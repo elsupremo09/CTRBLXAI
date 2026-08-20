@@ -1,243 +1,180 @@
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+-- TemplateInspector.client.lua
+-- CTRBLXAI | Map Viewer + Tile Inspector
+--
+-- Handles:
+--   - Tile hover/selection (yellow outline)
+--   - Adaptive grid scaling
+--   - View mode toggle (TEMPLATE / REGION)
+--   - Tile inspector panel (right side, restyled)
+--   - Cross-selection: clicking a tile that has a unit on it
+--     also selects that unit in the unit inspector panel.
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-local mouse = player:GetMouse()
+local mouse  = player:GetMouse()
 
 --------------------------------------------------
 -- SETTINGS
 --------------------------------------------------
 
-local HOVER_COLOR =
-	Color3.fromRGB(255, 255, 255)
-
-local SELECTED_COLOR =
-	Color3.fromRGB(255, 230, 0)
-
-local HOVER_OUTLINE_TRANSPARENCY = 0.15
+local HOVER_COLOR    = Color3.fromRGB(255, 255, 255)
+local SELECTED_COLOR = Color3.fromRGB(255, 230, 0)
+local HOVER_OUTLINE_TRANSPARENCY    = 0.15
 local SELECTED_OUTLINE_TRANSPARENCY = 0
+local SELECTION_LINE_THICKNESS      = 0.16
 
-local SELECTION_LINE_THICKNESS = 0.16
+local TILE_VISUAL_GUI_NAME   = "TileVisualGui"
+local TILE_VISUAL_FRAME_NAME = "TileVisualFrame"
 
-local TILE_VISUAL_GUI_NAME =
-	"TileVisualGui"
-
-local TILE_VISUAL_FRAME_NAME =
-	"TileVisualFrame"
-
---------------------------------------------------
--- ADAPTIVE GRID SETTINGS
---------------------------------------------------
-
-local GRID_VERTICAL_PREFIX = "GridLine_V_"
+local GRID_VERTICAL_PREFIX   = "GridLine_V_"
 local GRID_HORIZONTAL_PREFIX = "GridLine_H_"
-
--- Minimum grid width when the camera is close.
 local GRID_MINIMUM_THICKNESS = 0.08
-
--- Maximum grid width when the camera is far away.
 local GRID_MAXIMUM_THICKNESS = 0.40
+local GRID_DISTANCE_SCALE    = 0.0015
+local GRID_MINIMUM_HEIGHT    = 0.04
+local GRID_MAXIMUM_HEIGHT    = 0.16
+local GRID_SURFACE_GAP       = 0.015
 
--- Controls how quickly the grid becomes thicker
--- as the camera moves farther from the map.
-local GRID_DISTANCE_SCALE = 0.0015
-
--- Minimum and maximum physical grid height.
-local GRID_MINIMUM_HEIGHT = 0.04
-local GRID_MAXIMUM_HEIGHT = 0.16
-
--- Keeps grid Parts above the solid SurfaceGui tops.
-local GRID_SURFACE_GAP = 0.015
+-- Marker colors used in the stripe
+local MARKER_COLORS = {
+	PD  = Color3.fromRGB(70,  140, 255),  -- player deploy (blue)
+	ED  = Color3.fromRGB(220, 60,  60),   -- enemy deploy (red)
+	LAN = Color3.fromRGB(166, 166, 166),  -- lane (grey)
+	POI = Color3.fromRGB(91,  155, 213),  -- point of interest
+	ADV = Color3.fromRGB(169, 209, 142),  -- advantage
+	HZD = Color3.fromRGB(152, 72,  206),  -- hazard (purple)
+	BLK = Color3.fromRGB(60,  60,  60),   -- blocker (dark)
+	WAT = Color3.fromRGB(0,   112, 192),  -- water
+	NEU = Color3.fromRGB(120, 120, 120),  -- neutral
+}
 
 --------------------------------------------------
 -- STATE
 --------------------------------------------------
 
-local hoveredTile = nil
+local hoveredTile  = nil
 local selectedTile = nil
+local hoverBox     = nil
+local selectedBox  = nil
 
-local hoverBox = nil
-local selectedBox = nil
-
-local currentViewMode = "REGION"
-local currentMapFolder = nil
-
+local currentViewMode      = "REGION"
+local currentMapFolder     = nil
 local mapChildAddedConnection = nil
 
-local gridLines = {}
+local gridLines        = {}
 local gridOriginalSizes = {}
-
-local mapCenter = nil
-local mapSurfaceY = nil
+local mapCenter        = nil
+local mapSurfaceY      = nil
 
 --------------------------------------------------
--- UI CREATION
+-- PANEL CREATION  (matches unit inspector style)
+--   Dark background, rounded corners, left stripe,
+--   RichText monospaced content label.
 --------------------------------------------------
 
 local screenGui = Instance.new("ScreenGui")
-
-screenGui.Name = "TileInspectorGui"
+screenGui.Name         = "TileInspectorGui"
 screenGui.ResetOnSpawn = false
-screenGui.Parent =
-	player:WaitForChild("PlayerGui")
+screenGui.Parent       = player:WaitForChild("PlayerGui")
 
-local function createPanel(
-	name,
-	position,
-	size,
-	title
-)
+local function makePanel(name, yOffset, height)
 	local frame = Instance.new("Frame")
+	frame.Name                = name
+	frame.Size                = UDim2.new(0, 220, 0, height)
+	frame.AnchorPoint         = Vector2.new(1, 0)
+	frame.Position            = UDim2.new(1, -12, 0, yOffset)
+	frame.BackgroundColor3    = Color3.fromRGB(15, 15, 20)
+	frame.BackgroundTransparency = 0.08
+	frame.BorderSizePixel     = 0
+	frame.Parent              = screenGui
 
-	frame.Name = name
-	frame.Position = position
-	frame.Size = size
-	frame.BackgroundColor3 =
-		Color3.fromRGB(20, 20, 20)
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent       = frame
 
-	frame.BackgroundTransparency = 0.15
-	frame.BorderSizePixel = 0
-	frame.Parent = screenGui
+	-- Left stripe (color set when tile is selected)
+	local stripe = Instance.new("Frame")
+	stripe.Name             = "Stripe"
+	stripe.Size             = UDim2.new(0, 4, 1, 0)
+	stripe.Position         = UDim2.new(0, 0, 0, 0)
+	stripe.BackgroundColor3 = Color3.fromRGB(120, 120, 120)
+	stripe.BorderSizePixel  = 0
+	stripe.Parent           = frame
 
-	local titleLabel =
-		Instance.new("TextLabel")
+	local stripeCorner = Instance.new("UICorner")
+	stripeCorner.CornerRadius = UDim.new(0, 8)
+	stripeCorner.Parent       = stripe
 
-	titleLabel.Name = "Title"
-	titleLabel.Position =
-		UDim2.new(0, 10, 0, 8)
+	-- Content label
+	local content = Instance.new("TextLabel")
+	content.Name                 = "Content"
+	content.Size                 = UDim2.new(1, -16, 1, -12)
+	content.Position             = UDim2.new(0, 12, 0, 8)
+	content.BackgroundTransparency = 1
+	content.Font                 = Enum.Font.Code
+	content.TextSize             = 13
+	content.TextColor3           = Color3.fromRGB(220, 220, 220)
+	content.TextXAlignment       = Enum.TextXAlignment.Left
+	content.TextYAlignment       = Enum.TextYAlignment.Top
+	content.TextWrapped          = true
+	content.RichText             = true
+	content.Text                 = ""
+	content.Parent               = frame
 
-	titleLabel.Size =
-		UDim2.new(1, -20, 0, 28)
-
-	titleLabel.BackgroundTransparency = 1
-	titleLabel.Font = Enum.Font.SourceSansBold
-	titleLabel.TextSize = 24
-	titleLabel.TextColor3 =
-		Color3.fromRGB(255, 255, 255)
-
-	titleLabel.TextXAlignment =
-		Enum.TextXAlignment.Left
-
-	titleLabel.Text = title
-	titleLabel.Parent = frame
-
-	local body = Instance.new("TextLabel")
-
-	body.Name = "Body"
-	body.Position =
-		UDim2.new(0, 10, 0, 42)
-
-	body.Size =
-		UDim2.new(1, -20, 1, -52)
-
-	body.BackgroundTransparency = 1
-	body.Font = Enum.Font.Code
-	body.TextSize = 15
-	body.TextColor3 =
-		Color3.fromRGB(255, 255, 255)
-
-	body.TextXAlignment =
-		Enum.TextXAlignment.Left
-
-	body.TextYAlignment =
-		Enum.TextYAlignment.Top
-
-	body.TextWrapped = false
-	body.Text = ""
-	body.Parent = frame
-
-	return frame, body
+	return frame, stripe, content
 end
 
-local tilePanel, tileBody = createPanel(
-	"TileInspectorPanel",
-	UDim2.new(1, -340, 0, 70),
-	UDim2.new(0, 320, 0, 260),
-	"Tile Inspector"
-)
+-- Tile panel — top right
+local tilePanel,   tileStripe,   tileContent   = makePanel("TilePanel",   80,  230)
+-- Object panel — below tile panel
+local objectPanel, objectStripe, objectContent = makePanel("ObjectPanel", 322, 110)
 
-local objectPanel, objectBody = createPanel(
-	"ObjectInspectorPanel",
-	UDim2.new(1, -340, 0, 350),
-	UDim2.new(0, 320, 0, 180),
-	"Object Inspector"
-)
+-- Hide both until a tile is selected
+tilePanel.Visible   = false
+objectPanel.Visible = false
 
 --------------------------------------------------
--- VIEW MODE BUTTON
+-- VIEW MODE BUTTON  (unchanged style)
 --------------------------------------------------
 
-local viewModeButton =
-	Instance.new("TextButton")
+local viewModeButton = Instance.new("TextButton")
+viewModeButton.Name                 = "ViewModeButton"
+viewModeButton.AnchorPoint          = Vector2.new(0.5, 0)
+viewModeButton.Position             = UDim2.new(0.5, 0, 0, 20)
+viewModeButton.Size                 = UDim2.new(0, 230, 0, 42)
+viewModeButton.BackgroundColor3     = Color3.fromRGB(15, 15, 20)
+viewModeButton.BackgroundTransparency = 0.08
+viewModeButton.BorderSizePixel      = 0
+viewModeButton.AutoButtonColor      = true
+viewModeButton.Font                 = Enum.Font.SourceSansBold
+viewModeButton.TextSize             = 18
+viewModeButton.TextColor3           = Color3.fromRGB(220, 220, 220)
+viewModeButton.Parent               = screenGui
 
-viewModeButton.Name = "ViewModeButton"
-viewModeButton.AnchorPoint =
-	Vector2.new(0.5, 0)
-
-viewModeButton.Position =
-	UDim2.new(0.5, 0, 0, 20)
-
-viewModeButton.Size =
-	UDim2.new(0, 230, 0, 42)
-
-viewModeButton.BackgroundColor3 =
-	Color3.fromRGB(20, 20, 20)
-
-viewModeButton.BackgroundTransparency = 0.1
-viewModeButton.BorderSizePixel = 0
-viewModeButton.AutoButtonColor = true
-viewModeButton.Font =
-	Enum.Font.SourceSansBold
-
-viewModeButton.TextSize = 20
-viewModeButton.TextColor3 =
-	Color3.fromRGB(255, 255, 255)
-
-viewModeButton.Parent = screenGui
-
-local buttonCorner =
-	Instance.new("UICorner")
-
-buttonCorner.CornerRadius =
-	UDim.new(0, 6)
-
-buttonCorner.Parent = viewModeButton
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 6)
+btnCorner.Parent       = viewModeButton
 
 --------------------------------------------------
 -- SELECTION BOXES
 --------------------------------------------------
 
-local function createSelectionBox(
-	name,
-	color,
-	transparency
-)
+local function createSelectionBox(name, color, transparency)
 	local box = Instance.new("SelectionBox")
-
-	box.Name = name
-	box.Color3 = color
-	box.LineThickness =
-		SELECTION_LINE_THICKNESS
-
-	box.Transparency = transparency
-	box.Visible = false
-	box.Parent = workspace
-
+	box.Name          = name
+	box.Color3        = color
+	box.LineThickness = SELECTION_LINE_THICKNESS
+	box.Transparency  = transparency
+	box.Visible       = false
+	box.Parent        = workspace
 	return box
 end
 
-hoverBox = createSelectionBox(
-	"TileHoverBox",
-	HOVER_COLOR,
-	HOVER_OUTLINE_TRANSPARENCY
-)
-
-selectedBox = createSelectionBox(
-	"TileSelectedBox",
-	SELECTED_COLOR,
-	SELECTED_OUTLINE_TRANSPARENCY
-)
+hoverBox    = createSelectionBox("TileHoverBox",    HOVER_COLOR,    HOVER_OUTLINE_TRANSPARENCY)
+selectedBox = createSelectionBox("TileSelectedBox", SELECTED_COLOR, SELECTED_OUTLINE_TRANSPARENCY)
 
 --------------------------------------------------
 -- INSTANCE HELPERS
@@ -246,182 +183,81 @@ selectedBox = createSelectionBox(
 local function isTemplateTile(instance)
 	return instance
 		and instance:IsA("BasePart")
-		and instance:GetAttribute(
-			"IsTemplateTile"
-		) == true
+		and instance:GetAttribute("IsTemplateTile") == true
 end
 
 local function isVerticalGridLine(instance)
 	return instance
 		and instance:IsA("BasePart")
-		and string.sub(
-			instance.Name,
-			1,
-			#GRID_VERTICAL_PREFIX
-		) == GRID_VERTICAL_PREFIX
+		and string.sub(instance.Name, 1, #GRID_VERTICAL_PREFIX) == GRID_VERTICAL_PREFIX
 end
 
 local function isHorizontalGridLine(instance)
 	return instance
 		and instance:IsA("BasePart")
-		and string.sub(
-			instance.Name,
-			1,
-			#GRID_HORIZONTAL_PREFIX
-		) == GRID_HORIZONTAL_PREFIX
+		and string.sub(instance.Name, 1, #GRID_HORIZONTAL_PREFIX) == GRID_HORIZONTAL_PREFIX
 end
 
 local function isGridLine(instance)
-	return isVerticalGridLine(instance)
-		or isHorizontalGridLine(instance)
+	return isVerticalGridLine(instance) or isHorizontalGridLine(instance)
 end
 
-local function getAttributeText(
-	tile,
-	attributeName,
-	fallback
-)
-	local value =
-		tile:GetAttribute(attributeName)
-
-	if value == nil then
-		return fallback
-	end
-
-	return tostring(value)
+local function getAttributeText(tile, attr, fallback)
+	local v = tile:GetAttribute(attr)
+	return v ~= nil and tostring(v) or fallback
 end
 
-local function getViewColor(
-	tile,
-	viewMode
-)
-	local attributeName
-
-	if viewMode == "TEMPLATE" then
-		attributeName = "TemplateColor"
-	else
-		attributeName =
-			"RegionDebugColor"
-	end
-
-	local color =
-		tile:GetAttribute(attributeName)
-
-	if typeof(color) == "Color3" then
-		return color
-	end
-
-	return tile.Color
+local function getViewColor(tile, viewMode)
+	local attr = viewMode == "TEMPLATE" and "TemplateColor" or "RegionDebugColor"
+	local color = tile:GetAttribute(attr)
+	return typeof(color) == "Color3" and color or tile.Color
 end
 
 --------------------------------------------------
--- SOLID TILE-TOP VISUAL
+-- TILE-TOP VISUAL
 --------------------------------------------------
 
 local function findTileVisualFrame(tile)
-	local surfaceGui =
-		tile:FindFirstChild(
-			TILE_VISUAL_GUI_NAME
-		)
-
-	if not surfaceGui
-		or not surfaceGui:IsA(
-			"SurfaceGui"
-		) then
-		return nil
-	end
-
-	local frame =
-		surfaceGui:FindFirstChild(
-			TILE_VISUAL_FRAME_NAME
-		)
-
-	if frame
-		and frame:IsA("Frame") then
-		return frame
-	end
-
-	return nil
+	local sg = tile:FindFirstChild(TILE_VISUAL_GUI_NAME)
+	if not sg or not sg:IsA("SurfaceGui") then return nil end
+	local f = sg:FindFirstChild(TILE_VISUAL_FRAME_NAME)
+	return f and f:IsA("Frame") and f or nil
 end
 
 local function createTileVisual(tile)
-	local oldSurfaceGui =
-		tile:FindFirstChild(
-			TILE_VISUAL_GUI_NAME
-		)
+	local old = tile:FindFirstChild(TILE_VISUAL_GUI_NAME)
+	if old then old:Destroy() end
 
-	if oldSurfaceGui then
-		oldSurfaceGui:Destroy()
-	end
-
-	local surfaceGui =
-		Instance.new("SurfaceGui")
-
-	surfaceGui.Name =
-		TILE_VISUAL_GUI_NAME
-
-	surfaceGui.Face =
-		Enum.NormalId.Top
-
-	surfaceGui.AlwaysOnTop = false
-	surfaceGui.Active = false
-	surfaceGui.LightInfluence = 0
-	surfaceGui.Brightness = 1
-
-	surfaceGui.SizingMode =
-		Enum.SurfaceGuiSizingMode.PixelsPerStud
-
-	surfaceGui.PixelsPerStud = 20
-	surfaceGui.Parent = tile
+	local sg = Instance.new("SurfaceGui")
+	sg.Name       = TILE_VISUAL_GUI_NAME
+	sg.Face       = Enum.NormalId.Top
+	sg.AlwaysOnTop = false
+	sg.Active     = false
+	sg.LightInfluence = 0
+	sg.Brightness = 1
+	sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	sg.PixelsPerStud = 20
+	sg.Parent     = tile
 
 	local frame = Instance.new("Frame")
-
-	frame.Name =
-		TILE_VISUAL_FRAME_NAME
-
-	frame.Position =
-		UDim2.fromScale(0, 0)
-
-	frame.Size =
-		UDim2.fromScale(1, 1)
-
-	frame.BorderSizePixel = 0
+	frame.Name                = TILE_VISUAL_FRAME_NAME
+	frame.Position            = UDim2.fromScale(0, 0)
+	frame.Size                = UDim2.fromScale(1, 1)
+	frame.BorderSizePixel     = 0
 	frame.BackgroundTransparency = 0
-
-	frame.BackgroundColor3 =
-		getViewColor(
-			tile,
-			currentViewMode
-		)
-
-	frame.Active = false
-	frame.Parent = surfaceGui
-
+	frame.BackgroundColor3    = getViewColor(tile, currentViewMode)
+	frame.Active              = false
+	frame.Parent              = sg
 	return frame
 end
 
 local function ensureTileVisual(tile)
-	local frame =
-		findTileVisualFrame(tile)
-
-	if frame then
-		return frame
-	end
-
-	return createTileVisual(tile)
+	return findTileVisualFrame(tile) or createTileVisual(tile)
 end
 
-local function setTileDisplayColor(
-	tile,
-	displayColor
-)
-	tile.Color = displayColor
-
-	local visualFrame =
-		ensureTileVisual(tile)
-
-	visualFrame.BackgroundColor3 =
-		displayColor
+local function setTileDisplayColor(tile, color)
+	tile.Color = color
+	ensureTileVisual(tile).BackgroundColor3 = color
 end
 
 --------------------------------------------------
@@ -429,35 +265,18 @@ end
 --------------------------------------------------
 
 local function updateViewModeButton()
-	viewModeButton.Text =
-		"View: "
-		.. currentViewMode
-		.. " | Click to Switch"
+	viewModeButton.Text = "View: " .. currentViewMode .. "  |  Click to Switch"
 end
 
 local function applyViewMode(viewMode)
 	currentViewMode = viewMode
-
-	if currentMapFolder
-		and currentMapFolder.Parent then
-		for _, instance in ipairs(
-			currentMapFolder:GetChildren()
-		) do
-			if isTemplateTile(instance) then
-				local displayColor =
-					getViewColor(
-						instance,
-						currentViewMode
-					)
-
-				setTileDisplayColor(
-					instance,
-					displayColor
-				)
+	if currentMapFolder and currentMapFolder.Parent then
+		for _, inst in ipairs(currentMapFolder:GetChildren()) do
+			if isTemplateTile(inst) then
+				setTileDisplayColor(inst, getViewColor(inst, currentViewMode))
 			end
 		end
 	end
-
 	updateViewModeButton()
 end
 
@@ -468,183 +287,73 @@ end
 local function clearGridState()
 	table.clear(gridLines)
 	table.clear(gridOriginalSizes)
-
-	mapCenter = nil
+	mapCenter   = nil
 	mapSurfaceY = nil
 end
 
 local function registerGridLine(line)
-	if gridOriginalSizes[line] then
-		return
-	end
-
+	if gridOriginalSizes[line] then return end
 	table.insert(gridLines, line)
 	gridOriginalSizes[line] = line.Size
-
-	line.Material = Enum.Material.Neon
-	line.Color = Color3.fromRGB(15, 15, 15)
+	line.Material   = Enum.Material.Neon
+	line.Color      = Color3.fromRGB(15, 15, 15)
 	line.CastShadow = false
 	line.CanCollide = false
-	line.CanTouch = false
-	line.CanQuery = false
+	line.CanTouch   = false
+	line.CanQuery   = false
 end
 
 local function calculateMapBounds()
-	if not currentMapFolder then
-		mapCenter = nil
-		mapSurfaceY = nil
-		return
-	end
-
-	local minimumX = math.huge
-	local maximumX = -math.huge
-	local minimumZ = math.huge
-	local maximumZ = -math.huge
-	local highestSurfaceY = -math.huge
-	local tileFound = false
-
-	for _, instance in ipairs(
-		currentMapFolder:GetChildren()
-	) do
-		if isTemplateTile(instance) then
-			tileFound = true
-
-			local halfX =
-				instance.Size.X / 2
-
-			local halfZ =
-				instance.Size.Z / 2
-
-			minimumX = math.min(
-				minimumX,
-				instance.Position.X - halfX
-			)
-
-			maximumX = math.max(
-				maximumX,
-				instance.Position.X + halfX
-			)
-
-			minimumZ = math.min(
-				minimumZ,
-				instance.Position.Z - halfZ
-			)
-
-			maximumZ = math.max(
-				maximumZ,
-				instance.Position.Z + halfZ
-			)
-
-			highestSurfaceY = math.max(
-				highestSurfaceY,
-				instance.Position.Y
-					+ (instance.Size.Y / 2)
-			)
+	if not currentMapFolder then mapCenter = nil; mapSurfaceY = nil; return end
+	local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
+	local topY = -math.huge
+	local found = false
+	for _, inst in ipairs(currentMapFolder:GetChildren()) do
+		if isTemplateTile(inst) then
+			found = true
+			local hx, hz = inst.Size.X / 2, inst.Size.Z / 2
+			minX = math.min(minX, inst.Position.X - hx)
+			maxX = math.max(maxX, inst.Position.X + hx)
+			minZ = math.min(minZ, inst.Position.Z - hz)
+			maxZ = math.max(maxZ, inst.Position.Z + hz)
+			topY = math.max(topY, inst.Position.Y + inst.Size.Y / 2)
 		end
 	end
-
-	if not tileFound then
-		mapCenter = nil
-		mapSurfaceY = nil
-		return
-	end
-
-	mapSurfaceY = highestSurfaceY
-
-	mapCenter = Vector3.new(
-		(minimumX + maximumX) / 2,
-		mapSurfaceY,
-		(minimumZ + maximumZ) / 2
-	)
+	if not found then mapCenter = nil; mapSurfaceY = nil; return end
+	mapSurfaceY = topY
+	mapCenter   = Vector3.new((minX + maxX) / 2, topY, (minZ + maxZ) / 2)
 end
 
 local function registerCurrentMapChildren()
-	if not currentMapFolder then
-		return
+	if not currentMapFolder then return end
+	for _, inst in ipairs(currentMapFolder:GetChildren()) do
+		if isGridLine(inst) then registerGridLine(inst) end
 	end
-
-	for _, instance in ipairs(
-		currentMapFolder:GetChildren()
-	) do
-		if isGridLine(instance) then
-			registerGridLine(instance)
-		end
-	end
-
 	calculateMapBounds()
 end
 
 local function updateAdaptiveGrid()
 	local camera = workspace.CurrentCamera
+	if not camera or not mapCenter or not mapSurfaceY then return end
+	local dist = (camera.CFrame.Position - mapCenter).Magnitude
+	local thick = math.clamp(GRID_MINIMUM_THICKNESS + dist * GRID_DISTANCE_SCALE,
+		GRID_MINIMUM_THICKNESS, GRID_MAXIMUM_THICKNESS)
+	local h     = math.clamp(thick * 0.5, GRID_MINIMUM_HEIGHT, GRID_MAXIMUM_HEIGHT)
+	local posY  = mapSurfaceY + GRID_SURFACE_GAP + h / 2
 
-	if not camera
-		or not mapCenter
-		or not mapSurfaceY then
-		return
-	end
-
-	local cameraDistance =
-		(
-			camera.CFrame.Position
-			- mapCenter
-		).Magnitude
-
-	local gridThickness =
-		math.clamp(
-			GRID_MINIMUM_THICKNESS
-				+ (
-					cameraDistance
-					* GRID_DISTANCE_SCALE
-				),
-			GRID_MINIMUM_THICKNESS,
-			GRID_MAXIMUM_THICKNESS
-		)
-
-	local gridHeight =
-		math.clamp(
-			gridThickness * 0.5,
-			GRID_MINIMUM_HEIGHT,
-			GRID_MAXIMUM_HEIGHT
-		)
-
-	local gridPositionY =
-		mapSurfaceY
-		+ GRID_SURFACE_GAP
-		+ (gridHeight / 2)
-
-	for index = #gridLines, 1, -1 do
-		local line = gridLines[index]
-		local originalSize =
-			gridOriginalSizes[line]
-
-		if not line
-			or not line.Parent
-			or not originalSize then
-			table.remove(gridLines, index)
-
-			if line then
-				gridOriginalSizes[line] = nil
-			end
+	for i = #gridLines, 1, -1 do
+		local line = gridLines[i]
+		local orig = gridOriginalSizes[line]
+		if not line or not line.Parent or not orig then
+			table.remove(gridLines, i)
+			if line then gridOriginalSizes[line] = nil end
 		else
 			if isVerticalGridLine(line) then
-				line.Size = Vector3.new(
-					gridThickness,
-					gridHeight,
-					originalSize.Z
-				)
+				line.Size = Vector3.new(thick, h, orig.Z)
 			elseif isHorizontalGridLine(line) then
-				line.Size = Vector3.new(
-					originalSize.X,
-					gridHeight,
-					gridThickness
-				)
+				line.Size = Vector3.new(orig.X, h, thick)
 			end
-
-			line.Position = Vector3.new(
-				line.Position.X,
-				gridPositionY,
-				line.Position.Z
-			)
+			line.Position = Vector3.new(line.Position.X, posY, line.Position.Z)
 		end
 	end
 end
@@ -662,17 +371,7 @@ end
 
 local function registerMapChild(child)
 	if isTemplateTile(child) then
-		local displayColor =
-			getViewColor(
-				child,
-				currentViewMode
-			)
-
-		setTileDisplayColor(
-			child,
-			displayColor
-		)
-
+		setTileDisplayColor(child, getViewColor(child, currentViewMode))
 		calculateMapBounds()
 	elseif isGridLine(child) then
 		registerGridLine(child)
@@ -682,152 +381,89 @@ end
 local function attachToMapFolder(mapFolder)
 	disconnectMapChildAdded()
 	clearGridState()
-
 	currentMapFolder = mapFolder
 
-	local initialViewMode =
-		mapFolder:GetAttribute(
-			"InitialViewMode"
-		)
+	local iv = mapFolder:GetAttribute("InitialViewMode")
+	currentViewMode = (iv == "TEMPLATE" or iv == "REGION") and iv or "REGION"
 
-	if initialViewMode == "TEMPLATE"
-		or initialViewMode == "REGION" then
-		currentViewMode =
-			initialViewMode
-	else
-		currentViewMode = "REGION"
-	end
-
-	mapChildAddedConnection =
-		mapFolder.ChildAdded:Connect(
-			registerMapChild
-		)
-
+	mapChildAddedConnection = mapFolder.ChildAdded:Connect(registerMapChild)
 	applyViewMode(currentViewMode)
 	registerCurrentMapChildren()
 	updateAdaptiveGrid()
 end
 
 --------------------------------------------------
--- INSPECTOR TEXT
+-- INSPECTOR TEXT  (RichText, styled like unit panel)
 --------------------------------------------------
 
-local function buildTileInspectorText(tile)
-	if not tile then
-		return "No tile selected."
-	end
+local function buildTileText(tile)
+	if not tile then return "" end
 
-	local x =
-		getAttributeText(tile, "X", "?")
+	local marker   = getAttributeText(tile, "TemplateMarker", "?")
+	local x        = getAttributeText(tile, "X", "?")
+	local y        = getAttributeText(tile, "Y", "?")
+	local biome    = getAttributeText(tile, "BiomeId",  "—")
+	local region   = getAttributeText(tile, "RegionId", "—")
+	local elev     = getAttributeText(tile, "Elevation", "—")
+	local terrain  = getAttributeText(tile, "Terrain",  "—")
+	local effect   = getAttributeText(tile, "Effect",   "None")
+	local passable = getAttributeText(tile, "Passable", "?")
 
-	local y =
-		getAttributeText(tile, "Y", "?")
-
-	local marker =
-		getAttributeText(
-			tile,
-			"TemplateMarker",
-			"Unknown"
-		)
-
-	local biomeId =
-		getAttributeText(
-			tile,
-			"BiomeId",
-			"Unknown"
-		)
-
-	local elevation =
-		getAttributeText(
-			tile,
-			"Elevation",
-			"Unknown"
-		)
-
-	local terrain =
-		getAttributeText(
-			tile,
-			"Terrain",
-			"Unknown"
-		)
-
-	local regionId =
-		getAttributeText(
-			tile,
-			"RegionId",
-			"Unknown"
-		)
-
-	local effect =
-		getAttributeText(
-			tile,
-			"Effect",
-			"None"
-		)
-
-	local passable =
-		getAttributeText(
-			tile,
-			"Passable",
-			"Unknown"
-		)
-
-	return table.concat({
-		"Coordinates: " .. x .. ", " .. y,
-		"Template Marker: " .. marker,
-		"Biome: " .. biomeId,
-		"Elevation: " .. elevation,
-		"Terrain: " .. terrain,
-		"Region ID: " .. regionId,
-		"Effect: " .. effect,
-		"Passable: " .. passable,
-	}, "\n")
+	return string.format(
+		"<font color='#CCCCCC'><b>Tile (%s, %s)</b></font>\n" ..
+		"<font color='#888888'>Marker: %s</font>\n\n" ..
+		"<font color='#AAAAAA'>── LOCATION ──</font>\n" ..
+		"Biome    %s\n" ..
+		"Region   %s\n\n" ..
+		"<font color='#AAAAAA'>── TERRAIN ──</font>\n" ..
+		"Type     %s\n" ..
+		"Elev     %s\n" ..
+		"Effect   %s\n" ..
+		"Passable %s",
+		x, y,
+		marker,
+		biome,
+		region,
+		terrain,
+		elev,
+		effect,
+		passable
+	)
 end
 
-local function buildObjectInspectorText(tile)
-	if not tile then
-		return "No tile selected."
-	end
+local function buildObjectText(tile)
+	if not tile then return "" end
+	local name     = getAttributeText(tile, "ObjectName",             "None")
+	local category = getAttributeText(tile, "ObjectCategory",         "None")
+	local impact   = getAttributeText(tile, "ObjectPassabilityImpact","None")
 
-	local objectName =
-		getAttributeText(
-			tile,
-			"ObjectName",
-			"None"
-		)
-
-	local objectCategory =
-		getAttributeText(
-			tile,
-			"ObjectCategory",
-			"None"
-		)
-
-	local objectPassabilityImpact =
-		getAttributeText(
-			tile,
-			"ObjectPassabilityImpact",
-			"None"
-		)
-
-	return table.concat({
-		"Object: " .. objectName,
-		"Category: " .. objectCategory,
-		"Passability Impact: "
-			.. objectPassabilityImpact,
-	}, "\n")
+	return string.format(
+		"<font color='#AAAAAA'>── OBJECT ──</font>\n" ..
+		"Name     %s\n" ..
+		"Category %s\n" ..
+		"Passability Impact\n%s",
+		name, category, impact
+	)
 end
 
 local function updateInspector()
-	tileBody.Text =
-		buildTileInspectorText(
-			selectedTile
-		)
+	if not selectedTile then
+		tilePanel.Visible   = false
+		objectPanel.Visible = false
+		return
+	end
 
-	objectBody.Text =
-		buildObjectInspectorText(
-			selectedTile
-		)
+	-- Stripe color matches template marker
+	local marker = selectedTile:GetAttribute("TemplateMarker") or "NEU"
+	local stripeColor = MARKER_COLORS[marker] or Color3.fromRGB(120, 120, 120)
+	tileStripe.BackgroundColor3   = stripeColor
+	objectStripe.BackgroundColor3 = stripeColor
+
+	tileContent.Text   = buildTileText(selectedTile)
+	objectContent.Text = buildObjectText(selectedTile)
+
+	tilePanel.Visible   = true
+	objectPanel.Visible = true
 end
 
 --------------------------------------------------
@@ -835,14 +471,9 @@ end
 --------------------------------------------------
 
 local function setHoveredTile(tile)
-	if hoveredTile == tile then
-		return
-	end
-
+	if hoveredTile == tile then return end
 	hoveredTile = tile
-
-	if hoveredTile
-		and hoveredTile ~= selectedTile then
+	if hoveredTile and hoveredTile ~= selectedTile then
 		hoverBox.Adornee = hoveredTile
 		hoverBox.Visible = true
 	else
@@ -851,13 +482,22 @@ local function setHoveredTile(tile)
 	end
 end
 
+-- Find a unit occupying a tile by grid coordinates.
+-- Calls into _G.CTRBLXAI_SelectUnit if the tile has a unit on it.
+local function trySelectUnitOnTile(tile)
+	if not tile then return end
+
+	-- Pass the tile's world position so the battle client can match by proximity.
+	if type(_G.CTRBLXAI_SelectUnitNearWorldPos) == "function" then
+		_G.CTRBLXAI_SelectUnitNearWorldPos(tile.Position.X, tile.Position.Z)
+	end
+end
+
 local function setSelectedTile(tile)
 	selectedTile = tile
 
 	if selectedTile then
-		selectedBox.Adornee =
-			selectedTile
-
+		selectedBox.Adornee = selectedTile
 		selectedBox.Visible = true
 	else
 		selectedBox.Adornee = nil
@@ -870,98 +510,98 @@ local function setSelectedTile(tile)
 	end
 
 	updateInspector()
+	trySelectUnitOnTile(tile)
 end
 
---------------------------------------------------
--- VIEW MODE EVENTS
---------------------------------------------------
-
-viewModeButton.Activated:Connect(
-	function()
-		if currentViewMode == "REGION" then
-			applyViewMode("TEMPLATE")
-		else
-			applyViewMode("REGION")
-		end
-	end
-)
-
-workspace.ChildAdded:Connect(
-	function(child)
-		if child.Name == "TemplateViewerMap"
-			and child:IsA("Folder") then
-			attachToMapFolder(child)
-		end
-	end
-)
-
-workspace.ChildRemoved:Connect(
-	function(child)
-		if child == currentMapFolder then
-			disconnectMapChildAdded()
-			clearGridState()
-
-			currentMapFolder = nil
-			hoveredTile = nil
-			selectedTile = nil
-
-			hoverBox.Adornee = nil
-			hoverBox.Visible = false
-
-			selectedBox.Adornee = nil
-			selectedBox.Visible = false
-
-			updateInspector()
-		end
-	end
-)
-
---------------------------------------------------
--- TILE INPUT AND FRAME UPDATE
---------------------------------------------------
-
-RunService.RenderStepped:Connect(
-	function()
-		updateAdaptiveGrid()
-
-		local target = mouse.Target
-
-		if isTemplateTile(target) then
-			setHoveredTile(target)
-		else
-			setHoveredTile(nil)
-		end
-	end
-)
-
-UserInputService.InputBegan:Connect(
-	function(input, gameProcessed)
-		if gameProcessed then
-			return
-		end
-
-		if input.UserInputType
-			== Enum.UserInputType.MouseButton1 then
-			local target = mouse.Target
-
-			if isTemplateTile(target) then
-				setSelectedTile(target)
+-- Publish to _G so BattleVisualClient can drive tile selection
+-- when a unit token is clicked.
+-- Finds the tile Part at the given grid coords and selects it.
+_G.CTRBLXAI_SelectTileAt = function(tileX, tileY)
+	if not currentMapFolder then return end
+	for _, inst in ipairs(currentMapFolder:GetChildren()) do
+		if isTemplateTile(inst) then
+			local x = inst:GetAttribute("X")
+			local y = inst:GetAttribute("Y")
+			if x == tileX and y == tileY then
+				setSelectedTile(inst)
+				return
 			end
 		end
 	end
-)
+	-- Tile not found (e.g. battle map is separate from template map) — clear selection.
+	setSelectedTile(nil)
+end
+
+--------------------------------------------------
+-- VIEW MODE BUTTON
+--------------------------------------------------
+
+viewModeButton.Activated:Connect(function()
+	applyViewMode(currentViewMode == "REGION" and "TEMPLATE" or "REGION")
+end)
+
+--------------------------------------------------
+-- MAP EVENTS
+--------------------------------------------------
+
+workspace.ChildAdded:Connect(function(child)
+	if child.Name == "TemplateViewerMap" and child:IsA("Folder") then
+		attachToMapFolder(child)
+	end
+end)
+
+workspace.ChildRemoved:Connect(function(child)
+	if child == currentMapFolder then
+		disconnectMapChildAdded()
+		clearGridState()
+		currentMapFolder = nil
+		hoveredTile      = nil
+		selectedTile     = nil
+		hoverBox.Adornee  = nil
+		hoverBox.Visible  = false
+		selectedBox.Adornee = nil
+		selectedBox.Visible = false
+		updateInspector()
+	end
+end)
+
+--------------------------------------------------
+-- INPUT  (RenderStepped hover + click selection)
+--------------------------------------------------
+
+RunService.RenderStepped:Connect(function()
+	updateAdaptiveGrid()
+	local target = mouse.Target
+	setHoveredTile(isTemplateTile(target) and target or nil)
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		local target = mouse.Target
+		if isTemplateTile(target) then
+			setSelectedTile(target)
+		elseif target
+			and target:IsA("BasePart")
+			and string.sub(target.Name, 1, 5) == "Unit_"
+		then
+			-- Clicked a unit cylinder — let BattleVisualClient handle unit selection,
+			-- then select the tile under the unit using its battle coords via _G bridge.
+			local unitId = string.sub(target.Name, 6)
+			if type(_G.CTRBLXAI_SelectUnitAtTile) == "function" then
+				-- BattleVisualClient's mouse handler fires first and selects the unit+tile.
+				-- We don't need to do anything extra here — it's already handled.
+			end
+		end
+	end
+end)
 
 --------------------------------------------------
 -- INITIAL STATE
 --------------------------------------------------
 
-local existingMap =
-	workspace:FindFirstChild(
-		"TemplateViewerMap"
-	)
-
-if existingMap
-	and existingMap:IsA("Folder") then
+local existingMap = workspace:FindFirstChild("TemplateViewerMap")
+if existingMap and existingMap:IsA("Folder") then
 	attachToMapFolder(existingMap)
 else
 	updateViewModeButton()

@@ -1,0 +1,94 @@
+CTRBLXAI — Document Index
+==========================
+Read this file FIRST. Use CTRBLXAI.db for all data lookups.
+Do NOT read the xlsx files — they are human-readable exports only.
+
+PROJECT FILES
+  D:\AI\Projects\CTRBLXAI\docs\CTRBLXAI.db                 — SINGLE SOURCE OF TRUTH (query with SQL)
+  D:\AI\Projects\CTRBLXAI\docs\CTRBLXAI_Game_Rules.xlsx    — Human-readable export (DO NOT read for data)
+  D:\AI\Projects\CTRBLXAI\docs\CTRBLXAI_Build_Plan.xlsx    — Human-readable export (DO NOT read for data)
+  D:\AI\Projects\CTRBLXAI\docs\CTRBLXAI_Development_Roadmap.xlsx — Progress tracker (check Status Overview sheet)
+
+DATA ACCESS RULES
+  - ALWAYS query CTRBLXAI.db with SQL for data lookups.
+  - The xlsx files are auto-generated exports for the user to browse. Never read them.
+  - When updating game rules or architecture, UPDATE the .db, then REGENERATE the xlsx.
+  - Use: import sqlite3; conn = sqlite3.connect(r"D:\AI\Projects\CTRBLXAI\docs\CTRBLXAI.db")
+  - Query example: SELECT * FROM skills WHERE Skill_Name = 'Power Strike'
+
+SOURCE CODE
+  D:\AI\Projects\CTRBLXAI\source\ — Luau files synced to Roblox Studio via Rojo
+  Rojo config: D:\AI\Projects\CTRBLXAI\default.project.json
+
+WORKFLOW
+  - Write .lua files directly to source/. Rojo auto-syncs to Roblox Studio.
+  - User tests in Roblox Studio and reports results.
+  - User is not a programmer. Keep language simple.
+
+==========================
+GAME RULES — Sheet Index (CTRBLXAI_Game_Rules.xlsx)
+==========================
+Only read the specific sheet you need for the current task.
+
+SHEET                   | TOPIC                                           | WHEN TO READ
+01 Project Identity     | Core identity, locked decisions, authority rules | Only if resolving a design conflict
+02 Core Stats Formulas  | STR/AGI/INT/VIT/DEX/LUK formulas, AP/RT, actions, damage resolution | Implementing combat math, stats, timeline
+03 Movement Targeting   | Movement range, terrain cost, elevation, jump, displacement, LoS, projectiles, AOE patterns | Implementing movement, pathfinding, targeting
+04 Elements Statuses    | Elements, all damage/control/buff statuses with formulas and durations | Implementing status effects
+05 Skills Framework     | Skill Card field definitions, rules, how skills work | Implementing the skill system structure
+05b Skill Catalog       | Full catalog: 48 skills × 39 columns | Looking up a specific skill's data
+06 Augments Framework   | Augment rules, cost model, slots | Implementing augment attachment
+06b Augment Catalog     | Full catalog: 59 augments × 24 columns | Looking up a specific augment's data
+07 Doctrines            | 15 doctrines with stat packages, passives, skill choices | Implementing doctrine equip/effects
+08 Races                | 15 races with starting stats, growth, passives, tags | Implementing race selection/effects
+09 Weapons Equipment    | BP pricing, 15 weapon archetypes, rarity, generation rules, affixes | Implementing items, loot generation
+10 Loot Progression     | Fortune, rewards, drop rates, activities, guild progression | Implementing reward/loot systems
+11 Trigger Safety       | 16 trigger recursion rules (TRG-001 to TRG-016) | Implementing event queue safety
+12 Map Gen Rules        | Map generation pipeline (11 steps), validation, failure handling | Implementing procedural map generation
+13 Map Templates        | T01-T08 template catalog (sizes, purposes, zone rules) | Implementing template selection
+T01-T08 sheets          | Actual grid diagrams for each template | Implementing specific template layouts
+14 Biomes               | 12 biome profiles with terrain/object weights | Implementing biome loading
+15 Regions              | 20 region types with terrain/object/hazard weights | Implementing region generation
+16 Terrain Effects      | 22 terrain types + tile effects with tags, costs, transformations | Implementing terrain behavior
+17 Objects Encounters   | Map objects, interactions, encounter composition | Implementing objects and enemy spawning
+18 Open Decisions       | Unresolved/parked design topics | Checking what's not finalized
+
+==========================
+BUILD PLAN — Sheet Index (CTRBLXAI_Build_Plan.xlsx)
+==========================
+
+SHEET                        | TOPIC                                    | WHEN TO READ
+INDEX                        | Table of contents                        | Quick reference only
+01 Authority & Boundaries    | What source owns what domain             | Resolving conflicts between docs
+02 Service Boundaries        | 12 runtime services, what each owns/reads/writes | Deciding which module handles a feature
+03 Unit Runtime Schema       | Unit state fields (HP, stats, position, loadout) | Writing unit data structures
+04 Equipment Runtime Schema  | Equipment/loadout state                  | Writing inventory/equip code
+05 Skill & Augment Schemas   | Skill + Augment runtime fields           | Writing skill/augment data structures
+06 Doctrine & Battle Schemas | Doctrine state + Battle State fields (CT, phase, queues) | Writing battle state management
+07 Command Pipeline          | 9-step command validation (receive → commit) | Implementing player/AI action handling
+08 Skill Resolution Pipeline | 12-step skill lifecycle (commit → resolve → complete) | Implementing skill execution
+09 Target Validation Pipeline| 9-step targeting (selection → lock → preview) | Implementing target selection
+10 Damage & Effect Pipeline  | 10-step damage resolution (classify → emit) | Implementing damage calculation
+11 Trigger Event Queue       | Event types, priorities, caps, termination | Implementing the event queue
+12 Status & Summon Engines   | Status lifecycle + summon creation/replacement | Implementing statuses and summons
+13 Reward & Generation       | Reward pipeline + procedural generation contracts | Implementing loot generation
+14 Save Data Contract        | What's persisted, schema versioning, migration | Implementing save/load
+15 AI Integration            | GetLegalActions, PreviewAction, CommitAction interfaces | Implementing enemy AI
+16 Failure Handling          | Fault classes, rollback, diagnostics     | Implementing error recovery
+17 Validation Matrix         | Required invariants and test conditions   | Writing validation/tests
+18 Roblox Platform           | DataStore limits, frame budgets, client/server split, performance rules | Any Roblox-specific decisions
+19 Implementation Plan       | Slice breakdown, priorities, vertical slice guide | Planning what to build next
+
+==========================
+KEY DECISIONS (avoid re-looking these up)
+==========================
+- All skills scale with equipped main weapon + optionally a primary stat. No weapon/spell distinction.
+- 2H weapon equipped → Armor Off-Hand WT = 0.
+- Focus weapons: architecturally supported, excluded from initial implementation.
+- Inventory: no hard cap. Maintenance cost past a threshold (soft economic pressure).
+- AI per-unit budget: 50-100ms. 3-tier funnel (filter → score → preview). Role-based complexity.
+- Map pre-generation: 4 maps after each battle while player is in menu.
+- Event queue hard cap: 128 per action. Yield every 32 events.
+- Save data: compact numeric IDs + lookup tables. Split across 3 DataStore keys.
+- All game logic: server-side only. Client displays and sends commands.
+- Deterministic: same seed + same content version = same result. No random variance in combat.
