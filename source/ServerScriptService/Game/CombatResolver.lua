@@ -1,35 +1,22 @@
 -- CombatResolver.lua
--- CTRBLXAI | Slice 1
+-- CTRBLXAI | Slice 3 (AOE, Healing, Burn/Poison generation)
 --
 -- Calculates the numerical result of an attack or skill hit.
 -- Returns an outcome table — does NOT write to unit state directly.
--- The caller (CommandService) applies the outcome.
 --
--- Slice 1 scope:
---   Basic Attack and a single damage skill.
---   Full 9-step damage sequence from the DB (core_stats — damage sequence):
---     1. Attack Power / Skill Power
---     2. Defense (Slice 1: units have no equipment, Defense = 0)
---     3. Outgoing Damage category modifiers (Slice 1: none)
---     4. Hit Quality  (Precision - Evasiveness)
---     5. Positional Modifier (Slice 1: none)
---     6. Element Modifier (Slice 1: no weaknesses)
---     7. Combat Fortune (Slice 1: skipped — LUK delta lookup deferred)
---     8. Guard / final mitigation (Slice 1: no Guard)
---     9. Round once
---
--- Formulas (locked, from DB):
---   Basic Attack Power = Weapon Damage * (1 + STR / 200)
---     Slice 1: no weapons. Weapon Damage is provided by the caller
---     (hardcoded in the unit definition for now).
---   Defense Power = Defense * (1 + VIT / 300)   [Defense = 0 in Slice 1]
---   Effective Defense = (AP * DP) / (AP + DP)
---   Raw Damage = AP - Effective Defense
---   Hit Quality = 1 + (Precision - Evasiveness)
---     Precision   = DEX / (DEX + 200)
---     Evasiveness = AGI / (AGI + 200)
---   Final Damage = round(Raw Damage * Hit Quality)
---   Minimum final damage = 0 (no universal minimum-1 rule).
+-- Slice 3 additions:
+--   - ResolveHealing: calculates healing amount
+--   - Burn status application uses actual fire damage dealt
+--   - AOE outcomes return multiple results
+
+local StatusService = require(script.Parent.StatusService)
+
+local GameConstants = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("CTRBLXAI")
+		:WaitForChild("Shared")
+		:WaitForChild("GameConstants")
+)
 
 local CombatResolver = {}
 
@@ -56,12 +43,8 @@ local function calcAttackPower(weaponDamage, attackerStr)
 end
 
 local function calcDefensePower(defense, defenderVit)
-	-- Slice 1: no equipment, Defense = 0.
-	-- Effective Defense = (AP * DP) / (AP + DP)
-	-- When DP = 0, Effective Defense = 0.
 	if defense <= 0 then return 0 end
-	local dp = defense * (1 + defenderVit / 300)
-	return dp
+	return defense * (1 + defenderVit / 300)
 end
 
 local function calcEffectiveDefense(attackPower, defensePower)
@@ -72,21 +55,6 @@ end
 
 --------------------------------------------------
 -- PUBLIC: RESOLVE BASIC ATTACK
---
--- attacker, defender: unit tables (from UnitSchema)
--- weaponDamage: the weapon's base damage value (number)
---   In Slice 1, the caller passes a hardcoded value per unit.
---
--- Returns an outcome table:
---   {
---     type         = "Damage",
---     targetId     = defender.id,
---     rawDamage    = <number>,
---     hitQuality   = <number>,
---     finalDamage  = <number>,  -- the value to subtract from HP
---     attackPower  = <number>,  -- for debug
---     defensePower = <number>,  -- for debug
---   }
 --------------------------------------------------
 
 function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
@@ -94,56 +62,39 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 		type(attacker) == "table" and type(defender) == "table",
 		"ResolveBasicAttack: attacker and defender must be unit tables."
 	)
-	assert(
-		type(weaponDamage) == "number" and weaponDamage >= 0,
-		"ResolveBasicAttack: weaponDamage must be a non-negative number."
-	)
 
 	local aStats = attacker.effectiveStats
 	local dStats = defender.effectiveStats
 
-	-- Step 1: Attack Power
 	local ap = calcAttackPower(weaponDamage, aStats.STR)
-
-	-- Step 2: Defense
-	local dp = calcDefensePower(0, dStats.VIT) -- Defense = 0 in Slice 1
+	local dp = calcDefensePower(0, dStats.VIT)
 	local effectiveDefense = calcEffectiveDefense(ap, dp)
-
-	-- Step 3: Outgoing Damage category modifiers — none in Slice 1.
-
-	-- Step 4: Hit Quality
 	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI)
 
-	-- Steps 5-8: Positional, Element, Combat Fortune, Guard — none in Slice 1.
+	local positionalMod = GameConstants.GetPositionalModifier(
+		attacker.tileX, attacker.tileY,
+		defender.tileX, defender.tileY
+	)
 
-	-- Step 9: Raw Damage then round once.
 	local rawDamage   = ap - effectiveDefense
-	local finalDamage = math.max(0, math.round(rawDamage * hitQuality))
+	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod))
 
 	return {
-		type         = "Damage",
-		targetId     = defender.id,
-		attackPower  = ap,
-		defensePower = dp,
-		rawDamage    = rawDamage,
-		hitQuality   = hitQuality,
-		finalDamage  = finalDamage,
+		type           = "Damage",
+		targetId       = defender.id,
+		attackPower    = ap,
+		defensePower   = dp,
+		rawDamage      = rawDamage,
+		hitQuality     = hitQuality,
+		positionalMod  = positionalMod,
+		finalDamage    = finalDamage,
+		appliesStatus  = nil,
+		sourceUnitId   = attacker.id,
 	}
 end
 
 --------------------------------------------------
--- PUBLIC: RESOLVE SKILL
---
--- Slice 1: A skill provides its own Power value (authored number).
--- The skill may or may not inherit STR scaling — declared in the
--- skill definition via inheritStr = true/false.
---
--- skillDef fields used here:
---   power        (number) — base skill damage value
---   inheritStr   (bool)   — if true, multiply by (1 + STR/200)
---   range        (number) — used by TargetingService, not here
---
--- Returns the same outcome shape as ResolveBasicAttack.
+-- PUBLIC: RESOLVE SKILL (damage skill, single target)
 --------------------------------------------------
 
 function CombatResolver.ResolveSkill(attacker, defender, skillDef)
@@ -151,87 +102,152 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		type(attacker) == "table" and type(defender) == "table",
 		"ResolveSkill: attacker and defender must be unit tables."
 	)
-	assert(
-		type(skillDef) == "table" and type(skillDef.power) == "number",
-		"ResolveSkill: skillDef must have a numeric power field."
-	)
 
 	local aStats = attacker.effectiveStats
 	local dStats = defender.effectiveStats
 
-	-- Step 1: Skill Power
-	local sp = skillDef.power
+	-- Skill Power = Weapon Attack Power × power multiplier
+	local weaponDamage = attacker.weaponDamage or 10
+	local sp = weaponDamage * (skillDef.power or 1.0)
 	if skillDef.inheritStr then
 		sp = sp * (1 + aStats.STR / 200)
 	end
 
-	-- Step 2: Defense (0 in Slice 1)
 	local dp = calcDefensePower(0, dStats.VIT)
 	local effectiveDefense = calcEffectiveDefense(sp, dp)
-
-	-- Step 4: Hit Quality
 	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI)
 
-	-- Step 9: Round once.
+	local positionalMod = GameConstants.GetPositionalModifier(
+		attacker.tileX, attacker.tileY,
+		defender.tileX, defender.tileY
+	)
+
 	local rawDamage   = sp - effectiveDefense
-	local finalDamage = math.max(0, math.round(rawDamage * hitQuality))
+	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod))
 
 	return {
-		type         = "Damage",
-		targetId     = defender.id,
-		attackPower  = sp,
-		defensePower = dp,
-		rawDamage    = rawDamage,
-		hitQuality   = hitQuality,
-		finalDamage  = finalDamage,
+		type           = "Damage",
+		targetId       = defender.id,
+		attackPower    = sp,
+		defensePower   = dp,
+		rawDamage      = rawDamage,
+		hitQuality     = hitQuality,
+		positionalMod  = positionalMod,
+		finalDamage    = finalDamage,
+		appliesStatus  = skillDef.appliesStatus or nil,
+		sourceUnitId   = attacker.id,
 	}
 end
 
 --------------------------------------------------
--- PUBLIC: APPLY OUTCOME
---   Writes the outcome's finalDamage to the target unit.
---   Returns the actual HP change (capped at current HP).
+-- PUBLIC: RESOLVE HEALING (Slice 3)
+--
+-- Healing Light formula (simplified for L=1):
+--   HealAmount = round((10 + 0.35×INT + WeaponDamage×0.30) × SkillPotency)
+--   SkillPotency = 1 + INT / (200 + INT)
 --------------------------------------------------
 
-function CombatResolver.ApplyOutcome(outcome, defender)
+function CombatResolver.ResolveHealing(caster, target, skillDef)
 	assert(
-		outcome.type == "Damage",
-		"ApplyOutcome: only Damage outcomes are supported in Slice 1."
+		type(caster) == "table" and type(target) == "table",
+		"ResolveHealing: caster and target must be unit tables."
 	)
 
-	local actual = UnitSchema_ApplyDamage(outcome.finalDamage, defender)
+	local cStats = caster.effectiveStats
+	local int = cStats.INT or 10
+	local weaponDamage = caster.weaponDamage or 10
+
+	-- Skill Potency Multiplier = 1 + INT / (200 + INT)
+	local skillPotency = 1 + int / (200 + int)
+
+	-- Healing formula
+	local baseHeal = 10 + 0.35 * int + weaponDamage * 0.30
+	local finalHeal = math.max(1, math.round(baseHeal * skillPotency))
+
+	return {
+		type         = "Healing",
+		targetId     = target.id,
+		finalHealing = finalHeal,
+		sourceUnitId = caster.id,
+	}
+end
+
+--------------------------------------------------
+-- PUBLIC: APPLY OUTCOME (damage or healing)
+--------------------------------------------------
+
+function CombatResolver.ApplyOutcome(outcome, target)
+	if outcome.type == "Healing" then
+		local actual = UnitSchema_ApplyHealing(outcome.finalHealing, target)
+		print(string.format(
+			"[CombatResolver] %s healed for %d | HP: %d/%d",
+			target.name, actual, target.currentHp, target.maxHp
+		))
+		return actual, nil
+	end
+
+	-- Damage outcome
+	assert(outcome.type == "Damage", "ApplyOutcome: unsupported outcome type.")
+
+	local actual = UnitSchema_ApplyDamage(outcome.finalDamage, target)
+
+	local statusApplied = nil
+	if outcome.appliesStatus and actual > 0 and target.isAlive then
+		-- For Burn, pass the actual fire damage dealt
+		local fireDmg = nil
+		if outcome.appliesStatus == "Burn" then
+			fireDmg = actual
+		end
+		StatusService.ApplyStatus(
+			target,
+			outcome.appliesStatus,
+			outcome.sourceUnitId or "unknown",
+			fireDmg
+		)
+		statusApplied = outcome.appliesStatus
+	end
+
+	local posLabel = ""
+	if outcome.positionalMod and outcome.positionalMod ~= 1.0 then
+		local pct = math.round((outcome.positionalMod - 1) * 100)
+		posLabel = string.format(" | Pos:%+d%%", pct)
+	end
 
 	print(string.format(
-		"[CombatResolver] %s takes %d damage (AP:%.1f HQ:%.2f) | HP: %d/%d %s",
-		defender.name,
+		"[CombatResolver] %s takes %d damage (AP:%.1f HQ:%.2f%s) | HP: %d/%d %s%s",
+		target.name,
 		outcome.finalDamage,
 		outcome.attackPower,
 		outcome.hitQuality,
-		defender.currentHp,
-		defender.maxHp,
-		defender.isAlive and "" or "| DEFEATED"
+		posLabel,
+		target.currentHp,
+		target.maxHp,
+		target.isAlive and "" or "| DEFEATED",
+		statusApplied and (" | +" .. statusApplied) or ""
 	))
 
-	return actual
+	return actual, statusApplied
 end
 
--- NOTE: CombatResolver.ApplyOutcome calls UnitSchema.ApplyDamage but
--- cannot require UnitSchema here without a circular path in Slice 1.
--- CommandService owns the require chain. It passes a bound function
--- via CombatResolver.BindApplyDamage() below.
+--------------------------------------------------
+-- BIND APPLY DAMAGE / HEALING
+--------------------------------------------------
 
 local _applyDamage = nil
+local _applyHealing = nil
 
 function CombatResolver.BindApplyDamage(fn)
 	_applyDamage = fn
 end
 
--- Override the inner call once the binding exists.
+function CombatResolver.BindApplyHealing(fn)
+	_applyHealing = fn
+end
+
 function UnitSchema_ApplyDamage(amount, unit)
 	if _applyDamage then
 		return _applyDamage(unit, amount)
 	end
-	-- Fallback (should not happen if CommandService binds correctly).
 	local actual = math.min(unit.currentHp, amount)
 	unit.currentHp = unit.currentHp - actual
 	if unit.currentHp <= 0 then
@@ -239,6 +255,15 @@ function UnitSchema_ApplyDamage(amount, unit)
 		unit.currentHp = 0
 		unit.currentAp = 0
 	end
+	return actual
+end
+
+function UnitSchema_ApplyHealing(amount, unit)
+	if _applyHealing then
+		return _applyHealing(unit, amount)
+	end
+	local actual = math.min(unit.maxHp - unit.currentHp, amount)
+	unit.currentHp = unit.currentHp + actual
 	return actual
 end
 

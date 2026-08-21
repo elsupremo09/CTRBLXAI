@@ -1,38 +1,27 @@
 -- CommandService.lua
--- CTRBLXAI | Slice 1
+-- CTRBLXAI | Slice 3
 --
 -- The single entry point for all unit actions.
--- Every action — whether issued by the player or the AI —
--- goes through ValidateAndCommit(). Nothing modifies unit state
--- or the battle unless this function approves it.
+-- Implements the 9-step Command Pipeline.
 --
--- Implements the 9-step Command Pipeline from the DB (command_pipeline):
---   1.  Receive command (create envelope)
---   2.  Turn gate (is this unit the active unit?)
---   3.  Action availability (is the unit able to act?)
---   4.  Loadout legality  (Slice 1: always passes — no loadout yet)
---   5.  Selection validation (call TargetingService)
---   6.  Cost evaluation (does the unit have enough AP?)
---   7.  Snapshot (immutable record — Slice 1: inline)
---   8.  Atomic commit (deduct AP, apply effects)
---   9.  Handoff (log completion)
+-- Slice 3 channeling rules:
+--   - Skills with channelTime > 0 enter Channeling state on commit.
+--   - MP is CHECKED at commit (must be sufficient) but NOT spent.
+--   - MP is SPENT at activation (when channel completes).
+--   - If MP is insufficient at activation (e.g. enemy drained mana), skill fizzles.
+--   - Silence, Stun, or any disabling status interrupts channeling.
+--   - Damage does NOT interrupt channeling.
 --
--- Supported action types (Slice 1):
---   "Move"   — move the unit to a new tile
---   "Attack" — basic attack an adjacent enemy
---   "Skill"  — use the unit's equipped skill
---   "Wait"   — end the turn with no more actions
---
--- RT costs (from DB: core_stats — Action Economy):
---   Move RT per tile = round(Base RT * 0.0625) per tile moved
---   Basic Attack RT  = round(Base RT * 0.10)
---   Skill RT         = skill's authored RT cost
---   Wait             = triggers Rest RT (handled by BattleCoordinator.EndTurn)
+-- Also:
+--   - AOE skills (Cleave pattern) resolve against multiple targets.
+--   - Healing skills target allies/self.
+--   - MP cost deducted on instant skills.
 
-local UnitSchema       = require(script.Parent.UnitSchema)
-local TargetingService = require(script.Parent.TargetingService)
-local CombatResolver   = require(script.Parent.CombatResolver)
+local UnitSchema        = require(script.Parent.UnitSchema)
+local TargetingService  = require(script.Parent.TargetingService)
+local CombatResolver    = require(script.Parent.CombatResolver)
 local BattleCoordinator = require(script.Parent.BattleCoordinator)
+local StatusService     = require(script.Parent.StatusService)
 
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -41,24 +30,21 @@ local GameConstants = require(
 		:WaitForChild("GameConstants")
 )
 
--- Bind UnitSchema.ApplyDamage into CombatResolver so it can apply outcomes.
+-- Bind UnitSchema helpers into CombatResolver.
 CombatResolver.BindApplyDamage(UnitSchema.ApplyDamage)
+CombatResolver.BindApplyHealing(UnitSchema.ApplyHealing)
 
 local CommandService = {}
 
 --------------------------------------------------
--- CONSTANTS  (from GameConstants shared module)
+-- CONSTANTS
 --------------------------------------------------
 
-local BASE_RT_STANDARD     = GameConstants.BASE_RT_STANDARD
-local MOVE_RT_PER_TILE     = BASE_RT_STANDARD * GameConstants.MOVE_RT_FACTOR
-local BASIC_ATTACK_BASE_RT = math.round(BASE_RT_STANDARD * GameConstants.BASIC_ATTACK_RT_FACTOR)
+local MOVE_RT_FACTOR         = GameConstants.MOVE_RT_FACTOR
+local BASIC_ATTACK_RT_FACTOR = GameConstants.BASIC_ATTACK_RT_FACTOR
 
 --------------------------------------------------
--- INTERNAL: CONTENT REGISTRY (Slice 1 stub)
---   The real Content Registry lives in ReplicatedStorage.
---   For Slice 1, skills are looked up from a simple table
---   populated when CommandService is first required.
+-- SKILL REGISTRY
 --------------------------------------------------
 
 local skillRegistry = {}
@@ -71,9 +57,12 @@ function CommandService.RegisterSkill(skillDef)
 	skillRegistry[skillDef.id] = skillDef
 end
 
--- Public read-only accessor so external code (e.g. AI) can look up a skill's data.
 function CommandService.GetSkill(skillId)
 	return skillRegistry[skillId]
+end
+
+function CommandService.GetAllSkills()
+	return skillRegistry
 end
 
 local function lookupSkill(skillId)
@@ -81,9 +70,7 @@ local function lookupSkill(skillId)
 end
 
 --------------------------------------------------
--- INTERNAL: MAP STATE (Slice 1 stub)
---   CommandService needs map dimensions for TargetingService.
---   Main.server.lua sets these once the battle starts.
+-- MAP STATE
 --------------------------------------------------
 
 local _mapWidth  = 8
@@ -95,29 +82,163 @@ function CommandService.SetMapDimensions(width, height)
 end
 
 --------------------------------------------------
--- INTERNAL: RT CALCULATION
+-- RT CALCULATION
 --------------------------------------------------
 
-local function calcMoveRt(tilesMoving)
-	return math.round(MOVE_RT_PER_TILE * tilesMoving)
+local function calcMoveRt(actor, tilesMoving)
+	local modBaseRt = StatusService.GetModifiedBaseRt(actor)
+	local perTile = modBaseRt * MOVE_RT_FACTOR
+	return math.round(perTile * tilesMoving)
+end
+
+local function calcBasicAttackBaseRt(actor)
+	local modBaseRt = StatusService.GetModifiedBaseRt(actor)
+	return math.round(modBaseRt * BASIC_ATTACK_RT_FACTOR)
+end
+
+--------------------------------------------------
+-- PUBLIC: GetSkillCandidates (for AI and client)
+--------------------------------------------------
+
+function CommandService.GetSkillCandidates(actor, allUnits, skillId)
+	local skillDef = lookupSkill(skillId)
+	if not skillDef then return {} end
+	return TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
+end
+
+--------------------------------------------------
+-- PUBLIC: GetUnitSkills (for client Skill Card UI)
+--------------------------------------------------
+
+function CommandService.GetUnitSkills(unit)
+	local skills = {}
+	for _, sid in ipairs(unit.skillIds or {}) do
+		local def = lookupSkill(sid)
+		if def then
+			table.insert(skills, def)
+		end
+	end
+	if #skills == 0 and unit.skillId then
+		local def = lookupSkill(unit.skillId)
+		if def then
+			table.insert(skills, def)
+		end
+	end
+	return skills
+end
+
+--------------------------------------------------
+-- PUBLIC: ActivateChanneledSkill
+--
+-- Called when a channeling unit's turn comes up.
+-- Checks MP, spends it, resolves the skill.
+-- Returns: success (bool), result info table or nil
+--------------------------------------------------
+
+function CommandService.ActivateChanneledSkill(state, unit)
+	if not unit.isChanneling or not unit.channelingData then
+		return false, "Unit is not channeling."
+	end
+
+	local data     = unit.channelingData
+	local skillDef = data.skillDef
+	local target   = data.target
+	local mpCost   = data.mpCost or 0
+
+	-- Clear channeling state first (regardless of outcome)
+	unit.isChanneling   = false
+	unit.channelingData = nil
+
+	-- Check if target is still alive (for offensive/healing skills)
+	if target and not target.isAlive then
+		print(string.format(
+			"[CommandService] Channel FIZZLE | %s | [%s] — target %s is dead",
+			unit.name, skillDef.name or skillDef.id, target.name
+		))
+		return false, "Target died during channel."
+	end
+
+	-- Check MP at activation — if insufficient, fizzle
+	if not UnitSchema.HasEnoughMp(unit, mpCost) then
+		print(string.format(
+			"[CommandService] Channel FIZZLE | %s | [%s] — MP insufficient (%d/%d needed)",
+			unit.name, skillDef.name or skillDef.id, unit.currentMp, mpCost
+		))
+		return false, "MP insufficient at activation."
+	end
+
+	-- SPEND MP now
+	UnitSchema.SpendMp(unit, mpCost)
+
+	-- RT cost for the activation itself is minimal (skill already "charged")
+	local activationRt = skillDef.rtCost or math.round(
+		StatusService.GetModifiedBaseRt(unit) * 0.10
+	)
+	BattleCoordinator.AccrueRt(state, activationRt)
+
+	-- Resolve the skill
+	local result = {}
+
+	if skillDef.isHealing then
+		local outcome = CombatResolver.ResolveHealing(unit, target, skillDef)
+		local actual = CombatResolver.ApplyOutcome(outcome, target)
+		result.type     = "Healing"
+		result.target   = target
+		result.healing  = actual
+		result.skillName = skillDef.name
+
+		print(string.format(
+			"[CommandService] Channel ACTIVATE [%s] | %s -> %s | Heal:%d | MP:%d",
+			skillDef.name, unit.name, target.name, actual, mpCost
+		))
+
+	elseif skillDef.aoePattern == "Cleave" then
+		local targets = TargetingService.GetCleaveTargets(unit, target, state.units)
+		local totalDmg = 0
+		local hitCount = 0
+		local allOutcomes = {}
+		for _, t in ipairs(targets) do
+			if t.isAlive then
+				local outcome = CombatResolver.ResolveSkill(unit, t, skillDef)
+				CombatResolver.ApplyOutcome(outcome, t)
+				totalDmg = totalDmg + outcome.finalDamage
+				hitCount = hitCount + 1
+				table.insert(allOutcomes, { target = t, outcome = outcome })
+			end
+		end
+		result.type      = "AOE"
+		result.targets   = allOutcomes
+		result.totalDmg  = totalDmg
+		result.hitCount  = hitCount
+		result.skillName = skillDef.name
+
+		print(string.format(
+			"[CommandService] Channel ACTIVATE [%s] AOE | %s | Hits:%d | Dmg:%d | MP:%d",
+			skillDef.name, unit.name, hitCount, totalDmg, mpCost
+		))
+	else
+		-- Single target damage
+		local outcome = CombatResolver.ResolveSkill(unit, target, skillDef)
+		local actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target)
+		result.type          = "Damage"
+		result.target        = target
+		result.damage        = outcome.finalDamage
+		result.statusApplied = statusApplied
+		result.skillName     = skillDef.name
+
+		print(string.format(
+			"[CommandService] Channel ACTIVATE [%s] | %s -> %s | Dmg:%d | MP:%d%s",
+			skillDef.name, unit.name, target.name,
+			outcome.finalDamage, mpCost,
+			statusApplied and (" | +" .. statusApplied) or ""
+		))
+	end
+
+	return true, result
 end
 
 --------------------------------------------------
 -- PUBLIC: ValidateAndCommit
---
--- Parameters:
---   state      — BattleState from BattleCoordinator
---   actorId    — id of the unit issuing the command
---   actionType — "Move" | "Attack" | "Skill" | "Wait"
---   selection  —
---     Move:   { tileX, tileY }
---     Attack: target unit table
---     Skill:  { target = unit, skillId = string }
---     Wait:   nil
---
--- Returns:
---   true,  nil          — success
---   false, reasonString — rejected (no state was changed)
 --------------------------------------------------
 
 function CommandService.ValidateAndCommit(
@@ -126,8 +247,7 @@ function CommandService.ValidateAndCommit(
 	actionType,
 	selection
 )
-	-- ── STEP 1: Receive command ───────────────────────────────────
-	-- Find the actor in the battle state.
+	-- STEP 1: Receive command
 	local actor = nil
 	for _, unit in ipairs(state.units) do
 		if unit.id == actorId then
@@ -140,7 +260,7 @@ function CommandService.ValidateAndCommit(
 		return false, "Actor not found: " .. tostring(actorId)
 	end
 
-	-- ── STEP 2: Turn gate ─────────────────────────────────────────
+	-- STEP 2: Turn gate
 	if state.phase ~= "TurnOpen" then
 		return false, "No turn is open."
 	end
@@ -148,20 +268,17 @@ function CommandService.ValidateAndCommit(
 		return false, actor.name .. " is not the active unit."
 	end
 
-	-- ── STEP 3: Action availability ───────────────────────────────
+	-- STEP 3: Action availability
 	if not actor.isAlive then
 		return false, actor.name .. " is defeated."
 	end
-
-	-- Wait costs 0 AP and always passes availability.
 	if actionType ~= "Wait" and actor.currentAp <= 0 then
 		return false, actor.name .. " has no AP remaining."
 	end
 
-	-- ── STEP 4: Loadout legality ──────────────────────────────────
-	-- Slice 1: no equipment or doctrine. Always passes.
+	-- STEP 4: Loadout legality (stub)
 
-	-- ── STEP 5: Selection validation ─────────────────────────────
+	-- STEP 5: Selection validation
 	local skillDef = nil
 
 	if actionType == "Skill" then
@@ -174,48 +291,46 @@ function CommandService.ValidateAndCommit(
 			return false, "Unknown skill: " .. tostring(selection.skillId)
 		end
 
-		-- Re-wrap selection so TargetingService sees target + skillRange.
+		-- MP check (must have enough — not spent yet for channeled skills)
+		local mpCost = skillDef.mpCost or 0
+		if not UnitSchema.HasEnoughMp(actor, mpCost) then
+			return false, string.format(
+				"%s does not have enough MP (%d/%d needed).",
+				actor.name, actor.currentMp, mpCost
+			)
+		end
+
 		local targetSelection = {
-			target     = selection.target,
-			skillRange = skillDef.range or 1,
+			target      = selection.target,
+			skillRange  = skillDef.range or 1,
+			targetRules = skillDef.targetRules or "Enemy Unit",
 		}
 
 		local valid, reason = TargetingService.ValidateSelection(
 			actor, "Skill", targetSelection,
 			state.units, _mapWidth, _mapHeight
 		)
-		if not valid then
-			return false, reason
-		end
-
+		if not valid then return false, reason end
 	else
 		local valid, reason = TargetingService.ValidateSelection(
 			actor, actionType, selection,
 			state.units, _mapWidth, _mapHeight
 		)
-		if not valid then
-			return false, reason
-		end
+		if not valid then return false, reason end
 	end
 
-	-- ── STEP 6: Cost evaluation ───────────────────────────────────
-	-- All actions cost 1 AP except Wait (0 AP).
+	-- STEP 6: Cost evaluation
 	local apCost = (actionType == "Wait") and 0 or 1
-
 	if apCost > 0 and actor.currentAp < apCost then
 		return false, actor.name .. " does not have enough AP."
 	end
 
-	-- ── STEP 7: Snapshot (Slice 1: inline — no separate object) ──
-	-- Nothing to do here in Slice 1.
+	-- STEP 7: Snapshot (stub)
 
-	-- ── STEP 8: Atomic commit ─────────────────────────────────────
-	-- Deduct AP first, then apply effects.
+	-- STEP 8: Atomic commit
 	actor.currentAp = actor.currentAp - apCost
 
 	if actionType == "Move" then
-		-- Use pathCost from TargetingService (actual budget consumed, accounts for
-		-- diagonal steps at 1.5×). Fall back to Manhattan distance if not provided.
 		local pathCost
 		if selection.pathCost ~= nil then
 			pathCost = selection.pathCost
@@ -224,7 +339,7 @@ function CommandService.ValidateAndCommit(
 			local dy = math.abs(selection.tileY - actor.tileY)
 			pathCost = dx + dy
 		end
-		local rtCost = calcMoveRt(pathCost)
+		local rtCost = calcMoveRt(actor, pathCost)
 		BattleCoordinator.AccrueRt(state, rtCost)
 
 		actor.tileX = selection.tileX
@@ -237,20 +352,12 @@ function CommandService.ValidateAndCommit(
 		))
 
 	elseif actionType == "Attack" then
-		local target  = selection
-
-		-- Basic Attack RT = round(Base RT * 0.10) + Effective Weapon WT
-		-- Effective Weapon WT: Slice 1 stub — stored on unit as weaponWt (default 0).
-		-- Full formula: weaponWt * (1 - STR / (200 + STR)) — added in Slice 4.
+		local target = selection
 		local effectiveWeaponWt = actor.weaponWt or 0
-		local rtCost = BASIC_ATTACK_BASE_RT + effectiveWeaponWt
+		local rtCost = calcBasicAttackBaseRt(actor) + effectiveWeaponWt
 
-		-- Weapon damage: stored on unit as weaponDamage (Slice 1 stub, default 10).
 		local weaponDamage = actor.weaponDamage or 10
-
-		local outcome = CombatResolver.ResolveBasicAttack(
-			actor, target, weaponDamage
-		)
+		local outcome = CombatResolver.ResolveBasicAttack(actor, target, weaponDamage)
 		CombatResolver.ApplyOutcome(outcome, target)
 		BattleCoordinator.AccrueRt(state, rtCost)
 
@@ -261,33 +368,98 @@ function CommandService.ValidateAndCommit(
 		))
 
 	elseif actionType == "Skill" then
-		local target  = selection.target
-		local rtCost  = skillDef.rtCost or math.round(BASE_RT_STANDARD * 0.10)
+		local target = selection.target
+		local mpCost = skillDef.mpCost or 0
 
-		local outcome = CombatResolver.ResolveSkill(actor, target, skillDef)
-		CombatResolver.ApplyOutcome(outcome, target)
-		BattleCoordinator.AccrueRt(state, rtCost)
+		-- Check if this is a CHANNELED skill
+		if skillDef.channelTime and skillDef.channelTime > 0 then
+			-- CHANNELED SKILL: don't spend MP, don't resolve.
+			-- Set up channeling state, end turn with channel RT.
+			local dex = actor.effectiveStats and actor.effectiveStats.DEX or 10
+			local channelRt = GameConstants.CalcChannelTime(skillDef.channelTime, dex)
 
-		print(string.format(
-			"[CommandService] SKILL [%s] | %s -> %s | Dmg:%d | RT:%d | AP left:%d",
-			skillDef.name or skillDef.id,
-			actor.name, target.name,
-			outcome.finalDamage, rtCost, actor.currentAp
-		))
+			BattleCoordinator.StartChanneling(actor, {
+				skillDef = skillDef,
+				target   = target,
+				mpCost   = mpCost,
+			})
+
+			-- Force end turn with channel RT as the wait time
+			-- Use remaining AP to signal "turn is done"
+			actor.currentAp = 0
+			BattleCoordinator.EndTurnChanneling(state, channelRt)
+
+			print(string.format(
+				"[CommandService] SKILL COMMIT (CHANNEL) [%s] | %s -> %s | Channel RT:%d | MP reserved:%d",
+				skillDef.name or skillDef.id,
+				actor.name, target.name,
+				channelRt, mpCost
+			))
+
+			return true, nil -- Turn already ended by EndTurnChanneling
+		end
+
+		-- INSTANT SKILL: spend MP and resolve immediately
+		UnitSchema.SpendMp(actor, mpCost)
+
+		local baseRtCost = skillDef.rtCost or math.round(
+			StatusService.GetModifiedBaseRt(actor) * 0.10
+		)
+
+		if skillDef.isHealing then
+			local outcome = CombatResolver.ResolveHealing(actor, target, skillDef)
+			CombatResolver.ApplyOutcome(outcome, target)
+			BattleCoordinator.AccrueRt(state, baseRtCost)
+
+			print(string.format(
+				"[CommandService] SKILL [%s] | %s -> %s | Heal:%d | MP:%d | RT:%d | AP left:%d",
+				skillDef.name or skillDef.id,
+				actor.name, target.name,
+				outcome.finalHealing, mpCost, baseRtCost, actor.currentAp
+			))
+
+		elseif skillDef.aoePattern == "Cleave" then
+			local targets = TargetingService.GetCleaveTargets(
+				actor, target, state.units
+			)
+			local totalDmg = 0
+			local hitCount = 0
+			for _, t in ipairs(targets) do
+				if t.isAlive then
+					local outcome = CombatResolver.ResolveSkill(actor, t, skillDef)
+					CombatResolver.ApplyOutcome(outcome, t)
+					totalDmg = totalDmg + outcome.finalDamage
+					hitCount = hitCount + 1
+				end
+			end
+			BattleCoordinator.AccrueRt(state, baseRtCost)
+
+			print(string.format(
+				"[CommandService] SKILL [%s] AOE | %s | Hits:%d | TotalDmg:%d | MP:%d | RT:%d | AP left:%d",
+				skillDef.name or skillDef.id,
+				actor.name, hitCount, totalDmg, mpCost, baseRtCost, actor.currentAp
+			))
+		else
+			local outcome = CombatResolver.ResolveSkill(actor, target, skillDef)
+			local actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target)
+			BattleCoordinator.AccrueRt(state, baseRtCost)
+
+			print(string.format(
+				"[CommandService] SKILL [%s] | %s -> %s | Dmg:%d | MP:%d | RT:%d | AP left:%d%s",
+				skillDef.name or skillDef.id,
+				actor.name, target.name,
+				outcome.finalDamage, mpCost, baseRtCost, actor.currentAp,
+				statusApplied and (" | +" .. statusApplied) or ""
+			))
+		end
 
 	elseif actionType == "Wait" then
-		-- Wait ends the turn immediately. No AP or RT cost here —
-		-- BattleCoordinator.EndTurn handles Rest RT.
-		print(string.format(
-			"[CommandService] WAIT | %s",
-			actor.name
-		))
+		print(string.format("[CommandService] WAIT | %s", actor.name))
 		BattleCoordinator.EndTurn(state)
 		return true, nil
 	end
 
-	-- ── STEP 9: Handoff ───────────────────────────────────────────
-	-- If the unit has no AP left, end the turn automatically.
+	-- STEP 9: Handoff
 	if actor.currentAp <= 0 then
 		BattleCoordinator.EndTurn(state)
 	end

@@ -1,19 +1,22 @@
 -- BattleCoordinator.lua
--- CTRBLXAI | Slice 1
+-- CTRBLXAI | Slice 3
 --
 -- Owns the battle lifecycle: the CT clock, which unit acts next,
 -- opening and closing turns, and deciding when the battle is over.
 --
--- Slice 1 scope:
---   - Advance CT until the lowest-RT unit hits 0 RT.
---   - Resolve ties by: Level > AGI > HP% (lower first) > LUK > stableOrderKey.
---   - Open a turn (give the unit its AP).
---   - Close a turn (apply RT cost, check for battle end).
---   - Declare victory / defeat.
---
--- Does NOT own: skill formulas, damage, targeting, or AI logic.
+-- Slice 3 additions:
+--   - Channeling system: units can enter "Channeling" state.
+--     When their CT comes up again, they activate the stored skill
+--     instead of getting a normal turn.
+--   - Channel interruption: if a disabling status (Silence, Stun, etc.)
+--     is applied while channeling, channeling is cancelled.
+--   - Damage does NOT interrupt channeling.
+--   - MP is checked at commit (must have enough) but only SPENT at activation.
+--   - If MP is insufficient at activation, skill fizzles.
 
 local UnitSchema = require(script.Parent.UnitSchema)
+local StatusService = require(script.Parent.StatusService)
+
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("CTRBLXAI")
@@ -24,58 +27,103 @@ local GameConstants = require(
 local BattleCoordinator = {}
 
 --------------------------------------------------
--- CONSTANTS  (from GameConstants shared module)
+-- CONSTANTS
 --------------------------------------------------
 
-local BASE_RT_STANDARD     = GameConstants.BASE_RT_STANDARD
 local AP_PER_TURN_STANDARD = GameConstants.AP_PER_TURN_STANDARD
 local REST_RT_MULTIPLIER   = GameConstants.REST_RT_MULTIPLIER
+
+--------------------------------------------------
+-- CHANNELING INTERRUPTION STATUSES
+-- Any of these, when applied to a channeling unit, cancels channeling.
+--------------------------------------------------
+
+local CHANNEL_DISRUPTORS = {
+	Silence = true,
+	Stun    = true,
+	Freeze  = true,
+	Sleep   = true,
+	-- Add future disabling statuses here
+}
+
+function BattleCoordinator.IsChannelDisruptor(statusId)
+	return CHANNEL_DISRUPTORS[statusId] == true
+end
 
 --------------------------------------------------
 -- BATTLE STATE
 --------------------------------------------------
 
--- Creates a fresh BattleState for a new battle.
--- units = list of unit tables created via UnitSchema.Create().
 function BattleCoordinator.CreateBattleState(units)
 	assert(
 		type(units) == "table" and #units >= 2,
 		"CreateBattleState: need at least 2 units."
 	)
 
-	-- Assign a stable tie-break order based on insertion order.
 	for index, unit in ipairs(units) do
 		unit.stableOrderKey = index
 	end
 
 	local state = {
-		-- All units in the battle (alive and defeated).
-		units = units,
-
-		-- The unit whose turn is currently open, or nil.
-		activeUnit = nil,
-
-		-- RT costs queued up during the current turn.
-		-- BattleCoordinator adds to this when actions are committed.
-		turnRtAccrued = 0,
-
-		-- Whether any action was taken this turn.
+		units           = units,
+		activeUnit      = nil,
+		turnRtAccrued   = 0,
 		turnActionTaken = false,
-
-		-- Global CT clock. Informational only for Slice 1.
-		ct = 0,
-
-		-- "Waiting" (no one is acting) | "TurnOpen" | "BattleOver"
-		phase = "Waiting",
-
-		-- Winner: "Player" | "Enemy" | nil
-		winner = nil,
-
-		-- How many full turns have completed (for debugging).
-		turnCount = 0,
+		ct              = 0,
+		phase           = "Waiting",
+		winner          = nil,
+		turnCount       = 0,
 	}
 
 	return state
+end
+
+--------------------------------------------------
+-- CHANNELING STATE ON UNIT
+--
+-- Unit fields added when channeling:
+--   unit.isChanneling    = true/false
+--   unit.channelingData  = {
+--       skillDef   = <skill definition>,
+--       target     = <target unit reference>,
+--       mpCost     = <MP to spend on activation>,
+--       casterId   = <caster id (always self)>,
+--   }
+--
+-- Set by CommandService when a channeled skill is committed.
+-- Cleared by:
+--   1. Activation (skill fires or fizzles)
+--   2. Interrupt (disabling status applied)
+--   3. Death
+--------------------------------------------------
+
+function BattleCoordinator.StartChanneling(unit, channelingData)
+	unit.isChanneling   = true
+	unit.channelingData = channelingData
+	print(string.format(
+		"[BattleCoordinator] %s begins CHANNELING [%s] (target: %s)",
+		unit.name,
+		channelingData.skillDef.name or channelingData.skillDef.id,
+		channelingData.target and channelingData.target.name or "self"
+	))
+end
+
+function BattleCoordinator.InterruptChanneling(unit, reason)
+	if not unit.isChanneling then return false end
+	local skillName = unit.channelingData and unit.channelingData.skillDef
+		and (unit.channelingData.skillDef.name or unit.channelingData.skillDef.id)
+		or "unknown"
+	unit.isChanneling   = false
+	unit.channelingData = nil
+	print(string.format(
+		"[BattleCoordinator] %s channeling INTERRUPTED [%s] — %s (MP not spent)",
+		unit.name, skillName, reason or "unknown"
+	))
+	return true
+end
+
+function BattleCoordinator.IsChanneling(unit)
+	return unit.isChanneling == true
 end
 
 --------------------------------------------------
@@ -104,40 +152,25 @@ end
 
 --------------------------------------------------
 -- INTERNAL: NEXT READY UNIT
---   Advances CT until at least one unit reaches RT 0.
---   Returns the unit that should act next.
 --------------------------------------------------
 
 local function resolveReadyTie(a, b)
-	-- Rule: Higher Level wins (acts first).
 	local aLevel = a.level or 1
 	local bLevel = b.level or 1
-	if aLevel ~= bLevel then
-		return aLevel > bLevel
-	end
+	if aLevel ~= bLevel then return aLevel > bLevel end
 
-	-- Rule: Higher AGI wins.
 	local aAgi = a.effectiveStats and a.effectiveStats.AGI or 10
 	local bAgi = b.effectiveStats and b.effectiveStats.AGI or 10
-	if aAgi ~= bAgi then
-		return aAgi > bAgi
-	end
+	if aAgi ~= bAgi then return aAgi > bAgi end
 
-	-- Rule: Lower HP% wins (more desperate = acts first).
 	local aHpPct = a.currentHp / a.maxHp
 	local bHpPct = b.currentHp / b.maxHp
-	if aHpPct ~= bHpPct then
-		return aHpPct < bHpPct
-	end
+	if aHpPct ~= bHpPct then return aHpPct < bHpPct end
 
-	-- Rule: Higher LUK wins.
 	local aLuk = a.effectiveStats and a.effectiveStats.LUK or 10
 	local bLuk = b.effectiveStats and b.effectiveStats.LUK or 10
-	if aLuk ~= bLuk then
-		return aLuk > bLuk
-	end
+	if aLuk ~= bLuk then return aLuk > bLuk end
 
-	-- Final tie-break: lower stableOrderKey acts first.
 	return a.stableOrderKey < b.stableOrderKey
 end
 
@@ -145,7 +178,6 @@ local function advanceToNextReady(state)
 	local alive = getAliveUnits(state)
 	if #alive == 0 then return nil end
 
-	-- Find the minimum RT among alive units.
 	local minRt = math.huge
 	for _, unit in ipairs(alive) do
 		if unit.remainingRt < minRt then
@@ -153,13 +185,11 @@ local function advanceToNextReady(state)
 		end
 	end
 
-	-- Advance CT by that amount and subtract from all alive units.
 	state.ct = state.ct + minRt
 	for _, unit in ipairs(alive) do
 		unit.remainingRt = unit.remainingRt - minRt
 	end
 
-	-- Collect all units now at RT 0.
 	local ready = {}
 	for _, unit in ipairs(alive) do
 		if unit.remainingRt <= 0 then
@@ -169,7 +199,6 @@ local function advanceToNextReady(state)
 
 	if #ready == 0 then return nil end
 
-	-- Sort by tie-break rules and return the winner.
 	table.sort(ready, resolveReadyTie)
 	return ready[1]
 end
@@ -201,10 +230,6 @@ end
 -- PUBLIC API
 --------------------------------------------------
 
--- AdvanceClock
--- Call this when phase == "Waiting".
--- Advances CT, picks the next unit, opens their turn.
--- Returns the unit that is now active, or nil if battle is over.
 function BattleCoordinator.AdvanceClock(state)
 	assert(
 		state.phase == "Waiting",
@@ -225,22 +250,27 @@ function BattleCoordinator.AdvanceClock(state)
 	state.turnRtAccrued   = 0
 	state.turnActionTaken = false
 
+	-- Process DoT at start of turn (Poison/Burn damage)
+	local dotEvents = StatusService.ProcessStartOfTurn(nextUnit)
+	state.dotEvents = dotEvents
+
+	-- If unit is channeling, this is the ACTIVATION turn (not a normal turn).
+	-- Main.server.lua will check unit.isChanneling and handle activation.
+	-- We still give AP so EndTurn doesn't error, but the unit won't use it.
 	UnitSchema.RefreshAp(nextUnit)
 	nextUnit.currentAp = AP_PER_TURN_STANDARD
 
 	print(string.format(
-		"[BattleCoordinator] CT:%d | Turn %d | %s",
+		"[BattleCoordinator] CT:%d | Turn %d | %s%s",
 		state.ct,
 		state.turnCount + 1,
-		UnitSchema.Describe(nextUnit)
+		UnitSchema.Describe(nextUnit),
+		nextUnit.isChanneling and " [CHANNELING ACTIVATION]" or ""
 	))
 
 	return nextUnit
 end
 
--- AccrueRt
--- Called by CommandService when an action's RT cost is determined.
--- Adds that cost to the running total for this turn.
 function BattleCoordinator.AccrueRt(state, rtCost)
 	assert(
 		state.phase == "TurnOpen",
@@ -253,9 +283,9 @@ function BattleCoordinator.AccrueRt(state, rtCost)
 end
 
 -- EndTurn
--- Call this when the active unit has finished acting
--- (they used Wait, ran out of AP, or voluntarily ended).
--- Applies RT and hands control back to "Waiting".
+-- Uses Modified Base RT from StatusService (accounts for Slow/Haste).
+-- After computing RT, ticks all statuses (decrements turns, removes expired).
+-- Returns: { expiredStatuses = { "Slow", ... } }
 function BattleCoordinator.EndTurn(state)
 	assert(
 		state.phase == "TurnOpen",
@@ -264,24 +294,22 @@ function BattleCoordinator.EndTurn(state)
 
 	local unit = state.activeUnit
 
-	-- If no action was taken, apply Rest RT instead of accrued RT.
-	-- Rest RT replaces Base RT (it is a shorter-than-normal turn).
+	local modifiedBaseRt = StatusService.GetModifiedBaseRt(unit)
+
 	if not state.turnActionTaken then
-		unit.remainingRt = math.round(
-			BASE_RT_STANDARD * REST_RT_MULTIPLIER
-		)
+		unit.remainingRt = math.round(modifiedBaseRt * REST_RT_MULTIPLIER)
 	else
-		-- Full turn RT = Base RT + sum of all action RT costs this turn.
-		-- Action costs are additive on top of the base. Minimum 1.
-		unit.remainingRt = math.max(1,
-			BASE_RT_STANDARD + state.turnRtAccrued
-		)
+		unit.remainingRt = math.max(1, modifiedBaseRt + state.turnRtAccrued)
 	end
 
+	-- Tick statuses: decrement durations, remove expired.
+	local expired = StatusService.TickStatuses(unit)
+
 	print(string.format(
-		"[BattleCoordinator] Turn ended | %s | Next RT: %d",
+		"[BattleCoordinator] Turn ended | %s | Next RT: %d | ModBaseRT: %d",
 		unit.name,
-		unit.remainingRt
+		unit.remainingRt,
+		modifiedBaseRt
 	))
 
 	state.turnCount     = state.turnCount + 1
@@ -289,18 +317,46 @@ function BattleCoordinator.EndTurn(state)
 	state.turnRtAccrued = 0
 	state.phase         = "Waiting"
 
-	-- Check if battle just ended after this turn's KOs.
 	checkBattleEnd(state)
+
+	return { expiredStatuses = expired }
 end
 
--- GetPhase
--- Returns the current phase string.
+-- EndTurnChanneling
+-- Special EndTurn for when a unit commits a channeled skill.
+-- The unit's RT is set to channelRt (the time to wait before activation).
+-- No status tick happens (that happens on the activation turn).
+function BattleCoordinator.EndTurnChanneling(state, channelRt)
+	assert(
+		state.phase == "TurnOpen",
+		"EndTurnChanneling: no turn is open."
+	)
+
+	local unit = state.activeUnit
+	unit.remainingRt = math.max(1, channelRt)
+
+	print(string.format(
+		"[BattleCoordinator] Channeling turn ended | %s | Channel RT: %d",
+		unit.name, unit.remainingRt
+	))
+
+	-- Tick statuses even during channeling (so Slow/Poison timers still count down)
+	local expired = StatusService.TickStatuses(unit)
+
+	state.turnCount     = state.turnCount + 1
+	state.activeUnit    = nil
+	state.turnRtAccrued = 0
+	state.phase         = "Waiting"
+
+	checkBattleEnd(state)
+
+	return { expiredStatuses = expired }
+end
+
 function BattleCoordinator.GetPhase(state)
 	return state.phase
 end
 
--- GetWinner
--- Returns "Player", "Enemy", or nil if battle is not over.
 function BattleCoordinator.GetWinner(state)
 	return state.winner
 end

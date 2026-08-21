@@ -1,27 +1,20 @@
 -- BattleEvents.lua
--- CTRBLXAI | Slice 1 Visual
+-- CTRBLXAI | Slice 3
 --
--- Creates and exposes the RemoteEvents used to broadcast
--- battle state from the server to the client.
+-- Creates and exposes RemoteEvents for battle communication.
 --
--- RULE: Server fires these. Client only listens.
--- Client never fires back through these channels.
+-- Server → Client (FireAllClients / FireClient):
+--   BattleStarted, TurnStarted, UnitMoved, UnitActed, UnitDefeated,
+--   TurnEnded, BattleEnded, StatusApplied, StatusExpired,
+--   DotDamage, SkillCardData, TargetHighlight, HealingApplied,
+--   PlayerTurnPrompt (tells client it's their turn with available actions)
 --
--- Events:
---   BattleStarted  { units }          — battle beginning, initial unit data
---   TurnStarted    { unitId, ct }     — a unit's turn has opened
---   UnitMoved      { unitId, tileX, tileY }
---   UnitActed      { actorId, actionType, targetId, damage, skillName }
---   UnitDefeated   { unitId }
---   TurnEnded      { unitId, nextRt } — unit's turn closed
---   BattleEnded    { winner }         — battle is over
+-- Client → Server (FireServer):
+--   PlayerCommand (player sends their chosen action)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
--- Wait for the Remotes folder to exist (server creates it, client waits).
 local function getOrCreateFolder()
-	-- Server path: create it.
-	-- Client path: wait for it.
 	local CTRBLXAI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 	assert(CTRBLXAI, "BattleEvents: CTRBLXAI folder not found in ReplicatedStorage.")
 
@@ -44,9 +37,17 @@ local EVENT_NAMES = {
 	"UnitDefeated",
 	"TurnEnded",
 	"BattleEnded",
+	"StatusApplied",
+	"StatusExpired",
+	"DotDamage",
+	"SkillCardData",
+	"TargetHighlight",
+	"HealingApplied",
+	-- Player input (Slice 3)
+	"PlayerTurnPrompt",
+	"PlayerCommand",
 }
 
--- Create or retrieve each RemoteEvent.
 local BattleEvents = {}
 
 for _, name in ipairs(EVENT_NAMES) do

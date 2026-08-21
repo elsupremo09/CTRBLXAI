@@ -1,25 +1,24 @@
 -- BattleVisualClient.client.lua
--- CTRBLXAI | Slice 1 Visual
+-- CTRBLXAI | Slice 3 — Player Input + Timeline Bar
 --
--- Listens to BattleEvents fired by the server and renders:
---   - Unit tokens (colored cylinders) on the correct tiles
---   - HP bars above each unit (BillboardGui)
---   - A floating damage number when a unit is hit
---   - A result banner when the battle ends
---
--- RULE: This script only displays. It never sends commands to the server
--- and never modifies any game state.
+-- Structure:
+--   1. Services & Variables
+--   2. Map helpers
+--   3. Highlight management
+--   4. Token creation & bar updates
+--   5. Floating text
+--   6. Timeline bar
+--   7. Action bar UI
+--   8. Tile selection logic (same pattern as TemplateInspector)
+--   9. mouse.Button1Down click handler
+--   10. Event handlers (BattleStarted, TurnStarted, etc.)
 
 local Players           = game:GetService("Players")
 local TweenService      = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService  = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
-
---------------------------------------------------
--- WAIT FOR REMOTES
---------------------------------------------------
+local mouse  = player:GetMouse()
 
 local BattleEvents = require(
 	ReplicatedStorage
@@ -29,699 +28,848 @@ local BattleEvents = require(
 )
 
 --------------------------------------------------
--- MAP CONFIGURATION
--- Must match the values in Main.server.lua.
--- The client doesn't generate the map — it just
--- needs to know tile size to position tokens.
+-- 1. MAP CONFIGURATION
 --------------------------------------------------
 
-local TILE_SIZE   = 5    -- studs per tile (matches TemplateViewer)
-local TILE_HEIGHT = 0.6  -- height of a tile Part
+local TILE_SIZE        = 5
+local TILE_BASE_HEIGHT = 0.6
+local ELEVATION_STEP   = 2.5
+local MAP_WIDTH        = 8
+local MAP_HEIGHT       = 8
 
--- Where tile (1,1) starts in world space.
--- TemplateViewer centers the map at (0, 0).
--- Map is 8x8 for Slice 1.
-local MAP_WIDTH   = 8
-local MAP_HEIGHT  = 8
+local MAP_OFFSET_X = -75 + 11 * TILE_SIZE
+local MAP_OFFSET_Z = -50 + 6 * TILE_SIZE
 
-local MAP_OFFSET_X = -(MAP_WIDTH  * TILE_SIZE / 2)
-local MAP_OFFSET_Z = -(MAP_HEIGHT * TILE_SIZE / 2)
+local BATTLE_OFFSET_X = 11
+local BATTLE_OFFSET_Y = 6
+
+local elevationMap = nil
+
+local function getElevation(tileX, tileY)
+	if not elevationMap then return 1 end
+	local row = elevationMap[tileY]
+	if row then return row[tileX] or 1 end
+	return 1
+end
+
+local function tileSurfaceY(elevation)
+	return TILE_BASE_HEIGHT + ((elevation or 1) - 1) * ELEVATION_STEP
+end
 
 local function tileToWorld(tileX, tileY)
+	local elev = getElevation(tileX, tileY)
 	return Vector3.new(
 		MAP_OFFSET_X + (tileX - 0.5) * TILE_SIZE,
-		TILE_HEIGHT + 1.0,   -- sit on top of tile + small lift
+		tileSurfaceY(elev) + 1.0,
 		MAP_OFFSET_Z + (tileY - 0.5) * TILE_SIZE
 	)
 end
 
+local function templateToBattle(templateX, templateY)
+	local bx = templateX - BATTLE_OFFSET_X
+	local by = templateY - BATTLE_OFFSET_Y
+	if bx >= 1 and bx <= MAP_WIDTH and by >= 1 and by <= MAP_HEIGHT then
+		return bx, by
+	end
+	return nil, nil
+end
+
 --------------------------------------------------
--- VISUAL SETTINGS
+-- 2. VISUAL SETTINGS & STATE
 --------------------------------------------------
 
-local UNIT_RADIUS    = 0.9   -- cylinder radius
-local UNIT_HEIGHT    = 1.8   -- cylinder height
-
-local SIDE_COLORS = {
-	Player = Color3.fromRGB(70, 140, 255),   -- blue
-	Enemy  = Color3.fromRGB(220, 60, 60),    -- red
+local UNIT_RADIUS    = 0.9
+local UNIT_HEIGHT    = 1.8
+local SIDE_COLORS    = {
+	Player = Color3.fromRGB(70, 140, 255),
+	Enemy  = Color3.fromRGB(220, 60, 60),
 }
+local DEFEATED_COLOR  = Color3.fromRGB(80, 80, 80)
+local MOVE_TWEEN_TIME = 0.45
 
-local DEFEATED_COLOR = Color3.fromRGB(80, 80, 80)
-
-local HP_BAR_HEIGHT  = 0.3   -- studs, height of the green bar
-local HP_BAR_WIDTH   = TILE_SIZE * 0.8
-
-local MOVE_TWEEN_TIME   = 0.45
-local DAMAGE_FLOAT_TIME = 0.9
-
---------------------------------------------------
--- STATE
---   unitTokens[unitId] = { part, hpBar, hpFill, label }
---   unitData[unitId]   = serialized unit table from server
---------------------------------------------------
-
-local unitTokens = {}
-local unitData   = {}
-
--- Container folder so we don't pollute workspace root.
+local unitTokens   = {}
+local unitData     = {}
 local visualFolder = Instance.new("Folder")
 visualFolder.Name   = "BattleVisuals"
 visualFolder.Parent = workspace
 
+local isPlayerTurn    = false
+local currentPrompt   = nil
+local inputMode       = nil  -- nil, "move", "attack", "skill"
+local selectedSkill   = nil
+local highlightParts  = {}
+
 --------------------------------------------------
--- TOKEN CREATION
+-- 3. HIGHLIGHT MANAGEMENT
 --------------------------------------------------
 
-local function createHpBar(parent, maxHp)
-	-- HP bar billboard — sits just above the cylinder top
+local function clearHighlights()
+	for _, part in ipairs(highlightParts) do
+		part:Destroy()
+	end
+	highlightParts = {}
+end
+
+local function createTileHighlight(tileX, tileY, color, transparency)
+	local elev = getElevation(tileX, tileY)
+	local pos = Vector3.new(
+		MAP_OFFSET_X + (tileX - 0.5) * TILE_SIZE,
+		tileSurfaceY(elev) + 0.15,
+		MAP_OFFSET_Z + (tileY - 0.5) * TILE_SIZE
+	)
+
+	local part = Instance.new("Part")
+	part.Name         = "Highlight_" .. tileX .. "_" .. tileY
+	part.Anchored     = true
+	part.CanCollide   = false
+	part.CanQuery     = false  -- invisible to raycasts so it doesn't block mouse.Target
+	part.Size         = Vector3.new(TILE_SIZE * 0.85, 0.15, TILE_SIZE * 0.85)
+	part.Position     = pos
+	part.Color        = color
+	part.Transparency = transparency or 0.5
+	part.Material     = Enum.Material.Neon
+	part.Parent       = visualFolder
+
+	table.insert(highlightParts, part)
+	return part
+end
+
+--------------------------------------------------
+-- 4. TOKEN CREATION & BAR UPDATES
+--------------------------------------------------
+
+local function createHpBar(parent)
 	local billboard = Instance.new("BillboardGui")
-	billboard.Name        = "HpBillboard"
-	billboard.Size        = UDim2.new(0, 80, 0, 10)
+	billboard.Name = "HpBillboard"
+	billboard.Size = UDim2.new(0, 80, 0, 10)
 	billboard.StudsOffset = Vector3.new(0, UNIT_HEIGHT * 0.5 + 0.3, 0)
 	billboard.AlwaysOnTop = false
-	billboard.Parent      = parent
+	billboard.Parent = parent
 
-	-- Background (dark bar)
 	local bg = Instance.new("Frame")
-	bg.Name                  = "BG"
-	bg.Size                  = UDim2.fromScale(1, 1)
-	bg.BackgroundColor3      = Color3.fromRGB(40, 40, 40)
-	bg.BorderSizePixel        = 0
-	bg.Parent                = billboard
+	bg.Size = UDim2.fromScale(1, 1)
+	bg.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	bg.BorderSizePixel = 0
+	bg.Parent = billboard
 
-	-- Green fill
 	local fill = Instance.new("Frame")
-	fill.Name                = "Fill"
-	fill.Size                = UDim2.fromScale(1, 1)
-	fill.BackgroundColor3    = Color3.fromRGB(80, 200, 80)
-	fill.BorderSizePixel      = 0
-	fill.Parent               = bg
+	fill.Name = "Fill"
+	fill.Size = UDim2.fromScale(1, 1)
+	fill.BackgroundColor3 = Color3.fromRGB(80, 200, 80)
+	fill.BorderSizePixel = 0
+	fill.Parent = bg
 
-	-- Name label — separate BillboardGui sitting higher than the HP bar
-	local nameBillboard = Instance.new("BillboardGui")
-	nameBillboard.Name        = "NameBillboard"
-	nameBillboard.Size        = UDim2.new(0, 100, 0, 16)
-	nameBillboard.StudsOffset = Vector3.new(0, UNIT_HEIGHT * 0.5 + 1.0, 0)
-	nameBillboard.AlwaysOnTop = false
-	nameBillboard.Parent      = parent
+	local mpBb = Instance.new("BillboardGui")
+	mpBb.Size = UDim2.new(0, 60, 0, 4)
+	mpBb.StudsOffset = Vector3.new(0, UNIT_HEIGHT * 0.5 + 0.0, 0)
+	mpBb.AlwaysOnTop = false
+	mpBb.Parent = parent
+
+	local mpBg = Instance.new("Frame")
+	mpBg.Size = UDim2.fromScale(1, 1)
+	mpBg.BackgroundColor3 = Color3.fromRGB(20, 20, 50)
+	mpBg.BorderSizePixel = 0
+	mpBg.Parent = mpBb
+
+	local mpFill = Instance.new("Frame")
+	mpFill.Name = "Fill"
+	mpFill.Size = UDim2.fromScale(1, 1)
+	mpFill.BackgroundColor3 = Color3.fromRGB(80, 120, 220)
+	mpFill.BorderSizePixel = 0
+	mpFill.Parent = mpBg
+
+	local nameBb = Instance.new("BillboardGui")
+	nameBb.Size = UDim2.new(0, 120, 0, 16)
+	nameBb.StudsOffset = Vector3.new(0, UNIT_HEIGHT * 0.5 + 1.0, 0)
+	nameBb.AlwaysOnTop = false
+	nameBb.Parent = parent
 
 	local label = Instance.new("TextLabel")
-	label.Name               = "NameLabel"
-	label.Size               = UDim2.fromScale(1, 1)
+	label.Size = UDim2.fromScale(1, 1)
 	label.BackgroundTransparency = 1
-	label.TextColor3         = Color3.fromRGB(255, 255, 255)
-	label.TextSize           = 12
-	label.Font               = Enum.Font.SourceSansBold
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.TextSize = 12
+	label.Font = Enum.Font.SourceSansBold
 	label.TextStrokeTransparency = 0.4
-	label.Parent             = nameBillboard
+	label.Parent = nameBb
 
-	return billboard, fill, label
+	return fill, label, mpFill
 end
 
 local function spawnToken(unit)
 	local part = Instance.new("Part")
-	part.Name      = "Unit_" .. unit.id
-	part.Shape     = Enum.PartType.Cylinder
-	part.Size      = Vector3.new(UNIT_HEIGHT, UNIT_RADIUS * 2, UNIT_RADIUS * 2)
-	part.CFrame    = CFrame.new(tileToWorld(unit.tileX, unit.tileY))
-		* CFrame.Angles(0, 0, math.rad(90))  -- stand the cylinder upright
-	part.Anchored  = true
+	part.Name = "Unit_" .. unit.id
+	part.Shape = Enum.PartType.Cylinder
+	part.Size = Vector3.new(UNIT_HEIGHT, UNIT_RADIUS * 2, UNIT_RADIUS * 2)
+	part.CFrame = CFrame.new(tileToWorld(unit.tileX, unit.tileY)) * CFrame.Angles(0, 0, math.rad(90))
+	part.Anchored = true
 	part.CanCollide = false
-	part.CanQuery   = false   -- mouse clicks pass through to the tile below
+	part.CanQuery = true
 	part.CastShadow = true
-	part.Color     = SIDE_COLORS[unit.side] or Color3.fromRGB(180, 180, 180)
-	part.Material  = Enum.Material.SmoothPlastic
-	part.Parent    = visualFolder
+	part.Color = SIDE_COLORS[unit.side] or Color3.fromRGB(180, 180, 180)
+	part.Material = Enum.Material.SmoothPlastic
+	part.Parent = visualFolder
 
-	local billboard, fill, label = createHpBar(part, unit.maxHp)
+	local fill, label, mpFill = createHpBar(part)
 	label.Text = unit.name
 
-	unitTokens[unit.id] = {
-		part      = part,
-		billboard = billboard,
-		fill      = fill,
-		label     = label,
-	}
+	unitTokens[unit.id] = { part = part, fill = fill, label = label, mpFill = mpFill }
 end
-
---------------------------------------------------
--- HP BAR UPDATE
---------------------------------------------------
 
 local function updateHpBar(unitId, currentHp, maxHp)
 	local token = unitTokens[unitId]
 	if not token then return end
-
 	local pct = math.clamp(currentHp / maxHp, 0, 1)
-
-	-- Color shifts green → yellow → red as HP falls
-	local r = math.round(255 * (1 - pct))
-	local g = math.round(255 * pct)
-	token.fill.BackgroundColor3 = Color3.fromRGB(r, g, 30)
+	token.fill.BackgroundColor3 = Color3.fromRGB(math.round(255 * (1 - pct)), math.round(255 * pct), 30)
 	token.fill.Size = UDim2.fromScale(pct, 1)
+	local name = unitData[unitId] and unitData[unitId].name or unitId
+	token.label.Text = string.format("%s %d/%d", name, currentHp, maxHp)
+end
 
-	token.label.Text = string.format(
-		"%s  %d/%d",
-		unitData[unitId] and unitData[unitId].name or unitId,
-		currentHp,
-		maxHp
-	)
+local function updateMpBar(unitId, currentMp, maxMp)
+	local token = unitTokens[unitId]
+	if not token or not token.mpFill or maxMp <= 0 then return end
+	token.mpFill.Size = UDim2.fromScale(math.clamp(currentMp / maxMp, 0, 1), 1)
 end
 
 --------------------------------------------------
--- FLOATING SKILL LABEL
--- Shows the skill name above the attacker when a skill is used.
--- Floats upward and fades out, same style as damage numbers
--- but in a golden/skill color so it reads differently.
+-- 5. FLOATING TEXT
 --------------------------------------------------
 
-local SKILL_FLOAT_TIME = 1.1
-
-local function showSkillLabel(worldPos, skillName)
+local function showFloatingText(worldPos, text, color, duration)
+	duration = duration or 0.9
 	local anchor = Instance.new("Part")
-	anchor.Anchored    = true
-	anchor.CanCollide  = false
-	anchor.CanQuery    = false
+	anchor.Anchored = true
+	anchor.CanCollide = false
+	anchor.CanQuery = false
 	anchor.Transparency = 1
-	anchor.Size        = Vector3.new(0.1, 0.1, 0.1)
-	anchor.Position    = worldPos + Vector3.new(0, 2.5, 0)
-	anchor.Parent      = visualFolder
+	anchor.Size = Vector3.new(0.1, 0.1, 0.1)
+	anchor.Position = worldPos + Vector3.new(0, 2, 0)
+	anchor.Parent = visualFolder
 
-	local billboard = Instance.new("BillboardGui")
-	billboard.Size        = UDim2.new(0, 160, 0, 28)
-	billboard.StudsOffset = Vector3.new(0, 0, 0)
-	billboard.AlwaysOnTop = true
-	billboard.Parent      = anchor
+	local bb = Instance.new("BillboardGui")
+	bb.Size = UDim2.new(0, 160, 0, 36)
+	bb.AlwaysOnTop = true
+	bb.Parent = anchor
 
-	local label = Instance.new("TextLabel")
-	label.Size                   = UDim2.fromScale(1, 1)
-	label.BackgroundTransparency = 1
-	label.Font                   = Enum.Font.SourceSansBold
-	label.TextSize               = 18
-	label.TextColor3             = Color3.fromRGB(255, 210, 60)  -- gold
-	label.TextStrokeTransparency = 0.2
-	label.Text                   = "✦ " .. skillName
-	label.Parent                 = billboard
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.fromScale(1, 1)
+	lbl.BackgroundTransparency = 1
+	lbl.Font = Enum.Font.SourceSansBold
+	lbl.TextSize = 20
+	lbl.TextColor3 = color
+	lbl.TextStrokeTransparency = 0.2
+	lbl.Text = text
+	lbl.Parent = bb
 
 	TweenService:Create(anchor,
-		TweenInfo.new(SKILL_FLOAT_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Position = anchor.Position + Vector3.new(0, 3.5, 0) }
+		TweenInfo.new(duration, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+		{ Position = worldPos + Vector3.new(0, 5, 0) }
 	):Play()
-	TweenService:Create(label,
-		TweenInfo.new(SKILL_FLOAT_TIME * 0.6, Enum.EasingStyle.Linear,
-			Enum.EasingDirection.In, 0, false, SKILL_FLOAT_TIME * 0.4),
+	TweenService:Create(lbl,
+		TweenInfo.new(duration * 0.6, Enum.EasingStyle.Linear, Enum.EasingDirection.In, 0, false, duration * 0.4),
 		{ TextTransparency = 1, TextStrokeTransparency = 1 }
 	):Play()
-
-	task.delay(SKILL_FLOAT_TIME + 0.1, function()
-		anchor:Destroy()
-	end)
+	task.delay(duration + 0.1, function() anchor:Destroy() end)
 end
 
 --------------------------------------------------
--- FLOATING DAMAGE NUMBER
+-- 6. CT TIMELINE BAR
 --------------------------------------------------
 
-local function showDamageNumber(worldPos, damage, isCrit)
-	local billboard = Instance.new("BillboardGui")
-	billboard.Size        = UDim2.new(0, 80, 0, 36)
-	billboard.StudsOffset = Vector3.new(0, 2, 0)
-	billboard.AlwaysOnTop = true
-	billboard.Adornee     = nil
+local timelineGui = nil
 
-	-- Attach to a temporary invisible part at the hit location
-	local anchor = Instance.new("Part")
-	anchor.Anchored   = true
-	anchor.CanCollide = false
-	anchor.Transparency = 1
-	anchor.Size       = Vector3.new(0.1, 0.1, 0.1)
-	anchor.Position   = worldPos
-	anchor.Parent     = visualFolder
+local function updateTimeline(timeline)
+	if timelineGui then timelineGui:Destroy() end
+	if not timeline or #timeline == 0 then return end
 
-	billboard.Parent  = anchor
-
-	local label = Instance.new("TextLabel")
-	label.Size                  = UDim2.fromScale(1, 1)
-	label.BackgroundTransparency = 1
-	label.Font                  = Enum.Font.SourceSansBold
-	label.TextSize              = isCrit and 28 or 22
-	label.TextColor3            = isCrit
-		and Color3.fromRGB(255, 220, 0)
-		or  Color3.fromRGB(255, 80,  80)
-	label.TextStrokeTransparency = 0.2
-	label.Text                  = "-" .. tostring(damage)
-	label.Parent                = billboard
-
-	-- Float upward and fade out
-	local tweenUp = TweenService:Create(
-		anchor,
-		TweenInfo.new(DAMAGE_FLOAT_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ Position = worldPos + Vector3.new(0, 4, 0) }
-	)
-	local tweenFade = TweenService:Create(
-		label,
-		TweenInfo.new(DAMAGE_FLOAT_TIME * 0.7, Enum.EasingStyle.Linear,
-			Enum.EasingDirection.In, 0, false, DAMAGE_FLOAT_TIME * 0.3),
-		{ TextTransparency = 1, TextStrokeTransparency = 1 }
-	)
-
-	tweenUp:Play()
-	tweenFade:Play()
-
-	task.delay(DAMAGE_FLOAT_TIME + 0.1, function()
-		anchor:Destroy()
-	end)
-end
-
---------------------------------------------------
--- RESULT BANNER
---------------------------------------------------
-
-local function showResultBanner(winner)
 	local gui = Instance.new("ScreenGui")
-	gui.Name          = "BattleResultGui"
-	gui.ResetOnSpawn  = false
-	gui.Parent        = player:WaitForChild("PlayerGui")
+	gui.Name = "TimelineGui"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 90
+	gui.Parent = player:WaitForChild("PlayerGui")
+	timelineGui = gui
 
-	local frame = Instance.new("Frame")
-	frame.Size                = UDim2.new(0, 500, 0, 100)
-	frame.AnchorPoint         = Vector2.new(0.5, 0.5)
-	frame.Position            = UDim2.new(0.5, 0, 0.5, 0)
-	frame.BackgroundColor3    = Color3.fromRGB(10, 10, 10)
-	frame.BackgroundTransparency = 0.2
-	frame.BorderSizePixel      = 0
-	frame.Parent              = gui
+	local bar = Instance.new("Frame")
+	bar.Name = "TimelineBar"
+	bar.Size = UDim2.new(0, math.min(#timeline * 60, 600), 0, 50)
+	bar.AnchorPoint = Vector2.new(0.5, 0)
+	bar.Position = UDim2.new(0.5, 0, 0, 8)
+	bar.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
+	bar.BackgroundTransparency = 0.25
+	bar.BorderSizePixel = 0
+	bar.Parent = gui
 
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 10)
-	corner.Parent       = frame
+	Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 6)
 
-	local label = Instance.new("TextLabel")
-	label.Size                  = UDim2.fromScale(1, 1)
-	label.BackgroundTransparency = 1
-	label.Font                  = Enum.Font.SourceSansBold
-	label.TextSize              = 42
-	label.TextStrokeTransparency = 0.3
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.Padding = UDim.new(0, 4)
+	layout.Parent = bar
 
-	if winner == "Player" then
-		label.Text       = "⚔  VICTORY"
-		label.TextColor3 = Color3.fromRGB(100, 220, 100)
-	else
-		label.Text       = "☠  DEFEAT"
-		label.TextColor3 = Color3.fromRGB(220, 80, 80)
+	for i, entry in ipairs(timeline) do
+		local portrait = Instance.new("Frame")
+		portrait.Name = entry.name
+		portrait.Size = UDim2.new(0, 44, 0, 42)
+		portrait.BackgroundColor3 = entry.side == "Player"
+			and Color3.fromRGB(40, 80, 160) or Color3.fromRGB(140, 40, 40)
+		portrait.BackgroundTransparency = 0.15
+		portrait.BorderSizePixel = 0
+		portrait.Parent = bar
+
+		Instance.new("UICorner", portrait).CornerRadius = UDim.new(0, 4)
+
+		if i == 1 then
+			portrait.BackgroundTransparency = 0
+			local stroke = Instance.new("UIStroke")
+			stroke.Color = Color3.fromRGB(255, 230, 80)
+			stroke.Thickness = 2
+			stroke.Parent = portrait
+		end
+
+		local initial = Instance.new("TextLabel")
+		initial.Size = UDim2.fromScale(1, 0.6)
+		initial.Position = UDim2.new(0, 0, 0, 2)
+		initial.BackgroundTransparency = 1
+		initial.Font = Enum.Font.SourceSansBold
+		initial.TextSize = 16
+		initial.TextColor3 = Color3.fromRGB(255, 255, 255)
+		initial.Text = string.sub(entry.name, 1, 3)
+		initial.Parent = portrait
+
+		local rtLabel = Instance.new("TextLabel")
+		rtLabel.Size = UDim2.new(1, 0, 0, 14)
+		rtLabel.Position = UDim2.new(0, 0, 1, -14)
+		rtLabel.BackgroundTransparency = 1
+		rtLabel.Font = Enum.Font.SourceSans
+		rtLabel.TextSize = 10
+		rtLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
+		rtLabel.Text = i == 1 and "NOW" or tostring(entry.remainingRt)
+		rtLabel.Parent = portrait
+
+		if entry.isChanneling then
+			local ch = Instance.new("TextLabel")
+			ch.Size = UDim2.new(0, 12, 0, 12)
+			ch.Position = UDim2.new(1, -12, 0, 0)
+			ch.BackgroundTransparency = 1
+			ch.Font = Enum.Font.SourceSansBold
+			ch.TextSize = 10
+			ch.TextColor3 = Color3.fromRGB(255, 200, 60)
+			ch.Text = "◎"
+			ch.Parent = portrait
+		end
+	end
+end
+
+--------------------------------------------------
+-- 7. ACTION BAR UI
+--------------------------------------------------
+
+local actionBarGui = nil
+
+local function destroyActionBar()
+	if actionBarGui then actionBarGui:Destroy(); actionBarGui = nil end
+end
+
+local function createActionBar(prompt)
+	destroyActionBar()
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "ActionBarGui"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 100
+	gui.Parent = player:WaitForChild("PlayerGui")
+	actionBarGui = gui
+
+	local container = Instance.new("Frame")
+	container.Name = "ActionBar"
+	container.Size = UDim2.new(0, 720, 0, 90)
+	container.AnchorPoint = Vector2.new(0.5, 1)
+	container.Position = UDim2.new(0.5, 0, 0.92, 0)
+	container.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+	container.BackgroundTransparency = 0.15
+	container.BorderSizePixel = 0
+	container.Active = false
+	container.Parent = gui
+
+	Instance.new("UICorner", container).CornerRadius = UDim.new(0, 8)
+
+	local info = Instance.new("TextLabel")
+	info.Size = UDim2.new(1, -10, 0, 20)
+	info.Position = UDim2.new(0, 5, 0, 2)
+	info.BackgroundTransparency = 1
+	info.Font = Enum.Font.SourceSansBold
+	info.TextSize = 13
+	info.TextColor3 = Color3.fromRGB(200, 200, 200)
+	info.TextXAlignment = Enum.TextXAlignment.Left
+	info.Text = string.format("▶ %s | AP:%d | MP:%d/%d | HP:%d/%d",
+		prompt.unitName, prompt.currentAp, prompt.currentMp, prompt.maxMp,
+		prompt.currentHp, prompt.maxHp)
+	info.Parent = container
+
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, -10, 0, 55)
+	row.Position = UDim2.new(0, 5, 0, 25)
+	row.BackgroundTransparency = 1
+	row.Active = false
+	row.Parent = container
+
+	local rowLayout = Instance.new("UIListLayout")
+	rowLayout.FillDirection = Enum.FillDirection.Horizontal
+	rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	rowLayout.Padding = UDim.new(0, 6)
+	rowLayout.Parent = row
+
+	local function makeButton(name, text, subtext, color, enabled, callback)
+		local btn = Instance.new("TextButton")
+		btn.Name = name
+		btn.Size = UDim2.new(0, 115, 0, 55)
+		btn.BackgroundColor3 = enabled and color or Color3.fromRGB(40, 40, 40)
+		btn.BackgroundTransparency = enabled and 0.1 or 0.5
+		btn.BorderSizePixel = 0
+		btn.Font = Enum.Font.SourceSansBold
+		btn.TextSize = 13
+		btn.TextColor3 = enabled and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(100, 100, 100)
+		btn.Text = text .. (subtext ~= "" and ("\n" .. subtext) or "")
+		btn.TextWrapped = true
+		btn.Parent = row
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+		if enabled then btn.MouseButton1Click:Connect(callback) end
+		return btn
 	end
 
-	label.Parent = frame
+	makeButton("Move", "⬡ Move", "", Color3.fromRGB(50, 120, 50), #prompt.moveCandidates > 0, function()
+		inputMode = "move"; selectedSkill = nil; clearHighlights()
+		for _, tile in ipairs(prompt.moveCandidates) do
+			createTileHighlight(tile.tileX, tile.tileY, Color3.fromRGB(50, 200, 50), 0.55)
+		end
+	end)
 
-	-- Fade in
-	frame.BackgroundTransparency = 1
-	label.TextTransparency       = 1
-	label.TextStrokeTransparency = 1
+	makeButton("Attack", "⚔ Attack", "", Color3.fromRGB(180, 60, 60), #prompt.attackTargets > 0, function()
+		inputMode = "attack"; selectedSkill = nil; clearHighlights()
+		for _, t in ipairs(prompt.attackTargets) do
+			createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 60, 60), 0.45)
+		end
+	end)
 
-	TweenService:Create(frame,
-		TweenInfo.new(0.5), { BackgroundTransparency = 0.2 }
-	):Play()
-	TweenService:Create(label,
-		TweenInfo.new(0.5), { TextTransparency = 0, TextStrokeTransparency = 0.3 }
-	):Play()
-end
+	makeButton("Wait", "⏸ Wait", "", Color3.fromRGB(80, 80, 80), true, function()
+		clearHighlights(); destroyActionBar(); isPlayerTurn = false; inputMode = nil
+		BattleEvents.PlayerCommand:FireServer({ actionType = "Wait" })
+	end)
 
---------------------------------------------------
--- TURN INDICATOR
---------------------------------------------------
+	for _, skill in ipairs(prompt.skills) do
+		local canUse = skill.canUse and #skill.targets > 0
+		local subtext = string.format("MP:%d R:%d", skill.mpCost, skill.range)
+		local color = skill.isHealing and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(80, 80, 180)
 
-local activeTurnLabel = nil
-
-local function showTurnIndicator(unitId, ct)
-	local unit = unitData[unitId]
-	if not unit then return end
-
-	-- Update the unit's name label to show it's active
-	local token = unitTokens[unitId]
-	if token then
-		token.label.Text = string.format(
-			"▶ %s  %d/%d",
-			unit.name,
-			unit.currentHp or unit.maxHp,
-			unit.maxHp
-		)
-		token.label.TextColor3 = Color3.fromRGB(255, 230, 80)
+		makeButton(skill.id, "✦ " .. skill.name, subtext, color, canUse, function()
+			inputMode = "skill"; selectedSkill = skill; clearHighlights()
+			local hColor = skill.isHealing and Color3.fromRGB(50, 220, 50) or Color3.fromRGB(180, 80, 255)
+			for _, t in ipairs(skill.targets) do
+				createTileHighlight(t.tileX, t.tileY, hColor, 0.45)
+			end
+		end)
 	end
-end
 
-local function clearTurnIndicator(unitId)
-	local unit = unitData[unitId]
-	local token = unitTokens[unitId]
-	if not token or not unit then return end
-
-	token.label.TextColor3 = Color3.fromRGB(255, 255, 255)
-	token.label.Text = string.format(
-		"%s  %d/%d",
-		unit.name,
-		unit.currentHp or unit.maxHp,
-		unit.maxHp
-	)
+	updateTimeline(prompt.timeline)
 end
 
 --------------------------------------------------
--- EVENT HANDLERS
+-- 7b. UNIT INSPECTOR PANEL (left side)
+--
+-- Shows when any unit tile is clicked:
+--   Name, Side, HP, MP, AP, RT, Stats, Skills, Statuses
+--------------------------------------------------
+
+local unitInspectorGui = nil
+
+local function showUnitInspector(uid)
+	if unitInspectorGui then unitInspectorGui:Destroy() end
+
+	local data = unitData[uid]
+	if not data then return end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "UnitInspectorGui"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 80
+	gui.Parent = player:WaitForChild("PlayerGui")
+	unitInspectorGui = gui
+
+	local panel = Instance.new("Frame")
+	panel.Name = "UnitPanel"
+	panel.Size = UDim2.new(0, 180, 0, 340)
+	panel.Position = UDim2.new(0, 12, 0, 80)
+	panel.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+	panel.BackgroundTransparency = 0.08
+	panel.BorderSizePixel = 0
+	panel.Active = false
+	panel.Parent = gui
+
+	Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 8)
+
+	-- Left stripe (colored by side)
+	local stripe = Instance.new("Frame")
+	stripe.Size = UDim2.new(0, 4, 1, -8)
+	stripe.Position = UDim2.new(0, 4, 0, 4)
+	stripe.BackgroundColor3 = data.side == "Player"
+		and Color3.fromRGB(70, 140, 255) or Color3.fromRGB(220, 60, 60)
+	stripe.BorderSizePixel = 0
+	stripe.Parent = panel
+	Instance.new("UICorner", stripe).CornerRadius = UDim.new(0, 2)
+
+	-- Content label (monospaced RichText)
+	local content = Instance.new("TextLabel")
+	content.Size = UDim2.new(1, -18, 1, -8)
+	content.Position = UDim2.new(0, 14, 0, 4)
+	content.BackgroundTransparency = 1
+	content.Font = Enum.Font.RobotoMono
+	content.TextSize = 12
+	content.TextColor3 = Color3.fromRGB(220, 220, 220)
+	content.TextXAlignment = Enum.TextXAlignment.Left
+	content.TextYAlignment = Enum.TextYAlignment.Top
+	content.RichText = true
+	content.TextWrapped = true
+	content.Parent = panel
+
+	-- Build text
+	local nameColor = data.side == "Player" and "rgb(100,180,255)" or "rgb(255,100,100)"
+	local lines = {}
+	table.insert(lines, string.format('<font color="%s"><b>%s</b></font>', nameColor, data.name))
+	table.insert(lines, data.side)
+	table.insert(lines, "")
+	table.insert(lines, string.format("HP  %d / %d", data.currentHp or 0, data.maxHp or 0))
+	table.insert(lines, string.format("MP  %d / %d", data.currentMp or 0, data.maxMp or 0))
+	table.insert(lines, string.format("AP  %d   RT %d", data.currentAp or 0, data.remainingRt or 0))
+	table.insert(lines, "")
+
+	-- Stats
+	if data.stats then
+		table.insert(lines, "— STATS —")
+		table.insert(lines, string.format("STR %d  AGI %d", data.stats.STR or 0, data.stats.AGI or 0))
+		table.insert(lines, string.format("INT %d  VIT %d", data.stats.INT or 0, data.stats.VIT or 0))
+		table.insert(lines, string.format("DEX %d  LUK %d", data.stats.DEX or 0, data.stats.LUK or 0))
+		table.insert(lines, "")
+	end
+
+	-- Skills
+	if data.skillIds and #data.skillIds > 0 then
+		table.insert(lines, "— SKILLS —")
+		for _, sid in ipairs(data.skillIds) do
+			-- Show short name (strip "skill_" prefix, replace _ with space)
+			local display = string.gsub(sid, "^skill_", "")
+			display = string.gsub(display, "_", " ")
+			display = display:sub(1,1):upper() .. display:sub(2)
+			table.insert(lines, display)
+		end
+		table.insert(lines, "")
+	end
+
+	-- Statuses
+	if data.statuses and #data.statuses > 0 then
+		table.insert(lines, "— STATUS —")
+		for _, s in ipairs(data.statuses) do
+			local statusColor = s.id == "Poison" and "rgb(80,200,80)"
+				or s.id == "Burn" and "rgb(255,140,40)"
+				or "rgb(180,80,255)"
+			table.insert(lines, string.format('<font color="%s">%s</font> (%d)', statusColor, s.id, s.remainingTurns or 0))
+		end
+	end
+
+	content.Text = table.concat(lines, "\n")
+end
+
+local function hideUnitInspector()
+	if unitInspectorGui then unitInspectorGui:Destroy(); unitInspectorGui = nil end
+end
+
+--------------------------------------------------
+-- 8. TILE SELECTION LOGIC
+--    (Same proven pattern as TemplateInspector)
+--------------------------------------------------
+
+local mapFolder = workspace:WaitForChild("TemplateViewerMap", 15)
+
+local function isTemplateTile(instance)
+	return instance
+		and instance:IsA("BasePart")
+		and instance:GetAttribute("IsTemplateTile") == true
+end
+
+local function findTileAtPosition(worldPos)
+	-- Raycast straight DOWN from the position, include ONLY template tile parts.
+	-- This is identical to TemplateInspector's findTileAtPosition.
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Include
+	local tileParts = {}
+	if mapFolder then
+		for _, child in ipairs(mapFolder:GetChildren()) do
+			if child:IsA("BasePart") and child:GetAttribute("IsTemplateTile") == true then
+				table.insert(tileParts, child)
+			end
+		end
+	end
+	rayParams.FilterDescendantsInstances = tileParts
+	local origin = Vector3.new(worldPos.X, worldPos.Y + 50, worldPos.Z)
+	local result = workspace:Raycast(origin, Vector3.new(0, -100, 0), rayParams)
+	return result and result.Instance or nil
+end
+
+local function getTileUnderMouse()
+	-- Identical logic to TemplateInspector:
+	-- 1. Check mouse.Target — if it's a template tile, use it directly
+	-- 2. Otherwise, find the tile beneath whatever was clicked
+	local target = mouse.Target
+	if isTemplateTile(target) then
+		return target
+	elseif target and target:IsA("BasePart") then
+		return findTileAtPosition(target.Position)
+	end
+	return nil
+end
+
+local function tileToBattle(tilePart)
+	if not tilePart then return nil, nil end
+	local templateX = tilePart:GetAttribute("X")
+	local templateY = tilePart:GetAttribute("Y")
+	if templateX and templateY then
+		return templateToBattle(templateX, templateY)
+	end
+	return nil, nil
+end
+
+--------------------------------------------------
+-- 9. CLICK HANDLER
+--    Uses mouse.Button1Down (same as TemplateInspector)
+--------------------------------------------------
+
+mouse.Button1Down:Connect(function()
+	local tilePart = getTileUnderMouse()
+	local bx, by = tileToBattle(tilePart)
+
+	-- Always show unit inspector when clicking a tile with a unit
+	if bx then
+		for uid, data in pairs(unitData) do
+			if data.tileX == bx and data.tileY == by and data.isAlive ~= false then
+				showUnitInspector(uid)
+				break
+			end
+		end
+	end
+
+	-- If not in player input mode, stop here (inspector-only click)
+	if not isPlayerTurn or not inputMode then return end
+	if not bx then return end
+
+	if inputMode == "move" then
+		for _, tile in ipairs(currentPrompt.moveCandidates) do
+			if tile.tileX == bx and tile.tileY == by then
+				clearHighlights(); destroyActionBar()
+				isPlayerTurn = false; inputMode = nil
+				BattleEvents.PlayerCommand:FireServer({
+					actionType = "Move", tileX = bx, tileY = by, pathCost = tile.pathCost
+				})
+				return
+			end
+		end
+
+	elseif inputMode == "attack" then
+		for _, t in ipairs(currentPrompt.attackTargets) do
+			if t.tileX == bx and t.tileY == by then
+				clearHighlights(); destroyActionBar()
+				isPlayerTurn = false; inputMode = nil
+				BattleEvents.PlayerCommand:FireServer({
+					actionType = "Attack", targetId = t.id
+				})
+				return
+			end
+		end
+
+	elseif inputMode == "skill" and selectedSkill then
+		for _, t in ipairs(selectedSkill.targets) do
+			if t.tileX == bx and t.tileY == by then
+				clearHighlights(); destroyActionBar()
+				isPlayerTurn = false; inputMode = nil
+				BattleEvents.PlayerCommand:FireServer({
+					actionType = "Skill", skillId = selectedSkill.id, targetId = t.id
+				})
+				return
+			end
+		end
+	end
+end)
+
+--------------------------------------------------
+-- 10. EVENT HANDLERS
 --------------------------------------------------
 
 BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
-	-- Clear any leftover visuals from a previous run.
-	for _, child in ipairs(visualFolder:GetChildren()) do
-		child:Destroy()
-	end
+	for _, child in ipairs(visualFolder:GetChildren()) do child:Destroy() end
 	unitTokens = {}
 	unitData   = {}
+	elevationMap = data.elevationMap
 
 	for _, unit in ipairs(data.units) do
 		unitData[unit.id] = unit
 		spawnToken(unit)
 		updateHpBar(unit.id, unit.currentHp, unit.maxHp)
+		updateMpBar(unit.id, unit.currentMp or 0, unit.maxMp or 0)
 	end
 end)
 
 BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
-	showTurnIndicator(data.unitId, data.ct)
+	if unitData[data.unitId] then
+		unitData[data.unitId].statuses = data.statuses
+		if data.currentMp then
+			unitData[data.unitId].currentMp = data.currentMp
+			updateMpBar(data.unitId, data.currentMp, data.maxMp or unitData[data.unitId].maxMp or 0)
+		end
+	end
+	local token = unitTokens[data.unitId]
+	if token then
+		token.label.TextColor3 = Color3.fromRGB(255, 230, 80)
+	end
+	showUnitInspector(data.unitId)
+end)
+
+BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
+	currentPrompt = prompt
+	isPlayerTurn  = true
+	inputMode     = nil
+	selectedSkill = nil
+	createActionBar(prompt)
 end)
 
 BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 	local token = unitTokens[data.unitId]
 	if not token then return end
-
-	-- Update stored position
 	if unitData[data.unitId] then
 		unitData[data.unitId].tileX = data.tileX
 		unitData[data.unitId].tileY = data.tileY
 	end
-
-	-- Smooth glide to new tile
-	TweenService:Create(
-		token.part,
+	TweenService:Create(token.part,
 		TweenInfo.new(MOVE_TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-		{ CFrame = CFrame.new(tileToWorld(data.tileX, data.tileY))
-			* CFrame.Angles(0, 0, math.rad(90)) }
+		{ CFrame = CFrame.new(tileToWorld(data.tileX, data.tileY)) * CFrame.Angles(0, 0, math.rad(90)) }
 	):Play()
 end)
 
 BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
-	-- Update HP bar on the target
 	updateHpBar(data.targetId, data.targetHp, data.targetMaxHp)
+	if unitData[data.targetId] then unitData[data.targetId].currentHp = data.targetHp end
 
-	-- Update cached HP
-	if unitData[data.targetId] then
-		unitData[data.targetId].currentHp = data.targetHp
-	end
-
-	-- Show floating damage number above the target
 	local targetToken = unitTokens[data.targetId]
 	if targetToken then
-		-- If this was a skill, show the skill name above the attacker first.
 		if data.skillName then
 			local actorToken = unitTokens[data.actorId]
 			if actorToken then
-				showSkillLabel(actorToken.part.Position, data.skillName)
+				showFloatingText(actorToken.part.Position, "✦ " .. data.skillName, Color3.fromRGB(255, 210, 60), 1.1)
 			end
 		end
+		showFloatingText(targetToken.part.Position, "-" .. data.damage, Color3.fromRGB(255, 80, 80))
+	end
+end)
 
-		showDamageNumber(
-			targetToken.part.Position,
-			data.damage,
-			false
-		)
+BattleEvents.DotDamage.OnClientEvent:Connect(function(data)
+	updateHpBar(data.unitId, data.currentHp, data.maxHp)
+	if unitData[data.unitId] then unitData[data.unitId].currentHp = data.currentHp end
+	local token = unitTokens[data.unitId]
+	if token then
+		local color = data.statusId == "Poison" and Color3.fromRGB(60, 200, 60)
+			or data.statusId == "Burn" and Color3.fromRGB(255, 140, 40)
+			or Color3.fromRGB(200, 80, 200)
+		showFloatingText(token.part.Position, "-" .. data.damage .. " " .. data.statusId, color)
+	end
+end)
+
+BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
+	updateHpBar(data.targetId, data.targetHp, data.targetMaxHp)
+	if unitData[data.targetId] then unitData[data.targetId].currentHp = data.targetHp end
+	local targetToken = unitTokens[data.targetId]
+	if targetToken then
+		if data.skillName then
+			local actorToken = unitTokens[data.actorId]
+			if actorToken then
+				showFloatingText(actorToken.part.Position, "✦ " .. data.skillName, Color3.fromRGB(80, 220, 80), 1.1)
+			end
+		end
+		showFloatingText(targetToken.part.Position, "+" .. data.amount, Color3.fromRGB(80, 220, 80))
+	end
+end)
+
+BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
+	local token = unitTokens[data.unitId]
+	if token then
+		local color = data.statusId == "Poison" and Color3.fromRGB(80, 200, 80)
+			or data.statusId == "Burn" and Color3.fromRGB(255, 140, 40)
+			or Color3.fromRGB(180, 80, 255)
+		showFloatingText(token.part.Position + Vector3.new(0, 1, 0), "▼ " .. data.statusId, color, 1.2)
+	end
+end)
+
+BattleEvents.StatusExpired.OnClientEvent:Connect(function(data)
+	local token = unitTokens[data.unitId]
+	if token then
+		showFloatingText(token.part.Position + Vector3.new(0, 1, 0), "✗ " .. data.statusId, Color3.fromRGB(180, 180, 180), 1.2)
 	end
 end)
 
 BattleEvents.UnitDefeated.OnClientEvent:Connect(function(data)
 	local token = unitTokens[data.unitId]
 	if not token then return end
-
-	-- Tint the token grey and sink it into the ground
+	if unitData[data.unitId] then unitData[data.unitId].isAlive = false end
 	token.part.Color = DEFEATED_COLOR
-
-	TweenService:Create(
-		token.part,
-		TweenInfo.new(0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In),
-		{ CFrame = token.part.CFrame * CFrame.new(0, -UNIT_HEIGHT * 0.8, 0),
-		  Transparency = 0.6 }
-	):Play()
-
-	-- Grey out the HP bar
-	if token.fill then
-		token.fill.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
-		token.fill.Size = UDim2.fromScale(0, 1)
-	end
-	if token.label then
-		token.label.Text = (unitData[data.unitId] and unitData[data.unitId].name or data.unitId)
-			.. "  ✝"
-		token.label.TextColor3 = Color3.fromRGB(160, 160, 160)
-	end
-
-	if unitData[data.unitId] then
-		unitData[data.unitId].isAlive = false
-	end
+	token.part.Transparency = 0.5
 end)
 
 BattleEvents.TurnEnded.OnClientEvent:Connect(function(data)
-	clearTurnIndicator(data.unitId)
+	local token = unitTokens[data.unitId]
+	if token then token.label.TextColor3 = Color3.fromRGB(255, 255, 255) end
+	if data.currentMp and unitData[data.unitId] then
+		unitData[data.unitId].currentMp = data.currentMp
+		updateMpBar(data.unitId, data.currentMp, unitData[data.unitId].maxMp or 0)
+	end
+	clearHighlights()
+	destroyActionBar()
+	isPlayerTurn = false
+	inputMode = nil
 end)
 
 BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
-	-- Sync all final unit states
-	for _, unit in ipairs(data.units) do
-		unitData[unit.id] = unit
-		updateHpBar(unit.id, unit.currentHp, unit.maxHp)
-	end
+	clearHighlights()
+	destroyActionBar()
+	isPlayerTurn = false
+	if timelineGui then timelineGui:Destroy(); timelineGui = nil end
 
-	showResultBanner(data.winner)
-end)
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "BattleResultGui"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 110
+	gui.Parent = player:WaitForChild("PlayerGui")
 
---------------------------------------------------
--- UNIT STAT INSPECTOR PANEL
--- Click any unit cylinder to select it.
--- A panel slides in from the right showing all stats.
--- Click anywhere else (or the same unit) to deselect.
---------------------------------------------------
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(0, 500, 0, 100)
+	frame.AnchorPoint = Vector2.new(0.5, 0.5)
+	frame.Position = UDim2.new(0.5, 0, 0.5, 0)
+	frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+	frame.BackgroundTransparency = 0.2
+	frame.BorderSizePixel = 0
+	frame.Parent = gui
+	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
 
-local Camera = workspace.CurrentCamera
-
--- The ScreenGui that holds the panel
-local inspectorGui = Instance.new("ScreenGui")
-inspectorGui.Name         = "UnitInspectorGui"
-inspectorGui.ResetOnSpawn = false
-inspectorGui.Parent       = player:WaitForChild("PlayerGui")
-
--- Outer panel frame — slides in from the right
-local panel = Instance.new("Frame")
-panel.Name                = "UnitPanel"
-panel.Size                = UDim2.new(0, 220, 0, 340)
-panel.AnchorPoint         = Vector2.new(0, 0.5)
-panel.Position            = UDim2.new(0, 12, 0.5, 0)  -- left side, always on screen
-panel.BackgroundColor3    = Color3.fromRGB(15, 15, 20)
-panel.BackgroundTransparency = 0.08
-panel.BorderSizePixel     = 0
-panel.Parent              = inspectorGui
-
-local panelCorner = Instance.new("UICorner")
-panelCorner.CornerRadius = UDim.new(0, 8)
-panelCorner.Parent       = panel
-
--- Colored side stripe (changes with unit side)
-local stripe = Instance.new("Frame")
-stripe.Name              = "Stripe"
-stripe.Size              = UDim2.new(0, 4, 1, 0)
-stripe.Position          = UDim2.new(0, 0, 0, 0)
-stripe.BackgroundColor3  = Color3.fromRGB(70, 140, 255)
-stripe.BorderSizePixel   = 0
-stripe.Parent            = panel
-
-local stripeCorner = Instance.new("UICorner")
-stripeCorner.CornerRadius = UDim.new(0, 8)
-stripeCorner.Parent       = stripe
-
--- Content label (we'll set its text when a unit is selected)
-local content = Instance.new("TextLabel")
-content.Name                 = "Content"
-content.Size                 = UDim2.new(1, -16, 1, -12)
-content.Position             = UDim2.new(0, 12, 0, 8)
-content.BackgroundTransparency = 1
-content.Font                 = Enum.Font.Code
-content.TextSize             = 13
-content.TextColor3           = Color3.fromRGB(220, 220, 220)
-content.TextXAlignment       = Enum.TextXAlignment.Left
-content.TextYAlignment       = Enum.TextYAlignment.Top
-content.TextWrapped          = true
-content.RichText             = true
-content.Text                 = "<font color='#666666'>Click a unit or tile\nto inspect.</font>"
-content.Parent               = panel
-
-local selectedUnitId = nil
-local _isSelectingUnit = false  -- recursion guard
-
--- Panel is always visible — no slide needed.
--- This stub is kept so existing call sites don't break.
-local function slidePanel(_visible) end
-
-local function buildStatText(unit)
-	-- Side color tag for RichText
-	local sideColor = unit.side == "Player" and "#4A8CFF" or "#DC3C3C"
-	local aliveTag  = unit.isAlive and "" or "  <font color='#888888'>✝ DEFEATED</font>"
-
-	local s = unit.stats or {}
-
-	-- Derive display values from stats using the DB formulas
-	local hp    = unit.maxHp
-	local moveR = 3 + math.floor((s.AGI or 0) / 60)
-	local jump  = 1 + math.floor((s.DEX or 0) / 60)
-
-	-- Skill display name lookup (Slice 1 only two skills)
-	local skillNames = {
-		skill_power_strike  = "Power Strike",
-		skill_precise_shot  = "Precise Shot",
-	}
-	local skillLabel = unit.skillId
-		and (skillNames[unit.skillId] or unit.skillId)
-		or  "—"
-
-	return string.format(
-		"<font color='%s'><b>%s</b></font>%s\n" ..
-		"<font color='#888888'>%s</font>\n\n" ..
-		"<b>HP</b>   %d / %d\n" ..
-		"<b>AP</b>   %d   <font color='#888888'>RT %d</font>\n\n" ..
-		"<font color='#AAAAAA'>── STATS ──</font>\n" ..
-		"STR  %2d   AGI  %2d\n" ..
-		"INT  %2d   VIT  %2d\n" ..
-		"DEX  %2d   LUK  %2d\n\n" ..
-		"<font color='#AAAAAA'>── DERIVED ──</font>\n" ..
-		"Move  %d   Jump  %d\n\n" ..
-		"<font color='#AAAAAA'>── SKILL ──</font>\n" ..
-		"%s",
-		sideColor, unit.name, aliveTag,
-		unit.side,
-		unit.currentHp, hp,
-		unit.currentAp or 0, unit.remainingRt or 0,
-		s.STR or 0, s.AGI or 0,
-		s.INT or 0, s.VIT or 0,
-		s.DEX or 0, s.LUK or 0,
-		moveR, jump,
-		skillLabel
-	)
-end
-
-local function selectUnit(unitId)
-	local unit = unitData[unitId]
-	if not unit then return end
-
-	selectedUnitId = unitId
-
-	-- Update stripe color to match side
-	stripe.BackgroundColor3 = SIDE_COLORS[unit.side]
-		or Color3.fromRGB(180, 180, 180)
-
-	content.Text = buildStatText(unit)
-
-	-- Tell TemplateInspector to select the tile this unit is standing on.
-	-- Only call outward if we weren't triggered by a tile selection (breaks recursion).
-	if not _isSelectingUnit and type(_G.CTRBLXAI_SelectTileAt) == "function" then
-		_G.CTRBLXAI_SelectTileAt(unit.tileX, unit.tileY)
-	end
-end
-
--- Publish to _G so TemplateInspector can call us when a tile is clicked.
--- selectUnitAtTile: given tile grid coords, selects the unit standing there (if any).
-_G.CTRBLXAI_SelectUnitAtTile = function(tileX, tileY)
-	_isSelectingUnit = true
-	for id, data in pairs(unitData) do
-		if data.isAlive
-			and data.tileX == tileX
-			and data.tileY == tileY
-		then
-			selectUnit(id)
-			_isSelectingUnit = false
-			return
-		end
-	end
-	-- No unit on this tile — show placeholder.
-	selectedUnitId = nil
-	stripe.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-	content.Text = "<font color='#666666'>No unit on\nthis tile.</font>"
-	_isSelectingUnit = false
-end
-
--- World-position-based bridge: TemplateInspector passes the tile's world X/Z.
--- We find the unit whose token is closest to that position (within half a tile).
-_G.CTRBLXAI_SelectUnitNearWorldPos = function(worldX, worldZ)
-	local TILE_SIZE = 5
-	local MAX_DIST_SQ = (TILE_SIZE * 0.6) ^ 2  -- must be within 60% of a tile
-
-	_isSelectingUnit = true
-	local bestId   = nil
-	local bestDist = MAX_DIST_SQ
-	for id, data in pairs(unitData) do
-		if data.isAlive then
-			local token = unitTokens[id]
-			if token and token.part then
-				local dx = token.part.Position.X - worldX
-				local dz = token.part.Position.Z - worldZ
-				local dist = dx * dx + dz * dz
-				if dist < bestDist then
-					bestDist = dist
-					bestId   = id
-				end
-			end
-		end
-	end
-	if bestId then
-		selectUnit(bestId)
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.fromScale(1, 1)
+	lbl.BackgroundTransparency = 1
+	lbl.Font = Enum.Font.SourceSansBold
+	lbl.TextSize = 42
+	lbl.TextStrokeTransparency = 0.3
+	lbl.Parent = frame
+	if data.winner == "Player" then
+		lbl.Text = "⚔  VICTORY"
+		lbl.TextColor3 = Color3.fromRGB(100, 220, 100)
 	else
-		selectedUnitId = nil
-		stripe.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-		content.Text = "<font color='#666666'>No unit on\nthis tile.</font>"
-	end
-	_isSelectingUnit = false
-end
-
--- Click detection — fire a ray from the mouse into the world
-local mouse = player:GetMouse()
-
-mouse.Button1Down:Connect(function()
-	local target = mouse.Target
-	if not target then
-		selectedUnitId = nil
-		slidePanel(false)
-		return
-	end
-
-	-- Check if the clicked part is a unit token
-	-- Token names are "Unit_<unitId>"
-	local name = target.Name
-	if string.sub(name, 1, 5) == "Unit_" then
-		local unitId = string.sub(name, 6)
-		selectUnit(unitId)
-	else
-		selectedUnitId = nil
-		slidePanel(false)
-	end
-end)
-
--- Keep the panel content live — refresh on every UnitActed event
--- so HP and AP shown in the panel stay current while selected.
-BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
-	if selectedUnitId then
-		local unit = unitData[selectedUnitId]
-		if unit then
-			content.Text = buildStatText(unit)
-		end
-	end
-end)
-
-BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
-	if selectedUnitId then
-		local unit = unitData[selectedUnitId]
-		if unit then
-			content.Text = buildStatText(unit)
-		end
+		lbl.Text = "☠  DEFEAT"
+		lbl.TextColor3 = Color3.fromRGB(220, 80, 80)
 	end
 end)

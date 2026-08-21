@@ -1,5 +1,5 @@
 -- GameConstants.lua
--- CTRBLXAI | Shared numeric constants
+-- CTRBLXAI | Shared numeric constants (Slice 3: Skills and Real Combat)
 --
 -- Single source of truth for constants that are used by more than one
 -- server module. Require this module instead of defining local copies.
@@ -13,30 +13,305 @@ local GameConstants = {}
 -- TIMELINE  (from DB: core_stats — Timeline AP RT)
 --------------------------------------------------
 
--- Base RT for a standard unit. All action RT costs are additive on top of this.
--- Full turn RT = BASE_RT_STANDARD + sum of action costs.
--- Rest RT (no voluntary action) = round(BASE_RT_STANDARD × 0.75).
 GameConstants.BASE_RT_STANDARD = 400
-
--- AP granted to a standard unit at the start of each turn.
 GameConstants.AP_PER_TURN_STANDARD = 2
 
--- Boss unit overrides (not used in Slice 1, reserved for later).
-GameConstants.BASE_RT_BOSS        = 300
-GameConstants.AP_PER_TURN_BOSS    = 3
+GameConstants.BASE_RT_BOSS     = 300
+GameConstants.AP_PER_TURN_BOSS = 3
 
--- Rest RT multiplier (no action taken this turn).
-GameConstants.REST_RT_MULTIPLIER  = 0.75
+GameConstants.REST_RT_MULTIPLIER = 0.75
 
 --------------------------------------------------
 -- ACTION RT COST MULTIPLIERS
--- (additive on top of BASE_RT_STANDARD per turn)
 --------------------------------------------------
 
--- Move RT per tile = BASE_RT_STANDARD × this factor.
-GameConstants.MOVE_RT_FACTOR          = 0.0625
+GameConstants.MOVE_RT_FACTOR         = 0.0625
+GameConstants.BASIC_ATTACK_RT_FACTOR = 0.10
 
--- Basic Attack base RT = round(BASE_RT_STANDARD × this factor) + Weapon WT.
-GameConstants.BASIC_ATTACK_RT_FACTOR  = 0.10
+--------------------------------------------------
+-- ELEVATION  (from DB: movement_targeting — Elevation & Displacement)
+--------------------------------------------------
+
+GameConstants.ELEVATION_MAP = {
+	{ 1, 1, 1, 1, 1, 1, 1, 1 }, -- row 1
+	{ 1, 1, 2, 2, 2, 2, 1, 1 }, -- row 2
+	{ 1, 2, 3, 2, 2, 3, 2, 1 }, -- row 3
+	{ 1, 2, 2, 1, 1, 2, 2, 1 }, -- row 4
+	{ 1, 2, 2, 1, 1, 2, 2, 1 }, -- row 5
+	{ 1, 2, 3, 2, 2, 3, 2, 1 }, -- row 6
+	{ 1, 1, 2, 2, 2, 2, 1, 1 }, -- row 7
+	{ 1, 1, 1, 1, 1, 1, 1, 1 }, -- row 8
+}
+
+function GameConstants.GetElevation(tileX, tileY)
+	local row = GameConstants.ELEVATION_MAP[tileY]
+	if row then
+		return row[tileX] or 1
+	end
+	return 1
+end
+
+--------------------------------------------------
+-- TERRAIN TYPES  (from DB: terrain_effects)
+--------------------------------------------------
+
+GameConstants.TERRAIN_TYPES = {
+	Clear     = { id = "Clear",     moveCost = 1 },
+	Grassland = { id = "Grassland", moveCost = 1 },
+	Rocky     = { id = "Rocky",     moveCost = 1 },
+	Mud       = { id = "Mud",       moveCost = 2 },
+}
+
+GameConstants.TERRAIN_MAP = {
+	{ "Clear",     "Clear",     "Clear",     "Grassland", "Grassland", "Clear",     "Clear",     "Clear"     },
+	{ "Clear",     "Grassland", "Rocky",     "Grassland", "Grassland", "Rocky",     "Grassland", "Clear"     },
+	{ "Clear",     "Rocky",     "Rocky",     "Rocky",     "Rocky",     "Rocky",     "Rocky",     "Clear"     },
+	{ "Clear",     "Rocky",     "Rocky",     "Mud",       "Mud",       "Rocky",     "Rocky",     "Clear"     },
+	{ "Clear",     "Rocky",     "Rocky",     "Mud",       "Mud",       "Rocky",     "Rocky",     "Clear"     },
+	{ "Clear",     "Rocky",     "Rocky",     "Rocky",     "Rocky",     "Rocky",     "Rocky",     "Clear"     },
+	{ "Clear",     "Grassland", "Rocky",     "Grassland", "Grassland", "Rocky",     "Grassland", "Clear"     },
+	{ "Clear",     "Clear",     "Clear",     "Grassland", "Grassland", "Clear",     "Clear",     "Clear"     },
+}
+
+function GameConstants.GetTerrainCost(tileX, tileY)
+	local row = GameConstants.TERRAIN_MAP[tileY]
+	if row then
+		local terrainId = row[tileX]
+		if terrainId and GameConstants.TERRAIN_TYPES[terrainId] then
+			return GameConstants.TERRAIN_TYPES[terrainId].moveCost
+		end
+	end
+	return 1
+end
+
+function GameConstants.GetTerrainId(tileX, tileY)
+	local row = GameConstants.TERRAIN_MAP[tileY]
+	if row then
+		return row[tileX] or "Clear"
+	end
+	return "Clear"
+end
+
+--------------------------------------------------
+-- BLOCKERS
+--------------------------------------------------
+
+GameConstants.BLOCKERS = {
+	{ tileX = 4, tileY = 3 },
+	{ tileX = 5, tileY = 6 },
+	{ tileX = 2, tileY = 4 },
+	{ tileX = 7, tileY = 5 },
+}
+
+function GameConstants.IsBlocked(tileX, tileY)
+	for _, b in ipairs(GameConstants.BLOCKERS) do
+		if b.tileX == tileX and b.tileY == tileY then
+			return true
+		end
+	end
+	return false
+end
+
+--------------------------------------------------
+-- POSITIONAL DAMAGE MODIFIER
+--------------------------------------------------
+
+GameConstants.POSITIONAL_MODIFIER_PER_LEVEL = 0.10
+GameConstants.POSITIONAL_MODIFIER_MIN       = 0.70
+GameConstants.POSITIONAL_MODIFIER_MAX       = 1.30
+
+function GameConstants.GetPositionalModifier(attackerTileX, attackerTileY, defenderTileX, defenderTileY)
+	local aElev = GameConstants.GetElevation(attackerTileX, attackerTileY)
+	local dElev = GameConstants.GetElevation(defenderTileX, defenderTileY)
+	local diff  = aElev - dElev
+	local mod   = 1 + GameConstants.POSITIONAL_MODIFIER_PER_LEVEL * diff
+	return math.clamp(mod, GameConstants.POSITIONAL_MODIFIER_MIN, GameConstants.POSITIONAL_MODIFIER_MAX)
+end
+
+--------------------------------------------------
+-- STATUS DEFINITIONS  (from DB: elements_statuses)
+--
+-- Slice 3 adds: Poison and Burn (DoT debuffs)
+-- Poison: 5 turns, Damage = round(MaxHP × 0.15 × DebuffResistance)
+--         Reapplication: refresh duration. Undead immune.
+-- Burn:   3 turns, stored damage model.
+--         On application: storedBurn = round(fireDamageDealt × 0.20)
+--         Tick = round(storedBurn × DebuffResistance)
+--         Reapplication: adds stored Burn damage and extends duration
+--------------------------------------------------
+
+GameConstants.STATUSES = {
+	Slow = {
+		id           = "Slow",
+		kind         = "Debuff",
+		duration     = 3,
+		reapply      = "refresh",
+		rtMultiplier = 1.10,
+		dotType      = nil,
+	},
+	Poison = {
+		id           = "Poison",
+		kind         = "Debuff",
+		duration     = 5,
+		reapply      = "refresh",
+		rtMultiplier = nil,
+		dotType      = "Poison",
+		-- Damage = round(MaxHP × 0.15 × debuffResistance)
+		-- debuffResistance defaults to 1.0 (no resistance system yet)
+		dotFraction  = 0.15,
+	},
+	Burn = {
+		id           = "Burn",
+		kind         = "Debuff",
+		duration     = 3,
+		reapply      = "accumulate", -- adds stored damage + extends duration
+		rtMultiplier = nil,
+		dotType      = "Burn",
+		-- storedBurn set on application; tick = round(storedBurn × debuffResistance)
+		burnFraction = 0.20,
+	},
+}
+
+--------------------------------------------------
+-- SKILL DEFINITIONS (Slice 3: expanded catalog)
+--
+-- Simplified for implementation. Full formulas from DB are adapted
+-- for our current Effective Skill Level = 1 demo.
+-- L = Effective Skill Level (using 1 for now)
+-- Weapon WT = weaponWt on the unit
+-- Weapon Attack Power = weaponDamage × (1 + STR/200) [for Physical]
+--------------------------------------------------
+
+GameConstants.SKILLS = {
+	-- ===== SINGLE TARGET DAMAGE =====
+	power_strike = {
+		id            = "skill_power_strike",
+		name          = "Power Strike",
+		tags          = { "Direct Damage", "Physical" },
+		targetRules   = "Enemy Unit",
+		range         = 1,
+		pattern       = "Single",
+		mpCost        = 3,  -- round(3 + 0.08×(1-1)) = 3
+		rtCost        = 60, -- simplified: round(weaponWt × 1.25) approx
+		channelTime   = 0,
+		power         = 1.25, -- multiplier on Weapon Attack Power
+		inheritStr    = true,
+		appliesStatus = nil,
+		aoePattern    = nil,
+	},
+	crippling_shot = {
+		id            = "skill_crippling_shot",
+		name          = "Crippling Shot",
+		tags          = { "Direct Damage", "Physical", "Debuff" },
+		targetRules   = "Enemy Unit",
+		range         = 3,
+		pattern       = "Single",
+		mpCost        = 3,
+		rtCost        = 40,
+		channelTime   = 0,
+		power         = 0.80, -- weaker shot but applies Slow
+		inheritStr    = true,
+		appliesStatus = "Slow",
+		aoePattern    = nil,
+	},
+
+	-- ===== AOE DAMAGE (Cleave) =====
+	-- DB: SKL-SWEEPING-CUT: Authored Cleave, range 1, power 0.90×WAP
+	sweeping_cut = {
+		id            = "skill_sweeping_cut",
+		name          = "Sweeping Cut",
+		tags          = { "Direct Damage", "Physical" },
+		targetRules   = "Enemy Unit",
+		range         = 1,
+		pattern       = "Cleave", -- hits all enemies adjacent to caster in a 3-tile arc
+		mpCost        = 4, -- round(4 + 0.10×(1-1)) = 4
+		rtCost        = 75, -- round(weaponWt × 1.50) approx
+		channelTime   = 0,
+		power         = 0.90,
+		inheritStr    = true,
+		appliesStatus = nil,
+		-- Cleave pattern: the 3 tiles in front of the caster (based on facing toward target)
+		-- Implementation: hits primary target + all other enemies within range 1
+		-- that are within 1 tile of the primary target.
+		aoePattern    = "Cleave",
+	},
+
+	-- ===== FIRE SKILL (applies Burn) =====
+	-- DB: SKL-FIRE-BOLT: range 4, power 1.10×WAP, Fire damage → generates Burn
+	fire_bolt = {
+		id            = "skill_fire_bolt",
+		name          = "Fire Bolt",
+		tags          = { "Direct Damage", "Fire" },
+		targetRules   = "Enemy Unit",
+		range         = 4,
+		pattern       = "Single",
+		mpCost        = 3,
+		rtCost        = 50,
+		channelTime   = 0,
+		power         = 1.10,
+		inheritStr    = true,
+		appliesStatus = "Burn", -- Burn generated from Fire damage dealt
+		aoePattern    = nil,
+	},
+
+	-- ===== POISON SKILL =====
+	-- No direct DB entry for a "poison bolt" — we'll use a custom skill
+	-- that applies Poison. Inspired by Frostbind structure.
+	venom_strike = {
+		id            = "skill_venom_strike",
+		name          = "Venom Strike",
+		tags          = { "Direct Damage", "Physical", "Poison" },
+		targetRules   = "Enemy Unit",
+		range         = 1,
+		pattern       = "Single",
+		mpCost        = 3,
+		rtCost        = 50,
+		channelTime   = 0,
+		power         = 0.70,
+		inheritStr    = true,
+		appliesStatus = "Poison",
+		aoePattern    = nil,
+	},
+
+	-- ===== HEALING =====
+	-- DB: SKL-HEALING-LIGHT: ally/self, range 4, Channel 100 CT
+	-- Power = (10 + 0.25L + 0.35INT + WeaponDmg×0.30) × SkillPotency
+	-- Simplified for Slice 3: flat healing = 10 + 0.35×INT + weaponDamage×0.30
+	healing_light = {
+		id            = "skill_healing_light",
+		name          = "Healing Light",
+		tags          = { "Healing", "Holy" },
+		targetRules   = "Ally Unit, Self",
+		range         = 4,
+		pattern       = "Single",
+		mpCost        = 4, -- round(4 + 0.12×(1-1)) = 4
+		rtCost        = 25, -- round(weaponWt × 0.50) approx
+		channelTime   = 100, -- 100 CT channel (demonstrates Channel Time)
+		power         = 0,  -- uses custom healing formula
+		inheritStr    = false,
+		appliesStatus = nil,
+		aoePattern    = nil,
+		isHealing     = true,
+	},
+}
+
+--------------------------------------------------
+-- EVENT QUEUE LIMITS (from DB: trigger_safety)
+--------------------------------------------------
+
+GameConstants.EVENT_QUEUE_HARD_CAP       = 128
+GameConstants.EVENT_QUEUE_YIELD_INTERVAL = 32
+GameConstants.MAX_SECONDARY_EVENTS       = 20
+
+--------------------------------------------------
+-- CHANNEL TIME FORMULA (from DB: core_stats — DEX)
+-- Channel Time = Base Channel Time × (1 - DEX / (300 + DEX))
+--------------------------------------------------
+
+function GameConstants.CalcChannelTime(baseChannelTime, dex)
+	if baseChannelTime <= 0 then return 0 end
+	local reduction = dex / (300 + dex)
+	return math.max(1, math.round(baseChannelTime * (1 - reduction)))
+end
 
 return GameConstants

@@ -243,7 +243,8 @@ local function createTileVisual(tile)
 	frame.Name                = TILE_VISUAL_FRAME_NAME
 	frame.Position            = UDim2.fromScale(0, 0)
 	frame.Size                = UDim2.fromScale(1, 1)
-	frame.BorderSizePixel     = 0
+	frame.BorderSizePixel     = 2
+	frame.BorderColor3        = Color3.fromRGB(15, 15, 15)
 	frame.BackgroundTransparency = 0
 	frame.BackgroundColor3    = getViewColor(tile, currentViewMode)
 	frame.Active              = false
@@ -292,21 +293,19 @@ local function clearGridState()
 end
 
 local function registerGridLine(line)
-	if gridOriginalSizes[line] then return end
-	table.insert(gridLines, line)
-	gridOriginalSizes[line] = line.Size
-	line.Material   = Enum.Material.Neon
-	line.Color      = Color3.fromRGB(15, 15, 15)
-	line.CastShadow = false
-	line.CanCollide = false
-	line.CanTouch   = false
-	line.CanQuery   = false
+	-- Grid lines are no longer used — per-tile SurfaceGui borders replace them.
+	-- Hide any server-created grid line Parts so they don't render.
+	line.Transparency = 1
+	line.CanCollide   = false
+	line.CanQuery     = false
 end
 
 local function calculateMapBounds()
 	if not currentMapFolder then mapCenter = nil; mapSurfaceY = nil; return end
 	local minX, maxX, minZ, maxZ = math.huge, -math.huge, math.huge, -math.huge
-	local topY = -math.huge
+	-- Use the LOWEST tile surface so the grid sits at ground level.
+	-- Elevated tiles rise above the grid naturally.
+	local topY = math.huge
 	local found = false
 	for _, inst in ipairs(currentMapFolder:GetChildren()) do
 		if isTemplateTile(inst) then
@@ -316,7 +315,7 @@ local function calculateMapBounds()
 			maxX = math.max(maxX, inst.Position.X + hx)
 			minZ = math.min(minZ, inst.Position.Z - hz)
 			maxZ = math.max(maxZ, inst.Position.Z + hz)
-			topY = math.max(topY, inst.Position.Y + inst.Size.Y / 2)
+			topY = math.min(topY, inst.Position.Y + inst.Size.Y / 2)
 		end
 	end
 	if not found then mapCenter = nil; mapSurfaceY = nil; return end
@@ -333,29 +332,7 @@ local function registerCurrentMapChildren()
 end
 
 local function updateAdaptiveGrid()
-	local camera = workspace.CurrentCamera
-	if not camera or not mapCenter or not mapSurfaceY then return end
-	local dist = (camera.CFrame.Position - mapCenter).Magnitude
-	local thick = math.clamp(GRID_MINIMUM_THICKNESS + dist * GRID_DISTANCE_SCALE,
-		GRID_MINIMUM_THICKNESS, GRID_MAXIMUM_THICKNESS)
-	local h     = math.clamp(thick * 0.5, GRID_MINIMUM_HEIGHT, GRID_MAXIMUM_HEIGHT)
-	local posY  = mapSurfaceY + GRID_SURFACE_GAP + h / 2
-
-	for i = #gridLines, 1, -1 do
-		local line = gridLines[i]
-		local orig = gridOriginalSizes[line]
-		if not line or not line.Parent or not orig then
-			table.remove(gridLines, i)
-			if line then gridOriginalSizes[line] = nil end
-		else
-			if isVerticalGridLine(line) then
-				line.Size = Vector3.new(thick, h, orig.Z)
-			elseif isHorizontalGridLine(line) then
-				line.Size = Vector3.new(orig.X, h, thick)
-			end
-			line.Position = Vector3.new(line.Position.X, posY, line.Position.Z)
-		end
-	end
+	-- No-op: grid lines replaced by per-tile SurfaceGui borders.
 end
 
 --------------------------------------------------
@@ -569,10 +546,30 @@ end)
 -- INPUT  (RenderStepped hover + click selection)
 --------------------------------------------------
 
+local function findTileAtPosition(worldPos)
+	-- Raycast straight down from clicked position to find the tile underneath
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Include
+	local tileParts = {}
+	for _, child in ipairs(workspace:FindFirstChild("TemplateViewerMap"):GetChildren()) do
+		if child:IsA("BasePart") and child:GetAttribute("IsTemplateTile") == true then
+			table.insert(tileParts, child)
+		end
+	end
+	rayParams.FilterDescendantsInstances = tileParts
+	local origin = Vector3.new(worldPos.X, worldPos.Y + 50, worldPos.Z)
+	local result = workspace:Raycast(origin, Vector3.new(0, -100, 0), rayParams)
+	return result and result.Instance or nil
+end
+
 RunService.RenderStepped:Connect(function()
 	updateAdaptiveGrid()
 	local target = mouse.Target
-	setHoveredTile(isTemplateTile(target) and target or nil)
+	if isTemplateTile(target) then
+		setHoveredTile(target)
+	else
+		setHoveredTile(nil)
+	end
 end)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -581,16 +578,12 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 		local target = mouse.Target
 		if isTemplateTile(target) then
 			setSelectedTile(target)
-		elseif target
-			and target:IsA("BasePart")
-			and string.sub(target.Name, 1, 5) == "Unit_"
-		then
-			-- Clicked a unit cylinder — let BattleVisualClient handle unit selection,
-			-- then select the tile under the unit using its battle coords via _G bridge.
-			local unitId = string.sub(target.Name, 6)
-			if type(_G.CTRBLXAI_SelectUnitAtTile) == "function" then
-				-- BattleVisualClient's mouse handler fires first and selects the unit+tile.
-				-- We don't need to do anything extra here — it's already handled.
+		elseif target and target:IsA("BasePart") then
+			-- Clicked a non-tile object (blocker, unit, etc.)
+			-- Find the tile underneath it
+			local tile = findTileAtPosition(target.Position)
+			if tile then
+				setSelectedTile(tile)
 			end
 		end
 	end

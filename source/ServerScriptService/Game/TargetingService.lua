@@ -1,42 +1,35 @@
 -- TargetingService.lua
--- CTRBLXAI | Slice 1
+-- CTRBLXAI | Slice 3 (AOE Patterns + Ally Targeting)
 --
--- Answers two questions:
---   1. EnumerateCandidates: which tiles/units can this unit reach
---      for Move or Attack right now?
---   2. ValidateSelection: is this specific tile/unit a legal choice?
---
--- Slice 1 scope (flat map, no elevation, no LoS, no AOE patterns):
---   - Move: flood-fill within Movement Range, terrain cost = 1 per tile.
---   - Attack (Basic Attack): adjacent tiles (range 1), enemy units only.
---   - Skill: single-target, range from skill definition, enemy units only.
---
--- Does NOT own: damage math, status effects, or combat resolution.
+-- Slice 3 additions:
+--   - GetSkillCandidates: returns valid targets based on skill's targetRules
+--   - GetCleaveTargets: given a primary target + caster, returns all units hit by Cleave
+--   - Ally targeting: skills with "Ally Unit, Self" target rules can target allies or self
+
+local GameConstants = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("CTRBLXAI")
+		:WaitForChild("Shared")
+		:WaitForChild("GameConstants")
+)
 
 local TargetingService = {}
 
 --------------------------------------------------
 -- CONSTANTS
---   Movement Range formula (from DB: core_stats — AGI)
---   Movement Range = 3 + floor(AGI / 60) + Bonuses - Penalties
---   Slice 1: no bonuses/penalties, flat terrain cost = 1.
 --------------------------------------------------
 
 local BASE_MOVEMENT_RANGE = 3
 
--- All 8 directions.
--- cost = movement budget consumed per step.
--- Cardinal = 1.0 × terrain cost. Diagonal = 1.5 × terrain cost.
--- (DB: core_stats — Movement, Diagonal step = Terrain Cost × 1.5)
 local DIRECTIONS = {
-	{ dx =  1, dy =  0, cost = 1.0 },  -- E
-	{ dx = -1, dy =  0, cost = 1.0 },  -- W
-	{ dx =  0, dy =  1, cost = 1.0 },  -- S
-	{ dx =  0, dy = -1, cost = 1.0 },  -- N
-	{ dx =  1, dy =  1, cost = 1.5 },  -- SE
-	{ dx = -1, dy =  1, cost = 1.5 },  -- SW
-	{ dx =  1, dy = -1, cost = 1.5 },  -- NE
-	{ dx = -1, dy = -1, cost = 1.5 },  -- NW
+	{ dx =  1, dy =  0, cost = 1.0 },
+	{ dx = -1, dy =  0, cost = 1.0 },
+	{ dx =  0, dy =  1, cost = 1.0 },
+	{ dx =  0, dy = -1, cost = 1.0 },
+	{ dx =  1, dy =  1, cost = 1.5 },
+	{ dx = -1, dy =  1, cost = 1.5 },
+	{ dx =  1, dy = -1, cost = 1.5 },
+	{ dx = -1, dy = -1, cost = 1.5 },
 }
 
 --------------------------------------------------
@@ -48,7 +41,15 @@ local function getMovementRange(unit)
 	return BASE_MOVEMENT_RANGE + math.floor(agi / 60)
 end
 
--- Builds a fast lookup: key "x,y" -> unit, for all alive units.
+local function getJump(unit)
+	local dex = unit.effectiveStats and unit.effectiveStats.DEX or 10
+	return 1 + math.floor(dex / 60)
+end
+
+local function getDownwardJump(unit)
+	return getJump(unit) + 2
+end
+
 local function buildOccupancyMap(units)
 	local map = {}
 	for _, unit in ipairs(units) do
@@ -69,25 +70,23 @@ local function isInsideMap(x, y, mapWidth, mapHeight)
 		and y >= 1 and y <= mapHeight
 end
 
+local function chebyshevDistance(ax, ay, bx, by)
+	return math.max(math.abs(ax - bx), math.abs(ay - by))
+end
+
 --------------------------------------------------
--- MOVE CANDIDATES
---   BFS flood-fill within Movement Range.
---   Returns a list of { tileX, tileY } tables.
---   Rules (Slice 1, flat terrain):
---     - Can pass through allies, cannot end on allies.
---     - Cannot pass through enemies, cannot end on enemies.
---     - Terrain cost = 1 per cardinal step.
+-- MOVE CANDIDATES (unchanged from Slice 2)
 --------------------------------------------------
 
 function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight)
 	local range      = getMovementRange(actor)
+	local jump       = getJump(actor)
+	local downJump   = getDownwardJump(actor)
 	local occupancy  = buildOccupancyMap(allUnits)
 
-	-- visited[key] = cheapest cost to reach this tile
 	local visited    = {}
 	local candidates = {}
 
-	-- BFS queue: each entry is { x, y, costSoFar }
 	local queue      = { { x = actor.tileX, y = actor.tileY, cost = 0 } }
 	local startKey   = tileKey(actor.tileX, actor.tileY)
 	visited[startKey] = 0
@@ -97,32 +96,53 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 		local current = queue[head]
 		head = head + 1
 
+		local currentElev = GameConstants.GetElevation(current.x, current.y)
+
 		for _, dir in ipairs(DIRECTIONS) do
-			local nx   = current.x + dir.dx
-			local ny   = current.y + dir.dy
-			local key  = tileKey(nx, ny)
-			local newCost = current.cost + dir.cost  -- cardinal=1.0, diagonal=1.5
+			local nx = current.x + dir.dx
+			local ny = current.y + dir.dy
 
-			if isInsideMap(nx, ny, mapWidth, mapHeight)
-				and newCost <= range
-				and (visited[key] == nil or visited[key] > newCost)
-			then
-				local occupant = occupancy[key]
+			if isInsideMap(nx, ny, mapWidth, mapHeight) then
+				local key = tileKey(nx, ny)
 
-				-- Can pass through allies, blocked by enemies.
-				local passable = (occupant == nil)
-					or (occupant ~= actor and occupant.side == actor.side)
+				if GameConstants.IsBlocked(nx, ny) then
+					-- skip
+				else
+					local terrainCost = GameConstants.GetTerrainCost(nx, ny)
+					local stepCost = dir.cost * terrainCost
+					local newCost  = current.cost + stepCost
 
-				if passable then
-					visited[key] = newCost
+					if newCost <= range
+						and (visited[key] == nil or visited[key] > newCost)
+					then
+						local nextElev = GameConstants.GetElevation(nx, ny)
+						local elevDiff = nextElev - currentElev
 
-					-- Can only END on empty tiles.
-					if occupant == nil then
-					-- pathCost = actual movement budget consumed to reach this tile.
-					table.insert(candidates, { tileX = nx, tileY = ny, pathCost = newCost })
+						local elevLegal = true
+						if elevDiff > 0 then
+							elevLegal = elevDiff <= jump
+						elseif elevDiff < 0 then
+							elevLegal = math.abs(elevDiff) <= downJump
+						end
+
+						if elevLegal then
+							local occupant = occupancy[key]
+							local passable = (occupant == nil)
+								or (occupant ~= actor and occupant.side == actor.side)
+
+							if passable then
+								visited[key] = newCost
+
+								if occupant == nil then
+									table.insert(candidates, {
+										tileX = nx, tileY = ny, pathCost = newCost
+									})
+								end
+
+								table.insert(queue, { x = nx, y = ny, cost = newCost })
+							end
+						end
 					end
-
-					table.insert(queue, { x = nx, y = ny, cost = newCost })
 				end
 			end
 		end
@@ -132,10 +152,7 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 end
 
 --------------------------------------------------
--- ATTACK CANDIDATES
---   Returns enemy units within weapon range.
---   Slice 1: Basic Attack range = 1 (adjacent only).
---   skillRange parameter lets a skill override the range.
+-- ATTACK CANDIDATES (Chebyshev range, enemy only)
 --------------------------------------------------
 
 function TargetingService.GetAttackCandidates(actor, allUnits, range)
@@ -143,16 +160,8 @@ function TargetingService.GetAttackCandidates(actor, allUnits, range)
 	local candidates = {}
 
 	for _, unit in ipairs(allUnits) do
-		if unit.isAlive
-			and unit.side ~= actor.side
-		then
-			local dx = math.abs(unit.tileX - actor.tileX)
-			local dy = math.abs(unit.tileY - actor.tileY)
-
-			-- Chebyshev distance for Slice 1 (max(dx,dy) <= range).
-			-- The DB targeting rules distinguish cardinal vs diagonal;
-			-- for a range-1 basic attack this is equivalent.
-			if math.max(dx, dy) <= range then
+		if unit.isAlive and unit.side ~= actor.side then
+			if chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) <= range then
 				table.insert(candidates, unit)
 			end
 		end
@@ -162,15 +171,103 @@ function TargetingService.GetAttackCandidates(actor, allUnits, range)
 end
 
 --------------------------------------------------
--- VALIDATE SELECTION
---   Returns true + nil, or false + reason string.
+-- SKILL CANDIDATES (Slice 3)
+-- Returns valid target units based on the skill's targetRules.
+--   "Enemy Unit"       → enemies in range
+--   "Ally Unit, Self"  → allies + self in range
+--------------------------------------------------
+
+function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
+	local range = skillDef.range or 1
+	local targetRules = skillDef.targetRules or "Enemy Unit"
+	local candidates = {}
+
+	for _, unit in ipairs(allUnits) do
+		if not unit.isAlive then
+			-- skip dead units
+		elseif chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) > range then
+			-- skip out of range
+		else
+			if targetRules == "Enemy Unit" then
+				if unit.side ~= actor.side then
+					table.insert(candidates, unit)
+				end
+			elseif targetRules == "Ally Unit, Self" then
+				if unit.side == actor.side then
+					table.insert(candidates, unit)
+				end
+			end
+		end
+	end
+
+	return candidates
+end
+
+--------------------------------------------------
+-- CLEAVE TARGETS (Slice 3)
 --
---   actionType: "Move" | "Attack" | "Skill" | "Wait"
---   selection:
---     Move   -> { tileX, tileY }
---     Attack -> unit table
---     Skill  -> { target = unit, skillRange = number }
---     Wait   -> nil (always valid)
+-- Cleave hits all enemies within range 1 of the caster that are
+-- also within 1 tile of the primary target (forming a 3-tile arc).
+-- The primary target is always included.
+-- Returns a list of units (primary target first).
+--------------------------------------------------
+
+function TargetingService.GetCleaveTargets(actor, primaryTarget, allUnits)
+	local targets = { primaryTarget }
+	local seen = { [primaryTarget.id] = true }
+
+	for _, unit in ipairs(allUnits) do
+		if unit.isAlive
+			and unit.side ~= actor.side
+			and unit.id ~= primaryTarget.id
+			and not seen[unit.id]
+		then
+			-- Must be within range 1 of caster
+			local distToCaster = chebyshevDistance(
+				actor.tileX, actor.tileY, unit.tileX, unit.tileY
+			)
+			-- Must be within 1 tile of primary target (adjacent arc)
+			local distToTarget = chebyshevDistance(
+				primaryTarget.tileX, primaryTarget.tileY, unit.tileX, unit.tileY
+			)
+
+			if distToCaster <= 1 and distToTarget <= 1 then
+				table.insert(targets, unit)
+				seen[unit.id] = true
+			end
+		end
+	end
+
+	return targets
+end
+
+--------------------------------------------------
+-- GET VALID SKILL TILES (Slice 3 — for client highlighting)
+--
+-- Returns all tile positions within skill range (for highlighting).
+--------------------------------------------------
+
+function TargetingService.GetSkillRangeTiles(actor, skillDef, mapWidth, mapHeight)
+	local range = skillDef.range or 1
+	local tiles = {}
+
+	for dy = -range, range do
+		for dx = -range, range do
+			if math.max(math.abs(dx), math.abs(dy)) <= range then
+				local tx = actor.tileX + dx
+				local ty = actor.tileY + dy
+				if isInsideMap(tx, ty, mapWidth, mapHeight) then
+					table.insert(tiles, { tileX = tx, tileY = ty })
+				end
+			end
+		end
+	end
+
+	return tiles
+end
+
+--------------------------------------------------
+-- VALIDATE SELECTION (updated for Slice 3)
 --------------------------------------------------
 
 function TargetingService.ValidateSelection(
@@ -181,7 +278,6 @@ function TargetingService.ValidateSelection(
 	mapWidth,
 	mapHeight
 )
-	-- Wait is always valid.
 	if actionType == "Wait" then
 		return true, nil
 	end
@@ -199,9 +295,7 @@ function TargetingService.ValidateSelection(
 		)
 
 		for _, c in ipairs(candidates) do
-			if c.tileX == selection.tileX
-				and c.tileY == selection.tileY
-			then
+			if c.tileX == selection.tileX and c.tileY == selection.tileY then
 				return true, nil
 			end
 		end
@@ -215,9 +309,7 @@ function TargetingService.ValidateSelection(
 	end
 
 	if actionType == "Attack" then
-		if type(selection) ~= "table"
-			or not selection.isAlive
-		then
+		if type(selection) ~= "table" or not selection.isAlive then
 			return false, "Attack selection must be a living unit."
 		end
 		if selection.side == actor.side then
@@ -232,42 +324,44 @@ function TargetingService.ValidateSelection(
 		end
 
 		return false, string.format(
-			"Target %s is out of basic attack range.",
-			selection.name
+			"Target %s is out of basic attack range.", selection.name
 		)
 	end
 
 	if actionType == "Skill" then
-		if type(selection) ~= "table"
-			or type(selection.target) ~= "table"
-		then
+		if type(selection) ~= "table" or type(selection.target) ~= "table" then
 			return false, "Skill selection must be a table with a target field."
 		end
 
 		local target     = selection.target
 		local skillRange = selection.skillRange or 1
+		local targetRules = selection.targetRules or "Enemy Unit"
 
 		if not target.isAlive then
 			return false, "Target is not alive."
 		end
-		if target.side == actor.side then
-			return false, "Cannot target an ally with this skill."
-		end
 
-		local candidates = TargetingService.GetAttackCandidates(
-			actor, allUnits, skillRange
-		)
-		for _, c in ipairs(candidates) do
-			if c == target then
-				return true, nil
+		-- Validate target allegiance based on skill target rules
+		if targetRules == "Enemy Unit" then
+			if target.side == actor.side then
+				return false, "Cannot target an ally with this offensive skill."
+			end
+		elseif targetRules == "Ally Unit, Self" then
+			if target.side ~= actor.side then
+				return false, "Cannot target an enemy with this support skill."
 			end
 		end
 
-		return false, string.format(
-			"Target %s is out of skill range (%d).",
-			target.name,
-			skillRange
-		)
+		-- Range check (Chebyshev)
+		local dist = chebyshevDistance(actor.tileX, actor.tileY, target.tileX, target.tileY)
+		if dist > skillRange then
+			return false, string.format(
+				"Target %s is out of skill range (%d). Distance: %d.",
+				target.name, skillRange, dist
+			)
+		end
+
+		return true, nil
 	end
 
 	return false, "Unknown actionType: " .. tostring(actionType)

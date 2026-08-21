@@ -9,6 +9,12 @@ local TileDefinitions = require(
 		:WaitForChild("TileDefinitions")
 )
 
+local GameConstants = require(
+	CTRBLXAI
+		:WaitForChild("Shared")
+		:WaitForChild("GameConstants")
+)
+
 local Template = require(
 	CTRBLXAI
 		:WaitForChild("Templates")
@@ -25,7 +31,7 @@ local RegionGenerator = require(
 
 local TILE_SIZE = 5
 local TILE_HEIGHT = 0.6
-local TILE_MATERIAL = Enum.Material.Neon
+local TILE_MATERIAL = Enum.Material.SmoothPlastic
 
 local GRID_COLOR = Color3.fromRGB(20, 20, 20)
 local GRID_MATERIAL = Enum.Material.SmoothPlastic
@@ -573,3 +579,91 @@ for _, region in ipairs(
 end
 
 print("====================================")
+
+--------------------------------------------------
+-- SLICE 2: APPLY BATTLE ELEVATION TO TILES
+--
+-- The 8×8 battle grid maps onto template tiles (12-19, 7-14).
+-- Battle tile (bx, by) = template tile (bx + 11, by + 6).
+-- Adjust the Y position and Size.Y of those tiles based on the
+-- elevation map in GameConstants.
+--------------------------------------------------
+
+local BATTLE_OFFSET_X = 11  -- battle tile 1 → template col 12
+local BATTLE_OFFSET_Y = 6   -- battle tile 1 → template row 7
+local ELEVATION_STEP  = 2.5 -- extra Y studs per elevation level above 1
+
+local ELEVATED_COLOR  = Color3.fromRGB(180, 170, 150) -- stone look for raised tiles
+local PEAK_COLOR      = Color3.fromRGB(220, 200, 160) -- high peak (elevation 3)
+local MUD_COLOR       = Color3.fromRGB(90, 70, 40)    -- mud terrain tint
+local BLOCKER_COLOR   = Color3.fromRGB(50, 50, 55)    -- dark grey for impassable objects
+
+local battleTileCount = 0
+
+for _, child in ipairs(mapFolder:GetChildren()) do
+	if child:IsA("BasePart") and child:GetAttribute("IsTemplateTile") then
+		local tx = child:GetAttribute("X")
+		local ty = child:GetAttribute("Y")
+
+		if tx and ty then
+			-- Convert template coords to battle coords
+			local bx = tx - BATTLE_OFFSET_X
+			local by = ty - BATTLE_OFFSET_Y
+
+			-- Check if this tile is within the 8×8 battle grid
+			if bx >= 1 and bx <= 8 and by >= 1 and by <= 8 then
+				local elev = GameConstants.GetElevation(bx, by)
+				local tileHeight = TILE_HEIGHT + (elev - 1) * ELEVATION_STEP
+				local surfaceY = tileHeight / 2
+
+				child.Size = Vector3.new(child.Size.X, tileHeight, child.Size.Z)
+				child.Position = Vector3.new(child.Position.X, surfaceY, child.Position.Z)
+
+				child:SetAttribute("Elevation", elev)
+				child:SetAttribute("Terrain", GameConstants.GetTerrainId(bx, by))
+
+				if elev >= 3 then
+					child.Color = PEAK_COLOR
+					child.Material = Enum.Material.SmoothPlastic
+				elseif elev >= 2 then
+					child.Color = ELEVATED_COLOR
+					child.Material = Enum.Material.SmoothPlastic
+				end
+
+				-- Tint Mud tiles
+				if GameConstants.GetTerrainId(bx, by) == "Mud" then
+					child.Color = MUD_COLOR
+					child.Material = Enum.Material.SmoothPlastic
+				end
+
+				-- Render blockers as dark cubes on top of the tile
+				if GameConstants.IsBlocked(bx, by) then
+					child:SetAttribute("Passable", false)
+					child:SetAttribute("ObjectName", "Blocker")
+					child:SetAttribute("ObjectCategory", "Obstacle")
+					child:SetAttribute("ObjectPassabilityImpact", "Impassable")
+					local blockerHeight = ELEVATION_STEP * 1.5
+					local blocker = Instance.new("Part")
+					blocker.Name      = string.format("Blocker_%d_%d", bx, by)
+					blocker.Anchored  = true
+					blocker.CanCollide = true
+					blocker.CanQuery  = false
+					blocker.CastShadow = true
+					blocker.Material  = Enum.Material.SmoothPlastic
+					blocker.Color     = BLOCKER_COLOR
+					blocker.Size      = Vector3.new(TILE_SIZE * 0.7, blockerHeight, TILE_SIZE * 0.7)
+					blocker.Position  = Vector3.new(
+						child.Position.X,
+						surfaceY + tileHeight / 2 + blockerHeight / 2,
+						child.Position.Z
+					)
+					blocker.Parent = mapFolder
+				end
+
+				battleTileCount = battleTileCount + 1
+			end
+		end
+	end
+end
+
+print(string.format("[TemplateViewer] Battle elevation applied to %d tiles.", battleTileCount))
