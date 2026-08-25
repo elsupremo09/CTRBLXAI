@@ -152,6 +152,44 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 end
 
 --------------------------------------------------
+-- LINE OF SIGHT (Bresenham's line through grid)
+--
+-- Returns true if there is clear LoS from (x1,y1) to (x2,y2).
+-- LoS is blocked if ANY tile along the line is a blocker.
+-- The start and end tiles themselves do NOT block.
+-- Range 1 (adjacent) always has LoS (melee can't be blocked).
+--------------------------------------------------
+
+function TargetingService.HasLineOfSight(x1, y1, x2, y2)
+	-- Adjacent tiles always have LoS
+	if chebyshevDistance(x1, y1, x2, y2) <= 1 then
+		return true
+	end
+
+	-- Bresenham's line algorithm
+	local dx = math.abs(x2 - x1)
+	local dy = math.abs(y2 - y1)
+	local sx = x1 < x2 and 1 or -1
+	local sy = y1 < y2 and 1 or -1
+	local err = dx - dy
+	local cx, cy = x1, y1
+
+	while true do
+		local e2 = 2 * err
+		if e2 > -dy then err = err - dy; cx = cx + sx end
+		if e2 < dx then err = err + dx; cy = cy + sy end
+
+		-- If we've reached the destination, LoS is clear
+		if cx == x2 and cy == y2 then return true end
+
+		-- Check if this intermediate tile is a blocker
+		if GameConstants.IsBlocked(cx, cy) then
+			return false
+		end
+	end
+end
+
+--------------------------------------------------
 -- ATTACK CANDIDATES (Chebyshev range, enemy only)
 --------------------------------------------------
 
@@ -161,7 +199,10 @@ function TargetingService.GetAttackCandidates(actor, allUnits, range)
 
 	for _, unit in ipairs(allUnits) do
 		if unit.isAlive and unit.side ~= actor.side then
-			if chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) <= range then
+			local dist = chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
+			if dist <= range
+				and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
+			then
 				table.insert(candidates, unit)
 			end
 		end
@@ -188,7 +229,12 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 		elseif chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) > range then
 			-- skip out of range
 		else
-			if targetRules == "Enemy Unit" then
+			-- Check LoS (healing/ally skills skip LoS for now)
+			local hasLos = targetRules == "Ally Unit, Self"
+				or TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
+			if not hasLos then
+				-- blocked by obstacle
+			elseif targetRules == "Enemy Unit" then
 				if unit.side ~= actor.side then
 					table.insert(candidates, unit)
 				end
@@ -213,8 +259,11 @@ end
 --------------------------------------------------
 
 function TargetingService.GetCleaveTargets(actor, primaryTarget, allUnits)
-	local targets = { primaryTarget }
+	-- Cleave = all enemies within range 1 of the CASTER (not constrained to target).
+	-- Primary target is always included. The caster swings at everything adjacent.
+	local targets = {}
 	local seen = { [primaryTarget.id] = true }
+	table.insert(targets, primaryTarget)
 
 	for _, unit in ipairs(allUnits) do
 		if unit.isAlive
@@ -222,16 +271,12 @@ function TargetingService.GetCleaveTargets(actor, primaryTarget, allUnits)
 			and unit.id ~= primaryTarget.id
 			and not seen[unit.id]
 		then
-			-- Must be within range 1 of caster
 			local distToCaster = chebyshevDistance(
 				actor.tileX, actor.tileY, unit.tileX, unit.tileY
 			)
-			-- Must be within 1 tile of primary target (adjacent arc)
-			local distToTarget = chebyshevDistance(
-				primaryTarget.tileX, primaryTarget.tileY, unit.tileX, unit.tileY
-			)
 
-			if distToCaster <= 1 and distToTarget <= 1 then
+			-- Hit everyone within range 1 of the caster
+			if distToCaster <= 1 then
 				table.insert(targets, unit)
 				seen[unit.id] = true
 			end

@@ -116,7 +116,23 @@ function BattleVisualBroadcaster.BattleStarted(units)
 	task.wait(PACE.BattleStart)
 end
 
-function BattleVisualBroadcaster.TurnStarted(unit, ct)
+function BattleVisualBroadcaster.TurnStarted(unit, ct, allUnits)
+	-- Build a compact snapshot of all units' RT for client timeline simulation
+	local allUnitsRt = {}
+	if allUnits then
+		for _, u in ipairs(allUnits) do
+			if u.isAlive then
+				table.insert(allUnitsRt, {
+					id          = u.id,
+					name        = u.name,
+					side        = u.side,
+					remainingRt = u.remainingRt,
+					isChanneling = u.isChanneling or false,
+				})
+			end
+		end
+	end
+		allUnitsRt = allUnitsRt,
 	BattleEvents.TurnStarted:FireAllClients({
 		unitId   = unit.id,
 		ct       = ct,
@@ -209,10 +225,26 @@ end
 
 -- Status broadcasts
 function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns)
+	-- Include damage prediction so client can display immediately
+	local nextDamage = nil
+	local storedBurn = nil
+	local def = GameConstants.STATUSES[statusId]
+	if def then
+		if def.dotType == "Poison" then
+			nextDamage = math.max(1, math.round(unit.maxHp * def.dotFraction))
+		elseif def.dotType == "Burn" then
+			-- Find the status instance to get stored burn
+			local inst = StatusService.HasStatus(unit, statusId)
+			storedBurn = inst and inst.storedBurn or 0
+			nextDamage = storedBurn > 0 and math.max(1, math.round(storedBurn)) or nil
+		end
+	end
 	BattleEvents.StatusApplied:FireAllClients({
 		unitId         = unit.id,
 		statusId       = statusId,
 		remainingTurns = remainingTurns,
+		nextDamage     = nextDamage,
+		storedBurn     = storedBurn,
 	})
 	task.wait(PACE.Status)
 end

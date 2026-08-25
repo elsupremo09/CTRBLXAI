@@ -21,6 +21,7 @@ local CommandService          = require(Game:WaitForChild("CommandService"))
 local TargetingService        = require(Game:WaitForChild("TargetingService"))
 local BattleVisualBroadcaster = require(Game:WaitForChild("BattleVisualBroadcaster"))
 local StatusService           = require(Game:WaitForChild("StatusService"))
+local CombatResolver          = require(Game:WaitForChild("CombatResolver"))
 
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -119,6 +120,20 @@ local mage = UnitSchema.Create({
 	startingRt   = math.round(GameConstants.BASE_RT_STANDARD * (1 - 0.30 * 8 / (100 + 8))),
 })
 
+local ranger = UnitSchema.Create({
+	id           = "unit_ranger",
+	name         = "Ranger",
+	side         = "Player",
+	controller   = "Player",
+	tileX        = 5,
+	tileY        = 3,
+	stats        = { STR = 12, AGI = 16, INT = 8, VIT = 12, DEX = 18, LUK = 10 },
+	weaponDamage = 14,
+	weaponWt     = 30,
+	skillIds     = { "skill_crippling_shot", "skill_venom_strike" },
+	startingRt   = math.round(GameConstants.BASE_RT_STANDARD * (1 - 0.30 * 12 / (100 + 12))),
+})
+
 local grunt = UnitSchema.Create({
 	id           = "unit_grunt",
 	name         = "Grunt",
@@ -147,7 +162,21 @@ local pyro = UnitSchema.Create({
 	startingRt   = math.round(GameConstants.BASE_RT_STANDARD * (1 - 0.30 * 8 / (100 + 8))),
 })
 
-local allUnitsList = { hero, mage, grunt, pyro }
+local shaman = UnitSchema.Create({
+	id           = "unit_shaman",
+	name         = "Shaman",
+	side         = "Enemy",
+	controller   = "AI",
+	tileX        = 4,
+	tileY        = 8,
+	stats        = { STR = 6, AGI = 8, INT = 18, VIT = 14, DEX = 12, LUK = 10 },
+	weaponDamage = 10,
+	weaponWt     = 25,
+	skillIds     = { "skill_healing_light", "skill_crippling_shot" },
+	startingRt   = math.round(GameConstants.BASE_RT_STANDARD * (1 - 0.30 * 6 / (100 + 6))),
+})
+
+local allUnitsList = { hero, mage, ranger, grunt, pyro, shaman }
 for _, u in ipairs(allUnitsList) do
 	setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
 end
@@ -203,6 +232,8 @@ local function buildTurnPrompt(unit)
 				currentHp   = u.currentHp,
 				maxHp       = u.maxHp,
 				isChanneling = u.isChanneling or false,
+				channelRt   = u.channelRt or 0,
+				channeledSkillName = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.name or nil,
 			})
 		end
 	end
@@ -216,8 +247,27 @@ local function buildTurnPrompt(unit)
 			local candidates = TargetingService.GetSkillCandidates(unit, state.units, def)
 			local targetIds = {}
 			for _, c in ipairs(candidates) do
-				table.insert(targetIds, { id = c.id, name = c.name, tileX = c.tileX, tileY = c.tileY })
+				-- Pre-calculate predicted value for this target
+				local predicted = 0
+				local predType = "damage"
+				if def.isHealing then
+					local healResult = CombatResolver.ResolveHealing(unit, c, def)
+					predicted = healResult.finalHealing or 0
+					predType = "healing"
+				else
+					local dmgResult = CombatResolver.ResolveSkill(unit, c, def)
+					predicted = dmgResult.finalDamage or 0
+				end
+				table.insert(targetIds, {
+					id        = c.id,
+					name      = c.name,
+					tileX     = c.tileX,
+					tileY     = c.tileY,
+					predicted = predicted,
+					predType  = predType,
+				})
 			end
+
 			table.insert(skills, {
 				id          = def.id,
 				name        = def.name,
@@ -230,6 +280,9 @@ local function buildTurnPrompt(unit)
 				canUse      = canUse,
 				targets     = targetIds,
 				tags        = def.tags or {},
+				rtCost      = def.rtCost or 60,
+				power       = def.power or 0,
+				description = def.isHealing and "Heals ally" or (def.appliesStatus and ("Applies " .. def.appliesStatus) or "Damages target"),
 			})
 		end
 	end
@@ -243,12 +296,21 @@ local function buildTurnPrompt(unit)
 	local attackCandidates = TargetingService.GetAttackCandidates(unit, state.units, 1)
 	local attackTargets = {}
 	for _, c in ipairs(attackCandidates) do
-		table.insert(attackTargets, { id = c.id, name = c.name, tileX = c.tileX, tileY = c.tileY })
+		-- Pre-calculate predicted basic attack damage for aim phase
+		local atkResult = CombatResolver.ResolveBasicAttack(unit, c, unit.weaponDamage or 10)
+		table.insert(attackTargets, {
+			id        = c.id,
+			name      = c.name,
+			tileX     = c.tileX,
+			tileY     = c.tileY,
+			predicted = atkResult.finalDamage or 0,
+		})
 	end
 
 	return {
 		unitId         = unit.id,
 		unitName       = unit.name,
+		unitSide       = unit.side,
 		currentAp      = unit.currentAp,
 		currentMp      = unit.currentMp,
 		maxMp          = unit.maxMp,
@@ -260,6 +322,15 @@ local function buildTurnPrompt(unit)
 		moveCandidates = moveCandidates,
 		attackTargets  = attackTargets,
 		timeline       = timeline,
+		currentCt      = state.ct,
+		-- RT cost data so client can preview turn order shifts
+		unitBaseRt = StatusService.GetModifiedBaseRt(unit),
+		attackRt   = math.round(
+			StatusService.GetModifiedBaseRt(unit) * GameConstants.BASIC_ATTACK_RT_FACTOR
+		) + (unit.weaponWt or 40),
+		waitRt     = math.round(
+			StatusService.GetModifiedBaseRt(unit) * GameConstants.REST_RT_MULTIPLIER
+		),
 	}
 end
 
@@ -388,29 +459,61 @@ local function executePlayerCommand(unit, command)
 			return nil
 		end
 
-		local hpBefore = target.currentHp
-		local statusesBefore = #target.statusInstances
+		-- Snapshot ALL units' HP before commit (for AOE detection)
+		local hpSnapshot = {}
+		local statusSnapshot = {}
+		for _, u in ipairs(state.units) do
+			hpSnapshot[u.id] = u.currentHp
+			statusSnapshot[u.id] = #u.statusInstances
+		end
+
 		local selection = { target = target, skillId = command.skillId }
 
 		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Skill", selection)
 		if ok then
-			local damage = math.max(0, hpBefore - target.currentHp)
-			local healing = math.max(0, target.currentHp - hpBefore)
-			local newStatus = nil
-			if #target.statusInstances > statusesBefore then
-				newStatus = target.statusInstances[#target.statusInstances].id
+			-- Detect ALL units that were affected (for AOE skills)
+			local results = {}
+			for _, u in ipairs(state.units) do
+				local prevHp = hpSnapshot[u.id] or u.currentHp
+				local hpDiff = prevHp - u.currentHp
+				local prevStatuses = statusSnapshot[u.id] or 0
+				local newStatus = nil
+				if #u.statusInstances > prevStatuses then
+					newStatus = u.statusInstances[#u.statusInstances].id
+				end
+				if hpDiff ~= 0 or newStatus then
+					table.insert(results, {
+						actionType    = "Skill",
+						unit          = unit,
+						target        = u,
+						skillName     = skillDef.name,
+						damage        = math.max(0, hpDiff),
+						healing       = math.max(0, -hpDiff),
+						statusApplied = newStatus,
+						isChanneling  = unit.isChanneling,
+					})
+				end
 			end
 
-			return {
-				actionType    = "Skill",
-				unit          = unit,
-				target        = target,
-				skillName     = skillDef.name,
-				damage        = damage,
-				healing       = healing,
-				statusApplied = newStatus,
-				isChanneling  = unit.isChanneling,
-			}
+			-- Return first result (broadcastActions handles one at a time)
+			-- But we need to return ALL results for AOE
+			if #results == 1 then
+				return results[1]
+			elseif #results > 1 then
+				-- Return a special multi-hit result
+				return { actionType = "MultiHit", actions = results }
+			else
+				-- No visible change (e.g. channel commit)
+				return {
+					actionType   = "Skill",
+					unit         = unit,
+					target       = target,
+					skillName    = skillDef.name,
+					damage       = 0,
+					healing      = 0,
+					isChanneling = unit.isChanneling,
+				}
+			end
 		else
 			warn("[Main] Player skill rejected: " .. (reason or "unknown"))
 			return nil
@@ -469,6 +572,21 @@ local function broadcastActions(actions, activeUnit)
 			end
 		end
 	end
+
+	-- After each broadcast batch, send updated timeline so client sees
+	-- real-time turn order changes (especially during AI turns)
+	local timelineUpdate = {}
+	for _, u in ipairs(state.units) do
+		if u.isAlive then
+			table.insert(timelineUpdate, {
+				id = u.id, name = u.name, side = u.side,
+				remainingRt = u.remainingRt, isChanneling = u.isChanneling or false,
+				channelRt = u.channelRt or 0,
+				channeledSkillName = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.name or nil,
+			})
+		end
+	end
+	BattleEvents.TurnOrderUpdate:FireAllClients({ units = timelineUpdate, currentCt = state.ct })
 end
 
 
@@ -488,9 +606,16 @@ local function runPlayerTurn(unit)
 		local action = executePlayerCommand(unit, command)
 
 		if action then
-			table.insert(actions, action)
-			-- Broadcast this action IMMEDIATELY so the player sees it before next prompt
-			broadcastActions({ action }, unit)
+			-- Handle MultiHit (AOE) results
+			if action.actionType == "MultiHit" then
+				for _, subAction in ipairs(action.actions) do
+					table.insert(actions, subAction)
+				end
+				broadcastActions(action.actions, unit)
+			else
+				table.insert(actions, action)
+				broadcastActions({ action }, unit)
+			end
 
 			-- If it was Wait, turn ended inside CommandService
 			if action.actionType == "Wait" then
@@ -798,7 +923,7 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 		continue
 	end
 
-	BattleVisualBroadcaster.TurnStarted(activeUnit, state.ct)
+	BattleVisualBroadcaster.TurnStarted(activeUnit, state.ct, state.units)
 
 	-- Determine turn handler
 	local actions

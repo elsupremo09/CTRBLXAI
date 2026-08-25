@@ -95,9 +95,14 @@ visualFolder.Parent = workspace
 
 local isPlayerTurn    = false
 local currentPrompt   = nil
+local timelineSnapshot = nil  -- all alive units' RT snapshot, for simulation
+local currentBattleCt  = 0    -- current battle CT (for round boundary calculation)
 local inputMode       = nil  -- nil, "move", "attack", "skill"
 local selectedSkill   = nil
 local highlightParts  = {}
+local aimTarget       = nil  -- target data during aim phase (before confirm)
+local aimConfirmGui   = nil  -- confirm/cancel buttons during aim phase
+local predictionGui   = nil  -- floating predicted damage/healing label
 
 --------------------------------------------------
 -- 3. HIGHLIGHT MANAGEMENT
@@ -193,7 +198,7 @@ local function createHpBar(parent)
 	label.TextStrokeTransparency = 0.4
 	label.Parent = nameBb
 
-	return fill, label, mpFill
+	return fill, label, mpFill, billboard, mpBb, nameBb
 end
 
 local function spawnToken(unit)
@@ -210,10 +215,11 @@ local function spawnToken(unit)
 	part.Material = Enum.Material.SmoothPlastic
 	part.Parent = visualFolder
 
-	local fill, label, mpFill = createHpBar(part)
+	local fill, label, mpFill, hpBillboard, mpBillboard, nameBillboard = createHpBar(part)
 	label.Text = unit.name
 
-	unitTokens[unit.id] = { part = part, fill = fill, label = label, mpFill = mpFill }
+	unitTokens[unit.id] = { part = part, fill = fill, label = label, mpFill = mpFill,
+		hpBillboard = hpBillboard, mpBillboard = mpBillboard, nameBillboard = nameBillboard }
 end
 
 local function updateHpBar(unitId, currentHp, maxHp)
@@ -279,66 +285,261 @@ end
 
 local timelineGui = nil
 
-local function updateTimeline(timeline)
+-- simulateTurnOrder: given a snapshot of all units' current remainingRt,
+-- simulate the next `count` turns and return them in order.
+-- previewUnitId + previewNewRt: optionally override one unit's RT
+-- (used to preview what the bar will look like after an action).
+-- Uses BASE_RT = 450 as a rough "what happens after this future turn" estimate.
+local BASE_FUTURE_RT = 450
+
+local function simulateTurnOrder(snapshot, count, previewUnitId, previewNewRt, previewEvent)
+	-- Deep copy snapshot; also inject channeled skill activations as separate events
+	local units = {}
+	for _, u in ipairs(snapshot) do
+		table.insert(units, {
+			id          = u.id,
+			name        = u.name,
+			side        = u.side,
+			remainingRt = u.remainingRt,
+			isChanneling = u.isChanneling or false,
+			isEvent     = false,
+		})
+		-- If unit is channeling, add a separate "event" entry for the activation
+		if u.isChanneling and u.channelRt and u.channelRt > 0 then
+			table.insert(units, {
+				id          = u.id .. "_channel",
+				name        = u.channeledSkillName or "Skill",
+				side        = u.side,
+				remainingRt = u.channelRt,
+				isChanneling = false,
+				isEvent     = true, -- marks this as a delayed effect, not a unit turn
+				ownerId     = u.id,
+			})
+		end
+	end
+
+	-- Inject a preview event (e.g. Healing Light activation) when player is
+	-- selecting a channeled skill — so they can see where it lands in the bar
+	if previewEvent then
+		table.insert(units, {
+			id          = "preview_event",
+			name        = previewEvent.name or "Skill",
+			side        = previewEvent.side or "Player",
+			remainingRt = previewEvent.rt or 100,
+			isChanneling = false,
+			isEvent     = true,
+		})
+	end
+
+	-- Apply preview override
+	if previewUnitId and previewNewRt then
+		for _, u in ipairs(units) do
+			if u.id == previewUnitId then
+				u.remainingRt = previewNewRt
+				break
+			end
+		end
+	end
+
+	local result = {}
+	-- Round markers: based on CT. Every 1000 CT = new round.
+	-- Track elapsed CT in the simulation to know when boundaries are crossed.
+	local elapsedCt = 0
+	local nextRoundCt = math.ceil((currentBattleCt + 1) / 1000) * 1000  -- next 1000 boundary
+	local roundNumber = math.ceil((currentBattleCt + 1) / 1000) + 1     -- what round number that is
+
+	for _ = 1, count * 2 do
+		if #units == 0 then break end
+
+		-- Find the minimum RT
+		local minRt = math.huge
+		for _, u in ipairs(units) do
+			if u.remainingRt < minRt then minRt = u.remainingRt end
+		end
+		if minRt == math.huge then break end
+
+		-- Check if advancing by minRt crosses a round boundary
+		local ctAfterAdvance = currentBattleCt + elapsedCt + minRt
+		while ctAfterAdvance >= nextRoundCt and #result < count do
+			table.insert(result, {
+				id       = "round_" .. tostring(roundNumber),
+				name     = "R" .. tostring(roundNumber),
+				side     = "Neutral",
+				isEvent  = true,
+				isRound  = true,
+				isChanneling = false,
+				isPreview = false,
+			})
+			nextRoundCt = nextRoundCt + 1000
+			roundNumber = roundNumber + 1
+		end
+
+		elapsedCt = elapsedCt + minRt
+
+		-- Advance all units
+		for _, u in ipairs(units) do
+			u.remainingRt = u.remainingRt - minRt
+		end
+
+		-- Collect ready entries (RT <= 0)
+		local ready = {}
+		for _, u in ipairs(units) do
+			if u.remainingRt <= 0 then
+				table.insert(ready, u)
+			end
+		end
+		table.sort(ready, function(a, b) return a.id < b.id end)
+
+		for _, u in ipairs(ready) do
+			table.insert(result, {
+				id          = u.id,
+				name        = u.name,
+				side        = u.side,
+				remainingRt = 0,
+				isEvent     = u.isEvent,
+				isChanneling = u.isChanneling,
+				isPreview   = (previewUnitId ~= nil and u.id == previewUnitId and #result == 0),
+			})
+			-- Events (channel activations) fire once and disappear
+			if u.isEvent then
+				u.remainingRt = 99999 -- effectively remove from simulation
+			else
+				u.remainingRt = BASE_FUTURE_RT
+			end
+			if #result >= count then break end
+		end
+
+		if #result >= count then break end
+	end
+
+	return result
+end
+
+-- Forward declaration (defined later, but called from portrait click closures)
+local showUnitInspector
+
+local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEvent)
 	if timelineGui then timelineGui:Destroy() end
-	if not timeline or #timeline == 0 then return end
+	if not snapshot or #snapshot == 0 then return end
+
+	-- Generate 12 upcoming turn slots (includes channel activation events)
+	-- timeline[1] = active NOW, timeline[12] = furthest future
+	local timeline = simulateTurnOrder(snapshot, 10, previewUnitId, previewNewRt, previewEvent)
+	if #timeline == 0 then return end
 
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "TimelineGui"
 	gui.ResetOnSpawn = false
 	gui.DisplayOrder = 90
+	gui.IgnoreGuiInset = true
 	gui.Parent = player:WaitForChild("PlayerGui")
 	timelineGui = gui
 
+	-- Bar container: top-center
+	local slotCount = #timeline
+	local normalW = 39
+	local activeW = 50
+	local barWidth = (slotCount - 1) * (normalW + 2) + activeW + 16
+
 	local bar = Instance.new("Frame")
 	bar.Name = "TimelineBar"
-	bar.Size = UDim2.new(0, math.min(#timeline * 60, 600), 0, 50)
-	bar.AnchorPoint = Vector2.new(0.5, 0)
-	bar.Position = UDim2.new(0.5, 0, 0, 8)
+	bar.Size = UDim2.new(0, math.min(barWidth, 580), 0, 52)
+	bar.AnchorPoint = Vector2.new(1, 0)
+	bar.Position = UDim2.new(1, -10, 0, 4)
 	bar.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
 	bar.BackgroundTransparency = 0.25
 	bar.BorderSizePixel = 0
 	bar.Parent = gui
-
 	Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 6)
 
 	local layout = Instance.new("UIListLayout")
 	layout.FillDirection = Enum.FillDirection.Horizontal
-	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
-	layout.Padding = UDim.new(0, 4)
+	layout.Padding = UDim.new(0, 2)
 	layout.Parent = bar
 
+	-- Mana Khemia style: rightmost = NOW (active), leftmost = furthest future
+	-- timeline[1] = NOW, timeline[N] = furthest future
+	-- LayoutOrder: give furthest future the LOWEST value (leftmost)
+	-- and NOW the HIGHEST value (rightmost)
 	for i, entry in ipairs(timeline) do
-		local portrait = Instance.new("Frame")
-		portrait.Name = entry.name
-		portrait.Size = UDim2.new(0, 44, 0, 42)
-		portrait.BackgroundColor3 = entry.side == "Player"
-			and Color3.fromRGB(40, 80, 160) or Color3.fromRGB(140, 40, 40)
-		portrait.BackgroundTransparency = 0.15
+		local isActive = (i == 1) and not previewUnitId
+		local isPreviewSlot = entry.isPreview
+		local isEvent = entry.isEvent
+
+		local slotW = isActive and activeW or normalW
+		local slotH = isActive and 46 or 37
+
+		local portrait = Instance.new("TextButton")
+		portrait.Name = entry.name .. "_" .. tostring(i)
+		portrait.Size = UDim2.new(0, slotW, 0, slotH)
 		portrait.BorderSizePixel = 0
+		portrait.Text = ""
+		portrait.AutoButtonColor = false
+		-- LayoutOrder: higher = further right. Slot 1 (NOW) = highest.
+		portrait.LayoutOrder = slotCount - i + 1
 		portrait.Parent = bar
+
+		-- Color based on type
+		if isEvent then
+			if entry.isRound then
+				-- Round marker: narrow pill with round number
+				portrait.Size = UDim2.new(0, 22, 0, 37)
+				portrait.BackgroundColor3 = Color3.fromRGB(180, 180, 50)
+				portrait.BackgroundTransparency = 0.2
+			else
+				portrait.BackgroundColor3 = entry.side == "Player"
+					and Color3.fromRGB(60, 40, 140) or Color3.fromRGB(140, 60, 20)
+				portrait.BackgroundTransparency = 0.05
+			end
+		else
+			portrait.BackgroundColor3 = entry.side == "Player"
+				and Color3.fromRGB(40, 80, 160) or Color3.fromRGB(140, 40, 40)
+			portrait.BackgroundTransparency = 0.15
+		end
 
 		Instance.new("UICorner", portrait).CornerRadius = UDim.new(0, 4)
 
-		if i == 1 then
+		-- Active (NOW) slot: gold border, magnified, full opacity
+		if isActive then
 			portrait.BackgroundTransparency = 0
 			local stroke = Instance.new("UIStroke")
 			stroke.Color = Color3.fromRGB(255, 230, 80)
 			stroke.Thickness = 2
 			stroke.Parent = portrait
+		elseif isPreviewSlot then
+			-- Preview: shows where active unit will land after chosen action
+			portrait.BackgroundTransparency = 0
+			local stroke = Instance.new("UIStroke")
+			stroke.Color = Color3.fromRGB(200, 200, 200)
+			stroke.Thickness = 2
+			stroke.Parent = portrait
 		end
 
+		-- Name label
 		local initial = Instance.new("TextLabel")
-		initial.Size = UDim2.fromScale(1, 0.6)
+		initial.Size = UDim2.fromScale(1, 0.65)
 		initial.Position = UDim2.new(0, 0, 0, 2)
 		initial.BackgroundTransparency = 1
 		initial.Font = Enum.Font.SourceSansBold
-		initial.TextSize = 16
-		initial.TextColor3 = Color3.fromRGB(255, 255, 255)
-		initial.Text = string.sub(entry.name, 1, 3)
+		initial.TextSize = isActive and 15 or (isEvent and 9 or 12)
+		initial.TextColor3 = isEvent
+			and Color3.fromRGB(255, 200, 100) or Color3.fromRGB(255, 255, 255)
+		if isEvent then
+			if entry.isRound then
+				initial.TextSize = 9
+				initial.Text = entry.name  -- "R2", "R3", etc.
+			else
+				initial.Text = string.sub(entry.name, 1, 5)
+			end
+		else
+			initial.Text = string.sub(entry.name, 1, 3)
+		end
 		initial.Parent = portrait
 
+		-- Bottom label
 		local rtLabel = Instance.new("TextLabel")
 		rtLabel.Size = UDim2.new(1, 0, 0, 14)
 		rtLabel.Position = UDim2.new(0, 0, 1, -14)
@@ -346,22 +547,54 @@ local function updateTimeline(timeline)
 		rtLabel.Font = Enum.Font.SourceSans
 		rtLabel.TextSize = 10
 		rtLabel.TextColor3 = Color3.fromRGB(180, 180, 180)
-		rtLabel.Text = i == 1 and "NOW" or tostring(entry.remainingRt)
+		local labelText = ""
+		if isActive then
+			labelText = "NOW"
+		elseif isPreviewSlot then
+			labelText = "← YOU"
+		elseif isEvent then
+			if entry.isRound then
+				labelText = ""
+			else
+				labelText = "◎ ACT"
+			end
+		else
+			-- Show current RT for non-active unit portraits
+			local rt = 0
+			if timelineSnapshot then
+				for _, snap in ipairs(timelineSnapshot) do
+					if snap.id == entry.id then rt = snap.remainingRt; break end
+				end
+			end
+			labelText = tostring(rt)
+		end
+		rtLabel.Text = labelText
 		rtLabel.Parent = portrait
 
-		if entry.isChanneling then
-			local ch = Instance.new("TextLabel")
-			ch.Size = UDim2.new(0, 12, 0, 12)
-			ch.Position = UDim2.new(1, -12, 0, 0)
-			ch.BackgroundTransparency = 1
-			ch.Font = Enum.Font.SourceSansBold
-			ch.TextSize = 10
-			ch.TextColor3 = Color3.fromRGB(255, 200, 60)
-			ch.Text = "◎"
-			ch.Parent = portrait
+		-- Click handler: show RT tooltip and select the unit's tile
+		if not entry.isRound then
+			portrait.MouseButton1Click:Connect(function()
+				-- Find the unit in unitData (skip events that don't map to a unit)
+				local uid = entry.id
+				-- For channel events, the id is "unitId_channel" — extract the owner
+				if entry.isEvent and string.find(uid, "_channel") then
+					uid = string.gsub(uid, "_channel", "")
+				end
+				if uid and unitData[uid] then
+					-- Select the unit's tile (triggers tile inspector + highlight)
+					local data = unitData[uid]
+					if data.tileX and data.tileY and _G.CTRBLXAI_SelectTileAt then
+						_G.CTRBLXAI_SelectTileAt(data.tileX + BATTLE_OFFSET_X, data.tileY + BATTLE_OFFSET_Y)
+					end
+					-- Show unit inspector panel
+					showUnitInspector(uid)
+				end
+			end)
 		end
 	end
 end
+
+
 
 --------------------------------------------------
 -- 7. ACTION BAR UI
@@ -369,8 +602,100 @@ end
 
 local actionBarGui = nil
 
+-- Forward-declare skill tooltip (needed by destroyActionBar)
+local skillTooltipGui = nil
+local function hideSkillTooltip()
+	if skillTooltipGui then skillTooltipGui:Destroy(); skillTooltipGui = nil end
+end
+
+-- Forward-declare aim phase (needed by action bar callbacks + click handler)
+local function destroyAimPhase()
+	if aimConfirmGui then aimConfirmGui:Destroy(); aimConfirmGui = nil end
+	if predictionGui then predictionGui:Destroy(); predictionGui = nil end
+	aimTarget = nil
+end
+
+local function showPrediction(targetId, value, predType)
+	if predictionGui then predictionGui:Destroy() end
+
+	-- Use a ScreenGui label above the confirm buttons for guaranteed visibility
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "PredictionGui"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 115
+	gui.Parent = player:WaitForChild("PlayerGui")
+	predictionGui = gui
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(0, 160, 0, 36)
+	label.AnchorPoint = Vector2.new(0.5, 1)
+	label.Position = UDim2.new(0.5, 0, 0.76, 0)
+	label.BackgroundColor3 = predType == "healing"
+		and Color3.fromRGB(20, 60, 20) or Color3.fromRGB(80, 15, 15)
+	label.BackgroundTransparency = 0.1
+	label.BorderSizePixel = 0
+	label.Font = Enum.Font.SourceSansBold
+	label.TextSize = 20
+	label.TextColor3 = predType == "healing"
+		and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+	if predType == "healing" then
+		label.Text = "Heal: +" .. tostring(value)
+	else
+		label.Text = "Dmg: -" .. tostring(value)
+	end
+	label.Parent = gui
+	Instance.new("UICorner", label).CornerRadius = UDim.new(0, 6)
+end
+
+local function showAimConfirm(onConfirm, onCancel)
+	if aimConfirmGui then aimConfirmGui:Destroy() end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "AimConfirmGui"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 110
+	gui.Parent = player:WaitForChild("PlayerGui")
+	aimConfirmGui = gui
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(0, 220, 0, 45)
+	frame.AnchorPoint = Vector2.new(0.5, 1)
+	frame.Position = UDim2.new(0.5, 0, 0.82, 0)
+	frame.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
+	frame.BackgroundTransparency = 0.15
+	frame.BorderSizePixel = 0
+	frame.Parent = gui
+	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.Padding = UDim.new(0, 10)
+	layout.Parent = frame
+
+	local function makeBtn(text, color, callback)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(0, 90, 0, 32)
+		btn.BackgroundColor3 = color
+		btn.Font = Enum.Font.SourceSansBold
+		btn.TextSize = 14
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Text = text
+		btn.BorderSizePixel = 0
+		btn.Parent = frame
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+		btn.MouseButton1Click:Connect(callback)
+		return btn
+	end
+
+	makeBtn("✓ Confirm", Color3.fromRGB(40, 140, 40), onConfirm)
+	makeBtn("✗ Cancel", Color3.fromRGB(120, 40, 40), onCancel)
+end
+
 local function destroyActionBar()
 	if actionBarGui then actionBarGui:Destroy(); actionBarGui = nil end
+	hideSkillTooltip()
 end
 
 local function createActionBar(prompt)
@@ -442,6 +767,9 @@ local function createActionBar(prompt)
 
 	makeButton("Move", "⬡ Move", "", Color3.fromRGB(50, 120, 50), #prompt.moveCandidates > 0, function()
 		inputMode = "move"; selectedSkill = nil; clearHighlights()
+		-- Preview: use average 2-tile move RT as approximation
+		local previewRt = math.round((prompt.unitBaseRt or 400) * 0.0625 * 2) + (prompt.unitBaseRt or 400)
+		updateTimeline(timelineSnapshot, prompt.unitId, previewRt)
 		for _, tile in ipairs(prompt.moveCandidates) do
 			createTileHighlight(tile.tileX, tile.tileY, Color3.fromRGB(50, 200, 50), 0.55)
 		end
@@ -449,12 +777,17 @@ local function createActionBar(prompt)
 
 	makeButton("Attack", "⚔ Attack", "", Color3.fromRGB(180, 60, 60), #prompt.attackTargets > 0, function()
 		inputMode = "attack"; selectedSkill = nil; clearHighlights()
+		-- Preview: use attack RT cost
+		local previewRt = (prompt.attackRt or 80) + (prompt.unitBaseRt or 400)
+		updateTimeline(timelineSnapshot, prompt.unitId, previewRt)
 		for _, t in ipairs(prompt.attackTargets) do
 			createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 60, 60), 0.45)
 		end
 	end)
 
 	makeButton("Wait", "⏸ Wait", "", Color3.fromRGB(80, 80, 80), true, function()
+		-- Preview: wait RT (rest)
+		updateTimeline(timelineSnapshot, prompt.unitId, prompt.waitRt or 300)
 		clearHighlights(); destroyActionBar(); isPlayerTurn = false; inputMode = nil
 		BattleEvents.PlayerCommand:FireServer({ actionType = "Wait" })
 	end)
@@ -464,16 +797,73 @@ local function createActionBar(prompt)
 		local subtext = string.format("MP:%d R:%d", skill.mpCost, skill.range)
 		local color = skill.isHealing and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(80, 80, 180)
 
-		makeButton(skill.id, "✦ " .. skill.name, subtext, color, canUse, function()
-			inputMode = "skill"; selectedSkill = skill; clearHighlights()
+		local btn = makeButton(skill.id, "✦ " .. skill.name, subtext, color, canUse, function()
+			inputMode = "skill"; selectedSkill = skill; clearHighlights(); destroyAimPhase()
+			-- Preview: skill RT cost + base RT
+			local previewRt = (skill.rtCost or 60) + (prompt.unitBaseRt or 400)
+			local previewEvent = nil
+			if skill.channelTime and skill.channelTime > 0 then
+				-- Insert a separate event portrait for the channel activation
+				-- Unit's next turn is after commit RT; activation is a separate event
+				previewEvent = {
+					name = skill.name,
+					side = prompt.unitSide or "Player",
+					rt   = skill.channelTime,
+				}
+			end
+			updateTimeline(timelineSnapshot, prompt.unitId, previewRt, previewEvent)
 			local hColor = skill.isHealing and Color3.fromRGB(50, 220, 50) or Color3.fromRGB(180, 80, 255)
 			for _, t in ipairs(skill.targets) do
 				createTileHighlight(t.tileX, t.tileY, hColor, 0.45)
 			end
 		end)
+
+		-- Tooltip on hover: show skill details
+		if btn then
+			btn.MouseEnter:Connect(function()
+				hideSkillTooltip()
+				local gui = Instance.new("ScreenGui")
+				gui.Name = "SkillTooltipGui"
+				gui.ResetOnSpawn = false
+				gui.DisplayOrder = 120
+				gui.Parent = player:WaitForChild("PlayerGui")
+				skillTooltipGui = gui
+
+				local tip = Instance.new("TextLabel")
+				tip.Size = UDim2.new(0, 200, 0, 80)
+				tip.AnchorPoint = Vector2.new(0.5, 1)
+				tip.Position = UDim2.new(0.5, 0, 0.78, 0)
+				tip.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+				tip.BackgroundTransparency = 0.05
+				tip.BorderSizePixel = 0
+				tip.Font = Enum.Font.SourceSans
+				tip.TextSize = 12
+				tip.TextColor3 = Color3.fromRGB(220, 220, 220)
+				tip.TextWrapped = true
+				tip.TextYAlignment = Enum.TextYAlignment.Top
+				tip.Text = string.format(
+					"%s\n%s\nPower: %s | Range: %d | RT: %d\nMP: %d | Pattern: %s%s",
+					skill.name,
+					skill.description or "",
+					skill.power and tostring(skill.power) or "—",
+					skill.range or 1,
+					skill.rtCost or 0,
+					skill.mpCost or 0,
+					skill.pattern or "Single",
+					skill.channelTime and skill.channelTime > 0 and ("\nChannel: " .. skill.channelTime .. " CT") or ""
+				)
+				tip.Parent = gui
+				Instance.new("UICorner", tip).CornerRadius = UDim.new(0, 6)
+				Instance.new("UIPadding", tip).PaddingLeft = UDim.new(0, 6)
+			end)
+			btn.MouseLeave:Connect(function()
+				hideSkillTooltip()
+			end)
+		end
 	end
 
-	updateTimeline(prompt.timeline)
+	-- Initial display: show current state (no preview)
+	updateTimeline(timelineSnapshot, nil, nil)
 end
 
 --------------------------------------------------
@@ -485,7 +875,7 @@ end
 
 local unitInspectorGui = nil
 
-local function showUnitInspector(uid)
+showUnitInspector = function(uid)
 	if unitInspectorGui then unitInspectorGui:Destroy() end
 
 	local data = unitData[uid]
@@ -570,15 +960,104 @@ local function showUnitInspector(uid)
 	-- Statuses
 	if data.statuses and #data.statuses > 0 then
 		table.insert(lines, "— STATUS —")
-		for _, s in ipairs(data.statuses) do
-			local statusColor = s.id == "Poison" and "rgb(80,200,80)"
-				or s.id == "Burn" and "rgb(255,140,40)"
-				or "rgb(180,80,255)"
-			table.insert(lines, string.format('<font color="%s">%s</font> (%d)', statusColor, s.id, s.remainingTurns or 0))
-		end
+		table.insert(lines, "")  -- space before status buttons
 	end
 
 	content.Text = table.concat(lines, "\n")
+
+	-- Status buttons (clickable, below the text content)
+	if data.statuses and #data.statuses > 0 then
+		-- Calculate vertical offset for status buttons based on text lines
+		local textLineCount = #lines
+		local statusStartY = 4 + textLineCount * 14  -- approx 14px per line
+
+		local statusDetailLabel = nil  -- shared detail panel, toggled per status
+
+		for idx, s in ipairs(data.statuses) do
+			local statusColor = s.id == "Poison" and Color3.fromRGB(80, 200, 80)
+				or s.id == "Burn" and Color3.fromRGB(255, 140, 40)
+				or s.id == "Slow" and Color3.fromRGB(180, 80, 255)
+				or Color3.fromRGB(150, 150, 255)
+
+			local valueStr = string.format("%dt", s.remainingTurns or 0)
+			if s.nextDamage and s.nextDamage > 0 then
+				valueStr = valueStr .. string.format("  -%d", s.nextDamage)
+			end
+
+			local btn = Instance.new("TextButton")
+			btn.Name = "Status_" .. s.id
+			btn.Size = UDim2.new(1, -18, 0, 16)
+			btn.Position = UDim2.new(0, 14, 0, statusStartY + (idx - 1) * 18)
+			btn.BackgroundTransparency = 1
+			btn.BorderSizePixel = 0
+			btn.Font = Enum.Font.RobotoMono
+			btn.TextSize = 12
+			btn.TextColor3 = statusColor
+			btn.TextXAlignment = Enum.TextXAlignment.Left
+			btn.Text = string.format("▸ %s  %s", s.id, valueStr)
+			btn.Parent = panel
+
+			btn.MouseButton1Click:Connect(function()
+				-- Toggle detail panel for this status
+				if statusDetailLabel then
+					statusDetailLabel:Destroy()
+					statusDetailLabel = nil
+				end
+
+				-- Build detail text
+				local details = {}
+				table.insert(details, string.format("<b>%s</b>", s.id))
+
+				-- Description based on status type
+				if s.id == "Poison" then
+					table.insert(details, "DoT — 15% Max HP per turn")
+					table.insert(details, "Undead immune. Refreshes on reapply.")
+				elseif s.id == "Burn" then
+					table.insert(details, "DoT — Stored fire damage ticks each turn")
+					table.insert(details, "Reapply adds damage + extends duration.")
+					table.insert(details, "Water removes Burn.")
+				elseif s.id == "Slow" then
+					table.insert(details, "Base RT × 1.10 (10% slower)")
+					table.insert(details, "Affects Base RT-derived costs only.")
+				else
+					table.insert(details, "Status effect")
+				end
+
+				table.insert(details, "")
+				table.insert(details, string.format("Duration: %d turns remaining", s.remainingTurns or 0))
+				if s.nextDamage and s.nextDamage > 0 then
+					table.insert(details, string.format("Next tick: -%d damage", s.nextDamage))
+				end
+				if s.storedBurn and s.storedBurn > 0 then
+					table.insert(details, string.format("Stored burn: %d total", s.storedBurn))
+				end
+
+				local detailFrame = Instance.new("TextLabel")
+				detailFrame.Name = "StatusDetail"
+				detailFrame.Size = UDim2.new(0, 170, 0, 90)
+				detailFrame.Position = UDim2.new(0, 8, 0, statusStartY + (#data.statuses) * 18 + 4)
+				detailFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+				detailFrame.BackgroundTransparency = 0.05
+				detailFrame.BorderSizePixel = 0
+				detailFrame.Font = Enum.Font.SourceSans
+				detailFrame.TextSize = 11
+				detailFrame.TextColor3 = Color3.fromRGB(200, 200, 200)
+				detailFrame.TextXAlignment = Enum.TextXAlignment.Left
+				detailFrame.TextYAlignment = Enum.TextYAlignment.Top
+				detailFrame.TextWrapped = true
+				detailFrame.RichText = true
+				detailFrame.Text = table.concat(details, "\n")
+				detailFrame.Parent = panel
+				Instance.new("UICorner", detailFrame).CornerRadius = UDim.new(0, 4)
+				Instance.new("UIPadding", detailFrame).PaddingLeft = UDim.new(0, 4)
+				statusDetailLabel = detailFrame
+			end)
+		end
+
+		-- Expand panel height to fit statuses + potential detail
+		local extraHeight = (#data.statuses * 18) + 100
+		panel.Size = UDim2.new(0, 180, 0, math.max(340, statusStartY + extraHeight))
+	end
 end
 
 local function hideUnitInspector()
@@ -642,14 +1121,42 @@ end
 
 --------------------------------------------------
 -- 9. CLICK HANDLER
---    Uses mouse.Button1Down (same as TemplateInspector)
+--    Two-phase: (1) select target → aim phase, (2) confirm → commit
 --------------------------------------------------
+
+local function commitCommand(command)
+	clearHighlights(); destroyActionBar(); destroyAimPhase()
+	isPlayerTurn = false; inputMode = nil; selectedSkill = nil; aimTarget = nil
+	BattleEvents.PlayerCommand:FireServer(command)
+end
+
+local function cancelAim()
+	destroyAimPhase()
+	aimTarget = nil
+	if inputMode == "move" then
+		clearHighlights()
+		for _, tile in ipairs(currentPrompt.moveCandidates) do
+			createTileHighlight(tile.tileX, tile.tileY, Color3.fromRGB(50, 200, 50), 0.55)
+		end
+	elseif inputMode == "attack" then
+		clearHighlights()
+		for _, t in ipairs(currentPrompt.attackTargets) do
+			createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 60, 60), 0.45)
+		end
+	elseif inputMode == "skill" and selectedSkill then
+		clearHighlights()
+		local hColor = selectedSkill.isHealing and Color3.fromRGB(50, 220, 50) or Color3.fromRGB(180, 80, 255)
+		for _, t in ipairs(selectedSkill.targets) do
+			createTileHighlight(t.tileX, t.tileY, hColor, 0.45)
+		end
+	end
+end
 
 mouse.Button1Down:Connect(function()
 	local tilePart = getTileUnderMouse()
 	local bx, by = tileToBattle(tilePart)
 
-	-- Always show unit inspector when clicking a tile with a unit
+	-- Always show unit inspector on unit click
 	if bx then
 		for uid, data in pairs(unitData) do
 			if data.tileX == bx and data.tileY == by and data.isAlive ~= false then
@@ -659,18 +1166,25 @@ mouse.Button1Down:Connect(function()
 		end
 	end
 
-	-- If not in player input mode, stop here (inspector-only click)
+	-- If in aim phase and clicking elsewhere, cancel aim
+	if aimTarget then
+		cancelAim()
+		return
+	end
+
+	-- If not in input mode, just inspector
 	if not isPlayerTurn or not inputMode then return end
 	if not bx then return end
 
 	if inputMode == "move" then
 		for _, tile in ipairs(currentPrompt.moveCandidates) do
 			if tile.tileX == bx and tile.tileY == by then
-				clearHighlights(); destroyActionBar()
-				isPlayerTurn = false; inputMode = nil
-				BattleEvents.PlayerCommand:FireServer({
-					actionType = "Move", tileX = bx, tileY = by, pathCost = tile.pathCost
-				})
+				aimTarget = tile
+				clearHighlights()
+				createTileHighlight(bx, by, Color3.fromRGB(255, 255, 80), 0.35)
+				showAimConfirm(function()
+					commitCommand({ actionType = "Move", tileX = bx, tileY = by, pathCost = tile.pathCost })
+				end, cancelAim)
 				return
 			end
 		end
@@ -678,11 +1192,13 @@ mouse.Button1Down:Connect(function()
 	elseif inputMode == "attack" then
 		for _, t in ipairs(currentPrompt.attackTargets) do
 			if t.tileX == bx and t.tileY == by then
-				clearHighlights(); destroyActionBar()
-				isPlayerTurn = false; inputMode = nil
-				BattleEvents.PlayerCommand:FireServer({
-					actionType = "Attack", targetId = t.id
-				})
+				aimTarget = t
+				clearHighlights()
+				createTileHighlight(bx, by, Color3.fromRGB(255, 255, 80), 0.35)
+				showPrediction(t.id, t.predicted or 0, "damage")
+				showAimConfirm(function()
+					commitCommand({ actionType = "Attack", targetId = t.id })
+				end, cancelAim)
 				return
 			end
 		end
@@ -690,11 +1206,13 @@ mouse.Button1Down:Connect(function()
 	elseif inputMode == "skill" and selectedSkill then
 		for _, t in ipairs(selectedSkill.targets) do
 			if t.tileX == bx and t.tileY == by then
-				clearHighlights(); destroyActionBar()
-				isPlayerTurn = false; inputMode = nil
-				BattleEvents.PlayerCommand:FireServer({
-					actionType = "Skill", skillId = selectedSkill.id, targetId = t.id
-				})
+				aimTarget = t
+				clearHighlights()
+				createTileHighlight(bx, by, Color3.fromRGB(255, 255, 80), 0.35)
+				showPrediction(t.id, t.predicted or 0, t.predType or "damage")
+				showAimConfirm(function()
+					commitCommand({ actionType = "Skill", skillId = selectedSkill.id, targetId = t.id })
+				end, cancelAim)
 				return
 			end
 		end
@@ -727,6 +1245,11 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 			updateMpBar(data.unitId, data.currentMp, data.maxMp or unitData[data.unitId].maxMp or 0)
 		end
 	end
+	-- Use the authoritative snapshot from the server
+	if data.allUnitsRt and #data.allUnitsRt > 0 then
+		timelineSnapshot = data.allUnitsRt
+		updateTimeline(data.allUnitsRt, nil, nil)
+	end
 	local token = unitTokens[data.unitId]
 	if token then
 		token.label.TextColor3 = Color3.fromRGB(255, 230, 80)
@@ -734,8 +1257,25 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	showUnitInspector(data.unitId)
 end)
 
+-- Real-time turn order updates (fires after each AI action too)
+BattleEvents.TurnOrderUpdate.OnClientEvent:Connect(function(data)
+	if not data then return end
+	local snapshot = data.units
+	local ct = data.currentCt
+	if snapshot and #snapshot > 0 then
+		timelineSnapshot = snapshot
+		if ct then currentBattleCt = ct end
+		-- Only update if player isn't actively previewing an action
+		if not aimTarget and (not isPlayerTurn or not inputMode) then
+			updateTimeline(snapshot, nil, nil)
+		end
+	end
+end)
+
 BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
 	currentPrompt = prompt
+	timelineSnapshot = prompt.timeline
+	if prompt.currentCt then currentBattleCt = prompt.currentCt end
 	isPlayerTurn  = true
 	inputMode     = nil
 	selectedSkill = nil
@@ -801,6 +1341,18 @@ end)
 BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
 	local token = unitTokens[data.unitId]
 	if token then
+		-- Update local unitData so inspector shows it immediately
+		if unitData[data.unitId] then
+			if not unitData[data.unitId].statuses then
+				unitData[data.unitId].statuses = {}
+			end
+			table.insert(unitData[data.unitId].statuses, {
+				id             = data.statusId,
+				remainingTurns = data.remainingTurns or 0,
+				nextDamage     = data.nextDamage,
+				storedBurn     = data.storedBurn,
+			})
+		end
 		local color = data.statusId == "Poison" and Color3.fromRGB(80, 200, 80)
 			or data.statusId == "Burn" and Color3.fromRGB(255, 140, 40)
 			or Color3.fromRGB(180, 80, 255)
@@ -811,6 +1363,15 @@ end)
 BattleEvents.StatusExpired.OnClientEvent:Connect(function(data)
 	local token = unitTokens[data.unitId]
 	if token then
+		-- Remove from local unitData
+		if unitData[data.unitId] and unitData[data.unitId].statuses then
+			for i, s in ipairs(unitData[data.unitId].statuses) do
+				if s.id == data.statusId then
+					table.remove(unitData[data.unitId].statuses, i)
+					break
+				end
+			end
+		end
 		showFloatingText(token.part.Position + Vector3.new(0, 1, 0), "✗ " .. data.statusId, Color3.fromRGB(180, 180, 180), 1.2)
 	end
 end)
@@ -821,6 +1382,10 @@ BattleEvents.UnitDefeated.OnClientEvent:Connect(function(data)
 	if unitData[data.unitId] then unitData[data.unitId].isAlive = false end
 	token.part.Color = DEFEATED_COLOR
 	token.part.Transparency = 0.5
+	-- Hide HP/MP/Name bars for KO'd units
+	if token.hpBillboard then token.hpBillboard.Enabled = false end
+	if token.mpBillboard then token.mpBillboard.Enabled = false end
+	if token.nameBillboard then token.nameBillboard.Enabled = false end
 end)
 
 BattleEvents.TurnEnded.OnClientEvent:Connect(function(data)

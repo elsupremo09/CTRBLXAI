@@ -46,6 +46,7 @@ local EVENT_NAMES = {
 	-- Player input (Slice 3)
 	"PlayerTurnPrompt",
 	"PlayerCommand",
+	"TurnOrderUpdate",
 }
 
 local BattleEvents = {}

@@ -71,7 +71,8 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 					addedBurn = math.round(fireDamageDealt * def.burnFraction)
 				end
 				inst.storedBurn = (inst.storedBurn or 0) + addedBurn
-				inst.remainingTurns = inst.remainingTurns + def.duration
+				-- "Extends duration" = refresh to full duration (not additive)
+				inst.remainingTurns = def.duration
 				inst.sourceUnitId = sourceUnitId
 				print(string.format(
 					"[StatusService] %s on %s ACCUMULATED (+%d stored, %d turns now)",
@@ -227,10 +228,24 @@ end
 function StatusService.GetStatusSummary(unit)
 	local summary = {}
 	for _, inst in ipairs(unit.statusInstances) do
+		local def = GameConstants.STATUSES[inst.id]
+		-- Calculate expected next-tick damage
+		local nextDamage = nil
+		if def then
+			if def.dotType == "Poison" then
+				nextDamage = math.max(1, math.round(unit.maxHp * def.dotFraction))
+			elseif def.dotType == "Burn" then
+				local stored = inst.storedBurn or 0
+				if stored > 0 then
+					nextDamage = math.max(1, math.round(stored))
+				end
+			end
+		end
 		table.insert(summary, {
 			id             = inst.id,
 			remainingTurns = inst.remainingTurns,
 			storedBurn     = inst.storedBurn,
+			nextDamage     = nextDamage,
 		})
 	end
 	return summary
