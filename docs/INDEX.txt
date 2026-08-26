@@ -92,3 +92,45 @@ KEY DECISIONS (avoid re-looking these up)
 - Save data: compact numeric IDs + lookup tables. Split across 3 DataStore keys.
 - All game logic: server-side only. Client displays and sends commands.
 - Deterministic: same seed + same content version = same result. No random variance in combat.
+
+--- ITEM RARITY & BONUS SYSTEM (added 2026-08-26) ---
+
+item_rarity_framework (9 rows)
+  Rarity tiers with Bonus BP budgets. Columns: rarity, normal_bonus_bp, two_hand_bonus_bp, tolerance, valid_band, passive_slots, typical_roll, status.
+  Query: SELECT * FROM item_rarity_framework ORDER BY id
+
+item_rarity_rules (16 rows)
+  Framework rules (key-value pairs): scaling formula, stacking, eligibility, budget completion, safety rejection.
+  Query: SELECT rule_name, rule_value FROM item_rarity_rules
+
+bonus_numerical_attributes (117 rows)
+  Full catalog of tiered stat bonuses that can roll on items. 5-6 tiers per family.
+  Families: Weapon Attack, Weapon Defense, Weapon RT Delay, Equipment Defense, HP, MP, Weight Reduction, STR/AGI/INT/VIT/DEX/LUK Bonus, Fortune, Precision, Evasiveness, Healing Output, Debuff Resistance, RT Delay Resistance, Collision Damage, Fall Damage, Collision Resistance, Fall Resistance, Item Direct Damage, Skill Potency.
+  Columns: attribute_id, attribute_family, tier, bp_cost, minimum_rarity, eligible_equipment, level_scaled_flat_l99, fixed_pct_or_value, operation, calculation_rule, roll_weight_note, status.
+  Query: SELECT attribute_id, attribute_family, tier, bp_cost, minimum_rarity, calculation_rule FROM bonus_numerical_attributes WHERE attribute_family = 'X'
+
+bonus_passives (36 rows)
+  Bonus passives that can roll on items (max 1 per standard item, 2 for 2H).
+  Types: Reused weapon passives, threshold passives, elemental transformations, pattern conversions, elemental wards/negation/absorption.
+  Columns: passive_id, passive_name, source_type, bp_cost, minimum_rarity, eligible_item_types, effect_summary, stacking_rule, roll_weight, passive_slot_cost, status.
+  Query: SELECT passive_id, passive_name, bp_cost, minimum_rarity, effect_summary FROM bonus_passives
+
+roll_weight_model (8 rows)
+  How attribute roll weights work: native affinity (High), related (Medium), off-theme (Low).
+  Query: SELECT * FROM roll_weight_model
+
+item_generation_steps (10 rows)
+  10-step procedural item generation pipeline. From base selection through BP validation to save.
+  Query: SELECT step_number, operation, important_rule FROM item_generation_steps ORDER BY step_number
+
+--- PERSISTENT HP/MP SYSTEM (added 2026-08-26) ---
+
+persistent_hp_mp_rules (25 rows)
+  HP and MP persist between battles. No auto-refill. Post-battle recovery, KO penalty, MP Regen, base rules, max changes, passive interactions, deployment UI.
+  Key formulas:
+    Post-battle recovery: ceil(Max HP × 0.35) and ceil(Max MP × 0.35) for all surviving units
+    MP Regen: 6 × Total INT / (200 + Total INT) MP per 1000 CT (accumulator-based, CT-elapsed)
+    KO: zero recovery, cleared only at base
+    Base: replenishes Item charges but does NOT restore HP/MP
+  Query: SELECT section, topic, rule FROM persistent_hp_mp_rules WHERE section = 'X'
+  Sections: Persistent Resources, Post-Battle Recovery, KO Rules, Natural MP Regen, Recovery Stalling, Base Rules, Max Resource Changes, Passive Interactions, Deployment UI, Starter Support
