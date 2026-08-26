@@ -195,12 +195,16 @@ end
 
 function TargetingService.GetAttackCandidates(actor, allUnits, range)
 	range = range or 1
+	-- Support minimum range (ranged weapons cannot hit adjacent targets)
+	local minRange = actor.weaponMinRange or 1
+
 	local candidates = {}
 
 	for _, unit in ipairs(allUnits) do
 		if unit.isAlive and unit.side ~= actor.side then
 			local dist = chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
 			if dist <= range
+				and dist >= minRange
 				and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
 			then
 				table.insert(candidates, unit)
@@ -219,7 +223,13 @@ end
 --------------------------------------------------
 
 function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
-	local range = skillDef.range or 1
+	local baseRange = skillDef.range or 1
+	-- Missing 4 fix: Bonus Skill Range from INT
+	-- Rule: Bonus Skill Range = floor(INT / 75) + Flat bonuses
+	-- Default 100% inheritance unless skill declares otherwise
+	local int = actor.effectiveStats and actor.effectiveStats.INT or 10
+	local bonusRange = math.floor(int / 75)
+	local range = baseRange + bonusRange
 	local targetRules = skillDef.targetRules or "Enemy Unit"
 	local candidates = {}
 
@@ -361,7 +371,8 @@ function TargetingService.ValidateSelection(
 			return false, "Cannot attack an ally."
 		end
 
-		local candidates = TargetingService.GetAttackCandidates(actor, allUnits, 1)
+		-- Use actor's equipped weapon range for validation
+		local candidates = TargetingService.GetAttackCandidates(actor, allUnits, actor.weaponMaxRange or 1)
 		for _, c in ipairs(candidates) do
 			if c == selection then
 				return true, nil

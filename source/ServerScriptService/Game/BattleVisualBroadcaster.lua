@@ -201,6 +201,18 @@ function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName
 	task.wait(PACE.Healing)
 end
 
+-- Slice 4A: broadcast channel fizzle (target died, MP insufficient, etc.)
+function BattleVisualBroadcaster.ChannelFizzled(actor, skillName, reason)
+	BattleEvents.ChannelFizzled:FireAllClients({
+		actorId   = actor.id,
+		skillName = skillName,
+		reason    = reason or "fizzled",
+		tileX     = actor.tileX,
+		tileY     = actor.tileY,
+	})
+	task.wait(PACE.Action)
+end
+
 -- Slice 3: send skill card data to a specific player
 function BattleVisualBroadcaster.SendSkillCards(player, unit, skills)
 	local serializedSkills = {}

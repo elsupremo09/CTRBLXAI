@@ -77,7 +77,10 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	)
 
 	local rawDamage   = ap - effectiveDefense
-	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod))
+	-- Combat Fortune: LUK difference modifies damage (step 7 in pipeline)
+	local fortuneMod = GameConstants.CalcCombatFortune(aStats.LUK, dStats.LUK)
+
+	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod * fortuneMod))
 
 	return {
 		type           = "Damage",
@@ -123,7 +126,10 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	)
 
 	local rawDamage   = sp - effectiveDefense
-	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod))
+	-- Combat Fortune: LUK difference modifies damage (step 7 in pipeline)
+	local fortuneMod = GameConstants.CalcCombatFortune(aStats.LUK, dStats.LUK)
+
+	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod * fortuneMod))
 
 	return {
 		type           = "Damage",
@@ -160,9 +166,14 @@ function CombatResolver.ResolveHealing(caster, target, skillDef)
 	-- Skill Potency Multiplier = 1 + INT / (200 + INT)
 	local skillPotency = 1 + int / (200 + int)
 
-	-- Healing formula
+	-- Healing formula (base)
 	local baseHeal = 10 + 0.35 * int + weaponDamage * 0.30
-	local finalHeal = math.max(1, math.round(baseHeal * skillPotency))
+
+	-- Healing Efficiency: target's VIT increases received healing
+	-- Rule: Healing Efficiency = Healing × (1 + VIT / 300)
+	local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
+	local healEfficiency = 1 + targetVit / 300
+	local finalHeal = math.max(1, math.round(baseHeal * skillPotency * healEfficiency))
 
 	return {
 		type         = "Healing",

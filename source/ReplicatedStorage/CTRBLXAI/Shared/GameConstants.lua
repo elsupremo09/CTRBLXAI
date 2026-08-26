@@ -314,4 +314,37 @@ function GameConstants.CalcChannelTime(baseChannelTime, dex)
 	return math.max(1, math.round(baseChannelTime * (1 - reduction)))
 end
 
+--------------------------------------------------
+-- SHARED COMBAT FORMULAS
+--------------------------------------------------
+
+-- Bug 1 fix: STR reduces Effective Weapon WT
+-- Rule: Effective WT = WT × (1 - STR/(200+STR)) if WT>=0
+--        Effective WT = WT × (1 + STR/(200+STR)) if WT<0
+function GameConstants.CalcEffectiveWt(rawWt, str)
+	str = str or 0
+	rawWt = rawWt or 0
+	if rawWt >= 0 then
+		return rawWt * (1 - str / (200 + str))
+	else
+		return rawWt * (1 + str / (200 + str))
+	end
+end
+
+-- Missing 5: Combat Fortune (LUK damage modifier)
+-- Rule: Modifier = 0.40 × DeltaLUK / (abs(DeltaLUK) + 150)
+--       Multiplier = 1 + Modifier
+function GameConstants.CalcCombatFortune(attackerLuk, defenderLuk)
+	local delta = (attackerLuk or 10) - (defenderLuk or 10)
+	local modifier = 0.40 * delta / (math.abs(delta) + 150)
+	return 1 + modifier
+end
+
+-- Missing 6: LUK Starting RT
+-- Rule: Starting RT = round(Base RT × (1 - 0.30 × LUK / (100 + LUK)))
+function GameConstants.CalcStartingRt(baseRt, luk)
+	luk = luk or 10
+	return math.round(baseRt * (1 - 0.30 * luk / (100 + luk)))
+end
+
 return GameConstants

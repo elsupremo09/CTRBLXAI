@@ -95,6 +95,7 @@ visualFolder.Parent = workspace
 
 local isPlayerTurn    = false
 local currentPrompt   = nil
+local currentInspectedUnitId = nil
 local timelineSnapshot = nil  -- all alive units' RT snapshot, for simulation
 local currentBattleCt  = 0    -- current battle CT (for round boundary calculation)
 local inputMode       = nil  -- nil, "move", "attack", "skill"
@@ -647,7 +648,7 @@ local function showPrediction(targetId, value, predType)
 	Instance.new("UICorner", label).CornerRadius = UDim.new(0, 6)
 end
 
-local function showAimConfirm(onConfirm, onCancel)
+local function showAimConfirm(onConfirm, onCancel, warningText)
 	if aimConfirmGui then aimConfirmGui:Destroy() end
 
 	local gui = Instance.new("ScreenGui")
@@ -657,8 +658,10 @@ local function showAimConfirm(onConfirm, onCancel)
 	gui.Parent = player:WaitForChild("PlayerGui")
 	aimConfirmGui = gui
 
+	local frameHeight = warningText and 110 or 45
+
 	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(0, 220, 0, 45)
+	frame.Size = UDim2.new(0, 280, 0, frameHeight)
 	frame.AnchorPoint = Vector2.new(0.5, 1)
 	frame.Position = UDim2.new(0.5, 0, 0.82, 0)
 	frame.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
@@ -667,10 +670,29 @@ local function showAimConfirm(onConfirm, onCancel)
 	frame.Parent = gui
 	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
+	-- Warning text label (if provided)
+	if warningText then
+		local warnLabel = Instance.new("TextLabel")
+		warnLabel.Size = UDim2.new(1, -16, 0, 60)
+		warnLabel.Position = UDim2.new(0, 8, 0, 5)
+		warnLabel.BackgroundTransparency = 1
+		warnLabel.Font = Enum.Font.SourceSans
+		warnLabel.TextSize = 13
+		warnLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
+		warnLabel.TextWrapped = true
+		warnLabel.TextXAlignment = Enum.TextXAlignment.Center
+		warnLabel.TextYAlignment = Enum.TextYAlignment.Top
+		warnLabel.Text = warningText
+		warnLabel.Parent = frame
+	end
+
 	local layout = Instance.new("UIListLayout")
 	layout.FillDirection = Enum.FillDirection.Horizontal
 	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	if warningText then
+		layout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+	end
 	layout.Padding = UDim.new(0, 10)
 	layout.Parent = frame
 
@@ -775,7 +797,7 @@ local function createActionBar(prompt)
 		end
 	end)
 
-	makeButton("Attack", "⚔ Attack", "", Color3.fromRGB(180, 60, 60), #prompt.attackTargets > 0, function()
+	local atkBtn = makeButton("Attack", "⚔ Attack", "", Color3.fromRGB(180, 60, 60), #prompt.attackTargets > 0, function()
 		inputMode = "attack"; selectedSkill = nil; clearHighlights()
 		-- Preview: use attack RT cost
 		local previewRt = (prompt.attackRt or 80) + (prompt.unitBaseRt or 400)
@@ -784,6 +806,44 @@ local function createActionBar(prompt)
 			createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 60, 60), 0.45)
 		end
 	end)
+
+	-- Attack tooltip on hover
+	if atkBtn then
+		atkBtn.MouseEnter:Connect(function()
+			hideSkillTooltip()
+			local gui = Instance.new("ScreenGui")
+			gui.Name = "SkillTooltipGui"
+			gui.ResetOnSpawn = false
+			gui.DisplayOrder = 120
+			gui.Parent = player:WaitForChild("PlayerGui")
+			skillTooltipGui = gui
+
+			local tip = Instance.new("TextLabel")
+			tip.Size = UDim2.new(0, 200, 0, 70)
+			tip.AnchorPoint = Vector2.new(0.5, 1)
+			tip.Position = UDim2.new(0.5, 0, 0.78, 0)
+			tip.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+			tip.BackgroundTransparency = 0.05
+			tip.BorderSizePixel = 0
+			tip.Font = Enum.Font.SourceSans
+			tip.TextSize = 12
+			tip.TextColor3 = Color3.fromRGB(220, 220, 220)
+			tip.TextWrapped = true
+			tip.TextYAlignment = Enum.TextYAlignment.Top
+			tip.Text = string.format(
+				"Basic Attack\nPhysical melee/ranged strike\nRT Cost: %d | RT Delay: %d\nWeapon Dmg: %d",
+				prompt.attackRt or 0,
+				prompt.weaponRtDelay or 0,
+				prompt.weaponDamage or 0
+			)
+			tip.Parent = gui
+			Instance.new("UICorner", tip).CornerRadius = UDim.new(0, 6)
+			Instance.new("UIPadding", tip).PaddingLeft = UDim.new(0, 6)
+		end)
+		atkBtn.MouseLeave:Connect(function()
+			hideSkillTooltip()
+		end)
+	end
 
 	makeButton("Wait", "⏸ Wait", "", Color3.fromRGB(80, 80, 80), true, function()
 		-- Preview: wait RT (rest)
@@ -842,7 +902,7 @@ local function createActionBar(prompt)
 				tip.TextWrapped = true
 				tip.TextYAlignment = Enum.TextYAlignment.Top
 				tip.Text = string.format(
-					"%s\n%s\nPower: %s | Range: %d | RT: %d\nMP: %d | Pattern: %s%s",
+					"%s\n%s\nPower: %s | Range: %d | RT: %d\nMP: %d | Pattern: %s%s%s",
 					skill.name,
 					skill.description or "",
 					skill.power and tostring(skill.power) or "—",
@@ -850,7 +910,8 @@ local function createActionBar(prompt)
 					skill.rtCost or 0,
 					skill.mpCost or 0,
 					skill.pattern or "Single",
-					skill.channelTime and skill.channelTime > 0 and ("\nChannel: " .. skill.channelTime .. " CT") or ""
+					skill.channelTime and skill.channelTime > 0 and ("\nChannel: " .. skill.channelTime .. " CT") or "",
+					skill.willEndTurn and "\n⚠ Ends turn immediately" or ""
 				)
 				tip.Parent = gui
 				Instance.new("UICorner", tip).CornerRadius = UDim.new(0, 6)
@@ -874,9 +935,12 @@ end
 --------------------------------------------------
 
 local unitInspectorGui = nil
+local inspectedUnitId  = nil  -- tracks currently displayed unit for live refresh
 
 showUnitInspector = function(uid)
 	if unitInspectorGui then unitInspectorGui:Destroy() end
+	inspectedUnitId = uid
+
 
 	local data = unitData[uid]
 	if not data then return end
@@ -1062,6 +1126,14 @@ end
 
 local function hideUnitInspector()
 	if unitInspectorGui then unitInspectorGui:Destroy(); unitInspectorGui = nil end
+	inspectedUnitId = nil
+end
+
+-- Refresh inspector live when the currently-displayed unit's data changes
+local function refreshInspectorIfShowing(unitId)
+	if inspectedUnitId and inspectedUnitId == unitId then
+		showUnitInspector(unitId)
+	end
 end
 
 --------------------------------------------------
@@ -1210,9 +1282,26 @@ mouse.Button1Down:Connect(function()
 				clearHighlights()
 				createTileHighlight(bx, by, Color3.fromRGB(255, 255, 80), 0.35)
 				showPrediction(t.id, t.predicted or 0, t.predType or "damage")
+				-- Channeling warning: if skill will end turn and AP > 1, confirm first
+				local isChannel = selectedSkill.channelTime and selectedSkill.channelTime > 0
+				local unitAp = currentPrompt and currentPrompt.currentAp or 1
+				if isChannel and unitAp > 1 then
+					showAimConfirm(function()
+						-- Show channel warning dialog
+						destroyAimPhase()
+						local warnText = string.format(
+							"⚠ %s requires channeling.\nThis will end your turn immediately.\nYou still have %d AP remaining.\n\nCommit?",
+							selectedSkill.name or "Skill", unitAp - 1
+						)
+						showAimConfirm(function()
+							commitCommand({ actionType = "Skill", skillId = selectedSkill.id, targetId = t.id })
+						end, cancelAim, warnText)
+					end, cancelAim)
+				else
 				showAimConfirm(function()
 					commitCommand({ actionType = "Skill", skillId = selectedSkill.id, targetId = t.id })
 				end, cancelAim)
+				end
 				return
 			end
 		end
@@ -1309,6 +1398,7 @@ BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
 		end
 		showFloatingText(targetToken.part.Position, "-" .. data.damage, Color3.fromRGB(255, 80, 80))
 	end
+	refreshInspectorIfShowing(data.targetId)
 end)
 
 BattleEvents.DotDamage.OnClientEvent:Connect(function(data)
@@ -1321,6 +1411,7 @@ BattleEvents.DotDamage.OnClientEvent:Connect(function(data)
 			or Color3.fromRGB(200, 80, 200)
 		showFloatingText(token.part.Position, "-" .. data.damage .. " " .. data.statusId, color)
 	end
+	refreshInspectorIfShowing(data.unitId)
 end)
 
 BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
@@ -1336,27 +1427,44 @@ BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
 		end
 		showFloatingText(targetToken.part.Position, "+" .. data.amount, Color3.fromRGB(80, 220, 80))
 	end
+	refreshInspectorIfShowing(data.targetId)
 end)
 
 BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
 	local token = unitTokens[data.unitId]
 	if token then
-		-- Update local unitData so inspector shows it immediately
+		-- Update local unitData so inspector shows it immediately.
+		-- If the status already exists (reapplication/accumulate), UPDATE it
+		-- instead of inserting a duplicate.
 		if unitData[data.unitId] then
 			if not unitData[data.unitId].statuses then
 				unitData[data.unitId].statuses = {}
 			end
-			table.insert(unitData[data.unitId].statuses, {
-				id             = data.statusId,
-				remainingTurns = data.remainingTurns or 0,
-				nextDamage     = data.nextDamage,
-				storedBurn     = data.storedBurn,
-			})
+			local found = false
+			for _, existing in ipairs(unitData[data.unitId].statuses) do
+				if existing.id == data.statusId then
+					existing.remainingTurns = data.remainingTurns or 0
+					existing.nextDamage     = data.nextDamage
+					existing.storedBurn     = data.storedBurn
+					found = true
+					break
+				end
+			end
+			if not found then
+				table.insert(unitData[data.unitId].statuses, {
+					id             = data.statusId,
+					remainingTurns = data.remainingTurns or 0,
+					nextDamage     = data.nextDamage,
+					storedBurn     = data.storedBurn,
+				})
+			end
 		end
 		local color = data.statusId == "Poison" and Color3.fromRGB(80, 200, 80)
 			or data.statusId == "Burn" and Color3.fromRGB(255, 140, 40)
 			or Color3.fromRGB(180, 80, 255)
 		showFloatingText(token.part.Position + Vector3.new(0, 1, 0), "▼ " .. data.statusId, color, 1.2)
+
+		refreshInspectorIfShowing(data.unitId)
 	end
 end)
 
@@ -1373,6 +1481,15 @@ BattleEvents.StatusExpired.OnClientEvent:Connect(function(data)
 			end
 		end
 		showFloatingText(token.part.Position + Vector3.new(0, 1, 0), "✗ " .. data.statusId, Color3.fromRGB(180, 180, 180), 1.2)
+	end
+end)
+
+-- Slice 4A: Channel fizzle visual
+BattleEvents.ChannelFizzled.OnClientEvent:Connect(function(data)
+	local token = unitTokens[data.actorId]
+	if token then
+		local text = (data.skillName or "Skill") .. " fizzled!"
+		showFloatingText(token.part.Position + Vector3.new(0, 2, 0), text, Color3.fromRGB(200, 200, 200), 1.5)
 	end
 end)
 

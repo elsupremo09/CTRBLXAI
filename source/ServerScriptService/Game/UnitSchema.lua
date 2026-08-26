@@ -1,8 +1,22 @@
 -- UnitSchema.lua
--- CTRBLXAI | Slice 3
+-- CTRBLXAI | Slice 4A — Equipment Foundation
 --
 -- HP formula: HP = 50 + VIT × 4
--- MP formula: MP = 20 + INT × 2 (new in Slice 3)
+-- MP formula: MP = 20 + INT × 2
+--
+-- Slice 4A changes:
+--   - Equipment slots added to unit state
+--   - Doctrine reference added
+--   - Weapon stats read from equipped weapon (not flat input)
+--   - effectiveStats rebuilt by EquipmentService (not copied from input)
+--   - Backwards-compatible: if no equipment, uses legacy flat values
+
+local GameConstants = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("CTRBLXAI")
+		:WaitForChild("Shared")
+		:WaitForChild("GameConstants")
+)
 
 local UnitSchema = {}
 
@@ -27,6 +41,14 @@ local DEFAULT_RT = 100
 
 --------------------------------------------------
 -- CREATE
+--
+-- definition fields:
+--   REQUIRED: id, side, controller, tileX, tileY, stats
+--   OPTIONAL: equipmentSlots, doctrineId, weaponDamage (legacy),
+--             weaponWt (legacy), skillIds, startingRt, level
+--
+-- If equipmentSlots.MainHand is provided, weapon stats come from there.
+-- Otherwise falls back to legacy flat weaponDamage/weaponWt.
 --------------------------------------------------
 
 function UnitSchema.Create(definition)
@@ -60,7 +82,7 @@ function UnitSchema.Create(definition)
 		tileY         = definition.tileY,
 		facing        = definition.facing or "South",
 
-		-- Core stats
+		-- Core stats (permanent base — race growth + allocation)
 		baseStats     = {
 			STR = definition.stats.STR or 10,
 			AGI = definition.stats.AGI or 10,
@@ -69,6 +91,7 @@ function UnitSchema.Create(definition)
 			DEX = definition.stats.DEX or 10,
 			LUK = definition.stats.LUK or 10,
 		},
+		-- Effective stats (rebuilt by EquipmentService after doctrine+equipment)
 		effectiveStats = {
 			STR = definition.stats.STR or 10,
 			AGI = definition.stats.AGI or 10,
@@ -82,21 +105,34 @@ function UnitSchema.Create(definition)
 		maxHp         = maxHp,
 		currentHp     = maxHp,
 
-		-- Magic points (Slice 3)
+		-- Magic points
 		maxMp         = maxMp,
 		currentMp     = maxMp,
 
-		-- Weapon stats
+		-- Weapon stats (populated by EquipmentService.RebuildUnitStats or legacy)
 		weaponDamage  = definition.weaponDamage or 10,
 		weaponWt      = definition.weaponWt or 40,
+		weaponRtDelay = definition.weaponRtDelay or 0,
+		weaponDefense = definition.weaponDefense or 0,
+		weaponMinRange = definition.weaponMinRange or 1,
+		weaponMaxRange = definition.weaponMaxRange or 1,
+		weaponPattern = definition.weaponPattern or "Single",
+		weaponProjectileType = definition.weaponProjectileType or nil,
+		weaponHandClass = definition.weaponHandClass or "1H",
 
-		-- Timeline
-		remainingRt   = definition.startingRt or DEFAULT_RT,
+		-- Equipment (Slice 4A)
+		equipmentSlots = definition.equipmentSlots or nil,
+		doctrineId     = definition.doctrineId or nil,
+
+		-- Timeline: Starting RT uses LUK formula if no explicit override
+		-- Rule: Starting RT = round(Base RT × (1 - 0.30 × LUK / (100 + LUK)))
+		remainingRt   = definition.startingRt
+			or GameConstants.CalcStartingRt(GameConstants.BASE_RT_STANDARD, definition.stats.LUK or 10),
 
 		-- Turn resources
 		currentAp     = 0,
 
-		-- Skills (Slice 3: units can have multiple skills)
+		-- Skills (units can have multiple skills)
 		skillIds      = definition.skillIds or {},
 		-- Legacy single skill support
 		skillId       = definition.skillId or nil,
@@ -104,7 +140,7 @@ function UnitSchema.Create(definition)
 		-- Status effects
 		statusInstances = {},
 
-		-- Level (for tie-breaking)
+		-- Level (for tie-breaking and item level assignment)
 		level         = definition.level or 1,
 
 		-- Alive flag
@@ -167,7 +203,7 @@ end
 
 function UnitSchema.Describe(unit)
 	return string.format(
-		"[%s | %s | HP:%d/%d | MP:%d/%d | AP:%d | RT:%d | Tile:(%d,%d)]",
+		"[%s | %s | HP:%d/%d | MP:%d/%d | AP:%d | RT:%d | Tile:(%d,%d) | WpnDmg:%d WT:%d]",
 		unit.name,
 		unit.side,
 		unit.currentHp,
@@ -177,7 +213,9 @@ function UnitSchema.Describe(unit)
 		unit.currentAp,
 		unit.remainingRt,
 		unit.tileX,
-		unit.tileY
+		unit.tileY,
+		unit.weaponDamage or 0,
+		unit.weaponWt or 0
 	)
 end
 

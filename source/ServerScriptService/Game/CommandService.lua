@@ -92,8 +92,12 @@ local function calcMoveRt(actor, tilesMoving)
 end
 
 local function calcBasicAttackBaseRt(actor)
+	-- DB formula: Basic Attack RT = round(Modified Base RT × 0.10) + Effective Weapon WT
+	-- Effective WT = raw WT × (1 - STR/(200+STR)) — STR reduces burden
 	local modBaseRt = StatusService.GetModifiedBaseRt(actor)
-	return math.round(modBaseRt * BASIC_ATTACK_RT_FACTOR)
+	local str = actor.effectiveStats and actor.effectiveStats.STR or 10
+	local effectiveWt = GameConstants.CalcEffectiveWt(actor.weaponWt or 0, str)
+	return math.round(modBaseRt * BASIC_ATTACK_RT_FACTOR) + math.round(effectiveWt)
 end
 
 --------------------------------------------------
@@ -353,13 +357,22 @@ function CommandService.ValidateAndCommit(
 
 	elseif actionType == "Attack" then
 		local target = selection
-		local effectiveWeaponWt = actor.weaponWt or 0
-		local rtCost = calcBasicAttackBaseRt(actor) + effectiveWeaponWt
+		-- calcBasicAttackBaseRt already includes Effective Weapon WT
+		local rtCost = calcBasicAttackBaseRt(actor)
 
 		local weaponDamage = actor.weaponDamage or 10
 		local outcome = CombatResolver.ResolveBasicAttack(actor, target, weaponDamage)
 		CombatResolver.ApplyOutcome(outcome, target)
 		BattleCoordinator.AccrueRt(state, rtCost)
+
+		-- Missing 7: Apply Weapon RT Delay to target (reduced by target VIT)
+		-- Rule: RT Delay Resistance = Incoming RT Delay × (1 - VIT / (300 + VIT))
+		local rawDelay = actor.weaponRtDelay or 0
+		if rawDelay > 0 and target.isAlive then
+			local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
+			local actualDelay = math.round(rawDelay * (1 - targetVit / (300 + targetVit)))
+			target.remainingRt = target.remainingRt + math.max(0, actualDelay)
+		end
 
 		print(string.format(
 			"[CommandService] ATTACK | %s -> %s | Dmg:%d | RT:%d | AP left:%d",
@@ -443,6 +456,14 @@ function CommandService.ValidateAndCommit(
 			local outcome = CombatResolver.ResolveSkill(actor, target, skillDef)
 			local actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target)
 			BattleCoordinator.AccrueRt(state, baseRtCost)
+
+			-- Missing 7: Apply Weapon RT Delay to target (for damage skills)
+			local rawDelay = actor.weaponRtDelay or 0
+			if rawDelay > 0 and target.isAlive then
+				local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
+				local actualDelay = math.round(rawDelay * (1 - targetVit / (300 + targetVit)))
+				target.remainingRt = target.remainingRt + math.max(0, actualDelay)
+			end
 
 			print(string.format(
 				"[CommandService] SKILL [%s] | %s -> %s | Dmg:%d | MP:%d | RT:%d | AP left:%d%s",

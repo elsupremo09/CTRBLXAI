@@ -22,6 +22,20 @@ local TargetingService        = require(Game:WaitForChild("TargetingService"))
 local BattleVisualBroadcaster = require(Game:WaitForChild("BattleVisualBroadcaster"))
 local StatusService           = require(Game:WaitForChild("StatusService"))
 local CombatResolver          = require(Game:WaitForChild("CombatResolver"))
+local ItemGenerator           = require(Game:WaitForChild("ItemGenerator"))
+local InventoryService        = require(Game:WaitForChild("InventoryService"))
+local EquipmentService        = require(Game:WaitForChild("EquipmentService"))
+
+local WeaponData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("WeaponData")
+)
+local DoctrineData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("DoctrineData")
+)
 
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -90,7 +104,30 @@ end
 -- UNIT DEFINITIONS
 -- Player units have controller = "Player" (waits for input)
 -- Enemy units have controller = "AI"
+--
+-- Slice 4A: Units now get equipment via ItemGenerator + EquipmentService.
+-- Player ID for inventory ownership:
 --------------------------------------------------
+
+local PLAYER_ID = "player_1"
+InventoryService.InitPlayer(PLAYER_ID)
+
+-- Helper: generate a weapon, add to inventory, equip on unit
+local function equipGeneratedWeapon(unit, archetypeId, itemLevel, rarity, seed)
+	local item = ItemGenerator.Generate({
+		baseArchetypeId = archetypeId,
+		itemLevel = itemLevel,
+		rarity = rarity,
+		seed = seed,
+		sourceType = "Debug",
+	})
+	if not item then
+		warn("[Main] Failed to generate weapon: " .. archetypeId)
+		return
+	end
+	InventoryService.AddItem(PLAYER_ID, item)
+	EquipmentService.Equip(unit, item, "MainHand")
+end
 
 local hero = UnitSchema.Create({
 	id           = "unit_hero",
@@ -100,11 +137,9 @@ local hero = UnitSchema.Create({
 	tileX        = 4,
 	tileY        = 2,
 	stats        = { STR = 18, AGI = 14, INT = 8, VIT = 16, DEX = 12, LUK = 10 },
-	weaponDamage = 18,
-	weaponWt     = 45,
 	skillIds     = { "skill_power_strike", "skill_sweeping_cut" },
-	startingRt   = math.round(GameConstants.BASE_RT_STANDARD * (1 - 0.30 * 10 / (100 + 10))),
 })
+equipGeneratedWeapon(hero, "WPN-SWORD", 5, "Uncommon", 1001)
 
 local mage = UnitSchema.Create({
 	id           = "unit_mage",
@@ -114,11 +149,9 @@ local mage = UnitSchema.Create({
 	tileX        = 3,
 	tileY        = 1,
 	stats        = { STR = 6, AGI = 10, INT = 20, VIT = 10, DEX = 14, LUK = 8 },
-	weaponDamage = 12,
-	weaponWt     = 30,
 	skillIds     = { "skill_fire_bolt", "skill_healing_light" },
-	startingRt   = math.round(GameConstants.BASE_RT_STANDARD * (1 - 0.30 * 8 / (100 + 8))),
 })
+equipGeneratedWeapon(mage, "WPN-WAND", 5, "Uncommon", 1002)
 
 local ranger = UnitSchema.Create({
 	id           = "unit_ranger",
@@ -128,11 +161,9 @@ local ranger = UnitSchema.Create({
 	tileX        = 5,
 	tileY        = 3,
 	stats        = { STR = 12, AGI = 16, INT = 8, VIT = 12, DEX = 18, LUK = 10 },
-	weaponDamage = 14,
-	weaponWt     = 30,
 	skillIds     = { "skill_crippling_shot", "skill_venom_strike" },
-	startingRt   = math.round(GameConstants.BASE_RT_STANDARD * (1 - 0.30 * 12 / (100 + 12))),
 })
+equipGeneratedWeapon(ranger, "WPN-CROSSBOW", 5, "Uncommon", 1003)
 
 local grunt = UnitSchema.Create({
 	id           = "unit_grunt",
@@ -142,11 +173,9 @@ local grunt = UnitSchema.Create({
 	tileX        = 5,
 	tileY        = 7,
 	stats        = { STR = 14, AGI = 10, INT = 6, VIT = 14, DEX = 8, LUK = 6 },
-	weaponDamage = 16,
-	weaponWt     = 50,
 	skillIds     = { "skill_venom_strike", "skill_crippling_shot" },
-	startingRt   = math.round(GameConstants.BASE_RT_STANDARD * (1 - 0.30 * 6 / (100 + 6))),
 })
+equipGeneratedWeapon(grunt, "WPN-SPEAR", 5, "Common", 2001)
 
 local pyro = UnitSchema.Create({
 	id           = "unit_pyro",
@@ -156,11 +185,9 @@ local pyro = UnitSchema.Create({
 	tileX        = 6,
 	tileY        = 7,
 	stats        = { STR = 8, AGI = 12, INT = 16, VIT = 10, DEX = 10, LUK = 8 },
-	weaponDamage = 14,
-	weaponWt     = 35,
 	skillIds     = { "skill_fire_bolt", "skill_power_strike" },
-	startingRt   = math.round(GameConstants.BASE_RT_STANDARD * (1 - 0.30 * 8 / (100 + 8))),
 })
+equipGeneratedWeapon(pyro, "WPN-STAFF", 5, "Common", 2002)
 
 local shaman = UnitSchema.Create({
 	id           = "unit_shaman",
@@ -170,11 +197,9 @@ local shaman = UnitSchema.Create({
 	tileX        = 4,
 	tileY        = 8,
 	stats        = { STR = 6, AGI = 8, INT = 18, VIT = 14, DEX = 12, LUK = 10 },
-	weaponDamage = 10,
-	weaponWt     = 25,
 	skillIds     = { "skill_healing_light", "skill_crippling_shot" },
-	startingRt   = math.round(GameConstants.BASE_RT_STANDARD * (1 - 0.30 * 6 / (100 + 6))),
 })
+equipGeneratedWeapon(shaman, "WPN-WAND", 5, "Common", 2003)
 
 local allUnitsList = { hero, mage, ranger, grunt, pyro, shaman }
 for _, u in ipairs(allUnitsList) do
@@ -271,6 +296,7 @@ local function buildTurnPrompt(unit)
 			table.insert(skills, {
 				id          = def.id,
 				name        = def.name,
+				willEndTurn = (def.channelTime or 0) > 0, -- warn player: channeling ends turn
 				mpCost      = def.mpCost or 0,
 				range       = def.range or 1,
 				pattern     = def.pattern or "Single",
@@ -293,7 +319,7 @@ local function buildTurnPrompt(unit)
 		table.insert(moveCandidates, { tileX = tile.tileX, tileY = tile.tileY, pathCost = tile.pathCost })
 	end
 
-	local attackCandidates = TargetingService.GetAttackCandidates(unit, state.units, 1)
+	local attackCandidates = TargetingService.GetAttackCandidates(unit, state.units, unit.weaponMaxRange or 1)
 	local attackTargets = {}
 	for _, c in ipairs(attackCandidates) do
 		-- Pre-calculate predicted basic attack damage for aim phase
@@ -327,10 +353,14 @@ local function buildTurnPrompt(unit)
 		unitBaseRt = StatusService.GetModifiedBaseRt(unit),
 		attackRt   = math.round(
 			StatusService.GetModifiedBaseRt(unit) * GameConstants.BASIC_ATTACK_RT_FACTOR
-		) + (unit.weaponWt or 40),
+		) + math.round(GameConstants.CalcEffectiveWt(
+			unit.weaponWt or 40, unit.effectiveStats and unit.effectiveStats.STR or 10
+		)),
 		waitRt     = math.round(
 			StatusService.GetModifiedBaseRt(unit) * GameConstants.REST_RT_MULTIPLIER
 		),
+		weaponRtDelay = unit.weaponRtDelay or 0,
+		weaponDamage  = unit.weaponDamage or 10,
 	}
 end
 
@@ -462,9 +492,13 @@ local function executePlayerCommand(unit, command)
 		-- Snapshot ALL units' HP before commit (for AOE detection)
 		local hpSnapshot = {}
 		local statusSnapshot = {}
+		local burnSnapshot = {}
 		for _, u in ipairs(state.units) do
 			hpSnapshot[u.id] = u.currentHp
 			statusSnapshot[u.id] = #u.statusInstances
+			-- Snapshot burn stored value for accumulation detection
+			local burnInst = StatusService.HasStatus(u, "Burn")
+			burnSnapshot[u.id] = burnInst and burnInst.storedBurn or 0
 		end
 
 		local selection = { target = target, skillId = command.skillId }
@@ -480,6 +514,14 @@ local function executePlayerCommand(unit, command)
 				local newStatus = nil
 				if #u.statusInstances > prevStatuses then
 					newStatus = u.statusInstances[#u.statusInstances].id
+				else
+					-- Detect refreshed/accumulated statuses (instance count didn't change)
+					if skillDef.appliesStatus and hpDiff > 0 then
+						local inst = StatusService.HasStatus(u, skillDef.appliesStatus)
+						if inst then
+							newStatus = skillDef.appliesStatus
+						end
+					end
 				end
 				if hpDiff ~= 0 or newStatus then
 					table.insert(results, {
@@ -693,6 +735,15 @@ local function runAiTurn(unit)
 			local newStatus = nil
 			if targetUnit and #targetUnit.statusInstances > statusesBefore then
 				newStatus = targetUnit.statusInstances[#targetUnit.statusInstances].id
+			else
+				-- Detect refreshed/accumulated statuses (e.g. Burn accumulation)
+				if targetUnit and actionType == "Skill" and selection and selection.skillId then
+					local def = CommandService.GetSkill(selection.skillId)
+					if def and def.appliesStatus and damage > 0 then
+						local inst = StatusService.HasStatus(targetUnit, def.appliesStatus)
+						if inst then newStatus = def.appliesStatus end
+					end
+				end
 			end
 
 			table.insert(actions, {
@@ -717,6 +768,8 @@ local function runAiTurn(unit)
 	end
 
 	local acted = false
+	-- Track if we have a deferred channeling skill to use as last action
+	local deferredChannel = nil
 
 	-- 1. Heal if ally below 50%
 	local healSkillDef = nil
@@ -731,14 +784,20 @@ local function runAiTurn(unit)
 	if healSkillDef and UnitSchema.HasEnoughMp(unit, healSkillDef.mpCost or 0) then
 		local lowestAlly, lowestPct = findLowestAlly(unit, allUnits)
 		if lowestAlly and lowestPct < 0.50 then
-			local candidates = TargetingService.GetSkillCandidates(unit, allUnits, healSkillDef)
-			for _, c in ipairs(candidates) do
-				if c.id == lowestAlly.id then
-					local ok = tryCommit("Skill",
-						{ target = c, skillId = healSkillDef.id },
-						healSkillDef.name
-					)
-					if ok then acted = true; break end
+			-- If channeling skill and AP > 1, defer it (do other actions first)
+			local isChannel = (healSkillDef.channelTime or 0) > 0
+			if isChannel and unit.currentAp > 1 then
+				deferredChannel = { skillDef = healSkillDef, targetId = lowestAlly.id }
+			else
+				local candidates = TargetingService.GetSkillCandidates(unit, allUnits, healSkillDef)
+				for _, c in ipairs(candidates) do
+					if c.id == lowestAlly.id then
+						local ok = tryCommit("Skill",
+							{ target = c, skillId = healSkillDef.id },
+							healSkillDef.name
+						)
+						if ok then acted = true; break end
+					end
 				end
 			end
 		end
@@ -749,11 +808,22 @@ local function runAiTurn(unit)
 		for _, sid in ipairs(unit.skillIds or {}) do
 			local def = CommandService.GetSkill(sid)
 			if def and not def.isHealing and UnitSchema.HasEnoughMp(unit, def.mpCost or 0) then
-				local candidates = TargetingService.GetSkillCandidates(unit, allUnits, def)
-				if #candidates > 0 then
-					local ok = tryCommit("Skill",
-						{ target = candidates[1], skillId = def.id }, def.name)
-					if ok then acted = true; break end
+				-- If channeling and AP > 1, defer
+				local isChannel = (def.channelTime or 0) > 0
+				if isChannel and unit.currentAp > 1 then
+					if not deferredChannel then
+						local candidates = TargetingService.GetSkillCandidates(unit, allUnits, def)
+						if #candidates > 0 then
+							deferredChannel = { skillDef = def, targetId = candidates[1].id }
+						end
+					end
+				else
+					local candidates = TargetingService.GetSkillCandidates(unit, allUnits, def)
+					if #candidates > 0 then
+						local ok = tryCommit("Skill",
+							{ target = candidates[1], skillId = def.id }, def.name)
+						if ok then acted = true; break end
+					end
 				end
 			end
 		end
@@ -761,7 +831,7 @@ local function runAiTurn(unit)
 
 	-- Second action
 	if acted and BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
-		local attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, 1)
+		local attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1)
 		if #attackCandidates > 0 then
 			tryCommit("Attack", attackCandidates[1], nil)
 		end
@@ -769,12 +839,12 @@ local function runAiTurn(unit)
 
 	-- 3. Basic attack
 	if not acted then
-		local attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, 1)
+		local attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1)
 		if #attackCandidates > 0 then
 			acted = true
 			tryCommit("Attack", attackCandidates[1], nil)
 			if BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
-				attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, 1)
+				attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1)
 				if #attackCandidates > 0 then
 					tryCommit("Attack", attackCandidates[1], nil)
 				end
@@ -825,8 +895,28 @@ local function runAiTurn(unit)
 				end
 			end
 			if not usedSkill then
-				local attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, 1)
+				local attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1)
 				if #attackCandidates > 0 then tryCommit("Attack", attackCandidates[1], nil) end
+			end
+		end
+	end
+
+	-- 5. Execute deferred channeling skill (last action, so no AP is wasted)
+	if deferredChannel and BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
+		local def = deferredChannel.skillDef
+		local targetId = deferredChannel.targetId
+		-- Find the target unit
+		local target = nil
+		for _, u in ipairs(allUnits) do
+			if u.id == targetId and u.isAlive then target = u; break end
+		end
+		if target and UnitSchema.HasEnoughMp(unit, def.mpCost or 0) then
+			local candidates = TargetingService.GetSkillCandidates(unit, allUnits, def)
+			for _, c in ipairs(candidates) do
+				if c.id == targetId then
+					tryCommit("Skill", { target = c, skillId = def.id }, def.name)
+					break
+				end
 			end
 		end
 	end
@@ -843,10 +933,19 @@ end
 --------------------------------------------------
 
 local function handleChannelingActivation(activeUnit)
+	-- Grab skill name before activation clears channeling data
+	local channeledSkillName = activeUnit.channelingData
+		and activeUnit.channelingData.skillDef
+		and (activeUnit.channelingData.skillDef.name or activeUnit.channelingData.skillDef.id)
+		or "Unknown"
+
 	local success, result = CommandService.ActivateChanneledSkill(state, activeUnit)
 	local actions = {}
 
-	if success and result then
+	if not success then
+		-- Fizzle: target died, MP insufficient, etc.
+		BattleVisualBroadcaster.ChannelFizzled(activeUnit, channeledSkillName, result or "fizzled")
+	elseif result then
 		if result.type == "Healing" then
 			table.insert(actions, {
 				actionType = "Skill", unit = activeUnit, target = result.target,
@@ -927,6 +1026,7 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 
 	-- Determine turn handler
 	local actions
+	local wasChanneling = BattleCoordinator.IsChanneling(activeUnit)
 	if BattleCoordinator.IsChanneling(activeUnit) then
 		actions = handleChannelingActivation(activeUnit)
 	elseif activeUnit.controller == "Player" then
@@ -936,7 +1036,10 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 	end
 
 	-- Broadcast
-	if activeUnit.controller ~= "Player" then
+	-- AI actions: broadcast all at once after turn.
+	-- Player actions: broadcast immediately per-action inside runPlayerTurn.
+	-- Channeling activations: always broadcast here (player didn't trigger them manually).
+	if activeUnit.controller ~= "Player" or wasChanneling then
 		broadcastActions(actions, activeUnit)
 	end
 

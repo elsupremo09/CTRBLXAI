@@ -117,13 +117,17 @@ end
 
 function StatusService.ProcessStartOfTurn(unit)
 	local dotEvents = {}
+	-- Debuff Resistance: VIT reduces incoming DoT damage
+	-- Rule: Debuff Resistance Multiplier = 1 - VIT / (300 + VIT)
+	local vit = unit.effectiveStats and unit.effectiveStats.VIT or 10
+	local debuffResist = 1 - vit / (300 + vit)
 
 	for _, inst in ipairs(unit.statusInstances) do
 		local def = GameConstants.STATUSES[inst.id]
 		if not def or not def.dotType then
 			-- skip
 		elseif def.dotType == "Poison" then
-			local damage = math.max(1, math.round(unit.maxHp * def.dotFraction))
+			local damage = math.max(1, math.round(unit.maxHp * def.dotFraction * debuffResist))
 			table.insert(dotEvents, {
 				statusId     = "Poison",
 				damage       = damage,
@@ -132,7 +136,7 @@ function StatusService.ProcessStartOfTurn(unit)
 		elseif def.dotType == "Burn" then
 			local storedBurn = inst.storedBurn or 0
 			if storedBurn > 0 then
-				local damage = math.max(1, math.round(storedBurn))
+				local damage = math.max(1, math.round(storedBurn * debuffResist))
 				table.insert(dotEvents, {
 					statusId     = "Burn",
 					damage       = damage,
