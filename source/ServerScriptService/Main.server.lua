@@ -25,6 +25,7 @@ local CombatResolver          = require(Game:WaitForChild("CombatResolver"))
 local ItemGenerator           = require(Game:WaitForChild("ItemGenerator"))
 local InventoryService        = require(Game:WaitForChild("InventoryService"))
 local EquipmentService        = require(Game:WaitForChild("EquipmentService"))
+local PersistentStateService  = require(Game:WaitForChild("PersistentStateService"))
 
 local WeaponData = require(
 	game:GetService("ReplicatedStorage")
@@ -35,6 +36,11 @@ local DoctrineData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
 		:WaitForChild("DoctrineData")
+)
+local SkillData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("SkillData")
 )
 
 local GameConstants = require(
@@ -206,6 +212,17 @@ for _, u in ipairs(allUnitsList) do
 	setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
 end
 
+-- Register persistent state for player units (Slice 4B)
+PersistentStateService.InitPlayer(PLAYER_ID)
+for _, u in ipairs(allUnitsList) do
+	if u.side == "Player" then
+		local ps = PersistentStateService.GetUnitState(PLAYER_ID, u.id)
+		if not ps then
+			PersistentStateService.RegisterNewUnit(PLAYER_ID, u.id, u.maxHp, u.maxMp)
+		end
+	end
+end
+
 print("====================================")
 print("CTRBLXAI — Slice 3: Skills and Real Combat")
 print("====================================")
@@ -256,6 +273,7 @@ local function buildTurnPrompt(unit)
 				remainingRt = u.remainingRt,
 				currentHp   = u.currentHp,
 				maxHp       = u.maxHp,
+				isActive    = (u.id == unit.id), -- mark the actual active unit
 				isChanneling = u.isChanneling or false,
 				channelRt   = u.channelRt or 0,
 				channeledSkillName = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.name or nil,
@@ -342,6 +360,7 @@ local function buildTurnPrompt(unit)
 		maxMp          = unit.maxMp,
 		currentHp      = unit.currentHp,
 		maxHp          = unit.maxHp,
+		guardUsed      = unit.guardUsedThisTurn or false,
 		tileX          = unit.tileX,
 		tileY          = unit.tileY,
 		skills         = skills,
@@ -351,6 +370,7 @@ local function buildTurnPrompt(unit)
 		currentCt      = state.ct,
 		-- RT cost data so client can preview turn order shifts
 		unitBaseRt = StatusService.GetModifiedBaseRt(unit),
+		turnRtAccrued = state.turnRtAccrued or 0,
 		attackRt   = math.round(
 			StatusService.GetModifiedBaseRt(unit) * GameConstants.BASIC_ATTACK_RT_FACTOR
 		) + math.round(GameConstants.CalcEffectiveWt(
@@ -420,6 +440,16 @@ local function executePlayerCommand(unit, command)
 	if actionType == "Wait" then
 		CommandService.ValidateAndCommit(state, unit.id, "Wait", nil)
 		return { actionType = "Wait", unit = unit }
+	end
+
+	if actionType == "Guard" then
+		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Guard", nil)
+		if ok then
+			return { actionType = "Guard", unit = unit }
+		else
+			warn("[Main] Guard rejected: " .. (reason or "unknown"))
+			return nil
+		end
 	end
 
 	if actionType == "Move" then
@@ -612,6 +642,9 @@ local function broadcastActions(actions, activeUnit)
 					end
 				end
 			end
+
+		elseif action.actionType == "Guard" then
+			-- Guard visual already broadcast by CommandService; nothing extra needed here
 		end
 	end
 
@@ -921,6 +954,15 @@ local function runAiTurn(unit)
 		end
 	end
 
+	-- 6. Guard if low HP and have AP remaining (defensive fallback)
+	if BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
+		local hpPct = unit.currentHp / unit.maxHp
+		if hpPct < 0.40 and not unit.guardUsedThisTurn then
+			tryCommit("Guard", nil, nil)
+			table.insert(actions, { actionType = "Guard", unit = unit })
+		end
+	end
+
 	if BattleCoordinator.GetPhase(state) == "TurnOpen" then
 		CommandService.ValidateAndCommit(state, unit.id, "Wait", nil)
 	end
@@ -979,6 +1021,90 @@ end
 -- BROADCAST ACTIONS HELPER
 --------------------------------------------------
 
+
+--------------------------------------------------
+-- UNIT INSPECT REQUEST (3-tab panel data)
+--------------------------------------------------
+
+BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId)
+	-- Find the unit in state
+	local unit = nil
+	for _, u in ipairs(state.units) do
+		if u.id == unitId then unit = u; break end
+	end
+	if not unit then return end
+
+	-- Build equipment data
+	local equipData = {}
+	local slots = unit.equipmentSlots or {}
+	for slotName, itemInst in pairs(slots) do
+		if itemInst then
+			local profile = EquipmentService.GetEffectiveWeaponProfile(itemInst)
+			equipData[slotName] = {
+				name      = itemInst.name or "Unknown",
+				rarity    = itemInst.rarity or "Common",
+				itemLevel = itemInst.itemLevel or 1,
+				archetype = itemInst.archetype or "Unknown",
+				handClass = itemInst.handClass or "1H",
+				damage    = profile and profile.damage or 0,
+				wt        = profile and profile.wt or 0,
+				rtDelay   = profile and profile.rtDelay or 0,
+				defense   = profile and profile.defense or 0,
+				minRange  = profile and profile.minRange or 1,
+				maxRange  = profile and profile.maxRange or 1,
+				pattern   = profile and profile.pattern or "Single",
+				bonusLines = itemInst.bonusLines or {},
+				nativePassive = itemInst.nativePassive or nil,
+				bonusPassive  = itemInst.bonusPassive or nil,
+			}
+		end
+	end
+
+	-- Build skill data
+	local skillsData = {}
+	for _, sid in ipairs(unit.skillIds or {}) do
+		local skillKey = string.upper(sid):gsub("SKILL_", "SKL-"):gsub("_", "-")
+		local fullData = SkillData[skillKey]
+		local regDef = CommandService.GetSkill(sid)
+		local skillPower = regDef and regDef.power or 0
+		table.insert(skillsData, {
+			id           = sid,
+			name         = regDef and regDef.name or (fullData and fullData.name or sid),
+			tags         = fullData and fullData.tags or (regDef and regDef.tags or {}),
+			targetRules  = fullData and fullData.targetRules or (regDef and regDef.targetRules or ""),
+			range        = regDef and regDef.range or 1,
+			pattern      = fullData and fullData.pattern or (regDef and regDef.pattern or "Single"),
+			mpCost       = regDef and regDef.mpCost or 0,
+			rtCost       = regDef and regDef.rtCost or 0,
+			channelTime  = regDef and regDef.channelTime or 0,
+			power        = skillPower,
+			isHealing    = regDef and regDef.isHealing or false,
+			powerFormula = fullData and fullData.powerFormula or "",
+			mpCostFormula = fullData and fullData.mpCostFormula or "",
+			rtCostFormula = fullData and fullData.rtCostFormula or "",
+			effects      = fullData and fullData.effects or "",
+			specialRules = fullData and fullData.specialRules or "",
+		})
+		-- Attach estimated raw damage (presentation-only, before defense)
+		local attackPower = unit.derivedStats and unit.derivedStats.attackPower or 0
+		skillsData[#skillsData].estimatedDamage = math.round(attackPower * skillPower)
+	end
+
+	-- Build full response
+	local response = {
+		unitId       = unit.id,
+		name         = unit.name,
+		side         = unit.side,
+		primaryStats = unit.primaryStats,
+		derivedStats = unit.derivedStats,
+		equipment    = equipData,
+		skills       = skillsData,
+		doctrineId   = unit.doctrineId,
+		doctrine     = unit.doctrineId and DoctrineData[unit.doctrineId] or nil,
+	}
+
+	BattleEvents.InspectUnitResponse:FireClient(playerObj, response)
+end)
 
 --------------------------------------------------
 -- BATTLE LOOP
@@ -1071,3 +1197,36 @@ end
 print("====================================")
 
 BattleVisualBroadcaster.BattleEnded(winner or "None", state.units)
+
+--------------------------------------------------
+-- POST-BATTLE: PERSIST STATE + RECOVERY (Slice 4B)
+--------------------------------------------------
+
+local isQualifyingVictory = (winner == "Player")
+
+-- Step 1: Persist final HP/MP for all player units
+for _, u in ipairs(allUnitsList) do
+	if u.side == "Player" then
+		PersistentStateService.PersistBattleEnd(
+			PLAYER_ID, u.id,
+			u.currentHp, u.currentMp,
+			u.maxHp, u.maxMp,
+			not u.isAlive -- isKO
+		)
+	end
+end
+
+-- Step 2: Apply post-battle recovery (only on qualifying victory)
+if isQualifyingVictory then
+	print("[PostBattle] Qualifying victory — applying 35% recovery to survivors")
+	local recovery = PersistentStateService.ApplyPostBattleRecovery(PLAYER_ID)
+	for unitId, result in pairs(recovery) do
+		if result.wasKO then
+			print(string.format("  %s: KO — no recovery", unitId))
+		else
+			print(string.format("  %s: HP+%d MP+%d", unitId, result.hpRecovered, result.mpRecovered))
+		end
+	end
+else
+	print("[PostBattle] Not a qualifying victory — no recovery applied")
+end

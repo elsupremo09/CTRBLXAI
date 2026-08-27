@@ -27,6 +27,12 @@ GameConstants.REST_RT_MULTIPLIER = 0.75
 
 GameConstants.MOVE_RT_FACTOR         = 0.0625
 GameConstants.BASIC_ATTACK_RT_FACTOR = 0.10
+-- Guard
+GameConstants.GUARD_MITIGATION      = 0.35   -- base 35% damage reduction
+GameConstants.GUARD_CAP             = 0.80   -- maximum Guard mitigation (passives can add up to cap)
+GameConstants.GUARD_RT_BASE_FACTOR  = 0.10   -- round(Modified Base RT × this)
+GameConstants.GUARD_OFFHAND_WT_FACTOR = 0.50 -- + 50% of Effective Armor Off-Hand WT
+
 
 --------------------------------------------------
 -- ELEVATION  (from DB: movement_targeting — Elevation & Displacement)
@@ -346,5 +352,113 @@ function GameConstants.CalcStartingRt(baseRt, luk)
 	luk = luk or 10
 	return math.round(baseRt * (1 - 0.30 * luk / (100 + luk)))
 end
+
+--------------------------------------------------
+-- DERIVED STATS COMPUTATION
+--
+-- Builds the full derivedStats table from a unit's effectiveStats + weapon data.
+-- Called after every stat rebuild (equip, doctrine, buff/debuff).
+-- Returns { derivedStats = {...}, statBreakdown = {...} }
+--------------------------------------------------
+
+function GameConstants.ComputeDerivedStats(unit)
+	local s = unit.effectiveStats or {}
+	local str = s.STR or 10
+	local agi = s.AGI or 10
+	local int = s.INT or 10
+	local vit = s.VIT or 10
+	local dex = s.DEX or 10
+	local luk = s.LUK or 10
+
+	local weaponDamage  = unit.weaponDamage or 10
+	local weaponWt      = unit.weaponWt or 20
+	local weaponRtDelay = unit.weaponRtDelay or 0
+	local weaponDefense = unit.weaponDefense or 0
+
+	local derived = {
+		-- STR derived
+		attackPower     = math.round(weaponDamage * (1 + str / 200) * 10) / 10,
+		effectiveWt     = math.round(GameConstants.CalcEffectiveWt(weaponWt, str)),
+		rtDelayBonus    = math.round(weaponRtDelay * (1 + math.min(str / (200 + str), 0.75)) * 10) / 10,
+		force           = 1 + math.floor(str / 60),
+
+		-- AGI derived
+		movementRange   = 3 + math.floor(agi / 60),
+		evasiveness     = math.round(agi / (agi + 200) * 1000) / 10, -- store as % (e.g. 6.5)
+
+		-- INT derived
+		skillPotency    = math.round((1 + int / (200 + int)) * 1000) / 1000,
+		maxMp           = 20 + int * 2,
+		bonusSkillRange = math.floor(int / 75),
+		mpRegen         = 2 + math.floor(int / 40),
+
+		-- VIT derived
+		maxHp           = 50 + vit * 4,
+		healEfficiency  = math.round((1 + vit / 300) * 1000) / 1000,
+		defensePower    = math.round(weaponDefense * (1 + vit / 300) * 10) / 10,
+		debuffResist    = math.round((1 - vit / (300 + vit)) * 1000) / 1000,
+		rtDelayResist   = math.round((1 - vit / (300 + vit)) * 1000) / 1000,
+		stability       = 1 + math.floor(vit / 60),
+
+		-- DEX derived
+		precision       = math.round(dex / (dex + 200) * 1000) / 10, -- store as % (e.g. 5.7)
+		jump            = 1 + math.floor(dex / 60),
+		channelReduction = math.round(dex / (300 + dex) * 1000) / 10, -- store as % reduction
+
+		-- LUK derived
+		discoveryRadius = 1 + math.floor(luk / 60),
+		unitFortune     = math.round(luk / (luk + 200) * 1000) / 10, -- store as %
+		startingRt      = GameConstants.CalcStartingRt(GameConstants.BASE_RT_STANDARD, luk),
+
+		-- Composite combat stats
+		basicAttackRt   = math.round(GameConstants.BASE_RT_STANDARD * GameConstants.BASIC_ATTACK_RT_FACTOR)
+			+ math.round(GameConstants.CalcEffectiveWt(weaponWt, str)),
+	}
+
+	-- Store on unit
+	unit.derivedStats = derived
+
+	-- Build primary stat breakdown (base vs bonus)
+	local base = unit.baseStats or s
+	unit.primaryStats = {}
+	for _, stat in ipairs({"STR", "AGI", "INT", "VIT", "DEX", "LUK"}) do
+		local baseVal = base[stat] or 10
+		local totalVal = s[stat] or 10
+		unit.primaryStats[stat] = {
+			base  = baseVal,
+			bonus = totalVal - baseVal,
+			total = totalVal,
+		}
+	end
+
+	return derived
+end
+
+-- Stat metadata for client UI breakdown (formula strings + parent stat)
+GameConstants.STAT_META = {
+	attackPower     = { label = "Attack Power",     formula = "WeaponDmg × (1 + STR/200)", parent = "STR" },
+	effectiveWt     = { label = "Effective WT",     formula = "Weapon WT × (1 - STR/(200+STR))", parent = "STR" },
+	rtDelayBonus    = { label = "RT Delay Bonus",   formula = "Base RT Delay × (1 + min(STR/(200+STR), 0.75))", parent = "STR" },
+	force           = { label = "Force",            formula = "1 + floor(STR / 60)", parent = "STR" },
+	movementRange   = { label = "Movement Range",   formula = "3 + floor(AGI / 60)", parent = "AGI" },
+	evasiveness     = { label = "Evasiveness",      formula = "AGI / (AGI + 200)", parent = "AGI", unit = "%" },
+	skillPotency    = { label = "Skill Potency",    formula = "1 + INT / (200 + INT)", parent = "INT", unit = "×" },
+	maxMp           = { label = "Max MP",           formula = "20 + INT × 2", parent = "INT" },
+	bonusSkillRange = { label = "Bonus Skill Range", formula = "floor(INT / 75)", parent = "INT" },
+	mpRegen         = { label = "MP Regen",         formula = "2 + floor(INT / 40) per 1000 CT", parent = "INT" },
+	maxHp           = { label = "Max HP",           formula = "50 + VIT × 4", parent = "VIT" },
+	healEfficiency  = { label = "Heal Efficiency",  formula = "1 + VIT / 300", parent = "VIT", unit = "×" },
+	defensePower    = { label = "Defense Power",    formula = "Defense × (1 + VIT / 300)", parent = "VIT" },
+	debuffResist    = { label = "Debuff Resist",    formula = "1 - VIT / (300 + VIT)", parent = "VIT", unit = "×" },
+	rtDelayResist   = { label = "RT Delay Resist",  formula = "1 - VIT / (300 + VIT)", parent = "VIT", unit = "×" },
+	stability       = { label = "Stability",        formula = "1 + floor(VIT / 60)", parent = "VIT" },
+	precision       = { label = "Precision",        formula = "DEX / (DEX + 200)", parent = "DEX", unit = "%" },
+	jump            = { label = "Jump",             formula = "1 + floor(DEX / 60)", parent = "DEX" },
+	channelReduction = { label = "Channel Speed",   formula = "DEX / (300 + DEX) reduction", parent = "DEX", unit = "%" },
+	discoveryRadius = { label = "Discovery Radius", formula = "1 + floor(LUK / 60)", parent = "LUK" },
+	unitFortune     = { label = "Unit Fortune",     formula = "LUK / (LUK + 200)", parent = "LUK", unit = "%" },
+	startingRt      = { label = "Starting RT",      formula = "round(400 × (1 - 0.30 × LUK/(100+LUK)))", parent = "LUK" },
+	basicAttackRt   = { label = "Basic Attack RT",  formula = "round(Base RT × 0.10) + Effective WT", parent = "STR" },
+}
 
 return GameConstants

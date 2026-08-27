@@ -176,7 +176,7 @@ end
 
 local function advanceToNextReady(state)
 	local alive = getAliveUnits(state)
-	if #alive == 0 then return nil end
+	if #alive == 0 then return nil, 0 end
 
 	local minRt = math.huge
 	for _, unit in ipairs(alive) do
@@ -197,10 +197,10 @@ local function advanceToNextReady(state)
 		end
 	end
 
-	if #ready == 0 then return nil end
+	if #ready == 0 then return nil, minRt end
 
 	table.sort(ready, resolveReadyTie)
-	return ready[1]
+	return ready[1], minRt
 end
 
 --------------------------------------------------
@@ -240,15 +240,37 @@ function BattleCoordinator.AdvanceClock(state)
 		return nil
 	end
 
-	local nextUnit = advanceToNextReady(state)
+	local nextUnit, ctPassed = advanceToNextReady(state)
 	if not nextUnit then
 		return nil
+	end
+
+	-- MP Regen: all alive units regenerate based on CT elapsed
+	-- MP Regen = 2 + floor(INT/40) per 1000 CT. Accumulator-based.
+	if ctPassed > 0 then
+		for _, unit in ipairs(state.units) do
+			if unit.isAlive and unit.currentMp < unit.maxMp then
+				local int = unit.effectiveStats and unit.effectiveStats.INT or 10
+				local mpRegen = 2 + math.floor(int / 40)
+				if not unit.mpRegenAccumulator then unit.mpRegenAccumulator = 0 end
+				unit.mpRegenAccumulator = unit.mpRegenAccumulator + (ctPassed * mpRegen / 1000)
+				if unit.mpRegenAccumulator >= 1 then
+					local restored = math.floor(unit.mpRegenAccumulator)
+					unit.mpRegenAccumulator = unit.mpRegenAccumulator - restored
+					unit.currentMp = math.min(unit.maxMp, unit.currentMp + restored)
+				end
+			end
+		end
 	end
 
 	state.activeUnit      = nextUnit
 	state.phase           = "TurnOpen"
 	state.turnRtAccrued   = 0
 	state.turnActionTaken = false
+
+	-- Guard expires when unit becomes ready (new turn starts)
+	nextUnit.isGuarding = false
+	nextUnit.guardUsedThisTurn = false
 
 	-- Process DoT at start of turn (Poison/Burn damage)
 	local dotEvents = StatusService.ProcessStartOfTurn(nextUnit)

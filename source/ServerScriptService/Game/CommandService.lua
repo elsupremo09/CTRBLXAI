@@ -22,6 +22,7 @@ local TargetingService  = require(script.Parent.TargetingService)
 local CombatResolver    = require(script.Parent.CombatResolver)
 local BattleCoordinator = require(script.Parent.BattleCoordinator)
 local StatusService     = require(script.Parent.StatusService)
+local BattleVisualBroadcaster = require(script.Parent.BattleVisualBroadcaster)
 
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -315,7 +316,8 @@ function CommandService.ValidateAndCommit(
 			state.units, _mapWidth, _mapHeight
 		)
 		if not valid then return false, reason end
-	else
+	elseif actionType ~= "Wait" and actionType ~= "Guard" then
+		-- Move and Attack need target/tile validation
 		local valid, reason = TargetingService.ValidateSelection(
 			actor, actionType, selection,
 			state.units, _mapWidth, _mapHeight
@@ -478,6 +480,38 @@ function CommandService.ValidateAndCommit(
 		print(string.format("[CommandService] WAIT | %s", actor.name))
 		BattleCoordinator.EndTurn(state)
 		return true, nil
+
+	elseif actionType == "Guard" then
+		-- Guard: 1 AP, once per turn, enters Guard stance
+		if actor.guardUsedThisTurn then
+			return false, "Guard already used this turn"
+		end
+
+		-- Calculate Guard RT
+		-- Guard RT = round(Modified Base RT × 0.10) + 50% of Effective Armor Off-Hand WT
+		local modBaseRt = StatusService.GetModifiedBaseRt(actor)
+		local offHandWt = 0
+		if actor.weaponHandClass ~= "2H" then
+			-- Get off-hand WT (if a shield/off-hand is equipped)
+			if actor.equipmentSlots and actor.equipmentSlots.OffHand then
+				local offHandItem = actor.equipmentSlots.OffHand
+				offHandWt = offHandItem.scaledWt or offHandItem.wt or 0
+			end
+		end
+		local guardRt = math.round(modBaseRt * GameConstants.GUARD_RT_BASE_FACTOR)
+			+ math.round(offHandWt * GameConstants.GUARD_OFFHAND_WT_FACTOR)
+
+		-- Apply Guard state
+		actor.isGuarding = true
+		actor.guardUsedThisTurn = true
+		BattleCoordinator.AccrueRt(state, guardRt)
+
+		print(string.format(
+			"[CommandService] GUARD | %s | RT:%d | OffHandWT:%d | AP left:%d",
+			actor.name, guardRt, offHandWt, actor.currentAp
+		))
+
+		BattleVisualBroadcaster.GuardActivated(actor, guardRt)
 	end
 
 	-- STEP 9: Handoff

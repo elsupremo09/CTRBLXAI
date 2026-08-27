@@ -79,6 +79,8 @@ local function serializeUnit(unit)
 		remainingRt = unit.remainingRt,
 		skillIds    = unit.skillIds or {},
 		statuses    = StatusService.GetStatusSummary(unit),
+		derivedStats = unit.derivedStats or nil,
+		primaryStats = unit.primaryStats or nil,
 	}
 end
 
@@ -289,6 +291,18 @@ function BattleVisualBroadcaster.BattleEnded(winner, units)
 		units  = serialized,
 	})
 	task.wait(PACE.BattleEnd)
+end
+
+--------------------------------------------------
+-- GUARD
+--------------------------------------------------
+
+function BattleVisualBroadcaster.GuardActivated(unit, guardRt)
+	BattleEvents.GuardActivated:FireAllClients({
+		unitId  = unit.id,
+		guardRt = guardRt,
+	})
+	task.wait(PACE.Action * 0.5)
 end
 
 return BattleVisualBroadcaster

@@ -49,6 +49,10 @@ local EVENT_NAMES = {
 	"TurnOrderUpdate",
 	-- Slice 4A
 	"ChannelFizzled",
+	"GuardActivated",
+	-- Unit Inspector (3-tab)
+	"InspectUnitRequest",
+	"InspectUnitResponse",
 }
 
 local BattleEvents = {}

@@ -4,6 +4,10 @@
 -- HP formula: HP = 50 + VIT × 4
 -- MP formula: MP = 20 + INT × 2
 --
+-- Slice 4B changes:
+--   - Create() accepts optional currentHp/currentMp for persistent resource loading
+--   - mpRegenAccumulator field for fractional MP regen tracking
+
 -- Slice 4A changes:
 --   - Equipment slots added to unit state
 --   - Doctrine reference added
@@ -103,11 +107,14 @@ function UnitSchema.Create(definition)
 
 		-- Hit points
 		maxHp         = maxHp,
-		currentHp     = maxHp,
+		currentHp     = definition.currentHp or maxHp,
 
 		-- Magic points
 		maxMp         = maxMp,
-		currentMp     = maxMp,
+		currentMp     = definition.currentMp or maxMp,
+
+		-- MP Regen accumulator (Slice 4B: fractional CT-based regen)
+		mpRegenAccumulator = 0,
 
 		-- Weapon stats (populated by EquipmentService.RebuildUnitStats or legacy)
 		weaponDamage  = definition.weaponDamage or 10,
@@ -151,6 +158,9 @@ function UnitSchema.Create(definition)
 	if unit.skillId and #unit.skillIds == 0 then
 		table.insert(unit.skillIds, unit.skillId)
 	end
+
+	-- Compute derived stats from effective stats + weapon data
+	GameConstants.ComputeDerivedStats(unit)
 
 	return unit
 end

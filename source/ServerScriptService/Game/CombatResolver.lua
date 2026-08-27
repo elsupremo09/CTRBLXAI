@@ -82,6 +82,13 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 
 	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod * fortuneMod))
 
+	-- Step 8: Guard and other final mitigation
+	if defender.isGuarding then
+		local mitigation = GameConstants.GUARD_MITIGATION + (defender.guardBonus or 0)
+		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
+		finalDamage = math.max(0, math.round(finalDamage * (1 - mitigation)))
+	end
+
 	return {
 		type           = "Damage",
 		targetId       = defender.id,
@@ -130,6 +137,13 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	local fortuneMod = GameConstants.CalcCombatFortune(aStats.LUK, dStats.LUK)
 
 	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod * fortuneMod))
+
+	-- Step 8: Guard and other final mitigation
+	if defender.isGuarding then
+		local mitigation = GameConstants.GUARD_MITIGATION + (defender.guardBonus or 0)
+		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
+		finalDamage = math.max(0, math.round(finalDamage * (1 - mitigation)))
+	end
 
 	return {
 		type           = "Damage",

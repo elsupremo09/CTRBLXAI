@@ -33,6 +33,13 @@ local DoctrineData = require(
 		:WaitForChild("DoctrineData")
 )
 
+local GameConstants = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("CTRBLXAI")
+		:WaitForChild("Shared")
+		:WaitForChild("GameConstants")
+)
+
 local EquipmentService = {}
 
 --------------------------------------------------
@@ -264,6 +271,9 @@ function EquipmentService.RebuildUnitStats(unit)
 	if unit.currentMp and unit.currentMp > unit.maxMp then
 		unit.currentMp = unit.maxMp
 	end
+
+	-- 6. Compute all derived stats (formulas from all primary stats)
+	GameConstants.ComputeDerivedStats(unit)
 end
 
 --------------------------------------------------
