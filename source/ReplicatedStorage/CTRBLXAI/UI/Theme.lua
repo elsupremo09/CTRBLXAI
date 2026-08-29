@@ -228,6 +228,7 @@ function Theme.GetStatusColor(statusId)
 		Stun    = Theme.Colors.Stun,
 		Bleed   = Theme.Colors.Bleed,
 		Slow    = Theme.Colors.Slow,
+		Guard   = Color3.fromRGB(100, 180, 240),
 	}
 	return map[statusId] or Theme.Colors.Info
 end

@@ -26,6 +26,7 @@ local ItemGenerator           = require(Game:WaitForChild("ItemGenerator"))
 local InventoryService        = require(Game:WaitForChild("InventoryService"))
 local EquipmentService        = require(Game:WaitForChild("EquipmentService"))
 local PersistentStateService  = require(Game:WaitForChild("PersistentStateService"))
+local SaveService             = require(Game:WaitForChild("SaveService"))
 
 local WeaponData = require(
 	game:GetService("ReplicatedStorage")
@@ -118,8 +119,38 @@ end
 local PLAYER_ID = "player_1"
 InventoryService.InitPlayer(PLAYER_ID)
 
+-- Attempt to load saved state (Slice 4C)
+-- TEMPORARY: Delete stale save from old KO rules (remove after one run)
+SaveService.Delete(PLAYER_ID)
+
+local loadedSave, loadErr = SaveService.Load(PLAYER_ID)
+local hasSave = false
+if loadedSave then
+	hasSave = true
+	print("[Main] Save loaded — restoring state")
+	-- Restore roster persistent state
+	PersistentStateService.ImportState(PLAYER_ID, loadedSave.roster or {})
+	-- Restore inventory
+	InventoryService.ImportInventory(PLAYER_ID, loadedSave.inventory or {})
+elseif loadErr then
+	warn("[Main] Load failed: " .. loadErr .. " — starting fresh (retaining runtime state)")
+else
+	print("[Main] No save found — new session")
+end
+
 -- Helper: generate a weapon, add to inventory, equip on unit
 local function equipGeneratedWeapon(unit, archetypeId, itemLevel, rarity, seed)
+	-- If save was loaded, items are already in inventory — equip from there
+	if hasSave then
+		local allItems = InventoryService.GetAllItems(PLAYER_ID)
+		for _, item in ipairs(allItems) do
+			if item.baseArchetypeId == archetypeId then
+				EquipmentService.Equip(unit, item, "MainHand")
+				return
+			end
+		end
+		warn("[Main] No saved item found for archetype: " .. archetypeId)
+	end
 	local item = ItemGenerator.Generate({
 		baseArchetypeId = archetypeId,
 		itemLevel = itemLevel,
@@ -218,7 +249,18 @@ for _, u in ipairs(allUnitsList) do
 	if u.side == "Player" then
 		local ps = PersistentStateService.GetUnitState(PLAYER_ID, u.id)
 		if not ps then
+			-- Brand new unit — register at full
 			PersistentStateService.RegisterNewUnit(PLAYER_ID, u.id, u.maxHp, u.maxMp)
+		else
+			-- Loaded from save — apply persistent HP/MP to runtime unit
+			u.currentHp = math.min(ps.currentHp, u.maxHp)
+			u.currentMp = math.min(ps.currentMp, u.maxMp)
+			if ps.isKO then
+				u.isAlive = false
+				u.currentHp = 0
+			end
+			print(string.format("[Main] Loaded persistent state for %s: HP:%d/%d MP:%d/%d KO:%s",
+				u.name, u.currentHp, u.maxHp, u.currentMp, u.maxMp, tostring(ps.isKO)))
 		end
 	end
 end
@@ -1229,4 +1271,17 @@ if isQualifyingVictory then
 	end
 else
 	print("[PostBattle] Not a qualifying victory — no recovery applied")
+end
+
+-- Step 3: Save to DataStore
+local rosterState = PersistentStateService.ExportState(PLAYER_ID)
+local inventoryItems = InventoryService.ExportInventory(PLAYER_ID)
+local progression = {} -- Slice 4C placeholder; populated in future slices
+
+local saveOk, saveErr = SaveService.Save(PLAYER_ID, rosterState, inventoryItems, progression)
+if saveOk then
+	print("[PostBattle] Save successful")
+else
+	warn("[PostBattle] SAVE FAILED: " .. (saveErr or "unknown"))
+	-- Last-known-good state retained in memory — not overwritten
 end

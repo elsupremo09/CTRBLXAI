@@ -140,9 +140,12 @@ function PersistentStateService.ApplyPostBattleRecovery(playerId)
 
 	for unitId, state in pairs(unitStates[playerId]) do
 		if state.isKO then
-			results[unitId] = { hpRecovered = 0, mpRecovered = 0, wasKO = true }
+			-- KO cleared with 1 HP, no 35% recovery. MP unchanged.
+			state.currentHp = 1
+			state.isKO = false
+			results[unitId] = { hpRecovered = 1, mpRecovered = 0, wasKO = true }
 			print(string.format(
-				"[PersistentState] %s is KO — no recovery",
+				"[PersistentState] %s KO cleared → 1 HP (no 35%% recovery)",
 				unitId
 			))
 		else

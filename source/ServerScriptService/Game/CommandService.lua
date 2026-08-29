@@ -511,7 +511,10 @@ function CommandService.ValidateAndCommit(
 			actor.name, guardRt, offHandWt, actor.currentAp
 		))
 
-		BattleVisualBroadcaster.GuardActivated(actor, guardRt)
+		-- Calculate effective mitigation for display
+		local mitigation = GameConstants.GUARD_MITIGATION + (actor.guardBonus or 0)
+		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
+		BattleVisualBroadcaster.GuardActivated(actor, guardRt, mitigation)
 	end
 
 	-- STEP 9: Handoff

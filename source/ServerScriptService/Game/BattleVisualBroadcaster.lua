@@ -297,10 +297,11 @@ end
 -- GUARD
 --------------------------------------------------
 
-function BattleVisualBroadcaster.GuardActivated(unit, guardRt)
+function BattleVisualBroadcaster.GuardActivated(unit, guardRt, mitigation)
 	BattleEvents.GuardActivated:FireAllClients({
 		unitId  = unit.id,
 		guardRt = guardRt,
+		mitigation = mitigation or 0.35,
 	})
 	task.wait(PACE.Action * 0.5)
 end

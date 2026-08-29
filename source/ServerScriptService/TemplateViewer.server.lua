@@ -450,6 +450,20 @@ local function createGridOverlay()
 	end
 end
 
+-- Presentation-only map metadata for client camera bounds
+mapFolder:SetAttribute(
+	"MapWidth",
+	Template.Width
+)
+mapFolder:SetAttribute(
+	"MapHeight",
+	Template.Height
+)
+mapFolder:SetAttribute(
+	"TileSize",
+	TILE_SIZE
+)
+
 --------------------------------------------------
 -- RENDER MAP
 --------------------------------------------------
