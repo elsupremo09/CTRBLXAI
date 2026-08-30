@@ -176,6 +176,16 @@ GameConstants.STATUSES = {
 		-- storedBurn set on application; tick = round(storedBurn × debuffResistance)
 		burnFraction = 0.20,
 	},
+	Guard = {
+		id           = "Guard",
+		kind         = "Buff",
+		duration     = 2,        -- survives the EndTurn tick on the application turn;
+		                         -- expires at EndTurn of the unit's NEXT ready turn
+		reapply      = "refresh",
+		dispellable  = true,     -- removed by Purge/Dispel
+		removedByCC  = true,     -- removed by Stun, Freeze, Sleep
+		dotType      = nil,
+	},
 }
 
 --------------------------------------------------
@@ -351,6 +361,14 @@ end
 function GameConstants.CalcStartingRt(baseRt, luk)
 	luk = luk or 10
 	return math.round(baseRt * (1 - 0.30 * luk / (100 + luk)))
+end
+
+-- RT Delay Resistance (VIT reduces incoming RT Delay)
+-- Rule: Incoming RT Delay × (1 - VIT / (300 + VIT))
+function GameConstants.CalcRtDelayResistance(rawDelay, targetVit)
+	targetVit = targetVit or 10
+	local resist = 1 - targetVit / (300 + targetVit)
+	return math.round(rawDelay * resist)
 end
 
 --------------------------------------------------

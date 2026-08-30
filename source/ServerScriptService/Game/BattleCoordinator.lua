@@ -268,8 +268,7 @@ function BattleCoordinator.AdvanceClock(state)
 	state.turnRtAccrued   = 0
 	state.turnActionTaken = false
 
-	-- Guard expires when unit becomes ready (new turn starts)
-	nextUnit.isGuarding = false
+	-- Reset once-per-turn Guard limit (Guard status expires via StatusService tick)
 	nextUnit.guardUsedThisTurn = false
 
 	-- Process DoT at start of turn (Poison/Burn damage)

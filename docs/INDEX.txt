@@ -134,3 +134,23 @@ persistent_hp_mp_rules (25 rows)
     Base: replenishes Item charges but does NOT restore HP/MP
   Query: SELECT section, topic, rule FROM persistent_hp_mp_rules WHERE section = 'X'
   Sections: Persistent Resources, Post-Battle Recovery, KO Rules, Natural MP Regen, Recovery Stalling, Base Rules, Max Resource Changes, Passive Interactions, Deployment UI, Starter Support
+
+--- SLICE OWNERSHIP & MODULE BOUNDARIES (added 2026-08-30) ---
+
+slice_ownership (47 rows)
+  Per-slice ownership data: scope, owned modules, shared integration, contracts provided, forbidden changes, status.
+  Query: SELECT field, value FROM slice_ownership WHERE slice = N
+  Slices: 1-7
+
+module_classifications (34 rows)
+  Every source module classified: Slice-Owned, Protected Completed, Shared Integration, or Content Authority.
+  Columns: module, location, owner, classification, notes.
+  Query: SELECT module, owner, classification FROM module_classifications
+  Query: SELECT * FROM module_classifications WHERE classification = 'Shared Integration'
+  Query: SELECT * FROM module_classifications WHERE owner LIKE 'Slice 7%'
+
+project_rules entries added:
+  - "Module Classifications" -- four types and their rules
+  - "Dependency Direction" -- authoritative > gameplay > events > controllers > views
+  - "Compatibility Process" -- 11-step cross-slice addition process
+  - "Slice 7 Boundary" -- presentation only, forbidden gameplay ownership

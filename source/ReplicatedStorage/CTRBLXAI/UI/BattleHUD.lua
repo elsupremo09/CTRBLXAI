@@ -53,6 +53,9 @@ local battleLog       = {}
 -- Padding constant
 local PAD = 6
 
+-- Layout (set by UIController via ApplyLayout, consumed by ensureRoot and SetState)
+local currentLayout = nil
+
 --------------------------------------------------
 -- HELPERS
 --------------------------------------------------
@@ -201,6 +204,11 @@ local function ensureRoot()
 		UDim2.fromScale(0.25, 0.20),
 		UDim2.new(1, -PAD, 1, -PAD), Vector2.new(1, 1), rootFrame)
 	battleLogPanel.ClipsDescendants = true
+
+	-- Apply stored layout if UIController already calculated one
+	if currentLayout then
+		BattleHUD.ApplyLayout(currentLayout)
+	end
 end
 
 --------------------------------------------------
@@ -687,6 +695,49 @@ end
 --------------------------------------------------
 -- STATE MACHINE
 --------------------------------------------------
+
+--------------------------------------------------
+-- LAYOUT APPLICATION (called by UIController on viewport change)
+-- Updates panel position/size without touching state, data, or content.
+--------------------------------------------------
+
+function BattleHUD.ApplyLayout(layout)
+	currentLayout = layout
+	if not rootFrame then return end -- panels not created yet; ensureRoot will use currentLayout
+
+	local panels = {
+		ActiveUnit  = activeUnitPanel,
+		ActionPanel = actionPanel,
+		Inspector   = inspectorPanel,
+		TilePreview = tilePreviewPanel,
+		TurnOrder   = turnOrderBar,
+		Conditions  = conditionsPanel,
+		BattleLog   = battleLogPanel,
+	}
+
+	for name, panel in pairs(panels) do
+		local desc = layout[name]
+		if desc and panel then
+			if desc.Size then panel.Size = desc.Size end
+			if desc.Position then panel.Position = desc.Position end
+			if desc.AnchorPoint then panel.AnchorPoint = desc.AnchorPoint end
+		end
+	end
+
+	-- Re-run dependent positioning (ActionPanel below ActiveUnit, TilePreview below Inspector)
+	task.defer(function()
+		if activeUnitPanel and actionPanel and activeUnitPanel.Visible then
+			local parentBottom = activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y
+			local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
+			actionPanel.Position = UDim2.new(0, PAD, 0, (parentBottom - rootTop) + 4)
+		end
+		if inspectorPanel and tilePreviewPanel and inspectorPanel.Visible then
+			local parentBottom = inspectorPanel.AbsolutePosition.Y + inspectorPanel.AbsoluteSize.Y
+			local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
+			tilePreviewPanel.Position = UDim2.new(1, -PAD, 0, (parentBottom - rootTop) + 4)
+		end
+	end)
+end
 
 function BattleHUD.SetState(newState)
 	currentState = newState

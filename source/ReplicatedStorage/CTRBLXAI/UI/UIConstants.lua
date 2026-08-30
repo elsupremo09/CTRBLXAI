@@ -12,10 +12,10 @@ local UIConstants = {}
 --------------------------------------------------
 
 UIConstants.Breakpoints = {
-	Phone      = 640,   -- Below this = phone layout
-	Tablet     = 1024,  -- Below this = tablet layout
-	Desktop    = 1366,  -- Below this = small desktop
-	DesktopLg  = 1920,  -- Standard desktop
+	-- Stage 2 layout modes (width thresholds)
+	MobileLandscape  = 1024,  -- Below 1024 = MobileLandscape
+	CompactLandscape = 1280,  -- 1024-1279 = CompactLandscape
+	Desktop          = 1280,  -- 1280+ = Desktop
 }
 
 --------------------------------------------------
@@ -148,15 +148,18 @@ UIConstants.SafeArea = {
 -- HELPER: Get layout category for current viewport
 --------------------------------------------------
 
-function UIConstants.GetLayoutCategory(viewportWidth)
-	if viewportWidth < UIConstants.Breakpoints.Phone then
-		return "Phone"
-	elseif viewportWidth < UIConstants.Breakpoints.Tablet then
-		return "Tablet"
-	elseif viewportWidth < UIConstants.Breakpoints.Desktop then
-		return "SmallDesktop"
+function UIConstants.GetLayoutMode(viewportWidth)
+	if viewportWidth < UIConstants.Breakpoints.MobileLandscape then
+		return "MobileLandscape"
+	elseif viewportWidth < UIConstants.Breakpoints.CompactLandscape then
+		return "CompactLandscape"
 	end
 	return "Desktop"
+end
+
+-- Legacy alias for backward compatibility
+function UIConstants.GetLayoutCategory(viewportWidth)
+	return UIConstants.GetLayoutMode(viewportWidth)
 end
 
 return UIConstants

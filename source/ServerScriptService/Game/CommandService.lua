@@ -368,11 +368,10 @@ function CommandService.ValidateAndCommit(
 		BattleCoordinator.AccrueRt(state, rtCost)
 
 		-- Missing 7: Apply Weapon RT Delay to target (reduced by target VIT)
-		-- Rule: RT Delay Resistance = Incoming RT Delay × (1 - VIT / (300 + VIT))
 		local rawDelay = actor.weaponRtDelay or 0
 		if rawDelay > 0 and target.isAlive then
 			local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
-			local actualDelay = math.round(rawDelay * (1 - targetVit / (300 + targetVit)))
+			local actualDelay = GameConstants.CalcRtDelayResistance(rawDelay, targetVit)
 			target.remainingRt = target.remainingRt + math.max(0, actualDelay)
 		end
 
@@ -459,11 +458,10 @@ function CommandService.ValidateAndCommit(
 			local actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target)
 			BattleCoordinator.AccrueRt(state, baseRtCost)
 
-			-- Missing 7: Apply Weapon RT Delay to target (for damage skills)
 			local rawDelay = actor.weaponRtDelay or 0
 			if rawDelay > 0 and target.isAlive then
 				local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
-				local actualDelay = math.round(rawDelay * (1 - targetVit / (300 + targetVit)))
+				local actualDelay = GameConstants.CalcRtDelayResistance(rawDelay, targetVit)
 				target.remainingRt = target.remainingRt + math.max(0, actualDelay)
 			end
 
@@ -501,8 +499,8 @@ function CommandService.ValidateAndCommit(
 		local guardRt = math.round(modBaseRt * GameConstants.GUARD_RT_BASE_FACTOR)
 			+ math.round(offHandWt * GameConstants.GUARD_OFFHAND_WT_FACTOR)
 
-		-- Apply Guard state
-		actor.isGuarding = true
+		-- Apply Guard as a proper status (dispellable buff, removed by CC)
+		StatusService.ApplyStatus(actor, "Guard", actor.id)
 		actor.guardUsedThisTurn = true
 		BattleCoordinator.AccrueRt(state, guardRt)
 

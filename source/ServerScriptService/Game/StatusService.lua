@@ -34,6 +34,14 @@ local CHANNEL_DISRUPTORS = {
 	Sleep   = true,
 }
 
+-- Hard CC: statuses that remove buffs with removedByCC (e.g. Guard).
+-- Silence disrupts channeling but is NOT hard CC for Guard purposes.
+local HARD_CC = {
+	Stun   = true,
+	Freeze = true,
+	Sleep  = true,
+}
+
 function StatusService.IsChannelDisruptor(statusId)
 	return CHANNEL_DISRUPTORS[statusId] == true
 end
@@ -98,6 +106,24 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 	end
 
 	table.insert(unit.statusInstances, instance)
+
+	-- If this is a hard CC status, remove buffs flagged removedByCC (e.g. Guard)
+	if HARD_CC[statusId] then
+		local i = 1
+		while i <= #unit.statusInstances do
+			local inst = unit.statusInstances[i]
+			local instDef = GameConstants.STATUSES[inst.id]
+			if instDef and instDef.removedByCC and inst.id ~= statusId then
+				print(string.format(
+					"[StatusService] %s REMOVED from %s (CC: %s applied)",
+					inst.id, unit.name, statusId
+				))
+				table.remove(unit.statusInstances, i)
+			else
+				i = i + 1
+			end
+		end
+	end
 
 	print(string.format(
 		"[StatusService] %s APPLIED to %s (%d turns)%s%s",
@@ -253,6 +279,31 @@ function StatusService.GetStatusSummary(unit)
 		})
 	end
 	return summary
+end
+
+--------------------------------------------------
+-- PURGE / DISPEL (remove dispellable buffs)
+--
+-- Used by Purge/Dispel skills. Removes all statuses
+-- where def.dispellable == true.
+-- Returns list of removed status IDs.
+--------------------------------------------------
+
+function StatusService.RemoveDispellable(unit)
+	local removed = {}
+	local i = 1
+	while i <= #unit.statusInstances do
+		local inst = unit.statusInstances[i]
+		local def = GameConstants.STATUSES[inst.id]
+		if def and def.dispellable then
+			table.insert(removed, inst.id)
+			print(string.format("[StatusService] %s PURGED from %s", inst.id, unit.name))
+			table.remove(unit.statusInstances, i)
+		else
+			i = i + 1
+		end
+	end
+	return removed
 end
 
 return StatusService
