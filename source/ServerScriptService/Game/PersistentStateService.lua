@@ -126,6 +126,22 @@ function PersistentStateService.PersistBattleEnd(playerId, unitId, finalHp, fina
 end
 
 --------------------------------------------------
+-- CLEAR KO (called after every battle regardless of outcome)
+-- Session rule: base not implemented, so KO clears here.
+--------------------------------------------------
+
+function PersistentStateService.ClearAllKO(playerId)
+	PersistentStateService.InitPlayer(playerId)
+	for unitId, state in pairs(unitStates[playerId]) do
+		if state.isKO then
+			state.currentHp = 1
+			state.isKO = false
+			print(string.format("[PersistentState] %s KO cleared -> 1 HP", unitId))
+		end
+	end
+end
+
+--------------------------------------------------
 -- POST-BATTLE RECOVERY
 -- Apply 35% recovery to ALL surviving owned units.
 -- KO units receive NOTHING.
@@ -139,16 +155,9 @@ function PersistentStateService.ApplyPostBattleRecovery(playerId)
 	local results = {}
 
 	for unitId, state in pairs(unitStates[playerId]) do
-		if state.isKO then
-			-- KO cleared with 1 HP, no 35% recovery. MP unchanged.
-			state.currentHp = 1
-			state.isKO = false
-			results[unitId] = { hpRecovered = 1, mpRecovered = 0, wasKO = true }
-			print(string.format(
-				"[PersistentState] %s KO cleared → 1 HP (no 35%% recovery)",
-				unitId
-			))
-		else
+		-- KO already cleared by ClearAllKO before this runs.
+		-- Apply 35% recovery to all living units.
+		do
 			local hpRecovery = math.ceil(state.maxHp * RECOVERY_FRACTION)
 			local mpRecovery = math.ceil(state.maxMp * RECOVERY_FRACTION)
 
@@ -161,7 +170,7 @@ function PersistentStateService.ApplyPostBattleRecovery(playerId)
 			local actualHpRec = state.currentHp - prevHp
 			local actualMpRec = state.currentMp - prevMp
 
-			results[unitId] = { hpRecovered = actualHpRec, mpRecovered = actualMpRec, wasKO = false }
+			results[unitId] = { hpRecovered = actualHpRec, mpRecovered = actualMpRec }
 
 			print(string.format(
 				"[PersistentState] %s recovered HP:%d→%d (+%d) MP:%d→%d (+%d)",

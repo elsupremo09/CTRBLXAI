@@ -79,6 +79,7 @@ local currentPrompt   = nil
 local timelineSnapshot = nil
 local currentBattleCt  = 0
 local activeUnitId    = nil  -- who is currently acting (for timeline NOW marker)
+local devLastInspectedId = nil -- tracks last tile-clicked unit for Kill At Tile (dev only)
 local inputMode       = nil -- "move","attack","skill"
 local selectedSkill   = nil
 local highlightParts  = {}
@@ -557,7 +558,7 @@ local function processTileClick(bx, by)
 		if data.tileX == bx and data.tileY == by and data.isAlive ~= false then
 			local state = BattleHUD.GetState()
 			if state == "ActionSelection" or state == "SkillSelection" or state == "Idle" then
-				BattleHUD.ShowInspectUnit(data)
+				devLastInspectedId = data.id; BattleHUD.ShowInspectUnit(data)
 			end
 			break
 		end
@@ -706,18 +707,19 @@ end)
 
 
 --------------------------------------------------
--- DEV CAMERA TEST PANEL (temporary, remove when Slice 7 UI provides buttons)
+-- DEV OPTIONS PANEL (temporary, remove when Slice 7 UI provides buttons)
 -- Visible only during battle. Blocks input across its bounds.
 --------------------------------------------------
 
 local devCameraPanel = nil
+local devSelectedTile = nil -- {x, y} for Kill Unit targeting
 
 local function createDevCameraPanel()
 	if not RunService:IsStudio() then return end
 	if devCameraPanel then devCameraPanel:Destroy() end
 
 	local gui = Instance.new("ScreenGui")
-	gui.Name = "DevCameraTest"
+	gui.Name = "DevOptions"
 	gui.ResetOnSpawn = false
 	gui.DisplayOrder = 95
 	gui.Parent = player:WaitForChild("PlayerGui")
@@ -725,13 +727,13 @@ local function createDevCameraPanel()
 
 	local frame = Instance.new("Frame")
 	frame.Name = "DevPanel"
-	frame.Size = UDim2.fromOffset(120, 100)
+	frame.Size = UDim2.fromOffset(130, 230)
 	frame.Position = UDim2.new(0.5, 0, 0, 4)
 	frame.AnchorPoint = Vector2.new(0.5, 0)
 	frame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
 	frame.BackgroundTransparency = 0.1
 	frame.BorderSizePixel = 0
-	frame.Active = true  -- blocks input passthrough
+	frame.Active = true
 	frame.Parent = gui
 	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
 	local stroke = Instance.new("UIStroke", frame)
@@ -751,13 +753,13 @@ local function createDevCameraPanel()
 	title.BackgroundTransparency = 1
 	title.Font = Enum.Font.SourceSansBold; title.TextSize = 9
 	title.TextColor3 = Color3.fromRGB(200, 200, 50)
-	title.Text = "DEV CAMERA TEST"; title.LayoutOrder = 0
+	title.Text = "DEV OPTIONS"; title.LayoutOrder = 0
 	title.Parent = frame
 
-	local function makeBtn(text, order, callback)
+	local function makeBtn(text, order, callback, color)
 		local btn = Instance.new("TextButton")
 		btn.Size = UDim2.new(1, 0, 0, 22)
-		btn.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+		btn.BackgroundColor3 = color or Color3.fromRGB(50, 50, 65)
 		btn.BackgroundTransparency = 0.2
 		btn.Font = Enum.Font.SourceSans; btn.TextSize = 11
 		btn.TextColor3 = Color3.fromRGB(220, 220, 220)
@@ -768,6 +770,7 @@ local function createDevCameraPanel()
 		return btn
 	end
 
+	-- Camera buttons
 	makeBtn("FOCUS ACTIVE", 1, function()
 		local uid = activeUnitId
 		local udata = uid and unitData[uid]
@@ -797,6 +800,42 @@ local function createDevCameraPanel()
 		end
 		CameraController.ResetTacticalView(focusPos)
 	end)
+
+	-- Separator
+	local sep = Instance.new("Frame")
+	sep.Size = UDim2.new(1, 0, 0, 1)
+	sep.BackgroundColor3 = Color3.fromRGB(200, 200, 50)
+	sep.BackgroundTransparency = 0.5
+	sep.BorderSizePixel = 0; sep.LayoutOrder = 4
+	sep.Parent = frame
+
+	-- Battle control buttons
+	makeBtn("INSTANT WIN", 5, function()
+		BattleEvents.DevCommand:FireServer({ action = "InstantWin" })
+	end, Color3.fromRGB(30, 80, 30))
+
+	makeBtn("INSTANT LOSE", 6, function()
+		BattleEvents.DevCommand:FireServer({ action = "InstantLose" })
+	end, Color3.fromRGB(80, 30, 30))
+
+	makeBtn("KILL AT TILE", 7, function()
+		-- Uses the last tile-clicked unit (stored by devLastInspectedId)
+		local iid = devLastInspectedId
+		local idata = iid and unitData[iid]
+		if idata and idata.tileX and idata.tileY then
+			BattleEvents.DevCommand:FireServer({
+				action = "KillAtTile",
+				tileX = idata.tileX,
+				tileY = idata.tileY,
+			})
+		else
+			warn("[Dev] No unit selected -- click a unit first, then press KILL AT TILE")
+		end
+	end, Color3.fromRGB(80, 50, 20))
+
+	makeBtn("DELETE SAVE", 8, function()
+		BattleEvents.DevCommand:FireServer({ action = "DeleteSave" })
+	end, Color3.fromRGB(80, 20, 20))
 end
 
 local function destroyDevCameraPanel()

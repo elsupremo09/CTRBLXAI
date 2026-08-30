@@ -54,6 +54,8 @@ local EVENT_NAMES = {
 	-- Unit Inspector (3-tab)
 	"InspectUnitRequest",
 	"InspectUnitResponse",
+	-- Dev tools (Studio only)
+	"DevCommand",
 }
 
 local BattleEvents = {}

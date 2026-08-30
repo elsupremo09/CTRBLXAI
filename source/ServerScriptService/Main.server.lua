@@ -26,6 +26,7 @@ local InventoryService        = require(Game:WaitForChild("InventoryService"))
 local EquipmentService        = require(Game:WaitForChild("EquipmentService"))
 local PersistentStateService  = require(Game:WaitForChild("PersistentStateService"))
 local SaveService             = require(Game:WaitForChild("SaveService"))
+local RewardService           = require(Game:WaitForChild("RewardService"))
 local DisplacementService     = require(Game:WaitForChild("DisplacementService"))
 
 local WeaponData = require(
@@ -121,9 +122,6 @@ local PLAYER_ID = "player_1"
 InventoryService.InitPlayer(PLAYER_ID)
 
 -- Attempt to load saved state (Slice 4C)
--- TEMPORARY: Delete stale save from old KO rules (remove after one run)
-SaveService.Delete(PLAYER_ID)
-
 local loadedSave, loadErr = SaveService.Load(PLAYER_ID)
 local hasSave = false
 if loadedSave then
@@ -474,6 +472,70 @@ BattleEvents.PlayerCommand.OnServerEvent:Connect(function(player, command)
 	pendingCommand = command
 	commandReceived:Fire()
 end)
+
+--------------------------------------------------
+-- DEV COMMANDS (Studio only -- instant win/lose/kill)
+--------------------------------------------------
+
+local devForceResult = nil -- "PlayerWin" or "PlayerLose"
+
+if game:GetService("RunService"):IsStudio() then
+	BattleEvents.DevCommand.OnServerEvent:Connect(function(player, cmd)
+		if not cmd or type(cmd) ~= "table" then return end
+
+		if cmd.action == "InstantWin" then
+			print("[Dev] Instant Win triggered")
+			for _, u in ipairs(allUnitsList) do
+				if u.side == "Enemy" and u.isAlive then
+					UnitSchema.Kill(u)
+					clearTileOccupant(u.tileX, u.tileY)
+					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
+					print(string.format("[Dev] Killed %s", u.name))
+				end
+			end
+			state.phase = "BattleOver"
+			state.winner = "Player"
+			pendingCommand = { actionType = "Wait" }
+			commandReceived:Fire()
+
+		elseif cmd.action == "InstantLose" then
+			print("[Dev] Instant Lose triggered")
+			for _, u in ipairs(allUnitsList) do
+				if u.side == "Player" and u.isAlive then
+					UnitSchema.Kill(u)
+					clearTileOccupant(u.tileX, u.tileY)
+					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
+					print(string.format("[Dev] Killed %s", u.name))
+				end
+			end
+			state.phase = "BattleOver"
+			state.winner = "Enemy"
+			pendingCommand = { actionType = "Wait" }
+			commandReceived:Fire()
+
+		elseif cmd.action == "KillAtTile" then
+			local tx, ty = cmd.tileX, cmd.tileY
+			if not tx or not ty then return end
+			for _, u in ipairs(allUnitsList) do
+				if u.tileX == tx and u.tileY == ty and u.isAlive then
+					print(string.format("[Dev] Kill unit at (%d,%d): %s HP:%d->0", tx, ty, u.name, u.currentHp))
+					UnitSchema.Kill(u)
+					clearTileOccupant(u.tileX, u.tileY)
+					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
+				end
+			end
+		elseif cmd.action == "DeleteSave" then
+			local ok, err = SaveService.Delete(PLAYER_ID)
+			if ok then
+				print("[Dev] Save deleted for " .. PLAYER_ID .. " -- restart to begin fresh")
+			else
+				warn("[Dev] Delete failed: " .. (err or "unknown"))
+			end
+		end
+	end)
+	print("[Dev] DevCommand handler active (Studio only)")
+end
+
 
 local function waitForPlayerCommand(unit, playerObj)
 	-- Send prompt to client
@@ -1321,22 +1383,43 @@ for _, u in ipairs(allUnitsList) do
 	end
 end
 
--- Step 2: Apply post-battle recovery (only on qualifying victory)
-if isQualifyingVictory then
-	print("[PostBattle] Qualifying victory — applying 35% recovery to survivors")
-	local recovery = PersistentStateService.ApplyPostBattleRecovery(PLAYER_ID)
-	for unitId, result in pairs(recovery) do
-		if result.wasKO then
-			print(string.format("  %s: KO — no recovery", unitId))
-		else
-			print(string.format("  %s: HP+%d MP+%d", unitId, result.hpRecovered, result.mpRecovered))
-		end
-	end
-else
-	print("[PostBattle] Not a qualifying victory — no recovery applied")
+-- Step 2a: Clear KO on all player units (session rule — base not implemented)
+PersistentStateService.ClearAllKO(PLAYER_ID)
+
+-- Step 2b: Apply 35% recovery to all survivors (regardless of outcome)
+print("[PostBattle] Applying 35% recovery to survivors")
+local recovery = PersistentStateService.ApplyPostBattleRecovery(PLAYER_ID)
+for unitId, result in pairs(recovery) do
+	print(string.format("  %s: HP+%d MP+%d", unitId, result.hpRecovered, result.mpRecovered))
 end
 
--- Step 3: Save to DataStore
+--------------------------------------------------
+-- POST-BATTLE: GENERATE REWARDS (Slice 4D)
+--------------------------------------------------
+
+local rewardSummaries = {}
+
+if isQualifyingVictory then
+	-- Map Level placeholder: 1 until Slice 5 provides authoritative value
+	local MAP_LEVEL = 1
+	local opportunityId = string.format("battle_%s_%d", PLAYER_ID, os.clock())
+
+	local results, committedCount = RewardService.GenerateRewards(PLAYER_ID, MAP_LEVEL, opportunityId)
+
+	if committedCount > 0 then
+		rewardSummaries = RewardService.BuildRewardSummaries(results)
+		print(string.format("[PostBattle] %d reward(s) committed to inventory", committedCount))
+	end
+
+	-- Log any failures explicitly
+	for i, result in ipairs(results) do
+		if not result.committed then
+			warn(string.format("[PostBattle] Reward %d failed: %s", i, result.error or "unknown"))
+		end
+	end
+end
+
+-- Step 3: Save to DataStore (now includes committed rewards)
 local rosterState = PersistentStateService.ExportState(PLAYER_ID)
 local inventoryItems = InventoryService.ExportInventory(PLAYER_ID)
 local progression = {} -- Slice 4C placeholder; populated in future slices
