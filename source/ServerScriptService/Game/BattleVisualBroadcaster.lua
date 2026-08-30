@@ -306,4 +306,25 @@ function BattleVisualBroadcaster.GuardActivated(unit, guardRt, mitigation)
 	task.wait(PACE.Action * 0.5)
 end
 
+--------------------------------------------------
+-- PUSH
+--------------------------------------------------
+
+function BattleVisualBroadcaster.UnitPushed(pusher, target, result)
+	BattleEvents.UnitPushed:FireAllClients({
+		pusherId       = pusher.id,
+		targetId       = target.id,
+		pushed         = result.pushed,
+		tilesDisplaced = result.tilesDisplaced,
+		finalTileX     = result.finalTileX,
+		finalTileY     = result.finalTileY,
+		wallDamage     = result.wallCollision and result.wallCollision.damage or 0,
+		fallDamage     = result.fallDamage or 0,
+		blockedBy      = result.blockedBy,
+		targetHp       = target.currentHp,
+		targetMaxHp    = target.maxHp,
+	})
+	task.wait(PACE.Action)
+end
+
 return BattleVisualBroadcaster

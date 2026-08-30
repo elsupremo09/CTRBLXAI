@@ -117,7 +117,7 @@ local function computeCFrame()
 end
 
 local function clampFocus(f)
-	local margin = battleBounds.tileSize * 2  -- 2 tiles margin
+	local margin = battleBounds.tileSize * 4  -- 4 tiles margin (covers mobile + rotated zoom)
 	return Vector3.new(
 		math.clamp(f.X, battleBounds.minX - margin, battleBounds.maxX + margin),
 		0,
@@ -475,12 +475,14 @@ local function countTracked()
 end
 
 UserInputService.TouchStarted:Connect(function(touch, gameProcessed)
-	if gameProcessed then return end
 	if not isActive then return end
 
+	-- Check UI blocking (both gp and isOverUI for defense in depth)
 	local overUI = isOverUI(touch.Position)
-	if overUI then
-		print(string.format("[TouchLifecycle] event=Started accepted=false reason=ui tracked=%d", countTracked()))
+	if gameProcessed or overUI then
+		print(string.format("[TouchLifecycle] event=Started accepted=false reason=%s gp=%s overUI=%s pos=(%.0f,%.0f) tracked=%d",
+			gameProcessed and "gp" or "overUI", tostring(gameProcessed), tostring(overUI),
+			touch.Position.X, touch.Position.Y, countTracked()))
 		return
 	end
 
@@ -594,6 +596,7 @@ UserInputService.TouchMoved:Connect(function(touch, gameProcessed)
 			-- Use horizontal movement of the center as rotation signal
 			if not lastTwistAngle then
 				lastTwistAngle = center.X  -- store initial X
+				print(string.format("[TouchRotation] init centerX=%.0f threshold=%d", center.X, ROTATION_THRESHOLD))
 			else
 				local deltaX = center.X - lastTwistAngle
 				if math.abs(deltaX) > ROTATION_THRESHOLD then
@@ -603,7 +606,7 @@ UserInputService.TouchMoved:Connect(function(touch, gameProcessed)
 						CameraController.RotateCW()
 					end
 					rotationTriggered = true
-					print("[TouchGesture] type=rotate taps=0")
+					print(string.format("[TouchGesture] type=rotate deltaX=%.0f taps=0", deltaX))
 				end
 			end
 		end

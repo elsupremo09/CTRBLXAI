@@ -1,4 +1,3 @@
--- Main.server.lua
 -- CTRBLXAI | Slice 3 — "Skills and Real Combat"
 --
 -- Player-controlled units wait for client input.
@@ -27,6 +26,7 @@ local InventoryService        = require(Game:WaitForChild("InventoryService"))
 local EquipmentService        = require(Game:WaitForChild("EquipmentService"))
 local PersistentStateService  = require(Game:WaitForChild("PersistentStateService"))
 local SaveService             = require(Game:WaitForChild("SaveService"))
+local DisplacementService     = require(Game:WaitForChild("DisplacementService"))
 
 local WeaponData = require(
 	game:GetService("ReplicatedStorage")
@@ -98,6 +98,7 @@ local MAP_WIDTH  = 8
 local MAP_HEIGHT = 8
 
 CommandService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
+DisplacementService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
 
 --------------------------------------------------
 -- SKILL REGISTRATION
@@ -169,11 +170,12 @@ end
 local hero = UnitSchema.Create({
 	id           = "unit_hero",
 	name         = "Hero",
+	level        = 20,
 	side         = "Player",
 	controller   = "Player",
 	tileX        = 4,
-	tileY        = 2,
-	stats        = { STR = 18, AGI = 14, INT = 8, VIT = 16, DEX = 12, LUK = 10 },
+	tileY        = 4,
+	stats        = { STR = 54, AGI = 42, INT = 24, VIT = 48, DEX = 36, LUK = 30 },
 	skillIds     = { "skill_power_strike", "skill_sweeping_cut" },
 })
 equipGeneratedWeapon(hero, "WPN-SWORD", 5, "Uncommon", 1001)
@@ -181,11 +183,12 @@ equipGeneratedWeapon(hero, "WPN-SWORD", 5, "Uncommon", 1001)
 local mage = UnitSchema.Create({
 	id           = "unit_mage",
 	name         = "Mage",
+	level        = 20,
 	side         = "Player",
 	controller   = "Player",
 	tileX        = 3,
 	tileY        = 1,
-	stats        = { STR = 6, AGI = 10, INT = 20, VIT = 10, DEX = 14, LUK = 8 },
+	stats        = { STR = 18, AGI = 30, INT = 60, VIT = 30, DEX = 42, LUK = 24 },
 	skillIds     = { "skill_fire_bolt", "skill_healing_light" },
 })
 equipGeneratedWeapon(mage, "WPN-WAND", 5, "Uncommon", 1002)
@@ -193,14 +196,29 @@ equipGeneratedWeapon(mage, "WPN-WAND", 5, "Uncommon", 1002)
 local ranger = UnitSchema.Create({
 	id           = "unit_ranger",
 	name         = "Ranger",
+	level        = 20,
 	side         = "Player",
 	controller   = "Player",
 	tileX        = 5,
 	tileY        = 3,
-	stats        = { STR = 12, AGI = 16, INT = 8, VIT = 12, DEX = 18, LUK = 10 },
+	stats        = { STR = 36, AGI = 48, INT = 24, VIT = 36, DEX = 54, LUK = 30 },
 	skillIds     = { "skill_crippling_shot", "skill_venom_strike" },
 })
 equipGeneratedWeapon(ranger, "WPN-CROSSBOW", 5, "Uncommon", 1003)
+
+-- TEST OVERRIDE: Ranger's Venom Strike uses weapon range instead of fixed 1
+do
+	local baseVenom = GameConstants.SKILLS.venom_strike
+	local rangerVenom = {}
+	for k, v in pairs(baseVenom) do rangerVenom[k] = v end
+	rangerVenom.id    = "skill_venom_strike_ranged"
+	rangerVenom.range = ranger.weaponMaxRange or 1
+	CommandService.RegisterSkill(rangerVenom)
+	-- Swap in ranger's skill list
+	for i, sid in ipairs(ranger.skillIds) do
+		if sid == "skill_venom_strike" then ranger.skillIds[i] = "skill_venom_strike_ranged" end
+	end
+end
 
 local grunt = UnitSchema.Create({
 	id           = "unit_grunt",
@@ -393,6 +411,17 @@ local function buildTurnPrompt(unit)
 		})
 	end
 
+	-- Push targets: adjacent enemies (range 1, Chebyshev)
+	local pushTargets = {}
+	for _, c in ipairs(state.units) do
+		if c.isAlive and c.side ~= unit.side then
+			local dist = math.max(math.abs(c.tileX - unit.tileX), math.abs(c.tileY - unit.tileY))
+			if dist == 1 then
+				table.insert(pushTargets, { id = c.id, name = c.name, tileX = c.tileX, tileY = c.tileY })
+			end
+		end
+	end
+
 	return {
 		unitId         = unit.id,
 		unitName       = unit.name,
@@ -408,6 +437,8 @@ local function buildTurnPrompt(unit)
 		skills         = skills,
 		moveCandidates = moveCandidates,
 		attackTargets  = attackTargets,
+		pushTargets    = pushTargets,
+		pushRt         = math.round(StatusService.GetModifiedBaseRt(unit) * GameConstants.GUARD_RT_BASE_FACTOR),
 		timeline       = timeline,
 		currentCt      = state.ct,
 		-- RT cost data so client can preview turn order shifts
@@ -490,6 +521,27 @@ local function executePlayerCommand(unit, command)
 			return { actionType = "Guard", unit = unit }
 		else
 			warn("[Main] Guard rejected: " .. (reason or "unknown"))
+			return nil
+		end
+	end
+
+	if actionType == "Push" then
+		-- Find the target unit by ID
+		local target = nil
+		for _, u in ipairs(state.units) do
+			if u.id == command.targetId then target = u; break end
+		end
+		if not target then
+			warn("[Main] Push: target not found")
+			return nil
+		end
+		local oldTargetX, oldTargetY = target.tileX, target.tileY
+		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Push", target)
+		if ok then
+			return { actionType = "Push", unit = unit, target = target,
+				oldTargetX = oldTargetX, oldTargetY = oldTargetY }
+		else
+			warn("[Main] Push rejected: " .. (reason or "unknown"))
 			return nil
 		end
 	end
@@ -687,6 +739,17 @@ local function broadcastActions(actions, activeUnit)
 
 		elseif action.actionType == "Guard" then
 			-- Guard visual already broadcast by CommandService; nothing extra needed here
+
+		elseif action.actionType == "Push" then
+			-- Update tile occupancy for push displacement
+			if action.target and action.oldTargetX then
+				clearTileOccupant(action.oldTargetX, action.oldTargetY)
+				local t = action.target
+				if t.isAlive then
+					setTileOccupant(t.tileX, t.tileY, t.name, "Unit (" .. t.side .. ")", "Blocking")
+				end
+			end
+			-- Push visual already broadcast by CommandService
 		end
 	end
 

@@ -23,6 +23,7 @@ local CombatResolver    = require(script.Parent.CombatResolver)
 local BattleCoordinator = require(script.Parent.BattleCoordinator)
 local StatusService     = require(script.Parent.StatusService)
 local BattleVisualBroadcaster = require(script.Parent.BattleVisualBroadcaster)
+local DisplacementService = require(script.Parent.DisplacementService)
 
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -316,7 +317,7 @@ function CommandService.ValidateAndCommit(
 			state.units, _mapWidth, _mapHeight
 		)
 		if not valid then return false, reason end
-	elseif actionType ~= "Wait" and actionType ~= "Guard" then
+	elseif actionType ~= "Wait" and actionType ~= "Guard" and actionType ~= "Push" then
 		-- Move and Attack need target/tile validation
 		local valid, reason = TargetingService.ValidateSelection(
 			actor, actionType, selection,
@@ -513,6 +514,69 @@ function CommandService.ValidateAndCommit(
 		local mitigation = GameConstants.GUARD_MITIGATION + (actor.guardBonus or 0)
 		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
 		BattleVisualBroadcaster.GuardActivated(actor, guardRt, mitigation)
+
+	elseif actionType == "Push" then
+		-- Push: 1 AP, push adjacent enemy away
+		-- selection = target unit
+		local target = selection
+		if not target or not target.isAlive then
+			return false, "Push target is invalid or defeated."
+		end
+
+		-- Must be adjacent (Chebyshev distance 1)
+		local dist = math.max(
+			math.abs(actor.tileX - target.tileX),
+			math.abs(actor.tileY - target.tileY)
+		)
+		if dist > 1 then
+			return false, "Push target must be adjacent."
+		end
+
+		-- Push RT = round(Modified Base RT × 0.10)
+		local modBaseRt = StatusService.GetModifiedBaseRt(actor)
+		local pushRt = math.round(modBaseRt * GameConstants.GUARD_RT_BASE_FACTOR)
+		BattleCoordinator.AccrueRt(state, pushRt)
+
+		-- Resolve displacement
+		local force = 1
+		if actor.derivedStats and actor.derivedStats.force then
+			force = actor.derivedStats.force
+		elseif actor.effectiveStats and actor.effectiveStats.STR then
+			force = 1 + math.floor(actor.effectiveStats.STR / 60)
+		end
+		local direction = DisplacementService.GetPushDirection(actor, target)
+		local result = DisplacementService.ResolvePush(
+			actor, target, force, direction,
+			GameConstants.KNOCKBACK_SOURCE_MODIFIERS.GlobalPush,
+			state.units
+		)
+
+		-- Apply position change
+		target.tileX = result.finalTileX
+		target.tileY = result.finalTileY
+
+		-- Apply collision/fall damage
+		local totalPushDmg = 0
+		if result.wallCollision and result.wallCollision.damage > 0 then
+			totalPushDmg = totalPushDmg + result.wallCollision.damage
+		end
+		if result.fallDamage and result.fallDamage > 0 then
+			totalPushDmg = totalPushDmg + result.fallDamage
+		end
+		if totalPushDmg > 0 then
+			UnitSchema.ApplyDamage(target, totalPushDmg)
+		end
+
+		-- Broadcast
+		BattleVisualBroadcaster.UnitPushed(actor, target, result)
+
+		print(string.format(
+			"[CommandService] PUSH | %s -> %s | Force:%d | Moved:%d to (%d,%d) | Dmg:%d | RT:%d | AP left:%d",
+			actor.name, target.name, force,
+			result.tilesDisplaced, result.finalTileX, result.finalTileY,
+			totalPushDmg, pushRt, actor.currentAp
+		))
+
 	end
 
 	-- STEP 9: Handoff

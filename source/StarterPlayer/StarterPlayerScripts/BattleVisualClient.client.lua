@@ -428,7 +428,16 @@ local function enterActionSelection()
 			BattleHUD.AddLogEntry((prompt.unitName or "Unit") .. " guards.")
 			BattleEvents.PlayerCommand:FireServer({ actionType = "Guard" })
 		end },
-		{ id="Interact", text="Interact", enabled=false },
+		{ id="Push", text="Push", enabled=#(prompt.pushTargets or {}) > 0, onPress=function()
+			inputMode = "push"; selectedSkill = nil; clearHighlights()
+			local previewRt = (prompt.pushRt or 40) + (prompt.unitBaseRt or 400)
+			updateTimeline(timelineSnapshot, prompt.unitId, previewRt)
+			for _, t in ipairs(prompt.pushTargets or {}) do
+				createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 180, 40), 0.45)
+			end
+			storedActorData.onBack = enterActionSelection
+			BattleHUD.SetState("TargetSelection")
+		end },
 		{ id="Wait", text="Wait", enabled=true, onPress=function()
 			clearHighlights(); isPlayerTurn = false; inputMode = nil
 			BattleHUD.SetState("Resolving")
@@ -518,6 +527,9 @@ local function cancelToTargeting()
 		clearHighlights()
 		local c = selectedSkill.isHealing and Color3.fromRGB(60,180,80) or Color3.fromRGB(180,150,60)
 		for _, t in ipairs(selectedSkill.targets) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
+	elseif inputMode == "push" then
+		clearHighlights()
+		for _, t in ipairs(currentPrompt.pushTargets or {}) do createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 180, 40), 0.45) end
 	end
 	BattleHUD.SetState("TargetSelection")
 end
@@ -618,6 +630,23 @@ local function processTileClick(bx, by)
 					return
 				end
 			end
+
+		elseif inputMode == "push" then
+			for _, t in ipairs(currentPrompt.pushTargets or {}) do
+				if t.tileX == bx and t.tileY == by then
+					aimTarget = t; clearHighlights()
+					createTileHighlight(bx, by, "selected")
+					BattleHUD.SetTargetData(unitData[t.id])
+					BattleHUD.SetPreviewData({
+						estimatedDamage = 0,
+						description = "Push " .. (t.name or "target") .. " away",
+						onConfirm = function() commitCommand({ actionType = "Push", targetId = t.id }) end,
+						onBack = cancelToTargeting,
+					})
+					BattleHUD.SetState("Preview")
+					return
+				end
+			end
 		end
 	end
 end
@@ -653,7 +682,7 @@ game:GetService("RunService").Heartbeat:Connect(function()
 	-- Raycast from tap position to find tile
 	local cam = workspace.CurrentCamera
 	if not cam then return end
-	local ray = cam:ViewportPointToRay(tapPos.X, tapPos.Y)
+	local ray = cam:ScreenPointToRay(tapPos.X, tapPos.Y)
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Include
 	local tileParts = {}
@@ -968,6 +997,35 @@ BattleEvents.GuardActivated.OnClientEvent:Connect(function(data)
 			remainingTurns = 1,
 			value = mitigationPct .. "%",
 		})
+	end
+end)
+
+BattleEvents.UnitPushed.OnClientEvent:Connect(function(data)
+	local targetToken = unitTokens[data.targetId]
+	local pusherToken = unitTokens[data.pusherId]
+
+	-- Update local unit data position
+	if unitData[data.targetId] then
+		unitData[data.targetId].tileX = data.finalTileX
+		unitData[data.targetId].tileY = data.finalTileY
+	end
+
+	-- Animate target moving to new position
+	if targetToken and data.pushed then
+		TweenService:Create(targetToken.part,
+			TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+			{ CFrame = CFrame.new(tileToWorld(data.finalTileX, data.finalTileY)) * CFrame.Angles(0, 0, math.rad(90)) }
+		):Play()
+	end
+
+	-- Show push text + damage floats
+	if pusherToken then
+		showFloatingText(pusherToken.part.Position, "PUSH", Color3.fromRGB(255, 180, 40), 1.1)
+	end
+	local totalDmg = (data.wallDamage or 0) + (data.fallDamage or 0)
+	if totalDmg > 0 and targetToken then
+		showFloatingText(targetToken.part.Position, "-" .. totalDmg, Color3.fromRGB(255, 100, 40))
+		updateHpBar(data.targetId, data.targetHp, data.targetMaxHp)
 	end
 end)
 

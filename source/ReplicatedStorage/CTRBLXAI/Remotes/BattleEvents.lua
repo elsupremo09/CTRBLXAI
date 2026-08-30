@@ -50,6 +50,7 @@ local EVENT_NAMES = {
 	-- Slice 4A
 	"ChannelFizzled",
 	"GuardActivated",
+	"UnitPushed",
 	-- Unit Inspector (3-tab)
 	"InspectUnitRequest",
 	"InspectUnitResponse",

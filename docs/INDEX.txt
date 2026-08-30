@@ -154,3 +154,25 @@ project_rules entries added:
   - "Dependency Direction" -- authoritative > gameplay > events > controllers > views
   - "Compatibility Process" -- 11-step cross-slice addition process
   - "Slice 7 Boundary" -- presentation only, forbidden gameplay ownership
+
+--- ACTION MENU PRESENTATION (added 2026-08-30) ---
+
+project_rules entries (section = 'Action Menu', 9 rows):
+  Top-level: COMMANDS | SKILLS | ITEMS | WAIT (STANCE removed)
+  Commands submenu: MOVE | BASIC ATTACK | GUARD | PUSH | INTERACT
+  Button availability: never hide, gray out + tooltip
+  Push/Interact: visible but unavailable until deps implemented
+  Back/Confirm: fixed positions, stable across all menus
+  Query: SELECT topic, rule FROM project_rules WHERE section = 'Action Menu'
+
+--- PUSH ACTION (added 2026-08-30) ---
+
+project_rules (section = 'Push Action', 6 rows):
+  AP=1, RT=round(ModBaseRT x 0.10), Range=1, Direction=directly away, Distance=max(0, Force-Stability)
+  Query: SELECT topic, rule FROM project_rules WHERE section = 'Push Action'
+
+project_rules (section = 'Equipment WT Model', 1 row):
+  Non-weapon WT adds to Base RT always. Weapon WT only during Basic Attack/Skills.
+  Query: SELECT topic, rule FROM project_rules WHERE section = 'Equipment WT Model'
+
+core_stats entries: Push (1 AP), Push RT, Push Distance formula

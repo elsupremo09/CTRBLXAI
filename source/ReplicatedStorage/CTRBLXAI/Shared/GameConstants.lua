@@ -416,7 +416,7 @@ function GameConstants.ComputeDerivedStats(unit)
 		defensePower    = math.round(weaponDefense * (1 + vit / 300) * 10) / 10,
 		debuffResist    = math.round((1 - vit / (300 + vit)) * 1000) / 1000,
 		rtDelayResist   = math.round((1 - vit / (300 + vit)) * 1000) / 1000,
-		stability       = 1 + math.floor(vit / 60),
+		stability       = math.floor(vit / 60),
 
 		-- DEX derived
 		precision       = math.round(dex / (dex + 200) * 1000) / 10, -- store as % (e.g. 5.7)
@@ -452,6 +452,40 @@ function GameConstants.ComputeDerivedStats(unit)
 	return derived
 end
 
+--------------------------------------------------
+-- DISPLACEMENT FORMULAS (from DB: movement_targeting — Elevation & Displacement)
+--
+-- Wall Collision Damage = round(MaxHP × 0.04 × BlockedTiles × (1 + STR/200) × CollisionMult × BossHpMod × SourceMod)
+-- Fall Damage = round(MaxHP × 0.04 × (FallHeight - 2)^1.5)  [only if FallHeight >= 3]
+-- Push Distance = max(0, Force - Stability)
+--------------------------------------------------
+
+GameConstants.COLLISION_MULTIPLIERS = {
+	Unit       = 0.8,
+	WoodenWall = 1.0,
+	StoneWall  = 1.2,
+	Pillar     = 1.3,
+	Spikes     = 1.6,
+}
+
+GameConstants.KNOCKBACK_SOURCE_MODIFIERS = {
+	GlobalPush     = 1.0,
+	SkillKnockback = 0.5,
+}
+
+GameConstants.FALL_DAMAGE_MIN_HEIGHT = 3 -- forced drops below this cause no fall damage
+
+function GameConstants.CalcWallCollisionDamage(targetMaxHp, blockedTiles, attackerStr, collisionType, sourceModifier)
+	local collisionMult = GameConstants.COLLISION_MULTIPLIERS[collisionType] or 1.0
+	local bossMod = 1.0 -- Boss HP% modifier stub — no bosses in Slice 2
+	return math.round(targetMaxHp * 0.04 * blockedTiles * (1 + attackerStr / 200) * collisionMult * bossMod * sourceModifier)
+end
+
+function GameConstants.CalcFallDamage(targetMaxHp, fallHeight)
+	if fallHeight < GameConstants.FALL_DAMAGE_MIN_HEIGHT then return 0 end
+	return math.round(targetMaxHp * 0.04 * (fallHeight - 2) ^ 1.5)
+end
+
 -- Stat metadata for client UI breakdown (formula strings + parent stat)
 GameConstants.STAT_META = {
 	attackPower     = { label = "Attack Power",     formula = "WeaponDmg × (1 + STR/200)", parent = "STR" },
@@ -469,7 +503,7 @@ GameConstants.STAT_META = {
 	defensePower    = { label = "Defense Power",    formula = "Defense × (1 + VIT / 300)", parent = "VIT" },
 	debuffResist    = { label = "Debuff Resist",    formula = "1 - VIT / (300 + VIT)", parent = "VIT", unit = "×" },
 	rtDelayResist   = { label = "RT Delay Resist",  formula = "1 - VIT / (300 + VIT)", parent = "VIT", unit = "×" },
-	stability       = { label = "Stability",        formula = "1 + floor(VIT / 60)", parent = "VIT" },
+	stability       = { label = "Stability",        formula = "floor(VIT / 60)", parent = "VIT" },
 	precision       = { label = "Precision",        formula = "DEX / (DEX + 200)", parent = "DEX", unit = "%" },
 	jump            = { label = "Jump",             formula = "1 + floor(DEX / 60)", parent = "DEX" },
 	channelReduction = { label = "Channel Speed",   formula = "DEX / (300 + DEX) reduction", parent = "DEX", unit = "%" },
