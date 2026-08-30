@@ -117,13 +117,14 @@ local function computeCFrame()
 end
 
 local function clampFocus(f)
-	local margin = battleBounds.tileSize * 4  -- 4 tiles margin (covers mobile + rotated zoom)
+	local margin = battleBounds.tileSize * 8  -- 8 tiles margin (panels cover ~40% of mobile viewport)
 	return Vector3.new(
 		math.clamp(f.X, battleBounds.minX - margin, battleBounds.maxX + margin),
 		0,
 		math.clamp(f.Z, battleBounds.minZ - margin, battleBounds.maxZ + margin)
 	)
 end
+
 
 local function applyCFrame(instant)
 	if not isActive then return end
@@ -480,9 +481,6 @@ UserInputService.TouchStarted:Connect(function(touch, gameProcessed)
 	-- Check UI blocking (both gp and isOverUI for defense in depth)
 	local overUI = isOverUI(touch.Position)
 	if gameProcessed or overUI then
-		print(string.format("[TouchLifecycle] event=Started accepted=false reason=%s gp=%s overUI=%s pos=(%.0f,%.0f) tracked=%d",
-			gameProcessed and "gp" or "overUI", tostring(gameProcessed), tostring(overUI),
-			touch.Position.X, touch.Position.Y, countTracked()))
 		return
 	end
 
@@ -496,7 +494,7 @@ UserInputService.TouchStarted:Connect(function(touch, gameProcessed)
 	}
 
 	local count = countTracked()
-	print(string.format("[TouchLifecycle] event=Started accepted=true reason=battlefield tracked=%d", count))
+
 
 	-- If we now have 2+ touches, mark ALL tracked as multitouch
 	if count >= 2 then
@@ -507,6 +505,7 @@ UserInputService.TouchStarted:Connect(function(touch, gameProcessed)
 		-- Init aggregate state
 		rotationTriggered = false
 		lastPinchDist = nil
+		lastTwistAngle = nil
 	end
 end)
 
@@ -536,15 +535,25 @@ UserInputService.TouchEnded:Connect(function(touch)
 	trackedTouches[touch] = nil
 	local remaining = countTracked()
 
-	print(string.format("[TouchLifecycle] event=Ended tracked=true classification=%s remaining=%d tapIntent=%d",
-		classification, remaining, tapEmitted))
+
+	-- When multitouch drops to 1 surviving finger, let it pan
+	if remaining == 1 then
+		lastPinchDist = nil
+		lastTwistAngle = nil
+		rotationTriggered = false
+		for _, e in pairs(trackedTouches) do
+			e.inMultitouch = false
+			-- Keep exceededDrag = true so the surviving finger
+			-- can pan immediately but cannot produce a tap
+		end
+	end
 
 	-- Reset aggregate state when all fingers released
 	if remaining == 0 then
 		lastPinchDist = nil
 		lastTwistAngle = nil
 		rotationTriggered = false
-		print(string.format("[TouchGesture] type=%s taps=%d", classification, tapEmitted))
+
 	end
 end)
 
@@ -596,7 +605,6 @@ UserInputService.TouchMoved:Connect(function(touch, gameProcessed)
 			-- Use horizontal movement of the center as rotation signal
 			if not lastTwistAngle then
 				lastTwistAngle = center.X  -- store initial X
-				print(string.format("[TouchRotation] init centerX=%.0f threshold=%d", center.X, ROTATION_THRESHOLD))
 			else
 				local deltaX = center.X - lastTwistAngle
 				if math.abs(deltaX) > ROTATION_THRESHOLD then
@@ -606,7 +614,6 @@ UserInputService.TouchMoved:Connect(function(touch, gameProcessed)
 						CameraController.RotateCW()
 					end
 					rotationTriggered = true
-					print(string.format("[TouchGesture] type=rotate deltaX=%.0f taps=0", deltaX))
 				end
 			end
 		end
