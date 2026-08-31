@@ -880,6 +880,11 @@ BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	local centerZ = MAP_OFFSET_Z + (MAP_HEIGHT * TILE_SIZE) / 2
 	CameraController.EnterBattle(Vector3.new(centerX, 0, centerZ))
 
+	-- Collapse TemplateInspector panels during battle
+	if type(_G.CTRBLXAI_SetInspectorCollapsed) == "function" then
+		_G.CTRBLXAI_SetInspectorCollapsed(true)
+	end
+
 	createDevCameraPanel()
 
 	BattleHUD.Cleanup()
@@ -1107,6 +1112,10 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 		bp = { state = "Idle", actor = nil, target = nil, skill = nil, preview = nil, tile = nil, inspectedEntityId = nil }
 		destroyDevCameraPanel()
 		CameraController.ExitBattle()
+		-- Expand TemplateInspector panels after battle
+		if type(_G.CTRBLXAI_SetInspectorCollapsed) == "function" then
+			_G.CTRBLXAI_SetInspectorCollapsed(false)
+		end
 	end)
 end)
 

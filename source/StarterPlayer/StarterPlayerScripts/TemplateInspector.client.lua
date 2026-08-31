@@ -84,8 +84,8 @@ local function makePanel(name, yOffset, height)
 	local frame = Instance.new("Frame")
 	frame.Name                = name
 	frame.Size                = UDim2.new(0, 220, 0, height)
-	frame.AnchorPoint         = Vector2.new(1, 0)
-	frame.Position            = UDim2.new(1, -12, 0, yOffset)
+	frame.AnchorPoint         = Vector2.new(0, 1)
+	frame.Position            = UDim2.new(0, 12, 1, -yOffset)
 	frame.BackgroundColor3    = Color3.fromRGB(15, 15, 20)
 	frame.BackgroundTransparency = 0.08
 	frame.BorderSizePixel     = 0
@@ -128,11 +128,13 @@ local function makePanel(name, yOffset, height)
 end
 
 -- Tile panel — top right
-local tilePanel,   tileStripe,   tileContent   = makePanel("TilePanel",   80,  230)
--- Object panel — below tile panel
-local objectPanel, objectStripe, objectContent = makePanel("ObjectPanel", 322, 110)
+local tilePanel,   tileStripe,   tileContent   = makePanel("TilePanel",   120, 230)
+-- Object panel — above tile panel
+local objectPanel, objectStripe, objectContent = makePanel("ObjectPanel", 360, 110)
 
 -- Hide both until a tile is selected
+tilePanel:SetAttribute("_shouldShow", false)
+objectPanel:SetAttribute("_shouldShow", false)
 tilePanel.Visible   = false
 objectPanel.Visible = false
 
@@ -142,9 +144,9 @@ objectPanel.Visible = false
 
 local viewModeButton = Instance.new("TextButton")
 viewModeButton.Name                 = "ViewModeButton"
-viewModeButton.AnchorPoint          = Vector2.new(0.5, 0)
-viewModeButton.Position             = UDim2.new(0.5, 0, 0, 70)
-viewModeButton.Size                 = UDim2.new(0, 230, 0, 42)
+viewModeButton.AnchorPoint          = Vector2.new(0, 1)
+viewModeButton.Position             = UDim2.new(0, 12, 1, -475)
+viewModeButton.Size                 = UDim2.new(0, 220, 0, 36)
 viewModeButton.BackgroundColor3     = Color3.fromRGB(15, 15, 20)
 viewModeButton.BackgroundTransparency = 0.08
 viewModeButton.BorderSizePixel      = 0
@@ -157,6 +159,41 @@ viewModeButton.Parent               = screenGui
 local btnCorner = Instance.new("UICorner")
 btnCorner.CornerRadius = UDim.new(0, 6)
 btnCorner.Parent       = viewModeButton
+
+-- COLLAPSE / EXPAND TOGGLE
+local inspectorExpanded = true
+local collapseBtn = Instance.new("TextButton")
+collapseBtn.Name = "InspectorCollapse"
+collapseBtn.AnchorPoint = Vector2.new(0, 1)
+collapseBtn.Position = UDim2.new(0, 12, 1, -78)
+collapseBtn.Size = UDim2.new(0, 220, 0, 28)
+collapseBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+collapseBtn.BackgroundTransparency = 0.1
+collapseBtn.BorderSizePixel = 0
+collapseBtn.Font = Enum.Font.SourceSansBold
+collapseBtn.TextSize = 13
+collapseBtn.TextColor3 = Color3.fromRGB(160, 160, 170)
+collapseBtn.Text = "▼ Map Inspector"
+collapseBtn.Parent = screenGui
+Instance.new("UICorner", collapseBtn).CornerRadius = UDim.new(0, 4)
+
+local function updateInspectorVisibility()
+	tilePanel.Visible = inspectorExpanded and (tilePanel:GetAttribute("_shouldShow") ~= false)
+	objectPanel.Visible = inspectorExpanded and (objectPanel:GetAttribute("_shouldShow") ~= false)
+	viewModeButton.Visible = inspectorExpanded
+	collapseBtn.Text = inspectorExpanded and "▼ Map Inspector" or "▶ Map Inspector"
+end
+
+collapseBtn.MouseButton1Click:Connect(function()
+	inspectorExpanded = not inspectorExpanded
+	updateInspectorVisibility()
+end)
+
+-- Expose toggle for BVC to collapse during battle
+_G.CTRBLXAI_SetInspectorCollapsed = function(collapsed)
+	inspectorExpanded = not collapsed
+	updateInspectorVisibility()
+end
 
 --------------------------------------------------
 -- SELECTION BOXES
@@ -425,8 +462,9 @@ end
 
 local function updateInspector()
 	if not selectedTile then
-		tilePanel.Visible   = false
-		objectPanel.Visible = false
+		tilePanel:SetAttribute("_shouldShow", false)
+		objectPanel:SetAttribute("_shouldShow", false)
+		updateInspectorVisibility()
 		return
 	end
 
@@ -439,8 +477,9 @@ local function updateInspector()
 	tileContent.Text   = buildTileText(selectedTile)
 	objectContent.Text = buildObjectText(selectedTile)
 
-	tilePanel.Visible   = true
-	objectPanel.Visible = true
+	tilePanel:SetAttribute("_shouldShow", true)
+	objectPanel:SetAttribute("_shouldShow", true)
+	updateInspectorVisibility()
 end
 
 --------------------------------------------------
