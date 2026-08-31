@@ -86,6 +86,17 @@ local highlightParts  = {}
 local aimTarget       = nil
 local storedActorData = nil -- shared across enterActionSelection and click handlers
 
+-- Battle presentation: single table of everything the HUD needs to display
+local bp = {
+	state = "Idle",
+	actor = nil,
+	target = nil,
+	skill = nil,
+	preview = nil,
+	tile = nil,
+	inspectedEntityId = nil,
+}
+
 --------------------------------------------------
 -- HIGHLIGHTS
 --------------------------------------------------
@@ -377,40 +388,40 @@ local function enterActionSelection()
 				enabled = canUse,
 				onPress = function()
 					selectedSkill = skill; inputMode = "skill"; clearHighlights()
-					BattleHUD.SetSkillData({
+					bp.skill = {
 						name = skill.name, tags = table.concat(skill.tags or {}, ", "),
 						mpCost = skill.mpCost, rtCost = skill.rtCost, range = skill.range,
 						pattern = skill.pattern, channelTime = skill.channelTime,
 						effects = skill.description or "",
-					})
+					}
 					local pRt = (skill.rtCost or 60) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
 					local pEv = skill.channelTime and skill.channelTime > 0 and { name = skill.name, side = "Player", rt = skill.channelTime } or nil
 					updateTimeline(timelineSnapshot, prompt.unitId, pRt, pEv)
 					local c = skill.isHealing and Color3.fromRGB(60,180,80) or Color3.fromRGB(180,150,60)
 					for _, t in ipairs(skill.targets) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
 					storedActorData.onBack = enterSkillSelection
-					BattleHUD.SetState("TargetSelection")
+					bp.state = "TargetSelection"; BattleHUD.Render(bp)
 				end,
 			})
 		end
 		storedActorData.skillEntries = entries
 		storedActorData.onBack = enterActionSelection
-		BattleHUD.SetState("SkillSelection")
+		bp.state = "SkillSelection"; BattleHUD.Render(bp)
 	end
 
 	-- 4x2 grid: Attack, Skill, Move, Item, Guard, Interact, Wait, Stance
 	local actions = {
 		{ id="Attack", text="Attack", enabled=atkEnabled, onPress=function()
 			inputMode = "attack"; selectedSkill = nil; clearHighlights()
-			BattleHUD.SetSkillData({ name="Basic Attack", tags="Physical",
+			bp.skill = { name="Basic Attack", tags="Physical",
 				mpCost=0, rtCost=prompt.attackRt or 0, range=prompt.weaponRange or 1, pattern="Single",
-				effects="Weapon Dmg: "..(prompt.weaponDamage or 0).." | RT Delay: "..(prompt.weaponRtDelay or 0) })
+				effects="Weapon Dmg: "..(prompt.weaponDamage or 0).." | RT Delay: "..(prompt.weaponRtDelay or 0) }
 			local pRt = (prompt.attackRt or 80) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
 			updateTimeline(timelineSnapshot, prompt.unitId, pRt)
 			local c = Color3.fromRGB(200, 150, 60)
 			for _, t in ipairs(prompt.attackTargets) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
 			storedActorData.onBack = enterActionSelection
-			BattleHUD.SetState("TargetSelection")
+			bp.state = "TargetSelection"; BattleHUD.Render(bp)
 		end },
 		{ id="Skill", text="Skill", enabled=hasSkills, onPress=enterSkillSelection },
 		{ id="Move", text="Move", enabled=moveEnabled, onPress=function()
@@ -419,13 +430,13 @@ local function enterActionSelection()
 			updateTimeline(timelineSnapshot, prompt.unitId, pRt)
 			for _, tile in ipairs(prompt.moveCandidates) do createTileHighlight(tile.tileX, tile.tileY, "move") end
 			storedActorData.onBack = enterActionSelection
-			BattleHUD.SetSkillData(nil)
-			BattleHUD.SetState("TargetSelection")
+			bp.skill = nil
+			bp.state = "TargetSelection"; BattleHUD.Render(bp)
 		end },
 		{ id="Item", text="Item", enabled=false },
 		{ id="Guard", text="Guard", enabled=not prompt.guardUsed, onPress=function()
 			clearHighlights(); isPlayerTurn = false; inputMode = nil
-			BattleHUD.SetState("Resolving")
+			bp.state = "Resolving"; BattleHUD.Render(bp)
 			BattleHUD.AddLogEntry((prompt.unitName or "Unit") .. " guards.")
 			BattleEvents.PlayerCommand:FireServer({ actionType = "Guard" })
 		end },
@@ -437,11 +448,11 @@ local function enterActionSelection()
 				createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 180, 40), 0.45)
 			end
 			storedActorData.onBack = enterActionSelection
-			BattleHUD.SetState("TargetSelection")
+			bp.state = "TargetSelection"; BattleHUD.Render(bp)
 		end },
 		{ id="Wait", text="Wait", enabled=true, onPress=function()
 			clearHighlights(); isPlayerTurn = false; inputMode = nil
-			BattleHUD.SetState("Resolving")
+			bp.state = "Resolving"; BattleHUD.Render(bp)
 			BattleHUD.AddLogEntry((prompt.unitName or "Unit") .. " waits.")
 			BattleEvents.PlayerCommand:FireServer({ actionType = "Wait" })
 		end },
@@ -466,11 +477,11 @@ local function enterActionSelection()
 		statuses = actorUnit and actorUnit.statuses or {},
 		actions = actions,
 	}
-	BattleHUD.SetActorData(storedActorData)
-	BattleHUD.SetSkillData(nil)
-	BattleHUD.SetTargetData(nil)
-	BattleHUD.SetPreviewData(nil)
-	BattleHUD.SetState("ActionSelection")
+	bp.actor = storedActorData
+	bp.skill = nil
+	bp.target = nil
+	bp.preview = nil
+	bp.state = "ActionSelection"; BattleHUD.Render(bp)
 	updateTimeline(timelineSnapshot, nil, nil)
 end
 
@@ -509,14 +520,14 @@ end
 
 local function commitCommand(command)
 	clearHighlights(); isPlayerTurn = false; inputMode = nil; selectedSkill = nil; aimTarget = nil
-	BattleHUD.SetState("Resolving")
+	bp.state = "Resolving"; BattleHUD.Render(bp)
 	BattleEvents.PlayerCommand:FireServer(command)
 end
 
 local function cancelToTargeting()
 	aimTarget = nil
-	BattleHUD.SetTargetData(nil)
-	BattleHUD.SetPreviewData(nil)
+	bp.target = nil
+	bp.preview = nil
 	-- Re-highlight valid targets
 	if inputMode == "move" then
 		clearHighlights()
@@ -532,7 +543,7 @@ local function cancelToTargeting()
 		clearHighlights()
 		for _, t in ipairs(currentPrompt.pushTargets or {}) do createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 180, 40), 0.45) end
 	end
-	BattleHUD.SetState("TargetSelection")
+	bp.state = "TargetSelection"; BattleHUD.Render(bp)
 end
 
 --------------------------------------------------
@@ -546,19 +557,20 @@ local function processTileClick(bx, by)
 	local terrainId = GameConstants.GetTerrainId(bx, by)
 	local elevation = getElevation(bx, by)
 	local moveCost = GameConstants.GetTerrainCost(bx, by)
-	BattleHUD.ShowTileInfo({
+	bp.tile = {
 		terrainName = terrainId,
 		elevation = elevation,
 		moveCost = moveCost,
 		coords = string.format("(%d, %d)", bx, by),
-	})
+	}
+	BattleHUD.Render(bp)
 	
 	-- Always allow inspecting units by clicking (shows in right panel)
 	for uid, data in pairs(unitData) do
 		if data.tileX == bx and data.tileY == by and data.isAlive ~= false then
-			local state = BattleHUD.GetState()
+			local state = bp.state
 			if state == "ActionSelection" or state == "SkillSelection" or state == "Idle" then
-				devLastInspectedId = data.id; BattleHUD.ShowInspectUnit(data)
+				devLastInspectedId = data.id; bp.target = data; bp.inspectedEntityId = data.id; BattleHUD.Render(bp)
 			end
 			break
 		end
@@ -566,7 +578,7 @@ local function processTileClick(bx, by)
 	
 	if not isPlayerTurn or not inputMode then return end
 	
-	local state = BattleHUD.GetState()
+	local state = bp.state
 	
 	-- If in Preview state, clicking elsewhere cancels back to targeting
 	if state == "Preview" then
@@ -581,11 +593,11 @@ local function processTileClick(bx, by)
 				if tile.tileX == bx and tile.tileY == by then
 					aimTarget = tile; clearHighlights()
 					createTileHighlight(bx, by, "selected")
-					BattleHUD.SetPreviewData({
+					bp.preview = {
 						onConfirm = function() commitCommand({ actionType = "Move", tileX = bx, tileY = by, pathCost = tile.pathCost }) end,
 						onBack = cancelToTargeting,
-					})
-					BattleHUD.SetState("Preview")
+					}
+					bp.state = "Preview"; BattleHUD.Render(bp)
 					return
 				end
 			end
@@ -594,16 +606,16 @@ local function processTileClick(bx, by)
 				if t.tileX == bx and t.tileY == by then
 					aimTarget = t; clearHighlights()
 					createTileHighlight(bx, by, "selected")
-					BattleHUD.SetTargetData(unitData[t.id])
-					BattleHUD.SetPreviewData({
+					bp.target = unitData[t.id]
+					bp.preview = {
 						estimatedDamage = t.predicted or 0,
 						hpAfter = unitData[t.id] and math.max(0, (unitData[t.id].currentHp or 0) - (t.predicted or 0)) or nil,
 						rtDelay = currentPrompt.weaponRtDelay or 0,
 						statusEffect = "None",
 						onConfirm = function() commitCommand({ actionType = "Attack", targetId = t.id }) end,
 						onBack = cancelToTargeting,
-					})
-					BattleHUD.SetState("Preview")
+					}
+					bp.state = "Preview"; BattleHUD.Render(bp)
 					return
 				end
 			end
@@ -612,9 +624,9 @@ local function processTileClick(bx, by)
 				if t.tileX == bx and t.tileY == by then
 					aimTarget = t; clearHighlights()
 					createTileHighlight(bx, by, "selected")
-					BattleHUD.SetTargetData(unitData[t.id])
+					bp.target = unitData[t.id]
 					local statusEff = selectedSkill.appliesStatus or "None"
-					BattleHUD.SetPreviewData({
+					bp.preview = {
 						estimatedDamage = t.predicted or 0,
 						isHealing = (t.predType == "healing"),
 						hpAfter = unitData[t.id] and math.max(0, (unitData[t.id].currentHp or 0) - (t.predicted or 0)) or nil,
@@ -626,8 +638,8 @@ local function processTileClick(bx, by)
 							commitCommand({ actionType = "Skill", skillId = selectedSkill.id, targetId = t.id })
 						end,
 						onBack = cancelToTargeting,
-					})
-					BattleHUD.SetState("Preview")
+					}
+					bp.state = "Preview"; BattleHUD.Render(bp)
 					return
 				end
 			end
@@ -637,14 +649,14 @@ local function processTileClick(bx, by)
 				if t.tileX == bx and t.tileY == by then
 					aimTarget = t; clearHighlights()
 					createTileHighlight(bx, by, "selected")
-					BattleHUD.SetTargetData(unitData[t.id])
-					BattleHUD.SetPreviewData({
+					bp.target = unitData[t.id]
+					bp.preview = {
 						estimatedDamage = 0,
 						description = "Push " .. (t.name or "target") .. " away",
 						onConfirm = function() commitCommand({ actionType = "Push", targetId = t.id }) end,
 						onBack = cancelToTargeting,
-					})
-					BattleHUD.SetState("Preview")
+					}
+					bp.state = "Preview"; BattleHUD.Render(bp)
 					return
 				end
 			end
@@ -784,7 +796,7 @@ local function createDevCameraPanel()
 	end)
 
 	makeBtn("FOCUS SELECTED", 2, function()
-		local iid = BattleHUD.GetInspectedUnitId()
+		local iid = bp.inspectedEntityId
 		local idata = iid and unitData[iid]
 		if idata and idata.tileX and idata.tileY then
 			CameraController.FocusSelectedUnit(tileToWorld(idata.tileX, idata.tileY))
@@ -871,6 +883,7 @@ BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	createDevCameraPanel()
 
 	BattleHUD.Cleanup()
+	bp = { state = "Idle", actor = nil, target = nil, skill = nil, preview = nil, tile = nil, inspectedEntityId = nil }
 	for _, c in ipairs(visualFolder:GetChildren()) do c:Destroy() end
 	unitTokens = {}; unitData = {}; elevationMap = data.elevationMap
 	for _, unit in ipairs(data.units) do
@@ -882,6 +895,7 @@ end)
 
 BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	activeUnitId = data.unitId
+	bp.inspectedEntityId = nil  -- new turn resets inspection
 	if unitData[data.unitId] then
 		unitData[data.unitId].statuses = data.statuses
 		-- Clear Guard buff (expires on new turn) and restore token color
@@ -1075,7 +1089,7 @@ end)
 BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	isPlayerTurn = false; inputMode = nil; clearHighlights()
 	hideSelectionRing()
-	BattleHUD.SetState("BattleEnded")
+	bp.state = "BattleEnded"; BattleHUD.Render(bp)
 
 	-- Show result
 	local gui = Instance.new("ScreenGui"); gui.Name = "BattleResult"; gui.ResetOnSpawn = false
@@ -1090,6 +1104,7 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	task.delay(5, function()
 		if gui.Parent then gui:Destroy() end
 		BattleHUD.Cleanup()
+		bp = { state = "Idle", actor = nil, target = nil, skill = nil, preview = nil, tile = nil, inspectedEntityId = nil }
 		destroyDevCameraPanel()
 		CameraController.ExitBattle()
 	end)

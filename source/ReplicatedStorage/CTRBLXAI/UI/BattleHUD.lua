@@ -29,7 +29,6 @@ local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 local BattleHUD = {}
 
 -- State
-local currentState = "Idle"
 local screenGui, rootFrame = nil, nil
 
 -- Region frames (persistent, content swaps per state)
@@ -42,12 +41,16 @@ local conditionsPanel   = nil  -- Next to turn order
 local battleLogPanel    = nil  -- Lower-right (25% × 20%)
 
 -- Stored data
-local actorData       = nil
-local targetData      = nil
-local skillData       = nil
-local previewData     = nil
-local tileData        = nil
-local objectData      = nil
+-- Single presentation table — BVC builds this, BattleHUD.Render() consumes it
+local presentation = {
+	state = "Idle",
+	actor = nil,               -- active unit (whose turn)
+	target = nil,              -- aimed-at or inspected unit
+	skill = nil,               -- skill/action detail
+	preview = nil,             -- damage/move preview with onConfirm
+	tile = nil,                -- last-clicked tile info
+	inspectedEntityId = nil,   -- unit being examined (separate from actor)
+}
 local battleLog       = {}
 
 -- Padding constant
@@ -218,10 +221,10 @@ end
 function BattleHUD._buildActiveUnit()
 	if not activeUnitPanel then return end
 	clearFrame(activeUnitPanel)
-	activeUnitPanel.Visible = (actorData ~= nil)
-	if not actorData then return end
+	activeUnitPanel.Visible = (presentation.actor ~= nil)
+	if not presentation.actor then return end
 
-	local d = actorData
+	local d = presentation.actor
 	local pad = Instance.new("UIPadding", activeUnitPanel)
 	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
 	pad.PaddingRight = UDim.new(0, 6)
@@ -299,9 +302,9 @@ end
 function BattleHUD._buildActionGrid()
 	if not actionPanel then return end
 	clearFrame(actionPanel)
-	actionPanel.Visible = (currentState == "ActionSelection")
-	if currentState ~= "ActionSelection" then return end
-	if not actorData or not actorData.actions then return end
+	actionPanel.Visible = (presentation.state == "ActionSelection")
+	if presentation.state ~= "ActionSelection" then return end
+	if not presentation.actor or not presentation.actor.actions then return end
 
 	local grid = Instance.new("UIGridLayout", actionPanel)
 	grid.CellSize = UDim2.new(0.5, -4, 0.25, -3)
@@ -313,7 +316,7 @@ function BattleHUD._buildActionGrid()
 	pad.PaddingTop = UDim.new(0, 4); pad.PaddingLeft = UDim.new(0, 4)
 	pad.PaddingRight = UDim.new(0, 4); pad.PaddingBottom = UDim.new(0, 4)
 
-	for i, action in ipairs(actorData.actions) do
+	for i, action in ipairs(presentation.actor.actions) do
 		makeButton(actionPanel, action.text, {
 			size = nil, -- handled by grid
 			enabled = action.enabled,
@@ -331,8 +334,8 @@ end
 function BattleHUD._buildActionDetail()
 	if not actionPanel then return end
 	clearFrame(actionPanel)
-	actionPanel.Visible = (currentState == "TargetSelection")
-	if currentState ~= "TargetSelection" then return end
+	actionPanel.Visible = (presentation.state == "TargetSelection")
+	if presentation.state ~= "TargetSelection" then return end
 
 	local pad = Instance.new("UIPadding", actionPanel)
 	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
@@ -341,21 +344,21 @@ function BattleHUD._buildActionDetail()
 	local layout = Instance.new("UIListLayout", actionPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-	if skillData then
-		makeLabel(actionPanel, skillData.name or "Action", { font = Theme.Font.PrimaryBold,
+	if presentation.skill then
+		makeLabel(actionPanel, presentation.skill.name or "Action", { font = Theme.Font.PrimaryBold,
 			textSize = 12, order = 1 })
-		if skillData.tags and skillData.tags ~= "" then
-			makeLabel(actionPanel, skillData.tags, { textSize = 9,
+		if presentation.skill.tags and presentation.skill.tags ~= "" then
+			makeLabel(actionPanel, presentation.skill.tags, { textSize = 9,
 				color = Theme.Colors.TextSecondary, order = 2 })
 		end
 		local infoText = ""
-		if (skillData.mpCost or 0) > 0 then infoText = infoText .. "MP:" .. skillData.mpCost .. "  " end
-		infoText = infoText .. "RT:" .. (skillData.rtCost or 0)
-		infoText = infoText .. "  Range:" .. (skillData.range or 1)
-		infoText = infoText .. "  " .. (skillData.pattern or "Single")
+		if (presentation.skill.mpCost or 0) > 0 then infoText = infoText .. "MP:" .. presentation.skill.mpCost .. "  " end
+		infoText = infoText .. "RT:" .. (presentation.skill.rtCost or 0)
+		infoText = infoText .. "  Range:" .. (presentation.skill.range or 1)
+		infoText = infoText .. "  " .. (presentation.skill.pattern or "Single")
 		makeLabel(actionPanel, infoText, { font = Theme.Font.Mono, textSize = 9, order = 3 })
-		if skillData.effects and skillData.effects ~= "" then
-			makeLabel(actionPanel, skillData.effects, { textSize = 9, wrap = true,
+		if presentation.skill.effects and presentation.skill.effects ~= "" then
+			makeLabel(actionPanel, presentation.skill.effects, { textSize = 9, wrap = true,
 				size = UDim2.new(1, 0, 0, 24), color = Theme.Colors.Success, order = 4 })
 		end
 	end
@@ -371,8 +374,8 @@ function BattleHUD._buildActionDetail()
 	backBtn.Text = "← Back"; backBtn.BorderSizePixel = 0
 	backBtn.Parent = actionPanel
 	Instance.new("UICorner", backBtn).CornerRadius = Theme.CornerRadius.sm
-	if actorData and actorData.onBack then
-		backBtn.MouseButton1Click:Connect(actorData.onBack)
+	if presentation.actor and presentation.actor.onBack then
+		backBtn.MouseButton1Click:Connect(presentation.actor.onBack)
 	end
 end
 
@@ -384,8 +387,8 @@ function BattleHUD._buildInspector()
 	if not inspectorPanel then return end
 	clearFrame(inspectorPanel)
 
-	local showUnit = targetData ~= nil
-	local showObject = objectData ~= nil and not showUnit
+	local showUnit = presentation.target ~= nil
+	local showObject = false -- objectData not yet in presentation
 	inspectorPanel.Visible = showUnit or showObject
 
 	if not inspectorPanel.Visible then return end
@@ -398,7 +401,7 @@ function BattleHUD._buildInspector()
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
 	if showUnit then
-		local d = targetData
+		local d = presentation.target
 		-- Same format as active unit
 		local topRow = Instance.new("Frame")
 		topRow.Size = UDim2.new(1, 0, 0, 36); topRow.BackgroundTransparency = 1
@@ -442,7 +445,7 @@ function BattleHUD._buildInspector()
 		end
 
 	elseif showObject then
-		local o = objectData
+		local o = nil -- objectData not yet in presentation
 		makeLabel(inspectorPanel, o.name or "Object", { font = Theme.Font.PrimaryBold,
 			textSize = 12, order = 1 })
 		makeLabel(inspectorPanel, o.category or "", { textSize = 9,
@@ -474,15 +477,15 @@ function BattleHUD._buildTilePreview()
 	clearFrame(tilePreviewPanel)
 
 	-- Phase 3: Show damage preview
-	if currentState == "Preview" and previewData then
+	if presentation.state == "Preview" and presentation.preview then
 		tilePreviewPanel.Visible = true
 		BattleHUD._renderDamagePreview()
 		return
 	end
 
 	-- Otherwise show tile info
-	tilePreviewPanel.Visible = (tileData ~= nil)
-	if not tileData then return end
+	tilePreviewPanel.Visible = (presentation.tile ~= nil)
+	if not presentation.tile then return end
 
 	local pad = Instance.new("UIPadding", tilePreviewPanel)
 	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
@@ -490,23 +493,23 @@ function BattleHUD._buildTilePreview()
 	local layout = Instance.new("UIListLayout", tilePreviewPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-	makeLabel(tilePreviewPanel, tileData.terrainName or "Clear", {
+	makeLabel(tilePreviewPanel, presentation.tile.terrainName or "Clear", {
 		font = Theme.Font.PrimaryBold, textSize = 12, order = 1 })
 	makeLabel(tilePreviewPanel, string.format("Elev: %d  Cost: %d",
-		tileData.elevation or 1, tileData.moveCost or 1), {
+		presentation.tile.elevation or 1, presentation.tile.moveCost or 1), {
 		font = Theme.Font.Mono, textSize = 10, color = Theme.Colors.TextSecondary, order = 2 })
-	if tileData.effect and tileData.effect ~= "None" then
-		makeLabel(tilePreviewPanel, "Effect: " .. tileData.effect, {
+	if presentation.tile.effect and presentation.tile.effect ~= "None" then
+		makeLabel(tilePreviewPanel, "Effect: " .. presentation.tile.effect, {
 			textSize = 10, color = Theme.Colors.Warning, order = 3 })
 	end
-	if tileData.coords then
-		makeLabel(tilePreviewPanel, tileData.coords, { textSize = 9,
+	if presentation.tile.coords then
+		makeLabel(tilePreviewPanel, presentation.tile.coords, { textSize = 9,
 			color = Theme.Colors.TextDisabled, order = 5 })
 	end
 end
 
 function BattleHUD._renderDamagePreview()
-	if not tilePreviewPanel or not previewData then return end
+	if not tilePreviewPanel or not presentation.preview then return end
 
 	local pad = Instance.new("UIPadding", tilePreviewPanel)
 	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
@@ -517,20 +520,20 @@ function BattleHUD._renderDamagePreview()
 	makeLabel(tilePreviewPanel, "DAMAGE PREVIEW", { font = Theme.Font.PrimaryBold,
 		textSize = 10, color = Theme.Colors.TextSecondary, order = 1 })
 
-	local isHeal = previewData.isHealing or false
-	local dmgText = (isHeal and "+" or "-") .. tostring(previewData.estimatedDamage or 0)
+	local isHeal = presentation.preview.isHealing or false
+	local dmgText = (isHeal and "+" or "-") .. tostring(presentation.preview.estimatedDamage or 0)
 	makeLabel(tilePreviewPanel, dmgText, { font = Theme.Font.PrimaryBold, textSize = 22,
 		color = isHeal and Theme.Colors.Success or Theme.Colors.Danger, order = 2 })
 
-	if previewData.hpAfter then
-		makeLabel(tilePreviewPanel, "HP After: " .. previewData.hpAfter, { textSize = 10, order = 3 })
+	if presentation.preview.hpAfter then
+		makeLabel(tilePreviewPanel, "HP After: " .. presentation.preview.hpAfter, { textSize = 10, order = 3 })
 	end
-	if previewData.statusEffect and previewData.statusEffect ~= "None" then
-		makeLabel(tilePreviewPanel, "Effect: " .. previewData.statusEffect, {
+	if presentation.preview.statusEffect and presentation.preview.statusEffect ~= "None" then
+		makeLabel(tilePreviewPanel, "Effect: " .. presentation.preview.statusEffect, {
 			textSize = 10, color = Theme.Colors.Warning, order = 4 })
 	end
-	if previewData.mpSpent and previewData.mpSpent > 0 then
-		makeLabel(tilePreviewPanel, "MP Spent: " .. previewData.mpSpent, {
+	if presentation.preview.mpSpent and presentation.preview.mpSpent > 0 then
+		makeLabel(tilePreviewPanel, "MP Spent: " .. presentation.preview.mpSpent, {
 			textSize = 9, color = Theme.Colors.MP, order = 5 })
 	end
 
@@ -549,10 +552,10 @@ function BattleHUD._renderDamagePreview()
 	confirmBtn.Text = "Execute"; confirmBtn.BorderSizePixel = 0
 	confirmBtn.Parent = btnRow
 	Instance.new("UICorner", confirmBtn).CornerRadius = Theme.CornerRadius.sm
-	if previewData.onConfirm then
+	if presentation.preview.onConfirm then
 		confirmBtn.MouseButton1Click:Connect(function()
 			confirmBtn.Active = false; confirmBtn.BackgroundTransparency = 0.6
-			previewData.onConfirm()
+			presentation.preview.onConfirm()
 		end)
 	end
 
@@ -566,8 +569,8 @@ function BattleHUD._renderDamagePreview()
 	backBtn.Text = "Back"; backBtn.BorderSizePixel = 0
 	backBtn.Parent = btnRow
 	Instance.new("UICorner", backBtn).CornerRadius = Theme.CornerRadius.sm
-	if previewData.onBack then
-		backBtn.MouseButton1Click:Connect(previewData.onBack)
+	if presentation.preview.onBack then
+		backBtn.MouseButton1Click:Connect(presentation.preview.onBack)
 	end
 end
 
@@ -739,8 +742,19 @@ function BattleHUD.ApplyLayout(layout)
 	end)
 end
 
-function BattleHUD.SetState(newState)
-	currentState = newState
+function BattleHUD.Render(p)
+	-- Accept a full presentation table from BVC
+	if p then
+		presentation.state = p.state or presentation.state
+		presentation.actor = p.actor
+		presentation.target = p.target
+		presentation.skill = p.skill
+		if p.tile ~= nil then presentation.tile = p.tile end  -- tile persists unless explicitly cleared
+		presentation.preview = p.preview
+		presentation.inspectedEntityId = p.inspectedEntityId
+	end
+
+	local newState = presentation.state
 	ensureRoot()
 
 	-- Position dependent panels below their parent after AutomaticSize resolves
@@ -777,13 +791,15 @@ function BattleHUD.SetState(newState)
 		if actionPanel then actionPanel.Visible = false end
 		if activeUnitPanel then activeUnitPanel.Visible = false end
 	elseif newState == "SkillSelection" then
-		-- Skill list shown in action panel
 		BattleHUD._buildSkillList()
 		actionPanel.Visible = true
 	end
 end
+function BattleHUD.GetState() return presentation.state end
 
-function BattleHUD.GetState() return currentState end
+function BattleHUD.GetInspectedEntityId() return presentation.inspectedEntityId end
+
+function BattleHUD.GetPresentation() return presentation end
 
 --------------------------------------------------
 -- SKILL LIST (replaces action grid during SkillSelection)
@@ -793,7 +809,7 @@ function BattleHUD._buildSkillList()
 	if not actionPanel then return end
 	clearFrame(actionPanel)
 	actionPanel.Visible = true
-	if not actorData or not actorData.skillEntries then return end
+	if not presentation.actor or not presentation.actor.skillEntries then return end
 
 	local pad = Instance.new("UIPadding", actionPanel)
 	pad.PaddingTop = UDim.new(0, 4); pad.PaddingLeft = UDim.new(0, 4)
@@ -806,7 +822,7 @@ function BattleHUD._buildSkillList()
 	makeLabel(actionPanel, "Skill            MP  RT", { font = Theme.Font.Mono,
 		textSize = 9, color = Theme.Colors.TextSecondary, order = 0 })
 
-	for i, skill in ipairs(actorData.skillEntries) do
+	for i, skill in ipairs(presentation.actor.skillEntries) do
 		local enabled = skill.enabled ~= false
 		local btn = Instance.new("TextButton")
 		btn.Size = UDim2.new(1, 0, 0, 22)
@@ -833,54 +849,14 @@ function BattleHUD._buildSkillList()
 	backBtn.Text = "← Back"; backBtn.BorderSizePixel = 0
 	backBtn.LayoutOrder = 100; backBtn.Parent = actionPanel
 	Instance.new("UICorner", backBtn).CornerRadius = Theme.CornerRadius.sm
-	if actorData and actorData.onBack then
-		backBtn.MouseButton1Click:Connect(actorData.onBack)
+	if presentation.actor and presentation.actor.onBack then
+		backBtn.MouseButton1Click:Connect(presentation.actor.onBack)
 	end
 end
 
 --------------------------------------------------
 -- PUBLIC SETTERS
 --------------------------------------------------
-
-function BattleHUD.SetActorData(data) actorData = data end
-function BattleHUD.SetTargetData(data) targetData = data end
-function BattleHUD.SetSkillData(data) skillData = data end
-function BattleHUD.SetPreviewData(data) previewData = data end
-function BattleHUD.SetTileData(data) tileData = data end
-function BattleHUD.SetObjectData(data) objectData = data end
-
-function BattleHUD.ShowActorCard(data) actorData = data end
-function BattleHUD.HideActorCard() actorData = nil end
-function BattleHUD.ShowTargetCard(data) targetData = data end
-function BattleHUD.HideTargetCard() targetData = nil end
-function BattleHUD.ShowInspectUnit(data) targetData = data; BattleHUD._buildInspector() end
-function BattleHUD.ShowTileInfo(data) tileData = data; BattleHUD._buildTilePreview() end
-function BattleHUD.HideTileInfo() tileData = nil; if tilePreviewPanel then tilePreviewPanel.Visible = false end end
-
-function BattleHUD.GetInspectedUnitId() return actorData and actorData.id or nil end
-
--- Compatibility stubs
-function BattleHUD.ShowActionMenu() end
-function BattleHUD.HideActionMenu() end
-function BattleHUD.ShowSkillList() end
-function BattleHUD.HideSkillList() end
-function BattleHUD.ShowSkillDetail() end
-function BattleHUD.HideSkillDetail() end
-function BattleHUD.ShowConfirmBar() end
-function BattleHUD.HideConfirmBar() end
-function BattleHUD.ShowDamagePreview(data) previewData = data end
-function BattleHUD.HideDamagePreview() previewData = nil end
-function BattleHUD.ShowPhase() end
-function BattleHUD.HidePhase() end
-function BattleHUD.HideActionBar() end
-function BattleHUD.UpdateBattleState() end
-
---------------------------------------------------
--- TOOLTIP
---------------------------------------------------
-
-local tooltipFrame = nil
-local tooltipCloseConn = nil
 
 function BattleHUD.ShowTooltip(props)
 	BattleHUD.HideTooltip()
@@ -932,9 +908,9 @@ end
 --------------------------------------------------
 
 function BattleHUD.Cleanup()
-	currentState = "Idle"
-	actorData = nil; targetData = nil; skillData = nil
-	previewData = nil; tileData = nil; objectData = nil
+	presentation.state = "Idle"
+	presentation.actor = nil; presentation.target = nil; presentation.skill = nil
+	presentation.preview = nil; presentation.tile = nil; presentation.inspectedEntityId = nil
 	battleLog = {}
 	BattleHUD.HideTooltip()
 	if screenGui then screenGui:Destroy(); screenGui = nil end
