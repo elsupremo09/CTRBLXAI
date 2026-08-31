@@ -56,6 +56,19 @@ local EVENT_NAMES = {
 	"InspectUnitResponse",
 	-- Dev tools (Studio only)
 	"DevCommand",
+	-- Slice 4D: Management contracts
+	"RewardScreen",       -- S->C: reward summaries after victory
+	"RewardContinue",     -- C->S: player acknowledged rewards
+	"LoadoutHubOpen",     -- S->C: tells client to show loadout hub
+	"StartBattle",        -- C->S: player ready to fight
+}
+
+-- RemoteFunctions for Slice 4D management contracts
+local FUNCTION_NAMES = {
+	"GetRosterData",
+	"GetInventoryData",
+	"RequestEquip",
+	"RequestUnequip",
 }
 
 local BattleEvents = {}
@@ -70,6 +83,19 @@ for _, name in ipairs(EVENT_NAMES) do
 		event.Name    = name
 		event.Parent  = remoteFolder
 		BattleEvents[name] = event
+	end
+end
+
+for _, name in ipairs(FUNCTION_NAMES) do
+	local existing = remoteFolder:FindFirstChild(name)
+
+	if existing and existing:IsA("RemoteFunction") then
+		BattleEvents[name] = existing
+	else
+		local fn = Instance.new("RemoteFunction")
+		fn.Name   = name
+		fn.Parent = remoteFolder
+		BattleEvents[name] = fn
 	end
 end
 

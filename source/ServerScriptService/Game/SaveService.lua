@@ -182,12 +182,14 @@ end
 
 local function encodeUnit(unitState)
 	-- unitState from PersistentStateService
+	-- equipSlots: { MainHand = instanceId, OffHand = instanceId } added by doSave caller
 	return {
 		hp  = unitState.currentHp,
 		mp  = unitState.currentMp,
 		mhp = unitState.maxHp,
 		mmp = unitState.maxMp,
 		ko  = unitState.isKO,
+		eq  = unitState.equipSlots or nil,
 	}
 end
 
@@ -199,6 +201,7 @@ local function decodeUnit(encoded)
 		maxMp     = encoded.mmp,
 		isKO      = encoded.ko or false,
 		mpRegenAccumulator = 0,
+		equipSlots = encoded.eq or nil,
 	}
 end
 

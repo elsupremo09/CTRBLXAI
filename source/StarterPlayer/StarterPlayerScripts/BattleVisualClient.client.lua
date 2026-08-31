@@ -727,7 +727,7 @@ local function createDevCameraPanel()
 
 	local frame = Instance.new("Frame")
 	frame.Name = "DevPanel"
-	frame.Size = UDim2.fromOffset(130, 230)
+	frame.Size = UDim2.fromOffset(130, 260)
 	frame.Position = UDim2.new(0.5, 0, 0, 4)
 	frame.AnchorPoint = Vector2.new(0.5, 0)
 	frame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
@@ -836,6 +836,10 @@ local function createDevCameraPanel()
 	makeBtn("DELETE SAVE", 8, function()
 		BattleEvents.DevCommand:FireServer({ action = "DeleteSave" })
 	end, Color3.fromRGB(80, 20, 20))
+
+	makeBtn("SAVE NOW", 9, function()
+		BattleEvents.DevCommand:FireServer({ action = "SaveNow" })
+	end, Color3.fromRGB(30, 60, 80))
 end
 
 local function destroyDevCameraPanel()
@@ -1096,3 +1100,421 @@ _G.CTRBLXAI_SelectTileAt = function() end
 
 
 print("[CTRBLXAI] BattleVisualClient v3 loaded.")
+
+
+--------------------------------------------------
+-- LOADOUT HUB (Slice 4D — minimal functional placeholder)
+-- Slice 7 owns final visual presentation.
+--------------------------------------------------
+
+local loadoutHubGui = nil
+
+local function destroyLoadoutHub()
+	if loadoutHubGui then loadoutHubGui:Destroy(); loadoutHubGui = nil end
+end
+
+local function createLoadoutHub(phase)
+	destroyLoadoutHub()
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "LoadoutHub"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 90
+	gui.Parent = player:WaitForChild("PlayerGui")
+	loadoutHubGui = gui
+
+	local frame = Instance.new("Frame")
+	frame.Name = "HubFrame"
+	frame.Size = UDim2.fromOffset(520, 440)
+	frame.Position = UDim2.new(0.5, 0, 0.5, 0)
+	frame.AnchorPoint = Vector2.new(0.5, 0.5)
+	frame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+	frame.BackgroundTransparency = 0.05
+	frame.BorderSizePixel = 0
+	frame.Active = true
+	frame.Parent = gui
+	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+	local stroke = Instance.new("UIStroke", frame)
+	stroke.Color = Color3.fromRGB(100, 160, 220); stroke.Thickness = 2
+
+	-- Title
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, 0, 0, 28)
+	title.Position = UDim2.new(0, 0, 0, 4)
+	title.BackgroundTransparency = 1
+	title.Font = Enum.Font.SourceSansBold; title.TextSize = 16
+	title.TextColor3 = Color3.fromRGB(100, 160, 220)
+	title.Text = phase == "PreBattle" and "LOADOUT HUB (Pre-Battle)" or "LOADOUT HUB (Post-Battle)"
+	title.Parent = frame
+
+	-- Output area (scrollable text)
+	local outputFrame = Instance.new("ScrollingFrame")
+	outputFrame.Name = "Output"
+	outputFrame.Size = UDim2.new(1, -16, 1, -140)
+	outputFrame.Position = UDim2.new(0, 8, 0, 34)
+	outputFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+	outputFrame.BackgroundTransparency = 0.1
+	outputFrame.BorderSizePixel = 0
+	outputFrame.ScrollBarThickness = 6
+	outputFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+	outputFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	outputFrame.Parent = frame
+	Instance.new("UICorner", outputFrame).CornerRadius = UDim.new(0, 4)
+
+	local outputLayout = Instance.new("UIListLayout", outputFrame)
+	outputLayout.SortOrder = Enum.SortOrder.LayoutOrder; outputLayout.Padding = UDim.new(0, 2)
+
+	local outputText = Instance.new("TextLabel")
+	outputText.Name = "Text"
+	outputText.Size = UDim2.new(1, -8, 0, 0)
+	outputText.Position = UDim2.new(0, 4, 0, 2)
+	outputText.AutomaticSize = Enum.AutomaticSize.Y
+	outputText.BackgroundTransparency = 1
+	outputText.Font = Enum.Font.Code; outputText.TextSize = 11
+	outputText.TextColor3 = Color3.fromRGB(190, 190, 190)
+	outputText.TextXAlignment = Enum.TextXAlignment.Left
+	outputText.TextYAlignment = Enum.TextYAlignment.Top
+	outputText.TextWrapped = true
+	outputText.RichText = true
+	outputText.Text = "Loadout Hub ready. Use buttons below."
+	outputText.LayoutOrder = 0
+	outputText.Parent = outputFrame
+
+	local function setOutput(txt)
+		outputText.Text = txt
+		-- Remove any clickable line buttons from previous view
+		for _, child in ipairs(outputFrame:GetChildren()) do
+			if child:IsA("TextButton") then child:Destroy() end
+		end
+	end
+
+	-- Render clickable lines in the output area
+	-- Each line is a TextButton; clicking it calls onClickFn(lineData)
+	local function setClickableLines(header, lineEntries)
+		-- lineEntries = { {text, color, onClick} }
+		outputText.Text = header
+		for _, child in ipairs(outputFrame:GetChildren()) do
+			if child:IsA("TextButton") then child:Destroy() end
+		end
+		for idx, entry in ipairs(lineEntries) do
+			local btn = Instance.new("TextButton")
+			btn.Size = UDim2.new(1, -8, 0, 0)
+			btn.AutomaticSize = Enum.AutomaticSize.Y
+			btn.Position = UDim2.new(0, 4, 0, 0)
+			btn.BackgroundColor3 = Color3.fromRGB(30, 30, 42)
+			btn.BackgroundTransparency = 0.5
+			btn.BorderSizePixel = 0
+			btn.Font = Enum.Font.Code; btn.TextSize = 11
+			btn.TextColor3 = entry.color or Color3.fromRGB(190, 190, 190)
+			btn.TextXAlignment = Enum.TextXAlignment.Left
+			btn.TextWrapped = true
+			btn.RichText = true
+			btn.Text = entry.text
+			btn.LayoutOrder = idx + 1
+			btn.Parent = outputFrame
+			Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 2)
+			if entry.onClick then
+				btn.MouseButton1Click:Connect(entry.onClick)
+			end
+		end
+	end
+
+
+	-- Input fields for equip/unequip
+	local inputRow = Instance.new("Frame")
+	inputRow.Size = UDim2.new(1, -16, 0, 24)
+	inputRow.Position = UDim2.new(0, 8, 1, -130)
+	inputRow.BackgroundTransparency = 1
+	inputRow.Parent = frame
+
+	local unitInput = Instance.new("TextBox")
+	unitInput.Size = UDim2.fromOffset(130, 22)
+	unitInput.Position = UDim2.new(0, 0, 0, 0)
+	unitInput.PlaceholderText = "unit_hero"
+	unitInput.Text = ""
+	unitInput.Font = Enum.Font.Code; unitInput.TextSize = 10
+	unitInput.TextColor3 = Color3.fromRGB(220, 220, 220)
+	unitInput.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+	unitInput.BorderSizePixel = 0
+	unitInput.ClearTextOnFocus = false
+	unitInput.Parent = inputRow
+	Instance.new("UICorner", unitInput).CornerRadius = UDim.new(0, 3)
+
+	local itemInput = Instance.new("TextBox")
+	itemInput.Size = UDim2.fromOffset(160, 22)
+	itemInput.Position = UDim2.new(0, 134, 0, 0)
+	itemInput.PlaceholderText = "item_1001_1"
+	itemInput.Text = ""
+	itemInput.Font = Enum.Font.Code; itemInput.TextSize = 10
+	itemInput.TextColor3 = Color3.fromRGB(220, 220, 220)
+	itemInput.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+	itemInput.BorderSizePixel = 0
+	itemInput.ClearTextOnFocus = false
+	itemInput.Parent = inputRow
+	Instance.new("UICorner", itemInput).CornerRadius = UDim.new(0, 3)
+
+	-- Button row
+	local btnRow = Instance.new("Frame")
+	btnRow.Size = UDim2.new(1, -16, 0, 66)
+	btnRow.Position = UDim2.new(0, 8, 1, -100)
+	btnRow.BackgroundTransparency = 1
+	btnRow.Parent = frame
+
+	local btnLayout = Instance.new("UIGridLayout", btnRow)
+	btnLayout.CellSize = UDim2.fromOffset(115, 28)
+	btnLayout.CellPadding = UDim2.fromOffset(4, 4)
+	btnLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	local function hubBtn(text, order, callback, color)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(0, 100, 0, 28)
+		btn.BackgroundColor3 = color or Color3.fromRGB(50, 70, 90)
+		btn.BackgroundTransparency = 0.15
+		btn.Font = Enum.Font.SourceSansBold; btn.TextSize = 11
+		btn.TextColor3 = Color3.fromRGB(220, 220, 220)
+		btn.Text = text; btn.LayoutOrder = order
+		btn.BorderSizePixel = 0; btn.Parent = btnRow
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+		btn.MouseButton1Click:Connect(callback)
+		return btn
+	end
+
+	hubBtn("VIEW ROSTER", 1, function()
+		setOutput("Loading roster...")
+		local roster = BattleEvents.GetRosterData:InvokeServer()
+		if not roster then setOutput("Failed to get roster."); return end
+		local entries = {}
+		for uid, data in pairs(roster) do
+			local hpColor = data.isKO and "rgb(150,150,150)" or (data.currentHp / data.maxHp > 0.5 and "rgb(100,200,100)" or "rgb(200,100,100)")
+			local offTag = (data.equippedOffHandName and data.equippedOffHandName ~= "none") and (" | Off:" .. data.equippedOffHandName) or ""
+			local lineText = string.format(
+				'<font color="%s">%s</font> L%d | HP:%d/%d MP:%d/%d%s | Wpn:%s%s | <font color="rgb(100,160,220)">%s</font>',
+				hpColor, data.name, data.level,
+				data.currentHp, data.maxHp, data.currentMp, data.maxMp,
+				data.isKO and " [KO]" or "",
+				data.equippedWeaponName, offTag,
+				uid
+			)
+			local capturedUid = uid
+			table.insert(entries, {
+				text = lineText,
+				onClick = function() unitInput.Text = capturedUid end,
+			})
+		end
+		setClickableLines("<b>ROSTER</b> (click a unit to fill Unit ID)\n", entries)
+	end)
+
+	hubBtn("VIEW INVENTORY", 2, function()
+		setOutput("Loading inventory...")
+		local items = BattleEvents.GetInventoryData:InvokeServer()
+		if not items then setOutput("Failed to get inventory."); return end
+		local entries = {}
+		for _, item in ipairs(items) do
+			local rarityColor = ({
+				Broken = "rgb(120,120,120)", Common = "rgb(200,200,200)",
+				Uncommon = "rgb(100,200,100)", Rare = "rgb(100,150,255)",
+				Epic = "rgb(180,100,255)", Legendary = "rgb(255,180,50)",
+			})[item.rarity] or "rgb(200,200,200)"
+			local slotTag = item.equippedSlot and (" [" .. item.equippedSlot .. "]") or ""
+			local eqTag = item.equippedBy and string.format(' <font color="rgb(255,200,80)">← %s%s</font>', item.equippedBy, slotTag) or ""
+			local lineText = string.format(
+				'<font color="%s">[%s]</font> %s L%d | Dmg:%d WT:%d Def:%d | +%dattr +%dpass | ID:%s%s',
+				rarityColor, item.rarity, item.name, item.itemLevel,
+				item.damage, item.wt, item.defense,
+				item.bonusCount, item.passiveCount, item.instanceId,
+				eqTag
+			)
+			local capturedId = item.instanceId
+			table.insert(entries, {
+				text = lineText,
+				color = Color3.fromRGB(190, 190, 190),
+				onClick = function() itemInput.Text = capturedId end,
+			})
+		end
+		setClickableLines(string.format("<b>INVENTORY (%d items)</b> (click an item to fill Item ID)\n", #items), entries)
+	end)
+
+	hubBtn("EQUIP", 3, function()
+		setOutput("EQUIP: Enter unitId and instanceId in the boxes below, then press CONFIRM EQUIP.\n\nUnit IDs: unit_hero, unit_mage, unit_ranger\nItem IDs: see VIEW INVENTORY")
+	end)
+
+	hubBtn("UNEQUIP", 4, function()
+		setOutput("UNEQUIP: Enter unitId below, then press CONFIRM UNEQUIP.\nSlot defaults to MainHand.\n\nUnit IDs: unit_hero, unit_mage, unit_ranger")
+	end)
+
+	if phase == "PreBattle" then
+		hubBtn("START BATTLE", 5, function()
+			destroyLoadoutHub()
+			BattleEvents.StartBattle:FireServer()
+		end, Color3.fromRGB(40, 100, 40))
+	else
+		-- PostBattle: DONE button closes hub and signals server to continue
+		hubBtn("DONE", 5, function()
+			destroyLoadoutHub()
+			BattleEvents.StartBattle:FireServer()
+		end, Color3.fromRGB(40, 120, 60))
+	end
+
+	-- Dev tools in Loadout Hub
+	hubBtn("SAVE NOW", 6, function()
+		BattleEvents.DevCommand:FireServer({ action = "SaveNow" })
+		setOutput("Save requested...")
+	end, Color3.fromRGB(30, 60, 80))
+
+	hubBtn("DELETE SAVE", 7, function()
+		BattleEvents.DevCommand:FireServer({ action = "DeleteSave" })
+		setOutput("Delete save requested...")
+	end, Color3.fromRGB(80, 20, 20))
+
+
+	local confirmEquip = Instance.new("TextButton")
+	confirmEquip.Size = UDim2.fromOffset(85, 22)
+	confirmEquip.Position = UDim2.new(0, 298, 0, 0)
+	confirmEquip.Text = "CONFIRM EQUIP"
+	confirmEquip.Font = Enum.Font.SourceSansBold; confirmEquip.TextSize = 10
+	confirmEquip.TextColor3 = Color3.fromRGB(220, 220, 220)
+	confirmEquip.BackgroundColor3 = Color3.fromRGB(40, 80, 40)
+	confirmEquip.BorderSizePixel = 0
+	confirmEquip.Parent = inputRow
+	Instance.new("UICorner", confirmEquip).CornerRadius = UDim.new(0, 3)
+	confirmEquip.MouseButton1Click:Connect(function()
+		local uid = unitInput.Text
+		local iid = itemInput.Text
+		if uid == "" or iid == "" then setOutput("Enter both unit ID and item ID."); return end
+		setOutput("Equipping...")
+		local result = BattleEvents.RequestEquip:InvokeServer(uid, iid)
+		if result and result.ok then
+			setOutput(string.format("Equipped %s on %s (%s)", result.name or iid, uid, result.slot or "?"))
+		else
+			setOutput("Equip failed: " .. (result and result.reason or "unknown"))
+		end
+	end)
+
+	local confirmUnequip = Instance.new("TextButton")
+	confirmUnequip.Size = UDim2.fromOffset(95, 22)
+	confirmUnequip.Position = UDim2.new(0, 387, 0, 0)
+	confirmUnequip.Text = "CONFIRM UNEQUIP"
+	confirmUnequip.Font = Enum.Font.SourceSansBold; confirmUnequip.TextSize = 10
+	confirmUnequip.TextColor3 = Color3.fromRGB(220, 220, 220)
+	confirmUnequip.BackgroundColor3 = Color3.fromRGB(80, 40, 40)
+	confirmUnequip.BorderSizePixel = 0
+	confirmUnequip.Parent = inputRow
+	Instance.new("UICorner", confirmUnequip).CornerRadius = UDim.new(0, 3)
+	confirmUnequip.MouseButton1Click:Connect(function()
+		local uid = unitInput.Text
+		if uid == "" then setOutput("Enter unit ID."); return end
+		setOutput("Unequipping...")
+		local result = BattleEvents.RequestUnequip:InvokeServer(uid, "MainHand")
+		if result and result.ok then
+			setOutput(string.format("Unequipped MainHand on %s", uid))
+		else
+			setOutput("Unequip failed: " .. (result and result.reason or "unknown"))
+		end
+	end)
+end
+
+--------------------------------------------------
+-- REWARD SCREEN (Slice 4D — minimal functional placeholder)
+--------------------------------------------------
+
+local rewardGui = nil
+
+BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
+	if rewardGui then rewardGui:Destroy() end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "RewardScreen"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 92
+	gui.Parent = player:WaitForChild("PlayerGui")
+	rewardGui = gui
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.fromOffset(360, 260)
+	frame.Position = UDim2.new(0.5, 0, 0.4, 0)
+	frame.AnchorPoint = Vector2.new(0.5, 0.5)
+	frame.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
+	frame.BackgroundTransparency = 0.05
+	frame.BorderSizePixel = 0
+	frame.Active = true
+	frame.Parent = gui
+	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+	local stroke = Instance.new("UIStroke", frame)
+	stroke.Color = Color3.fromRGB(255, 200, 50); stroke.Thickness = 2
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, 0, 0, 30)
+	title.BackgroundTransparency = 1
+	title.Font = Enum.Font.SourceSansBold; title.TextSize = 18
+	title.TextColor3 = Color3.fromRGB(255, 200, 50)
+	title.Text = "VICTORY! Rewards Earned"
+	title.Parent = frame
+
+	local rewards = data.rewards or {}
+	local yPos = 36
+	for _, item in ipairs(rewards) do
+		local rarityColor = ({
+			Broken = Color3.fromRGB(120,120,120), Common = Color3.fromRGB(200,200,200),
+			Uncommon = Color3.fromRGB(100,200,100), Rare = Color3.fromRGB(100,150,255),
+			Epic = Color3.fromRGB(180,100,255), Legendary = Color3.fromRGB(255,180,50),
+		})[item.rarity] or Color3.fromRGB(200,200,200)
+
+		local card = Instance.new("Frame")
+		card.Size = UDim2.new(1, -20, 0, 50)
+		card.Position = UDim2.new(0, 10, 0, yPos)
+		card.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+		card.BorderSizePixel = 0
+		card.Parent = frame
+		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
+		local cardStroke = Instance.new("UIStroke", card)
+		cardStroke.Color = rarityColor; cardStroke.Thickness = 1
+
+		local nameLabel = Instance.new("TextLabel")
+		nameLabel.Size = UDim2.new(1, -8, 0, 18)
+		nameLabel.Position = UDim2.new(0, 4, 0, 4)
+		nameLabel.BackgroundTransparency = 1
+		nameLabel.Font = Enum.Font.SourceSansBold; nameLabel.TextSize = 13
+		nameLabel.TextColor3 = rarityColor
+		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+		nameLabel.Text = string.format("%s [%s] L%d", item.name, item.rarity, item.itemLevel)
+		nameLabel.Parent = card
+
+		local statsLabel = Instance.new("TextLabel")
+		statsLabel.Size = UDim2.new(1, -8, 0, 14)
+		statsLabel.Position = UDim2.new(0, 4, 0, 24)
+		statsLabel.BackgroundTransparency = 1
+		statsLabel.Font = Enum.Font.Code; statsLabel.TextSize = 10
+		statsLabel.TextColor3 = Color3.fromRGB(170, 170, 170)
+		statsLabel.TextXAlignment = Enum.TextXAlignment.Left
+		statsLabel.Text = string.format("Dmg:%d  WT:%d  Def:%d  +%dattr +%dpass  %s",
+			item.damage, item.wt, item.defense, item.bonusCount, item.passiveCount, item.handClass)
+		statsLabel.Parent = card
+
+		yPos = yPos + 56
+	end
+
+	local continueBtn = Instance.new("TextButton")
+	continueBtn.Size = UDim2.fromOffset(120, 32)
+	continueBtn.Position = UDim2.new(0.5, 0, 1, -42)
+	continueBtn.AnchorPoint = Vector2.new(0.5, 0)
+	continueBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 50)
+	continueBtn.Font = Enum.Font.SourceSansBold; continueBtn.TextSize = 14
+	continueBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+	continueBtn.Text = "CONTINUE"
+	continueBtn.BorderSizePixel = 0
+	continueBtn.Parent = frame
+	Instance.new("UICorner", continueBtn).CornerRadius = UDim.new(0, 4)
+	continueBtn.MouseButton1Click:Connect(function()
+		if rewardGui then rewardGui:Destroy(); rewardGui = nil end
+		BattleEvents.RewardContinue:FireServer()
+	end)
+end)
+
+--------------------------------------------------
+-- LOADOUT HUB EVENT HANDLER
+--------------------------------------------------
+
+BattleEvents.LoadoutHubOpen.OnClientEvent:Connect(function(data)
+	local phase = data and data.phase or "PostBattle"
+	createLoadoutHub(phase)
+end)

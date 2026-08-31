@@ -124,6 +124,7 @@ InventoryService.InitPlayer(PLAYER_ID)
 -- Attempt to load saved state (Slice 4C)
 local loadedSave, loadErr = SaveService.Load(PLAYER_ID)
 local hasSave = false
+local savedEquipMap = {} -- unitId -> { MainHand = instanceId, OffHand = instanceId }
 if loadedSave then
 	hasSave = true
 	print("[Main] Save loaded — restoring state")
@@ -131,6 +132,12 @@ if loadedSave then
 	PersistentStateService.ImportState(PLAYER_ID, loadedSave.roster or {})
 	-- Restore inventory
 	InventoryService.ImportInventory(PLAYER_ID, loadedSave.inventory or {})
+	-- Extract saved equipment assignments
+	for unitId, unitData in pairs(loadedSave.roster or {}) do
+		if unitData.equipSlots then
+			savedEquipMap[unitId] = unitData.equipSlots
+		end
+	end
 elseif loadErr then
 	warn("[Main] Load failed: " .. loadErr .. " — starting fresh (retaining runtime state)")
 else
@@ -140,7 +147,27 @@ end
 -- Helper: generate a weapon, add to inventory, equip on unit
 local function equipGeneratedWeapon(unit, archetypeId, itemLevel, rarity, seed)
 	-- If save was loaded, items are already in inventory — equip from there
+	-- Priority: use saved slot assignment (instanceId), fall back to archetype match
 	if hasSave then
+		local slotMap = savedEquipMap[unit.id]
+		if slotMap and slotMap.MainHand then
+			local item = InventoryService.GetItem(PLAYER_ID, slotMap.MainHand)
+			if item then
+				EquipmentService.Equip(unit, item, "MainHand")
+				print(string.format("[Main] Restored %s MainHand from save: %s", unit.name, slotMap.MainHand))
+				-- Restore OffHand from save (if present)
+				if slotMap and slotMap.OffHand then
+					local offItem = InventoryService.GetItem(PLAYER_ID, slotMap.OffHand)
+					if offItem then
+						EquipmentService.Equip(unit, offItem, "OffHand")
+						print("[Main] Restored " .. unit.name .. " OffHand from save: " .. slotMap.OffHand)
+					end
+				end
+				return
+			end
+			warn(string.format("[Main] Saved MainHand item %s not found in inventory for %s — falling back to archetype", slotMap.MainHand, unit.name))
+		end
+		-- Fallback: match by archetype (legacy saves without equipSlots)
 		local allItems = InventoryService.GetAllItems(PLAYER_ID)
 		for _, item in ipairs(allItems) do
 			if item.baseArchetypeId == archetypeId then
@@ -177,6 +204,23 @@ local hero = UnitSchema.Create({
 	skillIds     = { "skill_power_strike", "skill_sweeping_cut" },
 })
 equipGeneratedWeapon(hero, "WPN-SWORD", 5, "Uncommon", 1001)
+
+-- Starter off-hand shield (inventory only, not equipped)
+if not hasSave then
+	local starterShield = ItemGenerator.Generate({
+		baseArchetypeId = "OFF-SHIELD",
+		itemLevel = 5,
+		rarity = "Common",
+		seed = 1004,
+		sourceType = "Debug",
+	})
+	if starterShield then
+		InventoryService.AddItem(PLAYER_ID, starterShield)
+		print("[Main] Added starter Shield to inventory: " .. starterShield.instanceId)
+	else
+		warn("[Main] Failed to generate starter Shield (OFF-SHIELD)")
+	end
+end
 
 local mage = UnitSchema.Create({
 	id           = "unit_mage",
@@ -293,7 +337,304 @@ print("====================================")
 -- BATTLE STATE
 --------------------------------------------------
 
-local state = BattleCoordinator.CreateBattleState(allUnitsList)
+--------------------------------------------------
+-- PLAYER UNIT LOOKUP (needed by doSave and management handlers)
+--------------------------------------------------
+local playerUnits = {}
+for _, u in ipairs(allUnitsList) do
+	if u.side == "Player" then playerUnits[u.id] = u end
+end
+
+--------------------------------------------------
+-- REUSABLE SAVE HELPER
+--------------------------------------------------
+
+local function doSave()
+	local rosterState = PersistentStateService.ExportState(PLAYER_ID)
+	local inventoryItems = InventoryService.ExportInventory(PLAYER_ID)
+	-- Enrich roster with equipment slot assignments (instanceIds only)
+	for unitId, unit in pairs(playerUnits) do
+		if rosterState[unitId] and unit.equipmentSlots then
+			local slots = {}
+			for slot, item in pairs(unit.equipmentSlots) do
+				slots[slot] = item.instanceId
+			end
+			rosterState[unitId].equipSlots = slots
+		end
+	end
+	-- Diagnostic: log equipment slot assignments being saved
+	for unitId, unitState in pairs(rosterState) do
+		if unitState.equipSlots then
+			local parts = {}
+			for slot, iid in pairs(unitState.equipSlots) do
+				table.insert(parts, slot .. ":" .. tostring(iid))
+			end
+			print(string.format("[Save] Equipment: %s=%s", unitId, table.concat(parts, ",")))
+		end
+	end
+	local progression = {}
+	local ok, err = SaveService.Save(PLAYER_ID, rosterState, inventoryItems, progression)
+	if ok then
+		print("[Save] Successful")
+	else
+		warn("[Save] FAILED: " .. (err or "unknown"))
+	end
+	return ok, err
+end
+
+--------------------------------------------------
+-- MANAGEMENT REMOTEFUNCTIONS (Slice 4D)
+-- Active throughout the session (pre-battle, post-battle, hub)
+--------------------------------------------------
+
+
+BattleEvents.GetRosterData.OnServerInvoke = function(player)
+	local roster = {}
+	for unitId, unit in pairs(playerUnits) do
+		local pState = PersistentStateService.GetUnitState(PLAYER_ID, unitId)
+		local loadout = EquipmentService.GetLoadout(unit)
+		local mainItem = loadout and loadout.MainHand
+		local offHandItem = loadout and loadout.OffHand
+		roster[unitId] = {
+			name = unit.name,
+			level = unit.level or 1,
+			currentHp = pState and pState.currentHp or unit.currentHp,
+			maxHp = pState and pState.maxHp or unit.maxHp,
+			currentMp = pState and pState.currentMp or unit.currentMp,
+			maxMp = pState and pState.maxMp or unit.maxMp,
+			isKO = pState and pState.isKO or false,
+			equippedWeapon = mainItem and mainItem.instanceId or "none",
+			equippedWeaponName = mainItem and (WeaponData.GetByArchetypeId(mainItem.baseArchetypeId) or {}).name or "none",
+			equippedOffHandName = offHandItem and (WeaponData.GetByArchetypeId(offHandItem.baseArchetypeId) or {}).name or "none",
+			doctrineId = unit.doctrineId or "none",
+		}
+	end
+	-- Diagnostic: log roster summary
+	local rosterParts = {}
+	for unitId, rd in pairs(roster) do
+		table.insert(rosterParts, string.format("%s(Wpn:%s,Off:%s)", rd.name, rd.equippedWeaponName, rd.equippedOffHandName))
+	end
+	local unitCount = #rosterParts
+	print(string.format("[Roster] Returned %d units: %s", unitCount, table.concat(rosterParts, ", ")))
+
+	return roster
+end
+
+BattleEvents.GetInventoryData.OnServerInvoke = function(player)
+	local items = InventoryService.GetAllItems(PLAYER_ID)
+	local result = {}
+	-- Build reverse lookup: instanceId -> unitId that has it equipped
+	local equippedByMap = {}
+	for unitId, unit in pairs(playerUnits) do
+		if unit.equipmentSlots then
+			for slot, eqItem in pairs(unit.equipmentSlots) do
+				equippedByMap[eqItem.instanceId] = { unitId = unitId, slot = slot }
+			end
+		end
+	end
+	for _, item in ipairs(items) do
+		local archetype = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+		local profile = WeaponData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
+		table.insert(result, {
+			instanceId = item.instanceId,
+			name = archetype and archetype.name or "Unknown",
+			category = archetype and archetype.category or "Unknown",
+			handClass = archetype and archetype.handClass or "1H",
+			itemLevel = item.itemLevel,
+			rarity = item.rarityId,
+			damage = profile and profile.damage or 0,
+			wt = profile and profile.wt or 0,
+			defense = profile and profile.defense or 0,
+			bonusCount = #item.bonusLines,
+			passiveCount = #item.bonusPassiveIds,
+			equippedBy = equippedByMap[item.instanceId] and equippedByMap[item.instanceId].unitId or nil,
+			equippedSlot = equippedByMap[item.instanceId] and equippedByMap[item.instanceId].slot or nil,
+		})
+	end
+	-- Diagnostic: log inventory summary
+	local equippedCount = 0
+	for _, entry in ipairs(result) do
+		if entry.equippedBy then
+			equippedCount = equippedCount + 1
+		end
+	end
+	print(string.format("[Inventory] Returned %d items, %d equipped", #result, equippedCount))
+	for _, entry in ipairs(result) do
+		if entry.equippedBy then
+			print(string.format("[Inventory] %s [%s] → %s [%s]", entry.name, entry.instanceId, entry.equippedBy, entry.equippedSlot))
+		end
+	end
+
+	return result
+end
+
+BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId)
+	local unit = playerUnits[unitId]
+	if not unit then
+		warn(string.format("[Management] Equip FAILED: %s + %s — Unknown unit: %s", tostring(unitId), tostring(instanceId), tostring(unitId)))
+		return { ok = false, reason = "Unknown unit: " .. tostring(unitId) }
+	end
+	local item = InventoryService.GetItem(PLAYER_ID, instanceId)
+	if not item then
+		warn(string.format("[Management] Equip FAILED: %s + %s — Item not found: %s", tostring(unitId), tostring(instanceId), tostring(instanceId)))
+		return { ok = false, reason = "Item not found: " .. tostring(instanceId) }
+	end
+	if not InventoryService.OwnsItem(PLAYER_ID, instanceId) then
+		warn(string.format("[Management] Equip FAILED: %s + %s — Not owned", tostring(unitId), tostring(instanceId)))
+		return { ok = false, reason = "Not owned" }
+	end
+	local archetype = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+	if not archetype then
+		warn(string.format("[Management] Equip FAILED: %s + %s — Unknown archetype", tostring(unitId), tostring(instanceId)))
+		return { ok = false, reason = "Unknown archetype" }
+	end
+	local slot = (archetype.category == "OffHand") and "OffHand" or "MainHand"
+	-- Auto-unequip from previous holder if item is equipped elsewhere
+	for prevId, prevUnit in pairs(playerUnits) do
+		if prevId ~= unitId and prevUnit.equipmentSlots then
+			for prevSlot, prevItem in pairs(prevUnit.equipmentSlots) do
+				if prevItem.instanceId == instanceId then
+					EquipmentService.Unequip(prevUnit, prevSlot)
+					EquipmentService.RebuildUnitStats(prevUnit)
+					print(string.format("[Management] Auto-unequipped %s from %s to equip on %s", archetype.name, prevUnit.name, unit.name))
+				end
+			end
+		end
+	end
+	local ok, err = EquipmentService.Equip(unit, item, slot)
+	if ok then
+		EquipmentService.RebuildUnitStats(unit)
+		print(string.format("[Management] %s equipped %s [%s] in %s", unit.name, archetype.name, instanceId, slot))
+		return { ok = true, slot = slot, name = archetype.name }
+	else
+		warn(string.format("[Management] Equip FAILED: %s + %s — %s", tostring(unitId), tostring(instanceId), err or "Equip failed"))
+		return { ok = false, reason = err or "Equip failed" }
+	end
+end
+
+BattleEvents.RequestUnequip.OnServerInvoke = function(player, unitId, slot)
+	local unit = playerUnits[unitId]
+	if not unit then
+		warn(string.format("[Management] Unequip FAILED: %s %s — Unknown unit: %s", tostring(unitId), tostring(slot or "MainHand"), tostring(unitId)))
+		return { ok = false, reason = "Unknown unit: " .. tostring(unitId) }
+	end
+	local ok, err = EquipmentService.Unequip(unit, slot or "MainHand")
+	if ok then
+		EquipmentService.RebuildUnitStats(unit)
+		print(string.format("[Management] %s unequipped %s", unit.name, slot or "MainHand"))
+		return { ok = true }
+	else
+		warn(string.format("[Management] Unequip FAILED: %s %s — %s", tostring(unitId), tostring(slot or "MainHand"), err or "Unequip failed"))
+		return { ok = false, reason = err or "Unequip failed" }
+	end
+end
+
+--------------------------------------------------
+-- HUB + REWARD SCREEN HELPERS
+--------------------------------------------------
+
+local hubContinueSignal = Instance.new("BindableEvent")
+local rewardContinueSignal = Instance.new("BindableEvent")
+
+BattleEvents.StartBattle.OnServerEvent:Connect(function(player)
+	print("[Hub] Player ready to start battle")
+	hubContinueSignal:Fire()
+end)
+
+BattleEvents.RewardContinue.OnServerEvent:Connect(function(player)
+	print("[Hub] Player acknowledged rewards")
+	rewardContinueSignal:Fire()
+end)
+
+
+
+
+
+-- Forward declarations for DevCommand handler (needs state/pendingCommand/commandReceived)
+local state
+local pendingCommand
+local commandReceived
+
+--------------------------------------------------
+-- DEV COMMANDS (Studio only -- instant win/lose/kill)
+--------------------------------------------------
+
+local devForceResult = nil -- "PlayerWin" or "PlayerLose"
+
+if game:GetService("RunService"):IsStudio() then
+	BattleEvents.DevCommand.OnServerEvent:Connect(function(player, cmd)
+		if not cmd or type(cmd) ~= "table" then return end
+
+		if cmd.action == "InstantWin" then
+			print("[Dev] Instant Win triggered")
+			for _, u in ipairs(allUnitsList) do
+				if u.side == "Enemy" and u.isAlive then
+					UnitSchema.Kill(u)
+					clearTileOccupant(u.tileX, u.tileY)
+					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
+					print(string.format("[Dev] Killed %s", u.name))
+				end
+			end
+			state.phase = "BattleOver"
+			state.winner = "Player"
+			pendingCommand = { actionType = "Wait" }
+			commandReceived:Fire()
+
+		elseif cmd.action == "InstantLose" then
+			print("[Dev] Instant Lose triggered")
+			for _, u in ipairs(allUnitsList) do
+				if u.side == "Player" and u.isAlive then
+					UnitSchema.Kill(u)
+					clearTileOccupant(u.tileX, u.tileY)
+					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
+					print(string.format("[Dev] Killed %s", u.name))
+				end
+			end
+			state.phase = "BattleOver"
+			state.winner = "Enemy"
+			pendingCommand = { actionType = "Wait" }
+			commandReceived:Fire()
+
+		elseif cmd.action == "KillAtTile" then
+			local tx, ty = cmd.tileX, cmd.tileY
+			if not tx or not ty then return end
+			for _, u in ipairs(allUnitsList) do
+				if u.tileX == tx and u.tileY == ty and u.isAlive then
+					print(string.format("[Dev] Kill unit at (%d,%d): %s HP:%d->0", tx, ty, u.name, u.currentHp))
+					UnitSchema.Kill(u)
+					clearTileOccupant(u.tileX, u.tileY)
+					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
+				end
+			end
+		elseif cmd.action == "DeleteSave" then
+			local ok, err = SaveService.Delete(PLAYER_ID)
+			if ok then
+				print("[Dev] Save deleted for " .. PLAYER_ID .. " -- restart to begin fresh")
+			else
+				warn("[Dev] Delete failed: " .. (err or "unknown"))
+			end
+
+		elseif cmd.action == "SaveNow" then
+			local ok, err = doSave()
+			if ok then
+				print("[Dev] Manual save successful")
+			else
+				warn("[Dev] Manual save failed: " .. (err or "unknown"))
+			end
+		end
+	end)
+	print("[Dev] DevCommand handler active (Studio only)")
+end
+
+-- PRE-BATTLE LOADOUT HUB
+print("[Hub] Opening pre-battle Loadout Hub")
+BattleEvents.LoadoutHubOpen:FireAllClients({ phase = "PreBattle" })
+
+-- Wait for player to press Start Battle
+hubContinueSignal.Event:Wait()
+print("[Hub] Player started battle")
+
+state = BattleCoordinator.CreateBattleState(allUnitsList)
 
 task.wait(2)
 BattleVisualBroadcaster.BattleStarted(state.units)
@@ -464,78 +805,14 @@ end
 
 local PLAYER_TURN_TIMEOUT = 120 -- seconds
 
-local pendingCommand = nil
-local commandReceived = Instance.new("BindableEvent")
+pendingCommand = nil
+commandReceived = Instance.new("BindableEvent")
 
 BattleEvents.PlayerCommand.OnServerEvent:Connect(function(player, command)
 	-- Accept commands from any connected player (single-player for now)
 	pendingCommand = command
 	commandReceived:Fire()
 end)
-
---------------------------------------------------
--- DEV COMMANDS (Studio only -- instant win/lose/kill)
---------------------------------------------------
-
-local devForceResult = nil -- "PlayerWin" or "PlayerLose"
-
-if game:GetService("RunService"):IsStudio() then
-	BattleEvents.DevCommand.OnServerEvent:Connect(function(player, cmd)
-		if not cmd or type(cmd) ~= "table" then return end
-
-		if cmd.action == "InstantWin" then
-			print("[Dev] Instant Win triggered")
-			for _, u in ipairs(allUnitsList) do
-				if u.side == "Enemy" and u.isAlive then
-					UnitSchema.Kill(u)
-					clearTileOccupant(u.tileX, u.tileY)
-					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
-					print(string.format("[Dev] Killed %s", u.name))
-				end
-			end
-			state.phase = "BattleOver"
-			state.winner = "Player"
-			pendingCommand = { actionType = "Wait" }
-			commandReceived:Fire()
-
-		elseif cmd.action == "InstantLose" then
-			print("[Dev] Instant Lose triggered")
-			for _, u in ipairs(allUnitsList) do
-				if u.side == "Player" and u.isAlive then
-					UnitSchema.Kill(u)
-					clearTileOccupant(u.tileX, u.tileY)
-					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
-					print(string.format("[Dev] Killed %s", u.name))
-				end
-			end
-			state.phase = "BattleOver"
-			state.winner = "Enemy"
-			pendingCommand = { actionType = "Wait" }
-			commandReceived:Fire()
-
-		elseif cmd.action == "KillAtTile" then
-			local tx, ty = cmd.tileX, cmd.tileY
-			if not tx or not ty then return end
-			for _, u in ipairs(allUnitsList) do
-				if u.tileX == tx and u.tileY == ty and u.isAlive then
-					print(string.format("[Dev] Kill unit at (%d,%d): %s HP:%d->0", tx, ty, u.name, u.currentHp))
-					UnitSchema.Kill(u)
-					clearTileOccupant(u.tileX, u.tileY)
-					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
-				end
-			end
-		elseif cmd.action == "DeleteSave" then
-			local ok, err = SaveService.Delete(PLAYER_ID)
-			if ok then
-				print("[Dev] Save deleted for " .. PLAYER_ID .. " -- restart to begin fresh")
-			else
-				warn("[Dev] Delete failed: " .. (err or "unknown"))
-			end
-		end
-	end)
-	print("[Dev] DevCommand handler active (Studio only)")
-end
-
 
 local function waitForPlayerCommand(unit, playerObj)
 	-- Send prompt to client
@@ -1420,14 +1697,29 @@ if isQualifyingVictory then
 end
 
 -- Step 3: Save to DataStore (now includes committed rewards)
-local rosterState = PersistentStateService.ExportState(PLAYER_ID)
-local inventoryItems = InventoryService.ExportInventory(PLAYER_ID)
-local progression = {} -- Slice 4C placeholder; populated in future slices
+doSave()
 
-local saveOk, saveErr = SaveService.Save(PLAYER_ID, rosterState, inventoryItems, progression)
-if saveOk then
-	print("[PostBattle] Save successful")
-else
-	warn("[PostBattle] SAVE FAILED: " .. (saveErr or "unknown"))
-	-- Last-known-good state retained in memory — not overwritten
+-- Step 4: Reward screen (if rewards earned)
+if #rewardSummaries > 0 then
+	print(string.format("[PostBattle] Sending %d reward(s) to client", #rewardSummaries))
+	BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries })
+	rewardContinueSignal.Event:Wait()
+	print("[PostBattle] Player acknowledged rewards")
+end
+
+-- Step 5: Post-battle Loadout Hub
+print("[Hub] Opening post-battle Loadout Hub")
+BattleEvents.LoadoutHubOpen:FireAllClients({ phase = "PostBattle" })
+
+-- Step 6: Wait for player to close the hub, then auto-save
+-- (Equipment changes via RequestEquip update the same unit objects
+-- that doSave reads, so this save captures any post-battle equip changes.)
+hubContinueSignal.Event:Wait()
+print("[Hub] Post-battle hub closed — saving equipment changes")
+doSave()
+
+-- Keep script alive for management requests (SaveNow DevCommand also works here)
+print("[Hub] Session active. Management requests available.")
+while true do
+	task.wait(1)
 end
