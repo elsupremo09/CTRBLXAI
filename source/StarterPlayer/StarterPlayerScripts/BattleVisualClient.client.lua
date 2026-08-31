@@ -473,6 +473,7 @@ local function enterActionSelection()
 		remainingRt = (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0),
 		doctrine = prompt.doctrine or "",
 		level = prompt.level,
+		race = prompt.race or nil,
 		tileX = actorTileX, tileY = actorTileY, elevation = actorElev,
 		statuses = actorUnit and actorUnit.statuses or {},
 		actions = actions,
@@ -565,12 +566,15 @@ local function processTileClick(bx, by)
 	}
 	BattleHUD.Render(bp)
 	
-	-- Always allow inspecting units by clicking (shows in right panel)
+	-- Inspect unit by clicking — works in ALL states (View Mode)
 	for uid, data in pairs(unitData) do
 		if data.tileX == bx and data.tileY == by and data.isAlive ~= false then
-			local state = bp.state
-			if state == "ActionSelection" or state == "SkillSelection" or state == "Idle" then
-				devLastInspectedId = data.id; bp.target = data; bp.inspectedEntityId = data.id; BattleHUD.Render(bp)
+			bp.inspectedEntityId = data.id
+			bp.target = data
+			BattleHUD.Render(bp)
+			-- Open full 3-tab inspector panel
+			if _G.CTRBLXAI_OpenInspectorPanel then
+				_G.CTRBLXAI_OpenInspectorPanel(data.id)
 			end
 			break
 		end
@@ -593,7 +597,14 @@ local function processTileClick(bx, by)
 				if tile.tileX == bx and tile.tileY == by then
 					aimTarget = tile; clearHighlights()
 					createTileHighlight(bx, by, "selected")
+					local moveRt = tile.pathCost or 0
 					bp.preview = {
+						actionType = "Move",
+						actorName = currentPrompt.unitName,
+						fromTile = string.format("(%d,%d)", storedActorData.tileX or 0, storedActorData.tileY or 0),
+						toTile = string.format("(%d,%d)", bx, by),
+						actorApBefore = currentPrompt.currentAp, actorApAfter = (currentPrompt.currentAp or 1) - 1,
+						actorRtAfter = moveRt + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
 						onConfirm = function() commitCommand({ actionType = "Move", tileX = bx, tileY = by, pathCost = tile.pathCost }) end,
 						onBack = cancelToTargeting,
 					}
@@ -607,10 +618,18 @@ local function processTileClick(bx, by)
 					aimTarget = t; clearHighlights()
 					createTileHighlight(bx, by, "selected")
 					bp.target = unitData[t.id]
+					local tgtData = unitData[t.id]
 					bp.preview = {
+						actionType = "Attack",
+						actorName = currentPrompt.unitName,
+						actorMpBefore = currentPrompt.currentMp, actorMpAfter = currentPrompt.currentMp, -- no MP cost
+						actorApBefore = currentPrompt.currentAp, actorApAfter = (currentPrompt.currentAp or 1) - 1,
+						actorRtAfter = (currentPrompt.attackRt or 80) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
+						targetName = t.name,
+						targetHpBefore = tgtData and tgtData.currentHp or 0,
+						targetHpAfter = tgtData and math.max(0, (tgtData.currentHp or 0) - (t.predicted or 0)) or 0,
 						estimatedDamage = t.predicted or 0,
-						hpAfter = unitData[t.id] and math.max(0, (unitData[t.id].currentHp or 0) - (t.predicted or 0)) or nil,
-						rtDelay = currentPrompt.weaponRtDelay or 0,
+						targetRtDelay = currentPrompt.weaponRtDelay or 0,
 						statusEffect = "None",
 						onConfirm = function() commitCommand({ actionType = "Attack", targetId = t.id }) end,
 						onBack = cancelToTargeting,
@@ -626,15 +645,42 @@ local function processTileClick(bx, by)
 					createTileHighlight(bx, by, "selected")
 					bp.target = unitData[t.id]
 					local statusEff = selectedSkill.appliesStatus or "None"
+					local statusDur = 0
+					if statusEff ~= "None" and GameConstants.STATUSES and GameConstants.STATUSES[statusEff] then
+						statusDur = GameConstants.STATUSES[statusEff].duration or 0
+					end
+					local isHeal = (t.predType == "healing")
+					local tgtData = unitData[t.id]
+					local tgtHpBefore = tgtData and tgtData.currentHp or 0
+					local tgtMaxHp = tgtData and tgtData.maxHp or tgtHpBefore
+					local tgtHpAfter
+					if isHeal then
+						tgtHpAfter = math.min(tgtMaxHp, tgtHpBefore + (t.predicted or 0))
+					else
+						tgtHpAfter = math.max(0, tgtHpBefore - (t.predicted or 0))
+					end
+					local skillRtCost = selectedSkill.rtCost or 60
+					local isChannel = selectedSkill.channelTime and selectedSkill.channelTime > 0
 					bp.preview = {
+						actionType = "Skill",
+						skillName = selectedSkill.name,
+						actorName = currentPrompt.unitName,
+						actorMpBefore = currentPrompt.currentMp,
+						actorMpAfter = (currentPrompt.currentMp or 0) - (selectedSkill.mpCost or 0),
+						actorApBefore = currentPrompt.currentAp,
+						actorApAfter = (currentPrompt.currentAp or 1) - 1,
+						actorRtAfter = skillRtCost + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
+						targetName = t.name,
+						targetHpBefore = tgtHpBefore,
+						targetHpAfter = tgtHpAfter,
 						estimatedDamage = t.predicted or 0,
-						isHealing = (t.predType == "healing"),
-						hpAfter = unitData[t.id] and math.max(0, (unitData[t.id].currentHp or 0) - (t.predicted or 0)) or nil,
-						rtDelay = 0,
+						isHealing = isHeal,
+						targetRtDelay = (not isHeal) and (currentPrompt.weaponRtDelay or 0) or 0,
 						statusEffect = statusEff,
-						mpSpent = selectedSkill.mpCost,
+						statusDuration = statusDur,
+						channelTime = isChannel and selectedSkill.channelTime or nil,
+						channelResolveCt = isChannel and (currentBattleCt or 0) + (selectedSkill.channelTime or 0) or nil,
 						onConfirm = function()
-							local isChannel = selectedSkill.channelTime and selectedSkill.channelTime > 0
 							commitCommand({ actionType = "Skill", skillId = selectedSkill.id, targetId = t.id })
 						end,
 						onBack = cancelToTargeting,
@@ -651,7 +697,11 @@ local function processTileClick(bx, by)
 					createTileHighlight(bx, by, "selected")
 					bp.target = unitData[t.id]
 					bp.preview = {
-						estimatedDamage = 0,
+						actionType = "Push",
+						actorName = currentPrompt.unitName,
+						actorApBefore = currentPrompt.currentAp, actorApAfter = (currentPrompt.currentAp or 1) - 1,
+						actorRtAfter = (currentPrompt.pushRt or 40) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
+						targetName = t.name,
 						description = "Push " .. (t.name or "target") .. " away",
 						onConfirm = function() commitCommand({ actionType = "Push", targetId = t.id }) end,
 						onBack = cancelToTargeting,
@@ -717,6 +767,81 @@ game:GetService("RunService").Heartbeat:Connect(function()
 	processTileClick(bx, by)
 end)
 
+--------------------------------------------------
+-- HOVER TOOLTIP (shows unit name/HP on mouse hover)
+--------------------------------------------------
+
+local lastHoveredUnitId = nil
+
+game:GetService("RunService").RenderStepped:Connect(function()
+	if not next(unitData) then
+		if lastHoveredUnitId then
+			lastHoveredUnitId = nil
+			BattleHUD.HideTooltip()
+		end
+		return
+	end
+
+	-- Check what tile is under the mouse
+	local tilePart = getTileUnderMouse()
+	if not tilePart then
+		if lastHoveredUnitId then
+			lastHoveredUnitId = nil
+			BattleHUD.HideTooltip()
+		end
+		return
+	end
+
+	local bx, by = tileToBattle(tilePart)
+	if not bx then
+		if lastHoveredUnitId then
+			lastHoveredUnitId = nil
+			BattleHUD.HideTooltip()
+		end
+		return
+	end
+
+	-- Find unit on this tile
+	local hoveredUnit = nil
+	for _, data in pairs(unitData) do
+		if data.tileX == bx and data.tileY == by and data.isAlive ~= false then
+			hoveredUnit = data
+			break
+		end
+	end
+
+	if hoveredUnit then
+		-- Don't show tooltip for the unit we're already inspecting
+		if hoveredUnit.id == bp.inspectedEntityId then
+			if lastHoveredUnitId then
+				lastHoveredUnitId = nil
+				BattleHUD.HideTooltip()
+			end
+			return
+		end
+		if hoveredUnit.id ~= lastHoveredUnitId then
+			lastHoveredUnitId = hoveredUnit.id
+			local hpText = string.format("HP %d/%d", hoveredUnit.currentHp or 0, hoveredUnit.maxHp or 0)
+			local sideColor = hoveredUnit.side == "Player" and Theme.Colors.Success or Theme.Colors.Danger
+			BattleHUD.ShowTooltip({
+				title = hoveredUnit.name or "Unit",
+				lines = {
+					{ text = hpText, color = Theme.Colors.TextPrimary },
+					{ text = hoveredUnit.side or "?", color = sideColor },
+				},
+				position = UDim2.new(0, mouse.X + 16, 0, mouse.Y - 10),
+				anchorPoint = Vector2.new(0, 1),
+				maxWidth = 140,
+			})
+		end
+	else
+		if lastHoveredUnitId then
+			lastHoveredUnitId = nil
+			BattleHUD.HideTooltip()
+		end
+	end
+end)
+
 
 --------------------------------------------------
 -- DEV OPTIONS PANEL (temporary, remove when Slice 7 UI provides buttons)
@@ -747,6 +872,8 @@ local function createDevCameraPanel()
 	frame.BorderSizePixel = 0
 	frame.Active = true
 	frame.Parent = gui
+	local hubConstraint = Instance.new("UISizeConstraint", frame)
+	hubConstraint.MaxSize = Vector2.new(560, 480)
 	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
 	local stroke = Instance.new("UIStroke", frame)
 	stroke.Color = Color3.fromRGB(200, 200, 50); stroke.Thickness = 1
@@ -1121,6 +1248,13 @@ end)
 
 _G.CTRBLXAI_SelectTileAt = function() end
 
+_G.CTRBLXAI_GetElevation = function(tileX, tileY)
+	if elevationMap and elevationMap[tileY] then
+		return elevationMap[tileY][tileX] or 1
+	end
+	return 1
+end
+
 
 
 print("[CTRBLXAI] BattleVisualClient v3 loaded.")
@@ -1149,7 +1283,7 @@ local function createLoadoutHub(phase)
 
 	local frame = Instance.new("Frame")
 	frame.Name = "HubFrame"
-	frame.Size = UDim2.fromOffset(520, 440)
+	frame.Size = UDim2.new(0.92, 0, 0.88, 0) -- responsive: 92% width, 88% height (fits mobile)
 	frame.Position = UDim2.new(0.5, 0, 0.5, 0)
 	frame.AnchorPoint = Vector2.new(0.5, 0.5)
 	frame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)

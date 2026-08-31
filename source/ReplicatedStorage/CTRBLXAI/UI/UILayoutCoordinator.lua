@@ -34,46 +34,46 @@ function UILayoutCoordinator.GetLayout(viewportSize)
 	local PAD = 6
 
 	if mode == "Desktop" then
-		-- Current proven layout: left/right 20% panels, bottom timeline/log
+		-- Approved layout: right-side panel stack, bottom-center timeline, lower-left log
 		return {
 			mode = "Desktop",
-			ActiveUnit   = { Size = UDim2.new(0.20, 0, 0, 0), Position = UDim2.new(0, PAD, 0, PAD), AnchorPoint = Vector2.new(0, 0) },
-			ActionPanel  = { Size = UDim2.new(0.20, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(0, 0) }, -- positioned dynamically below ActiveUnit
-			Inspector    = { Size = UDim2.new(0.20, 0, 0, 0), Position = UDim2.new(1, -PAD, 0, PAD), AnchorPoint = Vector2.new(1, 0) },
-			TilePreview  = { Size = UDim2.new(0.20, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) }, -- positioned dynamically below Inspector
-			TurnOrder    = { Size = UDim2.fromScale(0.45, 0.07), Position = UDim2.new(0, PAD, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
-			Conditions   = { Size = UDim2.fromScale(0.12, 0.07), Position = UDim2.new(0.45, PAD + 4, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
-			BattleLog    = { Size = UDim2.fromScale(0.25, 0.20), Position = UDim2.new(1, -PAD, 1, -PAD), AnchorPoint = Vector2.new(1, 1) },
+			ActiveUnit   = { Size = UDim2.new(0.20, 0, 0, 0), Position = UDim2.new(1, -PAD, 0, PAD), AnchorPoint = Vector2.new(1, 0) },
+			ActionPanel  = { Size = UDim2.new(0.20, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) }, -- dynamically below ActiveUnit
+			Inspector    = { Size = UDim2.new(0.20, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) }, -- dynamically below ActionPanel
+			TilePreview  = { Size = UDim2.new(0.20, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) }, -- dynamically below Inspector
+			TurnOrder    = { Size = UDim2.fromScale(0.45, 0.07), Position = UDim2.new(0.5, 0, 1, -PAD), AnchorPoint = Vector2.new(0.5, 1) },
+			Conditions   = { Size = UDim2.fromScale(0.12, 0.07), Position = UDim2.new(0.725, PAD, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
+			BattleLog    = { Size = UDim2.fromScale(0.25, 0.20), Position = UDim2.new(0, PAD, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
 		}
 
 	elseif mode == "CompactLandscape" then
-		-- Same arrangement, narrower panels to avoid overlap with min-width constraints
+		-- Same as Desktop but narrower panels
 		local panelW = math.max(240, math.floor(w * 0.20))
 		local panelScale = panelW / w
 		return {
 			mode = "CompactLandscape",
-			ActiveUnit   = { Size = UDim2.new(panelScale, 0, 0, 0), Position = UDim2.new(0, PAD, 0, PAD), AnchorPoint = Vector2.new(0, 0) },
-			ActionPanel  = { Size = UDim2.new(panelScale, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(0, 0) },
-			Inspector    = { Size = UDim2.new(panelScale, 0, 0, 0), Position = UDim2.new(1, -PAD, 0, PAD), AnchorPoint = Vector2.new(1, 0) },
+			ActiveUnit   = { Size = UDim2.new(panelScale, 0, 0, 0), Position = UDim2.new(1, -PAD, 0, PAD), AnchorPoint = Vector2.new(1, 0) },
+			ActionPanel  = { Size = UDim2.new(panelScale, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
+			Inspector    = { Size = UDim2.new(panelScale, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
 			TilePreview  = { Size = UDim2.new(panelScale, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
-			TurnOrder    = { Size = UDim2.fromScale(0.40, 0.08), Position = UDim2.new(0, PAD, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
-			Conditions   = { Size = UDim2.fromScale(0.12, 0.08), Position = UDim2.new(0.40, PAD + 4, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
-			BattleLog    = { Size = UDim2.fromScale(0.25, 0.22), Position = UDim2.new(1, -PAD, 1, -PAD), AnchorPoint = Vector2.new(1, 1) },
+			TurnOrder    = { Size = UDim2.fromScale(0.40, 0.08), Position = UDim2.new(0.5, 0, 1, -PAD), AnchorPoint = Vector2.new(0.5, 1) },
+			Conditions   = { Size = UDim2.fromScale(0.12, 0.08), Position = UDim2.new(0.70, PAD, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
+			BattleLog    = { Size = UDim2.fromScale(0.25, 0.22), Position = UDim2.new(0, PAD, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
 		}
 
 	else -- MobileLandscape
-		-- Provisional: squeeze panels, reduce heights, keep all visible
+		-- Same right-side stack, tighter spacing
 		local panelW = 240 / w  -- fixed 240px as scale fraction
 		local PAD_M = 4
 		return {
 			mode = "MobileLandscape",
-			ActiveUnit   = { Size = UDim2.new(panelW, 0, 0, 0), Position = UDim2.new(0, PAD_M, 0, PAD_M), AnchorPoint = Vector2.new(0, 0) },
-			ActionPanel  = { Size = UDim2.new(panelW, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(0, 0) },
-			Inspector    = { Size = UDim2.new(panelW, 0, 0, 0), Position = UDim2.new(1, -PAD_M, 0, PAD_M), AnchorPoint = Vector2.new(1, 0) },
+			ActiveUnit   = { Size = UDim2.new(panelW, 0, 0, 0), Position = UDim2.new(1, -PAD_M, 0, PAD_M), AnchorPoint = Vector2.new(1, 0) },
+			ActionPanel  = { Size = UDim2.new(panelW, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
+			Inspector    = { Size = UDim2.new(panelW, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
 			TilePreview  = { Size = UDim2.new(panelW, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
-			TurnOrder    = { Size = UDim2.fromScale(0.40, 0.10), Position = UDim2.new(0, PAD_M, 1, -PAD_M), AnchorPoint = Vector2.new(0, 1) },
-			Conditions   = { Size = UDim2.fromScale(0.12, 0.10), Position = UDim2.new(0.40, PAD_M + 4, 1, -PAD_M), AnchorPoint = Vector2.new(0, 1) },
-			BattleLog    = { Size = UDim2.fromScale(0.28, 0.25), Position = UDim2.new(1, -PAD_M, 1, -PAD_M), AnchorPoint = Vector2.new(1, 1) },
+			TurnOrder    = { Size = UDim2.fromScale(0.40, 0.10), Position = UDim2.new(0.5, 0, 1, -PAD_M), AnchorPoint = Vector2.new(0.5, 1) },
+			Conditions   = { Size = UDim2.fromScale(0.12, 0.10), Position = UDim2.new(0.70, PAD_M, 1, -PAD_M), AnchorPoint = Vector2.new(0, 1) },
+			BattleLog    = { Size = UDim2.fromScale(0.28, 0.25), Position = UDim2.new(0, PAD_M, 1, -PAD_M), AnchorPoint = Vector2.new(0, 1) },
 		}
 	end
 end

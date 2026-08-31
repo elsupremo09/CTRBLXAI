@@ -725,6 +725,7 @@ local function buildTurnPrompt(unit)
 				tags        = def.tags or {},
 				rtCost      = def.rtCost or 60,
 				power       = def.power or 0,
+				appliesStatus = def.appliesStatus or nil,
 				description = def.isHealing and "Heals ally" or (def.appliesStatus and ("Applies " .. def.appliesStatus) or "Damages target"),
 			})
 		end
@@ -793,6 +794,11 @@ local function buildTurnPrompt(unit)
 		),
 		weaponRtDelay = unit.weaponRtDelay or 0,
 		weaponDamage  = unit.weaponDamage or 10,
+		-- Unit identity (for active unit panel display)
+		level    = unit.level or 1,
+		race     = unit.race or nil,
+		doctrine = unit.doctrineId or "",
+		maxAp    = 2,
 	}
 end
 
@@ -1535,14 +1541,35 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 	end
 
 	-- Build full response
+	-- Build status summary
+	local statusSummary = {}
+	for _, inst in ipairs(unit.statusInstances or {}) do
+		table.insert(statusSummary, {
+			id = inst.statusId,
+			remainingTurns = inst.remainingTurns,
+			kind = GameConstants.STATUSES[inst.statusId] and GameConstants.STATUSES[inst.statusId].kind or "Debuff",
+		})
+	end
+
 	local response = {
 		unitId       = unit.id,
 		name         = unit.name,
 		side         = unit.side,
+		level        = unit.level or 1,
+		raceId       = unit.raceId or nil,  -- placeholder: race system not yet implemented
+		tileX        = unit.tileX,
+		tileY        = unit.tileY,
+		currentHp    = unit.currentHp,
+		maxHp        = unit.maxHp,
+		currentMp    = unit.currentMp,
+		maxMp        = unit.maxMp,
+		currentAp    = unit.currentAp or 0,
+		remainingRt  = unit.remainingRt or 0,
 		primaryStats = unit.primaryStats,
 		derivedStats = unit.derivedStats,
 		equipment    = equipData,
 		skills       = skillsData,
+		statuses     = statusSummary,
 		doctrineId   = unit.doctrineId,
 		doctrine     = unit.doctrineId and DoctrineData[unit.doctrineId] or nil,
 	}

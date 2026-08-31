@@ -128,6 +128,21 @@ local function renderStatsTab(content, data)
 			end
 		end
 	end
+
+	-- Active statuses (buffs/debuffs)
+	if data.statuses and #data.statuses > 0 then
+		createSection(content, "ACTIVE EFFECTS", order); order = order + 1
+		for _, s in ipairs(data.statuses) do
+			local color = s.kind == "Buff" and "100,255,100" or "255,180,80"
+			local turnsStr = s.remainingTurns and (s.remainingTurns .. " turns") or "?"
+			createLabel(content, {
+				Text = string.format('  <font color="rgb(%s)">%s</font>  (%s)', color, s.id, turnsStr),
+				Order = order, Padding = 4,
+			})
+			order = order + 1
+		end
+	end
+
 end
 
 --------------------------------------------------
@@ -324,9 +339,9 @@ local function buildPanel(data)
 	frame.Parent = gui
 	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
 
-	-- Header (name, HP, MP)
+	-- Header (name + combat info)
 	local header = Instance.new("TextLabel")
-	header.Size = UDim2.new(1, 0, 0, 38)
+	header.Size = UDim2.new(1, 0, 0, 22)
 	header.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
 	header.BackgroundTransparency = 0.2
 	header.BorderSizePixel = 0
@@ -335,9 +350,37 @@ local function buildPanel(data)
 	header.TextColor3 = Color3.fromRGB(255, 240, 200)
 	header.TextXAlignment = Enum.TextXAlignment.Left
 	header.RichText = true
-	header.Text = string.format("  <b>%s</b>  [%s]", data.name or "Unit", data.side or "?")
+	local levelStr = data.level and ("Lv." .. data.level) or ""
+	local raceStr = data.raceId or "—"
+	header.Text = string.format("  <b>%s</b>  %s  [%s]  %s", data.name or "Unit", levelStr, data.side or "?", raceStr)
 	header.Parent = frame
 	Instance.new("UICorner", header).CornerRadius = UDim.new(0, 8)
+
+	-- Sub-header: HP/MP, AP/RT, coordinates, elevation
+	local subHeader = Instance.new("TextLabel")
+	subHeader.Size = UDim2.new(1, 0, 0, 16)
+	subHeader.Position = UDim2.new(0, 0, 0, 22)
+	subHeader.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+	subHeader.BackgroundTransparency = 0.3
+	subHeader.BorderSizePixel = 0
+	subHeader.Font = Enum.Font.Code
+	subHeader.TextSize = 10
+	subHeader.TextColor3 = Color3.fromRGB(180, 180, 190)
+	subHeader.TextXAlignment = Enum.TextXAlignment.Left
+	subHeader.RichText = true
+	local hpStr = string.format("HP %d/%d  MP %d/%d", data.currentHp or 0, data.maxHp or 0, data.currentMp or 0, data.maxMp or 0)
+	local apStr = "AP " .. (data.currentAp or 0) .. "  RT " .. (data.remainingRt or 0)
+	local coordStr = ""
+	if data.tileX and data.tileY then
+		-- Elevation: try elevationMap from BVC via _G, or fall back to 1
+		local elev = 1
+		if type(_G.CTRBLXAI_GetElevation) == "function" then
+			elev = _G.CTRBLXAI_GetElevation(data.tileX, data.tileY) or 1
+		end
+		coordStr = string.format("  Tile(%d,%d) Elev %d", data.tileX, data.tileY, elev)
+	end
+	subHeader.Text = "  " .. hpStr .. "  " .. apStr .. coordStr
+	subHeader.Parent = frame
 
 	-- Close button
 	local closeBtn = Instance.new("TextButton")

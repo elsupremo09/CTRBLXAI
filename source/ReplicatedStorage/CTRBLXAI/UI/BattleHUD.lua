@@ -26,6 +26,9 @@ local player = Players.LocalPlayer
 local CTRBLXAI_UI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10)
 local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 
+local Shared = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("Shared", 10)
+local GameConstants = require(Shared:WaitForChild("GameConstants", 10))
+
 local BattleHUD = {}
 
 -- State
@@ -163,49 +166,49 @@ local function ensureRoot()
 	rootFrame.BackgroundTransparency = 1
 	rootFrame.Parent = screenGui
 
-	-- UPPER-LEFT: Active Unit Panel (20% W × 25% H)
+	-- UPPER-RIGHT: Active Unit Panel (20% W, height=auto)
 	activeUnitPanel = makePanel("ActiveUnit",
-		UDim2.new(0.20, 0, 0, 0),  -- width=20% screen, height=auto
-		UDim2.new(0, PAD, 0, PAD), Vector2.new(0, 0), rootFrame,
-		{ autoY = true, minW = 240, maxW = 340, minH = 60, maxH = 220 })
-	activeUnitPanel.Visible = false
-
-	-- LEFT: Action Panel (20% W, height fits content) — below active unit
-	actionPanel = makePanel("ActionPanel",
-		UDim2.new(0.20, 0, 0, 0),  -- width=20%, height=auto
-		UDim2.new(0, PAD, 0, 0), Vector2.new(0, 0), rootFrame,
-		{ autoY = true, minW = 240, maxW = 340, minH = 50, maxH = 200 })
-	actionPanel.Visible = false
-
-	-- UPPER-RIGHT: Inspector Panel (20% W, height fits content)
-	inspectorPanel = makePanel("Inspector",
 		UDim2.new(0.20, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, PAD), Vector2.new(1, 0), rootFrame,
 		{ autoY = true, minW = 240, maxW = 340, minH = 60, maxH = 220 })
+	activeUnitPanel.Visible = false
+
+	-- RIGHT: Action Panel (20% W, height=auto) — dynamically below ActiveUnit
+	actionPanel = makePanel("ActionPanel",
+		UDim2.new(0.20, 0, 0, 0),
+		UDim2.new(1, -PAD, 0, 0), Vector2.new(1, 0), rootFrame,
+		{ autoY = true, minW = 240, maxW = 340, minH = 50, maxH = 200 })
+	actionPanel.Visible = false
+
+	-- RIGHT: Inspector Panel (20% W, height=auto) — below ActionPanel when visible
+	inspectorPanel = makePanel("Inspector",
+		UDim2.new(0.20, 0, 0, 0),
+		UDim2.new(1, -PAD, 0, 0), Vector2.new(1, 0), rootFrame,
+		{ autoY = true, minW = 240, maxW = 340, minH = 60, maxH = 220 })
 	inspectorPanel.Visible = false
 
-	-- RIGHT: Tile/Preview Panel (20% W, height fits content)
+	-- RIGHT: Tile/Preview Panel (20% W, height=auto) — below Inspector
 	tilePreviewPanel = makePanel("TilePreview",
 		UDim2.new(0.20, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, 0), Vector2.new(1, 0), rootFrame,
 		{ autoY = true, minW = 240, maxW = 340, minH = 50, maxH = 300 })
 	tilePreviewPanel.Visible = false
 
-	-- LOWER-LEFT: Turn Order Bar (45% W × 7% H)
+	-- BOTTOM-CENTER: Turn Order Bar (45% W × 7% H)
 	turnOrderBar = makePanel("TurnOrder",
 		UDim2.fromScale(0.45, 0.07),
-		UDim2.new(0, PAD, 1, -PAD), Vector2.new(0, 1), rootFrame)
+		UDim2.new(0.5, 0, 1, -PAD), Vector2.new(0.5, 1), rootFrame)
 	turnOrderBar.ClipsDescendants = true
 
-	-- ADJACENT: Conditions Panel (small, next to turn order)
+	-- ADJACENT: Conditions Panel (small, right of turn order)
 	conditionsPanel = makePanel("Conditions",
 		UDim2.fromScale(0.12, 0.07),
-		UDim2.new(0.45, PAD + 4, 1, -PAD), Vector2.new(0, 1), rootFrame)
+		UDim2.new(0.725, PAD, 1, -PAD), Vector2.new(0, 1), rootFrame)
 
-	-- LOWER-RIGHT: Battle Log (25% W × 20% H)
+	-- LOWER-LEFT: Battle Log (25% W × 20% H)
 	battleLogPanel = makePanel("BattleLog",
 		UDim2.fromScale(0.25, 0.20),
-		UDim2.new(1, -PAD, 1, -PAD), Vector2.new(1, 1), rootFrame)
+		UDim2.new(0, PAD, 1, -PAD), Vector2.new(0, 1), rootFrame)
 	battleLogPanel.ClipsDescendants = true
 
 	-- Apply stored layout if UIController already calculated one
@@ -259,8 +262,12 @@ function BattleHUD._buildActiveUnit()
 		size = UDim2.new(1, -44, 0, 16), font = Theme.Font.PrimaryBold, textSize = 13,
 		color = Theme.GetSideColor(d.side) })
 	-- Doctrine + Level
-	local docText = (d.doctrine or "") .. (d.level and ("  Lv." .. d.level) or "")
-	makeLabel(topRow, docText, { pos = UDim2.new(0, 42, 0, 16),
+	local levelStr = d.level and ("Lv." .. d.level) or ""
+	local raceStr = d.race or "—"
+	local docStr = d.doctrine and d.doctrine ~= "" and d.doctrine or nil
+	local infoLine = levelStr .. "  " .. raceStr
+	if docStr then infoLine = infoLine .. "  " .. docStr end
+	makeLabel(topRow, infoLine, { pos = UDim2.new(0, 42, 0, 16),
 		size = UDim2.new(1, -44, 0, 12), textSize = 9, color = Theme.Colors.TextSecondary })
 
 	-- HP / MP values (no bars)
@@ -291,7 +298,7 @@ function BattleHUD._buildActiveUnit()
 	if d.tileX and d.tileY then
 		local tileText = string.format("Tile (%d,%d)  Elev: %d", d.tileX, d.tileY, d.elevation or 1)
 		makeLabel(activeUnitPanel, tileText, { size = UDim2.new(1, 0, 0, 12),
-			textSize = 9, color = Theme.Colors.TextDisabled, order = 10 })
+			textSize = 9, color = Theme.Colors.TextSecondary, order = 10 })
 	end
 end
 
@@ -510,38 +517,126 @@ end
 
 function BattleHUD._renderDamagePreview()
 	if not tilePreviewPanel or not presentation.preview then return end
+	local p = presentation.preview
 
 	local pad = Instance.new("UIPadding", tilePreviewPanel)
 	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 6)
 
 	local layout = Instance.new("UIListLayout", tilePreviewPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-	makeLabel(tilePreviewPanel, "DAMAGE PREVIEW", { font = Theme.Font.PrimaryBold,
-		textSize = 10, color = Theme.Colors.TextSecondary, order = 1 })
-
-	local isHeal = presentation.preview.isHealing or false
-	local dmgText = (isHeal and "+" or "-") .. tostring(presentation.preview.estimatedDamage or 0)
-	makeLabel(tilePreviewPanel, dmgText, { font = Theme.Font.PrimaryBold, textSize = 22,
-		color = isHeal and Theme.Colors.Success or Theme.Colors.Danger, order = 2 })
-
-	if presentation.preview.hpAfter then
-		makeLabel(tilePreviewPanel, "HP After: " .. presentation.preview.hpAfter, { textSize = 10, order = 3 })
+	local order = 0
+	local function row(text, color, bold)
+		order = order + 1
+		makeLabel(tilePreviewPanel, text, {
+			textSize = bold and 11 or 10,
+			font = bold and Theme.Font.PrimaryBold or Theme.Font.Mono,
+			color = color or Theme.Colors.TextPrimary,
+			order = order,
+		})
 	end
-	if presentation.preview.statusEffect and presentation.preview.statusEffect ~= "None" then
-		makeLabel(tilePreviewPanel, "Effect: " .. presentation.preview.statusEffect, {
-			textSize = 10, color = Theme.Colors.Warning, order = 4 })
+
+	local function diffRow(label, before, after, unit, goodIfHigher)
+		local delta = (after or 0) - (before or 0)
+		if delta == 0 and not unit then return end
+		local sign = delta > 0 and "+" or ""
+		local deltaColor = Theme.Colors.TextSecondary
+		if delta > 0 then
+			deltaColor = goodIfHigher and Theme.Colors.Success or Theme.Colors.Danger
+		elseif delta < 0 then
+			deltaColor = goodIfHigher and Theme.Colors.Danger or Theme.Colors.Success
+		end
+		local unitStr = unit and (" " .. unit) or ""
+		local text = string.format("%s: %d → %d  (%s%d%s)", label, before or 0, after or 0, sign, delta, unitStr)
+		row(text, deltaColor)
 	end
-	if presentation.preview.mpSpent and presentation.preview.mpSpent > 0 then
-		makeLabel(tilePreviewPanel, "MP Spent: " .. presentation.preview.mpSpent, {
-			textSize = 9, color = Theme.Colors.MP, order = 5 })
+
+	-- HEADER
+	local actionType = p.actionType or "Action"
+	row("─── " .. string.upper(actionType) .. " PREVIEW ───", Theme.Colors.TextSecondary, true)
+
+	-- MOVE
+	if actionType == "Move" then
+		row(p.actorName or "Unit", Theme.Colors.TextGold, true)
+		row("Tile: " .. (p.fromTile or "?") .. " → " .. (p.toTile or "?"))
+		diffRow("AP", p.actorApBefore, p.actorApAfter)
+		row("RT After: " .. (p.actorRtAfter or 0), Theme.Colors.TextSecondary)
+
+	-- ATTACK
+	elseif actionType == "Attack" then
+		row(p.actorName or "Attacker", Theme.Colors.TextGold, true)
+		diffRow("MP", p.actorMpBefore, p.actorMpAfter, nil, true)
+		diffRow("AP", p.actorApBefore, p.actorApAfter)
+		row("RT After: " .. (p.actorRtAfter or 0), Theme.Colors.TextSecondary)
+
+		row("")  -- spacer
+		row(p.targetName or "Target", Theme.Colors.Danger, true)
+		diffRow("HP", p.targetHpBefore, p.targetHpAfter, nil, true)
+		if (p.targetRtDelay or 0) > 0 then
+			row("RT Delay: +" .. p.targetRtDelay, Theme.Colors.Warning)
+		end
+
+	-- SKILL
+	elseif actionType == "Skill" then
+		row(p.actorName or "Caster", Theme.Colors.TextGold, true)
+		diffRow("MP", p.actorMpBefore, p.actorMpAfter, nil, true)
+		diffRow("AP", p.actorApBefore, p.actorApAfter)
+		row("RT After: " .. (p.actorRtAfter or 0), Theme.Colors.TextSecondary)
+
+		if p.channelTime and p.channelTime > 0 then
+			row("⏳ Channel: " .. p.channelTime .. " CT", Theme.Colors.Warning)
+			if p.channelResolveCt then
+				row("Resolves at CT ~" .. p.channelResolveCt, Theme.Colors.TextSecondary)
+			end
+		end
+
+		row("")  -- spacer
+		local targetColor = p.isHealing and Theme.Colors.Success or Theme.Colors.Danger
+		row(p.targetName or "Target", targetColor, true)
+		diffRow("HP", p.targetHpBefore, p.targetHpAfter, nil, true)
+		if (p.targetRtDelay or 0) > 0 then
+			row("RT Delay: +" .. p.targetRtDelay, Theme.Colors.Warning)
+		end
+
+		if p.statusEffect and p.statusEffect ~= "None" then
+			local statusText = p.statusEffect
+			if (p.statusDuration or 0) > 0 then
+				statusText = statusText .. " (" .. p.statusDuration .. " turns)"
+			end
+			local statusKind = "Debuff"
+			if GameConstants and GameConstants.STATUSES and GameConstants.STATUSES[p.statusEffect] then
+				statusKind = GameConstants.STATUSES[p.statusEffect].kind or "Debuff"
+			end
+			local statusColor = statusKind == "Buff" and Theme.Colors.Success or Theme.Colors.Warning
+			row("+" .. statusText, statusColor)
+		end
+
+	-- PUSH
+	elseif actionType == "Push" then
+		row(p.actorName or "Unit", Theme.Colors.TextGold, true)
+		diffRow("AP", p.actorApBefore, p.actorApAfter)
+		row("RT After: " .. (p.actorRtAfter or 0), Theme.Colors.TextSecondary)
+		row("")
+		row("Push " .. (p.targetName or "target") .. " away", Theme.Colors.Warning)
+
+	-- FALLBACK (legacy format)
+	else
+		if p.estimatedDamage then
+			local isHeal = p.isHealing or false
+			local dmgText = (isHeal and "+" or "-") .. tostring(p.estimatedDamage or 0)
+			row(dmgText, isHeal and Theme.Colors.Success or Theme.Colors.Danger, true)
+		end
+		if p.description then
+			row(p.description)
+		end
 	end
 
 	-- Confirm + Back buttons
 	local btnRow = Instance.new("Frame")
 	btnRow.Size = UDim2.new(1, 0, 0, 26)
 	btnRow.BackgroundTransparency = 1
-	btnRow.LayoutOrder = 10; btnRow.Parent = tilePreviewPanel
+	btnRow.LayoutOrder = 100; btnRow.Parent = tilePreviewPanel
 
 	local confirmBtn = Instance.new("TextButton")
 	confirmBtn.Size = UDim2.new(0.48, 0, 1, 0)
@@ -552,10 +647,10 @@ function BattleHUD._renderDamagePreview()
 	confirmBtn.Text = "Execute"; confirmBtn.BorderSizePixel = 0
 	confirmBtn.Parent = btnRow
 	Instance.new("UICorner", confirmBtn).CornerRadius = Theme.CornerRadius.sm
-	if presentation.preview.onConfirm then
+	if p.onConfirm then
 		confirmBtn.MouseButton1Click:Connect(function()
 			confirmBtn.Active = false; confirmBtn.BackgroundTransparency = 0.6
-			presentation.preview.onConfirm()
+			p.onConfirm()
 		end)
 	end
 
@@ -569,8 +664,8 @@ function BattleHUD._renderDamagePreview()
 	backBtn.Text = "Back"; backBtn.BorderSizePixel = 0
 	backBtn.Parent = btnRow
 	Instance.new("UICorner", backBtn).CornerRadius = Theme.CornerRadius.sm
-	if presentation.preview.onBack then
-		backBtn.MouseButton1Click:Connect(presentation.preview.onBack)
+	if p.onBack then
+		backBtn.MouseButton1Click:Connect(p.onBack)
 	end
 end
 
@@ -727,17 +822,28 @@ function BattleHUD.ApplyLayout(layout)
 		end
 	end
 
-	-- Re-run dependent positioning (ActionPanel below ActiveUnit, TilePreview below Inspector)
+	-- Re-run right-side stack positioning
 	task.defer(function()
-		if activeUnitPanel and actionPanel and activeUnitPanel.Visible then
-			local parentBottom = activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y
-			local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
-			actionPanel.Position = UDim2.new(0, PAD, 0, (parentBottom - rootTop) + 4)
+		local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
+		local nextY = PAD
+
+		if activeUnitPanel and activeUnitPanel.Visible then
+			nextY = (activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y - rootTop) + 4
 		end
-		if inspectorPanel and tilePreviewPanel and inspectorPanel.Visible then
-			local parentBottom = inspectorPanel.AbsolutePosition.Y + inspectorPanel.AbsoluteSize.Y
-			local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
-			tilePreviewPanel.Position = UDim2.new(1, -PAD, 0, (parentBottom - rootTop) + 4)
+		if actionPanel then
+			actionPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			if actionPanel.Visible then
+				nextY = (actionPanel.AbsolutePosition.Y + actionPanel.AbsoluteSize.Y - rootTop) + 4
+			end
+		end
+		if inspectorPanel then
+			inspectorPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			if inspectorPanel.Visible then
+				nextY = (inspectorPanel.AbsolutePosition.Y + inspectorPanel.AbsoluteSize.Y - rootTop) + 4
+			end
+		end
+		if tilePreviewPanel then
+			tilePreviewPanel.Position = UDim2.new(1, -PAD, 0, nextY)
 		end
 	end)
 end
@@ -757,19 +863,35 @@ function BattleHUD.Render(p)
 	local newState = presentation.state
 	ensureRoot()
 
-	-- Position dependent panels below their parent after AutomaticSize resolves
+	-- Position right-side stack: ActiveUnit → ActionPanel → Inspector → TilePreview
 	task.defer(function()
-		-- Action panel below Active Unit panel
-		if activeUnitPanel and actionPanel then
-			local parentBottom = activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y
-			local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
-			actionPanel.Position = UDim2.new(0, PAD, 0, (parentBottom - rootTop) + 4)
+		local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
+		local nextY = PAD  -- start from top
+
+		-- ActiveUnit is always at top-right (fixed position)
+		if activeUnitPanel and activeUnitPanel.Visible then
+			nextY = (activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y - rootTop) + 4
 		end
-		-- TilePreview below Inspector panel
-		if inspectorPanel and tilePreviewPanel then
-			local parentBottom = inspectorPanel.AbsolutePosition.Y + inspectorPanel.AbsoluteSize.Y
-			local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
-			tilePreviewPanel.Position = UDim2.new(1, -PAD, 0, (parentBottom - rootTop) + 4)
+
+		-- ActionPanel below ActiveUnit
+		if actionPanel then
+			actionPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			if actionPanel.Visible then
+				nextY = (actionPanel.AbsolutePosition.Y + actionPanel.AbsoluteSize.Y - rootTop) + 4
+			end
+		end
+
+		-- Inspector below ActionPanel (or below ActiveUnit if action hidden)
+		if inspectorPanel then
+			inspectorPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			if inspectorPanel.Visible then
+				nextY = (inspectorPanel.AbsolutePosition.Y + inspectorPanel.AbsoluteSize.Y - rootTop) + 4
+			end
+		end
+
+		-- TilePreview below Inspector
+		if tilePreviewPanel then
+			tilePreviewPanel.Position = UDim2.new(1, -PAD, 0, nextY)
 		end
 	end)
 
@@ -885,7 +1007,14 @@ function BattleHUD.ShowTooltip(props)
 			color = Theme.Colors.TextGold, order = 0 })
 	end
 	for i, line in ipairs(props.lines or {}) do
-		if line then makeLabel(tooltipFrame, line, { textSize = 10, wrap = true, order = i }) end
+		if type(line) == "string" then
+			makeLabel(tooltipFrame, line, { textSize = 10, wrap = true, order = i })
+		elseif type(line) == "table" and line.text then
+			makeLabel(tooltipFrame, line.text, {
+				textSize = line.textSize or 10, wrap = true, order = i,
+				color = line.color or Theme.Colors.TextPrimary,
+			})
+		end
 	end
 
 	task.defer(function()
