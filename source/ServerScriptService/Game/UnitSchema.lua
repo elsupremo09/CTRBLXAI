@@ -22,6 +22,12 @@ local GameConstants = require(
 		:WaitForChild("GameConstants")
 )
 
+local RaceData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("RaceData")
+)
+
 local UnitSchema = {}
 
 --------------------------------------------------
@@ -65,10 +71,25 @@ function UnitSchema.Create(definition)
 		'UnitSchema.Create: controller must be "Player" or "AI".')
 	assert(type(definition.tileX) == "number" and type(definition.tileY) == "number",
 		"UnitSchema.Create: tileX and tileY must be numbers.")
-	assert(type(definition.stats) == "table", "UnitSchema.Create: stats must be a table.")
 
-	local vit = definition.stats.VIT or 10
-	local int = definition.stats.INT or 10
+	-- Resolve base stats: race-derived (4F) or legacy flat table
+	local resolvedStats
+	local raceId = definition.raceId or nil
+	local level = definition.level or 1
+
+	if raceId then
+		-- Race-derived: base stats = startingStat + floor(growth × (level - 1))
+		resolvedStats = RaceData.CalcBaseStats(raceId, level)
+		assert(resolvedStats, "UnitSchema.Create: invalid raceId: " .. tostring(raceId))
+	elseif definition.stats then
+		-- Legacy: raw stat table (enemies, test units)
+		resolvedStats = definition.stats
+	else
+		error("UnitSchema.Create: either raceId or stats must be provided.")
+	end
+
+	local vit = resolvedStats.VIT or 10
+	local int = resolvedStats.INT or 10
 	local maxHp = calcMaxHp(vit)
 	local maxMp = definition.maxMp or calcMaxMp(int)
 
@@ -86,23 +107,30 @@ function UnitSchema.Create(definition)
 		tileY         = definition.tileY,
 		facing        = definition.facing or "South",
 
+		-- Race identity (Slice 4F)
+		raceId        = raceId,
+
+		-- Perks and drawbacks (Slice 4F — fields only, content catalog pending)
+		perkIds       = definition.perkIds or {},
+		drawbackIds   = definition.drawbackIds or {},
+
 		-- Core stats (permanent base — race growth + allocation)
 		baseStats     = {
-			STR = definition.stats.STR or 10,
-			AGI = definition.stats.AGI or 10,
-			INT = definition.stats.INT or 10,
-			VIT = definition.stats.VIT or 10,
-			DEX = definition.stats.DEX or 10,
-			LUK = definition.stats.LUK or 10,
+			STR = resolvedStats.STR or 10,
+			AGI = resolvedStats.AGI or 10,
+			INT = resolvedStats.INT or 10,
+			VIT = resolvedStats.VIT or 10,
+			DEX = resolvedStats.DEX or 10,
+			LUK = resolvedStats.LUK or 10,
 		},
 		-- Effective stats (rebuilt by EquipmentService after doctrine+equipment)
 		effectiveStats = {
-			STR = definition.stats.STR or 10,
-			AGI = definition.stats.AGI or 10,
-			INT = definition.stats.INT or 10,
-			VIT = definition.stats.VIT or 10,
-			DEX = definition.stats.DEX or 10,
-			LUK = definition.stats.LUK or 10,
+			STR = resolvedStats.STR or 10,
+			AGI = resolvedStats.AGI or 10,
+			INT = resolvedStats.INT or 10,
+			VIT = resolvedStats.VIT or 10,
+			DEX = resolvedStats.DEX or 10,
+			LUK = resolvedStats.LUK or 10,
 		},
 
 		-- Hit points
@@ -134,7 +162,7 @@ function UnitSchema.Create(definition)
 		-- Timeline: Starting RT uses LUK formula if no explicit override
 		-- Rule: Starting RT = round(Base RT × (1 - 0.30 × LUK / (100 + LUK)))
 		remainingRt   = definition.startingRt
-			or GameConstants.CalcStartingRt(GameConstants.BASE_RT_STANDARD, definition.stats.LUK or 10),
+			or GameConstants.CalcStartingRt(GameConstants.BASE_RT_STANDARD, resolvedStats.LUK or 10),
 
 		-- Turn resources
 		currentAp     = 0,
@@ -147,7 +175,7 @@ function UnitSchema.Create(definition)
 		-- Status effects
 		statusInstances = {},
 
-		-- Level (for tie-breaking and item level assignment)
+		-- Level (persistent — drives race stat growth, tie-breaking, item level)
 		level         = definition.level or 1,
 
 		-- Alive flag

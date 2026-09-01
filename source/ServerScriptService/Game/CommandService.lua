@@ -24,6 +24,7 @@ local BattleCoordinator = require(script.Parent.BattleCoordinator)
 local StatusService     = require(script.Parent.StatusService)
 local BattleVisualBroadcaster = require(script.Parent.BattleVisualBroadcaster)
 local DisplacementService = require(script.Parent.DisplacementService)
+local RacePassiveService  = require(script.Parent.RacePassiveService)
 
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -297,8 +298,10 @@ function CommandService.ValidateAndCommit(
 			return false, "Unknown skill: " .. tostring(selection.skillId)
 		end
 
-		-- MP check (must have enough — not spent yet for channeled skills)
+
 		local mpCost = skillDef.mpCost or 0
+		mpCost = math.max(0, math.round(mpCost * RacePassiveService.GetMpCostModifier(actor)))
+
 		if not UnitSchema.HasEnoughMp(actor, mpCost) then
 			return false, string.format(
 				"%s does not have enough MP (%d/%d needed).",
@@ -385,6 +388,7 @@ function CommandService.ValidateAndCommit(
 	elseif actionType == "Skill" then
 		local target = selection.target
 		local mpCost = skillDef.mpCost or 0
+		mpCost = math.max(0, math.round(mpCost * RacePassiveService.GetMpCostModifier(actor)))
 
 		-- Check if this is a CHANNELED skill
 		if skillDef.channelTime and skillDef.channelTime > 0 then
@@ -502,6 +506,7 @@ function CommandService.ValidateAndCommit(
 
 		-- Apply Guard as a proper status (dispellable buff, removed by CC)
 		StatusService.ApplyStatus(actor, "Guard", actor.id)
+		actor.guardBonus = RacePassiveService.GetGuardMitigationBonus(actor)
 		actor.guardUsedThisTurn = true
 		BattleCoordinator.AccrueRt(state, guardRt)
 

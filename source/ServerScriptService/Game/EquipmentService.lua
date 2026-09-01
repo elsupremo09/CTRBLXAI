@@ -1,4 +1,5 @@
 -- EquipmentService.lua
+local RacePassiveService = require(script.Parent.RacePassiveService)
 -- CTRBLXAI | Slice 4A — Equipment Foundation
 --
 -- Owns: equipped state, hand legality, deterministic stat rebuilding.
@@ -86,14 +87,17 @@ function EquipmentService.ValidateEquip(unit, itemInstance, slot)
 		local mainHand = unit.equipmentSlots and unit.equipmentSlots.MainHand
 		if mainHand then
 			local mainArchetype = WeaponData.GetByArchetypeId(mainHand.baseArchetypeId)
-			if mainArchetype and mainArchetype.handClass == "2H" then
+			-- Titan: Colossal Arsenal allows 2H melee as 1H, so OffHand is available
+			local titanBypass = mainArchetype and mainArchetype.handClass == "2H" and RacePassiveService.CanEquip2HAsWith1H(unit)
+			if mainArchetype and mainArchetype.handClass == "2H" and not titanBypass then
 				return false, "Cannot equip off-hand with a 2H weapon"
 			end
 		end
 	end
 
 	-- If equipping a 2H weapon, off-hand must be cleared
-	if slot == "MainHand" and archetype.handClass == "2H" then
+	-- Titan: Colossal Arsenal — 2H melee equipped as 1H, OffHand NOT cleared
+	if slot == "MainHand" and archetype.handClass == "2H" and not RacePassiveService.CanEquip2HAsWith1H(unit) then
 		-- This is allowed; OffHand will be force-cleared during equip
 	end
 
@@ -125,9 +129,9 @@ function EquipmentService.Equip(unit, itemInstance, slot)
 		unit.equipmentSlots = {}
 	end
 
-	-- If 2H weapon, force-clear off-hand
+	-- If 2H weapon, force-clear off-hand (Titan bypasses this)
 	local archetype = WeaponData.GetByArchetypeId(itemInstance.baseArchetypeId)
-	if slot == "MainHand" and archetype.handClass == "2H" then
+	if slot == "MainHand" and archetype.handClass == "2H" and not RacePassiveService.CanEquip2HAsWith1H(unit) then
 		unit.equipmentSlots.OffHand = nil
 	end
 
@@ -226,6 +230,17 @@ function EquipmentService.RebuildUnitStats(unit)
 		if primaryPctBonuses[stat] ~= 0 or primaryFlatBonuses[stat] ~= 0 then
 			local pctBonus = math.round(base[stat] * primaryPctBonuses[stat])
 			total[stat] = total[stat] + pctBonus + primaryFlatBonuses[stat]
+		end
+	end
+
+	-- 3b. Race passive stat penalties (Slice 4F)
+	-- Applied AFTER doctrine + equipment, BEFORE HP/MP derivation
+	local raceMods = RacePassiveService.GetStatModifiers(unit)
+	if raceMods then
+		for stat, pctMod in pairs(raceMods) do
+			if total[stat] then
+				total[stat] = math.max(0, math.round(total[stat] * (1 + pctMod)))
+			end
 		end
 	end
 

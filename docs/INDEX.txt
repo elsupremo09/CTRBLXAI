@@ -176,3 +176,5 @@ project_rules (section = 'Equipment WT Model', 1 row):
   Query: SELECT topic, rule FROM project_rules WHERE section = 'Equipment WT Model'
 
 core_stats entries: Push (1 AP), Push RT, Push Distance formula
+
+loadout_ui_spec          — Slice 7 Roster and Unit Loadout presentation spec (tabs, header, equipment, skills, augments, consumables, comparison, interaction, responsive rules)

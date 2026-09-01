@@ -13,6 +13,8 @@ local GameConstants = require(
 		:WaitForChild("GameConstants")
 )
 
+local RacePassiveService = require(script.Parent.RacePassiveService)
+
 local TargetingService = {}
 
 --------------------------------------------------
@@ -38,7 +40,8 @@ local DIRECTIONS = {
 
 local function getMovementRange(unit)
 	local agi = unit.effectiveStats and unit.effectiveStats.AGI or 10
-	return BASE_MOVEMENT_RANGE + math.floor(agi / 60)
+	local raceOffset = RacePassiveService.GetMovementRangeModifier(unit)
+	return math.max(1, BASE_MOVEMENT_RANGE + math.floor(agi / 60) + raceOffset)
 end
 
 local function getJump(unit)

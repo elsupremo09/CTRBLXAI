@@ -125,12 +125,71 @@ Theme.BorderThickness = {
 -- FONTS
 --------------------------------------------------
 
+-- Font theme presets
+Theme._fontThemes = {
+	Tactical = {
+		name        = "Tactical",
+		label       = "⚔ Tactical",
+		Primary     = Enum.Font.Gotham,
+		PrimaryBold = Enum.Font.GothamBold,
+		Mono        = Enum.Font.Gotham,
+		Display     = Enum.Font.GothamBold,
+	},
+	Chronicle = {
+		name        = "Chronicle",
+		label       = "📜 Chronicle",
+		Primary     = Enum.Font.Fondamento,
+		PrimaryBold = Enum.Font.Fondamento,
+		Mono        = Enum.Font.Fondamento,
+		Display     = Enum.Font.Fondamento,
+	},
+	Tome = {
+		name        = "Tome",
+		label       = "📖 Tome",
+		Primary     = Enum.Font.Antique,
+		PrimaryBold = Enum.Font.Antique,
+		Mono        = Enum.Font.Antique,
+		Display     = Enum.Font.GrenzeGotisch,
+	},
+}
+Theme._fontThemeOrder = { "Tactical", "Chronicle", "Tome" }
+Theme._currentFontTheme = "Tactical"
+
+-- Active font table (updated by SetFontTheme)
 Theme.Font = {
-	Primary     = Enum.Font.SourceSans,
-	PrimaryBold = Enum.Font.SourceSansBold,
-	Mono        = Enum.Font.RobotoMono,
+	Primary     = Enum.Font.Gotham,
+	PrimaryBold = Enum.Font.GothamBold,
+	Mono        = Enum.Font.Gotham,
 	Display     = Enum.Font.GothamBold,
 }
+
+function Theme.SetFontTheme(themeName)
+	local preset = Theme._fontThemes[themeName]
+	if not preset then return end
+	Theme._currentFontTheme = themeName
+	Theme.Font.Primary     = preset.Primary
+	Theme.Font.PrimaryBold = preset.PrimaryBold
+	Theme.Font.Mono        = preset.Mono
+	Theme.Font.Display     = preset.Display
+end
+
+function Theme.CycleFontTheme()
+	local order = Theme._fontThemeOrder
+	for i, name in ipairs(order) do
+		if name == Theme._currentFontTheme then
+			local next = order[(i % #order) + 1]
+			Theme.SetFontTheme(next)
+			return next
+		end
+	end
+	Theme.SetFontTheme(order[1])
+	return order[1]
+end
+
+function Theme.GetFontThemeLabel()
+	local preset = Theme._fontThemes[Theme._currentFontTheme]
+	return preset and preset.label or Theme._currentFontTheme
+end
 
 --------------------------------------------------
 -- TEXT SIZES
@@ -245,5 +304,96 @@ function Theme.GetHPColor(ratio)
 	end
 	return Theme.Colors.HP
 end
+
+--------------------------------------------------
+-- VIEWPORT-SCALED TEXT & ELEMENT SIZING
+--------------------------------------------------
+
+-- Reference resolution (design target)
+local REF_WIDTH = 1920
+local viewportWidth = REF_WIDTH
+local currentMode = "Desktop"  -- "Desktop", "Compact", "Mobile"
+
+--- Call once per viewport change (UILayoutCoordinator → BattleHUD.ApplyLayout → here)
+function Theme.SetViewport(w, h)
+	viewportWidth = math.max(w or REF_WIDTH, 800)
+	if viewportWidth < 1024 then
+		currentMode = "Mobile"
+	elseif viewportWidth < 1280 then
+		currentMode = "Compact"
+	else
+		currentMode = "Desktop"
+	end
+end
+
+--- Returns the current layout mode string.
+function Theme.GetMode()
+	return currentMode
+end
+
+--------------------------------------------------
+-- STRICT TYPOGRAPHIC CONTRACT
+-- One font family. Six roles. No exceptions.
+-- Mobile sizes are LARGER than desktop (small physical screen = bigger text).
+--------------------------------------------------
+
+local TEXT_SIZES = {
+	--              Desktop  Compact  Mobile
+	Title   = {       16,      16,      18   },
+	Heading = {       13,      13,      15   },
+	Body    = {       11,      11,      13   },
+	Small   = {       10,      10,      12   },
+	Mono    = {       11,      11,      13   },
+	Tiny    = {        9,       9,      11   },
+	Badge   = {        7,       7,       9   },
+}
+
+local MODE_INDEX = { Desktop = 1, Compact = 2, Mobile = 3 }
+
+Theme.Text = {}
+
+function Theme.Text.Title()   return TEXT_SIZES.Title[MODE_INDEX[currentMode]]   end
+function Theme.Text.Heading() return TEXT_SIZES.Heading[MODE_INDEX[currentMode]] end
+function Theme.Text.Body()    return TEXT_SIZES.Body[MODE_INDEX[currentMode]]    end
+function Theme.Text.Small()   return TEXT_SIZES.Small[MODE_INDEX[currentMode]]   end
+function Theme.Text.Mono()    return TEXT_SIZES.Mono[MODE_INDEX[currentMode]]    end
+function Theme.Text.Tiny()    return TEXT_SIZES.Tiny[MODE_INDEX[currentMode]]    end
+function Theme.Text.Badge()   return TEXT_SIZES.Badge[MODE_INDEX[currentMode]]   end
+
+--------------------------------------------------
+-- ELEMENT SIZING (hard mode switch, same principle)
+--------------------------------------------------
+
+local ELEM_SIZES = {
+	--                 Desktop  Compact  Mobile
+	RowTall    = {       40,      38,      44   },
+	RowMedium  = {       26,      26,      30   },
+	RowSmall   = {       18,      18,      22   },
+	RowTiny    = {       14,      14,      18   },
+	Portrait   = {       36,      34,      40   },
+	IconBtn    = {       26,      26,      30   },
+	ToggleBtn  = {       26,      26,      30   },
+	Padding    = {        6,       6,       8   },
+	PaddingLg  = {        8,       8,      10   },
+}
+
+Theme.Elem = {}
+
+function Theme.Elem.RowTall()   return ELEM_SIZES.RowTall[MODE_INDEX[currentMode]]   end
+function Theme.Elem.RowMedium() return ELEM_SIZES.RowMedium[MODE_INDEX[currentMode]] end
+function Theme.Elem.RowSmall()  return ELEM_SIZES.RowSmall[MODE_INDEX[currentMode]]  end
+function Theme.Elem.RowTiny()   return ELEM_SIZES.RowTiny[MODE_INDEX[currentMode]]   end
+function Theme.Elem.Portrait()  return ELEM_SIZES.Portrait[MODE_INDEX[currentMode]]  end
+function Theme.Elem.IconBtn()   return ELEM_SIZES.IconBtn[MODE_INDEX[currentMode]]   end
+function Theme.Elem.ToggleBtn() return ELEM_SIZES.ToggleBtn[MODE_INDEX[currentMode]] end
+function Theme.Elem.Padding()   return ELEM_SIZES.Padding[MODE_INDEX[currentMode]]   end
+function Theme.Elem.PaddingLg() return ELEM_SIZES.PaddingLg[MODE_INDEX[currentMode]] end
+
+--- Legacy compat: Theme.Scaled(basePx) still works but uses mode-based scaling.
+function Theme.Scaled(basePx)
+	local multiplier = currentMode == "Mobile" and 1.15 or 1.0
+	return math.floor(basePx * multiplier + 0.5)
+end
+Theme.ScaledPx = Theme.Scaled
 
 return Theme

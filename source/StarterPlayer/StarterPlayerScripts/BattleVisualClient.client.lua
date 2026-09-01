@@ -482,6 +482,15 @@ local function enterActionSelection()
 	bp.skill = nil
 	bp.target = nil
 	bp.preview = nil
+
+	-- Auto-highlight move range on action selection (spatial awareness)
+	clearHighlights()
+	if prompt.moveCandidates then
+		for _, tile in ipairs(prompt.moveCandidates) do
+			createTileHighlight(tile.tileX, tile.tileY, "move")
+		end
+	end
+
 	bp.state = "ActionSelection"; BattleHUD.Render(bp)
 	updateTimeline(timelineSnapshot, nil, nil)
 end
@@ -554,7 +563,16 @@ end
 
 local function processTileClick(bx, by)
 	
-	-- Always show tile info
+	-- Find occupant for tile info
+	local occupantName = nil
+	for uid, data in pairs(unitData) do
+		if data.tileX == bx and data.tileY == by and data.isAlive ~= false then
+			occupantName = data.name
+			break
+		end
+	end
+
+	-- Always update tile info
 	local terrainId = GameConstants.GetTerrainId(bx, by)
 	local elevation = getElevation(bx, by)
 	local moveCost = GameConstants.GetTerrainCost(bx, by)
@@ -563,23 +581,29 @@ local function processTileClick(bx, by)
 		elevation = elevation,
 		moveCost = moveCost,
 		coords = string.format("(%d, %d)", bx, by),
+		occupantName = occupantName,
 	}
 	BattleHUD.Render(bp)
 	
-	-- Inspect unit by clicking — works in ALL states (View Mode)
+	-- Inspect unit by clicking — works in ALL states
 	for uid, data in pairs(unitData) do
 		if data.tileX == bx and data.tileY == by and data.isAlive ~= false then
 			bp.inspectedEntityId = data.id
 			bp.target = data
 			BattleHUD.Render(bp)
-			-- Open full 3-tab inspector panel
-			if _G.CTRBLXAI_OpenInspectorPanel then
+			-- Only auto-open full inspector during Idle (no active turn) — never during
+			-- combat flow (ActionSelection, TargetSelection, Preview, SkillSelection)
+			local hudState = BattleHUD.GetState()
+			if hudState == "Idle" and not BattleHUD.IsViewMode() and _G.CTRBLXAI_OpenInspectorPanel then
 				_G.CTRBLXAI_OpenInspectorPanel(data.id)
 			end
 			break
 		end
 	end
 	
+	-- View mode: tile + unit info updated above, skip combat flow
+	if BattleHUD.IsViewMode() then return end
+
 	if not isPlayerTurn or not inputMode then return end
 	
 	local state = bp.state
@@ -629,7 +653,7 @@ local function processTileClick(bx, by)
 						targetHpBefore = tgtData and tgtData.currentHp or 0,
 						targetHpAfter = tgtData and math.max(0, (tgtData.currentHp or 0) - (t.predicted or 0)) or 0,
 						estimatedDamage = t.predicted or 0,
-						targetRtDelay = currentPrompt.weaponRtDelay or 0,
+						targetRtDelay = GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10),
 						statusEffect = "None",
 						onConfirm = function() commitCommand({ actionType = "Attack", targetId = t.id }) end,
 						onBack = cancelToTargeting,
@@ -664,6 +688,7 @@ local function processTileClick(bx, by)
 					bp.preview = {
 						actionType = "Skill",
 						skillName = selectedSkill.name,
+						skillTags = bp.skill and bp.skill.tags or nil,
 						actorName = currentPrompt.unitName,
 						actorMpBefore = currentPrompt.currentMp,
 						actorMpAfter = (currentPrompt.currentMp or 0) - (selectedSkill.mpCost or 0),
@@ -675,7 +700,7 @@ local function processTileClick(bx, by)
 						targetHpAfter = tgtHpAfter,
 						estimatedDamage = t.predicted or 0,
 						isHealing = isHeal,
-						targetRtDelay = (not isHeal) and (currentPrompt.weaponRtDelay or 0) or 0,
+						targetRtDelay = (not isHeal) and GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10) or 0,
 						statusEffect = statusEff,
 						statusDuration = statusDur,
 						channelTime = isChannel and selectedSkill.channelTime or nil,
@@ -822,16 +847,30 @@ game:GetService("RunService").RenderStepped:Connect(function()
 		if hoveredUnit.id ~= lastHoveredUnitId then
 			lastHoveredUnitId = hoveredUnit.id
 			local hpText = string.format("HP %d/%d", hoveredUnit.currentHp or 0, hoveredUnit.maxHp or 0)
+			local mpText = string.format("MP %d/%d", hoveredUnit.currentMp or 0, hoveredUnit.maxMp or 0)
 			local sideColor = hoveredUnit.side == "Player" and Theme.Colors.Success or Theme.Colors.Danger
+			local tooltipLines = {
+				{ text = hpText, color = Theme.Colors.TextPrimary },
+				{ text = mpText, color = Theme.Colors.TextSecondary },
+			}
+			-- Add status effects
+			if hoveredUnit.statuses and #hoveredUnit.statuses > 0 then
+				local statusParts = {}
+				for _, s in ipairs(hoveredUnit.statuses) do
+					local name = s.id or s.name or "?"
+					local turns = s.remainingTurns and ("(" .. s.remainingTurns .. ")") or ""
+					table.insert(statusParts, name .. turns)
+				end
+				table.insert(tooltipLines, { text = table.concat(statusParts, " "), color = Theme.Colors.Warning })
+			end
 			BattleHUD.ShowTooltip({
 				title = hoveredUnit.name or "Unit",
-				lines = {
-					{ text = hpText, color = Theme.Colors.TextPrimary },
-					{ text = hoveredUnit.side or "?", color = sideColor },
-				},
+				portrait = string.sub(hoveredUnit.name or "?", 1, 2),
+				portraitColor = sideColor,
+				lines = tooltipLines,
 				position = UDim2.new(0, mouse.X + 16, 0, mouse.Y - 10),
 				anchorPoint = Vector2.new(0, 1),
-				maxWidth = 140,
+				maxWidth = 160,
 			})
 		end
 	else
@@ -862,18 +901,19 @@ local function createDevCameraPanel()
 	gui.Parent = player:WaitForChild("PlayerGui")
 	devCameraPanel = gui
 
+	local devExpanded = false
+
 	local frame = Instance.new("Frame")
 	frame.Name = "DevPanel"
-	frame.Size = UDim2.fromOffset(130, 260)
-	frame.Position = UDim2.new(0.5, 0, 0, 4)
-	frame.AnchorPoint = Vector2.new(0.5, 0)
+	frame.Size = UDim2.fromOffset(130, 14)
+	frame.Position = UDim2.new(0, 130, 0, 4)
+	frame.AnchorPoint = Vector2.new(0, 0)
 	frame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
 	frame.BackgroundTransparency = 0.1
 	frame.BorderSizePixel = 0
 	frame.Active = true
+	frame.ClipsDescendants = true
 	frame.Parent = gui
-	local hubConstraint = Instance.new("UISizeConstraint", frame)
-	hubConstraint.MaxSize = Vector2.new(560, 480)
 	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
 	local stroke = Instance.new("UIStroke", frame)
 	stroke.Color = Color3.fromRGB(200, 200, 50); stroke.Thickness = 1
@@ -887,13 +927,24 @@ local function createDevCameraPanel()
 	pad.PaddingRight = UDim.new(0, 3)
 
 	-- Title
-	local title = Instance.new("TextLabel")
+	local title = Instance.new("TextButton")
 	title.Size = UDim2.new(1, 0, 0, 14)
 	title.BackgroundTransparency = 1
 	title.Font = Enum.Font.SourceSansBold; title.TextSize = 9
 	title.TextColor3 = Color3.fromRGB(200, 200, 50)
-	title.Text = "DEV OPTIONS"; title.LayoutOrder = 0
+	title.Text = "▶ DEV"; title.LayoutOrder = 0
+	title.AutoButtonColor = false; title.BorderSizePixel = 0
 	title.Parent = frame
+	title.MouseButton1Click:Connect(function()
+		devExpanded = not devExpanded
+		if devExpanded then
+			frame.Size = UDim2.fromOffset(130, 260)
+			title.Text = "▼ DEV OPTIONS"
+		else
+			frame.Size = UDim2.fromOffset(130, 14)
+			title.Text = "▶ DEV"
+		end
+	end)
 
 	local function makeBtn(text, order, callback, color)
 		local btn = Instance.new("TextButton")
@@ -1095,9 +1146,28 @@ BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
 	-- Battle log
 	local actorName = unitData[data.actorId] and unitData[data.actorId].name or "?"
 	local targetName = unitData[data.targetId] and unitData[data.targetId].name or "?"
-	local logText = data.skillName and (actorName.." used "..data.skillName.." on "..targetName..". -"..data.damage.." HP")
+	local logText = data.skillName
+		and (actorName.." used "..data.skillName.." → "..targetName..". -"..data.damage.." HP")
 		or (actorName.." attacks "..targetName..". -"..data.damage.." HP")
+	if data.statusApplied and data.statusApplied ~= "" then
+		logText = logText .. " +" .. data.statusApplied
+	end
+	if data.rtDelay and data.rtDelay > 0 then
+		logText = logText .. " RT+" .. data.rtDelay
+	end
 	BattleHUD.AddLogEntry(logText)
+
+	-- Show resolution result in preview panel
+	bp.preview = {
+		actionType = "Result",
+		actorName = actorName,
+		targetName = targetName,
+		skillName = data.skillName,
+		damage = data.damage,
+		statusApplied = data.statusApplied,
+		rtDelay = data.rtDelay,
+	}
+	BattleHUD.Render(bp)
 end)
 
 BattleEvents.DotDamage.OnClientEvent:Connect(function(data)
@@ -1121,6 +1191,16 @@ BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
 	local actorName = unitData[data.actorId] and unitData[data.actorId].name or "?"
 	local targetName = unitData[data.targetId] and unitData[data.targetId].name or "?"
 	BattleHUD.AddLogEntry(actorName.." heals "..targetName..". +"..data.amount.." HP")
+
+	-- Show resolution result
+	bp.preview = {
+		actionType = "Result",
+		actorName = actorName,
+		targetName = targetName,
+		skillName = data.skillName,
+		healing = data.amount,
+	}
+	BattleHUD.Render(bp)
 end)
 
 BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
@@ -1229,7 +1309,7 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.fromOffset(300,60)
 	lbl.AnchorPoint = Vector2.new(0.5,0.5); lbl.Position = UDim2.fromScale(0.5,0.4)
 	lbl.BackgroundColor3 = Theme.Colors.Background; lbl.BackgroundTransparency = 0.2
-	lbl.Font = Theme.Font.Display; lbl.TextSize = 28; lbl.BorderSizePixel = 0
+	lbl.Font = Theme.Font.Display; lbl.TextSize = Theme.Text.Title() + Theme.Scaled(12); lbl.BorderSizePixel = 0
 	lbl.TextColor3 = data.winner == "Player" and Theme.Colors.TextGold or Theme.Colors.Danger
 	lbl.Text = data.winner == "Player" and "VICTORY" or "DEFEAT"; lbl.Parent = gui
 	Instance.new("UICorner", lbl).CornerRadius = Theme.CornerRadius.lg
@@ -1286,23 +1366,25 @@ local function createLoadoutHub(phase)
 	frame.Size = UDim2.new(0.92, 0, 0.88, 0) -- responsive: 92% width, 88% height (fits mobile)
 	frame.Position = UDim2.new(0.5, 0, 0.5, 0)
 	frame.AnchorPoint = Vector2.new(0.5, 0.5)
-	frame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
-	frame.BackgroundTransparency = 0.05
+	frame.BackgroundColor3 = Theme.Colors.Background
+	frame.BackgroundTransparency = 0.02
 	frame.BorderSizePixel = 0
 	frame.Active = true
 	frame.Parent = gui
 	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+	local hubConstraint = Instance.new("UISizeConstraint", frame)
+	hubConstraint.MaxSize = Vector2.new(560, 480)
 	local stroke = Instance.new("UIStroke", frame)
-	stroke.Color = Color3.fromRGB(100, 160, 220); stroke.Thickness = 2
+	stroke.Color = Theme.Colors.Border; stroke.Thickness = 1
 
 	-- Title
 	local title = Instance.new("TextLabel")
 	title.Size = UDim2.new(1, 0, 0, 28)
 	title.Position = UDim2.new(0, 0, 0, 4)
 	title.BackgroundTransparency = 1
-	title.Font = Enum.Font.SourceSansBold; title.TextSize = 16
-	title.TextColor3 = Color3.fromRGB(100, 160, 220)
-	title.Text = phase == "PreBattle" and "LOADOUT HUB (Pre-Battle)" or "LOADOUT HUB (Post-Battle)"
+	title.Font = Theme.Font.PrimaryBold; title.TextSize = Theme.Text.Title()
+	title.TextColor3 = Theme.Colors.TextGold
+	title.Text = phase == "PreBattle" and "⚔ LOADOUT HUB" or "⚔ LOADOUT HUB (Post-Battle)"
 	title.Parent = frame
 
 	-- Output area (scrollable text)
@@ -1310,7 +1392,7 @@ local function createLoadoutHub(phase)
 	outputFrame.Name = "Output"
 	outputFrame.Size = UDim2.new(1, -16, 1, -140)
 	outputFrame.Position = UDim2.new(0, 8, 0, 34)
-	outputFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+	outputFrame.BackgroundColor3 = Theme.Colors.Surface
 	outputFrame.BackgroundTransparency = 0.1
 	outputFrame.BorderSizePixel = 0
 	outputFrame.ScrollBarThickness = 6
@@ -1426,10 +1508,10 @@ local function createLoadoutHub(phase)
 	local function hubBtn(text, order, callback, color)
 		local btn = Instance.new("TextButton")
 		btn.Size = UDim2.new(0, 100, 0, 28)
-		btn.BackgroundColor3 = color or Color3.fromRGB(50, 70, 90)
+		btn.BackgroundColor3 = color or Theme.Colors.Surface
 		btn.BackgroundTransparency = 0.15
-		btn.Font = Enum.Font.SourceSansBold; btn.TextSize = 11
-		btn.TextColor3 = Color3.fromRGB(220, 220, 220)
+		btn.Font = Theme.Font.PrimaryBold; btn.TextSize = Theme.Text.Body()
+		btn.TextColor3 = Theme.Colors.TextPrimary
 		btn.Text = text; btn.LayoutOrder = order
 		btn.BorderSizePixel = 0; btn.Parent = btnRow
 		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
@@ -1529,7 +1611,7 @@ local function createLoadoutHub(phase)
 	confirmEquip.Size = UDim2.fromOffset(85, 22)
 	confirmEquip.Position = UDim2.new(0, 298, 0, 0)
 	confirmEquip.Text = "CONFIRM EQUIP"
-	confirmEquip.Font = Enum.Font.SourceSansBold; confirmEquip.TextSize = 10
+	confirmEquip.Font = Theme.Font.PrimaryBold; confirmEquip.TextSize = Theme.Text.Small()
 	confirmEquip.TextColor3 = Color3.fromRGB(220, 220, 220)
 	confirmEquip.BackgroundColor3 = Color3.fromRGB(40, 80, 40)
 	confirmEquip.BorderSizePixel = 0
@@ -1552,7 +1634,7 @@ local function createLoadoutHub(phase)
 	confirmUnequip.Size = UDim2.fromOffset(95, 22)
 	confirmUnequip.Position = UDim2.new(0, 387, 0, 0)
 	confirmUnequip.Text = "CONFIRM UNEQUIP"
-	confirmUnequip.Font = Enum.Font.SourceSansBold; confirmUnequip.TextSize = 10
+	confirmUnequip.Font = Theme.Font.PrimaryBold; confirmUnequip.TextSize = Theme.Text.Small()
 	confirmUnequip.TextColor3 = Color3.fromRGB(220, 220, 220)
 	confirmUnequip.BackgroundColor3 = Color3.fromRGB(80, 40, 40)
 	confirmUnequip.BorderSizePixel = 0
@@ -1588,34 +1670,61 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	rewardGui = gui
 
 	local frame = Instance.new("Frame")
-	frame.Size = UDim2.fromOffset(360, 260)
-	frame.Position = UDim2.new(0.5, 0, 0.4, 0)
+	frame.Size = UDim2.new(0.85, 0, 0.80, 0)
+	frame.Position = UDim2.new(0.5, 0, 0.5, 0)
 	frame.AnchorPoint = Vector2.new(0.5, 0.5)
-	frame.BackgroundColor3 = Color3.fromRGB(25, 30, 40)
-	frame.BackgroundTransparency = 0.05
+	frame.BackgroundColor3 = Theme.Colors.Background
+	frame.BackgroundTransparency = 0.02
 	frame.BorderSizePixel = 0
 	frame.Active = true
 	frame.Parent = gui
 	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+	local rewardConstraint = Instance.new("UISizeConstraint", frame)
+	rewardConstraint.MaxSize = Vector2.new(480, 400)
 	local stroke = Instance.new("UIStroke", frame)
-	stroke.Color = Color3.fromRGB(255, 200, 50); stroke.Thickness = 2
+	stroke.Color = Theme.Colors.TextGold; stroke.Thickness = 2
 
 	local title = Instance.new("TextLabel")
 	title.Size = UDim2.new(1, 0, 0, 30)
 	title.BackgroundTransparency = 1
-	title.Font = Enum.Font.SourceSansBold; title.TextSize = 18
-	title.TextColor3 = Color3.fromRGB(255, 200, 50)
-	title.Text = "VICTORY! Rewards Earned"
+	title.Font = Theme.Font.PrimaryBold; title.TextSize = Theme.Text.Title() + 2
+	title.TextColor3 = Theme.Colors.TextGold
+	title.Text = "VICTORY!"
 	title.Parent = frame
+
+	-- Recovery summary
+	if data.recovery and #data.recovery > 0 then
+		local recoveryText = ""
+		for _, r in ipairs(data.recovery) do
+			local hpGain = (r.hpGain and r.hpGain > 0) and ("HP+" .. r.hpGain) or ""
+			local mpGain = (r.mpGain and r.mpGain > 0) and ("MP+" .. r.mpGain) or ""
+			local gains = hpGain .. (hpGain ~= "" and mpGain ~= "" and " " or "") .. mpGain
+			if gains ~= "" then
+				recoveryText = recoveryText .. (r.name or "?") .. ": " .. gains .. "  "
+			end
+		end
+		if recoveryText ~= "" then
+			local recLabel = Instance.new("TextLabel")
+			recLabel.Size = UDim2.new(1, -16, 0, 16)
+			recLabel.Position = UDim2.new(0, 8, 0, 28)
+			recLabel.BackgroundTransparency = 1
+			recLabel.Font = Theme.Font.Mono; recLabel.TextSize = Theme.Text.Tiny()
+			recLabel.TextColor3 = Theme.Colors.Success
+			recLabel.TextXAlignment = Enum.TextXAlignment.Left
+			recLabel.Text = recoveryText
+			recLabel.Parent = frame
+		end
+	end
 
 	local rewards = data.rewards or {}
 	local yPos = 36
 	for _, item in ipairs(rewards) do
-		local rarityColor = ({
-			Broken = Color3.fromRGB(120,120,120), Common = Color3.fromRGB(200,200,200),
-			Uncommon = Color3.fromRGB(100,200,100), Rare = Color3.fromRGB(100,150,255),
-			Epic = Color3.fromRGB(180,100,255), Legendary = Color3.fromRGB(255,180,50),
-		})[item.rarity] or Color3.fromRGB(200,200,200)
+		local rarityColor = Theme.GetRarityColor and Theme.GetRarityColor(item.rarity)
+			or ({
+				Broken = Color3.fromRGB(120,120,120), Common = Color3.fromRGB(200,200,200),
+				Uncommon = Color3.fromRGB(100,200,100), Rare = Color3.fromRGB(100,150,255),
+				Epic = Color3.fromRGB(180,100,255), Legendary = Color3.fromRGB(255,180,50),
+			})[item.rarity] or Color3.fromRGB(200,200,200)
 
 		local card = Instance.new("Frame")
 		card.Size = UDim2.new(1, -20, 0, 50)
@@ -1631,7 +1740,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		nameLabel.Size = UDim2.new(1, -8, 0, 18)
 		nameLabel.Position = UDim2.new(0, 4, 0, 4)
 		nameLabel.BackgroundTransparency = 1
-		nameLabel.Font = Enum.Font.SourceSansBold; nameLabel.TextSize = 13
+		nameLabel.Font = Theme.Font.PrimaryBold; nameLabel.TextSize = Theme.Text.Heading()
 		nameLabel.TextColor3 = rarityColor
 		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
 		nameLabel.Text = string.format("%s [%s] L%d", item.name, item.rarity, item.itemLevel)
@@ -1641,7 +1750,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		statsLabel.Size = UDim2.new(1, -8, 0, 14)
 		statsLabel.Position = UDim2.new(0, 4, 0, 24)
 		statsLabel.BackgroundTransparency = 1
-		statsLabel.Font = Enum.Font.Code; statsLabel.TextSize = 10
+		statsLabel.Font = Theme.Font.Mono; statsLabel.TextSize = Theme.Text.Small()
 		statsLabel.TextColor3 = Color3.fromRGB(170, 170, 170)
 		statsLabel.TextXAlignment = Enum.TextXAlignment.Left
 		statsLabel.Text = string.format("Dmg:%d  WT:%d  Def:%d  +%dattr +%dpass  %s",
@@ -1656,7 +1765,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	continueBtn.Position = UDim2.new(0.5, 0, 1, -42)
 	continueBtn.AnchorPoint = Vector2.new(0.5, 0)
 	continueBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 50)
-	continueBtn.Font = Enum.Font.SourceSansBold; continueBtn.TextSize = 14
+	continueBtn.Font = Theme.Font.PrimaryBold; continueBtn.TextSize = Theme.Text.Title()
 	continueBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
 	continueBtn.Text = "CONTINUE"
 	continueBtn.BorderSizePixel = 0

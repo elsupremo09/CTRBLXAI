@@ -56,7 +56,7 @@ local PACE = {
 --------------------------------------------------
 
 local function serializeUnit(unit)
-	return {
+	local result = {
 		id          = unit.id,
 		name        = unit.name,
 		side        = unit.side,
@@ -81,7 +81,27 @@ local function serializeUnit(unit)
 		statuses    = StatusService.GetStatusSummary(unit),
 		derivedStats = unit.derivedStats or nil,
 		primaryStats = unit.primaryStats or nil,
+		level        = unit.level or 1,
+		-- Compact weapon summary for battle UI display
+		weaponName     = nil,
+		weaponArchetype = nil,
+		weaponDamage   = unit.weaponDamage or 0,
+		weaponWt       = unit.weaponWt or 0,
+		weaponRtDelay  = unit.weaponRtDelay or 0,
+		weaponPattern  = unit.weaponPattern or "Single",
+		weaponRange    = unit.weaponMaxRange or 1,
 	}
+
+	-- Get weapon name from equipment slots if available
+	if unit.equipmentSlots then
+		local mainHand = unit.equipmentSlots.MainHand
+		if mainHand then
+			result.weaponName = mainHand.name or nil
+			result.weaponArchetype = mainHand.archetype or nil
+		end
+	end
+
+	return result
 end
 
 local function serializeSkill(skillDef)
@@ -164,6 +184,7 @@ function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName)
 		targetHp    = target.currentHp,
 		targetMaxHp = target.maxHp,
 		statusApplied = outcome.statusApplied or nil,
+		rtDelay     = outcome.rtDelay or nil,
 	})
 	task.wait(PACE.Action)
 

@@ -22,6 +22,10 @@ local GameConstants = require(
 		:WaitForChild("Shared", 10)
 		:WaitForChild("GameConstants", 10)
 )
+local Theme = require(
+	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+		:WaitForChild("UI", 10):WaitForChild("Theme", 10)
+)
 
 --------------------------------------------------
 -- STATE
@@ -45,8 +49,8 @@ local function createLabel(parent, props)
 	lbl.Size = props.Size or UDim2.new(1, 0, 0, 16)
 	lbl.BackgroundTransparency = props.BgTrans or 1
 	lbl.BackgroundColor3 = props.BgColor or Color3.fromRGB(20, 20, 30)
-	lbl.Font = props.Font or Enum.Font.SourceSans
-	lbl.TextSize = props.TextSize or 11
+	lbl.Font = props.Font or Theme.Font.Primary
+	lbl.TextSize = props.TextSize or Theme.Text.Body()
 	lbl.TextColor3 = props.Color or Color3.fromRGB(200, 200, 200)
 	lbl.TextXAlignment = props.Align or Enum.TextXAlignment.Left
 	lbl.TextYAlignment = Enum.TextYAlignment.Top
@@ -70,8 +74,8 @@ local function createSection(parent, title, order)
 		Size = UDim2.new(1, 0, 0, 18),
 		BgTrans = 0.3,
 		BgColor = Color3.fromRGB(30, 30, 45),
-		Font = Enum.Font.SourceSansBold,
-		TextSize = 11,
+		Font = Theme.Font.PrimaryBold,
+		TextSize = Theme.Text.Body(),
 		Color = Color3.fromRGB(180, 180, 220),
 		Order = order,
 	})
@@ -82,11 +86,80 @@ end
 --------------------------------------------------
 
 local function renderStatsTab(content, data)
-	local order = 1
-
-	-- Primary stats
-	createSection(content, "PRIMARY STATS", order); order = order + 1
 	local ps = data.primaryStats or {}
+	local derived = data.derivedStats or {}
+
+	-- Helper: render a section header + stat rows into a column frame
+	local function addSection(col, title, order)
+		local hdr = Instance.new("TextLabel")
+		hdr.Size = UDim2.new(1, 0, 0, 16)
+		hdr.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+		hdr.BackgroundTransparency = 0.3
+		hdr.Font = Theme.Font.PrimaryBold
+		hdr.TextSize = Theme.Text.Small()
+		hdr.TextColor3 = Color3.fromRGB(180, 180, 220)
+		hdr.TextXAlignment = Enum.TextXAlignment.Left
+		hdr.RichText = true; hdr.BorderSizePixel = 0
+		hdr.Text = " " .. title; hdr.LayoutOrder = order
+		hdr.Parent = col
+		Instance.new("UICorner", hdr).CornerRadius = UDim.new(0, 3)
+		return order + 1
+	end
+
+	local function addRow(col, text, order)
+		local lbl = Instance.new("TextLabel")
+		lbl.Size = UDim2.new(1, 0, 0, 14)
+		lbl.BackgroundTransparency = 1; lbl.BorderSizePixel = 0
+		lbl.Font = Theme.Font.Mono
+		lbl.TextSize = Theme.Text.Small()
+		lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.RichText = true; lbl.TextWrapped = true
+		lbl.Text = " " .. text; lbl.LayoutOrder = order
+		lbl.Parent = col
+		return order + 1
+	end
+
+	local function addDerived(col, keys, order)
+		for _, key in ipairs(keys) do
+			local val = derived[key]
+			if val then
+				local meta = GameConstants.STAT_META and GameConstants.STAT_META[key]
+				local label = meta and meta.label or key
+				local suffix = meta and meta.unit or ""
+				order = addRow(col, string.format("%s: <b>%s%s</b>", label, tostring(val), suffix), order)
+			end
+		end
+		return order
+	end
+
+	-- 3-column container
+	local colRow = Instance.new("Frame")
+	colRow.Size = UDim2.new(1, 0, 0, 0)
+	colRow.AutomaticSize = Enum.AutomaticSize.Y
+	colRow.BackgroundTransparency = 1; colRow.BorderSizePixel = 0
+	colRow.LayoutOrder = 1; colRow.Parent = content
+
+	local function makeCol(xScale, xOffset)
+		local col = Instance.new("Frame")
+		col.Size = UDim2.new(0.333, -4, 0, 0)
+		col.AutomaticSize = Enum.AutomaticSize.Y
+		col.Position = UDim2.new(xScale, xOffset, 0, 0)
+		col.BackgroundTransparency = 1; col.BorderSizePixel = 0
+		col.Parent = colRow
+		local lay = Instance.new("UIListLayout", col)
+		lay.Padding = UDim.new(0, 2)
+		lay.SortOrder = Enum.SortOrder.LayoutOrder
+		return col
+	end
+
+	local col1 = makeCol(0, 0)
+	local col2 = makeCol(0.333, 2)
+	local col3 = makeCol(0.666, 4)
+
+	-- COLUMN 1: Primary Stats + Combat
+	local o1 = 1
+	o1 = addSection(col1, "PRIMARY STATS", o1)
 	for _, stat in ipairs({"STR", "AGI", "INT", "VIT", "DEX", "LUK"}) do
 		local info = ps[stat]
 		local total = info and info.total or 0
@@ -94,55 +167,42 @@ local function renderStatsTab(content, data)
 		local bonus = info and info.bonus or 0
 		local bonusStr = bonus > 0 and string.format(' <font color="rgb(100,255,100)">+%d</font>', bonus)
 			or bonus < 0 and string.format(' <font color="rgb(255,100,100)">%d</font>', bonus) or ""
-		createLabel(content, {
-			Text = string.format("  %s: <b>%d</b>%s  (base %d)", stat, total, bonusStr, base),
-			Order = order, Padding = 4,
-		})
-		order = order + 1
+		o1 = addRow(col1, string.format("%s:<b>%d</b>%s (%d)", stat, total, bonusStr, base), o1)
 	end
+	o1 = addSection(col1, "COMBAT", o1)
+	o1 = addDerived(col1, {"attackPower", "effectiveWt", "precision", "evasiveness", "basicAttackRt"}, o1)
 
-	-- Derived stats by category
-	local derived = data.derivedStats or {}
-	local categories = {
-		{ "COMBAT", {"attackPower", "effectiveWt", "precision", "evasiveness", "basicAttackRt"} },
-		{ "DEFENSE", {"defensePower", "debuffResist", "rtDelayResist", "stability"} },
-		{ "RESOURCES", {"maxHp", "maxMp", "mpRegen"} },
-		{ "MOVEMENT", {"movementRange", "jump", "force"} },
-		{ "SKILLS", {"skillPotency", "bonusSkillRange", "channelReduction", "healEfficiency"} },
-		{ "OTHER", {"discoveryRadius", "unitFortune", "startingRt"} },
-	}
+	-- COLUMN 2: Defense + Resources
+	local o2 = 1
+	o2 = addSection(col2, "DEFENSE", o2)
+	o2 = addDerived(col2, {"defensePower", "debuffResist", "rtDelayResist", "stability"}, o2)
+	o2 = addSection(col2, "RESOURCES", o2)
+	o2 = addDerived(col2, {"maxHp", "maxMp", "mpRegen"}, o2)
+	o2 = addSection(col2, "MOVEMENT", o2)
+	o2 = addDerived(col2, {"movementRange", "jump", "force"}, o2)
 
-	for _, cat in ipairs(categories) do
-		createSection(content, cat[1], order); order = order + 1
-		for _, key in ipairs(cat[2]) do
-			local val = derived[key]
-			if val then
-				local meta = GameConstants.STAT_META and GameConstants.STAT_META[key]
-				local label = meta and meta.label or key
-				local suffix = meta and meta.unit or ""
-				createLabel(content, {
-					Text = string.format("  %s: <b>%s%s</b>", label, tostring(val), suffix),
-					Order = order, Padding = 4,
-				})
-				order = order + 1
-			end
-		end
-	end
+	-- COLUMN 3: Movement + Skills + Other
+	local o3 = 1
+	o3 = addSection(col3, "SKILLS", o3)
+	o3 = addDerived(col3, {"skillPotency", "bonusSkillRange", "channelReduction", "healEfficiency"}, o3)
+	o3 = addSection(col3, "OTHER", o3)
+	o3 = addDerived(col3, {"discoveryRadius", "unitFortune", "startingRt"}, o3)
 
-	-- Active statuses (buffs/debuffs)
+	-- ACTIVE EFFECTS (full width, below columns)
 	if data.statuses and #data.statuses > 0 then
-		createSection(content, "ACTIVE EFFECTS", order); order = order + 1
+		createSection(content, "ACTIVE EFFECTS", 2)
+		local effectOrder = 3
 		for _, s in ipairs(data.statuses) do
 			local color = s.kind == "Buff" and "100,255,100" or "255,180,80"
 			local turnsStr = s.remainingTurns and (s.remainingTurns .. " turns") or "?"
+			local statusName = s.id or s.name or "Unknown"
 			createLabel(content, {
-				Text = string.format('  <font color="rgb(%s)">%s</font>  (%s)', color, s.id, turnsStr),
-				Order = order, Padding = 4,
+				Text = string.format('  <font color="rgb(%s)">%s</font>  (%s)', color, statusName, turnsStr),
+				Order = effectOrder, Padding = 4,
 			})
-			order = order + 1
+			effectOrder = effectOrder + 1
 		end
 	end
-
 end
 
 --------------------------------------------------
@@ -203,7 +263,7 @@ local function renderEquipmentTab(content, data)
 	if data.doctrine then
 		createLabel(content, {
 			Text = "  " .. (data.doctrine.name or data.doctrineId or "Unknown"),
-			Order = order, Font = Enum.Font.SourceSansBold,
+			Order = order, Font = Theme.Font.PrimaryBold,
 			Color = Color3.fromRGB(220, 200, 100),
 		})
 		order = order + 1
@@ -316,6 +376,115 @@ end
 -- MAIN PANEL BUILDER
 --------------------------------------------------
 
+
+local function renderTraitsTab(content, data)
+	local order = 1
+
+	-- Section helper
+	local function sectionHeader(text, color)
+		createLabel(content, {
+			Text = text,
+			Size = UDim2.new(1, 0, 0, 18),
+			TextSize = Theme.Text.Body(),
+			Font = Theme.Font.PrimaryBold,
+			TextColor3 = color or Color3.fromRGB(255, 220, 80),
+			Order = order,
+			Padding = 6,
+		})
+		order = order + 1
+	end
+
+	local function traitEntry(name, desc, color)
+		createLabel(content, {
+			Text = string.format('<font color="rgb(%d,%d,%d)">%s</font>', color.R*255, color.G*255, color.B*255, name),
+			Size = UDim2.new(1, 0, 0, 14),
+			TextSize = Theme.Text.Body(),
+			Font = Theme.Font.PrimaryBold,
+			RichText = true,
+			Order = order,
+			Padding = 2,
+		})
+		order = order + 1
+		if desc and desc ~= "" then
+			createLabel(content, {
+				Text = "  " .. desc,
+				Size = UDim2.new(1, 0, 0, 28),
+				TextSize = Theme.Text.Body(),
+				TextWrapped = true,
+				TextColor3 = Color3.fromRGB(180, 180, 190),
+				Order = order,
+				Padding = 0,
+			})
+			order = order + 1
+		end
+	end
+
+	-- ACTIVE BUFFS
+	local buffs = {}
+	local debuffs = {}
+	for _, s in ipairs(data.statuses or {}) do
+		if s.kind == "Buff" then
+			table.insert(buffs, s)
+		else
+			table.insert(debuffs, s)
+		end
+	end
+
+	sectionHeader("Active Buffs", Color3.fromRGB(100, 255, 100))
+	if #buffs > 0 then
+		for _, b in ipairs(buffs) do
+			local name = (b.id or "Unknown") .. "  (" .. (b.remainingTurns or "?") .. " turns)"
+			traitEntry(name, "", Color3.fromRGB(100, 255, 100))
+		end
+	else
+		createLabel(content, {
+			Text = "  None", TextSize = Theme.Text.Small(),
+			TextColor3 = Color3.fromRGB(100, 100, 110), Order = order, Padding = 0,
+		})
+		order = order + 1
+	end
+
+	-- ACTIVE DEBUFFS
+	sectionHeader("Active Debuffs", Color3.fromRGB(255, 180, 80))
+	if #debuffs > 0 then
+		for _, d in ipairs(debuffs) do
+			local name = (d.id or "Unknown") .. "  (" .. (d.remainingTurns or "?") .. " turns)"
+			traitEntry(name, "", Color3.fromRGB(255, 180, 80))
+		end
+	else
+		createLabel(content, {
+			Text = "  None", TextSize = Theme.Text.Small(),
+			TextColor3 = Color3.fromRGB(100, 100, 110), Order = order, Padding = 0,
+		})
+		order = order + 1
+	end
+
+	-- RACE PASSIVE
+	sectionHeader("Race Passive", Color3.fromRGB(180, 160, 255))
+	if data.racePassiveName then
+		traitEntry(data.racePassiveName, data.racePassiveEffect or "", Color3.fromRGB(180, 160, 255))
+	else
+		createLabel(content, {
+			Text = "  No race assigned", TextSize = Theme.Text.Small(),
+			TextColor3 = Color3.fromRGB(100, 100, 110), Order = order, Padding = 0,
+		})
+		order = order + 1
+	end
+
+	-- DOCTRINE
+	sectionHeader("Doctrine", Color3.fromRGB(100, 200, 255))
+	if data.doctrine then
+		traitEntry(data.doctrine.name or data.doctrineId or "Unknown",
+			data.doctrine.effect or data.doctrine.description or "", Color3.fromRGB(100, 200, 255))
+	else
+		createLabel(content, {
+			Text = "  No doctrine assigned", TextSize = Theme.Text.Small(),
+			TextColor3 = Color3.fromRGB(100, 100, 110), Order = order, Padding = 0,
+		})
+		order = order + 1
+	end
+end
+
 local function buildPanel(data)
 	destroyPanel()
 	if not data then return end
@@ -330,9 +499,15 @@ local function buildPanel(data)
 	-- Main frame
 	local frame = Instance.new("Frame")
 	frame.Name = "InspectorFrame"
-	frame.Size = UDim2.new(0, 320, 0, 480)
+	-- Responsive sizing: use viewport-aware dimensions
+	local cam = workspace.CurrentCamera
+	local vpW = cam and cam.ViewportSize.X or 1920
+	local isMobile = vpW < 1024
+	local panelW = isMobile and math.min(math.floor(vpW * 0.62), 480) or 420
+	local panelH = isMobile and math.min(math.floor((cam and cam.ViewportSize.Y or 480) * 0.85), 400) or 480
+	frame.Size = UDim2.new(0, panelW, 0, panelH)
 	frame.AnchorPoint = Vector2.new(0, 0)
-	frame.Position = UDim2.new(0, 10, 0, 80)
+	frame.Position = UDim2.new(0, 6, 0, 6)
 	frame.BackgroundColor3 = Color3.fromRGB(10, 10, 16)
 	frame.BackgroundTransparency = 0.03
 	frame.BorderSizePixel = 0
@@ -345,8 +520,8 @@ local function buildPanel(data)
 	header.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
 	header.BackgroundTransparency = 0.2
 	header.BorderSizePixel = 0
-	header.Font = Enum.Font.SourceSansBold
-	header.TextSize = 13
+	header.Font = Theme.Font.PrimaryBold
+	header.TextSize = Theme.Text.Heading()
 	header.TextColor3 = Color3.fromRGB(255, 240, 200)
 	header.TextXAlignment = Enum.TextXAlignment.Left
 	header.RichText = true
@@ -363,8 +538,8 @@ local function buildPanel(data)
 	subHeader.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
 	subHeader.BackgroundTransparency = 0.3
 	subHeader.BorderSizePixel = 0
-	subHeader.Font = Enum.Font.Code
-	subHeader.TextSize = 10
+	subHeader.Font = Theme.Font.Mono
+	subHeader.TextSize = Theme.Text.Body()
 	subHeader.TextColor3 = Color3.fromRGB(180, 180, 190)
 	subHeader.TextXAlignment = Enum.TextXAlignment.Left
 	subHeader.RichText = true
@@ -387,8 +562,8 @@ local function buildPanel(data)
 	closeBtn.Size = UDim2.new(0, 24, 0, 24)
 	closeBtn.Position = UDim2.new(1, -28, 0, 7)
 	closeBtn.BackgroundColor3 = Color3.fromRGB(80, 30, 30)
-	closeBtn.Font = Enum.Font.SourceSansBold
-	closeBtn.TextSize = 14
+	closeBtn.Font = Theme.Font.PrimaryBold
+	closeBtn.TextSize = Theme.Text.Title()
 	closeBtn.TextColor3 = Color3.fromRGB(255, 200, 200)
 	closeBtn.Text = "✗"
 	closeBtn.BorderSizePixel = 0
@@ -441,6 +616,8 @@ local function buildPanel(data)
 			renderEquipmentTab(contentFrame, data)
 		elseif tabName == "skills" then
 			renderSkillsTab(contentFrame, data)
+		elseif tabName == "traits" then
+			renderTraitsTab(contentFrame, data)
 		end
 
 		-- Update canvas size
@@ -450,13 +627,13 @@ local function buildPanel(data)
 	end
 
 	-- Create tab buttons
-	local tabs = { {"stats", "Stats"}, {"equipment", "Equipment"}, {"skills", "Skills"} }
+	local tabs = { {"stats", "Stats"}, {"equipment", "Equip"}, {"skills", "Skills"}, {"traits", "Traits"} }
 	for _, tab in ipairs(tabs) do
 		local tabBtn = Instance.new("TextButton")
-		tabBtn.Size = UDim2.new(0, 90, 0, 22)
+		tabBtn.Size = UDim2.new(0, 70, 0, 22)
 		tabBtn.BackgroundColor3 = tab[1] == "stats" and Color3.fromRGB(50, 60, 80) or Color3.fromRGB(30, 30, 40)
-		tabBtn.Font = Enum.Font.SourceSansBold
-		tabBtn.TextSize = 12
+		tabBtn.Font = Theme.Font.PrimaryBold
+		tabBtn.TextSize = Theme.Text.Body()
 		tabBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
 		tabBtn.Text = tab[2]
 		tabBtn.BorderSizePixel = 0

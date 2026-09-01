@@ -10,6 +10,7 @@
 --   - AOE outcomes return multiple results
 
 local StatusService = require(script.Parent.StatusService)
+local RacePassiveService = require(script.Parent.RacePassiveService)
 
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -82,6 +83,12 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 
 	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod * fortuneMod))
 
+	-- Race passive modifiers (Slice 4F)
+	-- Basic Attack: element=nil, isAOE=false, isPhysical=true
+	local raceDealtMod = RacePassiveService.GetDamageDealtModifier(attacker, nil, false)
+	local raceRecvMod  = RacePassiveService.GetDamageReceivedModifier(defender, nil, false, true)
+	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod))
+
 	-- Step 8: Guard and other final mitigation
 	-- Check Guard via status instances (Guard is now a proper status)
 	local hasGuard = false
@@ -105,7 +112,7 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 		hitQuality     = hitQuality,
 		positionalMod  = positionalMod,
 		finalDamage    = finalDamage,
-		appliesStatus  = nil,
+		appliesStatus  = RacePassiveService.GetBasicAttackStatus(attacker),
 		sourceUnitId   = attacker.id,
 	}
 end
@@ -144,6 +151,14 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	local fortuneMod = GameConstants.CalcCombatFortune(aStats.LUK, dStats.LUK)
 
 	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod * fortuneMod))
+
+	-- Race passive modifiers (Slice 4F)
+	local skillElement = skillDef.element or nil
+	local skillIsAOE = skillDef.aoePattern ~= nil and skillDef.aoePattern ~= "Single"
+	local skillIsPhysical = (skillElement == nil or skillElement == "Physical" or skillElement == "")
+	local raceDealtMod = RacePassiveService.GetDamageDealtModifier(attacker, skillElement, skillIsAOE)
+	local raceRecvMod  = RacePassiveService.GetDamageReceivedModifier(defender, skillElement, skillIsAOE, skillIsPhysical)
+	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod))
 
 	-- Step 8: Guard and other final mitigation
 	local hasGuardSkill = false

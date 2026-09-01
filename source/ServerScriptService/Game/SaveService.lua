@@ -190,6 +190,9 @@ local function encodeUnit(unitState)
 		mmp = unitState.maxMp,
 		ko  = unitState.isKO,
 		eq  = unitState.equipSlots or nil,
+		rid = unitState.raceId or nil,
+		pks = unitState.perkIds or {},
+		dbs = unitState.drawbackIds or {},
 	}
 end
 
@@ -202,6 +205,9 @@ local function decodeUnit(encoded)
 		isKO      = encoded.ko or false,
 		mpRegenAccumulator = 0,
 		equipSlots = encoded.eq or nil,
+		raceId     = encoded.rid or nil,
+		perkIds    = encoded.pks or {},
+		drawbackIds = encoded.dbs or {},
 	}
 end
 

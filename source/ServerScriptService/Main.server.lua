@@ -34,6 +34,11 @@ local WeaponData = require(
 		:WaitForChild("Content")
 		:WaitForChild("WeaponData")
 )
+local RaceData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("RaceData")
+)
 local DoctrineData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
@@ -125,6 +130,7 @@ InventoryService.InitPlayer(PLAYER_ID)
 local loadedSave, loadErr = SaveService.Load(PLAYER_ID)
 local hasSave = false
 local savedEquipMap = {} -- unitId -> { MainHand = instanceId, OffHand = instanceId }
+local savedRaceMap = {}  -- unitId -> { raceId, perkIds, drawbackIds }
 if loadedSave then
 	hasSave = true
 	print("[Main] Save loaded — restoring state")
@@ -136,6 +142,14 @@ if loadedSave then
 	for unitId, unitData in pairs(loadedSave.roster or {}) do
 		if unitData.equipSlots then
 			savedEquipMap[unitId] = unitData.equipSlots
+		end
+		-- Extract saved race/trait data (Slice 4F)
+		if unitData.raceId then
+			savedRaceMap[unitId] = {
+				raceId = unitData.raceId,
+				perkIds = unitData.perkIds or {},
+				drawbackIds = unitData.drawbackIds or {},
+			}
 		end
 	end
 elseif loadErr then
@@ -196,11 +210,11 @@ local hero = UnitSchema.Create({
 	id           = "unit_hero",
 	name         = "Hero",
 	level        = 20,
+	raceId       = "RACE-HUMAN",
 	side         = "Player",
 	controller   = "Player",
 	tileX        = 4,
 	tileY        = 4,
-	stats        = { STR = 54, AGI = 42, INT = 24, VIT = 48, DEX = 36, LUK = 30 },
 	skillIds     = { "skill_power_strike", "skill_sweeping_cut" },
 })
 equipGeneratedWeapon(hero, "WPN-SWORD", 5, "Uncommon", 1001)
@@ -226,11 +240,11 @@ local mage = UnitSchema.Create({
 	id           = "unit_mage",
 	name         = "Mage",
 	level        = 20,
+	raceId       = "RACE-ELF",
 	side         = "Player",
 	controller   = "Player",
 	tileX        = 3,
 	tileY        = 1,
-	stats        = { STR = 18, AGI = 30, INT = 60, VIT = 30, DEX = 42, LUK = 24 },
 	skillIds     = { "skill_fire_bolt", "skill_healing_light" },
 })
 equipGeneratedWeapon(mage, "WPN-WAND", 5, "Uncommon", 1002)
@@ -239,11 +253,11 @@ local ranger = UnitSchema.Create({
 	id           = "unit_ranger",
 	name         = "Ranger",
 	level        = 20,
+	raceId       = "RACE-SHADOW",
 	side         = "Player",
 	controller   = "Player",
 	tileX        = 5,
 	tileY        = 3,
-	stats        = { STR = 36, AGI = 48, INT = 24, VIT = 36, DEX = 54, LUK = 30 },
 	skillIds     = { "skill_crippling_shot", "skill_venom_strike" },
 })
 equipGeneratedWeapon(ranger, "WPN-CROSSBOW", 5, "Uncommon", 1003)
@@ -361,6 +375,12 @@ local function doSave()
 			end
 			rosterState[unitId].equipSlots = slots
 		end
+		-- Enrich with race and trait data (Slice 4F)
+		if rosterState[unitId] and unit.raceId then
+			rosterState[unitId].raceId = unit.raceId
+			rosterState[unitId].perkIds = unit.perkIds or {}
+			rosterState[unitId].drawbackIds = unit.drawbackIds or {}
+		end
 	end
 	-- Diagnostic: log equipment slot assignments being saved
 	for unitId, unitState in pairs(rosterState) do
@@ -407,12 +427,18 @@ BattleEvents.GetRosterData.OnServerInvoke = function(player)
 			equippedWeaponName = mainItem and (WeaponData.GetByArchetypeId(mainItem.baseArchetypeId) or {}).name or "none",
 			equippedOffHandName = offHandItem and (WeaponData.GetByArchetypeId(offHandItem.baseArchetypeId) or {}).name or "none",
 			doctrineId = unit.doctrineId or "none",
+			-- Race identity (Slice 4F)
+			raceId = unit.raceId or "none",
+			raceName = unit.raceId and RaceData.GetRace(unit.raceId) and RaceData.GetRace(unit.raceId).name or "none",
+			racePassive = unit.raceId and RaceData.GetRace(unit.raceId) and RaceData.GetRace(unit.raceId).passiveName or "none",
+			perkIds = unit.perkIds or {},
+			drawbackIds = unit.drawbackIds or {},
 		}
 	end
 	-- Diagnostic: log roster summary
 	local rosterParts = {}
 	for unitId, rd in pairs(roster) do
-		table.insert(rosterParts, string.format("%s(Wpn:%s,Off:%s)", rd.name, rd.equippedWeaponName, rd.equippedOffHandName))
+		table.insert(rosterParts, string.format("%s(%s,Wpn:%s,Off:%s)", rd.name, rd.raceName, rd.equippedWeaponName, rd.equippedOffHandName))
 	end
 	local unitCount = #rosterParts
 	print(string.format("[Roster] Returned %d units: %s", unitCount, table.concat(rosterParts, ", ")))
@@ -918,6 +944,7 @@ local function executePlayerCommand(unit, command)
 		end
 
 		local hpBefore = target.currentHp
+		local rtBefore = target.remainingRt
 		local statusesBefore = #target.statusInstances
 		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Attack", target)
 		if ok then
@@ -925,12 +952,14 @@ local function executePlayerCommand(unit, command)
 			if #target.statusInstances > statusesBefore then
 				newStatus = target.statusInstances[#target.statusInstances].id
 			end
+			local rtAdded = target.remainingRt - rtBefore
 			return {
 				actionType    = "Attack",
 				unit          = unit,
 				target        = target,
 				damage        = hpBefore - target.currentHp,
 				statusApplied = newStatus,
+				rtDelay       = rtAdded > 0 and rtAdded or nil,
 			}
 		else
 			warn("[Main] Player attack rejected: " .. (reason or "unknown"))
@@ -958,12 +987,14 @@ local function executePlayerCommand(unit, command)
 			return nil
 		end
 
-		-- Snapshot ALL units' HP before commit (for AOE detection)
+		-- Snapshot ALL units' HP/RT before commit (for AOE detection)
 		local hpSnapshot = {}
+		local rtSnapshot = {}
 		local statusSnapshot = {}
 		local burnSnapshot = {}
 		for _, u in ipairs(state.units) do
 			hpSnapshot[u.id] = u.currentHp
+			rtSnapshot[u.id] = u.remainingRt
 			statusSnapshot[u.id] = #u.statusInstances
 			-- Snapshot burn stored value for accumulation detection
 			local burnInst = StatusService.HasStatus(u, "Burn")
@@ -993,6 +1024,7 @@ local function executePlayerCommand(unit, command)
 					end
 				end
 				if hpDiff ~= 0 or newStatus then
+					local rtAdded = u.remainingRt - (rtSnapshot[u.id] or 0)
 					table.insert(results, {
 						actionType    = "Skill",
 						unit          = unit,
@@ -1002,6 +1034,7 @@ local function executePlayerCommand(unit, command)
 						healing       = math.max(0, -hpDiff),
 						statusApplied = newStatus,
 						isChanneling  = unit.isChanneling,
+						rtDelay       = rtAdded > 0 and rtAdded or nil,
 					})
 				end
 			end
@@ -1061,6 +1094,7 @@ local function broadcastActions(actions, activeUnit)
 						finalDamage   = action.damage or 0,
 						type          = "Damage",
 						statusApplied = action.statusApplied,
+						rtDelay       = action.rtDelay,
 					}
 					BattleVisualBroadcaster.UnitActed(
 						action.unit, target, outcome, action.skillName
@@ -1557,6 +1591,8 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		side         = unit.side,
 		level        = unit.level or 1,
 		raceId       = unit.raceId or nil,  -- placeholder: race system not yet implemented
+		racePassiveName   = nil,  -- populated below if race assigned
+		racePassiveEffect = nil,
 		tileX        = unit.tileX,
 		tileY        = unit.tileY,
 		currentHp    = unit.currentHp,
@@ -1573,6 +1609,12 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		doctrineId   = unit.doctrineId,
 		doctrine     = unit.doctrineId and DoctrineData[unit.doctrineId] or nil,
 	}
+
+	-- Populate race passive if race is assigned
+	if unit.raceId and RaceData and RaceData[unit.raceId] then
+		response.racePassiveName = RaceData[unit.raceId].passive_name
+		response.racePassiveEffect = RaceData[unit.raceId].passive_effect
+	end
 
 	BattleEvents.InspectUnitResponse:FireClient(playerObj, response)
 end)
@@ -1727,9 +1769,23 @@ end
 doSave()
 
 -- Step 4: Reward screen (if rewards earned)
+-- Build recovery summary for client display
+local recoverySummary = {}
+for unitId, result in pairs(recovery) do
+	local unitName = unitId
+	for _, u in ipairs(state.units) do
+		if u.id == unitId then unitName = u.name; break end
+	end
+	if result.hpRecovered > 0 or result.mpRecovered > 0 then
+		table.insert(recoverySummary, {
+			name = unitName, hpGain = result.hpRecovered, mpGain = result.mpRecovered,
+		})
+	end
+end
+
 if #rewardSummaries > 0 then
 	print(string.format("[PostBattle] Sending %d reward(s) to client", #rewardSummaries))
-	BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries })
+	BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary })
 	rewardContinueSignal.Event:Wait()
 	print("[PostBattle] Player acknowledged rewards")
 end
