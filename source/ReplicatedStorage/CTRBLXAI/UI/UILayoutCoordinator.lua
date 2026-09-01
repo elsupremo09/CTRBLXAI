@@ -43,7 +43,7 @@ function UILayoutCoordinator.GetLayout(viewportSize)
 			TilePreview  = { Size = UDim2.new(0.20, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) }, -- dynamically below Inspector
 			TurnOrder    = { Size = UDim2.fromScale(0.60, 0.10), Position = UDim2.new(0, PAD, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
 			Conditions   = { Size = UDim2.fromScale(0.12, 0.10), Position = UDim2.new(0.60, PAD * 2, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
-			BattleLog    = { Size = UDim2.fromScale(0.25, 0.20), Position = UDim2.new(0, PAD, 0, PAD + 32), AnchorPoint = Vector2.new(0, 0) },
+			BattleLog    = { Size = UDim2.fromScale(0.25, 0.75), Position = UDim2.new(0, PAD, 0, PAD + 32), AnchorPoint = Vector2.new(0, 0) },
 		}
 
 	elseif mode == "CompactLandscape" then
@@ -58,7 +58,7 @@ function UILayoutCoordinator.GetLayout(viewportSize)
 			TilePreview  = { Size = UDim2.new(panelScale, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
 			TurnOrder    = { Size = UDim2.fromScale(0.60, 0.10), Position = UDim2.new(0, PAD, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
 			Conditions   = { Size = UDim2.fromScale(0.12, 0.10), Position = UDim2.new(0.60, PAD * 2, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
-			BattleLog    = { Size = UDim2.fromScale(0.25, 0.22), Position = UDim2.new(0, PAD, 0, PAD + 32), AnchorPoint = Vector2.new(0, 0) },
+			BattleLog    = { Size = UDim2.fromScale(0.25, 0.73), Position = UDim2.new(0, PAD, 0, PAD + 32), AnchorPoint = Vector2.new(0, 0) },
 		}
 
 	else -- MobileLandscape
@@ -73,7 +73,7 @@ function UILayoutCoordinator.GetLayout(viewportSize)
 			TilePreview  = { Size = UDim2.new(panelW, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
 			TurnOrder    = { Size = UDim2.fromScale(0.60, 0.12), Position = UDim2.new(0, PAD_M, 1, -PAD_M), AnchorPoint = Vector2.new(0, 1) },
 			Conditions   = { Size = UDim2.fromScale(0.12, 0.12), Position = UDim2.new(0.60, PAD_M * 2, 1, -PAD_M), AnchorPoint = Vector2.new(0, 1) },
-			BattleLog    = { Size = UDim2.fromScale(0.28, 0.25), Position = UDim2.new(0, PAD_M, 0, PAD_M + 32), AnchorPoint = Vector2.new(0, 0) },
+			BattleLog    = { Size = UDim2.fromScale(0.28, 0.70), Position = UDim2.new(0, PAD_M, 0, PAD_M + 32), AnchorPoint = Vector2.new(0, 0) },
 		}
 	end
 end

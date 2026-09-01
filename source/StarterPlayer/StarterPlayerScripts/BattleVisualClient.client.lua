@@ -545,7 +545,8 @@ local function enterActionSelection()
 	end
 
 	bp.state = "ActionSelection"; BattleHUD.Render(bp)
-	updateTimeline(timelineSnapshot, nil, nil)
+	-- Pass base RT so ghost shows where unit will be if they end turn now
+	updateTimeline(timelineSnapshot, prompt.unitId, (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0))
 end
 
 --------------------------------------------------

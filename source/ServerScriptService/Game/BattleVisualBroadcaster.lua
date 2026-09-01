@@ -39,7 +39,7 @@ local BattleVisualBroadcaster = {}
 --------------------------------------------------
 
 local PACE = {
-	BattleStart  = 1.5,
+	BattleStart  = 2.5,
 	TurnStart    = 0.5,
 	Move         = 1.0,
 	Action       = 1.2,
@@ -154,13 +154,13 @@ function BattleVisualBroadcaster.TurnStarted(unit, ct, allUnits)
 			end
 		end
 	end
-		allUnitsRt = allUnitsRt,
 	BattleEvents.TurnStarted:FireAllClients({
 		unitId   = unit.id,
 		ct       = ct,
 		statuses = StatusService.GetStatusSummary(unit),
 		currentMp = unit.currentMp or 0,
 		maxMp     = unit.maxMp or 0,
+		allUnitsRt = allUnitsRt,
 	})
 	task.wait(PACE.TurnStart)
 end

@@ -256,36 +256,6 @@ local function ensureRoot()
 	Instance.new("UICorner", logBtn).CornerRadius = Theme.CornerRadius.sm
 	logBtn.MouseButton1Click:Connect(function() BattleHUD.ToggleBattleLog() end)
 
-	-- TOP-RIGHT: Font theme switcher — lives in its own ScreenGui with
-	-- IgnoreGuiInset = true so it can sit in the Roblox top bar area.
-	-- This ScreenGui will also host future menu buttons.
-	local topBarGui = Instance.new("ScreenGui")
-	topBarGui.Name = "BattleTopBar"
-	topBarGui.ResetOnSpawn = false
-	topBarGui.DisplayOrder = Theme.DisplayOrder.HUD + 1
-	topBarGui.IgnoreGuiInset = true
-	topBarGui.Parent = getPlayerGui()
-
-	local themeBtn = Instance.new("TextButton")
-	themeBtn.Name = "ThemeSwitcher"
-	themeBtn.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 4, Theme.Elem.ToggleBtn())
-	themeBtn.Position = UDim2.new(1, -PAD, 0, 4)
-	themeBtn.AnchorPoint = Vector2.new(1, 0)
-	themeBtn.BackgroundColor3 = Theme.Colors.Surface
-	themeBtn.BackgroundTransparency = 0.15
-	themeBtn.Font = Theme.Font.PrimaryBold; themeBtn.TextSize = Theme.Text.Small()
-	themeBtn.TextColor3 = Theme.Colors.TextSecondary
-	themeBtn.Text = Theme.GetFontThemeLabel()
-	themeBtn.BorderSizePixel = 0
-	themeBtn.Parent = topBarGui
-	Instance.new("UICorner", themeBtn).CornerRadius = Theme.CornerRadius.sm
-	themeBtn.MouseButton1Click:Connect(function()
-		local newName = Theme.CycleFontTheme()
-		themeBtn.Text = Theme.GetFontThemeLabel()
-		themeBtn.Font = Theme.Font.PrimaryBold
-		BattleHUD.Render(nil)
-	end)
-
 	-- Apply stored layout if UIController already calculated one
 	if currentLayout then
 		BattleHUD.ApplyLayout(currentLayout)
@@ -656,24 +626,41 @@ function BattleHUD._renderDamagePreview()
 	local order = 0
 	local function row(text, color, bold)
 		order = order + 1
-		makeLabel(tilePreviewPanel, text, {
+		local lbl = makeLabel(tilePreviewPanel, text, {
 			textSize = bold and Theme.Text.Body() or Theme.Text.Small(),
 			font = bold and Theme.Font.PrimaryBold or Theme.Font.Mono,
 			color = color or Theme.Colors.TextPrimary,
 			order = order,
+			wrap = true,
 		})
+		lbl.AutomaticSize = Enum.AutomaticSize.Y
+		lbl.Size = UDim2.new(1, 0, 0, 0)
+	end
+
+	-- Name badge: colored background box (blue=Player, red=Enemy) with white text
+	local function nameRow(text, side)
+		order = order + 1
+		local bgColor = (side == "Player") and Theme.Colors.Player or Theme.Colors.Enemy
+		local lbl = Instance.new("TextLabel")
+		lbl.Size = UDim2.new(1, -4, 0, Theme.Elem.RowSmall())
+		lbl.BackgroundColor3 = bgColor
+		lbl.BackgroundTransparency = 0.15
+		lbl.BorderSizePixel = 0
+		lbl.Font = Theme.Font.PrimaryBold
+		lbl.TextSize = Theme.Text.Body()
+		lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.Text = "  " .. (text or "Unit")
+		lbl.LayoutOrder = order
+		lbl.Parent = tilePreviewPanel
+		Instance.new("UICorner", lbl).CornerRadius = Theme.CornerRadius.sm
 	end
 
 	local function diffRow(label, before, after, unit, goodIfHigher)
 		local delta = (after or 0) - (before or 0)
 		if delta == 0 and not unit then return end
 		local sign = delta > 0 and "+" or ""
-		local deltaColor = Theme.Colors.TextSecondary
-		if delta > 0 then
-			deltaColor = goodIfHigher and Theme.Colors.Success or Theme.Colors.Danger
-		elseif delta < 0 then
-			deltaColor = goodIfHigher and Theme.Colors.Danger or Theme.Colors.Success
-		end
+		local deltaColor = Theme.Colors.TextPrimary
 		local unitStr = unit and (" " .. unit) or ""
 		local text = string.format("%s: %d → %d  (%s%d%s)", label, before or 0, after or 0, sign, delta, unitStr)
 		row(text, deltaColor)
@@ -681,7 +668,7 @@ function BattleHUD._renderDamagePreview()
 
 	-- HEADER
 	local actionType = p.actionType or "Action"
-	row("─── " .. string.upper(actionType) .. " PREVIEW ───", Theme.Colors.TextGold, true)
+	row(string.upper(actionType) .. " PREVIEW", Theme.Colors.TextGold, true)
 
 	-- Action detail: show what is being performed
 	if p.skillName then
@@ -701,45 +688,52 @@ function BattleHUD._renderDamagePreview()
 
 	-- MOVE
 	if actionType == "Move" then
-		row(p.actorName or "Unit", Theme.Colors.TextGold, true)
+		nameRow(p.actorName or "Unit", "Player")
 		row("Tile: " .. (p.fromTile or "?") .. " → " .. (p.toTile or "?"))
 		diffRow("AP", p.actorApBefore, p.actorApAfter)
-		row("RT After: " .. (p.actorRtAfter or 0), Theme.Colors.TextSecondary)
+		row("RT After: " .. (p.actorRtAfter or 0))
 
 	-- ATTACK
 	elseif actionType == "Attack" then
-		row(p.actorName or "Attacker", Theme.Colors.TextGold, true)
+		nameRow(p.actorName or "Attacker", "Player")
 		diffRow("MP", p.actorMpBefore, p.actorMpAfter, nil, true)
 		diffRow("AP", p.actorApBefore, p.actorApAfter)
-		row("RT After: " .. (p.actorRtAfter or 0), Theme.Colors.TextSecondary)
+		row("RT After: " .. (p.actorRtAfter or 0))
 
 		row("")  -- spacer
-		row(p.targetName or "Target", Theme.Colors.Danger, true)
+		nameRow(p.targetName or "Target", "Enemy")
 		diffRow("HP", p.targetHpBefore, p.targetHpAfter, nil, true)
 		if (p.targetRtDelay or 0) > 0 then
-			row("RT Delay: +" .. p.targetRtDelay, Theme.Colors.Warning)
+			row("RT Delay: +" .. p.targetRtDelay)
 		end
 
 	-- SKILL
 	elseif actionType == "Skill" then
-		row(p.actorName or "Caster", Theme.Colors.TextGold, true)
+		nameRow(p.actorName or "Caster", "Player")
 		diffRow("MP", p.actorMpBefore, p.actorMpAfter, nil, true)
 		diffRow("AP", p.actorApBefore, p.actorApAfter)
-		row("RT After: " .. (p.actorRtAfter or 0), Theme.Colors.TextSecondary)
+		row("RT After: " .. (p.actorRtAfter or 0))
 
 		if p.channelTime and p.channelTime > 0 then
 			row("⏳ Channel: " .. p.channelTime .. " CT", Theme.Colors.Warning)
 			if p.channelResolveCt then
-				row("Resolves at CT ~" .. p.channelResolveCt, Theme.Colors.TextSecondary)
+				row("Resolves at CT ~" .. p.channelResolveCt)
+			end
+			-- AP forfeit warning: channeling ends the turn immediately
+			local remainingAp = (p.actorApAfter or 0)
+			if remainingAp > 0 then
+				row("⚠ ENDS TURN — forfeits " .. remainingAp .. " remaining AP", Theme.Colors.Danger)
+			else
+				row("⚠ ENDS TURN immediately", Theme.Colors.Warning)
 			end
 		end
 
 		row("")  -- spacer
-		local targetColor = p.isHealing and Theme.Colors.Success or Theme.Colors.Danger
-		row(p.targetName or "Target", targetColor, true)
+		local targetSide = p.isHealing and "Player" or "Enemy"
+		nameRow(p.targetName or "Target", targetSide)
 		diffRow("HP", p.targetHpBefore, p.targetHpAfter, nil, true)
 		if (p.targetRtDelay or 0) > 0 then
-			row("RT Delay: +" .. p.targetRtDelay, Theme.Colors.Warning)
+			row("RT Delay: +" .. p.targetRtDelay)
 		end
 
 		if p.statusEffect and p.statusEffect ~= "None" then
@@ -751,17 +745,17 @@ function BattleHUD._renderDamagePreview()
 			if GameConstants and GameConstants.STATUSES and GameConstants.STATUSES[p.statusEffect] then
 				statusKind = GameConstants.STATUSES[p.statusEffect].kind or "Debuff"
 			end
-			local statusColor = statusKind == "Buff" and Theme.Colors.Success or Theme.Colors.Warning
+			local statusColor = statusKind == "Buff" and Theme.Colors.Success or Theme.Colors.TextPrimary
 			row("+" .. statusText, statusColor)
 		end
 
 	-- PUSH
 	elseif actionType == "Push" then
-		row(p.actorName or "Unit", Theme.Colors.TextGold, true)
+		nameRow(p.actorName or "Unit", "Player")
 		diffRow("AP", p.actorApBefore, p.actorApAfter)
-		row("RT After: " .. (p.actorRtAfter or 0), Theme.Colors.TextSecondary)
+		row("RT After: " .. (p.actorRtAfter or 0))
 		row("")
-		row("Push " .. (p.targetName or "target") .. " away", Theme.Colors.Warning)
+		row("Push " .. (p.targetName or "target") .. " away")
 
 	-- RESULT (post-execution summary)
 	elseif actionType == "Result" then
@@ -843,6 +837,7 @@ end
 
 function BattleHUD.UpdateTimeline(entries)
 	ensureRoot()
+	BattleHUD._lastTimelineEntries = entries
 	if not turnOrderBar then return end
 	clearFrame(turnOrderBar)
 	if not entries or #entries == 0 then turnOrderBar.Visible = false; return end
@@ -1523,10 +1518,6 @@ function BattleHUD.Cleanup()
 	savedBattleState = nil
 	BattleHUD.HideTooltip()
 	if screenGui then screenGui:Destroy(); screenGui = nil end
-	-- Destroy the top bar overlay (theme switcher + future menu buttons)
-	local pg = getPlayerGui()
-	local topBar = pg and pg:FindFirstChild("BattleTopBar")
-	if topBar then topBar:Destroy() end
 	rootFrame = nil
 	activeUnitPanel = nil; actionPanel = nil
 	inspectorPanel = nil; tilePreviewPanel = nil
