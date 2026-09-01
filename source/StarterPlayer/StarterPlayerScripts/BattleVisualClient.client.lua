@@ -317,52 +317,105 @@ end
 
 local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEvent)
 	if not snapshot or #snapshot == 0 then BattleHUD.UpdateTimeline({}); return end
-	local tl = simulateTurnOrder(snapshot, 10, previewUnitId, previewNewRt, previewEvent)
+	local tl = simulateTurnOrder(snapshot, 12, previewUnitId, previewNewRt, previewEvent)
 
-	-- ALWAYS place the active unit at array index 1 (renders rightmost due to
-	-- BattleHUD LayoutOrder = slotCount - i + 1). Independent of preview state.
+	-- Build the final entries list:
+	-- [1] = pinned NOW active unit
+	-- [2..] = future events in RT order, including the active unit's ghost
+
+	local finalEntries = {}
+
+	-- Pinned NOW slot
 	if activeUnitId then
-		-- Step 1: Find and remove active unit from wherever simulation placed it
-		local activeIdx = nil
-		for i, e in ipairs(tl) do
-			if not e.isEvent and not e.isRound and e.id == activeUnitId then
-				activeIdx = i; break
+		local nowName = activeUnitId
+		local nowSide = "Player"
+		local nowTileX, nowTileY
+		if unitData[activeUnitId] then
+			nowName = unitData[activeUnitId].name or activeUnitId
+			nowSide = unitData[activeUnitId].side or "Player"
+			nowTileX = unitData[activeUnitId].tileX
+			nowTileY = unitData[activeUnitId].tileY
+		elseif timelineSnapshot then
+			for _, s in ipairs(timelineSnapshot) do
+				if s.id == activeUnitId then nowName = s.name; nowSide = s.side; break end
+			end
+		end
+		table.insert(finalEntries, {
+			id = activeUnitId, name = nowName, side = nowSide,
+			tileX = nowTileX, tileY = nowTileY,
+			rt = 0, isActive = true, isGhost = false,
+			isEvent = false, isRound = false,
+		})
+	end
+
+	-- Remaining entries from simulation (future turns)
+	local activeSeenCount = 0
+	local seenUnits = {}  -- track first occurrence of each unit
+	local hasPreviewRt = (previewUnitId ~= nil and previewNewRt ~= nil)
+	for _, e in ipairs(tl) do
+		-- Enrich with tile data for click resolution
+		local enriched = {
+			id = e.id, name = e.name, side = e.side, rt = e.rt,
+			isActive = false, isEvent = e.isEvent or false, isRound = e.isRound or false,
+			isGhost = false,
+		}
+
+		-- Active unit ghost logic:
+		-- Without preview: simulation has active unit at RT=0 (current turn) + RT=450 (next).
+		--   Skip 1st (duplicate of NOW), keep 2nd as ghost.
+		-- With preview: simulation has active unit at RT=previewNewRt (next turn) only.
+		--   Keep 1st as ghost (it's already at the correct position).
+		if activeUnitId and not e.isEvent and not e.isRound and e.id == activeUnitId then
+			activeSeenCount = activeSeenCount + 1
+			if not hasPreviewRt and activeSeenCount == 1 then
+				enriched = nil  -- current turn duplicate (no preview active)
+			elseif activeSeenCount == 2 then
+				enriched.isGhost = true
+				enriched.rt = previewNewRt or enriched.rt
+			elseif hasPreviewRt and activeSeenCount == 1 then
+				enriched.isGhost = true
+				enriched.rt = previewNewRt or enriched.rt
+			else
+				enriched = nil  -- far future, skip
 			end
 		end
 
-		local activeEntry
-		if activeIdx then
-			activeEntry = table.remove(tl, activeIdx)
-		else
-			-- Fallback: build from timelineSnapshot if simulation excluded it
-			local fallbackName = activeUnitId
-			local fallbackSide = "Player"
-			if timelineSnapshot then
+		-- Skip duplicate appearances of non-active units (keep only first)
+		if enriched and not e.isEvent and not e.isRound and not enriched.isGhost then
+			if seenUnits[e.id] then
+				enriched = nil
+			else
+				seenUnits[e.id] = true
+			end
+		end
+
+		if enriched then
+			-- Attach tile coordinates from unitData
+			local baseId = e.id
+			-- Channel events have id like "unit_ch" — extract the base unit id
+			if e.isEvent and type(e.id) == "string" and string.sub(e.id, -3) == "_ch" then
+				baseId = string.sub(e.id, 1, -4)
+				enriched.casterId = baseId
+				enriched.casterName = unitData[baseId] and unitData[baseId].name or nil
+			end
+			if unitData[baseId] then
+				enriched.tileX = unitData[baseId].tileX
+				enriched.tileY = unitData[baseId].tileY
+			end
+
+			-- Attach RT from snapshot
+			-- Don't overwrite ghost RT — it carries the simulation-computed future RT
+			if not e.isRound and not e.isEvent and not enriched.isGhost and timelineSnapshot then
 				for _, s in ipairs(timelineSnapshot) do
-					if s.id == activeUnitId then
-						fallbackName = s.name; fallbackSide = s.side; break
-					end
+					if s.id == e.id then enriched.rt = s.remainingRt; break end
 				end
 			end
-			activeEntry = { id = activeUnitId, name = fallbackName, side = fallbackSide, rt = 0, isEvent = false, isRound = false }
-		end
 
-		-- Step 2: Mark active; ensure all others are not active
-		activeEntry.isActive = true
-		for _, e in ipairs(tl) do e.isActive = false end
-
-		-- Step 3: Insert at index 1 (rightmost position)
-		table.insert(tl, 1, activeEntry)
-	end
-
-	-- Attach RT values
-	for _, e in ipairs(tl) do
-		if not e.isRound and not e.isEvent and timelineSnapshot then
-			for _, s in ipairs(timelineSnapshot) do if s.id == e.id then e.rt = s.remainingRt; break end end
+			table.insert(finalEntries, enriched)
 		end
 	end
 
-	BattleHUD.UpdateTimeline(tl)
+	BattleHUD.UpdateTimeline(finalEntries)
 end
 
 --------------------------------------------------
@@ -1335,6 +1388,52 @@ _G.CTRBLXAI_GetElevation = function(tileX, tileY)
 	return 1
 end
 
+
+_G.CTRBLXAI_TimelineClickTile = function(tileX, tileY)
+	if tileX and tileY then
+		processTileClick(tileX, tileY)
+
+		-- Highlight the tile with "selected" style
+		clearHighlights()
+		createTileHighlight(tileX, tileY, "selected")
+
+		-- Show quick-look tooltip (same as hover)
+		local hoveredUnit = nil
+		for _, data in pairs(unitData) do
+			if data.tileX == tileX and data.tileY == tileY and data.isAlive ~= false then
+				hoveredUnit = data
+				break
+			end
+		end
+		if hoveredUnit then
+			local hpText = string.format("HP %d/%d", hoveredUnit.currentHp or 0, hoveredUnit.maxHp or 0)
+			local mpText = string.format("MP %d/%d", hoveredUnit.currentMp or 0, hoveredUnit.maxMp or 0)
+			local tooltipLines = {
+				{ text = hpText, color = Theme.Colors.TextPrimary },
+				{ text = mpText, color = Theme.Colors.TextSecondary },
+			}
+			if hoveredUnit.statuses and #hoveredUnit.statuses > 0 then
+				local statusParts = {}
+				for _, s in ipairs(hoveredUnit.statuses) do
+					table.insert(statusParts, (s.id or "?") .. (s.remainingTurns and ("(" .. s.remainingTurns .. ")") or ""))
+				end
+				table.insert(tooltipLines, { text = table.concat(statusParts, " "), color = Theme.Colors.Warning })
+			end
+			local worldPos = tileToWorld(tileX, tileY)
+			local cam = workspace.CurrentCamera
+			local screenPos = cam and cam:WorldToScreenPoint(worldPos) or Vector3.new(400, 200, 0)
+			BattleHUD.ShowTooltip({
+				title = hoveredUnit.name or "Unit",
+				portrait = string.sub(hoveredUnit.name or "?", 1, 2),
+				portraitColor = Theme.GetSideColor(hoveredUnit.side),
+				lines = tooltipLines,
+				position = UDim2.new(0, screenPos.X, 0, screenPos.Y - 20),
+				anchorPoint = Vector2.new(0.5, 1),
+				maxWidth = 160,
+			})
+		end
+	end
+end
 
 
 print("[CTRBLXAI] BattleVisualClient v3 loaded.")

@@ -859,24 +859,17 @@ function BattleHUD.UpdateTimeline(entries)
 	pad.PaddingLeft = UDim.new(0, 4); pad.PaddingRight = UDim.new(0, 4)
 	pad.PaddingTop = UDim.new(0, 2); pad.PaddingBottom = UDim.new(0, 2)
 
-	-- Sort entries: active unit first (LayoutOrder = 1), then rest in order
-	local sorted = {}
-	for _, e in ipairs(entries) do table.insert(sorted, e) end
-	table.sort(sorted, function(a, b)
-		if a.isActive and not b.isActive then return true end
-		if not a.isActive and b.isActive then return false end
-		return false -- preserve original order for non-active
-	end)
+	local barH = turnOrderBar.AbsoluteSize.Y
+	local slotH = math.max(barH - 6, 40)
 
-	local slotCount = #sorted
-	for i, entry in ipairs(sorted) do
+	for i, entry in ipairs(entries) do
 		local isActive = entry.isActive or false
 		local isRound = entry.isRound or false
 		local isEvent = entry.isEvent or false
-		-- 50% larger slots: active 66, normal 51, round 27
-		-- Square slots: use bar height as slot size
-		local barH = turnOrderBar.AbsoluteSize.Y
-		local slotH = math.max(barH - 6, 40)
+		local isGhost = entry.isGhost or false
+		local isUnit = not isRound and not isEvent
+
+		-- Slot sizing: active wider, rounds narrower, rest square
 		local slotW = isActive and (slotH + 12) or (isRound and math.floor(slotH * 0.5) or slotH)
 
 		local portrait = Instance.new("TextButton")
@@ -885,7 +878,18 @@ function BattleHUD.UpdateTimeline(entries)
 		portrait.AutoButtonColor = false
 		portrait.LayoutOrder = i; portrait.Parent = turnOrderBar
 
-		if isRound then
+		-- Shape: square for units, circle for non-units
+		if isUnit then
+			Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
+		else
+			Instance.new("UICorner", portrait).CornerRadius = UDim.new(0.5, 0)
+		end
+
+		-- Background color
+		if isGhost then
+			portrait.BackgroundColor3 = Theme.GetSideColor(entry.side)
+			portrait.BackgroundTransparency = 0.6
+		elseif isRound then
 			portrait.BackgroundColor3 = Color3.fromRGB(50, 50, 30)
 			portrait.BackgroundTransparency = 0.4
 		elseif isEvent then
@@ -898,36 +902,80 @@ function BattleHUD.UpdateTimeline(entries)
 			portrait.BackgroundColor3 = Theme.GetSideColor(entry.side)
 			portrait.BackgroundTransparency = 0.4
 		end
-		Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
 
+		-- Active unit: gold border
 		if isActive then
 			local st = Instance.new("UIStroke", portrait)
 			st.Color = Theme.Colors.BorderFocused; st.Thickness = 2
 		end
+		-- Ghost: dashed-feel thin border
+		if isGhost then
+			local st = Instance.new("UIStroke", portrait)
+			st.Color = Theme.Colors.TextSecondary; st.Thickness = 1
+		end
 
+		-- Top label: name
 		local nameL = Instance.new("TextLabel")
 		nameL.Size = UDim2.new(1, 0, 0.55, 0)
 		nameL.Position = UDim2.new(0, 0, 0, 1)
 		nameL.BackgroundTransparency = 1
 		nameL.Font = Theme.Font.PrimaryBold
 		nameL.TextSize = isActive and Theme.Text.Body() or Theme.Text.Small()
-		nameL.TextColor3 = isEvent and Theme.Colors.TextGold or Theme.Colors.TextPrimary
 		nameL.TextTruncate = Enum.TextTruncate.AtEnd
-		nameL.Text = isRound and (entry.name or "") or string.sub(entry.name or "?", 1, isActive and 8 or 5)
+		if isRound then
+			nameL.Text = entry.name or ""
+			nameL.TextColor3 = Theme.Colors.TextSecondary
+		elseif isEvent then
+			-- Channel: show spell name, caster on bottom
+			nameL.Text = string.sub(entry.name or "?", 1, 6)
+			nameL.TextColor3 = Theme.Colors.TextGold
+		elseif isActive then
+			nameL.Text = string.sub(entry.name or "?", 1, 8)
+			nameL.TextColor3 = Theme.Colors.TextPrimary
+		else
+			nameL.Text = string.sub(entry.name or "?", 1, 5)
+			nameL.TextColor3 = isGhost and Theme.Colors.TextSecondary or Theme.Colors.TextPrimary
+		end
 		nameL.Parent = portrait
 
+		-- Bottom label
 		local bottomL = Instance.new("TextLabel")
 		bottomL.Size = UDim2.new(1, 0, 0.35, 0)
 		bottomL.Position = UDim2.fromScale(0, 0.6)
 		bottomL.BackgroundTransparency = 1
 		bottomL.Font = Theme.Font.Mono; bottomL.TextSize = Theme.Text.Small()
 		bottomL.TextColor3 = Theme.Colors.TextSecondary
-		bottomL.Text = isActive and "NOW" or (isEvent and "ACT" or (entry.rt and tostring(entry.rt) or ""))
+		if isActive then
+			bottomL.Text = "NOW"
+		elseif isEvent then
+			-- Channel: show caster name
+			bottomL.Text = entry.casterName and string.sub(entry.casterName, 1, 5) or "ACT"
+		elseif isRound then
+			bottomL.Text = ""
+		else
+			bottomL.Text = entry.rt and tostring(entry.rt) or ""
+		end
 		bottomL.Parent = portrait
 
-		if entry.onClick and not isRound then
-			portrait.MouseButton1Click:Connect(entry.onClick)
-		end
+		-- Click handler
+		portrait.MouseButton1Click:Connect(function()
+			if isUnit or isEvent then
+				local tileX = entry.tileX
+				local tileY = entry.tileY
+				-- Always inspect the unit's tile (highlights tile + updates inspector)
+				if tileX and tileY and _G.CTRBLXAI_TimelineClickTile then
+					_G.CTRBLXAI_TimelineClickTile(tileX, tileY)
+				end
+			elseif isRound then
+				BattleHUD.ShowTooltip({
+					title = entry.name or "Round",
+					lines = {{ text = "New round begins", color = Theme.Colors.TextSecondary }},
+					position = UDim2.new(0, portrait.AbsolutePosition.X + portrait.AbsoluteSize.X / 2, 0, portrait.AbsolutePosition.Y - 4),
+					anchorPoint = Vector2.new(0.5, 1),
+					maxWidth = 140,
+				})
+			end
+		end)
 	end
 end
 
