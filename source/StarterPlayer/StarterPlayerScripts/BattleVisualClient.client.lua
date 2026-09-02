@@ -464,19 +464,6 @@ local function enterActionSelection()
 
 	-- 4x2 grid: Attack, Skill, Move, Item, Guard, Interact, Wait, Stance
 	local actions = {
-		{ id="Attack", text="Attack", enabled=atkEnabled, onPress=function()
-			inputMode = "attack"; selectedSkill = nil; clearHighlights()
-			bp.skill = { name="Basic Attack", tags="Physical",
-				mpCost=0, rtCost=prompt.attackRt or 0, range=prompt.weaponRange or 1, pattern="Single",
-				effects="Weapon Dmg: "..(prompt.weaponDamage or 0).." | RT Delay: "..(prompt.weaponRtDelay or 0) }
-			local pRt = (prompt.attackRt or 80) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
-			updateTimeline(timelineSnapshot, prompt.unitId, pRt)
-			local c = Color3.fromRGB(200, 150, 60)
-			for _, t in ipairs(prompt.attackTargets) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
-			storedActorData.onBack = enterActionSelection
-			bp.state = "TargetSelection"; BattleHUD.Render(bp)
-		end },
-		{ id="Skill", text="Skill", enabled=hasSkills, onPress=enterSkillSelection },
 		{ id="Move", text="Move", enabled=moveEnabled, onPress=function()
 			inputMode = "move"; selectedSkill = nil; clearHighlights()
 			local pRt = math.round((prompt.unitBaseRt or 400)*0.0625*2) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
@@ -486,30 +473,45 @@ local function enterActionSelection()
 			bp.skill = nil
 			bp.state = "TargetSelection"; BattleHUD.Render(bp)
 		end },
-		{ id="Item", text="Item", enabled=false },
-		{ id="Guard", text="Guard", enabled=not prompt.guardUsed, onPress=function()
-			clearHighlights(); isPlayerTurn = false; inputMode = nil
-			bp.state = "Resolving"; BattleHUD.Render(bp)
-			BattleHUD.AddLogEntry((prompt.unitName or "Unit") .. " guards.")
-			BattleEvents.PlayerCommand:FireServer({ actionType = "Guard" })
-		end },
-		{ id="Push", text="Push", enabled=#(prompt.pushTargets or {}) > 0, onPress=function()
-			inputMode = "push"; selectedSkill = nil; clearHighlights()
-			local previewRt = (prompt.pushRt or 40) + (prompt.unitBaseRt or 400)
-			updateTimeline(timelineSnapshot, prompt.unitId, previewRt)
-			for _, t in ipairs(prompt.pushTargets or {}) do
-				createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 180, 40), 0.45)
-			end
-			storedActorData.onBack = enterActionSelection
-			bp.state = "TargetSelection"; BattleHUD.Render(bp)
-		end },
+		{ id="Commands", text="Commands", enabled=true, isSubmenu=true, subActions={
+			{ id="Attack", text="Attack", enabled=atkEnabled, onPress=function()
+				inputMode = "attack"; selectedSkill = nil; clearHighlights()
+				bp.skill = { name="Basic Attack", tags="Physical",
+					mpCost=0, rtCost=prompt.attackRt or 0, range=prompt.weaponRange or 1, pattern="Single",
+					effects="Weapon Dmg: "..(prompt.weaponDamage or 0).." | RT Delay: "..(prompt.weaponRtDelay or 0) }
+				local pRt = (prompt.attackRt or 80) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
+				updateTimeline(timelineSnapshot, prompt.unitId, pRt)
+				local c = Color3.fromRGB(200, 150, 60)
+				for _, t in ipairs(prompt.attackTargets) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
+				storedActorData.onBack = enterActionSelection
+				bp.state = "TargetSelection"; BattleHUD.Render(bp)
+			end },
+			{ id="Interact", text="Interact", enabled=false },
+			{ id="Push", text="Push", enabled=#(prompt.pushTargets or {}) > 0, onPress=function()
+				inputMode = "push"; selectedSkill = nil; clearHighlights()
+				local previewRt = (prompt.pushRt or 40) + (prompt.unitBaseRt or 400)
+				updateTimeline(timelineSnapshot, prompt.unitId, previewRt)
+				for _, t in ipairs(prompt.pushTargets or {}) do
+					createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 180, 40), 0.45)
+				end
+				storedActorData.onBack = enterActionSelection
+				bp.state = "TargetSelection"; BattleHUD.Render(bp)
+			end },
+			{ id="Guard", text="Guard", enabled=not prompt.guardUsed, onPress=function()
+				clearHighlights(); isPlayerTurn = false; inputMode = nil
+				bp.state = "Resolving"; BattleHUD.Render(bp)
+				BattleHUD.AddLogEntry((prompt.unitName or "Unit") .. " guards.")
+				BattleEvents.PlayerCommand:FireServer({ actionType = "Guard" })
+			end },
+		}},
+		{ id="Skill", text="Skills", enabled=hasSkills, onPress=enterSkillSelection },
+		{ id="Item", text="Items", enabled=false },
 		{ id="Wait", text="Wait", enabled=true, onPress=function()
 			clearHighlights(); isPlayerTurn = false; inputMode = nil
 			bp.state = "Resolving"; BattleHUD.Render(bp)
 			BattleHUD.AddLogEntry((prompt.unitName or "Unit") .. " waits.")
 			BattleEvents.PlayerCommand:FireServer({ actionType = "Wait" })
 		end },
-		{ id="Stance", text="Stance", enabled=false },
 	}
 
 	-- Get actor tile info

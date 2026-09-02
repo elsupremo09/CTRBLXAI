@@ -27,6 +27,13 @@ Theme.Colors = {
 	BorderSelected  = Color3.fromRGB(100, 160, 255), -- Selected element (blue)
 	BorderFocused   = Color3.fromRGB(255, 230, 80),  -- Active/focused (gold)
 
+	-- Dark Metal Plate panel style
+	MetalOuter      = Color3.fromRGB(18, 18, 26),    -- Outer panel frame
+	MetalInner      = Color3.fromRGB(26, 26, 36),    -- Inner panel (slightly lighter)
+	MetalGlow       = Color3.fromRGB(80, 120, 200),  -- Inner glow tint (blue)
+	MetalEdge       = Color3.fromRGB(42, 42, 58),    -- Outer border
+	MetalRivet      = Color3.fromRGB(55, 55, 70),    -- Rivet highlight
+
 	-- Faction
 	Player          = Color3.fromRGB(70, 130, 220),  -- Muted blue
 	Enemy           = Color3.fromRGB(200, 70, 50),   -- Restrained red-orange

@@ -209,7 +209,7 @@ end
 local hero = UnitSchema.Create({
 	id           = "unit_hero",
 	name         = "Hero",
-	level        = 20,
+	level        = 25,
 	raceId       = "RACE-HUMAN",
 	side         = "Player",
 	controller   = "Player",
@@ -239,7 +239,7 @@ end
 local mage = UnitSchema.Create({
 	id           = "unit_mage",
 	name         = "Mage",
-	level        = 20,
+	level        = 25,
 	raceId       = "RACE-ELF",
 	side         = "Player",
 	controller   = "Player",
@@ -252,7 +252,7 @@ equipGeneratedWeapon(mage, "WPN-WAND", 5, "Uncommon", 1002)
 local ranger = UnitSchema.Create({
 	id           = "unit_ranger",
 	name         = "Ranger",
-	level        = 20,
+	level        = 25,
 	raceId       = "RACE-SHADOW",
 	side         = "Player",
 	controller   = "Player",
@@ -285,6 +285,7 @@ local grunt = UnitSchema.Create({
 	tileY        = 7,
 	stats        = { STR = 14, AGI = 10, INT = 6, VIT = 14, DEX = 8, LUK = 6 },
 	skillIds     = { "skill_venom_strike", "skill_crippling_shot" },
+	startingRt   = 420,
 })
 equipGeneratedWeapon(grunt, "WPN-SPEAR", 5, "Common", 2001)
 
@@ -297,6 +298,7 @@ local pyro = UnitSchema.Create({
 	tileY        = 7,
 	stats        = { STR = 8, AGI = 12, INT = 16, VIT = 10, DEX = 10, LUK = 8 },
 	skillIds     = { "skill_fire_bolt", "skill_power_strike" },
+	startingRt   = 420,
 })
 equipGeneratedWeapon(pyro, "WPN-STAFF", 5, "Common", 2002)
 
@@ -309,6 +311,7 @@ local shaman = UnitSchema.Create({
 	tileY        = 8,
 	stats        = { STR = 6, AGI = 8, INT = 18, VIT = 14, DEX = 12, LUK = 10 },
 	skillIds     = { "skill_healing_light", "skill_crippling_shot" },
+	startingRt   = 420,
 })
 equipGeneratedWeapon(shaman, "WPN-WAND", 5, "Common", 2003)
 

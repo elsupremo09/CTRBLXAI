@@ -42,6 +42,7 @@ local tilePreviewPanel  = nil  -- Right below inspector (20% × 15%)
 local turnOrderBar      = nil  -- Lower-left (45% × 7%)
 local conditionsPanel   = nil  -- Next to turn order
 local battleLogPanel    = nil  -- Lower-right (25% × 20%)
+local commandBar          = nil  -- Fixed bottom-right: Execute/Back buttons
 
 -- Stored data
 -- Single presentation table — BVC builds this, BattleHUD.Render() consumes it
@@ -80,7 +81,7 @@ end
 local function clearFrame(frame)
 	if not frame then return end
 	for _, child in ipairs(frame:GetChildren()) do
-		if not child:IsA("UICorner") and not child:IsA("UIStroke") and not child:IsA("UIPadding") then
+		if not child:IsA("UICorner") and not child:IsA("UIStroke") and not child:IsA("UIPadding") and not child:IsA("UISizeConstraint") then
 			child:Destroy()
 		end
 	end
@@ -88,27 +89,32 @@ end
 
 local function makePanel(name, size, position, anchor, parent, opts)
 	opts = opts or {}
-	local f = Instance.new("Frame")
+
+	-- 9-slice ornate gold frame
+	local f = Instance.new("ImageLabel")
 	f.Name = name
 	f.Size = size
 	f.Position = position
 	f.AnchorPoint = anchor or Vector2.new(0, 0)
-	f.BackgroundColor3 = Theme.Colors.Panel
-	f.BackgroundTransparency = 0.04
+	f.Image = "rbxassetid://96315850586636"
+	f.ScaleType = Enum.ScaleType.Slice
+	-- Image is 1254px but Roblox downscales to 1024. Coords scaled: 200*(1024/1254)=163, 1054*(1024/1254)=861
+	f.SliceCenter = Rect.new(163, 163, 861, 861)
+	f.SliceScale = opts.sliceScale or 0.06
+	f.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	f.BackgroundTransparency = 0.15
+	f.ImageTransparency = 0
 	f.BorderSizePixel = 0
-	f.Active = true  -- Blocks input from passing through to battlefield
-	f.ClipsDescendants = not opts.autoY  -- don't clip if auto-sizing
+	f.Active = true
+	f.ClipsDescendants = not opts.autoY
 	f.Parent = parent
-	Instance.new("UICorner", f).CornerRadius = Theme.CornerRadius.md
-	local s = Instance.new("UIStroke", f)
-	s.Color = Theme.Colors.Border; s.Thickness = 1
 
 	-- AutomaticSize + constraints
 	if opts.autoY then
 		f.AutomaticSize = Enum.AutomaticSize.Y
 		local constraint = Instance.new("UISizeConstraint", f)
-		constraint.MinSize = Vector2.new(opts.minW or 240, opts.minH or 60)
-		constraint.MaxSize = Vector2.new(opts.maxW or 340, opts.maxH or 400)
+		constraint.MinSize = Vector2.new(opts.minW or 180, opts.minH or 60)
+		constraint.MaxSize = Vector2.new(opts.maxW or 260, opts.maxH or 400)
 	end
 	return f
 end
@@ -175,35 +181,35 @@ local function ensureRoot()
 
 	-- UPPER-RIGHT: Active Unit Panel (20% W, height=auto)
 	activeUnitPanel = makePanel("ActiveUnit",
-		UDim2.new(0.20, 0, 0, 0),
+		UDim2.new(0.15, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, PAD), Vector2.new(1, 0), rootFrame,
-		{ autoY = true, minW = 240, maxW = 340, minH = 60, maxH = 220 })
+		{ autoY = true, minW = 180, maxW = 260, minH = 60, maxH = 220 })
 	activeUnitPanel.Visible = false
 
 	-- RIGHT: Action Panel (20% W, height=auto) — dynamically below ActiveUnit
 	actionPanel = makePanel("ActionPanel",
-		UDim2.new(0.20, 0, 0, 0),
+		UDim2.new(0.15, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, 0), Vector2.new(1, 0), rootFrame,
-		{ autoY = true, minW = 240, maxW = 340, minH = 50, maxH = 200 })
+		{ autoY = true, minW = 180, maxW = 260, minH = 50, maxH = 200 })
 	actionPanel.Visible = false
 
 	-- RIGHT: Inspector Panel (20% W, height=auto) — below ActionPanel when visible
 	inspectorPanel = makePanel("Inspector",
-		UDim2.new(0.20, 0, 0, 0),
+		UDim2.new(0.15, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, 0), Vector2.new(1, 0), rootFrame,
-		{ autoY = true, minW = 240, maxW = 340, minH = 60, maxH = 220 })
+		{ autoY = true, minW = 180, maxW = 260, minH = 60, maxH = 220 })
 	inspectorPanel.Visible = false
 
 	-- RIGHT: Tile/Preview Panel (20% W, height=auto) — below Inspector
 	tilePreviewPanel = makePanel("TilePreview",
-		UDim2.new(0.20, 0, 0, 0),
+		UDim2.new(0.15, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, 0), Vector2.new(1, 0), rootFrame,
-		{ autoY = true, minW = 240, maxW = 340, minH = 50, maxH = 500 })
+		{ autoY = true, minW = 180, maxW = 260, minH = 50, maxH = 500 })
 	tilePreviewPanel.Visible = false
 
 	-- BOTTOM-LEFT: Turn Order Bar (45% W × 7% H)
 	turnOrderBar = makePanel("TurnOrder",
-		UDim2.fromScale(0.60, 0.10),
+		UDim2.fromScale(0.60, 0.15),
 		UDim2.new(0, PAD, 1, -PAD), Vector2.new(0, 1), rootFrame)
 	turnOrderBar.ClipsDescendants = true
 
@@ -218,6 +224,16 @@ local function ensureRoot()
 		UDim2.new(0, PAD, 0, PAD + 32), Vector2.new(0, 0), rootFrame)
 	battleLogPanel.ClipsDescendants = true
 	battleLogPanel.Visible = isBattleLogExpanded
+
+	-- BOTTOM-RIGHT: Fixed command bar (Execute / Back)
+	commandBar = Instance.new("Frame")
+	commandBar.Name = "CommandBar"
+	commandBar.Size = UDim2.new(0.15, 0, 0, 36)
+	commandBar.Position = UDim2.new(1, -PAD, 1, -PAD)
+	commandBar.AnchorPoint = Vector2.new(1, 1)
+	commandBar.BackgroundTransparency = 1
+	commandBar.Parent = rootFrame
+	commandBar.Visible = false
 
 	-- TOP-LEFT: View Mode + Battle Log toggles
 	viewModeButtons = Instance.new("Frame")
@@ -274,24 +290,28 @@ function BattleHUD._buildActiveUnit()
 
 	local d = presentation.actor
 	local pad = Instance.new("UIPadding", activeUnitPanel)
-	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 6)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
 
 	local layout = Instance.new("UIListLayout", activeUnitPanel)
-	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 4); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-	-- Row 1: Portrait + Name/Doctrine/Level
+	local portraitSize = math.floor(Theme.Elem.Portrait() * 1.25)
+	local raceIconSize = math.floor(portraitSize * 0.8)
+	local topH = math.max(portraitSize + 4, 44)
+
+	-- === TOP ROW: [Portrait+Level] | [Name / Doctrine / HP-MP] | [Race Icon] ===
 	local topRow = Instance.new("Frame")
-	topRow.Size = UDim2.new(1, 0, 0, Theme.Elem.RowTall()); topRow.BackgroundTransparency = 1
+	topRow.Size = UDim2.new(1, 0, 0, topH); topRow.BackgroundTransparency = 1
 	topRow.LayoutOrder = 1; topRow.Parent = activeUnitPanel
 
-	-- Portrait (clickable)
+	-- Portrait (left, clickable → opens full inspector)
 	local portrait = Instance.new("TextButton")
-	portrait.Size = UDim2.new(0, Theme.Elem.Portrait(), 0, Theme.Elem.Portrait())
-	portrait.Position = UDim2.new(0, 0, 0, 2)
+	portrait.Size = UDim2.new(0, portraitSize, 0, portraitSize)
+	portrait.Position = UDim2.new(0, 0, 0, 0)
 	portrait.BackgroundColor3 = Theme.GetSideColor(d.side)
 	portrait.BackgroundTransparency = 0.2
-	portrait.Font = Theme.Font.PrimaryBold; portrait.TextSize = Theme.Text.Title()
+	portrait.Font = Theme.Font.PrimaryBold; portrait.TextSize = Theme.Text.Heading()
 	portrait.TextColor3 = Theme.Colors.TextPrimary
 	portrait.Text = string.sub(d.name or "?", 1, 2)
 	portrait.BorderSizePixel = 0; portrait.Parent = topRow
@@ -302,32 +322,59 @@ function BattleHUD._buildActiveUnit()
 		end
 	end)
 
-	-- Name
-	makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, 42, 0, 0),
-		size = UDim2.new(1, -44, 0, 16), font = Theme.Font.PrimaryBold, textSize = Theme.Text.Heading(),
-		color = Theme.GetSideColor(d.side) })
-	-- Doctrine + Level
-	local levelStr = d.level and ("Lv." .. d.level) or ""
-	local raceStr = d.race or "—"
-	local docStr = d.doctrine and d.doctrine ~= "" and d.doctrine or nil
-	local infoLine = levelStr .. "  " .. raceStr
-	if docStr then infoLine = infoLine .. "  " .. docStr end
-	makeLabel(topRow, infoLine, { pos = UDim2.new(0, 42, 0, 16),
-		size = UDim2.new(1, -44, 0, 12), textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary })
+	-- Level badge on portrait
+	if d.level then
+		local lvl = Instance.new("TextLabel")
+		lvl.Size = UDim2.new(1, 0, 0, 12)
+		lvl.Position = UDim2.new(0, 0, 1, -12)
+		lvl.BackgroundColor3 = Color3.fromRGB(0, 0, 0); lvl.BackgroundTransparency = 0.3
+		lvl.Font = Theme.Font.Mono; lvl.TextSize = Theme.Text.Small()
+		lvl.TextColor3 = Theme.Colors.TextPrimary; lvl.Text = "Lv." .. d.level
+		lvl.BorderSizePixel = 0; lvl.Parent = portrait
+	end
 
-	-- HP / MP values (no bars)
-	local hpMpText = string.format("HP %d/%d    MP %d/%d",
-		d.currentHp or 0, d.maxHp or 0, d.currentMp or 0, d.maxMp or 0)
-	makeLabel(activeUnitPanel, hpMpText, { size = UDim2.new(1, 0, 0, 14),
-		font = Theme.Font.Mono, textSize = Theme.Text.Body(), order = 2 })
+	-- Center column: Name, Doctrine, HP/MP
+	local cx = portraitSize + 6
+	local cw = -(portraitSize + raceIconSize + 16)
+	makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, cx, 0, 0),
+		size = UDim2.new(1, cw, 0, 16), font = Theme.Font.PrimaryBold,
+		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) })
+	local docLine = (d.doctrine and d.doctrine ~= "") and d.doctrine or "—"
+	makeLabel(topRow, docLine, { pos = UDim2.new(0, cx, 0, 16),
+		size = UDim2.new(1, cw, 0, 12), textSize = Theme.Text.Small(),
+		color = Theme.Colors.TextSecondary })
+	local hpMp = string.format("HP %d/%d  MP %d/%d", d.currentHp or 0, d.maxHp or 0, d.currentMp or 0, d.maxMp or 0)
+	makeLabel(topRow, hpMp, { pos = UDim2.new(0, cx, 0, 30),
+		size = UDim2.new(1, cw, 0, 14), font = Theme.Font.Mono,
+		textSize = Theme.Text.Body(), color = Theme.Colors.TextPrimary })
 
-	-- AP circles + RT
+	-- Race icon (right, circular)
+	local raceIcon = Instance.new("Frame")
+	raceIcon.Size = UDim2.new(0, raceIconSize, 0, raceIconSize)
+	raceIcon.Position = UDim2.new(1, -raceIconSize, 0, 2)
+	raceIcon.BackgroundColor3 = Theme.Colors.Surface; raceIcon.BackgroundTransparency = 0.3
+	raceIcon.BorderSizePixel = 0; raceIcon.Parent = topRow
+	Instance.new("UICorner", raceIcon).CornerRadius = UDim.new(0.5, 0)
+	local raceText = Instance.new("TextLabel")
+	raceText.Size = UDim2.fromScale(1, 1); raceText.BackgroundTransparency = 1
+	raceText.Font = Theme.Font.Primary; raceText.TextSize = Theme.Text.Small()
+	raceText.TextColor3 = Theme.Colors.TextSecondary
+	raceText.Text = d.race and string.sub(d.race, 1, 3) or "—"
+	raceText.Parent = raceIcon
+
+	-- === ROW 2: RT (left) + AP (right) ===
+	local row2 = Instance.new("Frame")
+	row2.Size = UDim2.new(1, 0, 0, 16); row2.BackgroundTransparency = 1
+	row2.LayoutOrder = 2; row2.Parent = activeUnitPanel
+	makeLabel(row2, "RT " .. (d.remainingRt or 0), { pos = UDim2.new(0, 0, 0, 0),
+		size = UDim2.new(0.5, 0, 1, 0), font = Theme.Font.Mono,
+		textSize = Theme.Text.Body(), color = Theme.Colors.TextSecondary })
 	local apText = "AP "
 	for i = 1, math.min(d.currentAp or 0, 5) do apText = apText .. "●" end
 	for i = (d.currentAp or 0) + 1, (d.maxAp or 2) do apText = apText .. "○" end
-	apText = apText .. "    RT " .. (d.remainingRt or 0)
-	makeLabel(activeUnitPanel, apText, { size = UDim2.new(1, 0, 0, 14),
-		font = Theme.Font.Mono, textSize = Theme.Text.Body(), order = 3 })
+	makeLabel(row2, apText, { pos = UDim2.new(0.5, 0, 0, 0),
+		size = UDim2.new(0.5, 0, 1, 0), font = Theme.Font.Mono,
+		textSize = Theme.Text.Body(), color = Theme.Colors.TextPrimary })
 
 	-- Statuses
 	if d.statuses and #d.statuses > 0 then
@@ -336,15 +383,9 @@ function BattleHUD._buildActiveUnit()
 			statusText = statusText .. "[" .. s.id .. "(" .. (s.remainingTurns or "?") .. ")] "
 		end
 		makeLabel(activeUnitPanel, statusText, { size = UDim2.new(1, 0, 0, 12),
-			textSize = Theme.Text.Small(), color = Theme.Colors.Warning, order = 4 })
+			textSize = Theme.Text.Small(), color = Theme.Colors.Warning, order = 3 })
 	end
 
-	-- Tile info (bottom of panel)
-	if d.tileX and d.tileY then
-		local tileText = string.format("Tile (%d,%d)  Elev: %d", d.tileX, d.tileY, d.elevation or 1)
-		makeLabel(activeUnitPanel, tileText, { size = UDim2.new(1, 0, 0, 12),
-			textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 10 })
-	end
 end
 
 --------------------------------------------------
@@ -353,33 +394,112 @@ end
 
 function BattleHUD._buildActionGrid()
 	if not actionPanel then return end
+	BattleHUD.HideCommandBar()
 	clearFrame(actionPanel)
 	actionPanel.Visible = (presentation.state == "ActionSelection")
 	if presentation.state ~= "ActionSelection" then return end
 	if not presentation.actor or not presentation.actor.actions then return end
 
-	local grid = Instance.new("UIGridLayout", actionPanel)
-	grid.CellSize = UDim2.new(0.5, -4, 0.25, -3)
-	grid.CellPadding = UDim2.new(0, 4, 0, 3)
-	grid.SortOrder = Enum.SortOrder.LayoutOrder
-	grid.FillDirection = Enum.FillDirection.Horizontal
+	BattleHUD._showActionList(presentation.actor.actions, nil)
+end
+
+-- Renders a list of action entries into actionPanel.
+-- If parentLabel is provided, shows a "← Back" button that returns to the top level.
+function BattleHUD._showActionList(actions, parentLabel)
+	if not actionPanel then return end
+	clearFrame(actionPanel)
+	actionPanel.Visible = true
 
 	local pad = Instance.new("UIPadding", actionPanel)
-	pad.PaddingTop = UDim.new(0, 4); pad.PaddingLeft = UDim.new(0, 4)
-	pad.PaddingRight = UDim.new(0, 4); pad.PaddingBottom = UDim.new(0, 4)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
 
-	for i, action in ipairs(presentation.actor.actions) do
-		makeButton(actionPanel, action.text, {
-			size = nil, -- handled by grid
-			enabled = action.enabled,
-			onPress = action.onPress,
-			order = i,
-			textSize = Theme.Text.Body(),
+	local layout = Instance.new("UIListLayout", actionPanel)
+	layout.Padding = UDim.new(0, 3)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	-- Command bar: Back button when inside a submenu
+	if parentLabel then
+		BattleHUD.ShowCommandBar({
+			{ text = "Back", color = Theme.Colors.Surface, textColor = Theme.Colors.TextSecondary,
+			  onPress = function() BattleHUD._showActionList(presentation.actor.actions, nil) end },
 		})
+	else
+		BattleHUD.HideCommandBar()
+	end
+
+	for i, action in ipairs(actions) do
+		if action.isSubmenu and action.subActions then
+			makeButton(actionPanel, action.text .. " ▸", {
+				size = UDim2.new(1, 0, 0, Theme.Elem.RowMedium()),
+				enabled = action.enabled,
+				onPress = function()
+					BattleHUD._showActionList(action.subActions, "Back")
+				end,
+				order = i,
+				textSize = Theme.Text.Body(),
+			})
+		else
+			makeButton(actionPanel, action.text, {
+				size = UDim2.new(1, 0, 0, Theme.Elem.RowMedium()),
+				enabled = action.enabled,
+				onPress = action.onPress,
+				order = i,
+				textSize = Theme.Text.Body(),
+			})
+		end
 	end
 end
 
 --------------------------------------------------
+
+--------------------------------------------------
+-- COMMAND BAR — Fixed bottom-right Execute/Back
+--------------------------------------------------
+
+function BattleHUD.ShowCommandBar(buttons)
+	ensureRoot()
+	if not commandBar then return end
+	-- Clear previous
+	for _, child in ipairs(commandBar:GetChildren()) do child:Destroy() end
+
+	if not buttons or #buttons == 0 then
+		commandBar.Visible = false
+		return
+	end
+	commandBar.Visible = true
+
+	local btnCount = #buttons
+	local btnW = 1 / btnCount
+
+	for i, b in ipairs(buttons) do
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(btnW, -2, 1, 0)
+		btn.Position = UDim2.new(btnW * (i - 1), 1, 0, 0)
+		btn.BackgroundColor3 = b.color or Theme.Colors.Surface
+		btn.BackgroundTransparency = 0.15
+		btn.Font = Theme.Font.PrimaryBold; btn.TextSize = Theme.Text.Body()
+		btn.TextColor3 = b.textColor or Theme.Colors.TextPrimary
+		btn.Text = b.text or ""; btn.BorderSizePixel = 0
+		btn.Active = b.enabled ~= false
+		btn.AutoButtonColor = b.enabled ~= false
+		if b.enabled == false then btn.BackgroundTransparency = 0.6; btn.TextColor3 = Theme.Colors.TextDisabled end
+		btn.Parent = commandBar
+		Instance.new("UICorner", btn).CornerRadius = Theme.CornerRadius.sm
+		if b.onPress and b.enabled ~= false then
+			btn.MouseButton1Click:Connect(function()
+				if b.disableOnPress then btn.Active = false; btn.BackgroundTransparency = 0.6 end
+				b.onPress()
+			end)
+		end
+	end
+end
+
+function BattleHUD.HideCommandBar()
+	ensureRoot()
+	if commandBar then commandBar.Visible = false end
+end
+
 -- ACTION PANEL — Phase 2: Skill/Action Detail + Back
 --------------------------------------------------
 
@@ -393,8 +513,8 @@ function BattleHUD._buildActionDetail()
 	if not showDetail then return end
 
 	local pad = Instance.new("UIPadding", actionPanel)
-	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 6)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
 
 	local layout = Instance.new("UIListLayout", actionPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -430,21 +550,12 @@ function BattleHUD._buildActionDetail()
 		end
 	end
 
-	-- Back button (TargetSelection only — Preview has its own Back in the preview panel)
+	-- Command bar: Back button during TargetSelection
 	if state == "TargetSelection" then
-		local backBtn = Instance.new("TextButton")
-		backBtn.Size = UDim2.new(0.5, 0, 0, Theme.Elem.RowMedium() - 2)
-		backBtn.Position = UDim2.new(0.25, 0, 1, -28)
-		backBtn.BackgroundColor3 = Theme.Colors.Surface
-		backBtn.BackgroundTransparency = 0.2
-		backBtn.Font = Theme.Font.PrimaryBold; backBtn.TextSize = Theme.Text.Body()
-		backBtn.TextColor3 = Theme.Colors.TextSecondary
-		backBtn.Text = "← Back"; backBtn.BorderSizePixel = 0
-		backBtn.Parent = actionPanel
-		Instance.new("UICorner", backBtn).CornerRadius = Theme.CornerRadius.sm
-		if presentation.actor and presentation.actor.onBack then
-			backBtn.MouseButton1Click:Connect(presentation.actor.onBack)
-		end
+		BattleHUD.ShowCommandBar({
+			{ text = "Back", color = Theme.Colors.Surface, textColor = Theme.Colors.TextSecondary,
+			  onPress = presentation.actor and presentation.actor.onBack or nil },
+		})
 	end
 end
 
@@ -458,13 +569,14 @@ function BattleHUD._buildInspector()
 
 	local showUnit = presentation.target ~= nil
 	local showObject = false -- objectData not yet in presentation
-	inspectorPanel.Visible = showUnit or showObject
+	-- Only show non-active unit inspector in view mode
+	inspectorPanel.Visible = isViewMode and (showUnit or showObject)
 
 	if not inspectorPanel.Visible then return end
 
 	local pad = Instance.new("UIPadding", inspectorPanel)
-	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 6)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
 
 	local layout = Instance.new("UIListLayout", inspectorPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -588,11 +700,12 @@ function BattleHUD._buildTilePreview()
 	end
 
 	-- Otherwise show tile info
-	tilePreviewPanel.Visible = (presentation.tile ~= nil)
+	-- Only show terrain inspector in view mode or during Preview
+	tilePreviewPanel.Visible = isViewMode and (presentation.tile ~= nil)
 	if not presentation.tile then return end
 
 	local pad = Instance.new("UIPadding", tilePreviewPanel)
-	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
 
 	local layout = Instance.new("UIListLayout", tilePreviewPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -617,8 +730,8 @@ function BattleHUD._renderDamagePreview()
 	local p = presentation.preview
 
 	local pad = Instance.new("UIPadding", tilePreviewPanel)
-	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 6)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
 
 	local layout = Instance.new("UIListLayout", tilePreviewPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -794,41 +907,11 @@ function BattleHUD._renderDamagePreview()
 		end
 	end
 
-	-- Confirm + Back buttons
-	local btnRow = Instance.new("Frame")
-	btnRow.Size = UDim2.new(1, 0, 0, Theme.Elem.RowMedium())
-	btnRow.BackgroundTransparency = 1
-	btnRow.LayoutOrder = 100; btnRow.Parent = tilePreviewPanel
-
-	local confirmBtn = Instance.new("TextButton")
-	confirmBtn.Size = UDim2.new(0.48, 0, 1, 0)
-	confirmBtn.BackgroundColor3 = Theme.Colors.Success
-	confirmBtn.BackgroundTransparency = 0.15
-	confirmBtn.Font = Theme.Font.PrimaryBold; confirmBtn.TextSize = Theme.Text.Body()
-	confirmBtn.TextColor3 = Theme.Colors.TextPrimary
-	confirmBtn.Text = "Execute"; confirmBtn.BorderSizePixel = 0
-	confirmBtn.Parent = btnRow
-	Instance.new("UICorner", confirmBtn).CornerRadius = Theme.CornerRadius.sm
-	if p.onConfirm then
-		confirmBtn.MouseButton1Click:Connect(function()
-			confirmBtn.Active = false; confirmBtn.BackgroundTransparency = 0.6
-			p.onConfirm()
-		end)
-	end
-
-	local backBtn = Instance.new("TextButton")
-	backBtn.Size = UDim2.new(0.48, 0, 1, 0)
-	backBtn.Position = UDim2.new(0.52, 0, 0, 0)
-	backBtn.BackgroundColor3 = Theme.Colors.Surface
-	backBtn.BackgroundTransparency = 0.2
-	backBtn.Font = Theme.Font.PrimaryBold; backBtn.TextSize = Theme.Text.Body()
-	backBtn.TextColor3 = Theme.Colors.TextSecondary
-	backBtn.Text = "Back"; backBtn.BorderSizePixel = 0
-	backBtn.Parent = btnRow
-	Instance.new("UICorner", backBtn).CornerRadius = Theme.CornerRadius.sm
-	if p.onBack then
-		backBtn.MouseButton1Click:Connect(p.onBack)
-	end
+	-- Command bar: Execute + Back during Preview
+	BattleHUD.ShowCommandBar({
+		{ text = "Execute", color = Theme.Colors.Success, onPress = p.onConfirm, disableOnPress = true },
+		{ text = "Back", color = Theme.Colors.Surface, textColor = Theme.Colors.TextSecondary, onPress = p.onBack },
+	})
 end
 
 --------------------------------------------------
@@ -851,11 +934,12 @@ function BattleHUD.UpdateTimeline(entries)
 	layout.Padding = UDim.new(0, 3)
 
 	local pad = Instance.new("UIPadding", turnOrderBar)
-	pad.PaddingLeft = UDim.new(0, 4); pad.PaddingRight = UDim.new(0, 4)
-	pad.PaddingTop = UDim.new(0, 2); pad.PaddingBottom = UDim.new(0, 2)
+	pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
 
 	local barH = turnOrderBar.AbsoluteSize.Y
-	local slotH = math.max(barH - 6, 40)
+	-- Subtract padding (10 top + 10 bottom = 20) so slots fit inside the frame
+	local slotH = math.max(barH - 24, 32)
 
 	for i, entry in ipairs(entries) do
 		local isActive = entry.isActive or false
@@ -898,12 +982,13 @@ function BattleHUD.UpdateTimeline(entries)
 			portrait.BackgroundTransparency = 0.4
 		end
 
+
 		-- Active unit: gold border
 		if isActive then
 			local st = Instance.new("UIStroke", portrait)
 			st.Color = Theme.Colors.BorderFocused; st.Thickness = 2
 		end
-		-- Ghost: dashed-feel thin border
+		-- Ghost: thin border
 		if isGhost then
 			local st = Instance.new("UIStroke", portrait)
 			st.Color = Theme.Colors.TextSecondary; st.Thickness = 1
@@ -989,7 +1074,7 @@ function BattleHUD._buildBattleLog()
 	clearFrame(battleLogPanel)
 
 	local pad = Instance.new("UIPadding", battleLogPanel)
-	pad.PaddingTop = UDim.new(0, 4); pad.PaddingLeft = UDim.new(0, 6)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
 
 	local scroll = Instance.new("ScrollingFrame")
 	scroll.Size = UDim2.fromScale(1, 1)
@@ -1037,23 +1122,27 @@ function BattleHUD._buildViewModeUnit()
 	activeUnitPanel.Visible = true
 
 	local pad = Instance.new("UIPadding", activeUnitPanel)
-	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 6)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
 
 	local layout = Instance.new("UIListLayout", activeUnitPanel)
-	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 4); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-	-- Row 1: Portrait + Name/Info
+	local portraitSize = math.floor(Theme.Elem.Portrait() * 1.25)
+	local raceIconSize = math.floor(portraitSize * 0.8)
+	local topH = math.max(portraitSize + 4, 44)
+
+	-- === TOP ROW: [Portrait+Level] | [Name / Doctrine / HP-MP] | [Race Icon] ===
 	local topRow = Instance.new("Frame")
-	topRow.Size = UDim2.new(1, 0, 0, Theme.Elem.RowTall()); topRow.BackgroundTransparency = 1
+	topRow.Size = UDim2.new(1, 0, 0, topH); topRow.BackgroundTransparency = 1
 	topRow.LayoutOrder = 1; topRow.Parent = activeUnitPanel
 
 	local portrait = Instance.new("TextButton")
-	portrait.Size = UDim2.new(0, Theme.Elem.Portrait(), 0, Theme.Elem.Portrait())
-	portrait.Position = UDim2.new(0, 0, 0, 2)
+	portrait.Size = UDim2.new(0, portraitSize, 0, portraitSize)
+	portrait.Position = UDim2.new(0, 0, 0, 0)
 	portrait.BackgroundColor3 = Theme.GetSideColor(d.side)
 	portrait.BackgroundTransparency = 0.2
-	portrait.Font = Theme.Font.PrimaryBold; portrait.TextSize = Theme.Text.Title()
+	portrait.Font = Theme.Font.PrimaryBold; portrait.TextSize = Theme.Text.Heading()
 	portrait.TextColor3 = Theme.Colors.TextPrimary
 	portrait.Text = string.sub(d.name or "?", 1, 2)
 	portrait.BorderSizePixel = 0; portrait.Parent = topRow
@@ -1064,32 +1153,56 @@ function BattleHUD._buildViewModeUnit()
 		end
 	end)
 
-	makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, 42, 0, 0),
-		size = UDim2.new(1, -44, 0, 16), font = Theme.Font.PrimaryBold, textSize = Theme.Text.Heading(),
-		color = Theme.GetSideColor(d.side) })
-	local levelStr = d.level and ("Lv." .. d.level) or ""
-	local raceStr = d.race or "\xE2\x80\x94"
-	local docStr = d.doctrine and d.doctrine ~= "" and d.doctrine or nil
-	local infoLine = levelStr .. "  " .. raceStr
-	if docStr then infoLine = infoLine .. "  " .. docStr end
-	makeLabel(topRow, infoLine, { pos = UDim2.new(0, 42, 0, 16),
-		size = UDim2.new(1, -44, 0, 12), textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary })
+	-- Level badge on portrait
+	if d.level then
+		local lvl = Instance.new("TextLabel")
+		lvl.Size = UDim2.new(1, 0, 0, 12)
+		lvl.Position = UDim2.new(0, 0, 1, -12)
+		lvl.BackgroundColor3 = Color3.fromRGB(0, 0, 0); lvl.BackgroundTransparency = 0.3
+		lvl.Font = Theme.Font.Mono; lvl.TextSize = Theme.Text.Small()
+		lvl.TextColor3 = Theme.Colors.TextPrimary; lvl.Text = "Lv." .. d.level
+		lvl.BorderSizePixel = 0; lvl.Parent = portrait
+	end
 
-	-- HP / MP
-	local hpMpText = string.format("HP %d/%d    MP %d/%d",
-		d.currentHp or 0, d.maxHp or 0, d.currentMp or 0, d.maxMp or 0)
-	makeLabel(activeUnitPanel, hpMpText, { size = UDim2.new(1, 0, 0, 14),
-		font = Theme.Font.Mono, textSize = Theme.Text.Body(), order = 2 })
+	-- Center column: Name, Doctrine, HP/MP
+	local cx = portraitSize + 6
+	local cw = -(portraitSize + raceIconSize + 16)
+	makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, cx, 0, 0),
+		size = UDim2.new(1, cw, 0, 16), font = Theme.Font.PrimaryBold,
+		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) })
+	local docLine = (d.doctrine and d.doctrine ~= "") and d.doctrine or "\xE2\x80\x94"
+	makeLabel(topRow, docLine, { pos = UDim2.new(0, cx, 0, 16),
+		size = UDim2.new(1, cw, 0, 12), textSize = Theme.Text.Small(),
+		color = Theme.Colors.TextSecondary })
+	local hpMp = string.format("HP %d/%d  MP %d/%d", d.currentHp or 0, d.maxHp or 0, d.currentMp or 0, d.maxMp or 0)
+	makeLabel(topRow, hpMp, { pos = UDim2.new(0, cx, 0, 30),
+		size = UDim2.new(1, cw, 0, 14), font = Theme.Font.Mono,
+		textSize = Theme.Text.Body(), color = Theme.Colors.TextPrimary })
 
-	-- RT only (no AP in view mode)
+	-- Race icon (right, circular)
+	local raceIcon = Instance.new("Frame")
+	raceIcon.Size = UDim2.new(0, raceIconSize, 0, raceIconSize)
+	raceIcon.Position = UDim2.new(1, -raceIconSize, 0, 2)
+	raceIcon.BackgroundColor3 = Theme.Colors.Surface; raceIcon.BackgroundTransparency = 0.3
+	raceIcon.BorderSizePixel = 0; raceIcon.Parent = topRow
+	Instance.new("UICorner", raceIcon).CornerRadius = UDim.new(0.5, 0)
+	local raceText = Instance.new("TextLabel")
+	raceText.Size = UDim2.fromScale(1, 1); raceText.BackgroundTransparency = 1
+	raceText.Font = Theme.Font.Primary; raceText.TextSize = Theme.Text.Small()
+	raceText.TextColor3 = Theme.Colors.TextSecondary
+	raceText.Text = d.race and string.sub(d.race, 1, 3) or "\xE2\x80\x94"
+	raceText.Parent = raceIcon
+
+	-- === ROW 2: RT ===
 	makeLabel(activeUnitPanel, "RT " .. (d.remainingRt or 0), { size = UDim2.new(1, 0, 0, 14),
-		font = Theme.Font.Mono, textSize = Theme.Text.Body(), order = 3, color = Theme.Colors.TextSecondary })
+		font = Theme.Font.Mono, textSize = Theme.Text.Body(), order = 2,
+		color = Theme.Colors.TextSecondary })
 
 	-- Weapon
 	if d.weaponName then
 		local wpnText = string.format("\xE2\x9A\x94 %s  Dmg:%d  WT:%d", d.weaponName, d.weaponDamage or 0, d.weaponWt or 0)
 		makeLabel(activeUnitPanel, wpnText, { font = Theme.Font.Mono, textSize = Theme.Text.Body(),
-			color = Theme.Colors.TextGold, order = 4 })
+			color = Theme.Colors.TextGold, order = 3 })
 	end
 
 	-- Statuses
@@ -1099,14 +1212,10 @@ function BattleHUD._buildViewModeUnit()
 			statusText = statusText .. "[" .. s.id .. "(" .. (s.remainingTurns or "?") .. ")] "
 		end
 		makeLabel(activeUnitPanel, statusText, { size = UDim2.new(1, 0, 0, 12),
-			textSize = Theme.Text.Small(), color = Theme.Colors.Warning, order = 5 })
+			textSize = Theme.Text.Small(), color = Theme.Colors.Warning, order = 4 })
 	end
 
-	-- Tile info
-	if d.tileX and d.tileY then
-		makeLabel(activeUnitPanel, string.format("Tile (%d,%d)  Elev: %d", d.tileX, d.tileY, d.elevation or 1), {
-			size = UDim2.new(1, 0, 0, 12), textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 8 })
-	end
+
 
 	-- View Full Details button
 	local detailBtn = Instance.new("TextButton")
@@ -1137,8 +1246,8 @@ function BattleHUD._buildViewModeTile()
 	actionPanel.Visible = true
 
 	local pad = Instance.new("UIPadding", actionPanel)
-	pad.PaddingTop = UDim.new(0, 6); pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 6)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
 
 	local layout = Instance.new("UIListLayout", actionPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -1367,8 +1476,8 @@ function BattleHUD._buildSkillList()
 	if not presentation.actor or not presentation.actor.skillEntries then return end
 
 	local pad = Instance.new("UIPadding", actionPanel)
-	pad.PaddingTop = UDim.new(0, 4); pad.PaddingLeft = UDim.new(0, 4)
-	pad.PaddingRight = UDim.new(0, 4)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
 
 	local layout = Instance.new("UIListLayout", actionPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -1395,18 +1504,11 @@ function BattleHUD._buildSkillList()
 		if enabled and skill.onPress then btn.MouseButton1Click:Connect(skill.onPress) end
 	end
 
-	-- Back button
-	local backBtn = Instance.new("TextButton")
-	backBtn.Size = UDim2.new(0.5, 0, 0, Theme.Elem.RowSmall() + 2)
-	backBtn.BackgroundColor3 = Theme.Colors.Surface; backBtn.BackgroundTransparency = 0.3
-	backBtn.Font = Theme.Font.Primary; backBtn.TextSize = Theme.Text.Body()
-	backBtn.TextColor3 = Theme.Colors.TextSecondary
-	backBtn.Text = "← Back"; backBtn.BorderSizePixel = 0
-	backBtn.LayoutOrder = 100; backBtn.Parent = actionPanel
-	Instance.new("UICorner", backBtn).CornerRadius = Theme.CornerRadius.sm
-	if presentation.actor and presentation.actor.onBack then
-		backBtn.MouseButton1Click:Connect(presentation.actor.onBack)
-	end
+	-- Command bar: Back button during SkillSelection
+	BattleHUD.ShowCommandBar({
+		{ text = "Back", color = Theme.Colors.Surface, textColor = Theme.Colors.TextSecondary,
+		  onPress = presentation.actor and presentation.actor.onBack or nil },
+	})
 end
 
 --------------------------------------------------
