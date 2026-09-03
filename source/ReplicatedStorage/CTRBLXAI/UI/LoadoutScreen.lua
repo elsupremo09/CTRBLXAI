@@ -11,6 +11,8 @@ local player = Players.LocalPlayer
 local CTRBLXAI_UI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10)
 local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 local MockData    = require(CTRBLXAI_UI:WaitForChild("MockLoadoutData", 10))
+local BattleEvents = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+	:WaitForChild("Remotes", 10):WaitForChild("BattleEvents", 10))
 
 local LoadoutScreen = {}
 
@@ -133,9 +135,11 @@ end
 --------------------------------------------------
 
 local tabBarGui = nil
+local optionsDropdown = nil
 
 local function buildTabBar()
 	if tabBarGui then tabBarGui:Destroy() end
+	if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
 	local panel
 	tabBarGui, panel = Theme.MakeTabBar("LoadoutTabBar", getPlayerGui())
 
@@ -175,6 +179,96 @@ local function buildTabBar()
 			btn.TextColor3 = tb.InactiveColor
 		end
 	end
+
+	-- OPTIONS button (right-aligned, outside the centered tabs)
+	local optBtn = Instance.new("TextButton")
+	optBtn.Size = UDim2.new(0, 66, 0, 24)
+	optBtn.Position = UDim2.new(1, -8, 0, 8)
+	optBtn.AnchorPoint = Vector2.new(1, 0)
+	optBtn.BackgroundColor3 = Theme.Colors.Surface
+	optBtn.BackgroundTransparency = 0.3
+	optBtn.Font = Theme.Font.PrimaryBold
+	optBtn.TextSize = Theme.Text.Small()
+	optBtn.TextColor3 = Theme.Colors.TextSecondary
+	optBtn.Text = "OPTIONS"
+	optBtn.BorderSizePixel = 0
+	optBtn.Parent = tabBarGui
+	Instance.new("UICorner", optBtn).CornerRadius = UDim.new(0, 4)
+
+	optBtn.MouseButton1Click:Connect(function()
+		-- Toggle dropdown
+		if optionsDropdown then
+			optionsDropdown:Destroy()
+			optionsDropdown = nil
+			return
+		end
+
+		optionsDropdown = Instance.new("ScreenGui")
+		optionsDropdown.Name = "OptionsDropdown"
+		optionsDropdown.DisplayOrder = 115
+		optionsDropdown.ResetOnSpawn = false
+		optionsDropdown.Parent = getPlayerGui()
+
+		-- Backdrop to close on outside click
+		local backdrop = Instance.new("TextButton")
+		backdrop.Size = UDim2.fromScale(1, 1)
+		backdrop.BackgroundTransparency = 1
+		backdrop.Text = ""
+		backdrop.Parent = optionsDropdown
+		backdrop.MouseButton1Click:Connect(function()
+			if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
+		end)
+
+		-- Menu panel below the OPTIONS button
+		local menuItems = {
+			{ text = "Start Battle", color = Theme.Colors.Success, action = function()
+				if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
+				LoadoutScreen.Hide()
+				BattleEvents.StartBattle:FireServer()
+			end },
+			{ text = "Save Now", color = Theme.Colors.Info, action = function()
+				BattleEvents.DevCommand:FireServer({ action = "SaveNow" })
+				if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
+			end },
+			{ text = "Delete Save", color = Theme.Colors.Danger, action = function()
+				BattleEvents.DevCommand:FireServer({ action = "DeleteSave" })
+				if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
+			end },
+		}
+
+		local rowH = 28
+		local menuW = 110
+		local menuH = #menuItems * rowH + 6
+		local menuPanel = Instance.new("Frame")
+		menuPanel.Size = UDim2.new(0, menuW, 0, menuH)
+		menuPanel.Position = UDim2.new(0, optBtn.AbsolutePosition.X, 0, optBtn.AbsolutePosition.Y + optBtn.AbsoluteSize.Y + 2)
+		menuPanel.BackgroundColor3 = Theme.Colors.Panel
+		menuPanel.BorderSizePixel = 0
+		menuPanel.Parent = optionsDropdown
+		Instance.new("UICorner", menuPanel).CornerRadius = UDim.new(0, 4)
+		Instance.new("UIStroke", menuPanel).Color = Theme.Colors.Border
+		pad(menuPanel, 3, 3, 3, 3)
+
+		local menuLayout = Instance.new("UIListLayout", menuPanel)
+		menuLayout.Padding = UDim.new(0, 2)
+		menuLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+		for idx, mi in ipairs(menuItems) do
+			local row = Instance.new("TextButton")
+			row.Size = UDim2.new(1, 0, 0, rowH - 2)
+			row.BackgroundColor3 = mi.color
+			row.BackgroundTransparency = 0.75
+			row.Font = Theme.Font.PrimaryBold
+			row.TextSize = Theme.Text.Small()
+			row.TextColor3 = Theme.Colors.TextPrimary
+			row.Text = mi.text
+			row.BorderSizePixel = 0
+			row.LayoutOrder = idx
+			row.Parent = menuPanel
+			Instance.new("UICorner", row).CornerRadius = UDim.new(0, 3)
+			row.MouseButton1Click:Connect(mi.action)
+		end
+	end)
 end
 
 --------------------------------------------------
@@ -863,28 +957,12 @@ openItemDetail = function(item, compareItem)
 
 	pad(panel, 10, 12, 12, 10)
 
-	-- Title bar
-	makeLabel(panel, { Text = "ITEM DETAILS", Size = UDim2.new(1, 0, 0, 22),
-		Position = UDim2.new(0, 0, 0, 0),
-		Font = Theme.Font.PrimaryBold, TextSize = 14,
-		TextColor3 = Theme.Colors.TextGold, TextXAlignment = Enum.TextXAlignment.Center })
-
 	if compareItem then
 		-- ============ COMPARISON MODE ============
 		buildComparisonContent(panel, item, compareItem, unit)
 	else
 		-- ============ SOLO DETAIL MODE ============
 		buildSoloDetailContent(panel, item)
-	end
-
-	-- Flavor text (only in solo mode)
-	if not compareItem and item.flavor then
-		local flavorLbl = makeLabel(panel, { Text = item.flavor,
-			Size = UDim2.new(1, 0, 0, 20),
-			Position = UDim2.new(0, 0, 1, -24),
-			TextSize = 9, TextColor3 = Theme.Colors.TextDisabled,
-			TextWrapped = true, RichText = true,
-			Font = Enum.Font.SourceSansItalic })
 	end
 
 	-- ============ BUTTON BAR (fixed bottom-right of SCREEN, outside the panel) ============
@@ -966,12 +1044,13 @@ end
 buildSoloDetailContent = function(panel, item)
 	local rc = getRarityColor(item.rarity)
 
-	-- Item header row: icon + name + subtitle + tags
-	local headerY = 28
+	-- Item header: portrait + name + subtitle + tags + flavor
+	local headerY = 0
+	local portraitSize = 64
 
-	-- Rarity gem + icon
+	-- Portrait (larger, rarity-tinted)
 	local iconFrame = Instance.new("Frame")
-	iconFrame.Size = UDim2.new(0, 56, 0, 56)
+	iconFrame.Size = UDim2.new(0, portraitSize, 0, portraitSize)
 	iconFrame.Position = UDim2.new(0, 0, 0, headerY)
 	iconFrame.BackgroundColor3 = rc
 	iconFrame.BackgroundTransparency = 0.75
@@ -981,14 +1060,15 @@ buildSoloDetailContent = function(panel, item)
 	local iconStroke = Instance.new("UIStroke", iconFrame)
 	iconStroke.Color = rc
 	iconStroke.Thickness = 1.5
-
 	makeLabel(iconFrame, { Text = item.icon or "?", Size = UDim2.fromScale(1, 1),
-		TextSize = 28, TextXAlignment = Enum.TextXAlignment.Center })
+		TextSize = 30, TextXAlignment = Enum.TextXAlignment.Center })
 
+	local textX = portraitSize + 8
 	-- Name
-	makeLabel(panel, { Text = item.name, Size = UDim2.new(1, -70, 0, 20),
-		Position = UDim2.new(0, 64, 0, headerY),
-		Font = Theme.Font.PrimaryBold, TextSize = 16, TextColor3 = Theme.Colors.TextPrimary })
+	makeLabel(panel, { Text = item.name, Size = UDim2.new(1, -textX, 0, 18),
+		Position = UDim2.new(0, textX, 0, headerY),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Heading(),
+		TextColor3 = Theme.Colors.TextPrimary })
 
 	-- Subtitle: Lv.X · Rarity · SubType
 	local subParts = {}
@@ -996,39 +1076,49 @@ buildSoloDetailContent = function(panel, item)
 	table.insert(subParts, item.rarity or "Common")
 	if item.sub then table.insert(subParts, item.sub) end
 	makeLabel(panel, { Text = table.concat(subParts, "  ·  "),
-		Size = UDim2.new(1, -70, 0, 14),
-		Position = UDim2.new(0, 64, 0, headerY + 20),
-		TextSize = 11, TextColor3 = rc })
+		Size = UDim2.new(1, -textX, 0, 14),
+		Position = UDim2.new(0, textX, 0, headerY + 18),
+		TextSize = Theme.Text.Small(), TextColor3 = rc })
 
-	-- Tags row
+	-- Tags
+	local tagY = headerY + 34
 	if item.tags and #item.tags > 0 then
 		local tagRow = Instance.new("Frame")
-		tagRow.Size = UDim2.new(1, -70, 0, 18)
-		tagRow.Position = UDim2.new(0, 64, 0, headerY + 36)
+		tagRow.Size = UDim2.new(1, -textX, 0, 16)
+		tagRow.Position = UDim2.new(0, textX, 0, tagY)
 		tagRow.BackgroundTransparency = 1
 		tagRow.Parent = panel
-
 		local tagLayout = Instance.new("UIListLayout", tagRow)
 		tagLayout.FillDirection = Enum.FillDirection.Horizontal
-		tagLayout.Padding = UDim.new(0, 4)
-
+		tagLayout.Padding = UDim.new(0, 3)
 		for ti, tag in ipairs(item.tags) do
 			local chip = Instance.new("Frame")
-			chip.Size = UDim2.new(0, #tag * 6 + 12, 0, 16)
+			chip.Size = UDim2.new(0, #tag * 5 + 10, 0, 14)
 			chip.BackgroundColor3 = Theme.Colors.Surface
 			chip.BackgroundTransparency = 0.3
 			chip.BorderSizePixel = 0
 			chip.LayoutOrder = ti
 			chip.Parent = tagRow
-			Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 8)
+			Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 7)
 			makeLabel(chip, { Text = tag, Size = UDim2.fromScale(1, 1),
-				TextSize = 9, TextColor3 = Theme.Colors.TextSecondary,
+				TextSize = Theme.Text.Badge(), TextColor3 = Theme.Colors.TextSecondary,
 				TextXAlignment = Enum.TextXAlignment.Center })
 		end
+		tagY = tagY + 18
+	end
+
+	-- Flavor text (below tags)
+	if item.flavor then
+		makeLabel(panel, { Text = item.flavor,
+			Size = UDim2.new(1, -textX, 0, 16),
+			Position = UDim2.new(0, textX, 0, tagY),
+			TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextDisabled,
+			TextWrapped = true, Font = Enum.Font.SourceSansItalic })
+		tagY = tagY + 18
 	end
 
 	-- Divider
-	local divY = headerY + 60
+	local divY = math.max(tagY + 2, portraitSize + 4)
 	local div = Instance.new("Frame")
 	div.Size = UDim2.new(1, 0, 0, 1)
 	div.Position = UDim2.new(0, 0, 0, divY)
@@ -1036,180 +1126,273 @@ buildSoloDetailContent = function(panel, item)
 	div.BorderSizePixel = 0
 	div.Parent = panel
 
-	-- Two columns below divider
-	local bodyY = divY + 8
-	local bodyH = 240
+	-- Content area: two columns below divider
+	local bodyY = divY + 6
 	local halfW = 0.48
 
-	-- LEFT COLUMN: Stats + Bonus Attributes + Attack Pattern
-	local leftCol = Instance.new("Frame")
-	leftCol.Size = UDim2.new(halfW, 0, 0, bodyH)
-	leftCol.Position = UDim2.new(0, 0, 0, bodyY)
-	leftCol.BackgroundTransparency = 1
-	leftCol.Parent = panel
+	-- Container for switchable content (base vs bonus)
+	local contentFrame = Instance.new("Frame")
+	contentFrame.Size = UDim2.new(1, 0, 1, -(bodyY + 30))
+	contentFrame.Position = UDim2.new(0, 0, 0, bodyY)
+	contentFrame.BackgroundTransparency = 1
+	contentFrame.Parent = panel
 
-	-- Stats section
-	makeLabel(leftCol, { Text = "STATS", Size = UDim2.new(1, 0, 0, 14),
-		Font = Theme.Font.PrimaryBold, TextSize = 11, TextColor3 = Theme.Colors.TextSecondary })
+	-- State: which view is shown
+	local showingBonus = false
 
-	local statY = 18
-	local STAT_DISPLAY = { "Damage", "Range", "WeaponWT", "BasicAttackRT", "Force", "Stability", "Defense" }
-	local STAT_LABELS = { Damage="Damage", Range="Range", WeaponWT="Weapon WT", BasicAttackRT="Basic Attack RT", Force="Force", Stability="Stability", Defense="Defense" }
-	local STAT_ICONS = { Damage="⚔", Range="◎", WeaponWT="⚖", BasicAttackRT="⏱", Force="💥", Stability="🛡", Defense="🛡" }
+	local function buildBaseView()
+		for _, child in ipairs(contentFrame:GetChildren()) do child:Destroy() end
 
-	if item.stats then
-		for _, key in ipairs(STAT_DISPLAY) do
-			local val = item.stats[key]
-			if val ~= nil then
-				local row = Instance.new("Frame")
-				row.Size = UDim2.new(1, 0, 0, 16)
-				row.Position = UDim2.new(0, 0, 0, statY)
-				row.BackgroundTransparency = 1
-				row.Parent = leftCol
+		local leftCol = Instance.new("Frame")
+		leftCol.Size = UDim2.new(halfW, 0, 1, 0)
+		leftCol.Position = UDim2.new(0, 0, 0, 0)
+		leftCol.BackgroundTransparency = 1
+		leftCol.Parent = contentFrame
 
-				makeLabel(row, { Text = (STAT_ICONS[key] or "") .. " " .. (STAT_LABELS[key] or key),
-					Size = UDim2.new(0.65, 0, 1, 0),
-					TextSize = 11, TextColor3 = Theme.Colors.TextSecondary })
-				makeLabel(row, { Text = tostring(val),
-					Size = UDim2.new(0.35, 0, 1, 0), Position = UDim2.new(0.65, 0, 0, 0),
-					TextSize = 12, TextColor3 = Theme.Colors.TextPrimary,
-					Font = Theme.Font.PrimaryBold,
-					TextXAlignment = Enum.TextXAlignment.Right })
+		local rightCol = Instance.new("Frame")
+		rightCol.Size = UDim2.new(halfW, 0, 1, 0)
+		rightCol.Position = UDim2.new(1 - halfW, 0, 0, 0)
+		rightCol.BackgroundTransparency = 1
+		rightCol.Parent = contentFrame
 
-				statY = statY + 18
+		-- LEFT: Base stats
+		local statY = 0
+		local bs = item.baseStats or {}
+
+		if item.isWeapon then
+			-- Weapon: Attack, Range, Defense, WT, RT Delay
+			local weaponStats = {
+				{ label = "Attack", value = bs.Attack },
+				{ label = "Range", value = bs.Range },
+				{ label = "Defense", value = bs.Defense },
+				{ label = "WT", value = bs.WT },
+				{ label = "RT Delay", value = bs.RTDelay },
+			}
+			for _, s in ipairs(weaponStats) do
+				if s.value ~= nil then
+					local row = Instance.new("Frame")
+					row.Size = UDim2.new(1, 0, 0, 16)
+					row.Position = UDim2.new(0, 0, 0, statY)
+					row.BackgroundTransparency = 1
+					row.Parent = leftCol
+					makeLabel(row, { Text = s.label, Size = UDim2.new(0.6, 0, 1, 0),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextSecondary })
+					makeLabel(row, { Text = tostring(s.value), Size = UDim2.new(0.4, 0, 1, 0),
+						Position = UDim2.new(0.6, 0, 0, 0),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextPrimary,
+						Font = Theme.Font.PrimaryBold, TextXAlignment = Enum.TextXAlignment.Right })
+					statY = statY + 18
+				end
 			end
-		end
-	end
-
-	-- Bonus Attributes
-	if item.bonusAttr then
-		local hasBonus = false
-		for _ in pairs(item.bonusAttr) do hasBonus = true; break end
-		if hasBonus then
-			statY = statY + 6
-			makeLabel(leftCol, { Text = "BONUS ATTRIBUTES",
-				Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, statY),
-				Font = Theme.Font.PrimaryBold, TextSize = 11, TextColor3 = Theme.Colors.TextSecondary })
-			statY = statY + 16
-
-			for _, sn in ipairs(STAT_ORDER) do
-				local bv = item.bonusAttr[sn]
-				if bv and bv ~= 0 then
-					local sign = bv > 0 and "+" or ""
-					makeLabel(leftCol, { Text = sn .. "  " .. sign .. bv,
-						Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 8, 0, statY),
-						TextSize = 11, TextColor3 = Theme.Colors.Success })
-					statY = statY + 16
+		else
+			-- Non-weapon: Defense, HP, MP, WT
+			local armorStats = {
+				{ label = "Defense", value = bs.Defense },
+				{ label = "HP", value = bs.HP },
+				{ label = "MP", value = bs.MP },
+				{ label = "WT", value = bs.WT },
+			}
+			for _, s in ipairs(armorStats) do
+				if s.value ~= nil and s.value ~= 0 then
+					local row = Instance.new("Frame")
+					row.Size = UDim2.new(1, 0, 0, 16)
+					row.Position = UDim2.new(0, 0, 0, statY)
+					row.BackgroundTransparency = 1
+					row.Parent = leftCol
+					makeLabel(row, { Text = s.label, Size = UDim2.new(0.6, 0, 1, 0),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextSecondary })
+					makeLabel(row, { Text = tostring(s.value), Size = UDim2.new(0.4, 0, 1, 0),
+						Position = UDim2.new(0.6, 0, 0, 0),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextPrimary,
+						Font = Theme.Font.PrimaryBold, TextXAlignment = Enum.TextXAlignment.Right })
+					statY = statY + 18
 				end
 			end
 		end
-	end
 
-	-- Attack Pattern
-	if item.pattern then
-		statY = statY + 6
-		makeLabel(leftCol, { Text = "ATTACK PATTERN",
-			Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, statY),
-			Font = Theme.Font.PrimaryBold, TextSize = 11, TextColor3 = Theme.Colors.TextSecondary })
-		statY = statY + 16
-		makeLabel(leftCol, { Text = item.pattern.desc or item.pattern.type or "",
-			Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 8, 0, statY),
-			TextSize = 10, TextColor3 = Theme.Colors.TextPrimary })
-	end
-
-	-- RIGHT COLUMN: Passives
-	local rightCol = Instance.new("Frame")
-	rightCol.Size = UDim2.new(halfW, 0, 0, bodyH)
-	rightCol.Position = UDim2.new(1 - halfW, 0, 0, bodyY)
-	rightCol.BackgroundTransparency = 1
-	rightCol.Parent = panel
-
-	makeLabel(rightCol, { Text = "PASSIVES", Size = UDim2.new(1, 0, 0, 14),
-		Font = Theme.Font.PrimaryBold, TextSize = 11, TextColor3 = Theme.Colors.TextSecondary })
-
-	local passY = 18
-	if item.passives and #item.passives > 0 then
-		for _, p in ipairs(item.passives) do
-			-- Passive card
-			local pCard = Instance.new("Frame")
-			pCard.Size = UDim2.new(1, 0, 0, 56)
-			pCard.Position = UDim2.new(0, 0, 0, passY)
-			pCard.BackgroundColor3 = Theme.Colors.PanelRaised
-			pCard.BackgroundTransparency = 0.3
-			pCard.BorderSizePixel = 0
-			pCard.Parent = rightCol
-			Instance.new("UICorner", pCard).CornerRadius = UDim.new(0, 4)
-
-			-- Icon
-			makeLabel(pCard, { Text = p.icon or "✦", Size = UDim2.new(0, 32, 0, 32),
-				Position = UDim2.new(0, 4, 0, 4),
-				TextSize = 20, TextXAlignment = Enum.TextXAlignment.Center })
-
-			-- Name
-			makeLabel(pCard, { Text = p.name or "Passive",
-				Size = UDim2.new(1, -44, 0, 16), Position = UDim2.new(0, 40, 0, 2),
-				Font = Theme.Font.PrimaryBold, TextSize = 12,
-				TextColor3 = Theme.Colors.Success })
-
-			-- Description
-			makeLabel(pCard, { Text = p.desc or "",
-				Size = UDim2.new(1, -44, 0, 34), Position = UDim2.new(0, 40, 0, 18),
-				TextSize = 10, TextColor3 = Theme.Colors.TextSecondary,
-				TextWrapped = true })
-
-			passY = passY + 62
+		-- RIGHT: Archetype passives
+		makeLabel(rightCol, { Text = "PASSIVES", Size = UDim2.new(1, 0, 0, 12),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary })
+		local passY = 14
+		if item.passives and #item.passives > 0 then
+			for _, p in ipairs(item.passives) do
+				local pCard = Instance.new("Frame")
+				pCard.Size = UDim2.new(1, 0, 0, 48)
+				pCard.Position = UDim2.new(0, 0, 0, passY)
+				pCard.BackgroundColor3 = Theme.Colors.PanelRaised
+				pCard.BackgroundTransparency = 0.3
+				pCard.BorderSizePixel = 0
+				pCard.Parent = rightCol
+				Instance.new("UICorner", pCard).CornerRadius = UDim.new(0, 4)
+				makeLabel(pCard, { Text = p.icon or "✦", Size = UDim2.new(0, 28, 0, 28),
+					Position = UDim2.new(0, 3, 0, 3),
+					TextSize = 18, TextXAlignment = Enum.TextXAlignment.Center })
+				makeLabel(pCard, { Text = p.name or "Passive",
+					Size = UDim2.new(1, -36, 0, 14), Position = UDim2.new(0, 34, 0, 1),
+					Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
+					TextColor3 = Theme.Colors.Success })
+				makeLabel(pCard, { Text = p.desc or "",
+					Size = UDim2.new(1, -36, 0, 28), Position = UDim2.new(0, 34, 0, 16),
+					TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+					TextWrapped = true })
+				passY = passY + 52
+			end
+		else
+			makeLabel(rightCol, { Text = "None", Size = UDim2.new(1, 0, 0, 14),
+				Position = UDim2.new(0, 0, 0, passY),
+				TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
 		end
-	else
-		makeLabel(rightCol, { Text = "No passives",
-			Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, passY),
-			TextSize = 11, TextColor3 = Theme.Colors.TextDisabled })
 	end
+
+	local function buildBonusView()
+		for _, child in ipairs(contentFrame:GetChildren()) do child:Destroy() end
+
+		local leftCol = Instance.new("Frame")
+		leftCol.Size = UDim2.new(halfW, 0, 1, 0)
+		leftCol.Position = UDim2.new(0, 0, 0, 0)
+		leftCol.BackgroundTransparency = 1
+		leftCol.Parent = contentFrame
+
+		local rightCol = Instance.new("Frame")
+		rightCol.Size = UDim2.new(halfW, 0, 1, 0)
+		rightCol.Position = UDim2.new(1 - halfW, 0, 0, 0)
+		rightCol.BackgroundTransparency = 1
+		rightCol.Parent = contentFrame
+
+		-- LEFT: Bonus numerical stats
+		makeLabel(leftCol, { Text = "BONUS STATS", Size = UDim2.new(1, 0, 0, 12),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary })
+		local statY = 14
+		local bs = item.bonusStats or {}
+		local BONUS_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK", "HP", "MP", "Fortune", "Precision", "Evasiveness" }
+		local hasAny = false
+		for _, sn in ipairs(BONUS_ORDER) do
+			local bv = bs[sn]
+			if bv and bv ~= 0 then
+				hasAny = true
+				local sign = bv > 0 and "+" or ""
+				makeLabel(leftCol, { Text = sn .. "  " .. sign .. bv,
+					Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 4, 0, statY),
+					TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.Success })
+				statY = statY + 16
+			end
+		end
+		if not hasAny then
+			makeLabel(leftCol, { Text = "None", Size = UDim2.new(1, 0, 0, 14),
+				Position = UDim2.new(0, 4, 0, statY),
+				TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
+		end
+
+		-- RIGHT: Bonus passives
+		makeLabel(rightCol, { Text = "BONUS PASSIVES", Size = UDim2.new(1, 0, 0, 12),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary })
+		local passY = 14
+		local bp = item.bonusPassives or {}
+		if #bp > 0 then
+			for _, p in ipairs(bp) do
+				local pCard = Instance.new("Frame")
+				pCard.Size = UDim2.new(1, 0, 0, 48)
+				pCard.Position = UDim2.new(0, 0, 0, passY)
+				pCard.BackgroundColor3 = Theme.Colors.PanelRaised
+				pCard.BackgroundTransparency = 0.3
+				pCard.BorderSizePixel = 0
+				pCard.Parent = rightCol
+				Instance.new("UICorner", pCard).CornerRadius = UDim.new(0, 4)
+				makeLabel(pCard, { Text = p.icon or "✦", Size = UDim2.new(0, 28, 0, 28),
+					Position = UDim2.new(0, 3, 0, 3),
+					TextSize = 18, TextXAlignment = Enum.TextXAlignment.Center })
+				makeLabel(pCard, { Text = p.name or "Passive",
+					Size = UDim2.new(1, -36, 0, 14), Position = UDim2.new(0, 34, 0, 1),
+					Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
+					TextColor3 = Theme.Colors.Info })
+				makeLabel(pCard, { Text = p.desc or "",
+					Size = UDim2.new(1, -36, 0, 28), Position = UDim2.new(0, 34, 0, 16),
+					TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+					TextWrapped = true })
+				passY = passY + 52
+			end
+		else
+			makeLabel(rightCol, { Text = "None", Size = UDim2.new(1, 0, 0, 14),
+				Position = UDim2.new(0, 0, 0, passY),
+				TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
+		end
+	end
+
+	-- Show base view initially
+	buildBaseView()
+
+	-- Toggle button (lower-left of panel)
+	local toggleBtn = Instance.new("TextButton")
+	toggleBtn.Size = UDim2.new(0, 90, 0, 24)
+	toggleBtn.Position = UDim2.new(0, 0, 1, -28)
+	toggleBtn.BackgroundColor3 = Theme.Colors.Surface
+	toggleBtn.BackgroundTransparency = 0.2
+	toggleBtn.Font = Theme.Font.PrimaryBold
+	toggleBtn.TextSize = 10
+	toggleBtn.TextColor3 = Theme.Colors.TextSecondary
+	toggleBtn.Text = "Show Bonus >"
+	toggleBtn.BorderSizePixel = 0
+	toggleBtn.Parent = panel
+	Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 4)
+	toggleBtn.MouseButton1Click:Connect(function()
+		showingBonus = not showingBonus
+		if showingBonus then
+			buildBonusView()
+			toggleBtn.Text = "< Show Base"
+		else
+			buildBaseView()
+			toggleBtn.Text = "Show Bonus >"
+		end
+	end)
 end
+
 
 --------------------------------------------------
 -- COMPARISON CONTENT (reference image 2)
 --------------------------------------------------
 
 buildComparisonContent = function(panel, selectedItem, currentItem, unit)
-	local headerY = 28
+	-- Compact header: two item cards side by side (persistent, not affected by toggle)
+	local headerY = 0
+	local cardH = 40
+	local halfW = 0.46
 
-	-- CURRENT column header
-	makeLabel(panel, { Text = "CURRENT", Size = UDim2.new(0.3, 0, 0, 14),
+	-- CURRENT label + card (left)
+	makeLabel(panel, { Text = "CURRENT", Size = UDim2.new(halfW, 0, 0, 12),
 		Position = UDim2.new(0, 0, 0, headerY),
-		TextSize = 11, TextColor3 = Theme.Colors.TextSecondary,
+		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
 		TextXAlignment = Enum.TextXAlignment.Center,
 		Font = Theme.Font.PrimaryBold })
 
-	-- SELECTED column header
-	makeLabel(panel, { Text = "SELECTED", Size = UDim2.new(0.3, 0, 0, 14),
-		Position = UDim2.new(0.55, 0, 0, headerY),
-		TextSize = 11, TextColor3 = Theme.Colors.TextSecondary,
-		TextXAlignment = Enum.TextXAlignment.Center,
-		Font = Theme.Font.PrimaryBold })
-
-	-- Current item card
 	local curCard = Instance.new("Frame")
-	curCard.Size = UDim2.new(0.3, 0, 0, 56)
-	curCard.Position = UDim2.new(0, 0, 0, headerY + 16)
+	curCard.Size = UDim2.new(halfW, 0, 0, cardH)
+	curCard.Position = UDim2.new(0, 0, 0, headerY + 14)
 	curCard.BackgroundColor3 = getRarityColor(currentItem.rarity)
 	curCard.BackgroundTransparency = 0.75
 	curCard.BorderSizePixel = 0
 	curCard.Parent = panel
 	Instance.new("UICorner", curCard).CornerRadius = UDim.new(0, 4)
 	Instance.new("UIStroke", curCard).Color = getRarityColor(currentItem.rarity)
-	makeLabel(curCard, { Text = currentItem.icon or "?", Size = UDim2.new(0, 32, 1, 0),
-		TextSize = 22, TextXAlignment = Enum.TextXAlignment.Center })
-	makeLabel(curCard, { Text = currentItem.name .. "\nLv." .. (currentItem.lv or 0),
-		Size = UDim2.new(1, -36, 1, 0), Position = UDim2.new(0, 34, 0, 4),
-		TextSize = 11, TextWrapped = true, TextColor3 = Theme.Colors.TextPrimary })
-	makeLabel(curCard, { Text = "(Equipped)",
-		Size = UDim2.new(1, -36, 0, 12), Position = UDim2.new(0, 34, 1, -14),
-		TextSize = 9, TextColor3 = Theme.Colors.TextSecondary })
+	makeLabel(curCard, { Text = currentItem.icon or "?", Size = UDim2.new(0, 28, 1, 0),
+		TextSize = 20, TextXAlignment = Enum.TextXAlignment.Center })
+	makeLabel(curCard, { Text = currentItem.name,
+		Size = UDim2.new(1, -32, 0, 14), Position = UDim2.new(0, 30, 0, 3),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
+		TextColor3 = Theme.Colors.TextPrimary })
+	makeLabel(curCard, { Text = "Lv." .. (currentItem.lv or 0) .. "  (Equipped)",
+		Size = UDim2.new(1, -32, 0, 12), Position = UDim2.new(0, 30, 0, 18),
+		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary })
 
-	-- Selected item card
+	-- SELECTED label + card (right)
+	makeLabel(panel, { Text = "SELECTED", Size = UDim2.new(halfW, 0, 0, 12),
+		Position = UDim2.new(1 - halfW, 0, 0, headerY),
+		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Font = Theme.Font.PrimaryBold })
+
 	local selCard = Instance.new("Frame")
-	selCard.Size = UDim2.new(0.3, 0, 0, 56)
-	selCard.Position = UDim2.new(0.55, 0, 0, headerY + 16)
+	selCard.Size = UDim2.new(halfW, 0, 0, cardH)
+	selCard.Position = UDim2.new(1 - halfW, 0, 0, headerY + 14)
 	selCard.BackgroundColor3 = getRarityColor(selectedItem.rarity)
 	selCard.BackgroundTransparency = 0.75
 	selCard.BorderSizePixel = 0
@@ -1218,197 +1401,270 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 	local selStroke = Instance.new("UIStroke", selCard)
 	selStroke.Color = Theme.Colors.TextGold
 	selStroke.Thickness = 2
-	makeLabel(selCard, { Text = selectedItem.icon or "?", Size = UDim2.new(0, 32, 1, 0),
-		TextSize = 22, TextXAlignment = Enum.TextXAlignment.Center })
-	makeLabel(selCard, { Text = selectedItem.name .. "\nLv." .. (selectedItem.lv or 0),
-		Size = UDim2.new(1, -36, 1, 0), Position = UDim2.new(0, 34, 0, 4),
-		TextSize = 11, TextWrapped = true, TextColor3 = Theme.Colors.TextPrimary })
+	makeLabel(selCard, { Text = selectedItem.icon or "?", Size = UDim2.new(0, 28, 1, 0),
+		TextSize = 20, TextXAlignment = Enum.TextXAlignment.Center })
+	makeLabel(selCard, { Text = selectedItem.name,
+		Size = UDim2.new(1, -32, 0, 14), Position = UDim2.new(0, 30, 0, 3),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
+		TextColor3 = Theme.Colors.TextPrimary })
+	makeLabel(selCard, { Text = "Lv." .. (selectedItem.lv or 0),
+		Size = UDim2.new(1, -32, 0, 12), Position = UDim2.new(0, 30, 0, 18),
+		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary })
 
-	-- Stat comparison table
-	local tableY = headerY + 80
-	local COMPARE_STATS = { "Damage", "Range", "WeaponWT", "BasicAttackRT", "Force", "Stability", "Defense" }
-	local COMPARE_LABELS = { Damage="Damage", Range="Range", WeaponWT="Weapon WT", BasicAttackRT="Basic Attack RT", Force="Force", Stability="Stability", Defense="Defense" }
-	-- Stats where lower is better
-	local LOWER_IS_BETTER = { WeaponWT = true, BasicAttackRT = true }
+	-- Divider
+	local divY = headerY + 14 + cardH + 4
+	local div = Instance.new("Frame")
+	div.Size = UDim2.new(1, 0, 0, 1)
+	div.Position = UDim2.new(0, 0, 0, divY)
+	div.BackgroundColor3 = Theme.Colors.Border
+	div.BorderSizePixel = 0
+	div.Parent = panel
 
-	local curStats = currentItem.stats or {}
-	local selStats = selectedItem.stats or {}
+	-- Content container (switchable)
+	local bodyY = divY + 4
+	local contentFrame = Instance.new("Frame")
+	contentFrame.Size = UDim2.new(1, 0, 1, -(bodyY + 30))
+	contentFrame.Position = UDim2.new(0, 0, 0, bodyY)
+	contentFrame.BackgroundTransparency = 1
+	contentFrame.Parent = panel
 
-	local rowY = tableY
-	for _, key in ipairs(COMPARE_STATS) do
-		local cv = curStats[key]
-		local sv = selStats[key]
-		if cv ~= nil or sv ~= nil then
-			local row = Instance.new("Frame")
-			row.Size = UDim2.new(1, 0, 0, 18)
-			row.Position = UDim2.new(0, 0, 0, rowY)
-			row.BackgroundTransparency = 1
-			row.Parent = panel
+	local showingBonus = false
 
-			-- Current value (left)
-			makeLabel(row, { Text = tostring(cv or "—"),
-				Size = UDim2.new(0.2, 0, 1, 0),
-				TextSize = 12, TextColor3 = Theme.Colors.TextPrimary,
-				TextXAlignment = Enum.TextXAlignment.Center,
-				Font = Theme.Font.PrimaryBold })
+	-- Helper: build a stat comparison row
+	local COMPARE_STATS = { "Attack", "Range", "Defense", "WT", "RTDelay" }
+	local COMPARE_LABELS = { Attack="Attack", Range="Range", Defense="Defense", WT="WT", RTDelay="RT Delay" }
+	local LOWER_IS_BETTER = { WT = true, RTDelay = true }
+	local STAT_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK" }
 
-			-- Stat name (center)
-			makeLabel(row, { Text = COMPARE_LABELS[key] or key,
-				Size = UDim2.new(0.3, 0, 1, 0), Position = UDim2.new(0.2, 0, 0, 0),
-				TextSize = 11, TextColor3 = Theme.Colors.TextSecondary,
+	local function addStatRow(parent, label, cvStr, svStr, delta, isGood, y)
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 16)
+		row.Position = UDim2.new(0, 0, 0, y)
+		row.BackgroundTransparency = 1
+		row.Parent = parent
+		makeLabel(row, { Text = cvStr, Size = UDim2.new(0.18, 0, 1, 0),
+			TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Center, Font = Theme.Font.PrimaryBold })
+		makeLabel(row, { Text = label, Size = UDim2.new(0.24, 0, 1, 0),
+			Position = UDim2.new(0.18, 0, 0, 0),
+			TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary,
+			TextXAlignment = Enum.TextXAlignment.Center })
+		makeLabel(row, { Text = svStr, Size = UDim2.new(0.18, 0, 1, 0),
+			Position = UDim2.new(0.54, 0, 0, 0),
+			TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Center, Font = Theme.Font.PrimaryBold })
+		if delta and delta ~= "" then
+			makeLabel(row, { Text = delta, Size = UDim2.new(0.14, 0, 1, 0),
+				Position = UDim2.new(0.78, 0, 0, 0),
+				TextSize = Theme.Text.Small(), Font = Theme.Font.PrimaryBold,
+				TextColor3 = isGood and Theme.Colors.Success or Theme.Colors.Danger,
 				TextXAlignment = Enum.TextXAlignment.Center })
+		end
+	end
 
-			-- Selected value
-			makeLabel(row, { Text = tostring(sv or "—"),
-				Size = UDim2.new(0.2, 0, 1, 0), Position = UDim2.new(0.55, 0, 0, 0),
-				TextSize = 12, TextColor3 = Theme.Colors.TextPrimary,
-				TextXAlignment = Enum.TextXAlignment.Center,
-				Font = Theme.Font.PrimaryBold })
+	local function addPassiveCard(parent, name, desc, isLost, y, xScale)
+		local card = Instance.new("Frame")
+		card.Size = UDim2.new(0.48, 0, 0, 36)
+		card.Position = UDim2.new(xScale, 0, 0, y)
+		card.BackgroundColor3 = isLost and Theme.Colors.Danger or Theme.Colors.Success
+		card.BackgroundTransparency = 0.85
+		card.BorderSizePixel = 0
+		card.Parent = parent
+		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
+		local tagColor = isLost and Theme.Colors.Danger or Theme.Colors.Success
+		local suffix = isLost and " (Lost)" or " (Gained)"
+		makeLabel(card, { Text = name .. suffix,
+			Size = UDim2.new(1, -6, 0, 12), Position = UDim2.new(0, 3, 0, 2),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
+			TextColor3 = tagColor })
+		makeLabel(card, { Text = desc or "",
+			Size = UDim2.new(1, -6, 0, 18), Position = UDim2.new(0, 3, 0, 14),
+			TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+			TextWrapped = true })
+	end
 
-			-- Delta (right)
-			local cvNum = tonumber(cv)
-			local svNum = tonumber(sv)
-			if cvNum and svNum then
-				local diff = svNum - cvNum
-				if diff ~= 0 then
-					local lowerBetter = LOWER_IS_BETTER[key]
-					local isGood = (lowerBetter and diff < 0) or (not lowerBetter and diff > 0)
-					local sign = diff > 0 and "+" or ""
-					makeLabel(row, { Text = sign .. diff,
-						Size = UDim2.new(0.2, 0, 1, 0), Position = UDim2.new(0.8, 0, 0, 0),
-						TextSize = 11,
-						TextColor3 = isGood and Theme.Colors.Success or Theme.Colors.Danger,
-						TextXAlignment = Enum.TextXAlignment.Center,
-						Font = Theme.Font.PrimaryBold })
+	-- ============ BASE COMPARE VIEW ============
+	local function buildBaseCompare()
+		for _, child in ipairs(contentFrame:GetChildren()) do child:Destroy() end
+
+		local curStats = currentItem.baseStats or {}
+		local selStats = selectedItem.baseStats or {}
+		local rowY = 0
+
+		for _, key in ipairs(COMPARE_STATS) do
+			local cv = curStats[key]
+			local sv = selStats[key]
+			if cv ~= nil or sv ~= nil then
+				local delta = ""
+				local isGood = false
+				local cvNum = tonumber(cv)
+				local svNum = tonumber(sv)
+				if cvNum and svNum then
+					local diff = svNum - cvNum
+					if diff ~= 0 then
+						local lowerBetter = LOWER_IS_BETTER[key]
+						isGood = (lowerBetter and diff < 0) or (not lowerBetter and diff > 0)
+						local sign = diff > 0 and "+" or ""
+						delta = sign .. diff
+					end
+				elseif type(cv) == "string" and type(sv) == "string" and cv ~= sv then
+					delta = "~"
 				end
-			elseif type(cv) == "string" and type(sv) == "string" and cv ~= sv then
-				-- Range strings like "1" vs "6 - 8"
-				makeLabel(row, { Text = "~",
-					Size = UDim2.new(0.2, 0, 1, 0), Position = UDim2.new(0.8, 0, 0, 0),
-					TextSize = 11, TextColor3 = Theme.Colors.Info,
-					TextXAlignment = Enum.TextXAlignment.Center })
+				addStatRow(contentFrame, COMPARE_LABELS[key] or key,
+					tostring(cv or "—"), tostring(sv or "—"), delta, isGood, rowY)
+				rowY = rowY + 18
 			end
-
-			rowY = rowY + 20
 		end
-	end
 
-	-- Bonus attribute comparison
-	rowY = rowY + 6
-	makeLabel(panel, { Text = "BONUS ATTRIBUTES",
-		Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, rowY),
-		Font = Theme.Font.PrimaryBold, TextSize = 11, TextColor3 = Theme.Colors.TextSecondary,
-		TextXAlignment = Enum.TextXAlignment.Center })
-	rowY = rowY + 16
+		-- Archetype passive comparison
+		rowY = rowY + 4
+		makeLabel(contentFrame, { Text = "PASSIVES",
+			Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 0, rowY),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+			TextColor3 = Theme.Colors.TextSecondary,
+			TextXAlignment = Enum.TextXAlignment.Center })
+		rowY = rowY + 14
 
-	local curBA = currentItem.bonusAttr or {}
-	local selBA = selectedItem.bonusAttr or {}
+		local curPN = {}
+		if currentItem.passives then for _, p in ipairs(currentItem.passives) do curPN[p.name] = p end end
+		local selPN = {}
+		if selectedItem.passives then for _, p in ipairs(selectedItem.passives) do selPN[p.name] = p end end
 
-	-- Current bonus (left)
-	local curParts = {}
-	for _, sn in ipairs(STAT_ORDER) do
-		if curBA[sn] and curBA[sn] ~= 0 then table.insert(curParts, sn .. " +" .. curBA[sn]) end
-	end
-	makeLabel(panel, { Text = #curParts > 0 and table.concat(curParts, ", ") or "—",
-		Size = UDim2.new(0.4, 0, 0, 14), Position = UDim2.new(0, 0, 0, rowY),
-		TextSize = 10, TextColor3 = Theme.Colors.TextSecondary,
-		TextXAlignment = Enum.TextXAlignment.Center })
-
-	-- Selected bonus (right)
-	local selParts = {}
-	for _, sn in ipairs(STAT_ORDER) do
-		if selBA[sn] and selBA[sn] ~= 0 then table.insert(selParts, sn .. " +" .. selBA[sn]) end
-	end
-	makeLabel(panel, { Text = #selParts > 0 and table.concat(selParts, ", ") or "—",
-		Size = UDim2.new(0.4, 0, 0, 14), Position = UDim2.new(0.55, 0, 0, rowY),
-		TextSize = 10, TextColor3 = Theme.Colors.TextSecondary,
-		TextXAlignment = Enum.TextXAlignment.Center })
-
-	-- Net change
-	rowY = rowY + 16
-	local netParts = {}
-	for _, sn in ipairs(STAT_ORDER) do
-		local cv2 = curBA[sn] or 0
-		local sv2 = selBA[sn] or 0
-		local diff = sv2 - cv2
-		if diff ~= 0 then
-			local sign = diff > 0 and "+" or ""
-			local color = diff > 0 and "rgb(60,200,80)" or "rgb(220,50,50)"
-			table.insert(netParts, "<font color=\"" .. color .. "\">" .. sn .. " " .. sign .. diff .. "</font>")
+		if currentItem.passives then
+			for _, p in ipairs(currentItem.passives) do
+				if not selPN[p.name] then
+					addPassiveCard(contentFrame, p.name, p.desc, true, rowY, 0)
+				end
+			end
 		end
-	end
-	if #netParts > 0 then
-		makeLabel(panel, { Text = "Net: " .. table.concat(netParts, ", "),
-			Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, rowY),
-			TextSize = 10, TextColor3 = Theme.Colors.TextSecondary,
-			TextXAlignment = Enum.TextXAlignment.Center, RichText = true })
-		rowY = rowY + 18
-	end
-
-	-- Passive comparison
-	rowY = rowY + 4
-	makeLabel(panel, { Text = "PASSIVE",
-		Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, rowY),
-		Font = Theme.Font.PrimaryBold, TextSize = 11, TextColor3 = Theme.Colors.TextSecondary,
-		TextXAlignment = Enum.TextXAlignment.Center })
-	rowY = rowY + 16
-
-	local curPassNames = {}
-	if currentItem.passives then
-		for _, p in ipairs(currentItem.passives) do curPassNames[p.name] = p end
-	end
-	local selPassNames = {}
-	if selectedItem.passives then
-		for _, p in ipairs(selectedItem.passives) do selPassNames[p.name] = p end
-	end
-
-	-- Lost passives (current has, selected doesn't)
-	if currentItem.passives then
-		for _, p in ipairs(currentItem.passives) do
-			if not selPassNames[p.name] then
-				local lostCard = Instance.new("Frame")
-				lostCard.Size = UDim2.new(0.48, 0, 0, 44)
-				lostCard.Position = UDim2.new(0, 0, 0, rowY)
-				lostCard.BackgroundColor3 = Theme.Colors.Danger
-				lostCard.BackgroundTransparency = 0.85
-				lostCard.BorderSizePixel = 0
-				lostCard.Parent = panel
-				Instance.new("UICorner", lostCard).CornerRadius = UDim.new(0, 4)
-				makeLabel(lostCard, { Text = p.name .. " (Lost)",
-					Size = UDim2.new(1, -8, 0, 14), Position = UDim2.new(0, 4, 0, 2),
-					Font = Theme.Font.PrimaryBold, TextSize = 11,
-					TextColor3 = Theme.Colors.Danger })
-				makeLabel(lostCard, { Text = p.desc or "",
-					Size = UDim2.new(1, -8, 0, 24), Position = UDim2.new(0, 4, 0, 16),
-					TextSize = 9, TextColor3 = Theme.Colors.TextSecondary, TextWrapped = true })
+		if selectedItem.passives then
+			for _, p in ipairs(selectedItem.passives) do
+				if not curPN[p.name] then
+					addPassiveCard(contentFrame, p.name, p.desc, false, rowY, 0.52)
+					rowY = rowY + 40
+				end
 			end
 		end
 	end
 
-	-- Gained passives (selected has, current doesn't)
-	if selectedItem.passives then
-		for _, p in ipairs(selectedItem.passives) do
-			if not curPassNames[p.name] then
-				local gainCard = Instance.new("Frame")
-				gainCard.Size = UDim2.new(0.48, 0, 0, 44)
-				gainCard.Position = UDim2.new(0.52, 0, 0, rowY)
-				gainCard.BackgroundColor3 = Theme.Colors.Success
-				gainCard.BackgroundTransparency = 0.85
-				gainCard.BorderSizePixel = 0
-				gainCard.Parent = panel
-				Instance.new("UICorner", gainCard).CornerRadius = UDim.new(0, 4)
-				makeLabel(gainCard, { Text = p.name .. " (Gained)",
-					Size = UDim2.new(1, -8, 0, 14), Position = UDim2.new(0, 4, 0, 2),
-					Font = Theme.Font.PrimaryBold, TextSize = 11,
-					TextColor3 = Theme.Colors.Success })
-				makeLabel(gainCard, { Text = p.desc or "",
-					Size = UDim2.new(1, -8, 0, 24), Position = UDim2.new(0, 4, 0, 16),
-					TextSize = 9, TextColor3 = Theme.Colors.TextSecondary, TextWrapped = true })
-				rowY = rowY + 48
+	-- ============ BONUS COMPARE VIEW ============
+	local function buildBonusCompare()
+		for _, child in ipairs(contentFrame:GetChildren()) do child:Destroy() end
+
+		-- Side-by-side: left = current item bonuses, right = selected item bonuses
+		local leftCol = Instance.new("Frame")
+		leftCol.Size = UDim2.new(0.48, 0, 1, 0)
+		leftCol.Position = UDim2.new(0, 0, 0, 0)
+		leftCol.BackgroundTransparency = 1
+		leftCol.Parent = contentFrame
+
+		local rightCol = Instance.new("Frame")
+		rightCol.Size = UDim2.new(0.48, 0, 1, 0)
+		rightCol.Position = UDim2.new(0.52, 0, 0, 0)
+		rightCol.BackgroundTransparency = 1
+		rightCol.Parent = contentFrame
+
+		-- Helper: list bonus stats + passives for one item into a column
+		local function fillBonusColumn(col, bonusStats, bonusPassives)
+			local y = 0
+
+			-- Bonus numerical stats
+			makeLabel(col, { Text = "BONUS STATS", Size = UDim2.new(1, 0, 0, 12),
+				Position = UDim2.new(0, 0, 0, y),
+				Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+				TextColor3 = Theme.Colors.TextSecondary })
+			y = y + 14
+
+			local bs = bonusStats or {}
+			local hasStats = false
+			for _, sn in ipairs(STAT_ORDER) do
+				local bv = bs[sn]
+				if bv and bv ~= 0 then
+					hasStats = true
+					local sign = bv > 0 and "+" or ""
+					makeLabel(col, { Text = sn .. "  " .. sign .. bv,
+						Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 4, 0, y),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.Success })
+					y = y + 16
+				end
+			end
+			if not hasStats then
+				makeLabel(col, { Text = "None", Size = UDim2.new(1, 0, 0, 12),
+					Position = UDim2.new(0, 4, 0, y),
+					TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
+				y = y + 14
+			end
+
+			-- Bonus passives
+			y = y + 4
+			makeLabel(col, { Text = "BONUS PASSIVES", Size = UDim2.new(1, 0, 0, 12),
+				Position = UDim2.new(0, 0, 0, y),
+				Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+				TextColor3 = Theme.Colors.TextSecondary })
+			y = y + 14
+
+			local bp = bonusPassives or {}
+			if #bp > 0 then
+				for _, p in ipairs(bp) do
+					local pCard = Instance.new("Frame")
+					pCard.Size = UDim2.new(1, 0, 0, 40)
+					pCard.Position = UDim2.new(0, 0, 0, y)
+					pCard.BackgroundColor3 = Theme.Colors.PanelRaised
+					pCard.BackgroundTransparency = 0.3
+					pCard.BorderSizePixel = 0
+					pCard.Parent = col
+					Instance.new("UICorner", pCard).CornerRadius = UDim.new(0, 4)
+					makeLabel(pCard, { Text = p.name or "Passive",
+						Size = UDim2.new(1, -6, 0, 12), Position = UDim2.new(0, 3, 0, 2),
+						Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
+						TextColor3 = Theme.Colors.Info })
+					makeLabel(pCard, { Text = p.desc or "",
+						Size = UDim2.new(1, -6, 0, 22), Position = UDim2.new(0, 3, 0, 14),
+						TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+						TextWrapped = true })
+					y = y + 44
+				end
+			else
+				makeLabel(col, { Text = "None", Size = UDim2.new(1, 0, 0, 12),
+					Position = UDim2.new(0, 4, 0, y),
+					TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
 			end
 		end
+
+		fillBonusColumn(leftCol, currentItem.bonusStats, currentItem.bonusPassives)
+		fillBonusColumn(rightCol, selectedItem.bonusStats, selectedItem.bonusPassives)
 	end
+
+
+	-- Show base view initially
+	buildBaseCompare()
+
+	-- Toggle button (lower-left of panel)
+	local toggleBtn = Instance.new("TextButton")
+	toggleBtn.Size = UDim2.new(0, 90, 0, 24)
+	toggleBtn.Position = UDim2.new(0, 0, 1, -28)
+	toggleBtn.BackgroundColor3 = Theme.Colors.Surface
+	toggleBtn.BackgroundTransparency = 0.2
+	toggleBtn.Font = Theme.Font.PrimaryBold
+	toggleBtn.TextSize = Theme.Text.Small()
+	toggleBtn.TextColor3 = Theme.Colors.TextSecondary
+	toggleBtn.Text = "Show Bonus >"
+	toggleBtn.BorderSizePixel = 0
+	toggleBtn.Parent = panel
+	Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 4)
+	toggleBtn.MouseButton1Click:Connect(function()
+		showingBonus = not showingBonus
+		if showingBonus then
+			buildBonusCompare()
+			toggleBtn.Text = "< Show Base"
+		else
+			buildBaseCompare()
+			toggleBtn.Text = "Show Bonus >"
+		end
+	end)
 end
+
+
 -- SCREEN BUILD
 --------------------------------------------------
 
@@ -1463,6 +1719,7 @@ end
 function LoadoutScreen.Hide()
 	closeDetail()
 	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+	if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
 	if tabBarGui then tabBarGui:Destroy(); tabBarGui = nil end
 	if screenGui then screenGui:Destroy(); screenGui = nil end
 	rootFrame = nil
