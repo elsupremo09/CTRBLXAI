@@ -34,8 +34,8 @@ local SORT_OPTIONS = {
 	{ label = "Lv \xe2\x86\x91", field = "lv", desc = false },
 	{ label = "Name", field = "name", desc = false },
 	{ label = "Rarity", field = "rarity", desc = true },
-	{ label = "Newest", field = "acquire", desc = true },
-	{ label = "Oldest", field = "acquire", desc = false },
+	{ label = "New First", field = "new", desc = true },
+	{ label = "New Last", field = "new", desc = false },
 }
 
 local CATEGORY_FILTERS = {
@@ -241,7 +241,9 @@ local function buildTabBar()
 		local menuH = #menuItems * rowH + 6
 		local menuPanel = Instance.new("Frame")
 		menuPanel.Size = UDim2.new(0, menuW, 0, menuH)
-		menuPanel.Position = UDim2.new(0, optBtn.AbsolutePosition.X, 0, optBtn.AbsolutePosition.Y + optBtn.AbsoluteSize.Y + 2)
+		-- Right-align: menu's right edge aligns with button's right edge
+		local menuX = optBtn.AbsolutePosition.X + optBtn.AbsoluteSize.X - menuW
+		menuPanel.Position = UDim2.new(0, menuX, 0, optBtn.AbsolutePosition.Y + optBtn.AbsoluteSize.Y + 2)
 		menuPanel.BackgroundColor3 = Theme.Colors.Panel
 		menuPanel.BorderSizePixel = 0
 		menuPanel.Parent = optionsDropdown
@@ -482,9 +484,15 @@ local function buildEquippedLoadout()
 
 			-- Click: filter inventory to this slot type
 			tile.MouseButton1Click:Connect(function()
-				currentFilter = slotDef.slot
-				if slotDef.slot == "Doctrine" then currentFilter = "Doctrine" end
-				buildInventory()
+				if item then
+					-- Item equipped: open detail view with UNEQUIP
+					openItemDetail(item, nil, true)
+				else
+					-- Empty slot: filter inventory to this slot type
+					currentFilter = slotDef.slot
+					if slotDef.slot == "Doctrine" then currentFilter = "Doctrine" end
+					buildInventory()
+				end
 			end)
 		end
 
@@ -641,12 +649,15 @@ local function buildItemGrid(parent)
 				if sortOpt.desc then return ra > rb else return ra < rb end
 			end
 			return false
-		elseif sortOpt.field == "acquire" then
-			local aa, ab = a.acqOrder or 0, b.acqOrder or 0
-			if aa ~= ab then
-				if sortOpt.desc then return aa > ab else return aa < ab end
+		elseif sortOpt.field == "new" then
+			local na = a.isNew and 1 or 0
+			local nb = b.isNew and 1 or 0
+			if na ~= nb then
+				-- desc = "New First" (new items on top), asc = "New Last" (new at bottom)
+				if sortOpt.desc then return na > nb else return na < nb end
 			end
-			return false
+			-- Tie-break: sort by name within same new/old group
+			return (a.name or "") < (b.name or "")
 		else -- lv (default)
 			local la, lb = a.lv or 0, b.lv or 0
 			if la ~= lb then
@@ -703,6 +714,21 @@ local function buildItemGrid(parent)
 				TextXAlignment = Enum.TextXAlignment.Center })
 		end
 
+		-- NEW badge (top-right, below equipped marker if both)
+		if item.isNew then
+			local newBadge = Instance.new("Frame")
+			newBadge.Size = UDim2.new(0, 22, 0, 12)
+			newBadge.Position = UDim2.new(1, -24, 0, isEquipped and 16 or 2)
+			newBadge.BackgroundColor3 = Theme.Colors.Success
+			newBadge.BorderSizePixel = 0
+			newBadge.Parent = card
+			Instance.new("UICorner", newBadge).CornerRadius = UDim.new(0, 2)
+			makeLabel(newBadge, { Text = "NEW", Size = UDim2.fromScale(1, 1),
+				TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+				TextColor3 = Color3.fromRGB(0, 0, 0),
+				TextXAlignment = Enum.TextXAlignment.Center })
+		end
+
 		-- Icon (center)
 		makeLabel(card, { Text = item.icon or "?", Size = UDim2.new(1, 0, 0, 28),
 			Position = UDim2.new(0, 0, 0.15, 0),
@@ -722,8 +748,6 @@ local function buildItemGrid(parent)
 			TextXAlignment = Enum.TextXAlignment.Left })
 
 		card.MouseButton1Click:Connect(function()
-			selectedItemId = item.id
-			buildInventory()
 			openItemDetail(item, nil)
 		end)
 	end
@@ -919,7 +943,7 @@ closeDetail = function()
 	if detailOverlay then detailOverlay:Destroy(); detailOverlay = nil end
 end
 
-openItemDetail = function(item, compareItem)
+openItemDetail = function(item, compareItem, isEquippedMode)
 	closeDetail()
 	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
 	if not item then return end
@@ -1002,15 +1026,29 @@ openItemDetail = function(item, compareItem)
 		return btn
 	end
 
-	-- 1st from right: EQUIP
-	addFooterBtn("EQUIP", Theme.Colors.Success, function()
-		if unit then
-			local slot = item.cat
-			MockData.MockEquip(unit.id, slot, item.id)
-			closeDetail()
-			LoadoutScreen.Refresh()
+	-- 1st from right: EQUIP or UNEQUIP
+	if isEquippedMode then
+		local eqSlot = item.cat
+		-- Don't allow unequipping Doctrine
+		if eqSlot ~= "Doctrine" then
+			addFooterBtn("UNEQUIP", Theme.Colors.Danger, function()
+				if unit then
+					MockData.MockUnequip(unit.id, eqSlot)
+					closeDetail()
+					LoadoutScreen.Refresh()
+				end
+			end)
 		end
-	end)
+	else
+		addFooterBtn("EQUIP", Theme.Colors.Success, function()
+			if unit then
+				local slot = item.cat
+				MockData.MockEquip(unit.id, slot, item.id)
+				closeDetail()
+				LoadoutScreen.Refresh()
+			end
+		end)
+	end
 
 	-- 2nd from right: BACK
 	addFooterBtn("BACK", Theme.Colors.Surface, closeDetail)

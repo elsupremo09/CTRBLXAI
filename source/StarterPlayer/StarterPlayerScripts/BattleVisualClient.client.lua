@@ -1776,30 +1776,41 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	gui.Parent = player:WaitForChild("PlayerGui")
 	rewardGui = gui
 
-	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(0.85, 0, 0.80, 0)
-	frame.Position = UDim2.new(0.5, 0, 0.5, 0)
-	frame.AnchorPoint = Vector2.new(0.5, 0.5)
-	frame.BackgroundColor3 = Theme.Colors.Background
-	frame.BackgroundTransparency = 0.02
-	frame.BorderSizePixel = 0
-	frame.Active = true
-	frame.Parent = gui
-	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-	local rewardConstraint = Instance.new("UISizeConstraint", frame)
-	rewardConstraint.MaxSize = Vector2.new(480, 400)
-	local stroke = Instance.new("UIStroke", frame)
-	stroke.Color = Theme.Colors.TextGold; stroke.Thickness = 2
+	-- Dim backdrop
+	local backdrop = Instance.new("Frame")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.4
+	backdrop.BorderSizePixel = 0
+	backdrop.Parent = gui
 
+	-- Main panel using Theme
+	local frame = Theme.MakePanel("VictoryPanel",
+		UDim2.new(0.70, 0, 0.85, 0),
+		UDim2.new(0.5, 0, 0.5, 0),
+		Vector2.new(0.5, 0.5),
+		gui)
+	frame.ClipsDescendants = true
+
+	local framePad = Instance.new("UIPadding", frame)
+	framePad.PaddingTop = UDim.new(0, 10)
+	framePad.PaddingLeft = UDim.new(0, 12)
+	framePad.PaddingRight = UDim.new(0, 12)
+	framePad.PaddingBottom = UDim.new(0, 10)
+
+	-- VICTORY! title
 	local title = Instance.new("TextLabel")
-	title.Size = UDim2.new(1, 0, 0, 30)
+	title.Size = UDim2.new(1, 0, 0, 24)
 	title.BackgroundTransparency = 1
-	title.Font = Theme.Font.PrimaryBold; title.TextSize = Theme.Text.Title() + 2
+	title.Font = Theme.Font.PrimaryBold
+	title.TextSize = Theme.Text.Title()
 	title.TextColor3 = Theme.Colors.TextGold
 	title.Text = "VICTORY!"
+	title.TextXAlignment = Enum.TextXAlignment.Center
 	title.Parent = frame
 
 	-- Recovery summary
+	local recY = 26
 	if data.recovery and #data.recovery > 0 then
 		local recoveryText = ""
 		for _, r in ipairs(data.recovery) do
@@ -1812,71 +1823,297 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		end
 		if recoveryText ~= "" then
 			local recLabel = Instance.new("TextLabel")
-			recLabel.Size = UDim2.new(1, -16, 0, 16)
-			recLabel.Position = UDim2.new(0, 8, 0, 28)
+			recLabel.Size = UDim2.new(1, 0, 0, 14)
+			recLabel.Position = UDim2.new(0, 0, 0, recY)
 			recLabel.BackgroundTransparency = 1
-			recLabel.Font = Theme.Font.Mono; recLabel.TextSize = Theme.Text.Tiny()
+			recLabel.Font = Theme.Font.Mono
+			recLabel.TextSize = Theme.Text.Tiny()
 			recLabel.TextColor3 = Theme.Colors.Success
 			recLabel.TextXAlignment = Enum.TextXAlignment.Left
 			recLabel.Text = recoveryText
 			recLabel.Parent = frame
+			recY = recY + 16
 		end
 	end
 
+	-- Loot header
+	local lootLabel = Instance.new("TextLabel")
+	lootLabel.Size = UDim2.new(1, 0, 0, 14)
+	lootLabel.Position = UDim2.new(0, 0, 0, recY)
+	lootLabel.BackgroundTransparency = 1
+	lootLabel.Font = Theme.Font.PrimaryBold
+	lootLabel.TextSize = Theme.Text.Small()
+	lootLabel.TextColor3 = Theme.Colors.TextSecondary
+	lootLabel.TextXAlignment = Enum.TextXAlignment.Left
+	lootLabel.Text = "LOOT"
+	lootLabel.Parent = frame
+
+	-- Loot grid
 	local rewards = data.rewards or {}
-	local yPos = 36
-	for _, item in ipairs(rewards) do
-		local rarityColor = Theme.GetRarityColor and Theme.GetRarityColor(item.rarity)
-			or ({
-				Broken = Color3.fromRGB(120,120,120), Common = Color3.fromRGB(200,200,200),
-				Uncommon = Color3.fromRGB(100,200,100), Rare = Color3.fromRGB(100,150,255),
-				Epic = Color3.fromRGB(180,100,255), Legendary = Color3.fromRGB(255,180,50),
-			})[item.rarity] or Color3.fromRGB(200,200,200)
+	local gridY = recY + 18
 
-		local card = Instance.new("Frame")
-		card.Size = UDim2.new(1, -20, 0, 50)
-		card.Position = UDim2.new(0, 10, 0, yPos)
-		card.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
-		card.BorderSizePixel = 0
-		card.Parent = frame
-		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
-		local cardStroke = Instance.new("UIStroke", card)
-		cardStroke.Color = rarityColor; cardStroke.Thickness = 1
+	local lootGrid = Instance.new("ScrollingFrame")
+	lootGrid.Size = UDim2.new(1, 0, 1, -(gridY + 40))
+	lootGrid.Position = UDim2.new(0, 0, 0, gridY)
+	lootGrid.BackgroundTransparency = 1
+	lootGrid.BorderSizePixel = 0
+	lootGrid.ScrollBarThickness = 3
+	lootGrid.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	lootGrid.CanvasSize = UDim2.new(0, 0, 0, 0)
+	lootGrid.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	lootGrid.Parent = frame
 
-		local nameLabel = Instance.new("TextLabel")
-		nameLabel.Size = UDim2.new(1, -8, 0, 18)
-		nameLabel.Position = UDim2.new(0, 4, 0, 4)
-		nameLabel.BackgroundTransparency = 1
-		nameLabel.Font = Theme.Font.PrimaryBold; nameLabel.TextSize = Theme.Text.Heading()
-		nameLabel.TextColor3 = rarityColor
-		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-		nameLabel.Text = string.format("%s [%s] L%d", item.name, item.rarity, item.itemLevel)
-		nameLabel.Parent = card
+	local grid = Instance.new("UIGridLayout", lootGrid)
+	grid.CellSize = UDim2.new(0, 72, 0, 82)
+	grid.CellPadding = UDim2.new(0, 4, 0, 3)
+	grid.SortOrder = Enum.SortOrder.LayoutOrder
+	grid.FillDirection = Enum.FillDirection.Horizontal
 
-		local statsLabel = Instance.new("TextLabel")
-		statsLabel.Size = UDim2.new(1, -8, 0, 14)
-		statsLabel.Position = UDim2.new(0, 4, 0, 24)
-		statsLabel.BackgroundTransparency = 1
-		statsLabel.Font = Theme.Font.Mono; statsLabel.TextSize = Theme.Text.Small()
-		statsLabel.TextColor3 = Color3.fromRGB(170, 170, 170)
-		statsLabel.TextXAlignment = Enum.TextXAlignment.Left
-		statsLabel.Text = string.format("Dmg:%d  WT:%d  Def:%d  +%dattr +%dpass  %s",
-			item.damage, item.wt, item.defense, item.bonusCount, item.passiveCount, item.handClass)
-		statsLabel.Parent = card
+	-- Hand class -> icon mapping
+	local HAND_ICONS = {
+		["1H"] = "\xe2\x9a\x94", ["2H"] = "\xe2\x9a\x94",
+		["Off-Hand"] = "\xf0\x9f\x9b\xa1",
+	}
 
-		yPos = yPos + 56
+	-- Detail overlay state
+	local detailFrame = nil
+
+	local function closeRewardDetail()
+		if detailFrame then detailFrame:Destroy(); detailFrame = nil end
 	end
 
+	for idx, item in ipairs(rewards) do
+		local rc = Theme.GetRarityColor(item.rarity)
+
+		local card = Instance.new("TextButton")
+		card.Size = UDim2.new(1, 0, 1, 0)
+		card.BackgroundColor3 = rc
+		card.BackgroundTransparency = 0.75
+		card.BorderSizePixel = 0
+		card.Text = ""
+		card.AutoButtonColor = true
+		card.LayoutOrder = idx
+		card.Parent = lootGrid
+		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
+		local cardStroke = Instance.new("UIStroke", card)
+		cardStroke.Color = rc
+		cardStroke.Thickness = 1.5
+
+		-- Level badge (top-left)
+		local lvl = Instance.new("TextLabel")
+		lvl.Size = UDim2.new(0, 36, 0, 12)
+		lvl.Position = UDim2.new(0, 3, 0, 2)
+		lvl.BackgroundTransparency = 1
+		lvl.Font = Theme.Font.Mono
+		lvl.TextSize = Theme.Text.Tiny()
+		lvl.TextColor3 = Theme.Colors.TextSecondary
+		lvl.TextXAlignment = Enum.TextXAlignment.Left
+		lvl.Text = "Lv" .. (item.itemLevel or 1)
+		lvl.Parent = card
+
+		-- Icon (center)
+		local icon = Instance.new("TextLabel")
+		icon.Size = UDim2.new(1, 0, 0, 28)
+		icon.Position = UDim2.new(0, 0, 0.15, 0)
+		icon.BackgroundTransparency = 1
+		icon.Font = Theme.Font.Primary
+		icon.TextSize = 24
+		icon.TextColor3 = Theme.Colors.TextPrimary
+		icon.TextXAlignment = Enum.TextXAlignment.Center
+		icon.Text = HAND_ICONS[item.handClass] or "\xe2\x9a\x94"
+		icon.Parent = card
+
+		-- Name strip (bottom)
+		local nameBg = Instance.new("Frame")
+		nameBg.Size = UDim2.new(1, 0, 0, 14)
+		nameBg.Position = UDim2.new(0, 0, 1, -14)
+		nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		nameBg.BackgroundTransparency = 0.4
+		nameBg.BorderSizePixel = 0
+		nameBg.Parent = card
+		local nameLabel = Instance.new("TextLabel")
+		nameLabel.Size = UDim2.new(1, -4, 1, 0)
+		nameLabel.Position = UDim2.new(0, 2, 0, 0)
+		nameLabel.BackgroundTransparency = 1
+		nameLabel.Font = Theme.Font.Primary
+		nameLabel.TextSize = Theme.Text.Small()
+		nameLabel.TextColor3 = Theme.Colors.TextPrimary
+		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+		nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		nameLabel.Text = item.name or "?"
+		nameLabel.Parent = nameBg
+
+		-- Click -> detail view
+		card.MouseButton1Click:Connect(function()
+			closeRewardDetail()
+
+			-- Build detail panel (left side, like loadout detail)
+			detailFrame = Theme.MakePanel("LootDetail",
+				UDim2.new(0.50, 0, 0.80, 0),
+				UDim2.new(0, 6, 0.5, 0),
+				Vector2.new(0, 0.5),
+				gui)
+			detailFrame.ClipsDescendants = true
+
+			local dp = Instance.new("UIPadding", detailFrame)
+			dp.PaddingTop = UDim.new(0, 10)
+			dp.PaddingLeft = UDim.new(0, 12)
+			dp.PaddingRight = UDim.new(0, 12)
+			dp.PaddingBottom = UDim.new(0, 10)
+
+			-- Header: icon + name + subtitle
+			local dIcon = Instance.new("Frame")
+			dIcon.Size = UDim2.new(0, 56, 0, 56)
+			dIcon.BackgroundColor3 = rc
+			dIcon.BackgroundTransparency = 0.75
+			dIcon.BorderSizePixel = 0
+			dIcon.Parent = detailFrame
+			Instance.new("UICorner", dIcon).CornerRadius = UDim.new(0, 6)
+			Instance.new("UIStroke", dIcon).Color = rc
+			local dIconText = Instance.new("TextLabel")
+			dIconText.Size = UDim2.fromScale(1, 1)
+			dIconText.BackgroundTransparency = 1
+			dIconText.Font = Theme.Font.Primary
+			dIconText.TextSize = 28
+			dIconText.TextColor3 = Theme.Colors.TextPrimary
+			dIconText.Text = HAND_ICONS[item.handClass] or "\xe2\x9a\x94"
+			dIconText.Parent = dIcon
+
+			-- Name
+			local dName = Instance.new("TextLabel")
+			dName.Size = UDim2.new(1, -64, 0, 18)
+			dName.Position = UDim2.new(0, 64, 0, 0)
+			dName.BackgroundTransparency = 1
+			dName.Font = Theme.Font.PrimaryBold
+			dName.TextSize = Theme.Text.Heading()
+			dName.TextColor3 = Theme.Colors.TextPrimary
+			dName.TextXAlignment = Enum.TextXAlignment.Left
+			dName.Text = item.name or "?"
+			dName.Parent = detailFrame
+
+			-- Subtitle
+			local dSub = Instance.new("TextLabel")
+			dSub.Size = UDim2.new(1, -64, 0, 14)
+			dSub.Position = UDim2.new(0, 64, 0, 18)
+			dSub.BackgroundTransparency = 1
+			dSub.Font = Theme.Font.Primary
+			dSub.TextSize = Theme.Text.Small()
+			dSub.TextColor3 = rc
+			dSub.TextXAlignment = Enum.TextXAlignment.Left
+			dSub.Text = "Lv." .. (item.itemLevel or 1) .. "  ·  " .. (item.rarity or "Common") .. "  ·  " .. (item.handClass or "")
+			dSub.Parent = detailFrame
+
+			-- Tags
+			local tagY = 34
+			local tagTexts = {}
+			if item.handClass then table.insert(tagTexts, item.handClass) end
+			if item.category then table.insert(tagTexts, item.category) end
+			if #tagTexts > 0 then
+				local tagRow = Instance.new("Frame")
+				tagRow.Size = UDim2.new(1, -64, 0, 14)
+				tagRow.Position = UDim2.new(0, 64, 0, tagY)
+				tagRow.BackgroundTransparency = 1
+				tagRow.Parent = detailFrame
+				local tagLayout = Instance.new("UIListLayout", tagRow)
+				tagLayout.FillDirection = Enum.FillDirection.Horizontal
+				tagLayout.Padding = UDim.new(0, 3)
+				for ti, tag in ipairs(tagTexts) do
+					local chip = Instance.new("Frame")
+					chip.Size = UDim2.new(0, #tag * 5 + 10, 0, 14)
+					chip.BackgroundColor3 = Theme.Colors.Surface
+					chip.BackgroundTransparency = 0.3
+					chip.BorderSizePixel = 0
+					chip.LayoutOrder = ti
+					chip.Parent = tagRow
+					Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 7)
+					local tagLabel = Instance.new("TextLabel")
+					tagLabel.Size = UDim2.fromScale(1, 1)
+					tagLabel.BackgroundTransparency = 1
+					tagLabel.Font = Theme.Font.Primary
+					tagLabel.TextSize = Theme.Text.Badge()
+					tagLabel.TextColor3 = Theme.Colors.TextSecondary
+					tagLabel.TextXAlignment = Enum.TextXAlignment.Center
+					tagLabel.Text = tag
+					tagLabel.Parent = chip
+				end
+			end
+
+			-- Divider
+			local divY = 56
+			local divider = Instance.new("Frame")
+			divider.Size = UDim2.new(1, 0, 0, 1)
+			divider.Position = UDim2.new(0, 0, 0, divY)
+			divider.BackgroundColor3 = Theme.Colors.Border
+			divider.BorderSizePixel = 0
+			divider.Parent = detailFrame
+
+			-- Base stats
+			local statY = divY + 6
+			local statDefs = {
+				{ label = "Attack", value = item.damage },
+				{ label = "Defense", value = item.defense },
+				{ label = "WT", value = item.wt },
+				{ label = "Bonuses", value = item.bonusCount .. " attributes" },
+				{ label = "Passives", value = item.passiveCount .. " bonus" },
+			}
+			for _, s in ipairs(statDefs) do
+				local row = Instance.new("Frame")
+				row.Size = UDim2.new(0.5, 0, 0, 16)
+				row.Position = UDim2.new(0, 0, 0, statY)
+				row.BackgroundTransparency = 1
+				row.Parent = detailFrame
+				local sLabel = Instance.new("TextLabel")
+				sLabel.Size = UDim2.new(0.55, 0, 1, 0)
+				sLabel.BackgroundTransparency = 1
+				sLabel.Font = Theme.Font.Primary
+				sLabel.TextSize = Theme.Text.Body()
+				sLabel.TextColor3 = Theme.Colors.TextSecondary
+				sLabel.TextXAlignment = Enum.TextXAlignment.Left
+				sLabel.Text = s.label
+				sLabel.Parent = row
+				local sVal = Instance.new("TextLabel")
+				sVal.Size = UDim2.new(0.45, 0, 1, 0)
+				sVal.Position = UDim2.new(0.55, 0, 0, 0)
+				sVal.BackgroundTransparency = 1
+				sVal.Font = Theme.Font.PrimaryBold
+				sVal.TextSize = Theme.Text.Body()
+				sVal.TextColor3 = Theme.Colors.TextPrimary
+				sVal.TextXAlignment = Enum.TextXAlignment.Right
+				sVal.Text = tostring(s.value)
+				sVal.Parent = row
+				statY = statY + 18
+			end
+
+			-- Back button (inside detail panel, lower-left)
+			local backBtn = Instance.new("TextButton")
+			backBtn.Size = UDim2.new(0, 70, 0, 24)
+			backBtn.Position = UDim2.new(0, 0, 1, -28)
+			backBtn.BackgroundColor3 = Theme.Colors.Surface
+			backBtn.BackgroundTransparency = 0.2
+			backBtn.Font = Theme.Font.PrimaryBold
+			backBtn.TextSize = Theme.Text.Small()
+			backBtn.TextColor3 = Theme.Colors.TextPrimary
+			backBtn.Text = "BACK"
+			backBtn.BorderSizePixel = 0
+			backBtn.Parent = detailFrame
+			Instance.new("UICorner", backBtn).CornerRadius = UDim.new(0, 4)
+			backBtn.MouseButton1Click:Connect(closeRewardDetail)
+		end)
+	end
+
+	-- CONTINUE button (bottom-right of screen, outside panel, like battle Execute)
 	local continueBtn = Instance.new("TextButton")
-	continueBtn.Size = UDim2.fromOffset(120, 32)
-	continueBtn.Position = UDim2.new(0.5, 0, 1, -42)
-	continueBtn.AnchorPoint = Vector2.new(0.5, 0)
-	continueBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 50)
-	continueBtn.Font = Theme.Font.PrimaryBold; continueBtn.TextSize = Theme.Text.Title()
-	continueBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+	continueBtn.Size = UDim2.new(0, 100, 0, 32)
+	continueBtn.Position = UDim2.new(1, -8, 1, -8)
+	continueBtn.AnchorPoint = Vector2.new(1, 1)
+	continueBtn.BackgroundColor3 = Theme.Colors.Success
+	continueBtn.BackgroundTransparency = 0.15
+	continueBtn.Font = Theme.Font.PrimaryBold
+	continueBtn.TextSize = Theme.Text.Body()
+	continueBtn.TextColor3 = Theme.Colors.TextPrimary
 	continueBtn.Text = "CONTINUE"
 	continueBtn.BorderSizePixel = 0
-	continueBtn.Parent = frame
+	continueBtn.Parent = gui
 	Instance.new("UICorner", continueBtn).CornerRadius = UDim.new(0, 4)
 	continueBtn.MouseButton1Click:Connect(function()
 		if rewardGui then rewardGui:Destroy(); rewardGui = nil end
