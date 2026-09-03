@@ -202,8 +202,8 @@ function PersistentStateService.AdvanceMpRegen(unit, ctPassed)
 	if not unit.isAlive then return 0 end
 	if ctPassed <= 0 then return 0 end
 
-	local int = unit.effectiveStats and unit.effectiveStats.INT or 10
-	local mpRegen = PersistentStateService.CalcMpRegen(int)
+	local mpRegen = unit.derivedStats and unit.derivedStats.mpRegen
+		or PersistentStateService.CalcMpRegen(unit.effectiveStats and unit.effectiveStats.INT or 10)
 
 	-- Initialize accumulator if missing
 	if not unit.mpRegenAccumulator then

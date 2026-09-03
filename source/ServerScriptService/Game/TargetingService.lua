@@ -39,12 +39,21 @@ local DIRECTIONS = {
 --------------------------------------------------
 
 local function getMovementRange(unit)
-	local agi = unit.effectiveStats and unit.effectiveStats.AGI or 10
+	local base = 0
+	if unit.derivedStats and unit.derivedStats.movementRange then
+		base = unit.derivedStats.movementRange
+	else
+		local agi = unit.effectiveStats and unit.effectiveStats.AGI or 10
+		base = BASE_MOVEMENT_RANGE + math.floor(agi / 60)
+	end
 	local raceOffset = RacePassiveService.GetMovementRangeModifier(unit)
-	return math.max(1, BASE_MOVEMENT_RANGE + math.floor(agi / 60) + raceOffset)
+	return math.max(1, base + raceOffset)
 end
 
 local function getJump(unit)
+	if unit.derivedStats and unit.derivedStats.jump then
+		return unit.derivedStats.jump
+	end
 	local dex = unit.effectiveStats and unit.effectiveStats.DEX or 10
 	return 1 + math.floor(dex / 60)
 end
@@ -229,9 +238,8 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 	local baseRange = skillDef.range or 1
 	-- Missing 4 fix: Bonus Skill Range from INT
 	-- Rule: Bonus Skill Range = floor(INT / 75) + Flat bonuses
-	-- Default 100% inheritance unless skill declares otherwise
-	local int = actor.effectiveStats and actor.effectiveStats.INT or 10
-	local bonusRange = math.floor(int / 75)
+	local bonusRange = actor.derivedStats and actor.derivedStats.bonusSkillRange
+		or math.floor((actor.effectiveStats and actor.effectiveStats.INT or 10) / 75)
 	local range = baseRange + bonusRange
 	local targetRules = skillDef.targetRules or "Enemy Unit"
 	local candidates = {}

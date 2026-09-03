@@ -372,6 +372,40 @@ function GameConstants.CalcRtDelayResistance(rawDelay, targetVit)
 end
 
 --------------------------------------------------
+-- SHARED DERIVED STAT FORMULAS
+--
+-- Primitive functions used by ComputeDerivedStats and by services
+-- that need to recalculate with dynamic inputs (e.g. CombatResolver
+-- calculating attack power with a different weapon mid-action).
+-- Each function returns the RAW (unrounded) value.
+--------------------------------------------------
+
+function GameConstants.CalcAttackPower(weaponDmg, str)
+	return weaponDmg * (1 + str / 200)
+end
+
+function GameConstants.CalcDefensePower(def, vit)
+	if def <= 0 then return 0 end
+	return def * (1 + vit / 300)
+end
+
+function GameConstants.CalcPrecision(dex)
+	return dex / (dex + 200)
+end
+
+function GameConstants.CalcEvasiveness(agi)
+	return agi / (agi + 200)
+end
+
+function GameConstants.CalcSkillPotency(int)
+	return 1 + int / (200 + int)
+end
+
+function GameConstants.CalcHealEfficiency(vit)
+	return 1 + vit / 300
+end
+
+--------------------------------------------------
 -- DERIVED STATS COMPUTATION
 --
 -- Builds the full derivedStats table from a unit's effectiveStats + weapon data.
@@ -395,31 +429,31 @@ function GameConstants.ComputeDerivedStats(unit)
 
 	local derived = {
 		-- STR derived
-		attackPower     = math.round(weaponDamage * (1 + str / 200) * 10) / 10,
+		attackPower     = math.round(GameConstants.CalcAttackPower(weaponDamage, str) * 10) / 10,
 		effectiveWt     = math.round(GameConstants.CalcEffectiveWt(weaponWt, str)),
 		rtDelayBonus    = math.round(weaponRtDelay * (1 + math.min(str / (200 + str), 0.75)) * 10) / 10,
 		force           = 1 + math.floor(str / 60),
 
 		-- AGI derived
 		movementRange   = 3 + math.floor(agi / 60),
-		evasiveness     = math.round(agi / (agi + 200) * 1000) / 10, -- store as % (e.g. 6.5)
+		evasiveness     = math.round(GameConstants.CalcEvasiveness(agi) * 1000) / 10, -- store as % (e.g. 6.5)
 
 		-- INT derived
-		skillPotency    = math.round((1 + int / (200 + int)) * 1000) / 1000,
+		skillPotency    = math.round(GameConstants.CalcSkillPotency(int) * 1000) / 1000,
 		maxMp           = 20 + int * 2,
 		bonusSkillRange = math.floor(int / 75),
 		mpRegen         = 2 + math.floor(int / 40),
 
 		-- VIT derived
 		maxHp           = 50 + vit * 4,
-		healEfficiency  = math.round((1 + vit / 300) * 1000) / 1000,
-		defensePower    = math.round(weaponDefense * (1 + vit / 300) * 10) / 10,
-		debuffResist    = math.round((1 - vit / (300 + vit)) * 1000) / 1000,
+		healEfficiency  = math.round(GameConstants.CalcHealEfficiency(vit) * 1000) / 1000,
+		defensePower    = math.round(GameConstants.CalcDefensePower(weaponDefense, vit) * 10) / 10,
+		debuffResist    = math.round((1 - vit / (300 + vit)) * 1000) / 1000, -- no Calc* for this composite
 		rtDelayResist   = math.round((1 - vit / (300 + vit)) * 1000) / 1000,
 		stability       = math.floor(vit / 60),
 
 		-- DEX derived
-		precision       = math.round(dex / (dex + 200) * 1000) / 10, -- store as % (e.g. 5.7)
+		precision       = math.round(GameConstants.CalcPrecision(dex) * 1000) / 10, -- store as % (e.g. 5.7)
 		jump            = 1 + math.floor(dex / 60),
 		channelReduction = math.round(dex / (300 + dex) * 1000) / 10, -- store as % reduction
 

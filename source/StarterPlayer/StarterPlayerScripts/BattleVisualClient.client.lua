@@ -1170,6 +1170,11 @@ end)
 BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
 	currentPrompt = prompt
 	activeUnitId = prompt.unitId
+	-- Exit view mode so the action panel renders correctly.
+	-- Without this, Render returns early and the action buttons never appear.
+	if BattleHUD.IsViewMode() then
+		BattleHUD.ToggleViewMode()
+	end
 	timelineSnapshot = prompt.timeline
 	if prompt.currentCt then currentBattleCt = prompt.currentCt end
 	isPlayerTurn = true; inputMode = nil; selectedSkill = nil
@@ -1885,5 +1890,11 @@ end)
 
 BattleEvents.LoadoutHubOpen.OnClientEvent:Connect(function(data)
 	local phase = data and data.phase or "PostBattle"
-	createLoadoutHub(phase)
+	-- Open new Loadout Screen (Slice 7) instead of old hub
+	if _G.CTRBLXAI_OpenLoadout then
+		_G.CTRBLXAI_OpenLoadout()
+	else
+		-- Fallback to old hub if new screen not loaded yet
+		createLoadoutHub(phase)
+	end
 end)

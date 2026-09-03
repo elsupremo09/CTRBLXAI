@@ -145,8 +145,8 @@ function StatusService.ProcessStartOfTurn(unit)
 	local dotEvents = {}
 	-- Debuff Resistance: VIT reduces incoming DoT damage
 	-- Rule: Debuff Resistance Multiplier = 1 - VIT / (300 + VIT)
-	local vit = unit.effectiveStats and unit.effectiveStats.VIT or 10
-	local debuffResist = 1 - vit / (300 + vit)
+	local debuffResist = unit.derivedStats and unit.derivedStats.debuffResist
+		or (1 - (unit.effectiveStats and unit.effectiveStats.VIT or 10) / (300 + (unit.effectiveStats and unit.effectiveStats.VIT or 10)))
 
 	for _, inst in ipairs(unit.statusInstances) do
 		local def = GameConstants.STATUSES[inst.id]

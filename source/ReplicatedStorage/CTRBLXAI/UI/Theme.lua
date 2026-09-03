@@ -403,4 +403,194 @@ function Theme.Scaled(basePx)
 end
 Theme.ScaledPx = Theme.Scaled
 
+
+--------------------------------------------------
+-- PANEL FRAME CONSTANTS (Slice 7 — locked)
+--------------------------------------------------
+
+Theme.PanelFrame = {
+	Asset       = "rbxassetid://96315850586636",
+	SliceCenter = Rect.new(163, 163, 861, 861),
+	SliceScale  = 0.06,
+	BgColor     = Color3.fromRGB(0, 0, 0),
+	BgTransparency = 0.15,
+	ImageTransparency = 0,
+	MinPadding  = 10,
+}
+
+-- Creates a standard ornate panel frame (ImageLabel).
+-- Usage: Theme.MakePanel(name, size, position, anchor, parent, opts)
+--   opts.sliceScale: override (should NOT be used — consistency rule)
+--   opts.noBg: if true, BackgroundTransparency = 1 (decorative border only)
+--   opts.autoY: enables AutomaticSize.Y with min/max constraints
+function Theme.MakePanel(name, size, position, anchor, parent, opts)
+	opts = opts or {}
+	local pf = Theme.PanelFrame
+	local f = Instance.new("ImageLabel")
+	f.Name = name or "Panel"
+	f.Size = size
+	f.Position = position or UDim2.new(0, 0, 0, 0)
+	f.AnchorPoint = anchor or Vector2.new(0, 0)
+	f.Image = pf.Asset
+	f.ScaleType = Enum.ScaleType.Slice
+	f.SliceCenter = pf.SliceCenter
+	f.SliceScale = pf.SliceScale
+	f.BackgroundColor3 = pf.BgColor
+	f.BackgroundTransparency = opts.noBg and 1 or pf.BgTransparency
+	f.ImageTransparency = pf.ImageTransparency
+	f.BorderSizePixel = 0
+	f.Active = true
+	f.ClipsDescendants = not opts.autoY
+	f.Parent = parent
+	if opts.autoY then
+		f.AutomaticSize = Enum.AutomaticSize.Y
+		local c = Instance.new("UISizeConstraint", f)
+		c.MinSize = Vector2.new(opts.minW or 180, opts.minH or 60)
+		c.MaxSize = Vector2.new(opts.maxW or 260, opts.maxH or 400)
+	end
+	return f
+end
+
+-- Creates a decorative screen border overlay (ornate corners, no fill).
+-- Usage: Theme.MakeScreenBorder(parent)
+function Theme.MakeScreenBorder(parent)
+	local pf = Theme.PanelFrame
+	local f = Instance.new("ImageLabel")
+	f.Name = "ScreenBorder"
+	f.Size = UDim2.new(1, 4, 1, 4)
+	f.Position = UDim2.new(0, -2, 0, -2)
+	f.Image = pf.Asset
+	f.ScaleType = Enum.ScaleType.Slice
+	f.SliceCenter = pf.SliceCenter
+	f.SliceScale = pf.SliceScale
+	f.BackgroundTransparency = 1
+	f.ImageTransparency = pf.ImageTransparency
+	f.BorderSizePixel = 0
+	f.Active = false
+	f.ZIndex = 10
+	f.Parent = parent
+	return f
+end
+
+--------------------------------------------------
+-- FULL-SCREEN PATTERN
+--------------------------------------------------
+-- Standard full-screen layout used by Equipment, Info, Skills,
+-- and any future full-screen panel.  IgnoreGuiInset = false so
+-- content starts below the Roblox top bar.
+
+Theme.FullScreen = {
+	DisplayOrder     = 100,
+	IgnoreGuiInset   = false,
+	BackgroundColor  = Theme.Colors.Background,
+	BackgroundTransparency = 0,
+	-- Positional gap between adjacent panels (px).
+	-- Panels touch at 0; their ornate borders create a natural divider.
+	PanelGap         = 0,
+}
+
+--------------------------------------------------
+-- PORTRAIT / TILE DESIGN RULES
+--------------------------------------------------
+-- Level badge position: ALWAYS upper-left corner of any portrait or
+-- item tile (units and items alike). No exceptions.
+Theme.LevelBadgeAnchor = "TopLeft"   -- reference constant (enforced by convention)
+
+--------------------------------------------------
+-- ITEM TILE PRESENTATION RULES
+--------------------------------------------------
+-- Standard format for displaying any item (inventory, equipped gear,
+-- shops, victory loot, battle inspector, trade, etc.)
+--
+-- Layout (top to bottom):
+--   [Level badge]  upper-left corner, small text, left-aligned
+--   [Icon]         centered horizontally, vertically ~15% from top
+--   [Name]         bottom edge of tile, centered, rarity-colored text
+--
+-- Background:  rarity color at 75% transparency (subtle tint)
+-- Border:      UIStroke colored by rarity (1.5px), gold 2px when selected
+-- Corner:      4px radius
+--
+-- Any deviation is a bug, not a design choice.
+Theme.ItemTile = {
+	BgTransparency   = 0.75,      -- rarity color shown at this transparency
+	SelectedBgColor  = Color3.fromRGB(40, 35, 20),
+	SelectedBgTransparency = 0.05,
+	StrokeThickness  = 1.5,
+	SelectedStrokeThickness = 2,
+	CornerRadius     = 4,
+	IconYScale       = 0.15,      -- icon vertical position (scale from top)
+	NameFromBottom   = 14,        -- name label offset from bottom edge (px)
+	NameBgColor      = Color3.fromRGB(0, 0, 0),
+	NameBgTransparency = 0.4,
+	NameTextColor    = Theme.Colors.TextPrimary,  -- white, always
+	NameAlignment    = "Left",    -- left-aligned, never centered
+}
+
+--- Creates a standard full-screen ScreenGui + root Frame + decorative border.
+--- Returns screenGui, rootFrame.
+--- Usage:
+---   local sg, root = Theme.MakeFullScreen("LoadoutScreen", parent)
+function Theme.MakeFullScreen(name, parent)
+	local sg = Instance.new("ScreenGui")
+	sg.Name = name or "FullScreen"
+	sg.ResetOnSpawn = false
+	sg.DisplayOrder = Theme.FullScreen.DisplayOrder
+	sg.IgnoreGuiInset = Theme.FullScreen.IgnoreGuiInset
+	sg.Parent = parent
+
+	local root = Instance.new("Frame")
+	root.Name = "Root"
+	root.Size = UDim2.fromScale(1, 1)
+	root.BackgroundColor3 = Theme.FullScreen.BackgroundColor
+	root.BackgroundTransparency = Theme.FullScreen.BackgroundTransparency
+	root.Parent = sg
+
+	Theme.MakeScreenBorder(root)
+
+	return sg, root
+end
+
+--------------------------------------------------
+-- TAB BAR PATTERN
+--------------------------------------------------
+-- Sits in the Roblox top-bar safe area (IgnoreGuiInset = true).
+-- Positioned to leave a 2px gap above the full-screen panel below.
+
+Theme.TabBar = {
+	DisplayOrder     = 150,
+	PanelWidth       = 360,
+	PanelHeight      = 45,
+	PositionXScale   = 0.5,
+	PositionXOffset  = 60,   -- right of center (avoids Roblox top-left buttons)
+	PositionY        = 14,   -- leaves 2px gap above IgnoreGuiInset=false content
+	InnerPadX        = 8,
+	InnerPadY        = 3,
+	TabWidth         = 110,
+	TabSpacing       = 4,
+	TabTextSize      = 13,
+	ActiveColor      = Theme.Colors.TextGold,
+	InactiveColor    = Theme.Colors.TextSecondary,
+	UnderlineHeight  = 2,
+}
+
+--- Creates a standard tab bar ScreenGui + ornate panel.
+--- Returns tabBarGui, tabPanel (the ImageLabel to parent tab content into).
+function Theme.MakeTabBar(name, parent)
+	local tb = Theme.TabBar
+	local sg = Instance.new("ScreenGui")
+	sg.Name = name or "TabBar"
+	sg.ResetOnSpawn = false
+	sg.DisplayOrder = tb.DisplayOrder
+	sg.IgnoreGuiInset = true
+	sg.Parent = parent
+
+	local panel = Theme.MakePanel("TabPanel",
+		UDim2.new(0, tb.PanelWidth, 0, tb.PanelHeight),
+		UDim2.new(tb.PositionXScale, tb.PositionXOffset, 0, tb.PositionY),
+		Vector2.new(0.5, 0), sg)
+
+	return sg, panel
+end
+
 return Theme

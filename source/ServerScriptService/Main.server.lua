@@ -1614,9 +1614,11 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 	}
 
 	-- Populate race passive if race is assigned
-	if unit.raceId and RaceData and RaceData[unit.raceId] then
-		response.racePassiveName = RaceData[unit.raceId].passive_name
-		response.racePassiveEffect = RaceData[unit.raceId].passive_effect
+	local raceEntry = unit.raceId and RaceData and RaceData.GetRace(unit.raceId) or nil
+	if raceEntry then
+		response.raceName = raceEntry.name
+		response.racePassiveName = raceEntry.passiveName
+		response.racePassiveEffect = raceEntry.passiveEffect
 	end
 
 	BattleEvents.InspectUnitResponse:FireClient(playerObj, response)

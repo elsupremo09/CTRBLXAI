@@ -546,8 +546,6 @@ function CommandService.ValidateAndCommit(
 		local force = 1
 		if actor.derivedStats and actor.derivedStats.force then
 			force = actor.derivedStats.force
-		elseif actor.effectiveStats and actor.effectiveStats.STR then
-			force = 1 + math.floor(actor.effectiveStats.STR / 60)
 		end
 		local direction = DisplacementService.GetPushDirection(actor, target)
 		local result = DisplacementService.ResolvePush(

@@ -25,27 +25,10 @@ local CombatResolver = {}
 -- INTERNAL FORMULA HELPERS
 --------------------------------------------------
 
-local function calcPrecision(dex)
-	return dex / (dex + 200)
-end
-
-local function calcEvasiveness(agi)
-	return agi / (agi + 200)
-end
-
 local function calcHitQuality(attackerDex, defenderAgi)
-	local precision   = calcPrecision(attackerDex)
-	local evasiveness = calcEvasiveness(defenderAgi)
+	local precision   = GameConstants.CalcPrecision(attackerDex)
+	local evasiveness = GameConstants.CalcEvasiveness(defenderAgi)
 	return 1 + (precision - evasiveness)
-end
-
-local function calcAttackPower(weaponDamage, attackerStr)
-	return weaponDamage * (1 + attackerStr / 200)
-end
-
-local function calcDefensePower(defense, defenderVit)
-	if defense <= 0 then return 0 end
-	return defense * (1 + defenderVit / 300)
 end
 
 local function calcEffectiveDefense(attackPower, defensePower)
@@ -67,8 +50,8 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	local aStats = attacker.effectiveStats
 	local dStats = defender.effectiveStats
 
-	local ap = calcAttackPower(weaponDamage, aStats.STR)
-	local dp = calcDefensePower(0, dStats.VIT)
+	local ap = GameConstants.CalcAttackPower(weaponDamage, aStats.STR)
+	local dp = GameConstants.CalcDefensePower(0, dStats.VIT)
 	local effectiveDefense = calcEffectiveDefense(ap, dp)
 	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI)
 
@@ -134,10 +117,10 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	local weaponDamage = attacker.weaponDamage or 10
 	local sp = weaponDamage * (skillDef.power or 1.0)
 	if skillDef.inheritStr then
-		sp = sp * (1 + aStats.STR / 200)
+		sp = GameConstants.CalcAttackPower(sp, aStats.STR)
 	end
 
-	local dp = calcDefensePower(0, dStats.VIT)
+	local dp = GameConstants.CalcDefensePower(0, dStats.VIT)
 	local effectiveDefense = calcEffectiveDefense(sp, dp)
 	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI)
 
@@ -206,15 +189,14 @@ function CombatResolver.ResolveHealing(caster, target, skillDef)
 	local weaponDamage = caster.weaponDamage or 10
 
 	-- Skill Potency Multiplier = 1 + INT / (200 + INT)
-	local skillPotency = 1 + int / (200 + int)
+	local skillPotency = GameConstants.CalcSkillPotency(int)
 
 	-- Healing formula (base)
 	local baseHeal = 10 + 0.35 * int + weaponDamage * 0.30
 
 	-- Healing Efficiency: target's VIT increases received healing
-	-- Rule: Healing Efficiency = Healing × (1 + VIT / 300)
 	local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
-	local healEfficiency = 1 + targetVit / 300
+	local healEfficiency = GameConstants.CalcHealEfficiency(targetVit)
 	local finalHeal = math.max(1, math.round(baseHeal * skillPotency * healEfficiency))
 
 	return {

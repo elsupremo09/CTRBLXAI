@@ -1,5 +1,5 @@
 -- UILayoutCoordinator.lua
--- CTRBLXAI | Slice 7 Stage 2 — Pure Layout Calculator
+-- CTRBLXAI | Slice 7 Stage 2 -- Pure Layout Calculator
 --
 -- Stateless ModuleScript. Given a viewport size, returns panel layout values.
 -- Does NOT own battle state, connect events, create/destroy panels, or touch Camera.
@@ -26,7 +26,7 @@ end
 
 --- Returns a table of panel layout descriptors for the given viewport.
 --- Each panel entry: { Size, Position, AnchorPoint }
---- Constraints (min/max) are NOT changed — they remain on the panel instances.
+--- Constraints (min/max) are NOT changed -- they remain on the panel instances.
 function UILayoutCoordinator.GetLayout(viewportSize)
 	local mode = UILayoutCoordinator.GetLayoutMode(viewportSize)
 	local w = viewportSize.X

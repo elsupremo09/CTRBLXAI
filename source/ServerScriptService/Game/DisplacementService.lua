@@ -152,12 +152,10 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 
 	-- Step 1: Calculate push distance.
 	-- Force = pusher's derived force (1 + floor(STR/60))
-	-- Stability = target's derived stability (1 + floor(VIT/60))
+	-- Stability = target's derived stability (floor(VIT/60))
 	local targetStability = 1
 	if target.derivedStats and target.derivedStats.stability then
 		targetStability = target.derivedStats.stability
-	elseif target.effectiveStats and target.effectiveStats.VIT then
-		targetStability = 1 + math.floor(target.effectiveStats.VIT / 60)
 	end
 
 	local pushDistance = math.max(0, force - targetStability)

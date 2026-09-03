@@ -250,8 +250,8 @@ function BattleCoordinator.AdvanceClock(state)
 	if ctPassed > 0 then
 		for _, unit in ipairs(state.units) do
 			if unit.isAlive and unit.currentMp < unit.maxMp then
-				local int = unit.effectiveStats and unit.effectiveStats.INT or 10
-				local mpRegen = 2 + math.floor(int / 40)
+				local mpRegen = unit.derivedStats and unit.derivedStats.mpRegen
+					or (2 + math.floor((unit.effectiveStats and unit.effectiveStats.INT or 10) / 40))
 				if not unit.mpRegenAccumulator then unit.mpRegenAccumulator = 0 end
 				unit.mpRegenAccumulator = unit.mpRegenAccumulator + (ctPassed * mpRegen / 1000)
 				if unit.mpRegenAccumulator >= 1 then
