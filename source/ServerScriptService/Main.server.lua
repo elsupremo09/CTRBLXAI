@@ -1694,6 +1694,23 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 		continue
 	end
 
+	-- Turn skip: Sleep / Petrify / Stun / Knock-out
+	local shouldSkip, skipReason = StatusService.ShouldSkipTurn(activeUnit)
+	if shouldSkip then
+		print(string.format(
+			"[TurnSkip] %s skipped (%s) | HP: %d/%d",
+			activeUnit.name, skipReason,
+			activeUnit.currentHp, activeUnit.maxHp
+		))
+		BattleVisualBroadcaster.TurnStarted(activeUnit, state.ct, state.units)
+		StatusService.TickStatuses(activeUnit)
+		BattleCoordinator.EndTurn(state)
+		BattleVisualBroadcaster.TurnSkipped(activeUnit, skipReason)
+		BattleVisualBroadcaster.TurnEnded(activeUnit, activeUnit.remainingRt)
+		if BattleCoordinator.GetPhase(state) == "BattleOver" then break end
+		continue
+	end
+
 	BattleVisualBroadcaster.TurnStarted(activeUnit, state.ct, state.units)
 
 	-- Determine turn handler

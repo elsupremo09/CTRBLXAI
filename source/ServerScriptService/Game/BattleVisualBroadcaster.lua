@@ -366,4 +366,18 @@ function BattleVisualBroadcaster.UnitPushed(pusher, target, result)
 	task.wait(PACE.Action)
 end
 
+--------------------------------------------------
+-- TURN SKIPPED (Phase 2)
+--------------------------------------------------
+
+function BattleVisualBroadcaster.TurnSkipped(unit, reason)
+	BattleEvents.TurnSkipped:FireAllClients({
+		unitId    = unit.id,
+		unitName  = unit.name,
+		side      = unit.side,
+		reason    = reason,
+	})
+	task.wait(PACE.Action)
+end
+
 return BattleVisualBroadcaster

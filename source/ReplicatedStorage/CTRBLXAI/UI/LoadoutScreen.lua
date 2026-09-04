@@ -18,6 +18,9 @@ local LoadoutScreen = {}
 
 local screenGui, rootFrame
 local unitHeaderPanel, equippedPanel, inventoryPanel
+local skillsPanel      -- left column for skills tab
+local infoPanel        -- left column for info tab  
+local currentTab = "EQUIPMENT" 
 local currentFilter = "All"
 local selectedItemId = nil
 
@@ -70,6 +73,7 @@ local STAT_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK" }
 local buildInventory
 local openItemDetail, closeDetail
 local buildSoloDetailContent, buildComparisonContent
+local switchTab, buildSkillsContent, buildInfoContent
 
 --------------------------------------------------
 -- HELPERS
@@ -172,7 +176,7 @@ local function buildTabBar()
 		btn.BorderSizePixel = 0
 		btn.Parent = bar
 
-		if name == "EQUIPMENT" then
+		if name == currentTab then
 			btn.TextColor3 = tb.ActiveColor
 			local underline = Instance.new("Frame")
 			underline.Size = UDim2.new(0.8, 0, 0, tb.UnderlineHeight)
@@ -183,6 +187,13 @@ local function buildTabBar()
 		else
 			btn.TextColor3 = tb.InactiveColor
 		end
+
+		btn.MouseButton1Click:Connect(function()
+			if currentTab ~= name then
+				currentTab = name
+				switchTab()
+			end
+		end)
 	end
 
 	-- OPTIONS button (right-aligned, outside the centered tabs)
@@ -295,9 +306,29 @@ local function buildUnitHeader()
 	row.BackgroundTransparency = 1
 	row.Parent = unitHeaderPanel
 
+	-- Prev unit button (left of portrait)
+	local prevBtn = Instance.new("TextButton")
+	prevBtn.Size = UDim2.new(0, 18, 0, 28)
+	prevBtn.Position = UDim2.new(0, 0, 0, 8)
+	prevBtn.BackgroundColor3 = Theme.Colors.Surface
+	prevBtn.BackgroundTransparency = 0.4
+	prevBtn.Font = Theme.Font.PrimaryBold
+	prevBtn.TextSize = Theme.Text.Body()
+	prevBtn.TextColor3 = Theme.Colors.TextSecondary
+	prevBtn.Text = "\xe2\x97\x80"
+	prevBtn.BorderSizePixel = 0
+	prevBtn.Parent = row
+	Instance.new("UICorner", prevBtn).CornerRadius = UDim.new(0, 3)
+	prevBtn.MouseButton1Click:Connect(function()
+		MockData.PrevUnit()
+		LoadoutScreen.Refresh()
+	end)
+
 	-- Portrait
+	local portraitX = 22
 	local portrait = Instance.new("Frame")
 	portrait.Size = UDim2.new(0, 44, 0, 44)
+	portrait.Position = UDim2.new(0, portraitX, 0, 0)
 	portrait.BackgroundColor3 = Theme.Colors.Player
 	portrait.BackgroundTransparency = 0.2
 	portrait.BorderSizePixel = 0
@@ -338,32 +369,34 @@ local function buildUnitHeader()
 	end
 
 	-- Name + Race
-	makeLabel(row, { Text = unit.name, Position = UDim2.new(0, 52, 0, 2),
-		Size = UDim2.new(1, -100, 0, 18), Font = Theme.Font.PrimaryBold,
+	local textX = portraitX + 52
+	makeLabel(row, { Text = unit.name, Position = UDim2.new(0, textX, 0, 2),
+		Size = UDim2.new(1, -(textX + 26), 0, 18), Font = Theme.Font.PrimaryBold,
 		TextSize = Theme.Text.Heading(), TextColor3 = Theme.Colors.Player })
 	makeLabel(row, { Text = unit.raceName,
-		Position = UDim2.new(0, 52, 0, 20),
-		Size = UDim2.new(1, -100, 0, 14), TextSize = Theme.Text.Small(),
+		Position = UDim2.new(0, textX, 0, 20),
+		Size = UDim2.new(1, -(textX + 26), 0, 14), TextSize = Theme.Text.Small(),
 		TextColor3 = Theme.Colors.TextSecondary })
 
-	-- Switch unit button
-	local switchBtn = Instance.new("TextButton")
-	switchBtn.Size = UDim2.new(0, 28, 0, 28)
-	switchBtn.Position = UDim2.new(1, -28, 0, 8)
-	switchBtn.BackgroundColor3 = Theme.Colors.Surface
-	switchBtn.BackgroundTransparency = 0.3
-	switchBtn.Font = Theme.Font.PrimaryBold
-	switchBtn.TextSize = 16
-	switchBtn.TextColor3 = Theme.Colors.TextSecondary
-	switchBtn.Text = "⇆"
-	switchBtn.BorderSizePixel = 0
-	switchBtn.Parent = row
-	Instance.new("UICorner", switchBtn).CornerRadius = UDim.new(0, 4)
-	switchBtn.MouseButton1Click:Connect(function()
+	-- Next unit button (right side)
+	local nextBtn = Instance.new("TextButton")
+	nextBtn.Size = UDim2.new(0, 18, 0, 28)
+	nextBtn.Position = UDim2.new(1, -18, 0, 8)
+	nextBtn.BackgroundColor3 = Theme.Colors.Surface
+	nextBtn.BackgroundTransparency = 0.4
+	nextBtn.Font = Theme.Font.PrimaryBold
+	nextBtn.TextSize = Theme.Text.Body()
+	nextBtn.TextColor3 = Theme.Colors.TextSecondary
+	nextBtn.Text = "\xe2\x96\xb6"
+	nextBtn.BorderSizePixel = 0
+	nextBtn.Parent = row
+	Instance.new("UICorner", nextBtn).CornerRadius = UDim.new(0, 3)
+	nextBtn.MouseButton1Click:Connect(function()
 		MockData.NextUnit()
 		LoadoutScreen.Refresh()
 	end)
 end
+
 
 --------------------------------------------------
 -- PRIMARY STATS (3x2 grid below header)
@@ -446,8 +479,15 @@ local function buildEquippedLoadout()
 		gridLayout.CellPadding = UDim2.new(0, 3, 0, 3)
 		gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
+		-- Check if main hand weapon is 2H (disables off-hand)
+		local mainItem = MockData.GetEquipped(unit.id, "MainHand")
+		local mainIs2H = mainItem and (mainItem.hands == "Two-Handed" or mainItem.hands == "2H") or false
+
+
 		for i, slotDef in ipairs(EQUIP_SLOTS) do
 			local item = MockData.GetEquipped(unit.id, slotDef.slot)
+			local isOffHandDisabled = (slotDef.slot == "OffHand" and mainIs2H)
+
 
 			local tile = Instance.new("TextButton")
 			if item then
@@ -459,6 +499,12 @@ local function buildEquippedLoadout()
 				tile.BackgroundTransparency = 0.6
 			end
 			tile.BorderSizePixel = 0
+			if isOffHandDisabled then
+				tile.BackgroundColor3 = Theme.Colors.Background
+				tile.BackgroundTransparency = 0.3
+				tile.AutoButtonColor = false
+			end
+
 			tile.Text = ""
 			tile.AutoButtonColor = true
 			tile.LayoutOrder = i
@@ -492,14 +538,27 @@ local function buildEquippedLoadout()
 						TextXAlignment = Enum.TextXAlignment.Left })
 				end
 			else
-				-- Empty slot
-				makeLabel(tile, { Text = "—", Size = UDim2.new(1, 0, 1, 0),
-					TextSize = 20, TextColor3 = Theme.Colors.TextDisabled,
-					TextXAlignment = Enum.TextXAlignment.Center })
+				-- Empty slot or disabled off-hand
+				if isOffHandDisabled then
+					makeLabel(tile, { Text = "2H", Size = UDim2.new(1, 0, 0, 20),
+						Position = UDim2.new(0, 0, 0.3, 0),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextDisabled,
+						TextXAlignment = Enum.TextXAlignment.Center,
+						Font = Theme.Font.PrimaryBold })
+					makeLabel(tile, { Text = "OFF-HAND", Size = UDim2.new(1, 0, 0, 12),
+						Position = UDim2.new(0, 0, 1, -14),
+						TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextDisabled,
+						TextXAlignment = Enum.TextXAlignment.Center })
+				else
+					makeLabel(tile, { Text = "\xe2\x80\x94", Size = UDim2.new(1, 0, 1, 0),
+						TextSize = 20, TextColor3 = Theme.Colors.TextDisabled,
+						TextXAlignment = Enum.TextXAlignment.Center })
+				end
 			end
 
 			-- Click: filter inventory to this slot type
 			tile.MouseButton1Click:Connect(function()
+				if isOffHandDisabled then return end
 				if item then
 					-- Item equipped: open detail view with UNEQUIP
 					openItemDetail(item, nil, true)
@@ -1719,6 +1778,243 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 end
 
 
+
+--------------------------------------------------
+-- TAB SWITCHING
+--------------------------------------------------
+
+switchTab = function()
+	-- Hide all tab-specific panels
+	if inventoryPanel then inventoryPanel.Visible = false end
+	if equippedPanel then equippedPanel.Visible = false end
+	if skillsPanel then skillsPanel.Visible = false end
+	if infoPanel then infoPanel.Visible = false end
+
+	-- Close any open overlays
+	closeDetail()
+	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+
+	if currentTab == "EQUIPMENT" then
+		if inventoryPanel then inventoryPanel.Visible = true end
+		if equippedPanel then equippedPanel.Visible = true end
+		buildInventory()
+		buildEquippedLoadout()
+	elseif currentTab == "SKILLS" then
+		if skillsPanel then skillsPanel.Visible = true end
+		buildSkillsContent()
+	elseif currentTab == "INFO" then
+		if infoPanel then infoPanel.Visible = true end
+		buildInfoContent()
+	end
+
+	-- Rebuild tab bar to update active highlight
+	buildTabBar()
+	-- Rebuild unit header (always visible)
+	buildUnitHeader()
+end
+
+--------------------------------------------------
+-- SKILLS TAB CONTENT
+--------------------------------------------------
+
+buildSkillsContent = function()
+	if not skillsPanel then return end
+	clearChildren(skillsPanel)
+	pad(skillsPanel, 10, 12, 12, 10)
+
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	-- Title
+	makeLabel(skillsPanel, { Text = "SKILL LOADOUT", Size = UDim2.new(1, 0, 0, 18),
+		Position = UDim2.new(0, 0, 0, 0),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Heading(),
+		TextColor3 = Theme.Colors.TextGold })
+
+	local loadout = MockData.GetSkillLoadout(unit.id)
+	local doctrineId = unit.doctrineId or "DOC-BERSERKER"
+	local doctrineChoices = MockData.GetDoctrineChoices(doctrineId)
+
+	local slotY = 24
+	local SLOT_H = 44
+	local SLOT_GAP = 4
+
+	for slot = 1, 5 do
+		local skillId = loadout[slot]
+		local skill = skillId and MockData.GetSkill(skillId) or nil
+
+		-- Slot frame
+		local slotFrame = Instance.new("Frame")
+		slotFrame.Size = UDim2.new(1, 0, 0, SLOT_H)
+		slotFrame.Position = UDim2.new(0, 0, 0, slotY)
+		slotFrame.BackgroundColor3 = Theme.Colors.PanelRaised
+		slotFrame.BackgroundTransparency = 0.3
+		slotFrame.BorderSizePixel = 0
+		slotFrame.Parent = skillsPanel
+		Instance.new("UICorner", slotFrame).CornerRadius = UDim.new(0, 4)
+
+		-- Slot number badge (left)
+		local badge = Instance.new("Frame")
+		badge.Size = UDim2.new(0, 24, 0, 24)
+		badge.Position = UDim2.new(0, 6, 0.5, -12)
+		badge.BorderSizePixel = 0
+		badge.Parent = slotFrame
+		Instance.new("UICorner", badge).CornerRadius = UDim.new(0, 4)
+
+		local badgeLabel = Instance.new("TextLabel")
+		badgeLabel.Size = UDim2.fromScale(1, 1)
+		badgeLabel.BackgroundTransparency = 1
+		badgeLabel.Font = Theme.Font.PrimaryBold
+		badgeLabel.TextSize = Theme.Text.Body()
+		badgeLabel.TextColor3 = Theme.Colors.TextPrimary
+		badgeLabel.Text = tostring(slot)
+		badgeLabel.Parent = badge
+
+		if slot == 5 then
+			-- Locked slot
+			badge.BackgroundColor3 = Theme.Colors.TextDisabled
+			badge.BackgroundTransparency = 0.5
+			slotFrame.BackgroundTransparency = 0.6
+
+			makeLabel(slotFrame, { Text = "Locked — First Race Evolution",
+				Size = UDim2.new(1, -40, 0, 16),
+				Position = UDim2.new(0, 36, 0.5, -8),
+				TextSize = Theme.Text.Body(),
+				TextColor3 = Theme.Colors.TextDisabled,
+				Font = Theme.Font.Primary })
+
+		elseif slot == 1 then
+			-- Doctrine Skill slot
+			badge.BackgroundColor3 = Theme.Colors.TextGold
+			badge.BackgroundTransparency = 0.3
+
+			if skill then
+				makeLabel(slotFrame, { Text = skill.name,
+					Size = UDim2.new(0.5, -40, 0, 16),
+					Position = UDim2.new(0, 36, 0, 4),
+					Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
+					TextColor3 = Theme.Colors.TextGold })
+				makeLabel(slotFrame, { Text = skill.desc or "",
+					Size = UDim2.new(0.5, -40, 0, 14),
+					Position = UDim2.new(0, 36, 0, 22),
+					TextSize = Theme.Text.Tiny(),
+					TextColor3 = Theme.Colors.TextSecondary,
+					TextWrapped = true })
+			else
+				makeLabel(slotFrame, { Text = "No Doctrine Skill",
+					Size = UDim2.new(1, -40, 0, 16),
+					Position = UDim2.new(0, 36, 0.5, -8),
+					TextSize = Theme.Text.Body(),
+					TextColor3 = Theme.Colors.TextDisabled })
+			end
+
+			-- MP / RT on right side
+			if skill then
+				makeLabel(slotFrame, { Text = "MP " .. (skill.mpCost or 0),
+					Size = UDim2.new(0, 40, 0, 14),
+					Position = UDim2.new(1, -90, 0, 6),
+					TextSize = Theme.Text.Small(), Font = Theme.Font.Mono,
+					TextColor3 = Theme.Colors.MP })
+				makeLabel(slotFrame, { Text = "RT " .. (skill.rtCost or 0),
+					Size = UDim2.new(0, 40, 0, 14),
+					Position = UDim2.new(1, -46, 0, 6),
+					TextSize = Theme.Text.Small(), Font = Theme.Font.Mono,
+					TextColor3 = Theme.Colors.TextSecondary })
+			end
+
+			-- Doctrine label
+			makeLabel(slotFrame, { Text = "DOCTRINE",
+				Size = UDim2.new(0, 60, 0, 10),
+				Position = UDim2.new(1, -90, 0, 24),
+				TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+				TextColor3 = Theme.Colors.TextGold })
+
+		elseif skill then
+			-- Normal skill slot (2-4) with skill equipped
+			badge.BackgroundColor3 = Theme.Colors.Player
+			badge.BackgroundTransparency = 0.3
+
+			makeLabel(slotFrame, { Text = skill.name,
+				Size = UDim2.new(0.5, -40, 0, 16),
+				Position = UDim2.new(0, 36, 0, 4),
+				Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
+				TextColor3 = Theme.Colors.TextPrimary })
+
+			-- Tags
+			local tagText = table.concat(skill.tags or {}, ", ")
+			makeLabel(slotFrame, { Text = tagText,
+				Size = UDim2.new(0.5, -40, 0, 12),
+				Position = UDim2.new(0, 36, 0, 22),
+				TextSize = Theme.Text.Tiny(),
+				TextColor3 = Theme.Colors.TextSecondary })
+
+			-- MP / RT
+			makeLabel(slotFrame, { Text = "MP " .. (skill.mpCost or 0),
+				Size = UDim2.new(0, 40, 0, 14),
+				Position = UDim2.new(1, -90, 0, 6),
+				TextSize = Theme.Text.Small(), Font = Theme.Font.Mono,
+				TextColor3 = Theme.Colors.MP })
+			makeLabel(slotFrame, { Text = "RT " .. (skill.rtCost or 0),
+				Size = UDim2.new(0, 40, 0, 14),
+				Position = UDim2.new(1, -46, 0, 6),
+				TextSize = Theme.Text.Small(), Font = Theme.Font.Mono,
+				TextColor3 = Theme.Colors.TextSecondary })
+
+			-- Range
+			makeLabel(slotFrame, { Text = "R:" .. (skill.range or 1),
+				Size = UDim2.new(0, 30, 0, 14),
+				Position = UDim2.new(1, -90, 0, 24),
+				TextSize = Theme.Text.Tiny(), Font = Theme.Font.Mono,
+				TextColor3 = Theme.Colors.TextSecondary })
+
+		else
+			-- Empty slot (2-4)
+			badge.BackgroundColor3 = Theme.Colors.Surface
+			badge.BackgroundTransparency = 0.5
+
+			makeLabel(slotFrame, { Text = "— Empty —",
+				Size = UDim2.new(1, -40, 0, 16),
+				Position = UDim2.new(0, 36, 0.5, -8),
+				TextSize = Theme.Text.Body(),
+				TextColor3 = Theme.Colors.TextDisabled })
+		end
+
+		slotY = slotY + SLOT_H + SLOT_GAP
+	end
+
+	-- Augment slots note
+	slotY = slotY + 8
+	makeLabel(skillsPanel, { Text = "Augment slots available on each skill (2 per skill). Tap a skill to manage augments.",
+		Size = UDim2.new(1, 0, 0, 24),
+		Position = UDim2.new(0, 0, 0, slotY),
+		TextSize = Theme.Text.Tiny(),
+		TextColor3 = Theme.Colors.TextDisabled,
+		TextWrapped = true })
+end
+
+--------------------------------------------------
+-- INFO TAB CONTENT (placeholder)
+--------------------------------------------------
+
+buildInfoContent = function()
+	if not infoPanel then return end
+	clearChildren(infoPanel)
+	pad(infoPanel, 10, 12, 12, 10)
+
+	makeLabel(infoPanel, { Text = "INFO",
+		Size = UDim2.new(1, 0, 0, 18),
+		Position = UDim2.new(0, 0, 0, 0),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Heading(),
+		TextColor3 = Theme.Colors.TextGold })
+
+	makeLabel(infoPanel, { Text = "Unit information, stats, race, and doctrine details will appear here.",
+		Size = UDim2.new(1, 0, 0, 40),
+		Position = UDim2.new(0, 0, 0, 24),
+		TextSize = Theme.Text.Body(),
+		TextColor3 = Theme.Colors.TextSecondary,
+		TextWrapped = true })
+end
+
 -- SCREEN BUILD
 --------------------------------------------------
 
@@ -1759,11 +2055,26 @@ function LoadoutScreen.Show()
 		UDim2.new(1, 0, 1, -(headerH + gap)),
 		UDim2.new(0, 0, 0, headerH + gap), nil, rightCol)
 
-	-- LEFT COLUMN: Inventory (70% width, flush to left/top/bottom edges)
+	-- LEFT COLUMN: Tab-specific panels (70% width, flush to left/top/bottom edges)
+	-- Equipment tab: inventory
 	inventoryPanel = makePanel("Inventory",
 		UDim2.new(0.70, 0, 1, 0),
 		UDim2.new(0, 0, 0, 0), nil, rootFrame)
 
+	-- Skills tab: skill loadout
+	skillsPanel = makePanel("SkillsPanel",
+		UDim2.new(0.70, 0, 1, 0),
+		UDim2.new(0, 0, 0, 0), nil, rootFrame)
+	skillsPanel.Visible = false
+
+	-- Info tab: unit info
+	infoPanel = makePanel("InfoPanel",
+		UDim2.new(0.70, 0, 1, 0),
+		UDim2.new(0, 0, 0, 0), nil, rootFrame)
+	infoPanel.Visible = false
+
+	-- Show the correct tab
+	currentTab = "EQUIPMENT"
 	LoadoutScreen.Refresh()
 end
 
@@ -1783,6 +2094,8 @@ function LoadoutScreen.Hide()
 	unitHeaderPanel = nil
 	equippedPanel = nil
 	inventoryPanel = nil
+	skillsPanel = nil
+	infoPanel = nil
 end
 
 function LoadoutScreen.Toggle()

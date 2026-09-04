@@ -12,6 +12,12 @@
 local StatusService = require(script.Parent.StatusService)
 local RacePassiveService = require(script.Parent.RacePassiveService)
 
+local RaceData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("RaceData")
+)
+
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("CTRBLXAI")
@@ -24,6 +30,120 @@ local CombatResolver = {}
 --------------------------------------------------
 -- INTERNAL FORMULA HELPERS
 --------------------------------------------------
+
+-- Known element tags. Anything in this set found in a skill's .tags array
+-- is treated as the skill's element. First match wins.
+local ELEMENT_SET = {
+	Physical = true, Fire = true, Water = true, Ice = true,
+	Poison = true, Dark = true, Holy = true, Electric = true,
+}
+
+local function extractElement(tags)
+	if not tags then return "Physical" end
+	for _, tag in ipairs(tags) do
+		if ELEMENT_SET[tag] then return tag end
+	end
+	return "Physical"
+end
+
+-- Returns true if unit has the Undead race tag
+local function isUndead(unit)
+	if not unit.raceId then return false end
+	local raceEntry = RaceData[unit.raceId]
+	if raceEntry and raceEntry.tags then
+		for _, tag in ipairs(raceEntry.tags) do
+			if tag == "Undead" then return true end
+		end
+	end
+	return false
+end
+
+--------------------------------------------------
+-- ELEMENT DAMAGE INTERACTIONS (Phase 3)
+--
+-- Modifies finalDamage based on element vs defender status.
+-- Returns: modifiedDamage, removedStatuses (table of IDs)
+--
+-- Rules from DB (elements_statuses):
+--   Fire vs Wet/Frozen    → damage ×0.50, removes Wet/Frozen
+--   Physical vs Frozen    → damage ×1.50
+--   Water vs Frozen       → damage ×1.50
+--   Water vs Burn         → removes Burn, Water damage ×0.50
+--   Holy vs Undead        → damage ×2.0
+--   Dark vs Undead        → heals instead (handled separately)
+--------------------------------------------------
+
+local function applyElementInteractions(defender, element, finalDamage)
+	local removed = {}
+
+	local hasWet    = StatusService.HasStatus(defender, "Wet")
+	local hasFrozen = StatusService.HasStatus(defender, "Frozen")
+	local hasBurn   = StatusService.HasStatus(defender, "Burn")
+	local undead    = isUndead(defender)
+
+	if element == "Fire" then
+		-- Fire vs Wet: halved, removes Wet
+		if hasWet then
+			finalDamage = math.max(0, math.round(finalDamage * 0.50))
+			StatusService.RemoveStatus(defender, "Wet")
+			table.insert(removed, "Wet")
+		end
+		-- Fire vs Frozen: halved, removes Frozen
+		if hasFrozen then
+			finalDamage = math.max(0, math.round(finalDamage * 0.50))
+			StatusService.RemoveStatus(defender, "Frozen")
+			table.insert(removed, "Frozen")
+		end
+
+	elseif element == "Physical" then
+		-- Physical vs Frozen: ×1.50
+		if hasFrozen then
+			finalDamage = math.max(0, math.round(finalDamage * 1.50))
+		end
+
+	elseif element == "Water" then
+		-- Water vs Frozen: ×1.50
+		if hasFrozen then
+			finalDamage = math.max(0, math.round(finalDamage * 1.50))
+		end
+		-- Water vs Burn: removes Burn, Water damage halved
+		if hasBurn then
+			finalDamage = math.max(0, math.round(finalDamage * 0.50))
+			StatusService.RemoveStatus(defender, "Burn")
+			table.insert(removed, "Burn")
+		end
+
+	elseif element == "Holy" then
+		-- Holy vs Undead: ×2.0
+		if undead then
+			finalDamage = math.max(0, math.round(finalDamage * 2.0))
+		end
+	end
+
+	-- Electric: no interactions yet (DB: "Future interactions not finalized")
+
+	return finalDamage, removed
+end
+
+-- Element→status triggers. Applied after damage resolves.
+-- Skips if the skill already applied the same status via appliesStatus.
+local function applyElementStatusTriggers(sourceUnitId, defender, element, actualDamage, alreadyApplied)
+	if actualDamage <= 0 or not defender.isAlive then return end
+
+	if element == "Fire" and alreadyApplied ~= "Burn" then
+		StatusService.ApplyStatus(defender, "Burn", sourceUnitId, actualDamage)
+	elseif element == "Water" then
+		StatusService.ApplyStatus(defender, "Wet", sourceUnitId)
+	elseif element == "Ice" then
+		-- Ice on Wet target → convert Wet to Frozen
+		if StatusService.HasStatus(defender, "Wet") then
+			StatusService.RemoveStatus(defender, "Wet")
+			StatusService.ApplyStatus(defender, "Frozen", sourceUnitId)
+		end
+	elseif element == "Poison" and alreadyApplied ~= "Poison" then
+		StatusService.ApplyStatus(defender, "Poison", sourceUnitId)
+	end
+end
 
 local function calcHitQuality(attackerDex, defenderAgi)
 	local precision   = GameConstants.CalcPrecision(attackerDex)
@@ -86,6 +206,32 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 		finalDamage = math.max(0, math.round(finalDamage * (1 - mitigation)))
 	end
 
+	-- Step 9: Petrify damage reduction
+	-- Petrify: normal damage ×0.70, HP%-based damage ×0.25
+	if StatusService.HasStatus(defender, "Petrify") then
+		finalDamage = math.max(0, math.round(finalDamage * 0.70))
+		print(string.format(
+			"[CombatResolver] Petrify reduces damage to %d (×0.70)", finalDamage
+		))
+	end
+
+	-- Step 10: Element interactions (Phase 3)
+	-- Basic Attack element = weapon element or Physical
+	local attackElement = attacker.weaponElement or "Physical"
+
+	-- Dark vs Undead: convert damage to healing
+	if attackElement == "Dark" and isUndead(defender) then
+		return {
+			type         = "Healing",
+			targetId     = defender.id,
+			finalHealing = finalDamage,
+			sourceUnitId = attacker.id,
+			element      = attackElement,
+		}
+	end
+
+	finalDamage = applyElementInteractions(defender, attackElement, finalDamage)
+
 	return {
 		type           = "Damage",
 		targetId       = defender.id,
@@ -96,6 +242,7 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 		positionalMod  = positionalMod,
 		finalDamage    = finalDamage,
 		appliesStatus  = RacePassiveService.GetBasicAttackStatus(attacker),
+		element        = attackElement,
 		sourceUnitId   = attacker.id,
 	}
 end
@@ -136,7 +283,8 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod * fortuneMod))
 
 	-- Race passive modifiers (Slice 4F)
-	local skillElement = skillDef.element or nil
+	-- Extract element from skill tags (Phase 3)
+	local skillElement = extractElement(skillDef.tags)
 	local skillIsAOE = skillDef.aoePattern ~= nil and skillDef.aoePattern ~= "Single"
 	local skillIsPhysical = (skillElement == nil or skillElement == "Physical" or skillElement == "")
 	local raceDealtMod = RacePassiveService.GetDamageDealtModifier(attacker, skillElement, skillIsAOE)
@@ -156,6 +304,28 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		finalDamage = math.max(0, math.round(finalDamage * (1 - mitigation)))
 	end
 
+	-- Step 9: Petrify damage reduction
+	if StatusService.HasStatus(defender, "Petrify") then
+		finalDamage = math.max(0, math.round(finalDamage * 0.70))
+		print(string.format(
+			"[CombatResolver] Petrify reduces skill damage to %d (×0.70)", finalDamage
+		))
+	end
+
+	-- Step 10: Element interactions (Phase 3)
+	-- Dark vs Undead: convert damage to healing
+	if skillElement == "Dark" and isUndead(defender) then
+		return {
+			type         = "Healing",
+			targetId     = defender.id,
+			finalHealing = finalDamage,
+			sourceUnitId = attacker.id,
+			element      = skillElement,
+		}
+	end
+
+	finalDamage = applyElementInteractions(defender, skillElement, finalDamage)
+
 	return {
 		type           = "Damage",
 		targetId       = defender.id,
@@ -166,6 +336,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		positionalMod  = positionalMod,
 		finalDamage    = finalDamage,
 		appliesStatus  = skillDef.appliesStatus or nil,
+		element        = skillElement,
 		sourceUnitId   = attacker.id,
 	}
 end
@@ -199,6 +370,29 @@ function CombatResolver.ResolveHealing(caster, target, skillDef)
 	local healEfficiency = GameConstants.CalcHealEfficiency(targetVit)
 	local finalHeal = math.max(1, math.round(baseHeal * skillPotency * healEfficiency))
 
+	-- Phase 3: Undead healing reversal
+	-- Non-Dark healing vs Undead → converted to damage
+	local healElement = extractElement(skillDef.tags)
+	if isUndead(target) and healElement ~= "Dark" then
+		print(string.format(
+			"[CombatResolver] Undead healing reversal: %s receives %d damage instead of healing",
+			target.name, finalHeal
+		))
+		return {
+			type         = "Damage",
+			targetId     = target.id,
+			finalDamage  = finalHeal,
+			attackPower  = 0,
+			defensePower = 0,
+			rawDamage    = finalHeal,
+			hitQuality   = 1.0,
+			positionalMod = 1.0,
+			appliesStatus = nil,
+			element      = healElement,
+			sourceUnitId = caster.id,
+		}
+	end
+
 	return {
 		type         = "Healing",
 		targetId     = target.id,
@@ -226,6 +420,9 @@ function CombatResolver.ApplyOutcome(outcome, target)
 
 	local actual = UnitSchema_ApplyDamage(outcome.finalDamage, target)
 
+	-- Phase 2: Check for damage-triggered status removal (e.g. Sleep)
+	StatusService.OnDamageReceived(target, actual)
+
 	local statusApplied = nil
 	if outcome.appliesStatus and actual > 0 and target.isAlive then
 		-- For Burn, pass the actual fire damage dealt
@@ -240,6 +437,13 @@ function CombatResolver.ApplyOutcome(outcome, target)
 			fireDmg
 		)
 		statusApplied = outcome.appliesStatus
+	end
+
+	-- Phase 3: Element→status triggers (Fire→Burn, Water→Wet, Ice→Frozen, Poison→Poison)
+	-- Only fires if actual damage > 0 and target alive.
+	-- Skips if the same status was already applied by appliesStatus above.
+	if outcome.element and actual > 0 and target.isAlive then
+		applyElementStatusTriggers(outcome.sourceUnitId or "unknown", target, outcome.element, actual, statusApplied)
 	end
 
 	local posLabel = ""

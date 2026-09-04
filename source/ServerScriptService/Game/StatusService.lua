@@ -306,4 +306,83 @@ function StatusService.RemoveDispellable(unit)
 	return removed
 end
 
+--------------------------------------------------
+-- ACTION BLOCKING (Phase 2)
+--
+-- Reads the `blocks` table from GameConstants.STATUSES.
+-- Returns true + reason if any active status blocks this action type.
+-- actionType: "Move", "Attack", "Skill", "Guard", "Wait", "Push"
+--------------------------------------------------
+
+function StatusService.IsActionBlocked(unit, actionType)
+	-- Guard and Wait are never blocked by status effects
+	if actionType == "Guard" or actionType == "Wait" then
+		return false, nil
+	end
+
+	for _, inst in ipairs(unit.statusInstances) do
+		local def = GameConstants.STATUSES[inst.id]
+		if def and def.blocks then
+			if def.blocks.All then
+				return true, inst.id .. " prevents all actions"
+			end
+			if actionType == "Skill" and def.blocks.Skills then
+				return true, inst.id .. " prevents skill use"
+			end
+			if actionType == "Attack" and def.blocks.BasicAttack then
+				return true, inst.id .. " prevents basic attack"
+			end
+			if actionType == "Move" and def.blocks.Move then
+				return true, inst.id .. " prevents movement"
+			end
+		end
+	end
+	return false, nil
+end
+
+--------------------------------------------------
+-- TURN SKIP CHECK (Phase 2)
+--
+-- Returns true + reason if the unit's turn should be
+-- auto-skipped (Sleep, Petrify, Stun, Knock-out).
+--------------------------------------------------
+
+function StatusService.ShouldSkipTurn(unit)
+	for _, inst in ipairs(unit.statusInstances) do
+		local def = GameConstants.STATUSES[inst.id]
+		if def and def.skipsTurn then
+			return true, inst.id
+		end
+	end
+	return false, nil
+end
+
+--------------------------------------------------
+-- ON DAMAGE RECEIVED (Phase 2)
+--
+-- Called after damage is applied to a unit.
+-- Currently handles: Sleep removed by damage.
+-- Returns a table of status IDs that were removed.
+--------------------------------------------------
+
+function StatusService.OnDamageReceived(unit, damage)
+	if damage <= 0 then return {} end
+
+	local removed = {}
+
+	-- Sleep: "Damage from any source removes Sleep immediately"
+	local sleepInst = StatusService.HasStatus(unit, "Sleep")
+	if sleepInst then
+		StatusService.RemoveStatus(unit, "Sleep")
+		table.insert(removed, "Sleep")
+		print(string.format("[StatusService] Sleep BROKEN by damage on %s", unit.name))
+
+		-- Apply Sleep Immunity (2 turns, undispellable)
+		StatusService.ApplyStatus(unit, "Sleep Immunity", unit.id)
+		print(string.format("[StatusService] Sleep Immunity applied to %s", unit.name))
+	end
+
+	return removed
+end
+
 return StatusService

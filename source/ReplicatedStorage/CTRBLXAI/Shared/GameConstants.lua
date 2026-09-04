@@ -186,6 +186,312 @@ GameConstants.STATUSES = {
 		removedByCC  = true,     -- removed by Stun, Freeze, Sleep
 		dotType      = nil,
 	},
+
+	-- ===== DAMAGE OVER TIME (new) =====
+
+	Venom = {
+		id           = "Venom",
+		kind         = "Debuff",
+		duration     = nil,       -- Unlimited until cured
+		reapply      = "stack",   -- Venom Strength +1 on reapply
+	},
+
+	Bleed = {
+		id           = "Bleed",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 2000,
+		reapply      = "chain",   -- Refresh self + apply Raptured
+	},
+
+	Raptured = {
+		id           = "Raptured",
+		kind         = "Debuff",
+		duration     = 5,
+		reapply      = "chain",   -- Refresh self + apply Wounded
+	},
+
+	Wounded = {
+		id           = "Wounded",
+		kind         = "Debuff",
+		duration     = 3,
+		reapply      = "chain",   -- Refresh self + apply Bleed
+	},
+
+	-- ===== HAZARD CONDITIONS =====
+
+	Drowning = {
+		id           = "Drowning",
+		kind         = "Debuff",
+		duration     = nil,       -- Unlimited while valid
+		reapply      = "none",
+		implemented  = false,     -- BLOCKED: needs water tile system
+	},
+
+	Sinking = {
+		id           = "Sinking",
+		kind         = "Debuff",
+		duration     = nil,       -- Unlimited while valid
+		reapply      = "none",
+		blocks       = { Move = true },
+		implemented  = false,     -- BLOCKED: needs sinking tile system
+	},
+
+	-- ===== DEBUFFS =====
+
+	Blind = {
+		id           = "Blind",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 2000,
+		reapply      = "refresh",
+	},
+
+	Confuse = {
+		id           = "Confuse",
+		kind         = "Debuff",
+		duration     = 3,
+		reapply      = "refresh",
+	},
+
+	Silence = {
+		id           = "Silence",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 2000,
+		reapply      = "refresh",
+		blocks       = { Skills = true },
+	},
+
+	Mute = {
+		id           = "Mute",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 3000,
+		reapply      = "refresh",
+	},
+
+	Break = {
+		id           = "Break",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 3000,
+		reapply      = "refresh",
+	},
+
+	Disarmed = {
+		id           = "Disarmed",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 3000,
+		reapply      = "refresh",
+		blocks       = { BasicAttack = true },
+	},
+
+	Pinned = {
+		id           = "Pinned",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 1000,
+		reapply      = "refresh",
+		blocks       = { Move = true },
+	},
+
+	Crippled = {
+		id           = "Crippled",
+		kind         = "Debuff",
+		duration     = 5,
+		reapply      = "refresh",
+	},
+
+	["Mana Burn"] = {
+		id           = "Mana Burn",
+		kind         = "Debuff",
+		duration     = 3,
+		reapply      = "refresh",
+	},
+
+	Petrify = {
+		id           = "Petrify",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 1500,
+		reapply      = "refresh",
+		blocks       = { All = true },
+		skipsTurn    = true,
+	},
+
+	-- ===== TEMPO MODIFIERS =====
+
+	Haste = {
+		id           = "Haste",
+		kind         = "Buff",
+		duration     = 3,
+		reapply      = "refresh",
+		rtMultiplier = 0.90,
+	},
+
+	Frenzy = {
+		id           = "Frenzy",
+		kind         = "Buff",
+		duration     = 3,
+		reapply      = "refresh",
+	},
+
+	Wet = {
+		id           = "Wet",
+		kind         = "Debuff",
+		duration     = 5,
+		reapply      = "refresh",
+	},
+
+	Frozen = {
+		id           = "Frozen",
+		kind         = "Debuff",
+		duration     = 3,
+		reapply      = "refresh",
+	},
+
+	-- ===== SPECIAL CONDITIONS =====
+
+	Undead = {
+		id           = "Undead",
+		kind         = "Special",
+		duration     = nil,       -- Permanent or temporary
+		reapply      = "none",
+	},
+
+	Overflow = {
+		id           = "Overflow",
+		kind         = "Buff",
+		duration     = 3,
+		reapply      = "extend",
+		implemented  = false,     -- BLOCKED: pending clarification
+	},
+
+	-- ===== HEALING / RESOURCE BUFFS =====
+
+	Regeneration = {
+		id           = "Regeneration",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 3000,
+		reapply      = "extend",
+	},
+
+	Recharge = {
+		id           = "Recharge",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 1200,
+		reapply      = "refresh",
+	},
+
+	-- ===== COMBAT BUFFS =====
+
+	Hide = {
+		id           = "Hide",
+		kind         = "Buff",
+		duration     = 3,
+		reapply      = "refresh",
+	},
+
+	Blessed = {
+		id           = "Blessed",
+		kind         = "Buff",
+		duration     = 4,
+		reapply      = "refresh",
+	},
+
+	Cursed = {
+		id           = "Cursed",
+		kind         = "Debuff",
+		duration     = 4,
+		reapply      = "refresh",
+	},
+
+	Enlightened = {
+		id           = "Enlightened",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 3000,
+		reapply      = "stack",
+	},
+
+	-- ===== STATE BUFFS =====
+
+	Flight = {
+		id           = "Flight",
+		kind         = "Buff",
+		duration     = 3,
+		reapply      = "refresh",
+	},
+
+	["Giant Transformation"] = {
+		id           = "Giant Transformation",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 3000,
+		reapply      = "refresh",
+	},
+
+	-- ===== COMBAT STATES =====
+
+	["Knock-out"] = {
+		id           = "Knock-out",
+		kind         = "Special",
+		duration     = nil,
+		durationCt   = 3000,
+		reapply      = "none",
+		blocks       = { All = true },
+		skipsTurn    = true,
+	},
+
+	Rush = {
+		id           = "Rush",
+		kind         = "Buff",
+		duration     = 4,
+		reapply      = "refresh",
+	},
+
+	Weakened = {
+		id           = "Weakened",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 2000,
+		reapply      = "refresh",
+	},
+
+	-- ===== HARD CONTROL =====
+
+	Sleep = {
+		id           = "Sleep",
+		kind         = "Debuff",
+		duration     = 2,
+		reapply      = "none",
+		blocks       = { All = true },
+		skipsTurn    = true,
+	},
+
+	["Sleep Immunity"] = {
+		id           = "Sleep Immunity",
+		kind         = "Buff",
+		duration     = 2,
+		reapply      = "refresh",
+		undispellable = true,
+	},
+
+	-- ===== DEFERRED =====
+
+	Stun = {
+		id           = "Stun",
+		kind         = "Debuff",
+		duration     = nil,
+		reapply      = "refresh",
+		blocks       = { All = true },
+		skipsTurn    = true,
+		implemented  = false,     -- DEFERRED: no DB definition yet
+	},
 }
 
 --------------------------------------------------

@@ -292,4 +292,69 @@ function MockLoadoutData.LoadFromServer()
 	end
 end
 
+
+--------------------------------------------------
+-- MOCK SKILL DATA (for Skills Tab)
+--------------------------------------------------
+
+-- Skills available in the game (simplified from SkillData.lua / GameConstants.SKILLS)
+MockLoadoutData.SkillCatalog = {
+	{ id = "skill_power_strike", name = "Power Strike", tags = {"Direct Damage","Physical"}, mpCost = 2, rtCost = 40, range = 1, pattern = "Single", desc = "A powerful melee strike dealing 1.20× weapon damage.", element = "Physical" },
+	{ id = "skill_sweeping_cut", name = "Sweeping Cut", tags = {"Direct Damage","Physical","AOE"}, mpCost = 4, rtCost = 50, range = 1, pattern = "Cleave", desc = "Slash in a wide arc hitting adjacent enemies.", element = "Physical" },
+	{ id = "skill_fire_bolt", name = "Fire Bolt", tags = {"Direct Damage","Fire"}, mpCost = 3, rtCost = 40, range = 4, pattern = "Single", desc = "Launch a bolt of fire at a distant enemy.", element = "Fire" },
+	{ id = "skill_healing_light", name = "Healing Light", tags = {"Healing","Holy"}, mpCost = 4, rtCost = 20, range = 4, pattern = "Single", desc = "Restore HP to an ally.", element = "Holy" },
+	{ id = "skill_crippling_shot", name = "Crippling Shot", tags = {"Direct Damage","Physical","Debuff"}, mpCost = 3, rtCost = 40, range = 3, pattern = "Single", desc = "A ranged shot that slows the target.", element = "Physical" },
+	{ id = "skill_venom_strike", name = "Venom Strike", tags = {"Direct Damage","Physical","Debuff"}, mpCost = 3, rtCost = 35, range = 1, pattern = "Single", desc = "Melee attack that poisons the target.", element = "Physical" },
+	{ id = "doc_berserker_01", name = "Raging Blow", tags = {"Direct Damage","Physical"}, mpCost = 5, rtCost = 60, range = 1, pattern = "Single", desc = "Berserker doctrine skill. Devastating blow that scales with missing HP.", element = "Physical", isDoctrine = true },
+	{ id = "doc_ranger_01", name = "Eagle Eye", tags = {"Buff"}, mpCost = 3, rtCost = 30, range = 0, pattern = "Self", desc = "Ranger doctrine skill. Increases accuracy and range for 2 turns.", element = nil, isDoctrine = true },
+	{ id = "doc_arcanist_01", name = "Arcane Surge", tags = {"Direct Damage","Arcane"}, mpCost = 6, rtCost = 50, range = 4, pattern = "Single", desc = "Arcanist doctrine skill. Pure arcane damage that ignores defense.", element = "Arcane", isDoctrine = true },
+}
+
+-- Doctrine → skill choices mapping (references SkillCatalog ids)
+MockLoadoutData.DoctrineSkillChoices = {
+	["DOC-BERSERKER"] = { "doc_berserker_01", "skill_power_strike", "skill_sweeping_cut" },
+	["DOC-RANGER"] = { "doc_ranger_01", "skill_crippling_shot", "skill_venom_strike" },
+	["DOC-ARCANIST"] = { "doc_arcanist_01", "skill_fire_bolt", "skill_healing_light" },
+}
+
+-- Equipped skills per unit (slot 1 = doctrine, slots 2-4 = normal, slot 5 = locked)
+MockLoadoutData.SkillLoadout = {
+	unit_hero = {
+		[1] = "doc_berserker_01",  -- Doctrine Skill
+		[2] = "skill_power_strike",
+		[3] = "skill_sweeping_cut",
+		[4] = nil,                  -- Empty slot
+		[5] = nil,                  -- Locked
+	},
+	unit_ranger = {
+		[1] = "doc_ranger_01",
+		[2] = "skill_crippling_shot",
+		[3] = "skill_venom_strike",
+		[4] = nil,
+		[5] = nil,
+	},
+	unit_mage = {
+		[1] = "doc_arcanist_01",
+		[2] = "skill_fire_bolt",
+		[3] = "skill_healing_light",
+		[4] = nil,
+		[5] = nil,
+	},
+}
+
+function MockLoadoutData.GetSkill(skillId)
+	for _, sk in ipairs(MockLoadoutData.SkillCatalog) do
+		if sk.id == skillId then return sk end
+	end
+	return nil
+end
+
+function MockLoadoutData.GetSkillLoadout(unitId)
+	return MockLoadoutData.SkillLoadout[unitId] or {}
+end
+
+function MockLoadoutData.GetDoctrineChoices(doctrineId)
+	return MockLoadoutData.DoctrineSkillChoices[doctrineId] or {}
+end
+
 return MockLoadoutData

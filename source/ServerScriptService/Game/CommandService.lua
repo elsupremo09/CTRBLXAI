@@ -283,6 +283,14 @@ function CommandService.ValidateAndCommit(
 		return false, actor.name .. " has no AP remaining."
 	end
 
+	-- STEP 3b: Status-based action blocking (Phase 2)
+	-- Silence → blocks Skills, Disarmed → blocks Attack, Pinned → blocks Move,
+	-- Sleep/Petrify/KO → blocks All. Guard/Wait never blocked.
+	local blocked, blockReason = StatusService.IsActionBlocked(actor, actionType)
+	if blocked then
+		return false, actor.name .. " cannot " .. actionType .. ": " .. blockReason
+	end
+
 	-- STEP 4: Loadout legality (stub)
 
 	-- STEP 5: Selection validation

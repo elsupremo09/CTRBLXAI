@@ -54,6 +54,8 @@ local EVENT_NAMES = {
 	-- Unit Inspector (3-tab)
 	"InspectUnitRequest",
 	"InspectUnitResponse",
+	-- Phase 2: Status expansion
+	"TurnSkipped",
 	-- Dev tools (Studio only)
 	"DevCommand",
 	-- Slice 4D: Management contracts
