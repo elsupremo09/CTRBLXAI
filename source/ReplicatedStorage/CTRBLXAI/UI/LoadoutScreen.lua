@@ -79,6 +79,11 @@ local function getPlayerGui()
 	return player:WaitForChild("PlayerGui")
 end
 
+-- Public: build item detail content into any panel (for reuse by victory screen etc.)
+function LoadoutScreen.BuildItemDetail(panel, item)
+	buildSoloDetailContent(panel, item)
+end
+
 local function clearChildren(frame)
 	if not frame then return end
 	for _, child in ipairs(frame:GetChildren()) do
@@ -1719,6 +1724,9 @@ end
 
 function LoadoutScreen.Show()
 	if screenGui and screenGui.Parent then return end
+
+	-- Fetch real inventory from server (falls back to mock data on failure)
+	MockData.LoadFromServer()
 
 	screenGui, rootFrame = Theme.MakeFullScreen("LoadoutScreen", getPlayerGui())
 

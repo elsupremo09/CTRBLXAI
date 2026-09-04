@@ -3,7 +3,16 @@
 -- DEFERRED DEPENDENCY: Real data comes from Slice 4.
 -- Every table here is a MOCK placeholder.
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local BattleEvents = require(
+	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+		:WaitForChild("Remotes", 10)
+		:WaitForChild("BattleEvents", 10)
+)
+
 local MockLoadoutData = {}
+
+MockLoadoutData._useServerData = false
 
 MockLoadoutData.Units = {
 	{ id = "unit_hero", name = "Hero", level = 25, raceId = "RACE-HUMAN", raceName = "Human", side = "Player",
@@ -39,8 +48,8 @@ MockLoadoutData.Inventory = {
 	{ id = "w001", name = "Iron Longsword", cat = "MainHand", sub = "1H Sword", hands = "One-Handed", lv = 12, rarity = "Common", icon = "⚔", qty = 1, acqOrder = 1, isWeapon = true, tags = {"Melee","Slashing","One-Handed","Warrior"}, baseStats = {Attack=34,Range="1-1",Defense=3,WT=31,RTDelay=31}, passives = {{name="Power Strike",icon="⚔",desc="Unleash a heavy melee blow that increases your Force on the first attack each round."}}, bonusStats = {STR=6,VIT=3}, bonusPassives = {}, flavor = "A soldier's blade, forged in the capital armory." },
 	{ id = "w002", name = "Steel Greatsword", cat = "MainHand", sub = "2H Sword", hands = "Two-Handed", lv = 18, rarity = "Uncommon", icon = "⚔", qty = 1, acqOrder = 5, isWeapon = true, tags = {"Melee","Slashing","Two-Handed","Warrior"}, baseStats = {Attack=37,Range="1-1",Defense=6,WT=16,RTDelay=94}, passives = {{name="Cleave",icon="⚔",desc="Basic attacks hit adjacent tiles in a sweeping arc."}}, bonusStats = {STR=8,VIT=5}, bonusPassives = {}, flavor = "Heavy and true. Each swing carves through armor like parchment." },
 	{ id = "w003", name = "Oak Staff", cat = "MainHand", sub = "2H Staff", hands = "Two-Handed", lv = 15, rarity = "Common", icon = "🏑", qty = 1, acqOrder = 3, isWeapon = true, tags = {"Ranged","Magical","Two-Handed","Mage"}, baseStats = {Attack=31,Range="2-4",Defense=0,WT=22,RTDelay=32}, passives = {{name="Arcane Reach",icon="✨",desc="Skills that inherit weapon range gain +1 bonus Maximum Range."}}, bonusStats = {INT=7}, bonusPassives = {}, flavor = "Cut from an ancient oak in the Whispering Forest." },
-	{ id = "w004", name = "Flame Rapier", cat = "MainHand", sub = "1H Sword", hands = "One-Handed", lv = 22, rarity = "Rare", icon = "⚔", qty = 1, acqOrder = 18, isWeapon = true, isNew = true, tags = {"Melee","Piercing","One-Handed","Duelist"}, baseStats = {Attack=40,Range="1-1",Defense=0,WT=15,RTDelay=20}, passives = {{name="Precision Strike",icon="🎯",desc="+15% Hit Quality on Basic Attacks."}}, bonusStats = {DEX=9,AGI=4}, bonusPassives = {{name="Flame Touch",icon="🔥",desc="Basic attacks apply Burn for 2 rounds (10% weapon damage per tick)."}}, flavor = "A duelist's dream — fast, precise, and wreathed in flame." },
-	{ id = "w005", name = "Crossbow", cat = "MainHand", sub = "2H Ranged", hands = "Two-Handed", lv = 20, rarity = "Rare", icon = "🏹", qty = 1, acqOrder = 20, isWeapon = true, isNew = true, tags = {"Ranged","Piercing","Two-Handed","Ranger"}, baseStats = {Attack=20,Range="2-4",Defense=0,WT=37,RTDelay=12}, passives = {{name="Armor Pierce",icon="🏹",desc="Reduce effective target Defense by 30% before damage resolution."}}, bonusStats = {DEX=9,AGI=4}, bonusPassives = {{name="Steady Aim",icon="🎯",desc="When you do not move during a round, increases Accuracy by 15%."},{name="Light Frame",icon="🪶",desc="Reduces Weapon Weight penalty by 10% when your DEX is 30 or higher."}}, flavor = "A hunter's crossbow, forged in a border outpost where survival depends on precision and patience." },
+	{ id = "w004", name = "Flame Rapier", cat = "MainHand", sub = "1H Sword", hands = "One-Handed", lv = 22, rarity = "Rare", icon = "⚔", qty = 1, acqOrder = 18, isWeapon = true, tags = {"Melee","Piercing","One-Handed","Duelist"}, baseStats = {Attack=40,Range="1-1",Defense=0,WT=15,RTDelay=20}, passives = {{name="Precision Strike",icon="🎯",desc="+15% Hit Quality on Basic Attacks."}}, bonusStats = {DEX=9,AGI=4}, bonusPassives = {{name="Flame Touch",icon="🔥",desc="Basic attacks apply Burn for 2 rounds (10% weapon damage per tick)."}}, flavor = "A duelist's dream — fast, precise, and wreathed in flame." },
+	{ id = "w005", name = "Crossbow", cat = "MainHand", sub = "2H Ranged", hands = "Two-Handed", lv = 20, rarity = "Rare", icon = "🏹", qty = 1, acqOrder = 20, isWeapon = true, tags = {"Ranged","Piercing","Two-Handed","Ranger"}, baseStats = {Attack=20,Range="2-4",Defense=0,WT=37,RTDelay=12}, passives = {{name="Armor Pierce",icon="🏹",desc="Reduce effective target Defense by 30% before damage resolution."}}, bonusStats = {DEX=9,AGI=4}, bonusPassives = {{name="Steady Aim",icon="🎯",desc="When you do not move during a round, increases Accuracy by 15%."},{name="Light Frame",icon="🪶",desc="Reduces Weapon Weight penalty by 10% when your DEX is 30 or higher."}}, flavor = "A hunter's crossbow, forged in a border outpost where survival depends on precision and patience." },
 	{ id = "w006", name = "Hunter Bow", cat = "MainHand", sub = "2H Ranged", hands = "Two-Handed", lv = 20, rarity = "Uncommon", icon = "🏹", qty = 1, acqOrder = 12, isWeapon = true, tags = {"Ranged","Piercing","Two-Handed","Ranger"}, baseStats = {Attack=37,Range="2-4",Defense=-3,WT=41,RTDelay=67}, passives = {{name="High Ground",icon="⬆",desc="When attacking from higher elevation, increase elevation damage bonus by 35%."}}, bonusStats = {DEX=7,AGI=3}, bonusPassives = {}, flavor = "Carved from mountain ash. Favors those who take the high ground." },
 	{ id = "w007", name = "Battle Axe", cat = "MainHand", sub = "2H Axe", hands = "Two-Handed", lv = 19, rarity = "Uncommon", icon = "🪓", qty = 1, acqOrder = 15, isWeapon = true, tags = {"Melee","Slashing","Two-Handed","Warrior"}, baseStats = {Attack=46,Range="1-1",Defense=0,WT=64,RTDelay=76}, passives = {{name="Knockback",icon="💥",desc="Basic attacks push the target 1 tile away if Force exceeds their Stability."}}, bonusStats = {STR=8,VIT=4}, bonusPassives = {}, flavor = "Built to cleave through shield walls. Subtlety is not its purpose." },
 	{ id = "w008", name = "Mage Staff", cat = "MainHand", sub = "2H Staff", hands = "Two-Handed", lv = 16, rarity = "Common", icon = "🏑", qty = 1, acqOrder = 4, isWeapon = true, tags = {"Ranged","Magical","Two-Handed","Mage"}, baseStats = {Attack=32,Range="2-4",Defense=0,WT=23,RTDelay=34}, passives = {{name="Arcane Reach",icon="✨",desc="Skills that inherit weapon range gain +1 bonus Maximum Range."}}, bonusStats = {INT=6,LUK=2}, bonusPassives = {}, flavor = "Standard-issue from the Arcanum. Reliable, if uninspiring." },
@@ -133,6 +142,16 @@ end
 function MockLoadoutData.MockEquip(unitId, slot, itemId)
 	local eq = MockLoadoutData.Equipped[unitId]
 	if not eq then return end
+	if MockLoadoutData._useServerData then
+		local ok, result = pcall(function()
+			return BattleEvents.RequestEquip:InvokeServer(unitId, itemId)
+		end)
+		if ok then
+			print("[LoadoutData] Server equip:", unitId, slot, itemId)
+			MockLoadoutData.LoadFromServer()  -- refresh
+			return
+		end
+	end
 	eq[slot] = itemId
 	print("[Mock] Equipped", itemId, "to", slot, "on", unitId)
 end
@@ -140,9 +159,137 @@ end
 function MockLoadoutData.MockUnequip(unitId, slot)
 	local eq = MockLoadoutData.Equipped[unitId]
 	if not eq then return end
+	if MockLoadoutData._useServerData then
+		local ok, result = pcall(function()
+			return BattleEvents.RequestUnequip:InvokeServer(unitId, slot)
+		end)
+		if ok then
+			print("[LoadoutData] Server unequip:", unitId, slot)
+			MockLoadoutData.LoadFromServer()  -- refresh
+			return
+		end
+	end
 	local prev = eq[slot]
 	eq[slot] = nil
 	print("[Mock] Unequipped", prev, "from", slot, "on", unitId)
+end
+
+--------------------------------------------------
+-- SERVER DATA LOADING
+--------------------------------------------------
+
+-- Passive ID → display name lookup (lightweight, no full descriptions)
+local PASSIVE_NAMES = {
+	ArmorPierce = "Armor Pierce", Cleave = "Cleave", PowerStrike = "Power Strike",
+	Knockback = "Knockback", Fortify = "Fortify", ArcaneFlow = "Arcane Flow",
+	ArcaneReach = "Arcane Reach", HighGround = "High Ground", PiercingEdge = "Piercing Edge",
+	RangePlus1 = "Range +1", Stagger = "Stagger", Brutal = "Brutal", Deflect = "Deflect",
+	Venomous = "Venomous", Riposte = "Riposte", Tempo = "Tempo",
+}
+
+-- Hand class → icon emoji mapping
+local HAND_ICONS = {
+	["1H"] = "⚔", ["2H"] = "⚔", ["Off-Hand"] = "🛡",
+}
+
+-- Map a server item to the UI format expected by LoadoutScreen
+local function mapServerItem(si)
+	local isWeapon = si.isWeapon or (si.category == "Weapon")
+	local range = (si.minRange or 1) .. "-" .. (si.maxRange or 1)
+
+	-- Determine slot category from handClass + category
+	local cat = "MainHand"
+	if si.handClass == "Off-Hand" then
+		cat = "OffHand"
+	elseif not isWeapon then
+		cat = si.category or "Accessory"
+	end
+
+	-- Build tags
+	local tags = {}
+	if si.handClass then table.insert(tags, si.handClass) end
+	if si.category then table.insert(tags, si.category) end
+
+	-- Base stats
+	local baseStats
+	if isWeapon then
+		baseStats = {
+			Attack = si.damage or 0, Range = range,
+			Defense = si.defense or 0, WT = si.wt or 0,
+			RTDelay = si.rtDelay or 0,
+		}
+	else
+		baseStats = {
+			Defense = si.defense or 0, HP = 0, MP = 0, WT = si.wt or 0,
+		}
+	end
+
+	-- Archetype passive
+	local passives = {}
+	if si.nativePassiveId then
+		table.insert(passives, {
+			name = PASSIVE_NAMES[si.nativePassiveId] or si.nativePassiveId,
+			icon = "✦",
+			desc = "",
+		})
+	end
+
+	return {
+		id = si.instanceId,
+		name = si.name or "Unknown",
+		cat = cat,
+		sub = si.handClass or "1H",
+		hands = si.handClass,
+		lv = si.itemLevel or 1,
+		rarity = si.rarity or "Common",
+		icon = HAND_ICONS[si.handClass] or "⚔",
+		qty = 1,
+		isWeapon = isWeapon,
+		isNew = si.isNew or false,
+		tags = tags,
+		baseStats = baseStats,
+		passives = passives,
+		bonusStats = {},
+		bonusPassives = {},
+		flavor = "",
+	}
+end
+
+function MockLoadoutData.LoadFromServer()
+	print("[LoadoutData] Attempting to fetch inventory from server...")
+
+	if not BattleEvents or not BattleEvents.GetInventoryData then
+		warn("[LoadoutData] BattleEvents.GetInventoryData not available — using mock data")
+		MockLoadoutData._useServerData = false
+		return
+	end
+
+	local ok, serverItems = pcall(function()
+		return BattleEvents.GetInventoryData:InvokeServer()
+	end)
+	if ok and serverItems and #serverItems > 0 then
+		MockLoadoutData.Inventory = {}
+		MockLoadoutData.Equipped = {}
+		for _, si in ipairs(serverItems) do
+			local uiItem = mapServerItem(si)
+			table.insert(MockLoadoutData.Inventory, uiItem)
+			-- Track equipped items
+			if si.equippedBy then
+				if not MockLoadoutData.Equipped[si.equippedBy] then
+					MockLoadoutData.Equipped[si.equippedBy] = {}
+				end
+				MockLoadoutData.Equipped[si.equippedBy][si.equippedSlot or uiItem.cat] = uiItem.id
+			end
+		end
+		MockLoadoutData._useServerData = true
+		print(string.format("[LoadoutData] Loaded %d items from server (%d equipped)",
+			#MockLoadoutData.Inventory,
+			#serverItems - #MockLoadoutData.Inventory + #MockLoadoutData.Inventory))
+	else
+		warn("[LoadoutData] Server fetch failed — using mock data. ok=" .. tostring(ok)
+			.. " result=" .. tostring(serverItems))
+		MockLoadoutData._useServerData = false
+	end
 end
 
 return MockLoadoutData

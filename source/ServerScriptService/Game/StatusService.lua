@@ -30,16 +30,16 @@ local StatusService = {}
 local CHANNEL_DISRUPTORS = {
 	Silence = true,
 	Stun    = true,
-	Freeze  = true,
 	Sleep   = true,
+	Petrify = true,
 }
 
 -- Hard CC: statuses that remove buffs with removedByCC (e.g. Guard).
 -- Silence disrupts channeling but is NOT hard CC for Guard purposes.
 local HARD_CC = {
 	Stun   = true,
-	Freeze = true,
 	Sleep  = true,
+	Petrify = true,
 }
 
 function StatusService.IsChannelDisruptor(statusId)

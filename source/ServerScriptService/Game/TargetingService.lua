@@ -172,10 +172,23 @@ end
 -- Range 1 (adjacent) always has LoS (melee can't be blocked).
 --------------------------------------------------
 
-function TargetingService.HasLineOfSight(x1, y1, x2, y2)
+function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerElevation)
 	-- Adjacent tiles always have LoS
 	if chebyshevDistance(x1, y1, x2, y2) <= 1 then
 		return true
+	end
+
+	-- Build a lookup of tiles occupied by standing units (block LoS).
+	-- Dead units do not block. Start/end tiles excluded by the loop below.
+	local unitOccupied = {}
+	if allUnits then
+		for _, u in ipairs(allUnits) do
+			if u.isAlive then
+				local key = u.tileX .. "," .. u.tileY
+				local uElev = GameConstants.GetElevation(u.tileX, u.tileY)
+				unitOccupied[key] = uElev
+			end
+		end
 	end
 
 	-- Bresenham's line algorithm
@@ -198,6 +211,19 @@ function TargetingService.HasLineOfSight(x1, y1, x2, y2)
 		if GameConstants.IsBlocked(cx, cy) then
 			return false
 		end
+
+		-- Check if a standing unit occupies this intermediate tile
+		if allUnits then
+			local key = cx .. "," .. cy
+			local blockerElev = unitOccupied[key]
+			if blockerElev then
+				-- Bypass: attacker elevation >= 3 above blocker elevation
+				local atkElev = attackerElevation or GameConstants.GetElevation(x1, y1)
+				if atkElev < blockerElev + 3 then
+					return false
+				end
+			end
+		end
 	end
 end
 
@@ -217,7 +243,7 @@ function TargetingService.GetAttackCandidates(actor, allUnits, range)
 			local dist = chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
 			if dist <= range
 				and dist >= minRange
-				and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
+				and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY, allUnits)
 			then
 				table.insert(candidates, unit)
 			end
@@ -252,7 +278,7 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 		else
 			-- Check LoS (healing/ally skills skip LoS for now)
 			local hasLos = targetRules == "Ally Unit, Self"
-				or TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
+				or TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY, allUnits)
 			if not hasLos then
 				-- blocked by obstacle
 			elseif targetRules == "Enemy Unit" then

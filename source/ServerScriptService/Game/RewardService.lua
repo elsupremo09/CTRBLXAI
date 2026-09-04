@@ -236,10 +236,14 @@ function RewardService.BuildRewardSummaries(results)
 				damage = profile and profile.damage or 0,
 				wt = profile and profile.wt or 0,
 				defense = profile and profile.defense or 0,
+				rtDelay = profile and profile.rtDelay or 0,
+				minRange = profile and profile.minRange or 1,
+				maxRange = profile and profile.maxRange or 1,
 				bonusCount = #item.bonusLines,
 				passiveCount = #item.bonusPassiveIds,
 				handClass = archetype and archetype.handClass or "1H",
 				category = archetype and archetype.category or "Weapon",
+				isWeapon = archetype and archetype.category == "Weapon" or false,
 			})
 		end
 	end

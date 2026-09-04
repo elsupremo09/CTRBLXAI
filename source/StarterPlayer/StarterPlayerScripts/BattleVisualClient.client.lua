@@ -34,6 +34,11 @@ local Theme = require(
 		:WaitForChild("UI", 10):WaitForChild("Theme", 10)
 )
 
+local LoadoutScreen = require(
+	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+		:WaitForChild("UI", 10):WaitForChild("LoadoutScreen", 10)
+)
+
 local CameraController = require(
 	player:WaitForChild("PlayerScripts")
 		:WaitForChild("CameraController", 10)
@@ -1765,6 +1770,7 @@ end
 --------------------------------------------------
 
 local rewardGui = nil
+local rewardBackBtn = nil
 
 BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	if rewardGui then rewardGui:Destroy() end
@@ -1775,6 +1781,24 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	gui.DisplayOrder = 92
 	gui.Parent = player:WaitForChild("PlayerGui")
 	rewardGui = gui
+
+	-- Local makeLabel helper (same signature as BattleHUD's)
+	local function makeLabel(parent, text, props)
+		local lbl = Instance.new("TextLabel")
+		lbl.Size = props.size or UDim2.new(1, 0, 0, 14)
+		lbl.Position = props.pos or UDim2.new(0, 0, 0, 0)
+		lbl.BackgroundTransparency = 1
+		lbl.BorderSizePixel = 0
+		lbl.Font = props.font or Theme.Font.Primary
+		lbl.TextSize = props.textSize or Theme.Text.Body()
+		lbl.TextColor3 = props.color or Theme.Colors.TextPrimary
+		lbl.TextXAlignment = props.align or Enum.TextXAlignment.Left
+		lbl.TextWrapped = props.wrap or false
+		lbl.Text = text or ""
+		lbl.LayoutOrder = props.order or 0
+		lbl.Parent = parent
+		return lbl
+	end
 
 	-- Dim backdrop
 	local backdrop = Instance.new("Frame")
@@ -1949,7 +1973,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 
 			-- Build detail panel (left side, like loadout detail)
 			detailFrame = Theme.MakePanel("LootDetail",
-				UDim2.new(0.50, 0, 0.80, 0),
+				UDim2.new(0.55, 0, 0.90, 0),
 				UDim2.new(0, 6, 0.5, 0),
 				Vector2.new(0, 0.5),
 				gui)
@@ -1961,164 +1985,93 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 			dp.PaddingRight = UDim.new(0, 12)
 			dp.PaddingBottom = UDim.new(0, 10)
 
-			-- Header: icon + name + subtitle
-			local dIcon = Instance.new("Frame")
-			dIcon.Size = UDim2.new(0, 56, 0, 56)
-			dIcon.BackgroundColor3 = rc
-			dIcon.BackgroundTransparency = 0.75
-			dIcon.BorderSizePixel = 0
-			dIcon.Parent = detailFrame
-			Instance.new("UICorner", dIcon).CornerRadius = UDim.new(0, 6)
-			Instance.new("UIStroke", dIcon).Color = rc
-			local dIconText = Instance.new("TextLabel")
-			dIconText.Size = UDim2.fromScale(1, 1)
-			dIconText.BackgroundTransparency = 1
-			dIconText.Font = Theme.Font.Primary
-			dIconText.TextSize = 28
-			dIconText.TextColor3 = Theme.Colors.TextPrimary
-			dIconText.Text = HAND_ICONS[item.handClass] or "\xe2\x9a\x94"
-			dIconText.Parent = dIcon
-
-			-- Name
-			local dName = Instance.new("TextLabel")
-			dName.Size = UDim2.new(1, -64, 0, 18)
-			dName.Position = UDim2.new(0, 64, 0, 0)
-			dName.BackgroundTransparency = 1
-			dName.Font = Theme.Font.PrimaryBold
-			dName.TextSize = Theme.Text.Heading()
-			dName.TextColor3 = Theme.Colors.TextPrimary
-			dName.TextXAlignment = Enum.TextXAlignment.Left
-			dName.Text = item.name or "?"
-			dName.Parent = detailFrame
-
-			-- Subtitle
-			local dSub = Instance.new("TextLabel")
-			dSub.Size = UDim2.new(1, -64, 0, 14)
-			dSub.Position = UDim2.new(0, 64, 0, 18)
-			dSub.BackgroundTransparency = 1
-			dSub.Font = Theme.Font.Primary
-			dSub.TextSize = Theme.Text.Small()
-			dSub.TextColor3 = rc
-			dSub.TextXAlignment = Enum.TextXAlignment.Left
-			dSub.Text = "Lv." .. (item.itemLevel or 1) .. "  ·  " .. (item.rarity or "Common") .. "  ·  " .. (item.handClass or "")
-			dSub.Parent = detailFrame
-
-			-- Tags
-			local tagY = 34
-			local tagTexts = {}
-			if item.handClass then table.insert(tagTexts, item.handClass) end
-			if item.category then table.insert(tagTexts, item.category) end
-			if #tagTexts > 0 then
-				local tagRow = Instance.new("Frame")
-				tagRow.Size = UDim2.new(1, -64, 0, 14)
-				tagRow.Position = UDim2.new(0, 64, 0, tagY)
-				tagRow.BackgroundTransparency = 1
-				tagRow.Parent = detailFrame
-				local tagLayout = Instance.new("UIListLayout", tagRow)
-				tagLayout.FillDirection = Enum.FillDirection.Horizontal
-				tagLayout.Padding = UDim.new(0, 3)
-				for ti, tag in ipairs(tagTexts) do
-					local chip = Instance.new("Frame")
-					chip.Size = UDim2.new(0, #tag * 5 + 10, 0, 14)
-					chip.BackgroundColor3 = Theme.Colors.Surface
-					chip.BackgroundTransparency = 0.3
-					chip.BorderSizePixel = 0
-					chip.LayoutOrder = ti
-					chip.Parent = tagRow
-					Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 7)
-					local tagLabel = Instance.new("TextLabel")
-					tagLabel.Size = UDim2.fromScale(1, 1)
-					tagLabel.BackgroundTransparency = 1
-					tagLabel.Font = Theme.Font.Primary
-					tagLabel.TextSize = Theme.Text.Badge()
-					tagLabel.TextColor3 = Theme.Colors.TextSecondary
-					tagLabel.TextXAlignment = Enum.TextXAlignment.Center
-					tagLabel.Text = tag
-					tagLabel.Parent = chip
-				end
-			end
-
-			-- Divider
-			local divY = 56
-			local divider = Instance.new("Frame")
-			divider.Size = UDim2.new(1, 0, 0, 1)
-			divider.Position = UDim2.new(0, 0, 0, divY)
-			divider.BackgroundColor3 = Theme.Colors.Border
-			divider.BorderSizePixel = 0
-			divider.Parent = detailFrame
-
-			-- Base stats
-			local statY = divY + 6
-			local statDefs = {
-				{ label = "Attack", value = item.damage },
-				{ label = "Defense", value = item.defense },
-				{ label = "WT", value = item.wt },
-				{ label = "Bonuses", value = item.bonusCount .. " attributes" },
-				{ label = "Passives", value = item.passiveCount .. " bonus" },
+			-- Convert reward item to UI format and render using shared detail view
+			local uiItem = {
+				id = item.name .. "_loot",
+				name = item.name or "Unknown",
+				cat = item.handClass == "Off-Hand" and "OffHand" or "MainHand",
+				sub = item.handClass or "1H",
+				hands = item.handClass,
+				lv = item.itemLevel or 1,
+				rarity = item.rarity or "Common",
+				icon = HAND_ICONS[item.handClass] or "\xe2\x9a\x94",
+				qty = 1,
+				isWeapon = item.isWeapon or (item.category == "Weapon"),
+				tags = {},
+				baseStats = {
+					Attack = item.damage or 0,
+					Range = (item.minRange or 1) .. "-" .. (item.maxRange or 1),
+					Defense = item.defense or 0,
+					WT = item.wt or 0,
+					RTDelay = item.rtDelay or 0,
+				},
+				passives = {},
+				bonusStats = {},
+				bonusPassives = {},
+				flavor = "",
 			}
-			for _, s in ipairs(statDefs) do
-				local row = Instance.new("Frame")
-				row.Size = UDim2.new(0.5, 0, 0, 16)
-				row.Position = UDim2.new(0, 0, 0, statY)
-				row.BackgroundTransparency = 1
-				row.Parent = detailFrame
-				local sLabel = Instance.new("TextLabel")
-				sLabel.Size = UDim2.new(0.55, 0, 1, 0)
-				sLabel.BackgroundTransparency = 1
-				sLabel.Font = Theme.Font.Primary
-				sLabel.TextSize = Theme.Text.Body()
-				sLabel.TextColor3 = Theme.Colors.TextSecondary
-				sLabel.TextXAlignment = Enum.TextXAlignment.Left
-				sLabel.Text = s.label
-				sLabel.Parent = row
-				local sVal = Instance.new("TextLabel")
-				sVal.Size = UDim2.new(0.45, 0, 1, 0)
-				sVal.Position = UDim2.new(0.55, 0, 0, 0)
-				sVal.BackgroundTransparency = 1
-				sVal.Font = Theme.Font.PrimaryBold
-				sVal.TextSize = Theme.Text.Body()
-				sVal.TextColor3 = Theme.Colors.TextPrimary
-				sVal.TextXAlignment = Enum.TextXAlignment.Right
-				sVal.Text = tostring(s.value)
-				sVal.Parent = row
-				statY = statY + 18
+			if item.handClass then table.insert(uiItem.tags, item.handClass) end
+			if item.category then table.insert(uiItem.tags, item.category) end
+			if item.nativePassiveId then
+				table.insert(uiItem.passives, {
+					name = item.nativePassiveId,
+					icon = "\xe2\x9c\xa6",
+					desc = "",
+				})
 			end
 
-			-- Back button (inside detail panel, lower-left)
-			local backBtn = Instance.new("TextButton")
-			backBtn.Size = UDim2.new(0, 70, 0, 24)
-			backBtn.Position = UDim2.new(0, 0, 1, -28)
-			backBtn.BackgroundColor3 = Theme.Colors.Surface
-			backBtn.BackgroundTransparency = 0.2
-			backBtn.Font = Theme.Font.PrimaryBold
-			backBtn.TextSize = Theme.Text.Small()
-			backBtn.TextColor3 = Theme.Colors.TextPrimary
-			backBtn.Text = "BACK"
-			backBtn.BorderSizePixel = 0
-			backBtn.Parent = detailFrame
-			Instance.new("UICorner", backBtn).CornerRadius = UDim.new(0, 4)
-			backBtn.MouseButton1Click:Connect(closeRewardDetail)
+			LoadoutScreen.BuildItemDetail(detailFrame, uiItem)
+
+			-- Show BACK button in the button bar
+			rewardBackBtn.Visible = true
 		end)
 	end
 
-	-- CONTINUE button (bottom-right of screen, outside panel, like battle Execute)
-	local continueBtn = Instance.new("TextButton")
-	continueBtn.Size = UDim2.new(0, 100, 0, 32)
-	continueBtn.Position = UDim2.new(1, -8, 1, -8)
-	continueBtn.AnchorPoint = Vector2.new(1, 1)
-	continueBtn.BackgroundColor3 = Theme.Colors.Success
-	continueBtn.BackgroundTransparency = 0.15
-	continueBtn.Font = Theme.Font.PrimaryBold
-	continueBtn.TextSize = Theme.Text.Body()
-	continueBtn.TextColor3 = Theme.Colors.TextPrimary
-	continueBtn.Text = "CONTINUE"
-	continueBtn.BorderSizePixel = 0
-	continueBtn.Parent = gui
-	Instance.new("UICorner", continueBtn).CornerRadius = UDim.new(0, 4)
-	continueBtn.MouseButton1Click:Connect(function()
+	-- ============ BUTTON BAR (bottom-right, same pattern as loadout/battle) ============
+	local PAD = 8
+	local BTN_W = 80
+	local BTN_H = 32
+	local BTN_GAP = 4
+
+	local btnBar = Instance.new("Frame")
+	btnBar.Name = "RewardBtnBar"
+	btnBar.BackgroundTransparency = 1
+	btnBar.AnchorPoint = Vector2.new(1, 1)
+	btnBar.Position = UDim2.new(1, -PAD, 1, -PAD)
+	btnBar.Parent = gui
+
+	local function addBtn(text, color, onClick, layoutIdx)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(0, BTN_W, 0, BTN_H)
+		btn.Position = UDim2.new(1, -(BTN_W + BTN_GAP) * layoutIdx, 0, 0)
+		btn.AnchorPoint = Vector2.new(1, 0)
+		btn.BackgroundColor3 = color
+		btn.BackgroundTransparency = 0.15
+		btn.Font = Theme.Font.PrimaryBold
+		btn.TextSize = Theme.Text.Body()
+		btn.TextColor3 = Theme.Colors.TextPrimary
+		btn.Text = text
+		btn.BorderSizePixel = 0
+		btn.Parent = btnBar
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+		btn.MouseButton1Click:Connect(onClick)
+		return btn
+	end
+
+	-- 1st from right: CONTINUE (primary action, like Equip/Execute)
+	addBtn("CONTINUE", Theme.Colors.Success, function()
 		if rewardGui then rewardGui:Destroy(); rewardGui = nil end
 		BattleEvents.RewardContinue:FireServer()
-	end)
+	end, 0)
+
+	-- 2nd from right: BACK (only visible when detail is open)
+	rewardBackBtn = addBtn("BACK", Theme.Colors.Surface, function()
+		closeRewardDetail()
+		rewardBackBtn.Visible = false
+	end, 1)
+	rewardBackBtn.Visible = false  -- hidden by default
+
+	btnBar.Size = UDim2.new(0, (BTN_W + BTN_GAP) * 2, 0, BTN_H)
 end)
 
 --------------------------------------------------
