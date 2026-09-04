@@ -303,7 +303,7 @@ local function buildUnitHeader()
 	pText.Size = UDim2.new(1, 0, 0, 32)
 	pText.BackgroundTransparency = 1
 	pText.Font = Theme.Font.PrimaryBold
-	pText.TextSize = 18
+	pText.TextSize = Theme.Text.Title()
 	pText.TextColor3 = Theme.Colors.TextPrimary
 	pText.Text = string.sub(unit.name, 1, 2)
 	pText.Parent = portrait
@@ -314,20 +314,31 @@ local function buildUnitHeader()
 	lvlBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 	lvlBadge.BackgroundTransparency = 0.3
 	lvlBadge.Font = Theme.Font.Mono
-	lvlBadge.TextSize = 9
+	lvlBadge.TextSize = Theme.Text.Tiny()
 	lvlBadge.TextColor3 = Theme.Colors.TextPrimary
 	lvlBadge.Text = "Lv." .. unit.level
 	lvlBadge.BorderSizePixel = 0
 	lvlBadge.TextXAlignment = Enum.TextXAlignment.Left
 	lvlBadge.Parent = portrait
 
+	-- Unallocated stat points indicator (red dot, top-right of portrait)
+	if unit.unallocatedPoints and unit.unallocatedPoints > 0 then
+		local alertDot = Instance.new("Frame")
+		alertDot.Size = UDim2.new(0, 10, 0, 10)
+		alertDot.Position = UDim2.new(1, -12, 0, 2)
+		alertDot.BackgroundColor3 = Theme.Colors.Danger
+		alertDot.BorderSizePixel = 0
+		alertDot.Parent = portrait
+		Instance.new("UICorner", alertDot).CornerRadius = UDim.new(0.5, 0)
+	end
+
 	-- Name + Race
 	makeLabel(row, { Text = unit.name, Position = UDim2.new(0, 52, 0, 2),
 		Size = UDim2.new(1, -100, 0, 18), Font = Theme.Font.PrimaryBold,
-		TextSize = 15, TextColor3 = Theme.Colors.Player })
-	makeLabel(row, { Text = "Lv." .. unit.level .. "  " .. unit.raceName,
+		TextSize = Theme.Text.Heading(), TextColor3 = Theme.Colors.Player })
+	makeLabel(row, { Text = unit.raceName,
 		Position = UDim2.new(0, 52, 0, 20),
-		Size = UDim2.new(1, -100, 0, 14), TextSize = 11,
+		Size = UDim2.new(1, -100, 0, 14), TextSize = Theme.Text.Small(),
 		TextColor3 = Theme.Colors.TextSecondary })
 
 	-- Switch unit button

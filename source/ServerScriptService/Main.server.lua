@@ -131,6 +131,7 @@ local loadedSave, loadErr = SaveService.Load(PLAYER_ID)
 local hasSave = false
 local savedEquipMap = {} -- unitId -> { MainHand = instanceId, OffHand = instanceId }
 local savedRaceMap = {}  -- unitId -> { raceId, perkIds, drawbackIds }
+local savedDoctrineMap = {}  -- unitId -> doctrineId
 if loadedSave then
 	hasSave = true
 	print("[Main] Save loaded — restoring state")
@@ -150,6 +151,10 @@ if loadedSave then
 				perkIds = unitData.perkIds or {},
 				drawbackIds = unitData.drawbackIds or {},
 			}
+		end
+		-- Extract saved doctrine
+		if unitData.doctrineId and unitData.doctrineId ~= "none" then
+			savedDoctrineMap[unitId] = unitData.doctrineId
 		end
 	end
 elseif loadErr then
@@ -339,6 +344,21 @@ for _, u in ipairs(allUnitsList) do
 			print(string.format("[Main] Loaded persistent state for %s: HP:%d/%d MP:%d/%d KO:%s",
 				u.name, u.currentHp, u.maxHp, u.currentMp, u.maxMp, tostring(ps.isKO)))
 		end
+	end
+end
+
+-- Restore or assign doctrines for player units
+for _, u in ipairs(allUnitsList) do
+	if u.side == "Player" then
+		local savedDoc = savedDoctrineMap[u.id]
+		if savedDoc then
+			u.doctrineId = savedDoc
+		end
+		-- Assign default doctrine if none set
+		if not u.doctrineId then
+			u.doctrineId = "DOC-BERSERKER"  -- placeholder default
+		end
+		print(string.format("[Main] %s doctrine: %s", u.name, u.doctrineId))
 	end
 end
 
@@ -825,8 +845,10 @@ local function buildTurnPrompt(unit)
 		weaponDamage  = unit.weaponDamage or 10,
 		-- Unit identity (for active unit panel display)
 		level    = unit.level or 1,
-		race     = unit.race or nil,
-		doctrine = unit.doctrineId or "",
+		race     = unit.raceId and RaceData.GetRace(unit.raceId)
+			and RaceData.GetRace(unit.raceId).name or nil,
+		doctrine = unit.doctrineId and DoctrineData[unit.doctrineId]
+			and DoctrineData[unit.doctrineId].name or "",
 		maxAp    = 2,
 	}
 end

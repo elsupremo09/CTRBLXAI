@@ -32,6 +32,18 @@ local StatusService = require(
 		:WaitForChild("StatusService")
 )
 
+local DoctrineData = require(
+	ReplicatedStorage
+		:WaitForChild("Content")
+		:WaitForChild("DoctrineData")
+)
+
+local RaceData = require(
+	ReplicatedStorage
+		:WaitForChild("Content")
+		:WaitForChild("RaceData")
+)
+
 local BattleVisualBroadcaster = {}
 
 --------------------------------------------------
@@ -90,6 +102,12 @@ local function serializeUnit(unit)
 		weaponRtDelay  = unit.weaponRtDelay or 0,
 		weaponPattern  = unit.weaponPattern or "Single",
 		weaponRange    = unit.weaponMaxRange or 1,
+		-- Doctrine (display name)
+		doctrine       = unit.doctrineId and DoctrineData[unit.doctrineId]
+			and DoctrineData[unit.doctrineId].name or nil,
+		-- Race (display name)
+		race           = unit.raceId and RaceData.GetRace(unit.raceId)
+			and RaceData.GetRace(unit.raceId).name or nil,
 	}
 
 	-- Get weapon name from equipment slots if available

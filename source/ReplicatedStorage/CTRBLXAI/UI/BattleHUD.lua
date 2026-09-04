@@ -290,28 +290,27 @@ function BattleHUD._buildActiveUnit()
 
 	local d = presentation.actor
 	local pad = Instance.new("UIPadding", activeUnitPanel)
-	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
-	pad.PaddingRight = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 8); pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 8); pad.PaddingBottom = UDim.new(0, 6)
 
 	local layout = Instance.new("UIListLayout", activeUnitPanel)
-	layout.Padding = UDim.new(0, 4); layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 3); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-	local portraitSize = math.floor(Theme.Elem.Portrait() * 1.25)
-	local raceIconSize = math.floor(portraitSize * 0.8)
-	local topH = math.max(portraitSize + 4, 44)
+	local portraitSize = math.floor(Theme.Elem.Portrait() * 1.4)
 
-	-- === TOP ROW: [Portrait+Level] | [Name / Doctrine / HP-MP] | [Race Icon] ===
+	-- === ROW 1: [Portrait] | [Name / Race / Doctrine / HP-MP] ===
 	local topRow = Instance.new("Frame")
-	topRow.Size = UDim2.new(1, 0, 0, topH); topRow.BackgroundTransparency = 1
+	topRow.Size = UDim2.new(1, 0, 0, portraitSize)
+	topRow.BackgroundTransparency = 1
 	topRow.LayoutOrder = 1; topRow.Parent = activeUnitPanel
 
-	-- Portrait (left, clickable → opens full inspector)
+	-- Portrait (left, clickable)
 	local portrait = Instance.new("TextButton")
 	portrait.Size = UDim2.new(0, portraitSize, 0, portraitSize)
 	portrait.Position = UDim2.new(0, 0, 0, 0)
 	portrait.BackgroundColor3 = Theme.GetSideColor(d.side)
 	portrait.BackgroundTransparency = 0.2
-	portrait.Font = Theme.Font.PrimaryBold; portrait.TextSize = Theme.Text.Heading()
+	portrait.Font = Theme.Font.PrimaryBold; portrait.TextSize = Theme.Text.Title()
 	portrait.TextColor3 = Theme.Colors.TextPrimary
 	portrait.Text = string.sub(d.name or "?", 1, 2)
 	portrait.BorderSizePixel = 0; portrait.Parent = topRow
@@ -322,71 +321,90 @@ function BattleHUD._buildActiveUnit()
 		end
 	end)
 
-	-- Level badge on portrait
+	-- Level badge (top-left of portrait)
 	if d.level then
 		local lvl = Instance.new("TextLabel")
-		lvl.Size = UDim2.new(1, 0, 0, 12)
-		lvl.Position = UDim2.new(0, 0, 1, -12)
+		lvl.Size = UDim2.new(0, 28, 0, 12)
+		lvl.Position = UDim2.new(0, 0, 0, 0)
 		lvl.BackgroundColor3 = Color3.fromRGB(0, 0, 0); lvl.BackgroundTransparency = 0.3
-		lvl.Font = Theme.Font.Mono; lvl.TextSize = Theme.Text.Small()
-		lvl.TextColor3 = Theme.Colors.TextPrimary; lvl.Text = "Lv." .. d.level
+		lvl.Font = Theme.Font.Mono; lvl.TextSize = Theme.Text.Tiny()
+		lvl.TextColor3 = Theme.Colors.TextPrimary
+		lvl.Text = "Lv." .. d.level
+		lvl.TextXAlignment = Enum.TextXAlignment.Left
 		lvl.BorderSizePixel = 0; lvl.Parent = portrait
 	end
 
-	-- Center column: Name, Doctrine, HP/MP
-	local cx = portraitSize + 6
-	local cw = -(portraitSize + raceIconSize + 16)
-	makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, cx, 0, 0),
-		size = UDim2.new(1, cw, 0, 16), font = Theme.Font.PrimaryBold,
+	-- Unallocated stat points indicator (red dot, top-right of portrait)
+	if d.unallocatedPoints and d.unallocatedPoints > 0 then
+		local alertDot = Instance.new("Frame")
+		alertDot.Size = UDim2.new(0, 10, 0, 10)
+		alertDot.Position = UDim2.new(1, -12, 0, 2)
+		alertDot.BackgroundColor3 = Theme.Colors.Danger
+		alertDot.BorderSizePixel = 0
+		alertDot.Parent = portrait
+		Instance.new("UICorner", alertDot).CornerRadius = UDim.new(0.5, 0)
+	end
+
+	-- Text column beside portrait: Name, Race, Doctrine, HP/MP
+	local tx = portraitSize + 6
+	local lineH = math.floor(portraitSize / 4)
+
+	makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, tx, 0, 0),
+		size = UDim2.new(1, -tx, 0, lineH), font = Theme.Font.PrimaryBold,
 		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) })
-	local docLine = (d.doctrine and d.doctrine ~= "") and d.doctrine or "—"
-	makeLabel(topRow, docLine, { pos = UDim2.new(0, cx, 0, 16),
-		size = UDim2.new(1, cw, 0, 12), textSize = Theme.Text.Small(),
+	makeLabel(topRow, d.race or "—", { pos = UDim2.new(0, tx, 0, lineH),
+		size = UDim2.new(1, -tx, 0, lineH), textSize = Theme.Text.Small(),
 		color = Theme.Colors.TextSecondary })
-	local hpMp = string.format("HP %d/%d  MP %d/%d", d.currentHp or 0, d.maxHp or 0, d.currentMp or 0, d.maxMp or 0)
-	makeLabel(topRow, hpMp, { pos = UDim2.new(0, cx, 0, 30),
-		size = UDim2.new(1, cw, 0, 14), font = Theme.Font.Mono,
-		textSize = Theme.Text.Body(), color = Theme.Colors.TextPrimary })
-
-	-- Race icon (right, circular)
-	local raceIcon = Instance.new("Frame")
-	raceIcon.Size = UDim2.new(0, raceIconSize, 0, raceIconSize)
-	raceIcon.Position = UDim2.new(1, -raceIconSize, 0, 2)
-	raceIcon.BackgroundColor3 = Theme.Colors.Surface; raceIcon.BackgroundTransparency = 0.3
-	raceIcon.BorderSizePixel = 0; raceIcon.Parent = topRow
-	Instance.new("UICorner", raceIcon).CornerRadius = UDim.new(0.5, 0)
-	local raceText = Instance.new("TextLabel")
-	raceText.Size = UDim2.fromScale(1, 1); raceText.BackgroundTransparency = 1
-	raceText.Font = Theme.Font.Primary; raceText.TextSize = Theme.Text.Small()
-	raceText.TextColor3 = Theme.Colors.TextSecondary
-	raceText.Text = d.race and string.sub(d.race, 1, 3) or "—"
-	raceText.Parent = raceIcon
-
-	-- === ROW 2: RT (left) + AP (right) ===
-	local row2 = Instance.new("Frame")
-	row2.Size = UDim2.new(1, 0, 0, 16); row2.BackgroundTransparency = 1
-	row2.LayoutOrder = 2; row2.Parent = activeUnitPanel
-	makeLabel(row2, "RT " .. (d.remainingRt or 0), { pos = UDim2.new(0, 0, 0, 0),
-		size = UDim2.new(0.5, 0, 1, 0), font = Theme.Font.Mono,
-		textSize = Theme.Text.Body(), color = Theme.Colors.TextSecondary })
+	local docLine = (d.doctrine and d.doctrine ~= "") and d.doctrine or "—"
+	makeLabel(topRow, docLine, { pos = UDim2.new(0, tx, 0, lineH * 2),
+		size = UDim2.new(1, -tx, 0, lineH), textSize = Theme.Text.Small(),
+		color = Theme.Colors.TextSecondary })
+	-- RT + AP (4th line beside portrait, compact)
 	local apText = "AP "
-	for i = 1, math.min(d.currentAp or 0, 5) do apText = apText .. "●" end
-	for i = (d.currentAp or 0) + 1, (d.maxAp or 2) do apText = apText .. "○" end
-	makeLabel(row2, apText, { pos = UDim2.new(0.5, 0, 0, 0),
-		size = UDim2.new(0.5, 0, 1, 0), font = Theme.Font.Mono,
-		textSize = Theme.Text.Body(), color = Theme.Colors.TextPrimary })
+	for i = 1, math.min(d.currentAp or 0, 5) do apText = apText .. "\xe2\x97\x8f" end
+	for i = (d.currentAp or 0) + 1, (d.maxAp or 2) do apText = apText .. "\xe2\x97\x8b" end
+	local rtApText = "RT " .. (d.remainingRt or 0) .. "  " .. apText
+	makeLabel(topRow, rtApText, { pos = UDim2.new(0, tx, 0, lineH * 3),
+		size = UDim2.new(1, -tx, 0, lineH), font = Theme.Font.Mono,
+		textSize = Theme.Text.Body(), color = Theme.Colors.TextSecondary })
 
-	-- Statuses
+	-- === ROW 2: HP/MP (full width, below portrait area) ===
+	local hpMp = string.format("HP %d/%d  MP %d/%d", d.currentHp or 0, d.maxHp or 0, d.currentMp or 0, d.maxMp or 0)
+	makeLabel(activeUnitPanel, hpMp, { size = UDim2.new(1, 0, 0, 14),
+		font = Theme.Font.Mono, textSize = Theme.Text.Body(),
+		color = Theme.Colors.TextPrimary, order = 2 })
+
+	-- === ROW 3: Status icons (horizontal) ===
 	if d.statuses and #d.statuses > 0 then
-		local statusText = ""
-		for _, s in ipairs(d.statuses) do
-			statusText = statusText .. "[" .. s.id .. "(" .. (s.remainingTurns or "?") .. ")] "
+		local statusRow = Instance.new("Frame")
+		statusRow.Size = UDim2.new(1, 0, 0, 18)
+		statusRow.BackgroundTransparency = 1
+		statusRow.LayoutOrder = 3; statusRow.Parent = activeUnitPanel
+		local statusLayout = Instance.new("UIListLayout", statusRow)
+		statusLayout.FillDirection = Enum.FillDirection.Horizontal
+		statusLayout.Padding = UDim.new(0, 3)
+		for si, s in ipairs(d.statuses) do
+			local icon = Instance.new("Frame")
+			icon.Size = UDim2.new(0, 18, 0, 18)
+			icon.BackgroundColor3 = Theme.Colors[s.id] or Theme.Colors.Warning
+			icon.BackgroundTransparency = 0.3
+			icon.BorderSizePixel = 0
+			icon.LayoutOrder = si
+			icon.Parent = statusRow
+			Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 3)
+			local iconLabel = Instance.new("TextLabel")
+			iconLabel.Size = UDim2.fromScale(1, 1)
+			iconLabel.BackgroundTransparency = 1
+			iconLabel.Font = Theme.Font.PrimaryBold
+			iconLabel.TextSize = Theme.Text.Badge()
+			iconLabel.TextColor3 = Theme.Colors.TextPrimary
+			iconLabel.Text = string.sub(s.id, 1, 2)
+			iconLabel.Parent = icon
 		end
-		makeLabel(activeUnitPanel, statusText, { size = UDim2.new(1, 0, 0, 12),
-			textSize = Theme.Text.Small(), color = Theme.Colors.Warning, order = 3 })
 	end
 
 end
+
 
 --------------------------------------------------
 -- ACTION PANEL (left, below active) — Phase 1: 4×2 grid
@@ -1122,19 +1140,18 @@ function BattleHUD._buildViewModeUnit()
 	activeUnitPanel.Visible = true
 
 	local pad = Instance.new("UIPadding", activeUnitPanel)
-	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
-	pad.PaddingRight = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 8); pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 8); pad.PaddingBottom = UDim.new(0, 6)
 
 	local layout = Instance.new("UIListLayout", activeUnitPanel)
-	layout.Padding = UDim.new(0, 4); layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 3); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-	local portraitSize = math.floor(Theme.Elem.Portrait() * 1.25)
-	local raceIconSize = math.floor(portraitSize * 0.8)
-	local topH = math.max(portraitSize + 4, 44)
+	local portraitSize = math.floor(Theme.Elem.Portrait() * 1.4)
 
-	-- === TOP ROW: [Portrait+Level] | [Name / Doctrine / HP-MP] | [Race Icon] ===
+	-- === ROW 1: [Portrait] | [Name / Race / Doctrine / RT] ===
 	local topRow = Instance.new("Frame")
-	topRow.Size = UDim2.new(1, 0, 0, topH); topRow.BackgroundTransparency = 1
+	topRow.Size = UDim2.new(1, 0, 0, portraitSize)
+	topRow.BackgroundTransparency = 1
 	topRow.LayoutOrder = 1; topRow.Parent = activeUnitPanel
 
 	local portrait = Instance.new("TextButton")
@@ -1142,7 +1159,7 @@ function BattleHUD._buildViewModeUnit()
 	portrait.Position = UDim2.new(0, 0, 0, 0)
 	portrait.BackgroundColor3 = Theme.GetSideColor(d.side)
 	portrait.BackgroundTransparency = 0.2
-	portrait.Font = Theme.Font.PrimaryBold; portrait.TextSize = Theme.Text.Heading()
+	portrait.Font = Theme.Font.PrimaryBold; portrait.TextSize = Theme.Text.Title()
 	portrait.TextColor3 = Theme.Colors.TextPrimary
 	portrait.Text = string.sub(d.name or "?", 1, 2)
 	portrait.BorderSizePixel = 0; portrait.Parent = topRow
@@ -1153,87 +1170,80 @@ function BattleHUD._buildViewModeUnit()
 		end
 	end)
 
-	-- Level badge on portrait
 	if d.level then
 		local lvl = Instance.new("TextLabel")
-		lvl.Size = UDim2.new(1, 0, 0, 12)
-		lvl.Position = UDim2.new(0, 0, 1, -12)
+		lvl.Size = UDim2.new(0, 28, 0, 12)
+		lvl.Position = UDim2.new(0, 0, 0, 0)
 		lvl.BackgroundColor3 = Color3.fromRGB(0, 0, 0); lvl.BackgroundTransparency = 0.3
-		lvl.Font = Theme.Font.Mono; lvl.TextSize = Theme.Text.Small()
-		lvl.TextColor3 = Theme.Colors.TextPrimary; lvl.Text = "Lv." .. d.level
+		lvl.Font = Theme.Font.Mono; lvl.TextSize = Theme.Text.Tiny()
+		lvl.TextColor3 = Theme.Colors.TextPrimary
+		lvl.Text = "Lv." .. d.level
+		lvl.TextXAlignment = Enum.TextXAlignment.Left
 		lvl.BorderSizePixel = 0; lvl.Parent = portrait
 	end
 
-	-- Center column: Name, Doctrine, HP/MP
-	local cx = portraitSize + 6
-	local cw = -(portraitSize + raceIconSize + 16)
-	makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, cx, 0, 0),
-		size = UDim2.new(1, cw, 0, 16), font = Theme.Font.PrimaryBold,
+	if d.unallocatedPoints and d.unallocatedPoints > 0 then
+		local alertDot = Instance.new("Frame")
+		alertDot.Size = UDim2.new(0, 10, 0, 10)
+		alertDot.Position = UDim2.new(1, -12, 0, 2)
+		alertDot.BackgroundColor3 = Theme.Colors.Danger
+		alertDot.BorderSizePixel = 0
+		alertDot.Parent = portrait
+		Instance.new("UICorner", alertDot).CornerRadius = UDim.new(0.5, 0)
+	end
+
+	local tx = portraitSize + 6
+	local lineH = math.floor(portraitSize / 4)
+
+	makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, tx, 0, 0),
+		size = UDim2.new(1, -tx, 0, lineH), font = Theme.Font.PrimaryBold,
 		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) })
+	makeLabel(topRow, d.race or "\xE2\x80\x94", { pos = UDim2.new(0, tx, 0, lineH),
+		size = UDim2.new(1, -tx, 0, lineH), textSize = Theme.Text.Small(),
+		color = Theme.Colors.TextSecondary })
 	local docLine = (d.doctrine and d.doctrine ~= "") and d.doctrine or "\xE2\x80\x94"
-	makeLabel(topRow, docLine, { pos = UDim2.new(0, cx, 0, 16),
-		size = UDim2.new(1, cw, 0, 12), textSize = Theme.Text.Small(),
+	makeLabel(topRow, docLine, { pos = UDim2.new(0, tx, 0, lineH * 2),
+		size = UDim2.new(1, -tx, 0, lineH), textSize = Theme.Text.Small(),
 		color = Theme.Colors.TextSecondary })
+	makeLabel(topRow, "RT " .. (d.remainingRt or 0), { pos = UDim2.new(0, tx, 0, lineH * 3),
+		size = UDim2.new(1, -tx, 0, lineH), font = Theme.Font.Mono,
+		textSize = Theme.Text.Body(), color = Theme.Colors.TextSecondary })
+
 	local hpMp = string.format("HP %d/%d  MP %d/%d", d.currentHp or 0, d.maxHp or 0, d.currentMp or 0, d.maxMp or 0)
-	makeLabel(topRow, hpMp, { pos = UDim2.new(0, cx, 0, 30),
-		size = UDim2.new(1, cw, 0, 14), font = Theme.Font.Mono,
-		textSize = Theme.Text.Body(), color = Theme.Colors.TextPrimary })
+	makeLabel(activeUnitPanel, hpMp, { size = UDim2.new(1, 0, 0, 14),
+		font = Theme.Font.Mono, textSize = Theme.Text.Body(),
+		color = Theme.Colors.TextPrimary, order = 2 })
 
-	-- Race icon (right, circular)
-	local raceIcon = Instance.new("Frame")
-	raceIcon.Size = UDim2.new(0, raceIconSize, 0, raceIconSize)
-	raceIcon.Position = UDim2.new(1, -raceIconSize, 0, 2)
-	raceIcon.BackgroundColor3 = Theme.Colors.Surface; raceIcon.BackgroundTransparency = 0.3
-	raceIcon.BorderSizePixel = 0; raceIcon.Parent = topRow
-	Instance.new("UICorner", raceIcon).CornerRadius = UDim.new(0.5, 0)
-	local raceText = Instance.new("TextLabel")
-	raceText.Size = UDim2.fromScale(1, 1); raceText.BackgroundTransparency = 1
-	raceText.Font = Theme.Font.Primary; raceText.TextSize = Theme.Text.Small()
-	raceText.TextColor3 = Theme.Colors.TextSecondary
-	raceText.Text = d.race and string.sub(d.race, 1, 3) or "\xE2\x80\x94"
-	raceText.Parent = raceIcon
-
-	-- === ROW 2: RT ===
-	makeLabel(activeUnitPanel, "RT " .. (d.remainingRt or 0), { size = UDim2.new(1, 0, 0, 14),
-		font = Theme.Font.Mono, textSize = Theme.Text.Body(), order = 2,
-		color = Theme.Colors.TextSecondary })
-
-	-- Weapon
-	if d.weaponName then
-		local wpnText = string.format("\xE2\x9A\x94 %s  Dmg:%d  WT:%d", d.weaponName, d.weaponDamage or 0, d.weaponWt or 0)
-		makeLabel(activeUnitPanel, wpnText, { font = Theme.Font.Mono, textSize = Theme.Text.Body(),
-			color = Theme.Colors.TextGold, order = 3 })
-	end
-
-	-- Statuses
 	if d.statuses and #d.statuses > 0 then
-		local statusText = ""
-		for _, s in ipairs(d.statuses) do
-			statusText = statusText .. "[" .. s.id .. "(" .. (s.remainingTurns or "?") .. ")] "
+		local statusRow = Instance.new("Frame")
+		statusRow.Size = UDim2.new(1, 0, 0, 18)
+		statusRow.BackgroundTransparency = 1
+		statusRow.LayoutOrder = 3; statusRow.Parent = activeUnitPanel
+		local statusLayout = Instance.new("UIListLayout", statusRow)
+		statusLayout.FillDirection = Enum.FillDirection.Horizontal
+		statusLayout.Padding = UDim.new(0, 3)
+		for si, s in ipairs(d.statuses) do
+			local icon = Instance.new("Frame")
+			icon.Size = UDim2.new(0, 18, 0, 18)
+			icon.BackgroundColor3 = Theme.Colors[s.id] or Theme.Colors.Warning
+			icon.BackgroundTransparency = 0.3
+			icon.BorderSizePixel = 0
+			icon.LayoutOrder = si
+			icon.Parent = statusRow
+			Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 3)
+			local iconLabel = Instance.new("TextLabel")
+			iconLabel.Size = UDim2.fromScale(1, 1)
+			iconLabel.BackgroundTransparency = 1
+			iconLabel.Font = Theme.Font.PrimaryBold
+			iconLabel.TextSize = Theme.Text.Badge()
+			iconLabel.TextColor3 = Theme.Colors.TextPrimary
+			iconLabel.Text = string.sub(s.id, 1, 2)
+			iconLabel.Parent = icon
 		end
-		makeLabel(activeUnitPanel, statusText, { size = UDim2.new(1, 0, 0, 12),
-			textSize = Theme.Text.Small(), color = Theme.Colors.Warning, order = 4 })
 	end
 
-
-
-	-- View Full Details button
-	local detailBtn = Instance.new("TextButton")
-	detailBtn.Size = UDim2.new(1, 0, 0, Theme.Elem.RowMedium())
-	detailBtn.BackgroundColor3 = Theme.Colors.Surface
-	detailBtn.BackgroundTransparency = 0.3
-	detailBtn.Font = Theme.Font.PrimaryBold; detailBtn.TextSize = Theme.Text.Body()
-	detailBtn.TextColor3 = Theme.Colors.TextPrimary
-	detailBtn.Text = "View Full Details"
-	detailBtn.BorderSizePixel = 0
-	detailBtn.LayoutOrder = 10; detailBtn.Parent = activeUnitPanel
-	Instance.new("UICorner", detailBtn).CornerRadius = Theme.CornerRadius.sm
-	detailBtn.MouseButton1Click:Connect(function()
-		if _G.CTRBLXAI_OpenInspectorPanel and d.id then
-			_G.CTRBLXAI_OpenInspectorPanel(d.id)
-		end
-	end)
 end
+
 
 function BattleHUD._buildViewModeTile()
 	if not actionPanel then return end
@@ -1345,25 +1355,46 @@ function BattleHUD.ApplyLayout(layout)
 	-- Re-run right-side stack positioning
 	task.defer(function()
 		local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
+		local rootLeft = rootFrame and rootFrame.AbsolutePosition.X or 0
 		local nextY = PAD
+		local stackW = activeUnitPanel and activeUnitPanel.AbsoluteSize.X or nil
+		local stackX = activeUnitPanel and (activeUnitPanel.AbsolutePosition.X - rootLeft) or nil
 
 		if activeUnitPanel and activeUnitPanel.Visible then
-			nextY = (activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y - rootTop) + 4
+			nextY = (activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y - rootTop)
 		end
 		if actionPanel then
-			actionPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			if stackX and stackW then
+				actionPanel.AnchorPoint = Vector2.new(0, 0)
+				actionPanel.Position = UDim2.new(0, stackX, 0, nextY)
+				actionPanel.Size = UDim2.new(0, stackW, 0, 0)
+			else
+				actionPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			end
 			if actionPanel.Visible then
-				nextY = (actionPanel.AbsolutePosition.Y + actionPanel.AbsoluteSize.Y - rootTop) + 4
+				nextY = (actionPanel.AbsolutePosition.Y + actionPanel.AbsoluteSize.Y - rootTop)
 			end
 		end
 		if inspectorPanel then
-			inspectorPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			if stackX and stackW then
+				inspectorPanel.AnchorPoint = Vector2.new(0, 0)
+				inspectorPanel.Position = UDim2.new(0, stackX, 0, nextY)
+				inspectorPanel.Size = UDim2.new(0, stackW, 0, 0)
+			else
+				inspectorPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			end
 			if inspectorPanel.Visible then
-				nextY = (inspectorPanel.AbsolutePosition.Y + inspectorPanel.AbsoluteSize.Y - rootTop) + 4
+				nextY = (inspectorPanel.AbsolutePosition.Y + inspectorPanel.AbsoluteSize.Y - rootTop)
 			end
 		end
 		if tilePreviewPanel then
-			tilePreviewPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			if stackX and stackW then
+				tilePreviewPanel.AnchorPoint = Vector2.new(0, 0)
+				tilePreviewPanel.Position = UDim2.new(0, stackX, 0, nextY)
+				tilePreviewPanel.Size = UDim2.new(0, stackW, 0, 0)
+			else
+				tilePreviewPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			end
 		end
 	end)
 end
@@ -1392,12 +1423,21 @@ function BattleHUD.Render(p)
 		-- Position right-side stack (activeUnit on top, actionPanel below)
 		task.defer(function()
 			local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
+			local rootLeft = rootFrame and rootFrame.AbsolutePosition.X or 0
 			local nextY = PAD
+			local stackW = activeUnitPanel and activeUnitPanel.AbsoluteSize.X or nil
+			local stackX = activeUnitPanel and (activeUnitPanel.AbsolutePosition.X - rootLeft) or nil
 			if activeUnitPanel and activeUnitPanel.Visible then
-				nextY = (activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y - rootTop) + 4
+				nextY = (activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y - rootTop)
 			end
 			if actionPanel then
-				actionPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+				if stackX and stackW then
+					actionPanel.AnchorPoint = Vector2.new(0, 0)
+					actionPanel.Position = UDim2.new(0, stackX, 0, nextY)
+					actionPanel.Size = UDim2.new(0, stackW, 0, 0)
+				else
+					actionPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+				end
 			end
 		end)
 		return
@@ -1406,32 +1446,53 @@ function BattleHUD.Render(p)
 	-- Position right-side stack: ActiveUnit → ActionPanel → Inspector → TilePreview
 	task.defer(function()
 		local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
+		local rootLeft = rootFrame and rootFrame.AbsolutePosition.X or 0
 		local nextY = PAD  -- start from top
+		local stackW = activeUnitPanel and activeUnitPanel.AbsoluteSize.X or nil
+		local stackX = activeUnitPanel and (activeUnitPanel.AbsolutePosition.X - rootLeft) or nil
 
 		-- ActiveUnit is always at top-right (fixed position)
 		if activeUnitPanel and activeUnitPanel.Visible then
-			nextY = (activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y - rootTop) + 4
+			nextY = (activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y - rootTop)
 		end
 
 		-- ActionPanel below ActiveUnit
 		if actionPanel then
-			actionPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			if stackX and stackW then
+				actionPanel.AnchorPoint = Vector2.new(0, 0)
+				actionPanel.Position = UDim2.new(0, stackX, 0, nextY)
+				actionPanel.Size = UDim2.new(0, stackW, 0, 0)
+			else
+				actionPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			end
 			if actionPanel.Visible then
-				nextY = (actionPanel.AbsolutePosition.Y + actionPanel.AbsoluteSize.Y - rootTop) + 4
+				nextY = (actionPanel.AbsolutePosition.Y + actionPanel.AbsoluteSize.Y - rootTop)
 			end
 		end
 
 		-- Inspector below ActionPanel (or below ActiveUnit if action hidden)
 		if inspectorPanel then
-			inspectorPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			if stackX and stackW then
+				inspectorPanel.AnchorPoint = Vector2.new(0, 0)
+				inspectorPanel.Position = UDim2.new(0, stackX, 0, nextY)
+				inspectorPanel.Size = UDim2.new(0, stackW, 0, 0)
+			else
+				inspectorPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			end
 			if inspectorPanel.Visible then
-				nextY = (inspectorPanel.AbsolutePosition.Y + inspectorPanel.AbsoluteSize.Y - rootTop) + 4
+				nextY = (inspectorPanel.AbsolutePosition.Y + inspectorPanel.AbsoluteSize.Y - rootTop)
 			end
 		end
 
 		-- TilePreview below Inspector
 		if tilePreviewPanel then
-			tilePreviewPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			if stackX and stackW then
+				tilePreviewPanel.AnchorPoint = Vector2.new(0, 0)
+				tilePreviewPanel.Position = UDim2.new(0, stackX, 0, nextY)
+				tilePreviewPanel.Size = UDim2.new(0, stackW, 0, 0)
+			else
+				tilePreviewPanel.Position = UDim2.new(1, -PAD, 0, nextY)
+			end
 		end
 	end)
 
