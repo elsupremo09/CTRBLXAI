@@ -1,4 +1,4 @@
--- TargetingService.lua
+
 -- CTRBLXAI | Slice 3 (AOE Patterns + Ally Targeting)
 --
 -- Slice 3 additions:
@@ -14,6 +14,17 @@ local GameConstants = require(
 )
 
 local RacePassiveService = require(script.Parent.RacePassiveService)
+local StatusService = require(script.Parent.StatusService)
+
+-- Effective Elevation: tile elevation + 5 if unit has Flight status.
+-- DB: "Flight treats unit as Tile Elevation + 5"
+local function getEffectiveElevation(unit)
+	local tileElev = GameConstants.GetElevation(unit.tileX, unit.tileY)
+	if StatusService.HasStatus(unit, "Flight") then
+		return tileElev + 5
+	end
+	return tileElev
+end
 
 local TargetingService = {}
 
@@ -170,16 +181,22 @@ end
 -- LoS is blocked if ANY tile along the line is a blocker.
 -- The start and end tiles themselves do NOT block.
 -- Range 1 (adjacent) always has LoS (melee can't be blocked).
+-- projectileType: nil/"Direct"/"Channeled" = units block LoS.
+--                 "Arc" = units do NOT block (arc clears over them),
+--                         but terrain BlocksLoS still applies.
 --------------------------------------------------
 
-function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerElevation)
+function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerElevation, projectileType)
 	-- Adjacent tiles always have LoS
 	if chebyshevDistance(x1, y1, x2, y2) <= 1 then
 		return true
 	end
 
 	-- Build a lookup of tiles occupied by standing units (block LoS).
-	-- Dead units do not block. Start/end tiles excluded by the loop below.
+	-- Arc projectiles use arc clearance instead of direct LoS:
+	--   Arc Peak Elevation = Attacker Elevation + Arc Height (default 3)
+	--   Clear if Arc Peak >= Blocker Elevation + 2
+	local isArc = (projectileType == "Arc")
 	local unitOccupied = {}
 	if allUnits then
 		for _, u in ipairs(allUnits) do
@@ -217,10 +234,20 @@ function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerEleva
 			local key = cx .. "," .. cy
 			local blockerElev = unitOccupied[key]
 			if blockerElev then
-				-- Bypass: attacker elevation >= 3 above blocker elevation
 				local atkElev = attackerElevation or GameConstants.GetElevation(x1, y1)
-				if atkElev < blockerElev + 3 then
-					return false
+
+				if isArc then
+					-- Arc clearance: Arc Peak Elevation >= Blocker Elevation + 2
+					-- Arc Peak = Attacker Elevation + Arc Height (default 3)
+					local arcPeak = atkElev + 3
+					if arcPeak < blockerElev + 2 then
+						return false
+					end
+				else
+					-- Direct/Channeled/None: bypass if attacker >= 3 above blocker
+					if atkElev < blockerElev + 3 then
+						return false
+					end
 				end
 			end
 		end
@@ -243,7 +270,8 @@ function TargetingService.GetAttackCandidates(actor, allUnits, range)
 			local dist = chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
 			if dist <= range
 				and dist >= minRange
-				and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY, allUnits)
+				and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
+					allUnits, getEffectiveElevation(actor), actor.weaponProjectileType)
 			then
 				table.insert(candidates, unit)
 			end
@@ -277,8 +305,11 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 			-- skip out of range
 		else
 			-- Check LoS (healing/ally skills skip LoS for now)
+			-- Projectile type: skill override or weapon default
+			local projType = skillDef.projectileType or actor.weaponProjectileType
 			local hasLos = targetRules == "Ally Unit, Self"
-				or TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY, allUnits)
+				or TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
+					allUnits, getEffectiveElevation(actor), projType)
 			if not hasLos then
 				-- blocked by obstacle
 			elseif targetRules == "Enemy Unit" then

@@ -218,8 +218,8 @@ local hero = UnitSchema.Create({
 	raceId       = "RACE-HUMAN",
 	side         = "Player",
 	controller   = "Player",
-	tileX        = 4,
-	tileY        = 4,
+	tileX        = 5,
+	tileY        = 5,
 	skillIds     = { "skill_power_strike", "skill_sweeping_cut" },
 })
 equipGeneratedWeapon(hero, "WPN-SWORD", 5, "Uncommon", 1001)
@@ -248,8 +248,8 @@ local mage = UnitSchema.Create({
 	raceId       = "RACE-ELF",
 	side         = "Player",
 	controller   = "Player",
-	tileX        = 3,
-	tileY        = 1,
+	tileX        = 1,
+	tileY        = 4,
 	skillIds     = { "skill_fire_bolt", "skill_healing_light" },
 })
 equipGeneratedWeapon(mage, "WPN-WAND", 5, "Uncommon", 1002)
@@ -261,8 +261,8 @@ local ranger = UnitSchema.Create({
 	raceId       = "RACE-SHADOW",
 	side         = "Player",
 	controller   = "Player",
-	tileX        = 5,
-	tileY        = 3,
+	tileX        = 8,
+	tileY        = 5,
 	skillIds     = { "skill_crippling_shot", "skill_venom_strike" },
 })
 equipGeneratedWeapon(ranger, "WPN-CROSSBOW", 5, "Uncommon", 1003)

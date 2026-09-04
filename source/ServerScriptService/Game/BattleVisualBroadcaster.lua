@@ -380,4 +380,17 @@ function BattleVisualBroadcaster.TurnSkipped(unit, reason)
 	task.wait(PACE.Action)
 end
 
+--------------------------------------------------
+-- STATUS IMMUNE (Phase 4)
+--------------------------------------------------
+
+function BattleVisualBroadcaster.StatusImmune(unit, statusId, reason)
+	BattleEvents.StatusImmune:FireAllClients({
+		unitId    = unit.id,
+		unitName  = unit.name,
+		statusId  = statusId,
+		reason    = reason,
+	})
+end
+
 return BattleVisualBroadcaster

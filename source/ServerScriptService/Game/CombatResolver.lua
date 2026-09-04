@@ -11,6 +11,7 @@
 
 local StatusService = require(script.Parent.StatusService)
 local RacePassiveService = require(script.Parent.RacePassiveService)
+local BattleVisualBroadcaster = require(script.Parent.BattleVisualBroadcaster)
 
 local RaceData = require(
 	game:GetService("ReplicatedStorage")
@@ -127,27 +128,39 @@ end
 
 -- Element→status triggers. Applied after damage resolves.
 -- Skips if the skill already applied the same status via appliesStatus.
+-- Broadcasts StatusImmune if the status was blocked by immunity.
 local function applyElementStatusTriggers(sourceUnitId, defender, element, actualDamage, alreadyApplied)
 	if actualDamage <= 0 or not defender.isAlive then return end
 
+	local function tryApply(statusId, fireDmg)
+		local applied, _, immuneReason = StatusService.ApplyStatus(defender, statusId, sourceUnitId, fireDmg)
+		if not applied and immuneReason then
+			BattleVisualBroadcaster.StatusImmune(defender, statusId, immuneReason)
+		end
+	end
+
 	if element == "Fire" and alreadyApplied ~= "Burn" then
-		StatusService.ApplyStatus(defender, "Burn", sourceUnitId, actualDamage)
+		tryApply("Burn", actualDamage)
 	elseif element == "Water" then
-		StatusService.ApplyStatus(defender, "Wet", sourceUnitId)
+		tryApply("Wet")
 	elseif element == "Ice" then
 		-- Ice on Wet target → convert Wet to Frozen
 		if StatusService.HasStatus(defender, "Wet") then
 			StatusService.RemoveStatus(defender, "Wet")
-			StatusService.ApplyStatus(defender, "Frozen", sourceUnitId)
+			tryApply("Frozen")
 		end
 	elseif element == "Poison" and alreadyApplied ~= "Poison" then
-		StatusService.ApplyStatus(defender, "Poison", sourceUnitId)
+		tryApply("Poison")
 	end
 end
 
-local function calcHitQuality(attackerDex, defenderAgi)
+local function calcHitQuality(attackerDex, defenderAgi, attackerUnit)
 	local precision   = GameConstants.CalcPrecision(attackerDex)
 	local evasiveness = GameConstants.CalcEvasiveness(defenderAgi)
+	-- Blind: Final Precision = Precision × 0.50 (DB: elements_statuses)
+	if attackerUnit and StatusService.HasStatus(attackerUnit, "Blind") then
+		precision = precision * 0.50
+	end
 	return 1 + (precision - evasiveness)
 end
 
@@ -173,7 +186,7 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	local ap = GameConstants.CalcAttackPower(weaponDamage, aStats.STR)
 	local dp = GameConstants.CalcDefensePower(0, dStats.VIT)
 	local effectiveDefense = calcEffectiveDefense(ap, dp)
-	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI)
+	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI, attacker)
 
 	local positionalMod = GameConstants.GetPositionalModifier(
 		attacker.tileX, attacker.tileY,
@@ -269,7 +282,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 
 	local dp = GameConstants.CalcDefensePower(0, dStats.VIT)
 	local effectiveDefense = calcEffectiveDefense(sp, dp)
-	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI)
+	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI, attacker)
 
 	local positionalMod = GameConstants.GetPositionalModifier(
 		attacker.tileX, attacker.tileY,
@@ -403,9 +416,11 @@ end
 
 --------------------------------------------------
 -- PUBLIC: APPLY OUTCOME (damage or healing)
+-- attacker (optional): unit table of the source, used for Confuse backlash.
+-- Callers that have the attacker unit should pass it.
 --------------------------------------------------
 
-function CombatResolver.ApplyOutcome(outcome, target)
+function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	if outcome.type == "Healing" then
 		local actual = UnitSchema_ApplyHealing(outcome.finalHealing, target)
 		print(string.format(
@@ -430,13 +445,17 @@ function CombatResolver.ApplyOutcome(outcome, target)
 		if outcome.appliesStatus == "Burn" then
 			fireDmg = actual
 		end
-		StatusService.ApplyStatus(
+		local applied, _, immuneReason = StatusService.ApplyStatus(
 			target,
 			outcome.appliesStatus,
 			outcome.sourceUnitId or "unknown",
 			fireDmg
 		)
-		statusApplied = outcome.appliesStatus
+		if applied then
+			statusApplied = outcome.appliesStatus
+		elseif not applied and immuneReason then
+			BattleVisualBroadcaster.StatusImmune(target, outcome.appliesStatus, immuneReason)
+		end
 	end
 
 	-- Phase 3: Element→status triggers (Fire→Burn, Water→Wet, Ice→Frozen, Poison→Poison)
@@ -444,6 +463,20 @@ function CombatResolver.ApplyOutcome(outcome, target)
 	-- Skips if the same status was already applied by appliesStatus above.
 	if outcome.element and actual > 0 and target.isAlive then
 		applyElementStatusTriggers(outcome.sourceUnitId or "unknown", target, outcome.element, actual, statusApplied)
+	end
+
+	-- Confuse backlash: when a confused unit deals damage, it takes
+	-- backlash = round(finalDamage × 0.30 × debuffResist)
+	-- DB: "backlash = round(Final Enemy HP Damage × 0.30 × Debuff Resistance)"
+	if attacker and actual > 0 and StatusService.HasStatus(attacker, "Confuse") then
+		local debuffResist = attacker.derivedStats and attacker.derivedStats.debuffResist or 1.0
+		local backlash = math.max(0, math.round(actual * 0.30 * debuffResist))
+		if backlash > 0 and attacker.isAlive then
+			UnitSchema_ApplyDamage(backlash, attacker)
+			print(string.format(
+				"[CombatResolver] Confuse backlash: %s takes %d self-damage", attacker.name, backlash
+			))
+		end
 	end
 
 	local posLabel = ""

@@ -91,7 +91,10 @@ end
 local function calcMoveRt(actor, tilesMoving)
 	local modBaseRt = StatusService.GetModifiedBaseRt(actor)
 	local perTile = modBaseRt * MOVE_RT_FACTOR
-	return math.round(perTile * tilesMoving)
+	-- Frozen: all RT costs ×2. Wet: movement RT ×1.25.
+	local frozenMult = StatusService.GetAllRtMultiplier(actor)
+	local wetMult    = StatusService.GetMovementRtMultiplier(actor)
+	return math.round(perTile * tilesMoving * frozenMult * wetMult)
 end
 
 local function calcBasicAttackBaseRt(actor)
@@ -100,7 +103,9 @@ local function calcBasicAttackBaseRt(actor)
 	local modBaseRt = StatusService.GetModifiedBaseRt(actor)
 	local str = actor.effectiveStats and actor.effectiveStats.STR or 10
 	local effectiveWt = GameConstants.CalcEffectiveWt(actor.weaponWt or 0, str)
-	return math.round(modBaseRt * BASIC_ATTACK_RT_FACTOR) + math.round(effectiveWt)
+	local baseAttackRt = math.round(modBaseRt * BASIC_ATTACK_RT_FACTOR) + math.round(effectiveWt)
+	-- Frozen: all RT costs ×2
+	return math.round(baseAttackRt * StatusService.GetAllRtMultiplier(actor))
 end
 
 --------------------------------------------------
@@ -310,6 +315,14 @@ function CommandService.ValidateAndCommit(
 		local mpCost = skillDef.mpCost or 0
 		mpCost = math.max(0, math.round(mpCost * RacePassiveService.GetMpCostModifier(actor)))
 
+		-- Mana Burn: Extra MP Cost = round(Max MP × 0.20)
+		-- DB: "Extra MP Cost = round(Max MP × 0.20). Total MP Spent = Skill MP Cost + Extra."
+		local manaBurnExtra = 0
+		if StatusService.HasStatus(actor, "Mana Burn") then
+			manaBurnExtra = math.round((actor.maxMp or 20) * 0.20)
+			mpCost = mpCost + manaBurnExtra
+		end
+
 		if not UnitSchema.HasEnoughMp(actor, mpCost) then
 			return false, string.format(
 				"%s does not have enough MP (%d/%d needed).",
@@ -398,6 +411,13 @@ function CommandService.ValidateAndCommit(
 		local mpCost = skillDef.mpCost or 0
 		mpCost = math.max(0, math.round(mpCost * RacePassiveService.GetMpCostModifier(actor)))
 
+		-- Mana Burn: Extra MP Cost (same as validation path)
+		local manaBurnExtra = 0
+		if StatusService.HasStatus(actor, "Mana Burn") then
+			manaBurnExtra = math.round((actor.maxMp or 20) * 0.20)
+			mpCost = mpCost + manaBurnExtra
+		end
+
 		-- Check if this is a CHANNELED skill
 		if skillDef.channelTime and skillDef.channelTime > 0 then
 			-- CHANNELED SKILL: don't spend MP, don't resolve.
@@ -429,9 +449,22 @@ function CommandService.ValidateAndCommit(
 		-- INSTANT SKILL: spend MP and resolve immediately
 		UnitSchema.SpendMp(actor, mpCost)
 
+		-- Mana Burn damage: round(Total MP Spent × 0.50 × Debuff Resistance)
+		if manaBurnExtra > 0 and actor.isAlive then
+			local debuffResist = actor.derivedStats and actor.derivedStats.debuffResist or 1.0
+			local manaBurnDmg = math.round(mpCost * 0.50 * debuffResist)
+			if manaBurnDmg > 0 then
+				UnitSchema.ApplyDamage(actor, manaBurnDmg)
+				print(string.format("[CommandService] Mana Burn: %s takes %d damage (MP spent: %d)",
+					actor.name, manaBurnDmg, mpCost))
+			end
+		end
+
 		local baseRtCost = skillDef.rtCost or math.round(
 			StatusService.GetModifiedBaseRt(actor) * 0.10
 		)
+		-- Frozen: all RT costs ×2
+		baseRtCost = math.round(baseRtCost * StatusService.GetAllRtMultiplier(actor))
 
 		if skillDef.isHealing then
 			local outcome = CombatResolver.ResolveHealing(actor, target, skillDef)
@@ -511,6 +544,8 @@ function CommandService.ValidateAndCommit(
 		end
 		local guardRt = math.round(modBaseRt * GameConstants.GUARD_RT_BASE_FACTOR)
 			+ math.round(offHandWt * GameConstants.GUARD_OFFHAND_WT_FACTOR)
+		-- Frozen: all RT costs ×2
+		guardRt = math.round(guardRt * StatusService.GetAllRtMultiplier(actor))
 
 		-- Apply Guard as a proper status (dispellable buff, removed by CC)
 		StatusService.ApplyStatus(actor, "Guard", actor.id)
@@ -548,6 +583,8 @@ function CommandService.ValidateAndCommit(
 		-- Push RT = round(Modified Base RT × 0.10)
 		local modBaseRt = StatusService.GetModifiedBaseRt(actor)
 		local pushRt = math.round(modBaseRt * GameConstants.GUARD_RT_BASE_FACTOR)
+		-- Frozen: all RT costs ×2
+		pushRt = math.round(pushRt * StatusService.GetAllRtMultiplier(actor))
 		BattleCoordinator.AccrueRt(state, pushRt)
 
 		-- Resolve displacement

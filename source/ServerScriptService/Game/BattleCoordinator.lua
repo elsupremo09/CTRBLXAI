@@ -263,6 +263,15 @@ function BattleCoordinator.AdvanceClock(state)
 		end
 	end
 
+	-- CT-based status tick: decrement durationCt for ALL alive units
+	if ctPassed > 0 then
+		for _, unit in ipairs(state.units) do
+			if unit.isAlive then
+				StatusService.ProcessCtTick(unit, ctPassed)
+			end
+		end
+	end
+
 	state.activeUnit      = nextUnit
 	state.phase           = "TurnOpen"
 	state.turnRtAccrued   = 0
@@ -316,11 +325,13 @@ function BattleCoordinator.EndTurn(state)
 	local unit = state.activeUnit
 
 	local modifiedBaseRt = StatusService.GetModifiedBaseRt(unit)
+	-- Frozen: all RT costs ×2
+	local frozenMult = StatusService.GetAllRtMultiplier(unit)
 
 	if not state.turnActionTaken then
-		unit.remainingRt = math.round(modifiedBaseRt * REST_RT_MULTIPLIER)
+		unit.remainingRt = math.round(modifiedBaseRt * REST_RT_MULTIPLIER * frozenMult)
 	else
-		unit.remainingRt = math.max(1, modifiedBaseRt + state.turnRtAccrued)
+		unit.remainingRt = math.max(1, math.round((modifiedBaseRt + state.turnRtAccrued) * frozenMult))
 	end
 
 	-- Tick statuses: decrement durations, remove expired.

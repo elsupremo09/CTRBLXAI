@@ -20,6 +20,12 @@ local GameConstants = require(
 		:WaitForChild("GameConstants")
 )
 
+local RaceData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("RaceData")
+)
+
 local StatusService = {}
 
 --------------------------------------------------
@@ -47,10 +53,73 @@ function StatusService.IsChannelDisruptor(statusId)
 end
 
 --------------------------------------------------
+-- IMMUNITY FRAMEWORK (Phase 4)
+--
+-- Checks whether a unit is immune to a status before application.
+-- Sources: race tags, active buffs (Sleep Immunity), Petrify state.
+--------------------------------------------------
+
+-- Race tag → immune statuses (from DB race_tags table)
+local TAG_IMMUNITIES = {
+	Undead     = { Poison = true, Venom = true, Bleed = true, Raptured = true, Wounded = true },
+	Mechanical = { Poison = true, Venom = true, Bleed = true, Raptured = true, Wounded = true },
+	Amphibious = { Drowning = true },
+	-- Flying: Sinking immunity (DB: "Flight immune" on Sinking)
+	Flying     = { Sinking = true },
+}
+
+-- Helper: get race tags for a unit via RaceData
+local function getUnitTags(unit)
+	if not unit.raceId then return {} end
+	local raceEntry = RaceData[unit.raceId]
+	if raceEntry and raceEntry.tags then
+		return raceEntry.tags
+	end
+	return {}
+end
+
+function StatusService.IsImmune(unit, statusId)
+	-- 1. Race tag immunities
+	local tags = getUnitTags(unit)
+	for _, tag in ipairs(tags) do
+		local immuneSet = TAG_IMMUNITIES[tag]
+		if immuneSet and immuneSet[statusId] then
+			return true, tag .. " immune to " .. statusId
+		end
+	end
+
+	-- 2. Active buff immunities (Sleep Immunity blocks Sleep)
+	if statusId == "Sleep" then
+		for _, inst in ipairs(unit.statusInstances) do
+			if inst.id == "Sleep Immunity" then
+				return true, "Sleep Immunity active"
+			end
+		end
+	end
+
+	-- 3. Petrify blocks all new debuffs
+	-- DB: "Immune to new debuffs" while Petrified
+	if statusId ~= "Petrify" then -- Petrify doesn't block itself
+		local def = GameConstants.STATUSES[statusId]
+		if def and (def.kind == "Debuff") then
+			for _, inst in ipairs(unit.statusInstances) do
+				if inst.id == "Petrify" then
+					return true, "Petrified: immune to new debuffs"
+				end
+			end
+		end
+	end
+
+	return false, nil
+end
+
+--------------------------------------------------
 -- APPLY STATUS
 --
 -- Returns: applied (bool), disruptsChannel (bool)
+--          Third return (optional): immuneReason (string) if blocked by immunity
 -- Caller must check disruptsChannel and interrupt channeling if true.
+-- Caller should check third return to broadcast StatusImmune if non-nil.
 --------------------------------------------------
 
 function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt)
@@ -58,6 +127,15 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 	if not def then
 		warn("[StatusService] Unknown status: " .. tostring(statusId))
 		return false, false
+	end
+
+	-- Phase 4: Immunity check
+	local immune, immuneReason = StatusService.IsImmune(unit, statusId)
+	if immune then
+		print(string.format(
+			"[StatusService] %s IMMUNE to %s (%s)", unit.name, statusId, immuneReason
+		))
+		return false, false, immuneReason
 	end
 
 	local disruptsChannel = CHANNEL_DISRUPTORS[statusId] == true
@@ -69,23 +147,65 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 				inst.remainingTurns = def.duration
 				inst.sourceUnitId   = sourceUnitId
 				print(string.format(
-					"[StatusService] %s on %s REFRESHED (%d turns)",
-					statusId, unit.name, def.duration
+					"[StatusService] %s on %s REFRESHED (%s)",
+					statusId, unit.name, def.duration and (def.duration .. " turns") or "CT"
 				))
 				return false, disruptsChannel
+
 			elseif def.reapply == "accumulate" then
 				local addedBurn = 0
 				if statusId == "Burn" and fireDamageDealt then
 					addedBurn = math.round(fireDamageDealt * def.burnFraction)
 				end
 				inst.storedBurn = (inst.storedBurn or 0) + addedBurn
-				-- "Extends duration" = refresh to full duration (not additive)
 				inst.remainingTurns = def.duration
 				inst.sourceUnitId = sourceUnitId
 				print(string.format(
 					"[StatusService] %s on %s ACCUMULATED (+%d stored, %d turns now)",
 					statusId, unit.name, addedBurn, inst.remainingTurns
 				))
+				return false, disruptsChannel
+
+			elseif def.reapply == "stack" then
+				-- Venom: Strength +1. Enlightened: stack +1.
+				inst.stacks = (inst.stacks or 1) + 1
+				inst.remainingTurns = def.duration  -- refresh duration
+				inst.sourceUnitId = sourceUnitId
+				print(string.format(
+					"[StatusService] %s on %s STACKED (now %d stacks)",
+					statusId, unit.name, inst.stacks
+				))
+				return false, disruptsChannel
+
+			elseif def.reapply == "extend" then
+				-- Regeneration, Overflow: add to remaining duration
+				local addTurns = def.duration or 0
+				inst.remainingTurns = (inst.remainingTurns or 0) + addTurns
+				inst.sourceUnitId = sourceUnitId
+				print(string.format(
+					"[StatusService] %s on %s EXTENDED (+%d, now %d turns)",
+					statusId, unit.name, addTurns, inst.remainingTurns
+				))
+				return false, disruptsChannel
+
+			elseif def.reapply == "chain" then
+				-- Bleed→Raptured, Raptured→Wounded, Wounded→Bleed
+				inst.remainingTurns = def.duration  -- refresh self
+				inst.sourceUnitId = sourceUnitId
+				-- Apply next in chain
+				local CHAIN_NEXT = { Bleed = "Raptured", Raptured = "Wounded", Wounded = "Bleed" }
+				local nextStatus = CHAIN_NEXT[statusId]
+				if nextStatus then
+					print(string.format(
+						"[StatusService] %s on %s CHAINED → applying %s",
+						statusId, unit.name, nextStatus
+					))
+					StatusService.ApplyStatus(unit, nextStatus, sourceUnitId)
+				end
+				return false, disruptsChannel
+
+			elseif def.reapply == "none" then
+				-- Does nothing (Sleep, Undead, KO)
 				return false, disruptsChannel
 			end
 			return false, disruptsChannel
@@ -97,7 +217,13 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 		id             = statusId,
 		remainingTurns = def.duration,
 		sourceUnitId   = sourceUnitId or "unknown",
+		stacks         = 1,  -- default stack count for all statuses
 	}
+
+	-- CT-based duration: set remainingCt instead of remainingTurns
+	if def.durationCt then
+		instance.remainingCt = def.durationCt
+	end
 
 	if statusId == "Burn" and fireDamageDealt then
 		instance.storedBurn = math.round(fireDamageDealt * def.burnFraction)
@@ -249,6 +375,141 @@ function StatusService.GetModifiedBaseRt(unit)
 	end
 
 	return math.round(baseRt * multiplier)
+end
+
+--------------------------------------------------
+-- RT COST MULTIPLIERS (Phase 3+ status effects)
+--
+-- Frozen: All RT costs ×2 (DB: "All RT costs including Movement RT x2")
+-- Wet: Movement RT ×1.25 only (DB: "Movement RT x1.25")
+--
+-- These are SEPARATE from GetModifiedBaseRt (Haste/Slow) because:
+-- Haste/Slow affect "Base RT-derived costs only" and explicitly exclude
+-- Skill Card RT, channel time, activation time.
+-- Frozen affects ALL RT costs including those.
+--------------------------------------------------
+
+function StatusService.GetAllRtMultiplier(unit)
+	for _, inst in ipairs(unit.statusInstances) do
+		if inst.id == "Frozen" then
+			return 2.0
+		end
+	end
+	return 1.0
+end
+
+function StatusService.GetMovementRtMultiplier(unit)
+	local mult = 1.0
+	for _, inst in ipairs(unit.statusInstances) do
+		if inst.id == "Wet" then mult = mult * 1.25 end
+	end
+	return mult
+end
+
+--------------------------------------------------
+-- CT-BASED TICK (Phase 4+)
+--
+-- Called by BattleCoordinator.AdvanceClock after CT advances.
+-- Decrements durationCt on all CT-based statuses by ctElapsed.
+-- Removes expired ones. Returns list of expired status IDs.
+--
+-- Turn-based statuses are NOT affected (they tick via TickStatuses).
+--------------------------------------------------
+
+function StatusService.ProcessCtTick(unit, ctElapsed)
+	if ctElapsed <= 0 then return {} end
+
+	local expired = {}
+	local i = 1
+	while i <= #unit.statusInstances do
+		local inst = unit.statusInstances[i]
+		if inst.remainingCt then
+			inst.remainingCt = inst.remainingCt - ctElapsed
+			if inst.remainingCt <= 0 then
+				table.insert(expired, inst.id)
+				print(string.format("[StatusService] %s EXPIRED (CT) on %s", inst.id, unit.name))
+				table.remove(unit.statusInstances, i)
+			else
+				i = i + 1
+			end
+		else
+			i = i + 1
+		end
+	end
+	return expired
+end
+
+--------------------------------------------------
+-- STATUS-BASED STAT MODIFIERS (Phase 2+)
+--
+-- Returns a table of { STAT = multiplier_offset } for all active
+-- status effects that modify stats. Consumers multiply:
+--   final = base × (1 + sum_of_offsets)
+--
+-- Weakened: all main stats -10% (offset = -0.10 per stat)
+-- Giant Transformation: STR +20%, VIT +20%, INT -20%, DEX -20%, AGI -20%
+-- Rush: DEX -20%
+-- Crippled: handled separately (movement/jump reduction, not stat %)
+-- Enlightened: all main stats +10% per stack
+--------------------------------------------------
+
+function StatusService.GetStatusStatModifiers(unit)
+	local mods = { STR = 0, AGI = 0, INT = 0, VIT = 0, DEX = 0, LUK = 0 }
+	local hasAny = false
+
+	for _, inst in ipairs(unit.statusInstances) do
+		if inst.id == "Weakened" then
+			for stat in pairs(mods) do mods[stat] = mods[stat] - 0.10 end
+			hasAny = true
+		elseif inst.id == "Giant Transformation" then
+			mods.STR = mods.STR + 0.20
+			mods.VIT = mods.VIT + 0.20
+			mods.INT = mods.INT - 0.20
+			mods.DEX = mods.DEX - 0.20
+			mods.AGI = mods.AGI - 0.20
+			hasAny = true
+		elseif inst.id == "Rush" then
+			mods.DEX = mods.DEX - 0.20
+			hasAny = true
+		elseif inst.id == "Enlightened" then
+			local stacks = inst.stacks or 1
+			local bonus = stacks * 0.10
+			for stat in pairs(mods) do mods[stat] = mods[stat] + bonus end
+			hasAny = true
+		end
+	end
+
+	return hasAny and mods or nil
+end
+
+--------------------------------------------------
+-- MOVEMENT RANGE MODIFIERS FROM STATUS
+-- Rush: +3 movement. Crippled: reduced by max(2, 50% current), min 1.
+--------------------------------------------------
+
+function StatusService.GetMovementRangeModifier(unit)
+	local offset = 0
+	for _, inst in ipairs(unit.statusInstances) do
+		if inst.id == "Rush" then
+			offset = offset + 3
+		end
+	end
+	return offset
+end
+
+function StatusService.GetCrippledReduction(unit, currentRange, currentJump)
+	for _, inst in ipairs(unit.statusInstances) do
+		if inst.id == "Crippled" then
+			-- Move Range reduced by max(2, 50% current), min final 1
+			local moveReduction = math.max(2, math.floor(currentRange * 0.50))
+			local finalMove = math.max(1, currentRange - moveReduction)
+			-- Jump reduced by max(1, 50% current), min final 0
+			local jumpReduction = math.max(1, math.floor(currentJump * 0.50))
+			local finalJump = math.max(0, currentJump - jumpReduction)
+			return finalMove, finalJump
+		end
+	end
+	return currentRange, currentJump
 end
 
 --------------------------------------------------

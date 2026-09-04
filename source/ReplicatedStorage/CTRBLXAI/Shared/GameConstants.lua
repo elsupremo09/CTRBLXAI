@@ -183,7 +183,7 @@ GameConstants.STATUSES = {
 		                         -- expires at EndTurn of the unit's NEXT ready turn
 		reapply      = "refresh",
 		dispellable  = true,     -- removed by Purge/Dispel
-		removedByCC  = true,     -- removed by Stun, Freeze, Sleep
+		removedByCC  = true,     -- removed by hard CC (Sleep, Petrify, Stun when defined)
 		dotType      = nil,
 	},
 
