@@ -393,4 +393,25 @@ function BattleVisualBroadcaster.StatusImmune(unit, statusId, reason)
 	})
 end
 
+--------------------------------------------------
+-- TILE EFFECTS (TileEffectService)
+--------------------------------------------------
+
+function BattleVisualBroadcaster.TileEffectApplied(tileX, tileY, effectId, durationCt)
+	BattleEvents.TileEffectApplied:FireAllClients({
+		tileX      = tileX,
+		tileY      = tileY,
+		effectId   = effectId,
+		durationCt = durationCt,
+	})
+end
+
+function BattleVisualBroadcaster.TileEffectRemoved(tileX, tileY, effectId)
+	BattleEvents.TileEffectRemoved:FireAllClients({
+		tileX    = tileX,
+		tileY    = tileY,
+		effectId = effectId,
+	})
+end
+
 return BattleVisualBroadcaster

@@ -129,13 +129,25 @@ end
 -- Element→status triggers. Applied after damage resolves.
 -- Skips if the skill already applied the same status via appliesStatus.
 -- Broadcasts StatusImmune if the status was blocked by immunity.
-local function applyElementStatusTriggers(sourceUnitId, defender, element, actualDamage, alreadyApplied)
+local function applyElementStatusTriggers(sourceUnitId, defender, element, actualDamage, alreadyApplied, attackerUnit)
 	if actualDamage <= 0 or not defender.isAlive then return end
 
 	local function tryApply(statusId, fireDmg)
 		local applied, _, immuneReason = StatusService.ApplyStatus(defender, statusId, sourceUnitId, fireDmg)
 		if not applied and immuneReason then
 			BattleVisualBroadcaster.StatusImmune(defender, statusId, immuneReason)
+		end
+	end
+
+	-- LICH — Arcane Corruption: override element→status mapping
+	-- DB: Fire→Burn, Water→Frozen, Earth→Petrify, Dark→Poison
+	if attackerUnit then
+		local override = RacePassiveService.GetElementStatusOverride(attackerUnit, element)
+		if override and override ~= alreadyApplied then
+			local fireDmg = (element == "Fire") and actualDamage or nil
+			tryApply(override, fireDmg)
+			print(string.format("[CombatResolver] Lich Arcane Corruption: %s → %s", element, override))
+			return   -- skip default triggers
 		end
 	end
 
@@ -232,6 +244,20 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	-- Basic Attack element = weapon element or Physical
 	local attackElement = attacker.weaponElement or "Physical"
 
+	-- Step 6b: Terrain occupy bonus — attacker's tile element bonus
+	-- Flight bypasses terrain bonuses
+	if not StatusService.HasStatus(attacker, "Flight") then
+		local terrainBonus = GameConstants.GetTerrainOccupyBonus(
+			GameConstants.GetTerrainId(attacker.tileX, attacker.tileY),
+			attackElement
+		)
+		if terrainBonus ~= 1 then
+			print(string.format("[CombatResolver] Terrain occupy bonus: %s ×%.2f",
+				GameConstants.GetTerrainId(attacker.tileX, attacker.tileY), terrainBonus))
+			finalDamage = math.max(0, math.round(finalDamage * terrainBonus))
+		end
+	end
+
 	-- Dark vs Undead: convert damage to healing
 	if attackElement == "Dark" and isUndead(defender) then
 		return {
@@ -326,6 +352,21 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	end
 
 	-- Step 10: Element interactions (Phase 3)
+
+	-- Step 6b: Terrain occupy bonus — attacker's tile element bonus
+	-- Flight bypasses terrain bonuses
+	if not StatusService.HasStatus(attacker, "Flight") then
+		local terrainBonusSkill = GameConstants.GetTerrainOccupyBonus(
+			GameConstants.GetTerrainId(attacker.tileX, attacker.tileY),
+			skillElement or "Physical"
+		)
+		if terrainBonusSkill ~= 1 then
+			print(string.format("[CombatResolver] Terrain occupy bonus (skill): %s ×%.2f",
+				GameConstants.GetTerrainId(attacker.tileX, attacker.tileY), terrainBonusSkill))
+			finalDamage = math.max(0, math.round(finalDamage * terrainBonusSkill))
+		end
+	end
+
 	-- Dark vs Undead: convert damage to healing
 	if skillElement == "Dark" and isUndead(defender) then
 		return {
@@ -462,7 +503,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- Only fires if actual damage > 0 and target alive.
 	-- Skips if the same status was already applied by appliesStatus above.
 	if outcome.element and actual > 0 and target.isAlive then
-		applyElementStatusTriggers(outcome.sourceUnitId or "unknown", target, outcome.element, actual, statusApplied)
+		applyElementStatusTriggers(outcome.sourceUnitId or "unknown", target, outcome.element, actual, statusApplied, attacker)
 	end
 
 	-- Confuse backlash: when a confused unit deals damage, it takes
@@ -477,6 +518,26 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 				"[CombatResolver] Confuse backlash: %s takes %d self-damage", attacker.name, backlash
 			))
 		end
+	end
+
+	-- Vampire lifesteal: heal attacker for % of damage dealt
+	-- TRG-010: Uses UnitSchema_ApplyHealing directly (not ApplyOutcome),
+	-- so it cannot recursively trigger lifesteal or other generated effects.
+	if attacker and actual > 0 and attacker.isAlive then
+		local isAOE = outcome.isAOE or false
+		local lifesteal = RacePassiveService.GetLifestealAmount(attacker, actual, isAOE)
+		if lifesteal > 0 then
+			UnitSchema_ApplyHealing(lifesteal, attacker)
+			print(string.format(
+				"[CombatResolver] Vampire lifesteal: %s heals %d (%.0f%% of %d)",
+				attacker.name, lifesteal, isAOE and 5 or 15, actual
+			))
+		end
+	end
+
+	-- Shadow Hide-on-hit: defender gains Hide after taking damage
+	if actual > 0 then
+		RacePassiveService.OnDamageReceived(target, actual, outcome.sourceUnitId)
 	end
 
 	local posLabel = ""

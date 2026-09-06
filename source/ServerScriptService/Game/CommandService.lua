@@ -39,6 +39,11 @@ CombatResolver.BindApplyHealing(UnitSchema.ApplyHealing)
 
 local CommandService = {}
 
+-- Optional: TileEffectService injected at runtime
+local _tileEffectService = nil
+function CommandService.SetTileEffectService(tes)
+	_tileEffectService = tes
+end
 --------------------------------------------------
 -- CONSTANTS
 --------------------------------------------------
@@ -58,6 +63,11 @@ function CommandService.RegisterSkill(skillDef)
 		"RegisterSkill: skillDef must have an id string."
 	)
 	skillRegistry[skillDef.id] = skillDef
+end
+
+function CommandService.RegisterSkillAlias(aliasKey, skillDef)
+	-- Store the same skillDef under an alias key (e.g. legacy "skill_power_strike")
+	skillRegistry[aliasKey] = skillDef
 end
 
 function CommandService.GetSkill(skillId)
@@ -183,9 +193,15 @@ function CommandService.ActivateChanneledSkill(state, unit)
 	UnitSchema.SpendMp(unit, mpCost)
 
 	-- RT cost for the activation itself is minimal (skill already "charged")
-	local activationRt = skillDef.rtCost or math.round(
-		StatusService.GetModifiedBaseRt(unit) * 0.10
-	)
+	-- Use rtMult if available, else legacy rtCost, else baseRt × 0.10
+	local activationRt
+	if skillDef.rtMult then
+		activationRt = math.round(GameConstants.CalcEffectiveWt(unit.weaponWt or 10, (unit.effectiveStats or {}).STR or 10) * skillDef.rtMult)
+	else
+		activationRt = skillDef.rtCost or math.round(
+			StatusService.GetModifiedBaseRt(unit) * 0.10
+		)
+	end
 	BattleCoordinator.AccrueRt(state, activationRt)
 
 	-- Resolve the skill
@@ -228,6 +244,101 @@ function CommandService.ActivateChanneledSkill(state, unit)
 			"[CommandService] Channel ACTIVATE [%s] AOE | %s | Hits:%d | Dmg:%d | MP:%d",
 			skillDef.name, unit.name, hitCount, totalDmg, mpCost
 		))
+
+	elseif skillDef.aoePattern and skillDef.aoePattern:sub(1,5) == "Chain" then
+		-- Chain AOE: jump from target to target with damage falloff
+		local maxTargets = tonumber(skillDef.aoePattern:match("%d+")) or 3
+		local chainTargets = TargetingService.GetChainTargets(
+			target, state.units, unit.side, maxTargets, 2
+		)
+		local totalDmg = 0
+		local hitCount = 0
+		local falloff = 1.0
+		local falloffRate = skillDef.chainFalloff or 0.80
+		local allOutcomes = {}
+		for _, u in ipairs(chainTargets) do
+			if u.isAlive then
+				local outcome = CombatResolver.ResolveSkill(unit, u, skillDef)
+				outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * falloff))
+				outcome.isAOE = true
+				CombatResolver.ApplyOutcome(outcome, u, unit)
+				totalDmg = totalDmg + outcome.finalDamage
+				hitCount = hitCount + 1
+				table.insert(allOutcomes, { target = u, outcome = outcome })
+				falloff = falloff * falloffRate
+			end
+		end
+		result.type      = "AOE"
+		result.targets   = allOutcomes
+		result.totalDmg  = totalDmg
+		result.hitCount  = hitCount
+		result.skillName = skillDef.name
+		print(string.format(
+			"[CommandService] Channel ACTIVATE [%s] Chain(%d/%d) | %s | Hits:%d | Dmg:%d | MP:%d",
+			skillDef.name, hitCount, maxTargets, unit.name, hitCount, totalDmg, mpCost
+		))
+
+	elseif skillDef.aoePattern and skillDef.aoePattern ~= "Cleave" then
+		-- Generic AOE: tile-based pattern resolution
+		local aoeTiles = TargetingService.GetAOETargetTiles(
+			skillDef.aoePattern, unit,
+			target.tileX, target.tileY,
+			_mapWidth, _mapHeight
+		)
+		local totalDmg = 0
+		local hitCount = 0
+		local allOutcomes = {}
+		-- AOE elevation filter: ±2 from center tile (DB default)
+		local centerElev = GameConstants.GetElevation(target.tileX, target.tileY)
+		-- AOE is indiscriminate by default (DB: friendly fire rule)
+		local targetRules = skillDef.targetRules or "Enemy Unit"
+		local hitsAllies = targetRules == "Ally Unit, Enemy Unit, Self"
+			or targetRules == "Ground, including occupied Ground"
+			or (not targetRules:find("Ally") == nil and not targetRules:find("Enemy") == nil)
+		for _, tile in ipairs(aoeTiles) do
+			local tileElev = GameConstants.GetElevation(tile.tileX, tile.tileY)
+			if math.abs(tileElev - centerElev) <= 2 then  -- ±2 elevation limit
+			-- BlocksAOE: Center Spread AOE does not pass through BlocksAOE objects
+			if not TargetingService.IsAOEBlocked(target.tileX, target.tileY, tile.tileX, tile.tileY) then
+			  for _, u in ipairs(state.units) do
+				if u.isAlive and u.tileX == tile.tileX and u.tileY == tile.tileY
+					and u.id ~= unit.id then  -- never hit self unless targetRules includes Self
+					-- Indiscriminate by default: hit both sides
+					local outcome = CombatResolver.ResolveSkill(unit, u, skillDef)
+					outcome.isAOE = true
+					CombatResolver.ApplyOutcome(outcome, u, unit)
+					totalDmg = totalDmg + outcome.finalDamage
+					hitCount = hitCount + 1
+					table.insert(allOutcomes, { target = u, outcome = outcome })
+				end
+				end
+			  end
+			end
+			end
+		result.type      = "AOE"
+		result.targets   = allOutcomes
+		result.totalDmg  = totalDmg
+		result.hitCount  = hitCount
+		result.skillName = skillDef.name
+		print(string.format(
+			"[CommandService] Channel ACTIVATE [%s] AOE(%s) | %s | Hits:%d | Dmg:%d | MP:%d",
+			skillDef.name, skillDef.aoePattern, unit.name, hitCount, totalDmg, mpCost
+		))
+
+		-- Skill→tile effect bridge (channeling activation)
+		if skillDef.createsTileEffect and _tileEffectService then
+			local centerElev = GameConstants.GetElevation(target.tileX, target.tileY)
+			for _, tile in ipairs(aoeTiles) do
+				local tileElev = GameConstants.GetElevation(tile.tileX, tile.tileY)
+				if math.abs(tileElev - centerElev) <= 2
+					and not TargetingService.IsAOEBlocked(target.tileX, target.tileY, tile.tileX, tile.tileY) then
+					_tileEffectService.ApplyTileEffect(
+						tile.tileX, tile.tileY, skillDef.createsTileEffect, unit.id
+					)
+				end
+			end
+		end
+
 	else
 		-- Single target damage
 		local outcome = CombatResolver.ResolveSkill(unit, target, skillDef)
@@ -332,7 +443,10 @@ function CommandService.ValidateAndCommit(
 
 		local targetSelection = {
 			target      = selection.target,
-			skillRange  = skillDef.range or 1,
+			-- range = -1 means inherit from weapon
+			skillRange  = (skillDef.range == -1)
+				and (actor.weaponMaxRange or 1)
+				or (skillDef.range or 1),
 			targetRules = skillDef.targetRules or "Enemy Unit",
 		}
 
@@ -382,6 +496,30 @@ function CommandService.ValidateAndCommit(
 			rtCost, actor.currentAp
 		))
 
+		-- Terrain cross effects: check destination terrain for cross penalties/effects
+		local terrainData = GameConstants.GetTerrainData(actor.tileX, actor.tileY)
+		if terrainData then
+			-- Apply crossCost as extra RT (terrains like Sand +1, Swamp +2)
+			-- Note: base moveCost is already handled by GetTerrainCost in pathfinding.
+			-- crossCost is for future terrains not yet on the map.
+			if terrainData.crossCost and terrainData.crossCost > 0 then
+				local extraRt = math.round(terrainData.crossCost * StatusService.GetModifiedBaseRt(actor) * GameConstants.MOVE_RT_FACTOR)
+				BattleCoordinator.AccrueRt(state, extraRt)
+			end
+
+			-- Terrain trigger on enter: Deep Water → Drowning, etc.
+			if terrainData.triggerEffect == "Drowning" and StatusService then
+				StatusService.ApplyStatus(actor, "Drowning", "terrain")
+				print(string.format("[CommandService] Terrain trigger: %s enters %s → Drowning",
+					actor.name, terrainData.id))
+			end
+		end
+
+		-- Tile effect cross check (Burning, Poison Cloud, etc.)
+		if _tileEffectService then
+			_tileEffectService.OnUnitEntersTile(actor, actor.tileX, actor.tileY)
+		end
+
 	elseif actionType == "Attack" then
 		local target = selection
 		-- calcBasicAttackBaseRt already includes Effective Weapon WT
@@ -398,6 +536,32 @@ function CommandService.ValidateAndCommit(
 			local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
 			local actualDelay = GameConstants.CalcRtDelayResistance(rawDelay, targetVit)
 			target.remainingRt = target.remainingRt + math.max(0, actualDelay)
+		end
+
+		-- Giant race tag: melee Basic Attacks gain Knockback
+		-- DB: "Melee Basic Attacks and compatible Skill Cards gain Knockback;
+		--      if already has Knockback, gain +1 Force."
+		-- Source modifier: Skill = 0.5 (vs GlobalPush = 1.0)
+		if target.isAlive and actor.raceId then
+			local RaceData = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
+			local raceEntry = RaceData[actor.raceId]
+			if raceEntry and raceEntry.tags then
+				for _, tag in ipairs(raceEntry.tags) do
+					if tag == "Giant" then
+						local force = actor.derivedStats and actor.derivedStats.force or 1
+						local stability = target.derivedStats and target.derivedStats.stability or 0
+						local pushDist = math.max(0, force - stability)
+						if pushDist > 0 then
+							local direction = DisplacementService.GetPushDirection(actor, target)
+							DisplacementService.ResolvePush(
+								target, direction, pushDist, actor, state,
+								GameConstants.KNOCKBACK_SOURCE_MODIFIERS.Skill
+							)
+						end
+						break
+					end
+				end
+			end
 		end
 
 		print(string.format(
@@ -460,9 +624,14 @@ function CommandService.ValidateAndCommit(
 			end
 		end
 
-		local baseRtCost = skillDef.rtCost or math.round(
-			StatusService.GetModifiedBaseRt(actor) * 0.10
-		)
+		-- Skill RT cost: rtMult × Effective Weapon WT (from DB formula)
+		-- Fallback: rtCost (legacy) or baseRt × 0.10
+		local baseRtCost
+		if skillDef.rtMult then
+			baseRtCost = math.round(GameConstants.CalcEffectiveWt(actor.weaponWt or 10, (actor.effectiveStats or {}).STR or 10) * skillDef.rtMult)
+		else
+			baseRtCost = skillDef.rtCost or math.round(StatusService.GetModifiedBaseRt(actor) * 0.10)
+		end
 		-- Frozen: all RT costs ×2
 		baseRtCost = math.round(baseRtCost * StatusService.GetAllRtMultiplier(actor))
 
@@ -499,6 +668,87 @@ function CommandService.ValidateAndCommit(
 				skillDef.name or skillDef.id,
 				actor.name, hitCount, totalDmg, mpCost, baseRtCost, actor.currentAp
 			))
+
+		elseif skillDef.aoePattern and skillDef.aoePattern:sub(1,5) == "Chain" then
+			-- Chain AOE: jump from target to target with damage falloff
+			local maxTargets = tonumber(skillDef.aoePattern:match("%d+")) or 3
+			local chainTargets = TargetingService.GetChainTargets(
+				target, state.units, actor.side, maxTargets, 2
+			)
+			local totalDmg = 0
+			local hitCount = 0
+			local falloff = 1.0
+			local falloffRate = skillDef.chainFalloff or 0.80
+			for idx, u in ipairs(chainTargets) do
+				if u.isAlive then
+					local outcome = CombatResolver.ResolveSkill(actor, u, skillDef)
+					-- Apply chain falloff
+					outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * falloff))
+					outcome.isAOE = true
+					CombatResolver.ApplyOutcome(outcome, u, actor)
+					totalDmg = totalDmg + outcome.finalDamage
+					hitCount = hitCount + 1
+					falloff = falloff * falloffRate
+				end
+			end
+			BattleCoordinator.AccrueRt(state, baseRtCost)
+
+			print(string.format(
+				"[CommandService] SKILL [%s] Chain(%d/%d) | %s | Hits:%d | TotalDmg:%d | MP:%d | RT:%d | AP left:%d",
+				skillDef.name or skillDef.id, hitCount, maxTargets,
+				actor.name, hitCount, totalDmg, mpCost, baseRtCost, actor.currentAp
+			))
+
+		elseif skillDef.aoePattern and skillDef.aoePattern ~= "Cleave" then
+			-- Generic AOE: tile-based pattern resolution
+			local aoeTiles = TargetingService.GetAOETargetTiles(
+				skillDef.aoePattern, actor,
+				target.tileX, target.tileY,
+				_mapWidth, _mapHeight
+			)
+			local totalDmg = 0
+			local hitCount = 0
+			-- AOE elevation filter: ±2 from center tile (DB default)
+			local centerElev = GameConstants.GetElevation(target.tileX, target.tileY)
+			for _, tile in ipairs(aoeTiles) do
+				local tileElev = GameConstants.GetElevation(tile.tileX, tile.tileY)
+				if math.abs(tileElev - centerElev) <= 2 then
+				-- BlocksAOE: Center Spread AOE does not pass through BlocksAOE
+				if not TargetingService.IsAOEBlocked(target.tileX, target.tileY, tile.tileX, tile.tileY) then
+				for _, u in ipairs(state.units) do
+					if u.isAlive and u.tileX == tile.tileX and u.tileY == tile.tileY
+						and u.id ~= actor.id then
+						local outcome = CombatResolver.ResolveSkill(actor, u, skillDef)
+						outcome.isAOE = true
+						CombatResolver.ApplyOutcome(outcome, u, actor)
+						totalDmg = totalDmg + outcome.finalDamage
+						hitCount = hitCount + 1
+					end
+				end
+				end
+			end
+			end  -- tile loop (for aoeTiles)
+			BattleCoordinator.AccrueRt(state, baseRtCost)
+
+			print(string.format(
+				"[CommandService] SKILL [%s] AOE(%s) | %s | Hits:%d | TotalDmg:%d | MP:%d | RT:%d | AP left:%d",
+				skillDef.name or skillDef.id, skillDef.aoePattern,
+				actor.name, hitCount, totalDmg, mpCost, baseRtCost, actor.currentAp
+			))
+
+			-- Skill→tile effect bridge: create tile effects on AOE tiles
+			if skillDef.createsTileEffect and _tileEffectService then
+				for _, tile in ipairs(aoeTiles) do
+					local tileElev = GameConstants.GetElevation(tile.tileX, tile.tileY)
+					if math.abs(tileElev - centerElev) <= 2
+						and not TargetingService.IsAOEBlocked(target.tileX, target.tileY, tile.tileX, tile.tileY) then
+						_tileEffectService.ApplyTileEffect(
+							tile.tileX, tile.tileY, skillDef.createsTileEffect, actor.id
+						)
+					end
+				end
+			end
+
 		else
 			local outcome = CombatResolver.ResolveSkill(actor, target, skillDef)
 			local actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target)

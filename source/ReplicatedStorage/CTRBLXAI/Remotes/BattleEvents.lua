@@ -64,6 +64,9 @@ local EVENT_NAMES = {
 	"RewardContinue",     -- C->S: player acknowledged rewards
 	"LoadoutHubOpen",     -- S->C: tells client to show loadout hub
 	"StartBattle",        -- C->S: player ready to fight
+	-- Tile effects (Slice 3: TileEffectService)
+	"TileEffectApplied",  -- S->C: effect placed on tile
+	"TileEffectRemoved",  -- S->C: effect removed from tile
 }
 
 -- RemoteFunctions for Slice 4D management contracts

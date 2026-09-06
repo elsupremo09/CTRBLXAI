@@ -48,10 +48,10 @@ local function createLabel(parent, props)
 	local lbl = Instance.new("TextLabel")
 	lbl.Size = props.Size or UDim2.new(1, 0, 0, 16)
 	lbl.BackgroundTransparency = props.BgTrans or 1
-	lbl.BackgroundColor3 = props.BgColor or Color3.fromRGB(20, 20, 30)
+	lbl.BackgroundColor3 = props.BgColor or Theme.Colors.Panel
 	lbl.Font = props.Font or Theme.Font.Primary
 	lbl.TextSize = props.TextSize or Theme.Text.Body()
-	lbl.TextColor3 = props.Color or Color3.fromRGB(200, 200, 200)
+	lbl.TextColor3 = props.Color or Theme.Colors.TextPrimary
 	lbl.TextXAlignment = props.Align or Enum.TextXAlignment.Left
 	lbl.TextYAlignment = Enum.TextYAlignment.Top
 	lbl.TextWrapped = true
@@ -73,10 +73,10 @@ local function createSection(parent, title, order)
 		Text = "  " .. title,
 		Size = UDim2.new(1, 0, 0, 18),
 		BgTrans = 0.3,
-		BgColor = Color3.fromRGB(30, 30, 45),
+		BgColor = Theme.Colors.PanelRaised,
 		Font = Theme.Font.PrimaryBold,
 		TextSize = Theme.Text.Body(),
-		Color = Color3.fromRGB(180, 180, 220),
+		Color = Theme.Colors.TextSecondary,
 		Order = order,
 	})
 end
@@ -93,11 +93,11 @@ local function renderStatsTab(content, data)
 	local function addSection(col, title, order)
 		local hdr = Instance.new("TextLabel")
 		hdr.Size = UDim2.new(1, 0, 0, 16)
-		hdr.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+		hdr.BackgroundColor3 = Theme.Colors.PanelRaised
 		hdr.BackgroundTransparency = 0.3
 		hdr.Font = Theme.Font.PrimaryBold
 		hdr.TextSize = Theme.Text.Small()
-		hdr.TextColor3 = Color3.fromRGB(180, 180, 220)
+		hdr.TextColor3 = Theme.Colors.TextSecondary
 		hdr.TextXAlignment = Enum.TextXAlignment.Left
 		hdr.RichText = true; hdr.BorderSizePixel = 0
 		hdr.Text = " " .. title; hdr.LayoutOrder = order
@@ -112,7 +112,7 @@ local function renderStatsTab(content, data)
 		lbl.BackgroundTransparency = 1; lbl.BorderSizePixel = 0
 		lbl.Font = Theme.Font.Mono
 		lbl.TextSize = Theme.Text.Small()
-		lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+		lbl.TextColor3 = Theme.Colors.TextPrimary
 		lbl.TextXAlignment = Enum.TextXAlignment.Left
 		lbl.RichText = true; lbl.TextWrapped = true
 		lbl.Text = " " .. text; lbl.LayoutOrder = order
@@ -252,7 +252,7 @@ local function renderEquipmentTab(content, data)
 		else
 			createLabel(content, {
 				Text = string.format("  %s %s: <font color='rgb(80,80,80)'>(empty)</font>", emoji, slot),
-				Order = order, Color = Color3.fromRGB(120, 120, 120),
+				Order = order, Color = Theme.Colors.TextDisabled,
 			})
 			order = order + 1
 		end
@@ -264,7 +264,7 @@ local function renderEquipmentTab(content, data)
 		createLabel(content, {
 			Text = "  " .. (data.doctrine.name or data.doctrineId or "Unknown"),
 			Order = order, Font = Theme.Font.PrimaryBold,
-			Color = Color3.fromRGB(220, 200, 100),
+			Color = Theme.Colors.TextGold,
 		})
 		order = order + 1
 		if data.doctrine.statPackage then
@@ -356,7 +356,7 @@ local function renderSkillsTab(content, data)
 			createLabel(content, {
 				Text = "  " .. skill.effects,
 				Order = order, Padding = 8, Size = UDim2.new(1, 0, 0, 24),
-				Color = Color3.fromRGB(160, 200, 160),
+				Color = Theme.Colors.Success,
 			})
 			order = order + 1
 		end
@@ -387,7 +387,7 @@ local function renderTraitsTab(content, data)
 			Size = UDim2.new(1, 0, 0, 18),
 			TextSize = Theme.Text.Body(),
 			Font = Theme.Font.PrimaryBold,
-			TextColor3 = color or Color3.fromRGB(255, 220, 80),
+			TextColor3 = color or Theme.Colors.TextGold,
 			Order = order,
 			Padding = 6,
 		})
@@ -411,7 +411,7 @@ local function renderTraitsTab(content, data)
 				Size = UDim2.new(1, 0, 0, 28),
 				TextSize = Theme.Text.Body(),
 				TextWrapped = true,
-				TextColor3 = Color3.fromRGB(180, 180, 190),
+				TextColor3 = Theme.Colors.TextSecondary,
 				Order = order,
 				Padding = 0,
 			})
@@ -430,56 +430,56 @@ local function renderTraitsTab(content, data)
 		end
 	end
 
-	sectionHeader("Active Buffs", Color3.fromRGB(100, 255, 100))
+	sectionHeader("Active Buffs", Theme.Colors.Success)
 	if #buffs > 0 then
 		for _, b in ipairs(buffs) do
 			local name = (b.id or "Unknown") .. "  (" .. (b.remainingTurns or "?") .. " turns)"
-			traitEntry(name, "", Color3.fromRGB(100, 255, 100))
+			traitEntry(name, "", Theme.Colors.Success)
 		end
 	else
 		createLabel(content, {
 			Text = "  None", TextSize = Theme.Text.Small(),
-			TextColor3 = Color3.fromRGB(100, 100, 110), Order = order, Padding = 0,
+			TextColor3 = Theme.Colors.TextDisabled, Order = order, Padding = 0,
 		})
 		order = order + 1
 	end
 
 	-- ACTIVE DEBUFFS
-	sectionHeader("Active Debuffs", Color3.fromRGB(255, 180, 80))
+	sectionHeader("Active Debuffs", Theme.Colors.Warning)
 	if #debuffs > 0 then
 		for _, d in ipairs(debuffs) do
 			local name = (d.id or "Unknown") .. "  (" .. (d.remainingTurns or "?") .. " turns)"
-			traitEntry(name, "", Color3.fromRGB(255, 180, 80))
+			traitEntry(name, "", Theme.Colors.Warning)
 		end
 	else
 		createLabel(content, {
 			Text = "  None", TextSize = Theme.Text.Small(),
-			TextColor3 = Color3.fromRGB(100, 100, 110), Order = order, Padding = 0,
+			TextColor3 = Theme.Colors.TextDisabled, Order = order, Padding = 0,
 		})
 		order = order + 1
 	end
 
 	-- RACE PASSIVE
-	sectionHeader("Race Passive", Color3.fromRGB(180, 160, 255))
+	sectionHeader("Race Passive", Theme.Colors.RarityEpic)
 	if data.racePassiveName then
-		traitEntry(data.racePassiveName, data.racePassiveEffect or "", Color3.fromRGB(180, 160, 255))
+		traitEntry(data.racePassiveName, data.racePassiveEffect or "", Theme.Colors.RarityEpic)
 	else
 		createLabel(content, {
 			Text = "  No race assigned", TextSize = Theme.Text.Small(),
-			TextColor3 = Color3.fromRGB(100, 100, 110), Order = order, Padding = 0,
+			TextColor3 = Theme.Colors.TextDisabled, Order = order, Padding = 0,
 		})
 		order = order + 1
 	end
 
 	-- DOCTRINE
-	sectionHeader("Doctrine", Color3.fromRGB(100, 200, 255))
+	sectionHeader("Doctrine", Theme.Colors.Info)
 	if data.doctrine then
 		traitEntry(data.doctrine.name or data.doctrineId or "Unknown",
-			data.doctrine.effect or data.doctrine.description or "", Color3.fromRGB(100, 200, 255))
+			data.doctrine.effect or data.doctrine.description or "", Theme.Colors.Info)
 	else
 		createLabel(content, {
 			Text = "  No doctrine assigned", TextSize = Theme.Text.Small(),
-			TextColor3 = Color3.fromRGB(100, 100, 110), Order = order, Padding = 0,
+			TextColor3 = Theme.Colors.TextDisabled, Order = order, Padding = 0,
 		})
 		order = order + 1
 	end
@@ -508,7 +508,7 @@ local function buildPanel(data)
 	frame.Size = UDim2.new(0, panelW, 0, panelH)
 	frame.AnchorPoint = Vector2.new(0, 0)
 	frame.Position = UDim2.new(0, 6, 0, 6)
-	frame.BackgroundColor3 = Color3.fromRGB(10, 10, 16)
+	frame.BackgroundColor3 = Theme.Colors.Background
 	frame.BackgroundTransparency = 0.03
 	frame.BorderSizePixel = 0
 	frame.Parent = gui
@@ -517,12 +517,12 @@ local function buildPanel(data)
 	-- Header (name + combat info)
 	local header = Instance.new("TextLabel")
 	header.Size = UDim2.new(1, 0, 0, 22)
-	header.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+	header.BackgroundColor3 = Theme.Colors.Panel
 	header.BackgroundTransparency = 0.2
 	header.BorderSizePixel = 0
 	header.Font = Theme.Font.PrimaryBold
 	header.TextSize = Theme.Text.Heading()
-	header.TextColor3 = Color3.fromRGB(255, 240, 200)
+	header.TextColor3 = Theme.Colors.TextPrimary
 	header.TextXAlignment = Enum.TextXAlignment.Left
 	header.RichText = true
 	local levelStr = data.level and ("Lv." .. data.level) or ""
@@ -535,12 +535,12 @@ local function buildPanel(data)
 	local subHeader = Instance.new("TextLabel")
 	subHeader.Size = UDim2.new(1, 0, 0, 16)
 	subHeader.Position = UDim2.new(0, 0, 0, 22)
-	subHeader.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+	subHeader.BackgroundColor3 = Theme.Colors.Panel
 	subHeader.BackgroundTransparency = 0.3
 	subHeader.BorderSizePixel = 0
 	subHeader.Font = Theme.Font.Mono
 	subHeader.TextSize = Theme.Text.Body()
-	subHeader.TextColor3 = Color3.fromRGB(180, 180, 190)
+	subHeader.TextColor3 = Theme.Colors.TextSecondary
 	subHeader.TextXAlignment = Enum.TextXAlignment.Left
 	subHeader.RichText = true
 	local hpStr = string.format("HP %d/%d  MP %d/%d", data.currentHp or 0, data.maxHp or 0, data.currentMp or 0, data.maxMp or 0)
@@ -561,10 +561,10 @@ local function buildPanel(data)
 	local closeBtn = Instance.new("TextButton")
 	closeBtn.Size = UDim2.new(0, 24, 0, 24)
 	closeBtn.Position = UDim2.new(1, -28, 0, 7)
-	closeBtn.BackgroundColor3 = Color3.fromRGB(80, 30, 30)
+	closeBtn.BackgroundColor3 = Theme.Colors.Danger
 	closeBtn.Font = Theme.Font.PrimaryBold
 	closeBtn.TextSize = Theme.Text.Title()
-	closeBtn.TextColor3 = Color3.fromRGB(255, 200, 200)
+	closeBtn.TextColor3 = Theme.Colors.TextPrimary
 	closeBtn.Text = "✗"
 	closeBtn.BorderSizePixel = 0
 	closeBtn.Parent = frame
@@ -575,7 +575,7 @@ local function buildPanel(data)
 	local tabBar = Instance.new("Frame")
 	tabBar.Size = UDim2.new(1, 0, 0, 26)
 	tabBar.Position = UDim2.new(0, 0, 0, 38)
-	tabBar.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
+	tabBar.BackgroundColor3 = Theme.Colors.Background
 	tabBar.BackgroundTransparency = 0.3
 	tabBar.BorderSizePixel = 0
 	tabBar.Parent = frame
@@ -631,10 +631,10 @@ local function buildPanel(data)
 	for _, tab in ipairs(tabs) do
 		local tabBtn = Instance.new("TextButton")
 		tabBtn.Size = UDim2.new(0, 70, 0, 22)
-		tabBtn.BackgroundColor3 = tab[1] == "stats" and Color3.fromRGB(50, 60, 80) or Color3.fromRGB(30, 30, 40)
+		tabBtn.BackgroundColor3 = tab[1] == "stats" and Theme.Colors.Surface or Theme.Colors.PanelRaised
 		tabBtn.Font = Theme.Font.PrimaryBold
 		tabBtn.TextSize = Theme.Text.Body()
-		tabBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+		tabBtn.TextColor3 = Theme.Colors.TextPrimary
 		tabBtn.Text = tab[2]
 		tabBtn.BorderSizePixel = 0
 		tabBtn.Parent = tabBar
@@ -644,10 +644,10 @@ local function buildPanel(data)
 			-- Update tab button visuals
 			for _, child in ipairs(tabBar:GetChildren()) do
 				if child:IsA("TextButton") then
-					child.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+					child.BackgroundColor3 = Theme.Colors.PanelRaised
 				end
 			end
-			tabBtn.BackgroundColor3 = Color3.fromRGB(50, 60, 80)
+			tabBtn.BackgroundColor3 = Theme.Colors.Surface
 			renderTab(tab[1])
 		end)
 	end

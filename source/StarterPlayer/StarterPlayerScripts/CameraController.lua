@@ -33,13 +33,13 @@ local player = Players.LocalPlayer
 --------------------------------------------------
 
 -- Camera geometry
-local FIXED_PITCH     = 50          -- Degrees downward (NOT player-adjustable)
+local FIXED_PITCH     = 45          -- Degrees downward (lower = more eye-level)
 local FIXED_FOV       = 55          -- Degrees (NOT animated or zoomed)
 local ROTATION_SNAP   = 45          -- 8 viewing directions
 
 -- Distance (calculated from visible-tile targets)
--- Closest: ~8 tiles, Default: ~11 tiles, Farthest: ~20 tiles
-local ZOOM_MIN        = 38
+-- Closest: ~3 tiles, Default: ~11 tiles, Farthest: ~20 tiles
+local ZOOM_MIN        = 15
 local ZOOM_DEFAULT    = 53
 local ZOOM_MAX        = 96
 local ZOOM_STEP       = 5           -- Per scroll tick

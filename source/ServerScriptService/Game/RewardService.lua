@@ -20,6 +20,11 @@ local Game = ServerScriptService:WaitForChild("Game")
 local ItemGenerator    = require(Game:WaitForChild("ItemGenerator"))
 local InventoryService = require(Game:WaitForChild("InventoryService"))
 
+local BonusData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("BonusData")
+)
 local WeaponData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
@@ -221,6 +226,54 @@ end
 -- Returns: { { name, rarity, itemLevel, damage, wt, defense, bonusCount, passiveCount }, ... }
 --------------------------------------------------
 
+local BONUS_DISPLAY_KEY = {
+	STR = "STR", AGI = "AGI", INT = "INT", VIT = "VIT", DEX = "DEX", LUK = "LUK",
+	damage = "Attack", defense = "Defense", rtDelay = "RT Delay", hp = "HP", mp = "MP", wt = "WT",
+	precision = "Precision", evasiveness = "Evasiveness", fortune = "Fortune", skillPotency = "Skill Potency",
+	healingOutput = "Healing", debuffResist = "Debuff Resist", rtDelayResist = "RT Delay Resist",
+}
+
+local function resolveItemBonuses(item)
+	local stats = {}
+	local passives = {}
+
+	for _, line in ipairs(item.bonusLines or {}) do
+		local attr = BonusData.NumericalAttributes[line.id]
+		if attr then
+			local key = BONUS_DISPLAY_KEY[attr.stat] or attr.family
+			local value = 0
+
+			if attr.operation == "PrimaryStat" or attr.operation == "BaseItemStat" then
+				local scale = WeaponData.GetScale(item.itemLevel or 1)
+				value = math.round((attr.l99Flat or 0) * scale)
+			elseif attr.operation == "WeightReduce" then
+				local scale = WeaponData.GetScale(item.itemLevel or 1)
+				value = -math.round((attr.l99Flat or 0) * scale)
+			elseif attr.operation == "Derived" then
+				value = math.round((attr.fixedValue or 0) * 100)
+			elseif attr.operation == "DerivedMultiplier" then
+				value = math.round(((attr.fixedValue or 1) - 1) * 100)
+			else
+				local scale = WeaponData.GetScale(item.itemLevel or 1)
+				value = math.round((attr.l99Flat or 0) * scale)
+			end
+
+			if value ~= 0 then
+				stats[key] = (stats[key] or 0) + value
+			end
+		end
+	end
+
+	for _, passiveId in ipairs(item.bonusPassiveIds or {}) do
+		local passive = BonusData.BonusPassives[passiveId]
+		if passive then
+			table.insert(passives, { name = passive.name or passiveId, icon = "\xe2\x97\x86", desc = passive.desc or "" })
+		end
+	end
+
+	return stats, passives
+end
+
 function RewardService.BuildRewardSummaries(results)
 	local summaries = {}
 	for _, result in ipairs(results) do
@@ -244,7 +297,14 @@ function RewardService.BuildRewardSummaries(results)
 				handClass = archetype and archetype.handClass or "1H",
 				category = archetype and archetype.category or "Weapon",
 				isWeapon = archetype and archetype.category == "Weapon" or false,
+				nativePassiveId = archetype and archetype.nativePassiveId or nil,
+				nativePassiveDesc = archetype and WeaponData.GetPassiveDesc(archetype.nativePassiveId) or nil,
+				projectileType = archetype and archetype.projectileType or nil,
+				element = archetype and WeaponData.GetElement(item.baseArchetypeId) or nil,
+				bonusStats = nil,
+				bonusPassives = nil,
 			})
+			summaries[#summaries].bonusStats, summaries[#summaries].bonusPassives = resolveItemBonuses(item)
 		end
 	end
 	return summaries

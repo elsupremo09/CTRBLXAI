@@ -67,6 +67,13 @@ local EQUIP_SLOTS = {
 
 local STAT_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK" }
 
+local BONUS_STAT_ORDER = {
+	"STR", "INT", "DEX", "AGI", "VIT", "LUK",
+	"HP", "MP", "Attack", "Defense", "RT Delay", "WT",
+	"Precision", "Evasiveness", "Fortune", "Skill Potency",
+	"Healing", "Debuff Resist", "RT Delay Resist",
+}
+
 --------------------------------------------------
 -- FORWARD DECLARATIONS (functions used before definition)
 --------------------------------------------------
@@ -1330,25 +1337,22 @@ buildSoloDetailContent = function(panel, item)
 		if item.passives and #item.passives > 0 then
 			for _, p in ipairs(item.passives) do
 				local pCard = Instance.new("Frame")
-				pCard.Size = UDim2.new(1, 0, 0, 48)
+				pCard.Size = UDim2.new(1, 0, 0, 36)
 				pCard.Position = UDim2.new(0, 0, 0, passY)
 				pCard.BackgroundColor3 = Theme.Colors.PanelRaised
 				pCard.BackgroundTransparency = 0.3
 				pCard.BorderSizePixel = 0
 				pCard.Parent = rightCol
 				Instance.new("UICorner", pCard).CornerRadius = UDim.new(0, 4)
-				makeLabel(pCard, { Text = p.icon or "✦", Size = UDim2.new(0, 28, 0, 28),
-					Position = UDim2.new(0, 3, 0, 3),
-					TextSize = 18, TextXAlignment = Enum.TextXAlignment.Center })
 				makeLabel(pCard, { Text = p.name or "Passive",
-					Size = UDim2.new(1, -36, 0, 14), Position = UDim2.new(0, 34, 0, 1),
-					Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
+					Size = UDim2.new(1, -8, 0, 14), Position = UDim2.new(0, 4, 0, 2),
+					Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
 					TextColor3 = Theme.Colors.Success })
 				makeLabel(pCard, { Text = p.desc or "",
-					Size = UDim2.new(1, -36, 0, 28), Position = UDim2.new(0, 34, 0, 16),
+					Size = UDim2.new(1, -8, 0, 18), Position = UDim2.new(0, 4, 0, 16),
 					TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
 					TextWrapped = true })
-				passY = passY + 52
+				passY = passY + 40
 			end
 		else
 			makeLabel(rightCol, { Text = "None", Size = UDim2.new(1, 0, 0, 14),
@@ -1377,9 +1381,8 @@ buildSoloDetailContent = function(panel, item)
 			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary })
 		local statY = 14
 		local bs = item.bonusStats or {}
-		local BONUS_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK", "HP", "MP", "Fortune", "Precision", "Evasiveness" }
 		local hasAny = false
-		for _, sn in ipairs(BONUS_ORDER) do
+		for _, sn in ipairs(BONUS_STAT_ORDER) do
 			local bv = bs[sn]
 			if bv and bv ~= 0 then
 				hasAny = true
@@ -1404,25 +1407,22 @@ buildSoloDetailContent = function(panel, item)
 		if #bp > 0 then
 			for _, p in ipairs(bp) do
 				local pCard = Instance.new("Frame")
-				pCard.Size = UDim2.new(1, 0, 0, 48)
+				pCard.Size = UDim2.new(1, 0, 0, 36)
 				pCard.Position = UDim2.new(0, 0, 0, passY)
 				pCard.BackgroundColor3 = Theme.Colors.PanelRaised
 				pCard.BackgroundTransparency = 0.3
 				pCard.BorderSizePixel = 0
 				pCard.Parent = rightCol
 				Instance.new("UICorner", pCard).CornerRadius = UDim.new(0, 4)
-				makeLabel(pCard, { Text = p.icon or "✦", Size = UDim2.new(0, 28, 0, 28),
-					Position = UDim2.new(0, 3, 0, 3),
-					TextSize = 18, TextXAlignment = Enum.TextXAlignment.Center })
 				makeLabel(pCard, { Text = p.name or "Passive",
-					Size = UDim2.new(1, -36, 0, 14), Position = UDim2.new(0, 34, 0, 1),
-					Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
+					Size = UDim2.new(1, -8, 0, 14), Position = UDim2.new(0, 4, 0, 2),
+					Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
 					TextColor3 = Theme.Colors.Info })
 				makeLabel(pCard, { Text = p.desc or "",
-					Size = UDim2.new(1, -36, 0, 28), Position = UDim2.new(0, 34, 0, 16),
+					Size = UDim2.new(1, -8, 0, 18), Position = UDim2.new(0, 4, 0, 16),
 					TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
 					TextWrapped = true })
-				passY = passY + 52
+				passY = passY + 40
 			end
 		else
 			makeLabel(rightCol, { Text = "None", Size = UDim2.new(1, 0, 0, 14),
@@ -1690,7 +1690,7 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 
 			local bs = bonusStats or {}
 			local hasStats = false
-			for _, sn in ipairs(STAT_ORDER) do
+			for _, sn in ipairs(BONUS_STAT_ORDER) do
 				local bv = bs[sn]
 				if bv and bv ~= 0 then
 					hasStats = true

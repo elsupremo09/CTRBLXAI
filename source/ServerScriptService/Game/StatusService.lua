@@ -401,7 +401,16 @@ end
 function StatusService.GetMovementRtMultiplier(unit)
 	local mult = 1.0
 	for _, inst in ipairs(unit.statusInstances) do
-		if inst.id == "Wet" then mult = mult * 1.25 end
+		if inst.id == "Wet" then
+			-- Mechanical race tag: Wet penalties doubled (DB: "Wet penalties are doubled")
+			-- Normal: ×1.25 (penalty = 0.25). Mechanical: penalty doubled → ×1.50
+			local isMechanical = false
+			local tags = getUnitTags(unit)
+			for _, tag in ipairs(tags) do
+				if tag == "Mechanical" then isMechanical = true; break end
+			end
+			mult = mult * (isMechanical and 1.50 or 1.25)
+		end
 	end
 	return mult
 end

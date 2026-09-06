@@ -409,4 +409,62 @@ function WeaponData.IsOffHand(archetypeId)
 	return def and def.category == "OffHand"
 end
 
+--------------------------------------------------
+-- NATIVE PASSIVE DESCRIPTIONS (from CTRBLXAI.db)
+--------------------------------------------------
+
+local NATIVE_PASSIVE_DESC = {
+	["ArcaneFlow"] = "Recover MP = 5 + floor(INT/20) on ready turn.",
+	["ArcaneReach"] = "Skills inheriting weapon range gain +1 Maximum Range.",
+	["ArmorPierce"] = "Reduce target Defense by 30% before damage.",
+	["Attunement"] = "+25% elemental damage dealt.",
+	["Backstab"] = "+50% damage when attacking from behind.",
+	["Brutal"] = "Weapon Damage x1.20 before STR scaling.",
+	["Bulwark"] = "+25% of base Weapon Defense added to Weapon Damage.",
+	["Bypass"] = "Ignores target Guard mitigation.",
+	["Charge"] = "+6% damage per tile moved this turn.",
+	["Deflect"] = "On Guard, reflect 20% of mitigated damage.",
+	["Drain"] = "Heal 5% of final damage dealt per hit.",
+	["Evasion"] = "+15% final Evasiveness.",
+	["Executioner"] = "+30% damage vs targets below 25% HP.",
+	["Fortify"] = "On hit, gain +20% of Weapon Defense as flat Defense.",
+	["Freeze"] = "Applies Freeze on hit.",
+	["GuardBonus"] = "On Guard, +15% damage mitigation.",
+	["HighGround"] = "+35% elevation damage bonus when attacking from above.",
+	["Ignite"] = "Applies Burn DoT on hit.",
+	["Knockback"] = "Push target floor(Force/2) tiles away on hit.",
+	["Lacerate"] = "Applies Bleed on hit.",
+	["Lore"] = "+30% applied status and buff duration.",
+	["Lullaby"] = "Applies Sleep on hit (2 turns, damage wakes).",
+	["PiercingEdge"] = "Pending definition.",
+	["PrecisionStrike"] = "+15% Hit Quality on Basic Attacks.",
+	["Pull"] = "Drag target floor(Force/2) tiles toward attacker.",
+	["QuickDraw"] = "After 2 Basic Attacks, next attack costs 0 RT.",
+	["Range+1"] = "+1 Maximum Range (Minimum unchanged).",
+	["Reap"] = "Heal 5% of total Cleave damage dealt.",
+	["SkillPotency"] = "+8% Skill damage dealt.",
+	["Stagger"] = "Weapon RT Delay x1.25 on hit.",
+	["Tricky"] = "Ignore 40% of target Evasiveness.",
+	["TrueStrike"] = "Hit Quality cannot go below 100%.",
+	["Venomous"] = "Applies Poison on hit.",
+}
+
+function WeaponData.GetPassiveDesc(passiveId)
+	return NATIVE_PASSIVE_DESC[passiveId] or ""
+end
+
+--------------------------------------------------
+-- ELEMENT TAG (derived from native passive)
+--------------------------------------------------
+
+local PASSIVE_ELEMENT = {
+	Ignite = "Fire", Freeze = "Ice", Venomous = "Poison",
+}
+
+function WeaponData.GetElement(archetypeId)
+	local def = WeaponData.Archetypes[archetypeId]
+	if not def or not def.nativePassiveId then return nil end
+	return PASSIVE_ELEMENT[def.nativePassiveId]
+end
+
 return WeaponData

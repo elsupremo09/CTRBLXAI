@@ -253,6 +253,23 @@ function EquipmentService.RebuildUnitStats(unit)
 		local profile = EquipmentService.GetEffectiveWeaponProfile(mainHand)
 		unit.weaponDamage = profile.damage
 		unit.weaponWt = profile.wt
+
+		-- Mechanical race tag: Raw Weapon WT ×1.15
+		-- DB: "start with Raw Weapon WT; apply Mechanical Raw Weapon WT ×1.15;
+		-- apply the relevant weapon-use multiplier; floor reduced Weapon WT..."
+		if unit.raceId then
+			local RaceData = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
+			local raceEntry = RaceData[unit.raceId]
+			if raceEntry and raceEntry.tags then
+				for _, tag in ipairs(raceEntry.tags) do
+					if tag == "Mechanical" then
+						unit.weaponWt = math.floor(unit.weaponWt * 1.15)
+						break
+					end
+				end
+			end
+		end
+
 		unit.weaponRtDelay = profile.rtDelay
 		unit.weaponDefense = profile.defense
 		unit.weaponMinRange = profile.minRange

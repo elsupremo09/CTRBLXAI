@@ -113,12 +113,12 @@ end
 
 -- Highlight modes with distinct visual styles
 local HIGHLIGHT_STYLES = {
-	move     = { color = Color3.fromRGB(50, 100, 170), transparency = 0.55, material = Enum.Material.SmoothPlastic },
-	target   = { color = Color3.fromRGB(200, 170, 50),  transparency = 0.50, material = Enum.Material.Neon },
-	selected = { color = Color3.fromRGB(255, 220, 60),  transparency = 0.35, material = Enum.Material.Neon },
-	aoe      = { color = Color3.fromRGB(200, 100, 40),  transparency = 0.50, material = Enum.Material.Neon },
-	invalid  = { color = Color3.fromRGB(100, 30, 30),   transparency = 0.70, material = Enum.Material.SmoothPlastic },
-	current  = { color = Color3.fromRGB(80, 160, 255),  transparency = 0.50, material = Enum.Material.Neon },
+	move     = { color = Theme.Colors.TileMove,     transparency = 0.55, material = Enum.Material.SmoothPlastic },
+	target   = { color = Theme.Colors.TileTarget,   transparency = 0.50, material = Enum.Material.Neon },
+	selected = { color = Theme.Colors.TileSelected,  transparency = 0.35, material = Enum.Material.Neon },
+	aoe      = { color = Theme.Colors.TileAOE,      transparency = 0.50, material = Enum.Material.Neon },
+	invalid  = { color = Theme.Colors.TileInvalid,   transparency = 0.70, material = Enum.Material.SmoothPlastic },
+	current  = { color = Theme.Colors.Info,          transparency = 0.50, material = Enum.Material.Neon },
 }
 
 local function createTileHighlight(tx, ty, colorOrStyle, transparency)
@@ -186,35 +186,41 @@ local function spawnToken(unit)
 	part.Material = Enum.Material.SmoothPlastic
 	part.Parent = visualFolder
 
-	-- HP billboard
-	local hpBb = Instance.new("BillboardGui"); hpBb.Size = UDim2.new(0,80,0,8)
-	hpBb.StudsOffset = Vector3.new(0, 1.3, 0); hpBb.AlwaysOnTop = false; hpBb.Parent = part
-	local hpBg = Instance.new("Frame"); hpBg.Size = UDim2.fromScale(1,1)
-	hpBg.BackgroundColor3 = Color3.fromRGB(20,20,25); hpBg.BorderSizePixel = 0; hpBg.Parent = hpBb
+	-- HP + MP billboard (single gui, stacked with 0px gap)
+	local barBb = Instance.new("BillboardGui"); barBb.Size = UDim2.new(0,48,0,13)
+	barBb.StudsOffset = Vector3.new(0, 1.2, 0); barBb.AlwaysOnTop = true; barBb.Parent = part
+
+	-- HP bar (9px tall — fits name text inside)
+	local hpBg = Instance.new("Frame")
+	hpBg.Size = UDim2.new(1, 0, 0, 9)
+	hpBg.Position = UDim2.new(0, 0, 0, 0)
+	hpBg.BackgroundColor3 = Theme.Colors.Panel; hpBg.BorderSizePixel = 0; hpBg.Parent = barBb
 	Instance.new("UICorner", hpBg).CornerRadius = UDim.new(0,2)
+	local hpStroke = Instance.new("UIStroke", hpBg)
+	hpStroke.Color = Theme.Colors.BadgeBg; hpStroke.Thickness = 1
 	local hpFill = Instance.new("Frame"); hpFill.Name = "Fill"
 	hpFill.Size = UDim2.fromScale(1,1); hpFill.BackgroundColor3 = Theme.Colors.HP
 	hpFill.BorderSizePixel = 0; hpFill.Parent = hpBg
 	Instance.new("UICorner", hpFill).CornerRadius = UDim.new(0,2)
 
-	-- MP billboard
-	local mpBb = Instance.new("BillboardGui"); mpBb.Size = UDim2.new(0,60,0,4)
-	mpBb.StudsOffset = Vector3.new(0, 1.05, 0); mpBb.AlwaysOnTop = false; mpBb.Parent = part
-	local mpBg = Instance.new("Frame"); mpBg.Size = UDim2.fromScale(1,1)
-	mpBg.BackgroundColor3 = Color3.fromRGB(15,15,30); mpBg.BorderSizePixel = 0; mpBg.Parent = mpBb
+	-- Name label (inside HP bar)
+	local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.fromScale(1,1)
+	lbl.BackgroundTransparency = 1; lbl.TextColor3 = Theme.Colors.TextPrimary
+	lbl.TextSize = 8; lbl.Font = Theme.Font.PrimaryBold; lbl.TextStrokeTransparency = 0.3
+	lbl.Text = unit.name; lbl.Parent = hpBg
+
+	-- MP bar (bottom portion: 4px, directly below HP)
+	local mpBg = Instance.new("Frame")
+	mpBg.Size = UDim2.new(1, 0, 0, 4)
+	mpBg.Position = UDim2.new(0, 0, 0, 9)
+	mpBg.BackgroundColor3 = Theme.Colors.Panel; mpBg.BorderSizePixel = 0; mpBg.Parent = barBb
 	Instance.new("UICorner", mpBg).CornerRadius = UDim.new(0,2)
+	local mpStroke = Instance.new("UIStroke", mpBg)
+	mpStroke.Color = Theme.Colors.BadgeBg; mpStroke.Thickness = 1
 	local mpFill = Instance.new("Frame"); mpFill.Name = "Fill"
 	mpFill.Size = UDim2.fromScale(1,1); mpFill.BackgroundColor3 = Theme.Colors.MP
 	mpFill.BorderSizePixel = 0; mpFill.Parent = mpBg
 	Instance.new("UICorner", mpFill).CornerRadius = UDim.new(0,2)
-
-	-- Name label
-	local nameBb = Instance.new("BillboardGui"); nameBb.Size = UDim2.new(0,120,0,16)
-	nameBb.StudsOffset = Vector3.new(0, 1.7, 0); nameBb.AlwaysOnTop = false; nameBb.Parent = part
-	local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.fromScale(1,1)
-	lbl.BackgroundTransparency = 1; lbl.TextColor3 = Theme.Colors.TextPrimary
-	lbl.TextSize = 12; lbl.Font = Theme.Font.PrimaryBold; lbl.TextStrokeTransparency = 0.4
-	lbl.Text = unit.name; lbl.Parent = nameBb
 
 	unitTokens[unit.id] = { part = part, fill = hpFill, mpFill = mpFill, label = lbl }
 end
@@ -224,7 +230,7 @@ local function updateHpBar(uid, hp, maxHp)
 	local r = math.clamp(hp/maxHp, 0, 1)
 	t.fill.BackgroundColor3 = Theme.GetHPColor(r)
 	TweenService:Create(t.fill, TweenInfo.new(0.4, Enum.EasingStyle.Quad), {Size = UDim2.fromScale(r,1)}):Play()
-	t.label.Text = string.format("%s %d/%d", unitData[uid] and unitData[uid].name or uid, hp, maxHp)
+	t.label.Text = unitData[uid] and unitData[uid].name or uid
 end
 
 local function updateMpBar(uid, mp, maxMp)
@@ -2006,17 +2012,23 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 					RTDelay = item.rtDelay or 0,
 				},
 				passives = {},
-				bonusStats = {},
-				bonusPassives = {},
+				bonusStats = item.bonusStats or {},
+				bonusPassives = item.bonusPassives or {},
 				flavor = "",
 			}
 			if item.handClass then table.insert(uiItem.tags, item.handClass) end
 			if item.category then table.insert(uiItem.tags, item.category) end
+			if item.projectileType then
+				table.insert(uiItem.tags, item.projectileType)
+			elseif uiItem.isWeapon then
+				table.insert(uiItem.tags, "Melee")
+			end
+			if item.element then table.insert(uiItem.tags, item.element) end
 			if item.nativePassiveId then
 				table.insert(uiItem.passives, {
 					name = item.nativePassiveId,
-					icon = "\xe2\x9c\xa6",
-					desc = "",
+					icon = "\xe2\x97\x86",
+					desc = item.nativePassiveDesc or "",
 				})
 			end
 

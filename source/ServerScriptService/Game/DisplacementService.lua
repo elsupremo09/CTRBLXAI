@@ -27,6 +27,8 @@ local GameConstants = require(
 		:WaitForChild("GameConstants")
 )
 
+local TileCrossEffectService = require(script.Parent.TileCrossEffectService)
+
 local DisplacementService = {}
 
 --------------------------------------------------
@@ -60,11 +62,13 @@ local function getUnitAt(allUnits, tileX, tileY)
 end
 
 -- Get what type of collision object a blocker is.
--- For Slice 2, all blockers are Stone Wall. Future slices
--- add per-blocker object types from the map data.
+-- Reads objectType from GameConstants.GetBlockerData.
 local function getBlockerCollisionType(tileX, tileY)
-	-- Future: read from tile object metadata.
-	return "StoneWall"
+	local data = GameConstants.GetBlockerData(tileX, tileY)
+	if data and data.objectType then
+		return data.objectType
+	end
+	return "StoneWall" -- fallback if no metadata
 end
 
 -- Find the nearest valid unoccupied tile to (tileX, tileY).
@@ -72,7 +76,6 @@ end
 -- to land somewhere nearby.
 -- Searches in a spiral outward. Returns {tileX, tileY} or nil.
 local function findNearestEmptyTile(allUnits, originX, originY, excludeUnit)
-	-- BFS from origin, looking for the first passable + unoccupied tile.
 	local visited = {}
 	local queue = {{ x = originX, y = originY }}
 	visited[originX .. "," .. originY] = true
@@ -87,7 +90,6 @@ local function findNearestEmptyTile(allUnits, originX, originY, excludeUnit)
 		local cur = queue[head]
 		head = head + 1
 
-		-- Check if this tile is a valid landing spot
 		if isInsideMap(cur.x, cur.y)
 			and not GameConstants.IsBlocked(cur.x, cur.y)
 		then
@@ -97,7 +99,6 @@ local function findNearestEmptyTile(allUnits, originX, originY, excludeUnit)
 			end
 		end
 
-		-- Expand neighbors
 		for _, d in ipairs(dirs) do
 			local nx, ny = cur.x + d[1], cur.y + d[2]
 			local key = nx .. "," .. ny
@@ -108,7 +109,7 @@ local function findNearestEmptyTile(allUnits, originX, originY, excludeUnit)
 		end
 	end
 
-	return nil -- no valid tile found (shouldn't happen on a real map)
+	return nil
 end
 
 --------------------------------------------------
@@ -119,27 +120,27 @@ end
 -- Parameters:
 --   pusher        — unit doing the pushing
 --   target        — unit being pushed
---   force         — attacker's Force value (already computed, e.g. derivedStats.force)
+--   force         — attacker's Force value (already computed)
 --   direction     — { dx = ±1, dy = ±1 } unit vector away from pusher
 --   sourceModifier — 1.0 for Global Action Push, 0.5 for Skill knockback
 --   allUnits      — all units in the battle (for occupancy checks)
 --
 -- Returns a result table:
 --   {
---     pushed         = true/false,     -- whether any displacement occurred
---     tilesDisplaced = N,              -- how many tiles the target actually moved
---     finalTileX     = X,              -- target's final grid X
---     finalTileY     = Y,              -- target's final grid Y
+--     pushed         = true/false,
+--     tilesDisplaced = N,
+--     finalTileX     = X,
+--     finalTileY     = Y,
 --     wallCollision  = { damage = N, colliderType = "StoneWall" } or nil,
---     fallDamage     = N or nil,       -- total fall damage taken (0 if none)
+--     fallDamage     = N or nil,
 --     blockedBy      = "unit"/"blocker"/"edge"/"elevation"/nil,
---     totalFallHeight = N or nil,      -- cumulative elevation drop during push
+--     totalFallHeight = N or nil,
+--     crossEffects   = { {type="slide", ...}, ... } or nil,
 --   }
 --
 -- IMPORTANT: This function does NOT write to unit state. It only
 -- reads positions and stats, then returns the result. The caller
--- (CommandService / CombatResolver) applies the actual HP changes
--- and position updates, then broadcasts events.
+-- applies the actual HP changes and position updates.
 --------------------------------------------------
 
 function DisplacementService.ResolvePush(pusher, target, force, direction, sourceModifier, allUnits)
@@ -151,16 +152,15 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	sourceModifier = sourceModifier or 1.0
 
 	-- Step 1: Calculate push distance.
-	-- Force = pusher's derived force (1 + floor(STR/60))
-	-- Stability = target's derived stability (floor(VIT/60))
 	local targetStability = 1
 	if target.derivedStats and target.derivedStats.stability then
 		targetStability = target.derivedStats.stability
+	elseif target.effectiveStats and target.effectiveStats.VIT then
+		targetStability = 1 + math.floor(target.effectiveStats.VIT / 60)
 	end
 
 	local pushDistance = math.max(0, force - targetStability)
 
-	-- If distance is 0, push fails — target is too stable.
 	if pushDistance == 0 then
 		print(string.format(
 			"[DisplacementService] Push RESISTED | %s (Force %d) -> %s (Stability %d) | Distance: 0",
@@ -189,6 +189,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	local blockedBy = nil
 	local wallCollisionResult = nil
 	local totalFallHeight = 0
+	local crossEffects = {}
 	local startElev = currentElev
 
 	for step = 1, pushDistance do
@@ -227,7 +228,6 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		-- Check 3: elevation — forced upward is blocked
 		local nextElev = GameConstants.GetElevation(nextX, nextY)
 		if nextElev > currentElev then
-			-- Cannot displace upward. Wall collision triggers.
 			blockedBy = "elevation"
 			local blockedTiles = pushDistance - tilesDisplaced
 			wallCollisionResult = {
@@ -243,7 +243,6 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		-- Check 4: occupancy — another unit on the tile
 		local occupant = getUnitAt(allUnits, nextX, nextY)
 		if occupant and occupant ~= target and occupant ~= pusher then
-			-- Collision with another unit. Stop here.
 			blockedBy = "unit"
 			local blockedTiles = pushDistance - tilesDisplaced
 			wallCollisionResult = {
@@ -258,7 +257,6 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		end
 
 		-- Tile is clear — move target here.
-		-- Track fall height (only forced downward counts).
 		if nextElev < currentElev then
 			totalFallHeight = totalFallHeight + (currentElev - nextElev)
 		end
@@ -267,13 +265,19 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		currentY = nextY
 		currentElev = nextElev
 		tilesDisplaced = tilesDisplaced + 1
+
+		-- Resolve cross effects for the tile we just entered.
+		local tileEffects = TileCrossEffectService.OnTileEntered(
+			target, currentX, currentY, direction, true, allUnits
+		)
+		for _, eff in ipairs(tileEffects) do
+			table.insert(crossEffects, eff)
+		end
 	end
 
 	-- Step 3: If pushed into an occupied tile (unit collision),
 	-- find the nearest valid empty tile for the target to land on.
 	if blockedBy == "unit" then
-		-- Target stays at currentX, currentY (the last clear tile).
-		-- If no tiles were displaced, try to find nearest empty around current pos.
 		if tilesDisplaced == 0 then
 			local fallback = findNearestEmptyTile(allUnits, currentX, currentY, target)
 			if fallback then
@@ -299,6 +303,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		fallDamage      = fallDamage > 0 and fallDamage or nil,
 		blockedBy       = blockedBy,
 		totalFallHeight = totalFallHeight,
+		crossEffects    = #crossEffects > 0 and crossEffects or nil,
 	}
 
 	print(string.format(
@@ -324,7 +329,6 @@ function DisplacementService.GetPushDirection(pusher, target)
 	local rawDx = target.tileX - pusher.tileX
 	local rawDy = target.tileY - pusher.tileY
 
-	-- Normalize to -1, 0, or 1 per axis.
 	local dx = 0
 	local dy = 0
 	if rawDx > 0 then dx = 1 elseif rawDx < 0 then dx = -1 end
@@ -332,7 +336,7 @@ function DisplacementService.GetPushDirection(pusher, target)
 
 	-- Edge case: pusher and target on the same tile (shouldn't happen).
 	if dx == 0 and dy == 0 then
-		dx = 1 -- default push east
+		dx = 1
 	end
 
 	return { dx = dx, dy = dy }

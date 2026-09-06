@@ -101,7 +101,7 @@ local function makePanel(name, size, position, anchor, parent, opts)
 	-- Image is 1254px but Roblox downscales to 1024. Coords scaled: 200*(1024/1254)=163, 1054*(1024/1254)=861
 	f.SliceCenter = Rect.new(163, 163, 861, 861)
 	f.SliceScale = opts.sliceScale or 0.06
-	f.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	f.BackgroundColor3 = Theme.Colors.Background
 	f.BackgroundTransparency = 0.15
 	f.ImageTransparency = 0
 	f.BorderSizePixel = 0
@@ -170,7 +170,7 @@ local function ensureRoot()
 	screenGui.Name = "BattleHUD"
 	screenGui.ResetOnSpawn = false
 	screenGui.DisplayOrder = Theme.DisplayOrder.HUD
-	screenGui.IgnoreGuiInset = false
+	screenGui.IgnoreGuiInset = true
 	screenGui.Parent = getPlayerGui()
 
 	rootFrame = Instance.new("Frame")
@@ -182,7 +182,7 @@ local function ensureRoot()
 	-- UPPER-RIGHT: Active Unit Panel (20% W, height=auto)
 	activeUnitPanel = makePanel("ActiveUnit",
 		UDim2.new(0.15, 0, 0, 0),
-		UDim2.new(1, -PAD, 0, PAD), Vector2.new(1, 0), rootFrame,
+		UDim2.new(1, -PAD, 0, 65), Vector2.new(1, 0), rootFrame,
 		{ autoY = true, minW = 180, maxW = 260, minH = 60, maxH = 220 })
 	activeUnitPanel.Visible = false
 
@@ -190,14 +190,14 @@ local function ensureRoot()
 	actionPanel = makePanel("ActionPanel",
 		UDim2.new(0.15, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, 0), Vector2.new(1, 0), rootFrame,
-		{ autoY = true, minW = 180, maxW = 260, minH = 50, maxH = 200 })
+		{ autoY = true, minW = 180, maxW = 260, minH = 50, maxH = 400 })
 	actionPanel.Visible = false
 
 	-- RIGHT: Inspector Panel (20% W, height=auto) — below ActionPanel when visible
 	inspectorPanel = makePanel("Inspector",
 		UDim2.new(0.15, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, 0), Vector2.new(1, 0), rootFrame,
-		{ autoY = true, minW = 180, maxW = 260, minH = 60, maxH = 220 })
+		{ autoY = true, minW = 180, maxW = 260, minH = 60, maxH = 400 })
 	inspectorPanel.Visible = false
 
 	-- RIGHT: Tile/Preview Panel (20% W, height=auto) — below Inspector
@@ -210,7 +210,7 @@ local function ensureRoot()
 	-- BOTTOM-LEFT: Turn Order Bar (45% W × 7% H)
 	turnOrderBar = makePanel("TurnOrder",
 		UDim2.fromScale(0.60, 0.15),
-		UDim2.new(0, PAD, 1, -PAD), Vector2.new(0, 1), rootFrame)
+		UDim2.new(0, PAD, 1, 0), Vector2.new(0, 1), rootFrame)
 	turnOrderBar.ClipsDescendants = true
 
 	-- ADJACENT: Conditions Panel (right of turn order bar)
@@ -221,7 +221,7 @@ local function ensureRoot()
 	-- TOP-LEFT: Battle Log (25% W × 20% H) — right below toggle buttons, starts collapsed
 	battleLogPanel = makePanel("BattleLog",
 		UDim2.fromScale(0.25, 0.20),
-		UDim2.new(0, PAD, 0, PAD + 32), Vector2.new(0, 0), rootFrame)
+		UDim2.new(0, PAD, 0, 78), Vector2.new(0, 0), rootFrame)
 	battleLogPanel.ClipsDescendants = true
 	battleLogPanel.Visible = isBattleLogExpanded
 
@@ -239,7 +239,7 @@ local function ensureRoot()
 	viewModeButtons = Instance.new("Frame")
 	viewModeButtons.Name = "ViewModeButtons"
 	viewModeButtons.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 4 + 12, Theme.Elem.ToggleBtn() + 2)
-	viewModeButtons.Position = UDim2.new(0, PAD, 0, PAD)
+	viewModeButtons.Position = UDim2.new(0, PAD, 0, 55)
 	viewModeButtons.BackgroundTransparency = 1
 	viewModeButtons.Parent = rootFrame
 
@@ -326,7 +326,7 @@ function BattleHUD._buildActiveUnit()
 		local lvl = Instance.new("TextLabel")
 		lvl.Size = UDim2.new(0, 28, 0, 12)
 		lvl.Position = UDim2.new(0, 0, 0, 0)
-		lvl.BackgroundColor3 = Color3.fromRGB(0, 0, 0); lvl.BackgroundTransparency = 0.3
+		lvl.BackgroundColor3 = Theme.Colors.BadgeBg; lvl.BackgroundTransparency = 0.3
 		lvl.Font = Theme.Font.Mono; lvl.TextSize = Theme.Text.Tiny()
 		lvl.TextColor3 = Theme.Colors.TextPrimary
 		lvl.Text = "Lv." .. d.level
@@ -779,7 +779,7 @@ function BattleHUD._renderDamagePreview()
 		lbl.BorderSizePixel = 0
 		lbl.Font = Theme.Font.PrimaryBold
 		lbl.TextSize = Theme.Text.Body()
-		lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+		lbl.TextColor3 = Theme.Colors.TextPrimary
 		lbl.TextXAlignment = Enum.TextXAlignment.Left
 		lbl.Text = "  " .. (text or "Unit")
 		lbl.LayoutOrder = order
@@ -987,10 +987,10 @@ function BattleHUD.UpdateTimeline(entries)
 			portrait.BackgroundColor3 = Theme.GetSideColor(entry.side)
 			portrait.BackgroundTransparency = 0.6
 		elseif isRound then
-			portrait.BackgroundColor3 = Color3.fromRGB(50, 50, 30)
+			portrait.BackgroundColor3 = Theme.Colors.EntityObject
 			portrait.BackgroundTransparency = 0.4
 		elseif isEvent then
-			portrait.BackgroundColor3 = Color3.fromRGB(60, 40, 100)
+			portrait.BackgroundColor3 = Theme.Colors.EntityHazard
 			portrait.BackgroundTransparency = 0.15
 		elseif isActive then
 			portrait.BackgroundColor3 = Theme.GetSideColor(entry.side)
@@ -1174,7 +1174,7 @@ function BattleHUD._buildViewModeUnit()
 		local lvl = Instance.new("TextLabel")
 		lvl.Size = UDim2.new(0, 28, 0, 12)
 		lvl.Position = UDim2.new(0, 0, 0, 0)
-		lvl.BackgroundColor3 = Color3.fromRGB(0, 0, 0); lvl.BackgroundTransparency = 0.3
+		lvl.BackgroundColor3 = Theme.Colors.BadgeBg; lvl.BackgroundTransparency = 0.3
 		lvl.Font = Theme.Font.Mono; lvl.TextSize = Theme.Text.Tiny()
 		lvl.TextColor3 = Theme.Colors.TextPrimary
 		lvl.Text = "Lv." .. d.level
@@ -1268,20 +1268,51 @@ function BattleHUD._buildViewModeTile()
 	local t = presentation.tile
 	makeLabel(actionPanel, t.terrainName or "Clear", { font = Theme.Font.PrimaryBold,
 		textSize = Theme.Text.Body(), order = 1 })
+
+	-- Terrain description/effect lookup
+	local TERRAIN_INFO = {
+		Clear = "Neutral ground",
+		Grassland = "Fertile field. Occupy: Holy +15%",
+		["Clover Field"] = "Lucky meadow. Occupy: LUK +30%",
+		["Wooden Floor"] = "Wooden structures and bridges",
+		Rocky = "Solid stone. Occupy: Earth +30%; Knockback Immunity",
+		Sand = "Loose desert ground. Cross: +1 Move Cost",
+		Mud = "Soft muddy ground. Cross: +1 Move Cost",
+		Swamp = "Marshland. Cross: +2 Move Cost",
+		["Shallow Water"] = "Walkable water. Occupy: Water +25%",
+		["Deep Water"] = "Deep water. Cross: +2 Move Cost; Drowning",
+		Ice = "Frozen surface. Cross: Sliding Knockback",
+		Metal = "Metallic flooring",
+		Molten = "Molten surface. Occupy: Fire +30%; Burn",
+		["Magic Circle"] = "Arcane platform. Occupy: INT +30%; Spell Range +1",
+		["Tainted Ground"] = "Corrupted earth. Drains MP from living units",
+		["Cracked Ground"] = "Weakened rock. May collapse under heavy units",
+		Quicksand = "Collapsing sand. Movement prohibited",
+		["Monolith (One-way)"] = "Ancient teleport. Random warp on end turn",
+		["Monolith (Two-way)"] = "Linked portal. Teleports to paired portal",
+	}
+	local terrainDesc = TERRAIN_INFO[t.terrainName or "Clear"]
+	if terrainDesc then
+		makeLabel(actionPanel, terrainDesc, {
+			size = UDim2.new(1, 0, 0, 28),
+			textSize = Theme.Text.Tiny(), color = Theme.Colors.TextSecondary,
+			wrap = true, order = 2 })
+	end
+
 	makeLabel(actionPanel, string.format("Coordinates: %s", t.coords or "?"), {
-		font = Theme.Font.Mono, textSize = Theme.Text.Body(), color = Theme.Colors.TextSecondary, order = 2 })
+		font = Theme.Font.Mono, textSize = Theme.Text.Body(), color = Theme.Colors.TextSecondary, order = 3 })
 	makeLabel(actionPanel, string.format("Elevation: %d", t.elevation or 1), {
-		font = Theme.Font.Mono, textSize = Theme.Text.Body(), order = 3 })
-	makeLabel(actionPanel, string.format("Move Cost: %d", t.moveCost or 1), {
 		font = Theme.Font.Mono, textSize = Theme.Text.Body(), order = 4 })
+	makeLabel(actionPanel, string.format("Move Cost: %d", t.moveCost or 1), {
+		font = Theme.Font.Mono, textSize = Theme.Text.Body(), order = 5 })
 	if t.effect and t.effect ~= "None" then
 		makeLabel(actionPanel, "Effect: " .. t.effect, {
-			textSize = Theme.Text.Small(), color = Theme.Colors.Warning, order = 5 })
+			textSize = Theme.Text.Small(), color = Theme.Colors.Warning, order = 6 })
 	end
 	if t.occupantName then
-		makeLabel(actionPanel, "", { size = UDim2.new(1, 0, 0, 4), order = 6 })
+		makeLabel(actionPanel, "", { size = UDim2.new(1, 0, 0, 4), order = 7 })
 		makeLabel(actionPanel, "Occupant: " .. t.occupantName, {
-			textSize = Theme.Text.Small(), color = Theme.Colors.TextGold, order = 7 })
+			textSize = Theme.Text.Small(), color = Theme.Colors.TextGold, order = 8 })
 	end
 end
 
@@ -1356,7 +1387,7 @@ function BattleHUD.ApplyLayout(layout)
 	task.defer(function()
 		local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
 		local rootLeft = rootFrame and rootFrame.AbsolutePosition.X or 0
-		local nextY = PAD
+		local nextY = 2
 		local stackW = activeUnitPanel and activeUnitPanel.AbsoluteSize.X or nil
 		local stackX = activeUnitPanel and (activeUnitPanel.AbsolutePosition.X - rootLeft) or nil
 
@@ -1424,7 +1455,7 @@ function BattleHUD.Render(p)
 		task.defer(function()
 			local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
 			local rootLeft = rootFrame and rootFrame.AbsolutePosition.X or 0
-			local nextY = PAD
+			local nextY = 2
 			local stackW = activeUnitPanel and activeUnitPanel.AbsoluteSize.X or nil
 			local stackX = activeUnitPanel and (activeUnitPanel.AbsolutePosition.X - rootLeft) or nil
 			if activeUnitPanel and activeUnitPanel.Visible then
@@ -1447,7 +1478,7 @@ function BattleHUD.Render(p)
 	task.defer(function()
 		local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
 		local rootLeft = rootFrame and rootFrame.AbsolutePosition.X or 0
-		local nextY = PAD  -- start from top
+		local nextY = 2  -- start from top
 		local stackW = activeUnitPanel and activeUnitPanel.AbsoluteSize.X or nil
 		local stackX = activeUnitPanel and (activeUnitPanel.AbsolutePosition.X - rootLeft) or nil
 

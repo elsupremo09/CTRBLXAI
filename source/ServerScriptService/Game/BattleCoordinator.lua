@@ -26,6 +26,11 @@ local GameConstants = require(
 
 local BattleCoordinator = {}
 
+-- Optional: TileEffectService injected at runtime to avoid circular requires
+local _tileEffectService = nil
+function BattleCoordinator.SetTileEffectService(tes)
+	_tileEffectService = tes
+end
 --------------------------------------------------
 -- CONSTANTS
 --------------------------------------------------
@@ -270,6 +275,11 @@ function BattleCoordinator.AdvanceClock(state)
 				StatusService.ProcessCtTick(unit, ctPassed)
 			end
 		end
+	end
+
+	-- Tile effect CT tick: decay durations, fire periodic damage
+	if ctPassed > 0 and _tileEffectService then
+		_tileEffectService.ProcessCtTick(ctPassed, state.units)
 	end
 
 	state.activeUnit      = nextUnit

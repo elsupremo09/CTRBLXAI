@@ -7,6 +7,14 @@
 
 local RacePassiveService = {}
 
+local StatusService = require(script.Parent.StatusService)
+
+local GameConstants = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("CTRBLXAI")
+		:WaitForChild("Shared")
+		:WaitForChild("GameConstants")
+)
 --------------------------------------------------
 -- HELPERS
 --------------------------------------------------
@@ -87,7 +95,7 @@ function RacePassiveService.GetDamageReceivedModifier(defender, element, isAOE, 
 	end
 
 	-- SHADOW — Umbral Veil: elemental damage received +10%
-	-- (Hide-on-hit part is PENDING — no Hide status exists yet)
+	-- (Hide-on-hit: implemented via RacePassiveService.OnDamageReceived)
 	if raceId == "RACE-SHADOW" then
 		if isElemental(element) then
 			mod = mod * 1.10
@@ -219,6 +227,79 @@ function RacePassiveService.GetBasicAttackStatus(unit)
 		return "Poison"
 	end
 
+	return nil
+end
+
+--------------------------------------------------
+-- VAMPIRE LIFESTEAL
+-- Returns the HP to heal on the attacker after dealing damage.
+-- Called from CombatResolver.ApplyOutcome after damage is applied.
+--
+-- DB (Vampire passive): Heal 15% of direct damage dealt,
+-- reduced to 5% for AOE damage.
+-- Day/night stat modifier: DEFERRED (no time-of-day system).
+--------------------------------------------------
+
+function RacePassiveService.GetLifestealAmount(attacker, actualDamage, isAOE)
+	local raceId = getRaceId(attacker)
+	if raceId ~= "RACE-VAMPIRE" then return 0 end
+	if actualDamage <= 0 then return 0 end
+
+	local rate = isAOE and 0.05 or 0.15
+	return math.max(1, math.round(actualDamage * rate))
+end
+
+--------------------------------------------------
+-- SHADOW HIDE-ON-HIT
+-- After receiving direct damage, gain Hide for 1 turn.
+-- Called from CombatResolver.ApplyOutcome after damage is applied.
+--
+-- DB (Shadow passive): "After receiving direct damage, gain
+-- Hide for one turn."
+--------------------------------------------------
+
+function RacePassiveService.OnDamageReceived(defender, actualDamage, sourceUnitId)
+	local raceId = getRaceId(defender)
+	if not raceId then return end
+	if actualDamage <= 0 or not defender.isAlive then return end
+
+	-- SHADOW — Umbral Veil: gain Hide for 1 turn on damage
+	if raceId == "RACE-SHADOW" then
+		StatusService.ApplyStatus(defender, "Hide", sourceUnitId or "passive")
+		-- Override duration to 1 turn (base Hide is 3 turns)
+		if defender.statusInstances then
+			for _, inst in ipairs(defender.statusInstances) do
+				if inst.id == "Hide" then
+					inst.remainingTurns = 1
+					break
+				end
+			end
+		end
+		print(string.format(
+			"[RacePassiveService] Shadow Umbral Veil: %s gains Hide (1 turn)", defender.name
+		))
+	end
+end
+
+--------------------------------------------------
+-- LICH ELEMENT→STATUS OVERRIDE
+-- Returns the status to apply for a given element, overriding
+-- the default element→status triggers.
+-- Returns nil if no override (use default behavior).
+--
+-- DB (Lich passive): "Fire→Burn, Water→Frozen, Earth→Petrify,
+-- Dark→Poison"
+--------------------------------------------------
+
+function RacePassiveService.GetElementStatusOverride(attacker, element)
+	local raceId = getRaceId(attacker)
+	if raceId ~= "RACE-LICH" then return nil end
+
+	if element == "Fire" then return "Burn"       -- same as default
+	elseif element == "Water" then return "Frozen" -- default is Wet
+	elseif element == "Earth" then return "Petrify"-- no default
+	elseif element == "Dark" then return "Poison"  -- no default
+	end
 	return nil
 end
 

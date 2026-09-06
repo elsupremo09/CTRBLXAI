@@ -28,6 +28,7 @@ local PersistentStateService  = require(Game:WaitForChild("PersistentStateServic
 local SaveService             = require(Game:WaitForChild("SaveService"))
 local RewardService           = require(Game:WaitForChild("RewardService"))
 local DisplacementService     = require(Game:WaitForChild("DisplacementService"))
+local TileEffectService       = require(Game:WaitForChild("TileEffectService"))
 
 local WeaponData = require(
 	game:GetService("ReplicatedStorage")
@@ -48,6 +49,12 @@ local SkillData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
 		:WaitForChild("SkillData")
+)
+
+local BonusData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("BonusData")
 )
 
 local GameConstants = require(
@@ -106,12 +113,25 @@ local MAP_HEIGHT = 8
 CommandService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
 DisplacementService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
 
+-- TileEffectService init
+TileEffectService.Init(MAP_WIDTH, MAP_HEIGHT)
+TileEffectService.SetStatusService(StatusService)
+TileEffectService.SetBroadcaster(BattleVisualBroadcaster)
+BattleCoordinator.SetTileEffectService(TileEffectService)
+CommandService.SetTileEffectService(TileEffectService)
+
 --------------------------------------------------
 -- SKILL REGISTRATION
 --------------------------------------------------
 
-for _, skillDef in pairs(GameConstants.SKILLS) do
+for key, skillDef in pairs(GameConstants.SKILLS) do
 	CommandService.RegisterSkill(skillDef)
+	-- Legacy alias support: if this entry was iterated under an alias key
+	-- (e.g. "skill_power_strike" → same table as "SKL-POWER-STRIKE"),
+	-- RegisterSkill only stores under skillDef.id. Also store under the alias.
+	if key ~= skillDef.id then
+		CommandService.RegisterSkillAlias(key, skillDef)
+	end
 end
 
 --------------------------------------------------
@@ -269,7 +289,7 @@ equipGeneratedWeapon(ranger, "WPN-CROSSBOW", 5, "Uncommon", 1003)
 
 -- TEST OVERRIDE: Ranger's Venom Strike uses weapon range instead of fixed 1
 do
-	local baseVenom = GameConstants.SKILLS.venom_strike
+	local baseVenom = GameConstants.SKILLS["skill_venom_strike"]
 	local rangerVenom = {}
 	for k, v in pairs(baseVenom) do rangerVenom[k] = v end
 	rangerVenom.id    = "skill_venom_strike_ranged"
@@ -323,6 +343,26 @@ equipGeneratedWeapon(shaman, "WPN-WAND", 5, "Common", 2003)
 local allUnitsList = { hero, mage, ranger, grunt, pyro, shaman }
 for _, u in ipairs(allUnitsList) do
 	setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
+end
+
+-- Apply permanent Flight status to units with the Flying race tag
+-- DB: "Flying: Grants permanent Flight using complete Manual Flight benefits and drawbacks"
+do
+	local RaceData = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
+	for _, u in ipairs(allUnitsList) do
+		if u.raceId then
+			local raceEntry = RaceData[u.raceId]
+			if raceEntry and raceEntry.tags then
+				for _, tag in ipairs(raceEntry.tags) do
+					if tag == "Flying" then
+						StatusService.ApplyStatus(u, "Flight", "RaceTag")
+						print(string.format("[Main] %s has Flying tag — Flight status applied", u.name))
+						break
+					end
+				end
+			end
+		end
+	end
 end
 
 -- Register persistent state for player units (Slice 4B)
@@ -469,6 +509,64 @@ BattleEvents.GetRosterData.OnServerInvoke = function(player)
 	return roster
 end
 
+--------------------------------------------------
+-- BONUS DISPLAY RESOLVER
+-- Converts raw bonusLines/bonusPassiveIds into UI-friendly format.
+-- bonusStats: { STR = 1, VIT = 2 }  (scaled flat at item level)
+-- bonusPassives: { { name = "Brutal", icon = "✦", desc = "" } }
+--------------------------------------------------
+
+local BONUS_DISPLAY_KEY = {
+	STR = "STR", AGI = "AGI", INT = "INT", VIT = "VIT", DEX = "DEX", LUK = "LUK",
+	damage = "Attack", defense = "Defense", rtDelay = "RT Delay", hp = "HP", mp = "MP", wt = "WT",
+	precision = "Precision", evasiveness = "Evasiveness", fortune = "Fortune", skillPotency = "Skill Potency",
+	healingOutput = "Healing", debuffResist = "Debuff Resist", rtDelayResist = "RT Delay Resist",
+}
+
+local function resolveItemBonuses(item)
+	local stats = {}
+	local passives = {}
+
+	for _, line in ipairs(item.bonusLines or {}) do
+		local attr = BonusData.NumericalAttributes[line.id]
+		if attr then
+			local key = BONUS_DISPLAY_KEY[attr.stat] or attr.family
+			local value = 0
+
+			if attr.operation == "PrimaryStat" or attr.operation == "BaseItemStat" then
+				local scale = WeaponData.GetScale(item.itemLevel or 1)
+				value = math.round((attr.l99Flat or 0) * scale)
+			elseif attr.operation == "WeightReduce" then
+				local scale = WeaponData.GetScale(item.itemLevel or 1)
+				value = -math.round((attr.l99Flat or 0) * scale)
+			elseif attr.operation == "Derived" then
+				-- fixedValue is additive pct like 0.03 → display as 3
+				value = math.round((attr.fixedValue or 0) * 100)
+			elseif attr.operation == "DerivedMultiplier" then
+				-- fixedValue is multiplier like 1.08 → +8, or 0.95 → -5
+				value = math.round(((attr.fixedValue or 1) - 1) * 100)
+			else
+				-- Unknown operation — try l99Flat
+				local scale = WeaponData.GetScale(item.itemLevel or 1)
+				value = math.round((attr.l99Flat or 0) * scale)
+			end
+
+			if value ~= 0 then
+				stats[key] = (stats[key] or 0) + value
+			end
+		end
+	end
+
+	for _, passiveId in ipairs(item.bonusPassiveIds or {}) do
+		local passive = BonusData.BonusPassives[passiveId]
+		if passive then
+			table.insert(passives, { name = passive.name or passiveId, icon = "\xe2\x97\x86", desc = passive.desc or "" })
+		end
+	end
+
+	return stats, passives
+end
+
 BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 	local items = InventoryService.GetAllItems(PLAYER_ID)
 	local result = {}
@@ -499,12 +597,18 @@ BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 			maxRange = profile and profile.maxRange or 1,
 			isWeapon = archetype and archetype.category == "Weapon" or false,
 			nativePassiveId = archetype and archetype.nativePassiveId or nil,
+			nativePassiveDesc = archetype and WeaponData.GetPassiveDesc(archetype.nativePassiveId) or nil,
+			projectileType = archetype and archetype.projectileType or nil,
+			element = archetype and WeaponData.GetElement(item.baseArchetypeId) or nil,
 			isNew = item.isNew or false,
 			bonusCount = #item.bonusLines,
 			passiveCount = #item.bonusPassiveIds,
 			equippedBy = equippedByMap[item.instanceId] and equippedByMap[item.instanceId].unitId or nil,
 			equippedSlot = equippedByMap[item.instanceId] and equippedByMap[item.instanceId].slot or nil,
+			bonusStats = nil,
+			bonusPassives = nil,
 		})
+		result[#result].bonusStats, result[#result].bonusPassives = resolveItemBonuses(item)
 	end
 	-- Diagnostic: log inventory summary
 	local equippedCount = 0
@@ -778,7 +882,10 @@ local function buildTurnPrompt(unit)
 				canUse      = canUse,
 				targets     = targetIds,
 				tags        = def.tags or {},
-				rtCost      = def.rtCost or 60,
+				rtCost      = def.rtMult
+					and math.round(GameConstants.CalcEffectiveWt(
+						unit.weaponWt or 10, (unit.effectiveStats or {}).STR or 10) * def.rtMult)
+					or (def.rtCost or 60),
 				power       = def.power or 0,
 				appliesStatus = def.appliesStatus or nil,
 				description = def.isHealing and "Heals ally" or (def.appliesStatus and ("Applies " .. def.appliesStatus) or "Damages target"),
@@ -1590,7 +1697,10 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 			range        = regDef and regDef.range or 1,
 			pattern      = fullData and fullData.pattern or (regDef and regDef.pattern or "Single"),
 			mpCost       = regDef and regDef.mpCost or 0,
-			rtCost       = regDef and regDef.rtCost or 0,
+			rtCost       = (regDef and regDef.rtMult)
+				and math.round(GameConstants.CalcEffectiveWt(
+					unit.weaponWt or 10, (unit.effectiveStats or {}).STR or 10) * regDef.rtMult)
+				or (regDef and regDef.rtCost or 0),
 			channelTime  = regDef and regDef.channelTime or 0,
 			power        = skillPower,
 			isHealing    = regDef and regDef.isHealing or false,

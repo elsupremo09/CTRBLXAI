@@ -76,6 +76,23 @@ Theme.Colors = {
 	-- Misc
 	Overlay         = Color3.fromRGB(0, 0, 0),       -- Modal backdrop (use with transparency)
 	Defeated        = Color3.fromRGB(60, 60, 60),    -- KO'd unit tint
+
+	-- UI element backgrounds
+	BadgeBg         = Color3.fromRGB(0, 0, 0),       -- Level badges, name strip overlays
+	SelectedItem    = Color3.fromRGB(40, 35, 20),     -- Selected inventory item (gold-tint)
+	EmptySlot       = Color3.fromRGB(15, 15, 22),     -- Empty equipment tile
+	LockedSlot      = Color3.fromRGB(10, 10, 15),     -- Locked consumable slot
+
+	-- Battle tile highlights
+	TileMove        = Color3.fromRGB(50, 100, 170),   -- Movement range (blue)
+	TileTarget      = Color3.fromRGB(200, 170, 50),   -- Valid target (gold)
+	TileSelected    = Color3.fromRGB(255, 220, 60),   -- Selected tile (bright gold)
+	TileAOE         = Color3.fromRGB(200, 100, 40),   -- Area of effect (orange)
+	TileInvalid     = Color3.fromRGB(100, 30, 30),    -- Invalid target (dark red)
+
+	-- Entity portrait backgrounds (map objects/hazards)
+	EntityObject    = Color3.fromRGB(50, 50, 30),     -- Map object
+	EntityHazard    = Color3.fromRGB(60, 40, 100),    -- Hazard
 }
 
 --------------------------------------------------
@@ -111,6 +128,7 @@ Theme.Spacing = {
 --------------------------------------------------
 
 Theme.CornerRadius = {
+	xs = UDim.new(0, 3),
 	sm = UDim.new(0, 4),
 	md = UDim.new(0, 6),
 	lg = UDim.new(0, 8),

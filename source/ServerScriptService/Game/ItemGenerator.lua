@@ -139,26 +139,29 @@ end
 
 local function step4_BuildPassivePool(rarity, archetype, bonusBp)
 	local pool = {}
+	-- Determine if this archetype is already elemental (via native passive)
+	local PASSIVE_ELEMENT = {
+		Ignite = true, Freeze = true, Venomous = true,
+	}
+	local isElemental = archetype.nativePassiveId and PASSIVE_ELEMENT[archetype.nativePassiveId] or false
 	for passiveId, passive in pairs(BonusData.BonusPassives) do
-		-- Check minimum rarity
-		if not BonusData.MeetsMinimumRarity(rarity, passive.minRarity) then
-			continue
-		end
-		-- Check BP affordability (same-rarity gate: must afford from normal budget)
-		if passive.bpCost > bonusBp then
-			continue
-		end
-		-- Simplified eligibility: "Any" passes all; specific types checked loosely
-		-- (Full eligibility would check weapon family tags — simplified for now)
-		local eligible = passive.eligible
-		if eligible == "Any" then
-			table.insert(pool, { id = passiveId, passive = passive, weight = 1.0 })
-		elseif eligible == "Weapons" or eligible == "WeaponsOffHands" then
-			if archetype.category == "Weapon" or archetype.category == "OffHand" then
-				table.insert(pool, { id = passiveId, passive = passive, weight = 0.5 })
+		-- Guard: rarity + affordability checks (replaced continue for Luau safety)
+		if BonusData.MeetsMinimumRarity(rarity, passive.minRarity)
+			and passive.bpCost <= bonusBp then
+			local eligible = passive.eligible
+			if eligible == "Any" then
+				table.insert(pool, { id = passiveId, passive = passive, weight = 1.0 })
+			elseif eligible == "Weapons" or eligible == "WeaponsOffHands" then
+				if archetype.category == "Weapon" or archetype.category == "OffHand" then
+					table.insert(pool, { id = passiveId, passive = passive, weight = 0.5 })
+				end
+			elseif eligible == "NonElementalWeapons" then
+				if (archetype.category == "Weapon" or archetype.category == "OffHand")
+					and not isElemental then
+					table.insert(pool, { id = passiveId, passive = passive, weight = 0.3 })
+				end
 			end
 		end
-		-- Other specific eligibilities produce lower weight
 	end
 	return pool
 end
@@ -200,24 +203,23 @@ end
 local function step6_BuildAttributePool(rarity, archetype)
 	local pool = {}
 	for attrId, attr in pairs(BonusData.NumericalAttributes) do
-		-- Check minimum rarity
-		if not BonusData.MeetsMinimumRarity(rarity, attr.minRarity) then
-			continue
-		end
-		-- Check equipment eligibility
-		local eligible = attr.eligible
-		local passes = false
-		if eligible == "Any" then
-			passes = true
-		elseif eligible == "Weapons" then
-			passes = archetype.category == "Weapon"
-		elseif eligible == "WeaponsOffHands" then
-			passes = archetype.category == "Weapon" or archetype.category == "OffHand"
-		elseif eligible == "NonWeapon" then
-			passes = archetype.category ~= "Weapon"
-		end
-		if passes then
-			table.insert(pool, { id = attrId, attr = attr })
+		-- Guard: rarity check (replaced continue for Luau safety)
+		if BonusData.MeetsMinimumRarity(rarity, attr.minRarity) then
+			-- Check equipment eligibility
+			local eligible = attr.eligible
+			local passes = false
+			if eligible == "Any" then
+				passes = true
+			elseif eligible == "Weapons" then
+				passes = archetype.category == "Weapon"
+			elseif eligible == "WeaponsOffHands" then
+				passes = archetype.category == "Weapon" or archetype.category == "OffHand"
+			elseif eligible == "NonWeapon" then
+				passes = archetype.category ~= "Weapon"
+			end
+			if passes then
+				table.insert(pool, { id = attrId, attr = attr })
+			end
 		end
 	end
 	return pool
@@ -257,19 +259,24 @@ local function step7_SelectNumericalTiers(rng, pool, remainingBp, minBand, maxBa
 
 		for _, entry in ipairs(shuffled) do
 			local attr = entry.attr
-			-- Skip if family already used
-			if usedFamilies[attr.family] then continue end
-			-- Skip if would exceed max band
-			if spentBp + attr.bpCost > maxBand then continue end
-			-- Prefer candidates that get us closer to target
-			local diff = math.abs((spentBp + attr.bpCost) - targetBp)
-			if diff < bestDiff then
-				bestDiff = diff
-				bestCandidate = entry
+			-- Guard: family + budget checks (replaced continue for Luau safety)
+			if not usedFamilies[attr.family]
+				and (spentBp + attr.bpCost <= maxBand) then
+				-- Prefer candidates that get us closer to target
+				local diff = math.abs((spentBp + attr.bpCost) - targetBp)
+				if diff < bestDiff then
+					bestDiff = diff
+					bestCandidate = entry
+				end
 			end
 		end
 
-		if not bestCandidate then break end
+		if not bestCandidate then
+			if spentBp < minBand then
+				warn("[ItemGen] step7: no candidate found, pool exhausted at " .. spentBp .. "BP")
+			end
+			break
+		end
 
 		table.insert(selected, { id = bestCandidate.id, tier = bestCandidate.attr.tier })
 		spentBp = spentBp + bestCandidate.attr.bpCost
@@ -386,12 +393,14 @@ function ItemGenerator.Generate(input)
 
 	-- STEP 6: Build numerical pool
 	local attrPool = step6_BuildAttributePool(input.rarity, baseInfo.archetype)
+	print("[ItemGen] step6 pool: " .. #attrPool .. " eligible attributes for " .. input.rarity)
 
 	-- STEP 7: Select numerical tiers (spend remaining BP)
 	local remainingBp = rarityInfo.bonusBp - passiveBpSpent
 	local selectedAttributes, attrBpSpent = step7_SelectNumericalTiers(
 		rng, attrPool, remainingBp, rarityInfo.minBand - passiveBpSpent, rarityInfo.maxBand - passiveBpSpent
 	)
+	print("[ItemGen] step7 result: " .. #selectedAttributes .. " attrs, " .. attrBpSpent .. "BP spent of " .. remainingBp .. "BP budget")
 
 	-- STEP 8: Validate total BP
 	local totalSpent = passiveBpSpent + attrBpSpent

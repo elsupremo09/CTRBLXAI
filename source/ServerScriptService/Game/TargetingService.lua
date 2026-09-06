@@ -16,6 +16,12 @@ local GameConstants = require(
 local RacePassiveService = require(script.Parent.RacePassiveService)
 local StatusService = require(script.Parent.StatusService)
 
+local RaceData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("RaceData")
+)
+
 -- Effective Elevation: tile elevation + 5 if unit has Flight status.
 -- DB: "Flight treats unit as Tile Elevation + 5"
 local function getEffectiveElevation(unit)
@@ -24,6 +30,26 @@ local function getEffectiveElevation(unit)
 		return tileElev + 5
 	end
 	return tileElev
+end
+
+-- Melee elevation restriction: melee attacks (range 1-2) limited to ±2 elevation.
+-- Giant race tag overrides to ±5.
+-- DB: "Melee attacks can only target units within +/-2 elevation levels of the attacker.
+--      Giant race tag overrides this to +/-5."
+local function isMeleeElevationLegal(actor, target, attackRange)
+	if not attackRange or attackRange > 2 then return true end -- ranged, no limit
+	local atkElev = getEffectiveElevation(actor)
+	local defElev = GameConstants.GetElevation(target.tileX, target.tileY)
+	local elevDiff = math.abs(atkElev - defElev)
+	-- Giant: ±5
+	local maxDiff = 2
+	local raceEntry = RaceData[actor.raceId]
+	if raceEntry and raceEntry.tags then
+		for _, tag in ipairs(raceEntry.tags) do
+			if tag == "Giant" then maxDiff = 5; break end
+		end
+	end
+	return elevDiff <= maxDiff
 end
 
 local TargetingService = {}
@@ -129,7 +155,9 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 				local key = tileKey(nx, ny)
 
 				if GameConstants.IsBlocked(nx, ny) then
-					-- skip
+				-- skip
+			elseif GameConstants.IsImpassableTerrain(nx, ny) then
+				-- skip (Quicksand etc.)
 				else
 					local terrainCost = GameConstants.GetTerrainCost(nx, ny)
 					local stepCost = dir.cost * terrainCost
@@ -190,6 +218,21 @@ function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerEleva
 	-- Adjacent tiles always have LoS
 	if chebyshevDistance(x1, y1, x2, y2) <= 1 then
 		return true
+	end
+
+	-- Giant race tag: ranged attacks targeting a Giant ignore LoS and blockers.
+	-- DB: "Ranged attacks targeting the Giant ignore LoS and blockers."
+	if allUnits then
+		for _, u in ipairs(allUnits) do
+			if u.tileX == x2 and u.tileY == y2 and u.isAlive and u.raceId then
+				local raceEntry = RaceData[u.raceId]
+				if raceEntry and raceEntry.tags then
+					for _, tag in ipairs(raceEntry.tags) do
+						if tag == "Giant" then return true end
+					end
+				end
+			end
+		end
 	end
 
 	-- Build a lookup of tiles occupied by standing units (block LoS).
@@ -272,6 +315,7 @@ function TargetingService.GetAttackCandidates(actor, allUnits, range)
 				and dist >= minRange
 				and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
 					allUnits, getEffectiveElevation(actor), actor.weaponProjectileType)
+				and isMeleeElevationLegal(actor, unit, range)
 			then
 				table.insert(candidates, unit)
 			end
@@ -289,7 +333,8 @@ end
 --------------------------------------------------
 
 function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
-	local baseRange = skillDef.range or 1
+	-- range = -1 means inherit from weapon
+	local baseRange = (skillDef.range == -1) and (actor.weaponMaxRange or 1) or (skillDef.range or 1)
 	-- Missing 4 fix: Bonus Skill Range from INT
 	-- Rule: Bonus Skill Range = floor(INT / 75) + Flat bonuses
 	local bonusRange = actor.derivedStats and actor.derivedStats.bonusSkillRange
@@ -312,6 +357,8 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 					allUnits, getEffectiveElevation(actor), projType)
 			if not hasLos then
 				-- blocked by obstacle
+			elseif not isMeleeElevationLegal(actor, unit, baseRange) then
+				-- melee elevation too different
 			elseif targetRules == "Enemy Unit" then
 				if unit.side ~= actor.side then
 					table.insert(candidates, unit)
@@ -371,7 +418,8 @@ end
 --------------------------------------------------
 
 function TargetingService.GetSkillRangeTiles(actor, skillDef, mapWidth, mapHeight)
-	local range = skillDef.range or 1
+	-- range = -1 means inherit from weapon
+	local range = (skillDef.range == -1) and (actor.weaponMaxRange or 1) or (skillDef.range or 1)
 	local tiles = {}
 
 	for dy = -range, range do
@@ -489,6 +537,259 @@ function TargetingService.ValidateSelection(
 	end
 
 	return false, "Unknown actionType: " .. tostring(actionType)
+end
+
+--------------------------------------------------
+-- AOE PATTERN TILE GENERATORS  (Slice 3)
+--
+-- Each function returns an array of {tileX, tileY} positions
+-- that the pattern covers.  CommandService collects units on
+-- those tiles, filters by targetRules, and resolves each hit.
+--
+-- DB rules:
+--   - AOE elevation limit: ±2 from center/anchor (default)
+--   - Center Spread AOE does not pass through BlocksAOE
+--   - Selected Area AOE affects valid tiles directly
+--   - Caster-origin patterns use caster's current tile
+--
+-- Elevation + BlocksAOE filtering is done by the caller,
+-- not inside these generators (keeps them pure geometry).
+--------------------------------------------------
+
+-- Circle: all tiles within Chebyshev distance <= radius of center
+function TargetingService.GetCircleTiles(centerX, centerY, radius, mapWidth, mapHeight)
+	local tiles = {}
+	for dy = -radius, radius do
+		for dx = -radius, radius do
+			if math.max(math.abs(dx), math.abs(dy)) <= radius then
+				local tx, ty = centerX + dx, centerY + dy
+				if isInsideMap(tx, ty, mapWidth, mapHeight) then
+					table.insert(tiles, { tileX = tx, tileY = ty })
+				end
+			end
+		end
+	end
+	return tiles
+end
+
+-- Ring: only the outer edge of a circle (distance == radius)
+function TargetingService.GetRingTiles(centerX, centerY, radius, mapWidth, mapHeight)
+	local tiles = {}
+	for dy = -radius, radius do
+		for dx = -radius, radius do
+			if math.max(math.abs(dx), math.abs(dy)) == radius then
+				local tx, ty = centerX + dx, centerY + dy
+				if isInsideMap(tx, ty, mapWidth, mapHeight) then
+					table.insert(tiles, { tileX = tx, tileY = ty })
+				end
+			end
+		end
+	end
+	return tiles
+end
+
+-- Cross: cardinal lines of length N from center (+ center itself)
+function TargetingService.GetCrossTiles(centerX, centerY, radius, mapWidth, mapHeight)
+	local tiles = { { tileX = centerX, tileY = centerY } }
+	local dirs = { {0,-1}, {0,1}, {-1,0}, {1,0} }
+	for _, d in ipairs(dirs) do
+		for i = 1, radius do
+			local tx, ty = centerX + d[1]*i, centerY + d[2]*i
+			if isInsideMap(tx, ty, mapWidth, mapHeight) then
+				table.insert(tiles, { tileX = tx, tileY = ty })
+			end
+		end
+	end
+	return tiles
+end
+
+-- Line: N tiles in a direction from origin (exclusive of origin)
+-- direction = {dx, dy} normalized to -1/0/1
+function TargetingService.GetLineTiles(originX, originY, dx, dy, length, mapWidth, mapHeight)
+	local tiles = {}
+	for i = 1, length do
+		local tx, ty = originX + dx*i, originY + dy*i
+		if isInsideMap(tx, ty, mapWidth, mapHeight) then
+			table.insert(tiles, { tileX = tx, tileY = ty })
+		end
+	end
+	return tiles
+end
+
+-- Cone: expanding triangle in a direction, depth N
+-- At distance d from origin, width = 2d-1 tiles perpendicular to direction
+-- direction = {dx, dy} (cardinal or diagonal)
+function TargetingService.GetConeTiles(originX, originY, dx, dy, depth, mapWidth, mapHeight)
+	local tiles = {}
+	-- Determine perpendicular direction
+	local perpDx, perpDy
+	if dx == 0 then
+		perpDx, perpDy = 1, 0
+	elseif dy == 0 then
+		perpDx, perpDy = 0, 1
+	else
+		-- Diagonal: perpendicular is the two cardinals
+		perpDx, perpDy = -dy, dx
+	end
+
+	for d = 1, depth do
+		-- Center tile at distance d
+		local cx, cy = originX + dx*d, originY + dy*d
+		-- Width expands: at d=1 width=1, d=2 width=3, d=3 width=5
+		local spread = d - 1
+		for s = -spread, spread do
+			local tx = cx + perpDx * s
+			local ty = cy + perpDy * s
+			if isInsideMap(tx, ty, mapWidth, mapHeight) then
+				table.insert(tiles, { tileX = tx, tileY = ty })
+			end
+		end
+	end
+	return tiles
+end
+
+-- Adjacent Area: all 8 tiles around a center (not including center)
+function TargetingService.GetAdjacentTiles(centerX, centerY, mapWidth, mapHeight)
+	local tiles = {}
+	for dy = -1, 1 do
+		for dx = -1, 1 do
+			if not (dx == 0 and dy == 0) then
+				local tx, ty = centerX + dx, centerY + dy
+				if isInsideMap(tx, ty, mapWidth, mapHeight) then
+					table.insert(tiles, { tileX = tx, tileY = ty })
+				end
+			end
+		end
+	end
+	return tiles
+end
+
+--------------------------------------------------
+-- GetAOETargets: unified AOE resolution
+--
+-- Given an aoePattern string, origin, target/direction,
+-- returns all affected {tileX, tileY} positions.
+-- CommandService calls this then filters for units.
+--------------------------------------------------
+
+function TargetingService.GetAOETargetTiles(aoePattern, actor, targetTileX, targetTileY, mapWidth, mapHeight)
+	-- Parse pattern type and parameter
+	local patternType, param = aoePattern:match("^(%a+)(%d*)$")
+	param = tonumber(param) or 1
+
+	if patternType == "Circle" then
+		return TargetingService.GetCircleTiles(targetTileX, targetTileY, param, mapWidth, mapHeight)
+
+	elseif patternType == "Ring" then
+		return TargetingService.GetRingTiles(targetTileX, targetTileY, param, mapWidth, mapHeight)
+
+	elseif patternType == "Cross" then
+		return TargetingService.GetCrossTiles(targetTileX, targetTileY, param, mapWidth, mapHeight)
+
+	elseif patternType == "Line" then
+		-- Direction from actor toward target
+		local ddx = targetTileX - actor.tileX
+		local ddy = targetTileY - actor.tileY
+		local dx = ddx ~= 0 and (ddx > 0 and 1 or -1) or 0
+		local dy = ddy ~= 0 and (ddy > 0 and 1 or -1) or 0
+		return TargetingService.GetLineTiles(actor.tileX, actor.tileY, dx, dy, param, mapWidth, mapHeight)
+
+	elseif patternType == "Cone" then
+		local ddx = targetTileX - actor.tileX
+		local ddy = targetTileY - actor.tileY
+		local dx = ddx ~= 0 and (ddx > 0 and 1 or -1) or 0
+		local dy = ddy ~= 0 and (ddy > 0 and 1 or -1) or 0
+		return TargetingService.GetConeTiles(actor.tileX, actor.tileY, dx, dy, param, mapWidth, mapHeight)
+
+	elseif patternType == "Adjacent" then
+		return TargetingService.GetAdjacentTiles(targetTileX, targetTileY, mapWidth, mapHeight)
+
+	elseif patternType == "Spread" then
+		-- 3x3 Center Spread = Circle radius 1
+		return TargetingService.GetCircleTiles(targetTileX, targetTileY, 1, mapWidth, mapHeight)
+
+	elseif patternType == "Impact" then
+		-- Impact 1 = Cross radius 1 (3×3 cross)
+		return TargetingService.GetCrossTiles(targetTileX, targetTileY, 1, mapWidth, mapHeight)
+
+	elseif patternType == "Cleave" then
+		-- Cleave is handled separately via GetCleaveTargets (unit-based, not tile-based)
+		return {}
+
+	else
+		print(string.format("[TargetingService] Unknown AOE pattern: %s", aoePattern))
+		return {}
+	end
+end
+
+--------------------------------------------------
+-- AOE SPREAD BLOCKING
+-- Center Spread AOE does not pass through BlocksAOE objects.
+-- Uses Bresenham walk from center to tile; if any intermediate
+-- tile has a BlocksAOE blocker, the target tile is blocked.
+-- DB: "Walls, closed doors, sealed barriers, and solid map
+-- objects tagged BlocksAOE block spread."
+--------------------------------------------------
+
+function TargetingService.IsAOEBlocked(centerX, centerY, targetX, targetY)
+	-- Walk from center toward target, checking intermediate tiles
+	local dx = targetX - centerX
+	local dy = targetY - centerY
+	local steps = math.max(math.abs(dx), math.abs(dy))
+	if steps <= 1 then return false end  -- adjacent tiles never blocked
+
+	for i = 1, steps - 1 do
+		local t = i / steps
+		local ix = centerX + math.floor(dx * t + 0.5)
+		local iy = centerY + math.floor(dy * t + 0.5)
+		if GameConstants.HasBlockerTag(ix, iy, "BlocksAOE") then
+			return true
+		end
+	end
+
+	-- Also blocked if the target tile itself is a BlocksAOE object
+	if GameConstants.HasBlockerTag(targetX, targetY, "BlocksAOE") then
+		return true
+	end
+	return false
+end
+
+--------------------------------------------------
+-- Chain targeting: jumps from target to nearest
+-- valid enemy within jumpRange, up to maxTargets.
+-- Returns array of units in chain order.
+--
+-- DB: Chain skills select first target at commitment.
+-- Jump distance default = 2 tiles (Chebyshev).
+--------------------------------------------------
+
+function TargetingService.GetChainTargets(firstTarget, allUnits, attackerSide, maxTargets, jumpRange)
+	jumpRange = jumpRange or 2
+	local chain = { firstTarget }
+	local seen = { [firstTarget.id] = true }
+	local current = firstTarget
+
+	for _ = 2, maxTargets do
+		local bestUnit = nil
+		local bestDist = math.huge
+
+		for _, u in ipairs(allUnits) do
+			if u.isAlive and u.side ~= attackerSide and not seen[u.id] then
+				local dist = chebyshevDistance(current.tileX, current.tileY, u.tileX, u.tileY)
+				if dist <= jumpRange and dist < bestDist then
+					bestDist = dist
+					bestUnit = u
+				end
+			end
+		end
+
+		if not bestUnit then break end
+		table.insert(chain, bestUnit)
+		seen[bestUnit.id] = true
+		current = bestUnit
+	end
+
+	return chain
 end
 
 return TargetingService
