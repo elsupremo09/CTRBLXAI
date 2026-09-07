@@ -10,9 +10,29 @@ local BattleEvents = require(
 		:WaitForChild("BattleEvents", 10)
 )
 
+-- Content definition modules (full skill/augment data for UI lookups)
+local SkillDataModule = require(
+	ReplicatedStorage:WaitForChild("Content", 10)
+		:WaitForChild("SkillData", 10)
+)
+local AugmentDataModule = require(
+	ReplicatedStorage:WaitForChild("Content", 10)
+		:WaitForChild("AugmentData", 10)
+)
+
 local MockLoadoutData = {}
 
 MockLoadoutData._useServerData = false
+MockLoadoutData._useServerSkillData = false
+
+-- Server skill data storage (populated by LoadSkillData)
+MockLoadoutData.ServerSkillSlots = {}    -- [unitId] = slots array from server
+MockLoadoutData.SkillCardInventory = {}  -- [skillId] = quantity
+MockLoadoutData.AugmentCardInventory = {} -- [augmentId] = quantity
+
+-- Content definition lookups
+MockLoadoutData.SkillDefs = SkillDataModule
+MockLoadoutData.AugmentDefs = AugmentDataModule
 
 MockLoadoutData.Units = {
 	{ id = "unit_hero", name = "Hero", level = 25, raceId = "RACE-HUMAN", raceName = "Human", side = "Player",
@@ -257,7 +277,7 @@ local function mapServerItem(si)
 		passives = passives,
 		bonusStats = si.bonusStats or {},
 		bonusPassives = si.bonusPassives or {},
-		flavor = "",
+		flavor = si.flavor or "",
 	}
 end
 
@@ -356,11 +376,147 @@ function MockLoadoutData.GetSkill(skillId)
 end
 
 function MockLoadoutData.GetSkillLoadout(unitId)
+	if MockLoadoutData.ServerSkillSlots[unitId] then
+		return MockLoadoutData.ServerSkillSlots[unitId]
+	end
 	return MockLoadoutData.SkillLoadout[unitId] or {}
 end
 
 function MockLoadoutData.GetDoctrineChoices(doctrineId)
 	return MockLoadoutData.DoctrineSkillChoices[doctrineId] or {}
+end
+
+--------------------------------------------------
+-- CONTENT DEFINITION HELPERS
+--------------------------------------------------
+
+function MockLoadoutData.GetSkillDef(skillId)
+	if not skillId then return nil end
+	return MockLoadoutData.SkillDefs[skillId]
+end
+
+function MockLoadoutData.GetAugmentDef(augmentId)
+	if not augmentId then return nil end
+	return MockLoadoutData.AugmentDefs[augmentId]
+end
+
+--------------------------------------------------
+-- SERVER SKILL DATA LOADING
+--------------------------------------------------
+
+--- Fetch skill loadout from server for a unit.
+-- Stores result in ServerSkillSlots, SkillCardInventory, AugmentCardInventory.
+-- Falls back silently on failure (mock data remains available).
+function MockLoadoutData.LoadSkillData(unitId)
+	print("[LoadoutData] Attempting to fetch skill loadout from server for:", unitId)
+
+	if not BattleEvents or not BattleEvents.GetSkillLoadout then
+		warn("[LoadoutData] BattleEvents.GetSkillLoadout not available — using mock skill data")
+		MockLoadoutData._useServerSkillData = false
+		return
+	end
+
+	local ok, result = pcall(function()
+		return BattleEvents.GetSkillLoadout:InvokeServer(unitId)
+	end)
+
+	if ok and result and result.ok then
+		-- Store slots for this unit
+		MockLoadoutData.ServerSkillSlots[unitId] = result.slots or {}
+
+		-- Store card inventories (shared across units)
+		if result.skillCards then
+			MockLoadoutData.SkillCardInventory = result.skillCards
+		end
+		if result.augmentCards then
+			MockLoadoutData.AugmentCardInventory = result.augmentCards
+		end
+
+		MockLoadoutData._useServerSkillData = true
+		print(string.format(
+			"[LoadoutData] Loaded skill data from server for %s: %d slots, %d skill cards, %d augment cards",
+			unitId,
+			#MockLoadoutData.ServerSkillSlots[unitId],
+			(function()
+				local n = 0
+				for _ in pairs(MockLoadoutData.SkillCardInventory) do n = n + 1 end
+				return n
+			end)(),
+			(function()
+				local n = 0
+				for _ in pairs(MockLoadoutData.AugmentCardInventory) do n = n + 1 end
+				return n
+			end)()
+		))
+	else
+		warn("[LoadoutData] Server skill fetch failed — using mock data. ok="
+			.. tostring(ok) .. " result=" .. tostring(result))
+		MockLoadoutData._useServerSkillData = false
+	end
+end
+
+--------------------------------------------------
+-- SERVER SKILL/AUGMENT ACTION WRAPPERS
+--------------------------------------------------
+
+function MockLoadoutData.ServerEquipSkillCard(unitId, slotIndex, skillId)
+	local ok, result = pcall(function()
+		return BattleEvents.RequestEquipSkillCard:InvokeServer(unitId, slotIndex, skillId)
+	end)
+	if ok then
+		print("[LoadoutData] Server equip skill card:", unitId, slotIndex, skillId)
+		return result
+	end
+	warn("[LoadoutData] ServerEquipSkillCard failed:", result)
+	return { ok = false, reason = "Server error" }
+end
+
+function MockLoadoutData.ServerUnequipSkillCard(unitId, slotIndex)
+	local ok, result = pcall(function()
+		return BattleEvents.RequestUnequipSkillCard:InvokeServer(unitId, slotIndex)
+	end)
+	if ok then
+		print("[LoadoutData] Server unequip skill card:", unitId, slotIndex)
+		return result
+	end
+	warn("[LoadoutData] ServerUnequipSkillCard failed:", result)
+	return { ok = false, reason = "Server error" }
+end
+
+function MockLoadoutData.ServerAttachAugment(unitId, slotIndex, augSlotIndex, augmentId)
+	local ok, result = pcall(function()
+		return BattleEvents.RequestAttachAugment:InvokeServer(unitId, slotIndex, augSlotIndex, augmentId)
+	end)
+	if ok then
+		print("[LoadoutData] Server attach augment:", unitId, slotIndex, augSlotIndex, augmentId)
+		return result
+	end
+	warn("[LoadoutData] ServerAttachAugment failed:", result)
+	return { ok = false, reason = "Server error" }
+end
+
+function MockLoadoutData.ServerDetachAugment(unitId, slotIndex, augSlotIndex)
+	local ok, result = pcall(function()
+		return BattleEvents.RequestDetachAugment:InvokeServer(unitId, slotIndex, augSlotIndex)
+	end)
+	if ok then
+		print("[LoadoutData] Server detach augment:", unitId, slotIndex, augSlotIndex)
+		return result
+	end
+	warn("[LoadoutData] ServerDetachAugment failed:", result)
+	return { ok = false, reason = "Server error" }
+end
+
+function MockLoadoutData.ServerSelectDoctrineSkill(unitId, skillId)
+	local ok, result = pcall(function()
+		return BattleEvents.RequestDoctrineSkillSelect:InvokeServer(unitId, skillId)
+	end)
+	if ok then
+		print("[LoadoutData] Server select doctrine skill:", unitId, skillId)
+		return result
+	end
+	warn("[LoadoutData] ServerSelectDoctrineSkill failed:", result)
+	return { ok = false, reason = "Server error" }
 end
 
 return MockLoadoutData

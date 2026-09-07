@@ -30,6 +30,11 @@ local WeaponData = require(
 		:WaitForChild("Content")
 		:WaitForChild("WeaponData")
 )
+local ArmorData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ArmorData")
+)
 
 local RewardService = {}
 
@@ -103,8 +108,15 @@ local function getArchetypePool()
 		return cachedArchetypePool
 	end
 	local pool = {}
+	-- Weapon + OffHand archetypes
 	for archetypeId, def in pairs(WeaponData.Archetypes) do
 		if def.category == "Weapon" or def.category == "OffHand" then
+			table.insert(pool, archetypeId)
+		end
+	end
+	-- Armor archetypes (Slice 4G)
+	for archetypeId, def in pairs(ArmorData.Archetypes) do
+		if def.category == "Armor" then
 			table.insert(pool, archetypeId)
 		end
 	end
@@ -183,11 +195,13 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 			local ok, addErr = InventoryService.AddItem(playerId, item)
 			if ok then
 				committedCount = committedCount + 1
+				local archetype = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+					or ArmorData.GetByArchetypeId(item.baseArchetypeId)
+				local itemName = archetype and archetype.name or item.name or item.instanceId
 				print(string.format(
 					"[RewardService] Reward %d committed: %s | %s L%d %s",
-					i, item.instanceId,
-					WeaponData.GetByArchetypeId(item.baseArchetypeId).name,
-					item.itemLevel, item.rarityId
+					i, item.instanceId, itemName,
+					item.itemLevel or 0, item.rarityId or "?"
 				))
 				table.insert(results, {
 					item = item,
@@ -267,7 +281,7 @@ local function resolveItemBonuses(item)
 	for _, passiveId in ipairs(item.bonusPassiveIds or {}) do
 		local passive = BonusData.BonusPassives[passiveId]
 		if passive then
-			table.insert(passives, { name = passive.name or passiveId, icon = "\xe2\x97\x86", desc = passive.desc or "" })
+			table.insert(passives, { name = passive.name or passiveId, icon = "[*]", desc = passive.desc or "" })
 		end
 	end
 
@@ -280,27 +294,42 @@ function RewardService.BuildRewardSummaries(results)
 		if result.committed and result.item then
 			local item = result.item
 			local archetype = WeaponData.GetByArchetypeId(item.baseArchetypeId)
-			local profile = WeaponData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
+			local isArmor = false
+			if not archetype then
+				archetype = ArmorData.GetByArchetypeId(item.baseArchetypeId)
+				isArmor = true
+			end
+			local profile = isArmor
+				and ArmorData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
+				or WeaponData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
 
 			table.insert(summaries, {
 				name = archetype and archetype.name or "Unknown",
 				rarity = item.rarityId,
 				itemLevel = item.itemLevel,
-				damage = profile and profile.damage or 0,
 				wt = profile and profile.wt or 0,
 				defense = profile and profile.defense or 0,
-				rtDelay = profile and profile.rtDelay or 0,
-				minRange = profile and profile.minRange or 1,
-				maxRange = profile and profile.maxRange or 1,
 				bonusCount = #item.bonusLines,
 				passiveCount = #item.bonusPassiveIds,
-				handClass = archetype and archetype.handClass or "1H",
-				category = archetype and archetype.category or "Weapon",
-				isWeapon = archetype and archetype.category == "Weapon" or false,
-				nativePassiveId = archetype and archetype.nativePassiveId or nil,
-				nativePassiveDesc = archetype and WeaponData.GetPassiveDesc(archetype.nativePassiveId) or nil,
-				projectileType = archetype and archetype.projectileType or nil,
-				element = archetype and WeaponData.GetElement(item.baseArchetypeId) or nil,
+				isWeapon = not isArmor and archetype and archetype.category == "Weapon" or false,
+				isArmor = isArmor,
+				-- Weapon-specific fields
+				damage = (not isArmor) and (profile and profile.damage or 0) or 0,
+				rtDelay = (not isArmor) and (profile and profile.rtDelay or 0) or 0,
+				minRange = (not isArmor) and (profile and profile.minRange or 1) or 0,
+				maxRange = (not isArmor) and (profile and profile.maxRange or 1) or 0,
+				handClass = (not isArmor) and (archetype and archetype.handClass or "1H") or nil,
+				category = archetype and (isArmor and "Armor" or archetype.category) or "Unknown",
+				nativePassiveId = (not isArmor) and (archetype and archetype.nativePassiveId or nil) or nil,
+				nativePassiveDesc = (not isArmor) and (archetype and WeaponData.GetPassiveDesc(archetype.nativePassiveId) or nil) or nil,
+				projectileType = (not isArmor) and (archetype and archetype.projectileType or nil) or nil,
+				element = (not isArmor) and (archetype and WeaponData.GetElement(item.baseArchetypeId) or nil) or nil,
+				-- Armor-specific fields
+				hp = isArmor and (profile and profile.hp or 0) or nil,
+				mp = isArmor and (profile and profile.mp or 0) or nil,
+				slot = isArmor and (archetype and archetype.slot or nil) or nil,
+				passiveName = isArmor and (archetype and archetype.passiveName or nil) or nil,
+				passiveDesc = isArmor and (archetype and archetype.passiveDesc or nil) or nil,
 				bonusStats = nil,
 				bonusPassives = nil,
 			})

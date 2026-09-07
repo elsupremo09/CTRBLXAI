@@ -67,6 +67,7 @@ local EVENT_NAMES = {
 	-- Tile effects (Slice 3: TileEffectService)
 	"TileEffectApplied",  -- S->C: effect placed on tile
 	"TileEffectRemoved",  -- S->C: effect removed from tile
+	"UnitStateChanged",   -- S->C: unit HP/isAlive changed (revive, etc.)
 }
 
 -- RemoteFunctions for Slice 4D management contracts
@@ -75,6 +76,23 @@ local FUNCTION_NAMES = {
 	"GetInventoryData",
 	"RequestEquip",
 	"RequestUnequip",
+	-- Slice 4H: Doctrine management
+	"RequestDoctrineChange",
+	"RequestDoctrineSkillSelect",
+	"GetDoctrineChoices",
+	-- Slice 4I: Skill Card and Augment Card management
+	"RequestEquipSkillCard",
+	"RequestUnequipSkillCard",
+	"RequestAttachAugment",
+	"RequestDetachAugment",
+	"GetSkillLoadout",
+	-- Slice 4J: Stat allocation and comparison
+	"RequestAllocateStat",
+	"GetEquipmentComparison",
+	"GetDoctrineComparison",
+	-- Slice 4G.4: Consumable management
+	"RequestEquipConsumable",
+	"RequestUnequipConsumable",
 }
 
 local BattleEvents = {}

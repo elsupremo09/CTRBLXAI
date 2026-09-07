@@ -14,6 +14,11 @@ local WeaponData = require(
 		:WaitForChild("Content")
 		:WaitForChild("WeaponData")
 )
+local ArmorData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ArmorData")
+)
 local BonusData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
@@ -79,14 +84,24 @@ end
 
 local function step1_SelectBase(input)
 	local archetype = WeaponData.GetByArchetypeId(input.baseArchetypeId)
+	local isArmor = false
+	if archetype then
+		isArmor = false
+	else
+		archetype = ArmorData.GetByArchetypeId(input.baseArchetypeId)
+		isArmor = true
+	end
 	if not archetype then
 		return nil, "Invalid archetype: " .. tostring(input.baseArchetypeId)
 	end
-	local profile = WeaponData.GetScaledProfile(input.baseArchetypeId, input.itemLevel)
+	local profile = isArmor
+		and ArmorData.GetScaledProfile(input.baseArchetypeId, input.itemLevel)
+		or WeaponData.GetScaledProfile(input.baseArchetypeId, input.itemLevel)
 	return {
 		archetype = archetype,
 		scaledProfile = profile,
 		itemLevel = input.itemLevel,
+		isArmor = isArmor,
 	}
 end
 

@@ -14,7 +14,9 @@ local GameConstants = require(
 )
 
 local RacePassiveService = require(script.Parent.RacePassiveService)
+local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
 local StatusService = require(script.Parent.StatusService)
+
 
 local RaceData = require(
 	game:GetService("ReplicatedStorage")
@@ -84,7 +86,8 @@ local function getMovementRange(unit)
 		base = BASE_MOVEMENT_RANGE + math.floor(agi / 60)
 	end
 	local raceOffset = RacePassiveService.GetMovementRangeModifier(unit)
-	return math.max(1, base + raceOffset)
+	local armorOffset = ArmorPassiveService.GetMovementRangeBonus(unit)
+	return math.max(1, base + raceOffset + armorOffset)
 end
 
 local function getJump(unit)
@@ -92,7 +95,9 @@ local function getJump(unit)
 		return unit.derivedStats.jump
 	end
 	local dex = unit.effectiveStats and unit.effectiveStats.DEX or 10
-	return 1 + math.floor(dex / 60)
+	local raceJump = RacePassiveService.GetJumpModifier(unit)
+	local armorJump = ArmorPassiveService.GetJumpBonus(unit)
+	return 1 + math.floor(dex / 60) + raceJump + armorJump
 end
 
 local function getDownwardJump(unit)
@@ -303,6 +308,7 @@ end
 
 function TargetingService.GetAttackCandidates(actor, allUnits, range)
 	range = range or 1
+	range = range + RacePassiveService.GetRangeModifier(actor)
 	-- Support minimum range (ranged weapons cannot hit adjacent targets)
 	local minRange = actor.weaponMinRange or 1
 
@@ -488,7 +494,8 @@ function TargetingService.ValidateSelection(
 		end
 
 		-- Use actor's equipped weapon range for validation
-		local candidates = TargetingService.GetAttackCandidates(actor, allUnits, actor.weaponMaxRange or 1)
+		local attackRange = (actor.weaponMaxRange or 1) + RacePassiveService.GetRangeModifier(actor)
+		local candidates = TargetingService.GetAttackCandidates(actor, allUnits, attackRange)
 		for _, c in ipairs(candidates) do
 			if c == selection then
 				return true, nil

@@ -228,7 +228,7 @@ local function ensureRoot()
 	-- BOTTOM-RIGHT: Fixed command bar (Execute / Back)
 	commandBar = Instance.new("Frame")
 	commandBar.Name = "CommandBar"
-	commandBar.Size = UDim2.new(0.15, 0, 0, 36)
+	commandBar.Size = UDim2.new(0.20, 0, 0, 40)
 	commandBar.Position = UDim2.new(1, -PAD, 1, -PAD)
 	commandBar.AnchorPoint = Vector2.new(1, 1)
 	commandBar.BackgroundTransparency = 1
@@ -491,22 +491,26 @@ function BattleHUD.ShowCommandBar(buttons)
 	local btnW = 1 / btnCount
 
 	for i, b in ipairs(buttons) do
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(btnW, -2, 1, 0)
-		btn.Position = UDim2.new(btnW * (i - 1), 1, 0, 0)
-		btn.BackgroundColor3 = b.color or Theme.Colors.Surface
-		btn.BackgroundTransparency = 0.15
-		btn.Font = Theme.Font.PrimaryBold; btn.TextSize = Theme.Text.Body()
-		btn.TextColor3 = b.textColor or Theme.Colors.TextPrimary
-		btn.Text = b.text or ""; btn.BorderSizePixel = 0
-		btn.Active = b.enabled ~= false
-		btn.AutoButtonColor = b.enabled ~= false
-		if b.enabled == false then btn.BackgroundTransparency = 0.6; btn.TextColor3 = Theme.Colors.TextDisabled end
-		btn.Parent = commandBar
-		Instance.new("UICorner", btn).CornerRadius = Theme.CornerRadius.sm
+		-- Map color to button style
+		local style = "Secondary"
+		local bText = b.text or ""
+		local bColor = b.color
+		if bColor == Theme.Colors.Success or bColor == Theme.Colors.Danger then
+			style = "Primary"
+		elseif bText == "Execute" or bText == "Confirm" or bText == "Move" or bText == "Attack" then
+			style = "Primary"
+		elseif bText == "Back" or bText == "Cancel" then
+			style = "Secondary"
+		end
+		local btn = Theme.MakeButton(commandBar, bText, style, nil, {
+			size = UDim2.new(btnW, -2, 1, 0),
+			position = UDim2.new(btnW * (i - 1), 1, 0, 0),
+			textColor = b.textColor or Theme.Colors.TextPrimary,
+			disabled = (b.enabled == false),
+		})
 		if b.onPress and b.enabled ~= false then
 			btn.MouseButton1Click:Connect(function()
-				if b.disableOnPress then btn.Active = false; btn.BackgroundTransparency = 0.6 end
+				if b.disableOnPress then btn.ImageTransparency = 0.5; btn.Active = false end
 				b.onPress()
 			end)
 		end

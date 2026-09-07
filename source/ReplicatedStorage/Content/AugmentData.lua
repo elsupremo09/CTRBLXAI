@@ -5,6 +5,7 @@
 local AugmentData = {
 	["AUG-BLEEDING-EDGE-SUPPORT"] = {
 		name = "Bleeding Edge Support",
+		description = "Adds a bleed effect to damage skills, increasing MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -23,6 +24,7 @@ local AugmentData = {
 	},
 	["AUG-VENOMOUS-SUPPORT"] = {
 		name = "Venomous Support",
+		description = "Adds a venom effect to damage skills, increasing MP cost by 15%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -41,6 +43,7 @@ local AugmentData = {
 	},
 	["AUG-BLINDING-SUPPORT"] = {
 		name = "Blinding Support",
+		description = "Adds a blind effect to damage skills, increasing MP cost by 15%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -58,6 +61,7 @@ local AugmentData = {
 	},
 	["AUG-CRIPPLING-SUPPORT"] = {
 		name = "Crippling Support",
+		description = "Adds a cripple effect to damage skills, increasing MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -76,6 +80,7 @@ local AugmentData = {
 	},
 	["AUG-SILENCING-SUPPORT"] = {
 		name = "Silencing Support",
+		description = "Adds a silence effect to damage skills, increasing MP cost by 25%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -93,6 +98,7 @@ local AugmentData = {
 	},
 	["AUG-DISARMING-SUPPORT"] = {
 		name = "Disarming Support",
+		description = "Adds a disarm effect to damage skills, increasing MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -111,6 +117,7 @@ local AugmentData = {
 	},
 	["AUG-MUTING-SUPPORT"] = {
 		name = "Muting Support",
+		description = "Adds a mute effect to damage skills, disabling target augments. Increases MP cost by 15%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -128,6 +135,7 @@ local AugmentData = {
 	},
 	["AUG-CURSING-SUPPORT"] = {
 		name = "Cursing Support",
+		description = "Adds a curse effect to damage skills, reducing target hit quality. Increases MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -145,6 +153,7 @@ local AugmentData = {
 	},
 	["AUG-WEAKENING-SUPPORT"] = {
 		name = "Weakening Support",
+		description = "Adds a weaken effect to damage skills, reducing all target stats. Increases MP cost by 25%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -162,6 +171,7 @@ local AugmentData = {
 	},
 	["AUG-MANA-EROSION-SUPPORT"] = {
 		name = "Mana Erosion Support",
+		description = "Drains target MP on each hit, increasing MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -179,6 +189,7 @@ local AugmentData = {
 	},
 	["AUG-MANA-RUPTURE-SUPPORT"] = {
 		name = "Mana Rupture Support",
+		description = "Destroys target MP on each hit and deals bonus damage equal to MP removed. Increases MP cost by 25%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -197,6 +208,7 @@ local AugmentData = {
 	},
 	["AUG-FIRE-CONVERSION"] = {
 		name = "Fire Conversion",
+		description = "Converts physical damage to fire element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
 		otherRequirements = "Physical",
@@ -214,6 +226,7 @@ local AugmentData = {
 	},
 	["AUG-ICE-CONVERSION"] = {
 		name = "Ice Conversion",
+		description = "Converts physical damage to ice element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
 		otherRequirements = "Physical",
@@ -231,6 +244,7 @@ local AugmentData = {
 	},
 	["AUG-ELECTRIC-CONVERSION"] = {
 		name = "Electric Conversion",
+		description = "Converts physical damage to electric element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
 		otherRequirements = "Physical",
@@ -248,6 +262,7 @@ local AugmentData = {
 	},
 	["AUG-EARTH-CONVERSION"] = {
 		name = "Earth Conversion",
+		description = "Converts physical damage to earth element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
 		otherRequirements = "Physical",
@@ -265,6 +280,7 @@ local AugmentData = {
 	},
 	["AUG-HOLY-CONVERSION"] = {
 		name = "Holy Conversion",
+		description = "Converts physical damage to holy element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
 		otherRequirements = "Physical",
@@ -282,6 +298,7 @@ local AugmentData = {
 	},
 	["AUG-DARK-CONVERSION"] = {
 		name = "Dark Conversion",
+		description = "Converts physical damage to dark element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
 		otherRequirements = "Physical",
@@ -299,6 +316,7 @@ local AugmentData = {
 	},
 	["AUG-POISON-CONVERSION"] = {
 		name = "Poison Conversion",
+		description = "Converts physical damage to poison element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
 		otherRequirements = "Physical",
@@ -316,6 +334,7 @@ local AugmentData = {
 	},
 	["AUG-LIFESTEAL"] = {
 		name = "Lifesteal",
+		description = "Recovers HP equal to 10% of damage dealt, slightly reducing weapon damage scaling.",
 		family = "Recovery",
 		requiredSkillTags = {"Direct Damage"},
 		effect = "Recover HP equal to 10% of actual HP damage dealt by the supported Skill.",
@@ -332,6 +351,7 @@ local AugmentData = {
 	},
 	["AUG-MANA-LEECH"] = {
 		name = "Mana Leech",
+		description = "Recovers MP equal to 10% of damage dealt, reducing weapon damage scaling by 15%.",
 		family = "Recovery",
 		requiredSkillTags = {"Direct Damage"},
 		effect = "Recover MP equal to 10% of actual HP damage dealt by the supported Skill.",
@@ -348,6 +368,7 @@ local AugmentData = {
 	},
 	["AUG-HP-CASTING"] = {
 		name = "HP Casting",
+		description = "Pays MP costs with HP instead (2 HP per 1 MP), letting you cast without MP.",
 		family = "Resource Conversion",
 		otherRequirements = "Positive MP Cost",
 		effect = "Convert only ordinary authored MP Cost to HP at 2 HP per 1 MP. External additional MP costs remain MP. Cannot commit if payment reduces caster to 0 HP or below.",
@@ -365,6 +386,7 @@ local AugmentData = {
 	},
 	["AUG-BLOOD-CASTING"] = {
 		name = "Blood Casting",
+		description = "Pays 3 HP per 1 MP on top of normal MP cost in exchange for +10% skill potency.",
 		family = "Resource Conversion",
 		otherRequirements = "Positive MP Cost",
 		effect = "Pay ordinary MP Cost plus 3 HP per 1 ordinary authored MP; gain +10% Skill Potency for this resolution. External added MP does not increase HP payment. Cannot commit if payment reduces caster to 0 HP or below.",
@@ -382,6 +404,7 @@ local AugmentData = {
 	},
 	["AUG-AGI-SCALING"] = {
 		name = "AGI Scaling",
+		description = "Uses AGI instead of STR for the skill's weapon damage calculation. Increases MP cost by 15%.",
 		family = "Stat Scaling",
 		otherRequirements = "Positive Weapon Attack Power scaling",
 		effect = "For the supported Skill’s Weapon Attack Power calculation, use AGI instead of STR. Does not change Basic Attack, Weapon WT reduction, Force, Weapon RT Delay strength, burden, other Skills, or other STR-owned mechanics.",
@@ -398,6 +421,7 @@ local AugmentData = {
 	},
 	["AUG-INT-SCALING"] = {
 		name = "INT Scaling",
+		description = "Uses INT instead of STR for the skill's weapon damage calculation. Increases MP cost by 15%.",
 		family = "Stat Scaling",
 		otherRequirements = "Positive Weapon Attack Power scaling",
 		effect = "For the supported Skill’s Weapon Attack Power calculation, use INT instead of STR. Does not change Basic Attack, Weapon WT reduction, Force, Weapon RT Delay strength, burden, other Skills, or other STR-owned mechanics.",
@@ -414,6 +438,7 @@ local AugmentData = {
 	},
 	["AUG-VIT-SCALING"] = {
 		name = "VIT Scaling",
+		description = "Uses VIT instead of STR for the skill's weapon damage calculation. Increases MP cost by 15%.",
 		family = "Stat Scaling",
 		otherRequirements = "Positive Weapon Attack Power scaling",
 		effect = "For the supported Skill’s Weapon Attack Power calculation, use VIT instead of STR. Does not change Basic Attack, Weapon WT reduction, Force, Weapon RT Delay strength, burden, other Skills, or other STR-owned mechanics.",
@@ -430,6 +455,7 @@ local AugmentData = {
 	},
 	["AUG-DEX-SCALING"] = {
 		name = "DEX Scaling",
+		description = "Uses DEX instead of STR for the skill's weapon damage calculation. Increases MP cost by 15%.",
 		family = "Stat Scaling",
 		otherRequirements = "Positive Weapon Attack Power scaling",
 		effect = "For the supported Skill’s Weapon Attack Power calculation, use DEX instead of STR. Does not change Basic Attack, Weapon WT reduction, Force, Weapon RT Delay strength, burden, other Skills, or other STR-owned mechanics.",
@@ -446,6 +472,7 @@ local AugmentData = {
 	},
 	["AUG-LUK-SCALING"] = {
 		name = "LUK Scaling",
+		description = "Uses LUK instead of STR for the skill's weapon damage calculation. Increases MP cost by 15%.",
 		family = "Stat Scaling",
 		otherRequirements = "Positive Weapon Attack Power scaling",
 		effect = "For the supported Skill’s Weapon Attack Power calculation, use LUK instead of STR. Does not change Basic Attack, Weapon WT reduction, Force, Weapon RT Delay strength, burden, other Skills, or other STR-owned mechanics.",
@@ -462,6 +489,7 @@ local AugmentData = {
 	},
 	["AUG-FORCEFUL-STRIKE"] = {
 		name = "Forceful Strike",
+		description = "Knocks the target back 1 tile on hit, slightly reducing weapon damage scaling.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -479,6 +507,7 @@ local AugmentData = {
 	},
 	["AUG-PULLING-STRIKE"] = {
 		name = "Pulling Strike",
+		description = "Pulls the target 1 tile toward the caster on hit, slightly reducing weapon damage scaling.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -497,6 +526,7 @@ local AugmentData = {
 	},
 	["AUG-SWAP-STRIKE"] = {
 		name = "Swap Strike",
+		description = "Swaps positions with the target after dealing damage, reducing weapon damage scaling by 25%.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -515,6 +545,7 @@ local AugmentData = {
 	},
 	["AUG-EXECUTIONER"] = {
 		name = "Executioner",
+		description = "Recovers 1 AP when the skill kills an enemy, reducing weapon damage scaling by 25%.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
 		effect = "If the supported Skill directly defeats at least one enemy, recover 1 AP.",
@@ -533,6 +564,7 @@ local AugmentData = {
 	},
 	["AUG-BLOOD-HARVEST"] = {
 		name = "Blood Harvest",
+		description = "Recovers 15% max HP when the skill kills an enemy. Slot cost only.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
 		effect = "If the supported Skill directly defeats at least one enemy, recover 15% Max HP.",
@@ -551,6 +583,7 @@ local AugmentData = {
 	},
 	["AUG-SOUL-HARVEST"] = {
 		name = "Soul Harvest",
+		description = "Recovers 10% max MP when the skill kills an enemy. Slot cost only.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
 		effect = "If the supported Skill directly defeats at least one enemy, recover 10% Max MP.",
@@ -569,6 +602,7 @@ local AugmentData = {
 	},
 	["AUG-PURIFYING-KILL"] = {
 		name = "Purifying Kill",
+		description = "Removes one debuff from the caster when the skill kills an enemy. Increases MP cost by 15%.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
 		effect = "If the supported Skill directly defeats at least one enemy, remove one dispellable debuff from the caster using normal stable-priority dispel.",
@@ -587,6 +621,7 @@ local AugmentData = {
 	},
 	["AUG-PURGING-STRIKE"] = {
 		name = "Purging Strike",
+		description = "Removes one buff from the target on hit, reducing weapon damage scaling by 20%.",
 		family = "Purge",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -605,6 +640,7 @@ local AugmentData = {
 	},
 	["AUG-EXPLOSIVE-DEATH"] = {
 		name = "Explosive Death",
+		description = "When the skill kills an enemy, adjacent units take fire damage equal to 25% of the slain unit's max HP. Slot cost only.",
 		family = "Death Explosion",
 		requiredSkillTags = {"Direct Damage"},
 		effect = "Only when supported Skill primary damage itself reduces an enemy to 0 HP: adjacent units take Fire damage equal to 25% defeated Max HP. Does not trigger from explosions, collision, falling, map objects, DoT, terrain, reactions, Mana Rupture, or passive follow-ups.",
@@ -623,6 +659,7 @@ local AugmentData = {
 	},
 	["AUG-TREASURE-HUNTER"] = {
 		name = "Treasure Hunter",
+		description = "Improves the quality of loot dropped by enemies killed with this skill. Slot cost only.",
 		family = "Reward",
 		requiredSkillTags = {"Direct Damage"},
 		effect = "If the supported Skill directly defeats an enemy and it successfully generates an eligible ordinary reward, apply Augment Quality Weight Multiplier ×1.25 to the selected category’s eligible nonzero quality weights before normalization.",
@@ -639,6 +676,7 @@ local AugmentData = {
 	},
 	["AUG-GOLD-HARVEST"] = {
 		name = "Gold Harvest",
+		description = "Increases gold dropped by enemies killed with this skill by 25%, slightly reducing weapon damage scaling.",
 		family = "Reward",
 		requiredSkillTags = {"Direct Damage"},
 		effect = "If the supported Skill directly defeats an enemy eligible to generate Gold, increase that enemy’s generated Gold by 25%.",
@@ -657,6 +695,7 @@ local AugmentData = {
 	},
 	["AUG-CHAIN-SUPPORT"] = {
 		name = "Chain Support",
+		description = "Converts the skill to chain through up to 2 additional enemies at 75% power per jump. Increases MP cost by 25%.",
 		family = "Pattern",
 		requiredTargetRules = "Enemy Unit",
 		requiredPattern = "Single",
@@ -675,6 +714,7 @@ local AugmentData = {
 	},
 	["AUG-LINE-PROJECTION"] = {
 		name = "Line Projection",
+		description = "Extends the skill into a line, hitting a second target behind the first at 75% power. Increases MP cost by 20%.",
 		family = "Pattern",
 		requiredTargetRules = "Unit",
 		requiredPattern = "Single",
@@ -693,6 +733,7 @@ local AugmentData = {
 	},
 	["AUG-IMPACT-SPLASH"] = {
 		name = "Impact Splash",
+		description = "Adds splash damage to the skill, hitting 4 adjacent tiles at 50% power. Increases MP cost by 25%.",
 		family = "Pattern",
 		requiredPattern = "Single",
 		otherRequirements = "supported Skill has a numerical effect",
@@ -710,6 +751,7 @@ local AugmentData = {
 	},
 	["AUG-CONCENTRATED-EFFECT"] = {
 		name = "Concentrated Effect",
+		description = "Focuses AOE skills into a single powerful hit with +25% damage. Increases MP cost by 15%.",
 		family = "Pattern",
 		requiredPattern = "Non-Single",
 		otherRequirements = "Pattern is not Single; supported Skill has a numerical primary effect",
@@ -727,6 +769,7 @@ local AugmentData = {
 	},
 	["AUG-BURNING-GROUND"] = {
 		name = "Burning Ground",
+		description = "Creates burning terrain on affected tiles for a duration. Increases MP cost by 20%.",
 		family = "Terrain Effect",
 		requiredSkillTags = {"Direct Damage"},
 		otherRequirements = "Fire",
@@ -744,6 +787,7 @@ local AugmentData = {
 	},
 	["AUG-WET-GROUND"] = {
 		name = "Wet Ground",
+		description = "Creates wet terrain on affected tiles, setting up ice combos. Increases MP cost by 15%.",
 		family = "Terrain Effect",
 		requiredTargetRules = "Enemy Unit",
 		otherRequirements = "Water;  or Ground",
@@ -761,6 +805,7 @@ local AugmentData = {
 	},
 	["AUG-FROZEN-GROUND"] = {
 		name = "Frozen Ground",
+		description = "Creates frozen terrain on affected tiles, causing sliding. Increases MP cost by 20%.",
 		family = "Terrain Effect",
 		requiredTargetRules = "Enemy Unit",
 		otherRequirements = "Ice;  or Ground",
@@ -778,6 +823,7 @@ local AugmentData = {
 	},
 	["AUG-POISON-CLOUD"] = {
 		name = "Poison Cloud",
+		description = "Creates a poison cloud on affected tiles for a duration. Increases MP cost by 20%.",
 		family = "Terrain Effect",
 		requiredTargetRules = "Enemy Unit",
 		otherRequirements = "Poison;  or Ground",
@@ -795,6 +841,7 @@ local AugmentData = {
 	},
 	["AUG-PREDATOR-STRIKE"] = {
 		name = "Predator Strike",
+		description = "Deals +25% bonus damage to targets that have at least one debuff. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -811,6 +858,7 @@ local AugmentData = {
 	},
 	["AUG-SHATTER-BLOW"] = {
 		name = "Shatter Blow",
+		description = "Deals +55% bonus damage to Frozen targets and shatters the ice. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -827,6 +875,7 @@ local AugmentData = {
 	},
 	["AUG-VENOM-BURST"] = {
 		name = "Venom Burst",
+		description = "Deals +40% bonus damage to targets afflicted with Poison or Venom. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -843,6 +892,7 @@ local AugmentData = {
 	},
 	["AUG-HEIGHTS-ADVANTAGE"] = {
 		name = "Height Advantage",
+		description = "Deals +35% bonus damage when attacking from higher elevation. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -859,6 +909,7 @@ local AugmentData = {
 	},
 	["AUG-DESPERATION"] = {
 		name = "Desperation",
+		description = "Deals +60% bonus damage when the caster is below 30% HP. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -875,6 +926,7 @@ local AugmentData = {
 	},
 	["AUG-FOCUSED-FINISHER"] = {
 		name = "Focused Finisher",
+		description = "Deals +50% bonus damage to targets below 25% HP. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -891,6 +943,7 @@ local AugmentData = {
 	},
 	["AUG-BARRIER-ON-HIT"] = {
 		name = "Barrier on Hit",
+		description = "Grants the caster a temporary barrier equal to 15% of damage dealt, reducing weapon damage scaling by 15%.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -908,6 +961,7 @@ local AugmentData = {
 	},
 	["AUG-EVASION-SURGE"] = {
 		name = "Evasion Surge",
+		description = "Grants +30% evasion until the caster's next turn after using the skill. Reduces weapon damage scaling by 15%.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -924,6 +978,7 @@ local AugmentData = {
 	},
 	["AUG-RETALIATION-GUARD"] = {
 		name = "Retaliation Guard",
+		description = "The next incoming attack this round deals 20% less damage to the caster. Reduces weapon damage scaling by 20%.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -940,6 +995,7 @@ local AugmentData = {
 	},
 	["AUG-THREAT-REDUCTION"] = {
 		name = "Threat Reduction",
+		description = "Reduces the caster's threat by 20% until next turn, making enemies less likely to target them. Slightly reduces weapon damage.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -955,6 +1011,7 @@ local AugmentData = {
 	},
 	["AUG-FORTIFY-ON-KILL"] = {
 		name = "Fortify on Kill",
+		description = "Grants +25% damage reduction for a full round when the skill kills an enemy. Slot cost only.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -973,6 +1030,7 @@ local AugmentData = {
 	},
 	["AUG-DRAINING-WARD"] = {
 		name = "Draining Ward",
+		description = "Grants a ward that absorbs the next magic damage (up to 20% of damage dealt). Reduces weapon damage scaling by 15%.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -990,6 +1048,7 @@ local AugmentData = {
 	},
 	["AUG-STEADFAST-STRIKE"] = {
 		name = "Steadfast Strike",
+		description = "Makes the caster immune to knockback, pulls, and swaps until their next turn. Slightly reduces weapon damage.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1005,6 +1064,7 @@ local AugmentData = {
 	},
 	["AUG-ARMOR-PIERCING"] = {
 		name = "Armor Piercing",
+		description = "Ignores 30% of the target's physical defense, slightly reducing weapon damage scaling.",
 		family = "Penetration",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1021,6 +1081,7 @@ local AugmentData = {
 	},
 	["AUG-QUICKEN-SELF"] = {
 		name = "Quicken Self",
+		description = "Reduces the caster's charge time for their next turn by 15%. Increases MP cost by 30%.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1038,6 +1099,7 @@ local AugmentData = {
 	},
 	["AUG-DELAY-STRIKE"] = {
 		name = "Delay Strike",
+		description = "Increases the target's charge time for their next turn by 20%. Increases MP cost by 35%.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1056,6 +1118,7 @@ local AugmentData = {
 	},
 	["AUG-MOMENTUM"] = {
 		name = "Momentum",
+		description = "Reduces the caster's charge time by 30% when the skill kills an enemy. Increases MP cost by 25%.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1075,6 +1138,7 @@ local AugmentData = {
 	},
 	["AUG-PRIORITY-SURGE"] = {
 		name = "Priority Surge",
+		description = "Deals +15% bonus damage if the caster acts first in the round. Slot cost only.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1092,6 +1156,7 @@ local AugmentData = {
 	},
 	["AUG-INTERRUPT"] = {
 		name = "Interrupt",
+		description = "Cancels the target's channeling if they are mid-cast, wasting their skill. Increases MP cost by 40%.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1109,6 +1174,7 @@ local AugmentData = {
 	},
 	["AUG-SLUGGISH-BLOW"] = {
 		name = "Sluggish Blow",
+		description = "Inflicts Slow on the target for 1 turn after dealing damage. Increases MP cost by 25%.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1126,6 +1192,7 @@ local AugmentData = {
 	},
 	["AUG-HASTE-SUPPORT"] = {
 		name = "Haste Support",
+		description = "Also applies Haste to the target of a healing or support skill. Increases MP cost by 30%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
 		requiredTargetRules = "Ally Unit OR Self",
@@ -1142,6 +1209,7 @@ local AugmentData = {
 	},
 	["AUG-REGENERATION-SUPPORT"] = {
 		name = "Regeneration Support",
+		description = "Also applies Regeneration to the target of a healing or support skill. Increases MP cost by 25%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
 		requiredTargetRules = "Ally Unit OR Self",
@@ -1158,6 +1226,7 @@ local AugmentData = {
 	},
 	["AUG-RECHARGE-SUPPORT"] = {
 		name = "Recharge Support",
+		description = "Also applies MP Recharge to the target of a healing or support skill. Increases MP cost by 25%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
 		requiredTargetRules = "Ally Unit OR Self",
@@ -1174,6 +1243,7 @@ local AugmentData = {
 	},
 	["AUG-BLESSED-SUPPORT"] = {
 		name = "Blessed Support",
+		description = "Also applies Blessed to the target of a healing or support skill. Increases MP cost by 35%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
 		requiredTargetRules = "Ally Unit OR Self",
@@ -1190,6 +1260,7 @@ local AugmentData = {
 	},
 	["AUG-ENLIGHTEN-SUPPORT"] = {
 		name = "Enlighten Support",
+		description = "Also applies Enlightened to the target of a healing or support skill. Increases MP cost by 30%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
 		requiredTargetRules = "Ally Unit OR Self",
@@ -1206,6 +1277,7 @@ local AugmentData = {
 	},
 	["AUG-RUSH-SUPPORT"] = {
 		name = "Rush Support",
+		description = "Also applies Rush to the target of a healing or support skill. Increases MP cost by 20%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
 		requiredTargetRules = "Ally Unit OR Self",
@@ -1222,6 +1294,7 @@ local AugmentData = {
 	},
 	["AUG-FRENZY-SUPPORT"] = {
 		name = "Frenzy Support",
+		description = "Also applies Frenzy to the target of a healing or support skill. Increases MP cost by 35%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
 		requiredTargetRules = "Ally Unit OR Self",
@@ -1238,6 +1311,7 @@ local AugmentData = {
 	},
 	["AUG-BURNING-SUPPORT"] = {
 		name = "Burning Support",
+		description = "Adds a burn effect to fire damage skills. Increases MP cost by 15%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1256,6 +1330,7 @@ local AugmentData = {
 	},
 	["AUG-CONFUSING-SUPPORT"] = {
 		name = "Confusing Support",
+		description = "Adds a confuse effect to damage skills, causing backlash damage when the target attacks. Increases MP cost by 30%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1273,6 +1348,7 @@ local AugmentData = {
 	},
 	["AUG-PINNING-SUPPORT"] = {
 		name = "Pinning Support",
+		description = "Pins the target in place for 1 turn after dealing damage. Increases MP cost by 25%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1290,6 +1366,7 @@ local AugmentData = {
 	},
 	["AUG-BREAK-SUPPORT"] = {
 		name = "Break Support",
+		description = "Applies Break on hit, disabling the target's passive abilities. Increases MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1307,6 +1384,7 @@ local AugmentData = {
 	},
 	["AUG-WETTING-SUPPORT"] = {
 		name = "Wetting Support",
+		description = "Applies Wet to the target on hit, setting up ice combos. Increases MP cost by 10%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1325,6 +1403,7 @@ local AugmentData = {
 	},
 	["AUG-OVERHEALING-SHIELD"] = {
 		name = "Overhealing Shield",
+		description = "Converts excess healing beyond max HP into a temporary barrier (up to 20% max HP). Increases MP cost by 20%.",
 		family = "Recovery",
 		requiredSkillTags = {"Healing"},
 		requiredTargetRules = "Ally Unit OR Self",
@@ -1341,6 +1420,7 @@ local AugmentData = {
 	},
 	["AUG-VITALITY-SURGE"] = {
 		name = "Vitality Surge",
+		description = "Recovers 5% of the caster's max HP on hit (flat, not damage-based). Slightly reduces weapon damage scaling.",
 		family = "Recovery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1358,6 +1438,7 @@ local AugmentData = {
 	},
 	["AUG-SIPHON-BARRIER"] = {
 		name = "Siphon Barrier",
+		description = "Recovers MP equal to 20% of any barrier or shield removed from the target. Slot cost only.",
 		family = "Recovery",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1374,6 +1455,7 @@ local AugmentData = {
 	},
 	["AUG-TOXIC-DEATH"] = {
 		name = "Toxic Death",
+		description = "When the skill kills an enemy, applies Poison to all enemies within 2 tiles. Slot cost only.",
 		family = "Death Explosion",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1391,6 +1473,7 @@ local AugmentData = {
 	},
 	["AUG-SHATTERING-DEATH"] = {
 		name = "Shattering Death",
+		description = "When the skill kills an enemy, reduces physical defense of all enemies within 2 tiles by 20%. Slot cost only.",
 		family = "Death Explosion",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1408,6 +1491,7 @@ local AugmentData = {
 	},
 	["AUG-TERRIFYING-DEATH"] = {
 		name = "Terrifying Death",
+		description = "When the skill kills an enemy, pushes all enemies within 3 tiles away from the death location. Slot cost only.",
 		family = "Death Explosion",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1426,6 +1510,7 @@ local AugmentData = {
 	},
 	["AUG-MASS-PURGE"] = {
 		name = "Mass Purge",
+		description = "Removes 1 buff from each enemy hit by the skill. Increases MP cost by 30%.",
 		family = "Purge",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1445,6 +1530,7 @@ local AugmentData = {
 	},
 	["AUG-DEEP-PURGE"] = {
 		name = "Deep Purge",
+		description = "Removes up to 2 buffs from a single target on hit. Increases MP cost by 35%.",
 		family = "Purge",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1464,6 +1550,7 @@ local AugmentData = {
 	},
 	["AUG-SELF-CLEANSE"] = {
 		name = "Self Cleanse",
+		description = "Removes 1 debuff from the caster after the skill resolves. Increases MP cost by 25%.",
 		family = "Purge",
 		requiredSkillTags = {"Direct Damage OR Support"},
 		requiredTargetRules = "Any",
@@ -1479,6 +1566,7 @@ local AugmentData = {
 	},
 	["AUG-LAUNCHING-STRIKE"] = {
 		name = "Launching Strike",
+		description = "Launches the target 1 elevation tier upward on hit. Increases MP cost by 20%.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1497,6 +1585,7 @@ local AugmentData = {
 	},
 	["AUG-SCATTER-STRIKE"] = {
 		name = "Scatter Strike",
+		description = "Scatters all hit targets 1 tile away from the impact center. Increases MP cost by 25%.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1516,6 +1605,7 @@ local AugmentData = {
 	},
 	["AUG-VORTEX-STRIKE"] = {
 		name = "Vortex Strike",
+		description = "Pulls all hit targets 1 tile toward the impact center. Increases MP cost by 25%.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1535,6 +1625,7 @@ local AugmentData = {
 	},
 	["AUG-CHAIN-KILL"] = {
 		name = "Chain Kill",
+		description = "When the skill kills an enemy, immediately repeat the skill on a different target for free (one chain max). Reduces weapon damage by 30%.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1556,6 +1647,7 @@ local AugmentData = {
 	},
 	["AUG-KILL-MOMENTUM-MP"] = {
 		name = "Triumphant Recovery",
+		description = "Recovers 30% of the skill's MP cost when it kills an enemy. Slot cost only.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1573,6 +1665,7 @@ local AugmentData = {
 	},
 	["AUG-OVERKILL-SPLASH"] = {
 		name = "Overkill Splash",
+		description = "When the skill overkills an enemy, splashes excess damage to a nearby foe (capped at 50%). Slot cost only.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1594,6 +1687,7 @@ local AugmentData = {
 	},
 	["AUG-ELECTRIC-FIELD"] = {
 		name = "Electric Field",
+		description = "Creates an electric field on the target's tile and adjacent tiles that damages units ending their turn there. Increases MP cost by 25%.",
 		family = "Terrain Effect",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1612,6 +1706,7 @@ local AugmentData = {
 	},
 	["AUG-DARKENED-GROUND"] = {
 		name = "Darkened Ground",
+		description = "Creates darkened ground that reduces healing received by units standing on it by 20%. Increases MP cost by 20%.",
 		family = "Terrain Effect",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1629,6 +1724,7 @@ local AugmentData = {
 	},
 	["AUG-HOLY-GROUND"] = {
 		name = "Holy Ground",
+		description = "Creates holy ground that heals allies for 5% max HP each turn and damages undead. Increases MP cost by 30%.",
 		family = "Terrain Effect",
 		requiredSkillTags = {"Direct Damage OR Support OR Healing"},
 		requiredTargetRules = "Any",
@@ -1647,6 +1743,7 @@ local AugmentData = {
 	},
 	["AUG-PIERCING-SHOT"] = {
 		name = "Piercing Shot",
+		description = "Projectile pierces through the target, hitting one enemy directly behind for 60% damage. Increases MP cost by 20%.",
 		family = "Pattern",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1668,6 +1765,7 @@ local AugmentData = {
 	},
 	["AUG-BOUNCE-SHOT"] = {
 		name = "Bounce Shot",
+		description = "Projectile bounces to one additional enemy near the target for 50% damage. Increases MP cost by 20%.",
 		family = "Pattern",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1689,6 +1787,7 @@ local AugmentData = {
 	},
 	["AUG-WIDE-ARC"] = {
 		name = "Wide Arc",
+		description = "Also hits enemies adjacent to both the caster and target for 40% damage. Increases MP cost by 20%.",
 		family = "Pattern",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1710,6 +1809,7 @@ local AugmentData = {
 	},
 	["AUG-SOUL-ECHO"] = {
 		name = "Soul Echo",
+		description = "When the skill kills an enemy, summons a Soul Echo that detonates next turn for 30% of the kill damage as dark AOE. Slot cost only.",
 		family = "Summoning",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1729,6 +1829,7 @@ local AugmentData = {
 	},
 	["AUG-DECOY-SPAWN"] = {
 		name = "Decoy Spawn",
+		description = "Spawns a decoy next to the caster after the skill resolves, drawing enemy attention. Increases MP cost by 30%.",
 		family = "Summoning",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
@@ -1746,6 +1847,7 @@ local AugmentData = {
 	},
 	["AUG-TURRET-SPAWN"] = {
 		name = "Turret Spawn",
+		description = "Spawns a turret next to the caster after the skill resolves that attacks nearby enemies. Increases MP cost by 50%.",
 		family = "Summoning",
 		requiredSkillTags = {"Direct Damage"},
 		requiredTargetRules = "Enemy Unit",
