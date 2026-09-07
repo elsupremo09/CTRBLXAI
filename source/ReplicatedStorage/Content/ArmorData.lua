@@ -1,0 +1,1020 @@
+-- ArmorData.lua
+-- CTRBLXAI | Slice 4A — Equipment Foundation
+-- Auto-generated from CTRBLXAI.db nonweapon_equipment catalog.
+-- Do not edit manually. Regenerate from database.
+--
+-- All stats are L99 endpoints. Use ItemLevelScale to get actual values.
+-- Scale(L) = 0.30 + 0.70 * ((L - 1) / 98) ^ 0.55
+-- Scaled properties: defense, wt, hp, mp (sign preserved).
+-- NOT scaled: passives, actionOwnership, slot.
+
+local ArmorData = {}
+
+--------------------------------------------------
+-- ITEM LEVEL SCALING
+--------------------------------------------------
+
+function ArmorData.GetScale(itemLevel)
+	if itemLevel < 1 then itemLevel = 1 end
+	if itemLevel == 99 then return 1.0 end
+	return 0.30 + 0.70 * ((itemLevel - 1) / 98) ^ 0.55
+end
+
+function ArmorData.ScaleProperty(l99Value, itemLevel)
+	if l99Value == 0 then return 0 end
+	local scale = ArmorData.GetScale(itemLevel)
+	return math.round(l99Value * scale)
+end
+
+--------------------------------------------------
+-- ARCHETYPE CATALOG
+-- numericId: compact save ID (101+ for armor)
+-- Stats are L99 values. Zero stays zero.
+--------------------------------------------------
+
+ArmorData.Archetypes = {
+	-- === HEAD (Interact) ===
+	["HD-001"] = {
+		numericId = 101, name = "Quickhand Hood", category = "Armor",
+		slot = "Head", defense = 19, wt = 8, hp = 20, mp = 13,
+		passiveName = "Interact RT ×0.75",
+		passiveDesc = "Interact RT ×0.75.",
+		passiveBp = 60, totalBp = 251,
+		actionOwnership = "Interact",
+	},
+	["HD-002"] = {
+		numericId = 102, name = "Surveyor Visor", category = "Armor",
+		slot = "Head", defense = 18, wt = 10, hp = 20, mp = 12,
+		passiveName = "Interact Maximum Range +2",
+		passiveDesc = "Interact Maximum Range +2.",
+		passiveBp = 70, totalBp = 248,
+		actionOwnership = "Interact",
+	},
+	["HD-003"] = {
+		numericId = 103, name = "Field Medic Coif", category = "Armor",
+		slot = "Head", defense = 17, wt = 12, hp = 25, mp = 13,
+		passiveName = "Interact revives KO'd ally at 15% HP",
+		passiveDesc = "Interact revives KO'd ally at 15% HP.",
+		passiveBp = 60, totalBp = 248,
+		actionOwnership = "Interact",
+	},
+	["HD-004"] = {
+		numericId = 104, name = "Chronologist Monocle", category = "Armor",
+		slot = "Head", defense = 10, wt = 8, hp = 16, mp = 24,
+		passiveName = "Interact on ally grants target -50 RT",
+		passiveDesc = "Interact on ally grants target -50 RT.",
+		passiveBp = 70, totalBp = 248,
+		actionOwnership = "Interact",
+	},
+	["HD-005"] = {
+		numericId = 105, name = "Recruiter's Circlet", category = "Armor",
+		slot = "Head", defense = 17, wt = 8, hp = 18, mp = 12,
+		passiveName = "Interact on valid enemy attempts Recruitment with Success Rate +10%",
+		passiveDesc = "Interact on valid enemy attempts Recruitment with Success Rate +10%.",
+		passiveBp = 80, totalBp = 251,
+		actionOwnership = "Interact",
+	},
+	["HD-006"] = {
+		numericId = 106, name = "Diplomat's Veil", category = "Armor",
+		slot = "Head", defense = 10, wt = 6, hp = 16, mp = 24,
+		passiveName = "Interact recruitment ignores hostility threshold",
+		passiveDesc = "Interact recruitment ignores hostility threshold.",
+		passiveBp = 70, totalBp = 252,
+		actionOwnership = "Interact",
+	},
+	["HD-007"] = {
+		numericId = 107, name = "Siege Gunner Helm", category = "Armor",
+		slot = "Head", defense = 28, wt = 15, hp = 22, mp = 6,
+		passiveName = "Interact on siege/artillery object: damage ×1.5",
+		passiveDesc = "Interact on siege/artillery object: damage ×1.5.",
+		passiveBp = 50, totalBp = 250,
+		actionOwnership = "Interact",
+	},
+	["HD-008"] = {
+		numericId = 108, name = "Artillerist Eyepiece", category = "Armor",
+		slot = "Head", defense = 19, wt = 10, hp = 21, mp = 13,
+		passiveName = "Interact on siege/artillery object: range +2",
+		passiveDesc = "Interact on siege/artillery object: range +2.",
+		passiveBp = 60, totalBp = 250,
+		actionOwnership = "Interact",
+	},
+	["HD-009"] = {
+		numericId = 109, name = "Demolition Mask", category = "Armor",
+		slot = "Head", defense = 27, wt = 14, hp = 23, mp = 6,
+		passiveName = "Interact destroys breakable objects in 1 action regardless of HP",
+		passiveDesc = "Interact destroys breakable objects in 1 action regardless of HP.",
+		passiveBp = 50, totalBp = 250,
+		actionOwnership = "Interact",
+	},
+	["HD-010"] = {
+		numericId = 110, name = "Trapfinder Goggles", category = "Armor",
+		slot = "Head", defense = 16, wt = 8, hp = 23, mp = 12,
+		passiveName = "Interact disarms adjacent traps; reveals hidden traps within 3 tiles",
+		passiveDesc = "Interact disarms adjacent traps; reveals hidden traps within 3 tiles.",
+		passiveBp = 70, totalBp = 251,
+		actionOwnership = "Interact",
+	},
+	["HD-011"] = {
+		numericId = 111, name = "Salvager's Cap", category = "Armor",
+		slot = "Head", defense = 17, wt = 8, hp = 25, mp = 14,
+		passiveName = "Interact on destroyed objects yields bonus loot/materials",
+		passiveDesc = "Interact on destroyed objects yields bonus loot/materials.",
+		passiveBp = 50, totalBp = 250,
+		actionOwnership = "Interact",
+	},
+	["HD-012"] = {
+		numericId = 112, name = "Locksmith Lens", category = "Armor",
+		slot = "Head", defense = 16, wt = 8, hp = 24, mp = 13,
+		passiveName = "Interact opens locked containers without a key",
+		passiveDesc = "Interact opens locked containers without a key.",
+		passiveBp = 60, totalBp = 248,
+		actionOwnership = "Interact",
+	},
+	["HD-013"] = {
+		numericId = 113, name = "Relic Reader Crown", category = "Armor",
+		slot = "Head", defense = 11, wt = 6, hp = 18, mp = 28,
+		passiveName = "Interact on discovery objects reveals full information",
+		passiveDesc = "Interact on discovery objects reveals full information.",
+		passiveBp = 40, totalBp = 249,
+		actionOwnership = "Interact",
+	},
+	["HD-014"] = {
+		numericId = 114, name = "Hazard Warden Hood", category = "Armor",
+		slot = "Head", defense = 24, wt = 14, hp = 20, mp = 5,
+		passiveName = "Interact on hazard tile neutralizes it permanently",
+		passiveDesc = "Interact on hazard tile neutralizes it permanently.",
+		passiveBp = 80, totalBp = 252,
+		actionOwnership = "Interact",
+	},
+	["HD-015"] = {
+		numericId = 115, name = "Mechanist Headgear", category = "Armor",
+		slot = "Head", defense = 17, wt = 12, hp = 17, mp = 12,
+		passiveName = "Interact on allied objects/summons: restore 1 charge or +500 CT duration",
+		passiveDesc = "Interact on allied objects/summons: restore 1 charge or +500 CT duration.",
+		passiveBp = 90, totalBp = 250,
+		actionOwnership = "Interact",
+	},
+	["HD-016"] = {
+		numericId = 116, name = "Signal Officer Beret", category = "Armor",
+		slot = "Head", defense = 16, wt = 10, hp = 24, mp = 12,
+		passiveName = "Interact on KO'd ally: revive at 25% HP if within 2 tiles of another ally",
+		passiveDesc = "Interact on KO'd ally: revive at 25% HP if within 2 tiles of another ally.",
+		passiveBp = 70, totalBp = 250,
+		actionOwnership = "Interact",
+	},
+	["HD-017"] = {
+		numericId = 117, name = "Rescue Marshal Helm", category = "Armor",
+		slot = "Head", defense = 16, wt = 12, hp = 22, mp = 12,
+		passiveName = "Interact on KO'd ally: revive at 20% HP and immediately relocate to user's tile",
+		passiveDesc = "Interact on KO'd ally: revive at 20% HP and immediately relocate to user's tile.",
+		passiveBp = 80, totalBp = 250,
+		actionOwnership = "Interact",
+	},
+	["HD-018"] = {
+		numericId = 118, name = "Merchant's Turban", category = "Armor",
+		slot = "Head", defense = 16, wt = 6, hp = 24, mp = 13,
+		passiveName = "Interact on shop objects: all prices reduced by 20%",
+		passiveDesc = "Interact on shop objects: all prices reduced by 20%.",
+		passiveBp = 60, totalBp = 252,
+		actionOwnership = "Interact",
+	},
+	["HD-019"] = {
+		numericId = 119, name = "Oracle Diadem", category = "Armor",
+		slot = "Head", defense = 8, wt = 8, hp = 14, mp = 21,
+		passiveName = "Interact reveals enemy stats, skills, and AI behavior for 1000 CT",
+		passiveDesc = "Interact reveals enemy stats, skills, and AI behavior for 1000 CT.",
+		passiveBp = 100, totalBp = 250,
+		actionOwnership = "Interact",
+	},
+	["HD-020"] = {
+		numericId = 120, name = "Commandant Helm", category = "Armor",
+		slot = "Head", defense = 15, wt = 10, hp = 22, mp = 12,
+		passiveName = "Interact on ally: target gains +20% damage for 500 CT",
+		passiveDesc = "Interact on ally: target gains +20% damage for 500 CT.",
+		passiveBp = 80, totalBp = 249,
+		actionOwnership = "Interact",
+	},
+
+	-- === BODY (Guard) ===
+	["BD-001"] = {
+		numericId = 121, name = "Brigandine", category = "Armor",
+		slot = "Body", defense = 42, wt = 35, hp = 35, mp = 9,
+		passiveName = "While Guarding: damage reduction 35%→45% (cap still 80%)",
+		passiveDesc = "While Guarding: damage reduction 35%→45% (cap still 80%).",
+		passiveBp = 120, totalBp = 401,
+		actionOwnership = "Guard",
+	},
+	["BD-002"] = {
+		numericId = 122, name = "Fortress Plate", category = "Armor",
+		slot = "Body", defense = 50, wt = 45, hp = 31, mp = 4,
+		passiveName = "While Guarding: incoming displacement/push is negated",
+		passiveDesc = "While Guarding: incoming displacement/push is negated.",
+		passiveBp = 130, totalBp = 399,
+		actionOwnership = "Guard",
+	},
+	["BD-003"] = {
+		numericId = 123, name = "Duelist Jerkin", category = "Armor",
+		slot = "Body", defense = 20, wt = 20, hp = 34, mp = 22,
+		passiveName = "Guard RT ×0.60 (faster Guard recovery)",
+		passiveDesc = "Guard RT ×0.60 (faster Guard recovery).",
+		passiveBp = 150, totalBp = 400,
+		actionOwnership = "Guard",
+	},
+	["BD-004"] = {
+		numericId = 124, name = "Anchor Mail", category = "Armor",
+		slot = "Body", defense = 48, wt = 38, hp = 39, mp = 10,
+		passiveName = "While Guarding: Stability +3",
+		passiveDesc = "While Guarding: Stability +3.",
+		passiveBp = 80, totalBp = 401,
+		actionOwnership = "Guard",
+	},
+	["BD-005"] = {
+		numericId = 125, name = "Reactive Cuirass", category = "Armor",
+		slot = "Body", defense = 42, wt = 35, hp = 35, mp = 9,
+		passiveName = "First hit received each turn triggers auto-Guard at no AP",
+		passiveDesc = "First hit received each turn triggers auto-Guard at no AP.",
+		passiveBp = 120, totalBp = 401,
+		actionOwnership = "Guard",
+	},
+	["BD-006"] = {
+		numericId = 126, name = "Layered Lamellar", category = "Armor",
+		slot = "Body", defense = 45, wt = 38, hp = 38, mp = 9,
+		passiveName = "While Guarding: each successive hit in same Guard reduces damage by additional 5% (stacks to +20%)",
+		passiveDesc = "While Guarding: each successive hit in same Guard reduces damage by additional 5% (stacks to +20%).",
+		passiveBp = 100, totalBp = 399,
+		actionOwnership = "Guard",
+	},
+	["BD-007"] = {
+		numericId = 127, name = "Mirror Mail", category = "Armor",
+		slot = "Body", defense = 34, wt = 32, hp = 37, mp = 23,
+		passiveName = "While Guarding: projectile attacks are reflected back at 30% damage",
+		passiveDesc = "While Guarding: projectile attacks are reflected back at 30% damage.",
+		passiveBp = 90, totalBp = 399,
+		actionOwnership = "Guard",
+	},
+	["BD-008"] = {
+		numericId = 128, name = "Grounding Harness", category = "Armor",
+		slot = "Body", defense = 34, wt = 30, hp = 38, mp = 23,
+		passiveName = "Forced displacement distance reduced by 2 (always active, not Guard-dependent). Min 0; does not prevent teleport, blink, or swap",
+		passiveDesc = "Forced displacement distance reduced by 2 (always active, not Guard-dependent). Min 0; does not prevent teleport, blink, or swap.",
+		passiveBp = 85, totalBp = 401,
+		actionOwnership = "Guard",
+	},
+	["BD-009"] = {
+		numericId = 129, name = "Reprisal Coat", category = "Armor",
+		slot = "Body", defense = 25, wt = 28, hp = 53, mp = 18,
+		passiveName = "While Guarding: store 40% of damage mitigated; next Basic Attack adds stored damage",
+		passiveDesc = "While Guarding: store 40% of damage mitigated; next Basic Attack adds stored damage.",
+		passiveBp = 100, totalBp = 400,
+		actionOwnership = "Guard",
+	},
+	["BD-010"] = {
+		numericId = 130, name = "Wardweave Robe", category = "Armor",
+		slot = "Body", defense = 17, wt = 18, hp = 28, mp = 42,
+		passiveName = "While Guarding: immune to new debuff application",
+		passiveDesc = "While Guarding: immune to new debuff application.",
+		passiveBp = 100, totalBp = 401,
+		actionOwnership = "Guard",
+	},
+	["BD-011"] = {
+		numericId = 131, name = "Hazard Suit", category = "Armor",
+		slot = "Body", defense = 43, wt = 35, hp = 36, mp = 9,
+		passiveName = "While Guarding: immune to terrain/hazard/weather damage",
+		passiveDesc = "While Guarding: immune to terrain/hazard/weather damage.",
+		passiveBp = 110, totalBp = 399,
+		actionOwnership = "Guard",
+	},
+	["BD-012"] = {
+		numericId = 132, name = "Collision Padding", category = "Armor",
+		slot = "Body", defense = 48, wt = 32, hp = 41, mp = 10,
+		passiveName = "Collision and fall damage reduced by 50%",
+		passiveDesc = "Collision and fall damage reduced by 50%.",
+		passiveBp = 60, totalBp = 399,
+		actionOwnership = "Guard",
+	},
+	["BD-013"] = {
+		numericId = 133, name = "Feather Armor", category = "Armor",
+		slot = "Body", defense = 23, wt = 10, hp = 38, mp = 25,
+		passiveName = "Reduce effective fall height by 2 while Guarding. Ultra-light body armor (lightness priced in)",
+		passiveDesc = "Reduce effective fall height by 2 while Guarding. Ultra-light body armor (lightness priced in).",
+		passiveBp = 90, totalBp = 399,
+		actionOwnership = "Guard",
+	},
+	["BD-014"] = {
+		numericId = 134, name = "Guardian Mantle", category = "Armor",
+		slot = "Body", defense = 25, wt = 38, hp = 37, mp = 20,
+		passiveName = "While Guarding: adjacent allies also receive 50% of Guard damage reduction",
+		passiveDesc = "While Guarding: adjacent allies also receive 50% of Guard damage reduction.",
+		passiveBp = 160, totalBp = 400,
+		actionOwnership = "Guard",
+	},
+	["BD-015"] = {
+		numericId = 135, name = "Sentinel Carapace", category = "Armor",
+		slot = "Body", defense = 50, wt = 40, hp = 31, mp = 4,
+		passiveName = "While Guarding: enemies that end Move adjacent to this unit lose 2 Movement Range next turn",
+		passiveDesc = "While Guarding: enemies that end Move adjacent to this unit lose 2 Movement Range next turn.",
+		passiveBp = 120, totalBp = 399,
+		actionOwnership = "Guard",
+	},
+	["BD-016"] = {
+		numericId = 136, name = "Spiked Plate", category = "Armor",
+		slot = "Body", defense = 27, wt = 35, hp = 57, mp = 19,
+		passiveName = "While Guarding: attackers take 20% of their own damage as retaliation",
+		passiveDesc = "While Guarding: attackers take 20% of their own damage as retaliation.",
+		passiveBp = 90, totalBp = 402,
+		actionOwnership = "Guard",
+	},
+	["BD-017"] = {
+		numericId = 137, name = "Ablative Shell", category = "Armor",
+		slot = "Body", defense = 41, wt = 36, hp = 34, mp = 9,
+		passiveName = "While Guarding: gain Shield equal to 15% of Max HP before damage resolution",
+		passiveDesc = "While Guarding: gain Shield equal to 15% of Max HP before damage resolution.",
+		passiveBp = 130, totalBp = 401,
+		actionOwnership = "Guard",
+	},
+	["BD-018"] = {
+		numericId = 138, name = "Interception Armor", category = "Armor",
+		slot = "Body", defense = 26, wt = 40, hp = 38, mp = 21,
+		passiveName = "While Guarding: may intercept attacks targeting adjacent allies within 1 tile",
+		passiveDesc = "While Guarding: may intercept attacks targeting adjacent allies within 1 tile.",
+		passiveBp = 150, totalBp = 398,
+		actionOwnership = "Guard",
+	},
+	["BD-019"] = {
+		numericId = 139, name = "Second-Wind Vest", category = "Armor",
+		slot = "Body", defense = 29, wt = 25, hp = 42, mp = 22,
+		passiveName = "While Guarding: recover 10% of Max HP",
+		passiveDesc = "While Guarding: recover 10% of Max HP.",
+		passiveBp = 90, totalBp = 399,
+		actionOwnership = "Guard",
+	},
+	["BD-020"] = {
+		numericId = 140, name = "Unyielding Aegis", category = "Armor",
+		slot = "Body", defense = 46, wt = 42, hp = 27, mp = 4,
+		passiveName = "Once per battle: survive lethal direct damage at 1 HP. Only direct damage; not fall/collision/hazards",
+		passiveDesc = "Once per battle: survive lethal direct damage at 1 HP. Only direct damage; not fall/collision/hazards.",
+		passiveBp = 155, totalBp = 398,
+		actionOwnership = "Guard",
+	},
+
+	-- === GLOVES (Push) ===
+	["GL-001"] = {
+		numericId = 141, name = "Reinforced Gloves", category = "Armor",
+		slot = "Gloves", defense = 21, wt = 12, hp = 17, mp = 4,
+		passiveName = "Push Force +1. Ignore up to 2 enemy Stability",
+		passiveDesc = "Push Force +1. Ignore up to 2 enemy Stability.",
+		passiveBp = 100, totalBp = 248,
+		actionOwnership = "Push",
+	},
+	["GL-002"] = {
+		numericId = 142, name = "Titan Knuckles", category = "Armor",
+		slot = "Gloves", defense = 12, wt = 15, hp = 26, mp = 8,
+		passiveName = "Push Force +3",
+		passiveDesc = "Push Force +3.",
+		passiveBp = 110, totalBp = 250,
+		actionOwnership = "Push",
+	},
+	["GL-003"] = {
+		numericId = 143, name = "Quickgrip Gloves", category = "Armor",
+		slot = "Gloves", defense = 14, wt = 6, hp = 24, mp = 15,
+		passiveName = "Push RT Cost ×0.75",
+		passiveDesc = "Push RT Cost ×0.75.",
+		passiveBp = 60, totalBp = 250,
+		actionOwnership = "Push",
+	},
+	["GL-004"] = {
+		numericId = 144, name = "Longarm Bracers", category = "Armor",
+		slot = "Gloves", defense = 17, wt = 10, hp = 19, mp = 12,
+		passiveName = "Push Maximum Range +1",
+		passiveDesc = "Push Maximum Range +1.",
+		passiveBp = 80, totalBp = 250,
+		actionOwnership = "Push",
+	},
+	["GL-005"] = {
+		numericId = 145, name = "Butcher's Gloves", category = "Armor",
+		slot = "Gloves", defense = 10, wt = 10, hp = 21, mp = 7,
+		passiveName = "Push becomes Pull instead (displaces target toward user). Push range +3, minimum range 2 (cannot target adjacent). Normal Push Force applies. If remaining Force exceeds pull distance, target collides with user — normal collision damage to both",
+		passiveDesc = "Push becomes Pull instead (displaces target toward user). Push range +3, minimum range 2 (cannot target adjacent). Normal Push Force applies. If remaining Force exceeds pull distance, target collides with user — normal collision damage to both.",
+		passiveBp = 130, totalBp = 251,
+		actionOwnership = "Push",
+	},
+	["GL-006"] = {
+		numericId = 146, name = "Ally Launcher", category = "Armor",
+		slot = "Gloves", defense = 14, wt = 10, hp = 19, mp = 11,
+		passiveName = "Push Force +3 when targeting ally; RT ×0.50. Allied Push causes no collision damage",
+		passiveDesc = "Push Force +3 when targeting ally; RT ×0.50. Allied Push causes no collision damage.",
+		passiveBp = 100, totalBp = 251,
+		actionOwnership = "Push",
+	},
+	["GL-007"] = {
+		numericId = 147, name = "Demolition Mitts", category = "Armor",
+		slot = "Gloves", defense = 11, wt = 12, hp = 23, mp = 8,
+		passiveName = "When Push causes a movable object to collide, the object detonates as a Bomb Barrel: 3×3 explosion (30% Max HP damage), destroys adjacent breakable bridges/walls",
+		passiveDesc = "When Push causes a movable object to collide, the object detonates as a Bomb Barrel: 3×3 explosion (30% Max HP damage), destroys adjacent breakable bridges/walls.",
+		passiveBp = 120, totalBp = 252,
+		actionOwnership = "Push",
+	},
+	["GL-008"] = {
+		numericId = 148, name = "Siege Bracers", category = "Armor",
+		slot = "Gloves", defense = 25, wt = 14, hp = 21, mp = 5,
+		passiveName = "Push Force +3 when target is a movable object",
+		passiveDesc = "Push Force +3 when target is a movable object.",
+		passiveBp = 70, totalBp = 250,
+		actionOwnership = "Push",
+	},
+	["GL-009"] = {
+		numericId = 149, name = "Ram Gauntlets", category = "Armor",
+		slot = "Gloves", defense = 12, wt = 14, hp = 25, mp = 8,
+		passiveName = "Wall collision damage from Push gains ×1.25 multiplier. User moves along with pushed target",
+		passiveDesc = "Wall collision damage from Push gains ×1.25 multiplier. User moves along with pushed target.",
+		passiveBp = 110, totalBp = 249,
+		actionOwnership = "Push",
+	},
+	["GL-010"] = {
+		numericId = 150, name = "Edgefinder Gloves", category = "Armor",
+		slot = "Gloves", defense = 17, wt = 10, hp = 19, mp = 12,
+		passiveName = "When Push forces target downward, treat Fall Height as +1 for damage formula",
+		passiveDesc = "When Push forces target downward, treat Fall Height as +1 for damage formula.",
+		passiveBp = 80, totalBp = 250,
+		actionOwnership = "Push",
+	},
+	["GL-011"] = {
+		numericId = 151, name = "Staggering Fists", category = "Armor",
+		slot = "Gloves", defense = 10, wt = 10, hp = 22, mp = 8,
+		passiveName = "Push applies +75 RT Delay and −1 Movement Range on target's next turn",
+		passiveDesc = "Push applies +75 RT Delay and −1 Movement Range on target's next turn.",
+		passiveBp = 120, totalBp = 248,
+		actionOwnership = "Push",
+	},
+	["GL-012"] = {
+		numericId = 152, name = "Crushing Vambraces", category = "Armor",
+		slot = "Gloves", defense = 12, wt = 14, hp = 27, mp = 9,
+		passiveName = "Push collision damage deals double to Shields/barriers; ignores Guard effects on target",
+		passiveDesc = "Push collision damage deals double to Shields/barriers; ignores Guard effects on target.",
+		passiveBp = 100, totalBp = 249,
+		actionOwnership = "Push",
+	},
+	["GL-013"] = {
+		numericId = 153, name = "Vector Gloves", category = "Armor",
+		slot = "Gloves", defense = 14, wt = 10, hp = 15, mp = 9,
+		passiveName = "For adjacent targets, choose any legal outward direction (not just directly away)",
+		passiveDesc = "For adjacent targets, choose any legal outward direction (not just directly away).",
+		passiveBp = 120, totalBp = 251,
+		actionOwnership = "Push",
+	},
+	["GL-014"] = {
+		numericId = 154, name = "Chain-Push Bracers", category = "Armor",
+		slot = "Gloves", defense = 15, wt = 12, hp = 16, mp = 10,
+		passiveName = "If pushed object collides with another movable object/unit, transfer remaining Force to collided target",
+		passiveDesc = "If pushed object collides with another movable object/unit, transfer remaining Force to collided target.",
+		passiveBp = 110, totalBp = 249,
+		actionOwnership = "Push",
+	},
+	["GL-015"] = {
+		numericId = 155, name = "Throwing Gloves", category = "Armor",
+		slot = "Gloves", defense = 14, wt = 8, hp = 21, mp = 11,
+		passiveName = "Decrease elevation of tile where pushed unit landed by 1. Push uses arc projectile rules",
+		passiveDesc = "Decrease elevation of tile where pushed unit landed by 1. Push uses arc projectile rules.",
+		passiveBp = 90, totalBp = 251,
+		actionOwnership = "Push",
+	},
+	["GL-016"] = {
+		numericId = 156, name = "Fighter's Gauntlets", category = "Armor",
+		slot = "Gloves", defense = 9, wt = 14, hp = 20, mp = 7,
+		passiveName = "Push deals 30% of base weapon damage and triggers weapon on-hit effects",
+		passiveDesc = "Push deals 30% of base weapon damage and triggers weapon on-hit effects.",
+		passiveBp = 145, totalBp = 250,
+		actionOwnership = "Push",
+	},
+	["GL-017"] = {
+		numericId = 157, name = "Grappler's Wraps", category = "Armor",
+		slot = "Gloves", defense = 9, wt = 10, hp = 15, mp = 10,
+		passiveName = "Swap position with target before applying Push toward user's original direction",
+		passiveDesc = "Swap position with target before applying Push toward user's original direction.",
+		passiveBp = 140, totalBp = 250,
+		actionOwnership = "Push",
+	},
+	["GL-018"] = {
+		numericId = 158, name = "Momentum Bracers", category = "Armor",
+		slot = "Gloves", defense = 17, wt = 10, hp = 20, mp = 12,
+		passiveName = "For each tile moved this turn, Push Force +0.5 (rounded down at resolution)",
+		passiveDesc = "For each tile moved this turn, Push Force +0.5 (rounded down at resolution).",
+		passiveBp = 75, totalBp = 248,
+		actionOwnership = "Push",
+	},
+	["GL-019"] = {
+		numericId = 159, name = "Counterforce Gloves", category = "Armor",
+		slot = "Gloves", defense = 17, wt = 12, hp = 14, mp = 4,
+		passiveName = "After successfully pushing a unit, trigger Guard at no additional AP cost",
+		passiveDesc = "After successfully pushing a unit, trigger Guard at no additional AP cost.",
+		passiveBp = 130, totalBp = 249,
+		actionOwnership = "Push",
+	},
+	["GL-020"] = {
+		numericId = 160, name = "Shockwave Gauntlets", category = "Armor",
+		slot = "Gloves", defense = 11, wt = 14, hp = 24, mp = 8,
+		passiveName = "When Push causes collision, units cardinally adjacent to collision tile are displaced 1 tile away",
+		passiveDesc = "When Push causes collision, units cardinally adjacent to collision tile are displaced 1 tile away.",
+		passiveBp = 120, totalBp = 251,
+		actionOwnership = "Push",
+	},
+
+	-- === FEET (Move) ===
+	["FT-001"] = {
+		numericId = 162, name = "Traveler Boots", category = "Armor",
+		slot = "Feet", defense = 9, wt = 8, hp = 15, mp = 9,
+		passiveName = "Movement Range +2 (permanent)",
+		passiveDesc = "Movement Range +2 (permanent).",
+		passiveBp = 140, totalBp = 250,
+		actionOwnership = "Move",
+	},
+	["FT-002"] = {
+		numericId = 163, name = "Windrunner Boots", category = "Armor",
+		slot = "Feet", defense = 10, wt = 8, hp = 17, mp = 11,
+		passiveName = "Base Movement RT ×0.75",
+		passiveDesc = "Base Movement RT ×0.75.",
+		passiveBp = 120, totalBp = 249,
+		actionOwnership = "Move",
+	},
+	["FT-003"] = {
+		numericId = 164, name = "Heavy March Boots", category = "Armor",
+		slot = "Feet", defense = 24, wt = 16, hp = 20, mp = 5,
+		passiveName = "Gain Stability +1 until next turn for each tile moved",
+		passiveDesc = "Gain Stability +1 until next turn for each tile moved.",
+		passiveBp = 80, totalBp = 248,
+		actionOwnership = "Move",
+	},
+	["FT-004"] = {
+		numericId = 165, name = "Pathfinder Boots", category = "Armor",
+		slot = "Feet", defense = 14, wt = 10, hp = 16, mp = 10,
+		passiveName = "Ignore extra movement-cost penalties from terrain",
+		passiveDesc = "Ignore extra movement-cost penalties from terrain.",
+		passiveBp = 110, totalBp = 248,
+		actionOwnership = "Move",
+	},
+	["FT-005"] = {
+		numericId = 166, name = "Levitation Boots", category = "Armor",
+		slot = "Feet", defense = 10, wt = 6, hp = 17, mp = 25,
+		passiveName = "Ignore effects of Shallow Water, Deep Water, and Wet tile effects",
+		passiveDesc = "Ignore effects of Shallow Water, Deep Water, and Wet tile effects.",
+		passiveBp = 60, totalBp = 249,
+		actionOwnership = "Move",
+	},
+	["FT-006"] = {
+		numericId = 167, name = "Climbing Boots", category = "Armor",
+		slot = "Feet", defense = 17, wt = 12, hp = 17, mp = 12,
+		passiveName = "Jump +2",
+		passiveDesc = "Jump +2.",
+		passiveBp = 90, totalBp = 250,
+		actionOwnership = "Move",
+	},
+	["FT-007"] = {
+		numericId = 168, name = "Softstep Slippers", category = "Armor",
+		slot = "Feet", defense = 13, wt = 4, hp = 22, mp = 14,
+		passiveName = "Moving across trap tiles does not trigger them; ending on tile still triggers",
+		passiveDesc = "Moving across trap tiles does not trigger them; ending on tile still triggers.",
+		passiveBp = 70, totalBp = 249,
+		actionOwnership = "Move",
+	},
+	["FT-008"] = {
+		numericId = 169, name = "Skirmisher Greaves", category = "Armor",
+		slot = "Feet", defense = 11, wt = 12, hp = 23, mp = 8,
+		passiveName = "After moving ≥3 path-cost, next direct damage action this turn gains +15% final damage",
+		passiveDesc = "After moving ≥3 path-cost, next direct damage action this turn gains +15% final damage.",
+		passiveBp = 120, totalBp = 252,
+		actionOwnership = "Move",
+	},
+	["FT-009"] = {
+		numericId = 170, name = "Retreat Boots", category = "Armor",
+		slot = "Feet", defense = 15, wt = 10, hp = 17, mp = 11,
+		passiveName = "If every step increased distance from nearest enemy, gain Evasiveness +20% until next turn",
+		passiveDesc = "If every step increased distance from nearest enemy, gain Evasiveness +20% until next turn.",
+		passiveBp = 100, totalBp = 250,
+		actionOwnership = "Move",
+	},
+	["FT-010"] = {
+		numericId = 171, name = "Vanguard Greaves", category = "Armor",
+		slot = "Feet", defense = 20, wt = 14, hp = 17, mp = 4,
+		passiveName = "If Move ends adjacent to enemy, gain 15% direct final damage reduction until next turn",
+		passiveDesc = "If Move ends adjacent to enemy, gain 15% direct final damage reduction until next turn.",
+		passiveBp = 110, totalBp = 249,
+		actionOwnership = "Move",
+	},
+	["FT-011"] = {
+		numericId = 172, name = "Sprinter Boots", category = "Armor",
+		slot = "Feet", defense = 9, wt = 8, hp = 15, mp = 9,
+		passiveName = "First Move each turn gains Movement Range +3",
+		passiveDesc = "First Move each turn gains Movement Range +3.",
+		passiveBp = 140, totalBp = 250,
+		actionOwnership = "Move",
+	},
+	["FT-012"] = {
+		numericId = 173, name = "Relay Boots", category = "Armor",
+		slot = "Feet", defense = 13, wt = 10, hp = 13, mp = 9,
+		passiveName = "Second Move same turn has Movement Range +2 and Movement RT ×0.50",
+		passiveDesc = "Second Move same turn has Movement Range +2 and Movement RT ×0.50.",
+		passiveBp = 130, totalBp = 250,
+		actionOwnership = "Move",
+	},
+	["FT-013"] = {
+		numericId = 174, name = "Ice Cleats", category = "Armor",
+		slot = "Feet", defense = 26, wt = 10, hp = 22, mp = 6,
+		passiveName = "Does not slide from voluntary movement or end-of-move effects on Ice/Oily tiles",
+		passiveDesc = "Does not slide from voluntary movement or end-of-move effects on Ice/Oily tiles.",
+		passiveBp = 50, totalBp = 250,
+		actionOwnership = "Move",
+	},
+	["FT-014"] = {
+		numericId = 175, name = "Firewalker Sabatons", category = "Armor",
+		slot = "Feet", defense = 26, wt = 14, hp = 22, mp = 5,
+		passiveName = "Crossing Burning or Molten tiles does not apply their cross effect",
+		passiveDesc = "Crossing Burning or Molten tiles does not apply their cross effect.",
+		passiveBp = 60, totalBp = 248,
+		actionOwnership = "Move",
+	},
+	["FT-015"] = {
+		numericId = 176, name = "Portal Treads", category = "Armor",
+		slot = "Feet", defense = 5, wt = 12, hp = 8, mp = 11,
+		passiveName = "Movement type changes to teleport. Unit ignores ALL pathing obstacles: walls, structural geometry, enemies, objects, elevation differences. Destination must be standable, unoccupied, within range. Movement Range −2, Movement RT ×2",
+		passiveDesc = "Movement type changes to teleport. Unit ignores ALL pathing obstacles: walls, structural geometry, enemies, objects, elevation differences. Destination must be standable, unoccupied, within range. Movement Range −2, Movement RT ×2.",
+		passiveBp = 180, totalBp = 251,
+		actionOwnership = "Move",
+	},
+	["FT-016"] = {
+		numericId = 177, name = "Trailblazer Boots", category = "Armor",
+		slot = "Feet", defense = 11, wt = 12, hp = 25, mp = 8,
+		passiveName = "Tiles traversed this Move are set on fire. Does not burn unit's final tile. Movement −1",
+		passiveDesc = "Tiles traversed this Move are set on fire. Does not burn unit's final tile. Movement −1.",
+		passiveBp = 110, totalBp = 248,
+		actionOwnership = "Move",
+	},
+	["FT-017"] = {
+		numericId = 178, name = "Pursuer Greaves", category = "Armor",
+		slot = "Feet", defense = 10, wt = 14, hp = 23, mp = 7,
+		passiveName = "If Move ends adjacent to enemy, apply 50 RT delay to all adjacent enemies. Once per turn",
+		passiveDesc = "If Move ends adjacent to enemy, apply 50 RT delay to all adjacent enemies. Once per turn.",
+		passiveBp = 130, totalBp = 249,
+		actionOwnership = "Move",
+	},
+	["FT-018"] = {
+		numericId = 179, name = "Rescue Spurs", category = "Armor",
+		slot = "Feet", defense = 13, wt = 10, hp = 19, mp = 10,
+		passiveName = "May end Move on ally's tile; move ally to last tile crossed. Movement −2, RT ×2",
+		passiveDesc = "May end Move on ally's tile; move ally to last tile crossed. Movement −2, RT ×2.",
+		passiveBp = 110, totalBp = 252,
+		actionOwnership = "Move",
+	},
+	["FT-019"] = {
+		numericId = 180, name = "Kick Boots", category = "Armor",
+		slot = "Feet", defense = 10, wt = 14, hp = 23, mp = 7,
+		passiveName = "May end Move on enemy's tile; trigger Knockback on enemy in enemy's facing direction. Movement −2, RT ×2",
+		passiveDesc = "May end Move on enemy's tile; trigger Knockback on enemy in enemy's facing direction. Movement −2, RT ×2.",
+		passiveBp = 130, totalBp = 249,
+		actionOwnership = "Move",
+	},
+	["FT-020"] = {
+		numericId = 181, name = "Phantom Steps", category = "Armor",
+		slot = "Feet", defense = 12, wt = 8, hp = 21, mp = 13,
+		passiveName = "May move through enemy-occupied tiles. Each enemy tile costs +2 movement and triggers compatible reactions",
+		passiveDesc = "May move through enemy-occupied tiles. Each enemy tile costs +2 movement and triggers compatible reactions.",
+		passiveBp = 90, totalBp = 249,
+		actionOwnership = "Move",
+	},
+
+	-- === ACCESSORY (Item) ===
+	["AC-001"] = {
+		numericId = 182, name = "Utility Belt", category = "Armor",
+		slot = "Accessory", defense = 10, wt = 3, hp = 15, mp = 8,
+		passiveName = "Equipped Item slot capacity +1",
+		passiveDesc = "Equipped Item slot capacity +1.",
+		passiveBp = 80, totalBp = 201,
+		actionOwnership = "Item",
+	},
+	["AC-002"] = {
+		numericId = 183, name = "Quickdraw Pouch", category = "Armor",
+		slot = "Accessory", defense = 10, wt = 2, hp = 12, mp = 7,
+		passiveName = "Item RT Cost ×0.75",
+		passiveDesc = "Item RT Cost ×0.75.",
+		passiveBp = 90, totalBp = 200,
+		actionOwnership = "Item",
+	},
+	["AC-003"] = {
+		numericId = 184, name = "Long-Throw Strap", category = "Armor",
+		slot = "Accessory", defense = 11, wt = 2, hp = 12, mp = 8,
+		passiveName = "Item Maximum Range +2",
+		passiveDesc = "Item Maximum Range +2.",
+		passiveBp = 80, totalBp = 199,
+		actionOwnership = "Item",
+	},
+	["AC-004"] = {
+		numericId = 185, name = "Grenadier Satchel", category = "Armor",
+		slot = "Accessory", defense = 8, wt = 3, hp = 17, mp = 6,
+		passiveName = "Damaging consumable Items gain +15% final damage",
+		passiveDesc = "Damaging consumable Items gain +15% final damage.",
+		passiveBp = 90, totalBp = 199,
+		actionOwnership = "Item",
+	},
+	["AC-005"] = {
+		numericId = 186, name = "Wide-Fuse Kit", category = "Armor",
+		slot = "Accessory", defense = 7, wt = 4, hp = 15, mp = 5,
+		passiveName = "Single-target damage Items gain Impact Splash (adjacent tiles at 50% damage)",
+		passiveDesc = "Single-target damage Items gain Impact Splash (adjacent tiles at 50% damage).",
+		passiveBp = 110, totalBp = 202,
+		actionOwnership = "Item",
+	},
+	["AC-006"] = {
+		numericId = 187, name = "Medic's Case", category = "Armor",
+		slot = "Accessory", defense = 8, wt = 3, hp = 12, mp = 7,
+		passiveName = "Items restore +50% HP/MP",
+		passiveDesc = "Items restore +50% HP/MP.",
+		passiveBp = 100, totalBp = 198,
+		actionOwnership = "Item",
+	},
+	["AC-007"] = {
+		numericId = 188, name = "Overflowing Flask", category = "Armor",
+		slot = "Accessory", defense = 7, wt = 2, hp = 11, mp = 17,
+		passiveName = "Restoring Items also grant regen equal to 7% of restored amount per 100 CT for 500 CT",
+		passiveDesc = "Restoring Items also grant regen equal to 7% of restored amount per 100 CT for 500 CT.",
+		passiveBp = 70, totalBp = 202,
+		actionOwnership = "Item",
+	},
+	["AC-008"] = {
+		numericId = 189, name = "Preservation Case", category = "Armor",
+		slot = "Accessory", defense = 13, wt = 3, hp = 10, mp = 3,
+		passiveName = "When taking direct damage from enemy, recharge 1 item charge. Cannot target items at max charge",
+		passiveDesc = "When taking direct damage from enemy, recharge 1 item charge. Cannot target items at max charge.",
+		passiveBp = 100, totalBp = 201,
+		actionOwnership = "Item",
+	},
+	["AC-009"] = {
+		numericId = 190, name = "Reinforced Cartridge", category = "Armor",
+		slot = "Accessory", defense = 10, wt = 2, hp = 12, mp = 7,
+		passiveName = "Increase equipped item use charges by 20%, min +1",
+		passiveDesc = "Increase equipped item use charges by 20%, min +1.",
+		passiveBp = 90, totalBp = 200,
+		actionOwnership = "Item",
+	},
+	["AC-010"] = {
+		numericId = 191, name = "Expiry Extender", category = "Armor",
+		slot = "Accessory", defense = 6, wt = 2, hp = 10, mp = 16,
+		passiveName = "Item effect duration +500 CT",
+		passiveDesc = "Item effect duration +500 CT.",
+		passiveBp = 80, totalBp = 200,
+		actionOwnership = "Item",
+	},
+	["AC-011"] = {
+		numericId = 192, name = "Terraformer Token", category = "Armor",
+		slot = "Accessory", defense = 11, wt = 2, hp = 16, mp = 8,
+		passiveName = "Item usage raises target tile elevation by 1",
+		passiveDesc = "Item usage raises target tile elevation by 1.",
+		passiveBp = 70, totalBp = 201,
+		actionOwnership = "Item",
+	},
+	["AC-012"] = {
+		numericId = 193, name = "Trapmaker's Roll", category = "Armor",
+		slot = "Accessory", defense = 9, wt = 2, hp = 13, mp = 7,
+		passiveName = "Trap Items placed at Range +3 and remain active +500 CT",
+		passiveDesc = "Trap Items placed at Range +3 and remain active +500 CT.",
+		passiveBp = 90, totalBp = 198,
+		actionOwnership = "Item",
+	},
+	["AC-013"] = {
+		numericId = 194, name = "Deployable Toolkit", category = "Armor",
+		slot = "Accessory", defense = 11, wt = 3, hp = 13, mp = 8,
+		passiveName = "Summoned units gain +25% Max HP",
+		passiveDesc = "Summoned units gain +25% Max HP.",
+		passiveBp = 80, totalBp = 200,
+		actionOwnership = "Item",
+	},
+	["AC-014"] = {
+		numericId = 195, name = "Bomber Ring", category = "Armor",
+		slot = "Accessory", defense = 6, wt = 2, hp = 13, mp = 4,
+		passiveName = "Completely REPLACES item effect/identity with bomb during that action. Bomb: range 3, AoE, RT 110. Bomb_Damage = round((50 + Level × 4) × 0.18). Original item effect does not occur. Other passives checking item identity see 'bomb/AoE'",
+		passiveDesc = "Completely REPLACES item effect/identity with bomb during that action. Bomb: range 3, AoE, RT 110. Bomb_Damage = round((50 + Level × 4) × 0.18). Original item effect does not occur. Other passives checking item identity see 'bomb/AoE'.",
+		passiveBp = 120, totalBp = 201,
+		actionOwnership = "Item",
+	},
+	["AC-015"] = {
+		numericId = 196, name = "Emergency Locket", category = "Armor",
+		slot = "Accessory", defense = 12, wt = 2, hp = 10, mp = 3,
+		passiveName = "Once per turn. When HP ≤25% outside unit turn, auto-use heal item with highest remaining charge count on self. Consumes charge, no AP, double RT",
+		passiveDesc = "Once per turn. When HP ≤25% outside unit turn, auto-use heal item with highest remaining charge count on self. Consumes charge, no AP, double RT.",
+		passiveBp = 100, totalBp = 198,
+		actionOwnership = "Item",
+	},
+	["AC-016"] = {
+		numericId = 197, name = "Courier's Seal", category = "Armor",
+		slot = "Accessory", defense = 9, wt = 2, hp = 13, mp = 7,
+		passiveName = "Ally-targeted Item effects also apply to user. Item RT +50%",
+		passiveDesc = "Ally-targeted Item effects also apply to user. Item RT +50%.",
+		passiveBp = 90, totalBp = 198,
+		actionOwnership = "Item",
+	},
+	["AC-017"] = {
+		numericId = 198, name = "Conservation Charm", category = "Armor",
+		slot = "Accessory", defense = 10, wt = 2, hp = 10, mp = 6,
+		passiveName = "Once per turn, when the user performs a second manually committed Item action during the same turn, the primary Item used by that action does not consume a charge. Double that primary Item's authored base RT before applying approved Item RT reductions. Free, triggered, copied, bundled, or simultaneously activated Items do not count toward the order of manually committed Item actions. Charge-restoration Items are eligible",
+		passiveDesc = "Once per turn, when the user performs a second manually committed Item action during the same turn, the primary Item used by that action does not consume a charge. Double that primary Item's authored base RT before applying approved Item RT reductions. Free, triggered, copied, bundled, or simultaneously activated Items do not count toward the order of manually committed Item actions. Charge-restoration Items are eligible.",
+		passiveBp = 100, totalBp = 200,
+		actionOwnership = "Item",
+	},
+	["AC-018"] = {
+		numericId = 199, name = "Field Alchemist Emblem", category = "Armor",
+		slot = "Accessory", defense = 7, wt = 3, hp = 14, mp = 5,
+		passiveName = "Every 2 basic attacks, recharge 1 item with least charges. Cannot target max charge",
+		passiveDesc = "Every 2 basic attacks, recharge 1 item with least charges. Cannot target max charge.",
+		passiveBp = 110, totalBp = 201,
+		actionOwnership = "Item",
+	},
+	["AC-019"] = {
+		numericId = 200, name = "Quartermaster Badge", category = "Armor",
+		slot = "Accessory", defense = 9, wt = 3, hp = 14, mp = 7,
+		passiveName = "At battle start, choose 1 ally. User and chosen ally share Item charges (both draw from and contribute to the same charge pool for all equipped Items). Item RT +20%",
+		passiveDesc = "At battle start, choose 1 ally. User and chosen ally share Item charges (both draw from and contribute to the same charge pool for all equipped Items). Item RT +20%.",
+		passiveBp = 90, totalBp = 199,
+		actionOwnership = "Item",
+	},
+	["AC-020"] = {
+		numericId = 201, name = "Masterwork Toolchain", category = "Armor",
+		slot = "Accessory", defense = 6, wt = 3, hp = 13, mp = 4,
+		passiveName = "Once per turn, when the user commits an Item with an authored base RT of 120 or less, the user may select a second equipped Item with an authored base RT of 120 or less. The second Item must have a legal target within the first Item's selected target area. Both Items resolve as one action for 1 AP. Each Item consumes one charge. Combined RT = Primary Item Base RT + round(Bundled Item Base RT × 0.50). Apply approved Item RT reductions after calculating the combined RT. Cannot bundle: Heavy/Battlefield Items, Items with authored base RT above 120, charge-restoration Items, Item-copying Items, Items that grant additional Item actions, Items activated through another simultaneous/bundled/copied/triggered effect",
+		passiveDesc = "Once per turn, when the user commits an Item with an authored base RT of 120 or less, the user may select a second equipped Item with an authored base RT of 120 or less. The second Item must have a legal target within the first Item's selected target area. Both Items resolve as one action for 1 AP. Each Item consumes one charge. Combined RT = Primary Item Base RT + round(Bundled Item Base RT × 0.50). Apply approved Item RT reductions after calculating the combined RT. Cannot bundle: Heavy/Battlefield Items, Items with authored base RT above 120, charge-restoration Items, Item-copying Items, Items that grant additional Item actions, Items activated through another simultaneous/bundled/copied/triggered effect.",
+		passiveBp = 120, totalBp = 199,
+		actionOwnership = "Item",
+	},
+
+	-- === GLOVES (Push) ===
+	["GL-021"] = {
+		numericId = 161, name = "Initiator's Grips", category = "Armor",
+		slot = "Gloves", defense = 12, wt = 10, hp = 13, mp = 8,
+		passiveName = "Once per turn, the first Push action does not cost AP. That Push has RT Cost ×2 and Force ×0.5 (rounded down, minimum Force 1)",
+		passiveDesc = "Once per turn, the first Push action does not cost AP. That Push has RT Cost ×2 and Force ×0.5 (rounded down, minimum Force 1).",
+		passiveBp = 140, totalBp = 251,
+		actionOwnership = "Push",
+	},
+}
+
+--------------------------------------------------
+-- LOOKUP HELPERS
+--------------------------------------------------
+
+-- Reverse map: numericId -> archetypeId
+ArmorData._byNumericId = {}
+for archetypeId, def in pairs(ArmorData.Archetypes) do
+	ArmorData._byNumericId[def.numericId] = archetypeId
+end
+
+function ArmorData.GetByArchetypeId(archetypeId)
+	return ArmorData.Archetypes[archetypeId]
+end
+
+function ArmorData.GetByNumericId(numericId)
+	local archetypeId = ArmorData._byNumericId[numericId]
+	if archetypeId then
+		return ArmorData.Archetypes[archetypeId], archetypeId
+	end
+	return nil, nil
+end
+
+function ArmorData.GetScaledProfile(archetypeId, itemLevel)
+	local def = ArmorData.Archetypes[archetypeId]
+	if not def then return nil end
+	return {
+		defense = ArmorData.ScaleProperty(def.defense, itemLevel),
+		wt      = ArmorData.ScaleProperty(def.wt, itemLevel),
+		hp      = ArmorData.ScaleProperty(def.hp, itemLevel),
+		mp      = ArmorData.ScaleProperty(def.mp, itemLevel),
+		-- Structural (not scaled)
+		slot            = def.slot,
+		passiveName     = def.passiveName,
+		actionOwnership = def.actionOwnership,
+	}
+end
+
+function ArmorData.IsArmor(archetypeId)
+	local def = ArmorData.Archetypes[archetypeId]
+	return def ~= nil
+end
+
+function ArmorData.GetAllIds()
+	local ids = {}
+	for archetypeId in pairs(ArmorData.Archetypes) do
+		table.insert(ids, archetypeId)
+	end
+	table.sort(ids)
+	return ids
+end
+
+--------------------------------------------------
+-- PASSIVE DESCRIPTIONS (from CTRBLXAI.db)
+--------------------------------------------------
+
+local PASSIVE_DESC = {
+	["After moving ≥3 path-cost, next direct damage action this turn gains +15% final damage"] = "After moving ≥3 path-cost, next direct damage action this turn gains +15% final damage.",
+	["After successfully pushing a unit, trigger Guard at no additional AP cost"] = "After successfully pushing a unit, trigger Guard at no additional AP cost.",
+	["Ally-targeted Item effects also apply to user. Item RT +50%"] = "Ally-targeted Item effects also apply to user. Item RT +50%.",
+	["At battle start, choose 1 ally. User and chosen ally share Item charges (both draw from and contribute to the same charge pool for all equipped Items). Item RT +20%"] = "At battle start, choose 1 ally. User and chosen ally share Item charges (both draw from and contribute to the same charge pool for all equipped Items). Item RT +20%.",
+	["Base Movement RT ×0.75"] = "Base Movement RT ×0.75.",
+	["Collision and fall damage reduced by 50%"] = "Collision and fall damage reduced by 50%.",
+	["Completely REPLACES item effect/identity with bomb during that action. Bomb: range 3, AoE, RT 110. Bomb_Damage = round((50 + Level × 4) × 0.18). Original item effect does not occur. Other passives checking item identity see 'bomb/AoE'"] = "Completely REPLACES item effect/identity with bomb during that action. Bomb: range 3, AoE, RT 110. Bomb_Damage = round((50 + Level × 4) × 0.18). Original item effect does not occur. Other passives checking item identity see 'bomb/AoE'.",
+	["Crossing Burning or Molten tiles does not apply their cross effect"] = "Crossing Burning or Molten tiles does not apply their cross effect.",
+	["Damaging consumable Items gain +15% final damage"] = "Damaging consumable Items gain +15% final damage.",
+	["Decrease elevation of tile where pushed unit landed by 1. Push uses arc projectile rules"] = "Decrease elevation of tile where pushed unit landed by 1. Push uses arc projectile rules.",
+	["Does not slide from voluntary movement or end-of-move effects on Ice/Oily tiles"] = "Does not slide from voluntary movement or end-of-move effects on Ice/Oily tiles.",
+	["Equipped Item slot capacity +1"] = "Equipped Item slot capacity +1.",
+	["Every 2 basic attacks, recharge 1 item with least charges. Cannot target max charge"] = "Every 2 basic attacks, recharge 1 item with least charges. Cannot target max charge.",
+	["First Move each turn gains Movement Range +3"] = "First Move each turn gains Movement Range +3.",
+	["First hit received each turn triggers auto-Guard at no AP"] = "First hit received each turn triggers auto-Guard at no AP.",
+	["For adjacent targets, choose any legal outward direction (not just directly away)"] = "For adjacent targets, choose any legal outward direction (not just directly away).",
+	["For each tile moved this turn, Push Force +0.5 (rounded down at resolution)"] = "For each tile moved this turn, Push Force +0.5 (rounded down at resolution).",
+	["Forced displacement distance reduced by 2 (always active, not Guard-dependent). Min 0; does not prevent teleport, blink, or swap"] = "Forced displacement distance reduced by 2 (always active, not Guard-dependent). Min 0; does not prevent teleport, blink, or swap.",
+	["Gain Stability +1 until next turn for each tile moved"] = "Gain Stability +1 until next turn for each tile moved.",
+	["Guard RT ×0.60 (faster Guard recovery)"] = "Guard RT ×0.60 (faster Guard recovery).",
+	["If Move ends adjacent to enemy, apply 50 RT delay to all adjacent enemies. Once per turn"] = "If Move ends adjacent to enemy, apply 50 RT delay to all adjacent enemies. Once per turn.",
+	["If Move ends adjacent to enemy, gain 15% direct final damage reduction until next turn"] = "If Move ends adjacent to enemy, gain 15% direct final damage reduction until next turn.",
+	["If every step increased distance from nearest enemy, gain Evasiveness +20% until next turn"] = "If every step increased distance from nearest enemy, gain Evasiveness +20% until next turn.",
+	["If pushed object collides with another movable object/unit, transfer remaining Force to collided target"] = "If pushed object collides with another movable object/unit, transfer remaining Force to collided target.",
+	["Ignore effects of Shallow Water, Deep Water, and Wet tile effects"] = "Ignore effects of Shallow Water, Deep Water, and Wet tile effects.",
+	["Ignore extra movement-cost penalties from terrain"] = "Ignore extra movement-cost penalties from terrain.",
+	["Increase equipped item use charges by 20%, min +1"] = "Increase equipped item use charges by 20%, min +1.",
+	["Interact Maximum Range +2"] = "Interact Maximum Range +2.",
+	["Interact RT ×0.75"] = "Interact RT ×0.75.",
+	["Interact destroys breakable objects in 1 action regardless of HP"] = "Interact destroys breakable objects in 1 action regardless of HP.",
+	["Interact disarms adjacent traps; reveals hidden traps within 3 tiles"] = "Interact disarms adjacent traps; reveals hidden traps within 3 tiles.",
+	["Interact on KO'd ally: revive at 20% HP and immediately relocate to user's tile"] = "Interact on KO'd ally: revive at 20% HP and immediately relocate to user's tile.",
+	["Interact on KO'd ally: revive at 25% HP if within 2 tiles of another ally"] = "Interact on KO'd ally: revive at 25% HP if within 2 tiles of another ally.",
+	["Interact on allied objects/summons: restore 1 charge or +500 CT duration"] = "Interact on allied objects/summons: restore 1 charge or +500 CT duration.",
+	["Interact on ally grants target -50 RT"] = "Interact on ally grants target -50 RT.",
+	["Interact on ally: target gains +20% damage for 500 CT"] = "Interact on ally: target gains +20% damage for 500 CT.",
+	["Interact on destroyed objects yields bonus loot/materials"] = "Interact on destroyed objects yields bonus loot/materials.",
+	["Interact on discovery objects reveals full information"] = "Interact on discovery objects reveals full information.",
+	["Interact on hazard tile neutralizes it permanently"] = "Interact on hazard tile neutralizes it permanently.",
+	["Interact on shop objects: all prices reduced by 20%"] = "Interact on shop objects: all prices reduced by 20%.",
+	["Interact on siege/artillery object: damage ×1.5"] = "Interact on siege/artillery object: damage ×1.5.",
+	["Interact on siege/artillery object: range +2"] = "Interact on siege/artillery object: range +2.",
+	["Interact on valid enemy attempts Recruitment with Success Rate +10%"] = "Interact on valid enemy attempts Recruitment with Success Rate +10%.",
+	["Interact opens locked containers without a key"] = "Interact opens locked containers without a key.",
+	["Interact recruitment ignores hostility threshold"] = "Interact recruitment ignores hostility threshold.",
+	["Interact reveals enemy stats, skills, and AI behavior for 1000 CT"] = "Interact reveals enemy stats, skills, and AI behavior for 1000 CT.",
+	["Interact revives KO'd ally at 15% HP"] = "Interact revives KO'd ally at 15% HP.",
+	["Item Maximum Range +2"] = "Item Maximum Range +2.",
+	["Item RT Cost ×0.75"] = "Item RT Cost ×0.75.",
+	["Item effect duration +500 CT"] = "Item effect duration +500 CT.",
+	["Item usage raises target tile elevation by 1"] = "Item usage raises target tile elevation by 1.",
+	["Items restore +50% HP/MP"] = "Items restore +50% HP/MP.",
+	["Jump +2"] = "Jump +2.",
+	["May end Move on ally's tile; move ally to last tile crossed. Movement −2, RT ×2"] = "May end Move on ally's tile; move ally to last tile crossed. Movement −2, RT ×2.",
+	["May end Move on enemy's tile; trigger Knockback on enemy in enemy's facing direction. Movement −2, RT ×2"] = "May end Move on enemy's tile; trigger Knockback on enemy in enemy's facing direction. Movement −2, RT ×2.",
+	["May move through enemy-occupied tiles. Each enemy tile costs +2 movement and triggers compatible reactions"] = "May move through enemy-occupied tiles. Each enemy tile costs +2 movement and triggers compatible reactions.",
+	["Movement Range +2 (permanent)"] = "Movement Range +2 (permanent).",
+	["Movement type changes to teleport. Unit ignores ALL pathing obstacles: walls, structural geometry, enemies, objects, elevation differences. Destination must be standable, unoccupied, within range. Movement Range −2, Movement RT ×2"] = "Movement type changes to teleport. Unit ignores ALL pathing obstacles: walls, structural geometry, enemies, objects, elevation differences. Destination must be standable, unoccupied, within range. Movement Range −2, Movement RT ×2.",
+	["Moving across trap tiles does not trigger them; ending on tile still triggers"] = "Moving across trap tiles does not trigger them; ending on tile still triggers.",
+	["Once per battle: survive lethal direct damage at 1 HP. Only direct damage; not fall/collision/hazards"] = "Once per battle: survive lethal direct damage at 1 HP. Only direct damage; not fall/collision/hazards.",
+	["Once per turn, the first Push action does not cost AP. That Push has RT Cost ×2 and Force ×0.5 (rounded down, minimum Force 1)"] = "Once per turn, the first Push action does not cost AP. That Push has RT Cost ×2 and Force ×0.5 (rounded down, minimum Force 1).",
+	["Once per turn, when the user commits an Item with an authored base RT of 120 or less, the user may select a second equipped Item with an authored base RT of 120 or less. The second Item must have a legal target within the first Item's selected target area. Both Items resolve as one action for 1 AP. Each Item consumes one charge. Combined RT = Primary Item Base RT + round(Bundled Item Base RT × 0.50). Apply approved Item RT reductions after calculating the combined RT. Cannot bundle: Heavy/Battlefield Items, Items with authored base RT above 120, charge-restoration Items, Item-copying Items, Items that grant additional Item actions, Items activated through another simultaneous/bundled/copied/triggered effect"] = "Once per turn, when the user commits an Item with an authored base RT of 120 or less, the user may select a second equipped Item with an authored base RT of 120 or less. The second Item must have a legal target within the first Item's selected target area. Both Items resolve as one action for 1 AP. Each Item consumes one charge. Combined RT = Primary Item Base RT + round(Bundled Item Base RT × 0.50). Apply approved Item RT reductions after calculating the combined RT. Cannot bundle: Heavy/Battlefield Items, Items with authored base RT above 120, charge-restoration Items, Item-copying Items, Items that grant additional Item actions, Items activated through another simultaneous/bundled/copied/triggered effect.",
+	["Once per turn, when the user performs a second manually committed Item action during the same turn, the primary Item used by that action does not consume a charge. Double that primary Item's authored base RT before applying approved Item RT reductions. Free, triggered, copied, bundled, or simultaneously activated Items do not count toward the order of manually committed Item actions. Charge-restoration Items are eligible"] = "Once per turn, when the user performs a second manually committed Item action during the same turn, the primary Item used by that action does not consume a charge. Double that primary Item's authored base RT before applying approved Item RT reductions. Free, triggered, copied, bundled, or simultaneously activated Items do not count toward the order of manually committed Item actions. Charge-restoration Items are eligible.",
+	["Once per turn. When HP ≤25% outside unit turn, auto-use heal item with highest remaining charge count on self. Consumes charge, no AP, double RT"] = "Once per turn. When HP ≤25% outside unit turn, auto-use heal item with highest remaining charge count on self. Consumes charge, no AP, double RT.",
+	["Push Force +1. Ignore up to 2 enemy Stability"] = "Push Force +1. Ignore up to 2 enemy Stability.",
+	["Push Force +3"] = "Push Force +3.",
+	["Push Force +3 when target is a movable object"] = "Push Force +3 when target is a movable object.",
+	["Push Force +3 when targeting ally; RT ×0.50. Allied Push causes no collision damage"] = "Push Force +3 when targeting ally; RT ×0.50. Allied Push causes no collision damage.",
+	["Push Maximum Range +1"] = "Push Maximum Range +1.",
+	["Push RT Cost ×0.75"] = "Push RT Cost ×0.75.",
+	["Push applies +75 RT Delay and −1 Movement Range on target's next turn"] = "Push applies +75 RT Delay and −1 Movement Range on target's next turn.",
+	["Push becomes Pull instead (displaces target toward user). Push range +3, minimum range 2 (cannot target adjacent). Normal Push Force applies. If remaining Force exceeds pull distance, target collides with user — normal collision damage to both"] = "Push becomes Pull instead (displaces target toward user). Push range +3, minimum range 2 (cannot target adjacent). Normal Push Force applies. If remaining Force exceeds pull distance, target collides with user — normal collision damage to both.",
+	["Push collision damage deals double to Shields/barriers; ignores Guard effects on target"] = "Push collision damage deals double to Shields/barriers; ignores Guard effects on target.",
+	["Push deals 30% of base weapon damage and triggers weapon on-hit effects"] = "Push deals 30% of base weapon damage and triggers weapon on-hit effects.",
+	["Reduce effective fall height by 2 while Guarding. Ultra-light body armor (lightness priced in)"] = "Reduce effective fall height by 2 while Guarding. Ultra-light body armor (lightness priced in).",
+	["Restoring Items also grant regen equal to 7% of restored amount per 100 CT for 500 CT"] = "Restoring Items also grant regen equal to 7% of restored amount per 100 CT for 500 CT.",
+	["Second Move same turn has Movement Range +2 and Movement RT ×0.50"] = "Second Move same turn has Movement Range +2 and Movement RT ×0.50.",
+	["Single-target damage Items gain Impact Splash (adjacent tiles at 50% damage)"] = "Single-target damage Items gain Impact Splash (adjacent tiles at 50% damage).",
+	["Summoned units gain +25% Max HP"] = "Summoned units gain +25% Max HP.",
+	["Swap position with target before applying Push toward user's original direction"] = "Swap position with target before applying Push toward user's original direction.",
+	["Tiles traversed this Move are set on fire. Does not burn unit's final tile. Movement −1"] = "Tiles traversed this Move are set on fire. Does not burn unit's final tile. Movement −1.",
+	["Trap Items placed at Range +3 and remain active +500 CT"] = "Trap Items placed at Range +3 and remain active +500 CT.",
+	["Wall collision damage from Push gains ×1.25 multiplier. User moves along with pushed target"] = "Wall collision damage from Push gains ×1.25 multiplier. User moves along with pushed target.",
+	["When Push causes a movable object to collide, the object detonates as a Bomb Barrel: 3×3 explosion (30% Max HP damage), destroys adjacent breakable bridges/walls"] = "When Push causes a movable object to collide, the object detonates as a Bomb Barrel: 3×3 explosion (30% Max HP damage), destroys adjacent breakable bridges/walls.",
+	["When Push causes collision, units cardinally adjacent to collision tile are displaced 1 tile away"] = "When Push causes collision, units cardinally adjacent to collision tile are displaced 1 tile away.",
+	["When Push forces target downward, treat Fall Height as +1 for damage formula"] = "When Push forces target downward, treat Fall Height as +1 for damage formula.",
+	["When taking direct damage from enemy, recharge 1 item charge. Cannot target items at max charge"] = "When taking direct damage from enemy, recharge 1 item charge. Cannot target items at max charge.",
+	["While Guarding: Stability +3"] = "While Guarding: Stability +3.",
+	["While Guarding: adjacent allies also receive 50% of Guard damage reduction"] = "While Guarding: adjacent allies also receive 50% of Guard damage reduction.",
+	["While Guarding: attackers take 20% of their own damage as retaliation"] = "While Guarding: attackers take 20% of their own damage as retaliation.",
+	["While Guarding: damage reduction 35%→45% (cap still 80%)"] = "While Guarding: damage reduction 35%→45% (cap still 80%).",
+	["While Guarding: each successive hit in same Guard reduces damage by additional 5% (stacks to +20%)"] = "While Guarding: each successive hit in same Guard reduces damage by additional 5% (stacks to +20%).",
+	["While Guarding: enemies that end Move adjacent to this unit lose 2 Movement Range next turn"] = "While Guarding: enemies that end Move adjacent to this unit lose 2 Movement Range next turn.",
+	["While Guarding: gain Shield equal to 15% of Max HP before damage resolution"] = "While Guarding: gain Shield equal to 15% of Max HP before damage resolution.",
+	["While Guarding: immune to new debuff application"] = "While Guarding: immune to new debuff application.",
+	["While Guarding: immune to terrain/hazard/weather damage"] = "While Guarding: immune to terrain/hazard/weather damage.",
+	["While Guarding: incoming displacement/push is negated"] = "While Guarding: incoming displacement/push is negated.",
+	["While Guarding: may intercept attacks targeting adjacent allies within 1 tile"] = "While Guarding: may intercept attacks targeting adjacent allies within 1 tile.",
+	["While Guarding: projectile attacks are reflected back at 30% damage"] = "While Guarding: projectile attacks are reflected back at 30% damage.",
+	["While Guarding: recover 10% of Max HP"] = "While Guarding: recover 10% of Max HP.",
+	["While Guarding: store 40% of damage mitigated; next Basic Attack adds stored damage"] = "While Guarding: store 40% of damage mitigated; next Basic Attack adds stored damage.",
+}
+
+function ArmorData.GetPassiveDesc(passiveName)
+	return PASSIVE_DESC[passiveName] or ""
+end
+
+return ArmorData

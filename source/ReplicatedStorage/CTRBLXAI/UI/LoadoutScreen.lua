@@ -81,6 +81,30 @@ local buildInventory
 local openItemDetail, closeDetail
 local buildSoloDetailContent, buildComparisonContent
 local switchTab, buildSkillsContent, buildInfoContent
+local buildSkillLoadout
+local openSkillCardDetail, openAugmentCardDetail
+local openSkillSlotPicker, openAugmentSlotPicker
+local openEquippedSkillDetail, openEquippedAugmentDetail
+
+
+-- Skills tab state
+local selectedSkillCardId = nil
+local skillSubTab = "SKILL"     -- "SKILL" or "AUGMENT"
+local skillTypeFilter = "All"
+local skillTagFilter = "All"
+local skillSortIndex = 1
+local skillSearchText = ""
+
+local SKILL_SORT_OPTIONS_SK = {
+	{ label = "Name", field = "name", desc = false },
+	{ label = "MP ↓", field = "mpCost", desc = true },
+	{ label = "MP ↑", field = "mpCost", desc = false },
+	{ label = "RT ↓", field = "rtCost", desc = true },
+	{ label = "RT ↑", field = "rtCost", desc = false },
+}
+
+local SKILL_TYPE_FILTERS = { "All", "Damage", "Heal", "Buff", "Debuff", "Utility" }
+local SKILL_TAG_FILTERS = { "All", "Fire", "Ice", "Electric", "Holy", "Dark", "Poison", "Physical" }
 
 --------------------------------------------------
 -- HELPERS
@@ -1073,145 +1097,263 @@ openItemDetail = function(item, compareItem, isEquippedMode)
 
 	-- ============ BUTTON BAR (fixed bottom-right of SCREEN, outside the panel) ============
 	-- Matches battle UI Execute/Back position: bottom-right, anchored (1,1).
-	-- Right-to-left: EQUIP (rightmost), BACK, COMPARE (if applicable).
-	local PAD = 8
-	local BTN_W = 80
-	local BTN_H = 32
-	local BTN_GAP = 4
 
-	-- Container bar — positioned on the overlay, not inside the panel
-	local btnBar = Instance.new("Frame")
-	btnBar.Name = "DetailBtnBar"
-	btnBar.BackgroundTransparency = 1
-	btnBar.AnchorPoint = Vector2.new(1, 1)
-	btnBar.Position = UDim2.new(1, -PAD, 1, -PAD)
-	btnBar.Parent = detailOverlay
+	-- Collect buttons: COMPARE(1) | EQUIP(2) | BACK(3) right-aligned
+	local btnDefs = {}
+	local order = 1
 
-	local btnIndex = 0  -- counts from right edge
-
-	local function addFooterBtn(text, color, onClick)
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(0, BTN_W, 0, BTN_H)
-		btn.Position = UDim2.new(1, -(BTN_W + BTN_GAP) * btnIndex, 0, 0)
-		btn.AnchorPoint = Vector2.new(1, 0)
-		btn.BackgroundColor3 = color
-		btn.BackgroundTransparency = 0.15
-		btn.Font = Theme.Font.PrimaryBold
-		btn.TextSize = Theme.Text.Body()
-		btn.TextColor3 = Theme.Colors.TextPrimary
-		btn.Text = text
-		btn.BorderSizePixel = 0
-		btn.Parent = btnBar
-		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
-		btn.MouseButton1Click:Connect(onClick)
-		btnIndex = btnIndex + 1
-		return btn
+	-- Tertiary: COMPARE or DETAILS (leftmost, optional)
+	if not compareItem and unit then
+		local slot = item.cat
+		local equippedItem = MockData.GetEquipped(unit.id, slot)
+		if equippedItem and equippedItem.id ~= item.id then
+			table.insert(btnDefs, { text = "COMPARE", style = "Tertiary", order = order, onClick = function()
+				openItemDetail(item, equippedItem)
+			end })
+			order = order + 1
+		end
+	end
+	if compareItem then
+		table.insert(btnDefs, { text = "DETAILS", style = "Tertiary", order = order, onClick = function()
+			openItemDetail(item, nil)
+		end })
+		order = order + 1
 	end
 
-	-- 1st from right: EQUIP or UNEQUIP
+	-- Primary: EQUIP or UNEQUIP
 	if isEquippedMode then
 		local eqSlot = item.cat
-		-- Don't allow unequipping Doctrine
 		if eqSlot ~= "Doctrine" then
-			addFooterBtn("UNEQUIP", Theme.Colors.Danger, function()
+			table.insert(btnDefs, { text = "UNEQUIP", style = "Primary", order = order, onClick = function()
 				if unit then
 					MockData.MockUnequip(unit.id, eqSlot)
 					closeDetail()
 					LoadoutScreen.Refresh()
 				end
-			end)
+			end })
+			order = order + 1
 		end
 	else
-		addFooterBtn("EQUIP", Theme.Colors.Success, function()
+		table.insert(btnDefs, { text = "EQUIP", style = "Primary", order = order, onClick = function()
 			if unit then
 				local slot = item.cat
 				MockData.MockEquip(unit.id, slot, item.id)
 				closeDetail()
 				LoadoutScreen.Refresh()
 			end
-		end)
+		end })
+		order = order + 1
 	end
 
-	-- 2nd from right: BACK
-	addFooterBtn("BACK", Theme.Colors.Surface, closeDetail)
+	-- Secondary: BACK (always rightmost)
+	table.insert(btnDefs, { text = "BACK", style = "Secondary", order = order, onClick = closeDetail })
 
-	-- 3rd from right: COMPARE (only in solo mode when an equipped item exists to compare)
+	-- Build button row: bottom-right of SCREEN, on the overlay ScreenGui
+	local btnCount = #btnDefs
+	local BTN_W = 96
+	local BTN_H = 35
+	local BTN_GAP = 2
+	local totalW = btnCount * BTN_W + (btnCount - 1) * BTN_GAP
+	local btnBar = Instance.new("Frame")
+	btnBar.Name = "DetailBtnBar"
+	btnBar.Size = UDim2.new(0, totalW, 0, BTN_H)
+	btnBar.BackgroundTransparency = 1
+	btnBar.AnchorPoint = Vector2.new(1, 1)
+	btnBar.Position = UDim2.new(1, -8, 1, -8)
+	btnBar.Parent = detailOverlay
+
+	local rowLayout = Instance.new("UIListLayout")
+	rowLayout.FillDirection = Enum.FillDirection.Horizontal
+	rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	rowLayout.Padding = UDim.new(0, 2)
+	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	rowLayout.Parent = btnBar
+
+	for _, def in ipairs(btnDefs) do
+		local btn = Theme.MakeButton(btnBar, def.text, def.style, def.onClick, {
+			size = UDim2.new(0, BTN_W, 0, BTN_H),
+		})
+		btn.LayoutOrder = def.order
+	end
+
+	-- [DIAG] COMPARE gating conditions
+	print("[DIAG-COMPARE] compareItem = " .. tostring(compareItem))
+	print("[DIAG-COMPARE] unit = " .. tostring(unit))
 	if not compareItem and unit then
-		local slot = item.cat
-		local equippedItem = MockData.GetEquipped(unit.id, slot)
-		if equippedItem and equippedItem.id ~= item.id then
-			addFooterBtn("COMPARE", Theme.Colors.Surface, function()
-				openItemDetail(item, equippedItem)
-			end)
+		local diagSlot = item.cat
+		local diagEquipped = MockData.GetEquipped(unit.id, diagSlot)
+		print("[DIAG-COMPARE] item.cat (slot) = " .. tostring(diagSlot))
+		print("[DIAG-COMPARE] equippedItem = " .. tostring(diagEquipped))
+		if diagEquipped then
+			print("[DIAG-COMPARE] equippedItem.id = " .. tostring(diagEquipped.id) .. " | item.id = " .. tostring(item.id))
+			print("[DIAG-COMPARE] ids differ = " .. tostring(diagEquipped.id ~= item.id))
 		end
 	end
-
-	-- 3rd from right: DETAILS (only in compare mode — returns to solo detail view)
-	if compareItem then
-		addFooterBtn("DETAILS", Theme.Colors.Surface, function()
-			openItemDetail(item, nil)
-		end)
+	print("[DIAG-COMPARE] isEquippedMode = " .. tostring(isEquippedMode))
+	print("[DIAG-COMPARE] btnCount = " .. tostring(btnCount))
+	for _, def in ipairs(btnDefs) do
+		print("[DIAG-COMPARE] btnDef: text=" .. def.text .. " style=" .. def.style .. " order=" .. tostring(def.order))
 	end
 
-	-- Size the bar to fit all buttons
-	btnBar.Size = UDim2.new(0, (BTN_W + BTN_GAP) * btnIndex, 0, BTN_H)
+	-- [DIAG] Deferred layout dump (after 1 frame)
+	task.defer(function()
+		if not btnBar or not btnBar.Parent then
+			print("[DIAG-LAYOUT] btnBar destroyed or no parent!")
+			return
+		end
+		print("[DIAG-LAYOUT] ---- BUTTON BAR ----")
+		print("[DIAG-LAYOUT] btnBar.Parent = " .. btnBar.Parent:GetFullName())
+		print("[DIAG-LAYOUT] btnBar.AbsolutePosition = " .. tostring(btnBar.AbsolutePosition))
+		print("[DIAG-LAYOUT] btnBar.AbsoluteSize = " .. tostring(btnBar.AbsoluteSize))
+		print("[DIAG-LAYOUT] btnBar.Size = " .. tostring(btnBar.Size))
+		print("[DIAG-LAYOUT] btnBar.Visible = " .. tostring(btnBar.Visible))
+
+		-- Detail panel
+		print("[DIAG-LAYOUT] ---- DETAIL PANEL ----")
+		print("[DIAG-LAYOUT] panel.AbsolutePosition = " .. tostring(panel.AbsolutePosition))
+		print("[DIAG-LAYOUT] panel.AbsoluteSize = " .. tostring(panel.AbsoluteSize))
+		print("[DIAG-LAYOUT] panel.ClipsDescendants = " .. tostring(panel.ClipsDescendants))
+
+		-- UIListLayout
+		local layout = btnBar:FindFirstChildWhichIsA("UIListLayout")
+		if layout then
+			print("[DIAG-LAYOUT] UIListLayout.AbsoluteContentSize = " .. tostring(layout.AbsoluteContentSize))
+			print("[DIAG-LAYOUT] UIListLayout.Padding = " .. tostring(layout.Padding))
+		end
+
+		-- Per-button
+		print("[DIAG-LAYOUT] ---- INDIVIDUAL BUTTONS ----")
+		local prevRight = nil
+		for _, child in ipairs(btnBar:GetChildren()) do
+			if child:IsA("ImageButton") then
+				local ap = child.AbsolutePosition
+				local as = child.AbsoluteSize
+				print(("[DIAG-LAYOUT] %s | AbsPos=%s | AbsSize=%s | Visible=%s | ImgTransp=%s"):format(
+					child.Name, tostring(ap), tostring(as),
+					tostring(child.Visible), tostring(child.ImageTransparency)))
+				-- Compute gap from previous button
+				if prevRight then
+					local gap = ap.X - prevRight
+					print(("[DIAG-LAYOUT]   ^ gap from previous right edge = %.1f px"):format(gap))
+				end
+				prevRight = ap.X + as.X
+			end
+		end
+
+		-- SliceCenter recap
+		print("[DIAG-SLICE] BTN_SLICE_CENTER applied = " .. tostring(btnBar:GetChildren()[1] and btnBar:GetChildren()[1]:IsA("ImageButton") and btnBar:GetChildren()[1].SliceCenter or "N/A"))
+		print("[DIAG-SLICE] Source images are ORIGINAL 256x50 uploads (trimmed 200x48 were never uploaded)")
+	end)
+
 end
 
 --------------------------------------------------
 -- SOLO DETAIL CONTENT (reference image 1)
 --------------------------------------------------
 
-buildSoloDetailContent = function(panel, item)
-	local rc = getRarityColor(item.rarity)
+-- Helper: generate a fallback flavor line for equipment without authored flavor
+local function getItemFlavor(item)
+	if item.flavor and item.flavor ~= "" then return item.flavor end
+	-- Generate basic flavor from item properties
+	local parts = {}
+	local rarity = item.rarity or "Common"
+	if rarity == "Legendary" then
+		table.insert(parts, "A legendary")
+	elseif rarity == "Epic" then
+		table.insert(parts, "A finely crafted")
+	elseif rarity == "Rare" then
+		table.insert(parts, "A well-forged")
+	elseif rarity == "Uncommon" then
+		table.insert(parts, "A sturdy")
+	else
+		table.insert(parts, "A standard")
+	end
+	-- Category/type
+	local sub = item.sub or ""
+	local cat = item.cat or ""
+	if sub ~= "" then
+		table.insert(parts, sub:lower())
+	elseif cat == "MainHand" then
+		table.insert(parts, "weapon")
+	elseif cat == "OffHand" then
+		table.insert(parts, "off-hand item")
+	elseif cat == "Head" then
+		table.insert(parts, "headpiece")
+	elseif cat == "Torso" then
+		table.insert(parts, "body armor")
+	elseif cat == "Arms" then
+		table.insert(parts, "pair of gloves")
+	elseif cat == "Legs" then
+		table.insert(parts, "pair of boots")
+	elseif cat == "Accessory" then
+		table.insert(parts, "accessory")
+	else
+		table.insert(parts, "piece of equipment")
+	end
+	-- Passive hint
+	if item.passives and #item.passives > 0 then
+		table.insert(parts, "with the " .. item.passives[1].name .. " property.")
+	else
+		table.insert(parts, "built for the battlefield.")
+	end
+	return table.concat(parts, " ")
+end
 
-	-- Item header: portrait + name + subtitle + tags + flavor
-	local headerY = 0
-	local portraitSize = 64
+--------------------------------------------------
+-- SHARED DETAIL HEADER (uniform across all item types)
+--------------------------------------------------
+local DETAIL_PORTRAIT = 52
+local DETAIL_TEXT_X = DETAIL_PORTRAIT + 8
 
-	-- Portrait (larger, rarity-tinted)
+local function buildDetailHeader(parent, opts)
 	local iconFrame = Instance.new("Frame")
-	iconFrame.Size = UDim2.new(0, portraitSize, 0, portraitSize)
-	iconFrame.Position = UDim2.new(0, 0, 0, headerY)
-	iconFrame.BackgroundColor3 = rc
-	iconFrame.BackgroundTransparency = 0.75
+	iconFrame.Size = UDim2.new(0, DETAIL_PORTRAIT, 0, DETAIL_PORTRAIT)
+	iconFrame.Position = UDim2.new(0, 0, 0, 0)
+	iconFrame.BackgroundColor3 = opts.iconBg or Theme.Colors.Surface
+	iconFrame.BackgroundTransparency = opts.iconBgTransparency or 0.15
 	iconFrame.BorderSizePixel = 0
-	iconFrame.Parent = panel
+	iconFrame.Parent = parent
 	Instance.new("UICorner", iconFrame).CornerRadius = UDim.new(0, 6)
-	local iconStroke = Instance.new("UIStroke", iconFrame)
-	iconStroke.Color = rc
-	iconStroke.Thickness = 1.5
-	makeLabel(iconFrame, { Text = item.icon or "?", Size = UDim2.fromScale(1, 1),
-		TextSize = 30, TextXAlignment = Enum.TextXAlignment.Center })
-
-	local textX = portraitSize + 8
-	-- Name
-	makeLabel(panel, { Text = item.name, Size = UDim2.new(1, -textX, 0, 18),
-		Position = UDim2.new(0, textX, 0, headerY),
+	local stroke = Instance.new("UIStroke", iconFrame)
+	stroke.Color = opts.iconStrokeColor or Theme.Colors.Border
+	stroke.Thickness = 1.5
+	makeLabel(iconFrame, { Text = opts.iconText or "?", Size = UDim2.fromScale(1, 1),
+		TextSize = Theme.Text.Title(), TextColor3 = opts.iconColor or Theme.Colors.TextPrimary,
+		TextXAlignment = Enum.TextXAlignment.Center })
+	if opts.level and opts.level > 0 then
+		local lvBadge = Instance.new("Frame")
+		lvBadge.Size = UDim2.new(0, 26, 0, 16)
+		lvBadge.Position = UDim2.new(0, 0, 0, 0)
+		lvBadge.BackgroundColor3 = Theme.Colors.Panel
+		lvBadge.BorderSizePixel = 0
+		lvBadge.ZIndex = 2
+		lvBadge.Parent = iconFrame
+		Instance.new("UICorner", lvBadge).CornerRadius = UDim.new(0, 3)
+		Instance.new("UIStroke", lvBadge).Color = Theme.Colors.Border
+		makeLabel(lvBadge, { Text = "Lv" .. opts.level,
+			Size = UDim2.fromScale(1, 1),
+			TextSize = Theme.Text.Tiny(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Theme.Colors.TextGold,
+			TextXAlignment = Enum.TextXAlignment.Center })
+	end
+	makeLabel(parent, { Text = opts.name or "?",
+		Size = UDim2.new(1, -DETAIL_TEXT_X, 0, 18),
+		Position = UDim2.new(0, DETAIL_TEXT_X, 0, 0),
 		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Heading(),
 		TextColor3 = Theme.Colors.TextPrimary })
-
-	-- Subtitle: Lv.X · Rarity · SubType
-	local subParts = {}
-	if item.lv and item.lv > 0 then table.insert(subParts, "Lv." .. item.lv) end
-	table.insert(subParts, item.rarity or "Common")
-	if item.sub then table.insert(subParts, item.sub) end
-	makeLabel(panel, { Text = table.concat(subParts, "  ·  "),
-		Size = UDim2.new(1, -textX, 0, 14),
-		Position = UDim2.new(0, textX, 0, headerY + 18),
-		TextSize = Theme.Text.Small(), TextColor3 = rc })
-
-	-- Tags
-	local tagY = headerY + 34
-	if item.tags and #item.tags > 0 then
+	local tagY = 20
+	local tags = opts.tags or {}
+	if #tags > 0 then
 		local tagRow = Instance.new("Frame")
-		tagRow.Size = UDim2.new(1, -textX, 0, 16)
-		tagRow.Position = UDim2.new(0, textX, 0, tagY)
+		tagRow.Size = UDim2.new(1, -DETAIL_TEXT_X, 0, 16)
+		tagRow.Position = UDim2.new(0, DETAIL_TEXT_X, 0, tagY)
 		tagRow.BackgroundTransparency = 1
-		tagRow.Parent = panel
+		tagRow.Parent = parent
 		local tagLayout = Instance.new("UIListLayout", tagRow)
 		tagLayout.FillDirection = Enum.FillDirection.Horizontal
 		tagLayout.Padding = UDim.new(0, 3)
-		for ti, tag in ipairs(item.tags) do
+		for ti, tag in ipairs(tags) do
 			local chip = Instance.new("Frame")
 			chip.Size = UDim2.new(0, #tag * 5 + 10, 0, 14)
 			chip.BackgroundColor3 = Theme.Colors.Surface
@@ -1226,19 +1368,36 @@ buildSoloDetailContent = function(panel, item)
 		end
 		tagY = tagY + 18
 	end
-
-	-- Flavor text (below tags)
-	if item.flavor then
-		makeLabel(panel, { Text = item.flavor,
-			Size = UDim2.new(1, -textX, 0, 16),
-			Position = UDim2.new(0, textX, 0, tagY),
-			TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextDisabled,
-			TextWrapped = true, Font = Enum.Font.SourceSansItalic })
-		tagY = tagY + 18
+	local desc = opts.description or ""
+	if desc ~= "" then
+		makeLabel(parent, { Text = desc,
+			Size = UDim2.new(1, -DETAIL_TEXT_X, 0, 28),
+			Position = UDim2.new(0, DETAIL_TEXT_X, 0, tagY),
+			TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+			TextWrapped = true })
+		tagY = tagY + 30
 	end
+	return math.max(tagY + 2, DETAIL_PORTRAIT + 4)
+end
+
+
+buildSoloDetailContent = function(panel, item)
+	local rc = getRarityColor(item.rarity)
+
+	-- Unified header
+	local divY = buildDetailHeader(panel, {
+		iconText = item.icon or "?",
+		iconBg = rc,
+		iconBgTransparency = 0.75,
+		iconColor = Theme.Colors.TextPrimary,
+		iconStrokeColor = rc,
+		name = item.name,
+		tags = item.tags,
+		description = getItemFlavor(item),
+		level = item.lv,
+	})
 
 	-- Divider
-	local divY = math.max(tagY + 2, portraitSize + 4)
 	local div = Instance.new("Frame")
 	div.Size = UDim2.new(1, 0, 0, 1)
 	div.Position = UDim2.new(0, 0, 0, divY)
@@ -1801,6 +1960,7 @@ switchTab = function()
 		buildEquippedLoadout()
 	elseif currentTab == "SKILLS" then
 		if skillsPanel then skillsPanel.Visible = true end
+		if equippedPanel then equippedPanel.Visible = true end
 		buildSkillsContent()
 	elseif currentTab == "INFO" then
 		if infoPanel then infoPanel.Visible = true end
@@ -1814,182 +1974,2069 @@ switchTab = function()
 end
 
 --------------------------------------------------
--- SKILLS TAB CONTENT
+-- SKILLS TAB CONTENT (v3 — Grid + Loadout Table)
 --------------------------------------------------
 
+-- =====================================================
+-- SKILLS TAB v3: Grid Layout with Detail Overlays
+-- Replaces lines 1843-2881 in LoadoutScreen.lua
+-- =====================================================
+
+-- SKILL TYPE classification helper
+local function getSkillType(tags)
+	if not tags then return "Utility" end
+	for _, t in ipairs(tags) do
+		if t == "Direct Damage" then return "Damage" end
+	end
+	for _, t in ipairs(tags) do
+		if t == "Healing" then return "Heal" end
+	end
+	for _, t in ipairs(tags) do
+		if t == "Buff" or t == "Shield" then return "Buff" end
+	end
+	for _, t in ipairs(tags) do
+		if t == "Debuff" then return "Debuff" end
+	end
+	return "Utility"
+end
+
+-- Skill-type colour table
+local STYPE_COLORS = {
+	Damage  = { bg = Color3.fromRGB(74, 26, 26), icon = Color3.fromRGB(248, 113, 113) },
+	Heal    = { bg = Color3.fromRGB(26, 58, 26), icon = Color3.fromRGB(74, 222, 128)  },
+	Buff    = { bg = Color3.fromRGB(26, 42, 74), icon = Color3.fromRGB(96, 165, 250)  },
+	Debuff  = { bg = Color3.fromRGB(42, 26, 74), icon = Color3.fromRGB(192, 132, 252) },
+	Utility = { bg = Color3.fromRGB(42, 42, 42), icon = Color3.fromRGB(226, 232, 240) },
+}
+
+-- Skill-type emoji icons
+-- Helper: simplify pattern text for display
+local function simplifyPattern(raw)
+	if not raw then return "-" end
+	local low = raw:lower()
+	if low:find("inherit weapon") or low:find("weapon pattern") then
+		return "Weapon"
+	end
+	-- Strip "Authored " prefix
+	local simplified = raw:gsub("^Authored%s+", "")
+	return simplified
+end
+
+-- Helper: simplify targeting range text for display
+local function simplifyRange(raw)
+	if not raw then return "-" end
+	local low = raw:lower()
+	-- Check for weapon range inheritance
+	if low:find("inherit") and low:find("weapon range") then
+		-- Extract bonus skill range %
+		local pct = raw:match("(%d+)%%.-[Bb]onus [Ss]kill [Rr]ange")
+		if pct then
+			return "Weapon + " .. pct .. "% Bonus Skill Range"
+		end
+		return "Weapon Range"
+	end
+	-- Fixed range: "Fixed 4; add 100% inherited Bonus Skill Range"
+	local fixedVal = raw:match("[Ff]ixed%s+(%d+)")
+	local bonusPct = raw:match("(%d+)%%.-[Bb]onus [Ss]kill [Rr]ange")
+	if fixedVal then
+		if bonusPct and bonusPct ~= "0" then
+			return fixedVal .. " + " .. bonusPct .. "% Bonus Skill Range"
+		end
+		return fixedVal
+	end
+	-- Authored range formula
+	local formula = raw:match("[Aa]uthored [Rr]ange [Ff]ormula:%s*(.-)%;")
+	if formula then
+		local inheritance = raw:match("Inheritance%s*=%s*(%d+)%%")
+		if inheritance and inheritance ~= "0" then
+			return formula .. " + " .. inheritance .. "% Bonus Skill Range"
+		end
+		return formula
+	end
+	-- Self range
+	if low:find("^self") then return "Self" end
+	-- Fallback: return first line only, trimmed
+	local firstLine = raw:match("^([^\n]+)")
+	if firstLine and #firstLine > 50 then
+		return firstLine:sub(1, 47) .. "..."
+	end
+	return firstLine or raw
+end
+
+-- Helper: build a short skill description from its definition
+local function buildSkillDescription(def)
+	if not def then return "" end
+	local parts = {}
+	-- Range type
+	local range = def.targetingRange or ""
+	local rangeLow = range:lower()
+	if rangeLow:find("self") then
+		table.insert(parts, "Self-targeting")
+	elseif rangeLow:find("fixed") then
+		table.insert(parts, "Ranged")
+	elseif rangeLow:find("weapon range") or rangeLow:find("inherit") then
+		table.insert(parts, "Weapon-range")
+	else
+		table.insert(parts, "Targeted")
+	end
+	-- Element
+	local tags = def.tags or {}
+	local elements = { "Fire", "Ice", "Electric", "Holy", "Dark", "Poison", "Water", "Earth" }
+	for _, el in ipairs(elements) do
+		for _, t in ipairs(tags) do
+			if t == el then
+				table.insert(parts, el:lower())
+				break
+			end
+		end
+	end
+	-- Pattern
+	local pat = def.pattern or ""
+	local patLow = pat:lower()
+	if patLow:find("single") then
+		table.insert(parts, "single-target")
+	elseif patLow:find("cleave") or patLow:find("sweep") then
+		table.insert(parts, "cleave")
+	elseif patLow:find("line") then
+		table.insert(parts, "line")
+	elseif patLow:find("circle") or patLow:find("spread") then
+		table.insert(parts, "area")
+	elseif patLow:find("chain") then
+		table.insert(parts, "chain")
+	elseif patLow:find("weapon") or patLow:find("inherit") then
+		table.insert(parts, "weapon-pattern")
+	elseif patLow:find("self") then
+		table.insert(parts, "self")
+	end
+	-- Projectile
+	local props = def.properties or ""
+	if props:lower():find("projectile") then
+		table.insert(parts, "projectile")
+	end
+	-- Main action from tags
+	local hasHeal = false
+	local hasDamage = false
+	local hasBuff = false
+	local hasDebuff = false
+	for _, t in ipairs(tags) do
+		if t == "Healing" then hasHeal = true end
+		if t == "Direct Damage" then hasDamage = true end
+		if t == "Buff" or t == "Shield" then hasBuff = true end
+		if t == "Debuff" then hasDebuff = true end
+	end
+	if hasDamage and hasDebuff then
+		table.insert(parts, "attack with debuff")
+	elseif hasDamage then
+		table.insert(parts, "attack")
+	elseif hasHeal then
+		table.insert(parts, "heal")
+	elseif hasBuff then
+		table.insert(parts, "buff")
+	elseif hasDebuff then
+		table.insert(parts, "debuff")
+	end
+	return table.concat(parts, " ")
+end
+
+-- Helper: clean effects text — strip pattern/range/snapshot redundancy
+local function cleanEffects(raw)
+	if not raw then return "" end
+	local text = raw
+	-- Remove "Authored Single pattern; " or similar pattern mentions
+	text = text:gsub("[Aa]uthored%s+%w+%s+pattern;?%s*", "")
+	-- Remove "Inherit Weapon Pattern." type mentions
+	text = text:gsub("[Ii]nherit%s+[Ww]eapon%s+[Pp]attern%.?%s*", "")
+	-- Remove snapshot timing references
+	text = text:gsub("[Ss]napshot%s+at%s+commitment[^%.]*%.?%s*", "")
+	-- Remove "persistent/created effects..." noise
+	text = text:gsub("persistent/created effects[^%.]*%.?%s*", "")
+	-- Remove leading/trailing whitespace and semicolons
+	text = text:gsub("^[;%s]+", ""):gsub("[;%s]+$", "")
+	-- Capitalize first letter
+	if #text > 0 then
+		text = text:sub(1, 1):upper() .. text:sub(2)
+	end
+	return text
+end
+
+local STYPE_ICONS = {
+	Damage  = "[X]",
+	Heal    = "[+]",
+	Buff    = "[^]",
+	Debuff  = "[v]",
+	Utility = "[*]",
+}
+
+-- Element colour lookup
+local ELEM_COLORS = {
+	Fire     = Color3.fromRGB(249, 115, 22),
+	Ice      = Color3.fromRGB(56, 189, 248),
+	Electric = Color3.fromRGB(250, 204, 21),
+	Holy     = Color3.fromRGB(253, 230, 138),
+	Dark     = Color3.fromRGB(167, 139, 250),
+	Poison   = Color3.fromRGB(134, 239, 172),
+	Physical = nil, -- uses TextSecondary
+}
+
+local function getElement(tags)
+	if not tags then return nil end
+	for _, t in ipairs(tags) do
+		if ELEM_COLORS[t] then return t end
+	end
+	return nil
+end
+
+-- ==================================================================
+-- buildSkillsContent: Main Skills tab
+-- Uses skillsPanel (left 70%) for card grid
+-- Uses equippedPanel (right 30%) for skill loadout table
+-- ==================================================================
 buildSkillsContent = function()
 	if not skillsPanel then return end
 	clearChildren(skillsPanel)
-	pad(skillsPanel, 10, 12, 12, 10)
+	pad(skillsPanel, 8, 8, 8, 8)
 
 	local unit = MockData.GetSelectedUnit()
 	if not unit then return end
 
-	-- Title
-	makeLabel(skillsPanel, { Text = "SKILL LOADOUT", Size = UDim2.new(1, 0, 0, 18),
-		Position = UDim2.new(0, 0, 0, 0),
-		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Heading(),
-		TextColor3 = Theme.Colors.TextGold })
+	-- Load skill data from server
+	if MockData.LoadSkillData then
+		MockData.LoadSkillData(unit.id)
+	end
 
 	local loadout = MockData.GetSkillLoadout(unit.id)
 	local doctrineId = unit.doctrineId or "DOC-BERSERKER"
-	local doctrineChoices = MockData.GetDoctrineChoices(doctrineId)
 
-	local slotY = 24
-	local SLOT_H = 44
-	local SLOT_GAP = 4
+	-- ============================================================
+	-- LEFT: CARD GRID (in skillsPanel)
+	-- ============================================================
 
-	for slot = 1, 5 do
-		local skillId = loadout[slot]
-		local skill = skillId and MockData.GetSkill(skillId) or nil
+	-- Filter bar
+	local ctrlRow = Instance.new("Frame")
+	ctrlRow.Size = UDim2.new(1, 0, 0, 24)
+	ctrlRow.Position = UDim2.new(0, 0, 0, 0)
+	ctrlRow.BackgroundTransparency = 1
+	ctrlRow.Parent = skillsPanel
 
-		-- Slot frame
-		local slotFrame = Instance.new("Frame")
-		slotFrame.Size = UDim2.new(1, 0, 0, SLOT_H)
-		slotFrame.Position = UDim2.new(0, 0, 0, slotY)
-		slotFrame.BackgroundColor3 = Theme.Colors.PanelRaised
-		slotFrame.BackgroundTransparency = 0.3
-		slotFrame.BorderSizePixel = 0
-		slotFrame.Parent = skillsPanel
-		Instance.new("UICorner", slotFrame).CornerRadius = UDim.new(0, 4)
+	local ctrlLayout = Instance.new("UIListLayout", ctrlRow)
+	ctrlLayout.FillDirection = Enum.FillDirection.Horizontal
+	ctrlLayout.Padding = UDim.new(0, 3)
+	ctrlLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 
-		-- Slot number badge (left)
-		local badge = Instance.new("Frame")
-		badge.Size = UDim2.new(0, 24, 0, 24)
-		badge.Position = UDim2.new(0, 6, 0.5, -12)
-		badge.BorderSizePixel = 0
-		badge.Parent = slotFrame
-		Instance.new("UICorner", badge).CornerRadius = UDim.new(0, 4)
+	-- Search box
+	local search = Instance.new("TextBox")
+	search.Size = UDim2.new(1, -195, 1, 0)
+	search.BackgroundColor3 = Theme.Colors.Surface
+	search.BackgroundTransparency = 0.2
+	search.Font = Theme.Font.Primary
+	search.TextSize = Theme.Text.Small()
+	search.TextColor3 = Theme.Colors.TextPrimary
+	search.PlaceholderText = "Search cards..."
+	search.PlaceholderColor3 = Theme.Colors.TextDisabled
+	search.Text = skillSearchText or ""
+	search.BorderSizePixel = 0
+	search.ClearTextOnFocus = false
+	search.LayoutOrder = 1
+	search.Parent = ctrlRow
+	Instance.new("UICorner", search).CornerRadius = UDim.new(0, 3)
 
-		local badgeLabel = Instance.new("TextLabel")
-		badgeLabel.Size = UDim2.fromScale(1, 1)
-		badgeLabel.BackgroundTransparency = 1
-		badgeLabel.Font = Theme.Font.PrimaryBold
-		badgeLabel.TextSize = Theme.Text.Body()
-		badgeLabel.TextColor3 = Theme.Colors.TextPrimary
-		badgeLabel.Text = tostring(slot)
-		badgeLabel.Parent = badge
+	search.FocusLost:Connect(function()
+		skillSearchText = search.Text
+		buildSkillsContent()
+	end)
 
-		if slot == 5 then
-			-- Locked slot
-			badge.BackgroundColor3 = Theme.Colors.TextDisabled
-			badge.BackgroundTransparency = 0.5
-			slotFrame.BackgroundTransparency = 0.6
-
-			makeLabel(slotFrame, { Text = "Locked — First Race Evolution",
-				Size = UDim2.new(1, -40, 0, 16),
-				Position = UDim2.new(0, 36, 0.5, -8),
-				TextSize = Theme.Text.Body(),
-				TextColor3 = Theme.Colors.TextDisabled,
-				Font = Theme.Font.Primary })
-
-		elseif slot == 1 then
-			-- Doctrine Skill slot
-			badge.BackgroundColor3 = Theme.Colors.TextGold
-			badge.BackgroundTransparency = 0.3
-
-			if skill then
-				makeLabel(slotFrame, { Text = skill.name,
-					Size = UDim2.new(0.5, -40, 0, 16),
-					Position = UDim2.new(0, 36, 0, 4),
-					Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
-					TextColor3 = Theme.Colors.TextGold })
-				makeLabel(slotFrame, { Text = skill.desc or "",
-					Size = UDim2.new(0.5, -40, 0, 14),
-					Position = UDim2.new(0, 36, 0, 22),
-					TextSize = Theme.Text.Tiny(),
-					TextColor3 = Theme.Colors.TextSecondary,
-					TextWrapped = true })
-			else
-				makeLabel(slotFrame, { Text = "No Doctrine Skill",
-					Size = UDim2.new(1, -40, 0, 16),
-					Position = UDim2.new(0, 36, 0.5, -8),
-					TextSize = Theme.Text.Body(),
-					TextColor3 = Theme.Colors.TextDisabled })
-			end
-
-			-- MP / RT on right side
-			if skill then
-				makeLabel(slotFrame, { Text = "MP " .. (skill.mpCost or 0),
-					Size = UDim2.new(0, 40, 0, 14),
-					Position = UDim2.new(1, -90, 0, 6),
-					TextSize = Theme.Text.Small(), Font = Theme.Font.Mono,
-					TextColor3 = Theme.Colors.MP })
-				makeLabel(slotFrame, { Text = "RT " .. (skill.rtCost or 0),
-					Size = UDim2.new(0, 40, 0, 14),
-					Position = UDim2.new(1, -46, 0, 6),
-					TextSize = Theme.Text.Small(), Font = Theme.Font.Mono,
-					TextColor3 = Theme.Colors.TextSecondary })
-			end
-
-			-- Doctrine label
-			makeLabel(slotFrame, { Text = "DOCTRINE",
-				Size = UDim2.new(0, 60, 0, 10),
-				Position = UDim2.new(1, -90, 0, 24),
-				TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
-				TextColor3 = Theme.Colors.TextGold })
-
-		elseif skill then
-			-- Normal skill slot (2-4) with skill equipped
-			badge.BackgroundColor3 = Theme.Colors.Player
-			badge.BackgroundTransparency = 0.3
-
-			makeLabel(slotFrame, { Text = skill.name,
-				Size = UDim2.new(0.5, -40, 0, 16),
-				Position = UDim2.new(0, 36, 0, 4),
-				Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
-				TextColor3 = Theme.Colors.TextPrimary })
-
-			-- Tags
-			local tagText = table.concat(skill.tags or {}, ", ")
-			makeLabel(slotFrame, { Text = tagText,
-				Size = UDim2.new(0.5, -40, 0, 12),
-				Position = UDim2.new(0, 36, 0, 22),
-				TextSize = Theme.Text.Tiny(),
-				TextColor3 = Theme.Colors.TextSecondary })
-
-			-- MP / RT
-			makeLabel(slotFrame, { Text = "MP " .. (skill.mpCost or 0),
-				Size = UDim2.new(0, 40, 0, 14),
-				Position = UDim2.new(1, -90, 0, 6),
-				TextSize = Theme.Text.Small(), Font = Theme.Font.Mono,
-				TextColor3 = Theme.Colors.MP })
-			makeLabel(slotFrame, { Text = "RT " .. (skill.rtCost or 0),
-				Size = UDim2.new(0, 40, 0, 14),
-				Position = UDim2.new(1, -46, 0, 6),
-				TextSize = Theme.Text.Small(), Font = Theme.Font.Mono,
-				TextColor3 = Theme.Colors.TextSecondary })
-
-			-- Range
-			makeLabel(slotFrame, { Text = "R:" .. (skill.range or 1),
-				Size = UDim2.new(0, 30, 0, 14),
-				Position = UDim2.new(1, -90, 0, 24),
-				TextSize = Theme.Text.Tiny(), Font = Theme.Font.Mono,
-				TextColor3 = Theme.Colors.TextSecondary })
-
-		else
-			-- Empty slot (2-4)
-			badge.BackgroundColor3 = Theme.Colors.Surface
-			badge.BackgroundTransparency = 0.5
-
-			makeLabel(slotFrame, { Text = "— Empty —",
-				Size = UDim2.new(1, -40, 0, 16),
-				Position = UDim2.new(0, 36, 0.5, -8),
-				TextSize = Theme.Text.Body(),
-				TextColor3 = Theme.Colors.TextDisabled })
-		end
-
-		slotY = slotY + SLOT_H + SLOT_GAP
+	-- Shared dropdown helpers (reuse module-level activeDropdown)
+	local function closeDD()
+		if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
 	end
 
-	-- Augment slots note
-	slotY = slotY + 8
-	makeLabel(skillsPanel, { Text = "Augment slots available on each skill (2 per skill). Tap a skill to manage augments.",
-		Size = UDim2.new(1, 0, 0, 24),
-		Position = UDim2.new(0, 0, 0, slotY),
-		TextSize = Theme.Text.Tiny(),
-		TextColor3 = Theme.Colors.TextDisabled,
-		TextWrapped = true })
+	local function showDD(anchorBtn, options, onSelect)
+		closeDD()
+		local rowH = 22
+		local menuH = #options * rowH + 4
+		local menuW = math.max(anchorBtn.AbsoluteSize.X, 80)
+
+		activeDropdown = Instance.new("ScreenGui")
+		activeDropdown.Name = "SkillDropdown"
+		activeDropdown.DisplayOrder = 105
+		activeDropdown.ResetOnSpawn = false
+		activeDropdown.Parent = getPlayerGui()
+
+		local ddBack = Instance.new("TextButton")
+		ddBack.Size = UDim2.fromScale(1, 1)
+		ddBack.BackgroundTransparency = 1
+		ddBack.Text = ""
+		ddBack.Parent = activeDropdown
+		ddBack.MouseButton1Click:Connect(closeDD)
+
+		local mPanel = Instance.new("Frame")
+		mPanel.Size = UDim2.new(0, menuW, 0, menuH)
+		mPanel.Position = UDim2.new(0,
+			anchorBtn.AbsolutePosition.X,
+			0, anchorBtn.AbsolutePosition.Y + anchorBtn.AbsoluteSize.Y + 2)
+		mPanel.BackgroundColor3 = Theme.Colors.Panel
+		mPanel.BorderSizePixel = 0
+		mPanel.ZIndex = 50
+		mPanel.Parent = activeDropdown
+		Instance.new("UICorner", mPanel).CornerRadius = UDim.new(0, 4)
+		Instance.new("UIStroke", mPanel).Color = Theme.Colors.Border
+		pad(mPanel, 2, 2, 2, 2)
+
+		local mLayout = Instance.new("UIListLayout", mPanel)
+		mLayout.Padding = UDim.new(0, 0)
+		mLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+		for idx, opt in ipairs(options) do
+			local row = Instance.new("TextButton")
+			row.Size = UDim2.new(1, 0, 0, rowH)
+			row.BackgroundColor3 = Theme.Colors.PanelRaised
+			row.BackgroundTransparency = opt.active and 0.2 or 0.6
+			row.Font = Theme.Font.Primary
+			row.TextSize = Theme.Text.Small()
+			row.TextColor3 = opt.active and Theme.Colors.TextGold or Theme.Colors.TextPrimary
+			row.Text = opt.label
+			row.BorderSizePixel = 0
+			row.LayoutOrder = idx
+			row.ZIndex = 51
+			row.Parent = mPanel
+			Instance.new("UICorner", row).CornerRadius = UDim.new(0, 3)
+			row.MouseButton1Click:Connect(function()
+				closeDD()
+				onSelect(opt.value, idx)
+			end)
+		end
+	end
+
+	-- Dropdown buttons
+	local function makeDDBtn(text, order, isActive)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(0, 62, 1, 0)
+		btn.BackgroundColor3 = Theme.Colors.Surface
+		btn.BackgroundTransparency = 0.2
+		btn.Font = Theme.Font.Primary
+		btn.TextSize = Theme.Text.Small()
+		btn.TextColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+		btn.Text = text
+		btn.BorderSizePixel = 0
+		btn.LayoutOrder = order
+		btn.Parent = ctrlRow
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 3)
+		return btn
+	end
+
+	-- Type filter (All / Skill / Augment + subtypes)
+	local typeLbl = skillTypeFilter == "All" and "Type v" or (skillTypeFilter .. " v")
+	local typeBtn = makeDDBtn(typeLbl, 2, skillTypeFilter ~= "All")
+	typeBtn.MouseButton1Click:Connect(function()
+		local opts = {}
+		for _, ft in ipairs(SKILL_TYPE_FILTERS) do
+			table.insert(opts, { label = ft, value = ft, active = (skillTypeFilter == ft) })
+		end
+		showDD(typeBtn, opts, function(val)
+			skillTypeFilter = val
+			selectedSkillCardId = nil
+			buildSkillsContent()
+		end)
+	end)
+
+	-- Tag filter
+	local tagLbl = skillTagFilter == "All" and "Tags v" or (skillTagFilter .. " v")
+	local tagBtn = makeDDBtn(tagLbl, 3, skillTagFilter ~= "All")
+	tagBtn.MouseButton1Click:Connect(function()
+		local opts = {}
+		for _, t in ipairs(SKILL_TAG_FILTERS) do
+			table.insert(opts, { label = t, value = t, active = (skillTagFilter == t) })
+		end
+		showDD(tagBtn, opts, function(val)
+			skillTagFilter = val
+			selectedSkillCardId = nil
+			buildSkillsContent()
+		end)
+	end)
+
+	-- Sort
+	local sortOpt = SKILL_SORT_OPTIONS_SK[skillSortIndex] or SKILL_SORT_OPTIONS_SK[1]
+	local sortBtn = makeDDBtn(sortOpt.label .. " v", 4, false)
+	sortBtn.MouseButton1Click:Connect(function()
+		local opts = {}
+		for si, s in ipairs(SKILL_SORT_OPTIONS_SK) do
+			table.insert(opts, { label = s.label, value = si, active = (skillSortIndex == si) })
+		end
+		showDD(sortBtn, opts, function(val)
+			skillSortIndex = val
+			buildSkillsContent()
+		end)
+	end)
+
+	-- ---- Build card data from inventory ----
+	local skillCards = {}
+	local augmentCards = {}
+
+	-- Server skill card inventory
+	if MockData.SkillCardInventory then
+		for skillId, qty in pairs(MockData.SkillCardInventory) do
+			if qty and qty > 0 then
+				local def = MockData.GetSkillDef(skillId)
+				if def then
+					table.insert(skillCards, {
+						id = skillId, name = def.name or skillId,
+						tags = def.tags or {}, mpCost = def.mpCostFormula or "?",
+						rtCost = def.rtCostFormula or "?",
+						desc = def.effects or "", qty = qty,
+						isSkill = true, def = def,
+					})
+				end
+			end
+		end
+	end
+
+	-- Fallback: also include mock catalog if no server data
+	if #skillCards == 0 then
+		for _, sk in ipairs(MockData.SkillCatalog or {}) do
+			if not sk.isDoctrine then
+				table.insert(skillCards, {
+					id = sk.id, name = sk.name,
+					tags = sk.tags or {}, mpCost = "MP " .. (sk.mpCost or 0),
+					rtCost = "RT " .. (sk.rtCost or 0),
+					desc = sk.desc or "", qty = sk.qty or 1,
+					isSkill = true, mockSkill = sk,
+				})
+			end
+		end
+	end
+
+	-- Server augment card inventory
+	if MockData.AugmentCardInventory then
+		for augId, qty in pairs(MockData.AugmentCardInventory) do
+			if qty and qty > 0 then
+				local def = MockData.GetAugmentDef(augId)
+				if def then
+					table.insert(augmentCards, {
+						id = augId, name = def.name or augId,
+						family = def.family or "", costFormula = def.costFormula or "",
+						effect = def.effect or "", qty = qty,
+						isAugment = true, def = def,
+					})
+				end
+			end
+		end
+	end
+
+	-- Filter by type
+	if skillTypeFilter ~= "All" then
+		if skillTypeFilter == "Damage" or skillTypeFilter == "Heal" or skillTypeFilter == "Buff"
+			or skillTypeFilter == "Debuff" or skillTypeFilter == "Utility" then
+			-- Filter skills only, remove augments
+			local filtered = {}
+			for _, sk in ipairs(skillCards) do
+				if getSkillType(sk.tags) == skillTypeFilter then
+					table.insert(filtered, sk)
+				end
+			end
+			skillCards = filtered
+			augmentCards = {}
+		end
+	end
+
+	-- Filter by tag
+	if skillTagFilter ~= "All" then
+		local filtered = {}
+		for _, sk in ipairs(skillCards) do
+			local match = false
+			for _, t in ipairs(sk.tags or {}) do
+				if t == skillTagFilter then match = true; break end
+			end
+			if match then table.insert(filtered, sk) end
+		end
+		skillCards = filtered
+		-- Augments: filter by required skill tags
+		local augFiltered = {}
+		for _, aug in ipairs(augmentCards) do
+			local def = aug.def
+			if def and def.requiredSkillTags then
+				for _, rt in ipairs(def.requiredSkillTags) do
+					if rt == skillTagFilter then
+						table.insert(augFiltered, aug)
+						break
+					end
+				end
+			end
+		end
+		augmentCards = augFiltered
+	end
+
+	-- Search filter
+	if skillSearchText and skillSearchText ~= "" then
+		local q = string.lower(skillSearchText)
+		local fSk = {}
+		for _, sk in ipairs(skillCards) do
+			if string.find(string.lower(sk.name), q, 1, true) then
+				table.insert(fSk, sk)
+			end
+		end
+		skillCards = fSk
+		local fAug = {}
+		for _, aug in ipairs(augmentCards) do
+			if string.find(string.lower(aug.name), q, 1, true) then
+				table.insert(fAug, aug)
+			end
+		end
+		augmentCards = fAug
+	end
+
+	-- Sort skill cards
+	local sortDef = SKILL_SORT_OPTIONS_SK[skillSortIndex] or SKILL_SORT_OPTIONS_SK[1]
+	table.sort(skillCards, function(a, b)
+		if sortDef.field == "name" then
+			return (a.name or "") < (b.name or "")
+		elseif sortDef.field == "mpCost" then
+			local ma = tonumber(tostring(a.mpCost):match("%d+")) or 0
+			local mb = tonumber(tostring(b.mpCost):match("%d+")) or 0
+			if ma ~= mb then
+				if sortDef.desc then return ma > mb else return ma < mb end
+			end
+			return false
+		elseif sortDef.field == "rtCost" then
+			local ra = tonumber(tostring(a.rtCost):match("%d+")) or 0
+			local rb = tonumber(tostring(b.rtCost):match("%d+")) or 0
+			if ra ~= rb then
+				if sortDef.desc then return ra > rb else return ra < rb end
+			end
+			return false
+		end
+		return false
+	end)
+
+	-- Sort augment cards by name
+	table.sort(augmentCards, function(a, b)
+		return (a.name or "") < (b.name or "")
+	end)
+
+	-- ---- Build grid ----
+	local cardGrid = Instance.new("ScrollingFrame")
+	cardGrid.Name = "SkillCardGrid"
+	cardGrid.Size = UDim2.new(1, 0, 1, -30)
+	cardGrid.Position = UDim2.new(0, 0, 0, 28)
+	cardGrid.BackgroundTransparency = 1
+	cardGrid.BorderSizePixel = 0
+	cardGrid.ScrollBarThickness = 4
+	cardGrid.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	cardGrid.CanvasSize = UDim2.new(0, 0, 0, 0)
+	cardGrid.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	cardGrid.Parent = skillsPanel
+
+	local grid = Instance.new("UIGridLayout", cardGrid)
+	grid.CellSize = UDim2.new(0, 72, 0, 82)
+	grid.CellPadding = UDim2.new(0, 4, 0, 3)
+	grid.SortOrder = Enum.SortOrder.LayoutOrder
+	grid.FillDirection = Enum.FillDirection.Horizontal
+
+	local layoutOrder = 0
+
+	-- Skill tiles
+	for _, sk in ipairs(skillCards) do
+		local stype = getSkillType(sk.tags)
+		local stc = STYPE_COLORS[stype] or STYPE_COLORS.Utility
+		local isSel = (selectedSkillCardId == sk.id)
+
+		local card = Instance.new("TextButton")
+		card.Size = UDim2.new(1, 0, 1, 0) -- sized by grid
+		card.BackgroundColor3 = stc.bg
+		card.BackgroundTransparency = 0.65
+		card.BorderSizePixel = 0
+		card.Text = ""
+		card.AutoButtonColor = true
+		card.LayoutOrder = layoutOrder
+		card.Parent = cardGrid
+		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
+
+		-- Border: type-colored normally, gold when selected
+		local stroke = Instance.new("UIStroke", card)
+		stroke.Color = isSel and Theme.Colors.TextGold or stc.icon
+		stroke.Thickness = isSel and 2 or 1
+
+		-- MP badge (top-left)
+		local mpText = sk.mpCost
+		if type(mpText) == "string" then
+			-- Extract just the number from formula
+			local num = mpText:match("(%d+)")
+			mpText = num and ("MP " .. num) or "MP ?"
+		else
+			mpText = "MP " .. tostring(mpText or 0)
+		end
+		local mpBadge = Instance.new("Frame")
+		mpBadge.Size = UDim2.new(0, 30, 0, 12)
+		mpBadge.Position = UDim2.new(0, 2, 0, 2)
+		mpBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		mpBadge.BackgroundTransparency = 0.4
+		mpBadge.BorderSizePixel = 0
+		mpBadge.Parent = card
+		Instance.new("UICorner", mpBadge).CornerRadius = UDim.new(0, 3)
+		makeLabel(mpBadge, { Text = mpText, Size = UDim2.fromScale(1, 1),
+			TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.MP,
+			TextXAlignment = Enum.TextXAlignment.Center })
+
+		-- Qty badge (top-right)
+		if sk.qty and sk.qty > 1 then
+			local qBadge = Instance.new("Frame")
+			qBadge.Size = UDim2.new(0, 20, 0, 12)
+			qBadge.Position = UDim2.new(1, -22, 0, 2)
+			qBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			qBadge.BackgroundTransparency = 0.4
+			qBadge.BorderSizePixel = 0
+			qBadge.Parent = card
+			Instance.new("UICorner", qBadge).CornerRadius = UDim.new(0, 3)
+			makeLabel(qBadge, { Text = "x" .. sk.qty, Size = UDim2.fromScale(1, 1),
+				TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextPrimary,
+				TextXAlignment = Enum.TextXAlignment.Center })
+		end
+
+		-- Icon (center)
+		makeLabel(card, { Text = STYPE_ICONS[stype] or "[*]",
+			Size = UDim2.new(1, 0, 0, 24),
+			Position = UDim2.new(0, 0, 0, 14),
+			TextSize = Theme.Text.Title(), TextColor3 = stc.icon,
+			TextXAlignment = Enum.TextXAlignment.Center })
+
+		-- Name strip (bottom)
+		local nameBg = Instance.new("Frame")
+		nameBg.Size = UDim2.new(1, 0, 0, 22)
+		nameBg.Position = UDim2.new(0, 0, 1, -22)
+		nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		nameBg.BackgroundTransparency = 0.45
+		nameBg.BorderSizePixel = 0
+		nameBg.Parent = card
+		makeLabel(nameBg, { Text = sk.name,
+			Size = UDim2.new(1, -4, 0, 12),
+			Position = UDim2.new(0, 2, 0, 0),
+			TextSize = Theme.Text.Tiny(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Left })
+
+		-- Tags line
+		local elem = getElement(sk.tags)
+		local tagStr = table.concat(sk.tags or {}, "  |  ")
+		makeLabel(nameBg, { Text = tagStr,
+			Size = UDim2.new(1, -4, 0, 10),
+			Position = UDim2.new(0, 2, 0, 12),
+			TextSize = Theme.Text.Badge(),
+			TextColor3 = elem and ELEM_COLORS[elem] or Theme.Colors.TextSecondary })
+
+		card.MouseButton1Click:Connect(function()
+			openSkillCardDetail(sk)
+		end)
+
+		layoutOrder = layoutOrder + 1
+	end
+
+	-- Augment tiles
+	for _, aug in ipairs(augmentCards) do
+		local isSel = (selectedSkillCardId == aug.id)
+
+		local card = Instance.new("TextButton")
+		card.Size = UDim2.new(1, 0, 1, 0) -- sized by grid
+		card.BackgroundColor3 = Color3.fromRGB(74, 53, 16)
+		card.BackgroundTransparency = 0.7
+		card.BorderSizePixel = 0
+		card.Text = ""
+		card.AutoButtonColor = true
+		card.LayoutOrder = layoutOrder
+		card.Parent = cardGrid
+		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
+
+		local stroke = Instance.new("UIStroke", card)
+		stroke.Color = isSel and Theme.Colors.TextGold or Color3.fromRGB(74, 53, 16)
+		stroke.Thickness = isSel and 2 or 1
+
+		-- Cost badge (top-left)
+		local costText = aug.costFormula or ""
+		local costShort = costText:match("x[%d%.]+") or costText:match("x[%d%.]+") or ""
+		if costShort ~= "" then
+			local cBadge = Instance.new("Frame")
+			cBadge.Size = UDim2.new(0, 28, 0, 12)
+			cBadge.Position = UDim2.new(0, 2, 0, 2)
+			cBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			cBadge.BackgroundTransparency = 0.4
+			cBadge.BorderSizePixel = 0
+			cBadge.Parent = card
+			Instance.new("UICorner", cBadge).CornerRadius = UDim.new(0, 3)
+			makeLabel(cBadge, { Text = costShort, Size = UDim2.fromScale(1, 1),
+				TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextGold,
+				TextXAlignment = Enum.TextXAlignment.Center })
+		end
+
+		-- Qty badge (top-right)
+		if aug.qty and aug.qty > 1 then
+			local qBadge = Instance.new("Frame")
+			qBadge.Size = UDim2.new(0, 20, 0, 12)
+			qBadge.Position = UDim2.new(1, -22, 0, 2)
+			qBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			qBadge.BackgroundTransparency = 0.4
+			qBadge.BorderSizePixel = 0
+			qBadge.Parent = card
+			Instance.new("UICorner", qBadge).CornerRadius = UDim.new(0, 3)
+			makeLabel(qBadge, { Text = "x" .. aug.qty, Size = UDim2.fromScale(1, 1),
+				TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextPrimary,
+				TextXAlignment = Enum.TextXAlignment.Center })
+		end
+
+		-- Icon (center)
+		makeLabel(card, { Text = "[o]",
+			Size = UDim2.new(1, 0, 0, 24),
+			Position = UDim2.new(0, 0, 0, 14),
+			TextSize = Theme.Text.Title(), TextColor3 = Theme.Colors.TextGold,
+			TextXAlignment = Enum.TextXAlignment.Center })
+
+		-- Name strip (bottom)
+		local nameBg = Instance.new("Frame")
+		nameBg.Size = UDim2.new(1, 0, 0, 22)
+		nameBg.Position = UDim2.new(0, 0, 1, -22)
+		nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		nameBg.BackgroundTransparency = 0.45
+		nameBg.BorderSizePixel = 0
+		nameBg.Parent = card
+		makeLabel(nameBg, { Text = aug.name,
+			Size = UDim2.new(1, -4, 0, 12),
+			Position = UDim2.new(0, 2, 0, 0),
+			TextSize = Theme.Text.Tiny(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Theme.Colors.TextPrimary })
+		makeLabel(nameBg, { Text = aug.family or "",
+			Size = UDim2.new(1, -4, 0, 10),
+			Position = UDim2.new(0, 2, 0, 12),
+			TextSize = Theme.Text.Badge(), TextColor3 = Theme.Colors.TextGold })
+
+		card.MouseButton1Click:Connect(function()
+			openAugmentCardDetail(aug)
+		end)
+
+		layoutOrder = layoutOrder + 1
+	end
+
+	-- ============================================================
+	-- RIGHT: SKILL LOADOUT TABLE (in equippedPanel)
+	-- ============================================================
+	buildSkillLoadout()
+end
+
+
+-- =====================================================
+-- SKILLS TAB v3 Part 2: Loadout Table + Detail Overlays
+-- =====================================================
+
+-- ==================================================================
+-- buildSkillLoadout: Renders the skill loadout in equippedPanel
+-- ==================================================================
+buildSkillLoadout = function()
+	if not equippedPanel then return end
+	clearChildren(equippedPanel)
+	pad(equippedPanel, 6, 6, 6, 6)
+
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	local loadout = MockData.GetSkillLoadout(unit.id)
+	local doctrineId = unit.doctrineId or "DOC-BERSERKER"
+
+	-- Column headers
+	local hdrRow = Instance.new("Frame")
+	hdrRow.Size = UDim2.new(1, 0, 0, 14)
+	hdrRow.Position = UDim2.new(0, 0, 0, 0)
+	hdrRow.BackgroundTransparency = 1
+	hdrRow.Parent = equippedPanel
+
+	makeLabel(hdrRow, { Text = "SKILLS",
+		Size = UDim2.new(0.6, 0, 1, 0), Position = UDim2.new(0, 24, 0, 0),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+		TextColor3 = Theme.Colors.TextSecondary })
+	makeLabel(hdrRow, { Text = "AUGMENTS",
+		Size = UDim2.new(0.35, 0, 1, 0), Position = UDim2.new(0.65, 0, 0, 0),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+		TextColor3 = Theme.Colors.TextSecondary,
+		TextXAlignment = Enum.TextXAlignment.Center })
+
+	-- Scrollable slot container (4 slots visible, 5th by scroll)
+	local SLOT_H = 50
+	local SLOT_GAP = 3
+	local AUG_SZ = 22
+
+	local slotScroll = Instance.new("ScrollingFrame")
+	slotScroll.Name = "SlotScroll"
+	slotScroll.Size = UDim2.new(1, 0, 1, -18)
+	slotScroll.Position = UDim2.new(0, 0, 0, 16)
+	slotScroll.BackgroundTransparency = 1
+	slotScroll.BorderSizePixel = 0
+	slotScroll.ScrollBarThickness = 3
+	slotScroll.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	slotScroll.CanvasSize = UDim2.new(0, 0, 0, (SLOT_H + SLOT_GAP) * 5)
+	slotScroll.ClipsDescendants = true
+	slotScroll.Parent = equippedPanel
+
+	for slot = 1, 5 do
+		local slotData = nil
+		local skillId = nil
+		local skillName = nil
+		local augments = {}
+
+		-- Get slot data from server or mock
+		if type(loadout) == "table" and loadout[slot] then
+			local sd = loadout[slot]
+			if type(sd) == "table" then
+				slotData = sd
+				skillId = sd.skillId
+				skillName = sd.skillName
+				augments = sd.augments or {}
+				if skillId == "none" then skillId = nil end
+			else
+				skillId = sd
+				local sk = MockData.GetSkill(skillId)
+				if sk then skillName = sk.name end
+			end
+		end
+
+		local skillDef = skillId and MockData.GetSkillDef(skillId) or nil
+		local mockSkill = skillId and MockData.GetSkill(skillId) or nil
+		local tags = (skillDef and skillDef.tags) or (mockSkill and mockSkill.tags) or {}
+		local name = (skillDef and skillDef.name) or skillName or (mockSkill and mockSkill.name) or nil
+
+		local slotY = (slot - 1) * (SLOT_H + SLOT_GAP)
+
+		-- Row container
+		local rowF = Instance.new("Frame")
+		rowF.Size = UDim2.new(1, 0, 0, SLOT_H)
+		rowF.Position = UDim2.new(0, 0, 0, slotY)
+		rowF.BackgroundColor3 = Theme.Colors.PanelRaised
+		rowF.BackgroundTransparency = 0.3
+		rowF.BorderSizePixel = 0
+		rowF.Parent = slotScroll
+		Instance.new("UICorner", rowF).CornerRadius = UDim.new(0, 4)
+
+		-- ---- LOCKED SLOT 5 ----
+		if slot == 5 then
+			rowF.BackgroundTransparency = 0.6
+			makeLabel(rowF, { Text = "[L] Locked - Race Evolution",
+				Size = UDim2.new(1, -6, 1, 0),
+				Position = UDim2.new(0, 3, 0, 0),
+				TextSize = Theme.Text.Tiny(),
+				TextColor3 = Theme.Colors.TextDisabled })
+
+		elseif name then
+			local stype = getSkillType(tags)
+			local stc = STYPE_COLORS[stype] or STYPE_COLORS.Utility
+
+			-- Skill icon (square, fills row height minus padding)
+			local icoSz = SLOT_H - 4
+			local sIco = Instance.new("TextButton")
+			sIco.Name = "SkillIcon"
+			sIco.Size = UDim2.new(0, icoSz, 0, icoSz)
+			sIco.Position = UDim2.new(0, 2, 0, 2)
+			sIco.BackgroundColor3 = stc.bg
+			sIco.BackgroundTransparency = 0.15
+			sIco.BorderSizePixel = 0
+			sIco.Text = ""
+			sIco.AutoButtonColor = false
+			sIco.Parent = rowF
+			Instance.new("UICorner", sIco).CornerRadius = UDim.new(0, 4)
+			makeLabel(sIco, { Text = STYPE_ICONS[stype] or "[*]",
+				Size = UDim2.fromScale(1, 1), TextSize = Theme.Text.Heading(),
+				TextColor3 = stc.icon, TextXAlignment = Enum.TextXAlignment.Center })
+
+			-- Click icon -> detail view
+			local capturedSlot = slot
+			local capturedId = skillId
+			local capturedAugs = augments
+			sIco.MouseButton1Click:Connect(function()
+				openEquippedSkillDetail(capturedSlot, capturedId, capturedAugs)
+			end)
+
+			-- Skill name only (no tags, no MP/RT)
+			local nameX = icoSz + 6
+			local augArea = (AUG_SZ + 2) * 2 + 4
+			local nameW = UDim2.new(1, -(nameX + augArea), 1, 0)
+
+			if slot == 1 then
+				-- Doctrine: name is clickable for dropdown, show "DOCTRINE" subtitle
+				local nameBtn = Instance.new("TextButton")
+				nameBtn.Size = UDim2.new(1, -(nameX + augArea), 0, SLOT_H - 12)
+				nameBtn.Position = UDim2.new(0, nameX, 0, 0)
+				nameBtn.BackgroundTransparency = 1
+				nameBtn.Text = ""
+				nameBtn.Parent = rowF
+				makeLabel(nameBtn, { Text = name,
+					Size = UDim2.new(1, 0, 0, 16),
+					Position = UDim2.new(0, 0, 0, 2),
+					Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
+					TextColor3 = Theme.Colors.TextGold })
+				makeLabel(nameBtn, { Text = "DOCTRINE v",
+					Size = UDim2.new(1, 0, 0, 10),
+					Position = UDim2.new(0, 0, 1, -10),
+					TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+					TextColor3 = Theme.Colors.TextMuted or Theme.Colors.TextDisabled })
+
+				-- Click name -> doctrine dropdown
+				nameBtn.MouseButton1Click:Connect(function()
+					local choices = MockData.GetDoctrineChoices(doctrineId)
+					local opts = {}
+					for _, cid in ipairs(choices) do
+						local cSkill = MockData.GetSkill(cid) or MockData.GetSkillDef(cid)
+						if cSkill then
+							table.insert(opts, {
+								label = cSkill.name,
+								value = cid,
+								active = (cid == skillId),
+							})
+						end
+					end
+					if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+					local function closeDD()
+						if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+					end
+					local rowH2 = 24
+					local menuH = #opts * rowH2 + 4
+					activeDropdown = Instance.new("ScreenGui")
+					activeDropdown.Name = "DoctrineDropdown"
+					activeDropdown.DisplayOrder = 105
+					activeDropdown.ResetOnSpawn = false
+					activeDropdown.Parent = getPlayerGui()
+					local ddBack = Instance.new("TextButton")
+					ddBack.Size = UDim2.fromScale(1, 1)
+					ddBack.BackgroundTransparency = 1
+					ddBack.Text = ""
+					ddBack.Parent = activeDropdown
+					ddBack.MouseButton1Click:Connect(closeDD)
+					local mPanel = Instance.new("Frame")
+					mPanel.Size = UDim2.new(0, 140, 0, menuH)
+					mPanel.Position = UDim2.new(0,
+						rowF.AbsolutePosition.X + icoSz + 4,
+						0, rowF.AbsolutePosition.Y + rowF.AbsoluteSize.Y + 2)
+					mPanel.BackgroundColor3 = Theme.Colors.Panel
+					mPanel.BorderSizePixel = 0
+					mPanel.ZIndex = 50
+					mPanel.Parent = activeDropdown
+					Instance.new("UICorner", mPanel).CornerRadius = UDim.new(0, 4)
+					Instance.new("UIStroke", mPanel).Color = Theme.Colors.Border
+					pad(mPanel, 2, 2, 2, 2)
+					local mLayout = Instance.new("UIListLayout", mPanel)
+					mLayout.Padding = UDim.new(0, 0)
+					mLayout.SortOrder = Enum.SortOrder.LayoutOrder
+					for idx, opt in ipairs(opts) do
+						local mRow = Instance.new("TextButton")
+						mRow.Size = UDim2.new(1, 0, 0, rowH2)
+						mRow.BackgroundColor3 = Theme.Colors.PanelRaised
+						mRow.BackgroundTransparency = opt.active and 0.2 or 0.6
+						mRow.Font = Theme.Font.Primary
+						mRow.TextSize = Theme.Text.Small()
+						mRow.TextColor3 = opt.active and Theme.Colors.TextGold or Theme.Colors.TextPrimary
+						mRow.Text = opt.label
+						mRow.BorderSizePixel = 0
+						mRow.LayoutOrder = idx
+						mRow.ZIndex = 51
+						mRow.Parent = mPanel
+						Instance.new("UICorner", mRow).CornerRadius = UDim.new(0, 3)
+						mRow.MouseButton1Click:Connect(function()
+							closeDD()
+							if MockData.ServerSelectDoctrineSkill then
+								MockData.ServerSelectDoctrineSkill(unit.id, opt.value)
+							else
+								local sl = MockData.SkillLoadout[unit.id]
+								if sl then sl[1] = opt.value end
+							end
+							MockData.LoadSkillData(unit.id)
+							buildSkillsContent()
+						end)
+					end
+				end)
+			else
+				-- Slots 2-4: just show full name
+				makeLabel(rowF, { Text = name,
+					Size = UDim2.new(1, -(nameX + augArea), 1, 0),
+					Position = UDim2.new(0, nameX, 0, 0),
+					Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
+					TextColor3 = Theme.Colors.TextPrimary })
+			end
+
+			-- Augment icon slots (right side, 2 small squares)
+			for a = 1, 2 do
+				local augId = augments[a]
+				local augDef = augId and MockData.GetAugmentDef(augId)
+
+				local augBtn = Instance.new("TextButton")
+				augBtn.Size = UDim2.new(0, AUG_SZ, 0, AUG_SZ)
+				augBtn.Position = UDim2.new(1, -(AUG_SZ + 2) * (3 - a), 0, (SLOT_H - AUG_SZ) / 2)
+				augBtn.BackgroundColor3 = augDef and Color3.fromRGB(74, 53, 16) or Theme.Colors.Surface
+				augBtn.BackgroundTransparency = augDef and 0.3 or 0.6
+				augBtn.BorderSizePixel = 0
+				augBtn.Text = ""
+				augBtn.Parent = rowF
+				Instance.new("UICorner", augBtn).CornerRadius = UDim.new(0, 3)
+
+				if augDef then
+					-- Show icon placeholder (gold diamond)
+					makeLabel(augBtn, { Text = "[o]",
+						Size = UDim2.fromScale(1, 1),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextGold,
+						TextXAlignment = Enum.TextXAlignment.Center })
+
+					local cSlot = slot
+					local cAug = a
+					augBtn.MouseButton1Click:Connect(function()
+						openEquippedAugmentDetail(cSlot, cAug, augId)
+					end)
+				else
+					-- Empty augment slot indicator
+					makeLabel(augBtn, { Text = "+",
+						Size = UDim2.fromScale(1, 1),
+						TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextDisabled,
+						TextXAlignment = Enum.TextXAlignment.Center })
+				end
+			end
+
+		else
+			-- Empty skill slot
+			makeLabel(rowF, { Text = "- Empty -",
+				Size = UDim2.new(1, -6, 1, 0),
+				Position = UDim2.new(0, 3, 0, 0),
+				TextSize = Theme.Text.Small(),
+				TextColor3 = Theme.Colors.TextDisabled })
+		end
+	end
+
+	-- Doctrine note
+	makeLabel(equippedPanel, { Text = "Slot 1 = Doctrine skill",
+		Size = UDim2.new(1, 0, 0, 12),
+		Position = UDim2.new(0, 0, 1, -14),
+		TextSize = Theme.Text.Badge(), TextColor3 = Theme.Colors.TextDisabled })
+end
+
+
+-- ==================================================================
+-- openSkillCardDetail: Detail overlay for inventory skill card
+-- ==================================================================
+openSkillCardDetail = function(sk)
+	closeDetail()
+	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+
+	local unit = MockData.GetSelectedUnit()
+	local def = sk.def or MockData.GetSkillDef(sk.id)
+	local tags = (def and def.tags) or sk.tags or {}
+	local stype = getSkillType(tags)
+	local stc = STYPE_COLORS[stype] or STYPE_COLORS.Utility
+	local elem = getElement(tags)
+
+	-- Overlay ScreenGui
+	detailOverlay = Instance.new("ScreenGui")
+	detailOverlay.Name = "SkillDetailOverlay"
+	detailOverlay.DisplayOrder = 110
+	detailOverlay.ResetOnSpawn = false
+	detailOverlay.Parent = getPlayerGui()
+
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.4
+	backdrop.Text = ""
+	backdrop.BorderSizePixel = 0
+	backdrop.Parent = detailOverlay
+	backdrop.MouseButton1Click:Connect(closeDetail)
+
+	-- Detail panel (left-docked, 55% width)
+	local panel = Theme.MakePanel("SkillDetailPanel",
+		UDim2.new(0.55, 0, 0.90, 0),
+		UDim2.new(0, 6, 0.5, 0),
+		Vector2.new(0, 0.5),
+		detailOverlay)
+	panel.ClipsDescendants = true
+
+	-- Scrollable content
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, -16, 1, -8)
+	scroll.Position = UDim2.new(0, 8, 0, 4)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 3
+	scroll.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.Parent = panel
+
+	local layout = Instance.new("UIListLayout", scroll)
+	layout.Padding = UDim.new(0, 4)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	local order = 0
+	local function addRow(parent, height)
+		local f = Instance.new("Frame")
+		f.Size = UDim2.new(1, 0, 0, height)
+		f.BackgroundTransparency = 1
+		f.LayoutOrder = order
+		f.Parent = parent
+		order = order + 1
+		return f
+	end
+
+	-- Unified header
+	local descText = (def and def.description) or buildSkillDescription(def)
+	local hdrH = buildDetailHeader(addRow(scroll, 72), {
+		iconText = STYPE_ICONS[stype] or "[*]",
+		iconBg = stc.bg,
+		iconColor = stc.icon,
+		iconStrokeColor = stc.icon,
+		name = def and def.name or sk.name or "?",
+		tags = tags,
+		description = descText or "",
+	})
+
+	-- Divider
+	local div = addRow(scroll, 1)
+	div.BackgroundColor3 = Theme.Colors.Border
+	div.BackgroundTransparency = 0
+
+	-- Stats section
+	local statsHdr = addRow(scroll, 12)
+	makeLabel(statsHdr, { Text = "STATS", Size = UDim2.fromScale(1, 1),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+		TextColor3 = Theme.Colors.TextSecondary })
+
+	-- Stat rows helper
+	local function addStatRow(label, value)
+		local r = addRow(scroll, 16)
+		makeLabel(r, { Text = label, Size = UDim2.new(0.3, 0, 1, 0),
+			TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary })
+		makeLabel(r, { Text = value, Size = UDim2.new(0.7, -4, 1, 0),
+			Position = UDim2.new(0.3, 4, 0, 0),
+			TextSize = Theme.Text.Small(), Font = Theme.Font.Mono,
+			TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Right })
+	end
+
+	if def then
+		addStatRow("MP Cost", def.mpCostFormula or "-")
+		addStatRow("RT Cost", def.rtCostFormula or "-")
+		addStatRow("Pattern", simplifyPattern(def.pattern))
+		if def.channelTime and def.channelTime > 0 then
+			addStatRow("Channel", tostring(def.channelTime) .. " CT")
+		end
+		if def.activationTime and def.activationTime > 0 then
+			addStatRow("Activation", tostring(def.activationTime) .. " CT")
+		end
+
+		-- Range box
+		if def.targetingRange then
+			addStatRow("Range", simplifyRange(def.targetingRange))
+		end
+
+		-- Power formula
+		if def.powerFormula then
+			local pf = addRow(scroll, 30)
+			pf.BackgroundColor3 = Theme.Colors.Surface
+			pf.BackgroundTransparency = 0.3
+			Instance.new("UICorner", pf).CornerRadius = UDim.new(0, 4)
+			makeLabel(pf, { Text = "POWER",
+				Size = UDim2.new(1, -8, 0, 10),
+				Position = UDim2.new(0, 4, 0, 2),
+				TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+				TextColor3 = Theme.Colors.TextSecondary })
+			makeLabel(pf, { Text = def.powerFormula,
+				Size = UDim2.new(1, -8, 0, 14),
+				Position = UDim2.new(0, 4, 0, 14),
+				TextSize = Theme.Text.Tiny(), Font = Theme.Font.Mono,
+				TextColor3 = Theme.Colors.Info })
+		end
+
+		-- Effects
+		local effectsDisplayText = (def.description) or cleanEffects(def.effects)
+		if effectsDisplayText and effectsDisplayText ~= "" then
+			local ef = addRow(scroll, 40)
+			ef.BackgroundColor3 = Theme.Colors.PanelRaised
+			ef.BackgroundTransparency = 0.2
+			Instance.new("UICorner", ef).CornerRadius = UDim.new(0, 4)
+			makeLabel(ef, { Text = "DESCRIPTION",
+				Size = UDim2.new(1, -8, 0, 10),
+				Position = UDim2.new(0, 4, 0, 2),
+				TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+				TextColor3 = Theme.Colors.TextSecondary })
+			makeLabel(ef, { Text = effectsDisplayText,
+				Size = UDim2.new(1, -8, 0, 24),
+				Position = UDim2.new(0, 4, 0, 14),
+				TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary,
+				TextWrapped = true })
+		end
+	else
+		-- Mock skill fallback
+		local ms = sk.mockSkill or sk
+		addStatRow("MP Cost", "MP " .. tostring(ms.mpCost or 0))
+		addStatRow("RT Cost", "RT " .. tostring(ms.rtCost or 0))
+		addStatRow("Range", tostring(ms.range or 1))
+		addStatRow("Pattern", ms.pattern or "Single")
+		if ms.desc and ms.desc ~= "" then
+			local ef = addRow(scroll, 30)
+			ef.BackgroundColor3 = Theme.Colors.PanelRaised
+			ef.BackgroundTransparency = 0.2
+			Instance.new("UICorner", ef).CornerRadius = UDim.new(0, 4)
+			makeLabel(ef, { Text = ms.desc,
+				Size = UDim2.new(1, -8, 1, -4),
+				Position = UDim2.new(0, 4, 0, 2),
+				TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary,
+				TextWrapped = true })
+		end
+	end
+
+	-- ---- BUTTON BAR ----
+	local SKL_BTN_W = 96
+	local SKL_BTN_H = 35
+	local SKL_BTN_GAP = 2
+	local btnBar = Instance.new("Frame")
+	btnBar.Name = "BtnBar"
+	btnBar.BackgroundTransparency = 1
+	btnBar.AnchorPoint = Vector2.new(1, 1)
+	btnBar.Position = UDim2.new(1, -8, 1, -8)
+	btnBar.Parent = detailOverlay
+	local rowLayout = Instance.new("UIListLayout")
+	rowLayout.FillDirection = Enum.FillDirection.Horizontal
+	rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	rowLayout.Padding = UDim.new(0, SKL_BTN_GAP)
+	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	rowLayout.Parent = btnBar
+
+	local btnOrder = 0
+	local function addBtn(text, color, onClick)
+		local style = "Secondary"
+		if color == Theme.Colors.Success or color == Theme.Colors.Danger then
+			style = "Primary"
+		elseif color == Theme.Colors.Surface then
+			if text == "COMPARE" or text == "DETAILS" or text == "SWAP" then
+				style = "Tertiary"
+			end
+		end
+		local btn = Theme.MakeButton(btnBar, text, style, onClick, {
+			size = UDim2.new(0, SKL_BTN_W, 0, SKL_BTN_H),
+		})
+		btn.LayoutOrder = btnOrder
+		btnOrder = btnOrder + 1
+		return btn
+	end
+
+	-- EQUIP -> opens slot picker
+	addBtn("EQUIP", Theme.Colors.Success, function()
+		closeDetail()
+		openSkillSlotPicker(sk)
+	end)
+
+	addBtn("BACK", Theme.Colors.Surface, closeDetail)
+
+	btnBar.Size = UDim2.new(0, (btnOrder * SKL_BTN_W) + ((btnOrder - 1) * SKL_BTN_GAP), 0, SKL_BTN_H)
+end
+
+-- ==================================================================
+-- openAugmentCardDetail: Detail overlay for inventory augment card
+-- ==================================================================
+openAugmentCardDetail = function(aug)
+	closeDetail()
+	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+
+	local def = aug.def or MockData.GetAugmentDef(aug.id)
+
+	detailOverlay = Instance.new("ScreenGui")
+	detailOverlay.Name = "AugmentDetailOverlay"
+	detailOverlay.DisplayOrder = 110
+	detailOverlay.ResetOnSpawn = false
+	detailOverlay.Parent = getPlayerGui()
+
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.4
+	backdrop.Text = ""
+	backdrop.BorderSizePixel = 0
+	backdrop.Parent = detailOverlay
+	backdrop.MouseButton1Click:Connect(closeDetail)
+
+	local panel = Theme.MakePanel("AugmentDetailPanel",
+		UDim2.new(0.55, 0, 0.90, 0),
+		UDim2.new(0, 6, 0.5, 0),
+		Vector2.new(0, 0.5),
+		detailOverlay)
+	panel.ClipsDescendants = true
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, -16, 1, -8)
+	scroll.Position = UDim2.new(0, 8, 0, 4)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 3
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.Parent = panel
+
+	local layout = Instance.new("UIListLayout", scroll)
+	layout.Padding = UDim.new(0, 4)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	local order = 0
+	local function addRow(parent, height)
+		local f = Instance.new("Frame")
+		f.Size = UDim2.new(1, 0, 0, height)
+		f.BackgroundTransparency = 1
+		f.LayoutOrder = order
+		f.Parent = parent
+		order = order + 1
+		return f
+	end
+
+	-- Unified header
+	local augTags = {}
+	if def and def.family then table.insert(augTags, def.family) end
+	local augDescText = (def and def.description) or ""
+	local hdrH = buildDetailHeader(addRow(scroll, 72), {
+		iconText = "[o]",
+		iconBg = Color3.fromRGB(74, 53, 16),
+		iconColor = Theme.Colors.TextGold,
+		iconStrokeColor = Theme.Colors.TextGold,
+		name = def and def.name or aug.name or "?",
+		tags = augTags,
+		description = augDescText,
+	})
+
+	-- Requirement tags
+	if def then
+		local reqTags = def.requiredSkillTags or {}
+		if #reqTags > 0 or (def.requiredTargetRules and def.requiredTargetRules ~= "") then
+			local tagRow = addRow(scroll, 18)
+			local tagL = Instance.new("UIListLayout", tagRow)
+			tagL.FillDirection = Enum.FillDirection.Horizontal
+			tagL.Padding = UDim.new(0, 4)
+			local ti = 0
+			for _, rt in ipairs(reqTags) do
+				ti = ti + 1
+				local chip = Instance.new("Frame")
+				chip.Size = UDim2.new(0, #("Req: " .. rt) * 5 + 12, 0, 16)
+				chip.BackgroundColor3 = Theme.Colors.Surface
+				chip.BackgroundTransparency = 0.3
+				chip.BorderSizePixel = 0
+				chip.LayoutOrder = ti
+				chip.Parent = tagRow
+				Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 8)
+				Instance.new("UIStroke", chip).Color = Theme.Colors.Border
+				makeLabel(chip, { Text = "Req: " .. rt, Size = UDim2.fromScale(1, 1),
+					TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+					TextColor3 = Theme.Colors.TextSecondary,
+					TextXAlignment = Enum.TextXAlignment.Center })
+			end
+			if def.requiredTargetRules and def.requiredTargetRules ~= "" then
+				ti = ti + 1
+				local chip = Instance.new("Frame")
+				chip.Size = UDim2.new(0, #("Req: " .. def.requiredTargetRules) * 5 + 12, 0, 16)
+				chip.BackgroundColor3 = Theme.Colors.Surface
+				chip.BackgroundTransparency = 0.3
+				chip.BorderSizePixel = 0
+				chip.LayoutOrder = ti
+				chip.Parent = tagRow
+				Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 8)
+				Instance.new("UIStroke", chip).Color = Theme.Colors.Border
+				makeLabel(chip, { Text = "Req: " .. def.requiredTargetRules, Size = UDim2.fromScale(1, 1),
+					TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+					TextColor3 = Theme.Colors.TextSecondary,
+					TextXAlignment = Enum.TextXAlignment.Center })
+			end
+		end
+	end
+
+	-- Effect
+	local effText = (def and def.description) or (def and def.effect) or aug.effect or ""
+	if effText ~= "" then
+		local ef = addRow(scroll, 40)
+		ef.BackgroundColor3 = Theme.Colors.PanelRaised
+		ef.BackgroundTransparency = 0.2
+		Instance.new("UICorner", ef).CornerRadius = UDim.new(0, 4)
+		makeLabel(ef, { Text = "EFFECT",
+			Size = UDim2.new(1, -8, 0, 10),
+			Position = UDim2.new(0, 4, 0, 2),
+			TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Theme.Colors.TextSecondary })
+		makeLabel(ef, { Text = effText,
+			Size = UDim2.new(1, -8, 0, 24),
+			Position = UDim2.new(0, 4, 0, 14),
+			TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary,
+			TextWrapped = true })
+	end
+
+	-- Cost modifier
+	if def and def.costFormula then
+		local cm = addRow(scroll, 22)
+		cm.BackgroundColor3 = Theme.Colors.PanelRaised
+		cm.BackgroundTransparency = 0.2
+		Instance.new("UICorner", cm).CornerRadius = UDim.new(0, 4)
+		makeLabel(cm, { Text = "COST MODIFIER", Size = UDim2.new(0.4, 0, 1, 0),
+			Position = UDim2.new(0, 4, 0, 0),
+			TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold, TextColor3 = Theme.Colors.TextSecondary })
+		makeLabel(cm, { Text = def.costFormula, Size = UDim2.new(0.5, 0, 1, 0),
+			Position = UDim2.new(0.45, 0, 0, 0),
+			TextSize = Theme.Text.Body(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.Danger,
+			TextXAlignment = Enum.TextXAlignment.Right })
+	end
+
+	-- Details
+	if def then
+		local function addDetailRow(label, value)
+			if not value or value == "" then return end
+			local r = addRow(scroll, 16)
+			makeLabel(r, { Text = label, Size = UDim2.new(0.4, 0, 1, 0),
+				TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary })
+			makeLabel(r, { Text = value, Size = UDim2.new(0.6, 0, 1, 0),
+				Position = UDim2.new(0.4, 0, 0, 0),
+				TextSize = Theme.Text.Small(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextPrimary,
+				TextXAlignment = Enum.TextXAlignment.Right })
+		end
+		addDetailRow("Trigger", def.trigger)
+		addDetailRow("Frequency", def.deliveryFrequency)
+		addDetailRow("Snapshot", def.snapshotTiming)
+	end
+
+	-- Conflicts
+	if def and def.conflicts and def.conflicts ~= "" then
+		local cf = addRow(scroll, 36)
+		cf.BackgroundColor3 = Color3.fromRGB(60, 20, 20)
+		cf.BackgroundTransparency = 0.4
+		Instance.new("UICorner", cf).CornerRadius = UDim.new(0, 4)
+		makeLabel(cf, { Text = "[!] CONFLICTS",
+			Size = UDim2.new(1, -8, 0, 10),
+			Position = UDim2.new(0, 4, 0, 2),
+			TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold, TextColor3 = Theme.Colors.Danger })
+		makeLabel(cf, { Text = def.conflicts,
+			Size = UDim2.new(1, -8, 0, 20),
+			Position = UDim2.new(0, 4, 0, 14),
+			TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary, TextWrapped = true })
+	end
+
+	-- ---- BUTTON BAR ----
+	local SKL_BTN_W = 96
+	local SKL_BTN_H = 35
+	local SKL_BTN_GAP = 2
+	local btnBar = Instance.new("Frame")
+	btnBar.Name = "BtnBar"
+	btnBar.BackgroundTransparency = 1
+	btnBar.AnchorPoint = Vector2.new(1, 1)
+	btnBar.Position = UDim2.new(1, -8, 1, -8)
+	btnBar.Parent = detailOverlay
+	local bLayout = Instance.new("UIListLayout")
+	bLayout.FillDirection = Enum.FillDirection.Horizontal
+	bLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	bLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	bLayout.Padding = UDim.new(0, SKL_BTN_GAP)
+	bLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	bLayout.Parent = btnBar
+	local btnOrder = 0
+	local function addBtn(text, color, onClick)
+		local style = "Secondary"
+		if color == Theme.Colors.Success or color == Theme.Colors.Danger then
+			style = "Primary"
+		elseif color == Theme.Colors.Surface then
+			if text == "COMPARE" or text == "DETAILS" or text == "SWAP" then
+				style = "Tertiary"
+			end
+		end
+		local btn = Theme.MakeButton(btnBar, text, style, onClick, {
+			size = UDim2.new(0, SKL_BTN_W, 0, SKL_BTN_H),
+		})
+		btn.LayoutOrder = btnOrder
+		btnOrder = btnOrder + 1
+	end
+
+	addBtn("ATTACH", Theme.Colors.Success, function()
+		closeDetail()
+		openAugmentSlotPicker(aug)
+	end)
+	addBtn("BACK", Theme.Colors.Surface, closeDetail)
+	btnBar.Size = UDim2.new(0, (btnOrder * SKL_BTN_W) + ((btnOrder - 1) * SKL_BTN_GAP), 0, SKL_BTN_H)
+end
+
+-- ==================================================================
+-- openSkillSlotPicker: Modal popup to choose which slot to equip to
+-- ==================================================================
+openSkillSlotPicker = function(sk)
+	closeDetail()
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+	local loadout = MockData.GetSkillLoadout(unit.id)
+
+	detailOverlay = Instance.new("ScreenGui")
+	detailOverlay.Name = "SlotPickerOverlay"
+	detailOverlay.DisplayOrder = 115
+	detailOverlay.ResetOnSpawn = false
+	detailOverlay.Parent = getPlayerGui()
+
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.5
+	backdrop.Text = ""
+	backdrop.BorderSizePixel = 0
+	backdrop.Parent = detailOverlay
+	backdrop.MouseButton1Click:Connect(closeDetail)
+
+	local popup = Theme.MakePanel("SlotPicker",
+		UDim2.new(0, 280, 0, 240),
+		UDim2.new(0.5, 0, 0.5, 0),
+		Vector2.new(0.5, 0.5),
+		detailOverlay)
+	popup.ClipsDescendants = true
+	pad(popup, 10, 10, 10, 10)
+
+	makeLabel(popup, { Text = "> Equip " .. (sk.name or "?") .. " to:",
+		Size = UDim2.new(1, 0, 0, 18),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
+		TextColor3 = Theme.Colors.TextPrimary })
+
+	local rowY = 24
+	for slot = 1, 5 do
+		local disabled = false
+		local slotLabel = "Slot " .. slot
+		local occupant = "Empty"
+		local slotColor = Theme.Colors.Player
+
+		if slot == 1 then
+			disabled = true
+			slotLabel = "Doctrine Slot"
+			occupant = "Doctrine only"
+			slotColor = Theme.Colors.TextGold
+		elseif slot == 5 then
+			disabled = true
+			slotLabel = "Slot 5"
+			occupant = "Locked - Race Evolution"
+			slotColor = Theme.Colors.TextDisabled
+		else
+			-- Check current occupant
+			local sd = type(loadout) == "table" and loadout[slot]
+			if sd then
+				local occName
+				if type(sd) == "table" then
+					occName = sd.skillName
+					if occName == "none" then occName = nil end
+				else
+					local ms = MockData.GetSkill(sd) or MockData.GetSkillDef(sd)
+					if ms then occName = ms.name end
+				end
+				if occName then
+					occupant = "Replace: " .. occName
+				end
+			end
+		end
+
+		local rowBtn = Instance.new("TextButton")
+		rowBtn.Size = UDim2.new(1, 0, 0, 32)
+		rowBtn.Position = UDim2.new(0, 0, 0, rowY)
+		rowBtn.BackgroundColor3 = Theme.Colors.PanelRaised
+		rowBtn.BackgroundTransparency = disabled and 0.6 or 0.2
+		rowBtn.BorderSizePixel = 0
+		rowBtn.Text = ""
+		rowBtn.AutoButtonColor = not disabled
+		rowBtn.Parent = popup
+		Instance.new("UICorner", rowBtn).CornerRadius = UDim.new(0, 4)
+
+		-- Badge
+		local bF = Instance.new("Frame")
+		bF.Size = UDim2.new(0, 20, 0, 20)
+		bF.Position = UDim2.new(0, 6, 0.5, -10)
+		bF.BackgroundColor3 = slotColor
+		bF.BackgroundTransparency = disabled and 0.5 or 0
+		bF.BorderSizePixel = 0
+		bF.Parent = rowBtn
+		Instance.new("UICorner", bF).CornerRadius = UDim.new(0.5, 0)
+		makeLabel(bF, { Text = tostring(slot), Size = UDim2.fromScale(1, 1),
+			TextSize = Theme.Text.Small(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Color3.fromRGB(13, 15, 20),
+			TextXAlignment = Enum.TextXAlignment.Center })
+
+		makeLabel(rowBtn, { Text = slotLabel,
+			Size = UDim2.new(0.4, -30, 1, 0),
+			Position = UDim2.new(0, 32, 0, 0),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
+			TextColor3 = disabled and Theme.Colors.TextDisabled or Theme.Colors.TextPrimary })
+		makeLabel(rowBtn, { Text = occupant,
+			Size = UDim2.new(0.5, 0, 1, 0),
+			Position = UDim2.new(0.48, 0, 0, 0),
+			TextSize = Theme.Text.Tiny(),
+			TextColor3 = disabled and Theme.Colors.TextDisabled or Theme.Colors.Warning,
+			TextXAlignment = Enum.TextXAlignment.Right })
+
+		if not disabled then
+			local capturedSlot = slot
+			rowBtn.MouseButton1Click:Connect(function()
+				closeDetail()
+				-- Equip: server auto-handles unequip of existing + augment return
+				if MockData.ServerEquipSkillCard then
+					MockData.ServerEquipSkillCard(unit.id, capturedSlot, sk.id)
+				else
+					local sl = MockData.SkillLoadout[unit.id]
+					if sl then sl[capturedSlot] = sk.id end
+				end
+				MockData.LoadSkillData(unit.id)
+				buildSkillsContent()
+			end)
+		end
+
+		rowY = rowY + 36
+	end
+
+	-- Cancel
+	local cancel = Instance.new("TextButton")
+	cancel.Size = UDim2.new(1, 0, 0, 18)
+	cancel.Position = UDim2.new(0, 0, 1, -20)
+	cancel.BackgroundTransparency = 1
+	cancel.Font = Theme.Font.Primary
+	cancel.TextSize = Theme.Text.Small()
+	cancel.TextColor3 = Theme.Colors.TextSecondary
+	cancel.Text = "Cancel"
+	cancel.Parent = popup
+	cancel.MouseButton1Click:Connect(closeDetail)
+end
+
+-- ==================================================================
+-- openAugmentSlotPicker: Show all 10 augment slots to choose from
+-- ==================================================================
+openAugmentSlotPicker = function(aug)
+	closeDetail()
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+	local loadout = MockData.GetSkillLoadout(unit.id)
+
+	detailOverlay = Instance.new("ScreenGui")
+	detailOverlay.Name = "AugSlotPickerOverlay"
+	detailOverlay.DisplayOrder = 115
+	detailOverlay.ResetOnSpawn = false
+	detailOverlay.Parent = getPlayerGui()
+
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.5
+	backdrop.Text = ""
+	backdrop.BorderSizePixel = 0
+	backdrop.Parent = detailOverlay
+	backdrop.MouseButton1Click:Connect(closeDetail)
+
+	local popup = Theme.MakePanel("AugSlotPicker",
+		UDim2.new(0, 320, 0, 360),
+		UDim2.new(0.5, 0, 0.5, 0),
+		Vector2.new(0.5, 0.5),
+		detailOverlay)
+	popup.ClipsDescendants = true
+	pad(popup, 10, 10, 10, 10)
+
+	makeLabel(popup, { Text = "[o] Attach " .. (aug.name or "?") .. " to:",
+		Size = UDim2.new(1, 0, 0, 18),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
+		TextColor3 = Theme.Colors.TextGold })
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, 0, 1, -44)
+	scroll.Position = UDim2.new(0, 0, 0, 22)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 3
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.Parent = popup
+
+	local sLayout = Instance.new("UIListLayout", scroll)
+	sLayout.Padding = UDim.new(0, 3)
+	sLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	local rowOrder = 0
+
+	for slot = 1, 5 do
+		local sd = type(loadout) == "table" and loadout[slot]
+		local skillName = nil
+		local augments = {}
+		local disabled = (slot == 5)
+
+		if sd then
+			if type(sd) == "table" then
+				skillName = sd.skillName
+				if skillName == "none" then skillName = nil end
+				augments = sd.augments or {}
+			else
+				local ms = MockData.GetSkill(sd) or MockData.GetSkillDef(sd)
+				if ms then skillName = ms.name end
+			end
+		end
+
+		if not skillName and slot ~= 5 then
+			disabled = true -- no skill in slot = can't attach augment
+		end
+
+		for augSlot = 1, 2 do
+			local existingAug = augments[augSlot]
+			local existingDef = existingAug and MockData.GetAugmentDef(existingAug)
+
+			local rowBtn = Instance.new("TextButton")
+			rowBtn.Size = UDim2.new(1, 0, 0, 26)
+			rowBtn.BackgroundColor3 = Theme.Colors.PanelRaised
+			rowBtn.BackgroundTransparency = disabled and 0.6 or 0.2
+			rowBtn.BorderSizePixel = 0
+			rowBtn.Text = ""
+			rowBtn.AutoButtonColor = not disabled
+			rowBtn.LayoutOrder = rowOrder
+			rowBtn.Parent = scroll
+			Instance.new("UICorner", rowBtn).CornerRadius = UDim.new(0, 4)
+
+			local slotLabel = "Slot " .. slot .. "  |  Aug " .. augSlot
+			local occLabel = "Empty"
+			if disabled and slot == 5 then
+				occLabel = "Locked"
+			elseif disabled then
+				occLabel = "No skill equipped"
+			elseif existingDef then
+				occLabel = "Replace: " .. existingDef.name
+			end
+
+			makeLabel(rowBtn, { Text = slotLabel,
+				Size = UDim2.new(0.35, 0, 1, 0),
+				Position = UDim2.new(0, 6, 0, 0),
+				Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+				TextColor3 = disabled and Theme.Colors.TextDisabled or Theme.Colors.TextPrimary })
+			makeLabel(rowBtn, { Text = skillName or (slot == 5 and "Locked" or "-"),
+				Size = UDim2.new(0.25, 0, 1, 0),
+				Position = UDim2.new(0.35, 0, 0, 0),
+				TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary })
+			makeLabel(rowBtn, { Text = occLabel,
+				Size = UDim2.new(0.35, -6, 1, 0),
+				Position = UDim2.new(0.62, 0, 0, 0),
+				TextSize = Theme.Text.Badge(), TextColor3 = disabled and Theme.Colors.TextDisabled or Theme.Colors.Warning,
+				TextXAlignment = Enum.TextXAlignment.Right })
+
+			if not disabled then
+				local cSlot, cAug = slot, augSlot
+				rowBtn.MouseButton1Click:Connect(function()
+					closeDetail()
+					if MockData.ServerAttachAugment then
+						MockData.ServerAttachAugment(unit.id, cSlot, cAug, aug.id)
+					end
+					MockData.LoadSkillData(unit.id)
+					buildSkillsContent()
+				end)
+			end
+
+			rowOrder = rowOrder + 1
+		end
+	end
+
+	local cancel = Instance.new("TextButton")
+	cancel.Size = UDim2.new(1, 0, 0, 18)
+	cancel.Position = UDim2.new(0, 0, 1, -20)
+	cancel.BackgroundTransparency = 1
+	cancel.Font = Theme.Font.Primary
+	cancel.TextSize = Theme.Text.Small()
+	cancel.TextColor3 = Theme.Colors.TextSecondary
+	cancel.Text = "Cancel"
+	cancel.Parent = popup
+	cancel.MouseButton1Click:Connect(closeDetail)
+end
+
+-- ==================================================================
+-- openEquippedSkillDetail: Detail for an equipped skill slot
+-- ==================================================================
+openEquippedSkillDetail = function(slotNum, skillId, augments)
+	closeDetail()
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	local def = MockData.GetSkillDef(skillId)
+	local mockSkill = MockData.GetSkill(skillId)
+	local tags = (def and def.tags) or (mockSkill and mockSkill.tags) or {}
+	local name = (def and def.name) or (mockSkill and mockSkill.name) or skillId or "?"
+	local stype = getSkillType(tags)
+	local stc = STYPE_COLORS[stype] or STYPE_COLORS.Utility
+
+	-- Build the same skill detail panel as openSkillCardDetail
+	-- but with UNEQUIP instead of EQUIP, and show equipped augments
+	local fakeCard = {
+		id = skillId, name = name, tags = tags, def = def, mockSkill = mockSkill,
+		mpCost = def and def.mpCostFormula or (mockSkill and mockSkill.mpCost) or 0,
+		rtCost = def and def.rtCostFormula or (mockSkill and mockSkill.rtCost) or 0,
+		qty = 1, isSkill = true,
+	}
+
+	-- Reuse skill detail overlay code via a flag
+	-- For simplicity, build a simpler equipped view
+	detailOverlay = Instance.new("ScreenGui")
+	detailOverlay.Name = "EquippedSkillDetail"
+	detailOverlay.DisplayOrder = 110
+	detailOverlay.ResetOnSpawn = false
+	detailOverlay.Parent = getPlayerGui()
+
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.4
+	backdrop.Text = ""
+	backdrop.BorderSizePixel = 0
+	backdrop.Parent = detailOverlay
+	backdrop.MouseButton1Click:Connect(closeDetail)
+
+	local panel = Theme.MakePanel("EquippedSkillPanel",
+		UDim2.new(0.55, 0, 0.90, 0),
+		UDim2.new(0, 6, 0.5, 0),
+		Vector2.new(0, 0.5), detailOverlay)
+	panel.ClipsDescendants = true
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, -16, 1, -8)
+	scroll.Position = UDim2.new(0, 8, 0, 4)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 3
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.Parent = panel
+
+	local layout = Instance.new("UIListLayout", scroll)
+	layout.Padding = UDim.new(0, 4)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	local order = 0
+	local function addRow(parent, height)
+		local f = Instance.new("Frame")
+		f.Size = UDim2.new(1, 0, 0, height)
+		f.BackgroundTransparency = 1
+		f.LayoutOrder = order
+		f.Parent = parent
+		order = order + 1
+		return f
+	end
+
+	-- Unified header
+	local eqDescText = (def and def.description) or buildSkillDescription(def)
+	local hdrH = buildDetailHeader(addRow(scroll, 72), {
+		iconText = STYPE_ICONS[stype] or "[*]",
+		iconBg = stc.bg,
+		iconColor = stc.icon,
+		iconStrokeColor = stc.icon,
+		name = name,
+		tags = tags,
+		description = eqDescText or "",
+	})
+	local slotRow = addRow(scroll, 14)
+	makeLabel(slotRow, { Text = "Equipped in Slot " .. slotNum,
+		Size = UDim2.fromScale(1, 1),
+		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.Info })
+
+	-- Stats (abbreviated)
+	if def then
+		local function addSR(l, v)
+			local r = addRow(scroll, 14)
+			makeLabel(r, { Text = l, Size = UDim2.new(0.3, 0, 1, 0), TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary })
+			makeLabel(r, { Text = v, Size = UDim2.new(0.7, -4, 1, 0), Position = UDim2.new(0.3, 4, 0, 0),
+				TextSize = Theme.Text.Small(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextPrimary,
+				TextXAlignment = Enum.TextXAlignment.Right })
+		end
+		addSR("MP Cost", def.mpCostFormula or "-")
+		addSR("RT Cost", def.rtCostFormula or "-")
+		addSR("Pattern", simplifyPattern(def.pattern))
+	end
+
+	-- Attached augments
+	local augHdr = addRow(scroll, 14)
+	makeLabel(augHdr, { Text = "ATTACHED AUGMENTS", Size = UDim2.fromScale(1, 1),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+		TextColor3 = Theme.Colors.TextGold })
+
+	for a = 1, 2 do
+		local augId = augments and augments[a]
+		local augDef = augId and MockData.GetAugmentDef(augId)
+		if augDef then
+			local ar = addRow(scroll, 26)
+			ar.BackgroundColor3 = Theme.Colors.PanelRaised
+			ar.BackgroundTransparency = 0.2
+			Instance.new("UICorner", ar).CornerRadius = UDim.new(0, 4)
+
+			makeLabel(ar, { Text = "[o] " .. augDef.name,
+				Size = UDim2.new(0.6, -4, 1, 0),
+				Position = UDim2.new(0, 4, 0, 0),
+				TextSize = Theme.Text.Small(), Font = Theme.Font.PrimaryBold,
+				TextColor3 = Theme.Colors.TextGold })
+			makeLabel(ar, { Text = augDef.costFormula or "",
+				Size = UDim2.new(0.35, 0, 1, 0),
+				Position = UDim2.new(0.62, 0, 0, 0),
+				TextSize = Theme.Text.Tiny(), Font = Theme.Font.Mono,
+				TextColor3 = Theme.Colors.Danger,
+				TextXAlignment = Enum.TextXAlignment.Right })
+		else
+			local ar = addRow(scroll, 22)
+			ar.BackgroundColor3 = Theme.Colors.PanelRaised
+			ar.BackgroundTransparency = 0.5
+			Instance.new("UICorner", ar).CornerRadius = UDim.new(0, 4)
+			makeLabel(ar, { Text = "[o] Empty Augment Slot " .. a,
+				Size = UDim2.new(1, -8, 1, 0),
+				Position = UDim2.new(0, 4, 0, 0),
+				TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextDisabled })
+		end
+	end
+
+	-- Buttons
+	local SKL_BTN_W = 96
+	local SKL_BTN_H = 35
+	local SKL_BTN_GAP = 2
+	local btnBar = Instance.new("Frame")
+	btnBar.Name = "BtnBar"
+	btnBar.BackgroundTransparency = 1
+	btnBar.AnchorPoint = Vector2.new(1, 1)
+	btnBar.Position = UDim2.new(1, -8, 1, -8)
+	btnBar.Parent = detailOverlay
+	local bLayout = Instance.new("UIListLayout")
+	bLayout.FillDirection = Enum.FillDirection.Horizontal
+	bLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	bLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	bLayout.Padding = UDim.new(0, SKL_BTN_GAP)
+	bLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	bLayout.Parent = btnBar
+	local btnOrder = 0
+	local function addBtn(text, color, onClick)
+		local style = "Secondary"
+		if color == Theme.Colors.Success or color == Theme.Colors.Danger then
+			style = "Primary"
+		elseif color == Theme.Colors.Surface then
+			if text == "COMPARE" or text == "DETAILS" or text == "SWAP" then
+				style = "Tertiary"
+			end
+		end
+		local btn = Theme.MakeButton(btnBar, text, style, onClick, {
+			size = UDim2.new(0, SKL_BTN_W, 0, SKL_BTN_H),
+		})
+		btn.LayoutOrder = btnOrder
+		btnOrder = btnOrder + 1
+	end
+
+	-- UNEQUIP: also detaches all augments
+	addBtn("UNEQUIP", Theme.Colors.Danger, function()
+		closeDetail()
+		-- Detach augments first
+		for a = 1, 2 do
+			if augments and augments[a] then
+				if MockData.ServerDetachAugment then
+					MockData.ServerDetachAugment(unit.id, slotNum, a)
+				end
+			end
+		end
+		-- Then unequip
+		if MockData.ServerUnequipSkillCard then
+			MockData.ServerUnequipSkillCard(unit.id, slotNum)
+		else
+			local sl = MockData.SkillLoadout[unit.id]
+			if sl then sl[slotNum] = nil end
+		end
+		MockData.LoadSkillData(unit.id)
+		buildSkillsContent()
+	end)
+
+	addBtn("BACK", Theme.Colors.Surface, closeDetail)
+	btnBar.Size = UDim2.new(0, (btnOrder * SKL_BTN_W) + ((btnOrder - 1) * SKL_BTN_GAP), 0, SKL_BTN_H)
+end
+
+-- ==================================================================
+-- openEquippedAugmentDetail: Detail for an attached augment
+-- ==================================================================
+openEquippedAugmentDetail = function(slotNum, augSlotNum, augmentId)
+	closeDetail()
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	local def = MockData.GetAugmentDef(augmentId)
+	local name = def and def.name or augmentId or "?"
+
+	detailOverlay = Instance.new("ScreenGui")
+	detailOverlay.Name = "EquippedAugDetail"
+	detailOverlay.DisplayOrder = 110
+	detailOverlay.ResetOnSpawn = false
+	detailOverlay.Parent = getPlayerGui()
+
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.4
+	backdrop.Text = ""
+	backdrop.BorderSizePixel = 0
+	backdrop.Parent = detailOverlay
+	backdrop.MouseButton1Click:Connect(closeDetail)
+
+	local panel = Theme.MakePanel("EquippedAugPanel",
+		UDim2.new(0.55, 0, 0.70, 0),
+		UDim2.new(0, 6, 0.5, 0),
+		Vector2.new(0, 0.5), detailOverlay)
+	panel.ClipsDescendants = true
+	pad(panel, 10, 10, 10, 10)
+
+	-- Unified header
+	local eqAugTags = {}
+	if def and def.family then table.insert(eqAugTags, def.family) end
+	local eqAugDesc = (def and def.description) or (def and def.effect) or ""
+	local nextY = buildDetailHeader(panel, {
+		iconText = "[o]",
+		iconBg = Color3.fromRGB(74, 53, 16),
+		iconColor = Theme.Colors.TextGold,
+		iconStrokeColor = Theme.Colors.TextGold,
+		name = name,
+		tags = eqAugTags,
+		description = eqAugDesc,
+	})
+	makeLabel(panel, { Text = "Slot " .. slotNum .. "  |  Augment " .. augSlotNum,
+		Size = UDim2.new(1, 0, 0, 12),
+		Position = UDim2.new(0, 0, 0, nextY),
+		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.Info })
+
+	-- Cost
+	if def and def.costFormula then
+		makeLabel(panel, { Text = "Cost: " .. def.costFormula,
+			Size = UDim2.new(1, 0, 0, 14),
+			Position = UDim2.new(0, 0, 0, 88),
+			TextSize = Theme.Text.Body(), Font = Theme.Font.Mono,
+			TextColor3 = Theme.Colors.Danger })
+	end
+
+	-- Buttons
+	local SKL_BTN_W = 96
+	local SKL_BTN_H = 35
+	local SKL_BTN_GAP = 2
+	local btnBar = Instance.new("Frame")
+	btnBar.Name = "BtnBar"
+	btnBar.BackgroundTransparency = 1
+	btnBar.AnchorPoint = Vector2.new(1, 1)
+	btnBar.Position = UDim2.new(1, -8, 1, -8)
+	btnBar.Parent = detailOverlay
+	local bLayout = Instance.new("UIListLayout")
+	bLayout.FillDirection = Enum.FillDirection.Horizontal
+	bLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	bLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	bLayout.Padding = UDim.new(0, SKL_BTN_GAP)
+	bLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	bLayout.Parent = btnBar
+	local btnOrder = 0
+	local function addBtn(text, color, onClick)
+		local style = "Secondary"
+		if color == Theme.Colors.Success or color == Theme.Colors.Danger then
+			style = "Primary"
+		elseif color == Theme.Colors.Surface then
+			if text == "COMPARE" or text == "DETAILS" or text == "SWAP" then
+				style = "Tertiary"
+			end
+		end
+		local btn = Theme.MakeButton(btnBar, text, style, onClick, {
+			size = UDim2.new(0, SKL_BTN_W, 0, SKL_BTN_H),
+		})
+		btn.LayoutOrder = btnOrder
+		btnOrder = btnOrder + 1
+	end
+
+	addBtn("DETACH", Theme.Colors.Danger, function()
+		closeDetail()
+		if MockData.ServerDetachAugment then
+			MockData.ServerDetachAugment(unit.id, slotNum, augSlotNum)
+		end
+		MockData.LoadSkillData(unit.id)
+		buildSkillsContent()
+	end)
+	addBtn("BACK", Theme.Colors.Surface, closeDetail)
+	btnBar.Size = UDim2.new(0, (btnOrder * SKL_BTN_W) + ((btnOrder - 1) * SKL_BTN_GAP), 0, SKL_BTN_H)
 end
 
 --------------------------------------------------

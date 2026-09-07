@@ -16,6 +16,9 @@
 
 local UnitSchema = require(script.Parent.UnitSchema)
 local StatusService = require(script.Parent.StatusService)
+local RacePassiveService = require(script.Parent.RacePassiveService)
+local DoctrinePassiveService = require(script.Parent.DoctrinePassiveService)
+local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
 
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -148,7 +151,10 @@ end
 local function getSideAlive(state, side)
 	local count = 0
 	for _, unit in ipairs(state.units) do
-		if unit.isAlive and unit.side == side then
+		-- Count alive units + KO'd Zombies that haven't used their revive
+		local canRevive = (not unit.isAlive) and unit.raceId == "RACE-ZOMBIE"
+			and not unit.zombieReviveUsed
+		if unit.side == side and (unit.isAlive or canRevive) then
 			count = count + 1
 		end
 	end
@@ -277,6 +283,17 @@ function BattleCoordinator.AdvanceClock(state)
 		end
 	end
 
+	-- Zombie revive: accumulate CT for KO'd Zombies
+	if ctPassed > 0 then
+		for _, unit in ipairs(state.units) do
+			if not unit.isAlive then
+				if RacePassiveService.ProcessZombieRevive(unit, ctPassed) then
+					BattleVisualBroadcaster.UnitStateChanged(unit)
+				end
+			end
+		end
+	end
+
 	-- Tile effect CT tick: decay durations, fire periodic damage
 	if ctPassed > 0 and _tileEffectService then
 		_tileEffectService.ProcessCtTick(ctPassed, state.units)
@@ -299,6 +316,10 @@ function BattleCoordinator.AdvanceClock(state)
 	-- We still give AP so EndTurn doesn't error, but the unit won't use it.
 	UnitSchema.RefreshAp(nextUnit)
 	nextUnit.currentAp = AP_PER_TURN_STANDARD
+
+	-- Reset doctrine per-turn state (Slice 4H)
+	DoctrinePassiveService.OnTurnStart(nextUnit)
+	ArmorPassiveService.OnTurnStart(nextUnit)
 
 	print(string.format(
 		"[BattleCoordinator] CT:%d | Turn %d | %s%s",

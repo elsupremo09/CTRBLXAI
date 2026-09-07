@@ -611,4 +611,124 @@ function Theme.MakeTabBar(name, parent)
 	return sg, panel
 end
 
+--------------------------------------------------
+-- THEMED BUTTONS (9-slice ImageButton)
+--------------------------------------------------
+
+Theme.ButtonAssets = {
+	Primary   = { Asset = "rbxassetid://128127407312284" },  -- gold/bronze (equip, attach, confirm)
+	Secondary = { Asset = "rbxassetid://79828905582448" },    -- dark charcoal (back, cancel)
+	Tertiary  = { Asset = "rbxassetid://74754968977134" },   -- dark blue/steel (compare, swap)
+}
+
+-- [DIAG] Asset ID dump at load time
+print("[DIAG-ASSETS] Primary   = " .. Theme.ButtonAssets.Primary.Asset .. " (NEW trimmed 200x48)")
+print("[DIAG-ASSETS] Secondary = " .. Theme.ButtonAssets.Secondary.Asset .. " (NEW trimmed 200x48)")
+print("[DIAG-ASSETS] Tertiary  = " .. Theme.ButtonAssets.Tertiary.Asset .. " (NEW trimmed 200x48)")
+print("[DIAG-ASSETS] BTN_SLICE_CENTER = " .. tostring(BTN_SLICE_CENTER) .. " (matches 200x48 source)")
+
+-- Shared SliceCenter for all button assets (adjust if 9-slice guides differ)
+local BTN_SLICE_CENTER = Rect.new(12, 12, 188, 36)
+
+-- style: "Primary", "Secondary", or "Tertiary"
+function Theme.MakeButton(parent, text, style, onClick, opts)
+	opts = opts or {}
+	local asset = Theme.ButtonAssets[style] or Theme.ButtonAssets.Secondary
+
+	local btn = Instance.new("ImageButton")
+	btn.Name = opts.name or ("Btn_" .. text)
+	btn.Size = opts.size or UDim2.new(0, 80, 0, 44)
+	btn.Position = opts.position or UDim2.new(0, 0, 0, 0)
+	btn.AnchorPoint = opts.anchor or Vector2.new(0, 0)
+	btn.Image = asset.Asset
+	btn.ScaleType = Enum.ScaleType.Slice
+	btn.SliceCenter = BTN_SLICE_CENTER
+	btn.SliceScale = 1
+	btn.ImageColor3 = Color3.new(1, 1, 1)
+	btn.BackgroundTransparency = 1
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = false
+	btn.Parent = parent
+
+	-- State handling: hover, press, disabled
+	if opts.disabled then
+		btn.ImageTransparency = 0.5
+		btn.Active = false
+		btn.ImageColor3 = Color3.fromRGB(120, 120, 120)
+	else
+		local normalY = btn.Position.Y
+		btn.MouseEnter:Connect(function()
+			btn.ImageColor3 = Color3.fromRGB(230, 230, 230)
+		end)
+		btn.MouseLeave:Connect(function()
+			btn.ImageColor3 = Color3.new(1, 1, 1)
+		end)
+		btn.MouseButton1Down:Connect(function()
+			btn.ImageColor3 = Color3.fromRGB(180, 180, 180)
+			btn.Position = btn.Position + UDim2.new(0, 0, 0, 2)
+		end)
+		btn.MouseButton1Up:Connect(function()
+			btn.ImageColor3 = Color3.new(1, 1, 1)
+			btn.Position = btn.Position - UDim2.new(0, 0, 0, 2)
+		end)
+	end
+
+	-- Text label: child of button, centered, with padding for 9-slice borders
+	local lbl = Instance.new("TextLabel")
+	lbl.Name = "Label"
+	lbl.Size = UDim2.fromScale(1, 1)
+	lbl.BackgroundTransparency = 1
+	lbl.Font = Theme.Font.PrimaryBold
+	lbl.TextScaled = false
+	lbl.TextSize = Theme.Text.Body()
+	lbl.TextTruncate = Enum.TextTruncate.None
+	if opts.textColor then
+		lbl.TextColor3 = opts.textColor
+	elseif style == "Primary" then
+		lbl.TextColor3 = Theme.Colors.TextGold
+	elseif style == "Secondary" then
+		lbl.TextColor3 = Theme.Colors.TextSecondary
+	else
+		lbl.TextColor3 = Theme.Colors.TextPrimary
+	end
+	lbl.Text = string.upper(text)
+	lbl.TextXAlignment = Enum.TextXAlignment.Center
+	lbl.TextYAlignment = Enum.TextYAlignment.Center
+	lbl.Parent = btn
+
+	-- Padding so text doesn't enter 12px slice border region
+	local lblPad = Instance.new("UIPadding")
+	lblPad.PaddingLeft = UDim.new(0, 14)
+	lblPad.PaddingRight = UDim.new(0, 14)
+	lblPad.PaddingTop = UDim.new(0, 6)
+	lblPad.PaddingBottom = UDim.new(0, 6)
+	lblPad.Parent = lbl
+
+	-- Fixed TextSize from Theme.Text.Body()
+
+	-- [DIAG] Button creation dump
+	print(("[DIAG-BTN] Created: %s | Style=%s | Asset=%s"):format(
+		btn:GetFullName(), style or "nil", tostring(btn.Image)))
+	print(("[DIAG-BTN]   Size=%s | SliceCenter=%s | SliceScale=%s"):format(
+		tostring(btn.Size), tostring(btn.SliceCenter), tostring(btn.SliceScale)))
+	print(("[DIAG-BTN]   ImageColor3=%s | ImageTransparency=%s | AutoButtonColor=%s"):format(
+		tostring(btn.ImageColor3), tostring(btn.ImageTransparency), tostring(btn.AutoButtonColor)))
+	print(("[DIAG-BTN]   ImageRectSize=%s | ImageRectOffset=%s"):format(
+		tostring(btn.ImageRectSize), tostring(btn.ImageRectOffset)))
+	task.defer(function()
+		if btn and btn.Parent then
+			print(("[DIAG-BTN-DEFERRED] %s | AbsPos=%s | AbsSize=%s | Visible=%s | IsLoaded=%s"):format(
+				btn:GetFullName(),
+				tostring(btn.AbsolutePosition), tostring(btn.AbsoluteSize),
+				tostring(btn.Visible), tostring(btn.IsLoaded)))
+		end
+	end)
+
+	if onClick then
+		btn.MouseButton1Click:Connect(onClick)
+	end
+
+	return btn
+end
+
 return Theme

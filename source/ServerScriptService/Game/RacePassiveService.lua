@@ -9,6 +9,7 @@ local RacePassiveService = {}
 
 local StatusService = require(script.Parent.StatusService)
 
+
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("CTRBLXAI")
@@ -21,6 +22,15 @@ local GameConstants = require(
 
 local function getRaceId(unit)
 	return unit and unit.raceId or nil
+end
+
+local function isOnWaterTile(unit)
+	if not unit or not unit.tileX or not unit.tileY then return false end
+	local terrainId = GameConstants.GetTerrainId(unit.tileX, unit.tileY)
+	return terrainId == "Shallow Water"
+		or terrainId == "Deep Water"
+		or terrainId == "Ice"
+		or terrainId == "Swamp"
 end
 
 local function isElemental(element)
@@ -56,6 +66,20 @@ function RacePassiveService.GetDamageDealtModifier(attacker, element, isAOE)
 	if raceId == "RACE-ELEMENTAL-SPIRIT" then
 		if isElemental(element) then
 			mod = mod * 1.30
+		end
+	end
+
+	-- MERMAID — Tidecaller: off water, all stats -10% → damage dealt -10%
+	if raceId == "RACE-MERMAID" then
+		if not isOnWaterTile(attacker) then
+			mod = mod * 0.90
+		end
+	end
+
+	-- MERMAID — Tidecaller: off water, all stats -10% → damage received +10%
+	if raceId == "RACE-MERMAID" then
+		if not isOnWaterTile(defender) then
+			mod = mod * 1.10
 		end
 	end
 
@@ -155,6 +179,22 @@ function RacePassiveService.GetMovementRangeModifier(unit)
 
 	-- GOLEM — Fortified Frame: Movement Range -1
 	if raceId == "RACE-GOLEM" then return -1 end
+
+	return 0
+end
+
+--------------------------------------------------
+-- JUMP MODIFIER
+-- Returns an integer offset to jump height.
+-- Called from TargetingService.getJump.
+--------------------------------------------------
+
+function RacePassiveService.GetJumpModifier(unit)
+	local raceId = getRaceId(unit)
+	if not raceId then return 0 end
+
+	-- ELF — Elven Focus: Jump +1
+	if raceId == "RACE-ELF" then return 1 end
 
 	return 0
 end
@@ -301,6 +341,95 @@ function RacePassiveService.GetElementStatusOverride(attacker, element)
 	elseif element == "Dark" then return "Poison"  -- no default
 	end
 	return nil
+end
+
+--------------------------------------------------
+-- MERMAID — TIDECALLER
+-- Range +1 while on Water/Wet/Ice tile.
+-- All primary stats -10% while NOT on Water/Wet/Ice.
+--------------------------------------------------
+
+function RacePassiveService.GetRangeModifier(unit)
+	local raceId = getRaceId(unit)
+	if raceId ~= "RACE-MERMAID" then return 0 end
+	if isOnWaterTile(unit) then return 1 end
+	return 0
+end
+
+function RacePassiveService.GetMermaidStatPenalty(unit)
+	local raceId = getRaceId(unit)
+	if raceId ~= "RACE-MERMAID" then return nil end
+	if isOnWaterTile(unit) then return nil end
+	-- Not on water: all primary stats -10%
+	return {
+		STR = -0.10, AGI = -0.10, INT = -0.10,
+		VIT = -0.10, DEX = -0.10, LUK = -0.10,
+	}
+end
+
+--------------------------------------------------
+-- ZOMBIE — UNDYING
+-- Revive 3 turns after KO with 50% Max HP.
+-- Uses CT accumulation: when a KO'd Zombie accumulates
+-- 3000 CT (equivalent of 3 turns), revive.
+--------------------------------------------------
+
+local ZOMBIE_REVIVE_CT = 3000
+
+function RacePassiveService.ProcessZombieRevive(unit, ctPassed)
+	local raceId = getRaceId(unit)
+	if raceId ~= "RACE-ZOMBIE" then return false end
+	if unit.isAlive then return false end
+
+	if not unit.zombieReviveUsed then
+		if not unit.zombieKoCt then unit.zombieKoCt = 0 end
+		unit.zombieKoCt = unit.zombieKoCt + ctPassed
+
+		if unit.zombieKoCt >= ZOMBIE_REVIVE_CT then
+			-- Revive with 50% Max HP
+			unit.isAlive = true
+			unit.currentHp = math.ceil(unit.maxHp * 0.50)
+			unit.remainingRt = unit.startingRt or 400
+			unit.zombieReviveUsed = true
+			unit.zombieKoCt = nil
+			print(string.format(
+				"[RacePassiveService] Zombie Undying: %s revives with %d/%d HP",
+				unit.name, unit.currentHp, unit.maxHp
+			))
+			return true
+		end
+	end
+	return false
+end
+
+function RacePassiveService.OnUnitKO(unit)
+	local raceId = getRaceId(unit)
+	if raceId == "RACE-ZOMBIE" and not unit.zombieReviveUsed then
+		unit.zombieKoCt = 0
+		print(string.format(
+			"[RacePassiveService] Zombie Undying: %s KO'd — revive timer started",
+			unit.name
+		))
+	end
+end
+
+--------------------------------------------------
+-- ANDROID — EXTENDING ARMS
+-- Push becomes Pull (reverse direction).
+-- Push Force +3.
+-- Push cannot target adjacent units (distance must be > 1).
+--------------------------------------------------
+
+function RacePassiveService.GetPushOverride(unit)
+	local raceId = getRaceId(unit)
+	if raceId ~= "RACE-ANDROID" then return nil end
+	return {
+		reverseDirection = true,  -- Pull instead of Push
+		forceBonus = 3,           -- +3 Force
+		minDistance = 2,          -- Cannot target adjacent
+		maxDistance = 4,          -- Extended reach (1 base + 3 bonus)
+		label = "Pull",          -- Display label
+	}
 end
 
 return RacePassiveService

@@ -1,6 +1,7 @@
 -- EquipmentService.lua
 local RacePassiveService = require(script.Parent.RacePassiveService)
 -- CTRBLXAI | Slice 4A — Equipment Foundation
+-- Slice 4G — Armor Slot Expansion
 --
 -- Owns: equipped state, hand legality, deterministic stat rebuilding.
 -- Interface: ValidateLoadout, Equip, Unequip, RebuildUnitStats.
@@ -12,16 +13,26 @@ local RacePassiveService = require(script.Parent.RacePassiveService)
 --   1. Race base stats (permanent)
 --   2. Doctrine stat package (once)
 --   3. Equipment bonus numerical attributes (all equipped items)
---   4. Bonus passives (flagged, not stat contributions)
---   5. Derived stats from totals
+--   3b. Race passive stat penalties
+--   3c. Armor stat contributions (Def, HP, MP, WT)
+--   4. Weapon combat profile from MainHand
+--   5. HP/MP from effective stats + armor HP/MP
+--   6. Derived stats from totals
 --
--- Equipment slots: MainHand, OffHand, Armor, Accessory1, Accessory2
+-- Equipment slots (7):
+--   MainHand, OffHand — weapons
+--   Head, Body, Gloves, Feet, Accessory — armor
 -- 2H weapon → OffHand forced nil, Armor Off-Hand WT = 0 in Guard RT.
 
 local WeaponData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
 		:WaitForChild("WeaponData")
+)
+local ArmorData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ArmorData")
 )
 local BonusData = require(
 	game:GetService("ReplicatedStorage")
@@ -50,10 +61,48 @@ local EquipmentService = {}
 local VALID_SLOTS = {
 	MainHand = true,
 	OffHand = true,
-	Armor = true,
-	Accessory1 = true,
-	Accessory2 = true,
+	Head = true,
+	Body = true,
+	Gloves = true,
+	Feet = true,
+	Accessory = true,
 }
+
+local ARMOR_SLOTS = {
+	Head = true,
+	Body = true,
+	Gloves = true,
+	Feet = true,
+	Accessory = true,
+}
+
+--------------------------------------------------
+-- ARCHETYPE RESOLUTION (weapon or armor)
+--------------------------------------------------
+
+local function resolveArchetype(baseArchetypeId)
+	local wArch = WeaponData.GetByArchetypeId(baseArchetypeId)
+	if wArch then return wArch, "weapon" end
+	local aArch = ArmorData.GetByArchetypeId(baseArchetypeId)
+	if aArch then return aArch, "armor" end
+	return nil, nil
+end
+
+--------------------------------------------------
+-- SLOT DETERMINATION
+--------------------------------------------------
+
+function EquipmentService.DetermineSlot(itemInstance)
+	local wArch = WeaponData.GetByArchetypeId(itemInstance.baseArchetypeId)
+	if wArch then
+		return (wArch.category == "OffHand") and "OffHand" or "MainHand"
+	end
+	local aArch = ArmorData.GetByArchetypeId(itemInstance.baseArchetypeId)
+	if aArch then
+		return aArch.slot -- "Head", "Body", "Gloves", "Feet", "Accessory"
+	end
+	return nil
+end
 
 --------------------------------------------------
 -- LOADOUT VALIDATION
@@ -67,38 +116,50 @@ function EquipmentService.ValidateEquip(unit, itemInstance, slot)
 		return false, "Invalid item instance"
 	end
 
-	local archetype = WeaponData.GetByArchetypeId(itemInstance.baseArchetypeId)
+	local archetype, itemType = resolveArchetype(itemInstance.baseArchetypeId)
 	if not archetype then
 		return false, "Unknown archetype: " .. tostring(itemInstance.baseArchetypeId)
 	end
 
-	-- Weapon → MainHand only
-	if archetype.category == "Weapon" and slot ~= "MainHand" then
-		return false, "Weapons can only go in MainHand"
-	end
-
-	-- OffHand → OffHand only
-	if archetype.category == "OffHand" and slot ~= "OffHand" then
-		return false, "Off-hands can only go in OffHand slot"
-	end
-
-	-- 2H weapon check: cannot equip OffHand if MainHand is 2H
-	if slot == "OffHand" then
-		local mainHand = unit.equipmentSlots and unit.equipmentSlots.MainHand
-		if mainHand then
-			local mainArchetype = WeaponData.GetByArchetypeId(mainHand.baseArchetypeId)
-			-- Titan: Colossal Arsenal allows 2H melee as 1H, so OffHand is available
-			local titanBypass = mainArchetype and mainArchetype.handClass == "2H" and RacePassiveService.CanEquip2HAsWith1H(unit)
-			if mainArchetype and mainArchetype.handClass == "2H" and not titanBypass then
-				return false, "Cannot equip off-hand with a 2H weapon"
+	if itemType == "weapon" then
+		-- Weapon → MainHand only
+		if archetype.category == "Weapon" and slot ~= "MainHand" then
+			return false, "Weapons can only go in MainHand"
+		end
+		-- OffHand → OffHand only
+		if archetype.category == "OffHand" and slot ~= "OffHand" then
+			return false, "Off-hands can only go in OffHand slot"
+		end
+		-- Cannot put weapon in armor slot
+		if ARMOR_SLOTS[slot] then
+			return false, "Cannot equip weapon in armor slot"
+		end
+		-- 2H weapon check: cannot equip OffHand if MainHand is 2H
+		if slot == "OffHand" then
+			local mainHand = unit.equipmentSlots and unit.equipmentSlots.MainHand
+			if mainHand then
+				local mainArchetype = WeaponData.GetByArchetypeId(mainHand.baseArchetypeId)
+				-- Titan: Colossal Arsenal allows 2H melee as 1H, so OffHand is available
+				local titanBypass = mainArchetype and mainArchetype.handClass == "2H" and RacePassiveService.CanEquip2HAsWith1H(unit)
+				if mainArchetype and mainArchetype.handClass == "2H" and not titanBypass then
+					return false, "Cannot equip off-hand with a 2H weapon"
+				end
 			end
 		end
-	end
-
-	-- If equipping a 2H weapon, off-hand must be cleared
-	-- Titan: Colossal Arsenal — 2H melee equipped as 1H, OffHand NOT cleared
-	if slot == "MainHand" and archetype.handClass == "2H" and not RacePassiveService.CanEquip2HAsWith1H(unit) then
-		-- This is allowed; OffHand will be force-cleared during equip
+		-- If equipping a 2H weapon, off-hand must be cleared
+		-- Titan: Colossal Arsenal — 2H melee equipped as 1H, OffHand NOT cleared
+		if slot == "MainHand" and archetype.handClass == "2H" and not RacePassiveService.CanEquip2HAsWith1H(unit) then
+			-- This is allowed; OffHand will be force-cleared during equip
+		end
+	elseif itemType == "armor" then
+		-- Armor → matching slot only
+		if archetype.slot ~= slot then
+			return false, "This armor goes in " .. archetype.slot .. ", not " .. slot
+		end
+		-- Cannot put armor in weapon slots
+		if slot == "MainHand" or slot == "OffHand" then
+			return false, "Cannot equip armor in weapon slot"
+		end
 	end
 
 	-- Cannot equip same instance in multiple slots
@@ -129,9 +190,11 @@ function EquipmentService.Equip(unit, itemInstance, slot)
 		unit.equipmentSlots = {}
 	end
 
+	local archetype, itemType = resolveArchetype(itemInstance.baseArchetypeId)
+
 	-- If 2H weapon, force-clear off-hand (Titan bypasses this)
-	local archetype = WeaponData.GetByArchetypeId(itemInstance.baseArchetypeId)
-	if slot == "MainHand" and archetype.handClass == "2H" and not RacePassiveService.CanEquip2HAsWith1H(unit) then
+	if itemType == "weapon" and slot == "MainHand" and archetype.handClass == "2H"
+		and not RacePassiveService.CanEquip2HAsWith1H(unit) then
 		unit.equipmentSlots.OffHand = nil
 	end
 
@@ -244,6 +307,29 @@ function EquipmentService.RebuildUnitStats(unit)
 		end
 	end
 
+	-- 3c. Armor stat contributions (Slice 4G)
+	-- Sum scaled defense, hp, mp, wt from all equipped armor pieces
+	local armorDefense = 0
+	local armorWt = 0
+	local armorHp = 0
+	local armorMp = 0
+
+	for _, item in ipairs(equippedItems) do
+		local aArch = ArmorData.GetByArchetypeId(item.baseArchetypeId)
+		if aArch then
+			local scaled = ArmorData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
+			if scaled then
+				armorDefense = armorDefense + scaled.defense
+				armorWt = armorWt + scaled.wt
+				armorHp = armorHp + scaled.hp
+				armorMp = armorMp + scaled.mp
+			end
+		end
+	end
+
+	unit.armorDefense = armorDefense
+	unit.armorWt = armorWt
+
 	-- Write effective stats
 	unit.effectiveStats = total
 
@@ -255,8 +341,6 @@ function EquipmentService.RebuildUnitStats(unit)
 		unit.weaponWt = profile.wt
 
 		-- Mechanical race tag: Raw Weapon WT ×1.15
-		-- DB: "start with Raw Weapon WT; apply Mechanical Raw Weapon WT ×1.15;
-		-- apply the relevant weapon-use multiplier; floor reduced Weapon WT..."
 		if unit.raceId then
 			local RaceData = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
 			local raceEntry = RaceData[unit.raceId]
@@ -290,11 +374,20 @@ function EquipmentService.RebuildUnitStats(unit)
 		unit.weaponHandClass = "1H"
 	end
 
-	-- 5. Rebuild HP/MP from effective stats
+	-- 4b. Off-hand defense contribution
+	local offHand = unit.equipmentSlots and unit.equipmentSlots.OffHand
+	if offHand then
+		local offProfile = EquipmentService.GetEffectiveWeaponProfile(offHand)
+		unit.offHandDefense = offProfile.defense
+	else
+		unit.offHandDefense = 0
+	end
+
+	-- 5. Rebuild HP/MP from effective stats + armor contributions
 	local vit = total.VIT
 	local int = total.INT
-	unit.maxHp = 50 + vit * 4
-	unit.maxMp = 20 + int * 2
+	unit.maxHp = 50 + vit * 4 + armorHp
+	unit.maxMp = 20 + int * 2 + armorMp
 
 	-- Clamp current to new max (don't increase current beyond max)
 	if unit.currentHp and unit.currentHp > unit.maxHp then
@@ -369,6 +462,14 @@ function EquipmentService.GetEffectiveWeaponProfile(itemInstance)
 end
 
 --------------------------------------------------
+-- ARMOR PROFILE (scaled stats at item level)
+--------------------------------------------------
+
+function EquipmentService.GetEffectiveArmorProfile(itemInstance)
+	return ArmorData.GetScaledProfile(itemInstance.baseArchetypeId, itemInstance.itemLevel)
+end
+
+--------------------------------------------------
 -- HELPERS
 --------------------------------------------------
 
@@ -396,6 +497,10 @@ end
 
 function EquipmentService.GetLoadout(unit)
 	return unit.equipmentSlots or {}
+end
+
+function EquipmentService.IsArmorSlot(slot)
+	return ARMOR_SLOTS[slot] == true
 end
 
 return EquipmentService

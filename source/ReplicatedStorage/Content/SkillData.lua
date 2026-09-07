@@ -5,6 +5,7 @@
 local SkillData = {
 	["SKL-FIRE-BOLT"] = {
 		name = "Fire Bolt",
+		description = "Launches a bolt of fire at a single enemy at range, dealing fire damage.",
 		tags = {"Direct Damage", "Fire"},
 		properties = "Projectile: Direct",
 		targetRules = "Enemy Unit",
@@ -22,6 +23,7 @@ local SkillData = {
 	},
 	["SKL-FROSTBIND"] = {
 		name = "Frostbind",
+		description = "Hurls an ice bolt at a single enemy, dealing ice damage. If the target is Wet, freezes them solid.",
 		tags = {"Direct Damage", "Debuff", "Ice"},
 		properties = "Projectile: Direct",
 		targetRules = "Enemy Unit",
@@ -39,6 +41,7 @@ local SkillData = {
 	},
 	["SKL-HEALING-LIGHT"] = {
 		name = "Healing Light",
+		description = "Channels holy energy to restore HP to one ally or yourself at range.",
 		tags = {"Healing", "Holy"},
 		properties = "Passives: None",
 		targetRules = "Ally Unit, Self",
@@ -55,6 +58,7 @@ local SkillData = {
 	},
 	["SKL-DARK-RESTORATION"] = {
 		name = "Dark Restoration",
+		description = "A dual-purpose dark spell that heals an undead ally or deals dark damage to an enemy at range.",
 		tags = {"Healing", "Direct Damage", "Dark"},
 		targetRules = "Ally Unit, Enemy Unit, Self",
 		rtCostFormula = "round(Effective Weapon WT × 0.60)",
@@ -70,6 +74,7 @@ local SkillData = {
 	},
 	["SKL-ARCANE-BARRIER"] = {
 		name = "Arcane Barrier",
+		description = "Projects a magical shield onto one ally or yourself, absorbing incoming damage.",
 		tags = {"Shield", "Buff"},
 		properties = "Passives: None",
 		targetRules = "Ally Unit, Self",
@@ -86,6 +91,7 @@ local SkillData = {
 	},
 	["SKL-RAINFALL-ZONE"] = {
 		name = "Rainfall Zone",
+		description = "Calls down rain over a wide area, drenching all targets with Wet status.",
 		tags = {"Debuff", "Water"},
 		properties = "Potency: None",
 		targetRules = "Ground, including occupied Ground",
@@ -103,6 +109,7 @@ local SkillData = {
 	},
 	["SKL-STONE-PRISON"] = {
 		name = "Stone Prison",
+		description = "Encases a single enemy in stone at range, inflicting Petrify.",
 		tags = {"Debuff", "Earth"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Enemy Unit",
@@ -119,6 +126,7 @@ local SkillData = {
 	},
 	["SKL-CHAIN-SPARK"] = {
 		name = "Chain Spark",
+		description = "Fires a bolt of lightning that chains between up to four enemies, dealing electric damage with reduced power on each jump.",
 		tags = {"Direct Damage", "Electric"},
 		targetRules = "Enemy Unit",
 		rtCostFormula = "round(Effective Weapon WT × 1.00)",
@@ -135,6 +143,7 @@ local SkillData = {
 	},
 	["SKL-METEOR-MARKER"] = {
 		name = "Meteor Marker",
+		description = "Calls down a meteor on a 3x3 area, dealing heavy fire damage at the center with splash damage and inflicting Burn. Watch for friendly fire.",
 		tags = {"Direct Damage", "Fire", "Debuff"},
 		properties = "Projectile: Arc",
 		targetRules = "Ground, including occupied Ground",
@@ -155,6 +164,7 @@ local SkillData = {
 	},
 	["SKL-PHANTOM-EXCHANGE"] = {
 		name = "Phantom Exchange",
+		description = "Swaps positions with a selected ally at range. Fails if either destination is blocked.",
 		tags = {"Utility"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Ally Unit",
@@ -170,6 +180,7 @@ local SkillData = {
 	},
 	["SKL-BLINK"] = {
 		name = "Blink",
+		description = "Teleports the caster to a nearby empty tile. Range scales with AGI.",
 		tags = {"Utility"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Empty Tile",
@@ -184,6 +195,7 @@ local SkillData = {
 	},
 	["SKL-VITAL-BARRIER"] = {
 		name = "Vital Barrier",
+		description = "Creates a defensive shield on one ally or yourself, scaling with VIT and weapon defense.",
 		tags = {"Shield", "Buff"},
 		properties = "Passives: None",
 		targetRules = "Ally Unit, Self",
@@ -201,6 +213,7 @@ local SkillData = {
 	},
 	["SKL-FATED-ESCAPE"] = {
 		name = "Fated Escape",
+		description = "Teleports a selected ally to a tile next to the caster. Range scales with LUK.",
 		tags = {"Utility"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Ally Unit",
@@ -216,6 +229,7 @@ local SkillData = {
 	},
 	["SKL-POWER-STRIKE"] = {
 		name = "Power Strike",
+		description = "A powerful physical strike that deals heavy weapon damage to a single enemy.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Projectile: Inherit",
 		targetRules = "Enemy Unit",
@@ -233,6 +247,7 @@ local SkillData = {
 	},
 	["SKL-SWEEPING-CUT"] = {
 		name = "Sweeping Cut",
+		description = "Swings in a wide melee arc, hitting all enemies in a cleave pattern with physical damage.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -249,6 +264,7 @@ local SkillData = {
 	},
 	["SKL-CRUSHING-ADVANCE"] = {
 		name = "Crushing Advance",
+		description = "Delivers a heavy melee blow that deals physical damage and knocks the target back.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -266,6 +282,7 @@ local SkillData = {
 	},
 	["SKL-LONGSHOT"] = {
 		name = "Longshot",
+		description = "A high-damage ranged physical attack that inherits the weapon's full range profile.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Ranged Only",
 		targetRules = "Enemy Unit",
@@ -284,6 +301,7 @@ local SkillData = {
 	},
 	["SKL-HAMSTRING"] = {
 		name = "Hamstring",
+		description = "A quick strike that deals physical damage and cripples the target, reducing their movement.",
 		tags = {"Direct Damage", "Debuff", "Physical"},
 		properties = "Projectile: Inherit",
 		targetRules = "Enemy Unit",
@@ -300,6 +318,7 @@ local SkillData = {
 	},
 	["SKL-EXECUTION-STROKE"] = {
 		name = "Execution Stroke",
+		description = "A devastating finisher that deals massive bonus damage to enemies below 25% HP.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Projectile: Inherit",
 		targetRules = "Enemy Unit",
@@ -320,6 +339,7 @@ local SkillData = {
 	},
 	["SKL-FIELD-DRESSING"] = {
 		name = "Field Dressing",
+		description = "A close-range heal that restores HP to an adjacent ally or yourself.",
 		tags = {"Healing"},
 		properties = "Passives: None",
 		targetRules = "Ally Unit, Self",
@@ -336,6 +356,7 @@ local SkillData = {
 	},
 	["SKL-WEAPON-WARD"] = {
 		name = "Weapon Ward",
+		description = "Projects a shield onto one ally or yourself, scaling with weapon attack and defense.",
 		tags = {"Shield", "Buff"},
 		properties = "Passives: None",
 		targetRules = "Ally Unit, Self",
@@ -352,6 +373,7 @@ local SkillData = {
 	},
 	["SKL-PURIFYING-FORM"] = {
 		name = "Purifying Form",
+		description = "Removes one debuff from an ally or yourself and grants temporary debuff resistance.",
 		tags = {"Utility", "Buff"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Ally Unit, Self",
@@ -368,6 +390,7 @@ local SkillData = {
 	},
 	["SKL-GUARDIAN-S-PROJECTION"] = {
 		name = "Guardian’s Projection",
+		description = "Grants a defense buff to one ally or yourself at range, scaling with weapon defense.",
 		tags = {"Buff"},
 		properties = "Passives: None",
 		targetRules = "Ally Unit, Self",
@@ -385,6 +408,7 @@ local SkillData = {
 	},
 	["SKL-LUCKY-STRIKE"] = {
 		name = "Lucky Strike",
+		description = "A physical strike with bonus damage scaling with the caster's LUK stat. Deterministic — no crits or random damage.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Projectile: Inherit",
 		targetRules = "Enemy Unit",
@@ -402,6 +426,7 @@ local SkillData = {
 	},
 	["SKL-RAPID-ASSAULT"] = {
 		name = "Rapid Assault",
+		description = "Unleashes a flurry of rapid physical strikes on a single target. Hit count scales with AGI, up to 4 hits.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Projectile: Inherit",
 		targetRules = "Enemy Unit",
@@ -420,6 +445,7 @@ local SkillData = {
 	},
 	["SKL-BASTION-PROJECTION"] = {
 		name = "Bastion Projection",
+		description = "Creates a sturdy shield on one ally or yourself, scaling with weapon defense and VIT.",
 		tags = {"Shield", "Buff"},
 		properties = "Passives: None",
 		targetRules = "Ally Unit, Self",
@@ -437,6 +463,7 @@ local SkillData = {
 	},
 	["SKL-PRECISE-DISARM"] = {
 		name = "Precise Disarm",
+		description = "A precise strike that deals physical damage and disarms the target, preventing their weapon attacks.",
 		tags = {"Direct Damage", "Debuff", "Physical"},
 		properties = "Projectile: Inherit",
 		targetRules = "Enemy Unit",
@@ -454,6 +481,7 @@ local SkillData = {
 	},
 	["SKL-OPPORTUNIST-S-STEP"] = {
 		name = "Opportunist’s Step",
+		description = "Quickly repositions the caster along a legal path. Step distance scales with AGI.",
 		tags = {"Utility"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Empty Tile",
@@ -468,6 +496,7 @@ local SkillData = {
 	},
 	["SKL-STEAL"] = {
 		name = "Steal",
+		description = "Attempts to steal a reward from an adjacent enemy.",
 		tags = {"Utility"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Enemy Unit",
@@ -484,6 +513,7 @@ local SkillData = {
 	},
 	["DOC-VANGUARD-01"] = {
 		name = "Hold the Line",
+		description = "Enters a defensive stance, gaining increased Stability and reducing incoming damage for a duration.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Self",
@@ -503,6 +533,7 @@ local SkillData = {
 	},
 	["DOC-BERSERKER-01"] = {
 		name = "Reckless Charge",
+		description = "Charges up to 3 tiles toward an enemy and strikes for physical damage. Costs 10% current HP as a trade-off.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -521,6 +552,7 @@ local SkillData = {
 	},
 	["DOC-ARCANIST-01"] = {
 		name = "Mana Surge",
+		description = "Restores 20% of max MP and empowers the next skill with +10% potency. Costs no MP.",
 		tags = {"Buff", "Utility"},
 		properties = "Passives: None",
 		targetRules = "Self",
@@ -541,6 +573,7 @@ local SkillData = {
 	},
 	["DOC-TACTICIAN-01"] = {
 		name = "Coordinated Advance",
+		description = "Buffs an ally or yourself with extra movement range and faster movement speed for a duration.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Ally Unit, Self",
@@ -561,6 +594,7 @@ local SkillData = {
 	},
 	["DOC-RANGER-01"] = {
 		name = "Hunter’s Mark",
+		description = "Strikes an enemy at range and marks them — the Ranger deals +15% damage to the marked target and ignores their Hide.",
 		tags = {"Direct Damage", "Debuff", "Physical"},
 		properties = "Projectile: Inherit",
 		targetRules = "Enemy Unit",
@@ -581,6 +615,7 @@ local SkillData = {
 	},
 	["DOC-WARLORD-01"] = {
 		name = "War Cry",
+		description = "Rallies the caster and all nearby allies, boosting their damage and Stability.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Self, Allies",
@@ -602,6 +637,7 @@ local SkillData = {
 	},
 	["DOC-SHADOWBINDER-01"] = {
 		name = "Veil of Weakness",
+		description = "Curses an enemy at range with Weakened and reduced debuff resistance.",
 		tags = {"Debuff", "Dark"},
 		properties = "Potency: None",
 		targetRules = "Enemy Unit",
@@ -623,6 +659,7 @@ local SkillData = {
 	},
 	["DOC-SPELLBLADE-01"] = {
 		name = "Arcane Strike",
+		description = "A hybrid strike that combines full weapon damage with bonus magic power from INT.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Projectile: Inherit",
 		targetRules = "Enemy Unit",
@@ -642,6 +679,7 @@ local SkillData = {
 	},
 	["DOC-ASCETIC-01"] = {
 		name = "Meditate",
+		description = "Restores MP to yourself or transfers MP to an ally. Also grants temporary debuff resistance. Costs no MP.",
 		tags = {"Utility", "Buff"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Self, Ally Unit",
@@ -662,6 +700,7 @@ local SkillData = {
 	},
 	["DOC-TRICKSTER-01"] = {
 		name = "Misdirection",
+		description = "Creates a deceptive ward that redirects the next enemy attack targeting the caster to a nearby enemy instead.",
 		tags = {"Utility", "Buff"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Self",
@@ -681,6 +720,7 @@ local SkillData = {
 	},
 	["DOC-THIEF-01"] = {
 		name = "Mug",
+		description = "Strikes an enemy for physical damage and attempts to steal from them in the same action.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Projectile: Inherit",
 		targetRules = "Enemy Unit",
@@ -700,6 +740,7 @@ local SkillData = {
 	},
 	["DOC-DUELIST-01"] = {
 		name = "Riposte Stance",
+		description = "Enters a reactive stance that automatically counterattacks up to twice when hit by melee attacks.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None",
 		targetRules = "Self",
@@ -719,6 +760,7 @@ local SkillData = {
 	},
 	["DOC-TWINBLADE-01"] = {
 		name = "Crossing Blades",
+		description = "Strikes with both weapons in quick succession, dealing two hits of dual-wield physical damage.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Dual Wield",
 		targetRules = "Enemy Unit",
@@ -737,6 +779,7 @@ local SkillData = {
 	},
 	["DOC-TWINBLADE-02"] = {
 		name = "Feinting Flurry",
+		description = "Unleashes four rapid alternating strikes with both weapons, reducing the target's evasion with each hit.",
 		tags = {"Direct Damage", "Physical", "Debuff"},
 		properties = "Dual Wield",
 		targetRules = "Enemy Unit",
@@ -758,6 +801,7 @@ local SkillData = {
 	},
 	["DOC-JUGGERNAUT-01"] = {
 		name = "Overwhelming Blow",
+		description = "Delivers a massive two-handed melee strike that deals heavy damage and knocks the target back.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "2H Melee",
 		targetRules = "Enemy Unit",
@@ -778,6 +822,7 @@ local SkillData = {
 	},
 	["DOC-CONJURER-01"] = {
 		name = "Conjure Sentinel",
+		description = "Summons a durable melee Sentinel to fight alongside the caster. Only one Sentinel at a time.",
 		tags = {"Summon"},
 		properties = "Passives: None",
 		targetRules = "Empty Tile",
@@ -799,6 +844,7 @@ local SkillData = {
 	},
 	["DOC-CONJURER-02"] = {
 		name = "Conjure Wisp",
+		description = "Summons a flying Wisp that attacks enemies at range with electric bolts. Only one Wisp at a time.",
 		tags = {"Summon"},
 		properties = "Passives: None",
 		targetRules = "Empty Tile",
@@ -820,6 +866,7 @@ local SkillData = {
 	},
 	["DOC-CONJURER-03"] = {
 		name = "Conjure Mender",
+		description = "Summons a healing Mender that automatically restores HP to nearby allies. Only one Mender at a time.",
 		tags = {"Summon"},
 		properties = "Passives: None",
 		targetRules = "Empty Tile",
@@ -841,6 +888,7 @@ local SkillData = {
 	},
 	["SKL-CRIPPLING-SHOT"] = {
 		name = "Crippling Shot",
+		description = "A ranged physical shot that damages and inflicts Slow on the target for 3 turns.",
 		tags = {"Direct Damage", "Debuff", "Physical"},
 		properties = "Projectile: Inherit",
 		targetRules = "Enemy Unit",
@@ -858,6 +906,7 @@ local SkillData = {
 	},
 	["SKL-PYROCLASM"] = {
 		name = "Pyroclasm",
+		description = "Unleashes a line of fire in a chosen direction, dealing fire damage and inflicting Burn on all targets hit. Friendly fire.",
 		tags = {"Direct Damage", "Fire"},
 		targetRules = "Ground, including occupied Ground",
 		rtCostFormula = "round(Effective Weapon WT × 1.30)",
@@ -877,6 +926,7 @@ local SkillData = {
 	},
 	["SKL-GALE-THRUST"] = {
 		name = "Gale Thrust",
+		description = "Thrusts forward in a cone, dealing physical damage and knocking back all enemies caught in the blast.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -895,6 +945,7 @@ local SkillData = {
 	},
 	["SKL-TIDAL-CRASH"] = {
 		name = "Tidal Crash",
+		description = "Crashes a wave of water in a cross pattern, dealing water damage and applying Wet to all targets. Friendly fire.",
 		tags = {"Direct Damage", "Water"},
 		targetRules = "Ground, including occupied Ground",
 		rtCostFormula = "round(Effective Weapon WT × 1.40)",
@@ -914,6 +965,7 @@ local SkillData = {
 	},
 	["SKL-STATIC-FIELD"] = {
 		name = "Static Field",
+		description = "Emits an electric ring around the caster, delaying enemy turns and slowing their movement. Allies are unaffected.",
 		tags = {"Debuff", "Electric"},
 		properties = "Potency: None, Allies Exempt",
 		targetRules = "Enemy Unit",
@@ -931,6 +983,7 @@ local SkillData = {
 	},
 	["SKL-VENOM-BURST"] = {
 		name = "Venom Burst",
+		description = "Releases a burst of poison damage to all adjacent enemies and inflicts Poison on each one.",
 		tags = {"Direct Damage", "Poison", "Debuff"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -949,6 +1002,7 @@ local SkillData = {
 	},
 	["SKL-FISSURE-LINE"] = {
 		name = "Fissure Line",
+		description = "Opens a fissure in a line, dealing earth damage and slowing affected targets. Friendly fire.",
 		tags = {"Direct Damage", "Earth", "Debuff"},
 		targetRules = "Ground, including occupied Ground",
 		rtCostFormula = "round(Effective Weapon WT × 1.30)",
@@ -967,6 +1021,7 @@ local SkillData = {
 	},
 	["SKL-CONSECRATE"] = {
 		name = "Consecrate",
+		description = "Channels holy healing in an area around the caster, restoring HP to all nearby allies. Damages undead instead.",
 		tags = {"Healing", "Buff", "Holy"},
 		properties = "Allies Exempt, Passives: None",
 		targetRules = "Self, Allies",
@@ -984,6 +1039,7 @@ local SkillData = {
 	},
 	["SKL-SHADOW-RAKE"] = {
 		name = "Shadow Rake",
+		description = "Rakes enemies in a short melee cone with dark energy, dealing dark damage to all targets hit.",
 		tags = {"Direct Damage", "Dark"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -1002,6 +1058,7 @@ local SkillData = {
 	},
 	["SKL-GLACIAL-WAVE"] = {
 		name = "Glacial Wave",
+		description = "Sends a wave of ice in a line, dealing ice damage. Targets that are Wet are Frozen. Friendly fire.",
 		tags = {"Direct Damage", "Ice", "Debuff"},
 		targetRules = "Ground, including occupied Ground",
 		rtCostFormula = "round(Effective Weapon WT × 1.25)",
@@ -1021,6 +1078,7 @@ local SkillData = {
 	},
 	["SKL-MIASMA-CLOUD"] = {
 		name = "Miasma Cloud",
+		description = "Creates a cloud of toxic gas in a wide area, inflicting Poison on all targets caught inside. Friendly fire.",
 		tags = {"Debuff", "Poison"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Ground, including occupied Ground",
@@ -1038,6 +1096,7 @@ local SkillData = {
 	},
 	["SKL-BLINDING-FLASH"] = {
 		name = "Blinding Flash",
+		description = "Emits a holy flash in a cone, blinding all enemies hit and delaying their turns. Allies are unaffected.",
 		tags = {"Debuff", "Holy"},
 		properties = "Potency: None, Passives: None, Allies Exempt",
 		targetRules = "Enemy Unit",
@@ -1054,6 +1113,7 @@ local SkillData = {
 	},
 	["SKL-SIPHON-PULSE"] = {
 		name = "Siphon Pulse",
+		description = "Drains dark energy from all enemies surrounding the caster, dealing damage and healing for 30% of damage dealt.",
 		tags = {"Direct Damage", "Dark", "Healing"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -1073,6 +1133,7 @@ local SkillData = {
 	},
 	["SKL-SUMMON-DECOY"] = {
 		name = "Summon Decoy",
+		description = "Places a fragile decoy on an empty tile that draws enemy attention as a high-priority target.",
 		tags = {"Summon", "Utility"},
 		properties = "Passives: None, Potency: None",
 		targetRules = "Empty Tile",
@@ -1092,6 +1153,7 @@ local SkillData = {
 	},
 	["SKL-MENDING-RAIN"] = {
 		name = "Mending Rain",
+		description = "Calls healing rain over an area, restoring HP to allies and applying Wet — setting up ice combos.",
 		tags = {"Healing", "Water"},
 		properties = "Allies Exempt, Passives: None",
 		targetRules = "Self, Allies",
@@ -1110,6 +1172,7 @@ local SkillData = {
 	},
 	["SKL-VOLTAIC-CHAIN"] = {
 		name = "Voltaic Chain",
+		description = "Fires an electric bolt that chains through up to 3 enemies, pinning the last target in the chain.",
 		tags = {"Direct Damage", "Electric", "Debuff"},
 		targetRules = "Enemy Unit",
 		rtCostFormula = "round(Effective Weapon WT × 1.10)",
@@ -1127,6 +1190,7 @@ local SkillData = {
 	},
 	["SKL-IGNITION-LANCE"] = {
 		name = "Ignition Lance",
+		description = "Launches a devastating long-range fire bolt at a single enemy, dealing the highest single-target fire damage and inflicting Burn.",
 		tags = {"Direct Damage", "Fire"},
 		properties = "Projectile: Direct",
 		targetRules = "Enemy Unit",
@@ -1145,6 +1209,7 @@ local SkillData = {
 	},
 	["SKL-RENDING-SLASH"] = {
 		name = "Rending Slash",
+		description = "Slashes an enemy in melee, dealing physical damage and applying Bleed for ongoing bonus damage on physical hits.",
 		tags = {"Direct Damage", "Physical", "Debuff"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -1162,6 +1227,7 @@ local SkillData = {
 	},
 	["SKL-MIND-FRACTURE"] = {
 		name = "Mind Fracture",
+		description = "Shatters an enemy's focus at range, inflicting Confuse — confused enemies take 30% backlash damage when they attack.",
 		tags = {"Debuff", "Dark"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Enemy Unit",
@@ -1178,6 +1244,7 @@ local SkillData = {
 	},
 	["SKL-SEAL-OF-SILENCE"] = {
 		name = "Seal of Silence",
+		description = "Seals an enemy's ability to use skills at range, inflicting Silence and interrupting channeling.",
 		tags = {"Debuff", "Holy"},
 		properties = "Potency: None, Passives: None, Allies Exempt",
 		targetRules = "Enemy Unit",
@@ -1193,6 +1260,7 @@ local SkillData = {
 	},
 	["SKL-MANA-SCORCH"] = {
 		name = "Mana Scorch",
+		description = "Scorches an enemy with fire at range, dealing damage and inflicting Mana Burn — forcing extra MP costs on their skills.",
 		tags = {"Direct Damage", "Fire", "Debuff"},
 		properties = "Projectile: Direct",
 		targetRules = "Enemy Unit",
@@ -1211,6 +1279,7 @@ local SkillData = {
 	},
 	["SKL-WITHER"] = {
 		name = "Wither",
+		description = "Corrupts an enemy at range, applying Weakened (-10% all stats) and Cursed (reduced hit quality).",
 		tags = {"Debuff", "Poison"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Enemy Unit",
@@ -1226,6 +1295,7 @@ local SkillData = {
 	},
 	["SKL-BULWARK-FIELD"] = {
 		name = "Bulwark Field",
+		description = "Projects a shield to the caster and all nearby allies in an area, absorbing damage for each one.",
 		tags = {"Shield", "Buff"},
 		properties = "Allies Exempt, Passives: None, Potency: None",
 		targetRules = "Self, Allies",
@@ -1245,6 +1315,7 @@ local SkillData = {
 	},
 	["SKL-RETRIBUTION-SHELL"] = {
 		name = "Retribution Shell",
+		description = "Applies a reactive shield to an ally or yourself. When the shield breaks, it deals physical damage back to the attacker.",
 		tags = {"Shield", "Buff", "Direct Damage"},
 		properties = "Passives: None",
 		targetRules = "Ally Unit, Self",
@@ -1265,6 +1336,7 @@ local SkillData = {
 	},
 	["SKL-INVIGORATE"] = {
 		name = "Invigorate",
+		description = "Energizes an ally or yourself with Haste (faster turn recovery) and Regeneration (gradual HP restoration).",
 		tags = {"Buff", "Utility"},
 		properties = "Allies Exempt, Passives: None, Potency: None",
 		targetRules = "Ally Unit, Self",
@@ -1282,6 +1354,7 @@ local SkillData = {
 	},
 	["SKL-TOXIC-NEEDLE"] = {
 		name = "Toxic Needle",
+		description = "Fires a poison needle at range, dealing light damage but applying Venom that stacks stronger with each hit.",
 		tags = {"Direct Damage", "Poison", "Debuff"},
 		properties = "Projectile: Direct",
 		targetRules = "Enemy Unit",
@@ -1299,6 +1372,7 @@ local SkillData = {
 	},
 	["SKL-SHATTER-POINT"] = {
 		name = "Shatter Point",
+		description = "A heavy melee earth strike that inflicts Break, disabling the target's passive abilities.",
 		tags = {"Direct Damage", "Earth", "Debuff"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -1317,6 +1391,7 @@ local SkillData = {
 	},
 	["SKL-NULL-STRIKE"] = {
 		name = "Null Strike",
+		description = "A melee strike that deals physical damage and applies Mute, disabling the target's skill augments.",
 		tags = {"Direct Damage", "Physical", "Debuff"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -1334,6 +1409,7 @@ local SkillData = {
 	},
 	["SKL-BATTLE-FURY"] = {
 		name = "Battle Fury",
+		description = "Enters a battle frenzy, gaining Frenzy (faster basic attacks) and Rush (extra movement) for several turns.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Self",
@@ -1351,6 +1427,7 @@ local SkillData = {
 	},
 	["SKL-ARCANE-RENEWAL"] = {
 		name = "Arcane Renewal",
+		description = "Applies a Recharge buff to an ally or yourself, restoring MP immediately and periodically over time.",
 		tags = {"Buff", "Utility"},
 		properties = "Allies Exempt, Passives: None, Potency: None",
 		targetRules = "Ally Unit, Self",
@@ -1369,6 +1446,7 @@ local SkillData = {
 	},
 	["SKL-VANISHING-STEP"] = {
 		name = "Vanishing Step",
+		description = "Vanishes into shadow, becoming untargetable. The next attack from stealth gains greatly improved accuracy.",
 		tags = {"Utility", "Dark"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Self",
@@ -1386,6 +1464,7 @@ local SkillData = {
 	},
 	["SKL-BENEDICTION"] = {
 		name = "Benediction",
+		description = "Bestows a powerful holy blessing, granting Blessed (improved hit quality) and Enlightened (boosted stats). Enlightened stacks with repeated casts.",
 		tags = {"Buff", "Holy"},
 		properties = "Allies Exempt, Passives: None, Potency: None",
 		targetRules = "Ally Unit, Self",
@@ -1404,6 +1483,7 @@ local SkillData = {
 	},
 	["SKL-EARTHEN-LANCE"] = {
 		name = "Earthen Lance",
+		description = "Launches a spear of earth at a single enemy at long range, dealing earth damage.",
 		tags = {"Direct Damage", "Earth"},
 		properties = "Projectile: Direct",
 		targetRules = "Enemy Unit",
@@ -1422,6 +1502,7 @@ local SkillData = {
 	},
 	["SKL-FLASH-FREEZE"] = {
 		name = "Flash Freeze",
+		description = "Freezes the ground in a cross pattern, transforming water tiles into ice and applying Wet to units in the area.",
 		tags = {"Utility", "Ice"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Ground, including occupied Ground",
@@ -1439,6 +1520,7 @@ local SkillData = {
 	},
 	["SKL-IGNITE-GROUND"] = {
 		name = "Ignite Ground",
+		description = "Sets an area on fire, dealing immediate fire damage and creating burning terrain that damages occupants over time. Friendly fire.",
 		tags = {"Direct Damage", "Fire", "Utility"},
 		targetRules = "Ground, including occupied Ground",
 		rtCostFormula = "round(Effective Weapon WT × 1.20)",
@@ -1457,6 +1539,7 @@ local SkillData = {
 	},
 	["SKL-TWIN-FANGS"] = {
 		name = "Twin Fangs",
+		description = "Strikes an enemy twice in quick melee succession. Each hit resolves damage and triggers weapon effects independently.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -1474,6 +1557,7 @@ local SkillData = {
 	},
 	["SKL-STORM-BARRAGE"] = {
 		name = "Storm Barrage",
+		description = "Fires three rapid electric shots at a single enemy at range. The final hit delays the target's next turn.",
 		tags = {"Direct Damage", "Electric"},
 		properties = "Ranged Only",
 		targetRules = "Enemy Unit",
@@ -1493,6 +1577,7 @@ local SkillData = {
 	},
 	["SKL-LUNGE"] = {
 		name = "Lunge",
+		description = "Lunges forward one tile toward a nearby enemy, closing the gap and delivering a physical melee strike.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -1510,6 +1595,7 @@ local SkillData = {
 	},
 	["SKL-RECOIL-SHOT"] = {
 		name = "Recoil Shot",
+		description = "Fires a ranged physical shot and automatically retreats one tile away from the target.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Ranged Only, Projectile: Direct",
 		targetRules = "Enemy Unit",
@@ -1527,6 +1613,7 @@ local SkillData = {
 	},
 	["SKL-COUNTER-STANCE"] = {
 		name = "Counter Stance",
+		description = "Enters a reactive stance. The next melee attack against the caster triggers an automatic counter-strike.",
 		tags = {"Buff", "Utility"},
 		properties = "Melee Only, Potency: None, Passives: None",
 		targetRules = "Self",
@@ -1546,6 +1633,7 @@ local SkillData = {
 	},
 	["SKL-POISON-TRAP"] = {
 		name = "Poison Trap",
+		description = "Places an invisible trap on an empty tile. When an enemy steps on it, they are poisoned and afflicted with strong Venom.",
 		tags = {"Debuff", "Poison", "Utility"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Empty Tile",
@@ -1563,6 +1651,7 @@ local SkillData = {
 	},
 	["SKL-DECIMATING-SWING"] = {
 		name = "Decimating Swing",
+		description = "A massive two-handed cleave that hits all enemies in the arc for heavy physical damage with no falloff.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "2H Melee",
 		targetRules = "Enemy Unit",
@@ -1581,6 +1670,7 @@ local SkillData = {
 	},
 	["SKL-FLURRY-OF-BLADES"] = {
 		name = "Flurry of Blades",
+		description = "Unleashes four rapid alternating strikes with dual-wielded weapons. Each hit triggers weapon effects independently.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Dual Wield",
 		targetRules = "Enemy Unit",
@@ -1598,6 +1688,7 @@ local SkillData = {
 	},
 	["SKL-SUMMON-TURRET"] = {
 		name = "Summon Turret",
+		description = "Deploys an immobile turret that automatically fires at the nearest enemy each turn. Only one turret at a time.",
 		tags = {"Summon", "Direct Damage"},
 		properties = "Passives: None, Potency: None",
 		targetRules = "Empty Tile",
@@ -1618,6 +1709,7 @@ local SkillData = {
 	},
 	["SKL-SUMMON-WARD-TOTEM"] = {
 		name = "Summon Ward Totem",
+		description = "Summons a ward totem that projects a debuff-resistance aura to all nearby allies. Only one totem at a time.",
 		tags = {"Summon", "Buff"},
 		properties = "Passives: None, Potency: None",
 		targetRules = "Empty Tile",
@@ -1637,6 +1729,7 @@ local SkillData = {
 	},
 	["SKL-SHATTER-BLOW"] = {
 		name = "Shatter Blow",
+		description = "A melee strike that deals double damage to Frozen targets, shattering the ice for a devastating combo finish.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -1654,6 +1747,7 @@ local SkillData = {
 	},
 	["SKL-HEMORRHAGE"] = {
 		name = "Hemorrhage",
+		description = "Exploits bleeding wounds in melee — deals bonus damage to targets with Bleed without consuming it.",
 		tags = {"Direct Damage", "Physical", "Debuff"},
 		properties = "Melee Only",
 		targetRules = "Enemy Unit",
@@ -1671,6 +1765,7 @@ local SkillData = {
 	},
 	["SKL-PURGE"] = {
 		name = "Purge",
+		description = "Removes up to 2 debuffs from an ally or yourself at range, healing for each debuff cleansed.",
 		tags = {"Healing", "Utility", "Holy"},
 		properties = "Allies Exempt, Passives: None",
 		targetRules = "Ally Unit, Self",
@@ -1686,6 +1781,7 @@ local SkillData = {
 	},
 	["SKL-LIFE-LINK"] = {
 		name = "Life Link",
+		description = "Creates a healing bond with an ally. While linked, 50% of all healing the caster receives is shared with them.",
 		tags = {"Buff", "Healing", "Utility"},
 		properties = "Allies Exempt, Passives: None, Potency: None",
 		targetRules = "Ally Unit",
@@ -1704,6 +1800,7 @@ local SkillData = {
 	},
 	["SKL-TORRENT-SPEAR"] = {
 		name = "Torrent Spear",
+		description = "Hurls a spear of water at a single enemy at range, dealing water damage and applying Wet. Bonus damage to Frozen targets.",
 		tags = {"Direct Damage", "Water"},
 		properties = "Projectile: Direct",
 		targetRules = "Enemy Unit",
@@ -1722,6 +1819,7 @@ local SkillData = {
 	},
 	["SKL-BLOOD-PRICE"] = {
 		name = "Blood Price",
+		description = "Deals heavy dark damage at range with no MP cost, but the caster sacrifices 15% of their max HP as payment.",
 		tags = {"Direct Damage", "Dark"},
 		targetRules = "Enemy Unit",
 		rtCostFormula = "round(Effective Weapon WT × 0.80)",
@@ -1738,6 +1836,7 @@ local SkillData = {
 	},
 	["SKL-FESTERING-WOUND"] = {
 		name = "Festering Wound",
+		description = "Curses an enemy at range, halving all healing they receive for the duration.",
 		tags = {"Debuff", "Poison", "Dark"},
 		properties = "Potency: None, Passives: None",
 		targetRules = "Enemy Unit",
@@ -1755,6 +1854,7 @@ local SkillData = {
 	},
 	["SKL-THUNDERCLAP"] = {
 		name = "Thunderclap",
+		description = "Unleashes a thunderous electric blast around the caster, damaging and delaying all nearby enemies. Allies are unaffected.",
 		tags = {"Direct Damage", "Electric", "Debuff"},
 		properties = "Allies Exempt",
 		targetRules = "Enemy Unit",
@@ -1774,6 +1874,7 @@ local SkillData = {
 	},
 	["SKL-EMPOWERING-AURA"] = {
 		name = "Empowering Aura",
+		description = "Projects an empowering aura, boosting the damage of all nearby allies by 10% for several turns.",
 		tags = {"Buff", "Utility"},
 		properties = "Support",
 		targetRules = "Self (Aura)",
@@ -1794,6 +1895,7 @@ local SkillData = {
 	},
 	["SKL-SKYFALL-LANCE"] = {
 		name = "Skyfall Lance",
+		description = "Leaps to an enemy and strikes with a powerful descending blow. Deals bonus damage when landing from higher elevation.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Melee, Jump Attack",
 		targetRules = "Enemy Unit",
@@ -1813,6 +1915,7 @@ local SkillData = {
 	},
 	["SKL-DRAGON-DIVE"] = {
 		name = "Dragon Dive",
+		description = "Soars into the air and crashes down on a target area, dealing physical damage to all enemies in the impact zone.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Melee, Jump Attack, AOE",
 		targetRules = "Enemy Tile",
@@ -1834,6 +1937,7 @@ local SkillData = {
 	},
 	["SKL-HOLY-SMITE"] = {
 		name = "Holy Smite",
+		description = "Strikes a single enemy with holy damage at weapon range. Deals double damage to undead.",
 		tags = {"Direct Damage", "Holy"},
 		properties = "Ranged",
 		targetRules = "Enemy Unit",
@@ -1853,6 +1957,7 @@ local SkillData = {
 	},
 	["SKL-SANCTIFY"] = {
 		name = "Sanctify",
+		description = "Heals all allies around the caster and grants them Blessed. Also damages nearby undead enemies with holy power.",
 		tags = {"Healing", "Buff", "Holy"},
 		properties = "Support, AOE",
 		targetRules = "Ally Tile (centered on caster)",
@@ -1874,6 +1979,7 @@ local SkillData = {
 	},
 	["SKL-BARRAGE"] = {
 		name = "Barrage",
+		description = "Fires 4 rapid physical shots at a single enemy at range. Each hit resolves independently and can trigger weapon effects.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Ranged, Multi-hit",
 		targetRules = "Enemy Unit",
@@ -1893,6 +1999,7 @@ local SkillData = {
 	},
 	["SKL-NATURES-GRASP"] = {
 		name = "Nature's Grasp",
+		description = "Roots an enemy in place at range with earth magic, applying Pinned and creating difficult terrain around them.",
 		tags = {"Debuff", "Earth", "Utility"},
 		properties = "Ranged, Control",
 		targetRules = "Enemy Unit",

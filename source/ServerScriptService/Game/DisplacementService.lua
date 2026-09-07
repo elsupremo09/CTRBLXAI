@@ -245,6 +245,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		if occupant and occupant ~= target and occupant ~= pusher then
 			blockedBy = "unit"
 			local blockedTiles = pushDistance - tilesDisplaced
+			-- Pushed unit takes collision damage (uses pushed unit's MaxHP)
 			wallCollisionResult = {
 				damage = GameConstants.CalcWallCollisionDamage(
 					target.maxHp, blockedTiles, pusher.effectiveStats.STR,
@@ -252,6 +253,12 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 				),
 				colliderType = "Unit",
 				collidedUnitId = occupant.id,
+				-- Collided unit also takes collision damage (uses THEIR MaxHP).
+				-- Same formula: both units absorb the same impact.
+				collidedUnitDamage = GameConstants.CalcWallCollisionDamage(
+					occupant.maxHp, blockedTiles, pusher.effectiveStats.STR,
+					"Unit", sourceModifier
+				),
 			}
 			break
 		end
@@ -311,7 +318,14 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		pusher.name, target.name,
 		force, targetStability, pushDistance,
 		tilesDisplaced, currentX, currentY,
-		wallCollisionResult and string.format(" | WallDmg:%d (%s)", wallCollisionResult.damage, wallCollisionResult.colliderType) or "",
+		wallCollisionResult and string.format(
+			" | WallDmg:%d (%s)%s",
+			wallCollisionResult.damage,
+			wallCollisionResult.colliderType,
+			wallCollisionResult.collidedUnitDamage
+				and string.format(" + CollidedDmg:%d", wallCollisionResult.collidedUnitDamage)
+				or ""
+		) or "",
 		fallDamage > 0 and string.format(" | FallDmg:%d (drop %d)", fallDamage, totalFallHeight) or "",
 		blockedBy and (" | BlockedBy:" .. blockedBy) or ""
 	))

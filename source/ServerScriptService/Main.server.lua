@@ -29,6 +29,9 @@ local SaveService             = require(Game:WaitForChild("SaveService"))
 local RewardService           = require(Game:WaitForChild("RewardService"))
 local DisplacementService     = require(Game:WaitForChild("DisplacementService"))
 local TileEffectService       = require(Game:WaitForChild("TileEffectService"))
+local RacePassiveService      = require(Game:WaitForChild("RacePassiveService"))
+local ArmorPassiveService     = require(Game:WaitForChild("ArmorPassiveService"))
+local AIService               = require(Game:WaitForChild("AIService"))
 
 local WeaponData = require(
 	game:GetService("ReplicatedStorage")
@@ -55,6 +58,17 @@ local BonusData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
 		:WaitForChild("BonusData")
+)
+local ArmorData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ArmorData")
+)
+
+local AugmentData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("AugmentData")
 )
 
 local GameConstants = require(
@@ -120,6 +134,16 @@ TileEffectService.SetBroadcaster(BattleVisualBroadcaster)
 BattleCoordinator.SetTileEffectService(TileEffectService)
 CommandService.SetTileEffectService(TileEffectService)
 
+-- AIService dependency injection
+AIService.SetDependencies({
+	TargetingService  = TargetingService,
+	CommandService    = CommandService,
+	CombatResolver    = CombatResolver,
+	StatusService     = StatusService,
+	UnitSchema        = UnitSchema,
+	TileEffectService = TileEffectService,
+})
+
 --------------------------------------------------
 -- SKILL REGISTRATION
 --------------------------------------------------
@@ -152,6 +176,12 @@ local hasSave = false
 local savedEquipMap = {} -- unitId -> { MainHand = instanceId, OffHand = instanceId }
 local savedRaceMap = {}  -- unitId -> { raceId, perkIds, drawbackIds }
 local savedDoctrineMap = {}  -- unitId -> doctrineId
+local savedDoctrineSkillMap = {} -- unitId -> selectedDoctrineSkill
+local savedSkillLoadoutMap = {} -- unitId -> skillLoadout table
+local savedCardInventory = {} -- { skillCards = {id=qty}, augmentCards = {id=qty} }
+local savedStatAllocation = {} -- unitId -> { STR = N, AGI = N, ... }
+local savedRecords = {} -- unitId -> { battlesParticipated = N, ... }
+local savedConsumableSlots = {} -- unitId -> consumableSlots table
 if loadedSave then
 	hasSave = true
 	print("[Main] Save loaded — restoring state")
@@ -175,6 +205,21 @@ if loadedSave then
 		-- Extract saved doctrine
 		if unitData.doctrineId and unitData.doctrineId ~= "none" then
 			savedDoctrineMap[unitId] = unitData.doctrineId
+		end
+		if unitData.selectedDoctrineSkill then
+			savedDoctrineSkillMap[unitId] = unitData.selectedDoctrineSkill
+		end
+		if unitData.skillLoadout then
+			savedSkillLoadoutMap[unitId] = unitData.skillLoadout
+		end
+		if unitData.statAllocation then
+			savedStatAllocation[unitId] = unitData.statAllocation
+		end
+		if unitData.records then
+			savedRecords[unitId] = unitData.records
+		end
+		if unitData.consumableSlots then
+			savedConsumableSlots[unitId] = unitData.consumableSlots
 		end
 	end
 elseif loadErr then
@@ -261,6 +306,39 @@ if not hasSave then
 	end
 end
 
+-- Starter armor items (inventory only, not equipped) — Slice 4G
+-- ItemGenerator doesn't handle armor yet (4G.5), so create catalog instances directly.
+if not hasSave then
+	local STARTER_ARMOR = {
+		{ id = "HD-001", slot = "Head",      seed = 3001 },
+		{ id = "BD-001", slot = "Body",      seed = 3002 },
+		{ id = "GL-001", slot = "Gloves",    seed = 3003 },
+		{ id = "FT-001", slot = "Feet",      seed = 3004 },
+		{ id = "AC-001", slot = "Accessory", seed = 3005 },
+	}
+	for _, def in ipairs(STARTER_ARMOR) do
+		local aArch = ArmorData.GetByArchetypeId(def.id)
+		if aArch then
+			local armorInstance = {
+				instanceId = "armor_" .. def.seed .. "_1",
+				baseArchetypeId = def.id,
+				itemLevel = 5,
+				rarityId = "Common",
+				bonusLines = {},
+				bonusPassiveIds = {},
+				generatorVersion = 1,
+				sourceType = "Starter",
+			}
+			InventoryService.AddItem(PLAYER_ID, armorInstance)
+			print(string.format("[Main] Added starter %s (%s) to inventory: %s", aArch.name, def.slot, armorInstance.instanceId))
+		else
+			warn("[Main] Starter armor archetype not found: " .. def.id)
+		end
+	end
+end
+
+-- Starter cards moved after cardInventory declaration (see block near line 1060)
+
 local mage = UnitSchema.Create({
 	id           = "unit_mage",
 	name         = "Mage",
@@ -301,11 +379,38 @@ do
 	end
 end
 
+--------------------------------------------------
+-- RESTORE ARMOR SLOTS FROM SAVE (Slice 4G)
+-- After all weapons are equipped, restore armor slots
+-- from savedEquipMap for each player unit.
+--------------------------------------------------
+if hasSave then
+	local ARMOR_SLOT_NAMES = { "Head", "Body", "Gloves", "Feet", "Accessory" }
+	for _, pUnit in ipairs({ hero, mage, ranger }) do
+		local slotMap = savedEquipMap[pUnit.id]
+		if slotMap then
+			for _, armorSlot in ipairs(ARMOR_SLOT_NAMES) do
+				local savedId = slotMap[armorSlot]
+				if savedId then
+					local armorItem = InventoryService.GetItem(PLAYER_ID, savedId)
+					if armorItem then
+						EquipmentService.Equip(pUnit, armorItem, armorSlot)
+						print(string.format("[Main] Restored %s %s from save: %s", pUnit.name, armorSlot, savedId))
+					else
+						warn(string.format("[Main] Saved %s item %s not found for %s", armorSlot, savedId, pUnit.name))
+					end
+				end
+			end
+		end
+	end
+end
+
 local grunt = UnitSchema.Create({
 	id           = "unit_grunt",
 	name         = "Grunt",
 	side         = "Enemy",
 	controller   = "AI",
+	aiRole       = "Basic",
 	tileX        = 5,
 	tileY        = 7,
 	stats        = { STR = 14, AGI = 10, INT = 6, VIT = 14, DEX = 8, LUK = 6 },
@@ -319,6 +424,7 @@ local pyro = UnitSchema.Create({
 	name         = "Pyro",
 	side         = "Enemy",
 	controller   = "AI",
+	aiRole       = "Elite",
 	tileX        = 6,
 	tileY        = 7,
 	stats        = { STR = 8, AGI = 12, INT = 16, VIT = 10, DEX = 10, LUK = 8 },
@@ -332,6 +438,7 @@ local shaman = UnitSchema.Create({
 	name         = "Shaman",
 	side         = "Enemy",
 	controller   = "AI",
+	aiRole       = "Elite",
 	tileX        = 4,
 	tileY        = 8,
 	stats        = { STR = 6, AGI = 8, INT = 18, VIT = 14, DEX = 12, LUK = 10 },
@@ -398,7 +505,83 @@ for _, u in ipairs(allUnitsList) do
 		if not u.doctrineId then
 			u.doctrineId = "DOC-BERSERKER"  -- placeholder default
 		end
-		print(string.format("[Main] %s doctrine: %s", u.name, u.doctrineId))
+		-- Restore selected doctrine skill from save (Slice 4H)
+		local savedSkill = savedDoctrineSkillMap[u.id]
+		if savedSkill then
+			u.selectedDoctrineSkill = savedSkill
+		end
+		-- Auto-select first skill choice if none set
+		if not u.selectedDoctrineSkill then
+			local doc = DoctrineData[u.doctrineId]
+			if doc and doc.skillChoices and #doc.skillChoices > 0 then
+				u.selectedDoctrineSkill = doc.skillChoices[1]
+			end
+		end
+		print(string.format("[Main] %s doctrine: %s (skill: %s)",
+			u.name, u.doctrineId, tostring(u.selectedDoctrineSkill)))
+
+		-- Restore skill loadout from save (Slice 4I)
+		local savedLoadout = savedSkillLoadoutMap[u.id]
+		if savedLoadout then
+			u.skillLoadout = savedLoadout
+		end
+		-- Initialize empty loadout if none exists
+		if not u.skillLoadout then
+			u.skillLoadout = { slot2 = nil, slot3 = nil, slot4 = nil }
+		end
+
+		-- Restore stat allocation from save (Slice 4J)
+		local savedAlloc = savedStatAllocation[u.id]
+		if savedAlloc then
+			u.statAllocation = savedAlloc
+			-- Apply allocation to baseStats
+			for stat, pts in pairs(savedAlloc) do
+				if u.baseStats[stat] then
+					u.baseStats[stat] = u.baseStats[stat] + pts
+				end
+			end
+			EquipmentService.RebuildUnitStats(u)
+		end
+
+		-- Restore or initialize unit records (Slice 4K)
+		local savedRec = savedRecords[u.id]
+		if savedRec then
+			u.records = savedRec
+		else
+			u.records = {
+				battlesParticipated = 0,
+				victoriesParticipated = 0,
+				enemiesDefeated = 0,
+				totalDamageDealt = 0,
+				totalHealingDone = 0,
+				timesKO = 0,
+			}
+		end
+
+		-- Initialize consumable slots (Slice 4G.4)
+		-- 6 slots: 1-3 open, 4-6 locked (unlock via progression)
+		local savedCons = savedConsumableSlots[u.id]
+		if savedCons then
+			u.consumableSlots = savedCons
+		end
+		if not u.consumableSlots then
+			u.consumableSlots = {}
+		end
+		u.consumableSlotCount = 3  -- open slots (4-6 locked)
+		u.maxConsumableSlots = 6
+
+		-- Build skillIds from loadout (doctrine skill + equipped skill cards)
+		u.skillIds = {}
+		if u.selectedDoctrineSkill then
+			table.insert(u.skillIds, u.selectedDoctrineSkill)
+		end
+		for _, slotKey in ipairs({"slot2", "slot3", "slot4"}) do
+			local slotData = u.skillLoadout[slotKey]
+			if slotData and slotData.skillId then
+				table.insert(u.skillIds, slotData.skillId)
+			end
+		end
+		print(string.format("[Main] %s skills: %s", u.name, table.concat(u.skillIds, ", ")))
 	end
 end
 
@@ -444,6 +627,15 @@ local function doSave()
 			rosterState[unitId].perkIds = unit.perkIds or {}
 			rosterState[unitId].drawbackIds = unit.drawbackIds or {}
 		end
+		-- Enrich with doctrine data (Slice 4H)
+		if rosterState[unitId] then
+			rosterState[unitId].doctrineId = unit.doctrineId or nil
+			rosterState[unitId].selectedDoctrineSkill = unit.selectedDoctrineSkill or nil
+			rosterState[unitId].skillLoadout = unit.skillLoadout or nil
+			rosterState[unitId].statAllocation = unit.statAllocation or nil
+			rosterState[unitId].records = unit.records or nil
+			rosterState[unitId].consumableSlots = unit.consumableSlots or nil
+		end
 	end
 	-- Diagnostic: log equipment slot assignments being saved
 	for unitId, unitState in pairs(rosterState) do
@@ -478,6 +670,11 @@ BattleEvents.GetRosterData.OnServerInvoke = function(player)
 		local loadout = EquipmentService.GetLoadout(unit)
 		local mainItem = loadout and loadout.MainHand
 		local offHandItem = loadout and loadout.OffHand
+		local headItem = loadout and loadout.Head
+		local bodyItem = loadout and loadout.Body
+		local glovesItem = loadout and loadout.Gloves
+		local feetItem = loadout and loadout.Feet
+		local accessoryItem = loadout and loadout.Accessory
 		roster[unitId] = {
 			name = unit.name,
 			level = unit.level or 1,
@@ -490,12 +687,39 @@ BattleEvents.GetRosterData.OnServerInvoke = function(player)
 			equippedWeaponName = mainItem and (WeaponData.GetByArchetypeId(mainItem.baseArchetypeId) or {}).name or "none",
 			equippedOffHandName = offHandItem and (WeaponData.GetByArchetypeId(offHandItem.baseArchetypeId) or {}).name or "none",
 			doctrineId = unit.doctrineId or "none",
+			-- Doctrine details (Slice 4H)
+			doctrineName = unit.doctrineId and DoctrineData[unit.doctrineId] and DoctrineData[unit.doctrineId].name or "none",
+			doctrinePassive = unit.doctrineId and DoctrineData[unit.doctrineId] and DoctrineData[unit.doctrineId].passiveName or "none",
+			doctrinePassiveEffect = unit.doctrineId and DoctrineData[unit.doctrineId] and DoctrineData[unit.doctrineId].passiveEffect or "none",
+			selectedDoctrineSkill = unit.selectedDoctrineSkill or "none",
 			-- Race identity (Slice 4F)
 			raceId = unit.raceId or "none",
+			-- Armor equipment (Slice 4G)
+			equippedHead = headItem and (ArmorData.GetByArchetypeId(headItem.baseArchetypeId) or {}).name or "none",
+			equippedBody = bodyItem and (ArmorData.GetByArchetypeId(bodyItem.baseArchetypeId) or {}).name or "none",
+			equippedGloves = glovesItem and (ArmorData.GetByArchetypeId(glovesItem.baseArchetypeId) or {}).name or "none",
+			equippedFeet = feetItem and (ArmorData.GetByArchetypeId(feetItem.baseArchetypeId) or {}).name or "none",
+			equippedAccessory = accessoryItem and (ArmorData.GetByArchetypeId(accessoryItem.baseArchetypeId) or {}).name or "none",
 			raceName = unit.raceId and RaceData.GetRace(unit.raceId) and RaceData.GetRace(unit.raceId).name or "none",
 			racePassive = unit.raceId and RaceData.GetRace(unit.raceId) and RaceData.GetRace(unit.raceId).passiveName or "none",
 			perkIds = unit.perkIds or {},
 			drawbackIds = unit.drawbackIds or {},
+			-- Unit records (Slice 4K)
+			records = unit.records or {},
+			-- Consumable slots (Slice 4G.4)
+			consumableSlots = (function()
+				local slots = {}
+				for idx = 1, unit.maxConsumableSlots or 6 do
+					local slotData = unit.consumableSlots and unit.consumableSlots[idx]
+					if slotData then
+						local consDef = ConsumableData.GetById(slotData.consumableId)
+						slots[idx] = { consumableId = slotData.consumableId, name = consDef and consDef.name or "Unknown", currentCharges = slotData.currentCharges, maxCharges = slotData.maxCharges, locked = (idx > (unit.consumableSlotCount or 3)) }
+					else
+						slots[idx] = { empty = true, locked = (idx > (unit.consumableSlotCount or 3)) }
+					end
+				end
+				return slots
+			end)(),
 		}
 	end
 	-- Diagnostic: log roster summary
@@ -580,35 +804,72 @@ BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 		end
 	end
 	for _, item in ipairs(items) do
-		local archetype = WeaponData.GetByArchetypeId(item.baseArchetypeId)
-		local profile = WeaponData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
-		table.insert(result, {
-			instanceId = item.instanceId,
-			name = archetype and archetype.name or "Unknown",
-			category = archetype and archetype.category or "Unknown",
-			handClass = archetype and archetype.handClass or "1H",
-			itemLevel = item.itemLevel,
-			rarity = item.rarityId,
-			damage = profile and profile.damage or 0,
-			wt = profile and profile.wt or 0,
-			defense = profile and profile.defense or 0,
-			rtDelay = profile and profile.rtDelay or 0,
-			minRange = profile and profile.minRange or 1,
-			maxRange = profile and profile.maxRange or 1,
-			isWeapon = archetype and archetype.category == "Weapon" or false,
-			nativePassiveId = archetype and archetype.nativePassiveId or nil,
-			nativePassiveDesc = archetype and WeaponData.GetPassiveDesc(archetype.nativePassiveId) or nil,
-			projectileType = archetype and archetype.projectileType or nil,
-			element = archetype and WeaponData.GetElement(item.baseArchetypeId) or nil,
-			isNew = item.isNew or false,
-			bonusCount = #item.bonusLines,
-			passiveCount = #item.bonusPassiveIds,
-			equippedBy = equippedByMap[item.instanceId] and equippedByMap[item.instanceId].unitId or nil,
-			equippedSlot = equippedByMap[item.instanceId] and equippedByMap[item.instanceId].slot or nil,
-			bonusStats = nil,
-			bonusPassives = nil,
-		})
-		result[#result].bonusStats, result[#result].bonusPassives = resolveItemBonuses(item)
+		local wArch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+		local aArch = not wArch and ArmorData.GetByArchetypeId(item.baseArchetypeId) or nil
+		local entry
+		if wArch then
+			local profile = WeaponData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
+			entry = {
+				instanceId = item.instanceId,
+				name = wArch.name,
+				category = wArch.category,
+				handClass = wArch.handClass or "1H",
+				slot = (wArch.category == "OffHand") and "OffHand" or "MainHand",
+				itemLevel = item.itemLevel,
+				rarity = item.rarityId,
+				damage = profile and profile.damage or 0,
+				wt = profile and profile.wt or 0,
+				defense = profile and profile.defense or 0,
+				rtDelay = profile and profile.rtDelay or 0,
+				minRange = profile and profile.minRange or 1,
+				maxRange = profile and profile.maxRange or 1,
+				isWeapon = wArch.category == "Weapon",
+				isArmor = false,
+				nativePassiveId = wArch.nativePassiveId or nil,
+				nativePassiveDesc = WeaponData.GetPassiveDesc(wArch.nativePassiveId) or nil,
+				projectileType = wArch.projectileType or nil,
+				element = WeaponData.GetElement(item.baseArchetypeId) or nil,
+			}
+		elseif aArch then
+			local scaled = ArmorData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
+			entry = {
+				instanceId = item.instanceId,
+				name = aArch.name,
+				category = "Armor",
+				slot = aArch.slot,
+				itemLevel = item.itemLevel,
+				rarity = item.rarityId,
+				defense = scaled and scaled.defense or 0,
+				wt = scaled and scaled.wt or 0,
+				hp = scaled and scaled.hp or 0,
+				mp = scaled and scaled.mp or 0,
+				damage = 0,
+				rtDelay = 0,
+				minRange = 0,
+				maxRange = 0,
+				isWeapon = false,
+				isArmor = true,
+				passiveName = aArch.passiveName or nil,
+				passiveDesc = aArch.passiveDesc or nil,
+				actionOwnership = aArch.actionOwnership or nil,
+			}
+		else
+			entry = {
+				instanceId = item.instanceId,
+				name = "Unknown",
+				category = "Unknown",
+				itemLevel = item.itemLevel,
+				rarity = item.rarityId,
+			}
+		end
+		-- Common fields
+		entry.isNew = item.isNew or false
+		entry.bonusCount = #(item.bonusLines or {})
+		entry.passiveCount = #(item.bonusPassiveIds or {})
+		entry.equippedBy = equippedByMap[item.instanceId] and equippedByMap[item.instanceId].unitId or nil
+		entry.equippedSlot = equippedByMap[item.instanceId] and equippedByMap[item.instanceId].slot or nil
+		entry.bonusStats, entry.bonusPassives = resolveItemBonuses(item)
+		table.insert(result, entry)
 	end
 	-- Diagnostic: log inventory summary
 	local equippedCount = 0
@@ -642,12 +903,19 @@ BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId)
 		warn(string.format("[Management] Equip FAILED: %s + %s — Not owned", tostring(unitId), tostring(instanceId)))
 		return { ok = false, reason = "Not owned" }
 	end
+	-- Resolve archetype from WeaponData or ArmorData
 	local archetype = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+	local isArmor = false
+	if not archetype then
+		archetype = ArmorData.GetByArchetypeId(item.baseArchetypeId)
+		isArmor = true
+	end
 	if not archetype then
 		warn(string.format("[Management] Equip FAILED: %s + %s — Unknown archetype", tostring(unitId), tostring(instanceId)))
 		return { ok = false, reason = "Unknown archetype" }
 	end
-	local slot = (archetype.category == "OffHand") and "OffHand" or "MainHand"
+	-- Determine slot: armor uses archetype.slot, weapons use category
+	local slot = isArmor and archetype.slot or ((archetype.category == "OffHand") and "OffHand" or "MainHand")
 	-- Auto-unequip from previous holder if item is equipped elsewhere
 	for prevId, prevUnit in pairs(playerUnits) do
 		if prevId ~= unitId and prevUnit.equipmentSlots then
@@ -686,6 +954,545 @@ BattleEvents.RequestUnequip.OnServerInvoke = function(player, unitId, slot)
 		warn(string.format("[Management] Unequip FAILED: %s %s — %s", tostring(unitId), tostring(slot or "MainHand"), err or "Unequip failed"))
 		return { ok = false, reason = err or "Unequip failed" }
 	end
+end
+
+--------------------------------------------------
+-- DOCTRINE MANAGEMENT (Slice 4H)
+--------------------------------------------------
+
+-- GetDoctrineChoices: returns available doctrines and their skill choices
+BattleEvents.GetDoctrineChoices.OnServerInvoke = function(player)
+	local result = {}
+	for docId, doc in pairs(DoctrineData) do
+		if type(doc) == "table" and doc.name then
+			table.insert(result, {
+				doctrineId = docId,
+				name = doc.name,
+				identity = doc.identity or "",
+				statPackage = doc.statPackage or {},
+				passiveName = doc.passiveName or "",
+				passiveEffect = doc.passiveEffect or "",
+				skillChoices = doc.skillChoices or {},
+			})
+		end
+	end
+	table.sort(result, function(a, b) return a.doctrineId < b.doctrineId end)
+	print(string.format("[Doctrine] Returned %d doctrine choices", #result))
+	return result
+end
+
+-- RequestDoctrineChange: assign a doctrine to a unit
+BattleEvents.RequestDoctrineChange.OnServerInvoke = function(player, unitId, doctrineId)
+	local unit = playerUnits[unitId]
+	if not unit then
+		warn(string.format("[Doctrine] Change FAILED: %s — Unknown unit", tostring(unitId)))
+		return { ok = false, reason = "Unknown unit: " .. tostring(unitId) }
+	end
+	-- Validate doctrine exists
+	local doctrine = DoctrineData[doctrineId]
+	if not doctrine or type(doctrine) ~= "table" or not doctrine.name then
+		warn(string.format("[Doctrine] Change FAILED: %s — Unknown doctrine: %s", tostring(unitId), tostring(doctrineId)))
+		return { ok = false, reason = "Unknown doctrine: " .. tostring(doctrineId) }
+	end
+	local oldDoc = unit.doctrineId
+	unit.doctrineId = doctrineId
+	-- Clear selected doctrine skill (new doctrine has different choices)
+	unit.selectedDoctrineSkill = nil
+	-- Auto-select first skill choice as default
+	if doctrine.skillChoices and #doctrine.skillChoices > 0 then
+		unit.selectedDoctrineSkill = doctrine.skillChoices[1]
+	end
+	-- Rebuild stats (doctrine stat package changed)
+	EquipmentService.RebuildUnitStats(unit)
+	print(string.format("[Doctrine] %s doctrine changed: %s → %s (skill: %s)",
+		unit.name, tostring(oldDoc), doctrineId, tostring(unit.selectedDoctrineSkill)))
+	return {
+		ok = true,
+		doctrineName = doctrine.name,
+		selectedSkill = unit.selectedDoctrineSkill,
+	}
+end
+
+-- RequestDoctrineSkillSelect: pick one of the 3 skill choices
+BattleEvents.RequestDoctrineSkillSelect.OnServerInvoke = function(player, unitId, skillId)
+	local unit = playerUnits[unitId]
+	if not unit then
+		warn(string.format("[Doctrine] Skill select FAILED: %s — Unknown unit", tostring(unitId)))
+		return { ok = false, reason = "Unknown unit: " .. tostring(unitId) }
+	end
+	if not unit.doctrineId then
+		warn(string.format("[Doctrine] Skill select FAILED: %s — No doctrine equipped", tostring(unitId)))
+		return { ok = false, reason = "No doctrine equipped" }
+	end
+	local doctrine = DoctrineData[unit.doctrineId]
+	if not doctrine then
+		warn(string.format("[Doctrine] Skill select FAILED: %s — Doctrine data missing", unit.doctrineId))
+		return { ok = false, reason = "Doctrine data missing" }
+	end
+	-- Validate skillId is one of the 3 choices
+	local valid = false
+	for _, choice in ipairs(doctrine.skillChoices or {}) do
+		if choice == skillId then
+			valid = true
+			break
+		end
+	end
+	if not valid then
+		warn(string.format("[Doctrine] Skill select FAILED: %s not in %s choices", tostring(skillId), unit.doctrineId))
+		return { ok = false, reason = skillId .. " is not a valid choice for " .. (doctrine.name or unit.doctrineId) }
+	end
+	local oldSkill = unit.selectedDoctrineSkill
+	unit.selectedDoctrineSkill = skillId
+	print(string.format("[Doctrine] %s skill changed: %s → %s", unit.name, tostring(oldSkill), skillId))
+	return { ok = true, selectedSkill = skillId }
+end
+
+--------------------------------------------------
+-- SKILL CARD & AUGMENT CARD MANAGEMENT (Slice 4I)
+--------------------------------------------------
+
+-- Card inventory: { skillCards = {[skillId] = qty}, augmentCards = {[augId] = qty} }
+-- Stored per-player. For now, single player.
+local cardInventory = { skillCards = {}, augmentCards = {} }
+
+-- Restore from save (progression key — future use)
+-- For now, cards are granted via starter block or rewards
+
+-- Populate starter cards when inventory is empty
+-- (Card persistence not yet in save pipeline)
+do
+	local hasAny = false
+	for _ in pairs(cardInventory.skillCards) do hasAny = true; break end
+	if not hasAny then
+		for _ in pairs(cardInventory.augmentCards) do hasAny = true; break end
+	end
+	if not hasAny then
+		cardInventory.skillCards = {
+			["SKL-POWER-STRIKE"] = 1, ["SKL-SWEEPING-CUT"] = 1,
+			["SKL-FIRE-BOLT"] = 1, ["SKL-HEALING-LIGHT"] = 1,
+			["SKL-CRIPPLING-SHOT"] = 1, ["SKL-VENOM-STRIKE"] = 1,
+		}
+		cardInventory.augmentCards = {
+			["AUG-BLEEDING-EDGE-SUPPORT"] = 2, ["AUG-VENOMOUS-SUPPORT"] = 2,
+		}
+		print("[Main] Starter cards loaded (6 skill, 4 augment)")
+	end
+end
+
+
+-- Helper: rebuild unit.skillIds from loadout
+local function rebuildSkillIds(unit)
+	unit.skillIds = {}
+	if unit.selectedDoctrineSkill then
+		table.insert(unit.skillIds, unit.selectedDoctrineSkill)
+	end
+	for _, slotKey in ipairs({"slot2", "slot3", "slot4"}) do
+		local slotData = unit.skillLoadout and unit.skillLoadout[slotKey]
+		if slotData and slotData.skillId then
+			table.insert(unit.skillIds, slotData.skillId)
+		end
+	end
+end
+
+-- GetSkillLoadout: returns unit's skill slots + card inventories
+BattleEvents.GetSkillLoadout.OnServerInvoke = function(player, unitId)
+	local unit = playerUnits[unitId]
+	if not unit then
+		return { ok = false, reason = "Unknown unit" }
+	end
+	local loadout = unit.skillLoadout or {}
+	local slots = {}
+	-- Slot 1: Doctrine skill
+	local docSkill = unit.selectedDoctrineSkill
+	local docDef = docSkill and SkillData[docSkill]
+	slots[1] = {
+		slotType = "Doctrine",
+		skillId = docSkill or "none",
+		skillName = docDef and docDef.name or "none",
+		augments = unit.doctrineAugments or {},
+		locked = false,
+	}
+	-- Slots 2-4: Skill cards
+	for i = 2, 4 do
+		local key = "slot" .. i
+		local slotData = loadout[key]
+		if slotData and slotData.skillId then
+			local def = SkillData[slotData.skillId]
+			slots[i] = {
+				slotType = "SkillCard",
+				skillId = slotData.skillId,
+				skillName = def and def.name or slotData.skillId,
+				augments = slotData.augments or {},
+				locked = false,
+			}
+		else
+			slots[i] = { slotType = "Empty", skillId = "none", augments = {}, locked = false }
+		end
+	end
+	-- Slot 5: Locked
+	slots[5] = { slotType = "Locked", skillId = "none", augments = {}, locked = true }
+	return {
+		ok = true,
+		slots = slots,
+		skillCards = cardInventory.skillCards,
+		augmentCards = cardInventory.augmentCards,
+	}
+end
+
+-- RequestEquipSkillCard: equip a skill card into slot 2/3/4
+BattleEvents.RequestEquipSkillCard.OnServerInvoke = function(player, unitId, slotIndex, skillId)
+	local unit = playerUnits[unitId]
+	if not unit then
+		warn("[SkillCard] Equip FAILED: Unknown unit " .. tostring(unitId))
+		return { ok = false, reason = "Unknown unit" }
+	end
+	if slotIndex < 2 or slotIndex > 4 then
+		return { ok = false, reason = "Invalid slot (must be 2-4)" }
+	end
+	-- Validate skill exists
+	local skillDef = SkillData[skillId]
+	if not skillDef then
+		return { ok = false, reason = "Unknown skill: " .. tostring(skillId) }
+	end
+	-- Check card inventory
+	local qty = cardInventory.skillCards[skillId] or 0
+	if qty <= 0 then
+		return { ok = false, reason = "No skill card: " .. (skillDef.name or skillId) }
+	end
+	-- Check not already equipped in another slot on this unit
+	-- Check against doctrine skill (slot 1) — doctrines can offer regular skills
+	if unit.selectedDoctrineSkill and unit.selectedDoctrineSkill == skillId then
+		return { ok = false, reason = skillDef.name .. " already equipped as Doctrine Skill" }
+	end
+	-- Check against other skill card slots (2-4)
+	local loadout = unit.skillLoadout or {}
+	for _, key in ipairs({"slot2", "slot3", "slot4"}) do
+		local slotData = loadout[key]
+		if slotData and slotData.skillId == skillId then
+			return { ok = false, reason = skillDef.name .. " already equipped in another slot" }
+		end
+	end
+	-- Unequip existing card in target slot (return to inventory)
+	local slotKey = "slot" .. slotIndex
+	local existing = loadout[slotKey]
+	if existing and existing.skillId then
+		cardInventory.skillCards[existing.skillId] = (cardInventory.skillCards[existing.skillId] or 0) + 1
+		-- Return augment cards too
+		for _, augId in ipairs(existing.augments or {}) do
+			if augId then
+				cardInventory.augmentCards[augId] = (cardInventory.augmentCards[augId] or 0) + 1
+			end
+		end
+	end
+	-- Consume card from inventory
+	cardInventory.skillCards[skillId] = qty - 1
+	if cardInventory.skillCards[skillId] <= 0 then
+		cardInventory.skillCards[skillId] = nil
+	end
+	-- Equip
+	if not unit.skillLoadout then unit.skillLoadout = {} end
+	unit.skillLoadout[slotKey] = { skillId = skillId, augments = {} }
+	rebuildSkillIds(unit)
+	print(string.format("[SkillCard] %s equipped %s in slot %d", unit.name, skillDef.name, slotIndex))
+	return { ok = true, skillName = skillDef.name }
+end
+
+-- RequestUnequipSkillCard: remove a skill card from slot 2/3/4
+BattleEvents.RequestUnequipSkillCard.OnServerInvoke = function(player, unitId, slotIndex)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+	if slotIndex < 2 or slotIndex > 4 then return { ok = false, reason = "Invalid slot" } end
+	local slotKey = "slot" .. slotIndex
+	local loadout = unit.skillLoadout or {}
+	local existing = loadout[slotKey]
+	if not existing or not existing.skillId then
+		return { ok = false, reason = "Slot is empty" }
+	end
+	-- Return skill card to inventory
+	cardInventory.skillCards[existing.skillId] = (cardInventory.skillCards[existing.skillId] or 0) + 1
+	-- Return augment cards
+	for _, augId in ipairs(existing.augments or {}) do
+		if augId then
+			cardInventory.augmentCards[augId] = (cardInventory.augmentCards[augId] or 0) + 1
+		end
+	end
+	unit.skillLoadout[slotKey] = nil
+	rebuildSkillIds(unit)
+	print(string.format("[SkillCard] %s unequipped slot %d", unit.name, slotIndex))
+	return { ok = true }
+end
+
+-- RequestAttachAugment: attach an augment card to a skill's augment slot
+BattleEvents.RequestAttachAugment.OnServerInvoke = function(player, unitId, slotIndex, augSlotIndex, augmentId)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+	if slotIndex < 1 or slotIndex > 4 then return { ok = false, reason = "Invalid skill slot" } end
+	if augSlotIndex < 1 or augSlotIndex > 2 then return { ok = false, reason = "Invalid augment slot (1 or 2)" } end
+	-- Validate augment exists
+	local augDef = AugmentData[augmentId]
+	if not augDef then return { ok = false, reason = "Unknown augment" } end
+	-- Check card inventory
+	local qty = cardInventory.augmentCards[augmentId] or 0
+	if qty <= 0 then return { ok = false, reason = "No augment card: " .. (augDef.name or augmentId) } end
+	-- Find the skill slot data
+	local slotKey = slotIndex == 1 and "_doctrine" or ("slot" .. slotIndex)
+	local slotData
+	if slotIndex == 1 then
+		-- Doctrine skill augments stored separately
+		if not unit.doctrineAugments then unit.doctrineAugments = {} end
+		slotData = unit.doctrineAugments
+	else
+		local loadout = unit.skillLoadout or {}
+		slotData = loadout[slotKey]
+		if not slotData or not slotData.skillId then
+			return { ok = false, reason = "No skill in slot " .. slotIndex }
+		end
+	end
+	-- Initialize augments array
+	if slotIndex == 1 then
+		-- Doctrine augments: simple 2-slot array
+		local existing = slotData[augSlotIndex]
+		if existing then
+			cardInventory.augmentCards[existing] = (cardInventory.augmentCards[existing] or 0) + 1
+		end
+		slotData[augSlotIndex] = augmentId
+	else
+		if not slotData.augments then slotData.augments = {} end
+		local existing = slotData.augments[augSlotIndex]
+		if existing then
+			cardInventory.augmentCards[existing] = (cardInventory.augmentCards[existing] or 0) + 1
+		end
+		slotData.augments[augSlotIndex] = augmentId
+	end
+	cardInventory.augmentCards[augmentId] = qty - 1
+	if cardInventory.augmentCards[augmentId] <= 0 then cardInventory.augmentCards[augmentId] = nil end
+	print(string.format("[Augment] %s attached %s to slot %d aug %d", unit.name, augDef.name, slotIndex, augSlotIndex))
+	return { ok = true, augmentName = augDef.name }
+end
+
+-- RequestDetachAugment: remove an augment from a skill's augment slot
+BattleEvents.RequestDetachAugment.OnServerInvoke = function(player, unitId, slotIndex, augSlotIndex)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+	if augSlotIndex < 1 or augSlotIndex > 2 then return { ok = false, reason = "Invalid augment slot" } end
+	local augId
+	if slotIndex == 1 then
+		if not unit.doctrineAugments then return { ok = false, reason = "No augments" } end
+		augId = unit.doctrineAugments[augSlotIndex]
+		unit.doctrineAugments[augSlotIndex] = nil
+	else
+		local loadout = unit.skillLoadout or {}
+		local slotData = loadout["slot" .. slotIndex]
+		if not slotData or not slotData.augments then return { ok = false, reason = "No augments" } end
+		augId = slotData.augments[augSlotIndex]
+		slotData.augments[augSlotIndex] = nil
+	end
+	if not augId then return { ok = false, reason = "Augment slot empty" } end
+	cardInventory.augmentCards[augId] = (cardInventory.augmentCards[augId] or 0) + 1
+	print(string.format("[Augment] %s detached aug from slot %d aug %d", unit.name, slotIndex, augSlotIndex))
+	return { ok = true }
+end
+
+--------------------------------------------------
+-- CONSUMABLE SLOT MANAGEMENT (Slice 4G.4)
+--------------------------------------------------
+
+local ConsumableData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ConsumableData")
+)
+
+-- RequestEquipConsumable: assign a consumable to a slot (1-6)
+BattleEvents.RequestEquipConsumable.OnServerInvoke = function(player, unitId, slotIndex, consumableId)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+	if slotIndex < 1 or slotIndex > 6 then return { ok = false, reason = "Invalid slot (1-6)" } end
+	if slotIndex > (unit.consumableSlotCount or 3) then
+		return { ok = false, reason = "Slot " .. slotIndex .. " is locked" }
+	end
+	-- Validate consumable exists
+	local consDef = ConsumableData.GetById(consumableId)
+	if not consDef then return { ok = false, reason = "Unknown consumable: " .. tostring(consumableId) } end
+	-- Check not already in another slot on this unit
+	for idx, existing in pairs(unit.consumableSlots or {}) do
+		if existing.consumableId == consumableId and idx ~= slotIndex then
+			return { ok = false, reason = consDef.name .. " already in slot " .. idx }
+		end
+	end
+	-- Replace existing
+	if not unit.consumableSlots then unit.consumableSlots = {} end
+	unit.consumableSlots[slotIndex] = {
+		consumableId = consumableId,
+		currentCharges = consDef.maxCharges or 1,
+		maxCharges = consDef.maxCharges or 1,
+	}
+	print(string.format("[Consumable] %s equipped %s in slot %d (charges: %d)",
+		unit.name, consDef.name, slotIndex, consDef.maxCharges or 1))
+	return { ok = true, name = consDef.name, charges = consDef.maxCharges or 1 }
+end
+
+-- RequestUnequipConsumable: remove consumable from slot
+BattleEvents.RequestUnequipConsumable.OnServerInvoke = function(player, unitId, slotIndex)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+	if not unit.consumableSlots or not unit.consumableSlots[slotIndex] then
+		return { ok = false, reason = "Slot is empty" }
+	end
+	local removed = unit.consumableSlots[slotIndex]
+	unit.consumableSlots[slotIndex] = nil
+	print(string.format("[Consumable] %s unequipped slot %d (%s)",
+		unit.name, slotIndex, removed.consumableId))
+	return { ok = true }
+end
+
+--------------------------------------------------
+-- STAT ALLOCATION & COMPARISON (Slice 4J)
+--------------------------------------------------
+
+-- Stat allocation: units earn points through leveling (Slice 6).
+-- Human race passive: +1 bonus point every 3 levels.
+-- For now: no leveling = 0 base points. Infrastructure ready for when leveling arrives.
+
+local STATS_LIST = {"STR", "AGI", "INT", "VIT", "DEX", "LUK"}
+
+local function getUnallocatedPoints(unit)
+	-- Base points from leveling (Slice 6 will provide this formula)
+	local basePoints = 0  -- placeholder: 0 until leveling system exists
+	-- Human race bonus: +1 per 3 levels
+	if unit.raceId == "RACE-HUMAN" then
+		basePoints = basePoints + math.floor((unit.level or 1) / 3)
+	end
+	-- Subtract already allocated
+	local spent = 0
+	local alloc = unit.statAllocation or {}
+	for _, stat in ipairs(STATS_LIST) do
+		spent = spent + (alloc[stat] or 0)
+	end
+	return math.max(0, basePoints - spent)
+end
+
+-- RequestAllocateStat: spend 1 unallocated point on a stat
+BattleEvents.RequestAllocateStat.OnServerInvoke = function(player, unitId, stat)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+	-- Validate stat name
+	local validStat = false
+	for _, s in ipairs(STATS_LIST) do
+		if s == stat then validStat = true; break end
+	end
+	if not validStat then return { ok = false, reason = "Invalid stat: " .. tostring(stat) } end
+	-- Check points available
+	local available = getUnallocatedPoints(unit)
+	if available <= 0 then
+		return { ok = false, reason = "No unallocated points" }
+	end
+	-- Allocate
+	if not unit.statAllocation then unit.statAllocation = {} end
+	unit.statAllocation[stat] = (unit.statAllocation[stat] or 0) + 1
+	-- Rebuild stats (allocation feeds into baseStats)
+	unit.baseStats[stat] = unit.baseStats[stat] + 1
+	EquipmentService.RebuildUnitStats(unit)
+	print(string.format("[StatAlloc] %s +1 %s (total alloc: %d, remaining: %d)",
+		unit.name, stat, unit.statAllocation[stat], getUnallocatedPoints(unit)))
+	return {
+		ok = true,
+		stat = stat,
+		newValue = unit.effectiveStats[stat],
+		remaining = getUnallocatedPoints(unit),
+	}
+end
+
+-- GetEquipmentComparison: authoritative before/after deltas for equipping an item
+BattleEvents.GetEquipmentComparison.OnServerInvoke = function(player, unitId, instanceId)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+	local item = InventoryService.GetItem(PLAYER_ID, instanceId)
+	if not item then return { ok = false, reason = "Item not found" } end
+	-- Snapshot current stats
+	local before = {
+		STR = unit.effectiveStats.STR, AGI = unit.effectiveStats.AGI,
+		INT = unit.effectiveStats.INT, VIT = unit.effectiveStats.VIT,
+		DEX = unit.effectiveStats.DEX, LUK = unit.effectiveStats.LUK,
+		maxHp = unit.maxHp, maxMp = unit.maxMp,
+		weaponDamage = unit.weaponDamage, weaponWt = unit.weaponWt,
+		weaponDefense = unit.weaponDefense,
+		armorDefense = unit.armorDefense or 0,
+		armorWt = unit.armorWt or 0,
+	}
+	-- Determine target slot
+	local slot = EquipmentService.DetermineSlot(item)
+	if not slot then return { ok = false, reason = "Cannot determine slot" } end
+	-- Save current equipped item in that slot
+	local savedItem = unit.equipmentSlots and unit.equipmentSlots[slot] or nil
+	-- Temporarily equip the new item
+	if not unit.equipmentSlots then unit.equipmentSlots = {} end
+	unit.equipmentSlots[slot] = item
+	EquipmentService.RebuildUnitStats(unit)
+	-- Snapshot after
+	local after = {
+		STR = unit.effectiveStats.STR, AGI = unit.effectiveStats.AGI,
+		INT = unit.effectiveStats.INT, VIT = unit.effectiveStats.VIT,
+		DEX = unit.effectiveStats.DEX, LUK = unit.effectiveStats.LUK,
+		maxHp = unit.maxHp, maxMp = unit.maxMp,
+		weaponDamage = unit.weaponDamage, weaponWt = unit.weaponWt,
+		weaponDefense = unit.weaponDefense,
+		armorDefense = unit.armorDefense or 0,
+		armorWt = unit.armorWt or 0,
+	}
+	-- Restore original
+	unit.equipmentSlots[slot] = savedItem
+	EquipmentService.RebuildUnitStats(unit)
+	-- Compute deltas
+	local deltas = {}
+	for key, val in pairs(after) do
+		local diff = val - (before[key] or 0)
+		if diff ~= 0 then
+			deltas[key] = diff
+		end
+	end
+	return { ok = true, slot = slot, before = before, after = after, deltas = deltas }
+end
+
+-- GetDoctrineComparison: authoritative before/after for swapping doctrine
+BattleEvents.GetDoctrineComparison.OnServerInvoke = function(player, unitId, newDoctrineId)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+	local newDoc = DoctrineData[newDoctrineId]
+	if not newDoc then return { ok = false, reason = "Unknown doctrine" } end
+	-- Snapshot current
+	local before = {
+		STR = unit.effectiveStats.STR, AGI = unit.effectiveStats.AGI,
+		INT = unit.effectiveStats.INT, VIT = unit.effectiveStats.VIT,
+		DEX = unit.effectiveStats.DEX, LUK = unit.effectiveStats.LUK,
+		maxHp = unit.maxHp, maxMp = unit.maxMp,
+		doctrineName = unit.doctrineId and DoctrineData[unit.doctrineId] and DoctrineData[unit.doctrineId].name or "none",
+	}
+	-- Temporarily swap doctrine
+	local savedDoc = unit.doctrineId
+	unit.doctrineId = newDoctrineId
+	EquipmentService.RebuildUnitStats(unit)
+	local after = {
+		STR = unit.effectiveStats.STR, AGI = unit.effectiveStats.AGI,
+		INT = unit.effectiveStats.INT, VIT = unit.effectiveStats.VIT,
+		DEX = unit.effectiveStats.DEX, LUK = unit.effectiveStats.LUK,
+		maxHp = unit.maxHp, maxMp = unit.maxMp,
+		doctrineName = newDoc.name,
+	}
+	-- Restore
+	unit.doctrineId = savedDoc
+	EquipmentService.RebuildUnitStats(unit)
+	-- Deltas
+	local deltas = {}
+	for _, stat in ipairs(STATS_LIST) do
+		local diff = after[stat] - before[stat]
+		if diff ~= 0 then deltas[stat] = diff end
+	end
+	local hpDiff = after.maxHp - before.maxHp
+	local mpDiff = after.maxMp - before.maxMp
+	if hpDiff ~= 0 then deltas.maxHp = hpDiff end
+	if mpDiff ~= 0 then deltas.maxMp = mpDiff end
+	return { ok = true, before = before, after = after, deltas = deltas }
 end
 
 --------------------------------------------------
@@ -914,11 +1721,15 @@ local function buildTurnPrompt(unit)
 	end
 
 	-- Push targets: adjacent enemies (range 1, Chebyshev)
+	-- Android: extended range (up to 4), cannot target adjacent (minDistance 2)
+	local pushOverride = RacePassiveService.GetPushOverride(unit)
+	local pushMaxDist = pushOverride and pushOverride.maxDistance or 1
+	local pushMinDist = pushOverride and pushOverride.minDistance or 1
 	local pushTargets = {}
 	for _, c in ipairs(state.units) do
 		if c.isAlive and c.side ~= unit.side then
 			local dist = math.max(math.abs(c.tileX - unit.tileX), math.abs(c.tileY - unit.tileY))
-			if dist == 1 then
+			if dist >= pushMinDist and dist <= pushMaxDist then
 				table.insert(pushTargets, { id = c.id, name = c.name, tileX = c.tileX, tileY = c.tileY })
 			end
 		end
@@ -1422,169 +2233,99 @@ local function runAiTurn(unit)
 		return ok
 	end
 
-	local acted = false
-	-- Track if we have a deferred channeling skill to use as last action
-	local deferredChannel = nil
+	-- Use AIService to plan the turn (3-tier role-based scoring)
+	local plan = AIService.PlanTurn(unit, allUnits, MAP_WIDTH, MAP_HEIGHT)
 
-	-- 1. Heal if ally below 50%
-	local healSkillDef = nil
-	for _, sid in ipairs(unit.skillIds or {}) do
-		local def = CommandService.GetSkill(sid)
-		if def and def.isHealing then
-			healSkillDef = def
+	-- Execute the plan step by step
+	for _, step in ipairs(plan) do
+		if BattleCoordinator.GetPhase(state) ~= "TurnOpen" then break end
+		if unit.currentAp <= 0 and step.actionType ~= "Wait" then break end
+
+		local ok = false
+		if step.actionType == "Attack" then
+			ok = tryCommit("Attack", step.selection, nil)
+		elseif step.actionType == "Skill" then
+			ok = tryCommit("Skill", step.selection, step.skillName)
+		elseif step.actionType == "Move" then
+			ok = tryCommit("Move", step.selection, nil)
+		elseif step.actionType == "Guard" then
+			ok = tryCommit("Guard", nil, nil)
+		elseif step.actionType == "Push" then
+			ok = tryCommit("Push", step.selection, nil)
+		elseif step.actionType == "Wait" then
+			-- Wait handled at end
 			break
 		end
-	end
 
-	if healSkillDef and UnitSchema.HasEnoughMp(unit, healSkillDef.mpCost or 0) then
-		local lowestAlly, lowestPct = findLowestAlly(unit, allUnits)
-		if lowestAlly and lowestPct < 0.50 then
-			-- If channeling skill and AP > 1, defer it (do other actions first)
-			local isChannel = (healSkillDef.channelTime or 0) > 0
-			if isChannel and unit.currentAp > 1 then
-				deferredChannel = { skillDef = healSkillDef, targetId = lowestAlly.id }
-			else
-				local candidates = TargetingService.GetSkillCandidates(unit, allUnits, healSkillDef)
-				for _, c in ipairs(candidates) do
-					if c.id == lowestAlly.id then
-						local ok = tryCommit("Skill",
-							{ target = c, skillId = healSkillDef.id },
-							healSkillDef.name
-						)
-						if ok then acted = true; break end
+		-- After a move, re-evaluate if plan requested it
+		if ok and step.actionType == "Move" and plan.needsReeval
+			and BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
+			-- Re-plan with remaining AP from new position
+			local replan = AIService.PlanTurn(unit, allUnits, MAP_WIDTH, MAP_HEIGHT)
+			for _, rstep in ipairs(replan) do
+				if BattleCoordinator.GetPhase(state) ~= "TurnOpen" then break end
+				if unit.currentAp <= 0 then break end
+				if rstep.actionType == "Wait" then break end
+				if rstep.actionType ~= "Move" then
+					if rstep.actionType == "Attack" then
+						tryCommit("Attack", rstep.selection, nil)
+					elseif rstep.actionType == "Skill" then
+						tryCommit("Skill", rstep.selection, rstep.skillName)
+					elseif rstep.actionType == "Guard" then
+						tryCommit("Guard", nil, nil)
+					elseif rstep.actionType == "Push" then
+						tryCommit("Push", rstep.selection, nil)
 					end
+					break  -- Only 1 action after re-eval
 				end
 			end
 		end
 	end
 
-	-- 2. Offensive skills
-	if not acted then
-		for _, sid in ipairs(unit.skillIds or {}) do
-			local def = CommandService.GetSkill(sid)
-			if def and not def.isHealing and UnitSchema.HasEnoughMp(unit, def.mpCost or 0) then
-				-- If channeling and AP > 1, defer
-				local isChannel = (def.channelTime or 0) > 0
-				if isChannel and unit.currentAp > 1 then
-					if not deferredChannel then
-						local candidates = TargetingService.GetSkillCandidates(unit, allUnits, def)
-						if #candidates > 0 then
-							deferredChannel = { skillDef = def, targetId = candidates[1].id }
+	-- AI consumable usage (Slice 4G): after plan execution, check if unit
+	-- should use a consumable item (healing at low HP, status cure, etc.)
+	if BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 and unit.consumableSlots then
+		local bestSlot = nil
+		local bestPriority = 0
+		for slotIdx = 1, (unit.consumableSlotCount or 3) do
+			local slot = unit.consumableSlots[slotIdx]
+			if slot and slot.consumableId and slot.currentCharges and slot.currentCharges > 0 then
+				local consDef = ConsumableData.GetById(slot.consumableId)
+				if consDef then
+					local formula = consDef.effectFormula or ""
+					local hpPct = unit.currentHp / math.max(1, unit.maxHp)
+					local mpPct = unit.currentMp / math.max(1, unit.maxMp)
+					local priority = 0
+					-- HP recovery: use when HP ≤ 35%
+					if formula:match("Restore%s+%d+%%%s+target%s+Max%s+HP") and hpPct <= 0.35 then
+						priority = 10 + (1 - hpPct) * 10
+					-- MP recovery: use when MP ≤ 20% and unit has skills
+					elseif formula:match("Restore%s+%d+%%%s+target%s+Max%s+MP") and mpPct <= 0.20 and #(unit.skillIds or {}) > 0 then
+						priority = 5
+					-- Status cure: use when unit has a disabling status
+					elseif formula:match("Remove") then
+						for _, inst in ipairs(unit.statusInstances or {}) do
+							if inst.id == "Poison" or inst.id == "Burn" or inst.id == "Silence" then
+								priority = 7; break
+							end
 						end
 					end
-				else
-					local candidates = TargetingService.GetSkillCandidates(unit, allUnits, def)
-					if #candidates > 0 then
-						local ok = tryCommit("Skill",
-							{ target = candidates[1], skillId = def.id }, def.name)
-						if ok then acted = true; break end
+					-- Charge conservation: preserve last charge unless critical
+					if priority > 0 and slot.currentCharges <= 1 and hpPct > 0.20 then
+						priority = 0
 					end
+					if priority > bestPriority then bestPriority = priority; bestSlot = slotIdx end
 				end
 			end
 		end
-	end
-
-	-- Second action
-	if acted and BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
-		local attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1)
-		if #attackCandidates > 0 then
-			tryCommit("Attack", attackCandidates[1], nil)
+		if bestSlot then
+			local target = { tileX = unit.tileX, tileY = unit.tileY }
+			print(string.format("[AI] %s using consumable slot %d", unit.name, bestSlot))
+			tryCommit("Item", { target = target, itemSlotIndex = bestSlot }, nil)
 		end
 	end
 
-	-- 3. Basic attack
-	if not acted then
-		local attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1)
-		if #attackCandidates > 0 then
-			acted = true
-			tryCommit("Attack", attackCandidates[1], nil)
-			if BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
-				attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1)
-				if #attackCandidates > 0 then
-					tryCommit("Attack", attackCandidates[1], nil)
-				end
-			end
-		end
-	end
-
-	-- 4. Move toward enemy
-	if not acted then
-		local nearestEnemy = nil
-		local nearestDist  = math.huge
-		for _, other in ipairs(allUnits) do
-			if other.isAlive and other.side ~= unit.side then
-				local d = math.max(
-					math.abs(other.tileX - unit.tileX),
-					math.abs(other.tileY - unit.tileY)
-				)
-				if d < nearestDist then
-					nearestDist  = d
-					nearestEnemy = other
-				end
-			end
-		end
-
-		if nearestEnemy then
-			local moveCandidates = TargetingService.GetMoveCandidates(unit, allUnits, MAP_WIDTH, MAP_HEIGHT)
-			local bestTile, bestDist = nil, math.huge
-			for _, tile in ipairs(moveCandidates) do
-				local d = math.max(
-					math.abs(tile.tileX - nearestEnemy.tileX),
-					math.abs(tile.tileY - nearestEnemy.tileY)
-				)
-				if d < bestDist then bestDist = d; bestTile = tile end
-			end
-			if bestTile then tryCommit("Move", bestTile, nil) end
-		end
-
-		if BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
-			local usedSkill = false
-			for _, sid in ipairs(unit.skillIds or {}) do
-				local def = CommandService.GetSkill(sid)
-				if def and not def.isHealing and UnitSchema.HasEnoughMp(unit, def.mpCost or 0) then
-					local candidates = TargetingService.GetSkillCandidates(unit, allUnits, def)
-					if #candidates > 0 then
-						tryCommit("Skill", { target = candidates[1], skillId = def.id }, def.name)
-						usedSkill = true; break
-					end
-				end
-			end
-			if not usedSkill then
-				local attackCandidates = TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1)
-				if #attackCandidates > 0 then tryCommit("Attack", attackCandidates[1], nil) end
-			end
-		end
-	end
-
-	-- 5. Execute deferred channeling skill (last action, so no AP is wasted)
-	if deferredChannel and BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
-		local def = deferredChannel.skillDef
-		local targetId = deferredChannel.targetId
-		-- Find the target unit
-		local target = nil
-		for _, u in ipairs(allUnits) do
-			if u.id == targetId and u.isAlive then target = u; break end
-		end
-		if target and UnitSchema.HasEnoughMp(unit, def.mpCost or 0) then
-			local candidates = TargetingService.GetSkillCandidates(unit, allUnits, def)
-			for _, c in ipairs(candidates) do
-				if c.id == targetId then
-					tryCommit("Skill", { target = c, skillId = def.id }, def.name)
-					break
-				end
-			end
-		end
-	end
-
-	-- 6. Guard if low HP and have AP remaining (defensive fallback)
-	if BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
-		local hpPct = unit.currentHp / unit.maxHp
-		if hpPct < 0.40 and not unit.guardUsedThisTurn then
-			tryCommit("Guard", nil, nil)
-			table.insert(actions, { actionType = "Guard", unit = unit })
-		end
-	end
-
+	-- Always end turn
 	if BattleCoordinator.GetPhase(state) == "TurnOpen" then
 		CommandService.ValidateAndCommit(state, unit.id, "Wait", nil)
 	end
@@ -1769,6 +2510,11 @@ end)
 local MAX_TURNS = 200
 local turnCount = 0
 
+-- Initialize armor passives for all units at battle start (Slice 4G.9)
+for _, unit in ipairs(state.units) do
+	ArmorPassiveService.OnBattleStart(unit)
+end
+
 while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURNS do
 	local activeUnit = BattleCoordinator.AdvanceClock(state)
 	if not activeUnit then break end
@@ -1800,13 +2546,9 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 		end
 		BattleCoordinator.EndTurn(state)
 		BattleVisualBroadcaster.TurnEnded(activeUnit, 0)
-		if BattleCoordinator.GetPhase(state) == "BattleOver" then break end
-		continue
-	end
-
-	-- Turn skip: Sleep / Petrify / Stun / Knock-out
-	local shouldSkip, skipReason = StatusService.ShouldSkipTurn(activeUnit)
-	if shouldSkip then
+	elseif StatusService.ShouldSkipTurn(activeUnit) then
+		-- Turn skip: Sleep / Petrify / Stun / Knock-out
+		local _, skipReason = StatusService.ShouldSkipTurn(activeUnit)
 		print(string.format(
 			"[TurnSkip] %s skipped (%s) | HP: %d/%d",
 			activeUnit.name, skipReason,
@@ -1817,37 +2559,33 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 		BattleCoordinator.EndTurn(state)
 		BattleVisualBroadcaster.TurnSkipped(activeUnit, skipReason)
 		BattleVisualBroadcaster.TurnEnded(activeUnit, activeUnit.remainingRt)
-		if BattleCoordinator.GetPhase(state) == "BattleOver" then break end
-		continue
-	end
-
-	BattleVisualBroadcaster.TurnStarted(activeUnit, state.ct, state.units)
-
-	-- Determine turn handler
-	local actions
-	local wasChanneling = BattleCoordinator.IsChanneling(activeUnit)
-	if BattleCoordinator.IsChanneling(activeUnit) then
-		actions = handleChannelingActivation(activeUnit)
-	elseif activeUnit.controller == "Player" then
-		actions = runPlayerTurn(activeUnit)
 	else
-		actions = runAiTurn(activeUnit)
-	end
+		-- Normal turn
+		BattleVisualBroadcaster.TurnStarted(activeUnit, state.ct, state.units)
 
-	-- Broadcast
-	-- AI actions: broadcast all at once after turn.
-	-- Player actions: broadcast immediately per-action inside runPlayerTurn.
-	-- Channeling activations: always broadcast here (player didn't trigger them manually).
-	if activeUnit.controller ~= "Player" or wasChanneling then
-		broadcastActions(actions, activeUnit)
-	end
+		-- Determine turn handler
+		local actions
+		local wasChanneling = BattleCoordinator.IsChanneling(activeUnit)
+		if BattleCoordinator.IsChanneling(activeUnit) then
+			actions = handleChannelingActivation(activeUnit)
+		elseif activeUnit.controller == "Player" then
+			actions = runPlayerTurn(activeUnit)
+		else
+			actions = runAiTurn(activeUnit)
+		end
 
-	-- Safety close
-	if BattleCoordinator.GetPhase(state) == "TurnOpen" then
-		CommandService.ValidateAndCommit(state, activeUnit.id, "Wait", nil)
-	end
+		-- Broadcast
+		if activeUnit.controller ~= "Player" or wasChanneling then
+			broadcastActions(actions, activeUnit)
+		end
 
-	BattleVisualBroadcaster.TurnEnded(activeUnit, activeUnit.remainingRt)
+		-- Safety close
+		if BattleCoordinator.GetPhase(state) == "TurnOpen" then
+			CommandService.ValidateAndCommit(state, activeUnit.id, "Wait", nil)
+		end
+
+		BattleVisualBroadcaster.TurnEnded(activeUnit, activeUnit.remainingRt)
+	end
 end
 
 --------------------------------------------------
@@ -1876,6 +2614,30 @@ BattleVisualBroadcaster.BattleEnded(winner or "None", state.units)
 --------------------------------------------------
 
 local isQualifyingVictory = (winner == "Player")
+
+--------------------------------------------------
+-- POST-BATTLE: UPDATE UNIT RECORDS (Slice 4K)
+--------------------------------------------------
+for _, u in ipairs(allUnitsList) do
+	if u.side == "Player" and u.records then
+		u.records.battlesParticipated = (u.records.battlesParticipated or 0) + 1
+		if isQualifyingVictory then
+			u.records.victoriesParticipated = (u.records.victoriesParticipated or 0) + 1
+		end
+		if not u.isAlive then
+			u.records.timesKO = (u.records.timesKO or 0) + 1
+		end
+	end
+end
+-- Enemy defeat tracking: count how many enemies each player unit killed
+for _, u in ipairs(allUnitsList) do
+	if u.side == "Enemy" and not u.isAlive and u._killedBy then
+		local killer = playerUnits[u._killedBy]
+		if killer and killer.records then
+			killer.records.enemiesDefeated = (killer.records.enemiesDefeated or 0) + 1
+		end
+	end
+end
 
 -- Step 1: Persist final HP/MP for all player units
 for _, u in ipairs(allUnitsList) do

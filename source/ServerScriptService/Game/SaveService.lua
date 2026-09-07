@@ -25,6 +25,11 @@ local WeaponData = require(
 		:WaitForChild("Content")
 		:WaitForChild("WeaponData")
 )
+local ArmorData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ArmorData")
+)
 
 local SaveService = {}
 
@@ -143,6 +148,9 @@ end
 local function encodeItem(item)
 	-- Compact: { archetypeNumericId, level, rarityId, bonusLines[], passiveIds[] }
 	local archetype = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+	if not archetype then
+		archetype = ArmorData.GetByArchetypeId(item.baseArchetypeId)
+	end
 	local numId = archetype and archetype.numericId or 0
 	local bonusLines = {}
 	for _, line in ipairs(item.bonusLines or {}) do
@@ -193,6 +201,12 @@ local function encodeUnit(unitState)
 		rid = unitState.raceId or nil,
 		pks = unitState.perkIds or {},
 		dbs = unitState.drawbackIds or {},
+		doc = unitState.doctrineId or nil,
+		dsk = unitState.selectedDoctrineSkill or nil,
+		skl = unitState.skillLoadout or nil,
+		sap = unitState.statAllocation or nil,
+		rec = unitState.records or nil,
+		con = unitState.consumableSlots or nil,
 	}
 end
 
@@ -208,6 +222,12 @@ local function decodeUnit(encoded)
 		raceId     = encoded.rid or nil,
 		perkIds    = encoded.pks or {},
 		drawbackIds = encoded.dbs or {},
+		doctrineId = encoded.doc or nil,
+		selectedDoctrineSkill = encoded.dsk or nil,
+		skillLoadout = encoded.skl or nil,
+		statAllocation = encoded.sap or nil,
+		records = encoded.rec or nil,
+		consumableSlots = encoded.con or nil,
 	}
 end
 

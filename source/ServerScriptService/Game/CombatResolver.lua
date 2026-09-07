@@ -11,6 +11,8 @@
 
 local StatusService = require(script.Parent.StatusService)
 local RacePassiveService = require(script.Parent.RacePassiveService)
+local DoctrinePassiveService = require(script.Parent.DoctrinePassiveService)
+local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
 local BattleVisualBroadcaster = require(script.Parent.BattleVisualBroadcaster)
 
 local RaceData = require(
@@ -215,7 +217,11 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	-- Basic Attack: element=nil, isAOE=false, isPhysical=true
 	local raceDealtMod = RacePassiveService.GetDamageDealtModifier(attacker, nil, false)
 	local raceRecvMod  = RacePassiveService.GetDamageReceivedModifier(defender, nil, false, true)
-	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod))
+	-- Doctrine passive modifiers (Slice 4H)
+	local docBADmgMod = DoctrinePassiveService.GetBasicAttackDamageModifier(attacker)
+	local docDealtMod = DoctrinePassiveService.GetDamageDealtModifier(attacker, defender, nil, false, true, nil)
+	local docRecvMod  = DoctrinePassiveService.GetDamageReceivedModifier(defender, attacker, nil, false)
+	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod * docBADmgMod * docDealtMod * docRecvMod))
 
 	-- Step 8: Guard and other final mitigation
 	-- Check Guard via status instances (Guard is now a proper status)
@@ -328,7 +334,11 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	local skillIsPhysical = (skillElement == nil or skillElement == "Physical" or skillElement == "")
 	local raceDealtMod = RacePassiveService.GetDamageDealtModifier(attacker, skillElement, skillIsAOE)
 	local raceRecvMod  = RacePassiveService.GetDamageReceivedModifier(defender, skillElement, skillIsAOE, skillIsPhysical)
-	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod))
+	-- Doctrine passive modifiers (Slice 4H)
+	local docSkillPotency = DoctrinePassiveService.GetSkillPotencyModifier(attacker)
+	local docDealtMod = DoctrinePassiveService.GetDamageDealtModifier(attacker, defender, skillElement, true, false, nil)
+	local docRecvMod  = DoctrinePassiveService.GetDamageReceivedModifier(defender, attacker, skillElement, true)
+	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod * docSkillPotency * docDealtMod * docRecvMod))
 
 	-- Step 8: Guard and other final mitigation
 	local hasGuardSkill = false
@@ -476,6 +486,11 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 
 	local actual = UnitSchema_ApplyDamage(outcome.finalDamage, target)
 
+	-- Track who dealt the killing blow (for unit records)
+	if not target.isAlive and attacker then
+		target._killedBy = attacker.id
+	end
+
 	-- Phase 2: Check for damage-triggered status removal (e.g. Sleep)
 	StatusService.OnDamageReceived(target, actual)
 
@@ -535,9 +550,21 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		end
 	end
 
+	-- Doctrine lifesteal: Reaper Soul Rend (Slice 4H)
+	if attacker and actual > 0 and attacker.isAlive then
+		local docLifesteal = DoctrinePassiveService.GetLifestealAmount(attacker, actual, outcome.isAOE or false)
+		if docLifesteal > 0 then
+			UnitSchema_ApplyHealing(docLifesteal, attacker)
+			print(string.format(
+				"[CombatResolver] Doctrine lifesteal: %s heals %d", attacker.name, docLifesteal
+			))
+		end
+	end
+
 	-- Shadow Hide-on-hit: defender gains Hide after taking damage
 	if actual > 0 then
 		RacePassiveService.OnDamageReceived(target, actual, outcome.sourceUnitId)
+		DoctrinePassiveService.OnDamageTaken(target)
 	end
 
 	local posLabel = ""
@@ -558,6 +585,11 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		target.isAlive and "" or "| DEFEATED",
 		statusApplied and (" | +" .. statusApplied) or ""
 	))
+
+	-- Zombie KO timer: start revive countdown on death
+	if not target.isAlive then
+		RacePassiveService.OnUnitKO(target)
+	end
 
 	return actual, statusApplied
 end
@@ -584,6 +616,12 @@ function UnitSchema_ApplyDamage(amount, unit)
 	local actual = math.min(unit.currentHp, amount)
 	unit.currentHp = unit.currentHp - actual
 	if unit.currentHp <= 0 then
+		-- Armor passive: survive lethal damage at 1 HP (once per battle)
+		if ArmorPassiveService.CanSurviveLethalDamage(unit) then
+			unit.currentHp = 1
+			print(string.format("[CombatResolver] %s survived lethal damage via armor passive (1 HP)", unit.name))
+			return actual - 1
+		end
 		unit.isAlive   = false
 		unit.currentHp = 0
 		unit.currentAp = 0

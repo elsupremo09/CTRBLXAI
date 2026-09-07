@@ -414,4 +414,18 @@ function BattleVisualBroadcaster.TileEffectRemoved(tileX, tileY, effectId)
 	})
 end
 
+--------------------------------------------------
+-- UNIT STATE CHANGE (revive, etc.)
+-- Generic broadcast for HP/isAlive changes outside normal combat.
+--------------------------------------------------
+
+function BattleVisualBroadcaster.UnitStateChanged(unit)
+	BattleEvents.UnitStateChanged:FireAllClients({
+		unitId    = unit.id,
+		hp        = unit.currentHp,
+		maxHp     = unit.maxHp,
+		isAlive   = unit.isAlive,
+	})
+end
+
 return BattleVisualBroadcaster

@@ -1,4 +1,3 @@
--- CommandService.lua
 -- CTRBLXAI | Slice 3
 --
 -- The single entry point for all unit actions.
@@ -25,6 +24,14 @@ local StatusService     = require(script.Parent.StatusService)
 local BattleVisualBroadcaster = require(script.Parent.BattleVisualBroadcaster)
 local DisplacementService = require(script.Parent.DisplacementService)
 local RacePassiveService  = require(script.Parent.RacePassiveService)
+local DoctrinePassiveService = require(script.Parent.DoctrinePassiveService)
+local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
+
+local ConsumableData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ConsumableData")
+)
 
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -110,12 +117,212 @@ end
 local function calcBasicAttackBaseRt(actor)
 	-- DB formula: Basic Attack RT = round(Modified Base RT × 0.10) + Effective Weapon WT
 	-- Effective WT = raw WT × (1 - STR/(200+STR)) — STR reduces burden
+	-- Armor WT added to total burden (4G.9: heavy armor slows all actions)
 	local modBaseRt = StatusService.GetModifiedBaseRt(actor)
 	local str = actor.effectiveStats and actor.effectiveStats.STR or 10
-	local effectiveWt = GameConstants.CalcEffectiveWt(actor.weaponWt or 0, str)
+	local totalWt = (actor.weaponWt or 0) + (actor.armorWt or 0)
+	local effectiveWt = GameConstants.CalcEffectiveWt(totalWt, str)
 	local baseAttackRt = math.round(modBaseRt * BASIC_ATTACK_RT_FACTOR) + math.round(effectiveWt)
 	-- Frozen: all RT costs ×2
 	return math.round(baseAttackRt * StatusService.GetAllRtMultiplier(actor))
+end
+
+--------------------------------------------------
+-- ITEM TARGET VALIDATION
+--
+-- Validates that a consumable item's target satisfies the
+-- targetRules from ConsumableData. Range is Chebyshev distance.
+--------------------------------------------------
+
+local function validateItemTarget(actor, target, consumableDef)
+	local rules = consumableDef.targetRules or "Self"
+	local range = consumableDef.range or 0
+
+	-- Self / Self-origin: must target self (or no explicit target needed)
+	if rules == "Self" then
+		if not target or target.id ~= actor.id then
+			return false, "This item can only target yourself."
+		end
+		return true, nil
+	end
+
+	if rules == "Self-origin" or rules == "Self and Allies" then
+		-- Self-centered AOE: user is the implicit center
+		return true, nil
+	end
+
+	-- KO Ally: special — target must be dead
+	if rules == "KO Ally" then
+		if not target then
+			return false, "This item requires a KO'd ally target."
+		end
+		if target.side ~= actor.side then
+			return false, "This item can only target an ally."
+		end
+		if target.isAlive then
+			return false, "This item can only target a KO'd unit."
+		end
+		local dist = math.max(
+			math.abs(actor.tileX - (target.tileX or 0)),
+			math.abs(actor.tileY - (target.tileY or 0))
+		)
+		if dist > range then
+			return false, "Target is out of range."
+		end
+		return true, nil
+	end
+
+	-- Ground / Tile targeting: target is a coordinate table { tileX, tileY }
+	if rules == "Ground" or rules == "Tile" or rules == "Enemy or Ground" then
+		if not target then
+			return false, "This item requires a target location."
+		end
+		local tx = target.tileX or 0
+		local ty = target.tileY or 0
+		local dist = math.max(
+			math.abs(actor.tileX - tx),
+			math.abs(actor.tileY - ty)
+		)
+		if dist > range then
+			return false, "Target is out of range."
+		end
+		return true, nil
+	end
+
+	-- All remaining rules require a living unit target
+	if not target then
+		return false, "This item requires a target."
+	end
+	if not target.isAlive then
+		return false, "Target is defeated."
+	end
+
+	-- Chebyshev range check
+	local dist = math.max(
+		math.abs(actor.tileX - (target.tileX or 0)),
+		math.abs(actor.tileY - (target.tileY or 0))
+	)
+	if dist > range then
+		return false, "Target is out of range."
+	end
+
+	if rules == "Self or Ally" then
+		if target.side ~= actor.side then
+			return false, "This item can only target yourself or an ally."
+		end
+	elseif rules == "Ally" then
+		if target.side ~= actor.side or target.id == actor.id then
+			return false, "This item can only target an ally (not yourself)."
+		end
+	elseif rules == "Enemy" or rules == "Enemy Unit" then
+		if target.side == actor.side then
+			return false, "This item can only target an enemy."
+		end
+	elseif rules == "Any Unit" then
+		-- Any living unit is valid (isAlive already checked above)
+	end
+
+	return true, nil
+end
+
+--------------------------------------------------
+-- ITEM EFFECT RESOLUTION
+--
+-- Parses effectFormula from ConsumableData and applies the
+-- immediate effect. Returns a result table for broadcasting.
+--
+-- Supported categories:
+--   A) HP Recovery   — "Restore N% ... Max HP"
+--   B) MP Recovery   — "Restore N% ... Max MP"
+--   C) Status Cure   — "Remove [status] and [status]"
+--   D) Direct Damage  — "Deal [element] damage equal to N% Weapon Attack Power"
+--   E) Status Apply   — "Apply [status] for N turns"
+--   F) Unimplemented  — anything else (logged, skipped)
+--
+-- NOTE: AI item usage would hook into CommandService.GetItemCandidates
+-- (not yet implemented — see Main.server.lua AI turn logic).
+--------------------------------------------------
+
+local function resolveItemEffect(user, target, consumableDef, allUnits)
+	local formula = consumableDef.effectFormula or ""
+	local result = {
+		effectType  = "Unknown",
+		amount      = 0,
+		statusId    = nil,
+		element     = nil,
+		description = formula,
+	}
+
+	-- A) HP Recovery: "Restore N% ... Max HP"
+	local hpPct = formula:match("Restore (%d+)%%.-Max HP")
+	if hpPct then
+		local pct = tonumber(hpPct)
+		local heal = math.ceil((target.maxHp or 1) * pct / 100)
+		UnitSchema.ApplyHealing(target, heal)
+		result.effectType = "HpRestore"
+		result.amount     = heal
+		return result
+	end
+
+	-- B) MP Recovery: "Restore N% ... Max MP"
+	local mpPct = formula:match("Restore (%d+)%%.-Max MP")
+	if mpPct then
+		local pct = tonumber(mpPct)
+		local restore = math.max(1, math.ceil((target.maxMp or 1) * pct / 100))
+		local before  = target.currentMp or 0
+		target.currentMp = math.min((target.maxMp or 1), before + restore)
+		result.effectType = "MpRestore"
+		result.amount     = target.currentMp - before
+		return result
+	end
+
+	-- C) Status Cure: "Remove [status] and/or [status]"
+	if formula:match("^Remove ") then
+		local statusPart = formula:gsub("^Remove ", ""):gsub("%.$", "")
+		-- Normalise separators: ", and " → ", " then " and " → ", "
+		statusPart = statusPart:gsub(", and ", ", "):gsub(" and ", ", ")
+		local statuses = {}
+		for s in statusPart:gmatch("[^,]+") do
+			local trimmed = s:match("^%s*(.-)%s*$")
+			if trimmed and trimmed ~= "" then
+				table.insert(statuses, trimmed)
+			end
+		end
+		for _, statusName in ipairs(statuses) do
+			StatusService.RemoveStatus(target, statusName)
+		end
+		result.effectType = "StatusCure"
+		result.statusId   = table.concat(statuses, ", ")
+		return result
+	end
+
+	-- D) Direct Damage: "Deal [Element] damage equal to N% Weapon Attack Power"
+	local element, dmgPct = formula:match("Deal (%a+) damage equal to (%d+)%%")
+	if element and dmgPct then
+		local pct = tonumber(dmgPct)
+		local attackPower = user.weaponDamage or 10
+		local damage = math.round(attackPower * pct / 100)
+		UnitSchema.ApplyDamage(target, damage)
+		result.effectType = "Damage"
+		result.amount     = damage
+		result.element    = element
+		return result
+	end
+
+	-- E) Status Application: "Apply [status] for N turns"
+	local statusName, turns = formula:match("Apply (.+) for (%d+) turns")
+	if statusName and turns then
+		StatusService.ApplyStatus(target, statusName, user.id)
+		result.effectType = "StatusApply"
+		result.statusId   = statusName
+		result.amount     = tonumber(turns)
+		return result
+	end
+
+	-- F) Unimplemented formula — log and skip
+	print("[Item] Effect not yet implemented: " .. formula)
+	result.effectType = "Unimplemented"
+	return result
 end
 
 --------------------------------------------------
@@ -196,7 +403,7 @@ function CommandService.ActivateChanneledSkill(state, unit)
 	-- Use rtMult if available, else legacy rtCost, else baseRt × 0.10
 	local activationRt
 	if skillDef.rtMult then
-		activationRt = math.round(GameConstants.CalcEffectiveWt(unit.weaponWt or 10, (unit.effectiveStats or {}).STR or 10) * skillDef.rtMult)
+		activationRt = math.round(GameConstants.CalcEffectiveWt((unit.weaponWt or 10) + (unit.armorWt or 0), (unit.effectiveStats or {}).STR or 10) * skillDef.rtMult)
 	else
 		activationRt = skillDef.rtCost or math.round(
 			StatusService.GetModifiedBaseRt(unit) * 0.10
@@ -425,6 +632,7 @@ function CommandService.ValidateAndCommit(
 
 		local mpCost = skillDef.mpCost or 0
 		mpCost = math.max(0, math.round(mpCost * RacePassiveService.GetMpCostModifier(actor)))
+		mpCost = math.max(0, math.round(mpCost * DoctrinePassiveService.GetMpCostModifier(actor, actor._docFirstSkillUsed ~= true)))
 
 		-- Mana Burn: Extra MP Cost = round(Max MP × 0.20)
 		-- DB: "Extra MP Cost = round(Max MP × 0.20). Total MP Spent = Skill MP Cost + Extra."
@@ -455,6 +663,37 @@ function CommandService.ValidateAndCommit(
 			state.units, _mapWidth, _mapHeight
 		)
 		if not valid then return false, reason end
+	elseif actionType == "Item" then
+		-- Item action: use a consumable from an equipped slot
+		if type(selection) ~= "table" or not selection.itemSlotIndex then
+			return false, "Item command requires a selection with itemSlotIndex."
+		end
+
+		local slotIndex = selection.itemSlotIndex
+		local slots = actor.consumableSlots
+		if not slots or not slots[slotIndex] then
+			return false, "No consumable equipped in slot " .. tostring(slotIndex) .. "."
+		end
+
+		local slot = slots[slotIndex]
+		if not slot.consumableId or slot.consumableId == "" then
+			return false, "Consumable slot " .. tostring(slotIndex) .. " is empty."
+		end
+
+		local consumableDef = ConsumableData.Items[slot.consumableId]
+		if not consumableDef then
+			return false, "Unknown consumable: " .. tostring(slot.consumableId)
+		end
+
+		if (slot.currentCharges or 0) <= 0 then
+			return false, consumableDef.name .. " has no charges remaining."
+		end
+
+		-- Validate target against the consumable's targetRules and range
+		local target = selection.target
+		local valid, reason = validateItemTarget(actor, target, consumableDef)
+		if not valid then return false, reason end
+
 	elseif actionType ~= "Wait" and actionType ~= "Guard" and actionType ~= "Push" then
 		-- Move and Attack need target/tile validation
 		local valid, reason = TargetingService.ValidateSelection(
@@ -574,6 +813,7 @@ function CommandService.ValidateAndCommit(
 		local target = selection.target
 		local mpCost = skillDef.mpCost or 0
 		mpCost = math.max(0, math.round(mpCost * RacePassiveService.GetMpCostModifier(actor)))
+		mpCost = math.max(0, math.round(mpCost * DoctrinePassiveService.GetMpCostModifier(actor, actor._docFirstSkillUsed ~= true)))
 
 		-- Mana Burn: Extra MP Cost (same as validation path)
 		local manaBurnExtra = 0
@@ -628,7 +868,7 @@ function CommandService.ValidateAndCommit(
 		-- Fallback: rtCost (legacy) or baseRt × 0.10
 		local baseRtCost
 		if skillDef.rtMult then
-			baseRtCost = math.round(GameConstants.CalcEffectiveWt(actor.weaponWt or 10, (actor.effectiveStats or {}).STR or 10) * skillDef.rtMult)
+			baseRtCost = math.round(GameConstants.CalcEffectiveWt((actor.weaponWt or 10) + (actor.armorWt or 0), (actor.effectiveStats or {}).STR or 10) * skillDef.rtMult)
 		else
 			baseRtCost = skillDef.rtCost or math.round(StatusService.GetModifiedBaseRt(actor) * 0.10)
 		end
@@ -800,6 +1040,7 @@ function CommandService.ValidateAndCommit(
 		-- Apply Guard as a proper status (dispellable buff, removed by CC)
 		StatusService.ApplyStatus(actor, "Guard", actor.id)
 		actor.guardBonus = RacePassiveService.GetGuardMitigationBonus(actor)
+		local armorGuardBonus = ArmorPassiveService.GetGuardMitigationBonus(actor)
 		actor.guardUsedThisTurn = true
 		BattleCoordinator.AccrueRt(state, guardRt)
 
@@ -809,25 +1050,32 @@ function CommandService.ValidateAndCommit(
 		))
 
 		-- Calculate effective mitigation for display
-		local mitigation = GameConstants.GUARD_MITIGATION + (actor.guardBonus or 0)
+		local mitigation = GameConstants.GUARD_MITIGATION + (actor.guardBonus or 0) + armorGuardBonus
 		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
 		BattleVisualBroadcaster.GuardActivated(actor, guardRt, mitigation)
 
 	elseif actionType == "Push" then
-		-- Push: 1 AP, push adjacent enemy away
+		-- Push: 1 AP, push adjacent enemy away (Android: Pull with extended range)
 		-- selection = target unit
 		local target = selection
 		if not target or not target.isAlive then
 			return false, "Push target is invalid or defeated."
 		end
 
-		-- Must be adjacent (Chebyshev distance 1)
+		-- Android override: Pull with extended range, cannot target adjacent
+		local pushOverride = RacePassiveService.GetPushOverride(actor)
+		local maxPushDist = pushOverride and pushOverride.maxDistance or 1
+		local minPushDist = pushOverride and pushOverride.minDistance or 1
+
 		local dist = math.max(
 			math.abs(actor.tileX - target.tileX),
 			math.abs(actor.tileY - target.tileY)
 		)
-		if dist > 1 then
-			return false, "Push target must be adjacent."
+		if dist > maxPushDist then
+			return false, "Target is out of range."
+		end
+		if dist < minPushDist then
+			return false, "Target is too close."
 		end
 
 		-- Push RT = round(Modified Base RT × 0.10)
@@ -842,7 +1090,13 @@ function CommandService.ValidateAndCommit(
 		if actor.derivedStats and actor.derivedStats.force then
 			force = actor.derivedStats.force
 		end
+		if pushOverride and pushOverride.forceBonus then
+			force = force + pushOverride.forceBonus
+		end
 		local direction = DisplacementService.GetPushDirection(actor, target)
+		if pushOverride and pushOverride.reverseDirection then
+			direction = { x = -direction.x, y = -direction.y }
+		end
 		local result = DisplacementService.ResolvePush(
 			actor, target, force, direction,
 			GameConstants.KNOCKBACK_SOURCE_MODIFIERS.GlobalPush,
@@ -865,17 +1119,80 @@ function CommandService.ValidateAndCommit(
 			UnitSchema.ApplyDamage(target, totalPushDmg)
 		end
 
+		-- Apply collision damage to the collided unit (both units absorb the impact)
+		if result.wallCollision
+			and result.wallCollision.collidedUnitId
+			and result.wallCollision.collidedUnitDamage
+			and result.wallCollision.collidedUnitDamage > 0
+		then
+			for _, u in ipairs(state.units) do
+				if u.id == result.wallCollision.collidedUnitId and u.isAlive then
+					UnitSchema.ApplyDamage(u, result.wallCollision.collidedUnitDamage)
+					print(string.format(
+						"[CommandService] COLLISION | %s also takes %d damage from impact",
+						u.name, result.wallCollision.collidedUnitDamage
+					))
+					break
+				end
+			end
+		end
+
 		-- Broadcast
 		BattleVisualBroadcaster.UnitPushed(actor, target, result)
 
+		local actionLabel = pushOverride and pushOverride.label or "PUSH"
 		print(string.format(
-			"[CommandService] PUSH | %s -> %s | Force:%d | Moved:%d to (%d,%d) | Dmg:%d | RT:%d | AP left:%d",
-			actor.name, target.name, force,
+			"[CommandService] %s | %s -> %s | Force:%d | Moved:%d to (%d,%d) | Dmg:%d | RT:%d | AP left:%d",
+			actionLabel, actor.name, target.name, force,
 			result.tilesDisplaced, result.finalTileX, result.finalTileY,
 			totalPushDmg, pushRt, actor.currentAp
 		))
 
-	end
+	elseif actionType == "Item" then
+		-- ITEM ACTION: use a consumable from the unit's equipped slot.
+		-- Validation already confirmed slot, charges, target, and range.
+		local slotIndex    = selection.itemSlotIndex
+		local target       = selection.target
+		local slot         = actor.consumableSlots[slotIndex]
+		local consumableDef = ConsumableData.Items[slot.consumableId]
+
+		-- Deduct 1 charge (item stays equipped at 0 charges but is unusable)
+		slot.currentCharges = slot.currentCharges - 1
+
+		-- RT cost comes from the consumable definition (fixed, not weapon-scaled)
+		local rtCost = consumableDef.rtCost or 80
+		-- Frozen: all RT costs ×2
+		rtCost = math.round(rtCost * StatusService.GetAllRtMultiplier(actor))
+		BattleCoordinator.AccrueRt(state, rtCost)
+
+		-- Resolve the consumable's effect
+		local effectResult = resolveItemEffect(actor, target, consumableDef, state.units)
+
+		-- Broadcast via existing UnitActed event (client sees actionType = "Item")
+		-- NOTE: BattleVisualBroadcaster.UnitActed currently infers actionType from
+		-- skillName presence. A dedicated "ItemUsed" broadcast method should be added
+		-- to BVB in a future update for proper client-side item animations.
+		if BattleVisualBroadcaster.UnitActed then
+			BattleVisualBroadcaster.UnitActed(actor, target, {
+				finalDamage    = effectResult.amount or 0,
+				statusApplied  = effectResult.statusId,
+			}, consumableDef.name)
+		end
+
+		print(string.format(
+			"[CommandService] ITEM [%s] | %s -> %s | Effect:%s | Amount:%d | RT:%d | Charges:%d/%d | AP left:%d",
+			consumableDef.name,
+			actor.name,
+			target and target.name or "ground",
+			effectResult.effectType,
+			effectResult.amount or 0,
+			rtCost,
+			slot.currentCharges,
+			slot.maxCharges or consumableDef.maxCharges or 0,
+			actor.currentAp
+		))
+
+	end  -- end if/elseif action chain
 
 	-- STEP 9: Handoff
 	if actor.currentAp <= 0 then
