@@ -1150,29 +1150,27 @@ openItemDetail = function(item, compareItem, isEquippedMode)
 
 	-- Build button row: bottom-right of SCREEN, on the overlay ScreenGui
 	local btnCount = #btnDefs
-	local BTN_W = 96
-	local BTN_H = 35
-	local BTN_GAP = 2
-	local totalW = btnCount * BTN_W + (btnCount - 1) * BTN_GAP
+	local fb = Theme.FooterBar
+	local totalW = btnCount * fb.BTN_W + (btnCount - 1) * fb.BTN_GAP
 	local btnBar = Instance.new("Frame")
 	btnBar.Name = "DetailBtnBar"
-	btnBar.Size = UDim2.new(0, totalW, 0, BTN_H)
+	btnBar.Size = UDim2.new(0, totalW, 0, fb.BTN_H)
 	btnBar.BackgroundTransparency = 1
 	btnBar.AnchorPoint = Vector2.new(1, 1)
-	btnBar.Position = UDim2.new(1, -8, 1, -8)
+	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
 	btnBar.Parent = detailOverlay
 
 	local rowLayout = Instance.new("UIListLayout")
 	rowLayout.FillDirection = Enum.FillDirection.Horizontal
 	rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	rowLayout.Padding = UDim.new(0, 2)
+	rowLayout.Padding = UDim.new(0, fb.BTN_GAP)
 	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	rowLayout.Parent = btnBar
 
 	for _, def in ipairs(btnDefs) do
 		local btn = Theme.MakeButton(btnBar, def.text, def.style, def.onClick, {
-			size = UDim2.new(0, BTN_W, 0, BTN_H),
+			size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H),
 		})
 		btn.LayoutOrder = def.order
 	end
@@ -1318,9 +1316,19 @@ local function buildDetailHeader(parent, opts)
 	local stroke = Instance.new("UIStroke", iconFrame)
 	stroke.Color = opts.iconStrokeColor or Theme.Colors.Border
 	stroke.Thickness = 1.5
-	makeLabel(iconFrame, { Text = opts.iconText or "?", Size = UDim2.fromScale(1, 1),
-		TextSize = Theme.Text.Title(), TextColor3 = opts.iconColor or Theme.Colors.TextPrimary,
-		TextXAlignment = Enum.TextXAlignment.Center })
+	if opts.iconImage and opts.iconImage ~= "" then
+		local ico = Instance.new("ImageLabel")
+		ico.Size = UDim2.new(1, -4, 1, -4)
+		ico.Position = UDim2.new(0, 2, 0, 2)
+		ico.BackgroundTransparency = 1
+		ico.Image = opts.iconImage
+		ico.ScaleType = Enum.ScaleType.Fit
+		ico.Parent = iconFrame
+	else
+		makeLabel(iconFrame, { Text = opts.iconText or "?", Size = UDim2.fromScale(1, 1),
+			TextSize = Theme.Text.Title(), TextColor3 = opts.iconColor or Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Center })
+	end
 	if opts.level and opts.level > 0 then
 		local lvBadge = Instance.new("Frame")
 		lvBadge.Size = UDim2.new(0, 26, 0, 16)
@@ -2555,48 +2563,39 @@ buildSkillsContent = function()
 		stroke.Color = isSel and Theme.Colors.TextGold or stc.icon
 		stroke.Thickness = isSel and 2 or 1
 
-		-- MP badge (top-left)
-		local mpText = sk.mpCost
-		if type(mpText) == "string" then
-			-- Extract just the number from formula
-			local num = mpText:match("(%d+)")
-			mpText = num and ("MP " .. num) or "MP ?"
-		else
-			mpText = "MP " .. tostring(mpText or 0)
-		end
-		local mpBadge = Instance.new("Frame")
-		mpBadge.Size = UDim2.new(0, 30, 0, 12)
-		mpBadge.Position = UDim2.new(0, 2, 0, 2)
-		mpBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-		mpBadge.BackgroundTransparency = 0.4
-		mpBadge.BorderSizePixel = 0
-		mpBadge.Parent = card
-		Instance.new("UICorner", mpBadge).CornerRadius = UDim.new(0, 3)
-		makeLabel(mpBadge, { Text = mpText, Size = UDim2.fromScale(1, 1),
-			TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.MP,
+		-- Qty badge (top-right, always shown for stackable items)
+		local skQty = sk.qty or 1
+		local qBadge = Instance.new("Frame")
+		qBadge.Size = UDim2.new(0, 22, 0, 12)
+		qBadge.Position = UDim2.new(1, -24, 0, 2)
+		qBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		qBadge.BackgroundTransparency = 0.4
+		qBadge.BorderSizePixel = 0
+		qBadge.ZIndex = 3
+		qBadge.Parent = card
+		Instance.new("UICorner", qBadge).CornerRadius = UDim.new(0, 3)
+		local qLbl = makeLabel(qBadge, { Text = "x" .. skQty, Size = UDim2.fromScale(1, 1),
+			TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextPrimary,
 			TextXAlignment = Enum.TextXAlignment.Center })
+		if qLbl then qLbl.ZIndex = 3 end
 
-		-- Qty badge (top-right)
-		if sk.qty and sk.qty > 1 then
-			local qBadge = Instance.new("Frame")
-			qBadge.Size = UDim2.new(0, 20, 0, 12)
-			qBadge.Position = UDim2.new(1, -22, 0, 2)
-			qBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-			qBadge.BackgroundTransparency = 0.4
-			qBadge.BorderSizePixel = 0
-			qBadge.Parent = card
-			Instance.new("UICorner", qBadge).CornerRadius = UDim.new(0, 3)
-			makeLabel(qBadge, { Text = "x" .. sk.qty, Size = UDim2.fromScale(1, 1),
-				TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextPrimary,
+		-- Icon (full frame) — use uploaded image if available, else type emoji
+		local skDef = sk.def or MockData.GetSkillDef(sk.id)
+		if skDef and skDef.icon and skDef.icon ~= "" then
+			local ico = Instance.new("ImageLabel")
+			ico.Size = UDim2.new(1, -4, 1, -4)
+			ico.Position = UDim2.new(0, 2, 0, 2)
+			ico.BackgroundTransparency = 1
+			ico.Image = skDef.icon
+			ico.ScaleType = Enum.ScaleType.Crop
+			ico.Parent = card
+		else
+			makeLabel(card, { Text = STYPE_ICONS[stype] or "[*]",
+				Size = UDim2.new(1, 0, 0, 24),
+				Position = UDim2.new(0, 0, 0, 14),
+				TextSize = Theme.Text.Title(), TextColor3 = stc.icon,
 				TextXAlignment = Enum.TextXAlignment.Center })
 		end
-
-		-- Icon (center)
-		makeLabel(card, { Text = STYPE_ICONS[stype] or "[*]",
-			Size = UDim2.new(1, 0, 0, 24),
-			Position = UDim2.new(0, 0, 0, 14),
-			TextSize = Theme.Text.Title(), TextColor3 = stc.icon,
-			TextXAlignment = Enum.TextXAlignment.Center })
 
 		-- Name strip (bottom)
 		local nameBg = Instance.new("Frame")
@@ -2658,6 +2657,7 @@ buildSkillsContent = function()
 			cBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 			cBadge.BackgroundTransparency = 0.4
 			cBadge.BorderSizePixel = 0
+			cBadge.ZIndex = 3
 			cBadge.Parent = card
 			Instance.new("UICorner", cBadge).CornerRadius = UDim.new(0, 3)
 			makeLabel(cBadge, { Text = costShort, Size = UDim2.fromScale(1, 1),
@@ -2665,27 +2665,39 @@ buildSkillsContent = function()
 				TextXAlignment = Enum.TextXAlignment.Center })
 		end
 
-		-- Qty badge (top-right)
-		if aug.qty and aug.qty > 1 then
-			local qBadge = Instance.new("Frame")
-			qBadge.Size = UDim2.new(0, 20, 0, 12)
-			qBadge.Position = UDim2.new(1, -22, 0, 2)
-			qBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-			qBadge.BackgroundTransparency = 0.4
-			qBadge.BorderSizePixel = 0
-			qBadge.Parent = card
-			Instance.new("UICorner", qBadge).CornerRadius = UDim.new(0, 3)
-			makeLabel(qBadge, { Text = "x" .. aug.qty, Size = UDim2.fromScale(1, 1),
-				TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextPrimary,
+		-- Qty badge (top-right, always shown for stackable items)
+		local augQty = aug.qty or 1
+		local qBadge = Instance.new("Frame")
+		qBadge.Size = UDim2.new(0, 22, 0, 12)
+		qBadge.Position = UDim2.new(1, -24, 0, 2)
+		qBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		qBadge.BackgroundTransparency = 0.4
+		qBadge.BorderSizePixel = 0
+		qBadge.ZIndex = 3
+		qBadge.Parent = card
+		Instance.new("UICorner", qBadge).CornerRadius = UDim.new(0, 3)
+		local qLbl = makeLabel(qBadge, { Text = "x" .. augQty, Size = UDim2.fromScale(1, 1),
+			TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Center })
+		if qLbl then qLbl.ZIndex = 3 end
+
+		-- Icon (full frame) — use uploaded image if available, else [o]
+		local augDef = aug.def or MockData.GetAugmentDef(aug.id)
+		if augDef and augDef.icon and augDef.icon ~= "" then
+			local ico = Instance.new("ImageLabel")
+			ico.Size = UDim2.new(1, -4, 1, -4)
+			ico.Position = UDim2.new(0, 2, 0, 2)
+			ico.BackgroundTransparency = 1
+			ico.Image = augDef.icon
+			ico.ScaleType = Enum.ScaleType.Crop
+			ico.Parent = card
+		else
+			makeLabel(card, { Text = "[o]",
+				Size = UDim2.new(1, 0, 0, 24),
+				Position = UDim2.new(0, 0, 0, 14),
+				TextSize = Theme.Text.Title(), TextColor3 = Theme.Colors.TextGold,
 				TextXAlignment = Enum.TextXAlignment.Center })
 		end
-
-		-- Icon (center)
-		makeLabel(card, { Text = "[o]",
-			Size = UDim2.new(1, 0, 0, 24),
-			Position = UDim2.new(0, 0, 0, 14),
-			TextSize = Theme.Text.Title(), TextColor3 = Theme.Colors.TextGold,
-			TextXAlignment = Enum.TextXAlignment.Center })
 
 		-- Name strip (bottom)
 		local nameBg = Instance.new("Frame")
@@ -2836,9 +2848,20 @@ buildSkillLoadout = function()
 			sIco.AutoButtonColor = false
 			sIco.Parent = rowF
 			Instance.new("UICorner", sIco).CornerRadius = UDim.new(0, 4)
-			makeLabel(sIco, { Text = STYPE_ICONS[stype] or "[*]",
-				Size = UDim2.fromScale(1, 1), TextSize = Theme.Text.Heading(),
-				TextColor3 = stc.icon, TextXAlignment = Enum.TextXAlignment.Center })
+			local slotDef = MockData.GetSkillDef(skillId)
+			if slotDef and slotDef.icon and slotDef.icon ~= "" then
+				local ico = Instance.new("ImageLabel")
+				ico.Size = UDim2.new(1, -4, 1, -4)
+				ico.Position = UDim2.new(0, 2, 0, 2)
+				ico.BackgroundTransparency = 1
+				ico.Image = slotDef.icon
+				ico.ScaleType = Enum.ScaleType.Fit
+				ico.Parent = sIco
+			else
+				makeLabel(sIco, { Text = STYPE_ICONS[stype] or "[*]",
+					Size = UDim2.fromScale(1, 1), TextSize = Theme.Text.Heading(),
+					TextColor3 = stc.icon, TextXAlignment = Enum.TextXAlignment.Center })
+			end
 
 			-- Click icon -> detail view
 			local capturedSlot = slot
@@ -2970,11 +2993,21 @@ buildSkillLoadout = function()
 				Instance.new("UICorner", augBtn).CornerRadius = UDim.new(0, 3)
 
 				if augDef then
-					-- Show icon placeholder (gold diamond)
-					makeLabel(augBtn, { Text = "[o]",
-						Size = UDim2.fromScale(1, 1),
-						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextGold,
-						TextXAlignment = Enum.TextXAlignment.Center })
+					-- Show icon image or fallback
+					if augDef.icon and augDef.icon ~= "" then
+						local ico = Instance.new("ImageLabel")
+						ico.Size = UDim2.new(1, -2, 1, -2)
+						ico.Position = UDim2.new(0, 1, 0, 1)
+						ico.BackgroundTransparency = 1
+						ico.Image = augDef.icon
+						ico.ScaleType = Enum.ScaleType.Fit
+						ico.Parent = augBtn
+					else
+						makeLabel(augBtn, { Text = "[o]",
+							Size = UDim2.fromScale(1, 1),
+							TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextGold,
+							TextXAlignment = Enum.TextXAlignment.Center })
+					end
 
 					local cSlot = slot
 					local cAug = a
@@ -3077,6 +3110,7 @@ openSkillCardDetail = function(sk)
 	local descText = (def and def.description) or buildSkillDescription(def)
 	local hdrH = buildDetailHeader(addRow(scroll, 72), {
 		iconText = STYPE_ICONS[stype] or "[*]",
+		iconImage = def and def.icon or nil,
 		iconBg = stc.bg,
 		iconColor = stc.icon,
 		iconStrokeColor = stc.icon,
@@ -3181,20 +3215,18 @@ openSkillCardDetail = function(sk)
 	end
 
 	-- ---- BUTTON BAR ----
-	local SKL_BTN_W = 96
-	local SKL_BTN_H = 35
-	local SKL_BTN_GAP = 2
+	local fb = Theme.FooterBar
 	local btnBar = Instance.new("Frame")
 	btnBar.Name = "BtnBar"
 	btnBar.BackgroundTransparency = 1
 	btnBar.AnchorPoint = Vector2.new(1, 1)
-	btnBar.Position = UDim2.new(1, -8, 1, -8)
+	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
 	btnBar.Parent = detailOverlay
 	local rowLayout = Instance.new("UIListLayout")
 	rowLayout.FillDirection = Enum.FillDirection.Horizontal
 	rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	rowLayout.Padding = UDim.new(0, SKL_BTN_GAP)
+	rowLayout.Padding = UDim.new(0, fb.BTN_GAP)
 	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	rowLayout.Parent = btnBar
 
@@ -3209,7 +3241,7 @@ openSkillCardDetail = function(sk)
 			end
 		end
 		local btn = Theme.MakeButton(btnBar, text, style, onClick, {
-			size = UDim2.new(0, SKL_BTN_W, 0, SKL_BTN_H),
+			size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H),
 		})
 		btn.LayoutOrder = btnOrder
 		btnOrder = btnOrder + 1
@@ -3224,7 +3256,7 @@ openSkillCardDetail = function(sk)
 
 	addBtn("BACK", Theme.Colors.Surface, closeDetail)
 
-	btnBar.Size = UDim2.new(0, (btnOrder * SKL_BTN_W) + ((btnOrder - 1) * SKL_BTN_GAP), 0, SKL_BTN_H)
+	btnBar.Size = UDim2.new(0, (btnOrder * fb.BTN_W) + ((btnOrder - 1) * fb.BTN_GAP), 0, fb.BTN_H)
 end
 
 -- ==================================================================
@@ -3289,6 +3321,7 @@ openAugmentCardDetail = function(aug)
 	local augDescText = (def and def.description) or ""
 	local hdrH = buildDetailHeader(addRow(scroll, 72), {
 		iconText = "[o]",
+		iconImage = def and def.icon or nil,
 		iconBg = Color3.fromRGB(74, 53, 16),
 		iconColor = Theme.Colors.TextGold,
 		iconStrokeColor = Theme.Colors.TextGold,
@@ -3409,20 +3442,18 @@ openAugmentCardDetail = function(aug)
 	end
 
 	-- ---- BUTTON BAR ----
-	local SKL_BTN_W = 96
-	local SKL_BTN_H = 35
-	local SKL_BTN_GAP = 2
+	local fb = Theme.FooterBar
 	local btnBar = Instance.new("Frame")
 	btnBar.Name = "BtnBar"
 	btnBar.BackgroundTransparency = 1
 	btnBar.AnchorPoint = Vector2.new(1, 1)
-	btnBar.Position = UDim2.new(1, -8, 1, -8)
+	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
 	btnBar.Parent = detailOverlay
 	local bLayout = Instance.new("UIListLayout")
 	bLayout.FillDirection = Enum.FillDirection.Horizontal
 	bLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	bLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	bLayout.Padding = UDim.new(0, SKL_BTN_GAP)
+	bLayout.Padding = UDim.new(0, fb.BTN_GAP)
 	bLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	bLayout.Parent = btnBar
 	local btnOrder = 0
@@ -3436,7 +3467,7 @@ openAugmentCardDetail = function(aug)
 			end
 		end
 		local btn = Theme.MakeButton(btnBar, text, style, onClick, {
-			size = UDim2.new(0, SKL_BTN_W, 0, SKL_BTN_H),
+			size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H),
 		})
 		btn.LayoutOrder = btnOrder
 		btnOrder = btnOrder + 1
@@ -3447,7 +3478,7 @@ openAugmentCardDetail = function(aug)
 		openAugmentSlotPicker(aug)
 	end)
 	addBtn("BACK", Theme.Colors.Surface, closeDetail)
-	btnBar.Size = UDim2.new(0, (btnOrder * SKL_BTN_W) + ((btnOrder - 1) * SKL_BTN_GAP), 0, SKL_BTN_H)
+	btnBar.Size = UDim2.new(0, (btnOrder * fb.BTN_W) + ((btnOrder - 1) * fb.BTN_GAP), 0, fb.BTN_H)
 end
 
 -- ==================================================================
@@ -3809,6 +3840,7 @@ openEquippedSkillDetail = function(slotNum, skillId, augments)
 	local eqDescText = (def and def.description) or buildSkillDescription(def)
 	local hdrH = buildDetailHeader(addRow(scroll, 72), {
 		iconText = STYPE_ICONS[stype] or "[*]",
+		iconImage = def and def.icon or nil,
 		iconBg = stc.bg,
 		iconColor = stc.icon,
 		iconStrokeColor = stc.icon,
@@ -3874,20 +3906,18 @@ openEquippedSkillDetail = function(slotNum, skillId, augments)
 	end
 
 	-- Buttons
-	local SKL_BTN_W = 96
-	local SKL_BTN_H = 35
-	local SKL_BTN_GAP = 2
+	local fb = Theme.FooterBar
 	local btnBar = Instance.new("Frame")
 	btnBar.Name = "BtnBar"
 	btnBar.BackgroundTransparency = 1
 	btnBar.AnchorPoint = Vector2.new(1, 1)
-	btnBar.Position = UDim2.new(1, -8, 1, -8)
+	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
 	btnBar.Parent = detailOverlay
 	local bLayout = Instance.new("UIListLayout")
 	bLayout.FillDirection = Enum.FillDirection.Horizontal
 	bLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	bLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	bLayout.Padding = UDim.new(0, SKL_BTN_GAP)
+	bLayout.Padding = UDim.new(0, fb.BTN_GAP)
 	bLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	bLayout.Parent = btnBar
 	local btnOrder = 0
@@ -3901,7 +3931,7 @@ openEquippedSkillDetail = function(slotNum, skillId, augments)
 			end
 		end
 		local btn = Theme.MakeButton(btnBar, text, style, onClick, {
-			size = UDim2.new(0, SKL_BTN_W, 0, SKL_BTN_H),
+			size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H),
 		})
 		btn.LayoutOrder = btnOrder
 		btnOrder = btnOrder + 1
@@ -3930,7 +3960,7 @@ openEquippedSkillDetail = function(slotNum, skillId, augments)
 	end)
 
 	addBtn("BACK", Theme.Colors.Surface, closeDetail)
-	btnBar.Size = UDim2.new(0, (btnOrder * SKL_BTN_W) + ((btnOrder - 1) * SKL_BTN_GAP), 0, SKL_BTN_H)
+	btnBar.Size = UDim2.new(0, (btnOrder * fb.BTN_W) + ((btnOrder - 1) * fb.BTN_GAP), 0, fb.BTN_H)
 end
 
 -- ==================================================================
@@ -3970,8 +4000,10 @@ openEquippedAugmentDetail = function(slotNum, augSlotNum, augmentId)
 	local eqAugTags = {}
 	if def and def.family then table.insert(eqAugTags, def.family) end
 	local eqAugDesc = (def and def.description) or (def and def.effect) or ""
+	local eqAugDef = MockData.GetAugmentDef(augId)
 	local nextY = buildDetailHeader(panel, {
 		iconText = "[o]",
+		iconImage = eqAugDef and eqAugDef.icon or nil,
 		iconBg = Color3.fromRGB(74, 53, 16),
 		iconColor = Theme.Colors.TextGold,
 		iconStrokeColor = Theme.Colors.TextGold,
@@ -3994,20 +4026,18 @@ openEquippedAugmentDetail = function(slotNum, augSlotNum, augmentId)
 	end
 
 	-- Buttons
-	local SKL_BTN_W = 96
-	local SKL_BTN_H = 35
-	local SKL_BTN_GAP = 2
+	local fb = Theme.FooterBar
 	local btnBar = Instance.new("Frame")
 	btnBar.Name = "BtnBar"
 	btnBar.BackgroundTransparency = 1
 	btnBar.AnchorPoint = Vector2.new(1, 1)
-	btnBar.Position = UDim2.new(1, -8, 1, -8)
+	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
 	btnBar.Parent = detailOverlay
 	local bLayout = Instance.new("UIListLayout")
 	bLayout.FillDirection = Enum.FillDirection.Horizontal
 	bLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	bLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	bLayout.Padding = UDim.new(0, SKL_BTN_GAP)
+	bLayout.Padding = UDim.new(0, fb.BTN_GAP)
 	bLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	bLayout.Parent = btnBar
 	local btnOrder = 0
@@ -4021,7 +4051,7 @@ openEquippedAugmentDetail = function(slotNum, augSlotNum, augmentId)
 			end
 		end
 		local btn = Theme.MakeButton(btnBar, text, style, onClick, {
-			size = UDim2.new(0, SKL_BTN_W, 0, SKL_BTN_H),
+			size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H),
 		})
 		btn.LayoutOrder = btnOrder
 		btnOrder = btnOrder + 1
@@ -4036,7 +4066,7 @@ openEquippedAugmentDetail = function(slotNum, augSlotNum, augmentId)
 		buildSkillsContent()
 	end)
 	addBtn("BACK", Theme.Colors.Surface, closeDetail)
-	btnBar.Size = UDim2.new(0, (btnOrder * SKL_BTN_W) + ((btnOrder - 1) * SKL_BTN_GAP), 0, SKL_BTN_H)
+	btnBar.Size = UDim2.new(0, (btnOrder * fb.BTN_W) + ((btnOrder - 1) * fb.BTN_GAP), 0, fb.BTN_H)
 end
 
 --------------------------------------------------

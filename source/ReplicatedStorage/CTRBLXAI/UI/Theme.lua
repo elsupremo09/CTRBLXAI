@@ -630,6 +630,16 @@ print("[DIAG-ASSETS] BTN_SLICE_CENTER = " .. tostring(BTN_SLICE_CENTER) .. " (ma
 -- Shared SliceCenter for all button assets (adjust if 9-slice guides differ)
 local BTN_SLICE_CENTER = Rect.new(12, 12, 188, 36)
 
+-- ============ FOOTER BUTTON BAR CONFIG ============
+-- All screens must use these values for bottom-right button bars.
+-- Position: anchored (1,1) at screen bottom-right with 8px margin.
+Theme.FooterBar = {
+	BTN_W   = 96,
+	BTN_H   = 35,
+	BTN_GAP = 2,
+	PAD     = 8,     -- margin from screen edge
+}
+
 -- style: "Primary", "Secondary", or "Tertiary"
 function Theme.MakeButton(parent, text, style, onClick, opts)
 	opts = opts or {}

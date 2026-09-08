@@ -228,8 +228,8 @@ local function ensureRoot()
 	-- BOTTOM-RIGHT: Fixed command bar (Execute / Back)
 	commandBar = Instance.new("Frame")
 	commandBar.Name = "CommandBar"
-	commandBar.Size = UDim2.new(0.20, 0, 0, 40)
-	commandBar.Position = UDim2.new(1, -PAD, 1, -PAD)
+	commandBar.Size = UDim2.new(0, 2 * Theme.FooterBar.BTN_W + Theme.FooterBar.BTN_GAP, 0, Theme.FooterBar.BTN_H)
+	commandBar.Position = UDim2.new(1, -Theme.FooterBar.PAD, 1, -Theme.FooterBar.PAD)
 	commandBar.AnchorPoint = Vector2.new(1, 1)
 	commandBar.BackgroundTransparency = 1
 	commandBar.Parent = rootFrame
@@ -481,6 +481,15 @@ function BattleHUD.ShowCommandBar(buttons)
 	-- Clear previous
 	for _, child in ipairs(commandBar:GetChildren()) do child:Destroy() end
 
+	-- Add UIListLayout for consistent spacing
+	local cmdLayout = Instance.new("UIListLayout")
+	cmdLayout.FillDirection = Enum.FillDirection.Horizontal
+	cmdLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	cmdLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	cmdLayout.Padding = UDim.new(0, Theme.FooterBar.BTN_GAP)
+	cmdLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	cmdLayout.Parent = commandBar
+
 	if not buttons or #buttons == 0 then
 		commandBar.Visible = false
 		return
@@ -488,7 +497,8 @@ function BattleHUD.ShowCommandBar(buttons)
 	commandBar.Visible = true
 
 	local btnCount = #buttons
-	local btnW = 1 / btnCount
+	local fb = Theme.FooterBar
+	commandBar.Size = UDim2.new(0, btnCount * fb.BTN_W + (btnCount - 1) * fb.BTN_GAP, 0, fb.BTN_H)
 
 	for i, b in ipairs(buttons) do
 		-- Map color to button style
@@ -502,12 +512,13 @@ function BattleHUD.ShowCommandBar(buttons)
 		elseif bText == "Back" or bText == "Cancel" then
 			style = "Secondary"
 		end
+		local fb = Theme.FooterBar
 		local btn = Theme.MakeButton(commandBar, bText, style, nil, {
-			size = UDim2.new(btnW, -2, 1, 0),
-			position = UDim2.new(btnW * (i - 1), 1, 0, 0),
+			size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H),
 			textColor = b.textColor or Theme.Colors.TextPrimary,
 			disabled = (b.enabled == false),
 		})
+		btn.LayoutOrder = i
 		if b.onPress and b.enabled ~= false then
 			btn.MouseButton1Click:Connect(function()
 				if b.disableOnPress then btn.ImageTransparency = 0.5; btn.Active = false end
