@@ -517,6 +517,10 @@ local function buildEquippedLoadout()
 
 		for i, slotDef in ipairs(EQUIP_SLOTS) do
 			local item = MockData.GetEquipped(unit.id, slotDef.slot)
+			-- Doctrine is not a regular inventory item — build from server data
+			if not item and slotDef.slot == "Doctrine" then
+				item = MockData.GetEquippedDoctrine(unit.id)
+			end
 			local isOffHandDisabled = (slotDef.slot == "OffHand" and mainIs2H)
 
 
@@ -543,10 +547,34 @@ local function buildEquippedLoadout()
 			Instance.new("UICorner", tile).CornerRadius = UDim.new(0, 4)
 
 			if item then
-				-- Icon (centered, large)
-				makeLabel(tile, { Text = item.icon or "?", Size = UDim2.new(1, 0, 0, 24),
-					Position = UDim2.new(0, 0, 0.15, 0),
-					TextSize = 22, TextXAlignment = Enum.TextXAlignment.Center })
+				-- Icon (centered) — use uploaded image if available
+				if item.icon and string.find(item.icon, "rbxassetid://") then
+					local PAD = 2
+					local ico = Instance.new("ImageLabel")
+					-- Square: side length = tile height minus 2*PAD
+					ico.Size = UDim2.new(1, -2*PAD, 1, -2*PAD)
+					ico.SizeConstraint = Enum.SizeConstraint.RelativeYY
+					ico.Position = UDim2.new(1, -PAD, 0, PAD)
+					ico.AnchorPoint = Vector2.new(1, 0)
+					ico.BackgroundTransparency = 1
+					ico.Image = item.icon
+					ico.ScaleType = Enum.ScaleType.Fit
+					ico.Parent = tile
+				else
+					makeLabel(tile, { Text = item.icon or "?", Size = UDim2.new(1, 0, 0, 24),
+						Position = UDim2.new(0, 0, 0.15, 0),
+						TextSize = 22, TextXAlignment = Enum.TextXAlignment.Center })
+				end
+
+				-- Slot type label (left side, vertically centered)
+				local slotLbl = makeLabel(tile, { Text = slotDef.label,
+					Size = UDim2.new(0.5, 0, 0.5, 0),
+					Position = UDim2.new(0, 3, 0.15, 0),
+					TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+					TextColor3 = Theme.Colors.TextDisabled,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextWrapped = true })
+				if slotLbl then slotLbl.ZIndex = 3 end
 
 				-- Name (bottom area)
 				local nameBg = Instance.new("Frame")
@@ -555,18 +583,21 @@ local function buildEquippedLoadout()
 				nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 				nameBg.BackgroundTransparency = 0.4
 				nameBg.BorderSizePixel = 0
+				nameBg.ZIndex = 3
 				nameBg.Parent = tile
-				makeLabel(nameBg, { Text = item.name, Size = UDim2.new(1, -4, 1, 0),
+				local eqNameLbl = makeLabel(nameBg, { Text = item.name, Size = UDim2.new(1, -4, 1, 0),
 					Position = UDim2.new(0, 2, 0, 0),
-					TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextPrimary,
+					TextSize = Theme.Text.Small(), TextColor3 = getRarityColor(item.rarity),
 					TextXAlignment = Enum.TextXAlignment.Left })
+				if eqNameLbl then eqNameLbl.ZIndex = 3 end
 
 				-- Level
 				if item.lv and item.lv > 0 then
-					makeLabel(tile, { Text = "Lv" .. item.lv, Size = UDim2.new(0, 28, 0, 10),
+					local eqLvLbl = makeLabel(tile, { Text = "Lv" .. item.lv, Size = UDim2.new(0, 28, 0, 10),
 						Position = UDim2.new(0, 2, 0, 2),
 						TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary,
 						TextXAlignment = Enum.TextXAlignment.Left })
+					if eqLvLbl then eqLvLbl.ZIndex = 3 end
 				end
 			else
 				-- Empty slot or disabled off-hand
@@ -800,10 +831,11 @@ local function buildItemGrid(parent)
 
 		-- Level (top-left)
 		local lvlText = item.cat == "Consumable" and ("×" .. (item.qty or 1)) or ("Lv." .. (item.lv or 1))
-		makeLabel(card, { Text = lvlText, Size = UDim2.new(0, 36, 0, 12),
+		local lvLbl = makeLabel(card, { Text = lvlText, Size = UDim2.new(0, 36, 0, 12),
 			Position = UDim2.new(0, 3, 0, 2),
 			TextSize = 9, TextColor3 = Theme.Colors.TextSecondary,
 			Font = Theme.Font.Mono })
+		if lvLbl then lvLbl.ZIndex = 3 end
 
 		-- Equipped marker (top-right)
 		if isEquipped then
@@ -812,12 +844,14 @@ local function buildItemGrid(parent)
 			marker.Position = UDim2.new(1, -16, 0, 2)
 			marker.BackgroundColor3 = Theme.Colors.TextGold
 			marker.BorderSizePixel = 0
+			marker.ZIndex = 3
 			marker.Parent = card
 			Instance.new("UICorner", marker).CornerRadius = UDim.new(0, 2)
-			makeLabel(marker, { Text = "E", Size = UDim2.fromScale(1, 1),
+			local eLbl = makeLabel(marker, { Text = "E", Size = UDim2.fromScale(1, 1),
 				TextSize = 8, Font = Theme.Font.PrimaryBold,
 				TextColor3 = Color3.fromRGB(0, 0, 0),
 				TextXAlignment = Enum.TextXAlignment.Center })
+			if eLbl then eLbl.ZIndex = 3 end
 		end
 
 		-- NEW badge (top-right, below equipped marker if both)
@@ -827,18 +861,30 @@ local function buildItemGrid(parent)
 			newBadge.Position = UDim2.new(1, -24, 0, isEquipped and 16 or 2)
 			newBadge.BackgroundColor3 = Theme.Colors.Success
 			newBadge.BorderSizePixel = 0
+			newBadge.ZIndex = 3
 			newBadge.Parent = card
 			Instance.new("UICorner", newBadge).CornerRadius = UDim.new(0, 2)
-			makeLabel(newBadge, { Text = "NEW", Size = UDim2.fromScale(1, 1),
+			local newLbl = makeLabel(newBadge, { Text = "NEW", Size = UDim2.fromScale(1, 1),
 				TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
 				TextColor3 = Color3.fromRGB(0, 0, 0),
 				TextXAlignment = Enum.TextXAlignment.Center })
+			if newLbl then newLbl.ZIndex = 3 end
 		end
 
-		-- Icon (center)
-		makeLabel(card, { Text = item.icon or "?", Size = UDim2.new(1, 0, 0, 28),
-			Position = UDim2.new(0, 0, 0.15, 0),
-			TextSize = 24, TextXAlignment = Enum.TextXAlignment.Center })
+		-- Icon (center) — use uploaded image if available, else text
+		if item.icon and string.find(item.icon, "rbxassetid://") then
+			local ico = Instance.new("ImageLabel")
+			ico.Size = UDim2.new(1, -4, 1, -4)
+			ico.Position = UDim2.new(0, 2, 0, 2)
+			ico.BackgroundTransparency = 1
+			ico.Image = item.icon
+			ico.ScaleType = Enum.ScaleType.Crop
+			ico.Parent = card
+		else
+			makeLabel(card, { Text = item.icon or "?", Size = UDim2.new(1, 0, 0, 28),
+				Position = UDim2.new(0, 0, 0.15, 0),
+				TextSize = 24, TextXAlignment = Enum.TextXAlignment.Center })
+		end
 
 		-- Name (bottom)
 		local nameBg = Instance.new("Frame")
@@ -847,11 +893,13 @@ local function buildItemGrid(parent)
 		nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		nameBg.BackgroundTransparency = 0.4
 		nameBg.BorderSizePixel = 0
+		nameBg.ZIndex = 3
 		nameBg.Parent = card
-		makeLabel(nameBg, { Text = item.name, Size = UDim2.new(1, -4, 1, 0),
+		local nameLbl = makeLabel(nameBg, { Text = item.name, Size = UDim2.new(1, -4, 1, 0),
 			Position = UDim2.new(0, 2, 0, 0),
-			TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextPrimary,
+			TextSize = Theme.Text.Small(), TextColor3 = getRarityColor(item.rarity),
 			TextXAlignment = Enum.TextXAlignment.Left })
+		if nameLbl then nameLbl.ZIndex = 3 end
 
 		card.MouseButton1Click:Connect(function()
 			openItemDetail(item, nil)
@@ -1395,6 +1443,7 @@ buildSoloDetailContent = function(panel, item)
 	-- Unified header
 	local divY = buildDetailHeader(panel, {
 		iconText = item.icon or "?",
+		iconImage = (item.icon and string.find(item.icon, "rbxassetid://")) and item.icon or nil,
 		iconBg = rc,
 		iconBgTransparency = 0.75,
 		iconColor = Theme.Colors.TextPrimary,
@@ -2213,7 +2262,7 @@ buildSkillsContent = function()
 	end
 
 	local loadout = MockData.GetSkillLoadout(unit.id)
-	local doctrineId = unit.doctrineId or "DOC-BERSERKER"
+	local doctrineId = MockData.GetUnitDoctrineId(unit.id)
 
 	-- ============================================================
 	-- LEFT: CARD GRID (in skillsPanel)
@@ -2609,7 +2658,7 @@ buildSkillsContent = function()
 			Size = UDim2.new(1, -4, 0, 12),
 			Position = UDim2.new(0, 2, 0, 0),
 			TextSize = Theme.Text.Tiny(), Font = Theme.Font.PrimaryBold,
-			TextColor3 = Theme.Colors.TextPrimary,
+			TextColor3 = stc.icon,
 			TextXAlignment = Enum.TextXAlignment.Left })
 
 		-- Tags line
@@ -2747,7 +2796,7 @@ buildSkillLoadout = function()
 	if not unit then return end
 
 	local loadout = MockData.GetSkillLoadout(unit.id)
-	local doctrineId = unit.doctrineId or "DOC-BERSERKER"
+	local doctrineId = MockData.GetUnitDoctrineId(unit.id)
 
 	-- Column headers
 	local hdrRow = Instance.new("Frame")
@@ -2863,12 +2912,23 @@ buildSkillLoadout = function()
 					TextColor3 = stc.icon, TextXAlignment = Enum.TextXAlignment.Center })
 			end
 
-			-- Click icon -> detail view
-			local capturedSlot = slot
-			local capturedId = skillId
-			local capturedAugs = augments
+			-- Click icon -> same detail view as inventory skill cards
+			local capturedDef = MockData.GetSkillDef(skillId)
+			local capturedMock = MockData.GetSkill(skillId)
+			local capturedSk = {
+				id = skillId,
+				name = name,
+				tags = tags,
+				mpCost = capturedDef and capturedDef.mpCostFormula or (capturedMock and capturedMock.mpCost) or "?",
+				rtCost = capturedDef and capturedDef.rtCostFormula or (capturedMock and capturedMock.rtCost) or "?",
+				desc = capturedDef and capturedDef.effects or "",
+				qty = 1,
+				isSkill = true,
+				def = capturedDef,
+				mockSkill = capturedMock,
+			}
 			sIco.MouseButton1Click:Connect(function()
-				openEquippedSkillDetail(capturedSlot, capturedId, capturedAugs)
+				openSkillCardDetail(capturedSk)
 			end)
 
 			-- Skill name only (no tags, no MP/RT)
@@ -3015,11 +3075,17 @@ buildSkillLoadout = function()
 						openEquippedAugmentDetail(cSlot, cAug, augId)
 					end)
 				else
-					-- Empty augment slot indicator
+					-- Empty augment slot — click opens augment card inventory detail
 					makeLabel(augBtn, { Text = "+",
 						Size = UDim2.fromScale(1, 1),
 						TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextDisabled,
 						TextXAlignment = Enum.TextXAlignment.Center })
+					local cSlot = slot
+					local cAug = a
+					augBtn.MouseButton1Click:Connect(function()
+						-- Open a picker showing all augment cards to attach to this specific slot
+						openAugmentPickerForSlot(unit.id, cSlot, cAug)
+					end)
 				end
 			end
 
@@ -3623,6 +3689,129 @@ openSkillSlotPicker = function(sk)
 end
 
 -- ==================================================================
+-- openAugmentPickerForSlot: Show available augment cards to attach to a specific slot
+-- Called when clicking an empty "+" augment slot in the loadout table
+local function openAugmentPickerForSlot(unitId, slotNum, augSlotNum)
+	closeDetail()
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	-- Build list of available augment cards
+	local augCards = {}
+	if MockData.AugmentCardInventory then
+		for augId, qty in pairs(MockData.AugmentCardInventory) do
+			if qty and qty > 0 then
+				local def = MockData.GetAugmentDef(augId)
+				if def then
+					table.insert(augCards, { id = augId, name = def.name or augId, qty = qty, def = def })
+				end
+			end
+		end
+	end
+	table.sort(augCards, function(a, b) return a.name < b.name end)
+
+	if #augCards == 0 then return end
+
+	detailOverlay = Instance.new("ScreenGui")
+	detailOverlay.Name = "AugPickerForSlot"
+	detailOverlay.DisplayOrder = 115
+	detailOverlay.ResetOnSpawn = false
+	detailOverlay.Parent = getPlayerGui()
+
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.5
+	backdrop.Text = ""
+	backdrop.BorderSizePixel = 0
+	backdrop.Parent = detailOverlay
+	backdrop.MouseButton1Click:Connect(closeDetail)
+
+	local popup = Theme.MakePanel("AugPickerForSlot",
+		UDim2.new(0, 280, 0, 300),
+		UDim2.new(0.5, 0, 0.5, 0),
+		Vector2.new(0.5, 0.5),
+		detailOverlay)
+	popup.ClipsDescendants = true
+	pad(popup, 10, 10, 10, 10)
+
+	makeLabel(popup, { Text = "Attach augment to Slot " .. slotNum .. " Aug " .. augSlotNum .. ":",
+		Size = UDim2.new(1, 0, 0, 18),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
+		TextColor3 = Theme.Colors.TextGold })
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, 0, 1, -44)
+	scroll.Position = UDim2.new(0, 0, 0, 22)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 3
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.Parent = popup
+
+	local sLayout = Instance.new("UIListLayout", scroll)
+	sLayout.Padding = UDim.new(0, 3)
+	sLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	for idx, ac in ipairs(augCards) do
+		local rowBtn = Instance.new("TextButton")
+		rowBtn.Size = UDim2.new(1, 0, 0, 28)
+		rowBtn.BackgroundColor3 = Theme.Colors.PanelRaised
+		rowBtn.BackgroundTransparency = 0.2
+		rowBtn.BorderSizePixel = 0
+		rowBtn.Text = ""
+		rowBtn.AutoButtonColor = true
+		rowBtn.LayoutOrder = idx
+		rowBtn.Parent = scroll
+		Instance.new("UICorner", rowBtn).CornerRadius = UDim.new(0, 4)
+
+		-- Icon
+		if ac.def and ac.def.icon and ac.def.icon ~= "" then
+			local ico = Instance.new("ImageLabel")
+			ico.Size = UDim2.new(0, 22, 0, 22)
+			ico.Position = UDim2.new(0, 3, 0, 3)
+			ico.BackgroundTransparency = 1
+			ico.Image = ac.def.icon
+			ico.ScaleType = Enum.ScaleType.Fit
+			ico.Parent = rowBtn
+		end
+
+		makeLabel(rowBtn, { Text = ac.name,
+			Size = UDim2.new(1, -32, 1, 0),
+			Position = UDim2.new(0, 28, 0, 0),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
+			TextColor3 = Theme.Colors.TextPrimary })
+
+		makeLabel(rowBtn, { Text = "x" .. ac.qty,
+			Size = UDim2.new(0, 24, 1, 0),
+			Position = UDim2.new(1, -26, 0, 0),
+			TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono,
+			TextColor3 = Theme.Colors.TextSecondary,
+			TextXAlignment = Enum.TextXAlignment.Right })
+
+		rowBtn.MouseButton1Click:Connect(function()
+			closeDetail()
+			if MockData.ServerAttachAugment then
+				MockData.ServerAttachAugment(unitId, slotNum, augSlotNum, ac.id)
+			end
+			MockData.LoadSkillData(unitId)
+			buildSkillsContent()
+		end)
+	end
+
+	local cancel = Instance.new("TextButton")
+	cancel.Size = UDim2.new(1, 0, 0, 18)
+	cancel.Position = UDim2.new(0, 0, 1, -20)
+	cancel.BackgroundTransparency = 1
+	cancel.Font = Theme.Font.Primary
+	cancel.TextSize = Theme.Text.Small()
+	cancel.TextColor3 = Theme.Colors.TextSecondary
+	cancel.Text = "Cancel"
+	cancel.Parent = popup
+	cancel.MouseButton1Click:Connect(closeDetail)
+end
+
 -- openAugmentSlotPicker: Show all 10 augment slots to choose from
 -- ==================================================================
 openAugmentSlotPicker = function(aug)
@@ -4157,8 +4346,14 @@ end
 
 function LoadoutScreen.Refresh()
 	buildUnitHeader()
-	buildEquippedLoadout()
-	buildInventory()
+	if currentTab == "EQUIPMENT" then
+		buildEquippedLoadout()
+		buildInventory()
+	elseif currentTab == "SKILLS" then
+		buildSkillsContent()
+	elseif currentTab == "INFO" then
+		buildInfoContent()
+	end
 end
 
 function LoadoutScreen.Hide()

@@ -541,6 +541,7 @@ local SkillData = {
 	},
 	["DOC-VANGUARD-01"] = {
 		name = "Hold the Line",
+		icon = "rbxassetid://97017157952047",
 		description = "Enters a defensive stance, gaining increased Stability and reducing incoming damage for a duration.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None, Passives: None",
@@ -561,6 +562,7 @@ local SkillData = {
 	},
 	["DOC-BERSERKER-01"] = {
 		name = "Reckless Charge",
+		icon = "rbxassetid://95332908802191",
 		description = "Charges up to 3 tiles toward an enemy and strikes for physical damage. Costs 10% current HP as a trade-off.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Melee Only",
@@ -580,6 +582,7 @@ local SkillData = {
 	},
 	["DOC-ARCANIST-01"] = {
 		name = "Mana Surge",
+		icon = "rbxassetid://133225253193415",
 		description = "Restores 20% of max MP and empowers the next skill with +10% potency. Costs no MP.",
 		tags = {"Buff", "Utility"},
 		properties = "Passives: None",
@@ -601,6 +604,7 @@ local SkillData = {
 	},
 	["DOC-TACTICIAN-01"] = {
 		name = "Coordinated Advance",
+		icon = "rbxassetid://114034182443247",
 		description = "Buffs an ally or yourself with extra movement range and faster movement speed for a duration.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None, Passives: None",
@@ -622,6 +626,7 @@ local SkillData = {
 	},
 	["DOC-RANGER-01"] = {
 		name = "Hunter’s Mark",
+		icon = "rbxassetid://75906484757522",
 		description = "Strikes an enemy at range and marks them — the Ranger deals +15% damage to the marked target and ignores their Hide.",
 		tags = {"Direct Damage", "Debuff", "Physical"},
 		properties = "Projectile: Inherit",
@@ -643,6 +648,7 @@ local SkillData = {
 	},
 	["DOC-WARLORD-01"] = {
 		name = "War Cry",
+		icon = "rbxassetid://124279830540889",
 		description = "Rallies the caster and all nearby allies, boosting their damage and Stability.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None, Passives: None",
@@ -665,6 +671,7 @@ local SkillData = {
 	},
 	["DOC-SHADOWBINDER-01"] = {
 		name = "Veil of Weakness",
+		icon = "rbxassetid://99485436500098",
 		description = "Curses an enemy at range with Weakened and reduced debuff resistance.",
 		tags = {"Debuff", "Dark"},
 		properties = "Potency: None",
@@ -687,6 +694,7 @@ local SkillData = {
 	},
 	["DOC-SPELLBLADE-01"] = {
 		name = "Arcane Strike",
+		icon = "rbxassetid://99106052758926",
 		description = "A hybrid strike that combines full weapon damage with bonus magic power from INT.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Projectile: Inherit",
@@ -707,6 +715,7 @@ local SkillData = {
 	},
 	["DOC-ASCETIC-01"] = {
 		name = "Meditate",
+		icon = "rbxassetid://115819499591443",
 		description = "Restores MP to yourself or transfers MP to an ally. Also grants temporary debuff resistance. Costs no MP.",
 		tags = {"Utility", "Buff"},
 		properties = "Potency: None, Passives: None",
@@ -728,6 +737,7 @@ local SkillData = {
 	},
 	["DOC-TRICKSTER-01"] = {
 		name = "Misdirection",
+		icon = "rbxassetid://137604494702566",
 		description = "Creates a deceptive ward that redirects the next enemy attack targeting the caster to a nearby enemy instead.",
 		tags = {"Utility", "Buff"},
 		properties = "Potency: None, Passives: None",
@@ -748,6 +758,7 @@ local SkillData = {
 	},
 	["DOC-THIEF-01"] = {
 		name = "Mug",
+		icon = "rbxassetid://104907530190478",
 		description = "Strikes an enemy for physical damage and attempts to steal from them in the same action.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Projectile: Inherit",
@@ -768,6 +779,7 @@ local SkillData = {
 	},
 	["DOC-DUELIST-01"] = {
 		name = "Riposte Stance",
+		icon = "rbxassetid://104724809142322",
 		description = "Enters a reactive stance that automatically counterattacks up to twice when hit by melee attacks.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None",
@@ -788,6 +800,7 @@ local SkillData = {
 	},
 	["DOC-TWINBLADE-01"] = {
 		name = "Crossing Blades",
+		icon = "rbxassetid://89428795792042",
 		description = "Strikes with both weapons in quick succession, dealing two hits of dual-wield physical damage.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Dual Wield",
@@ -807,6 +820,7 @@ local SkillData = {
 	},
 	["DOC-TWINBLADE-02"] = {
 		name = "Feinting Flurry",
+		icon = "rbxassetid://98012725325249",
 		description = "Unleashes four rapid alternating strikes with both weapons, reducing the target's evasion with each hit.",
 		tags = {"Direct Damage", "Physical", "Debuff"},
 		properties = "Dual Wield",
@@ -829,6 +843,7 @@ local SkillData = {
 	},
 	["DOC-JUGGERNAUT-01"] = {
 		name = "Overwhelming Blow",
+		icon = "rbxassetid://112694580518016",
 		description = "Delivers a massive two-handed melee strike that deals heavy damage and knocks the target back.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "2H Melee",
@@ -850,6 +865,7 @@ local SkillData = {
 	},
 	["DOC-CONJURER-01"] = {
 		name = "Conjure Sentinel",
+		icon = "rbxassetid://116068659182802",
 		description = "Summons a durable melee Sentinel to fight alongside the caster. Only one Sentinel at a time.",
 		tags = {"Summon"},
 		properties = "Passives: None",
@@ -872,6 +888,7 @@ local SkillData = {
 	},
 	["DOC-CONJURER-02"] = {
 		name = "Conjure Wisp",
+		icon = "rbxassetid://89940868904189",
 		description = "Summons a flying Wisp that attacks enemies at range with electric bolts. Only one Wisp at a time.",
 		tags = {"Summon"},
 		properties = "Passives: None",
@@ -894,6 +911,7 @@ local SkillData = {
 	},
 	["DOC-CONJURER-03"] = {
 		name = "Conjure Mender",
+		icon = "rbxassetid://107788459113867",
 		description = "Summons a healing Mender that automatically restores HP to nearby allies. Only one Mender at a time.",
 		tags = {"Summon"},
 		properties = "Passives: None",

@@ -19,6 +19,10 @@ local AugmentDataModule = require(
 	ReplicatedStorage:WaitForChild("Content", 10)
 		:WaitForChild("AugmentData", 10)
 )
+local DoctrineDataModule = require(
+	ReplicatedStorage:WaitForChild("Content", 10)
+		:WaitForChild("DoctrineData", 10)
+)
 
 local MockLoadoutData = {}
 
@@ -139,6 +143,37 @@ function MockLoadoutData.GetEquipped(unitId, slot)
 	local eq = MockLoadoutData.Equipped[unitId]
 	if eq and eq[slot] then return MockLoadoutData.GetItem(eq[slot]) end
 	return nil
+end
+
+-- Build a virtual item for the equipped doctrine (not a real inventory item)
+function MockLoadoutData.GetEquippedDoctrine(unitId)
+	local docId = MockLoadoutData.GetUnitDoctrineId(unitId)
+	if not docId then return nil end
+	local doc = DoctrineDataModule[docId]
+	if not doc or type(doc) ~= "table" or not doc.name then return nil end
+	return {
+		id = docId,
+		name = doc.name,
+		cat = "Doctrine",
+		sub = "Doctrine",
+		hands = nil,
+		lv = 0,
+		rarity = "Legendary",
+		icon = doc.icon or "[D]",
+		qty = 1,
+		isWeapon = false,
+		isDoctrine = true,
+		tags = { "Doctrine" },
+		baseStats = {},
+		passives = doc.passiveName and {{
+			name = doc.passiveName,
+			icon = "[*]",
+			desc = doc.passiveEffect or "",
+		}} or {},
+		bonusStats = doc.statPackage or {},
+		bonusPassives = {},
+		flavor = doc.identity or "",
+	}
 end
 
 function MockLoadoutData.IsEquipped(itemId, unitId)
@@ -268,7 +303,7 @@ local function mapServerItem(si)
 		hands = si.handClass,
 		lv = si.itemLevel or 1,
 		rarity = si.rarity or "Common",
-		icon = HAND_ICONS[si.handClass] or "⚔",
+		icon = si.icon or HAND_ICONS[si.handClass] or "[*]",
 		qty = 1,
 		isWeapon = isWeapon,
 		isNew = si.isNew or false,
@@ -386,6 +421,15 @@ function MockLoadoutData.GetDoctrineChoices(doctrineId)
 	return MockLoadoutData.DoctrineSkillChoices[doctrineId] or {}
 end
 
+function MockLoadoutData.GetUnitDoctrineId(unitId)
+	if MockLoadoutData.ServerDoctrineId and MockLoadoutData.ServerDoctrineId[unitId] then
+		return MockLoadoutData.ServerDoctrineId[unitId]
+	end
+	-- Fallback to mock unit data
+	local unit = MockLoadoutData.GetSelectedUnit()
+	return unit and unit.doctrineId or "DOC-BERSERKER"
+end
+
 --------------------------------------------------
 -- CONTENT DEFINITION HELPERS
 --------------------------------------------------
@@ -430,6 +474,16 @@ function MockLoadoutData.LoadSkillData(unitId)
 		end
 		if result.augmentCards then
 			MockLoadoutData.AugmentCardInventory = result.augmentCards
+		end
+
+		-- Store doctrine choices from server (keyed by doctrineId)
+		if result.doctrineId and result.doctrineChoices then
+			MockLoadoutData.DoctrineSkillChoices[result.doctrineId] = result.doctrineChoices
+		end
+		-- Store the server-authoritative doctrineId for this unit
+		if result.doctrineId then
+			MockLoadoutData.ServerDoctrineId = MockLoadoutData.ServerDoctrineId or {}
+			MockLoadoutData.ServerDoctrineId[unitId] = result.doctrineId
 		end
 
 		MockLoadoutData._useServerSkillData = true

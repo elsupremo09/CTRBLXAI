@@ -36,6 +36,7 @@ WeaponData.Archetypes = {
 	-- === 2H MELEE ===
 	["WPN-GREATSWORD"] = {
 		numericId = 1, name = "Greatsword", category = "Weapon",
+		icon = "rbxassetid://122604995355077",
 		damage = 65, wt = 165, rtDelay = 28, defense = 10,
 		handClass = "2H", minRange = 1, maxRange = 1,
 		pattern = "Cleave", projectileType = nil,
@@ -43,6 +44,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-CLAWS"] = {
 		numericId = 2, name = "Claws", category = "Weapon",
+		icon = "rbxassetid://139537105067108",
 		damage = 45, wt = 25, rtDelay = 110, defense = -5,
 		handClass = "2H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -50,6 +52,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-WARAXE"] = {
 		numericId = 3, name = "War Axe", category = "Weapon",
+		icon = "rbxassetid://91631095061220",
 		damage = 97, wt = 107, rtDelay = 20, defense = -20,
 		handClass = "2H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -57,6 +60,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-SPEAR"] = {
 		numericId = 4, name = "Spear", category = "Weapon",
+		icon = "rbxassetid://109619472503823",
 		damage = 42, wt = 90, rtDelay = 45, defense = 21,
 		handClass = "2H", minRange = 1, maxRange = 2,
 		pattern = "Line2", projectileType = nil,
@@ -64,6 +68,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-HAMMER"] = {
 		numericId = 5, name = "Hammer", category = "Weapon",
+		icon = "rbxassetid://118677292434899",
 		damage = 80, wt = 130, rtDelay = 110, defense = 5,
 		handClass = "2H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -72,6 +77,7 @@ WeaponData.Archetypes = {
 	-- === 1H MELEE ===
 	["WPN-SWORD"] = {
 		numericId = 6, name = "Sword", category = "Weapon",
+		icon = "rbxassetid://83622596767928",
 		damage = 67, wt = 60, rtDelay = 60, defense = 5,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -79,6 +85,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-DAGGER"] = {
 		numericId = 7, name = "Dagger", category = "Weapon",
+		icon = "rbxassetid://76551934687501",
 		damage = 60, wt = 10, rtDelay = 20, defense = 6,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -86,6 +93,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-WHIP"] = {
 		numericId = 8, name = "Whip", category = "Weapon",
+		icon = "rbxassetid://109633862483295",
 		damage = 52, wt = 80, rtDelay = 45, defense = 0,
 		handClass = "1H", minRange = 1, maxRange = 3,
 		pattern = "Single", projectileType = nil,
@@ -93,6 +101,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-CLUB"] = {
 		numericId = 9, name = "Club", category = "Weapon",
+		icon = "rbxassetid://126512797489617",
 		damage = 37, wt = 70, rtDelay = 64, defense = 19,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -100,6 +109,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-SWORDBREAKER"] = {
 		numericId = 10, name = "Sword Breaker", category = "Weapon",
+		icon = "rbxassetid://78246587290266",
 		damage = 41, wt = 25, rtDelay = 53, defense = 44,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -108,6 +118,7 @@ WeaponData.Archetypes = {
 	-- === 2H RANGED ===
 	["WPN-CROSSBOW"] = {
 		numericId = 11, name = "Crossbow", category = "Weapon",
+		icon = "rbxassetid://121148894517091",
 		damage = 34, wt = 20, rtDelay = 64, defense = 0,
 		handClass = "2H", minRange = 2, maxRange = 4,
 		pattern = "Single", projectileType = "Direct",
@@ -115,6 +126,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-STAFF"] = {
 		numericId = 12, name = "Staff", category = "Weapon",
+		icon = "rbxassetid://118293925403009",
 		damage = 58, wt = 60, rtDelay = 40, defense = 0,
 		handClass = "2H", minRange = 2, maxRange = 4,
 		pattern = "Single", projectileType = "Channeled",
@@ -122,6 +134,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-GREATBOW"] = {
 		numericId = 13, name = "Great Bow", category = "Weapon",
+		icon = "rbxassetid://108682570205799",
 		damage = 63, wt = 115, rtDelay = 71, defense = -5,
 		handClass = "2H", minRange = 2, maxRange = 4,
 		pattern = "Single", projectileType = "Arc",
@@ -129,6 +142,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-LONGBOW"] = {
 		numericId = 14, name = "Longbow", category = "Weapon",
+		icon = "rbxassetid://115039672236376",
 		damage = 50, wt = 130, rtDelay = 20, defense = -5,
 		handClass = "2H", minRange = 2, maxRange = 5,
 		pattern = "Single", projectileType = "Arc",
@@ -136,6 +150,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-BAZOOKA"] = {
 		numericId = 15, name = "Bazooka", category = "Weapon",
+		icon = "rbxassetid://127227509368608",
 		damage = 43, wt = 215, rtDelay = 20, defense = -5,
 		handClass = "2H", minRange = 3, maxRange = 5,
 		pattern = "ImpactSplash", projectileType = "Arc",
@@ -144,6 +159,7 @@ WeaponData.Archetypes = {
 	-- === 1H RANGED ===
 	["WPN-PISTOL"] = {
 		numericId = 16, name = "Pistol", category = "Weapon",
+		icon = "rbxassetid://111287192347105",
 		damage = 20, wt = 70, rtDelay = 58, defense = 0,
 		handClass = "1H", minRange = 2, maxRange = 4,
 		pattern = "Single", projectileType = "Direct",
@@ -151,6 +167,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-WAND"] = {
 		numericId = 17, name = "Wand", category = "Weapon",
+		icon = "rbxassetid://131226888529449",
 		damage = 25, wt = 50, rtDelay = 45, defense = 0,
 		handClass = "1H", minRange = 2, maxRange = 3,
 		pattern = "Single", projectileType = "Channeled",
@@ -158,6 +175,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-BLOWGUN"] = {
 		numericId = 18, name = "Blowgun", category = "Weapon",
+		icon = "rbxassetid://76407740167748",
 		damage = 15, wt = 60, rtDelay = 0, defense = 2,
 		handClass = "1H", minRange = 2, maxRange = 4,
 		pattern = "Single", projectileType = "Direct",
@@ -166,6 +184,7 @@ WeaponData.Archetypes = {
 	-- === NEW 1H MELEE ===
 	["WPN-RAPIER"] = {
 		numericId = 19, name = "Rapier", category = "Weapon",
+		icon = "rbxassetid://79967882502489",
 		damage = 66, wt = 33, rtDelay = 25, defense = 0,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -173,6 +192,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-SICKLE"] = {
 		numericId = 20, name = "Sickle", category = "Weapon",
+		icon = "rbxassetid://77990199135866",
 		damage = 59, wt = 64, rtDelay = 53, defense = 0,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -180,6 +200,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-TORCH"] = {
 		numericId = 21, name = "Torch", category = "Weapon",
+		icon = "rbxassetid://109405975213091",
 		damage = 38, wt = 35, rtDelay = 54, defense = 9,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -187,6 +208,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-FAN"] = {
 		numericId = 22, name = "Fan", category = "Weapon",
+		icon = "rbxassetid://113759500482323",
 		damage = 57, wt = 75, rtDelay = 15, defense = -5,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Adjacent", projectileType = nil,
@@ -194,6 +216,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-FLAIL"] = {
 		numericId = 23, name = "Flail", category = "Weapon",
+		icon = "rbxassetid://70750705494124",
 		damage = 59, wt = 61, rtDelay = 49, defense = -3,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -201,6 +224,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-HATCHET"] = {
 		numericId = 24, name = "Hatchet", category = "Weapon",
+		icon = "rbxassetid://114121191862998",
 		damage = 64, wt = 35, rtDelay = 28, defense = 4,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -209,6 +233,7 @@ WeaponData.Archetypes = {
 	-- === NEW 1H RANGED ===
 	["WPN-NEEDLE"] = {
 		numericId = 25, name = "Needle", category = "Weapon",
+		icon = "rbxassetid://109267348834151",
 		damage = 29, wt = 64, rtDelay = 54, defense = -3,
 		handClass = "1H", minRange = 2, maxRange = 3,
 		pattern = "Single", projectileType = "Direct",
@@ -216,6 +241,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-BOOMERANG"] = {
 		numericId = 26, name = "Boomerang", category = "Weapon",
+		icon = "rbxassetid://74937236701523",
 		damage = 39, wt = 74, rtDelay = 42, defense = -3,
 		handClass = "1H", minRange = 2, maxRange = 3,
 		pattern = "Single", projectileType = "Arc",
@@ -223,6 +249,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-THROWINGKNIFE"] = {
 		numericId = 27, name = "Throwing Knife", category = "Weapon",
+		icon = "rbxassetid://81642861704722",
 		damage = 47, wt = 40, rtDelay = 25, defense = -3,
 		handClass = "1H", minRange = 2, maxRange = 3,
 		pattern = "Single", projectileType = "Direct",
@@ -230,6 +257,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-BELL"] = {
 		numericId = 28, name = "Bell", category = "Weapon",
+		icon = "rbxassetid://101029559621843",
 		damage = 5, wt = 30, rtDelay = 15, defense = 0,
 		handClass = "1H", minRange = 2, maxRange = 3,
 		pattern = "Single", projectileType = "Channeled",
@@ -238,6 +266,7 @@ WeaponData.Archetypes = {
 	-- === NEW 2H MELEE ===
 	["WPN-SCYTHE"] = {
 		numericId = 29, name = "Scythe", category = "Weapon",
+		icon = "rbxassetid://112522569710001",
 		damage = 64, wt = 177, rtDelay = 15, defense = -5,
 		handClass = "2H", minRange = 1, maxRange = 1,
 		pattern = "Cleave", projectileType = nil,
@@ -245,6 +274,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-LANCE"] = {
 		numericId = 30, name = "Lance", category = "Weapon",
+		icon = "rbxassetid://78236041653469",
 		damage = 91, wt = 100, rtDelay = 29, defense = 2,
 		handClass = "2H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -252,6 +282,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-FLAMEBERGE"] = {
 		numericId = 31, name = "Flameberge", category = "Weapon",
+		icon = "rbxassetid://85923390469142",
 		damage = 87, wt = 100, rtDelay = 59, defense = 5,
 		handClass = "2H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -259,6 +290,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-GREATSHIELD"] = {
 		numericId = 32, name = "Greatshield", category = "Weapon",
+		icon = "rbxassetid://77361921059074",
 		damage = 59, wt = 60, rtDelay = 79, defense = 54,
 		handClass = "2H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
@@ -266,6 +298,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-CHAINS"] = {
 		numericId = 33, name = "Chains", category = "Weapon",
+		icon = "rbxassetid://128778016004052",
 		damage = 50, wt = 50, rtDelay = 89, defense = 24,
 		handClass = "2H", minRange = 1, maxRange = 2,
 		pattern = "Single", projectileType = nil,
@@ -274,6 +307,7 @@ WeaponData.Archetypes = {
 	-- === NEW 2H RANGED ===
 	["WPN-MORTAR"] = {
 		numericId = 34, name = "Mortar", category = "Weapon",
+		icon = "rbxassetid://90803939512871",
 		damage = 59, wt = 161, rtDelay = 15, defense = -8,
 		handClass = "2H", minRange = 4, maxRange = 5,
 		pattern = "ImpactSplash", projectileType = "Arc",
@@ -281,6 +315,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-BALLISTA"] = {
 		numericId = 35, name = "Ballista", category = "Weapon",
+		icon = "rbxassetid://84334480824304",
 		damage = 58, wt = 153, rtDelay = 15, defense = -8,
 		handClass = "2H", minRange = 2, maxRange = 4,
 		pattern = "Line2", projectileType = "Direct",
@@ -288,6 +323,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-JAVELIN"] = {
 		numericId = 36, name = "Javelin", category = "Weapon",
+		icon = "rbxassetid://123876188718944",
 		damage = 64, wt = 93, rtDelay = 54, defense = -5,
 		handClass = "2H", minRange = 2, maxRange = 3,
 		pattern = "Adjacent", projectileType = "Arc",
@@ -295,6 +331,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-FROSTROD"] = {
 		numericId = 37, name = "Frost Rod", category = "Weapon",
+		icon = "rbxassetid://104447164199147",
 		damage = 34, wt = 50, rtDelay = 54, defense = 1,
 		handClass = "2H", minRange = 2, maxRange = 4,
 		pattern = "Single", projectileType = "Channeled",
@@ -302,6 +339,7 @@ WeaponData.Archetypes = {
 	},
 	["WPN-WARHORN"] = {
 		numericId = 38, name = "War Horn", category = "Weapon",
+		icon = "rbxassetid://128189252119179",
 		damage = 5, wt = 68, rtDelay = 94, defense = 0,
 		handClass = "2H", minRange = 1, maxRange = 2,
 		pattern = "ImpactSplash", projectileType = "Channeled",
@@ -310,6 +348,7 @@ WeaponData.Archetypes = {
 	-- === OFF-HAND EQUIPMENT ===
 	["OFF-SHIELD"] = {
 		numericId = 50, name = "Shield", category = "OffHand",
+		icon = "rbxassetid://130630252450635",
 		damage = 0, wt = 20, rtDelay = 0, defense = 57,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
 		pattern = nil, projectileType = nil,
@@ -317,6 +356,7 @@ WeaponData.Archetypes = {
 	},
 	["OFF-ORB"] = {
 		numericId = 51, name = "Orb", category = "OffHand",
+		icon = "rbxassetid://84835752401831",
 		damage = 50, wt = 20, rtDelay = 0, defense = 0,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
 		pattern = nil, projectileType = nil,
@@ -324,6 +364,7 @@ WeaponData.Archetypes = {
 	},
 	["OFF-BUCKLER"] = {
 		numericId = 52, name = "Buckler", category = "OffHand",
+		icon = "rbxassetid://91094733433191",
 		damage = 0, wt = 20, rtDelay = 10, defense = 55,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
 		pattern = nil, projectileType = nil,
@@ -331,6 +372,7 @@ WeaponData.Archetypes = {
 	},
 	["OFF-TOME"] = {
 		numericId = 53, name = "Tome", category = "OffHand",
+		icon = "rbxassetid://140273978942167",
 		damage = 23, wt = 20, rtDelay = 0, defense = 28,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
 		pattern = nil, projectileType = nil,
@@ -338,6 +380,7 @@ WeaponData.Archetypes = {
 	},
 	["OFF-QUIVER"] = {
 		numericId = 54, name = "Quiver", category = "OffHand",
+		icon = "rbxassetid://133565854493583",
 		damage = 40, wt = 20, rtDelay = 0, defense = 0,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
 		pattern = nil, projectileType = nil,
@@ -345,6 +388,7 @@ WeaponData.Archetypes = {
 	},
 	["OFF-PARRYINGDAGGER"] = {
 		numericId = 55, name = "Parrying Dagger", category = "OffHand",
+		icon = "rbxassetid://104535230073639",
 		damage = 33, wt = 20, rtDelay = 0, defense = 21,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
 		pattern = nil, projectileType = nil,
@@ -352,6 +396,7 @@ WeaponData.Archetypes = {
 	},
 	["OFF-CRYSTAL"] = {
 		numericId = 56, name = "Crystal", category = "OffHand",
+		icon = "rbxassetid://120571767307728",
 		damage = 46, wt = 20, rtDelay = 0, defense = 0,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
 		pattern = nil, projectileType = nil,
