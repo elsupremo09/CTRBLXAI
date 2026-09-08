@@ -285,6 +285,7 @@ local hero = UnitSchema.Create({
 	controller   = "Player",
 	tileX        = 5,
 	tileY        = 5,
+	doctrineId   = "DOC-BERSERKER",
 	skillIds     = { "skill_power_strike", "skill_sweeping_cut" },
 })
 equipGeneratedWeapon(hero, "WPN-SWORD", 5, "Uncommon", 1001)
@@ -348,6 +349,7 @@ local mage = UnitSchema.Create({
 	controller   = "Player",
 	tileX        = 1,
 	tileY        = 4,
+	doctrineId   = "DOC-ARCANIST",
 	skillIds     = { "skill_fire_bolt", "skill_healing_light" },
 })
 equipGeneratedWeapon(mage, "WPN-WAND", 5, "Uncommon", 1002)
@@ -361,6 +363,7 @@ local ranger = UnitSchema.Create({
 	controller   = "Player",
 	tileX        = 8,
 	tileY        = 5,
+	doctrineId   = "DOC-RANGER",
 	skillIds     = { "skill_crippling_shot", "skill_venom_strike" },
 })
 equipGeneratedWeapon(ranger, "WPN-CROSSBOW", 5, "Uncommon", 1003)
@@ -825,6 +828,7 @@ BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 				maxRange = profile and profile.maxRange or 1,
 				isWeapon = wArch.category == "Weapon",
 				isArmor = false,
+				icon = wArch.icon or nil,
 				nativePassiveId = wArch.nativePassiveId or nil,
 				nativePassiveDesc = WeaponData.GetPassiveDesc(wArch.nativePassiveId) or nil,
 				projectileType = wArch.projectileType or nil,
@@ -1131,11 +1135,22 @@ BattleEvents.GetSkillLoadout.OnServerInvoke = function(player, unitId)
 	end
 	-- Slot 5: Locked
 	slots[5] = { slotType = "Locked", skillId = "none", augments = {}, locked = true }
+	-- Include doctrine choices so client doesn't rely on mock data
+	local docChoices = {}
+	if unit.doctrineId then
+		local doctrine = DoctrineData[unit.doctrineId]
+		if doctrine then
+			docChoices = doctrine.skillChoices or {}
+		end
+	end
+
 	return {
 		ok = true,
 		slots = slots,
 		skillCards = cardInventory.skillCards,
 		augmentCards = cardInventory.augmentCards,
+		doctrineId = unit.doctrineId,
+		doctrineChoices = docChoices,
 	}
 end
 

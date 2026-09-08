@@ -25,6 +25,12 @@ local RegionGenerator = require(
 	ServerScriptService:WaitForChild("RegionGenerator")
 )
 
+local TerrainTextures = require(
+	CTRBLXAI
+		:WaitForChild("Shared")
+		:WaitForChild("TerrainTextures")
+)
+
 --------------------------------------------------
 -- SETTINGS
 --------------------------------------------------
@@ -634,7 +640,11 @@ for _, child in ipairs(mapFolder:GetChildren()) do
 				child.Position = Vector3.new(child.Position.X, surfaceY, child.Position.Z)
 
 				child:SetAttribute("Elevation", elev)
-				child:SetAttribute("Terrain", GameConstants.GetTerrainId(bx, by))
+				local terrainName = GameConstants.GetTerrainId(bx, by)
+				child:SetAttribute("Terrain", terrainName)
+
+				-- Apply terrain texture with random rotation/flip
+				TerrainTextures.Apply(child, terrainName)
 
 				if elev >= 3 then
 					child.Color = PEAK_COLOR
