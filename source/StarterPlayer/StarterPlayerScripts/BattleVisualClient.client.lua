@@ -2039,51 +2039,39 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		end)
 	end
 
-	-- ============ BUTTON BAR (bottom-right, same pattern as loadout/battle) ============
-	local PAD = 8
-	local BTN_W = 80
-	local BTN_H = 32
-	local BTN_GAP = 4
-
+	-- ============ BUTTON BAR (bottom-right, Theme.FooterBar standard) ============
+	local fb = Theme.FooterBar
 	local btnBar = Instance.new("Frame")
 	btnBar.Name = "RewardBtnBar"
 	btnBar.BackgroundTransparency = 1
 	btnBar.AnchorPoint = Vector2.new(1, 1)
-	btnBar.Position = UDim2.new(1, -PAD, 1, -PAD)
+	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
 	btnBar.Parent = gui
 
-	local function addBtn(text, color, onClick, layoutIdx)
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(0, BTN_W, 0, BTN_H)
-		btn.Position = UDim2.new(1, -(BTN_W + BTN_GAP) * layoutIdx, 0, 0)
-		btn.AnchorPoint = Vector2.new(1, 0)
-		btn.BackgroundColor3 = color
-		btn.BackgroundTransparency = 0.15
-		btn.Font = Theme.Font.PrimaryBold
-		btn.TextSize = Theme.Text.Body()
-		btn.TextColor3 = Theme.Colors.TextPrimary
-		btn.Text = text
-		btn.BorderSizePixel = 0
-		btn.Parent = btnBar
-		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
-		btn.MouseButton1Click:Connect(onClick)
-		return btn
-	end
+	local rowLayout = Instance.new("UIListLayout")
+	rowLayout.FillDirection = Enum.FillDirection.Horizontal
+	rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	rowLayout.Padding = UDim.new(0, fb.BTN_GAP)
+	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	rowLayout.Parent = btnBar
 
-	-- 1st from right: CONTINUE (primary action, like Equip/Execute)
-	addBtn("CONTINUE", Theme.Colors.Success, function()
+	-- 1st from right: CONTINUE (Primary)
+	local continueBtn = Theme.MakeButton(btnBar, "CONTINUE", "Primary", function()
 		if rewardGui then rewardGui:Destroy(); rewardGui = nil end
 		BattleEvents.RewardContinue:FireServer()
-	end, 0)
+	end, { size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H) })
+	continueBtn.LayoutOrder = 2
 
-	-- 2nd from right: BACK (only visible when detail is open)
-	rewardBackBtn = addBtn("BACK", Theme.Colors.Surface, function()
+	-- 2nd from right: BACK (Secondary, hidden by default)
+	rewardBackBtn = Theme.MakeButton(btnBar, "BACK", "Secondary", function()
 		closeRewardDetail()
 		rewardBackBtn.Visible = false
-	end, 1)
-	rewardBackBtn.Visible = false  -- hidden by default
+	end, { size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H) })
+	rewardBackBtn.LayoutOrder = 1
+	rewardBackBtn.Visible = false
 
-	btnBar.Size = UDim2.new(0, (BTN_W + BTN_GAP) * 2, 0, BTN_H)
+	btnBar.Size = UDim2.new(0, 2 * fb.BTN_W + fb.BTN_GAP, 0, fb.BTN_H)
 end)
 
 --------------------------------------------------
