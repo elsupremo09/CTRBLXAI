@@ -791,6 +791,13 @@ local function resolveItemBonuses(item)
 		end
 	end
 
+	-- DIAG: log resolved bonus stats
+	local dbgParts = {}
+	for k, v in pairs(stats) do table.insert(dbgParts, k .. "=" .. tostring(v)) end
+	if #dbgParts > 0 then
+		print("[DIAG-Resolve] " .. (item.baseArchetypeId or "?") .. " L" .. (item.itemLevel or 0) .. " " .. (item.rarityId or "?") .. ": " .. table.concat(dbgParts, ", ") .. " (" .. #(item.bonusLines or {}) .. " lines, " .. #(item.bonusPassiveIds or {}) .. " passives)")
+	end
+
 	return stats, passives
 end
 
@@ -829,6 +836,7 @@ BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 				isWeapon = wArch.category == "Weapon",
 				isArmor = false,
 				icon = wArch.icon or nil,
+				flavor = wArch.flavor or nil,
 				nativePassiveId = wArch.nativePassiveId or nil,
 				nativePassiveDesc = WeaponData.GetPassiveDesc(wArch.nativePassiveId) or nil,
 				projectileType = wArch.projectileType or nil,
@@ -853,6 +861,8 @@ BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 				maxRange = 0,
 				isWeapon = false,
 				isArmor = true,
+				icon = aArch.icon or nil,
+				flavor = aArch.flavor or nil,
 				passiveName = aArch.passiveName or nil,
 				passiveDesc = aArch.passiveDesc or nil,
 				actionOwnership = aArch.actionOwnership or nil,

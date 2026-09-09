@@ -741,4 +741,81 @@ function Theme.MakeButton(parent, text, style, onClick, opts)
 	return btn
 end
 
+--------------------------------------------------
+-- ICONS (uploaded image assets)
+--------------------------------------------------
+
+Theme.Icons = {
+	-- Equipment slot / type filters
+	MainHand   = "rbxassetid://107712701709286",
+	OffHand    = "rbxassetid://98983861153491",
+	Head       = "rbxassetid://103490891066080",
+	Torso      = "rbxassetid://129417807804589",
+	Arms       = "rbxassetid://83459049184332",
+	Legs       = "rbxassetid://96798091456636",
+	Accessory  = "rbxassetid://96470544764943",
+	Consumable = "rbxassetid://128189551113145",
+	Doctrine   = "rbxassetid://76800665797153",
+	-- Card types
+	SkillCard  = "rbxassetid://88268068619196",
+	AugmentCard = "rbxassetid://85750066155505",
+	-- Filter reset
+	AllTypes   = "rbxassetid://126425312270409",
+	-- Primary stats
+	STR = "rbxassetid://113370285263658",
+	INT = "rbxassetid://123655246718422",
+	DEX = "rbxassetid://88598304062639",
+	AGI = "rbxassetid://105014331313013",
+	VIT = "rbxassetid://89015702504702",
+	LUK = "rbxassetid://133750248203590",
+	-- Navigation / UI
+	Sort       = "rbxassetid://85887130565247",
+	Filter     = "rbxassetid://109789920233574",
+	Expand     = "rbxassetid://75163824424401",
+	Collapse   = "rbxassetid://81689987316999",
+	ArrowLeft  = "rbxassetid://109201725784401",
+	ArrowRight = "rbxassetid://140157391488573",
+	-- Skill type / element icons
+	Damage     = "rbxassetid://135504525921846",
+	Heal       = "rbxassetid://83266476873580",
+	Buff       = "rbxassetid://120381762395957",
+	Debuff     = "rbxassetid://115587565920808",
+	Utility    = "rbxassetid://88423697133074",
+	Fire       = "rbxassetid://98928388908694",
+	Ice        = "rbxassetid://80553337901604",
+	Electric   = "rbxassetid://80992677701740",
+	Holy       = "rbxassetid://101839417852763",
+	Dark       = "rbxassetid://101952109436543",
+	Poison     = "rbxassetid://74613503786638",
+	Physical   = "rbxassetid://112711726025191",
+	Reset      = "rbxassetid://82195895256938",
+}
+
+--------------------------------------------------
+-- TERRAIN TEXTURES (uploaded tile surface images)
+--------------------------------------------------
+
+Theme.Terrain = {
+	["Clear"]          = "rbxassetid://109805975558014",
+	["Grassland"]      = "rbxassetid://128007269403177",
+	["Clover Field"]   = "rbxassetid://109662805904614",
+	["Forest"]         = "rbxassetid://135752092589962",
+	["Wooden Floor"]   = "rbxassetid://126612632552137",
+	["Rocky"]          = "rbxassetid://90522759746156",
+	["Sand"]           = "rbxassetid://130402247622009",
+	["Mud"]            = "rbxassetid://103981896145024",
+	["Dirt Road"]      = "rbxassetid://70967889930713",
+	["Stone Road"]     = "rbxassetid://91078246561441",
+	["Shallow Water"]  = "rbxassetid://133104312443373",
+	["Deep Water"]     = "rbxassetid://91104299895108",
+	["Swamp"]          = "rbxassetid://102784702693557",
+	["Ice"]            = "rbxassetid://111074337572921",
+	["Metal"]          = "rbxassetid://109801126120884",
+	["Molten"]         = "rbxassetid://102728788006487",
+	["Magic Circle"]   = "rbxassetid://83344810206782",
+	["Tainted Ground"] = "rbxassetid://78418011585017",
+	["Cracked Ground"] = "rbxassetid://112911396208647",
+	["Quicksand"]      = "rbxassetid://125706353174532",
+}
+
 return Theme

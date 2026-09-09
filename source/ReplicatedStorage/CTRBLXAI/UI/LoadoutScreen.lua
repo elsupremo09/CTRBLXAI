@@ -42,16 +42,16 @@ local SORT_OPTIONS = {
 }
 
 local CATEGORY_FILTERS = {
-	{ id = "All",       label = "All",    icon = "⊞" },
-	{ id = "MainHand",  label = "Main",   icon = "⚔" },
-	{ id = "OffHand",   label = "Off",    icon = "🛡" },
-	{ id = "Head",      label = "Head",   icon = "🪖" },
-	{ id = "Torso",     label = "Torso",  icon = "🦺" },
-	{ id = "Arms",      label = "Arms",   icon = "🧤" },
-	{ id = "Legs",      label = "Legs",   icon = "🥾" },
-	{ id = "Accessory", label = "Acc",    icon = "💍" },
-	{ id = "Consumable",label = "Use",    icon = "🧪" },
-	{ id = "Doctrine",  label = "Doct",   icon = "📜" },
+	{ id = "All",       label = "All",    icon = Theme.Icons.AllTypes },
+	{ id = "MainHand",  label = "Main",   icon = Theme.Icons.MainHand },
+	{ id = "OffHand",   label = "Off",    icon = Theme.Icons.OffHand },
+	{ id = "Head",      label = "Head",   icon = Theme.Icons.Head },
+	{ id = "Torso",     label = "Torso",  icon = Theme.Icons.Torso },
+	{ id = "Arms",      label = "Arms",   icon = Theme.Icons.Arms },
+	{ id = "Legs",      label = "Legs",   icon = Theme.Icons.Legs },
+	{ id = "Accessory", label = "Acc",    icon = Theme.Icons.Accessory },
+	{ id = "Consumable",label = "Use",    icon = Theme.Icons.Consumable },
+	{ id = "Doctrine",  label = "Doct",   icon = Theme.Icons.Doctrine },
 }
 
 local EQUIP_SLOTS = {
@@ -97,10 +97,10 @@ local skillSearchText = ""
 
 local SKILL_SORT_OPTIONS_SK = {
 	{ label = "Name", field = "name", desc = false },
-	{ label = "MP ↓", field = "mpCost", desc = true },
-	{ label = "MP ↑", field = "mpCost", desc = false },
-	{ label = "RT ↓", field = "rtCost", desc = true },
-	{ label = "RT ↑", field = "rtCost", desc = false },
+	{ label = "MP v", field = "mpCost", desc = true },
+	{ label = "MP ^", field = "mpCost", desc = false },
+	{ label = "RT v", field = "rtCost", desc = true },
+	{ label = "RT ^", field = "rtCost", desc = false },
 }
 
 local SKILL_TYPE_FILTERS = { "All", "Damage", "Heal", "Buff", "Debuff", "Utility" }
@@ -338,15 +338,13 @@ local function buildUnitHeader()
 	row.Parent = unitHeaderPanel
 
 	-- Prev unit button (left of portrait)
-	local prevBtn = Instance.new("TextButton")
+	local prevBtn = Instance.new("ImageButton")
 	prevBtn.Size = UDim2.new(0, 18, 0, 28)
 	prevBtn.Position = UDim2.new(0, 0, 0, 8)
 	prevBtn.BackgroundColor3 = Theme.Colors.Surface
 	prevBtn.BackgroundTransparency = 0.4
-	prevBtn.Font = Theme.Font.PrimaryBold
-	prevBtn.TextSize = Theme.Text.Body()
-	prevBtn.TextColor3 = Theme.Colors.TextSecondary
-	prevBtn.Text = "\xe2\x97\x80"
+	prevBtn.Image = Theme.Icons.ArrowLeft
+	prevBtn.ScaleType = Enum.ScaleType.Fit
 	prevBtn.BorderSizePixel = 0
 	prevBtn.Parent = row
 	Instance.new("UICorner", prevBtn).CornerRadius = UDim.new(0, 3)
@@ -410,15 +408,13 @@ local function buildUnitHeader()
 		TextColor3 = Theme.Colors.TextSecondary })
 
 	-- Next unit button (right side)
-	local nextBtn = Instance.new("TextButton")
+	local nextBtn = Instance.new("ImageButton")
 	nextBtn.Size = UDim2.new(0, 18, 0, 28)
 	nextBtn.Position = UDim2.new(1, -18, 0, 8)
 	nextBtn.BackgroundColor3 = Theme.Colors.Surface
 	nextBtn.BackgroundTransparency = 0.4
-	nextBtn.Font = Theme.Font.PrimaryBold
-	nextBtn.TextSize = Theme.Text.Body()
-	nextBtn.TextColor3 = Theme.Colors.TextSecondary
-	nextBtn.Text = "\xe2\x96\xb6"
+	nextBtn.Image = Theme.Icons.ArrowRight
+	nextBtn.ScaleType = Enum.ScaleType.Fit
 	nextBtn.BorderSizePixel = 0
 	nextBtn.Parent = row
 	Instance.new("UICorner", nextBtn).CornerRadius = UDim.new(0, 3)
@@ -612,8 +608,30 @@ local function buildEquippedLoadout()
 						TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextDisabled,
 						TextXAlignment = Enum.TextXAlignment.Center })
 				else
-					makeLabel(tile, { Text = "\xe2\x80\x94", Size = UDim2.new(1, 0, 1, 0),
-						TextSize = 20, TextColor3 = Theme.Colors.TextDisabled,
+					-- Empty slot: show slot icon image + label
+					local SLOT_ICON_MAP = {
+						MainHand = Theme.Icons.MainHand, OffHand = Theme.Icons.OffHand,
+						Head = Theme.Icons.Head, Torso = Theme.Icons.Torso,
+						Arms = Theme.Icons.Arms, Legs = Theme.Icons.Legs,
+						Accessory = Theme.Icons.Accessory, Doctrine = Theme.Icons.Doctrine,
+					}
+					local slotIcon = SLOT_ICON_MAP[slotDef.slot]
+					if slotIcon then
+						local ico = Instance.new("ImageLabel")
+						ico.Size = UDim2.new(0.55, 0, 0.55, 0)
+						ico.Position = UDim2.new(0.5, 0, 0.45, 0)
+						ico.AnchorPoint = Vector2.new(0.5, 0.5)
+						ico.BackgroundTransparency = 1
+						ico.Image = slotIcon
+						ico.ScaleType = Enum.ScaleType.Fit
+						ico.ImageTransparency = 0.5
+						ico.Parent = tile
+					end
+					makeLabel(tile, { Text = slotDef.label,
+						Size = UDim2.new(1, -4, 0, 12),
+						Position = UDim2.new(0, 2, 1, -14),
+						TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+						TextColor3 = Theme.Colors.TextDisabled,
 						TextXAlignment = Enum.TextXAlignment.Center })
 				end
 			end
@@ -758,10 +776,21 @@ local function buildItemGrid(parent)
 	itemGrid.Parent = parent
 
 	local grid = Instance.new("UIGridLayout", itemGrid)
-	grid.CellSize = UDim2.new(0, 72, 1/3, -4)
 	grid.CellPadding = UDim2.new(0, 4, 0, 3)
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
 	grid.FillDirection = Enum.FillDirection.Horizontal
+
+	-- Compute cell size: target 5+ columns, clamped 64-100px, height = width * 1.2
+	local MIN_CELL = 64
+	local MAX_CELL = 100
+	local TARGET_COLS = 5
+	local GAP = 4
+	local containerW = itemGrid.AbsoluteSize.X - 16 -- subtract padding
+	if containerW < 100 then containerW = 400 end -- fallback
+	local cellW = math.floor(containerW / TARGET_COLS) - GAP
+	cellW = math.clamp(cellW, MIN_CELL, MAX_CELL)
+	local cellH = math.floor(cellW * 1.2)
+	grid.CellSize = UDim2.new(0, cellW, 0, cellH)
 
 	local items = MockData.GetFilteredItems(currentFilter)
 
@@ -806,6 +835,10 @@ local function buildItemGrid(parent)
 
 	for i, item in ipairs(items) do
 		local isEquipped = MockData.IsEquipped(item.id, unit.id)
+		local isEquippedByOther = false
+		if not isEquipped then
+			isEquippedByOther = MockData.IsEquippedByAny(item.id)
+		end
 		local isSelected = (selectedItemId == item.id)
 
 		local card = Instance.new("TextButton")
@@ -837,12 +870,12 @@ local function buildItemGrid(parent)
 			Font = Theme.Font.Mono })
 		if lvLbl then lvLbl.ZIndex = 3 end
 
-		-- Equipped marker (top-right)
-		if isEquipped then
+		-- Equipped marker (top-right): gold = this unit, grey = another unit
+		if isEquipped or isEquippedByOther then
 			local marker = Instance.new("Frame")
 			marker.Size = UDim2.new(0, 14, 0, 12)
 			marker.Position = UDim2.new(1, -16, 0, 2)
-			marker.BackgroundColor3 = Theme.Colors.TextGold
+			marker.BackgroundColor3 = isEquipped and Theme.Colors.TextGold or Theme.Colors.TextDisabled
 			marker.BorderSizePixel = 0
 			marker.ZIndex = 3
 			marker.Parent = card
@@ -949,9 +982,9 @@ buildInventory = function()
 	Instance.new("UICorner", search).CornerRadius = UDim.new(0, 3)
 
 	-- Type / Rarity / Sort dropdown buttons
-	local filterLabel = currentFilter == "All" and "Type ▾" or (currentFilter .. " ▾")
-	local rarityLabel = currentRarity == "All" and "Rarity ▾" or (currentRarity .. " ▾")
-	local sortLabel = SORT_OPTIONS[currentSort].label .. " ▾"
+	local filterLabel = currentFilter == "All" and "Type v" or (currentFilter .. " v")
+	local rarityLabel = currentRarity == "All" and "Rarity v" or (currentRarity .. " v")
+	local sortLabel = SORT_OPTIONS[currentSort].label .. " v"
 
 	-- Shared dropdown helper: opens a menu below the anchor button
 	local function closeDropdown()
@@ -1006,12 +1039,37 @@ buildInventory = function()
 			row.Font = Theme.Font.Primary
 			row.TextSize = Theme.Text.Small()
 			row.TextColor3 = opt.active and Theme.Colors.TextGold or Theme.Colors.TextPrimary
-			row.Text = opt.label
 			row.BorderSizePixel = 0
 			row.LayoutOrder = idx
 			row.ZIndex = 51
 			row.Parent = menuPanel
 			Instance.new("UICorner", row).CornerRadius = UDim.new(0, 3)
+			-- Icon + text layout
+			local hasImage = opt.icon and string.find(opt.icon, "rbxassetid://")
+			if hasImage then
+				row.Text = ""
+				local ico = Instance.new("ImageLabel")
+				ico.Size = UDim2.new(0, 16, 0, 16)
+				ico.Position = UDim2.new(0, 4, 0.5, -8)
+				ico.BackgroundTransparency = 1
+				ico.Image = opt.icon
+				ico.ScaleType = Enum.ScaleType.Fit
+				ico.ZIndex = 52
+				ico.Parent = row
+				local lbl = Instance.new("TextLabel")
+				lbl.Size = UDim2.new(1, -24, 1, 0)
+				lbl.Position = UDim2.new(0, 22, 0, 0)
+				lbl.BackgroundTransparency = 1
+				lbl.Font = Theme.Font.Primary
+				lbl.TextSize = Theme.Text.Small()
+				lbl.TextColor3 = opt.active and Theme.Colors.TextGold or Theme.Colors.TextPrimary
+				lbl.TextXAlignment = Enum.TextXAlignment.Left
+				lbl.Text = opt.label
+				lbl.ZIndex = 52
+				lbl.Parent = row
+			else
+				row.Text = opt.label
+			end
 			row.MouseButton1Click:Connect(function()
 				closeDropdown()
 				onSelect(opt.value, idx)
@@ -1019,31 +1077,51 @@ buildInventory = function()
 		end
 	end
 
-	local function makeDropdown(text, order, isActive)
+	local function makeDropdown(text, order, isActive, iconAsset)
 		local btn = Instance.new("TextButton")
 		btn.Size = UDim2.new(0, 62, 1, 0)
 		btn.BackgroundColor3 = Theme.Colors.Surface
 		btn.BackgroundTransparency = 0.2
-		btn.Font = Theme.Font.Primary
-		btn.TextSize = Theme.Text.Small()
-		btn.TextColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
-		btn.Text = text
 		btn.BorderSizePixel = 0
 		btn.LayoutOrder = order
 		btn.Parent = ctrlRow
 		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 3)
+		if iconAsset then
+			btn.Text = ""
+			local ico = Instance.new("ImageLabel")
+			ico.Size = UDim2.new(0, 14, 0, 14)
+			ico.Position = UDim2.new(0, 3, 0.5, -7)
+			ico.BackgroundTransparency = 1
+			ico.Image = iconAsset
+			ico.ScaleType = Enum.ScaleType.Fit
+			ico.ImageColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+			ico.Parent = btn
+			local lbl = Instance.new("TextLabel")
+			lbl.Size = UDim2.new(1, -19, 1, 0)
+			lbl.Position = UDim2.new(0, 19, 0, 0)
+			lbl.BackgroundTransparency = 1
+			lbl.Font = Theme.Font.Primary
+			lbl.TextSize = Theme.Text.Small()
+			lbl.TextColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+			lbl.TextXAlignment = Enum.TextXAlignment.Left
+			lbl.TextTruncate = Enum.TextTruncate.AtEnd
+			lbl.Text = text
+			lbl.Parent = btn
+		else
+			btn.Font = Theme.Font.Primary
+			btn.TextSize = Theme.Text.Small()
+			btn.TextColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+			btn.Text = text
+		end
 		return btn
 	end
 
 	-- Type filter button — cycles through category filters
-	local typeBtn = makeDropdown(filterLabel, 2, currentFilter ~= "All")
+	local typeBtn = makeDropdown(filterLabel, 2, currentFilter ~= "All", Theme.Icons.Filter)
 	typeBtn.MouseButton1Click:Connect(function()
 		local opts = {}
-		table.insert(opts, { label = "⊞ All Types", value = "All", active = (currentFilter == "All") })
 		for _, f in ipairs(CATEGORY_FILTERS) do
-			if f.id ~= "All" then
-				table.insert(opts, { label = f.icon .. " " .. f.label, value = f.id, active = (currentFilter == f.id) })
-			end
+			table.insert(opts, { label = f.label, value = f.id, icon = f.icon, active = (currentFilter == f.id) })
 		end
 		showDropdown(typeBtn, opts, function(val)
 			currentFilter = val
@@ -1056,7 +1134,7 @@ buildInventory = function()
 	end)
 
 	-- Rarity filter button — cycles through rarity options
-	local rarityBtn = makeDropdown(rarityLabel, 3, currentRarity ~= "All")
+	local rarityBtn = makeDropdown(rarityLabel, 3, currentRarity ~= "All", Theme.Icons.Filter)
 	rarityBtn.MouseButton1Click:Connect(function()
 		local opts = {}
 		for _, r in ipairs(RARITY_OPTIONS) do
@@ -1072,7 +1150,7 @@ buildInventory = function()
 	end)
 
 	-- Sort button — cycles through sort modes
-	local sortBtn = makeDropdown(sortLabel, 4, false)
+	local sortBtn = makeDropdown(sortLabel, 4, false, Theme.Icons.Sort)
 	sortBtn.MouseButton1Click:Connect(function()
 		local opts = {}
 		for si, s in ipairs(SORT_OPTIONS) do
@@ -1383,22 +1461,36 @@ local function buildDetailHeader(parent, opts)
 		lvBadge.Position = UDim2.new(0, 0, 0, 0)
 		lvBadge.BackgroundColor3 = Theme.Colors.Panel
 		lvBadge.BorderSizePixel = 0
-		lvBadge.ZIndex = 2
+		lvBadge.ZIndex = 5
 		lvBadge.Parent = iconFrame
 		Instance.new("UICorner", lvBadge).CornerRadius = UDim.new(0, 3)
-		Instance.new("UIStroke", lvBadge).Color = Theme.Colors.Border
-		makeLabel(lvBadge, { Text = "Lv" .. opts.level,
+		local bStroke = Instance.new("UIStroke", lvBadge)
+		bStroke.Color = Theme.Colors.Border
+		bStroke.ZIndex = 5
+		local bLbl = makeLabel(lvBadge, { Text = "Lv" .. opts.level,
 			Size = UDim2.fromScale(1, 1),
 			TextSize = Theme.Text.Tiny(), Font = Theme.Font.PrimaryBold,
 			TextColor3 = Theme.Colors.TextGold,
 			TextXAlignment = Enum.TextXAlignment.Center })
+		if bLbl then bLbl.ZIndex = 5 end
 	end
 	makeLabel(parent, { Text = opts.name or "?",
 		Size = UDim2.new(1, -DETAIL_TEXT_X, 0, 18),
 		Position = UDim2.new(0, DETAIL_TEXT_X, 0, 0),
 		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Heading(),
 		TextColor3 = Theme.Colors.TextPrimary })
+	-- Subtitle: "Lv.X | Rarity" below name
 	local tagY = 20
+	if opts.level and opts.level > 0 then
+		local subParts = { "Lv." .. opts.level }
+		if opts.rarity and opts.rarity ~= "" then table.insert(subParts, opts.rarity) end
+		makeLabel(parent, { Text = table.concat(subParts, " | "),
+			Size = UDim2.new(1, -DETAIL_TEXT_X, 0, 14),
+			Position = UDim2.new(0, DETAIL_TEXT_X, 0, tagY),
+			TextSize = Theme.Text.Small(), Font = Theme.Font.Primary,
+			TextColor3 = opts.subtitleColor or Theme.Colors.TextSecondary })
+		tagY = tagY + 16
+	end
 	local tags = opts.tags or {}
 	if #tags > 0 then
 		local tagRow = Instance.new("Frame")
@@ -1452,6 +1544,8 @@ buildSoloDetailContent = function(panel, item)
 		tags = item.tags,
 		description = getItemFlavor(item),
 		level = item.lv,
+		rarity = item.rarity,
+		subtitleColor = rc,
 	})
 
 	-- Divider
@@ -1659,18 +1753,29 @@ buildSoloDetailContent = function(panel, item)
 	toggleBtn.Font = Theme.Font.PrimaryBold
 	toggleBtn.TextSize = 10
 	toggleBtn.TextColor3 = Theme.Colors.TextSecondary
-	toggleBtn.Text = "Show Bonus >"
+	toggleBtn.Text = "Show Bonus"
 	toggleBtn.BorderSizePixel = 0
 	toggleBtn.Parent = panel
 	Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 4)
+	local toggleIcon = Instance.new("ImageLabel")
+	toggleIcon.Name = "ToggleIcon"
+	toggleIcon.Size = UDim2.new(0, 12, 0, 12)
+	toggleIcon.Position = UDim2.new(1, -16, 0.5, -6)
+	toggleIcon.BackgroundTransparency = 1
+	toggleIcon.Image = Theme.Icons.Expand
+	toggleIcon.ScaleType = Enum.ScaleType.Fit
+	toggleIcon.ImageColor3 = Theme.Colors.TextSecondary
+	toggleIcon.Parent = toggleBtn
 	toggleBtn.MouseButton1Click:Connect(function()
 		showingBonus = not showingBonus
 		if showingBonus then
 			buildBonusView()
-			toggleBtn.Text = "< Show Base"
+			toggleBtn.Text = "Show Base"
+			if toggleBtn:FindFirstChild("ToggleIcon") then toggleBtn.ToggleIcon.Image = Theme.Icons.Collapse end
 		else
 			buildBaseView()
-			toggleBtn.Text = "Show Bonus >"
+			toggleBtn.Text = "Show Bonus"
+			if toggleBtn:FindFirstChild("ToggleIcon") then toggleBtn.ToggleIcon.Image = Theme.Icons.Expand end
 		end
 	end)
 end
@@ -1977,18 +2082,29 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 	toggleBtn.Font = Theme.Font.PrimaryBold
 	toggleBtn.TextSize = Theme.Text.Small()
 	toggleBtn.TextColor3 = Theme.Colors.TextSecondary
-	toggleBtn.Text = "Show Bonus >"
+	toggleBtn.Text = "Show Bonus"
 	toggleBtn.BorderSizePixel = 0
 	toggleBtn.Parent = panel
 	Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 4)
+	local toggleIcon = Instance.new("ImageLabel")
+	toggleIcon.Name = "ToggleIcon"
+	toggleIcon.Size = UDim2.new(0, 12, 0, 12)
+	toggleIcon.Position = UDim2.new(1, -16, 0.5, -6)
+	toggleIcon.BackgroundTransparency = 1
+	toggleIcon.Image = Theme.Icons.Expand
+	toggleIcon.ScaleType = Enum.ScaleType.Fit
+	toggleIcon.ImageColor3 = Theme.Colors.TextSecondary
+	toggleIcon.Parent = toggleBtn
 	toggleBtn.MouseButton1Click:Connect(function()
 		showingBonus = not showingBonus
 		if showingBonus then
 			buildBonusCompare()
-			toggleBtn.Text = "< Show Base"
+			toggleBtn.Text = "Show Base"
+			if toggleBtn:FindFirstChild("ToggleIcon") then toggleBtn.ToggleIcon.Image = Theme.Icons.Collapse end
 		else
 			buildBaseCompare()
-			toggleBtn.Text = "Show Bonus >"
+			toggleBtn.Text = "Show Bonus"
+			if toggleBtn:FindFirstChild("ToggleIcon") then toggleBtn.ToggleIcon.Image = Theme.Icons.Expand end
 		end
 	end)
 end
@@ -2351,12 +2467,36 @@ buildSkillsContent = function()
 			row.Font = Theme.Font.Primary
 			row.TextSize = Theme.Text.Small()
 			row.TextColor3 = opt.active and Theme.Colors.TextGold or Theme.Colors.TextPrimary
-			row.Text = opt.label
 			row.BorderSizePixel = 0
 			row.LayoutOrder = idx
 			row.ZIndex = 51
 			row.Parent = mPanel
 			Instance.new("UICorner", row).CornerRadius = UDim.new(0, 3)
+			local hasImg = opt.icon and string.find(opt.icon, "rbxassetid://")
+			if hasImg then
+				row.Text = ""
+				local ico = Instance.new("ImageLabel")
+				ico.Size = UDim2.new(0, 16, 0, 16)
+				ico.Position = UDim2.new(0, 4, 0.5, -8)
+				ico.BackgroundTransparency = 1
+				ico.Image = opt.icon
+				ico.ScaleType = Enum.ScaleType.Fit
+				ico.ZIndex = 52
+				ico.Parent = row
+				local lbl = Instance.new("TextLabel")
+				lbl.Size = UDim2.new(1, -24, 1, 0)
+				lbl.Position = UDim2.new(0, 22, 0, 0)
+				lbl.BackgroundTransparency = 1
+				lbl.Font = Theme.Font.Primary
+				lbl.TextSize = Theme.Text.Small()
+				lbl.TextColor3 = opt.active and Theme.Colors.TextGold or Theme.Colors.TextPrimary
+				lbl.TextXAlignment = Enum.TextXAlignment.Left
+				lbl.Text = opt.label
+				lbl.ZIndex = 52
+				lbl.Parent = row
+			else
+				row.Text = opt.label
+			end
 			row.MouseButton1Click:Connect(function()
 				closeDD()
 				onSelect(opt.value, idx)
@@ -2365,30 +2505,58 @@ buildSkillsContent = function()
 	end
 
 	-- Dropdown buttons
-	local function makeDDBtn(text, order, isActive)
+	local function makeDDBtn(text, order, isActive, iconAsset)
 		local btn = Instance.new("TextButton")
 		btn.Size = UDim2.new(0, 62, 1, 0)
 		btn.BackgroundColor3 = Theme.Colors.Surface
 		btn.BackgroundTransparency = 0.2
-		btn.Font = Theme.Font.Primary
-		btn.TextSize = Theme.Text.Small()
-		btn.TextColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
-		btn.Text = text
 		btn.BorderSizePixel = 0
 		btn.LayoutOrder = order
 		btn.Parent = ctrlRow
 		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 3)
+		if iconAsset then
+			btn.Text = ""
+			local ico = Instance.new("ImageLabel")
+			ico.Size = UDim2.new(0, 14, 0, 14)
+			ico.Position = UDim2.new(0, 3, 0.5, -7)
+			ico.BackgroundTransparency = 1
+			ico.Image = iconAsset
+			ico.ScaleType = Enum.ScaleType.Fit
+			ico.ImageColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+			ico.Parent = btn
+			local lbl = Instance.new("TextLabel")
+			lbl.Size = UDim2.new(1, -19, 1, 0)
+			lbl.Position = UDim2.new(0, 19, 0, 0)
+			lbl.BackgroundTransparency = 1
+			lbl.Font = Theme.Font.Primary
+			lbl.TextSize = Theme.Text.Small()
+			lbl.TextColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+			lbl.TextXAlignment = Enum.TextXAlignment.Left
+			lbl.TextTruncate = Enum.TextTruncate.AtEnd
+			lbl.Text = text
+			lbl.Parent = btn
+		else
+			btn.Font = Theme.Font.Primary
+			btn.TextSize = Theme.Text.Small()
+			btn.TextColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+			btn.Text = text
+		end
 		return btn
 	end
 
 	-- Type filter (All / Skill / Augment + subtypes)
 	local typeLbl = skillTypeFilter == "All" and "Type v" or (skillTypeFilter .. " v")
-	local typeBtn = makeDDBtn(typeLbl, 2, skillTypeFilter ~= "All")
+	local typeBtn = makeDDBtn(typeLbl, 2, skillTypeFilter ~= "All", Theme.Icons.Filter)
 	typeBtn.MouseButton1Click:Connect(function()
 		local opts = {}
-		for _, ft in ipairs(SKILL_TYPE_FILTERS) do
-			table.insert(opts, { label = ft, value = ft, active = (skillTypeFilter == ft) })
-		end
+		local TYPE_ICONS = {
+				All = Theme.Icons.Reset, Damage = Theme.Icons.Damage,
+				Heal = Theme.Icons.Heal, Buff = Theme.Icons.Buff,
+				Debuff = Theme.Icons.Debuff, Utility = Theme.Icons.Utility,
+			}
+			for _, ft in ipairs(SKILL_TYPE_FILTERS) do
+				table.insert(opts, { label = ft, value = ft, icon = TYPE_ICONS[ft], active = (skillTypeFilter == ft) })
+			end
 		showDD(typeBtn, opts, function(val)
 			skillTypeFilter = val
 			selectedSkillCardId = nil
@@ -2398,12 +2566,18 @@ buildSkillsContent = function()
 
 	-- Tag filter
 	local tagLbl = skillTagFilter == "All" and "Tags v" or (skillTagFilter .. " v")
-	local tagBtn = makeDDBtn(tagLbl, 3, skillTagFilter ~= "All")
+	local tagBtn = makeDDBtn(tagLbl, 3, skillTagFilter ~= "All", Theme.Icons.Filter)
 	tagBtn.MouseButton1Click:Connect(function()
 		local opts = {}
-		for _, t in ipairs(SKILL_TAG_FILTERS) do
-			table.insert(opts, { label = t, value = t, active = (skillTagFilter == t) })
-		end
+		local TAG_ICONS = {
+				All = Theme.Icons.Reset, Fire = Theme.Icons.Fire,
+				Ice = Theme.Icons.Ice, Electric = Theme.Icons.Electric,
+				Holy = Theme.Icons.Holy, Dark = Theme.Icons.Dark,
+				Poison = Theme.Icons.Poison, Physical = Theme.Icons.Physical,
+			}
+			for _, t in ipairs(SKILL_TAG_FILTERS) do
+				table.insert(opts, { label = t, value = t, icon = TAG_ICONS[t], active = (skillTagFilter == t) })
+			end
 		showDD(tagBtn, opts, function(val)
 			skillTagFilter = val
 			selectedSkillCardId = nil
@@ -2413,7 +2587,7 @@ buildSkillsContent = function()
 
 	-- Sort
 	local sortOpt = SKILL_SORT_OPTIONS_SK[skillSortIndex] or SKILL_SORT_OPTIONS_SK[1]
-	local sortBtn = makeDDBtn(sortOpt.label .. " v", 4, false)
+	local sortBtn = makeDDBtn(sortOpt.label .. " v", 4, false, Theme.Icons.Sort)
 	sortBtn.MouseButton1Click:Connect(function()
 		local opts = {}
 		for si, s in ipairs(SKILL_SORT_OPTIONS_SK) do
@@ -2583,10 +2757,21 @@ buildSkillsContent = function()
 	cardGrid.Parent = skillsPanel
 
 	local grid = Instance.new("UIGridLayout", cardGrid)
-	grid.CellSize = UDim2.new(0, 72, 0, 82)
 	grid.CellPadding = UDim2.new(0, 4, 0, 3)
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
 	grid.FillDirection = Enum.FillDirection.Horizontal
+
+	-- Compute cell size: same logic as equipment grid
+	local SK_MIN_CELL = 64
+	local SK_MAX_CELL = 100
+	local SK_TARGET_COLS = 5
+	local SK_GAP = 4
+	local skContainerW = cardGrid.AbsoluteSize.X - 16
+	if skContainerW < 100 then skContainerW = 400 end
+	local skCellW = math.floor(skContainerW / SK_TARGET_COLS) - SK_GAP
+	skCellW = math.clamp(skCellW, SK_MIN_CELL, SK_MAX_CELL)
+	local skCellH = math.floor(skCellW * 1.2)
+	grid.CellSize = UDim2.new(0, skCellW, 0, skCellH)
 
 	local layoutOrder = 0
 
@@ -2771,6 +2956,19 @@ buildSkillsContent = function()
 		end)
 
 		layoutOrder = layoutOrder + 1
+	end
+
+	-- Empty state: show message if no cards in grid
+	if #skillCards == 0 and #augmentCards == 0 then
+		local emptyLabel = Instance.new("TextLabel")
+		emptyLabel.Size = UDim2.new(1, 0, 0, 40)
+		emptyLabel.BackgroundTransparency = 1
+		emptyLabel.Font = Theme.Font.Primary
+		emptyLabel.TextSize = Theme.Text.Body()
+		emptyLabel.TextColor3 = Theme.Colors.TextDisabled
+		emptyLabel.Text = "No cards available"
+		emptyLabel.TextXAlignment = Enum.TextXAlignment.Center
+		emptyLabel.Parent = cardGrid
 	end
 
 	-- ============================================================

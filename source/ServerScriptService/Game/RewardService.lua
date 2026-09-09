@@ -305,6 +305,8 @@ function RewardService.BuildRewardSummaries(results)
 
 			table.insert(summaries, {
 				name = archetype and archetype.name or "Unknown",
+				icon = archetype and archetype.icon or nil,
+				flavor = archetype and archetype.flavor or nil,
 				rarity = item.rarityId,
 				itemLevel = item.itemLevel,
 				wt = profile and profile.wt or 0,
