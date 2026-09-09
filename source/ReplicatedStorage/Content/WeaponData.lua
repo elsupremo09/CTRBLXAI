@@ -35,7 +35,8 @@ end
 WeaponData.Archetypes = {
 	-- === 2H MELEE ===
 	["WPN-GREATSWORD"] = {
-		numericId = 1, name = "Greatsword", category = "Weapon",
+		numericId = 1, name = "Greatsword",
+		flavor = "Compensating for something? Good. Compensate harder.", category = "Weapon",
 		icon = "rbxassetid://122604995355077",
 		damage = 65, wt = 165, rtDelay = 28, defense = 10,
 		handClass = "2H", minRange = 1, maxRange = 1,
@@ -43,7 +44,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 1000,
 	},
 	["WPN-CLAWS"] = {
-		numericId = 2, name = "Claws", category = "Weapon",
+		numericId = 2, name = "Claws",
+		flavor = "For when you want a hug to leave a lasting impression.", category = "Weapon",
 		icon = "rbxassetid://139537105067108",
 		damage = 45, wt = 25, rtDelay = 110, defense = -5,
 		handClass = "2H", minRange = 1, maxRange = 1,
@@ -51,7 +53,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Stagger", nativePassiveBp = 100, totalBp = 988,
 	},
 	["WPN-WARAXE"] = {
-		numericId = 3, name = "War Axe", category = "Weapon",
+		numericId = 3, name = "War Axe",
+		flavor = "Subtlety died the day this was forged. No one mourned.", category = "Weapon",
 		icon = "rbxassetid://91631095061220",
 		damage = 97, wt = 107, rtDelay = 20, defense = -20,
 		handClass = "2H", minRange = 1, maxRange = 1,
@@ -59,7 +62,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Brutal", nativePassiveBp = 100, totalBp = 1000,
 	},
 	["WPN-SPEAR"] = {
-		numericId = 4, name = "Spear", category = "Weapon",
+		numericId = 4, name = "Spear",
+		flavor = "The original 'I'd rather not be near you' weapon.", category = "Weapon",
 		icon = "rbxassetid://109619472503823",
 		damage = 42, wt = 90, rtDelay = 45, defense = 21,
 		handClass = "2H", minRange = 1, maxRange = 2,
@@ -67,7 +71,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Fortify", nativePassiveBp = 120, totalBp = 1011,
 	},
 	["WPN-HAMMER"] = {
-		numericId = 5, name = "Hammer", category = "Weapon",
+		numericId = 5, name = "Hammer",
+		flavor = "Diplomacy, but louder.", category = "Weapon",
 		icon = "rbxassetid://118677292434899",
 		damage = 80, wt = 130, rtDelay = 110, defense = 5,
 		handClass = "2H", minRange = 1, maxRange = 1,
@@ -76,7 +81,8 @@ WeaponData.Archetypes = {
 	},
 	-- === 1H MELEE ===
 	["WPN-SWORD"] = {
-		numericId = 6, name = "Sword", category = "Weapon",
+		numericId = 6, name = "Sword",
+		flavor = "Standard issue. Standard dreams. Standard funeral.", category = "Weapon",
 		icon = "rbxassetid://83622596767928",
 		damage = 67, wt = 60, rtDelay = 60, defense = 5,
 		handClass = "1H", minRange = 1, maxRange = 1,
@@ -84,7 +90,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 1000,
 	},
 	["WPN-DAGGER"] = {
-		numericId = 7, name = "Dagger", category = "Weapon",
+		numericId = 7, name = "Dagger",
+		flavor = "Small, quiet, and full of bad intentions.", category = "Weapon",
 		icon = "rbxassetid://76551934687501",
 		damage = 60, wt = 10, rtDelay = 20, defense = 6,
 		handClass = "1H", minRange = 1, maxRange = 1,
@@ -92,7 +99,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "PiercingEdge", nativePassiveBp = 120, totalBp = 996,
 	},
 	["WPN-WHIP"] = {
-		numericId = 8, name = "Whip", category = "Weapon",
+		numericId = 8, name = "Whip",
+		flavor = "Three tiles of questionable life choices.", category = "Weapon",
 		icon = "rbxassetid://109633862483295",
 		damage = 52, wt = 80, rtDelay = 45, defense = 0,
 		handClass = "1H", minRange = 1, maxRange = 3,
@@ -100,7 +108,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 998,
 	},
 	["WPN-CLUB"] = {
-		numericId = 9, name = "Club", category = "Weapon",
+		numericId = 9, name = "Club",
+		flavor = "It's a stick. Hit things with it. You'll be fine.", category = "Weapon",
 		icon = "rbxassetid://126512797489617",
 		damage = 37, wt = 70, rtDelay = 64, defense = 19,
 		handClass = "1H", minRange = 1, maxRange = 1,
@@ -108,7 +117,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Knockback", nativePassiveBp = 150, totalBp = 997,
 	},
 	["WPN-SWORDBREAKER"] = {
-		numericId = 10, name = "Sword Breaker", category = "Weapon",
+		numericId = 10, name = "Sword Breaker",
+		flavor = "Made to ruin someone's favorite sword. And their day.", category = "Weapon",
 		icon = "rbxassetid://78246587290266",
 		damage = 41, wt = 25, rtDelay = 53, defense = 44,
 		handClass = "1H", minRange = 1, maxRange = 1,
@@ -117,7 +127,8 @@ WeaponData.Archetypes = {
 	},
 	-- === 2H RANGED ===
 	["WPN-CROSSBOW"] = {
-		numericId = 11, name = "Crossbow", category = "Weapon",
+		numericId = 11, name = "Crossbow",
+		flavor = "Point-and-click adventure through someone's chestplate.", category = "Weapon",
 		icon = "rbxassetid://121148894517091",
 		damage = 34, wt = 20, rtDelay = 64, defense = 0,
 		handClass = "2H", minRange = 2, maxRange = 4,
@@ -125,7 +136,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "ArmorPierce", nativePassiveBp = 130, totalBp = 995,
 	},
 	["WPN-STAFF"] = {
-		numericId = 12, name = "Staff", category = "Weapon",
+		numericId = 12, name = "Staff",
+		flavor = "A scholar's weapon. Scholars are terrifying.", category = "Weapon",
 		icon = "rbxassetid://118293925403009",
 		damage = 58, wt = 60, rtDelay = 40, defense = 0,
 		handClass = "2H", minRange = 2, maxRange = 4,
@@ -133,7 +145,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "ArcaneReach", nativePassiveBp = 120, totalBp = 1003,
 	},
 	["WPN-GREATBOW"] = {
-		numericId = 13, name = "Great Bow", category = "Weapon",
+		numericId = 13, name = "Great Bow",
+		flavor = "Height advantage sold separately. Worth every tile.", category = "Weapon",
 		icon = "rbxassetid://108682570205799",
 		damage = 63, wt = 115, rtDelay = 71, defense = -5,
 		handClass = "2H", minRange = 2, maxRange = 4,
@@ -141,7 +154,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "HighGround", nativePassiveBp = 100, totalBp = 1001,
 	},
 	["WPN-LONGBOW"] = {
-		numericId = 14, name = "Longbow", category = "Weapon",
+		numericId = 14, name = "Longbow",
+		flavor = "One more tile of range. One more tile of cowardice.", category = "Weapon",
 		icon = "rbxassetid://115039672236376",
 		damage = 50, wt = 130, rtDelay = 20, defense = -5,
 		handClass = "2H", minRange = 2, maxRange = 5,
@@ -149,7 +163,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Range+1", nativePassiveBp = 190, totalBp = 1000,
 	},
 	["WPN-BAZOOKA"] = {
-		numericId = 15, name = "Bazooka", category = "Weapon",
+		numericId = 15, name = "Bazooka",
+		flavor = "Historically inaccurate? Yes. Fun? Also yes.", category = "Weapon",
 		icon = "rbxassetid://127227509368608",
 		damage = 43, wt = 215, rtDelay = 20, defense = -5,
 		handClass = "2H", minRange = 3, maxRange = 5,
@@ -158,7 +173,8 @@ WeaponData.Archetypes = {
 	},
 	-- === 1H RANGED ===
 	["WPN-PISTOL"] = {
-		numericId = 16, name = "Pistol", category = "Weapon",
+		numericId = 16, name = "Pistol",
+		flavor = "Point. Click. Medieval tech support.", category = "Weapon",
 		icon = "rbxassetid://111287192347105",
 		damage = 20, wt = 70, rtDelay = 58, defense = 0,
 		handClass = "1H", minRange = 2, maxRange = 4,
@@ -166,7 +182,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 991,
 	},
 	["WPN-WAND"] = {
-		numericId = 17, name = "Wand", category = "Weapon",
+		numericId = 17, name = "Wand",
+		flavor = "It's a stick that hates you slightly less than a club.", category = "Weapon",
 		icon = "rbxassetid://131226888529449",
 		damage = 25, wt = 50, rtDelay = 45, defense = 0,
 		handClass = "1H", minRange = 2, maxRange = 3,
@@ -174,7 +191,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "ArcaneFlow", nativePassiveBp = 80, totalBp = 990,
 	},
 	["WPN-BLOWGUN"] = {
-		numericId = 18, name = "Blowgun", category = "Weapon",
+		numericId = 18, name = "Blowgun",
+		flavor = "One puff and your weekend plans change dramatically.", category = "Weapon",
 		icon = "rbxassetid://76407740167748",
 		damage = 15, wt = 60, rtDelay = 0, defense = 2,
 		handClass = "1H", minRange = 2, maxRange = 4,
@@ -183,7 +201,8 @@ WeaponData.Archetypes = {
 	},
 	-- === NEW 1H MELEE ===
 	["WPN-RAPIER"] = {
-		numericId = 19, name = "Rapier", category = "Weapon",
+		numericId = 19, name = "Rapier",
+		flavor = "En garde! ...They don't know what that means here.", category = "Weapon",
 		icon = "rbxassetid://79967882502489",
 		damage = 66, wt = 33, rtDelay = 25, defense = 0,
 		handClass = "1H", minRange = 1, maxRange = 1,
@@ -191,7 +210,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "PrecisionStrike", nativePassiveBp = 130, totalBp = 1007,
 	},
 	["WPN-SICKLE"] = {
-		numericId = 20, name = "Sickle", category = "Weapon",
+		numericId = 20, name = "Sickle",
+		flavor = "Harvest wheat. Harvest HP. Same motion, really.", category = "Weapon",
 		icon = "rbxassetid://77990199135866",
 		damage = 59, wt = 64, rtDelay = 53, defense = 0,
 		handClass = "1H", minRange = 1, maxRange = 1,
@@ -199,7 +219,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Drain", nativePassiveBp = 120, totalBp = 1008,
 	},
 	["WPN-TORCH"] = {
-		numericId = 21, name = "Torch", category = "Weapon",
+		numericId = 21, name = "Torch",
+		flavor = "The solution to every problem is fire. Always fire.", category = "Weapon",
 		icon = "rbxassetid://109405975213091",
 		damage = 38, wt = 35, rtDelay = 54, defense = 9,
 		handClass = "1H", minRange = 1, maxRange = 1,
@@ -207,7 +228,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Ignite", nativePassiveBp = 150, totalBp = 992,
 	},
 	["WPN-FAN"] = {
-		numericId = 22, name = "Fan", category = "Weapon",
+		numericId = 22, name = "Fan",
+		flavor = "Elegant. Deadly. Absolutely useless in actual wind.", category = "Weapon",
 		icon = "rbxassetid://113759500482323",
 		damage = 57, wt = 75, rtDelay = 15, defense = -5,
 		handClass = "1H", minRange = 1, maxRange = 1,
@@ -215,7 +237,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 1007,
 	},
 	["WPN-FLAIL"] = {
-		numericId = 23, name = "Flail", category = "Weapon",
+		numericId = 23, name = "Flail",
+		flavor = "Even the wielder doesn't know where it's going.", category = "Weapon",
 		icon = "rbxassetid://70750705494124",
 		damage = 59, wt = 61, rtDelay = 49, defense = -3,
 		handClass = "1H", minRange = 1, maxRange = 1,
@@ -223,7 +246,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Bypass", nativePassiveBp = 140, totalBp = 1007,
 	},
 	["WPN-HATCHET"] = {
-		numericId = 24, name = "Hatchet", category = "Weapon",
+		numericId = 24, name = "Hatchet",
+		flavor = "For finishing what the first 80% of damage started.", category = "Weapon",
 		icon = "rbxassetid://114121191862998",
 		damage = 64, wt = 35, rtDelay = 28, defense = 4,
 		handClass = "1H", minRange = 1, maxRange = 1,
@@ -232,7 +256,8 @@ WeaponData.Archetypes = {
 	},
 	-- === NEW 1H RANGED ===
 	["WPN-NEEDLE"] = {
-		numericId = 25, name = "Needle", category = "Weapon",
+		numericId = 25, name = "Needle",
+		flavor = "Armor? What armor? I don't see any armor.", category = "Weapon",
 		icon = "rbxassetid://109267348834151",
 		damage = 29, wt = 64, rtDelay = 54, defense = -3,
 		handClass = "1H", minRange = 2, maxRange = 3,
@@ -240,7 +265,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "TrueStrike", nativePassiveBp = 150, totalBp = 1008,
 	},
 	["WPN-BOOMERANG"] = {
-		numericId = 26, name = "Boomerang", category = "Weapon",
+		numericId = 26, name = "Boomerang",
+		flavor = "Comes back every time. Like regret.", category = "Weapon",
 		icon = "rbxassetid://74937236701523",
 		damage = 39, wt = 74, rtDelay = 42, defense = -3,
 		handClass = "1H", minRange = 2, maxRange = 3,
@@ -248,7 +274,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Tricky", nativePassiveBp = 130, totalBp = 1008,
 	},
 	["WPN-THROWINGKNIFE"] = {
-		numericId = 27, name = "Throwing Knife", category = "Weapon",
+		numericId = 27, name = "Throwing Knife",
+		flavor = "Gone in one frame. Just like your HP.", category = "Weapon",
 		icon = "rbxassetid://81642861704722",
 		damage = 47, wt = 40, rtDelay = 25, defense = -3,
 		handClass = "1H", minRange = 2, maxRange = 3,
@@ -256,7 +283,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Backstab", nativePassiveBp = 120, totalBp = 1007,
 	},
 	["WPN-BELL"] = {
-		numericId = 28, name = "Bell", category = "Weapon",
+		numericId = 28, name = "Bell",
+		flavor = "Ding. Ding. Why are your eyes closing?", category = "Weapon",
 		icon = "rbxassetid://101029559621843",
 		damage = 5, wt = 30, rtDelay = 15, defense = 0,
 		handClass = "1H", minRange = 2, maxRange = 3,
@@ -265,7 +293,8 @@ WeaponData.Archetypes = {
 	},
 	-- === NEW 2H MELEE ===
 	["WPN-SCYTHE"] = {
-		numericId = 29, name = "Scythe", category = "Weapon",
+		numericId = 29, name = "Scythe",
+		flavor = "The edgelord starter kit. Comes with free backstory.", category = "Weapon",
 		icon = "rbxassetid://112522569710001",
 		damage = 64, wt = 177, rtDelay = 15, defense = -5,
 		handClass = "2H", minRange = 1, maxRange = 1,
@@ -273,7 +302,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Reap", nativePassiveBp = 100, totalBp = 1008,
 	},
 	["WPN-LANCE"] = {
-		numericId = 30, name = "Lance", category = "Weapon",
+		numericId = 30, name = "Lance",
+		flavor = "Run at them really fast. That's the whole plan.", category = "Weapon",
 		icon = "rbxassetid://78236041653469",
 		damage = 91, wt = 100, rtDelay = 29, defense = 2,
 		handClass = "2H", minRange = 1, maxRange = 1,
@@ -281,7 +311,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Charge", nativePassiveBp = 130, totalBp = 992,
 	},
 	["WPN-FLAMEBERGE"] = {
-		numericId = 31, name = "Flameberge", category = "Weapon",
+		numericId = 31, name = "Flameberge",
+		flavor = "Wavy blade. Wavy damage. Wavy ethics.", category = "Weapon",
 		icon = "rbxassetid://85923390469142",
 		damage = 87, wt = 100, rtDelay = 59, defense = 5,
 		handClass = "2H", minRange = 1, maxRange = 1,
@@ -289,7 +320,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Lacerate", nativePassiveBp = 140, totalBp = 990,
 	},
 	["WPN-GREATSHIELD"] = {
-		numericId = 32, name = "Greatshield", category = "Weapon",
+		numericId = 32, name = "Greatshield",
+		flavor = "Technically a weapon. We checked. Twice.", category = "Weapon",
 		icon = "rbxassetid://77361921059074",
 		damage = 59, wt = 60, rtDelay = 79, defense = 54,
 		handClass = "2H", minRange = 1, maxRange = 1,
@@ -297,7 +329,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Bulwark", nativePassiveBp = 150, totalBp = 1000,
 	},
 	["WPN-CHAINS"] = {
-		numericId = 33, name = "Chains", category = "Weapon",
+		numericId = 33, name = "Chains",
+		flavor = "Nothing says 'let's talk' like dragging them closer.", category = "Weapon",
 		icon = "rbxassetid://128778016004052",
 		damage = 50, wt = 50, rtDelay = 89, defense = 24,
 		handClass = "2H", minRange = 1, maxRange = 2,
@@ -306,7 +339,8 @@ WeaponData.Archetypes = {
 	},
 	-- === NEW 2H RANGED ===
 	["WPN-MORTAR"] = {
-		numericId = 34, name = "Mortar", category = "Weapon",
+		numericId = 34, name = "Mortar",
+		flavor = "Lob it. Forget it. Hear the screaming later.", category = "Weapon",
 		icon = "rbxassetid://90803939512871",
 		damage = 59, wt = 161, rtDelay = 15, defense = -8,
 		handClass = "2H", minRange = 4, maxRange = 5,
@@ -314,7 +348,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 1010,
 	},
 	["WPN-BALLISTA"] = {
-		numericId = 35, name = "Ballista", category = "Weapon",
+		numericId = 35, name = "Ballista",
+		flavor = "A siege weapon is a valid personal choice.", category = "Weapon",
 		icon = "rbxassetid://84334480824304",
 		damage = 58, wt = 153, rtDelay = 15, defense = -8,
 		handClass = "2H", minRange = 2, maxRange = 4,
@@ -322,7 +357,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 1010,
 	},
 	["WPN-JAVELIN"] = {
-		numericId = 36, name = "Javelin", category = "Weapon",
+		numericId = 36, name = "Javelin",
+		flavor = "Throw it. That's it. Don't overthink this.", category = "Weapon",
 		icon = "rbxassetid://123876188718944",
 		damage = 64, wt = 93, rtDelay = 54, defense = -5,
 		handClass = "2H", minRange = 2, maxRange = 3,
@@ -330,7 +366,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 1007,
 	},
 	["WPN-FROSTROD"] = {
-		numericId = 37, name = "Frost Rod", category = "Weapon",
+		numericId = 37, name = "Frost Rod",
+		flavor = "Freeze now, apologize never.", category = "Weapon",
 		icon = "rbxassetid://104447164199147",
 		damage = 34, wt = 50, rtDelay = 54, defense = 1,
 		handClass = "2H", minRange = 2, maxRange = 4,
@@ -338,7 +375,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Freeze", nativePassiveBp = 180, totalBp = 992,
 	},
 	["WPN-WARHORN"] = {
-		numericId = 38, name = "War Horn", category = "Weapon",
+		numericId = 38, name = "War Horn",
+		flavor = "You don't hit them with it. That's the scary part.", category = "Weapon",
 		icon = "rbxassetid://128189252119179",
 		damage = 5, wt = 68, rtDelay = 94, defense = 0,
 		handClass = "2H", minRange = 1, maxRange = 2,
@@ -347,7 +385,8 @@ WeaponData.Archetypes = {
 	},
 	-- === OFF-HAND EQUIPMENT ===
 	["OFF-SHIELD"] = {
-		numericId = 50, name = "Shield", category = "OffHand",
+		numericId = 50, name = "Shield",
+		flavor = "Hide behind it. No one's judging. Much.", category = "OffHand",
 		icon = "rbxassetid://130630252450635",
 		damage = 0, wt = 20, rtDelay = 0, defense = 57,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
@@ -355,7 +394,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "GuardBonus", nativePassiveBp = 120, totalBp = 348,
 	},
 	["OFF-ORB"] = {
-		numericId = 51, name = "Orb", category = "OffHand",
+		numericId = 51, name = "Orb",
+		flavor = "Floaty, glowy, makes your spells hit different.", category = "OffHand",
 		icon = "rbxassetid://84835752401831",
 		damage = 50, wt = 20, rtDelay = 0, defense = 0,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
@@ -363,7 +403,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "SkillPotency", nativePassiveBp = 100, totalBp = 350,
 	},
 	["OFF-BUCKLER"] = {
-		numericId = 52, name = "Buckler", category = "OffHand",
+		numericId = 52, name = "Buckler",
+		flavor = "A shield for people who still want to stab things.", category = "OffHand",
 		icon = "rbxassetid://91094733433191",
 		damage = 0, wt = 20, rtDelay = 10, defense = 55,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
@@ -371,7 +412,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Deflect", nativePassiveBp = 130, totalBp = 350,
 	},
 	["OFF-TOME"] = {
-		numericId = 53, name = "Tome", category = "OffHand",
+		numericId = 53, name = "Tome",
+		flavor = "Knowledge is power. This one has both, literally.", category = "OffHand",
 		icon = "rbxassetid://140273978942167",
 		damage = 23, wt = 20, rtDelay = 0, defense = 28,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
@@ -379,7 +421,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Lore", nativePassiveBp = 120, totalBp = 347,
 	},
 	["OFF-QUIVER"] = {
-		numericId = 54, name = "Quiver", category = "OffHand",
+		numericId = 54, name = "Quiver",
+		flavor = "More arrows than common sense. Perfect ratio.", category = "OffHand",
 		icon = "rbxassetid://133565854493583",
 		damage = 40, wt = 20, rtDelay = 0, defense = 0,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
@@ -387,7 +430,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "QuickDraw", nativePassiveBp = 300, totalBp = 350,
 	},
 	["OFF-PARRYINGDAGGER"] = {
-		numericId = 55, name = "Parrying Dagger", category = "OffHand",
+		numericId = 55, name = "Parrying Dagger",
+		flavor = "For when 'no' needs to be expressed with steel.", category = "OffHand",
 		icon = "rbxassetid://104535230073639",
 		damage = 33, wt = 20, rtDelay = 0, defense = 21,
 		handClass = "OffHand", minRange = 0, maxRange = 0,
@@ -395,7 +439,8 @@ WeaponData.Archetypes = {
 		nativePassiveId = "Evasion", nativePassiveBp = 100, totalBp = 349,
 	},
 	["OFF-CRYSTAL"] = {
-		numericId = 56, name = "Crystal", category = "OffHand",
+		numericId = 56, name = "Crystal",
+		flavor = "It hums. You hum back. The bond is weird but real.", category = "OffHand",
 		icon = "rbxassetid://120571767307728",
 		damage = 46, wt = 20, rtDelay = 0, defense = 0,
 		handClass = "OffHand", minRange = 0, maxRange = 0,

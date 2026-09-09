@@ -185,6 +185,15 @@ function MockLoadoutData.IsEquipped(itemId, unitId)
 	return false
 end
 
+function MockLoadoutData.IsEquippedByAny(itemId)
+	for unitId, eq in pairs(MockLoadoutData.Equipped) do
+		for _, eqId in pairs(eq) do
+			if eqId == itemId then return true, unitId end
+		end
+	end
+	return false, nil
+end
+
 function MockLoadoutData.GetFilteredItems(category)
 	if not category or category == "All" then return MockLoadoutData.Inventory end
 	local r = {}
@@ -252,10 +261,13 @@ local function mapServerItem(si)
 	local isWeapon = si.isWeapon or (si.category == "Weapon")
 	local range = (si.minRange or 1) .. "-" .. (si.maxRange or 1)
 
-	-- Determine slot category from handClass + category
+	-- Determine slot category from handClass + category + armor slot
+	local SLOT_MAP = { Body = "Torso", Gloves = "Arms", Feet = "Legs" }
 	local cat = "MainHand"
 	if si.handClass == "Off-Hand" then
 		cat = "OffHand"
+	elseif si.isArmor and si.slot then
+		cat = SLOT_MAP[si.slot] or si.slot
 	elseif not isWeapon then
 		cat = si.category or "Accessory"
 	end
@@ -263,10 +275,14 @@ local function mapServerItem(si)
 	-- Build tags
 	local tags = {}
 	if si.handClass then table.insert(tags, si.handClass) end
-	if si.category then table.insert(tags, si.category) end
+	if si.isArmor and si.slot then
+		table.insert(tags, si.slot)
+	elseif si.category and si.category ~= "OffHand" and si.category ~= "Weapon" then
+		table.insert(tags, si.category)
+	end
 	if si.projectileType then
 		table.insert(tags, si.projectileType)
-	elseif isWeapon then
+	elseif isWeapon and not si.handClass then
 		table.insert(tags, "Melee")
 	end
 	if si.element then table.insert(tags, si.element) end
@@ -290,9 +306,30 @@ local function mapServerItem(si)
 	if si.nativePassiveId then
 		table.insert(passives, {
 			name = PASSIVE_NAMES[si.nativePassiveId] or si.nativePassiveId,
-			icon = "◆",
+			icon = "[*]",
 			desc = si.nativePassiveDesc or "",
 		})
+	elseif si.passiveName and si.passiveName ~= "" then
+		table.insert(passives, {
+			name = si.passiveName,
+			icon = "[*]",
+			desc = si.passiveDesc or "",
+		})
+	end
+
+	-- DIAG: log bonus stats + passives
+	local hasBonusStats = si.bonusStats and next(si.bonusStats)
+	local hasBonusPassives = si.bonusPassives and #si.bonusPassives > 0
+	if hasBonusStats or hasBonusPassives then
+		local parts = {}
+		if hasBonusStats then
+			for k, v in pairs(si.bonusStats) do table.insert(parts, k .. "=" .. tostring(v)) end
+		end
+		local passiveNames = {}
+		if hasBonusPassives then
+			for _, p in ipairs(si.bonusPassives) do table.insert(passiveNames, p.name or "?") end
+		end
+		print("[DIAG-Bonus] " .. (si.name or "?") .. " (" .. (si.rarity or "?") .. "): stats={" .. table.concat(parts, ", ") .. "} passives={" .. table.concat(passiveNames, ", ") .. "} (bonusCount=" .. tostring(si.bonusCount) .. " passiveCount=" .. tostring(si.passiveCount) .. ")")
 	end
 
 	return {
@@ -339,7 +376,11 @@ function MockLoadoutData.LoadFromServer()
 				if not MockLoadoutData.Equipped[si.equippedBy] then
 					MockLoadoutData.Equipped[si.equippedBy] = {}
 				end
-				MockLoadoutData.Equipped[si.equippedBy][si.equippedSlot or uiItem.cat] = uiItem.id
+				-- Normalize server slot names to UI slot names
+				local SLOT_MAP = { Body = "Torso", Gloves = "Arms", Feet = "Legs" }
+				local rawSlot = si.equippedSlot or uiItem.cat
+				local uiSlot = SLOT_MAP[rawSlot] or rawSlot
+				MockLoadoutData.Equipped[si.equippedBy][uiSlot] = uiItem.id
 			end
 		end
 		MockLoadoutData._useServerData = true

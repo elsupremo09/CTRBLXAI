@@ -41,7 +41,7 @@ local TILE_MATERIAL = Enum.Material.SmoothPlastic
 
 local GRID_COLOR = Color3.fromRGB(20, 20, 20)
 local GRID_MATERIAL = Enum.Material.SmoothPlastic
-local GRID_THICKNESS = 0.6
+local GRID_THICKNESS = 0.08
 
 local DEFAULT_ELEVATION = 5
 
@@ -645,6 +645,10 @@ for _, child in ipairs(mapFolder:GetChildren()) do
 
 				-- Apply terrain texture with random rotation/flip
 				TerrainTextures.Apply(child, terrainName)
+
+				-- Set tile Part color to dark neutral — texture carries the visual,
+				-- dark edges act as subtle grid lines between tiles
+				child.Color = Color3.fromRGB(20, 20, 20)
 
 				if elev >= 3 then
 					child.Color = PEAK_COLOR

@@ -1907,9 +1907,11 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 
 	-- Detail overlay state
 	local detailFrame = nil
+	local detailGui = nil
 
 	local function closeRewardDetail()
 		if detailFrame then detailFrame:Destroy(); detailFrame = nil end
+		if detailGui then detailGui:Destroy(); detailGui = nil end
 	end
 
 	for idx, item in ipairs(rewards) do
@@ -1930,28 +1932,48 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		cardStroke.Thickness = 1.5
 
 		-- Level badge (top-left)
+		local lvBg = Instance.new("Frame")
+		lvBg.Size = UDim2.new(0, 36, 0, 14)
+		lvBg.Position = UDim2.new(0, 2, 0, 2)
+		lvBg.BackgroundColor3 = Theme.Colors.BadgeBg
+		lvBg.BackgroundTransparency = 0.3
+		lvBg.BorderSizePixel = 0
+		lvBg.ZIndex = 3
+		lvBg.Parent = card
+		Instance.new("UICorner", lvBg).CornerRadius = UDim.new(0, 3)
 		local lvl = Instance.new("TextLabel")
-		lvl.Size = UDim2.new(0, 36, 0, 12)
-		lvl.Position = UDim2.new(0, 3, 0, 2)
+		lvl.Size = UDim2.fromScale(1, 1)
 		lvl.BackgroundTransparency = 1
 		lvl.Font = Theme.Font.Mono
 		lvl.TextSize = Theme.Text.Tiny()
 		lvl.TextColor3 = Theme.Colors.TextSecondary
-		lvl.TextXAlignment = Enum.TextXAlignment.Left
-		lvl.Text = "Lv" .. (item.itemLevel or 1)
-		lvl.Parent = card
+		lvl.TextXAlignment = Enum.TextXAlignment.Center
+		lvl.Text = "Lv." .. (item.itemLevel or 1)
+		lvl.ZIndex = 3
+		lvl.Parent = lvBg
 
-		-- Icon (center)
-		local icon = Instance.new("TextLabel")
-		icon.Size = UDim2.new(1, 0, 0, 28)
-		icon.Position = UDim2.new(0, 0, 0.15, 0)
-		icon.BackgroundTransparency = 1
-		icon.Font = Theme.Font.Primary
-		icon.TextSize = 24
-		icon.TextColor3 = Theme.Colors.TextPrimary
-		icon.TextXAlignment = Enum.TextXAlignment.Center
-		icon.Text = HAND_ICONS[item.handClass] or "\xe2\x9a\x94"
-		icon.Parent = card
+		-- Icon (center) -- use archetype image if available
+		local iconId = item.icon or HAND_ICONS[item.handClass]
+		if iconId and string.find(iconId, "rbxassetid://") then
+			local img = Instance.new("ImageLabel")
+			img.Size = UDim2.new(1, -4, 1, -4)
+			img.Position = UDim2.new(0, 2, 0, 2)
+			img.BackgroundTransparency = 1
+			img.Image = iconId
+			img.ScaleType = Enum.ScaleType.Crop
+			img.Parent = card
+		else
+			local icon = Instance.new("TextLabel")
+			icon.Size = UDim2.new(1, 0, 0, 28)
+			icon.Position = UDim2.new(0, 0, 0.15, 0)
+			icon.BackgroundTransparency = 1
+			icon.Font = Theme.Font.Primary
+			icon.TextSize = 24
+			icon.TextColor3 = Theme.Colors.TextPrimary
+			icon.TextXAlignment = Enum.TextXAlignment.Center
+			icon.Text = "[*]"
+			icon.Parent = card
+		end
 
 		-- Name strip (bottom)
 		local nameBg = Instance.new("Frame")
@@ -1960,6 +1982,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		nameBg.BackgroundTransparency = 0.4
 		nameBg.BorderSizePixel = 0
+		nameBg.ZIndex = 3
 		nameBg.Parent = card
 		local nameLabel = Instance.new("TextLabel")
 		nameLabel.Size = UDim2.new(1, -4, 1, 0)
@@ -1971,6 +1994,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
 		nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
 		nameLabel.Text = item.name or "?"
+		nameLabel.ZIndex = 3
 		nameLabel.Parent = nameBg
 
 		-- Click -> detail view
@@ -1978,11 +2002,18 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 			closeRewardDetail()
 
 			-- Build detail panel (left side, like loadout detail)
+			-- Detail overlay: separate ScreenGui with higher DisplayOrder
+			detailGui = Instance.new("ScreenGui")
+			detailGui.Name = "LootDetailOverlay"
+			detailGui.ResetOnSpawn = false
+			detailGui.DisplayOrder = 93
+			detailGui.Parent = player:WaitForChild("PlayerGui")
+
 			detailFrame = Theme.MakePanel("LootDetail",
 				UDim2.new(0.55, 0, 0.90, 0),
 				UDim2.new(0, 6, 0.5, 0),
 				Vector2.new(0, 0.5),
-				gui)
+				detailGui)
 			detailFrame.ClipsDescendants = true
 
 			local dp = Instance.new("UIPadding", detailFrame)
@@ -1995,12 +2026,13 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 			local uiItem = {
 				id = item.name .. "_loot",
 				name = item.name or "Unknown",
-				cat = item.handClass == "Off-Hand" and "OffHand" or "MainHand",
+				cat = item.isArmor and (({Body="Torso",Gloves="Arms",Feet="Legs"})[item.slot] or item.slot or "Accessory")
+					or (item.handClass == "Off-Hand" and "OffHand" or "MainHand"),
 				sub = item.handClass or "1H",
 				hands = item.handClass,
 				lv = item.itemLevel or 1,
 				rarity = item.rarity or "Common",
-				icon = HAND_ICONS[item.handClass] or "\xe2\x9a\x94",
+				icon = item.icon or HAND_ICONS[item.handClass] or "[*]",
 				qty = 1,
 				isWeapon = item.isWeapon or (item.category == "Weapon"),
 				tags = {},
@@ -2017,7 +2049,11 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 				flavor = "",
 			}
 			if item.handClass then table.insert(uiItem.tags, item.handClass) end
-			if item.category then table.insert(uiItem.tags, item.category) end
+			if item.isArmor and item.slot then
+				table.insert(uiItem.tags, item.slot)
+			elseif item.category and item.category ~= "OffHand" and item.category ~= "Weapon" then
+				table.insert(uiItem.tags, item.category)
+			end
 			if item.projectileType then
 				table.insert(uiItem.tags, item.projectileType)
 			elseif uiItem.isWeapon then
@@ -2027,8 +2063,14 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 			if item.nativePassiveId then
 				table.insert(uiItem.passives, {
 					name = item.nativePassiveId,
-					icon = "\xe2\x97\x86",
+					icon = "[*]",
 					desc = item.nativePassiveDesc or "",
+				})
+			elseif item.passiveName and item.passiveName ~= "" then
+				table.insert(uiItem.passives, {
+					name = item.passiveName,
+					icon = "[*]",
+					desc = item.passiveDesc or "",
 				})
 			end
 
@@ -2058,6 +2100,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 
 	-- 1st from right: CONTINUE (Primary)
 	local continueBtn = Theme.MakeButton(btnBar, "CONTINUE", "Primary", function()
+		closeRewardDetail()
 		if rewardGui then rewardGui:Destroy(); rewardGui = nil end
 		BattleEvents.RewardContinue:FireServer()
 	end, { size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H) })
