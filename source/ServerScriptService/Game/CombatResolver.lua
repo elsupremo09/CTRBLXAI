@@ -13,6 +13,7 @@ local StatusService = require(script.Parent.StatusService)
 local RacePassiveService = require(script.Parent.RacePassiveService)
 local DoctrinePassiveService = require(script.Parent.DoctrinePassiveService)
 local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
+local AugmentEffectService = require(script.Parent.AugmentEffectService)
 local BattleVisualBroadcaster = require(script.Parent.BattleVisualBroadcaster)
 
 local RaceData = require(
@@ -393,6 +394,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	return {
 		type           = "Damage",
 		targetId       = defender.id,
+		skillId        = skillDef.id or nil,
 		attackPower    = sp,
 		defensePower   = dp,
 		rawDamage      = rawDamage,
@@ -558,6 +560,18 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			print(string.format(
 				"[CombatResolver] Doctrine lifesteal: %s heals %d", attacker.name, docLifesteal
 			))
+		end
+	end
+
+	-- Augment effects (Slice 4 — AugmentEffectService)
+	if attacker and outcome.skillId and actual > 0 then
+		local augIds = AugmentEffectService.GetAugmentsForSkill(attacker, outcome.skillId)
+		if #augIds > 0 then
+			AugmentEffectService.OnDamageResolved(attacker, target, actual, nil, augIds, nil)
+			-- OnKill: if target died
+			if not target.isAlive then
+				AugmentEffectService.OnKill(attacker, target, nil, augIds)
+			end
 		end
 	end
 
