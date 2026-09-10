@@ -31,7 +31,9 @@ local DisplacementService     = require(Game:WaitForChild("DisplacementService")
 local TileEffectService       = require(Game:WaitForChild("TileEffectService"))
 local RacePassiveService      = require(Game:WaitForChild("RacePassiveService"))
 local ArmorPassiveService     = require(Game:WaitForChild("ArmorPassiveService"))
+local AugmentEffectService    = require(Game:WaitForChild("AugmentEffectService"))
 local AIService               = require(Game:WaitForChild("AIService"))
+
 
 local WeaponData = require(
 	game:GetService("ReplicatedStorage")

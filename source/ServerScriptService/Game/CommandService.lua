@@ -26,6 +26,7 @@ local DisplacementService = require(script.Parent.DisplacementService)
 local RacePassiveService  = require(script.Parent.RacePassiveService)
 local DoctrinePassiveService = require(script.Parent.DoctrinePassiveService)
 local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
+local AugmentEffectService = require(script.Parent.AugmentEffectService)
 
 local ConsumableData = require(
 	game:GetService("ReplicatedStorage")
@@ -633,6 +634,7 @@ function CommandService.ValidateAndCommit(
 		local mpCost = skillDef.mpCost or 0
 		mpCost = math.max(0, math.round(mpCost * RacePassiveService.GetMpCostModifier(actor)))
 		mpCost = math.max(0, math.round(mpCost * DoctrinePassiveService.GetMpCostModifier(actor, actor._docFirstSkillUsed ~= true)))
+		mpCost = math.max(0, math.round(mpCost * AugmentEffectService.GetMpCostMultiplier(actor, selection.skillId)))
 
 		-- Mana Burn: Extra MP Cost = round(Max MP × 0.20)
 		-- DB: "Extra MP Cost = round(Max MP × 0.20). Total MP Spent = Skill MP Cost + Extra."
@@ -877,7 +879,7 @@ function CommandService.ValidateAndCommit(
 
 		if skillDef.isHealing then
 			local outcome = CombatResolver.ResolveHealing(actor, target, skillDef)
-			CombatResolver.ApplyOutcome(outcome, target)
+			CombatResolver.ApplyOutcome(outcome, target, actor)
 			BattleCoordinator.AccrueRt(state, baseRtCost)
 
 			print(string.format(
@@ -896,7 +898,7 @@ function CommandService.ValidateAndCommit(
 			for _, t in ipairs(targets) do
 				if t.isAlive then
 					local outcome = CombatResolver.ResolveSkill(actor, t, skillDef)
-					CombatResolver.ApplyOutcome(outcome, t)
+					CombatResolver.ApplyOutcome(outcome, t, actor)
 					totalDmg = totalDmg + outcome.finalDamage
 					hitCount = hitCount + 1
 				end
@@ -939,7 +941,7 @@ function CommandService.ValidateAndCommit(
 				actor.name, hitCount, totalDmg, mpCost, baseRtCost, actor.currentAp
 			))
 
-		elseif skillDef.aoePattern and skillDef.aoePattern ~= "Cleave" then
+		elseif skillDef.aoePattern and skillDef.aoePattern ~= "Cleave" and skillDef.aoePattern ~= "InheritWeapon" then
 			-- Generic AOE: tile-based pattern resolution
 			local aoeTiles = TargetingService.GetAOETargetTiles(
 				skillDef.aoePattern, actor,
@@ -991,7 +993,7 @@ function CommandService.ValidateAndCommit(
 
 		else
 			local outcome = CombatResolver.ResolveSkill(actor, target, skillDef)
-			local actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target)
+			local actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target, actor)
 			BattleCoordinator.AccrueRt(state, baseRtCost)
 
 			local rawDelay = actor.weaponRtDelay or 0

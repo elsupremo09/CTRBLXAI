@@ -252,8 +252,8 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 	end
 
 	print(string.format(
-		"[StatusService] %s APPLIED to %s (%d turns)%s%s",
-		statusId, unit.name, def.duration,
+		"[StatusService] %s APPLIED to %s (%s turns)%s%s",
+		statusId, unit.name, tostring(def.duration or "∞"),
 		instance.storedBurn and (" | stored:" .. instance.storedBurn) or "",
 		disruptsChannel and " [CHANNEL DISRUPTOR]" or ""
 	))
