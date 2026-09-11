@@ -252,17 +252,18 @@ function EquipmentService.RebuildUnitStats(unit)
 		LUK = base.LUK,
 	}
 
-	-- 2. Doctrine stat package (applied once, additive)
+	-- 2. Doctrine stat package (percentage modifiers applied to base stats)
+	-- DB: "Six signed percentages" — e.g. STR_Modifier: 15 means +15% of base STR
 	if unit.doctrineId then
 		local doctrine = DoctrineData[unit.doctrineId]
 		if doctrine and doctrine.statPackage then
 			local pkg = doctrine.statPackage
-			total.STR = total.STR + (pkg.STR or 0)
-			total.AGI = total.AGI + (pkg.AGI or 0)
-			total.INT = total.INT + (pkg.INT or 0)
-			total.VIT = total.VIT + (pkg.VIT or 0)
-			total.DEX = total.DEX + (pkg.DEX or 0)
-			total.LUK = total.LUK + (pkg.LUK or 0)
+			total.STR = total.STR + math.round(base.STR * (pkg.STR or 0) / 100)
+			total.AGI = total.AGI + math.round(base.AGI * (pkg.AGI or 0) / 100)
+			total.INT = total.INT + math.round(base.INT * (pkg.INT or 0) / 100)
+			total.VIT = total.VIT + math.round(base.VIT * (pkg.VIT or 0) / 100)
+			total.DEX = total.DEX + math.round(base.DEX * (pkg.DEX or 0) / 100)
+			total.LUK = total.LUK + math.round(base.LUK * (pkg.LUK or 0) / 100)
 		end
 	end
 
@@ -331,6 +332,12 @@ function EquipmentService.RebuildUnitStats(unit)
 	unit.armorWt = armorWt
 
 	-- Write effective stats
+	-- Clamp all stats to minimum 0 (doctrine packages can push stats negative at low levels)
+	for _, stat in ipairs({"STR", "AGI", "INT", "VIT", "DEX", "LUK"}) do
+		if total[stat] < 0 then
+			total[stat] = 0
+		end
+	end
 	unit.effectiveStats = total
 
 	-- 4. Rebuild weapon combat profile from MainHand

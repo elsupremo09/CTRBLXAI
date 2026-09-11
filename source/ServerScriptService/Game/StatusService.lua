@@ -539,6 +539,15 @@ function StatusService.GetStatusSummary(unit)
 				if stored > 0 then
 					nextDamage = math.max(1, math.round(stored))
 				end
+			elseif inst.id == "Venom" then
+				local stacks = inst.stacks or 1
+				nextDamage = math.max(1, math.round(unit.maxHp * 0.03 * stacks))
+			elseif inst.id == "Bleed" then
+				nextDamage = math.max(1, math.round(unit.maxHp * 0.05))
+			elseif inst.id == "Raptured" then
+				nextDamage = math.max(1, math.round(unit.maxHp * 0.02))
+			elseif inst.id == "Wounded" then
+				nextDamage = math.max(1, math.round(unit.maxHp * 0.15))
 			end
 		end
 		table.insert(summary, {
@@ -546,6 +555,7 @@ function StatusService.GetStatusSummary(unit)
 			remainingTurns = inst.remainingTurns,
 			storedBurn     = inst.storedBurn,
 			nextDamage     = nextDamage,
+			stacks         = inst.stacks,
 		})
 	end
 	return summary

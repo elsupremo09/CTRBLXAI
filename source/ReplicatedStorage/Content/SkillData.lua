@@ -5,7 +5,7 @@
 local SkillData = {
 	["SKL-FIRE-BOLT"] = {
 		name = "Fire Bolt",
-		icon = "rbxassetid://84002941677539",
+		icon = "rbxassetid://126155419480147",
 		description = "Launches a bolt of fire at a single enemy at range, dealing fire damage.",
 		tags = {"Direct Damage", "Fire"},
 		properties = "Projectile: Direct",
@@ -24,7 +24,7 @@ local SkillData = {
 	},
 	["SKL-FROSTBIND"] = {
 		name = "Frostbind",
-		icon = "rbxassetid://94702934619820",
+		icon = "rbxassetid://122430223204191",
 		description = "Hurls an ice bolt at a single enemy, dealing ice damage. If the target is Wet, freezes them solid.",
 		tags = {"Direct Damage", "Debuff", "Ice"},
 		properties = "Projectile: Direct",
@@ -43,7 +43,7 @@ local SkillData = {
 	},
 	["SKL-HEALING-LIGHT"] = {
 		name = "Healing Light",
-		icon = "rbxassetid://110682709258418",
+		icon = "rbxassetid://135333153493311",
 		description = "Channels holy energy to restore HP to one ally or yourself at range.",
 		tags = {"Healing", "Holy"},
 		properties = "Passives: None",
@@ -61,7 +61,7 @@ local SkillData = {
 	},
 	["SKL-DARK-RESTORATION"] = {
 		name = "Dark Restoration",
-		icon = "rbxassetid://116402431566248",
+		icon = "rbxassetid://79019043855568",
 		description = "A dual-purpose dark spell that heals an undead ally or deals dark damage to an enemy at range.",
 		tags = {"Healing", "Direct Damage", "Dark"},
 		targetRules = "Ally Unit, Enemy Unit, Self",
@@ -78,7 +78,7 @@ local SkillData = {
 	},
 	["SKL-ARCANE-BARRIER"] = {
 		name = "Arcane Barrier",
-		icon = "rbxassetid://94279033274383",
+		icon = "rbxassetid://73340590695897",
 		description = "Projects a magical shield onto one ally or yourself, absorbing incoming damage.",
 		tags = {"Shield", "Buff"},
 		properties = "Passives: None",
@@ -96,7 +96,7 @@ local SkillData = {
 	},
 	["SKL-RAINFALL-ZONE"] = {
 		name = "Rainfall Zone",
-		icon = "rbxassetid://84577520006934",
+		icon = "rbxassetid://104823760111853",
 		description = "Calls down rain over a wide area, drenching all targets with Wet status.",
 		tags = {"Debuff", "Water"},
 		properties = "Potency: None",
@@ -115,7 +115,7 @@ local SkillData = {
 	},
 	["SKL-STONE-PRISON"] = {
 		name = "Stone Prison",
-		icon = "rbxassetid://78611268832186",
+		icon = "rbxassetid://81796383134360",
 		description = "Encases a single enemy in stone at range, inflicting Petrify.",
 		tags = {"Debuff", "Earth"},
 		properties = "Potency: None, Passives: None",
@@ -133,7 +133,7 @@ local SkillData = {
 	},
 	["SKL-CHAIN-SPARK"] = {
 		name = "Chain Spark",
-		icon = "rbxassetid://73396327821913",
+		icon = "rbxassetid://76107763909044",
 		description = "Fires a bolt of lightning that chains between up to four enemies, dealing electric damage with reduced power on each jump.",
 		tags = {"Direct Damage", "Electric"},
 		targetRules = "Enemy Unit",
@@ -151,7 +151,7 @@ local SkillData = {
 	},
 	["SKL-METEOR-MARKER"] = {
 		name = "Meteor Marker",
-		icon = "rbxassetid://107802811113746",
+		icon = "rbxassetid://120634479784335",
 		description = "Calls down a meteor on a 3x3 area, dealing heavy fire damage at the center with splash damage and inflicting Burn. Watch for friendly fire.",
 		tags = {"Direct Damage", "Fire", "Debuff"},
 		properties = "Projectile: Arc",
@@ -173,7 +173,7 @@ local SkillData = {
 	},
 	["SKL-PHANTOM-EXCHANGE"] = {
 		name = "Phantom Exchange",
-		icon = "rbxassetid://138497292562773",
+		icon = "rbxassetid://98279474292193",
 		description = "Swaps positions with a selected ally at range. Fails if either destination is blocked.",
 		tags = {"Utility"},
 		properties = "Potency: None, Passives: None",
@@ -190,7 +190,7 @@ local SkillData = {
 	},
 	["SKL-BLINK"] = {
 		name = "Blink",
-		icon = "rbxassetid://113035507758996",
+		icon = "rbxassetid://97806395136010",
 		description = "Teleports the caster to a nearby empty tile. Range scales with AGI.",
 		tags = {"Utility"},
 		properties = "Potency: None, Passives: None",
@@ -206,7 +206,7 @@ local SkillData = {
 	},
 	["SKL-VITAL-BARRIER"] = {
 		name = "Vital Barrier",
-		icon = "rbxassetid://72116296025160",
+		icon = "rbxassetid://127689120878914",
 		description = "Creates a defensive shield on one ally or yourself, scaling with VIT and weapon defense.",
 		tags = {"Shield", "Buff"},
 		properties = "Passives: None",
@@ -225,7 +225,7 @@ local SkillData = {
 	},
 	["SKL-FATED-ESCAPE"] = {
 		name = "Fated Escape",
-		icon = "rbxassetid://77885261868544",
+		icon = "rbxassetid://70658135006004",
 		description = "Teleports a selected ally to a tile next to the caster. Range scales with LUK.",
 		tags = {"Utility"},
 		properties = "Potency: None, Passives: None",
@@ -242,7 +242,7 @@ local SkillData = {
 	},
 	["SKL-POWER-STRIKE"] = {
 		name = "Power Strike",
-		icon = "rbxassetid://127307713262722",
+		icon = "rbxassetid://103746111023994",
 		description = "A powerful physical strike that deals heavy weapon damage to a single enemy.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Projectile: Inherit",
@@ -261,7 +261,7 @@ local SkillData = {
 	},
 	["SKL-SWEEPING-CUT"] = {
 		name = "Sweeping Cut",
-		icon = "rbxassetid://130422022578619",
+		icon = "rbxassetid://85937750264338",
 		description = "Swings in a wide melee arc, hitting all enemies in a cleave pattern with physical damage.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Melee Only",
@@ -279,7 +279,7 @@ local SkillData = {
 	},
 	["SKL-CRUSHING-ADVANCE"] = {
 		name = "Crushing Advance",
-		icon = "rbxassetid://78089446225215",
+		icon = "rbxassetid://126687355330743",
 		description = "Delivers a heavy melee blow that deals physical damage and knocks the target back.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Melee Only",
@@ -298,7 +298,7 @@ local SkillData = {
 	},
 	["SKL-LONGSHOT"] = {
 		name = "Longshot",
-		icon = "rbxassetid://81887655214920",
+		icon = "rbxassetid://77632708323951",
 		description = "A high-damage ranged physical attack that inherits the weapon's full range profile.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Ranged Only",
@@ -318,7 +318,7 @@ local SkillData = {
 	},
 	["SKL-HAMSTRING"] = {
 		name = "Hamstring",
-		icon = "rbxassetid://130397571628203",
+		icon = "rbxassetid://105280493278408",
 		description = "A quick strike that deals physical damage and cripples the target, reducing their movement.",
 		tags = {"Direct Damage", "Debuff", "Physical"},
 		properties = "Projectile: Inherit",
@@ -336,7 +336,7 @@ local SkillData = {
 	},
 	["SKL-EXECUTION-STROKE"] = {
 		name = "Execution Stroke",
-		icon = "rbxassetid://132466006412747",
+		icon = "rbxassetid://105108246230161",
 		description = "A devastating finisher that deals massive bonus damage to enemies below 25% HP.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Projectile: Inherit",
@@ -358,7 +358,7 @@ local SkillData = {
 	},
 	["SKL-FIELD-DRESSING"] = {
 		name = "Field Dressing",
-		icon = "rbxassetid://82622490774524",
+		icon = "rbxassetid://126411514068687",
 		description = "A close-range heal that restores HP to an adjacent ally or yourself.",
 		tags = {"Healing"},
 		properties = "Passives: None",
@@ -376,7 +376,7 @@ local SkillData = {
 	},
 	["SKL-WEAPON-WARD"] = {
 		name = "Weapon Ward",
-		icon = "rbxassetid://70696949214769",
+		icon = "rbxassetid://139534993299087",
 		description = "Projects a shield onto one ally or yourself, scaling with weapon attack and defense.",
 		tags = {"Shield", "Buff"},
 		properties = "Passives: None",
@@ -394,7 +394,7 @@ local SkillData = {
 	},
 	["SKL-PURIFYING-FORM"] = {
 		name = "Purifying Form",
-		icon = "rbxassetid://119441592831324",
+		icon = "rbxassetid://104438619100089",
 		description = "Removes one debuff from an ally or yourself and grants temporary debuff resistance.",
 		tags = {"Utility", "Buff"},
 		properties = "Potency: None, Passives: None",
@@ -412,7 +412,7 @@ local SkillData = {
 	},
 	["SKL-GUARDIAN-S-PROJECTION"] = {
 		name = "Guardian’s Projection",
-		icon = "rbxassetid://117528147489200",
+		icon = "rbxassetid://97865139425696",
 		description = "Grants a defense buff to one ally or yourself at range, scaling with weapon defense.",
 		tags = {"Buff"},
 		properties = "Passives: None",
@@ -431,6 +431,7 @@ local SkillData = {
 	},
 	["SKL-LUCKY-STRIKE"] = {
 		name = "Lucky Strike",
+		icon = "rbxassetid://108820500861660",
 		description = "A physical strike with bonus damage scaling with the caster's LUK stat. Deterministic — no crits or random damage.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Projectile: Inherit",
@@ -449,7 +450,7 @@ local SkillData = {
 	},
 	["SKL-RAPID-ASSAULT"] = {
 		name = "Rapid Assault",
-		icon = "rbxassetid://115370757492492",
+		icon = "rbxassetid://129063239660450",
 		description = "Unleashes a flurry of rapid physical strikes on a single target. Hit count scales with AGI, up to 4 hits.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Projectile: Inherit",
@@ -469,7 +470,7 @@ local SkillData = {
 	},
 	["SKL-BASTION-PROJECTION"] = {
 		name = "Bastion Projection",
-		icon = "rbxassetid://126956091308925",
+		icon = "rbxassetid://77490392628982",
 		description = "Creates a sturdy shield on one ally or yourself, scaling with weapon defense and VIT.",
 		tags = {"Shield", "Buff"},
 		properties = "Passives: None",
@@ -488,7 +489,7 @@ local SkillData = {
 	},
 	["SKL-PRECISE-DISARM"] = {
 		name = "Precise Disarm",
-		icon = "rbxassetid://88400120990024",
+		icon = "rbxassetid://120345345882039",
 		description = "A precise strike that deals physical damage and disarms the target, preventing their weapon attacks.",
 		tags = {"Direct Damage", "Debuff", "Physical"},
 		properties = "Projectile: Inherit",
@@ -507,7 +508,7 @@ local SkillData = {
 	},
 	["SKL-OPPORTUNIST-S-STEP"] = {
 		name = "Opportunist’s Step",
-		icon = "rbxassetid://76689290044040",
+		icon = "rbxassetid://71106051788374",
 		description = "Quickly repositions the caster along a legal path. Step distance scales with AGI.",
 		tags = {"Utility"},
 		properties = "Potency: None, Passives: None",
@@ -523,7 +524,7 @@ local SkillData = {
 	},
 	["SKL-STEAL"] = {
 		name = "Steal",
-		icon = "rbxassetid://97755484333572",
+		icon = "rbxassetid://74474734985816",
 		description = "Attempts to steal a reward from an adjacent enemy.",
 		tags = {"Utility"},
 		properties = "Potency: None, Passives: None",
@@ -541,7 +542,7 @@ local SkillData = {
 	},
 	["DOC-VANGUARD-01"] = {
 		name = "Hold the Line",
-		icon = "rbxassetid://97017157952047",
+		icon = "rbxassetid://133743183022426",
 		description = "Enters a defensive stance, gaining increased Stability and reducing incoming damage for a duration.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None, Passives: None",
@@ -562,7 +563,7 @@ local SkillData = {
 	},
 	["DOC-BERSERKER-01"] = {
 		name = "Reckless Charge",
-		icon = "rbxassetid://95332908802191",
+		icon = "rbxassetid://126414710942852",
 		description = "Charges up to 3 tiles toward an enemy and strikes for physical damage. Costs 10% current HP as a trade-off.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Melee Only",
@@ -582,7 +583,7 @@ local SkillData = {
 	},
 	["DOC-ARCANIST-01"] = {
 		name = "Mana Surge",
-		icon = "rbxassetid://133225253193415",
+		icon = "rbxassetid://129561600672962",
 		description = "Restores 20% of max MP and empowers the next skill with +10% potency. Costs no MP.",
 		tags = {"Buff", "Utility"},
 		properties = "Passives: None",
@@ -604,7 +605,7 @@ local SkillData = {
 	},
 	["DOC-TACTICIAN-01"] = {
 		name = "Coordinated Advance",
-		icon = "rbxassetid://114034182443247",
+		icon = "rbxassetid://131584936465472",
 		description = "Buffs an ally or yourself with extra movement range and faster movement speed for a duration.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None, Passives: None",
@@ -626,7 +627,7 @@ local SkillData = {
 	},
 	["DOC-RANGER-01"] = {
 		name = "Hunter’s Mark",
-		icon = "rbxassetid://75906484757522",
+		icon = "rbxassetid://102579507708668",
 		description = "Strikes an enemy at range and marks them — the Ranger deals +15% damage to the marked target and ignores their Hide.",
 		tags = {"Direct Damage", "Debuff", "Physical"},
 		properties = "Projectile: Inherit",
@@ -648,7 +649,7 @@ local SkillData = {
 	},
 	["DOC-WARLORD-01"] = {
 		name = "War Cry",
-		icon = "rbxassetid://124279830540889",
+		icon = "rbxassetid://136820177189374",
 		description = "Rallies the caster and all nearby allies, boosting their damage and Stability.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None, Passives: None",
@@ -671,7 +672,7 @@ local SkillData = {
 	},
 	["DOC-SHADOWBINDER-01"] = {
 		name = "Veil of Weakness",
-		icon = "rbxassetid://99485436500098",
+		icon = "rbxassetid://75953653161931",
 		description = "Curses an enemy at range with Weakened and reduced debuff resistance.",
 		tags = {"Debuff", "Dark"},
 		properties = "Potency: None",
@@ -694,7 +695,7 @@ local SkillData = {
 	},
 	["DOC-SPELLBLADE-01"] = {
 		name = "Arcane Strike",
-		icon = "rbxassetid://99106052758926",
+		icon = "rbxassetid://136734265029926",
 		description = "A hybrid strike that combines full weapon damage with bonus magic power from INT.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Projectile: Inherit",
@@ -715,7 +716,7 @@ local SkillData = {
 	},
 	["DOC-ASCETIC-01"] = {
 		name = "Meditate",
-		icon = "rbxassetid://115819499591443",
+		icon = "rbxassetid://97719372148070",
 		description = "Restores MP to yourself or transfers MP to an ally. Also grants temporary debuff resistance. Costs no MP.",
 		tags = {"Utility", "Buff"},
 		properties = "Potency: None, Passives: None",
@@ -737,7 +738,7 @@ local SkillData = {
 	},
 	["DOC-TRICKSTER-01"] = {
 		name = "Misdirection",
-		icon = "rbxassetid://137604494702566",
+		icon = "rbxassetid://129243232152967",
 		description = "Creates a deceptive ward that redirects the next enemy attack targeting the caster to a nearby enemy instead.",
 		tags = {"Utility", "Buff"},
 		properties = "Potency: None, Passives: None",
@@ -758,7 +759,7 @@ local SkillData = {
 	},
 	["DOC-THIEF-01"] = {
 		name = "Mug",
-		icon = "rbxassetid://104907530190478",
+		icon = "rbxassetid://114896153364074",
 		description = "Strikes an enemy for physical damage and attempts to steal from them in the same action.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Projectile: Inherit",
@@ -779,7 +780,7 @@ local SkillData = {
 	},
 	["DOC-DUELIST-01"] = {
 		name = "Riposte Stance",
-		icon = "rbxassetid://104724809142322",
+		icon = "rbxassetid://119474266138450",
 		description = "Enters a reactive stance that automatically counterattacks up to twice when hit by melee attacks.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None",
@@ -800,7 +801,7 @@ local SkillData = {
 	},
 	["DOC-TWINBLADE-01"] = {
 		name = "Crossing Blades",
-		icon = "rbxassetid://89428795792042",
+		icon = "rbxassetid://129115595479321",
 		description = "Strikes with both weapons in quick succession, dealing two hits of dual-wield physical damage.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Dual Wield",
@@ -820,7 +821,7 @@ local SkillData = {
 	},
 	["DOC-TWINBLADE-02"] = {
 		name = "Feinting Flurry",
-		icon = "rbxassetid://98012725325249",
+		icon = "rbxassetid://122298681186723",
 		description = "Unleashes four rapid alternating strikes with both weapons, reducing the target's evasion with each hit.",
 		tags = {"Direct Damage", "Physical", "Debuff"},
 		properties = "Dual Wield",
@@ -843,7 +844,7 @@ local SkillData = {
 	},
 	["DOC-JUGGERNAUT-01"] = {
 		name = "Overwhelming Blow",
-		icon = "rbxassetid://112694580518016",
+		icon = "rbxassetid://83930191458170",
 		description = "Delivers a massive two-handed melee strike that deals heavy damage and knocks the target back.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "2H Melee",
@@ -865,7 +866,7 @@ local SkillData = {
 	},
 	["DOC-CONJURER-01"] = {
 		name = "Conjure Sentinel",
-		icon = "rbxassetid://116068659182802",
+		icon = "rbxassetid://111466664978766",
 		description = "Summons a durable melee Sentinel to fight alongside the caster. Only one Sentinel at a time.",
 		tags = {"Summon"},
 		properties = "Passives: None",
@@ -888,7 +889,7 @@ local SkillData = {
 	},
 	["DOC-CONJURER-02"] = {
 		name = "Conjure Wisp",
-		icon = "rbxassetid://89940868904189",
+		icon = "rbxassetid://78806798521397",
 		description = "Summons a flying Wisp that attacks enemies at range with electric bolts. Only one Wisp at a time.",
 		tags = {"Summon"},
 		properties = "Passives: None",
@@ -911,7 +912,7 @@ local SkillData = {
 	},
 	["DOC-CONJURER-03"] = {
 		name = "Conjure Mender",
-		icon = "rbxassetid://107788459113867",
+		icon = "rbxassetid://114339931312461",
 		description = "Summons a healing Mender that automatically restores HP to nearby allies. Only one Mender at a time.",
 		tags = {"Summon"},
 		properties = "Passives: None",
@@ -934,7 +935,7 @@ local SkillData = {
 	},
 	["SKL-CRIPPLING-SHOT"] = {
 		name = "Crippling Shot",
-		icon = "rbxassetid://114657755500583",
+		icon = "rbxassetid://106014683803581",
 		description = "A ranged physical shot that damages and inflicts Slow on the target for 3 turns.",
 		tags = {"Direct Damage", "Debuff", "Physical"},
 		properties = "Projectile: Inherit",
@@ -953,7 +954,7 @@ local SkillData = {
 	},
 	["SKL-PYROCLASM"] = {
 		name = "Pyroclasm",
-		icon = "rbxassetid://71519739710850",
+		icon = "rbxassetid://123513262686046",
 		description = "Unleashes a line of fire in a chosen direction, dealing fire damage and inflicting Burn on all targets hit. Friendly fire.",
 		tags = {"Direct Damage", "Fire"},
 		targetRules = "Ground, including occupied Ground",
@@ -974,7 +975,7 @@ local SkillData = {
 	},
 	["SKL-GALE-THRUST"] = {
 		name = "Gale Thrust",
-		icon = "rbxassetid://111033469215515",
+		icon = "rbxassetid://103711138106207",
 		description = "Thrusts forward in a cone, dealing physical damage and knocking back all enemies caught in the blast.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Melee Only",
@@ -994,7 +995,7 @@ local SkillData = {
 	},
 	["SKL-TIDAL-CRASH"] = {
 		name = "Tidal Crash",
-		icon = "rbxassetid://85658583427535",
+		icon = "rbxassetid://115863319205353",
 		description = "Crashes a wave of water in a cross pattern, dealing water damage and applying Wet to all targets. Friendly fire.",
 		tags = {"Direct Damage", "Water"},
 		targetRules = "Ground, including occupied Ground",
@@ -1015,7 +1016,7 @@ local SkillData = {
 	},
 	["SKL-STATIC-FIELD"] = {
 		name = "Static Field",
-		icon = "rbxassetid://97873321187633",
+		icon = "rbxassetid://72128260424093",
 		description = "Emits an electric ring around the caster, delaying enemy turns and slowing their movement. Allies are unaffected.",
 		tags = {"Debuff", "Electric"},
 		properties = "Potency: None, Allies Exempt",
@@ -1034,7 +1035,7 @@ local SkillData = {
 	},
 	["SKL-VENOM-BURST"] = {
 		name = "Venom Burst",
-		icon = "rbxassetid://102199062347233",
+		icon = "rbxassetid://80246594997901",
 		description = "Releases a burst of poison damage to all adjacent enemies and inflicts Poison on each one.",
 		tags = {"Direct Damage", "Poison", "Debuff"},
 		properties = "Melee Only",
@@ -1054,7 +1055,7 @@ local SkillData = {
 	},
 	["SKL-FISSURE-LINE"] = {
 		name = "Fissure Line",
-		icon = "rbxassetid://84637065672086",
+		icon = "rbxassetid://106042198910837",
 		description = "Opens a fissure in a line, dealing earth damage and slowing affected targets. Friendly fire.",
 		tags = {"Direct Damage", "Earth", "Debuff"},
 		targetRules = "Ground, including occupied Ground",
@@ -1074,7 +1075,7 @@ local SkillData = {
 	},
 	["SKL-CONSECRATE"] = {
 		name = "Consecrate",
-		icon = "rbxassetid://116130280297543",
+		icon = "rbxassetid://103980180506394",
 		description = "Channels holy healing in an area around the caster, restoring HP to all nearby allies. Damages undead instead.",
 		tags = {"Healing", "Buff", "Holy"},
 		properties = "Allies Exempt, Passives: None",
@@ -1093,7 +1094,7 @@ local SkillData = {
 	},
 	["SKL-SHADOW-RAKE"] = {
 		name = "Shadow Rake",
-		icon = "rbxassetid://110337883893387",
+		icon = "rbxassetid://80781237820942",
 		description = "Rakes enemies in a short melee cone with dark energy, dealing dark damage to all targets hit.",
 		tags = {"Direct Damage", "Dark"},
 		properties = "Melee Only",
@@ -1113,7 +1114,7 @@ local SkillData = {
 	},
 	["SKL-GLACIAL-WAVE"] = {
 		name = "Glacial Wave",
-		icon = "rbxassetid://74093264531670",
+		icon = "rbxassetid://102675948986727",
 		description = "Sends a wave of ice in a line, dealing ice damage. Targets that are Wet are Frozen. Friendly fire.",
 		tags = {"Direct Damage", "Ice", "Debuff"},
 		targetRules = "Ground, including occupied Ground",
@@ -1134,7 +1135,7 @@ local SkillData = {
 	},
 	["SKL-MIASMA-CLOUD"] = {
 		name = "Miasma Cloud",
-		icon = "rbxassetid://95530991162353",
+		icon = "rbxassetid://121482855671953",
 		description = "Creates a cloud of toxic gas in a wide area, inflicting Poison on all targets caught inside. Friendly fire.",
 		tags = {"Debuff", "Poison"},
 		properties = "Potency: None, Passives: None",
@@ -1153,7 +1154,7 @@ local SkillData = {
 	},
 	["SKL-BLINDING-FLASH"] = {
 		name = "Blinding Flash",
-		icon = "rbxassetid://113505897004520",
+		icon = "rbxassetid://119819143751134",
 		description = "Emits a holy flash in a cone, blinding all enemies hit and delaying their turns. Allies are unaffected.",
 		tags = {"Debuff", "Holy"},
 		properties = "Potency: None, Passives: None, Allies Exempt",
@@ -1171,7 +1172,7 @@ local SkillData = {
 	},
 	["SKL-SIPHON-PULSE"] = {
 		name = "Siphon Pulse",
-		icon = "rbxassetid://122701633240052",
+		icon = "rbxassetid://83512407618369",
 		description = "Drains dark energy from all enemies surrounding the caster, dealing damage and healing for 30% of damage dealt.",
 		tags = {"Direct Damage", "Dark", "Healing"},
 		properties = "Melee Only",
@@ -1192,7 +1193,7 @@ local SkillData = {
 	},
 	["SKL-SUMMON-DECOY"] = {
 		name = "Summon Decoy",
-		icon = "rbxassetid://86966341342176",
+		icon = "rbxassetid://116919367549382",
 		description = "Places a fragile decoy on an empty tile that draws enemy attention as a high-priority target.",
 		tags = {"Summon", "Utility"},
 		properties = "Passives: None, Potency: None",
@@ -1213,7 +1214,7 @@ local SkillData = {
 	},
 	["SKL-MENDING-RAIN"] = {
 		name = "Mending Rain",
-		icon = "rbxassetid://102140972877184",
+		icon = "rbxassetid://122089441516190",
 		description = "Calls healing rain over an area, restoring HP to allies and applying Wet — setting up ice combos.",
 		tags = {"Healing", "Water"},
 		properties = "Allies Exempt, Passives: None",
@@ -1233,7 +1234,7 @@ local SkillData = {
 	},
 	["SKL-VOLTAIC-CHAIN"] = {
 		name = "Voltaic Chain",
-		icon = "rbxassetid://132219461626782",
+		icon = "rbxassetid://83554469360697",
 		description = "Fires an electric bolt that chains through up to 3 enemies, pinning the last target in the chain.",
 		tags = {"Direct Damage", "Electric", "Debuff"},
 		targetRules = "Enemy Unit",
@@ -1252,7 +1253,7 @@ local SkillData = {
 	},
 	["SKL-IGNITION-LANCE"] = {
 		name = "Ignition Lance",
-		icon = "rbxassetid://132499081838165",
+		icon = "rbxassetid://136836556117039",
 		description = "Launches a devastating long-range fire bolt at a single enemy, dealing the highest single-target fire damage and inflicting Burn.",
 		tags = {"Direct Damage", "Fire"},
 		properties = "Projectile: Direct",
@@ -1272,7 +1273,7 @@ local SkillData = {
 	},
 	["SKL-RENDING-SLASH"] = {
 		name = "Rending Slash",
-		icon = "rbxassetid://110223023536930",
+		icon = "rbxassetid://116088368549324",
 		description = "Slashes an enemy in melee, dealing physical damage and applying Bleed for ongoing bonus damage on physical hits.",
 		tags = {"Direct Damage", "Physical", "Debuff"},
 		properties = "Melee Only",
@@ -1291,7 +1292,7 @@ local SkillData = {
 	},
 	["SKL-MIND-FRACTURE"] = {
 		name = "Mind Fracture",
-		icon = "rbxassetid://88017506948897",
+		icon = "rbxassetid://86300696893114",
 		description = "Shatters an enemy's focus at range, inflicting Confuse — confused enemies take 30% backlash damage when they attack.",
 		tags = {"Debuff", "Dark"},
 		properties = "Potency: None, Passives: None",
@@ -1309,7 +1310,7 @@ local SkillData = {
 	},
 	["SKL-SEAL-OF-SILENCE"] = {
 		name = "Seal of Silence",
-		icon = "rbxassetid://105987106714588",
+		icon = "rbxassetid://98421684198676",
 		description = "Seals an enemy's ability to use skills at range, inflicting Silence and interrupting channeling.",
 		tags = {"Debuff", "Holy"},
 		properties = "Potency: None, Passives: None, Allies Exempt",
@@ -1326,7 +1327,7 @@ local SkillData = {
 	},
 	["SKL-MANA-SCORCH"] = {
 		name = "Mana Scorch",
-		icon = "rbxassetid://117069989366068",
+		icon = "rbxassetid://104893640366702",
 		description = "Scorches an enemy with fire at range, dealing damage and inflicting Mana Burn — forcing extra MP costs on their skills.",
 		tags = {"Direct Damage", "Fire", "Debuff"},
 		properties = "Projectile: Direct",
@@ -1346,7 +1347,7 @@ local SkillData = {
 	},
 	["SKL-WITHER"] = {
 		name = "Wither",
-		icon = "rbxassetid://82247194581121",
+		icon = "rbxassetid://114241598444053",
 		description = "Corrupts an enemy at range, applying Weakened (-10% all stats) and Cursed (reduced hit quality).",
 		tags = {"Debuff", "Poison"},
 		properties = "Potency: None, Passives: None",
@@ -1363,7 +1364,7 @@ local SkillData = {
 	},
 	["SKL-BULWARK-FIELD"] = {
 		name = "Bulwark Field",
-		icon = "rbxassetid://120863708336091",
+		icon = "rbxassetid://137921721258011",
 		description = "Projects a shield to the caster and all nearby allies in an area, absorbing damage for each one.",
 		tags = {"Shield", "Buff"},
 		properties = "Allies Exempt, Passives: None, Potency: None",
@@ -1384,7 +1385,7 @@ local SkillData = {
 	},
 	["SKL-RETRIBUTION-SHELL"] = {
 		name = "Retribution Shell",
-		icon = "rbxassetid://80969214890310",
+		icon = "rbxassetid://83100875934179",
 		description = "Applies a reactive shield to an ally or yourself. When the shield breaks, it deals physical damage back to the attacker.",
 		tags = {"Shield", "Buff", "Direct Damage"},
 		properties = "Passives: None",
@@ -1406,7 +1407,7 @@ local SkillData = {
 	},
 	["SKL-INVIGORATE"] = {
 		name = "Invigorate",
-		icon = "rbxassetid://128993337115855",
+		icon = "rbxassetid://137216846868461",
 		description = "Energizes an ally or yourself with Haste (faster turn recovery) and Regeneration (gradual HP restoration).",
 		tags = {"Buff", "Utility"},
 		properties = "Allies Exempt, Passives: None, Potency: None",
@@ -1425,7 +1426,7 @@ local SkillData = {
 	},
 	["SKL-TOXIC-NEEDLE"] = {
 		name = "Toxic Needle",
-		icon = "rbxassetid://123298972365497",
+		icon = "rbxassetid://121272504574631",
 		description = "Fires a poison needle at range, dealing light damage but applying Venom that stacks stronger with each hit.",
 		tags = {"Direct Damage", "Poison", "Debuff"},
 		properties = "Projectile: Direct",
@@ -1444,7 +1445,7 @@ local SkillData = {
 	},
 	["SKL-SHATTER-POINT"] = {
 		name = "Shatter Point",
-		icon = "rbxassetid://129298247004419",
+		icon = "rbxassetid://93539658631440",
 		description = "A heavy melee earth strike that inflicts Break, disabling the target's passive abilities.",
 		tags = {"Direct Damage", "Earth", "Debuff"},
 		properties = "Melee Only",
@@ -1464,7 +1465,7 @@ local SkillData = {
 	},
 	["SKL-NULL-STRIKE"] = {
 		name = "Null Strike",
-		icon = "rbxassetid://118518217919844",
+		icon = "rbxassetid://106137394696254",
 		description = "A melee strike that deals physical damage and applies Mute, disabling the target's skill augments.",
 		tags = {"Direct Damage", "Physical", "Debuff"},
 		properties = "Melee Only",
@@ -1483,7 +1484,7 @@ local SkillData = {
 	},
 	["SKL-BATTLE-FURY"] = {
 		name = "Battle Fury",
-		icon = "rbxassetid://133850240144010",
+		icon = "rbxassetid://76432538092045",
 		description = "Enters a battle frenzy, gaining Frenzy (faster basic attacks) and Rush (extra movement) for several turns.",
 		tags = {"Buff", "Utility"},
 		properties = "Potency: None, Passives: None",
@@ -1502,7 +1503,7 @@ local SkillData = {
 	},
 	["SKL-ARCANE-RENEWAL"] = {
 		name = "Arcane Renewal",
-		icon = "rbxassetid://122464224432197",
+		icon = "rbxassetid://70840544903437",
 		description = "Applies a Recharge buff to an ally or yourself, restoring MP immediately and periodically over time.",
 		tags = {"Buff", "Utility"},
 		properties = "Allies Exempt, Passives: None, Potency: None",
@@ -1522,7 +1523,7 @@ local SkillData = {
 	},
 	["SKL-VANISHING-STEP"] = {
 		name = "Vanishing Step",
-		icon = "rbxassetid://136968778446345",
+		icon = "rbxassetid://128440652760971",
 		description = "Vanishes into shadow, becoming untargetable. The next attack from stealth gains greatly improved accuracy.",
 		tags = {"Utility", "Dark"},
 		properties = "Potency: None, Passives: None",
@@ -1541,7 +1542,7 @@ local SkillData = {
 	},
 	["SKL-BENEDICTION"] = {
 		name = "Benediction",
-		icon = "rbxassetid://104992088451411",
+		icon = "rbxassetid://111025861345859",
 		description = "Bestows a powerful holy blessing, granting Blessed (improved hit quality) and Enlightened (boosted stats). Enlightened stacks with repeated casts.",
 		tags = {"Buff", "Holy"},
 		properties = "Allies Exempt, Passives: None, Potency: None",
@@ -1561,7 +1562,7 @@ local SkillData = {
 	},
 	["SKL-EARTHEN-LANCE"] = {
 		name = "Earthen Lance",
-		icon = "rbxassetid://100929071695220",
+		icon = "rbxassetid://116691748000598",
 		description = "Launches a spear of earth at a single enemy at long range, dealing earth damage.",
 		tags = {"Direct Damage", "Earth"},
 		properties = "Projectile: Direct",
@@ -1581,7 +1582,7 @@ local SkillData = {
 	},
 	["SKL-FLASH-FREEZE"] = {
 		name = "Flash Freeze",
-		icon = "rbxassetid://71673517157947",
+		icon = "rbxassetid://101503028789517",
 		description = "Freezes the ground in a cross pattern, transforming water tiles into ice and applying Wet to units in the area.",
 		tags = {"Utility", "Ice"},
 		properties = "Potency: None, Passives: None",
@@ -1600,7 +1601,7 @@ local SkillData = {
 	},
 	["SKL-IGNITE-GROUND"] = {
 		name = "Ignite Ground",
-		icon = "rbxassetid://77020472183678",
+		icon = "rbxassetid://124360159176892",
 		description = "Sets an area on fire, dealing immediate fire damage and creating burning terrain that damages occupants over time. Friendly fire.",
 		tags = {"Direct Damage", "Fire", "Utility"},
 		targetRules = "Ground, including occupied Ground",
@@ -1620,7 +1621,7 @@ local SkillData = {
 	},
 	["SKL-TWIN-FANGS"] = {
 		name = "Twin Fangs",
-		icon = "rbxassetid://137606775670169",
+		icon = "rbxassetid://111035414884476",
 		description = "Strikes an enemy twice in quick melee succession. Each hit resolves damage and triggers weapon effects independently.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Melee Only",
@@ -1639,7 +1640,7 @@ local SkillData = {
 	},
 	["SKL-STORM-BARRAGE"] = {
 		name = "Storm Barrage",
-		icon = "rbxassetid://122508494748980",
+		icon = "rbxassetid://89893514242401",
 		description = "Fires three rapid electric shots at a single enemy at range. The final hit delays the target's next turn.",
 		tags = {"Direct Damage", "Electric"},
 		properties = "Ranged Only",
@@ -1660,7 +1661,7 @@ local SkillData = {
 	},
 	["SKL-LUNGE"] = {
 		name = "Lunge",
-		icon = "rbxassetid://80715844552354",
+		icon = "rbxassetid://96150886806560",
 		description = "Lunges forward one tile toward a nearby enemy, closing the gap and delivering a physical melee strike.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Melee Only",
@@ -1679,7 +1680,7 @@ local SkillData = {
 	},
 	["SKL-RECOIL-SHOT"] = {
 		name = "Recoil Shot",
-		icon = "rbxassetid://82785094132865",
+		icon = "rbxassetid://139462756954115",
 		description = "Fires a ranged physical shot and automatically retreats one tile away from the target.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Ranged Only, Projectile: Direct",
@@ -1698,7 +1699,7 @@ local SkillData = {
 	},
 	["SKL-COUNTER-STANCE"] = {
 		name = "Counter Stance",
-		icon = "rbxassetid://131476766375808",
+		icon = "rbxassetid://130623767582981",
 		description = "Enters a reactive stance. The next melee attack against the caster triggers an automatic counter-strike.",
 		tags = {"Buff", "Utility"},
 		properties = "Melee Only, Potency: None, Passives: None",
@@ -1719,7 +1720,7 @@ local SkillData = {
 	},
 	["SKL-POISON-TRAP"] = {
 		name = "Poison Trap",
-		icon = "rbxassetid://134963202609195",
+		icon = "rbxassetid://135602369565361",
 		description = "Places an invisible trap on an empty tile. When an enemy steps on it, they are poisoned and afflicted with strong Venom.",
 		tags = {"Debuff", "Poison", "Utility"},
 		properties = "Potency: None, Passives: None",
@@ -1738,7 +1739,7 @@ local SkillData = {
 	},
 	["SKL-DECIMATING-SWING"] = {
 		name = "Decimating Swing",
-		icon = "rbxassetid://83189606165366",
+		icon = "rbxassetid://107271940116934",
 		description = "A massive two-handed cleave that hits all enemies in the arc for heavy physical damage with no falloff.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "2H Melee",
@@ -1758,7 +1759,7 @@ local SkillData = {
 	},
 	["SKL-FLURRY-OF-BLADES"] = {
 		name = "Flurry of Blades",
-		icon = "rbxassetid://120430335948001",
+		icon = "rbxassetid://116772028136246",
 		description = "Unleashes four rapid alternating strikes with dual-wielded weapons. Each hit triggers weapon effects independently.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Dual Wield",
@@ -1777,7 +1778,7 @@ local SkillData = {
 	},
 	["SKL-SUMMON-TURRET"] = {
 		name = "Summon Turret",
-		icon = "rbxassetid://101046853130387",
+		icon = "rbxassetid://131429880437583",
 		description = "Deploys an immobile turret that automatically fires at the nearest enemy each turn. Only one turret at a time.",
 		tags = {"Summon", "Direct Damage"},
 		properties = "Passives: None, Potency: None",
@@ -1799,7 +1800,7 @@ local SkillData = {
 	},
 	["SKL-SUMMON-WARD-TOTEM"] = {
 		name = "Summon Ward Totem",
-		icon = "rbxassetid://102595107387087",
+		icon = "rbxassetid://96390635700810",
 		description = "Summons a ward totem that projects a debuff-resistance aura to all nearby allies. Only one totem at a time.",
 		tags = {"Summon", "Buff"},
 		properties = "Passives: None, Potency: None",
@@ -1820,7 +1821,7 @@ local SkillData = {
 	},
 	["SKL-SHATTER-BLOW"] = {
 		name = "Shatter Blow",
-		icon = "rbxassetid://128678285688950",
+		icon = "rbxassetid://137659025942043",
 		description = "A melee strike that deals double damage to Frozen targets, shattering the ice for a devastating combo finish.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Melee Only",
@@ -1839,7 +1840,7 @@ local SkillData = {
 	},
 	["SKL-HEMORRHAGE"] = {
 		name = "Hemorrhage",
-		icon = "rbxassetid://95236850333674",
+		icon = "rbxassetid://93372396080076",
 		description = "Exploits bleeding wounds in melee — deals bonus damage to targets with Bleed without consuming it.",
 		tags = {"Direct Damage", "Physical", "Debuff"},
 		properties = "Melee Only",
@@ -1858,7 +1859,7 @@ local SkillData = {
 	},
 	["SKL-PURGE"] = {
 		name = "Purge",
-		icon = "rbxassetid://96206291592165",
+		icon = "rbxassetid://103460057271726",
 		description = "Removes up to 2 debuffs from an ally or yourself at range, healing for each debuff cleansed.",
 		tags = {"Healing", "Utility", "Holy"},
 		properties = "Allies Exempt, Passives: None",
@@ -1875,7 +1876,7 @@ local SkillData = {
 	},
 	["SKL-LIFE-LINK"] = {
 		name = "Life Link",
-		icon = "rbxassetid://118507238555109",
+		icon = "rbxassetid://108820500861660",
 		description = "Creates a healing bond with an ally. While linked, 50% of all healing the caster receives is shared with them.",
 		tags = {"Buff", "Healing", "Utility"},
 		properties = "Allies Exempt, Passives: None, Potency: None",
@@ -1895,7 +1896,7 @@ local SkillData = {
 	},
 	["SKL-TORRENT-SPEAR"] = {
 		name = "Torrent Spear",
-		icon = "rbxassetid://78289327906179",
+		icon = "rbxassetid://101391411889473",
 		description = "Hurls a spear of water at a single enemy at range, dealing water damage and applying Wet. Bonus damage to Frozen targets.",
 		tags = {"Direct Damage", "Water"},
 		properties = "Projectile: Direct",
@@ -1915,7 +1916,7 @@ local SkillData = {
 	},
 	["SKL-BLOOD-PRICE"] = {
 		name = "Blood Price",
-		icon = "rbxassetid://117770771937915",
+		icon = "rbxassetid://107667118334207",
 		description = "Deals heavy dark damage at range with no MP cost, but the caster sacrifices 15% of their max HP as payment.",
 		tags = {"Direct Damage", "Dark"},
 		targetRules = "Enemy Unit",
@@ -1933,7 +1934,7 @@ local SkillData = {
 	},
 	["SKL-FESTERING-WOUND"] = {
 		name = "Festering Wound",
-		icon = "rbxassetid://122857090447003",
+		icon = "rbxassetid://72223662195586",
 		description = "Curses an enemy at range, halving all healing they receive for the duration.",
 		tags = {"Debuff", "Poison", "Dark"},
 		properties = "Potency: None, Passives: None",
@@ -1952,7 +1953,7 @@ local SkillData = {
 	},
 	["SKL-THUNDERCLAP"] = {
 		name = "Thunderclap",
-		icon = "rbxassetid://105309461624344",
+		icon = "rbxassetid://99059119283267",
 		description = "Unleashes a thunderous electric blast around the caster, damaging and delaying all nearby enemies. Allies are unaffected.",
 		tags = {"Direct Damage", "Electric", "Debuff"},
 		properties = "Allies Exempt",
@@ -1973,7 +1974,7 @@ local SkillData = {
 	},
 	["SKL-EMPOWERING-AURA"] = {
 		name = "Empowering Aura",
-		icon = "rbxassetid://128076031768432",
+		icon = "rbxassetid://82016782180222",
 		description = "Projects an empowering aura, boosting the damage of all nearby allies by 10% for several turns.",
 		tags = {"Buff", "Utility"},
 		properties = "Support",
@@ -1995,7 +1996,7 @@ local SkillData = {
 	},
 	["SKL-SKYFALL-LANCE"] = {
 		name = "Skyfall Lance",
-		icon = "rbxassetid://89837289694719",
+		icon = "rbxassetid://118197194676386",
 		description = "Leaps to an enemy and strikes with a powerful descending blow. Deals bonus damage when landing from higher elevation.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Melee, Jump Attack",
@@ -2016,7 +2017,7 @@ local SkillData = {
 	},
 	["SKL-DRAGON-DIVE"] = {
 		name = "Dragon Dive",
-		icon = "rbxassetid://107646705777353",
+		icon = "rbxassetid://90736369408118",
 		description = "Soars into the air and crashes down on a target area, dealing physical damage to all enemies in the impact zone.",
 		tags = {"Direct Damage", "Physical", "Utility"},
 		properties = "Melee, Jump Attack, AOE",
@@ -2039,7 +2040,7 @@ local SkillData = {
 	},
 	["SKL-HOLY-SMITE"] = {
 		name = "Holy Smite",
-		icon = "rbxassetid://72065632666510",
+		icon = "rbxassetid://106273373925197",
 		description = "Strikes a single enemy with holy damage at weapon range. Deals double damage to undead.",
 		tags = {"Direct Damage", "Holy"},
 		properties = "Ranged",
@@ -2060,7 +2061,7 @@ local SkillData = {
 	},
 	["SKL-SANCTIFY"] = {
 		name = "Sanctify",
-		icon = "rbxassetid://90346759055401",
+		icon = "rbxassetid://88825610095045",
 		description = "Heals all allies around the caster and grants them Blessed. Also damages nearby undead enemies with holy power.",
 		tags = {"Healing", "Buff", "Holy"},
 		properties = "Support, AOE",
@@ -2083,7 +2084,7 @@ local SkillData = {
 	},
 	["SKL-BARRAGE"] = {
 		name = "Barrage",
-		icon = "rbxassetid://131525052750241",
+		icon = "rbxassetid://129774359307995",
 		description = "Fires 4 rapid physical shots at a single enemy at range. Each hit resolves independently and can trigger weapon effects.",
 		tags = {"Direct Damage", "Physical"},
 		properties = "Ranged, Multi-hit",
@@ -2104,7 +2105,7 @@ local SkillData = {
 	},
 	["SKL-NATURES-GRASP"] = {
 		name = "Nature's Grasp",
-		icon = "rbxassetid://119169690028717",
+		icon = "rbxassetid://105965883392973",
 		description = "Roots an enemy in place at range with earth magic, applying Pinned and creating difficult terrain around them.",
 		tags = {"Debuff", "Earth", "Utility"},
 		properties = "Ranged, Control",

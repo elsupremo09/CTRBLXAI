@@ -31,6 +31,17 @@ local UILayoutCoordinator = require(CTRBLXAI_UI:WaitForChild("UILayoutCoordinato
 
 local BattleHUD = require(CTRBLXAI_UI:WaitForChild("BattleHUD", 10))
 
+-- StyleSheet Design System (Phase 1-5)
+local CTRBLXAI_Shared = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("Shared", 10)
+local styleOk, StyleBootstrap = pcall(function()
+	return require(CTRBLXAI_Shared:WaitForChild("StyleBootstrap", 5))
+end)
+if styleOk and StyleBootstrap then
+	StyleBootstrap.Init()
+else
+	warn("[UIController] StyleBootstrap not available -- running without StyleSheet system")
+end
+
 --------------------------------------------------
 -- STATE
 --------------------------------------------------

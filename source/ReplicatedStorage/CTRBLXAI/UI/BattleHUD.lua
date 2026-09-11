@@ -377,7 +377,7 @@ function BattleHUD._buildActiveUnit()
 	-- === ROW 3: Status icons (horizontal) ===
 	if d.statuses and #d.statuses > 0 then
 		local statusRow = Instance.new("Frame")
-		statusRow.Size = UDim2.new(1, 0, 0, 18)
+		statusRow.Size = UDim2.new(1, 0, 0, 28)
 		statusRow.BackgroundTransparency = 1
 		statusRow.LayoutOrder = 3; statusRow.Parent = activeUnitPanel
 		local statusLayout = Instance.new("UIListLayout", statusRow)
@@ -385,8 +385,8 @@ function BattleHUD._buildActiveUnit()
 		statusLayout.Padding = UDim.new(0, 3)
 		for si, s in ipairs(d.statuses) do
 			local icon = Instance.new("Frame")
-			icon.Size = UDim2.new(0, 18, 0, 18)
-			icon.BackgroundColor3 = Theme.Colors[s.id] or Theme.Colors.Warning
+			icon.Size = UDim2.new(0, 28, 0, 28)
+			icon.BackgroundColor3 = Theme.GetStatusColor(s.id or "")
 			icon.BackgroundTransparency = 0.3
 			icon.BorderSizePixel = 0
 			icon.LayoutOrder = si
@@ -396,7 +396,7 @@ function BattleHUD._buildActiveUnit()
 			iconLabel.Size = UDim2.fromScale(1, 1)
 			iconLabel.BackgroundTransparency = 1
 			iconLabel.Font = Theme.Font.PrimaryBold
-			iconLabel.TextSize = Theme.Text.Badge()
+			iconLabel.TextSize = Theme.Text.Small()
 			iconLabel.TextColor3 = Theme.Colors.TextPrimary
 			iconLabel.Text = string.sub(s.id, 1, 2)
 			iconLabel.Parent = icon
@@ -659,7 +659,7 @@ function BattleHUD._buildInspector()
 
 		if d.statuses and #d.statuses > 0 then
 			local statusRow = Instance.new("Frame")
-			statusRow.Size = UDim2.new(1, 0, 0, Theme.Elem.RowSmall())
+			statusRow.Size = UDim2.new(1, 0, 0, 28)
 			statusRow.BackgroundTransparency = 1
 			statusRow.LayoutOrder = 5; statusRow.Parent = inspectorPanel
 			local sLayout = Instance.new("UIListLayout", statusRow)
@@ -671,7 +671,7 @@ function BattleHUD._buildInspector()
 				local sName = s.id or s.name or "?"
 				local sColor = Theme.GetStatusColor and Theme.GetStatusColor(sName) or Theme.Colors.Warning
 				local badge = Instance.new("Frame")
-				badge.Size = UDim2.fromOffset(0, 16)
+				badge.Size = UDim2.fromOffset(0, 24)
 				badge.AutomaticSize = Enum.AutomaticSize.X
 				badge.BackgroundColor3 = sColor
 				badge.BackgroundTransparency = 0.7
@@ -835,9 +835,25 @@ function BattleHUD._renderDamagePreview()
 	-- MOVE
 	if actionType == "Move" then
 		nameRow(p.actorName or "Unit", "Player")
-		row("Tile: " .. (p.fromTile or "?") .. " → " .. (p.toTile or "?"))
+		row(string.format("To %s  %s", p.toTile or "?", p.destTerrain or ""))
+		row(string.format("Path: %d tiles", p.pathLength or 1))
 		diffRow("AP", p.actorApBefore, p.actorApAfter)
 		row("RT After: " .. (p.actorRtAfter or 0))
+		-- Path hazards
+		if p.pathHazards and #p.pathHazards > 0 then
+			row("")
+			row("-- HAZARDS --", Theme.Colors.Warning, true)
+			for _, h in ipairs(p.pathHazards) do
+				local hazColor = Theme.Colors.Warning
+				if h.warn == "Burn" or h.warn == "MP drain" then
+					hazColor = Theme.Colors.Danger
+				end
+				row(string.format("  (%d,%d) %s - %s", h.tileX, h.tileY, h.terrain, h.warn), hazColor)
+			end
+		else
+			row("")
+			row("Path clear", Theme.Colors.Success)
+		end
 
 	-- ATTACK
 	elseif actionType == "Attack" then
@@ -1231,7 +1247,7 @@ function BattleHUD._buildViewModeUnit()
 
 	if d.statuses and #d.statuses > 0 then
 		local statusRow = Instance.new("Frame")
-		statusRow.Size = UDim2.new(1, 0, 0, 18)
+		statusRow.Size = UDim2.new(1, 0, 0, 28)
 		statusRow.BackgroundTransparency = 1
 		statusRow.LayoutOrder = 3; statusRow.Parent = activeUnitPanel
 		local statusLayout = Instance.new("UIListLayout", statusRow)
@@ -1239,8 +1255,8 @@ function BattleHUD._buildViewModeUnit()
 		statusLayout.Padding = UDim.new(0, 3)
 		for si, s in ipairs(d.statuses) do
 			local icon = Instance.new("Frame")
-			icon.Size = UDim2.new(0, 18, 0, 18)
-			icon.BackgroundColor3 = Theme.Colors[s.id] or Theme.Colors.Warning
+			icon.Size = UDim2.new(0, 28, 0, 28)
+			icon.BackgroundColor3 = Theme.GetStatusColor(s.id or "")
 			icon.BackgroundTransparency = 0.3
 			icon.BorderSizePixel = 0
 			icon.LayoutOrder = si
@@ -1250,7 +1266,7 @@ function BattleHUD._buildViewModeUnit()
 			iconLabel.Size = UDim2.fromScale(1, 1)
 			iconLabel.BackgroundTransparency = 1
 			iconLabel.Font = Theme.Font.PrimaryBold
-			iconLabel.TextSize = Theme.Text.Badge()
+			iconLabel.TextSize = Theme.Text.Small()
 			iconLabel.TextColor3 = Theme.Colors.TextPrimary
 			iconLabel.Text = string.sub(s.id, 1, 2)
 			iconLabel.Parent = icon

@@ -89,6 +89,7 @@ local inputMode       = nil -- "move","attack","skill"
 local selectedSkill   = nil
 local highlightParts  = {}
 local aimTarget       = nil
+local pathHighlightParts = {}  -- separate from highlightParts so move-range stays visible
 local storedActorData = nil -- shared across enterActionSelection and click handlers
 
 -- Battle presentation: single table of everything the HUD needs to display
@@ -109,6 +110,9 @@ local bp = {
 local function clearHighlights()
 	for _, p in ipairs(highlightParts) do p:Destroy() end
 	highlightParts = {}
+	-- Also clear path highlights (inline to avoid forward-reference)
+	for _, p in ipairs(pathHighlightParts) do p:Destroy() end
+	pathHighlightParts = {}
 end
 
 -- Highlight modes with distinct visual styles
@@ -140,6 +144,98 @@ local function createTileHighlight(tx, ty, colorOrStyle, transparency)
 	p.Material = mat
 	p.Parent = visualFolder
 	table.insert(highlightParts, p)
+end
+
+-- PATH HIGHLIGHTS (rendered separately so move-range stays visible)
+
+local PATH_HAZARDS = {
+	Molten           = { warn = "Burn",    color = Color3.fromRGB(255, 100, 30) },
+	["Tainted Ground"] = { warn = "MP drain", color = Color3.fromRGB(160, 60, 180) },
+	["Deep Water"]   = { warn = "Drowning", color = Color3.fromRGB(40, 80, 160) },
+	["Shallow Water"]= { warn = "+1 cost",  color = Color3.fromRGB(80, 160, 220) },
+	Ice              = { warn = "Slide",    color = Color3.fromRGB(180, 220, 255) },
+	Sand             = { warn = "+1 cost",  color = Color3.fromRGB(200, 180, 100) },
+	Mud              = { warn = "+1 cost",  color = Color3.fromRGB(140, 100, 60) },
+	Swamp            = { warn = "+2 cost",  color = Color3.fromRGB(80, 120, 60) },
+}
+
+local function clearMovePath()
+	for _, p in ipairs(pathHighlightParts) do p:Destroy() end
+	pathHighlightParts = {}
+end
+
+local function renderMovePath(path, destX, destY)
+	clearMovePath()
+
+	-- Build full ordered list: intermediate path tiles + destination
+	local fullPath = {}
+	for _, step in ipairs(path or {}) do
+		table.insert(fullPath, { tileX = step.tileX, tileY = step.tileY, terrain = step.terrain })
+	end
+	table.insert(fullPath, { tileX = destX, tileY = destY, isDest = true })
+
+	for i, step in ipairs(fullPath) do
+		local tx, ty = step.tileX, step.tileY
+		local elev = getElevation(tx, ty)
+		local surfaceY = tileSurfaceY(elev) + 0.15
+
+		-- Path tile highlight (brighter than move-range)
+		local hazard = PATH_HAZARDS[step.terrain]
+		local tileColor
+		if step.isDest then
+			tileColor = Color3.fromRGB(240, 200, 60) -- gold destination
+		elseif hazard then
+			tileColor = hazard.color
+		else
+			tileColor = Color3.fromRGB(100, 180, 255) -- bright path blue
+		end
+
+		local hl = Instance.new("Part")
+		hl.Name = "Path_" .. tx .. "_" .. ty
+		hl.Anchored, hl.CanCollide, hl.CanQuery = true, false, false
+		hl.Size = Vector3.new(TILE_SIZE * 0.92, 0.15, TILE_SIZE * 0.92)
+		hl.Position = Vector3.new(MAP_OFFSET_X + (tx-0.5)*TILE_SIZE, surfaceY, MAP_OFFSET_Z + (ty-0.5)*TILE_SIZE)
+		hl.Color = tileColor
+		hl.Transparency = step.isDest and 0.15 or 0.25
+		hl.Material = Enum.Material.Neon
+		hl.Parent = visualFolder
+		table.insert(pathHighlightParts, hl)
+
+		-- Floating 3D arrow pointing toward next tile
+		if i < #fullPath then
+			local nextStep = fullPath[i + 1]
+			local nx = MAP_OFFSET_X + (nextStep.tileX - 0.5) * TILE_SIZE
+			local nz = MAP_OFFSET_Z + (nextStep.tileY - 0.5) * TILE_SIZE
+			local cx = MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE
+			local cz = MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE
+			local fromPos = Vector3.new(cx, surfaceY + 1.5, cz)
+			local toPos   = Vector3.new(nx, surfaceY + 1.5, nz)
+			local midPos  = (fromPos + toPos) * 0.5
+			local lookCF  = CFrame.lookAt(midPos, toPos)
+			-- Wedge 1 (top half of chevron)
+			local w1 = Instance.new("WedgePart")
+			w1.Name = "PathArrow_" .. tx .. "_" .. ty .. "_T"
+			w1.Anchored, w1.CanCollide, w1.CanQuery = true, false, false
+			w1.Size = Vector3.new(2.0, 0.5, 2.0)
+			w1.CFrame = lookCF * CFrame.new(0, 0.25, 0)
+			w1.Color = Color3.fromRGB(180, 220, 255)
+			w1.Material = Enum.Material.Neon
+			w1.Transparency = 0.3
+			w1.Parent = visualFolder
+			table.insert(pathHighlightParts, w1)
+			-- Wedge 2 (bottom half, flipped — forms diamond/chevron)
+			local w2 = Instance.new("WedgePart")
+			w2.Name = "PathArrow_" .. tx .. "_" .. ty .. "_B"
+			w2.Anchored, w2.CanCollide, w2.CanQuery = true, false, false
+			w2.Size = Vector3.new(2.0, 0.5, 2.0)
+			w2.CFrame = lookCF * CFrame.new(0, -0.25, 0) * CFrame.Angles(math.rad(180), 0, 0)
+			w2.Color = Color3.fromRGB(180, 220, 255)
+			w2.Material = Enum.Material.Neon
+			w2.Transparency = 0.3
+			w2.Parent = visualFolder
+			table.insert(pathHighlightParts, w2)
+		end
+	end
 end
 
 --------------------------------------------------
@@ -549,14 +645,6 @@ local function enterActionSelection()
 	bp.target = nil
 	bp.preview = nil
 
-	-- Auto-highlight move range on action selection (spatial awareness)
-	clearHighlights()
-	if prompt.moveCandidates then
-		for _, tile in ipairs(prompt.moveCandidates) do
-			createTileHighlight(tile.tileX, tile.tileY, "move")
-		end
-	end
-
 	bp.state = "ActionSelection"; BattleHUD.Render(bp)
 	-- Pass base RT so ghost shows where unit will be if they end turn now
 	updateTimeline(timelineSnapshot, prompt.unitId, (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0))
@@ -686,18 +774,39 @@ local function processTileClick(bx, by)
 		if inputMode == "move" then
 			for _, tile in ipairs(currentPrompt.moveCandidates) do
 				if tile.tileX == bx and tile.tileY == by then
-					aimTarget = tile; clearHighlights()
-					createTileHighlight(bx, by, "selected")
+					aimTarget = tile
+					-- Keep move-range highlights, layer path on top
+					clearMovePath()
+					renderMovePath(tile.path, bx, by)
+					-- Build path hazard list for preview panel
+					local pathHazards = {}
+					for _, step in ipairs(tile.path or {}) do
+						local h = PATH_HAZARDS[step.terrain]
+						if h then
+							table.insert(pathHazards, {
+								tileX = step.tileX, tileY = step.tileY,
+								terrain = step.terrain, warn = h.warn,
+							})
+						end
+					end
+					-- Also check destination terrain
+					local destH = PATH_HAZARDS[tile.terrain]
+					if destH then
+						table.insert(pathHazards, { tileX = bx, tileY = by, terrain = tile.terrain, warn = destH.warn })
+					end
 					local moveRt = tile.pathCost or 0
 					bp.preview = {
 						actionType = "Move",
 						actorName = currentPrompt.unitName,
 						fromTile = string.format("(%d,%d)", storedActorData.tileX or 0, storedActorData.tileY or 0),
 						toTile = string.format("(%d,%d)", bx, by),
+						destTerrain = tile.terrain or "Clear",
+						pathLength = #(tile.path or {}) + 1,
+						pathHazards = pathHazards,
 						actorApBefore = currentPrompt.currentAp, actorApAfter = (currentPrompt.currentAp or 1) - 1,
 						actorRtAfter = moveRt + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
 						onConfirm = function() commitCommand({ actionType = "Move", tileX = bx, tileY = by, pathCost = tile.pathCost }) end,
-						onBack = cancelToTargeting,
+						onBack = function() clearMovePath(); cancelToTargeting() end,
 					}
 					bp.state = "Preview"; BattleHUD.Render(bp)
 					return
@@ -1933,7 +2042,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 
 		-- Level badge (top-left)
 		local lvBg = Instance.new("Frame")
-		lvBg.Size = UDim2.new(0, 36, 0, 14)
+		lvBg.Size = item.isCard and UDim2.new(0, 48, 0, 14) or UDim2.new(0, 36, 0, 14)
 		lvBg.Position = UDim2.new(0, 2, 0, 2)
 		lvBg.BackgroundColor3 = Theme.Colors.BadgeBg
 		lvBg.BackgroundTransparency = 0.3
@@ -1941,6 +2050,16 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		lvBg.ZIndex = 3
 		lvBg.Parent = card
 		Instance.new("UICorner", lvBg).CornerRadius = UDim.new(0, 3)
+		local CARD_BADGE = {
+			SkillCard = "SKILL",
+			AugmentCard = "AUGMENT",
+			Doctrine = "DOCTRINE",
+			Consumable = "ITEM",
+		}
+		local badgeText = "Lv." .. (item.itemLevel or 1)
+		if item.isCard and item.category then
+			badgeText = CARD_BADGE[item.category] or item.category
+		end
 		local lvl = Instance.new("TextLabel")
 		lvl.Size = UDim2.fromScale(1, 1)
 		lvl.BackgroundTransparency = 1
@@ -1948,7 +2067,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		lvl.TextSize = Theme.Text.Tiny()
 		lvl.TextColor3 = Theme.Colors.TextSecondary
 		lvl.TextXAlignment = Enum.TextXAlignment.Center
-		lvl.Text = "Lv." .. (item.itemLevel or 1)
+		lvl.Text = badgeText
 		lvl.ZIndex = 3
 		lvl.Parent = lvBg
 
@@ -2022,59 +2141,113 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 			dp.PaddingRight = UDim.new(0, 12)
 			dp.PaddingBottom = UDim.new(0, 10)
 
-			-- Convert reward item to UI format and render using shared detail view
-			local uiItem = {
-				id = item.name .. "_loot",
-				name = item.name or "Unknown",
-				cat = item.isArmor and (({Body="Torso",Gloves="Arms",Feet="Legs"})[item.slot] or item.slot or "Accessory")
-					or (item.handClass == "Off-Hand" and "OffHand" or "MainHand"),
-				sub = item.handClass or "1H",
-				hands = item.handClass,
-				lv = item.itemLevel or 1,
-				rarity = item.rarity or "Common",
-				icon = item.icon or HAND_ICONS[item.handClass] or "[*]",
-				qty = 1,
-				isWeapon = item.isWeapon or (item.category == "Weapon"),
-				tags = {},
-				baseStats = {
-					Attack = item.damage or 0,
-					Range = (item.minRange or 1) .. "-" .. (item.maxRange or 1),
-					Defense = item.defense or 0,
-					WT = item.wt or 0,
-					RTDelay = item.rtDelay or 0,
-				},
-				passives = {},
-				bonusStats = item.bonusStats or {},
-				bonusPassives = item.bonusPassives or {},
-				flavor = "",
-			}
-			if item.handClass then table.insert(uiItem.tags, item.handClass) end
-			if item.isArmor and item.slot then
-				table.insert(uiItem.tags, item.slot)
-			elseif item.category and item.category ~= "OffHand" and item.category ~= "Weapon" then
-				table.insert(uiItem.tags, item.category)
-			end
-			if item.projectileType then
-				table.insert(uiItem.tags, item.projectileType)
-			elseif uiItem.isWeapon then
-				table.insert(uiItem.tags, "Melee")
-			end
-			if item.element then table.insert(uiItem.tags, item.element) end
-			if item.nativePassiveId then
-				table.insert(uiItem.passives, {
-					name = item.nativePassiveId,
-					icon = "[*]",
-					desc = item.nativePassiveDesc or "",
-				})
-			elseif item.passiveName and item.passiveName ~= "" then
-				table.insert(uiItem.passives, {
-					name = item.passiveName,
-					icon = "[*]",
-					desc = item.passiveDesc or "",
-				})
-			end
+			if item.isCard then
+				-- Non-equipment card detail (simple text layout)
+				local scrollArea = Instance.new("ScrollingFrame")
+				scrollArea.Size = UDim2.new(1, 0, 1, 0)
+				scrollArea.BackgroundTransparency = 1
+				scrollArea.BorderSizePixel = 0
+				scrollArea.ScrollBarThickness = 3
+				scrollArea.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+				scrollArea.CanvasSize = UDim2.new(0, 0, 0, 0)
+				scrollArea.AutomaticCanvasSize = Enum.AutomaticSize.Y
+				scrollArea.Parent = detailFrame
+				local layout = Instance.new("UIListLayout", scrollArea)
+				layout.SortOrder = Enum.SortOrder.LayoutOrder
+				layout.Padding = UDim.new(0, 6)
 
-			LoadoutScreen.BuildItemDetail(detailFrame, uiItem)
+				local rc = Theme.GetRarityColor(item.rarity)
+				local CARD_TYPE_LABEL = {
+					SkillCard = "Skill Card", AugmentCard = "Augment Card",
+					Doctrine = "Doctrine", Consumable = "Consumable",
+				}
+				local catLabel = CARD_TYPE_LABEL[item.category] or "Card"
+
+				makeLabel(scrollArea, catLabel, { font = Theme.Font.Mono, textSize = Theme.Text.Tiny(), color = Theme.Colors.TextSecondary, order = 1 })
+				makeLabel(scrollArea, item.name or "Unknown", { font = Theme.Font.PrimaryBold, textSize = Theme.Text.Title(), color = rc, order = 2 })
+				makeLabel(scrollArea, item.rarity or "Common", { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = rc, order = 3 })
+
+				-- Description
+				if item.desc and item.desc ~= "" then
+					local descLbl = makeLabel(scrollArea, item.desc, {
+						font = Theme.Font.Primary, textSize = Theme.Text.Body(),
+						color = Theme.Colors.TextPrimary, order = 5, wrap = true,
+					})
+					descLbl.Size = UDim2.new(1, 0, 0, 60)
+					descLbl.AutomaticSize = Enum.AutomaticSize.Y
+				end
+
+				-- Category-specific fields
+				if item.category == "SkillCard" then
+					if item.mpCost then makeLabel(scrollArea, "MP Cost: " .. item.mpCost, { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 10 }) end
+					if item.element then makeLabel(scrollArea, "Element: " .. item.element, { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 11 }) end
+				elseif item.category == "AugmentCard" then
+					if item.family then makeLabel(scrollArea, "Family: " .. item.family, { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 10 }) end
+				elseif item.category == "Doctrine" then
+					if item.passiveName then makeLabel(scrollArea, "Passive: " .. item.passiveName, { font = Theme.Font.PrimaryBold, textSize = Theme.Text.Small(), color = Theme.Colors.TextGold, order = 10 }) end
+					if item.passiveEffect then
+						local peLbl = makeLabel(scrollArea, item.passiveEffect, { font = Theme.Font.Primary, textSize = Theme.Text.Tiny(), color = Theme.Colors.TextSecondary, order = 11, wrap = true })
+						peLbl.Size = UDim2.new(1, 0, 0, 40)
+						peLbl.AutomaticSize = Enum.AutomaticSize.Y
+					end
+				elseif item.category == "Consumable" then
+					if item.conCategory then makeLabel(scrollArea, "Type: " .. item.conCategory, { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 10 }) end
+					if item.maxCharges then makeLabel(scrollArea, "Charges: " .. item.maxCharges, { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 11 }) end
+				end
+			else
+				-- Equipment detail (existing path)
+				local uiItem = {
+					id = item.name .. "_loot",
+					name = item.name or "Unknown",
+					cat = item.isArmor and (({Body="Torso",Gloves="Arms",Feet="Legs"})[item.slot] or item.slot or "Accessory")
+						or (item.handClass == "Off-Hand" and "OffHand" or "MainHand"),
+					sub = item.handClass or "1H",
+					hands = item.handClass,
+					lv = item.itemLevel or 1,
+					rarity = item.rarity or "Common",
+					icon = item.icon or HAND_ICONS[item.handClass] or "[*]",
+					qty = 1,
+					isWeapon = item.isWeapon or (item.category == "Weapon"),
+					tags = {},
+					baseStats = {
+						Attack = item.damage or 0,
+						Range = (item.minRange or 1) .. "-" .. (item.maxRange or 1),
+						Defense = item.defense or 0,
+						WT = item.wt or 0,
+						RTDelay = item.rtDelay or 0,
+					},
+					passives = {},
+					bonusStats = item.bonusStats or {},
+					bonusPassives = item.bonusPassives or {},
+					flavor = "",
+				}
+				if item.handClass then table.insert(uiItem.tags, item.handClass) end
+				if item.isArmor and item.slot then
+					table.insert(uiItem.tags, item.slot)
+				elseif item.equipCategory and item.equipCategory ~= "OffHand" and item.equipCategory ~= "Weapon" then
+					table.insert(uiItem.tags, item.equipCategory)
+				end
+				if item.projectileType then
+					table.insert(uiItem.tags, item.projectileType)
+				elseif uiItem.isWeapon then
+					table.insert(uiItem.tags, "Melee")
+				end
+				if item.element then table.insert(uiItem.tags, item.element) end
+				if item.nativePassiveId then
+					table.insert(uiItem.passives, {
+						name = item.nativePassiveId,
+						icon = "[*]",
+						desc = item.nativePassiveDesc or "",
+					})
+				elseif item.passiveName and item.passiveName ~= "" then
+					table.insert(uiItem.passives, {
+						name = item.passiveName,
+						icon = "[*]",
+						desc = item.passiveDesc or "",
+					})
+				end
+				LoadoutScreen.BuildItemDetail(detailFrame, uiItem)
+			end
 
 			-- Show BACK button in the button bar
 			rewardBackBtn.Visible = true

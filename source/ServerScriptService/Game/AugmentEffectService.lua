@@ -18,6 +18,7 @@
 --   • AugmentData effect fields are prose — status mappings are hardcoded.
 
 local StatusService = require(script.Parent.StatusService)
+local BattleVisualBroadcaster = require(script.Parent.BattleVisualBroadcaster)
 
 local AugmentData = require(
 	game:GetService("ReplicatedStorage")
@@ -272,11 +273,12 @@ end
 local function shouldSkipForFrequency(augmentId)
 	if not hasFired(augmentId) then return false end
 	local freq = getDeliveryFrequency(augmentId)
-	-- These frequencies fire every time, no tracking needed
-	if freq == "Per qualifying target" or freq == "Per successful hit" then
+	-- Per-target frequencies: fire on every hit/target, no skip
+	if freq == "Per qualifying target" or freq == "Per successful hit"
+		or freq == "Once per supported resolution" then
 		return false
 	end
-	return true  -- already fired this resolution
+	return true  -- truly once-per-skill (future use)
 end
 
 --------------------------------------------------
@@ -476,6 +478,10 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 			if not shouldSkipForFrequency(augId) and defender.isAlive then
 				StatusService.ApplyStatus(defender, statusToApply, attacker.id)
 				markFired(augId)
+				local inst = StatusService.HasStatus(defender, statusToApply)
+				if inst then
+					BattleVisualBroadcaster.StatusApplied(defender, statusToApply, inst.remainingTurns)
+				end
 				print(string.format(
 					"[AugmentEffect] %s triggered on %s (apply %s)",
 					augName, defender.name, statusToApply
@@ -490,6 +496,10 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 			if not shouldSkipForFrequency(augId) and attacker.isAlive then
 				StatusService.ApplyStatus(attacker, buffToApply, attacker.id)
 				markFired(augId)
+				local inst = StatusService.HasStatus(attacker, buffToApply)
+				if inst then
+					BattleVisualBroadcaster.StatusApplied(attacker, buffToApply, inst.remainingTurns)
+				end
 				print(string.format(
 					"[AugmentEffect] %s triggered on %s (self-buff %s)",
 					augName, attacker.name, buffToApply

@@ -780,16 +780,20 @@ local function buildItemGrid(parent)
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
 	grid.FillDirection = Enum.FillDirection.Horizontal
 
-	-- Compute cell size: target 5+ columns, clamped 64-100px, height = width * 1.2
-	local MIN_CELL = 64
-	local MAX_CELL = 100
-	local TARGET_COLS = 5
+	-- Compute cell size: responsive to screen — minimum 3 rows visible, max 96px wide
+	local MAX_CELL = 96
+	local MIN_CELL = 48
+	local ASPECT = 1.2
 	local GAP = 4
 	local containerW = itemGrid.AbsoluteSize.X - 16 -- subtract padding
+	local containerH = itemGrid.AbsoluteSize.Y
 	if containerW < 100 then containerW = 400 end -- fallback
-	local cellW = math.floor(containerW / TARGET_COLS) - GAP
+	if containerH < 100 then containerH = 300 end -- fallback
+	-- Height-first: ensure 3 rows fit
+	local maxCellH = math.floor((containerH - 2 * GAP) / 3)
+	local cellW = math.floor(maxCellH / ASPECT)
 	cellW = math.clamp(cellW, MIN_CELL, MAX_CELL)
-	local cellH = math.floor(cellW * 1.2)
+	local cellH = math.floor(cellW * ASPECT)
 	grid.CellSize = UDim2.new(0, cellW, 0, cellH)
 
 	local items = MockData.GetFilteredItems(currentFilter)
@@ -2762,15 +2766,19 @@ buildSkillsContent = function()
 	grid.FillDirection = Enum.FillDirection.Horizontal
 
 	-- Compute cell size: same logic as equipment grid
-	local SK_MIN_CELL = 64
-	local SK_MAX_CELL = 100
-	local SK_TARGET_COLS = 5
+	local SK_MAX_CELL = 96
+	local SK_MIN_CELL = 48
+	local SK_ASPECT = 1.2
 	local SK_GAP = 4
 	local skContainerW = cardGrid.AbsoluteSize.X - 16
+	local skContainerH = cardGrid.AbsoluteSize.Y
 	if skContainerW < 100 then skContainerW = 400 end
-	local skCellW = math.floor(skContainerW / SK_TARGET_COLS) - SK_GAP
+	if skContainerH < 100 then skContainerH = 300 end
+	-- Height-first: ensure 3 rows fit
+	local skMaxCellH = math.floor((skContainerH - 2 * SK_GAP) / 3)
+	local skCellW = math.floor(skMaxCellH / SK_ASPECT)
 	skCellW = math.clamp(skCellW, SK_MIN_CELL, SK_MAX_CELL)
-	local skCellH = math.floor(skCellW * 1.2)
+	local skCellH = math.floor(skCellW * SK_ASPECT)
 	grid.CellSize = UDim2.new(0, skCellW, 0, skCellH)
 
 	local layoutOrder = 0
