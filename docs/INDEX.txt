@@ -178,3 +178,4 @@ project_rules (section = 'Equipment WT Model', 1 row):
 core_stats entries: Push (1 AP), Push RT, Push Distance formula
 
 loadout_ui_spec          — Slice 7 Roster and Unit Loadout presentation spec (tabs, header, equipment, skills, augments, consumables, comparison, interaction, responsive rules)
+item_affix_names             — Prefix/suffix affix names for procedurally generated equipment (153 entries: 117 numerical attribute tiers + 36 passive bonuses)

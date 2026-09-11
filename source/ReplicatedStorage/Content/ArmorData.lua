@@ -37,7 +37,7 @@ ArmorData.Archetypes = {
 	["HD-001"] = {
 		numericId = 101, name = "Quickhand Hood",
 		flavor = "Fast hands, empty head. The hood just completes the look.", category = "Armor",
-		icon = "rbxassetid://96218840828744",
+		icon = "rbxassetid://120132832596365",
 		slot = "Head", defense = 19, wt = 8, hp = 20, mp = 13,
 		passiveName = "Interact RT ×0.75",
 		passiveDesc = "Interact RT ×0.75.",
@@ -47,7 +47,7 @@ ArmorData.Archetypes = {
 	["HD-002"] = {
 		numericId = 102, name = "Surveyor Visor",
 		flavor = "See further. Understand less. Standard military issue.", category = "Armor",
-		icon = "rbxassetid://108046347782952",
+		icon = "rbxassetid://93572776691357",
 		slot = "Head", defense = 18, wt = 10, hp = 20, mp = 12,
 		passiveName = "Interact Maximum Range +2",
 		passiveDesc = "Interact Maximum Range +2.",
@@ -57,7 +57,7 @@ ArmorData.Archetypes = {
 	["HD-003"] = {
 		numericId = 103, name = "Field Medic Coif",
 		flavor = "The red cross means 'I heal.' The stains mean 'eventually.'", category = "Armor",
-		icon = "rbxassetid://133208986343473",
+		icon = "rbxassetid://82985173923504",
 		slot = "Head", defense = 17, wt = 12, hp = 25, mp = 13,
 		passiveName = "Interact revives KO'd ally at 15% HP",
 		passiveDesc = "Interact revives KO'd ally at 15% HP.",
@@ -67,7 +67,7 @@ ArmorData.Archetypes = {
 	["HD-004"] = {
 		numericId = 104, name = "Chronologist Monocle",
 		flavor = "It's just a monocle. The time stuff is a side effect of squinting.", category = "Armor",
-		icon = "rbxassetid://122040713817443",
+		icon = "rbxassetid://129651468208600",
 		slot = "Head", defense = 10, wt = 8, hp = 16, mp = 24,
 		passiveName = "Interact on ally grants target -50 RT",
 		passiveDesc = "Interact on ally grants target -50 RT.",
@@ -77,7 +77,7 @@ ArmorData.Archetypes = {
 	["HD-005"] = {
 		numericId = 105, name = "Recruiter's Circlet",
 		flavor = "Enemies join you willingly. The circlet may be cursed. Don't ask.", category = "Armor",
-		icon = "rbxassetid://72340040630836",
+		icon = "rbxassetid://97538457527010",
 		slot = "Head", defense = 17, wt = 8, hp = 18, mp = 12,
 		passiveName = "Interact on valid enemy attempts Recruitment with Success Rate +10%",
 		passiveDesc = "Interact on valid enemy attempts Recruitment with Success Rate +10%.",
@@ -87,7 +87,7 @@ ArmorData.Archetypes = {
 	["HD-006"] = {
 		numericId = 106, name = "Diplomat's Veil",
 		flavor = "Makes you so polite, even hostiles forget they hate you.", category = "Armor",
-		icon = "rbxassetid://127812430235706",
+		icon = "rbxassetid://72449076770052",
 		slot = "Head", defense = 10, wt = 6, hp = 16, mp = 24,
 		passiveName = "Interact recruitment ignores hostility threshold",
 		passiveDesc = "Interact recruitment ignores hostility threshold.",
@@ -96,7 +96,7 @@ ArmorData.Archetypes = {
 	},
 	["HD-007"] = {
 		numericId = 107, name = "Siege Gunner Helm",
-		flavor = "Peripheral vision is for people without cannons.", icon = "rbxassetid://124275918703646", category = "Armor",
+		flavor = "Peripheral vision is for people without cannons.", icon = "rbxassetid://140156537990310", category = "Armor",
 		slot = "Head", defense = 28, wt = 15, hp = 22, mp = 6,
 		passiveName = "Interact on siege/artillery object: damage ×1.5",
 		passiveDesc = "Interact on siege/artillery object: damage ×1.5.",
@@ -106,7 +106,7 @@ ArmorData.Archetypes = {
 	["HD-008"] = {
 		numericId = 108, name = "Artillerist Eyepiece",
 		flavor = "You'll hit targets two tiles further. You still won't aim.", category = "Armor",
-		icon = "rbxassetid://86761315467002",
+		icon = "rbxassetid://102906553108963",
 		slot = "Head", defense = 19, wt = 10, hp = 21, mp = 13,
 		passiveName = "Interact on siege/artillery object: range +2",
 		passiveDesc = "Interact on siege/artillery object: range +2.",
@@ -116,7 +116,7 @@ ArmorData.Archetypes = {
 	["HD-009"] = {
 		numericId = 109, name = "Demolition Mask",
 		flavor = "Break first, ask questions at the debriefing. If there is one.", category = "Armor",
-		icon = "rbxassetid://73992119735481",
+		icon = "rbxassetid://108564073038909",
 		slot = "Head", defense = 27, wt = 14, hp = 23, mp = 6,
 		passiveName = "Interact destroys breakable objects in 1 action regardless of HP",
 		passiveDesc = "Interact destroys breakable objects in 1 action regardless of HP.",
@@ -126,7 +126,7 @@ ArmorData.Archetypes = {
 	["HD-010"] = {
 		numericId = 110, name = "Trapfinder Goggles",
 		flavor = "Reveals traps you would've found anyway. With your face.", category = "Armor",
-		icon = "rbxassetid://113742954135345",
+		icon = "rbxassetid://97437692438005",
 		slot = "Head", defense = 16, wt = 8, hp = 23, mp = 12,
 		passiveName = "Interact disarms adjacent traps; reveals hidden traps within 3 tiles",
 		passiveDesc = "Interact disarms adjacent traps; reveals hidden traps within 3 tiles.",
@@ -136,7 +136,7 @@ ArmorData.Archetypes = {
 	["HD-011"] = {
 		numericId = 111, name = "Salvager's Cap",
 		flavor = "One man's rubble is another man's retirement fund.", category = "Armor",
-		icon = "rbxassetid://112310393169747",
+		icon = "rbxassetid://112817664942450",
 		slot = "Head", defense = 17, wt = 8, hp = 25, mp = 14,
 		passiveName = "Interact on destroyed objects yields bonus loot/materials",
 		passiveDesc = "Interact on destroyed objects yields bonus loot/materials.",
@@ -146,7 +146,7 @@ ArmorData.Archetypes = {
 	["HD-012"] = {
 		numericId = 112, name = "Locksmith Lens",
 		flavor = "Opens any lock. The ethics? Also unlocked, apparently.", category = "Armor",
-		icon = "rbxassetid://127818688673976",
+		icon = "rbxassetid://91269243605619",
 		slot = "Head", defense = 16, wt = 8, hp = 24, mp = 13,
 		passiveName = "Interact opens locked containers without a key",
 		passiveDesc = "Interact opens locked containers without a key.",
@@ -156,7 +156,7 @@ ArmorData.Archetypes = {
 	["HD-013"] = {
 		numericId = 113, name = "Relic Reader Crown",
 		flavor = "Know everything about the artifact. Still can't sell it.", category = "Armor",
-		icon = "rbxassetid://97630886058340",
+		icon = "rbxassetid://117939154306011",
 		slot = "Head", defense = 11, wt = 6, hp = 18, mp = 28,
 		passiveName = "Interact on discovery objects reveals full information",
 		passiveDesc = "Interact on discovery objects reveals full information.",
@@ -166,7 +166,7 @@ ArmorData.Archetypes = {
 	["HD-014"] = {
 		numericId = 114, name = "Hazard Warden Hood",
 		flavor = "Neutralizes hazards by sheer bureaucratic authority.", category = "Armor",
-		icon = "rbxassetid://138223960121517",
+		icon = "rbxassetid://120944692973915",
 		slot = "Head", defense = 24, wt = 14, hp = 20, mp = 5,
 		passiveName = "Interact on hazard tile neutralizes it permanently",
 		passiveDesc = "Interact on hazard tile neutralizes it permanently.",
@@ -176,7 +176,7 @@ ArmorData.Archetypes = {
 	["HD-015"] = {
 		numericId = 115, name = "Mechanist Headgear",
 		flavor = "Talks to machines. They don't talk back. Mostly.", category = "Armor",
-		icon = "rbxassetid://71394389538164",
+		icon = "rbxassetid://134354794068744",
 		slot = "Head", defense = 17, wt = 12, hp = 17, mp = 12,
 		passiveName = "Interact on allied objects/summons: restore 1 charge or +500 CT duration",
 		passiveDesc = "Interact on allied objects/summons: restore 1 charge or +500 CT duration.",
@@ -186,7 +186,7 @@ ArmorData.Archetypes = {
 	["HD-016"] = {
 		numericId = 116, name = "Signal Officer Beret",
 		flavor = "Coordinates revivals by yelling really, really specifically.", category = "Armor",
-		icon = "rbxassetid://87019455597792",
+		icon = "rbxassetid://127680747164758",
 		slot = "Head", defense = 16, wt = 10, hp = 24, mp = 12,
 		passiveName = "Interact on KO'd ally: revive at 25% HP if within 2 tiles of another ally",
 		passiveDesc = "Interact on KO'd ally: revive at 25% HP if within 2 tiles of another ally.",
@@ -196,7 +196,7 @@ ArmorData.Archetypes = {
 	["HD-017"] = {
 		numericId = 117, name = "Rescue Marshal Helm",
 		flavor = "Picks up the fallen and carries them to safety. Romantically.", category = "Armor",
-		icon = "rbxassetid://85551272840011",
+		icon = "rbxassetid://131970899337026",
 		slot = "Head", defense = 16, wt = 12, hp = 22, mp = 12,
 		passiveName = "Interact on KO'd ally: revive at 20% HP and immediately relocate to user's tile",
 		passiveDesc = "Interact on KO'd ally: revive at 20% HP and immediately relocate to user's tile.",
@@ -206,7 +206,7 @@ ArmorData.Archetypes = {
 	["HD-018"] = {
 		numericId = 118, name = "Merchant's Turban",
 		flavor = "The turban whispers discount codes in forgotten tongues.", category = "Armor",
-		icon = "rbxassetid://79646564533031",
+		icon = "rbxassetid://80202414204679",
 		slot = "Head", defense = 16, wt = 6, hp = 24, mp = 13,
 		passiveName = "Interact on shop objects: all prices reduced by 20%",
 		passiveDesc = "Interact on shop objects: all prices reduced by 20%.",
@@ -215,7 +215,7 @@ ArmorData.Archetypes = {
 	},
 	["HD-019"] = {
 		numericId = 119, name = "Oracle Diadem",
-		flavor = "Reveals enemy stats. Knowing won't save you, but it's polite.", icon = "rbxassetid://128795852053033", category = "Armor",
+		flavor = "Reveals enemy stats. Knowing won't save you, but it's polite.", icon = "rbxassetid://102900544068475", category = "Armor",
 		slot = "Head", defense = 8, wt = 8, hp = 14, mp = 21,
 		passiveName = "Interact reveals enemy stats, skills, and AI behavior for 1000 CT",
 		passiveDesc = "Interact reveals enemy stats, skills, and AI behavior for 1000 CT.",
@@ -224,7 +224,7 @@ ArmorData.Archetypes = {
 	},
 	["HD-020"] = {
 		numericId = 120, name = "Commandant Helm",
-		flavor = "Worn by people who point at things and call it leadership.", icon = "rbxassetid://103153858005975", category = "Armor",
+		flavor = "Worn by people who point at things and call it leadership.", icon = "rbxassetid://95266434729040", category = "Armor",
 		slot = "Head", defense = 15, wt = 10, hp = 22, mp = 12,
 		passiveName = "Interact on ally: target gains +20% damage for 500 CT",
 		passiveDesc = "Interact on ally: target gains +20% damage for 500 CT.",
@@ -236,7 +236,7 @@ ArmorData.Archetypes = {
 	["BD-001"] = {
 		numericId = 121, name = "Brigandine",
 		flavor = "Forty-five percent less dying. Read the warranty.", category = "Armor",
-		icon = "rbxassetid://109630022882722",
+		icon = "rbxassetid://138507975002217",
 		slot = "Body", defense = 42, wt = 35, hp = 35, mp = 9,
 		passiveName = "While Guarding: damage reduction 35%→45% (cap still 80%)",
 		passiveDesc = "While Guarding: damage reduction 35%→45% (cap still 80%).",
@@ -246,7 +246,7 @@ ArmorData.Archetypes = {
 	["BD-002"] = {
 		numericId = 122, name = "Fortress Plate",
 		flavor = "You will not be moved. Or comfortable. Or fast.", category = "Armor",
-		icon = "rbxassetid://139158496465393",
+		icon = "rbxassetid://72858127656258",
 		slot = "Body", defense = 50, wt = 45, hp = 31, mp = 4,
 		passiveName = "While Guarding: incoming displacement/push is negated",
 		passiveDesc = "While Guarding: incoming displacement/push is negated.",
@@ -255,7 +255,7 @@ ArmorData.Archetypes = {
 	},
 	["BD-003"] = {
 		numericId = 123, name = "Duelist Jerkin",
-		flavor = "Blocks faster, because standing still is for statues.", icon = "rbxassetid://91574735230889", category = "Armor",
+		flavor = "Blocks faster, because standing still is for statues.", icon = "rbxassetid://79461948373447", category = "Armor",
 		slot = "Body", defense = 20, wt = 20, hp = 34, mp = 22,
 		passiveName = "Guard RT ×0.60 (faster Guard recovery)",
 		passiveDesc = "Guard RT ×0.60 (faster Guard recovery).",
@@ -265,7 +265,7 @@ ArmorData.Archetypes = {
 	["BD-004"] = {
 		numericId = 124, name = "Anchor Mail",
 		flavor = "Roots you like a tree. Smells like one too, eventually.", category = "Armor",
-		icon = "rbxassetid://111473206571419",
+		icon = "rbxassetid://103932689723073",
 		slot = "Body", defense = 48, wt = 38, hp = 39, mp = 10,
 		passiveName = "While Guarding: Stability +3",
 		passiveDesc = "While Guarding: Stability +3.",
@@ -275,7 +275,7 @@ ArmorData.Archetypes = {
 	["BD-005"] = {
 		numericId = 125, name = "Reactive Cuirass",
 		flavor = "Blocks the first hit automatically. Panics, technically.", category = "Armor",
-		icon = "rbxassetid://99209799758548",
+		icon = "rbxassetid://76921831006948",
 		slot = "Body", defense = 42, wt = 35, hp = 35, mp = 9,
 		passiveName = "First hit received each turn triggers auto-Guard at no AP",
 		passiveDesc = "First hit received each turn triggers auto-Guard at no AP.",
@@ -285,7 +285,7 @@ ArmorData.Archetypes = {
 	["BD-006"] = {
 		numericId = 126, name = "Layered Lamellar",
 		flavor = "Hit me again. No really, I get stronger. Please stop.", category = "Armor",
-		icon = "rbxassetid://133147082202681",
+		icon = "rbxassetid://122460589815470",
 		slot = "Body", defense = 45, wt = 38, hp = 38, mp = 9,
 		passiveName = "While Guarding: each successive hit in same Guard reduces damage by additional 5% (stacks to +20%)",
 		passiveDesc = "While Guarding: each successive hit in same Guard reduces damage by additional 5% (stacks to +20%).",
@@ -295,7 +295,7 @@ ArmorData.Archetypes = {
 	["BD-007"] = {
 		numericId = 127, name = "Mirror Mail",
 		flavor = "Returns projectiles to sender. No refunds.", category = "Armor",
-		icon = "rbxassetid://77576990952391",
+		icon = "rbxassetid://87043770032960",
 		slot = "Body", defense = 34, wt = 32, hp = 37, mp = 23,
 		passiveName = "While Guarding: projectile attacks are reflected back at 30% damage",
 		passiveDesc = "While Guarding: projectile attacks are reflected back at 30% damage.",
@@ -305,7 +305,7 @@ ArmorData.Archetypes = {
 	["BD-008"] = {
 		numericId = 128, name = "Grounding Harness",
 		flavor = "They can push you, but only a little. How dignified.", category = "Armor",
-		icon = "rbxassetid://72689993440054",
+		icon = "rbxassetid://124530974572069",
 		slot = "Body", defense = 34, wt = 30, hp = 38, mp = 23,
 		passiveName = "Forced displacement distance reduced by 2 (always active, not Guard-dependent). Min 0; does not prevent teleport, blink, or swap",
 		passiveDesc = "Forced displacement distance reduced by 2 (always active, not Guard-dependent). Min 0; does not prevent teleport, blink, or swap.",
@@ -315,7 +315,7 @@ ArmorData.Archetypes = {
 	["BD-009"] = {
 		numericId = 129, name = "Reprisal Coat",
 		flavor = "Remembers every hit and holds a grudge. Literally.", category = "Armor",
-		icon = "rbxassetid://106326947035396",
+		icon = "rbxassetid://76467324986700",
 		slot = "Body", defense = 25, wt = 28, hp = 53, mp = 18,
 		passiveName = "While Guarding: store 40% of damage mitigated; next Basic Attack adds stored damage",
 		passiveDesc = "While Guarding: store 40% of damage mitigated; next Basic Attack adds stored damage.",
@@ -324,7 +324,7 @@ ArmorData.Archetypes = {
 	},
 	["BD-010"] = {
 		numericId = 130, name = "Wardweave Robe",
-		flavor = "Debuffs slide off like rain on a duck. A magical duck.", icon = "rbxassetid://94739481914381", category = "Armor",
+		flavor = "Debuffs slide off like rain on a duck. A magical duck.", icon = "rbxassetid://101914368310601", category = "Armor",
 		slot = "Body", defense = 17, wt = 18, hp = 28, mp = 42,
 		passiveName = "While Guarding: immune to new debuff application",
 		passiveDesc = "While Guarding: immune to new debuff application.",
@@ -334,7 +334,7 @@ ArmorData.Archetypes = {
 	["BD-011"] = {
 		numericId = 131, name = "Hazard Suit",
 		flavor = "Fire, acid, blizzards -- this suit has seen the forecast.", category = "Armor",
-		icon = "rbxassetid://93861752042664",
+		icon = "rbxassetid://115557370911560",
 		slot = "Body", defense = 43, wt = 35, hp = 36, mp = 9,
 		passiveName = "While Guarding: immune to terrain/hazard/weather damage",
 		passiveDesc = "While Guarding: immune to terrain/hazard/weather damage.",
@@ -344,7 +344,7 @@ ArmorData.Archetypes = {
 	["BD-012"] = {
 		numericId = 132, name = "Collision Padding",
 		flavor = "For people who fall often and have stopped being embarrassed.", category = "Armor",
-		icon = "rbxassetid://129769851319445",
+		icon = "rbxassetid://74214201463295",
 		slot = "Body", defense = 48, wt = 32, hp = 41, mp = 10,
 		passiveName = "Collision and fall damage reduced by 50%",
 		passiveDesc = "Collision and fall damage reduced by 50%.",
@@ -354,7 +354,7 @@ ArmorData.Archetypes = {
 	["BD-013"] = {
 		numericId = 133, name = "Feather Armor",
 		flavor = "So light you'll forget you're wearing it. So will enemies.", category = "Armor",
-		icon = "rbxassetid://78015096254020",
+		icon = "rbxassetid://73125637194390",
 		slot = "Body", defense = 23, wt = 10, hp = 38, mp = 25,
 		passiveName = "Reduce effective fall height by 2 while Guarding. Ultra-light body armor (lightness priced in)",
 		passiveDesc = "Reduce effective fall height by 2 while Guarding. Ultra-light body armor (lightness priced in).",
@@ -364,7 +364,7 @@ ArmorData.Archetypes = {
 	["BD-014"] = {
 		numericId = 134, name = "Guardian Mantle",
 		flavor = "Stand near the big guy. Trust the big guy. Be the big guy.", category = "Armor",
-		icon = "rbxassetid://78696513326837",
+		icon = "rbxassetid://134951602987383",
 		slot = "Body", defense = 25, wt = 38, hp = 37, mp = 20,
 		passiveName = "While Guarding: adjacent allies also receive 50% of Guard damage reduction",
 		passiveDesc = "While Guarding: adjacent allies also receive 50% of Guard damage reduction.",
@@ -374,7 +374,7 @@ ArmorData.Archetypes = {
 	["BD-015"] = {
 		numericId = 135, name = "Sentinel Carapace",
 		flavor = "Enemies slow down near you. Probably the smell.", category = "Armor",
-		icon = "rbxassetid://109826433313546",
+		icon = "rbxassetid://136315800786987",
 		slot = "Body", defense = 50, wt = 40, hp = 31, mp = 4,
 		passiveName = "While Guarding: enemies that end Move adjacent to this unit lose 2 Movement Range next turn",
 		passiveDesc = "While Guarding: enemies that end Move adjacent to this unit lose 2 Movement Range next turn.",
@@ -384,7 +384,7 @@ ArmorData.Archetypes = {
 	["BD-016"] = {
 		numericId = 136, name = "Spiked Plate",
 		flavor = "Hugging the wearer is technically an attack. And inadvisable.", category = "Armor",
-		icon = "rbxassetid://89198405675291",
+		icon = "rbxassetid://83741172433022",
 		slot = "Body", defense = 27, wt = 35, hp = 57, mp = 19,
 		passiveName = "While Guarding: attackers take 20% of their own damage as retaliation",
 		passiveDesc = "While Guarding: attackers take 20% of their own damage as retaliation.",
@@ -394,7 +394,7 @@ ArmorData.Archetypes = {
 	["BD-017"] = {
 		numericId = 137, name = "Ablative Shell",
 		flavor = "Generates a shield right before impact. Rude but effective.", category = "Armor",
-		icon = "rbxassetid://107883452764419",
+		icon = "rbxassetid://139964782519599",
 		slot = "Body", defense = 41, wt = 36, hp = 34, mp = 9,
 		passiveName = "While Guarding: gain Shield equal to 15% of Max HP before damage resolution",
 		passiveDesc = "While Guarding: gain Shield equal to 15% of Max HP before damage resolution.",
@@ -404,7 +404,7 @@ ArmorData.Archetypes = {
 	["BD-018"] = {
 		numericId = 138, name = "Interception Armor",
 		flavor = "Jump in front of someone else's problem. Heroic. Questionable.", category = "Armor",
-		icon = "rbxassetid://75375910326604",
+		icon = "rbxassetid://73412950661074",
 		slot = "Body", defense = 26, wt = 40, hp = 38, mp = 21,
 		passiveName = "While Guarding: may intercept attacks targeting adjacent allies within 1 tile",
 		passiveDesc = "While Guarding: may intercept attacks targeting adjacent allies within 1 tile.",
@@ -414,7 +414,7 @@ ArmorData.Archetypes = {
 	["BD-019"] = {
 		numericId = 139, name = "Second-Wind Vest",
 		flavor = "Heals while guarding. Multitasking at its laziest.", category = "Armor",
-		icon = "rbxassetid://77328721096908",
+		icon = "rbxassetid://130335272300870",
 		slot = "Body", defense = 29, wt = 25, hp = 42, mp = 22,
 		passiveName = "While Guarding: recover 10% of Max HP",
 		passiveDesc = "While Guarding: recover 10% of Max HP.",
@@ -424,7 +424,7 @@ ArmorData.Archetypes = {
 	["BD-020"] = {
 		numericId = 140, name = "Unyielding Aegis",
 		flavor = "You survive the lethal blow. Once. Make it count, hero.", category = "Armor",
-		icon = "rbxassetid://83522481326126",
+		icon = "rbxassetid://102869821881658",
 		slot = "Body", defense = 46, wt = 42, hp = 27, mp = 4,
 		passiveName = "Once per battle: survive lethal direct damage at 1 HP. Only direct damage; not fall/collision/hazards",
 		passiveDesc = "Once per battle: survive lethal direct damage at 1 HP. Only direct damage; not fall/collision/hazards.",
@@ -436,7 +436,7 @@ ArmorData.Archetypes = {
 	["GL-001"] = {
 		numericId = 141, name = "Reinforced Gloves",
 		flavor = "Reinforced palms. For when a polite shove isn't enough.", category = "Armor",
-		icon = "rbxassetid://139435576886751",
+		icon = "rbxassetid://80036498480036",
 		slot = "Gloves", defense = 21, wt = 12, hp = 17, mp = 4,
 		passiveName = "Push Force +1. Ignore up to 2 enemy Stability",
 		passiveDesc = "Push Force +1. Ignore up to 2 enemy Stability.",
@@ -445,7 +445,7 @@ ArmorData.Archetypes = {
 	},
 	["GL-002"] = {
 		numericId = 142, name = "Titan Knuckles",
-		flavor = "Three extra tiles of someone else's bad day.", icon = "rbxassetid://104658549934996", category = "Armor",
+		flavor = "Three extra tiles of someone else's bad day.", icon = "rbxassetid://72948157763748", category = "Armor",
 		slot = "Gloves", defense = 12, wt = 15, hp = 26, mp = 8,
 		passiveName = "Push Force +3",
 		passiveDesc = "Push Force +3.",
@@ -455,7 +455,7 @@ ArmorData.Archetypes = {
 	["GL-003"] = {
 		numericId = 143, name = "Quickgrip Gloves",
 		flavor = "Grab, shove, done. The paperwork takes longer.", category = "Armor",
-		icon = "rbxassetid://114980228798150",
+		icon = "rbxassetid://114835896162534",
 		slot = "Gloves", defense = 14, wt = 6, hp = 24, mp = 15,
 		passiveName = "Push RT Cost ×0.75",
 		passiveDesc = "Push RT Cost ×0.75.",
@@ -465,7 +465,7 @@ ArmorData.Archetypes = {
 	["GL-004"] = {
 		numericId = 144, name = "Longarm Bracers",
 		flavor = "Reach out and touch someone. Against their will.", category = "Armor",
-		icon = "rbxassetid://125848954353707",
+		icon = "rbxassetid://88409115266208",
 		slot = "Gloves", defense = 17, wt = 10, hp = 19, mp = 12,
 		passiveName = "Push Maximum Range +1",
 		passiveDesc = "Push Maximum Range +1.",
@@ -475,7 +475,7 @@ ArmorData.Archetypes = {
 	["GL-005"] = {
 		numericId = 145, name = "Butcher's Gloves",
 		flavor = "Pulls enemies closer. The smell does the rest.", category = "Armor",
-		icon = "rbxassetid://77772124812677",
+		icon = "rbxassetid://70401075836042",
 		slot = "Gloves", defense = 10, wt = 10, hp = 21, mp = 7,
 		passiveName = "Push becomes Pull instead (displaces target toward user). Push range +3, minimum range 2 (cannot target adjacent). Normal Push Force applies. If remaining Force exceeds pull distance, target collides with user — normal collision damage to both",
 		passiveDesc = "Push becomes Pull instead (displaces target toward user). Push range +3, minimum range 2 (cannot target adjacent). Normal Push Force applies. If remaining Force exceeds pull distance, target collides with user — normal collision damage to both.",
@@ -485,7 +485,7 @@ ArmorData.Archetypes = {
 	["GL-006"] = {
 		numericId = 146, name = "Ally Launcher",
 		flavor = "Launch allies at the problem. They'll understand. Maybe.", category = "Armor",
-		icon = "rbxassetid://133280529629565",
+		icon = "rbxassetid://88393716691525",
 		slot = "Gloves", defense = 14, wt = 10, hp = 19, mp = 11,
 		passiveName = "Push Force +3 when targeting ally; RT ×0.50. Allied Push causes no collision damage",
 		passiveDesc = "Push Force +3 when targeting ally; RT ×0.50. Allied Push causes no collision damage.",
@@ -495,7 +495,7 @@ ArmorData.Archetypes = {
 	["GL-007"] = {
 		numericId = 147, name = "Demolition Mitts",
 		flavor = "Push barrel into crowd. Barrel explodes. Not your fault.", category = "Armor",
-		icon = "rbxassetid://94423578825257",
+		icon = "rbxassetid://121452108546272",
 		slot = "Gloves", defense = 11, wt = 12, hp = 23, mp = 8,
 		passiveName = "When Push causes a movable object to collide, the object detonates as a Bomb Barrel: 3×3 explosion (30% Max HP damage), destroys adjacent breakable bridges/walls",
 		passiveDesc = "When Push causes a movable object to collide, the object detonates as a Bomb Barrel: 3×3 explosion (30% Max HP damage), destroys adjacent breakable bridges/walls.",
@@ -505,7 +505,7 @@ ArmorData.Archetypes = {
 	["GL-008"] = {
 		numericId = 148, name = "Siege Bracers",
 		flavor = "Siege equipment was meant to be thrown. Probably.", category = "Armor",
-		icon = "rbxassetid://91205209410727",
+		icon = "rbxassetid://113496593605838",
 		slot = "Gloves", defense = 25, wt = 14, hp = 21, mp = 5,
 		passiveName = "Push Force +3 when target is a movable object",
 		passiveDesc = "Push Force +3 when target is a movable object.",
@@ -515,7 +515,7 @@ ArmorData.Archetypes = {
 	["GL-009"] = {
 		numericId = 149, name = "Ram Gauntlets",
 		flavor = "Escort them personally into the nearest wall. Five stars.", category = "Armor",
-		icon = "rbxassetid://81381494956956",
+		icon = "rbxassetid://81410782663038",
 		slot = "Gloves", defense = 12, wt = 14, hp = 25, mp = 8,
 		passiveName = "Wall collision damage from Push gains ×1.25 multiplier. User moves along with pushed target",
 		passiveDesc = "Wall collision damage from Push gains ×1.25 multiplier. User moves along with pushed target.",
@@ -525,7 +525,7 @@ ArmorData.Archetypes = {
 	["GL-010"] = {
 		numericId = 150, name = "Edgefinder Gloves",
 		flavor = "Pushes people off ledges with surgical precision. And joy.", category = "Armor",
-		icon = "rbxassetid://89295707133594",
+		icon = "rbxassetid://128753657656883",
 		slot = "Gloves", defense = 17, wt = 10, hp = 19, mp = 12,
 		passiveName = "When Push forces target downward, treat Fall Height as +1 for damage formula",
 		passiveDesc = "When Push forces target downward, treat Fall Height as +1 for damage formula.",
@@ -535,7 +535,7 @@ ArmorData.Archetypes = {
 	["GL-011"] = {
 		numericId = 151, name = "Staggering Fists",
 		flavor = "One good shove and they forget whose turn it is.", category = "Armor",
-		icon = "rbxassetid://116633649221707",
+		icon = "rbxassetid://129542927332623",
 		slot = "Gloves", defense = 10, wt = 10, hp = 22, mp = 8,
 		passiveName = "Push applies +75 RT Delay and −1 Movement Range on target's next turn",
 		passiveDesc = "Push applies +75 RT Delay and −1 Movement Range on target's next turn.",
@@ -545,7 +545,7 @@ ArmorData.Archetypes = {
 	["GL-012"] = {
 		numericId = 152, name = "Crushing Vambraces",
 		flavor = "Shields, barriers, guard stances -- all just suggestions now.", category = "Armor",
-		icon = "rbxassetid://110267563453582",
+		icon = "rbxassetid://131034726179505",
 		slot = "Gloves", defense = 12, wt = 14, hp = 27, mp = 9,
 		passiveName = "Push collision damage deals double to Shields/barriers; ignores Guard effects on target",
 		passiveDesc = "Push collision damage deals double to Shields/barriers; ignores Guard effects on target.",
@@ -555,7 +555,7 @@ ArmorData.Archetypes = {
 	["GL-013"] = {
 		numericId = 153, name = "Vector Gloves",
 		flavor = "Push in any direction. Physics is more of a guideline.", category = "Armor",
-		icon = "rbxassetid://70619015952531",
+		icon = "rbxassetid://92027777600785",
 		slot = "Gloves", defense = 14, wt = 10, hp = 15, mp = 9,
 		passiveName = "For adjacent targets, choose any legal outward direction (not just directly away)",
 		passiveDesc = "For adjacent targets, choose any legal outward direction (not just directly away).",
@@ -565,7 +565,7 @@ ArmorData.Archetypes = {
 	["GL-014"] = {
 		numericId = 154, name = "Chain-Push Bracers",
 		flavor = "One push starts a chain reaction. Newton would be proud.", category = "Armor",
-		icon = "rbxassetid://109171173510365",
+		icon = "rbxassetid://118716912491335",
 		slot = "Gloves", defense = 15, wt = 12, hp = 16, mp = 10,
 		passiveName = "If pushed object collides with another movable object/unit, transfer remaining Force to collided target",
 		passiveDesc = "If pushed object collides with another movable object/unit, transfer remaining Force to collided target.",
@@ -575,7 +575,7 @@ ArmorData.Archetypes = {
 	["GL-015"] = {
 		numericId = 155, name = "Throwing Gloves",
 		flavor = "Throws people AND lowers the ground. You're a menace.", category = "Armor",
-		icon = "rbxassetid://126847057830425",
+		icon = "rbxassetid://85729039730119",
 		slot = "Gloves", defense = 14, wt = 8, hp = 21, mp = 11,
 		passiveName = "Decrease elevation of tile where pushed unit landed by 1. Push uses arc projectile rules",
 		passiveDesc = "Decrease elevation of tile where pushed unit landed by 1. Push uses arc projectile rules.",
@@ -585,7 +585,7 @@ ArmorData.Archetypes = {
 	["GL-016"] = {
 		numericId = 156, name = "Fighter's Gauntlets",
 		flavor = "These gloves hit like a weapon. Because they are one.", category = "Armor",
-		icon = "rbxassetid://126963194153917",
+		icon = "rbxassetid://91901869194350",
 		slot = "Gloves", defense = 9, wt = 14, hp = 20, mp = 7,
 		passiveName = "Push deals 30% of base weapon damage and triggers weapon on-hit effects",
 		passiveDesc = "Push deals 30% of base weapon damage and triggers weapon on-hit effects.",
@@ -595,7 +595,7 @@ ArmorData.Archetypes = {
 	["GL-017"] = {
 		numericId = 157, name = "Grappler's Wraps",
 		flavor = "Swap places, then push. The old switcheroo, literally.", category = "Armor",
-		icon = "rbxassetid://96786734092543",
+		icon = "rbxassetid://76180946319519",
 		slot = "Gloves", defense = 9, wt = 10, hp = 15, mp = 10,
 		passiveName = "Swap position with target before applying Push toward user's original direction",
 		passiveDesc = "Swap position with target before applying Push toward user's original direction.",
@@ -605,7 +605,7 @@ ArmorData.Archetypes = {
 	["GL-018"] = {
 		numericId = 158, name = "Momentum Bracers",
 		flavor = "Run further, push harder. Cardio finally pays off.", category = "Armor",
-		icon = "rbxassetid://114200717541207",
+		icon = "rbxassetid://95491988550624",
 		slot = "Gloves", defense = 17, wt = 10, hp = 20, mp = 12,
 		passiveName = "For each tile moved this turn, Push Force +0.5 (rounded down at resolution)",
 		passiveDesc = "For each tile moved this turn, Push Force +0.5 (rounded down at resolution).",
@@ -615,7 +615,7 @@ ArmorData.Archetypes = {
 	["GL-019"] = {
 		numericId = 159, name = "Counterforce Gloves",
 		flavor = "Shove someone, then guard. The bully's perfect combo.", category = "Armor",
-		icon = "rbxassetid://81291297380785",
+		icon = "rbxassetid://126216356137777",
 		slot = "Gloves", defense = 17, wt = 12, hp = 14, mp = 4,
 		passiveName = "After successfully pushing a unit, trigger Guard at no additional AP cost",
 		passiveDesc = "After successfully pushing a unit, trigger Guard at no additional AP cost.",
@@ -625,7 +625,7 @@ ArmorData.Archetypes = {
 	["GL-020"] = {
 		numericId = 160, name = "Shockwave Gauntlets",
 		flavor = "The shockwave is a feature. The property damage is a bug.", category = "Armor",
-		icon = "rbxassetid://79654534454984",
+		icon = "rbxassetid://93208680115902",
 		slot = "Gloves", defense = 11, wt = 14, hp = 24, mp = 8,
 		passiveName = "When Push causes collision, units cardinally adjacent to collision tile are displaced 1 tile away",
 		passiveDesc = "When Push causes collision, units cardinally adjacent to collision tile are displaced 1 tile away.",
@@ -637,7 +637,7 @@ ArmorData.Archetypes = {
 	["FT-001"] = {
 		numericId = 162, name = "Traveler Boots",
 		flavor = "Two extra tiles. Still no idea where you're going.", category = "Armor",
-		icon = "rbxassetid://84698761179534",
+		icon = "rbxassetid://116705395833094",
 		slot = "Feet", defense = 9, wt = 8, hp = 15, mp = 9,
 		passiveName = "Movement Range +2 (permanent)",
 		passiveDesc = "Movement Range +2 (permanent).",
@@ -647,7 +647,7 @@ ArmorData.Archetypes = {
 	["FT-002"] = {
 		numericId = 163, name = "Windrunner Boots",
 		flavor = "Fast feet, slow brain. Nature finds a balance.", category = "Armor",
-		icon = "rbxassetid://136854613540398",
+		icon = "rbxassetid://130359251774859",
 		slot = "Feet", defense = 10, wt = 8, hp = 17, mp = 11,
 		passiveName = "Base Movement RT ×0.75",
 		passiveDesc = "Base Movement RT ×0.75.",
@@ -657,7 +657,7 @@ ArmorData.Archetypes = {
 	["FT-003"] = {
 		numericId = 164, name = "Heavy March Boots",
 		flavor = "Each step makes you harder to move. Also harder to stop.", category = "Armor",
-		icon = "rbxassetid://103108487781082",
+		icon = "rbxassetid://100038548255288",
 		slot = "Feet", defense = 24, wt = 16, hp = 20, mp = 5,
 		passiveName = "Gain Stability +1 until next turn for each tile moved",
 		passiveDesc = "Gain Stability +1 until next turn for each tile moved.",
@@ -667,7 +667,7 @@ ArmorData.Archetypes = {
 	["FT-004"] = {
 		numericId = 165, name = "Pathfinder Boots",
 		flavor = "Mud, sand, brambles -- the boots don't care and neither should you.", category = "Armor",
-		icon = "rbxassetid://108655340133880",
+		icon = "rbxassetid://117162699853637",
 		slot = "Feet", defense = 14, wt = 10, hp = 16, mp = 10,
 		passiveName = "Ignore extra movement-cost penalties from terrain",
 		passiveDesc = "Ignore extra movement-cost penalties from terrain.",
@@ -676,7 +676,7 @@ ArmorData.Archetypes = {
 	},
 	["FT-005"] = {
 		numericId = 166, name = "Levitation Boots",
-		flavor = "Hover over water. Act surprised when people stare.", icon = "rbxassetid://128647442305070", category = "Armor",
+		flavor = "Hover over water. Act surprised when people stare.", icon = "rbxassetid://108772337779765", category = "Armor",
 		slot = "Feet", defense = 10, wt = 6, hp = 17, mp = 25,
 		passiveName = "Ignore effects of Shallow Water, Deep Water, and Wet tile effects",
 		passiveDesc = "Ignore effects of Shallow Water, Deep Water, and Wet tile effects.",
@@ -686,7 +686,7 @@ ArmorData.Archetypes = {
 	["FT-006"] = {
 		numericId = 167, name = "Climbing Boots",
 		flavor = "Climb anything. Regret most of it at the top.", category = "Armor",
-		icon = "rbxassetid://97650360633177",
+		icon = "rbxassetid://105750408144934",
 		slot = "Feet", defense = 17, wt = 12, hp = 17, mp = 12,
 		passiveName = "Jump +2",
 		passiveDesc = "Jump +2.",
@@ -696,7 +696,7 @@ ArmorData.Archetypes = {
 	["FT-007"] = {
 		numericId = 168, name = "Softstep Slippers",
 		flavor = "Walk over traps like they're someone else's problem.", category = "Armor",
-		icon = "rbxassetid://122158468943456",
+		icon = "rbxassetid://107438611379639",
 		slot = "Feet", defense = 13, wt = 4, hp = 22, mp = 14,
 		passiveName = "Moving across trap tiles does not trigger them; ending on tile still triggers",
 		passiveDesc = "Moving across trap tiles does not trigger them; ending on tile still triggers.",
@@ -705,7 +705,7 @@ ArmorData.Archetypes = {
 	},
 	["FT-008"] = {
 		numericId = 169, name = "Skirmisher Greaves",
-		flavor = "Run three tiles and your next hit just hits different.", icon = "rbxassetid://71392939566051", category = "Armor",
+		flavor = "Run three tiles and your next hit just hits different.", icon = "rbxassetid://75127433085599", category = "Armor",
 		slot = "Feet", defense = 11, wt = 12, hp = 23, mp = 8,
 		passiveName = "After moving ≥3 path-cost, next direct damage action this turn gains +15% final damage",
 		passiveDesc = "After moving ≥3 path-cost, next direct damage action this turn gains +15% final damage.",
@@ -715,7 +715,7 @@ ArmorData.Archetypes = {
 	["FT-009"] = {
 		numericId = 170, name = "Retreat Boots",
 		flavor = "Running away has never been this rewarding. Or this fast.", category = "Armor",
-		icon = "rbxassetid://119878059248133",
+		icon = "rbxassetid://119653745198963",
 		slot = "Feet", defense = 15, wt = 10, hp = 17, mp = 11,
 		passiveName = "If every step increased distance from nearest enemy, gain Evasiveness +20% until next turn",
 		passiveDesc = "If every step increased distance from nearest enemy, gain Evasiveness +20% until next turn.",
@@ -725,7 +725,7 @@ ArmorData.Archetypes = {
 	["FT-010"] = {
 		numericId = 171, name = "Vanguard Greaves",
 		flavor = "Get in their face. Get tougher. That's the whole plan.", category = "Armor",
-		icon = "rbxassetid://91684609733196",
+		icon = "rbxassetid://95863944656364",
 		slot = "Feet", defense = 20, wt = 14, hp = 17, mp = 4,
 		passiveName = "If Move ends adjacent to enemy, gain 15% direct final damage reduction until next turn",
 		passiveDesc = "If Move ends adjacent to enemy, gain 15% direct final damage reduction until next turn.",
@@ -735,7 +735,7 @@ ArmorData.Archetypes = {
 	["FT-011"] = {
 		numericId = 172, name = "Sprinter Boots",
 		flavor = "First move of the day hits different. Three tiles different.", category = "Armor",
-		icon = "rbxassetid://90702397487434",
+		icon = "rbxassetid://127225381962101",
 		slot = "Feet", defense = 9, wt = 8, hp = 15, mp = 9,
 		passiveName = "First Move each turn gains Movement Range +3",
 		passiveDesc = "First Move each turn gains Movement Range +3.",
@@ -745,7 +745,7 @@ ArmorData.Archetypes = {
 	["FT-012"] = {
 		numericId = 173, name = "Relay Boots",
 		flavor = "Second wind? More like second sprint. Your knees disagree.", category = "Armor",
-		icon = "rbxassetid://131515727555326",
+		icon = "rbxassetid://82181377811263",
 		slot = "Feet", defense = 13, wt = 10, hp = 13, mp = 9,
 		passiveName = "Second Move same turn has Movement Range +2 and Movement RT ×0.50",
 		passiveDesc = "Second Move same turn has Movement Range +2 and Movement RT ×0.50.",
@@ -755,7 +755,7 @@ ArmorData.Archetypes = {
 	["FT-013"] = {
 		numericId = 174, name = "Ice Cleats",
 		flavor = "Stand on ice without falling. Revolutionary, apparently.", category = "Armor",
-		icon = "rbxassetid://138324172186012",
+		icon = "rbxassetid://102249377619555",
 		slot = "Feet", defense = 26, wt = 10, hp = 22, mp = 6,
 		passiveName = "Does not slide from voluntary movement or end-of-move effects on Ice/Oily tiles",
 		passiveDesc = "Does not slide from voluntary movement or end-of-move effects on Ice/Oily tiles.",
@@ -765,7 +765,7 @@ ArmorData.Archetypes = {
 	["FT-014"] = {
 		numericId = 175, name = "Firewalker Sabatons",
 		flavor = "Walk through fire. Your soles have no soul to burn.", category = "Armor",
-		icon = "rbxassetid://128651560913178",
+		icon = "rbxassetid://95517667599487",
 		slot = "Feet", defense = 26, wt = 14, hp = 22, mp = 5,
 		passiveName = "Crossing Burning or Molten tiles does not apply their cross effect",
 		passiveDesc = "Crossing Burning or Molten tiles does not apply their cross effect.",
@@ -775,7 +775,7 @@ ArmorData.Archetypes = {
 	["FT-015"] = {
 		numericId = 176, name = "Portal Treads",
 		flavor = "Teleport anywhere. Walk nowhere. Knees have never been happier.", category = "Armor",
-		icon = "rbxassetid://85937643612206",
+		icon = "rbxassetid://76549255687272",
 		slot = "Feet", defense = 5, wt = 12, hp = 8, mp = 11,
 		passiveName = "Movement type changes to teleport. Unit ignores ALL pathing obstacles: walls, structural geometry, enemies, objects, elevation differences. Destination must be standable, unoccupied, within range. Movement Range −2, Movement RT ×2",
 		passiveDesc = "Movement type changes to teleport. Unit ignores ALL pathing obstacles: walls, structural geometry, enemies, objects, elevation differences. Destination must be standable, unoccupied, within range. Movement Range −2, Movement RT ×2.",
@@ -785,7 +785,7 @@ ArmorData.Archetypes = {
 	["FT-016"] = {
 		numericId = 177, name = "Trailblazer Boots",
 		flavor = "Leave fire in your wake. Arson, but make it tactical.", category = "Armor",
-		icon = "rbxassetid://73234483317320",
+		icon = "rbxassetid://99079077458348",
 		slot = "Feet", defense = 11, wt = 12, hp = 25, mp = 8,
 		passiveName = "Tiles traversed this Move are set on fire. Does not burn unit's final tile. Movement −1",
 		passiveDesc = "Tiles traversed this Move are set on fire. Does not burn unit's final tile. Movement −1.",
@@ -795,7 +795,7 @@ ArmorData.Archetypes = {
 	["FT-017"] = {
 		numericId = 178, name = "Pursuer Greaves",
 		flavor = "Get close and watch them freeze up. RT delay is scary.", category = "Armor",
-		icon = "rbxassetid://78210989570267",
+		icon = "rbxassetid://114418969692257",
 		slot = "Feet", defense = 10, wt = 14, hp = 23, mp = 7,
 		passiveName = "If Move ends adjacent to enemy, apply 50 RT delay to all adjacent enemies. Once per turn",
 		passiveDesc = "If Move ends adjacent to enemy, apply 50 RT delay to all adjacent enemies. Once per turn.",
@@ -805,7 +805,7 @@ ArmorData.Archetypes = {
 	["FT-018"] = {
 		numericId = 179, name = "Rescue Spurs",
 		flavor = "Step on an ally, yeet them behind you. It's 'rescue.'", category = "Armor",
-		icon = "rbxassetid://91673011292647",
+		icon = "rbxassetid://106681697383039",
 		slot = "Feet", defense = 13, wt = 10, hp = 19, mp = 10,
 		passiveName = "May end Move on ally's tile; move ally to last tile crossed. Movement −2, RT ×2",
 		passiveDesc = "May end Move on ally's tile; move ally to last tile crossed. Movement −2, RT ×2.",
@@ -815,7 +815,7 @@ ArmorData.Archetypes = {
 	["FT-019"] = {
 		numericId = 180, name = "Kick Boots",
 		flavor = "Run up to someone and kick them. Simple. Elegant. Rude.", category = "Armor",
-		icon = "rbxassetid://120433544053471",
+		icon = "rbxassetid://121693556356034",
 		slot = "Feet", defense = 10, wt = 14, hp = 23, mp = 7,
 		passiveName = "May end Move on enemy's tile; trigger Knockback on enemy in enemy's facing direction. Movement −2, RT ×2",
 		passiveDesc = "May end Move on enemy's tile; trigger Knockback on enemy in enemy's facing direction. Movement −2, RT ×2.",
@@ -825,7 +825,7 @@ ArmorData.Archetypes = {
 	["FT-020"] = {
 		numericId = 181, name = "Phantom Steps",
 		flavor = "Walk through enemies. They'll feel it. So will you.", category = "Armor",
-		icon = "rbxassetid://115717183341378",
+		icon = "rbxassetid://95584015025144",
 		slot = "Feet", defense = 12, wt = 8, hp = 21, mp = 13,
 		passiveName = "May move through enemy-occupied tiles. Each enemy tile costs +2 movement and triggers compatible reactions",
 		passiveDesc = "May move through enemy-occupied tiles. Each enemy tile costs +2 movement and triggers compatible reactions.",
@@ -836,7 +836,7 @@ ArmorData.Archetypes = {
 	-- === ACCESSORY (Item) ===
 	["AC-001"] = {
 		numericId = 182, name = "Utility Belt",
-		flavor = "One more pocket. One more reason to hoard.", icon = "rbxassetid://110583594016356", category = "Armor",
+		flavor = "One more pocket. One more reason to hoard.", icon = "rbxassetid://71221865463045", category = "Armor",
 		slot = "Accessory", defense = 10, wt = 3, hp = 15, mp = 8,
 		passiveName = "Equipped Item slot capacity +1",
 		passiveDesc = "Equipped Item slot capacity +1.",
@@ -846,7 +846,7 @@ ArmorData.Archetypes = {
 	["AC-002"] = {
 		numericId = 183, name = "Quickdraw Pouch",
 		flavor = "Draw items 25% faster. Fumble them at the same rate.", category = "Armor",
-		icon = "rbxassetid://84156315321317",
+		icon = "rbxassetid://87915542091772",
 		slot = "Accessory", defense = 10, wt = 2, hp = 12, mp = 7,
 		passiveName = "Item RT Cost ×0.75",
 		passiveDesc = "Item RT Cost ×0.75.",
@@ -856,7 +856,7 @@ ArmorData.Archetypes = {
 	["AC-003"] = {
 		numericId = 184, name = "Long-Throw Strap",
 		flavor = "Throw potions two tiles further. Aim not included.", category = "Armor",
-		icon = "rbxassetid://139390778909794",
+		icon = "rbxassetid://85462060800499",
 		slot = "Accessory", defense = 11, wt = 2, hp = 12, mp = 8,
 		passiveName = "Item Maximum Range +2",
 		passiveDesc = "Item Maximum Range +2.",
@@ -866,7 +866,7 @@ ArmorData.Archetypes = {
 	["AC-004"] = {
 		numericId = 185, name = "Grenadier Satchel",
 		flavor = "Makes bombs 15% angrier. Don't ask how.", category = "Armor",
-		icon = "rbxassetid://127346727035322",
+		icon = "rbxassetid://118127011931193",
 		slot = "Accessory", defense = 8, wt = 3, hp = 17, mp = 6,
 		passiveName = "Damaging consumable Items gain +15% final damage",
 		passiveDesc = "Damaging consumable Items gain +15% final damage.",
@@ -876,7 +876,7 @@ ArmorData.Archetypes = {
 	["AC-005"] = {
 		numericId = 186, name = "Wide-Fuse Kit",
 		flavor = "Splash damage on single-target items. Collateral is a feature.", category = "Armor",
-		icon = "rbxassetid://70883047242739",
+		icon = "rbxassetid://82350326340558",
 		slot = "Accessory", defense = 7, wt = 4, hp = 15, mp = 5,
 		passiveName = "Single-target damage Items gain Impact Splash (adjacent tiles at 50% damage)",
 		passiveDesc = "Single-target damage Items gain Impact Splash (adjacent tiles at 50% damage).",
@@ -886,7 +886,7 @@ ArmorData.Archetypes = {
 	["AC-006"] = {
 		numericId = 187, name = "Medic's Case",
 		flavor = "Heals more. Because 'enough' is never enough in this game.", category = "Armor",
-		icon = "rbxassetid://129190691341124",
+		icon = "rbxassetid://132351758886460",
 		slot = "Accessory", defense = 8, wt = 3, hp = 12, mp = 7,
 		passiveName = "Items restore +50% HP/MP",
 		passiveDesc = "Items restore +50% HP/MP.",
@@ -896,7 +896,7 @@ ArmorData.Archetypes = {
 	["AC-007"] = {
 		numericId = 188, name = "Overflowing Flask",
 		flavor = "The flask never stops pouring. Neither does the regret.", category = "Armor",
-		icon = "rbxassetid://73246146500610",
+		icon = "rbxassetid://91047145000407",
 		slot = "Accessory", defense = 7, wt = 2, hp = 11, mp = 17,
 		passiveName = "Restoring Items also grant regen equal to 7% of restored amount per 100 CT for 500 CT",
 		passiveDesc = "Restoring Items also grant regen equal to 7% of restored amount per 100 CT for 500 CT.",
@@ -906,7 +906,7 @@ ArmorData.Archetypes = {
 	["AC-008"] = {
 		numericId = 189, name = "Preservation Case",
 		flavor = "Get hit, get a charge back. Pain is a resource now.", category = "Armor",
-		icon = "rbxassetid://100576787513514",
+		icon = "rbxassetid://125090754808677",
 		slot = "Accessory", defense = 13, wt = 3, hp = 10, mp = 3,
 		passiveName = "When taking direct damage from enemy, recharge 1 item charge. Cannot target items at max charge",
 		passiveDesc = "When taking direct damage from enemy, recharge 1 item charge. Cannot target items at max charge.",
@@ -916,7 +916,7 @@ ArmorData.Archetypes = {
 	["AC-009"] = {
 		numericId = 190, name = "Reinforced Cartridge",
 		flavor = "Twenty percent more uses. Twenty percent more problems.", category = "Armor",
-		icon = "rbxassetid://106906589507781",
+		icon = "rbxassetid://114708842160566",
 		slot = "Accessory", defense = 10, wt = 2, hp = 12, mp = 7,
 		passiveName = "Increase equipped item use charges by 20%, min +1",
 		passiveDesc = "Increase equipped item use charges by 20%, min +1.",
@@ -926,7 +926,7 @@ ArmorData.Archetypes = {
 	["AC-010"] = {
 		numericId = 191, name = "Expiry Extender",
 		flavor = "Effects last longer. Like a bad roommate's cooking smell.", category = "Armor",
-		icon = "rbxassetid://99148407219205",
+		icon = "rbxassetid://80311756304449",
 		slot = "Accessory", defense = 6, wt = 2, hp = 10, mp = 16,
 		passiveName = "Item effect duration +500 CT",
 		passiveDesc = "Item effect duration +500 CT.",
@@ -936,7 +936,7 @@ ArmorData.Archetypes = {
 	["AC-011"] = {
 		numericId = 192, name = "Terraformer Token",
 		flavor = "Using an item raises the ground. Terrain is a suggestion.", category = "Armor",
-		icon = "rbxassetid://71697597707231",
+		icon = "rbxassetid://88894248529247",
 		slot = "Accessory", defense = 11, wt = 2, hp = 16, mp = 8,
 		passiveName = "Item usage raises target tile elevation by 1",
 		passiveDesc = "Item usage raises target tile elevation by 1.",
@@ -946,7 +946,7 @@ ArmorData.Archetypes = {
 	["AC-012"] = {
 		numericId = 193, name = "Trapmaker's Roll",
 		flavor = "Place traps from range. Because getting close is for amateurs.", category = "Armor",
-		icon = "rbxassetid://138327662816475",
+		icon = "rbxassetid://92108416430242",
 		slot = "Accessory", defense = 9, wt = 2, hp = 13, mp = 7,
 		passiveName = "Trap Items placed at Range +3 and remain active +500 CT",
 		passiveDesc = "Trap Items placed at Range +3 and remain active +500 CT.",
@@ -956,7 +956,7 @@ ArmorData.Archetypes = {
 	["AC-013"] = {
 		numericId = 194, name = "Deployable Toolkit",
 		flavor = "Your summons are 25% beefier. They still won't thank you.", category = "Armor",
-		icon = "rbxassetid://91146086694225",
+		icon = "rbxassetid://135722426754261",
 		slot = "Accessory", defense = 11, wt = 3, hp = 13, mp = 8,
 		passiveName = "Summoned units gain +25% Max HP",
 		passiveDesc = "Summoned units gain +25% Max HP.",
@@ -966,7 +966,7 @@ ArmorData.Archetypes = {
 	["AC-014"] = {
 		numericId = 195, name = "Bomber Ring",
 		flavor = "Turns any item into a bomb. Healing potion? Bomb. Antidote? Bomb.", category = "Armor",
-		icon = "rbxassetid://133420923972648",
+		icon = "rbxassetid://139352958509551",
 		slot = "Accessory", defense = 6, wt = 2, hp = 13, mp = 4,
 		passiveName = "Completely REPLACES item effect/identity with bomb during that action. Bomb: range 3, AoE, RT 110. Bomb_Damage = round((50 + Level × 4) × 0.18). Original item effect does not occur. Other passives checking item identity see 'bomb/AoE'",
 		passiveDesc = "Completely REPLACES item effect/identity with bomb during that action. Bomb: range 3, AoE, RT 110. Bomb_Damage = round((50 + Level × 4) × 0.18). Original item effect does not occur. Other passives checking item identity see 'bomb/AoE'.",
@@ -976,7 +976,7 @@ ArmorData.Archetypes = {
 	["AC-015"] = {
 		numericId = 196, name = "Emergency Locket",
 		flavor = "Auto-heals when you're almost dead. Panic in accessory form.", category = "Armor",
-		icon = "rbxassetid://90304212642581",
+		icon = "rbxassetid://118009685066627",
 		slot = "Accessory", defense = 12, wt = 2, hp = 10, mp = 3,
 		passiveName = "Once per turn. When HP ≤25% outside unit turn, auto-use heal item with highest remaining charge count on self. Consumes charge, no AP, double RT",
 		passiveDesc = "Once per turn. When HP ≤25% outside unit turn, auto-use heal item with highest remaining charge count on self. Consumes charge, no AP, double RT.",
@@ -985,6 +985,7 @@ ArmorData.Archetypes = {
 	},
 	["AC-016"] = {
 		numericId = 197, name = "Courier's Seal",
+		icon = "rbxassetid://83488655154087",
 		flavor = "Help someone else, help yourself. Selfishness with extra steps.", category = "Armor",
 		slot = "Accessory", defense = 9, wt = 2, hp = 13, mp = 7,
 		passiveName = "Ally-targeted Item effects also apply to user. Item RT +50%",
@@ -995,7 +996,7 @@ ArmorData.Archetypes = {
 	["AC-017"] = {
 		numericId = 198, name = "Conservation Charm",
 		flavor = "Second item's free. The cosmic debt is not.", category = "Armor",
-		icon = "rbxassetid://129005716999269",
+		icon = "rbxassetid://97117785192277",
 		slot = "Accessory", defense = 10, wt = 2, hp = 10, mp = 6,
 		passiveName = "Once per turn, when the user performs a second manually committed Item action during the same turn, the primary Item used by that action does not consume a charge. Double that primary Item's authored base RT before applying approved Item RT reductions. Free, triggered, copied, bundled, or simultaneously activated Items do not count toward the order of manually committed Item actions. Charge-restoration Items are eligible",
 		passiveDesc = "Once per turn, when the user performs a second manually committed Item action during the same turn, the primary Item used by that action does not consume a charge. Double that primary Item's authored base RT before applying approved Item RT reductions. Free, triggered, copied, bundled, or simultaneously activated Items do not count toward the order of manually committed Item actions. Charge-restoration Items are eligible.",
@@ -1005,7 +1006,7 @@ ArmorData.Archetypes = {
 	["AC-018"] = {
 		numericId = 199, name = "Field Alchemist Emblem",
 		flavor = "Hit things twice, restock once. Violence-based logistics.", category = "Armor",
-		icon = "rbxassetid://133942445312101",
+		icon = "rbxassetid://124147350677323",
 		slot = "Accessory", defense = 7, wt = 3, hp = 14, mp = 5,
 		passiveName = "Every 2 basic attacks, recharge 1 item with least charges. Cannot target max charge",
 		passiveDesc = "Every 2 basic attacks, recharge 1 item with least charges. Cannot target max charge.",
@@ -1015,7 +1016,7 @@ ArmorData.Archetypes = {
 	["AC-019"] = {
 		numericId = 200, name = "Quartermaster Badge",
 		flavor = "Share your stuff with one ally. Friendship is mandatory.", category = "Armor",
-		icon = "rbxassetid://129921091013256",
+		icon = "rbxassetid://97584841305286",
 		slot = "Accessory", defense = 9, wt = 3, hp = 14, mp = 7,
 		passiveName = "At battle start, choose 1 ally. User and chosen ally share Item charges (both draw from and contribute to the same charge pool for all equipped Items). Item RT +20%",
 		passiveDesc = "At battle start, choose 1 ally. User and chosen ally share Item charges (both draw from and contribute to the same charge pool for all equipped Items). Item RT +20%.",
@@ -1025,7 +1026,7 @@ ArmorData.Archetypes = {
 	["AC-020"] = {
 		numericId = 201, name = "Masterwork Toolchain",
 		flavor = "Use two items at once. Inventory management is a combat skill.", category = "Armor",
-		icon = "rbxassetid://104222674173616",
+		icon = "rbxassetid://138164130385066",
 		slot = "Accessory", defense = 6, wt = 3, hp = 13, mp = 4,
 		passiveName = "Once per turn, when the user commits an Item with an authored base RT of 120 or less, the user may select a second equipped Item with an authored base RT of 120 or less. The second Item must have a legal target within the first Item's selected target area. Both Items resolve as one action for 1 AP. Each Item consumes one charge. Combined RT = Primary Item Base RT + round(Bundled Item Base RT × 0.50). Apply approved Item RT reductions after calculating the combined RT. Cannot bundle: Heavy/Battlefield Items, Items with authored base RT above 120, charge-restoration Items, Item-copying Items, Items that grant additional Item actions, Items activated through another simultaneous/bundled/copied/triggered effect",
 		passiveDesc = "Once per turn, when the user commits an Item with an authored base RT of 120 or less, the user may select a second equipped Item with an authored base RT of 120 or less. The second Item must have a legal target within the first Item's selected target area. Both Items resolve as one action for 1 AP. Each Item consumes one charge. Combined RT = Primary Item Base RT + round(Bundled Item Base RT × 0.50). Apply approved Item RT reductions after calculating the combined RT. Cannot bundle: Heavy/Battlefield Items, Items with authored base RT above 120, charge-restoration Items, Item-copying Items, Items that grant additional Item actions, Items activated through another simultaneous/bundled/copied/triggered effect.",
@@ -1036,7 +1037,7 @@ ArmorData.Archetypes = {
 	-- === GLOVES (Push) ===
 	["GL-021"] = {
 		numericId = 161, name = "Initiator's Grips",
-		flavor = "First push is free. Everything after that, you'll feel.", icon = "rbxassetid://131037464517036", category = "Armor",
+		flavor = "First push is free. Everything after that, you'll feel.", icon = "rbxassetid://118111106695168", category = "Armor",
 		slot = "Gloves", defense = 12, wt = 10, hp = 13, mp = 8,
 		passiveName = "Once per turn, the first Push action does not cost AP. That Push has RT Cost ×2 and Force ×0.5 (rounded down, minimum Force 1)",
 		passiveDesc = "Once per turn, the first Push action does not cost AP. That Push has RT Cost ×2 and Force ×0.5 (rounded down, minimum Force 1).",

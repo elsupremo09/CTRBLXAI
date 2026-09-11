@@ -2,39 +2,31 @@
 -- CTRBLXAI | Slice 4D — Rewards, Inventory, and Loadout Management
 --
 -- Generates encounter-completion rewards after a qualifying victory.
--- Commits rewards to InventoryService before export/save.
+-- Supports 5 reward categories: Equipment (40%), Skill Card (15%),
+-- Augment Card (15%), Doctrine (5%), Consumable (25%).
 --
--- Slice 4 owns this pipeline for all loot drops (equips, consumables,
--- doctrines, skill cards, augment cards). Currently only equip drops
--- are implemented.
+-- Equipment rewards are committed directly to InventoryService.
+-- Non-equipment rewards (cards) are returned uncommitted — Main.server
+-- commits them to the appropriate inventory (cardInventory, etc.) and
+-- sets result.committed = true before calling BuildRewardSummaries.
 --
 -- Item Level source: Map Level (owned by Slice 5).
 -- Placeholder: mapLevel = 1 until Slice 5 provides authoritative value.
---
--- Non-atomic: items are committed one at a time. No rollback.
--- Insertion failures are handled explicitly per item.
 
 local ServerScriptService = game:GetService("ServerScriptService")
 local Game = ServerScriptService:WaitForChild("Game")
+local Content = game:GetService("ReplicatedStorage"):WaitForChild("Content")
 
 local ItemGenerator    = require(Game:WaitForChild("ItemGenerator"))
 local InventoryService = require(Game:WaitForChild("InventoryService"))
 
-local BonusData = require(
-	game:GetService("ReplicatedStorage")
-		:WaitForChild("Content")
-		:WaitForChild("BonusData")
-)
-local WeaponData = require(
-	game:GetService("ReplicatedStorage")
-		:WaitForChild("Content")
-		:WaitForChild("WeaponData")
-)
-local ArmorData = require(
-	game:GetService("ReplicatedStorage")
-		:WaitForChild("Content")
-		:WaitForChild("ArmorData")
-)
+local BonusData       = require(Content:WaitForChild("BonusData"))
+local WeaponData      = require(Content:WaitForChild("WeaponData"))
+local ArmorData       = require(Content:WaitForChild("ArmorData"))
+local SkillData       = require(Content:WaitForChild("SkillData"))
+local AugmentData     = require(Content:WaitForChild("AugmentData"))
+local DoctrineData    = require(Content:WaitForChild("DoctrineData"))
+local ConsumableData  = require(Content:WaitForChild("ConsumableData"))
 
 local RewardService = {}
 
@@ -42,7 +34,16 @@ local RewardService = {}
 -- CONSTANTS
 --------------------------------------------------
 
--- Normal Encounter rarity weights (from loot_progression table)
+-- Normal encounter category weights (user-defined)
+local CATEGORY_WEIGHTS = {
+	{ category = "Equipment",   weight = 0.40 },
+	{ category = "SkillCard",   weight = 0.15 },
+	{ category = "AugmentCard", weight = 0.15 },
+	{ category = "Doctrine",    weight = 0.05 },
+	{ category = "Consumable",  weight = 0.25 },
+}
+
+-- Equipment rarity weights (from DB loot_progression)
 local NORMAL_RARITY_WEIGHTS = {
 	{ rarity = "Broken",    weight = 0.10  },
 	{ rarity = "Common",    weight = 0.55  },
@@ -50,10 +51,14 @@ local NORMAL_RARITY_WEIGHTS = {
 	{ rarity = "Rare",      weight = 0.10  },
 	{ rarity = "Epic",      weight = 0.049 },
 	{ rarity = "Legendary", weight = 0.001 },
-	-- Mythic, Transcendent, Unique: weight 0 for normal encounters
 }
 
--- Number of reward items per qualifying victory
+-- Rarity rank for card minimum clamping
+local RARITY_RANK = {
+	Broken = 0, Common = 1, Uncommon = 2, Rare = 3,
+	Epic = 4, Legendary = 5, Mythic = 6,
+}
+
 local MIN_REWARDS = 1
 local MAX_REWARDS = 2
 
@@ -61,14 +66,7 @@ local MAX_REWARDS = 2
 -- INTERNAL STATE
 --------------------------------------------------
 
--- Tracks processed opportunity IDs to prevent duplicate rewards
--- opportunityId -> true
 local processedOpportunities = {}
-
---------------------------------------------------
--- SEED GENERATION
---------------------------------------------------
-
 local _rewardSeedCounter = 0
 
 local function generateRewardSeed()
@@ -77,67 +75,123 @@ local function generateRewardSeed()
 end
 
 --------------------------------------------------
--- RARITY ROLL
+-- WEIGHTED ROLL HELPER
 --------------------------------------------------
 
-local function rollRarity(rng)
-	local totalWeight = 0
-	for _, entry in ipairs(NORMAL_RARITY_WEIGHTS) do
-		totalWeight = totalWeight + entry.weight
+local function weightedRoll(rng, entries, keyField, weightField)
+	local total = 0
+	for _, e in ipairs(entries) do
+		total = total + e[weightField]
 	end
-
-	local roll = rng:NextNumber() * totalWeight
-	local cumulative = 0
-	for _, entry in ipairs(NORMAL_RARITY_WEIGHTS) do
-		cumulative = cumulative + entry.weight
-		if roll <= cumulative then
-			return entry.rarity
+	local roll = rng:NextNumber() * total
+	local cum = 0
+	for _, e in ipairs(entries) do
+		cum = cum + e[weightField]
+		if roll <= cum then
+			return e[keyField]
 		end
 	end
-	return "Common" -- fallback
+	return entries[1][keyField]
+end
+
+-- Card rarity: roll equipment weights but clamp to Rare minimum
+-- per DB: "Normal Skill Card rarity begins at Rare"
+local function rollCardRarity(rng)
+	local base = weightedRoll(rng, NORMAL_RARITY_WEIGHTS, "rarity", "weight")
+	if (RARITY_RANK[base] or 0) < 3 then
+		return "Rare"
+	end
+	return base
 end
 
 --------------------------------------------------
--- ARCHETYPE POOL
+-- POOL BUILDERS (cached)
 --------------------------------------------------
 
-local cachedArchetypePool = nil
+local cachedEquipPool = nil
+local cachedSkillPool = nil
+local cachedAugmentPool = nil
+local cachedDoctrinePool = nil
+local cachedConsumablePool = nil
 
-local function getArchetypePool()
-	if cachedArchetypePool then
-		return cachedArchetypePool
-	end
+local function getEquipPool()
+	if cachedEquipPool then return cachedEquipPool end
 	local pool = {}
-	-- Weapon + OffHand archetypes
-	for archetypeId, def in pairs(WeaponData.Archetypes) do
+	for id, def in pairs(WeaponData.Archetypes) do
 		if def.category == "Weapon" or def.category == "OffHand" then
-			table.insert(pool, archetypeId)
+			table.insert(pool, id)
 		end
 	end
-	-- Armor archetypes (Slice 4G)
-	for archetypeId, def in pairs(ArmorData.Archetypes) do
+	for id, def in pairs(ArmorData.Archetypes) do
 		if def.category == "Armor" then
-			table.insert(pool, archetypeId)
+			table.insert(pool, id)
 		end
 	end
-	table.sort(pool) -- deterministic order
-	cachedArchetypePool = pool
+	table.sort(pool)
+	cachedEquipPool = pool
+	return pool
+end
+
+local function getSkillPool()
+	if cachedSkillPool then return cachedSkillPool end
+	local pool = {}
+	for id, def in pairs(SkillData) do
+		if type(def) == "table" and def.name then
+			table.insert(pool, id)
+		end
+	end
+	table.sort(pool)
+	cachedSkillPool = pool
+	return pool
+end
+
+local function getAugmentPool()
+	if cachedAugmentPool then return cachedAugmentPool end
+	local pool = {}
+	for id, def in pairs(AugmentData) do
+		if type(def) == "table" and def.name then
+			table.insert(pool, id)
+		end
+	end
+	table.sort(pool)
+	cachedAugmentPool = pool
+	return pool
+end
+
+local function getDoctrinePool()
+	if cachedDoctrinePool then return cachedDoctrinePool end
+	local pool = {}
+	for id, def in pairs(DoctrineData) do
+		if type(def) == "table" and def.name then
+			table.insert(pool, id)
+		end
+	end
+	table.sort(pool)
+	cachedDoctrinePool = pool
+	return pool
+end
+
+local function getConsumablePool()
+	if cachedConsumablePool then return cachedConsumablePool end
+	local pool = ConsumableData.GetAllIds()
+	table.sort(pool)
+	cachedConsumablePool = pool
 	return pool
 end
 
 --------------------------------------------------
 -- PUBLIC: GenerateRewards
 --
--- Called after qualifying victory, before export/save.
---
--- Input:
---   playerId: string
---   mapLevel: number (from Slice 5; placeholder 1 for now)
---   opportunityId: string (unique per battle, prevents duplicates)
---
 -- Returns:
---   results: { { item = itemInstance, committed = bool, error = string? }, ... }
---   count: number of successfully committed items
+--   results: array of reward entries (see below)
+--   equipCommitted: number of equipment items committed to InventoryService
+--
+-- Each result entry:
+--   Equipment:     { category="Equipment", item=instance, committed=bool }
+--   Non-equipment: { category=string, cardData={id,name,desc,...}, committed=false }
+--
+-- Main.server commits non-equipment rewards and sets committed=true
+-- before calling BuildRewardSummaries.
 --------------------------------------------------
 
 function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
@@ -145,7 +199,6 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 	assert(type(mapLevel) == "number" and mapLevel >= 1, "RewardService: mapLevel must be >= 1")
 	assert(type(opportunityId) == "string", "RewardService: opportunityId required")
 
-	-- Idempotency: process each opportunity exactly once
 	if processedOpportunities[opportunityId] then
 		warn("[RewardService] Duplicate opportunity rejected: " .. opportunityId)
 		return {}, 0
@@ -154,7 +207,6 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 
 	local rng = Random.new(generateRewardSeed())
 	local rewardCount = rng:NextInteger(MIN_REWARDS, MAX_REWARDS)
-	local pool = getArchetypePool()
 
 	print(string.format(
 		"[RewardService] Generating %d reward(s) for %s | MapLevel=%d | OpportunityId=%s",
@@ -162,82 +214,138 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 	))
 
 	local results = {}
-	local committedCount = 0
+	local equipCommitted = 0
 
 	for i = 1, rewardCount do
 		local seed = generateRewardSeed()
 		local itemRng = Random.new(seed)
 
-		-- Roll rarity
-		local rarity = rollRarity(itemRng)
+		-- Step 1: Roll reward category
+		local category = weightedRoll(itemRng, CATEGORY_WEIGHTS, "category", "weight")
 
-		-- Generate item
-		local item, genErr = ItemGenerator.GenerateFromPool(
-			pool,
-			mapLevel,  -- Item Level = Map Level
-			rarity,
-			seed,
-			"Loot"
-		)
-
-		if not item then
-			warn(string.format(
-				"[RewardService] Generation failed for reward %d: %s",
-				i, genErr or "unknown"
-			))
-			table.insert(results, {
-				item = nil,
-				committed = false,
-				error = genErr or "Generation failed",
-			})
-		else
-			-- Commit to inventory (non-atomic, per-item)
-			local ok, addErr = InventoryService.AddItem(playerId, item)
-			if ok then
-				committedCount = committedCount + 1
-				local archetype = WeaponData.GetByArchetypeId(item.baseArchetypeId)
-					or ArmorData.GetByArchetypeId(item.baseArchetypeId)
-				local itemName = archetype and archetype.name or item.name or item.instanceId
-				print(string.format(
-					"[RewardService] Reward %d committed: %s | %s L%d %s",
-					i, item.instanceId, itemName,
-					item.itemLevel or 0, item.rarityId or "?"
-				))
+		if category == "Equipment" then
+			local rarity = weightedRoll(itemRng, NORMAL_RARITY_WEIGHTS, "rarity", "weight")
+			local pool = getEquipPool()
+			local item, genErr = ItemGenerator.GenerateFromPool(pool, mapLevel, rarity, seed, "Loot")
+			if not item then
+				warn(string.format("[RewardService] Equipment gen failed %d: %s", i, genErr or "unknown"))
 				table.insert(results, {
-					item = item,
-					committed = true,
-					error = nil,
+					category = "Equipment", committed = false,
+					error = genErr or "Generation failed",
 				})
 			else
-				warn(string.format(
-					"[RewardService] Commit failed for reward %d (%s): %s",
-					i, item.instanceId, addErr or "unknown"
-				))
-				table.insert(results, {
-					item = item,
-					committed = false,
-					error = addErr or "Commit failed",
-				})
+				local ok, addErr = InventoryService.AddItem(playerId, item)
+				if ok then
+					equipCommitted = equipCommitted + 1
+					local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+						or ArmorData.GetByArchetypeId(item.baseArchetypeId)
+					print(string.format("[RewardService] Reward %d: Equipment %s | %s L%d %s",
+						i, item.instanceId, arch and arch.name or "?",
+						item.itemLevel or 0, item.rarityId or "?"))
+					table.insert(results, {
+						category = "Equipment", item = item, committed = true,
+					})
+				else
+					warn(string.format("[RewardService] Equipment commit failed %d: %s", i, addErr or "unknown"))
+					table.insert(results, {
+						category = "Equipment", item = item, committed = false,
+						error = addErr or "Commit failed",
+					})
+				end
 			end
+
+		elseif category == "SkillCard" then
+			local pool = getSkillPool()
+			local skillId = pool[itemRng:NextInteger(1, #pool)]
+			local def = SkillData[skillId]
+			local rarity = rollCardRarity(itemRng)
+			print(string.format("[RewardService] Reward %d: SkillCard %s (%s) [%s]",
+				i, skillId, def and def.name or "?", rarity))
+			table.insert(results, {
+				category = "SkillCard", committed = false,
+				cardData = {
+					id = skillId,
+					name = def and def.name or skillId,
+					desc = def and def.description or "",
+					rarity = rarity,
+					mpCost = def and def.mpCost,
+					element = def and def.element,
+					tags = def and def.tags,
+				},
+			})
+
+		elseif category == "AugmentCard" then
+			local pool = getAugmentPool()
+			local augId = pool[itemRng:NextInteger(1, #pool)]
+			local def = AugmentData[augId]
+			local rarity = rollCardRarity(itemRng)
+			print(string.format("[RewardService] Reward %d: AugmentCard %s (%s) [%s]",
+				i, augId, def and def.name or "?", rarity))
+			table.insert(results, {
+				category = "AugmentCard", committed = false,
+				cardData = {
+					id = augId,
+					name = def and def.name or augId,
+					desc = def and def.description or "",
+					rarity = rarity,
+					family = def and def.family,
+				},
+			})
+
+		elseif category == "Doctrine" then
+			local pool = getDoctrinePool()
+			local docId = pool[itemRng:NextInteger(1, #pool)]
+			local def = DoctrineData[docId]
+			local rarity = rollCardRarity(itemRng)
+			print(string.format("[RewardService] Reward %d: Doctrine %s (%s) [%s]",
+				i, docId, def and def.name or "?", rarity))
+			table.insert(results, {
+				category = "Doctrine", committed = false,
+				cardData = {
+					id = docId,
+					name = def and def.name or docId,
+					desc = def and def.identity or "",
+					rarity = rarity,
+					passiveName = def and def.passiveName,
+					passiveEffect = def and def.passiveEffect,
+				},
+			})
+
+		elseif category == "Consumable" then
+			local pool = getConsumablePool()
+			local conId = pool[itemRng:NextInteger(1, #pool)]
+			local def = ConsumableData.GetById(conId)
+			local rarity = weightedRoll(itemRng, NORMAL_RARITY_WEIGHTS, "rarity", "weight")
+			print(string.format("[RewardService] Reward %d: Consumable %s (%s) [%s]",
+				i, conId, def and def.name or "?", rarity))
+			table.insert(results, {
+				category = "Consumable", committed = false,
+				cardData = {
+					id = conId,
+					name = def and def.name or conId,
+					desc = def and def.effectFormula or "",
+					rarity = rarity,
+					conCategory = def and def.category or "Unknown",
+					maxCharges = def and def.maxCharges or 1,
+				},
+			})
 		end
 	end
 
-	print(string.format(
-		"[RewardService] Done: %d/%d committed for %s",
-		committedCount, rewardCount, playerId
-	))
+	print(string.format("[RewardService] Done: %d equipment committed, %d total for %s",
+		equipCommitted, #results, playerId))
 
-	return results, committedCount
+	return results, equipCommitted
 end
 
 --------------------------------------------------
 -- PUBLIC: BuildRewardSummaries
 --
--- Converts committed reward results into a client-safe payload.
--- Only includes successfully committed items.
--- No ownership data — display only.
+-- Converts committed results into client-safe payload.
+-- Call AFTER Main commits non-equipment rewards.
 --
--- Returns: { { name, rarity, itemLevel, damage, wt, defense, bonusCount, passiveCount }, ... }
+-- Equipment:     full stat block (weapon/armor fields)
+-- Non-equipment: card display fields (name, desc, category, rarity)
 --------------------------------------------------
 
 local BONUS_DISPLAY_KEY = {
@@ -291,7 +399,10 @@ end
 function RewardService.BuildRewardSummaries(results)
 	local summaries = {}
 	for _, result in ipairs(results) do
-		if result.committed and result.item then
+		if not result.committed then
+			-- Skip uncommitted (failed) results
+		elseif result.category == "Equipment" and result.item then
+			-- Equipment summary (full stat block)
 			local item = result.item
 			local archetype = WeaponData.GetByArchetypeId(item.baseArchetypeId)
 			local isArmor = false
@@ -303,30 +414,30 @@ function RewardService.BuildRewardSummaries(results)
 				and ArmorData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
 				or WeaponData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
 
-			table.insert(summaries, {
+			local summary = {
 				name = archetype and archetype.name or "Unknown",
 				icon = archetype and archetype.icon or nil,
 				flavor = archetype and archetype.flavor or nil,
 				rarity = item.rarityId,
 				itemLevel = item.itemLevel,
+				category = "Equipment",
+				isCard = false,
 				wt = profile and profile.wt or 0,
 				defense = profile and profile.defense or 0,
 				bonusCount = #item.bonusLines,
 				passiveCount = #item.bonusPassiveIds,
 				isWeapon = not isArmor and archetype and archetype.category == "Weapon" or false,
 				isArmor = isArmor,
-				-- Weapon-specific fields
 				damage = (not isArmor) and (profile and profile.damage or 0) or 0,
 				rtDelay = (not isArmor) and (profile and profile.rtDelay or 0) or 0,
 				minRange = (not isArmor) and (profile and profile.minRange or 1) or 0,
 				maxRange = (not isArmor) and (profile and profile.maxRange or 1) or 0,
 				handClass = (not isArmor) and (archetype and archetype.handClass or "1H") or nil,
-				category = archetype and (isArmor and "Armor" or archetype.category) or "Unknown",
+				equipCategory = archetype and (isArmor and "Armor" or archetype.category) or "Unknown",
 				nativePassiveId = (not isArmor) and (archetype and archetype.nativePassiveId or nil) or nil,
 				nativePassiveDesc = (not isArmor) and (archetype and WeaponData.GetPassiveDesc(archetype.nativePassiveId) or nil) or nil,
 				projectileType = (not isArmor) and (archetype and archetype.projectileType or nil) or nil,
 				element = (not isArmor) and (archetype and WeaponData.GetElement(item.baseArchetypeId) or nil) or nil,
-				-- Armor-specific fields
 				hp = isArmor and (profile and profile.hp or 0) or nil,
 				mp = isArmor and (profile and profile.mp or 0) or nil,
 				slot = isArmor and (archetype and archetype.slot or nil) or nil,
@@ -334,8 +445,33 @@ function RewardService.BuildRewardSummaries(results)
 				passiveDesc = isArmor and (archetype and archetype.passiveDesc or nil) or nil,
 				bonusStats = nil,
 				bonusPassives = nil,
+			}
+			summary.bonusStats, summary.bonusPassives = resolveItemBonuses(item)
+			table.insert(summaries, summary)
+
+		elseif result.cardData then
+			-- Non-equipment card summary
+			local cd = result.cardData
+			table.insert(summaries, {
+				name = cd.name or "Unknown",
+				category = result.category,
+				rarity = cd.rarity or "Common",
+				isCard = true,
+				cardId = cd.id,
+				desc = cd.desc or "",
+				-- Skill-specific
+				mpCost = cd.mpCost,
+				element = cd.element,
+				tags = cd.tags,
+				-- Augment-specific
+				family = cd.family,
+				-- Doctrine-specific
+				passiveName = cd.passiveName,
+				passiveEffect = cd.passiveEffect,
+				-- Consumable-specific
+				conCategory = cd.conCategory,
+				maxCharges = cd.maxCharges,
 			})
-			summaries[#summaries].bonusStats, summaries[#summaries].bonusPassives = resolveItemBonuses(item)
 		end
 	end
 	return summaries

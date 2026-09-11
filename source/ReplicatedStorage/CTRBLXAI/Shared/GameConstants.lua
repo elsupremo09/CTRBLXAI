@@ -452,6 +452,7 @@ end
 GameConstants.STATUSES = {
 	Slow = {
 		id           = "Slow",
+		description  = "RT costs increased by 10%.",
 		kind         = "Debuff",
 		duration     = 3,
 		reapply      = "refresh",
@@ -460,6 +461,7 @@ GameConstants.STATUSES = {
 	},
 	Poison = {
 		id           = "Poison",
+		description  = "Takes 15% Max HP damage each turn.",
 		kind         = "Debuff",
 		duration     = 5,
 		reapply      = "refresh",
@@ -471,6 +473,7 @@ GameConstants.STATUSES = {
 	},
 	Burn = {
 		id           = "Burn",
+		description  = "Takes stored fire damage each turn. Accumulates on reapply.",
 		kind         = "Debuff",
 		duration     = 3,
 		reapply      = "accumulate", -- adds stored damage + extends duration
@@ -481,6 +484,7 @@ GameConstants.STATUSES = {
 	},
 	Guard = {
 		id           = "Guard",
+		description  = "Reduces incoming damage by 35%. Removed by hard CC.",
 		kind         = "Buff",
 		duration     = 2,        -- survives the EndTurn tick on the application turn;
 		                         -- expires at EndTurn of the unit's NEXT ready turn
@@ -494,6 +498,7 @@ GameConstants.STATUSES = {
 
 	Venom = {
 		id           = "Venom",
+		description  = "Takes 3% Max HP per stack each turn. Stacks on reapply.",
 		kind         = "Debuff",
 		duration     = nil,       -- Unlimited until cured
 		reapply      = "stack",   -- Venom Strength +1 on reapply
@@ -501,6 +506,7 @@ GameConstants.STATUSES = {
 
 	Bleed = {
 		id           = "Bleed",
+		description  = "Takes 5% Max HP bonus damage when hit by physical attacks.",
 		kind         = "Debuff",
 		duration     = nil,
 		durationCt   = 2000,
@@ -509,6 +515,7 @@ GameConstants.STATUSES = {
 
 	Raptured = {
 		id           = "Raptured",
+		description  = "Takes 2% Max HP damage per tile moved.",
 		kind         = "Debuff",
 		duration     = 5,
 		reapply      = "chain",   -- Refresh self + apply Wounded
@@ -516,6 +523,7 @@ GameConstants.STATUSES = {
 
 	Wounded = {
 		id           = "Wounded",
+		description  = "Takes 15% Max HP damage on AP-spending actions.",
 		kind         = "Debuff",
 		duration     = 3,
 		reapply      = "chain",   -- Refresh self + apply Bleed
@@ -525,6 +533,7 @@ GameConstants.STATUSES = {
 
 	Drowning = {
 		id           = "Drowning",
+		description  = "Jump penalty -1 every 500 CT. KO at -5.",
 		kind         = "Debuff",
 		duration     = nil,       -- Unlimited while valid
 		reapply      = "none",
@@ -533,6 +542,7 @@ GameConstants.STATUSES = {
 
 	Sinking = {
 		id           = "Sinking",
+		description  = "Cannot move. Jump penalty -1 every 500 CT. KO at -5.",
 		kind         = "Debuff",
 		duration     = nil,       -- Unlimited while valid
 		reapply      = "none",
@@ -544,6 +554,7 @@ GameConstants.STATUSES = {
 
 	Blind = {
 		id           = "Blind",
+		description  = "Precision halved.",
 		kind         = "Debuff",
 		duration     = nil,
 		durationCt   = 2000,
@@ -552,6 +563,7 @@ GameConstants.STATUSES = {
 
 	Confuse = {
 		id           = "Confuse",
+		description  = "Takes 30% of dealt damage as backlash.",
 		kind         = "Debuff",
 		duration     = 3,
 		reapply      = "refresh",
@@ -559,6 +571,7 @@ GameConstants.STATUSES = {
 
 	Silence = {
 		id           = "Silence",
+		description  = "Cannot use skills. Interrupts channeling.",
 		kind         = "Debuff",
 		duration     = nil,
 		durationCt   = 2000,
@@ -568,6 +581,7 @@ GameConstants.STATUSES = {
 
 	Mute = {
 		id           = "Mute",
+		description  = "Skill augments disabled. Base skills remain usable.",
 		kind         = "Debuff",
 		duration     = nil,
 		durationCt   = 3000,
@@ -576,6 +590,7 @@ GameConstants.STATUSES = {
 
 	Break = {
 		id           = "Break",
+		description  = "Doctrine, race, and unit passives disabled.",
 		kind         = "Debuff",
 		duration     = nil,
 		durationCt   = 3000,
@@ -584,6 +599,7 @@ GameConstants.STATUSES = {
 
 	Disarmed = {
 		id           = "Disarmed",
+		description  = "Cannot use basic attack.",
 		kind         = "Debuff",
 		duration     = nil,
 		durationCt   = 3000,
@@ -593,6 +609,7 @@ GameConstants.STATUSES = {
 
 	Pinned = {
 		id           = "Pinned",
+		description  = "Cannot move. Other actions unaffected.",
 		kind         = "Debuff",
 		duration     = nil,
 		durationCt   = 1000,
@@ -602,6 +619,7 @@ GameConstants.STATUSES = {
 
 	Crippled = {
 		id           = "Crippled",
+		description  = "Movement range and jump halved.",
 		kind         = "Debuff",
 		duration     = 5,
 		reapply      = "refresh",
@@ -609,6 +627,7 @@ GameConstants.STATUSES = {
 
 	["Mana Burn"] = {
 		id           = "Mana Burn",
+		description  = "Skills cost 20% Max MP extra. Excess MP dealt as damage.",
 		kind         = "Debuff",
 		duration     = 3,
 		reapply      = "refresh",
@@ -616,6 +635,7 @@ GameConstants.STATUSES = {
 
 	Petrify = {
 		id           = "Petrify",
+		description  = "Cannot act. RT frozen. Immune to new debuffs. Reduced damage taken.",
 		kind         = "Debuff",
 		duration     = nil,
 		durationCt   = 1500,
@@ -628,6 +648,7 @@ GameConstants.STATUSES = {
 
 	Haste = {
 		id           = "Haste",
+		description  = "RT costs reduced by 10%.",
 		kind         = "Buff",
 		duration     = 3,
 		reapply      = "refresh",
@@ -636,6 +657,7 @@ GameConstants.STATUSES = {
 
 	Frenzy = {
 		id           = "Frenzy",
+		description  = "Basic attack tempo increased.",
 		kind         = "Buff",
 		duration     = 3,
 		reapply      = "refresh",
@@ -643,6 +665,7 @@ GameConstants.STATUSES = {
 
 	Wet = {
 		id           = "Wet",
+		description  = "Movement RT increased. Fire damage halved. Ice may freeze.",
 		kind         = "Debuff",
 		duration     = 5,
 		reapply      = "refresh",
@@ -650,6 +673,7 @@ GameConstants.STATUSES = {
 
 	Frozen = {
 		id           = "Frozen",
+		description  = "All RT costs doubled. Physical/Water damage +50%. Fire removes.",
 		kind         = "Debuff",
 		duration     = 3,
 		reapply      = "refresh",
@@ -659,6 +683,7 @@ GameConstants.STATUSES = {
 
 	Undead = {
 		id           = "Undead",
+		description  = "Dark heals. Holy damage doubled. Immune to Poison/Bleed family.",
 		kind         = "Special",
 		duration     = nil,       -- Permanent or temporary
 		reapply      = "none",
@@ -666,6 +691,7 @@ GameConstants.STATUSES = {
 
 	Overflow = {
 		id           = "Overflow",
+		description  = "Pending clarification.",
 		kind         = "Buff",
 		duration     = 3,
 		reapply      = "extend",
@@ -676,6 +702,7 @@ GameConstants.STATUSES = {
 
 	Regeneration = {
 		id           = "Regeneration",
+		description  = "Heals 5% Max HP every 300 CT.",
 		kind         = "Buff",
 		duration     = nil,
 		durationCt   = 3000,
@@ -684,6 +711,7 @@ GameConstants.STATUSES = {
 
 	Recharge = {
 		id           = "Recharge",
+		description  = "Restores 5% Max MP every 300 CT.",
 		kind         = "Buff",
 		duration     = nil,
 		durationCt   = 1200,
@@ -694,6 +722,7 @@ GameConstants.STATUSES = {
 
 	Hide = {
 		id           = "Hide",
+		description  = "Untargetable. Next attack gains +50% hit quality. Broken by offensive action.",
 		kind         = "Buff",
 		duration     = 3,
 		reapply      = "refresh",
@@ -701,6 +730,7 @@ GameConstants.STATUSES = {
 
 	Blessed = {
 		id           = "Blessed",
+		description  = "Hit quality +25%.",
 		kind         = "Buff",
 		duration     = 4,
 		reapply      = "refresh",
@@ -708,6 +738,7 @@ GameConstants.STATUSES = {
 
 	Cursed = {
 		id           = "Cursed",
+		description  = "Hit quality -25%.",
 		kind         = "Debuff",
 		duration     = 4,
 		reapply      = "refresh",
@@ -715,6 +746,7 @@ GameConstants.STATUSES = {
 
 	Enlightened = {
 		id           = "Enlightened",
+		description  = "All stats +10% per stack.",
 		kind         = "Buff",
 		duration     = nil,
 		durationCt   = 3000,
@@ -725,6 +757,7 @@ GameConstants.STATUSES = {
 
 	Flight = {
 		id           = "Flight",
+		description  = "Elevation +5. Ignores terrain costs. Incoming damage +30%.",
 		kind         = "Buff",
 		duration     = 3,
 		reapply      = "refresh",
@@ -732,6 +765,7 @@ GameConstants.STATUSES = {
 
 	["Giant Transformation"] = {
 		id           = "Giant Transformation",
+		description  = "STR/VIT +20%. INT/DEX/AGI -20%.",
 		kind         = "Buff",
 		duration     = nil,
 		durationCt   = 3000,
@@ -742,6 +776,7 @@ GameConstants.STATUSES = {
 
 	["Knock-out"] = {
 		id           = "Knock-out",
+		description  = "Cannot act. Removed from battle after 3000 CT if not revived.",
 		kind         = "Special",
 		duration     = nil,
 		durationCt   = 3000,
@@ -752,6 +787,7 @@ GameConstants.STATUSES = {
 
 	Rush = {
 		id           = "Rush",
+		description  = "Movement range +3. DEX -20%.",
 		kind         = "Buff",
 		duration     = 4,
 		reapply      = "refresh",
@@ -759,6 +795,7 @@ GameConstants.STATUSES = {
 
 	Weakened = {
 		id           = "Weakened",
+		description  = "All stats -10%.",
 		kind         = "Debuff",
 		duration     = nil,
 		durationCt   = 2000,
@@ -769,6 +806,7 @@ GameConstants.STATUSES = {
 
 	Sleep = {
 		id           = "Sleep",
+		description  = "Cannot act. Damage breaks sleep. Heals 3% per 200 CT.",
 		kind         = "Debuff",
 		duration     = 2,
 		reapply      = "none",
@@ -778,6 +816,7 @@ GameConstants.STATUSES = {
 
 	["Sleep Immunity"] = {
 		id           = "Sleep Immunity",
+		description  = "Immune to Sleep.",
 		kind         = "Buff",
 		duration     = 2,
 		reapply      = "refresh",
@@ -788,6 +827,7 @@ GameConstants.STATUSES = {
 
 	Stun = {
 		id           = "Stun",
+		description  = "Cannot act.",
 		kind         = "Debuff",
 		duration     = nil,
 		reapply      = "refresh",

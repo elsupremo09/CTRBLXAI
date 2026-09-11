@@ -303,16 +303,42 @@ end
 
 function Theme.GetStatusColor(statusId)
 	local map = {
-		Poison  = Theme.Colors.Poison,
-		Burn    = Theme.Colors.Burn,
-		Freeze  = Theme.Colors.Freeze,
-		Frozen  = Theme.Colors.Freeze,
-		Silence = Theme.Colors.Silence,
-		Mute    = Theme.Colors.Silence,
-		Stun    = Theme.Colors.Stun,
-		Bleed   = Theme.Colors.Bleed,
-		Slow    = Theme.Colors.Slow,
-		Guard   = Color3.fromRGB(100, 180, 240),
+		-- DoTs
+		Poison     = Theme.Colors.Poison,
+		Venom      = Theme.Colors.Poison,
+		Burn       = Theme.Colors.Burn,
+		Bleed      = Theme.Colors.Bleed,
+		Raptured   = Theme.Colors.Bleed,
+		Wounded    = Theme.Colors.Bleed,
+		-- CC / Debuffs
+		Freeze     = Theme.Colors.Freeze,
+		Frozen     = Theme.Colors.Freeze,
+		Silence    = Theme.Colors.Silence,
+		Mute       = Theme.Colors.Silence,
+		Stun       = Theme.Colors.Stun,
+		Slow       = Theme.Colors.Slow,
+		Blind      = Color3.fromRGB(120, 100, 140),
+		Confuse    = Color3.fromRGB(200, 120, 200),
+		Pinned     = Color3.fromRGB(160, 120, 80),
+		Crippled   = Color3.fromRGB(160, 120, 80),
+		Disarmed   = Color3.fromRGB(160, 120, 80),
+		Petrify    = Color3.fromRGB(140, 140, 140),
+		Sleep      = Color3.fromRGB(120, 140, 200),
+		Weakened   = Color3.fromRGB(180, 100, 100),
+		Cursed     = Color3.fromRGB(160, 60, 180),
+		Wet        = Color3.fromRGB(80, 160, 220),
+		Drowning   = Color3.fromRGB(40, 80, 160),
+		-- Buffs
+		Guard      = Color3.fromRGB(100, 180, 240),
+		Haste      = Color3.fromRGB(80, 220, 180),
+		Frenzy     = Color3.fromRGB(220, 100, 60),
+		Hide       = Color3.fromRGB(120, 120, 140),
+		Blessed    = Color3.fromRGB(240, 220, 100),
+		Flight     = Color3.fromRGB(180, 220, 255),
+		Regeneration = Color3.fromRGB(80, 220, 120),
+		Recharge   = Color3.fromRGB(100, 180, 240),
+		Rush       = Color3.fromRGB(255, 180, 60),
+		Enlightened = Color3.fromRGB(240, 240, 180),
 	}
 	return map[statusId] or Theme.Colors.Info
 end
@@ -817,5 +843,58 @@ Theme.Terrain = {
 	["Cracked Ground"] = "rbxassetid://112911396208647",
 	["Quicksand"]      = "rbxassetid://125706353174532",
 }
+
+--------------------------------------------------
+-- STYLESHEET LINK HELPER
+-- Call on any ScreenGui to enable StyleSheet rules.
+-- Only needed when using tag-based styling (Phase 2+).
+--------------------------------------------------
+
+function Theme.LinkStyleSheet(screenGui)
+	local styleOk, StyleBootstrap = pcall(function()
+		return require(game:GetService("ReplicatedStorage")
+			:WaitForChild("CTRBLXAI", 5):WaitForChild("Shared", 5)
+			:WaitForChild("StyleBootstrap", 5))
+	end)
+	if styleOk and StyleBootstrap and StyleBootstrap.Link then
+		StyleBootstrap.Link(screenGui)
+	end
+end
+
+--------------------------------------------------
+-- STYLESHEET BRIDGE (Phase 3)
+-- Called by StyleBootstrap after Init() to bind Theme.Colors
+-- to StyleSheet token values. All existing Theme.Colors.X refs
+-- continue to work but now read from the canonical token source.
+--------------------------------------------------
+
+function Theme.BindToStyleSheet(tokenSheet)
+	if not tokenSheet then
+		warn("[Theme] BindToStyleSheet called with nil tokenSheet")
+		return
+	end
+
+	-- Replace each color in Theme.Colors with the token value
+	local bound = 0
+	for key, currentValue in pairs(Theme.Colors) do
+		local tokenValue = tokenSheet:GetAttribute(key)
+		if tokenValue and typeof(tokenValue) == "Color3" then
+			Theme.Colors[key] = tokenValue
+			bound = bound + 1
+		end
+	end
+
+	-- Listen for token changes (hot-reload support)
+	tokenSheet.AttributeChanged:Connect(function(attrName)
+		if Theme.Colors[attrName] then
+			local newValue = tokenSheet:GetAttribute(attrName)
+			if newValue and typeof(newValue) == "Color3" then
+				Theme.Colors[attrName] = newValue
+			end
+		end
+	end)
+
+	print("[Theme] Bound " .. bound .. " colors to StyleSheet tokens (live updates enabled)")
+end
 
 return Theme

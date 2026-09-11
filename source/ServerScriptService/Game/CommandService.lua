@@ -768,7 +768,7 @@ function CommandService.ValidateAndCommit(
 
 		local weaponDamage = actor.weaponDamage or 10
 		local outcome = CombatResolver.ResolveBasicAttack(actor, target, weaponDamage)
-		CombatResolver.ApplyOutcome(outcome, target)
+		CombatResolver.ApplyOutcome(outcome, target, actor)
 		BattleCoordinator.AccrueRt(state, rtCost)
 
 		-- Missing 7: Apply Weapon RT Delay to target (reduced by target VIT)

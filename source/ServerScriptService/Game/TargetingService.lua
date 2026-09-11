@@ -139,6 +139,7 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 	local occupancy  = buildOccupancyMap(allUnits)
 
 	local visited    = {}
+	local parent     = {}
 	local candidates = {}
 
 	local queue      = { { x = actor.tileX, y = actor.tileY, cost = 0 } }
@@ -188,6 +189,7 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 
 							if passable then
 								visited[key] = newCost
+								parent[key] = tileKey(current.x, current.y)
 
 								if occupant == nil then
 									table.insert(candidates, {
@@ -202,6 +204,23 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 				end
 			end
 		end
+	end
+
+	-- Reconstruct path for each candidate by tracing parent chain
+	for _, cand in ipairs(candidates) do
+		local path = {}
+		local ck = tileKey(cand.tileX, cand.tileY)
+		local pk = parent[ck]
+		while pk and pk ~= startKey do
+			local px, py = pk:match("^(%d+),(%d+)$")
+			px, py = tonumber(px), tonumber(py)
+			local terrain = GameConstants.GetTerrainId(px, py)
+			table.insert(path, 1, { tileX = px, tileY = py, terrain = terrain or "Clear" })
+			pk = parent[pk]
+		end
+		-- Add destination terrain
+		cand.terrain = GameConstants.GetTerrainId(cand.tileX, cand.tileY) or "Clear"
+		cand.path = path
 	end
 
 	return candidates
@@ -346,6 +365,12 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 	local bonusRange = actor.derivedStats and actor.derivedStats.bonusSkillRange
 		or math.floor((actor.effectiveStats and actor.effectiveStats.INT or 10) / 75)
 	local range = baseRange + bonusRange
+	if range < 1 then range = 1 end  -- Safety: negative bonusRange must not reduce below 1
+	print(string.format("[SkillCand] %s using %s | skillRange=%s baseRange=%d bonusRange=%d range=%d | weaponMaxRange=%s INT=%s derivedBSR=%s",
+		actor.name, skillDef.name or skillDef.id, tostring(skillDef.range),
+		baseRange, bonusRange, range, tostring(actor.weaponMaxRange),
+		tostring(actor.effectiveStats and actor.effectiveStats.INT),
+		tostring(actor.derivedStats and actor.derivedStats.bonusSkillRange)))
 	local targetRules = skillDef.targetRules or "Enemy Unit"
 	local candidates = {}
 
@@ -354,20 +379,29 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 			-- skip dead units
 		elseif chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) > range then
 			-- skip out of range
+			print(string.format("[SkillCand] %s REJECTED %s: out of range (dist=%d > range=%d)",
+				actor.name, unit.name, chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY), range))
 		else
 			-- Check LoS (healing/ally skills skip LoS for now)
 			-- Projectile type: skill override or weapon default
-			local projType = skillDef.projectileType or actor.weaponProjectileType
+			local projType = skillDef.projectileType
+			if not projType or projType == "Inherit" then
+				projType = actor.weaponProjectileType
+			end
 			local hasLos = targetRules == "Ally Unit, Self"
 				or TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
 					allUnits, getEffectiveElevation(actor), projType)
 			if not hasLos then
 				-- blocked by obstacle
+				print(string.format("[SkillCand] %s REJECTED %s: no LoS (proj=%s)", actor.name, unit.name, tostring(projType)))
 			elseif not isMeleeElevationLegal(actor, unit, baseRange) then
 				-- melee elevation too different
+				print(string.format("[SkillCand] %s REJECTED %s: elevation (baseRange=%d)", actor.name, unit.name, baseRange))
 			elseif targetRules == "Enemy Unit" then
 				if unit.side ~= actor.side then
 					table.insert(candidates, unit)
+				else
+					print(string.format("[SkillCand] %s REJECTED %s: same side", actor.name, unit.name))
 				end
 			elseif targetRules == "Ally Unit, Self" then
 				if unit.side == actor.side then
@@ -390,26 +424,45 @@ end
 --------------------------------------------------
 
 function TargetingService.GetCleaveTargets(actor, primaryTarget, allUnits)
-	-- Cleave = all enemies within range 1 of the CASTER (not constrained to target).
-	-- Primary target is always included. The caster swings at everything adjacent.
+	-- Cleave = primary target + up to 2 flanking units perpendicular to attack direction.
+	-- Max 3 hits. Secondary tiles are adjacent to BOTH attacker AND target, on the sides.
+	-- Elevation filter: secondary must be ±2 elevation from attacker.
 	local targets = {}
-	local seen = { [primaryTarget.id] = true }
 	table.insert(targets, primaryTarget)
 
-	for _, unit in ipairs(allUnits) do
-		if unit.isAlive
-			and unit.side ~= actor.side
-			and unit.id ~= primaryTarget.id
-			and not seen[unit.id]
-		then
-			local distToCaster = chebyshevDistance(
-				actor.tileX, actor.tileY, unit.tileX, unit.tileY
-			)
+	-- Direction vector from attacker to target
+	local dx = primaryTarget.tileX - actor.tileX
+	local dy = primaryTarget.tileY - actor.tileY
 
-			-- Hit everyone within range 1 of the caster
-			if distToCaster <= 1 then
-				table.insert(targets, unit)
-				seen[unit.id] = true
+	-- Perpendicular directions (the two flanking tiles)
+	-- For cardinal: (1,0)→perps are (0,1),(0,-1). For diagonal: (1,1)→perps are (1,-1),(-1,1)
+	local perp1X, perp1Y, perp2X, perp2Y
+	if dx == 0 then     -- N or S attack
+		perp1X, perp1Y = -1, dy
+		perp2X, perp2Y = 1, dy
+	elseif dy == 0 then -- E or W attack
+		perp1X, perp1Y = dx, -1
+		perp2X, perp2Y = dx, 1
+	else                -- diagonal attack
+		perp1X, perp1Y = dx, 0
+		perp2X, perp2Y = 0, dy
+	end
+
+	local atkElev = getEffectiveElevation(actor)
+	local flankTiles = {
+		{ x = actor.tileX + perp1X, y = actor.tileY + perp1Y },
+		{ x = actor.tileX + perp2X, y = actor.tileY + perp2Y },
+	}
+
+	for _, tile in ipairs(flankTiles) do
+		local tileElev = GameConstants.GetElevation(tile.x, tile.y)
+		if math.abs(tileElev - atkElev) <= 2 then
+			for _, unit in ipairs(allUnits) do
+				if unit.isAlive and unit.side ~= actor.side
+					and unit.id ~= primaryTarget.id
+					and unit.tileX == tile.x and unit.tileY == tile.y then
+					table.insert(targets, unit)
+				end
 			end
 		end
 	end

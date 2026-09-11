@@ -1095,6 +1095,22 @@ do
 	end
 end
 
+-- Starter consumables: equip a healing potion on Hero if no consumables saved
+do
+	local heroUnit = nil
+	for _, u in ipairs(allUnitsList) do
+		if u.id == "unit_hero" then heroUnit = u; break end
+	end
+	if heroUnit and (not heroUnit.consumableSlots or not heroUnit.consumableSlots[1]) then
+		heroUnit.consumableSlots = heroUnit.consumableSlots or {}
+		heroUnit.consumableSlots[1] = {
+			consumableId = "REC-001",  -- Emergency Small Healing Potion
+			currentCharges = 1,
+			maxCharges = 1,
+		}
+		print("[Main] Starter consumable equipped: REC-001 on Hero slot 1")
+	end
+end
 
 -- Helper: rebuild unit.skillIds from loadout
 local function rebuildSkillIds(unit)
@@ -1730,7 +1746,13 @@ local function buildTurnPrompt(unit)
 	local moveTiles = TargetingService.GetMoveCandidates(unit, state.units, MAP_WIDTH, MAP_HEIGHT)
 	local moveCandidates = {}
 	for _, tile in ipairs(moveTiles) do
-		table.insert(moveCandidates, { tileX = tile.tileX, tileY = tile.tileY, pathCost = tile.pathCost })
+		table.insert(moveCandidates, {
+			tileX    = tile.tileX,
+			tileY    = tile.tileY,
+			pathCost = tile.pathCost,
+			terrain  = tile.terrain,
+			path     = tile.path,
+		})
 	end
 
 	local attackCandidates = TargetingService.GetAttackCandidates(unit, state.units, unit.weaponMaxRange or 1)
@@ -2485,12 +2507,22 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 
 	-- Build full response
 	-- Build status summary
+	local rawSummary = StatusService.GetStatusSummary(unit)
 	local statusSummary = {}
-	for _, inst in ipairs(unit.statusInstances or {}) do
+	for _, entry in ipairs(rawSummary) do
+		local sid = entry.id
+		local sDef = sid and GameConstants.STATUSES[sid] or nil
+		local inst = nil
+		for _, si in ipairs(unit.statusInstances or {}) do
+			if si.id == sid then inst = si; break end
+		end
 		table.insert(statusSummary, {
-			id = inst.statusId,
-			remainingTurns = inst.remainingTurns,
-			kind = GameConstants.STATUSES[inst.statusId] and GameConstants.STATUSES[inst.statusId].kind or "Debuff",
+			id = sid,
+			remainingTurns = entry.remainingTurns or (sDef and sDef.duration),
+			kind = sDef and sDef.kind or "Debuff",
+			stacks = inst and inst.stacks and inst.stacks > 1 and inst.stacks or nil,
+			nextDamage = entry.nextDamage,
+			storedBurn = entry.storedBurn,
 		})
 	end
 
@@ -2699,11 +2731,34 @@ if isQualifyingVictory then
 	local MAP_LEVEL = 1
 	local opportunityId = string.format("battle_%s_%d", PLAYER_ID, os.clock())
 
-	local results, committedCount = RewardService.GenerateRewards(PLAYER_ID, MAP_LEVEL, opportunityId)
+	local results, equipCommitted = RewardService.GenerateRewards(PLAYER_ID, MAP_LEVEL, opportunityId)
 
-	if committedCount > 0 then
+	-- Commit non-equipment rewards to card inventories
+	local cardCommitted = 0
+	for _, result in ipairs(results) do
+		if not result.committed and result.cardData then
+			local cat = result.category
+			local id = result.cardData.id
+			if cat == "SkillCard" then
+				cardInventory.skillCards[id] = (cardInventory.skillCards[id] or 0) + 1
+				result.committed = true
+				cardCommitted = cardCommitted + 1
+			elseif cat == "AugmentCard" then
+				cardInventory.augmentCards[id] = (cardInventory.augmentCards[id] or 0) + 1
+				result.committed = true
+				cardCommitted = cardCommitted + 1
+			elseif cat == "Doctrine" or cat == "Consumable" then
+				-- Tracked for display; ownership gating deferred
+				result.committed = true
+				cardCommitted = cardCommitted + 1
+			end
+		end
+	end
+
+	local totalCommitted = equipCommitted + cardCommitted
+	if totalCommitted > 0 then
 		rewardSummaries = RewardService.BuildRewardSummaries(results)
-		print(string.format("[PostBattle] %d reward(s) committed to inventory", committedCount))
+		print(string.format("[PostBattle] %d reward(s) committed (%d equip, %d cards)", totalCommitted, equipCommitted, cardCommitted))
 	end
 
 	-- Log any failures explicitly

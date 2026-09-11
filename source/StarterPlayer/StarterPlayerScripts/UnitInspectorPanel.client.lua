@@ -192,14 +192,94 @@ local function renderStatsTab(content, data)
 	if data.statuses and #data.statuses > 0 then
 		createSection(content, "ACTIVE EFFECTS", 2)
 		local effectOrder = 3
-		for _, s in ipairs(data.statuses) do
-			local color = s.kind == "Buff" and "100,255,100" or "255,180,80"
-			local turnsStr = s.remainingTurns and (s.remainingTurns .. " turns") or "?"
-			local statusName = s.id or s.name or "Unknown"
-			createLabel(content, {
-				Text = string.format('  <font color="rgb(%s)">%s</font>  (%s)', color, statusName, turnsStr),
-				Order = effectOrder, Padding = 4,
-			})
+		for i = #data.statuses, 1, -1 do
+			local s = data.statuses[i]
+			local sid = s.id or s.name or "Unknown"
+			local def = GameConstants.STATUSES and GameConstants.STATUSES[sid] or nil
+			local kind = s.kind or (def and def.kind) or "Debuff"
+			local sColor = Theme.GetStatusColor and Theme.GetStatusColor(sid) or Theme.Colors.Warning
+
+			-- Duration
+			local durStr
+			if s.remainingTurns then durStr = s.remainingTurns .. " turns"
+			elseif def and def.durationCt then durStr = "CT-based"
+			else durStr = "Permanent" end
+
+			-- Stacks
+			local stackStr = s.stacks and s.stacks > 1 and (" x" .. s.stacks) or ""
+
+			-- Row frame: icon badge + name/details
+			local row = Instance.new("Frame")
+			local hasDesc = def and def.description
+			row.Size = UDim2.new(1, 0, 0, hasDesc and 46 or 32)
+			row.BackgroundTransparency = 1
+			row.BorderSizePixel = 0
+			row.LayoutOrder = effectOrder
+			row.Parent = content
+
+			-- Colored icon badge (left)
+			local badge = Instance.new("Frame")
+			badge.Size = UDim2.fromOffset(28, 28)
+			badge.Position = UDim2.fromOffset(4, 2)
+			badge.BackgroundColor3 = sColor
+			badge.BackgroundTransparency = 0.3
+			badge.BorderSizePixel = 0
+			badge.Parent = row
+			Instance.new("UICorner", badge).CornerRadius = UDim.new(0, 4)
+			local badgeLbl = Instance.new("TextLabel")
+			badgeLbl.Size = UDim2.fromScale(1, 1)
+			badgeLbl.BackgroundTransparency = 1
+			badgeLbl.Font = Theme.Font.PrimaryBold
+			badgeLbl.TextSize = Theme.Text.Small()
+			badgeLbl.TextColor3 = Theme.Colors.TextPrimary
+			badgeLbl.Text = string.sub(sid, 1, 2)
+			badgeLbl.Parent = badge
+
+			-- Name + duration (right of badge)
+			local nameLbl = Instance.new("TextLabel")
+			nameLbl.Size = UDim2.new(1, -40, 0, 16)
+			nameLbl.Position = UDim2.fromOffset(38, 0)
+			nameLbl.BackgroundTransparency = 1
+			nameLbl.Font = Theme.Font.PrimaryBold
+			nameLbl.TextSize = Theme.Text.Body()
+			nameLbl.TextColor3 = sColor
+			nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+			nameLbl.RichText = true
+			nameLbl.Text = sid .. stackStr .. "  (" .. durStr .. ")"
+			nameLbl.Parent = row
+
+			-- Description line from GameConstants
+			local descText = def and def.description or nil
+			if descText then
+				local descLbl = Instance.new("TextLabel")
+				descLbl.Size = UDim2.new(1, -40, 0, 14)
+				descLbl.Position = UDim2.fromOffset(38, 16)
+				descLbl.BackgroundTransparency = 1
+				descLbl.Font = Theme.Font.Primary
+				descLbl.TextSize = Theme.Text.Small()
+				descLbl.TextColor3 = Theme.Colors.TextSecondary
+				descLbl.TextXAlignment = Enum.TextXAlignment.Left
+				descLbl.Text = descText
+				descLbl.Parent = row
+			end
+
+			-- Damage line (below description)
+			if s.nextDamage and s.nextDamage > 0 then
+				local dmgY = descText and 30 or 16
+				local dmgLbl = Instance.new("TextLabel")
+				dmgLbl.Size = UDim2.new(1, -40, 0, 14)
+				dmgLbl.Position = UDim2.fromOffset(38, dmgY)
+				dmgLbl.BackgroundTransparency = 1
+				dmgLbl.Font = Theme.Font.PrimaryBold
+				dmgLbl.TextSize = Theme.Text.Small()
+				dmgLbl.TextColor3 = Theme.Colors.Danger
+				dmgLbl.TextXAlignment = Enum.TextXAlignment.Left
+				dmgLbl.Text = "Next: " .. s.nextDamage .. " dmg"
+				dmgLbl.Parent = row
+				-- Expand row height to fit
+				row.Size = UDim2.new(1, 0, 0, dmgY + 16)
+			end
+
 			effectOrder = effectOrder + 1
 		end
 	end
@@ -432,9 +512,18 @@ local function renderTraitsTab(content, data)
 
 	sectionHeader("Active Buffs", Theme.Colors.Success)
 	if #buffs > 0 then
-		for _, b in ipairs(buffs) do
-			local name = (b.id or "Unknown") .. "  (" .. (b.remainingTurns or "?") .. " turns)"
-			traitEntry(name, "", Theme.Colors.Success)
+		for i = #buffs, 1, -1 do
+			local b = buffs[i]
+			local sid = b.id or "Unknown"
+			local def = GameConstants.STATUSES and GameConstants.STATUSES[sid] or nil
+			local durStr
+			if b.remainingTurns then durStr = b.remainingTurns .. " turns"
+			elseif def and def.durationCt then durStr = "CT-based"
+			else durStr = "Permanent" end
+			local stackStr = b.stacks and b.stacks > 1 and (" x" .. b.stacks) or ""
+			local desc = ""
+			if def and def.rtMultiplier then desc = "RT x" .. def.rtMultiplier end
+			traitEntry(sid .. stackStr .. "  (" .. durStr .. ")", desc, Theme.Colors.Success)
 		end
 	else
 		createLabel(content, {
@@ -447,9 +536,19 @@ local function renderTraitsTab(content, data)
 	-- ACTIVE DEBUFFS
 	sectionHeader("Active Debuffs", Theme.Colors.Warning)
 	if #debuffs > 0 then
-		for _, d in ipairs(debuffs) do
-			local name = (d.id or "Unknown") .. "  (" .. (d.remainingTurns or "?") .. " turns)"
-			traitEntry(name, "", Theme.Colors.Warning)
+		for i = #debuffs, 1, -1 do
+			local d = debuffs[i]
+			local sid = d.id or "Unknown"
+			local def = GameConstants.STATUSES and GameConstants.STATUSES[sid] or nil
+			local durStr
+			if d.remainingTurns then durStr = d.remainingTurns .. " turns"
+			elseif def and def.durationCt then durStr = "CT-based"
+			else durStr = "Permanent" end
+			local stackStr = d.stacks and d.stacks > 1 and (" x" .. d.stacks) or ""
+			local desc = ""
+			if def and def.dotType then desc = "DoT: " .. def.dotType end
+			if def and def.blocks then desc = desc .. (desc ~= "" and " | " or "") .. "Blocks actions" end
+			traitEntry(sid .. stackStr .. "  (" .. durStr .. ")", desc, Theme.Colors.Warning)
 		end
 	else
 		createLabel(content, {
