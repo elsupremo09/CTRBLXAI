@@ -852,4 +852,85 @@ function TargetingService.GetChainTargets(firstTarget, allUnits, attackerSide, m
 	return chain
 end
 
+--------------------------------------------------
+-- GET IMPACT SPLASH TARGETS (Slice 4 — Weapon Pattern AOE)
+--
+-- DB rule: "Primary Target receives 100% damage; four cardinally
+-- adjacent splash tiles receive 50% damage. Friendly fire applies."
+--
+-- Returns: { {unit=unit, dmgMult=1.0}, {unit=unit, dmgMult=0.5}, ... }
+-- Primary target always first. Splash includes ALL alive units on
+-- cardinal tiles (enemies AND allies — friendly fire per DB).
+-- Elevation filter: splash tile must be ±2 from impact tile.
+--------------------------------------------------
+
+function TargetingService.GetImpactSplashTargets(actor, primaryTarget, allUnits)
+	local results = {}
+	table.insert(results, { unit = primaryTarget, dmgMult = 1.0 })
+
+	local cx, cy = primaryTarget.tileX, primaryTarget.tileY
+	local impactElev = getEffectiveElevation(primaryTarget)
+
+	-- Four cardinal neighbors
+	local cardinals = {
+		{ x = cx, y = cy - 1 },
+		{ x = cx, y = cy + 1 },
+		{ x = cx - 1, y = cy },
+		{ x = cx + 1, y = cy },
+	}
+
+	for _, tile in ipairs(cardinals) do
+		local tileElev = GameConstants.GetElevation(tile.x, tile.y)
+		if math.abs(tileElev - impactElev) <= 2 then
+			for _, u in ipairs(allUnits) do
+				if u.isAlive and u.id ~= primaryTarget.id and u.id ~= actor.id
+					and u.tileX == tile.x and u.tileY == tile.y then
+					table.insert(results, { unit = u, dmgMult = 0.5 })
+				end
+			end
+		end
+	end
+
+	return results
+end
+
+--------------------------------------------------
+-- GET LINE2 TARGETS (Slice 4 — Weapon Pattern AOE)
+--
+-- DB rule: Line 2 hits primary target + the tile directly
+-- behind the target in the attack direction. Both at 100%.
+-- Elevation filter: ±2 from primary target.
+--
+-- Returns: { {unit=unit, dmgMult=1.0}, ... }
+--------------------------------------------------
+
+function TargetingService.GetLine2Targets(actor, primaryTarget, allUnits)
+	local results = {}
+	table.insert(results, { unit = primaryTarget, dmgMult = 1.0 })
+
+	-- Direction from attacker to target (normalized to -1/0/+1)
+	local rawDx = primaryTarget.tileX - actor.tileX
+	local rawDy = primaryTarget.tileY - actor.tileY
+	local dx = rawDx == 0 and 0 or (rawDx > 0 and 1 or -1)
+	local dy = rawDy == 0 and 0 or (rawDy > 0 and 1 or -1)
+
+	-- Tile behind target = target + direction
+	local behindX = primaryTarget.tileX + dx
+	local behindY = primaryTarget.tileY + dy
+
+	local primaryElev = getEffectiveElevation(primaryTarget)
+	local behindElev = GameConstants.GetElevation(behindX, behindY)
+
+	if math.abs(behindElev - primaryElev) <= 2 then
+		for _, u in ipairs(allUnits) do
+			if u.isAlive and u.id ~= primaryTarget.id and u.id ~= actor.id
+				and u.tileX == behindX and u.tileY == behindY then
+				table.insert(results, { unit = u, dmgMult = 1.0 })
+			end
+		end
+	end
+
+	return results
+end
+
 return TargetingService

@@ -311,6 +311,12 @@ function StatusService.TickStatuses(unit)
 
 	while i <= #unit.statusInstances do
 		local inst = unit.statusInstances[i]
+		-- CT-based statuses use remainingCt (decremented elsewhere); skip turn decrement
+		if inst.remainingCt then
+			i = i + 1
+			continue
+		end
+		if not inst.remainingTurns then i = i + 1; continue end
 		inst.remainingTurns = inst.remainingTurns - 1
 
 		if inst.remainingTurns <= 0 then

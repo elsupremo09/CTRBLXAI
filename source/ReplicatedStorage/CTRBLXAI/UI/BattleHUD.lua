@@ -386,20 +386,32 @@ function BattleHUD._buildActiveUnit()
 		for si, s in ipairs(d.statuses) do
 			local icon = Instance.new("Frame")
 			icon.Size = UDim2.new(0, 28, 0, 28)
-			icon.BackgroundColor3 = Theme.GetStatusColor(s.id or "")
-			icon.BackgroundTransparency = 0.3
+			icon.BackgroundTransparency = 1
 			icon.BorderSizePixel = 0
 			icon.LayoutOrder = si
 			icon.Parent = statusRow
 			Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 3)
-			local iconLabel = Instance.new("TextLabel")
-			iconLabel.Size = UDim2.fromScale(1, 1)
-			iconLabel.BackgroundTransparency = 1
-			iconLabel.Font = Theme.Font.PrimaryBold
-			iconLabel.TextSize = Theme.Text.Small()
-			iconLabel.TextColor3 = Theme.Colors.TextPrimary
-			iconLabel.Text = string.sub(s.id, 1, 2)
-			iconLabel.Parent = icon
+			local statusAsset = Theme.GetStatusIcon(s.id)
+			if statusAsset then
+				local img = Instance.new("ImageLabel")
+				img.Size = UDim2.fromScale(1, 1)
+				img.Position = UDim2.fromScale(0, 0)
+				img.BackgroundTransparency = 1
+				img.Image = statusAsset
+				img.ScaleType = Enum.ScaleType.Fit
+				img.Parent = icon
+			else
+				icon.BackgroundColor3 = Theme.GetStatusColor(s.id or "")
+				icon.BackgroundTransparency = 0.3
+				local iconLabel = Instance.new("TextLabel")
+				iconLabel.Size = UDim2.fromScale(1, 1)
+				iconLabel.BackgroundTransparency = 1
+				iconLabel.Font = Theme.Font.PrimaryBold
+				iconLabel.TextSize = Theme.Text.Small()
+				iconLabel.TextColor3 = Theme.Colors.TextPrimary
+				iconLabel.Text = string.sub(s.id, 1, 2)
+				iconLabel.Parent = icon
+			end
 		end
 	end
 
@@ -670,18 +682,31 @@ function BattleHUD._buildInspector()
 			for si, s in ipairs(d.statuses) do
 				local sName = s.id or s.name or "?"
 				local sColor = Theme.GetStatusColor and Theme.GetStatusColor(sName) or Theme.Colors.Warning
+				local sAsset = Theme.GetStatusIcon(sName)
 				local badge = Instance.new("Frame")
-				badge.Size = UDim2.fromOffset(0, 24)
-				badge.AutomaticSize = Enum.AutomaticSize.X
+				badge.Size = sAsset and UDim2.fromOffset(24, 24) or UDim2.fromOffset(0, 24)
+				badge.AutomaticSize = sAsset and Enum.AutomaticSize.None or Enum.AutomaticSize.X
 				badge.BackgroundColor3 = sColor
-				badge.BackgroundTransparency = 0.7
+				badge.BackgroundTransparency = sAsset and 1 or 0.7
 				badge.BorderSizePixel = 0
 				badge.LayoutOrder = si
 				badge.Parent = statusRow
 				Instance.new("UICorner", badge).CornerRadius = UDim.new(0, 3)
-				local bStroke = Instance.new("UIStroke", badge); bStroke.Color = sColor; bStroke.Thickness = 1
-				local badgePad = Instance.new("UIPadding", badge)
-				badgePad.PaddingLeft = UDim.new(0, 4); badgePad.PaddingRight = UDim.new(0, 4)
+				if sAsset then
+					local img = Instance.new("ImageLabel")
+					img.Size = UDim2.fromScale(1, 1)
+					img.Position = UDim2.fromScale(0, 0)
+					img.BackgroundTransparency = 1
+					img.Image = sAsset
+					img.ScaleType = Enum.ScaleType.Fit
+					img.Parent = badge
+				end
+				local bStroke = Instance.new("UIStroke", badge)
+				bStroke.Color = sColor; bStroke.Thickness = 1
+				if not sAsset then
+					local badgePad = Instance.new("UIPadding", badge)
+					badgePad.PaddingLeft = UDim.new(0, 4); badgePad.PaddingRight = UDim.new(0, 4)
+				end
 				local bLbl = Instance.new("TextLabel")
 				bLbl.Size = UDim2.new(0, 0, 1, 0)
 				bLbl.AutomaticSize = Enum.AutomaticSize.X
@@ -689,7 +714,7 @@ function BattleHUD._buildInspector()
 				bLbl.Font = Theme.Font.PrimaryBold; bLbl.TextSize = Theme.Text.Small()
 				bLbl.TextColor3 = sColor
 				bLbl.Text = sName .. " " .. (s.remainingTurns or "?")
-				bLbl.Parent = badge
+				if not sAsset then bLbl.Parent = badge end
 			end
 		end
 
@@ -737,8 +762,13 @@ function BattleHUD._buildTilePreview()
 	tilePreviewPanel.Visible = isViewMode and (presentation.tile ~= nil)
 	if not presentation.tile then return end
 
-	local pad = Instance.new("UIPadding", tilePreviewPanel)
-	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
+	-- Find-or-create UIPadding (clearFrame preserves existing UIPadding)
+	local pad = tilePreviewPanel:FindFirstChildOfClass("UIPadding")
+	if not pad then pad = Instance.new("UIPadding", tilePreviewPanel) end
+	pad.PaddingTop = UDim.new(0, 10)
+	pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingBottom = UDim.new(0, 10)
 
 	local layout = Instance.new("UIListLayout", tilePreviewPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -762,9 +792,13 @@ function BattleHUD._renderDamagePreview()
 	if not tilePreviewPanel or not presentation.preview then return end
 	local p = presentation.preview
 
-	local pad = Instance.new("UIPadding", tilePreviewPanel)
-	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
+	-- Find-or-create UIPadding (clearFrame preserves existing UIPadding)
+	local pad = tilePreviewPanel:FindFirstChildOfClass("UIPadding")
+	if not pad then pad = Instance.new("UIPadding", tilePreviewPanel) end
+	pad.PaddingTop = UDim.new(0, 10)
+	pad.PaddingLeft = UDim.new(0, 10)
 	pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingBottom = UDim.new(0, 30)
 
 	local layout = Instance.new("UIListLayout", tilePreviewPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -779,8 +813,7 @@ function BattleHUD._renderDamagePreview()
 			order = order,
 			wrap = true,
 		})
-		lbl.AutomaticSize = Enum.AutomaticSize.Y
-		lbl.Size = UDim2.new(1, 0, 0, 0)
+		lbl.Size = UDim2.new(1, 0, 0, 16)
 	end
 
 	-- Name badge: colored background box (blue=Player, red=Enemy) with white text
@@ -1256,20 +1289,32 @@ function BattleHUD._buildViewModeUnit()
 		for si, s in ipairs(d.statuses) do
 			local icon = Instance.new("Frame")
 			icon.Size = UDim2.new(0, 28, 0, 28)
-			icon.BackgroundColor3 = Theme.GetStatusColor(s.id or "")
-			icon.BackgroundTransparency = 0.3
+			icon.BackgroundTransparency = 1
 			icon.BorderSizePixel = 0
 			icon.LayoutOrder = si
 			icon.Parent = statusRow
 			Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 3)
-			local iconLabel = Instance.new("TextLabel")
-			iconLabel.Size = UDim2.fromScale(1, 1)
-			iconLabel.BackgroundTransparency = 1
-			iconLabel.Font = Theme.Font.PrimaryBold
-			iconLabel.TextSize = Theme.Text.Small()
-			iconLabel.TextColor3 = Theme.Colors.TextPrimary
-			iconLabel.Text = string.sub(s.id, 1, 2)
-			iconLabel.Parent = icon
+			local statusAsset = Theme.GetStatusIcon(s.id)
+			if statusAsset then
+				local img = Instance.new("ImageLabel")
+				img.Size = UDim2.fromScale(1, 1)
+				img.Position = UDim2.fromScale(0, 0)
+				img.BackgroundTransparency = 1
+				img.Image = statusAsset
+				img.ScaleType = Enum.ScaleType.Fit
+				img.Parent = icon
+			else
+				icon.BackgroundColor3 = Theme.GetStatusColor(s.id or "")
+				icon.BackgroundTransparency = 0.3
+				local iconLabel = Instance.new("TextLabel")
+				iconLabel.Size = UDim2.fromScale(1, 1)
+				iconLabel.BackgroundTransparency = 1
+				iconLabel.Font = Theme.Font.PrimaryBold
+				iconLabel.TextSize = Theme.Text.Small()
+				iconLabel.TextColor3 = Theme.Colors.TextPrimary
+				iconLabel.Text = string.sub(s.id, 1, 2)
+				iconLabel.Parent = icon
+			end
 		end
 	end
 
@@ -1480,6 +1525,8 @@ function BattleHUD.Render(p)
 	if isViewMode then
 		BattleHUD._buildViewModeUnit()
 		BattleHUD._buildViewModeTile()
+		-- Hide command bar during view mode — no executable actions
+		if commandBar then commandBar.Visible = false end
 		if inspectorPanel then inspectorPanel.Visible = false end
 		if tilePreviewPanel then tilePreviewPanel.Visible = false end
 		-- Position right-side stack (activeUnit on top, actionPanel below)
@@ -1570,10 +1617,8 @@ function BattleHUD.Render(p)
 		BattleHUD._buildActionDetail()
 		actionPanel.Visible = true
 	elseif newState == "Preview" then
-		-- Hide all other panels to give full column to damage preview + buttons
-		if activeUnitPanel then activeUnitPanel.Visible = false end
+		-- Hide action panel; keep unit inspector visible during preview
 		if actionPanel then actionPanel.Visible = false end
-		if inspectorPanel then inspectorPanel.Visible = false end
 	elseif newState == "Resolving" or newState == "BattleEnded" or newState == "Idle" then
 		if actionPanel then actionPanel.Visible = false end
 		if activeUnitPanel then activeUnitPanel.Visible = false end
