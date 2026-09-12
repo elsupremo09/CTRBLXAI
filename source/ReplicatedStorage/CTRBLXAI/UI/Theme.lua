@@ -344,6 +344,77 @@ function Theme.GetStatusColor(statusId)
 end
 
 --------------------------------------------------
+-- STATUS ICONS (uploaded buff/debuff artwork)
+--------------------------------------------------
+
+Theme.StatusIcons = {
+	-- Direct status matches
+	Bleed = "rbxassetid://113854998694593",
+	Blessed = "rbxassetid://116105290983743",
+	Blind = "rbxassetid://94814222761026",
+	Break = "rbxassetid://79852853947226",
+	Burn = "rbxassetid://75519945659735",
+	Confuse = "rbxassetid://79580598651850",
+	Cursed = "rbxassetid://112849934774058",
+	Disarmed = "rbxassetid://106976200021807",
+	Drowning = "rbxassetid://120142515770933",
+	Enlightened = "rbxassetid://107395069757037",
+	Flight = "rbxassetid://118449123338156",
+	Frenzy = "rbxassetid://134508508432698",
+	Frozen = "rbxassetid://106508246279272",
+	Guard = "rbxassetid://136768561223678",
+	Haste = "rbxassetid://107616801519783",
+	Hide = "rbxassetid://71022129320243",
+	Mute = "rbxassetid://114703248620406",
+	Petrify = "rbxassetid://93214788664187",
+	Pinned = "rbxassetid://102600978844956",
+	Poison = "rbxassetid://117414657521915",
+	Raptured = "rbxassetid://94845401079886",
+	Regeneration = "rbxassetid://90086599629276",
+	Rush = "rbxassetid://99372078613765",
+	Silence = "rbxassetid://115793223315634",
+	Sinking = "rbxassetid://114656299898571",
+	Slow = "rbxassetid://116231027208761",
+	Stun = "rbxassetid://119779443078840",
+	Undead = "rbxassetid://132729338310527",
+	Venom = "rbxassetid://125786813997936",
+	Weakened = "rbxassetid://136762004052791",
+	Wet = "rbxassetid://74595594881036",
+	Wounded = "rbxassetid://88940830661819",
+	-- Special effects
+	["Knock-out"] = "rbxassetid://127667837490323",
+	["Mana Burn"] = "rbxassetid://84384905462621",
+	["Giant Transformation"] = "rbxassetid://139508832025303",
+	Marked = "rbxassetid://93573661475142",
+	["Healing Reduction"] = "rbxassetid://86350792055046",
+	-- Stat buffs/debuffs
+	["STR Up"] = "rbxassetid://138455586362576",
+	["STR Down"] = "rbxassetid://99430266583093",
+	["INT Up"] = "rbxassetid://93264140346028",
+	["INT Down"] = "rbxassetid://118122656931546",
+	["DEX Up"] = "rbxassetid://120619600039146",
+	["DEX Down"] = "rbxassetid://108726759627305",
+	["AGI Up"] = "rbxassetid://122461513457057",
+	["AGI Down"] = "rbxassetid://118142675301802",
+	["VIT Up"] = "rbxassetid://101266565295505",
+	["VIT Down"] = "rbxassetid://123828321926483",
+	["LUK Up"] = "rbxassetid://70434303929664",
+	["LUK Down"] = "rbxassetid://128543498938297",
+	["Defense Up"] = "rbxassetid://140116351603411",
+	["Defense Down"] = "rbxassetid://109161150600887",
+	["Damage Up"] = "rbxassetid://81011157004062",
+	["Damage Down"] = "rbxassetid://107044152504247",
+	["Evasion Up"] = "rbxassetid://117567533720444",
+	["Evasion Down"] = "rbxassetid://73778276289890",
+	["Debuff Res Up"] = "rbxassetid://86326417579254",
+	["Debuff Res Down"] = "rbxassetid://87649964133406",
+}
+
+function Theme.GetStatusIcon(statusId)
+	return Theme.StatusIcons[statusId] or nil
+end
+
+--------------------------------------------------
 -- HELPER: Get HP bar color based on ratio
 --------------------------------------------------
 

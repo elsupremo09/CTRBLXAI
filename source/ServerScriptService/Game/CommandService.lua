@@ -767,11 +767,74 @@ function CommandService.ValidateAndCommit(
 		local rtCost = calcBasicAttackBaseRt(actor)
 
 		local weaponDamage = actor.weaponDamage or 10
-		local outcome = CombatResolver.ResolveBasicAttack(actor, target, weaponDamage)
-		CombatResolver.ApplyOutcome(outcome, target, actor)
+
+		-- Weapon pattern AOE resolution
+		local weaponPattern = actor.weaponPattern or "Single"
+		local totalDmg = 0
+		local hitCount = 0
+
+		if weaponPattern == "ImpactSplash" then
+			local splashTargets = TargetingService.GetImpactSplashTargets(actor, target, state.units)
+			for _, entry in ipairs(splashTargets) do
+				if entry.unit.isAlive then
+					local outcome = CombatResolver.ResolveBasicAttack(actor, entry.unit, weaponDamage)
+					outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * entry.dmgMult))
+					if entry.dmgMult < 1.0 then outcome.isAOE = true end
+					CombatResolver.ApplyOutcome(outcome, entry.unit, actor)
+					totalDmg = totalDmg + outcome.finalDamage
+					hitCount = hitCount + 1
+				end
+			end
+		elseif weaponPattern == "Line2" then
+			local lineTargets = TargetingService.GetLine2Targets(actor, target, state.units)
+			for _, entry in ipairs(lineTargets) do
+				if entry.unit.isAlive then
+					local outcome = CombatResolver.ResolveBasicAttack(actor, entry.unit, weaponDamage)
+					CombatResolver.ApplyOutcome(outcome, entry.unit, actor)
+					totalDmg = totalDmg + outcome.finalDamage
+					hitCount = hitCount + 1
+				end
+			end
+		elseif weaponPattern == "Cleave" then
+			local cleaveTargets = TargetingService.GetCleaveTargets(actor, target, state.units)
+			for _, u in ipairs(cleaveTargets) do
+				if u.isAlive then
+					local outcome = CombatResolver.ResolveBasicAttack(actor, u, weaponDamage)
+					if u.id ~= target.id then
+						outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * 0.5))
+						outcome.isAOE = true
+					end
+					CombatResolver.ApplyOutcome(outcome, u, actor)
+					totalDmg = totalDmg + outcome.finalDamage
+					hitCount = hitCount + 1
+				end
+			end
+		elseif weaponPattern == "Adjacent" then
+			-- Adjacent: primary + units on both sides of target (perpendicular), 50% splash
+			local adjTargets = TargetingService.GetCleaveTargets(actor, target, state.units)
+			for _, u in ipairs(adjTargets) do
+				if u.isAlive then
+					local outcome = CombatResolver.ResolveBasicAttack(actor, u, weaponDamage)
+					if u.id ~= target.id then
+						outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * 0.5))
+						outcome.isAOE = true
+					end
+					CombatResolver.ApplyOutcome(outcome, u, actor)
+					totalDmg = totalDmg + outcome.finalDamage
+					hitCount = hitCount + 1
+				end
+			end
+		else
+			-- Single-target (default)
+			local outcome = CombatResolver.ResolveBasicAttack(actor, target, weaponDamage)
+			CombatResolver.ApplyOutcome(outcome, target, actor)
+			totalDmg = outcome.finalDamage
+			hitCount = 1
+		end
+
 		BattleCoordinator.AccrueRt(state, rtCost)
 
-		-- Missing 7: Apply Weapon RT Delay to target (reduced by target VIT)
+		-- Apply Weapon RT Delay to primary target (reduced by target VIT)
 		local rawDelay = actor.weaponRtDelay or 0
 		if rawDelay > 0 and target.isAlive then
 			local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
@@ -779,10 +842,7 @@ function CommandService.ValidateAndCommit(
 			target.remainingRt = target.remainingRt + math.max(0, actualDelay)
 		end
 
-		-- Giant race tag: melee Basic Attacks gain Knockback
-		-- DB: "Melee Basic Attacks and compatible Skill Cards gain Knockback;
-		--      if already has Knockback, gain +1 Force."
-		-- Source modifier: Skill = 0.5 (vs GlobalPush = 1.0)
+		-- Giant race tag: melee Basic Attacks gain Knockback (primary target only)
 		if target.isAlive and actor.raceId then
 			local RaceData = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
 			local raceEntry = RaceData[actor.raceId]
@@ -806,9 +866,10 @@ function CommandService.ValidateAndCommit(
 		end
 
 		print(string.format(
-			"[CommandService] ATTACK | %s -> %s | Dmg:%d | RT:%d | AP left:%d",
+			"[CommandService] ATTACK %s | %s -> %s | Dmg:%d Hits:%d | RT:%d | AP left:%d",
+			weaponPattern ~= "Single" and ("["..weaponPattern.."]") or "",
 			actor.name, target.name,
-			outcome.finalDamage, rtCost, actor.currentAp
+			totalDmg, hitCount, rtCost, actor.currentAp
 		))
 
 	elseif actionType == "Skill" then
@@ -992,6 +1053,61 @@ function CommandService.ValidateAndCommit(
 			end
 
 		else
+			-- Check for "Inherit Weapon Pattern" skills
+			local inheritedPattern = nil
+			if skillDef.aoePattern == "InheritWeapon" then
+				inheritedPattern = actor.weaponPattern or "Single"
+			end
+
+			if inheritedPattern and inheritedPattern ~= "Single" then
+				-- Weapon pattern AOE via inherited skill
+				local totalDmg = 0
+				local hitCount = 0
+				local aoeTargets
+
+				if inheritedPattern == "ImpactSplash" then
+					aoeTargets = TargetingService.GetImpactSplashTargets(actor, target, state.units)
+				elseif inheritedPattern == "Line2" then
+					aoeTargets = TargetingService.GetLine2Targets(actor, target, state.units)
+				elseif inheritedPattern == "Cleave" then
+					-- Re-use Cleave with 50% secondary
+					local cleaveUnits = TargetingService.GetCleaveTargets(actor, target, state.units)
+					aoeTargets = {}
+					for _, u in ipairs(cleaveUnits) do
+						local mult = (u.id == target.id) and 1.0 or 0.5
+						table.insert(aoeTargets, { unit = u, dmgMult = mult })
+					end
+				elseif inheritedPattern == "Adjacent" then
+					local adjUnits = TargetingService.GetCleaveTargets(actor, target, state.units)
+					aoeTargets = {}
+					for _, u in ipairs(adjUnits) do
+						local mult = (u.id == target.id) and 1.0 or 0.5
+						table.insert(aoeTargets, { unit = u, dmgMult = mult })
+					end
+				end
+
+				if aoeTargets then
+					for _, entry in ipairs(aoeTargets) do
+						if entry.unit.isAlive then
+							local outcome = CombatResolver.ResolveSkill(actor, entry.unit, skillDef)
+							outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * entry.dmgMult))
+							if entry.dmgMult < 1.0 then outcome.isAOE = true end
+							CombatResolver.ApplyOutcome(outcome, entry.unit, actor)
+							totalDmg = totalDmg + outcome.finalDamage
+							hitCount = hitCount + 1
+						end
+					end
+				end
+				BattleCoordinator.AccrueRt(state, baseRtCost)
+
+				print(string.format(
+					"[CommandService] SKILL [%s] Inherit[%s] | %s | Hits:%d | TotalDmg:%d | MP:%d | RT:%d | AP left:%d",
+					skillDef.name or skillDef.id, inheritedPattern,
+					actor.name, hitCount, totalDmg, mpCost, baseRtCost, actor.currentAp
+				))
+
+			else
+			-- Single-target (default)
 			local outcome = CombatResolver.ResolveSkill(actor, target, skillDef)
 			local actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target, actor)
 			BattleCoordinator.AccrueRt(state, baseRtCost)
@@ -1010,6 +1126,7 @@ function CommandService.ValidateAndCommit(
 				outcome.finalDamage, mpCost, baseRtCost, actor.currentAp,
 				statusApplied and (" | +" .. statusApplied) or ""
 			))
+			end
 		end
 
 	elseif actionType == "Wait" then

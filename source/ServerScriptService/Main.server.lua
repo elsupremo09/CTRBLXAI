@@ -2524,8 +2524,11 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 	for slotName, itemInst in pairs(slots) do
 		if itemInst then
 			local profile = EquipmentService.GetEffectiveWeaponProfile(itemInst)
+			local _wArch = WeaponData.GetByArchetypeId(itemInst.baseArchetypeId)
+			local _aArch = not _wArch and ArmorData.GetByArchetypeId(itemInst.baseArchetypeId) or nil
+			local _icon = (_wArch and _wArch.icon) or (_aArch and _aArch.icon) or nil
 			equipData[slotName] = {
-				name      = itemInst.name or "Unknown",
+				name      = (_wArch and _wArch.name) or (_aArch and _aArch.name) or "Unknown",
 				rarity    = itemInst.rarity or "Common",
 				itemLevel = itemInst.itemLevel or 1,
 				archetype = itemInst.archetype or "Unknown",
@@ -2538,8 +2541,13 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 				maxRange  = profile and profile.maxRange or 1,
 				pattern   = profile and profile.pattern or "Single",
 				bonusLines = itemInst.bonusLines or {},
-				nativePassive = itemInst.nativePassive or nil,
+				resolvedBonus = (function() local s, p = resolveItemBonuses(itemInst); return {stats = s, passives = p} end)(),
+				passiveName   = itemInst.nativePassiveId or nil,
+				passiveDesc   = itemInst.nativePassiveId and WeaponData.GetPassiveDesc(itemInst.nativePassiveId) or nil,
 				bonusPassive  = itemInst.bonusPassive or nil,
+				flavor        = (_wArch and _wArch.flavor) or (_aArch and _aArch.flavor) or nil,
+				icon          = _icon,
+				displayName   = itemInst.displayName or nil,
 			}
 		end
 	end
@@ -2571,6 +2579,8 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 			rtCostFormula = fullData and fullData.rtCostFormula or "",
 			effects      = fullData and fullData.effects or "",
 			specialRules = fullData and fullData.specialRules or "",
+			icon         = fullData and fullData.icon or nil,
+			description  = fullData and fullData.description or nil,
 		})
 		-- Attach estimated raw damage (presentation-only, before defense)
 		local attackPower = unit.derivedStats and unit.derivedStats.attackPower or 0
@@ -2591,6 +2601,7 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		table.insert(statusSummary, {
 			id = sid,
 			remainingTurns = entry.remainingTurns or (sDef and sDef.duration),
+			remainingCt = inst and inst.remainingCt or nil,
 			kind = sDef and sDef.kind or "Debuff",
 			stacks = inst and inst.stacks and inst.stacks > 1 and inst.stacks or nil,
 			nextDamage = entry.nextDamage,

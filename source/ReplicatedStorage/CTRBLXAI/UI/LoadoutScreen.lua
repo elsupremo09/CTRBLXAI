@@ -492,7 +492,6 @@ local function buildEquippedLoadout()
 		btn.MouseButton1Click:Connect(function()
 			equippedTab = tabDef.id
 			buildEquippedLoadout()
-			-- Rebuild left panel based on sub-tab
 			if equippedTab == "cons" then
 				buildConsumableGrid()
 			else
@@ -1005,9 +1004,9 @@ buildInventory = function()
 	Instance.new("UICorner", search).CornerRadius = UDim.new(0, 3)
 
 	-- Type / Rarity / Sort dropdown buttons
-	local filterLabel = currentFilter == "All" and "Type v" or (currentFilter .. " v")
-	local rarityLabel = currentRarity == "All" and "Rarity v" or (currentRarity .. " v")
-	local sortLabel = SORT_OPTIONS[currentSort].label .. " v"
+	local filterLabel = currentFilter == "All" and "Type" or (currentFilter )
+	local rarityLabel = currentRarity == "All" and "Rarity" or (currentRarity )
+	local sortLabel = SORT_OPTIONS[currentSort].label 
 
 	-- Shared dropdown helper: opens a menu below the anchor button
 	local function closeDropdown()
@@ -1790,6 +1789,7 @@ buildSoloDetailContent = function(panel, item)
 	toggleIcon.ImageColor3 = Theme.Colors.TextSecondary
 	toggleIcon.Parent = toggleBtn
 	toggleBtn.MouseButton1Click:Connect(function()
+		print("[DIAG-TOGGLE] Show Bonus/Base clicked | showingBonus=" .. tostring(not showingBonus))
 		showingBonus = not showingBonus
 		if showingBonus then
 			buildBonusView()
@@ -2581,7 +2581,7 @@ buildSkillsContent = function()
 	end
 
 	-- Type filter (All / Skill / Augment + subtypes)
-	local typeLbl = skillTypeFilter == "All" and "Type v" or (skillTypeFilter .. " v")
+	local typeLbl = skillTypeFilter == "All" and "Type" or (skillTypeFilter )
 	local typeBtn = makeDDBtn(typeLbl, 2, skillTypeFilter ~= "All", Theme.Icons.Filter)
 	typeBtn.MouseButton1Click:Connect(function()
 		local opts = {}
@@ -2601,7 +2601,7 @@ buildSkillsContent = function()
 	end)
 
 	-- Tag filter
-	local tagLbl = skillTagFilter == "All" and "Tags v" or (skillTagFilter .. " v")
+	local tagLbl = skillTagFilter == "All" and "Tags" or (skillTagFilter )
 	local tagBtn = makeDDBtn(tagLbl, 3, skillTagFilter ~= "All", Theme.Icons.Filter)
 	tagBtn.MouseButton1Click:Connect(function()
 		local opts = {}
@@ -2623,7 +2623,7 @@ buildSkillsContent = function()
 
 	-- Sort
 	local sortOpt = SKILL_SORT_OPTIONS_SK[skillSortIndex] or SKILL_SORT_OPTIONS_SK[1]
-	local sortBtn = makeDDBtn(sortOpt.label .. " v", 4, false, Theme.Icons.Sort)
+	local sortBtn = makeDDBtn(sortOpt.label , 4, false, Theme.Icons.Sort)
 	sortBtn.MouseButton1Click:Connect(function()
 		local opts = {}
 		for si, s in ipairs(SKILL_SORT_OPTIONS_SK) do
@@ -2642,7 +2642,7 @@ buildSkillsContent = function()
 	-- Server skill card inventory
 	if MockData.SkillCardInventory then
 		for skillId, qty in pairs(MockData.SkillCardInventory) do
-			if qty and qty > 0 then
+			if qty then
 				local def = MockData.GetSkillDef(skillId)
 				if def then
 					table.insert(skillCards, {
@@ -2675,7 +2675,7 @@ buildSkillsContent = function()
 	-- Server augment card inventory
 	if MockData.AugmentCardInventory then
 		for augId, qty in pairs(MockData.AugmentCardInventory) do
-			if qty and qty > 0 then
+			if qty then
 				local def = MockData.GetAugmentDef(augId)
 				if def then
 					table.insert(augmentCards, {
@@ -2822,14 +2822,19 @@ buildSkillsContent = function()
 		local stc = STYPE_COLORS[stype] or STYPE_COLORS.Utility
 		local isSel = (selectedSkillCardId == sk.id)
 
+		local skQty = sk.qty or 1
 		local card = Instance.new("TextButton")
 		card.Size = UDim2.new(1, 0, 1, 0) -- sized by grid
 		card.BackgroundColor3 = stc.bg
-		card.BackgroundTransparency = 0.65
+		card.BackgroundTransparency = (skQty <= 0) and 0.85 or 0.65
 		card.BorderSizePixel = 0
 		card.Text = ""
-		card.AutoButtonColor = true
+		card.AutoButtonColor = (skQty > 0)
 		card.LayoutOrder = layoutOrder
+		if skQty <= 0 then
+			local dim = Instance.new("UIGradient", card)
+			dim.Color = ColorSequence.new(Color3.fromRGB(80, 80, 80))
+		end
 		card.Parent = cardGrid
 		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
 
@@ -2839,7 +2844,6 @@ buildSkillsContent = function()
 		stroke.Thickness = isSel and 2 or 1
 
 		-- Qty badge (top-right, always shown for stackable items)
-		local skQty = sk.qty or 1
 		local qBadge = Instance.new("Frame")
 		qBadge.Size = UDim2.new(0, 22, 0, 12)
 		qBadge.Position = UDim2.new(1, -24, 0, 2)
@@ -2908,14 +2912,19 @@ buildSkillsContent = function()
 	for _, aug in ipairs(augmentCards) do
 		local isSel = (selectedSkillCardId == aug.id)
 
+		local augQty = aug.qty or 1
 		local card = Instance.new("TextButton")
 		card.Size = UDim2.new(1, 0, 1, 0) -- sized by grid
 		card.BackgroundColor3 = Color3.fromRGB(74, 53, 16)
-		card.BackgroundTransparency = 0.7
+		card.BackgroundTransparency = (augQty <= 0) and 0.85 or 0.7
 		card.BorderSizePixel = 0
 		card.Text = ""
-		card.AutoButtonColor = true
+		card.AutoButtonColor = (augQty > 0)
 		card.LayoutOrder = layoutOrder
+		if augQty <= 0 then
+			local dim = Instance.new("UIGradient", card)
+			dim.Color = ColorSequence.new(Color3.fromRGB(80, 80, 80))
+		end
 		card.Parent = cardGrid
 		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
 
@@ -2942,7 +2951,6 @@ buildSkillsContent = function()
 		end
 
 		-- Qty badge (top-right, always shown for stackable items)
-		local augQty = aug.qty or 1
 		local qBadge = Instance.new("Frame")
 		qBadge.Size = UDim2.new(0, 22, 0, 12)
 		qBadge.Position = UDim2.new(1, -24, 0, 2)
@@ -4499,9 +4507,6 @@ openEquippedAugmentDetail = function(slotNum, augSlotNum, augmentId)
 	btnBar.Size = UDim2.new(0, (btnOrder * fb.BTN_W) + ((btnOrder - 1) * fb.BTN_GAP), 0, fb.BTN_H)
 end
 
---------------------------------------------------
---------------------------------------------------
-
 
 --------------------------------------------------
 -- CONSUMABLE GRID & DETAIL (inventory-style browse)
@@ -4525,20 +4530,15 @@ buildConsumableGrid = function()
 	if not inventoryPanel then return end
 	clearChildren(inventoryPanel)
 	pad(inventoryPanel, 8, 8, 8, 8)
-
-	-- Toolbar: Search + Category filter
 	local ctrlRow = Instance.new("Frame")
 	ctrlRow.Size = UDim2.new(1, 0, 0, 24)
 	ctrlRow.Position = UDim2.new(0, 0, 0, 0)
 	ctrlRow.BackgroundTransparency = 1
 	ctrlRow.Parent = inventoryPanel
-
 	local ctrlLayout = Instance.new("UIListLayout", ctrlRow)
 	ctrlLayout.FillDirection = Enum.FillDirection.Horizontal
 	ctrlLayout.Padding = UDim.new(0, 3)
 	ctrlLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-
-	-- Search box
 	local search = Instance.new("TextBox")
 	search.Size = UDim2.new(1, -90, 1, 0)
 	search.BackgroundColor3 = Theme.Colors.Surface
@@ -4554,14 +4554,11 @@ buildConsumableGrid = function()
 	search.LayoutOrder = 1
 	search.Parent = ctrlRow
 	Instance.new("UICorner", search).CornerRadius = UDim.new(0, 3)
-
 	search.FocusLost:Connect(function()
 		consSearch = search.Text
 		buildConsumableGrid()
 	end)
-
-	-- Category cycle button
-	local catLabel = consFilter == "All" and "Type v" or (consFilter .. " v")
+	local catLabel = consFilter == "All" and "Type" or consFilter
 	local catBtn = Instance.new("TextButton")
 	catBtn.Size = UDim2.new(0, 85, 1, 0)
 	catBtn.BackgroundColor3 = Theme.Colors.Surface
@@ -4577,21 +4574,18 @@ buildConsumableGrid = function()
 	catBtn.MouseButton1Click:Connect(function()
 		local curIdx = 1
 		for idx, cat in ipairs(CONS_CATEGORY_ORDER) do
-			if cat == consFilter then curIdx = idx break end
+			if cat == consFilter then curIdx = idx; break end
 		end
 		curIdx = (curIdx % #CONS_CATEGORY_ORDER) + 1
 		consFilter = CONS_CATEGORY_ORDER[curIdx]
 		buildConsumableGrid()
 	end)
-
-	-- Build item list from ConsumableData
 	local allIds = ConsumableData.GetAllIds()
 	local items = {}
 	for _, cid in ipairs(allIds) do
 		local def = ConsumableData.GetById(cid)
 		if def then
 			local cat = def.category or "?"
-			-- Apply filters
 			if consFilter ~= "All" and cat ~= consFilter then continue end
 			if consSearch ~= "" and not string.find(string.lower(def.name or ""), string.lower(consSearch), 1, true) then continue end
 			table.insert(items, { id = cid, name = def.name or cid, category = cat,
@@ -4604,7 +4598,6 @@ buildConsumableGrid = function()
 				tags = def.tags or {} })
 		end
 	end
-	-- Sort by category then name
 	local catOrder = {}
 	for idx, cat in ipairs(CONS_CATEGORY_ORDER) do catOrder[cat] = idx end
 	table.sort(items, function(a, b)
@@ -4613,8 +4606,6 @@ buildConsumableGrid = function()
 		if ca ~= cb then return ca < cb end
 		return a.name < b.name
 	end)
-
-	-- Grid
 	local scrollFrame = Instance.new("ScrollingFrame")
 	scrollFrame.Size = UDim2.new(1, 0, 1, -30)
 	scrollFrame.Position = UDim2.new(0, 0, 0, 28)
@@ -4624,415 +4615,236 @@ buildConsumableGrid = function()
 	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
 	scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	scrollFrame.Parent = inventoryPanel
-
 	local containerW = scrollFrame.AbsoluteSize.X
 	if containerW < 10 then containerW = 400 end
 	local containerH = scrollFrame.AbsoluteSize.Y
 	if containerH < 10 then containerH = 200 end
-
 	local GAP = 3
 	local maxCellH = math.floor((containerH - 2 * GAP) / 3)
 	local cellW = math.clamp(math.floor(maxCellH / 1.2), 48, 96)
 	local cellH = math.floor(cellW * 1.2)
-
 	local gridLayout = Instance.new("UIGridLayout", scrollFrame)
 	gridLayout.CellSize = UDim2.new(0, cellW, 0, cellH)
 	gridLayout.CellPadding = UDim2.new(0, GAP, 0, GAP)
 	gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
 	for idx, ci in ipairs(items) do
 		local catColor = CONS_CATEGORY_COLORS[ci.category] or Theme.Colors.TextSecondary
-
 		local tile = Instance.new("TextButton")
 		tile.BackgroundColor3 = catColor
 		tile.BackgroundTransparency = 0.75
-		tile.BorderSizePixel = 0
-		tile.Text = ""
-		tile.AutoButtonColor = true
-		tile.LayoutOrder = idx
+		tile.BorderSizePixel = 0; tile.Text = ""
+		tile.AutoButtonColor = true; tile.LayoutOrder = idx
 		tile.Parent = scrollFrame
 		Instance.new("UICorner", tile).CornerRadius = UDim.new(0, 4)
-
-		-- Category-colored left stripe
 		local stripe = Instance.new("Frame")
 		stripe.Size = UDim2.new(0, 3, 1, 0)
-		stripe.BackgroundColor3 = catColor
-		stripe.BorderSizePixel = 0
+		stripe.BackgroundColor3 = catColor; stripe.BorderSizePixel = 0
 		stripe.Parent = tile
-
-		-- Charges badge (top-right)
 		local qtyFrame = Instance.new("Frame")
 		qtyFrame.Size = UDim2.new(0, 22, 0, 12)
 		qtyFrame.Position = UDim2.new(1, -24, 0, 2)
 		qtyFrame.BackgroundColor3 = Theme.Colors.BadgeBg
-		qtyFrame.BackgroundTransparency = 0.4
-		qtyFrame.BorderSizePixel = 0
-		qtyFrame.ZIndex = 3
-		qtyFrame.Parent = tile
+		qtyFrame.BackgroundTransparency = 0.4; qtyFrame.BorderSizePixel = 0
+		qtyFrame.ZIndex = 3; qtyFrame.Parent = tile
 		Instance.new("UICorner", qtyFrame).CornerRadius = UDim.new(0, 3)
 		local qtyLabel = makeLabel(qtyFrame, { Text = "x" .. ci.maxCharges,
-			Size = UDim2.fromScale(1, 1),
-			TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono,
-			TextColor3 = Theme.Colors.TextPrimary,
-			TextXAlignment = Enum.TextXAlignment.Center })
+			Size = UDim2.fromScale(1, 1), TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono,
+			TextColor3 = Theme.Colors.TextPrimary, TextXAlignment = Enum.TextXAlignment.Center })
 		if qtyLabel then qtyLabel.ZIndex = 3 end
-
-		-- Name strip (bottom)
 		local nameStrip = Instance.new("Frame")
 		nameStrip.Size = UDim2.new(1, 0, 0, 14)
 		nameStrip.Position = UDim2.new(0, 0, 1, -14)
 		nameStrip.BackgroundColor3 = Color3.new(0, 0, 0)
-		nameStrip.BackgroundTransparency = 0.4
-		nameStrip.BorderSizePixel = 0
-		nameStrip.ZIndex = 3
-		nameStrip.Parent = tile
+		nameStrip.BackgroundTransparency = 0.4; nameStrip.BorderSizePixel = 0
+		nameStrip.ZIndex = 3; nameStrip.Parent = tile
 		local nameLabel = makeLabel(nameStrip, { Text = ci.name,
-			Size = UDim2.fromScale(1, 1),
-			Position = UDim2.new(0, 4, 0, 0),
+			Size = UDim2.fromScale(1, 1), Position = UDim2.new(0, 4, 0, 0),
 			TextSize = Theme.Text.Tiny(), Font = Theme.Font.Primary,
-			TextColor3 = catColor,
-			TextXAlignment = Enum.TextXAlignment.Left,
+			TextColor3 = catColor, TextXAlignment = Enum.TextXAlignment.Left,
 			TextTruncate = Enum.TextTruncate.AtEnd })
 		if nameLabel then nameLabel.ZIndex = 3 end
-
-		-- Click → open detail
-		tile.MouseButton1Click:Connect(function()
-			openConsumableDetail(ci)
-		end)
+		tile.MouseButton1Click:Connect(function() openConsumableDetail(ci) end)
 	end
-
-	-- Footer
 	makeLabel(inventoryPanel, { Text = string.format("Showing: %d / %d", #items, #allIds),
-		Size = UDim2.new(1, 0, 0, 14),
-		Position = UDim2.new(0, 0, 1, -14),
+		Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 1, -14),
 		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextDisabled,
 		TextXAlignment = Enum.TextXAlignment.Left })
 end
 
--- CONSUMABLE DETAIL PANEL
 openConsumableDetail = function(ci)
 	closeDetail()
 	local unit = MockData.GetSelectedUnit()
 	if not unit then return end
-
 	detailOverlay = Instance.new("ScreenGui")
-	detailOverlay.Name = "ConsDetail"
-	detailOverlay.DisplayOrder = 110
-	detailOverlay.ResetOnSpawn = false
-	detailOverlay.Parent = getPlayerGui()
-
-	-- Backdrop
+	detailOverlay.Name = "ConsDetail"; detailOverlay.DisplayOrder = 110
+	detailOverlay.ResetOnSpawn = false; detailOverlay.Parent = getPlayerGui()
 	local backdrop = Instance.new("TextButton")
 	backdrop.Size = UDim2.fromScale(1, 1)
-	backdrop.BackgroundColor3 = Theme.Colors.Overlay
-	backdrop.BackgroundTransparency = 0.5
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay; backdrop.BackgroundTransparency = 0.5
 	backdrop.Text = ""; backdrop.BorderSizePixel = 0
-	backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
-
-	-- Panel (left-docked, like equipment detail)
-	local panel = Theme.MakePanel("ConsDetail",
-		UDim2.new(0.55, 0, 0.9, 0),
-		UDim2.new(0, 8, 0.05, 0),
-		Vector2.new(0, 0),
-		detailOverlay)
-	panel.ClipsDescendants = true
-	pad(panel, 10, 10, 10, 10)
-
+	backdrop.Parent = detailOverlay; backdrop.MouseButton1Click:Connect(closeDetail)
+	local panel = Theme.MakePanel("ConsDetail", UDim2.new(0.55, 0, 0.9, 0),
+		UDim2.new(0, 8, 0.05, 0), Vector2.new(0, 0), detailOverlay)
+	panel.ClipsDescendants = true; pad(panel, 10, 10, 10, 10)
 	local catColor = CONS_CATEGORY_COLORS[ci.category] or Theme.Colors.TextSecondary
-
-	-- Header
-	buildDetailHeader(panel, {
-		iconText = "[C]",
-		name = ci.name,
+	buildDetailHeader(panel, { iconText = "[C]", name = ci.name,
 		subtitleText = ci.category .. " | " .. ci.economy .. " | " .. ci.profile,
-		subtitleColor = catColor,
-		tags = ci.tags,
-		tagColor = catColor,
-		description = ci.effectFormula,
-	})
-
-	-- Stats section
+		subtitleColor = catColor, tags = ci.tags, tagColor = catColor,
+		description = ci.effectFormula })
 	local yOff = 100
 	local function addStatRow(label, value)
-		makeLabel(panel, { Text = label,
-			Size = UDim2.new(0.4, 0, 0, 16), Position = UDim2.new(0, 0, 0, yOff),
+		makeLabel(panel, { Text = label, Size = UDim2.new(0.4, 0, 0, 16), Position = UDim2.new(0, 0, 0, yOff),
 			TextSize = Theme.Text.Small(), Font = Theme.Font.Primary,
-			TextColor3 = Theme.Colors.TextSecondary,
-			TextXAlignment = Enum.TextXAlignment.Left })
-		makeLabel(panel, { Text = tostring(value),
-			Size = UDim2.new(0.55, 0, 0, 16), Position = UDim2.new(0.42, 0, 0, yOff),
+			TextColor3 = Theme.Colors.TextSecondary, TextXAlignment = Enum.TextXAlignment.Left })
+		makeLabel(panel, { Text = tostring(value), Size = UDim2.new(0.55, 0, 0, 16), Position = UDim2.new(0.42, 0, 0, yOff),
 			TextSize = Theme.Text.Small(), Font = Theme.Font.PrimaryBold,
-			TextColor3 = Theme.Colors.TextPrimary,
-			TextXAlignment = Enum.TextXAlignment.Left })
+			TextColor3 = Theme.Colors.TextPrimary, TextXAlignment = Enum.TextXAlignment.Left })
 		yOff = yOff + 18
 	end
-
-	-- Divider
-	local div = Instance.new("Frame")
-	div.Size = UDim2.new(0.9, 0, 0, 1)
-	div.Position = UDim2.new(0.05, 0, 0, yOff)
-	div.BackgroundColor3 = Theme.Colors.TextDisabled
-	div.BackgroundTransparency = 0.5
-	div.BorderSizePixel = 0
-	div.Parent = panel
+	local div = Instance.new("Frame"); div.Size = UDim2.new(0.9, 0, 0, 1)
+	div.Position = UDim2.new(0.05, 0, 0, yOff); div.BackgroundColor3 = Theme.Colors.TextDisabled
+	div.BackgroundTransparency = 0.5; div.BorderSizePixel = 0; div.Parent = panel
 	yOff = yOff + 6
-
-	addStatRow("Charges:", tostring(ci.maxCharges))
-	addStatRow("RT Cost:", tostring(ci.rtCost))
-	addStatRow("Range:", tostring(ci.range))
-	addStatRow("Target:", ci.targetRules)
-	addStatRow("Pattern:", ci.pattern)
-	addStatRow("Duration:", ci.duration)
+	addStatRow("Charges:", tostring(ci.maxCharges)); addStatRow("RT Cost:", tostring(ci.rtCost))
+	addStatRow("Range:", tostring(ci.range)); addStatRow("Target:", ci.targetRules)
+	addStatRow("Pattern:", ci.pattern); addStatRow("Duration:", ci.duration)
 	addStatRow("Scaling:", ci.scalingBasis)
-
-	-- Button bar
 	local fb = Theme.FooterBar
-	local btnBar = Instance.new("Frame")
-	btnBar.Name = "ConsBtnBar"
+	local btnBar = Instance.new("Frame"); btnBar.Name = "ConsBtnBar"
 	btnBar.Size = UDim2.new(0, fb.BTN_W * 2 + fb.BTN_GAP + fb.PAD, 0, fb.BTN_H)
-	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
-	btnBar.AnchorPoint = Vector2.new(1, 1)
-	btnBar.BackgroundTransparency = 1
-	btnBar.Parent = detailOverlay
-
+	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD); btnBar.AnchorPoint = Vector2.new(1, 1)
+	btnBar.BackgroundTransparency = 1; btnBar.Parent = detailOverlay
 	local btnLayout = Instance.new("UIListLayout", btnBar)
 	btnLayout.FillDirection = Enum.FillDirection.Horizontal
 	btnLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	btnLayout.Padding = UDim.new(0, fb.BTN_GAP)
-
-	local backBtn = Theme.MakeButton(btnBar, "BACK", "Secondary")
-	backBtn.LayoutOrder = 2
+	local backBtn = Theme.MakeButton(btnBar, "BACK", "Secondary"); backBtn.LayoutOrder = 2
 	backBtn.MouseButton1Click:Connect(closeDetail)
-
-	local equipBtn = Theme.MakeButton(btnBar, "EQUIP", "Primary")
-	equipBtn.LayoutOrder = 1
-	equipBtn.MouseButton1Click:Connect(function()
-		closeDetail()
-		openConsumableSlotPicker(unit.id, ci)
-	end)
+	local equipBtn = Theme.MakeButton(btnBar, "EQUIP", "Primary"); equipBtn.LayoutOrder = 1
+	equipBtn.MouseButton1Click:Connect(function() closeDetail(); openConsumableSlotPicker(unit.id, ci) end)
 end
 
--- CONSUMABLE SLOT PICKER (which slot to equip into?)
 openConsumableSlotPicker = function(unitId, ci)
 	closeDetail()
 	local unit = MockData.GetSelectedUnit()
 	if not unit then return end
-
-	detailOverlay = Instance.new("ScreenGui")
-	detailOverlay.Name = "ConsSlotPicker"
-	detailOverlay.DisplayOrder = 115
-	detailOverlay.ResetOnSpawn = false
+	detailOverlay = Instance.new("ScreenGui"); detailOverlay.Name = "ConsSlotPicker"
+	detailOverlay.DisplayOrder = 115; detailOverlay.ResetOnSpawn = false
 	detailOverlay.Parent = getPlayerGui()
-
-	local backdrop = Instance.new("TextButton")
-	backdrop.Size = UDim2.fromScale(1, 1)
-	backdrop.BackgroundColor3 = Theme.Colors.Overlay
-	backdrop.BackgroundTransparency = 0.5
-	backdrop.Text = ""; backdrop.BorderSizePixel = 0
-	backdrop.Parent = detailOverlay
+	local backdrop = Instance.new("TextButton"); backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay; backdrop.BackgroundTransparency = 0.5
+	backdrop.Text = ""; backdrop.BorderSizePixel = 0; backdrop.Parent = detailOverlay
 	backdrop.MouseButton1Click:Connect(closeDetail)
-
-	local popup = Theme.MakePanel("ConsSlotPicker",
-		UDim2.new(0, 260, 0, 240),
-		UDim2.new(0.5, 0, 0.5, 0),
-		Vector2.new(0.5, 0.5),
-		detailOverlay)
-	popup.ClipsDescendants = true
-	pad(popup, 10, 10, 10, 10)
-
-	makeLabel(popup, { Text = "Equip " .. ci.name .. " to slot:",
-		Size = UDim2.new(1, 0, 0, 18),
-		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
-		TextColor3 = Theme.Colors.TextGold })
-
-	local scroll = Instance.new("ScrollingFrame")
-	scroll.Size = UDim2.new(1, 0, 1, -44)
-	scroll.Position = UDim2.new(0, 0, 0, 22)
-	scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0
-	scroll.ScrollBarThickness = 3
-	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	local popup = Theme.MakePanel("ConsSlotPicker", UDim2.new(0, 260, 0, 240),
+		UDim2.new(0.5, 0, 0.5, 0), Vector2.new(0.5, 0.5), detailOverlay)
+	popup.ClipsDescendants = true; pad(popup, 10, 10, 10, 10)
+	makeLabel(popup, { Text = "Equip " .. ci.name .. " to slot:", Size = UDim2.new(1, 0, 0, 18),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextGold })
+	local scroll = Instance.new("ScrollingFrame"); scroll.Size = UDim2.new(1, 0, 1, -44)
+	scroll.Position = UDim2.new(0, 0, 0, 22); scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0; scroll.ScrollBarThickness = 3
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0); scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	scroll.Parent = popup
-
-	local sLayout = Instance.new("UIListLayout", scroll)
-	sLayout.Padding = UDim.new(0, 3)
+	local sLayout = Instance.new("UIListLayout", scroll); sLayout.Padding = UDim.new(0, 3)
 	sLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
 	for slotIdx = 1, 6 do
 		local slotKey = "Cons" .. slotIdx
 		local locked = MockData.ConsSlotLocked[slotKey]
 		local existing = MockData.GetEquipped(unitId, slotKey)
-
-		local rowBtn = Instance.new("TextButton")
-		rowBtn.Size = UDim2.new(1, 0, 0, 28)
+		local rowBtn = Instance.new("TextButton"); rowBtn.Size = UDim2.new(1, 0, 0, 28)
 		rowBtn.BackgroundColor3 = locked and Theme.Colors.Background or Theme.Colors.PanelRaised
 		rowBtn.BackgroundTransparency = locked and 0.5 or 0.2
-		rowBtn.BorderSizePixel = 0
-		rowBtn.Text = ""
-		rowBtn.AutoButtonColor = not locked
-		rowBtn.LayoutOrder = slotIdx
-		rowBtn.Parent = scroll
+		rowBtn.BorderSizePixel = 0; rowBtn.Text = ""; rowBtn.AutoButtonColor = not locked
+		rowBtn.LayoutOrder = slotIdx; rowBtn.Parent = scroll
 		Instance.new("UICorner", rowBtn).CornerRadius = UDim.new(0, 4)
-
 		local slotText = "Slot " .. slotIdx
-		if locked then
-			slotText = slotText .. "  [LOCKED]"
-		elseif existing then
-			slotText = slotText .. ": " .. (existing.name or "?") .. " (replace)"
-		else
-			slotText = slotText .. ": Empty"
-		end
-
-		makeLabel(rowBtn, { Text = slotText,
-			Size = UDim2.new(1, -8, 1, 0), Position = UDim2.new(0, 4, 0, 0),
+		if locked then slotText = slotText .. "  [LOCKED]"
+		elseif existing then slotText = slotText .. ": " .. (existing.name or "?") .. " (replace)"
+		else slotText = slotText .. ": Empty" end
+		makeLabel(rowBtn, { Text = slotText, Size = UDim2.new(1, -8, 1, 0), Position = UDim2.new(0, 4, 0, 0),
 			Font = Theme.Font.Primary, TextSize = Theme.Text.Small(),
 			TextColor3 = locked and Theme.Colors.TextDisabled or Theme.Colors.TextPrimary })
-
 		if not locked then
 			rowBtn.MouseButton1Click:Connect(function()
 				closeDetail()
 				local result = BattleEvents.RequestEquipConsumable:InvokeServer(unitId, slotIdx, ci.id)
 				if result and result.ok then
-					-- Update local state
 					if not MockData.Equipped[unitId] then MockData.Equipped[unitId] = {} end
-					MockData.Equipped[unitId][slotKey] = {
-						id = ci.id, consumableId = ci.id, name = ci.name,
-						cat = "Consumable", sub = ci.category,
-						icon = ci.icon or "[C]", qty = ci.maxCharges,
-						effect = ci.effectFormula,
-					}
+					MockData.Equipped[unitId][slotKey] = { id = ci.id, consumableId = ci.id, name = ci.name,
+						cat = "Consumable", sub = ci.category, icon = ci.icon or "[C]", qty = ci.maxCharges,
+						effect = ci.effectFormula }
 					buildEquippedLoadout()
 				end
 			end)
 		end
 	end
-
-	local cancel = Instance.new("TextButton")
-	cancel.Size = UDim2.new(1, 0, 0, 18)
-	cancel.Position = UDim2.new(0, 0, 1, -20)
-	cancel.BackgroundTransparency = 1
+	local cancel = Instance.new("TextButton"); cancel.Size = UDim2.new(1, 0, 0, 18)
+	cancel.Position = UDim2.new(0, 0, 1, -20); cancel.BackgroundTransparency = 1
 	cancel.Font = Theme.Font.Primary; cancel.TextSize = Theme.Text.Small()
 	cancel.TextColor3 = Theme.Colors.TextSecondary; cancel.Text = "Cancel"
-	cancel.Parent = popup
-	cancel.MouseButton1Click:Connect(closeDetail)
+	cancel.Parent = popup; cancel.MouseButton1Click:Connect(closeDetail)
 end
 
--- EQUIPPED CONSUMABLE DETAIL (click slot in loadout → detail with UNEQUIP)
 openEquippedConsumableDetail = function(unitId, slotIdx, item)
 	closeDetail()
-
-	-- Look up full definition from ConsumableData
 	local def = ConsumableData.GetById(item.consumableId or item.id)
-	local ci = {
-		id = item.consumableId or item.id,
-		name = item.name or "Unknown",
+	local ci = { id = item.consumableId or item.id, name = item.name or "Unknown",
 		category = (def and def.category) or item.sub or "?",
 		maxCharges = (def and def.maxCharges) or item.qty or 1,
-		rtCost = (def and def.rtCost) or 0,
-		range = (def and def.range) or 0,
-		targetRules = (def and def.targetRules) or "",
-		pattern = (def and def.pattern) or "",
+		rtCost = (def and def.rtCost) or 0, range = (def and def.range) or 0,
+		targetRules = (def and def.targetRules) or "", pattern = (def and def.pattern) or "",
 		effectFormula = (def and def.effectFormula) or item.effect or "",
 		icon = (def and def.icon) or item.icon or nil,
-		economy = (def and def.economy) or "",
-		profile = (def and def.profile) or "",
-		duration = (def and def.duration) or "Instant",
-		scalingBasis = (def and def.scalingBasis) or "",
-		tags = (def and def.tags) or {},
-	}
-
-	detailOverlay = Instance.new("ScreenGui")
-	detailOverlay.Name = "ConsEqDetail"
-	detailOverlay.DisplayOrder = 110
-	detailOverlay.ResetOnSpawn = false
+		economy = (def and def.economy) or "", profile = (def and def.profile) or "",
+		duration = (def and def.duration) or "Instant", scalingBasis = (def and def.scalingBasis) or "",
+		tags = (def and def.tags) or {} }
+	detailOverlay = Instance.new("ScreenGui"); detailOverlay.Name = "ConsEqDetail"
+	detailOverlay.DisplayOrder = 110; detailOverlay.ResetOnSpawn = false
 	detailOverlay.Parent = getPlayerGui()
-
-	local backdrop = Instance.new("TextButton")
-	backdrop.Size = UDim2.fromScale(1, 1)
-	backdrop.BackgroundColor3 = Theme.Colors.Overlay
-	backdrop.BackgroundTransparency = 0.5
-	backdrop.Text = ""; backdrop.BorderSizePixel = 0
-	backdrop.Parent = detailOverlay
+	local backdrop = Instance.new("TextButton"); backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay; backdrop.BackgroundTransparency = 0.5
+	backdrop.Text = ""; backdrop.BorderSizePixel = 0; backdrop.Parent = detailOverlay
 	backdrop.MouseButton1Click:Connect(closeDetail)
-
 	local catColor = CONS_CATEGORY_COLORS[ci.category] or Theme.Colors.TextSecondary
-
-	local panel = Theme.MakePanel("ConsEqDetail",
-		UDim2.new(0.55, 0, 0.9, 0),
-		UDim2.new(0, 8, 0.05, 0),
-		Vector2.new(0, 0),
-		detailOverlay)
-	panel.ClipsDescendants = true
-	pad(panel, 10, 10, 10, 10)
-
-	buildDetailHeader(panel, {
-		iconText = "[C]",
-		name = ci.name,
-		subtitleText = "Slot " .. slotIdx .. " | " .. ci.category,
-		subtitleColor = catColor,
-		tags = ci.tags,
-		tagColor = catColor,
-		description = ci.effectFormula,
-	})
-
+	local panel = Theme.MakePanel("ConsEqDetail", UDim2.new(0.55, 0, 0.9, 0),
+		UDim2.new(0, 8, 0.05, 0), Vector2.new(0, 0), detailOverlay)
+	panel.ClipsDescendants = true; pad(panel, 10, 10, 10, 10)
+	buildDetailHeader(panel, { iconText = "[C]", name = ci.name,
+		subtitleText = "Slot " .. slotIdx .. " | " .. ci.category, subtitleColor = catColor,
+		tags = ci.tags, tagColor = catColor, description = ci.effectFormula })
 	local yOff = 100
 	local function addStatRow(label, value)
-		makeLabel(panel, { Text = label,
-			Size = UDim2.new(0.4, 0, 0, 16), Position = UDim2.new(0, 0, 0, yOff),
+		makeLabel(panel, { Text = label, Size = UDim2.new(0.4, 0, 0, 16), Position = UDim2.new(0, 0, 0, yOff),
 			TextSize = Theme.Text.Small(), Font = Theme.Font.Primary,
-			TextColor3 = Theme.Colors.TextSecondary,
-			TextXAlignment = Enum.TextXAlignment.Left })
-		makeLabel(panel, { Text = tostring(value),
-			Size = UDim2.new(0.55, 0, 0, 16), Position = UDim2.new(0.42, 0, 0, yOff),
+			TextColor3 = Theme.Colors.TextSecondary, TextXAlignment = Enum.TextXAlignment.Left })
+		makeLabel(panel, { Text = tostring(value), Size = UDim2.new(0.55, 0, 0, 16), Position = UDim2.new(0.42, 0, 0, yOff),
 			TextSize = Theme.Text.Small(), Font = Theme.Font.PrimaryBold,
-			TextColor3 = Theme.Colors.TextPrimary,
-			TextXAlignment = Enum.TextXAlignment.Left })
+			TextColor3 = Theme.Colors.TextPrimary, TextXAlignment = Enum.TextXAlignment.Left })
 		yOff = yOff + 18
 	end
-
-	local div = Instance.new("Frame")
-	div.Size = UDim2.new(0.9, 0, 0, 1)
-	div.Position = UDim2.new(0.05, 0, 0, yOff)
-	div.BackgroundColor3 = Theme.Colors.TextDisabled
-	div.BackgroundTransparency = 0.5; div.BorderSizePixel = 0
-	div.Parent = panel
-	yOff = yOff + 6
-
-	addStatRow("Charges:", tostring(ci.maxCharges))
-	addStatRow("RT Cost:", tostring(ci.rtCost))
-	addStatRow("Range:", tostring(ci.range))
-	addStatRow("Target:", ci.targetRules)
+	local div = Instance.new("Frame"); div.Size = UDim2.new(0.9, 0, 0, 1)
+	div.Position = UDim2.new(0.05, 0, 0, yOff); div.BackgroundColor3 = Theme.Colors.TextDisabled
+	div.BackgroundTransparency = 0.5; div.BorderSizePixel = 0; div.Parent = panel; yOff = yOff + 6
+	addStatRow("Charges:", tostring(ci.maxCharges)); addStatRow("RT Cost:", tostring(ci.rtCost))
+	addStatRow("Range:", tostring(ci.range)); addStatRow("Target:", ci.targetRules)
 	addStatRow("Pattern:", ci.pattern)
-
-	-- Button bar
 	local fb = Theme.FooterBar
-	local btnBar = Instance.new("Frame")
-	btnBar.Name = "ConsEqBtnBar"
+	local btnBar = Instance.new("Frame"); btnBar.Name = "ConsEqBtnBar"
 	btnBar.Size = UDim2.new(0, fb.BTN_W * 2 + fb.BTN_GAP + fb.PAD, 0, fb.BTN_H)
-	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
-	btnBar.AnchorPoint = Vector2.new(1, 1)
-	btnBar.BackgroundTransparency = 1
-	btnBar.Parent = detailOverlay
-
+	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD); btnBar.AnchorPoint = Vector2.new(1, 1)
+	btnBar.BackgroundTransparency = 1; btnBar.Parent = detailOverlay
 	local btnLayout = Instance.new("UIListLayout", btnBar)
 	btnLayout.FillDirection = Enum.FillDirection.Horizontal
 	btnLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	btnLayout.Padding = UDim.new(0, fb.BTN_GAP)
-
-	local backBtn = Theme.MakeButton(btnBar, "BACK", "Secondary")
-	backBtn.LayoutOrder = 2
+	local backBtn = Theme.MakeButton(btnBar, "BACK", "Secondary"); backBtn.LayoutOrder = 2
 	backBtn.MouseButton1Click:Connect(closeDetail)
-
-	local unBtn = Theme.MakeButton(btnBar, "UNEQUIP", "Primary")
-	unBtn.LayoutOrder = 1
+	local unBtn = Theme.MakeButton(btnBar, "UNEQUIP", "Primary"); unBtn.LayoutOrder = 1
 	unBtn.MouseButton1Click:Connect(function()
 		closeDetail()
 		local result = BattleEvents.RequestUnequipConsumable:InvokeServer(unitId, slotIdx)
 		if result and result.ok then
-			if MockData.Equipped[unitId] then
-				MockData.Equipped[unitId]["Cons" .. slotIdx] = nil
-			end
+			if MockData.Equipped[unitId] then MockData.Equipped[unitId]["Cons" .. slotIdx] = nil end
 			buildEquippedLoadout()
 		end
 	end)
