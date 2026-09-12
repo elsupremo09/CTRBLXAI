@@ -307,6 +307,13 @@ local function showItemDetail(eq, slotName)
 		gui)
 	panel.ClipsDescendants = true
 
+	-- Padding to keep content inside the 9-slice frame border (~10px each side)
+	local padObj = Instance.new("UIPadding", panel)
+	padObj.PaddingTop = UDim.new(0, 10)
+	padObj.PaddingLeft = UDim.new(0, 12)
+	padObj.PaddingRight = UDim.new(0, 12)
+	padObj.PaddingBottom = UDim.new(0, 10)
+
 	-- Close only when clicking OUTSIDE the panel.
 	-- The panel is an ImageLabel (does not consume clicks), so we check bounds manually.
 	backdrop.MouseButton1Click:Connect(function()
