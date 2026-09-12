@@ -823,7 +823,7 @@ BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 			local profile = WeaponData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
 			entry = {
 				instanceId = item.instanceId,
-				name = wArch.name,
+				name = item.displayName or wArch.name,
 				category = wArch.category,
 				handClass = wArch.handClass or "1H",
 				slot = (wArch.category == "OffHand") and "OffHand" or "MainHand",
@@ -848,7 +848,7 @@ BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 			local scaled = ArmorData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
 			entry = {
 				instanceId = item.instanceId,
-				name = aArch.name,
+				name = item.displayName or aArch.name,
 				category = "Armor",
 				slot = aArch.slot,
 				itemLevel = item.itemLevel,
@@ -1387,6 +1387,33 @@ BattleEvents.RequestUnequipConsumable.OnServerInvoke = function(player, unitId, 
 	print(string.format("[Consumable] %s unequipped slot %d (%s)",
 		unit.name, slotIndex, removed.consumableId))
 	return { ok = true }
+end
+
+-- GetConsumableSlots: return all consumable slot data for all player units
+BattleEvents.GetConsumableSlots.OnServerInvoke = function(player)
+	local result = {}
+	for unitId, unit in pairs(playerUnits) do
+		local slots = {}
+		local maxSlots = unit.maxConsumableSlots or 6
+		local unlockedSlots = unit.consumableSlotCount or 3
+		for idx = 1, maxSlots do
+			local slotData = unit.consumableSlots and unit.consumableSlots[idx]
+			if slotData then
+				local consDef = ConsumableData.GetById(slotData.consumableId)
+				slots[idx] = {
+					consumableId = slotData.consumableId,
+					name = consDef and consDef.name or "Unknown",
+					currentCharges = slotData.currentCharges,
+					maxCharges = slotData.maxCharges,
+					locked = (idx > unlockedSlots),
+				}
+			else
+				slots[idx] = { empty = true, locked = (idx > unlockedSlots) }
+			end
+		end
+		result[unitId] = slots
+	end
+	return result
 end
 
 --------------------------------------------------

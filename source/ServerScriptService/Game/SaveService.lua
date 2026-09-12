@@ -166,6 +166,7 @@ local function encodeItem(item)
 		bps = item.bonusPassiveIds or {},
 		gv  = item.generatorVersion or 1,
 		src = item.sourceType or "Generated",
+		dn  = item.displayName,
 	}
 end
 
@@ -185,6 +186,7 @@ local function decodeItem(encoded)
 		bonusPassiveIds  = encoded.bps or {},
 		generatorVersion = encoded.gv or 1,
 		sourceType       = encoded.src or "Generated",
+		displayName      = encoded.dn,
 	}
 end
 

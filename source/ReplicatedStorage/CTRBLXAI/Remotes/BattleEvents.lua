@@ -94,6 +94,7 @@ local FUNCTION_NAMES = {
 
 	"RequestEquipConsumable",
 	"RequestUnequipConsumable",
+	"GetConsumableSlots",
 }
 
 local BattleEvents = {}

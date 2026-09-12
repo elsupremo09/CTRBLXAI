@@ -266,6 +266,7 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 				cardData = {
 					id = skillId,
 					name = def and def.name or skillId,
+					icon = def and def.icon or nil,
 					desc = def and def.description or "",
 					rarity = rarity,
 					mpCost = def and def.mpCost,
@@ -286,6 +287,7 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 				cardData = {
 					id = augId,
 					name = def and def.name or augId,
+					icon = def and def.icon or nil,
 					desc = def and def.description or "",
 					rarity = rarity,
 					family = def and def.family,
@@ -304,6 +306,7 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 				cardData = {
 					id = docId,
 					name = def and def.name or docId,
+					icon = def and def.icon or nil,
 					desc = def and def.identity or "",
 					rarity = rarity,
 					passiveName = def and def.passiveName,
@@ -323,6 +326,7 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 				cardData = {
 					id = conId,
 					name = def and def.name or conId,
+					icon = def and def.icon or nil,
 					desc = def and def.effectFormula or "",
 					rarity = rarity,
 					conCategory = def and def.category or "Unknown",
@@ -415,7 +419,7 @@ function RewardService.BuildRewardSummaries(results)
 				or WeaponData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
 
 			local summary = {
-				name = archetype and archetype.name or "Unknown",
+				name = item.displayName or (archetype and archetype.name) or "Unknown",
 				icon = archetype and archetype.icon or nil,
 				flavor = archetype and archetype.flavor or nil,
 				rarity = item.rarityId,
@@ -454,6 +458,7 @@ function RewardService.BuildRewardSummaries(results)
 			local cd = result.cardData
 			table.insert(summaries, {
 				name = cd.name or "Unknown",
+				icon = cd.icon or nil,
 				category = result.category,
 				rarity = cd.rarity or "Common",
 				isCard = true,

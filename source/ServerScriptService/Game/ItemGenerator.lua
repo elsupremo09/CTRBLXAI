@@ -24,6 +24,11 @@ local BonusData = require(
 		:WaitForChild("Content")
 		:WaitForChild("BonusData")
 )
+local AffixData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("AffixData")
+)
 
 local ItemGenerator = {}
 
@@ -335,6 +340,73 @@ end
 --------------------------------------------------
 
 local function step10_BuildInstance(input, selectedPassives, selectedAttributes, rng)
+	-- Compose display name from affixes
+	local displayName = nil
+	local arch = WeaponData.GetByArchetypeId(input.baseArchetypeId)
+		or ArmorData.GetByArchetypeId(input.baseArchetypeId)
+	local baseName = arch and arch.name or nil
+
+	if baseName and (#selectedAttributes > 0 or #selectedPassives > 0) then
+		-- Build combined bonus list with BP costs
+		local bonusList = {}
+		for _, attr in ipairs(selectedAttributes) do
+			local def = BonusData.NumericalAttributes[attr.id]
+			if def then
+				table.insert(bonusList, {
+					bpCost = def.bpCost or 0,
+					sourceType = "numerical",
+					family = def.family,
+					tier = def.tier or attr.tier or 1,
+				})
+			end
+		end
+		for _, passiveId in ipairs(selectedPassives) do
+			local def = BonusData.BonusPassives[passiveId]
+			if def then
+				table.insert(bonusList, {
+					bpCost = def.bpCost or 0,
+					sourceType = "passive",
+					family = passiveId,
+					tier = 0,
+				})
+			end
+		end
+
+		-- Sort descending by BP cost; ties: passive > numerical, then alphabetical family
+		table.sort(bonusList, function(a, b)
+			if a.bpCost ~= b.bpCost then return a.bpCost > b.bpCost end
+			if a.sourceType ~= b.sourceType then return a.sourceType == "passive" end
+			return a.family < b.family
+		end)
+
+		-- Look up affix names
+		local prefix = nil
+		local suffix = nil
+		if bonusList[1] then
+			local b = bonusList[1]
+			if b.sourceType == "numerical" then
+				prefix = AffixData.Numerical[b.family] and AffixData.Numerical[b.family][b.tier]
+			else
+				prefix = AffixData.Passive[b.family]
+			end
+		end
+		if bonusList[2] then
+			local b = bonusList[2]
+			if b.sourceType == "numerical" then
+				suffix = AffixData.Numerical[b.family] and AffixData.Numerical[b.family][b.tier]
+			else
+				suffix = AffixData.Passive[b.family]
+			end
+		end
+
+		-- Compose
+		if prefix and suffix then
+			displayName = prefix .. " " .. baseName .. " of " .. suffix
+		elseif prefix then
+			displayName = prefix .. " " .. baseName
+		end
+	end
+
 	return {
 		instanceId       = generateInstanceId(input.seed),
 		baseArchetypeId  = input.baseArchetypeId,
@@ -344,6 +416,7 @@ local function step10_BuildInstance(input, selectedPassives, selectedAttributes,
 		bonusPassiveIds  = selectedPassives,    -- { "PAS-011", ... }
 		generatorVersion = 1,
 		sourceType       = input.sourceType or "Generated",
+		displayName      = displayName,
 	}
 end
 
