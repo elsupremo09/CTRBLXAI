@@ -13,6 +13,8 @@ local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 local MockData    = require(CTRBLXAI_UI:WaitForChild("MockLoadoutData", 10))
 local BattleEvents = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 	:WaitForChild("Remotes", 10):WaitForChild("BattleEvents", 10))
+local ConsumableData = require(ReplicatedStorage:WaitForChild("Content", 10)
+	:WaitForChild("ConsumableData", 10))
 
 local LoadoutScreen = {}
 
@@ -75,6 +77,10 @@ local BONUS_STAT_ORDER = {
 }
 
 --------------------------------------------------
+-- CONSUMABLE PICKER POPUP
+--------------------------------------------------
+
+--------------------------------------------------
 -- FORWARD DECLARATIONS (functions used before definition)
 --------------------------------------------------
 local buildInventory
@@ -85,6 +91,8 @@ local buildSkillLoadout
 local openSkillCardDetail, openAugmentCardDetail
 local openSkillSlotPicker, openAugmentSlotPicker
 local openEquippedSkillDetail, openEquippedAugmentDetail
+local openConsumableDetail, openConsumableSlotPicker, openEquippedConsumableDetail
+local buildConsumableGrid
 
 
 -- Skills tab state
@@ -484,6 +492,12 @@ local function buildEquippedLoadout()
 		btn.MouseButton1Click:Connect(function()
 			equippedTab = tabDef.id
 			buildEquippedLoadout()
+			-- Rebuild left panel based on sub-tab
+			if equippedTab == "cons" then
+				buildConsumableGrid()
+			else
+				buildInventory()
+			end
 		end)
 	end
 
@@ -682,11 +696,11 @@ local function buildEquippedLoadout()
 				TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
 
 			if locked then
-				makeLabel(cell, { Text = "🔒", Size = UDim2.new(1, 0, 1, 0),
+				makeLabel(cell, { Text = "[X]", Size = UDim2.new(1, 0, 1, 0),
 					TextSize = 18, TextXAlignment = Enum.TextXAlignment.Center,
 					TextColor3 = Theme.Colors.TextDisabled })
 			elseif item then
-				makeLabel(cell, { Text = item.icon or "🧪", Size = UDim2.new(1, 0, 0, 28),
+				makeLabel(cell, { Text = item.icon or "[C]", Size = UDim2.new(1, 0, 0, 28),
 					Position = UDim2.new(0, 0, 0, 4),
 					TextSize = 22, TextXAlignment = Enum.TextXAlignment.Center })
 				if item.qty and item.qty > 1 then
@@ -701,6 +715,9 @@ local function buildEquippedLoadout()
 					Position = UDim2.new(0, 2, 1, -14),
 					TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary,
 					TextXAlignment = Enum.TextXAlignment.Center })
+				cell.MouseButton1Click:Connect(function()
+					openEquippedConsumableDetail(unit.id, i, item)
+				end)
 			else
 				makeLabel(cell, { Text = "—", Size = UDim2.new(1, 0, 1, 0),
 					TextSize = 20, TextColor3 = Theme.Colors.TextDisabled,
@@ -2139,7 +2156,7 @@ switchTab = function()
 		-- Reclaim stat panel space
 		local eqTop = 60 + (Theme.FullScreen.PanelGap or 2)
 		if equippedPanel then equippedPanel.Size = UDim2.new(1, 0, 1, -eqTop); equippedPanel.Position = UDim2.new(0, 0, 0, eqTop) end
-		buildInventory()
+		if equippedTab == "cons" then buildConsumableGrid() else buildInventory() end
 		buildEquippedLoadout()
 	elseif currentTab == "SKILLS" then
 		if skillsPanel then skillsPanel.Visible = true end
@@ -4484,6 +4501,543 @@ end
 
 --------------------------------------------------
 --------------------------------------------------
+
+
+--------------------------------------------------
+-- CONSUMABLE GRID & DETAIL (inventory-style browse)
+--------------------------------------------------
+
+local CONS_CATEGORY_ORDER = { "All", "Recovery", "Support", "Utility", "Control", "Damage", "Environment", "Deployable" }
+local CONS_CATEGORY_COLORS = {
+	Recovery = Color3.fromRGB(80, 220, 120),
+	Support = Color3.fromRGB(100, 180, 240),
+	Utility = Color3.fromRGB(200, 180, 100),
+	Control = Color3.fromRGB(200, 120, 200),
+	Damage = Color3.fromRGB(220, 80, 80),
+	Environment = Color3.fromRGB(120, 180, 80),
+	Deployable = Color3.fromRGB(180, 140, 100),
+}
+
+local consFilter = "All"
+local consSearch = ""
+
+buildConsumableGrid = function()
+	if not inventoryPanel then return end
+	clearChildren(inventoryPanel)
+	pad(inventoryPanel, 8, 8, 8, 8)
+
+	-- Toolbar: Search + Category filter
+	local ctrlRow = Instance.new("Frame")
+	ctrlRow.Size = UDim2.new(1, 0, 0, 24)
+	ctrlRow.Position = UDim2.new(0, 0, 0, 0)
+	ctrlRow.BackgroundTransparency = 1
+	ctrlRow.Parent = inventoryPanel
+
+	local ctrlLayout = Instance.new("UIListLayout", ctrlRow)
+	ctrlLayout.FillDirection = Enum.FillDirection.Horizontal
+	ctrlLayout.Padding = UDim.new(0, 3)
+	ctrlLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+
+	-- Search box
+	local search = Instance.new("TextBox")
+	search.Size = UDim2.new(1, -90, 1, 0)
+	search.BackgroundColor3 = Theme.Colors.Surface
+	search.BackgroundTransparency = 0.2
+	search.Font = Theme.Font.Primary
+	search.TextSize = Theme.Text.Small()
+	search.TextColor3 = Theme.Colors.TextPrimary
+	search.PlaceholderText = "Search..."
+	search.PlaceholderColor3 = Theme.Colors.TextDisabled
+	search.Text = consSearch
+	search.BorderSizePixel = 0
+	search.ClearTextOnFocus = false
+	search.LayoutOrder = 1
+	search.Parent = ctrlRow
+	Instance.new("UICorner", search).CornerRadius = UDim.new(0, 3)
+
+	search.FocusLost:Connect(function()
+		consSearch = search.Text
+		buildConsumableGrid()
+	end)
+
+	-- Category cycle button
+	local catLabel = consFilter == "All" and "Type v" or (consFilter .. " v")
+	local catBtn = Instance.new("TextButton")
+	catBtn.Size = UDim2.new(0, 85, 1, 0)
+	catBtn.BackgroundColor3 = Theme.Colors.Surface
+	catBtn.BackgroundTransparency = 0.2
+	catBtn.Font = Theme.Font.PrimaryBold
+	catBtn.TextSize = Theme.Text.Small()
+	catBtn.TextColor3 = Theme.Colors.TextPrimary
+	catBtn.Text = catLabel
+	catBtn.BorderSizePixel = 0
+	catBtn.LayoutOrder = 2
+	catBtn.Parent = ctrlRow
+	Instance.new("UICorner", catBtn).CornerRadius = UDim.new(0, 3)
+	catBtn.MouseButton1Click:Connect(function()
+		local curIdx = 1
+		for idx, cat in ipairs(CONS_CATEGORY_ORDER) do
+			if cat == consFilter then curIdx = idx break end
+		end
+		curIdx = (curIdx % #CONS_CATEGORY_ORDER) + 1
+		consFilter = CONS_CATEGORY_ORDER[curIdx]
+		buildConsumableGrid()
+	end)
+
+	-- Build item list from ConsumableData
+	local allIds = ConsumableData.GetAllIds()
+	local items = {}
+	for _, cid in ipairs(allIds) do
+		local def = ConsumableData.GetById(cid)
+		if def then
+			local cat = def.category or "?"
+			-- Apply filters
+			if consFilter ~= "All" and cat ~= consFilter then continue end
+			if consSearch ~= "" and not string.find(string.lower(def.name or ""), string.lower(consSearch), 1, true) then continue end
+			table.insert(items, { id = cid, name = def.name or cid, category = cat,
+				maxCharges = def.maxCharges or 1, tier = def.tier or "Common",
+				rtCost = def.rtCost or 0, range = def.range or 0,
+				targetRules = def.targetRules or "", pattern = def.pattern or "",
+				effectFormula = def.effectFormula or "", icon = def.icon or nil,
+				economy = def.economy or "", profile = def.profile or "",
+				duration = def.duration or "Instant", scalingBasis = def.scalingBasis or "",
+				tags = def.tags or {} })
+		end
+	end
+	-- Sort by category then name
+	local catOrder = {}
+	for idx, cat in ipairs(CONS_CATEGORY_ORDER) do catOrder[cat] = idx end
+	table.sort(items, function(a, b)
+		local ca = catOrder[a.category] or 99
+		local cb = catOrder[b.category] or 99
+		if ca ~= cb then return ca < cb end
+		return a.name < b.name
+	end)
+
+	-- Grid
+	local scrollFrame = Instance.new("ScrollingFrame")
+	scrollFrame.Size = UDim2.new(1, 0, 1, -30)
+	scrollFrame.Position = UDim2.new(0, 0, 0, 28)
+	scrollFrame.BackgroundTransparency = 1
+	scrollFrame.BorderSizePixel = 0
+	scrollFrame.ScrollBarThickness = 3
+	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scrollFrame.Parent = inventoryPanel
+
+	local containerW = scrollFrame.AbsoluteSize.X
+	if containerW < 10 then containerW = 400 end
+	local containerH = scrollFrame.AbsoluteSize.Y
+	if containerH < 10 then containerH = 200 end
+
+	local GAP = 3
+	local maxCellH = math.floor((containerH - 2 * GAP) / 3)
+	local cellW = math.clamp(math.floor(maxCellH / 1.2), 48, 96)
+	local cellH = math.floor(cellW * 1.2)
+
+	local gridLayout = Instance.new("UIGridLayout", scrollFrame)
+	gridLayout.CellSize = UDim2.new(0, cellW, 0, cellH)
+	gridLayout.CellPadding = UDim2.new(0, GAP, 0, GAP)
+	gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	for idx, ci in ipairs(items) do
+		local catColor = CONS_CATEGORY_COLORS[ci.category] or Theme.Colors.TextSecondary
+
+		local tile = Instance.new("TextButton")
+		tile.BackgroundColor3 = catColor
+		tile.BackgroundTransparency = 0.75
+		tile.BorderSizePixel = 0
+		tile.Text = ""
+		tile.AutoButtonColor = true
+		tile.LayoutOrder = idx
+		tile.Parent = scrollFrame
+		Instance.new("UICorner", tile).CornerRadius = UDim.new(0, 4)
+
+		-- Category-colored left stripe
+		local stripe = Instance.new("Frame")
+		stripe.Size = UDim2.new(0, 3, 1, 0)
+		stripe.BackgroundColor3 = catColor
+		stripe.BorderSizePixel = 0
+		stripe.Parent = tile
+
+		-- Charges badge (top-right)
+		local qtyFrame = Instance.new("Frame")
+		qtyFrame.Size = UDim2.new(0, 22, 0, 12)
+		qtyFrame.Position = UDim2.new(1, -24, 0, 2)
+		qtyFrame.BackgroundColor3 = Theme.Colors.BadgeBg
+		qtyFrame.BackgroundTransparency = 0.4
+		qtyFrame.BorderSizePixel = 0
+		qtyFrame.ZIndex = 3
+		qtyFrame.Parent = tile
+		Instance.new("UICorner", qtyFrame).CornerRadius = UDim.new(0, 3)
+		local qtyLabel = makeLabel(qtyFrame, { Text = "x" .. ci.maxCharges,
+			Size = UDim2.fromScale(1, 1),
+			TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono,
+			TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Center })
+		if qtyLabel then qtyLabel.ZIndex = 3 end
+
+		-- Name strip (bottom)
+		local nameStrip = Instance.new("Frame")
+		nameStrip.Size = UDim2.new(1, 0, 0, 14)
+		nameStrip.Position = UDim2.new(0, 0, 1, -14)
+		nameStrip.BackgroundColor3 = Color3.new(0, 0, 0)
+		nameStrip.BackgroundTransparency = 0.4
+		nameStrip.BorderSizePixel = 0
+		nameStrip.ZIndex = 3
+		nameStrip.Parent = tile
+		local nameLabel = makeLabel(nameStrip, { Text = ci.name,
+			Size = UDim2.fromScale(1, 1),
+			Position = UDim2.new(0, 4, 0, 0),
+			TextSize = Theme.Text.Tiny(), Font = Theme.Font.Primary,
+			TextColor3 = catColor,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd })
+		if nameLabel then nameLabel.ZIndex = 3 end
+
+		-- Click → open detail
+		tile.MouseButton1Click:Connect(function()
+			openConsumableDetail(ci)
+		end)
+	end
+
+	-- Footer
+	makeLabel(inventoryPanel, { Text = string.format("Showing: %d / %d", #items, #allIds),
+		Size = UDim2.new(1, 0, 0, 14),
+		Position = UDim2.new(0, 0, 1, -14),
+		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextDisabled,
+		TextXAlignment = Enum.TextXAlignment.Left })
+end
+
+-- CONSUMABLE DETAIL PANEL
+openConsumableDetail = function(ci)
+	closeDetail()
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	detailOverlay = Instance.new("ScreenGui")
+	detailOverlay.Name = "ConsDetail"
+	detailOverlay.DisplayOrder = 110
+	detailOverlay.ResetOnSpawn = false
+	detailOverlay.Parent = getPlayerGui()
+
+	-- Backdrop
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.5
+	backdrop.Text = ""; backdrop.BorderSizePixel = 0
+	backdrop.Parent = detailOverlay
+	backdrop.MouseButton1Click:Connect(closeDetail)
+
+	-- Panel (left-docked, like equipment detail)
+	local panel = Theme.MakePanel("ConsDetail",
+		UDim2.new(0.55, 0, 0.9, 0),
+		UDim2.new(0, 8, 0.05, 0),
+		Vector2.new(0, 0),
+		detailOverlay)
+	panel.ClipsDescendants = true
+	pad(panel, 10, 10, 10, 10)
+
+	local catColor = CONS_CATEGORY_COLORS[ci.category] or Theme.Colors.TextSecondary
+
+	-- Header
+	buildDetailHeader(panel, {
+		iconText = "[C]",
+		name = ci.name,
+		subtitleText = ci.category .. " | " .. ci.economy .. " | " .. ci.profile,
+		subtitleColor = catColor,
+		tags = ci.tags,
+		tagColor = catColor,
+		description = ci.effectFormula,
+	})
+
+	-- Stats section
+	local yOff = 100
+	local function addStatRow(label, value)
+		makeLabel(panel, { Text = label,
+			Size = UDim2.new(0.4, 0, 0, 16), Position = UDim2.new(0, 0, 0, yOff),
+			TextSize = Theme.Text.Small(), Font = Theme.Font.Primary,
+			TextColor3 = Theme.Colors.TextSecondary,
+			TextXAlignment = Enum.TextXAlignment.Left })
+		makeLabel(panel, { Text = tostring(value),
+			Size = UDim2.new(0.55, 0, 0, 16), Position = UDim2.new(0.42, 0, 0, yOff),
+			TextSize = Theme.Text.Small(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Left })
+		yOff = yOff + 18
+	end
+
+	-- Divider
+	local div = Instance.new("Frame")
+	div.Size = UDim2.new(0.9, 0, 0, 1)
+	div.Position = UDim2.new(0.05, 0, 0, yOff)
+	div.BackgroundColor3 = Theme.Colors.TextDisabled
+	div.BackgroundTransparency = 0.5
+	div.BorderSizePixel = 0
+	div.Parent = panel
+	yOff = yOff + 6
+
+	addStatRow("Charges:", tostring(ci.maxCharges))
+	addStatRow("RT Cost:", tostring(ci.rtCost))
+	addStatRow("Range:", tostring(ci.range))
+	addStatRow("Target:", ci.targetRules)
+	addStatRow("Pattern:", ci.pattern)
+	addStatRow("Duration:", ci.duration)
+	addStatRow("Scaling:", ci.scalingBasis)
+
+	-- Button bar
+	local fb = Theme.FooterBar
+	local btnBar = Instance.new("Frame")
+	btnBar.Name = "ConsBtnBar"
+	btnBar.Size = UDim2.new(0, fb.BTN_W * 2 + fb.BTN_GAP + fb.PAD, 0, fb.BTN_H)
+	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
+	btnBar.AnchorPoint = Vector2.new(1, 1)
+	btnBar.BackgroundTransparency = 1
+	btnBar.Parent = detailOverlay
+
+	local btnLayout = Instance.new("UIListLayout", btnBar)
+	btnLayout.FillDirection = Enum.FillDirection.Horizontal
+	btnLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	btnLayout.Padding = UDim.new(0, fb.BTN_GAP)
+
+	local backBtn = Theme.MakeButton(btnBar, "BACK", "Secondary")
+	backBtn.LayoutOrder = 2
+	backBtn.MouseButton1Click:Connect(closeDetail)
+
+	local equipBtn = Theme.MakeButton(btnBar, "EQUIP", "Primary")
+	equipBtn.LayoutOrder = 1
+	equipBtn.MouseButton1Click:Connect(function()
+		closeDetail()
+		openConsumableSlotPicker(unit.id, ci)
+	end)
+end
+
+-- CONSUMABLE SLOT PICKER (which slot to equip into?)
+openConsumableSlotPicker = function(unitId, ci)
+	closeDetail()
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	detailOverlay = Instance.new("ScreenGui")
+	detailOverlay.Name = "ConsSlotPicker"
+	detailOverlay.DisplayOrder = 115
+	detailOverlay.ResetOnSpawn = false
+	detailOverlay.Parent = getPlayerGui()
+
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.5
+	backdrop.Text = ""; backdrop.BorderSizePixel = 0
+	backdrop.Parent = detailOverlay
+	backdrop.MouseButton1Click:Connect(closeDetail)
+
+	local popup = Theme.MakePanel("ConsSlotPicker",
+		UDim2.new(0, 260, 0, 240),
+		UDim2.new(0.5, 0, 0.5, 0),
+		Vector2.new(0.5, 0.5),
+		detailOverlay)
+	popup.ClipsDescendants = true
+	pad(popup, 10, 10, 10, 10)
+
+	makeLabel(popup, { Text = "Equip " .. ci.name .. " to slot:",
+		Size = UDim2.new(1, 0, 0, 18),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(),
+		TextColor3 = Theme.Colors.TextGold })
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, 0, 1, -44)
+	scroll.Position = UDim2.new(0, 0, 0, 22)
+	scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 3
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.Parent = popup
+
+	local sLayout = Instance.new("UIListLayout", scroll)
+	sLayout.Padding = UDim.new(0, 3)
+	sLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	for slotIdx = 1, 6 do
+		local slotKey = "Cons" .. slotIdx
+		local locked = MockData.ConsSlotLocked[slotKey]
+		local existing = MockData.GetEquipped(unitId, slotKey)
+
+		local rowBtn = Instance.new("TextButton")
+		rowBtn.Size = UDim2.new(1, 0, 0, 28)
+		rowBtn.BackgroundColor3 = locked and Theme.Colors.Background or Theme.Colors.PanelRaised
+		rowBtn.BackgroundTransparency = locked and 0.5 or 0.2
+		rowBtn.BorderSizePixel = 0
+		rowBtn.Text = ""
+		rowBtn.AutoButtonColor = not locked
+		rowBtn.LayoutOrder = slotIdx
+		rowBtn.Parent = scroll
+		Instance.new("UICorner", rowBtn).CornerRadius = UDim.new(0, 4)
+
+		local slotText = "Slot " .. slotIdx
+		if locked then
+			slotText = slotText .. "  [LOCKED]"
+		elseif existing then
+			slotText = slotText .. ": " .. (existing.name or "?") .. " (replace)"
+		else
+			slotText = slotText .. ": Empty"
+		end
+
+		makeLabel(rowBtn, { Text = slotText,
+			Size = UDim2.new(1, -8, 1, 0), Position = UDim2.new(0, 4, 0, 0),
+			Font = Theme.Font.Primary, TextSize = Theme.Text.Small(),
+			TextColor3 = locked and Theme.Colors.TextDisabled or Theme.Colors.TextPrimary })
+
+		if not locked then
+			rowBtn.MouseButton1Click:Connect(function()
+				closeDetail()
+				local result = BattleEvents.RequestEquipConsumable:InvokeServer(unitId, slotIdx, ci.id)
+				if result and result.ok then
+					-- Update local state
+					if not MockData.Equipped[unitId] then MockData.Equipped[unitId] = {} end
+					MockData.Equipped[unitId][slotKey] = {
+						id = ci.id, consumableId = ci.id, name = ci.name,
+						cat = "Consumable", sub = ci.category,
+						icon = ci.icon or "[C]", qty = ci.maxCharges,
+						effect = ci.effectFormula,
+					}
+					buildEquippedLoadout()
+				end
+			end)
+		end
+	end
+
+	local cancel = Instance.new("TextButton")
+	cancel.Size = UDim2.new(1, 0, 0, 18)
+	cancel.Position = UDim2.new(0, 0, 1, -20)
+	cancel.BackgroundTransparency = 1
+	cancel.Font = Theme.Font.Primary; cancel.TextSize = Theme.Text.Small()
+	cancel.TextColor3 = Theme.Colors.TextSecondary; cancel.Text = "Cancel"
+	cancel.Parent = popup
+	cancel.MouseButton1Click:Connect(closeDetail)
+end
+
+-- EQUIPPED CONSUMABLE DETAIL (click slot in loadout → detail with UNEQUIP)
+openEquippedConsumableDetail = function(unitId, slotIdx, item)
+	closeDetail()
+
+	-- Look up full definition from ConsumableData
+	local def = ConsumableData.GetById(item.consumableId or item.id)
+	local ci = {
+		id = item.consumableId or item.id,
+		name = item.name or "Unknown",
+		category = (def and def.category) or item.sub or "?",
+		maxCharges = (def and def.maxCharges) or item.qty or 1,
+		rtCost = (def and def.rtCost) or 0,
+		range = (def and def.range) or 0,
+		targetRules = (def and def.targetRules) or "",
+		pattern = (def and def.pattern) or "",
+		effectFormula = (def and def.effectFormula) or item.effect or "",
+		icon = (def and def.icon) or item.icon or nil,
+		economy = (def and def.economy) or "",
+		profile = (def and def.profile) or "",
+		duration = (def and def.duration) or "Instant",
+		scalingBasis = (def and def.scalingBasis) or "",
+		tags = (def and def.tags) or {},
+	}
+
+	detailOverlay = Instance.new("ScreenGui")
+	detailOverlay.Name = "ConsEqDetail"
+	detailOverlay.DisplayOrder = 110
+	detailOverlay.ResetOnSpawn = false
+	detailOverlay.Parent = getPlayerGui()
+
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.5
+	backdrop.Text = ""; backdrop.BorderSizePixel = 0
+	backdrop.Parent = detailOverlay
+	backdrop.MouseButton1Click:Connect(closeDetail)
+
+	local catColor = CONS_CATEGORY_COLORS[ci.category] or Theme.Colors.TextSecondary
+
+	local panel = Theme.MakePanel("ConsEqDetail",
+		UDim2.new(0.55, 0, 0.9, 0),
+		UDim2.new(0, 8, 0.05, 0),
+		Vector2.new(0, 0),
+		detailOverlay)
+	panel.ClipsDescendants = true
+	pad(panel, 10, 10, 10, 10)
+
+	buildDetailHeader(panel, {
+		iconText = "[C]",
+		name = ci.name,
+		subtitleText = "Slot " .. slotIdx .. " | " .. ci.category,
+		subtitleColor = catColor,
+		tags = ci.tags,
+		tagColor = catColor,
+		description = ci.effectFormula,
+	})
+
+	local yOff = 100
+	local function addStatRow(label, value)
+		makeLabel(panel, { Text = label,
+			Size = UDim2.new(0.4, 0, 0, 16), Position = UDim2.new(0, 0, 0, yOff),
+			TextSize = Theme.Text.Small(), Font = Theme.Font.Primary,
+			TextColor3 = Theme.Colors.TextSecondary,
+			TextXAlignment = Enum.TextXAlignment.Left })
+		makeLabel(panel, { Text = tostring(value),
+			Size = UDim2.new(0.55, 0, 0, 16), Position = UDim2.new(0.42, 0, 0, yOff),
+			TextSize = Theme.Text.Small(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Left })
+		yOff = yOff + 18
+	end
+
+	local div = Instance.new("Frame")
+	div.Size = UDim2.new(0.9, 0, 0, 1)
+	div.Position = UDim2.new(0.05, 0, 0, yOff)
+	div.BackgroundColor3 = Theme.Colors.TextDisabled
+	div.BackgroundTransparency = 0.5; div.BorderSizePixel = 0
+	div.Parent = panel
+	yOff = yOff + 6
+
+	addStatRow("Charges:", tostring(ci.maxCharges))
+	addStatRow("RT Cost:", tostring(ci.rtCost))
+	addStatRow("Range:", tostring(ci.range))
+	addStatRow("Target:", ci.targetRules)
+	addStatRow("Pattern:", ci.pattern)
+
+	-- Button bar
+	local fb = Theme.FooterBar
+	local btnBar = Instance.new("Frame")
+	btnBar.Name = "ConsEqBtnBar"
+	btnBar.Size = UDim2.new(0, fb.BTN_W * 2 + fb.BTN_GAP + fb.PAD, 0, fb.BTN_H)
+	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
+	btnBar.AnchorPoint = Vector2.new(1, 1)
+	btnBar.BackgroundTransparency = 1
+	btnBar.Parent = detailOverlay
+
+	local btnLayout = Instance.new("UIListLayout", btnBar)
+	btnLayout.FillDirection = Enum.FillDirection.Horizontal
+	btnLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	btnLayout.Padding = UDim.new(0, fb.BTN_GAP)
+
+	local backBtn = Theme.MakeButton(btnBar, "BACK", "Secondary")
+	backBtn.LayoutOrder = 2
+	backBtn.MouseButton1Click:Connect(closeDetail)
+
+	local unBtn = Theme.MakeButton(btnBar, "UNEQUIP", "Primary")
+	unBtn.LayoutOrder = 1
+	unBtn.MouseButton1Click:Connect(function()
+		closeDetail()
+		local result = BattleEvents.RequestUnequipConsumable:InvokeServer(unitId, slotIdx)
+		if result and result.ok then
+			if MockData.Equipped[unitId] then
+				MockData.Equipped[unitId]["Cons" .. slotIdx] = nil
+			end
+			buildEquippedLoadout()
+		end
+	end)
+end
+
 -- STAT PANEL (right column, below unit header — always visible)
 --------------------------------------------------
 
@@ -4848,16 +5402,7 @@ function LoadoutScreen.Show()
 end
 
 function LoadoutScreen.Refresh()
-	buildUnitHeader()
-	if currentTab == "EQUIPMENT" then
-		buildEquippedLoadout()
-		buildInventory()
-	elseif currentTab == "SKILLS" then
-		buildSkillsContent()
-	elseif currentTab == "INFO" then
-		buildStatPanel()
-		buildInfoContent()
-	end
+	switchTab()
 end
 
 function LoadoutScreen.Hide()

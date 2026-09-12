@@ -141,7 +141,11 @@ end
 
 function MockLoadoutData.GetEquipped(unitId, slot)
 	local eq = MockLoadoutData.Equipped[unitId]
-	if eq and eq[slot] then return MockLoadoutData.GetItem(eq[slot]) end
+	if eq and eq[slot] then
+		-- Consumable slots store full item tables, equipment stores IDs
+		if type(eq[slot]) == "table" then return eq[slot] end
+		return MockLoadoutData.GetItem(eq[slot])
+	end
 	return nil
 end
 
@@ -387,6 +391,40 @@ function MockLoadoutData.LoadFromServer()
 		print(string.format("[LoadoutData] Loaded %d items from server (%d equipped)",
 			#MockLoadoutData.Inventory,
 			#serverItems - #MockLoadoutData.Inventory + #MockLoadoutData.Inventory))
+
+		-- Fetch consumable slots
+		if BattleEvents and BattleEvents.GetConsumableSlots then
+			local csOk, consSlots = pcall(function()
+				return BattleEvents.GetConsumableSlots:InvokeServer()
+			end)
+			if csOk and consSlots then
+				local totalCons = 0
+				for unitId, slots in pairs(consSlots) do
+					if not MockLoadoutData.Equipped[unitId] then
+						MockLoadoutData.Equipped[unitId] = {}
+					end
+					-- Update slot lock state from server (same for all units)
+					for idx, sd in pairs(slots) do
+						MockLoadoutData.ConsSlotLocked["Cons" .. idx] = (sd.locked == true)
+					end
+					for idx, sd in pairs(slots) do
+						local slotKey = "Cons" .. idx
+						if sd.consumableId and not sd.empty then
+							MockLoadoutData.Equipped[unitId][slotKey] = {
+								id = sd.consumableId, consumableId = sd.consumableId,
+								name = sd.name or sd.consumableId,
+								cat = "Consumable", sub = "Consumable",
+								icon = "?", qty = sd.currentCharges or 1,
+							}
+							totalCons = totalCons + 1
+						end
+					end
+				end
+				print(string.format("[LoadoutData] Loaded %d consumable slots", totalCons))
+			else
+				warn("[LoadoutData] Failed to load consumable slots: " .. tostring(consSlots))
+			end
+		end
 	else
 		warn("[LoadoutData] Server fetch failed — using mock data. ok=" .. tostring(ok)
 			.. " result=" .. tostring(serverItems))
