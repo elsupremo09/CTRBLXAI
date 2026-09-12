@@ -5,7 +5,7 @@
 local AugmentData = {
 	["AUG-BLEEDING-EDGE-SUPPORT"] = {
 		name = "Bleeding Edge Support",
-		icon = "rbxassetid://121747714429063",
+		icon = "rbxassetid://83567989347471",
 		description = "Adds a bleed effect to damage skills, increasing MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -25,7 +25,7 @@ local AugmentData = {
 	},
 	["AUG-VENOMOUS-SUPPORT"] = {
 		name = "Venomous Support",
-		icon = "rbxassetid://128867638760386",
+		icon = "rbxassetid://114372543914193",
 		description = "Adds a venom effect to damage skills, increasing MP cost by 15%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -45,7 +45,7 @@ local AugmentData = {
 	},
 	["AUG-BLINDING-SUPPORT"] = {
 		name = "Blinding Support",
-		icon = "rbxassetid://109168010738866",
+		icon = "rbxassetid://140394574381421",
 		description = "Adds a blind effect to damage skills, increasing MP cost by 15%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -64,7 +64,7 @@ local AugmentData = {
 	},
 	["AUG-CRIPPLING-SUPPORT"] = {
 		name = "Crippling Support",
-		icon = "rbxassetid://129685569184797",
+		icon = "rbxassetid://87718823645471",
 		description = "Adds a cripple effect to damage skills, increasing MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -84,7 +84,7 @@ local AugmentData = {
 	},
 	["AUG-SILENCING-SUPPORT"] = {
 		name = "Silencing Support",
-		icon = "rbxassetid://78829475771223",
+		icon = "rbxassetid://111148119906834",
 		description = "Adds a silence effect to damage skills, increasing MP cost by 25%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -103,7 +103,7 @@ local AugmentData = {
 	},
 	["AUG-DISARMING-SUPPORT"] = {
 		name = "Disarming Support",
-		icon = "rbxassetid://109451598763089",
+		icon = "rbxassetid://87047337771165",
 		description = "Adds a disarm effect to damage skills, increasing MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -123,7 +123,7 @@ local AugmentData = {
 	},
 	["AUG-MUTING-SUPPORT"] = {
 		name = "Muting Support",
-		icon = "rbxassetid://107615452712894",
+		icon = "rbxassetid://137717061620947",
 		description = "Adds a mute effect to damage skills, disabling target augments. Increases MP cost by 15%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -142,7 +142,7 @@ local AugmentData = {
 	},
 	["AUG-CURSING-SUPPORT"] = {
 		name = "Cursing Support",
-		icon = "rbxassetid://137323737475465",
+		icon = "rbxassetid://129316264243683",
 		description = "Adds a curse effect to damage skills, reducing target hit quality. Increases MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -161,7 +161,7 @@ local AugmentData = {
 	},
 	["AUG-WEAKENING-SUPPORT"] = {
 		name = "Weakening Support",
-		icon = "rbxassetid://72481620704432",
+		icon = "rbxassetid://89587457488659",
 		description = "Adds a weaken effect to damage skills, reducing all target stats. Increases MP cost by 25%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -180,7 +180,7 @@ local AugmentData = {
 	},
 	["AUG-MANA-EROSION-SUPPORT"] = {
 		name = "Mana Erosion Support",
-		icon = "rbxassetid://89631303672844",
+		icon = "rbxassetid://76234213557637",
 		description = "Drains target MP on each hit, increasing MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -199,7 +199,7 @@ local AugmentData = {
 	},
 	["AUG-MANA-RUPTURE-SUPPORT"] = {
 		name = "Mana Rupture Support",
-		icon = "rbxassetid://70520159444540",
+		icon = "rbxassetid://72843931898989",
 		description = "Destroys target MP on each hit and deals bonus damage equal to MP removed. Increases MP cost by 25%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -219,7 +219,7 @@ local AugmentData = {
 	},
 	["AUG-FIRE-CONVERSION"] = {
 		name = "Fire Conversion",
-		icon = "rbxassetid://89052374089655",
+		icon = "rbxassetid://89575762663110",
 		description = "Converts physical damage to fire element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
@@ -238,7 +238,7 @@ local AugmentData = {
 	},
 	["AUG-ICE-CONVERSION"] = {
 		name = "Ice Conversion",
-		icon = "rbxassetid://117696201897814",
+		icon = "rbxassetid://102274649426717",
 		description = "Converts physical damage to ice element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
@@ -257,7 +257,7 @@ local AugmentData = {
 	},
 	["AUG-ELECTRIC-CONVERSION"] = {
 		name = "Electric Conversion",
-		icon = "rbxassetid://93440950737481",
+		icon = "rbxassetid://112626949755533",
 		description = "Converts physical damage to electric element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
@@ -276,7 +276,7 @@ local AugmentData = {
 	},
 	["AUG-EARTH-CONVERSION"] = {
 		name = "Earth Conversion",
-		icon = "rbxassetid://106209527475726",
+		icon = "rbxassetid://91545139556138",
 		description = "Converts physical damage to earth element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
@@ -295,7 +295,7 @@ local AugmentData = {
 	},
 	["AUG-HOLY-CONVERSION"] = {
 		name = "Holy Conversion",
-		icon = "rbxassetid://86043457960599",
+		icon = "rbxassetid://130612366379737",
 		description = "Converts physical damage to holy element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
@@ -314,7 +314,7 @@ local AugmentData = {
 	},
 	["AUG-DARK-CONVERSION"] = {
 		name = "Dark Conversion",
-		icon = "rbxassetid://83399351291464",
+		icon = "rbxassetid://103786612360846",
 		description = "Converts physical damage to dark element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
@@ -333,7 +333,7 @@ local AugmentData = {
 	},
 	["AUG-POISON-CONVERSION"] = {
 		name = "Poison Conversion",
-		icon = "rbxassetid://87337550593230",
+		icon = "rbxassetid://119796926516040",
 		description = "Converts physical damage to poison element, increasing MP cost by 10%.",
 		family = "Element Conversion",
 		requiredSkillTags = {"Direct Damage"},
@@ -352,7 +352,7 @@ local AugmentData = {
 	},
 	["AUG-LIFESTEAL"] = {
 		name = "Lifesteal",
-		icon = "rbxassetid://74957504522114",
+		icon = "rbxassetid://87468335887109",
 		description = "Recovers HP equal to 10% of damage dealt, slightly reducing weapon damage scaling.",
 		family = "Recovery",
 		requiredSkillTags = {"Direct Damage"},
@@ -370,7 +370,7 @@ local AugmentData = {
 	},
 	["AUG-MANA-LEECH"] = {
 		name = "Mana Leech",
-		icon = "rbxassetid://82795617485718",
+		icon = "rbxassetid://71643292953167",
 		description = "Recovers MP equal to 10% of damage dealt, reducing weapon damage scaling by 15%.",
 		family = "Recovery",
 		requiredSkillTags = {"Direct Damage"},
@@ -388,7 +388,7 @@ local AugmentData = {
 	},
 	["AUG-HP-CASTING"] = {
 		name = "HP Casting",
-		icon = "rbxassetid://109920285409921",
+		icon = "rbxassetid://75357772257913",
 		description = "Pays MP costs with HP instead (2 HP per 1 MP), letting you cast without MP.",
 		family = "Resource Conversion",
 		otherRequirements = "Positive MP Cost",
@@ -407,7 +407,7 @@ local AugmentData = {
 	},
 	["AUG-BLOOD-CASTING"] = {
 		name = "Blood Casting",
-		icon = "rbxassetid://73528433683179",
+		icon = "rbxassetid://124359468594207",
 		description = "Pays 3 HP per 1 MP on top of normal MP cost in exchange for +10% skill potency.",
 		family = "Resource Conversion",
 		otherRequirements = "Positive MP Cost",
@@ -426,7 +426,7 @@ local AugmentData = {
 	},
 	["AUG-AGI-SCALING"] = {
 		name = "AGI Scaling",
-		icon = "rbxassetid://112341487729518",
+		icon = "rbxassetid://117202008128710",
 		description = "Uses AGI instead of STR for the skill's weapon damage calculation. Increases MP cost by 15%.",
 		family = "Stat Scaling",
 		otherRequirements = "Positive Weapon Attack Power scaling",
@@ -444,7 +444,7 @@ local AugmentData = {
 	},
 	["AUG-INT-SCALING"] = {
 		name = "INT Scaling",
-		icon = "rbxassetid://122362719238095",
+		icon = "rbxassetid://110883224409829",
 		description = "Uses INT instead of STR for the skill's weapon damage calculation. Increases MP cost by 15%.",
 		family = "Stat Scaling",
 		otherRequirements = "Positive Weapon Attack Power scaling",
@@ -462,7 +462,7 @@ local AugmentData = {
 	},
 	["AUG-VIT-SCALING"] = {
 		name = "VIT Scaling",
-		icon = "rbxassetid://132200068032196",
+		icon = "rbxassetid://82515315157940",
 		description = "Uses VIT instead of STR for the skill's weapon damage calculation. Increases MP cost by 15%.",
 		family = "Stat Scaling",
 		otherRequirements = "Positive Weapon Attack Power scaling",
@@ -480,7 +480,7 @@ local AugmentData = {
 	},
 	["AUG-DEX-SCALING"] = {
 		name = "DEX Scaling",
-		icon = "rbxassetid://74622119643222",
+		icon = "rbxassetid://78080560105812",
 		description = "Uses DEX instead of STR for the skill's weapon damage calculation. Increases MP cost by 15%.",
 		family = "Stat Scaling",
 		otherRequirements = "Positive Weapon Attack Power scaling",
@@ -498,7 +498,7 @@ local AugmentData = {
 	},
 	["AUG-LUK-SCALING"] = {
 		name = "LUK Scaling",
-		icon = "rbxassetid://82061434090173",
+		icon = "rbxassetid://124595646481497",
 		description = "Uses LUK instead of STR for the skill's weapon damage calculation. Increases MP cost by 15%.",
 		family = "Stat Scaling",
 		otherRequirements = "Positive Weapon Attack Power scaling",
@@ -516,7 +516,7 @@ local AugmentData = {
 	},
 	["AUG-FORCEFUL-STRIKE"] = {
 		name = "Forceful Strike",
-		icon = "rbxassetid://130726743194418",
+		icon = "rbxassetid://115954712572604",
 		description = "Knocks the target back 1 tile on hit, slightly reducing weapon damage scaling.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
@@ -535,7 +535,7 @@ local AugmentData = {
 	},
 	["AUG-PULLING-STRIKE"] = {
 		name = "Pulling Strike",
-		icon = "rbxassetid://84592630466038",
+		icon = "rbxassetid://105201649590553",
 		description = "Pulls the target 1 tile toward the caster on hit, slightly reducing weapon damage scaling.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
@@ -555,7 +555,7 @@ local AugmentData = {
 	},
 	["AUG-SWAP-STRIKE"] = {
 		name = "Swap Strike",
-		icon = "rbxassetid://79143469852444",
+		icon = "rbxassetid://98223109744569",
 		description = "Swaps positions with the target after dealing damage, reducing weapon damage scaling by 25%.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
@@ -575,7 +575,7 @@ local AugmentData = {
 	},
 	["AUG-EXECUTIONER"] = {
 		name = "Executioner",
-		icon = "rbxassetid://84300304353740",
+		icon = "rbxassetid://133580553153965",
 		description = "Recovers 1 AP when the skill kills an enemy, reducing weapon damage scaling by 25%.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
@@ -595,7 +595,7 @@ local AugmentData = {
 	},
 	["AUG-BLOOD-HARVEST"] = {
 		name = "Blood Harvest",
-		icon = "rbxassetid://79047852421521",
+		icon = "rbxassetid://114413286863107",
 		description = "Recovers 15% max HP when the skill kills an enemy. Slot cost only.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
@@ -615,7 +615,7 @@ local AugmentData = {
 	},
 	["AUG-SOUL-HARVEST"] = {
 		name = "Soul Harvest",
-		icon = "rbxassetid://137868278937158",
+		icon = "rbxassetid://79589652709612",
 		description = "Recovers 10% max MP when the skill kills an enemy. Slot cost only.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
@@ -635,7 +635,7 @@ local AugmentData = {
 	},
 	["AUG-PURIFYING-KILL"] = {
 		name = "Purifying Kill",
-		icon = "rbxassetid://137594128711263",
+		icon = "rbxassetid://97208705908075",
 		description = "Removes one debuff from the caster when the skill kills an enemy. Increases MP cost by 15%.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
@@ -655,7 +655,7 @@ local AugmentData = {
 	},
 	["AUG-PURGING-STRIKE"] = {
 		name = "Purging Strike",
-		icon = "rbxassetid://139576361562610",
+		icon = "rbxassetid://77920411555478",
 		description = "Removes one buff from the target on hit, reducing weapon damage scaling by 20%.",
 		family = "Purge",
 		requiredSkillTags = {"Direct Damage"},
@@ -675,7 +675,7 @@ local AugmentData = {
 	},
 	["AUG-EXPLOSIVE-DEATH"] = {
 		name = "Explosive Death",
-		icon = "rbxassetid://107128400878799",
+		icon = "rbxassetid://76302675771172",
 		description = "When the skill kills an enemy, adjacent units take fire damage equal to 25% of the slain unit's max HP. Slot cost only.",
 		family = "Death Explosion",
 		requiredSkillTags = {"Direct Damage"},
@@ -695,7 +695,7 @@ local AugmentData = {
 	},
 	["AUG-TREASURE-HUNTER"] = {
 		name = "Treasure Hunter",
-		icon = "rbxassetid://77671378087130",
+		icon = "rbxassetid://102597753116066",
 		description = "Improves the quality of loot dropped by enemies killed with this skill. Slot cost only.",
 		family = "Reward",
 		requiredSkillTags = {"Direct Damage"},
@@ -713,7 +713,7 @@ local AugmentData = {
 	},
 	["AUG-GOLD-HARVEST"] = {
 		name = "Gold Harvest",
-		icon = "rbxassetid://129770766972692",
+		icon = "rbxassetid://73031111455642",
 		description = "Increases gold dropped by enemies killed with this skill by 25%, slightly reducing weapon damage scaling.",
 		family = "Reward",
 		requiredSkillTags = {"Direct Damage"},
@@ -733,7 +733,7 @@ local AugmentData = {
 	},
 	["AUG-CHAIN-SUPPORT"] = {
 		name = "Chain Support",
-		icon = "rbxassetid://121692598503705",
+		icon = "rbxassetid://117078798182537",
 		description = "Converts the skill to chain through up to 2 additional enemies at 75% power per jump. Increases MP cost by 25%.",
 		family = "Pattern",
 		requiredTargetRules = "Enemy Unit",
@@ -753,7 +753,7 @@ local AugmentData = {
 	},
 	["AUG-LINE-PROJECTION"] = {
 		name = "Line Projection",
-		icon = "rbxassetid://117680434947372",
+		icon = "rbxassetid://92076192748817",
 		description = "Extends the skill into a line, hitting a second target behind the first at 75% power. Increases MP cost by 20%.",
 		family = "Pattern",
 		requiredTargetRules = "Unit",
@@ -773,7 +773,7 @@ local AugmentData = {
 	},
 	["AUG-IMPACT-SPLASH"] = {
 		name = "Impact Splash",
-		icon = "rbxassetid://101681672506241",
+		icon = "rbxassetid://102735317401713",
 		description = "Adds splash damage to the skill, hitting 4 adjacent tiles at 50% power. Increases MP cost by 25%.",
 		family = "Pattern",
 		requiredPattern = "Single",
@@ -792,7 +792,7 @@ local AugmentData = {
 	},
 	["AUG-CONCENTRATED-EFFECT"] = {
 		name = "Concentrated Effect",
-		icon = "rbxassetid://117565964193816",
+		icon = "rbxassetid://99194862413577",
 		description = "Focuses AOE skills into a single powerful hit with +25% damage. Increases MP cost by 15%.",
 		family = "Pattern",
 		requiredPattern = "Non-Single",
@@ -811,7 +811,7 @@ local AugmentData = {
 	},
 	["AUG-BURNING-GROUND"] = {
 		name = "Burning Ground",
-		icon = "rbxassetid://110768325412543",
+		icon = "rbxassetid://72500198423270",
 		description = "Creates burning terrain on affected tiles for a duration. Increases MP cost by 20%.",
 		family = "Terrain Effect",
 		requiredSkillTags = {"Direct Damage"},
@@ -830,7 +830,7 @@ local AugmentData = {
 	},
 	["AUG-WET-GROUND"] = {
 		name = "Wet Ground",
-		icon = "rbxassetid://104213912850468",
+		icon = "rbxassetid://132130466430217",
 		description = "Creates wet terrain on affected tiles, setting up ice combos. Increases MP cost by 15%.",
 		family = "Terrain Effect",
 		requiredTargetRules = "Enemy Unit",
@@ -849,7 +849,7 @@ local AugmentData = {
 	},
 	["AUG-FROZEN-GROUND"] = {
 		name = "Frozen Ground",
-		icon = "rbxassetid://75208106850161",
+		icon = "rbxassetid://119816953093798",
 		description = "Creates frozen terrain on affected tiles, causing sliding. Increases MP cost by 20%.",
 		family = "Terrain Effect",
 		requiredTargetRules = "Enemy Unit",
@@ -868,7 +868,7 @@ local AugmentData = {
 	},
 	["AUG-POISON-CLOUD"] = {
 		name = "Poison Cloud",
-		icon = "rbxassetid://114277584841310",
+		icon = "rbxassetid://89243883677166",
 		description = "Creates a poison cloud on affected tiles for a duration. Increases MP cost by 20%.",
 		family = "Terrain Effect",
 		requiredTargetRules = "Enemy Unit",
@@ -887,7 +887,7 @@ local AugmentData = {
 	},
 	["AUG-PREDATOR-STRIKE"] = {
 		name = "Predator Strike",
-		icon = "rbxassetid://120177500801629",
+		icon = "rbxassetid://121224377415414",
 		description = "Deals +25% bonus damage to targets that have at least one debuff. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
@@ -905,7 +905,7 @@ local AugmentData = {
 	},
 	["AUG-SHATTER-BLOW"] = {
 		name = "Shatter Blow",
-		icon = "rbxassetid://74254890082364",
+		icon = "rbxassetid://74365239139473",
 		description = "Deals +55% bonus damage to Frozen targets and shatters the ice. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
@@ -923,7 +923,7 @@ local AugmentData = {
 	},
 	["AUG-VENOM-BURST"] = {
 		name = "Venom Burst",
-		icon = "rbxassetid://109449398806565",
+		icon = "rbxassetid://123825136612662",
 		description = "Deals +40% bonus damage to targets afflicted with Poison or Venom. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
@@ -941,7 +941,7 @@ local AugmentData = {
 	},
 	["AUG-HEIGHTS-ADVANTAGE"] = {
 		name = "Height Advantage",
-		icon = "rbxassetid://73773856640151",
+		icon = "rbxassetid://81732190315863",
 		description = "Deals +35% bonus damage when attacking from higher elevation. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
@@ -959,7 +959,7 @@ local AugmentData = {
 	},
 	["AUG-DESPERATION"] = {
 		name = "Desperation",
-		icon = "rbxassetid://75126839550281",
+		icon = "rbxassetid://107088100844878",
 		description = "Deals +60% bonus damage when the caster is below 30% HP. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
@@ -977,7 +977,7 @@ local AugmentData = {
 	},
 	["AUG-FOCUSED-FINISHER"] = {
 		name = "Focused Finisher",
-		icon = "rbxassetid://94936166752651",
+		icon = "rbxassetid://73879191315403",
 		description = "Deals +50% bonus damage to targets below 25% HP. Slot cost only.",
 		family = "Conditional Amplifier",
 		requiredSkillTags = {"Direct Damage"},
@@ -995,7 +995,7 @@ local AugmentData = {
 	},
 	["AUG-BARRIER-ON-HIT"] = {
 		name = "Barrier on Hit",
-		icon = "rbxassetid://86231282617873",
+		icon = "rbxassetid://100255610611684",
 		description = "Grants the caster a temporary barrier equal to 15% of damage dealt, reducing weapon damage scaling by 15%.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
@@ -1014,7 +1014,7 @@ local AugmentData = {
 	},
 	["AUG-EVASION-SURGE"] = {
 		name = "Evasion Surge",
-		icon = "rbxassetid://101829109367818",
+		icon = "rbxassetid://123407675395083",
 		description = "Grants +30% evasion until the caster's next turn after using the skill. Reduces weapon damage scaling by 15%.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
@@ -1032,7 +1032,7 @@ local AugmentData = {
 	},
 	["AUG-RETALIATION-GUARD"] = {
 		name = "Retaliation Guard",
-		icon = "rbxassetid://111920062719139",
+		icon = "rbxassetid://122664651054779",
 		description = "The next incoming attack this round deals 20% less damage to the caster. Reduces weapon damage scaling by 20%.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
@@ -1050,6 +1050,7 @@ local AugmentData = {
 	},
 	["AUG-THREAT-REDUCTION"] = {
 		name = "Threat Reduction",
+		icon = "rbxassetid://120671431939529",
 		description = "Reduces the caster's threat by 20% until next turn, making enemies less likely to target them. Slightly reduces weapon damage.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
@@ -1066,7 +1067,7 @@ local AugmentData = {
 	},
 	["AUG-FORTIFY-ON-KILL"] = {
 		name = "Fortify on Kill",
-		icon = "rbxassetid://124897879441546",
+		icon = "rbxassetid://73243436256792",
 		description = "Grants +25% damage reduction for a full round when the skill kills an enemy. Slot cost only.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
@@ -1086,7 +1087,7 @@ local AugmentData = {
 	},
 	["AUG-DRAINING-WARD"] = {
 		name = "Draining Ward",
-		icon = "rbxassetid://132998525149279",
+		icon = "rbxassetid://128782083350927",
 		description = "Grants a ward that absorbs the next magic damage (up to 20% of damage dealt). Reduces weapon damage scaling by 15%.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
@@ -1105,7 +1106,7 @@ local AugmentData = {
 	},
 	["AUG-STEADFAST-STRIKE"] = {
 		name = "Steadfast Strike",
-		icon = "rbxassetid://118824817524025",
+		icon = "rbxassetid://136019922176234",
 		description = "Makes the caster immune to knockback, pulls, and swaps until their next turn. Slightly reduces weapon damage.",
 		family = "Defensive",
 		requiredSkillTags = {"Direct Damage"},
@@ -1122,7 +1123,7 @@ local AugmentData = {
 	},
 	["AUG-ARMOR-PIERCING"] = {
 		name = "Armor Piercing",
-		icon = "rbxassetid://74391646627656",
+		icon = "rbxassetid://109501710281585",
 		description = "Ignores 30% of the target's physical defense, slightly reducing weapon damage scaling.",
 		family = "Penetration",
 		requiredSkillTags = {"Direct Damage"},
@@ -1140,7 +1141,7 @@ local AugmentData = {
 	},
 	["AUG-QUICKEN-SELF"] = {
 		name = "Quicken Self",
-		icon = "rbxassetid://77153153989248",
+		icon = "rbxassetid://85434258321087",
 		description = "Reduces the caster's charge time for their next turn by 15%. Increases MP cost by 30%.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
@@ -1159,7 +1160,7 @@ local AugmentData = {
 	},
 	["AUG-DELAY-STRIKE"] = {
 		name = "Delay Strike",
-		icon = "rbxassetid://87588076479543",
+		icon = "rbxassetid://138587987083031",
 		description = "Increases the target's charge time for their next turn by 20%. Increases MP cost by 35%.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
@@ -1179,7 +1180,7 @@ local AugmentData = {
 	},
 	["AUG-MOMENTUM"] = {
 		name = "Momentum",
-		icon = "rbxassetid://120281380303435",
+		icon = "rbxassetid://92965594298613",
 		description = "Reduces the caster's charge time by 30% when the skill kills an enemy. Increases MP cost by 25%.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
@@ -1200,7 +1201,7 @@ local AugmentData = {
 	},
 	["AUG-PRIORITY-SURGE"] = {
 		name = "Priority Surge",
-		icon = "rbxassetid://104642485043518",
+		icon = "rbxassetid://93412668186265",
 		description = "Deals +15% bonus damage if the caster acts first in the round. Slot cost only.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
@@ -1219,7 +1220,7 @@ local AugmentData = {
 	},
 	["AUG-INTERRUPT"] = {
 		name = "Interrupt",
-		icon = "rbxassetid://102943011261313",
+		icon = "rbxassetid://82799335420645",
 		description = "Cancels the target's channeling if they are mid-cast, wasting their skill. Increases MP cost by 40%.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
@@ -1238,7 +1239,7 @@ local AugmentData = {
 	},
 	["AUG-SLUGGISH-BLOW"] = {
 		name = "Sluggish Blow",
-		icon = "rbxassetid://101322077488586",
+		icon = "rbxassetid://123377570771326",
 		description = "Inflicts Slow on the target for 1 turn after dealing damage. Increases MP cost by 25%.",
 		family = "Timing",
 		requiredSkillTags = {"Direct Damage"},
@@ -1257,7 +1258,7 @@ local AugmentData = {
 	},
 	["AUG-HASTE-SUPPORT"] = {
 		name = "Haste Support",
-		icon = "rbxassetid://123276343569017",
+		icon = "rbxassetid://75133441926608",
 		description = "Also applies Haste to the target of a healing or support skill. Increases MP cost by 30%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
@@ -1275,7 +1276,7 @@ local AugmentData = {
 	},
 	["AUG-REGENERATION-SUPPORT"] = {
 		name = "Regeneration Support",
-		icon = "rbxassetid://81460943908668",
+		icon = "rbxassetid://113210015419466",
 		description = "Also applies Regeneration to the target of a healing or support skill. Increases MP cost by 25%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
@@ -1293,7 +1294,7 @@ local AugmentData = {
 	},
 	["AUG-RECHARGE-SUPPORT"] = {
 		name = "Recharge Support",
-		icon = "rbxassetid://106741020831771",
+		icon = "rbxassetid://113972579445662",
 		description = "Also applies MP Recharge to the target of a healing or support skill. Increases MP cost by 25%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
@@ -1311,7 +1312,7 @@ local AugmentData = {
 	},
 	["AUG-BLESSED-SUPPORT"] = {
 		name = "Blessed Support",
-		icon = "rbxassetid://90655134940318",
+		icon = "rbxassetid://133861488584263",
 		description = "Also applies Blessed to the target of a healing or support skill. Increases MP cost by 35%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
@@ -1329,7 +1330,7 @@ local AugmentData = {
 	},
 	["AUG-ENLIGHTEN-SUPPORT"] = {
 		name = "Enlighten Support",
-		icon = "rbxassetid://97816640445835",
+		icon = "rbxassetid://102522401893061",
 		description = "Also applies Enlightened to the target of a healing or support skill. Increases MP cost by 30%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
@@ -1347,7 +1348,7 @@ local AugmentData = {
 	},
 	["AUG-RUSH-SUPPORT"] = {
 		name = "Rush Support",
-		icon = "rbxassetid://95417048095776",
+		icon = "rbxassetid://84538756367133",
 		description = "Also applies Rush to the target of a healing or support skill. Increases MP cost by 20%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
@@ -1365,7 +1366,7 @@ local AugmentData = {
 	},
 	["AUG-FRENZY-SUPPORT"] = {
 		name = "Frenzy Support",
-		icon = "rbxassetid://135835164768504",
+		icon = "rbxassetid://121979174690992",
 		description = "Also applies Frenzy to the target of a healing or support skill. Increases MP cost by 35%.",
 		family = "Buff Delivery",
 		requiredSkillTags = {"Support OR Healing"},
@@ -1383,6 +1384,7 @@ local AugmentData = {
 	},
 	["AUG-BURNING-SUPPORT"] = {
 		name = "Burning Support",
+		icon = "rbxassetid://84838582899309",
 		description = "Adds a burn effect to fire damage skills. Increases MP cost by 15%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -1402,7 +1404,7 @@ local AugmentData = {
 	},
 	["AUG-CONFUSING-SUPPORT"] = {
 		name = "Confusing Support",
-		icon = "rbxassetid://130662695602942",
+		icon = "rbxassetid://138004849470541",
 		description = "Adds a confuse effect to damage skills, causing backlash damage when the target attacks. Increases MP cost by 30%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -1421,7 +1423,7 @@ local AugmentData = {
 	},
 	["AUG-PINNING-SUPPORT"] = {
 		name = "Pinning Support",
-		icon = "rbxassetid://124427022493144",
+		icon = "rbxassetid://87910134228718",
 		description = "Pins the target in place for 1 turn after dealing damage. Increases MP cost by 25%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -1440,7 +1442,7 @@ local AugmentData = {
 	},
 	["AUG-BREAK-SUPPORT"] = {
 		name = "Break Support",
-		icon = "rbxassetid://79363291218191",
+		icon = "rbxassetid://79840407264105",
 		description = "Applies Break on hit, disabling the target's passive abilities. Increases MP cost by 20%.",
 		family = "Status Delivery",
 		requiredSkillTags = {"Direct Damage"},
@@ -1479,7 +1481,7 @@ local AugmentData = {
 	},
 	["AUG-OVERHEALING-SHIELD"] = {
 		name = "Overhealing Shield",
-		icon = "rbxassetid://123474619046454",
+		icon = "rbxassetid://89847199461290",
 		description = "Converts excess healing beyond max HP into a temporary barrier (up to 20% max HP). Increases MP cost by 20%.",
 		family = "Recovery",
 		requiredSkillTags = {"Healing"},
@@ -1497,7 +1499,7 @@ local AugmentData = {
 	},
 	["AUG-VITALITY-SURGE"] = {
 		name = "Vitality Surge",
-		icon = "rbxassetid://96005528719713",
+		icon = "rbxassetid://93036619431687",
 		description = "Recovers 5% of the caster's max HP on hit (flat, not damage-based). Slightly reduces weapon damage scaling.",
 		family = "Recovery",
 		requiredSkillTags = {"Direct Damage"},
@@ -1516,7 +1518,7 @@ local AugmentData = {
 	},
 	["AUG-SIPHON-BARRIER"] = {
 		name = "Siphon Barrier",
-		icon = "rbxassetid://133591554198499",
+		icon = "rbxassetid://79323523658453",
 		description = "Recovers MP equal to 20% of any barrier or shield removed from the target. Slot cost only.",
 		family = "Recovery",
 		requiredSkillTags = {"Direct Damage"},
@@ -1534,7 +1536,7 @@ local AugmentData = {
 	},
 	["AUG-TOXIC-DEATH"] = {
 		name = "Toxic Death",
-		icon = "rbxassetid://107175500266774",
+		icon = "rbxassetid://112020618135009",
 		description = "When the skill kills an enemy, applies Poison to all enemies within 2 tiles. Slot cost only.",
 		family = "Death Explosion",
 		requiredSkillTags = {"Direct Damage"},
@@ -1553,7 +1555,7 @@ local AugmentData = {
 	},
 	["AUG-SHATTERING-DEATH"] = {
 		name = "Shattering Death",
-		icon = "rbxassetid://97890533597846",
+		icon = "rbxassetid://105416326287208",
 		description = "When the skill kills an enemy, reduces physical defense of all enemies within 2 tiles by 20%. Slot cost only.",
 		family = "Death Explosion",
 		requiredSkillTags = {"Direct Damage"},
@@ -1572,7 +1574,7 @@ local AugmentData = {
 	},
 	["AUG-TERRIFYING-DEATH"] = {
 		name = "Terrifying Death",
-		icon = "rbxassetid://84579087058408",
+		icon = "rbxassetid://130092335472446",
 		description = "When the skill kills an enemy, pushes all enemies within 3 tiles away from the death location. Slot cost only.",
 		family = "Death Explosion",
 		requiredSkillTags = {"Direct Damage"},
@@ -1592,7 +1594,7 @@ local AugmentData = {
 	},
 	["AUG-MASS-PURGE"] = {
 		name = "Mass Purge",
-		icon = "rbxassetid://103270816340908",
+		icon = "rbxassetid://138970353392869",
 		description = "Removes 1 buff from each enemy hit by the skill. Increases MP cost by 30%.",
 		family = "Purge",
 		requiredSkillTags = {"Direct Damage"},
@@ -1613,7 +1615,7 @@ local AugmentData = {
 	},
 	["AUG-DEEP-PURGE"] = {
 		name = "Deep Purge",
-		icon = "rbxassetid://124671721879340",
+		icon = "rbxassetid://123729646532862",
 		description = "Removes up to 2 buffs from a single target on hit. Increases MP cost by 35%.",
 		family = "Purge",
 		requiredSkillTags = {"Direct Damage"},
@@ -1634,7 +1636,7 @@ local AugmentData = {
 	},
 	["AUG-SELF-CLEANSE"] = {
 		name = "Self Cleanse",
-		icon = "rbxassetid://116500387045026",
+		icon = "rbxassetid://134382598439991",
 		description = "Removes 1 debuff from the caster after the skill resolves. Increases MP cost by 25%.",
 		family = "Purge",
 		requiredSkillTags = {"Direct Damage OR Support"},
@@ -1651,7 +1653,7 @@ local AugmentData = {
 	},
 	["AUG-LAUNCHING-STRIKE"] = {
 		name = "Launching Strike",
-		icon = "rbxassetid://135820855403657",
+		icon = "rbxassetid://96175937166616",
 		description = "Launches the target 1 elevation tier upward on hit. Increases MP cost by 20%.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
@@ -1671,7 +1673,7 @@ local AugmentData = {
 	},
 	["AUG-SCATTER-STRIKE"] = {
 		name = "Scatter Strike",
-		icon = "rbxassetid://126871220353037",
+		icon = "rbxassetid://119185448337387",
 		description = "Scatters all hit targets 1 tile away from the impact center. Increases MP cost by 25%.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
@@ -1692,7 +1694,7 @@ local AugmentData = {
 	},
 	["AUG-VORTEX-STRIKE"] = {
 		name = "Vortex Strike",
-		icon = "rbxassetid://117180572181930",
+		icon = "rbxassetid://82512744259803",
 		description = "Pulls all hit targets 1 tile toward the impact center. Increases MP cost by 25%.",
 		family = "Displacement",
 		requiredSkillTags = {"Direct Damage"},
@@ -1713,7 +1715,7 @@ local AugmentData = {
 	},
 	["AUG-CHAIN-KILL"] = {
 		name = "Chain Kill",
-		icon = "rbxassetid://117204960994138",
+		icon = "rbxassetid://112692031205571",
 		description = "When the skill kills an enemy, immediately repeat the skill on a different target for free (one chain max). Reduces weapon damage by 30%.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
@@ -1736,7 +1738,7 @@ local AugmentData = {
 	},
 	["AUG-KILL-MOMENTUM-MP"] = {
 		name = "Triumphant Recovery",
-		icon = "rbxassetid://98706629172794",
+		icon = "rbxassetid://139889783802684",
 		description = "Recovers 30% of the skill's MP cost when it kills an enemy. Slot cost only.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
@@ -1755,7 +1757,7 @@ local AugmentData = {
 	},
 	["AUG-OVERKILL-SPLASH"] = {
 		name = "Overkill Splash",
-		icon = "rbxassetid://98854934137250",
+		icon = "rbxassetid://77244831882348",
 		description = "When the skill overkills an enemy, splashes excess damage to a nearby foe (capped at 50%). Slot cost only.",
 		family = "Kill Trigger",
 		requiredSkillTags = {"Direct Damage"},
@@ -1778,7 +1780,7 @@ local AugmentData = {
 	},
 	["AUG-ELECTRIC-FIELD"] = {
 		name = "Electric Field",
-		icon = "rbxassetid://96680756424008",
+		icon = "rbxassetid://121653300825625",
 		description = "Creates an electric field on the target's tile and adjacent tiles that damages units ending their turn there. Increases MP cost by 25%.",
 		family = "Terrain Effect",
 		requiredSkillTags = {"Direct Damage"},
@@ -1798,7 +1800,7 @@ local AugmentData = {
 	},
 	["AUG-DARKENED-GROUND"] = {
 		name = "Darkened Ground",
-		icon = "rbxassetid://84801723906540",
+		icon = "rbxassetid://76994764111228",
 		description = "Creates darkened ground that reduces healing received by units standing on it by 20%. Increases MP cost by 20%.",
 		family = "Terrain Effect",
 		requiredSkillTags = {"Direct Damage"},
@@ -1817,7 +1819,7 @@ local AugmentData = {
 	},
 	["AUG-HOLY-GROUND"] = {
 		name = "Holy Ground",
-		icon = "rbxassetid://106120794465956",
+		icon = "rbxassetid://127847406428578",
 		description = "Creates holy ground that heals allies for 5% max HP each turn and damages undead. Increases MP cost by 30%.",
 		family = "Terrain Effect",
 		requiredSkillTags = {"Direct Damage OR Support OR Healing"},
@@ -1837,7 +1839,7 @@ local AugmentData = {
 	},
 	["AUG-PIERCING-SHOT"] = {
 		name = "Piercing Shot",
-		icon = "rbxassetid://96758876809100",
+		icon = "rbxassetid://88028583234883",
 		description = "Projectile pierces through the target, hitting one enemy directly behind for 60% damage. Increases MP cost by 20%.",
 		family = "Pattern",
 		requiredSkillTags = {"Direct Damage"},
@@ -1860,7 +1862,7 @@ local AugmentData = {
 	},
 	["AUG-BOUNCE-SHOT"] = {
 		name = "Bounce Shot",
-		icon = "rbxassetid://70421496134035",
+		icon = "rbxassetid://92100340320384",
 		description = "Projectile bounces to one additional enemy near the target for 50% damage. Increases MP cost by 20%.",
 		family = "Pattern",
 		requiredSkillTags = {"Direct Damage"},
@@ -1883,7 +1885,7 @@ local AugmentData = {
 	},
 	["AUG-WIDE-ARC"] = {
 		name = "Wide Arc",
-		icon = "rbxassetid://90943294301497",
+		icon = "rbxassetid://96715068382370",
 		description = "Also hits enemies adjacent to both the caster and target for 40% damage. Increases MP cost by 20%.",
 		family = "Pattern",
 		requiredSkillTags = {"Direct Damage"},
@@ -1906,7 +1908,7 @@ local AugmentData = {
 	},
 	["AUG-SOUL-ECHO"] = {
 		name = "Soul Echo",
-		icon = "rbxassetid://134215808899802",
+		icon = "rbxassetid://112616050245876",
 		description = "When the skill kills an enemy, summons a Soul Echo that detonates next turn for 30% of the kill damage as dark AOE. Slot cost only.",
 		family = "Summoning",
 		requiredSkillTags = {"Direct Damage"},
@@ -1927,7 +1929,7 @@ local AugmentData = {
 	},
 	["AUG-DECOY-SPAWN"] = {
 		name = "Decoy Spawn",
-		icon = "rbxassetid://114875070276579",
+		icon = "rbxassetid://124370861303687",
 		description = "Spawns a decoy next to the caster after the skill resolves, drawing enemy attention. Increases MP cost by 30%.",
 		family = "Summoning",
 		requiredSkillTags = {"Direct Damage"},
@@ -1946,7 +1948,7 @@ local AugmentData = {
 	},
 	["AUG-TURRET-SPAWN"] = {
 		name = "Turret Spawn",
-		icon = "rbxassetid://79173116747459",
+		icon = "rbxassetid://139095107886587",
 		description = "Spawns a turret next to the caster after the skill resolves that attacks nearby enemies. Increases MP cost by 50%.",
 		family = "Summoning",
 		requiredSkillTags = {"Direct Damage"},

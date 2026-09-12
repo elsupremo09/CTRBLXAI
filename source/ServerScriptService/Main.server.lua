@@ -1446,6 +1446,51 @@ BattleEvents.RequestAllocateStat.OnServerInvoke = function(player, unitId, stat)
 	}
 end
 
+-- GetUnitFullStats: returns complete stat breakdown for Info tab
+BattleEvents.GetUnitFullStats.OnServerInvoke = function(player, unitId)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+
+	-- Race info
+	local raceEntry = unit.raceId and RaceData and RaceData.GetRace(unit.raceId) or nil
+	-- Doctrine info
+	local docEntry = unit.doctrineId and DoctrineData[unit.doctrineId] or nil
+
+	return {
+		ok = true,
+		unitId = unit.id,
+		name = unit.name,
+		level = unit.level or 1,
+		-- Primary stats
+		baseStats = {
+			STR = unit.baseStats.STR, AGI = unit.baseStats.AGI,
+			INT = unit.baseStats.INT, VIT = unit.baseStats.VIT,
+			DEX = unit.baseStats.DEX, LUK = unit.baseStats.LUK,
+		},
+		effectiveStats = {
+			STR = unit.effectiveStats.STR, AGI = unit.effectiveStats.AGI,
+			INT = unit.effectiveStats.INT, VIT = unit.effectiveStats.VIT,
+			DEX = unit.effectiveStats.DEX, LUK = unit.effectiveStats.LUK,
+		},
+		derivedStats = unit.derivedStats or {},
+		statAllocation = unit.statAllocation or {},
+		unallocatedPoints = getUnallocatedPoints(unit),
+		-- Resources
+		currentHp = unit.currentHp, maxHp = unit.maxHp,
+		currentMp = unit.currentMp, maxMp = unit.maxMp,
+		-- Race
+		raceId = unit.raceId,
+		raceName = raceEntry and raceEntry.name or nil,
+		racePassiveName = raceEntry and raceEntry.passiveName or nil,
+		racePassiveEffect = raceEntry and raceEntry.passiveEffect or nil,
+		-- Doctrine
+		doctrineId = unit.doctrineId,
+		doctrineName = docEntry and docEntry.name or nil,
+		doctrinePassiveName = docEntry and docEntry.passiveName or nil,
+		doctrinePassiveEffect = docEntry and docEntry.passiveEffect or nil,
+	}
+end
+
 -- GetEquipmentComparison: authoritative before/after deltas for equipping an item
 BattleEvents.GetEquipmentComparison.OnServerInvoke = function(player, unitId, instanceId)
 	local unit = playerUnits[unitId]

@@ -90,7 +90,8 @@ local FUNCTION_NAMES = {
 	"RequestAllocateStat",
 	"GetEquipmentComparison",
 	"GetDoctrineComparison",
-	-- Slice 4G.4: Consumable management
+	"GetUnitFullStats",
+
 	"RequestEquipConsumable",
 	"RequestUnequipConsumable",
 }

@@ -17,7 +17,7 @@ local BattleEvents = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 local LoadoutScreen = {}
 
 local screenGui, rootFrame
-local unitHeaderPanel, equippedPanel, inventoryPanel
+local unitHeaderPanel, equippedPanel, inventoryPanel, statPanel
 local skillsPanel      -- left column for skills tab
 local infoPanel        -- left column for info tab  
 local currentTab = "EQUIPMENT" 
@@ -80,7 +80,7 @@ local BONUS_STAT_ORDER = {
 local buildInventory
 local openItemDetail, closeDetail
 local buildSoloDetailContent, buildComparisonContent
-local switchTab, buildSkillsContent, buildInfoContent
+local switchTab, buildSkillsContent, buildInfoContent, buildStatPanel
 local buildSkillLoadout
 local openSkillCardDetail, openAugmentCardDetail
 local openSkillSlotPicker, openAugmentSlotPicker
@@ -795,6 +795,7 @@ local function buildItemGrid(parent)
 	cellW = math.clamp(cellW, MIN_CELL, MAX_CELL)
 	local cellH = math.floor(cellW * ASPECT)
 	grid.CellSize = UDim2.new(0, cellW, 0, cellH)
+	local iconFrame = math.max(3, math.round(cellW * 0.05))
 
 	local items = MockData.GetFilteredItems(currentFilter)
 
@@ -911,11 +912,12 @@ local function buildItemGrid(parent)
 		-- Icon (center) — use uploaded image if available, else text
 		if item.icon and string.find(item.icon, "rbxassetid://") then
 			local ico = Instance.new("ImageLabel")
-			ico.Size = UDim2.new(1, -4, 1, -4)
-			ico.Position = UDim2.new(0, 2, 0, 2)
+			local icoSidePx = cellW - iconFrame * 2
+			ico.Size = UDim2.new(1, -iconFrame * 2, 0, icoSidePx)
+			ico.Position = UDim2.fromOffset(iconFrame, iconFrame)
 			ico.BackgroundTransparency = 1
 			ico.Image = item.icon
-			ico.ScaleType = Enum.ScaleType.Crop
+			ico.ScaleType = Enum.ScaleType.Fit
 			ico.Parent = card
 		else
 			makeLabel(card, { Text = item.icon or "?", Size = UDim2.new(1, 0, 0, 28),
@@ -2123,6 +2125,7 @@ switchTab = function()
 	-- Hide all tab-specific panels
 	if inventoryPanel then inventoryPanel.Visible = false end
 	if equippedPanel then equippedPanel.Visible = false end
+	if statPanel then statPanel.Visible = false end
 	if skillsPanel then skillsPanel.Visible = false end
 	if infoPanel then infoPanel.Visible = false end
 
@@ -2133,14 +2136,26 @@ switchTab = function()
 	if currentTab == "EQUIPMENT" then
 		if inventoryPanel then inventoryPanel.Visible = true end
 		if equippedPanel then equippedPanel.Visible = true end
+		-- Reclaim stat panel space
+		local eqTop = 60 + (Theme.FullScreen.PanelGap or 2)
+		if equippedPanel then equippedPanel.Size = UDim2.new(1, 0, 1, -eqTop); equippedPanel.Position = UDim2.new(0, 0, 0, eqTop) end
 		buildInventory()
 		buildEquippedLoadout()
 	elseif currentTab == "SKILLS" then
 		if skillsPanel then skillsPanel.Visible = true end
 		if equippedPanel then equippedPanel.Visible = true end
+		-- Reclaim stat panel space
+		local eqTop = 60 + (Theme.FullScreen.PanelGap or 2)
+		if equippedPanel then equippedPanel.Size = UDim2.new(1, 0, 1, -eqTop); equippedPanel.Position = UDim2.new(0, 0, 0, eqTop) end
 		buildSkillsContent()
 	elseif currentTab == "INFO" then
 		if infoPanel then infoPanel.Visible = true end
+		if statPanel then statPanel.Visible = true end
+		-- Push equipped panel below stat panel
+		local gap = Theme.FullScreen.PanelGap or 2
+		local topUsed = 60 + gap + 160 + gap
+		if equippedPanel then equippedPanel.Size = UDim2.new(1, 0, 1, -topUsed); equippedPanel.Position = UDim2.new(0, 0, 0, topUsed) end
+		buildStatPanel()
 		buildInfoContent()
 	end
 
@@ -2780,6 +2795,7 @@ buildSkillsContent = function()
 	skCellW = math.clamp(skCellW, SK_MIN_CELL, SK_MAX_CELL)
 	local skCellH = math.floor(skCellW * SK_ASPECT)
 	grid.CellSize = UDim2.new(0, skCellW, 0, skCellH)
+	local skIconFrame = math.max(3, math.round(skCellW * 0.05))
 
 	local layoutOrder = 0
 
@@ -2825,11 +2841,12 @@ buildSkillsContent = function()
 		local skDef = sk.def or MockData.GetSkillDef(sk.id)
 		if skDef and skDef.icon and skDef.icon ~= "" then
 			local ico = Instance.new("ImageLabel")
-			ico.Size = UDim2.new(1, -4, 1, -4)
-			ico.Position = UDim2.new(0, 2, 0, 2)
+			local skIcoSidePx = skCellW - skIconFrame * 2
+			ico.Size = UDim2.new(1, -skIconFrame * 2, 0, skIcoSidePx)
+			ico.Position = UDim2.fromOffset(skIconFrame, skIconFrame)
 			ico.BackgroundTransparency = 1
 			ico.Image = skDef.icon
-			ico.ScaleType = Enum.ScaleType.Crop
+			ico.ScaleType = Enum.ScaleType.Fit
 			ico.Parent = card
 		else
 			makeLabel(card, { Text = STYPE_ICONS[stype] or "[*]",
@@ -2927,11 +2944,12 @@ buildSkillsContent = function()
 		local augDef = aug.def or MockData.GetAugmentDef(aug.id)
 		if augDef and augDef.icon and augDef.icon ~= "" then
 			local ico = Instance.new("ImageLabel")
-			ico.Size = UDim2.new(1, -4, 1, -4)
-			ico.Position = UDim2.new(0, 2, 0, 2)
+			local augIcoSidePx = skCellW - skIconFrame * 2
+			ico.Size = UDim2.new(1, -skIconFrame * 2, 0, augIcoSidePx)
+			ico.Position = UDim2.fromOffset(skIconFrame, skIconFrame)
 			ico.BackgroundTransparency = 1
 			ico.Image = augDef.icon
-			ico.ScaleType = Enum.ScaleType.Crop
+			ico.ScaleType = Enum.ScaleType.Fit
 			ico.Parent = card
 		else
 			makeLabel(card, { Text = "[o]",
@@ -4465,26 +4483,300 @@ openEquippedAugmentDetail = function(slotNum, augSlotNum, augmentId)
 end
 
 --------------------------------------------------
+--------------------------------------------------
+-- STAT PANEL (right column, below unit header — always visible)
+--------------------------------------------------
+
+buildStatPanel = function()
+	if not statPanel then return end
+	clearChildren(statPanel)
+	pad(statPanel, 6, 8, 8, 6)
+
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	-- Fetch stats from server
+	local ok, statsData = pcall(function()
+		return BattleEvents.GetUnitFullStats:InvokeServer(unit.id)
+	end)
+	if not ok or not statsData or not statsData.ok then
+		statsData = { baseStats = {}, effectiveStats = {}, unallocatedPoints = 0 }
+	end
+
+	local layout = Instance.new("UIListLayout", statPanel)
+	layout.Padding = UDim.new(0, 2)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	-- Header with allocation points
+	local pts = statsData.unallocatedPoints or 0
+	local hdrText = pts > 0 and ("STATS  [" .. pts .. " pts]") or "STATS"
+	local hdr = Instance.new("TextLabel")
+	hdr.Size = UDim2.new(1, 0, 0, 16); hdr.BackgroundTransparency = 0.3
+	hdr.BackgroundColor3 = Theme.Colors.PanelRaised; hdr.BorderSizePixel = 0
+	hdr.Font = Theme.Font.PrimaryBold; hdr.TextSize = Theme.Text.Small()
+	hdr.TextColor3 = pts > 0 and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+	hdr.TextXAlignment = Enum.TextXAlignment.Left
+	hdr.Text = "  " .. hdrText; hdr.LayoutOrder = 0; hdr.Parent = statPanel
+
+	local STAT_ORDER = {"STR", "AGI", "INT", "VIT", "DEX", "LUK"}
+	local base = statsData.baseStats or {}
+	local eff = statsData.effectiveStats or {}
+
+	for si, stat in ipairs(STAT_ORDER) do
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 20); row.BackgroundTransparency = 1
+		row.BorderSizePixel = 0; row.LayoutOrder = si; row.Parent = statPanel
+
+		local statLbl = Instance.new("TextLabel")
+		statLbl.Size = UDim2.new(0, 36, 1, 0); statLbl.BackgroundTransparency = 1
+		statLbl.Font = Theme.Font.PrimaryBold; statLbl.TextSize = Theme.Text.Small()
+		statLbl.TextColor3 = Theme.Colors.TextPrimary
+		statLbl.TextXAlignment = Enum.TextXAlignment.Left
+		statLbl.Text = " " .. stat; statLbl.Parent = row
+
+		local baseVal = base[stat] or 0
+		local effVal = eff[stat] or 0
+		local bonus = effVal - baseVal
+		local bonusStr = bonus > 0 and (" (+" .. bonus .. ")") or (bonus < 0 and (" (" .. bonus .. ")") or "")
+
+		local valLbl = Instance.new("TextLabel")
+		valLbl.Size = UDim2.new(1, -72, 1, 0); valLbl.Position = UDim2.fromOffset(36, 0)
+		valLbl.BackgroundTransparency = 1
+		valLbl.Font = Theme.Font.Mono; valLbl.TextSize = Theme.Text.Small()
+		valLbl.TextColor3 = Theme.Colors.TextPrimary
+		valLbl.TextXAlignment = Enum.TextXAlignment.Left
+		valLbl.Text = tostring(baseVal) .. bonusStr; valLbl.Parent = row
+
+		if pts > 0 then
+			local btn = Theme.MakeButton(row, "+", "Primary", nil, {
+				size = UDim2.fromOffset(24, 18),
+				position = UDim2.new(1, -28, 0, 1),
+			})
+			btn.MouseButton1Click:Connect(function()
+				local result = BattleEvents.RequestAllocateStat:InvokeServer(unit.id, stat)
+				if result and result.ok then
+					buildStatPanel() -- refresh after allocation
+				end
+			end)
+		end
+	end
+end
+
 -- INFO TAB CONTENT (placeholder)
 --------------------------------------------------
 
 buildInfoContent = function()
 	if not infoPanel then return end
 	clearChildren(infoPanel)
-	pad(infoPanel, 10, 12, 12, 10)
 
-	makeLabel(infoPanel, { Text = "INFO",
-		Size = UDim2.new(1, 0, 0, 18),
-		Position = UDim2.new(0, 0, 0, 0),
-		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Heading(),
-		TextColor3 = Theme.Colors.TextGold })
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
 
-	makeLabel(infoPanel, { Text = "Unit information, stats, race, and doctrine details will appear here.",
-		Size = UDim2.new(1, 0, 0, 40),
-		Position = UDim2.new(0, 0, 0, 24),
-		TextSize = Theme.Text.Body(),
-		TextColor3 = Theme.Colors.TextSecondary,
-		TextWrapped = true })
+	-- Fetch full stats from server
+	local ok2, statsData = pcall(function()
+		return BattleEvents.GetUnitFullStats:InvokeServer(unit.id)
+	end)
+	if not ok2 or not statsData or not statsData.ok then
+		makeLabel(infoPanel, { Text = "Failed to load unit stats.",
+			Size = UDim2.new(1, 0, 0, 30), TextColor3 = Theme.Colors.Danger,
+			TextSize = Theme.Text.Body() })
+		return
+	end
+
+	-- =============================================
+	-- LEFT COLUMN: Identity + Passives (scrollable)
+	-- =============================================
+	local leftCol = Instance.new("ScrollingFrame")
+	leftCol.Name = "InfoLeft"
+	leftCol.Size = UDim2.new(0.50, -2, 1, 0)
+	leftCol.Position = UDim2.new(0, 0, 0, 0)
+	leftCol.BackgroundTransparency = 1; leftCol.BorderSizePixel = 0
+	leftCol.ScrollBarThickness = 3
+	leftCol.ScrollBarImageColor3 = Theme.Colors.Surface
+	leftCol.CanvasSize = UDim2.new(0, 0, 0, 0)
+	leftCol.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	leftCol.Parent = infoPanel
+
+	local leftLayout = Instance.new("UIListLayout", leftCol)
+	leftLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	leftLayout.Padding = UDim.new(0, 4)
+	local leftPad = Instance.new("UIPadding", leftCol)
+	leftPad.PaddingTop = UDim.new(0, 8); leftPad.PaddingLeft = UDim.new(0, 8)
+	leftPad.PaddingRight = UDim.new(0, 4); leftPad.PaddingBottom = UDim.new(0, 12)
+
+	local lOrder = 0
+	local function nextL() lOrder = lOrder + 1; return lOrder end
+
+	local function sectionHeader(parent, text, orderFn)
+		local hdr = Instance.new("TextLabel")
+		hdr.Size = UDim2.new(1, 0, 0, 20)
+		hdr.BackgroundColor3 = Theme.Colors.PanelRaised
+		hdr.BackgroundTransparency = 0.3
+		hdr.Font = Theme.Font.PrimaryBold; hdr.TextSize = Theme.Text.Body()
+		hdr.TextColor3 = Theme.Colors.TextSecondary
+		hdr.TextXAlignment = Enum.TextXAlignment.Left
+		hdr.Text = "  " .. text; hdr.BorderSizePixel = 0
+		hdr.LayoutOrder = orderFn(); hdr.Parent = parent
+		Instance.new("UIPadding", hdr).PaddingLeft = UDim.new(0, 4)
+	end
+
+	local function infoRow(parent, label, value, color, orderFn)
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 16)
+		row.BackgroundTransparency = 1; row.BorderSizePixel = 0
+		row.LayoutOrder = orderFn(); row.Parent = parent
+		local lbl = Instance.new("TextLabel")
+		lbl.Size = UDim2.new(0.55, 0, 1, 0)
+		lbl.BackgroundTransparency = 1
+		lbl.Font = Theme.Font.Primary; lbl.TextSize = Theme.Text.Small()
+		lbl.TextColor3 = Theme.Colors.TextSecondary
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.Text = "  " .. label; lbl.Parent = row
+		local val = Instance.new("TextLabel")
+		val.Size = UDim2.new(0.45, 0, 1, 0)
+		val.Position = UDim2.new(0.55, 0, 0, 0)
+		val.BackgroundTransparency = 1
+		val.Font = Theme.Font.Mono; val.TextSize = Theme.Text.Small()
+		val.TextColor3 = color or Theme.Colors.TextPrimary
+		val.TextXAlignment = Enum.TextXAlignment.Left
+		val.Text = tostring(value); val.Parent = row
+	end
+
+	local function descLabel(parent, text, orderFn)
+		local d = Instance.new("TextLabel")
+		d.Size = UDim2.new(1, 0, 0, 28); d.BackgroundTransparency = 1
+		d.Font = Theme.Font.Primary; d.TextSize = Theme.Text.Small()
+		d.TextColor3 = Theme.Colors.TextSecondary
+		d.TextXAlignment = Enum.TextXAlignment.Left; d.TextWrapped = true
+		d.Text = "  " .. text; d.BorderSizePixel = 0
+		d.LayoutOrder = orderFn(); d.Parent = parent
+	end
+
+	-- Unit identity row
+	local identityRow = Instance.new("Frame")
+	identityRow.Size = UDim2.new(1, 0, 0, 130)
+	identityRow.BackgroundTransparency = 1; identityRow.BorderSizePixel = 0
+	identityRow.LayoutOrder = nextL(); identityRow.Parent = leftCol
+
+	local portrait = Instance.new("Frame")
+	portrait.Size = UDim2.fromOffset(120, 120)
+	portrait.Position = UDim2.fromOffset(0, 4)
+	portrait.BackgroundColor3 = Theme.Colors.Player
+	portrait.BackgroundTransparency = 0.2; portrait.BorderSizePixel = 0
+	portrait.Parent = identityRow
+	Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.md
+	local pStroke = Instance.new("UIStroke", portrait)
+	pStroke.Color = Theme.Colors.TextGold; pStroke.Thickness = 2
+	local pLabel = Instance.new("TextLabel")
+	pLabel.Size = UDim2.fromScale(1, 1); pLabel.BackgroundTransparency = 1
+	pLabel.Font = Theme.Font.PrimaryBold; pLabel.TextSize = 40
+	pLabel.TextColor3 = Theme.Colors.TextPrimary
+	pLabel.Text = string.sub(statsData.name or "?", 1, 2)
+	pLabel.Parent = portrait
+	local lvBadge = Instance.new("Frame")
+	lvBadge.Size = UDim2.fromOffset(28, 16); lvBadge.Position = UDim2.fromOffset(0, 0)
+	lvBadge.BackgroundColor3 = Theme.Colors.BadgeBg; lvBadge.BorderSizePixel = 0
+	lvBadge.ZIndex = 3; lvBadge.Parent = portrait
+	Instance.new("UICorner", lvBadge).CornerRadius = UDim.new(0, 3)
+	local lvLbl = Instance.new("TextLabel")
+	lvLbl.Size = UDim2.fromScale(1, 1); lvLbl.BackgroundTransparency = 1
+	lvLbl.Font = Theme.Font.PrimaryBold; lvLbl.TextSize = Theme.Text.Badge()
+	lvLbl.TextColor3 = Theme.Colors.TextPrimary; lvLbl.ZIndex = 3
+	lvLbl.Text = "Lv" .. (statsData.level or 1); lvLbl.Parent = lvBadge
+
+	local textX = 130
+	local function identityLabel(text, yPos, font, size, color)
+		local l = Instance.new("TextLabel")
+		l.Size = UDim2.new(1, -textX, 0, 18)
+		l.Position = UDim2.fromOffset(textX, yPos)
+		l.BackgroundTransparency = 1
+		l.Font = font or Theme.Font.Primary; l.TextSize = size or Theme.Text.Body()
+		l.TextColor3 = color or Theme.Colors.TextPrimary
+		l.TextXAlignment = Enum.TextXAlignment.Left
+		l.Text = text; l.Parent = identityRow
+	end
+
+	identityLabel(statsData.name or "Unit", 4, Theme.Font.PrimaryBold, Theme.Text.Heading(), Theme.Colors.Player)
+	identityLabel(statsData.raceName or "Unknown Race", 26, nil, Theme.Text.Body(), Theme.Colors.TextSecondary)
+	identityLabel(statsData.doctrineName or "No Doctrine", 44, nil, Theme.Text.Body(), Theme.Colors.Info)
+	identityLabel(string.format("HP %d / %d    MP %d / %d",
+		statsData.currentHp or 0, statsData.maxHp or 0,
+		statsData.currentMp or 0, statsData.maxMp or 0),
+		66, Theme.Font.Mono, Theme.Text.Body(), Theme.Colors.TextPrimary)
+
+	-- Race passive
+	if statsData.racePassiveName then
+		sectionHeader(leftCol, "RACE PASSIVE", nextL)
+		infoRow(leftCol, statsData.racePassiveName, "", Theme.Colors.RarityEpic, nextL)
+		if statsData.racePassiveEffect then descLabel(leftCol, statsData.racePassiveEffect, nextL) end
+	end
+
+	-- Doctrine passive
+	if statsData.doctrinePassiveName then
+		sectionHeader(leftCol, "DOCTRINE PASSIVE", nextL)
+		infoRow(leftCol, statsData.doctrinePassiveName, "", Theme.Colors.Info, nextL)
+		if statsData.doctrinePassiveEffect then descLabel(leftCol, statsData.doctrinePassiveEffect, nextL) end
+	end
+
+	-- =============================================
+	-- RIGHT COLUMN: Derived Stats (scrollable)
+	-- =============================================
+	local rightCol = Instance.new("ScrollingFrame")
+	rightCol.Name = "InfoRight"
+	rightCol.Size = UDim2.new(0.50, -2, 1, 0)
+	rightCol.Position = UDim2.new(0.50, 2, 0, 0)
+	rightCol.BackgroundTransparency = 1; rightCol.BorderSizePixel = 0
+	rightCol.ScrollBarThickness = 3
+	rightCol.ScrollBarImageColor3 = Theme.Colors.Surface
+	rightCol.CanvasSize = UDim2.new(0, 0, 0, 0)
+	rightCol.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	rightCol.Parent = infoPanel
+
+	local rightLayout = Instance.new("UIListLayout", rightCol)
+	rightLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	rightLayout.Padding = UDim.new(0, 3)
+	local rightPad = Instance.new("UIPadding", rightCol)
+	rightPad.PaddingTop = UDim.new(0, 8); rightPad.PaddingLeft = UDim.new(0, 4)
+	rightPad.PaddingRight = UDim.new(0, 8); rightPad.PaddingBottom = UDim.new(0, 12)
+
+	local rOrder = 0
+	local function nextR() rOrder = rOrder + 1; return rOrder end
+
+	local d = statsData.derivedStats or {}
+
+	sectionHeader(rightCol, "COMBAT", nextR)
+	infoRow(rightCol, "Attack Power", d.attackPower or 0, nil, nextR)
+	infoRow(rightCol, "Effective WT", d.effectiveWt or 0, nil, nextR)
+	infoRow(rightCol, "Precision", string.format("%.1f%%", (d.precision or 0) * 100), nil, nextR)
+	infoRow(rightCol, "Evasiveness", string.format("%.1f%%", (d.evasiveness or 0) * 100), nil, nextR)
+	infoRow(rightCol, "Basic Attack RT", d.basicAttackRt or 0, nil, nextR)
+
+	sectionHeader(rightCol, "DEFENSE", nextR)
+	infoRow(rightCol, "Defense Power", d.defensePower or 0, nil, nextR)
+	infoRow(rightCol, "Debuff Resist", string.format("%.3fx", d.debuffResist or 1), nil, nextR)
+	infoRow(rightCol, "RT Delay Resist", string.format("%.3fx", d.rtDelayResist or 1), nil, nextR)
+	infoRow(rightCol, "Stability", d.stability or 0, nil, nextR)
+
+	sectionHeader(rightCol, "RESOURCES", nextR)
+	infoRow(rightCol, "Max HP", statsData.maxHp or 0, nil, nextR)
+	infoRow(rightCol, "Max MP", statsData.maxMp or 0, nil, nextR)
+	infoRow(rightCol, "MP Regen", d.mpRegen or 0, nil, nextR)
+
+	sectionHeader(rightCol, "MOVEMENT", nextR)
+	infoRow(rightCol, "Movement Range", d.movementRange or 0, nil, nextR)
+	infoRow(rightCol, "Jump", d.jump or 0, nil, nextR)
+	infoRow(rightCol, "Force", d.force or 0, nil, nextR)
+
+	sectionHeader(rightCol, "SKILLS", nextR)
+	infoRow(rightCol, "Skill Potency", string.format("%.3fx", d.skillPotency or 1), nil, nextR)
+	infoRow(rightCol, "Bonus Skill Range", d.bonusSkillRange or 0, nil, nextR)
+	infoRow(rightCol, "Channel Speed", string.format("%.1f%%", (d.channelReduction or 0) * 100), nil, nextR)
+	infoRow(rightCol, "Heal Efficiency", string.format("%.3fx", d.healEfficiency or 1), nil, nextR)
+
+	sectionHeader(rightCol, "OTHER", nextR)
+	infoRow(rightCol, "Discovery Radius", d.discoveryRadius or 0, nil, nextR)
+	infoRow(rightCol, "Unit Fortune", string.format("%.1f%%", (d.unitFortune or 0) * 100), nil, nextR)
+	infoRow(rightCol, "Starting RT", d.startingRt or 0, nil, nextR)
 end
 
 -- SCREEN BUILD
@@ -4519,13 +4811,18 @@ function LoadoutScreen.Show()
 		UDim2.new(1, 0, 0, 60),
 		UDim2.new(0, 0, 0, 0), nil, rightCol)
 
-
-	-- Equipped loadout (below unit header)
+	-- Stat panel (below unit header — primary stats + allocation)
 	local gap = Theme.FullScreen.PanelGap
-	local headerH = 60
+	local statPanelH = 160
+	statPanel = makePanel("StatPanel",
+		UDim2.new(1, 0, 0, statPanelH),
+		UDim2.new(0, 0, 0, 60 + gap), nil, rightCol)
+
+	-- Equipped loadout (below stat panel)
+	local topUsed = 60 + gap + statPanelH + gap
 	equippedPanel = makePanel("EquippedLoadout",
-		UDim2.new(1, 0, 1, -(headerH + gap)),
-		UDim2.new(0, 0, 0, headerH + gap), nil, rightCol)
+		UDim2.new(1, 0, 1, -topUsed),
+		UDim2.new(0, 0, 0, topUsed), nil, rightCol)
 
 	-- LEFT COLUMN: Tab-specific panels (70% width, flush to left/top/bottom edges)
 	-- Equipment tab: inventory
@@ -4558,6 +4855,7 @@ function LoadoutScreen.Refresh()
 	elseif currentTab == "SKILLS" then
 		buildSkillsContent()
 	elseif currentTab == "INFO" then
+		buildStatPanel()
 		buildInfoContent()
 	end
 end
