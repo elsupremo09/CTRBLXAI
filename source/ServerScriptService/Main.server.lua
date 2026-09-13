@@ -33,6 +33,7 @@ local RacePassiveService      = require(Game:WaitForChild("RacePassiveService"))
 local ArmorPassiveService     = require(Game:WaitForChild("ArmorPassiveService"))
 local AugmentEffectService    = require(Game:WaitForChild("AugmentEffectService"))
 local AIService               = require(Game:WaitForChild("AIService"))
+local MapService              = require(Game:WaitForChild("MapService"))
 
 
 local WeaponData = require(
@@ -93,8 +94,8 @@ local BattleEvents = require(
 
 local mapFolder = workspace:WaitForChild("TemplateViewerMap")
 
-local BATTLE_OFFSET_X = 11
-local BATTLE_OFFSET_Y = 6
+local BATTLE_OFFSET_X = 0
+local BATTLE_OFFSET_Y = 0
 
 local function findTilePart(x, y)
 	local templateX = x + BATTLE_OFFSET_X
@@ -123,8 +124,18 @@ end
 -- MAP SETUP
 --------------------------------------------------
 
-local MAP_WIDTH  = 8
-local MAP_HEIGHT = 8
+local generatedMap = MapService.Generate("Plains", "T01", 12345)
+local MAP_WIDTH    = generatedMap.width
+local MAP_HEIGHT   = generatedMap.height
+
+GameConstants.SetGeneratedMap(generatedMap)
+
+-- Deployment positions for unit placement.
+local playerSpawns = generatedMap.deploymentZones.player
+local enemySpawns  = generatedMap.deploymentZones.enemy
+
+print(string.format("[Main] Map generated: %dx%d, %d player spawns, %d enemy spawns",
+	MAP_WIDTH, MAP_HEIGHT, #playerSpawns, #enemySpawns))
 
 CommandService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
 DisplacementService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
@@ -157,6 +168,43 @@ for key, skillDef in pairs(GameConstants.SKILLS) do
 	-- RegisterSkill only stores under skillDef.id. Also store under the alias.
 	if key ~= skillDef.id then
 		CommandService.RegisterSkillAlias(key, skillDef)
+	end
+end
+
+--------------------------------------------------
+-- DOCTRINE SKILL REGISTRATION
+-- Doctrine-exclusive skills (DOC-*) are not in GameConstants.SKILLS.
+-- They need combat definitions so CommandService can resolve them
+-- during PlayerTurnPrompt. Formulas parsed from CTRBLXAI.db.
+-- NOTE: Only the 18 doctrine skills that exist in SkillData are
+-- registered. When new doctrine skills are added to the DB, add
+-- their combat entries here.
+--------------------------------------------------
+
+local doctrineSkillCombatDefs = {
+	["DOC-BERSERKER-01"] = { id = "DOC-BERSERKER-01", name = "Reckless Charge", tags = {"Direct Damage","Physical","Utility"}, targetRules = "Enemy Unit", range = 3, pattern = "Single", mpCost = 4, rtMult = 1.50, channelTime = 0, power = 1.20, isHealing = false, projectileType = "Direct" },
+	["DOC-ARCANIST-01"]  = { id = "DOC-ARCANIST-01", name = "Mana Surge", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 0, rtCost = 60, channelTime = 150, power = 0, isHealing = false },
+	["DOC-RANGER-01"]    = { id = "DOC-RANGER-01", name = "Hunter's Mark", tags = {"Direct Damage","Debuff","Physical"}, targetRules = "Enemy Unit", range = -1, pattern = "Single", mpCost = 4, rtMult = 1.00, channelTime = 0, power = 0.75, isHealing = false },
+	["DOC-VANGUARD-01"]  = { id = "DOC-VANGUARD-01", name = "Hold the Line", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 4, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false },
+	["DOC-TACTICIAN-01"] = { id = "DOC-TACTICIAN-01", name = "Coordinated Advance", tags = {"Buff","Utility"}, targetRules = "Ally Unit", range = 4, pattern = "Single", mpCost = 5, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
+	["DOC-WARLORD-01"]   = { id = "DOC-WARLORD-01", name = "War Cry", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "AOE", mpCost = 6, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
+	["DOC-SHADOWBINDER-01"] = { id = "DOC-SHADOWBINDER-01", name = "Veil of Weakness", tags = {"Debuff","Dark"}, targetRules = "Enemy Unit", range = 3, pattern = "Single", mpCost = 5, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
+	["DOC-SPELLBLADE-01"] = { id = "DOC-SPELLBLADE-01", name = "Arcane Strike", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 4, rtMult = 1.25, channelTime = 0, power = 1.10, isHealing = false },
+	["DOC-ASCETIC-01"]   = { id = "DOC-ASCETIC-01", name = "Meditate", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 0, rtMult = 0.50, channelTime = 0, power = 0, isHealing = false },
+	["DOC-TRICKSTER-01"] = { id = "DOC-TRICKSTER-01", name = "Misdirection", tags = {"Debuff","Utility"}, targetRules = "Enemy Unit", range = 3, pattern = "Single", mpCost = 3, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false },
+	["DOC-THIEF-01"]     = { id = "DOC-THIEF-01", name = "Mug", tags = {"Direct Damage","Physical","Utility"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 2, rtMult = 1.00, channelTime = 0, power = 0.80, isHealing = false },
+	["DOC-DUELIST-01"]   = { id = "DOC-DUELIST-01", name = "Riposte Stance", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 3, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false },
+	["DOC-TWINBLADE-01"] = { id = "DOC-TWINBLADE-01", name = "Crossing Blades", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 4, rtMult = 1.25, channelTime = 0, power = 1.30, isHealing = false },
+	["DOC-TWINBLADE-02"] = { id = "DOC-TWINBLADE-02", name = "Feinting Flurry", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 5, rtMult = 1.50, channelTime = 0, power = 0.60, isHealing = false },
+	["DOC-JUGGERNAUT-01"] = { id = "DOC-JUGGERNAUT-01", name = "Overwhelming Blow", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 6, rtMult = 2.00, channelTime = 0, power = 1.80, isHealing = false },
+	["DOC-CONJURER-01"]  = { id = "DOC-CONJURER-01", name = "Conjure Sentinel", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 3, pattern = "Single", mpCost = 8, rtMult = 1.50, channelTime = 0, power = 0, isHealing = false },
+	["DOC-CONJURER-02"]  = { id = "DOC-CONJURER-02", name = "Conjure Wisp", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 4, pattern = "Single", mpCost = 5, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
+	["DOC-CONJURER-03"]  = { id = "DOC-CONJURER-03", name = "Conjure Mender", tags = {"Summon","Healing"}, targetRules = "Empty Tile", range = 3, pattern = "Single", mpCost = 7, rtMult = 1.25, channelTime = 0, power = 0, isHealing = false },
+}
+
+for docId, docDef in pairs(doctrineSkillCombatDefs) do
+	if not CommandService.GetSkill(docId) then
+		CommandService.RegisterSkill(docDef)
 	end
 end
 
@@ -285,8 +333,8 @@ local hero = UnitSchema.Create({
 	raceId       = "RACE-HUMAN",
 	side         = "Player",
 	controller   = "Player",
-	tileX        = 5,
-	tileY        = 5,
+	tileX        = playerSpawns[1].x,
+	tileY        = playerSpawns[1].y,
 	doctrineId   = "DOC-BERSERKER",
 	skillIds     = { "skill_power_strike", "skill_sweeping_cut" },
 })
@@ -349,8 +397,8 @@ local mage = UnitSchema.Create({
 	raceId       = "RACE-ELF",
 	side         = "Player",
 	controller   = "Player",
-	tileX        = 1,
-	tileY        = 4,
+	tileX        = playerSpawns[2].x,
+	tileY        = playerSpawns[2].y,
 	doctrineId   = "DOC-ARCANIST",
 	skillIds     = { "skill_fire_bolt", "skill_healing_light" },
 })
@@ -363,8 +411,8 @@ local ranger = UnitSchema.Create({
 	raceId       = "RACE-SHADOW",
 	side         = "Player",
 	controller   = "Player",
-	tileX        = 8,
-	tileY        = 5,
+	tileX        = playerSpawns[3].x,
+	tileY        = playerSpawns[3].y,
 	doctrineId   = "DOC-RANGER",
 	skillIds     = { "skill_crippling_shot", "skill_venom_strike" },
 })
@@ -416,8 +464,8 @@ local grunt = UnitSchema.Create({
 	side         = "Enemy",
 	controller   = "AI",
 	aiRole       = "Basic",
-	tileX        = 5,
-	tileY        = 7,
+	tileX        = enemySpawns[1].x,
+	tileY        = enemySpawns[1].y,
 	stats        = { STR = 14, AGI = 10, INT = 6, VIT = 14, DEX = 8, LUK = 6 },
 	skillIds     = { "skill_venom_strike", "skill_crippling_shot" },
 	startingRt   = 420,
@@ -430,8 +478,8 @@ local pyro = UnitSchema.Create({
 	side         = "Enemy",
 	controller   = "AI",
 	aiRole       = "Elite",
-	tileX        = 6,
-	tileY        = 7,
+	tileX        = enemySpawns[2].x,
+	tileY        = enemySpawns[2].y,
 	stats        = { STR = 8, AGI = 12, INT = 16, VIT = 10, DEX = 10, LUK = 8 },
 	skillIds     = { "skill_fire_bolt", "skill_power_strike" },
 	startingRt   = 420,
@@ -444,8 +492,8 @@ local shaman = UnitSchema.Create({
 	side         = "Enemy",
 	controller   = "AI",
 	aiRole       = "Elite",
-	tileX        = 4,
-	tileY        = 8,
+	tileX        = enemySpawns[3].x,
+	tileY        = enemySpawns[3].y,
 	stats        = { STR = 6, AGI = 8, INT = 18, VIT = 14, DEX = 12, LUK = 10 },
 	skillIds     = { "skill_healing_light", "skill_crippling_shot" },
 	startingRt   = 420,
@@ -2554,7 +2602,22 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 
 	-- Build skill data
 	local skillsData = {}
+	-- Build a slot-index-to-augments map from the skill loadout
+	local slotAugments = {}
+	local loadout = unit.skillLoadout or {}
+	-- Slot 1: doctrine augments
+	slotAugments[1] = unit.doctrineAugments or {}
+	-- Slots 2-4: skill card augments
+	for i = 2, 4 do
+		local key = "slot" .. i
+		local slotData = loadout[key]
+		slotAugments[i] = slotData and slotData.augments or {}
+	end
+	slotAugments[5] = {} -- locked slot
+
+	local skillSlotIdx = 0
 	for _, sid in ipairs(unit.skillIds or {}) do
+		skillSlotIdx = skillSlotIdx + 1
 		local skillKey = string.upper(sid):gsub("SKILL_", "SKL-"):gsub("_", "-")
 		local fullData = SkillData[skillKey]
 		local regDef = CommandService.GetSkill(sid)
@@ -2582,6 +2645,22 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 			icon         = fullData and fullData.icon or nil,
 			description  = fullData and fullData.description or nil,
 		})
+		-- Attach augments for this skill slot
+		local augIds = slotAugments[skillSlotIdx] or {}
+		local augList = {}
+		-- Use numeric loop (not ipairs) — augment arrays may be sparse (slot 2 filled, slot 1 empty)
+		for ai = 1, 2 do
+			local augId = augIds[ai]
+			if not augId then continue end
+			local augDef = AugmentData[augId]
+			if augDef then
+				table.insert(augList, { id = augId, name = augDef.name or augId, icon = augDef.icon or nil, description = augDef.description or "" })
+			else
+				table.insert(augList, { id = augId, name = augId, icon = nil, description = "" })
+			end
+		end
+		print(string.format("[DIAG-AUG] %s slot%d augments: %d found | raw=%s", sid, skillSlotIdx, #augList, tostring(#augIds > 0 and augIds or "empty")))
+		skillsData[#skillsData].augments = augList
 		-- Attach estimated raw damage (presentation-only, before defense)
 		local attackPower = unit.derivedStats and unit.derivedStats.attackPower or 0
 		skillsData[#skillsData].estimatedDamage = math.round(attackPower * skillPower)

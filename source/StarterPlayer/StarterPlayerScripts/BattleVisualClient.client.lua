@@ -51,10 +51,10 @@ local CameraController = require(
 local TILE_SIZE = 5
 local TILE_BASE_HEIGHT = 0.6
 local ELEVATION_STEP = 2.5
-local MAP_WIDTH, MAP_HEIGHT = 8, 8
-local MAP_OFFSET_X = -75 + 11 * TILE_SIZE
-local MAP_OFFSET_Z = -50 + 6 * TILE_SIZE
-local BATTLE_OFFSET_X, BATTLE_OFFSET_Y = 11, 6
+local MAP_WIDTH, MAP_HEIGHT = 30, 20
+local MAP_OFFSET_X = -75
+local MAP_OFFSET_Z = -50
+local BATTLE_OFFSET_X, BATTLE_OFFSET_Y = 0, 0
 
 local elevationMap = nil
 

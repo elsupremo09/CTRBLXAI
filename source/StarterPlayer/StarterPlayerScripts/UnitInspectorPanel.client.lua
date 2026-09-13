@@ -454,6 +454,49 @@ local function showSkillDetail(skill)
 		row("EFFECTS", { font = Theme.Font.PrimaryBold, color = Theme.Colors.TextGold })
 		row(skill.effects, { height = 60, color = Theme.Colors.TextSecondary })
 	end
+
+	-- Augments
+	if skill.augments and #skill.augments > 0 then
+		row("AUGMENTS", { font = Theme.Font.PrimaryBold, color = Theme.Colors.Info })
+		for _, aug in ipairs(skill.augments) do
+			local augRow = Instance.new("Frame")
+			augRow.Size = UDim2.new(1, 0, 0, 36)
+			augRow.BackgroundColor3 = Theme.Colors.PanelRaised
+			augRow.BackgroundTransparency = 0.4
+			augRow.BorderSizePixel = 0
+			order = order + 1
+			augRow.LayoutOrder = order
+			augRow.Parent = scroll
+			Instance.new("UICorner", augRow).CornerRadius = UDim.new(0, 4)
+			if aug.icon and string.find(aug.icon, "rbxassetid://") then
+				local ico = Instance.new("ImageLabel")
+				ico.Size = UDim2.fromOffset(30, 30)
+				ico.Position = UDim2.fromOffset(3, 3)
+				ico.BackgroundTransparency = 1
+				ico.Image = aug.icon; ico.ScaleType = Enum.ScaleType.Fit
+				ico.Parent = augRow
+			end
+			local augName = Instance.new("TextLabel")
+			augName.Size = UDim2.new(1, -40, 0, 14)
+			augName.Position = UDim2.fromOffset(36, 2)
+			augName.BackgroundTransparency = 1; augName.BorderSizePixel = 0
+			augName.Font = Theme.Font.PrimaryBold; augName.TextSize = Theme.Text.Small()
+			augName.TextColor3 = Theme.Colors.TextPrimary
+			augName.TextXAlignment = Enum.TextXAlignment.Left
+			augName.Text = aug.name or aug.id or "?"; augName.Parent = augRow
+			if aug.description and aug.description ~= "" then
+				local augDesc = Instance.new("TextLabel")
+				augDesc.Size = UDim2.new(1, -40, 0, 12)
+				augDesc.Position = UDim2.fromOffset(36, 18)
+				augDesc.BackgroundTransparency = 1; augDesc.BorderSizePixel = 0
+				augDesc.Font = Theme.Font.Primary; augDesc.TextSize = Theme.Text.Tiny()
+				augDesc.TextColor3 = Theme.Colors.TextSecondary
+				augDesc.TextXAlignment = Enum.TextXAlignment.Left
+				augDesc.TextTruncate = Enum.TextTruncate.AtEnd
+				augDesc.Text = aug.description; augDesc.Parent = augRow
+			end
+		end
+	end
 end
 
 

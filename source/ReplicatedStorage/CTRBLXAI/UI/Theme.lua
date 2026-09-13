@@ -303,115 +303,18 @@ end
 
 function Theme.GetStatusColor(statusId)
 	local map = {
-		-- DoTs
-		Poison     = Theme.Colors.Poison,
-		Venom      = Theme.Colors.Poison,
-		Burn       = Theme.Colors.Burn,
-		Bleed      = Theme.Colors.Bleed,
-		Raptured   = Theme.Colors.Bleed,
-		Wounded    = Theme.Colors.Bleed,
-		-- CC / Debuffs
-		Freeze     = Theme.Colors.Freeze,
-		Frozen     = Theme.Colors.Freeze,
-		Silence    = Theme.Colors.Silence,
-		Mute       = Theme.Colors.Silence,
-		Stun       = Theme.Colors.Stun,
-		Slow       = Theme.Colors.Slow,
-		Blind      = Color3.fromRGB(120, 100, 140),
-		Confuse    = Color3.fromRGB(200, 120, 200),
-		Pinned     = Color3.fromRGB(160, 120, 80),
-		Crippled   = Color3.fromRGB(160, 120, 80),
-		Disarmed   = Color3.fromRGB(160, 120, 80),
-		Petrify    = Color3.fromRGB(140, 140, 140),
-		Sleep      = Color3.fromRGB(120, 140, 200),
-		Weakened   = Color3.fromRGB(180, 100, 100),
-		Cursed     = Color3.fromRGB(160, 60, 180),
-		Wet        = Color3.fromRGB(80, 160, 220),
-		Drowning   = Color3.fromRGB(40, 80, 160),
-		-- Buffs
-		Guard      = Color3.fromRGB(100, 180, 240),
-		Haste      = Color3.fromRGB(80, 220, 180),
-		Frenzy     = Color3.fromRGB(220, 100, 60),
-		Hide       = Color3.fromRGB(120, 120, 140),
-		Blessed    = Color3.fromRGB(240, 220, 100),
-		Flight     = Color3.fromRGB(180, 220, 255),
-		Regeneration = Color3.fromRGB(80, 220, 120),
-		Recharge   = Color3.fromRGB(100, 180, 240),
-		Rush       = Color3.fromRGB(255, 180, 60),
-		Enlightened = Color3.fromRGB(240, 240, 180),
+		Poison  = Theme.Colors.Poison,
+		Burn    = Theme.Colors.Burn,
+		Freeze  = Theme.Colors.Freeze,
+		Frozen  = Theme.Colors.Freeze,
+		Silence = Theme.Colors.Silence,
+		Mute    = Theme.Colors.Silence,
+		Stun    = Theme.Colors.Stun,
+		Bleed   = Theme.Colors.Bleed,
+		Slow    = Theme.Colors.Slow,
+		Guard   = Color3.fromRGB(100, 180, 240),
 	}
 	return map[statusId] or Theme.Colors.Info
-end
-
---------------------------------------------------
--- STATUS ICONS (uploaded buff/debuff artwork)
---------------------------------------------------
-
-Theme.StatusIcons = {
-	-- Direct status matches
-	Bleed = "rbxassetid://113854998694593",
-	Blessed = "rbxassetid://116105290983743",
-	Blind = "rbxassetid://94814222761026",
-	Break = "rbxassetid://79852853947226",
-	Burn = "rbxassetid://75519945659735",
-	Confuse = "rbxassetid://79580598651850",
-	Cursed = "rbxassetid://112849934774058",
-	Disarmed = "rbxassetid://106976200021807",
-	Drowning = "rbxassetid://120142515770933",
-	Enlightened = "rbxassetid://107395069757037",
-	Flight = "rbxassetid://118449123338156",
-	Frenzy = "rbxassetid://134508508432698",
-	Frozen = "rbxassetid://106508246279272",
-	Guard = "rbxassetid://136768561223678",
-	Haste = "rbxassetid://107616801519783",
-	Hide = "rbxassetid://71022129320243",
-	Mute = "rbxassetid://114703248620406",
-	Petrify = "rbxassetid://93214788664187",
-	Pinned = "rbxassetid://102600978844956",
-	Poison = "rbxassetid://117414657521915",
-	Raptured = "rbxassetid://94845401079886",
-	Regeneration = "rbxassetid://90086599629276",
-	Rush = "rbxassetid://99372078613765",
-	Silence = "rbxassetid://115793223315634",
-	Sinking = "rbxassetid://114656299898571",
-	Slow = "rbxassetid://116231027208761",
-	Stun = "rbxassetid://119779443078840",
-	Undead = "rbxassetid://132729338310527",
-	Venom = "rbxassetid://125786813997936",
-	Weakened = "rbxassetid://136762004052791",
-	Wet = "rbxassetid://74595594881036",
-	Wounded = "rbxassetid://88940830661819",
-	-- Special effects
-	["Knock-out"] = "rbxassetid://127667837490323",
-	["Mana Burn"] = "rbxassetid://84384905462621",
-	["Giant Transformation"] = "rbxassetid://139508832025303",
-	Marked = "rbxassetid://93573661475142",
-	["Healing Reduction"] = "rbxassetid://86350792055046",
-	-- Stat buffs/debuffs
-	["STR Up"] = "rbxassetid://138455586362576",
-	["STR Down"] = "rbxassetid://99430266583093",
-	["INT Up"] = "rbxassetid://93264140346028",
-	["INT Down"] = "rbxassetid://118122656931546",
-	["DEX Up"] = "rbxassetid://120619600039146",
-	["DEX Down"] = "rbxassetid://108726759627305",
-	["AGI Up"] = "rbxassetid://122461513457057",
-	["AGI Down"] = "rbxassetid://118142675301802",
-	["VIT Up"] = "rbxassetid://101266565295505",
-	["VIT Down"] = "rbxassetid://123828321926483",
-	["LUK Up"] = "rbxassetid://70434303929664",
-	["LUK Down"] = "rbxassetid://128543498938297",
-	["Defense Up"] = "rbxassetid://140116351603411",
-	["Defense Down"] = "rbxassetid://109161150600887",
-	["Damage Up"] = "rbxassetid://81011157004062",
-	["Damage Down"] = "rbxassetid://107044152504247",
-	["Evasion Up"] = "rbxassetid://117567533720444",
-	["Evasion Down"] = "rbxassetid://73778276289890",
-	["Debuff Res Up"] = "rbxassetid://86326417579254",
-	["Debuff Res Down"] = "rbxassetid://87649964133406",
-}
-
-function Theme.GetStatusIcon(statusId)
-	return Theme.StatusIcons[statusId] or nil
 end
 
 --------------------------------------------------
@@ -524,7 +427,7 @@ Theme.ScaledPx = Theme.Scaled
 --------------------------------------------------
 
 Theme.PanelFrame = {
-	Asset       = "rbxassetid://96315850586636",
+	Asset       = "rbxassetid://136267806455194",
 	SliceCenter = Rect.new(163, 163, 861, 861),
 	SliceScale  = 0.06,
 	BgColor     = Color3.fromRGB(0, 0, 0),
@@ -713,9 +616,9 @@ end
 --------------------------------------------------
 
 Theme.ButtonAssets = {
-	Primary   = { Asset = "rbxassetid://128127407312284" },  -- gold/bronze (equip, attach, confirm)
-	Secondary = { Asset = "rbxassetid://79828905582448" },    -- dark charcoal (back, cancel)
-	Tertiary  = { Asset = "rbxassetid://74754968977134" },   -- dark blue/steel (compare, swap)
+	Primary   = { Asset = "rbxassetid://89295920306721" },  -- gold/bronze (equip, attach, confirm)
+	Secondary = { Asset = "rbxassetid://131548301376394" },    -- dark charcoal (back, cancel)
+	Tertiary  = { Asset = "rbxassetid://84429775461281" },   -- dark blue/steel (compare, swap)
 }
 
 -- [DIAG] Asset ID dump at load time
@@ -844,76 +747,78 @@ end
 
 Theme.Icons = {
 	-- Equipment slot / type filters
-	MainHand   = "rbxassetid://107712701709286",
-	OffHand    = "rbxassetid://98983861153491",
-	Head       = "rbxassetid://103490891066080",
-	Torso      = "rbxassetid://129417807804589",
-	Arms       = "rbxassetid://83459049184332",
-	Legs       = "rbxassetid://96798091456636",
-	Accessory  = "rbxassetid://96470544764943",
-	Consumable = "rbxassetid://128189551113145",
-	Doctrine   = "rbxassetid://76800665797153",
+	MainHand   = "rbxassetid://133602692411441",
+	OffHand    = "rbxassetid://96495270865173",
+	Head       = "rbxassetid://97362668137582",
+	Torso      = "rbxassetid://84005272453086",
+	Arms       = "rbxassetid://121508765705229",
+	Legs       = "rbxassetid://81092915600570",
+	Accessory  = "rbxassetid://100332548791860",
+	Consumable = "rbxassetid://123389439567950",
+	Doctrine   = "rbxassetid://101933256038083",
 	-- Card types
-	SkillCard  = "rbxassetid://88268068619196",
-	AugmentCard = "rbxassetid://85750066155505",
+	SkillCard  = "rbxassetid://114875072968763",
+	AugmentCard = "rbxassetid://120453713458004",
 	-- Filter reset
-	AllTypes   = "rbxassetid://126425312270409",
+	AllTypes   = "rbxassetid://87409616114560",
 	-- Primary stats
-	STR = "rbxassetid://113370285263658",
-	INT = "rbxassetid://123655246718422",
-	DEX = "rbxassetid://88598304062639",
-	AGI = "rbxassetid://105014331313013",
-	VIT = "rbxassetid://89015702504702",
-	LUK = "rbxassetid://133750248203590",
+	STR = "rbxassetid://101684046584247",
+	INT = "rbxassetid://105464348895017",
+	DEX = "rbxassetid://121345574413158",
+	AGI = "rbxassetid://111815728303705",
+	VIT = "rbxassetid://113624831794919",
+	LUK = "rbxassetid://91593832326365",
 	-- Navigation / UI
-	Sort       = "rbxassetid://85887130565247",
-	Filter     = "rbxassetid://109789920233574",
-	Expand     = "rbxassetid://75163824424401",
-	Collapse   = "rbxassetid://81689987316999",
-	ArrowLeft  = "rbxassetid://109201725784401",
-	ArrowRight = "rbxassetid://140157391488573",
+	Sort       = "rbxassetid://110139184321415",
+	Filter     = "rbxassetid://114182934986152",
+	Expand     = "rbxassetid://83560753146501",
+	Collapse   = "rbxassetid://138171978051088",
+	ArrowLeft  = "rbxassetid://80226461252890",
+	ArrowRight = "rbxassetid://81425976997479",
 	-- Skill type / element icons
-	Damage     = "rbxassetid://135504525921846",
-	Heal       = "rbxassetid://83266476873580",
-	Buff       = "rbxassetid://120381762395957",
-	Debuff     = "rbxassetid://115587565920808",
-	Utility    = "rbxassetid://88423697133074",
-	Fire       = "rbxassetid://98928388908694",
-	Ice        = "rbxassetid://80553337901604",
-	Electric   = "rbxassetid://80992677701740",
-	Holy       = "rbxassetid://101839417852763",
-	Dark       = "rbxassetid://101952109436543",
-	Poison     = "rbxassetid://74613503786638",
-	Physical   = "rbxassetid://112711726025191",
-	Reset      = "rbxassetid://82195895256938",
+	Damage     = "rbxassetid://73538985181962",
+	Heal       = "rbxassetid://138838552429669",
+	Buff       = "rbxassetid://77404382786098",
+	Debuff     = "rbxassetid://100065477653854",
+	Utility    = "rbxassetid://140311470017954",
+	Fire       = "rbxassetid://90499553843764",
+	Ice        = "rbxassetid://138027925853937",
+	Electric   = "rbxassetid://105621023635054",
+	Holy       = "rbxassetid://88526010401352",
+	Dark       = "rbxassetid://96999711635239",
+	Poison     = "rbxassetid://137992638646487",
+	Physical   = "rbxassetid://124197323548413",
+	Reset      = "rbxassetid://87409616114560",
 }
+
 
 --------------------------------------------------
 -- TERRAIN TEXTURES (uploaded tile surface images)
 --------------------------------------------------
 
 Theme.Terrain = {
-	["Clear"]          = "rbxassetid://109805975558014",
-	["Grassland"]      = "rbxassetid://128007269403177",
-	["Clover Field"]   = "rbxassetid://109662805904614",
-	["Forest"]         = "rbxassetid://135752092589962",
-	["Wooden Floor"]   = "rbxassetid://126612632552137",
-	["Rocky"]          = "rbxassetid://90522759746156",
-	["Sand"]           = "rbxassetid://130402247622009",
-	["Mud"]            = "rbxassetid://103981896145024",
-	["Dirt Road"]      = "rbxassetid://70967889930713",
-	["Stone Road"]     = "rbxassetid://91078246561441",
-	["Shallow Water"]  = "rbxassetid://133104312443373",
-	["Deep Water"]     = "rbxassetid://91104299895108",
-	["Swamp"]          = "rbxassetid://102784702693557",
-	["Ice"]            = "rbxassetid://111074337572921",
-	["Metal"]          = "rbxassetid://109801126120884",
-	["Molten"]         = "rbxassetid://102728788006487",
-	["Magic Circle"]   = "rbxassetid://83344810206782",
-	["Tainted Ground"] = "rbxassetid://78418011585017",
-	["Cracked Ground"] = "rbxassetid://112911396208647",
-	["Quicksand"]      = "rbxassetid://125706353174532",
+	["Clear"]          = "rbxassetid://74692826345872",
+	["Grassland"]      = "rbxassetid://89238035189625",
+	["Clover Field"]   = "rbxassetid://86809605502149",
+	["Forest"]         = "rbxassetid://92048265218097",
+	["Wooden Floor"]   = "rbxassetid://72918745499013",
+	["Rocky"]          = "rbxassetid://86134990751716",
+	["Sand"]           = "rbxassetid://105434745636051",
+	["Mud"]            = "rbxassetid://97058803836850",
+	["Dirt Road"]      = "rbxassetid://74896495319547",
+	["Stone Road"]     = "rbxassetid://105323659190313",
+	["Shallow Water"]  = "rbxassetid://111962301136930",
+	["Deep Water"]     = "rbxassetid://138905752952965",
+	["Swamp"]          = "rbxassetid://82636405695018",
+	["Ice"]            = "rbxassetid://93574916698714",
+	["Metal"]          = "rbxassetid://106647711046909",
+	["Molten"]         = "rbxassetid://120698732334060",
+	["Magic Circle"]   = "rbxassetid://96217583623367",
+	["Tainted Ground"] = "rbxassetid://90980399497254",
+	["Cracked Ground"] = "rbxassetid://80266846327057",
+	["Quicksand"]      = "rbxassetid://103522632282664",
 }
+
 
 --------------------------------------------------
 -- STYLESHEET LINK HELPER
@@ -933,39 +838,103 @@ function Theme.LinkStyleSheet(screenGui)
 end
 
 --------------------------------------------------
--- STYLESHEET BRIDGE (Phase 3)
--- Called by StyleBootstrap after Init() to bind Theme.Colors
--- to StyleSheet token values. All existing Theme.Colors.X refs
--- continue to work but now read from the canonical token source.
+-- STYLESHEET BINDING (live token updates)
+-- Called by UIController after StyleBootstrap.Init().
+-- Replaces hardcoded color values with live token values.
 --------------------------------------------------
 
 function Theme.BindToStyleSheet(tokenSheet)
-	if not tokenSheet then
-		warn("[Theme] BindToStyleSheet called with nil tokenSheet")
-		return
-	end
-
-	-- Replace each color in Theme.Colors with the token value
+	if not tokenSheet then return end
 	local bound = 0
-	for key, currentValue in pairs(Theme.Colors) do
-		local tokenValue = tokenSheet:GetAttribute(key)
-		if tokenValue and typeof(tokenValue) == "Color3" then
-			Theme.Colors[key] = tokenValue
+	for name, _ in pairs(Theme.Colors) do
+		local attr = tokenSheet:GetAttribute(name)
+		if attr and typeof(attr) == "Color3" then
+			Theme.Colors[name] = attr
 			bound = bound + 1
 		end
 	end
-
-	-- Listen for token changes (hot-reload support)
+	-- Listen for changes
 	tokenSheet.AttributeChanged:Connect(function(attrName)
-		if Theme.Colors[attrName] then
-			local newValue = tokenSheet:GetAttribute(attrName)
-			if newValue and typeof(newValue) == "Color3" then
-				Theme.Colors[attrName] = newValue
-			end
+		local val = tokenSheet:GetAttribute(attrName)
+		if val and typeof(val) == "Color3" and Theme.Colors[attrName] ~= nil then
+			Theme.Colors[attrName] = val
 		end
 	end)
-
-	print("[Theme] Bound " .. bound .. " colors to StyleSheet tokens (live updates enabled)")
+	print(string.format("[Theme] Bound %d colors to StyleSheet tokens (live updates enabled)", bound))
 end
 
+
+--------------------------------------------------
+-- STATUS ICONS (uploaded status effect images)
+--------------------------------------------------
+
+Theme.StatusIcons = {
+	-- Direct statuses
+	["Bleed"] = "rbxassetid://104544875304364",
+	["Blessed"] = "rbxassetid://134501709564011",
+	["Blind"] = "rbxassetid://135715197401068",
+	["Break"] = "rbxassetid://82752083137056",
+	["Burn"] = "rbxassetid://127380629906495",
+	["Confuse"] = "rbxassetid://88912553984364",
+	["Cursed"] = "rbxassetid://106130370004820",
+	["Disarmed"] = "rbxassetid://98727063604020",
+	["Drowning"] = "rbxassetid://82406141494000",
+	["Enlightened"] = "rbxassetid://95850043032649",
+	["Flight"] = "rbxassetid://133476216837852",
+	["Frenzy"] = "rbxassetid://112991829266774",
+	["Frozen"] = "rbxassetid://131792217565295",
+	["Guard"] = "rbxassetid://93092271875026",
+	["Haste"] = "rbxassetid://103750088309187",
+	["Hide"] = "rbxassetid://104833271248846",
+	["Mute"] = "rbxassetid://90624828336249",
+	["Petrify"] = "rbxassetid://79048541782109",
+	["Pinned"] = "rbxassetid://105892594257666",
+	["Poison"] = "rbxassetid://94477759410466",
+	["Raptured"] = "rbxassetid://109980542058661",
+	["Recharge"] = "rbxassetid://76141685219972",
+	["Regeneration"] = "rbxassetid://135322355280867",
+	["Rush"] = "rbxassetid://130350534308838",
+	["Silence"] = "rbxassetid://77891113079501",
+	["Sinking"] = "rbxassetid://131639755942578",
+	["Slow"] = "rbxassetid://90098284289426",
+	["Stun"] = "rbxassetid://124111723287049",
+	["Taunt"] = "rbxassetid://81048950818139",
+	["Undead"] = "rbxassetid://123085258262041",
+	["Venom"] = "rbxassetid://72549374501907",
+	["Weakened"] = "rbxassetid://90496607680306",
+	["Wet"] = "rbxassetid://124928366115617",
+	["Wounded"] = "rbxassetid://132434877253211",
+	-- Special effects
+	["Giant Transformation"] = "rbxassetid://111982624235278",
+	["Healing Reduction"] = "rbxassetid://117128659285814",
+	["Knock-out"] = "rbxassetid://120054515894443",
+	["Mana Burn"] = "rbxassetid://77473884983225",
+	["Marked"] = "rbxassetid://123205375175891",
+	-- Stat buffs/debuffs
+	["STR Up"] = "rbxassetid://102204044712943",
+	["STR Down"] = "rbxassetid://132312931452826",
+	["INT Up"] = "rbxassetid://135273539845715",
+	["INT Down"] = "rbxassetid://89325866053030",
+	["DEX Up"] = "rbxassetid://95605274513215",
+	["DEX Down"] = "rbxassetid://87286160614484",
+	["AGI Up"] = "rbxassetid://102738592517132",
+	["AGI Down"] = "rbxassetid://106079362821163",
+	["VIT Up"] = "rbxassetid://128028989550779",
+	["VIT Down"] = "rbxassetid://137384824243587",
+	["LUK Up"] = "rbxassetid://116441603583335",
+	["LUK Down"] = "rbxassetid://138508730225416",
+	["Defense Up"] = "rbxassetid://125326830800546",
+	["Defense Down"] = "rbxassetid://113107461369810",
+	["Damage Up"] = "rbxassetid://115159212084450",
+	["Damage Down"] = "rbxassetid://118285717297561",
+	["Evasion Up"] = "rbxassetid://139633360952925",
+	["Evasion Down"] = "rbxassetid://116710982804215",
+	["Debuff Res Up"] = "rbxassetid://106742276340514",
+	["Debuff Res Down"] = "rbxassetid://71353124191974",
+}
+
+function Theme.GetStatusIcon(statusId)
+	if not statusId then return nil end
+	return Theme.StatusIcons[statusId]
+end
 return Theme

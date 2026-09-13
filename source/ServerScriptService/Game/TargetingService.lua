@@ -292,7 +292,8 @@ function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerEleva
 		if cx == x2 and cy == y2 then return true end
 
 		-- Check if this intermediate tile is a blocker
-		if GameConstants.IsBlocked(cx, cy) then
+		-- Arc projectiles fly over terrain blockers; only Direct/Channeled are stopped
+		if not isArc and GameConstants.IsBlocked(cx, cy) then
 			return false
 		end
 

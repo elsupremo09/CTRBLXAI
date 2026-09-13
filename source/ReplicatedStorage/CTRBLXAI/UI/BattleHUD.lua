@@ -96,7 +96,7 @@ local function makePanel(name, size, position, anchor, parent, opts)
 	f.Size = size
 	f.Position = position
 	f.AnchorPoint = anchor or Vector2.new(0, 0)
-	f.Image = "rbxassetid://96315850586636"
+	f.Image = "rbxassetid://136267806455194"
 	f.ScaleType = Enum.ScaleType.Slice
 	-- Image is 1254px but Roblox downscales to 1024. Coords scaled: 200*(1024/1254)=163, 1054*(1024/1254)=861
 	f.SliceCenter = Rect.new(163, 163, 861, 861)
