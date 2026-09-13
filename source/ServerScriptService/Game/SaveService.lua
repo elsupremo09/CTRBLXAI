@@ -83,7 +83,15 @@ local function getDataStore(keyType)
 	local storeName = namespace .. "_" .. keyType
 
 	if not _datastores[storeName] then
-		_datastores[storeName] = DataStoreService:GetDataStore(storeName)
+		local ok, store = pcall(function()
+			return DataStoreService:GetDataStore(storeName)
+		end)
+		if not ok then
+			warn("[SaveService] DataStore unavailable (" .. tostring(store) .. ") — falling back to memory mode")
+			_mode = "memory"
+			return nil
+		end
+		_datastores[storeName] = store
 	end
 	return _datastores[storeName]
 end

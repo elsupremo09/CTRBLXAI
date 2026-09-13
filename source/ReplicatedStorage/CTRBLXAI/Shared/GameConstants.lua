@@ -38,16 +38,9 @@ GameConstants.GUARD_OFFHAND_WT_FACTOR = 0.50 -- + 50% of Effective Armor Off-Han
 -- ELEVATION  (from DB: movement_targeting — Elevation & Displacement)
 --------------------------------------------------
 
-GameConstants.ELEVATION_MAP = {
-	{ 1, 1, 1, 1, 1, 1, 1, 1 }, -- row 1
-	{ 1, 1, 2, 2, 2, 2, 1, 1 }, -- row 2
-	{ 1, 2, 3, 2, 2, 3, 2, 1 }, -- row 3
-	{ 1, 2, 2, 1, 1, 2, 2, 1 }, -- row 4
-	{ 1, 2, 2, 1, 1, 2, 2, 1 }, -- row 5
-	{ 1, 2, 3, 2, 2, 3, 2, 1 }, -- row 6
-	{ 1, 1, 2, 2, 2, 2, 1, 1 }, -- row 7
-	{ 1, 1, 1, 1, 1, 1, 1, 1 }, -- row 8
-}
+-- Empty default — overwritten by SetGeneratedMap() from MapService
+-- output before battle starts. Functions below read from this table.
+GameConstants.ELEVATION_MAP = {}
 
 function GameConstants.GetElevation(tileX, tileY)
 	local row = GameConstants.ELEVATION_MAP[tileY]
@@ -216,16 +209,9 @@ GameConstants.TERRAIN_TYPES = {
 	},
 }
 
-GameConstants.TERRAIN_MAP = {
-	{ "Clear",        "Sand",           "Grassland",     "Clover Field",   "Clear",          "Wooden Floor",  "Metal",          "Clear"          }, -- row 1
-	{ "Sand",         "Grassland",      "Rocky",         "Grassland",      "Grassland",      "Rocky",         "Shallow Water",  "Clear"          }, -- row 2 (Hero)
-	{ "Wooden Floor", "Rocky",          "Rocky",         "Tainted Ground", "Magic Circle",   "Rocky",         "Rocky",          "Metal"          }, -- row 3
-	{ "Deep Water",   "Cracked Ground", "Mud",           "Ice",            "Ice",            "Rocky",         "Rocky",          "Swamp"          }, -- row 4
-	{ "Clear",        "Sand",           "Mud",           "Quicksand",      "Shallow Water",  "Cracked Ground","Clover Field",   "Clear"          }, -- row 5
-	{ "Grassland",    "Rocky",          "Rocky",         "Deep Water",     "Rocky",          "Rocky",         "Rocky",          "Clear"          }, -- row 6
-	{ "Clear",        "Grassland",      "Rocky",         "Grassland",      "Grassland",      "Rocky",         "Grassland",      "Clear"          }, -- row 7 (Grunt)
-	{ "Clear",        "Clear",          "Wooden Floor",  "Sand",           "Grassland",      "Tainted Ground","Clear",          "Clear"          }, -- row 8
-}
+-- Empty default — overwritten by SetGeneratedMap() from MapService
+-- output before battle starts. Functions below read from this table.
+GameConstants.TERRAIN_MAP = {}
 
 -- Check if a terrain type is impassable (cannot be entered by voluntary movement).
 -- DB: Quicksand col_5 = "Movement prohibited"
@@ -366,12 +352,9 @@ GameConstants.TILE_EFFECTS = {
 -- BLOCKERS
 --------------------------------------------------
 
-GameConstants.BLOCKERS = {
-	{ tileX = 4, tileY = 3, objectType = "StoneWall", tags = { "BlocksAOE", "BlocksLoS" } },
-	{ tileX = 5, tileY = 6, objectType = "StoneWall", tags = { "BlocksAOE", "BlocksLoS" } },
-	{ tileX = 2, tileY = 4, objectType = "Pillar",    tags = { "BlocksAOE", "BlocksLoS" } },
-	{ tileX = 7, tileY = 5, objectType = "WoodenWall", tags = { "BlocksAOE" } },
-}
+-- Empty default — overwritten by SetGeneratedMap() from MapService
+-- output before battle starts. Functions below read from this table.
+GameConstants.BLOCKERS = {}
 
 function GameConstants.IsBlocked(tileX, tileY)
 	for _, b in ipairs(GameConstants.BLOCKERS) do
@@ -419,6 +402,22 @@ function GameConstants.HasBlockerTag(tileX, tileY, tag)
 		if t == tag then return true end
 	end
 	return false
+end
+
+--------------------------------------------------
+-- MAP GENERATION BRIDGE
+-- Populates hardcoded tables from generated map data.
+-- Called by Main.server.lua after MapService.Generate().
+--------------------------------------------------
+
+function GameConstants.SetGeneratedMap(mapState)
+	GameConstants.ELEVATION_MAP = mapState.elevationGrid
+	GameConstants.TERRAIN_MAP   = mapState.terrainGrid
+	GameConstants.BLOCKERS      = mapState.blockers
+	print(string.format(
+		"[GameConstants] SetGeneratedMap: %dx%d, %d blockers",
+		#mapState.terrainGrid[1], #mapState.terrainGrid,
+		#mapState.blockers))
 end
 
 --------------------------------------------------
