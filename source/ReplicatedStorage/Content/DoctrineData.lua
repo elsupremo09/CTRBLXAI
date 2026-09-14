@@ -5,7 +5,7 @@
 local DoctrineData = {
 	["DOC-VANGUARD"] = {
 		name = "Vanguard",
-		icon = "rbxassetid://70845723924288",
+		icon = "rbxassetid://130978196469571",
 		identity = "Frontline durability",
 		statPackage = {STR = 5, AGI = -10, INT = -10, VIT = 15, DEX = 5, LUK = -5},
 		passiveName = "Bulwark",
@@ -24,7 +24,7 @@ local DoctrineData = {
 	},
 	["DOC-BERSERKER"] = {
 		name = "Berserker",
-		icon = "rbxassetid://72798287008621",
+		icon = "rbxassetid://99152287727205",
 		identity = "Risk and reward melee",
 		statPackage = {STR = 15, AGI = 5, INT = -15, VIT = 5, DEX = -5, LUK = -5},
 		passiveName = "Blood Frenzy",
@@ -43,7 +43,7 @@ local DoctrineData = {
 	},
 	["DOC-ARCANIST"] = {
 		name = "Arcanist",
-		icon = "rbxassetid://82620490547621",
+		icon = "rbxassetid://116175253632597",
 		identity = "Resource-intensive Skill use",
 		statPackage = {STR = -10, AGI = -5, INT = 15, VIT = -10, DEX = 5, LUK = 5},
 		passiveName = "Arcane Efficiency",
@@ -61,7 +61,7 @@ local DoctrineData = {
 	},
 	["DOC-TACTICIAN"] = {
 		name = "Tactician",
-		icon = "rbxassetid://91168613720354",
+		icon = "rbxassetid://139551826763828",
 		identity = "Timeline and battlefield control",
 		statPackage = {STR = -5, AGI = -5, INT = 5, VIT = -15, DEX = 10, LUK = 10},
 		passiveName = "Command Tempo",
@@ -80,7 +80,7 @@ local DoctrineData = {
 	},
 	["DOC-RANGER"] = {
 		name = "Ranger",
-		icon = "rbxassetid://118144397418343",
+		icon = "rbxassetid://95023154193066",
 		identity = "Positioning and ranged precision",
 		statPackage = {STR = -5, AGI = 10, INT = -10, VIT = -15, DEX = 15, LUK = 5},
 		passiveName = "Steady Aim",
@@ -99,7 +99,7 @@ local DoctrineData = {
 	},
 	["DOC-WARLORD"] = {
 		name = "Warlord",
-		icon = "rbxassetid://117081195612585",
+		icon = "rbxassetid://75225031797786",
 		identity = "Offensive party support",
 		statPackage = {STR = 10, AGI = -5, INT = -10, VIT = 10, DEX = -10, LUK = 5},
 		passiveName = "Commanding Presence",
@@ -118,7 +118,7 @@ local DoctrineData = {
 	},
 	["DOC-SHADOWBINDER"] = {
 		name = "Shadowbinder",
-		icon = "rbxassetid://106276711556469",
+		icon = "rbxassetid://100444142596387",
 		identity = "Debuff specialization",
 		statPackage = {STR = -10, AGI = -5, INT = 10, VIT = -15, DEX = 5, LUK = 15},
 		passiveName = "Malignancy",
@@ -136,7 +136,7 @@ local DoctrineData = {
 	},
 	["DOC-SPELLBLADE"] = {
 		name = "Spellblade",
-		icon = "rbxassetid://82948512792437",
+		icon = "rbxassetid://87254008638694",
 		identity = "Hybrid weapon and Skill use",
 		statPackage = {STR = 10, AGI = -5, INT = 10, VIT = -10, DEX = 5, LUK = -10},
 		passiveName = "Arcane Edge",
@@ -155,7 +155,7 @@ local DoctrineData = {
 	},
 	["DOC-ASCETIC"] = {
 		name = "Ascetic",
-		icon = "rbxassetid://132781493803003",
+		icon = "rbxassetid://82191183099318",
 		identity = "Sustain and resource recovery",
 		statPackage = {STR = -10, AGI = -5, INT = 10, VIT = 10, DEX = 5, LUK = -10},
 		passiveName = "Inner Reserve",
@@ -173,7 +173,7 @@ local DoctrineData = {
 	},
 	["DOC-TRICKSTER"] = {
 		name = "Trickster",
-		icon = "rbxassetid://127276137663138",
+		icon = "rbxassetid://137125684035279",
 		identity = "Fortune and positioning",
 		statPackage = {STR = -10, AGI = 10, INT = -5, VIT = -15, DEX = 5, LUK = 15},
 		passiveName = "Fleeting Step",
@@ -191,7 +191,7 @@ local DoctrineData = {
 	},
 	["DOC-THIEF"] = {
 		name = "Thief",
-		icon = "rbxassetid://112796474894259",
+		icon = "rbxassetid://76235659809747",
 		identity = "Loot acquisition and Fortune",
 		statPackage = {STR = -10, AGI = 10, INT = -10, VIT = -10, DEX = 10, LUK = 10},
 		passiveName = "Fortune Hand",
@@ -210,7 +210,7 @@ local DoctrineData = {
 	},
 	["DOC-DUELIST"] = {
 		name = "Duelist",
-		icon = "rbxassetid://84265559863462",
+		icon = "rbxassetid://70396607391801",
 		identity = "Single-weapon mastery",
 		statPackage = {STR = 5, AGI = 10, INT = -10, VIT = -10, DEX = 10, LUK = -5},
 		passiveName = "Single-Weapon Mastery",
@@ -228,7 +228,7 @@ local DoctrineData = {
 	},
 	["DOC-TWINBLADE"] = {
 		name = "Twinblade",
-		icon = "rbxassetid://91429325760957",
+		icon = "rbxassetid://86662160732778",
 		identity = "Dual-wield combat",
 		statPackage = {STR = 10, AGI = 10, INT = -10, VIT = -10, DEX = 5, LUK = -5},
 		passiveName = "Dual-Wield Discipline",
@@ -247,7 +247,7 @@ local DoctrineData = {
 	},
 	["DOC-JUGGERNAUT"] = {
 		name = "Juggernaut",
-		icon = "rbxassetid://72207909165433",
+		icon = "rbxassetid://115952749074867",
 		identity = "Heavy melee pressure",
 		statPackage = {STR = 15, AGI = -10, INT = -10, VIT = 10, LUK = -5},
 		passiveName = "Two-Handed Mastery",
@@ -265,7 +265,7 @@ local DoctrineData = {
 	},
 	["DOC-CONJURER"] = {
 		name = "Conjurer",
-		icon = "rbxassetid://126421724264636",
+		icon = "rbxassetid://77114672203419",
 		identity = "Summoning",
 		statPackage = {STR = -10, AGI = -10, INT = 15, VIT = 5, DEX = 5, LUK = -5},
 		passiveName = "Bound Host",
@@ -284,7 +284,7 @@ local DoctrineData = {
 	},
 	["DOC-CLERIC"] = {
 		name = "Cleric",
-		icon = "rbxassetid://80113911746825",
+		icon = "rbxassetid://102211111604984",
 		identity = "Dedicated healing and ally preservation",
 		statPackage = {STR = -10, AGI = -5, INT = 15, VIT = 10, DEX = -5, LUK = -5},
 		passiveName = "Sacred Bond",
@@ -303,7 +303,7 @@ local DoctrineData = {
 	},
 	["DOC-ELEMENTALIST"] = {
 		name = "Elementalist",
-		icon = "rbxassetid://101755209401515",
+		icon = "rbxassetid://139714704239607",
 		identity = "Raw elemental magic damage",
 		statPackage = {STR = -15, AGI = -5, INT = 15, VIT = -10, DEX = 10, LUK = 5},
 		passiveName = "Elemental Convergence",
@@ -322,7 +322,7 @@ local DoctrineData = {
 	},
 	["DOC-SENTINEL"] = {
 		name = "Sentinel",
-		icon = "rbxassetid://94267999028274",
+		icon = "rbxassetid://126106786329064",
 		identity = "Reactive punishment and counterplay",
 		statPackage = {STR = 10, AGI = -5, INT = -10, VIT = 15, DEX = -5, LUK = -5},
 		passiveName = "Vengeful Riposte",
@@ -341,7 +341,7 @@ local DoctrineData = {
 	},
 	["DOC-GEOMANCER"] = {
 		name = "Geomancer",
-		icon = "rbxassetid://89126033226333",
+		icon = "rbxassetid://91334964570223",
 		identity = "Terrain manipulation and area denial",
 		statPackage = {STR = -10, AGI = -10, INT = 10, VIT = 5, DEX = 10, LUK = -5},
 		passiveName = "Terrain Mastery",
@@ -360,7 +360,7 @@ local DoctrineData = {
 	},
 	["DOC-SHIELDBEARER"] = {
 		name = "Shieldbearer",
-		icon = "rbxassetid://126760489148780",
+		icon = "rbxassetid://77079573259063",
 		identity = "Shield-focused tanking and party protection",
 		statPackage = {STR = 5, AGI = -10, INT = -5, VIT = 15, DEX = 5, LUK = -10},
 		passiveName = "Aegis Protocol",
@@ -379,7 +379,7 @@ local DoctrineData = {
 	},
 	["DOC-ASSASSIN"] = {
 		name = "Assassin",
-		icon = "rbxassetid://117122634302677",
+		icon = "rbxassetid://71508157190198",
 		identity = "Burst single-target damage and repositioning",
 		statPackage = {STR = 5, AGI = 15, INT = -15, VIT = -15, DEX = 10},
 		passiveName = "Killing Intent",
@@ -398,7 +398,7 @@ local DoctrineData = {
 	},
 	["DOC-PALADIN"] = {
 		name = "Paladin",
-		icon = "rbxassetid://110872203445876",
+		icon = "rbxassetid://106072966644617",
 		identity = "Holy tank-healer hybrid",
 		statPackage = {STR = 5, AGI = -10, INT = 5, VIT = 10, DEX = -5, LUK = -5},
 		passiveName = "Divine Aegis",
@@ -417,7 +417,7 @@ local DoctrineData = {
 	},
 	["DOC-MONK"] = {
 		name = "Monk",
-		icon = "rbxassetid://102335068217848",
+		icon = "rbxassetid://83997109659859",
 		identity = "Unarmed martial arts and multi-hit",
 		statPackage = {STR = 10, AGI = 10, INT = -15, VIT = 5, DEX = 5, LUK = -15},
 		passiveName = "Flowing Strikes",
@@ -436,7 +436,7 @@ local DoctrineData = {
 	},
 	["DOC-PLAGUE-DOCTOR"] = {
 		name = "Plague Doctor",
-		icon = "rbxassetid://105172185594614",
+		icon = "rbxassetid://74028211586990",
 		identity = "Poison and dark debuff specialist with emergency healing",
 		statPackage = {STR = -10, AGI = -5, INT = 10, VIT = 5, DEX = -5, LUK = 5},
 		passiveName = "Virulence",
@@ -454,7 +454,7 @@ local DoctrineData = {
 	},
 	["DOC-ENCHANTER"] = {
 		name = "Enchanter",
-		icon = "rbxassetid://111880846616509",
+		icon = "rbxassetid://73238606840612",
 		identity = "Buff amplification and duration extension",
 		statPackage = {STR = -15, AGI = 5, INT = 10, VIT = -5, DEX = -5, LUK = 10},
 		passiveName = "Lingering Enchantment",
@@ -473,7 +473,7 @@ local DoctrineData = {
 	},
 	["DOC-DRAGOON"] = {
 		name = "Dragoon",
-		icon = "rbxassetid://135885073124578",
+		icon = "rbxassetid://108275959219811",
 		identity = "Aerial strike specialist and jump combat",
 		statPackage = {STR = 15, AGI = 5, INT = -15, VIT = 5, DEX = -5, LUK = -5},
 		passiveName = "Aerial Supremacy",
@@ -492,7 +492,7 @@ local DoctrineData = {
 	},
 	["DOC-REAPER"] = {
 		name = "Reaper",
-		icon = "rbxassetid://114617743287272",
+		icon = "rbxassetid://128455491785152",
 		identity = "Dark melee sustain through enemy HP drain",
 		statPackage = {STR = 10, AGI = 5, INT = 5, VIT = -10, DEX = -15, LUK = 5},
 		passiveName = "Soul Rend",
@@ -511,7 +511,7 @@ local DoctrineData = {
 	},
 	["DOC-TEMPLAR"] = {
 		name = "Templar",
-		icon = "rbxassetid://133029204573711",
+		icon = "rbxassetid://89042519467659",
 		identity = "Holy damage dealer and anti-undead specialist",
 		statPackage = {STR = 10, AGI = -5, INT = 10, VIT = -5, DEX = -5, LUK = -5},
 		passiveName = "Radiant Judgment",
@@ -529,7 +529,7 @@ local DoctrineData = {
 	},
 	["DOC-STORMBRINGER"] = {
 		name = "Stormbringer",
-		icon = "rbxassetid://131160863938627",
+		icon = "rbxassetid://129050776016734",
 		identity = "Electric chain damage and crowd control",
 		statPackage = {STR = -10, AGI = 5, INT = 15, VIT = -15, DEX = 5},
 		passiveName = "Conductivity",
@@ -548,7 +548,7 @@ local DoctrineData = {
 	},
 	["DOC-GUNNER"] = {
 		name = "Gunner",
-		icon = "rbxassetid://133085780175409",
+		icon = "rbxassetid://108034086754630",
 		identity = "Ranged physical multi-hit and suppression",
 		statPackage = {STR = 5, AGI = -5, INT = -15, VIT = -5, DEX = 15, LUK = 5},
 		passiveName = "Suppressive Fire",
@@ -567,7 +567,7 @@ local DoctrineData = {
 	},
 	["DOC-WARDEN"] = {
 		name = "Warden",
-		icon = "rbxassetid://107914973064947",
+		icon = "rbxassetid://84077317479689",
 		identity = "Earth/nature defensive support and area control",
 		statPackage = {STR = -5, AGI = -10, INT = 5, VIT = 15, DEX = 5, LUK = -10},
 		passiveName = "Earthen Resilience",
@@ -586,7 +586,7 @@ local DoctrineData = {
 	},
 	["DOC-SKIRMISHER"] = {
 		name = "Skirmisher",
-		icon = "rbxassetid://105874472581415",
+		icon = "rbxassetid://140118193653338",
 		identity = "Mobile melee with bleed and hit-and-run",
 		statPackage = {STR = 5, AGI = 10, INT = -10, VIT = -5, DEX = 10, LUK = -10},
 		passiveName = "Harrying Strikes",

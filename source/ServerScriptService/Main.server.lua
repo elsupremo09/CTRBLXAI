@@ -34,6 +34,7 @@ local ArmorPassiveService     = require(Game:WaitForChild("ArmorPassiveService")
 local AugmentEffectService    = require(Game:WaitForChild("AugmentEffectService"))
 local AIService               = require(Game:WaitForChild("AIService"))
 local MapService              = require(Game:WaitForChild("MapService"))
+local MapRenderer             = require(Game:WaitForChild("MapRenderer"))
 
 
 local WeaponData = require(
@@ -124,7 +125,7 @@ end
 -- MAP SETUP
 --------------------------------------------------
 
-local generatedMap = MapService.Generate("Plains", "T01", 12345)
+local generatedMap = MapService.Generate("Plains", "T01")
 local MAP_WIDTH    = generatedMap.width
 local MAP_HEIGHT   = generatedMap.height
 
@@ -1750,6 +1751,52 @@ if game:GetService("RunService"):IsStudio() then
 			else
 				warn("[Dev] Manual save failed: " .. (err or "unknown"))
 			end
+
+		elseif cmd.action == "ViewMode" then
+			local mode = cmd.mode
+			if mode ~= "TERRAIN" and mode ~= "REGION" and mode ~= "TEMPLATE" then
+				warn("[Dev] ViewMode: invalid mode '" .. tostring(mode) .. "'. Use TERRAIN, REGION, or TEMPLATE.")
+				return
+			end
+			local folder = workspace:FindFirstChild("TemplateViewerMap")
+			if not folder then
+				warn("[Dev] ViewMode: no TemplateViewerMap in workspace")
+				return
+			end
+			MapRenderer.SetViewMode(folder, mode)
+			print("[Dev] View mode: " .. mode)
+
+		elseif cmd.action == "Regenerate" then
+			-- Get current biome/template from existing map or from command.
+			local currentFolder = workspace:FindFirstChild("TemplateViewerMap")
+			local currentBiome = currentFolder and currentFolder:GetAttribute("BiomeId") or "Plains"
+			local currentTemplate = currentFolder and currentFolder:GetAttribute("TemplateId") or "T01"
+
+			local biome    = (cmd.biome and cmd.biome ~= "") and cmd.biome or currentBiome
+			local template = (cmd.template and cmd.template ~= "") and cmd.template or currentTemplate
+
+			print(string.format("[Dev] Regenerating: biome=%s template=%s", biome, template))
+
+			-- Clear cache and generate new map.
+			MapService.ClearCache()
+			local ok, newMap = pcall(MapService.Generate, biome, template, nil)
+			if not ok then
+				warn("[Dev] Regenerate failed: " .. tostring(newMap))
+				return
+			end
+
+			GameConstants.SetGeneratedMap(newMap)
+
+			-- Destroy old map and render new one.
+			if currentFolder then
+				currentFolder:Destroy()
+			end
+
+			local newFolder = MapRenderer.Render(newMap, "TERRAIN")
+			newFolder.Parent = workspace
+			mapFolder = newFolder
+
+			print(string.format("[Dev] Regenerated: biome=%s template=%s seed=%d", biome, template, newMap.seed))
 		end
 	end)
 	print("[Dev] DevCommand handler active (Studio only)")
@@ -1758,6 +1805,13 @@ end
 -- PRE-BATTLE LOADOUT HUB
 print("[Hub] Opening pre-battle Loadout Hub")
 BattleEvents.LoadoutHubOpen:FireAllClients({ phase = "PreBattle" })
+
+-- Sync map data (terrain/elevation/blockers) to client for tile inspector
+BattleEvents.MapDataSync:FireAllClients({
+	terrainGrid  = generatedMap.terrainGrid,
+	elevationGrid = generatedMap.elevationGrid,
+	blockers     = generatedMap.blockers,
+})
 
 -- Wait for player to press Start Battle
 hubContinueSignal.Event:Wait()
