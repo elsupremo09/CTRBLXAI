@@ -1114,7 +1114,7 @@ local function createDevCameraPanel()
 	title.MouseButton1Click:Connect(function()
 		devExpanded = not devExpanded
 		if devExpanded then
-			frame.Size = UDim2.fromOffset(130, 260)
+			frame.Size = UDim2.fromOffset(130, 500)
 			title.Text = "▼ DEV OPTIONS"
 		else
 			frame.Size = UDim2.fromOffset(130, 14)
@@ -1206,6 +1206,75 @@ local function createDevCameraPanel()
 	makeBtn("SAVE NOW", 9, function()
 		BattleEvents.DevCommand:FireServer({ action = "SaveNow" })
 	end, Color3.fromRGB(30, 60, 80))
+
+	-- Separator: Map Tools
+	local sep2 = Instance.new("Frame")
+	sep2.Size = UDim2.new(1, 0, 0, 1)
+	sep2.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+	sep2.BackgroundTransparency = 0.5
+	sep2.BorderSizePixel = 0; sep2.LayoutOrder = 10
+	sep2.Parent = frame
+
+	local mapLabel = Instance.new("TextLabel")
+	mapLabel.Size = UDim2.new(1, 0, 0, 12)
+	mapLabel.BackgroundTransparency = 1
+	mapLabel.Font = Enum.Font.SourceSansBold; mapLabel.TextSize = 9
+	mapLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
+	mapLabel.Text = "MAP"; mapLabel.LayoutOrder = 11
+	mapLabel.Parent = frame
+
+	-- View mode buttons
+	makeBtn("VIEW: TERRAIN", 12, function()
+		BattleEvents.DevCommand:FireServer({ action = "ViewMode", mode = "TERRAIN" })
+	end, Color3.fromRGB(40, 70, 40))
+
+	makeBtn("VIEW: REGION", 13, function()
+		BattleEvents.DevCommand:FireServer({ action = "ViewMode", mode = "REGION" })
+	end, Color3.fromRGB(40, 50, 70))
+
+	makeBtn("VIEW: TEMPLATE", 14, function()
+		BattleEvents.DevCommand:FireServer({ action = "ViewMode", mode = "TEMPLATE" })
+	end, Color3.fromRGB(60, 50, 50))
+
+	-- Separator: Regenerate
+	local sep3 = Instance.new("Frame")
+	sep3.Size = UDim2.new(1, 0, 0, 1)
+	sep3.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+	sep3.BackgroundTransparency = 0.5
+	sep3.BorderSizePixel = 0; sep3.LayoutOrder = 15
+	sep3.Parent = frame
+
+	-- Biome cycle: rotate through all biomes
+	local biomeList = {
+		"Plains", "Forest", "Desert", "Swamp", "Highlands",
+		"Tundra", "Volcano", "Cave", "Ruins", "Castle", "Corrupted",
+	}
+	local biomeIdx = 1
+
+	local biomeBtn = makeBtn("BIOME: Plains", 16, function() end, Color3.fromRGB(50, 65, 50))
+	biomeBtn.MouseButton1Click:Connect(function()
+		biomeIdx = (biomeIdx % #biomeList) + 1
+		biomeBtn.Text = "BIOME: " .. biomeList[biomeIdx]
+	end)
+
+	-- Template cycle: rotate through all templates
+	local templateList = { "T01", "T02", "T03", "T04", "T05", "T06", "T07", "T08" }
+	local templateIdx = 1
+
+	local templateBtn = makeBtn("TMPL: T01", 17, function() end, Color3.fromRGB(50, 50, 65))
+	templateBtn.MouseButton1Click:Connect(function()
+		templateIdx = (templateIdx % #templateList) + 1
+		templateBtn.Text = "TMPL: " .. templateList[templateIdx]
+	end)
+
+	-- Regenerate button: uses current biome/template selection
+	makeBtn("REGENERATE MAP", 18, function()
+		BattleEvents.DevCommand:FireServer({
+			action = "Regenerate",
+			biome = biomeList[biomeIdx],
+			template = templateList[templateIdx],
+		})
+	end, Color3.fromRGB(80, 60, 20))
 end
 
 local function destroyDevCameraPanel()
@@ -2302,5 +2371,13 @@ BattleEvents.LoadoutHubOpen.OnClientEvent:Connect(function(data)
 	else
 		-- Fallback to old hub if new screen not loaded yet
 		createLoadoutHub(phase)
+	end
+end)
+
+-- Receive generated map data (terrain/elevation/blockers) from server
+BattleEvents.MapDataSync.OnClientEvent:Connect(function(mapData)
+	if mapData and GameConstants.SetGeneratedMap then
+		GameConstants.SetGeneratedMap(mapData)
+		print("[BattleVisualClient] MapDataSync received — terrain/elevation updated on client")
 	end
 end)

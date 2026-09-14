@@ -68,6 +68,7 @@ local EVENT_NAMES = {
 	"TileEffectApplied",  -- S->C: effect placed on tile
 	"TileEffectRemoved",  -- S->C: effect removed from tile
 	"UnitStateChanged",   -- S->C: unit HP/isAlive changed (revive, etc.)
+	"MapDataSync",        -- S->C: terrain/elevation/blocker grids for client
 }
 
 -- RemoteFunctions for Slice 4D management contracts

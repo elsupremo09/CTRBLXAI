@@ -361,19 +361,23 @@ local function showSkillDetail(skill)
 	backdrop.Parent = gui
 	backdrop.MouseButton1Click:Connect(closeDetailOverlay)
 
-	local panel = Instance.new("Frame")
-	panel.Size = UDim2.new(0.5, 0, 0.7, 0)
-	panel.Position = UDim2.new(0, 8, 0.15, 0)
-	panel.BackgroundColor3 = Theme.Colors.Background
-	panel.BackgroundTransparency = 0.03
-	panel.BorderSizePixel = 0
+	local panel = Theme.MakePanel("InspSkillDetail",
+		UDim2.new(0.55, 0, 0.8, 0),
+		UDim2.new(0, 8, 0.1, 0),
+		Vector2.new(0, 0),
+		gui)
 	panel.ClipsDescendants = true
-	panel.Parent = gui
-	Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 8)
+
+	-- Padding to keep content inside the 9-slice frame border
+	local panelPad = Instance.new("UIPadding", panel)
+	panelPad.PaddingTop = UDim.new(0, 10)
+	panelPad.PaddingLeft = UDim.new(0, 12)
+	panelPad.PaddingRight = UDim.new(0, 12)
+	panelPad.PaddingBottom = UDim.new(0, 10)
 
 	local scroll = Instance.new("ScrollingFrame")
-	scroll.Size = UDim2.new(1, -12, 1, -12)
-	scroll.Position = UDim2.fromOffset(6, 6)
+	scroll.Size = UDim2.fromScale(1, 1)
+	scroll.Position = UDim2.fromOffset(0, 0)
 	scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0
 	scroll.ScrollBarThickness = 3
 	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -928,22 +932,26 @@ local function buildPanel(data)
 	gui.Parent = player:WaitForChild("PlayerGui")
 	panelGui = gui
 
-	-- Main frame
-	local frame = Instance.new("Frame")
-	frame.Name = "InspectorFrame"
 	local cam = workspace.CurrentCamera
 	local vpW = cam and cam.ViewportSize.X or 1920
 	local isMobile = vpW < 1024
 	local panelW = isMobile and math.min(math.floor(vpW * 0.62), 480) or 420
 	local panelH = isMobile and math.min(math.floor((cam and cam.ViewportSize.Y or 480) * 0.85), 420) or 500
-	frame.Size = UDim2.new(0, panelW, 0, panelH)
-	frame.AnchorPoint = Vector2.new(0, 0)
-	frame.Position = UDim2.new(0, 6, 0, 6)
-	frame.BackgroundColor3 = Theme.Colors.Background
-	frame.BackgroundTransparency = 0.03
-	frame.BorderSizePixel = 0
-	frame.Parent = gui
-	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+	-- Main frame (9-slice ornate panel)
+	local frame = Theme.MakePanel("InspectorFrame",
+		UDim2.new(0, panelW, 0, panelH),
+		UDim2.new(0, 6, 0, 6),
+		Vector2.new(0, 0),
+		gui)
+	frame.ClipsDescendants = true
+
+	-- Padding to keep content inside the 9-slice frame border
+	local framePad = Instance.new("UIPadding", frame)
+	framePad.PaddingTop = UDim.new(0, 10)
+	framePad.PaddingLeft = UDim.new(0, 10)
+	framePad.PaddingRight = UDim.new(0, 10)
+	framePad.PaddingBottom = UDim.new(0, 10)
 
 	-- PORTRAIT (upper-left, 48x48)
 	local PORTRAIT_SIZE = 64

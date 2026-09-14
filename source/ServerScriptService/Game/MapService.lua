@@ -33,10 +33,58 @@ local TemplateRegistry = {
 			:WaitForChild("Templates")
 			:WaitForChild("T01_FrontlinePressure")
 	),
+	T02 = require(
+		ReplicatedStorage
+			:WaitForChild("CTRBLXAI")
+			:WaitForChild("Templates")
+			:WaitForChild("T02_SplitPressure")
+	),
+	T03 = require(
+		ReplicatedStorage
+			:WaitForChild("CTRBLXAI")
+			:WaitForChild("Templates")
+			:WaitForChild("T03_BrokenCrossing")
+	),
+	T04 = require(
+		ReplicatedStorage
+			:WaitForChild("CTRBLXAI")
+			:WaitForChild("Templates")
+			:WaitForChild("T04_BossRingFixed")
+	),
+	T05 = require(
+		ReplicatedStorage
+			:WaitForChild("CTRBLXAI")
+			:WaitForChild("Templates")
+			:WaitForChild("T05_DefenseCenter")
+	),
+	T06 = require(
+		ReplicatedStorage
+			:WaitForChild("CTRBLXAI")
+			:WaitForChild("Templates")
+			:WaitForChild("T06_AdvantageContest")
+	),
+	T07 = require(
+		ReplicatedStorage
+			:WaitForChild("CTRBLXAI")
+			:WaitForChild("Templates")
+			:WaitForChild("T07_WaveSurvival")
+	),
+	T08 = require(
+		ReplicatedStorage
+			:WaitForChild("CTRBLXAI")
+			:WaitForChild("Templates")
+			:WaitForChild("T08_AmbushPincer")
+	),
 }
 
 local MapService = {}
 
+--------------------------------------------------
+-- MAP CACHE
+-- First Generate() call produces the map; subsequent
+-- calls with the same biome+template return the cache.
+--------------------------------------------------
+local _cachedMap = nil
 --------------------------------------------------
 -- CONSTANTS
 --------------------------------------------------
@@ -60,7 +108,65 @@ local BIOME_REGION_POOLS = {
 		{ type = "Clearing",  weight = 30 },
 		{ type = "Farmland",  weight = 20 },
 	},
-	-- Future biomes add entries here.
+	Forest = {
+		{ type = "Forest",    weight = 45 },
+		{ type = "Clearing",  weight = 25 },
+		{ type = "Grassland", weight = 15 },
+		{ type = "Riverbank", weight = 15 },
+	},
+	Desert = {
+		{ type = "Rocky",     weight = 40 },
+		{ type = "Beach",     weight = 30 },
+		{ type = "Clearing",  weight = 20 },
+		{ type = "Grassland", weight = 10 },
+	},
+	Swamp = {
+		{ type = "Marsh",     weight = 45 },
+		{ type = "Riverbank", weight = 25 },
+		{ type = "Forest",    weight = 15 },
+		{ type = "Clearing",  weight = 15 },
+	},
+	Highlands = {
+		{ type = "Rocky",         weight = 40 },
+		{ type = "Mountain Pass", weight = 35 },
+		{ type = "Grassland",     weight = 15 },
+		{ type = "Clearing",      weight = 10 },
+	},
+	Tundra = {
+		{ type = "Frozen Lake", weight = 45 },
+		{ type = "Rocky",       weight = 30 },
+		{ type = "Grassland",   weight = 15 },
+		{ type = "Clearing",    weight = 10 },
+	},
+	Volcano = {
+		{ type = "Volcanic Rock", weight = 45 },
+		{ type = "Lava Channel",  weight = 25 },
+		{ type = "Rocky",         weight = 20 },
+		{ type = "Clearing",      weight = 10 },
+	},
+	Cave = {
+		{ type = "Cave Chamber", weight = 50 },
+		{ type = "Rocky",        weight = 30 },
+		{ type = "Clearing",     weight = 20 },
+	},
+	Ruins = {
+		{ type = "Ruins",     weight = 45 },
+		{ type = "Rocky",     weight = 25 },
+		{ type = "Graveyard", weight = 15 },
+		{ type = "Clearing",  weight = 15 },
+	},
+	Castle = {
+		{ type = "Castle Courtyard", weight = 40 },
+		{ type = "Castle Interior",  weight = 30 },
+		{ type = "Rocky",            weight = 15 },
+		{ type = "Clearing",         weight = 15 },
+	},
+	Corrupted = {
+		{ type = "Corrupted", weight = 45 },
+		{ type = "Graveyard", weight = 25 },
+		{ type = "Marsh",     weight = 15 },
+		{ type = "Forest",    weight = 15 },
+	},
 }
 
 -- Elevation range per biome.
@@ -74,7 +180,36 @@ local BIOME_ELEVATION = {
 		lanMax   = 2,
 		advBonus = 1,
 	},
-	-- Future biomes add entries here.
+	Forest = {
+		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 1,
+	},
+	Desert = {
+		min = 1, max = 4, lanMin = 1, lanMax = 3, advBonus = 1,
+	},
+	Swamp = {
+		min = 1, max = 2, lanMin = 1, lanMax = 2, advBonus = 1,
+	},
+	Highlands = {
+		min = 1, max = 6, lanMin = 1, lanMax = 3, advBonus = 2,
+	},
+	Tundra = {
+		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 1,
+	},
+	Volcano = {
+		min = 1, max = 5, lanMin = 1, lanMax = 3, advBonus = 2,
+	},
+	Cave = {
+		min = 1, max = 4, lanMin = 1, lanMax = 3, advBonus = 1,
+	},
+	Ruins = {
+		min = 1, max = 4, lanMin = 1, lanMax = 3, advBonus = 2,
+	},
+	Castle = {
+		min = 1, max = 5, lanMin = 1, lanMax = 3, advBonus = 2,
+	},
+	Corrupted = {
+		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 1,
+	},
 }
 
 -- Object placement density per template marker (fraction of tiles).
@@ -88,6 +223,7 @@ local MARKER_OBJECT_DENSITY = {
 	POI = 0.08,
 	ADV = 0.08,
 	NEU = 0.03,
+	WAT = 0.04,
 }
 
 -- Markers that require passable terrain (PD/ED/LAN).
@@ -781,6 +917,13 @@ end
 -- PUBLIC API
 --------------------------------------------------
 
+--- Clear the cached map so the next Generate() call
+--- produces a fresh map even for the same biome+template.
+--- Used by DevCommand Regenerate.
+function MapService.ClearCache()
+	_cachedMap = nil
+end
+
 --- Generate a complete playable battlefield.
 --- @param biomeId string — Key in BiomeData (e.g. "Plains").
 --- @param templateId string — Key in TemplateRegistry (e.g. "T01").
@@ -791,6 +934,15 @@ function MapService.Generate(biomeId, templateId, seed)
 		"[MapService] biomeId must be a string")
 	assert(type(templateId) == "string",
 		"[MapService] templateId must be a string")
+
+	-- Return cached map if one exists for the same biome+template.
+	-- This lets TemplateViewer and Main share one generated map
+	-- without coordinating execution order.
+	if _cachedMap
+		and _cachedMap.biomeId == biomeId
+		and _cachedMap.templateId == templateId then
+		return _cachedMap
+	end
 
 	-- Step 1: Load template.
 	local template = loadTemplate(templateId)
@@ -894,7 +1046,8 @@ function MapService.Generate(biomeId, templateId, seed)
 					"[MapService]   %s → %s", regionId, regionTypeName))
 			end
 
-			return mapState
+			_cachedMap = mapState
+			return _cachedMap
 		end
 
 		-- Log and retry.
