@@ -93,7 +93,7 @@ local BattleEvents = require(
 -- TILE OCCUPANCY HELPERS
 --------------------------------------------------
 
-local mapFolder = workspace:WaitForChild("TemplateViewerMap")
+local mapFolder = nil  -- Set after quest map renders (L~195). No startup map.
 
 local BATTLE_OFFSET_X = 0
 local BATTLE_OFFSET_Y = 0
@@ -122,21 +122,98 @@ local function clearTileOccupant(x, y)
 end
 
 --------------------------------------------------
--- MAP SETUP
+-- QUEST BOARD > MAP SETUP
+-- Quest flow replaces hardcoded Plains/T01 generation.
+-- Map generation + service init deferred until after quest selection.
 --------------------------------------------------
 
-local generatedMap = MapService.Generate("Plains", "T01")
+local QuestGenerator = require(Game:WaitForChild("QuestGenerator"))
+
+-- Wait for at least one player to join
+local player
+if #Players:GetPlayers() > 0 then
+	player = Players:GetPlayers()[1]
+else
+	player = Players.PlayerAdded:Wait()
+end
+print("[Main] Player joined: " .. player.Name)
+
+-- Generate 3 quests
+local playerLevel = 1  -- prototype: hardcoded level 1. Future: read from save.
+local quests = QuestGenerator.Generate(playerLevel, os.time())
+
+-- Show Quest Board to all clients
+BattleEvents.QuestBoardOpen:FireAllClients({ quests = quests })
+
+-- Wait for quest selection
+local selectedQuestId = nil
+local questSelectedSignal = Instance.new("BindableEvent")
+
+local questSelectedConn = BattleEvents.QuestSelected.OnServerEvent:Connect(function(plr, data)
+	if data and data.questId then
+		selectedQuestId = data.questId
+		questSelectedSignal:Fire()
+	end
+end)
+
+questSelectedSignal.Event:Wait()
+questSelectedConn:Disconnect()
+questSelectedSignal:Destroy()
+
+-- Find selected quest
+local selectedQuest = nil
+for _, q in ipairs(quests) do
+	if q.id == selectedQuestId then
+		selectedQuest = q
+		break
+	end
+end
+if not selectedQuest then selectedQuest = quests[1] end -- fallback
+
+print(string.format("[Main] Quest selected: %s (%s/%s)", selectedQuest.name, selectedQuest.biome, selectedQuest.template))
+
+-- Generate map from quest parameters
+local generatedMap = MapService.Generate(selectedQuest.biome, selectedQuest.template)
 local MAP_WIDTH    = generatedMap.width
 local MAP_HEIGHT   = generatedMap.height
-
 GameConstants.SetGeneratedMap(generatedMap)
-
--- Deployment positions for unit placement.
 local playerSpawns = generatedMap.deploymentZones.player
 local enemySpawns  = generatedMap.deploymentZones.enemy
 
+-- Render the quest-selected map (replaces the initial TemplateViewer render).
+local oldMapFolder = workspace:FindFirstChild("TemplateViewerMap")
+if oldMapFolder then
+	print(string.format("[Main] Destroying old map folder: %s (%s)",
+		oldMapFolder.Name, oldMapFolder:GetAttribute("BiomeId") or "unknown"))
+	oldMapFolder:Destroy()
+else
+	print("[Main] No old TemplateViewerMap found to destroy")
+end
+
+local questMapFolder = MapRenderer.Render(generatedMap, "TERRAIN")
+questMapFolder.Parent = workspace
+mapFolder = questMapFolder
+
+MapService.ClearCache()  -- clear so Regenerate dev tool can generate fresh
+
+-- FIX: StreamingEnabled is on (Roblox default) but CharacterAutoLoads is false,
+-- so there is no character and Player.ReplicationFocus defaults to nil.
+-- Without a focus the server never streams most map Parts to the client.
+-- Create an invisible anchor at map center and point the player's focus there.
+local streamFocus = Instance.new("Part")
+streamFocus.Name       = "StreamFocus"
+streamFocus.Anchored   = true
+streamFocus.CanCollide = false
+streamFocus.Transparency = 1
+streamFocus.Position   = Vector3.new(0, 0, 0)  -- map is centered at origin
+streamFocus.Parent     = workspace
+player.ReplicationFocus = streamFocus
+
 print(string.format("[Main] Map generated: %dx%d, %d player spawns, %d enemy spawns",
 	MAP_WIDTH, MAP_HEIGHT, #playerSpawns, #enemySpawns))
+
+-- Store active quest for later use (rewards, objectives)
+local activeQuest = selectedQuest
 
 CommandService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
 DisplacementService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
@@ -334,8 +411,8 @@ local hero = UnitSchema.Create({
 	raceId       = "RACE-HUMAN",
 	side         = "Player",
 	controller   = "Player",
-	tileX        = playerSpawns[1].x,
-	tileY        = playerSpawns[1].y,
+	tileX        = 0,  -- set during deployment phase
+	tileY        = 0,  -- set during deployment phase
 	doctrineId   = "DOC-BERSERKER",
 	skillIds     = { "skill_power_strike", "skill_sweeping_cut" },
 })
@@ -398,8 +475,8 @@ local mage = UnitSchema.Create({
 	raceId       = "RACE-ELF",
 	side         = "Player",
 	controller   = "Player",
-	tileX        = playerSpawns[2].x,
-	tileY        = playerSpawns[2].y,
+	tileX        = 0,  -- set during deployment phase
+	tileY        = 0,  -- set during deployment phase
 	doctrineId   = "DOC-ARCANIST",
 	skillIds     = { "skill_fire_bolt", "skill_healing_light" },
 })
@@ -412,8 +489,8 @@ local ranger = UnitSchema.Create({
 	raceId       = "RACE-SHADOW",
 	side         = "Player",
 	controller   = "Player",
-	tileX        = playerSpawns[3].x,
-	tileY        = playerSpawns[3].y,
+	tileX        = 0,  -- set during deployment phase
+	tileY        = 0,  -- set during deployment phase
 	doctrineId   = "DOC-RANGER",
 	skillIds     = { "skill_crippling_shot", "skill_venom_strike" },
 })
@@ -503,7 +580,9 @@ equipGeneratedWeapon(shaman, "WPN-WAND", 5, "Common", 2003)
 
 local allUnitsList = { hero, mage, ranger, grunt, pyro, shaman }
 for _, u in ipairs(allUnitsList) do
-	setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
+	if u.side == "Enemy" then
+		setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
+	end
 end
 
 -- Apply permanent Flight status to units with the Flying race tag
@@ -1796,7 +1875,53 @@ if game:GetService("RunService"):IsStudio() then
 			newFolder.Parent = workspace
 			mapFolder = newFolder
 
-			print(string.format("[Dev] Regenerated: biome=%s template=%s seed=%d", biome, template, newMap.seed))
+			-- Update module-level map state so services use the new map.
+			generatedMap  = newMap
+			MAP_WIDTH     = newMap.width
+			MAP_HEIGHT    = newMap.height
+			playerSpawns  = newMap.deploymentZones.player
+			enemySpawns   = newMap.deploymentZones.enemy
+
+			CommandService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
+			DisplacementService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
+
+			-- Sync terrain, elevation, blockers, AND dimensions to client.
+			BattleEvents.MapDataSync:FireAllClients({
+				terrainGrid   = newMap.terrainGrid,
+				elevationGrid = newMap.elevationGrid,
+				blockers      = newMap.blockers,
+				mapWidth      = MAP_WIDTH,
+				mapHeight     = MAP_HEIGHT,
+			})
+
+			-- DEV-TOOL: Reposition units to new deployment anchors.
+			local newPlayerAnchors = newMap.deploymentZones.player
+			local newEnemyAnchors  = newMap.deploymentZones.enemy
+			local pi, ei = 1, 1
+			for _, u in ipairs(allUnitsList) do
+				clearTileOccupant(u.tileX, u.tileY)
+				if u.side == "Player" then
+					local a = newPlayerAnchors[pi] or newPlayerAnchors[1]
+					u.tileX = a.x
+					u.tileY = a.y
+					pi = pi + 1
+				else
+					local a = newEnemyAnchors[ei] or newEnemyAnchors[1]
+					u.tileX = a.x
+					u.tileY = a.y
+					ei = ei + 1
+				end
+				setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
+				-- Notify client to move the token.
+				BattleEvents.UnitMoved:FireAllClients({
+					unitId = u.id,
+					tileX  = u.tileX,
+					tileY  = u.tileY,
+				})
+			end
+
+			print(string.format("[Dev] Regenerated: biome=%s template=%s seed=%d (%dx%d, %d units repositioned)",
+				biome, template, newMap.seed, MAP_WIDTH, MAP_HEIGHT, #allUnitsList))
 		end
 	end)
 	print("[Dev] DevCommand handler active (Studio only)")
@@ -1811,12 +1936,148 @@ BattleEvents.MapDataSync:FireAllClients({
 	terrainGrid  = generatedMap.terrainGrid,
 	elevationGrid = generatedMap.elevationGrid,
 	blockers     = generatedMap.blockers,
+	mapWidth     = MAP_WIDTH,
+	mapHeight    = MAP_HEIGHT,
 })
 
--- Wait for player to press Start Battle
+-- Wait for player to press Deploy (hub "Start Battle" button)
 hubContinueSignal.Event:Wait()
-print("[Hub] Player started battle")
+print("[Hub] Player ready — entering deployment phase")
 
+-- === DEPLOYMENT PHASE ===
+-- Player manually places each unit on PD (Player Deployment) tiles.
+-- Enemy units are already positioned at ED (Enemy Deployment) anchors.
+
+local function serializeForDeployment(unitList, side)
+	local result = {}
+	for _, u in ipairs(unitList) do
+		if u.side == side then
+			local wpnName = "Unarmed"
+			if u.equipmentSlots and u.equipmentSlots.MainHand then
+				local wArch = WeaponData.GetByArchetypeId(u.equipmentSlots.MainHand.baseArchetypeId)
+				if wArch then wpnName = wArch.name end
+			end
+			table.insert(result, {
+				id         = u.id,
+				name       = u.name,
+				side       = u.side,
+				tileX      = u.tileX,
+				tileY      = u.tileY,
+				weaponName = wpnName,
+			})
+		end
+	end
+	return result
+end
+
+local deployPlayerUnits = {}
+local deployEnemyUnits  = {}
+for _, u in ipairs(allUnitsList) do
+	if u.side == "Player" then
+		table.insert(deployPlayerUnits, u)
+	else
+		table.insert(deployEnemyUnits, u)
+	end
+end
+
+-- Trim PD anchors to 2× player unit count for tactical choice variety.
+-- MapService generates up to 6 PD anchors; we only expose the ones the
+-- player can actually use (double their roster size).
+local deployAnchorsToShow = {}
+local maxPDAnchors = math.min(#playerSpawns, #deployPlayerUnits * 2)
+for i = 1, maxPDAnchors do
+	table.insert(deployAnchorsToShow, playerSpawns[i])
+end
+
+BattleEvents.DeploymentPhase:FireAllClients({
+	playerAnchors = deployAnchorsToShow,
+	enemyUnits    = serializeForDeployment(allUnitsList, "Enemy"),
+	playerUnits   = serializeForDeployment(allUnitsList, "Player"),
+	mapWidth      = MAP_WIDTH,
+	mapHeight     = MAP_HEIGHT,
+})
+
+print(string.format("[Deploy] Phase started — %d PD anchors, %d player units to place, %d enemies pre-placed",
+	#playerSpawns, #deployPlayerUnits, #deployEnemyUnits))
+
+for i, a in ipairs(deployAnchorsToShow) do
+	print(string.format("[Deploy]   PD anchor %d: (%d, %d)", i, a.x, a.y))
+end
+
+local deployedCount = 0
+local occupiedTiles = {}
+local deploymentCompleteSignal = Instance.new("BindableEvent")
+
+for _, u in ipairs(deployEnemyUnits) do
+	occupiedTiles[u.tileY * 100000 + u.tileX] = true
+end
+
+local deployConn = BattleEvents.DeployUnit.OnServerEvent:Connect(function(plr, data)
+	if not data or not data.unitId or not data.tileX or not data.tileY then return end
+
+	local validTile = false
+	-- Validate against the trimmed anchor list (2× player count), not all PD tiles.
+	for _, anchor in ipairs(deployAnchorsToShow) do
+		if anchor.x == data.tileX and anchor.y == data.tileY then validTile = true; break end
+	end
+	if not validTile then
+		warn(string.format("[Deploy] REJECTED: tile (%d,%d) is not a valid PD anchor", data.tileX, data.tileY))
+		return
+	end
+
+	local tileKey = data.tileY * 100000 + data.tileX
+	if occupiedTiles[tileKey] then
+		warn(string.format("[Deploy] REJECTED: tile (%d,%d) already occupied", data.tileX, data.tileY))
+		return
+	end
+
+	local unit = nil
+	for _, u in ipairs(deployPlayerUnits) do
+		if u.id == data.unitId then unit = u; break end
+	end
+	if not unit then
+		warn(string.format("[Deploy] REJECTED: unit %s not found", tostring(data.unitId)))
+		return
+	end
+	if unit.tileX ~= 0 or unit.tileY ~= 0 then
+		warn(string.format("[Deploy] REJECTED: unit %s already deployed at (%d,%d)", unit.name, unit.tileX, unit.tileY))
+		return
+	end
+
+	unit.tileX = data.tileX
+	unit.tileY = data.tileY
+	occupiedTiles[tileKey] = true
+	deployedCount = deployedCount + 1
+
+	setTileOccupant(unit.tileX, unit.tileY, unit.name, "Unit (" .. unit.side .. ")", "Blocking")
+
+	BattleEvents.UnitDeployed:FireAllClients({
+		unitId = unit.id,
+		tileX  = data.tileX,
+		tileY  = data.tileY,
+	})
+
+	print(string.format("[Deploy] %s placed at (%d,%d) — %d/%d deployed",
+		unit.name, data.tileX, data.tileY, deployedCount, #deployPlayerUnits))
+end)
+
+local readyConn = BattleEvents.DeploymentReady.OnServerEvent:Connect(function(plr)
+	if deployedCount >= #deployPlayerUnits then
+		deploymentCompleteSignal:Fire()
+	else
+		warn(string.format("[Deploy] Ready signal but only %d/%d deployed — waiting",
+			deployedCount, #deployPlayerUnits))
+	end
+end)
+
+deploymentCompleteSignal.Event:Wait()
+deployConn:Disconnect()
+readyConn:Disconnect()
+deploymentCompleteSignal:Destroy()
+
+print(string.format("[Deploy] All %d player units deployed — starting battle", #deployPlayerUnits))
+
+-- === BATTLE START ===
 state = BattleCoordinator.CreateBattleState(allUnitsList)
 
 task.wait(2)

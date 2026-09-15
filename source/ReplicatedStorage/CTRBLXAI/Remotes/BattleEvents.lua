@@ -69,6 +69,14 @@ local EVENT_NAMES = {
 	"TileEffectRemoved",  -- S->C: effect removed from tile
 	"UnitStateChanged",   -- S->C: unit HP/isAlive changed (revive, etc.)
 	"MapDataSync",        -- S->C: terrain/elevation/blocker grids for client
+	-- Phase B: Quest Board
+	"QuestBoardOpen",     -- S->C: quest board data (3 quests)
+	"QuestSelected",      -- C->S: player picks a quest
+	-- Phase D: Deployment
+	"DeploymentPhase",    -- S->C: deployment data (anchors, units, map size)
+	"DeployUnit",         -- C->S: player places a unit on a tile
+	"UnitDeployed",       -- S->C: server confirms unit placement
+	"DeploymentReady",    -- C->S: all units placed, start battle
 }
 
 -- RemoteFunctions for Slice 4D management contracts

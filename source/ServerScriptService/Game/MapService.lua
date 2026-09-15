@@ -1,11 +1,15 @@
 -- MapService.lua
--- CTRBLXAI | Slice 5 Phase 2 — Procedural Map Generator
+-- CTRBLXAI | Feature Coherence System — Round 1
 --
+-- Thin orchestrator calling pass modules in sequence.
 -- 11-step deterministic pipeline: biome + template → playable battlefield.
 --
--- Initial delivery scope: Plains biome + T01 template.
--- Pipeline architecture supports any biome/template — only Plains+T01
--- is tested end-to-end.
+-- Pass pipeline:
+--   FloorPass      — Floor terrain per region (uniform, no scatter)
+--   FeaturePass    — 14 feature types (Round 2-4, stub)
+--   TransitionPass — Prohibitions + buffers (Round 2, stub)
+--   ElevationPass  — Terrain-correlated elevation
+--   ValidationPass — Coherence validation (Round 5, stub)
 --
 -- This module does not create Roblox Instances.
 -- It produces a data table consumed by GameConstants.SetGeneratedMap().
@@ -24,6 +28,13 @@ local ObjectData  = require(Content:WaitForChild("ObjectData"))
 local RegionGenerator = require(
 	ServerScriptService:WaitForChild("RegionGenerator")
 )
+
+-- Pass modules (sibling scripts in Game/).
+local FloorPass     = require(script.Parent:WaitForChild("FloorPass"))
+local ElevationPass = require(script.Parent:WaitForChild("ElevationPass"))
+local FeaturePass     = require(script.Parent:WaitForChild("FeaturePass"))
+local TransitionPass  = require(script.Parent:WaitForChild("TransitionPass"))
+local ValidationPass  = require(script.Parent:WaitForChild("ValidationPass"))
 
 -- Template registry — add future templates here.
 local TemplateRegistry = {
@@ -178,13 +189,13 @@ local BIOME_ELEVATION = {
 		max      = 3,
 		lanMin   = 1,
 		lanMax   = 2,
-		advBonus = 1,
+		advBonus = 2,
 	},
 	Forest = {
-		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 1,
+		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 2,
 	},
 	Desert = {
-		min = 1, max = 4, lanMin = 1, lanMax = 3, advBonus = 1,
+		min = 1, max = 4, lanMin = 1, lanMax = 3, advBonus = 2,
 	},
 	Swamp = {
 		min = 1, max = 2, lanMin = 1, lanMax = 2, advBonus = 1,
@@ -193,13 +204,13 @@ local BIOME_ELEVATION = {
 		min = 1, max = 6, lanMin = 1, lanMax = 3, advBonus = 2,
 	},
 	Tundra = {
-		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 1,
+		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 2,
 	},
 	Volcano = {
 		min = 1, max = 5, lanMin = 1, lanMax = 3, advBonus = 2,
 	},
 	Cave = {
-		min = 1, max = 4, lanMin = 1, lanMax = 3, advBonus = 1,
+		min = 1, max = 4, lanMin = 1, lanMax = 3, advBonus = 2,
 	},
 	Ruins = {
 		min = 1, max = 4, lanMin = 1, lanMax = 3, advBonus = 2,
@@ -208,8 +219,12 @@ local BIOME_ELEVATION = {
 		min = 1, max = 5, lanMin = 1, lanMax = 3, advBonus = 2,
 	},
 	Corrupted = {
-		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 1,
+		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 2,
 	},
+}
+
+local DEFAULT_ELEVATION = {
+	min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 1,
 }
 
 -- Object placement density per template marker (fraction of tiles).
@@ -272,7 +287,7 @@ local function weightedSelect(weights, rng, validator, fallback)
 	end
 
 	if total == 0 then
-		return fallback or "Clear"
+		return fallback
 	end
 
 	-- Sort for deterministic traversal regardless of hash order.
@@ -315,10 +330,8 @@ end
 
 --------------------------------------------------
 -- TERRAIN VALIDATORS
--- Used by weightedSelect to filter the biome/region
--- weight tables. Gracefully skips unresolved terrain IDs
--- (e.g. "Forest Floor", "Road") — redistributes weight
--- to resolved entries.
+-- Used by FeaturePass (Round 2) and object placement.
+-- Gracefully skips unresolved terrain IDs.
 --------------------------------------------------
 
 local function validTerrain(id)
@@ -373,19 +386,18 @@ local function createSeedContext(seed)
 		objectRng    = Random.new(master:NextInteger(1, MAX_SEED)),
 		conditionRng = Random.new(master:NextInteger(1, MAX_SEED)),
 		deployRng    = Random.new(master:NextInteger(1, MAX_SEED)),
+		featureRng   = Random.new(master:NextInteger(1, MAX_SEED)),
 	}
 end
 
 --------------------------------------------------
--- STEP 4: GENERATE BASE TERRAIN
--- Fill every tile with terrain from biome weights.
--- Template markers are applied. PD/ED/LAN get passable
--- terrain only.
+-- STEP 4: INITIALIZE TILES
+-- Create the tile grid with template markers.
+-- Terrain and elevation are filled by the passes.
 --------------------------------------------------
 
-local function generateBaseTerrain(w, h, template, biome, rng)
+local function initializeTiles(w, h, template)
 	local tiles = {}
-	local ops   = 0
 
 	for y = 1, h do
 		tiles[y] = {}
@@ -393,151 +405,18 @@ local function generateBaseTerrain(w, h, template, biome, rng)
 		for x = 1, w do
 			local marker = (template.Grid[y] and template.Grid[y][x]) or "NEU"
 
-			local validator = PASSABLE_REQUIRED[marker]
-				and validPassableTerrain or validTerrain
-
 			tiles[y][x] = {
-				terrain   = weightedSelect(
-					biome.terrainWeights, rng, validator, "Clear"
-				),
-				elevation = 1,
+				terrain   = nil,      -- FloorPass fills this
+				elevation = 1,        -- ElevationPass fills this
 				object    = nil,
-				regionId  = nil,
+				regionId  = nil,      -- stamped after RegionGenerator
 				marker    = marker,
+				protected = false,    -- FloorPass marks PD/ED/LAN
 			}
-
-			ops = ops + 1
-			if ops % YIELD_INTERVAL == 0 then task.wait() end
 		end
 	end
 
 	return tiles
-end
-
---------------------------------------------------
--- STEP 5: SHAPE REGIONS
--- 5a: Generate region ownership grid via RegionGenerator.
--- 5b: Assign a region type (e.g. Grassland, Clearing) to
---     each generated region from the biome pool.
--- 5c: Override terrain per region's terrain weights.
---     Unresolved terrain IDs are skipped (graceful fallback).
---------------------------------------------------
-
-local function shapeRegions(tiles, w, h, biome, seedCtx)
-	-- 5a: Region ownership grid.
-	local regionResult = RegionGenerator.Generate({
-		Width                     = w,
-		Height                    = h,
-		BiomeId                   = biome.id,
-		RegionCount               = 3,
-		MinimumRegionPercent      = 0.15,
-		MaximumGenerationAttempts = 50,
-		Seed                      = seedCtx.regionSeed,
-	})
-
-	-- 5b: Map each generated region ID to a region type.
-	local pool = BIOME_REGION_POOLS[biome.id]
-		or { { type = "Grassland", weight = 100 } }
-
-	local regionTypeMap = {} -- regionId → RegionData key
-	for _, region in ipairs(regionResult.Regions) do
-		regionTypeMap[region.Id] = weightedSelectArray(pool, seedCtx.terrainRng)
-	end
-
-	-- 5c: Override terrain using region weights.
-	local ops = 0
-
-	for y = 1, h do
-		for x = 1, w do
-			local tile     = tiles[y][x]
-			local regionId = regionResult.Grid[y][x]
-			tile.regionId  = regionId
-
-			local regionTypeName = regionTypeMap[regionId]
-			local regionType     = RegionData[regionTypeName]
-
-			if regionType and regionType.terrainWeights then
-				local validator = PASSABLE_REQUIRED[tile.marker]
-					and validPassableTerrain or validTerrain
-
-				tile.terrain = weightedSelect(
-					regionType.terrainWeights,
-					seedCtx.terrainRng,
-					validator,
-					"Clear"
-				)
-			end
-
-			ops = ops + 1
-			if ops % YIELD_INTERVAL == 0 then task.wait() end
-		end
-	end
-
-	return regionResult, regionTypeMap
-end
-
---------------------------------------------------
--- STEP 6: ASSIGN ELEVATION
--- Biome-appropriate variance. Plains = low (1-3).
--- LAN-family tiles smoothed to ensure adjacent tiles
--- differ by ≤ 1 (Jump=1 constraint from DB).
---------------------------------------------------
-
-local function assignElevation(tiles, w, h, biome, rng)
-	local cfg = BIOME_ELEVATION[biome.id]
-		or { min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 1 }
-
-	-- First pass: initial elevation based on marker type.
-	for y = 1, h do
-		for x = 1, w do
-			local tile   = tiles[y][x]
-			local marker = tile.marker
-
-			if marker == "PD" or marker == "ED" then
-				tile.elevation = cfg.min
-			elseif marker == "ADV" then
-				tile.elevation = math.min(
-					cfg.lanMax + cfg.advBonus, cfg.max
-				)
-			elseif marker == "LAN" or marker == "HZD" or marker == "BLK" then
-				tile.elevation = rng:NextInteger(cfg.lanMin, cfg.lanMax)
-			elseif marker == "POI" then
-				tile.elevation = rng:NextInteger(cfg.min, cfg.lanMax)
-			else -- NEU
-				tile.elevation = rng:NextInteger(cfg.min, cfg.max)
-			end
-		end
-	end
-
-	-- Smoothing passes: enforce adjacent LAN-family tiles
-	-- differ by ≤ 1 elevation. Three passes is sufficient
-	-- for the 30×20 grid.
-	for _ = 1, 3 do
-		for y = 1, h do
-			for x = 1, w do
-				local tile = tiles[y][x]
-				if LAN_FAMILY[tile.marker] then
-					for _, dir in ipairs(CARDINAL) do
-						local nx, ny = x + dir.x, y + dir.y
-						if isInBounds(nx, ny, w, h) then
-							local neighbor = tiles[ny][nx]
-							if LAN_FAMILY[neighbor.marker] then
-								local diff = tile.elevation - neighbor.elevation
-								if diff > 1 then
-									tile.elevation = neighbor.elevation + 1
-								elseif diff < -1 then
-									tile.elevation = neighbor.elevation - 1
-								end
-								tile.elevation = math.clamp(
-									tile.elevation, cfg.min, cfg.max
-								)
-							end
-						end
-					end
-				end
-			end
-		end
-	end
 end
 
 --------------------------------------------------
@@ -936,8 +815,6 @@ function MapService.Generate(biomeId, templateId, seed)
 		"[MapService] templateId must be a string")
 
 	-- Return cached map if one exists for the same biome+template.
-	-- This lets TemplateViewer and Main share one generated map
-	-- without coordinating execution order.
 	if _cachedMap
 		and _cachedMap.biomeId == biomeId
 		and _cachedMap.templateId == templateId then
@@ -968,15 +845,62 @@ function MapService.Generate(biomeId, templateId, seed)
 			attempt, MAX_GENERATION_ATTEMPTS,
 			seedCtx.seed, biomeId, templateId))
 
-		-- Step 4: Generate base terrain.
-		local tiles = generateBaseTerrain(w, h, template, biome, seedCtx.terrainRng)
+		-- Step 4: Initialize tile grid with markers.
+		local tiles = initializeTiles(w, h, template)
 
-		-- Step 5: Shape regions and override terrain.
-		local regionResult, regionTypeMap =
-			shapeRegions(tiles, w, h, biome, seedCtx)
+		-- Step 5a: Generate region ownership grid.
+		local regionResult = RegionGenerator.Generate({
+			Width                     = w,
+			Height                    = h,
+			BiomeId                   = biome.id,
+			RegionCount               = 3,
+			MinimumRegionPercent      = 0.15,
+			MaximumGenerationAttempts = 50,
+			Seed                      = seedCtx.regionSeed,
+		})
 
-		-- Step 6: Assign elevation.
-		assignElevation(tiles, w, h, biome, seedCtx.elevationRng)
+		-- Stamp region IDs onto tiles.
+		for y = 1, h do
+			for x = 1, w do
+				tiles[y][x].regionId = regionResult.Grid[y][x]
+			end
+		end
+
+		-- Step 5b: Assign a region type to each generated region.
+		local pool = BIOME_REGION_POOLS[biome.id]
+			or { { type = "Grassland", weight = 100 } }
+
+		local regionTypeMap = {}
+		for _, region in ipairs(regionResult.Regions) do
+			regionTypeMap[region.Id] = weightedSelectArray(
+				pool, seedCtx.terrainRng
+			)
+		end
+
+		-- Build mapState for the pass pipeline.
+		local mapState = {
+			width          = w,
+			height         = h,
+			biomeId        = biomeId,
+			templateId     = templateId,
+			seed           = seedCtx.seed,
+			template       = template,
+			biome          = biome,
+			regionResult   = regionResult,
+			regionTypeMap  = regionTypeMap,
+			tiles          = tiles,
+			rng            = seedCtx,
+			biomeElevation = BIOME_ELEVATION[biomeId] or DEFAULT_ELEVATION,
+		}
+
+		--======================================================
+		-- PASS PIPELINE
+		--======================================================
+		mapState = FloorPass.Run(mapState)
+		mapState = FeaturePass.Run(mapState)
+		mapState = TransitionPass.Run(mapState)
+		mapState = ElevationPass.Run(mapState)
+		mapState = ValidationPass.Run(mapState)
 
 		-- Step 7: Validate connectivity (pre-object).
 		local conn, connErr = validateConnectivity(tiles, w, h)
@@ -1007,25 +931,17 @@ function MapService.Generate(biomeId, templateId, seed)
 		local elevGrid, terrainGrid = buildGrids(tiles, w, h)
 		local blockers              = buildBlockers(objects)
 
-		local mapState = {
-			width           = w,
-			height          = h,
-			biomeId         = biomeId,
-			templateId      = templateId,
-			seed            = seedCtx.seed,
-			tiles           = tiles,
-			deploymentZones = deployZones,
-			objects         = objects,
-			battleCondition = battleCondition,
-			-- Pre-built grids for GameConstants.SetGeneratedMap().
-			elevationGrid   = elevGrid,
-			terrainGrid     = terrainGrid,
-			blockers        = blockers,
-			generationAudit = {
-				attempts         = attempt,
-				seed             = seedCtx.seed,
-				validationPassed = false,
-			},
+		-- Populate final mapState fields for downstream consumers.
+		mapState.deploymentZones = deployZones
+		mapState.objects         = objects
+		mapState.battleCondition = battleCondition
+		mapState.elevationGrid   = elevGrid
+		mapState.terrainGrid     = terrainGrid
+		mapState.blockers        = blockers
+		mapState.generationAudit = {
+			attempts         = attempt,
+			seed             = seedCtx.seed,
+			validationPassed = false,
 		}
 
 		-- Step 11: Final validation.
@@ -1033,6 +949,14 @@ function MapService.Generate(biomeId, templateId, seed)
 
 		if valid then
 			mapState.generationAudit.validationPassed = true
+			-- Include ValidationPass report in audit (advisory).
+			if mapState.validationReport then
+				mapState.generationAudit.validationReport = mapState.validationReport
+				if not mapState.validationReport.passed then
+					warn(string.format("[MapService] ValidationPass advisory: %d violation(s)",
+						mapState.validationReport.totalViolations or 0))
+				end
+			end
 
 			print(string.format(
 				"[MapService] Generated %dx%d  seed=%d  regions=%d  objects=%d  condition=%s  attempt=%d",
@@ -1045,6 +969,12 @@ function MapService.Generate(biomeId, templateId, seed)
 				print(string.format(
 					"[MapService]   %s → %s", regionId, regionTypeName))
 			end
+
+			-- Strip internal pipeline fields before caching.
+			mapState.rng            = nil
+			mapState.template       = nil
+			mapState.biome          = nil
+			mapState.biomeElevation = nil
 
 			_cachedMap = mapState
 			return _cachedMap
