@@ -325,36 +325,36 @@ local function createGridLine(name, position, size, mapFolder)
 	line.Parent = mapFolder
 end
 
-local function createGridOverlay(mapWidth, mapHeight, maxElevation, offsetX, offsetZ, mapFolder)
-	local gridY = getTileHeight(maxElevation) + 0.06
-
-	local mapWidthStuds  = mapWidth * TILE_SIZE
-	local mapHeightStuds = mapHeight * TILE_SIZE
-
-	for x = 0, mapWidth do
-		createGridLine(
-			"GridLine_V_" .. x,
-			Vector3.new(
-				offsetX + (x * TILE_SIZE),
-				gridY,
-				0
-			),
-			Vector3.new(GRID_THICKNESS, 0.06, mapHeightStuds),
-			mapFolder
-		)
-	end
-
-	for y = 0, mapHeight do
-		createGridLine(
-			"GridLine_H_" .. y,
-			Vector3.new(
-				0,
-				gridY,
-				offsetZ + (y * TILE_SIZE)
-			),
-			Vector3.new(mapWidthStuds, 0.03, GRID_THICKNESS),
-			mapFolder
-		)
+local function createGridOverlay(mapWidth, mapHeight, _maxElevation, offsetX, offsetZ, mapFolder, generatedMap)
+	-- Per-tile grid edges that follow elevation.
+	-- Each tile gets a south edge and an east edge at its own top-surface height.
+	for y = 1, mapHeight do
+		for x = 1, mapWidth do
+			local elev = generatedMap.tiles[y] and generatedMap.tiles[y][x] and generatedMap.tiles[y][x].elevation or 1
+			local topY = getTileHeight(elev) + 0.04
+			-- South edge (along X axis at tile's south Z boundary)
+			createGridLine(
+				"Grid_S_" .. x .. "_" .. y,
+				Vector3.new(
+					offsetX + ((x - 0.5) * TILE_SIZE),
+					topY,
+					offsetZ + (y * TILE_SIZE)
+				),
+				Vector3.new(TILE_SIZE, 0.04, GRID_THICKNESS),
+				mapFolder
+			)
+			-- East edge (along Z axis at tile's east X boundary)
+			createGridLine(
+				"Grid_E_" .. x .. "_" .. y,
+				Vector3.new(
+					offsetX + (x * TILE_SIZE),
+					topY,
+					offsetZ + ((y - 0.5) * TILE_SIZE)
+				),
+				Vector3.new(GRID_THICKNESS, 0.04, TILE_SIZE),
+				mapFolder
+			)
+		end
 	end
 end
 
@@ -433,7 +433,7 @@ function MapRenderer.Render(generatedMap, viewMode)
 			end
 		end
 	end
-	createGridOverlay(mapWidth, mapHeight, maxElev, offsetX, offsetZ, mapFolder)
+	createGridOverlay(mapWidth, mapHeight, maxElev, offsetX, offsetZ, mapFolder, generatedMap)
 
 	print(string.format(
 		"[MapRenderer] Rendered %dx%d  biome=%s  template=%s  seed=%d  view=%s",

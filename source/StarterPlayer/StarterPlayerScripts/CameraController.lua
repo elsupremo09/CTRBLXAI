@@ -8,6 +8,7 @@
 -- Touch model: per-touch identity tracking, tap-on-release classification.
 --
 -- API:
+--   EnterMenu()              — fixed camera for UI-only state (no controls)
 --   EnterBattle(focusPos?)   — activate tactical camera + disable controls
 --   ExitBattle()             — restore all native controls
 --   Pan(dx, dz)              — rotation-aware pan, clamped
@@ -269,6 +270,23 @@ end
 
 --------------------------------------------------
 -- BATTLE MODE ENTER/EXIT
+--------------------------------------------------
+
+function CameraController.EnterMenu()
+	camera = workspace.CurrentCamera
+	camera.CameraType = Enum.CameraType.Scriptable
+	camera.CameraSubject = nil
+	camera.FieldOfView = FIXED_FOV
+	-- Elevated angle looking at world origin — pleasant backdrop for UI
+	camera.CFrame = CFrame.lookAt(Vector3.new(0, 30, 40), Vector3.new(0, 0, 0))
+	-- Menu mode: no tactical controls, no battle state
+	isActive = false
+	inBattle = false
+	print("[CameraController] Menu mode ENTERED.")
+end
+
+--------------------------------------------------
+-- BATTLE MODE — hide/show character helpers
 --------------------------------------------------
 
 local function hideCharacter()

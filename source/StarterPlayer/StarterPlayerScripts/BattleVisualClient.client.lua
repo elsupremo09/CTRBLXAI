@@ -43,6 +43,11 @@ local CameraController = require(
 	player:WaitForChild("PlayerScripts")
 		:WaitForChild("CameraController", 10)
 )
+local _vfxOk, VFXController = pcall(require,
+	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+		:WaitForChild("Shared", 10):WaitForChild("VFXController", 10)
+)
+if not _vfxOk then warn("[BVC] VFXController failed to load: " .. tostring(VFXController)); VFXController = nil end
 
 --------------------------------------------------
 -- MAP CONFIGURATION
@@ -654,7 +659,7 @@ end
 -- TILE SELECTION
 --------------------------------------------------
 
-local mapFolder = workspace:WaitForChild("TemplateViewerMap", 15)
+local mapFolder = workspace:FindFirstChild("TemplateViewerMap")  -- nil until quest map renders; updated in MapDataSync handler
 
 local function getTileUnderMouse()
 	local target = mouse.Target
@@ -731,6 +736,7 @@ local function processTileClick(bx, by)
 	local terrainId = GameConstants.GetTerrainId(bx, by)
 	local elevation = getElevation(bx, by)
 	local moveCost = GameConstants.GetTerrainCost(bx, by)
+	print(string.format("[DIAG-TILE] Click (%d,%d) terrain=%s elev=%s GC_elev=%s hasLocalMap=%s", bx, by, tostring(terrainId), tostring(elevation), tostring(GameConstants.GetElevation(bx, by)), tostring(elevationMap ~= nil)))
 	bp.tile = {
 		terrainName = terrainId,
 		elevation = elevation,
@@ -1319,11 +1325,18 @@ BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 		updateHpBar(unit.id, unit.currentHp, unit.maxHp)
 		updateMpBar(unit.id, unit.currentMp or 0, unit.maxMp or 0)
 	end
+	-- VFX: init post-processing + clear stale highlights
+	local mf = workspace:FindFirstChild("TemplateViewerMap")
+	local biome = mf and mf:GetAttribute("BiomeId") or "Plains"
+	if VFXController then pcall(VFXController.Init, biome); pcall(VFXController.ClearAllHighlights) end
 end)
 
 BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	activeUnitId = data.unitId
 	bp.inspectedEntityId = nil  -- new turn resets inspection
+	-- VFX: highlight active unit (gold outline)
+	local _at = unitTokens[data.unitId]
+	if _at and VFXController then pcall(VFXController.SetActiveUnit, data.unitId, _at.part) end
 	if unitData[data.unitId] then
 		unitData[data.unitId].statuses = data.statuses
 		-- Clear Guard buff (expires on new turn) and restore token color
@@ -1392,6 +1405,19 @@ BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
 			if at then showFloatingText(at.part.Position, data.skillName, Theme.Colors.TextGold, 1.1) end
 		end
 		showDamageText(tt.part.Position, data.damage, false)
+		-- VFX: attack visual (beam or slash) + impact particles
+		local _actor = unitTokens[data.actorId]
+		if _actor then
+			local dist = (_actor.part.Position - tt.part.Position).Magnitude
+			if dist > 7.5 then
+				if VFXController then pcall(VFXController.RangedBeam, _actor.part.Position, tt.part.Position) end
+			else
+				if VFXController then pcall(VFXController.MeleeSlash, _actor.part.Position, tt.part.Position) end
+			end
+		end
+		if VFXController then pcall(VFXController.DamageImpact, tt.part.Position) end
+		-- Brief red target highlight (1s)
+		if VFXController then pcall(VFXController.SetPersistHighlight, data.targetId, tt.part, "target"); task.delay(1.0, function() pcall(VFXController.ClearHighlight, data.targetId) end) end
 	end
 	-- Battle log
 	local actorName = unitData[data.actorId] and unitData[data.actorId].name or "?"
@@ -1422,6 +1448,9 @@ end)
 
 BattleEvents.DotDamage.OnClientEvent:Connect(function(data)
 	updateHpBar(data.unitId, data.currentHp, data.maxHp)
+	-- VFX: subtle DOT tick particles
+	local _dt = unitTokens[data.unitId]
+	if _dt and VFXController then pcall(VFXController.DotTick, _dt.part.Position, data.statusId) end
 	if unitData[data.unitId] then unitData[data.unitId].currentHp = data.currentHp end
 	local t = unitTokens[data.unitId]
 	if t then showDamageText(t.part.Position, data.damage, false)
@@ -1437,6 +1466,8 @@ BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
 	if tt then
 		if data.skillName then local at = unitTokens[data.actorId]; if at then showFloatingText(at.part.Position, data.skillName, Theme.Colors.Success, 1.1) end end
 		showDamageText(tt.part.Position, data.amount, true)
+		-- VFX: rising green heal particles
+		if VFXController then pcall(VFXController.HealEffect, tt.part.Position) end
 	end
 	local actorName = unitData[data.actorId] and unitData[data.actorId].name or "?"
 	local targetName = unitData[data.targetId] and unitData[data.targetId].name or "?"
@@ -1463,7 +1494,11 @@ BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
 		if not found then table.insert(unitData[data.unitId].statuses, { id = data.statusId, remainingTurns = data.remainingTurns or 0 }) end
 	end
 	local t = unitTokens[data.unitId]
-	if t then showStatusText(t.part.Position, "+"..data.statusId, Theme.GetStatusColor(data.statusId)) end
+	if t then
+		showStatusText(t.part.Position, "+"..data.statusId, Theme.GetStatusColor(data.statusId))
+		-- VFX: colored status burst
+		if VFXController then pcall(VFXController.StatusBurst, t.part.Position, data.statusId) end
+	end
 end)
 
 BattleEvents.StatusExpired.OnClientEvent:Connect(function(data)
@@ -1491,6 +1526,11 @@ end)
 BattleEvents.UnitDefeated.OnClientEvent:Connect(function(data)
 	local t = unitTokens[data.unitId]; if t then t.part.Color = Color3.fromRGB(60,60,60); t.part.Transparency = 0.4 end
 	if unitData[data.unitId] then unitData[data.unitId].isAlive = false end
+	-- VFX: KO smoke puff + persistent grey highlight
+	if t then
+		if VFXController then pcall(VFXController.KOEffect, t.part.Position) end
+		if VFXController then pcall(VFXController.SetPersistHighlight, data.unitId, t.part, "ko") end
+	end
 end)
 
 BattleEvents.GuardActivated.OnClientEvent:Connect(function(data)
@@ -1500,6 +1540,8 @@ BattleEvents.GuardActivated.OnClientEvent:Connect(function(data)
 	if token then
 		showFloatingText(token.part.Position, "GUARD " .. mitigationPct .. "%", Color3.fromRGB(100, 200, 255), 1.2)
 		token.part.Color = Color3.fromRGB(80, 140, 200)
+		-- VFX: guard highlight (light blue outline)
+		if VFXController then pcall(VFXController.SetPersistHighlight, data.unitId, token.part, "guard") end
 	end
 	if unitData[data.unitId] then
 		unitData[data.unitId].isGuarding = true
@@ -2378,6 +2420,26 @@ end)
 BattleEvents.MapDataSync.OnClientEvent:Connect(function(mapData)
 	if mapData and GameConstants.SetGeneratedMap then
 		GameConstants.SetGeneratedMap(mapData)
+		-- Update map dimensions and offsets when server sends new size
+		-- (e.g. Regenerate switching T01 30×20 → T04 20×20).
+		if mapData.mapWidth and mapData.mapHeight then
+			MAP_WIDTH   = mapData.mapWidth
+			MAP_HEIGHT  = mapData.mapHeight
+			MAP_OFFSET_X = -(MAP_WIDTH  * TILE_SIZE) / 2
+			MAP_OFFSET_Z = -(MAP_HEIGHT * TILE_SIZE) / 2
+		end
+		-- Also update BVC's local elevation map so getElevation() returns correct values
+		-- before BattleStarted fires (e.g. during view mode / tile inspector)
+		if mapData.elevationGrid then elevationMap = mapData.elevationGrid end
+		-- Init VFX post-processing + biome atmosphere
+		local mf = workspace:FindFirstChild("TemplateViewerMap")
+		if mf then mapFolder = mf end  -- Update module-level ref for tile selection
+		local biome = mf and mf:GetAttribute("BiomeId") or "Plains"
+		-- Ensure dev panel (view mode buttons) is available as soon as a map exists,
+		-- not just after BattleStarted.  Safe to call multiple times — it destroys
+		-- the old panel first.
+		createDevCameraPanel()
+		if VFXController then pcall(VFXController.Init, biome) end
 		print("[BattleVisualClient] MapDataSync received — terrain/elevation updated on client")
 	end
 end)
