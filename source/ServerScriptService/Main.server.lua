@@ -264,12 +264,12 @@ local doctrineSkillCombatDefs = {
 	["DOC-ARCANIST-01"]  = { id = "DOC-ARCANIST-01", name = "Mana Surge", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 0, rtCost = 60, channelTime = 150, power = 0, isHealing = false },
 	["DOC-RANGER-01"]    = { id = "DOC-RANGER-01", name = "Hunter's Mark", tags = {"Direct Damage","Debuff","Physical"}, targetRules = "Enemy Unit", range = -1, pattern = "Single", mpCost = 4, rtMult = 1.00, channelTime = 0, power = 0.75, isHealing = false },
 	["DOC-VANGUARD-01"]  = { id = "DOC-VANGUARD-01", name = "Hold the Line", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 4, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false },
-	["DOC-TACTICIAN-01"] = { id = "DOC-TACTICIAN-01", name = "Coordinated Advance", tags = {"Buff","Utility"}, targetRules = "Ally Unit", range = 4, pattern = "Single", mpCost = 5, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
+	["DOC-TACTICIAN-01"] = { id = "DOC-TACTICIAN-01", name = "Coordinated Advance", tags = {"Buff","Utility"}, targetRules = "Ally Unit, Self", range = 4, pattern = "Single", mpCost = 5, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
 	["DOC-WARLORD-01"]   = { id = "DOC-WARLORD-01", name = "War Cry", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "AOE", mpCost = 6, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
 	["DOC-SHADOWBINDER-01"] = { id = "DOC-SHADOWBINDER-01", name = "Veil of Weakness", tags = {"Debuff","Dark"}, targetRules = "Enemy Unit", range = 3, pattern = "Single", mpCost = 5, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
 	["DOC-SPELLBLADE-01"] = { id = "DOC-SPELLBLADE-01", name = "Arcane Strike", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 4, rtMult = 1.25, channelTime = 0, power = 1.10, isHealing = false },
-	["DOC-ASCETIC-01"]   = { id = "DOC-ASCETIC-01", name = "Meditate", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 0, rtMult = 0.50, channelTime = 0, power = 0, isHealing = false },
-	["DOC-TRICKSTER-01"] = { id = "DOC-TRICKSTER-01", name = "Misdirection", tags = {"Debuff","Utility"}, targetRules = "Enemy Unit", range = 3, pattern = "Single", mpCost = 3, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false },
+	["DOC-ASCETIC-01"]   = { id = "DOC-ASCETIC-01", name = "Meditate", tags = {"Buff","Utility"}, targetRules = "Self, Ally Unit", range = 3, pattern = "Single", mpCost = 0, rtMult = 0.50, channelTime = 0, power = 0, isHealing = false },
+	["DOC-TRICKSTER-01"] = { id = "DOC-TRICKSTER-01", name = "Misdirection", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 3, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false },
 	["DOC-THIEF-01"]     = { id = "DOC-THIEF-01", name = "Mug", tags = {"Direct Damage","Physical","Utility"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 2, rtMult = 1.00, channelTime = 0, power = 0.80, isHealing = false },
 	["DOC-DUELIST-01"]   = { id = "DOC-DUELIST-01", name = "Riposte Stance", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 3, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false },
 	["DOC-TWINBLADE-01"] = { id = "DOC-TWINBLADE-01", name = "Crossing Blades", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 4, rtMult = 1.25, channelTime = 0, power = 1.30, isHealing = false },
@@ -1405,6 +1405,32 @@ BattleEvents.RequestAttachAugment.OnServerInvoke = function(player, unitId, slot
 	-- Check card inventory
 	local qty = cardInventory.augmentCards[augmentId] or 0
 	if qty <= 0 then return { ok = false, reason = "No augment card: " .. (augDef.name or augmentId) } end
+	-- Validate augment compatibility with the target skill
+	local targetSkillId
+	if slotIndex == 1 then
+		targetSkillId = unit.selectedDoctrineSkill
+	else
+		local slotKey2 = "slot" .. slotIndex
+		local slotCheck = unit.skillLoadout and unit.skillLoadout[slotKey2]
+		targetSkillId = slotCheck and slotCheck.skillId
+	end
+	if targetSkillId then
+		local skillDef = CommandService.GetSkill(targetSkillId)
+		if skillDef and augDef.requiredSkillTags then
+			local skillTags = skillDef.tags or {}
+			local hasMatch = false
+			for _, reqTag in ipairs(augDef.requiredSkillTags) do
+				for _, sTag in ipairs(skillTags) do
+					if reqTag == sTag then hasMatch = true; break end
+				end
+				if hasMatch then break end
+			end
+			if not hasMatch then
+				local needed = table.concat(augDef.requiredSkillTags, "/")
+				return { ok = false, reason = augDef.name .. " requires [" .. needed .. "] skill — " .. (skillDef.name or targetSkillId) .. " is incompatible" }
+			end
+		end
+	end
 	-- Find the skill slot data
 	local slotKey = slotIndex == 1 and "_doctrine" or ("slot" .. slotIndex)
 	local slotData
@@ -2130,28 +2156,46 @@ local function buildTurnPrompt(unit)
 		local def = CommandService.GetSkill(sid)
 		if def then
 			local canUse = UnitSchema.HasEnoughMp(unit, def.mpCost or 0)
-			local candidates = TargetingService.GetSkillCandidates(unit, state.units, def)
+			local candidates, computedRange = TargetingService.GetSkillCandidates(unit, state.units, def)
+			local isGroundTarget = false
+			local isSelfTarget = false
+			local tr = def.targetRules or "Enemy Unit"
+			if tr == "Self" or tr == "Self (Aura)" or tr == "Ally Tile (centered on caster)"
+				or (tr == "Self, Allies" and (def.range or 0) == 0)
+			then
+				isSelfTarget = true
+			end
 			local targetIds = {}
 			for _, c in ipairs(candidates) do
-				-- Pre-calculate predicted value for this target
-				local predicted = 0
-				local predType = "damage"
-				if def.isHealing then
-					local healResult = CombatResolver.ResolveHealing(unit, c, def)
-					predicted = healResult.finalHealing or 0
-					predType = "healing"
+				if c.isGroundTarget then
+					isGroundTarget = true
+					-- Ground target: no predicted damage, just a marker
+					table.insert(targetIds, {
+						id = "_ground_target", name = "Ground",
+						tileX = c.tileX, tileY = c.tileY,
+						predicted = 0, predType = "damage",
+						isGroundTarget = true,
+					})
 				else
-					local dmgResult = CombatResolver.ResolveSkill(unit, c, def)
-					predicted = dmgResult.finalDamage or 0
+					local predicted = 0
+					local predType = "damage"
+					if def.isHealing then
+						local healResult = CombatResolver.ResolveHealing(unit, c, def)
+						predicted = healResult.finalHealing or 0
+						predType = "healing"
+					else
+						local dmgResult = CombatResolver.ResolveSkill(unit, c, def)
+						predicted = dmgResult.finalDamage or 0
+					end
+					table.insert(targetIds, {
+						id        = c.id,
+						name      = c.name,
+						tileX     = c.tileX,
+						tileY     = c.tileY,
+						predicted = predicted,
+						predType  = predType,
+					})
 				end
-				table.insert(targetIds, {
-					id        = c.id,
-					name      = c.name,
-					tileX     = c.tileX,
-					tileY     = c.tileY,
-					predicted = predicted,
-					predType  = predType,
-				})
 			end
 
 			table.insert(skills, {
@@ -2167,6 +2211,9 @@ local function buildTurnPrompt(unit)
 				canUse      = canUse,
 				targets     = targetIds,
 				tags        = def.tags or {},
+				groundTarget = isGroundTarget,
+				selfTarget   = isSelfTarget,
+				computedRange = computedRange or (def.range or 1),
 				rtCost      = def.rtMult
 					and math.round(GameConstants.CalcEffectiveWt(
 						unit.weaponWt or 10, (unit.effectiveStats or {}).STR or 10) * def.rtMult)
@@ -2401,22 +2448,36 @@ local function executePlayerCommand(unit, command)
 	end
 
 	if actionType == "Skill" then
-		-- Find the target unit by ID
 		local target = nil
-		for _, u in ipairs(state.units) do
-			if u.id == command.targetId then
-				target = u
-				break
-			end
-		end
-		if not target then
-			warn("[Main] Player skill: target not found")
-			return nil
-		end
-
 		local skillDef = CommandService.GetSkill(command.skillId)
 		if not skillDef then
 			warn("[Main] Player skill: unknown skill " .. tostring(command.skillId))
+			return nil
+		end
+		local tr = skillDef.targetRules or "Enemy Unit"
+
+		if command.tileX and command.tileY and not command.targetId then
+			-- Ground targeting: create a virtual target with tile coords
+			target = {
+				tileX = command.tileX,
+				tileY = command.tileY,
+				isGroundTarget = true,
+				isAlive = true,
+				name = string.format("Ground(%d,%d)", command.tileX, command.tileY),
+				id = "_ground_" .. command.tileX .. "_" .. command.tileY,
+			}
+			print(string.format("[Main] Skill ground target: (%d,%d)", command.tileX, command.tileY))
+		else
+			-- Unit targeting: find by ID
+			for _, u in ipairs(state.units) do
+				if u.id == command.targetId then
+					target = u
+					break
+				end
+			end
+		end
+		if not target then
+			warn("[Main] Player skill: target not found (targetId=" .. tostring(command.targetId) .. ")")
 			return nil
 		end
 

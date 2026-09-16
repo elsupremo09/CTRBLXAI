@@ -3348,11 +3348,6 @@ buildSkillLoadout = function()
 		end
 	end
 
-	-- Doctrine note
-	makeLabel(equippedPanel, { Text = "Slot 1 = Doctrine skill",
-		Size = UDim2.new(1, 0, 0, 12),
-		Position = UDim2.new(0, 0, 1, -14),
-		TextSize = Theme.Text.Badge(), TextColor3 = Theme.Colors.TextDisabled })
 end
 
 

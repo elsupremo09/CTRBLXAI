@@ -89,12 +89,16 @@ end
 --------------------------------------------------
 local function cleanup()
 	active = false
+	_G.CTRBLXAI_DeploymentActive = false
 	if inputConn then inputConn:Disconnect(); inputConn = nil end
 	if deployFolder then deployFolder:Destroy(); deployFolder = nil end
 	if screenGui then screenGui:Destroy(); screenGui = nil end
-	-- Re-enable BattleHUD (hidden during deployment to avoid timeline overlap)
-	local battleHudGui = player.PlayerGui:FindFirstChild("BattleHUD")
-	if battleHudGui then battleHudGui.Enabled = true end
+	-- Re-enable DevOptions (BattleHUD will be recreated fresh by BattleStarted)
+	local dv = player.PlayerGui:FindFirstChild("DevOptions")
+	if dv then dv.Enabled = true end
+	-- Destroy stale BattleHUD so it's built fresh when battle starts
+	local bh = player.PlayerGui:FindFirstChild("BattleHUD")
+	if bh then bh:Destroy() end
 	pdHighlights   = {}
 	enemyTokens    = {}
 	playerTokens   = {}
@@ -114,17 +118,16 @@ local function createPDHighlight(tx, ty)
 
 	local p = Instance.new("Part")
 	p.Name         = "Deploy_" .. tx .. "_" .. ty
-	-- Height must be thick enough for reliable raycast hits at 45° camera.
-	-- 1.0 stud is visually acceptable (glowing blue slab) and always hittable.
-	p.Size         = Vector3.new(TILE_SIZE * 0.92, 1.0, TILE_SIZE * 0.92)
+	-- Thin overlay — raycast hits the terrain tile below, not this Part.
+	p.Size         = Vector3.new(TILE_SIZE * 0.92, 0.1, TILE_SIZE * 0.92)
 	p.Position     = Vector3.new(
 		MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE,
-		surfaceY + 0.5,  -- center of the 1-stud slab sits at surface + 0.5
+		surfaceY + 0.05,
 		MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE
 	)
 	p.Anchored     = true
 	p.CanCollide   = false
-	p.CanQuery     = true
+	p.CanQuery     = false  -- raycast targets terrain tiles instead
 	p.Color        = Theme.Colors.Player      -- Muted blue
 	p.Material     = Enum.Material.Neon
 	p.Transparency = 0.50
@@ -217,13 +220,20 @@ end
 local function selectUnit(unitId)
 	selectedUnitId = unitId
 	for _, entry in ipairs(rosterEntries) do
-		if entry.id == unitId and not entry.deployed then
-			entry.stroke.Color = Theme.Colors.BorderSelected
-			entry.button.BackgroundColor3 = Theme.Colors.PanelRaised
-		else
+		if entry.deployed then
+			-- Deployed: keep dimmed, thin border
 			entry.stroke.Color = Theme.Colors.Border
-			entry.button.BackgroundColor3 = entry.deployed
-				and Theme.Colors.Panel or Theme.Colors.Surface
+			entry.stroke.Thickness = 1
+		elseif entry.id == unitId then
+			-- Selected: gold highlight
+			entry.stroke.Color = Theme.Colors.BorderFocused
+			entry.stroke.Thickness = 2
+			entry.button.BackgroundTransparency = 0.1
+		else
+			-- Unselected: default
+			entry.stroke.Color = Theme.Colors.Border
+			entry.stroke.Thickness = 1
+			entry.button.BackgroundTransparency = 0.15
 		end
 	end
 end
@@ -245,36 +255,21 @@ local function showStartBattleButton()
 	if startBattleBtn then return end
 	if not screenGui then return end
 
-	startBattleBtn = Instance.new("TextButton")
-	startBattleBtn.Name            = "StartBattleBtn"
-	startBattleBtn.Size            = UDim2.new(0, 240, 0, 54)
-	startBattleBtn.Position        = UDim2.new(0.5, -120, 1, -80)
-	startBattleBtn.BackgroundColor3 = Theme.Colors.Success
-	startBattleBtn.Text            = "START BATTLE"
-	startBattleBtn.TextColor3      = Theme.Colors.TextPrimary
-	startBattleBtn.TextSize        = Theme.Text.Title()
-	startBattleBtn.Font            = Theme.Font.Display
-	startBattleBtn.BorderSizePixel = 0
-	startBattleBtn.AutoButtonColor = true
-	startBattleBtn.Parent          = screenGui
-	Instance.new("UICorner", startBattleBtn).CornerRadius = UDim.new(0, 8)
-	local stroke = Instance.new("UIStroke", startBattleBtn)
-	stroke.Color     = Theme.Colors.Success
-	stroke.Thickness = 2
+	-- Place the button at the right end of the deploy strip
+	local strip = screenGui:FindFirstChild("DeployStrip")
+	if not strip then return end
 
-	-- Pulse animation
-	local pulse = TweenService:Create(startBattleBtn,
-		TweenInfo.new(0.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
-		{ BackgroundColor3 = Theme.Colors.Success })
-	pulse:Play()
+	startBattleBtn = Theme.MakeButton(screenGui, "START BATTLE", "Primary", nil, {
+		width = 120,
+		height = 40,
+	})
+	startBattleBtn.Position = UDim2.new(1, -12, 1, -12)
+	startBattleBtn.AnchorPoint = Vector2.new(1, 1)
 
 	startBattleBtn.MouseButton1Click:Connect(function()
 		active = false
 		BattleEvents.DeploymentReady:FireServer({})
-		-- Fade out UI while waiting for BattleStarted
-		if startBattleBtn then
-			startBattleBtn.Visible = false
-		end
+		if startBattleBtn then startBattleBtn.Visible = false end
 	end)
 end
 
@@ -287,64 +282,74 @@ local function createRosterUI(playerUnits)
 	screenGui.ResetOnSpawn       = false
 	screenGui.ZIndexBehavior     = Enum.ZIndexBehavior.Sibling
 	screenGui.DisplayOrder       = 15
+	screenGui.IgnoreGuiInset     = true
 	screenGui.Parent             = player.PlayerGui
-	-- Link StyleSheet tokens
 	if StyleBootstrap and StyleBootstrap.Link then
 		StyleBootstrap.Link(screenGui)
 	end
 
-	-- Title banner
-	local title = Instance.new("TextLabel")
-	title.Name                 = "Title"
-	title.Size                 = UDim2.new(0, 340, 0, 36)
-	title.Position             = UDim2.new(0.5, -170, 0, 12)
-	title.BackgroundColor3     = Theme.Colors.Panel
-	title.BackgroundTransparency = 0.3
-	title.Text                 = "⚔  DEPLOY YOUR UNITS  ⚔"
-	title.TextColor3           = Theme.Colors.TextGold
-	title.TextSize             = Theme.Text.Title()
-	title.Font                 = Theme.Font.Display
-	title.TextStrokeTransparency = 0.4
-	title.BorderSizePixel      = 0
-	title.Parent               = screenGui
-	Instance.new("UICorner", title).CornerRadius = UDim.new(0, 6)
-	local titleStroke = Instance.new("UIStroke", title)
-	titleStroke.Color     = Theme.Colors.BorderFocused
-	titleStroke.Thickness = 1
+	-- Hide ALL battle HUD elements during deployment (they have no function here)
+	local battleHudGui = player.PlayerGui:FindFirstChild("BattleHUD")
+	if battleHudGui then battleHudGui.Enabled = false end
+	local devOptsGui = player.PlayerGui:FindFirstChild("DevOptions")
+	if devOptsGui then devOptsGui.Enabled = false end
 
-	-- Instruction label
-	local instruction = Instance.new("TextLabel")
-	instruction.Name                 = "Instruction"
-	instruction.Size                 = UDim2.new(0, 340, 0, 20)
-	instruction.Position             = UDim2.new(0.5, -170, 0, 52)
-	instruction.BackgroundTransparency = 1
-	instruction.Text                 = "Select a unit, then click a blue tile to place it."
-	instruction.TextColor3           = Theme.Colors.TextSecondary
-	instruction.TextSize             = Theme.Text.Small()
-	instruction.Font                 = Theme.Font.Primary
-	instruction.Parent               = screenGui
+	-- ── Responsive sizing ───────────────────────────────────
+	local cam = workspace.CurrentCamera
+	local vw = cam and cam.ViewportSize.X or 1366
+	local vh = cam and cam.ViewportSize.Y or 768
+	if vw <= 0 then vw = 1366 end
+	if vh <= 0 then vh = 768 end
 
-	-- Roster panel (left side)
-	local entryHeight = 54
-	local padding     = 8
-	local totalHeight = #playerUnits * entryHeight + (#playerUnits - 1) * padding + 2 * padding
+	local unitCount = math.min(#playerUnits, 8)
+	local cellSize = math.clamp(math.floor(vh * 0.13), 40, 64)
+	local cellGap  = math.clamp(math.floor(vw * 0.004), 3, 6)
+	local stripPad = 8
+	local stripW   = unitCount * cellSize + (unitCount - 1) * cellGap + stripPad * 2
+	local stripH   = cellSize + stripPad * 2
 
-	local panel = Instance.new("Frame")
-	panel.Name                 = "RosterPanel"
-	panel.Size                 = UDim2.new(0, 220, 0, totalHeight)
-	panel.Position             = UDim2.new(0, 16, 0.5, 0)
-	panel.AnchorPoint          = Vector2.new(0, 0.5)
-	panel.BackgroundColor3     = Theme.Colors.Panel
-	panel.BackgroundTransparency = 0.12
-	panel.BorderSizePixel      = 0
-	panel.Parent               = screenGui
-	Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 6)
-	local panelStroke = Instance.new("UIStroke", panel)
-	panelStroke.Color     = Theme.Colors.Border
-	panelStroke.Thickness = 1
+	-- ── Deploy strip (ornate frame, bottom-center) ──────────
+	local strip = Theme.MakePanel("DeployStrip",
+		UDim2.new(0, stripW, 0, stripH),
+		nil, nil, screenGui)
+	strip.Position    = UDim2.new(0.5, 0, 1, -10)
+	strip.AnchorPoint = Vector2.new(0.5, 1)
+	strip.ClipsDescendants = true
 
+	local innerPad = Instance.new("UIPadding", strip)
+	innerPad.PaddingTop    = UDim.new(0, stripPad)
+	innerPad.PaddingBottom = UDim.new(0, stripPad)
+	innerPad.PaddingLeft   = UDim.new(0, stripPad)
+	innerPad.PaddingRight  = UDim.new(0, stripPad)
+
+	-- Horizontal layout
+	local layout = Instance.new("UIListLayout", strip)
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, cellGap)
+
+	-- ── Header (above strip) ────────────────────────────────
+	local header = Instance.new("TextLabel")
+	header.Name = "DeployHeader"
+	header.Size = UDim2.new(0, stripW, 0, 18)
+	header.Position = UDim2.new(0.5, 0, 1, -10 - stripH - 4)
+	header.AnchorPoint = Vector2.new(0.5, 1)
+	header.BackgroundTransparency = 1
+	header.Text = "DEPLOY YOUR UNITS"
+	header.TextColor3 = Theme.Colors.TextGold
+	header.TextSize = Theme.Text.Small()
+	header.Font = Theme.Font.PrimaryBold
+	header.TextXAlignment = Enum.TextXAlignment.Center
+	header.TextStrokeTransparency = 0.4
+	header.Parent = screenGui
+
+	-- ── Build unit cells ────────────────────────────────────
 	rosterEntries = {}
 	for i, unitInfo in ipairs(playerUnits) do
+		if i > 8 then break end
+
 		local entry = {
 			id         = unitInfo.id,
 			name       = unitInfo.name,
@@ -352,71 +357,114 @@ local function createRosterUI(playerUnits)
 			deployed   = false,
 		}
 
-		local btn = Instance.new("TextButton")
-		btn.Name            = "Unit_" .. unitInfo.id
-		btn.Size            = UDim2.new(1, -2 * padding, 0, entryHeight)
-		btn.Position        = UDim2.new(0, padding, 0, padding + (i - 1) * (entryHeight + padding))
-		btn.BackgroundColor3 = Theme.Colors.Surface
-		btn.BorderSizePixel = 0
-		btn.Text            = ""
-		btn.AutoButtonColor = false
-		btn.Parent          = panel
-		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
-		local btnStroke = Instance.new("UIStroke", btn)
-		btnStroke.Color     = Theme.Colors.Border
-		btnStroke.Thickness = 1
+		-- Portrait cell (square)
+		local cell = Instance.new("TextButton")
+		cell.Name            = "Cell_" .. unitInfo.id
+		cell.Size            = UDim2.new(0, cellSize, 0, cellSize)
+		cell.LayoutOrder     = i
+		cell.BackgroundColor3 = Theme.Colors.Player
+		cell.BackgroundTransparency = 0.15
+		cell.BorderSizePixel = 0
+		cell.Text            = ""
+		cell.AutoButtonColor = true
+		cell.Parent          = strip
+		Instance.new("UICorner", cell).CornerRadius = Theme.CornerRadius.sm
 
-		-- Side color stripe (left edge)
-		local stripe = Instance.new("Frame")
-		stripe.Size             = UDim2.new(0, 4, 1, -6)
-		stripe.Position         = UDim2.new(0, 3, 0, 3)
-		stripe.BackgroundColor3 = Theme.Colors.Player
-		stripe.BorderSizePixel  = 0
-		stripe.Parent           = btn
-		Instance.new("UICorner", stripe).CornerRadius = UDim.new(0, 2)
+		local cellStroke = Instance.new("UIStroke", cell)
+		cellStroke.Color     = Theme.Colors.Border
+		cellStroke.Thickness = 1
 
-		-- Unit name
+		-- 2-char initials (centered)
+		local initials = Instance.new("TextLabel")
+		initials.Name = "Initials"
+		initials.Size = UDim2.new(1, 0, 1, -12)
+		initials.Position = UDim2.new(0, 0, 0, 0)
+		initials.BackgroundTransparency = 1
+		initials.Text = string.upper(string.sub(unitInfo.name, 1, 2))
+		initials.TextColor3 = Theme.Colors.TextPrimary
+		initials.TextSize = math.max(Theme.Text.Body(), math.floor(cellSize * 0.32))
+		initials.Font = Theme.Font.PrimaryBold
+		initials.TextStrokeTransparency = 0.3
+		initials.Parent = cell
+
+		-- Level badge (top-left)
+		local lvl = unitInfo.level or 1
+		local badge = Instance.new("Frame")
+		badge.Name = "LvBadge"
+		badge.Size = UDim2.new(0, math.floor(cellSize * 0.5), 0, 11)
+		badge.Position = UDim2.new(0, 1, 0, 1)
+		badge.BackgroundColor3 = Theme.Colors.BadgeBg
+		badge.BackgroundTransparency = 0.25
+		badge.BorderSizePixel = 0
+		badge.ZIndex = 3
+		badge.Parent = cell
+		Instance.new("UICorner", badge).CornerRadius = Theme.CornerRadius.xs
+
+		local lvText = Instance.new("TextLabel")
+		lvText.Size = UDim2.fromScale(1, 1)
+		lvText.BackgroundTransparency = 1
+		lvText.Text = "Lv." .. lvl
+		lvText.TextColor3 = Theme.Colors.TextPrimary
+		lvText.TextSize = Theme.Text.Badge()
+		lvText.Font = Theme.Font.Mono
+		lvText.ZIndex = 3
+		lvText.Parent = badge
+
+		-- Name strip (bottom overlay)
+		local nameStrip = Instance.new("Frame")
+		nameStrip.Name = "NameStrip"
+		nameStrip.Size = UDim2.new(1, 0, 0, 13)
+		nameStrip.Position = UDim2.new(0, 0, 1, -13)
+		nameStrip.BackgroundColor3 = Theme.Colors.BadgeBg
+		nameStrip.BackgroundTransparency = 0.4
+		nameStrip.BorderSizePixel = 0
+		nameStrip.ZIndex = 3
+		nameStrip.Parent = cell
+
 		local nameLabel = Instance.new("TextLabel")
-		nameLabel.Size                 = UDim2.new(1, -42, 0, 20)
-		nameLabel.Position             = UDim2.new(0, 16, 0, 5)
+		nameLabel.Size = UDim2.new(1, -4, 1, 0)
+		nameLabel.Position = UDim2.new(0, 2, 0, 0)
 		nameLabel.BackgroundTransparency = 1
-		nameLabel.Text                 = unitInfo.name
-		nameLabel.TextColor3           = Theme.Colors.TextPrimary
-		nameLabel.TextSize             = Theme.Text.Body()
-		nameLabel.Font                 = Theme.Font.PrimaryBold
-		nameLabel.TextXAlignment       = Enum.TextXAlignment.Left
-		nameLabel.TextStrokeTransparency = 0.5
-		nameLabel.Parent               = btn
+		nameLabel.Text = unitInfo.name
+		nameLabel.TextColor3 = Theme.Colors.TextPrimary
+		nameLabel.TextSize = Theme.Text.Badge()
+		nameLabel.Font = Theme.Font.PrimaryBold
+		nameLabel.TextXAlignment = Enum.TextXAlignment.Center
+		nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		nameLabel.ZIndex = 3
+		nameLabel.Parent = nameStrip
 
-		-- Weapon name
-		local weaponLabel = Instance.new("TextLabel")
-		weaponLabel.Size                 = UDim2.new(1, -42, 0, 16)
-		weaponLabel.Position             = UDim2.new(0, 16, 0, 28)
-		weaponLabel.BackgroundTransparency = 1
-		weaponLabel.Text                 = entry.weaponName
-		weaponLabel.TextColor3           = Theme.Colors.TextSecondary
-		weaponLabel.TextSize             = Theme.Text.Tiny()
-		weaponLabel.Font                 = Theme.Font.Primary
-		weaponLabel.TextXAlignment       = Enum.TextXAlignment.Left
-		weaponLabel.Parent               = btn
+		-- Deployed check badge (top-right, hidden until deployed)
+		local checkBadge = Instance.new("Frame")
+		checkBadge.Name = "CheckBadge"
+		checkBadge.Size = UDim2.new(0, 14, 0, 14)
+		checkBadge.Position = UDim2.new(1, -15, 0, 1)
+		checkBadge.BackgroundColor3 = Theme.Colors.Success
+		checkBadge.BackgroundTransparency = 0.2
+		checkBadge.BorderSizePixel = 0
+		checkBadge.ZIndex = 4
+		checkBadge.Visible = false
+		checkBadge.Parent = cell
+		Instance.new("UICorner", checkBadge).CornerRadius = UDim.new(0.5, 0)
 
-		-- Deploy status indicator (right side)
-		local statusLbl = Instance.new("TextLabel")
-		statusLbl.Name                 = "Status"
-		statusLbl.Size                 = UDim2.new(0, 24, 0, 24)
-		statusLbl.Position             = UDim2.new(1, -28, 0.5, -12)
-		statusLbl.BackgroundTransparency = 1
-		statusLbl.Text                 = ""
-		statusLbl.TextColor3           = Theme.Colors.Success
-		statusLbl.TextSize             = Theme.Text.Heading()
-		statusLbl.Font                 = Theme.Font.PrimaryBold
-		statusLbl.Parent               = btn
+		local checkText = Instance.new("TextLabel")
+		checkText.Size = UDim2.fromScale(1, 1)
+		checkText.BackgroundTransparency = 1
+		checkText.Text = "OK"
+		checkText.TextColor3 = Color3.new(1, 1, 1)
+		checkText.TextSize = 7
+		checkText.Font = Theme.Font.PrimaryBold
+		checkText.ZIndex = 4
+		checkText.Parent = checkBadge
 
-		entry.button      = btn
-		entry.stroke      = btnStroke
-		entry.statusLabel = statusLbl
+		entry.button     = cell
+		entry.stroke     = cellStroke
+		entry.initials   = initials
+		entry.nameStrip  = nameStrip
+		entry.nameLabel  = nameLabel
+		entry.checkBadge = checkBadge
 
-		btn.MouseButton1Click:Connect(function()
+		cell.MouseButton1Click:Connect(function()
 			if not entry.deployed and active then
 				selectUnit(entry.id)
 			end
@@ -463,7 +511,9 @@ local function onInputBegan(input, gameProcessed)
 
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Include
-	rayParams.FilterDescendantsInstances = { deployFolder }
+	-- Raycast against terrain tiles (thick, reliable) instead of thin overlays
+	local mapF = workspace:FindFirstChild("TemplateViewerMap")
+	rayParams.FilterDescendantsInstances = mapF and { mapF, deployFolder } or { deployFolder }
 
 	local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 500, rayParams)
 	if not result or not result.Instance then
@@ -473,11 +523,18 @@ local function onInputBegan(input, gameProcessed)
 
 	local hitPart = result.Instance
 	print(string.format("[DeploymentUI] Raycast hit: %s", hitPart.Name))
-	if hitPart.Name:sub(1, 7) ~= "Deploy_" then print("[DeploymentUI] BAIL: hit part not Deploy_"); return end
 
-	local tx = hitPart:GetAttribute("TileX")
-	local ty = hitPart:GetAttribute("TileY")
+	-- Resolve tile coordinates: Deploy_ parts have TileX/TileY, terrain tiles have X/Y
+	local tx = hitPart:GetAttribute("TileX") or hitPart:GetAttribute("X")
+	local ty = hitPart:GetAttribute("TileY") or hitPart:GetAttribute("Y")
 	if not tx or not ty then return end
+
+	-- Only accept PD-highlighted tiles
+	local key = tx .. "_" .. ty
+	if not pdHighlights[key] then
+		print(string.format("[DeploymentUI] BAIL: tile (%d,%d) is not a deploy tile", tx, ty))
+		return
+	end
 
 	BattleEvents.DeployUnit:FireServer({
 		unitId = selectedUnitId,
@@ -492,10 +549,18 @@ end
 BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 	cleanup()
 	active = true
+	_G.CTRBLXAI_DeploymentActive = true
 
-	-- Hide BattleHUD during deployment — timeline bar overlaps Start Battle button
-	local battleHudGui = player.PlayerGui:FindFirstChild("BattleHUD")
-	if battleHudGui then battleHudGui.Enabled = false end
+	-- Hide ALL battle HUD elements during deployment
+	local function hideBattleHUD()
+		local bh = player.PlayerGui:FindFirstChild("BattleHUD")
+		if bh then bh:Destroy() end
+		local dv = player.PlayerGui:FindFirstChild("DevOptions")
+		if dv then dv:Destroy() end
+	end
+	hideBattleHUD()
+	-- Deferred re-check: BattleHUD may be created after this handler by BVC
+	task.delay(0.5, hideBattleHUD)
 
 	mapWidth  = data.mapWidth or 30
 	mapHeight = data.mapHeight or 20
@@ -602,9 +667,16 @@ BattleEvents.UnitDeployed.OnClientEvent:Connect(function(data)
 	for _, entry in ipairs(rosterEntries) do
 		if entry.id == data.unitId then
 			entry.deployed = true
-			entry.statusLabel.Text = "✓"
-			entry.button.BackgroundColor3 = Theme.Colors.Panel
-			entry.stroke.Color = Theme.Colors.Border
+			-- Dim the cell
+			entry.button.BackgroundTransparency = 0.65
+			if entry.initials then entry.initials.TextTransparency = 0.5 end
+			if entry.nameStrip then entry.nameStrip.BackgroundTransparency = 0.75 end
+			if entry.nameLabel then entry.nameLabel.TextTransparency = 0.5 end
+			-- Show small check badge (top-right)
+			if entry.checkBadge then entry.checkBadge.Visible = true end
+			entry.stroke.Color = Theme.Colors.Success
+			entry.stroke.Thickness = 1
+			entry.button.AutoButtonColor = false
 			unitName = entry.name
 			break
 		end

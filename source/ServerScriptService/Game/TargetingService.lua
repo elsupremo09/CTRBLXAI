@@ -361,8 +361,6 @@ end
 function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 	-- range = -1 means inherit from weapon
 	local baseRange = (skillDef.range == -1) and (actor.weaponMaxRange or 1) or (skillDef.range or 1)
-	-- Missing 4 fix: Bonus Skill Range from INT
-	-- Rule: Bonus Skill Range = floor(INT / 75) + Flat bonuses
 	local bonusRange = actor.derivedStats and actor.derivedStats.bonusSkillRange
 		or math.floor((actor.effectiveStats and actor.effectiveStats.INT or 10) / 75)
 	local range = baseRange + bonusRange
@@ -375,44 +373,118 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 	local targetRules = skillDef.targetRules or "Enemy Unit"
 	local candidates = {}
 
+	-- ============================================================
+	-- SELF-TARGETING: Self, Self (Aura), Ally Tile (centered on caster)
+	-- No selection needed — caster is the only valid target
+	-- "Self, Allies" with range=0 is also caster-origin AOE (Consecrate, Bulwark Field)
+	-- ============================================================
+	if targetRules == "Self" or targetRules == "Self (Aura)"
+		or targetRules == "Ally Tile (centered on caster)"
+		or (targetRules == "Self, Allies" and (skillDef.range or 0) == 0) then
+		table.insert(candidates, actor) -- self is the "target"
+		print(string.format("[SkillCand] %s → self-target (%s)", actor.name, targetRules))
+		return candidates, range
+	end
+
+	-- ============================================================
+	-- "Self, Allies" with range > 0 is GROUND-TARGETED AOE
+	-- (e.g. Mending Rain: anchor range 3, Circle radius 2, allies only)
+	-- ============================================================
+	if targetRules == "Self, Allies" and (skillDef.range or 0) > 0 then
+		table.insert(candidates, {
+			id = "_ground_target",
+			name = "Ground",
+			tileX = actor.tileX,
+			tileY = actor.tileY,
+			isGroundTarget = true,
+		})
+		print(string.format("[SkillCand] %s → ground target (Self, Allies range=%d)", actor.name, range))
+		return candidates, range
+	end
+
+	-- ============================================================
+	-- TILE TARGETING: Ground / Enemy Tile / Empty Tile
+	-- Return a special ground-target marker + range so the caller
+	-- knows to accept tile clicks instead of unit clicks.
+	-- ============================================================
+	if targetRules == "Ground, including occupied Ground"
+		or targetRules == "Enemy Tile"
+		or targetRules == "Empty Tile" then
+		-- Ground-targeting skill is always available if caster has MP
+		-- Return a special marker entry so buildTurnPrompt sends groundTarget=true
+		table.insert(candidates, {
+			id = "_ground_target",
+			name = "Ground",
+			tileX = actor.tileX,
+			tileY = actor.tileY,
+			isGroundTarget = true,
+		})
+		print(string.format("[SkillCand] %s → ground target (%s) range=%d", actor.name, targetRules, range))
+		return candidates, range
+	end
+
+	-- ============================================================
+	-- UNIT TARGETING: iterate all units and filter by targetRules
+	-- ============================================================
+	local isAllyRule = targetRules == "Ally Unit, Self"
+		or targetRules == "Self, Ally Unit"
+	local isAllyOnlyRule = targetRules == "Ally Unit"
+	local isIndiscriminate = targetRules == "Ally Unit, Enemy Unit, Self"
+
 	for _, unit in ipairs(allUnits) do
 		if not unit.isAlive then
 			-- skip dead units
 		elseif chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) > range then
-			-- skip out of range
 			print(string.format("[SkillCand] %s REJECTED %s: out of range (dist=%d > range=%d)",
 				actor.name, unit.name, chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY), range))
 		else
-			-- Check LoS (healing/ally skills skip LoS for now)
-			-- Projectile type: skill override or weapon default
+			-- LoS check: ally/healing skills skip LoS
 			local projType = skillDef.projectileType
 			if not projType or projType == "Inherit" then
 				projType = actor.weaponProjectileType
 			end
-			local hasLos = targetRules == "Ally Unit, Self"
+			local skipLos = isAllyRule or isAllyOnlyRule or isIndiscriminate
+			local hasLos = skipLos
 				or TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
 					allUnits, getEffectiveElevation(actor), projType)
 			if not hasLos then
-				-- blocked by obstacle
 				print(string.format("[SkillCand] %s REJECTED %s: no LoS (proj=%s)", actor.name, unit.name, tostring(projType)))
 			elseif not isMeleeElevationLegal(actor, unit, baseRange) then
-				-- melee elevation too different
 				print(string.format("[SkillCand] %s REJECTED %s: elevation (baseRange=%d)", actor.name, unit.name, baseRange))
-			elseif targetRules == "Enemy Unit" then
-				if unit.side ~= actor.side then
+			else
+				-- Allegiance filter
+				if targetRules == "Enemy Unit" then
+					if unit.side ~= actor.side then
+						table.insert(candidates, unit)
+					else
+						print(string.format("[SkillCand] %s REJECTED %s: same side", actor.name, unit.name))
+					end
+				elseif isAllyRule then
+					-- Ally Unit, Self / Self, Allies / Self, Ally Unit
+					if unit.side == actor.side then
+						table.insert(candidates, unit)
+					end
+				elseif isAllyOnlyRule then
+					-- Ally Unit (NOT self)
+					if unit.side == actor.side and unit.id ~= actor.id then
+						table.insert(candidates, unit)
+					elseif unit.id == actor.id then
+						print(string.format("[SkillCand] %s REJECTED %s: self excluded (Ally Unit only)", actor.name, unit.name))
+					end
+				elseif isIndiscriminate then
+					-- Any alive unit in range
 					table.insert(candidates, unit)
 				else
-					print(string.format("[SkillCand] %s REJECTED %s: same side", actor.name, unit.name))
-				end
-			elseif targetRules == "Ally Unit, Self" then
-				if unit.side == actor.side then
-					table.insert(candidates, unit)
+					-- Unknown targetRules fallback: treat as enemy
+					if unit.side ~= actor.side then
+						table.insert(candidates, unit)
+					end
 				end
 			end
 		end
 	end
 
-	return candidates
+	return candidates, range
 end
 
 --------------------------------------------------
@@ -562,7 +634,7 @@ function TargetingService.ValidateSelection(
 	end
 
 	if actionType == "Skill" then
-		if type(selection) ~= "table" or type(selection.target) ~= "table" then
+		if type(selection) ~= "table" then
 			return false, "Skill selection must be a table with a target field."
 		end
 
@@ -570,7 +642,26 @@ function TargetingService.ValidateSelection(
 		local skillRange = selection.skillRange or 1
 		local targetRules = selection.targetRules or "Enemy Unit"
 
-		if not target.isAlive then
+		-- Ground targeting: validate tile coords + range only
+		if target and target.isGroundTarget then
+			local dist = chebyshevDistance(actor.tileX, actor.tileY, target.tileX, target.tileY)
+			if dist > skillRange then
+				return false, string.format(
+					"Ground target (%d,%d) out of range (%d). Distance: %d.",
+					target.tileX, target.tileY, skillRange, dist
+				)
+			end
+			return true, nil
+		end
+
+		-- Self-targeting: always valid (target is the caster)
+		if targetRules == "Self" or targetRules == "Self (Aura)"
+			or targetRules == "Ally Tile (centered on caster)"
+			or targetRules == "Self, Allies" then
+			return true, nil
+		end
+
+		if not target or not target.isAlive then
 			return false, "Target is not alive."
 		end
 
@@ -583,6 +674,12 @@ function TargetingService.ValidateSelection(
 			if target.side ~= actor.side then
 				return false, "Cannot target an enemy with this support skill."
 			end
+		elseif targetRules == "Ally Unit" then
+			if target.side ~= actor.side or target.id == actor.id then
+				return false, "Must target an ally (not self)."
+			end
+		elseif targetRules == "Ally Unit, Enemy Unit, Self" then
+			-- Any unit is valid
 		end
 
 		-- Range check (Chebyshev)
@@ -735,7 +832,15 @@ end
 
 function TargetingService.GetAOETargetTiles(aoePattern, actor, targetTileX, targetTileY, mapWidth, mapHeight)
 	-- Parse pattern type and parameter
-	local patternType, param = aoePattern:match("^(%a+)(%d*)$")
+	-- Supports: "Circle2", "Ring1", "Spread", "Spread3x3", "Impact1", etc.
+	local patternType, param = aoePattern:match("^(%a+)(%d+)$")
+	if not patternType then
+		-- Handle formats like "Spread3x3" (NxN suffix) or bare names like "Spread"
+		patternType, param = aoePattern:match("^(%a+)(%d+)x%d+$")
+	end
+	if not patternType then
+		patternType = aoePattern:match("^(%a+)$")
+	end
 	param = tonumber(param) or 1
 
 	if patternType == "Circle" then
