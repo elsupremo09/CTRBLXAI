@@ -547,11 +547,40 @@ local function enterActionSelection()
 		inputMode = nil; selectedSkill = nil; clearHighlights()
 		local entries = {}
 		for _, skill in ipairs(prompt.skills or {}) do
-			local canUse = skill.canUse and skill.targets and #skill.targets > 0
+			local canUse = skill.canUse and (
+				skill.selfTarget
+				or skill.groundTarget
+				or (skill.targets and #skill.targets > 0)
+			)
 			table.insert(entries, {
 				id = skill.id, name = skill.name, mpCost = skill.mpCost or 0, rtCost = skill.rtCost or 0,
 				enabled = canUse,
 				onPress = function()
+					-- SELF-TARGET: auto-commit immediately, no tile selection
+					if skill.selfTarget then
+						selectedSkill = skill; inputMode = nil; clearHighlights()
+						local skillRtCost = skill.rtCost or 60
+						local isChannel = skill.channelTime and skill.channelTime > 0
+						bp.skill = {
+							name = skill.name, tags = table.concat(skill.tags or {}, ", "),
+							mpCost = skill.mpCost, rtCost = skill.rtCost, range = skill.range,
+							pattern = skill.pattern, channelTime = skill.channelTime,
+							effects = skill.description or "",
+						}
+						bp.preview = {
+							actionType = "Skill", skillName = skill.name,
+							actorName = prompt.unitName,
+							actorMpBefore = prompt.currentMp, actorMpAfter = (prompt.currentMp or 0) - (skill.mpCost or 0),
+							actorApBefore = prompt.currentAp, actorApAfter = (prompt.currentAp or 1) - 1,
+							actorRtAfter = skillRtCost + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0),
+							targetName = prompt.unitName .. " (Self)",
+							channelTime = isChannel and skill.channelTime or nil,
+							onConfirm = function() commitCommand({ actionType = "Skill", skillId = skill.id, targetId = prompt.unitId }) end,
+							onBack = enterSkillSelection,
+						}
+						bp.state = "Preview"; BattleHUD.Render(bp)
+						return
+					end
 					selectedSkill = skill; inputMode = "skill"; clearHighlights()
 					bp.skill = {
 						name = skill.name, tags = table.concat(skill.tags or {}, ", "),
@@ -563,7 +592,17 @@ local function enterActionSelection()
 					local pEv = skill.channelTime and skill.channelTime > 0 and { name = skill.name, side = "Player", rt = skill.channelTime } or nil
 					updateTimeline(timelineSnapshot, prompt.unitId, pRt, pEv)
 					local c = skill.isHealing and Color3.fromRGB(60,180,80) or Color3.fromRGB(180,150,60)
-					for _, t in ipairs(skill.targets) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
+					if skill.groundTarget then
+						-- Ground targeting: highlight all tiles in range (reuse move highlight pattern)
+						local gr = skill.computedRange or 5
+						for dy = -gr, gr do
+							for dx = -gr, gr do
+								createTileHighlight((storedActorData.tileX or 0) + dx, (storedActorData.tileY or 0) + dy, c, 0.5)
+							end
+						end
+					else
+						for _, t in ipairs(skill.targets) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
+					end
 					storedActorData.onBack = enterSkillSelection
 					bp.state = "TargetSelection"; BattleHUD.Render(bp)
 				end,
@@ -722,7 +761,10 @@ end
 
 
 local function processTileClick(bx, by)
-	
+
+	-- Skip all HUD rendering during deployment — DeploymentUI owns the screen
+	if _G.CTRBLXAI_DeploymentActive then return end
+
 	-- Find occupant for tile info
 	local occupantName = nil
 	for uid, data in pairs(unitData) do
@@ -845,7 +887,41 @@ local function processTileClick(bx, by)
 				end
 			end
 		elseif inputMode == "skill" and selectedSkill then
-			for _, t in ipairs(selectedSkill.targets) do
+			-- GROUND TARGETING: any tile click in range is valid
+			if selectedSkill.groundTarget then
+				local gr = selectedSkill.computedRange or 5
+				local actX = storedActorData.tileX or 0
+				local actY = storedActorData.tileY or 0
+				local dist = math.max(math.abs(bx - actX), math.abs(by - actY))
+				if dist <= gr then
+					aimTarget = { tileX = bx, tileY = by }; clearHighlights()
+					createTileHighlight(bx, by, "selected")
+					local skillRtCost = selectedSkill.rtCost or 60
+					local isChannel = selectedSkill.channelTime and selectedSkill.channelTime > 0
+					bp.preview = {
+						actionType = "Skill",
+						skillName = selectedSkill.name,
+						skillTags = bp.skill and bp.skill.tags or nil,
+						actorName = currentPrompt.unitName,
+						actorMpBefore = currentPrompt.currentMp,
+						actorMpAfter = (currentPrompt.currentMp or 0) - (selectedSkill.mpCost or 0),
+						actorApBefore = currentPrompt.currentAp,
+						actorApAfter = (currentPrompt.currentAp or 1) - 1,
+						actorRtAfter = skillRtCost + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
+						targetName = string.format("Ground (%d,%d)", bx, by),
+						channelTime = isChannel and selectedSkill.channelTime or nil,
+						channelResolveCt = isChannel and (currentBattleCt or 0) + (selectedSkill.channelTime or 0) or nil,
+						onConfirm = function()
+							commitCommand({ actionType = "Skill", skillId = selectedSkill.id, tileX = bx, tileY = by })
+						end,
+						onBack = cancelToTargeting,
+					}
+					bp.state = "Preview"; BattleHUD.Render(bp)
+					return
+				end
+			end
+			-- UNIT TARGETING: match clicked tile to a candidate unit
+			for _, t in ipairs(selectedSkill.targets or {}) do
 				if t.tileX == bx and t.tileY == by then
 					aimTarget = t; clearHighlights()
 					createTileHighlight(bx, by, "selected")
@@ -1337,6 +1413,8 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	-- VFX: highlight active unit (gold outline)
 	local _at = unitTokens[data.unitId]
 	if _at and VFXController then pcall(VFXController.SetActiveUnit, data.unitId, _at.part) end
+	-- Camera: auto-focus on unit taking its turn
+	if _at then CameraController.FocusActiveUnit(_at.part.Position) end
 	if unitData[data.unitId] then
 		unitData[data.unitId].statuses = data.statuses
 		-- Clear Guard buff (expires on new turn) and restore token color
@@ -1393,6 +1471,10 @@ BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 		local newPos = tileToWorld(data.tileX, data.tileY) - Vector3.new(0, 0.7, 0)
 		TweenService:Create(selectionRing, TweenInfo.new(0.45, Enum.EasingStyle.Quad), {CFrame = CFrame.new(newPos) * CFrame.Angles(0,0,math.rad(90))}):Play()
 	end
+	-- Camera: follow the active unit when it moves
+	if data.unitId == activeUnitId then
+		CameraController.FocusActiveUnit(tileToWorld(data.tileX, data.tileY))
+	end
 end)
 
 BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
@@ -1400,6 +1482,14 @@ BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
 	if unitData[data.targetId] then unitData[data.targetId].currentHp = data.targetHp end
 	local tt = unitTokens[data.targetId]
 	if tt then
+		-- Camera: frame both actor and target during action resolution
+		local _actorToken = unitTokens[data.actorId]
+		if _actorToken and _actorToken.part ~= tt.part then
+			CameraController.SaveZoom()
+			CameraController.FocusTwoTargets(_actorToken.part.Position, tt.part.Position)
+			-- Restore zoom after action visuals settle
+			task.delay(1.5, function() CameraController.RestoreZoom() end)
+		end
 		if data.skillName then
 			local at = unitTokens[data.actorId]
 			if at then showFloatingText(at.part.Position, data.skillName, Theme.Colors.TextGold, 1.1) end
@@ -1464,6 +1554,13 @@ BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
 	if unitData[data.targetId] then unitData[data.targetId].currentHp = data.targetHp end
 	local tt = unitTokens[data.targetId]
 	if tt then
+		-- Camera: frame healer and target
+		local _healActor = unitTokens[data.actorId]
+		if _healActor and _healActor.part ~= tt.part then
+			CameraController.SaveZoom()
+			CameraController.FocusTwoTargets(_healActor.part.Position, tt.part.Position)
+			task.delay(1.5, function() CameraController.RestoreZoom() end)
+		end
 		if data.skillName then local at = unitTokens[data.actorId]; if at then showFloatingText(at.part.Position, data.skillName, Theme.Colors.Success, 1.1) end end
 		showDamageText(tt.part.Position, data.amount, true)
 		-- VFX: rising green heal particles

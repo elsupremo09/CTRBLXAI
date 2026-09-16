@@ -653,10 +653,13 @@ function CommandService.ValidateAndCommit(
 
 		local targetSelection = {
 			target      = selection.target,
-			-- range = -1 means inherit from weapon
-			skillRange  = (skillDef.range == -1)
+			-- Compute skill range with bonus (same formula as GetSkillCandidates)
+			skillRange  = math.max(1, ((skillDef.range == -1)
 				and (actor.weaponMaxRange or 1)
-				or (skillDef.range or 1),
+				or (skillDef.range or 1))
+				+ (actor.derivedStats and actor.derivedStats.bonusSkillRange
+					or math.floor((actor.effectiveStats and actor.effectiveStats.INT or 10) / 75))
+			),
 			targetRules = skillDef.targetRules or "Enemy Unit",
 		}
 

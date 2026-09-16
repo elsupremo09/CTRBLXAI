@@ -245,6 +245,53 @@ function CameraController.FocusSelectedUnit(worldPos)
 	print(string.format("[CameraRecovery] action=focusSelected success=true distance=%.0f yaw=%.0f", distance, yaw))
 end
 
+--- Frame two world positions so both are visible.
+--- Computes midpoint as focus, adjusts zoom to fit both + padding.
+--- @param posA Vector3  — first position (e.g. actor)
+--- @param posB Vector3  — second position (e.g. target)
+--- @param padFactor number? — extra zoom margin (default 1.4)
+function CameraController.FocusTwoTargets(posA, posB, padFactor)
+	if not isActive then return end
+	if not isValidVector(posA) or not isValidVector(posB) then return end
+	padFactor = padFactor or 1.4
+
+	-- Midpoint as focus
+	local mid = Vector3.new((posA.X + posB.X) / 2, 0, (posA.Z + posB.Z) / 2)
+	focus = clampFocus(mid)
+
+	-- Euclidean separation on XZ plane
+	local sep = ((posA.X - posB.X)^2 + (posA.Z - posB.Z)^2)^0.5
+	-- Minimum span: never zoom closer than ~4 tiles of coverage
+	sep = math.max(sep, 20)
+
+	-- Camera geometry: at our pitch the visible ground span is roughly
+	-- 2 * distance * tan(halfFOV).  The pitch stretches the far edge but
+	-- we want the tighter (near-edge) estimate so both tokens stay on
+	-- screen with comfortable margin.  Using the simpler horizontal
+	-- frustum keeps the math predictable.
+	local halfFov = math.rad(FIXED_FOV / 2)
+	local visPerDist = 2 * math.tan(halfFov)   -- ground width per unit distance
+	-- Solve for distance, then pad generously
+	local needed = (sep * padFactor) / math.max(visPerDist, 0.01)
+	distance = math.clamp(needed, ZOOM_MIN, ZOOM_MAX)
+
+	applyCFrame(false)
+end
+
+--- Store previous zoom so it can be restored after a two-target frame.
+local _savedDistance = nil
+
+function CameraController.SaveZoom()
+	_savedDistance = distance
+end
+
+function CameraController.RestoreZoom()
+	if not isActive or not _savedDistance then return end
+	distance = math.clamp(_savedDistance, ZOOM_MIN, ZOOM_MAX)
+	_savedDistance = nil
+	applyCFrame(false)
+end
+
 function CameraController.ResetTacticalView(focusPos)
 	distance = ZOOM_DEFAULT
 	yaw = 0
