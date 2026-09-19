@@ -260,7 +260,7 @@ end
 --------------------------------------------------
 
 local doctrineSkillCombatDefs = {
-	["DOC-BERSERKER-01"] = { id = "DOC-BERSERKER-01", name = "Reckless Charge", tags = {"Direct Damage","Physical","Utility"}, targetRules = "Enemy Unit", range = 3, pattern = "Single", mpCost = 4, rtMult = 1.50, channelTime = 0, power = 1.20, isHealing = false, projectileType = "Direct" },
+	["DOC-BERSERKER-01"] = { id = "DOC-BERSERKER-01", name = "Reckless Charge", tags = {"Direct Damage","Physical","Utility"}, targetRules = "Enemy Unit", range = 3, pattern = "Single", mpCost = 4, rtMult = 1.50, channelTime = 0, power = 1.20, isHealing = false, isCharge = true },
 	["DOC-ARCANIST-01"]  = { id = "DOC-ARCANIST-01", name = "Mana Surge", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 0, rtCost = 60, channelTime = 150, power = 0, isHealing = false },
 	["DOC-RANGER-01"]    = { id = "DOC-RANGER-01", name = "Hunter's Mark", tags = {"Direct Damage","Debuff","Physical"}, targetRules = "Enemy Unit", range = -1, pattern = "Single", mpCost = 4, rtMult = 1.00, channelTime = 0, power = 0.75, isHealing = false },
 	["DOC-VANGUARD-01"]  = { id = "DOC-VANGUARD-01", name = "Hold the Line", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 4, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false },
@@ -1915,6 +1915,7 @@ if game:GetService("RunService"):IsStudio() then
 			BattleEvents.MapDataSync:FireAllClients({
 				terrainGrid   = newMap.terrainGrid,
 				elevationGrid = newMap.elevationGrid,
+				objectGrid    = newMap.objectGrid,
 				blockers      = newMap.blockers,
 				mapWidth      = MAP_WIDTH,
 				mapHeight     = MAP_HEIGHT,
@@ -1961,6 +1962,7 @@ BattleEvents.LoadoutHubOpen:FireAllClients({ phase = "PreBattle" })
 BattleEvents.MapDataSync:FireAllClients({
 	terrainGrid  = generatedMap.terrainGrid,
 	elevationGrid = generatedMap.elevationGrid,
+	objectGrid   = generatedMap.objectGrid,
 	blockers     = generatedMap.blockers,
 	mapWidth     = MAP_WIDTH,
 	mapHeight    = MAP_HEIGHT,
@@ -2013,6 +2015,36 @@ local deployAnchorsToShow = {}
 local maxPDAnchors = math.min(#playerSpawns, #deployPlayerUnits * 2)
 for i = 1, maxPDAnchors do
 	table.insert(deployAnchorsToShow, playerSpawns[i])
+end
+
+-- Spawn R15 models for enemy units (they're already positioned)
+local _raceModelsFolder = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
+print(string.format("[DIAG-MODEL] Enemy spawn | RaceModels folder=%s | enemy count=%d",
+	tostring(_raceModelsFolder ~= nil), #deployEnemyUnits))
+if _raceModelsFolder then
+	local _umf = workspace:FindFirstChild("UnitModels")
+	if not _umf then _umf = Instance.new("Folder"); _umf.Name = "UnitModels"; _umf.Parent = workspace end
+	for _, eu in ipairs(deployEnemyUnits) do
+		local _rn = eu.raceId and RaceData.GetRace(eu.raceId) and RaceData.GetRace(eu.raceId).name or nil
+		print(string.format("[DIAG-MODEL]   Enemy %s raceId=%s raceName=%s", eu.name, tostring(eu.raceId), tostring(_rn)))
+		local _tpl = _rn and _raceModelsFolder:FindFirstChild(_rn)
+		if _tpl and _tpl:IsA("Model") then
+			local c = _tpl:Clone()
+			c.Name = "Unit_" .. eu.id
+			local hrp = c.PrimaryPart or c:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				hrp.Anchored = true
+				local _ox = -(MAP_WIDTH * 5) / 2
+				local _oz = -(MAP_HEIGHT * 5) / 2
+				local _elev = generatedMap.elevationGrid and generatedMap.elevationGrid[eu.tileY]
+					and generatedMap.elevationGrid[eu.tileY][eu.tileX] or 1
+				local _tileTopY = 0.6 + (_elev - 1) * 2.5
+				c:PivotTo(CFrame.new(_ox + (eu.tileX - 0.5) * 5, _tileTopY, _oz + (eu.tileY - 0.5) * 5))
+			end
+			c.Parent = _umf
+			print(string.format("[Deploy] Enemy %s → R15 model '%s' at (%d,%d)", eu.name, _rn, eu.tileX, eu.tileY))
+		end
+	end
 end
 
 BattleEvents.DeploymentPhase:FireAllClients({
@@ -2083,8 +2115,85 @@ local deployConn = BattleEvents.DeployUnit.OnServerEvent:Connect(function(plr, d
 		tileY  = data.tileY,
 	})
 
+	-- Spawn R15 model for the deployed unit
+	local _raceModels = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
+	print(string.format("[DIAG-MODEL] Deploy unit %s | raceId=%s | RaceModels folder=%s",
+		unit.name, tostring(unit.raceId), tostring(_raceModels ~= nil)))
+	if _raceModels then
+		local _raceName = unit.raceId and RaceData.GetRace(unit.raceId)
+			and RaceData.GetRace(unit.raceId).name or nil
+		print(string.format("[DIAG-MODEL]   raceName=%s | template=%s", tostring(_raceName), tostring(_raceModels:FindFirstChild(tostring(_raceName)) ~= nil)))
+		local _template = _raceName and _raceModels:FindFirstChild(_raceName)
+		if _template and _template:IsA("Model") then
+			local _umf = workspace:FindFirstChild("UnitModels")
+			if not _umf then _umf = Instance.new("Folder"); _umf.Name = "UnitModels"; _umf.Parent = workspace end
+			-- Remove existing model if re-deployed
+			local existing = _umf:FindFirstChild("Unit_" .. unit.id)
+			if existing then existing:Destroy() end
+			local clone = _template:Clone()
+			clone.Name = "Unit_" .. unit.id
+			local hrp = clone.PrimaryPart or clone:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				hrp.Anchored = true
+				-- PivotTo places model's feet at the target position
+				local _ox = -(MAP_WIDTH * 5) / 2
+				local _oz = -(MAP_HEIGHT * 5) / 2
+				local _elev = generatedMap.elevationGrid and generatedMap.elevationGrid[data.tileY]
+					and generatedMap.elevationGrid[data.tileY][data.tileX] or 1
+				local _feetY = 0.6 + (_elev - 1) * 2.5
+				clone:PivotTo(CFrame.new(
+					_ox + (data.tileX - 0.5) * 5,
+					_feetY,
+					_oz + (data.tileY - 0.5) * 5
+				))
+			end
+			clone.Parent = _umf
+		end
+	end
+
 	print(string.format("[Deploy] %s placed at (%d,%d) — %d/%d deployed",
 		unit.name, data.tileX, data.tileY, deployedCount, #deployPlayerUnits))
+end)
+
+-- UNDEPLOY: Player removes a previously deployed unit
+local undeployConn = BattleEvents.UndeployUnit.OnServerEvent:Connect(function(plr, data)
+	if not data or not data.unitId then return end
+
+	local unit = nil
+	for _, u in ipairs(deployPlayerUnits) do
+		if u.id == data.unitId then unit = u; break end
+	end
+	if not unit then
+		warn(string.format("[Deploy] UNDEPLOY REJECTED: unit %s not found", tostring(data.unitId)))
+		return
+	end
+	if unit.tileX == 0 and unit.tileY == 0 then
+		warn(string.format("[Deploy] UNDEPLOY REJECTED: unit %s is not deployed", unit.name))
+		return
+	end
+
+	local oldX, oldY = unit.tileX, unit.tileY
+	local tileKey = oldY * 100000 + oldX
+	occupiedTiles[tileKey] = nil
+	unit.tileX = 0
+	unit.tileY = 0
+	deployedCount = deployedCount - 1
+
+	BattleEvents.UnitUndeployed:FireAllClients({
+		unitId = unit.id,
+		tileX  = oldX,
+		tileY  = oldY,
+	})
+
+	-- Remove R15 model
+	local _umf = workspace:FindFirstChild("UnitModels")
+	if _umf then
+		local existing = _umf:FindFirstChild("Unit_" .. unit.id)
+		if existing then existing:Destroy() end
+	end
+
+	print(string.format("[Deploy] %s UNDEPLOYED from (%d,%d) — %d/%d deployed",
+		unit.name, oldX, oldY, deployedCount, #deployPlayerUnits))
 end)
 
 local readyConn = BattleEvents.DeploymentReady.OnServerEvent:Connect(function(plr)
@@ -2106,7 +2215,96 @@ print(string.format("[Deploy] All %d player units deployed — starting battle",
 -- === BATTLE START ===
 state = BattleCoordinator.CreateBattleState(allUnitsList)
 
+-- Spawn R15 race models for all units
+local raceModelsFolder = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
+-- DIAGNOSTIC: enumerate what's actually in ServerStorage and RaceModels
+print(string.format("[DIAG-MODEL] ServerStorage children: %d", #game:GetService("ServerStorage"):GetChildren()))
+for _, child in ipairs(game:GetService("ServerStorage"):GetChildren()) do
+	print(string.format("[DIAG-MODEL]   SS child: '%s' (%s)", child.Name, child.ClassName))
+end
+if raceModelsFolder then
+	for _, child in ipairs(raceModelsFolder:GetChildren()) do
+		print(string.format("[DIAG-MODEL]   RaceModels child: '%s' (%s)", child.Name, child.ClassName))
+	end
+end
+local TILE_SZ = 5
+local offsetX, offsetZ = -(MAP_WIDTH * TILE_SZ) / 2, -(MAP_HEIGHT * TILE_SZ) / 2
+local unitModelsFolder = workspace:FindFirstChild("UnitModels")
+if not unitModelsFolder then
+	unitModelsFolder = Instance.new("Folder")
+	unitModelsFolder.Name = "UnitModels"
+	unitModelsFolder.Parent = workspace
+end
+
+for _, unit in ipairs(allUnitsList) do
+	if not unit.isAlive then continue end
+	local raceName = unit.raceId and RaceData.GetRace(unit.raceId)
+		and RaceData.GetRace(unit.raceId).name or nil
+	local template = raceName and raceModelsFolder and raceModelsFolder:FindFirstChild(raceName)
+	if template and template:IsA("Model") then
+		-- Skip if model already exists (spawned during deployment)
+		if unitModelsFolder:FindFirstChild("Unit_" .. unit.id) then
+			print(string.format("[Spawn] %s → model already exists (from deployment)", unit.name))
+			continue
+		end
+		local clone = template:Clone()
+		clone.Name = "Unit_" .. unit.id
+		local hrp = clone.PrimaryPart or clone:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			hrp.Anchored = true
+			-- Position at the unit's tile
+			local elev = generatedMap.elevationGrid and generatedMap.elevationGrid[unit.tileY]
+				and generatedMap.elevationGrid[unit.tileY][unit.tileX] or 1
+			local tileTopY = 0.6 + (elev - 1) * 2.5  -- TILE_BASE_HEIGHT + (elev-1)*ELEVATION_STEP
+			local tilePos = Vector3.new(
+				offsetX + (unit.tileX - 0.5) * TILE_SZ,
+				tileTopY,  -- PivotTo places feet at tile surface
+				offsetZ + (unit.tileY - 0.5) * TILE_SZ
+			)
+			clone:PivotTo(CFrame.new(tilePos))
+		end
+		clone.Parent = unitModelsFolder
+		print(string.format("[Spawn] %s → R15 model '%s' at (%d,%d)", unit.name, raceName, unit.tileX, unit.tileY))
+	else
+		print(string.format("[Spawn] %s → no model for race '%s' (cylinder fallback)", unit.name, tostring(raceName)))
+	end
+end
+
 task.wait(2)
+
+--------------------------------------------------
+-- INITIAL FACING
+-- Player units face toward average enemy position.
+-- Enemy units face toward average player position.
+--------------------------------------------------
+do
+	local playerAvgX, playerAvgY, playerCount = 0, 0, 0
+	local enemyAvgX, enemyAvgY, enemyCount = 0, 0, 0
+	for _, u in ipairs(allUnitsList) do
+		if u.side == "Player" then
+			playerAvgX = playerAvgX + u.tileX
+			playerAvgY = playerAvgY + u.tileY
+			playerCount = playerCount + 1
+		else
+			enemyAvgX = enemyAvgX + u.tileX
+			enemyAvgY = enemyAvgY + u.tileY
+			enemyCount = enemyCount + 1
+		end
+	end
+	if playerCount > 0 then playerAvgX = playerAvgX / playerCount; playerAvgY = playerAvgY / playerCount end
+	if enemyCount > 0 then enemyAvgX = enemyAvgX / enemyCount; enemyAvgY = enemyAvgY / enemyCount end
+
+	local facingLog = {}
+	for _, u in ipairs(allUnitsList) do
+		local targetX = (u.side == "Player") and enemyAvgX or playerAvgX
+		local targetY = (u.side == "Player") and enemyAvgY or playerAvgY
+		local f = GameConstants.CalcFacingFrom(u.tileX, u.tileY, targetX, targetY)
+		if f then u.facing = f end
+		table.insert(facingLog, u.name .. "→" .. (u.facing or "?"))
+	end
+	print("[Main] Initial facing: " .. table.concat(facingLog, ", "))
+end
+
 BattleVisualBroadcaster.BattleStarted(state.units)
 
 --------------------------------------------------
@@ -2358,10 +2556,48 @@ end
 -- Returns: action table for broadcasting, or nil
 --------------------------------------------------
 
+--------------------------------------------------
+-- FACING PROMPT: Ask player to choose facing direction
+-- Called when player Guards or manually ends turn (Wait).
+-- Skipped when all AP is spent naturally.
+--------------------------------------------------
+local function promptPlayerFacing(unit, playerObj)
+	if not playerObj then return end
+	BattleEvents.FacingPrompt:FireClient(playerObj, {
+		unitId       = unit.id,
+		currentFacing = unit.facing,
+		tileX        = unit.tileX,
+		tileY        = unit.tileY,
+	})
+
+	-- Wait for response with 5-second timeout
+	local responded = false
+	local conn
+	conn = BattleEvents.SetFacing.OnServerEvent:Connect(function(player, data)
+		if player == playerObj and data and data.unitId == unit.id then
+			if GameConstants.IsValidFacing(data.facing) then
+				unit.facing = data.facing
+				BattleVisualBroadcaster.FacingChanged(unit)
+				print(string.format("[Main] %s facing set to %s (player choice)", unit.name, unit.facing))
+			end
+			responded = true
+		end
+	end)
+	local deadline = tick() + 5
+	while not responded and tick() < deadline do
+		task.wait(0.1)
+	end
+	if conn then conn:Disconnect() end
+end
+
+--------------------------------------------------
+
 local function executePlayerCommand(unit, command)
 	local actionType = command.actionType
 
 	if actionType == "Wait" then
+		-- Player forfeits remaining AP — offer facing choice
+		promptPlayerFacing(unit, Players:GetPlayers()[1])
 		CommandService.ValidateAndCommit(state, unit.id, "Wait", nil)
 		return { actionType = "Wait", unit = unit }
 	end
@@ -2369,6 +2605,8 @@ local function executePlayerCommand(unit, command)
 	if actionType == "Guard" then
 		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Guard", nil)
 		if ok then
+			-- Guard forfeits remaining AP — offer facing choice
+			promptPlayerFacing(unit, Players:GetPlayers()[1])
 			return { actionType = "Guard", unit = unit }
 		else
 			warn("[Main] Guard rejected: " .. (reason or "unknown"))
@@ -2802,6 +3040,41 @@ local function runAiTurn(unit)
 			break
 		end
 
+		-- After an attack/skill, check if the target is no longer available (KO or Hide)
+		-- If so, replan remaining AP instead of executing stale plan steps
+		if ok and (step.actionType == "Attack" or step.actionType == "Skill")
+			and BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
+			local stepTarget = nil
+			if step.actionType == "Attack" then
+				stepTarget = step.selection
+			elseif step.selection and step.selection.target then
+				stepTarget = step.selection.target
+			end
+			if stepTarget and (not stepTarget.isAlive or StatusService.HasStatus(stepTarget, "Hide")) then
+				print(string.format("[AI] %s replanning — target %s no longer available (%s)",
+					unit.name, stepTarget.name,
+					not stepTarget.isAlive and "KO" or "Hide"))
+				local combatReplan = AIService.PlanTurn(unit, allUnits, MAP_WIDTH, MAP_HEIGHT)
+				for _, rstep in ipairs(combatReplan) do
+					if BattleCoordinator.GetPhase(state) ~= "TurnOpen" then break end
+					if unit.currentAp <= 0 then break end
+					if rstep.actionType == "Wait" then break end
+					if rstep.actionType == "Attack" then
+						tryCommit("Attack", rstep.selection, nil)
+					elseif rstep.actionType == "Skill" then
+						tryCommit("Skill", rstep.selection, rstep.skillName)
+					elseif rstep.actionType == "Guard" then
+						tryCommit("Guard", nil, nil)
+					elseif rstep.actionType == "Push" then
+						tryCommit("Push", rstep.selection, nil)
+					elseif rstep.actionType == "Move" then
+						tryCommit("Move", rstep.selection, nil)
+					end
+				end
+				break  -- Exit original plan loop — replan has consumed remaining AP
+			end
+		end
+
 		-- After a move, re-evaluate if plan requested it
 		if ok and step.actionType == "Move" and plan.needsReeval
 			and BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
@@ -2867,6 +3140,28 @@ local function runAiTurn(unit)
 			local target = { tileX = unit.tileX, tileY = unit.tileY }
 			print(string.format("[AI] %s using consumable slot %d", unit.name, bestSlot))
 			tryCommit("Item", { target = target, itemSlotIndex = bestSlot }, nil)
+		end
+	end
+
+	-- AI facing: face toward nearest alive enemy at turn end
+	do
+		local nearestDist = math.huge
+		local nearestEnemy = nil
+		for _, other in ipairs(allUnits) do
+			if other.isAlive and other.side ~= unit.side then
+				local dist = math.max(math.abs(other.tileX - unit.tileX), math.abs(other.tileY - unit.tileY))
+				if dist < nearestDist then
+					nearestDist = dist
+					nearestEnemy = other
+				end
+			end
+		end
+		if nearestEnemy then
+			local aiFacing = GameConstants.CalcFacingFrom(unit.tileX, unit.tileY, nearestEnemy.tileX, nearestEnemy.tileY)
+			if aiFacing then
+				unit.facing = aiFacing
+				BattleVisualBroadcaster.FacingChanged(unit)
+			end
 		end
 	end
 

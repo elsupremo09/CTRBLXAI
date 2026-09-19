@@ -29,6 +29,10 @@ local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 local Shared = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("Shared", 10)
 local GameConstants = require(Shared:WaitForChild("GameConstants", 10))
 
+local Content = ReplicatedStorage:WaitForChild("Content", 10)
+local _odOk, ObjectData = pcall(require, Content and Content:WaitForChild("ObjectData", 5))
+if not _odOk then ObjectData = nil end
+
 local BattleHUD = {}
 
 -- State
@@ -212,11 +216,13 @@ local function ensureRoot()
 		UDim2.fromScale(0.60, 0.15),
 		UDim2.new(0, PAD, 1, 0), Vector2.new(0, 1), rootFrame)
 	turnOrderBar.ClipsDescendants = true
+	turnOrderBar.Visible = false  -- hidden until UpdateTimeline populates it
 
 	-- ADJACENT: Conditions Panel (right of turn order bar)
 	conditionsPanel = makePanel("Conditions",
 		UDim2.fromScale(0.12, 0.10),
 		UDim2.new(0.60, PAD * 2, 1, -PAD), Vector2.new(0, 1), rootFrame)
+	conditionsPanel.Visible = false  -- hidden until battle populates it
 
 	-- TOP-LEFT: Battle Log (25% W × 20% H) — right below toggle buttons, starts collapsed
 	battleLogPanel = makePanel("BattleLog",
@@ -1389,6 +1395,29 @@ function BattleHUD._buildViewModeTile()
 		makeLabel(actionPanel, "", { size = UDim2.new(1, 0, 0, 4), order = 7 })
 		makeLabel(actionPanel, "Occupant: " .. t.occupantName, {
 			textSize = Theme.Text.Small(), color = Theme.Colors.TextGold, order = 8 })
+	end
+
+	-- Map object on this tile
+	if t.objectName and ObjectData and ObjectData.Objects then
+		local objDef = ObjectData.Objects[t.objectName]
+		if objDef then
+			makeLabel(actionPanel, "", { size = UDim2.new(1, 0, 0, 4), order = 9 })
+			makeLabel(actionPanel, "OBJECT: " .. t.objectName, {
+				font = Theme.Font.PrimaryBold,
+				textSize = Theme.Text.Small(), color = Theme.Colors.Warning, order = 10 })
+			-- Category
+			if objDef.category then
+				makeLabel(actionPanel, objDef.category, {
+					textSize = Theme.Text.Tiny(), color = Theme.Colors.TextSecondary, order = 11 })
+			end
+			-- Primary effect (describes damage, range, etc.)
+			if objDef.primaryEffect then
+				makeLabel(actionPanel, objDef.primaryEffect, {
+					size = UDim2.new(1, 0, 0, 28),
+					textSize = Theme.Text.Tiny(), color = Theme.Colors.TextPrimary,
+					wrap = true, order = 12 })
+			end
+		end
 	end
 end
 

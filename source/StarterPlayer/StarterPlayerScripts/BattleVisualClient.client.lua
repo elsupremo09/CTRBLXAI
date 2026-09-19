@@ -67,8 +67,15 @@ local function getElevation(tx, ty)
 	if elevationMap then local r = elevationMap[ty]; if r then return r[tx] or 1 end end; return 1
 end
 local function tileSurfaceY(elev) return TILE_BASE_HEIGHT + ((elev or 1) - 1) * ELEVATION_STEP end
+local R15_STAND_OFFSET_DEFAULT = 2.35  -- fallback if HipHeight can't be read
 local function tileToWorld(tx, ty)
 	return Vector3.new(MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE, tileSurfaceY(getElevation(tx, ty)) + 1, MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE)
+end
+local function tileToWorldR15(tx, ty, hipHeight)
+	-- Returns the HRP center position for an R15 model standing on this tile.
+	-- hipHeight = distance from feet (tile surface) to HRP center.
+	local offset = hipHeight or R15_STAND_OFFSET_DEFAULT
+	return Vector3.new(MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE, tileSurfaceY(getElevation(tx, ty)) + offset, MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE)
 end
 local function templateToBattle(x, y)
 	local bx, by = x - BATTLE_OFFSET_X, y - BATTLE_OFFSET_Y
@@ -113,42 +120,61 @@ local bp = {
 --------------------------------------------------
 
 local function clearHighlights()
-	for _, p in ipairs(highlightParts) do p:Destroy() end
+	for _, obj in ipairs(highlightParts) do obj:Destroy() end
 	highlightParts = {}
 	-- Also clear path highlights (inline to avoid forward-reference)
-	for _, p in ipairs(pathHighlightParts) do p:Destroy() end
+	for _, obj in ipairs(pathHighlightParts) do obj:Destroy() end
 	pathHighlightParts = {}
 end
 
--- Highlight modes with distinct visual styles
+-- Highlight modes with distinct visual styles.
+-- SurfaceGui on Top face of invisible tile Parts, AlwaysOnTop renders through terrain.
+-- Shows a clean colored fill + border at exact tile boundaries — no floating Parts.
 local HIGHLIGHT_STYLES = {
-	move     = { color = Theme.Colors.TileMove,     transparency = 0.55, material = Enum.Material.SmoothPlastic },
-	target   = { color = Theme.Colors.TileTarget,   transparency = 0.50, material = Enum.Material.Neon },
-	selected = { color = Theme.Colors.TileSelected,  transparency = 0.35, material = Enum.Material.Neon },
-	aoe      = { color = Theme.Colors.TileAOE,      transparency = 0.50, material = Enum.Material.Neon },
-	invalid  = { color = Theme.Colors.TileInvalid,   transparency = 0.70, material = Enum.Material.SmoothPlastic },
-	current  = { color = Theme.Colors.Info,          transparency = 0.50, material = Enum.Material.Neon },
+	move     = { fill = Theme.Colors.TileMove,     fillTrans = 0.50, border = Theme.Colors.TileMove,     borderTrans = 0.1, borderPx = 2 },
+	target   = { fill = Theme.Colors.TileTarget,   fillTrans = 0.40, border = Theme.Colors.TileTarget,   borderTrans = 0.0, borderPx = 3 },
+	selected = { fill = Theme.Colors.TileSelected,  fillTrans = 0.30, border = Theme.Colors.TileSelected, borderTrans = 0.0, borderPx = 3 },
+	aoe      = { fill = Theme.Colors.TileAOE,      fillTrans = 0.45, border = Theme.Colors.TileAOE,      borderTrans = 0.0, borderPx = 3 },
+	invalid  = { fill = Theme.Colors.TileInvalid,   fillTrans = 0.65, border = Theme.Colors.TileInvalid,  borderTrans = 0.3, borderPx = 2 },
+	current  = { fill = Theme.Colors.Info,          fillTrans = 0.40, border = Theme.Colors.Info,          borderTrans = 0.0, borderPx = 3 },
 }
 
-local function createTileHighlight(tx, ty, colorOrStyle, transparency)
+local function createTileHighlight(bx, by, colorOrStyle, _transparency)
 	local style = type(colorOrStyle) == "string" and HIGHLIGHT_STYLES[colorOrStyle] or nil
-	local color = style and style.color or colorOrStyle or Color3.fromRGB(200, 170, 50)
-	local trans = style and style.transparency or transparency or 0.55
-	local mat = style and style.material or Enum.Material.Neon
+	local fillColor   = style and style.fill       or colorOrStyle or Color3.fromRGB(200, 170, 50)
+	local fillTrans   = style and style.fillTrans   or _transparency or 0.50
+	local borderColor = style and style.border      or fillColor
+	local borderTrans = style and style.borderTrans or 0.1
+	local borderPx    = style and style.borderPx    or 2
 
-	local elev = getElevation(tx, ty)
-	local pos = Vector3.new(MAP_OFFSET_X + (tx-0.5)*TILE_SIZE, tileSurfaceY(elev)+0.12, MAP_OFFSET_Z + (ty-0.5)*TILE_SIZE)
+	local tilePart = getTilePart(bx, by)
+	if not tilePart then return end
 
-	local p = Instance.new("Part")
-	p.Name = "HL_"..tx.."_"..ty
-	p.Anchored, p.CanCollide, p.CanQuery = true, false, false
-	p.Size = Vector3.new(TILE_SIZE*0.80, 0.08, TILE_SIZE*0.80)
-	p.Position = pos
-	p.Color = color
-	p.Transparency = trans
-	p.Material = mat
-	p.Parent = visualFolder
-	table.insert(highlightParts, p)
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "TileHL"
+	gui.Face = Enum.NormalId.Top
+	gui.AlwaysOnTop = true
+	gui.Brightness = 1.2
+	gui.LightInfluence = 0
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 10
+	gui.Parent = tilePart
+
+	local fill = Instance.new("Frame")
+	fill.Name = "Fill"
+	fill.Size = UDim2.fromScale(1, 1)
+	fill.BackgroundColor3 = fillColor
+	fill.BackgroundTransparency = fillTrans
+	fill.BorderSizePixel = 0
+	fill.Parent = gui
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = borderColor
+	stroke.Thickness = borderPx
+	stroke.Transparency = borderTrans
+	stroke.Parent = fill
+
+	table.insert(highlightParts, gui)
 end
 
 -- PATH HIGHLIGHTS (rendered separately so move-range stays visible)
@@ -182,9 +208,9 @@ local function renderMovePath(path, destX, destY)
 	for i, step in ipairs(fullPath) do
 		local tx, ty = step.tileX, step.tileY
 		local elev = getElevation(tx, ty)
-		local surfaceY = tileSurfaceY(elev) + 0.15
+		local surfaceY = tileSurfaceY(elev) + 3.5
 
-		-- Path tile highlight (brighter than move-range)
+		-- Path tile highlight via Highlight instance
 		local hazard = PATH_HAZARDS[step.terrain]
 		local tileColor
 		if step.isDest then
@@ -195,18 +221,35 @@ local function renderMovePath(path, destX, destY)
 			tileColor = Color3.fromRGB(100, 180, 255) -- bright path blue
 		end
 
-		local hl = Instance.new("Part")
-		hl.Name = "Path_" .. tx .. "_" .. ty
-		hl.Anchored, hl.CanCollide, hl.CanQuery = true, false, false
-		hl.Size = Vector3.new(TILE_SIZE * 0.92, 0.15, TILE_SIZE * 0.92)
-		hl.Position = Vector3.new(MAP_OFFSET_X + (tx-0.5)*TILE_SIZE, surfaceY, MAP_OFFSET_Z + (ty-0.5)*TILE_SIZE)
-		hl.Color = tileColor
-		hl.Transparency = step.isDest and 0.15 or 0.25
-		hl.Material = Enum.Material.Neon
-		hl.Parent = visualFolder
-		table.insert(pathHighlightParts, hl)
+		local pathTilePart = getTilePart(tx, ty)
+		if pathTilePart then
+			local pGui = Instance.new("SurfaceGui")
+			pGui.Name = "PathHL"
+			pGui.Face = Enum.NormalId.Top
+			pGui.AlwaysOnTop = true
+			pGui.Brightness = 1.4
+			pGui.LightInfluence = 0
+			pGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+			pGui.PixelsPerStud = 10
+			pGui.Parent = pathTilePart
 
-		-- Floating 3D arrow pointing toward next tile
+			local pFill = Instance.new("Frame")
+			pFill.Size = UDim2.fromScale(1, 1)
+			pFill.BackgroundColor3 = tileColor
+			pFill.BackgroundTransparency = step.isDest and 0.15 or 0.30
+			pFill.BorderSizePixel = 0
+			pFill.Parent = pGui
+
+			local pStroke = Instance.new("UIStroke")
+			pStroke.Color = tileColor
+			pStroke.Thickness = 3
+			pStroke.Transparency = 0.0
+			pStroke.Parent = pFill
+
+			table.insert(pathHighlightParts, pGui)
+		end
+
+		-- Floating 3D arrow pointing toward next tile (keep as Parts — they float above)
 		if i < #fullPath then
 			local nextStep = fullPath[i + 1]
 			local nx = MAP_OFFSET_X + (nextStep.tileX - 0.5) * TILE_SIZE
@@ -217,7 +260,6 @@ local function renderMovePath(path, destX, destY)
 			local toPos   = Vector3.new(nx, surfaceY + 1.5, nz)
 			local midPos  = (fromPos + toPos) * 0.5
 			local lookCF  = CFrame.lookAt(midPos, toPos)
-			-- Wedge 1 (top half of chevron)
 			local w1 = Instance.new("WedgePart")
 			w1.Name = "PathArrow_" .. tx .. "_" .. ty .. "_T"
 			w1.Anchored, w1.CanCollide, w1.CanQuery = true, false, false
@@ -228,7 +270,6 @@ local function renderMovePath(path, destX, destY)
 			w1.Transparency = 0.3
 			w1.Parent = visualFolder
 			table.insert(pathHighlightParts, w1)
-			-- Wedge 2 (bottom half, flipped — forms diamond/chevron)
 			local w2 = Instance.new("WedgePart")
 			w2.Name = "PathArrow_" .. tx .. "_" .. ty .. "_B"
 			w2.Anchored, w2.CanCollide, w2.CanQuery = true, false, false
@@ -277,19 +318,58 @@ end
 --------------------------------------------------
 
 local function spawnToken(unit)
-	local part = Instance.new("Part")
-	part.Name = "Unit_" .. unit.id
-	part.Shape = Enum.PartType.Cylinder
-	part.Size = Vector3.new(1.8, 1.8, 1.8)
-	part.CFrame = CFrame.new(tileToWorld(unit.tileX, unit.tileY)) * CFrame.Angles(0,0,math.rad(90))
-	part.Anchored, part.CanCollide, part.CanQuery = true, false, true
-	part.Color = Theme.GetSideColor(unit.side)
-	part.Material = Enum.Material.SmoothPlastic
-	part.Parent = visualFolder
+	-- Try to find a server-spawned R15 model for this unit
+	local model = nil
+	local anchorPart = nil
+	-- Look for server-spawned R15 model in workspace/UnitModels
+	local unitModelsFolder = workspace:FindFirstChild("UnitModels")
+	if unitModelsFolder then
+		model = unitModelsFolder:FindFirstChild("Unit_" .. unit.id)
+	end
+
+	if model and model:IsA("Model") then
+		-- R15 model found — use its HumanoidRootPart as the anchor
+		anchorPart = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart")
+		if anchorPart then
+			-- Position model feet on tile surface.
+			-- PivotTo places the model's PIVOT (which is at the feet for R15 rigs)
+			-- at the given CFrame. So we just need the tile surface Y, no HipHeight math.
+			local feetY = tileSurfaceY(getElevation(unit.tileX, unit.tileY))
+			local feetPos = Vector3.new(
+				MAP_OFFSET_X + (unit.tileX - 0.5) * TILE_SIZE,
+				feetY,
+				MAP_OFFSET_Z + (unit.tileY - 0.5) * TILE_SIZE
+			)
+			model:PivotTo(CFrame.new(feetPos))
+			anchorPart.Anchored = true
+			-- Reparent to visualFolder if not already there
+			if model.Parent ~= visualFolder then
+				model.Parent = visualFolder
+			end
+		else
+			-- Model has no HumanoidRootPart — treat as invalid, fall back
+			model = nil
+		end
+	end
+
+	-- Fallback: create cylinder placeholder if no R15 model
+	if not anchorPart then
+		local part = Instance.new("Part")
+		part.Name = "Unit_" .. unit.id
+		part.Shape = Enum.PartType.Cylinder
+		part.Size = Vector3.new(1.8, 1.8, 1.8)
+		part.CFrame = CFrame.new(tileToWorld(unit.tileX, unit.tileY)) * CFrame.Angles(0,0,math.rad(90))
+		part.Anchored, part.CanCollide, part.CanQuery = true, false, true
+		part.Color = Theme.GetSideColor(unit.side)
+		part.Material = Enum.Material.SmoothPlastic
+		part.Parent = visualFolder
+		anchorPart = part
+	end
 
 	-- HP + MP billboard (single gui, stacked with 0px gap)
 	local barBb = Instance.new("BillboardGui"); barBb.Size = UDim2.new(0,48,0,13)
-	barBb.StudsOffset = Vector3.new(0, 1.2, 0); barBb.AlwaysOnTop = true; barBb.Parent = part
+	barBb.StudsOffset = Vector3.new(0, model and 2.8 or 1.2, 0)
+	barBb.AlwaysOnTop = true; barBb.Parent = anchorPart
 
 	-- HP bar (9px tall — fits name text inside)
 	local hpBg = Instance.new("Frame")
@@ -323,7 +403,22 @@ local function spawnToken(unit)
 	mpFill.BorderSizePixel = 0; mpFill.Parent = mpBg
 	Instance.new("UICorner", mpFill).CornerRadius = UDim.new(0,2)
 
-	unitTokens[unit.id] = { part = part, fill = hpFill, mpFill = mpFill, label = lbl }
+	-- Measure the actual pivot-to-HRP offset from the live model.
+	-- Model:GetPivot() returns the feet position; HRP.Position is the hip center.
+	-- The difference is the correct standing offset for this model.
+	local _hipH = R15_STAND_OFFSET_DEFAULT
+	if model and anchorPart then
+		-- PivotTo places the model's pivot (feet) at the target position.
+		-- HRP center sits above the pivot by: HipHeight + 0.5*HRP.Size.Y
+		-- But with scaling, these values may differ from the template.
+		-- Safest: measure from the live model after it's in workspace.
+		local pivotY = model:GetPivot().Position.Y
+		local hrpY = anchorPart.Position.Y
+		_hipH = math.abs(hrpY - pivotY)
+		if _hipH < 0.5 then _hipH = R15_STAND_OFFSET_DEFAULT end  -- sanity fallback
+		print(string.format("[DIAG-HIP] %s pivotY=%.2f hrpY=%.2f offset=%.2f", unit.name or unit.id, pivotY, hrpY, _hipH))
+	end
+	unitTokens[unit.id] = { part = anchorPart, model = model, fill = hpFill, mpFill = mpFill, label = lbl, hipHeight = _hipH }
 end
 
 local function updateHpBar(uid, hp, maxHp)
@@ -700,17 +795,27 @@ end
 
 local mapFolder = workspace:FindFirstChild("TemplateViewerMap")  -- nil until quest map renders; updated in MapDataSync handler
 
+-- Find the invisible tile Part for a given battle coordinate.
+-- Used by Highlight-based tile indicators (no floating Parts needed).
+local function getTilePart(bx, by)
+	if not mapFolder then return nil end
+	local tx, ty = bx + BATTLE_OFFSET_X, by + BATTLE_OFFSET_Y
+	local name = string.format("Tile_%02d_%02d", tx, ty)
+	return mapFolder:FindFirstChild(name)
+end
+
 local function getTileUnderMouse()
 	local target = mouse.Target
 	if target and target:IsA("BasePart") and target:GetAttribute("IsTemplateTile") then return target end
-	if target and target:IsA("BasePart") then
+	-- Fallback: mouse hit terrain voxels or a non-tile Part.
+	-- Use mouse.Hit (actual click world position), not target.Position
+	-- (workspace.Terrain.Position is always (0,0,0), not the hit point).
+	local hitPos = mouse.Hit and mouse.Hit.Position
+	if hitPos then
 		local rp = RaycastParams.new(); rp.FilterType = Enum.RaycastFilterType.Include
-		local parts = {}
-		if mapFolder then for _, c in ipairs(mapFolder:GetChildren()) do
-			if c:IsA("BasePart") and c:GetAttribute("IsTemplateTile") then table.insert(parts, c) end
-		end end
+		local parts = {}; if mapFolder then for _, c in ipairs(mapFolder:GetChildren()) do if c:IsA("BasePart") and c:GetAttribute("IsTemplateTile") then table.insert(parts, c) end end end
 		rp.FilterDescendantsInstances = parts
-		local res = workspace:Raycast(Vector3.new(target.Position.X, target.Position.Y + 50, target.Position.Z), Vector3.new(0,-100,0), rp)
+		local res = workspace:Raycast(Vector3.new(hitPos.X, hitPos.Y + 50, hitPos.Z), Vector3.new(0,-100,0), rp)
 		return res and res.Instance or nil
 	end
 	return nil
@@ -762,8 +867,8 @@ end
 
 local function processTileClick(bx, by)
 
-	-- Skip all HUD rendering during deployment — DeploymentUI owns the screen
-	if _G.CTRBLXAI_DeploymentActive then return end
+	-- During deployment: allow tile inspection but skip combat flow.
+	-- BattleHUD view mode provides tile + object info during placement.
 
 	-- Find occupant for tile info
 	local occupantName = nil
@@ -779,12 +884,16 @@ local function processTileClick(bx, by)
 	local elevation = getElevation(bx, by)
 	local moveCost = GameConstants.GetTerrainCost(bx, by)
 	print(string.format("[DIAG-TILE] Click (%d,%d) terrain=%s elev=%s GC_elev=%s hasLocalMap=%s", bx, by, tostring(terrainId), tostring(elevation), tostring(GameConstants.GetElevation(bx, by)), tostring(elevationMap ~= nil)))
+	-- Look up map object at this tile
+	local objectName = GameConstants.GetObjectAt(bx, by)
+
 	bp.tile = {
 		terrainName = terrainId,
 		elevation = elevation,
 		moveCost = moveCost,
 		coords = string.format("(%d, %d)", bx, by),
 		occupantName = occupantName,
+		objectName = objectName,
 	}
 	BattleHUD.Render(bp)
 	
@@ -794,18 +903,21 @@ local function processTileClick(bx, by)
 			bp.inspectedEntityId = data.id
 			bp.target = data
 			BattleHUD.Render(bp)
-			-- Only auto-open full inspector during Idle (no active turn) — never during
-			-- combat flow (ActionSelection, TargetSelection, Preview, SkillSelection)
+			-- Open full inspector during: Idle, View mode, or Deployment phase
 			local hudState = BattleHUD.GetState()
-			if hudState == "Idle" and not BattleHUD.IsViewMode() and _G.CTRBLXAI_OpenInspectorPanel then
+			local canInspect = (hudState == "Idle")
+				or BattleHUD.IsViewMode()
+				or _G.CTRBLXAI_DeploymentActive
+			if canInspect and _G.CTRBLXAI_OpenInspectorPanel then
 				_G.CTRBLXAI_OpenInspectorPanel(data.id)
 			end
 			break
 		end
 	end
 	
-	-- View mode: tile + unit info updated above, skip combat flow
+	-- View mode or deployment: tile + unit info updated above, skip combat flow
 	if BattleHUD.IsViewMode() then return end
+	if _G.CTRBLXAI_DeploymentActive then return end
 
 	if not isPlayerTurn or not inputMode then return end
 	
@@ -1421,7 +1533,7 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 		if unitData[data.unitId].isGuarding then
 			unitData[data.unitId].isGuarding = false
 			local token = unitTokens[data.unitId]
-			if token then token.part.Color = Theme.GetSideColor(unitData[data.unitId].side) end
+			if token and not token.model then token.part.Color = Theme.GetSideColor(unitData[data.unitId].side) end
 			-- Remove Guard from visible statuses
 			for i, s in ipairs(unitData[data.unitId].statuses or {}) do
 				if s.id == "Guard" then table.remove(unitData[data.unitId].statuses, i); break end
@@ -1464,7 +1576,66 @@ end)
 BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 	local token = unitTokens[data.unitId]; if not token then return end
 	if unitData[data.unitId] then unitData[data.unitId].tileX = data.tileX; unitData[data.unitId].tileY = data.tileY end
-	TweenService:Create(token.part, TweenInfo.new(0.45, Enum.EasingStyle.Quad), {CFrame = CFrame.new(tileToWorld(data.tileX, data.tileY)) * CFrame.Angles(0,0,math.rad(90))}):Play()
+	if token.model then
+		-- R15 model: handle elevation changes with arc tween
+		local destPos = tileToWorldR15(data.tileX, data.tileY, token.hipHeight)
+		local currentPos = token.part.Position
+		local dir = (destPos - currentPos) * Vector3.new(1, 0, 1)  -- XZ only
+		local lookCF = if dir.Magnitude > 0.1
+			then CFrame.lookAt(destPos, destPos + dir)
+			else CFrame.new(destPos)
+
+		-- If elevation changes, arc over terrain: rise → travel → land
+		local elevDiff = math.abs(destPos.Y - currentPos.Y)
+		if elevDiff > 0.5 then
+			local peakY = math.max(currentPos.Y, destPos.Y) + 1.5
+			local midXZ = (currentPos + destPos) / 2
+			local riseCF = CFrame.lookAt(
+				Vector3.new(currentPos.X, peakY, currentPos.Z),
+				Vector3.new(destPos.X, peakY, destPos.Z))
+			-- Rise (fast)
+			TweenService:Create(token.part, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = riseCF}):Play()
+			-- Travel + land (after rise)
+			task.delay(0.15, function()
+				if token.part and token.part.Parent then
+					TweenService:Create(token.part, TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = lookCF}):Play()
+				end
+			end)
+		else
+			-- Flat movement: simple tween
+			TweenService:Create(token.part, TweenInfo.new(0.45, Enum.EasingStyle.Quad), {CFrame = lookCF}):Play()
+		end
+		-- Play walk animation during tween.
+		-- AnimateScript (LocalScript) doesn't run in workspace Models,
+		-- so we create an Animator if needed and load the animation directly.
+		local humanoid = token.model:FindFirstChildOfClass("Humanoid")
+		if humanoid then
+			local animator = humanoid:FindFirstChildOfClass("Animator")
+			if not animator then
+				animator = Instance.new("Animator")
+				animator.Parent = humanoid
+			end
+			if not token._walkTrack then
+				local ok, track = pcall(function()
+					local walkAnim = Instance.new("Animation")
+					walkAnim.AnimationId = "rbxassetid://507777826"  -- default R15 walk
+					return animator:LoadAnimation(walkAnim)
+				end)
+				if ok and track then token._walkTrack = track end
+			end
+			if token._walkTrack then token._walkTrack:Play() end
+			-- Stop walk after tween completes
+			task.delay(0.5, function()
+				if token._walkTrack and token._walkTrack.IsPlaying then
+					token._walkTrack:Stop(0.2)
+				end
+			end)
+		end
+	else
+		-- Cylinder fallback: keep 90-degree rotation
+		local destPos = tileToWorld(data.tileX, data.tileY)
+		TweenService:Create(token.part, TweenInfo.new(0.45, Enum.EasingStyle.Quad), {CFrame = CFrame.new(destPos) * CFrame.Angles(0,0,math.rad(90))}):Play()
+	end
 
 	-- Move selection ring to follow active unit
 	if selectionRing and data.unitId == activeUnitId then
@@ -1621,7 +1792,14 @@ BattleEvents.TurnEnded.OnClientEvent:Connect(function(data)
 end)
 
 BattleEvents.UnitDefeated.OnClientEvent:Connect(function(data)
-	local t = unitTokens[data.unitId]; if t then t.part.Color = Color3.fromRGB(60,60,60); t.part.Transparency = 0.4 end
+	local t = unitTokens[data.unitId]
+	if t then
+		if not t.model then
+			-- Cylinder fallback: dim the part directly
+			t.part.Color = Color3.fromRGB(60,60,60); t.part.Transparency = 0.4
+		end
+		-- R15 and cylinder both get VFX highlight (handled below)
+	end
 	if unitData[data.unitId] then unitData[data.unitId].isAlive = false end
 	-- VFX: KO smoke puff + persistent grey highlight
 	if t then
@@ -1636,7 +1814,7 @@ BattleEvents.GuardActivated.OnClientEvent:Connect(function(data)
 
 	if token then
 		showFloatingText(token.part.Position, "GUARD " .. mitigationPct .. "%", Color3.fromRGB(100, 200, 255), 1.2)
-		token.part.Color = Color3.fromRGB(80, 140, 200)
+		if not token.model then token.part.Color = Color3.fromRGB(80, 140, 200) end
 		-- VFX: guard highlight (light blue outline)
 		if VFXController then pcall(VFXController.SetPersistHighlight, data.unitId, token.part, "guard") end
 	end
@@ -1728,6 +1906,9 @@ end
 _G.CTRBLXAI_TimelineClickTile = function(tileX, tileY)
 	if tileX and tileY then
 		processTileClick(tileX, tileY)
+
+		-- Focus camera on the clicked unit's tile
+		CameraController.FocusActiveUnit(tileToWorld(tileX, tileY))
 
 		-- Highlight the tile with "selected" style
 		clearHighlights()
@@ -2513,6 +2694,46 @@ BattleEvents.LoadoutHubOpen.OnClientEvent:Connect(function(data)
 	end
 end)
 
+-- Deployment phase: populate unitData with enemy/player positions
+-- so processTileClick can find units for the inspector.
+BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
+	-- Add enemy units to unitData (they have fixed positions)
+	if data.enemyUnits then
+		for _, eu in ipairs(data.enemyUnits) do
+			unitData[eu.id] = {
+				id        = eu.id,
+				name      = eu.name,
+				side      = eu.side or "Enemy",
+				tileX     = eu.tileX,
+				tileY     = eu.tileY,
+				isAlive   = true,
+				currentHp = 0,
+				maxHp     = 0,
+			}
+		end
+	end
+	print(string.format("[BVC] DeploymentPhase: %d enemy units added to unitData",
+		data.enemyUnits and #data.enemyUnits or 0))
+end)
+
+-- When a player unit is deployed, add it to unitData for inspector access
+BattleEvents.UnitDeployed.OnClientEvent:Connect(function(data)
+	if data.unitId and data.tileX and data.tileY then
+		if not unitData[data.unitId] then
+			unitData[data.unitId] = { id = data.unitId, name = data.unitId, side = "Player", isAlive = true, currentHp = 0, maxHp = 0 }
+		end
+		unitData[data.unitId].tileX = data.tileX
+		unitData[data.unitId].tileY = data.tileY
+	end
+end)
+
+-- When a player unit is undeployed, clear its tile position
+BattleEvents.UnitUndeployed.OnClientEvent:Connect(function(data)
+	if data.unitId and unitData[data.unitId] then
+		unitData[data.unitId].tileX = 0
+		unitData[data.unitId].tileY = 0
+	end
+end)
 -- Receive generated map data (terrain/elevation/blockers) from server
 BattleEvents.MapDataSync.OnClientEvent:Connect(function(mapData)
 	if mapData and GameConstants.SetGeneratedMap then
@@ -2537,6 +2758,113 @@ BattleEvents.MapDataSync.OnClientEvent:Connect(function(mapData)
 		-- the old panel first.
 		createDevCameraPanel()
 		if VFXController then pcall(VFXController.Init, biome) end
-		print("[BattleVisualClient] MapDataSync received — terrain/elevation updated on client")
+	print("[BattleVisualClient] MapDataSync received — terrain/elevation updated on client")
 	end
+end)
+
+--------------------------------------------------
+-- FACING SYSTEM — Client handlers
+--------------------------------------------------
+
+-- Track facing per unit for local display
+local function updateUnitFacing(unitId, facing)
+	if unitData[unitId] then
+		unitData[unitId].facing = facing
+	end
+end
+
+-- FacingChanged: server broadcasts when a unit's facing changes
+BattleEvents.FacingChanged.OnClientEvent:Connect(function(data)
+	if data and data.unitId and data.facing then
+		updateUnitFacing(data.unitId, data.facing)
+	end
+end)
+
+-- FacingPrompt: server asks player to choose facing direction (Guard/Wait only)
+BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
+	if not data or not data.unitId then return end
+
+	local ARROW_CHARS = {
+		N  = "↑",  NE = "↗", E  = "→", SE = "↘",
+		S  = "↓",  SW = "↙", W  = "←", NW = "↖",
+	}
+	local DIR_ORDER = { "NW", "N", "NE", "W", nil, "E", "SW", "S", "SE" }
+	-- 3×3 grid positions (row, col) centered on unit
+	local DIR_POS = {
+		NW = {0, 0}, N  = {0, 1}, NE = {0, 2},
+		W  = {1, 0},              E  = {1, 2},
+		SW = {2, 0}, S  = {2, 1}, SE = {2, 2},
+	}
+
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "FacingPrompt"
+	screenGui.ResetOnSpawn = false
+	screenGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+
+	local container = Instance.new("Frame")
+	container.Name = "FacingContainer"
+	container.Size = UDim2.new(0, 150, 0, 150)
+	container.Position = UDim2.new(0.5, -75, 0.5, -75)
+	container.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	container.BackgroundTransparency = 0.6
+	container.BorderSizePixel = 0
+	container.Parent = screenGui
+
+	local title = Instance.new("TextLabel")
+	title.Name = "Title"
+	title.Size = UDim2.new(1, 0, 0, 20)
+	title.Position = UDim2.new(0, 0, 0, -22)
+	title.BackgroundTransparency = 1
+	title.Text = "CHOOSE FACING"
+	title.TextColor3 = Color3.fromRGB(255, 220, 100)
+	title.TextSize = 14
+	title.Font = Enum.Font.GothamBold
+	title.Parent = container
+
+	local chosen = false
+	local btnSize = 44
+	local gap = 3
+
+	for dir, pos in pairs(DIR_POS) do
+		local row, col = pos[1], pos[2]
+		local btn = Instance.new("TextButton")
+		btn.Name = dir
+		btn.Size = UDim2.new(0, btnSize, 0, btnSize)
+		btn.Position = UDim2.new(0, col * (btnSize + gap), 0, row * (btnSize + gap))
+		btn.Text = ARROW_CHARS[dir] or "?"
+		btn.TextSize = 22
+		btn.Font = Enum.Font.GothamBold
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.BorderSizePixel = 0
+
+		-- Highlight current facing
+		if dir == data.currentFacing then
+			btn.BackgroundColor3 = Color3.fromRGB(80, 140, 220)
+		else
+			btn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+		end
+
+		btn.Parent = container
+
+		btn.MouseButton1Click:Connect(function()
+			if chosen then return end
+			chosen = true
+			BattleEvents.SetFacing:FireServer({
+				unitId = data.unitId,
+				facing = dir,
+			})
+			print(string.format("[BVC] Facing chosen: %s → %s", data.unitId, dir))
+			if screenGui and screenGui.Parent then
+				screenGui:Destroy()
+			end
+		end)
+	end
+
+	-- Auto-dismiss after 5 seconds if no choice
+	task.delay(5, function()
+		if not chosen and screenGui and screenGui.Parent then
+			screenGui:Destroy()
+			print("[BVC] Facing prompt timed out — keeping current facing")
+		end
+	end)
 end)

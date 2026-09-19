@@ -93,12 +93,9 @@ local function cleanup()
 	if inputConn then inputConn:Disconnect(); inputConn = nil end
 	if deployFolder then deployFolder:Destroy(); deployFolder = nil end
 	if screenGui then screenGui:Destroy(); screenGui = nil end
-	-- Re-enable DevOptions (BattleHUD will be recreated fresh by BattleStarted)
+	-- Re-enable DevOptions
 	local dv = player.PlayerGui:FindFirstChild("DevOptions")
 	if dv then dv.Enabled = true end
-	-- Destroy stale BattleHUD so it's built fresh when battle starts
-	local bh = player.PlayerGui:FindFirstChild("BattleHUD")
-	if bh then bh:Destroy() end
 	pdHighlights   = {}
 	enemyTokens    = {}
 	playerTokens   = {}
@@ -114,28 +111,38 @@ local function createPDHighlight(tx, ty)
 	local key = tileKey(tx, ty)
 	if pdHighlights[key] then return end
 
-	local surfaceY = tileSurfaceY(tx, ty) + 0.12
+	-- Find the invisible tile Part in the map.
+	local mapF = workspace:FindFirstChild("TemplateViewerMap")
+	if not mapF then return end
+	local tileName = string.format("Tile_%02d_%02d", tx, ty)
+	local tilePart = mapF:FindFirstChild(tileName)
+	if not tilePart then return end
 
-	local p = Instance.new("Part")
-	p.Name         = "Deploy_" .. tx .. "_" .. ty
-	-- Thin overlay — raycast hits the terrain tile below, not this Part.
-	p.Size         = Vector3.new(TILE_SIZE * 0.92, 0.1, TILE_SIZE * 0.92)
-	p.Position     = Vector3.new(
-		MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE,
-		surfaceY + 0.05,
-		MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE
-	)
-	p.Anchored     = true
-	p.CanCollide   = false
-	p.CanQuery     = false  -- raycast targets terrain tiles instead
-	p.Color        = Theme.Colors.Player      -- Muted blue
-	p.Material     = Enum.Material.Neon
-	p.Transparency = 0.50
-	p:SetAttribute("TileX", tx)
-	p:SetAttribute("TileY", ty)
-	p.Parent       = deployFolder
+	-- SurfaceGui on tile's Top face — renders through terrain via AlwaysOnTop.
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "DeployHL"
+	gui.Face = Enum.NormalId.Top
+	gui.AlwaysOnTop = true
+	gui.Brightness = 1.3
+	gui.LightInfluence = 0
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 10
+	gui.Parent = tilePart
 
-	pdHighlights[key] = p
+	local fill = Instance.new("Frame")
+	fill.Size = UDim2.fromScale(1, 1)
+	fill.BackgroundColor3 = Theme.Colors.Player
+	fill.BackgroundTransparency = 0.40
+	fill.BorderSizePixel = 0
+	fill.Parent = gui
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Theme.Colors.Player
+	stroke.Thickness = 3
+	stroke.Transparency = 0.0
+	stroke.Parent = fill
+
+	pdHighlights[key] = gui
 end
 
 --------------------------------------------------
@@ -178,6 +185,13 @@ end
 -- 3D PARTS: Player Token (spawned when deployed)
 --------------------------------------------------
 local function createPlayerToken(unitId, unitName, tx, ty)
+	-- If a server-spawned R15 model exists, skip the cylinder placeholder
+	local umf = workspace:FindFirstChild("UnitModels")
+	if umf and umf:FindFirstChild("Unit_" .. unitId) then
+		playerTokens[unitId] = umf:FindFirstChild("Unit_" .. unitId)
+		return
+	end
+
 	local part = Instance.new("Part")
 	part.Name       = "PlayerDeploy_" .. unitId
 	part.Shape      = Enum.PartType.Cylinder
@@ -288,9 +302,7 @@ local function createRosterUI(playerUnits)
 		StyleBootstrap.Link(screenGui)
 	end
 
-	-- Hide ALL battle HUD elements during deployment (they have no function here)
-	local battleHudGui = player.PlayerGui:FindFirstChild("BattleHUD")
-	if battleHudGui then battleHudGui.Enabled = false end
+	-- Hide DevOptions during deployment; BattleHUD stays for view mode tile inspection
 	local devOptsGui = player.PlayerGui:FindFirstChild("DevOptions")
 	if devOptsGui then devOptsGui.Enabled = false end
 
@@ -465,7 +477,11 @@ local function createRosterUI(playerUnits)
 		entry.checkBadge = checkBadge
 
 		cell.MouseButton1Click:Connect(function()
-			if not entry.deployed and active then
+			if not active then return end
+			if entry.deployed then
+				-- Undeploy: remove unit from the tile
+				BattleEvents.UndeployUnit:FireServer({ unitId = entry.id })
+			else
 				selectUnit(entry.id)
 			end
 		end)
@@ -551,16 +567,9 @@ BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 	active = true
 	_G.CTRBLXAI_DeploymentActive = true
 
-	-- Hide ALL battle HUD elements during deployment
-	local function hideBattleHUD()
-		local bh = player.PlayerGui:FindFirstChild("BattleHUD")
-		if bh then bh:Destroy() end
-		local dv = player.PlayerGui:FindFirstChild("DevOptions")
-		if dv then dv:Destroy() end
-	end
-	hideBattleHUD()
-	-- Deferred re-check: BattleHUD may be created after this handler by BVC
-	task.delay(0.5, hideBattleHUD)
+	-- Hide DevOptions during deployment (BattleHUD stays for view mode)
+	local dv = player.PlayerGui:FindFirstChild("DevOptions")
+	if dv then dv.Enabled = false end
 
 	mapWidth  = data.mapWidth or 30
 	mapHeight = data.mapHeight or 20
@@ -714,6 +723,56 @@ BattleEvents.UnitDeployed.OnClientEvent:Connect(function(data)
 		selectNextUndeployed()
 	end
 end)
+
+BattleEvents.UnitUndeployed.OnClientEvent:Connect(function(data)
+	if not data or not data.unitId then return end
+
+	-- Restore cell visual state
+	for _, entry in ipairs(rosterEntries) do
+		if entry.id == data.unitId then
+			entry.deployed = false
+			entry.button.BackgroundTransparency = 0.15
+			entry.button.AutoButtonColor = true
+			if entry.initials then entry.initials.TextTransparency = 0 end
+			if entry.nameStrip then entry.nameStrip.BackgroundTransparency = 0.4 end
+			if entry.nameLabel then entry.nameLabel.TextTransparency = 0 end
+			if entry.checkBadge then entry.checkBadge.Visible = false end
+			entry.stroke.Color = Theme.Colors.Border
+			entry.stroke.Thickness = 1
+			break
+		end
+	end
+
+	-- Remove player token from map
+	if playerTokens[data.unitId] then
+		-- Only destroy if it's a locally-created cylinder (not server R15 model)
+		if playerTokens[data.unitId]:IsA("Part") then
+			playerTokens[data.unitId]:Destroy()
+		end
+		-- Server handles R15 model removal via UnitUndeployed handler
+		playerTokens[data.unitId] = nil
+	end
+
+	-- Restore PD tile highlight
+	if data.tileX and data.tileY then
+		createPDHighlight(data.tileX, data.tileY)
+	end
+
+	-- Hide Start Battle button (no longer all deployed)
+	if startBattleBtn then
+		startBattleBtn.Visible = false
+		-- Also hide the container
+		local container = screenGui and screenGui:FindFirstChild("StartBattleBtnContainer")
+		if container then container.Visible = false end
+	end
+	startBattleBtn = nil
+
+	-- Auto-select the undeployed unit
+	selectUnit(data.unitId)
+
+	print(string.format("[DeploymentUI] %s undeployed from (%d,%d)", data.unitId, data.tileX or 0, data.tileY or 0))
+end)
+
 
 --------------------------------------------------
 -- EVENT: BattleStarted — clean up deployment UI

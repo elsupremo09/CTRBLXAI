@@ -39,6 +39,45 @@ local TILE_MATERIAL  = Enum.Material.SmoothPlastic
 local ELEVATION_STEP = 2.5
 
 local GRID_COLOR     = Color3.fromRGB(20, 20, 20)
+
+-- HYBRID TERRAIN SYSTEM
+-- Natural terrains: 3D voxel terrain (workspace.Terrain:FillBlock).
+-- Man-made/magical terrains: visible tile Parts with SurfaceGui textures.
+-- This gives organic 3D visuals for nature + crisp flat geometry for structures.
+
+-- Man-made/magical terrains that keep visible tile Parts with SurfaceGui textures.
+local SURFACEGUI_TERRAINS = {
+	Metal                  = true,
+	["Magic Circle"]       = true,
+	["Wooden Floor"]       = true,
+	["Monolith (One-way)"] = true,
+	["Monolith (Two-way)"] = true,
+}
+
+-- Voxel material per natural terrain (17 entries, each unique).
+local TERRAIN_VOXEL = {
+	Clear              = Enum.Material.Ground,       -- brown earth
+	Grassland          = Enum.Material.Grass,        -- 3D grass blades
+	["Clover Field"]   = Enum.Material.LeafyGrass,   -- flat leafy green (no 3D blades)
+	Forest             = Enum.Material.Limestone,    -- pale earthy forest floor
+	Rocky              = Enum.Material.Rock,          -- grey rock
+	Sand               = Enum.Material.Sand,          -- warm sand
+	Mud                = Enum.Material.Mud,            -- wet brown mud
+	Swamp              = Enum.Material.Slate,          -- dark wet stone
+	["Shallow Water"]  = Enum.Material.Glacier,       -- pale reflective surface
+	["Deep Water"]     = Enum.Material.Water,          -- translucent water
+	Ice                = Enum.Material.Ice,             -- reflective ice
+	Molten             = Enum.Material.CrackedLava,    -- glowing lava
+	["Tainted Ground"] = Enum.Material.Basalt,         -- dark corrupted
+	["Cracked Ground"] = Enum.Material.Asphalt,        -- dark cracked, no glow
+	Quicksand          = Enum.Material.Sandstone,      -- pale stone-sand
+	["Stone Road"]     = Enum.Material.Cobblestone,    -- cobble road
+	["Dirt Road"]      = Enum.Material.Pavement,       -- packed grey-brown road
+}
+
+-- Fill depth for terrain voxels. Must be >= 4 studs (one full voxel cell)
+-- to fully saturate voxels and prevent neighbor materials from bleeding in.
+local TERRAIN_FILL_DEPTH = 8
 local GRID_MATERIAL  = Enum.Material.SmoothPlastic
 local GRID_THICKNESS = 0.08
 
@@ -234,11 +273,26 @@ local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap
 		tile:SetAttribute("ObjectPassabilityImpact", "None")
 	end
 
-	-- APPLY TERRAIN TEXTURE (TERRAIN view mode)
+	-- APPLY TERRAIN VISUALS (TERRAIN view mode)
 	if viewMode == "TERRAIN" then
-		TerrainTextures.Apply(tile, terrainId)
-		-- Dark backing so texture edges look clean.
-		tile.Color = Color3.fromRGB(20, 20, 20)
+		if SURFACEGUI_TERRAINS[terrainId] then
+			-- Man-made/magical: visible tile Part with custom SurfaceGui texture.
+			TerrainTextures.Apply(tile, terrainId)
+			tile.Color = Color3.fromRGB(20, 20, 20)
+		else
+			-- Natural: fill 3D voxel terrain, hide tile Part.
+			local voxelMat = TERRAIN_VOXEL[terrainId]
+			if voxelMat then
+				local topY = position.Y + tileHeight / 2
+				local fillCenterY = topY - TERRAIN_FILL_DEPTH / 2
+				workspace.Terrain:FillBlock(
+					CFrame.new(position.X, fillCenterY, position.Z),
+					Vector3.new(TILE_SIZE, TERRAIN_FILL_DEPTH, TILE_SIZE),
+					voxelMat
+				)
+			end
+			tile.Transparency = 1
+		end
 	end
 
 	tile.Parent = mapFolder
@@ -331,7 +385,9 @@ local function createGridOverlay(mapWidth, mapHeight, _maxElevation, offsetX, of
 	for y = 1, mapHeight do
 		for x = 1, mapWidth do
 			local elev = generatedMap.tiles[y] and generatedMap.tiles[y][x] and generatedMap.tiles[y][x].elevation or 1
-			local topY = getTileHeight(elev) + 0.04
+			-- Raise grid lines 2 studs above tile surface so they sit above
+			-- terrain voxels (which have organic shapes extending above Part height).
+			local topY = getTileHeight(elev) + 2.0
 			-- South edge (along X axis at tile's south Z boundary)
 			createGridLine(
 				"Grid_S_" .. x .. "_" .. y,
@@ -401,6 +457,11 @@ function MapRenderer.Render(generatedMap, viewMode)
 	local offsetX = -(mapWidthStuds / 2)
 	local offsetZ = -(mapHeightStuds / 2)
 
+	-- Clear any existing terrain voxels from previous map.
+	if viewMode == "TERRAIN" then
+		workspace.Terrain:Clear()
+	end
+
 	-- Create tiles.
 	for y = 1, mapHeight do
 		for x = 1, mapWidth do
@@ -458,47 +519,61 @@ function MapRenderer.SetViewMode(folder, mode)
 		'[MapRenderer] mode must be "TERRAIN", "REGION", or "TEMPLATE".'
 	)
 
+	-- When switching TO terrain mode, fill voxels; otherwise clear them.
+	if mode == "TERRAIN" then
+		workspace.Terrain:Clear()
+	else
+		workspace.Terrain:Clear()
+	end
+
 	for _, child in ipairs(folder:GetChildren()) do
 		if child:IsA("BasePart") and child:GetAttribute("IsTemplateTile") then
 			if mode == "TERRAIN" then
-				-- Dark backing + show textures.
-				child.Color = Color3.fromRGB(20, 20, 20)
-
-				-- Restore terrain texture if not already applied.
 				local terrainId = child:GetAttribute("Terrain")
-				local hasTexture = child:FindFirstChild("TerrainTexture")
-				if not hasTexture and terrainId then
-					TerrainTextures.Apply(child, terrainId)
-				end
-
-				-- Show textures (set transparency to 0).
-				for _, gui in ipairs(child:GetChildren()) do
-					if gui:IsA("SurfaceGui") then
-						gui.Enabled = true
+				if terrainId and SURFACEGUI_TERRAINS[terrainId] then
+					-- Man-made/magical: show tile + apply texture.
+					child.Transparency = 0
+					child.Material = TILE_MATERIAL
+					child.Color = Color3.fromRGB(20, 20, 20)
+					if not child:FindFirstChild("TerrainTexture") then
+						TerrainTextures.Apply(child, terrainId)
+					end
+					-- Show existing SurfaceGuis.
+					for _, gui in ipairs(child:GetChildren()) do
+						if gui:IsA("SurfaceGui") then gui.Enabled = true end
+					end
+				else
+					-- Natural: fill voxels, hide tile.
+					if terrainId then
+						local voxelMat = TERRAIN_VOXEL[terrainId]
+						if voxelMat then
+							local _topY = child.Position.Y + child.Size.Y / 2
+							local _fillCY = _topY - TERRAIN_FILL_DEPTH / 2
+							workspace.Terrain:FillBlock(
+								CFrame.new(child.Position.X, _fillCY, child.Position.Z),
+								Vector3.new(child.Size.X, TERRAIN_FILL_DEPTH, child.Size.Z),
+								voxelMat
+							)
+						end
+					end
+					child.Transparency = 1
+					-- Hide any SurfaceGuis from prior mode.
+					for _, gui in ipairs(child:GetChildren()) do
+						if gui:IsA("SurfaceGui") then gui.Enabled = false end
 					end
 				end
 
 			elseif mode == "REGION" then
+				child.Transparency = 0
+				child.Material = TILE_MATERIAL
 				child.Color = child:GetAttribute("RegionDebugColor")
 					or Color3.fromRGB(128, 128, 128)
 
-				-- Hide textures.
-				for _, gui in ipairs(child:GetChildren()) do
-					if gui:IsA("SurfaceGui") then
-						gui.Enabled = false
-					end
-				end
-
 			elseif mode == "TEMPLATE" then
+				child.Transparency = 0
+				child.Material = TILE_MATERIAL
 				child.Color = child:GetAttribute("TemplateColor")
 					or Color3.fromRGB(255, 0, 255)
-
-				-- Hide textures.
-				for _, gui in ipairs(child:GetChildren()) do
-					if gui:IsA("SurfaceGui") then
-						gui.Enabled = false
-					end
-				end
 			end
 		end
 	end

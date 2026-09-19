@@ -680,17 +680,20 @@ end
 local function buildGrids(tiles, w, h)
 	local elevGrid    = {}
 	local terrainGrid = {}
+	local objectGrid  = {}
 
 	for y = 1, h do
 		elevGrid[y]    = {}
 		terrainGrid[y] = {}
+		objectGrid[y]  = {}
 		for x = 1, w do
 			elevGrid[y][x]    = tiles[y][x].elevation
 			terrainGrid[y][x] = tiles[y][x].terrain
+			objectGrid[y][x]  = tiles[y][x].object  -- nil if no object
 		end
 	end
 
-	return elevGrid, terrainGrid
+	return elevGrid, terrainGrid, objectGrid
 end
 
 --- Run all validation invariants.
@@ -928,7 +931,7 @@ function MapService.Generate(biomeId, templateId, seed)
 		local deployZones = placeDeploymentAnchors(tiles, w, h, seedCtx.deployRng)
 
 		-- Build auxiliary data for GameConstants.
-		local elevGrid, terrainGrid = buildGrids(tiles, w, h)
+		local elevGrid, terrainGrid, objectGrid = buildGrids(tiles, w, h)
 		local blockers              = buildBlockers(objects)
 
 		-- Populate final mapState fields for downstream consumers.
@@ -937,6 +940,7 @@ function MapService.Generate(biomeId, templateId, seed)
 		mapState.battleCondition = battleCondition
 		mapState.elevationGrid   = elevGrid
 		mapState.terrainGrid     = terrainGrid
+		mapState.objectGrid      = objectGrid
 		mapState.blockers        = blockers
 		mapState.generationAudit = {
 			attempts         = attempt,

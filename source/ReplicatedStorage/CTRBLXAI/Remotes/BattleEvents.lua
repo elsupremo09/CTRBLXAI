@@ -76,7 +76,13 @@ local EVENT_NAMES = {
 	"DeploymentPhase",    -- S->C: deployment data (anchors, units, map size)
 	"DeployUnit",         -- C->S: player places a unit on a tile
 	"UnitDeployed",       -- S->C: server confirms unit placement
+	"UndeployUnit",       -- C->S: player removes a deployed unit
+	"UnitUndeployed",     -- S->C: server confirms unit removal
 	"DeploymentReady",    -- C->S: all units placed, start battle
+	-- Facing system
+	"FacingPrompt",       -- S->C: asks player to choose facing direction
+	"SetFacing",          -- C->S: player's chosen facing direction
+	"FacingChanged",      -- S->C: unit facing direction changed
 }
 
 -- RemoteFunctions for Slice 4D management contracts
