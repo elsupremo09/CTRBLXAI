@@ -428,4 +428,18 @@ function BattleVisualBroadcaster.UnitStateChanged(unit)
 	})
 end
 
+--------------------------------------------------
+-- FACING CHANGE
+-- Broadcasts when a unit's facing direction changes.
+--------------------------------------------------
+
+function BattleVisualBroadcaster.FacingChanged(unit)
+	BattleEvents.FacingChanged:FireAllClients({
+		unitId = unit.id,
+		facing = unit.facing,
+		tileX  = unit.tileX,
+		tileY  = unit.tileY,
+	})
+end
+
 return BattleVisualBroadcaster

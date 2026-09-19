@@ -413,11 +413,18 @@ end
 function GameConstants.SetGeneratedMap(mapState)
 	GameConstants.ELEVATION_MAP = mapState.elevationGrid
 	GameConstants.TERRAIN_MAP   = mapState.terrainGrid
+	GameConstants.OBJECT_MAP    = mapState.objectGrid or {}
 	GameConstants.BLOCKERS      = mapState.blockers
 	print(string.format(
 		"[GameConstants] SetGeneratedMap: %dx%d, %d blockers",
 		#mapState.terrainGrid[1], #mapState.terrainGrid,
 		#mapState.blockers))
+end
+
+--- Return the object name at tile (x, y), or nil if none.
+function GameConstants.GetObjectAt(tileX, tileY)
+	local row = GameConstants.OBJECT_MAP and GameConstants.OBJECT_MAP[tileY]
+	return row and row[tileX] or nil
 end
 
 --------------------------------------------------
@@ -2545,5 +2552,138 @@ GameConstants.STAT_META = {
 	startingRt      = { label = "Starting RT",      formula = "round(400 × (1 - 0.30 × LUK/(100+LUK)))", parent = "LUK" },
 	basicAttackRt   = { label = "Basic Attack RT",  formula = "round(Base RT × 0.10) + Effective WT", parent = "STR" },
 }
+
+--------------------------------------------------
+-- FACING SYSTEM  (8-direction unit facing)
+--
+-- Every unit faces one of 8 directions. Facing affects
+-- Hit Quality: attackers gain a Precision bonus when
+-- striking from the side (+0.05) or back (+0.10).
+--
+-- Zone classification (relative to defender's facing):
+--   Offset 0-1 → Front, Offset 2 → Side, Offset 3-4 → Back
+--------------------------------------------------
+
+GameConstants.FACING_VECTORS = {
+	N  = { dx =  0, dy = -1 },
+	NE = { dx =  1, dy = -1 },
+	E  = { dx =  1, dy =  0 },
+	SE = { dx =  1, dy =  1 },
+	S  = { dx =  0, dy =  1 },
+	SW = { dx = -1, dy =  1 },
+	W  = { dx = -1, dy =  0 },
+	NW = { dx = -1, dy = -1 },
+}
+
+GameConstants.FACING_INDEX = {
+	N = 0, NE = 1, E = 2, SE = 3, S = 4, SW = 5, W = 6, NW = 7,
+}
+
+GameConstants.FACING_FROM_INDEX = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" }
+-- Index 1-based: FACING_FROM_INDEX[1]="N" ... FACING_FROM_INDEX[8]="NW"
+-- To convert 0-based index: FACING_FROM_INDEX[idx + 1]
+
+GameConstants.FACING_PRECISION_BONUS = {
+	Front = 0.00,
+	Side  = 0.05,
+	Back  = 0.10,
+}
+
+GameConstants.FACING_OPPOSITE = {
+	N = "S", NE = "SW", E = "W", SE = "NW",
+	S = "N", SW = "NE", W = "E", NW = "SE",
+}
+
+--- Return the nearest of 8 directions from (fromX,fromY) toward (toX,toY).
+--- Returns nil if from == to (no direction change).
+function GameConstants.CalcFacingFrom(fromX, fromY, toX, toY)
+	local dx = toX - fromX
+	local dy = toY - fromY
+	if dx == 0 and dy == 0 then return nil end
+
+	-- atan2 gives angle in radians; convert to 0-7 index (clockwise from N)
+	-- math.atan2(dx, -dy) gives 0 = North, positive = clockwise
+	local angle = math.atan2(dx, -dy)
+	if angle < 0 then angle = angle + 2 * math.pi end
+
+	local step = 2 * math.pi / 8  -- 45 degrees
+	local idx = math.floor((angle + step / 2) / step) % 8
+	return GameConstants.FACING_FROM_INDEX[idx + 1]
+end
+
+--- Determine the facing zone: "Front", "Side", or "Back".
+--- Compares the direction FROM defender TO attacker against
+--- the defender's facing direction.
+function GameConstants.GetFacingZone(attackerX, attackerY, defenderX, defenderY, defenderFacing)
+	if not defenderFacing then return "Front" end
+
+	-- Direction from defender toward attacker (where the attack comes from)
+	local attackDir = GameConstants.CalcFacingFrom(defenderX, defenderY, attackerX, attackerY)
+	if not attackDir then return "Front" end -- same tile
+
+	local attackIdx = GameConstants.FACING_INDEX[attackDir]
+	local defIdx    = GameConstants.FACING_INDEX[defenderFacing]
+	if not attackIdx or not defIdx then return "Front" end
+
+	local offset = (attackIdx - defIdx) % 8
+	if offset > 4 then offset = 8 - offset end
+
+	-- offset 0-1 = Front (forward arc), 2 = Side, 3-4 = Back (rear arc)
+	if offset <= 1 then
+		return "Front"
+	elseif offset == 2 then
+		return "Side"
+	else
+		return "Back"
+	end
+end
+
+--- Return the Precision bonus for a facing zone.
+function GameConstants.GetFacingPrecisionBonus(zone)
+	return GameConstants.FACING_PRECISION_BONUS[zone] or 0.00
+end
+
+--- Return the facing vector {dx, dy} for a direction string.
+function GameConstants.GetFacingVector(facing)
+	return GameConstants.FACING_VECTORS[facing] or GameConstants.FACING_VECTORS.S
+end
+
+--- Return the tile directly behind a unit (opposite of facing).
+function GameConstants.GetRearTile(unitX, unitY, unitFacing)
+	local vec = GameConstants.GetFacingVector(unitFacing)
+	return unitX - vec.dx, unitY - vec.dy
+end
+
+--- Return the opposite direction.
+function GameConstants.GetOppositeFacing(facing)
+	return GameConstants.FACING_OPPOSITE[facing] or "N"
+end
+
+--- Validate a facing direction string.
+function GameConstants.IsValidFacing(facing)
+	return GameConstants.FACING_INDEX[facing] ~= nil
+end
+
+--- Get cone tiles for a facing-based cone skill.
+--- coneSize = number of rows (2 → 3 tiles, 3 → 6 tiles).
+--- Returns array of {x, y} tiles (narrow wedge per DB spec).
+function GameConstants.GetConeTiles(originX, originY, facing, coneSize)
+	local fv = GameConstants.GetFacingVector(facing)
+	-- Perpendicular vector: rotate 90° clockwise
+	local px, py = -fv.dy, fv.dx
+	local tiles = {}
+	for row = 1, coneSize do
+		-- Center tile of this row
+		local cx = originX + fv.dx * row
+		local cy = originY + fv.dy * row
+		table.insert(tiles, { x = cx, y = cy })
+		-- Spread tiles: ±1 to ±(row-1) perpendicular
+		for spread = 1, row - 1 do
+			table.insert(tiles, { x = cx + px * spread, y = cy + py * spread })
+			table.insert(tiles, { x = cx - px * spread, y = cy - py * spread })
+		end
+	end
+	return tiles
+end
 
 return GameConstants

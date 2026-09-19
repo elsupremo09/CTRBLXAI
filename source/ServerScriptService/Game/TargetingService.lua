@@ -335,7 +335,8 @@ function TargetingService.GetAttackCandidates(actor, allUnits, range)
 	local candidates = {}
 
 	for _, unit in ipairs(allUnits) do
-		if unit.isAlive and unit.side ~= actor.side then
+		if unit.isAlive and unit.side ~= actor.side
+			and not StatusService.HasStatus(unit, "Hide") then
 			local dist = chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY)
 			if dist <= range
 				and dist >= minRange
@@ -454,9 +455,11 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 			else
 				-- Allegiance filter
 				if targetRules == "Enemy Unit" then
-					if unit.side ~= actor.side then
+					if unit.side ~= actor.side and not StatusService.HasStatus(unit, "Hide") then
 						table.insert(candidates, unit)
-					else
+					elseif StatusService.HasStatus(unit, "Hide") then
+						print(string.format("[SkillCand] %s REJECTED %s: hidden (Hide status)", actor.name, unit.name))
+					elseif unit.side == actor.side then
 						print(string.format("[SkillCand] %s REJECTED %s: same side", actor.name, unit.name))
 					end
 				elseif isAllyRule then

@@ -731,6 +731,9 @@ function CommandService.ValidateAndCommit(
 		local rtCost = calcMoveRt(actor, pathCost)
 		BattleCoordinator.AccrueRt(state, rtCost)
 
+		-- Save old position for facing calculation
+		local prevTileX, prevTileY = actor.tileX, actor.tileY
+
 		actor.tileX = selection.tileX
 		actor.tileY = selection.tileY
 
@@ -739,6 +742,12 @@ function CommandService.ValidateAndCommit(
 			actor.name, actor.tileX, actor.tileY,
 			rtCost, actor.currentAp
 		))
+
+		-- Update facing: face movement direction
+		local moveFacing = GameConstants.CalcFacingFrom(prevTileX, prevTileY, actor.tileX, actor.tileY)
+		if moveFacing then
+			actor.facing = moveFacing
+		end
 
 		-- Terrain cross effects: check destination terrain for cross penalties/effects
 		local terrainData = GameConstants.GetTerrainData(actor.tileX, actor.tileY)
@@ -874,6 +883,18 @@ function CommandService.ValidateAndCommit(
 			actor.name, target.name,
 			totalDmg, hitCount, rtCost, actor.currentAp
 		))
+
+		-- Update facing: face toward attack target
+		local atkFacing = GameConstants.CalcFacingFrom(actor.tileX, actor.tileY, target.tileX, target.tileY)
+		if atkFacing then
+			actor.facing = atkFacing
+		end
+
+		-- Hide dispel: offensive action breaks Hide
+		if StatusService.HasStatus(actor, "Hide") then
+			StatusService.RemoveStatus(actor, "Hide")
+			print(string.format("[CommandService] %s Hide dispelled (basic attack)", actor.name))
+		end
 
 	elseif actionType == "Skill" then
 		local target = selection.target
@@ -1111,6 +1132,54 @@ function CommandService.ValidateAndCommit(
 
 			else
 			-- Single-target (default)
+
+			-- CHARGE SKILL: reposition actor adjacent to target before damage
+			if skillDef.isCharge and target.isAlive then
+				local dist = math.max(math.abs(actor.tileX - target.tileX), math.abs(actor.tileY - target.tileY))
+				if dist > 1 then
+					-- Find best adjacent tile (Chebyshev distance 1 from target)
+					local bestTile = nil
+					local bestDist = 999
+					local bestDistSq = 999
+					for dy = -1, 1 do
+						for dx = -1, 1 do
+							if dx ~= 0 or dy ~= 0 then
+								local cx = target.tileX + dx
+								local cy = target.tileY + dy
+								if cx >= 1 and cx <= _mapWidth and cy >= 1 and cy <= _mapHeight
+									and not GameConstants.IsBlocked(cx, cy) then
+									-- Check not occupied by another unit
+									local occupied = false
+									for _, u in ipairs(state.units) do
+										if u.isAlive and u.tileX == cx and u.tileY == cy then
+											occupied = true
+											break
+										end
+									end
+									if not occupied then
+										local dCheb = math.max(math.abs(actor.tileX - cx), math.abs(actor.tileY - cy))
+										local dSq = (actor.tileX - cx)^2 + (actor.tileY - cy)^2
+										-- Prefer closer tile; on tie, prefer tile on direct line (lower Euclidean²)
+										if dCheb < bestDist or (dCheb == bestDist and dSq < bestDistSq) then
+											bestDist = dCheb
+											bestDistSq = dSq
+											bestTile = { x = cx, y = cy }
+										end
+									end
+								end
+							end
+						end
+					end
+					if bestTile then
+						print(string.format("[CommandService] CHARGE | %s moved (%d,%d)->(%d,%d) adjacent to %s",
+							actor.name, actor.tileX, actor.tileY, bestTile.x, bestTile.y, target.name))
+						actor.tileX = bestTile.x
+						actor.tileY = bestTile.y
+						BattleVisualBroadcaster.UnitMoved(actor)
+					end
+				end
+			end
+
 			local outcome = CombatResolver.ResolveSkill(actor, target, skillDef)
 			local actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target, actor)
 			BattleCoordinator.AccrueRt(state, baseRtCost)
@@ -1130,6 +1199,29 @@ function CommandService.ValidateAndCommit(
 				statusApplied and (" | +" .. statusApplied) or ""
 			))
 			end
+		end
+
+		-- CHARGE SELF-COST: lose 10% current HP after damage (min 1 HP remaining)
+		if skillDef.isCharge and actor.isAlive then
+			local selfCost = math.max(1, math.floor(actor.currentHp * 0.10))
+			actor.currentHp = math.max(1, actor.currentHp - selfCost)
+			print(string.format(
+				"[CommandService] CHARGE SELF-COST | %s lost %d HP (10%%) | HP: %d/%d",
+				actor.name, selfCost, actor.currentHp, actor.maxHp or 0))
+		end
+
+		-- Update facing: face toward skill target (unit-targeted skills only)
+		if target and target.tileX and not skillDef.isSelfTarget then
+			local skillFacing = GameConstants.CalcFacingFrom(actor.tileX, actor.tileY, target.tileX, target.tileY)
+			if skillFacing then
+				actor.facing = skillFacing
+			end
+		end
+
+		-- Hide dispel: offensive skill breaks Hide (non-healing only)
+		if not skillDef.isHealing and StatusService.HasStatus(actor, "Hide") then
+			StatusService.RemoveStatus(actor, "Hide")
+			print(string.format("[CommandService] %s Hide dispelled (offensive skill)", actor.name))
 		end
 
 	elseif actionType == "Wait" then

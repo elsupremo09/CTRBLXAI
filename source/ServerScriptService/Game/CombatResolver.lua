@@ -203,6 +203,21 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	local effectiveDefense = calcEffectiveDefense(ap, dp)
 	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI, attacker)
 
+	-- Hide: +50% hit quality when attacking from Hide
+	if StatusService.HasStatus(attacker, "Hide") then
+		hitQuality = hitQuality * 1.50
+		print(string.format("[CombatResolver] %s attacking from Hide: HQ x1.50", attacker.name))
+	end
+
+	-- Facing precision bonus: side/back attacks boost HQ
+	local facingZone = GameConstants.GetFacingZone(
+		attacker.tileX, attacker.tileY,
+		defender.tileX, defender.tileY,
+		defender.facing
+	)
+	local facingBonus = GameConstants.GetFacingPrecisionBonus(facingZone)
+	hitQuality = hitQuality + facingBonus
+
 	local positionalMod = GameConstants.GetPositionalModifier(
 		attacker.tileX, attacker.tileY,
 		defender.tileX, defender.tileY
@@ -286,6 +301,7 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 		rawDamage      = rawDamage,
 		hitQuality     = hitQuality,
 		positionalMod  = positionalMod,
+		facingZone     = facingZone,
 		finalDamage    = finalDamage,
 		appliesStatus  = RacePassiveService.GetBasicAttackStatus(attacker),
 		element        = attackElement,
@@ -316,6 +332,21 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	local dp = GameConstants.CalcDefensePower(0, dStats.VIT)
 	local effectiveDefense = calcEffectiveDefense(sp, dp)
 	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI, attacker)
+
+	-- Hide: +50% hit quality when attacking from Hide
+	if StatusService.HasStatus(attacker, "Hide") then
+		hitQuality = hitQuality * 1.50
+		print(string.format("[CombatResolver] %s attacking from Hide: HQ x1.50", attacker.name))
+	end
+
+	-- Facing precision bonus: side/back attacks boost HQ
+	local facingZone = GameConstants.GetFacingZone(
+		attacker.tileX, attacker.tileY,
+		defender.tileX, defender.tileY,
+		defender.facing
+	)
+	local facingBonus = GameConstants.GetFacingPrecisionBonus(facingZone)
+	hitQuality = hitQuality + facingBonus
 
 	local positionalMod = GameConstants.GetPositionalModifier(
 		attacker.tileX, attacker.tileY,
@@ -400,6 +431,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		rawDamage      = rawDamage,
 		hitQuality     = hitQuality,
 		positionalMod  = positionalMod,
+		facingZone     = facingZone,
 		finalDamage    = finalDamage,
 		appliesStatus  = skillDef.appliesStatus or nil,
 		element        = skillElement,
@@ -587,13 +619,19 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		posLabel = string.format(" | Pos:%+d%%", pct)
 	end
 
+	local facingLabel = ""
+	if outcome.facingZone and outcome.facingZone ~= "Front" then
+		facingLabel = string.format(" | %s(+%.0f%%)", outcome.facingZone, GameConstants.GetFacingPrecisionBonus(outcome.facingZone) * 100)
+	end
+
 	print(string.format(
-		"[CombatResolver] %s takes %d damage (AP:%.1f HQ:%.2f%s) | HP: %d/%d %s%s",
+		"[CombatResolver] %s takes %d damage (AP:%.1f HQ:%.2f%s%s) | HP: %d/%d %s%s",
 		target.name,
 		outcome.finalDamage,
 		outcome.attackPower,
 		outcome.hitQuality,
 		posLabel,
+		facingLabel,
 		target.currentHp,
 		target.maxHp,
 		target.isAlive and "" or "| DEFEATED",
