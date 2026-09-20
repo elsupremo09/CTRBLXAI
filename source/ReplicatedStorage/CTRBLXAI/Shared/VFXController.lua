@@ -184,9 +184,9 @@ function VFXController.Init(biome)
 	-- Bloom: subtle glow on Neon tile highlights and skill effects
 	if not Lighting:FindFirstChildOfClass("BloomEffect") then
 		local b = Instance.new("BloomEffect")
-		b.Intensity = 0.4
-		b.Size = 24
-		b.Threshold = 0.9
+		b.Intensity = 0.7
+		b.Size = 28
+		b.Threshold = 0.8  -- lowered 0.9->0.8 so mid-bright neon (blue move frame) blooms
 		b.Parent = Lighting
 	end
 
