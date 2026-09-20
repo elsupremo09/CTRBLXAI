@@ -33,6 +33,11 @@ local _sbOk, StyleBootstrap = pcall(require,
 		:WaitForChild("Shared", 10):WaitForChild("StyleBootstrap", 10)
 )
 if not _sbOk then StyleBootstrap = nil end
+local _thlOk, TileHL = pcall(require,
+	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+		:WaitForChild("Shared", 10):WaitForChild("TileHighlightManager", 10)
+)
+if not _thlOk then warn("[DeploymentUI] TileHighlightManager failed: " .. tostring(TileHL)); TileHL = nil end
 local CameraController = require(
 	player:WaitForChild("PlayerScripts")
 		:WaitForChild("CameraController", 10)
@@ -96,6 +101,7 @@ local function cleanup()
 	-- Re-enable DevOptions
 	local dv = player.PlayerGui:FindFirstChild("DevOptions")
 	if dv then dv.Enabled = true end
+	if TileHL then TileHL.ClearGroup("deploy") end
 	pdHighlights   = {}
 	enemyTokens    = {}
 	playerTokens   = {}
@@ -111,38 +117,10 @@ local function createPDHighlight(tx, ty)
 	local key = tileKey(tx, ty)
 	if pdHighlights[key] then return end
 
-	-- Find the invisible tile Part in the map.
-	local mapF = workspace:FindFirstChild("TemplateViewerMap")
-	if not mapF then return end
-	local tileName = string.format("Tile_%02d_%02d", tx, ty)
-	local tilePart = mapF:FindFirstChild(tileName)
-	if not tilePart then return end
-
-	-- SurfaceGui on tile's Top face — renders through terrain via AlwaysOnTop.
-	local gui = Instance.new("SurfaceGui")
-	gui.Name = "DeployHL"
-	gui.Face = Enum.NormalId.Top
-	gui.AlwaysOnTop = true
-	gui.Brightness = 1.3
-	gui.LightInfluence = 0
-	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-	gui.PixelsPerStud = 10
-	gui.Parent = tilePart
-
-	local fill = Instance.new("Frame")
-	fill.Size = UDim2.fromScale(1, 1)
-	fill.BackgroundColor3 = Theme.Colors.Player
-	fill.BackgroundTransparency = 0.40
-	fill.BorderSizePixel = 0
-	fill.Parent = gui
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = Theme.Colors.Player
-	stroke.Thickness = 3
-	stroke.Transparency = 0.0
-	stroke.Parent = fill
-
-	pdHighlights[key] = gui
+	if TileHL then
+		TileHL.Add(tx, ty, "deploy", "deploy")
+		pdHighlights[key] = true  -- track key for removal
+	end
 end
 
 --------------------------------------------------
@@ -525,6 +503,31 @@ local function onInputBegan(input, gameProcessed)
 	-- ScreenPointToRay accounts for the GUI inset (topbar); ViewportPointToRay does not.
 	local unitRay = camera:ScreenPointToRay(pos.X, pos.Y)
 
+	-- Click-pads first: thin invisible pads coincident with the deploy-tile
+	-- highlights. They do not occlude neighbors like the tall terrain boxes,
+	-- so the pad hit is the tile the player actually sees under the cursor.
+	if TileHL then
+		local padFolder = TileHL.GetPadFolder()
+		if padFolder then
+			local rpp = RaycastParams.new()
+			rpp.FilterType = Enum.RaycastFilterType.Include
+			rpp.FilterDescendantsInstances = { padFolder }
+			local pres = workspace:Raycast(unitRay.Origin, unitRay.Direction * 500, rpp)
+			if pres and pres.Instance then
+				local px = pres.Instance:GetAttribute("X")
+				local py = pres.Instance:GetAttribute("Y")
+				if px and py then
+					local pkey = px .. "_" .. py
+					if pdHighlights[pkey] then
+						BattleEvents.DeployUnit:FireServer({ unitId = selectedUnitId, tileX = px, tileY = py })
+						return
+					end
+					print(string.format("[DeploymentUI] pad (%d,%d) not a deploy tile — falling back", px, py))
+				end
+			end
+		end
+	end
+
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Include
 	-- Raycast against terrain tiles (thick, reliable) instead of thin overlays
@@ -539,6 +542,21 @@ local function onInputBegan(input, gameProcessed)
 
 	local hitPart = result.Instance
 	print(string.format("[DeploymentUI] Raycast hit: %s", hitPart.Name))
+
+	-- ===== DIAGNOSTIC (logging only, no behavior change) =====
+	-- Compare the box the ray physically struck vs the tile the CLICK POINT
+	-- actually falls in (inverse of tileToWorld's grid math). If these differ,
+	-- it confirms tall invisible tile boxes are occluding the intended tile.
+	do
+		local hp = result.Position
+		local computedTx = math.floor((hp.X - MAP_OFFSET_X) / TILE_SIZE + 0.5)
+		local computedTy = math.floor((hp.Z - MAP_OFFSET_Z) / TILE_SIZE + 0.5)
+		local boxTx = hitPart:GetAttribute("TileX") or hitPart:GetAttribute("X")
+		local boxTy = hitPart:GetAttribute("TileY") or hitPart:GetAttribute("Y")
+		print(string.format("[DIAG-CLICK] boxHit=(%s,%s) worldPoint=(%.2f,%.2f,%.2f) computedTile=(%d,%d) %s",
+			tostring(boxTx), tostring(boxTy), hp.X, hp.Y, hp.Z, computedTx, computedTy,
+			(tostring(boxTx) ~= tostring(computedTx) or tostring(boxTy) ~= tostring(computedTy)) and "<<< MISMATCH" or "match"))
+	end
 
 	-- Resolve tile coordinates: Deploy_ parts have TileX/TileY, terrain tiles have X/Y
 	local tx = hitPart:GetAttribute("TileX") or hitPart:GetAttribute("X")
@@ -583,6 +601,22 @@ BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 	deployFolder = Instance.new("Folder")
 	deployFolder.Name   = "DeploymentParts"
 	deployFolder.Parent = workspace
+
+	-- Ensure TileHL is initialized for this map
+	if TileHL and not TileHL.IsAvailable() then
+		local mf = workspace:FindFirstChild("TemplateViewerMap")
+		if mf then
+			local mw = mf:GetAttribute("MapWidth") or 30
+			local mh = mf:GetAttribute("MapHeight") or 20
+			TileHL.Init({
+				mapFolder    = mf,
+				tileSize     = TILE_SIZE,
+				mapOffsetX   = -(mw * TILE_SIZE) / 2,
+				mapOffsetZ   = -(mh * TILE_SIZE) / 2,
+				visualFolder = deployFolder,
+			})
+		end
+	end
 
 	-- Create PD tile highlights (blue)
 	for _, anchor in ipairs(data.playerAnchors or {}) do
@@ -699,7 +733,7 @@ BattleEvents.UnitDeployed.OnClientEvent:Connect(function(data)
 	-- Remove PD tile highlight (tile is now occupied)
 	local key = tileKey(data.tileX, data.tileY)
 	if pdHighlights[key] then
-		pdHighlights[key]:Destroy()
+		if TileHL then TileHL.Remove(data.tileX, data.tileY) end
 		pdHighlights[key] = nil
 	end
 

@@ -49,6 +49,12 @@ local _vfxOk, VFXController = pcall(require,
 )
 if not _vfxOk then warn("[BVC] VFXController failed to load: " .. tostring(VFXController)); VFXController = nil end
 
+local _thlOk, TileHL = pcall(require,
+	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+		:WaitForChild("Shared", 10):WaitForChild("TileHighlightManager", 10)
+)
+if not _thlOk then warn("[BVC] TileHighlightManager failed: " .. tostring(TileHL)); TileHL = nil end
+
 --------------------------------------------------
 -- MAP CONFIGURATION
 --------------------------------------------------
@@ -120,61 +126,36 @@ local bp = {
 --------------------------------------------------
 
 local function clearHighlights()
-	for _, obj in ipairs(highlightParts) do obj:Destroy() end
+	if TileHL then TileHL.ClearGroup("battle") end
 	highlightParts = {}
-	-- Also clear path highlights (inline to avoid forward-reference)
-	for _, obj in ipairs(pathHighlightParts) do obj:Destroy() end
+	-- Also clear path highlights
+	if TileHL then TileHL.ClearGroup("path") end
+	for _, obj in ipairs(pathHighlightParts) do obj:Destroy() end -- arrows (WedgeParts)
 	pathHighlightParts = {}
 end
 
--- Highlight modes with distinct visual styles.
--- SurfaceGui on Top face of invisible tile Parts, AlwaysOnTop renders through terrain.
--- Shows a clean colored fill + border at exact tile boundaries — no floating Parts.
+-- Highlight styles — delegates to TileHighlightManager (EditableMesh terrain-conforming).
+-- Fallback to a simple Part if TileHL is unavailable.
 local HIGHLIGHT_STYLES = {
-	move     = { fill = Theme.Colors.TileMove,     fillTrans = 0.50, border = Theme.Colors.TileMove,     borderTrans = 0.1, borderPx = 2 },
-	target   = { fill = Theme.Colors.TileTarget,   fillTrans = 0.40, border = Theme.Colors.TileTarget,   borderTrans = 0.0, borderPx = 3 },
-	selected = { fill = Theme.Colors.TileSelected,  fillTrans = 0.30, border = Theme.Colors.TileSelected, borderTrans = 0.0, borderPx = 3 },
-	aoe      = { fill = Theme.Colors.TileAOE,      fillTrans = 0.45, border = Theme.Colors.TileAOE,      borderTrans = 0.0, borderPx = 3 },
-	invalid  = { fill = Theme.Colors.TileInvalid,   fillTrans = 0.65, border = Theme.Colors.TileInvalid,  borderTrans = 0.3, borderPx = 2 },
-	current  = { fill = Theme.Colors.Info,          fillTrans = 0.40, border = Theme.Colors.Info,          borderTrans = 0.0, borderPx = 3 },
+	move     = { color = Theme.Colors.TileMove,     transparency = 0.50 },
+	target   = { color = Theme.Colors.TileTarget,   transparency = 0.40 },
+	selected = { color = Theme.Colors.TileSelected,  transparency = 0.25 },
+	aoe      = { color = Theme.Colors.TileAOE,      transparency = 0.40 },
+	invalid  = { color = Theme.Colors.TileInvalid,   transparency = 0.65 },
+	current  = { color = Theme.Colors.Info,          transparency = 0.40 },
 }
 
+local function tileKey(tx, ty) return tx .. "_" .. ty end
+
 local function createTileHighlight(bx, by, colorOrStyle, _transparency)
-	local style = type(colorOrStyle) == "string" and HIGHLIGHT_STYLES[colorOrStyle] or nil
-	local fillColor   = style and style.fill       or colorOrStyle or Color3.fromRGB(200, 170, 50)
-	local fillTrans   = style and style.fillTrans   or _transparency or 0.50
-	local borderColor = style and style.border      or fillColor
-	local borderTrans = style and style.borderTrans or 0.1
-	local borderPx    = style and style.borderPx    or 2
+	local tx, ty = bx + BATTLE_OFFSET_X, by + BATTLE_OFFSET_Y
 
-	local tilePart = getTilePart(bx, by)
-	if not tilePart then return end
-
-	local gui = Instance.new("SurfaceGui")
-	gui.Name = "TileHL"
-	gui.Face = Enum.NormalId.Top
-	gui.AlwaysOnTop = true
-	gui.Brightness = 1.2
-	gui.LightInfluence = 0
-	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-	gui.PixelsPerStud = 10
-	gui.Parent = tilePart
-
-	local fill = Instance.new("Frame")
-	fill.Name = "Fill"
-	fill.Size = UDim2.fromScale(1, 1)
-	fill.BackgroundColor3 = fillColor
-	fill.BackgroundTransparency = fillTrans
-	fill.BorderSizePixel = 0
-	fill.Parent = gui
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = borderColor
-	stroke.Thickness = borderPx
-	stroke.Transparency = borderTrans
-	stroke.Parent = fill
-
-	table.insert(highlightParts, gui)
+	if TileHL then
+		local styleName = type(colorOrStyle) == "string" and colorOrStyle or nil
+		local overColor = type(colorOrStyle) ~= "string" and colorOrStyle or nil
+		TileHL.Add(tx, ty, styleName, "battle", overColor, _transparency)
+		table.insert(highlightParts, tileKey(tx, ty))
+	end
 end
 
 -- PATH HIGHLIGHTS (rendered separately so move-range stays visible)
@@ -191,7 +172,8 @@ local PATH_HAZARDS = {
 }
 
 local function clearMovePath()
-	for _, p in ipairs(pathHighlightParts) do p:Destroy() end
+	if TileHL then TileHL.ClearGroup("path") end
+	for _, p in ipairs(pathHighlightParts) do p:Destroy() end -- arrows only
 	pathHighlightParts = {}
 end
 
@@ -221,32 +203,11 @@ local function renderMovePath(path, destX, destY)
 			tileColor = Color3.fromRGB(100, 180, 255) -- bright path blue
 		end
 
-		local pathTilePart = getTilePart(tx, ty)
-		if pathTilePart then
-			local pGui = Instance.new("SurfaceGui")
-			pGui.Name = "PathHL"
-			pGui.Face = Enum.NormalId.Top
-			pGui.AlwaysOnTop = true
-			pGui.Brightness = 1.4
-			pGui.LightInfluence = 0
-			pGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-			pGui.PixelsPerStud = 10
-			pGui.Parent = pathTilePart
-
-			local pFill = Instance.new("Frame")
-			pFill.Size = UDim2.fromScale(1, 1)
-			pFill.BackgroundColor3 = tileColor
-			pFill.BackgroundTransparency = step.isDest and 0.15 or 0.30
-			pFill.BorderSizePixel = 0
-			pFill.Parent = pGui
-
-			local pStroke = Instance.new("UIStroke")
-			pStroke.Color = tileColor
-			pStroke.Thickness = 3
-			pStroke.Transparency = 0.0
-			pStroke.Parent = pFill
-
-			table.insert(pathHighlightParts, pGui)
+		-- Path tile highlight via TileHighlightManager
+		if TileHL then
+			local ptx, pty = tx + BATTLE_OFFSET_X, ty + BATTLE_OFFSET_Y
+			local pathStyle = step.isDest and "pathDest" or "path"
+			TileHL.Add(ptx, pty, pathStyle, "path", tileColor, step.isDest and 0.15 or 0.30)
 		end
 
 		-- Floating 3D arrow pointing toward next tile (keep as Parts — they float above)
@@ -805,17 +766,38 @@ local function getTilePart(bx, by)
 end
 
 local function getTileUnderMouse()
+	-- Click-pads first: thin invisible pads coincident with tile highlights.
+	-- They do not occlude neighbors, so the pad hit is the tile the player
+	-- sees under the cursor (removes elevation parallax offset).
+	local cam0 = workspace.CurrentCamera
+	if cam0 and TileHL then
+		local padFolder = TileHL.GetPadFolder()
+		if padFolder then
+			local rpp = RaycastParams.new()
+			rpp.FilterType = Enum.RaycastFilterType.Include
+			rpp.FilterDescendantsInstances = { padFolder }
+			local ray0 = cam0:ScreenPointToRay(mouse.X, mouse.Y)
+			local pres = workspace:Raycast(ray0.Origin, ray0.Direction * 500, rpp)
+			if pres and pres.Instance then return pres.Instance end
+		end
+	end
 	local target = mouse.Target
 	if target and target:IsA("BasePart") and target:GetAttribute("IsTemplateTile") then return target end
-	-- Fallback: mouse hit terrain voxels or a non-tile Part.
-	-- Use mouse.Hit (actual click world position), not target.Position
-	-- (workspace.Terrain.Position is always (0,0,0), not the hit point).
-	local hitPos = mouse.Hit and mouse.Hit.Position
-	if hitPos then
-		local rp = RaycastParams.new(); rp.FilterType = Enum.RaycastFilterType.Include
-		local parts = {}; if mapFolder then for _, c in ipairs(mapFolder:GetChildren()) do if c:IsA("BasePart") and c:GetAttribute("IsTemplateTile") then table.insert(parts, c) end end end
-		rp.FilterDescendantsInstances = parts
-		local res = workspace:Raycast(Vector3.new(hitPos.X, hitPos.Y + 50, hitPos.Z), Vector3.new(0,-100,0), rp)
+	-- Fallback: mouse hit terrain voxels, grid lines, highlight walls, or a
+	-- non-tile Part. Use camera:ScreenPointToRay with Include filter for ONLY
+	-- tile Parts (not the whole mapFolder — grid lines are also in there and
+	-- would intercept the ray before reaching tiles).
+	local cam = workspace.CurrentCamera
+	if cam and mapFolder then
+		local rp = RaycastParams.new()
+		rp.FilterType = Enum.RaycastFilterType.Include
+		local tileParts = {}
+		for _, c in ipairs(mapFolder:GetChildren()) do
+			if c:IsA("BasePart") and c:GetAttribute("IsTemplateTile") then table.insert(tileParts, c) end
+		end
+		rp.FilterDescendantsInstances = tileParts
+		local ray = cam:ScreenPointToRay(mouse.X, mouse.Y)
+		local res = workspace:Raycast(ray.Origin, ray.Direction * 500, rp)
 		return res and res.Instance or nil
 	end
 	return nil
@@ -935,7 +917,10 @@ local function processTileClick(bx, by)
 			for _, tile in ipairs(currentPrompt.moveCandidates) do
 				if tile.tileX == bx and tile.tileY == by then
 					aimTarget = tile
-					-- Keep move-range highlights, layer path on top
+				-- Keep move-range highlights, layer path on top
+				-- Mark the selected destination tile as "selected" (yellow)
+				-- so it stands out from the blue move-range tiles
+				createTileHighlight(bx, by, "selected")
 					clearMovePath()
 					renderMovePath(tile.path, bx, by)
 					-- Build path hazard list for preview panel
@@ -1141,6 +1126,20 @@ game:GetService("RunService").Heartbeat:Connect(function()
 	local cam = workspace.CurrentCamera
 	if not cam then return end
 	local ray = cam:ScreenPointToRay(tapPos.X, tapPos.Y)
+	-- Click-pads first (parallax-immune); fall back to tile Parts.
+	if TileHL then
+		local padFolder = TileHL.GetPadFolder()
+		if padFolder then
+			local rpp = RaycastParams.new()
+			rpp.FilterType = Enum.RaycastFilterType.Include
+			rpp.FilterDescendantsInstances = { padFolder }
+			local pres = workspace:Raycast(ray.Origin, ray.Direction * 500, rpp)
+			if pres and pres.Instance then
+				local pbx, pby = tileToBattle(pres.Instance)
+				if pbx then processTileClick(pbx, pby); return end
+			end
+		end
+	end
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Include
 	local tileParts = {}
@@ -2759,6 +2758,33 @@ BattleEvents.MapDataSync.OnClientEvent:Connect(function(mapData)
 		createDevCameraPanel()
 		if VFXController then pcall(VFXController.Init, biome) end
 	print("[BattleVisualClient] MapDataSync received — terrain/elevation updated on client")
+	-- Initialize terrain-conforming tile highlights
+	if TileHL then
+		local mf = workspace:FindFirstChild("TemplateViewerMap")
+		local mw = mapData.width or MAP_WIDTH
+		local mh = mapData.height or MAP_HEIGHT
+		local mOffX = -(mw * TILE_SIZE) / 2
+		local mOffZ = -(mh * TILE_SIZE) / 2
+		TileHL.Init({
+			mapFolder    = mf,
+			tileSize     = TILE_SIZE,
+			mapOffsetX   = mOffX,
+			mapOffsetZ   = mOffZ,
+			visualFolder = visualFolder,
+		})
+		-- Set styles with Theme colors
+		TileHL.SetStyles({
+			move     = { color = Theme.Colors.TileMove,    transparency = 0.50, material = Enum.Material.Neon },
+			target   = { color = Theme.Colors.TileTarget,  transparency = 0.40, material = Enum.Material.Neon },
+			selected = { color = Theme.Colors.TileSelected, transparency = 0.25, material = Enum.Material.Neon },
+			aoe      = { color = Theme.Colors.TileAOE,     transparency = 0.40, material = Enum.Material.Neon },
+			invalid  = { color = Theme.Colors.TileInvalid,  transparency = 0.65, material = Enum.Material.SmoothPlastic },
+			current  = { color = Theme.Colors.Info,         transparency = 0.40, material = Enum.Material.Neon },
+			deploy   = { color = Theme.Colors.Player,       transparency = 0.40, material = Enum.Material.Neon },
+			path     = { color = Color3.fromRGB(100, 180, 255), transparency = 0.30, material = Enum.Material.Neon },
+			pathDest = { color = Color3.fromRGB(240, 200, 60),  transparency = 0.15, material = Enum.Material.Neon },
+		})
+	end
 	end
 end)
 
