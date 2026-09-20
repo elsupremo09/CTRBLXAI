@@ -83,6 +83,41 @@ local function tileToWorldR15(tx, ty, hipHeight)
 	local offset = hipHeight or R15_STAND_OFFSET_DEFAULT
 	return Vector3.new(MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE, tileSurfaceY(getElevation(tx, ty)) + offset, MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE)
 end
+
+-- Raycast down to the ACTUAL rendered ground at a tile center. Roblox Terrain
+-- voxels quantize to a ~4-stud grid, so the visible surface can sit up to ~2
+-- studs above the flat tile-Part top (tileSurfaceY). Placing feet at
+-- tileSurfaceY buries the unit in the voxel hill after a move. This returns
+-- the true surface Y; falls back to grid math on a ray miss.
+-- Excludes overlays that float above ground (TileHighlights frames/pads,
+-- GridOverlay), unit models, and battle visuals — but KEEPS TemplateViewerMap
+-- so man-made SurfaceGui-terrain tiles (no voxel fill) still register.
+local function groundSurfaceY(tx, ty)
+	local wx = MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE
+	local wz = MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Exclude
+	local ex = {}
+	for _, name in { "UnitModels", "BattleVisuals", "DeploymentParts", "GridOverlay", "TileHighlights" } do
+		local f = workspace:FindFirstChild(name)
+		if f then table.insert(ex, f) end
+	end
+	rp.FilterDescendantsInstances = ex
+	local res = workspace:Raycast(Vector3.new(wx, 200, wz), Vector3.new(0, -400, 0), rp)
+	if res then return res.Position.Y end
+	return tileSurfaceY(getElevation(tx, ty))  -- fallback: grid math on ray miss
+end
+
+-- R15 world position grounded to the real terrain surface (see groundSurfaceY).
+local function tileToWorldR15Grounded(tx, ty, hipHeight)
+	local offset = hipHeight or R15_STAND_OFFSET_DEFAULT
+	return Vector3.new(MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE, groundSurfaceY(tx, ty) + offset, MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE)
+end
+
+-- Grounded twin of tileToWorld (surface + 1) for the cylinder fallback token.
+local function tileToWorldGrounded(tx, ty)
+	return Vector3.new(MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE, groundSurfaceY(tx, ty) + 1, MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE)
+end
 local function templateToBattle(x, y)
 	local bx, by = x - BATTLE_OFFSET_X, y - BATTLE_OFFSET_Y
 	if bx >= 1 and bx <= MAP_WIDTH and by >= 1 and by <= MAP_HEIGHT then return bx, by end
@@ -295,7 +330,9 @@ local function spawnToken(unit)
 			-- Position model feet on tile surface.
 			-- PivotTo places the model's PIVOT (which is at the feet for R15 rigs)
 			-- at the given CFrame. So we just need the tile surface Y, no HipHeight math.
-			local feetY = tileSurfaceY(getElevation(unit.tileX, unit.tileY))
+			-- Ground feet to the real voxel surface (not the buried tile-Part top),
+			-- matching the grounded move path so R15 units don't spawn buried.
+			local feetY = groundSurfaceY(unit.tileX, unit.tileY)
 			local feetPos = Vector3.new(
 				MAP_OFFSET_X + (unit.tileX - 0.5) * TILE_SIZE,
 				feetY,
@@ -319,7 +356,7 @@ local function spawnToken(unit)
 		part.Name = "Unit_" .. unit.id
 		part.Shape = Enum.PartType.Cylinder
 		part.Size = Vector3.new(1.8, 1.8, 1.8)
-		part.CFrame = CFrame.new(tileToWorld(unit.tileX, unit.tileY)) * CFrame.Angles(0,0,math.rad(90))
+		part.CFrame = CFrame.new(tileToWorldGrounded(unit.tileX, unit.tileY)) * CFrame.Angles(0,0,math.rad(90))
 		part.Anchored, part.CanCollide, part.CanQuery = true, false, true
 		part.Color = Theme.GetSideColor(unit.side)
 		part.Material = Enum.Material.SmoothPlastic
@@ -1577,8 +1614,16 @@ BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 	if unitData[data.unitId] then unitData[data.unitId].tileX = data.tileX; unitData[data.unitId].tileY = data.tileY end
 	if token.model then
 		-- R15 model: handle elevation changes with arc tween
-		local destPos = tileToWorldR15(data.tileX, data.tileY, token.hipHeight)
+		local destPos = tileToWorldR15Grounded(data.tileX, data.tileY, token.hipHeight)
 		local currentPos = token.part.Position
+		-- ===== DIAG-MOVE (logging only, no behavior change) =====
+		do
+			local _elev = getElevation(data.tileX, data.tileY)
+			local _gridY = tileSurfaceY(_elev) + (tonumber(token.hipHeight) or 0)
+			print(string.format("[DIAG-MOVE] %s -> tile(%d,%d) elev=%s hip=%.2f groundedDestY=%.2f gridDestY=%.2f curY=%.2f (delta=%.2f)",
+				tostring(data.unitId), data.tileX, data.tileY, tostring(_elev),
+				tonumber(token.hipHeight) or -1, destPos.Y, _gridY, currentPos.Y, destPos.Y - _gridY))
+		end
 		local dir = (destPos - currentPos) * Vector3.new(1, 0, 1)  -- XZ only
 		local lookCF = if dir.Magnitude > 0.1
 			then CFrame.lookAt(destPos, destPos + dir)
@@ -1631,8 +1676,8 @@ BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 			end)
 		end
 	else
-		-- Cylinder fallback: keep 90-degree rotation
-		local destPos = tileToWorld(data.tileX, data.tileY)
+		-- Cylinder fallback: keep 90-degree rotation (grounded to real surface)
+		local destPos = tileToWorldGrounded(data.tileX, data.tileY)
 		TweenService:Create(token.part, TweenInfo.new(0.45, Enum.EasingStyle.Quad), {CFrame = CFrame.new(destPos) * CFrame.Angles(0,0,math.rad(90))}):Play()
 	end
 
