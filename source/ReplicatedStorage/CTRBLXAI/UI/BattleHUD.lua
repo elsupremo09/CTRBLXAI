@@ -67,6 +67,8 @@ local isBattleLogExpanded = false
 local savedBattleState    = nil   -- presentation.state before entering view mode
 local viewModeButtons     = nil   -- top-left toggle frame
 local viewModeViewBtn     = nil   -- reference for visual update
+local currentCameraMode   = "Isometric"  -- Isometric | Top | Side (drives View dropdown)
+local viewModeDropdown    = nil   -- the open dropdown frame, if any
 
 -- Padding constant
 local PAD = 6
@@ -264,7 +266,7 @@ local function ensureRoot()
 	viewModeViewBtn.Text = "\xF0\x9F\x91\x81 View"; viewModeViewBtn.BorderSizePixel = 0
 	viewModeViewBtn.LayoutOrder = 1; viewModeViewBtn.Parent = viewModeButtons
 	Instance.new("UICorner", viewModeViewBtn).CornerRadius = Theme.CornerRadius.sm
-	viewModeViewBtn.MouseButton1Click:Connect(function() BattleHUD.ToggleViewMode() end)
+	viewModeViewBtn.MouseButton1Click:Connect(function() BattleHUD.ToggleViewDropdown() end)
 
 	local logBtn = Instance.new("TextButton")
 	logBtn.Name = "LogToggle"
@@ -1425,6 +1427,71 @@ end
 -- VIEW MODE / BATTLE LOG TOGGLES
 --------------------------------------------------
 
+-- Close the view dropdown if open.
+function BattleHUD.CloseViewDropdown()
+	if viewModeDropdown then viewModeDropdown:Destroy(); viewModeDropdown = nil end
+end
+
+-- Apply a camera view mode (Isometric/Top/Side) via the BVC bridge, update the
+-- button label, and enforce the free-view rule (Side has no free-view).
+function BattleHUD.SetCameraMode(mode)
+	currentCameraMode = mode
+	if _G.CTRBLXAI_SetViewMode then _G.CTRBLXAI_SetViewMode(mode) end
+	if viewModeViewBtn then
+		viewModeViewBtn.Text = "\xF0\x9F\x91\x81 " .. mode
+	end
+	-- Side view disallows free-view: if it was on, turn it off.
+	if mode == "Side" and isViewMode then
+		BattleHUD.ToggleViewMode()
+	end
+	BattleHUD.CloseViewDropdown()
+end
+
+-- Open/close a small dropdown listing the three camera modes plus a Free-view
+-- toggle row. Free-view greys out (disabled) while in Side view.
+function BattleHUD.ToggleViewDropdown()
+	if viewModeDropdown then BattleHUD.CloseViewDropdown(); return end
+	if not viewModeViewBtn then return end
+	local dd = Instance.new("Frame")
+	dd.Name = "ViewDropdown"
+	dd.BackgroundColor3 = Theme.Colors.Surface
+	dd.BackgroundTransparency = 0.05
+	dd.BorderSizePixel = 0
+	dd.Position = UDim2.new(0, PAD, 0, 55 + Theme.Elem.ToggleBtn() + 4)
+	dd.Size = UDim2.fromOffset(132, 0)
+	dd.AutomaticSize = Enum.AutomaticSize.Y
+	dd.ZIndex = 50
+	dd.Parent = rootFrame
+	Instance.new("UICorner", dd).CornerRadius = Theme.CornerRadius.sm
+	local ddLayout = Instance.new("UIListLayout", dd)
+	ddLayout.Padding = UDim.new(0, 2); ddLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	local ddPad = Instance.new("UIPadding", dd)
+	ddPad.PaddingTop = UDim.new(0,4); ddPad.PaddingBottom = UDim.new(0,4)
+	ddPad.PaddingLeft = UDim.new(0,4); ddPad.PaddingRight = UDim.new(0,4)
+	local order = 0
+	local function addRow(label, onClick, enabled, checked)
+		order = order + 1
+		local b = Instance.new("TextButton")
+		b.Size = UDim2.new(1, 0, 0, Theme.Elem.ToggleBtn())
+		b.BackgroundColor3 = Theme.Colors.Panel
+		b.BackgroundTransparency = enabled and 0.1 or 0.6
+		b.BorderSizePixel = 0
+		b.Font = Theme.Font.PrimaryBold; b.TextSize = Theme.Text.Body()
+		b.TextColor3 = enabled and (checked and Theme.Colors.TextGold or Theme.Colors.TextPrimary) or Theme.Colors.TextDisabled
+		b.Text = (checked and "* " or "") .. label
+		b.LayoutOrder = order; b.ZIndex = 51; b.Parent = dd
+		Instance.new("UICorner", b).CornerRadius = Theme.CornerRadius.xs
+		if enabled then b.MouseButton1Click:Connect(onClick) end
+		return b
+	end
+	addRow("Isometric", function() BattleHUD.SetCameraMode("Isometric") end, true, currentCameraMode == "Isometric")
+	addRow("Top", function() BattleHUD.SetCameraMode("Top") end, true, currentCameraMode == "Top")
+	addRow("Side", function() BattleHUD.SetCameraMode("Side") end, true, currentCameraMode == "Side")
+	local freeEnabled = (currentCameraMode ~= "Side")
+	addRow(isViewMode and "Free View: ON" or "Free View: OFF", function() BattleHUD.ToggleViewMode(); BattleHUD.CloseViewDropdown() end, freeEnabled, isViewMode)
+	viewModeDropdown = dd
+end
+
 function BattleHUD.ToggleViewMode()
 	isViewMode = not isViewMode
 	if isViewMode then
@@ -1821,7 +1888,8 @@ function BattleHUD.Cleanup()
 	activeUnitPanel = nil; actionPanel = nil
 	inspectorPanel = nil; tilePreviewPanel = nil
 	turnOrderBar = nil; conditionsPanel = nil; battleLogPanel = nil
-	viewModeButtons = nil; viewModeViewBtn = nil
+	if viewModeDropdown then viewModeDropdown:Destroy() end
+	viewModeButtons = nil; viewModeViewBtn = nil; viewModeDropdown = nil; currentCameraMode = "Isometric"
 end
 
 return BattleHUD

@@ -747,6 +747,9 @@ function CommandService.ValidateAndCommit(
 		local moveFacing = GameConstants.CalcFacingFrom(prevTileX, prevTileY, actor.tileX, actor.tileY)
 		if moveFacing then
 			actor.facing = moveFacing
+			-- Broadcast so the client's facing indicator follows the walk in real
+			-- time (not just the manual Guard/Wait path).
+			BattleVisualBroadcaster.FacingChanged(actor)
 		end
 
 		-- Terrain cross effects: check destination terrain for cross penalties/effects
@@ -888,6 +891,7 @@ function CommandService.ValidateAndCommit(
 		local atkFacing = GameConstants.CalcFacingFrom(actor.tileX, actor.tileY, target.tileX, target.tileY)
 		if atkFacing then
 			actor.facing = atkFacing
+			BattleVisualBroadcaster.FacingChanged(actor)
 		end
 
 		-- Hide dispel: offensive action breaks Hide
@@ -1215,6 +1219,7 @@ function CommandService.ValidateAndCommit(
 			local skillFacing = GameConstants.CalcFacingFrom(actor.tileX, actor.tileY, target.tileX, target.tileY)
 			if skillFacing then
 				actor.facing = skillFacing
+				BattleVisualBroadcaster.FacingChanged(actor)
 			end
 		end
 

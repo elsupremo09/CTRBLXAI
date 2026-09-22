@@ -64,7 +64,7 @@ local TERRAIN_VOXEL = {
 	Sand               = Enum.Material.Sand,          -- warm sand
 	Mud                = Enum.Material.Mud,            -- wet brown mud
 	Swamp              = Enum.Material.Slate,          -- dark wet stone
-	["Shallow Water"]  = Enum.Material.Glacier,       -- pale reflective surface
+	["Shallow Water"]  = Enum.Material.Water,          -- animated water; rendered as sand bed + thin water cap (see fillTerrainVoxelColumn)
 	["Deep Water"]     = Enum.Material.Water,          -- translucent water
 	Ice                = Enum.Material.Ice,             -- reflective ice
 	Molten             = Enum.Material.CrackedLava,    -- glowing lava
@@ -78,6 +78,41 @@ local TERRAIN_VOXEL = {
 -- Fill depth for terrain voxels. Must be >= 4 studs (one full voxel cell)
 -- to fully saturate voxels and prevent neighbor materials from bleeding in.
 local TERRAIN_FILL_DEPTH = 8
+-- Shallow Water renders as a solid sand bed with a thin animated Water cap on
+-- top. The translucent cap lets the bed show through, reading as shallow; Deep
+-- Water uses a full Water column. Water hue/waves are GLOBAL Terrain properties
+-- (cannot be set per-tile), so shallow vs deep is distinguished by depth only.
+local SHALLOW_WATER_CAP = 1.5   -- studs of Water on top of the bed
+
+-- Fill a tile's terrain voxel column. Centralizes the FillBlock logic so the
+-- initial render and view-mode-switch paths stay identical (no divergence).
+local function fillTerrainVoxelColumn(cx: number, topY: number, cz: number, sx: number, sz: number, terrainId: string)
+	local voxelMat = TERRAIN_VOXEL[terrainId]
+	if not voxelMat then return end
+
+	if terrainId == "Shallow Water" then
+		-- Sand bed for the lower portion...
+		local bedDepth = TERRAIN_FILL_DEPTH - SHALLOW_WATER_CAP
+		local bedTopY  = topY - SHALLOW_WATER_CAP
+		workspace.Terrain:FillBlock(
+			CFrame.new(cx, bedTopY - bedDepth / 2, cz),
+			Vector3.new(sx, bedDepth, sz),
+			Enum.Material.Sand
+		)
+		-- ...thin animated Water cap on top.
+		workspace.Terrain:FillBlock(
+			CFrame.new(cx, topY - SHALLOW_WATER_CAP / 2, cz),
+			Vector3.new(sx, SHALLOW_WATER_CAP, sz),
+			Enum.Material.Water
+		)
+	else
+		workspace.Terrain:FillBlock(
+			CFrame.new(cx, topY - TERRAIN_FILL_DEPTH / 2, cz),
+			Vector3.new(sx, TERRAIN_FILL_DEPTH, sz),
+			voxelMat
+		)
+	end
+end
 local GRID_MATERIAL  = Enum.Material.SmoothPlastic
 local GRID_THICKNESS = 0.08
 
@@ -281,15 +316,9 @@ local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap
 			tile.Color = Color3.fromRGB(20, 20, 20)
 		else
 			-- Natural: fill 3D voxel terrain, hide tile Part.
-			local voxelMat = TERRAIN_VOXEL[terrainId]
-			if voxelMat then
+			if TERRAIN_VOXEL[terrainId] then
 				local topY = position.Y + tileHeight / 2
-				local fillCenterY = topY - TERRAIN_FILL_DEPTH / 2
-				workspace.Terrain:FillBlock(
-					CFrame.new(position.X, fillCenterY, position.Z),
-					Vector3.new(TILE_SIZE, TERRAIN_FILL_DEPTH, TILE_SIZE),
-					voxelMat
-				)
+				fillTerrainVoxelColumn(position.X, topY, position.Z, TILE_SIZE, TILE_SIZE, terrainId)
 			end
 			tile.Transparency = 1
 		end
@@ -385,9 +414,9 @@ local function createGridOverlay(mapWidth, mapHeight, _maxElevation, offsetX, of
 	for y = 1, mapHeight do
 		for x = 1, mapWidth do
 			local elev = generatedMap.tiles[y] and generatedMap.tiles[y][x] and generatedMap.tiles[y][x].elevation or 1
-			-- Raise grid lines 2 studs above tile surface so they sit above
+			-- Raise grid lines 3 studs above tile surface so they sit above
 			-- terrain voxels (which have organic shapes extending above Part height).
-			local topY = getTileHeight(elev) + 2.0
+			local topY = getTileHeight(elev) + 3.0
 			-- South edge (along X axis at tile's south Z boundary)
 			createGridLine(
 				"Grid_S_" .. x .. "_" .. y,
@@ -545,15 +574,9 @@ function MapRenderer.SetViewMode(folder, mode)
 				else
 					-- Natural: fill voxels, hide tile.
 					if terrainId then
-						local voxelMat = TERRAIN_VOXEL[terrainId]
-						if voxelMat then
+						if TERRAIN_VOXEL[terrainId] then
 							local _topY = child.Position.Y + child.Size.Y / 2
-							local _fillCY = _topY - TERRAIN_FILL_DEPTH / 2
-							workspace.Terrain:FillBlock(
-								CFrame.new(child.Position.X, _fillCY, child.Position.Z),
-								Vector3.new(child.Size.X, TERRAIN_FILL_DEPTH, child.Size.Z),
-								voxelMat
-							)
+							fillTerrainVoxelColumn(child.Position.X, _topY, child.Position.Z, child.Size.X, child.Size.Z, terrainId)
 						end
 					end
 					child.Transparency = 1

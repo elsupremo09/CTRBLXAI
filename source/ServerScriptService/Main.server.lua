@@ -925,7 +925,6 @@ local function resolveItemBonuses(item)
 	local dbgParts = {}
 	for k, v in pairs(stats) do table.insert(dbgParts, k .. "=" .. tostring(v)) end
 	if #dbgParts > 0 then
-		print("[DIAG-Resolve] " .. (item.baseArchetypeId or "?") .. " L" .. (item.itemLevel or 0) .. " " .. (item.rarityId or "?") .. ": " .. table.concat(dbgParts, ", ") .. " (" .. #(item.bonusLines or {}) .. " lines, " .. #(item.bonusPassiveIds or {}) .. " passives)")
 	end
 
 	return stats, passives
@@ -2019,14 +2018,11 @@ end
 
 -- Spawn R15 models for enemy units (they're already positioned)
 local _raceModelsFolder = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
-print(string.format("[DIAG-MODEL] Enemy spawn | RaceModels folder=%s | enemy count=%d",
-	tostring(_raceModelsFolder ~= nil), #deployEnemyUnits))
 if _raceModelsFolder then
 	local _umf = workspace:FindFirstChild("UnitModels")
 	if not _umf then _umf = Instance.new("Folder"); _umf.Name = "UnitModels"; _umf.Parent = workspace end
 	for _, eu in ipairs(deployEnemyUnits) do
 		local _rn = eu.raceId and RaceData.GetRace(eu.raceId) and RaceData.GetRace(eu.raceId).name or nil
-		print(string.format("[DIAG-MODEL]   Enemy %s raceId=%s raceName=%s", eu.name, tostring(eu.raceId), tostring(_rn)))
 		local _tpl = _rn and _raceModelsFolder:FindFirstChild(_rn)
 		if _tpl and _tpl:IsA("Model") then
 			local c = _tpl:Clone()
@@ -2117,12 +2113,9 @@ local deployConn = BattleEvents.DeployUnit.OnServerEvent:Connect(function(plr, d
 
 	-- Spawn R15 model for the deployed unit
 	local _raceModels = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
-	print(string.format("[DIAG-MODEL] Deploy unit %s | raceId=%s | RaceModels folder=%s",
-		unit.name, tostring(unit.raceId), tostring(_raceModels ~= nil)))
 	if _raceModels then
 		local _raceName = unit.raceId and RaceData.GetRace(unit.raceId)
 			and RaceData.GetRace(unit.raceId).name or nil
-		print(string.format("[DIAG-MODEL]   raceName=%s | template=%s", tostring(_raceName), tostring(_raceModels:FindFirstChild(tostring(_raceName)) ~= nil)))
 		local _template = _raceName and _raceModels:FindFirstChild(_raceName)
 		if _template and _template:IsA("Model") then
 			local _umf = workspace:FindFirstChild("UnitModels")
@@ -2218,13 +2211,10 @@ state = BattleCoordinator.CreateBattleState(allUnitsList)
 -- Spawn R15 race models for all units
 local raceModelsFolder = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
 -- DIAGNOSTIC: enumerate what's actually in ServerStorage and RaceModels
-print(string.format("[DIAG-MODEL] ServerStorage children: %d", #game:GetService("ServerStorage"):GetChildren()))
 for _, child in ipairs(game:GetService("ServerStorage"):GetChildren()) do
-	print(string.format("[DIAG-MODEL]   SS child: '%s' (%s)", child.Name, child.ClassName))
 end
 if raceModelsFolder then
 	for _, child in ipairs(raceModelsFolder:GetChildren()) do
-		print(string.format("[DIAG-MODEL]   RaceModels child: '%s' (%s)", child.Name, child.ClassName))
 	end
 end
 local TILE_SZ = 5
@@ -2583,8 +2573,8 @@ local function promptPlayerFacing(unit, playerObj)
 			responded = true
 		end
 	end)
-	local deadline = tick() + 5
-	while not responded and tick() < deadline do
+	-- Turn-based: wait until the player actually chooses (no timeout).
+	while not responded do
 		task.wait(0.1)
 	end
 	if conn then conn:Disconnect() end
@@ -3330,7 +3320,6 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 				table.insert(augList, { id = augId, name = augId, icon = nil, description = "" })
 			end
 		end
-		print(string.format("[DIAG-AUG] %s slot%d augments: %d found | raw=%s", sid, skillSlotIdx, #augList, tostring(#augIds > 0 and augIds or "empty")))
 		skillsData[#skillsData].augments = augList
 		-- Attach estimated raw damage (presentation-only, before defense)
 		local attackPower = unit.derivedStats and unit.derivedStats.attackPower or 0
