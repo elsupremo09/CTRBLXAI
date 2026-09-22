@@ -543,21 +543,6 @@ local function onInputBegan(input, gameProcessed)
 	local hitPart = result.Instance
 	print(string.format("[DeploymentUI] Raycast hit: %s", hitPart.Name))
 
-	-- ===== DIAGNOSTIC (logging only, no behavior change) =====
-	-- Compare the box the ray physically struck vs the tile the CLICK POINT
-	-- actually falls in (inverse of tileToWorld's grid math). If these differ,
-	-- it confirms tall invisible tile boxes are occluding the intended tile.
-	do
-		local hp = result.Position
-		local computedTx = math.floor((hp.X - MAP_OFFSET_X) / TILE_SIZE + 0.5)
-		local computedTy = math.floor((hp.Z - MAP_OFFSET_Z) / TILE_SIZE + 0.5)
-		local boxTx = hitPart:GetAttribute("TileX") or hitPart:GetAttribute("X")
-		local boxTy = hitPart:GetAttribute("TileY") or hitPart:GetAttribute("Y")
-		print(string.format("[DIAG-CLICK] boxHit=(%s,%s) worldPoint=(%.2f,%.2f,%.2f) computedTile=(%d,%d) %s",
-			tostring(boxTx), tostring(boxTy), hp.X, hp.Y, hp.Z, computedTx, computedTy,
-			(tostring(boxTx) ~= tostring(computedTx) or tostring(boxTy) ~= tostring(computedTy)) and "<<< MISMATCH" or "match"))
-	end
-
 	-- Resolve tile coordinates: Deploy_ parts have TileX/TileY, terrain tiles have X/Y
 	local tx = hitPart:GetAttribute("TileX") or hitPart:GetAttribute("X")
 	local ty = hitPart:GetAttribute("TileY") or hitPart:GetAttribute("Y")

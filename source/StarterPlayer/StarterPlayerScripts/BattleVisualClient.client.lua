@@ -1616,14 +1616,6 @@ BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 		-- R15 model: handle elevation changes with arc tween
 		local destPos = tileToWorldR15Grounded(data.tileX, data.tileY, token.hipHeight)
 		local currentPos = token.part.Position
-		-- ===== DIAG-MOVE (logging only, no behavior change) =====
-		do
-			local _elev = getElevation(data.tileX, data.tileY)
-			local _gridY = tileSurfaceY(_elev) + (tonumber(token.hipHeight) or 0)
-			print(string.format("[DIAG-MOVE] %s -> tile(%d,%d) elev=%s hip=%.2f groundedDestY=%.2f gridDestY=%.2f curY=%.2f (delta=%.2f)",
-				tostring(data.unitId), data.tileX, data.tileY, tostring(_elev),
-				tonumber(token.hipHeight) or -1, destPos.Y, _gridY, currentPos.Y, destPos.Y - _gridY))
-		end
 		local dir = (destPos - currentPos) * Vector3.new(1, 0, 1)  -- XZ only
 		local lookCF = if dir.Magnitude > 0.1
 			then CFrame.lookAt(destPos, destPos + dir)
