@@ -313,6 +313,110 @@ end
 -- 3D TOKENS
 --------------------------------------------------
 
+-- Orient a unit to its facing: rotate the R15 model in place (same CFrame.lookAt
+-- convention the move handler uses, so it agrees with the walk animation) AND
+-- show a stud-free SurfaceGui chevron on the ground pointing the same way. The
+-- chevron is the primary cue for cylinder-fallback units (no model to rotate).
+local function orientUnitToFacing(unitId, facing, skipModelRotate)
+	local token = unitTokens[unitId]
+	if not token or not token.part then return end
+	local vec = GameConstants.FACING_VECTORS[facing]
+	if not vec then return end
+	local mag = math.sqrt(vec.dx * vec.dx + vec.dy * vec.dy)
+	if mag == 0 then return end
+	local worldDir = Vector3.new(vec.dx / mag, 0, vec.dy / mag)
+
+	-- 1) Rotate the R15 model in place (cylinders have no model).
+	if token.model and not skipModelRotate then
+		local pivot = token.model:GetPivot()
+		local p = pivot.Position
+		pcall(function() token.model:PivotTo(CFrame.lookAt(p, p + worldDir)) end)
+	end
+
+	-- 2) Ground chevron (lazy-created, one per token). Stud-free SurfaceGui on an
+	-- invisible plane — same technique as the facing arrows/tile frames.
+	local pad = token.facePad
+	if not pad then
+		pad = Instance.new("Part")
+		pad.Name         = "FaceIndicator_" .. tostring(unitId)
+		pad.Anchored     = true
+		pad.CanCollide   = false
+		pad.CanQuery     = false
+		pad.CastShadow   = false
+		pad.Transparency = 1
+		pad.Size         = Vector3.new(2.5, 0.1, 2.5)   -- halved per request
+		local sg = Instance.new("SurfaceGui")
+		sg.Face           = Enum.NormalId.Top
+		sg.SizingMode     = Enum.SurfaceGuiSizingMode.PixelsPerStud
+		sg.PixelsPerStud  = 48
+		sg.LightInfluence = 0
+		sg.Parent         = pad
+		-- Facing arrow = uploaded green-arrow Image (asset 111086634875547),
+		-- drawn pointing UP so rotation 0 = world-North. It rides inside the
+		-- "Glyph" container so the atan2(dx,-dy) rotation below points it head-
+		-- forward along the unit's world facing (camera-proof). ImageLabel on a
+		-- SurfaceGui is stud-free (no part face). Image is left untinted so the
+		-- arrow keeps its own green; set ImageColor3 to tint per-state if wanted.
+		local glyphRoot = Instance.new("ImageLabel")
+		glyphRoot.Name             = "Glyph"
+		glyphRoot.AnchorPoint      = Vector2.new(0.5, 0.5)
+		glyphRoot.Position         = UDim2.fromScale(0.5, 0.5)
+		glyphRoot.Size             = UDim2.fromScale(1, 1)
+		glyphRoot.BackgroundTransparency = 1
+		glyphRoot.Image            = "rbxassetid://111086634875547"
+		glyphRoot.ScaleType        = Enum.ScaleType.Fit
+		glyphRoot.Parent           = sg
+		pad.Parent = visualFolder
+		token.facePad = pad
+	end
+	-- Float the chevron ABOVE the unit's head, not on the ground. Ground-level
+	-- placement (even offset forward) was buried by tall grass and occluded by
+	-- voxel terrain at the 45-degree camera. Overhead clears all terrain, is
+	-- always visible, and stays model-independent (reads facing + position only).
+	-- A small forward nudge along the facing keeps the pointing direction clear.
+	-- Store the facing direction so the per-frame follow loop can keep the small
+	-- forward lean without recomputing facing every frame.
+	token._faceDir = worldDir
+	-- Immediate placement (the Heartbeat follow below keeps it glued afterward).
+	pad.CFrame = CFrame.new(
+		token.part.Position.X + worldDir.X * FACE_FWD_NUDGE,
+		token.part.Position.Y + FACE_OVERHEAD_H,
+		token.part.Position.Z + worldDir.Z * FACE_FWD_NUDGE
+	)
+	local glyph = pad:FindFirstChild("Glyph", true)
+	if glyph then
+		-- Top-face GUI: up (-Y) maps to world -Z (North). Clockwise per (dx,dy).
+		-- The uploaded arrow art points DOWN, and testing showed the result was a
+		-- consistent 90 deg CCW off, so the total offset is 270 deg (180 for the
+		-- down-pointing art + 90 to correct the observed CCW skew). This makes the
+		-- arrowhead point along the unit's true world facing.
+		glyph.Rotation = math.deg(math.atan2(vec.dx, -vec.dy)) + 270
+	end
+end
+
+-- Facing-indicator placement constants (shared by orientUnitToFacing + follow loop)
+FACE_OVERHEAD_H  = 5.5   -- studs above the unit anchor
+FACE_FWD_NUDGE   = 0.6   -- slight lean toward the faced direction
+
+-- Continuously glue each unit's facing arrow above the unit so it follows moves,
+-- knockback, and any displacement in real time. Discrete repositioning (spawn /
+-- facing-choice / one delayed call after a move) left the arrow stranded on
+-- multi-move and mid-tween cases. Position-only per frame (cheap for <=6 units);
+-- rotation changes only on facing change, handled in orientUnitToFacing.
+RunService.Heartbeat:Connect(function()
+	for _, token in pairs(unitTokens) do
+		local pad = token.facePad
+		if pad and pad.Parent and token.part then
+			local dir = token._faceDir or Vector3.zero
+			pad.CFrame = CFrame.new(
+				token.part.Position.X + dir.X * FACE_FWD_NUDGE,
+				token.part.Position.Y + FACE_OVERHEAD_H,
+				token.part.Position.Z + dir.Z * FACE_FWD_NUDGE
+			)
+		end
+	end
+end)
+
 local function spawnToken(unit)
 	-- Try to find a server-spawned R15 model for this unit
 	local model = nil
@@ -414,9 +518,11 @@ local function spawnToken(unit)
 		local hrpY = anchorPart.Position.Y
 		_hipH = math.abs(hrpY - pivotY)
 		if _hipH < 0.5 then _hipH = R15_STAND_OFFSET_DEFAULT end  -- sanity fallback
-		print(string.format("[DIAG-HIP] %s pivotY=%.2f hrpY=%.2f offset=%.2f", unit.name or unit.id, pivotY, hrpY, _hipH))
 	end
 	unitTokens[unit.id] = { part = anchorPart, model = model, fill = hpFill, mpFill = mpFill, label = lbl, hipHeight = _hipH }
+	-- Show initial facing for EVERY unit (players + enemies) from spawn. Default to
+	-- "S" if the payload omits facing so an indicator always appears.
+	orientUnitToFacing(unit.id, unit.facing or "S")
 end
 
 local function updateHpBar(uid, hp, maxHp)
@@ -902,7 +1008,6 @@ local function processTileClick(bx, by)
 	local terrainId = GameConstants.GetTerrainId(bx, by)
 	local elevation = getElevation(bx, by)
 	local moveCost = GameConstants.GetTerrainCost(bx, by)
-	print(string.format("[DIAG-TILE] Click (%d,%d) terrain=%s elev=%s GC_elev=%s hasLocalMap=%s", bx, by, tostring(terrainId), tostring(elevation), tostring(GameConstants.GetElevation(bx, by)), tostring(elevationMap ~= nil)))
 	-- Look up map object at this tile
 	local objectName = GameConstants.GetObjectAt(bx, by)
 
@@ -1682,6 +1787,13 @@ BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 	if data.unitId == activeUnitId then
 		CameraController.FocusActiveUnit(tileToWorld(data.tileX, data.tileY))
 	end
+	-- Reposition the facing chevron to the new tile once the move settles. The
+	-- model itself is already rotated by the move tween's lookAt, so skip re-
+	-- rotating the model here (skipModelRotate=true) to avoid fighting the tween.
+	task.delay(0.5, function()
+		local f = unitData[data.unitId] and unitData[data.unitId].facing
+		if f then orientUnitToFacing(data.unitId, f, true) end
+	end)
 end)
 
 BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
@@ -1930,6 +2042,65 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 end)
 
 _G.CTRBLXAI_SelectTileAt = function() end
+
+-- ── View-mode support: grid visibility + per-tile elevation numbers ──
+-- Grid Parts (Grid_S_*/Grid_E_*) are server-built inside TemplateViewerMap and
+-- replicated. We toggle their visibility client-side per view mode (NET-001:
+-- client owns visuals). Elevation number labels are created lazily on first
+-- Top-view entry and cached in a dedicated folder, then just shown/hidden.
+local elevLabelFolder = nil
+
+local function setGridVisible(visible)
+	local mf = workspace:FindFirstChild("TemplateViewerMap")
+	if not mf then return end
+	for _, ch in ipairs(mf:GetChildren()) do
+		if ch:IsA("BasePart") and string.sub(ch.Name, 1, 5) == "Grid_" then
+			ch.Transparency = visible and 0.5 or 1
+		end
+	end
+end
+
+local function buildElevationLabels()
+	if elevLabelFolder and elevLabelFolder.Parent then return end
+	elevLabelFolder = Instance.new("Folder")
+	elevLabelFolder.Name = "ElevationLabels"
+	if not elevationMap then elevLabelFolder.Parent = workspace; return end
+	for ty, row in pairs(elevationMap) do
+		for tx, elev in pairs(row) do
+			local pad = Instance.new("Part")
+			pad.Anchored = true; pad.CanCollide = false; pad.CanQuery = false
+			pad.CanTouch = false; pad.CastShadow = false; pad.Transparency = 1
+			pad.Size = Vector3.new(TILE_SIZE * 0.9, 0.05, TILE_SIZE * 0.9)
+			pad.CFrame = CFrame.new(MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE, tileSurfaceY(elev) + 3.1, MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE)
+			local sg = Instance.new("SurfaceGui")
+			sg.Face = Enum.NormalId.Top; sg.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+			sg.PixelsPerStud = 24; sg.LightInfluence = 0; sg.AlwaysOnTop = true; sg.Parent = pad
+			local lbl = Instance.new("TextLabel")
+			lbl.Size = UDim2.fromScale(1,1); lbl.BackgroundTransparency = 1
+			lbl.Text = tostring(elev); lbl.TextScaled = false; lbl.TextSize = 28; lbl.Font = Theme.Font.PrimaryBold
+			lbl.TextColor3 = Color3.fromRGB(255,255,255)
+			local st = Instance.new("UIStroke"); st.Thickness = 2; st.Color = Color3.new(0,0,0); st.Parent = lbl
+			lbl.Parent = sg
+			pad.Parent = elevLabelFolder
+		end
+	end
+	elevLabelFolder.Parent = workspace
+end
+
+local function setElevationLabelsVisible(visible)
+	if visible then
+		buildElevationLabels()
+	end
+	if elevLabelFolder then elevLabelFolder.Parent = visible and workspace or nil end
+end
+
+_G.CTRBLXAI_SetViewMode = function(mode)
+	CameraController.SetViewMode(mode)
+	-- Grid hidden only in Side view; visible in Isometric + Top.
+	setGridVisible(mode ~= "Side")
+	-- Elevation numbers only in Top view.
+	setElevationLabelsVisible(mode == "Top")
+end
 
 _G.CTRBLXAI_GetElevation = function(tileX, tileY)
 	if elevationMap and elevationMap[tileY] then
@@ -2785,6 +2956,8 @@ BattleEvents.MapDataSync.OnClientEvent:Connect(function(mapData)
 		-- Also update BVC's local elevation map so getElevation() returns correct values
 		-- before BattleStarted fires (e.g. during view mode / tile inspector)
 		if mapData.elevationGrid then elevationMap = mapData.elevationGrid end
+		-- Map changed: drop cached elevation labels so Top view rebuilds them.
+		if elevLabelFolder then elevLabelFolder:Destroy(); elevLabelFolder = nil end
 		-- Init VFX post-processing + biome atmosphere
 		local mf = workspace:FindFirstChild("TemplateViewerMap")
 		if mf then mapFolder = mf end  -- Update module-level ref for tile selection
@@ -2834,6 +3007,8 @@ local function updateUnitFacing(unitId, facing)
 	if unitData[unitId] then
 		unitData[unitId].facing = facing
 	end
+	-- Rotate the model + update the ground chevron so the choice is visible.
+	orientUnitToFacing(unitId, facing)
 end
 
 -- FacingChanged: server broadcasts when a unit's facing changes
@@ -2847,87 +3022,120 @@ end)
 BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
 	if not data or not data.unitId then return end
 
-	local ARROW_CHARS = {
-		N  = "↑",  NE = "↗", E  = "→", SE = "↘",
-		S  = "↓",  SW = "↙", W  = "←", NW = "↖",
-	}
-	local DIR_ORDER = { "NW", "N", "NE", "W", nil, "E", "SW", "S", "SE" }
-	-- 3×3 grid positions (row, col) centered on unit
-	local DIR_POS = {
-		NW = {0, 0}, N  = {0, 1}, NE = {0, 2},
-		W  = {1, 0},              E  = {1, 2},
-		SW = {2, 0}, S  = {2, 1}, SE = {2, 2},
-	}
+	-- World-space facing arrows (camera-proof). 8 flat SurfaceGui arrow planes
+	-- sit on the ground ringing the unit, each pointing along its WORLD direction via
+	-- GameConstants.FACING_VECTORS (dx,dy -> world X,Z). Because they live in 3D
+	-- space they rotate WITH the map, so orbiting the camera never changes which
+	-- world direction an arrow means. Replaces the old screen-fixed 3x3 button
+	-- grid, where screen-up stopped meaning world-north once the camera orbited.
+	local udata = unitData[data.unitId]
+	if not udata or not udata.tileX or not udata.tileY then return end
+	local tx, ty = udata.tileX, udata.tileY
 
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "FacingPrompt"
-	screenGui.ResetOnSpawn = false
-	screenGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+	local ARROW_RING   = 8.25  -- studs from tile center out to each arrow (25% reduction; ring+plane scaled together so 2*ring*sin(22.5) >= plane still holds)
+	local ARROW_HEIGHT = 5.5   -- studs above ground so arrows clear SURROUNDING higher terrain (raised from 2.0; matches overhead-indicator clearance). Note: only lifts the arrows physically — a unit boxed by very tall cliffs could still occlude the click target. Future top-view/minimap facing UI is the full ceiling-buster.
+	local ARROW_LEN    = 2.2
+	local ARROW_WID    = 1.4
 
-	local container = Instance.new("Frame")
-	container.Name = "FacingContainer"
-	container.Size = UDim2.new(0, 150, 0, 150)
-	container.Position = UDim2.new(0.5, -75, 0.5, -75)
-	container.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	container.BackgroundTransparency = 0.6
-	container.BorderSizePixel = 0
-	container.Parent = screenGui
+	-- Gold highlight for the CURRENT facing's outline. All choice arrows share the
+	-- same green arrow art now (green tints poorly), so the current one is set apart
+	-- by a thicker gold stroke rather than a fill color.
+	local currentColor = (Theme.Colors and (Theme.Colors.TileSelected or Theme.Colors.Warning)) or Color3.fromRGB(255, 220, 60)
 
-	local title = Instance.new("TextLabel")
-	title.Name = "Title"
-	title.Size = UDim2.new(1, 0, 0, 20)
-	title.Position = UDim2.new(0, 0, 0, -22)
-	title.BackgroundTransparency = 1
-	title.Text = "CHOOSE FACING"
-	title.TextColor3 = Color3.fromRGB(255, 220, 100)
-	title.TextSize = 14
-	title.Font = Enum.Font.GothamBold
-	title.Parent = container
+	local baseWX  = MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE
+	local baseWZ  = MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE
+	local groundY = groundSurfaceY(tx, ty) + ARROW_HEIGHT
+
+	local folder = Instance.new("Folder")
+	folder.Name = "FacingArrows"
+	folder.Parent = workspace
 
 	local chosen = false
-	local btnSize = 44
-	local gap = 3
+	local conns = {}  -- PRF-004: track connections, disconnect on cleanup
 
-	for dir, pos in pairs(DIR_POS) do
-		local row, col = pos[1], pos[2]
-		local btn = Instance.new("TextButton")
-		btn.Name = dir
-		btn.Size = UDim2.new(0, btnSize, 0, btnSize)
-		btn.Position = UDim2.new(0, col * (btnSize + gap), 0, row * (btnSize + gap))
-		btn.Text = ARROW_CHARS[dir] or "?"
-		btn.TextSize = 22
-		btn.Font = Enum.Font.GothamBold
-		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-		btn.BorderSizePixel = 0
+	-- Hide THIS unit's overhead facing arrow while its choice arrows are on screen.
+	-- The choice arrows use the SAME green arrow image, so they now communicate the
+	-- unit's facing directly and the overhead one would be redundant clutter. It is
+	-- restored on cleanup (choice made or prompt torn down); FacingChanged then
+	-- re-orients it to the chosen direction.
+	local promptToken = unitTokens[data.unitId]
+	local overheadGlyph = promptToken and promptToken.facePad and promptToken.facePad:FindFirstChild("Glyph", true)
+	if overheadGlyph then overheadGlyph.Visible = false end
 
-		-- Highlight current facing
-		if dir == data.currentFacing then
-			btn.BackgroundColor3 = Color3.fromRGB(80, 140, 220)
-		else
-			btn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
-		end
-
-		btn.Parent = container
-
-		btn.MouseButton1Click:Connect(function()
-			if chosen then return end
-			chosen = true
-			BattleEvents.SetFacing:FireServer({
-				unitId = data.unitId,
-				facing = dir,
-			})
-			print(string.format("[BVC] Facing chosen: %s → %s", data.unitId, dir))
-			if screenGui and screenGui.Parent then
-				screenGui:Destroy()
-			end
-		end)
+	local function cleanup()
+		for _, c in conns do c:Disconnect() end
+		table.clear(conns)
+		if overheadGlyph then overheadGlyph.Visible = true end
+		if folder and folder.Parent then folder:Destroy() end  -- MEM-002
 	end
 
-	-- Auto-dismiss after 5 seconds if no choice
-	task.delay(5, function()
-		if not chosen and screenGui and screenGui.Parent then
-			screenGui:Destroy()
-			print("[BVC] Facing prompt timed out — keeping current facing")
-		end
-	end)
+	local ARROW_PLANE = 6.0   -- studs; flat plane footprint per arrow (25% reduction; ring reduced in lockstep to keep no-overlap)
+
+	for dir, vec in GameConstants.FACING_VECTORS do
+		local mag = math.sqrt(vec.dx * vec.dx + vec.dy * vec.dy)
+		local nx, nz = vec.dx / mag, vec.dy / mag
+		local pos = Vector3.new(baseWX + nx * ARROW_RING, groundY, baseWZ + nz * ARROW_RING)
+
+		-- Flat INVISIBLE carrier plane. A SurfaceGui on its Top face draws the
+		-- arrow glyph, so there is no visible part surface (no studs, ever) -
+		-- same stud-free technique the tile-highlight frames use. Kept axis-
+		-- aligned; the glyph is rotated in 2D to point along its world dir, so
+		-- it stays camera-proof (rotates WITH the map, not the screen).
+		-- NET-004: all properties before parenting.
+		local plane = Instance.new("Part")
+		plane.Name         = "Face_" .. dir
+		plane.Anchored     = true
+		plane.CanCollide   = false
+		plane.CanQuery     = true    -- ClickDetector needs it hittable
+		plane.CastShadow   = false
+		plane.Transparency = 1       -- invisible carrier; SurfaceGui does the drawing
+		plane.Size         = Vector3.new(ARROW_PLANE, 0.1, ARROW_PLANE)
+		plane.CFrame       = CFrame.new(pos)
+
+		local sg = Instance.new("SurfaceGui")
+		sg.Face           = Enum.NormalId.Top
+		sg.SizingMode     = Enum.SurfaceGuiSizingMode.PixelsPerStud
+		sg.PixelsPerStud  = 48
+		sg.LightInfluence = 0        -- fullbright glyph, ignores world lighting
+		sg.AlwaysOnTop    = true   -- draw the arrow glyph OVER terrain so it is never visually buried (click target is still the carrier Part below)
+		sg.Parent         = plane
+
+		-- Use the SAME green arrow image as the overhead facing indicator, so the
+		-- choose-facing arrows and the per-unit facing arrow are visually identical.
+		-- This teaches the player that a green arrow == facing direction, and a
+		-- full-bleed image reads much larger than the old TextScaled triangle.
+		local lbl = Instance.new("ImageLabel")
+		lbl.Size                   = UDim2.fromScale(1, 1)
+		lbl.BackgroundTransparency = 1
+		lbl.Image                  = "rbxassetid://111086634875547"
+		lbl.ScaleType              = Enum.ScaleType.Fit
+		-- Same rotation convention as the overhead indicator (+270 for the
+		-- down-pointing green art) so each choice arrow points along its world dir.
+		lbl.Rotation               = math.deg(math.atan2(vec.dx, -vec.dy)) + 270
+		-- Outline so the green arrow reads against ANY terrain. CURRENT facing gets a
+		-- thicker GOLD outline to stay distinguishable while all arrows share green art.
+		local isCurrent = (dir == data.currentFacing)
+		local outline = Instance.new("UIStroke")
+		outline.Thickness    = isCurrent and 4 or 2
+		outline.Color        = isCurrent and currentColor or Color3.new(0, 0, 0)
+		outline.Transparency = 0.05
+		outline.Parent       = lbl
+		lbl.Parent                 = sg
+
+		local cd = Instance.new("ClickDetector")
+		cd.MaxActivationDistance = 1000
+		cd.Parent = plane
+
+		plane.Parent = folder
+
+		table.insert(conns, cd.MouseClick:Connect(function()
+			if chosen then return end
+			chosen = true
+			BattleEvents.SetFacing:FireServer({ unitId = data.unitId, facing = dir })
+			print(string.format("[BVC] Facing chosen: %s -> %s", data.unitId, dir))
+			cleanup()
+		end))
+	end
+
+	-- Turn-based: no timer. Arrows stay until the player chooses a facing.
 end)

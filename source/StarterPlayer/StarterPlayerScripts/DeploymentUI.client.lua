@@ -280,9 +280,8 @@ local function createRosterUI(playerUnits)
 		StyleBootstrap.Link(screenGui)
 	end
 
-	-- Hide DevOptions during deployment; BattleHUD stays for view mode tile inspection
-	local devOptsGui = player.PlayerGui:FindFirstChild("DevOptions")
-	if devOptsGui then devOptsGui.Enabled = false end
+	-- Dev options panel stays AVAILABLE during deployment (user request) so dev
+	-- commands (view mode, regenerate, etc.) can be used while placing units.
 
 	-- ── Responsive sizing ───────────────────────────────────
 	local cam = workspace.CurrentCamera
@@ -570,9 +569,7 @@ BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 	active = true
 	_G.CTRBLXAI_DeploymentActive = true
 
-	-- Hide DevOptions during deployment (BattleHUD stays for view mode)
-	local dv = player.PlayerGui:FindFirstChild("DevOptions")
-	if dv then dv.Enabled = false end
+	-- Dev options panel stays AVAILABLE during deployment (user request).
 
 	mapWidth  = data.mapWidth or 30
 	mapHeight = data.mapHeight or 20
@@ -616,23 +613,15 @@ BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 	do
 		local mf = workspace:FindFirstChild("TemplateViewerMap")
 		if mf then
-			print(string.format("[DIAG-POS] MapFolder found: %s (%d children)", mf.Name, #mf:GetChildren()))
 			for _, anchor in ipairs(data.playerAnchors or {}) do
 				local tileName = string.format("Tile_%02d_%02d", anchor.x, anchor.y)
 				local tilePart = mf:FindFirstChild(tileName)
 				local deployPart = deployFolder:FindFirstChild("Deploy_" .. anchor.x .. "_" .. anchor.y)
 				if tilePart and deployPart then
-					print(string.format("[DIAG-POS] Tile(%d,%d) MapRenderer=(%0.1f, %0.1f, %0.1f) Deploy=(%0.1f, %0.1f, %0.1f) DIFF=(%.1f, %.1f, %.1f)",
-						anchor.x, anchor.y,
-						tilePart.Position.X, tilePart.Position.Y, tilePart.Position.Z,
-						deployPart.Position.X, deployPart.Position.Y, deployPart.Position.Z,
-						deployPart.Position.X - tilePart.Position.X, deployPart.Position.Y - tilePart.Position.Y, deployPart.Position.Z - tilePart.Position.Z))
 				else
-					print(string.format("[DIAG-POS] Tile(%d,%d) tilePart=%s deployPart=%s", anchor.x, anchor.y, tostring(tilePart ~= nil), tostring(deployPart ~= nil)))
 				end
 			end
 		else
-			print("[DIAG-POS] WARNING: No TemplateViewerMap folder found in workspace!")
 		end
 	end
 

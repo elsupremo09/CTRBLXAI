@@ -34,15 +34,26 @@ local player = Players.LocalPlayer
 --------------------------------------------------
 
 -- Camera geometry
-local FIXED_PITCH     = 45          -- Degrees downward (lower = more eye-level)
 local FIXED_FOV       = 55          -- Degrees (NOT animated or zoomed)
 local ROTATION_SNAP   = 45          -- 8 viewing directions
 
 -- Distance (calculated from visible-tile targets)
 -- Closest: ~3 tiles, Default: ~11 tiles, Farthest: ~20 tiles
-local ZOOM_MIN        = 15
-local ZOOM_DEFAULT    = 53
-local ZOOM_MAX        = 96
+-- View-mode profiles. Each mode swaps pitch + zoom band. Isometric is the
+-- original tactical view (default). Top is near-straight-down (88, NOT 90 --
+-- at exactly 90 the yaw math degenerates and pan direction becomes ambiguous).
+-- Side is near eye-level to appreciate unit models: looser zoom band and
+-- focus tracks the looked-at unit Y (trackY) so elevated models stay framed.
+local VIEW_PROFILES = {
+	Isometric = { pitch = 45, zoomMin = 15, zoomMax = 96,  zoomDefault = 53, trackY = false },
+	Top       = { pitch = 88, zoomMin = 20, zoomMax = 90,  zoomDefault = 55, trackY = false },
+	Side      = { pitch = 12, zoomMin = 8,  zoomMax = 140, zoomDefault = 40, trackY = true  },
+}
+local currentViewMode = "Isometric"
+local activePitch  = VIEW_PROFILES.Isometric.pitch
+local ZOOM_MIN     = VIEW_PROFILES.Isometric.zoomMin
+local ZOOM_DEFAULT = VIEW_PROFILES.Isometric.zoomDefault
+local ZOOM_MAX     = VIEW_PROFILES.Isometric.zoomMax
 local ZOOM_STEP       = 5           -- Per scroll tick
 
 -- Pan
@@ -109,7 +120,7 @@ local storedTouchControls  = nil
 --------------------------------------------------
 
 local function computeCFrame()
-	local pitchRad = math.rad(FIXED_PITCH)
+	local pitchRad = math.rad(activePitch)
 	local yawRad   = math.rad(yaw)
 	local ox = distance * math.cos(pitchRad) * math.sin(yawRad)
 	local oz = distance * math.cos(pitchRad) * math.cos(yawRad)
@@ -119,9 +130,12 @@ end
 
 local function clampFocus(f)
 	local margin = battleBounds.tileSize * 8  -- 8 tiles margin (panels cover ~40% of mobile viewport)
+	-- Preserve the incoming Y (was hardcoded 0). All ground-focus callers pass
+	-- Y=0 already, so they are unaffected; FocusTwoTargets passes the units'
+	-- average Y so elevated combatants stay framed instead of sitting above screen.
 	return Vector3.new(
 		math.clamp(f.X, battleBounds.minX - margin, battleBounds.maxX + margin),
-		0,
+		f.Y,
 		math.clamp(f.Z, battleBounds.minZ - margin, battleBounds.maxZ + margin)
 	)
 end
@@ -229,7 +243,8 @@ end
 function CameraController.FocusActiveUnit(worldPos)
 	if not isActive then return end
 	if not isValidVector(worldPos) then return end
-	focus = clampFocus(Vector3.new(worldPos.X, 0, worldPos.Z))
+	local fy = CameraController.TracksFocusY() and worldPos.Y or 0
+	focus = clampFocus(Vector3.new(worldPos.X, fy, worldPos.Z))
 	applyCFrame(false)
 	print(string.format("[CameraRecovery] action=focusActive success=true distance=%.0f yaw=%.0f", distance, yaw))
 end
@@ -240,7 +255,8 @@ function CameraController.FocusSelectedUnit(worldPos)
 		print("[CameraRecovery] action=focusSelected success=false (invalid position)")
 		return
 	end
-	focus = clampFocus(Vector3.new(worldPos.X, 0, worldPos.Z))
+	local fy = CameraController.TracksFocusY() and worldPos.Y or 0
+	focus = clampFocus(Vector3.new(worldPos.X, fy, worldPos.Z))
 	applyCFrame(false)
 	print(string.format("[CameraRecovery] action=focusSelected success=true distance=%.0f yaw=%.0f", distance, yaw))
 end
@@ -255,12 +271,16 @@ function CameraController.FocusTwoTargets(posA, posB, padFactor)
 	if not isValidVector(posA) or not isValidVector(posB) then return end
 	padFactor = padFactor or 1.4
 
-	-- Midpoint as focus
-	local mid = Vector3.new((posA.X + posB.X) / 2, 0, (posA.Z + posB.Z) / 2)
+	-- Midpoint as focus. Use the average Y of both units (not ground 0) so
+	-- elevated combatants stay framed — hardcoding Y=0 aimed the camera at the
+	-- ground and pushed units on raised terrain above the top of the screen.
+	local midY = (posA.Y + posB.Y) / 2
+	local mid = Vector3.new((posA.X + posB.X) / 2, midY, (posA.Z + posB.Z) / 2)
 	focus = clampFocus(mid)
 
-	-- Euclidean separation on XZ plane
-	local sep = ((posA.X - posB.X)^2 + (posA.Z - posB.Z)^2)^0.5
+	-- Full 3D separation (includes elevation gap) so a tall vertical spread
+	-- also widens the frame, not just horizontal distance.
+	local sep = ((posA.X - posB.X)^2 + (posA.Y - posB.Y)^2 + (posA.Z - posB.Z)^2)^0.5
 	-- Minimum span: never zoom closer than ~4 tiles of coverage
 	sep = math.max(sep, 20)
 
@@ -311,8 +331,45 @@ function CameraController.FrameTile(tileX, tileY)
 	applyCFrame(false)
 end
 
+--- Switch camera view profile: "Isometric", "Top", or "Side".
+--- Swaps pitch + zoom band. In Side mode, focus Y tracks the looked-at unit
+--- (set via FocusActiveUnit/FocusSelectedUnit) so elevated models stay framed.
+function CameraController.SetViewMode(mode)
+	local p = VIEW_PROFILES[mode]
+	if not p then
+		warn("[CameraController] SetViewMode: unknown mode '" .. tostring(mode) .. "'")
+		return
+	end
+	currentViewMode = mode
+	activePitch  = p.pitch
+	ZOOM_MIN     = p.zoomMin
+	ZOOM_MAX     = p.zoomMax
+	ZOOM_DEFAULT = p.zoomDefault
+	-- Re-clamp current distance into the new band and re-apply.
+	distance = math.clamp(distance, ZOOM_MIN, ZOOM_MAX)
+	applyCFrame(false)
+	print(string.format("[CameraController] View mode -> %s (pitch=%.0f zoom=%d..%d)", mode, activePitch, ZOOM_MIN, ZOOM_MAX))
+end
+
+--- Returns the current view-mode name and whether it allows free-view inspection.
+function CameraController.GetViewMode()
+	return currentViewMode
+end
+
+--- Whether the current view mode permits free-view (tile/unit inspection).
+--- Side view is a cinematic mode with no free-view.
+function CameraController.AllowsFreeView()
+	return currentViewMode ~= "Side"
+end
+
+--- Does the current view profile track the looked-at unit's Y (side view)?
+function CameraController.TracksFocusY()
+	local p = VIEW_PROFILES[currentViewMode]
+	return p ~= nil and p.trackY == true
+end
+
 function CameraController.GetState()
-	return { focus=focus, distance=distance, pitch=FIXED_PITCH, yaw=yaw, fov=FIXED_FOV, isActive=isActive, inBattle=inBattle }
+	return { focus=focus, distance=distance, pitch=activePitch, yaw=yaw, fov=FIXED_FOV, isActive=isActive, inBattle=inBattle, viewMode=currentViewMode }
 end
 
 --------------------------------------------------
@@ -420,6 +477,12 @@ function CameraController.EnterBattle(focusPos)
 	camera.FieldOfView = FIXED_FOV
 	isActive = true
 
+	-- Always start battle in Isometric.
+	currentViewMode = "Isometric"
+	activePitch  = VIEW_PROFILES.Isometric.pitch
+	ZOOM_MIN     = VIEW_PROFILES.Isometric.zoomMin
+	ZOOM_MAX     = VIEW_PROFILES.Isometric.zoomMax
+	ZOOM_DEFAULT = VIEW_PROFILES.Isometric.zoomDefault
 	-- Set initial view
 	distance = ZOOM_DEFAULT
 	yaw = 0
@@ -435,7 +498,7 @@ function CameraController.EnterBattle(focusPos)
 	hideCharacter()
 
 	print(string.format("[CameraState] pitch=%.0f yaw=%.0f fov=%.0f distance=%.0f focus=(%.0f,%.0f,%.0f)",
-		FIXED_PITCH, yaw, FIXED_FOV, distance, focus.X, focus.Y, focus.Z))
+		activePitch, yaw, FIXED_FOV, distance, focus.X, focus.Y, focus.Z))
 	print("[CameraController] Battle mode ENTERED.")
 end
 

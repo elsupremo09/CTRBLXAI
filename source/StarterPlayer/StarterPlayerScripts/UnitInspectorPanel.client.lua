@@ -46,13 +46,10 @@ local detailOverlayGui = nil
 
 local closeDetailOverlay  -- forward declaration
 closeDetailOverlay = function()
-	print("[DIAG-CLOSE] closeDetailOverlay called | gui=" .. tostring(detailOverlayGui ~= nil))
-	print(debug.traceback("[DIAG-CLOSE] traceback", 2))
 	if detailOverlayGui then detailOverlayGui:Destroy(); detailOverlayGui = nil end
 end
 
 local function destroyPanel()
-	print("[DIAG-CLOSE] destroyPanel called")
 	closeDetailOverlay()
 	if panelGui then panelGui:Destroy(); panelGui = nil end
 	if clickOutsideConn then clickOutsideConn:Disconnect(); clickOutsideConn = nil end
@@ -320,13 +317,10 @@ local function showItemDetail(eq, slotName)
 		local mouse = game:GetService("UserInputService"):GetMouseLocation()
 		local pos = panel.AbsolutePosition
 		local sz = panel.AbsoluteSize
-		print(string.format("[DIAG-CLOSE] backdrop handler | mouse=(%.0f,%.0f) panel=(%.0f,%.0f)-(%.0f,%.0f)", mouse.X, mouse.Y, pos.X, pos.Y, pos.X+sz.X, pos.Y+sz.Y))
 		if mouse.X >= pos.X and mouse.X <= pos.X + sz.X
 			and mouse.Y >= pos.Y and mouse.Y <= pos.Y + sz.Y then
-			print("[DIAG-CLOSE] backdrop BLOCKED (click inside panel)")
 			return -- click was inside the panel, ignore
 		end
-		print("[DIAG-CLOSE] backdrop CLOSING (click outside panel)")
 		closeDetailOverlay()
 	end)
 
@@ -1156,7 +1150,6 @@ local function buildPanel(data)
 			if not panelGui or not frame or not frame.Parent then return end
 			-- Don't close inspector while a detail overlay is open (it has its own dismiss logic)
 			if detailOverlayGui then print("[DIAG-CLOSE] InputBegan BLOCKED by detailOverlayGui guard"); return end
-			print("[DIAG-CLOSE] InputBegan click-outside check running (overlay NOT open)")
 			local mousePos = UserInputService:GetMouseLocation()
 			local absPos = frame.AbsolutePosition
 			local absSize = frame.AbsoluteSize

@@ -622,10 +622,6 @@ Theme.ButtonAssets = {
 }
 
 -- [DIAG] Asset ID dump at load time
-print("[DIAG-ASSETS] Primary   = " .. Theme.ButtonAssets.Primary.Asset .. " (NEW trimmed 200x48)")
-print("[DIAG-ASSETS] Secondary = " .. Theme.ButtonAssets.Secondary.Asset .. " (NEW trimmed 200x48)")
-print("[DIAG-ASSETS] Tertiary  = " .. Theme.ButtonAssets.Tertiary.Asset .. " (NEW trimmed 200x48)")
-print("[DIAG-ASSETS] BTN_SLICE_CENTER = " .. tostring(BTN_SLICE_CENTER) .. " (matches 200x48 source)")
 
 -- Shared SliceCenter for all button assets (adjust if 9-slice guides differ)
 local BTN_SLICE_CENTER = Rect.new(12, 12, 188, 36)
@@ -717,20 +713,8 @@ function Theme.MakeButton(parent, text, style, onClick, opts)
 	-- Fixed TextSize from Theme.Text.Body()
 
 	-- [DIAG] Button creation dump
-	print(("[DIAG-BTN] Created: %s | Style=%s | Asset=%s"):format(
-		btn:GetFullName(), style or "nil", tostring(btn.Image)))
-	print(("[DIAG-BTN]   Size=%s | SliceCenter=%s | SliceScale=%s"):format(
-		tostring(btn.Size), tostring(btn.SliceCenter), tostring(btn.SliceScale)))
-	print(("[DIAG-BTN]   ImageColor3=%s | ImageTransparency=%s | AutoButtonColor=%s"):format(
-		tostring(btn.ImageColor3), tostring(btn.ImageTransparency), tostring(btn.AutoButtonColor)))
-	print(("[DIAG-BTN]   ImageRectSize=%s | ImageRectOffset=%s"):format(
-		tostring(btn.ImageRectSize), tostring(btn.ImageRectOffset)))
 	task.defer(function()
 		if btn and btn.Parent then
-			print(("[DIAG-BTN-DEFERRED] %s | AbsPos=%s | AbsSize=%s | Visible=%s | IsLoaded=%s"):format(
-				btn:GetFullName(),
-				tostring(btn.AbsolutePosition), tostring(btn.AbsoluteSize),
-				tostring(btn.Visible), tostring(btn.IsLoaded)))
 		end
 	end)
 

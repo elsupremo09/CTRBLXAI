@@ -333,7 +333,6 @@ local function mapServerItem(si)
 		if hasBonusPassives then
 			for _, p in ipairs(si.bonusPassives) do table.insert(passiveNames, p.name or "?") end
 		end
-		print("[DIAG-Bonus] " .. (si.name or "?") .. " (" .. (si.rarity or "?") .. "): stats={" .. table.concat(parts, ", ") .. "} passives={" .. table.concat(passiveNames, ", ") .. "} (bonusCount=" .. tostring(si.bonusCount) .. " passiveCount=" .. tostring(si.passiveCount) .. ")")
 	end
 
 	return {

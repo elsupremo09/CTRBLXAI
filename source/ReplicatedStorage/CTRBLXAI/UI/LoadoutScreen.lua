@@ -1324,72 +1324,43 @@ openItemDetail = function(item, compareItem, isEquippedMode)
 	end
 
 	-- [DIAG] COMPARE gating conditions
-	print("[DIAG-COMPARE] compareItem = " .. tostring(compareItem))
-	print("[DIAG-COMPARE] unit = " .. tostring(unit))
 	if not compareItem and unit then
 		local diagSlot = item.cat
 		local diagEquipped = MockData.GetEquipped(unit.id, diagSlot)
-		print("[DIAG-COMPARE] item.cat (slot) = " .. tostring(diagSlot))
-		print("[DIAG-COMPARE] equippedItem = " .. tostring(diagEquipped))
 		if diagEquipped then
-			print("[DIAG-COMPARE] equippedItem.id = " .. tostring(diagEquipped.id) .. " | item.id = " .. tostring(item.id))
-			print("[DIAG-COMPARE] ids differ = " .. tostring(diagEquipped.id ~= item.id))
 		end
 	end
-	print("[DIAG-COMPARE] isEquippedMode = " .. tostring(isEquippedMode))
-	print("[DIAG-COMPARE] btnCount = " .. tostring(btnCount))
 	for _, def in ipairs(btnDefs) do
-		print("[DIAG-COMPARE] btnDef: text=" .. def.text .. " style=" .. def.style .. " order=" .. tostring(def.order))
 	end
 
 	-- [DIAG] Deferred layout dump (after 1 frame)
 	task.defer(function()
 		if not btnBar or not btnBar.Parent then
-			print("[DIAG-LAYOUT] btnBar destroyed or no parent!")
 			return
 		end
-		print("[DIAG-LAYOUT] ---- BUTTON BAR ----")
-		print("[DIAG-LAYOUT] btnBar.Parent = " .. btnBar.Parent:GetFullName())
-		print("[DIAG-LAYOUT] btnBar.AbsolutePosition = " .. tostring(btnBar.AbsolutePosition))
-		print("[DIAG-LAYOUT] btnBar.AbsoluteSize = " .. tostring(btnBar.AbsoluteSize))
-		print("[DIAG-LAYOUT] btnBar.Size = " .. tostring(btnBar.Size))
-		print("[DIAG-LAYOUT] btnBar.Visible = " .. tostring(btnBar.Visible))
 
 		-- Detail panel
-		print("[DIAG-LAYOUT] ---- DETAIL PANEL ----")
-		print("[DIAG-LAYOUT] panel.AbsolutePosition = " .. tostring(panel.AbsolutePosition))
-		print("[DIAG-LAYOUT] panel.AbsoluteSize = " .. tostring(panel.AbsoluteSize))
-		print("[DIAG-LAYOUT] panel.ClipsDescendants = " .. tostring(panel.ClipsDescendants))
 
 		-- UIListLayout
 		local layout = btnBar:FindFirstChildWhichIsA("UIListLayout")
 		if layout then
-			print("[DIAG-LAYOUT] UIListLayout.AbsoluteContentSize = " .. tostring(layout.AbsoluteContentSize))
-			print("[DIAG-LAYOUT] UIListLayout.Padding = " .. tostring(layout.Padding))
 		end
 
 		-- Per-button
-		print("[DIAG-LAYOUT] ---- INDIVIDUAL BUTTONS ----")
 		local prevRight = nil
 		for _, child in ipairs(btnBar:GetChildren()) do
 			if child:IsA("ImageButton") then
 				local ap = child.AbsolutePosition
 				local as = child.AbsoluteSize
-				print(("[DIAG-LAYOUT] %s | AbsPos=%s | AbsSize=%s | Visible=%s | ImgTransp=%s"):format(
-					child.Name, tostring(ap), tostring(as),
-					tostring(child.Visible), tostring(child.ImageTransparency)))
 				-- Compute gap from previous button
 				if prevRight then
 					local gap = ap.X - prevRight
-					print(("[DIAG-LAYOUT]   ^ gap from previous right edge = %.1f px"):format(gap))
 				end
 				prevRight = ap.X + as.X
 			end
 		end
 
 		-- SliceCenter recap
-		print("[DIAG-SLICE] BTN_SLICE_CENTER applied = " .. tostring(btnBar:GetChildren()[1] and btnBar:GetChildren()[1]:IsA("ImageButton") and btnBar:GetChildren()[1].SliceCenter or "N/A"))
-		print("[DIAG-SLICE] Source images are ORIGINAL 256x50 uploads (trimmed 200x48 were never uploaded)")
 	end)
 
 end
@@ -1789,7 +1760,6 @@ buildSoloDetailContent = function(panel, item)
 	toggleIcon.ImageColor3 = Theme.Colors.TextSecondary
 	toggleIcon.Parent = toggleBtn
 	toggleBtn.MouseButton1Click:Connect(function()
-		print("[DIAG-TOGGLE] Show Bonus/Base clicked | showingBonus=" .. tostring(not showingBonus))
 		showingBonus = not showingBonus
 		if showingBonus then
 			buildBonusView()
