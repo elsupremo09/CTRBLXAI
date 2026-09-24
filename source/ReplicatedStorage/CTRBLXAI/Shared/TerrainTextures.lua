@@ -5,6 +5,10 @@
 
 local TerrainTextures = {}
 
+-- Grid-edge line (painted on per-tile top-face SurfaceGuis; see Apply).
+TerrainTextures.GridColor = Color3.fromRGB(20, 20, 20)
+TerrainTextures.GridThicknessPx = 2  -- SurfaceGui pixels (PixelsPerStud=50); tune for thinner/thicker
+
 -- Terrain name -> Roblox asset ID
 TerrainTextures.Assets = {
 	["Clear"] = "rbxassetid://74692826345872",
@@ -99,6 +103,28 @@ function TerrainTextures.Apply(tilePart, terrainName)
 		img.Position = UDim2.fromScale(0.5, 0.5)
 		img.AnchorPoint = Vector2.new(0.5, 0.5)
 	end
+
+	-- GRID EDGE LINE: a black border traced on the tile's top face via a UIStroke.
+	-- Because it lives on the top-face SurfaceGui, it sits exactly on the tile top and
+	-- tilts with the tile's elevation — 'painted on the edges'. Voxel tiles (grass/
+	-- water) never call Apply, so they get no grid, as intended. Separate from the
+	-- image frame so the random rotation/flip of the texture does not affect it.
+	local gridFrame = Instance.new("Frame")
+	gridFrame.Name = "GridEdge"
+	gridFrame.Size = UDim2.fromScale(1, 1)
+	gridFrame.Position = UDim2.fromScale(0.5, 0.5)
+	gridFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+	gridFrame.BackgroundTransparency = 1
+	gridFrame.BorderSizePixel = 0
+	gridFrame.ZIndex = 5
+	gridFrame.Parent = gui
+	local gridStroke = Instance.new("UIStroke")
+	gridStroke.Name = "GridStroke"
+	gridStroke.Color = TerrainTextures.GridColor
+	gridStroke.Thickness = TerrainTextures.GridThicknessPx
+	gridStroke.Transparency = 0
+	gridStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	gridStroke.Parent = gridFrame
 
 	-- Side faces: same texture, darkened
 	local SIDE_TINT = Color3.fromRGB(140, 140, 140) -- ~55% brightness

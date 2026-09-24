@@ -1893,6 +1893,32 @@ if game:GetService("RunService"):IsStudio() then
 			MapRenderer.SetViewMode(folder, mode)
 			print("[Dev] View mode: " .. mode)
 
+		elseif cmd.action == "TerrainRender" then
+			-- Terrain-render switcher (hybrid): the client swaps Per-tile/Mesh visuals
+			-- instantly on its own. Only VOXEL needs the server, because voxel writes
+			-- (workspace.Terrain) are server-authoritative. Re-running SetViewMode in
+			-- TERRAIN mode clears + refills the voxel terrain and resets natural tile
+			-- Parts to hidden — which replicates back to all clients.
+			local folder = workspace:FindFirstChild("TemplateViewerMap")
+			if not folder then
+				warn("[Dev] TerrainRender: no TemplateViewerMap in workspace")
+				return
+			end
+			if cmd.mode == "Voxel" then
+				-- Rebuild voxel terrain (clears + refills; hides natural tile Parts).
+				MapRenderer.SetViewMode(folder, "TERRAIN")
+				print("[Dev] Terrain render: Voxel (server rebuilt voxel terrain)")
+			elseif cmd.mode == "PerTile" then
+				-- Clear voxels and SHOW the tile Parts as the visible ground.
+				MapRenderer.ClearVoxelsForPerTile(folder)
+				print("[Dev] Terrain render: PerTile (server cleared voxels, tile Parts shown)")
+			elseif cmd.mode == "Mesh" then
+				-- Clear voxels and HIDE the tile Parts — the client mesh is the surface.
+				-- (Showing tile Parts here caused studs/shine/floating clutter under the mesh.)
+				MapRenderer.ClearVoxelsHideTiles(folder)
+				print("[Dev] Terrain render: Mesh (server cleared voxels, tile Parts hidden)")
+			end
+
 		elseif cmd.action == "Regenerate" then
 			-- Get current biome/template from existing map or from command.
 			local currentFolder = workspace:FindFirstChild("TemplateViewerMap")

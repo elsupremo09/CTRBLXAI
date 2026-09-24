@@ -33,6 +33,14 @@ local Theme = require(
 	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 		:WaitForChild("UI", 10):WaitForChild("Theme", 10)
 )
+-- Terrain surface textures (per-terrain asset IDs) for the Option-1 textured mesh.
+local _ttOk, TerrainTextures = pcall(function()
+	return require(
+		ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+			:WaitForChild("Shared", 10):WaitForChild("TerrainTextures", 10)
+	)
+end)
+if not _ttOk then warn("[TerrainMesh] TerrainTextures require failed: " .. tostring(TerrainTextures)); TerrainTextures = nil end
 
 local LoadoutScreen = require(
 	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
@@ -1617,6 +1625,32 @@ local function createDevCameraPanel()
 			template = templateList[templateIdx],
 		})
 	end, Color3.fromRGB(80, 60, 20))
+
+	-- Separator: Terrain render switcher
+	local sep4 = Instance.new("Frame")
+	sep4.Size = UDim2.new(1, 0, 0, 1)
+	sep4.BackgroundColor3 = Color3.fromRGB(200, 200, 50)
+	sep4.BackgroundTransparency = 0.5
+	sep4.BorderSizePixel = 0; sep4.LayoutOrder = 19
+	sep4.Parent = frame
+
+	local terrainLabel = Instance.new("TextLabel")
+	terrainLabel.Size = UDim2.new(1, 0, 0, 12)
+	terrainLabel.BackgroundTransparency = 1
+	terrainLabel.Font = Enum.Font.SourceSansBold; terrainLabel.TextSize = 9
+	terrainLabel.TextColor3 = Color3.fromRGB(200, 200, 50)
+	terrainLabel.Text = "TERRAIN RENDER"; terrainLabel.LayoutOrder = 20
+	terrainLabel.Parent = frame
+
+	makeBtn("TERRAIN: VOXEL", 21, function()
+		if _G.CTRBLXAI_SetTerrainRender then _G.CTRBLXAI_SetTerrainRender("Voxel") end
+	end, Color3.fromRGB(40, 60, 40))
+	makeBtn("TERRAIN: PER-TILE", 22, function()
+		if _G.CTRBLXAI_SetTerrainRender then _G.CTRBLXAI_SetTerrainRender("PerTile") end
+	end, Color3.fromRGB(50, 50, 65))
+	makeBtn("TERRAIN: MESH", 23, function()
+		if _G.CTRBLXAI_SetTerrainRender then _G.CTRBLXAI_SetTerrainRender("Mesh") end
+	end, Color3.fromRGB(60, 50, 60))
 end
 
 local function destroyDevCameraPanel()
@@ -2107,6 +2141,290 @@ _G.CTRBLXAI_SetViewMode = function(mode)
 	setGridVisible(mode ~= "Side")
 	-- Elevation numbers only in Top view.
 	setElevationLabelsVisible(mode == "Top")
+end
+
+-- ── TERRAIN RENDER SWITCHER (Phase 1: Voxel <-> Per-tile Parts) ──
+-- 3-way client-side visual swap so the player can A/B terrain looks live.
+-- Voxel: server-authoritative FillBlock terrain (natural tile Parts hidden).
+-- PerTile: show the replicated tile Parts themselves with per-terrain PBR
+--   Material + color (grids + clicks become exact on real Parts).
+-- Mesh: (Phase 3) client heightmap mesh — not yet built.
+-- NET-001: client owns visuals; the authoritative tile Parts + data never change,
+-- only their skin. Voxel writes are server-only, so selecting Voxel round-trips.
+local currentTerrainRender = "Voxel"  -- Voxel | PerTile | Mesh
+
+-- Per-terrain PBR material for Per-tile mode (client-side visual only).
+local TERRAIN_TILE_MATERIAL = {
+	Clear = Enum.Material.Ground, Grassland = Enum.Material.Grass,
+	["Clover Field"] = Enum.Material.LeafyGrass, Forest = Enum.Material.LeafyGrass,
+	Rocky = Enum.Material.Rock, Sand = Enum.Material.Sand, Mud = Enum.Material.Mud,
+	Swamp = Enum.Material.Slate, ["Shallow Water"] = Enum.Material.Sand,
+	["Deep Water"] = Enum.Material.Slate, Ice = Enum.Material.Glacier,
+	Molten = Enum.Material.CrackedLava, ["Tainted Ground"] = Enum.Material.Basalt,
+	["Cracked Ground"] = Enum.Material.Asphalt, Quicksand = Enum.Material.Sandstone,
+	["Stone Road"] = Enum.Material.Cobblestone, ["Dirt Road"] = Enum.Material.Pavement,
+}
+
+-- Show/hide the replicated tile Parts as solid material tiles (Per-tile mode).
+-- When false, natural tiles are hidden (Transparency=1) so voxels/mesh show instead;
+-- man-made SurfaceGui tiles are left as-is (they are always visible tile Parts).
+local function setPerTileVisible(visible)
+	local mf = workspace:FindFirstChild("TemplateViewerMap")
+	if not mf then return end
+	for _, ch in ipairs(mf:GetChildren()) do
+		if ch:IsA("BasePart") and ch:GetAttribute("IsTemplateTile") then
+			local terrainId = ch:GetAttribute("Terrain")
+			-- Man-made/SurfaceGui tiles carry their own texture; skip re-skinning them.
+			local hasSurfaceGui = ch:FindFirstChildOfClass("SurfaceGui") ~= nil
+			if not hasSurfaceGui then
+				if visible then
+					ch.Transparency = 0
+					ch.Material = TERRAIN_TILE_MATERIAL[terrainId] or Enum.Material.Ground
+					local tc = ch:GetAttribute("TerrainColor")
+					if typeof(tc) == "Color3" then ch.Color = tc end
+				else
+					ch.Transparency = 1
+				end
+			end
+		end
+	end
+end
+
+-- ── TERRAIN MESH (Phase 3 prototype): EditableMesh heightmap ──
+-- Builds ONE conforming surface whose vertices sit at each tile's elevation, so
+-- the ground slopes smoothly between tiles (vs flat-topped Per-tile blocks).
+-- PROTOTYPE: single neutral material, no per-terrain texturing yet — the point
+-- is to judge the sloped-mesh LOOK before investing in texturing. Client-side
+-- (NET-001): built from the replicated elevationMap after the server clears voxels.
+-- EditableMesh/CreateMeshPartAsync can fail or be unavailable — all guarded; on
+-- failure we fall back to leaving the Per-tile Parts visible.
+-- Option 1 terrain: one welded, UV-mapped, TEXTURED MeshPart PER terrain type
+-- (a MeshPart has a single texture slot, so 22 terrains = up to 22 parts). All
+-- live under this folder so cleanup is one Destroy. MEM-002.
+local terrainMeshFolder = nil
+
+local function clearTerrainMesh()
+	if terrainMeshFolder then terrainMeshFolder:Destroy(); terrainMeshFolder = nil end  -- MEM-002
+end
+
+-- Bilinear-interpolated ground height at a fractional tile coordinate (fx in
+-- [1..MAP_WIDTH], fy in [1..MAP_HEIGHT]) so subdivided vertices follow the slope
+-- between tile-center elevations. Clamps to map bounds.
+local function meshHeightAt(fx, fy)
+	local x0 = math.clamp(math.floor(fx), 1, MAP_WIDTH)
+	local x1 = math.clamp(x0 + 1, 1, MAP_WIDTH)
+	local y0 = math.clamp(math.floor(fy), 1, MAP_HEIGHT)
+	local y1 = math.clamp(y0 + 1, 1, MAP_HEIGHT)
+	local tx = fx - x0
+	local ty = fy - y0
+	local function e(ex, ey) return (elevationMap[ey] and elevationMap[ey][ex]) or 1 end
+	local e00, e10 = e(x0, y0), e(x1, y0)
+	local e01, e11 = e(x0, y1), e(x1, y1)
+	local top = e00 + (e10 - e00) * tx
+	local bot = e01 + (e11 - e01) * tx
+	local elev = top + (bot - top) * ty
+	return tileSurfaceY(elev)
+end
+
+-- Grid-line thickness as a fraction of a tile (small = thin line). The outer
+-- border ring of each tile's faces is colored black (the baked grid line); the
+-- inner square is the terrain fill color. Baked into the mesh so lines conform
+-- to the terrain slope (no floating Parts, no PNG). SetFaceColors provides the
+-- per-face black/fill coloring (confirmed available on this engine).
+local GRID_LINE_FRAC = 0.03
+local GRID_LINE_COLOR = Color3.fromRGB(15, 15, 15)
+
+local function buildTerrainMesh()
+	clearTerrainMesh()
+	if not elevationMap then warn("[TerrainMesh] no elevationMap"); return false end
+	local AssetService = game:GetService("AssetService")
+
+	-- Option 1: one welded, UV-mapped, TEXTURED MeshPart PER terrain type.
+	-- Tiles are grouped by GameConstants.GetTerrainId; each group builds its own
+	-- EditableMesh with: welded vertices (smooth normals within the terrain),
+	-- planar UVs (kills the studs — no-UV meshes fall back to the studded material
+	-- projection), the terrain's TextureID, and per-face vertex colors that MULTIPLY
+	-- the texture: white on fill faces (texture shows true) and black on the border
+	-- ring (baked grid line over the texture). One texture slot per part = per-terrain
+	-- parts. Man-made terrains without slope still texture fine here.
+	local m = GRID_LINE_FRAC
+	local fracs = { 0.0, m, 1.0 - m, 1.0 }
+	local UV_TILE_SPAN = 1.0  -- texture repeats once per tile (u,v in tile units)
+
+	local folder = Instance.new("Folder")
+	folder.Name = "TerrainMeshParts"
+
+	-- Group tile coords by terrain id.
+	local groups = {}  -- terrainId -> { {tx,ty}, ... }
+	for ty = 1, MAP_HEIGHT do
+		for tx = 1, MAP_WIDTH do
+			local tid = GameConstants.GetTerrainId(tx, ty)
+			groups[tid] = groups[tid] or {}
+			table.insert(groups[tid], { tx, ty })
+		end
+	end
+
+	local totalFaces = 0
+	local builtParts = 0
+
+	-- Build one MeshPart per terrain group.
+	for terrainId, tiles in pairs(groups) do
+		local ok, em = pcall(function() return AssetService:CreateEditableMesh() end)
+		if not ok or not em then
+			warn("[TerrainMesh] CreateEditableMesh failed for " .. tostring(terrainId) .. ": " .. tostring(em))
+		else
+			local vertCache = {}  -- 'ix_iy' -> vertex id (weld within this terrain group)
+			local blackFaces, fillFaces = {}, {}
+
+			local function lineIndex(tileIdx, sub)
+				if sub == 4 then return 3 * tileIdx end
+				return 3 * (tileIdx - 1) + (sub - 1)
+			end
+			local function getVert(tx, ty, gx, gy)
+				local ix = lineIndex(tx, gx)
+				local iy = lineIndex(ty, gy)
+				local k = ix .. "_" .. iy
+				local existing = vertCache[k]
+				if existing then return existing end
+				local fx = (tx - 1) + fracs[gx]
+				local fy = (ty - 1) + fracs[gy]
+				local wx = MAP_OFFSET_X + fx * TILE_SIZE
+				local wz = MAP_OFFSET_Z + fy * TILE_SIZE
+				local wy = meshHeightAt(tx - 0.5 + (fracs[gx] - 0.5), ty - 0.5 + (fracs[gy] - 0.5))
+				local vid = em:AddVertex(Vector3.new(wx, wy, wz))
+				vertCache[k] = vid
+				return vid
+			end
+			-- UV for a vertex: planar projection in tile units (repeats once per tile).
+			local uvCache = {}
+			local function getUV(tx, ty, gx, gy)
+				local fx = (tx - 1) + fracs[gx]
+				local fy = (ty - 1) + fracs[gy]
+				local k = string.format("%.4f_%.4f", fx, fy)
+				local existing = uvCache[k]
+				if existing then return existing end
+				local uid = em:AddUV(Vector2.new(fx / UV_TILE_SPAN, fy / UV_TILE_SPAN))
+				uvCache[k] = uid
+				return uid
+			end
+
+			local buildOk, buildErr = pcall(function()
+				for _, tc in ipairs(tiles) do
+					local tx, ty = tc[1], tc[2]
+					for gy = 1, 3 do
+						for gx = 1, 3 do
+							local a = getVert(tx, ty, gx,     gy)
+							local b = getVert(tx, ty, gx + 1, gy)
+							local c = getVert(tx, ty, gx + 1, gy + 1)
+							local d = getVert(tx, ty, gx,     gy + 1)
+							local f1 = em:AddTriangle(a, c, b)
+							local f2 = em:AddTriangle(a, d, c)
+							-- Assign UVs per face corner (matches the triangle winding).
+							local ua = getUV(tx, ty, gx,     gy)
+							local ub = getUV(tx, ty, gx + 1, gy)
+							local uc = getUV(tx, ty, gx + 1, gy + 1)
+							local ud = getUV(tx, ty, gx,     gy + 1)
+							if type(em.SetFaceUVs) == "function" then
+								em:SetFaceUVs(f1, { ua, uc, ub })
+								em:SetFaceUVs(f2, { ua, ud, uc })
+							end
+							if gx == 2 and gy == 2 then
+								table.insert(fillFaces, f1); table.insert(fillFaces, f2)
+							else
+								table.insert(blackFaces, f1); table.insert(blackFaces, f2)
+							end
+						end
+					end
+				end
+			end)
+			if not buildOk then
+				warn("[TerrainMesh] build failed for " .. tostring(terrainId) .. ": " .. tostring(buildErr))
+			else
+				-- Face colors MULTIPLY the texture: white=texture true, black=grid line.
+				pcall(function()
+					if type(em.AddColor) == "function" and type(em.SetFaceColors) == "function" then
+						local whiteId = em:AddColor(Color3.new(1, 1, 1), 1)
+						local blackId = em:AddColor(GRID_LINE_COLOR, 1)
+						for _, fid in ipairs(fillFaces) do em:SetFaceColors(fid, { whiteId, whiteId, whiteId }) end
+						for _, fid in ipairs(blackFaces) do em:SetFaceColors(fid, { blackId, blackId, blackId }) end
+					end
+				end)
+
+				local createOk, part = pcall(function()
+					return AssetService:CreateMeshPartAsync(Content.fromObject(em))
+				end)
+				if not createOk or not part then
+					warn("[TerrainMesh] CreateMeshPartAsync failed for " .. tostring(terrainId) .. ": " .. tostring(part))
+				else
+					part.Name = "TerrainMesh_" .. tostring(terrainId):gsub("%s+", "_")
+					part.Anchored = true
+					part.CanCollide = false
+					part.CanQuery = false
+					part.CanTouch = false
+					part.CastShadow = false
+					part.Material = Enum.Material.SmoothPlastic
+					-- Apply the terrain's surface texture (UVs make it map correctly; the
+					-- texture replaces the studded no-UV fallback).
+					local assetId = TerrainTextures and TerrainTextures.Assets and TerrainTextures.Assets[terrainId]
+					if assetId then
+						pcall(function() part.TextureID = assetId end)
+					end
+					part.CFrame = CFrame.new(0, 0, 0)
+					part.Parent = folder
+					totalFaces = totalFaces + #fillFaces + #blackFaces
+					builtParts = builtParts + 1
+				end
+			end
+		end
+	end
+
+	if builtParts == 0 then
+		warn("[TerrainMesh] no terrain parts built"); folder:Destroy(); return false
+	end
+	folder.Parent = workspace:FindFirstChild("TemplateViewerMap") or workspace
+	terrainMeshFolder = folder
+	print("[TerrainMesh] built " .. builtParts .. " per-terrain textured meshes (" .. totalFaces .. " faces, " .. MAP_WIDTH .. "x" .. MAP_HEIGHT .. " tiles)")
+	return true
+end
+
+_G.CTRBLXAI_SetTerrainRender = function(mode)
+	if mode ~= "Voxel" and mode ~= "PerTile" and mode ~= "Mesh" then return end
+	currentTerrainRender = mode
+	if mode == "PerTile" then
+		clearTerrainMesh()
+		setGridVisible(true)
+		-- Show tile Parts immediately for a responsive feel, AND ask the server to
+		-- CLEAR the voxel terrain — the client cannot clear voxels itself, so without
+		-- this the tile Parts stay buried under the voxels (the bug the user hit).
+		setPerTileVisible(true)
+		if BattleEvents.DevCommand then
+			BattleEvents.DevCommand:FireServer({ action = "TerrainRender", mode = "PerTile" })
+		end
+	elseif mode == "Voxel" then
+		clearTerrainMesh()
+		setGridVisible(true)
+		-- Hide the per-tile skins; ask the server to (re)build voxel terrain.
+		setPerTileVisible(false)
+		if BattleEvents.DevCommand then
+			BattleEvents.DevCommand:FireServer({ action = "TerrainRender", mode = "Voxel" })
+		end
+	elseif mode == "Mesh" then
+		-- Hide per-tile skins AND the floating Grid_* Parts — the baked mesh has its
+		-- own conforming grid lines, and the tile Parts are hidden server-side.
+		setPerTileVisible(false)
+		setGridVisible(false)
+		if BattleEvents.DevCommand then
+			BattleEvents.DevCommand:FireServer({ action = "TerrainRender", mode = "Mesh" })
+		end
+		local built = buildTerrainMesh()
+		if not built then
+			warn("[TerrainRender] Mesh build failed — falling back to Per-tile view")
+			setPerTileVisible(true)
+		end
+	else
+		clearTerrainMesh()
+	end
+	print("[TerrainRender] mode -> " .. mode)
 end
 
 _G.CTRBLXAI_GetElevation = function(tileX, tileY)
