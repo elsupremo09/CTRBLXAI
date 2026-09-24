@@ -313,6 +313,12 @@ local savedConsumableSlots = {} -- unitId -> consumableSlots table
 if loadedSave then
 	hasSave = true
 	print("[Main] Save loaded — restoring state")
+	-- Restore persisted card inventory (Bug fix: was never saved -> starter cards
+	-- re-granted every launch, multiplying with equipped-card restores).
+	local prog = loadedSave.progression or {}
+	if type(prog.cardInventory) == "table" then
+		savedCardInventory = prog.cardInventory
+	end
 	-- Restore roster persistent state
 	PersistentStateService.ImportState(PLAYER_ID, loadedSave.roster or {})
 	-- Restore inventory
@@ -742,6 +748,11 @@ end
 -- REUSABLE SAVE HELPER
 --------------------------------------------------
 
+-- Card inventory (loose, un-equipped skill/augment cards): { skillCards = {[id]=qty},
+-- augmentCards = {[id]=qty} }. Declared BEFORE doSave so doSave captures it as an
+-- upvalue and can persist it. Populated/restored further below (starter + save load).
+local cardInventory = { skillCards = {}, augmentCards = {} }
+
 local function doSave()
 	local rosterState = PersistentStateService.ExportState(PLAYER_ID)
 	local inventoryItems = InventoryService.ExportInventory(PLAYER_ID)
@@ -780,7 +791,9 @@ local function doSave()
 			print(string.format("[Save] Equipment: %s=%s", unitId, table.concat(parts, ",")))
 		end
 	end
-	local progression = {}
+	-- Persist the loose card inventory so skill/augment card counts survive relaunch
+	-- (previously never saved -> starter cards re-granted every launch = multiplication).
+	local progression = { cardInventory = cardInventory }
 	local ok, err = SaveService.Save(PLAYER_ID, rosterState, inventoryItems, progression)
 	if ok then
 		print("[Save] Successful")
@@ -1194,15 +1207,25 @@ end
 -- SKILL CARD & AUGMENT CARD MANAGEMENT (Slice 4I)
 --------------------------------------------------
 
--- Card inventory: { skillCards = {[skillId] = qty}, augmentCards = {[augId] = qty} }
--- Stored per-player. For now, single player.
-local cardInventory = { skillCards = {}, augmentCards = {} }
+-- Card inventory: declared earlier (before doSave) so it can be persisted.
+-- Reset here to a clean empty table before restore/starter population.
+cardInventory = { skillCards = {}, augmentCards = {} }
 
--- Restore from save (progression key — future use)
--- For now, cards are granted via starter block or rewards
+-- Restore persisted card inventory from the save (progression.cardInventory).
+-- savedCardInventory is populated in the load block above when the save carried it.
+if savedCardInventory and type(savedCardInventory) == "table" then
+	if type(savedCardInventory.skillCards) == "table" then
+		cardInventory.skillCards = savedCardInventory.skillCards
+	end
+	if type(savedCardInventory.augmentCards) == "table" then
+		cardInventory.augmentCards = savedCardInventory.augmentCards
+	end
+end
 
--- Populate starter cards when inventory is empty
--- (Card persistence not yet in save pipeline)
+-- Populate starter cards ONLY when the inventory is genuinely empty (fresh player,
+-- or an old save that predates card persistence -> granted once, then persists).
+-- After the first save, cardInventory is restored above and this block is skipped,
+-- so starter cards are never re-granted (fixes the relaunch multiplication bug).
 do
 	local hasAny = false
 	for _ in pairs(cardInventory.skillCards) do hasAny = true; break end
@@ -2333,7 +2356,12 @@ local function buildTurnPrompt(unit)
 				isActive    = (u.id == unit.id), -- mark the actual active unit
 				isChanneling = u.isChanneling or false,
 				channelRt   = u.channelRt or 0,
+				-- TWO-TIMER: remaining channel time = fixed deadline minus current CT, so the
+				-- client places the channel event at the correct timeline position (independent
+				-- of the caster's own RT entry).
+				channelRemaining = math.max(0, (u.channelResolveCt or 0) - state.ct),
 				channeledSkillName = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.name or nil,
+				channeledSkillIcon = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.icon or nil,
 			})
 		end
 	end
@@ -2863,7 +2891,9 @@ local function broadcastActions(actions, activeUnit)
 				id = u.id, name = u.name, side = u.side,
 				remainingRt = u.remainingRt, isChanneling = u.isChanneling or false,
 				channelRt = u.channelRt or 0,
+				channelRemaining = math.max(0, (u.channelResolveCt or 0) - state.ct),
 				channeledSkillName = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.name or nil,
+				channeledSkillIcon = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.icon or nil,
 			})
 		end
 	end
@@ -3203,9 +3233,9 @@ local function handleChannelingActivation(activeUnit)
 		end
 	end
 
-	if BattleCoordinator.GetPhase(state) == "TurnOpen" then
-		BattleCoordinator.EndTurn(state)
-	end
+	-- TWO-TIMER MODEL: do NOT end a turn here. Channel resolution is driven by the
+	-- channel deadline (ChannelResolve phase), not by the caster's turn. Phase is
+	-- managed by BattleCoordinator.ResolveChannelDeadline in the main loop.
 
 	return actions
 end
@@ -3399,6 +3429,26 @@ end
 while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURNS do
 	local activeUnit = BattleCoordinator.AdvanceClock(state)
 	if not activeUnit then break end
+
+	-- TWO-TIMER MODEL: channel-deadline resolution. AdvanceClock returns a signal
+	-- table { channelResolve = caster } when the clock reached a fixed channel
+	-- deadline. Fire the skill now (independent of whose RT is up), broadcast it,
+	-- then let ResolveChannelDeadline apply the resolve-timing rule: the caster
+	-- takes an immediate turn ONLY if its own RT already hit 0 (frozen); otherwise
+	-- it keeps its remaining RT. If immediate, fall through as that unit's turn.
+	if type(activeUnit) == "table" and activeUnit.channelResolve then
+		local caster = activeUnit.channelResolve
+		BattleVisualBroadcaster.TurnStarted(caster, state.ct, state.units)
+		local chActions = handleChannelingActivation(caster)
+		broadcastActions(chActions, caster)
+		local immediate = BattleCoordinator.ResolveChannelDeadline(state)
+		if not immediate then
+			-- No immediate turn — caster keeps its RT; continue the main loop.
+			continue
+		end
+		-- Immediate turn: process 'caster' as the active unit for this iteration.
+		activeUnit = immediate
+	end
 
 	turnCount = turnCount + 1
 

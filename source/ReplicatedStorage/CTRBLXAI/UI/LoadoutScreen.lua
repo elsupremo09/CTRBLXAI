@@ -93,6 +93,7 @@ local openSkillSlotPicker, openAugmentSlotPicker
 local openEquippedSkillDetail, openEquippedAugmentDetail
 local openConsumableDetail, openConsumableSlotPicker, openEquippedConsumableDetail
 local buildConsumableGrid
+local openDoctrinePicker
 
 
 -- Skills tab state
@@ -652,13 +653,19 @@ local function buildEquippedLoadout()
 			-- Click: filter inventory to this slot type
 			tile.MouseButton1Click:Connect(function()
 				if isOffHandDisabled then return end
+				-- Doctrine slot is special: doctrines are NOT item-inventory entries, so
+				-- filtering the inventory yields nothing (old bug). Open a doctrine picker
+				-- sourced from GetAllDoctrines + RequestDoctrineChange instead.
+				if slotDef.slot == "Doctrine" then
+					openDoctrinePicker(unit.id)
+					return
+				end
 				if item then
 					-- Item equipped: open detail view with UNEQUIP
 					openItemDetail(item, nil, true)
 				else
 					-- Empty slot: filter inventory to this slot type
 					currentFilter = slotDef.slot
-					if slotDef.slot == "Doctrine" then currentFilter = "Doctrine" end
 					buildInventory()
 				end
 			end)
@@ -1195,6 +1202,82 @@ local detailOverlay = nil
 
 closeDetail = function()
 	if detailOverlay then detailOverlay:Destroy(); detailOverlay = nil end
+end
+
+-- Doctrine picker: doctrines are not item-inventory entries, so the Equipment
+-- Doctrine slot opens this centered list (from MockData.GetAllDoctrines) instead
+-- of the item filter. Selecting one swaps via MockData.ServerChangeDoctrine
+-- (authoritative RequestDoctrineChange) and refreshes the loadout.
+openDoctrinePicker = function(unitId)
+	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+	local doctrines = MockData.GetAllDoctrines and MockData.GetAllDoctrines() or {}
+	local currentId = MockData.GetUnitDoctrineId and MockData.GetUnitDoctrineId(unitId) or nil
+
+	activeDropdown = Instance.new("ScreenGui")
+	activeDropdown.Name = "DoctrinePicker"
+	activeDropdown.DisplayOrder = 106
+	activeDropdown.ResetOnSpawn = false
+	activeDropdown.Parent = getPlayerGui()
+	local function closeDD() if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end end
+
+	local back = Instance.new("TextButton")
+	back.Size = UDim2.fromScale(1, 1); back.BackgroundColor3 = Color3.new(0,0,0)
+	back.BackgroundTransparency = 0.5; back.Text = ""; back.AutoButtonColor = false
+	back.Parent = activeDropdown
+	back.MouseButton1Click:Connect(closeDD)
+
+	local panel = Theme.MakePanel and Theme.MakePanel("DoctrinePickerPanel") or Instance.new("Frame")
+	panel.Size = UDim2.new(0, 320, 0, 380)
+	panel.Position = UDim2.fromScale(0.5, 0.5)
+	panel.AnchorPoint = Vector2.new(0.5, 0.5)
+	panel.Parent = activeDropdown
+	pad(panel, 10, 12, 12, 10)
+
+	makeLabel(panel, { Text = "SWAP DOCTRINE",
+		Size = UDim2.new(1, 0, 0, 20), Position = UDim2.new(0, 0, 0, 0),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Heading(),
+		TextColor3 = Theme.Colors.TextGold })
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, 0, 1, -28); scroll.Position = UDim2.new(0, 0, 0, 26)
+	scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 4; scroll.CanvasSize = UDim2.new(0,0,0,0)
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y; scroll.Parent = panel
+	local slay = Instance.new("UIListLayout", scroll)
+	slay.Padding = UDim.new(0, 4); slay.SortOrder = Enum.SortOrder.LayoutOrder
+
+	for idx, doc in ipairs(doctrines) do
+		local isCur = (doc.id == currentId)
+		local row = Instance.new("TextButton")
+		row.Size = UDim2.new(1, -4, 0, 46)
+		row.BackgroundColor3 = isCur and Theme.Colors.PanelRaised or Theme.Colors.Panel
+		row.BackgroundTransparency = isCur and 0.1 or 0.4
+		row.BorderSizePixel = 0; row.Text = ""; row.LayoutOrder = idx; row.Parent = scroll
+		Instance.new("UICorner", row).CornerRadius = Theme.CornerRadius.sm
+		if isCur then local st = Instance.new("UIStroke", row); st.Color = Theme.Colors.TextGold; st.Thickness = 1.5 end
+		local ico = Instance.new("ImageLabel")
+		ico.Size = UDim2.new(0, 38, 0, 38); ico.Position = UDim2.new(0, 4, 0.5, -19)
+		ico.BackgroundTransparency = 1; ico.ScaleType = Enum.ScaleType.Fit
+		if type(doc.icon) == "string" and string.find(doc.icon, "rbxassetid://") then ico.Image = doc.icon end
+		ico.Parent = row
+		makeLabel(row, { Text = doc.name .. (isCur and "  (current)" or ""),
+			Size = UDim2.new(1, -50, 0, 16), Position = UDim2.new(0, 46, 0, 5),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
+			TextColor3 = isCur and Theme.Colors.TextGold or Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Left })
+		makeLabel(row, { Text = doc.identity or "",
+			Size = UDim2.new(1, -50, 0, 14), Position = UDim2.new(0, 46, 0, 24),
+			Font = Theme.Font.Primary, TextSize = Theme.Text.Badge(),
+			TextColor3 = Theme.Colors.TextSecondary,
+			TextXAlignment = Enum.TextXAlignment.Left })
+		row.MouseButton1Click:Connect(function()
+			if doc.id ~= currentId and MockData.ServerChangeDoctrine then
+				MockData.ServerChangeDoctrine(unitId, doc.id)
+			end
+			closeDD()
+			LoadoutScreen.Refresh()
+		end)
+	end
 end
 
 openItemDetail = function(item, compareItem, isEquippedMode)

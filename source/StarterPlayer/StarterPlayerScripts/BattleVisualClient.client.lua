@@ -587,8 +587,12 @@ local function simulateTurnOrder(snapshot, count, previewUnitId, previewNewRt, p
 	local units = {}
 	for _, u in ipairs(snapshot) do
 		table.insert(units, { id = u.id, name = u.name, side = u.side, remainingRt = u.remainingRt, isEvent = false, isActive = u.isActive or false })
-		if u.isChanneling and u.channelRt and u.channelRt > 0 then
-			table.insert(units, { id = u.id.."_ch", name = u.channeledSkillName or "Skill", side = u.side, remainingRt = u.channelRt, isEvent = true })
+		-- TWO-TIMER MODEL: the channel event sits at its REMAINING channel time
+		-- (deadline minus current CT), INDEPENDENT of the caster's own RT entry above.
+		-- Both entries coexist: the caster (its real RT) and the spell (its deadline).
+		local chRemain = u.channelRemaining or u.channelRt
+		if u.isChanneling and chRemain and chRemain > 0 then
+			table.insert(units, { id = u.id.."_ch", name = u.channeledSkillName or "Skill", side = u.side, remainingRt = chRemain, isEvent = true, channeledSkillIcon = u.channeledSkillIcon, casterSide = u.side })
 		end
 	end
 	if previewEvent then table.insert(units, { id = "pev", name = previewEvent.name, side = previewEvent.side, remainingRt = previewEvent.rt or 100, isEvent = true }) end
@@ -617,7 +621,7 @@ local function simulateTurnOrder(snapshot, count, previewUnitId, previewNewRt, p
 		for _, u in ipairs(units) do if u.remainingRt <= 0 then table.insert(ready, u) end end
 		table.sort(ready, function(a,b) return a.id < b.id end)
 		for _, u in ipairs(ready) do
-			table.insert(result, { id = u.id, name = u.name, side = u.side, rt = 0, isEvent = u.isEvent, isRound = false, isActive = false })
+			table.insert(result, { id = u.id, name = u.name, side = u.side, rt = 0, isEvent = u.isEvent, isRound = false, isActive = false, channeledSkillIcon = u.channeledSkillIcon, casterSide = u.casterSide })
 			u.remainingRt = u.isEvent and 99999 or 450
 			if #result >= count then break end
 		end
@@ -708,6 +712,8 @@ local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEven
 				baseId = string.sub(e.id, 1, -4)
 				enriched.casterId = baseId
 				enriched.casterName = unitData[baseId] and unitData[baseId].name or nil
+				enriched.casterSide = (unitData[baseId] and unitData[baseId].side) or e.casterSide
+				enriched.channeledSkillIcon = e.channeledSkillIcon
 			end
 			if unitData[baseId] then
 				enriched.tileX = unitData[baseId].tileX
@@ -907,6 +913,7 @@ local function getTilePart(bx, by)
 	local name = string.format("Tile_%02d_%02d", tx, ty)
 	return mapFolder:FindFirstChild(name)
 end
+
 
 local function getTileUnderMouse()
 	-- Click-pads first: thin invisible pads coincident with tile highlights.

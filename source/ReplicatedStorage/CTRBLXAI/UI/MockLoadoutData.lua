@@ -499,6 +499,47 @@ function MockLoadoutData.GetDoctrineChoices(doctrineId)
 	return MockLoadoutData.DoctrineSkillChoices[doctrineId] or {}
 end
 
+-- Full list of doctrines the player can swap to (from local DoctrineData). Each
+-- entry: { id, name, identity, icon }. Used by the Equipment-tab Doctrine slot
+-- picker. Doctrines are NOT item-inventory entries, so they cannot come through
+-- GetFilteredItems -- that was the bug (empty doctrine 'inventory').
+function MockLoadoutData.GetAllDoctrines()
+	local out = {}
+	for docId, doc in pairs(DoctrineDataModule) do
+		if type(doc) == "table" and doc.name then
+			table.insert(out, {
+				id = docId, name = doc.name,
+				identity = doc.identity or "",
+				icon = doc.icon or "[D]",
+			})
+		end
+	end
+	table.sort(out, function(a, b) return a.id < b.id end)
+	return out
+end
+
+-- Swap a unit's doctrine via the authoritative server RequestDoctrineChange,
+-- then refresh skill data so the new doctrine + its default skill are reflected.
+function MockLoadoutData.ServerChangeDoctrine(unitId, doctrineId)
+	if MockLoadoutData._useServerData then
+		local ok, result = pcall(function()
+			return BattleEvents.RequestDoctrineChange:InvokeServer(unitId, doctrineId)
+		end)
+		if ok and type(result) == "table" and result.ok then
+			if MockLoadoutData.ServerDoctrineId then
+				MockLoadoutData.ServerDoctrineId[unitId] = doctrineId
+			end
+			MockLoadoutData.LoadSkillData(unitId)
+			return true
+		end
+		warn("[LoadoutData] ServerChangeDoctrine failed:", result and result.reason or "unknown")
+		return false
+	end
+	-- Mock fallback: just record the id locally.
+	if MockLoadoutData.ServerDoctrineId then MockLoadoutData.ServerDoctrineId[unitId] = doctrineId end
+	return true
+end
+
 function MockLoadoutData.GetUnitDoctrineId(unitId)
 	if MockLoadoutData.ServerDoctrineId and MockLoadoutData.ServerDoctrineId[unitId] then
 		return MockLoadoutData.ServerDoctrineId[unitId]
