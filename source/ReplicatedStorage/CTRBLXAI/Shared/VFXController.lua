@@ -26,6 +26,43 @@ vfxFolder.Name = "VFX"
 vfxFolder.Parent = workspace
 
 --------------------------------------------------
+-- PRE-MADE VFX ASSETS (ReplicatedStorage/CTRBLXAI/VFX) + REGISTRY
+-- The asset LIBRARY (ParticleEmitters/Models authored in Studio) lives in
+-- ReplicatedStorage so the client can clone it (NET-001: client owns visuals).
+-- vfxAssetFolder is resolved lazily so require order doesn't matter.
+--------------------------------------------------
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local vfxAssetFolder = nil  -- resolved on first use
+local VFXRegistry = nil
+local SkillData = nil
+local _regOk = pcall(function()
+	VFXRegistry = require(
+		ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+			:WaitForChild("Shared", 10):WaitForChild("VFXRegistry", 10)
+	)
+end)
+if not _regOk then warn("[VFX] VFXRegistry require failed — pre-made VFX disabled") end
+-- SkillData lives in ReplicatedStorage/Content; resolve it directly.
+pcall(function()
+	local content = ReplicatedStorage:FindFirstChild("Content")
+	if content then
+		local sd = content:FindFirstChild("SkillData")
+		if sd then SkillData = require(sd) end
+	end
+end)
+
+local function getAssetFolder()
+	if vfxAssetFolder and vfxAssetFolder.Parent then return vfxAssetFolder end
+	local ct = ReplicatedStorage:FindFirstChild("CTRBLXAI")
+	if ct then vfxAssetFolder = ct:FindFirstChild("VFX") end
+	if not vfxAssetFolder then
+		-- Fallback: a top-level ReplicatedStorage/VFX folder.
+		vfxAssetFolder = ReplicatedStorage:FindFirstChild("VFX")
+	end
+	return vfxAssetFolder
+end
+
+--------------------------------------------------
 -- HIGHLIGHT STATE
 --------------------------------------------------
 local activeHL  = nil    -- { unitId, instance } (one at a time)
@@ -515,6 +552,123 @@ function VFXController.MeleeSlash(fromPos, toPos, element)
 	TweenService:Create(proj, tweenInfo, { Position = targetPos }):Play()
 
 	Debris:AddItem(proj, 2)
+end
+
+--------------------------------------------------
+-- PRE-MADE ASSET PLAYBACK
+-- PlayAsset clones a named asset from the VFX library, positions it at a world
+-- point, plays it (enabling any ParticleEmitters), and auto-cleans up. Handles
+-- both ParticleEmitter-bearing assets and Model assets. NET-004 (props before
+-- parent), MEM-002 (Destroy), AP-016 (client-side particles).
+--------------------------------------------------
+
+-- Collect every ParticleEmitter in an instance tree.
+local function collectEmitters(root)
+	local out = {}
+	if root:IsA("ParticleEmitter") then table.insert(out, root) end
+	for _, d in ipairs(root:GetDescendants()) do
+		if d:IsA("ParticleEmitter") then table.insert(out, d) end
+	end
+	return out
+end
+
+-- Anchor a template at a world position. Returns the parented clone (or nil).
+local function spawnAsset(assetName, position, lifetime)
+	if type(assetName) ~= "string" or assetName == "" then return nil end
+	local folder = getAssetFolder()
+	if not folder then return nil end
+	local template = folder:FindFirstChild(assetName)
+	if not template then
+		-- Graceful miss: caller keeps its programmatic fallback.
+		return nil
+	end
+	lifetime = lifetime or 2.0
+
+	local clone = template:Clone()
+
+	-- Position: Model via PivotTo; single BasePart via CFrame; ParticleEmitter
+	-- needs a holder Part (emitters can't live bare in workspace usefully).
+	if clone:IsA("Model") then
+		clone.Parent = vfxFolder
+		pcall(function() clone:PivotTo(CFrame.new(position)) end)
+	elseif clone:IsA("BasePart") then
+		clone.Anchored = true
+		clone.CanCollide = false
+		clone.CanQuery = false
+		clone.CanTouch = false
+		clone.CFrame = CFrame.new(position)
+		clone.Parent = vfxFolder
+	elseif clone:IsA("ParticleEmitter") or clone:IsA("Attachment") then
+		local holder = Instance.new("Part")
+		holder.Name = "VFX_" .. assetName
+		holder.Anchored = true
+		holder.CanCollide = false
+		holder.CanQuery = false
+		holder.CanTouch = false
+		holder.Transparency = 1
+		holder.Size = Vector3.new(1, 1, 1)
+		holder.CFrame = CFrame.new(position)
+		clone.Parent = holder  -- before holder is parented (NET-004)
+		holder.Parent = vfxFolder
+		clone = holder
+	else
+		clone.Parent = vfxFolder
+	end
+
+	-- Emit: enable emitters; one-shot a burst so short effects actually show.
+	local emitters = collectEmitters(clone)
+	for _, em in ipairs(emitters) do
+		em.Enabled = true
+	end
+	-- Stop steady emission partway so it fades before cleanup (avoids a hard cut).
+	task.delay(math.max(0.1, lifetime * 0.5), function()
+		for _, em in ipairs(emitters) do
+			if em and em.Parent then em.Enabled = false end
+		end
+	end)
+
+	Debris:AddItem(clone, lifetime)  -- MEM-002 equivalent: scheduled Destroy
+	return clone
+end
+
+-- Public: play a named asset at a position (returns clone or nil on miss).
+function VFXController.PlayAsset(assetName, position, lifetime)
+	return spawnAsset(assetName, position, lifetime)
+end
+
+-- Resolve the VFX asset name for a skill, using the registry + SkillData tags.
+-- Order: BySkillId → ByElement(tag) → ByProperty(properties) → DefaultSkill.
+function VFXController.ResolveSkill(skillId)
+	if not VFXRegistry then return nil end
+	if skillId and VFXRegistry.BySkillId[skillId] then
+		return VFXRegistry.BySkillId[skillId]
+	end
+	local def = skillId and SkillData and SkillData[skillId] or nil
+	if def then
+		if def.tags then
+			for _, tag in ipairs(def.tags) do
+				if VFXRegistry.ByElement[tag] then return VFXRegistry.ByElement[tag] end
+			end
+		end
+		if def.properties then
+			local props = string.lower(tostring(def.properties))
+			for key, asset in pairs(VFXRegistry.ByProperty) do
+				if string.find(props, key, 1, true) then return asset end
+			end
+		end
+	end
+	return VFXRegistry.DefaultSkill
+end
+
+-- Resolve the VFX asset name for a status id.
+function VFXController.ResolveStatus(statusId)
+	if not VFXRegistry or not statusId then return nil end
+	return VFXRegistry.ByStatus[statusId]
+end
+
+-- Expose the registry so callers can read Melee/Ranged/KO/etc. fallbacks.
+function VFXController.GetRegistry()
+	return VFXRegistry
 end
 
 return VFXController

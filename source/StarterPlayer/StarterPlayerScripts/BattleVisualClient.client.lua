@@ -1855,14 +1855,35 @@ BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
 			if at then showFloatingText(at.part.Position, data.skillName, Theme.Colors.TextGold, 1.1) end
 		end
 		showDamageText(tt.part.Position, data.damage, false)
-		-- VFX: attack visual (beam or slash) + impact particles
+		-- VFX: prefer a pre-made asset resolved from the skill (element/tags) or the
+		-- melee/ranged fallback; keep the programmatic beam/slash if no asset maps.
 		local _actor = unitTokens[data.actorId]
-		if _actor then
+		if _actor and VFXController then
 			local dist = (_actor.part.Position - tt.part.Position).Magnitude
-			if dist > 7.5 then
-				if VFXController then pcall(VFXController.RangedBeam, _actor.part.Position, tt.part.Position) end
-			else
-				if VFXController then pcall(VFXController.MeleeSlash, _actor.part.Position, tt.part.Position) end
+			local isRanged = dist > 7.5
+			local assetName = nil
+			if data.skillId and VFXController.ResolveSkill then
+				assetName = VFXController.ResolveSkill(data.skillId)
+			end
+			if not assetName then
+				local reg = VFXController.GetRegistry and VFXController.GetRegistry() or nil
+				if reg then assetName = isRanged and reg.Ranged or reg.Melee end
+			end
+			local played = nil
+			if assetName and VFXController.PlayAsset then
+				-- For ranged, play at target impact point; melee also reads well there.
+				-- Capture the RETURN (clone or nil), not just pcall's ok flag — a graceful
+				-- miss returns nil and must fall through to the programmatic effect.
+				local ok, clone = pcall(VFXController.PlayAsset, assetName, tt.part.Position, 1.5)
+				played = ok and clone or nil
+			end
+			if not played then
+				-- Programmatic fallback (original behaviour).
+				if isRanged then
+					pcall(VFXController.RangedBeam, _actor.part.Position, tt.part.Position)
+				else
+					pcall(VFXController.MeleeSlash, _actor.part.Position, tt.part.Position)
+				end
 			end
 		end
 		if VFXController then pcall(VFXController.DamageImpact, tt.part.Position) end
@@ -1923,8 +1944,16 @@ BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
 		end
 		if data.skillName then local at = unitTokens[data.actorId]; if at then showFloatingText(at.part.Position, data.skillName, Theme.Colors.Success, 1.1) end end
 		showDamageText(tt.part.Position, data.amount, true)
-		-- VFX: rising green heal particles
-		if VFXController then pcall(VFXController.HealEffect, tt.part.Position) end
+		-- VFX: pre-made heal asset if mapped, else programmatic heal particles.
+		if VFXController then
+			local reg = VFXController.GetRegistry and VFXController.GetRegistry() or nil
+			local healAsset = reg and reg.Heal or nil
+			local ok, clone = false, nil
+			if healAsset and VFXController.PlayAsset then
+				ok, clone = pcall(VFXController.PlayAsset, healAsset, tt.part.Position, 1.5)
+			end
+			if not (ok and clone) then pcall(VFXController.HealEffect, tt.part.Position) end
+		end
 	end
 	local actorName = unitData[data.actorId] and unitData[data.actorId].name or "?"
 	local targetName = unitData[data.targetId] and unitData[data.targetId].name or "?"
@@ -1953,8 +1982,15 @@ BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
 	local t = unitTokens[data.unitId]
 	if t then
 		showStatusText(t.part.Position, "+"..data.statusId, Theme.GetStatusColor(data.statusId))
-		-- VFX: colored status burst
-		if VFXController then pcall(VFXController.StatusBurst, t.part.Position, data.statusId) end
+		-- VFX: pre-made status asset if mapped, else programmatic colored burst.
+		if VFXController then
+			local statusAsset = VFXController.ResolveStatus and VFXController.ResolveStatus(data.statusId) or nil
+			local ok, clone = false, nil
+			if statusAsset and VFXController.PlayAsset then
+				ok, clone = pcall(VFXController.PlayAsset, statusAsset, t.part.Position, 1.6)
+			end
+			if not (ok and clone) then pcall(VFXController.StatusBurst, t.part.Position, data.statusId) end
+		end
 	end
 end)
 
@@ -3362,10 +3398,6 @@ BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
 	local ARROW_LEN    = 2.2
 	local ARROW_WID    = 1.4
 
-	-- Gold highlight for the CURRENT facing's outline. All choice arrows share the
-	-- same green arrow art now (green tints poorly), so the current one is set apart
-	-- by a thicker gold stroke rather than a fill color.
-	local currentColor = (Theme.Colors and (Theme.Colors.TileSelected or Theme.Colors.Warning)) or Color3.fromRGB(255, 220, 60)
 
 	local baseWX  = MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE
 	local baseWZ  = MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE
@@ -3437,14 +3469,9 @@ BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
 		-- Same rotation convention as the overhead indicator (+270 for the
 		-- down-pointing green art) so each choice arrow points along its world dir.
 		lbl.Rotation               = math.deg(math.atan2(vec.dx, -vec.dy)) + 270
-		-- Outline so the green arrow reads against ANY terrain. CURRENT facing gets a
-		-- thicker GOLD outline to stay distinguishable while all arrows share green art.
-		local isCurrent = (dir == data.currentFacing)
-		local outline = Instance.new("UIStroke")
-		outline.Thickness    = isCurrent and 4 or 2
-		outline.Color        = isCurrent and currentColor or Color3.new(0, 0, 0)
-		outline.Transparency = 0.05
-		outline.Parent       = lbl
+		-- No UIStroke: a stroke on the full-bleed ImageLabel traced the label's
+		-- rectangular border (visible squares around each arrow), not the arrow shape.
+		-- The green arrows read fine against terrain on their own.
 		lbl.Parent                 = sg
 
 		local cd = Instance.new("ClickDetector")

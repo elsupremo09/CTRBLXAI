@@ -2861,7 +2861,7 @@ local function broadcastActions(actions, activeUnit)
 			if target then
 				if action.healing and action.healing > 0 then
 					BattleVisualBroadcaster.HealingApplied(
-						action.unit, target, action.healing, action.skillName
+						action.unit, target, action.healing, action.skillName, action.skillId
 					)
 				elseif action.isChanneling then
 					-- Channel commit visual — no damage yet
@@ -2873,7 +2873,7 @@ local function broadcastActions(actions, activeUnit)
 						rtDelay       = action.rtDelay,
 					}
 					BattleVisualBroadcaster.UnitActed(
-						action.unit, target, outcome, action.skillName
+						action.unit, target, outcome, action.skillName, action.skillId
 					)
 
 					if not target.isAlive then
@@ -3048,6 +3048,7 @@ local function runAiTurn(unit)
 				oldTileY       = oldTileY,
 				target         = targetUnit,
 				skillName      = skillName,
+				skillId        = (selection and selection.skillId) or nil,  -- for client VFX lookup
 				damage         = damage,
 				healing        = healing,
 				statusApplied  = newStatus,
