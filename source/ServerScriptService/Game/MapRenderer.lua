@@ -54,6 +54,17 @@ local SURFACEGUI_TERRAINS = {
 	["Monolith (Two-way)"] = true,
 }
 
+-- VOXEL KEEP-SET (user decision, Sep 24 2026): only these terrains stay 3D voxel
+-- terrain in the default battle render — Grassland (3D grass blades) and both
+-- waters (animated). EVERYTHING ELSE renders as a per-tile Part with a SurfaceGui
+-- terrain texture (crisp per-tile look, stud-free via SurfaceGui). This inverts the
+-- old default (which voxelised all natural terrain).
+local VOXEL_KEEP = {
+	Grassland        = true,
+	["Deep Water"]    = true,
+	["Shallow Water"] = true,
+}
+
 -- Voxel material per natural terrain (17 entries, each unique).
 local TERRAIN_VOXEL = {
 	Clear              = Enum.Material.Ground,       -- brown earth
@@ -309,18 +320,28 @@ local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap
 	end
 
 	-- APPLY TERRAIN VISUALS (TERRAIN view mode)
+	-- Hybrid default: VOXEL_KEEP terrains (Grassland + both Waters) render as 3D
+	-- voxel terrain; EVERY other terrain renders as a per-tile Part with a SurfaceGui
+	-- terrain texture (stud-free). Man-made terrains already had textures — they now
+	-- fall into the same per-tile path as the rest.
 	if viewMode == "TERRAIN" then
-		if SURFACEGUI_TERRAINS[terrainId] then
-			-- Man-made/magical: visible tile Part with custom SurfaceGui texture.
-			TerrainTextures.Apply(tile, terrainId)
-			tile.Color = Color3.fromRGB(20, 20, 20)
-		else
-			-- Natural: fill 3D voxel terrain, hide tile Part.
+		if VOXEL_KEEP[terrainId] then
+			-- Voxel keep-set: fill 3D voxel terrain, hide the tile Part.
 			if TERRAIN_VOXEL[terrainId] then
 				local topY = position.Y + tileHeight / 2
 				fillTerrainVoxelColumn(position.X, topY, position.Z, TILE_SIZE, TILE_SIZE, terrainId)
 			end
 			tile.Transparency = 1
+		else
+			-- Everything else: per-tile Part with a SurfaceGui terrain texture.
+			if TerrainTextures and TerrainTextures.Assets and TerrainTextures.Assets[terrainId] then
+				TerrainTextures.Apply(tile, terrainId)
+				tile.Color = Color3.fromRGB(20, 20, 20)
+			else
+				-- No texture for this terrain: show the Part with its terrain material/color.
+				tile.Material = TERRAIN_VOXEL[terrainId] or TILE_MATERIAL
+				tile.Color = getTerrainColor(terrainId)
+			end
 		end
 	end
 
@@ -523,7 +544,11 @@ function MapRenderer.Render(generatedMap, viewMode)
 			end
 		end
 	end
-	createGridOverlay(mapWidth, mapHeight, maxElev, offsetX, offsetZ, mapFolder, generatedMap)
+	-- Grid lines are now PAINTED on per-tile top-face SurfaceGuis (see
+	-- TerrainTextures.Apply GridEdge) so they follow tile elevation and don't float.
+	-- Voxel tiles (grass/water) intentionally have no grid. The old floating-Part
+	-- overlay is disabled (functions kept for reference / possible dev use).
+	-- createGridOverlay(mapWidth, mapHeight, maxElev, offsetX, offsetZ, mapFolder, generatedMap)
 
 	print(string.format(
 		"[MapRenderer] Rendered %dx%d  biome=%s  template=%s  seed=%d  view=%s",
@@ -559,30 +584,33 @@ function MapRenderer.SetViewMode(folder, mode)
 		if child:IsA("BasePart") and child:GetAttribute("IsTemplateTile") then
 			if mode == "TERRAIN" then
 				local terrainId = child:GetAttribute("Terrain")
-				if terrainId and SURFACEGUI_TERRAINS[terrainId] then
-					-- Man-made/magical: show tile + apply texture.
-					child.Transparency = 0
-					child.Material = TILE_MATERIAL
-					child.Color = Color3.fromRGB(20, 20, 20)
-					if not child:FindFirstChild("TerrainTexture") then
-						TerrainTextures.Apply(child, terrainId)
-					end
-					-- Show existing SurfaceGuis.
-					for _, gui in ipairs(child:GetChildren()) do
-						if gui:IsA("SurfaceGui") then gui.Enabled = true end
-					end
-				else
-					-- Natural: fill voxels, hide tile.
-					if terrainId then
-						if TERRAIN_VOXEL[terrainId] then
-							local _topY = child.Position.Y + child.Size.Y / 2
-							fillTerrainVoxelColumn(child.Position.X, _topY, child.Position.Z, child.Size.X, child.Size.Z, terrainId)
-						end
+				if terrainId and VOXEL_KEEP[terrainId] then
+					-- Voxel keep-set: fill voxels, hide tile, hide any prior SurfaceGuis.
+					if TERRAIN_VOXEL[terrainId] then
+						local _topY = child.Position.Y + child.Size.Y / 2
+						fillTerrainVoxelColumn(child.Position.X, _topY, child.Position.Z, child.Size.X, child.Size.Z, terrainId)
 					end
 					child.Transparency = 1
-					-- Hide any SurfaceGuis from prior mode.
 					for _, gui in ipairs(child:GetChildren()) do
 						if gui:IsA("SurfaceGui") then gui.Enabled = false end
+					end
+				else
+					-- Everything else: per-tile Part with a SurfaceGui terrain texture.
+					child.Transparency = 0
+					if terrainId and TerrainTextures and TerrainTextures.Assets and TerrainTextures.Assets[terrainId] then
+						child.Material = TILE_MATERIAL
+						child.Color = Color3.fromRGB(20, 20, 20)
+						if not child:FindFirstChild("TerrainTexture") then
+							TerrainTextures.Apply(child, terrainId)
+						end
+						for _, gui in ipairs(child:GetChildren()) do
+							if gui:IsA("SurfaceGui") then gui.Enabled = true end
+						end
+					else
+						-- No texture: show Part with its terrain material/color.
+						child.Material = TERRAIN_VOXEL[terrainId] or TILE_MATERIAL
+						local tc = child:GetAttribute("TerrainColor")
+						if typeof(tc) == "Color3" then child.Color = tc end
 					end
 				end
 
@@ -603,6 +631,65 @@ function MapRenderer.SetViewMode(folder, mode)
 
 	folder:SetAttribute("InitialViewMode", mode)
 	print("[MapRenderer] View mode: " .. mode)
+end
+
+--- Terrain-render switch: PER-TILE mode.
+--- Clears the voxel terrain (server-only op) and shows the natural tile Parts
+--- with per-terrain Material + color, so the tile-Part surface is actually
+--- VISIBLE (not buried under voxels). Man-made/SurfaceGui tiles keep their
+--- texture. This is the server half of the Per-tile terrain-render switch —
+--- the client cannot clear voxels itself (workspace.Terrain is server-only).
+--- @param folder Folder — The TemplateViewerMap folder.
+function MapRenderer.ClearVoxelsForPerTile(folder)
+	if not folder then return end
+	workspace.Terrain:Clear()
+	for _, child in ipairs(folder:GetChildren()) do
+		if child:IsA("BasePart") and child:GetAttribute("IsTemplateTile") then
+			local terrainId = child:GetAttribute("Terrain")
+			if terrainId and SURFACEGUI_TERRAINS[terrainId] then
+				-- Man-made/magical tiles keep their SurfaceGui texture.
+				child.Transparency = 0
+				child.Material = TILE_MATERIAL
+				child.Color = Color3.fromRGB(20, 20, 20)
+				if not child:FindFirstChild("TerrainTexture") then
+					TerrainTextures.Apply(child, terrainId)
+				end
+				for _, gui in ipairs(child:GetChildren()) do
+					if gui:IsA("SurfaceGui") then gui.Enabled = true end
+				end
+			else
+				-- Natural tiles: show the Part surface with its terrain color/material.
+				child.Transparency = 0
+				-- Reuse the same per-terrain material the voxels use, so the Part surface
+				-- reads like the natural terrain (Grass/Rock/Sand/...), not flat plastic.
+				child.Material = TERRAIN_VOXEL[terrainId] or TILE_MATERIAL
+				local tc = child:GetAttribute("TerrainColor")
+				if typeof(tc) == "Color3" then child.Color = tc end
+			end
+		end
+	end
+	folder:SetAttribute("TerrainRenderMode", "PerTile")
+	print("[MapRenderer] Terrain render: PER-TILE (voxels cleared, tile Parts shown)")
+end
+
+--- Terrain-render switch: MESH mode server half.
+--- Clears voxel terrain (server-only) AND hides ALL tile Parts, because in Mesh
+--- mode the client-built heightmap mesh IS the visible ground surface — the tile
+--- Parts must not show (they caused studs/shine/clutter under the mesh). SurfaceGui
+--- man-made tiles are also hidden here (their texture would float over the mesh).
+function MapRenderer.ClearVoxelsHideTiles(folder)
+	if not folder then return end
+	workspace.Terrain:Clear()
+	for _, child in ipairs(folder:GetChildren()) do
+		if child:IsA("BasePart") and child:GetAttribute("IsTemplateTile") then
+			child.Transparency = 1
+			for _, gui in ipairs(child:GetChildren()) do
+				if gui:IsA("SurfaceGui") then gui.Enabled = false end
+			end
+		end
+	end
+	folder:SetAttribute("TerrainRenderMode", "Mesh")
+	print("[MapRenderer] Terrain render: MESH (voxels cleared, tile Parts hidden)")
 end
 
 return MapRenderer

@@ -83,7 +83,13 @@ local function ensureRayParams(): RaycastParams
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
 	local excludes: {Instance} = {}
-	for _, name in { "TemplateViewerMap", "UnitModels", "BattleVisuals", "DeploymentParts", "GridOverlay", "TileHighlights" } do
+	-- Surface raycast must HIT the real ground: per-tile tile Parts (which live in
+	-- TemplateViewerMap) OR the voxel Terrain (grass/water). So we must NOT exclude
+	-- TemplateViewerMap anymore — after the per-tile terrain switch, excluding it
+	-- meant the ray hit nothing on per-tile tiles (voxels cleared) → surfaceY=0 →
+	-- highlight placed underground/invisible. We still exclude the transient visual
+	-- folders so the ray never lands on a highlight, unit, or deployment marker.
+	for _, name in { "UnitModels", "BattleVisuals", "DeploymentParts", "GridOverlay", "TileHighlights" } do
 		local f = workspace:FindFirstChild(name)
 		if f then table.insert(excludes, f) end
 	end
