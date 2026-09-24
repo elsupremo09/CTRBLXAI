@@ -192,13 +192,14 @@ function BattleVisualBroadcaster.UnitMoved(unit)
 	task.wait(PACE.Move)
 end
 
-function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName)
+function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, skillId)
 	BattleEvents.UnitActed:FireAllClients({
 		actorId     = actor.id,
 		actionType  = skillName and "Skill" or "Attack",
 		targetId    = target.id,
 		damage      = outcome.finalDamage,
 		skillName   = skillName,
+		skillId     = skillId,  -- client VFX registry lookup (element/tags)
 		targetHp    = target.currentHp,
 		targetMaxHp = target.maxHp,
 		statusApplied = outcome.statusApplied or nil,
@@ -230,7 +231,7 @@ function BattleVisualBroadcaster.DotDamage(unit, statusId, damage)
 end
 
 -- Slice 3: broadcast healing
-function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName)
+function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName, skillId)
 	BattleEvents.HealingApplied:FireAllClients({
 		actorId     = actor.id,
 		targetId    = target.id,
@@ -238,6 +239,7 @@ function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName
 		targetHp    = target.currentHp,
 		targetMaxHp = target.maxHp,
 		skillName   = skillName,
+		skillId     = skillId,  -- client VFX registry lookup
 	})
 	task.wait(PACE.Healing)
 end
