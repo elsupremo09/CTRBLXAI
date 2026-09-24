@@ -105,9 +105,18 @@ end
 --   3. Death
 --------------------------------------------------
 
-function BattleCoordinator.StartChanneling(unit, channelingData)
+function BattleCoordinator.StartChanneling(state, unit, channelingData)
 	unit.isChanneling   = true
 	unit.channelingData = channelingData
+	-- TWO-TIMER MODEL: the channel is an INDEPENDENT countdown from the caster's RT.
+	-- channelRt   = duration of the channel (for display / remaining calc)
+	-- channelResolveCt = absolute global-CT deadline, FIXED at commit. Haste/Slow/RT
+	--   manipulation on the caster must NOT move this (it only affects unit.remainingRt).
+	-- The caster's remainingRt is set by the NORMAL EndTurn (base + skill RT cost) in
+	-- CommandService — NOT here — so the caster keeps a real, independent RT.
+	local channelRt     = channelingData and channelingData.channelRt or 0
+	unit.channelRt      = channelRt
+	unit.channelResolveCt = (state and state.ct or 0) + channelRt
 	print(string.format(
 		"[BattleCoordinator] %s begins CHANNELING [%s] (target: %s)",
 		unit.name,
@@ -123,6 +132,8 @@ function BattleCoordinator.InterruptChanneling(unit, reason)
 		or "unknown"
 	unit.isChanneling   = false
 	unit.channelingData = nil
+	unit.channelRt      = nil
+	unit.channelResolveCt = nil
 	print(string.format(
 		"[BattleCoordinator] %s channeling INTERRUPTED [%s] — %s (MP not spent)",
 		unit.name, skillName, reason or "unknown"
@@ -185,25 +196,64 @@ local function resolveReadyTie(a, b)
 	return a.stableOrderKey < b.stableOrderKey
 end
 
+-- TWO-TIMER MODEL: the clock advances to the NEAREST of two kinds of events:
+--   (1) a unit's RT reaching 0 (its turn), and
+--   (2) a channeling unit's channelResolveCt (its skill fires) — an absolute
+--       global-CT deadline independent of that unit's RT.
+-- A caster whose RT has already hit <=0 while its channel is still pending is
+-- FROZEN: skipped for turn selection until its channel resolves/disrupts, then it
+-- becomes immediately ready. Returns either a ready unit, or a channel-resolution
+-- signal { channelResolve = <unit> } when a channel deadline is the nearest event.
 local function advanceToNextReady(state)
 	local alive = getAliveUnits(state)
 	if #alive == 0 then return nil, 0 end
 
+	-- Find the nearest event: min over (unit RT) and (channel remaining = resolveCt - ct).
 	local minRt = math.huge
 	for _, unit in ipairs(alive) do
-		if unit.remainingRt < minRt then
+		-- A frozen caster (RT<=0, still channeling) does NOT contribute an RT event.
+		local frozen = unit.isChanneling and unit.remainingRt <= 0
+		if not frozen and unit.remainingRt < minRt then
 			minRt = unit.remainingRt
 		end
+		if unit.isChanneling and unit.channelResolveCt then
+			local chRemain = unit.channelResolveCt - state.ct
+			if chRemain < minRt then minRt = chRemain end
+		end
 	end
+	if minRt == math.huge then return nil, 0 end
+	if minRt < 0 then minRt = 0 end
 
 	state.ct = state.ct + minRt
 	for _, unit in ipairs(alive) do
-		unit.remainingRt = unit.remainingRt - minRt
+		-- Frozen casters do not tick RT (they wait at 0 for the channel).
+		local frozen = unit.isChanneling and unit.remainingRt <= 0
+		if not frozen then
+			unit.remainingRt = unit.remainingRt - minRt
+		end
 	end
 
+	-- Channel resolution takes priority at its deadline: if any channeling unit's
+	-- resolveCt is now reached, fire that channel first (skill resolves independent
+	-- of whose RT is up). Pick the earliest-deadline channel if several coincide.
+	local resolveUnit = nil
+	for _, unit in ipairs(alive) do
+		if unit.isChanneling and unit.channelResolveCt and state.ct >= unit.channelResolveCt then
+			if not resolveUnit or unit.channelResolveCt < resolveUnit.channelResolveCt then
+				resolveUnit = unit
+			end
+		end
+	end
+	if resolveUnit then
+		return { channelResolve = resolveUnit }, minRt
+	end
+
+	-- Otherwise pick a ready unit by RT. Frozen casters (RT<=0 mid-channel) are
+	-- excluded — they cannot take a turn until their channel resolves.
 	local ready = {}
 	for _, unit in ipairs(alive) do
-		if unit.remainingRt <= 0 then
+		local frozen = unit.isChanneling and unit.remainingRt <= 0
+		if unit.remainingRt <= 0 and not frozen then
 			table.insert(ready, unit)
 		end
 	end
@@ -299,6 +349,17 @@ function BattleCoordinator.AdvanceClock(state)
 		_tileEffectService.ProcessCtTick(ctPassed, state.units)
 	end
 
+	-- TWO-TIMER MODEL: channel-resolution signal. The clock reached a channeling
+	-- unit's fixed deadline. Fire the skill OUTSIDE the normal turn flow (it resolves
+	-- regardless of whose RT is up). Enter a dedicated phase; the main loop calls
+	-- ResolveChannelDeadline. The caster takes its turn immediately ONLY if its own
+	-- RT has already hit 0 (frozen) — handled after resolution.
+	if type(nextUnit) == "table" and nextUnit.channelResolve then
+		state.phase = "ChannelResolve"
+		state.channelResolveUnit = nextUnit.channelResolve
+		return nextUnit  -- signal table; main loop detects .channelResolve
+	end
+
 	state.activeUnit      = nextUnit
 	state.phase           = "TurnOpen"
 	state.turnRtAccrued   = 0
@@ -330,6 +391,54 @@ function BattleCoordinator.AdvanceClock(state)
 	))
 
 	return nextUnit
+end
+
+-- TWO-TIMER MODEL: called by the main loop when AdvanceClock returned a
+-- { channelResolve = unit } signal. The caller (Main.server) fires the skill via
+-- CommandService.ActivateChanneledSkill BEFORE calling this. This function then
+-- applies the resolve-timing rule:
+--   * If the caster's own RT has already hit <=0 (it was frozen waiting), it takes
+--     its turn IMMEDIATELY: we open its turn here and return it.
+--   * Otherwise the caster keeps its remaining RT and re-enters normal rotation;
+--     we return nil and go back to Waiting.
+-- ActivateChanneledSkill has already cleared isChanneling/channelResolveCt.
+function BattleCoordinator.ResolveChannelDeadline(state)
+	assert(state.phase == "ChannelResolve", "ResolveChannelDeadline: wrong phase " .. tostring(state.phase))
+	local unit = state.channelResolveUnit
+	state.channelResolveUnit = nil
+
+	if not unit or not unit.isAlive then
+		state.phase = "Waiting"
+		return nil
+	end
+
+	-- Immediate turn ONLY if the caster's own RT already reached 0 while frozen.
+	if unit.remainingRt <= 0 then
+		state.activeUnit      = unit
+		state.phase           = "TurnOpen"
+		state.turnRtAccrued   = 0
+		state.turnActionTaken = false
+		unit.guardUsedThisTurn = false
+		local dotEvents = StatusService.ProcessStartOfTurn(unit)
+		state.dotEvents = dotEvents
+		UnitSchema.RefreshAp(unit)
+		unit.currentAp = AP_PER_TURN_STANDARD
+		DoctrinePassiveService.OnTurnStart(unit)
+		ArmorPassiveService.OnTurnStart(unit)
+		print(string.format(
+			"[BattleCoordinator] CT:%d | Channel resolved -> %s takes immediate turn (was frozen at 0 RT)",
+			state.ct, unit.name
+		))
+		return unit
+	end
+
+	-- Caster still has RT remaining: back to normal rotation, no immediate turn.
+	state.phase = "Waiting"
+	print(string.format(
+		"[BattleCoordinator] CT:%d | Channel resolved -> %s keeps %d RT (normal rotation)",
+		state.ct, unit.name, unit.remainingRt
+	))
+	return nil
 end
 
 function BattleCoordinator.AccrueRt(state, rtCost)

@@ -378,6 +378,8 @@ function CommandService.ActivateChanneledSkill(state, unit)
 	-- Clear channeling state first (regardless of outcome)
 	unit.isChanneling   = false
 	unit.channelingData = nil
+	unit.channelRt      = nil
+	unit.channelResolveCt = nil
 
 	-- Check if target is still alive (for offensive/healing skills)
 	if target and not target.isAlive then
@@ -400,17 +402,11 @@ function CommandService.ActivateChanneledSkill(state, unit)
 	-- SPEND MP now
 	UnitSchema.SpendMp(unit, mpCost)
 
-	-- RT cost for the activation itself is minimal (skill already "charged")
-	-- Use rtMult if available, else legacy rtCost, else baseRt × 0.10
-	local activationRt
-	if skillDef.rtMult then
-		activationRt = math.round(GameConstants.CalcEffectiveWt((unit.weaponWt or 10) + (unit.armorWt or 0), (unit.effectiveStats or {}).STR or 10) * skillDef.rtMult)
-	else
-		activationRt = skillDef.rtCost or math.round(
-			StatusService.GetModifiedBaseRt(unit) * 0.10
-		)
-	end
-	BattleCoordinator.AccrueRt(state, activationRt)
+	-- TWO-TIMER MODEL: the caster's RT was ALREADY charged at channel-commit time
+	-- (base + skill RT cost via AccrueRt + EndTurn in ValidateAndCommit). Activation
+	-- now runs in the ChannelResolve phase where NO turn is open, so calling AccrueRt
+	-- here would fail its TurnOpen assert (the crash we hit). No RT is charged at
+	-- activation — the skill was fully paid for on commit.
 
 	-- Resolve the skill
 	local result = {}
@@ -920,16 +916,28 @@ function CommandService.ValidateAndCommit(
 			local dex = actor.effectiveStats and actor.effectiveStats.DEX or 10
 			local channelRt = GameConstants.CalcChannelTime(skillDef.channelTime, dex)
 
-			BattleCoordinator.StartChanneling(actor, {
-				skillDef = skillDef,
-				target   = target,
-				mpCost   = mpCost,
+			BattleCoordinator.StartChanneling(state, actor, {
+				skillDef  = skillDef,
+				target    = target,
+				mpCost    = mpCost,
+				channelRt = channelRt,
 			})
 
-			-- Force end turn with channel RT as the wait time
-			-- Use remaining AP to signal "turn is done"
+			-- TWO-TIMER MODEL: the caster ends its turn NORMALLY (base + this skill's RT
+			-- cost), so it keeps a real, independent RT. The channel deadline
+			-- (channelResolveCt) was set in StartChanneling and ticks separately on the
+			-- global clock. Compute the skill RT cost with the SAME formula as the
+			-- non-channel skill path, accrue it, then end the turn normally.
+			local chBaseRtCost
+			if skillDef.rtMult then
+				chBaseRtCost = math.round(GameConstants.CalcEffectiveWt((actor.weaponWt or 10) + (actor.armorWt or 0), (actor.effectiveStats or {}).STR or 10) * skillDef.rtMult)
+			else
+				chBaseRtCost = skillDef.rtCost or math.round(StatusService.GetModifiedBaseRt(actor) * 0.10)
+			end
+			chBaseRtCost = math.round(chBaseRtCost * StatusService.GetAllRtMultiplier(actor))
 			actor.currentAp = 0
-			BattleCoordinator.EndTurnChanneling(state, channelRt)
+			BattleCoordinator.AccrueRt(state, chBaseRtCost)
+			BattleCoordinator.EndTurn(state)
 
 			print(string.format(
 				"[CommandService] SKILL COMMIT (CHANNEL) [%s] | %s -> %s | Channel RT:%d | MP reserved:%d",
@@ -938,7 +946,7 @@ function CommandService.ValidateAndCommit(
 				channelRt, mpCost
 			))
 
-			return true, nil -- Turn already ended by EndTurnChanneling
+			return true, nil -- Turn already ended normally (two-timer model); channel resolves at its deadline
 		end
 
 		-- INSTANT SKILL: spend MP and resolve immediately

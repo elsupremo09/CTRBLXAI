@@ -1073,6 +1073,51 @@ function BattleHUD.UpdateTimeline(entries)
 		end
 
 
+		-- Channel event: SPLIT portrait — left half = casting unit, right half = skill icon.
+		-- (User-approved Option B visual.) Only when we actually have a skill icon asset.
+		local isSplitChannel = isEvent and type(entry.channeledSkillIcon) == "string"
+			and string.find(entry.channeledSkillIcon, "rbxassetid://") ~= nil
+		if isSplitChannel then
+			portrait.BackgroundTransparency = 1  -- halves draw their own fills
+			-- LEFT half: caster side color + caster initials
+			local leftHalf = Instance.new("Frame")
+			leftHalf.Size = UDim2.new(0.5, 0, 1, 0)
+			leftHalf.Position = UDim2.new(0, 0, 0, 0)
+			leftHalf.BorderSizePixel = 0
+			leftHalf.BackgroundColor3 = Theme.GetSideColor(entry.casterSide or entry.side)
+			leftHalf.BackgroundTransparency = 0.1
+			leftHalf.Parent = portrait
+			local lcorner = Instance.new("UICorner", leftHalf); lcorner.CornerRadius = Theme.CornerRadius.sm
+			local lcInit = Instance.new("TextLabel")
+			lcInit.Size = UDim2.fromScale(1, 1); lcInit.BackgroundTransparency = 1
+			lcInit.Font = Theme.Font.PrimaryBold; lcInit.TextSize = Theme.Text.Small()
+			lcInit.TextColor3 = Theme.Colors.TextPrimary
+			lcInit.Text = string.sub(entry.casterName or "?", 1, 2)
+			lcInit.Parent = leftHalf
+			-- RIGHT half: skill icon image
+			local rightHalf = Instance.new("Frame")
+			rightHalf.Size = UDim2.new(0.5, 0, 1, 0)
+			rightHalf.Position = UDim2.new(0.5, 0, 0, 0)
+			rightHalf.BorderSizePixel = 0
+			rightHalf.BackgroundColor3 = Theme.Colors.EntityHazard
+			rightHalf.BackgroundTransparency = 0.15
+			rightHalf.Parent = portrait
+			local rcorner = Instance.new("UICorner", rightHalf); rcorner.CornerRadius = Theme.CornerRadius.sm
+			local skIco = Instance.new("ImageLabel")
+			skIco.Size = UDim2.fromScale(0.85, 0.85); skIco.Position = UDim2.fromScale(0.075, 0.075)
+			skIco.BackgroundTransparency = 1; skIco.ScaleType = Enum.ScaleType.Fit
+			skIco.Image = entry.channeledSkillIcon
+			skIco.Parent = rightHalf
+			-- Center divider line for a clean split seam
+			local seam = Instance.new("Frame")
+			seam.Size = UDim2.new(0, 1, 1, 0); seam.Position = UDim2.new(0.5, 0, 0, 0)
+			seam.BackgroundColor3 = Color3.new(0, 0, 0); seam.BackgroundTransparency = 0.4
+			seam.BorderSizePixel = 0; seam.Parent = portrait
+			-- Gold outline around the whole split portrait to read as one channeling unit
+			local chStroke = Instance.new("UIStroke", portrait)
+			chStroke.Color = Theme.Colors.TextGold; chStroke.Thickness = 1.5
+		end
+
 		-- Active unit: gold border
 		if isActive then
 			local st = Instance.new("UIStroke", portrait)
@@ -1084,7 +1129,8 @@ function BattleHUD.UpdateTimeline(entries)
 			st.Color = Theme.Colors.TextSecondary; st.Thickness = 1
 		end
 
-		-- Top label: name
+		-- Top label: name (skipped for split channel — halves already show caster + skill)
+		if not isSplitChannel then
 		local nameL = Instance.new("TextLabel")
 		nameL.Size = UDim2.new(1, 0, 0.55, 0)
 		nameL.Position = UDim2.new(0, 0, 0, 1)
@@ -1107,8 +1153,10 @@ function BattleHUD.UpdateTimeline(entries)
 			nameL.TextColor3 = isGhost and Theme.Colors.TextSecondary or Theme.Colors.TextPrimary
 		end
 		nameL.Parent = portrait
+		end
 
-		-- Bottom label
+		-- Bottom label (skipped for split channel)
+		if not isSplitChannel then
 		local bottomL = Instance.new("TextLabel")
 		bottomL.Size = UDim2.new(1, 0, 0.35, 0)
 		bottomL.Position = UDim2.fromScale(0, 0.6)
@@ -1126,6 +1174,7 @@ function BattleHUD.UpdateTimeline(entries)
 			bottomL.Text = entry.rt and tostring(entry.rt) or ""
 		end
 		bottomL.Parent = portrait
+		end
 
 		-- Click handler
 		portrait.MouseButton1Click:Connect(function()
