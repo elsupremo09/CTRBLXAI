@@ -326,19 +326,39 @@ function BattleCoordinator.AdvanceClock(state)
 
 	-- CT-based status tick: decrement durationCt for ALL alive units
 	if ctPassed > 0 then
+		-- Collect units that received Regeneration/Recharge periodic effects so the
+		-- driver (Main) can refresh their client bars. BattleCoordinator has no
+		-- broadcaster handle, so we stash on state — same pattern as state.dotEvents.
+		state.ctStatusUnits = {}
 		for _, unit in ipairs(state.units) do
 			if unit.isAlive then
-				StatusService.ProcessCtTick(unit, ctPassed)
+				-- ProcessCtTick also applies Regeneration (HoT) and Recharge (MoT)
+				-- periodic effects, mutating currentHp/currentMp and returning the
+				-- events so we can refresh the client's bars.
+				local _expired, ctEvents = StatusService.ProcessCtTick(unit, ctPassed)
+				if ctEvents and #ctEvents > 0 then
+					for _, ev in ipairs(ctEvents) do
+						print(string.format("[StatusService] %s %s +%d on %s",
+							ev.statusId, ev.kind, ev.amount, unit.name))
+					end
+					table.insert(state.ctStatusUnits, unit)
+				end
 			end
 		end
 	end
 
 	-- Zombie revive: accumulate CT for KO'd Zombies
 	if ctPassed > 0 then
+		-- BattleCoordinator has no broadcaster handle, so revived Zombies are
+		-- stashed on state.ctStatusUnits and the driver (Main) refreshes their
+		-- client state — same pattern as the Regeneration/Recharge tick above.
+		-- (Was calling BattleVisualBroadcaster.UnitStateChanged directly, which
+		-- is a nil global here and would error when a Zombie actually revived.)
+		state.ctStatusUnits = state.ctStatusUnits or {}
 		for _, unit in ipairs(state.units) do
 			if not unit.isAlive then
 				if RacePassiveService.ProcessZombieRevive(unit, ctPassed) then
-					BattleVisualBroadcaster.UnitStateChanged(unit)
+					table.insert(state.ctStatusUnits, unit)
 				end
 			end
 		end

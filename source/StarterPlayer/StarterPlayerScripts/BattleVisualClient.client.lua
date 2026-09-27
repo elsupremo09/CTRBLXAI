@@ -69,7 +69,10 @@ if not _thlOk then warn("[BVC] TileHighlightManager failed: " .. tostring(TileHL
 
 local TILE_SIZE = 5
 local TILE_BASE_HEIGHT = 0.6
-local ELEVATION_STEP = 2.5
+-- Must match server MapRenderer.ELEVATION_STEP (dev-locked 2026-09-24: 1.2 for the
+-- expanded 1–20 elevation scale). Drives client selection ring, camera focus,
+-- hover tooltips, and ray-miss fallback positioning. Keep in sync with server.
+local ELEVATION_STEP = 1.2
 local MAP_WIDTH, MAP_HEIGHT = 30, 20
 local MAP_OFFSET_X = -75
 local MAP_OFFSET_Z = -50
@@ -138,6 +141,41 @@ end
 
 local unitTokens   = {}
 local unitData     = {}
+
+-- Compute legal push landing tiles along the FIXED away-direction from pusher→target.
+-- Mirrors DisplacementService.ResolvePush interrupt logic: stops at map edge, blocker,
+-- forced-upward elevation, or an occupied tile. Returns array of {tileX,tileY,distance}
+-- for distances 1..maxDist that the target can actually reach (clear tiles only).
+local function computePushLandingTiles(actorX, actorY, targetX, targetY, maxDist)
+	local rawDx, rawDy = targetX - actorX, targetY - actorY
+	local dx, dy = 0, 0
+	if rawDx > 0 then dx = 1 elseif rawDx < 0 then dx = -1 end
+	if rawDy > 0 then dy = 1 elseif rawDy < 0 then dy = -1 end
+	if dx == 0 and dy == 0 then dx = 1 end
+	local tiles = {}
+	local cx, cy = targetX, targetY
+	local curElev = getElevation(cx, cy)
+	for step = 1, math.max(0, maxDist) do
+		local nx, ny = cx + dx, cy + dy
+		-- map bounds
+		if nx < 1 or nx > MAP_WIDTH or ny < 1 or ny > MAP_HEIGHT then break end
+		-- blocker
+		if GameConstants.IsBlocked(nx, ny) then break end
+		-- forced upward elevation blocks
+		local nElev = getElevation(nx, ny)
+		if nElev > curElev then break end
+		-- occupancy (another unit)
+		local occupied = false
+		for _, d in pairs(unitData) do
+			if d.isAlive ~= false and d.tileX == nx and d.tileY == ny then occupied = true; break end
+		end
+		if occupied then break end
+		-- clear tile — legal landing spot
+		table.insert(tiles, { tileX = nx, tileY = ny, distance = step })
+		cx, cy, curElev = nx, ny, nElev
+	end
+	return tiles
+end
 local visualFolder = Instance.new("Folder"); visualFolder.Name = "BattleVisuals"; visualFolder.Parent = workspace
 
 local isPlayerTurn    = false
@@ -148,8 +186,13 @@ local activeUnitId    = nil  -- who is currently acting (for timeline NOW marker
 local devLastInspectedId = nil -- tracks last tile-clicked unit for Kill At Tile (dev only)
 local inputMode       = nil -- "move","attack","skill"
 local selectedSkill   = nil
+local selectedItem    = nil -- consumable entry selected during ItemSelection
 local highlightParts  = {}
 local aimTarget       = nil
+-- Push distance sub-stage: after choosing a push target, player picks a stop tile
+-- (1..max) along the fixed away-direction. pushLandingTiles holds the legal path.
+local pushTargetSel   = nil  -- the chosen push target entry
+local pushLandingTiles = nil -- array of {tileX,tileY,distance} along away-ray
 local pathHighlightParts = {}  -- separate from highlightParts so move-range stays visible
 local storedActorData = nil -- shared across enterActionSelection and click handlers
 
@@ -201,6 +244,57 @@ local function createTileHighlight(bx, by, colorOrStyle, _transparency)
 	end
 end
 
+-- Skill-target tile color by skill TAGS (user spec Sep 25 2026). Priority:
+--   1. Direct Damage -> red     (wins even if also Debuff/Utility)
+--   2. Debuff        -> purple
+--   3. Healing/Buff  -> green
+--   4. Utility       -> yellow  (pure movement/positioning skills)
+--   fallback         -> muddy gold (untagged skill)
+-- Returns a Color3. Reads skill.tags (array of strings), present on the client
+-- skill object (same field bp.skill uses).
+local SKILL_COLOR_DMG    = Color3.fromRGB(255, 80, 80)   -- red
+local SKILL_COLOR_DEBUFF = Color3.fromRGB(180, 90, 220)  -- purple
+local SKILL_COLOR_HEAL   = Color3.fromRGB(60, 180, 80)   -- green
+local SKILL_COLOR_UTIL   = Color3.fromRGB(255, 220, 60)  -- yellow
+local SKILL_COLOR_FALLBACK = Color3.fromRGB(180, 150, 60) -- muddy gold
+local function skillTargetColor(skill)
+	if not skill then return SKILL_COLOR_FALLBACK end
+	local has = {}
+	for _, tag in ipairs(skill.tags or {}) do has[tag] = true end
+	-- isHealing flag is authoritative for heals even if tags omit 'Healing'.
+	-- Direct Damage wins even over Summon: a summon that is a SECONDARY rider on a
+	-- damage skill (e.g. "summon a zombie on killing blow") is fundamentally a damage
+	-- skill and reads RED. Summon otherwise takes priority over Debuff/Heal/Buff/
+	-- Utility, so a PRIMARY summon (its main purpose) reads YELLOW — including a
+	-- summon that also heals or debuffs (per user spec Sep 25 2026: Summon is priority
+	-- unless it is a secondary effect of a damage skill).
+	if has["Direct Damage"] then return SKILL_COLOR_DMG end
+	if has["Summon"] then return SKILL_COLOR_UTIL end
+	if has["Debuff"] then return SKILL_COLOR_DEBUFF end
+	if skill.isHealing or has["Healing"] or has["Buff"] then return SKILL_COLOR_HEAL end
+	if has["Utility"] then return SKILL_COLOR_UTIL end
+	return SKILL_COLOR_FALLBACK
+end
+
+-- Item-target tile color by consumable CATEGORY (user spec Sep 25 2026). Items
+-- carry a `category` field (7-type taxonomy) rather than skill-style tags:
+--   Damage -> red · Control -> purple · Recovery/Support -> green ·
+--   Utility/Environment/Deployable -> yellow · fallback -> gold.
+local ITEM_CATEGORY_COLOR = {
+	Damage      = SKILL_COLOR_DMG,
+	Control     = SKILL_COLOR_DEBUFF,
+	Recovery    = SKILL_COLOR_HEAL,
+	Support     = SKILL_COLOR_HEAL,
+	Utility     = SKILL_COLOR_UTIL,
+	Environment = SKILL_COLOR_UTIL,
+	Deployable  = SKILL_COLOR_UTIL,
+}
+local function itemTargetColor(item)
+	if not item then return SKILL_COLOR_FALLBACK end
+	-- isHealing is authoritative for green even if category is unusual.
+	if item.isHealing then return SKILL_COLOR_HEAL end
+	return ITEM_CATEGORY_COLOR[item.category or ""] or SKILL_COLOR_FALLBACK
+end
 -- PATH HIGHLIGHTS (rendered separately so move-range stays visible)
 
 local PATH_HAZARDS = {
@@ -253,38 +347,9 @@ local function renderMovePath(path, destX, destY)
 			TileHL.Add(ptx, pty, pathStyle, "path", tileColor, step.isDest and 0.15 or 0.30)
 		end
 
-		-- Floating 3D arrow pointing toward next tile (keep as Parts — they float above)
-		if i < #fullPath then
-			local nextStep = fullPath[i + 1]
-			local nx = MAP_OFFSET_X + (nextStep.tileX - 0.5) * TILE_SIZE
-			local nz = MAP_OFFSET_Z + (nextStep.tileY - 0.5) * TILE_SIZE
-			local cx = MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE
-			local cz = MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE
-			local fromPos = Vector3.new(cx, surfaceY + 1.5, cz)
-			local toPos   = Vector3.new(nx, surfaceY + 1.5, nz)
-			local midPos  = (fromPos + toPos) * 0.5
-			local lookCF  = CFrame.lookAt(midPos, toPos)
-			local w1 = Instance.new("WedgePart")
-			w1.Name = "PathArrow_" .. tx .. "_" .. ty .. "_T"
-			w1.Anchored, w1.CanCollide, w1.CanQuery = true, false, false
-			w1.Size = Vector3.new(2.0, 0.5, 2.0)
-			w1.CFrame = lookCF * CFrame.new(0, 0.25, 0)
-			w1.Color = Color3.fromRGB(180, 220, 255)
-			w1.Material = Enum.Material.Neon
-			w1.Transparency = 0.3
-			w1.Parent = visualFolder
-			table.insert(pathHighlightParts, w1)
-			local w2 = Instance.new("WedgePart")
-			w2.Name = "PathArrow_" .. tx .. "_" .. ty .. "_B"
-			w2.Anchored, w2.CanCollide, w2.CanQuery = true, false, false
-			w2.Size = Vector3.new(2.0, 0.5, 2.0)
-			w2.CFrame = lookCF * CFrame.new(0, -0.25, 0) * CFrame.Angles(math.rad(180), 0, 0)
-			w2.Color = Color3.fromRGB(180, 220, 255)
-			w2.Material = Enum.Material.Neon
-			w2.Transparency = 0.3
-			w2.Parent = visualFolder
-			table.insert(pathHighlightParts, w2)
-		end
+		-- (Floating white Neon arrow indicators removed Sep 25 2026 per user — the
+		-- path tile highlights above are sufficient; the arrows read as shiny white
+		-- clutter. The blue path tiles + gold destination remain via TileHL.)
 	end
 end
 
@@ -588,6 +653,161 @@ local function showStatusText(worldPos, text, color)
 end
 
 --------------------------------------------------
+-- ACTION ANNOUNCE LABEL (stays ~2s above the unit's head, does NOT rise)
+--------------------------------------------------
+-- One label per unit at a time; a new action replaces the old one. The label
+-- billboard is parented to the unit's own token part so it follows the unit if
+-- it moves during the display window.
+local actionLabels = {}  -- [unitId] = { gui = BillboardGui, token = tokenPart, expireAt = clock }
+
+local function showActionAnnounce(unitId, label)
+	local token = unitTokens[unitId]
+	if not token or not token.part then return end
+	if type(label) ~= "string" or label == "" then return end
+	-- Remove any existing label for this unit (replace, don't stack).
+	local existing = actionLabels[unitId]
+	if existing and existing.gui then existing.gui:Destroy() end
+	local bb = Instance.new("BillboardGui")
+	bb.Name = "ActionAnnounce"
+	bb.Size = UDim2.new(0, 150, 0, 26)
+	bb.StudsOffset = Vector3.new(0, token.model and 4.2 or 2.6, 0)  -- above the HP bar
+	bb.AlwaysOnTop = true
+	bb.MaxDistance = 200
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.fromScale(1, 1)
+	lbl.BackgroundTransparency = 0.35
+	lbl.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	lbl.BorderSizePixel = 0
+	lbl.Font = Theme.Font.PrimaryBold
+	lbl.TextSize = 16
+	lbl.TextColor3 = Theme.Colors.TextGold
+	lbl.TextStrokeTransparency = 0.3
+	lbl.Text = label
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 4)
+	corner.Parent = lbl
+	lbl.Parent = bb
+	bb.Parent = token.part  -- parent last (NET-004); follows the unit token
+	actionLabels[unitId] = { gui = bb, expireAt = os.clock() + 2.0 }
+	-- Fade + destroy after ~2s. Guard against replacement: only destroy if still ours.
+	task.delay(2.0, function()
+		local cur = actionLabels[unitId]
+		if cur and cur.gui == bb then
+			if bb and bb.Parent then
+				pcall(function()
+					TweenService:Create(lbl, TweenInfo.new(0.3), { TextTransparency = 1, BackgroundTransparency = 1, TextStrokeTransparency = 1 }):Play()
+				end)
+			end
+			task.delay(0.35, function() if bb then bb:Destroy() end end)
+			actionLabels[unitId] = nil
+		end
+	end)
+end
+
+local function clearActionLabel(unitId)
+	local existing = actionLabels[unitId]
+	if existing and existing.gui then existing.gui:Destroy() end
+	actionLabels[unitId] = nil
+end
+
+-- Server status summaries (TurnStarted/TurnEnded) don't carry the fallback
+-- sourceIcon we learned from StatusApplied. Carry it forward so iconless-status
+-- pills keep their borrowed skill/augment icon across turn ticks.
+local function mergeStatusSourceIcons(unitId, newList)
+	if type(newList) ~= "table" then return newList end
+	local prev = unitData[unitId] and unitData[unitId].statuses
+	if type(prev) == "table" then
+		local byId = {}
+		for _, st in ipairs(prev) do if st.id and st.sourceIcon then byId[st.id] = st.sourceIcon end end
+		for _, st in ipairs(newList) do
+			if st.id and not st.sourceIcon and byId[st.id] then st.sourceIcon = byId[st.id] end
+		end
+	end
+	return newList
+end
+
+--------------------------------------------------
+-- LOOPING DEBUFF VFX (follows the unit until cured / KO)
+--------------------------------------------------
+-- For each unit with one or more active DEBUFFS, cycle their VFX: play one for
+-- DEBUFF_VFX_PLAY seconds, wait DEBUFF_VFX_GAP, then the next (round-robin).
+-- A single Heartbeat scheduler drives all units (PRF-001: no per-unit loops).
+local DEBUFF_VFX_PLAY = 2.0   -- seconds each effect shows
+local DEBUFF_VFX_GAP  = 0.5   -- seconds of silence between effects
+local debuffLoops = {}  -- [unitId] = { ids = {statusId,...}, idx = n, nextAt = clock, active = clone }
+
+-- Which status ids count as debuffs we should loop VFX for. Driven by the
+-- status 'kind' table mirrored from GameConstants (Debuff kind only).
+local DEBUFF_KINDS = nil
+local function isDebuffStatus(statusId)
+	if not statusId then return false end
+	if DEBUFF_KINDS == nil then
+		DEBUFF_KINDS = {}
+		local ok, statuses = pcall(function() return GameConstants.STATUSES end)
+		if ok and type(statuses) == "table" then
+			for id, def in pairs(statuses) do
+				if type(def) == "table" and def.kind == "Debuff" then DEBUFF_KINDS[id] = true end
+			end
+		end
+	end
+	return DEBUFF_KINDS[statusId] == true
+end
+
+-- Rebuild a unit's debuff list from unitData; start/stop its loop as needed.
+local function refreshDebuffLoop(unitId)
+	local ud = unitData[unitId]
+	local token = unitTokens[unitId]
+	local ids = {}
+	if ud and ud.isAlive ~= false and ud.statuses and token then
+		for _, st in ipairs(ud.statuses) do
+			if st.id and isDebuffStatus(st.id) then table.insert(ids, st.id) end
+		end
+	end
+	if #ids == 0 then
+		local loop = debuffLoops[unitId]
+		if loop and loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
+		debuffLoops[unitId] = nil
+		return
+	end
+	local loop = debuffLoops[unitId]
+	if not loop then
+		debuffLoops[unitId] = { ids = ids, idx = 0, nextAt = 0, active = nil }
+	else
+		loop.ids = ids
+		if loop.idx > #ids then loop.idx = 0 end
+	end
+end
+
+-- One scheduler for all units. Advances each unit's round-robin on its own clock.
+RunService.Heartbeat:Connect(function()
+	local now = os.clock()
+	for unitId, loop in pairs(debuffLoops) do
+		local token = unitTokens[unitId]
+		local ud = unitData[unitId]
+		if not token or not token.part or not ud or ud.isAlive == false or #loop.ids == 0 then
+			if loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
+			debuffLoops[unitId] = nil
+		elseif now >= loop.nextAt then
+			-- Stop the previous effect if still around, then play the next id.
+			if loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
+			loop.active = nil
+			loop.idx = (loop.idx % #loop.ids) + 1
+			local sid = loop.ids[loop.idx]
+			if VFXController then
+				local assetName = VFXController.ResolveStatus and VFXController.ResolveStatus(sid) or nil
+				if assetName and VFXController.PlayAsset then
+					local ok, clone = pcall(VFXController.PlayAsset, assetName, token.part.Position, DEBUFF_VFX_PLAY)
+					loop.active = (ok and clone) or nil
+				end
+				if not loop.active then pcall(VFXController.StatusBurst, token.part.Position, sid) end
+			end
+			-- Next effect after this one finishes plus the gap.
+			loop.nextAt = now + DEBUFF_VFX_PLAY + DEBUFF_VFX_GAP
+		end
+	end
+end)
+
+--------------------------------------------------
 -- TIMELINE SIMULATION
 --------------------------------------------------
 
@@ -747,6 +967,12 @@ end
 -- ACTION BAR (builds data, tells HUD to enter ActionSelection)
 --------------------------------------------------
 
+-- Forward declaration: commitCommand is defined further below (after the
+-- targeting helpers), but self-target Preview closures inside
+-- enterActionSelection reference it before that point. Declaring the local
+-- here ensures every closure captures the same upvalue (not a nil global).
+local commitCommand
+
 local function enterActionSelection()
 	if not currentPrompt then return end
 	local prompt = currentPrompt
@@ -772,6 +998,10 @@ local function enterActionSelection()
 					-- SELF-TARGET: auto-commit immediately, no tile selection
 					if skill.selfTarget then
 						selectedSkill = skill; inputMode = nil; clearHighlights()
+						-- Self-target skills skip tile selection, so highlight the caster's
+						-- OWN tile (colored by the skill's classifier: self-buff→green,
+						-- self-utility→yellow, etc.) so there's still a frame during preview.
+						createTileHighlight(storedActorData.tileX or 0, storedActorData.tileY or 0, skillTargetColor(skill), 0.4)
 						local skillRtCost = skill.rtCost or 60
 						local isChannel = skill.channelTime and skill.channelTime > 0
 						bp.skill = {
@@ -782,6 +1012,7 @@ local function enterActionSelection()
 						}
 						bp.preview = {
 							actionType = "Skill", skillName = skill.name,
+							description = skill.description or "",
 							actorName = prompt.unitName,
 							actorMpBefore = prompt.currentMp, actorMpAfter = (prompt.currentMp or 0) - (skill.mpCost or 0),
 							actorApBefore = prompt.currentAp, actorApAfter = (prompt.currentAp or 1) - 1,
@@ -804,7 +1035,7 @@ local function enterActionSelection()
 					local pRt = (skill.rtCost or 60) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
 					local pEv = skill.channelTime and skill.channelTime > 0 and { name = skill.name, side = "Player", rt = skill.channelTime } or nil
 					updateTimeline(timelineSnapshot, prompt.unitId, pRt, pEv)
-					local c = skill.isHealing and Color3.fromRGB(60,180,80) or Color3.fromRGB(180,150,60)
+					local c = skillTargetColor(skill)
 					if skill.groundTarget then
 						-- Ground targeting: highlight all tiles in range (reuse move highlight pattern)
 						local gr = skill.computedRange or 5
@@ -826,6 +1057,74 @@ local function enterActionSelection()
 		bp.state = "SkillSelection"; BattleHUD.Render(bp)
 	end
 
+	local function enterItemSelection()
+		inputMode = nil; selectedSkill = nil; selectedItem = nil; clearHighlights()
+		local entries = {}
+		for _, item in ipairs(prompt.consumableSlots or {}) do
+			local canUse = (item.currentCharges or 0) > 0 and (
+				item.selfTarget
+				or item.groundTarget
+				or (item.targets and #item.targets > 0)
+			)
+			table.insert(entries, {
+				id = item.slotIndex,
+				name = string.format("%s (%d/%d)", item.name, item.currentCharges or 0, item.maxCharges or 0),
+				rtCost = item.rtCost or 0,
+				enabled = canUse,
+				onPress = function()
+					-- SELF-TARGET: preview then auto-commit on self
+					if item.selfTarget then
+						selectedItem = item; inputMode = nil; clearHighlights()
+						-- Self-target items skip tile selection, so highlight the caster's
+						-- OWN tile (light green = heal/beneficial) so there's still a frame.
+						createTileHighlight(storedActorData.tileX or 0, storedActorData.tileY or 0, SKILL_COLOR_HEAL, 0.4)
+						bp.preview = {
+							actionType = "Item",
+							skillName = item.name,
+							actorName = prompt.unitName,
+							actorApBefore = prompt.currentAp,
+							actorApAfter = (prompt.currentAp or 1) - 1,
+							actorRtAfter = (item.rtCost or 80) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0),
+							targetName = prompt.unitName .. " (Self)",
+							isHealing = item.isHealing or false,
+							description = "Item description placeholder.",
+							onConfirm = function()
+								commitCommand({ actionType = "Item", itemSlotIndex = item.slotIndex, targetId = prompt.unitId })
+							end,
+							onBack = enterItemSelection,
+						}
+						bp.state = "Preview"; BattleHUD.Render(bp)
+						return
+					end
+					-- UNIT or GROUND target: enter target selection
+					selectedItem = item; inputMode = "item"; clearHighlights()
+					local pRt = (item.rtCost or 80) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
+					updateTimeline(timelineSnapshot, prompt.unitId, pRt)
+					-- Show the item's description panel during targeting (like skills).
+					bp.skill = { name = item.name or "Item", tags = item.category or "",
+						mpCost = 0, rtCost = item.rtCost or 0, range = item.range or 0,
+						pattern = item.pattern or "Single", effects = "Item description placeholder." }
+					local c = itemTargetColor(item)
+					if item.groundTarget then
+						local gr = item.range or 0
+						for dy = -gr, gr do
+							for dx = -gr, gr do
+								createTileHighlight((storedActorData.tileX or 0) + dx, (storedActorData.tileY or 0) + dy, c, 0.5)
+							end
+						end
+					else
+						for _, t in ipairs(item.targets or {}) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
+					end
+					storedActorData.onBack = enterItemSelection
+					bp.state = "TargetSelection"; BattleHUD.Render(bp)
+				end,
+			})
+		end
+		storedActorData.itemEntries = entries
+		storedActorData.onBack = enterActionSelection
+		bp.state = "ItemSelection"; BattleHUD.Render(bp)
+	end
+
 	-- 4x2 grid: Attack, Skill, Move, Item, Guard, Interact, Wait, Stance
 	local actions = {
 		{ id="Move", text="Move", enabled=moveEnabled, onPress=function()
@@ -834,7 +1133,9 @@ local function enterActionSelection()
 			updateTimeline(timelineSnapshot, prompt.unitId, pRt)
 			for _, tile in ipairs(prompt.moveCandidates) do createTileHighlight(tile.tileX, tile.tileY, "move") end
 			storedActorData.onBack = enterActionSelection
-			bp.skill = nil
+			-- Show an action description panel during targeting (like skills/attack).
+			bp.skill = { name = "Move", tags = "", mpCost = 0, rtCost = 0, range = 0, pattern = "",
+				effects = "Move to a highlighted tile. RT scales with distance and terrain." }
 			bp.state = "TargetSelection"; BattleHUD.Render(bp)
 		end },
 		{ id="Commands", text="Commands", enabled=true, isSubmenu=true, subActions={
@@ -845,7 +1146,7 @@ local function enterActionSelection()
 					effects="Weapon Dmg: "..(prompt.weaponDamage or 0).." | RT Delay: "..(prompt.weaponRtDelay or 0) }
 				local pRt = (prompt.attackRt or 80) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
 				updateTimeline(timelineSnapshot, prompt.unitId, pRt)
-				local c = Color3.fromRGB(200, 150, 60)
+				local c = SKILL_COLOR_DMG  -- basic attack = direct damage = red
 				for _, t in ipairs(prompt.attackTargets) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
 				storedActorData.onBack = enterActionSelection
 				bp.state = "TargetSelection"; BattleHUD.Render(bp)
@@ -856,8 +1157,10 @@ local function enterActionSelection()
 				local previewRt = (prompt.pushRt or 40) + (prompt.unitBaseRt or 400)
 				updateTimeline(timelineSnapshot, prompt.unitId, previewRt)
 				for _, t in ipairs(prompt.pushTargets or {}) do
-					createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 180, 40), 0.45)
+					createTileHighlight(t.tileX, t.tileY, SKILL_COLOR_UTIL, 0.45)  -- push = repositioning = yellow
 				end
+				bp.skill = { name = "Push", tags = "Utility", mpCost = 0, rtCost = prompt.pushRt or 40,
+					range = 1, pattern = "Single", effects = "Shove an adjacent target one tile away." }
 				storedActorData.onBack = enterActionSelection
 				bp.state = "TargetSelection"; BattleHUD.Render(bp)
 			end },
@@ -869,7 +1172,7 @@ local function enterActionSelection()
 			end },
 		}},
 		{ id="Skill", text="Skills", enabled=hasSkills, onPress=enterSkillSelection },
-		{ id="Item", text="Items", enabled=false },
+		{ id="Item", text="Items", enabled=(prompt.consumableSlots and #prompt.consumableSlots > 0), onPress=enterItemSelection },
 		{ id="Wait", text="Wait", enabled=true, onPress=function()
 			clearHighlights(); isPlayerTurn = false; inputMode = nil
 			bp.state = "Resolving"; BattleHUD.Render(bp)
@@ -972,8 +1275,9 @@ end
 -- COMMIT + CANCEL
 --------------------------------------------------
 
-local function commitCommand(command)
-	clearHighlights(); isPlayerTurn = false; inputMode = nil; selectedSkill = nil; aimTarget = nil
+-- Assigns into the forward-declared `commitCommand` local (see above).
+function commitCommand(command)
+	clearHighlights(); isPlayerTurn = false; inputMode = nil; selectedSkill = nil; selectedItem = nil; aimTarget = nil
 	bp.state = "Resolving"; BattleHUD.Render(bp)
 	BattleEvents.PlayerCommand:FireServer(command)
 end
@@ -991,11 +1295,40 @@ local function cancelToTargeting()
 		for _, t in ipairs(currentPrompt.attackTargets) do createTileHighlight(t.tileX, t.tileY, "target") end
 	elseif inputMode == "skill" and selectedSkill then
 		clearHighlights()
-		local c = selectedSkill.isHealing and Color3.fromRGB(60,180,80) or Color3.fromRGB(180,150,60)
-		for _, t in ipairs(selectedSkill.targets) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
+		local c = skillTargetColor(selectedSkill)
+		if selectedSkill.groundTarget then
+			-- Ground skills (e.g. Meteor Marker) highlight a RANGE box around the
+			-- caster, not the .targets marker — mirror enterSkillSelection so back-out
+			-- re-shows the range instead of just the caster tile.
+			local gr = selectedSkill.computedRange or 5
+			for dy = -gr, gr do
+				for dx = -gr, gr do
+					createTileHighlight((storedActorData.tileX or 0) + dx, (storedActorData.tileY or 0) + dy, c, 0.5)
+				end
+			end
+		else
+			for _, t in ipairs(selectedSkill.targets) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
+		end
+	elseif inputMode == "item" and selectedItem then
+		clearHighlights()
+		local c = itemTargetColor(selectedItem)
+		if selectedItem.groundTarget then
+			local gr = selectedItem.range or 0
+			for dy = -gr, gr do
+				for dx = -gr, gr do
+					createTileHighlight((storedActorData.tileX or 0) + dx, (storedActorData.tileY or 0) + dy, c, 0.5)
+				end
+			end
+		else
+			for _, t in ipairs(selectedItem.targets or {}) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
+		end
 	elseif inputMode == "push" then
 		clearHighlights()
-		for _, t in ipairs(currentPrompt.pushTargets or {}) do createTileHighlight(t.tileX, t.tileY, Color3.fromRGB(255, 180, 40), 0.45) end
+		for _, t in ipairs(currentPrompt.pushTargets or {}) do createTileHighlight(t.tileX, t.tileY, SKILL_COLOR_UTIL, 0.45) end  -- push = yellow
+	elseif inputMode == "push_distance" and pushTargetSel then
+		clearHighlights()
+		createTileHighlight(pushTargetSel.tileX, pushTargetSel.tileY, "selected")
+		for _, lt in ipairs(pushLandingTiles or {}) do createTileHighlight(lt.tileX, lt.tileY, SKILL_COLOR_UTIL, 0.45) end
 	end
 	bp.state = "TargetSelection"; BattleHUD.Render(bp)
 end
@@ -1178,7 +1511,21 @@ local function processTileClick(bx, by)
 			for _, t in ipairs(selectedSkill.targets or {}) do
 				if t.tileX == bx and t.tileY == by then
 					aimTarget = t; clearHighlights()
-					createTileHighlight(bx, by, "selected")
+					-- CHARGE skills (damage + movement): keep the TARGET tile in the
+					-- skill's damage color (red), highlight the server-computed LANDING
+					-- tile in yellow, and draw the straight charge PATH in the white/
+					-- blooming move-path visual. Non-charge skills keep the plain
+					-- yellow 'selected' confirmation highlight on the target.
+					if selectedSkill.isCharge and t.landingTileX then
+						-- Draw the white charge PATH first (its destination paints the
+						-- landing tile gold), THEN overpaint the landing tile yellow and
+						-- the target tile red — so those two win the in-place recolor.
+						if t.chargePath then renderMovePath(t.chargePath, t.landingTileX, t.landingTileY) end
+						createTileHighlight(t.landingTileX, t.landingTileY, "selected")     -- landing = yellow (last = wins)
+						createTileHighlight(bx, by, skillTargetColor(selectedSkill), 0.4)  -- target stays red
+					else
+						createTileHighlight(bx, by, "selected")
+					end
 					bp.target = unitData[t.id]
 					local statusEff = selectedSkill.appliesStatus or "None"
 					local statusDur = 0
@@ -1228,10 +1575,51 @@ local function processTileClick(bx, by)
 			end
 
 		elseif inputMode == "push" then
+			-- Stage 1: choose push TARGET. Then enter distance sub-stage (pick stop tile 1..max).
 			for _, t in ipairs(currentPrompt.pushTargets or {}) do
 				if t.tileX == bx and t.tileY == by then
+					pushTargetSel = t
+					local actX = storedActorData and storedActorData.tileX or currentPrompt.tileX or 0
+					local actY = storedActorData and storedActorData.tileY or currentPrompt.tileY or 0
+					pushLandingTiles = computePushLandingTiles(actX, actY, t.tileX, t.tileY, t.maxPushDistance or 0)
+					if #pushLandingTiles == 0 then
+						-- No reachable clear tile (blocked/resisted). Preserve legacy: commit full push.
+						aimTarget = t; clearHighlights()
+						createTileHighlight(bx, by, "selected")
+						bp.target = unitData[t.id]
+						bp.preview = {
+							actionType = "Push",
+							actorName = currentPrompt.unitName,
+							actorApBefore = currentPrompt.currentAp, actorApAfter = (currentPrompt.currentAp or 1) - 1,
+							actorRtAfter = (currentPrompt.pushRt or 40) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
+							targetName = t.name,
+							description = "Push " .. (t.name or "target") .. " (blocked — collision)",
+							onConfirm = function() commitCommand({ actionType = "Push", targetId = t.id }) end,
+							onBack = cancelToTargeting,
+						}
+						bp.state = "Preview"; BattleHUD.Render(bp)
+						return
+					end
+					-- Enter distance sub-stage: highlight the target + legal landing tiles.
+					inputMode = "push_distance"
+					clearHighlights()
+					createTileHighlight(t.tileX, t.tileY, "selected")
+					for _, lt in ipairs(pushLandingTiles) do
+						createTileHighlight(lt.tileX, lt.tileY, SKILL_COLOR_UTIL, 0.45)
+					end
+					bp.state = "TargetSelection"; BattleHUD.Render(bp)
+					return
+				end
+			end
+		elseif inputMode == "push_distance" and pushTargetSel then
+			-- Stage 2: choose the STOP tile along the fixed away-ray (distance 1..max).
+			for _, lt in ipairs(pushLandingTiles or {}) do
+				if lt.tileX == bx and lt.tileY == by then
+					local t = pushTargetSel
+					local chosenDist = lt.distance
 					aimTarget = t; clearHighlights()
-					createTileHighlight(bx, by, "selected")
+					createTileHighlight(t.tileX, t.tileY, "selected")
+					createTileHighlight(bx, by, SKILL_COLOR_UTIL, 0.25)
 					bp.target = unitData[t.id]
 					bp.preview = {
 						actionType = "Push",
@@ -1239,8 +1627,65 @@ local function processTileClick(bx, by)
 						actorApBefore = currentPrompt.currentAp, actorApAfter = (currentPrompt.currentAp or 1) - 1,
 						actorRtAfter = (currentPrompt.pushRt or 40) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
 						targetName = t.name,
-						description = "Push " .. (t.name or "target") .. " away",
-						onConfirm = function() commitCommand({ actionType = "Push", targetId = t.id }) end,
+						description = string.format("Push %s %d tile%s away", t.name or "target", chosenDist, chosenDist == 1 and "" or "s"),
+						onConfirm = function() commitCommand({ actionType = "Push", targetId = t.id, pushDistance = chosenDist }) end,
+						onBack = function()
+							inputMode = "push"; pushLandingTiles = nil; pushTargetSel = nil
+							cancelToTargeting()
+						end,
+					}
+					bp.state = "Preview"; BattleHUD.Render(bp)
+					return
+				end
+			end
+		elseif inputMode == "item" and selectedItem then
+			-- GROUND TARGETING: any tile click in range is valid
+			if selectedItem.groundTarget then
+				local gr = selectedItem.range or 0
+				local actX = storedActorData.tileX or 0
+				local actY = storedActorData.tileY or 0
+				local dist = math.max(math.abs(bx - actX), math.abs(by - actY))
+				if dist <= gr then
+					aimTarget = { tileX = bx, tileY = by }; clearHighlights()
+					createTileHighlight(bx, by, "selected")
+					bp.preview = {
+						actionType = "Item",
+						skillName = selectedItem.name,
+						actorName = currentPrompt.unitName,
+						actorApBefore = currentPrompt.currentAp,
+						actorApAfter = (currentPrompt.currentAp or 1) - 1,
+						actorRtAfter = (selectedItem.rtCost or 80) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
+						targetName = string.format("Ground (%d,%d)", bx, by),
+						description = "Item description placeholder.",
+						onConfirm = function()
+							commitCommand({ actionType = "Item", itemSlotIndex = selectedItem.slotIndex, tileX = bx, tileY = by })
+						end,
+						onBack = cancelToTargeting,
+					}
+					bp.state = "Preview"; BattleHUD.Render(bp)
+					return
+				end
+			end
+			-- UNIT TARGETING: match clicked tile to a candidate unit
+			for _, t in ipairs(selectedItem.targets or {}) do
+				if t.tileX == bx and t.tileY == by then
+					aimTarget = t; clearHighlights()
+					createTileHighlight(bx, by, "selected")
+					bp.target = unitData[t.id]
+					local tgtData = unitData[t.id]
+					bp.preview = {
+						actionType = "Item",
+						skillName = selectedItem.name,
+						actorName = currentPrompt.unitName,
+						actorApBefore = currentPrompt.currentAp,
+						actorApAfter = (currentPrompt.currentAp or 1) - 1,
+						actorRtAfter = (selectedItem.rtCost or 80) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
+						targetName = t.name,
+						isHealing = selectedItem.isHealing or false,
+						description = "Item description placeholder.",
+						onConfirm = function()
+							commitCommand({ actionType = "Item", itemSlotIndex = selectedItem.slotIndex, targetId = t.id })
+						end,
 						onBack = cancelToTargeting,
 					}
 					bp.state = "Preview"; BattleHUD.Render(bp)
@@ -1486,45 +1931,6 @@ local function createDevCameraPanel()
 		return btn
 	end
 
-	-- Camera buttons
-	makeBtn("FOCUS ACTIVE", 1, function()
-		local uid = activeUnitId
-		local udata = uid and unitData[uid]
-		if udata and udata.tileX and udata.tileY then
-			CameraController.FocusActiveUnit(tileToWorld(udata.tileX, udata.tileY))
-		else
-			local cx = MAP_OFFSET_X + (MAP_WIDTH * TILE_SIZE) / 2
-			local cz = MAP_OFFSET_Z + (MAP_HEIGHT * TILE_SIZE) / 2
-			CameraController.FocusActiveUnit(Vector3.new(cx, 0, cz))
-		end
-	end)
-
-	makeBtn("FOCUS SELECTED", 2, function()
-		local iid = bp.inspectedEntityId
-		local idata = iid and unitData[iid]
-		if idata and idata.tileX and idata.tileY then
-			CameraController.FocusSelectedUnit(tileToWorld(idata.tileX, idata.tileY))
-		end
-	end)
-
-	makeBtn("RESET CAMERA", 3, function()
-		local uid = activeUnitId
-		local udata = uid and unitData[uid]
-		local focusPos = nil
-		if udata and udata.tileX and udata.tileY then
-			focusPos = tileToWorld(udata.tileX, udata.tileY)
-		end
-		CameraController.ResetTacticalView(focusPos)
-	end)
-
-	-- Separator
-	local sep = Instance.new("Frame")
-	sep.Size = UDim2.new(1, 0, 0, 1)
-	sep.BackgroundColor3 = Color3.fromRGB(200, 200, 50)
-	sep.BackgroundTransparency = 0.5
-	sep.BorderSizePixel = 0; sep.LayoutOrder = 4
-	sep.Parent = frame
-
 	-- Battle control buttons
 	makeBtn("INSTANT WIN", 5, function()
 		BattleEvents.DevCommand:FireServer({ action = "InstantWin" })
@@ -1626,31 +2032,6 @@ local function createDevCameraPanel()
 		})
 	end, Color3.fromRGB(80, 60, 20))
 
-	-- Separator: Terrain render switcher
-	local sep4 = Instance.new("Frame")
-	sep4.Size = UDim2.new(1, 0, 0, 1)
-	sep4.BackgroundColor3 = Color3.fromRGB(200, 200, 50)
-	sep4.BackgroundTransparency = 0.5
-	sep4.BorderSizePixel = 0; sep4.LayoutOrder = 19
-	sep4.Parent = frame
-
-	local terrainLabel = Instance.new("TextLabel")
-	terrainLabel.Size = UDim2.new(1, 0, 0, 12)
-	terrainLabel.BackgroundTransparency = 1
-	terrainLabel.Font = Enum.Font.SourceSansBold; terrainLabel.TextSize = 9
-	terrainLabel.TextColor3 = Color3.fromRGB(200, 200, 50)
-	terrainLabel.Text = "TERRAIN RENDER"; terrainLabel.LayoutOrder = 20
-	terrainLabel.Parent = frame
-
-	makeBtn("TERRAIN: VOXEL", 21, function()
-		if _G.CTRBLXAI_SetTerrainRender then _G.CTRBLXAI_SetTerrainRender("Voxel") end
-	end, Color3.fromRGB(40, 60, 40))
-	makeBtn("TERRAIN: PER-TILE", 22, function()
-		if _G.CTRBLXAI_SetTerrainRender then _G.CTRBLXAI_SetTerrainRender("PerTile") end
-	end, Color3.fromRGB(50, 50, 65))
-	makeBtn("TERRAIN: MESH", 23, function()
-		if _G.CTRBLXAI_SetTerrainRender then _G.CTRBLXAI_SetTerrainRender("Mesh") end
-	end, Color3.fromRGB(60, 50, 60))
 end
 
 local function destroyDevCameraPanel()
@@ -1690,6 +2071,10 @@ BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	bp = { state = "Idle", actor = nil, target = nil, skill = nil, preview = nil, tile = nil, inspectedEntityId = nil }
 	for _, c in ipairs(visualFolder:GetChildren()) do c:Destroy() end
 	unitTokens = {}; unitData = {}; elevationMap = data.elevationMap
+	for _, l in pairs(actionLabels) do if l.gui then l.gui:Destroy() end end
+	actionLabels = {}
+	for _, lp in pairs(debuffLoops) do if lp.active and lp.active.Parent then pcall(function() lp.active:Destroy() end) end end
+	debuffLoops = {}
 	for _, unit in ipairs(data.units) do
 		unitData[unit.id] = unit; spawnToken(unit)
 		updateHpBar(unit.id, unit.currentHp, unit.maxHp)
@@ -1701,6 +2086,21 @@ BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	if VFXController then pcall(VFXController.Init, biome); pcall(VFXController.ClearAllHighlights) end
 end)
 
+-- Reinforcement: a single unit entered the battle mid-fight. Build its token
+-- the same way BattleStarted does per unit, so it renders identically.
+BattleEvents.UnitSpawned.OnClientEvent:Connect(function(data)
+	local unit = data and data.unit
+	if not unit or not unit.id then return end
+	if unitTokens[unit.id] then return end  -- already present; ignore duplicate
+	unitData[unit.id] = unit
+	spawnToken(unit)
+	updateHpBar(unit.id, unit.currentHp, unit.maxHp)
+	updateMpBar(unit.id, unit.currentMp or 0, unit.maxMp or 0)
+	if orientUnitToFacing and unit.facing then
+		pcall(orientUnitToFacing, unit.id, unit.facing)
+	end
+end)
+
 BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	activeUnitId = data.unitId
 	bp.inspectedEntityId = nil  -- new turn resets inspection
@@ -1710,7 +2110,8 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	-- Camera: auto-focus on unit taking its turn
 	if _at then CameraController.FocusActiveUnit(_at.part.Position) end
 	if unitData[data.unitId] then
-		unitData[data.unitId].statuses = data.statuses
+		unitData[data.unitId].statuses = mergeStatusSourceIcons(data.unitId, data.statuses)
+		refreshDebuffLoop(data.unitId)
 		-- Clear Guard buff (expires on new turn) and restore token color
 		if unitData[data.unitId].isGuarding then
 			unitData[data.unitId].isGuarding = false
@@ -1975,10 +2376,15 @@ BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
 		if not unitData[data.unitId].statuses then unitData[data.unitId].statuses = {} end
 		local found = false
 		for _, ex in ipairs(unitData[data.unitId].statuses) do
-			if ex.id == data.statusId then ex.remainingTurns = data.remainingTurns; found = true; break end
+			if ex.id == data.statusId then
+				ex.remainingTurns = data.remainingTurns
+				if data.sourceIcon then ex.sourceIcon = data.sourceIcon end
+				found = true; break
+			end
 		end
-		if not found then table.insert(unitData[data.unitId].statuses, { id = data.statusId, remainingTurns = data.remainingTurns or 0 }) end
+		if not found then table.insert(unitData[data.unitId].statuses, { id = data.statusId, remainingTurns = data.remainingTurns or 0, sourceIcon = data.sourceIcon }) end
 	end
+	refreshDebuffLoop(data.unitId)
 	local t = unitTokens[data.unitId]
 	if t then
 		showStatusText(t.part.Position, "+"..data.statusId, Theme.GetStatusColor(data.statusId))
@@ -1998,8 +2404,16 @@ BattleEvents.StatusExpired.OnClientEvent:Connect(function(data)
 	if unitData[data.unitId] and unitData[data.unitId].statuses then
 		for i, s in ipairs(unitData[data.unitId].statuses) do if s.id == data.statusId then table.remove(unitData[data.unitId].statuses, i); break end end
 	end
+	refreshDebuffLoop(data.unitId)
 	local t = unitTokens[data.unitId]
 	if t then showStatusText(t.part.Position, "-"..data.statusId, Theme.Colors.TextSecondary) end
+end)
+
+-- Action announce: label above the acting unit's head for ~2s (Move / Basic
+-- Attack / skill or item name / Guard / Push). Server fires on every AP commit.
+BattleEvents.ActionAnnounced.OnClientEvent:Connect(function(data)
+	if not data or not data.unitId then return end
+	showActionAnnounce(data.unitId, data.label)
 end)
 
 BattleEvents.ChannelFizzled.OnClientEvent:Connect(function(data)
@@ -2011,8 +2425,9 @@ BattleEvents.TurnEnded.OnClientEvent:Connect(function(data)
 	local t = unitTokens[data.unitId]; if t then t.label.TextColor3 = Theme.Colors.TextPrimary end
 	hideSelectionRing()
 	if unitData[data.unitId] then
-		unitData[data.unitId].statuses = data.statuses
+		unitData[data.unitId].statuses = mergeStatusSourceIcons(data.unitId, data.statuses)
 		if data.currentMp then unitData[data.unitId].currentMp = data.currentMp; updateMpBar(data.unitId, data.currentMp, unitData[data.unitId].maxMp or 0) end
+		refreshDebuffLoop(data.unitId)
 	end
 end)
 
@@ -2026,6 +2441,8 @@ BattleEvents.UnitDefeated.OnClientEvent:Connect(function(data)
 		-- R15 and cylinder both get VFX highlight (handled below)
 	end
 	if unitData[data.unitId] then unitData[data.unitId].isAlive = false end
+	refreshDebuffLoop(data.unitId)  -- unit dead -> loop self-clears
+	clearActionLabel(data.unitId)
 	-- VFX: KO smoke puff + persistent grey highlight
 	if t then
 		if VFXController then pcall(VFXController.KOEffect, t.part.Position) end
@@ -3377,6 +3794,61 @@ BattleEvents.FacingChanged.OnClientEvent:Connect(function(data)
 	if data and data.unitId and data.facing then
 		updateUnitFacing(data.unitId, data.facing)
 	end
+end)
+
+-- ItemUsed: server broadcasts when a unit uses a consumable item.
+-- Updates the target's HP/MP bars (the effect already applied server-side),
+-- shows floating combat text, and logs the usage.
+BattleEvents.ItemUsed.OnClientEvent:Connect(function(data)
+	if not data then return end
+	local actorName  = (data.actorId and unitData[data.actorId] and unitData[data.actorId].name)
+		or data.actorName or "?"
+	local targetName = (data.targetId and unitData[data.targetId] and unitData[data.targetId].name)
+		or data.targetName or "?"
+	local amount     = data.amount or 0
+	local effectType = data.effectType or ""
+
+	-- Refresh the target unit's bars from the effect result. The server already
+	-- mutated HP/MP; pull the freshest values we know client-side and nudge bars.
+	local tgt = data.targetId and unitData[data.targetId] or nil
+	local tgtToken = data.targetId and unitTokens[data.targetId] or nil
+
+	if effectType == "HpRestore" and tgt then
+		tgt.currentHp = math.min((tgt.maxHp or amount), (tgt.currentHp or 0) + amount)
+		updateHpBar(data.targetId, tgt.currentHp, tgt.maxHp or tgt.currentHp)
+		if tgtToken and tgtToken.part then showDamageText(tgtToken.part.Position, amount, true) end
+	elseif effectType == "Damage" and tgt then
+		tgt.currentHp = math.max(0, (tgt.currentHp or 0) - amount)
+		updateHpBar(data.targetId, tgt.currentHp, tgt.maxHp or 1)
+		if tgtToken and tgtToken.part then showDamageText(tgtToken.part.Position, amount, false) end
+	elseif effectType == "MpRestore" and tgt then
+		tgt.currentMp = math.min((tgt.maxMp or amount), (tgt.currentMp or 0) + amount)
+		updateMpBar(data.targetId, tgt.currentMp, tgt.maxMp or tgt.currentMp)
+		if tgtToken and tgtToken.part then
+			showFloatingText(tgtToken.part.Position, "+"..amount.." MP", Theme.Colors.Info or Color3.fromRGB(80,160,255), 1.0)
+		end
+	elseif tgtToken and tgtToken.part then
+		-- Status cure / apply / other: show a small info popup
+		local info = data.statusId and tostring(data.statusId) or (effectType ~= "" and effectType or "used")
+		showFloatingText(tgtToken.part.Position, info, Theme.Colors.TextSecondary or Color3.fromRGB(200,200,200), 1.0)
+	end
+
+	-- Build a readable effect summary for the battle log.
+	local summary
+	if effectType == "HpRestore" then
+		summary = "healed " .. targetName .. " +" .. amount .. " HP"
+	elseif effectType == "MpRestore" then
+		summary = "restored " .. amount .. " MP to " .. targetName
+	elseif effectType == "StatusCure" then
+		summary = "cured " .. (data.statusId or "status") .. " on " .. targetName
+	elseif effectType == "StatusApply" then
+		summary = "applied " .. (data.statusId or "status") .. " to " .. targetName
+	elseif effectType == "Damage" then
+		summary = "dealt " .. amount .. " " .. (data.element or "") .. " to " .. targetName
+	else
+		summary = "on " .. targetName
+	end
+	BattleHUD.AddLogEntry(string.format("%s used %s — %s", actorName, data.itemName or "item", summary))
 end)
 
 -- FacingPrompt: server asks player to choose facing direction (Guard/Wait only)

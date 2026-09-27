@@ -34,6 +34,14 @@ local ConsumableData = require(
 		:WaitForChild("ConsumableData")
 )
 
+-- SkillData: used to resolve a self-buff 'stance' skill's own icon for the
+-- client-only status pill (Part B: stance skills that apply no real status).
+local SkillData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("SkillData")
+)
+
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("CTRBLXAI")
@@ -103,6 +111,65 @@ function CommandService.SetMapDimensions(width, height)
 end
 
 --------------------------------------------------
+-- CHARGE LANDING (shared: used by both the preview in the turn prompt AND the
+-- actual commit, so they can never diverge). A charge skill repositions the
+-- actor to the best empty tile adjacent (Chebyshev 1) to the target before
+-- damage: closest to the actor, tie-broken by lowest Euclidean² (straightest
+-- line). Returns {x,y} or nil (already adjacent / no legal tile).
+--------------------------------------------------
+function CommandService.ComputeChargeLanding(actor, target, state)
+	if not (actor and target) then return nil end
+	local dist = math.max(math.abs(actor.tileX - target.tileX), math.abs(actor.tileY - target.tileY))
+	if dist <= 1 then return nil end  -- already adjacent; no move
+	local bestTile, bestDist, bestDistSq = nil, 999, 999
+	for dy = -1, 1 do
+		for dx = -1, 1 do
+			if dx ~= 0 or dy ~= 0 then
+				local cx = target.tileX + dx
+				local cy = target.tileY + dy
+				if cx >= 1 and cx <= _mapWidth and cy >= 1 and cy <= _mapHeight
+					and not GameConstants.IsBlocked(cx, cy) then
+					local occupied = false
+					if state and state.units then
+						for _, u in ipairs(state.units) do
+							if u.isAlive and u.tileX == cx and u.tileY == cy then occupied = true; break end
+						end
+					end
+					if not occupied then
+						local dCheb = math.max(math.abs(actor.tileX - cx), math.abs(actor.tileY - cy))
+						local dSq = (actor.tileX - cx)^2 + (actor.tileY - cy)^2
+						if dCheb < bestDist or (dCheb == bestDist and dSq < bestDistSq) then
+							bestDist = dCheb
+							bestDistSq = dSq
+							bestTile = { x = cx, y = cy }
+						end
+					end
+				end
+			end
+		end
+	end
+	return bestTile
+end
+
+-- Straight-line tile path from (fromX,fromY) to (toX,toY), inclusive of the
+-- landing tile, EXCLUSIVE of the start. Bresenham-style diagonal walk (matches
+-- the 'legal straight path' the charge traverses). For the client path visual.
+function CommandService.ComputeChargePath(fromX, fromY, toX, toY)
+	local path = {}
+	local x, y = fromX, fromY
+	local guard = 0
+	while (x ~= toX or y ~= toY) and guard < 64 do
+		guard = guard + 1
+		local sx = (toX > x) and 1 or (toX < x) and -1 or 0
+		local sy = (toY > y) and 1 or (toY < y) and -1 or 0
+		x = x + sx
+		y = y + sy
+		local terrain = GameConstants.GetTerrainId and GameConstants.GetTerrainId(x, y) or nil
+		table.insert(path, { tileX = x, tileY = y, terrain = terrain })
+	end
+	return path
+end
+--------------------------------------------------
 -- RT CALCULATION
 --------------------------------------------------
 
@@ -123,7 +190,16 @@ local function calcBasicAttackBaseRt(actor)
 	local str = actor.effectiveStats and actor.effectiveStats.STR or 10
 	local totalWt = (actor.weaponWt or 0) + (actor.armorWt or 0)
 	local effectiveWt = GameConstants.CalcEffectiveWt(totalWt, str)
-	local baseAttackRt = math.round(modBaseRt * BASIC_ATTACK_RT_FACTOR) + math.round(effectiveWt)
+	-- Basic Attack RT has two parts: the base-RT component and the weapon-WT
+	-- burden. Frenzy (DB elements_statuses id 72: "Basic Attack tempo only")
+	-- reduces the BASE-RT component only; per developer decision 2026-09-26 it
+	-- does NOT affect the weapon-WT component.
+	local baseRtComponent = math.round(modBaseRt * BASIC_ATTACK_RT_FACTOR)
+	local frenzyDef = GameConstants.STATUSES.Frenzy
+	if frenzyDef and frenzyDef.basicAttackRtMult and StatusService.HasStatus(actor, "Frenzy") then
+		baseRtComponent = baseRtComponent * frenzyDef.basicAttackRtMult
+	end
+	local baseAttackRt = math.round(baseRtComponent) + math.round(effectiveWt)
 	-- Frozen: all RT costs ×2
 	return math.round(baseAttackRt * StatusService.GetAllRtMultiplier(actor))
 end
@@ -398,6 +474,9 @@ function CommandService.ActivateChanneledSkill(state, unit)
 		))
 		return false, "MP insufficient at activation."
 	end
+
+	-- Channel fires now: announce the skill over the caster.
+	BattleVisualBroadcaster.ActionAnnounced(unit, skillDef.name or skillDef.id or "Skill")
 
 	-- SPEND MP now
 	UnitSchema.SpendMp(unit, mpCost)
@@ -716,6 +795,7 @@ function CommandService.ValidateAndCommit(
 	actor.currentAp = actor.currentAp - apCost
 
 	if actionType == "Move" then
+		BattleVisualBroadcaster.ActionAnnounced(actor, "Move")
 		local pathCost
 		if selection.pathCost ~= nil then
 			pathCost = selection.pathCost
@@ -773,6 +853,7 @@ function CommandService.ValidateAndCommit(
 		end
 
 	elseif actionType == "Attack" then
+		BattleVisualBroadcaster.ActionAnnounced(actor, "Basic Attack")
 		local target = selection
 		-- calcBasicAttackBaseRt already includes Effective Weapon WT
 		local rtCost = calcBasicAttackBaseRt(actor)
@@ -861,14 +942,49 @@ function CommandService.ValidateAndCommit(
 				for _, tag in ipairs(raceEntry.tags) do
 					if tag == "Giant" then
 						local force = actor.derivedStats and actor.derivedStats.force or 1
-						local stability = target.derivedStats and target.derivedStats.stability or 0
-						local pushDist = math.max(0, force - stability)
-						if pushDist > 0 then
-							local direction = DisplacementService.GetPushDirection(actor, target)
-							DisplacementService.ResolvePush(
-								target, direction, pushDist, actor, state,
-								GameConstants.KNOCKBACK_SOURCE_MODIFIERS.Skill
-							)
+						local direction = DisplacementService.GetPushDirection(actor, target)
+						-- Giant basic-attack knockback is MELEE (isRanged=false → no ranged penalty).
+						-- ResolvePush computes distance from Force - Stability internally.
+						local result = DisplacementService.ResolvePush(
+							actor, target, force, direction,
+							GameConstants.KNOCKBACK_SOURCE_MODIFIERS.SkillKnockback, state.units,
+							nil, false
+						)
+						if result and result.pushed then
+							-- Apply position change
+							target.tileX = result.finalTileX
+							target.tileY = result.finalTileY
+							-- Apply collision/fall damage to the knocked-back target
+							local knockDmg = 0
+							if result.wallCollision and result.wallCollision.damage > 0 then
+								knockDmg = knockDmg + result.wallCollision.damage
+							end
+							if result.fallDamage and result.fallDamage > 0 then
+								knockDmg = knockDmg + result.fallDamage
+							end
+							if knockDmg > 0 and target.isAlive then
+								UnitSchema.ApplyDamage(target, knockDmg)
+							end
+							-- Collided unit also absorbs impact (both units take collision damage)
+							if result.wallCollision
+								and result.wallCollision.collidedUnitId
+								and result.wallCollision.collidedUnitDamage
+								and result.wallCollision.collidedUnitDamage > 0
+							then
+								for _, u in ipairs(state.units) do
+									if u.id == result.wallCollision.collidedUnitId and u.isAlive then
+										UnitSchema.ApplyDamage(u, result.wallCollision.collidedUnitDamage)
+										break
+									end
+								end
+							end
+							-- Broadcast the displacement so the client animates it
+							BattleVisualBroadcaster.UnitPushed(actor, target, result)
+							print(string.format(
+								"[CommandService] GIANT KNOCKBACK | %s -> %s | Moved:%d to (%d,%d) | Dmg:%d",
+								actor.name, target.name, result.tilesDisplaced,
+								result.finalTileX, result.finalTileY, knockDmg
+							))
 						end
 						break
 					end
@@ -897,6 +1013,7 @@ function CommandService.ValidateAndCommit(
 		end
 
 	elseif actionType == "Skill" then
+		BattleVisualBroadcaster.ActionAnnounced(actor, (skillDef and skillDef.name) or "Skill")
 		local target = selection.target
 		local mpCost = skillDef.mpCost or 0
 		mpCost = math.max(0, math.round(mpCost * RacePassiveService.GetMpCostModifier(actor)))
@@ -1142,53 +1259,107 @@ function CommandService.ValidateAndCommit(
 					actor.name, hitCount, totalDmg, mpCost, baseRtCost, actor.currentAp
 				))
 
+			elseif (skillDef.targetRules == "Self")
+				or (target and target.id and target.id == actor.id) then
+			-- SELF-TARGET buff (Battle Fury, Vanishing Step, Guard-stance skills, etc.).
+			-- These carry power=1.0 in data but their intent is the status, NOT damage.
+			-- Previously they fell into the single-target branch below and ran
+			-- ResolveSkill(actor, actor) — dealing weapon damage to the CASTER
+			-- (observed: Vanishing Step -> self Dmg:24, Battle Fury -> self Dmg:18).
+			-- Apply the authored self-status (if any) and spend RT; deal no damage.
+			-- Supports both a single appliesStatus and a list appliesStatuses
+			-- (multi-status self-buffs like Battle Fury: Frenzy + Rush).
+			if skillDef.appliesStatus then
+				StatusService.ApplyStatus(actor, skillDef.appliesStatus, actor.id)
+			end
+			if skillDef.appliesStatuses then
+				for _, sid in ipairs(skillDef.appliesStatuses) do
+					StatusService.ApplyStatus(actor, sid, actor.id)
+				end
+			end
+			BattleCoordinator.AccrueRt(state, baseRtCost)
+			-- Part B: stance-style self-buffs (e.g. Riposte Stance) apply NO real
+			-- status, so nothing would show. Emit a CLIENT-ONLY pill named after the
+			-- skill, carrying the skill's own icon (via sourceIcon), so the active
+			-- stance is visible. Clears naturally on the unit's next turn summary.
+			if not skillDef.appliesStatus and not skillDef.appliesStatuses then
+				local _sd = SkillData[skillDef.id or ""]
+				local _icon = _sd and _sd.icon or nil
+				BattleVisualBroadcaster.StatusApplied(actor, skillDef.name or "Stance", nil, _icon)
+			end
+			print(string.format(
+				"[CommandService] SKILL [%s] SELF | %s | Status:%s | MP:%d | RT:%d | AP left:%d",
+				skillDef.name or skillDef.id, actor.name,
+				skillDef.appliesStatus or "none", mpCost, baseRtCost, actor.currentAp
+			))
+
+			elseif target and target.side == actor.side and target.id ~= actor.id
+				and (skillDef.power or 0) == 0
+				and (skillDef.appliesStatus or skillDef.appliesStatuses) then
+			-- ALLY-TARGET buff (Benediction, Invigorate, Arcane Renewal, etc.).
+			-- Target is a friendly unit that is NOT the caster, the skill deals no
+			-- damage (power 0), and its intent is the authored buff status(es).
+			-- Without this branch these skills fall into the single-target damage
+			-- path below and run ResolveSkill(actor, ally) — DAMAGING the ally they
+			-- are meant to help. Apply the status(es) to the ally, spend RT, no damage.
+			-- Supports both a single appliesStatus and a list appliesStatuses.
+			if skillDef.appliesStatus then
+				StatusService.ApplyStatus(target, skillDef.appliesStatus, actor.id)
+			end
+			if skillDef.appliesStatuses then
+				for _, sid in ipairs(skillDef.appliesStatuses) do
+					StatusService.ApplyStatus(target, sid, actor.id)
+				end
+			end
+			BattleCoordinator.AccrueRt(state, baseRtCost)
+			-- Reflect the buff on the client (status pills / bars).
+			if BattleVisualBroadcaster.UnitStateChanged then
+				BattleVisualBroadcaster.UnitStateChanged(target)
+			end
+			print(string.format(
+				"[CommandService] SKILL [%s] ALLY-BUFF | %s -> %s | Status:%s | MP:%d | RT:%d | AP left:%d",
+				skillDef.name or skillDef.id, actor.name, target.name,
+				skillDef.appliesStatus or (skillDef.appliesStatuses and table.concat(skillDef.appliesStatuses, "+")) or "none",
+				mpCost, baseRtCost, actor.currentAp
+			))
+
+			elseif (target and target.isGroundTarget)
+				or (skillDef.targetRules == "Empty Tile")
+				or (skillDef.targetRules == "Ground")
+				or (skillDef.targetRules == "Enemy or Ground") then
+			-- GROUND/TILE-TARGET skill (Poison Trap, zone placements). The target is a
+			-- stat-less marker { tileX, tileY, isGroundTarget=true }. It must NOT go
+			-- through ResolveSkill (reads target.effectiveStats.VIT → crash). Create
+			-- the authored tile effect if one exists, spend RT, deal no direct damage.
+			-- NOTE: a skill with createsTileEffect==nil (e.g. Poison Trap today) places
+			-- nothing until that tile-effect content is wired — data/Designer gap.
+			if skillDef.createsTileEffect and _tileEffectService and target and target.tileX then
+				_tileEffectService.ApplyTileEffect(
+					target.tileX, target.tileY, skillDef.createsTileEffect, actor.id
+				)
+			end
+			BattleCoordinator.AccrueRt(state, baseRtCost)
+			print(string.format(
+				"[CommandService] SKILL [%s] GROUND (%s) | %s | tile:(%s,%s) | MP:%d | RT:%d | AP left:%d",
+				skillDef.name or skillDef.id, skillDef.createsTileEffect or "no-effect",
+				actor.name, tostring(target and target.tileX), tostring(target and target.tileY),
+				mpCost, baseRtCost, actor.currentAp
+			))
+
 			else
 			-- Single-target (default)
 
-			-- CHARGE SKILL: reposition actor adjacent to target before damage
+			-- CHARGE SKILL: reposition actor adjacent to target before damage.
+			-- Uses the SHARED landing function so the actual move matches the tile
+			-- previewed in the turn prompt exactly (one source of truth).
 			if skillDef.isCharge and target.isAlive then
-				local dist = math.max(math.abs(actor.tileX - target.tileX), math.abs(actor.tileY - target.tileY))
-				if dist > 1 then
-					-- Find best adjacent tile (Chebyshev distance 1 from target)
-					local bestTile = nil
-					local bestDist = 999
-					local bestDistSq = 999
-					for dy = -1, 1 do
-						for dx = -1, 1 do
-							if dx ~= 0 or dy ~= 0 then
-								local cx = target.tileX + dx
-								local cy = target.tileY + dy
-								if cx >= 1 and cx <= _mapWidth and cy >= 1 and cy <= _mapHeight
-									and not GameConstants.IsBlocked(cx, cy) then
-									-- Check not occupied by another unit
-									local occupied = false
-									for _, u in ipairs(state.units) do
-										if u.isAlive and u.tileX == cx and u.tileY == cy then
-											occupied = true
-											break
-										end
-									end
-									if not occupied then
-										local dCheb = math.max(math.abs(actor.tileX - cx), math.abs(actor.tileY - cy))
-										local dSq = (actor.tileX - cx)^2 + (actor.tileY - cy)^2
-										-- Prefer closer tile; on tie, prefer tile on direct line (lower Euclidean²)
-										if dCheb < bestDist or (dCheb == bestDist and dSq < bestDistSq) then
-											bestDist = dCheb
-											bestDistSq = dSq
-											bestTile = { x = cx, y = cy }
-										end
-									end
-								end
-							end
-						end
-					end
-					if bestTile then
-						print(string.format("[CommandService] CHARGE | %s moved (%d,%d)->(%d,%d) adjacent to %s",
-							actor.name, actor.tileX, actor.tileY, bestTile.x, bestTile.y, target.name))
-						actor.tileX = bestTile.x
-						actor.tileY = bestTile.y
-						BattleVisualBroadcaster.UnitMoved(actor)
-					end
+				local bestTile = CommandService.ComputeChargeLanding(actor, target, state)
+				if bestTile then
+					print(string.format("[CommandService] CHARGE | %s moved (%d,%d)->(%d,%d) adjacent to %s",
+						actor.name, actor.tileX, actor.tileY, bestTile.x, bestTile.y, target.name))
+					actor.tileX = bestTile.x
+					actor.tileY = bestTile.y
+					BattleVisualBroadcaster.UnitMoved(actor)
 				end
 			end
 
@@ -1279,12 +1450,18 @@ function CommandService.ValidateAndCommit(
 		-- Calculate effective mitigation for display
 		local mitigation = GameConstants.GUARD_MITIGATION + (actor.guardBonus or 0) + armorGuardBonus
 		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
+		BattleVisualBroadcaster.ActionAnnounced(actor, "Guard")
 		BattleVisualBroadcaster.GuardActivated(actor, guardRt, mitigation)
 
 	elseif actionType == "Push" then
-		-- Push: 1 AP, push adjacent enemy away (Android: Pull with extended range)
-		-- selection = target unit
+		-- Push: 1 AP, push adjacent target away (allies/neutrals/objects pushable).
+		-- selection = target unit (AI/legacy) OR { target = unit, pushDistance = N } (player).
 		local target = selection
+		local requestedDistance = nil
+		if type(selection) == "table" and selection.target then
+			target = selection.target
+			requestedDistance = selection.pushDistance
+		end
 		if not target or not target.isAlive then
 			return false, "Push target is invalid or defeated."
 		end
@@ -1304,6 +1481,7 @@ function CommandService.ValidateAndCommit(
 		if dist < minPushDist then
 			return false, "Target is too close."
 		end
+		BattleVisualBroadcaster.ActionAnnounced(actor, "Push")
 
 		-- Push RT = round(Modified Base RT × 0.10)
 		local modBaseRt = StatusService.GetModifiedBaseRt(actor)
@@ -1327,7 +1505,7 @@ function CommandService.ValidateAndCommit(
 		local result = DisplacementService.ResolvePush(
 			actor, target, force, direction,
 			GameConstants.KNOCKBACK_SOURCE_MODIFIERS.GlobalPush,
-			state.units
+			state.units, requestedDistance
 		)
 
 		-- Apply position change
@@ -1382,6 +1560,7 @@ function CommandService.ValidateAndCommit(
 		local target       = selection.target
 		local slot         = actor.consumableSlots[slotIndex]
 		local consumableDef = ConsumableData.Items[slot.consumableId]
+		BattleVisualBroadcaster.ActionAnnounced(actor, (consumableDef and consumableDef.name) or "Item")
 
 		-- Deduct 1 charge (item stays equipped at 0 charges but is unusable)
 		slot.currentCharges = slot.currentCharges - 1
@@ -1395,15 +1574,9 @@ function CommandService.ValidateAndCommit(
 		-- Resolve the consumable's effect
 		local effectResult = resolveItemEffect(actor, target, consumableDef, state.units)
 
-		-- Broadcast via existing UnitActed event (client sees actionType = "Item")
-		-- NOTE: BattleVisualBroadcaster.UnitActed currently infers actionType from
-		-- skillName presence. A dedicated "ItemUsed" broadcast method should be added
-		-- to BVB in a future update for proper client-side item animations.
-		if BattleVisualBroadcaster.UnitActed then
-			BattleVisualBroadcaster.UnitActed(actor, target, {
-				finalDamage    = effectResult.amount or 0,
-				statusApplied  = effectResult.statusId,
-			}, consumableDef.name)
+		-- Broadcast via dedicated ItemUsed event (client renders item feedback)
+		if BattleVisualBroadcaster.ItemUsed then
+			BattleVisualBroadcaster.ItemUsed(actor, target, consumableDef.name, effectResult)
 		end
 
 		print(string.format(

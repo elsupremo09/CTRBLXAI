@@ -83,6 +83,12 @@ local EVENT_NAMES = {
 	"FacingPrompt",       -- S->C: asks player to choose facing direction
 	"SetFacing",          -- C->S: player's chosen facing direction
 	"FacingChanged",      -- S->C: unit facing direction changed
+	-- Item usage
+	"ItemUsed",           -- S->C: unit used a consumable item
+	-- Reinforcements (mid-battle spawn)
+	"UnitSpawned",        -- S->C: a new unit entered the battle mid-fight
+	-- Action announce (AP spend label over the acting unit)
+	"ActionAnnounced",    -- S->C: { unitId, label } e.g. "Move", "Basic Attack", skill/item name
 }
 
 -- RemoteFunctions for Slice 4D management contracts

@@ -36,7 +36,10 @@ local MapRenderer = {}
 local TILE_SIZE      = 5
 local TILE_HEIGHT    = 0.6
 local TILE_MATERIAL  = Enum.Material.SmoothPlastic
-local ELEVATION_STEP = 2.5
+-- Vertical studs per elevation level. Reduced 2.5→1.2 (dev-locked 2026-09-24)
+-- for the expanded 1–20 elevation scale: peak (20) now renders ≈ 23 studs
+-- tall instead of ≈ 48, keeping tall maps camera/LoS-friendly and proportionate.
+local ELEVATION_STEP = 1.2
 
 local GRID_COLOR     = Color3.fromRGB(20, 20, 20)
 
@@ -63,6 +66,17 @@ local VOXEL_KEEP = {
 	Grassland        = true,
 	["Deep Water"]    = true,
 	["Shallow Water"] = true,
+}
+
+-- REFLECTIVE TERRAINS (user decision, Sep 25 2026): these render with a native
+-- REFLECTIVE Roblox material + Reflectance instead of the flat SurfaceGui texture,
+-- so the surface actually catches the skybox and reads shiny. Trade-off: a tile
+-- here shows the native material look, NOT its uploaded texture image (a SurfaceGui
+-- is flat 2D and cannot reflect). Add more terrains here to make them shiny.
+-- Each entry: material + reflectance (0..1) + optional color.
+local REFLECTIVE_TERRAINS = {
+	-- Metal reverted to the textured path Sep 25 2026 (native reflective metal read
+	-- as a mirror, not metal). Add entries here to make a terrain natively reflective.
 }
 
 -- Voxel material per natural terrain (17 entries, each unique).
@@ -332,6 +346,14 @@ local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap
 				fillTerrainVoxelColumn(position.X, topY, position.Z, TILE_SIZE, TILE_SIZE, terrainId)
 			end
 			tile.Transparency = 1
+		elseif REFLECTIVE_TERRAINS[terrainId] then
+			-- Reflective terrain: native shiny material (catches skybox), NOT a flat
+			-- SurfaceGui texture. Shows the material look in exchange for real shine.
+			local r = REFLECTIVE_TERRAINS[terrainId]
+			tile.Transparency = 0
+			tile.Material    = r.material
+			tile.Reflectance = r.reflectance
+			tile.Color       = r.color or getTerrainColor(terrainId)
 		else
 			-- Everything else: per-tile Part with a SurfaceGui terrain texture.
 			if TerrainTextures and TerrainTextures.Assets and TerrainTextures.Assets[terrainId] then
@@ -594,6 +616,16 @@ function MapRenderer.SetViewMode(folder, mode)
 					for _, gui in ipairs(child:GetChildren()) do
 						if gui:IsA("SurfaceGui") then gui.Enabled = false end
 					end
+				elseif terrainId and REFLECTIVE_TERRAINS[terrainId] then
+					-- Reflective terrain: native shiny material, disable any texture GUI.
+					local r = REFLECTIVE_TERRAINS[terrainId]
+					child.Transparency = 0
+					child.Material    = r.material
+					child.Reflectance = r.reflectance
+					child.Color       = r.color or (child:GetAttribute("TerrainColor")) or Color3.fromRGB(170, 175, 185)
+					for _, gui in ipairs(child:GetChildren()) do
+						if gui:IsA("SurfaceGui") then gui.Enabled = false end
+					end
 				else
 					-- Everything else: per-tile Part with a SurfaceGui terrain texture.
 					child.Transparency = 0
@@ -615,16 +647,27 @@ function MapRenderer.SetViewMode(folder, mode)
 				end
 
 			elseif mode == "REGION" then
+				-- Debug color must show on the Part face, so DISABLE the per-tile
+				-- SurfaceGui terrain texture (it would otherwise cover the color and
+				-- only the voxel tiles — which have no SurfaceGui — would change).
 				child.Transparency = 0
+				child.Reflectance = 0
 				child.Material = TILE_MATERIAL
 				child.Color = child:GetAttribute("RegionDebugColor")
 					or Color3.fromRGB(128, 128, 128)
+				for _, gui in ipairs(child:GetChildren()) do
+					if gui:IsA("SurfaceGui") then gui.Enabled = false end
+				end
 
 			elseif mode == "TEMPLATE" then
 				child.Transparency = 0
+				child.Reflectance = 0
 				child.Material = TILE_MATERIAL
 				child.Color = child:GetAttribute("TemplateColor")
 					or Color3.fromRGB(255, 0, 255)
+				for _, gui in ipairs(child:GetChildren()) do
+					if gui:IsA("SurfaceGui") then gui.Enabled = false end
+				end
 			end
 		end
 	end

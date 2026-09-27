@@ -35,6 +35,7 @@ local AugmentEffectService    = require(Game:WaitForChild("AugmentEffectService"
 local AIService               = require(Game:WaitForChild("AIService"))
 local MapService              = require(Game:WaitForChild("MapService"))
 local MapRenderer             = require(Game:WaitForChild("MapRenderer"))
+local EnemyGenerator          = require(Game:WaitForChild("EnemyGenerator"))
 
 
 local WeaponData = require(
@@ -542,49 +543,21 @@ if hasSave then
 	end
 end
 
-local grunt = UnitSchema.Create({
-	id           = "unit_grunt",
-	name         = "Grunt",
-	side         = "Enemy",
-	controller   = "AI",
-	aiRole       = "Basic",
-	tileX        = enemySpawns[1].x,
-	tileY        = enemySpawns[1].y,
-	stats        = { STR = 14, AGI = 10, INT = 6, VIT = 14, DEX = 8, LUK = 6 },
-	skillIds     = { "skill_venom_strike", "skill_crippling_shot" },
-	startingRt   = 420,
-})
-equipGeneratedWeapon(grunt, "WPN-SPEAR", 5, "Common", 2001)
+-- Procedurally generate the enemy squad from the selected quest's enemyTypes.
+-- Deterministic: RNG derived from the generated map's seed (project rule:
+-- same seed + content version = same result). Replaces the old hardcoded
+-- Grunt/Pyro/Shaman trio (dev-locked 2026-09-26).
+local enemyRng = Random.new((generatedMap.seed or os.time()) + 90001)
+local generatedEnemies = EnemyGenerator.GenerateEnemies(
+	activeQuest.enemyTypes or {},
+	enemySpawns,
+	enemyRng
+)
 
-local pyro = UnitSchema.Create({
-	id           = "unit_pyro",
-	name         = "Pyro",
-	side         = "Enemy",
-	controller   = "AI",
-	aiRole       = "Elite",
-	tileX        = enemySpawns[2].x,
-	tileY        = enemySpawns[2].y,
-	stats        = { STR = 8, AGI = 12, INT = 16, VIT = 10, DEX = 10, LUK = 8 },
-	skillIds     = { "skill_fire_bolt", "skill_power_strike" },
-	startingRt   = 420,
-})
-equipGeneratedWeapon(pyro, "WPN-STAFF", 5, "Common", 2002)
-
-local shaman = UnitSchema.Create({
-	id           = "unit_shaman",
-	name         = "Shaman",
-	side         = "Enemy",
-	controller   = "AI",
-	aiRole       = "Elite",
-	tileX        = enemySpawns[3].x,
-	tileY        = enemySpawns[3].y,
-	stats        = { STR = 6, AGI = 8, INT = 18, VIT = 14, DEX = 12, LUK = 10 },
-	skillIds     = { "skill_healing_light", "skill_crippling_shot" },
-	startingRt   = 420,
-})
-equipGeneratedWeapon(shaman, "WPN-WAND", 5, "Common", 2003)
-
-local allUnitsList = { hero, mage, ranger, grunt, pyro, shaman }
+local allUnitsList = { hero, mage, ranger }
+for _, enemyUnit in ipairs(generatedEnemies) do
+	table.insert(allUnitsList, enemyUnit)
+end
 for _, u in ipairs(allUnitsList) do
 	if u.side == "Enemy" then
 		setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
@@ -943,6 +916,78 @@ local function resolveItemBonuses(item)
 	return stats, passives
 end
 
+-- Shared item -> UI entry builder. GetInventoryData AND InspectUnit both use it,
+-- so the battle inspector's item detail always matches the loadout screen.
+local function buildItemEntry(item)
+	local wArch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+	local aArch = not wArch and ArmorData.GetByArchetypeId(item.baseArchetypeId) or nil
+	local entry
+	if wArch then
+		local profile = WeaponData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
+		entry = {
+			instanceId = item.instanceId,
+			name = item.displayName or wArch.name,
+			category = wArch.category,
+			handClass = wArch.handClass or "1H",
+			slot = (wArch.category == "OffHand") and "OffHand" or "MainHand",
+			itemLevel = item.itemLevel,
+			rarity = item.rarityId,
+			damage = profile and profile.damage or 0,
+			wt = profile and profile.wt or 0,
+			defense = profile and profile.defense or 0,
+			rtDelay = profile and profile.rtDelay or 0,
+			minRange = profile and profile.minRange or 1,
+			maxRange = profile and profile.maxRange or 1,
+			isWeapon = wArch.category == "Weapon",
+			isArmor = false,
+			icon = wArch.icon or nil,
+			flavor = wArch.flavor or nil,
+			nativePassiveId = wArch.nativePassiveId or nil,
+			nativePassiveDesc = WeaponData.GetPassiveDesc(wArch.nativePassiveId) or nil,
+			projectileType = wArch.projectileType or nil,
+			element = WeaponData.GetElement(item.baseArchetypeId) or nil,
+		}
+	elseif aArch then
+		local scaled = ArmorData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
+		entry = {
+			instanceId = item.instanceId,
+			name = item.displayName or aArch.name,
+			category = "Armor",
+			slot = aArch.slot,
+			itemLevel = item.itemLevel,
+			rarity = item.rarityId,
+			defense = scaled and scaled.defense or 0,
+			wt = scaled and scaled.wt or 0,
+			hp = scaled and scaled.hp or 0,
+			mp = scaled and scaled.mp or 0,
+			damage = 0,
+			rtDelay = 0,
+			minRange = 0,
+			maxRange = 0,
+			isWeapon = false,
+			isArmor = true,
+			icon = aArch.icon or nil,
+			flavor = aArch.flavor or nil,
+			passiveName = aArch.passiveName or nil,
+			passiveDesc = aArch.passiveDesc or nil,
+			actionOwnership = aArch.actionOwnership or nil,
+		}
+	else
+		entry = {
+			instanceId = item.instanceId,
+			name = "Unknown",
+			category = "Unknown",
+			itemLevel = item.itemLevel,
+			rarity = item.rarityId,
+		}
+	end
+	entry.isNew = item.isNew or false
+	entry.bonusCount = #(item.bonusLines or {})
+	entry.passiveCount = #(item.bonusPassiveIds or {})
+	entry.bonusStats, entry.bonusPassives = resolveItemBonuses(item)
+	return entry
+end
+
 BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 	local items = InventoryService.GetAllItems(PLAYER_ID)
 	local result = {}
@@ -956,75 +1001,9 @@ BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 		end
 	end
 	for _, item in ipairs(items) do
-		local wArch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
-		local aArch = not wArch and ArmorData.GetByArchetypeId(item.baseArchetypeId) or nil
-		local entry
-		if wArch then
-			local profile = WeaponData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
-			entry = {
-				instanceId = item.instanceId,
-				name = item.displayName or wArch.name,
-				category = wArch.category,
-				handClass = wArch.handClass or "1H",
-				slot = (wArch.category == "OffHand") and "OffHand" or "MainHand",
-				itemLevel = item.itemLevel,
-				rarity = item.rarityId,
-				damage = profile and profile.damage or 0,
-				wt = profile and profile.wt or 0,
-				defense = profile and profile.defense or 0,
-				rtDelay = profile and profile.rtDelay or 0,
-				minRange = profile and profile.minRange or 1,
-				maxRange = profile and profile.maxRange or 1,
-				isWeapon = wArch.category == "Weapon",
-				isArmor = false,
-				icon = wArch.icon or nil,
-				flavor = wArch.flavor or nil,
-				nativePassiveId = wArch.nativePassiveId or nil,
-				nativePassiveDesc = WeaponData.GetPassiveDesc(wArch.nativePassiveId) or nil,
-				projectileType = wArch.projectileType or nil,
-				element = WeaponData.GetElement(item.baseArchetypeId) or nil,
-			}
-		elseif aArch then
-			local scaled = ArmorData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
-			entry = {
-				instanceId = item.instanceId,
-				name = item.displayName or aArch.name,
-				category = "Armor",
-				slot = aArch.slot,
-				itemLevel = item.itemLevel,
-				rarity = item.rarityId,
-				defense = scaled and scaled.defense or 0,
-				wt = scaled and scaled.wt or 0,
-				hp = scaled and scaled.hp or 0,
-				mp = scaled and scaled.mp or 0,
-				damage = 0,
-				rtDelay = 0,
-				minRange = 0,
-				maxRange = 0,
-				isWeapon = false,
-				isArmor = true,
-				icon = aArch.icon or nil,
-				flavor = aArch.flavor or nil,
-				passiveName = aArch.passiveName or nil,
-				passiveDesc = aArch.passiveDesc or nil,
-				actionOwnership = aArch.actionOwnership or nil,
-			}
-		else
-			entry = {
-				instanceId = item.instanceId,
-				name = "Unknown",
-				category = "Unknown",
-				itemLevel = item.itemLevel,
-				rarity = item.rarityId,
-			}
-		end
-		-- Common fields
-		entry.isNew = item.isNew or false
-		entry.bonusCount = #(item.bonusLines or {})
-		entry.passiveCount = #(item.bonusPassiveIds or {})
+		local entry = buildItemEntry(item)
 		entry.equippedBy = equippedByMap[item.instanceId] and equippedByMap[item.instanceId].unitId or nil
 		entry.equippedSlot = equippedByMap[item.instanceId] and equippedByMap[item.instanceId].slot or nil
-		entry.bonusStats, entry.bonusPassives = resolveItemBonuses(item)
 		table.insert(result, entry)
 	end
 	-- Diagnostic: log inventory summary
@@ -1236,7 +1215,7 @@ do
 		cardInventory.skillCards = {
 			["SKL-POWER-STRIKE"] = 1, ["SKL-SWEEPING-CUT"] = 1,
 			["SKL-FIRE-BOLT"] = 1, ["SKL-HEALING-LIGHT"] = 1,
-			["SKL-CRIPPLING-SHOT"] = 1, ["SKL-VENOM-STRIKE"] = 1,
+			["SKL-CRIPPLING-SHOT"] = 1, ["SKL-VENOM-BURST"] = 1,
 		}
 		cardInventory.augmentCards = {
 			["AUG-BLEEDING-EDGE-SUPPORT"] = 2, ["AUG-VENOMOUS-SUPPORT"] = 2,
@@ -2083,7 +2062,7 @@ if _raceModelsFolder then
 				local _oz = -(MAP_HEIGHT * 5) / 2
 				local _elev = generatedMap.elevationGrid and generatedMap.elevationGrid[eu.tileY]
 					and generatedMap.elevationGrid[eu.tileY][eu.tileX] or 1
-				local _tileTopY = 0.6 + (_elev - 1) * 2.5
+				local _tileTopY = 0.6 + (_elev - 1) * 1.2  -- TILE_BASE_HEIGHT + (elev-1)*ELEVATION_STEP (dev-locked 1.2)
 				c:PivotTo(CFrame.new(_ox + (eu.tileX - 0.5) * 5, _tileTopY, _oz + (eu.tileY - 0.5) * 5))
 			end
 			c.Parent = _umf
@@ -2182,7 +2161,7 @@ local deployConn = BattleEvents.DeployUnit.OnServerEvent:Connect(function(plr, d
 				local _oz = -(MAP_HEIGHT * 5) / 2
 				local _elev = generatedMap.elevationGrid and generatedMap.elevationGrid[data.tileY]
 					and generatedMap.elevationGrid[data.tileY][data.tileX] or 1
-				local _feetY = 0.6 + (_elev - 1) * 2.5
+				local _feetY = 0.6 + (_elev - 1) * 1.2  -- TILE_BASE_HEIGHT + (elev-1)*ELEVATION_STEP (dev-locked 1.2)
 				clone:PivotTo(CFrame.new(
 					_ox + (data.tileX - 0.5) * 5,
 					_feetY,
@@ -2294,7 +2273,7 @@ for _, unit in ipairs(allUnitsList) do
 			-- Position at the unit's tile
 			local elev = generatedMap.elevationGrid and generatedMap.elevationGrid[unit.tileY]
 				and generatedMap.elevationGrid[unit.tileY][unit.tileX] or 1
-			local tileTopY = 0.6 + (elev - 1) * 2.5  -- TILE_BASE_HEIGHT + (elev-1)*ELEVATION_STEP
+			local tileTopY = 0.6 + (elev - 1) * 1.2  -- TILE_BASE_HEIGHT + (elev-1)*ELEVATION_STEP (dev-locked 1.2)
 			local tilePos = Vector3.new(
 				offsetX + (unit.tileX - 0.5) * TILE_SZ,
 				tileTopY,  -- PivotTo places feet at tile surface
@@ -2429,14 +2408,26 @@ local function buildTurnPrompt(unit)
 						local dmgResult = CombatResolver.ResolveSkill(unit, c, def)
 						predicted = dmgResult.finalDamage or 0
 					end
-					table.insert(targetIds, {
+					local tEntry = {
 						id        = c.id,
 						name      = c.name,
 						tileX     = c.tileX,
 						tileY     = c.tileY,
 						predicted = predicted,
 						predType  = predType,
-					})
+					}
+					-- CHARGE preview: server computes the landing tile + straight path
+					-- (shared with the actual commit logic) so the client can highlight
+					-- the caster's landing (yellow) and the path (white) at confirmation.
+					if def.isCharge then
+						local landing = CommandService.ComputeChargeLanding(unit, c, state)
+						if landing then
+							tEntry.landingTileX = landing.x
+							tEntry.landingTileY = landing.y
+							tEntry.chargePath = CommandService.ComputeChargePath(unit.tileX, unit.tileY, landing.x, landing.y)
+						end
+					end
+					table.insert(targetIds, tEntry)
 				end
 			end
 
@@ -2449,6 +2440,7 @@ local function buildTurnPrompt(unit)
 				pattern     = def.pattern or "Single",
 				targetRules = def.targetRules or "Enemy Unit",
 				isHealing   = def.isHealing or false,
+				isCharge    = def.isCharge or false,
 				channelTime = def.channelTime or 0,
 				canUse      = canUse,
 				targets     = targetIds,
@@ -2499,11 +2491,100 @@ local function buildTurnPrompt(unit)
 	local pushMaxDist = pushOverride and pushOverride.maxDistance or 1
 	local pushMinDist = pushOverride and pushOverride.minDistance or 1
 	local pushTargets = {}
+	-- Push targets ALL alive units in range (allies/enemies/neutrals/objects), not enemies only.
+	-- Original design intent: anything can be pushed. GL-006 makes ally push safe (no collision).
+	local pusherForce = 1
+	if unit.derivedStats and unit.derivedStats.force then
+		pusherForce = unit.derivedStats.force
+	end
 	for _, c in ipairs(state.units) do
-		if c.isAlive and c.side ~= unit.side then
+		if c.isAlive and c.id ~= unit.id then
 			local dist = math.max(math.abs(c.tileX - unit.tileX), math.abs(c.tileY - unit.tileY))
 			if dist >= pushMinDist and dist <= pushMaxDist then
-				table.insert(pushTargets, { id = c.id, name = c.name, tileX = c.tileX, tileY = c.tileY })
+				-- maxPushDistance = max(0, Force - target Stability); client offers 1..max stop tiles.
+				local tgtStability = 0
+				if c.derivedStats and c.derivedStats.stability then
+					tgtStability = c.derivedStats.stability
+				elseif c.effectiveStats and c.effectiveStats.VIT then
+					tgtStability = math.floor(c.effectiveStats.VIT / 60)
+				end
+				local maxPushDistance = math.max(0, pusherForce - tgtStability)
+				table.insert(pushTargets, {
+					id = c.id, name = c.name, tileX = c.tileX, tileY = c.tileY,
+					maxPushDistance = maxPushDistance, side = c.side,
+				})
+			end
+		end
+	end
+
+	-- Consumable items: usable slots only (has item + charges > 0), with
+	-- targeting metadata so the client can mirror the Skill flow.
+	local consumableItems = {}
+	for idx = 1, (unit.consumableSlotCount or 3) do
+		local slotData = unit.consumableSlots and unit.consumableSlots[idx]
+		if slotData and slotData.consumableId and (slotData.currentCharges or 0) > 0 then
+			local consDef = ConsumableData.GetById(slotData.consumableId)
+			if consDef then
+				local tr = consDef.targetRules or "Self"
+				local formula = consDef.effectFormula or ""
+				local itemRange = consDef.range or 0
+
+				-- Classify targeting mode from targetRules
+				local isSelf   = (tr == "Self")
+				local isGround = (tr == "Ground" or tr == "Tile" or tr == "Enemy or Ground"
+					or tr == "Self-origin" or tr == "Self and Allies")
+				local isAllyTarget  = (tr == "Self or Ally" or tr == "Ally")
+				local isEnemyTarget = (tr == "Enemy" or tr == "Enemy Unit")
+				local isAnyTarget   = (tr == "Any Unit")
+
+				local isHealing = formula:match("Restore%s+%d+%%.-Max HP") ~= nil
+
+				-- Build unit-target candidates by side + Chebyshev range
+				local itemTargets = {}
+				if isAllyTarget or isEnemyTarget or isAnyTarget then
+					for _, c in ipairs(state.units) do
+						if c.isAlive then
+							local sameSide = (c.side == unit.side)
+							local includeAlly  = isAllyTarget and sameSide
+							local includeEnemy = isEnemyTarget and (not sameSide)
+							local includeAny   = isAnyTarget
+							-- "Ally" excludes self; "Self or Ally"/"Any" include self
+							if isAllyTarget and tr == "Ally" and c.id == unit.id then
+								includeAlly = false
+							end
+							if includeAlly or includeEnemy or includeAny then
+								local dist = math.max(
+									math.abs(c.tileX - unit.tileX),
+									math.abs(c.tileY - unit.tileY)
+								)
+								if dist <= itemRange then
+									table.insert(itemTargets, {
+										id = c.id, name = c.name,
+										tileX = c.tileX, tileY = c.tileY,
+									})
+								end
+							end
+						end
+					end
+				end
+
+				table.insert(consumableItems, {
+					slotIndex     = idx,
+					consumableId  = slotData.consumableId,
+					name          = consDef.name or "Unknown",
+					currentCharges = slotData.currentCharges,
+					maxCharges    = slotData.maxCharges or consDef.maxCharges or 0,
+					rtCost        = consDef.rtCost or 80,
+					range         = itemRange,
+					targetRules   = tr,
+					pattern       = consDef.pattern or "Single",
+					effectFormula = formula,
+					category      = consDef.category or "",
+					isHealing     = isHealing,
+					selfTarget    = isSelf,
+					groundTarget  = isGround,
+					targets       = itemTargets,
+				})
 			end
 		end
 	end
@@ -2524,6 +2605,7 @@ local function buildTurnPrompt(unit)
 		moveCandidates = moveCandidates,
 		attackTargets  = attackTargets,
 		pushTargets    = pushTargets,
+		consumableSlots = consumableItems,
 		pushRt         = math.round(StatusService.GetModifiedBaseRt(unit) * GameConstants.GUARD_RT_BASE_FACTOR),
 		timeline       = timeline,
 		currentCt      = state.ct,
@@ -2669,7 +2751,9 @@ local function executePlayerCommand(unit, command)
 			return nil
 		end
 		local oldTargetX, oldTargetY = target.tileX, target.tileY
-		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Push", target)
+		-- Distance control: player may request a stop distance (1..max). nil = full (legacy).
+		local pushSelection = { target = target, pushDistance = command.pushDistance }
+		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Push", pushSelection)
 		if ok then
 			return { actionType = "Push", unit = unit, target = target,
 				oldTargetX = oldTargetX, oldTargetY = oldTargetY }
@@ -2840,6 +2924,78 @@ local function executePlayerCommand(unit, command)
 		end
 	end
 
+	if actionType == "Item" then
+		local slotIndex = command.itemSlotIndex
+		if not slotIndex then
+			warn("[Main] Player item: no itemSlotIndex")
+			return nil
+		end
+		local slot = unit.consumableSlots and unit.consumableSlots[slotIndex]
+		if not slot or not slot.consumableId then
+			warn("[Main] Player item: empty slot " .. tostring(slotIndex))
+			return nil
+		end
+		local consDef = ConsumableData.GetById(slot.consumableId)
+		local itemName = consDef and consDef.name or "Item"
+
+		-- Resolve target: ground tile (virtual) or unit by id
+		local target = nil
+		if command.tileX and command.tileY and not command.targetId then
+			target = {
+				tileX = command.tileX,
+				tileY = command.tileY,
+				isGroundTarget = true,
+				isAlive = true,
+				name = string.format("Ground(%d,%d)", command.tileX, command.tileY),
+				id = "_ground_" .. command.tileX .. "_" .. command.tileY,
+			}
+		else
+			for _, u in ipairs(state.units) do
+				if u.id == command.targetId then
+					target = u
+					break
+				end
+			end
+		end
+		if not target then
+			warn("[Main] Player item: target not found (targetId=" .. tostring(command.targetId) .. ")")
+			return nil
+		end
+
+		-- Snapshot target state for result reporting
+		local hpBefore = target.currentHp or 0
+		local mpBefore = target.currentMp or 0
+		local statusesBefore = target.statusInstances and #target.statusInstances or 0
+
+		local selection = { itemSlotIndex = slotIndex, target = target }
+		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Item", selection)
+		if ok then
+			local hpDelta = (target.currentHp or 0) - hpBefore
+			local mpDelta = (target.currentMp or 0) - mpBefore
+			local newStatus = nil
+			if target.statusInstances and #target.statusInstances > statusesBefore then
+				newStatus = target.statusInstances[#target.statusInstances].id
+			end
+			local amount = 0
+			if hpDelta ~= 0 then
+				amount = math.abs(hpDelta)
+			elseif mpDelta ~= 0 then
+				amount = math.abs(mpDelta)
+			end
+			return {
+				actionType    = "Item",
+				unit          = unit,
+				target        = target,
+				itemName      = itemName,
+				amount        = amount,
+				statusApplied = newStatus,
+			}
+		else
+			warn("[Main] Player item rejected: " .. (reason or "unknown"))
+			return nil
+		end
+	end
+
 	warn("[Main] Unknown player command: " .. tostring(actionType))
 	return nil
 end
@@ -2883,8 +3039,19 @@ local function broadcastActions(actions, activeUnit)
 					if action.statusApplied then
 						local statusInst = StatusService.HasStatus(target, action.statusApplied)
 						if statusInst then
+							-- Fallback icon: the applying skill's own icon (for statuses that
+							-- have no dedicated status icon, e.g. Crippled).
+							local _srcIcon = nil
+							if action.skillId then
+								local _sk = SkillData[action.skillId]
+								if not _sk then
+									local _key = string.upper(action.skillId):gsub("SKILL_", "SKL-"):gsub("_", "-")
+									_sk = SkillData[_key]
+								end
+								_srcIcon = _sk and _sk.icon or nil
+							end
 							BattleVisualBroadcaster.StatusApplied(
-								target, action.statusApplied, statusInst.remainingTurns
+								target, action.statusApplied, statusInst.remainingTurns, _srcIcon
 							)
 						end
 						checkChannelInterrupt(target, action.statusApplied)
@@ -3005,8 +3172,17 @@ local function runAiTurn(unit)
 		elseif actionType == "Skill" then
 			targetUnit = selection and selection.target
 		end
+		-- Ground/tile-targeted skills (e.g. Poison Trap) pass a stat-less marker
+		-- { tileX, tileY, isGroundTarget = true } as the target. It is truthy but
+		-- has no currentHp / statusInstances, so the unit-tracking reads below
+		-- crashed (#nil at the old L3159, aborting the whole AI turn). The real
+		-- work is done by ValidateAndCommit(selection); this block only tracks
+		-- HP/status deltas for a real unit, so treat a ground marker as no unit.
+		if targetUnit and targetUnit.isGroundTarget then
+			targetUnit = nil
+		end
 		local hpBefore = targetUnit and targetUnit.currentHp or 0
-		local statusesBefore = targetUnit and #targetUnit.statusInstances or 0
+		local statusesBefore = (targetUnit and targetUnit.statusInstances) and #targetUnit.statusInstances or 0
 
 		local oldTileX = unit.tileX
 		local oldTileY = unit.tileY
@@ -3063,130 +3239,44 @@ local function runAiTurn(unit)
 		return ok
 	end
 
-	-- Use AIService to plan the turn (3-tier role-based scoring)
-	local plan = AIService.PlanTurn(unit, allUnits, MAP_WIDTH, MAP_HEIGHT)
+	-- Per-AP decision loop (one smart brain + personality scoring).
+	-- The brain returns ONE best action; we commit it, then re-evaluate with
+	-- remaining AP. This replaces the old multi-step plan executor AND the old
+	-- bolt-on consumable block (item use is now a scored option inside the brain).
+	local MAX_AI_ACTIONS = 8  -- safety cap against any pathological loop
+	local actionsThisTurn = 0
+	while BattleCoordinator.GetPhase(state) == "TurnOpen"
+		and (unit.currentAp or 0) > 0
+		and actionsThisTurn < MAX_AI_ACTIONS do
 
-	-- Execute the plan step by step
-	for _, step in ipairs(plan) do
-		if BattleCoordinator.GetPhase(state) ~= "TurnOpen" then break end
-		if unit.currentAp <= 0 and step.actionType ~= "Wait" then break end
+		local action = AIService.DecideAction(unit, allUnits, MAP_WIDTH, MAP_HEIGHT)
+		if not action or action.actionType == "Wait" then
+			break  -- brain chose to stop; fall through to end-of-turn Wait
+		end
 
-		local ok = false
-		if step.actionType == "Attack" then
-			ok = tryCommit("Attack", step.selection, nil)
-		elseif step.actionType == "Skill" then
-			ok = tryCommit("Skill", step.selection, step.skillName)
-		elseif step.actionType == "Move" then
-			ok = tryCommit("Move", step.selection, nil)
-		elseif step.actionType == "Guard" then
-			ok = tryCommit("Guard", nil, nil)
-		elseif step.actionType == "Push" then
-			ok = tryCommit("Push", step.selection, nil)
-		elseif step.actionType == "Wait" then
-			-- Wait handled at end
+		local committed = false
+		local a = action.actionType
+		if a == "Attack" then
+			committed = tryCommit("Attack", action.selection, nil)
+		elseif a == "Skill" then
+			committed = tryCommit("Skill", action.selection, action.skillName)
+		elseif a == "Move" then
+			committed = tryCommit("Move", action.selection, nil)
+		elseif a == "Guard" then
+			committed = tryCommit("Guard", nil, nil)
+		elseif a == "Item" then
+			committed = tryCommit("Item", action.selection, nil)
+		else
+			-- Unknown action type: stop rather than spin.
 			break
 		end
 
-		-- After an attack/skill, check if the target is no longer available (KO or Hide)
-		-- If so, replan remaining AP instead of executing stale plan steps
-		if ok and (step.actionType == "Attack" or step.actionType == "Skill")
-			and BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
-			local stepTarget = nil
-			if step.actionType == "Attack" then
-				stepTarget = step.selection
-			elseif step.selection and step.selection.target then
-				stepTarget = step.selection.target
-			end
-			if stepTarget and (not stepTarget.isAlive or StatusService.HasStatus(stepTarget, "Hide")) then
-				print(string.format("[AI] %s replanning — target %s no longer available (%s)",
-					unit.name, stepTarget.name,
-					not stepTarget.isAlive and "KO" or "Hide"))
-				local combatReplan = AIService.PlanTurn(unit, allUnits, MAP_WIDTH, MAP_HEIGHT)
-				for _, rstep in ipairs(combatReplan) do
-					if BattleCoordinator.GetPhase(state) ~= "TurnOpen" then break end
-					if unit.currentAp <= 0 then break end
-					if rstep.actionType == "Wait" then break end
-					if rstep.actionType == "Attack" then
-						tryCommit("Attack", rstep.selection, nil)
-					elseif rstep.actionType == "Skill" then
-						tryCommit("Skill", rstep.selection, rstep.skillName)
-					elseif rstep.actionType == "Guard" then
-						tryCommit("Guard", nil, nil)
-					elseif rstep.actionType == "Push" then
-						tryCommit("Push", rstep.selection, nil)
-					elseif rstep.actionType == "Move" then
-						tryCommit("Move", rstep.selection, nil)
-					end
-				end
-				break  -- Exit original plan loop — replan has consumed remaining AP
-			end
-		end
+		actionsThisTurn = actionsThisTurn + 1
 
-		-- After a move, re-evaluate if plan requested it
-		if ok and step.actionType == "Move" and plan.needsReeval
-			and BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 then
-			-- Re-plan with remaining AP from new position
-			local replan = AIService.PlanTurn(unit, allUnits, MAP_WIDTH, MAP_HEIGHT)
-			for _, rstep in ipairs(replan) do
-				if BattleCoordinator.GetPhase(state) ~= "TurnOpen" then break end
-				if unit.currentAp <= 0 then break end
-				if rstep.actionType == "Wait" then break end
-				if rstep.actionType ~= "Move" then
-					if rstep.actionType == "Attack" then
-						tryCommit("Attack", rstep.selection, nil)
-					elseif rstep.actionType == "Skill" then
-						tryCommit("Skill", rstep.selection, rstep.skillName)
-					elseif rstep.actionType == "Guard" then
-						tryCommit("Guard", nil, nil)
-					elseif rstep.actionType == "Push" then
-						tryCommit("Push", rstep.selection, nil)
-					end
-					break  -- Only 1 action after re-eval
-				end
-			end
-		end
-	end
-
-	-- AI consumable usage (Slice 4G): after plan execution, check if unit
-	-- should use a consumable item (healing at low HP, status cure, etc.)
-	if BattleCoordinator.GetPhase(state) == "TurnOpen" and unit.currentAp > 0 and unit.consumableSlots then
-		local bestSlot = nil
-		local bestPriority = 0
-		for slotIdx = 1, (unit.consumableSlotCount or 3) do
-			local slot = unit.consumableSlots[slotIdx]
-			if slot and slot.consumableId and slot.currentCharges and slot.currentCharges > 0 then
-				local consDef = ConsumableData.GetById(slot.consumableId)
-				if consDef then
-					local formula = consDef.effectFormula or ""
-					local hpPct = unit.currentHp / math.max(1, unit.maxHp)
-					local mpPct = unit.currentMp / math.max(1, unit.maxMp)
-					local priority = 0
-					-- HP recovery: use when HP ≤ 35%
-					if formula:match("Restore%s+%d+%%%s+target%s+Max%s+HP") and hpPct <= 0.35 then
-						priority = 10 + (1 - hpPct) * 10
-					-- MP recovery: use when MP ≤ 20% and unit has skills
-					elseif formula:match("Restore%s+%d+%%%s+target%s+Max%s+MP") and mpPct <= 0.20 and #(unit.skillIds or {}) > 0 then
-						priority = 5
-					-- Status cure: use when unit has a disabling status
-					elseif formula:match("Remove") then
-						for _, inst in ipairs(unit.statusInstances or {}) do
-							if inst.id == "Poison" or inst.id == "Burn" or inst.id == "Silence" then
-								priority = 7; break
-							end
-						end
-					end
-					-- Charge conservation: preserve last charge unless critical
-					if priority > 0 and slot.currentCharges <= 1 and hpPct > 0.20 then
-						priority = 0
-					end
-					if priority > bestPriority then bestPriority = priority; bestSlot = slotIdx end
-				end
-			end
-		end
-		if bestSlot then
-			local target = { tileX = unit.tileX, tileY = unit.tileY }
-			print(string.format("[AI] %s using consumable slot %d", unit.name, bestSlot))
-			tryCommit("Item", { target = target, itemSlotIndex = bestSlot }, nil)
+		-- If a commit failed (state changed / illegal now), stop and end turn
+		-- rather than retrying the same rejected action forever.
+		if not committed then
+			break
 		end
 	end
 
@@ -3295,7 +3385,19 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 			local _icon = (_wArch and _wArch.icon) or (_aArch and _aArch.icon) or nil
 			equipData[slotName] = {
 				name      = (_wArch and _wArch.name) or (_aArch and _aArch.name) or "Unknown",
-				rarity    = itemInst.rarity or "Common",
+				-- Item instances store rarity as `rarityId` (ItemGenerator) — reading
+				-- `.rarity` always fell back to "Common". Same field GetInventoryData uses.
+				rarity    = itemInst.rarityId or itemInst.rarity or "Common",
+				isWeapon  = _wArch and (_wArch.category == "Weapon") or false,
+				isArmor   = _aArch ~= nil,
+				category  = (_wArch and _wArch.category) or (_aArch and "Armor") or nil,
+				slot      = (_aArch and _aArch.slot) or nil,
+				hp        = (_aArch and ArmorData.GetScaledProfile(itemInst.baseArchetypeId, itemInst.itemLevel) or {}).hp or 0,
+				mp        = (_aArch and ArmorData.GetScaledProfile(itemInst.baseArchetypeId, itemInst.itemLevel) or {}).mp or 0,
+				projectileType = (_wArch and _wArch.projectileType) or nil,
+				element   = _wArch and WeaponData.GetElement(itemInst.baseArchetypeId) or nil,
+				archPassiveName = (_aArch and _aArch.passiveName) or nil,
+				archPassiveDesc = (_aArch and _aArch.passiveDesc) or nil,
 				itemLevel = itemInst.itemLevel or 1,
 				archetype = itemInst.archetype or "Unknown",
 				handClass = itemInst.handClass or "1H",
@@ -3314,6 +3416,8 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 				flavor        = (_wArch and _wArch.flavor) or (_aArch and _aArch.flavor) or nil,
 				icon          = _icon,
 				displayName   = itemInst.displayName or nil,
+				-- Same entry GetInventoryData sends -> client maps it with the loadout's mapper.
+				invEntry      = buildItemEntry(itemInst),
 			}
 		end
 	end
@@ -3378,9 +3482,14 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 			end
 		end
 		skillsData[#skillsData].augments = augList
-		-- Attach estimated raw damage (presentation-only, before defense)
-		local attackPower = unit.derivedStats and unit.derivedStats.attackPower or 0
-		skillsData[#skillsData].estimatedDamage = math.round(attackPower * skillPower)
+		-- Raw power (presentation-only, BEFORE target defense/hit quality/facing).
+		-- Uses the SAME shared helpers as CombatResolver, so it can't drift from combat.
+		-- (Old code read derivedStats.attackPower, which is never populated -> always 0.)
+		if regDef then
+			local isHeal = regDef.isHealing
+			skillsData[#skillsData].estimatedDamage = (not isHeal) and math.round(CombatResolver.EstimateSkillPower(unit, regDef)) or nil
+			skillsData[#skillsData].estimatedHeal   = isHeal and math.round(CombatResolver.EstimateHealPower(unit)) or nil
+		end
 	end
 
 	-- Build full response
@@ -3425,6 +3534,34 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		derivedStats = unit.derivedStats,
 		equipment    = equipData,
 		skills       = skillsData,
+		consumables  = (function()
+			-- Equipped consumable slots (same data source as the turn prompt).
+			local list = {}
+			local unlocked = unit.consumableSlotCount or 3
+			local maxSlots = unit.maxConsumableSlots or 6
+			for idx = 1, maxSlots do
+				local sd = unit.consumableSlots and unit.consumableSlots[idx]
+				if sd and sd.consumableId then
+					local cd = ConsumableData.GetById(sd.consumableId)
+					table.insert(list, {
+						slotIndex = idx,
+						consumableId = sd.consumableId,
+						name = cd and cd.name or sd.consumableId,
+						category = cd and cd.category or "",
+						icon = cd and cd.icon or nil,
+						currentCharges = sd.currentCharges or 0,
+						maxCharges = sd.maxCharges or (cd and cd.maxCharges) or 0,
+						rtCost = cd and cd.rtCost or 0,
+						range = cd and cd.range or 0,
+						targetRules = cd and cd.targetRules or "",
+						locked = false,
+					})
+				elseif idx <= unlocked then
+					table.insert(list, { slotIndex = idx, empty = true })
+				end
+			end
+			return list
+		end)(),
 		statuses     = statusSummary,
 		doctrineId   = unit.doctrineId,
 		doctrine     = unit.doctrineId and DoctrineData[unit.doctrineId] or nil,
@@ -3478,6 +3615,14 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 	end
 
 	turnCount = turnCount + 1
+
+	-- Regeneration/Recharge CT-tick effects: BattleCoordinator applied the HP/MP
+	-- (mutating the units) and stashed the affected units here. Refresh their bars.
+	local ctStatusUnits = state.ctStatusUnits or {}
+	state.ctStatusUnits = nil
+	for _, u in ipairs(ctStatusUnits) do
+		BattleVisualBroadcaster.UnitStateChanged(u)
+	end
 
 	-- Process DoT
 	local dotEvents = state.dotEvents or {}

@@ -238,7 +238,7 @@ end
 --                         but terrain BlocksLoS still applies.
 --------------------------------------------------
 
-function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerElevation, projectileType)
+function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerElevation, projectileType, attackerSide)
 	-- Adjacent tiles always have LoS
 	if chebyshevDistance(x1, y1, x2, y2) <= 1 then
 		return true
@@ -264,13 +264,17 @@ function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerEleva
 	--   Arc Peak Elevation = Attacker Elevation + Arc Height (default 3)
 	--   Clear if Arc Peak >= Blocker Elevation + 2
 	local isArc = (projectileType == "Arc")
+	-- Unit-blocking LoS policy (user override Sep 26 2026, supersedes locked DB rule):
+	--   Direct/Channeled: only OPPOSITE-SIDE (enemy) units block. Allied units never block.
+	--   Arc: NO unit blocks (ally or enemy) — arc flies over all units, keeping it
+	--        meaningfully distinct from Direct. (Designer must update Projectile LoS rules
+	--        38 'Unit blockers' and 45 'Arc blocker clearance' in the DB.)
 	local unitOccupied = {}
 	if allUnits then
 		for _, u in ipairs(allUnits) do
 			if u.isAlive then
 				local key = u.tileX .. "," .. u.tileY
-				local uElev = GameConstants.GetElevation(u.tileX, u.tileY)
-				unitOccupied[key] = uElev
+				unitOccupied[key] = { elev = GameConstants.GetElevation(u.tileX, u.tileY), side = u.side }
 			end
 		end
 	end
@@ -298,24 +302,18 @@ function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerEleva
 		end
 
 		-- Check if a standing unit occupies this intermediate tile
-		if allUnits then
+		-- Arc projectiles are NEVER blocked by units (ally or enemy) — skip entirely.
+		if allUnits and not isArc then
 			local key = cx .. "," .. cy
-			local blockerElev = unitOccupied[key]
-			if blockerElev then
+			local blocker = unitOccupied[key]
+			-- Direct/Channeled: only OPPOSITE-SIDE (enemy) units block LoS.
+			-- Allied blockers (same side as attacker) never block. If attackerSide is
+			-- unknown (nil), fall back to blocking (safe default preserves old behavior).
+			if blocker and (attackerSide == nil or blocker.side ~= attackerSide) then
 				local atkElev = attackerElevation or GameConstants.GetElevation(x1, y1)
-
-				if isArc then
-					-- Arc clearance: Arc Peak Elevation >= Blocker Elevation + 2
-					-- Arc Peak = Attacker Elevation + Arc Height (default 3)
-					local arcPeak = atkElev + 3
-					if arcPeak < blockerElev + 2 then
-						return false
-					end
-				else
-					-- Direct/Channeled/None: bypass if attacker >= 3 above blocker
-					if atkElev < blockerElev + 3 then
-						return false
-					end
+				-- Bypass if attacker Effective Elevation >= 3 above blocker.
+				if atkElev < blocker.elev + 3 then
+					return false
 				end
 			end
 		end
@@ -341,7 +339,7 @@ function TargetingService.GetAttackCandidates(actor, allUnits, range)
 			if dist <= range
 				and dist >= minRange
 				and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
-					allUnits, getEffectiveElevation(actor), actor.weaponProjectileType)
+					allUnits, getEffectiveElevation(actor), actor.weaponProjectileType, actor.side)
 				and isMeleeElevationLegal(actor, unit, range)
 			then
 				table.insert(candidates, unit)
@@ -447,7 +445,7 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 			local skipLos = isAllyRule or isAllyOnlyRule or isIndiscriminate
 			local hasLos = skipLos
 				or TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
-					allUnits, getEffectiveElevation(actor), projType)
+					allUnits, getEffectiveElevation(actor), projType, actor.side)
 			if not hasLos then
 				print(string.format("[SkillCand] %s REJECTED %s: no LoS (proj=%s)", actor.name, unit.name, tostring(projType)))
 			elseif not isMeleeElevationLegal(actor, unit, baseRange) then
@@ -880,6 +878,13 @@ function TargetingService.GetAOETargetTiles(aoePattern, actor, targetTileX, targ
 	elseif patternType == "Impact" then
 		-- Impact 1 = Cross radius 1 (3×3 cross)
 		return TargetingService.GetCrossTiles(targetTileX, targetTileY, 1, mapWidth, mapHeight)
+
+	elseif patternType == "Aura" then
+		-- Aura is CASTER-ORIGIN: centered on the caster's own tile, radius = param
+		-- (Chebyshev), not the selected target tile. Mirrors Circle but from the
+		-- actor. Recipient side-filtering (allies vs enemies) is applied by the
+		-- resolution loop in CommandService, not here.
+		return TargetingService.GetCircleTiles(actor.tileX, actor.tileY, param, mapWidth, mapHeight)
 
 	elseif patternType == "Cleave" then
 		-- Cleave is handled separately via GetCleaveTargets (unit-based, not tile-based)

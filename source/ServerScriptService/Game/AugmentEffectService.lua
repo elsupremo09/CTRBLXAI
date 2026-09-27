@@ -299,6 +299,14 @@ end
 function AugmentEffectService.GetAugmentsForSkill(unit, skillId)
 	if not unit or not skillId then return {} end
 
+	-- Mute: disables skill augments only (base skill remains usable). DB
+	-- (elements_statuses id 63): "Disables skill augments only." Suppress at
+	-- this single choke point so both the MP-cost path and the damage path
+	-- see no augments while Mute is active — mirrors how Break disables passives.
+	if StatusService.HasStatus(unit, "Mute") then
+		return {}
+	end
+
 	-- Doctrine skill (slot 1)
 	if skillId == unit.selectedDoctrineSkill then
 		return unit.doctrineAugments or {}
@@ -480,7 +488,8 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 				markFired(augId)
 				local inst = StatusService.HasStatus(defender, statusToApply)
 				if inst then
-					BattleVisualBroadcaster.StatusApplied(defender, statusToApply, inst.remainingTurns)
+					local _augIcon = AugmentData[augId] and AugmentData[augId].icon or nil
+					BattleVisualBroadcaster.StatusApplied(defender, statusToApply, inst.remainingTurns, _augIcon)
 				end
 				print(string.format(
 					"[AugmentEffect] %s triggered on %s (apply %s)",
@@ -498,7 +507,8 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 				markFired(augId)
 				local inst = StatusService.HasStatus(attacker, buffToApply)
 				if inst then
-					BattleVisualBroadcaster.StatusApplied(attacker, buffToApply, inst.remainingTurns)
+					local _augIcon2 = AugmentData[augId] and AugmentData[augId].icon or nil
+					BattleVisualBroadcaster.StatusApplied(attacker, buffToApply, inst.remainingTurns, _augIcon2)
 				end
 				print(string.format(
 					"[AugmentEffect] %s triggered on %s (self-buff %s)",
