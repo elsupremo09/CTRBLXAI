@@ -176,7 +176,20 @@ local function calcHitQuality(attackerDex, defenderAgi, attackerUnit)
 	if attackerUnit and StatusService.HasStatus(attackerUnit, "Blind") then
 		precision = precision * 0.50
 	end
-	return 1 + (precision - evasiveness)
+	local hq = 1 + (precision - evasiveness)
+	-- Blessed / Cursed: additive Final Hit Quality modifier on the attacker.
+	-- DB (elements_statuses): Blessed +0.25, Cursed -0.25. Applied to the
+	-- afflicted unit's OWN attacks, after the precision/evasiveness term so it
+	-- stacks cleanly with facing/Hide (which are also added to final HQ).
+	if attackerUnit then
+		for _, inst in ipairs(attackerUnit.statusInstances or {}) do
+			local sdef = GameConstants.STATUSES[inst.id]
+			if sdef and sdef.hitQualityMod then
+				hq = hq + sdef.hitQualityMod
+			end
+		end
+	end
+	return hq
 end
 
 local function calcEffectiveDefense(attackPower, defensePower)
@@ -313,6 +326,29 @@ end
 -- PUBLIC: RESOLVE SKILL (damage skill, single target)
 --------------------------------------------------
 
+-- SHARED PRE-DEFENSE POWER (used by ResolveSkill/ResolveHealing AND the unit
+-- inspector's raw-damage display, so the shown number can never drift from
+-- real combat). Skill power = weapon attack power x skill power multiplier.
+function CombatResolver.EstimateSkillPower(attacker, skillDef)
+	local aStats = attacker.effectiveStats or {}
+	local weaponDamage = attacker.weaponDamage or 10
+	local sp = weaponDamage * (skillDef.power or 1.0)
+	if skillDef.inheritStr then
+		sp = GameConstants.CalcAttackPower(sp, aStats.STR)
+	end
+	return sp
+end
+
+-- Pre-target heal power (before the target's VIT heal efficiency).
+function CombatResolver.EstimateHealPower(caster)
+	local int = (caster.effectiveStats and caster.effectiveStats.INT) or 10
+	local weaponDamage = caster.weaponDamage or 10
+	-- Skill Potency Multiplier = 1 + INT / (200 + INT)
+	local skillPotency = GameConstants.CalcSkillPotency(int)
+	local baseHeal = 10 + 0.35 * int + weaponDamage * 0.30
+	return baseHeal * skillPotency
+end
+
 function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	assert(
 		type(attacker) == "table" and type(defender) == "table",
@@ -322,12 +358,8 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	local aStats = attacker.effectiveStats
 	local dStats = defender.effectiveStats
 
-	-- Skill Power = Weapon Attack Power × power multiplier
-	local weaponDamage = attacker.weaponDamage or 10
-	local sp = weaponDamage * (skillDef.power or 1.0)
-	if skillDef.inheritStr then
-		sp = GameConstants.CalcAttackPower(sp, aStats.STR)
-	end
+	-- Skill Power = Weapon Attack Power × power multiplier (shared helper)
+	local sp = CombatResolver.EstimateSkillPower(attacker, skillDef)
 
 	local dp = GameConstants.CalcDefensePower(0, dStats.VIT)
 	local effectiveDefense = calcEffectiveDefense(sp, dp)
@@ -422,6 +454,14 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 
 	finalDamage = applyElementInteractions(defender, skillElement, finalDamage)
 
+	-- Pure-debuff detection: a skill whose intent is the status itself, not
+	-- damage (power 0/nil and no STR inheritance). Its authored status must
+	-- land even though it deals no damage — the actual>0 gate in ApplyOutcome
+	-- is meant only to suppress rider statuses on fully-mitigated DAMAGING hits.
+	-- (See ApplyOutcome. Damaging skills leave this false and stay gated.)
+	local isPureStatusSkill = (skillDef.appliesStatus ~= nil or skillDef.appliesStatuses ~= nil)
+		and (not skillDef.inheritStr) and ((skillDef.power or 0) == 0)
+
 	return {
 		type           = "Damage",
 		targetId       = defender.id,
@@ -434,6 +474,8 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		facingZone     = facingZone,
 		finalDamage    = finalDamage,
 		appliesStatus  = skillDef.appliesStatus or nil,
+		appliesStatuses = skillDef.appliesStatuses or nil,
+		applyStatusUnconditional = isPureStatusSkill,
 		element        = skillElement,
 		sourceUnitId   = attacker.id,
 	}
@@ -453,20 +495,13 @@ function CombatResolver.ResolveHealing(caster, target, skillDef)
 		"ResolveHealing: caster and target must be unit tables."
 	)
 
-	local cStats = caster.effectiveStats
-	local int = cStats.INT or 10
-	local weaponDamage = caster.weaponDamage or 10
-
-	-- Skill Potency Multiplier = 1 + INT / (200 + INT)
-	local skillPotency = GameConstants.CalcSkillPotency(int)
-
-	-- Healing formula (base)
-	local baseHeal = 10 + 0.35 * int + weaponDamage * 0.30
+	-- Pre-target heal power: (10 + 0.35*INT + weaponDmg*0.30) x skill potency (shared helper)
+	local healPower = CombatResolver.EstimateHealPower(caster)
 
 	-- Healing Efficiency: target's VIT increases received healing
 	local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
 	local healEfficiency = GameConstants.CalcHealEfficiency(targetVit)
-	local finalHeal = math.max(1, math.round(baseHeal * skillPotency * healEfficiency))
+	local finalHeal = math.max(1, math.round(healPower * healEfficiency))
 
 	-- Phase 3: Undead healing reversal
 	-- Non-Dark healing vs Undead → converted to damage
@@ -529,7 +564,10 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	StatusService.OnDamageReceived(target, actual)
 
 	local statusApplied = nil
-	if outcome.appliesStatus and actual > 0 and target.isAlive then
+	-- Pure-debuff skills (applyStatusUnconditional) land their status with no
+	-- damage; damaging attacks still require actual>0 so a fully-mitigated hit
+	-- does not apply its rider status.
+	if outcome.appliesStatus and (actual > 0 or outcome.applyStatusUnconditional) and target.isAlive then
 		-- For Burn, pass the actual fire damage dealt
 		local fireDmg = nil
 		if outcome.appliesStatus == "Burn" then
@@ -545,6 +583,24 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			statusApplied = outcome.appliesStatus
 		elseif not applied and immuneReason then
 			BattleVisualBroadcaster.StatusImmune(target, outcome.appliesStatus, immuneReason)
+		end
+	end
+
+	-- Multi-status skills: apply each status in outcome.appliesStatuses (e.g. Wither
+	-- lands Weakened + Cursed on the enemy damage path). Same gate as the singular
+	-- appliesStatus above so a fully-mitigated damaging hit does not apply riders,
+	-- while pure-status skills (applyStatusUnconditional) always land. Burn is not
+	-- routed here (it uses the singular appliesStatus + fireDmg path).
+	if outcome.appliesStatuses and (actual > 0 or outcome.applyStatusUnconditional) and target.isAlive then
+		for _, sid in ipairs(outcome.appliesStatuses) do
+			local applied, _, immuneReason = StatusService.ApplyStatus(
+				target, sid, outcome.sourceUnitId or "unknown"
+			)
+			if applied then
+				statusApplied = statusApplied or sid
+			elseif not applied and immuneReason then
+				BattleVisualBroadcaster.StatusImmune(target, sid, immuneReason)
+			end
 		end
 	end
 

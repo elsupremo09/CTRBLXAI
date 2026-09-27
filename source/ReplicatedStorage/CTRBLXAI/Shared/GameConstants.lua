@@ -667,6 +667,11 @@ GameConstants.STATUSES = {
 		kind         = "Buff",
 		duration     = 3,
 		reapply      = "refresh",
+		-- DB (elements_statuses id 72) specifies "Basic Attack tempo only".
+		-- Magnitude set by developer decision 2026-09-26: reduce the base-RT
+		-- component of Basic Attack RT by 50%. Does NOT affect the weapon-WT
+		-- component (applied to the base-RT portion only in calcBasicAttackBaseRt).
+		basicAttackRtMult = 0.50,
 	},
 
 	Wet = {
@@ -713,6 +718,9 @@ GameConstants.STATUSES = {
 		duration     = nil,
 		durationCt   = 3000,
 		reapply      = "extend",
+		-- DB: Final Heal = round(round(Max HP x 0.05) x (1 + VIT / 300)) every 300 CT.
+		regenFraction = 0.05,
+		regenIntervalCt = 300,
 	},
 
 	Recharge = {
@@ -722,6 +730,11 @@ GameConstants.STATUSES = {
 		duration     = nil,
 		durationCt   = 1200,
 		reapply      = "refresh",
+		-- DB: on application restore round(Max MP x 0.10) min 1; then round(Max MP x 0.05) min 1
+		-- at 300, 600, 900, 1200 CT. Current MP cannot exceed Max MP.
+		rechargeImmediateFraction = 0.10,
+		rechargeTickFraction = 0.05,
+		rechargeIntervalCt = 300,
 	},
 
 	-- ===== COMBAT BUFFS =====
@@ -740,6 +753,8 @@ GameConstants.STATUSES = {
 		kind         = "Buff",
 		duration     = 4,
 		reapply      = "refresh",
+		-- DB: Final Hit Quality +0.25 (additive to final HQ, on the afflicted unit's attacks).
+		hitQualityMod = 0.25,
 	},
 
 	Cursed = {
@@ -748,6 +763,8 @@ GameConstants.STATUSES = {
 		kind         = "Debuff",
 		duration     = 4,
 		reapply      = "refresh",
+		-- DB: Final Hit Quality -0.25 (additive to final HQ, on the afflicted unit's attacks).
+		hitQualityMod = -0.25,
 	},
 
 	Enlightened = {
@@ -1675,7 +1692,9 @@ GameConstants.SKILLS = {
 		channelTime   = 100,
 		power         = 0,
 		inheritStr    = false,
-		appliesStatus = "Weakened",
+		-- DB: Apply Weakened (2000 CT) + Cursed (4 turns) to target. Undead are
+		-- immune to Poison-tagged Cursed (handled by StatusService.IsImmune).
+		appliesStatuses = { "Weakened", "Cursed" },
 		isHealing     = false,
 		projectileType = "Direct",
 	},
@@ -1721,9 +1740,10 @@ GameConstants.SKILLS = {
 		mpCost        = 5,
 		rtMult        = 1.0,
 		channelTime   = 0,
-		power         = 0.9,
+		power         = 0,  -- pure ally buff; no damage (routes through ally-buff branch)
 		inheritStr    = false,
-		appliesStatus = nil,
+		-- DB: Apply Haste (3 turns) + Regeneration (3000 CT) to target ally or self.
+		appliesStatuses = { "Haste", "Regeneration" },
 		isHealing     = false,
 		projectileType = "Direct",
 	},
@@ -1755,7 +1775,7 @@ GameConstants.SKILLS = {
 		channelTime   = 200,
 		power         = 1.0,
 		inheritStr    = true,
-		appliesStatus = nil,
+		appliesStatus = "Break",  -- Earth damage skill; Break disables target passives (mechanic in DoctrinePassiveService)
 		isHealing     = false,
 		projectileType = "Direct",
 	},
@@ -1771,7 +1791,9 @@ GameConstants.SKILLS = {
 		channelTime   = 0,
 		power         = 0.9,
 		inheritStr    = true,
-		appliesStatus = nil,
+		-- DB: Physical damage + apply Mute (3000 CT). Mute disables skill augments
+		-- only. Damaging rider — lands via the actual>0 status gate in ApplyOutcome.
+		appliesStatus = "Mute",
 		isHealing     = false,
 		projectileType = "Direct",
 	},
@@ -1785,9 +1807,11 @@ GameConstants.SKILLS = {
 		mpCost        = 4,
 		rtMult        = 1.0,
 		channelTime   = 0,
-		power         = 1.0,
+		power         = 0,  -- pure self-buff; no damage (was 1.0 → hit caster for weapon dmg)
 		inheritStr    = false,
-		appliesStatus = nil,
+		-- Applies BOTH Frenzy (3 turns) and Rush (4 turns) per DB. Rush mechanic works
+		-- (movement +3, DEX -20%); Frenzy mechanic (basic-attack tempo) is not yet consumed.
+		appliesStatuses = { "Frenzy", "Rush" },
 		isHealing     = false,
 		projectileType = "Direct",
 	},
@@ -1801,9 +1825,11 @@ GameConstants.SKILLS = {
 		mpCost        = 4,
 		rtMult        = 1.0,
 		channelTime   = 100,
-		power         = 0.1,
+		power         = 0,  -- pure ally buff; no damage (routes through ally-buff branch)
 		inheritStr    = false,
-		appliesStatus = nil,
+		-- DB: Apply Recharge (1200 CT) to target ally or self. Immediate MP restore
+		-- on apply + periodic restore every 300 CT (handled in StatusService).
+		appliesStatus = "Recharge",
 		isHealing     = false,
 		projectileType = "Direct",
 	},
@@ -1833,9 +1859,10 @@ GameConstants.SKILLS = {
 		mpCost        = 7,
 		rtMult        = 1.0,
 		channelTime   = 200,
-		power         = 1.0,
+		power         = 0,  -- pure ally buff; no damage (routes through ally-buff branch)
 		inheritStr    = false,
-		appliesStatus = "Blessed",
+		-- DB: Apply Blessed (4 turns) + Enlightened (3000 CT, 1 stack) to target.
+		appliesStatuses = { "Blessed", "Enlightened" },
 		isHealing     = false,
 		projectileType = "Direct",
 	},

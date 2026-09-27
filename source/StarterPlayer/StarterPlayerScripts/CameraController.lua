@@ -29,6 +29,23 @@ local GuiService       = game:GetService("GuiService")
 
 local player = Players.LocalPlayer
 
+-- Speed-line flourish on camera moves (client-only screen overlay). Loaded via
+-- pcall so a missing/broken module can never take the camera down with it.
+local SpeedLines = nil
+do
+	local mod = script.Parent and script.Parent:WaitForChild("SpeedLines", 5)
+	if mod then
+		local ok, res = pcall(require, mod)
+		if ok then
+			SpeedLines = res
+		else
+			warn("[CameraController] SpeedLines failed to load: " .. tostring(res))
+		end
+	else
+		warn("[CameraController] SpeedLines module not found - speed lines disabled")
+	end
+end
+
 --------------------------------------------------
 -- CONFIGURATION (all tunable for Studio testing)
 --------------------------------------------------
@@ -226,18 +243,24 @@ function CameraController.RotateCW()
 	if not isActive then return end
 	yaw = (math.round(yaw / ROTATION_SNAP) * ROTATION_SNAP - ROTATION_SNAP) % 360
 	applyCFrame(false)
+	if SpeedLines then SpeedLines.Burst() end
 end
 
 function CameraController.RotateCCW()
 	if not isActive then return end
 	yaw = (math.round(yaw / ROTATION_SNAP) * ROTATION_SNAP + ROTATION_SNAP) % 360
 	applyCFrame(false)
+	if SpeedLines then SpeedLines.Burst() end
 end
 
 function CameraController.Zoom(delta)
 	if not isActive then return end
+	local before = distance
 	distance = math.clamp(distance - delta, ZOOM_MIN, ZOOM_MAX)
 	applyCFrame(false)
+	-- Only pulse on a real change (no lines when pinned at a zoom limit).
+	-- SpeedLines throttles internally: one pulse per scroll/pinch gesture.
+	if SpeedLines and distance ~= before then SpeedLines.Zoom(distance - before) end
 end
 
 function CameraController.FocusActiveUnit(worldPos)
@@ -340,6 +363,7 @@ function CameraController.SetViewMode(mode)
 		warn("[CameraController] SetViewMode: unknown mode '" .. tostring(mode) .. "'")
 		return
 	end
+	local changed = (mode ~= currentViewMode)
 	currentViewMode = mode
 	activePitch  = p.pitch
 	ZOOM_MIN     = p.zoomMin
@@ -348,6 +372,7 @@ function CameraController.SetViewMode(mode)
 	-- Re-clamp current distance into the new band and re-apply.
 	distance = math.clamp(distance, ZOOM_MIN, ZOOM_MAX)
 	applyCFrame(false)
+	if changed and isActive and SpeedLines then SpeedLines.Burst() end
 	print(string.format("[CameraController] View mode -> %s (pitch=%.0f zoom=%d..%d)", mode, activePitch, ZOOM_MIN, ZOOM_MAX))
 end
 

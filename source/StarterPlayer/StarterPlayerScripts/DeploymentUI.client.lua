@@ -48,7 +48,10 @@ local CameraController = require(
 --------------------------------------------------
 local TILE_SIZE        = 5
 local TILE_BASE_HEIGHT = 0.6
-local ELEVATION_STEP   = 2.5
+-- Must match server MapRenderer.ELEVATION_STEP (dev-locked 2026-09-24: 1.2 for the
+-- expanded 1–20 elevation scale). Used by tileSurfaceY to seat deployment tile
+-- surfaces on the rendered terrain. Keep in sync with server + BattleVisualClient.
+local ELEVATION_STEP   = 1.2
 
 --------------------------------------------------
 -- STATE

@@ -115,116 +115,139 @@ local MAX_SEED                = 2147483647  -- 2^31 - 1
 -- Each generated region is assigned a type from this pool.
 local BIOME_REGION_POOLS = {
 	Plains = {
-		{ type = "Grassland", weight = 50 },
-		{ type = "Clearing",  weight = 30 },
-		{ type = "Farmland",  weight = 20 },
+		{ type = "Grassland", weight = 35 },
+		{ type = "Clearing",  weight = 20 },
+		{ type = "Farmland",  weight = 15 },
+		{ type = "Forest",    weight = 12 },
+		{ type = "Riverbank", weight = 10 },
+		{ type = "Village",   weight = 8 },
 	},
 	Forest = {
-		{ type = "Forest",    weight = 45 },
-		{ type = "Clearing",  weight = 25 },
-		{ type = "Grassland", weight = 15 },
-		{ type = "Riverbank", weight = 15 },
+		{ type = "Forest",    weight = 35 },
+		{ type = "Clearing",  weight = 18 },
+		{ type = "Grassland", weight = 12 },
+		{ type = "Riverbank", weight = 12 },
+		{ type = "Marsh",     weight = 13 },
+		{ type = "Rocky",     weight = 10 },
 	},
 	Desert = {
-		{ type = "Rocky",     weight = 40 },
-		{ type = "Beach",     weight = 30 },
-		{ type = "Clearing",  weight = 20 },
-		{ type = "Grassland", weight = 10 },
+		{ type = "Rocky",         weight = 30 },
+		{ type = "Beach",         weight = 22 },
+		{ type = "Clearing",      weight = 15 },
+		{ type = "Grassland",     weight = 8 },
+		{ type = "Ruins",         weight = 13 },
+		{ type = "Mountain Pass", weight = 12 },
 	},
 	Swamp = {
-		{ type = "Marsh",     weight = 45 },
-		{ type = "Riverbank", weight = 25 },
-		{ type = "Forest",    weight = 15 },
-		{ type = "Clearing",  weight = 15 },
+		{ type = "Marsh",     weight = 38 },
+		{ type = "Riverbank", weight = 22 },
+		{ type = "Forest",    weight = 13 },
+		{ type = "Clearing",  weight = 12 },
+		{ type = "Graveyard", weight = 15 },
 	},
 	Highlands = {
-		{ type = "Rocky",         weight = 40 },
-		{ type = "Mountain Pass", weight = 35 },
-		{ type = "Grassland",     weight = 15 },
-		{ type = "Clearing",      weight = 10 },
+		{ type = "Rocky",         weight = 30 },
+		{ type = "Mountain Pass", weight = 28 },
+		{ type = "Grassland",     weight = 12 },
+		{ type = "Clearing",      weight = 8 },
+		{ type = "Riverbank",     weight = 12 },
+		{ type = "Cave Chamber",  weight = 10 },
 	},
 	Tundra = {
-		{ type = "Frozen Lake", weight = 45 },
-		{ type = "Rocky",       weight = 30 },
-		{ type = "Grassland",   weight = 15 },
-		{ type = "Clearing",    weight = 10 },
+		{ type = "Frozen Lake",   weight = 35 },
+		{ type = "Rocky",         weight = 22 },
+		{ type = "Grassland",     weight = 12 },
+		{ type = "Clearing",      weight = 8 },
+		{ type = "Mountain Pass", weight = 13 },
+		{ type = "Riverbank",     weight = 10 },
 	},
 	Volcano = {
-		{ type = "Volcanic Rock", weight = 45 },
-		{ type = "Lava Channel",  weight = 25 },
-		{ type = "Rocky",         weight = 20 },
-		{ type = "Clearing",      weight = 10 },
+		{ type = "Volcanic Rock", weight = 35 },
+		{ type = "Lava Channel",  weight = 20 },
+		{ type = "Rocky",         weight = 15 },
+		{ type = "Clearing",      weight = 8 },
+		{ type = "Cave Chamber",  weight = 12 },
+		{ type = "Ruins",         weight = 10 },
 	},
 	Cave = {
-		{ type = "Cave Chamber", weight = 50 },
-		{ type = "Rocky",        weight = 30 },
-		{ type = "Clearing",     weight = 20 },
+		{ type = "Cave Chamber", weight = 38 },
+		{ type = "Rocky",        weight = 22 },
+		{ type = "Clearing",     weight = 15 },
+		{ type = "Lava Channel", weight = 13 },
+		{ type = "Riverbank",    weight = 12 },
 	},
 	Ruins = {
-		{ type = "Ruins",     weight = 45 },
-		{ type = "Rocky",     weight = 25 },
-		{ type = "Graveyard", weight = 15 },
-		{ type = "Clearing",  weight = 15 },
+		{ type = "Ruins",     weight = 35 },
+		{ type = "Rocky",     weight = 18 },
+		{ type = "Graveyard", weight = 13 },
+		{ type = "Clearing",  weight = 12 },
+		{ type = "Forest",    weight = 12 },
+		{ type = "Village",   weight = 10 },
 	},
 	Castle = {
-		{ type = "Castle Courtyard", weight = 40 },
-		{ type = "Castle Interior",  weight = 30 },
-		{ type = "Rocky",            weight = 15 },
-		{ type = "Clearing",         weight = 15 },
+		{ type = "Castle Courtyard", weight = 32 },
+		{ type = "Castle Interior",  weight = 24 },
+		{ type = "Rocky",            weight = 12 },
+		{ type = "Clearing",         weight = 10 },
+		{ type = "Village",          weight = 12 },
+		{ type = "Farmland",         weight = 10 },
 	},
 	Corrupted = {
-		{ type = "Corrupted", weight = 45 },
-		{ type = "Graveyard", weight = 25 },
-		{ type = "Marsh",     weight = 15 },
-		{ type = "Forest",    weight = 15 },
+		{ type = "Corrupted", weight = 38 },
+		{ type = "Graveyard", weight = 22 },
+		{ type = "Marsh",     weight = 13 },
+		{ type = "Forest",    weight = 12 },
+		{ type = "Ruins",     weight = 15 },
 	},
 }
 
 -- Elevation range per biome.
 -- lanMin/lanMax: constrained range for LAN-family tiles.
 -- advBonus: extra elevation added to ADV marker tiles.
+-- Global elevation scale (dev-locked 2026-09-24): sea level = 5, floor = 1, peak = 20.
+-- Water rests at/below sea level; rock rises toward peak. See ElevationScale_Design.md.
+local SEA_LEVEL = 5
+local ELEV_FLOOR = 1
+local ELEV_PEAK  = 20
+
 local BIOME_ELEVATION = {
 	Plains = {
-		min      = 1,
-		max      = 3,
-		lanMin   = 1,
-		lanMax   = 2,
-		advBonus = 2,
+		min = 5, max = 9, advBonus = 3,
 	},
 	Forest = {
-		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 2,
+		min = 5, max = 9, advBonus = 3,
 	},
 	Desert = {
-		min = 1, max = 4, lanMin = 1, lanMax = 3, advBonus = 2,
+		min = 5, max = 11, advBonus = 3,
 	},
 	Swamp = {
-		min = 1, max = 2, lanMin = 1, lanMax = 2, advBonus = 1,
+		min = 4, max = 7, advBonus = 2,
 	},
 	Highlands = {
-		min = 1, max = 6, lanMin = 1, lanMax = 3, advBonus = 2,
+		min = 6, max = 20, advBonus = 5,
 	},
 	Tundra = {
-		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 2,
+		min = 4, max = 9, advBonus = 3,
 	},
 	Volcano = {
-		min = 1, max = 5, lanMin = 1, lanMax = 3, advBonus = 2,
+		min = 5, max = 16, advBonus = 4,
 	},
 	Cave = {
-		min = 1, max = 4, lanMin = 1, lanMax = 3, advBonus = 2,
+		min = 4, max = 12, advBonus = 3,
 	},
 	Ruins = {
-		min = 1, max = 4, lanMin = 1, lanMax = 3, advBonus = 2,
+		min = 5, max = 12, advBonus = 3,
 	},
 	Castle = {
-		min = 1, max = 5, lanMin = 1, lanMax = 3, advBonus = 2,
+		min = 5, max = 14, advBonus = 4,
 	},
 	Corrupted = {
-		min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 2,
+		min = 5, max = 9, advBonus = 3,
 	},
 }
 
 local DEFAULT_ELEVATION = {
-	min = 1, max = 3, lanMin = 1, lanMax = 2, advBonus = 1,
+	min = 5, max = 9, advBonus = 3,
 }
 
 -- Object placement density per template marker (fraction of tiles).
@@ -248,16 +271,9 @@ local PASSABLE_REQUIRED = {
 	LAN = true,
 }
 
--- Markers belonging to the LAN-connected family.
--- Adjacent tiles within this family must have elevation diff ≤ 1.
-local LAN_FAMILY = {
-	PD  = true,
-	ED  = true,
-	LAN = true,
-	HZD = true,
-	BLK = true,
-	ADV = true,
-}
+-- (LAN_FAMILY removed 2026-09-25: runFinalValidation V6 swapped from a
+-- LAN-family flatness check to a PD→ED walkability check, so this set has
+-- no remaining readers. Connectivity is guaranteed by ElevationPass Phase 6.)
 
 --------------------------------------------------
 -- UTILITY FUNCTIONS
@@ -606,7 +622,12 @@ end
 -- Shuffle deterministically, then take first N.
 --------------------------------------------------
 
-local function placeDeploymentAnchors(tiles, w, h, rng)
+-- maxPlayer / maxEnemy: per-side anchor caps. Enemy side is passed the actual
+-- generated enemy count (up to ~18) so no enemies stack on one tile; player side
+-- is the quest's deployable party size (max 7). Both nil-safe (dev-locked 2026-09-26).
+local function placeDeploymentAnchors(tiles, w, h, rng, maxPlayer, maxEnemy)
+	local playerCap = maxPlayer or 7
+	local enemyCap  = maxEnemy or 18
 	local pdCandidates = {}
 	local edCandidates = {}
 
@@ -638,15 +659,13 @@ local function placeDeploymentAnchors(tiles, w, h, rng)
 	shuffle(pdCandidates)
 	shuffle(edCandidates)
 
-	-- Take first N anchors (up to 6 per side).
-	local maxAnchors = 6
 	local player = {}
 	local enemy  = {}
 
-	for i = 1, math.min(maxAnchors, #pdCandidates) do
+	for i = 1, math.min(playerCap, #pdCandidates) do
 		table.insert(player, pdCandidates[i])
 	end
-	for i = 1, math.min(maxAnchors, #edCandidates) do
+	for i = 1, math.min(enemyCap, #edCandidates) do
 		table.insert(enemy, edCandidates[i])
 	end
 
@@ -762,28 +781,16 @@ local function runFinalValidation(mapState)
 		end
 	end
 
-	-- V6: LAN-family adjacent elevation diff ≤ 1.
-	for y = 1, h do
-		for x = 1, w do
-			local tile = tiles[y][x]
-			if LAN_FAMILY[tile.marker] then
-				for _, dir in ipairs(CARDINAL) do
-					local nx, ny = x + dir.x, y + dir.y
-					if isInBounds(nx, ny, w, h) then
-						local n = tiles[ny][nx]
-						if LAN_FAMILY[n.marker] then
-							if math.abs(tile.elevation - n.elevation) > 1 then
-								table.insert(errors,
-									string.format(
-										"LAN elev breach (%d,%d)=%d ↔ (%d,%d)=%d",
-										x, y, tile.elevation,
-										nx, ny, n.elevation))
-							end
-						end
-					end
-				end
-			end
-		end
+	-- V6: PD→ED walkability (dev-locked 2026-09-25).
+	-- REPLACED the obsolete "LAN-family adjacent diff ≤ 1" flatness rule,
+	-- which contradicted the current design (a LAN lane may ramp along its
+	-- length, and LAN may form separate islands at different elevations).
+	-- The correct invariant is that a ≤1-step path exists from PD to ED,
+	-- which ElevationPass Phase 6 guarantees. (V2 above already asserts this
+	-- via validateConnectivity; this is the named V6 guard kept in place.)
+	local v6ok, v6err = validateConnectivity(tiles, w, h)
+	if not v6ok then
+		table.insert(errors, "V6 walkability: " .. (v6err or "no PD→ED path"))
 	end
 
 	-- V7: Determinism — structural check only.
@@ -873,11 +880,28 @@ function MapService.Generate(biomeId, templateId, seed)
 		local pool = BIOME_REGION_POOLS[biome.id]
 			or { { type = "Grassland", weight = 100 } }
 
+		-- Repeat penalty (dev-locked 2026-09-25): draws are sequential and
+		-- remember prior picks. Each time a region type is chosen, its weight
+		-- is multiplied by 0.5 for subsequent draws — so a fresh type is
+		-- favored, but a repeat is still possible (soft penalty, not a ban;
+		-- required because most pools have fewer types than a map has regions).
 		local regionTypeMap = {}
+		local usedCount     = {}   -- region type → times already picked this map
+		local REPEAT_FACTOR = 0.5
 		for _, region in ipairs(regionResult.Regions) do
-			regionTypeMap[region.Id] = weightedSelectArray(
-				pool, seedCtx.terrainRng
-			)
+			-- Build a penalized copy of the pool based on what's been used.
+			local penalized = {}
+			for _, e in ipairs(pool) do
+				local uses   = usedCount[e.type] or 0
+				local factor = REPEAT_FACTOR ^ uses   -- 1, 0.5, 0.25, ...
+				table.insert(penalized, {
+					type   = e.type,
+					weight = e.weight * factor,
+				})
+			end
+			local chosen = weightedSelectArray(penalized, seedCtx.terrainRng)
+			regionTypeMap[region.Id] = chosen
+			usedCount[chosen] = (usedCount[chosen] or 0) + 1
 		end
 
 		-- Build mapState for the pass pipeline.
@@ -893,7 +917,18 @@ function MapService.Generate(biomeId, templateId, seed)
 			regionTypeMap  = regionTypeMap,
 			tiles          = tiles,
 			rng            = seedCtx,
-			biomeElevation = BIOME_ELEVATION[biomeId] or DEFAULT_ELEVATION,
+			biomeElevation = (function()
+				-- Single-source the global scale onto the per-biome band (DAT: define once).
+				local band = BIOME_ELEVATION[biomeId] or DEFAULT_ELEVATION
+				return {
+					min      = band.min,
+					max      = band.max,
+					advBonus = band.advBonus,
+					seaLevel = SEA_LEVEL,
+					floor    = ELEV_FLOOR,
+					peak     = ELEV_PEAK,
+				}
+			end)(),
 		}
 
 		--======================================================

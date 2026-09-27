@@ -233,6 +233,17 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 
 	table.insert(unit.statusInstances, instance)
 
+	-- Recharge: immediate MP restore on application (DB elements_statuses id 78:
+	-- "On application: restore round(Max MP × 0.10), minimum 1 MP"). The periodic
+	-- restores are handled per-interval in ProcessCtTick. Reapplication does NOT
+	-- repeat this immediate restore (reapply path returns earlier, above).
+	if def.rechargeImmediateFraction then
+		local restore = math.max(1, math.round((unit.maxMp or 1) * def.rechargeImmediateFraction))
+		local before = unit.currentMp or 0
+		unit.currentMp = math.min(unit.maxMp or before, before + restore)
+		print(string.format("[StatusService] Recharge immediate: %s +%d MP", unit.name, unit.currentMp - before))
+	end
+
 	-- If this is a hard CC status, remove buffs flagged removedByCC (e.g. Guard)
 	if HARD_CC[statusId] then
 		local i = 1
@@ -435,9 +446,49 @@ function StatusService.ProcessCtTick(unit, ctElapsed)
 	if ctElapsed <= 0 then return {} end
 
 	local expired = {}
+	local events = {}   -- { { kind="Heal"|"Mana", statusId, amount }, ... }
 	local i = 1
 	while i <= #unit.statusInstances do
 		local inst = unit.statusInstances[i]
+		local def = GameConstants.STATUSES[inst.id]
+
+		-- Regeneration / Recharge: CT-interval periodic effects. Accrue elapsed CT
+		-- and fire one event per completed interval (handles large ctElapsed steps
+		-- that cross multiple boundaries). Amounts/cadence are DB-authored and live
+		-- in the status def; clamp to Max so bars never overshoot.
+		if def and inst.remainingCt then
+			if def.regenFraction and def.regenIntervalCt then
+				inst.regenAccumCt = (inst.regenAccumCt or 0) + ctElapsed
+				while inst.regenAccumCt >= def.regenIntervalCt do
+					inst.regenAccumCt = inst.regenAccumCt - def.regenIntervalCt
+					-- DB: Final Heal = round(round(Max HP × regenFraction) × (1 + VIT/300))
+					local vit = (unit.effectiveStats and unit.effectiveStats.VIT) or 10
+					local base = math.round((unit.maxHp or 1) * def.regenFraction)
+					local heal = math.round(base * (1 + vit / 300))
+					local before = unit.currentHp or 0
+					unit.currentHp = math.min(unit.maxHp or before, before + heal)
+					local applied = unit.currentHp - before
+					if applied > 0 then
+						table.insert(events, { kind = "Heal", statusId = inst.id, amount = applied })
+					end
+				end
+			end
+			if def.rechargeTickFraction and def.rechargeIntervalCt then
+				inst.rechargeAccumCt = (inst.rechargeAccumCt or 0) + ctElapsed
+				while inst.rechargeAccumCt >= def.rechargeIntervalCt do
+					inst.rechargeAccumCt = inst.rechargeAccumCt - def.rechargeIntervalCt
+					-- DB: restore round(Max MP × rechargeTickFraction), min 1, per event.
+					local restore = math.max(1, math.round((unit.maxMp or 1) * def.rechargeTickFraction))
+					local before = unit.currentMp or 0
+					unit.currentMp = math.min(unit.maxMp or before, before + restore)
+					local applied = unit.currentMp - before
+					if applied > 0 then
+						table.insert(events, { kind = "Mana", statusId = inst.id, amount = applied })
+					end
+				end
+			end
+		end
+
 		if inst.remainingCt then
 			inst.remainingCt = inst.remainingCt - ctElapsed
 			if inst.remainingCt <= 0 then
@@ -451,7 +502,7 @@ function StatusService.ProcessCtTick(unit, ctElapsed)
 			i = i + 1
 		end
 	end
-	return expired
+	return expired, events
 end
 
 --------------------------------------------------

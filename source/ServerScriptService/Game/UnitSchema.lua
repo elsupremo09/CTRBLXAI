@@ -102,6 +102,10 @@ function UnitSchema.Create(definition)
 		side          = definition.side,
 		controller    = definition.controller,
 
+		-- AI behavior role (Basic/Elite/Boss) — drives AIService tier selection.
+		-- Previously dropped here, silently forcing every enemy to "Basic".
+		aiRole        = definition.aiRole or "Basic",
+
 		-- Position
 		tileX         = definition.tileX,
 		tileY         = definition.tileY,

@@ -1299,12 +1299,15 @@ local function repairBridgePass(tiles, w, h)
 				local terrain = tile.terrain
 				if WATER_TERRAINS[terrain] then
 					tile.terrain = "Wooden Floor"
+					tile.isBridge = true   -- raised passable span over water
 					repaired     = repaired + 1
 				elseif LAVA_TERRAINS[terrain] then
 					tile.terrain = "Rocky"
+					tile.isBridge = true   -- passable causeway over lava
 					repaired     = repaired + 1
 				elseif IMPASSABLE_FIX[terrain] then
 					tile.terrain = "Clear"
+					tile.isBridge = true   -- passable crossing over impassable gap
 					repaired     = repaired + 1
 				end
 			end
@@ -1312,7 +1315,7 @@ local function repairBridgePass(tiles, w, h)
 	end
 	if repaired > 0 then
 		print(string.format(
-			"[FeaturePass] Bridge/Pass repair: fixed %d LAN tile(s).", repaired))
+			"[FeaturePass] Bridge/Pass: placed %d bridge span(s) over impassable terrain.", repaired))
 	end
 end
 

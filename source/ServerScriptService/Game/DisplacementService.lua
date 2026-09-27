@@ -143,7 +143,7 @@ end
 -- applies the actual HP changes and position updates.
 --------------------------------------------------
 
-function DisplacementService.ResolvePush(pusher, target, force, direction, sourceModifier, allUnits)
+function DisplacementService.ResolvePush(pusher, target, force, direction, sourceModifier, allUnits, requestedDistance, isRanged)
 	assert(type(pusher) == "table", "ResolvePush: pusher must be a unit table.")
 	assert(type(target) == "table", "ResolvePush: target must be a unit table.")
 	assert(type(direction) == "table" and direction.dx and direction.dy,
@@ -152,14 +152,28 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	sourceModifier = sourceModifier or 1.0
 
 	-- Step 1: Calculate push distance.
-	local targetStability = 1
+	-- DB rule (Push Distance): Stability = floor(VIT/60). Default 0, no +1 offset,
+	-- so this matches the Main pushTargets maxPushDistance preview exactly.
+	local targetStability = 0
 	if target.derivedStats and target.derivedStats.stability then
 		targetStability = target.derivedStats.stability
 	elseif target.effectiveStats and target.effectiveStats.VIT then
-		targetStability = 1 + math.floor(target.effectiveStats.VIT / 60)
+		targetStability = math.floor(target.effectiveStats.VIT / 60)
 	end
 
 	local pushDistance = math.max(0, force - targetStability)
+	-- Ranged knockback penalty: knockback from a RANGED attack is reduced by 50%,
+	-- rounded up (DB: ranged knockback distance x0.5, ceil). A nonzero knockback keeps
+	-- at least 1 tile. Central hook — every ranged knockback source inherits this by
+	-- passing isRanged=true. Melee/global-push sources pass false/nil (no reduction).
+	if isRanged and pushDistance > 0 then
+		pushDistance = math.ceil(pushDistance * 0.5)
+	end
+	-- Distance control: pusher may request a shorter stop distance (fixed direction).
+	-- nil = full distance (AI / legacy callers). Clamp to [0, maxDistance] (SEC-001).
+	if requestedDistance ~= nil then
+		pushDistance = math.min(pushDistance, math.max(0, math.floor(requestedDistance)))
+	end
 
 	if pushDistance == 0 then
 		print(string.format(

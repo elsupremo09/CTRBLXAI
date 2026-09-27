@@ -279,7 +279,7 @@ function BattleVisualBroadcaster.SendTargetHighlight(player, tiles, mode)
 end
 
 -- Status broadcasts
-function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns)
+function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns, sourceIcon)
 	-- Include damage prediction so client can display immediately
 	local nextDamage = nil
 	local storedBurn = nil
@@ -300,6 +300,9 @@ function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns)
 		remainingTurns = remainingTurns,
 		nextDamage     = nextDamage,
 		storedBurn     = storedBurn,
+		-- Fallback icon for statuses with no dedicated Theme icon: the icon of the
+		-- skill/augment that applied it. Client uses it only when GetStatusIcon is nil.
+		sourceIcon     = sourceIcon,
 	})
 	task.wait(PACE.Status)
 end
@@ -435,12 +438,58 @@ end
 -- Broadcasts when a unit's facing direction changes.
 --------------------------------------------------
 
+--------------------------------------------------
+-- ACTION ANNOUNCED
+-- Fired when a unit commits an AP action (Move / Basic Attack / Skill / Guard /
+-- Push / Item) and when a channeled skill fires. Client shows the label above
+-- the unit's head for ~2s. No pacing wait - the action's own event follows.
+--------------------------------------------------
+
+function BattleVisualBroadcaster.ActionAnnounced(unit, label)
+	if not unit or type(label) ~= "string" or label == "" then return end
+	BattleEvents.ActionAnnounced:FireAllClients({ unitId = unit.id, label = label })
+end
+
 function BattleVisualBroadcaster.FacingChanged(unit)
 	BattleEvents.FacingChanged:FireAllClients({
 		unitId = unit.id,
 		facing = unit.facing,
 		tileX  = unit.tileX,
 		tileY  = unit.tileY,
+	})
+end
+
+--------------------------------------------------
+-- ITEM USED
+-- Broadcasts when a unit uses a consumable item.
+--------------------------------------------------
+
+function BattleVisualBroadcaster.ItemUsed(actor, target, itemName, effectResult)
+	effectResult = effectResult or {}
+	BattleEvents.ItemUsed:FireAllClients({
+		actorId     = actor.id,
+		actorName   = actor.name,
+		targetId    = target and target.id,
+		targetName  = target and target.name,
+		itemName    = itemName,
+		effectType  = effectResult.effectType,
+		amount      = effectResult.amount or 0,
+		statusId    = effectResult.statusId,
+		element     = effectResult.element,
+		actorTileX  = actor.tileX,
+		actorTileY  = actor.tileY,
+		targetTileX = target and target.tileX,
+		targetTileY = target and target.tileY,
+	})
+end
+
+-- Announce a single unit that entered the battle mid-fight (reinforcement).
+-- The client spawns its token/health bar/facing using the same serialized
+-- payload shape as BattleStarted, so the new unit renders identically to
+-- units present at battle start.
+function BattleVisualBroadcaster.UnitSpawned(unit)
+	BattleEvents.UnitSpawned:FireAllClients({
+		unit = serializeUnit(unit),
 	})
 end
 

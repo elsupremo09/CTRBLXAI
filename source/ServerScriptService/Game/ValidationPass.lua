@@ -27,6 +27,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Content      = ReplicatedStorage:WaitForChild("Content")
 local TerrainData  = require(Content:WaitForChild("TerrainData"))
+local ObjectData   = require(Content:WaitForChild("ObjectData"))
 
 local ValidationPass = {}
 
@@ -45,15 +46,8 @@ local function isInBounds(x, y, w, h)
 	return x >= 1 and x <= w and y >= 1 and y <= h
 end
 
--- LAN-family markers: adjacent tiles must have elev diff ≤ 1.
-local LAN_FAMILY = {
-	PD  = true,
-	ED  = true,
-	LAN = true,
-	HZD = true,
-	BLK = true,
-	ADV = true,
-}
+-- (LAN_FAMILY removed 2026-09-24: V6 repurposed from LAN-family pairwise
+-- flatness to a PD→ED connectivity BFS, which does not need this set.)
 
 -- Water-family terrains for Deep Water interior check.
 local WATER_FAMILY = {
@@ -192,11 +186,12 @@ function ValidationPass.Run(mapState)
 	-- V2: Elevation Fill
 	--------------------------------------------------
 	local v2Violations = {}
-	local eMin = biomeElev and biomeElev.min or 1
-	local eMax = biomeElev and biomeElev.max or 6
-	-- Allow advBonus to push above max.
-	local advBonus = biomeElev and biomeElev.advBonus or 2
-	local effectiveMax = eMax + advBonus
+	-- Validate against the GLOBAL elevation scale, not the per-biome land
+	-- band. Water/pits legitimately sit below the biome's land min (down to
+	-- the global floor), and ADV bonuses can reach the global peak
+	-- (dev-locked 2026-09-24: floor=1, peak=20).
+	local eMin         = biomeElev and biomeElev.floor or 1
+	local effectiveMax = biomeElev and biomeElev.peak  or 20
 	for y = 1, h do
 		for x = 1, w do
 			local e = tiles[y][x].elevation
@@ -305,33 +300,69 @@ function ValidationPass.Run(mapState)
 	})
 
 	--------------------------------------------------
-	-- V6: LAN Jump=1
-	-- Adjacent LAN-family tiles must have elevation diff ≤ 1.
+	-- V6: PD→ED Connectivity (dev-locked 2026-09-24)
+	-- REPURPOSED: the old check asserted "all LAN-family neighbors ≤1
+	-- apart", which was the obsolete flat-everything contract. After the
+	-- elevation rework, HZD/BLK/ADV legitimately sit at cliff elevations,
+	-- so pairwise LAN-family flatness is no longer the invariant. The real
+	-- invariant is: a ≤1-step walkable path exists from PD to ED. This
+	-- mirrors validateConnectivity (the actual generation gate) and is
+	-- guaranteed by ElevationPass Phase 6 (corridor ramp).
 	--------------------------------------------------
 	local v6Violations = {}
-	for y = 1, h do
-		for x = 1, w do
-			local tile = tiles[y][x]
-			if LAN_FAMILY[tile.marker] then
+	do
+		-- BFS from all PD tiles over passable, ≤1-elevation-step tiles.
+		local function keyOf(x, y) return y * 100000 + x end
+		local pdList, edSet = {}, {}
+		for y = 1, h do
+			for x = 1, w do
+				local m = tiles[y][x].marker
+				if m == "PD" then
+					table.insert(pdList, { x = x, y = y })
+				elseif m == "ED" then
+					edSet[keyOf(x, y)] = true
+				end
+			end
+		end
+
+		local reachedED = false
+		if #pdList > 0 and next(edSet) ~= nil then
+			local visited, queue, qHead = {}, {}, 1
+			for _, pos in ipairs(pdList) do
+				local k = keyOf(pos.x, pos.y)
+				if not visited[k] then visited[k] = true; table.insert(queue, pos) end
+			end
+			while qHead <= #queue do
+				local cur  = queue[qHead]; qHead = qHead + 1
+				local tile = tiles[cur.y][cur.x]
+				if edSet[keyOf(cur.x, cur.y)] then reachedED = true; break end
 				for _, dir in ipairs(CARDINAL) do
-					local nx, ny = x + dir.x, y + dir.y
+					local nx, ny = cur.x + dir.x, cur.y + dir.y
 					if isInBounds(nx, ny, w, h) then
-						local nTile = tiles[ny][nx]
-						if LAN_FAMILY[nTile.marker] then
-							if math.abs(tile.elevation - nTile.elevation) > 1 then
-								table.insert(v6Violations,
-									string.format("(%d,%d)[%s]=%d ↔ (%d,%d)[%s]=%d",
-										x, y, tile.marker, tile.elevation,
-										nx, ny, nTile.marker, nTile.elevation))
+						local nk = keyOf(nx, ny)
+						if not visited[nk] then
+							local nTile = tiles[ny][nx]
+							local tDef  = TerrainData.Types[nTile.terrain]
+							local pass  = tDef and tDef.passable ~= false
+							local noBlock = nTile.object == nil
+								or (ObjectData.Objects[nTile.object]
+									and ObjectData.Objects[nTile.object].passable)
+							local elevOk = math.abs(tile.elevation - nTile.elevation) <= 1
+							if pass and noBlock and elevOk then
+								visited[nk] = true
+								table.insert(queue, { x = nx, y = ny })
 							end
 						end
 					end
 				end
 			end
 		end
+		if not reachedED then
+			table.insert(v6Violations, "No ≤1-step PD→ED path exists")
+		end
 	end
 	table.insert(checks, {
-		id = "V6", name = "LAN Jump=1",
+		id = "V6", name = "PD→ED Connectivity",
 		passed = #v6Violations == 0,
 		violations = #v6Violations > 0 and v6Violations or nil,
 	})

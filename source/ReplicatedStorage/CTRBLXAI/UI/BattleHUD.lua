@@ -399,7 +399,7 @@ function BattleHUD._buildActiveUnit()
 			icon.LayoutOrder = si
 			icon.Parent = statusRow
 			Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 3)
-			local statusAsset = Theme.GetStatusIcon(s.id)
+			local statusAsset = Theme.GetStatusIcon(s.id) or s.sourceIcon
 			if statusAsset then
 				local img = Instance.new("ImageLabel")
 				img.Size = UDim2.fromScale(1, 1)
@@ -690,7 +690,7 @@ function BattleHUD._buildInspector()
 			for si, s in ipairs(d.statuses) do
 				local sName = s.id or s.name or "?"
 				local sColor = Theme.GetStatusColor and Theme.GetStatusColor(sName) or Theme.Colors.Warning
-				local sAsset = Theme.GetStatusIcon(sName)
+				local sAsset = Theme.GetStatusIcon(sName) or s.sourceIcon
 				local badge = Instance.new("Frame")
 				badge.Size = sAsset and UDim2.fromOffset(24, 24) or UDim2.fromOffset(0, 24)
 				badge.AutomaticSize = sAsset and Enum.AutomaticSize.None or Enum.AutomaticSize.X
@@ -871,6 +871,13 @@ function BattleHUD._renderDamagePreview()
 		row("Guard", Theme.Colors.TextPrimary, true)
 	elseif actionType == "Move" then
 		row("Move", Theme.Colors.TextPrimary, true)
+	end
+
+	-- Action description (shown for any action that supplies one — notably
+	-- self-target skills like Riposte Stance which skip TargetSelection and come
+	-- straight here, so the TargetSelection description panel never renders).
+	if p.description and p.description ~= "" then
+		row(p.description, Theme.Colors.Success)
 	end
 
 	-- MOVE
@@ -1351,7 +1358,7 @@ function BattleHUD._buildViewModeUnit()
 			icon.LayoutOrder = si
 			icon.Parent = statusRow
 			Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 3)
-			local statusAsset = Theme.GetStatusIcon(s.id)
+			local statusAsset = Theme.GetStatusIcon(s.id) or s.sourceIcon
 			if statusAsset then
 				local img = Instance.new("ImageLabel")
 				img.Size = UDim2.fromScale(1, 1)
@@ -1770,6 +1777,9 @@ function BattleHUD.Render(p)
 	elseif newState == "SkillSelection" then
 		BattleHUD._buildSkillList()
 		actionPanel.Visible = true
+	elseif newState == "ItemSelection" then
+		BattleHUD._buildItemList()
+		actionPanel.Visible = true
 	end
 end
 function BattleHUD.GetState() return presentation.state end
@@ -1818,6 +1828,52 @@ function BattleHUD._buildSkillList()
 	end
 
 	-- Command bar: Back button during SkillSelection
+	BattleHUD.ShowCommandBar({
+		{ text = "Back", color = Theme.Colors.Surface, textColor = Theme.Colors.TextSecondary,
+		  onPress = presentation.actor and presentation.actor.onBack or nil },
+	})
+end
+
+--------------------------------------------------
+-- ITEM LIST (replaces action grid during ItemSelection)
+--------------------------------------------------
+
+function BattleHUD._buildItemList()
+	if not actionPanel then return end
+	clearFrame(actionPanel)
+	actionPanel.Visible = true
+	if not presentation.actor or not presentation.actor.itemEntries then return end
+
+	local pad = Instance.new("UIPadding", actionPanel)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
+
+	local layout = Instance.new("UIListLayout", actionPanel)
+	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	-- Header
+	makeLabel(actionPanel, "Item                 RT", { font = Theme.Font.Mono,
+		textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 0 })
+
+	for i, item in ipairs(presentation.actor.itemEntries) do
+		local enabled = item.enabled ~= false
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1, 0, 0, Theme.Elem.RowMedium())
+		btn.BackgroundColor3 = Theme.Colors.Surface
+		btn.BackgroundTransparency = enabled and 0.5 or 0.8
+		btn.BorderSizePixel = 0
+		btn.Font = Theme.Font.Mono; btn.TextSize = Theme.Text.Body()
+		btn.TextColor3 = enabled and Theme.Colors.TextPrimary or Theme.Colors.TextDisabled
+		btn.TextXAlignment = Enum.TextXAlignment.Left
+		btn.Text = string.format(" %-18s %2d",
+			string.sub(item.name or "?", 1, 17), item.rtCost or 0)
+		btn.AutoButtonColor = enabled; btn.Active = enabled
+		btn.LayoutOrder = i; btn.Parent = actionPanel
+		Instance.new("UICorner", btn).CornerRadius = Theme.CornerRadius.sm
+		if enabled and item.onPress then btn.MouseButton1Click:Connect(item.onPress) end
+	end
+
+	-- Command bar: Back button during ItemSelection
 	BattleHUD.ShowCommandBar({
 		{ text = "Back", color = Theme.Colors.Surface, textColor = Theme.Colors.TextSecondary,
 		  onPress = presentation.actor and presentation.actor.onBack or nil },

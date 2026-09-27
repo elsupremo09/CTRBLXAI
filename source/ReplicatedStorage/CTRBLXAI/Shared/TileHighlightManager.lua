@@ -1,12 +1,12 @@
 --!strict
 -- TileHighlightManager.lua
--- Client-side tile highlights using a SurfaceGui + UIStroke square outline.
+-- Client-side tile highlights using 4 thin Neon bars forming a glowing square
+-- outline (Neon is emissive and feeds Bloom, so the outline glows).
 --
--- Each highlighted tile gets ONE thin invisible plane carrying a SurfaceGui
--- whose Frame has a UIStroke border. This draws a perfectly crisp square
--- outline with NO stud geometry, NO corner seams, and NO z-fighting (the
--- previous 4-beam approach suffered all three). The plane translates upward
--- on a looping tween for the "rising energy frame" effect.
+-- Each highlighted tile gets ONE thin invisible carrier Part; four Neon bars
+-- (its children) form the square edges, plus a faint Neon fill plane for a
+-- subtle interior tint. The carrier translates upward on a looping tween for
+-- the "rising energy frame" effect; the bars/fill rise in lockstep.
 --
 -- A separate invisible click-pad (unchanged) handles tile targeting so the
 -- visual style can change freely without touching click resolution.
@@ -31,15 +31,19 @@ local TileHighlightManager = {}
 local FRAME_THICKNESS = 0.2     -- studs - thin invisible plane carrying the SurfaceGui
 local SURFACE_OFFSET  = 0.15    -- studs above terrain surface (base height of the frame)
 local RISE_HEIGHT     = 2.0     -- studs the frame travels upward each loop
-local STROKE_PX       = 11      -- UIStroke border thickness (pixels) - thicker = stronger bloom/glow
-local PIXELS_PER_STUD = 48      -- SurfaceGui resolution
+local GLOW_OUTLINE_TRANSPARENCY = 0.2   -- Neon edge-bar (rising outline) transparency; lower = stronger glow
+local GLOW_FILL_TRANSPARENCY    = 0.88  -- subtle Neon interior tint; high = faint (not a bright square)
+local GLOW_BAR_W                = 0.35  -- studs; thickness of each Neon outline bar
 local PAD_THICKNESS   = 0.2     -- thin invisible click pad at tile surface
 local RAY_START_Y     = 200
 local RAY_LENGTH      = 400
 
 -- Looping rising animation (PRF-001 / native_tools: TweenService, engine-level,
 -- NOT per-frame Heartbeat polling). 2.4s rise + 0.6s pause, repeats forever.
-local RISE_INFO = TweenInfo.new(2.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out, -1, false, 0.6)
+-- reverses=true so the frame rises (2.4s), eases back DOWN (2.4s), then PAUSES
+-- 0.6s at the BOTTOM before rising again (the inter-repeat delay lands at the
+-- start/bottom, not the peak). Gentle breathing pulse. -1 = loop forever.
+local RISE_INFO = TweenInfo.new(2.4, Enum.EasingStyle.Sine, Enum.EasingDirection.Out, -1, true, 0.6)
 
 -- ============================================================
 -- STATE
@@ -55,7 +59,7 @@ local _padFolder: Folder? = nil
 -- heightCache[key] = terrain surface Y at tile center
 local heightCache: {[string]: number} = {}
 
--- framePool[key] = { part: Part, stroke: UIStroke, baseY: number, wx: number, wz: number }
+-- framePool[key] = { part: Part, bars: {Part}, fill: Part, baseY: number, wx: number, wz: number }
 local framePool: {[string]: any} = {}
 
 -- padPool[key] = invisible queryable click pad covering the tile footprint
@@ -69,6 +73,8 @@ local groups: {[string]: {string}} = {}
 
 -- Raycast params (rebuilt on Init)
 local _rayParams: RaycastParams? = nil
+
+-- (Neon glow planes bloom regardless of color — no luminance boosting needed.)
 
 local function tileKey(tx: number, ty: number): string
 	return tx .. "_" .. ty
@@ -117,12 +123,12 @@ local function getSurfaceY(tx: number, ty: number): number
 end
 
 -- ============================================================
--- FRAME CREATION & POOLING (SurfaceGui + UIStroke)
+-- FRAME CREATION & POOLING (Neon bar outline)
 -- ============================================================
 
 --- Get or create the SurfaceGui outline frame for a tile (pooled).
---- A thin invisible plane hosts a Top-face SurfaceGui whose Frame carries a
---- UIStroke border. Crisp square outline: no studs, no seams, no z-fighting.
+--- A thin invisible carrier Part hosts 4 Neon edge bars (glowing square outline)
+--- plus a faint Neon fill plane. Neon geometry glows via Bloom; no studs.
 local function getOrCreateFrame(tx: number, ty: number): any
 	local key = tileKey(tx, ty)
 	if framePool[key] then return framePool[key] end
@@ -142,28 +148,52 @@ local function getOrCreateFrame(tx: number, ty: number): any
 	part.Size        = Vector3.new(_tileSize, FRAME_THICKNESS, _tileSize)
 	part.CFrame      = CFrame.new(wx, baseY, wz)
 
-	local sg = Instance.new("SurfaceGui")
-	sg.Name          = "FrameGui"
-	sg.Face          = Enum.NormalId.Top
-	sg.SizingMode    = Enum.SurfaceGuiSizingMode.PixelsPerStud
-	sg.PixelsPerStud = PIXELS_PER_STUD
-	sg.LightInfluence = 0   -- fullbright so the color stays vivid (still blooms)
-	sg.AlwaysOnTop   = false
-	sg.Parent        = part
+	-- GLOWING RISING OUTLINE: four thin Neon bars forming the square edge. Neon is
+	-- emissive geometry (feeds Bloom) — the ONLY thing that glows here. The old
+	-- non-glowing UIStroke border was removed Sep 25 2026 per user. Bars are children
+	-- of the carrier Part so they auto-hide/destroy with it; tweened in lockstep in
+	-- animateFrame so the whole outline rises together.
+	local function makeBar(name, sizeX, sizeZ, offX, offZ)
+		local bar = Instance.new("Part")
+		bar.Name         = name
+		bar.Anchored     = true
+		bar.CanCollide   = false
+		bar.CanQuery     = false
+		bar.CanTouch     = false
+		bar.CastShadow   = false
+		bar.Material     = Enum.Material.Neon
+		bar.Color        = Color3.fromRGB(255, 255, 255)
+		bar.Transparency = GLOW_OUTLINE_TRANSPARENCY
+		bar.Size         = Vector3.new(sizeX, 0.08, sizeZ)
+		bar.CFrame       = CFrame.new(wx + offX, baseY, wz + offZ)
+		bar.Parent       = part
+		return bar
+	end
+	local edge = _tileSize / 2 - GLOW_BAR_W / 2
+	local bars = {
+		makeBar("GlowBar_N", _tileSize, GLOW_BAR_W, 0, -edge),
+		makeBar("GlowBar_S", _tileSize, GLOW_BAR_W, 0,  edge),
+		makeBar("GlowBar_W", GLOW_BAR_W, _tileSize, -edge, 0),
+		makeBar("GlowBar_E", GLOW_BAR_W, _tileSize,  edge, 0),
+	}
 
-	local f = Instance.new("Frame")
-	f.Size                 = UDim2.fromScale(1, 1)
-	f.BackgroundTransparency = 1  -- DRW-003: 1, not partial
-	f.BorderSizePixel      = 0
-	f.Parent               = sg
+	-- Subtle interior fill tint (faint Neon plane) — a hint of glow inside the frame,
+	-- NOT the bright filled square. High transparency keeps it subtle.
+	local fill = Instance.new("Part")
+	fill.Name         = "GlowFill"
+	fill.Anchored     = true
+	fill.CanCollide   = false
+	fill.CanQuery     = false
+	fill.CanTouch     = false
+	fill.CastShadow   = false
+	fill.Material     = Enum.Material.Neon
+	fill.Color        = Color3.fromRGB(255, 255, 255)
+	fill.Transparency = GLOW_FILL_TRANSPARENCY
+	fill.Size         = Vector3.new(_tileSize * 0.9, 0.06, _tileSize * 0.9)
+	fill.CFrame       = CFrame.new(wx, baseY, wz)
+	fill.Parent       = part
 
-	local stroke = Instance.new("UIStroke")
-	stroke.Thickness    = STROKE_PX
-	stroke.Color        = Color3.fromRGB(255, 255, 255)
-	stroke.Transparency = 0  -- DRW-003: 0, not partial
-	stroke.Parent       = f
-
-	local frame = { part = part, stroke = stroke, baseY = baseY, wx = wx, wz = wz }
+	local frame = { part = part, bars = bars, fill = fill, baseY = baseY, wx = wx, wz = wz }
 	framePool[key] = frame
 	return frame
 end
@@ -177,7 +207,27 @@ local function animateFrame(frame: any): {Tween}
 		CFrame = CFrame.new(wx, baseY + RISE_HEIGHT, wz),
 	})
 	tw:Play()
-	return { tw }
+	local tweens = { tw }
+	-- Rise the Neon outline bars + fill in lockstep with the border. They are anchored
+	-- children, so they do NOT follow the parent CFrame tween automatically — tween
+	-- each with the same RISE_INFO so the whole frame rises together.
+	local function riseChild(child)
+		if not child then return end
+		-- Reset to the TRUE surface baseY, NOT the child's current Y. Pooled frames
+		-- are reused, and Tween:Cancel() leaves a child wherever it stopped mid-rise;
+		-- capturing that drifted Y as the base made re-shown outlines start mid-air.
+		-- X/Z never drift (only Y is tweened), so keep them; force Y back to baseY.
+		local cx, cz = child.Position.X, child.Position.Z
+		child.CFrame = CFrame.new(cx, baseY, cz)
+		local t2 = TweenService:Create(child, RISE_INFO, {
+			CFrame = CFrame.new(cx, baseY + RISE_HEIGHT, cz),
+		})
+		t2:Play()
+		table.insert(tweens, t2)
+	end
+	if frame.bars then for _, bar in frame.bars do riseChild(bar) end end
+	riseChild(frame.fill)
+	return tweens
 end
 
 --- Get or create the invisible click-pad for a tile (pooled).
@@ -302,7 +352,8 @@ function TileHighlightManager.Add(
 	-- tile becoming the "selected" confirmation tile: blue -> yellow) instead
 	-- of skipping. Keeps existing frame/pad/tween; no duplicate group entry.
 	if activeHighlights[key] then
-		activeHighlights[key].frame.stroke.Color = color
+		if activeHighlights[key].frame.bars then for _, bar in activeHighlights[key].frame.bars do bar.Color = color end end
+		if activeHighlights[key].frame.fill then activeHighlights[key].frame.fill.Color = color end
 		return
 	end
 
@@ -310,7 +361,8 @@ function TileHighlightManager.Add(
 	local pad = getOrCreatePad(tx, ty)
 
 	local parent = _hlFolder or workspace
-	frame.stroke.Color = color
+	if frame.bars then for _, bar in frame.bars do bar.Color = color end end
+	if frame.fill then frame.fill.Color = color end
 	frame.part.Parent = parent
 	pad.Parent = _padFolder or parent
 

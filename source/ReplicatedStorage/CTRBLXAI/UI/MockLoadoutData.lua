@@ -356,6 +356,9 @@ local function mapServerItem(si)
 	}
 end
 
+-- Public: lets the battle unit inspector reuse the exact loadout mapping.
+MockLoadoutData.MapServerItem = mapServerItem
+
 function MockLoadoutData.LoadFromServer()
 	print("[LoadoutData] Attempting to fetch inventory from server...")
 

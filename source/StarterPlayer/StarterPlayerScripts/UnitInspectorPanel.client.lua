@@ -30,6 +30,16 @@ local LoadoutScreen = require(
 	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 		:WaitForChild("UI", 10):WaitForChild("LoadoutScreen", 10)
 )
+-- MockLoadoutData owns mapServerItem (server item -> loadout UI item). Optional:
+-- if it fails to load, the inspector falls back to its local mapping.
+local MockLoadoutData = nil
+do
+	local ok, res = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+			:WaitForChild("UI", 10):WaitForChild("MockLoadoutData", 10))
+	end)
+	if ok then MockLoadoutData = res else warn("[UnitInspector] MockLoadoutData unavailable: " .. tostring(res)) end
+end
 
 --------------------------------------------------
 -- STATE
@@ -140,7 +150,7 @@ local function renderActiveEffects(content, data, startOrder)
 		badge.BorderSizePixel = 0
 		badge.Parent = row
 		Instance.new("UICorner", badge).CornerRadius = UDim.new(0, 4)
-		local statusAsset = Theme.GetStatusIcon(sid)
+		local statusAsset = Theme.GetStatusIcon(sid) or s.sourceIcon
 		if statusAsset then
 			local img = Instance.new("ImageLabel")
 			img.Size = UDim2.fromScale(1, 1)
@@ -281,6 +291,17 @@ local function showItemDetail(eq, slotName)
 		end
 	end
 
+	-- Prefer the loadout screen's own mapper on the shared server entry so the
+	-- battle inspector's item detail is identical to the loadout item detail.
+	if eq.invEntry and MockLoadoutData and MockLoadoutData.MapServerItem then
+		local ok, mapped = pcall(MockLoadoutData.MapServerItem, eq.invEntry)
+		if ok and mapped then
+			uiItem = mapped
+		else
+			warn("[UnitInspector] MapServerItem failed, using fallback mapping: " .. tostring(mapped))
+		end
+	end
+
 	-- Create overlay
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "InspectorItemDetail"
@@ -334,6 +355,22 @@ local function showItemDetail(eq, slotName)
 	backBtn.Position = UDim2.new(1, -fb.PAD - fb.BTN_W, 1, -fb.PAD - fb.BTN_H)
 	backBtn.AnchorPoint = Vector2.new(0, 0)
 	backBtn.MouseButton1Click:Connect(closeDetailOverlay)
+end
+
+-- Raw power line (before target defense / hit quality / facing). Server computes
+-- it with the same CombatResolver helpers real combat uses.
+local function skillPowerText(skill)
+	if skill.isHealing and skill.estimatedHeal then
+		return "Heal " .. tostring(skill.estimatedHeal), true
+	end
+	local isDamage = false
+	for _, tag in ipairs(skill.tags or {}) do
+		if tag == "Direct Damage" then isDamage = true; break end
+	end
+	if isDamage and skill.estimatedDamage and skill.estimatedDamage > 0 then
+		return "Dmg " .. tostring(skill.estimatedDamage), false
+	end
+	return nil, false
 end
 
 local function showSkillDetail(skill)
@@ -435,6 +472,11 @@ local function showSkillDetail(skill)
 	end
 
 	row(string.format("MP: %d   RT: %d   Range: %d", skill.mpCost or 0, skill.rtCost or 0, skill.range or 1), { font = Theme.Font.Mono })
+	local pwrText, pwrIsHeal = skillPowerText(skill)
+	if pwrText then
+		row(pwrText .. " (before target defense)", { font = Theme.Font.Mono,
+			color = pwrIsHeal and Theme.Colors.Success or Theme.Colors.Danger })
+	end
 	row("Target: " .. (skill.targetRules or "?") .. "   Pattern: " .. (skill.pattern or "?"), { color = Theme.Colors.TextSecondary })
 
 	-- Tags
@@ -813,6 +855,68 @@ local function renderEquipmentTab(content, data)
 			emptyLbl.Text = "- Empty -"; emptyLbl.Parent = tile
 		end
 	end
+
+	-- CONSUMABLES (equipped slots, from InspectUnit)
+	createSection(content, "CONSUMABLES", 2)
+	local cons = data.consumables or {}
+	if #cons == 0 then
+		createLabel(content, { Text = "  No consumables equipped.", Order = 3,
+			Color = Theme.Colors.TextDisabled })
+		return
+	end
+	local cGrid = Instance.new("Frame")
+	cGrid.Size = UDim2.new(1, 0, 0, 0)
+	cGrid.AutomaticSize = Enum.AutomaticSize.Y
+	cGrid.BackgroundTransparency = 1; cGrid.BorderSizePixel = 0
+	cGrid.LayoutOrder = 3
+	local cLayout = Instance.new("UIGridLayout")
+	cLayout.CellSize = UDim2.new(0.5, -3, 0, 40)
+	cLayout.CellPadding = UDim2.new(0, 4, 0, 4)
+	cLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	cLayout.Parent = cGrid
+	cGrid.Parent = content
+	for i, c in ipairs(cons) do
+		local tile = Instance.new("Frame")
+		tile.BackgroundColor3 = c.empty and Theme.Colors.Panel or Theme.Colors.PanelRaised
+		tile.BackgroundTransparency = c.empty and 0.6 or 0.3
+		tile.BorderSizePixel = 0
+		tile.LayoutOrder = c.slotIndex or i
+		Instance.new("UICorner", tile).CornerRadius = UDim.new(0, 4)
+		local textX = 4
+		if (not c.empty) and c.icon and string.find(c.icon, "rbxassetid://") then
+			local ico = Instance.new("ImageLabel")
+			ico.Size = UDim2.fromOffset(34, 34)
+			ico.Position = UDim2.fromOffset(3, 3)
+			ico.BackgroundTransparency = 1
+			ico.Image = c.icon
+			ico.ScaleType = Enum.ScaleType.Fit
+			ico.Parent = tile
+			textX = 40
+		end
+		local nameLbl = Instance.new("TextLabel")
+		nameLbl.Size = UDim2.new(1, -textX - 2, 0, 16)
+		nameLbl.Position = UDim2.fromOffset(textX, 3)
+		nameLbl.BackgroundTransparency = 1; nameLbl.BorderSizePixel = 0
+		nameLbl.Font = c.empty and Theme.Font.Primary or Theme.Font.PrimaryBold
+		nameLbl.TextSize = Theme.Text.Small()
+		nameLbl.TextColor3 = c.empty and Theme.Colors.TextDisabled or Theme.Colors.TextPrimary
+		nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+		nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+		nameLbl.Text = c.empty and ("SLOT " .. tostring(c.slotIndex or i) .. " - Empty -") or (c.name or "?")
+		nameLbl.Parent = tile
+		if not c.empty then
+			local chLbl = Instance.new("TextLabel")
+			chLbl.Size = UDim2.new(1, -textX - 2, 0, 12)
+			chLbl.Position = UDim2.fromOffset(textX, 21)
+			chLbl.BackgroundTransparency = 1; chLbl.BorderSizePixel = 0
+			chLbl.Font = Theme.Font.Mono; chLbl.TextSize = Theme.Text.Tiny()
+			chLbl.TextColor3 = (c.currentCharges or 0) > 0 and Theme.Colors.TextSecondary or Theme.Colors.Danger
+			chLbl.TextXAlignment = Enum.TextXAlignment.Left
+			chLbl.Text = string.format("x%d/%d  %s", c.currentCharges or 0, c.maxCharges or 0, c.category or "")
+			chLbl.Parent = tile
+		end
+		tile.Parent = cGrid
+	end
 end
 
 --------------------------------------------------
@@ -882,8 +986,10 @@ local function renderSkillsTab(content, data)
 		nameLbl.Parent = row
 
 		-- MP / RT / Range line
-		local infoText = string.format("MP:%d  RT:%d  Range:%d  %s",
-			skill.mpCost or 0, skill.rtCost or 0, skill.range or 1, skill.pattern or "")
+		local pwrText = skillPowerText(skill)
+		local infoText = string.format("MP:%d  RT:%d  Range:%d  %s%s",
+			skill.mpCost or 0, skill.rtCost or 0, skill.range or 1, skill.pattern or "",
+			pwrText and ("  " .. pwrText) or "")
 		local infoLbl = Instance.new("TextLabel")
 		infoLbl.Size = UDim2.new(1, -54, 0, 12)
 		infoLbl.Position = UDim2.fromOffset(50, 18)

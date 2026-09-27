@@ -31,12 +31,15 @@ local QUEST_TEMPLATES = {
 --------------------------------------------------
 
 local QUEST_PLAYER_SLOTS = {
-	Standard = { 3 },
-	Boss     = { 3, 4 },
-	Defense  = { 4 },
-	Ambush   = { 3 },
-	Survival = { 4, 5, 6 },
-	Crossing = { 3 },
+	-- Deployable party size per quest type (dev-locked 2026-09-26: 5-7 spread).
+	-- This is the DEPLOYABLE max the enemy-count budget keys off, not the number
+	-- the player actually fields. DB rule: max player-controlled deployment = 7.
+	Standard = { 5 },
+	Crossing = { 5 },
+	Ambush   = { 5 },
+	Defense  = { 6 },
+	Boss     = { 7 },
+	Survival = { 7 },
 }
 
 --------------------------------------------------
@@ -220,30 +223,36 @@ local function generateOneQuest(questIndex, playerLevel, rng)
 		totalEnemyCount = gruntCount + vetCount + eliteCount
 	end
 
-	-- Clamp total enemy count to 3-6
-	if totalEnemyCount < 3 then
-		-- Pad with an extra Grunt
+	-- Enemy count budget: 2x-2.5x the quest's DEPLOYABLE party size (playerSlots),
+	-- NOT the number the player actually deploys. E.g. playerSlots=6 -> 12-15 enemies,
+	-- playerSlots=3 -> 6-8. (dev-locked 2026-09-26; replaces the old fixed 3-6 prototype
+	-- clamp and satisfies the DB's open P0 "Encounter unit-count budget" in code.)
+	local countMultiplier = 2.0 + rng:NextNumber() * 0.5   -- [2.0, 2.5)
+	local enemyTarget = math.max(1, math.floor(playerSlots * countMultiplier + 0.5))
+
+	if totalEnemyCount < enemyTarget then
+		-- Pad with Grunts up to target.
 		local existing = nil
 		for _, et in ipairs(enemyTypes) do
 			if et.type == "Grunt" then existing = et; break end
 		end
-		local needed = 3 - totalEnemyCount
+		local needed = enemyTarget - totalEnemyCount
 		if existing then
 			existing.count = existing.count + needed
 		else
 			local gruntLvl = recommendedLvl + rng:NextInteger(-2, 0)
 			table.insert(enemyTypes, { type = "Grunt", level = math.max(1, gruntLvl), count = needed })
 		end
-		totalEnemyCount = 3
-	elseif totalEnemyCount > 6 then
-		-- Trim Grunts first
+		totalEnemyCount = enemyTarget
+	elseif totalEnemyCount > enemyTarget then
+		-- Trim Grunts first, keeping at least 1 of the group.
 		for _, et in ipairs(enemyTypes) do
+			if totalEnemyCount <= enemyTarget then break end
 			if et.type == "Grunt" then
-				local excess = totalEnemyCount - 6
+				local excess = totalEnemyCount - enemyTarget
 				local trim = math.min(excess, et.count - 1)
 				et.count = et.count - trim
 				totalEnemyCount = totalEnemyCount - trim
-				break
 			end
 		end
 	end
