@@ -1,0 +1,22 @@
+{
+  "session": "Slice 5 map-gen DB doc-sync (Documenter)",
+  "date": "2026-10-02T17:03:12",
+  "backup_db": [
+    "CTRBLXAI_pre_slice5docsync_20261002_170206.db"
+  ],
+  "items": {
+    "1_BLK_to_OBS": "map_templates legend row8 -> OBS (impassable wall); catalog bias zones rows13,14,17,18,20 BLK->OBS; map_gen_rules row12 contract bullet replaced; stored grids T01-T08 BLK->OBS swapped (T04 had none).",
+    "2_SLW": "Added SLW legend row + marker-contract bullet.",
+    "3_OBJ": "Added OBJ legend row + marker-contract bullet + new validation rule 'OBJ Reachability + OBS-only-blocker' (map_gen_rules row 68).",
+    "4_T09_T20": "Imported 12 templates into template_grids (grids verbatim from source lua) + map_templates catalog.",
+    "5_rotation": "Added 'Template Rotation / Inversion' pipeline rule (map_gen_rules row 69).",
+    "6_size": "map_gen_rules row11 (7. Map sizes), row22 (pipeline Step 1), row35 (Validation Matrix Map size) reworded size as non-binding/objective-driven.",
+    "7_slice5_status": "ALREADY current from prior 2026-10-02 session (development_slices + slice_ownership both read 'In Progress - near complete'); NO change needed. Handoff said 'Not Started' - stale/superseded.",
+    "FYI_anticluster": "No anti-clustering rule exists in map_gen_rules; nothing to annotate with the 'superseded-in-generation' note."
+  },
+  "flags": [
+    "T01 source grid diverges from stored grid by 84 cells beyond BLK->OBS (ADV halved, HZD/OBS/LAN shifted). Item 1 scoped only the rename, so T01 stored layout was PRESERVED (only BLK->OBS). Re-importing T01 layout from source is NOT yet authorized - needs user decision.",
+    "T09-T20 catalog PROSE (Purpose/PD-ED patterns/LAN rule/Notes) authored by Documenter from the grids; name+size+grid are source-verified. Confirm prose against the Dev hand-off (hand-off file was not reachable this session).",
+    "Many new rules carry 'Studio test PENDING' / 'DEV CHANGE PENDING' consistent with prior rows."
+  ]
+}

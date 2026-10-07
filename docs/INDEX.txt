@@ -92,13 +92,13 @@ SHEET                   | TOPIC                                           | WHEN
 
 12 Map Gen Rules        | Map generation pipeline (11 steps), validation, failure handling | Implementing procedural map generation
 
-13 Map Templates        | T01-T08 template catalog (sizes, purposes, zone rules) | Implementing template selection
+13 Map Templates        | T01-T20 template catalog (sizes, purposes, zone rules) | Implementing template selection
 
-T01-T08 sheets          | Actual grid diagrams for each template | Implementing specific template layouts
+T01-T20 sheets          | Actual grid diagrams for each template | Implementing specific template layouts
 
 14 Biomes               | 12 biome profiles with terrain/object weights | Implementing biome loading
 
-15 Regions              | 20 region types with terrain/object/hazard weights | Implementing region generation
+15 Regions              | 21 region types with terrain/object/hazard weights | Implementing region generation
 
 16 Terrain Effects      | 22 terrain types + tile effects with tags, costs, transformations | Implementing terrain behavior
 
@@ -380,3 +380,136 @@ materials_system � 5-tier generic material system for blacksmith upgrades. Tie
 guild_facilities � 9 guild base facilities with gold-only upgrade costs. Design rules (gold-only principle, gatekeeper model), per-facility parameters (base, scale, max level, unlock requirement, function, rarity unlocks), full cost tables (gold per level for all 9), simulation benchmarks (free/boosted player progression). Query with: SELECT * FROM guild_facilities WHERE section = 'Cost Table' or WHERE topic LIKE '%Blacksmith%'.
 
 enemy_ai_personalities — Enemy AI behavior system. One smart brain for all enemies; 5 doctrine-based personalities (Aggressive, Defender, Support, Controller, Skirmisher) defining action priority, plus general rules (battle distance, KO override, player profiling, tie-breaker, backstab, focus fire). Doctrine→personality mapping lives in doctrines.AI_Personality column. Query: SELECT * FROM enemy_ai_personalities WHERE section='Personality'.
+
+
+--- SLICE 5 MAP-GEN RECONCILIATION (added 2026-10-02) ---
+
+WARNING: the ONLY real database is D:\AI\Projects\CTRBLXAI\docs\CTRBLXAI.db.
+  A CTRBLXAI.db in the project ROOT is a wrong-path artifact (sqlite silently creates an empty
+  file when you connect to a path that does not exist). An empty 0-byte root stub was deleted
+  on 2026-10-02. If one reappears, some script is connecting to the wrong path - never read or
+  write it; delete it and fix the script path.
+
+map_gen_rules  'SLICE 5 GAP / BRIDGE / RIDGE RULES' block (rows 55-64): gap + span system, gap hard
+  invariant (every gap has a walkable span, else re-roll), repairBridgePass = safety net only,
+  per-biome gap floor terrain + span type table, span tile protection, 30/70 chokepoint/shortcut
+  gap mix (~17% achieved, accepted), chokepoint POI/ADV seal guard, floor-level ground = low
+  ground, ridge top-up to spinePct.
+terrain_effects 'TERRAIN MOVEMENT COST MODEL' block: single moveCost per terrain (Sand/Mud/Shallow
+  Water 1.0, Swamp/Deep Water 1.5), exact-cost reachability (no rounding), terrain crossCost retired.
+movement_targeting id 76 (terrain cost, exact); ids 38/45/71 LoS reconciled: allies never block,
+  enemies/neutrals block (3+ elevation bypass still applies), Arc ignores ALL units.
+objects_encounters 'BRIDGE SPAN OBJECTS' block: Plank Bridge, Rocky Causeway, Drawbridge.
+core_stats 'Starting RT applies to ALL units' - LUK initiative symmetric for enemies; player-roster units get a flat
+  -10 RT Player Initiative Edge (user ruling 2026-10-02; Dev change pending in EnemyGenerator + player deploy).
+
+--- 2026-10-02 USER RULINGS (follow-up to Slice 5 reconcile) ---
+map_gen_rules 'Gap Floor Terrain + Span Type per Biome' REVISED: chasm floors are EFFECT-BEARING terrain
+  (Desert Quicksand, Castle Rocky+Tar Pit, Volcano Molten, Highlands Deep Water, Plains/Forest Grassland+Vines,
+  Corrupted Tainted Ground). New rows 65-67: 'Chasm Floor = Effect-Bearing Terrain (general rule)',
+  'Desert Quicksand Chasm - span-crossing interaction', 'Chasm-Floor Effect Permanence'. Dev change pending.
+objects_encounters Stone Pillar (row 9): 4 high, falls into a 4-tile span (was 3). Spawn added to Castle/Corrupted
+  biomes and Castle Courtyard/Castle Interior/Village/Corrupted regions (Ruins stays highest).
+
+
+--- 2026-10-02 COUNTER STANCE / RIPOSTE / FRENZY CANON SYNC (from docs_handoff\DOC_HANDOFF_2026-10-01_db-sync.md) ---
+elements_statuses id 72 Frenzy: Basic Attack base-RT component x0.50; Effective Weapon WT EXEMPT
+  (light weapons gain most). Value = dev decision 2026-09-26, recorded as current; user confirmation pending.
+skills DOC-DUELIST-01 Riposte Stance + SKL-COUNTER-STANCE Counter Stance: shared reaction model -
+  no count limit; each counter ADDS caster's Basic Attack RT to its next turn (the balancer);
+  reach = equipped-weapon Basic Attack reach (not melee-only); full weapon pattern incl. Cleave;
+  friendly fire applies; no recursion (TRG-005). Riposte 85% power / 50% Wpn RT Delay (Duelist only);
+  Counter Stance 60% / 30% (general pool, cheaper). Shared CounterStance status - they do not stack.
+skills SKL-BATTLE-FURY Effects: Frenzy magnitude cross-reference.
+open_decisions rows 73 (Resolved - sync record) + 74 (Dev Pending - code gaps a-f vs canon).
+
+
+--- 2026-10-03 MAP-OBJECT CATALOG REWORK (from docs_handoff\DOC_HANDOFF_2026-10-03_map-objects-rework.md) ---
+objects_encounters catalog reworked (now 45 objects; was 46). Applied: 13 RENAMES (Mage Guild->Star Axis,
+  Warrior Guild->Burning Cauldron, Mercenary Camp->War Horn, Marletto Tower->Runed Boulder, Warrior's Tomb->Cursed Chest,
+  Arena->Blood Fountain, Tree of Knowledge->Astrolabe, Cartographer->Crystal Ball, Den of Thieves->Mysterious Boulder,
+  Altar of Sacrifice->Necro Tome Stand, Seer's Hut->Chaos Statue, Stables->Angel Statue, War Machine Factory->Forge);
+  5 REMOVALS (Scholar, Trading Post, Refugee Camp, Skeleton Transformer, Library of Enlightenment); 4 NEW
+  (Potion Desk [PARKED-Slice8], Glow Crystal [PARKED-Slice6], Pandora's Box, Swan Pond). Catalog names now match
+  ServerStorage model names 1:1. Effect/RT/CT reworks per handoff: timed-buff objects CT900->1500 + RT150 Interact
+  (Rally Flag, Star Axis, Burning Cauldron, War Horn [-15% base RT], Runed Boulder [+10% Atk/+10% Def]); Ballista
+  (cardinal, RT100, once-per-turn), Catapult (Cross AOE, RT100), Eye of the Magi (attacks 2 random foes 40% own MaxHP,
+  RT150, once-per-turn), Blood Fountain (Regen all allies MAP-WIDE), Astrolabe (-200 current RT all allies MAP-WIDE,
+  RT400), Fountain of Fortune (+50% Fortune all allies MAP-WIDE), Swan Pond (remove all debuffs all allies MAP-WIDE),
+  Mysterious Boulder (random debuff to ALL enemies, RT200), Necro Tome Stand (PASSIVE: on death within radius 3,
+  dark dmg = 10% of DYING unit's MaxHP to that unit's opponents), Cursed Statue (PASSIVE: +20% base RT in radius 3,
+  two-sided), Forge (RT150), Pandora's Box (random map-object effect incl. harmful, RT50).
+G1 default Interact RT = round(Modified Base RT x 0.10) when an object states no explicit RT. G2 all N×N areas
+  reworded to radius form (3×3->radius 1, 5×5->radius 2). G3 explosion -1 ELEVATION drop moved OFF objects onto the
+  EXPLOSION TAG: terrain_effects 'Explosion' row (AOE pattern & radius) now states tag-owned -1 drop; Cracked Ground
+  -3 collapse SUPERSEDES (does not stack); Bomb Barrel + Land Mine per-object 'Elevation -1' wording removed.
+  open_decisions 'Explosion mechanic numbers' row updated with the ownership move.
+Resolved rulings (handoff §10): all passive-aura objects affect BOTH sides; "all allies"/"all allied units" = MAP-WIDE;
+  Ballista + Eye of the Magi once-per-turn = per-unit per-turn (resets at that unit's own turn; Slice 5 object-runtime
+  needs a per-unit-per-turn usage tracker). open_decisions rows 75 (Glow Crystal PARKED, XP dep/Slice 6) + 76
+  (Potion Desk PARKED, consumable charge-refill dep/Slice 8). encounter-rules Step 7 (summon/reveal) refreshed:
+  Refugee Camp removed, War Machine Factory->Forge. Models with no catalog use (ignored): Anvil, Bone Totem,
+  Crystal Fountain, Cursed Mirror, Door of Light, Horror Gate, Magic Fountain.
+ObjectData.lua (source\ReplicatedStorage\Content) regenerated from objects_encounters: 45 objects + 14 battle
+  conditions; emits numeric interactRT field where an RT is specified; object ids match catalog/model names.
+  (Prior hand-maintained header said 15 conditions - the DB has 14 [Clear..Hunger Virus]; regen uses the accurate 14.)
+
+
+--- 2026-10-03 USER RULINGS (Interact targeting + counter trigger scope + channeled counters) ---
+project_rules 'Interact Command' ids 131/133/134/135: RECRUIT = ENEMIES only (NPC/Neutral not recruitable; a recruited unit
+  becomes Neutral and drops off the recruit list). AID (id 134) + REVIVE (id 135) = ALLIED units only. Net: a recruited Neutral
+  gets NO Interact option. Failed Interact = rejected before payment (no AP/RT). Battlefield-event NPC interactions unchanged.
+  open_decisions row 77 = resolution record ('do recruited Neutrals get Aid/Revive?' -> NO, allies only).
+skills SKL-COUNTER-STANCE + DOC-DUELIST-01 Effects/Targeting_Range/Special_Rules/Meta: counter triggers on ANY enemy attack that
+  deals direct damage > 0 to the holder (Basic Attack or damaging Skill of ANY pattern, primary or splash). Zero-damage/status-only
+  skills (Steal, Seal of Silence, Mind Fracture, Wither, Stone Prison) never trigger. Max 1 counter per holder per action.
+  Channeled/delayed skills: checked AT EXECUTION, with validity/range/LoS re-check (no counter if holder moved/KO'd/out of reach).
+trigger_safety TRG-004 rewritten to the same rule (AOE/splash DO provoke if damage > 0; enemy-only + TRG-005 guards kept).
+open_decisions row 74 (Dev gaps) updated: (c) trigger scope revised, (f) SkillData.lua text, (g) channeled execution-time hook,
+  (h) optional AI avoidance. Dev changes pending; not Studio-tested.
+  Build Plan note: trigger_event_queue row 6 still says 'Qualifying actively targeted AP action' - TRG-004 defines 'qualifying'.
+
+
+
+--- 2026-10-04 WEATHER / CRISIS DESIGN REWORK (from backups\weather_rework_20261004.py) ---
+objects_encounters BATTLE CONDITIONS reworked (now 15 conditions; Snow Storm added after Hunger Virus).
+  LOCKED MODEL: ONE combined EXCLUSIVE slot per round holds EITHER one weather OR one crisis (never both),
+  drawn from the biome 'Battle Condition Weights' pool; the 35 battlefield_events are SEPARATE and layer
+  on top (UNCHANGED). Per-round re-roll at every 1000-CT boundary. Quest sets starting weather + starting
+  time phase; both cycle every round (time cycle Dawn/Day/Dusk/Night already built). 'Undispellable for the
+  duration' = 1 round (1000 CT). ALL periodic weather effects now fire every 300 CT (the old 500-CT ones -
+  Wild Growth, Thunderstorm, Meteor Storm, Volcanic Eruptions, Earthquake - are now 300).
+  CHANGES: Rain = apply/refresh Wet to BOTH units + tiles /300CT, undispellable this round, triggers
+  Water/Wet reactions (Fire->Steam, Ice->Frozen, Electric->Static Cloud); replaces old Burning->Steam.
+  Strong Wind = trigger ALL Wind reactions /300CT (Steam->Clear, Static Cloud->Clear) + NEW Designer-defined
+  Wind reactions: Burning acceleration (extra spread pass per tick, reach not widened, TRG-012) and Poison
+  Cloud spread (migrate 1 adjacent tile/source/tick, TRG-012) - FLAG: new mechanics, Dev build + balance
+  pending. Heatwave = dry/burn transforms /300CT (Shallow/Deep Water->Clear, Ice->Shallow Water,
+  Grassland/Clover->Burning, Vines->Burning, Swamp/Mud->Rocky, Wet->Steam; Deep Water->Clear ends Drowning).
+  Dark Eclipse = ADD undispellable Haste (keep Light-25/Dark+25/Recruit-20). Holy Aurora = ADD undispellable
+  Slow (keep Light+25/Dark-25 AND the 300-CT Undead 5% Light tick). Mana Storm = restore 10% Max MP THEN
+  lose HP = 50% current MP (replaces +10% + Mana Burn). Severe Hail = random half of active units take 10%
+  Max HP /300CT (replaces old Liquid->Ice/Frozen tile version). Snow Storm (NEW) = all units UNDISPELLABLE
+  Frozen for the round + all water terrain->Ice; Frozen/Fire FLAG: Fire still removes an individual unit's
+  Frozen (reaction removal, not dispel) to preserve counterplay.
+  RELATED-RACES set for Dark Eclipse Haste / Holy Aurora Slow (Designer, grounded in races table): Undead-tag
+  (Zombie, Vampire) + Undead STATUS (temporary) + Werewolf + Demon (race, needs explicit hook). Skeleton/Lich
+  do NOT exist as races (excluded).
+terrain_effects: Burning + Poison Cloud gained Wind reactions; new 'HEATWAVE TRANSFORM SET' doc row.
+biomes 'Battle Condition Weights': Snow Storm added to Tundra 25 (Severe Hail 40->25, Strong Wind 20->15,
+  Clear 15->10), Highlands 10 (Strong Wind 30->25, Earthquake 20->15), Cave 10 (Clear 55->45). All pools = 100.
+map_gen_rules: 4 new P0 rows (Combined Exclusive Slot; Per-Round Re-Roll; Quest Start + Time Cycle;
+  Weather Periodic Interval = 300 CT). Generation Step 9 now sets the STARTING condition; re-roll runs each round.
+open_decisions rows 79-83: resolution records for the 5 deferred questions (2 carry FLAGs: Strong Wind new
+  mechanics; Snow Storm Frozen/Fire read). Game_Rules.xlsx sheets 12/14/16/17/18 regenerated from the DB.
+  elements_statuses UNCHANGED (Mana Burn id 68 now unused by weather but still defined). Dev-side weather
+  engine built in parallel - these are DESIGN/DB rulings only, not Studio-tested.
+
+
+game_flow (26 rows, sheet '28 Game Flow') - LOCKED 2026-10-07: full out-of-battle flow.
+  Stages: 1 Base (HQ private + shared multiplayer town), 2 Preparation (quest -> party -> depart briefing),
+  3 Battle start (opening camera, objectives, points of interest, deployment), 4 Battle end (victory/defeat,
+  expedition camp), 5 Return to base (KO to 1 HP, item refill, storage fee, dispatch returns, refresh counters).
+  Unit Management merged into the unit screen (Info/Equipment/Skills). Guaranteed rewards fixed at quest board refresh.
+  Town: menus first (1 player/server), walkable shared town later (~20/server) with private battle servers; HQ always private.
+  Open (stage 9): quest board refresh timing, camp rest options.

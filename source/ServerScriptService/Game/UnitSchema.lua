@@ -15,6 +15,15 @@
 --   - effectiveStats rebuilt by EquipmentService (not copied from input)
 --   - Backwards-compatible: if no equipment, uses legacy flat values
 
+-- SHIELD SUBSYSTEM (2026-10-05): units carry a shield_total absorption pool.
+--   All eligible damage (basic attack, skill, DoT, collision, reflect, Mana Burn)
+--   funnels through UnitSchema.ApplyDamage, so the shield gate lives HERE and
+--   covers every path (DB TRG-015 / damage-pipeline step G5: "Consume Shield
+--   before HP, including DoT"). The shield pool is kept in sync with the live
+--   "Shield" status instances by StatusService; ApplyDamage mutates shield_total
+--   directly for speed and records a transient break record so the caller (which
+--   knows the attacker) can resolve Retribution Shell's on-break retaliation.
+
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("CTRBLXAI")
@@ -148,6 +157,12 @@ function UnitSchema.Create(definition)
 		-- MP Regen accumulator (Slice 4B: fractional CT-based regen)
 		mpRegenAccumulator = 0,
 
+		-- Shield absorption pool (2026-10-05 shield subsystem). Aggregate current
+		-- Shield capacity (DB battle schema field "shield_total"). Soaks eligible
+		-- damage before HP; decays 10%/300 CT via StatusService. 0 = no shield.
+		-- Starts fresh each battle (not persisted — a battle-scoped buffer).
+		shield_total  = 0,
+
 		-- Weapon stats (populated by EquipmentService.RebuildUnitStats or legacy)
 		weaponDamage  = definition.weaponDamage or 10,
 		weaponWt      = definition.weaponWt or 40,
@@ -184,6 +199,31 @@ function UnitSchema.Create(definition)
 
 		-- Alive flag
 		isAlive       = true,
+
+		-- SUMMON FIELDS (2026-10-05 summon wiring). Present on ALL units but only
+		-- meaningful on summoned units (isSummon=true). Built by EnemyGenerator.SpawnSummon
+		-- from authored caster-% specs; non-summon units leave these at the defaults
+		-- below so existing behaviour is unchanged.
+		--   isSummon            : this unit was created by a summon skill
+		--   summonOwnerId       : id of the casting unit (one-at-a-time replace key)
+		--   summonType          : "Sentinel"/"Wisp"/"Mender"/"Decoy"/"Turret"/"WardTotem"
+		--   summonProfile       : AI behaviour tag — "attack"/"heal"/"turret"/"idle"
+		--   canMove             : false for stationary summons (Turret/Decoy/Totem)
+		--   isFlying            : Wisp flies (movement/elevation hint; data only here)
+		--   auraSpec            : Ward Totem continuous aura {radius, debuffResistMult}
+		--   turretSnapshotDamage: Turret's snapshotted Basic Attack power (set at summon)
+		--   rewardEligible      : summons grant NO rewards (false)
+		--   killTriggerEligible : summons are Kill-Trigger ineligible (false)
+		isSummon            = definition.isSummon or false,
+		summonOwnerId       = definition.summonOwnerId or nil,
+		summonType          = definition.summonType or nil,
+		summonProfile       = definition.summonProfile or nil,
+		canMove             = (definition.canMove ~= false),  -- defaults true unless explicitly false
+		isFlying            = definition.isFlying or false,
+		auraSpec            = definition.auraSpec or nil,
+		turretSnapshotDamage = definition.turretSnapshotDamage or nil,
+		rewardEligible      = (definition.rewardEligible ~= false),  -- defaults true (normal units)
+		killTriggerEligible = (definition.killTriggerEligible ~= false),  -- defaults true
 	}
 
 	-- Migrate single skillId into skillIds array if needed
@@ -211,14 +251,79 @@ function UnitSchema.Kill(unit)
 	unit.currentAp = 0
 end
 
+--------------------------------------------------
+-- APPLY DAMAGE  (SHIELD GATE — DB TRG-015 / pipeline step G5)
+--
+-- Shield absorbs eligible damage BEFORE HP. This is the single chokepoint for
+-- every damage path (basic attack, skill, DoT, collision, reflect, Mana Burn),
+-- so inserting the gate here covers them all without touching each call site.
+--
+-- Returns:
+--   actual        — HP actually removed (first return; UNCHANGED semantics for
+--                    all existing callers that only read this value)
+--   shieldBroke   — true if the shield pool was reduced to 0 by THIS call
+--                   (i.e. it had shield > 0 before and 0 after)
+--   shieldAbsorbed— amount of the incoming damage soaked by the shield
+--   shieldMaxAtBreak — the shield instance's MAX HP at the moment it broke
+--                    (for Retribution Shell on-break retaliation). nil if no break.
+--   retributionDamage — (5th) the broken Retribution Shell's stamped on-break
+--                    Physical snapshot (round(Shield Max HP x 0.50)); nil otherwise.
+--                    Forwarded from StatusService.OnShieldAbsorb so ApplyOutcome
+--                    can retaliate against the breaker (shield subsystem 2026-10-05).
+--
+-- The caller that knows the attacker (CombatResolver.ApplyOutcome, the DoT loop)
+-- inspects shieldBroke to resolve on-break reactions. ApplyDamage itself stays
+-- attacker-agnostic. StatusService owns the "Shield" status instances; this
+-- function syncs them via StatusService.OnShieldAbsorb so the pill/duration and
+-- the per-instance max-HP bookkeeping stay correct.
+--------------------------------------------------
+
+-- StatusService is injected (DI) to avoid a require cycle: StatusService requires
+-- GameConstants/RaceData/TraitEffectService; UnitSchema is required by nearly
+-- everything, so pulling StatusService in at module scope risks a cycle. Nil-safe:
+-- with no StatusService wired, ApplyDamage still soaks shield_total directly.
+local _statusService = nil
+function UnitSchema.SetStatusService(ss)
+	_statusService = ss
+end
+
 function UnitSchema.ApplyDamage(unit, amount)
 	assert(amount >= 0, "ApplyDamage: amount must be >= 0.")
+
+	local shieldAbsorbed = 0
+	local shieldBroke = false
+	local shieldMaxAtBreak = nil
+	-- Retribution snapshot (shield subsystem — 2026-10-05). If the broken shield was
+	-- a Retribution Shell, StatusService.OnShieldAbsorb returns its stamped
+	-- retributionDamage (round(Shield Max HP x 0.50)) as a 3rd value. We forward it
+	-- as ApplyDamage's 5th return so CombatResolver.ApplyOutcome (which knows the
+	-- attacker) can retaliate against the breaker. nil for the other five shields.
+	local shieldRetribution = nil
+
+	-- SHIELD GATE: soak before HP. Decay never routes here (decay cannot damage
+	-- HP — handled separately in StatusService.ProcessCtTick).
+	local shield = unit.shield_total or 0
+	if shield > 0 and amount > 0 then
+		local soak = math.min(shield, amount)
+		shieldAbsorbed = soak
+		unit.shield_total = shield - soak
+		amount = amount - soak
+		-- Let StatusService draw down the live Shield status instance(s) and tell
+		-- us whether the pool just emptied (for Retribution on-break). If no
+		-- StatusService is wired, infer the break from shield_total hitting 0.
+		if _statusService and _statusService.OnShieldAbsorb then
+			shieldBroke, shieldMaxAtBreak, shieldRetribution = _statusService.OnShieldAbsorb(unit, soak)
+		elseif unit.shield_total <= 0 then
+			shieldBroke = true
+		end
+	end
+
 	local actual = math.min(unit.currentHp, amount)
 	unit.currentHp = unit.currentHp - actual
 	if unit.currentHp <= 0 then
 		UnitSchema.Kill(unit)
 	end
-	return actual
+	return actual, shieldBroke, shieldAbsorbed, shieldMaxAtBreak, shieldRetribution
 end
 
 function UnitSchema.ApplyHealing(unit, amount)

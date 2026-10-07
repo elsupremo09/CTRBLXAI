@@ -13,7 +13,8 @@
 --   on the "To" side only if that tile is currently the specified
 --   terrain. 2 passes.
 --
--- Does NOT touch protected tiles (PD/ED/LAN).
+-- Does NOT touch protected tiles (PD/ED/LAN), deliberate gap tiles (isGap)
+-- or bridge span tiles (isBridge) — Round 3.
 -- Does NOT touch elevation.
 --
 -- Location: ServerScriptService/Game/TransitionPass.lua
@@ -39,6 +40,14 @@ local YIELD_INTERVAL = 100
 
 local function isInBounds(x, y, w, h)
 	return x >= 1 and x <= w and y >= 1 and y <= h
+end
+
+--- Round 3 (biomes spec row 28): deliberate gap tiles (isGap) and bridge
+--- span tiles (isBridge) placed by FeaturePass.placeGapsAndSpans are locked
+--- like protected tiles, so buffer/prohibition fixes never fill a chasm or
+--- repaint a span. Their non-locked neighbours still receive buffers.
+local function isLocked(tile)
+	return tile.protected or tile.isGap == true or tile.isBridge == true
 end
 
 --------------------------------------------------
@@ -229,17 +238,17 @@ function TransitionPass.Run(mapState)
 							local replaceA = (preferred == "A")
 
 							-- If preferred side is protected, try the other.
-							if replaceA and tileA.protected then
+							if replaceA and isLocked(tileA) then
 								replaceA = false
 							end
-							if not replaceA and tileB.protected then
+							if not replaceA and isLocked(tileB) then
 								replaceA = true
 							end
 
 							-- Tie-break using cluster size if both are
 							-- non-protected and the preferred side has a
 							-- LARGER local cluster than the other side.
-							if not tileA.protected and not tileB.protected then
+							if not isLocked(tileA) and not isLocked(tileB) then
 								local matchA = countMatchingNeighbors(
 									x, y, tiles, w, h)
 								local matchB = countMatchingNeighbors(
@@ -255,10 +264,10 @@ function TransitionPass.Run(mapState)
 							end
 
 							-- Apply.
-							if replaceA and not tileA.protected then
+							if replaceA and not isLocked(tileA) then
 								tileA.terrain = buffer
 								anyChange     = true
-							elseif not replaceA and not tileB.protected then
+							elseif not replaceA and not isLocked(tileB) then
 								tileB.terrain = buffer
 								anyChange     = true
 							end
@@ -288,7 +297,7 @@ function TransitionPass.Run(mapState)
 							local nx, ny = x + dir.x, y + dir.y
 							if isInBounds(nx, ny, w, h) then
 								local nTile = tiles[ny][nx]
-								if not nTile.protected then
+								if not isLocked(nTile) then
 									local shouldReplace = false
 
 									if rule.toSet == nil then

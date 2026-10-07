@@ -362,6 +362,50 @@ MockLoadoutData.MapServerItem = mapServerItem
 function MockLoadoutData.LoadFromServer()
 	print("[LoadoutData] Attempting to fetch inventory from server...")
 
+	-- ROSTER FIX 2026-10-07: build the unit list from the server roster so every
+	-- member (starting units, Tavern hires, battle recruits) can be cycled. The
+	-- mock Units list above stays only as a fallback if the server call fails.
+	if BattleEvents and BattleEvents.GetRosterData then
+		local rOk, roster = pcall(function()
+			return BattleEvents.GetRosterData:InvokeServer()
+		end)
+		if rOk and type(roster) == "table" and next(roster) ~= nil then
+			local STARTING_ORDER = { unit_hero = 1, unit_mage = 2, unit_ranger = 3 }
+			local units = {}
+			-- Server sends the string "none" for missing fields; treat it as empty.
+			local function field(v) if v == "none" then return nil end return v end
+			for unitId, rd in roster do
+				table.insert(units, {
+					id = unitId,
+					name = rd.name or unitId,
+					level = rd.level or 1,
+					raceId = field(rd.raceId),
+					raceName = field(rd.raceName),
+					doctrineId = field(rd.doctrineId),
+					doctrineName = field(rd.doctrineName),
+					side = "Player",
+					unallocatedPoints = rd.unallocatedPoints,
+				})
+			end
+			table.sort(units, function(a, b)
+				local oa = STARTING_ORDER[a.id] or 99
+				local ob = STARTING_ORDER[b.id] or 99
+				if oa ~= ob then return oa < ob end
+				return a.id < b.id
+			end)
+			local prevId = MockLoadoutData.Units[MockLoadoutData.SelectedUnitIndex]
+				and MockLoadoutData.Units[MockLoadoutData.SelectedUnitIndex].id
+			MockLoadoutData.Units = units
+			MockLoadoutData.SelectedUnitIndex = 1
+			for i, u in units do
+				if u.id == prevId then MockLoadoutData.SelectedUnitIndex = i break end
+			end
+			print(`[LoadoutData] Loaded roster from server: {#units} unit(s)`)
+		else
+			warn("[LoadoutData] Roster fetch failed — using mock unit list. ok=" .. tostring(rOk))
+		end
+	end
+
 	if not BattleEvents or not BattleEvents.GetInventoryData then
 		warn("[LoadoutData] BattleEvents.GetInventoryData not available — using mock data")
 		MockLoadoutData._useServerData = false

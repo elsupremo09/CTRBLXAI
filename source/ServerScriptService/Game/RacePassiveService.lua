@@ -16,6 +16,15 @@ local GameConstants = require(
 		:WaitForChild("Shared")
 		:WaitForChild("GameConstants")
 )
+
+-- RaceData: authoritative race lookup for the 2026-10-02 new-race passives.
+-- ALL new-race detection goes through RaceData.GetRace(raceId) (nil-safe) --
+-- never a direct bracket index into the RaceData module (8-site bug fixed 2026-10-02).
+local RaceData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("RaceData")
+)
 --------------------------------------------------
 -- HELPERS
 --------------------------------------------------
@@ -38,6 +47,49 @@ local function isElemental(element)
 	return element ~= nil and element ~= "Physical" and element ~= ""
 end
 
+-- New-race detection (2026-10-02 roster). Nil-safe: a nil or unknown raceId
+-- (RaceData.GetRace returns nil) is never treated as any race.
+local function isRace(unit, raceId)
+	local rid = unit and unit.raceId or nil
+	if not rid then return false end
+	if not RaceData.GetRace(rid) then return false end
+	return rid == raceId
+end
+
+local function hasTag(tags, wanted)
+	if type(tags) ~= "table" then return false end
+	for _, t in ipairs(tags) do
+		if t == wanted then return true end
+	end
+	return false
+end
+
+-- TIME OF DAY -- no day/night system exists yet.
+-- TODO(day/night): when a time-of-day system is built, return "Day" / "Dusk" /
+-- "Night" here (and resync stats on a phase change -- see RefreshConditionalStats).
+-- Until then this returns nil, so every day/night-gated race passive (Werewolf
+-- Moonblood; Vampire's day/night stat swing, also DEFERRED) is DORMANT / no-op.
+-- Time-of-day cycle (Dawn/Day/Dusk/Night, one phase per 1000-CT round). Set by
+-- BattleCoordinator via SetTimePhase as the battle clock crosses each round
+-- boundary. nil until a battle sets it (passives then no-op, as before).
+local _currentTimePhase = nil
+function RacePassiveService.SetTimePhase(phase)
+	_currentTimePhase = phase
+end
+function RacePassiveService.GetTimePhase()
+	return _currentTimePhase
+end
+local function getTimeOfDay()
+	return _currentTimePhase
+end
+
+-- Optional TileEffectService (DI) for tile-effect-aware race passives (Treant
+-- Forest Wrath reads the Vines effect). Forwarded by CombatResolver.SetTileEffectService.
+local _tileEffectService = nil
+function RacePassiveService.SetTileEffectService(tes)
+	_tileEffectService = tes
+end
+
 --------------------------------------------------
 -- DAMAGE DEALT MODIFIER
 -- Returns a multiplier applied to final damage dealt by this unit.
@@ -49,7 +101,7 @@ end
 --   isAOE: boolean
 --------------------------------------------------
 
-function RacePassiveService.GetDamageDealtModifier(attacker, element, isAOE)
+function RacePassiveService.GetDamageDealtModifier(attacker, element, isAOE, targetUnit)
 	local raceId = getRaceId(attacker)
 	if not raceId then return 1.0 end
 
@@ -76,10 +128,19 @@ function RacePassiveService.GetDamageDealtModifier(attacker, element, isAOE)
 		end
 	end
 
-	-- MERMAID — Tidecaller: off water, all stats -10% → damage received +10%
-	if raceId == "RACE-MERMAID" then
-		if not isOnWaterTile(defender) then
-			mod = mod * 1.10
+	-- TREANT — Forest Wrath (races row 'Treant', 2026-10-02): +15% damage dealt to
+	-- targets standing on Grassland / Forest / Clover Field terrain, or on a tile
+	-- carrying the Vines tile effect. ("Forest" is not a TERRAIN_TYPES id today --
+	-- kept for forward compatibility; harmless string compare.)
+	if targetUnit and targetUnit.tileX and targetUnit.tileY and isRace(attacker, "RACE-TREANT") then
+		local tId = GameConstants.GetTerrainId(targetUnit.tileX, targetUnit.tileY)
+		local onWildGround = (tId == "Grassland" or tId == "Forest" or tId == "Clover Field")
+		if not onWildGround and _tileEffectService and _tileEffectService.GetTileEffect then
+			local teff = _tileEffectService.GetTileEffect(targetUnit.tileX, targetUnit.tileY)
+			onWildGround = (teff ~= nil and teff.id == "Vines")
+		end
+		if onWildGround then
+			mod = mod * 1.15
 		end
 	end
 
@@ -140,6 +201,31 @@ function RacePassiveService.GetDamageReceivedModifier(defender, element, isAOE, 
 		end
 	end
 
+	-- MERMAID — Tidecaller (races row 'Mermaid'): "All primary stats -10% while not
+	-- occupying Water, Wet, or Ice" → as DEFENDER, off water: damage received +10%.
+	-- (BUGFIX 2026-10-03: moved here from GetDamageDealtModifier, where it read an
+	-- undefined global `defender` and so applied an unconditional +10% dealt.)
+	if raceId == "RACE-MERMAID" then
+		if not isOnWaterTile(defender) then
+			mod = mod * 1.10
+		end
+	end
+
+	-- CELESTIAL — Radiant Grace (races row 'Celestial', 2026-10-02): Dark damage received +20%
+	if element == "Dark" and isRace(defender, "RACE-CELESTIAL") then
+		mod = mod * 1.20
+	end
+
+	-- DEMON — Infernal Pact (races row 'Demon', 2026-10-02): Holy damage received +20%
+	if element == "Holy" and isRace(defender, "RACE-DEMON") then
+		mod = mod * 1.20
+	end
+
+	-- DRAGONKIN — Dragonscale (races row 'Dragonkin', 2026-10-02): Ice damage received +50%
+	if element == "Ice" and isRace(defender, "RACE-DRAGONKIN") then
+		mod = mod * 1.50
+	end
+
 	return mod
 end
 
@@ -180,6 +266,9 @@ function RacePassiveService.GetMovementRangeModifier(unit)
 	-- GOLEM — Fortified Frame: Movement Range -1
 	if raceId == "RACE-GOLEM" then return -1 end
 
+	-- RABBIT FOLK — Hop Step (races row 'Rabbit Folk', 2026-10-02): Movement Range -1
+	if isRace(unit, "RACE-RABBIT-FOLK") then return -1 end
+
 	return 0
 end
 
@@ -196,6 +285,64 @@ function RacePassiveService.GetJumpModifier(unit)
 	-- ELF — Elven Focus: Jump +1
 	if raceId == "RACE-ELF" then return 1 end
 
+	return 0
+end
+
+--------------------------------------------------
+-- DOWNWARD JUMP MODIFIER (2026-10-02)
+-- Integer offset applied ONLY to the downward-jump limit used by voluntary
+-- movement (TargetingService.getDownwardJump). Forced displacement is unaffected.
+--------------------------------------------------
+
+function RacePassiveService.GetDownwardJumpModifier(unit)
+	-- HALFLING — Nimble Steps (races row 'Halfling'): Jump -1 when moving to a
+	-- lower elevation (voluntary downward movement only).
+	if isRace(unit, "RACE-HALFLING") then return -1 end
+	return 0
+end
+
+--------------------------------------------------
+-- RABBIT FOLK — HOP STEP (2026-10-02)
+-- True if this unit may hop a single gap/pit tile in a straight line.
+-- Geometry / legality lives in TargetingService.GetMoveCandidates.
+--------------------------------------------------
+
+function RacePassiveService.CanHopGap(unit)
+	return isRace(unit, "RACE-RABBIT-FOLK")
+end
+
+--------------------------------------------------
+-- SKILL RANGE MODIFIER (2026-10-02)
+-- Integer offset to a skill's targeting range. Applied in BOTH
+-- TargetingService.GetSkillCandidates (prompt) and CommandService skill
+-- validation so the shown range and the validated range never drift.
+--------------------------------------------------
+
+-- Movement skills = skills whose effect relocates the CASTER (DB skills table
+-- Effects: Blink teleport, Opportunist's Step path relocation, Skyfall Lance /
+-- Dragon Dive leaps, Phantom Exchange swap, Reckless Charge). The data has no
+-- "Movement" tag, so they are listed explicitly; isMovement / isCharge flags on
+-- a def are also honored.
+local MOVEMENT_SKILL_IDS = {
+	["SKL-BLINK"]              = true,
+	["SKL-OPPORTUNIST-S-STEP"] = true,
+	["SKL-SKYFALL-LANCE"]      = true,
+	["SKL-DRAGON-DIVE"]        = true,
+	["SKL-PHANTOM-EXCHANGE"]   = true,
+	["DOC-BERSERKER-01"]       = true,
+}
+
+function RacePassiveService.IsMovementSkill(skillDef)
+	if type(skillDef) ~= "table" then return false end
+	if skillDef.isMovement or skillDef.isCharge then return true end
+	return skillDef.id ~= nil and MOVEMENT_SKILL_IDS[skillDef.id] == true
+end
+
+function RacePassiveService.GetSkillRangeModifier(unit, skillDef)
+	-- HALFLING — Nimble Steps (races row 'Halfling'): Movement skills gain +1 range
+	if isRace(unit, "RACE-HALFLING") and RacePassiveService.IsMovementSkill(skillDef) then
+		return 1
+	end
 	return 0
 end
 
@@ -249,6 +396,35 @@ function RacePassiveService.GetStatModifiers(unit)
 		return { STR = -0.15 }
 	end
 
+	-- DRAGONKIN — Dragonscale (races row 'Dragonkin', 2026-10-02): while a Burn
+	-- instance is active on this unit, all primary stats +15%. (Burn ticks are
+	-- nullified in StatusService.ProcessStartOfTurn, but the instance stays so
+	-- this still sees it.) Kept in sync mid-battle by RefreshConditionalStats.
+	if isRace(unit, "RACE-DRAGONKIN") and unit.statusInstances
+		and StatusService.HasStatus(unit, "Burn") then
+		return { STR = 0.15, AGI = 0.15, INT = 0.15, VIT = 0.15, DEX = 0.15, LUK = 0.15 }
+	end
+
+	-- WEREWOLF — Moonblood (races row 'Werewolf', 2026-10-02): all primary stats
+	-- +10% during dusk and night. Reads getTimeOfDay() (time cycle, 2026-10-04).
+	-- VAMPIRE — Vampirism day/night swing (races row 'Vampire'): all primary stats
+	-- -25% during DAY, +25% during NIGHT (dawn/dusk neutral). Reads the same cycle.
+	if isRace(unit, "RACE-VAMPIRE") then
+		local tod = getTimeOfDay()
+		if tod == "Day" then
+			return { STR = -0.25, AGI = -0.25, INT = -0.25, VIT = -0.25, DEX = -0.25, LUK = -0.25 }
+		elseif tod == "Night" then
+			return { STR = 0.25, AGI = 0.25, INT = 0.25, VIT = 0.25, DEX = 0.25, LUK = 0.25 }
+		end
+	end
+
+	if isRace(unit, "RACE-WEREWOLF") then
+		local tod = getTimeOfDay()
+		if tod == "Dusk" or tod == "Night" then
+			return { STR = 0.10, AGI = 0.10, INT = 0.10, VIT = 0.10, DEX = 0.10, LUK = 0.10 }
+		end
+	end
+
 	return nil
 end
 
@@ -258,13 +434,23 @@ end
 -- or nil if no status applies.
 --------------------------------------------------
 
-function RacePassiveService.GetBasicAttackStatus(unit)
+function RacePassiveService.GetBasicAttackStatus(unit, target)
 	local raceId = getRaceId(unit)
 	if not raceId then return nil end
 
 	-- GOBLIN — Cunning: Basic Attacks apply Poison
 	if raceId == "RACE-GOBLIN" then
 		return "Poison"
+	end
+
+	-- CRAB — Pincer Grip (races row 'Crab', 2026-10-02): Basic Attacks against a
+	-- target within range 1 (8 adjacent tiles, Chebyshev distance 1) inflict Wounded.
+	if target and unit.tileX and unit.tileY and target.tileX and target.tileY
+		and isRace(unit, "RACE-CRAB") then
+		local dist = math.max(math.abs(unit.tileX - target.tileX), math.abs(unit.tileY - target.tileY))
+		if dist == 1 then
+			return "Wounded"
+		end
 	end
 
 	return nil
@@ -319,6 +505,82 @@ function RacePassiveService.OnDamageReceived(defender, actualDamage, sourceUnitI
 			"[RacePassiveService] Shadow Umbral Veil: %s gains Hide (1 turn)", defender.name
 		))
 	end
+end
+
+--------------------------------------------------
+-- LIZARDMEN — SPIKED HIDE (2026-10-02)
+-- Reflected damage the ATTACKER takes when it lands a MELEE hit on this
+-- defender from one of the 8 adjacent tiles (Chebyshev 1). The caller
+-- (CombatResolver.ApplyOutcome) owns the melee / not-AOE / adjacency gate and
+-- applies the damage DIRECTLY (not via ApplyOutcome), so a reflect can never
+-- re-trigger reflects / lifesteal / other reaction hooks (TRG-010 pattern).
+-- DB races row 'Lizardmen': reflected damage = the Lizardman's current level.
+--------------------------------------------------
+
+function RacePassiveService.GetMeleeReflectDamage(defender)
+	if not isRace(defender, "RACE-LIZARDMEN") then return 0 end
+	return math.max(0, math.floor(defender.level or 1))
+end
+
+--------------------------------------------------
+-- OGRE — BRUTISH BULK (2026-10-02)
+-- Weapon WT multiplier (EquipmentService.RebuildUnitStats) and on-hit target
+-- RT delay (CombatResolver.ApplyOutcome).
+-- DB races row 'Ogre': Weapon WT +20%; on a successful hit, bonus RT delay on
+-- the TARGET = 50% of this unit's (effective) Weapon WT.
+--------------------------------------------------
+
+function RacePassiveService.GetWeaponWtMultiplier(unit)
+	if isRace(unit, "RACE-OGRE") then return 1.20 end
+	return 1.0
+end
+
+function RacePassiveService.GetOnHitRtDelay(attacker)
+	if not isRace(attacker, "RACE-OGRE") then return 0 end
+	-- Effective Weapon WT = Weapon WT (already x1.20 via RebuildUnitStats) after the
+	-- STR reduction -- same formula as CommandService.calcBasicAttackBaseRt.
+	local effWt = attacker.derivedStats and attacker.derivedStats.effectiveWt
+	if effWt == nil then
+		local str = attacker.effectiveStats and attacker.effectiveStats.STR or 10
+		effWt = math.round(GameConstants.CalcEffectiveWt(attacker.weaponWt or 0, str))
+	end
+	return math.max(0, math.round(0.50 * effWt))
+end
+
+--------------------------------------------------
+-- FELINE — NINE LIVES (2026-10-02)
+-- DB races row 'Feline': immune to fall damage (any downward displacement, any
+-- height); collision/knockback-impact damage received +20%. Fall damage ONLY --
+-- terrain / chasm-floor / tile ground-effects are untouched.
+--------------------------------------------------
+
+function RacePassiveService.IsFallDamageImmune(unit)
+	return isRace(unit, "RACE-FELINE")
+end
+
+function RacePassiveService.GetCollisionDamageMultiplier(unit)
+	if isRace(unit, "RACE-FELINE") then return 1.20 end
+	return 1.0
+end
+
+--------------------------------------------------
+-- SKILL POTENCY (INT) CONTRIBUTION MODIFIER (2026-10-02)
+-- Skill Potency = 1 + p, p = INT / (200 + INT)  (GameConstants.CalcSkillPotency).
+-- Celestial / Demon boost ONLY the INT contribution p by 20% for Holy / Dark
+-- tagged SKILLS: potency becomes 1 + 1.20p. Returned as a multiplier on the
+-- existing potency: (1 + 1.20p) / (1 + p). Only called from skill resolution
+-- (never Basic Attacks or items).
+-- DB races rows 'Celestial' (Radiant Grace) / 'Demon' (Infernal Pact).
+--------------------------------------------------
+
+function RacePassiveService.GetSkillPotencyMultiplier(unit, skillTags, int)
+	local boosted = (hasTag(skillTags, "Holy") and isRace(unit, "RACE-CELESTIAL"))
+		or (hasTag(skillTags, "Dark") and isRace(unit, "RACE-DEMON"))
+	if not boosted then return 1.0 end
+	int = int or (unit.effectiveStats and unit.effectiveStats.INT) or 0
+	if int <= 0 then return 1.0 end
+	local p = int / (200 + int)
+	return (1 + 1.20 * p) / (1 + p)
 end
 
 --------------------------------------------------
@@ -430,6 +692,165 @@ function RacePassiveService.GetPushOverride(unit)
 		maxDistance = 4,          -- Extended reach (1 base + 3 bonus)
 		label = "Pull",          -- Display label
 	}
+end
+
+--------------------------------------------------
+-- CONDITIONAL STAT SYNC (2026-10-02)
+-- Race stat mods that depend on battle state (Dragonkin: Burn active) are folded
+-- in by EquipmentService.RebuildUnitStats via GetStatModifiers. This re-runs that
+-- canonical, idempotent rebuild ONLY when the condition flips, so effectiveStats /
+-- derivedStats track the Burn instance mid-battle.
+-- Called from CombatResolver.ApplyOutcome and the BattleCoordinator turn hooks.
+-- TODO(day/night): add the Werewolf time-of-day flip here once it exists.
+--------------------------------------------------
+
+local _equipmentService = nil
+local function rebuildStats(unit)
+	if _equipmentService == nil then
+		-- Lazy require at RUNTIME: EquipmentService requires this module at load
+		-- time; by the time this runs both are cached, so there is no require cycle.
+		local ok, es = pcall(function() return require(script.Parent.EquipmentService) end)
+		_equipmentService = ok and es or false
+	end
+	if _equipmentService and _equipmentService.RebuildUnitStats then
+		_equipmentService.RebuildUnitStats(unit)
+		return true
+	end
+	return false
+end
+
+function RacePassiveService.RefreshConditionalStats(unit)
+	if not unit or not unit.isAlive then return false end
+	-- DRAGONKIN — Burn-conditional stat bonus.
+	if isRace(unit, "RACE-DRAGONKIN") then
+		local burning = (unit.statusInstances ~= nil and StatusService.HasStatus(unit, "Burn") ~= nil)
+		if (unit._dragonscaleActive == true) == burning then return false end
+		unit._dragonscaleActive = burning
+		local rebuilt = rebuildStats(unit)
+		print(string.format(
+			"[RacePassiveService] Dragonkin Dragonscale: %s Burn %s -> primary stats %s (rebuilt=%s)",
+			unit.name or "?", burning and "ACTIVE" or "ended", burning and "+15%" or "normal", tostring(rebuilt)
+		))
+		return rebuilt
+	end
+
+	-- VAMPIRE / WEREWOLF — time-of-day stat swings. Resync when the phase-driven
+	-- bonus state flips (Day/Night for Vampire; Dusk/Night for Werewolf). Store a
+	-- per-unit flag so we rebuild only on change, mirroring Dragonscale.
+	if isRace(unit, "RACE-VAMPIRE") or isRace(unit, "RACE-WEREWOLF") then
+		local tod = getTimeOfDay()
+		local active
+		if isRace(unit, "RACE-VAMPIRE") then
+			-- Any non-neutral phase changes stats (Day = debuff, Night = buff).
+			active = (tod == "Day" or tod == "Night") and tod or false
+		else
+			active = (tod == "Dusk" or tod == "Night") and true or false
+		end
+		if unit._todStatActive == active then return false end
+		unit._todStatActive = active
+		local rebuilt = rebuildStats(unit)
+		print(string.format(
+			"[RacePassiveService] Time-of-day stats: %s phase=%s -> state=%s (rebuilt=%s)",
+			unit.name or "?", tostring(tod), tostring(active), tostring(rebuilt)
+		))
+		return rebuilt
+	end
+
+	return false
+end
+
+--------------------------------------------------
+-- TURN HOOKS (2026-10-02) -- called by BattleCoordinator.
+--   OnTurnStart: when a unit's turn OPENS (after StatusService.ProcessStartOfTurn).
+--   OnTurnEnd:   after the unit's EndTurn status tick.
+-- BattleCoordinator has no broadcaster handle, so units whose HP / statuses
+-- changed are handed to the driver via state.ctStatusUnits (Main refreshes them
+-- with UnitStateChanged) -- same pattern as Regeneration / Zombie revive.
+--------------------------------------------------
+
+local function queueRefresh(state, unit)
+	if not state then return end
+	state._racePassiveRefresh = state._racePassiveRefresh or {}
+	table.insert(state._racePassiveRefresh, unit)
+end
+
+function RacePassiveService.OnTurnStart(unit, state)
+	-- Flush end-of-turn refreshes queued by OnTurnEnd. Done here (after
+	-- AdvanceClock's CT tick re-created state.ctStatusUnits) so Main sees them.
+	if state and state._racePassiveRefresh then
+		state.ctStatusUnits = state.ctStatusUnits or {}
+		for _, u in ipairs(state._racePassiveRefresh) do
+			table.insert(state.ctStatusUnits, u)
+		end
+		state._racePassiveRefresh = nil
+	end
+
+	if not unit or not unit.isAlive then return end
+
+	-- TROLL — Regrowth (races row 'Troll'): at the start of each of its turns,
+	-- regenerate 20% of MISSING HP = round(0.20 x (Max HP - Current HP)).
+	if unit.maxHp and unit.currentHp and isRace(unit, "RACE-TROLL") then
+		local missing = unit.maxHp - unit.currentHp
+		local heal = math.round(0.20 * missing)
+		if heal > 0 then
+			unit.currentHp = math.min(unit.maxHp, unit.currentHp + heal)
+			print(string.format(
+				"[RacePassiveService] Troll Regrowth: %s heals %d (20%% of %d missing) | HP: %d/%d",
+				unit.name or "?", heal, missing, unit.currentHp, unit.maxHp
+			))
+			if state then
+				state.ctStatusUnits = state.ctStatusUnits or {}
+				table.insert(state.ctStatusUnits, unit)
+			end
+		end
+	end
+
+	-- DRAGONKIN — keep the Burn-conditional stat bonus in sync.
+	if RacePassiveService.RefreshConditionalStats(unit) and state then
+		state.ctStatusUnits = state.ctStatusUnits or {}
+		table.insert(state.ctStatusUnits, unit)
+	end
+end
+
+function RacePassiveService.OnTurnEnd(unit, state)
+	if not unit or not unit.isAlive then return end
+
+	-- INSECTOID — Molt Cycle (races row 'Insectoid'): at the END of every 3rd turn
+	-- (3, 6, 9, ...) ALL statuses -- buffs AND debuffs -- are removed, simultaneously
+	-- and unavoidably. The per-battle turn counter lives on the battle state.
+	if isRace(unit, "RACE-INSECTOID") then
+		local counts
+		if state then
+			state._moltTurnCounts = state._moltTurnCounts or {}
+			counts = state._moltTurnCounts
+		else
+			unit._moltTurnCounts = unit._moltTurnCounts or {}
+			counts = unit._moltTurnCounts
+		end
+		local key = unit.id or "self"
+		local n = (counts[key] or 0) + 1
+		counts[key] = n
+		if n % 3 == 0 then
+			local list = unit.statusInstances
+			local removed = {}
+			if list then
+				for i = #list, 1, -1 do
+					table.insert(removed, 1, tostring(list[i].id))
+					table.remove(list, i)
+				end
+			end
+			print(string.format(
+				"[RacePassiveService] Insectoid Molt Cycle: %s turn %d -> cleared %d status(es) [%s]",
+				unit.name or "?", n, #removed, table.concat(removed, ", ")
+			))
+			if #removed > 0 then queueRefresh(state, unit) end
+		end
+	end
+
+	-- DRAGONKIN — Burn may have expired in the EndTurn tick (or been molted away).
+	if RacePassiveService.RefreshConditionalStats(unit) then
+		queueRefresh(state, unit)
+	end
 end
 
 return RacePassiveService

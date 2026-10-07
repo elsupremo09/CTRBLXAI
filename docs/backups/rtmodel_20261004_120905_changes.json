@@ -1,0 +1,187 @@
+{
+ "stamp": "20261004_120905",
+ "backup_db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_pre_rtmodel_20261004_120905.db",
+ "backup_xlsx": {
+  "CTRBLXAI_Game_Rules.xlsx": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Game_Rules_pre_rtmodel_20261004_120905.xlsx",
+  "CTRBLXAI_Weapons_Equipment.xlsx": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Weapons_Equipment_pre_rtmodel_20261004_120905.xlsx",
+  "CTRBLXAI_Unit_Traits.xlsx": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Unit_Traits_pre_rtmodel_20261004_120905.xlsx"
+ },
+ "log": [
+  [
+   "core_stats",
+   54,
+   [
+    54,
+    "Timeline AP RT",
+    "Starting RT applies to ALL units (players and enemies) + Player Initiative Edge (10 RT)",
+    "LUK Initiative is SYMMETRIC: players and enemies use the SAME formula. STEP 1 (every unit, once, at initial deployment): LUK Starting RT = round(Base RT × (1 − 0.30 × LUK / (100 + LUK))). Base RT input: player units = standard 400; enemy units = their tier base RT (current: Grunt 400, Veteran 380, Elite 350). STEP 2 (PLAYER-ROSTER units only) — Player Initiative Edge: Starting RT = LUK Starting RT − 10 (minimum 1). The edge is applied LAST, after any percentage Starting-RT modifiers (e.g. traits such as Timeline Sovereign / Temporal Drag). It does NOT apply to enemies, neutrals, allied NPCs, summons, or mid-battle reinforcements. Examples at LUK 10: Player 400 → 389 → 379; Grunt 400 → 389; Veteran 380 → 370; Elite 350 → 340. At LUK 50: Player 400 → 360 → 350; Grunt 400 → 360; Elite 350 → 315.",
+    "USER RULING 2026-10-02 (revises the same-day Designer ruling that had full parity and no player edge): LUK initiative applies to enemies too, keeping only a MINIMAL player-only advantage. Designer-chosen edge = flat 10 RT. Why 10, and why flat: (1) 10 RT = 2.5% of a 400 RT turn, 1% of a 1000-CT round — at equal LUK and tier the player simply moves first, so mirror matchups open in the player's favour; (2) it never overturns enemy tier identity — a LUK-10 player (379) still acts after a LUK-10 Veteran (370) or Elite (340); (3) it is the same size at every LUK, so LUK is worth exactly the same to both sides (a stronger player-only LUK coefficient was rejected: zero edge for low-LUK players, and LUK would be worth more on players than enemies — re-creating the asymmetry); (4) it is worth only ~10 LUK at low LUK, so a slightly luckier enemy can still beat it. SUPERSEDES the Sep 28 2026 'flagged, undecided' asymmetry note and this row's earlier no-edge wording. DEV CHANGE PENDING (Dev agent): EnemyGenerator sets startingRt = tier.baseRt and ignores LUK — it must apply STEP 1 to enemies; the player deploy path must add STEP 2. Until then shipped code is asymmetric. Not Studio-tested."
+   ],
+   [
+    54,
+    "Timeline AP RT",
+    "Starting RT applies to ALL units (players and enemies) + Player Initiative Edge (10 RT)",
+    "THREE-LAYER RT MODEL (USER RULING 2026-10-04 — final; supersedes the prior Starting-RT basis). LAYER 1 — Base RT = the unit's own base value + Effective Armor WT (gear). Own base value: player units = 400; enemy units = their KIND base (Grunt 400 / Veteran 380 / Elite 350), set BEFORE gear WT and BEFORE any modifier. LAYER 2 — Modified Base RT = Layer-1 Base RT × permanent trait base-RT modifiers (e.g. Quick −10%, Sluggish +10%, Timeline Sovereign −10%, Temporal Drag +8%) × active temporary RT statuses (Haste ×0.90, Slow ×1.10, Frozen ×2). Every Base-RT-derived per-turn cost (Move, Basic Attack, Guard, Interact, Item, Push, Rest) is calculated from Modified Base RT — see weapons_equipment 'Modified Base RT'. LAYER 3 — ONE-TIME modifiers: Starting RT is NOT a standalone or persistent stat. It is a one-time reduction applied to the unit's current RT once, at initial deployment, to decide who takes the first turn. STEP 1 (every unit, players and enemies, SAME formula): Starting RT = round(Modified Base RT × (1 − 0.30 × LUK / (100 + LUK)) × (1 + Trait Starting-RT %)). The Base RT INPUT is the unit's MODIFIED Base RT at deployment (includes Effective Armor WT, permanent trait modifiers, and any Haste/Slow/Frozen active at deploy) — NOT plain 400 / plain kind base. Trait Starting-RT %: Timeline Sovereign −12%, Temporal Drag +15%, otherwise 0 (if several ever apply, add the percentages). STEP 2 (PLAYER-ROSTER units only) — Player Initiative Edge: Starting RT = STEP-1 result − 10 (minimum 1), applied LAST, after LUK and trait percentages. No edge for enemies, neutrals, allied NPCs, summons, or mid-battle reinforcements. After the opener, RT follows normal per-turn costs from Modified Base RT; Starting RT never recurs. Examples at LUK 10 (WT = Effective Armor WT): Player WT 0: 400 → 389 → 379. Player WT 30: 430 → 418 → 408. Player WT 30 + Haste at deploy: 387 → 376 → 366. Grunt WT 0: 400 → 389; Grunt WT 20: 420 → 409. Veteran WT 0: 380 → 370; Veteran WT 20: 400 → 389. Elite WT 0: 350 → 340; Elite WT 20: 370 → 360; Elite WT 60: 410 → 399. Timeline Sovereign player WT 0: 360 → 308 → 298. Temporal Drag player WT 0: 432 → 483 → 473. At LUK 50: Player WT 0: 400 → 360 → 350; Player WT 30: 430 → 387 → 377; Elite WT 0: 350 → 315.",
+    "USER RULING 2026-10-04 (final; SUPERSEDES the 2026-10-02 STEP-1 basis 'player units = standard 400; enemy units = their tier base RT'). Source code already implements this model (Tester source-UAT 2026-10-04), except the trait Starting-RT % below. SUPERSEDED: prior examples that excluded armor from Starting RT (e.g. Elite 350 → 340 quoted regardless of gear) — Starting RT derives from Modified Base RT. 350 → 340 is still correct only for an Elite with 0 Effective Armor WT and no modifiers. Enemy kind identity is preserved by the Base-RT layering (at equal gear and LUK: Elite < Veteran < Grunt), but a heavily-armored unit can legitimately start later than a lighter unit of a faster kind (e.g. Elite WT 60 = 399 starts after an unarmored LUK-10 player at 379) — ACCEPTED by user ruling. Kind base RT now affects EVERY per-turn cost, not just the first turn (previously only the opener): e.g. Veteran Basic Attack base component round(380×0.10) = 38 vs 40; Veteran Rest round(380×0.75) = 285 vs 300; Elite movement 350×0.03 = 10.5 RT/tile vs 12 (before AGI). KEPT from 2026-10-02 ruling: symmetric LUK formula; flat −10 RT Player Initiative Edge, players only, applied last (10 RT = 2.5% of a 400 RT turn; same size at every LUK; worth ~10 LUK, so a luckier enemy can still beat it). TRAIT STARTING-RT % — Designer canon 2026-10-04, INTENDED BEHAVIOUR, DEV CHANGE PENDING: Timeline Sovereign / Temporal Drag Base-RT parts (−10% / +8%) are WIRED and live in Layer 2, so they already flow into the Starting-RT input. Their Starting-RT parts (−12% / +15%) ALSO layer on, as a multiplier inside the STEP-1 one-time reduction (after LUK, before the Player Edge, one rounding). This deliberately stacks with the Base-RT part: Sovereign opens ~21% earlier than an equal unit (298 vs 379), Drag ~25% later (473 vs 379). Accepted because it only affects the opener, the pair is legendary-tier, and the separate Starting-RT line is the trait's 'Timeline' identity. If playtest shows Sovereign openers are too dominant, retune the −12% (not the model). Not Studio-tested."
+   ]
+  ],
+  [
+   "weapons_equipment",
+   7,
+   [
+    7,
+    "Modified Base RT",
+    "Base RT + Effective Armor WT.",
+    "Locked",
+    null
+   ],
+   [
+    7,
+    "Modified Base RT",
+    "Modified Base RT = (unit's own Base RT + Effective Armor WT) × permanent trait base-RT modifiers × active Haste (×0.90) / Slow (×1.10) / Frozen (×2). Unit's own Base RT (Layer 1): player units 400; enemy units = their KIND base — Grunt 400 / Veteran 380 / Elite 350 (not a flat 400); boss units 300 (core_stats 'Boss unit'). Effective Armor WT = non-weapon equipment WT (Body/Head/Gloves/Feet/Accessory) after STR burden reduction; Armor Off-Hand WT is excluded (project_rules 'Armor Off-Hand WT'). Every Base-RT-derived per-turn cost (Move, Basic Attack, Guard, Interact, Item, Push, Rest) uses this value, so enemy kind base RT flows into every turn. It is also the input to the one-time Starting RT reduction (core_stats 'Starting RT applies to ALL units').",
+    "Locked",
+    "USER RULING 2026-10-04 (three-layer RT model, final): clarified the kind-base input and modifier order. Previous text was 'Base RT + Effective Armor WT.', which implied a flat 400 base for everyone. Weapon BP pricing references (Two-Attack Cycle RT, Attacks per 1000 CT) still assume a 400-base player unit."
+   ]
+  ],
+  [
+   "core_stats",
+   7,
+   [
+    7,
+    "Core Stats",
+    "LUK (Combat Fortune, Initiative, Discovery Radius, deterministic tie-breaking, expedition rewards)",
+    "Combat Fortune Modifier = 0.40 x Delta LUK / (abs(Delta LUK) + 150)\nStarting RT = round(Base RT x (1 - 0.30 x LUK / (100 + LUK)))\nDiscovery Radius = 1 + floor(LUK / 60) + Bonuses - Penalties\nUnit Fortune = LUK / (LUK + 200)",
+    "At +/-150 LUK difference, Combat Fortune changes direct final damage by +/-20%. Initiative applies once at initial deployment. LUK does not modify Hit Quality, status application, or recruitment. Starting RT applies to players AND enemies with the SAME LUK formula (enemies use their tier Base RT); player-roster units then get a flat −10 RT Player Initiative Edge — user ruling 2026-10-02; see 'Starting RT applies to ALL units'."
+   ],
+   [
+    7,
+    "Core Stats",
+    "LUK (Combat Fortune, Initiative, Discovery Radius, deterministic tie-breaking, expedition rewards)",
+    "Combat Fortune Modifier = 0.40 x Delta LUK / (abs(Delta LUK) + 150)\nStarting RT (one-time, at initial deployment) = round(Modified Base RT x (1 - 0.30 x LUK / (100 + LUK)) x (1 + Trait Starting-RT %))\nDiscovery Radius = 1 + floor(LUK / 60) + Bonuses - Penalties\nUnit Fortune = LUK / (LUK + 200)",
+    "At +/-150 LUK difference, Combat Fortune changes direct final damage by +/-20%. Initiative applies once at initial deployment. LUK does not modify Hit Quality, status application, or recruitment. Starting RT is a one-time reduction to current RT, not a persistent stat. It applies to players AND enemies with the SAME LUK formula; the input is each unit's MODIFIED Base RT (own/kind base + Effective Armor WT, × trait base-RT modifiers × Haste/Slow/Frozen) — user ruling 2026-10-04. Trait Starting-RT % (Sovereign −12% / Drag +15%) multiplies inside; player-roster units then get a flat −10 RT Player Initiative Edge (user ruling 2026-10-02); see 'Starting RT applies to ALL units'."
+   ]
+  ],
+  [
+   "loot_progression",
+   3,
+   [
+    3,
+    "LUK Fortune Discovery",
+    "Initiative",
+    "Starting RT = round(Base RT x (1 - 0.30 x LUK / (100 + LUK)))",
+    "Calculated once at initial deployment. Does not alter later Base RT or action RT. Applies to ALL units, players and enemies (enemies use their tier Base RT); player-roster units then subtract a flat 10 RT Player Initiative Edge (core_stats 'Starting RT applies to ALL units', user ruling 2026-10-02)."
+   ],
+   [
+    3,
+    "LUK Fortune Discovery",
+    "Initiative",
+    "Starting RT (one-time) = round(Modified Base RT x (1 - 0.30 x LUK / (100 + LUK)) x (1 + Trait Starting-RT %))",
+    "One-time reduction to current RT at initial deployment — not a persistent stat. Does not alter later Base RT or action RT. Input = the unit's Modified Base RT (own/kind base + Effective Armor WT, × trait base-RT modifiers × Haste/Slow/Frozen active at deploy) — user ruling 2026-10-04. Applies to ALL units, players and enemies. Trait Starting-RT % (Timeline Sovereign −12% / Temporal Drag +15%) multiplies inside (Dev pending); player-roster units then subtract a flat 10 RT Player Initiative Edge (core_stats 'Starting RT applies to ALL units', user rulings 2026-10-02 / 2026-10-04)."
+   ]
+  ],
+  [
+   "open_decisions",
+   56,
+   [
+    "Enemy AI tier & build config (TIER_BUILD)",
+    "Open — pending procedural generation",
+    "Enemy AI brain level (Basic/Elite/Boss) is assigned by build TIER, not by enemy species. Currently lives in code as TIER_BUILD in EnemyGenerator.lua (dev-locked 2026-09-26, marked for later DB migration). Defines Grunt=Basic, Elite=Elite, Veteran=Basic (RT, skill count, augments, gear band, consumables per tier). Procedural generation already reads tier.aiRole automatically. Decision: whether TIER_BUILD should migrate to a DB table and when. Recommendation: wait until procedural enemy generation is implemented, then migrate — schema should follow working code. Boss tier: PARKED — bosses will be unique hand-authored units, not procedurally generated, so no Boss build entry is needed. Recorded from Dev session hand-off 2026-09-26.",
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "Enemy AI tier & build config (TIER_BUILD)",
+    "Open — pending procedural generation",
+    "Enemy AI brain level (Basic/Elite/Boss) is assigned by build TIER, not by enemy species. Currently lives in code as TIER_BUILD in EnemyGenerator.lua (dev-locked 2026-09-26, marked for later DB migration). Defines Grunt=Basic, Elite=Elite, Veteran=Basic (RT, skill count, augments, gear band, consumables per tier). Procedural generation already reads tier.aiRole automatically. Decision: whether TIER_BUILD should migrate to a DB table and when. Recommendation: wait until procedural enemy generation is implemented, then migrate — schema should follow working code. Boss tier: PARKED — bosses will be unique hand-authored units, not procedurally generated, so no Boss build entry is needed. Recorded from Dev session hand-off 2026-09-26. CANON NOTE 2026-10-04 (USER RULING, three-layer RT model): the per-tier RT in TIER_BUILD (Grunt 400 / Veteran 380 / Elite 350) is the Layer-1 Base RT per enemy kind — applied BEFORE gear WT and modifiers — and it feeds Modified Base RT for EVERY per-turn cost (previously it only shaped the opener). See core_stats 'Starting RT applies to ALL units' and weapons_equipment 'Modified Base RT'. Any future DB migration of TIER_BUILD must keep this meaning.",
+    null,
+    null,
+    null,
+    null
+   ]
+  ],
+  [
+   "open_decisions",
+   67,
+   [
+    "Enemy LUK Starting RT asymmetry",
+    "Resolved",
+    "RESOLVED 2026-10-02 (USER RULING, refined by Designer): LUK Starting RT applies to enemies too, using their tier Base RT (Grunt 400 / Veteran 380 / Elite 350). Minimal player-only advantage = Player Initiative Edge, a flat −10 RT applied last to player-roster units' Starting RT. See core_stats 'Starting RT applies to ALL units'. Dev change pending in EnemyGenerator + player deploy path.",
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "Enemy LUK Starting RT asymmetry",
+    "Resolved",
+    "RESOLVED 2026-10-02 (USER RULING, refined by Designer): LUK Starting RT applies to enemies too, using their tier Base RT (Grunt 400 / Veteran 380 / Elite 350). Minimal player-only advantage = Player Initiative Edge, a flat −10 RT applied last to player-roster units' Starting RT. See core_stats 'Starting RT applies to ALL units'. Dev change pending in EnemyGenerator + player deploy path. UPDATED 2026-10-04 (USER RULING, three-layer RT model, final): the Starting-RT input is now each unit's MODIFIED Base RT (kind base + Effective Armor WT, × trait modifiers × Haste/Slow/Frozen), not the plain tier base; the kind base also drives every per-turn cost. Prior armor-excluded examples (Elite 350 → 340 regardless of gear) are SUPERSEDED. Dev path implemented (Tester source-UAT 2026-10-04); trait Starting-RT % layering (Sovereign −12% / Drag +15%) is canon but Dev change pending.",
+    null,
+    null,
+    null,
+    null
+   ]
+  ],
+  [
+   "unit_traits",
+   "TRAIT-P-178",
+   [
+    "TRAIT-P-178",
+    "perk",
+    "TRAIT-178",
+    "Timeline Sovereign",
+    "legendary",
+    "Base RT -10%, Starting RT -12%, RT delay inflicted +10%",
+    "General",
+    "Fixed",
+    "base",
+    "",
+    "Working"
+   ],
+   [
+    "TRAIT-P-178",
+    "perk",
+    "TRAIT-178",
+    "Timeline Sovereign",
+    "legendary",
+    "Base RT -10%, Starting RT -12%, RT delay inflicted +10%",
+    "General",
+    "Fixed",
+    "base",
+    "RT layering (Designer canon 2026-10-04): Base-RT part = Layer-2 permanent modifier (WIRED, live; flows into every per-turn cost AND the Starting-RT input). Starting-RT part = one-time Layer-3 multiplier inside STEP 1 of core_stats 'Starting RT applies to ALL units' (after LUK, before Player Initiative Edge, one rounding). DEV CHANGE PENDING.",
+    "Working"
+   ]
+  ],
+  [
+   "unit_traits",
+   "TRAIT-F-178",
+   [
+    "TRAIT-F-178",
+    "flaw",
+    "TRAIT-178",
+    "Temporal Drag",
+    "legendary",
+    "Base RT +8%, Starting RT +15%",
+    "General",
+    "Fixed",
+    "base",
+    "",
+    "Working"
+   ],
+   [
+    "TRAIT-F-178",
+    "flaw",
+    "TRAIT-178",
+    "Temporal Drag",
+    "legendary",
+    "Base RT +8%, Starting RT +15%",
+    "General",
+    "Fixed",
+    "base",
+    "RT layering (Designer canon 2026-10-04): Base-RT part = Layer-2 permanent modifier (WIRED, live; flows into every per-turn cost AND the Starting-RT input). Starting-RT part = one-time Layer-3 multiplier inside STEP 1 of core_stats 'Starting RT applies to ALL units' (after LUK, before Player Initiative Edge, one rounding). DEV CHANGE PENDING.",
+    "Working"
+   ]
+  ]
+ ]
+}

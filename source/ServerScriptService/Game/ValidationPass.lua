@@ -303,7 +303,7 @@ function ValidationPass.Run(mapState)
 	-- V6: PD→ED Connectivity (dev-locked 2026-09-24)
 	-- REPURPOSED: the old check asserted "all LAN-family neighbors ≤1
 	-- apart", which was the obsolete flat-everything contract. After the
-	-- elevation rework, HZD/BLK/ADV legitimately sit at cliff elevations,
+	-- elevation rework, HZD/OBS/ADV legitimately sit at cliff elevations,
 	-- so pairwise LAN-family flatness is no longer the invariant. The real
 	-- invariant is: a ≤1-step walkable path exists from PD to ED. This
 	-- mirrors validateConnectivity (the actual generation gate) and is
@@ -368,11 +368,84 @@ function ValidationPass.Run(mapState)
 	})
 
 	--------------------------------------------------
+	-- V13: OBJ Reachability (added Sep 30 2026)
+	-- Every OBJ (objective spawn) tile must be reachable from PD via a
+	-- ≤1-step passable path. OBS is the only marker that blocks — and since
+	-- OBS tiles are raised into impassable walls (ElevationPass Phase 2b,
+	-- isObstacle), the same passability + ≤1-elevation gate used for PD→ED
+	-- naturally excludes them. Only runs for templates that contain OBJ.
+	--------------------------------------------------
+	local v13Violations = {}
+	do
+		local objList = {}
+		for y = 1, h do
+			for x = 1, w do
+				if tiles[y][x].marker == "OBJ" then
+					table.insert(objList, { x = x, y = y })
+				end
+			end
+		end
+		if #objList > 0 then
+			-- BFS from all PD tiles over passable, ≤1-step, non-OBS tiles.
+			local function keyOf(x, y) return y * 100000 + x end
+			local pdList = {}
+			for y = 1, h do
+				for x = 1, w do
+					if tiles[y][x].marker == "PD" then
+						table.insert(pdList, { x = x, y = y })
+					end
+				end
+			end
+			local visited, queue, qHead = {}, {}, 1
+			for _, pos in ipairs(pdList) do
+				local k = keyOf(pos.x, pos.y)
+				if not visited[k] then visited[k] = true; table.insert(queue, pos) end
+			end
+			while qHead <= #queue do
+				local cur  = queue[qHead]; qHead = qHead + 1
+				local tile = tiles[cur.y][cur.x]
+				for _, dir in ipairs(CARDINAL) do
+					local nx, ny = cur.x + dir.x, cur.y + dir.y
+					if isInBounds(nx, ny, w, h) then
+						local nk = keyOf(nx, ny)
+						if not visited[nk] then
+							local nTile = tiles[ny][nx]
+							if not nTile.isObstacle then
+								local tDef  = TerrainData.Types[nTile.terrain]
+								local pass  = tDef and tDef.passable ~= false
+								local noBlock = nTile.object == nil
+									or (ObjectData.Objects[nTile.object]
+										and ObjectData.Objects[nTile.object].passable)
+								local elevOk = math.abs(tile.elevation - nTile.elevation) <= 1
+								if pass and noBlock and elevOk then
+									visited[nk] = true
+									table.insert(queue, { x = nx, y = ny })
+								end
+							end
+						end
+					end
+				end
+			end
+			for _, obj in ipairs(objList) do
+				if not visited[keyOf(obj.x, obj.y)] then
+					table.insert(v13Violations,
+						string.format("(%d,%d) OBJ not reachable from PD", obj.x, obj.y))
+				end
+			end
+		end
+	end
+	table.insert(checks, {
+		id = "V13", name = "OBJ Reachability",
+		passed = #v13Violations == 0,
+		violations = #v13Violations > 0 and v13Violations or nil,
+	})
+
+	--------------------------------------------------
 	-- V7: Protected Tile Passability
 	-- PD/ED/LAN tiles must have passable terrain.
 	--------------------------------------------------
 	local v7Violations = {}
-	local PASSABLE_REQUIRED = { PD = true, ED = true, LAN = true }
+	local PASSABLE_REQUIRED = { PD = true, ED = true, LAN = true, OBJ = true }
 	for y = 1, h do
 		for x = 1, w do
 			local tile = tiles[y][x]

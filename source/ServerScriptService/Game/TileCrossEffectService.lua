@@ -31,6 +31,14 @@ local GameConstants = require(
 
 local TileCrossEffectService = {}
 
+-- Optional: TileEffectService injected at runtime (DI) so a slide can continue
+-- across tiles whose ACTIVE tile effect is Oily / Ice / Frozen (slide-extension),
+-- not just Slippery BASE terrain. Wired in Main.server.lua during init.
+local _tileEffectService = nil
+function TileCrossEffectService.SetTileEffectService(tes)
+	_tileEffectService = tes
+end
+
 --------------------------------------------------
 -- Cross-effect definitions by terrain type.
 -- Each entry returns a function(unit, tileX, tileY, entryDir, isForced)
@@ -219,7 +227,9 @@ function TileCrossEffectService.ResolveSlide(unit, startX, startY, dx, dy, allUn
 			if stoppedBy then break end
 		end
 
-		-- Check if next tile is still slippery (continues slide)
+		-- Check if the next tile continues the slide. A tile continues the slide if it
+		-- is Slippery BASE terrain (Ice/Frozen terrain) OR carries an active tile effect
+		-- that extends slides: Oily (slideExtension=true) or Frozen/Ice-tagged effects.
 		local nextTerrain = GameConstants.GetTerrainData(nextX, nextY)
 		local isSlippery = false
 		if nextTerrain and nextTerrain.tags then
@@ -227,6 +237,25 @@ function TileCrossEffectService.ResolveSlide(unit, startX, startY, dx, dy, allUn
 				if tag == "Slippery" then
 					isSlippery = true
 					break
+				end
+			end
+		end
+		-- Active tile-effect slide extension (Oily / Ice / Frozen).
+		if not isSlippery and _tileEffectService and _tileEffectService.GetTileEffect then
+			local teff = _tileEffectService.GetTileEffect(nextX, nextY)
+			if teff then
+				local edef = GameConstants.TILE_EFFECTS[teff.id]
+				if edef then
+					if edef.slideExtension then
+						isSlippery = true
+					elseif edef.tags then
+						for _, tag in ipairs(edef.tags) do
+							if tag == "Slippery" or tag == "Frozen" then
+								isSlippery = true
+								break
+							end
+						end
+					end
 				end
 			end
 		end

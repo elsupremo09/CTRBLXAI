@@ -56,6 +56,12 @@ local _vfxOk, VFXController = pcall(require,
 		:WaitForChild("Shared", 10):WaitForChild("VFXController", 10)
 )
 if not _vfxOk then warn("[BVC] VFXController failed to load: " .. tostring(VFXController)); VFXController = nil end
+-- Combat sound effects (client-side; mirrors VFXController). Blank registry
+-- slots are skipped silently, so this is harmless until ids are filled in.
+local _sndOk, SoundController = pcall(require,
+	game:GetService("ReplicatedStorage"):WaitForChild("CTRBLXAI", 10)
+		:WaitForChild("Shared", 10):WaitForChild("SoundController", 10))
+if not _sndOk then warn("[BVC] SoundController failed to load: " .. tostring(SoundController)); SoundController = nil end
 
 local _thlOk, TileHL = pcall(require,
 	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
@@ -113,6 +119,19 @@ local function groundSurfaceY(tx, ty)
 		local f = workspace:FindFirstChild(name)
 		if f then table.insert(ex, f) end
 	end
+	-- Exclude map-object models (MapObjModel_*) too: they live INSIDE the map
+	-- folder next to the tile Parts, so without this a unit spawning on an object
+	-- tile would ground to the decorative model's geometry (floating or sunk)
+	-- instead of the terrain surface. Added Oct 5 2026 (burial regression after
+	-- object models were introduced).
+	local mapFolder = workspace:FindFirstChild("TemplateViewerMap")
+	if mapFolder then
+		for _, child in ipairs(mapFolder:GetChildren()) do
+			if string.sub(child.Name, 1, 12) == "MapObjModel_" then
+				table.insert(ex, child)
+			end
+		end
+	end
 	rp.FilterDescendantsInstances = ex
 	local res = workspace:Raycast(Vector3.new(wx, 200, wz), Vector3.new(0, -400, 0), rp)
 	if res then return res.Position.Y end
@@ -128,6 +147,53 @@ end
 -- Grounded twin of tileToWorld (surface + 1) for the cylinder fallback token.
 local function tileToWorldGrounded(tx, ty)
 	return Vector3.new(MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE, groundSurfaceY(tx, ty) + 1, MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE)
+end
+
+-- WATERFALL SPLASH: scan the terrain grid and place a persistent "Splashing Water"
+-- VFX on each waterfall BASE tile — a water tile that has a cardinally-adjacent
+-- water neighbour at a HIGHER elevation (i.e. water falls onto it). The splash
+-- sits on the base tile's surface, nudged toward the higher neighbour so it reads
+-- as the point where the fall lands. Uses the SAME water rule as the server-side
+-- waterfall fill (both waters count), so splashes line up with the water sheets.
+-- Client-side + visual-only; cleared and rebuilt on every MapDataSync.
+local WATERFALL_WATER = { ["Deep Water"] = true, ["Shallow Water"] = true }
+local function placeWaterfallSplashes()
+	if not VFXController or not VFXController.AddWaterfallSplash then return end
+	pcall(VFXController.ClearWaterfallSplashes)
+	local reg = VFXController.GetRegistry and VFXController.GetRegistry() or nil
+	local assetName = reg and reg.Waterfall or "Splashing Water"
+	local dirs = { {1,0}, {-1,0}, {0,1}, {0,-1} }
+	-- A splash only appears at a REAL waterfall: the higher water neighbour must be
+	-- at least this many elevation levels above the lower water tile. A 1-2 level
+	-- water step still shows the connecting water sheet (server-side) but NO splash,
+	-- so gently-sloped pools don't spam splashes everywhere — only genuine drops.
+	local WATERFALL_MIN_DROP = 3
+	for ty = 1, MAP_HEIGHT do
+		for tx = 1, MAP_WIDTH do
+			local tId = GameConstants.GetTerrainId(tx, ty)
+			if WATERFALL_WATER[tId] then
+				local selfElev = getElevation(tx, ty)
+				-- Find a cardinal water neighbour that is higher by a real DROP
+				-- (>= WATERFALL_MIN_DROP levels) — i.e. water genuinely falls onto me.
+				local nudgeX, nudgeZ, found = 0, 0, false
+				for _, d in ipairs(dirs) do
+					local nx, ny = tx + d[1], ty + d[2]
+					local nId = GameConstants.GetTerrainId(nx, ny)
+					if nId and WATERFALL_WATER[nId] and (getElevation(nx, ny) - selfElev) >= WATERFALL_MIN_DROP then
+						found = true
+						-- Nudge toward the higher neighbour (where the fall lands).
+						nudgeX = nudgeX + d[1]
+						nudgeZ = nudgeZ + d[2]
+					end
+				end
+				if found then
+					local base = tileToWorld(tx, ty)  -- base tile surface (+1)
+					local pos = base + Vector3.new(nudgeX * (TILE_SIZE * 0.35), 0, nudgeZ * (TILE_SIZE * 0.35))
+					pcall(VFXController.AddWaterfallSplash, tx, ty, assetName, pos)
+				end
+			end
+		end
+	end
 end
 local function templateToBattle(x, y)
 	local bx, by = x - BATTLE_OFFSET_X, y - BATTLE_OFFSET_Y
@@ -182,6 +248,7 @@ local isPlayerTurn    = false
 local currentPrompt   = nil
 local timelineSnapshot = nil
 local currentBattleCt  = 0
+local currentTimePhase = "Dawn"  -- time-of-day phase (updated by TimePhaseChanged); read by updateTimeline for the bar's time icon
 local activeUnitId    = nil  -- who is currently acting (for timeline NOW marker)
 local devLastInspectedId = nil -- tracks last tile-clicked unit for Kill At Tile (dev only)
 local inputMode       = nil -- "move","attack","skill"
@@ -490,6 +557,108 @@ RunService.Heartbeat:Connect(function()
 	end
 end)
 
+-- HP-bar name label: ONE source of truth for its text + colour, so spawn, HP
+-- updates and turn start/end can't drift apart (they previously overwrote the
+-- tier star with the plain name and recoloured enemy names gold/white).
+-- Enemy names are always red; players are gold while active, light otherwise.
+local function unitNameColor(u, isActive)
+	if u and u.side == "Enemy" then return Theme.Colors.Danger end
+	if u and u.side == "Neutral" then return Theme.Colors.Warning end
+	return isActive and Theme.Colors.TextGold or Theme.Colors.TextPrimary
+end
+
+-- Plain name text for the HP-bar label (the tier star is a separate ImageLabel,
+-- applied by applyUnitNameStar — image assets, not a text glyph, so no font risk).
+local function unitNameLabelText(u)
+	if not u then return "" end
+	return tostring(u.name or u.id or "")
+end
+
+-- Tier star images: gold for Elite, silver for Veteran, hidden otherwise.
+local TIER_STAR_IMAGE = {
+	Elite   = "rbxassetid://134634995983546",  -- gold star
+	Veteran = "rbxassetid://126540666012445",  -- silver star
+}
+-- Show/hide + set the token's tier-star ImageLabel from the unit's enemyType.
+local function applyUnitNameStar(token, u)
+	if not token or not token.star then return end
+	local img = u and u.enemyType and TIER_STAR_IMAGE[u.enemyType] or nil
+	if img then
+		token.star.Image = img
+		token.star.Visible = true
+	else
+		token.star.Visible = false
+	end
+end
+
+-- Base R15 animations played on character models in response to combat events.
+-- Free default R15 animation ids are used for now (user may swap specific ids
+-- later, same as the walk track). Reliable free ids: idle/walk/run/jump exist;
+-- Roblox has no guaranteed "hit"/"death" default, so hit uses a short reaction
+-- and KO uses a fall/faint — flagged as generic until specific ids are supplied.
+local R15_ANIM = {
+	Idle       = "rbxassetid://507766666",  -- default R15 idle (looped)
+	Hit        = "rbxassetid://507768375",  -- default R15 "cheer"/react — generic flinch stand-in
+	KO         = "rbxassetid://507765000",  -- default R15 fall-ish — generic KO stand-in
+	Attack     = "rbxassetid://507768375",  -- generic melee swing stand-in
+	Projectile = "rbxassetid://507767714",  -- default R15 run-ish — generic bow/gun draw stand-in
+	Cast       = "rbxassetid://507770677",  -- default R15 point/wave — generic spell-cast stand-in
+	ItemUse    = "rbxassetid://507770239",  -- default R15 wave — generic item-use stand-in
+}
+
+-- Get-or-create the Humanoid's Animator for a token's R15 model (nil for cylinders).
+local function getUnitAnimator(token)
+	if not token or not token.model then return nil end
+	local hum = token.model:FindFirstChildOfClass("Humanoid")
+	if not hum then return nil end
+	local animator = hum:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = hum
+	end
+	return animator
+end
+
+-- Play (and cache) a named base animation on a unit's model. kind is a key in
+-- R15_ANIM. opts: { loop=bool, fade=number, stopAfter=number }. Cylinders no-op.
+local function playUnitAnim(token, kind, opts)
+	opts = opts or {}
+	local id = R15_ANIM[kind]
+	if not id then return end
+	local animator = getUnitAnimator(token)
+	if not animator then return end  -- cylinder fallback: no animations
+	token._animTracks = token._animTracks or {}
+	local track = token._animTracks[kind]
+	if not track then
+		local ok, t = pcall(function()
+			local anim = Instance.new("Animation")
+			anim.AnimationId = id
+			return animator:LoadAnimation(anim)
+		end)
+		if ok and t then
+			track = t
+			track.Looped = opts.loop == true
+			token._animTracks[kind] = track
+		end
+	end
+	if not track then return end
+	track.Looped = opts.loop == true
+	track:Play(opts.fade or 0.1)
+	if opts.stopAfter and not opts.loop then
+		task.delay(opts.stopAfter, function()
+			if track and track.IsPlaying then track:Stop(0.15) end
+		end)
+	end
+	return track
+end
+
+-- Stop a unit's looping idle (e.g. on KO so the body doesn't keep breathing).
+local function stopUnitIdle(token)
+	if token and token._animTracks and token._animTracks.Idle and token._animTracks.Idle.IsPlaying then
+		token._animTracks.Idle:Stop(0.2)
+	end
+end
+
 local function spawnToken(unit)
 	-- Try to find a server-spawned R15 model for this unit
 	local model = nil
@@ -517,6 +686,14 @@ local function spawnToken(unit)
 			)
 			model:PivotTo(CFrame.new(feetPos))
 			anchorPart.Anchored = true
+			-- Disable the built-in Humanoid name/health display above the model —
+			-- it duplicates the name already shown inside the HP-bar billboard.
+			local _hum = model:FindFirstChildOfClass("Humanoid")
+			if _hum then
+				_hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+				_hum.NameDisplayDistance = 0
+				_hum.HealthDisplayDistance = 0
+			end
 			-- Reparent to visualFolder if not already there
 			if model.Parent ~= visualFolder then
 				model.Parent = visualFolder
@@ -541,15 +718,41 @@ local function spawnToken(unit)
 		anchorPart = part
 	end
 
-	-- HP + MP billboard (single gui, stacked with 0px gap)
-	local barBb = Instance.new("BillboardGui"); barBb.Size = UDim2.new(0,48,0,13)
-	barBb.StudsOffset = Vector3.new(0, model and 2.8 or 1.2, 0)
+	-- HP + MP billboard. A dedicated star column sits to the LEFT of the bars so
+	-- the tier star is clearly visible (not crammed inside the HP fill). The left
+	-- column is ALWAYS reserved (star hidden for Grunts/players) so every unit's
+	-- bars line up at the same screen position regardless of tier.
+	local STAR_SIZE = 26  -- tier star size
+	local BAR_W    = 48   -- px width of the HP/MP bars
+	local BAR_STACK_H = 13           -- HP(9) + MP(4)
+	local STAR_GAP = 1    -- px gap between the MP bar and the star below it
+	-- Billboard holds the HP+MP bar stack on top and the tier star centered BELOW.
+	local BB_H = BAR_STACK_H + STAR_GAP + STAR_SIZE
+	local barBb = Instance.new("BillboardGui"); barBb.Size = UDim2.new(0, BAR_W, 0, BB_H)
+	local BAR_TOP = 0                -- bars sit at the top of the billboard
+	-- Raise the billboard so the taller bar+star cluster clears the model's head.
+	-- The star hangs ~27px below the bars; the extra StudsOffset lifts the whole
+	-- billboard up so the star sits just under the bar near the head top, not over it.
+	barBb.StudsOffset = Vector3.new(0, model and 3.8 or 2.0, 0)
 	barBb.AlwaysOnTop = true; barBb.Parent = anchorPart
 
-	-- HP bar (9px tall — fits name text inside)
+	-- Tier star: ImageLabel centered BELOW the HP/MP bars (gold = Elite, silver =
+	-- Veteran). Hidden for Grunts/players (applyUnitNameStar toggles .Visible).
+	local starImg = Instance.new("ImageLabel")
+	starImg.Name = "TierStar"
+	starImg.BackgroundTransparency = 1
+	starImg.AnchorPoint = Vector2.new(0.5, 0)
+	starImg.Position = UDim2.new(0.5, 0, 0, BAR_STACK_H + STAR_GAP)  -- centered, below the bars
+	starImg.Size = UDim2.fromOffset(STAR_SIZE, STAR_SIZE)
+	starImg.ScaleType = Enum.ScaleType.Fit
+	starImg.ZIndex = 3
+	starImg.Visible = false
+	starImg.Parent = barBb
+
+	-- HP bar (9px tall — fits name text inside), full width at the top
 	local hpBg = Instance.new("Frame")
-	hpBg.Size = UDim2.new(1, 0, 0, 9)
-	hpBg.Position = UDim2.new(0, 0, 0, 0)
+	hpBg.Size = UDim2.new(0, BAR_W, 0, 9)
+	hpBg.Position = UDim2.new(0, 0, 0, BAR_TOP)
 	hpBg.BackgroundColor3 = Theme.Colors.Panel; hpBg.BorderSizePixel = 0; hpBg.Parent = barBb
 	Instance.new("UICorner", hpBg).CornerRadius = UDim.new(0,2)
 	local hpStroke = Instance.new("UIStroke", hpBg)
@@ -561,14 +764,21 @@ local function spawnToken(unit)
 
 	-- Name label (inside HP bar)
 	local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.fromScale(1,1)
-	lbl.BackgroundTransparency = 1; lbl.TextColor3 = Theme.Colors.TextPrimary
-	lbl.TextSize = 8; lbl.Font = Theme.Font.PrimaryBold; lbl.TextStrokeTransparency = 0.3
-	lbl.Text = unit.name; lbl.Parent = hpBg
+	lbl.BackgroundTransparency = 1
+	lbl.TextSize = 8; lbl.Font = Theme.Font.PrimaryBold
+	-- Crisp black outline on the name (all units).
+	lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+	lbl.TextStrokeTransparency = 0
+	-- Enemy names render red; players keep the default light color (active = gold).
+	lbl.TextColor3 = unitNameColor(unit)
+	lbl.Text = unitNameLabelText(unit)
+	lbl.ZIndex = 2
+	lbl.Parent = hpBg
 
-	-- MP bar (bottom portion: 4px, directly below HP)
+	-- MP bar (bottom portion: 4px, directly below HP), aligned under the HP bar
 	local mpBg = Instance.new("Frame")
-	mpBg.Size = UDim2.new(1, 0, 0, 4)
-	mpBg.Position = UDim2.new(0, 0, 0, 9)
+	mpBg.Size = UDim2.new(0, BAR_W, 0, 4)
+	mpBg.Position = UDim2.new(0, 0, 0, BAR_TOP + 9)
 	mpBg.BackgroundColor3 = Theme.Colors.Panel; mpBg.BorderSizePixel = 0; mpBg.Parent = barBb
 	Instance.new("UICorner", mpBg).CornerRadius = UDim.new(0,2)
 	local mpStroke = Instance.new("UIStroke", mpBg)
@@ -592,18 +802,56 @@ local function spawnToken(unit)
 		_hipH = math.abs(hrpY - pivotY)
 		if _hipH < 0.5 then _hipH = R15_STAND_OFFSET_DEFAULT end  -- sanity fallback
 	end
-	unitTokens[unit.id] = { part = anchorPart, model = model, fill = hpFill, mpFill = mpFill, label = lbl, hipHeight = _hipH }
+	unitTokens[unit.id] = { part = anchorPart, model = model, fill = hpFill, mpFill = mpFill, label = lbl, star = starImg, hipHeight = _hipH }
+	-- Set the tier star (gold Elite / silver Veteran / hidden otherwise). Tier is
+	-- fixed for the battle, so applying once at spawn is enough; the star is its
+	-- own ImageLabel so HP/turn label updates never disturb it.
+	applyUnitNameStar(unitTokens[unit.id], unit)
+	-- Base idle animation so standing R15 units aren't frozen stiff (looped; no-op
+	-- for cylinder fallbacks). Hit/KO/Attack one-shots play over this on events.
+	playUnitAnim(unitTokens[unit.id], "Idle", { loop = true, fade = 0.3 })
 	-- Show initial facing for EVERY unit (players + enemies) from spawn. Default to
 	-- "S" if the payload omits facing so an indicator always appears.
 	orientUnitToFacing(unit.id, unit.facing or "S")
+	-- [RIGPROBE] TEMPORARY: measure the R15 rig's real forward axis vs the facing
+	-- it was told to show, so the model-facing correction angle can be set exactly.
+	-- Remove once the offset is locked in. Prints only for R15 models.
+	if model and anchorPart then
+		task.defer(function()
+			local fv = GameConstants.FACING_VECTORS[unit.facing or "S"]
+			if not fv then return end
+			local mag = math.sqrt(fv.dx*fv.dx + fv.dy*fv.dy)
+			if mag == 0 then return end
+			local wantDir = Vector3.new(fv.dx/mag, 0, fv.dy/mag)  -- direction the ARROW points
+			local look = anchorPart.CFrame.LookVector  -- where the MODEL front points
+			local lookFlat = Vector3.new(look.X, 0, look.Z)
+			if lookFlat.Magnitude < 0.001 then return end
+			lookFlat = lookFlat.Unit
+			-- signed yaw from wantDir -> lookFlat, degrees (how far the rig front is off)
+			local dot = math.clamp(wantDir:Dot(lookFlat), -1, 1)
+			local cross = wantDir.X*lookFlat.Z - wantDir.Z*lookFlat.X
+			local deg = math.deg(math.atan2(cross, dot))
+			print(string.format("[RIGPROBE] %s facing=%s want=(%.2f,%.2f) look=(%.2f,%.2f) rigOffsetDeg=%.1f",
+				tostring(unit.id), tostring(unit.facing or "S"), wantDir.X, wantDir.Z, lookFlat.X, lookFlat.Z, deg))
+		end)
+	end
 end
 
 local function updateHpBar(uid, hp, maxHp)
 	local t = unitTokens[uid]; if not t then return end
+	-- Guard against a nil/zero maxHp (stale or partial payloads — e.g. a unit
+	-- serialized with maxHp=0 during deployment, or a death-time snapshot). Without
+	-- this, hp/maxHp is a divide-by-zero -> nan -> UDim2.fromScale(nan,1) renders a
+	-- BROKEN/empty bar. Mirror updateMpBar's guard: keep the last good bar instead.
+	-- Still refresh the name label so it stays correct.
+	if not hp or not maxHp or maxHp <= 0 then
+		t.label.Text = unitData[uid] and unitNameLabelText(unitData[uid]) or uid
+		return
+	end
 	local r = math.clamp(hp/maxHp, 0, 1)
 	t.fill.BackgroundColor3 = Theme.GetHPColor(r)
 	TweenService:Create(t.fill, TweenInfo.new(0.4, Enum.EasingStyle.Quad), {Size = UDim2.fromScale(r,1)}):Play()
-	t.label.Text = unitData[uid] and unitData[uid].name or uid
+	t.label.Text = unitData[uid] and unitNameLabelText(unitData[uid]) or uid
 end
 
 local function updateMpBar(uid, mp, maxMp)
@@ -718,9 +966,18 @@ local function mergeStatusSourceIcons(unitId, newList)
 	local prev = unitData[unitId] and unitData[unitId].statuses
 	if type(prev) == "table" then
 		local byId = {}
-		for _, st in ipairs(prev) do if st.id and st.sourceIcon then byId[st.id] = st.sourceIcon end end
+		for _, st in ipairs(prev) do
+			if st.id and (st.sourceIcon or st.sourceDesc or st.sourceDuration) then
+				byId[st.id] = { icon = st.sourceIcon, desc = st.sourceDesc, dur = st.sourceDuration }
+			end
+		end
 		for _, st in ipairs(newList) do
-			if st.id and not st.sourceIcon and byId[st.id] then st.sourceIcon = byId[st.id] end
+			local carried = st.id and byId[st.id]
+			if carried then
+				if not st.sourceIcon then st.sourceIcon = carried.icon end
+				if not st.sourceDesc then st.sourceDesc = carried.desc end
+				if not st.sourceDuration then st.sourceDuration = carried.dur end
+			end
 		end
 	end
 	return newList
@@ -808,6 +1065,91 @@ RunService.Heartbeat:Connect(function()
 end)
 
 --------------------------------------------------
+-- PERSISTENT LOOP VFX (channel / guard / stance) — standalone, NOT round-robined
+-- with the debuff scheduler above. Each unit can hold several keyed loops at once
+-- (e.g. 'channel', 'guard', 'stance'); each plays ONE asset continuously, replayed
+-- when its clone expires, until explicitly stopped by a lifecycle event.
+--------------------------------------------------
+local PERSIST_VFX_LIFETIME = 1.5  -- each replay lasts this long, then is replayed (user-set 1.5s Sep 28 2026)
+-- persistentLoops[unitId][key] = { asset = name, nextAt = clock, active = clone }
+local persistentLoops = {}
+
+local function startPersistentLoop(unitId, key, assetName)
+	if not unitId or not key or type(assetName) ~= "string" or assetName == "" then return end
+	local byUnit = persistentLoops[unitId]
+	if not byUnit then byUnit = {}; persistentLoops[unitId] = byUnit end
+	local loop = byUnit[key]
+	if loop then
+		loop.asset = assetName  -- retarget in place
+	else
+		byUnit[key] = { asset = assetName, nextAt = 0, active = nil }
+	end
+end
+
+local function stopPersistentLoop(unitId, key)
+	local byUnit = persistentLoops[unitId]
+	if not byUnit then return end
+	local loop = byUnit[key]
+	if loop then
+		if loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
+		byUnit[key] = nil
+	end
+	if next(byUnit) == nil then persistentLoops[unitId] = nil end
+end
+
+local function stopAllPersistentLoops(unitId)
+	local byUnit = persistentLoops[unitId]
+	if not byUnit then return end
+	for _, loop in pairs(byUnit) do
+		if loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
+	end
+	persistentLoops[unitId] = nil
+end
+
+-- Stance pills are client-only (synthetic id not in STATUSES) and clear by
+-- dropping off the server status summary on the unit's next turn. When that
+-- happens the unit has no synthetic status left, so stop its Charging loop.
+local function syncStanceLoop(unitId)
+	local byUnit = persistentLoops[unitId]
+	if not byUnit or not byUnit["stance"] then return end
+	local ud = unitData[unitId]
+	local stillStance = false
+	if ud and ud.statuses then
+		for _, st in ipairs(ud.statuses) do
+			if st.id and GameConstants.STATUSES and GameConstants.STATUSES[st.id] == nil then
+				stillStance = true; break
+			end
+		end
+	end
+	if not stillStance then stopPersistentLoop(unitId, "stance") end
+end
+
+-- One scheduler for all persistent loops. Replays each asset when its clone ends;
+-- keeps it glued to the unit. Independent of the debuff round-robin.
+RunService.Heartbeat:Connect(function()
+	local now = os.clock()
+	for unitId, byUnit in pairs(persistentLoops) do
+		local token = unitTokens[unitId]
+		local ud = unitData[unitId]
+		if not token or not token.part or not ud or ud.isAlive == false then
+			stopAllPersistentLoops(unitId)
+		else
+			for _, loop in pairs(byUnit) do
+				if now >= loop.nextAt then
+					if loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
+					loop.active = nil
+					if VFXController and VFXController.PlayAsset then
+						local ok, clone = pcall(VFXController.PlayAsset, loop.asset, token.part.Position, PERSIST_VFX_LIFETIME)
+						loop.active = (ok and clone) or nil
+					end
+					loop.nextAt = now + PERSIST_VFX_LIFETIME
+				end
+			end
+		end
+	end
+end)
+
+--------------------------------------------------
 -- TIMELINE SIMULATION
 --------------------------------------------------
 
@@ -820,7 +1162,7 @@ local function simulateTurnOrder(snapshot, count, previewUnitId, previewNewRt, p
 		-- Both entries coexist: the caster (its real RT) and the spell (its deadline).
 		local chRemain = u.channelRemaining or u.channelRt
 		if u.isChanneling and chRemain and chRemain > 0 then
-			table.insert(units, { id = u.id.."_ch", name = u.channeledSkillName or "Skill", side = u.side, remainingRt = chRemain, isEvent = true, channeledSkillIcon = u.channeledSkillIcon, casterSide = u.side })
+			table.insert(units, { id = u.id.."_ch", name = (u.channeledSkillName or "Skill") .. (u.channelPhase == "Activation" and " (landing)" or ""), side = u.side, remainingRt = chRemain, isEvent = true, channeledSkillIcon = u.channeledSkillIcon, casterSide = u.side })
 		end
 	end
 	if previewEvent then table.insert(units, { id = "pev", name = previewEvent.name, side = previewEvent.side, remainingRt = previewEvent.rt or 100, isEvent = true }) end
@@ -859,7 +1201,10 @@ local function simulateTurnOrder(snapshot, count, previewUnitId, previewNewRt, p
 end
 
 local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEvent)
-	if not snapshot or #snapshot == 0 then BattleHUD.UpdateTimeline({}); return end
+	if not snapshot or #snapshot == 0 then
+		BattleHUD.UpdateTimeline({}, { phase = currentTimePhase, ctRemaining = 1000 - (currentBattleCt % 1000) })
+		return
+	end
 	local tl = simulateTurnOrder(snapshot, 12, previewUnitId, previewNewRt, previewEvent)
 
 	-- Build the final entries list:
@@ -960,7 +1305,11 @@ local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEven
 		end
 	end
 
-	BattleHUD.UpdateTimeline(finalEntries)
+	-- Time-of-day + CT countdown for the bar's right end. Phase + CT come from the
+	-- server clock (currentTimePhase / currentBattleCt); CT counts DOWN to the next
+	-- 1000-CT round boundary (where the phase flips), starting at 1000.
+	local _timeInfo = { phase = currentTimePhase, ctRemaining = 1000 - (currentBattleCt % 1000) }
+	BattleHUD.UpdateTimeline(finalEntries, _timeInfo)
 end
 
 --------------------------------------------------
@@ -1151,7 +1500,22 @@ local function enterActionSelection()
 				storedActorData.onBack = enterActionSelection
 				bp.state = "TargetSelection"; BattleHUD.Render(bp)
 			end },
-			{ id="Interact", text="Interact", enabled=false },
+			{ id="Interact", text="Interact",
+				enabled = (prompt.interactAvailable == true),
+				onPress = function()
+					inputMode = "interact"; selectedSkill = nil; clearHighlights()
+					local previewRt = (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
+					updateTimeline(timelineSnapshot, prompt.unitId, previewRt)
+					-- Highlight every Interact candidate tile (recruit/ally/revive/object).
+					for _, t in ipairs(prompt.interactTargets or {}) do
+						createTileHighlight(t.tileX, t.tileY, SKILL_COLOR_UTIL, 0.45)
+					end
+					bp.skill = { name = "Interact", tags = "Utility", mpCost = 0,
+						rtCost = 0, range = 1, pattern = "Single",
+						effects = "Interact with an adjacent target: recruit a near-dead enemy, speed up an ally, revive a KO'd ally, or activate a map object." }
+					storedActorData.onBack = enterActionSelection
+					bp.state = "TargetSelection"; BattleHUD.Render(bp)
+				end },
 			{ id="Push", text="Push", enabled=#(prompt.pushTargets or {}) > 0, onPress=function()
 				inputMode = "push"; selectedSkill = nil; clearHighlights()
 				local previewRt = (prompt.pushRt or 40) + (prompt.unitBaseRt or 400)
@@ -1322,9 +1686,12 @@ local function cancelToTargeting()
 		else
 			for _, t in ipairs(selectedItem.targets or {}) do createTileHighlight(t.tileX, t.tileY, c, 0.5) end
 		end
+	elseif inputMode == "interact" then
+		clearHighlights()
+		for _, t in ipairs(currentPrompt.interactTargets or {}) do createTileHighlight(t.tileX, t.tileY, SKILL_COLOR_UTIL, 0.45) end
 	elseif inputMode == "push" then
 		clearHighlights()
-		for _, t in ipairs(currentPrompt.pushTargets or {}) do createTileHighlight(t.tileX, t.tileY, SKILL_COLOR_UTIL, 0.45) end  -- push = yellow
+		for _, t in ipairs(currentPrompt.pushTargets or {}) do createTileHighlight(t.tileX, t.tileY, SKILL_COLOR_UTIL, 0.45) end
 	elseif inputMode == "push_distance" and pushTargetSel then
 		clearHighlights()
 		createTileHighlight(pushTargetSel.tileX, pushTargetSel.tileY, "selected")
@@ -1360,30 +1727,68 @@ local function processTileClick(bx, by)
 	local objectName = GameConstants.GetObjectAt(bx, by)
 
 	bp.tile = {
+		x = bx,
+		y = by,
 		terrainName = terrainId,
 		elevation = elevation,
 		moveCost = moveCost,
 		coords = string.format("(%d, %d)", bx, by),
 		occupantName = occupantName,
 		objectName = objectName,
+		effect = (_G.CTRBLXAI_GetTileEffect and _G.CTRBLXAI_GetTileEffect(bx, by)) or nil,
 	}
 	BattleHUD.Render(bp)
 	
-	-- Inspect unit by clicking — works in ALL states
+	-- Inspect unit by clicking — works in ALL states.
+	-- KO'd units stay inspectable. Gather EVERY unit on the tile (alive first,
+	-- then KO'd, stable by id) so the inspector can cycle between them.
+	local clickedUnit = false
+	local tileUnits = {}
 	for uid, data in pairs(unitData) do
-		if data.tileX == bx and data.tileY == by and data.isAlive ~= false then
-			bp.inspectedEntityId = data.id
-			bp.target = data
+		if data.tileX == bx and data.tileY == by then
+			table.insert(tileUnits, data)
+		end
+	end
+	table.sort(tileUnits, function(a, b)
+		local aAlive = a.isAlive ~= false
+		local bAlive = b.isAlive ~= false
+		if aAlive ~= bAlive then return aAlive end
+		return tostring(a.id) < tostring(b.id)
+	end)
+	local primary = tileUnits[1]
+	if primary then
+		clickedUnit = true
+		-- Combat targeting still keys off the LIVING occupant only.
+		if primary.isAlive ~= false then
+			bp.inspectedEntityId = primary.id
+			bp.target = primary
 			BattleHUD.Render(bp)
-			-- Open full inspector during: Idle, View mode, or Deployment phase
-			local hudState = BattleHUD.GetState()
-			local canInspect = (hudState == "Idle")
-				or BattleHUD.IsViewMode()
-				or _G.CTRBLXAI_DeploymentActive
-			if canInspect and _G.CTRBLXAI_OpenInspectorPanel then
-				_G.CTRBLXAI_OpenInspectorPanel(data.id)
-			end
-			break
+		else
+			-- Only KO'd units here: drop any stale selection from an earlier click.
+			bp.inspectedEntityId = nil
+		end
+		-- Open full inspector during: Idle, View mode, or Deployment phase
+		local hudState = BattleHUD.GetState()
+		local canInspect = (hudState == "Idle") or (hudState == "EnemyTurn")
+			or BattleHUD.IsViewMode()
+			or _G.CTRBLXAI_DeploymentActive
+		if canInspect and _G.CTRBLXAI_OpenInspectorPanel then
+			local ids = {}
+			for _, u in ipairs(tileUnits) do table.insert(ids, u.id) end
+			_G.CTRBLXAI_OpenInspectorPanel(primary.id, ids)
+		end
+	end
+	-- F1 fix (2026-10-04): clicking an EMPTY tile clears the stale unit selection so
+	-- the newest click decides the dev-tool target (bp.tile holds the clicked tile).
+	if not clickedUnit then
+		bp.inspectedEntityId = nil
+	end
+	-- Map object inspection: an object tile with no unit on it opens the object inspector.
+	if not clickedUnit and objectName and objectName ~= "None" then
+		local hudStateObj = BattleHUD.GetState()
+		local canInspectObj = (hudStateObj == "Idle") or (hudStateObj == "EnemyTurn") or BattleHUD.IsViewMode() or _G.CTRBLXAI_DeploymentActive
+		if canInspectObj and _G.CTRBLXAI_OpenObjectInspector then
+			_G.CTRBLXAI_OpenObjectInspector(objectName, bx, by)
 		end
 	end
 	
@@ -1566,6 +1971,48 @@ local function processTileClick(bx, by)
 						channelResolveCt = isChannel and (currentBattleCt or 0) + (selectedSkill.channelTime or 0) or nil,
 						onConfirm = function()
 							commitCommand({ actionType = "Skill", skillId = selectedSkill.id, targetId = t.id })
+						end,
+						onBack = cancelToTargeting,
+					}
+					bp.state = "Preview"; BattleHUD.Render(bp)
+					return
+				end
+			end
+
+		elseif inputMode == "interact" then
+			-- Click an Interact candidate tile → Preview → commit. One stage:
+			-- the server re-validates the kind + target and dispatches the native.
+			for _, t in ipairs(currentPrompt.interactTargets or {}) do
+				if t.tileX == bx and t.tileY == by then
+					aimTarget = t; clearHighlights()
+					createTileHighlight(bx, by, "selected")
+					if t.id then bp.target = unitData[t.id] end
+					local desc
+					if t.interactKind == "recruitEnemy" then
+						desc = "Recruit " .. (t.name or "enemy") .. " — becomes a neutral ally."
+					elseif t.interactKind == "allyRtHelp" then
+						desc = "Aid " .. (t.name or "ally") .. " — cut their current RT by 35%."
+					elseif t.interactKind == "reviveAlly" then
+						desc = "Resuscitate " .. (t.name or "ally") .. " (channeled) — revives at low HP."
+					elseif t.interactKind == "mapObject" then
+						desc = "Activate " .. (t.name or "object") .. "."
+					else
+						desc = "Interact with " .. (t.name or "target") .. "."
+					end
+					bp.preview = {
+						actionType = "Interact",
+						actorName = currentPrompt.unitName,
+						actorApBefore = currentPrompt.currentAp, actorApAfter = (currentPrompt.currentAp or 1) - 1,
+						actorRtAfter = (t.rtPreview or 0) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
+						targetName = t.name,
+						description = desc,
+						onConfirm = function()
+							commitCommand({
+								actionType = "Interact",
+								interactKind = t.interactKind,
+								targetId = t.id,
+								objectId = t.objectId,
+							})
 						end,
 						onBack = cancelToTargeting,
 					}
@@ -1859,11 +2306,18 @@ end)
 --------------------------------------------------
 
 local devCameraPanel = nil
+local devPanelConnections = {} -- F-A: input connections to disconnect on destroy/recreate
 local devSelectedTile = nil -- {x, y} for Kill Unit targeting
 
 local function createDevCameraPanel()
 	if not RunService:IsStudio() then return end
 	if devCameraPanel then devCameraPanel:Destroy() end
+	-- F-A: clear any connections from a prior panel instance (recreated on BattleStarted
+	-- and on MapDataSync/Regenerate) so UserInputService listeners don't pile up.
+	for _, conn in ipairs(devPanelConnections) do
+		if conn then conn:Disconnect() end
+	end
+	table.clear(devPanelConnections)
 
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "DevOptions"
@@ -1873,168 +2327,485 @@ local function createDevCameraPanel()
 	devCameraPanel = gui
 
 	local devExpanded = false
+	local dragMoved = false -- F-B: true while a real title-bar drag is happening
+	local PANEL_W = 184
 
-	local frame = Instance.new("Frame")
-	frame.Name = "DevPanel"
-	frame.Size = UDim2.fromOffset(130, 14)
-	frame.Position = UDim2.new(0, 130, 0, 4)
-	frame.AnchorPoint = Vector2.new(0, 0)
-	frame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-	frame.BackgroundTransparency = 0.1
-	frame.BorderSizePixel = 0
-	frame.Active = true
-	frame.ClipsDescendants = true
-	frame.Parent = gui
-	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
-	local stroke = Instance.new("UIStroke", frame)
-	stroke.Color = Color3.fromRGB(200, 200, 50); stroke.Thickness = 1
+	-- Root frame (draggable via the title bar). Not a ScrollingFrame itself; the
+	-- scrolling body lives inside so the header/selection line stay pinned.
+	local root = Instance.new("Frame")
+	root.Name = "DevPanel"
+	root.Size = UDim2.fromOffset(PANEL_W, 16)
+	root.Position = UDim2.new(0, 130, 0, 4)
+	root.AnchorPoint = Vector2.new(0, 0)
+	root.BackgroundColor3 = Color3.fromRGB(28, 28, 38)
+	root.BackgroundTransparency = 0.05
+	root.BorderSizePixel = 0
+	root.Active = true
+	root.ClipsDescendants = true
+	root.Parent = gui
+	Instance.new("UICorner", root).CornerRadius = UDim.new(0, 6)
+	local rootStroke = Instance.new("UIStroke", root)
+	rootStroke.Color = Color3.fromRGB(200, 200, 50); rootStroke.Thickness = 1
 
-	local layout = Instance.new("UIListLayout", frame)
-	layout.Padding = UDim.new(0, 2)
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
-
-	local pad = Instance.new("UIPadding", frame)
-	pad.PaddingTop = UDim.new(0, 3); pad.PaddingLeft = UDim.new(0, 3)
-	pad.PaddingRight = UDim.new(0, 3)
-
-	-- Title
+	-- Title bar (drag handle + expand/collapse toggle).
 	local title = Instance.new("TextButton")
-	title.Size = UDim2.new(1, 0, 0, 14)
-	title.BackgroundTransparency = 1
-	title.Font = Enum.Font.SourceSansBold; title.TextSize = 9
+	title.Name = "TitleBar"
+	title.Size = UDim2.new(1, 0, 0, 16)
+	title.Position = UDim2.new(0, 0, 0, 0)
+	title.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+	title.BackgroundTransparency = 0.2
+	title.Font = Enum.Font.SourceSansBold; title.TextSize = 10
 	title.TextColor3 = Color3.fromRGB(200, 200, 50)
-	title.Text = "▶ DEV"; title.LayoutOrder = 0
-	title.AutoButtonColor = false; title.BorderSizePixel = 0
-	title.Parent = frame
-	title.MouseButton1Click:Connect(function()
-		devExpanded = not devExpanded
-		if devExpanded then
-			frame.Size = UDim2.fromOffset(130, 500)
-			title.Text = "▼ DEV OPTIONS"
-		else
-			frame.Size = UDim2.fromOffset(130, 14)
-			title.Text = "▶ DEV"
-		end
-	end)
+	title.Text = "> DEV  (drag)"; title.AutoButtonColor = false
+	title.BorderSizePixel = 0; title.Parent = root
+	Instance.new("UICorner", title).CornerRadius = UDim.new(0, 6)
 
-	local function makeBtn(text, order, callback, color)
+	-- Selection line: shows what the tools will act on (updated on demand).
+	local selLabel = Instance.new("TextLabel")
+	selLabel.Name = "SelectionLine"
+	selLabel.Size = UDim2.new(1, -6, 0, 14)
+	selLabel.Position = UDim2.new(0, 3, 0, 17)
+	selLabel.BackgroundTransparency = 1
+	selLabel.Font = Enum.Font.SourceSans; selLabel.TextSize = 10
+	selLabel.TextColor3 = Color3.fromRGB(150, 220, 150)
+	selLabel.TextXAlignment = Enum.TextXAlignment.Left
+	selLabel.Text = "Sel: (none)"; selLabel.Visible = false
+	selLabel.Parent = root
+
+	-- Scrolling body holds all the groups/controls.
+	local body = Instance.new("ScrollingFrame")
+	body.Name = "Body"
+	body.Size = UDim2.new(1, 0, 1, -32)
+	body.Position = UDim2.new(0, 0, 0, 32)
+	body.BackgroundTransparency = 1
+	body.BorderSizePixel = 0
+	body.Active = true
+	body.CanvasSize = UDim2.new(0, 0, 0, 0)
+	body.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	body.ScrollBarThickness = 4
+	body.ScrollBarImageColor3 = Color3.fromRGB(200, 200, 50)
+	body.ScrollingDirection = Enum.ScrollingDirection.Y
+	body.ScrollingEnabled = false
+	body.Visible = false
+	body.Parent = root
+	local bodyLayout = Instance.new("UIListLayout", body)
+	bodyLayout.Padding = UDim.new(0, 2)
+	bodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	local bodyPad = Instance.new("UIPadding", body)
+	bodyPad.PaddingTop = UDim.new(0, 3); bodyPad.PaddingLeft = UDim.new(0, 3)
+	bodyPad.PaddingRight = UDim.new(0, 3); bodyPad.PaddingBottom = UDim.new(0, 3)
+
+	-- selection resolver (shared by all action buttons) + live label refresh.
+	local function selectedTile()
+		local iid = bp and bp.inspectedEntityId
+		local idata = iid and unitData[iid]
+		if idata and idata.tileX and idata.tileY then
+			return idata.tileX, idata.tileY, idata
+		end
+		if bp and bp.tile and bp.tile.x and bp.tile.y then
+			return bp.tile.x, bp.tile.y, nil
+		end
+		return nil
+	end
+	local function refreshSelLabel()
+		local tx, ty, idata = selectedTile()
+		if not tx then
+			selLabel.Text = "Sel: (none - click a tile/unit)"
+		elseif idata then
+			selLabel.Text = string.format("Sel: %s @ (%d,%d)", idata.name or "unit", tx, ty)
+		else
+			selLabel.Text = string.format("Sel: tile (%d,%d)", tx, ty)
+		end
+	end
+
+	-------------------------------------------------------------
+	-- Group infrastructure: a header that expands/collapses its rows.
+	-------------------------------------------------------------
+	local groups = {}       -- name -> { header, container, open }
+	local orderCounter = 0
+	local function nextOrder() orderCounter = orderCounter + 1; return orderCounter end
+
+	local function addGroup(name, color)
+		local header = Instance.new("TextButton")
+		header.Size = UDim2.new(1, 0, 0, 18)
+		header.BackgroundColor3 = color or Color3.fromRGB(55, 55, 72)
+		header.BackgroundTransparency = 0.15
+		header.Font = Enum.Font.SourceSansBold; header.TextSize = 11
+		header.TextColor3 = Color3.fromRGB(230, 230, 170)
+		header.Text = "+ " .. name
+		header.LayoutOrder = nextOrder()
+		header.BorderSizePixel = 0; header.Parent = body
+		Instance.new("UICorner", header).CornerRadius = UDim.new(0, 4)
+
+		local container = Instance.new("Frame")
+		container.Name = name .. "_rows"
+		container.Size = UDim2.new(1, 0, 0, 0)
+		container.AutomaticSize = Enum.AutomaticSize.Y
+		container.BackgroundTransparency = 1
+		container.LayoutOrder = nextOrder()
+		container.Visible = false
+		container.Parent = body
+		local cl = Instance.new("UIListLayout", container)
+		cl.Padding = UDim.new(0, 2); cl.SortOrder = Enum.SortOrder.LayoutOrder
+
+		local g = { header = header, container = container, open = false }
+		header.MouseButton1Click:Connect(function()
+			g.open = not g.open
+			container.Visible = g.open
+			header.Text = (g.open and "- " or "+ ") .. name
+		end)
+		groups[name] = g
+		return g
+	end
+
+	local function makeBtn(parent, text, callback, color)
 		local btn = Instance.new("TextButton")
 		btn.Size = UDim2.new(1, 0, 0, 22)
 		btn.BackgroundColor3 = color or Color3.fromRGB(50, 50, 65)
 		btn.BackgroundTransparency = 0.2
 		btn.Font = Enum.Font.SourceSans; btn.TextSize = 11
 		btn.TextColor3 = Color3.fromRGB(220, 220, 220)
-		btn.Text = text; btn.LayoutOrder = order
-		btn.BorderSizePixel = 0; btn.Parent = frame
+		btn.Text = text; btn.LayoutOrder = nextOrder()
+		btn.BorderSizePixel = 0; btn.Parent = parent
 		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
 		btn.MouseButton1Click:Connect(callback)
 		return btn
 	end
 
-	-- Battle control buttons
-	makeBtn("INSTANT WIN", 5, function()
+	-- Tap-twice-to-confirm wrapper for destructive buttons.
+	local function makeConfirmBtn(parent, text, callback, color)
+		local armed = false
+		local btn
+		btn = makeBtn(parent, text, function()
+			if not armed then
+				armed = true
+				btn.Text = "CONFIRM? " .. text
+				btn.BackgroundColor3 = Color3.fromRGB(120, 90, 20)
+				task.delay(2.5, function()
+					if armed and btn and btn.Parent then
+						armed = false
+						btn.Text = text
+						btn.BackgroundColor3 = color or Color3.fromRGB(80, 30, 30)
+					end
+				end)
+			else
+				armed = false
+				btn.Text = text
+				btn.BackgroundColor3 = color or Color3.fromRGB(80, 30, 30)
+				callback()
+			end
+		end, color)
+		return btn
+	end
+
+	-------------------------------------------------------------
+	-- Dropdown: a button that opens a scrollable, searchable list.
+	-- onPick(value) fires on selection. Returns { get = fn, setItems = fn }.
+	-------------------------------------------------------------
+	local openDropdown = nil  -- only one open at a time
+	local function makeDropdown(parent, labelPrefix, items, onPick)
+		local state = { items = items, value = items[1], prefix = labelPrefix }
+
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1, 0, 0, 22)
+		btn.BackgroundColor3 = Color3.fromRGB(58, 48, 68)
+		btn.BackgroundTransparency = 0.15
+		btn.Font = Enum.Font.SourceSans; btn.TextSize = 11
+		btn.TextColor3 = Color3.fromRGB(225, 220, 235)
+		btn.Text = labelPrefix .. ": " .. tostring(state.value)
+		btn.LayoutOrder = nextOrder()
+		btn.BorderSizePixel = 0; btn.Parent = parent
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+
+		-- The list popup is parented to the ScreenGui (floats above body), positioned
+		-- under the button each time it opens.
+		local pop = Instance.new("Frame")
+		pop.Name = "Dropdown"
+		pop.Size = UDim2.fromOffset(PANEL_W - 8, 190)
+		pop.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+		pop.BorderSizePixel = 0
+		pop.Visible = false
+		pop.ZIndex = 50
+		pop.Parent = gui
+		Instance.new("UICorner", pop).CornerRadius = UDim.new(0, 4)
+		local ps = Instance.new("UIStroke", pop); ps.Color = Color3.fromRGB(200, 200, 50); ps.Thickness = 1
+
+		local search = Instance.new("TextBox")
+		search.Size = UDim2.new(1, -6, 0, 20)
+		search.Position = UDim2.new(0, 3, 0, 3)
+		search.BackgroundColor3 = Color3.fromRGB(40, 40, 52)
+		search.Font = Enum.Font.SourceSans; search.TextSize = 11
+		search.TextColor3 = Color3.fromRGB(230, 230, 230)
+		search.PlaceholderText = "search..."
+		search.Text = ""; search.ClearTextOnFocus = false
+		search.ZIndex = 51; search.BorderSizePixel = 0; search.Parent = pop
+		Instance.new("UICorner", search).CornerRadius = UDim.new(0, 3)
+
+		local listScroll = Instance.new("ScrollingFrame")
+		listScroll.Size = UDim2.new(1, -6, 1, -27)
+		listScroll.Position = UDim2.new(0, 3, 0, 25)
+		listScroll.BackgroundTransparency = 1
+		listScroll.BorderSizePixel = 0
+		listScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+		listScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		listScroll.ScrollBarThickness = 4
+		listScroll.ZIndex = 51
+		listScroll.Parent = pop
+		local lsl = Instance.new("UIListLayout", listScroll)
+		lsl.Padding = UDim.new(0, 1); lsl.SortOrder = Enum.SortOrder.LayoutOrder
+
+		local function closePop()
+			pop.Visible = false
+			if openDropdown == pop then openDropdown = nil end
+		end
+
+		local function rebuild(filter)
+			for _, c in ipairs(listScroll:GetChildren()) do
+				if c:IsA("TextButton") then c:Destroy() end
+			end
+			filter = (filter or ""):lower()
+			for _, item in ipairs(state.items) do
+				if filter == "" or tostring(item):lower():find(filter, 1, true) then
+					local row = Instance.new("TextButton")
+					row.Size = UDim2.new(1, 0, 0, 18)
+					row.BackgroundColor3 = Color3.fromRGB(44, 44, 56)
+					row.BackgroundTransparency = 0.2
+					row.Font = Enum.Font.SourceSans; row.TextSize = 11
+					row.TextColor3 = Color3.fromRGB(225, 225, 225)
+					row.Text = tostring(item)
+					row.ZIndex = 52; row.BorderSizePixel = 0; row.Parent = listScroll
+					row.MouseButton1Click:Connect(function()
+						state.value = item
+						btn.Text = labelPrefix .. ": " .. tostring(item)
+						closePop()
+						if onPick then onPick(item) end
+					end)
+				end
+			end
+		end
+
+		search:GetPropertyChangedSignal("Text"):Connect(function()
+			rebuild(search.Text)
+		end)
+
+		btn.MouseButton1Click:Connect(function()
+			if pop.Visible then closePop(); return end
+			if openDropdown and openDropdown ~= pop then openDropdown.Visible = false end
+			-- position under the button (absolute coords)
+			local ap = btn.AbsolutePosition
+			local sz = btn.AbsoluteSize
+			pop.Position = UDim2.fromOffset(ap.X, ap.Y + sz.Y + 2)
+			search.Text = ""
+			rebuild("")
+			pop.Visible = true
+			openDropdown = pop
+		end)
+
+		return {
+			get = function() return state.value end,
+			setItems = function(newItems)
+				state.items = newItems
+				state.value = newItems[1]
+				btn.Text = labelPrefix .. ": " .. tostring(state.value)
+			end,
+		}
+	end
+
+	-------------------------------------------------------------
+	-- GROUP: Battle (destructive actions guarded)
+	-------------------------------------------------------------
+	local gBattle = addGroup("BATTLE", Color3.fromRGB(60, 50, 45))
+	makeConfirmBtn(gBattle.container, "INSTANT WIN", function()
 		BattleEvents.DevCommand:FireServer({ action = "InstantWin" })
 	end, Color3.fromRGB(30, 80, 30))
-
-	makeBtn("INSTANT LOSE", 6, function()
+	makeConfirmBtn(gBattle.container, "INSTANT LOSE", function()
 		BattleEvents.DevCommand:FireServer({ action = "InstantLose" })
 	end, Color3.fromRGB(80, 30, 30))
-
-	makeBtn("KILL AT TILE", 7, function()
-		-- Uses the last tile-clicked unit (stored by devLastInspectedId)
-		local iid = devLastInspectedId
+	makeConfirmBtn(gBattle.container, "KILL AT TILE", function()
+		local iid = bp and bp.inspectedEntityId
 		local idata = iid and unitData[iid]
 		if idata and idata.tileX and idata.tileY then
-			BattleEvents.DevCommand:FireServer({
-				action = "KillAtTile",
-				tileX = idata.tileX,
-				tileY = idata.tileY,
-			})
+			BattleEvents.DevCommand:FireServer({ action = "KillAtTile", tileX = idata.tileX, tileY = idata.tileY })
 		else
-			warn("[Dev] No unit selected -- click a unit first, then press KILL AT TILE")
+			warn("[Dev] No unit selected -- click a unit first, then KILL AT TILE")
 		end
 	end, Color3.fromRGB(80, 50, 20))
-
-	makeBtn("DELETE SAVE", 8, function()
+	makeConfirmBtn(gBattle.container, "DELETE SAVE", function()
 		BattleEvents.DevCommand:FireServer({ action = "DeleteSave" })
 	end, Color3.fromRGB(80, 20, 20))
-
-	makeBtn("SAVE NOW", 9, function()
+	makeBtn(gBattle.container, "SAVE NOW", function()
 		BattleEvents.DevCommand:FireServer({ action = "SaveNow" })
 	end, Color3.fromRGB(30, 60, 80))
 
-	-- Separator: Map Tools
-	local sep2 = Instance.new("Frame")
-	sep2.Size = UDim2.new(1, 0, 0, 1)
-	sep2.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
-	sep2.BackgroundTransparency = 0.5
-	sep2.BorderSizePixel = 0; sep2.LayoutOrder = 10
-	sep2.Parent = frame
-
-	local mapLabel = Instance.new("TextLabel")
-	mapLabel.Size = UDim2.new(1, 0, 0, 12)
-	mapLabel.BackgroundTransparency = 1
-	mapLabel.Font = Enum.Font.SourceSansBold; mapLabel.TextSize = 9
-	mapLabel.TextColor3 = Color3.fromRGB(100, 200, 100)
-	mapLabel.Text = "MAP"; mapLabel.LayoutOrder = 11
-	mapLabel.Parent = frame
-
-	-- View mode buttons
-	makeBtn("VIEW: TERRAIN", 12, function()
+	-------------------------------------------------------------
+	-- GROUP: Map
+	-------------------------------------------------------------
+	local gMap = addGroup("MAP", Color3.fromRGB(45, 60, 45))
+	makeBtn(gMap.container, "VIEW: TERRAIN", function()
 		BattleEvents.DevCommand:FireServer({ action = "ViewMode", mode = "TERRAIN" })
 	end, Color3.fromRGB(40, 70, 40))
-
-	makeBtn("VIEW: REGION", 13, function()
+	makeBtn(gMap.container, "VIEW: REGION", function()
 		BattleEvents.DevCommand:FireServer({ action = "ViewMode", mode = "REGION" })
 	end, Color3.fromRGB(40, 50, 70))
-
-	makeBtn("VIEW: TEMPLATE", 14, function()
+	makeBtn(gMap.container, "VIEW: TEMPLATE", function()
 		BattleEvents.DevCommand:FireServer({ action = "ViewMode", mode = "TEMPLATE" })
 	end, Color3.fromRGB(60, 50, 50))
-
-	-- Separator: Regenerate
-	local sep3 = Instance.new("Frame")
-	sep3.Size = UDim2.new(1, 0, 0, 1)
-	sep3.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
-	sep3.BackgroundTransparency = 0.5
-	sep3.BorderSizePixel = 0; sep3.LayoutOrder = 15
-	sep3.Parent = frame
-
-	-- Biome cycle: rotate through all biomes
-	local biomeList = {
-		"Plains", "Forest", "Desert", "Swamp", "Highlands",
-		"Tundra", "Volcano", "Cave", "Ruins", "Castle", "Corrupted",
-	}
-	local biomeIdx = 1
-
-	local biomeBtn = makeBtn("BIOME: Plains", 16, function() end, Color3.fromRGB(50, 65, 50))
-	biomeBtn.MouseButton1Click:Connect(function()
-		biomeIdx = (biomeIdx % #biomeList) + 1
-		biomeBtn.Text = "BIOME: " .. biomeList[biomeIdx]
-	end)
-
-	-- Template cycle: rotate through all templates
-	local templateList = { "T01", "T02", "T03", "T04", "T05", "T06", "T07", "T08" }
-	local templateIdx = 1
-
-	local templateBtn = makeBtn("TMPL: T01", 17, function() end, Color3.fromRGB(50, 50, 65))
-	templateBtn.MouseButton1Click:Connect(function()
-		templateIdx = (templateIdx % #templateList) + 1
-		templateBtn.Text = "TMPL: " .. templateList[templateIdx]
-	end)
-
-	-- Regenerate button: uses current biome/template selection
-	makeBtn("REGENERATE MAP", 18, function()
-		BattleEvents.DevCommand:FireServer({
-			action = "Regenerate",
-			biome = biomeList[biomeIdx],
-			template = templateList[templateIdx],
-		})
+	local biomeList = { "Plains","Forest","Desert","Swamp","Highlands","Tundra","Volcano","Cave","Ruins","Castle","Corrupted" }
+	local templateList = { "T01","T02","T03","T04","T05","T06","T07","T08" }
+	local biomeDd = makeDropdown(gMap.container, "BIOME", biomeList, nil)
+	local tmplDd = makeDropdown(gMap.container, "TMPL", templateList, nil)
+	makeBtn(gMap.container, "REGENERATE MAP", function()
+		BattleEvents.DevCommand:FireServer({ action = "Regenerate", biome = biomeDd.get(), template = tmplDd.get() })
 	end, Color3.fromRGB(80, 60, 20))
 
+	-------------------------------------------------------------
+	-- GROUP: Status
+	-------------------------------------------------------------
+	local gStatus = addGroup("STATUS", Color3.fromRGB(58, 48, 68))
+	local statusList = {
+		"Burn","Poison","Venom","Bleed","Wounded","Raptured","Slow","Haste","Frozen","Wet",
+		"Blind","Confuse","Silence","Mute","Disarmed","Pinned","Crippled","Petrify","Sleep",
+		"Stun","Guard","Blessed","Cursed","Enlightened","Flight","Rush","Weakened","Hide",
+		"Regeneration","Recharge","Overflow","Mana Burn","Drowning","Sinking","Frenzy",
+		"Giant Transformation","Rally","Spell Focus","Battle Rage","Rune Ward","CounterStance",
+	}
+	local statusDd = makeDropdown(gStatus.container, "STATUS", statusList, nil)
+	makeBtn(gStatus.container, "APPLY STATUS", function()
+		local tx, ty = selectedTile()
+		if not tx then warn("[Dev] Select a unit first, then APPLY STATUS") return end
+		BattleEvents.DevCommand:FireServer({ action = "GrantStatus", tileX = tx, tileY = ty, statusId = statusDd.get() })
+	end, Color3.fromRGB(50, 70, 50))
+	makeBtn(gStatus.container, "CLEAR STATUSES", function()
+		local tx, ty = selectedTile()
+		if not tx then warn("[Dev] Select a unit first") return end
+		BattleEvents.DevCommand:FireServer({ action = "RemoveStatus", tileX = tx, tileY = ty, statusId = "ALL" })
+	end, Color3.fromRGB(70, 50, 50))
+	local weatherList = {
+		"Clear","Rain","Heatwave","Strong Wind","Snow Storm","Thunderstorm","Severe Hail",
+		"Dark Eclipse","Holy Aurora","Mana Storm","Meteor Storm","Volcanic Eruptions",
+		"Earthquake","Hunger Virus","Wild Growth",
+	}
+	local weatherDd = makeDropdown(gStatus.container, "WX", weatherList, nil)
+	makeBtn(gStatus.container, "SET WEATHER", function()
+		BattleEvents.DevCommand:FireServer({ action = "SetWeather", condition = weatherDd.get() })
+	end, Color3.fromRGB(40, 60, 75))
+
+	-------------------------------------------------------------
+	-- GROUP: Spawn
+	-------------------------------------------------------------
+	local gSpawn = addGroup("SPAWN", Color3.fromRGB(45, 60, 55))
+	local sideList = { "Enemy", "Neutral", "Player" }
+	local tierList = { "Grunt", "Veteran", "Elite" }
+	local sideDd = makeDropdown(gSpawn.container, "SIDE", sideList, nil)
+	local tierDd = makeDropdown(gSpawn.container, "TIER", tierList, nil)
+	makeBtn(gSpawn.container, "SPAWN AT TILE", function()
+		local tx, ty = selectedTile()
+		if not tx then warn("[Dev] Select a tile/unit first, then SPAWN AT TILE") return end
+		BattleEvents.DevCommand:FireServer({ action = "SpawnUnit", tileX = tx, tileY = ty, side = sideDd.get(), tier = tierDd.get() })
+	end, Color3.fromRGB(40, 65, 55))
+	makeBtn(gSpawn.container, "SPAWN GROUP (x3)", function()
+		local tx, ty = selectedTile()
+		if not tx then warn("[Dev] Select a tile/unit first") return end
+		BattleEvents.DevCommand:FireServer({ action = "SpawnGroup", tileX = tx, tileY = ty, side = sideDd.get(), tier = tierDd.get(), count = 3 })
+	end, Color3.fromRGB(45, 60, 50))
+
+	-- Object spawn: category dropdown drives the object dropdown's items.
+	local objCats = {
+		{ cat = "Siege",       items = { "Ballista", "Catapult", "Ice Spike", "Stone Pillar" } },
+		{ cat = "Hazard",      items = { "Bear Trap", "Spike Trap", "Snare Trap", "Land Mine", "Bomb Barrel", "Oil Sluice", "Steam Valve" } },
+		{ cat = "Exploration", items = { "Treasure Chest", "Mimic", "Cursed Chest", "Healing Spring", "Magic Spring", "Campfire", "Blood Fountain", "Astrolabe", "Potion Desk", "Crystal Ball", "Eye of the Magi", "Black Market" } },
+		{ cat = "Aura",        items = { "War Banner", "Cursed Statue", "Rally Flag", "Star Axis", "Burning Cauldron", "War Horn", "Runed Boulder" } },
+		{ cat = "Event",       items = { "Idol of Fortune", "Fountain of Fortune", "Tavern", "Necro Tome Stand", "Cover of Darkness", "Dragon Utopia", "Chaos Statue", "Angel Statue", "Obelisk", "Forge", "Witch Hut", "Mysterious Boulder", "Glow Crystal", "Pandora's Box", "Swan Pond" } },
+	}
+	local catNames = {}
+	for _, c in ipairs(objCats) do catNames[#catNames + 1] = c.cat end
+	local objDd  -- forward ref
+	local catDd = makeDropdown(gSpawn.container, "OBJ CAT", catNames, function(picked)
+		for _, c in ipairs(objCats) do
+			if c.cat == picked and objDd then objDd.setItems(c.items) end
+		end
+	end)
+	objDd = makeDropdown(gSpawn.container, "OBJ", objCats[1].items, nil)
+	makeBtn(gSpawn.container, "SPAWN OBJECT", function()
+		local tx, ty = selectedTile()
+		if not tx then warn("[Dev] Select a tile first, then SPAWN OBJECT") return end
+		BattleEvents.DevCommand:FireServer({ action = "SpawnObject", tileX = tx, tileY = ty, objectType = objDd.get() })
+	end, Color3.fromRGB(70, 60, 40))
+
+	-------------------------------------------------------------
+	-- Expand / collapse (title) + viewport height cap
+	-------------------------------------------------------------
+	title.MouseButton1Click:Connect(function()
+		-- F-B: a click that ended a real drag must NOT toggle the panel.
+		if dragMoved then dragMoved = false; return end
+		devExpanded = not devExpanded
+		if devExpanded then
+			local cam = workspace.CurrentCamera
+			local vpY = (cam and cam.ViewportSize and cam.ViewportSize.Y) or 760
+			local h = math.min(560, math.floor(vpY * 0.85))
+			root.Size = UDim2.fromOffset(PANEL_W, h)
+			title.Text = "v DEV OPTIONS  (drag)"
+			selLabel.Visible = true
+			body.Visible = true
+			body.ScrollingEnabled = true
+			refreshSelLabel()
+		else
+			root.Size = UDim2.fromOffset(PANEL_W, 16)
+			title.Text = "> DEV  (drag)"
+			selLabel.Visible = false
+			body.Visible = false
+			body.ScrollingEnabled = false
+			if openDropdown then openDropdown.Visible = false; openDropdown = nil end
+		end
+	end)
+
+	-- Refresh the selection line whenever the pointer is pressed anywhere (cheap,
+	-- so the "Sel:" line tracks the latest tile/unit click without polling).
+	devPanelConnections[#devPanelConnections + 1] = UserInputService.InputBegan:Connect(function(input, gp)
+		if not devExpanded then return end
+		if input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.UserInputType == Enum.UserInputType.Touch then
+			task.defer(refreshSelLabel)
+		end
+	end)
+
+	-------------------------------------------------------------
+	-- Dragging: drag the title bar to move the whole panel.
+	-------------------------------------------------------------
+	do
+		local dragging = false
+		local dragStart, startPos
+		title.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1
+				or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = true
+				dragMoved = false  -- F-B: reset; set true only if the pointer actually moves
+				dragStart = input.Position
+				startPos = root.Position
+				input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then dragging = false end
+				end)
+			end
+		end)
+		devPanelConnections[#devPanelConnections + 1] = UserInputService.InputChanged:Connect(function(input)
+			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+				or input.UserInputType == Enum.UserInputType.Touch) then
+				local delta = input.Position - dragStart
+				if math.abs(delta.X) + math.abs(delta.Y) > 4 then dragMoved = true end  -- F-B: real drag
+				root.Position = UDim2.new(
+					startPos.X.Scale, startPos.X.Offset + delta.X,
+					startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+			end
+		end)
+	end
 end
 
 local function destroyDevCameraPanel()
+	-- F-A: disconnect input listeners so they don't accumulate across battles/regenerates.
+	for _, conn in ipairs(devPanelConnections) do
+		if conn then conn:Disconnect() end
+	end
+	table.clear(devPanelConnections)
 	if devCameraPanel then devCameraPanel:Destroy(); devCameraPanel = nil end
 end
 
@@ -2042,7 +2813,29 @@ end
 -- EVENT HANDLERS
 --------------------------------------------------
 
+-- TILE-EFFECT VFX: server broadcasts TileEffectApplied/Removed (Burning, Poison Cloud...).
+-- Show a persistent VFX on the tile while the effect lasts (VFXRegistry.ByTileEffect).
+local activeTileEffects: {[string]: string} = {}  -- "x,y" -> effectId (for tile inspector)
+BattleEvents.TileEffectApplied.OnClientEvent:Connect(function(data)
+	if data and data.tileX and data.tileY then activeTileEffects[`{data.tileX},{data.tileY}`] = data.effectId end
+	if not (VFXController and VFXController.SetTileEffect and data and data.tileX and data.tileY) then return end
+	local pos = tileToWorldGrounded(data.tileX, data.tileY) - Vector3.new(0, 0.9, 0)
+	pcall(VFXController.SetTileEffect, data.tileX, data.tileY, data.effectId, pos)
+end)
+
+BattleEvents.TileEffectRemoved.OnClientEvent:Connect(function(data)
+	if data and data.tileX and data.tileY then activeTileEffects[`{data.tileX},{data.tileY}`] = nil end
+	if not (VFXController and VFXController.ClearTileEffect and data and data.tileX and data.tileY) then return end
+	pcall(VFXController.ClearTileEffect, data.tileX, data.tileY)
+end)
+
+_G.CTRBLXAI_GetTileEffect = function(x, y) return activeTileEffects[`{x},{y}`] end
+
 BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
+	if SoundController then SoundController.StopAllChannels() end
+	if VFXController and VFXController.ClearAllTileEffects then pcall(VFXController.ClearAllTileEffects) end
+	table.clear(activeTileEffects)
+	if BattleHUD.SetActiveEvent then BattleHUD.SetActiveEvent(nil) end
 	-- Supply playable battlefield bounds to camera (8×8 battle grid)
 	-- NOTE: Future procedural maps must supply these dynamically.
 	CameraController.SetBattlefieldBounds({
@@ -2075,6 +2868,8 @@ BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	actionLabels = {}
 	for _, lp in pairs(debuffLoops) do if lp.active and lp.active.Parent then pcall(function() lp.active:Destroy() end) end end
 	debuffLoops = {}
+	for uid in pairs(persistentLoops) do stopAllPersistentLoops(uid) end
+	persistentLoops = {}
 	for _, unit in ipairs(data.units) do
 		unitData[unit.id] = unit; spawnToken(unit)
 		updateHpBar(unit.id, unit.currentHp, unit.maxHp)
@@ -2101,16 +2896,147 @@ BattleEvents.UnitSpawned.OnClientEvent:Connect(function(data)
 	end
 end)
 
+-- Time cycle: receive the current time-of-day phase (Dawn/Day/Dusk/Night).
+-- currentTimePhase declared earlier (near currentBattleCt) so updateTimeline can read it.
+BattleEvents.TimePhaseChanged.OnClientEvent:Connect(function(data)
+	local phase = data and data.phase
+	if not phase then return end
+	currentTimePhase = phase
+	print("[BattleVisualClient] Time phase: " .. tostring(phase))
+end)
+
+-- DRAMATIC BATTLEFIELD-EVENT BANNER: a center-screen announcement that slides in,
+-- scale-punches, holds ~2s, then fades. Fired by the server when a battlefield
+-- event triggers (BattlefieldEventAnnounced). Visual-only. Reuses its own
+-- ScreenGui so it layers above the HUD and never disturbs other panels.
+local _eventBannerGui = nil
+local function showEventBanner(eventName)
+	if type(eventName) ~= "string" or eventName == "" then return end
+	-- Tear down any prior banner so rapid events don't stack.
+	if _eventBannerGui then _eventBannerGui:Destroy(); _eventBannerGui = nil end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "BattlefieldEventBanner"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.DisplayOrder = 100   -- above the HUD
+	gui.Parent = player:WaitForChild("PlayerGui")
+	_eventBannerGui = gui
+
+	-- Dim behind the banner (brief, subtle).
+	local dim = Instance.new("Frame")
+	dim.Size = UDim2.fromScale(1, 1)
+	dim.BackgroundColor3 = Color3.new(0, 0, 0)
+	dim.BackgroundTransparency = 1
+	dim.BorderSizePixel = 0
+	dim.ZIndex = 1
+	dim.Parent = gui
+
+	-- Center banner container (slides in + scale-punch).
+	local banner = Instance.new("Frame")
+	banner.AnchorPoint = Vector2.new(0.5, 0.5)
+	banner.Position = UDim2.fromScale(0.5, 0.42)
+	banner.Size = UDim2.fromScale(0.0, 0.14)   -- start collapsed; tween to full width
+	banner.BackgroundColor3 = Theme.Colors.Background or Color3.fromRGB(20, 20, 24)
+	banner.BackgroundTransparency = 0.15
+	banner.BorderSizePixel = 0
+	banner.ZIndex = 2
+	banner.Parent = gui
+	Instance.new("UICorner", banner).CornerRadius = UDim.new(0, 6)
+
+	-- Gold accent bars top + bottom.
+	local accentTop = Instance.new("Frame")
+	accentTop.Size = UDim2.new(1, 0, 0, 3)
+	accentTop.Position = UDim2.fromScale(0, 0)
+	accentTop.BackgroundColor3 = Theme.Colors.TextGold or Color3.fromRGB(230, 190, 90)
+	accentTop.BorderSizePixel = 0
+	accentTop.ZIndex = 3
+	accentTop.Parent = banner
+	local accentBot = accentTop:Clone()
+	accentBot.Position = UDim2.new(0, 0, 1, -3)
+	accentBot.Parent = banner
+
+	-- Event name text.
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.fromScale(1, 1)
+	title.BackgroundTransparency = 1
+	title.Font = Theme.Font.PrimaryBold
+	title.TextScaled = true
+	title.TextColor3 = Theme.Colors.TextGold or Color3.fromRGB(235, 205, 120)
+	title.TextStrokeColor3 = Color3.new(0, 0, 0)
+	title.TextStrokeTransparency = 0.2
+	title.Text = string.upper(eventName)
+	title.TextTransparency = 1
+	title.ZIndex = 4
+	title.Parent = banner
+	local titlePad = Instance.new("UIPadding", title)
+	titlePad.PaddingLeft = UDim.new(0, 24); titlePad.PaddingRight = UDim.new(0, 24)
+	titlePad.PaddingTop = UDim.new(0, 8); titlePad.PaddingBottom = UDim.new(0, 8)
+	local titleConstraint = Instance.new("UITextSizeConstraint", title)
+	titleConstraint.MaxTextSize = 48
+
+	-- Animate: dim in, banner slide/scale open, text fade in; hold; then fade out.
+	TweenService:Create(dim, TweenInfo.new(0.25), { BackgroundTransparency = 0.5 }):Play()
+	TweenService:Create(banner, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+		{ Size = UDim2.fromScale(0.6, 0.14) }):Play()
+	task.delay(0.15, function()
+		if title and title.Parent then
+			TweenService:Create(title, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
+		end
+	end)
+
+	-- Hold ~2s, then fade everything and clean up.
+	task.delay(2.2, function()
+		if not (gui and gui.Parent) then return end
+		TweenService:Create(dim, TweenInfo.new(0.4), { BackgroundTransparency = 1 }):Play()
+		TweenService:Create(title, TweenInfo.new(0.4), { TextTransparency = 1 }):Play()
+		TweenService:Create(banner, TweenInfo.new(0.4, Enum.EasingStyle.Quad), { BackgroundTransparency = 1 }):Play()
+		task.delay(0.45, function()
+			if gui then gui:Destroy() end
+			if _eventBannerGui == gui then _eventBannerGui = nil end
+		end)
+	end)
+end
+
+BattleEvents.BattlefieldEventAnnounced.OnClientEvent:Connect(function(data)
+	if data and BattleHUD.SetActiveEvent then BattleHUD.SetActiveEvent(data.eventName) end
+	local name = data and data.eventName
+	if not name or data.quiet then return end
+	showEventBanner(name)
+end)
+
+-- Weather/crisis: receive the active condition (one combined slot, per round).
+-- Stored for display; a visible weather label / VFX is a follow-up.
+local currentWeather = "Clear"
+BattleEvents.WeatherChanged.OnClientEvent:Connect(function(data)
+	local cond = data and data.condition
+	if not cond then return end
+	currentWeather = cond
+	if BattleHUD.SetWeather then BattleHUD.SetWeather(cond) end
+	print("[BattleVisualClient] Weather: " .. tostring(cond))
+end)
+
 BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	activeUnitId = data.unitId
 	bp.inspectedEntityId = nil  -- new turn resets inspection
 	-- VFX: highlight active unit (gold outline)
 	local _at = unitTokens[data.unitId]
 	if _at and VFXController then pcall(VFXController.SetActiveUnit, data.unitId, _at.part) end
-	-- Camera: auto-focus on unit taking its turn
-	if _at then CameraController.FocusActiveUnit(_at.part.Position) end
+	-- Camera: auto-focus on unit taking its turn. For AI (Enemy) turns, lock a
+	-- fixed isometric view for the whole turn; the player's chosen zoom/view is
+	-- captured and restored when their own turn begins (PlayerTurnPrompt).
+	local _side = unitData[data.unitId] and unitData[data.unitId].side or "Player"
+	if _at then
+		if _side ~= "Player" then
+			CameraController.BeginScriptedView()
+			CameraController.ScriptedFocus(_at.part.Position)
+		else
+			CameraController.FocusActiveUnit(_at.part.Position)
+		end
+	end
 	if unitData[data.unitId] then
 		unitData[data.unitId].statuses = mergeStatusSourceIcons(data.unitId, data.statuses)
+		syncStanceLoop(data.unitId)
 		refreshDebuffLoop(data.unitId)
 		-- Clear Guard buff (expires on new turn) and restore token color
 		if unitData[data.unitId].isGuarding then
@@ -2129,8 +3055,28 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 		timelineSnapshot = data.allUnitsRt; updateTimeline(data.allUnitsRt, nil, nil)
 	end
 	local token = unitTokens[data.unitId]
-	if token then token.label.TextColor3 = Theme.Colors.TextGold end
+	if token then token.label.TextColor3 = unitNameColor(unitData[data.unitId], true) end
 	showSelectionRing(data.unitId)
+	-- Enemy / neutral turn: keep the unit panel up and show the ACTIVE unit instead of
+	-- hiding it. Player turns are handled by PlayerTurnPrompt (full action data).
+	local _u = unitData[data.unitId]
+	if _u and _u.side ~= "Player" and not BattleHUD.IsViewMode() then
+		bp.actor = {
+			id = _u.id, name = _u.name, side = _u.side,
+			currentHp = _u.currentHp, maxHp = _u.maxHp,
+			currentMp = data.currentMp or _u.currentMp, maxMp = data.maxMp or _u.maxMp,
+			currentAp = _u.currentAp, maxAp = _u.maxAp or 2,
+			remainingRt = _u.remainingRt,
+			doctrine = _u.doctrine or "", level = _u.level, race = _u.race,
+			tileX = _u.tileX, tileY = _u.tileY,
+			elevation = getElevation(_u.tileX or 0, _u.tileY or 0),
+			statuses = _u.statuses or {},
+			actions = {},
+		}
+		bp.skill = nil; bp.target = nil; bp.preview = nil
+		bp.state = "EnemyTurn"
+		BattleHUD.Render(bp)
+	end
 end)
 
 BattleEvents.TurnOrderUpdate.OnClientEvent:Connect(function(data)
@@ -2143,6 +3089,7 @@ BattleEvents.TurnOrderUpdate.OnClientEvent:Connect(function(data)
 end)
 
 BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
+	if SoundController then SoundController.PlayTurnChime() end
 	currentPrompt = prompt
 	activeUnitId = prompt.unitId
 	-- Exit view mode so the action panel renders correctly.
@@ -2153,11 +3100,13 @@ BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
 	timelineSnapshot = prompt.timeline
 	if prompt.currentCt then currentBattleCt = prompt.currentCt end
 	isPlayerTurn = true; inputMode = nil; selectedSkill = nil
+	CameraController.EndScriptedView()  -- restore the player's last chosen zoom + view
 	enterActionSelection()
 end)
 
 BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 	local token = unitTokens[data.unitId]; if not token then return end
+	if SoundController then SoundController.PlayMove() end
 	if unitData[data.unitId] then unitData[data.unitId].tileX = data.tileX; unitData[data.unitId].tileY = data.tileY end
 	if token.model then
 		-- R15 model: handle elevation changes with arc tween
@@ -2229,12 +3178,16 @@ BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 	if data.unitId == activeUnitId then
 		CameraController.FocusActiveUnit(tileToWorld(data.tileX, data.tileY))
 	end
-	-- Reposition the facing chevron to the new tile once the move settles. The
-	-- model itself is already rotated by the move tween's lookAt, so skip re-
-	-- rotating the model here (skipModelRotate=true) to avoid fighting the tween.
+	-- Once the move tween finishes (flat 0.45s / arced 0.15+0.35s), settle BOTH the
+	-- chevron AND the model body to the unit's OFFICIAL facing (the 8-way value the
+	-- arrow + combat use), not the raw walk vector the tween aimed at. The tween
+	-- animates the body toward the walk direction for the walk itself; this final
+	-- settle (skipModelRotate=false) aligns the body with the arrow so they never
+	-- diverge after a move. The 0.5s delay lands right as the tween ends, so it
+	-- does not fight the animation.
 	task.delay(0.5, function()
 		local f = unitData[data.unitId] and unitData[data.unitId].facing
-		if f then orientUnitToFacing(data.unitId, f, true) end
+		if f then orientUnitToFacing(data.unitId, f, false) end
 	end)
 end)
 
@@ -2245,7 +3198,10 @@ BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
 	if tt then
 		-- Camera: frame both actor and target during action resolution
 		local _actorToken = unitTokens[data.actorId]
-		if _actorToken and _actorToken.part ~= tt.part then
+		if CameraController.IsScriptedView() then
+			-- AI turn: keep the fixed iso view; just re-center on the action.
+			CameraController.ScriptedFocus(tt.part.Position)
+		elseif _actorToken and _actorToken.part ~= tt.part then
 			CameraController.SaveZoom()
 			CameraController.FocusTwoTargets(_actorToken.part.Position, tt.part.Position)
 			-- Restore zoom after action visuals settle
@@ -2255,13 +3211,40 @@ BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
 			local at = unitTokens[data.actorId]
 			if at then showFloatingText(at.part.Position, data.skillName, Theme.Colors.TextGold, 1.1) end
 		end
-		showDamageText(tt.part.Position, data.damage, false)
+		-- Only show a damage number when real damage landed. Self-target / no-hit
+		-- skills (e.g. Riposte Stance) resolve with damage=0 and must NOT show '-0'.
+		if (data.damage or 0) > 0 then showDamageText(tt.part.Position, data.damage, false) end
+		-- Base animations: brief hit-reaction flinch on the target when damage lands,
+		-- and an attack swing on the actor. One-shots over the looped idle (R15 only).
+		if (data.damage or 0) > 0 then playUnitAnim(tt, "Hit", { stopAfter = 0.6 }) end
+		-- Actor action animation: a SKILL plays a cast motion; a basic attack from
+		-- range (same dist>7.5 proxy the VFX uses just below) plays a projectile
+		-- draw/shoot; an adjacent basic attack plays the melee swing. Free-default
+		-- stand-ins (swap specific ids later). One-shots over the looped idle.
+		do
+			local _at = unitTokens[data.actorId]
+			if _at then
+				local _kind = "Attack"
+				if data.skillId then
+					_kind = "Cast"
+				elseif tt and tt.part and _at.part and (_at.part.Position - tt.part.Position).Magnitude > 7.5 then
+					_kind = "Projectile"
+				end
+				playUnitAnim(_at, _kind, { stopAfter = 0.6 })
+			end
+		end
 		-- VFX: prefer a pre-made asset resolved from the skill (element/tags) or the
 		-- melee/ranged fallback; keep the programmatic beam/slash if no asset maps.
 		local _actor = unitTokens[data.actorId]
 		if _actor and VFXController then
 			local dist = (_actor.part.Position - tt.part.Position).Magnitude
 			local isRanged = dist > 7.5
+			-- SFX: skill hit resolves by tags; a plain basic attack (no skillId)
+			-- uses the melee/projectile slot (same ranged signal as the VFX).
+			if SoundController then
+				if data.skillId then SoundController.PlaySkill(data.skillId)
+				else SoundController.PlayAttack(isRanged) end
+			end
 			local assetName = nil
 			if data.skillId and VFXController.ResolveSkill then
 				assetName = VFXController.ResolveSkill(data.skillId)
@@ -2338,13 +3321,16 @@ BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
 	if tt then
 		-- Camera: frame healer and target
 		local _healActor = unitTokens[data.actorId]
-		if _healActor and _healActor.part ~= tt.part then
+		if CameraController.IsScriptedView() then
+			CameraController.ScriptedFocus(tt.part.Position)
+		elseif _healActor and _healActor.part ~= tt.part then
 			CameraController.SaveZoom()
 			CameraController.FocusTwoTargets(_healActor.part.Position, tt.part.Position)
 			task.delay(1.5, function() CameraController.RestoreZoom() end)
 		end
 		if data.skillName then local at = unitTokens[data.actorId]; if at then showFloatingText(at.part.Position, data.skillName, Theme.Colors.Success, 1.1) end end
 		showDamageText(tt.part.Position, data.amount, true)
+		if SoundController then SoundController.PlayHeal() end
 		-- VFX: pre-made heal asset if mapped, else programmatic heal particles.
 		if VFXController then
 			local reg = VFXController.GetRegistry and VFXController.GetRegistry() or nil
@@ -2379,15 +3365,40 @@ BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
 			if ex.id == data.statusId then
 				ex.remainingTurns = data.remainingTurns
 				if data.sourceIcon then ex.sourceIcon = data.sourceIcon end
+				if data.sourceDesc then ex.sourceDesc = data.sourceDesc end
+				if data.sourceDuration then ex.sourceDuration = data.sourceDuration end
 				found = true; break
 			end
 		end
-		if not found then table.insert(unitData[data.unitId].statuses, { id = data.statusId, remainingTurns = data.remainingTurns or 0, sourceIcon = data.sourceIcon }) end
+		if not found then table.insert(unitData[data.unitId].statuses, { id = data.statusId, remainingTurns = data.remainingTurns or 0, sourceIcon = data.sourceIcon, sourceDesc = data.sourceDesc, sourceDuration = data.sourceDuration }) end
 	end
 	refreshDebuffLoop(data.unitId)
+	-- Persistent standalone loops (NOT round-robined with debuffs):
+	-- Guard status -> Shield-01 while active; stance pill (synthetic id not in
+	-- STATUSES, carries sourceIcon) -> Charging while active.
+	do
+		local reg = VFXController and VFXController.GetRegistry and VFXController.GetRegistry() or nil
+		if reg then
+			if data.statusId == "Guard" and reg.GuardLoop then
+				startPersistentLoop(data.unitId, "guard", reg.GuardLoop)
+				if SoundController then SoundController.PlayGuard() end
+			else
+				local isRealStatus = GameConstants.STATUSES and GameConstants.STATUSES[data.statusId] ~= nil
+				if not isRealStatus and reg.Stance then
+					startPersistentLoop(data.unitId, "stance", reg.Stance)
+				end
+			end
+		end
+	end
 	local t = unitTokens[data.unitId]
 	if t then
 		showStatusText(t.part.Position, "+"..data.statusId, Theme.GetStatusColor(data.statusId))
+		-- SFX: play a buff/debuff sound based on the status kind (skip Guard — it
+		-- has its own sound above; synthetic stance pills have no STATUSES def).
+		if SoundController and data.statusId ~= "Guard" then
+			local _def = GameConstants.STATUSES and GameConstants.STATUSES[data.statusId]
+			if _def and _def.kind then SoundController.PlayStatus(_def.kind) end
+		end
 		-- VFX: pre-made status asset if mapped, else programmatic colored burst.
 		if VFXController then
 			local statusAsset = VFXController.ResolveStatus and VFXController.ResolveStatus(data.statusId) or nil
@@ -2405,6 +3416,7 @@ BattleEvents.StatusExpired.OnClientEvent:Connect(function(data)
 		for i, s in ipairs(unitData[data.unitId].statuses) do if s.id == data.statusId then table.remove(unitData[data.unitId].statuses, i); break end end
 	end
 	refreshDebuffLoop(data.unitId)
+	if data.statusId == "Guard" then stopPersistentLoop(data.unitId, "guard") end
 	local t = unitTokens[data.unitId]
 	if t then showStatusText(t.part.Position, "-"..data.statusId, Theme.Colors.TextSecondary) end
 end)
@@ -2419,13 +3431,41 @@ end)
 BattleEvents.ChannelFizzled.OnClientEvent:Connect(function(data)
 	local t = unitTokens[data.actorId]
 	if t then showFloatingText(t.part.Position, (data.skillName or "Skill").." fizzled!", Theme.Colors.Warning, 1.5) end
+	if data.actorId then stopPersistentLoop(data.actorId, "channel") end
+end)
+
+-- Channel loop lifecycle: start Charging 1 (damage) / Charging 2 (heal) on the
+-- caster; stop on execute (ChannelEnded) or interrupt (ChannelFizzled above).
+BattleEvents.ChannelStarted.OnClientEvent:Connect(function(data)
+	if not data or not data.unitId then return end
+	local reg = VFXController and VFXController.GetRegistry and VFXController.GetRegistry() or nil
+	local asset = reg and (data.isHealing and reg.ChannelHeal or reg.ChannelDamage) or nil
+	if asset then startPersistentLoop(data.unitId, "channel", asset) end
+	if SoundController then SoundController.StartChannel(data.unitId) end
+end)
+
+BattleEvents.ChannelEnded.OnClientEvent:Connect(function(data)
+	if data and data.unitId then stopPersistentLoop(data.unitId, "channel") end
+	if SoundController then SoundController.StopChannel(data.unitId) end
+end)
+
+-- Multi-target (Cleave) flourish: play Multi-Slash ON THE ATTACKER once. Each
+-- struck target already played its own Hit via UnitActed.
+BattleEvents.MultiTargetHit.OnClientEvent:Connect(function(data)
+	if not data or not data.unitId then return end
+	local at = unitTokens[data.unitId]
+	local reg = VFXController and VFXController.GetRegistry and VFXController.GetRegistry() or nil
+	if at and reg and reg.MultiTarget and VFXController.PlayAsset then
+		pcall(VFXController.PlayAsset, reg.MultiTarget, at.part.Position, 1.2)
+	end
 end)
 
 BattleEvents.TurnEnded.OnClientEvent:Connect(function(data)
-	local t = unitTokens[data.unitId]; if t then t.label.TextColor3 = Theme.Colors.TextPrimary end
+	local t = unitTokens[data.unitId]; if t then t.label.TextColor3 = unitNameColor(unitData[data.unitId]) end
 	hideSelectionRing()
 	if unitData[data.unitId] then
 		unitData[data.unitId].statuses = mergeStatusSourceIcons(data.unitId, data.statuses)
+		syncStanceLoop(data.unitId)
 		if data.currentMp then unitData[data.unitId].currentMp = data.currentMp; updateMpBar(data.unitId, data.currentMp, unitData[data.unitId].maxMp or 0) end
 		refreshDebuffLoop(data.unitId)
 	end
@@ -2433,6 +3473,23 @@ end)
 
 BattleEvents.UnitDefeated.OnClientEvent:Connect(function(data)
 	local t = unitTokens[data.unitId]
+	-- Unit LEFT the map (e.g. Merchant Caravan exit): vanish quietly — no KO
+	-- smoke/sound/anim/grey body — and forget the token. Real defeats never set this.
+	if data and data.removeUnit then
+		if t then
+			stopAllPersistentLoops(data.unitId)
+			clearActionLabel(data.unitId)
+			if SoundController then SoundController.StopChannel(data.unitId) end
+			if t.model and t.model.Parent then t.model:Destroy() end
+			if t.part and t.part.Parent then t.part:Destroy() end
+			-- Facing arrow pad lives in visualFolder (not under the token), so remove it too.
+			if t.facePad and t.facePad.Parent then t.facePad:Destroy() end
+		end
+		if VFXController then pcall(VFXController.ClearHighlight, data.unitId) end
+		unitTokens[data.unitId] = nil
+		unitData[data.unitId] = nil
+		return
+	end
 	if t then
 		if not t.model then
 			-- Cylinder fallback: dim the part directly
@@ -2443,10 +3500,18 @@ BattleEvents.UnitDefeated.OnClientEvent:Connect(function(data)
 	if unitData[data.unitId] then unitData[data.unitId].isAlive = false end
 	refreshDebuffLoop(data.unitId)  -- unit dead -> loop self-clears
 	clearActionLabel(data.unitId)
+	stopAllPersistentLoops(data.unitId)
+	if SoundController then
+		SoundController.StopChannel(data.unitId)  -- stop any channel loop on death
+		SoundController.PlayKO()
+	end
 	-- VFX: KO smoke puff + persistent grey highlight
 	if t then
 		if VFXController then pcall(VFXController.KOEffect, t.part.Position) end
 		if VFXController then pcall(VFXController.SetPersistHighlight, data.unitId, t.part, "ko") end
+		-- Base KO animation: stop the looped idle and play a fall/faint one-shot (R15 only).
+		stopUnitIdle(t)
+		playUnitAnim(t, "KO", { stopAfter = 2.0 })
 	end
 end)
 
@@ -2508,6 +3573,9 @@ BattleEvents.UnitPushed.OnClientEvent:Connect(function(data)
 end)
 
 BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
+	if SoundController then SoundController.StopAllChannels() end
+	if VFXController and VFXController.ClearAllTileEffects then pcall(VFXController.ClearAllTileEffects) end
+	if BattleHUD.SetActiveEvent then BattleHUD.SetActiveEvent(nil) end
 	isPlayerTurn = false; inputMode = nil; clearHighlights()
 	hideSelectionRing()
 	bp.state = "BattleEnded"; BattleHUD.Render(bp)
@@ -3745,6 +4813,8 @@ BattleEvents.MapDataSync.OnClientEvent:Connect(function(mapData)
 		-- the old panel first.
 		createDevCameraPanel()
 		if VFXController then pcall(VFXController.Init, biome) end
+		-- Place persistent waterfall splash VFX at waterfall bases (visual-only).
+		placeWaterfallSplashes()
 	print("[BattleVisualClient] MapDataSync received — terrain/elevation updated on client")
 	-- Initialize terrain-conforming tile highlights
 	if TileHL then
@@ -3807,6 +4877,18 @@ BattleEvents.ItemUsed.OnClientEvent:Connect(function(data)
 		or data.targetName or "?"
 	local amount     = data.amount or 0
 	local effectType = data.effectType or ""
+	-- SFX: map the item's effect to a sound bucket (payload carries effectType,
+	-- not the consumable category). HpRestore/MpRestore -> Recovery, Damage ->
+	-- Damage, anything else -> Default.
+	if SoundController then
+		local _cat = "Default"
+		if effectType == "HpRestore" or effectType == "MpRestore" then _cat = "Recovery"
+		elseif effectType == "Damage" then _cat = "Damage" end
+		SoundController.PlayItem(_cat)
+	end
+	-- Base animation: the actor plays a generic item-use motion (free-default
+	-- stand-in; R15 models only, cylinders no-op).
+	do local _au = data.actorId and unitTokens[data.actorId]; if _au then playUnitAnim(_au, "ItemUse", { stopAfter = 0.7 }) end end
 
 	-- Refresh the target unit's bars from the effect result. The server already
 	-- mutated HP/MP; pull the freshest values we know client-side and nudge bars.
@@ -3851,7 +4933,10 @@ BattleEvents.ItemUsed.OnClientEvent:Connect(function(data)
 	BattleHUD.AddLogEntry(string.format("%s used %s — %s", actorName, data.itemName or "item", summary))
 end)
 
--- FacingPrompt: server asks player to choose facing direction (Guard/Wait only)
+-- FacingPrompt: server asks player to choose a direction via the ground ring.
+-- Used for Guard/Wait facing AND for siege aiming (Ballista cardinal bolt —
+-- aimMode="siege" in the payload); renders the same ring for any FacingPrompt
+-- carrying a unitId + known position.
 BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
 	if not data or not data.unitId then return end
 

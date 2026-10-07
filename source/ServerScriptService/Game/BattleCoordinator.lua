@@ -34,6 +34,18 @@ local _tileEffectService = nil
 function BattleCoordinator.SetTileEffectService(tes)
 	_tileEffectService = tes
 end
+
+-- Weather engine (injected to avoid a require cycle; BattleCoordinator is required
+-- widely). Drives the per-round re-roll + 300-CT periodic tick off the clock.
+local _weatherService = nil
+function BattleCoordinator.SetWeatherService(ws)
+	_weatherService = ws
+end
+
+local _battlefieldEventService = nil
+function BattleCoordinator.SetBattlefieldEventService(bes)
+	_battlefieldEventService = bes
+end
 --------------------------------------------------
 -- CONSTANTS
 --------------------------------------------------
@@ -62,6 +74,39 @@ end
 -- BATTLE STATE
 --------------------------------------------------
 
+-- Time-of-day cycle: one phase per 1000-CT round, in order. phase index =
+-- floor(ct / 1000) % 4. Battle starts at Dawn (ct 0).
+local TIME_PHASES = { "Dawn", "Day", "Dusk", "Night" }
+local function timePhaseForCt(ct)
+	local idx = math.floor((ct or 0) / 1000) % 4
+	return TIME_PHASES[idx + 1]
+end
+
+-- Recompute state.timePhase from the clock; on a change, inform RacePassiveService
+-- and flag day/night-dependent units (Vampire/Werewolf) for a stat resync so their
+-- +/- bonuses flip at the boundary. Returns true if the phase changed.
+local function updateTimePhase(state)
+	local newPhase = timePhaseForCt(state.ct)
+	if newPhase == state.timePhase then return false end
+	state.timePhase = newPhase
+	RacePassiveService.SetTimePhase(newPhase)
+	-- Resync affected living units now (RefreshConditionalStats rebuilds only on
+	-- an actual bonus-state flip, so non-affected races are cheap no-ops).
+	for _, u in ipairs(state.units) do
+		if u.isAlive and RacePassiveService.RefreshConditionalStats(u) then
+			state.ctStatusUnits = state.ctStatusUnits or {}
+			table.insert(state.ctStatusUnits, u)
+		end
+	end
+	print(string.format("[BattleCoordinator] Time phase -> %s (ct=%d)", newPhase, state.ct))
+	-- BattleCoordinator has no broadcaster handle (BattleVisualBroadcaster is a nil
+	-- global here — calling it directly crashed the turn loop). Stash the new phase
+	-- on state; the driver (Main) broadcasts it after AdvanceClock, same pattern as
+	-- ctStatusUnits.
+	state.pendingTimePhase = newPhase
+	return true
+end
+
 function BattleCoordinator.CreateBattleState(units)
 	assert(
 		type(units) == "table" and #units >= 2,
@@ -81,6 +126,7 @@ function BattleCoordinator.CreateBattleState(units)
 		phase           = "Waiting",
 		winner          = nil,
 		turnCount       = 0,
+		timePhase       = "Dawn",   -- time cycle: Dawn->Day->Dusk->Night, one per 1000 CT
 	}
 
 	return state
@@ -115,6 +161,19 @@ function BattleCoordinator.StartChanneling(state, unit, channelingData)
 	-- The caster's remainingRt is set by the NORMAL EndTurn (base + skill RT cost) in
 	-- CommandService — NOT here — so the caster keeps a real, independent RT.
 	local channelRt     = channelingData and channelingData.channelRt or 0
+	-- ACTIVATION TIME (2026-10-07, frameworks 10/37 + skill_resolution_pipeline 4):
+	-- after the channel completes, ONE activation event is scheduled at
+	-- +activationCt. Phase "Channel" is interruptible; phase "Activation" is not.
+	-- A zero-channel skill with activation > 0 starts directly in "Activation".
+	local activationCt  = channelingData and channelingData.activationCt or 0
+	if channelRt <= 0 and activationCt > 0 then
+		unit.channelPhase        = "Activation"
+		unit.pendingActivationCt = 0
+		channelRt                = activationCt
+	else
+		unit.channelPhase        = "Channel"
+		unit.pendingActivationCt = activationCt
+	end
 	unit.channelRt      = channelRt
 	unit.channelResolveCt = (state and state.ct or 0) + channelRt
 	print(string.format(
@@ -127,6 +186,14 @@ end
 
 function BattleCoordinator.InterruptChanneling(unit, reason)
 	if not unit.isChanneling then return false end
+	-- Activation Time cannot be interrupted once scheduled (frameworks 10/37).
+	-- Only the caster's death still cancels it.
+	if unit.channelPhase == "Activation" and reason ~= "death" then
+		print(string.format(
+			"[BattleCoordinator] %s activation NOT interrupted (%s) — activation time is uninterruptible",
+			unit.name, reason or "unknown"))
+		return false
+	end
 	local skillName = unit.channelingData and unit.channelingData.skillDef
 		and (unit.channelingData.skillDef.name or unit.channelingData.skillDef.id)
 		or "unknown"
@@ -134,10 +201,35 @@ function BattleCoordinator.InterruptChanneling(unit, reason)
 	unit.channelingData = nil
 	unit.channelRt      = nil
 	unit.channelResolveCt = nil
+	unit.channelPhase   = nil
+	unit.pendingActivationCt = nil
 	print(string.format(
 		"[BattleCoordinator] %s channeling INTERRUPTED [%s] — %s (MP not spent)",
 		unit.name, skillName, reason or "unknown"
 	))
+	return true
+end
+
+-- Called by the main loop at a channel deadline BEFORE firing the skill. If the
+-- skill still owes Activation Time, switch to the uninterruptible Activation phase
+-- (deadline = now + activation), return the clock to Waiting and return true
+-- (nothing fires yet). Returns false when the skill should fire now.
+function BattleCoordinator.BeginActivationPhase(state, unit)
+	if not (unit and unit.isChanneling and unit.channelPhase == "Channel") then return false end
+	local act = unit.pendingActivationCt or 0
+	if act <= 0 then return false end
+	unit.channelPhase        = "Activation"
+	unit.pendingActivationCt = 0
+	unit.channelRt           = act
+	unit.channelResolveCt    = (state.ct or 0) + act
+	if state.phase == "ChannelResolve" then
+		state.phase = "Waiting"
+		state.channelResolveUnit = nil
+	end
+	local sd = unit.channelingData and unit.channelingData.skillDef
+	print(string.format(
+		"[BattleCoordinator] CT:%d | %s channel complete [%s] -> ACTIVATION (%d CT, uninterruptible, lands at CT %d)",
+		state.ct or 0, unit.name, sd and (sd.name or sd.id) or "?", act, unit.channelResolveCt))
 	return true
 end
 
@@ -230,6 +322,31 @@ local function advanceToNextReady(state)
 		local frozen = unit.isChanneling and unit.remainingRt <= 0
 		if not frozen then
 			unit.remainingRt = unit.remainingRt - minRt
+		end
+	end
+
+	-- Time cycle: advance Dawn/Day/Dusk/Night as the clock crosses 1000-CT rounds.
+	updateTimePhase(state)
+
+	-- Weather engine: per-round re-roll at each 1000-CT boundary + 300-CT periodic
+	-- tick. Deterministic rng seeded from the clock (no stored seed needed).
+	if _weatherService then
+		local wRng = Random.new(state.ct + 54321)
+		_weatherService.RerollForNewRound(state, wRng, state.ct)
+		_weatherService.Tick(state, minRt, wRng, state.ct)
+	end
+
+	-- Battlefield events: evaluate conditional/round-gated spawns once per 1000-CT
+	-- round boundary (separate from the weather slot; events layer on top).
+	if _battlefieldEventService then
+		local roundIndex = math.floor((state.ct or 0) / 1000)
+		if state.bfRound == nil or roundIndex > state.bfRound then
+			state.bfRound = roundIndex
+			local bfRng = Random.new((state.ct or 0) + 70007)
+			local ok, err = pcall(_battlefieldEventService.OnRoundStart, state, roundIndex, bfRng)
+			if not ok then
+				warn("[BattleCoordinator] BattlefieldEventService.OnRoundStart error: " .. tostring(err))
+			end
 		end
 	end
 
@@ -367,6 +484,11 @@ function BattleCoordinator.AdvanceClock(state)
 	-- Tile effect CT tick: decay durations, fire periodic damage
 	if ctPassed > 0 and _tileEffectService then
 		_tileEffectService.ProcessCtTick(ctPassed, state.units)
+		-- Burning spread: secondary post-tick propagation (TRG-012 cadence guard
+		-- lives inside ProcessSpread). Runs after ProcessCtTick per element Step 5.
+		if _tileEffectService.ProcessSpread then
+			_tileEffectService.ProcessSpread(ctPassed)
+		end
 	end
 
 	-- TWO-TIMER MODEL: channel-resolution signal. The clock reached a channeling
@@ -387,6 +509,12 @@ function BattleCoordinator.AdvanceClock(state)
 
 	-- Reset once-per-turn Guard limit (Guard status expires via StatusService tick)
 	nextUnit.guardUsedThisTurn = false
+	-- Reset once-per-turn Momentum AP gain (Perks & Flaws Phase 3, TRAIT-P-162).
+	nextUnit.momentumUsedThisTurn = false
+	nextUnit.pendingKoApGain = 0
+	-- Reset per-turn on-KO recovery accumulators (Bloodbath/Soul Charge 45% cap).
+	nextUnit.koHpThisTurn = 0
+	nextUnit.koMpThisTurn = 0
 
 	-- Process DoT at start of turn (Poison/Burn damage)
 	local dotEvents = StatusService.ProcessStartOfTurn(nextUnit)
@@ -401,6 +529,8 @@ function BattleCoordinator.AdvanceClock(state)
 	-- Reset doctrine per-turn state (Slice 4H)
 	DoctrinePassiveService.OnTurnStart(nextUnit)
 	ArmorPassiveService.OnTurnStart(nextUnit)
+	-- Race start-of-turn hooks (2026-10-02): Troll Regrowth, Dragonkin resync.
+	RacePassiveService.OnTurnStart(nextUnit, state)
 
 	print(string.format(
 		"[BattleCoordinator] CT:%d | Turn %d | %s%s",
@@ -439,12 +569,20 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 		state.turnRtAccrued   = 0
 		state.turnActionTaken = false
 		unit.guardUsedThisTurn = false
+		-- Reset once-per-turn Momentum AP gain (Perks & Flaws Phase 3, TRAIT-P-162).
+		unit.momentumUsedThisTurn = false
+		unit.pendingKoApGain = 0
+		-- Reset per-turn on-KO recovery accumulators (Bloodbath/Soul Charge 45% cap).
+		unit.koHpThisTurn = 0
+		unit.koMpThisTurn = 0
 		local dotEvents = StatusService.ProcessStartOfTurn(unit)
 		state.dotEvents = dotEvents
 		UnitSchema.RefreshAp(unit)
 		unit.currentAp = AP_PER_TURN_STANDARD
 		DoctrinePassiveService.OnTurnStart(unit)
 		ArmorPassiveService.OnTurnStart(unit)
+		-- Race start-of-turn hooks (2026-10-02): Troll Regrowth, Dragonkin resync.
+		RacePassiveService.OnTurnStart(unit, state)
 		print(string.format(
 			"[BattleCoordinator] CT:%d | Channel resolved -> %s takes immediate turn (was frozen at 0 RT)",
 			state.ct, unit.name
@@ -497,6 +635,9 @@ function BattleCoordinator.EndTurn(state)
 	-- Tick statuses: decrement durations, remove expired.
 	local expired = StatusService.TickStatuses(unit)
 
+	-- Race end-of-turn hooks (2026-10-02): Insectoid Molt Cycle, Dragonkin resync.
+	RacePassiveService.OnTurnEnd(unit, state)
+
 	print(string.format(
 		"[BattleCoordinator] Turn ended | %s | Next RT: %d | ModBaseRT: %d",
 		unit.name,
@@ -534,6 +675,9 @@ function BattleCoordinator.EndTurnChanneling(state, channelRt)
 
 	-- Tick statuses even during channeling (so Slow/Poison timers still count down)
 	local expired = StatusService.TickStatuses(unit)
+
+	-- Race end-of-turn hooks (2026-10-02): Insectoid Molt Cycle, Dragonkin resync.
+	RacePassiveService.OnTurnEnd(unit, state)
 
 	state.turnCount     = state.turnCount + 1
 	state.activeUnit    = nil

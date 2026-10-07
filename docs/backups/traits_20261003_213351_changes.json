@@ -1,0 +1,84 @@
+{
+  "timestamp": "20261003_213351",
+  "backup": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_pre_traits_20261003_213351.db",
+  "changes": [
+    {
+      "trait_id": "TRAIT-F-155",
+      "before": {
+        "name": "Bleed Ward",
+        "effect": "Cannot inflict or trigger bleed with attacks.",
+        "notes": ""
+      },
+      "after": {
+        "name": "Bleed Phobia",
+        "effect": "Cannot inflict or trigger bleed with attacks.",
+        "notes": "2026-10-03: renamed from \"Bleed Ward\" (Ward→Phobia flaw rename, decided 2026-09-29). Effect unchanged."
+      }
+    },
+    {
+      "trait_id": "TRAIT-F-157",
+      "before": {
+        "name": "Burn Ward",
+        "effect": "Attacking a target with burn triggers accumulated burn damage. Burn inflicted -5% of base damage.",
+        "notes": ""
+      },
+      "after": {
+        "name": "Burn Phobia",
+        "effect": "Cannot trigger accumulated burn damage with attacks. Burn inflicted -5% of base damage.",
+        "notes": "2026-10-03: renamed from \"Burn Ward\" (Ward→Phobia, decided 2026-09-29). Effect fixed: first sentence was copied un-inverted from Burn Specialist (granted the perk's burn-trigger benefit); now mirrors it as a penalty."
+      }
+    },
+    {
+      "trait_id": "TRAIT-F-163",
+      "before": {
+        "name": "Poison Ward",
+        "effect": "Cannot inflict or trigger poison with attacks.",
+        "notes": ""
+      },
+      "after": {
+        "name": "Poison Phobia",
+        "effect": "Cannot inflict or trigger poison with attacks.",
+        "notes": "2026-10-03: renamed from \"Poison Ward\" (Ward→Phobia flaw rename, decided 2026-09-29). Effect unchanged."
+      }
+    },
+    {
+      "trait_id": "TRAIT-F-166",
+      "before": {
+        "name": "Venom Ward",
+        "effect": "Cannot inflict or trigger venom with attacks.",
+        "notes": ""
+      },
+      "after": {
+        "name": "Venom Phobia",
+        "effect": "Cannot inflict or trigger venom with attacks.",
+        "notes": "2026-10-03: renamed from \"Venom Ward\" (Ward→Phobia flaw rename, decided 2026-09-29). Effect unchanged."
+      }
+    },
+    {
+      "trait_id": "TRAIT-F-160",
+      "before": {
+        "name": "Lifeless",
+        "effect": "Cannot heal from direct damage dealt.",
+        "notes": ""
+      },
+      "after": {
+        "name": "Lifeless",
+        "effect": "Recoil: after dealing direct damage, this unit takes self-damage equal to 4% of the direct damage dealt (half of Lifesteal's 8%). Non-lethal: recoil can never reduce HP below 1.",
+        "notes": "2026-10-03: half-recoil rewrite (decided 2026-09-29). Replaces old \"Cannot heal from direct damage dealt.\" Recoil = 50% of paired Lifesteal value (8% → 4%). Never kills: floors at 1 HP."
+      }
+    },
+    {
+      "trait_id": "TRAIT-F-174",
+      "before": {
+        "name": "Lifeless (Greater)",
+        "effect": "Cannot heal from direct damage dealt.",
+        "notes": ""
+      },
+      "after": {
+        "name": "Lifeless (Greater)",
+        "effect": "Recoil: after dealing direct damage, this unit takes self-damage equal to 4.8% of the direct damage dealt (half of Greater Lifesteal's 9.6%). Non-lethal: recoil can never reduce HP below 1.",
+        "notes": "2026-10-03: half-recoil rewrite (decided 2026-09-29). Replaces old \"Cannot heal from direct damage dealt.\" Recoil = 50% of paired Greater Lifesteal value (9.6% → 4.8%). Never kills: floors at 1 HP."
+      }
+    }
+  ]
+}

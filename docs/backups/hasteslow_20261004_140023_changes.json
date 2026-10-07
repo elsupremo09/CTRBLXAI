@@ -1,0 +1,64 @@
+{
+ "stamp": "20261004_140023",
+ "backup_db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_pre_hasteslow_20261004_140023.db",
+ "backup_xlsx": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Game_Rules_pre_hasteslow_20261004_140023.xlsx",
+ "log": [
+  {
+   "table": "elements_statuses",
+   "key": "id=70",
+   "column": "effect",
+   "before": "Modified Base RT = Base RT x 0.90. Affects Base RT-derived costs. Does not affect skill card RT, channel time, activation time, MP, or WT.",
+   "after": "Modified Base RT = Base RT x 0.90. Affects every Base RT-derived per-turn cost (Move, Basic Attack, Guard, Interact, Item, Push, Rest) AND the base-RT component of weapon-WT-based Skill RT. Skill RT = round((Modified Base RT x 0.10 + Effective Weapon WT) x SkillMult), so Haste lowers only the base component (e.g. Modified Base RT 400 -> 360, base component 40 -> 36). Haste does NOT scale the Effective Weapon WT term and does NOT change the SkillMult (N) - the base component is the only part of Skill RT derived from Modified Base RT. N still multiplies the (smaller) base component, so the RT saved = 4 x N at Modified Base RT 400. Examples (Effective Weapon WT 30): Fire Bolt N 1.00: 70 -> 66; Meteor Marker N 1.40: 98 -> 92. Skills with a FIXED / level-based RT formula (e.g. round(70 + 0.25 x L)) have no base component and are unaffected. Does not affect channel time, activation time, MP, or WT. USER RULING 2026-10-04: Haste now reaches Skill RT via the base component; this SUPERSEDES the old clause 'Does not affect skill card RT', which was written for the pre-base-component (weapon-WT-only) skill RT formula. See project_rules id 136 / open_decisions #78."
+  },
+  {
+   "table": "elements_statuses",
+   "key": "id=71",
+   "column": "effect",
+   "before": "Modified Base RT = Base RT x 1.10. Same scope as Haste: affects Base RT-derived costs only. Does not affect Skill Card RT, channel time, activation time, MP, or WT.",
+   "after": "Modified Base RT = Base RT x 1.10. Same scope as Haste: affects every Base RT-derived per-turn cost (Move, Basic Attack, Guard, Interact, Item, Push, Rest) AND the base-RT component of weapon-WT-based Skill RT. Skill RT = round((Modified Base RT x 0.10 + Effective Weapon WT) x SkillMult), so Slow raises only the base component (e.g. Modified Base RT 400 -> 440, base component 40 -> 44). Slow does NOT scale the Effective Weapon WT term and does NOT change the SkillMult (N) - the base component is the only part of Skill RT derived from Modified Base RT. N still multiplies the (larger) base component, so the RT added = 4 x N at Modified Base RT 400. Examples (Effective Weapon WT 30): Fire Bolt N 1.00: 70 -> 74; Meteor Marker N 1.40: 98 -> 104. Skills with a FIXED / level-based RT formula (e.g. round(70 + 0.25 x L)) have no base component and are unaffected. Does not affect channel time, activation time, MP, or WT. USER RULING 2026-10-04: Slow now reaches Skill RT via the base component; this SUPERSEDES the old clause 'Does not affect Skill Card RT', which was written for the pre-base-component (weapon-WT-only) skill RT formula. See project_rules id 136 / open_decisions #78."
+  },
+  {
+   "table": "project_rules",
+   "key": "id=136",
+   "column": "notes",
+   "before": "Locked — USER RULING 2026-10-04 (canon-reconciliation, recorded by Designer). Per-skill rows rewritten in skills.RT_Cost_Formula; canon statements core_stats id 20 + frameworks id 7 updated. DEV CHANGE PENDING (source to implement after record). Not Studio-tested.",
+   "after": "Locked — USER RULING 2026-10-04 (canon-reconciliation, recorded by Designer). Per-skill rows rewritten in skills.RT_Cost_Formula; canon statements core_stats id 20 + frameworks id 7 updated. DEV CHANGE PENDING (source to implement after record). Not Studio-tested. HASTE/SLOW CROSS-REFERENCE (USER RULING 2026-10-04): conflict RESOLVED in favor of 'Haste/Slow affect the skill RT base component'. Haste (x0.90) / Slow (x1.10) modify Modified Base RT, so they change the Modified Base RT x 0.10 term of Skill RT (400 base: 40 -> 36 / 44) - consistent with Basic Attack RT. They do NOT scale Effective Weapon WT or SkillMult N. Frenzy (elements_statuses id 72) unchanged: it halves only the Basic Attack base component, not the skill base component. Fixed / level-based RT skills unaffected. Canon: elements_statuses ids 70, 71 (old 'does not affect Skill Card RT' clause superseded)."
+  },
+  {
+   "table": "open_decisions",
+   "key": "rowid=78",
+   "column": "col_3",
+   "before": "RESOLVED 2026-10-04 (USER RULING). Skill RT = round((Modified Base RT × 0.10 + Effective Weapon WT) × N) for all skills previously authored as round(Effective Weapon WT × N); N preserved per skill; N scales the whole cost. Fixed/level-based RT skills untouched. Supersedes old weapon-WT-only model. Canon: project_rules id 136, core_stats id 20, frameworks id 7, skills.RT_Cost_Formula. Examples (ModBaseRT 400, EffWT 30): Fire Bolt 70, Meteor Marker 98. DEV CHANGE PENDING. FOLLOW-UP FLAGGED FOR USER: elements_statuses Haste (id 70) and Slow (id 71) say they 'do not affect Skill Card RT'. Under the new formula Skill RT contains Modified Base RT, so Haste/Slow would now shift skill RT indirectly (e.g. Haste: 40 -> 36 base component). Those rows were NOT edited - user to confirm whether Haste/Slow should now reach skill RT (literal reading of the ruling) or skills should use un-hasted Base RT.",
+   "after": "RESOLVED 2026-10-04 (USER RULING). Skill RT = round((Modified Base RT × 0.10 + Effective Weapon WT) × N) for all skills previously authored as round(Effective Weapon WT × N); N preserved per skill; N scales the whole cost. Fixed/level-based RT skills untouched. Supersedes old weapon-WT-only model. Canon: project_rules id 136, core_stats id 20, frameworks id 7, skills.RT_Cost_Formula. Examples (ModBaseRT 400, EffWT 30): Fire Bolt 70, Meteor Marker 98. DEV CHANGE PENDING. FOLLOW-UP FLAGGED FOR USER: elements_statuses Haste (id 70) and Slow (id 71) say they 'do not affect Skill Card RT'. Under the new formula Skill RT contains Modified Base RT, so Haste/Slow would now shift skill RT indirectly (e.g. Haste: 40 -> 36 base component). Those rows were NOT edited - user to confirm whether Haste/Slow should now reach skill RT (literal reading of the ruling) or skills should use un-hasted Base RT. HASTE/SLOW FOLLOW-UP RESOLVED 2026-10-04 (USER RULING): Haste/Slow DO affect Skill RT, via the base component only (literal reading adopted; skills do NOT use un-hasted Base RT). Haste: base component 40 -> 36; Slow: 40 -> 44 (Modified Base RT 400). Effective Weapon WT term and SkillMult N are NOT scaled. Frenzy (id 72) unchanged. elements_statuses ids 70/71 now updated; old 'does not affect Skill Card RT' clause superseded (written for the pre-base-component formula). Cross-ref: project_rules id 136."
+  },
+  {
+   "table": "skills",
+   "key": "Skill_ID=SKL-INVIGORATE",
+   "column": "Special_Rules",
+   "before": "Dual-buff support skill. Instant cast (no channel) — safe to use under pressure. Moderate costs. Haste doesn't affect skill RT or channel — it speeds up base recovery between actions. Regeneration stacks with itself via extend (repeated casts lengthen duration).",
+   "after": "Dual-buff support skill. Instant cast (no channel) — safe to use under pressure. Moderate costs. Haste speeds up base recovery between actions and (USER RULING 2026-10-04) also trims the base component of weapon-WT-based Skill RT (Modified Base RT x 0.10: 40 -> 36); it does not affect channel time, Effective Weapon WT, or SkillMult, and does not change Invigorate's own fixed RT formula. Regeneration stacks with itself via extend (repeated casts lengthen duration)."
+  }
+ ],
+ "xlsx_cells": [
+  [
+   "04 Elements Statuses",
+   "F29"
+  ],
+  [
+   "04 Elements Statuses",
+   "F30"
+  ],
+  [
+   "01 Project Identity",
+   "D135"
+  ],
+  [
+   "18 Open Decisions",
+   "C78"
+  ],
+  [
+   "05b Skill Catalog",
+   "U49"
+  ]
+ ]
+}

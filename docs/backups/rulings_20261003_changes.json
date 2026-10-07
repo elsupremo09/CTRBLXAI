@@ -1,0 +1,266 @@
+{
+ "stamp": "20261003_213223",
+ "backup_db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_pre_rulings_20261003_213223.db",
+ "backup_xlsx": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Game_Rules_pre_rulings_20261003_213223.xlsx",
+ "backup_index": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\INDEX_pre_rulings_20261003_213223.txt",
+ "counts_before": {
+  "project_rules": 133,
+  "skills": 107,
+  "trigger_safety": 21,
+  "open_decisions": 76
+ },
+ "counts_after": {
+  "project_rules": 133,
+  "skills": 107,
+  "trigger_safety": 21,
+  "open_decisions": 77
+ },
+ "log": [
+  [
+   "project_rules",
+   131,
+   [
+    131,
+    "Interact Command",
+    "Native — Overview",
+    "Interact is the global Head-slot action. Costs 1 AP. Native actions by target (map object / enemy / ally / KO'd ally) are built-in and do NOT require headgear. Head equipment passives ENHANCE these native actions; they do not enable them. All RT costs are a percentage of Modified Base RT (includes armor WT).",
+    "Locked — Design Session 2026-10-02"
+   ],
+   [
+    131,
+    "Interact Command",
+    "Native — Overview",
+    "Interact is the global Head-slot action. Costs 1 AP. Native actions by target (map object / enemy / ally / KO'd ally) are built-in and do NOT require headgear. Head equipment passives ENHANCE these native actions; they do not enable them. All RT costs are a percentage of Modified Base RT (includes armor WT). TARGET-SIDE FILTER (USER RULING 2026-10-03): RECRUIT -> ENEMY units only (units hostile to the interacting unit). AID (living-ally RT boost) and REVIVE (KO'd-ally resuscitation) -> ALLIED units only. NEUTRAL units get NO native unit-Interact option - this includes NPC/neutral units AND any unit recruited this battle (a recruited unit becomes Neutral, so it cannot be Recruited again, Aided, or Revived). Map-object Interact is unaffected. Authored battlefield-event NPC interactions (battlefield_events, e.g. Merchant Caravan, Fortune Teller) are event-defined, not native Recruit/Aid/Revive, and are not changed by this filter. REJECT WITHOUT PAYMENT: an Interact that fails any of its checks (wrong side, enemy HP above the recruit threshold, ineligible unit type, etc.) is rejected BEFORE commitment - NO AP, RT, or other cost is spent (command_pipeline step 2 'Reject with no cost/state change'; validation_matrix 'Failed validation changes no AP/MP/HP/RT/state').",
+    "Locked — Design Session 2026-10-02; target-side filter + reject-without-payment added 2026-10-03 (USER RULING). DEV CHANGE PENDING (Interact target filtering; no AP/RT charged when an Interact fails its checks). Not Studio-tested."
+   ]
+  ],
+  [
+   "project_rules",
+   133,
+   [
+    133,
+    "Interact Command",
+    "Native — Recruit Enemy",
+    "Interact on an enemy whose current HP is <=5% of max recruits it. Recruited unit becomes a controllable NEUTRAL for the rest of the battle. If still alive at battle end, it is PURIFIED (strips equipped skills + items ONLY; keeps race, perk, drawback, doctrine, base stats, and level) and added to the roster. Purification exists so recruiting does not grant free loot. No success rate — deterministic (fits no-RNG combat rule). RT cost = 10% of Modified Base RT. Cannot recruit: bosses, veterans, elites, or any unit whose race is not playable.",
+    "Locked — Design Session 2026-10-02"
+   ],
+   [
+    133,
+    "Interact Command",
+    "Native — Recruit Enemy",
+    "Interact on an ENEMY unit whose current HP is <=5% of max recruits it. TARGETS: ENEMIES ONLY (USER RULING 2026-10-03) - NPC/Neutral units are NOT recruitable. Recruited unit becomes a controllable NEUTRAL for the rest of the battle. Because it is now Neutral it is NO LONGER a valid recruit target (it drops off the recruit list), and it cannot receive Aid or Revive either (those are allies-only - see the Ally / KO'd Ally rows): a recruited Neutral gets NO Interact options. Consequence: a recruited Neutral that is KO'd cannot be Revived, so it is not 'still alive at battle end' and is not added to the roster. If still alive at battle end, it is PURIFIED (strips equipped skills + items ONLY; keeps race, perk, drawback, doctrine, base stats, and level) and added to the roster. Purification exists so recruiting does not grant free loot. No success rate — deterministic (fits no-RNG combat rule). RT cost = 10% of Modified Base RT. Cannot recruit: bosses, veterans, elites, Neutral/NPC units (including units already recruited), or any unit whose race is not playable.",
+    "Locked — Design Session 2026-10-02; target scope revised 2026-10-03 (USER RULING: enemies only; Neutral/NPC excluded; recruited unit becomes Neutral and drops off the recruit list). DEV CHANGE PENDING (Interact target filtering; no AP/RT charged when an Interact fails its checks). Not Studio-tested."
+   ]
+  ],
+  [
+   "project_rules",
+   134,
+   [
+    134,
+    "Interact Command",
+    "Native — Ally (not KO'd)",
+    "Interact on a living ally reduces that ally's CURRENT RT by 35% of current (e.g. RT 200 -> 130). RT reduction cannot take RT below 0. RT cost = 50% of Modified Base RT.",
+    "Locked — Design Session 2026-10-02"
+   ],
+   [
+    134,
+    "Interact Command",
+    "Native — Ally (not KO'd)",
+    "AID - Interact on a living ALLIED unit reduces that ally's CURRENT RT by 35% of current (e.g. RT 200 -> 130). RT reduction cannot take RT below 0. RT cost = 50% of Modified Base RT. TARGETS: ALLIED units ONLY (USER RULING 2026-10-03) - not Neutrals, not recruited Neutrals, not enemies.",
+    "Locked — Design Session 2026-10-02; allies-only target scope added 2026-10-03 (USER RULING) - RESOLVES the open item 'do recruited Neutrals get Aid/Revive?' = NO, allies only (open_decisions row 77). DEV CHANGE PENDING (Interact target filtering; no AP/RT charged when an Interact fails its checks). Not Studio-tested."
+   ]
+  ],
+  [
+   "project_rules",
+   135,
+   [
+    135,
+    "Interact Command",
+    "Native — KO'd Ally",
+    "Interact on a KO'd ally resuscitates it at 5% HP. RT cost = 30% of Modified Base RT. Channel Time = 200 CT.",
+    "Locked — Design Session 2026-10-02"
+   ],
+   [
+    135,
+    "Interact Command",
+    "Native — KO'd Ally",
+    "REVIVE - Interact on a KO'd ALLIED unit resuscitates it at 5% HP. RT cost = 30% of Modified Base RT. Channel Time = 200 CT. TARGETS: KO'd ALLIED units ONLY (USER RULING 2026-10-03) - not Neutrals, not recruited Neutrals, not enemies.",
+    "Locked — Design Session 2026-10-02; allies-only target scope added 2026-10-03 (USER RULING) - RESOLVES the open item 'do recruited Neutrals get Aid/Revive?' = NO, allies only (open_decisions row 77). DEV CHANGE PENDING (Interact target filtering; no AP/RT charged when an Interact fails its checks). Not Studio-tested."
+   ]
+  ],
+  [
+   "skills",
+   41,
+   [
+    "DOC-DUELIST-01",
+    "Riposte Stance",
+    "Buff, Utility",
+    "Potency: None",
+    "Self",
+    "round(60 + 0.25L)",
+    "round(5 + 0.12 × (L - 1))",
+    0,
+    0,
+    "For 1000 CT, counter EVERY eligible hit (no count limit). Each Riposte = the caster's Basic Attack at 85% Basic Attack Power (equipped main weapon and its pattern) and applies 50% main-hand Weapon RT Delay to the attacker. Balancer (replaces the old count cap): each counter ADDS the caster's own full Basic Attack RT (round(Modified Base RT x 0.10) + Effective Weapon WT, after Frenzy/Frozen) to its remaining RT, pushing its next turn later. No AP or action RT is spent.",
+    "None",
+    "Self; trigger attacker must be inside the caster's EQUIPPED-WEAPON Basic Attack reach at trigger time - same legality as a normal Basic Attack (weapon min/max range incl. ranged min-range, extended reach e.g. spear reach 2, LoS, elevation). Not melee-only.",
+    "Self",
+    "None",
+    "1000 CT",
+    "No count limit - reacts to every eligible hit while active; cost is paid in RT per counter (see Power Formula). Uses the shared CounterStance status with Counter Stance (SKL-COUNTER-STANCE): does not stack with itself or Counter Stance; recasting refreshes the 1000 CT window and the most recent cast's counter power applies.",
+    "Reaction; triggers when the caster is the DIRECT (primary) target of an enemy AP-consuming Basic Attack or single-target damaging Skill and the attacker is inside the caster's weapon reach. The counter resolves as the caster's Basic Attack with the full weapon pattern (Cleave/Adjacent/Line2/Impact Splash secondary hits at their normal splash rates). FRIENDLY FIRE APPLIES: pattern hits land on every unit in the area, including allies. AOE/splash secondary hits, passive follow-ups, indirect damage and other reactions do NOT trigger a counter.",
+    "At commitment; summon stats snapshot when created",
+    "Caster",
+    "Active/Reaction",
+    "No reaction recursion (TRG-005): a Riposte never triggers another Riposte/Counter. Risk is RT, not a count: every Riposte delays the caster's next turn by one Basic Attack RT, so heavy weapons pay more per counter and a swarmed Duelist can be pushed far back on the timeline. Duelist-exclusive premium version of Counter Stance (85% power, 50% Weapon RT Delay). Canon rev 2026-10-02: synced to developer rework 2026-09-28 (replaces 'max two Ripostes, melee-only'). Source: DOC_HANDOFF_2026-10-01_db-sync Item 2.",
+    "Source: Doctrine-only working profile; Ref: Doctrine choices; Rev 2026-10-02 counter-rework sync"
+   ],
+   [
+    "DOC-DUELIST-01",
+    "Riposte Stance",
+    "Buff, Utility",
+    "Potency: None",
+    "Self",
+    "round(60 + 0.25L)",
+    "round(5 + 0.12 × (L - 1))",
+    0,
+    0,
+    "For 1000 CT, counter EVERY eligible hit (no count limit). Each Riposte = the caster's Basic Attack at 85% Basic Attack Power (equipped main weapon and its pattern) and applies 50% main-hand Weapon RT Delay to the attacker. Balancer (replaces the old count cap): each counter ADDS the caster's own full Basic Attack RT (round(Modified Base RT x 0.10) + Effective Weapon WT, after Frenzy/Frozen) to its remaining RT, pushing its next turn later. No AP or action RT is spent.",
+    "None",
+    "Self; trigger attacker must be inside the caster's EQUIPPED-WEAPON Basic Attack reach at trigger time (= when the attack's damage resolves; for channeled/delayed Skills = at Skill execution, not commit) - same legality as a normal Basic Attack (weapon min/max range incl. ranged min-range, extended reach e.g. spear reach 2, LoS, elevation). Not melee-only.",
+    "Self",
+    "None",
+    "1000 CT",
+    "No count limit - reacts to every eligible hit while active; cost is paid in RT per counter (see Power Formula). Uses the shared CounterStance status with Counter Stance (SKL-COUNTER-STANCE): does not stack with itself or Counter Stance; recasting refreshes the 1000 CT window and the most recent cast's counter power applies.",
+    "Reaction (Riposte). TRIGGER (USER RULING 2026-10-03 - replaces the old 'DIRECT (primary) target of a Basic Attack or single-target damaging Skill only; AOE/splash does not trigger' wording): counters ANY ENEMY attack that DEALS DIRECT DAMAGE to the stance holder - an AP-consuming Basic Attack OR a damaging Skill of ANY pattern (Single, AOE, Cleave, Chain, Cone, Ring, Circle, Adjacent, Line, Impact Splash, InheritWeapon), whether the holder is the primary target or is caught by a splash/secondary hit. The gate is DAMAGE DEALT > 0 to the stance holder, NOT the number of targets. Damage dealt = final direct damage of at least 1 after Defense/Guard/mitigation; damage soaked by a Shield still counts; a hit fully negated or absorbed to 0 does not. Zero-damage / pure-status / debuff-only Skills (e.g. Steal, Seal of Silence, Mind Fracture, Wither, Stone Prison) do NOT trigger a counter; a damaging Skill that also applies a status DOES. Still required: the attacker is an ENEMY of the stance holder (an ally's friendly fire never provokes); the attacker is inside the holder's equipped-weapon Basic Attack reach; the holder is still standing after the hit; at most ONE counter per stance holder per attacking action (a multi-hit or multi-jump action that hits the holder several times provokes once - TRG-004). Passive follow-ups, DoT/status ticks, terrain, hazard, collision, fall and map-object damage, and other reactions do NOT trigger a counter. CHANNELED / DELAYED SKILLS (USER RULING 2026-10-03): an enemy Skill with Channel Time and/or Activation Time that deals direct damage DOES provoke a counter, but the check is made AT SKILL EXECUTION (when it activates/resolves and deals its damage), NOT when the enemy commits or starts channeling. At execution every condition is re-checked: the holder still has the CounterStance status, is still in the Skill's area and actually takes direct damage > 0, is still standing, and the attacker is still inside the holder's weapon reach with legal LoS/elevation for the holder's Basic Attack. If the holder moved out, was KO'd, lost LoS, or the attacker is now out of reach, NO counter fires. (Same rule the other way: a stance raised after the enemy committed but before execution does count.) COUNTER: resolves as the caster's Basic Attack at 85% Basic Attack Power with the full weapon pattern (Cleave/Adjacent/Line2/Impact Splash secondary hits at their normal splash rates) and applies 50% main-hand Weapon RT Delay to the attacker. FRIENDLY FIRE APPLIES: pattern hits land on every unit in the area, including allies. A counter never triggers another counter (TRG-005).",
+    "At commitment; summon stats snapshot when created",
+    "Caster",
+    "Active/Reaction",
+    "No reaction recursion (TRG-005): a Riposte never triggers another Riposte/Counter. Risk is RT, not a count: every Riposte delays the caster's next turn by one Basic Attack RT, so heavy weapons pay more per counter and a swarmed Duelist can be pushed far back on the timeline. Duelist-exclusive premium version of Counter Stance (85% power, 50% Weapon RT Delay). Canon rev 2026-10-02: synced to developer rework 2026-09-28 (replaces 'max two Ripostes, melee-only'). Source: DOC_HANDOFF_2026-10-01_db-sync Item 2. Canon rev 2026-10-03 (USER RULINGS): trigger = any enemy attack dealing direct damage > 0, any pattern (AOE/splash included; zero-damage/status-only Skills excluded); channeled/delayed Skills checked at execution with validity/range re-check. Player-facing SkillData.lua text must be updated by the Dev to match. Not Studio-tested.",
+    "Source: Doctrine-only working profile; Ref: Doctrine choices; Rev 2026-10-02 counter-rework sync; Rev 2026-10-03 user rulings (damage>0 any-pattern trigger; execution-time check for channeled/delayed)"
+   ]
+  ],
+  [
+   "skills",
+   87,
+   [
+    "SKL-COUNTER-STANCE",
+    "Counter Stance",
+    "Buff, Utility",
+    "Potency: None, Passives: None",
+    "Self",
+    "round(50 + 0.15 × L)",
+    "round(3 + 0.08 × (L - 1))",
+    0,
+    0,
+    "Counter attack = the caster's Basic Attack at 60% Basic Attack Power (equipped main weapon and its pattern). Counters EVERY eligible hit for 1000 CT (no count limit). Balancer (replaces the old count cap): each counter ADDS the caster's own full Basic Attack RT (round(Modified Base RT x 0.10) + Effective Weapon WT, after Frenzy/Frozen) to its remaining RT, pushing its next turn later. No AP or action RT is spent.",
+    "round(Weapon RT Delay × 0.30) applied to attacker on counter",
+    "Self; trigger attacker must be inside the caster's EQUIPPED-WEAPON Basic Attack reach at trigger time - same legality as a normal Basic Attack (weapon min/max range incl. ranged min-range, extended reach e.g. spear reach 2, LoS, elevation). Not melee-only.",
+    "Self",
+    "None",
+    "1000 CT",
+    "No count limit; cost is paid in RT per counter. Refresh; uses the shared CounterStance status with Riposte Stance - does not stack with itself or Riposte Stance (recasting refreshes the 1000 CT window; the most recent cast's counter power applies).",
+    "Apply Counter Stance buff (1000 CT). While active the caster triggers when the caster is the DIRECT (primary) target of an enemy AP-consuming Basic Attack or single-target damaging Skill and the attacker is inside the caster's weapon reach. The counter resolves as the caster's Basic Attack with the full weapon pattern (Cleave/Adjacent/Line2/Impact Splash secondary hits at their normal splash rates). FRIENDLY FIRE APPLIES: pattern hits land on every unit in the area, including allies. AOE/splash secondary hits, passive follow-ups, indirect damage and other reactions do NOT trigger a counter. Counter power 0.60x; attacker also takes round(Weapon RT Delay x 0.30). Each counter adds the caster's Basic Attack RT to its next turn. First general-pool reaction-eligible skill.",
+    "At commitment; persistent/created effects snapshot when created as authored",
+    "Caster when counter damage causes KO",
+    "Active/Reaction",
+    "Stance skill - spend AP now, react later. Same reaction model as Riposte Stance (DOC-DUELIST-01); it is the general-pool BUDGET version. Kept distinct by: power 60% vs 85%; Weapon RT Delay on attacker 30% vs 50%; cheaper to cast (RT 50+0.15L, MP 3+0.08(L-1) vs RT 60+0.25L, MP 5+0.12(L-1)); available to any unit vs Duelist-only. No further mechanical difference by design (Designer decision 2026-10-02). Counter does not trigger counters (no recursion, TRG-005). Canon rev 2026-10-02: synced to developer rework 2026-09-28 (replaces 'single-use, melee-only'). Source: DOC_HANDOFF_2026-10-01_db-sync Item 3.",
+    "Rev 2026-10-02 counter-rework sync (converged with Riposte Stance model)"
+   ],
+   [
+    "SKL-COUNTER-STANCE",
+    "Counter Stance",
+    "Buff, Utility",
+    "Potency: None, Passives: None",
+    "Self",
+    "round(50 + 0.15 × L)",
+    "round(3 + 0.08 × (L - 1))",
+    0,
+    0,
+    "Counter attack = the caster's Basic Attack at 60% Basic Attack Power (equipped main weapon and its pattern). Counters EVERY eligible hit for 1000 CT (no count limit). Balancer (replaces the old count cap): each counter ADDS the caster's own full Basic Attack RT (round(Modified Base RT x 0.10) + Effective Weapon WT, after Frenzy/Frozen) to its remaining RT, pushing its next turn later. No AP or action RT is spent.",
+    "round(Weapon RT Delay × 0.30) applied to attacker on counter",
+    "Self; trigger attacker must be inside the caster's EQUIPPED-WEAPON Basic Attack reach at trigger time (= when the attack's damage resolves; for channeled/delayed Skills = at Skill execution, not commit) - same legality as a normal Basic Attack (weapon min/max range incl. ranged min-range, extended reach e.g. spear reach 2, LoS, elevation). Not melee-only.",
+    "Self",
+    "None",
+    "1000 CT",
+    "No count limit; cost is paid in RT per counter. Refresh; uses the shared CounterStance status with Riposte Stance - does not stack with itself or Riposte Stance (recasting refreshes the 1000 CT window; the most recent cast's counter power applies).",
+    "Apply Counter Stance buff (1000 CT). While active the caster counters every qualifying hit. TRIGGER (USER RULING 2026-10-03 - replaces the old 'DIRECT (primary) target of a Basic Attack or single-target damaging Skill only; AOE/splash does not trigger' wording): counters ANY ENEMY attack that DEALS DIRECT DAMAGE to the stance holder - an AP-consuming Basic Attack OR a damaging Skill of ANY pattern (Single, AOE, Cleave, Chain, Cone, Ring, Circle, Adjacent, Line, Impact Splash, InheritWeapon), whether the holder is the primary target or is caught by a splash/secondary hit. The gate is DAMAGE DEALT > 0 to the stance holder, NOT the number of targets. Damage dealt = final direct damage of at least 1 after Defense/Guard/mitigation; damage soaked by a Shield still counts; a hit fully negated or absorbed to 0 does not. Zero-damage / pure-status / debuff-only Skills (e.g. Steal, Seal of Silence, Mind Fracture, Wither, Stone Prison) do NOT trigger a counter; a damaging Skill that also applies a status DOES. Still required: the attacker is an ENEMY of the stance holder (an ally's friendly fire never provokes); the attacker is inside the holder's equipped-weapon Basic Attack reach; the holder is still standing after the hit; at most ONE counter per stance holder per attacking action (a multi-hit or multi-jump action that hits the holder several times provokes once - TRG-004). Passive follow-ups, DoT/status ticks, terrain, hazard, collision, fall and map-object damage, and other reactions do NOT trigger a counter. CHANNELED / DELAYED SKILLS (USER RULING 2026-10-03): an enemy Skill with Channel Time and/or Activation Time that deals direct damage DOES provoke a counter, but the check is made AT SKILL EXECUTION (when it activates/resolves and deals its damage), NOT when the enemy commits or starts channeling. At execution every condition is re-checked: the holder still has the CounterStance status, is still in the Skill's area and actually takes direct damage > 0, is still standing, and the attacker is still inside the holder's weapon reach with legal LoS/elevation for the holder's Basic Attack. If the holder moved out, was KO'd, lost LoS, or the attacker is now out of reach, NO counter fires. (Same rule the other way: a stance raised after the enemy committed but before execution does count.) COUNTER: resolves as the caster's Basic Attack with the full weapon pattern (Cleave/Adjacent/Line2/Impact Splash secondary hits at their normal splash rates). FRIENDLY FIRE APPLIES: pattern hits land on every unit in the area, including allies. Counter power 0.60x; attacker also takes round(Weapon RT Delay x 0.30). Each counter adds the caster's Basic Attack RT to its next turn. A counter never triggers another counter (TRG-005). First general-pool reaction-eligible skill.",
+    "At commitment; persistent/created effects snapshot when created as authored",
+    "Caster when counter damage causes KO",
+    "Active/Reaction",
+    "Stance skill - spend AP now, react later. Same reaction model as Riposte Stance (DOC-DUELIST-01); it is the general-pool BUDGET version. Kept distinct by: power 60% vs 85%; Weapon RT Delay on attacker 30% vs 50%; cheaper to cast (RT 50+0.15L, MP 3+0.08(L-1) vs RT 60+0.25L, MP 5+0.12(L-1)); available to any unit vs Duelist-only. No further mechanical difference by design (Designer decision 2026-10-02). Counter does not trigger counters (no recursion, TRG-005). Canon rev 2026-10-02: synced to developer rework 2026-09-28 (replaces 'single-use, melee-only'). Source: DOC_HANDOFF_2026-10-01_db-sync Item 3. Canon rev 2026-10-03 (USER RULINGS): trigger = any enemy attack dealing direct damage > 0, any pattern (AOE/splash included; zero-damage/status-only Skills excluded); channeled/delayed Skills checked at execution with validity/range re-check. Player-facing SkillData.lua text must be updated by the Dev to match. Not Studio-tested.",
+    "Rev 2026-10-02 counter-rework sync (converged with Riposte Stance model); Rev 2026-10-03 user rulings (damage>0 any-pattern trigger; execution-time check for channeled/delayed)"
+   ]
+  ],
+  [
+   "trigger_safety",
+   9,
+   [
+    "TRG-004",
+    "Reaction Qualification",
+    "Enemy AP-consuming Basic Attack or Skill directly and actively targets reacting unit",
+    "Specific range and reaction requirements also pass",
+    "Resolve original targeting event; then eligible reaction under authored timing",
+    "Per authored reaction limit",
+    "Passive follow-ups, reactions, AOE, DoT, status, terrain, hazard, collision, fall, map-object damage do not independently provoke reactions",
+    "Reactor",
+    "Reactor for reaction damage",
+    "After qualifying targeted event stage",
+    "Nonqualifying event produces no reaction",
+    "Locked",
+    "Three passive follow-up attacks from one action do not create three counter-reactions."
+   ],
+   [
+    "TRG-004",
+    "Reaction Qualification",
+    "An ENEMY AP-consuming Basic Attack or Skill of ANY pattern (Single, AOE, Cleave, Chain, Cone, Ring, Circle, Adjacent, Line, Impact Splash, InheritWeapon) that DEALS DIRECT DAMAGE (> 0) to the reacting unit - as primary target or via a splash/secondary hit. Gate = damage dealt > 0, NOT target count or primary-target status. Channeled/delayed Skills: evaluated when the Skill EXECUTES (activation/resolution), never at commit.",
+    "Attacker is an ENEMY of the reacting unit (friendly fire never provokes); reacting unit is standing and holds an active reaction status at evaluation time; the reaction's own range/reach requirement passes (Counter Stance / Riposte: attacker inside the reactor's equipped-weapon Basic Attack reach, legal LoS/elevation); direct damage dealt to the reactor > 0 (Shield-soaked damage counts; fully negated/absorbed = 0). For channeled/delayed Skills ALL of these are re-checked at execution - if the reactor moved out, was KO'd, lost LoS, or the attacker is out of reach, no reaction.",
+    "Resolve the original action's damage stage (including all of its pattern hits); then queue at most one eligible reaction per reacting unit under authored timing",
+    "Max 1 reaction per reacting unit per qualifying action (multi-hit / multi-jump actions still provoke once); further limits per authored reaction",
+    "Zero-damage / pure-status / debuff-only Skills (e.g. Steal, Seal of Silence, Mind Fracture, Wither, Stone Prison), passive follow-ups, reactions (no reaction-to-reaction, TRG-005), DoT/status ticks, terrain, hazard, collision, fall and map-object damage do NOT provoke reactions. AOE/splash hits DO provoke if they deal direct damage > 0 to the reacting unit.",
+    "Reactor",
+    "Reactor for reaction damage",
+    "After the qualifying action's damage stage resolves (channeled/delayed Skills: at execution, never at commit)",
+    "Nonqualifying event (zero damage, non-enemy source, reactor out of reach/KO'd, or invalid at execution) produces no reaction",
+    "Locked",
+    "Three passive follow-up attacks from one action do not create three counter-reactions. REVISED 2026-10-03 (USER RULING): was 'directly and actively targets reacting unit' + 'AOE ... do not independently provoke reactions'. Now AOE/splash DO provoke when they deal direct damage > 0 to the reactor; zero-damage effects never do; channeled/delayed Skills are checked at execution. Reconciled with skills SKL-COUNTER-STANCE + DOC-DUELIST-01 (same wording). Enemy-only and no-counter-triggers-a-counter (TRG-005) guards unchanged. DEV CHANGE PENDING. Not Studio-tested."
+   ]
+  ],
+  [
+   "open_decisions",
+   74,
+   [
+    "Counter Stance / Riposte / Frenzy - Dev gaps vs canon (2026-10-02)",
+    "Dev Pending",
+    "Found while verifying code for the 2026-10-02 canon sync. Canon is correct; CODE needs: (a) COUNTER POWER NOT STAMPED - Main.server/GameConstants skill defs carry counterPowerMult but StatusService.ApplyStatus never copies it onto the CounterStance instance, so every counter uses the 0.85 fallback; Counter Stance currently counters at 85% instead of 60%. Stamp skillDef.counterPowerMult on apply/refresh. (b) ON-COUNTER WEAPON RT DELAY MISSING - TriggerCounterIfEligible deals damage + adds the caster's RT but applies no Weapon RT Delay to the attacker; canon: Riposte 50% main-hand Weapon RT Delay, Counter Stance round(Weapon RT Delay x 0.30). (If the user prefers to drop these, update canon instead.) (c) MULTI-PATTERN ATTACKERS NEVER PROVOKE - only the Single-pattern Basic Attack branch and single-target Skill branch call TriggerCounterIfEligible; an attacker using a Cleave/Adjacent/Line2/Impact Splash weapon that directly targets the stance holder gets no counter. Canon: any direct (primary-target) AP-consuming Basic Attack provokes; call the hook for the primary target in those branches. (d) NO HOSTILE CHECK - hook does not check sides; TRG-004 says ENEMY attack. Add attacker.side ~= defender.side guard. (e) RECAST DOES NOT REFRESH 1000 CT - refresh branch resets remainingTurns (nil for CT statuses) but not remainingCt; reset remainingCt = durationCt on refresh. (f) SkillData.lua SKL-COUNTER-STANCE description/specialRules still say single-use/melee-only - regenerate from skills table. Remove the 'DB not yet synced' note from DOC-DUELIST-01 specialRules.",
+    null,
+    null,
+    null,
+    null
+   ],
+   [
+    "Counter Stance / Riposte / Frenzy - Dev gaps vs canon (2026-10-02)",
+    "Dev Pending",
+    "Found while verifying code for the 2026-10-02 canon sync; UPDATED 2026-10-03 for USER RULINGS (counter trigger scope + channeled/delayed skills). Canon is correct; CODE needs: (a) COUNTER POWER NOT STAMPED - Main.server/GameConstants skill defs carry counterPowerMult but StatusService.ApplyStatus never copies it onto the CounterStance instance, so every counter uses the 0.85 fallback; Counter Stance currently counters at 85% instead of 60%. Stamp skillDef.counterPowerMult on apply/refresh. (b) ON-COUNTER WEAPON RT DELAY MISSING - TriggerCounterIfEligible deals damage + adds the caster's RT but applies no Weapon RT Delay to the attacker; canon: Riposte 50% main-hand Weapon RT Delay, Counter Stance round(Weapon RT Delay x 0.30). (If the user prefers to drop these, update canon instead.) (c) TRIGGER SCOPE (REVISED 2026-10-03 - supersedes the earlier 'call the hook for the primary target' fix): the counter hook must run for EVERY enemy hit that deals direct damage > 0 to a stance holder - Basic Attack or damaging Skill of ANY pattern (Single/AOE/Cleave/Chain/Cone/Ring/Circle/Adjacent/Line/Impact Splash/InheritWeapon), primary OR splash/secondary victim - not only the Single-pattern Basic Attack branch and single-target Skill branch. Gate = damage dealt > 0 (Shield-soaked counts; fully negated = 0), NOT target count. Zero-damage / status-only Skills (Steal, Seal of Silence, Mind Fracture, Wither, Stone Prison) must NOT provoke. Max one counter per holder per attacking action. (d) NO HOSTILE CHECK - hook does not check sides; TRG-004 says ENEMY attack. Add attacker.side ~= defender.side guard. (e) RECAST DOES NOT REFRESH 1000 CT - refresh branch resets remainingTurns (nil for CT statuses) but not remainingCt; reset remainingCt = durationCt on refresh. (f) PLAYER-FACING TEXT - the Dev must update SkillData.lua DOC-DUELIST-01 + SKL-COUNTER-STANCE description/effects/specialRules to match the skills table (any enemy attack that deals damage triggers, any pattern incl. AOE/splash; zero-damage/status-only skills do not; channeled/delayed skills are checked when they go off, and only if the holder is still a valid, in-reach target). Remove the 'DB not yet synced' note from DOC-DUELIST-01 specialRules if still present. (g) NEW 2026-10-03 - CHANNELED/DELAYED EXECUTION-TIME HOOK: for Skills with Channel Time / Activation Time, evaluate the counter when the Skill EXECUTES, not at commit; re-check at execution: holder still has CounterStance, still in the area and took damage > 0, still standing, attacker still inside the holder's weapon reach with legal LoS/elevation - otherwise no counter. (h) OPTIONAL - AIService counter-stance avoidance only penalises attacking a stance holder directly; under the new scope an AOE Skill that catches a stance holder also provokes, so the AI penalty should consider every enemy stance holder inside the attack area. TRG-004 + skills rows updated 2026-10-03 to match. Not Studio-tested.",
+    null,
+    null,
+    null,
+    null
+   ]
+  ]
+ ],
+ "inserted": [
+  [
+   "open_decisions",
+   [
+    "Interact targeting - Recruit / Aid / Revive target sides; do recruited Neutrals get Aid/Revive? (2026-10-03)",
+    "Resolved",
+    "RESOLVED 2026-10-03 (USER RULING). RECRUIT = ENEMIES ONLY (NPC/Neutral units are not recruitable; a recruited unit becomes Neutral, so it is no longer a valid recruit target and drops off the recruit list). AID + REVIVE = ALLIED units ONLY (not Neutrals, not recruited Neutrals, not enemies). NET: a recruited Neutral receives NO native Interact option (so a KO'd recruited Neutral cannot be Revived and is not added to the roster). This open item was raised in Dev/Designer review and had no row of its own; this row is its resolution record. Canon: project_rules 'Interact Command' ids 131, 133, 134, 135. DEV CHANGE PENDING: Interact target filtering + reject-without-payment (no AP/RT charged when an Interact fails its checks). Not Studio-tested.",
+    null,
+    null,
+    null,
+    null
+   ]
+  ]
+ ]
+}

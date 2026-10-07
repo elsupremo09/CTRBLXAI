@@ -20,6 +20,7 @@ local CommandService          = require(Game:WaitForChild("CommandService"))
 local TargetingService        = require(Game:WaitForChild("TargetingService"))
 local BattleVisualBroadcaster = require(Game:WaitForChild("BattleVisualBroadcaster"))
 local StatusService           = require(Game:WaitForChild("StatusService"))
+local TraitEffectService      = require(Game:WaitForChild("TraitEffectService"))
 local CombatResolver          = require(Game:WaitForChild("CombatResolver"))
 local ItemGenerator           = require(Game:WaitForChild("ItemGenerator"))
 local InventoryService        = require(Game:WaitForChild("InventoryService"))
@@ -29,6 +30,7 @@ local SaveService             = require(Game:WaitForChild("SaveService"))
 local RewardService           = require(Game:WaitForChild("RewardService"))
 local DisplacementService     = require(Game:WaitForChild("DisplacementService"))
 local TileEffectService       = require(Game:WaitForChild("TileEffectService"))
+local TileCrossEffectService  = require(Game:WaitForChild("TileCrossEffectService"))
 local RacePassiveService      = require(Game:WaitForChild("RacePassiveService"))
 local ArmorPassiveService     = require(Game:WaitForChild("ArmorPassiveService"))
 local AugmentEffectService    = require(Game:WaitForChild("AugmentEffectService"))
@@ -36,6 +38,25 @@ local AIService               = require(Game:WaitForChild("AIService"))
 local MapService              = require(Game:WaitForChild("MapService"))
 local MapRenderer             = require(Game:WaitForChild("MapRenderer"))
 local EnemyGenerator          = require(Game:WaitForChild("EnemyGenerator"))
+local TraitRoller             = require(Game:WaitForChild("TraitRoller"))
+local ObjectEffectService     = require(Game:WaitForChild("ObjectEffectService"))
+local WeatherService          = require(Game:WaitForChild("WeatherService"))
+local BattlefieldEventService = require(Game:WaitForChild("BattlefieldEventService"))
+
+-- Slice 6 services (switched on this pass). CurrencyService provides AsProvider()
+-- used by Recruitment/Blacksmith/Merchant/Dispatch; it is required FIRST so the
+-- provider exists before the consumers are wired below.
+local CurrencyService         = require(Game:WaitForChild("CurrencyService"))
+local RecruitmentService      = require(Game:WaitForChild("RecruitmentService"))
+local BlacksmithService       = require(Game:WaitForChild("BlacksmithService"))
+local GuildService            = require(Game:WaitForChild("GuildService"))
+local MerchantService         = require(Game:WaitForChild("MerchantService"))
+local DispatchService         = require(Game:WaitForChild("DispatchService"))
+local ExploreService          = require(Game:WaitForChild("ExploreService"))
+local ProgressionService      = require(Game:WaitForChild("ProgressionService"))
+-- Slice 6 temporary Guild menu (game_flow id 23): server glue for the building
+-- buttons. Requires GuildEvents itself, so the Guild remotes exist from here on.
+local GuildMenuService        = require(Game:WaitForChild("GuildMenuService"))
 
 
 local WeaponData = require(
@@ -47,6 +68,11 @@ local RaceData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
 		:WaitForChild("RaceData")
+)
+local TraitData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("TraitData")
 )
 local DoctrineData = require(
 	game:GetService("ReplicatedStorage")
@@ -195,6 +221,34 @@ local questMapFolder = MapRenderer.Render(generatedMap, "TERRAIN")
 questMapFolder.Parent = workspace
 mapFolder = questMapFolder
 
+-- Slice 5 blocker #2: give ObjectEffectService a way to render runtime-spawned
+-- objects (Forge, Mimic reveal) into the live mapFolder. The closure reads the
+-- `mapFolder` upvalue at CALL time, so it stays correct across Regenerate
+-- (which reassigns mapFolder). The new Part is a server instance in mapFolder
+-- and replicates to clients automatically.
+ObjectEffectService.SetObjectRenderer(function(inst)
+	if mapFolder then
+		MapRenderer.RenderOneObject(mapFolder, inst)
+	end
+end)
+
+-- Object-visual remover (Mimic reveal replaces its chest). Same mapFolder-upvalue
+-- pattern as the renderer above.
+ObjectEffectService.SetObjectVisualRemover(function(inst)
+	if mapFolder then
+		MapRenderer.RemoveOneObject(mapFolder, inst)
+	end
+end)
+
+-- Slice 5 blocker #3: tile reshaper for Stone Pillar's fallen span. Reads the
+-- `mapFolder` upvalue at call time (correct across Regenerate). Server Part
+-- change replicates to clients.
+ObjectEffectService.SetTileReshaper(function(x, y, terrain, elev)
+	if mapFolder then
+		MapRenderer.ReshapeTile(mapFolder, x, y, terrain, elev)
+	end
+end)
+
 MapService.ClearCache()  -- clear so Regenerate dev tool can generate fresh
 
 -- FIX: StreamingEnabled is on (Roblox default) but CharacterAutoLoads is false,
@@ -225,6 +279,48 @@ TileEffectService.SetStatusService(StatusService)
 TileEffectService.SetBroadcaster(BattleVisualBroadcaster)
 BattleCoordinator.SetTileEffectService(TileEffectService)
 CommandService.SetTileEffectService(TileEffectService)
+-- Summon spawner injection (2026-10-06): lets CommandService route the six summon
+-- skills to EnemyGenerator.SpawnSummon without a hard require (cycle-free, mirrors
+-- the TileEffectService injection above). EnemyGenerator is required at the top.
+CommandService.SetEnemyGenerator(EnemyGenerator)
+-- Round 2 terrain pass (2026-09-29): pathfinding/hit-quality/slide services also
+-- need the TileEffectService reference (Tar Pit move cost, Steam evasion, Oily slide).
+TargetingService.SetTileEffectService(TileEffectService)
+CombatResolver.SetTileEffectService(TileEffectService)
+TileCrossEffectService.SetTileEffectService(TileEffectService)
+
+-- Weather engine wiring: inject the service refs it needs + the back-references
+-- so weather drives per-round re-roll (BattleCoordinator), passive element
+-- damage (CombatResolver), Burn-suppression (StatusService), tile reshape, and
+-- client broadcast. The tile reshaper closure reads the mapFolder upvalue.
+WeatherService.SetTileEffectService(TileEffectService)
+WeatherService.SetBroadcaster(BattleVisualBroadcaster)
+WeatherService.SetStatusService(StatusService)
+WeatherService.SetTileReshaper(function(x, y, terrain, elev)
+	if mapFolder then MapRenderer.ReshapeTile(mapFolder, x, y, terrain, elev) end
+end)
+BattleCoordinator.SetWeatherService(WeatherService)
+CombatResolver.SetWeatherService(WeatherService)
+
+-- Battlefield events: inject the same proven deps (all nil-safe inside the service).
+BattlefieldEventService.SetBroadcaster(BattleVisualBroadcaster)
+-- Unit remover for event units that leave the map (Merchant Caravan etc.): frees
+-- the tile and tells clients to remove the token, same as a defeat removal.
+BattlefieldEventService.SetUnitRemover(function(u)
+	clearTileOccupant(u.tileX, u.tileY)
+	BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = true })
+end)
+BattlefieldEventService.SetTileEffectService(TileEffectService)
+BattlefieldEventService.SetEnemyGenerator(EnemyGenerator)
+BattlefieldEventService.SetRewardService(RewardService)
+BattlefieldEventService.SetWeatherService(WeatherService)
+BattlefieldEventService.SetTargetingService(TargetingService)
+BattlefieldEventService.SetStatusService(StatusService)
+BattlefieldEventService.SetCommandService(CommandService)
+BattlefieldEventService.SetTileReshaper(function(x, y, terrain, elev)
+	if mapFolder then MapRenderer.ReshapeTile(mapFolder, x, y, terrain, elev) end
+end)
+BattleCoordinator.SetBattlefieldEventService(BattlefieldEventService)
 
 -- AIService dependency injection
 AIService.SetDependencies({
@@ -260,25 +356,29 @@ end
 -- their combat entries here.
 --------------------------------------------------
 
+-- NOTE: level-based doctrine skills (Arcanist, Tactician, Warlord, Shadowbinder, Ascetic,
+-- Trickster, Duelist, Conjurer-01/02/03) have NO rt field here on purpose — their RT
+-- cost comes from GameConstants.SKILL_FIXED_RT (DB-authored). Weapon-WT doctrine skills
+-- (Berserker, Ranger, Vanguard, Spellblade, Thief, Juggernaut, Twinblade) keep rtMult.
 local doctrineSkillCombatDefs = {
 	["DOC-BERSERKER-01"] = { id = "DOC-BERSERKER-01", name = "Reckless Charge", tags = {"Direct Damage","Physical","Utility"}, targetRules = "Enemy Unit", range = 3, pattern = "Single", mpCost = 4, rtMult = 1.50, channelTime = 0, power = 1.20, isHealing = false, isCharge = true },
-	["DOC-ARCANIST-01"]  = { id = "DOC-ARCANIST-01", name = "Mana Surge", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 0, rtCost = 60, channelTime = 150, power = 0, isHealing = false },
+	["DOC-ARCANIST-01"]  = { id = "DOC-ARCANIST-01", name = "Mana Surge", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 0, channelTime = 150, power = 0, isHealing = false, appliesStatus = "Mana Surge", selfMpRestoreFraction = 0.20 },
 	["DOC-RANGER-01"]    = { id = "DOC-RANGER-01", name = "Hunter's Mark", tags = {"Direct Damage","Debuff","Physical"}, targetRules = "Enemy Unit", range = -1, pattern = "Single", mpCost = 4, rtMult = 1.00, channelTime = 0, power = 0.75, isHealing = false },
-	["DOC-VANGUARD-01"]  = { id = "DOC-VANGUARD-01", name = "Hold the Line", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 4, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false },
-	["DOC-TACTICIAN-01"] = { id = "DOC-TACTICIAN-01", name = "Coordinated Advance", tags = {"Buff","Utility"}, targetRules = "Ally Unit, Self", range = 4, pattern = "Single", mpCost = 5, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
-	["DOC-WARLORD-01"]   = { id = "DOC-WARLORD-01", name = "War Cry", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "AOE", mpCost = 6, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
-	["DOC-SHADOWBINDER-01"] = { id = "DOC-SHADOWBINDER-01", name = "Veil of Weakness", tags = {"Debuff","Dark"}, targetRules = "Enemy Unit", range = 3, pattern = "Single", mpCost = 5, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
-	["DOC-SPELLBLADE-01"] = { id = "DOC-SPELLBLADE-01", name = "Arcane Strike", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 4, rtMult = 1.25, channelTime = 0, power = 1.10, isHealing = false },
-	["DOC-ASCETIC-01"]   = { id = "DOC-ASCETIC-01", name = "Meditate", tags = {"Buff","Utility"}, targetRules = "Self, Ally Unit", range = 3, pattern = "Single", mpCost = 0, rtMult = 0.50, channelTime = 0, power = 0, isHealing = false },
-	["DOC-TRICKSTER-01"] = { id = "DOC-TRICKSTER-01", name = "Misdirection", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 3, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false },
+	["DOC-VANGUARD-01"]  = { id = "DOC-VANGUARD-01", name = "Hold the Line", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 4, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false, appliesStatus = "Hold the Line" }, -- DB: Stability +2, direct dmg taken -15%, 1000 CT (2026-10-07)
+	["DOC-TACTICIAN-01"] = { id = "DOC-TACTICIAN-01", name = "Coordinated Advance", tags = {"Buff","Utility"}, targetRules = "Ally Unit, Self", range = 4, pattern = "Single", mpCost = 5, channelTime = 100, power = 0, isHealing = false, appliesStatus = "Coordinated Advance" }, -- DB: Move +2, Move RT -20%, 1000 CT, channel 100 (2026-10-07)
+	["DOC-WARLORD-01"]   = { id = "DOC-WARLORD-01", name = "War Cry", tags = {"Buff","Utility"}, targetRules = "Self, Allies", range = 0, pattern = "AOE", aoePattern = "Circle3", mpCost = 6, channelTime = 100, power = 0, isHealing = false, appliesStatus = "War Cry" }, -- DB: caster + allies radius 3, dmg +10%, Stability +1, 1000 CT, channel 100 (2026-10-07)
+	["DOC-SHADOWBINDER-01"] = { id = "DOC-SHADOWBINDER-01", name = "Veil of Weakness", tags = {"Debuff","Dark"}, targetRules = "Enemy Unit", range = 4, pattern = "Single", mpCost = 5, channelTime = 150, power = 0, isHealing = false, appliesStatus = "Weakened", appliesStatuses = { "Debuff Res Down" }, statusDurationCt = 1500 }, -- DB: Weakened + Debuff Res -10 pts, 1500 CT (2026-10-07)
+	["DOC-SPELLBLADE-01"] = { id = "DOC-SPELLBLADE-01", name = "Arcane Strike", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 4, rtMult = 1.00, channelTime = 0, power = 1.10, isHealing = false }, -- rtMult 1.00 per DB (was 1.25)
+	["DOC-ASCETIC-01"]   = { id = "DOC-ASCETIC-01", name = "Meditate", tags = {"Buff","Utility"}, targetRules = "Self, Ally Unit", range = 3, pattern = "Single", mpCost = 0, channelTime = 200, power = 0, isHealing = false, appliesStatus = "Debuff Res Up", selfMpRestoreFraction = 0.15, allyMpTransferFraction = 0.12 },
+	["DOC-TRICKSTER-01"] = { id = "DOC-TRICKSTER-01", name = "Misdirection", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 3, channelTime = 0, power = 0, isHealing = false, appliesStatus = "Misdirection" }, -- DB: 1000 CT, first enemy single-target attack redirected (CommandService applyMisdirection)
 	["DOC-THIEF-01"]     = { id = "DOC-THIEF-01", name = "Mug", tags = {"Direct Damage","Physical","Utility"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 2, rtMult = 1.00, channelTime = 0, power = 0.80, isHealing = false },
-	["DOC-DUELIST-01"]   = { id = "DOC-DUELIST-01", name = "Riposte Stance", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 3, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false },
+	["DOC-DUELIST-01"]   = { id = "DOC-DUELIST-01", name = "Riposte Stance", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 3, channelTime = 0, power = 0, isHealing = false, appliesStatus = "CounterStance", counterPowerMult = 0.85, counterRtDelayMult = 0.50 },  -- DB: each Riposte deals 85% Basic Attack Power + 50% Weapon RT Delay to attacker
 	["DOC-TWINBLADE-01"] = { id = "DOC-TWINBLADE-01", name = "Crossing Blades", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 4, rtMult = 1.25, channelTime = 0, power = 1.30, isHealing = false },
 	["DOC-TWINBLADE-02"] = { id = "DOC-TWINBLADE-02", name = "Feinting Flurry", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 5, rtMult = 1.50, channelTime = 0, power = 0.60, isHealing = false },
 	["DOC-JUGGERNAUT-01"] = { id = "DOC-JUGGERNAUT-01", name = "Overwhelming Blow", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 6, rtMult = 2.00, channelTime = 0, power = 1.80, isHealing = false },
-	["DOC-CONJURER-01"]  = { id = "DOC-CONJURER-01", name = "Conjure Sentinel", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 3, pattern = "Single", mpCost = 8, rtMult = 1.50, channelTime = 0, power = 0, isHealing = false },
-	["DOC-CONJURER-02"]  = { id = "DOC-CONJURER-02", name = "Conjure Wisp", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 4, pattern = "Single", mpCost = 5, rtMult = 1.00, channelTime = 0, power = 0, isHealing = false },
-	["DOC-CONJURER-03"]  = { id = "DOC-CONJURER-03", name = "Conjure Mender", tags = {"Summon","Healing"}, targetRules = "Empty Tile", range = 3, pattern = "Single", mpCost = 7, rtMult = 1.25, channelTime = 0, power = 0, isHealing = false },
+	["DOC-CONJURER-01"]  = { id = "DOC-CONJURER-01", name = "Conjure Sentinel", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 3, pattern = "Single", mpCost = 8, channelTime = 0, power = 0, isHealing = false, isSummon = true, summonProfile = "melee" },
+	["DOC-CONJURER-02"]  = { id = "DOC-CONJURER-02", name = "Conjure Wisp", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 4, pattern = "Single", mpCost = 5, channelTime = 0, power = 0, isHealing = false, isSummon = true, summonProfile = "ranged" },
+	["DOC-CONJURER-03"]  = { id = "DOC-CONJURER-03", name = "Conjure Mender", tags = {"Summon","Healing"}, targetRules = "Empty Tile", range = 3, pattern = "Single", mpCost = 7, channelTime = 0, power = 0, isHealing = false, isSummon = true, summonProfile = "healer" },
 }
 
 for docId, docDef in pairs(doctrineSkillCombatDefs) do
@@ -298,6 +398,57 @@ end
 
 local PLAYER_ID = "player_1"
 InventoryService.InitPlayer(PLAYER_ID)
+
+--------------------------------------------------
+-- SLICE 6 SERVICE STARTUP (additive, dependency-ordered)
+-- CurrencyService first (provides AsProvider used by shops/recruit), then the
+-- batch-1 (Recruitment/Blacksmith/Guild) and batch-2 (Merchant/Dispatch/Explore)
+-- consumers. Balances are RESTORED from the save below (EDIT 3) via Import().
+-- ProgressionService providers + unit-XP sinks are wired AFTER playerUnits is
+-- defined (they capture it), see the block just below the playerUnits lookup.
+--------------------------------------------------
+CurrencyService.InitPlayer(PLAYER_ID)
+GuildService.InitPlayer(PLAYER_ID)
+local currencyProvider = CurrencyService.AsProvider()
+
+-- Batch-1: Recruitment + Blacksmith
+RecruitmentService.SetCurrencyProvider(currencyProvider)
+BlacksmithService.SetCurrencyProvider(currencyProvider)
+RecruitmentService.SetGuildService(GuildService)
+RecruitmentService.SetPersistentStateService(PersistentStateService)
+BlacksmithService.SetEquipmentService(EquipmentService)
+BlacksmithService.SetWeaponData(WeaponData)
+BlacksmithService.SetArmorData(ArmorData)
+-- TODO when their UIs land: RecruitmentService.SetUnitFactory(...),
+--   RecruitmentService.SetTavernLevelProvider(...) [Slice 8],
+--   BlacksmithService.SetItemPersist(...)
+
+-- Batch-2: Merchant + Dispatch + Explore
+MerchantService.SetCurrencyProvider(currencyProvider)
+MerchantService.SetInventoryService(InventoryService)
+MerchantService.SetEquipmentService(EquipmentService)
+MerchantService.SetItemGenerator(ItemGenerator)
+DispatchService.SetCurrencyProvider(currencyProvider)
+DispatchService.SetCurrencyCredit(function(pid, grant) return CurrencyService.Credit(pid, grant) end)
+ExploreService.SetCurrencyProvider(currencyProvider)
+ExploreService.SetRewardService(RewardService)
+ExploreService.SetGuildService(GuildService)
+-- TODO when their UIs/roster-availability land: MerchantService.SetMerchantLevelProvider(...),
+--   DispatchService.SetAvailabilitySink(...), DispatchService.SetRosterProvider(...)
+
+-- Slice 6 temporary Guild menu (2026-10-07): the connections the TODOs above were
+-- waiting for. Building levels come from ONE temporary table in GuildMenuService
+-- (all L1 until Slice 8 facilities exist). Wired BEFORE the save load below so
+-- DispatchService.Import re-marks away units through the availability sink.
+RecruitmentService.SetUnitFactory(GuildMenuService.BuildRecruitUnit)
+RecruitmentService.SetTavernLevelProvider(GuildMenuService.TavernLevelProvider)
+MerchantService.SetMerchantLevelProvider(GuildMenuService.MerchantLevelProvider)
+BlacksmithService.SetItemPersist(GuildMenuService.PersistItem)
+DispatchService.SetAvailabilitySink(GuildMenuService.AvailabilitySink)
+DispatchService.SetRosterProvider(GuildMenuService.RosterProvider)
+-- Blacksmith has no level provider in BlacksmithService; its locked level gates
+-- (guild_facilities id 12/13) are enforced in GuildMenuService before a commit.
+
 
 -- Attempt to load saved state (Slice 4C)
 local loadedSave, loadErr = SaveService.Load(PLAYER_ID)
@@ -357,11 +508,29 @@ if loadedSave then
 			savedConsumableSlots[unitId] = unitData.consumableSlots
 		end
 	end
+	-- Slice 6: restore saved currency balance (Key 2) and guild/dispatch/explore
+	-- progression (Key 3). All ride the EXISTING save payload; no second store.
+	if loadedSave.currencies then
+		CurrencyService.Import(PLAYER_ID, loadedSave.currencies)
+	end
+	if loadedSave.progression and loadedSave.progression.guild then
+		GuildService.Import(PLAYER_ID, loadedSave.progression.guild)
+	end
+	if loadedSave.progression and loadedSave.progression.dispatch then
+		DispatchService.Import(PLAYER_ID, loadedSave.progression.dispatch)
+	end
+	if loadedSave.progression and loadedSave.progression.explore then
+		ExploreService.Import(PLAYER_ID, loadedSave.progression.explore)
+	end
 elseif loadErr then
 	warn("[Main] Load failed: " .. loadErr .. " — starting fresh (retaining runtime state)")
 else
 	print("[Main] No save found — new session")
 end
+-- Slice 6 Guild menu: restore the completed-battle counter and the identity of
+-- units hired in earlier sessions (rides the existing progression payload, Key 3).
+GuildMenuService.Import(PLAYER_ID, loadedSave and loadedSave.progression
+	and loadedSave.progression.guildMenu or nil)
 
 -- Helper: generate a weapon, add to inventory, equip on unit
 local function equipGeneratedWeapon(unit, archetypeId, itemLevel, rarity, seed)
@@ -493,7 +662,7 @@ local ranger = UnitSchema.Create({
 	id           = "unit_ranger",
 	name         = "Ranger",
 	level        = 25,
-	raceId       = "RACE-SHADOW",
+	raceId       = "RACE-AVIAN",
 	side         = "Player",
 	controller   = "Player",
 	tileX        = 0,  -- set during deployment phase
@@ -502,6 +671,33 @@ local ranger = UnitSchema.Create({
 	skillIds     = { "skill_crippling_shot", "skill_venom_strike" },
 })
 equipGeneratedWeapon(ranger, "WPN-CROSSBOW", 5, "Uncommon", 1003)
+
+-- Perks & Flaws Phase 1: player roster units roll 1 perk + 1 flaw at first
+-- appearance (data only, no gameplay effect yet). AssignIfEmpty never re-rolls a
+-- unit that already has traits, so a loaded save (perkIds restored via savedRaceMap)
+-- is preserved. Deterministic per-unit seed from the unit id.
+for _, u in ipairs({ hero, mage, ranger }) do
+	-- Restore saved traits FIRST so a loaded save wins; AssignIfEmpty then skips the
+	-- re-roll for any unit that already has its saved perk+flaw.
+	local saved = savedRaceMap[u.id]
+	if saved then
+		if saved.perkIds and #saved.perkIds > 0 then u.perkIds = saved.perkIds end
+		if saved.drawbackIds and #saved.drawbackIds > 0 then u.drawbackIds = saved.drawbackIds end
+	end
+	local seed = 0
+	for ci = 1, #u.id do seed = seed + string.byte(u.id, ci) end
+	TraitRoller.AssignIfEmpty(u, Random.new(seed))
+	-- Perks & Flaws Phase 2 (TRAIT-MAIN-REBUILD): traits now carry static stat effects
+	-- (folded in EquipmentService.RebuildUnitStats) and were assigned AFTER this unit's
+	-- weapon equip/rebuild -- rebuild once so effectiveStats / max HP / MP include them.
+	-- A unit that was at full HP/MP stays full (Hardy / Deep Well raise the max).
+	-- Idempotent: a unit with no Phase-2 trait effect rebuilds to identical values.
+	local wasFullHp = u.currentHp ~= nil and u.maxHp ~= nil and u.currentHp >= u.maxHp
+	local wasFullMp = u.currentMp ~= nil and u.maxMp ~= nil and u.currentMp >= u.maxMp
+	EquipmentService.RebuildUnitStats(u)
+	if wasFullHp then u.currentHp = u.maxHp end
+	if wasFullMp then u.currentMp = u.maxMp end
+end
 
 -- TEST OVERRIDE: Ranger's Venom Strike uses weapon range instead of fixed 1
 do
@@ -555,6 +751,13 @@ local generatedEnemies = EnemyGenerator.GenerateEnemies(
 )
 
 local allUnitsList = { hero, mage, ranger }
+-- Slice 6 Guild menu: re-create units hired in earlier sessions. Inserted here,
+-- before the enemies and before the generic roster loops below (Flight, persistent
+-- HP/MP, doctrine, loadout, records), so recruits go through the same setup as the
+-- starting units. Traits + saved equipment are restored inside RestoreRecruits.
+for _, recruitUnit in ipairs(GuildMenuService.RestoreRecruits(PLAYER_ID, savedEquipMap, savedRaceMap)) do
+	table.insert(allUnitsList, recruitUnit)
+end
 for _, enemyUnit in ipairs(generatedEnemies) do
 	table.insert(allUnitsList, enemyUnit)
 end
@@ -570,7 +773,7 @@ do
 	local RaceData = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
 	for _, u in ipairs(allUnitsList) do
 		if u.raceId then
-			local raceEntry = RaceData[u.raceId]
+			local raceEntry = RaceData.GetRace(u.raceId)
 			if raceEntry and raceEntry.tags then
 				for _, tag in ipairs(raceEntry.tags) do
 					if tag == "Flying" then
@@ -670,6 +873,51 @@ for _, u in ipairs(allUnitsList) do
 			}
 		end
 
+		-- SLICE 6 LEVEL FIX (2026-10-07): ProgressionService reads level/xp/raceId
+		-- from this record and defaults a missing level to 1, so level-25 starting
+		-- units levelled up to 2. Reconcile record level with the unit's level:
+		--   * record level missing or LOWER than the unit -> raise the record to the
+		--     unit's level (seeds new records; one-time correction for old saves that
+		--     stored the bogus 1). XP toward next level is kept as-is.
+		--   * record level HIGHER than the unit -> the unit levelled up in an earlier
+		--     session (starting units are always rebuilt at 25), so restore that level
+		--     and recompute base stats from race growth + saved allocation.
+		-- Never lowers a level. (ARC-006: nil-safe on every read.)
+		do
+			local rec = u.records
+			local unitLevel = math.max(1, math.floor(tonumber(u.level) or 1))
+			local recLevel = tonumber(rec.level)
+			if recLevel == nil or math.floor(recLevel) < unitLevel then
+				if recLevel ~= nil then
+					print(string.format("[Main] Level fix: %s record level %d -> %d (save correction)",
+						u.name, math.floor(recLevel), unitLevel))
+				end
+				rec.level = unitLevel
+			elseif math.floor(recLevel) > unitLevel and u.raceId then
+				local newLevel = math.floor(recLevel)
+				local ok, stats = pcall(RaceData.CalcBaseStats, u.raceId, newLevel)
+				if ok and type(stats) == "table" then
+					u.level = newLevel
+					for stat, value in pairs(stats) do
+						local pts = (u.statAllocation and u.statAllocation[stat]) or 0
+						u.baseStats[stat] = value + pts
+					end
+					EquipmentService.RebuildUnitStats(u)
+					PersistentStateService.UpdateMaxResources(PLAYER_ID, u.id, u.maxHp, u.maxMp)
+					-- Keep the runtime HP/MP in step with the persistent state (it was
+					-- copied at L792 before this recompute). KO units stay at 0 HP.
+					local ps = PersistentStateService.GetUnitState(PLAYER_ID, u.id)
+					if ps and u.isAlive then
+						u.currentHp = math.min(ps.currentHp, u.maxHp)
+						u.currentMp = math.min(ps.currentMp, u.maxMp)
+					end
+					print(string.format("[Main] Level fix: %s restored to saved level %d", u.name, newLevel))
+				end
+			end
+			if tonumber(rec.xp) == nil then rec.xp = 0 end
+			if rec.raceId == nil then rec.raceId = u.raceId end
+		end
+
 		-- Initialize consumable slots (Slice 4G.4)
 		-- 6 slots: 1-3 open, 4-6 locked (unlock via progression)
 		local savedCons = savedConsumableSlots[u.id]
@@ -716,6 +964,91 @@ local playerUnits = {}
 for _, u in ipairs(allUnitsList) do
 	if u.side == "Player" then playerUnits[u.id] = u end
 end
+
+--------------------------------------------------
+-- SLICE 6: ProgressionService providers + unit-XP sinks
+-- Wired HERE (after playerUnits exists) because these closures capture it.
+--------------------------------------------------
+ProgressionService.SetUnitRecordProvider(function(pid, unitId)
+	local u = playerUnits[unitId]
+	return u and u.records or nil
+end)
+ProgressionService.SetOnLevelUp(function(pid, unitId, newLevel, newBaseStats)
+	local u = playerUnits[unitId]
+	if u then
+		-- Slice 6 item 2 (2026-10-07): mirror the load-time level fix (~L888-907).
+		-- Old code replaced baseStats with race-only stats (dropping saved stat
+		-- points) and never rebuilt, so max HP/MP stayed stale until rejoin.
+		local oldMaxHp, oldMaxMp = u.maxHp, u.maxMp
+		u.level = newLevel
+		if type(newBaseStats) == "table" and u.baseStats then
+			for stat, value in pairs(newBaseStats) do
+				local pts = (u.statAllocation and u.statAllocation[stat]) or 0
+				u.baseStats[stat] = value + pts
+			end
+			EquipmentService.RebuildUnitStats(u)
+		end
+		-- Runtime HP/MP follow the same rule as PersistentStateService: a max
+		-- increase is added to current (missing amount kept); KO units stay at 0.
+		-- Battle level-ups run before PersistBattleEnd, which copies these runtime
+		-- values into the persistent state, so this keeps the two in step.
+		if oldMaxHp and u.maxHp and u.maxHp > oldMaxHp and u.isAlive and (u.currentHp or 0) > 0 then
+			u.currentHp = math.min(u.maxHp, u.currentHp + (u.maxHp - oldMaxHp))
+		end
+		if oldMaxMp and u.maxMp and u.maxMp > oldMaxMp and u.currentMp then
+			u.currentMp = math.min(u.maxMp, u.currentMp + (u.maxMp - oldMaxMp))
+		end
+		if u.maxHp and u.maxMp then
+			PersistentStateService.UpdateMaxResources(pid, unitId, u.maxHp, u.maxMp)
+		end
+		if BattleVisualBroadcaster.UnitStateChanged then
+			BattleVisualBroadcaster.UnitStateChanged(u)
+		end
+	end
+end)
+-- Dispatch sink: (playerId, unitId, xp) -> direct per-unit grant.
+DispatchService.SetUnitXpSink(function(pid, unitId, xp)
+	ProgressionService.GrantUnitXp(pid, unitId, xp)
+end)
+-- Explore sink (2026-10-06): ExploreService now calls this with the full context
+-- (playerId, killXp, { squad, battleId, won, mapLevel }). Per the Designer ruling
+-- (unit_progression — the SENT expedition squad are full participants for EVERY
+-- expedition battle), route this battle's kill XP to each unitId in the SENT squad
+-- via ProgressionService.GrantExpeditionUnitXp, which applies the level-up curve
+-- and the Human ×1.10 bonus (see note below; BUG-017 fix).
+-- This replaces the old interim that granted to whoever was CURRENTLY deployed; the
+-- expedition's sent squad is the correct, stable participant set and survives rejoin.
+--
+-- FLAG-E4 (expected): nothing calls ExploreService.StartExpedition with a squad yet
+-- (no expedition-start UI), so ctx.squad is empty for now. In that case this sink
+-- NO-OPS cleanly (no fallback to deployed units — we never invent a participant set).
+-- The start-expedition CALLER must pass the sent-squad list (array of unitIds) once
+-- the UI exists; the plumbing below is ready and needs no further change.
+--
+-- Human ×1.10 on expeditions (RESOLVED, BUG-017): this sink calls
+-- ProgressionService.GrantExpeditionUnitXp, which applies the locked Human ×1.10
+-- itself (expedition-only path). Plain GrantUnitXp (used by Dispatch) still does
+-- NOT apply ×1.10 — dispatch XP is a flat formula (unit_progression 78).
+-- Updated 2026-10-07 (Slice 6 item 3): the old FLAG-EXPLORE-HUMAN note here
+-- predated the BUG-017 fix and was stale.
+ExploreService.SetUnitXpSink(function(pid, killXp, ctx)
+	-- ctx = { squad = {unitId,...}, battleId, won, mapLevel }. Third arg is required
+	-- for the sent-squad grant; guard it so an old 2-arg caller can never crash here.
+	-- Human units get their locked x1.10 inside GrantExpeditionUnitXp (expedition-only path).
+	local squad = (type(ctx) == "table" and type(ctx.squad) == "table") and ctx.squad or {}
+	if #squad == 0 then
+		-- FLAG-E4: no sent squad supplied — no-op (do NOT fall back to deployed units).
+		print(string.format(
+			"[Main] Explore XP sink: no sent squad (FLAG-E4) — %d XP not granted (awaiting start-expedition caller)",
+			killXp))
+		return
+	end
+	for _, unitId in ipairs(squad) do
+		if type(unitId) == "string" then
+			ProgressionService.GrantExpeditionUnitXp(pid, unitId, killXp, ctx and ctx.battleId)
+		end
+	end
+end)
 
 --------------------------------------------------
 -- REUSABLE SAVE HELPER
@@ -766,8 +1099,17 @@ local function doSave()
 	end
 	-- Persist the loose card inventory so skill/augment card counts survive relaunch
 	-- (previously never saved -> starter cards re-granted every launch = multiplication).
-	local progression = { cardInventory = cardInventory }
-	local ok, err = SaveService.Save(PLAYER_ID, rosterState, inventoryItems, progression)
+	-- Slice 6: fold guild/dispatch/explore progression into Key 3 and currency
+	-- balances into Key 2 (via the optional 5th Save arg). No second store.
+	local progression = {
+		cardInventory = cardInventory,
+		guild    = GuildService.Export(PLAYER_ID),
+		dispatch = DispatchService.Export(PLAYER_ID),
+		explore  = ExploreService.Export(PLAYER_ID),
+		guildMenu = GuildMenuService.Export(PLAYER_ID), -- Slice 6 Guild menu (battle counter + hired units)
+	}
+	local currencies = CurrencyService.Export(PLAYER_ID)
+	local ok, err = SaveService.Save(PLAYER_ID, rosterState, inventoryItems, progression, currencies)
 	if ok then
 		print("[Save] Successful")
 	else
@@ -777,10 +1119,31 @@ local function doSave()
 end
 
 --------------------------------------------------
+-- SLICE 6: temporary Guild menu wiring (needs playerUnits + doSave, so it lives
+-- here). Every Guild request is validated inside GuildMenuService (SEC-001).
+--------------------------------------------------
+GuildMenuService.Init({
+	playerId       = PLAYER_ID,
+	sessionPlayer  = player,
+	getPlayerUnits = function() return playerUnits end,
+	addPlayerUnit  = function(u) playerUnits[u.id] = u end,
+	doSave         = doSave,
+	getMapLevel    = function() return activeQuest and activeQuest.recommendedLvl or 1 end,
+	isSkillRegistered = function(skillId)
+		return CommandService.GetSkill(skillId) ~= nil
+	end,
+})
+
+--------------------------------------------------
 -- MANAGEMENT REMOTEFUNCTIONS (Slice 4D)
 -- Active throughout the session (pre-battle, post-battle, hub)
 --------------------------------------------------
 
+
+-- Forward declaration (2026-10-07): GetRosterData below needs the Human stat-point
+-- helper, which is defined further down (~'STATS_LIST'). A Lua local is only visible
+-- AFTER its declaration, so declare it here and assign it at the definition site.
+local getUnallocatedPoints
 
 BattleEvents.GetRosterData.OnServerInvoke = function(player)
 	local roster = {}
@@ -825,6 +1188,8 @@ BattleEvents.GetRosterData.OnServerInvoke = function(player)
 			drawbackIds = unit.drawbackIds or {},
 			-- Unit records (Slice 4K)
 			records = unit.records or {},
+			-- Unspent stat points for the loadout header dot (2026-10-07).
+			unallocatedPoints = getUnallocatedPoints and getUnallocatedPoints(unit) or 0,
 			-- Consumable slots (Slice 4G.4)
 			consumableSlots = (function()
 				local slots = {}
@@ -1575,15 +1940,17 @@ end
 -- STAT ALLOCATION & COMPARISON (Slice 4J)
 --------------------------------------------------
 
--- Stat allocation: units earn points through leveling (Slice 6).
--- Human race passive: +1 bonus point every 3 levels.
--- For now: no leveling = 0 base points. Infrastructure ready for when leveling arrives.
+-- Human Adaptability (races row 'Human'): "Gain +1 allocable stat point every 3
+-- levels." Leveling now exists (Slice 6), so this is live. Points are DERIVED from
+-- the unit's current level (floor(level/3) - points spent), never stored as a
+-- running total, so rejoins / level restores cannot double-grant. Non-Humans get
+-- 0 base points: the DB defines stat gain as race growth only (unit_progression 49).
 
 local STATS_LIST = {"STR", "AGI", "INT", "VIT", "DEX", "LUK"}
 
-local function getUnallocatedPoints(unit)
-	-- Base points from leveling (Slice 6 will provide this formula)
-	local basePoints = 0  -- placeholder: 0 until leveling system exists
+function getUnallocatedPoints(unit) -- assigns the forward-declared local (see GetRosterData)
+	-- No generic per-level points: stat gain is race growth (unit_progression 49).
+	local basePoints = 0
 	-- Human race bonus: +1 per 3 levels
 	if unit.raceId == "RACE-HUMAN" then
 		basePoints = basePoints + math.floor((unit.level or 1) / 3)
@@ -1937,6 +2304,31 @@ if game:GetService("RunService"):IsStudio() then
 
 			CommandService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
 			DisplacementService.SetMapDimensions(MAP_WIDTH, MAP_HEIGHT)
+			-- Tile effects belong to the old map: reset (also resizes bounds) and, if a
+			-- battle is already running, re-seed the new map's chasm-floor effects.
+			-- Tell clients the old map's tile effects are gone (Init wipes them silently).
+			for _, eff in pairs(TileEffectService.GetAllEffects()) do
+				if eff.tileX and eff.tileY then BattleVisualBroadcaster.TileEffectRemoved(eff.tileX, eff.tileY, eff.id) end
+			end
+			TileEffectService.Init(MAP_WIDTH, MAP_HEIGHT)
+			if state then
+				TileEffectService.SeedFloorEffects(GameConstants.FLOOR_EFFECTS)
+				-- Slice 5 map objects: the new map has its own placed objects —
+				-- refresh state.objects and recompute auras against the new layout
+				-- (old banners/stands are gone; new ones may cover deployed units).
+				state.objects = newMap.objects or {}
+				ObjectEffectService.ReconcileAuras(state.units, state)
+			end
+
+			-- Battlefield events on regenerate: re-pick for the new map.
+			do
+				local ec = 0
+				for _, u in ipairs(state.units) do if u.side == "Enemy" and u.isAlive then ec = ec + 1 end end
+				state.enemyCountAtStart = ec
+				state.playerDeployTiles = (generatedMap and generatedMap.deploymentZones and generatedMap.deploymentZones.player) or {}
+				local bfRng = Random.new((state.ct or 0) + 70007)
+				BattlefieldEventService.SelectEventsForBattle(state, activeQuest and activeQuest.biome or nil, bfRng)
+			end
 
 			-- Sync terrain, elevation, blockers, AND dimensions to client.
 			BattleEvents.MapDataSync:FireAllClients({
@@ -1976,14 +2368,175 @@ if game:GetService("RunService"):IsStudio() then
 
 			print(string.format("[Dev] Regenerated: biome=%s template=%s seed=%d (%dx%d, %d units repositioned)",
 				biome, template, newMap.seed, MAP_WIDTH, MAP_HEIGHT, #allUnitsList))
+
+		elseif cmd.action == "GrantStatus" then
+			-- Apply a buff/debuff to the selected unit (by tile). Repeatable.
+			local tx, ty, sid = cmd.tileX, cmd.tileY, cmd.statusId
+			if not tx or not ty or type(sid) ~= "string" then
+				warn("[Dev] GrantStatus: need tileX, tileY, statusId")
+				return
+			end
+			local hit = false
+			for _, u in ipairs(allUnitsList) do
+				if u.tileX == tx and u.tileY == ty and u.isAlive then
+					StatusService.ApplyStatus(u, sid, u.id)
+					-- D4 fix 2026-10-04: immediate feedback — rebuild stats (so stat-
+					-- changing statuses apply now, not next turn) + refresh the client.
+					if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
+					local inst
+					for _, si in ipairs(u.statusInstances or {}) do
+						if si.id == sid then inst = si break end
+					end
+					if inst and BattleVisualBroadcaster.StatusApplied then
+						BattleVisualBroadcaster.StatusApplied(u, sid, inst.remainingTurns, nil)
+					end
+					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u) end
+					print(string.format("[Dev] GrantStatus %s -> %s", sid, u.name))
+					hit = true
+				end
+			end
+			if not hit then warn("[Dev] GrantStatus: no living unit at tile") end
+
+		elseif cmd.action == "RemoveStatus" then
+			-- Remove one status (or all) from the selected unit.
+			local tx, ty, sid = cmd.tileX, cmd.tileY, cmd.statusId
+			if not tx or not ty then return end
+			for _, u in ipairs(allUnitsList) do
+				if u.tileX == tx and u.tileY == ty and u.isAlive then
+					if sid == "ALL" or not sid then
+						-- Snapshot ids first: RemoveStatus mutates statusInstances, so
+						-- iterating it live would skip every other entry (D2 fix).
+						local ids = {}
+						for _, inst in ipairs(u.statusInstances or {}) do
+							ids[#ids + 1] = inst.id
+						end
+						-- A1 fix (2026-10-04): only broadcast + count a removal that actually
+						-- happened. RemoveStatus returns false for hard-locked statuses (e.g.
+						-- Snow Storm Frozen), so the client no longer shows a false "-Frozen".
+						local removed = 0
+						for _, id in ipairs(ids) do
+							if StatusService.RemoveStatus(u, id) then
+								removed = removed + 1
+								if BattleVisualBroadcaster.StatusExpired then BattleVisualBroadcaster.StatusExpired(u, id) end
+							end
+						end
+						print(string.format("[Dev] RemoveStatus ALL (%d removed) -> %s", removed, u.name))
+					else
+						if StatusService.RemoveStatus(u, sid) then
+							if BattleVisualBroadcaster.StatusExpired then BattleVisualBroadcaster.StatusExpired(u, sid) end
+							print(string.format("[Dev] RemoveStatus %s -> %s", sid, u.name))
+						else
+							print(string.format("[Dev] RemoveStatus %s FAILED (locked?) -> %s", sid, u.name))
+						end
+					end
+					-- D4 fix: rebuild stats + refresh client immediately after removal.
+					if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
+					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u) end
+				end
+			end
+
+		elseif cmd.action == "SetWeather" then
+			-- Force a weather/crisis condition immediately (dev only).
+			local cond = cmd.condition
+			if type(cond) ~= "string" or cond == "" then
+				warn("[Dev] SetWeather: need condition")
+				return
+			end
+			local ok = WeatherService.ForceCondition(cond, state)
+			if ok then print("[Dev] SetWeather -> " .. cond) end
+
+		elseif cmd.action == "SpawnUnit" or cmd.action == "SpawnGroup" then
+			-- Spawn one or more units (Player ally / Enemy / Neutral) near the selected
+			-- tile. D3 fix 2026-10-04: never stack on an occupied / off-map / impassable
+			-- tile — a spiral search finds the nearest free, in-bounds, walkable tile.
+			local tx, ty = cmd.tileX, cmd.tileY
+			local tier = cmd.tier or "Grunt"
+			local side = cmd.side or "Enemy"
+			if not tx or not ty then
+				warn("[Dev] Spawn: need tileX, tileY (select a tile/unit first)")
+				return
+			end
+			if side ~= "Enemy" and side ~= "Neutral" and side ~= "Player" then side = "Enemy" end
+			local lvl = cmd.level or 1
+			local spawnSide = (side == "Player") and "Neutral" or side
+			local count = (cmd.action == "SpawnGroup") and math.clamp(tonumber(cmd.count) or 3, 1, 6) or 1
+			local devRng = Random.new(os.clock() * 1000)
+
+			-- Build an occupancy set of living units (by tile key) so we never stack.
+			local occupied = {}
+			for _, u in ipairs(allUnitsList) do
+				if u.isAlive then occupied[u.tileX .. "," .. u.tileY] = true end
+			end
+			local function tileFree(x, y)
+				if x < 1 or y < 1 or x > MAP_WIDTH or y > MAP_HEIGHT then return false end
+				if GameConstants.IsImpassableTerrain and GameConstants.IsImpassableTerrain(x, y) then return false end
+				if GameConstants.IsBlocked and GameConstants.IsBlocked(x, y) then return false end
+				return not occupied[x .. "," .. y]
+			end
+			-- Spiral outward from the anchor to find the next free tile (radius 0..6).
+			local function findFreeSpawnTile(ax, ay)
+				for r = 0, 6 do
+					for dx = -r, r do
+						for dy = -r, r do
+							if math.max(math.abs(dx), math.abs(dy)) == r then
+								local x, y = ax + dx, ay + dy
+								if tileFree(x, y) then return x, y end
+							end
+						end
+					end
+				end
+				return nil
+			end
+
+			local spawned = 0
+			for _ = 1, count do
+				local sx, sy = findFreeSpawnTile(tx, ty)
+				if not sx then
+					warn("[Dev] Spawn: no free tile near anchor")
+					break
+				end
+				local unit = EnemyGenerator.SpawnReinforcement(
+					{ type = tier, level = lvl }, { x = sx, y = sy }, state, devRng, spawnSide, cmd.raceOverride)
+				if unit then
+					if side == "Player" then unit.side = "Player"; unit.controller = "AI" end
+					occupied[unit.tileX .. "," .. unit.tileY] = true
+					setTileOccupant(unit.tileX, unit.tileY, unit.name, "Unit (" .. unit.side .. ")", "Blocking")
+					if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitSpawned then
+						BattleVisualBroadcaster.UnitSpawned(unit)
+					end
+					spawned = spawned + 1
+				end
+			end
+			print(string.format("[Dev] Spawn %s x%d (%s) near (%d,%d) -> %d spawned", side, count, tier, tx, ty, spawned))
+
+		elseif cmd.action == "SpawnObject" then
+			-- Place a map object (blocker or interactable) on the selected tile.
+			-- Uses the live PlaceObjectInstance path (renders + guards against stacking).
+			local tx, ty, objType = cmd.tileX, cmd.tileY, cmd.objectType
+			if not tx or not ty or type(objType) ~= "string" then
+				warn("[Dev] SpawnObject: need tileX, tileY, objectType")
+				return
+			end
+			if tx < 1 or ty < 1 or tx > MAP_WIDTH or ty > MAP_HEIGHT then
+				warn("[Dev] SpawnObject: tile off-map")
+				return
+			end
+			local inst = ObjectEffectService.PlaceObjectInstance(state, objType, tx, ty)
+			if inst then
+				print(string.format("[Dev] SpawnObject %s at (%d,%d) -> %s", objType, tx, ty, inst.id))
+			else
+				warn(string.format("[Dev] SpawnObject failed (tile occupied by another object?) %s (%d,%d)", objType, tx, ty))
+			end
 		end
 	end)
 	print("[Dev] DevCommand handler active (Studio only)")
 end
 
--- PRE-BATTLE LOADOUT HUB
-print("[Hub] Opening pre-battle Loadout Hub")
-BattleEvents.LoadoutHubOpen:FireAllClients({ phase = "PreBattle" })
+-- PRE-BATTLE GUILD MENU (Slice 6 temporary Guild menu, 2026-10-07). Replaces the
+-- pre-battle Loadout Hub; its Units button opens that same loadout screen, and
+-- leaving fires the same BattleEvents.StartBattle -> hubContinueSignal as before.
+print("[Hub] Opening pre-battle Guild menu")
+GuildMenuService.Open("PreBattle")
 
 -- Sync map data (terrain/elevation/blockers) to client for tile inspector
 BattleEvents.MapDataSync:FireAllClients({
@@ -1998,6 +2551,11 @@ BattleEvents.MapDataSync:FireAllClients({
 -- Wait for player to press Deploy (hub "Start Battle" button)
 hubContinueSignal.Event:Wait()
 print("[Hub] Player ready — entering deployment phase")
+GuildMenuService.Close()
+-- Guild menu effects on THIS battle's roster (in place; closures hold allUnitsList):
+-- add units hired just now, drop units away on dispatch, bench above the cap
+-- (deployment requires every listed unit to be placed, so over-cap would soft-lock).
+GuildMenuService.SyncBattleRoster(allUnitsList, #playerSpawns)
 
 -- === DEPLOYMENT PHASE ===
 -- Player manually places each unit on PD (Player Deployment) tiles.
@@ -2019,6 +2577,7 @@ local function serializeForDeployment(unitList, side)
 				tileX      = u.tileX,
 				tileY      = u.tileY,
 				weaponName = wpnName,
+				enemyType  = u.enemyType,  -- tier (Grunt/Veteran/Elite) for the deployment tier star
 			})
 		end
 	end
@@ -2055,6 +2614,9 @@ if _raceModelsFolder then
 		if _tpl and _tpl:IsA("Model") then
 			local c = _tpl:Clone()
 			c.Name = "Unit_" .. eu.id
+			-- Kill the R15 built-in overhead name/health tag (client HP-bar shows the name).
+			local _h1 = c:FindFirstChildOfClass("Humanoid")
+			if _h1 then _h1.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None; _h1.NameDisplayDistance = 0; _h1.HealthDisplayDistance = 0 end
 			local hrp = c.PrimaryPart or c:FindFirstChild("HumanoidRootPart")
 			if hrp then
 				hrp.Anchored = true
@@ -2075,6 +2637,7 @@ BattleEvents.DeploymentPhase:FireAllClients({
 	playerAnchors = deployAnchorsToShow,
 	enemyUnits    = serializeForDeployment(allUnitsList, "Enemy"),
 	playerUnits   = serializeForDeployment(allUnitsList, "Player"),
+	awayUnits     = GuildMenuService.GetAwayUnitsForDeployment(), -- greyed out, not placeable
 	mapWidth      = MAP_WIDTH,
 	mapHeight     = MAP_HEIGHT,
 })
@@ -2153,6 +2716,8 @@ local deployConn = BattleEvents.DeployUnit.OnServerEvent:Connect(function(plr, d
 			if existing then existing:Destroy() end
 			local clone = _template:Clone()
 			clone.Name = "Unit_" .. unit.id
+			local _h2 = clone:FindFirstChildOfClass("Humanoid")
+			if _h2 then _h2.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None; _h2.NameDisplayDistance = 0; _h2.HealthDisplayDistance = 0 end
 			local hrp = clone.PrimaryPart or clone:FindFirstChild("HumanoidRootPart")
 			if hrp then
 				hrp.Anchored = true
@@ -2233,8 +2798,87 @@ deploymentCompleteSignal:Destroy()
 
 print(string.format("[Deploy] All %d player units deployed — starting battle", #deployPlayerUnits))
 
+-- === INITIATIVE (DB core_stats id 54, user ruling 2026-10-02) ===
+-- STEP 1 (every unit, once, at initial deployment): LUK Starting RT =
+--   round(Base RT x (1 - 0.30 x LUK / (100 + LUK))). Player units use standard
+--   Base RT 400 and their FINAL effective LUK (doctrine/gear included — same basis
+--   EnemyGenerator uses for enemies, which already received STEP 1 on their tier RT).
+-- STEP 2 (PLAYER-ROSTER units only): Player Initiative Edge = -10 RT (min 1), applied
+--   LAST, after any % Starting-RT modifiers (none implemented yet). Never applied to
+--   enemies, neutrals, allied NPCs, summons or mid-battle reinforcements (those are
+--   not in deployPlayerUnits / not controller "Player").
+for _, u in ipairs(deployPlayerUnits) do
+	if u.side == "Player" and u.controller == "Player" then
+		local luk = (u.effectiveStats and u.effectiveStats.LUK) or 10
+		-- Starting RT (one-time) from Modified Base RT × LUK reduction, then the trait
+		-- Starting-RT % (Timeline Sovereign −12% / Temporal Drag +15%) layers on BEFORE
+		-- the flat Player Initiative Edge, which stays last (DB core_stats id 54, trait
+		-- Starting-RT % approved 2026-10-04).
+		-- Single rounding (DB core_stats 54): raw Modified Base RT × LUK factor × trait %,
+		-- rounded ONCE, then the flat Player Initiative Edge last.
+		local modBaseRt = StatusService.GetModifiedBaseRt(u)
+		local lukFactor = 1 - 0.30 * luk / (100 + luk)
+		local lukRt = math.round(modBaseRt * lukFactor * TraitEffectService.GetStartingRtMultiplier(u))
+		u.remainingRt = GameConstants.ApplyPlayerInitiativeEdge(lukRt)
+		print(string.format("[Initiative] %s LUK %d: %d -> %d (player edge -%d)",
+			u.name, luk, lukRt, u.remainingRt, GameConstants.PLAYER_INITIATIVE_EDGE_RT))
+	end
+end
+
 -- === BATTLE START ===
 state = BattleCoordinator.CreateBattleState(allUnitsList)
+StatusService.SetAuraUnitsProvider(function() return state and state.units end)  -- Ward Totem aura
+-- Status conflict rules (2026-10-07): notify clients when a conflict removes a status.
+StatusService.SetConflictRemovedHandler(function(unit, statusId)
+	if BattleVisualBroadcaster.StatusExpired then BattleVisualBroadcaster.StatusExpired(unit, statusId) end
+	if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(unit) end
+end)
+
+-- Slice 5 map objects: seed the battle state with the generated map's placed
+-- objects so Interact candidacy, aura reconcile, and the death-sweep can see
+-- them. The generator (MapService.placeObjects) emits { id, type, x, y } onto
+-- generatedMap.objects; the battle state carries the SAME shape (no remap).
+-- Without this, state.objects is nil and every map-object effect is inert.
+state.objects = generatedMap.objects or {}
+
+-- Time cycle: battle starts at Dawn (ct 0). Prime RacePassiveService + resync any
+-- day/night-dependent units (Vampire/Werewolf) and tell the client, so turn-1
+-- stats and UI are correct before the clock first advances.
+RacePassiveService.SetTimePhase(state.timePhase or "Dawn")
+for _, u in ipairs(state.units) do
+	if u.isAlive then RacePassiveService.RefreshConditionalStats(u) end
+end
+BattleVisualBroadcaster.TimePhaseChanged(state.timePhase or "Dawn")
+
+-- Weather engine: initialize the combined weather/crisis slot from the quest's
+-- biome pool + the starting condition the map generator selected, then apply the
+-- starting condition's onset statuses (e.g. Rain Wet, Snow Storm Frozen) so turn-1
+-- is correct before the first clock tick. Re-rolls each round thereafter.
+WeatherService.InitFromBiome(selectedQuest.biome, generatedMap.battleCondition, state.ct)
+WeatherService.ApplyStartingOnset(state)
+
+-- Slice 5 map objects: reset the per-battle object usage ledger, then apply any
+-- passive auras (War Banner / Cursed Statue) to units already standing in range
+-- at deployment. Subsequent entries/exits are reconciled on each Move.
+ObjectEffectService.ResetBattle()
+ObjectEffectService.ReconcileAuras(state.units, state)
+
+-- Battlefield events: pick this battle's events (0-3 random + conditional) and
+-- spawn the start ones. Separate from weather; layers on top. Seed the enemy
+-- count the Champion conditional compares against.
+do
+	local ec = 0
+	for _, u in ipairs(state.units) do if u.side == "Enemy" and u.isAlive then ec = ec + 1 end end
+	state.enemyCountAtStart = ec
+	state.playerDeployTiles = (generatedMap and generatedMap.deploymentZones and generatedMap.deploymentZones.player) or {}
+	local bfRng = Random.new((state.ct or 0) + 70007)
+	BattlefieldEventService.SelectEventsForBattle(state, activeQuest and activeQuest.biome or nil, bfRng)
+end
+
+-- Seed permanent chasm-floor tile effects (Vines / Tar Pit) int
+-- slot (map_gen_rules rows 59/65/67). Source = GameConstants.FLOOR_EFFECTS, set by
+-- SetGeneratedMap() from the generated map (also covers the dev Regenerate tool).
+TileEffectService.SeedFloorEffects(GameConstants.FLOOR_EFFECTS)
 
 -- Spawn R15 race models for all units
 local raceModelsFolder = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
@@ -2267,6 +2911,8 @@ for _, unit in ipairs(allUnitsList) do
 		end
 		local clone = template:Clone()
 		clone.Name = "Unit_" .. unit.id
+		local _h3 = clone:FindFirstChildOfClass("Humanoid")
+		if _h3 then _h3.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None; _h3.NameDisplayDistance = 0; _h3.HealthDisplayDistance = 0 end
 		local hrp = clone.PrimaryPart or clone:FindFirstChild("HumanoidRootPart")
 		if hrp then
 			hrp.Anchored = true
@@ -2324,6 +2970,18 @@ do
 end
 
 BattleVisualBroadcaster.BattleStarted(state.units)
+-- Re-announce battlefield events selected BEFORE BattleStarted: the client resets
+-- its Event panel on BattleStarted, so start-of-battle events (e.g. Fog Spirit) showed "None".
+for _, rec in ipairs(state.battlefieldEvents or {}) do
+	if rec.name then BattleVisualBroadcaster.BattlefieldEventAnnounced(rec.name, true) end
+end
+-- Resync tile effects seeded BEFORE BattleStarted (chasm-floor Vines/Tar Pit): the
+-- client clears tile VFX on BattleStarted, so re-announce every live effect now.
+for _, eff in pairs(TileEffectService.GetAllEffects()) do
+	if eff.tileX and eff.tileY and eff.id then
+		BattleVisualBroadcaster.TileEffectApplied(eff.tileX, eff.tileY, eff.id, eff.remainingCt)
+	end
+end
 
 --------------------------------------------------
 -- CHANNEL INTERRUPT HOOK
@@ -2331,8 +2989,12 @@ BattleVisualBroadcaster.BattleStarted(state.units)
 
 local function checkChannelInterrupt(unit, statusId)
 	if unit.isChanneling and StatusService.IsChannelDisruptor(statusId) then
-		BattleCoordinator.InterruptChanneling(unit, statusId .. " applied")
-		return true
+		-- Activation phase is uninterruptible (2026-10-07): InterruptChanneling
+		-- returns false then, and the channel visual must keep running.
+		if BattleCoordinator.InterruptChanneling(unit, statusId .. " applied") then
+			BattleVisualBroadcaster.ChannelEnded(unit)
+			return true
+		end
 	end
 	return false
 end
@@ -2365,6 +3027,7 @@ local function buildTurnPrompt(unit)
 				-- client places the channel event at the correct timeline position (independent
 				-- of the caster's own RT entry).
 				channelRemaining = math.max(0, (u.channelResolveCt or 0) - state.ct),
+				channelPhase = u.channelPhase, -- "Channel" | "Activation" (2026-10-07)
 				channeledSkillName = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.name or nil,
 				channeledSkillIcon = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.icon or nil,
 			})
@@ -2376,7 +3039,9 @@ local function buildTurnPrompt(unit)
 	for _, sid in ipairs(unit.skillIds or {}) do
 		local def = CommandService.GetSkill(sid)
 		if def then
-			local canUse = UnitSchema.HasEnoughMp(unit, def.mpCost or 0)
+			-- Level-based MP (2026-10-07): same pricing the server charges (CommandService.GetSkillMpCost).
+			local promptMpCost = CommandService.GetSkillMpCost(unit, def, def.id)
+			local canUse = UnitSchema.HasEnoughMp(unit, promptMpCost)
 			local candidates, computedRange = TargetingService.GetSkillCandidates(unit, state.units, def)
 			local isGroundTarget = false
 			local isSelfTarget = false
@@ -2435,7 +3100,7 @@ local function buildTurnPrompt(unit)
 				id          = def.id,
 				name        = def.name,
 				willEndTurn = (def.channelTime or 0) > 0, -- warn player: channeling ends turn
-				mpCost      = def.mpCost or 0,
+				mpCost      = promptMpCost,
 				range       = def.range or 1,
 				pattern     = def.pattern or "Single",
 				targetRules = def.targetRules or "Enemy Unit",
@@ -2448,10 +3113,19 @@ local function buildTurnPrompt(unit)
 				groundTarget = isGroundTarget,
 				selfTarget   = isSelfTarget,
 				computedRange = computedRange or (def.range or 1),
-				rtCost      = def.rtMult
-					and math.round(GameConstants.CalcEffectiveWt(
-						unit.weaponWt or 10, (unit.effectiveStats or {}).STR or 10) * def.rtMult)
-					or (def.rtCost or 60),
+				-- rtCost shown MUST match the charge path (CommandService): fixed/level skills
+				-- use their authored cost; weapon-WT skills use (base component + weapon WT) × N.
+				rtCost      = (function()
+					local lvl = (unit.equipmentSlots and unit.equipmentSlots.MainHand and unit.equipmentSlots.MainHand.itemLevel) or 1
+					local fx = GameConstants.CalcFixedSkillRt(def.id, lvl)
+					if fx then return fx end
+					if def.rtMult then
+						local baseComp = StatusService.GetModifiedBaseRt(unit) * GameConstants.BASIC_ATTACK_RT_FACTOR
+						local wWt = GameConstants.CalcEffectiveWt(unit.weaponWt or 10, (unit.effectiveStats or {}).STR or 10)
+						return math.round((baseComp + wWt) * def.rtMult)
+					end
+					return def.rtCost or 60
+				end)(),
 				power       = def.power or 0,
 				appliesStatus = def.appliesStatus or nil,
 				description = def.isHealing and "Heals ally" or (def.appliesStatus and ("Applies " .. def.appliesStatus) or "Damages target"),
@@ -2460,6 +3134,7 @@ local function buildTurnPrompt(unit)
 	end
 
 	local moveTiles = TargetingService.GetMoveCandidates(unit, state.units, MAP_WIDTH, MAP_HEIGHT)
+	if unit.isSummon and unit.canMove == false then moveTiles = {} end  -- immobile summon (Turret/Totem/Decoy)
 	local moveCandidates = {}
 	for _, tile in ipairs(moveTiles) do
 		table.insert(moveCandidates, {
@@ -2508,6 +3183,8 @@ local function buildTurnPrompt(unit)
 				elseif c.effectiveStats and c.effectiveStats.VIT then
 					tgtStability = math.floor(c.effectiveStats.VIT / 60)
 				end
+				-- Status Stability buffs (mirrors DisplacementService.ResolvePush).
+				tgtStability = math.max(0, tgtStability + StatusService.GetStabilityModifier(c))
 				local maxPushDistance = math.max(0, pusherForce - tgtStability)
 				table.insert(pushTargets, {
 					id = c.id, name = c.name, tileX = c.tileX, tileY = c.tileY,
@@ -2589,6 +3266,38 @@ local function buildTurnPrompt(unit)
 		end
 	end
 
+	-- INTERACT candidates (Slice 4 — Interact Command framework). Classified
+	-- server-side by native kind; the client labels each and only ungrays the
+	-- Interact button when at least one candidate exists (Button Availability
+	-- Policy). RT previews are a percentage of Modified Base RT per native kind.
+	local interactCands = TargetingService.GetInteractCandidates(unit, state.units, state)
+	local modBaseRtForInteract = StatusService.GetModifiedBaseRt(unit)
+	local interactTargets = {}
+	for _, c in ipairs(interactCands) do
+		-- Per-kind RT preview (native percentages; headgear may reduce later).
+		local rtPct = 0.10
+		local label = "Interact"
+		if c.interactKind == "allyRtHelp" then
+			rtPct = 0.50; label = "Aid (−35% RT)"
+		elseif c.interactKind == "reviveAlly" then
+			rtPct = 0.30; label = "Resuscitate (channel)"
+		elseif c.interactKind == "recruitEnemy" then
+			rtPct = 0.10; label = "Recruit"
+		elseif c.interactKind == "mapObject" then
+			rtPct = 0.10; label = "Activate"
+		end
+		table.insert(interactTargets, {
+			interactKind = c.interactKind,
+			id           = c.id,            -- unit targets
+			objectId     = c.objectId,      -- map-object targets
+			name         = c.name,
+			tileX        = c.tileX,
+			tileY        = c.tileY,
+			label        = label,
+			rtPreview    = math.round(modBaseRtForInteract * rtPct),
+		})
+	end
+
 	return {
 		unitId         = unit.id,
 		unitName       = unit.name,
@@ -2606,6 +3315,8 @@ local function buildTurnPrompt(unit)
 		attackTargets  = attackTargets,
 		pushTargets    = pushTargets,
 		consumableSlots = consumableItems,
+		interactTargets = interactTargets,
+		interactAvailable = (#interactTargets > 0),
 		pushRt         = math.round(StatusService.GetModifiedBaseRt(unit) * GameConstants.GUARD_RT_BASE_FACTOR),
 		timeline       = timeline,
 		currentCt      = state.ct,
@@ -2717,6 +3428,51 @@ local function promptPlayerFacing(unit, playerObj)
 end
 
 --------------------------------------------------
+-- CARDINAL DIRECTION PROMPT: reuse the facing ring to let the player AIM a
+-- siege weapon (Ballista) in one of the 4 cardinal directions. Unlike
+-- promptPlayerFacing this does NOT change the unit's facing — it just returns
+-- the chosen direction. Diagonal picks snap to the nearest cardinal (the bolt
+-- travels cardinally per DB). Single-player: uses Players:GetPlayers()[1].
+-- Blocking prompt-and-wait, same pattern as promptPlayerFacing.
+--------------------------------------------------
+local DIAG_TO_CARDINAL = { NE = "N", SE = "S", SW = "S", NW = "N" }
+local function promptCardinalDirection(unit)
+	local playerObj = Players:GetPlayers()[1]
+	if not playerObj then return nil end
+	BattleEvents.FacingPrompt:FireClient(playerObj, {
+		unitId        = unit.id,
+		currentFacing = unit.facing,
+		tileX         = unit.tileX,
+		tileY         = unit.tileY,
+		aimMode       = "siege",   -- client may style the ring differently; optional
+	})
+	local chosen, responded = nil, false
+	local conn
+	conn = BattleEvents.SetFacing.OnServerEvent:Connect(function(player, data)
+		if player == playerObj and data and data.unitId == unit.id then
+			local dir = data.facing
+			if dir and DIAG_TO_CARDINAL[dir] then dir = DIAG_TO_CARDINAL[dir] end
+			if dir == "N" or dir == "E" or dir == "S" or dir == "W" then
+				chosen = dir
+				responded = true
+			end
+		end
+	end)
+	while not responded do
+		task.wait(0.1)
+	end
+	if conn then conn:Disconnect() end
+	return chosen
+end
+
+-- Inject the cardinal direction prompter into ObjectEffectService now that it is
+-- defined (the main OES injection block near the top runs before this function
+-- exists, so wiring it here avoids a nil-prompter forward-reference).
+if ObjectEffectService.SetDirectionPrompter then
+	ObjectEffectService.SetDirectionPrompter(promptCardinalDirection)
+end
+
+--------------------------------------------------
 
 local function executePlayerCommand(unit, command)
 	local actionType = command.actionType
@@ -2759,6 +3515,39 @@ local function executePlayerCommand(unit, command)
 				oldTargetX = oldTargetX, oldTargetY = oldTargetY }
 		else
 			warn("[Main] Push rejected: " .. (reason or "unknown"))
+			return nil
+		end
+	end
+
+	if actionType == "Interact" then
+		-- INTERACT (Slice 4 framework). Client sends { actionType="Interact",
+		-- interactKind, targetId (unit) | objectId (map object) }. The command
+		-- service re-validates the candidate and dispatches the native effect.
+		local selection = {
+			interactKind = command.interactKind,
+			targetId     = command.targetId,
+			objectId     = command.objectId,
+		}
+		-- Capture pre-state for the apply side (recruit flips side → occupancy
+		-- label must refresh, like Push updates occupancy after displacement).
+		local tgt = nil
+		if command.targetId then
+			for _, u in ipairs(state.units) do
+				if u.id == command.targetId then tgt = u; break end
+			end
+		end
+		local oldSide = tgt and tgt.side or nil
+		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Interact", selection)
+		if ok then
+			return {
+				actionType   = "Interact",
+				unit         = unit,
+				target       = tgt,
+				interactKind = command.interactKind,
+				oldSide      = oldSide,
+			}
+		else
+			warn("[Main] Interact rejected: " .. (reason or "unknown"))
 			return nil
 		end
 	end
@@ -3072,6 +3861,19 @@ local function broadcastActions(actions, activeUnit)
 				end
 			end
 			-- Push visual already broadcast by CommandService
+
+		elseif action.actionType == "Interact" then
+			-- Recruit flips the target's side to Neutral — refresh its tile
+			-- occupant label so highlighting/targeting treats it correctly.
+			-- Ally-RT-help and channeled revive need no occupancy change here
+			-- (revive resolves later at its channel deadline). Map-object is parked.
+			if action.interactKind == "recruitEnemy" and action.target then
+				local t = action.target
+				if t.isAlive then
+					setTileOccupant(t.tileX, t.tileY, t.name, "Unit (" .. t.side .. ")", "Blocking")
+				end
+			end
+			-- Interact visuals already broadcast by CommandService
 		end
 	end
 
@@ -3085,6 +3887,7 @@ local function broadcastActions(actions, activeUnit)
 				remainingRt = u.remainingRt, isChanneling = u.isChanneling or false,
 				channelRt = u.channelRt or 0,
 				channelRemaining = math.max(0, (u.channelResolveCt or 0) - state.ct),
+				channelPhase = u.channelPhase, -- "Channel" | "Activation" (2026-10-07)
 				channeledSkillName = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.name or nil,
 				channeledSkillIcon = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.icon or nil,
 			})
@@ -3116,6 +3919,17 @@ local function runPlayerTurn(unit)
 					table.insert(actions, subAction)
 				end
 				broadcastActions(action.actions, unit)
+				-- Multi-target (Cleave) flourish: count damage sub-hits; if 2+, play
+				-- Multi-Slash ONCE on the attacker (each target already showed Hit).
+				local _dmgHits = 0
+				for _, sub in ipairs(action.actions) do
+					if (sub.actionType == "Attack" or sub.actionType == "Skill") and (sub.damage or 0) > 0 then
+						_dmgHits = _dmgHits + 1
+					end
+				end
+				if _dmgHits >= 2 then
+					BattleVisualBroadcaster.MultiTargetHit(unit)
+				end
 			else
 				table.insert(actions, action)
 				broadcastActions({ action }, unit)
@@ -3249,7 +4063,15 @@ local function runAiTurn(unit)
 		and (unit.currentAp or 0) > 0
 		and actionsThisTurn < MAX_AI_ACTIONS do
 
-		local action = AIService.DecideAction(unit, allUnits, MAP_WIDTH, MAP_HEIGHT)
+		-- Neutral battlefield-event NPCs use their own lightweight behaviour (move
+		-- across map / seek treasure / hunt monster / stay passive), NOT the enemy
+		-- AI brain which has no neutral concept.
+		local action
+		if unit.side == "Neutral" then
+			action = BattlefieldEventService.NeutralAction(unit, state)
+		else
+			action = AIService.DecideAction(unit, allUnits, MAP_WIDTH, MAP_HEIGHT)
+		end
 		if not action or action.actionType == "Wait" then
 			break  -- brain chose to stop; fall through to end-of-turn Wait
 		end
@@ -3328,6 +4150,7 @@ local function handleChannelingActivation(activeUnit)
 		-- Fizzle: target died, MP insufficient, etc.
 		BattleVisualBroadcaster.ChannelFizzled(activeUnit, channeledSkillName, result or "fizzled")
 	elseif result then
+		BattleVisualBroadcaster.ChannelEnded(activeUnit)
 		if result.type == "Healing" then
 			table.insert(actions, {
 				actionType = "Skill", unit = activeUnit, target = result.target,
@@ -3451,11 +4274,21 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 			targetRules  = fullData and fullData.targetRules or (regDef and regDef.targetRules or ""),
 			range        = regDef and regDef.range or 1,
 			pattern      = fullData and fullData.pattern or (regDef and regDef.pattern or "Single"),
-			mpCost       = regDef and regDef.mpCost or 0,
-			rtCost       = (regDef and regDef.rtMult)
-				and math.round(GameConstants.CalcEffectiveWt(
-					unit.weaponWt or 10, (unit.effectiveStats or {}).STR or 10) * regDef.rtMult)
-				or (regDef and regDef.rtCost or 0),
+			mpCost       = regDef and CommandService.GetSkillMpCost(unit, regDef, regDef.id or sid) or 0, -- level-based (2026-10-07)
+			-- rtCost shown MUST match the charge path (CommandService): fixed/level skills
+			-- use their authored cost; weapon-WT skills use (base component + weapon WT) × N.
+			rtCost       = (function()
+				if not regDef then return 0 end
+				local lvl = (unit.equipmentSlots and unit.equipmentSlots.MainHand and unit.equipmentSlots.MainHand.itemLevel) or 1
+				local fx = GameConstants.CalcFixedSkillRt(regDef.id or sid, lvl)
+				if fx then return fx end
+				if regDef.rtMult then
+					local baseComp = StatusService.GetModifiedBaseRt(unit) * GameConstants.BASIC_ATTACK_RT_FACTOR
+					local wWt = GameConstants.CalcEffectiveWt(unit.weaponWt or 10, (unit.effectiveStats or {}).STR or 10)
+					return math.round((baseComp + wWt) * regDef.rtMult)
+				end
+				return regDef.rtCost or 0
+			end)(),
 			channelTime  = regDef and regDef.channelTime or 0,
 			power        = skillPower,
 			isHealing    = regDef and regDef.isHealing or false,
@@ -3518,6 +4351,7 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		unitId       = unit.id,
 		name         = unit.name,
 		side         = unit.side,
+		isAlive      = unit.isAlive ~= false,
 		level        = unit.level or 1,
 		raceId       = unit.raceId or nil,  -- placeholder: race system not yet implemented
 		racePassiveName   = nil,  -- populated below if race assigned
@@ -3575,6 +4409,15 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		response.racePassiveEffect = raceEntry.passiveEffect
 	end
 
+	-- Perks & Flaws Phase 1: resolve the unit's perk + flaw ids to display objects
+	-- (name/tier/effect) via TraitData. Lookup is by trait_id (names can duplicate).
+	if TraitData then
+		local pid = unit.perkIds and unit.perkIds[1]
+		local fid = unit.drawbackIds and unit.drawbackIds[1]
+		if pid then response.perk = TraitData.GetTrait(pid) end
+		if fid then response.flaw = TraitData.GetTrait(fid) end
+	end
+
 	BattleEvents.InspectUnitResponse:FireClient(playerObj, response)
 end)
 
@@ -3594,6 +4437,23 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 	local activeUnit = BattleCoordinator.AdvanceClock(state)
 	if not activeUnit then break end
 
+	-- Time-phase change: BattleCoordinator stashes it on state (it has no
+	-- broadcaster handle); broadcast it here, before any early continue below.
+	if state.pendingTimePhase then
+		BattleVisualBroadcaster.TimePhaseChanged(state.pendingTimePhase)
+		state.pendingTimePhase = nil
+	end
+
+	-- Slice 5 map objects: at each turn boundary, (1) sweep for deaths so a
+	-- Necro Tome Stand fires on units killed during the prior turn, and (2) clear
+	-- the active unit's per-turn object-usage ledger (Ballista/Catapult/Eye are
+	-- "Once per turn"). activeUnit may be a channel-resolve signal table without
+	-- an .id — guard before using it as a unit.
+	ObjectEffectService.ProcessDeaths(state.units, state)
+	if activeUnit.id then
+		ObjectEffectService.ClearTurnUsage(activeUnit.id)
+	end
+
 	-- TWO-TIMER MODEL: channel-deadline resolution. AdvanceClock returns a signal
 	-- table { channelResolve = caster } when the clock reached a fixed channel
 	-- deadline. Fire the skill now (independent of whose RT is up), broadcast it,
@@ -3602,6 +4462,13 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 	-- it keeps its remaining RT. If immediate, fall through as that unit's turn.
 	if type(activeUnit) == "table" and activeUnit.channelResolve then
 		local caster = activeUnit.channelResolve
+		-- ACTIVATION TIME (2026-10-07): if the channel just completed but the skill
+		-- still owes Activation Time, schedule it (uninterruptible) instead of firing.
+		-- BeginActivationPhase returns the clock to Waiting; refresh the timeline.
+		if BattleCoordinator.BeginActivationPhase(state, caster) then
+			broadcastActions({}, caster)
+			continue
+		end
 		BattleVisualBroadcaster.TurnStarted(caster, state.ct, state.units)
 		local chActions = handleChannelingActivation(caster)
 		broadcastActions(chActions, caster)
@@ -3646,6 +4513,7 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 		clearTileOccupant(activeUnit.tileX, activeUnit.tileY)
 		if activeUnit.isChanneling then
 			BattleCoordinator.InterruptChanneling(activeUnit, "death")
+			BattleVisualBroadcaster.ChannelEnded(activeUnit)
 		end
 		BattleCoordinator.EndTurn(state)
 		BattleVisualBroadcaster.TurnEnded(activeUnit, 0)
@@ -3666,11 +4534,38 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 		-- Normal turn
 		BattleVisualBroadcaster.TurnStarted(activeUnit, state.ct, state.units)
 
+		-- Tile occupy effect: a unit that BEGINS its turn standing on a hazard tile
+		-- receives that tile's occupy status (DB: Burning/Poison Cloud/Vines "Inflict X").
+		-- Cross effects are handled separately on move (OnUnitEntersTile); this is the
+		-- start-of-turn occupy path. Only fires on a normal turn (not skip/death).
+		TileEffectService.OnUnitStartTurn(activeUnit)
+
+		-- Battlefield-event per-turn behaviour (Thief Hide, hazard trails, Monster
+		-- Hunter trap, Lightning strike, Lich ripple, Water flood, Bard aura, Traitor
+		-- flip). Fires for any unit carrying event flags; nil-safe/no-op otherwise.
+		do
+			local bfRng = Random.new((state.ct or 0) + (activeUnit.stableOrderKey or 0) + 70007)
+			local okB, errB = pcall(BattlefieldEventService.OnEventUnitTurn, activeUnit, state, bfRng)
+			if not okB then
+				warn("[Main] BattlefieldEventService.OnEventUnitTurn error: " .. tostring(errB))
+			end
+			-- Single-active-event slot: if the active event ended, fire the next one.
+			local okT, errT = pcall(BattlefieldEventService.OnTurnTick, state, bfRng,
+				math.floor((state.ct or 0) / 1000))
+			if not okT then
+				warn("[Main] BattlefieldEventService.OnTurnTick error: " .. tostring(errT))
+			end
+		end
+
 		-- Determine turn handler
 		local actions
 		local wasChanneling = BattleCoordinator.IsChanneling(activeUnit)
 		if BattleCoordinator.IsChanneling(activeUnit) then
 			actions = handleChannelingActivation(activeUnit)
+		elseif activeUnit.isSummon and (activeUnit.summonType == "Decoy" or activeUnit.summonType == "WardTotem") then
+			-- Decoy / Ward Totem never act (authored): skip their turn automatically.
+			CommandService.ValidateAndCommit(state, activeUnit.id, "Wait", nil)
+			actions = {}
 		elseif activeUnit.controller == "Player" then
 			actions = runPlayerTurn(activeUnit)
 		else
@@ -3685,6 +4580,33 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 		-- Safety close
 		if BattleCoordinator.GetPhase(state) == "TurnOpen" then
 			CommandService.ValidateAndCommit(state, activeUnit.id, "Wait", nil)
+		end
+
+		-- Tile end-of-turn hook: Tar Pit consecutive-turn Petrify counter
+		-- (increments if ending on Tar Pit, resets otherwise).
+		TileEffectService.OnUnitEndTurn(activeUnit)
+
+		-- Phase 3 Battle Focus / Mana-Starved (TRAIT-P/F-006/053): at end of turn, gain/
+		-- lose MP = fraction of max MP per remaining AP. Uses the AP left unspent this turn.
+		do
+			local mpPerApFrac = TraitEffectService.GetEndTurnMpPerApFraction(activeUnit)
+			local remainingAp = activeUnit.currentAp or 0
+			if mpPerApFrac ~= 0 and remainingAp > 0 and activeUnit.maxMp and activeUnit.maxMp > 0 then
+				local delta = math.round(activeUnit.maxMp * mpPerApFrac * remainingAp)
+				activeUnit.currentMp = math.clamp((activeUnit.currentMp or 0) + delta, 0, activeUnit.maxMp)
+				print(string.format("[Main] End-turn MP trait: %s %+d MP (%d AP left) -> %d", activeUnit.name, delta, remainingAp, activeUnit.currentMp))
+			end
+		end
+
+		-- Phase 3 Wrathful / Meek stack decay (TRAIT-P/F-152/167): DB rule "remove at end
+		-- of next turn" = 1-turn window (user ruling 2026-10-04, Option A). Hits land during
+		-- an ENEMY turn, so the stack is gained before this unit's turn, boosts THIS turn's
+		-- damage, and clears at the end of THIS turn. So: clear any stack at the unit's own
+		-- turn end. (No multi-turn age-tracking — that produced the 2-turn window.)
+		if activeUnit.combatStackPct and activeUnit.combatStackPct ~= 0 then
+			activeUnit.combatStackPct = 0
+			activeUnit.combatStackAge = 0
+			print(string.format("[Main] Wrathful/Meek stack expired (end of turn): %s", activeUnit.name))
 		end
 
 		BattleVisualBroadcaster.TurnEnded(activeUnit, activeUnit.remainingRt)
@@ -3709,8 +4631,6 @@ for _, u in ipairs(allUnitsList) do
 	print(string.format("  %s", UnitSchema.Describe(u)))
 end
 print("====================================")
-
-BattleVisualBroadcaster.BattleEnded(winner or "None", state.units)
 
 --------------------------------------------------
 -- POST-BATTLE: PERSIST STATE + RECOVERY (Slice 4B)
@@ -3738,6 +4658,94 @@ for _, u in ipairs(allUnitsList) do
 		local killer = playerUnits[u._killedBy]
 		if killer and killer.records then
 			killer.records.enemiesDefeated = (killer.records.enemiesDefeated or 0) + 1
+		end
+	end
+end
+
+--------------------------------------------------
+-- POST-BATTLE: AWARD UNIT XP (Slice 6 ProgressionService)
+-- Build the battle result from live state and hand it to AwardBattleXp, which
+-- applies the LOCKED deployed/benched/KO distribution, the overleveled penalty,
+-- the Human bonus, levels up and clamps at 99. Done BEFORE HP/MP persist + save
+-- so the new levels ride the EXISTING save payload (unit records -> Key 1/3).
+--------------------------------------------------
+do
+	-- kills[]: one entry per defeated ENEMY. enemyType is stamped by EnemyGenerator
+	-- (unit.enemyType = spec.type, EnemyGenerator L453) so Grunt/Veteran/Elite is
+	-- preserved (FLAG-P3 input present; no duplicate stamp added). level is the
+	-- enemy's own level. aiRole kept as a safe fallback only (retired field).
+	local kills = {}
+	local deployed = {}
+	local koList = {}
+	-- Slice 6 item 2: objective checks the battle loop can evaluate today.
+	local anyPlayerKO = false
+	local anyEnemyStanding = false
+	for _, u in ipairs(allUnitsList) do
+		if u.side == "Enemy" and not u.isSummon then
+			-- Summons are not Grunt/Veteran/Elite/Boss and are rewardEligible=false
+			-- (EnemyGenerator SpawnSummon): no kill XP (FLAG-P3 — they used to fall
+			-- back to Grunt XP).
+			if not u.isAlive then
+				table.insert(kills, {
+					enemyType = u.enemyType,          -- Grunt/Veteran/Elite/Boss (BUG-009 field)
+					aiRole    = u.aiRole,             -- fallback only
+					level     = u.level or 0,
+				})
+			else
+				anyEnemyStanding = true
+			end
+		elseif u.side == "Player" and not u.isSummon and playerUnits[u.id] then
+			-- Summons are temporary battle entities: no unit XP (not roster units).
+			-- Dev-spawned Player units are not roster units (no record) — skipped.
+			table.insert(deployed, u.id)
+			if not u.isAlive then
+				table.insert(koList, u.id)
+				anyPlayerKO = true
+			end
+		end
+	end
+
+	-- benched[] = owned roster MINUS deployed MINUS away on dispatch (FLAG-P2,
+	-- resolved 2026-10-07). Owned units the Guild menu benched above the
+	-- deployment cap (GuildMenuService.SyncBattleRoster removes them from
+	-- allUnitsList but they stay in playerUnits) land here and get the locked 65%.
+	local deployedSet = {}
+	for _, id in ipairs(deployed) do deployedSet[id] = true end
+	local benched = {}
+	for unitId in pairs(playerUnits) do
+		-- UAT D2 fix 2026-10-07: units away on dispatch are unavailable and earn
+		-- dispatch XP only (unit_progression 52/77/78) — never benched XP.
+		local isAway = DispatchService.IsUnitDispatched(PLAYER_ID, unitId)
+		if not deployedSet[unitId] and not isAway then
+			table.insert(benched, unitId)
+		end
+	end
+
+	-- Procedural objectives met (unit_progression 68/69; victory only — the
+	-- percentages live in ProgressionService). Known gap: a unit KO'd and then
+	-- revived mid-battle is alive at the end, so it does not break Flawless.
+	local objectivesMet = {}
+	if isQualifyingVictory then
+		if not anyPlayerKO then table.insert(objectivesMet, "Flawless") end
+		if not anyEnemyStanding then table.insert(objectivesMet, "AllDefeated") end
+	end
+
+	local battleResult = {
+		battleId         = string.format("battle_%s_%d", PLAYER_ID, turnCount),
+		won              = isQualifyingVictory,
+		recommendedLevel = activeQuest and activeQuest.recommendedLvl or nil,  -- FLAG-P1 (QuestGenerator L300)
+		kills            = kills,
+		deployed         = deployed,
+		benched          = benched,
+		ko               = koList,
+		objectivesMet    = objectivesMet,  -- FLAG-P4 (Flawless / AllDefeated)
+		-- Glow Crystal (Slice 6 item 3): set by ObjectEffectService on a player activation.
+		glowCrystal      = (state ~= nil and state.glowCrystalActive == true),
+	}
+	local xpSummary = ProgressionService.AwardBattleXp(PLAYER_ID, battleResult)
+	if xpSummary and xpSummary.flags and #xpSummary.flags > 0 then
+		for _, f in ipairs(xpSummary.flags) do
+			print("[PostBattle][XP-FLAG] " .. tostring(f))
 		end
 	end
 end
@@ -3771,8 +4779,10 @@ end
 local rewardSummaries = {}
 
 if isQualifyingVictory then
-	-- Map Level placeholder: 1 until Slice 5 provides authoritative value
-	local MAP_LEVEL = 1
+	-- Reward Item Level source (DB loot_progression, LOCKED): "Quest rewards:
+	-- Item Level = Quest Level." Quest Level = activeQuest.recommendedLvl (set at
+	-- quest selection). Fallback to 1 only if no quest is active (defensive).
+	local MAP_LEVEL = (activeQuest and activeQuest.recommendedLvl) or 1
 	local opportunityId = string.format("battle_%s_%d", PLAYER_ID, os.clock())
 
 	local results, equipCommitted = RewardService.GenerateRewards(PLAYER_ID, MAP_LEVEL, opportunityId)
@@ -3816,6 +4826,21 @@ end
 -- Step 3: Save to DataStore (now includes committed rewards)
 doSave()
 
+-- END BATTLE LAST (persistent_hp_mp_rules authored order: victory -> finish action +
+-- triggered resolutions -> commit rewards -> persist/recovery -> save -> END). The
+-- BattleEnded end-signal must fire only AFTER rewards are committed and state is saved.
+BattleVisualBroadcaster.BattleEnded(winner or "None", state.units)
+
+-- Slice 6 Guild menu "return to base" bookkeeping (game_flow id 20), AFTER the
+-- protected commit -> save -> BattleEnded order above (BUG-013 order unchanged):
+-- count this battle (win or loss) and bring home dispatches that are due (their
+-- XP goes through the wired Dispatch sink, materials through CurrencyService).
+GuildMenuService.OnBattleCompleted()
+-- Battle recruits (project_rules id 133): alive recruited Neutrals are purified and
+-- join the roster on ANY battle end. Runs after the protected BUG-013 order above.
+GuildMenuService.AdoptBattleRecruits(state.units)
+doSave()
+
 -- Step 4: Reward screen (if rewards earned)
 -- Build recovery summary for client display
 local recoverySummary = {}
@@ -3838,14 +4863,16 @@ if #rewardSummaries > 0 then
 	print("[PostBattle] Player acknowledged rewards")
 end
 
--- Step 5: Post-battle Loadout Hub
-print("[Hub] Opening post-battle Loadout Hub")
-BattleEvents.LoadoutHubOpen:FireAllClients({ phase = "PostBattle" })
+-- Step 5: Post-battle Guild menu (Slice 6 temporary Guild menu; replaces the
+-- post-battle Loadout Hub — its Units button opens the same loadout screen).
+print("[Hub] Opening post-battle Guild menu")
+GuildMenuService.Open("PostBattle")
 
 -- Step 6: Wait for player to close the hub, then auto-save
 -- (Equipment changes via RequestEquip update the same unit objects
 -- that doSave reads, so this save captures any post-battle equip changes.)
 hubContinueSignal.Event:Wait()
+GuildMenuService.Close()
 print("[Hub] Post-battle hub closed — saving equipment changes")
 doSave()
 

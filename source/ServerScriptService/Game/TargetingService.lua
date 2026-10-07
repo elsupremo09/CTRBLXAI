@@ -14,6 +14,7 @@ local GameConstants = require(
 )
 
 local RacePassiveService = require(script.Parent.RacePassiveService)
+local TraitEffectService = require(script.Parent.TraitEffectService) -- Perks & Flaws Phase 2
 local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
 local StatusService = require(script.Parent.StatusService)
 
@@ -45,7 +46,7 @@ local function isMeleeElevationLegal(actor, target, attackRange)
 	local elevDiff = math.abs(atkElev - defElev)
 	-- Giant: ±5
 	local maxDiff = 2
-	local raceEntry = RaceData[actor.raceId]
+	local raceEntry = actor.raceId and RaceData.GetRace(actor.raceId) or nil
 	if raceEntry and raceEntry.tags then
 		for _, tag in ipairs(raceEntry.tags) do
 			if tag == "Giant" then maxDiff = 5; break end
@@ -55,6 +56,14 @@ local function isMeleeElevationLegal(actor, target, attackRange)
 end
 
 local TargetingService = {}
+
+-- Optional: TileEffectService injected at runtime (DI, mirrors CommandService/
+-- BattleCoordinator) so pathfinding can honor active tile-effect move-cost bonuses
+-- (e.g. Tar Pit). Wired in Main.server.lua during init.
+local _tileEffectService = nil
+function TargetingService.SetTileEffectService(tes)
+	_tileEffectService = tes
+end
 
 --------------------------------------------------
 -- CONSTANTS
@@ -87,21 +96,39 @@ local function getMovementRange(unit)
 	end
 	local raceOffset = RacePassiveService.GetMovementRangeModifier(unit)
 	local armorOffset = ArmorPassiveService.GetMovementRangeBonus(unit)
-	return math.max(1, base + raceOffset + armorOffset)
+	-- Perks & Flaws Phase 2 (TRAIT-MOVE): Long Strider / Short Strider (0 for no trait).
+	local traitOffset = TraitEffectService.GetMovementRangeModifier(unit)
+	-- Status move buffs (2026-10-07): Coordinated Advance +2, Rush +3, Rally +1.
+	-- StatusService.GetMovementRangeModifier existed but was never called here.
+	local statusOffset = StatusService.GetMovementRangeModifier(unit)
+	return math.max(1, base + raceOffset + armorOffset + traitOffset + statusOffset)
 end
 
 local function getJump(unit)
+	-- BUGFIX 2026-10-03: derivedStats.jump is the BASE stat only
+	-- (GameConstants: 1 + floor(DEX/60)); the old early-return skipped the
+	-- racial (Elf +1) and armor (Climbing Boots +2) bonuses. Mirrors getMovementRange.
+	local base
 	if unit.derivedStats and unit.derivedStats.jump then
-		return unit.derivedStats.jump
+		base = unit.derivedStats.jump
+	else
+		local dex = unit.effectiveStats and unit.effectiveStats.DEX or 10
+		base = 1 + math.floor(dex / 60)
 	end
-	local dex = unit.effectiveStats and unit.effectiveStats.DEX or 10
 	local raceJump = RacePassiveService.GetJumpModifier(unit)
 	local armorJump = ArmorPassiveService.GetJumpBonus(unit)
-	return 1 + math.floor(dex / 60) + raceJump + armorJump
+	-- Slice 5 buff: Rally (+1 Jump) via status jumpOffset.
+	local statusJump = StatusService.GetJumpModifier(unit)
+	-- Perks & Flaws Phase 2 (TRAIT-JUMP): High Jumper / Stubby Legs (0 for no trait).
+	local traitJump = TraitEffectService.GetJumpModifier(unit)
+	return base + raceJump + armorJump + statusJump + traitJump
 end
 
 local function getDownwardJump(unit)
-	return getJump(unit) + 2
+	-- HALFLING — Nimble Steps (races row 'Halfling', 2026-10-02): Jump -1 when moving
+	-- to a lower elevation. Only the voluntary-move BFS uses this (forced
+	-- displacement never reads it), so it is voluntary downward movement only.
+	return math.max(0, getJump(unit) + 2 + RacePassiveService.GetDownwardJumpModifier(unit))
 end
 
 local function buildOccupancyMap(units)
@@ -128,6 +155,15 @@ local function chebyshevDistance(ax, ay, bx, by)
 	return math.max(math.abs(ax - bx), math.abs(ay - by))
 end
 
+-- RABBIT FOLK — Hop Step gap tile (2026-10-02): a deliberate chasm / gap floor
+-- (Slice 5 CHASM_FLOOR_MAP) or impassable pit terrain (Quicksand). Blockers
+-- (walls / objects) are NOT gaps -- a hop never clears a wall.
+local function isHopGapTile(x, y)
+	if GameConstants.IsBlocked(x, y) then return false end
+	if GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(x, y) then return true end
+	return GameConstants.IsImpassableTerrain(x, y)
+end
+
 --------------------------------------------------
 -- MOVE CANDIDATES (unchanged from Slice 2)
 --------------------------------------------------
@@ -137,6 +173,14 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 	local jump       = getJump(actor)
 	local downJump   = getDownwardJump(actor)
 	local occupancy  = buildOccupancyMap(allUnits)
+	local canHop     = RacePassiveService.CanHopGap(actor)  -- Rabbit Folk Hop Step
+	-- Flight (DB status id 83): ignores climb/downward jump limits, terrain movement
+	-- costs and tile bonuses/penalties, and may move OVER occupied tiles (but still
+	-- cannot END on an occupied tile). Permanent for Flying-tag races (e.g. Avian).
+	local hasFlight  = StatusService.HasStatus(actor, "Flight")
+	-- Perks & Flaws (Phase 2b): Pathfinder ignores terrain move-cost (treat as 1.0);
+	-- Bogged Down multiplies terrain cost by +50%. Computed once per pathfind.
+	local traitTerrainIgnore, traitTerrainMult = TraitEffectService.GetTerrainCostModifier(actor)
 
 	local visited    = {}
 	local parent     = {}
@@ -166,9 +210,34 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 				-- skip (Quicksand etc.)
 				else
 					local terrainCost = GameConstants.GetTerrainCost(nx, ny)
+					-- Active tile-effect move-cost bonus (e.g. Tar Pit). crossCostBonus in the
+					-- Tar Pit def stores the FULL effective cost (1.5, RESOLVED 2026-09-29), not
+					-- an additive delta, so reconcile via max(base, bonus) → effective cost 1.5.
+					if _tileEffectService and _tileEffectService.GetTileEffect then
+						local teff = _tileEffectService.GetTileEffect(nx, ny)
+						if teff then
+							local edef = GameConstants.TILE_EFFECTS[teff.id]
+							if edef and edef.crossCostBonus then
+								terrainCost = math.max(terrainCost, edef.crossCostBonus)
+							end
+						end
+					end
+					-- Flight ignores terrain movement costs and tile bonuses/penalties (DB id 83).
+					-- Perks & Flaws (Phase 2b): Pathfinder ignores terrain cost; Bogged Down +50%.
+					if hasFlight then
+						terrainCost = 1.0
+					elseif traitTerrainIgnore then
+						terrainCost = 1.0
+					else
+						terrainCost = terrainCost * traitTerrainMult
+					end
 					local stepCost = dir.cost * terrainCost
 					local newCost  = current.cost + stepCost
-
+					-- Terrain move costs may be fractional (e.g. Swamp/Deep Water 1.5 after the
+					-- Sep 28 2026 halving). A tile is reachable when its EXACT accumulated path
+					-- cost is within range — no per-tile or per-total rounding (user clarified
+					-- Sep 28 2026: fractional costs must not inflate a tile's cost). e.g. range 3
+					-- reaches two 1.5 tiles (3.0) OR one 1.5 + one 1.0 (2.5), etc.
 					if newCost <= range
 						and (visited[key] == nil or visited[key] > newCost)
 					then
@@ -176,15 +245,22 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 						local elevDiff = nextElev - currentElev
 
 						local elevLegal = true
-						if elevDiff > 0 then
-							elevLegal = elevDiff <= jump
-						elseif elevDiff < 0 then
-							elevLegal = math.abs(elevDiff) <= downJump
+						if not hasFlight then
+							-- Flight ignores climb/downward jump limits (DB id 83).
+							if elevDiff > 0 then
+								elevLegal = elevDiff <= jump
+							elseif elevDiff < 0 then
+								elevLegal = math.abs(elevDiff) <= downJump
+							end
 						end
 
 						if elevLegal then
 							local occupant = occupancy[key]
+							-- Flight may move OVER any occupied tile (ally or enemy); normal units
+							-- may only pass through same-side units. Ending on an occupied tile is
+							-- still forbidden for everyone (candidate insert requires occupant==nil).
 							local passable = (occupant == nil)
+								or hasFlight
 								or (occupant ~= actor and occupant.side == actor.side)
 
 							if passable then
@@ -198,6 +274,45 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 								end
 
 								table.insert(queue, { x = nx, y = ny, cost = newCost })
+							end
+						end
+					end
+				end
+			end
+
+			-- RABBIT FOLK — Hop Step (races row 'Rabbit Folk', 2026-10-02): hop a SINGLE
+			-- gap/pit tile in a straight (cardinal) line, ignoring that tile's elevation,
+			-- landing on the tile immediately past it. Guards that keep the Slice 5
+			-- chasm / chokepoint system intact:
+			--   * take-off tile must NOT itself be a gap tile (no chaining inside a chasm)
+			--   * landing tile must NOT be a gap tile (gap wider than 1 tile -> no hop)
+			--   * |landing elev - take-off elev| <= Jump (no free cliff-scaling)
+			--   * landing tile not blocked / impassable; normal range + occupancy rules
+			if canHop and (dir.dx == 0 or dir.dy == 0) and not isHopGapTile(current.x, current.y) then
+				local gx, gy = current.x + dir.dx, current.y + dir.dy
+				local lx, ly = current.x + 2 * dir.dx, current.y + 2 * dir.dy
+				if isInsideMap(gx, gy, mapWidth, mapHeight)
+					and isInsideMap(lx, ly, mapWidth, mapHeight)
+					and isHopGapTile(gx, gy)
+					and not isHopGapTile(lx, ly)
+					and not GameConstants.IsBlocked(lx, ly)
+					and not GameConstants.IsImpassableTerrain(lx, ly)
+				then
+					local landElev = GameConstants.GetElevation(lx, ly)
+					local gapOcc = occupancy[tileKey(gx, gy)]
+					local gapClear = (gapOcc == nil) or (gapOcc ~= actor and gapOcc.side == actor.side)
+					if gapClear and math.abs(landElev - currentElev) <= jump then
+						local hopCost = current.cost + 1.0 + GameConstants.GetTerrainCost(lx, ly)
+						local lkey = tileKey(lx, ly)
+						if hopCost <= range and (visited[lkey] == nil or visited[lkey] > hopCost) then
+							local landOcc = occupancy[lkey]
+							if (landOcc == nil) or (landOcc ~= actor and landOcc.side == actor.side) then
+								visited[lkey] = hopCost
+								parent[lkey] = tileKey(current.x, current.y)
+								if landOcc == nil then
+									table.insert(candidates, { tileX = lx, tileY = ly, pathCost = hopCost })
+								end
+								table.insert(queue, { x = lx, y = ly, cost = hopCost })
 							end
 						end
 					end
@@ -249,7 +364,7 @@ function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerEleva
 	if allUnits then
 		for _, u in ipairs(allUnits) do
 			if u.tileX == x2 and u.tileY == y2 and u.isAlive and u.raceId then
-				local raceEntry = RaceData[u.raceId]
+				local raceEntry = RaceData.GetRace(u.raceId)
 				if raceEntry and raceEntry.tags then
 					for _, tag in ipairs(raceEntry.tags) do
 						if tag == "Giant" then return true end
@@ -264,6 +379,29 @@ function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerEleva
 	--   Arc Peak Elevation = Attacker Elevation + Arc Height (default 3)
 	--   Clear if Arc Peak >= Blocker Elevation + 2
 	local isArc = (projectileType == "Arc")
+	-- Arc target-height gate (DB rule 46): an arc projectile cannot reach a target
+	-- whose EFFECTIVE elevation is ABOVE the arc's peak. Arc Peak = attacker effective
+	-- elevation + Arc Height (default 3; no per-projectile arcHeight exists in data).
+	-- Purely an ADDITIONAL target-height gate — it does not alter arc's "ignores unit
+	-- blockers / flies over terrain" behavior below. Applied once, for the destination.
+	-- (Adjacency and Giant-bypass early-returns above are intentionally left intact.)
+	if isArc then
+		local ARC_HEIGHT = 3
+		local atkElev = attackerElevation or GameConstants.GetElevation(x1, y1)
+		local arcPeak = atkElev + ARC_HEIGHT
+		local targetElev = GameConstants.GetElevation(x2, y2)
+		if allUnits then
+			for _, u in ipairs(allUnits) do
+				if u.isAlive and u.tileX == x2 and u.tileY == y2 then
+					targetElev = getEffectiveElevation(u)  -- flight-aware effective elevation
+					break
+				end
+			end
+		end
+		if targetElev > arcPeak then
+			return false
+		end
+	end
 	-- Unit-blocking LoS policy (user override Sep 26 2026, supersedes locked DB rule):
 	--   Direct/Channeled: only OPPOSITE-SIDE (enemy) units block. Allied units never block.
 	--   Arc: NO unit blocks (ally or enemy) — arc flies over all units, keeping it
@@ -358,12 +496,12 @@ end
 --------------------------------------------------
 
 function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
-	-- range = -1 means inherit from weapon
-	local baseRange = (skillDef.range == -1) and (actor.weaponMaxRange or 1) or (skillDef.range or 1)
-	local bonusRange = actor.derivedStats and actor.derivedStats.bonusSkillRange
-		or math.floor((actor.effectiveStats and actor.effectiveStats.INT or 10) / 75)
-	local range = baseRange + bonusRange
-	if range < 1 then range = 1 end  -- Safety: negative bonusRange must not reduce below 1
+	-- 2026-10-07: range (max + weapon-only min + per-skill Bonus Skill Range share)
+	-- comes from the ONE shared formula GameConstants.CalcSkillRange (DAT-001), also
+	-- used by CommandService validation so prompt and validation never drift.
+	-- HALFLING — Nimble Steps (2026-10-02): movement skills +1 range (race modifier).
+	local range, minRange, baseRange, bonusRange = GameConstants.CalcSkillRange(
+		actor, skillDef, RacePassiveService.GetSkillRangeModifier(actor, skillDef))
 	print(string.format("[SkillCand] %s using %s | skillRange=%s baseRange=%d bonusRange=%d range=%d | weaponMaxRange=%s INT=%s derivedBSR=%s",
 		actor.name, skillDef.name or skillDef.id, tostring(skillDef.range),
 		baseRange, bonusRange, range, tostring(actor.weaponMaxRange),
@@ -436,6 +574,9 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 		elseif chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) > range then
 			print(string.format("[SkillCand] %s REJECTED %s: out of range (dist=%d > range=%d)",
 				actor.name, unit.name, chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY), range))
+		elseif chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) < minRange then
+			print(string.format("[SkillCand] %s REJECTED %s: inside weapon min range (dist=%d < minRange=%d)",
+				actor.name, unit.name, chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY), minRange))
 		else
 			-- LoS check: ally/healing skills skip LoS
 			local projType = skillDef.projectileType
@@ -551,8 +692,9 @@ end
 --------------------------------------------------
 
 function TargetingService.GetSkillRangeTiles(actor, skillDef, mapWidth, mapHeight)
-	-- range = -1 means inherit from weapon
-	local range = (skillDef.range == -1) and (actor.weaponMaxRange or 1) or (skillDef.range or 1)
+	-- Shared formula (DAT-001) so highlighting matches validation.
+	local range = GameConstants.CalcSkillRange(
+		actor, skillDef, RacePassiveService.GetSkillRangeModifier(actor, skillDef))
 	local tiles = {}
 
 	for dy = -range, range do
@@ -641,6 +783,8 @@ function TargetingService.ValidateSelection(
 
 		local target     = selection.target
 		local skillRange = selection.skillRange or 1
+		-- BUGFIX 2026-10-06: weapon-range skills carry the weapon's min range (0 = none).
+		local skillMinRange = selection.skillMinRange or 0
 		local targetRules = selection.targetRules or "Enemy Unit"
 
 		-- Ground targeting: validate tile coords + range only
@@ -650,6 +794,12 @@ function TargetingService.ValidateSelection(
 				return false, string.format(
 					"Ground target (%d,%d) out of range (%d). Distance: %d.",
 					target.tileX, target.tileY, skillRange, dist
+				)
+			end
+			if dist < skillMinRange then
+				return false, string.format(
+					"Ground target (%d,%d) is inside weapon min range (%d). Distance: %d.",
+					target.tileX, target.tileY, skillMinRange, dist
 				)
 			end
 			return true, nil
@@ -689,6 +839,12 @@ function TargetingService.ValidateSelection(
 			return false, string.format(
 				"Target %s is out of skill range (%d). Distance: %d.",
 				target.name, skillRange, dist
+			)
+		end
+		if dist < skillMinRange then
+			return false, string.format(
+				"Target %s is inside weapon min range (%d). Distance: %d.",
+				target.name, skillMinRange, dist
 			)
 		end
 
@@ -1045,6 +1201,156 @@ function TargetingService.GetLine2Targets(actor, primaryTarget, allUnits)
 	end
 
 	return results
+end
+
+--------------------------------------------------
+-- GET INTERACT CANDIDATES (Slice 4 — Interact Command framework)
+--
+-- Interact is the universal Head-slot action (1 AP). It has four NATIVE
+-- target kinds (built-in; headgear only ENHANCES them, never enables):
+--   "recruitEnemy"  — enemy at <= recruitThreshold of max HP (native 5%)
+--   "allyRtHelp"    — living ally (not self): cuts the ally's current RT
+--   "reviveAlly"    — KO'd ally: channeled resuscitate (native 200 CT)
+--   "mapObject"     — a map object instance (PARKED — Slice 5 populates
+--                     state.objects; no object candidates appear until then)
+--
+-- Each candidate is tagged with { interactKind, id/objectId, name, tileX,
+-- tileY } so the client can label what the Interact will do and the server
+-- can re-validate on commit. Reach uses the actor's native Interact range
+-- (default 1, Chebyshev), extendable later by the HD-002 range hook.
+--
+-- Headgear ENHANCER hook points are nil-safe and default to the native
+-- baseline — see InteractService / CommandService for the magnitude hooks.
+-- Here we only need the recruit HP threshold and the interact reach, both
+-- read through ArmorPassiveService with a native-baseline fallback.
+--
+-- Returns: array of candidate tables (possibly empty — button grays out).
+--------------------------------------------------
+
+function TargetingService.GetInteractCandidates(actor, allUnits, state)
+	local candidates = {}
+	if not actor or not actor.isAlive then
+		return candidates
+	end
+
+	-- Interact reach: native 1 tile. HD-002 Surveyor Visor adds +2 (hook,
+	-- nil-safe → 0 until headgear passives are wired).
+	local reach = 1
+	if ArmorPassiveService.GetInteractRangeBonus then
+		reach = reach + (ArmorPassiveService.GetInteractRangeBonus(actor) or 0)
+	end
+	-- Perks & Flaws (Phase 2b): Long/Short Reach adjust interact range.
+	reach = reach + TraitEffectService.GetInteractRangeModifier(actor)
+	if reach < 1 then reach = 1 end
+
+	-- Recruit HP threshold: native 0.05 of max HP. HD-005 Recruiter's Circlet
+	-- raises it to 0.08 (hook, nil-safe → native until wired).
+	local recruitThreshold = 0.05
+	if ArmorPassiveService.GetRecruitThreshold then
+		recruitThreshold = ArmorPassiveService.GetRecruitThreshold(actor) or 0.05
+	end
+
+	local actorElev = getEffectiveElevation(actor)
+
+	-- UNIT-TARGET NATIVES (functional now) --------------------------------
+	for _, u in ipairs(allUnits) do
+		if u.id ~= actor.id then
+			local dist = chebyshevDistance(actor.tileX, actor.tileY, u.tileX, u.tileY)
+			if dist <= reach then
+				-- Interact reach honors the ±2 melee elevation rule (treat
+				-- like a reach-1/2 action; Giant tag widens via the helper).
+				local elevOk = isMeleeElevationLegal(actor, u, reach)
+				if elevOk then
+					if u.isAlive and u.eventInteractable and actor.side == "Player" then
+						-- BATTLEFIELD-EVENT NPC (2026-10-04): an authored event
+						-- interaction (Fortune Teller, Wandering Scholar, Merchant
+						-- Caravan, Wandering Bandits, ...). DB rule 131: these are
+						-- event-defined, NOT native Recruit/Aid/Revive, and are not
+						-- affected by the neutral filter. Only Player-side actors may
+						-- use them; BattlefieldEventService clears eventInteractable
+						-- once a one-time interaction is spent.
+						table.insert(candidates, {
+							interactKind = "eventNpc",
+							id = u.id, name = u.name,
+							tileX = u.tileX, tileY = u.tileY,
+						})
+					elseif not u.isAlive then
+						-- KO'd unit: only ALLIES can be resuscitated. Neutral units
+						-- (incl. recruited) are not allies and get no Interact (DB
+						-- rule 131) — so both actor and target must be non-Neutral.
+						if u.side == actor.side and actor.side ~= "Neutral" then
+							table.insert(candidates, {
+								interactKind = "reviveAlly",
+								id = u.id, name = u.name,
+								tileX = u.tileX, tileY = u.tileY,
+							})
+						end
+					elseif u.side == actor.side and actor.side ~= "Neutral" then
+						-- Living ally: RT-help. Neutral/recruited units get no Interact
+						-- (DB rule 131), so a Neutral actor cannot Aid another Neutral.
+						table.insert(candidates, {
+							interactKind = "allyRtHelp",
+							id = u.id, name = u.name,
+							tileX = u.tileX, tileY = u.tileY,
+						})
+					elseif u.side ~= "Neutral" and not u.recruited then
+						-- Living ENEMY (opposite side, not a Neutral/already-recruited
+						-- unit): recruit if at/under the HP threshold AND
+						-- tier-eligible. Native rule (CTRBLXAI.db "Native — Recruit
+						-- Enemy"): "Cannot recruit bosses, veterans, elites, or any
+						-- unit whose race is not playable." Enemy tier is carried on
+						-- `enemyType` (set by EnemyGenerator: "Grunt"/"Veteran"/
+						-- "Elite"; bosses are hand-crafted, never procedurally
+						-- spawned). Only a Grunt is recruitable; Veteran/Elite and
+						-- any untagged unit are excluded (unknown tier → not
+						-- recruitable). The "non-playable race" clause has no field
+						-- to check yet (RaceData has no `playable` flag and all races
+						-- are currently playable) — a harmless no-op until a
+						-- non-playable race is ever added.
+						local maxHp = u.maxHp or 1
+						local hpFrac = (u.currentHp or 0) / math.max(1, maxHp)
+						local tierEligible = (u.enemyType == "Grunt")
+						-- Recruit targets ENEMIES only: a recruited unit becomes
+						-- Neutral and is no longer an enemy, so it can never be
+						-- re-recruited (guarded above). Require genuine enemy side.
+						local isEnemyOfActor = (u.side == "Enemy") or (actor.side == "Player" and u.side ~= "Player" and u.side ~= "Neutral")
+						if hpFrac <= recruitThreshold and tierEligible and isEnemyOfActor then
+							table.insert(candidates, {
+								interactKind = "recruitEnemy",
+								id = u.id, name = u.name,
+								tileX = u.tileX, tileY = u.tileY,
+							})
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- MAP-OBJECT NATIVE (PARKED — Slice 5) --------------------------------
+	-- state.objects holds the generator's placed instances, shape { id, type,
+	-- x, y } (MapService.placeObjects). Read THAT shape here; emit candidate
+	-- fields (objectId/archetypeId/tileX/tileY) that the CommandService Interact
+	-- branch consumes. The command branch resolves activation + free/consumes-
+	-- action from ObjectData.activation; this function only needs reach + existence.
+	if state and state.objects then
+		for _, obj in ipairs(state.objects) do
+			if obj.x and obj.y then
+				local dist = chebyshevDistance(actor.tileX, actor.tileY, obj.x, obj.y)
+				if dist <= reach then
+					table.insert(candidates, {
+						interactKind = "mapObject",
+						objectId = obj.id,
+						archetypeId = obj.type,
+						name = obj.type or obj.id or "Object",
+						tileX = obj.x, tileY = obj.y,
+					})
+				end
+			end
+		end
+	end
+
+	return candidates
 end
 
 return TargetingService

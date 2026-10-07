@@ -44,6 +44,8 @@ local FLOOR_TERRAIN = {
 	["Beach"]            = "Sand",
 	["Dock"]             = "Wooden Floor",
 	["Cave Chamber"]     = "Rocky",
+	-- Town (regions row 23; open_decisions Dev wiring (c)): plain Clear like Village.
+	["Town"]             = "Clear",
 }
 
 local DEFAULT_FLOOR = "Clear"
@@ -74,10 +76,22 @@ function FloorPass.Run(mapState)
 			local regionTypeName = regionTypeMap[regionId]
 			local terrain        = FLOOR_TERRAIN[regionTypeName] or DEFAULT_FLOOR
 
+			local marker = tile.marker
+
+			-- SLW (Slow, added Sep 30 2026): heavy movement-cost PASSABLE terrain
+			-- (movement tax only — never a blocker, never affects connectivity).
+			-- Override the region floor with Swamp (passable, +2 move cost). Swamp
+			-- chosen over Deep Water because Deep Water carries a Drowning trigger;
+			-- SLW is meant to be a pure move tax.
+			if marker == "SLW" then
+				terrain = "Swamp"
+			end
+
 			-- Defensive: if the floor terrain is impassable and
 			-- the marker requires passable terrain, fall back.
-			local marker = tile.marker
-			if marker == "PD" or marker == "ED" or marker == "LAN" then
+			-- OBJ (Objective, added Sep 30 2026) is a spawn area like PD/ED — it
+			-- must be standable, so it is included in the passable-required set.
+			if marker == "PD" or marker == "ED" or marker == "LAN" or marker == "OBJ" then
 				local tDef = TerrainData.Types[terrain]
 				if not tDef or tDef.passable == false then
 					terrain = DEFAULT_FLOOR
@@ -87,8 +101,14 @@ function FloorPass.Run(mapState)
 			tile.terrain = terrain
 
 			-- Mark protected tiles (features cannot overwrite later).
-			if marker == "PD" or marker == "ED" or marker == "LAN" then
+			-- OBJ joins PD/ED/LAN: the objective spawn area must not be stomped
+			-- by a later feature. It also carries an isObjective flag for the
+			-- OBJ-reachable-from-PD validation (ValidationPass).
+			if marker == "PD" or marker == "ED" or marker == "LAN" or marker == "OBJ" then
 				tile.protected = true
+			end
+			if marker == "OBJ" then
+				tile.isObjective = true
 			end
 
 			ops = ops + 1

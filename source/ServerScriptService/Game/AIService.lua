@@ -72,6 +72,8 @@ local W = {
 	GUARD_BASE   = 15,   -- base value of Guard
 	WAIT_SCORE   = -100, -- Wait is always last resort
 	MOVE_TOWARD  = 5,    -- per tile closer (melee gap-close)
+	COUNTER_RISK = 1.0,  -- penalty scale on expected counter damage taken (CounterStance)
+	DECOY_PRIORITY = 1000, -- Decoy = highest-priority target within threat range (authored)
 }
 
 -- Layer 2 — personality dials. Each scales a Layer-1 factor.
@@ -119,6 +121,17 @@ local ROLE_BY_PERSONALITY = {
 -- HELPERS (preserved from prior brain)
 --------------------------------------------------
 
+-- Neutral targeting rule (user-locked 2026-10-06): enemies ignore Neutral units
+-- unless the neutral turned hostile (side changes to "Enemy") or is a protect-the-NPC
+-- event marked enemyPriorityTarget (Lost Noble). Every hostile-target check routes here.
+local function isHostileTo(unit, target)
+	if not target or target.side == unit.side then return false end
+	if target.side == "Neutral" then
+		return target.enemyPriorityTarget == true
+	end
+	return true
+end
+
 local function chebyshev(ax, ay, bx, by)
 	return math.max(math.abs(ax - bx), math.abs(ay - by))
 end
@@ -126,7 +139,7 @@ end
 local function findNearestEnemy(unit, allUnits)
 	local best, bestDist = nil, math.huge
 	for _, u in ipairs(allUnits) do
-		if u.isAlive and u.side ~= unit.side then
+		if u.isAlive and isHostileTo(unit, u) then
 			local d = chebyshev(unit.tileX, unit.tileY, u.tileX, u.tileY)
 			if d < bestDist then bestDist = d; best = u end
 		end
@@ -172,6 +185,27 @@ local function countAlliesInRange(unit, allUnits, range)
 	return count
 end
 
+-- Battle-already-engaged check (added Sep 28 2026, user rule):
+-- Returns true if ANY other unit on the acting unit's side is within
+-- BATTLE_DISTANCE of ANY enemy (player) unit — i.e. the fight is already joined
+-- somewhere. A lone diver may then engage even with no ally within staging range,
+-- since it is no longer the one initiating a solo dive. Excludes the acting unit
+-- itself so its own proximity does not count as "someone else engaged".
+local function battleAlreadyEngaged(unit, allUnits)
+	for _, ally in ipairs(allUnits) do
+		if ally.isAlive and ally.side == unit.side and ally.id ~= unit.id then
+			for _, foe in ipairs(allUnits) do
+				if foe.isAlive and isHostileTo(unit, foe) then
+					if chebyshev(ally.tileX, ally.tileY, foe.tileX, foe.tileY) <= BATTLE_DISTANCE then
+						return true
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
 -- Count living enemies still standing on a side.
 local function countLivingSide(allUnits, side)
 	local n = 0
@@ -211,7 +245,7 @@ end
 local function exposureAt(unit, tx, ty, allUnits)
 	local count = 0
 	for _, u in ipairs(allUnits) do
-		if u.isAlive and u.side ~= unit.side then
+		if u.isAlive and isHostileTo(unit, u) then
 			local range = u.weaponMaxRange or 1
 			if chebyshev(tx, ty, u.tileX, u.tileY) <= range then
 				count = count + 1
@@ -237,13 +271,45 @@ local function scoreAttack(unit, target, dials, allUnits)
 	if predicted >= target.currentHp then
 		score = score + W.KILL_BONUS
 	end
+	-- Decoy (SKL-SUMMON-DECOY): enemies treat it as highest-priority target in range.
+	if target.summonType == "Decoy" then score = score + W.DECOY_PRIORITY end
 	local lowHp = 1 - (target.currentHp / math.max(1, target.maxHp))
 	score = score + lowHp * W.LOW_HP_FOCUS * dials.lowHpFocus
 	score = score - exposureAt(unit, unit.tileX, unit.tileY, allUnits) * W.SELF_DANGER * dials.selfDanger
+	-- Counter-stance avoidance: if the target holds CounterStance and THIS
+	-- attacker sits within the target's basic-attack reach, attacking provokes a
+	-- riposte. Subtract the expected counter damage we'd take back so the AI
+	-- prefers other targets (or attacks from outside the target's reach, where
+	-- no counter fires and no penalty applies).
+	if _StatusService and _StatusService.HasStatus(target, "CounterStance") then
+		local inst = _StatusService.HasStatus(target, "CounterStance")
+		local mult = (inst and inst.counterPowerMult) or 0.85
+		local dist = math.max(math.abs(unit.tileX - target.tileX), math.abs(unit.tileY - target.tileY))
+		local tMin = target.weaponMinRange or 1
+		local tMax = target.weaponMaxRange or 1
+		if dist >= tMin and dist <= tMax then
+			local backlash = 0
+			if _CombatResolver then
+				local cr = _CombatResolver.ResolveBasicAttack(target, unit, target.weaponDamage or 10)
+				backlash = (cr.finalDamage or 0) * mult
+			end
+			score = score - (backlash / math.max(1, unit.maxHp)) * W.DAMAGE_PCT * W.COUNTER_RISK
+		end
+	end
 	return score, predicted
 end
 
 -- Score a skill against one target (damage / heal / control unified).
+-- Level-based MP cost (2026-10-07): price skills exactly as the server charges
+-- them (CommandService.GetSkillMpCost, injected) so the AI never plans a cast it
+-- cannot afford. Falls back to the flat def value if the dependency is missing.
+local function skillMpCost(unit, def)
+	if _CommandService and _CommandService.GetSkillMpCost then
+		return (_CommandService.GetSkillMpCost(unit, def, def.id))
+	end
+	return def.mpCost or 0
+end
+
 local function scoreSkill(unit, def, target, dials, allUnits)
 	local score = 0
 	local predicted = 0
@@ -261,7 +327,7 @@ local function scoreSkill(unit, def, target, dials, allUnits)
 			score = score + W.CONTROL * dials.control
 		end
 		score = score + W.CONTROL * 0.25  -- base value for placing a zone/trap
-		score = score - (def.mpCost or 0) * W.MP_COST * dials.resource
+		score = score - skillMpCost(unit, def) * W.MP_COST * dials.resource
 		return score, 0
 	end
 
@@ -279,24 +345,43 @@ local function scoreSkill(unit, def, target, dials, allUnits)
 		end
 	else
 		-- Damage factor.
-		if _CombatResolver and target.side ~= unit.side then
+		if _CombatResolver and isHostileTo(unit, target) then
 			local r = _CombatResolver.ResolveSkill(unit, target, def)
 			predicted = r.finalDamage or 0
 		end
 		local dmgPct = predicted / math.max(1, target.maxHp)
 		score = dmgPct * W.DAMAGE_PCT * dials.damage
-		if predicted >= target.currentHp and target.side ~= unit.side then
+		if predicted >= target.currentHp and isHostileTo(unit, target) then
 			score = score + W.KILL_BONUS
+		end
+		if target.summonType == "Decoy" and isHostileTo(unit, target) then
+			score = score + W.DECOY_PRIORITY
 		end
 		local lowHp = 1 - (target.currentHp / math.max(1, target.maxHp))
 		score = score + lowHp * W.LOW_HP_FOCUS * dials.lowHpFocus
 	end
 
 	-- Control factor: value a debuff/status on an ENEMY, but not a redundant re-apply.
-	if def.appliesStatus and target.side ~= unit.side then
+	if def.appliesStatus and isHostileTo(unit, target) then
 		if not hasActiveStatus(target, def.appliesStatus) then
 			score = score + W.CONTROL * dials.control
 		end
+	end
+
+	-- Setup-buff value (rule 24, 2026-10-07): a power-0 buff on a friendly unit that
+	-- does not already have it is worth half a CONTROL point, so the AI actually uses
+	-- doctrine buffs (Hold the Line, Coordinated Advance, War Cry). Rule 23 below
+	-- still zeroes a re-buff of a unit that already has the status.
+	if def.appliesStatus and not def.isHealing and (def.power or 0) == 0
+		and target.side == unit.side and not hasActiveStatus(target, def.appliesStatus) then
+		score = score + W.CONTROL * 0.5 * (dials.control or 1)
+	end
+
+	-- MP recovery value (2026-10-07: Mana Surge / Meditate): worth half a CONTROL
+	-- point when the friendly target is missing MP. Rule 23 below still applies.
+	if (def.selfMpRestoreFraction or def.allyMpTransferFraction) and target.side == unit.side
+		and (target.currentMp or 0) < (target.maxMp or 0) then
+		score = score + W.CONTROL * 0.5 * (dials.control or 1)
 	end
 
 	-- No-redundant-status on ALLIES (rule 23): a PURE BUFF skill that applies a
@@ -311,7 +396,7 @@ local function scoreSkill(unit, def, target, dials, allUnits)
 	end
 
 	-- Resource cost.
-	score = score - (def.mpCost or 0) * W.MP_COST * dials.resource
+	score = score - skillMpCost(unit, def) * W.MP_COST * dials.resource
 	return score, predicted
 end
 
@@ -375,7 +460,7 @@ local function enumerateSkillEntries(unit, allUnits)
 	local skills = {}
 	for _, sid in ipairs(unit.skillIds or {}) do
 		local def = _CommandService and _CommandService.GetSkill(sid)
-		if def and _UnitSchema and _UnitSchema.HasEnoughMp(unit, def.mpCost or 0) then
+		if def and _UnitSchema and _UnitSchema.HasEnoughMp(unit, skillMpCost(unit, def)) then
 			local candidates = _TargetingService.GetSkillCandidates(unit, allUnits, def)
 			if candidates and #candidates > 0 then
 				table.insert(skills, { def = def, candidates = candidates })
@@ -406,19 +491,50 @@ function AIService.DecideAction(unit, allUnits, mapW, mapH)
 	-- Helper: best move tile toward the nearest player (gap close).
 	----------------------------------------------------------------
 	local function bestMoveToward()
+		-- PATH-AWARE ADVANCE (fix Sep 28 2026): GetMoveCandidates already BFSes
+		-- from the unit and returns ONLY reachable empty tiles (it routes THROUGH
+		-- allies but cannot STOP on them). The old ranking used straight-line
+		-- distance from the candidate tile to the nearest player with pathCost as a
+		-- tiny tiebreak; when the straight-line-closest lane was clogged by allies,
+		-- the reachable tiles that remained did not clearly win, so boxed-in
+		-- enemies (observed: Grunt 2 parked 7 turns, Grunt 7 6 turns) stalled.
+		--
+		-- New ranking: among reachable tiles, strongly prefer those that REDUCE the
+		-- unit's current distance-to-nearest-player (real progress), then break ties
+		-- by shorter pathCost (cheaper step), then by lower straight-line distance.
+		-- A tile reached by routing AROUND the jam has a genuine smaller
+		-- distance-to-player, so it now scores as progress instead of being ignored.
+		local curDist = chebyshev(unit.tileX, unit.tileY, nearest.tileX, nearest.tileY)
 		local best, bestScore = nil, -math.huge
 		for _, tile in ipairs(moveTiles) do
 			local d = chebyshev(tile.tileX, tile.tileY, nearest.tileX, nearest.tileY)
-			local s = -d  -- closer = higher
+			-- Progress reward: how many tiles closer than standing still (can be
+			-- negative for a tile that is farther). Weighted heavily so any genuine
+			-- advance beats a lateral/backward tile.
+			local progress = curDist - d
+			local s = progress * 10 - d
 			if isTileHazardous(tile.tileX, tile.tileY) then s = s - 100 end
 			s = s - (tile.pathCost or 0) * 0.1
 			if s > bestScore then bestScore = s; best = tile end
 		end
 		if best then
+			-- Diagnostic: if the best reachable tile does NOT reduce distance, the
+			-- unit is boxed in by allies/terrain — surface it instead of silently
+			-- appearing to "freeze" (it is stuck, not crashed).
+			local bestDist = chebyshev(best.tileX, best.tileY, nearest.tileX, nearest.tileY)
+			if bestDist >= curDist then
+				print(string.format(
+					"[AIService] %s cannot advance (boxed): best reachable tile (%d,%d) dist=%d >= current dist=%d — taking best available",
+					unit.name, best.tileX, best.tileY, bestDist, curDist))
+			end
 			return { actionType = "Move", selection = best, skillName = nil,
 				score = W.MOVE_TOWARD, rtEstimate = 0, tile = best,
 				targetName = string.format("(%d,%d)", best.tileX, best.tileY) }
 		end
+		-- No reachable empty tile at all (fully surrounded): genuinely nothing to do.
+		print(string.format(
+			"[AIService] %s has NO reachable move tile (fully boxed in) — will Guard/Wait",
+			unit.name))
 		return nil
 	end
 
@@ -490,7 +606,7 @@ function AIService.DecideAction(unit, allUnits, mapW, mapH)
 		if not entry.def.isHealing then
 			for _, target in ipairs(entry.candidates) do
 				-- Skip ground/tile markers: no .side/.currentHp, can't be a KO target.
-				if not target.isGroundTarget and target.side ~= unit.side then
+				if not target.isGroundTarget and isHostileTo(unit, target) then
 					local _, predicted = scoreSkill(unit, entry.def, target, dials, allUnits)
 					if predicted >= target.currentHp and predicted > koScore then
 						koScore = predicted
@@ -508,9 +624,15 @@ function AIService.DecideAction(unit, allUnits, mapW, mapH)
 	----------------------------------------------------------------
 	-- (3) ENGAGEMENT STAGING — Aggressive/Skirmisher/Controller only.
 	--     Within battle distance but alone (no ally within 3): don't dive.
+	--     EXCEPTION (user rule, Sep 28 2026): if the battle is ALREADY ENGAGED —
+	--     any other allied enemy is within BATTLE_DISTANCE of a player — then a lone
+	--     diver treats it as safe to engage even with no ally within staging range.
+	--     The fight is already joined, so a straggler should not hang back.
 	----------------------------------------------------------------
 	local staging = (personality == "Aggressive" or personality == "Skirmisher" or personality == "Controller")
-	if staging and countAlliesInRange(unit, allUnits, ALLY_STAGING_RANGE) == 0 then
+	if staging
+		and countAlliesInRange(unit, allUnits, ALLY_STAGING_RANGE) == 0
+		and not battleAlreadyEngaged(unit, allUnits) then
 		if isRangedUnit(unit) then
 			-- ranged: attack if a target is in range; else move to get in range; else guard
 			if #attackTargets > 0 then
@@ -522,8 +644,40 @@ function AIService.DecideAction(unit, allUnits, mapW, mapH)
 					score = scoreGuard(unit, dials), rtEstimate = 0, targetName = "self" }
 			end
 		else
-			-- melee alone: consider a self/ally buff instead of Guard (refinement 24), else Guard
-			-- (buff handled by normal scoring below only if it out-scores Guard; here we bias to Guard)
+			-- melee alone (fix Sep 28 2026): the "don't dive alone" rule (19) exists so
+			-- a lone melee diver does not suicide-rush the player GROUP — it does NOT
+			-- mean stand still. The old code unconditionally returned Guard here, so a
+			-- melee unit separated from its group (e.g. clogged out of formation)
+			-- Guarded in place turn after turn and looked frozen (observed: Grunt 2/7
+			-- parked 6-7 turns). Instead, REGROUP: move toward the nearest ally to
+			-- rejoin formation; if there is no ally to regroup with, hold with Guard.
+			local nearestAllyTile, nearestAllyDist = nil, math.huge
+			for _, u in ipairs(allUnits) do
+				if u.isAlive and u.side == unit.side and u.id ~= unit.id then
+					local d = chebyshev(unit.tileX, unit.tileY, u.tileX, u.tileY)
+					if d < nearestAllyDist then nearestAllyDist = d; nearestAllyTile = u end
+				end
+			end
+			if nearestAllyTile then
+				-- Pick the reachable tile that gets closest to the nearest ally.
+				local curToAlly = nearestAllyDist
+				local regroupBest, regroupScore = nil, -math.huge
+				for _, tile in ipairs(moveTiles) do
+					local d = chebyshev(tile.tileX, tile.tileY, nearestAllyTile.tileX, nearestAllyTile.tileY)
+					local s = (curToAlly - d) * 10 - d
+					if isTileHazardous(tile.tileX, tile.tileY) then s = s - 100 end
+					s = s - (tile.pathCost or 0) * 0.1
+					if s > regroupScore then regroupScore = s; regroupBest = tile end
+				end
+				if regroupBest then
+					print(string.format("[AIService] %s (%s) regrouping toward ally at (%d,%d)",
+						unit.name, personality, nearestAllyTile.tileX, nearestAllyTile.tileY))
+					return { actionType = "Move", selection = regroupBest, skillName = nil,
+						score = W.MOVE_TOWARD, rtEstimate = 0, tile = regroupBest,
+						targetName = string.format("regroup (%d,%d)", regroupBest.tileX, regroupBest.tileY) }
+				end
+			end
+			-- No ally to regroup with (or no reachable tile): hold position.
 			return { actionType = "Guard", selection = nil, skillName = nil,
 				score = scoreGuard(unit, dials), rtEstimate = 0, targetName = "self" }
 		end
@@ -574,7 +728,7 @@ function AIService.DecideAction(unit, allUnits, mapW, mapH)
 		-- lowest-HP enemy that some move tile brings into weapon range this turn
 		local bestKO, bestKOHp, bestKOTile = nil, math.huge, nil
 		for _, u in ipairs(allUnits) do
-			if u.isAlive and u.side ~= unit.side then
+			if u.isAlive and isHostileTo(unit, u) then
 				for _, tile in ipairs(moveTiles) do
 					if chebyshev(tile.tileX, tile.tileY, u.tileX, u.tileY) <= wpnRange then
 						if u.currentHp < bestKOHp then

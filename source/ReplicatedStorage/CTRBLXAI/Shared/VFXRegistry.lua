@@ -70,7 +70,7 @@ VFXRegistry.ByStatus = {
 }
 
 -- Attack/action-type fallbacks (no skill, or nothing else matched).
-VFXRegistry.Melee      = "Multi-Slash"   -- close-range basic attack
+VFXRegistry.Melee      = "Hit"           -- close-range basic attack (single-target physical)
 VFXRegistry.Ranged     = "Projectile Orb" -- long-range basic attack
 VFXRegistry.Impact     = "Hit"            -- generic hit spark at target
 VFXRegistry.Heal       = "Heal"
@@ -78,5 +78,36 @@ VFXRegistry.KO         = "Black Hole"
 VFXRegistry.GuardUp    = "Shield-01"
 VFXRegistry.Channel    = "Channeling"
 VFXRegistry.DefaultSkill = "Hit Magic"   -- skill with no element/property/override
+
+-- Persistent-loop VFX (played continuously on a unit until a lifecycle event
+-- stops them; NOT round-robined with debuff VFX). Names are exact Instance
+-- names in the VFX folder (case/space-sensitive).
+VFXRegistry.ChannelDamage = "Charging 1"  -- damage-channel skill, loops until fire/interrupt
+VFXRegistry.ChannelHeal   = "Charging 2"  -- healing-channel skill, loops until fire/interrupt
+VFXRegistry.Stance        = "Charging"    -- stance self-buff (Riposte), loops while active
+VFXRegistry.GuardLoop     = "Shield-01"   -- Guard status, loops while active
+-- Multi-target melee (Cleave-type): plays ON THE ATTACKER. Each struck target
+-- still plays the per-target Hit effect separately.
+VFXRegistry.MultiTarget   = "Multi-Slash"
+
+-- Terrain waterfall splash: a PERSISTENT splash VFX placed on the LOWER water
+-- tile at the base of a waterfall (where high water falls onto low water). Uses
+-- the same "Splashing Water" asset as the Water element by default; its own key
+-- so it can be swapped independently. Placed via VFXController.AddWaterfallSplash.
+VFXRegistry.Waterfall     = "Splashing Water"
+
+-- Tile effects (TileEffectService ids) -> PERSISTENT VFX on the tile while active.
+-- Blank/missing name = no art (graceful). Fill the blanks once matching assets exist.
+VFXRegistry.ByTileEffect = {
+	Burning          = "Ground Flames",
+	["Poison Cloud"] = "Poison Gas",
+	["Static Cloud"] = "Shocked",
+	Frozen           = "Ice Blast",
+	Steam            = "",
+	Wet              = "",
+	Oily             = "",
+	["Tar Pit"]      = "",
+	Vines            = "",
+}
 
 return VFXRegistry

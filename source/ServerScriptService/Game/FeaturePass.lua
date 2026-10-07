@@ -22,14 +22,22 @@
 --   9. Fortification    — Rocky wall segment with gate gaps
 --  10. Moat             — Shallow Water parallel to Fortification + bridge
 --  11. Ruin Structure   — Rocky/Cracked Ground broken rectangle with gaps
---  12. Ridge / Cliff    — Linear Rocky near ADV tiles (ElevationPass makes tall)
---  13. Bridge / Pass    — Repair pass: ensures no LAN tile is impassable
+--  12. Ridge / Cliff    — Linear Rocky near ADV tiles (ElevationPass makes tall).
+--                         Round 3: ridge tiles flagged isRidge, perimeter tiles
+--                         isCliffEdge -> ElevationPass holds a >= cfg.cliffDrop
+--                         face. A spinePct high-ground budget tops ridges up.
+--  13. Bridge / Pass    — Round 3: DELIBERATE gaps (biome gapPolicy) crossed by
+--                         first-class bridge SPAN objects (placeGapsAndSpans).
+--                         repairBridgePass is now only a safety net.
 --  14. Road / Path      — Clear road connecting eligible regions + shoulders
 --  15. River            — Shallow Water channel with Mud banks (cross-region)
 --  16. Cave Corridor    — Clear passage connecting Cave Chambers
 --  17. Forest Density   — Clover Field scatter in Forest regions
 --
 -- Location: ServerScriptService/Game/FeaturePass.lua
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TerrainData = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("TerrainData"))
 
 local FeaturePass = {}
 
@@ -56,6 +64,21 @@ end
 
 local function coordKey(x, y)
 	return y * 100000 + x
+end
+
+--- Round 3: stamp tile.featured on every tile a feature placer claimed
+--- (usedSet keys). ElevationPass uses it to tell deliberate Rocky features
+--- (rock formations, walls, ADV / OBS rock, ridges) from region-floor Rocky,
+--- which now sits in the biome base band instead of the high band.
+local function stampFeatured(tiles, usedSet)
+	for key in pairs(usedSet) do
+		local fx = key % 100000
+		local fy = (key - fx) / 100000
+		local row = tiles[fy]
+		if row and row[fx] then
+			row[fx].featured = true
+		end
+	end
 end
 
 --- Deterministic Fisher-Yates shuffle.
@@ -340,6 +363,12 @@ local REGION_FEATURES = {
 		{ type = "Structure", minCount = 1, maxCount = 2,
 		  minSize = 4, maxSize = 12, minCluster = 4 },
 	},
+	-- Town (regions row 23; open_decisions Dev wiring (d)): 2-4 buildings
+	-- (Village gets 1-2); same building footprint as Village.
+	["Town"] = {
+		{ type = "Structure", minCount = 2, maxCount = 4,
+		  minSize = 4, maxSize = 12, minCluster = 4 },
+	},
 	["Forest"]           = {},
 	["Clearing"]         = {},
 	["Rocky"] = {
@@ -416,7 +445,7 @@ local REGION_FEATURES = {
 --------------------------------------------------
 -- WAT MARKER → FEATURE TYPE (biome-based)
 -- Round 2: only WAT markers handled.
--- ADV/HZD/BLK/NEU markers deferred to Round 5.
+-- ADV/HZD/OBS/NEU markers deferred to Round 5.
 --------------------------------------------------
 
 local WAT_BIOME_FEATURE = {
@@ -1260,9 +1289,21 @@ local function placeRidge(candidates, minSize, maxSize, minCluster,
 	if #blob < minCluster then return 0 end
 
 	-- Assign Rocky terrain to all ridge tiles.
+	-- Round 3 (biomes spec row 27): placeRidge RESERVES the cliff face.
+	-- Every ridge tile is flagged isRidge; perimeter tiles (any cardinal
+	-- neighbour outside the ridge) are flagged isCliffEdge. ElevationPass
+	-- reads isCliffEdge: those tiles start >= cfg.cliffDrop above the base
+	-- band (getTagElevationRange), Phase 3b enforces the >= cliffDrop step
+	-- over adjacent low ground, and Phases 3/4/6 exempt the step (it is never
+	-- a spine-to-spine pair; ridges are never placed on protected LAN tiles).
 	local tilesUsed = 0
 	for _, pos in ipairs(blob) do
-		tiles[pos.y][pos.x].terrain = "Rocky"
+		local t = tiles[pos.y][pos.x]
+		t.terrain = "Rocky"
+		t.isRidge = true
+		if not allCardinalInBlob(pos.x, pos.y, w, h, blobSet) then
+			t.isCliffEdge = true
+		end
 		usedSet[coordKey(pos.x, pos.y)] = true
 		tilesUsed = tilesUsed + 1
 	end
@@ -1290,33 +1331,803 @@ local IMPASSABLE_FIX = {
 	["Quicksand"]  = true,
 }
 
+--- SAFETY NET ONLY (Round 3, biomes spec row 28). Deliberate bridges are
+--- now made by placeGapsAndSpans; this pass no longer creates bridges on
+--- purpose. It only fires if a LAN tile was ACCIDENTALLY left on water /
+--- lava / impassable terrain, and it never touches deliberate gap tiles
+--- (isGap) or deliberate span tiles (isBridge). Repaired tiles are tagged
+--- bridgeRepair = true so they are distinguishable from real spans.
 local function repairBridgePass(tiles, w, h)
 	local repaired = 0
 	for y = 1, h do
 		for x = 1, w do
 			local tile = tiles[y][x]
-			if tile.marker == "LAN" then
+			if tile.marker == "LAN" and not tile.isGap and not tile.isBridge then
 				local terrain = tile.terrain
 				if WATER_TERRAINS[terrain] then
 					tile.terrain = "Wooden Floor"
-					tile.isBridge = true   -- raised passable span over water
+					tile.isBridge = true   -- safety-net plank over accidental water
+					tile.bridgeRepair = true
 					repaired     = repaired + 1
 				elseif LAVA_TERRAINS[terrain] then
 					tile.terrain = "Rocky"
-					tile.isBridge = true   -- passable causeway over lava
+					tile.isBridge = true   -- safety-net causeway over accidental lava
+					tile.bridgeRepair = true
 					repaired     = repaired + 1
 				elseif IMPASSABLE_FIX[terrain] then
 					tile.terrain = "Clear"
-					tile.isBridge = true   -- passable crossing over impassable gap
+					tile.isBridge = true   -- safety-net crossing over accidental gap
+					tile.bridgeRepair = true
 					repaired     = repaired + 1
 				end
 			end
 		end
 	end
 	if repaired > 0 then
-		print(string.format(
-			"[FeaturePass] Bridge/Pass: placed %d bridge span(s) over impassable terrain.", repaired))
+		warn(string.format(
+			"[FeaturePass] Bridge/Pass SAFETY NET fired: repaired %d accidentally impassable LAN tile(s).",
+			repaired))
 	end
+	return repaired
+end
+
+--------------------------------------------------
+-- HIGH-GROUND BUDGET (Round 3, biomes spec col_4 spinePct)
+-- If the map's high ground (Rocky / Cracked Ground / ADV tiles) is below
+-- cfg.spinePct of the map, add ridges through placeRidge (so every added
+-- tile carries the isRidge / isCliffEdge reservation) on NEU floor
+-- tiles until the budget is met. Never removes high ground; never touches
+-- protected, water, lava, structure or gap tiles. Bounded (12 attempts).
+--------------------------------------------------
+
+-- OBS (formerly BLK) is an impassable wall, NOT ridge-seed-eligible (Sep 30 2026
+-- cutover). Only NEU floor seeds ridges now.
+local RIDGE_SEED_MARKERS = { NEU = true }
+local RIDGE_BASE_TERRAIN = {
+	["Clear"]          = true,
+	["Grassland"]      = true,
+	["Clover Field"]   = true,
+	["Sand"]           = true,
+	["Mud"]            = true,
+	["Tainted Ground"] = true,
+}
+
+--- High ground for the budget = ADV tiles, Cracked Ground, and Rocky that
+--- is a deliberate feature (featured / ridge). Region-floor Rocky is low
+--- ground (ElevationPass puts it in the base band) and may host a ridge.
+local function isFloorRock(t)
+	return t.terrain == "Rocky" and not t.featured and not t.isRidge
+		and t.marker ~= "ADV"
+end
+
+local function isHighGroundTile(t)
+	if t.marker == "ADV" or t.terrain == "Cracked Ground" then return true end
+	return t.terrain == "Rocky" and not isFloorRock(t)
+end
+
+local function placeHighGroundBudget(mapState, tiles, w, h, rng)
+	local cfg = mapState.biomeElevation or {}
+	local pct = cfg.spinePct
+	if not pct or pct <= 0 then return 0 end
+	local target = math.floor(pct * w * h + 0.5)
+
+	local count = 0
+	local byRegion, regionOrder = {}, {}
+	local blocked = {}
+	for y = 1, h do
+		for x = 1, w do
+			local t = tiles[y][x]
+			if isHighGroundTile(t) then count = count + 1 end
+			local eligible = not t.protected and not t.isGap and not t.isBridge
+				and RIDGE_SEED_MARKERS[t.marker]
+				and (RIDGE_BASE_TERRAIN[t.terrain] or isFloorRock(t))
+				and t.regionId ~= nil
+			if eligible then
+				if not byRegion[t.regionId] then
+					byRegion[t.regionId] = {}
+					table.insert(regionOrder, t.regionId)
+				end
+				table.insert(byRegion[t.regionId], { x = x, y = y })
+			else
+				blocked[coordKey(x, y)] = true
+			end
+		end
+	end
+	if count >= target or #regionOrder == 0 then return 0 end
+
+	local added = 0
+	for _ = 1, 40 do
+		local remaining = target - count - added
+		if remaining < 3 then break end
+		local rid   = regionOrder[rng:NextInteger(1, #regionOrder)]
+		local avail = {}
+		for _, p in ipairs(byRegion[rid]) do
+			if not blocked[coordKey(p.x, p.y)] then table.insert(avail, p) end
+		end
+		if #avail >= 3 then
+			local maxLen = math.max(3, math.min(8, remaining))
+			added = added + placeRidge(avail, 3, maxLen, 3,
+				{ advTiles = avail }, rng, tiles, w, h, rid, blocked)
+		end
+	end
+	return added
+end
+
+--------------------------------------------------
+-- DELIBERATE GAPS + BRIDGE SPANS (Round 3, biomes spec row 28)
+-- placeGapsAndSpans cuts a real impassable-by-depth gap ACROSS the PD->ED
+-- spine and lays a first-class bridge SPAN object over it:
+--   * gap   : a strip `width` tiles deep (along travel) reaching up to
+--             policy.halfLen tiles either side of the span (stops at map
+--             edge, PD/ED/POI/ADV, other gaps/spans). Tiles get
+--             terrain = policy.gapTerrain, isGap = true, gapId, gapDepth.
+--             ElevationPass Phase 7 sinks them >= gapDepth below every bank,
+--             so off-span the gap is not walkable (real chasm / moat).
+--   * span  : the `width` spine tiles crossing the gap (span length = gap
+--             width). Tiles get terrain = span def spanTerrain,
+--             isBridge = true, bridgeSpanId. Passable; ElevationPass
+--             Phase 6c grades the deck bank -> span -> bank.
+-- Parallels the Stone Pillar 4-tile fallen span (objects_encounters row 9, revised 2026-10-02): the
+-- span is a Bridge-category object with a length and a span terrain,
+-- recorded in mapState.bridgeGaps[i].span (not a tile.object blocker).
+-- Placement is atomic: if PD->ED is no longer reachable (gap tiles blocked)
+-- the gap + span are rolled back. MapService.validateGapSpans rejects any
+-- map whose gap lost its usable span (bounded re-roll).
+--------------------------------------------------
+
+local BRIDGE_SPAN_DEFS = {
+	-- Tags per objects_encounters BRIDGE SPAN OBJECTS rows 79-81: spans are
+	-- PROTECTED, not Breakable (map_gen_rules row 60 'Span Tile Protection').
+	Plank = {
+		id = "Plank Bridge", category = "Bridge", spanTerrain = "Wooden Floor",
+		tags = { "Span", "Wooden Floor", "Flammable", "Protected" }, passable = true,
+		notes = "Wooden Floor plank span; length = gap width",
+	},
+	Causeway = {
+		id = "Rocky Causeway", category = "Bridge", spanTerrain = "Rocky",
+		tags = { "Span", "Rocky", "Stone", "Protected" }, passable = true,
+		notes = "Rocky causeway span; length = gap width",
+	},
+	Drawbridge = {
+		id = "Drawbridge", category = "Bridge", spanTerrain = "Wooden Floor",
+		tags = { "Span", "Wooden Floor", "Flammable", "Protected" }, passable = true,
+		notes = "Wooden Floor drawbridge span over a moat; length = gap width",
+	},
+}
+
+-- Markers a gap strip never extends into (deployment + objectives + high ground).
+local GAP_STOP_MARKERS = { PD = true, ED = true, POI = true, ADV = true }
+
+-- Existing deep liquid a gap strip stops at (keeps the chasm from merging
+-- into a lake / lava pool, which could otherwise act as a ford).
+local GAP_STOP_TERRAIN = { ["Deep Water"] = true, ["Molten"] = true }
+
+local function spineTilePassable(tile)
+	if tile.isGap then return false end
+	local tDef = TerrainData.Types[tile.terrain]
+	return tDef ~= nil and tDef.passable ~= false
+end
+
+--- BFS PD -> first ED over passable, non-gap tiles; LAN-preferred neighbour
+--- order (mirrors ElevationPass Phase 6). Returns array PD..ED or nil.
+local function findSpinePath(tiles, w, h)
+	local parent = {}
+	local queue, qHead = {}, 1
+	for y = 1, h do
+		for x = 1, w do
+			if tiles[y][x].marker == "PD" and spineTilePassable(tiles[y][x]) then
+				parent[coordKey(x, y)] = false
+				table.insert(queue, { x = x, y = y })
+			end
+		end
+	end
+	local goal = nil
+	while qHead <= #queue do
+		local cur = queue[qHead]
+		qHead = qHead + 1
+		if tiles[cur.y][cur.x].marker == "ED" then
+			goal = cur
+			break
+		end
+		local nbrs = {}
+		for _, dir in ipairs(CARDINAL) do
+			local nx, ny = cur.x + dir.x, cur.y + dir.y
+			if isInBounds(nx, ny, w, h) then
+				local nKey = coordKey(nx, ny)
+				if parent[nKey] == nil and spineTilePassable(tiles[ny][nx]) then
+					table.insert(nbrs, { x = nx, y = ny, key = nKey })
+				end
+			end
+		end
+		table.sort(nbrs, function(a, b)
+			local aLan = tiles[a.y][a.x].marker == "LAN"
+			local bLan = tiles[b.y][b.x].marker == "LAN"
+			if aLan ~= bLan then return aLan end
+			if a.y ~= b.y then return a.y < b.y end
+			return a.x < b.x
+		end)
+		for _, n in ipairs(nbrs) do
+			parent[n.key] = cur
+			table.insert(queue, { x = n.x, y = n.y })
+		end
+	end
+	if not goal then return nil end
+	local rev = {}
+	local node = goal
+	while node do
+		table.insert(rev, { x = node.x, y = node.y })
+		node = parent[coordKey(node.x, node.y)]
+	end
+	local path = {}
+	for i = #rev, 1, -1 do
+		table.insert(path, rev[i])
+	end
+	return path
+end
+
+--------------------------------------------------
+-- GAP MIX (Round 3 tuning, user decision locked 2026-09-29)
+-- Every placed gap rolls a type on the feature rng (deterministic):
+--   CHOKEPOINT (GAP_CHOKE_CHANCE = 30%) or SHORTCUT (the other 70%).
+--   SHORTCUT   : the base strip (span +/- policy.halfLen). A detour around
+--                the strip's end may still exist.
+--   CHOKEPOINT : the strip is extended ALONG the lane cross-section
+--                (perpendicular to travel at the crossing), tile by tile on
+--                both sides, until every strip row ends against a sealing
+--                tile (map edge, another gap, impassable terrain such as
+--                Quicksand, off-lane Deep Water / Molten, or a ridge cliff
+--                face that ElevationPass raises >= cliffDrop), so the span is
+--                the only crossing between its two banks.
+-- FALLBACK (connectivity always wins): if a side cannot seal within
+-- GAP_CHOKE_MAX_EXTEND extra tiles, runs into PD/ED or a span / span bank,
+-- the cut would disconnect PD->ED, strand any tile that was reachable
+-- before, or the banks still connect without the span, the extension is
+-- reverted and the gap stays a SHORTCUT (gap.chokeFallback records why).
+-- POI/ADV (Round 3 gap mix v2, "seal, but keep POI/ADV reachable"): a strip
+-- row MAY terminate on a POI or ADV tile, but only if every such POI/ADV
+-- region is still reachable from a PD tile WITHOUT crossing this gap's span
+-- (chokePoiAdvGuard); otherwise the seal is refused and the roll falls
+-- back as above. Such gaps carry gap.sealedOnPoiAdv = true.
+-- Extended tiles are ordinary gap tiles (isGap / gapId), so ElevationPass
+-- Phase 7 sinks them and MapService.placeObjects skips them.
+--------------------------------------------------
+
+local GAP_CHOKE_CHANCE     = 0.30  -- policy.chokeChance overrides
+local GAP_CHOKE_MAX_EXTEND = 10    -- extra tiles per side past halfLen; policy.chokeMaxExtend overrides
+local GAP_CHOKE_MAX_CANDIDATES = 12 -- crossings tried per chokepoint roll before falling back
+
+local CHOKE_LANE_MARKERS = { PD = true, ED = true, LAN = true }
+-- Round 3 gap mix v2: PD/ED stay hard stops for a chokepoint strip; POI/ADV
+-- are conditional seal endpoints (reachability guard, see chokePoiAdvGuard).
+local CHOKE_HARD_STOP_MARKERS = { PD = true, ED = true }
+local CHOKE_POI_ADV_MARKERS   = { POI = true, ADV = true }
+local CHOKE_POI_ADV_REFUSED   = "POI/ADV seal refused: objective only reachable across the span"
+
+--- A tile a chokepoint strip may terminate against (a "wall"). Lane tiles
+--- never count as walls: repairBridgePass / TransitionPass may still
+--- repaint them. Spans and span banks are always walkable.
+local function chokeSealTile(tile)
+	if tile.isGap then return true end
+	if tile.isBridge or tile.isBridgeApproach then return false end
+	if tile.protected or CHOKE_LANE_MARKERS[tile.marker] then return false end
+	if tile.isCliffEdge or GAP_STOP_TERRAIN[tile.terrain] then return true end
+	local tDef = TerrainData.Types[tile.terrain]
+	return tDef == nil or tDef.passable == false
+end
+
+--- 4-cardinal flood from `starts` over non-wall tiles, skipping `blocked`.
+local function chokeReach(tiles, w, h, starts, blocked)
+	local seen = {}
+	local queue, qHead = {}, 1
+	for _, s in ipairs(starts) do
+		local k = coordKey(s.x, s.y)
+		if not seen[k] and not blocked[k] and not chokeSealTile(tiles[s.y][s.x]) then
+			seen[k] = true
+			table.insert(queue, { x = s.x, y = s.y })
+		end
+	end
+	while qHead <= #queue do
+		local cur = queue[qHead]
+		qHead = qHead + 1
+		for _, dir in ipairs(CARDINAL) do
+			local nx, ny = cur.x + dir.x, cur.y + dir.y
+			if isInBounds(nx, ny, w, h) then
+				local k = coordKey(nx, ny)
+				if not seen[k] and not blocked[k] and not chokeSealTile(tiles[ny][nx]) then
+					seen[k] = true
+					table.insert(queue, { x = nx, y = ny })
+				end
+			end
+		end
+	end
+	return seen
+end
+
+--- Round 3 gap mix v2 reachability guard for strip rows that ended on a
+--- POI/ADV tile. For each such seal tile, its 4-connected same-marker region
+--- is walked. The seal is kept only if (a) at least one walkable tile of the
+--- region is reachable from a PD tile with this gap's span BLOCKED, and
+--- (b) no region tile that is reachable from PD at all (`after`, span open)
+--- is reachable ONLY via the span. Returns true when every region passes.
+local function chokePoiAdvGuard(tiles, w, h, pdList, sealList, spanBlocked, after)
+	local noSpan = chokeReach(tiles, w, h, pdList, spanBlocked)
+	local done   = {}
+	for _, p in ipairs(sealList) do
+		local k0 = coordKey(p.x, p.y)
+		if not done[k0] then
+			local marker   = tiles[p.y][p.x].marker
+			local anyReach = false
+			local queue, qHead = { { x = p.x, y = p.y } }, 1
+			done[k0] = true
+			while qHead <= #queue do
+				local cur = queue[qHead]
+				qHead = qHead + 1
+				local ck = coordKey(cur.x, cur.y)
+				if noSpan[ck] then
+					anyReach = true
+				elseif after[ck] then
+					return false            -- only reachable across the span
+				end
+				for _, dir in ipairs(CARDINAL) do
+					local nx, ny = cur.x + dir.x, cur.y + dir.y
+					if isInBounds(nx, ny, w, h) then
+						local nk = coordKey(nx, ny)
+						if not done[nk] and tiles[ny][nx].marker == marker then
+							done[nk] = true
+							table.insert(queue, { x = nx, y = ny })
+						end
+					end
+				end
+			end
+			if not anyReach then return false end
+		end
+	end
+	return true
+end
+
+--- Try to turn a just-placed SHORTCUT gap into a CHOKEPOINT. Mutates tiles
+--- only on success. Returns (extTileList, nil, poiAdvSealList) on success,
+--- or (nil, reason, poiAdvSealAttempted) on failure.
+local function extendGapToChokepoint(mapState, tiles, w, h, gapRec, px, py, policy, maxExtend)
+	local id  = gapRec.id
+	local cfg = mapState.biomeElevation or {}
+
+	-- 1. Plan the extension (read-only): per side, walk every strip row
+	--    outward from the end of this gap's own tiles.
+	local ext, extSet = {}, {}
+	local poiAdvSeals, poiAdvSet = {}, {}   -- v2: rows that ended on POI/ADV
+	for _, side in ipairs({ -1, 1 }) do
+		local rows = {}
+		for _, s in ipairs(gapRec.spanTiles) do
+			local off = 1
+			while true do
+				local gx, gy = s.x + px * side * off, s.y + py * side * off
+				if not isInBounds(gx, gy, w, h) then break end
+				local t = tiles[gy][gx]
+				if not (t.isGap and t.gapId == id) then break end
+				off = off + 1
+			end
+			table.insert(rows, { s = s, off = off, open = true })
+		end
+		local steps = 0
+		while true do
+			local anyOpen = false
+			for _, row in ipairs(rows) do
+				if row.open then
+					local gx, gy = row.s.x + px * side * row.off, row.s.y + py * side * row.off
+					if not isInBounds(gx, gy, w, h) then
+						row.open = false            -- sealed on the map edge
+					else
+						local t = tiles[gy][gx]
+						if t.isBridge or t.isBridgeApproach or CHOKE_HARD_STOP_MARKERS[t.marker] then
+							return nil, "strip hit PD/ED or a span before sealing"
+						elseif CHOKE_POI_ADV_MARKERS[t.marker] then
+							-- v2: conditional seal on POI/ADV (verified in step 3b).
+							row.open = false
+							local sk = coordKey(gx, gy)
+							if not poiAdvSet[sk] then
+								poiAdvSet[sk] = true
+								table.insert(poiAdvSeals, { x = gx, y = gy, marker = t.marker })
+							end
+						elseif chokeSealTile(t) then
+							row.open = false        -- sealed on a wall
+						else
+							anyOpen = true
+						end
+					end
+				end
+			end
+			if not anyOpen then break end
+			steps = steps + 1
+			if steps > maxExtend then
+				return nil, "lane open wider than max extend"
+			end
+			for _, row in ipairs(rows) do
+				if row.open then
+					local gx, gy = row.s.x + px * side * row.off, row.s.y + py * side * row.off
+					local k = coordKey(gx, gy)
+					if not extSet[k] then
+						extSet[k] = true
+						table.insert(ext, { x = gx, y = gy })
+					end
+					row.off = row.off + 1
+				end
+			end
+		end
+	end
+
+	-- 2. Apply tentatively.
+	local pdList = {}
+	for y = 1, h do
+		for x = 1, w do
+			if tiles[y][x].marker == "PD" then
+				table.insert(pdList, { x = x, y = y })
+			end
+		end
+	end
+	local before = chokeReach(tiles, w, h, pdList, {})
+	local backup = {}
+	for _, p in ipairs(ext) do
+		local t = tiles[p.y][p.x]
+		table.insert(backup, { t = t, terrain = t.terrain,
+			isCliffEdge = t.isCliffEdge, isRidge = t.isRidge })
+		t.terrain     = policy.gapTerrain
+		t.isGap       = true
+		t.gapId       = id
+		t.gapDepth    = cfg.cliffDrop
+		t.gapFloorEffect = policy.gapFloorEffect  -- Vines / Tar Pit floor slot (map_gen_rules 59/67)
+		t.isCliffEdge = nil
+		t.isRidge     = nil
+	end
+	local function revert(reason)
+		for _, b in ipairs(backup) do
+			b.t.terrain     = b.terrain
+			b.t.isCliffEdge = b.isCliffEdge
+			b.t.isRidge     = b.isRidge
+			b.t.isGap       = nil
+			b.t.gapId       = nil
+			b.t.gapDepth    = nil
+			b.t.gapFloorEffect = nil
+		end
+		return nil, reason, #poiAdvSeals > 0
+	end
+
+	-- 3. Validate: PD->ED still connects (the span is the crossing) ...
+	if not findSpinePath(tiles, w, h) then
+		return revert("extension would disconnect PD->ED")
+	end
+	-- ... no tile reachable before is stranded (other than the cut) ...
+	local after = chokeReach(tiles, w, h, pdList, {})
+	for k in pairs(before) do
+		if not extSet[k] and not after[k] then
+			return revert("extension would strand reachable tiles")
+		end
+	end
+	-- ... and the banks no longer connect except over this gap's span.
+	local spanBlocked = {}
+	for _, s in ipairs(gapRec.spanTiles) do
+		spanBlocked[coordKey(s.x, s.y)] = true
+	end
+	local chain  = gapRec.chain
+	local bankIn, bankOut = chain[1], chain[#chain]
+	local fromIn = chokeReach(tiles, w, h, { bankIn }, spanBlocked)
+	if fromIn[coordKey(bankOut.x, bankOut.y)] then
+		return revert("banks still connect around the strip")
+	end
+	-- 3b. Round 3 gap mix v2: rows that ended on a POI/ADV tile are valid
+	--     seals only if that POI/ADV region is still reachable from PD
+	--     WITHOUT this span (objectives stay freely reachable).
+	if #poiAdvSeals > 0
+		and not chokePoiAdvGuard(tiles, w, h, pdList, poiAdvSeals, spanBlocked, after) then
+		return revert(CHOKE_POI_ADV_REFUSED)
+	end
+	return ext, nil, poiAdvSeals
+end
+
+local function placeGapsAndSpans(mapState, tiles, w, h, rng)
+	local cfg    = mapState.biomeElevation or {}
+	local policy = cfg.gapPolicy
+	mapState.bridgeGaps = mapState.bridgeGaps or {}
+	if not policy or (policy.maxGaps or 0) <= 0 then return 0 end
+	if rng:NextNumber() >= (policy.chance or 0) then return 0 end
+
+	local spans   = policy.spans or { "Plank" }
+	local wanted  = rng:NextInteger(1, policy.maxGaps)
+	local halfLen = policy.halfLen or 4
+	local wMin    = policy.widthMin or 1
+	local wMax    = math.max(wMin, policy.widthMax or wMin)
+	local placed  = 0
+	local chokeChance = policy.chokeChance or GAP_CHOKE_CHANCE
+	local chokeMaxExt = policy.chokeMaxExtend or GAP_CHOKE_MAX_EXTEND
+	local mix = { rolledChoke = 0, chokepoint = 0, shortcut = 0, fallback = 0,
+		poiAdvSealed = 0, poiAdvTried = 0, poiAdvRefused = 0 }
+	mapState.gapMixAudit = mix
+
+	for _ = 1, wanted do
+		local path = findSpinePath(tiles, w, h)
+		if not path or #path < 8 then break end
+
+		-- Candidate crossings: middle 70% of the spine route, a straight run
+		-- of width+2 tiles (bank, span.., bank), span tiles not on
+		-- PD/ED/POI/ADV, and >= 6 tiles (Manhattan) from any existing span.
+		local function findCrossings(width)
+			local cands = {}
+			local lo = math.max(2, math.floor(#path * 0.15))
+			local hi = math.min(#path - width - 1, math.ceil(#path * 0.85))
+			for i = lo, hi do
+				local dx = path[i].x - path[i - 1].x
+				local dy = path[i].y - path[i - 1].y
+				local ok = true
+				for k = i, i + width do
+					local a, b = path[k - 1], path[k]
+					if b.x - a.x ~= dx or b.y - a.y ~= dy then
+						ok = false
+						break
+					end
+				end
+				if ok then
+					for k = i, i + width - 1 do
+						local t = tiles[path[k].y][path[k].x]
+						if GAP_STOP_MARKERS[t.marker] or t.isGap or t.isBridge then
+							ok = false
+							break
+						end
+					end
+				end
+				if ok then
+					local bIn  = tiles[path[i - 1].y][path[i - 1].x]
+					local bOut = tiles[path[i + width].y][path[i + width].x]
+					if bIn.isGap or bIn.isBridge or bOut.isGap or bOut.isBridge then
+						ok = false
+					end
+				end
+				-- Round 3 gap mix hardening: no open-sided span. A span tile
+				-- whose perpendicular neighbour is PD/ED/POI/ADV or another span
+				-- would stop the strip at 0 on that side, letting the route step
+				-- off the deck sideways; ElevationPass Phase 6c then regrades the
+				-- deck toward the far bank and can break the corridor.
+				if ok then
+					for k = i, i + width - 1 do
+						for _, side in ipairs({ -1, 1 }) do
+							local nx, ny = path[k].x + dy * side, path[k].y + dx * side
+							if isInBounds(nx, ny, w, h) then
+								local n = tiles[ny][nx]
+								if GAP_STOP_MARKERS[n.marker] or n.isBridge then
+									ok = false
+								end
+							end
+						end
+					end
+				end
+				if ok then
+					for _, g in ipairs(mapState.bridgeGaps) do
+						for _, s in ipairs(g.spanTiles) do
+							if math.abs(s.x - path[i].x) + math.abs(s.y - path[i].y) < 6 then
+								ok = false
+							end
+						end
+					end
+				end
+				if ok then
+					table.insert(cands, { i = i, dx = dx, dy = dy })
+				end
+			end
+			return cands
+		end
+
+		-- Rolled width first; if no straight run fits, retry at the policy min.
+		local width = rng:NextInteger(wMin, wMax)
+		local cands = findCrossings(width)
+		if #cands == 0 and width > wMin then
+			width = wMin
+			cands = findCrossings(width)
+		end
+		if #cands == 0 then break end
+		local pick = cands[rng:NextInteger(1, #cands)]
+		local id   = "gap_" .. tostring(#mapState.bridgeGaps + 1)
+
+		-- Build the gap strip for a crossing: `width` span tiles on the spine,
+		-- strip rows perpendicular to travel reaching halfLen either side.
+		local function buildStrip(pk)
+			local px, py   = pk.dy, pk.dx
+			local spanList = {}
+			local gapList  = {}
+			local gapSet   = {}
+			for k = pk.i, pk.i + width - 1 do
+				local s = path[k]
+				table.insert(spanList, { x = s.x, y = s.y })
+				for _, side in ipairs({ -1, 1 }) do
+					for off = 1, halfLen do
+						local gx, gy = s.x + px * side * off, s.y + py * side * off
+						if not isInBounds(gx, gy, w, h) then break end
+						local t = tiles[gy][gx]
+						if GAP_STOP_MARKERS[t.marker] or t.isGap or t.isBridge
+							or GAP_STOP_TERRAIN[t.terrain] then
+							break
+						end
+						local key = coordKey(gx, gy)
+						if not gapSet[key] then
+							gapSet[key] = true
+							table.insert(gapList, { x = gx, y = gy })
+						end
+					end
+				end
+			end
+			return spanList, gapList
+		end
+
+		-- Cut the strip + lay the span; returns the gap record, or nil (fully
+		-- rolled back) when the strip is too short or PD->ED would disconnect.
+		local spanKind = spans[rng:NextInteger(1, #spans)]
+		local spanDef  = BRIDGE_SPAN_DEFS[spanKind] or BRIDGE_SPAN_DEFS.Plank
+		local function cutGap(pk)
+			local spanList, gapList = buildStrip(pk)
+			if #gapList < 2 * width then return nil end
+			local backup = {}
+			for _, p in ipairs(gapList) do
+				local t = tiles[p.y][p.x]
+				table.insert(backup, { t = t, terrain = t.terrain,
+					isCliffEdge = t.isCliffEdge, isRidge = t.isRidge })
+				t.terrain     = policy.gapTerrain
+				t.isGap       = true
+				t.gapId       = id
+				t.gapDepth    = cfg.cliffDrop
+				-- Effect-bearing chasm floor (map_gen_rules rows 59/65/67): optional
+				-- permanent floor tile effect seeded at battle start (Vines / Tar Pit).
+				t.gapFloorEffect = policy.gapFloorEffect
+				t.isCliffEdge = nil
+				t.isRidge     = nil
+			end
+			for _, p in ipairs(spanList) do
+				local t = tiles[p.y][p.x]
+				table.insert(backup, { t = t, terrain = t.terrain,
+					isCliffEdge = t.isCliffEdge, isRidge = t.isRidge })
+				t.terrain      = spanDef.spanTerrain
+				t.isBridge     = true
+				t.bridgeSpanId = id
+			end
+			local chain = { { x = path[pk.i - 1].x, y = path[pk.i - 1].y } }
+			for _, s in ipairs(spanList) do
+				table.insert(chain, { x = s.x, y = s.y })
+			end
+			table.insert(chain, { x = path[pk.i + width].x, y = path[pk.i + width].y })
+			-- Bank tiles at both ends of the span (MapService keeps blocking
+			-- objects off them so the span stays usable).
+			local bankA = tiles[chain[1].y][chain[1].x]
+			local bankB = tiles[chain[#chain].y][chain[#chain].x]
+			local hadA, hadB = bankA.isBridgeApproach, bankB.isBridgeApproach
+			bankA.isBridgeApproach = true
+			bankB.isBridgeApproach = true
+			local rec = {
+				id           = id,
+				gapTerrain   = policy.gapTerrain,
+				gapFloorEffect = policy.gapFloorEffect,
+				gapTileCount = #gapList,
+				gapTiles     = gapList,
+				spanTiles    = spanList,
+				chain        = chain,
+				gapType      = "shortcut",  -- Round 3 gap mix: "shortcut" | "chokepoint"
+				rolledType   = "shortcut",
+				span = {
+					objectId    = spanDef.id,
+					kind        = spanKind,
+					category    = spanDef.category,
+					spanTerrain = spanDef.spanTerrain,
+					length      = width,
+					passable    = true,
+					dir         = { x = pk.dx, y = pk.dy },
+				},
+			}
+			local function undo()
+				for _, b in ipairs(backup) do
+					b.t.terrain      = b.terrain
+					b.t.isCliffEdge  = b.isCliffEdge
+					b.t.isRidge      = b.isRidge
+					b.t.isGap        = nil
+					b.t.gapId        = nil
+					b.t.gapDepth     = nil
+					b.t.gapFloorEffect = nil
+					b.t.isBridge     = nil
+					b.t.bridgeSpanId = nil
+				end
+				bankA.isBridgeApproach = hadA
+				bankB.isBridgeApproach = hadB
+			end
+			if not findSpinePath(tiles, w, h) then
+				-- Roll back: this cut would disconnect PD->ED.
+				undo()
+				return nil
+			end
+			return rec, undo
+		end
+
+		-- Round 3 gap mix: 30% CHOKEPOINT / 70% SHORTCUT. A chokepoint roll
+		-- tries the rolled crossing first, then up to GAP_CHOKE_MAX_CANDIDATES
+		-- other crossings (rng order) looking for a place where the lane is
+		-- genuinely pinched. If none seals, it FALLS BACK to a shortcut on the
+		-- rolled crossing (connectivity is never sacrificed).
+		local gapRec = nil
+		local wantChoke = rng:NextNumber() < chokeChance
+		local fallbackWhy = nil
+		local poiAdvRefusedHere = 0   -- v2: candidates refused by the POI/ADV guard
+		if wantChoke then
+			mix.rolledChoke = mix.rolledChoke + 1
+			local order = { pick }
+			local rest  = {}
+			for _, c in ipairs(cands) do
+				if c ~= pick then table.insert(rest, c) end
+			end
+			shuffleArray(rest, rng)
+			for _, c in ipairs(rest) do
+				if #order >= GAP_CHOKE_MAX_CANDIDATES then break end
+				table.insert(order, c)
+			end
+			for _, c in ipairs(order) do
+				local rec, undo = cutGap(c)
+				if rec then
+					local ext, why, poiAdv = extendGapToChokepoint(mapState, tiles, w, h,
+						rec, c.dy, c.dx, policy, chokeMaxExt)
+					if ext then
+						for _, p in ipairs(ext) do
+							table.insert(rec.gapTiles, p)
+						end
+						rec.gapTileCount     = #rec.gapTiles
+						rec.gapType          = "chokepoint"
+						rec.rolledType       = "chokepoint"
+						rec.chokeExtendTiles = #ext
+						if #poiAdv > 0 then
+							rec.sealedOnPoiAdv  = true
+							rec.poiAdvSealTiles = poiAdv
+							mix.poiAdvSealed    = mix.poiAdvSealed + 1
+							mix.poiAdvTried     = mix.poiAdvTried + 1
+						end
+						gapRec = rec
+						break
+					end
+					if poiAdv then
+						mix.poiAdvTried = mix.poiAdvTried + 1
+					end
+					if why == CHOKE_POI_ADV_REFUSED then
+						poiAdvRefusedHere = poiAdvRefusedHere + 1
+						mix.poiAdvRefused = mix.poiAdvRefused + 1
+					end
+					fallbackWhy = fallbackWhy or why
+					undo()
+				else
+					fallbackWhy = fallbackWhy or "base cut too short or disconnects PD->ED"
+				end
+			end
+			if gapRec then
+				mix.chokepoint = mix.chokepoint + 1
+			end
+		end
+		if not gapRec then
+			gapRec = cutGap(pick)
+			if gapRec then
+				if wantChoke then
+					gapRec.rolledType    = "chokepoint"
+					gapRec.chokeFallback = fallbackWhy or "no sealable crossing"
+					mix.fallback = mix.fallback + 1
+				end
+				mix.shortcut = mix.shortcut + 1
+			end
+		end
+		if gapRec then
+			if poiAdvRefusedHere > 0 then
+				gapRec.poiAdvSealRefused = poiAdvRefusedHere
+			end
+			table.insert(mapState.bridgeGaps, gapRec)
+			placed = placed + 1
+		end
+	end
+
+	if placed > 0 then
+		print(string.format(
+			"[FeaturePass] Gaps/Spans: placed %d deliberate gap(s), each crossed by a bridge span "
+				.. "(chokepoint %d, shortcut %d; %d chokepoint roll(s) fell back to shortcut).",
+			placed, mix.chokepoint, mix.shortcut, mix.fallback))
+	end
+	return placed
 end
 
 --------------------------------------------------
@@ -1369,7 +2180,7 @@ function FeaturePass.Run(mapState)
 	local regionWatMap   = {}   -- regionId → array of {x,y}
 	local regionAdvMap   = {}   -- regionId → array of {x,y} (ADV marker tiles)
 	local regionHzdMap   = {}   -- regionId → array of {x,y} (HZD marker tiles)
-	local regionBlkMap   = {}   -- regionId → array of {x,y} (BLK marker tiles)
+	local regionObsMap   = {}   -- regionId → array of {x,y} (OBS marker tiles)
 	local regionNeuMap   = {}   -- regionId → array of {x,y} (NEU marker tiles)
 
 	for _, region in ipairs(regions) do
@@ -1377,7 +2188,7 @@ function FeaturePass.Run(mapState)
 		regionWatMap[region.Id]   = {}
 		regionAdvMap[region.Id]   = {}
 		regionHzdMap[region.Id]   = {}
-		regionBlkMap[region.Id]   = {}
+		regionObsMap[region.Id]   = {}
 		regionNeuMap[region.Id]   = {}
 	end
 
@@ -1387,13 +2198,13 @@ function FeaturePass.Run(mapState)
 			local tile = tiles[y][x]
 			local rid  = tile.regionId
 			if rid and regionTilesMap[rid] then
-				-- ADV/HZD/BLK/NEU tiles are not protected; collect separately.
+				-- ADV/HZD/OBS/NEU tiles are not protected; collect separately.
 				if tile.marker == "ADV" then
 					table.insert(regionAdvMap[rid], { x = x, y = y })
 				elseif tile.marker == "HZD" then
 					table.insert(regionHzdMap[rid], { x = x, y = y })
-				elseif tile.marker == "BLK" then
-					table.insert(regionBlkMap[rid], { x = x, y = y })
+				elseif tile.marker == "OBS" then
+					table.insert(regionObsMap[rid], { x = x, y = y })
 				elseif tile.marker == "NEU" then
 					table.insert(regionNeuMap[rid], { x = x, y = y })
 				end
@@ -1518,12 +2329,15 @@ function FeaturePass.Run(mapState)
 			end
 		end
 
+		-- Round 3: remember which tiles Phase 1/2 features claimed.
+		stampFeatured(tiles, usedSet)
+
 		ops = ops + 1
 		if ops % YIELD_INTERVAL == 0 then task.wait() end
 	end
 
 	----------------------------------------------------
-	-- Phase 2b: ADV/HZD/BLK/NEU marker features (Round 5).
+	-- Phase 2b: ADV/HZD/OBS/NEU marker features (Round 5).
 	-- Runs after Phase 2 so region features have priority,
 	-- but before Phase 4 (cross-region) so paths route
 	-- around marker-placed terrain.
@@ -1722,28 +2536,23 @@ function FeaturePass.Run(mapState)
 		end
 
 		--------------------------------------------
-		-- BLK Marker Trigger: 40-60% Rocky with gaps for clusters ≥ 3.
+		-- OBS Marker Trigger: impassable wall zone (semantics reworked Sep 30 2026).
+		-- OBS is now walled by ELEVATION, not terrain: ElevationPass Phase 2b
+		-- raises every OBS tile >= 5 above its non-OBS neighbors and flags it
+		-- isObstacle, so the connectivity BFS (>1-step gate) treats it as a wall.
+		-- OBS keeps its inherited region-floor terrain (per the locked OBS
+		-- decision — "terrain comes from the region the OBS sprouted on"). This
+		-- block no longer forces Rocky or gates on cluster size; it only RESERVES
+		-- OBS tiles (featured + usedSet2b) so later features/objects don't stomp
+		-- them. ALL OBS tiles are reserved, including single-tile obstacles.
 		--------------------------------------------
-		local blkTiles = regionBlkMap[rid]
-		if blkTiles and #blkTiles >= 3 then
-			local blkClusters = findMarkerClustersOpt(blkTiles)
-			for _, cluster in ipairs(blkClusters) do
-				if #cluster >= 3 then
-					local blkFraction = 0.40 + rng:NextNumber() * 0.20
-					local blkTarget   = math.floor(#cluster * blkFraction + 0.5)
-					blkTarget = math.max(1, blkTarget)
-					shuffleArray(cluster, rng)
-					local blkPlaced = 0
-					for _, pos in ipairs(cluster) do
-						if blkPlaced >= blkTarget then break end
-						if isTileAvailable(pos.x, pos.y) then
-							tiles[pos.y][pos.x].terrain = "Rocky"
-							usedSet2b[coordKey(pos.x, pos.y)] = true
-							blkPlaced = blkPlaced + 1
-						end
-					end
-					phase2bTotal = phase2bTotal + blkPlaced
-				end
+		local obsTiles = regionObsMap[rid]
+		if obsTiles then
+			for _, pos in ipairs(obsTiles) do
+				local t = tiles[pos.y][pos.x]
+				t.featured = true
+				usedSet2b[coordKey(pos.x, pos.y)] = true
+				phase2bTotal = phase2bTotal + 1
 			end
 		end
 
@@ -1836,14 +2645,28 @@ function FeaturePass.Run(mapState)
 			end
 		end
 
+		-- Round 3: remember which tiles Phase 2b marker features claimed.
+		stampFeatured(tiles, usedSet2b)
+
 		ops = ops + 1
 		if ops % YIELD_INTERVAL == 0 then task.wait() end
 	end
 
 	if phase2bTotal > 0 then
 		print(string.format(
-			"[FeaturePass] Phase 2b: Placed %d marker-triggered tile(s) (ADV/HZD/BLK/NEU).",
+			"[FeaturePass] Phase 2b: Placed %d marker-triggered tile(s) (ADV/HZD/OBS/NEU).",
 			phase2bTotal))
+	end
+
+	----------------------------------------------------
+	-- Phase 2c (Round 3): high-ground budget (cfg.spinePct).
+	-- Tops up ridges (via placeRidge -> isRidge/isCliffEdge) before the
+	-- cross-region phase so roads/rivers route around them.
+	----------------------------------------------------
+	local ridgeAdded = placeHighGroundBudget(mapState, tiles, w, h, rng)
+	if ridgeAdded > 0 then
+		print(string.format(
+			"[FeaturePass] Phase 2c: High-ground budget added %d ridge tile(s).", ridgeAdded))
 	end
 
 	----------------------------------------------------
@@ -1898,7 +2721,8 @@ function FeaturePass.Run(mapState)
 
 	-- Biome gating tables.
 	local ROAD_BIOMES   = { Plains = true, Forest = true, Ruins = true, Castle = true }
-	local ROAD_REGIONS  = { Farmland = true, Village = true, ["Castle Courtyard"] = true }
+	-- Town added 2026-10-02 (open_decisions Dev wiring (e)): streets carry the LAN.
+	local ROAD_REGIONS  = { Farmland = true, Village = true, ["Castle Courtyard"] = true, Town = true }
 	local RIVER_BIOMES  = { Plains = true, Forest = true, Swamp = true }
 
 	-- Terrains that cross-region placement must not overwrite.
@@ -2341,8 +3165,29 @@ function FeaturePass.Run(mapState)
 	end
 
 	----------------------------------------------------
-	-- Phase 3: Bridge / Pass repair (type 13).
-	-- Defensive: ensure no LAN tile is impassable.
+	-- Phase 6 (Round 3): sanitize ridge flags. A later feature (road, river,
+	-- corridor, clover) may have repainted a ridge tile; only tiles that are
+	-- still Rocky keep the isRidge / isCliffEdge reservation.
+	----------------------------------------------------
+	for y = 1, h do
+		for x = 1, w do
+			local t = tiles[y][x]
+			if (t.isRidge or t.isCliffEdge) and t.terrain ~= "Rocky" then
+				t.isRidge     = nil
+				t.isCliffEdge = nil
+			end
+		end
+	end
+
+	----------------------------------------------------
+	-- Phase 7 (Round 3): deliberate gaps + bridge spans (biome gapPolicy).
+	----------------------------------------------------
+	placeGapsAndSpans(mapState, tiles, w, h, rng)
+
+	----------------------------------------------------
+	-- Phase 3: Bridge / Pass repair (type 13) — SAFETY NET ONLY.
+	-- Defensive: ensure no LAN tile is accidentally impassable. Deliberate
+	-- gap / span tiles are skipped (they are the real bridge mechanism).
 	----------------------------------------------------
 	repairBridgePass(tiles, w, h)
 

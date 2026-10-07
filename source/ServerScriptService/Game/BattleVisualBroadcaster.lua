@@ -72,6 +72,7 @@ local function serializeUnit(unit)
 		id          = unit.id,
 		name        = unit.name,
 		side        = unit.side,
+		enemyType   = unit.enemyType,  -- Grunt/Veteran/Elite; client shows tier star on the name
 		tileX       = unit.tileX,
 		tileY       = unit.tileY,
 		currentHp   = unit.currentHp,
@@ -245,6 +246,29 @@ function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName
 end
 
 -- Slice 4A: broadcast channel fizzle (target died, MP insufficient, etc.)
+-- Channel loop start: client plays a looping Charging VFX on the caster
+-- (Charging 1 for damage skills, Charging 2 for healing) until ChannelEnded
+-- (executed) or ChannelFizzled (interrupted).
+function BattleVisualBroadcaster.ChannelStarted(unit, isHealing)
+	if not unit then return end
+	BattleEvents.ChannelStarted:FireAllClients({ unitId = unit.id, isHealing = isHealing == true })
+end
+
+-- Channel loop stop on successful execution (interruption is signalled by
+-- ChannelFizzled, which the client also treats as a stop).
+function BattleVisualBroadcaster.ChannelEnded(unit)
+	if not unit then return end
+	BattleEvents.ChannelEnded:FireAllClients({ unitId = unit.id })
+end
+
+-- Attacker-side multi-target (Cleave) flourish: the client plays Multi-Slash ON
+-- THE ATTACKER once when a single action strikes 2+ targets. Each struck target
+-- still plays its own Hit effect via the per-target UnitActed events.
+function BattleVisualBroadcaster.MultiTargetHit(unit)
+	if not unit then return end
+	BattleEvents.MultiTargetHit:FireAllClients({ unitId = unit.id })
+end
+
 function BattleVisualBroadcaster.ChannelFizzled(actor, skillName, reason)
 	BattleEvents.ChannelFizzled:FireAllClients({
 		actorId   = actor.id,
@@ -279,7 +303,7 @@ function BattleVisualBroadcaster.SendTargetHighlight(player, tiles, mode)
 end
 
 -- Status broadcasts
-function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns, sourceIcon)
+function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns, sourceIcon, sourceDesc, sourceDuration)
 	-- Include damage prediction so client can display immediately
 	local nextDamage = nil
 	local storedBurn = nil
@@ -303,6 +327,11 @@ function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns, s
 		-- Fallback icon for statuses with no dedicated Theme icon: the icon of the
 		-- skill/augment that applied it. Client uses it only when GetStatusIcon is nil.
 		sourceIcon     = sourceIcon,
+		-- Fallback description/duration for synthetic pills (stance self-buffs) whose
+		-- id is NOT in GameConstants.STATUSES. The detailed inspector reads these when
+		-- it has no status-table def to pull description/duration from.
+		sourceDesc     = sourceDesc,
+		sourceDuration = sourceDuration,
 	})
 	task.wait(PACE.Status)
 end
@@ -490,6 +519,46 @@ end
 function BattleVisualBroadcaster.UnitSpawned(unit)
 	BattleEvents.UnitSpawned:FireAllClients({
 		unit = serializeUnit(unit),
+	})
+end
+
+-- Time cycle: broadcast the current time-of-day phase (Dawn/Day/Dusk/Night).
+function BattleVisualBroadcaster.TimePhaseChanged(phase)
+	BattleEvents.TimePhaseChanged:FireAllClients({ phase = phase })
+end
+
+-- Weather/crisis: broadcast the active condition (one combined slot, per round).
+function BattleVisualBroadcaster.WeatherChanged(condition)
+	BattleEvents.WeatherChanged:FireAllClients({ condition = condition })
+end
+
+-- Battlefield event: broadcast that a named battlefield event triggered so the
+-- client can show a dramatic center-screen banner. Visual-only announcement.
+-- quiet=true: update the Event panel only, no dramatic banner (used to resync
+-- start-of-battle events after BattleStarted so the banner doesn't replay).
+function BattleVisualBroadcaster.BattlefieldEventAnnounced(eventName, quiet)
+	if not eventName then return end
+	BattleEvents.BattlefieldEventAnnounced:FireAllClients({ eventName = eventName, quiet = quiet == true })
+end
+
+--------------------------------------------------
+-- SHIELD CHANGED (shield subsystem 2026-10-05)
+-- S->C: a unit's shield_total changed (granted, absorbed, decayed, or broke).
+-- Client shows a shield bar/pill and a grant/break flourish. Payload matches
+-- the BattleEvents.ShieldChanged contract { unitId, shieldTotal, delta, reason,
+-- maxHp, currentHp }. No pacing wait: grants ride the action's own pacing and
+-- decay ticks are stashed through state.ctStatusUnits (drained by Main).
+--------------------------------------------------
+
+function BattleVisualBroadcaster.ShieldChanged(unit, delta, reason)
+	if not unit then return end
+	BattleEvents.ShieldChanged:FireAllClients({
+		unitId      = unit.id,
+		shieldTotal = unit.shield_total or 0,
+		delta       = delta or 0,
+		reason      = reason or "update",  -- "grant" | "absorb" | "decay" | "break"
+		maxHp       = unit.maxHp,
+		currentHp   = unit.currentHp,
 	})
 end
 

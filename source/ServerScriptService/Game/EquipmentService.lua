@@ -1,5 +1,6 @@
 -- EquipmentService.lua
 local RacePassiveService = require(script.Parent.RacePassiveService)
+local TraitEffectService = require(script.Parent.TraitEffectService) -- Perks & Flaws Phase 2
 -- CTRBLXAI | Slice 4A — Equipment Foundation
 -- Slice 4G — Armor Slot Expansion
 --
@@ -275,13 +276,18 @@ function EquipmentService.RebuildUnitStats(unit)
 
 	local equippedItems = EquipmentService.GetAllEquippedItems(unit)
 	for _, item in ipairs(equippedItems) do
+		-- Perks & Flaws Phase 2 (TRAIT-ARMORSLOT-BONUS): <Slot> Specialist x2 / Klutz x0.5
+		-- scales this armor piece's primary-stat Bonus lines (weapons / no trait: slotMult = 1).
+		local itemArmorArch = ArmorData.GetByArchetypeId(item.baseArchetypeId)
+		local slotMult = itemArmorArch and TraitEffectService.GetArmorSlotMultiplier(unit, itemArmorArch.slot) or 1
 		for _, line in ipairs(item.bonusLines or {}) do
 			local attr = BonusData.GetAttribute(line.id)
 			if attr and attr.operation == "PrimaryStat" then
 				local stat = attr.stat
 				if primaryPctBonuses[stat] then
-					primaryPctBonuses[stat] = primaryPctBonuses[stat] + attr.pct
+					primaryPctBonuses[stat] = primaryPctBonuses[stat] + attr.pct * slotMult
 					local scaledFlat = WeaponData.ScaleProperty(attr.l99Flat, item.itemLevel)
+					if slotMult ~= 1 then scaledFlat = math.round(scaledFlat * slotMult) end
 					primaryFlatBonuses[stat] = primaryFlatBonuses[stat] + scaledFlat
 				end
 			end
@@ -308,6 +314,18 @@ function EquipmentService.RebuildUnitStats(unit)
 		end
 	end
 
+	-- 3b-T. Perks & Flaws Phase 2 (TRAIT-STAT-FOLD): unit-trait primary stat %
+	-- (Brawny/Weak STR +/-15%, Alert/Dull, ...). Same shape as the race fold above:
+	-- round(total * (1 + summed perk+flaw offset)). Static per unit; nil for no traits.
+	local traitMods = TraitEffectService.GetStatModifiers(unit)
+	if traitMods then
+		for stat, pctMod in pairs(traitMods) do
+			if total[stat] then
+				total[stat] = math.max(0, math.round(total[stat] * (1 + pctMod)))
+			end
+		end
+	end
+
 	-- 3c. Armor stat contributions (Slice 4G)
 	-- Sum scaled defense, hp, mp, wt from all equipped armor pieces
 	local armorDefense = 0
@@ -320,19 +338,68 @@ function EquipmentService.RebuildUnitStats(unit)
 		if aArch then
 			local scaled = ArmorData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
 			if scaled then
-				armorDefense = armorDefense + scaled.defense
-				armorWt = armorWt + scaled.wt
-				armorHp = armorHp + scaled.hp
-				armorMp = armorMp + scaled.mp
+				-- Perks & Flaws Phase 2 (TRAIT-ARMORSLOT-BASE): <Slot> Specialist x2 / Klutz x0.5
+				-- on this piece's Base Defense / HP / MP. Armor WT intentionally NOT scaled.
+				local sm = TraitEffectService.GetArmorSlotMultiplier(unit, aArch.slot)
+				if sm ~= 1 then
+					armorDefense = armorDefense + math.round(scaled.defense * sm)
+					armorWt = armorWt + scaled.wt
+					armorHp = armorHp + math.round(scaled.hp * sm)
+					armorMp = armorMp + math.round(scaled.mp * sm)
+				else
+					armorDefense = armorDefense + scaled.defense
+					armorWt = armorWt + scaled.wt
+					armorHp = armorHp + scaled.hp
+					armorMp = armorMp + scaled.mp
+				end
 			end
 		end
 	end
+
+	-- Perks & Flaws Phase 2 (TRAIT-ARMORDEF): Defensive / Exposed Armor -- summed armor
+	-- Defense x (1 +/- 20%/24%). Neutral (no trait) path leaves armorDefense untouched.
+	local armorDefMult = TraitEffectService.GetArmorDefenseMultiplier(unit)
+	if armorDefMult ~= 1 then
+		armorDefense = math.round(armorDefense * armorDefMult)
+	end
+
+	-- Perks & Flaws Phase 2 (TRAIT-034/092): Ironhide / Brittle Plating -- add/subtract
+	-- a fraction (±20%/25%) of total non-weapon (armor) WT to/from base armor defense.
+	-- armorWt is the summed WT of all equipped armor pieces (non-weapon by definition).
+	local armorFromWtFrac = TraitEffectService.GetArmorFromWtFraction(unit)
+	if armorFromWtFrac ~= 0 and armorWt and armorWt > 0 then
+		armorDefense = armorDefense + math.round(armorWt * armorFromWtFrac)
+	end
+	-- Floor armor Defense at 0 (consistent with the force/damage/WT folds). Only a
+	-- rare stack (Brittle Plating Greater + Exposed Armor Greater + a slot Klutz) could
+	-- push it negative. DESIGNER: if negative armor Defense is intended, drop this floor.
+	if armorDefense < 0 then armorDefense = 0 end
 
 	unit.armorDefense = armorDefense
 	unit.armorWt = armorWt
 
 	-- Write effective stats
 	-- Clamp all stats to minimum 0 (doctrine packages can push stats negative at low levels)
+	-- 3d. Status stat-modifiers (Slice 5 buff mechanism). Folded here so timed
+	-- buffs (Banner Blessing +15% all, Fortune Boon +50% LUK) and the existing
+	-- Weakened/Giant/Rush/Enlightened offsets finally affect effectiveStats via
+	-- the rebuild path. DEFERRED require avoids a load-time circular dependency
+	-- (EquipmentService <- GameConstants -> StatusService): require at call time.
+	-- Applied as round(total * (1 + pct)) per stat, matching the RacePassive 3b
+	-- pattern, AFTER doctrine/equipment/race/armor and BEFORE the min-0 clamp.
+	if unit.statusInstances then
+		local StatusService = require(script.Parent.StatusService)
+		local statMods = StatusService.GetStatusStatModifiers(unit)
+		if statMods then
+			for _, stat in ipairs({"STR", "AGI", "INT", "VIT", "DEX", "LUK"}) do
+				local pct = statMods[stat]
+				if pct and pct ~= 0 then
+					total[stat] = math.round(total[stat] * (1 + pct))
+				end
+			end
+		end
+	end
+
 	for _, stat in ipairs({"STR", "AGI", "INT", "VIT", "DEX", "LUK"}) do
 		if total[stat] < 0 then
 			total[stat] = 0
@@ -350,7 +417,7 @@ function EquipmentService.RebuildUnitStats(unit)
 		-- Mechanical race tag: Raw Weapon WT ×1.15
 		if unit.raceId then
 			local RaceData = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
-			local raceEntry = RaceData[unit.raceId]
+			local raceEntry = RaceData.GetRace(unit.raceId)
 			if raceEntry and raceEntry.tags then
 				for _, tag in ipairs(raceEntry.tags) do
 					if tag == "Mechanical" then
@@ -381,6 +448,50 @@ function EquipmentService.RebuildUnitStats(unit)
 		unit.weaponHandClass = "1H"
 	end
 
+	-- 4a. OGRE — Brutish Bulk (races row 'Ogre', 2026-10-02): Weapon WT +20%.
+	-- Applied after the Mechanical raw-WT step and before derived stats, so the
+	-- effective (STR-reduced) Weapon WT, Basic Attack RT and the Ogre on-hit RT
+	-- delay all inherit it. Non-positive WT is left alone (x1.20 would make a
+	-- negative WT "lighter").
+	local wtMult = RacePassiveService.GetWeaponWtMultiplier(unit)
+	if wtMult ~= 1 and unit.weaponWt and unit.weaponWt > 0 then
+		unit.weaponWt = math.floor(unit.weaponWt * wtMult + 1e-6)
+	end
+
+	-- 4a-T. Perks & Flaws Phase 2 (TRAIT-WEAPON): MainHand weapons only.
+	--   <Weapon> Specialist / Klutz: weapon WT x(1 -/+ 25%), base weapon damage x(1 +/- 25%)
+	--     when the equipped MainHand archetype name matches (TraitEffectService).
+	--   Heavy Hitter / Feather Strikes: +/- round(weapon WT x 20%/25%) to base weapon damage
+	--     (uses the final, trait-adjusted weapon WT; non-positive WT contributes nothing).
+	-- Applied after the race WT steps so effective WT / Basic Attack RT inherit it.
+	if mainHand then
+		local traitWtMult = TraitEffectService.GetWeaponWtMultiplier(unit)
+		if traitWtMult ~= 1 and unit.weaponWt and unit.weaponWt > 0 then
+			unit.weaponWt = math.floor(unit.weaponWt * traitWtMult + 1e-6)
+		end
+		-- Perks & Flaws Phase 2 (TRAIT-043/118): Strong Back / Weak Grip.
+		-- Gear (weapon) WT changed by -/+ frac; the magnitude of that WT change is
+		-- added to / subtracted from STR. STR delta uses the pre-change weapon WT so
+		-- the "amount" matches the WT actually shifted. effectiveStats was assigned
+		-- earlier (as `total`); ComputeDerivedStats runs after this, so the STR bump
+		-- flows into derived stats and STR-based WT reduction. Weapon-only scope
+		-- (DESIGNER: confirm whether "Gear WT" should include armor WT too).
+		local gearFrac = TraitEffectService.GetGearWtStrFraction(unit)
+		if gearFrac ~= 0 and unit.weaponWt and unit.weaponWt > 0 and unit.effectiveStats then
+			local wtDelta = math.round(unit.weaponWt * gearFrac)
+			unit.weaponWt = math.max(0, unit.weaponWt - wtDelta)
+			unit.effectiveStats.STR = math.max(0, (unit.effectiveStats.STR or 0) + wtDelta)
+		end
+		local traitDmgMult = TraitEffectService.GetWeaponDamageMultiplier(unit)
+		if traitDmgMult ~= 1 and unit.weaponDamage then
+			unit.weaponDamage = math.max(0, math.round(unit.weaponDamage * traitDmgMult))
+		end
+		local wtDmgFrac = TraitEffectService.GetWeaponWtDamageFraction(unit)
+		if wtDmgFrac ~= 0 and unit.weaponDamage and unit.weaponWt and unit.weaponWt > 0 then
+			unit.weaponDamage = math.max(0, unit.weaponDamage + math.round(unit.weaponWt * wtDmgFrac))
+		end
+	end
+
 	-- 4b. Off-hand defense contribution
 	local offHand = unit.equipmentSlots and unit.equipmentSlots.OffHand
 	if offHand then
@@ -393,8 +504,16 @@ function EquipmentService.RebuildUnitStats(unit)
 	-- 5. Rebuild HP/MP from effective stats + armor contributions
 	local vit = total.VIT
 	local int = total.INT
-	unit.maxHp = 50 + vit * 4 + armorHp
-	unit.maxMp = 20 + int * 2 + armorMp
+	-- Perks & Flaws Phase 2 (TRAIT-HPMP): Hardy / Frail (+/-20% max HP from VIT) and Deep /
+	-- Shallow Well (+/-20% max MP from INT) scale ONLY the stat term; neutral path unchanged.
+	local vitHp = vit * 4
+	local intMp = int * 2
+	local hpFromVit = TraitEffectService.GetHpFromVitMultiplier(unit)
+	local mpFromInt = TraitEffectService.GetMpFromIntMultiplier(unit)
+	if hpFromVit ~= 1 then vitHp = math.round(vitHp * hpFromVit) end
+	if mpFromInt ~= 1 then intMp = math.round(intMp * mpFromInt) end
+	unit.maxHp = 50 + vitHp + armorHp
+	unit.maxMp = 20 + intMp + armorMp
 
 	-- Clamp current to new max (don't increase current beyond max)
 	if unit.currentHp and unit.currentHp > unit.maxHp then
@@ -406,6 +525,25 @@ function EquipmentService.RebuildUnitStats(unit)
 
 	-- 6. Compute all derived stats (formulas from all primary stats)
 	GameConstants.ComputeDerivedStats(unit)
+
+	-- 6b. Perks & Flaws Phase 2 (TRAIT-FORCESTAB): Powerful Build / Frail Arms / Overwhelming
+	-- Force (flaw) flat Force; Rooted / Toppling flat Stability. Floored at 0.
+	local derived = unit.derivedStats
+	if derived then
+		local fMod = TraitEffectService.GetForceModifier(unit)
+		if fMod ~= 0 and derived.force then
+			derived.force = math.max(0, derived.force + fMod)
+		end
+		local sMod = TraitEffectService.GetStabilityModifier(unit)
+		if sMod ~= 0 and derived.stability then
+			derived.stability = math.max(0, derived.stability + sMod)
+		end
+		-- Perks & Flaws (Phase 2b): Far/Near-Sighted adjust Discovery Radius. Floored at 0.
+		local dMod = TraitEffectService.GetDiscoveryRadiusModifier(unit)
+		if dMod ~= 0 and derived.discoveryRadius then
+			derived.discoveryRadius = math.max(0, derived.discoveryRadius + dMod)
+		end
+	end
 end
 
 --------------------------------------------------

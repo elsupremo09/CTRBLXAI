@@ -6,7 +6,7 @@
 
 local ObjectData = {}
 
--- Objects (47)
+-- Objects (45)
 -- -----------------------------------------
 
 ObjectData.Objects = {}
@@ -54,9 +54,9 @@ ObjectData.Objects["Land Mine"] = {
 	passable = true,
 	activation = "Triggered",
 	triggerEvent = "Unit enters tile or Explosion",
-	primaryEffect = "3x3 Explosion (30% Max HP), Elevation -1",
+	primaryEffect = "radius 1 Explosion (25% Max HP)",
 	uses = "Once",
-	notes = "Chain reactions allowed",
+	notes = "Chain reactions allowed. Explosion elevation drop (-1) is owned by the EXPLOSION TAG, not this object (see terrain_effects 'Explosion').",
 }
 
 ObjectData.Objects["Bomb Barrel"] = {
@@ -66,9 +66,9 @@ ObjectData.Objects["Bomb Barrel"] = {
 	passable = false,
 	activation = "Triggered",
 	triggerEvent = "Fire-tag attack, Explosion, or Destroyed",
-	primaryEffect = "3x3 Explosion (30% Max HP), destroys adjacent breakable bridges/walls",
+	primaryEffect = "radius 1 Explosion (25% Max HP), destroys adjacent breakable bridges/walls",
 	uses = "Once",
-	notes = "Explosion lowers elevation by 1",
+	notes = "Generated gap spans (Plank Bridge / Rocky Causeway / Drawbridge) are NOT breakable bridges (map_gen_rules 'Span Tile Protection'). Explosion elevation drop (-1) is owned by the EXPLOSION TAG, not this object (see terrain_effects 'Explosion' / open_decisions 'CTRBLXAI Explosion Tag').",
 }
 
 ObjectData.Objects["Oil Sluice"] = {
@@ -78,7 +78,7 @@ ObjectData.Objects["Oil Sluice"] = {
 	passable = false,
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
-	primaryEffect = "Creates Tar Pit in 5x5 area",
+	primaryEffect = "Creates Tar Pit in radius 2 area",
 	uses = "Unlimited",
 	notes = "Fire/Explosion detonates stored oil",
 }
@@ -90,7 +90,7 @@ ObjectData.Objects["Steam Valve"] = {
 	passable = false,
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
-	primaryEffect = "Creates Steam in 5x5 area",
+	primaryEffect = "Creates Steam in radius 2 area",
 	uses = "Unlimited",
 	notes = "Battlefield control",
 }
@@ -102,9 +102,23 @@ ObjectData.Objects["Stone Pillar"] = {
 	passable = false,
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
-	primaryEffect = "Falls opposite direction, becoming a 3-tile bridge or crushing units (70% Max HP, +100 RT, Pinned)",
+	primaryEffect = "Falls in the direction opposite the interacting unit and becomes a 4-TILE-LONG Rocky span (fallen pillar = 4 tiles long × 1 tile wide; the standing pillar is 4 elevation levels HIGH, which is why its fall reaches 4 tiles) or crushes units on the landing tiles (70% Max HP, +100 RT, Pinned)",
 	uses = "Once",
-	notes = "Permanent terrain change",
+	notes = "Permanent terrain change. REVISED 2026-10-02 (user ruling): was a 3-tile bridge; now 4 long × 4 high. STANDING: Height 4 (4 elevation levels tall) — blocks movement and line of sight like a 4-high wall. FALLEN: 4 tiles long; span deck sits at the pillar's base-tile elevation; if a landing tile is 2+ levels higher than the base, the fall stops short there (the span ends on the previous tile; units on tiles it reached are still crushed). A 4-tile fall always reaches the far bank of any generated gap (max gap width 3). Crush unchanged: 70% Max HP (HP%-based, so boss HP% resistance applies), +100 RT, Pinned — now up to 4 tiles in a line instead of 3. The fallen span is NOT a protected generated span ('Span Tile Protection' does not apply). SPAWN (revised 2026-10-02 after user review): TOP = Highlands biome 10 and Mountain Pass region 10 (unchanged). Ruins biome 8 / region 8, Rocky region 8, Cave Chamber region 8 (unchanged). Added 2026-10-02: Castle biome 4, Corrupted biome 3, Castle Courtyard 4, Castle Interior 2, Village 3 (small settlements — kept), 'magic region' = Corrupted region 2 (kept) + Graveyard region 3 (user pick, Magic Circle tiles), 'big town' = new Town region 5. NOTE: shipped code places objects from the BIOME pool only — region-level weights take effect once object placement is region-aware (open_decisions 'Town region + region-level object weights — Dev wiring').",
+	-- Structured spec (objects_encounters Stone Pillar row, revised 2026-10-02 user ruling) for
+	-- the Stone Pillar fall/crush logic. NOTE: no object-Interact runtime exists yet
+	-- (BattleVisualClient 'Interact' button is a disabled stub), so these fields are
+	-- data-only until that system is built.
+	standingHeight  = 4,       -- standing pillar = 4 elevation levels tall (blocks move + LoS)
+	fallLength      = 4,       -- fallen pillar = 4 tiles long ...
+	fallWidth       = 1,       -- ... x 1 tile wide
+	fallenTerrain   = "Rocky", -- fallen span deck terrain, at the pillar's base-tile elevation
+	fallStopRise    = 2,       -- a landing tile 2+ levels above the base stops the fall short there
+	crushMaxTargets = 4,       -- up to 4 units in a line (was 3)
+	crushMaxHpPct   = 0.70,    -- crush: 70% Max HP (HP%-based; boss HP% resistance applies)
+	crushRtDelay    = 100,     -- crush: +100 RT
+	crushStatus     = "Pinned",-- crush: Pinned
+	protectedSpan   = false,   -- fallen pillar is NOT a protected generated span (map_gen_rules)
 }
 
 ObjectData.Objects["Ice Spike"] = {
@@ -125,10 +139,11 @@ ObjectData.Objects["Ballista"] = {
 	tags = { "Structure" },
 	passable = false,
 	activation = "Interact (Consumes Action)",
+	interactRT = 100,
 	triggerEvent = nil,
-	primaryEffect = "Fires penetrating bolt (250% Weapon Damage) in chosen direction",
-	uses = "Unlimited",
-	notes = "Uses operator stats",
+	primaryEffect = "Fires a penetrating bolt (250% Weapon Damage) in a chosen CARDINAL direction",
+	uses = "Once per turn",
+	notes = "Uses operator stats. 'Once per turn' = per-unit per-turn (resets at the start of that unit's own turn, like Guard); Slice 5 object-runtime needs a per-unit-per-turn usage tracker.",
 }
 
 ObjectData.Objects["Catapult"] = {
@@ -137,10 +152,11 @@ ObjectData.Objects["Catapult"] = {
 	tags = { "Structure" },
 	passable = false,
 	activation = "Interact (Consumes Action)",
+	interactRT = 100,
 	triggerEvent = nil,
-	primaryEffect = "Fires projectile (200% Weapon Damage, 3x3 Splash) within Range 6",
+	primaryEffect = "Fires a projectile (200% Weapon Damage, Cross AOE) within Range 6",
 	uses = "Unlimited",
-	notes = "Splash damages objects",
+	notes = "Splash damages objects. Cross AOE = radius-1 cross / plus-shape, 5 tiles (TargetingService.GetCrossTiles).",
 }
 
 ObjectData.Objects["War Banner"] = {
@@ -162,9 +178,9 @@ ObjectData.Objects["Cursed Statue"] = {
 	passable = false,
 	activation = "Passive",
 	triggerEvent = nil,
-	primaryEffect = "Units within Radius 3 suffer -15% to all primary stats",
+	primaryEffect = "Units within radius 3 suffer +20% to base RT",
 	uses = "Passive",
-	notes = "Removed if destroyed",
+	notes = "Removed if destroyed. +20% base RT = those units act SLOWER. Passive aura affects BOTH sides within radius 3 (per 2026-10-03 ruling: all passive auras are two-sided).",
 }
 
 ObjectData.Objects["Rally Flag"] = {
@@ -172,57 +188,62 @@ ObjectData.Objects["Rally Flag"] = {
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
-	activation = "Interact (Free)",
+	activation = "Interact (Consumes Action)",
+	interactRT = 150,
 	triggerEvent = nil,
-	primaryEffect = "Allies gain +1 Move and +1 Jump for 900 CT",
+	primaryEffect = "Allies gain +1 Move and +1 Jump for 1500 CT",
 	uses = "Once",
 	notes = "Does not stack",
 }
 
-ObjectData.Objects["Mage Guild"] = {
-	id = "Mage Guild",
+ObjectData.Objects["Star Axis"] = {
+	id = "Star Axis",
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
-	activation = "Interact (Free)",
+	activation = "Interact (Consumes Action)",
+	interactRT = 150,
 	triggerEvent = nil,
-	primaryEffect = "Friendly units gain +20% Spell Damage for 900 CT",
+	primaryEffect = "Friendly units gain +20% Spell Damage for 1500 CT",
 	uses = "Once",
 	notes = "Does not stack",
 }
 
-ObjectData.Objects["Warrior Guild"] = {
-	id = "Warrior Guild",
+ObjectData.Objects["Burning Cauldron"] = {
+	id = "Burning Cauldron",
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
-	activation = "Interact (Free)",
+	activation = "Interact (Consumes Action)",
+	interactRT = 150,
 	triggerEvent = nil,
-	primaryEffect = "Friendly units gain +20% Physical Damage for 900 CT",
+	primaryEffect = "Friendly units gain +20% Physical Damage for 1500 CT",
 	uses = "Once",
 	notes = "Does not stack",
 }
 
-ObjectData.Objects["Mercenary Camp"] = {
-	id = "Mercenary Camp",
+ObjectData.Objects["War Horn"] = {
+	id = "War Horn",
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
-	activation = "Interact (Free)",
+	activation = "Interact (Consumes Action)",
+	interactRT = 150,
 	triggerEvent = nil,
-	primaryEffect = "Friendly units deal +20% damage for 900 CT",
+	primaryEffect = "Friendly units gain -15% to base RT for 1500 CT",
 	uses = "Once",
-	notes = "Does not stack",
+	notes = "Does not stack. -15% base RT = act FASTER (a buff). Name reused from the War Horn weapon archetype (different system); model 'War Horn' in ServerStorage.",
 }
 
-ObjectData.Objects["Marletto Tower"] = {
-	id = "Marletto Tower",
+ObjectData.Objects["Runed Boulder"] = {
+	id = "Runed Boulder",
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
-	activation = "Interact (Free)",
+	activation = "Interact (Consumes Action)",
+	interactRT = 150,
 	triggerEvent = nil,
-	primaryEffect = "Friendly units take 20% less damage for 900 CT",
+	primaryEffect = "Friendly units gain +10% Attack and +10% Defense for 1500 CT",
 	uses = "Once",
 	notes = "Does not stack",
 }
@@ -236,7 +257,7 @@ ObjectData.Objects["Treasure Chest"] = {
 	triggerEvent = nil,
 	primaryEffect = "Random gold, equipment, materials and runes",
 	uses = "Once",
-	notes = nil,
+	notes = "—",
 }
 
 ObjectData.Objects["Mimic"] = {
@@ -246,13 +267,13 @@ ObjectData.Objects["Mimic"] = {
 	passable = false,
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
-	primaryEffect = "Reveals Mimic enemy with x3 loot rate",
+	primaryEffect = "Reveals Mimic enemy with ×3 loot rate",
 	uses = "Once",
 	notes = "Initially appears as Treasure Chest",
 }
 
-ObjectData.Objects["Warrior's Tomb"] = {
-	id = "Warrior's Tomb",
+ObjectData.Objects["Cursed Chest"] = {
+	id = "Cursed Chest",
 	category = "Exploration",
 	tags = { "Shrine" },
 	passable = false,
@@ -260,7 +281,7 @@ ObjectData.Objects["Warrior's Tomb"] = {
 	triggerEvent = nil,
 	primaryEffect = "Random treasure; inflicts Weakened (3000 CT)",
 	uses = "Once",
-	notes = nil,
+	notes = "—",
 }
 
 ObjectData.Objects["Healing Spring"] = {
@@ -272,7 +293,7 @@ ObjectData.Objects["Healing Spring"] = {
 	triggerEvent = nil,
 	primaryEffect = "Fully restores HP",
 	uses = "Once",
-	notes = nil,
+	notes = "—",
 }
 
 ObjectData.Objects["Magic Spring"] = {
@@ -284,7 +305,7 @@ ObjectData.Objects["Magic Spring"] = {
 	triggerEvent = nil,
 	primaryEffect = "Fully restores MP",
 	uses = "Once",
-	notes = nil,
+	notes = "—",
 }
 
 ObjectData.Objects["Campfire"] = {
@@ -296,59 +317,49 @@ ObjectData.Objects["Campfire"] = {
 	triggerEvent = nil,
 	primaryEffect = "Restore 30% HP and MP",
 	uses = "Once",
-	notes = nil,
+	notes = "—",
 }
 
-ObjectData.Objects["Arena"] = {
-	id = "Arena",
+ObjectData.Objects["Blood Fountain"] = {
+	id = "Blood Fountain",
 	category = "Exploration",
 	tags = { "Training" },
 	passable = false,
 	activation = "Interact (Consumes Action)",
+	interactRT = 150,
 	triggerEvent = nil,
-	primaryEffect = "Permanently gain +20% to to the unit's highest primary stat",
+	primaryEffect = "Grant Regeneration to all allies (MAP-WIDE)",
 	uses = "Once",
-	notes = "parked",
+	notes = "all allies = MAP-WIDE (every allied unit regardless of distance).",
 }
 
-ObjectData.Objects["Tree of Knowledge"] = {
-	id = "Tree of Knowledge",
+ObjectData.Objects["Astrolabe"] = {
+	id = "Astrolabe",
+	category = "Exploration",
+	tags = { "Shrine" },
+	passable = false,
+	activation = "Interact (Consumes Action)",
+	interactRT = 400,
+	triggerEvent = nil,
+	primaryEffect = "Single use. Reduce current RT of all allied units (MAP-WIDE) by 200.",
+	uses = "Once",
+	notes = "all allied units = MAP-WIDE.",
+}
+
+ObjectData.Objects["Potion Desk"] = {
+	id = "Potion Desk",
 	category = "Exploration",
 	tags = { "Shrine" },
 	passable = false,
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
-	primaryEffect = "Gain +1 Level; inflict Weakened (900 CT)",
+	primaryEffect = "Single use. Fully recharge the interacting unit's equipped consumables.",
 	uses = "Once",
-	notes = "parked",
+	notes = "PARKED: depends on consumable charge-refill (Slice 8 Guild Base) — inert until that system exists. Scope resolved 2026-10-03: interacting unit only (not map-wide). Uses default Interact RT per G1 (round(Modified Base RT x 0.10)) — no explicit RT.",
 }
 
-ObjectData.Objects["Scholar"] = {
-	id = "Scholar",
-	category = "Exploration",
-	tags = { "NPC" },
-	passable = true,
-	activation = "Interact (Consumes Action)",
-	triggerEvent = nil,
-	primaryEffect = "50% chance Job Level +1, otherwise random status ailment",
-	uses = "Once",
-	notes = "parked",
-}
-
-ObjectData.Objects["Library of Enlightenment"] = {
-	id = "Library of Enlightenment",
-	category = "Exploration",
-	tags = { "Shrine" },
-	passable = false,
-	activation = "Interact (Consumes Action)",
-	triggerEvent = nil,
-	primaryEffect = "Permanently gain +1 to all primary stats",
-	uses = "Once",
-	notes = "parked",
-}
-
-ObjectData.Objects["Cartographer"] = {
-	id = "Cartographer",
+ObjectData.Objects["Crystal Ball"] = {
+	id = "Crystal Ball",
 	category = "Exploration",
 	tags = { "NPC" },
 	passable = true,
@@ -356,7 +367,7 @@ ObjectData.Objects["Cartographer"] = {
 	triggerEvent = nil,
 	primaryEffect = "Reveals all Hidden Treasures",
 	uses = "Unlimited",
-	notes = nil,
+	notes = "—",
 }
 
 ObjectData.Objects["Eye of the Magi"] = {
@@ -364,11 +375,12 @@ ObjectData.Objects["Eye of the Magi"] = {
 	category = "Exploration",
 	tags = { "Arcane" },
 	passable = true,
-	activation = "Interact (Free)",
+	activation = "Interact (Consumes Action)",
+	interactRT = 150,
 	triggerEvent = nil,
-	primaryEffect = "Reveals Hidden enemies, Hidden Objects, and Hidden Treasures within Radius 5",
-	uses = "Unlimited",
-	notes = nil,
+	primaryEffect = "Attacks two random opponents for 40% of their max HP each.",
+	uses = "Once per turn",
+	notes = "40% of each target's OWN max HP (per-target). 'Once per turn' = per-unit per-turn (same tracker as Ballista).",
 }
 
 ObjectData.Objects["Black Market"] = {
@@ -381,30 +393,6 @@ ObjectData.Objects["Black Market"] = {
 	primaryEffect = "Opens shop containing six fixed discounted high-tier items",
 	uses = "Unlimited",
 	notes = "Shop inventory fixed for the battle",
-}
-
-ObjectData.Objects["Trading Post"] = {
-	id = "Trading Post",
-	category = "Event",
-	tags = { "Settlement" },
-	passable = false,
-	activation = "Interact (Free)",
-	triggerEvent = nil,
-	primaryEffect = "Next base shop has improved inventory and 20% discount",
-	uses = "Once",
-	notes = "Does not stack",
-}
-
-ObjectData.Objects["Den of Thieves"] = {
-	id = "Den of Thieves",
-	category = "Event",
-	tags = { "Settlement" },
-	passable = false,
-	activation = "Interact (Free)",
-	triggerEvent = nil,
-	primaryEffect = "Adds one high-level quest to next base visit",
-	uses = "Once",
-	notes = "Does not stack",
 }
 
 ObjectData.Objects["Idol of Fortune"] = {
@@ -424,11 +412,12 @@ ObjectData.Objects["Fountain of Fortune"] = {
 	category = "Event",
 	tags = { "Shrine" },
 	passable = false,
-	activation = "Interact (Free)",
+	activation = "Interact (Consumes Action)",
+	interactRT = 150,
 	triggerEvent = nil,
-	primaryEffect = "Increased recruitment success until battle ends",
+	primaryEffect = "Fortune +50% to all allies (MAP-WIDE) for 1500 CT",
 	uses = "Once",
-	notes = "Does not stack",
+	notes = "all allies = MAP-WIDE.",
 }
 
 ObjectData.Objects["Tavern"] = {
@@ -443,16 +432,16 @@ ObjectData.Objects["Tavern"] = {
 	notes = "Does not stack",
 }
 
-ObjectData.Objects["Altar of Sacrifice"] = {
-	id = "Altar of Sacrifice",
+ObjectData.Objects["Necro Tome Stand"] = {
+	id = "Necro Tome Stand",
 	category = "Event",
 	tags = { "Shrine" },
 	passable = false,
-	activation = "Interact (Consumes Action)",
-	triggerEvent = nil,
-	primaryEffect = "User loses 50% Max HP; all allies gain Enlightened",
-	uses = "Once",
-	notes = "Risk/Reward",
+	activation = "Passive",
+	triggerEvent = "Unit dies within radius 3",
+	primaryEffect = "Passive. Whenever a unit dies within radius 3, inflict dark damage to ALL opponents equal to 10% of the DYING unit's max HP.",
+	uses = "Passive",
+	notes = "10% of the DYING unit's max HP, dealt to that unit's opponents. Passive aura is two-sided: a death on EITHER side within radius 3 triggers damage to the dying unit's opponents (2026-10-03 ruling).",
 }
 
 ObjectData.Objects["Cover of Darkness"] = {
@@ -464,7 +453,7 @@ ObjectData.Objects["Cover of Darkness"] = {
 	triggerEvent = nil,
 	primaryEffect = "Blind all enemies within Radius 5 for 2000 CT",
 	uses = "Once",
-	notes = nil,
+	notes = "—",
 }
 
 ObjectData.Objects["Dragon Utopia"] = {
@@ -474,25 +463,13 @@ ObjectData.Objects["Dragon Utopia"] = {
 	passable = false,
 	activation = "Interact (Free)",
 	triggerEvent = nil,
-	primaryEffect = "Summons 4-6 Dragons with x3 loot rate",
+	primaryEffect = "Summons 4-6 Dragons with ×3 loot rate",
 	uses = "Once",
 	notes = "High-risk encounter",
 }
 
-ObjectData.Objects["Refugee Camp"] = {
-	id = "Refugee Camp",
-	category = "Event",
-	tags = { "Settlement" },
-	passable = false,
-	activation = "Interact (Consumes Action)",
-	triggerEvent = nil,
-	primaryEffect = "Summons one random neutral unit",
-	uses = "Once",
-	notes = nil,
-}
-
-ObjectData.Objects["Seer's Hut"] = {
-	id = "Seer's Hut",
+ObjectData.Objects["Chaos Statue"] = {
+	id = "Chaos Statue",
 	category = "Event",
 	tags = { "NPC" },
 	passable = true,
@@ -500,23 +477,11 @@ ObjectData.Objects["Seer's Hut"] = {
 	triggerEvent = nil,
 	primaryEffect = "Generates one optional quest",
 	uses = "Once",
-	notes = nil,
+	notes = "—",
 }
 
-ObjectData.Objects["Skeleton Transformer"] = {
-	id = "Skeleton Transformer",
-	category = "Event",
-	tags = { "Shrine" },
-	passable = false,
-	activation = "Interact (Consumes Action)",
-	triggerEvent = nil,
-	primaryEffect = "Transform one non-boss enemy into Skeleton (cannot be recruited) for 3000 CT.",
-	uses = "Once",
-	notes = "parked",
-}
-
-ObjectData.Objects["Stables"] = {
-	id = "Stables",
+ObjectData.Objects["Angel Statue"] = {
+	id = "Angel Statue",
 	category = "Event",
 	tags = { "Settlement" },
 	passable = false,
@@ -524,7 +489,7 @@ ObjectData.Objects["Stables"] = {
 	triggerEvent = nil,
 	primaryEffect = "Grants Flight for 1500 CT",
 	uses = "Once",
-	notes = nil,
+	notes = "—",
 }
 
 ObjectData.Objects["Obelisk"] = {
@@ -536,17 +501,18 @@ ObjectData.Objects["Obelisk"] = {
 	triggerEvent = nil,
 	primaryEffect = "All enemies are inflicted +300 RT Delay",
 	uses = "Once",
-	notes = nil,
+	notes = "—",
 }
 
-ObjectData.Objects["War Machine Factory"] = {
-	id = "War Machine Factory",
+ObjectData.Objects["Forge"] = {
+	id = "Forge",
 	category = "Event",
 	tags = { "Structure" },
 	passable = false,
 	activation = "Interact (Consumes Action)",
+	interactRT = 150,
 	triggerEvent = nil,
-	primaryEffect = "Summon one Ballista or Catapult on chosen tile within a radius of 3 from object",
+	primaryEffect = "Summon one Ballista or Catapult on a chosen tile within radius 3 of the object",
 	uses = "Once",
 	notes = nil,
 }
@@ -563,7 +529,58 @@ ObjectData.Objects["Witch Hut"] = {
 	notes = "Risk/Reward",
 }
 
--- Battle Conditions (15)
+ObjectData.Objects["Mysterious Boulder"] = {
+	id = "Mysterious Boulder",
+	category = "Event",
+	tags = { "Settlement" },
+	passable = false,
+	activation = "Interact (Consumes Action)",
+	interactRT = 200,
+	triggerEvent = nil,
+	primaryEffect = "Single use. Roll a random debuff, then inflict it on ALL enemies.",
+	uses = "Once",
+	notes = nil,
+}
+
+ObjectData.Objects["Glow Crystal"] = {
+	id = "Glow Crystal",
+	category = "Event",
+	tags = { "Shrine" },
+	passable = false,
+	activation = "Interact (Consumes Action)",
+	triggerEvent = nil,
+	primaryEffect = "Double all experience gained at end of battle.",
+	uses = "Once",
+	notes = "ACTIVE (Slice 6 item 3, 2026-10-07): player activation sets a battle flag; ProgressionService doubles end-of-battle XP once. Uses default Interact RT per G1 (round(Modified Base RT x 0.10)) — no explicit RT.",
+}
+
+ObjectData.Objects["Pandora's Box"] = {
+	id = "Pandora's Box",
+	category = "Event",
+	tags = { "Shrine" },
+	passable = false,
+	activation = "Interact (Consumes Action)",
+	interactRT = 50,
+	triggerEvent = nil,
+	primaryEffect = "Triggers a random map object effect, drawn from the FULL pool including harmful effects (traps/explosions can backfire on the user's side).",
+	uses = "Once",
+	notes = "RT 50 flat regardless of triggered effect. Roll pool = all triggerable map-object effects; triggered effect centers on the Pandora's Box tile. Passive-only / terrain-reshape effects that cannot sensibly be invoked by Interact are excluded from the roll pool (Designer note).",
+}
+
+ObjectData.Objects["Swan Pond"] = {
+	id = "Swan Pond",
+	category = "Event",
+	tags = { "Spring" },
+	passable = false,
+	activation = "Interact (Consumes Action)",
+	interactRT = 150,
+	triggerEvent = nil,
+	primaryEffect = "Single use. Remove all debuffs from all allies (MAP-WIDE).",
+	uses = "Once",
+	notes = "all allies = MAP-WIDE (2026-10-03 ruling).",
+}
+
+-- Battle Conditions (14)
 -- -----------------------------------------
 
 ObjectData.BattleConditions = {}
@@ -580,7 +597,7 @@ ObjectData.BattleConditions["Clear"] = {
 ObjectData.BattleConditions["Rain"] = {
 	id = "Rain",
 	description = "Rain drenches the battlefield.",
-	passiveEffect = "Fire Damage -25%; Water Damage +25%.",
+	passiveEffect = "Fire Damage −25%; Water Damage +25%.",
 	periodicEffect = "Every 300 CT, all Burning effects become Steam.",
 	interval = 300,
 	notes = "Promotes Water strategies.",
@@ -598,7 +615,7 @@ ObjectData.BattleConditions["Strong Wind"] = {
 ObjectData.BattleConditions["Heatwave"] = {
 	id = "Heatwave",
 	description = "Intense heat dries the battlefield.",
-	passiveEffect = "Fire Damage +20%; Water Damage -20%.",
+	passiveEffect = "Fire Damage +20%; Water Damage −20%.",
 	periodicEffect = "Every 300 CT, reduce all Wet durations by 300 CT.",
 	interval = 300,
 	notes = "Promotes Fire strategies.",
@@ -607,7 +624,7 @@ ObjectData.BattleConditions["Heatwave"] = {
 ObjectData.BattleConditions["Dark Eclipse"] = {
 	id = "Dark Eclipse",
 	description = "Darkness engulfs the battlefield.",
-	passiveEffect = "Light Damage -25%; Dark Damage +25%; Recruitment Chance -20%.",
+	passiveEffect = "Light Damage −25%; Dark Damage +25%; Recruitment Chance −20%.",
 	periodicEffect = "None.",
 	interval = nil,
 	notes = "Holy attacks are weakened.",
@@ -616,7 +633,7 @@ ObjectData.BattleConditions["Dark Eclipse"] = {
 ObjectData.BattleConditions["Holy Aurora"] = {
 	id = "Holy Aurora",
 	description = "Holy light shines over the battlefield.",
-	passiveEffect = "Light Damage +25%; Dark Damage -25%.",
+	passiveEffect = "Light Damage +25%; Dark Damage −25%.",
 	periodicEffect = "Every 300 CT, Undead units take 5% Max HP Light Damage.",
 	interval = 300,
 	notes = "Strong anti-undead condition.",
@@ -671,7 +688,7 @@ ObjectData.BattleConditions["Earthquake"] = {
 	id = "Earthquake",
 	description = "Violent tremors reshape the battlefield.",
 	passiveEffect = "None.",
-	periodicEffect = "Every 500 CT, randomly alter 20–40% of map tiles by -2 to +2 elevation; units on changed tiles suffer +150 RT Delay.",
+	periodicEffect = "Every 500 CT, randomly alter 20–40% of map tiles by −2 to +2 elevation; units on changed tiles suffer +150 RT Delay.",
 	interval = 500,
 	notes = "Permanently reshapes terrain.",
 }
