@@ -16,7 +16,7 @@ local BattleEvents = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 local ConsumableData = require(ReplicatedStorage:WaitForChild("Content", 10)
 	:WaitForChild("ConsumableData", 10))
 
-local LoadoutScreen = {}
+local LoadoutScreen: any = {}
 
 local screenGui, rootFrame
 local unitHeaderPanel, equippedPanel, inventoryPanel, statPanel
@@ -67,7 +67,7 @@ local EQUIP_SLOTS = {
 	{ slot = "Doctrine",  label = "DOCTRINE" },
 }
 
-local STAT_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK" }
+local _STAT_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK" }
 
 local BONUS_STAT_ORDER = {
 	"STR", "INT", "DEX", "AGI", "VIT", "LUK",
@@ -98,7 +98,7 @@ local openDoctrinePicker
 
 -- Skills tab state
 local selectedSkillCardId = nil
-local skillSubTab = "SKILL"     -- "SKILL" or "AUGMENT"
+local _skillSubTab = "SKILL"     -- "SKILL" or "AUGMENT"
 local skillTypeFilter = "All"
 local skillTagFilter = "All"
 local skillSortIndex = 1
@@ -739,7 +739,7 @@ end
 
 local filterBar, itemGrid, footerLabel
 
-local function buildFilterBar(parent)
+local function _buildFilterBar(parent)
 	if filterBar then clearChildren(filterBar) end
 	filterBar = Instance.new("Frame")
 	filterBar.Size = UDim2.new(1, 0, 0, 36)
@@ -1167,7 +1167,7 @@ buildInventory = function()
 	rarityBtn.MouseButton1Click:Connect(function()
 		local opts = {}
 		for _, r in ipairs(RARITY_OPTIONS) do
-			local clr = r == "All" and Theme.Colors.TextPrimary or getRarityColor(r)
+			local _clr = r == "All" and Theme.Colors.TextPrimary or getRarityColor(r)
 			local displayLabel = r == "All" and "All Rarities" or r
 			table.insert(opts, { label = displayLabel, value = r, active = (currentRarity == r) })
 		end
@@ -1437,7 +1437,7 @@ openItemDetail = function(item, compareItem, isEquippedMode)
 				local as = child.AbsoluteSize
 				-- Compute gap from previous button
 				if prevRight then
-					local gap = ap.X - prevRight
+					local _gap = ap.X - prevRight
 				end
 				prevRight = ap.X + as.X
 			end
@@ -1944,7 +1944,7 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 	local COMPARE_STATS = { "Attack", "Range", "Defense", "WT", "RTDelay" }
 	local COMPARE_LABELS = { Attack="Attack", Range="Range", Defense="Defense", WT="WT", RTDelay="RT Delay" }
 	local LOWER_IS_BETTER = { WT = true, RTDelay = true }
-	local STAT_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK" }
+	local _STAT_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK" }
 
 	local function addStatRow(parent, label, cvStr, svStr, delta, isGood, y)
 		local row = Instance.new("Frame")
@@ -2466,8 +2466,8 @@ buildSkillsContent = function()
 		MockData.LoadSkillData(unit.id)
 	end
 
-	local loadout = MockData.GetSkillLoadout(unit.id)
-	local doctrineId = MockData.GetUnitDoctrineId(unit.id)
+	local _loadout = MockData.GetSkillLoadout(unit.id)
+	local _doctrineId = MockData.GetUnitDoctrineId(unit.id)
 
 	-- ============================================================
 	-- LEFT: CARD GRID (in skillsPanel)
@@ -2987,7 +2987,7 @@ buildSkillsContent = function()
 
 		-- Cost badge (top-left)
 		local costText = aug.costFormula or ""
-		local costShort = costText:match("x[%d%.]+") or costText:match("x[%d%.]+") or ""
+		local costShort = costText:match("×[%d%.]+") or costText:match("x[%d%.]+") or ""
 		if costShort ~= "" then
 			local cBadge = Instance.new("Frame")
 			cBadge.Size = UDim2.new(0, 28, 0, 12)
@@ -3135,7 +3135,7 @@ buildSkillLoadout = function()
 	slotScroll.Parent = equippedPanel
 
 	for slot = 1, 5 do
-		local slotData = nil
+		local _slotData = nil
 		local skillId = nil
 		local skillName = nil
 		local augments = {}
@@ -3144,7 +3144,7 @@ buildSkillLoadout = function()
 		if type(loadout) == "table" and loadout[slot] then
 			local sd = loadout[slot]
 			if type(sd) == "table" then
-				slotData = sd
+				_slotData = sd
 				skillId = sd.skillId
 				skillName = sd.skillName
 				augments = sd.augments or {}
@@ -3236,7 +3236,7 @@ buildSkillLoadout = function()
 			-- Skill name only (no tags, no MP/RT)
 			local nameX = icoSz + 6
 			local augArea = (AUG_SZ + 2) * 2 + 4
-			local nameW = UDim2.new(1, -(nameX + augArea), 1, 0)
+			local _nameW = UDim2.new(1, -(nameX + augArea), 1, 0)
 
 			if slot == 1 then
 				-- Doctrine: name is clickable for dropdown, show "DOCTRINE" subtitle
@@ -3411,12 +3411,12 @@ openSkillCardDetail = function(sk)
 	closeDetail()
 	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
 
-	local unit = MockData.GetSelectedUnit()
+	local _unit = MockData.GetSelectedUnit()
 	local def = sk.def or MockData.GetSkillDef(sk.id)
 	local tags = (def and def.tags) or sk.tags or {}
 	local stype = getSkillType(tags)
 	local stc = STYPE_COLORS[stype] or STYPE_COLORS.Utility
-	local elem = getElement(tags)
+	local _elem = getElement(tags)
 
 	-- Overlay ScreenGui
 	detailOverlay = Instance.new("ScreenGui")
@@ -3471,7 +3471,7 @@ openSkillCardDetail = function(sk)
 
 	-- Unified header
 	local descText = (def and def.description) or buildSkillDescription(def)
-	local hdrH = buildDetailHeader(addRow(scroll, 72), {
+	local _hdrH = buildDetailHeader(addRow(scroll, 72), {
 		iconText = STYPE_ICONS[stype] or "[*]",
 		iconImage = def and def.icon or nil,
 		iconBg = stc.bg,
@@ -3682,7 +3682,7 @@ openAugmentCardDetail = function(aug)
 	local augTags = {}
 	if def and def.family then table.insert(augTags, def.family) end
 	local augDescText = (def and def.description) or ""
-	local hdrH = buildDetailHeader(addRow(scroll, 72), {
+	local _hdrH = buildDetailHeader(addRow(scroll, 72), {
 		iconText = "[o]",
 		iconImage = def and def.icon or nil,
 		iconBg = Color3.fromRGB(74, 53, 16),
@@ -4267,7 +4267,7 @@ openEquippedSkillDetail = function(slotNum, skillId, augments)
 
 	-- Build the same skill detail panel as openSkillCardDetail
 	-- but with UNEQUIP instead of EQUIP, and show equipped augments
-	local fakeCard = {
+	local _fakeCard = {
 		id = skillId, name = name, tags = tags, def = def, mockSkill = mockSkill,
 		mpCost = def and def.mpCostFormula or (mockSkill and mockSkill.mpCost) or 0,
 		rtCost = def and def.rtCostFormula or (mockSkill and mockSkill.rtCost) or 0,
@@ -4324,7 +4324,7 @@ openEquippedSkillDetail = function(slotNum, skillId, augments)
 
 	-- Unified header
 	local eqDescText = (def and def.description) or buildSkillDescription(def)
-	local hdrH = buildDetailHeader(addRow(scroll, 72), {
+	local _hdrH = buildDetailHeader(addRow(scroll, 72), {
 		iconText = STYPE_ICONS[stype] or "[*]",
 		iconImage = def and def.icon or nil,
 		iconBg = stc.bg,

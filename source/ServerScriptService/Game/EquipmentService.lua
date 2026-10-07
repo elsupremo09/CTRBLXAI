@@ -117,7 +117,7 @@ function EquipmentService.ValidateEquip(unit, itemInstance, slot)
 		return false, "Invalid item instance"
 	end
 
-	local archetype, itemType = resolveArchetype(itemInstance.baseArchetypeId)
+	local archetype: any, itemType = resolveArchetype(itemInstance.baseArchetypeId)
 	if not archetype then
 		return false, "Unknown archetype: " .. tostring(itemInstance.baseArchetypeId)
 	end

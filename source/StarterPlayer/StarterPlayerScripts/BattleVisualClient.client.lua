@@ -94,7 +94,7 @@ local R15_STAND_OFFSET_DEFAULT = 2.35  -- fallback if HipHeight can't be read
 local function tileToWorld(tx, ty)
 	return Vector3.new(MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE, tileSurfaceY(getElevation(tx, ty)) + 1, MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE)
 end
-local function tileToWorldR15(tx, ty, hipHeight)
+local function _tileToWorldR15(tx, ty, hipHeight)
 	-- Returns the HRP center position for an R15 model standing on this tile.
 	-- hipHeight = distance from feet (tile surface) to HRP center.
 	local offset = hipHeight or R15_STAND_OFFSET_DEFAULT
@@ -250,7 +250,7 @@ local timelineSnapshot = nil
 local currentBattleCt  = 0
 local currentTimePhase = "Dawn"  -- time-of-day phase (updated by TimePhaseChanged); read by updateTimeline for the bar's time icon
 local activeUnitId    = nil  -- who is currently acting (for timeline NOW marker)
-local devLastInspectedId = nil -- tracks last tile-clicked unit for Kill At Tile (dev only)
+local _devLastInspectedId = nil -- tracks last tile-clicked unit for Kill At Tile (dev only)
 local inputMode       = nil -- "move","attack","skill"
 local selectedSkill   = nil
 local selectedItem    = nil -- consumable entry selected during ItemSelection
@@ -289,7 +289,7 @@ end
 
 -- Highlight styles — delegates to TileHighlightManager (EditableMesh terrain-conforming).
 -- Fallback to a simple Part if TileHL is unavailable.
-local HIGHLIGHT_STYLES = {
+local _HIGHLIGHT_STYLES = {
 	move     = { color = Theme.Colors.TileMove,     transparency = 0.50 },
 	target   = { color = Theme.Colors.TileTarget,   transparency = 0.40 },
 	selected = { color = Theme.Colors.TileSelected,  transparency = 0.25 },
@@ -394,7 +394,7 @@ local function renderMovePath(path, destX, destY)
 	for i, step in ipairs(fullPath) do
 		local tx, ty = step.tileX, step.tileY
 		local elev = getElevation(tx, ty)
-		local surfaceY = tileSurfaceY(elev) + 3.5
+		local _surfaceY = tileSurfaceY(elev) + 3.5
 
 		-- Path tile highlight via Highlight instance
 		local hazard = PATH_HAZARDS[step.terrain]
@@ -1242,7 +1242,7 @@ local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEven
 	local hasPreviewRt = (previewUnitId ~= nil and previewNewRt ~= nil)
 	for _, e in ipairs(tl) do
 		-- Enrich with tile data for click resolution
-		local enriched = {
+		local enriched: any = {
 			id = e.id, name = e.name, side = e.side, rt = e.rt,
 			isActive = false, isEvent = e.isEvent or false, isRound = e.isRound or false,
 			isGhost = false,
@@ -1582,13 +1582,44 @@ local mapFolder = workspace:FindFirstChild("TemplateViewerMap")  -- nil until qu
 
 -- Find the invisible tile Part for a given battle coordinate.
 -- Used by Highlight-based tile indicators (no floating Parts needed).
-local function getTilePart(bx, by)
+local function _getTilePart(bx, by)
 	if not mapFolder then return nil end
 	local tx, ty = bx + BATTLE_OFFSET_X, by + BATTLE_OFFSET_Y
 	local name = string.format("Tile_%02d_%02d", tx, ty)
 	return mapFolder:FindFirstChild(name)
 end
 
+
+-- Resolve any instance inside a map-object clone (Model OR single Part named
+-- MapObjModel_*) to the tile Part the object stands on. nil if not an object.
+local function resolveObjectTile(inst: Instance?): BasePart?
+	if not (inst and mapFolder) then return nil end
+	local node: Instance? = inst
+	while node and node.Parent ~= mapFolder do node = node.Parent end
+	if node and string.sub(node.Name, 1, 12) == "MapObjModel_" then
+		local ox, oy = node:GetAttribute("ObjTileX"), node:GetAttribute("ObjTileY")
+		if ox and oy then
+			local tp = mapFolder:FindFirstChild(string.format("Tile_%02d_%02d", ox, oy))
+			if tp and tp:IsA("BasePart") then return tp end
+		end
+	end
+	return nil
+end
+
+-- Touch/ray path: if the ray hits a map object BEFORE any tile, use the object's tile.
+local function rayObjectTile(origin: Vector3, dir: Vector3): BasePart?
+	if not mapFolder then return nil end
+	local objs = {}
+	for _, c in ipairs(mapFolder:GetChildren()) do
+		if string.sub(c.Name, 1, 12) == "MapObjModel_" then table.insert(objs, c) end
+	end
+	if #objs == 0 then return nil end
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Include
+	rp.FilterDescendantsInstances = objs
+	local r = workspace:Raycast(origin, dir, rp)
+	return r and resolveObjectTile(r.Instance) or nil
+end
 
 local function getTileUnderMouse()
 	-- Click-pads first: thin invisible pads coincident with tile highlights.
@@ -1608,6 +1639,9 @@ local function getTileUnderMouse()
 	end
 	local target = mouse.Target
 	if target and target:IsA("BasePart") and target:GetAttribute("IsTemplateTile") then return target end
+	-- Click landed on a map object (Model or single Part): use the object's tile.
+	local objTile = resolveObjectTile(target)
+	if objTile then return objTile end
 	-- Fallback: mouse hit terrain voxels, grid lines, highlight walls, or a
 	-- non-tile Part. Use camera:ScreenPointToRay with Include filter for ONLY
 	-- tile Parts (not the whole mapFolder — grid lines are also in there and
@@ -1767,33 +1801,29 @@ local function processTileClick(bx, by)
 			-- Only KO'd units here: drop any stale selection from an earlier click.
 			bp.inspectedEntityId = nil
 		end
-		-- Open full inspector during: Idle, View mode, or Deployment phase
-		local hudState = BattleHUD.GetState()
-		local canInspect = (hudState == "Idle") or (hudState == "EnemyTurn")
-			or BattleHUD.IsViewMode()
-			or _G.CTRBLXAI_DeploymentActive
-		if canInspect and _G.CTRBLXAI_OpenInspectorPanel then
-			local ids = {}
-			for _, u in ipairs(tileUnits) do table.insert(ids, u.id) end
-			_G.CTRBLXAI_OpenInspectorPanel(primary.id, ids)
-		end
+		-- Show the tapped unit in the unit panel. The detailed inspector window opens
+		-- ONLY from a portrait tap (auto-open was a bug, removed 2026-10-07).
+		BattleHUD.SetSelection({ kind = "unit", data = primary })
+		local ids = {}
+		for _, u in ipairs(tileUnits) do table.insert(ids, u.id) end
+		_G.CTRBLXAI_TileUnitIds = ids  -- cycle list for the portrait-opened inspector
 	end
 	-- F1 fix (2026-10-04): clicking an EMPTY tile clears the stale unit selection so
 	-- the newest click decides the dev-tool target (bp.tile holds the clicked tile).
 	if not clickedUnit then
 		bp.inspectedEntityId = nil
 	end
-	-- Map object inspection: an object tile with no unit on it opens the object inspector.
+	-- Map object (no unit on the tile): show it in the unit panel.
 	if not clickedUnit and objectName and objectName ~= "None" then
-		local hudStateObj = BattleHUD.GetState()
-		local canInspectObj = (hudStateObj == "Idle") or (hudStateObj == "EnemyTurn") or BattleHUD.IsViewMode() or _G.CTRBLXAI_DeploymentActive
-		if canInspectObj and _G.CTRBLXAI_OpenObjectInspector then
-			_G.CTRBLXAI_OpenObjectInspector(objectName, bx, by)
-		end
+		BattleHUD.SetSelection({ kind = "object", name = objectName, x = bx, y = by })
+	elseif not clickedUnit then
+		BattleHUD.ClearSelection()  -- empty tile: panel goes back to the acting unit
 	end
+	-- White spinning marker on the inspected tile. On a unit, it follows the unit's body.
+	local _mk = primary and unitTokens[primary.id]
+	if TileHL and TileHL.SetInspectMarker then pcall(TileHL.SetInspectMarker, bx, by, _mk and _mk.part or nil) end
 	
 	-- View mode or deployment: tile + unit info updated above, skip combat flow
-	if BattleHUD.IsViewMode() then return end
 	if _G.CTRBLXAI_DeploymentActive then return end
 
 	if not isPlayerTurn or not inputMode then return end
@@ -2119,7 +2149,7 @@ local function processTileClick(bx, by)
 					aimTarget = t; clearHighlights()
 					createTileHighlight(bx, by, "selected")
 					bp.target = unitData[t.id]
-					local tgtData = unitData[t.id]
+					local _tgtData = unitData[t.id]
 					bp.preview = {
 						actionType = "Item",
 						skillName = selectedItem.name,
@@ -2202,6 +2232,22 @@ game:GetService("RunService").Heartbeat:Connect(function()
 	rayParams.FilterDescendantsInstances = tileParts
 	local result = workspace:Raycast(ray.Origin, ray.Direction * 500, rayParams)
 	local tilePart = result and result.Instance or nil
+	-- A tall map object in front of the tile wins (tap selects the object's tile).
+	local objTile = rayObjectTile(ray.Origin, ray.Direction * 500)
+	if objTile then
+		local objHit = workspace:Raycast(ray.Origin, ray.Direction * 500, (function()
+			local p = RaycastParams.new(); p.FilterType = Enum.RaycastFilterType.Include
+			local list = {}
+			for _, c in ipairs(mapFolder:GetChildren()) do
+				if string.sub(c.Name, 1, 12) == "MapObjModel_" then table.insert(list, c) end
+			end
+			p.FilterDescendantsInstances = list
+			return p
+		end)())
+		if objHit and (not result or (objHit.Position - ray.Origin).Magnitude < (result.Position - ray.Origin).Magnitude) then
+			tilePart = objTile
+		end
+	end
 	if not tilePart then return end
 
 	local bx, by = tileToBattle(tilePart)
@@ -2307,7 +2353,7 @@ end)
 
 local devCameraPanel = nil
 local devPanelConnections = {} -- F-A: input connections to disconnect on destroy/recreate
-local devSelectedTile = nil -- {x, y} for Kill Unit targeting
+local _devSelectedTile = nil -- {x, y} for Kill Unit targeting
 
 local function createDevCameraPanel()
 	if not RunService:IsStudio() then return end
@@ -2672,12 +2718,12 @@ local function createDevCameraPanel()
 	local statusDd = makeDropdown(gStatus.container, "STATUS", statusList, nil)
 	makeBtn(gStatus.container, "APPLY STATUS", function()
 		local tx, ty = selectedTile()
-		if not tx then warn("[Dev] Select a unit first, then APPLY STATUS") return end
+		if not tx then warn("[Dev] Select a unit first, then APPLY STATUS"); return end
 		BattleEvents.DevCommand:FireServer({ action = "GrantStatus", tileX = tx, tileY = ty, statusId = statusDd.get() })
 	end, Color3.fromRGB(50, 70, 50))
 	makeBtn(gStatus.container, "CLEAR STATUSES", function()
 		local tx, ty = selectedTile()
-		if not tx then warn("[Dev] Select a unit first") return end
+		if not tx then warn("[Dev] Select a unit first"); return end
 		BattleEvents.DevCommand:FireServer({ action = "RemoveStatus", tileX = tx, tileY = ty, statusId = "ALL" })
 	end, Color3.fromRGB(70, 50, 50))
 	local weatherList = {
@@ -2700,12 +2746,12 @@ local function createDevCameraPanel()
 	local tierDd = makeDropdown(gSpawn.container, "TIER", tierList, nil)
 	makeBtn(gSpawn.container, "SPAWN AT TILE", function()
 		local tx, ty = selectedTile()
-		if not tx then warn("[Dev] Select a tile/unit first, then SPAWN AT TILE") return end
+		if not tx then warn("[Dev] Select a tile/unit first, then SPAWN AT TILE"); return end
 		BattleEvents.DevCommand:FireServer({ action = "SpawnUnit", tileX = tx, tileY = ty, side = sideDd.get(), tier = tierDd.get() })
 	end, Color3.fromRGB(40, 65, 55))
 	makeBtn(gSpawn.container, "SPAWN GROUP (x3)", function()
 		local tx, ty = selectedTile()
-		if not tx then warn("[Dev] Select a tile/unit first") return end
+		if not tx then warn("[Dev] Select a tile/unit first"); return end
 		BattleEvents.DevCommand:FireServer({ action = "SpawnGroup", tileX = tx, tileY = ty, side = sideDd.get(), tier = tierDd.get(), count = 3 })
 	end, Color3.fromRGB(45, 60, 50))
 
@@ -2720,7 +2766,7 @@ local function createDevCameraPanel()
 	local catNames = {}
 	for _, c in ipairs(objCats) do catNames[#catNames + 1] = c.cat end
 	local objDd  -- forward ref
-	local catDd = makeDropdown(gSpawn.container, "OBJ CAT", catNames, function(picked)
+	local _catDd = makeDropdown(gSpawn.container, "OBJ CAT", catNames, function(picked)
 		for _, c in ipairs(objCats) do
 			if c.cat == picked and objDd then objDd.setItems(c.items) end
 		end
@@ -2728,7 +2774,7 @@ local function createDevCameraPanel()
 	objDd = makeDropdown(gSpawn.container, "OBJ", objCats[1].items, nil)
 	makeBtn(gSpawn.container, "SPAWN OBJECT", function()
 		local tx, ty = selectedTile()
-		if not tx then warn("[Dev] Select a tile first, then SPAWN OBJECT") return end
+		if not tx then warn("[Dev] Select a tile first, then SPAWN OBJECT"); return end
 		BattleEvents.DevCommand:FireServer({ action = "SpawnObject", tileX = tx, tileY = ty, objectType = objDd.get() })
 	end, Color3.fromRGB(70, 60, 40))
 
@@ -2830,6 +2876,12 @@ BattleEvents.TileEffectRemoved.OnClientEvent:Connect(function(data)
 end)
 
 _G.CTRBLXAI_GetTileEffect = function(x, y) return activeTileEffects[`{x},{y}`] end
+-- Called by BattleHUD when tapping an action snaps the panel back to the acting unit.
+_G.CTRBLXAI_MarkActiveUnit = function()
+	local u = activeUnitId and unitData[activeUnitId]
+	local tk = activeUnitId and unitTokens[activeUnitId]
+	if TileHL and TileHL.SetInspectMarker and u and u.tileX then pcall(TileHL.SetInspectMarker, u.tileX, u.tileY, tk and tk.part or nil) end
+end
 
 BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	if SoundController then SoundController.StopAllChannels() end
@@ -3007,17 +3059,22 @@ end)
 
 -- Weather/crisis: receive the active condition (one combined slot, per round).
 -- Stored for display; a visible weather label / VFX is a follow-up.
-local currentWeather = "Clear"
+local _currentWeather = "Clear"
 BattleEvents.WeatherChanged.OnClientEvent:Connect(function(data)
 	local cond = data and data.condition
 	if not cond then return end
-	currentWeather = cond
+	_currentWeather = cond
 	if BattleHUD.SetWeather then BattleHUD.SetWeather(cond) end
 	print("[BattleVisualClient] Weather: " .. tostring(cond))
 end)
 
 BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	activeUnitId = data.unitId
+	-- Every new turn refocuses the unit panel on the acting unit.
+	BattleHUD.ClearSelection()
+	local _au = unitData[data.unitId]
+	local _atk = unitTokens[data.unitId]
+	if TileHL and TileHL.SetInspectMarker and _au and _au.tileX then pcall(TileHL.SetInspectMarker, _au.tileX, _au.tileY, _atk and _atk.part or nil) end
 	bp.inspectedEntityId = nil  -- new turn resets inspection
 	-- VFX: highlight active unit (gold outline)
 	local _at = unitTokens[data.unitId]
@@ -3060,7 +3117,7 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	-- Enemy / neutral turn: keep the unit panel up and show the ACTIVE unit instead of
 	-- hiding it. Player turns are handled by PlayerTurnPrompt (full action data).
 	local _u = unitData[data.unitId]
-	if _u and _u.side ~= "Player" and not BattleHUD.IsViewMode() then
+	if _u and _u.side ~= "Player" then
 		bp.actor = {
 			id = _u.id, name = _u.name, side = _u.side,
 			currentHp = _u.currentHp, maxHp = _u.maxHp,
@@ -3092,11 +3149,7 @@ BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
 	if SoundController then SoundController.PlayTurnChime() end
 	currentPrompt = prompt
 	activeUnitId = prompt.unitId
-	-- Exit view mode so the action panel renders correctly.
-	-- Without this, Render returns early and the action buttons never appear.
-	if BattleHUD.IsViewMode() then
-		BattleHUD.ToggleViewMode()
-	end
+	BattleHUD.ClearSelection()  -- refocus on the acting unit
 	timelineSnapshot = prompt.timeline
 	if prompt.currentCt then currentBattleCt = prompt.currentCt end
 	isPlayerTurn = true; inputMode = nil; selectedSkill = nil
@@ -3121,7 +3174,7 @@ BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 		local elevDiff = math.abs(destPos.Y - currentPos.Y)
 		if elevDiff > 0.5 then
 			local peakY = math.max(currentPos.Y, destPos.Y) + 1.5
-			local midXZ = (currentPos + destPos) / 2
+			local _midXZ = (currentPos + destPos) / 2
 			local riseCF = CFrame.lookAt(
 				Vector3.new(currentPos.X, peakY, currentPos.Z),
 				Vector3.new(destPos.X, peakY, destPos.Z))
@@ -3576,6 +3629,8 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	if SoundController then SoundController.StopAllChannels() end
 	if VFXController and VFXController.ClearAllTileEffects then pcall(VFXController.ClearAllTileEffects) end
 	if BattleHUD.SetActiveEvent then BattleHUD.SetActiveEvent(nil) end
+	BattleHUD.ClearSelection()
+	if TileHL and TileHL.ClearInspectMarker then pcall(TileHL.ClearInspectMarker) end  -- after ClearSelection (it re-marks the actor)
 	isPlayerTurn = false; inputMode = nil; clearHighlights()
 	hideSelectionRing()
 	bp.state = "BattleEnded"; BattleHUD.Render(bp)
@@ -3672,7 +3727,7 @@ end
 -- Mesh: (Phase 3) client heightmap mesh — not yet built.
 -- NET-001: client owns visuals; the authoritative tile Parts + data never change,
 -- only their skin. Voxel writes are server-only, so selecting Voxel round-trips.
-local currentTerrainRender = "Voxel"  -- Voxel | PerTile | Mesh
+local _currentTerrainRender = "Voxel"  -- Voxel | PerTile | Mesh
 
 -- Per-terrain PBR material for Per-tile mode (client-side visual only).
 local TERRAIN_TILE_MATERIAL = {
@@ -3910,7 +3965,7 @@ end
 
 _G.CTRBLXAI_SetTerrainRender = function(mode)
 	if mode ~= "Voxel" and mode ~= "PerTile" and mode ~= "Mesh" then return end
-	currentTerrainRender = mode
+	_currentTerrainRender = mode
 	if mode == "PerTile" then
 		clearTerrainMesh()
 		setGridVisible(true)
@@ -4952,8 +5007,8 @@ BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
 
 	local ARROW_RING   = 8.25  -- studs from tile center out to each arrow (25% reduction; ring+plane scaled together so 2*ring*sin(22.5) >= plane still holds)
 	local ARROW_HEIGHT = 5.5   -- studs above ground so arrows clear SURROUNDING higher terrain (raised from 2.0; matches overhead-indicator clearance). Note: only lifts the arrows physically — a unit boxed by very tall cliffs could still occlude the click target. Future top-view/minimap facing UI is the full ceiling-buster.
-	local ARROW_LEN    = 2.2
-	local ARROW_WID    = 1.4
+	local _ARROW_LEN    = 2.2
+	local _ARROW_WID    = 1.4
 
 
 	local baseWX  = MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE

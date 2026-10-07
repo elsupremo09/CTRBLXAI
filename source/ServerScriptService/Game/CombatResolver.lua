@@ -158,7 +158,7 @@ end
 -- Element→status triggers. Applied after damage resolves.
 -- Skips if the skill already applied the same status via appliesStatus.
 -- Broadcasts StatusImmune if the status was blocked by immunity.
-local function applyElementStatusTriggers(sourceUnitId, defender, element, actualDamage, alreadyApplied, attackerUnit)
+local function applyElementStatusTriggers(sourceUnitId: any, defender: any, element: any, actualDamage: any, alreadyApplied: any, attackerUnit: any)
 	if actualDamage <= 0 or not defender.isAlive then return end
 
 	local function tryApply(statusId, fireDmg)

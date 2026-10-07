@@ -103,6 +103,7 @@ local ExploreService = {}
 --------------------------------------------------
 
 local WIPEOUT_GOLD_KEEP = 0.50     -- keep 50% of gold earned on wipeout/escape
+local DEFEAT_GUILD_XP_PENALTY = 100 -- unit_progression 94 (Locked; user approved 2026-10-07)
 local VICTORY_GOLD_KEEP = 1.00     -- keep 100% on victory
 local EXPLORATION_GOLD_BASE = 25   -- economy_framework Battle Completion Gold (Exploration)
 local GOLD_MAP_LEVEL_DIVISOR = 50  -- Base × (1 + Map Level / 50)
@@ -360,7 +361,7 @@ function ExploreService.ReportBattleResult(playerId: string, outcome: string, ba
 	elseif outcome == "wipeout" or outcome == "escape" then
 		-- Defeat rule (LOCKED): keep kill XP (already added above), keep 50% of
 		-- THIS battle's kill gold, lose ALL loot (none generated), no quest
-		-- progress, Guild XP penalty = zero (FLAG-E2). Expedition ends.
+		-- progress, Guild XP penalty 100 (unit_progression 94). Expedition ends.
 		local keptGold = math.floor(goldEarned * WIPEOUT_GOLD_KEEP)
 		s.earnedGold += keptGold
 		if _currency and _currency.AddGold and keptGold > 0 then
@@ -368,12 +369,17 @@ function ExploreService.ReportBattleResult(playerId: string, outcome: string, ba
 		end
 
 		-- NO loot generated/committed (only victory commits loot — LOCKED).
-		-- NO Guild XP awarded (penalty direction = reduced or zero; FLAG-E2).
+		-- FLAG-E2 RESOLVED (user approved 2026-10-07): lose 100 Guild XP, floored
+		-- at the current Guild level's start (GuildService.DeductGuildXp).
+		local guildXpLost = 0
+		if _guildService and _guildService.DeductGuildXp then
+			guildXpLost = _guildService.DeductGuildXp(playerId, DEFEAT_GUILD_XP_PENALTY)
+		end
 
 		s.active = false
 		print(string.format(
-			"[ExploreService] %s — expedition ENDED for %s | kept %d XP | kept 50%% gold (+%d) | loot LOST | no quest progress | Guild XP 0 (FLAG-E2)",
-			string.upper(outcome), playerId, s.earnedXp, keptGold))
+			"[ExploreService] %s — expedition ENDED for %s | kept %d XP | kept 50%% kill gold (+%d) | loot LOST | no quest progress | Guild XP -%d",
+			string.upper(outcome), playerId, s.earnedXp, keptGold, guildXpLost))
 
 		return true, {
 			outcome = outcome,
@@ -383,7 +389,8 @@ function ExploreService.ReportBattleResult(playerId: string, outcome: string, ba
 			killXp = killXp,
 			committedLoot = 0,
 			lootLost = true,
-			guildXpPenaltyApplied = true,  -- zero awarded (FLAG-E2)
+			guildXpPenaltyApplied = true,
+			guildXpLost = guildXpLost,
 			totals = { earnedXp = s.earnedXp, earnedGold = s.earnedGold, committedLoot = s.committedLoot },
 		}
 

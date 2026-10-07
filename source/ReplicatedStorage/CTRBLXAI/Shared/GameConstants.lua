@@ -1598,6 +1598,7 @@ GameConstants.SKILLS = {
 	["SKL-PHANTOM-EXCHANGE"] = {
 		id            = "SKL-PHANTOM-EXCHANGE",
 		name          = "Phantom Exchange",
+		swapWithTarget = true, -- 2026-10-07: swap with the selected ally (DB Targeting_Range note)
 		tags          = { "Utility" },
 		targetRules   = "Ally Unit",
 		range         = 4,
@@ -3352,6 +3353,65 @@ function GameConstants.GetConeTiles(originX, originY, facing, coneSize)
 		end
 	end
 	return tiles
+end
+
+-- ============================================================
+-- ALLOCABLE STAT POINTS (USER RULING 2026-10-07) -- single source for players
+-- AND enemies. Every unit gains 3 allocable points per level-up; Humans
+-- (Adaptability) gain 4 on every 3rd level-up. Level 1 = 0 level-ups. Derived
+-- from level, never stored, so it cannot double-grant.
+-- ============================================================
+function GameConstants.CalcAllocableStatPoints(level, raceId)
+	local levelUps = math.max(0, math.floor(level or 1) - 1)
+	local points = levelUps * 3
+	if raceId == "RACE-HUMAN" then
+		points += math.floor(levelUps / 3)
+	end
+	return points
+end
+
+-- Deterministic auto-spend (used for enemies). Splits `total` points across
+-- the positive entries of a weight table (e.g. a doctrine statPackage) in
+-- proportion to their weights, largest remainder first; ties break by the
+-- fixed STAT_ORDER below, so the same inputs always give the same result.
+-- Falls back to an even split over all six stats when no weight is positive.
+local AUTO_ALLOC_STAT_ORDER = table.freeze({ "STR", "INT", "DEX", "AGI", "VIT", "LUK" })
+function GameConstants.AutoAllocateStatPoints(total, weights)
+	local alloc = {}
+	total = math.max(0, math.floor(total or 0))
+	if total == 0 then return alloc end
+	local pos, sum = {}, 0
+	for _, stat in AUTO_ALLOC_STAT_ORDER do
+		local w = type(weights) == "table" and tonumber(weights[stat]) or nil
+		if w and w > 0 then pos[stat] = w; sum += w end
+	end
+	if sum <= 0 then
+		for _, stat in AUTO_ALLOC_STAT_ORDER do pos[stat] = 1 end
+		sum = #AUTO_ALLOC_STAT_ORDER
+	end
+	local given, rema = 0, {}
+	for idx, stat in AUTO_ALLOC_STAT_ORDER do
+		local w = pos[stat]
+		if w then
+			local exact = total * w / sum
+			local whole = math.floor(exact)
+			if whole > 0 then alloc[stat] = whole end
+			given += whole
+			table.insert(rema, { stat = stat, frac = exact - whole, idx = idx })
+		end
+	end
+	table.sort(rema, function(a, b)
+		if a.frac ~= b.frac then return a.frac > b.frac end
+		return a.idx < b.idx
+	end)
+	local i = 1
+	while given < total and #rema > 0 do
+		local r = rema[((i - 1) % #rema) + 1]
+		alloc[r.stat] = (alloc[r.stat] or 0) + 1
+		given += 1
+		i += 1
+	end
+	return alloc
 end
 
 return GameConstants

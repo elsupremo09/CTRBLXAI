@@ -206,7 +206,7 @@ local function guard(player: Player, key: string): string?
 	return nil
 end
 
-local function fail(msg: string)
+local function fail(msg: string): any
 	return { ok = false, error = msg }
 end
 
@@ -742,7 +742,7 @@ local function blacksmithGate(item: any): (boolean, string?)
 	return true, nil
 end
 
-local function describeItem(item: any)
+local function describeItem(item: any): any
 	local holder = holderOf(item.instanceId)
 	return {
 		instanceId = item.instanceId,
@@ -763,7 +763,7 @@ local function onGetOverview(player: Player)
 end
 
 local function onGetTavernPool(player: Player)
-	local g = guard(player, "tavern") if g then return fail(g) end
+	local g = guard(player, "tavern"); if g then return fail(g) end
 	local cache = tavernPool()
 	local list = {}
 	for _, c in cache.pool do
@@ -773,16 +773,16 @@ local function onGetTavernPool(player: Player)
 end
 
 local function onRequestHire(player: Player, candidateId: any)
-	local g = guard(player, "hire") if g then return fail(g) end
+	local g = guard(player, "hire"); if g then return fail(g) end
 	if type(candidateId) ~= "string" or #candidateId > 64 then return fail("Invalid recruit") end
 	local cache = tavernPool()
 	local idx, candidate = nil, nil
 	for i, c in cache.pool do
-		if c.candidateId == candidateId then idx, candidate = i, c break end
+		if c.candidateId == candidateId then idx, candidate = i, c; break end
 	end
 	if not candidate then return fail("That recruit is no longer available") end
 
-	local ok, result = RecruitmentService.CommitHire(_playerId, candidate)
+	local ok, result: any = RecruitmentService.CommitHire(_playerId, candidate)
 	if not ok then return fail(tostring(result)) end
 	local unitId = result.unitId
 	local unit = builtUnits[unitId]
@@ -803,7 +803,7 @@ local function onRequestHire(player: Player, candidateId: any)
 end
 
 local function onGetMerchantStock(player: Player)
-	local g = guard(player, "merchant") if g then return fail(g) end
+	local g = guard(player, "merchant"); if g then return fail(g) end
 	local res = merchantStock()
 	local stock = {}
 	for i, offer in res.stock or {} do
@@ -820,37 +820,37 @@ local function onGetMerchantStock(player: Player)
 			table.insert(sellable, d)
 		end
 	end
-	table.sort(sellable, function(a, b) return a.name < b.name end)
+	table.sort(sellable, function(a: any, b: any) return a.name < b.name end)
 	return { ok = true, stock = stock, sellable = sellable, reason = res.reason,
 		merchantLevel = GuildMenuService.GetBuildingLevel("Merchant") }
 end
 
 local function onRequestBuy(player: Player, offerIndex: any)
-	local g = guard(player, "buy") if g then return fail(g) end
+	local g = guard(player, "buy"); if g then return fail(g) end
 	if type(offerIndex) ~= "number" or offerIndex ~= offerIndex or offerIndex % 1 ~= 0 then
 		return fail("Invalid offer")
 	end
 	local res = merchantStock()
 	if offerIndex < 1 or offerIndex > #(res.stock or {}) then return fail("Invalid offer") end
-	local ok, result = MerchantService.BuyItem(_playerId, offerIndex, mapLevel(), battlesCompleted)
+	local ok, result: any = MerchantService.BuyItem(_playerId, offerIndex, mapLevel(), battlesCompleted)
 	if not ok then return fail(tostring(result)) end
 	save()
 	return { ok = true, name = itemDisplayName(result.item), price = result.price, gold = (balance()) }
 end
 
 local function onRequestSell(player: Player, instanceId: any)
-	local g = guard(player, "sell") if g then return fail(g) end
+	local g = guard(player, "sell"); if g then return fail(g) end
 	if type(instanceId) ~= "string" or #instanceId > 80 then return fail("Invalid item") end
 	if not InventoryService.OwnsItem(_playerId, instanceId) then return fail("Item not owned") end
 	if holderOf(instanceId) then return fail("Unequip that item before selling it") end
-	local ok, result = MerchantService.SellItem(_playerId, instanceId)
+	local ok, result: any = MerchantService.SellItem(_playerId, instanceId)
 	if not ok then return fail(tostring(result)) end
 	save()
 	return { ok = true, payout = result.payout, gold = (balance()) }
 end
 
 local function onGetBlacksmithItems(player: Player)
-	local g = guard(player, "smith") if g then return fail(g) end
+	local g = guard(player, "smith"); if g then return fail(g) end
 	local items = {}
 	for _, item in InventoryService.GetAllItems(_playerId) do
 		if type(item.itemLevel) == "number" then
@@ -869,7 +869,7 @@ local function onGetBlacksmithItems(player: Player)
 			table.insert(items, d)
 		end
 	end
-	table.sort(items, function(a, b)
+	table.sort(items, function(a: any, b: any)
 		if (a.equippedBy ~= nil) ~= (b.equippedBy ~= nil) then return a.equippedBy ~= nil end
 		return a.name < b.name
 	end)
@@ -886,29 +886,29 @@ local function ownedItem(instanceId: any): (any?, string?)
 end
 
 local function onRequestUpgrade(player: Player, instanceId: any)
-	local g = guard(player, "upgrade") if g then return fail(g) end
+	local g = guard(player, "upgrade"); if g then return fail(g) end
 	local item, err = ownedItem(instanceId)
 	if not item then return fail(err or "Invalid item") end
 	local allowed, why = blacksmithGate(item)
 	if not allowed then return fail(why or "Not allowed") end
-	local ok, result = BlacksmithService.CommitUpgrade(_playerId, item, item.itemLevel + 1)
+	local ok, result: any = BlacksmithService.CommitUpgrade(_playerId, item, item.itemLevel + 1)
 	if not ok then return fail(tostring(result)) end
 	save()
 	return { ok = true, toLevel = result.toLevel, gold = (balance()) }
 end
 
 local function onRequestDowngrade(player: Player, instanceId: any)
-	local g = guard(player, "downgrade") if g then return fail(g) end
+	local g = guard(player, "downgrade"); if g then return fail(g) end
 	local item, err = ownedItem(instanceId)
 	if not item then return fail(err or "Invalid item") end
-	local ok, result = BlacksmithService.CommitDowngrade(_playerId, item, item.itemLevel - 1)
+	local ok, result: any = BlacksmithService.CommitDowngrade(_playerId, item, item.itemLevel - 1)
 	if not ok then return fail(tostring(result)) end
 	save()
 	return { ok = true, toLevel = result.toLevel }
 end
 
 local function onGetDispatchBoard(player: Player)
-	local g = guard(player, "dispatch") if g then return fail(g) end
+	local g = guard(player, "dispatch"); if g then return fail(g) end
 	local board = dispatchBoard()
 	local missions = {}
 	for _, m in board.missions do
@@ -924,11 +924,14 @@ local function onGetDispatchBoard(player: Player)
 		table.insert(units, { id = id, name = live[id].name, level = live[id].level,
 			away = away, returnBattle = awayUntil[id] })
 	end
-	return { ok = true, missions = missions, units = units, battlesCompleted = battlesCompleted }
+	return { ok = true, missions = missions, units = units, battlesCompleted = battlesCompleted,
+		slotsUsed = DispatchService.GetSlotsUsed(_playerId),
+		slotCap = DispatchService.GetSlotCap(_playerId),
+		feeGold = DispatchService.GetFeeGold() }
 end
 
 local function onRequestDispatch(player: Player, missionId: any, unitIds: any)
-	local g = guard(player, "send") if g then return fail(g) end
+	local g = guard(player, "send"); if g then return fail(g) end
 	if type(missionId) ~= "string" or #missionId > 64 then return fail("Invalid mission") end
 	if type(unitIds) ~= "table" or #unitIds < 1 or #unitIds > MAX_DISPATCH_PICK then
 		return fail("Pick 1 to 7 units")
@@ -947,10 +950,10 @@ local function onRequestDispatch(player: Player, missionId: any, unitIds: any)
 	if homeUnitCount() - #clean < 1 then return fail("Keep at least one unit at home") end
 	local board = dispatchBoard()
 	local mIdx = nil
-	for i, m in board.missions do if m.missionId == missionId then mIdx = i break end end
+	for i, m in board.missions do if m.missionId == missionId then mIdx = i; break end end
 	if not mIdx then return fail("That mission is no longer offered") end
 
-	local ok, result = DispatchService.SendUnits(_playerId, missionId, clean, battlesCompleted)
+	local ok, result: any = DispatchService.SendUnits(_playerId, missionId, clean, battlesCompleted)
 	if not ok then return fail(tostring(result)) end
 	table.remove(board.missions, mIdx)
 	save()
@@ -958,7 +961,7 @@ local function onRequestDispatch(player: Player, missionId: any, unitIds: any)
 end
 
 local function onGetGuildUnits(player: Player)
-	local g = guard(player, "units") if g then return fail(g) end
+	local g = guard(player, "units"); if g then return fail(g) end
 	local live = playerUnits()
 	local list = {}
 	for _, id in sortedKeys(live) do
@@ -997,6 +1000,11 @@ function GuildMenuService.Init(deps: any)
 	_doSave = deps.doSave
 	_getMapLevel = deps.getMapLevel
 	_isSkillRegistered = deps.isSkillRegistered
+
+	-- Dispatch slots follow the temporary Guild Hall level (Dev-adjustable).
+	DispatchService.SetGuildHallLevelProvider(function(_pid: any)
+		return buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
+	end)
 
 	GuildEvents.GetGuildOverview.OnServerInvoke = onGetOverview
 	GuildEvents.GetTavernPool.OnServerInvoke = onGetTavernPool

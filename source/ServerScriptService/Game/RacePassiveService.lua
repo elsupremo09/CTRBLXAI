@@ -709,7 +709,7 @@ local function rebuildStats(unit)
 	if _equipmentService == nil then
 		-- Lazy require at RUNTIME: EquipmentService requires this module at load
 		-- time; by the time this runs both are cached, so there is no require cycle.
-		local ok, es = pcall(function() return require(script.Parent.EquipmentService) end)
+		local ok, es = pcall(function() return (require :: any)(script.Parent.EquipmentService) end)
 		_equipmentService = ok and es or false
 	end
 	if _equipmentService and _equipmentService.RebuildUnitStats then

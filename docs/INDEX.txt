@@ -513,3 +513,19 @@ game_flow (26 rows, sheet '28 Game Flow') - LOCKED 2026-10-07: full out-of-battl
   Unit Management merged into the unit screen (Info/Equipment/Skills). Guaranteed rewards fixed at quest board refresh.
   Town: menus first (1 player/server), walkable shared town later (~20/server) with private battle servers; HQ always private.
   Open (stage 9): quest board refresh timing, camp rest options.
+
+
+--- 2026-10-07 UGC RENTAL & OWNERSHIP (LOCKED, user-approved) - sheet '29 UGC Rental Ownership' ---
+ugc_rules (37 rows) - key/value rules. Columns: section, key, value, unit, status, notes.
+  Sections: Currency, Purpose, Try-On, Rental, Expiry, Ownership, Purchase, Rig, Enemy Outfits, Wishlist, Badges, Ratings, UI.
+  Query: SELECT key, value, unit, status, notes FROM ugc_rules WHERE section = 'Rental'
+  Core: free try-on 5 battles once/item ever (not a rental); rental 30 battles; -1 per battle at battle END if any
+  deployed unit wore it; price = 10 x level battle gold (ratio PROVISIONAL), x2 per successive rental of that item, never
+  resets, no cap; PlayerOwnsAsset = free/permanent, never saved, always re-verified; PromptPurchase on first equip of
+  unowned item + always-visible 'Buy for Roblox Avatar'; on-sale items only; Allow Third Party Sales required.
+  Enemy outfits: <=2 items/enemy, ~4 distinct/battle (PROVISIONAL, mobile perf), half random / half pushed, seeded,
+  server-side at spawn. Wishlist cap 50. Ratings private dev data. Separate UGC merchant; Customize in unit loadout screen.
+ugc_slots (11 rows) - Hat, Hair, Face, Neck, Shoulder, Front, Back, Waist, Shirt, Pants, Shoes.
+ugc_race_slot_blocks (6 rows, PROVISIONAL) - per RACE, visual only: Fairy/Avian Back; Mermaid Pants/Shoes/Waist; Treant Hair.
+ugc_catalog (1 PLACEHOLDER row) - curated asset list; asset_id='PLACEHOLDER' is not real, delete when real IDs added.
+  NOTE: battle gold payout per level for rental pricing not yet verified from RewardService - Dev to confirm.

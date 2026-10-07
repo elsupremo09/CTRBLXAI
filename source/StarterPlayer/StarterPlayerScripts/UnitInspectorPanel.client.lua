@@ -1372,7 +1372,7 @@ end)
 -- Expose a global so BattleVisualClient can trigger inspection
 _G.CTRBLXAI_OpenInspectorPanel = function(unitId, tileUnitIds)
 	if unitId then
-		if type(tileUnitIds) == "table" and #tileUnitIds > 0 then
+		if type(tileUnitIds) == "table" and #tileUnitIds > 0 and table.find(tileUnitIds, unitId) then
 			tileCycleIds = tileUnitIds
 		else
 			tileCycleIds = { unitId }

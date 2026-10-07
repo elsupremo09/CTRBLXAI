@@ -1236,8 +1236,8 @@ function TargetingService.GetInteractCandidates(actor, allUnits, state)
 	-- Interact reach: native 1 tile. HD-002 Surveyor Visor adds +2 (hook,
 	-- nil-safe → 0 until headgear passives are wired).
 	local reach = 1
-	if ArmorPassiveService.GetInteractRangeBonus then
-		reach = reach + (ArmorPassiveService.GetInteractRangeBonus(actor) or 0)
+	if (ArmorPassiveService :: any).GetInteractRangeBonus then
+		reach = reach + ((ArmorPassiveService :: any).GetInteractRangeBonus(actor) or 0)
 	end
 	-- Perks & Flaws (Phase 2b): Long/Short Reach adjust interact range.
 	reach = reach + TraitEffectService.GetInteractRangeModifier(actor)
@@ -1246,8 +1246,8 @@ function TargetingService.GetInteractCandidates(actor, allUnits, state)
 	-- Recruit HP threshold: native 0.05 of max HP. HD-005 Recruiter's Circlet
 	-- raises it to 0.08 (hook, nil-safe → native until wired).
 	local recruitThreshold = 0.05
-	if ArmorPassiveService.GetRecruitThreshold then
-		recruitThreshold = ArmorPassiveService.GetRecruitThreshold(actor) or 0.05
+	if (ArmorPassiveService :: any).GetRecruitThreshold then
+		recruitThreshold = (ArmorPassiveService :: any).GetRecruitThreshold(actor) or 0.05
 	end
 
 	local actorElev = getEffectiveElevation(actor)
