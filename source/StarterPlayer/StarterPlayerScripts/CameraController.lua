@@ -335,6 +335,58 @@ function CameraController.RestoreZoom()
 	applyCFrame(false)
 end
 
+--------------------------------------------------
+-- SCRIPTED VIEW (AI turns): lock a fixed isometric distance for the whole AI
+-- turn, then restore EXACTLY the zoom + view the player last chose. Fixes the
+-- bug where per-action SaveZoom/RestoreZoom captured the framing distance and
+-- ratcheted closer when the player zoomed mid-AI-turn.
+--------------------------------------------------
+local _scriptedView = nil  -- { distance, yaw, viewMode } captured at Begin, or nil
+local SCRIPTED_ISO_DISTANCE = VIEW_PROFILES.Isometric.zoomDefault  -- fixed AI-turn zoom
+
+function CameraController.BeginScriptedView()
+	if not isActive then return end
+	-- Capture once. Re-entrant calls (multiple AI actions in one turn) must NOT
+	-- overwrite the player's real saved state with a mid-scripted value.
+	if _scriptedView then return end
+	_scriptedView = { distance = distance, yaw = yaw, viewMode = currentViewMode }
+	-- Force fixed isometric for the scripted sequence.
+	if currentViewMode ~= "Isometric" then
+		CameraController.SetViewMode("Isometric")
+	end
+	distance = math.clamp(SCRIPTED_ISO_DISTANCE, ZOOM_MIN, ZOOM_MAX)
+	applyCFrame(false)
+end
+
+function CameraController.IsScriptedView()
+	return _scriptedView ~= nil
+end
+
+function CameraController.EndScriptedView()
+	if not _scriptedView then return end
+	local sv = _scriptedView
+	_scriptedView = nil
+	if not isActive then return end
+	-- Restore the player's last chosen view mode + zoom + yaw.
+	if sv.viewMode and sv.viewMode ~= currentViewMode then
+		CameraController.SetViewMode(sv.viewMode)
+	end
+	distance = math.clamp(sv.distance, ZOOM_MIN, ZOOM_MAX)
+	yaw = sv.yaw
+	applyCFrame(false)
+end
+
+-- During a scripted (AI) view, focus a unit at the LOCKED distance (no zoom
+-- change). Used in place of the ratcheting two-target framing.
+function CameraController.ScriptedFocus(worldPos)
+	if not isActive or not _scriptedView then return end
+	if not isValidVector(worldPos) then return end
+	local fy = CameraController.TracksFocusY() and worldPos.Y or 0
+	focus = clampFocus(Vector3.new(worldPos.X, fy, worldPos.Z))
+	distance = math.clamp(SCRIPTED_ISO_DISTANCE, ZOOM_MIN, ZOOM_MAX)
+	applyCFrame(false)
+end
+
 function CameraController.ResetTacticalView(focusPos)
 	distance = ZOOM_DEFAULT
 	yaw = 0
@@ -490,6 +542,7 @@ function CameraController.EnterBattle(focusPos)
 	if inBattle then return end
 	inBattle = true
 	camera = workspace.CurrentCamera
+	_scriptedView = nil  -- fresh battle starts with no scripted view held
 
 	-- Store native state
 	storedCameraType = camera.CameraType
@@ -531,6 +584,7 @@ function CameraController.ExitBattle()
 	if not inBattle then return end
 	inBattle = false
 	isActive = false
+	_scriptedView = nil  -- never let an AI-turn scripted view leak past battle end
 
 	-- Restore camera
 	camera.CameraType = storedCameraType or Enum.CameraType.Custom

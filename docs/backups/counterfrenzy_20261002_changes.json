@@ -1,0 +1,96 @@
+{
+ "session": "Counter Stance / Riposte / Frenzy canon sync (Designer)",
+ "date": "2026-10-02T17:10:57",
+ "source_handoff": "docs_handoff\\DOC_HANDOFF_2026-10-01_db-sync.md",
+ "backups": [
+  "CTRBLXAI_pre_counterfrenzy_20261002_170942.db",
+  "CTRBLXAI_Game_Rules_pre_counterfrenzy_20261002_170942.xlsx",
+  "INDEX_pre_counterfrenzy_20261002_170942.txt"
+ ],
+ "xlsx_regenerated": {
+  "CTRBLXAI_Game_Rules.xlsx": [
+   "04 Elements Statuses (row 31 Frenzy)",
+   "05b Skill Catalog (rows DOC-DUELIST-01, SKL-COUNTER-STANCE, SKL-BATTLE-FURY)",
+   "18 Open Decisions (rows 73-74 appended)"
+  ]
+ },
+ "changes": [
+  {
+   "table": "elements_statuses",
+   "key": "id=72",
+   "before": {
+    "effect": "Affects Basic Attack tempo only. Does not modify Skill Card RT Cost, MP Cost, Channel Time, or Activation Time unless an explicit Skill or effect says otherwise."
+   },
+   "after": {
+    "effect": "Basic Attack tempo only: halves the BASE-RT component of Basic Attack RT. Under Frenzy: Basic Attack RT = round(round(Modified Base RT x 0.10) x 0.50) + Effective Weapon WT. Effective Weapon WT is EXEMPT (never reduced), so the felt speed-up scales with how light the weapon is: e.g. Modified Base RT 400 -> base component 40 becomes 20; with Effective Weapon WT 10 a Basic Attack goes 50 -> 30 RT (-40%); with WT 60 it goes 100 -> 80 RT (-20%). Haste/Slow/armor WT act first (they change Modified Base RT); Frozen x2 applies to the final total. Also lowers the RT cost of Riposte Stance / Counter Stance counters (each counter costs one Basic Attack RT). Does not modify Skill Card RT Cost, MP Cost, Channel Time, or Activation Time unless an explicit Skill or effect says otherwise. Distinct from Haste (Base RT x0.90 on all Base-RT-derived costs). Magnitude 0.50 = developer balance decision 2026-09-26 (code: GameConstants.STATUSES.Frenzy.basicAttackRtMult), recorded in canon 2026-10-02 as the CURRENT decision; user balance confirmation pending (open_decisions)."
+   }
+  },
+  {
+   "table": "skills",
+   "key": "Skill_ID=DOC-DUELIST-01",
+   "before": {
+    "Power_Formula": "For 1000 CT, up to two eligible Ripostes. Each deals 85% Basic Attack Power and 50% main-hand Weapon RT Delay; no AP or action RT.",
+    "Reapplication_Stacking": "Maximum two Ripostes",
+    "Targeting_Range": "Self; trigger attacker must remain in legal reach",
+    "Effects": "Reaction; only AP-consuming actively targeted eligible melee attack/Skill; no passive follow-ups or reaction recursion",
+    "Special_Rules": "Reaction; only AP-consuming actively targeted eligible melee attack/Skill; no passive follow-ups or reaction recursion",
+    "Meta": "Source: Doctrine-only working profile; Ref: Doctrine choices"
+   },
+   "after": {
+    "Power_Formula": "For 1000 CT, counter EVERY eligible hit (no count limit). Each Riposte = the caster's Basic Attack at 85% Basic Attack Power (equipped main weapon and its pattern) and applies 50% main-hand Weapon RT Delay to the attacker. Balancer (replaces the old count cap): each counter ADDS the caster's own full Basic Attack RT (round(Modified Base RT x 0.10) + Effective Weapon WT, after Frenzy/Frozen) to its remaining RT, pushing its next turn later. No AP or action RT is spent.",
+    "Reapplication_Stacking": "No count limit - reacts to every eligible hit while active; cost is paid in RT per counter (see Power Formula). Uses the shared CounterStance status with Counter Stance (SKL-COUNTER-STANCE): does not stack with itself or Counter Stance; recasting refreshes the 1000 CT window and the most recent cast's counter power applies.",
+    "Targeting_Range": "Self; trigger attacker must be inside the caster's EQUIPPED-WEAPON Basic Attack reach at trigger time - same legality as a normal Basic Attack (weapon min/max range incl. ranged min-range, extended reach e.g. spear reach 2, LoS, elevation). Not melee-only.",
+    "Effects": "Reaction; triggers when the caster is the DIRECT (primary) target of an enemy AP-consuming Basic Attack or single-target damaging Skill and the attacker is inside the caster's weapon reach. The counter resolves as the caster's Basic Attack with the full weapon pattern (Cleave/Adjacent/Line2/Impact Splash secondary hits at their normal splash rates). FRIENDLY FIRE APPLIES: pattern hits land on every unit in the area, including allies. AOE/splash secondary hits, passive follow-ups, indirect damage and other reactions do NOT trigger a counter.",
+    "Special_Rules": "No reaction recursion (TRG-005): a Riposte never triggers another Riposte/Counter. Risk is RT, not a count: every Riposte delays the caster's next turn by one Basic Attack RT, so heavy weapons pay more per counter and a swarmed Duelist can be pushed far back on the timeline. Duelist-exclusive premium version of Counter Stance (85% power, 50% Weapon RT Delay). Canon rev 2026-10-02: synced to developer rework 2026-09-28 (replaces 'max two Ripostes, melee-only'). Source: DOC_HANDOFF_2026-10-01_db-sync Item 2.",
+    "Meta": "Source: Doctrine-only working profile; Ref: Doctrine choices; Rev 2026-10-02 counter-rework sync"
+   }
+  },
+  {
+   "table": "skills",
+   "key": "Skill_ID=SKL-COUNTER-STANCE",
+   "before": {
+    "Skill_Properties": "Melee Only, Potency: None, Passives: None",
+    "Power_Formula": "Counter attack: Weapon Attack Power × 0.60 × Skill Potency Multiplier",
+    "Targeting_Range": "Self.",
+    "Reapplication_Stacking": "Refresh; does not stack with itself or Riposte Stance",
+    "Effects": "Apply Counter Stance buff (1000 CT). While active: when caster is hit by a direct melee attack or melee skill from a unit within legal reach, caster automatically counterattacks for 0.60× weapon damage. Counter consumes the buff (one counter per application). First general-pool reaction-eligible skill.",
+    "Special_Rules": "Stance skill — spend AP now, react later. Single-use counter (consumed on trigger). Does not stack with Riposte Stance (Duelist doctrine version). Only triggers on direct melee attacks from within reach — AOE, ranged, and indirect damage do not trigger. Counter does not trigger counters (no recursion). Low RT cost (50+0.15L) makes it cheap to maintain.",
+    "Meta": null
+   },
+   "after": {
+    "Skill_Properties": "Potency: None, Passives: None",
+    "Power_Formula": "Counter attack = the caster's Basic Attack at 60% Basic Attack Power (equipped main weapon and its pattern). Counters EVERY eligible hit for 1000 CT (no count limit). Balancer (replaces the old count cap): each counter ADDS the caster's own full Basic Attack RT (round(Modified Base RT x 0.10) + Effective Weapon WT, after Frenzy/Frozen) to its remaining RT, pushing its next turn later. No AP or action RT is spent.",
+    "Targeting_Range": "Self; trigger attacker must be inside the caster's EQUIPPED-WEAPON Basic Attack reach at trigger time - same legality as a normal Basic Attack (weapon min/max range incl. ranged min-range, extended reach e.g. spear reach 2, LoS, elevation). Not melee-only.",
+    "Reapplication_Stacking": "No count limit; cost is paid in RT per counter. Refresh; uses the shared CounterStance status with Riposte Stance - does not stack with itself or Riposte Stance (recasting refreshes the 1000 CT window; the most recent cast's counter power applies).",
+    "Effects": "Apply Counter Stance buff (1000 CT). While active the caster triggers when the caster is the DIRECT (primary) target of an enemy AP-consuming Basic Attack or single-target damaging Skill and the attacker is inside the caster's weapon reach. The counter resolves as the caster's Basic Attack with the full weapon pattern (Cleave/Adjacent/Line2/Impact Splash secondary hits at their normal splash rates). FRIENDLY FIRE APPLIES: pattern hits land on every unit in the area, including allies. AOE/splash secondary hits, passive follow-ups, indirect damage and other reactions do NOT trigger a counter. Counter power 0.60x; attacker also takes round(Weapon RT Delay x 0.30). Each counter adds the caster's Basic Attack RT to its next turn. First general-pool reaction-eligible skill.",
+    "Special_Rules": "Stance skill - spend AP now, react later. Same reaction model as Riposte Stance (DOC-DUELIST-01); it is the general-pool BUDGET version. Kept distinct by: power 60% vs 85%; Weapon RT Delay on attacker 30% vs 50%; cheaper to cast (RT 50+0.15L, MP 3+0.08(L-1) vs RT 60+0.25L, MP 5+0.12(L-1)); available to any unit vs Duelist-only. No further mechanical difference by design (Designer decision 2026-10-02). Counter does not trigger counters (no recursion, TRG-005). Canon rev 2026-10-02: synced to developer rework 2026-09-28 (replaces 'single-use, melee-only'). Source: DOC_HANDOFF_2026-10-01_db-sync Item 3.",
+    "Meta": "Rev 2026-10-02 counter-rework sync (converged with Riposte Stance model)"
+   }
+  },
+  {
+   "table": "skills",
+   "key": "Skill_ID=SKL-BATTLE-FURY",
+   "before": {
+    "Effects": "Apply Frenzy buff to caster (faster Basic Attack tempo, 3 turns). Apply Rush buff to caster (Movement Range +3, DEX -20%, 4 turns). First skill applying Frenzy and Rush."
+   },
+   "after": {
+    "Effects": "Apply Frenzy buff to caster (Basic Attack base-RT component -50%, weapon WT unaffected; 3 turns). Apply Rush buff to caster (Movement Range +3, DEX -20%, 4 turns). First skill applying Frenzy and Rush."
+   }
+  },
+  {
+   "table": "open_decisions",
+   "key": "rowid=73",
+   "inserted": "Frenzy magnitude + Riposte/Counter Stance rework - canon sync (2026-10-02)"
+  },
+  {
+   "table": "open_decisions",
+   "key": "rowid=74",
+   "inserted": "Counter Stance / Riposte / Frenzy - Dev gaps vs canon (2026-10-02)"
+  }
+ ],
+ "not_changed": "Ranged-knockback x0.5 - code matches DB (per hand-off).",
+ "flags": [
+  "Frenzy 0.50 needs user balance confirmation",
+  "Dev gaps a-f in open_decisions row 74"
+ ]
+}

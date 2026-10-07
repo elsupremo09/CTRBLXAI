@@ -38,6 +38,14 @@ local _thlOk, TileHL = pcall(require,
 		:WaitForChild("Shared", 10):WaitForChild("TileHighlightManager", 10)
 )
 if not _thlOk then warn("[DeploymentUI] TileHighlightManager failed: " .. tostring(TileHL)); TileHL = nil end
+
+-- Tier star images (match the in-battle HP-bar star): gold = Elite, silver =
+-- Veteran, nothing for Grunts. Shown on the deployment enemy billboard so the
+-- player can read enemy tiers while sizing up the fight.
+local TIER_STAR_IMAGE = {
+	Elite   = "rbxassetid://134634995983546",  -- gold star
+	Veteran = "rbxassetid://126540666012445",  -- silver star
+}
 local CameraController = require(
 	player:WaitForChild("PlayerScripts")
 		:WaitForChild("CameraController", 10)
@@ -144,13 +152,32 @@ local function createEnemyToken(enemy)
 	part.Parent     = deployFolder
 
 	local bb = Instance.new("BillboardGui")
-	bb.Size           = UDim2.new(0, 60, 0, 14)
+	bb.Size           = UDim2.new(0, 68, 0, 14)
 	bb.StudsOffset    = Vector3.new(0, 1.5, 0)
 	bb.AlwaysOnTop    = true
 	bb.Parent         = part
 
+	-- Tier star (gold Elite / silver Veteran) to the LEFT of the name. Hidden for
+	-- Grunts. Same image assets as the in-battle HP-bar star for consistency.
+	local tierImg = enemy.enemyType and TIER_STAR_IMAGE[enemy.enemyType] or nil
+	local nameOffsetX = 0
+	if tierImg then
+		local star = Instance.new("ImageLabel")
+		star.Name = "TierStar"
+		star.BackgroundTransparency = 1
+		star.AnchorPoint = Vector2.new(0, 0.5)
+		star.Position = UDim2.new(0, 0, 0.5, 0)
+		star.Size = UDim2.fromOffset(12, 12)
+		star.ScaleType = Enum.ScaleType.Fit
+		star.Image = tierImg
+		star.ZIndex = 3
+		star.Parent = bb
+		nameOffsetX = 14  -- shift the name right so it doesn't overlap the star
+	end
+
 	local lbl = Instance.new("TextLabel")
-	lbl.Size                 = UDim2.fromScale(1, 1)
+	lbl.Size                 = UDim2.new(1, -nameOffsetX, 1, 0)
+	lbl.Position             = UDim2.new(0, nameOffsetX, 0, 0)
 	lbl.BackgroundTransparency = 1
 	lbl.TextColor3           = Theme.Colors.Enemy
 	lbl.TextSize             = Theme.Text.Badge()
@@ -271,7 +298,7 @@ end
 --------------------------------------------------
 -- ROSTER UI
 --------------------------------------------------
-local function createRosterUI(playerUnits)
+local function createRosterUI(playerUnits, awayUnits)
 	screenGui = Instance.new("ScreenGui")
 	screenGui.Name               = "DeploymentUI"
 	screenGui.ResetOnSpawn       = false
@@ -293,7 +320,10 @@ local function createRosterUI(playerUnits)
 	if vw <= 0 then vw = 1366 end
 	if vh <= 0 then vh = 768 end
 
-	local unitCount = math.min(#playerUnits, 8)
+	-- Slice 6 Guild menu: units away on dispatch / benched are shown greyed out
+	-- after the placeable units (display only; never added to rosterEntries).
+	awayUnits = awayUnits or {}
+	local unitCount = math.max(1, math.min(#playerUnits + #awayUnits, 8))
 	local cellSize = math.clamp(math.floor(vh * 0.13), 40, 64)
 	local cellGap  = math.clamp(math.floor(vw * 0.004), 3, 6)
 	local stripPad = 8
@@ -469,6 +499,28 @@ local function createRosterUI(playerUnits)
 		table.insert(rosterEntries, entry)
 	end
 
+	-- Greyed, non-interactive cells for units that cannot deploy this battle.
+	for j, awayInfo in ipairs(awayUnits) do
+		if #playerUnits + j > 8 then break end
+		local awayCell = Instance.new("Frame")
+		awayCell.Name = "Away_" .. tostring(awayInfo.id)
+		awayCell.Size = UDim2.new(0, cellSize, 0, cellSize)
+		awayCell.LayoutOrder = #playerUnits + j
+		awayCell.BackgroundColor3 = Theme.Colors.Defeated
+		awayCell.BackgroundTransparency = 0.3
+		awayCell.BorderSizePixel = 0
+		Instance.new("UICorner", awayCell).CornerRadius = Theme.CornerRadius.sm
+		local awayLabel = Instance.new("TextLabel")
+		awayLabel.Size = UDim2.fromScale(1, 1)
+		awayLabel.BackgroundTransparency = 1
+		awayLabel.Text = string.upper(string.sub(tostring(awayInfo.name), 1, 2)) .. "\n" .. tostring(awayInfo.reason or "AWAY")
+		awayLabel.TextColor3 = Theme.Colors.TextDisabled
+		awayLabel.TextSize = Theme.Text.Badge()
+		awayLabel.Font = Theme.Font.PrimaryBold
+		awayLabel.Parent = awayCell
+		awayCell.Parent = strip
+	end
+
 	-- Auto-select first unit
 	if #rosterEntries > 0 then
 		selectUnit(rosterEntries[1].id)
@@ -634,7 +686,7 @@ BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 	end
 
 	-- Create roster UI
-	createRosterUI(data.playerUnits or {})
+	createRosterUI(data.playerUnits or {}, data.awayUnits or {})
 
 	-- Set camera to view the battlefield
 	-- Focus camera on the PD deployment zone (average of PD anchor positions)

@@ -26,7 +26,77 @@ local RaceData = require(
 		:WaitForChild("RaceData")
 )
 
+-- Perks & Flaws Phase 2: DoT-received trait multipliers (Toxin Filter / Festering,
+-- Iron Stomach / Weak Stomach, Fire-Hardened / Flammable, ...). TraitEffectService
+-- depends only on ReplicatedStorage content modules, so there is no require cycle.
+local TraitEffectService = require(script.Parent.TraitEffectService)
+
 local StatusService = {}
+
+-- Weather Burn-suppression (user ruling 2026-10-04: Rain + Snow Storm prevent Burn
+-- effects). WeatherService pushes this flag on each re-roll so IsImmune blocks Burn
+-- APPLICATION while the active weather suppresses it — without StatusService
+-- requiring WeatherService (one-way, no cycle).
+local _weatherBurnSuppressed = false
+-- Ward Totem aura (SKL-SUMMON-WARD-TOTEM): allied units within radius 2 of a living
+-- Totem multiply their Debuff Resistance Multiplier by 0.80. Same-caster max 1 totem;
+-- totems from different casters each apply independently.
+local _auraUnits = nil
+function StatusService.SetAuraUnitsProvider(fn) _auraUnits = fn end
+
+--------------------------------------------------
+-- STATUS CONFLICT RULES (2026-10-07, user ruling)
+-- Enforced inside ApplyStatus so EVERY source (attacks, skills, weather, items,
+-- Dev grant) obeys them. Elemental DAMAGE modifiers stay in CombatResolver.
+--   cancel : applying X while Y is active removes Y and X is NOT applied
+--            (Haste <-> Slow cancel each other out).
+--   removes: applying X removes the listed statuses, then X is applied
+--            (DB elements_statuses 57/73/74: Water removes Burn; Fire removes
+--            Wet and Frozen; Ice converts Wet -> Frozen).
+--------------------------------------------------
+local STATUS_CANCELS = table.freeze({
+	Haste = "Slow",
+	Slow  = "Haste",
+})
+
+local STATUS_REMOVES = table.freeze({
+	Wet    = table.freeze({ "Burn" }),
+	Burn   = table.freeze({ "Wet", "Frozen" }),
+	Frozen = table.freeze({ "Wet" }),
+})
+
+-- Injected removal notifier (DI, mirrors SetAuraUnitsProvider): StatusService
+-- cannot require BattleVisualBroadcaster (it requires us). Main wires this so the
+-- client drops the status pill when a conflict rule removes a status.
+local _onConflictRemoved = nil
+function StatusService.SetConflictRemovedHandler(fn) _onConflictRemoved = fn end
+
+local function removeByConflict(unit, removedId, causeId)
+	if StatusService.RemoveStatus(unit, removedId) then
+		print(`[StatusService] {removedId} on {unit.name} removed by {causeId} (conflict rule)`)
+		if _onConflictRemoved then _onConflictRemoved(unit, removedId) end
+	end
+end
+
+local function wardTotemMult(unit)
+	local list = _auraUnits and _auraUnits() or nil
+	if type(list) ~= "table" then return 1.0 end
+	local m = 1.0
+	for _, u in ipairs(list) do
+		if u ~= unit and u.isAlive and u.isSummon and u.auraSpec and u.side == unit.side then
+			local r = u.auraSpec.radius or 2
+			if math.max(math.abs(u.tileX - unit.tileX), math.abs(u.tileY - unit.tileY)) <= r then
+				m = m * (u.auraSpec.debuffResistMult or 1.0)
+			end
+		end
+	end
+	return m
+end
+StatusService.GetWardTotemDebuffMult = wardTotemMult
+
+function StatusService.SetWeatherBurnSuppressed(v)
+	_weatherBurnSuppressed = v and true or false
+end
 
 --------------------------------------------------
 -- CHANNEL DISRUPTOR CHECK
@@ -71,14 +141,29 @@ local TAG_IMMUNITIES = {
 -- Helper: get race tags for a unit via RaceData
 local function getUnitTags(unit)
 	if not unit.raceId then return {} end
-	local raceEntry = RaceData[unit.raceId]
+	local raceEntry = RaceData.GetRace(unit.raceId)
 	if raceEntry and raceEntry.tags then
 		return raceEntry.tags
 	end
 	return {}
 end
 
+-- DRAGONKIN — Dragonscale (races row 'Dragonkin', 2026-10-02): Burn DAMAGE
+-- immunity -- NOT application immunity (Burn still applies and stays active so the
+-- +15% stat bonus sees it). Race detection via RaceData.GetRace (nil-safe). Inline
+-- here because StatusService cannot require RacePassiveService (circular dep).
+local function isBurnDamageImmune(unit)
+	if not unit or not unit.raceId then return false end
+	if not RaceData.GetRace(unit.raceId) then return false end
+	return unit.raceId == "RACE-DRAGONKIN"
+end
+
 function StatusService.IsImmune(unit, statusId)
+	-- 0. Weather Burn-suppression (Rain / Snow Storm): block Burn APPLICATION.
+	if statusId == "Burn" and _weatherBurnSuppressed then
+		return true, "weather suppresses Burn"
+	end
+
 	-- 1. Race tag immunities
 	local tags = getUnitTags(unit)
 	for _, tag in ipairs(tags) do
@@ -122,7 +207,10 @@ end
 -- Caller should check third return to broadcast StatusImmune if non-nil.
 --------------------------------------------------
 
-function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt)
+-- durationCtOverride (optional, 2026-10-07): a skill-authored CT duration that
+-- replaces the status default for THIS application only (e.g. Veil of Weakness
+-- Weakened 1500 CT vs default 2000). nil = status default (all other callers).
+function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt, durationCtOverride)
 	local def = GameConstants.STATUSES[statusId]
 	if not def then
 		warn("[StatusService] Unknown status: " .. tostring(statusId))
@@ -140,11 +228,34 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 
 	local disruptsChannel = CHANNEL_DISRUPTORS[statusId] == true
 
+	-- Conflict rules (see STATUS_CONFLICT RULES above). Runs after immunity so an
+	-- immune unit keeps its existing statuses untouched.
+	local cancelId = STATUS_CANCELS[statusId]
+	if cancelId and StatusService.HasStatus(unit, cancelId) then
+		removeByConflict(unit, cancelId, statusId)
+		print(`[StatusService] {statusId} cancelled {cancelId} on {unit.name}; {statusId} not applied`)
+		return false, disruptsChannel
+	end
+	local removesList = STATUS_REMOVES[statusId]
+	if removesList then
+		for _, removedId in removesList do
+			if StatusService.HasStatus(unit, removedId) then
+				removeByConflict(unit, removedId, statusId)
+			end
+		end
+	end
+
 	-- Check if unit already has this status.
 	for _, inst in ipairs(unit.statusInstances) do
 		if inst.id == statusId then
 			if def.reapply == "refresh" then
 				inst.remainingTurns = def.duration
+				-- CT-based statuses (e.g. CounterStance: durationCt=1000, duration=nil)
+				-- must refresh their CT window too — resetting remainingTurns alone
+				-- left the original CT deadline running on recast.
+				if def.durationCt then
+					inst.remainingCt = durationCtOverride or def.durationCt
+				end
 				inst.sourceUnitId   = sourceUnitId
 				print(string.format(
 					"[StatusService] %s on %s REFRESHED (%s)",
@@ -222,7 +333,22 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 
 	-- CT-based duration: set remainingCt instead of remainingTurns
 	if def.durationCt then
-		instance.remainingCt = def.durationCt
+		instance.remainingCt = durationCtOverride or def.durationCt
+	end
+
+	-- Perks & Flaws Phase 3 (TRAIT-033): Iron Will / Susceptible adjust DEBUFF duration
+	-- by -1 / +1 turn (or ∓400 CT for CT-based debuffs). Only affects debuffs (def.kind
+	-- == "Debuff"); never reduces a debuff below 1 turn / 1 CT (Iron Will can't null it).
+	if def.kind == "Debuff" then
+		local durOffset = TraitEffectService.GetDebuffDurationTurnOffset(unit)
+		if durOffset ~= 0 then
+			if instance.remainingTurns then
+				instance.remainingTurns = math.max(1, instance.remainingTurns + durOffset)
+			end
+			if instance.remainingCt then
+				instance.remainingCt = math.max(1, instance.remainingCt + durOffset * 400)
+			end
+		end
 	end
 
 	if statusId == "Burn" and fireDamageDealt then
@@ -272,34 +398,168 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 end
 
 --------------------------------------------------
+-- SHIELD SUBSYSTEM (2026-10-05)
+--
+-- Shields are granted by the six Shield skills (routed via skillDef.isShield in
+-- CombatResolver/CommandService) and tracked as a dedicated "Shield" status
+-- instance so they get a pill, a duration, and the 300-CT decay tick — while the
+-- fast aggregate unit.shield_total (which UnitSchema.ApplyDamage soaks against
+-- directly) is kept 1:1 in sync with the instance's shieldHp.
+--
+-- Design (authored, SkillData / CTRBLXAI.db): one Shield instance per unit.
+-- Recasting "Refresh; does not stack" — a new grant REPLACES the old instance
+-- (fresh shieldHp, fresh duration, decay accumulator reset). Retribution Shell
+-- carries a snapshot retributionDamage so a BREAK can retaliate against the
+-- breaker (resolved by CombatResolver.ApplyOutcome, which knows the attacker).
+--------------------------------------------------
+
+-- Grant / replace a unit's shield. shieldHp and durationCt are authored per skill.
+-- retributionDamage (optional) is the snapshot Physical damage dealt to whoever
+-- breaks the shield (Retribution Shell only; nil for the other five).
+function StatusService.ApplyShield(unit, shieldHp, durationCt, sourceUnitId, retributionDamage)
+	shieldHp = math.max(0, math.round(shieldHp or 0))
+	if shieldHp <= 0 then
+		return false
+	end
+
+	-- Remove any existing Shield instance (same-caster or not: a unit holds ONE
+	-- shield pool; recast replaces it per the authored "does not stack" rule).
+	local existingHp = 0
+	for idx = #unit.statusInstances, 1, -1 do
+		if unit.statusInstances[idx].id == "Shield" then
+			existingHp = existingHp + (unit.statusInstances[idx].shieldHp or 0)
+			table.remove(unit.statusInstances, idx)
+		end
+	end
+
+	local instance = {
+		id              = "Shield",
+		sourceUnitId    = sourceUnitId or "unknown",
+		stacks          = 1,
+		shieldHp        = shieldHp,
+		shieldMax       = shieldHp,
+		remainingCt     = durationCt,
+		decayAccumCt    = 0,
+		retributionDamage = retributionDamage,  -- nil unless Retribution Shell
+	}
+	table.insert(unit.statusInstances, instance)
+
+	-- Resync the aggregate pool: drop the replaced shield, add the new one.
+	unit.shield_total = math.max(0, (unit.shield_total or 0) - existingHp) + shieldHp
+
+	print(string.format(
+		"[StatusService] Shield GRANTED on %s | %d HP | dur %s CT%s",
+		unit.name, shieldHp, tostring(durationCt),
+		retributionDamage and (" | retrib " .. tostring(retributionDamage)) or ""
+	))
+	return true
+end
+
+-- Called by UnitSchema.ApplyDamage (DI) after it soaks `soak` damage into
+-- unit.shield_total. Draws the live Shield instance(s) down by the same amount,
+-- so the pill/duration/retribution bookkeeping stays correct.
+-- Returns: broke (bool — the pool reached 0 on this hit), shieldMaxAtBreak,
+--          retributionDamage (nil unless the broken shield was a Retribution Shell).
+function StatusService.OnShieldAbsorb(unit, soak)
+	soak = soak or 0
+	if soak <= 0 then return false, nil, nil end
+
+	local remaining = soak
+	local shieldMaxAtBreak, retributionDamage
+	local brokeInstance = false
+
+	local idx = 1
+	while idx <= #unit.statusInstances and remaining > 0 do
+		local inst = unit.statusInstances[idx]
+		if inst.id == "Shield" and (inst.shieldHp or 0) > 0 then
+			local drawn = math.min(inst.shieldHp, remaining)
+			inst.shieldHp = inst.shieldHp - drawn
+			remaining = remaining - drawn
+			if inst.shieldHp <= 0 then
+				-- This shield just broke. Capture its break data BEFORE removing it.
+				brokeInstance = true
+				shieldMaxAtBreak = inst.shieldMax or inst.shieldHp
+				retributionDamage = inst.retributionDamage
+				table.remove(unit.statusInstances, idx)
+			else
+				idx = idx + 1
+			end
+		else
+			idx = idx + 1
+		end
+	end
+
+	-- unit.shield_total was already decremented by ApplyDamage; clamp for safety
+	-- and treat "pool now empty" as the break signal (covers the 1:1 case).
+	if (unit.shield_total or 0) <= 0 then
+		unit.shield_total = 0
+		if brokeInstance then
+			return true, shieldMaxAtBreak, retributionDamage
+		end
+		return true, shieldMaxAtBreak, retributionDamage
+	end
+	return false, nil, nil
+end
+
+--------------------------------------------------
 -- PROCESS START OF TURN (DoT damage)
 --
 -- Called at the START of the active unit's turn.
 -- Returns a list of DoT events: { { statusId, damage, sourceUnitId }, ... }
 --------------------------------------------------
 
+-- Debuff Resistance Multiplier used by every debuff-damage formula (2026-10-07).
+-- 1) Base = 1 - VIT / (300 + VIT) (lower = more resistant).
+-- 2) "Debuff Res Down" (Veil of Weakness): resistance -10 percentage points, applied
+--    BEFORE other resistance/boss handling = multiplier +0.10. Does not stack (largest
+--    penalty only). Clamped at 1.0 so resistance never falls below 0%.
+-- 3) Then aura multipliers (Ward Totem x0.80, BUG-019).
+function StatusService.GetDebuffResist(unit)
+	local vit = unit.effectiveStats and unit.effectiveStats.VIT or 10
+	local base = unit.derivedStats and unit.derivedStats.debuffResist or (1 - vit / (300 + vit))
+	local penalty = 0
+	local bonus = 0 -- "Debuff Res Up" (Meditate): largest bonus only, -0.10 on the multiplier
+	for _, inst in ipairs(unit.statusInstances or {}) do
+		local d = GameConstants.STATUSES[inst.id]
+		if d and d.debuffResistPenalty and d.debuffResistPenalty > penalty then
+			penalty = d.debuffResistPenalty
+		end
+		if d and d.debuffResistBonus and d.debuffResistBonus > bonus then
+			bonus = d.debuffResistBonus
+		end
+	end
+	-- Net of Res Down and Res Up, clamped to [0, 1] (resistance between 0% and 100%).
+	return math.clamp(base + penalty - bonus, 0, 1.0) * wardTotemMult(unit)
+end
+
 function StatusService.ProcessStartOfTurn(unit)
 	local dotEvents = {}
-	-- Debuff Resistance: VIT reduces incoming DoT damage
-	-- Rule: Debuff Resistance Multiplier = 1 - VIT / (300 + VIT)
-	local debuffResist = unit.derivedStats and unit.derivedStats.debuffResist
-		or (1 - (unit.effectiveStats and unit.effectiveStats.VIT or 10) / (300 + (unit.effectiveStats and unit.effectiveStats.VIT or 10)))
+	-- Debuff Resistance (see GetDebuffResist): VIT, Debuff Res Down, Ward Totem.
+	local debuffResist = StatusService.GetDebuffResist(unit)
 
 	for _, inst in ipairs(unit.statusInstances) do
 		local def = GameConstants.STATUSES[inst.id]
 		if not def or not def.dotType then
 			-- skip
 		elseif def.dotType == "Poison" then
-			local damage = math.max(1, math.round(unit.maxHp * def.dotFraction * debuffResist))
+			-- TRAIT-DOT-POISON: x unit-trait DoT-received multiplier (1.0 when no trait).
+			local damage = math.max(1, math.round(unit.maxHp * def.dotFraction * debuffResist
+				* TraitEffectService.GetDotDamageReceivedModifier(unit, inst.id)))
 			table.insert(dotEvents, {
 				statusId     = "Poison",
 				damage       = damage,
 				sourceUnitId = inst.sourceUnitId,
 			})
+		elseif def.dotType == "Burn" and isBurnDamageImmune(unit) then
+			-- DRAGONKIN — Dragonscale: Burn tick nullified (0 damage). The instance is
+			-- KEPT (it still ticks down and still counts as active for the stat bonus).
+			print(string.format("[StatusService] Dragonscale: Burn tick on %s nullified (0 damage)", unit.name))
 		elseif def.dotType == "Burn" then
 			local storedBurn = inst.storedBurn or 0
 			if storedBurn > 0 then
-				local damage = math.max(1, math.round(storedBurn * debuffResist))
+				-- TRAIT-DOT-BURN: x unit-trait DoT-received multiplier (1.0 when no trait).
+				local damage = math.max(1, math.round(storedBurn * debuffResist
+					* TraitEffectService.GetDotDamageReceivedModifier(unit, "Burn")))
 				table.insert(dotEvents, {
 					statusId     = "Burn",
 					damage       = damage,
@@ -352,6 +612,12 @@ end
 function StatusService.RemoveStatus(unit, statusId)
 	for i, inst in ipairs(unit.statusInstances) do
 		if inst.id == statusId then
+			-- Weather hard-lock (Snow Storm undispellable Frozen, user ruling
+			-- 2026-10-04): a hardLock instance cannot be removed by ANY path
+			-- (including Fire thaw) until the weather clears it on re-roll.
+			if inst.hardLock then
+				return false
+			end
 			table.remove(unit.statusInstances, i)
 			print(string.format(
 				"[StatusService] %s REMOVED from %s",
@@ -381,7 +647,13 @@ end
 --------------------------------------------------
 
 function StatusService.GetModifiedBaseRt(unit)
-	local baseRt = GameConstants.BASE_RT_STANDARD
+	-- DB weapons_equipment id 7: Modified Base RT = Base RT + Effective Armor WT.
+	-- Armor weight belongs HERE (base turn time), not in the per-action WT term.
+	-- Base RT = the unit's OWN base (enemy kind sets initiativeBaseRt: Grunt 400 /
+	-- Veteran 380 / Elite 350; players have no field → default 400) PLUS gear WT.
+	-- Permanent modifiers (traits) and Haste/Slow multiply this below. All per-turn
+	-- RT costs and the one-time starting RT derive from this value.
+	local baseRt = (unit.initiativeBaseRt or GameConstants.BASE_RT_STANDARD) + GameConstants.CalcEffectiveArmorWt(unit)
 	local multiplier = 1.0
 
 	for _, inst in ipairs(unit.statusInstances) do
@@ -390,6 +662,11 @@ function StatusService.GetModifiedBaseRt(unit)
 			multiplier = multiplier * def.rtMultiplier
 		end
 	end
+
+	-- Perks & Flaws (Phase 2b): Quick/Sluggish/Timeline Sovereign/Temporal Drag adjust
+	-- base RT. Folded at this chokepoint so it propagates to every RT term derived from
+	-- Modified Base RT (move, basic attack, skill, guard). Starting RT is a separate term.
+	multiplier = multiplier * TraitEffectService.GetBaseRtMultiplier(unit)
 
 	return math.round(baseRt * multiplier)
 end
@@ -427,6 +704,11 @@ function StatusService.GetMovementRtMultiplier(unit)
 				if tag == "Mechanical" then isMechanical = true; break end
 			end
 			mult = mult * (isMechanical and 1.50 or 1.25)
+		end
+		-- Data-driven movement RT buffs (e.g. Coordinated Advance x0.80, 2026-10-07).
+		local mdef = GameConstants.STATUSES[inst.id]
+		if mdef and mdef.moveRtMult then
+			mult = mult * mdef.moveRtMult
 		end
 	end
 	return mult
@@ -489,9 +771,39 @@ function StatusService.ProcessCtTick(unit, ctElapsed)
 			end
 		end
 
+		-- Shield DECAY (runs for ANY shield instance, with or without a duration):
+		-- lose shieldDecayFraction (10%) of the CURRENT shield pool every
+		-- shieldDecayIntervalCt (300) CT. Mirrors the Regeneration accumulator so a
+		-- large ctElapsed that crosses several boundaries decays once per boundary.
+		-- Keeps the fast aggregate unit.shield_total in sync with this instance's
+		-- shieldHp (1:1 — one Shield instance per unit). The min-1 chip guarantees a
+		-- no-duration shield still fully drains instead of shrinking asymptotically.
+		-- (DB TRG-015 / shield decay rule; cadence matches all other 300-CT ticks.)
+		if def and def.shieldDecayFraction and def.shieldDecayIntervalCt and inst.shieldHp then
+			inst.decayAccumCt = (inst.decayAccumCt or 0) + ctElapsed
+			while inst.decayAccumCt >= def.shieldDecayIntervalCt and inst.shieldHp > 0 do
+				inst.decayAccumCt = inst.decayAccumCt - def.shieldDecayIntervalCt
+				local loss = math.round(inst.shieldHp * def.shieldDecayFraction)
+				if loss < 1 then loss = 1 end  -- always chip at least 1 so it drains
+				if loss > inst.shieldHp then loss = inst.shieldHp end
+				inst.shieldHp = inst.shieldHp - loss
+				unit.shield_total = math.max(0, (unit.shield_total or 0) - loss)
+				if loss > 0 then
+					table.insert(events, { kind = "Shield", statusId = inst.id, amount = -loss, reason = "decay" })
+				end
+			end
+		end
+
 		if inst.remainingCt then
 			inst.remainingCt = inst.remainingCt - ctElapsed
 			if inst.remainingCt <= 0 then
+				-- Shield expiry: a shield that runs out its duration simply vanishes
+				-- (no Retribution — that only triggers on a BREAK, per the recipe).
+				-- Drop its remaining capacity from the aggregate pool.
+				if inst.shieldHp then
+					unit.shield_total = math.max(0, (unit.shield_total or 0) - inst.shieldHp)
+					table.insert(events, { kind = "Shield", statusId = inst.id, amount = -(inst.shieldHp), reason = "expire" })
+				end
 				table.insert(expired, inst.id)
 				print(string.format("[StatusService] %s EXPIRED (CT) on %s", inst.id, unit.name))
 				table.remove(unit.statusInstances, i)
@@ -543,6 +855,20 @@ function StatusService.GetStatusStatModifiers(unit)
 			for stat in pairs(mods) do mods[stat] = mods[stat] + bonus end
 			hasAny = true
 		end
+
+		-- Data-driven stat buffs (Slice 5 map objects): any status def carrying
+		-- statPctMod folds in here. Covers Banner Blessing (+15% all) and
+		-- Fortune Boon (+50% LUK) without bespoke branches. The hardcoded cases
+		-- above are left intact to avoid changing their behavior.
+		local def = GameConstants.STATUSES[inst.id]
+		if def and def.statPctMod then
+			for stat, pct in pairs(def.statPctMod) do
+				if mods[stat] ~= nil then
+					mods[stat] = mods[stat] + pct
+					hasAny = true
+				end
+			end
+		end
 	end
 
 	return hasAny and mods or nil
@@ -559,8 +885,87 @@ function StatusService.GetMovementRangeModifier(unit)
 		if inst.id == "Rush" then
 			offset = offset + 3
 		end
+		-- Data-driven move buffs (Slice 5): any status def with moveOffset (Rally +1).
+		local def = GameConstants.STATUSES[inst.id]
+		if def and def.moveOffset then
+			offset = offset + def.moveOffset
+		end
 	end
 	return offset
+end
+
+-- Jump modifier from status buffs (Slice 5): sums jumpOffset across active
+-- statuses (Rally +1). Read by the jump calculation in TargetingService.
+function StatusService.GetJumpModifier(unit)
+	local offset = 0
+	for _, inst in ipairs(unit.statusInstances) do
+		local def = GameConstants.STATUSES[inst.id]
+		if def and def.jumpOffset then
+			offset = offset + def.jumpOffset
+		end
+	end
+	return offset
+end
+
+-- Outgoing-damage multiplier from status buffs (Slice 5). isSpell selects
+-- spellDamageMult (Spell Focus) vs physDamageMult (Battle Rage); attackMult
+-- (Rune Ward) applies to both. Returns a multiplier (1.0 = no change).
+function StatusService.GetDamageDealtMultiplier(unit, isSpell)
+	local mult = 1.0
+	for _, inst in ipairs(unit.statusInstances) do
+		local def = GameConstants.STATUSES[inst.id]
+		if def then
+			if isSpell and def.spellDamageMult then
+				mult = mult * def.spellDamageMult
+			elseif (not isSpell) and def.physDamageMult then
+				mult = mult * def.physDamageMult
+			end
+			if def.attackMult then
+				mult = mult * def.attackMult
+			end
+		end
+	end
+	return mult
+end
+
+-- Incoming-defense multiplier from status buffs (Slice 5): Rune Ward +10%
+-- Defense. Read where effective defense is computed in CombatResolver.
+function StatusService.GetDefenseMultiplier(unit)
+	local mult = 1.0
+	for _, inst in ipairs(unit.statusInstances) do
+		local def = GameConstants.STATUSES[inst.id]
+		if def and def.defenseMult then
+			mult = mult * def.defenseMult
+		end
+	end
+	return mult
+end
+
+-- Stability offset from statuses (Hold the Line +2, War Cry +1; 2026-10-07).
+-- Read wherever push distance uses target Stability (DisplacementService + Main
+-- push preview) so both stay identical. Push Distance = max(0, Force - Stability).
+function StatusService.GetStabilityModifier(unit)
+	local offset = 0
+	for _, inst in ipairs(unit.statusInstances or {}) do
+		local def = GameConstants.STATUSES[inst.id]
+		if def and def.stabilityOffset then
+			offset = offset + def.stabilityOffset
+		end
+	end
+	return offset
+end
+
+-- Final DIRECT damage received multiplier from statuses (Hold the Line x0.85).
+-- Applied by CombatResolver to basic attacks and skill hits only (not DoT ticks).
+function StatusService.GetDamageReceivedMultiplier(unit)
+	local mult = 1.0
+	for _, inst in ipairs(unit.statusInstances or {}) do
+		local def = GameConstants.STATUSES[inst.id]
+		if def and def.damageTakenMult then
+			mult = mult * def.damageTakenMult
+		end
+	end
+	return mult
 end
 
 function StatusService.GetCrippledReduction(unit, currentRange, currentJump)
@@ -593,7 +998,7 @@ function StatusService.GetStatusSummary(unit)
 				nextDamage = math.max(1, math.round(unit.maxHp * def.dotFraction))
 			elseif def.dotType == "Burn" then
 				local stored = inst.storedBurn or 0
-				if stored > 0 then
+				if stored > 0 and not isBurnDamageImmune(unit) then  -- Dragonscale: 0 next-tick
 					nextDamage = math.max(1, math.round(stored))
 				end
 			elseif inst.id == "Venom" then
@@ -641,6 +1046,26 @@ function StatusService.RemoveDispellable(unit)
 		end
 	end
 	return removed
+end
+
+-- Remove ONE random active debuff (kind == "Debuff") from the unit. Used by the
+-- Cleanse perk (TRAIT-P-132) on enemy KO. Returns the removed status id, or nil if
+-- the unit has no debuffs. Does not touch buffs or special statuses.
+function StatusService.RemoveRandomDebuff(unit)
+	if not unit.statusInstances then return nil end
+	local debuffIdx = {}
+	for i, inst in ipairs(unit.statusInstances) do
+		local def = GameConstants.STATUSES[inst.id]
+		if def and def.kind == "Debuff" then
+			table.insert(debuffIdx, i)
+		end
+	end
+	if #debuffIdx == 0 then return nil end
+	local pick = debuffIdx[math.random(1, #debuffIdx)]
+	local removedId = unit.statusInstances[pick].id
+	table.remove(unit.statusInstances, pick)
+	print(string.format("[StatusService] %s CLEANSED from %s (random debuff)", removedId, unit.name))
+	return removedId
 end
 
 --------------------------------------------------

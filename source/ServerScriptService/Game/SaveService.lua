@@ -248,7 +248,7 @@ end
 -- Returns: success (bool), error (string|nil)
 --------------------------------------------------
 
-function SaveService.Save(playerId, rosterState, inventoryItems, progression)
+function SaveService.Save(playerId, rosterState, inventoryItems, progression, currencies)
 	assert(type(playerId) == "string", "SaveService.Save: playerId required")
 
 	-- Encode roster (Key 1)
@@ -264,6 +264,11 @@ function SaveService.Save(playerId, rosterState, inventoryItems, progression)
 	local inventoryData = {
 		schemaVersion = SCHEMA_VERSION,
 		items = {},
+		-- Key 2 = "Inventory + Currencies" (save_data_contract). Gold + the 5
+		-- material counters live here alongside items (materials_system id30).
+		-- Passed in by the orchestrator from CurrencyService.Export(); optional
+		-- so legacy 4-arg callers are unaffected.
+		currencies = (type(currencies) == "table") and currencies or nil,
 	}
 	for _, item in pairs(inventoryItems or {}) do
 		table.insert(inventoryData.items, encodeItem(item))
@@ -384,6 +389,12 @@ function SaveService.Load(playerId)
 		end
 	end
 
+	-- Decode currencies (Key 2 — Inventory + Currencies). May be absent on
+	-- a pre-currency save or a brand-new player; nil is returned and the
+	-- orchestrator leaves CurrencyService at its starting balance.
+	local currencies = (inventoryRaw and type(inventoryRaw.currencies) == "table")
+		and inventoryRaw.currencies or nil
+
 	-- Decode progression
 	local progression = progressionRaw and progressionRaw.data or {}
 
@@ -393,7 +404,7 @@ function SaveService.Load(playerId)
 		(function() local n=0; for _ in pairs(inventory) do n=n+1 end; return n end)()
 	))
 
-	return { roster = roster, inventory = inventory, progression = progression }, nil
+	return { roster = roster, inventory = inventory, progression = progression, currencies = currencies }, nil
 end
 
 --------------------------------------------------

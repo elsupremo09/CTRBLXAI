@@ -876,6 +876,7 @@ Theme.StatusIcons = {
 	["Poison"] = "rbxassetid://94477759410466",
 	["Raptured"] = "rbxassetid://109980542058661",
 	["Recharge"] = "rbxassetid://76141685219972",
+	["Mana Surge"] = "rbxassetid://76141685219972",   -- Recharge icon (2026-10-07)
 	["Regeneration"] = "rbxassetid://135322355280867",
 	["Rush"] = "rbxassetid://130350534308838",
 	["Silence"] = "rbxassetid://77891113079501",
@@ -883,6 +884,7 @@ Theme.StatusIcons = {
 	["Slow"] = "rbxassetid://90098284289426",
 	["Stun"] = "rbxassetid://124111723287049",
 	["Taunt"] = "rbxassetid://81048950818139",
+	["Misdirection"] = "rbxassetid://104833271248846",   -- Hide icon (2026-10-07, placeholder)
 	["Undead"] = "rbxassetid://123085258262041",
 	["Venom"] = "rbxassetid://72549374501907",
 	["Weakened"] = "rbxassetid://90496607680306",
@@ -915,6 +917,10 @@ Theme.StatusIcons = {
 	["Evasion Down"] = "rbxassetid://116710982804215",
 	["Debuff Res Up"] = "rbxassetid://106742276340514",
 	["Debuff Res Down"] = "rbxassetid://71353124191974",
+	-- Doctrine signature buffs (2026-10-07) reuse existing icons until bespoke art exists.
+	["Hold the Line"] = "rbxassetid://125326830800546",       -- Defense Up icon
+	["Coordinated Advance"] = "rbxassetid://130350534308838", -- Rush icon
+	["War Cry"] = "rbxassetid://115159212084450",             -- Damage Up icon
 }
 
 function Theme.GetStatusIcon(statusId)

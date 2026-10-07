@@ -103,40 +103,112 @@ local TERRAIN_VOXEL = {
 -- Fill depth for terrain voxels. Must be >= 4 studs (one full voxel cell)
 -- to fully saturate voxels and prevent neighbor materials from bleeding in.
 local TERRAIN_FILL_DEPTH = 8
+-- Map floor Y (user decision, Oct 4 2026): voxel tiles fill DOWN to this common
+-- floor instead of a fixed 8-stud slab, so tall/elevated tiles are solid columns
+-- to the base with NO floating underside (the "floating earth" look). Elevation-1
+-- tiles top out at getTileHeight(1)=TILE_HEIGHT=0.6, so a floor a few studs below
+-- 0 gives every column a solid base. Visual-only: fill depth does NOT change tile
+-- collision / move cost / occupancy (those come from tile data).
+local FLOOR_Y = -4
 -- Shallow Water renders as a solid sand bed with a thin animated Water cap on
 -- top. The translucent cap lets the bed show through, reading as shallow; Deep
 -- Water uses a full Water column. Water hue/waves are GLOBAL Terrain properties
 -- (cannot be set per-tile), so shallow vs deep is distinguished by depth only.
 local SHALLOW_WATER_CAP = 1.5   -- studs of Water on top of the bed
 
+local function getTileHeight(elevation)
+	return TILE_HEIGHT
+		+ (elevation - 1) * ELEVATION_STEP
+end
+
+local function getTilePosition(x, y, elevation, offsetX, offsetZ)
+	local h = getTileHeight(elevation)
+	return Vector3.new(
+		offsetX + ((x - 0.5) * TILE_SIZE),
+		h / 2,
+		offsetZ + ((y - 0.5) * TILE_SIZE)
+	)
+end
+
 -- Fill a tile's terrain voxel column. Centralizes the FillBlock logic so the
 -- initial render and view-mode-switch paths stay identical (no divergence).
-local function fillTerrainVoxelColumn(cx: number, topY: number, cz: number, sx: number, sz: number, terrainId: string)
+local function fillTerrainVoxelColumn(cx: number, topY: number, cz: number, sx: number, sz: number, terrainId: string, dropToY: number?)
 	local voxelMat = TERRAIN_VOXEL[terrainId]
 	if not voxelMat then return end
 
+	-- Fill DOWN to the common map floor so no tile floats. Clamp to at least
+	-- TERRAIN_FILL_DEPTH so the lowest tiles still fully saturate voxels.
+	local colDepth = math.max(topY - FLOOR_Y, TERRAIN_FILL_DEPTH)
+
 	if terrainId == "Shallow Water" then
-		-- Sand bed for the lower portion...
-		local bedDepth = TERRAIN_FILL_DEPTH - SHALLOW_WATER_CAP
-		local bedTopY  = topY - SHALLOW_WATER_CAP
-		workspace.Terrain:FillBlock(
-			CFrame.new(cx, bedTopY - bedDepth / 2, cz),
-			Vector3.new(sx, bedDepth, sz),
-			Enum.Material.Sand
-		)
-		-- ...thin animated Water cap on top.
+		-- Thin animated Water cap on top...
 		workspace.Terrain:FillBlock(
 			CFrame.new(cx, topY - SHALLOW_WATER_CAP / 2, cz),
 			Vector3.new(sx, SHALLOW_WATER_CAP, sz),
 			Enum.Material.Water
 		)
+		-- ...sand bed for everything below the cap, down to the floor (no float).
+		local bedDepth = colDepth - SHALLOW_WATER_CAP
+		local bedTopY  = topY - SHALLOW_WATER_CAP
+		if bedDepth > 0 then
+			workspace.Terrain:FillBlock(
+				CFrame.new(cx, bedTopY - bedDepth / 2, cz),
+				Vector3.new(sx, bedDepth, sz),
+				Enum.Material.Sand
+			)
+		end
 	else
 		workspace.Terrain:FillBlock(
-			CFrame.new(cx, topY - TERRAIN_FILL_DEPTH / 2, cz),
-			Vector3.new(sx, TERRAIN_FILL_DEPTH, sz),
+			CFrame.new(cx, topY - colDepth / 2, cz),
+			Vector3.new(sx, colDepth, sz),
 			voxelMat
 		)
 	end
+
+	-- WATERFALL FACE: if this is a water tile sitting ABOVE an adjacent water tile,
+	-- dropToY is that lower neighbour's water SURFACE Y. Extend a solid Water sheet
+	-- straight down from this tile's own surface to that lower surface so the two
+	-- waters read as one connected flow instead of a floating pool. Visual-only
+	-- Terrain voxel write — tile elevation / move cost / occupancy are unchanged.
+	-- The drop face is always Water (even for Shallow Water, whose body is a sand
+	-- bed) so the fall reads as water, never floating sand.
+	if dropToY and dropToY < topY then
+		local fallDepth = topY - dropToY
+		if fallDepth > 0 then
+			workspace.Terrain:FillBlock(
+				CFrame.new(cx, topY - fallDepth / 2, cz),
+				Vector3.new(sx, fallDepth, sz),
+				Enum.Material.Water
+			)
+		end
+	end
+end
+
+-- Water terrains (both count as "water" for waterfall connection).
+local WATER_TERRAINS = {
+	["Deep Water"]    = true,
+	["Shallow Water"] = true,
+}
+
+-- Shared waterfall helper. For a water tile at (x,y) with elevation selfElev,
+-- return the LOWEST adjacent (cardinal) water neighbour's SURFACE Y that is below
+-- this tile — or nil if no lower water neighbour. lookupFn(nx, ny) must return
+-- (terrain, elevation) or (nil, nil) when off-map. Fed from generatedMap in the
+-- initial render and from sibling tile-Part attributes on a view-mode switch, so
+-- both paths stay consistent (waterfalls survive a view toggle).
+local function lowestWaterNeighborSurfaceY(x: number, y: number, selfElev: number, lookupFn): number?
+	local lowestY = nil
+	local dirs = { {1,0}, {-1,0}, {0,1}, {0,-1} }
+	for _, d in ipairs(dirs) do
+		local nTerrain, nElev = lookupFn(x + d[1], y + d[2])
+		if nTerrain and WATER_TERRAINS[nTerrain] and nElev and nElev < selfElev then
+			local nSurfaceY = getTileHeight(nElev)
+			if lowestY == nil or nSurfaceY < lowestY then
+				lowestY = nSurfaceY
+			end
+		end
+	end
+	return lowestY
 end
 local GRID_MATERIAL  = Enum.Material.SmoothPlastic
 local GRID_THICKNESS = 0.08
@@ -196,19 +268,6 @@ local function getTerrainColor(terrainId)
 		or Color3.fromRGB(200, 190, 170)
 end
 
-local function getTileHeight(elevation)
-	return TILE_HEIGHT
-		+ (elevation - 1) * ELEVATION_STEP
-end
-
-local function getTilePosition(x, y, elevation, offsetX, offsetZ)
-	local h = getTileHeight(elevation)
-	return Vector3.new(
-		offsetX + ((x - 0.5) * TILE_SIZE),
-		h / 2,
-		offsetZ + ((y - 0.5) * TILE_SIZE)
-	)
-end
 
 local function getTemplateColor(marker)
 	return TileDefinitions[marker]
@@ -259,6 +318,13 @@ end
 --------------------------------------------------
 -- TILE CREATION
 --------------------------------------------------
+
+-- Forward declaration: createTile (below) calls spawnObjectModel, which is defined
+-- further down. In Lua a `local function` is not visible before its line, so without
+-- this forward-declare spawnObjectModel is nil at the call site (crash:
+-- "attempt to call a nil value" at the object-model spawn). Declaring the local here
+-- and assigning it later (plain `function spawnObjectModel`) closes the gap.
+local spawnObjectModel
 
 local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap, offsetX, offsetZ, mapFolder)
 	local terrainId  = tileData.terrain
@@ -343,7 +409,19 @@ local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap
 			-- Voxel keep-set: fill 3D voxel terrain, hide the tile Part.
 			if TERRAIN_VOXEL[terrainId] then
 				local topY = position.Y + tileHeight / 2
-				fillTerrainVoxelColumn(position.X, topY, position.Z, TILE_SIZE, TILE_SIZE, terrainId)
+				-- Waterfall: if this water tile sits above an adjacent water tile,
+				-- extend a Water sheet down to that lower neighbour's surface. Neighbour
+				-- data comes from generatedMap here (initial render path).
+				local dropToY = nil
+				if WATER_TERRAINS[terrainId] then
+					dropToY = lowestWaterNeighborSurfaceY(x, y, elevation, function(nx, ny)
+						local row = generatedMap.tiles[ny]
+						local nd = row and row[nx]
+						if nd then return nd.terrain, nd.elevation end
+						return nil, nil
+					end)
+				end
+				fillTerrainVoxelColumn(position.X, topY, position.Z, TILE_SIZE, TILE_SIZE, terrainId, dropToY)
 			end
 			tile.Transparency = 1
 		elseif REFLECTIVE_TERRAINS[terrainId] then
@@ -368,6 +446,99 @@ local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap
 	end
 
 	tile.Parent = mapFolder
+
+	-- MAP OBJECT MODEL: if this tile carries a map object, spawn its real model
+	-- from ServerStorage/Map Objects (passable AND impassable — visual only).
+	-- renderBlockers (impassable list) runs after and will NOT double-spawn: it
+	-- checks for an existing model on the tile first. Only in TERRAIN view mode.
+	if viewMode == "TERRAIN" and objectName and objectName ~= "None" then
+		local tileTopY = tile.Position.Y + tileHeight / 2
+		spawnObjectModel(objectName, tile, tileTopY, x .. "_" .. y)
+	end
+end
+
+--------------------------------------------------
+-- MAP OBJECT MODELS (ServerStorage > Map Objects)
+--------------------------------------------------
+-- Resolve a map object's model by name from ServerStorage/Map Objects. User
+-- renamed the Studio models to match ObjectData keys (incl. case) on Oct 4 2026;
+-- a normalized (case/space-insensitive) fallback is kept as a cheap safety net.
+local _mapObjFolder = nil
+local function getMapObjectsFolder()
+	if _mapObjFolder and _mapObjFolder.Parent then return _mapObjFolder end
+	local ss = game:GetService("ServerStorage")
+	_mapObjFolder = ss:FindFirstChild("Map Objects")
+	return _mapObjFolder
+end
+
+local function normalizeName(s)
+	return string.lower((string.gsub(tostring(s), "%s+", "")))
+end
+
+local function findObjectModel(objectName)
+	local folder = getMapObjectsFolder()
+	if not folder or not objectName then return nil end
+	-- 1) exact name
+	local m = folder:FindFirstChild(objectName)
+	if m and m:IsA("Model") then return m end
+	-- 2) normalized (case/space-insensitive) fallback
+	local target = normalizeName(objectName)
+	for _, child in ipairs(folder:GetChildren()) do
+		if child:IsA("Model") and normalizeName(child.Name) == target then
+			return child
+		end
+	end
+	return nil
+end
+
+-- Spawn a map object's model standing on the tile top. Returns the clone, or nil
+-- if no model exists (caller then draws the fallback cube). Visual-only — does
+-- NOT set passability (the caller owns that from object data).
+-- NOTE: plain `function` (not `local function`) so this assigns to the forward-
+-- declared `local spawnObjectModel` above, making it visible to createTile.
+function spawnObjectModel(objectName, tileChild, tileTopY, uniqueKey)
+	local template = findObjectModel(objectName)
+	if not template then return nil end
+	local clone = template:Clone()
+	clone.Name = string.format("MapObjModel_%s_%s", tostring(objectName), tostring(uniqueKey or ""))
+	-- Stand the model on the tile top. PivotTo places the model's pivot at the
+	-- given CFrame; map-object models are authored with their pivot at the base,
+	-- so pivot at the tile-top centre sits them on the surface.
+	local cx = tileChild.Position.X
+	local cz = tileChild.Position.Z
+	local okPivot = pcall(function()
+		clone:PivotTo(CFrame.new(cx, tileTopY, cz))
+	end)
+	if not okPivot then
+		-- Model without a usable pivot: skip the model, let caller fall back.
+		clone:Destroy()
+		return nil
+	end
+	-- Not every model is authored with its pivot at the base (e.g. Healing Spring sat
+	-- half-buried). Ground by actual geometry: lift/lower so the lowest point of the
+	-- model's bounding box sits exactly on the tile top.
+	if clone:IsA("Model") then
+		pcall(function()
+			local bbCf, bbSize = clone:GetBoundingBox()
+			local dy = tileTopY - (bbCf.Position.Y - bbSize.Y / 2)
+			if math.abs(dy) > 0.05 then
+				clone:PivotTo(clone:GetPivot() + Vector3.new(0, dy, 0))
+			end
+		end)
+	end
+	-- Anchor every part so the model doesn't fall / drift (visual prop).
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = false  -- visual only; movement blocking is via tile Passable attr
+		end
+	end
+	if clone:IsA("BasePart") then
+		clone.Anchored = true
+		clone.CanCollide = false
+	end
+	clone.Parent = tileChild.Parent  -- same mapFolder as the tile
+	return clone
 end
 
 --------------------------------------------------
@@ -393,33 +564,32 @@ local function renderBlockers(generatedMap, mapFolder)
 				child:SetAttribute("ObjectCategory", "Obstacle")
 				child:SetAttribute("ObjectPassabilityImpact", "Impassable")
 
-				-- Create visual blocker cube.
-				local blockerHeight = ELEVATION_STEP * 1.5
-
-				local blockerPart = Instance.new("Part")
-				blockerPart.Name = string.format("Blocker_%d_%d", bx, by)
-				blockerPart.Anchored   = true
-				blockerPart.CanCollide = true
-				blockerPart.CanQuery   = false
-				blockerPart.CastShadow = true
-				blockerPart.Material   = Enum.Material.SmoothPlastic
-				blockerPart.Color      = BLOCKER_COLOR
-
-				blockerPart.Size = Vector3.new(
-					TILE_SIZE * 0.7,
-					blockerHeight,
-					TILE_SIZE * 0.7
-				)
-
-				blockerPart.Position = Vector3.new(
-					child.Position.X,
-					child.Position.Y
-						+ tileHeight / 2
-						+ blockerHeight / 2,
-					child.Position.Z
-				)
-
-				blockerPart.Parent = mapFolder
+				-- Prefer the real ServerStorage model; fall back to a cube if none.
+				-- createTile may have ALREADY spawned a model for this tile's object
+				-- (passable+impassable pass). Avoid double-spawning: only spawn here
+				-- if the mapFolder has no existing model clone for this tile.
+				local existing = mapFolder:FindFirstChild(string.format("MapObjModel_%s_%s", tostring(blocker.objectType), bx .. "_" .. by))
+				local tileTopY = child.Position.Y + tileHeight / 2
+				local modelClone = existing or spawnObjectModel(blocker.objectType, child, tileTopY, bx .. "_" .. by)
+				if not modelClone then
+					-- Fallback: visual blocker cube.
+					local blockerHeight = ELEVATION_STEP * 1.5
+					local blockerPart = Instance.new("Part")
+					blockerPart.Name = string.format("Blocker_%d_%d", bx, by)
+					blockerPart.Anchored   = true
+					blockerPart.CanCollide = true
+					blockerPart.CanQuery   = false
+					blockerPart.CastShadow = true
+					blockerPart.Material   = Enum.Material.SmoothPlastic
+					blockerPart.Color      = BLOCKER_COLOR
+					blockerPart.Size = Vector3.new(TILE_SIZE * 0.7, blockerHeight, TILE_SIZE * 0.7)
+					blockerPart.Position = Vector3.new(
+						child.Position.X,
+						child.Position.Y + tileHeight / 2 + blockerHeight / 2,
+						child.Position.Z
+					)
+					blockerPart.Parent = mapFolder
+				end
 				break
 			end
 		end
@@ -610,7 +780,26 @@ function MapRenderer.SetViewMode(folder, mode)
 					-- Voxel keep-set: fill voxels, hide tile, hide any prior SurfaceGuis.
 					if TERRAIN_VOXEL[terrainId] then
 						local _topY = child.Position.Y + child.Size.Y / 2
-						fillTerrainVoxelColumn(child.Position.X, _topY, child.Position.Z, child.Size.X, child.Size.Z, terrainId)
+						-- Waterfall (view-switch path): no generatedMap here, so read the
+						-- neighbour's Terrain/Elevation from its sibling tile Part's attributes.
+						-- Keeps this consistent with the initial-render path so waterfalls
+						-- survive a view-mode toggle.
+						local _dropToY = nil
+						if WATER_TERRAINS[terrainId] then
+							local _cx = child:GetAttribute("X")
+							local _cy = child:GetAttribute("Y")
+							local _cElev = child:GetAttribute("Elevation")
+							if _cx and _cy and _cElev then
+								_dropToY = lowestWaterNeighborSurfaceY(_cx, _cy, _cElev, function(nx, ny)
+									local nTile = folder:FindFirstChild(string.format("Tile_%02d_%02d", nx, ny))
+									if nTile then
+										return nTile:GetAttribute("Terrain"), nTile:GetAttribute("Elevation")
+									end
+									return nil, nil
+								end)
+							end
+						end
+						fillTerrainVoxelColumn(child.Position.X, _topY, child.Position.Z, child.Size.X, child.Size.Z, terrainId, _dropToY)
 					end
 					child.Transparency = 1
 					for _, gui in ipairs(child:GetChildren()) do
@@ -733,6 +922,132 @@ function MapRenderer.ClearVoxelsHideTiles(folder)
 	end
 	folder:SetAttribute("TerrainRenderMode", "Mesh")
 	print("[MapRenderer] Terrain render: MESH (voxels cleared, tile Parts hidden)")
+end
+
+--------------------------------------------------
+-- RUNTIME SINGLE-OBJECT RENDER (Slice 5 blockers: Forge object-spawn, Mimic
+-- reveal). Draws ONE object into a LIVE mapFolder using the same visuals as
+-- renderBlockers (tile attributes + a blocker cube for non-passable objects).
+-- Positions relative to the EXISTING tile Part (found by X/Y attributes) so no
+-- offset recomputation is needed. The new Part is a server instance in
+-- mapFolder, so Roblox replication shows it on all clients automatically.
+--
+-- instance: { id, type, x, y }  (generator shape)
+-- Returns true if rendered, false if the tile Part was not found.
+--------------------------------------------------
+function MapRenderer.RenderOneObject(mapFolder, instance)
+	if not (mapFolder and instance and instance.x and instance.y) then
+		return false
+	end
+	local ObjectData = require(
+		game:GetService("ReplicatedStorage")
+			:WaitForChild("Content"):WaitForChild("ObjectData")
+	)
+	local def = ObjectData.Objects and ObjectData.Objects[instance.type]
+	local nonPassable = def and def.passable == false
+
+	for _, child in ipairs(mapFolder:GetChildren()) do
+		if child:GetAttribute("X") == instance.x
+			and child:GetAttribute("Y") == instance.y then
+			-- Tag the tile with the object (matches createTile's attribute scheme).
+			child:SetAttribute("ObjectName", instance.type)
+			child:SetAttribute("ObjectCategory", "MapObject")
+			if nonPassable then
+				child:SetAttribute("Passable", false)
+				child:SetAttribute("ObjectPassabilityImpact", "Occupied")
+			end
+			-- Render the real model for EVERY object (passable or not). Model is
+			-- visual-only; passability is set above from object data.
+			local tileTopY = child.Position.Y + child.Size.Y / 2
+			local modelClone = spawnObjectModel(instance.type, child, tileTopY, instance.x .. "_" .. instance.y)
+			if not modelClone and nonPassable then
+				-- No model AND it blocks: fall back to the blocker cube so the
+				-- impassable tile still reads as occupied. Passable objects with no
+				-- model simply show nothing (unchanged from before).
+				local blockerHeight = ELEVATION_STEP * 1.5
+				local cube = Instance.new("Part")
+				cube.Name = string.format("MapObject_%s_%d_%d", tostring(instance.type), instance.x, instance.y)
+				cube.Anchored   = true
+				cube.CanCollide = true
+				cube.CanQuery   = false
+				cube.CastShadow = true
+				cube.Material   = Enum.Material.SmoothPlastic
+				cube.Color      = BLOCKER_COLOR
+				cube.Size = Vector3.new(TILE_SIZE * 0.7, blockerHeight, TILE_SIZE * 0.7)
+				cube.Position = Vector3.new(
+					child.Position.X,
+					child.Position.Y + (child.Size.Y / 2) + (blockerHeight / 2),
+					child.Position.Z
+				)
+				cube.Parent = mapFolder
+			end
+			return true
+		end
+	end
+	return false
+end
+
+--------------------------------------------------
+-- RUNTIME OBJECT REMOVAL (Mimic reveal). Destroys the object's model / fallback
+-- cube for a live instance and clears the tile's object attributes. Passability
+-- reverts to the terrain rule createTile uses (Quicksand = impassable).
+--------------------------------------------------
+function MapRenderer.RemoveOneObject(mapFolder, instance)
+	if not (mapFolder and instance and instance.x and instance.y) then
+		return false
+	end
+	local key = instance.x .. "_" .. instance.y
+	local names = {
+		string.format("MapObjModel_%s_%s", tostring(instance.type), key),
+		string.format("MapObject_%s_%d_%d", tostring(instance.type), instance.x, instance.y),
+		string.format("Blocker_%d_%d", instance.x, instance.y),
+	}
+	for _, n in names do
+		local inst = mapFolder:FindFirstChild(n)
+		if inst then inst:Destroy() end
+	end
+	for _, child in mapFolder:GetChildren() do
+		if child:GetAttribute("X") == instance.x and child:GetAttribute("Y") == instance.y then
+			child:SetAttribute("ObjectName", nil)
+			child:SetAttribute("ObjectCategory", nil)
+			child:SetAttribute("ObjectPassabilityImpact", nil)
+			child:SetAttribute("Passable", child:GetAttribute("Terrain") ~= "Quicksand")
+			return true
+		end
+	end
+	return false
+end
+
+--------------------------------------------------
+-- RUNTIME TILE RESHAPE (Slice 5 blocker #3: Stone Pillar fallen span). Mutates
+-- a live tile Part's terrain color + height/position to a new terrain+elevation.
+-- The tile is a server Part in mapFolder, so the change replicates to clients.
+-- Server-side GameConstants.TERRAIN_MAP / ELEVATION_MAP must be updated SEPARATELY
+-- by the caller (this only does the visual + the tile's own attributes).
+--------------------------------------------------
+function MapRenderer.ReshapeTile(mapFolder, x, y, newTerrain, newElevation)
+	if not (mapFolder and x and y) then return false end
+	for _, child in ipairs(mapFolder:GetChildren()) do
+		if child:GetAttribute("X") == x and child:GetAttribute("Y") == y
+			and child:GetAttribute("IsTemplateTile") then
+			if newElevation then
+				local h = getTileHeight(newElevation)
+				local pos = child.Position
+				child.Size = Vector3.new(TILE_SIZE, h, TILE_SIZE)
+				child.Position = Vector3.new(pos.X, h / 2, pos.Z)
+				child:SetAttribute("Elevation", newElevation)
+			end
+			if newTerrain then
+				child:SetAttribute("Terrain", newTerrain)
+				local tc = getTerrainColor(newTerrain)
+				child:SetAttribute("TerrainColor", tc)
+				-- Only recolor if currently in TERRAIN view (don't fight REGION/TEMPLATE view).
+				child.Color = tc
+			end
+			return true
+		end
+	end
+	return false
 end
 
 return MapRenderer

@@ -87,8 +87,23 @@ local EVENT_NAMES = {
 	"ItemUsed",           -- S->C: unit used a consumable item
 	-- Reinforcements (mid-battle spawn)
 	"UnitSpawned",        -- S->C: a new unit entered the battle mid-fight
+	-- Time cycle (Dawn/Day/Dusk/Night, one phase per 1000-CT round)
+	"TimePhaseChanged",   -- S->C: the battle time-of-day phase changed
+	-- Weather/crisis (one combined slot, re-rolls each round)
+	"WeatherChanged",     -- S->C: the active weather/crisis condition changed
 	-- Action announce (AP spend label over the acting unit)
 	"ActionAnnounced",    -- S->C: { unitId, label } e.g. "Move", "Basic Attack", skill/item name
+	-- Channel VFX lifecycle (loop start/stop on the caster)
+	"ChannelStarted",     -- S->C: { unitId, isHealing } start looping Charging 1/2
+	"ChannelEnded",       -- S->C: { unitId } stop the channel loop (fired on execute; interrupt uses ChannelFizzled)
+	"MultiTargetHit",     -- S->C: { unitId } attacker played a multi-target (Cleave) hit; client shows Multi-Slash on the attacker
+	-- Shield subsystem (damage-absorption pool). S->C: a unit's shield_total
+	-- changed (granted, absorbed damage, decayed, or broke). Client shows a
+	-- shield bar/pill and a grant/break flourish.
+	"ShieldChanged",      -- S->C: { unitId, shieldTotal, delta, reason, maxHp, currentHp }
+	-- Battlefield events (35-event system). S->C: a battlefield event triggered;
+	-- client shows a dramatic center-screen banner with the event's name.
+	"BattlefieldEventAnnounced",  -- S->C: { eventName }
 }
 
 -- RemoteFunctions for Slice 4D management contracts

@@ -1,0 +1,308 @@
+[
+ {
+  "op": "remove",
+  "name": "Scholar",
+  "rowid": 28
+ },
+ {
+  "op": "remove",
+  "name": "Trading Post",
+  "rowid": 33
+ },
+ {
+  "op": "remove",
+  "name": "Refugee Camp",
+  "rowid": 41
+ },
+ {
+  "op": "remove",
+  "name": "Skeleton Transformer",
+  "rowid": 43
+ },
+ {
+  "op": "remove",
+  "name": "Library of Enlightenment",
+  "rowid": 29
+ },
+ {
+  "op": "update",
+  "name": "Bomb Barrel",
+  "rowid": 6,
+  "changes": {
+   "eff": "radius 1 Explosion (25% Max HP), destroys adjacent breakable bridges/walls",
+   "notes": "Generated gap spans (Plank Bridge / Rocky Causeway / Drawbridge) are NOT breakable bridges (map_gen_rules 'Span Tile Protection'). Explosion elevation drop (-1) is owned by the EXPLOSION TAG, not this object (see terrain_effects 'Explosion' / open_decisions 'CTRBLXAI Explosion Tag')."
+  }
+ },
+ {
+  "op": "update",
+  "name": "Land Mine",
+  "rowid": 5,
+  "changes": {
+   "eff": "radius 1 Explosion (25% Max HP)",
+   "notes": "Chain reactions allowed. Explosion elevation drop (-1) is owned by the EXPLOSION TAG, not this object (see terrain_effects 'Explosion')."
+  }
+ },
+ {
+  "op": "update",
+  "name": "Oil Sluice",
+  "rowid": 7,
+  "changes": {
+   "eff": "Creates Tar Pit in radius 2 area"
+  }
+ },
+ {
+  "op": "update",
+  "name": "Steam Valve",
+  "rowid": 8,
+  "changes": {
+   "eff": "Creates Steam in radius 2 area"
+  }
+ },
+ {
+  "op": "update",
+  "name": "Ballista",
+  "rowid": 11,
+  "changes": {
+   "eff": "Fires a penetrating bolt (250% Weapon Damage) in a chosen CARDINAL direction",
+   "act": "Interact (Consumes Action), RT 100",
+   "uses": "Once per turn",
+   "notes": "Uses operator stats. 'Once per turn' = per-unit per-turn (resets at the start of that unit's own turn, like Guard); Slice 5 object-runtime needs a per-unit-per-turn usage tracker."
+  }
+ },
+ {
+  "op": "update",
+  "name": "Catapult",
+  "rowid": 12,
+  "changes": {
+   "eff": "Fires a projectile (200% Weapon Damage, Cross AOE) within Range 6",
+   "act": "Interact (Consumes Action), RT 100",
+   "notes": "Splash damages objects. Cross AOE = radius-1 cross / plus-shape, 5 tiles (TargetingService.GetCrossTiles)."
+  }
+ },
+ {
+  "op": "update",
+  "name": "Rally Flag",
+  "rowid": 15,
+  "changes": {
+   "eff": "Allies gain +1 Move and +1 Jump for 1500 CT",
+   "act": "Interact (Consumes Action), RT 150",
+   "notes": "Does not stack"
+  }
+ },
+ {
+  "op": "rename",
+  "name": "Mage Guild",
+  "rowid": 16,
+  "changes": {
+   "eff": "Friendly units gain +20% Spell Damage for 1500 CT",
+   "act": "Interact (Consumes Action), RT 150",
+   "notes": "Does not stack",
+   "obj": "Star Axis"
+  },
+  "old": "Mage Guild",
+  "new": "Star Axis"
+ },
+ {
+  "op": "rename",
+  "name": "Warrior Guild",
+  "rowid": 17,
+  "changes": {
+   "eff": "Friendly units gain +20% Physical Damage for 1500 CT",
+   "act": "Interact (Consumes Action), RT 150",
+   "notes": "Does not stack",
+   "obj": "Burning Cauldron"
+  },
+  "old": "Warrior Guild",
+  "new": "Burning Cauldron"
+ },
+ {
+  "op": "rename",
+  "name": "Mercenary Camp",
+  "rowid": 18,
+  "changes": {
+   "eff": "Friendly units gain -15% to base RT for 1500 CT",
+   "act": "Interact (Consumes Action), RT 150",
+   "notes": "Does not stack. -15% base RT = act FASTER (a buff). Name reused from the War Horn weapon archetype (different system); model 'War Horn' in ServerStorage.",
+   "obj": "War Horn"
+  },
+  "old": "Mercenary Camp",
+  "new": "War Horn"
+ },
+ {
+  "op": "rename",
+  "name": "Marletto Tower",
+  "rowid": 19,
+  "changes": {
+   "eff": "Friendly units gain +10% Attack and +10% Defense for 1500 CT",
+   "act": "Interact (Consumes Action), RT 150",
+   "notes": "Does not stack",
+   "obj": "Runed Boulder"
+  },
+  "old": "Marletto Tower",
+  "new": "Runed Boulder"
+ },
+ {
+  "op": "update",
+  "name": "Cursed Statue",
+  "rowid": 14,
+  "changes": {
+   "eff": "Units within radius 3 suffer +20% to base RT",
+   "notes": "Removed if destroyed. +20% base RT = those units act SLOWER. Passive aura affects BOTH sides within radius 3 (per 2026-10-03 ruling: all passive auras are two-sided)."
+  }
+ },
+ {
+  "op": "rename",
+  "name": "Warrior's Tomb",
+  "rowid": 22,
+  "changes": {
+   "obj": "Cursed Chest"
+  },
+  "old": "Warrior's Tomb",
+  "new": "Cursed Chest"
+ },
+ {
+  "op": "rename",
+  "name": "Arena",
+  "rowid": 26,
+  "changes": {
+   "eff": "Grant Regeneration to all allies (MAP-WIDE)",
+   "act": "Interact (Consumes Action), RT 150",
+   "uses": "Once",
+   "notes": "all allies = MAP-WIDE (every allied unit regardless of distance).",
+   "obj": "Blood Fountain"
+  },
+  "old": "Arena",
+  "new": "Blood Fountain"
+ },
+ {
+  "op": "rename",
+  "name": "Tree of Knowledge",
+  "rowid": 27,
+  "changes": {
+   "eff": "Single use. Reduce current RT of all allied units (MAP-WIDE) by 200.",
+   "act": "Interact (Consumes Action), RT 400",
+   "uses": "Once",
+   "notes": "all allied units = MAP-WIDE.",
+   "obj": "Astrolabe"
+  },
+  "old": "Tree of Knowledge",
+  "new": "Astrolabe"
+ },
+ {
+  "op": "rename",
+  "name": "Cartographer",
+  "rowid": 30,
+  "changes": {
+   "obj": "Crystal Ball"
+  },
+  "old": "Cartographer",
+  "new": "Crystal Ball"
+ },
+ {
+  "op": "update",
+  "name": "Eye of the Magi",
+  "rowid": 31,
+  "changes": {
+   "eff": "Attacks two random opponents for 40% of their max HP each.",
+   "act": "Interact (Consumes Action), RT 150",
+   "uses": "Once per turn",
+   "notes": "40% of each target's OWN max HP (per-target). 'Once per turn' = per-unit per-turn (same tracker as Ballista)."
+  }
+ },
+ {
+  "op": "rename",
+  "name": "Den of Thieves",
+  "rowid": 34,
+  "changes": {
+   "eff": "Single use. Roll a random debuff, then inflict it on ALL enemies.",
+   "act": "Interact (Consumes Action), RT 200",
+   "uses": "Once",
+   "notes": "",
+   "obj": "Mysterious Boulder"
+  },
+  "old": "Den of Thieves",
+  "new": "Mysterious Boulder"
+ },
+ {
+  "op": "rename",
+  "name": "Altar of Sacrifice",
+  "rowid": 38,
+  "changes": {
+   "eff": "Passive. Whenever a unit dies within radius 3, inflict dark damage to ALL opponents equal to 10% of the DYING unit's max HP.",
+   "act": "Passive",
+   "trig": "Unit dies within radius 3",
+   "uses": "Passive",
+   "notes": "10% of the DYING unit's max HP, dealt to that unit's opponents. Passive aura is two-sided: a death on EITHER side within radius 3 triggers damage to the dying unit's opponents (2026-10-03 ruling).",
+   "obj": "Necro Tome Stand"
+  },
+  "old": "Altar of Sacrifice",
+  "new": "Necro Tome Stand"
+ },
+ {
+  "op": "rename",
+  "name": "Seer's Hut",
+  "rowid": 42,
+  "changes": {
+   "obj": "Chaos Statue"
+  },
+  "old": "Seer's Hut",
+  "new": "Chaos Statue"
+ },
+ {
+  "op": "rename",
+  "name": "Stables",
+  "rowid": 44,
+  "changes": {
+   "obj": "Angel Statue"
+  },
+  "old": "Stables",
+  "new": "Angel Statue"
+ },
+ {
+  "op": "rename",
+  "name": "War Machine Factory",
+  "rowid": 46,
+  "changes": {
+   "eff": "Summon one Ballista or Catapult on a chosen tile within radius 3 of the object",
+   "act": "Interact (Consumes Action), RT 150",
+   "notes": "",
+   "obj": "Forge"
+  },
+  "old": "War Machine Factory",
+  "new": "Forge"
+ },
+ {
+  "op": "update",
+  "name": "Fountain of Fortune",
+  "rowid": 36,
+  "changes": {
+   "eff": "Fortune +50% to all allies (MAP-WIDE) for 1500 CT",
+   "act": "Interact (Consumes Action), RT 150",
+   "notes": "all allies = MAP-WIDE."
+  }
+ },
+ {
+  "op": "insert",
+  "name": "Potion Desk",
+  "rowid": 28,
+  "category": "Exploration"
+ },
+ {
+  "op": "insert",
+  "name": "Glow Crystal",
+  "rowid": 29,
+  "category": "Event"
+ },
+ {
+  "op": "insert",
+  "name": "Pandora's Box",
+  "rowid": 33,
+  "category": "Event"
+ },
+ {
+  "op": "insert",
+  "name": "Swan Pond",
+  "rowid": 41,
+  "category": "Event"
+ }
+]

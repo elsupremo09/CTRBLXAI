@@ -1,0 +1,87 @@
+{
+ "stamp": "20261002_011232",
+ "log": [
+  [
+   "regions",
+   18,
+   [
+    "Graveyard",
+    "Tombs and death-themed objects",
+    "15",
+    "140",
+    "Tainted Ground 20; Rocky 25; Grassland 20; Clear 15; Mud 10; Magic Circle 10",
+    "Tombstone 20; Coffin 10; Warrior Tomb 5; Cursed Statue 3; Chest 2",
+    "Dark Eclipse Mark 3; Poison Cloud 2",
+    "Warrior Tomb, Cursed Statue, Chest",
+    "Pairs with Corrupted/Ruins."
+   ],
+   [
+    "Graveyard",
+    "Tombs and death-themed objects",
+    "15",
+    "140",
+    "Tainted Ground 20; Rocky 25; Grassland 20; Clear 15; Mud 10; Magic Circle 10",
+    "Tombstone 20; Coffin 10; Warrior Tomb 5; Cursed Statue 3; Stone Pillar 3; Chest 2",
+    "Dark Eclipse Mark 3; Poison Cloud 2",
+    "Warrior Tomb, Cursed Statue, Chest",
+    "Pairs with Corrupted/Ruins."
+   ]
+  ],
+  [
+   "regions",
+   23,
+   null,
+   [
+    "Town",
+    "Large market settlement (urban big sibling of Village)",
+    "40",
+    "240",
+    "Road/Clear 35; Stone/Rocky 30; Wooden Floor 20; Metal 8; Grassland 7",
+    "House 30; Wall 10; Crate 8; Trading Post 6; Fence 5; Tavern 5; Stone Pillar 5; Cart 4; Black Market 3; Chest 3; Scholar 2; Den of Thieves 2; Stables 1; Mage Guild 1; Warrior Guild 1; Fountain of Fortune 1; Cartographer 1",
+    "Burning 3; Oily 2; Bomb Barrel 1",
+    "Trading Post, Tavern, Black Market, Den of Thieves, Stables, Fountain of Fortune, Chest",
+    "Authored 2026-10-02 (user request: a real 'big town' region; Village stays the small settlement). Denser and more paved than Village: buildings in blocks separated by a connected street network (Road/Clear) — streets should carry the LAN so buildings never wall off battleflow. Objects occupy tiles; NPC/merchant/guild services represented as objects. Stone Pillar = civic monument/colonnade in town squares (topples into the 4-tile span or crushes). Only spawn home for Den of Thieves, Stables, Mage Guild, Warrior Guild, Fountain of Fortune — keep each at 1-2 (strong free buffs, contestable by both sides). Min size 40, so it rarely fits a 20x20 map — mainly a 30x30/40x40 region. Pairs with Village, Farmland, Castle Courtyard, Dock. Suggested biome pools (Dev wires in code): Plains 5, Castle 10."
+   ]
+  ],
+  [
+   "objects_encounters",
+   9,
+   [
+    "Stone Pillar",
+    "Siege",
+    "Heavy, Breakable",
+    "No",
+    "Interact (Consumes Action)",
+    "—",
+    "Falls in the direction opposite the interacting unit and becomes a 4-TILE-LONG Rocky span (fallen pillar = 4 tiles long × 1 tile wide; the standing pillar is 4 elevation levels HIGH, which is why its fall reaches 4 tiles) or crushes units on the landing tiles (70% Max HP, +100 RT, Pinned)",
+    "Once",
+    "Permanent terrain change. REVISED 2026-10-02 (user ruling): was a 3-tile bridge; now 4 long × 4 high. STANDING: Height 4 (4 elevation levels tall) — blocks movement and line of sight like a 4-high wall. FALLEN: 4 tiles long; span deck sits at the pillar's base-tile elevation; if a landing tile is 2+ levels higher than the base, the fall stops short there (the span ends on the previous tile; units on tiles it reached are still crushed). A 4-tile fall always reaches the far bank of any generated gap (max gap width 3). Crush unchanged: 70% Max HP (HP%-based, so boss HP% resistance applies), +100 RT, Pinned — now up to 4 tiles in a line instead of 3. The fallen span is NOT a protected generated span ('Span Tile Protection' does not apply). SPAWN (2026-10-02): highest share in Ruins (biome 8, region 8 — unchanged); also added to Castle biome 4, Corrupted biome 3, Castle Courtyard 4, Castle Interior 2, Village 3 (closest to 'big town'), Corrupted region 2 (closest to 'magic region')."
+   ],
+   [
+    "Stone Pillar",
+    "Siege",
+    "Heavy, Breakable",
+    "No",
+    "Interact (Consumes Action)",
+    "—",
+    "Falls in the direction opposite the interacting unit and becomes a 4-TILE-LONG Rocky span (fallen pillar = 4 tiles long × 1 tile wide; the standing pillar is 4 elevation levels HIGH, which is why its fall reaches 4 tiles) or crushes units on the landing tiles (70% Max HP, +100 RT, Pinned)",
+    "Once",
+    "Permanent terrain change. REVISED 2026-10-02 (user ruling): was a 3-tile bridge; now 4 long × 4 high. STANDING: Height 4 (4 elevation levels tall) — blocks movement and line of sight like a 4-high wall. FALLEN: 4 tiles long; span deck sits at the pillar's base-tile elevation; if a landing tile is 2+ levels higher than the base, the fall stops short there (the span ends on the previous tile; units on tiles it reached are still crushed). A 4-tile fall always reaches the far bank of any generated gap (max gap width 3). Crush unchanged: 70% Max HP (HP%-based, so boss HP% resistance applies), +100 RT, Pinned — now up to 4 tiles in a line instead of 3. The fallen span is NOT a protected generated span ('Span Tile Protection' does not apply). SPAWN (revised 2026-10-02 after user review): TOP = Highlands biome 10 and Mountain Pass region 10 (unchanged). Ruins biome 8 / region 8, Rocky region 8, Cave Chamber region 8 (unchanged). Added 2026-10-02: Castle biome 4, Corrupted biome 3, Castle Courtyard 4, Castle Interior 2, Village 3 (small settlements — kept), 'magic region' = Corrupted region 2 (kept) + Graveyard region 3 (user pick, Magic Circle tiles), 'big town' = new Town region 5. NOTE: shipped code places objects from the BIOME pool only — region-level weights take effect once object placement is region-aware (open_decisions 'Town region + region-level object weights — Dev wiring')."
+   ]
+  ],
+  [
+   "open_decisions",
+   68,
+   null,
+   [
+    "Town region + region-level object weights — Dev wiring",
+    "Dev Pending",
+    "Raised 2026-10-02 (Designer, Stone Pillar spawn follow-up). (1) NEW REGION 'Town' is in the regions table; code does not know it yet. Dev to: (a) regenerate RegionData.lua from the regions table — it is already stale (missing the 2026-10-02 Stone Pillar additions to Village, Castle Courtyard, Castle Interior, Corrupted region, and now Graveyard + Town); BiomeData.lua should be re-checked against the biomes table too (Castle/Corrupted Stone Pillar added 2026-10-02). (b) add Town to MapService BIOME_REGION_POOLS — Designer recommendation: Plains {Town, 5} and Castle {Town, 10}; leave all existing entries unchanged. (c) FloorPass FLOOR_TERRAIN: Town = 'Clear' (same as Village). (d) FeaturePass REGION_FEATURES: Town = Structure, minCount 2, maxCount 4, minSize 4, maxSize 12, minCluster 4 (more buildings than Village's 1-2). (e) FeaturePass ROAD_REGIONS: add Town so the street/road system routes through it. No template/grid change needed — templates do not own regions (map_gen_rules 'Locked correction: biome pattern versus region'). (2) FINDING: shipped MapService object placement draws from the BIOME object pool only (biome.objectWeights); RegionData is required but its objectWeights are never read. So region-level spawn weights — including Stone Pillar in Mountain Pass 10, Ruins 8, Village 3, Graveyard 3, Town 5 — have NO in-game effect today; biome-level weights (Highlands 10, Ruins 8, Castle 4, Corrupted 3, ...) do. DECISION NEEDED: make object placement region-aware (Designer recommendation — map_gen_rules 6.3 says the region owns local object weights; e.g. blend region pool over biome pool), or treat region weights as intent only. Non-catalog decor names in region pools (House, Wall, Crate, Cart, Fence, Tombstone, Coffin, Boulder, Tree, ...) are not in ObjectData and would be skipped by the validator until they get ObjectData entries or substitutions (see Farmland special rule).",
+    null,
+    null,
+    null,
+    null
+   ]
+  ]
+ ]
+}

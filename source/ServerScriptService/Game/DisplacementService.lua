@@ -28,6 +28,9 @@ local GameConstants = require(
 )
 
 local TileCrossEffectService = require(script.Parent.TileCrossEffectService)
+-- Race passives (Feline Nine Lives fall immunity / collision +20%, 2026-10-02).
+local RacePassiveService = require(script.Parent.RacePassiveService)
+local StatusService = require(script.Parent.StatusService) -- status Stability buffs (2026-10-07)
 
 local DisplacementService = {}
 
@@ -160,6 +163,8 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	elseif target.effectiveStats and target.effectiveStats.VIT then
 		targetStability = math.floor(target.effectiveStats.VIT / 60)
 	end
+	-- Status Stability buffs (Hold the Line +2, War Cry +1). Mirrored in Main push preview.
+	targetStability = math.max(0, targetStability + StatusService.GetStabilityModifier(target))
 
 	local pushDistance = math.max(0, force - targetStability)
 	-- Ranged knockback penalty: knockback from a RANGED attack is reduced by 50%,
@@ -312,6 +317,32 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	local fallDamage = 0
 	if totalFallHeight >= GameConstants.FALL_DAMAGE_MIN_HEIGHT then
 		fallDamage = GameConstants.CalcFallDamage(target.maxHp, totalFallHeight)
+	end
+	-- FELINE — Nine Lives (races row 'Feline', 2026-10-02): immune to fall damage
+	-- (any downward displacement, any height). ONLY the fall-damage term is zeroed;
+	-- cross effects and landing-tile / chasm-floor ground effects resolve normally.
+	if fallDamage > 0 and RacePassiveService.IsFallDamageImmune(target) then
+		print(string.format("[DisplacementService] Feline Nine Lives: %s fall damage %d -> 0", target.name, fallDamage))
+		fallDamage = 0
+	end
+	-- FELINE — Nine Lives: collision / knockback-impact damage received +20%, for the
+	-- pushed unit (wallCollision.damage) and/or the unit it slammed into
+	-- (collidedUnitDamage) -- whichever is Feline.
+	if wallCollisionResult then
+		local tMult = RacePassiveService.GetCollisionDamageMultiplier(target)
+		if tMult ~= 1 and wallCollisionResult.damage then
+			wallCollisionResult.damage = math.round(wallCollisionResult.damage * tMult)
+		end
+		if wallCollisionResult.collidedUnitId and wallCollisionResult.collidedUnitDamage then
+			local collided = nil
+			for _, u in ipairs(allUnits or {}) do
+				if u.id == wallCollisionResult.collidedUnitId then collided = u; break end
+			end
+			local cMult = collided and RacePassiveService.GetCollisionDamageMultiplier(collided) or 1
+			if cMult ~= 1 then
+				wallCollisionResult.collidedUnitDamage = math.round(wallCollisionResult.collidedUnitDamage * cMult)
+			end
+		end
 	end
 
 	-- Build result.

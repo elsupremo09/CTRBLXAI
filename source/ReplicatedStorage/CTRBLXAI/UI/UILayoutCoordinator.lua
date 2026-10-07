@@ -36,17 +36,17 @@ function UILayoutCoordinator.GetLayout(viewportSize)
 	if mode == "Desktop" then
 		return {
 			mode = "Desktop",
-			ActiveUnit   = { Size = UDim2.new(0.15, 0, 0, 0), Position = UDim2.new(1, -PAD, 0, PAD), AnchorPoint = Vector2.new(1, 0) },
-			ActionPanel  = { Size = UDim2.new(0.15, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
-			Inspector    = { Size = UDim2.new(0.15, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
-			TilePreview  = { Size = UDim2.new(0.15, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
+			ActiveUnit   = { Size = UDim2.new(0.1125, 0, 0, 0), Position = UDim2.new(1, -PAD, 0, PAD), AnchorPoint = Vector2.new(1, 0) },
+			ActionPanel  = { Size = UDim2.new(0.1125, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
+			Inspector    = { Size = UDim2.new(0.1125, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
+			TilePreview  = { Size = UDim2.new(0.1125, 0, 0, 0), Position = nil, AnchorPoint = Vector2.new(1, 0) },
 			TurnOrder    = { Size = UDim2.fromScale(0.60, 0.15), Position = UDim2.new(0, PAD, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
 			Conditions   = { Size = UDim2.fromScale(0.12, 0.10), Position = UDim2.new(0.60, PAD * 2, 1, -PAD), AnchorPoint = Vector2.new(0, 1) },
 			BattleLog    = { Size = UDim2.fromScale(0.25, 0.75), Position = UDim2.new(0, PAD, 0, PAD + 32), AnchorPoint = Vector2.new(0, 0) },
 		}
 
 	elseif mode == "CompactLandscape" then
-		local panelW = math.max(180, math.floor(w * 0.15))
+		local panelW = math.max(135, math.floor(w * 0.1125))
 		local panelScale = panelW / w
 		return {
 			mode = "CompactLandscape",
@@ -60,7 +60,7 @@ function UILayoutCoordinator.GetLayout(viewportSize)
 		}
 
 	else -- MobileLandscape
-		local panelW = math.max(130, math.floor(w * 0.12)) / w
+		local panelW = math.max(98, math.floor(w * 0.09)) / w
 		local PAD_M = 4
 		return {
 			mode = "MobileLandscape",

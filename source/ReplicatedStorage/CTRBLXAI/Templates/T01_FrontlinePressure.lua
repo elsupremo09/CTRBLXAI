@@ -42,7 +42,7 @@ fillRect(grid, 5, 6, 26, 15, "LAN")
 
 -- Hazard and blocker pressure
 fillRect(grid, 12, 7, 19, 10, "HZD")
-fillRect(grid, 12, 11, 19, 14, "BLK")
+fillRect(grid, 12, 11, 19, 14, "OBS")
 
 -- POI areas
 fillRect(grid, 21, 3, 26, 5, "POI")

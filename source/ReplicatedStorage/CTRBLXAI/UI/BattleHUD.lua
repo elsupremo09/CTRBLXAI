@@ -32,8 +32,21 @@ local GameConstants = require(Shared:WaitForChild("GameConstants", 10))
 local Content = ReplicatedStorage:WaitForChild("Content", 10)
 local _odOk, ObjectData = pcall(require, Content and Content:WaitForChild("ObjectData", 5))
 if not _odOk then ObjectData = nil end
+local _bedOk, BattlefieldEventData = pcall(require, Content and Content:WaitForChild("BattlefieldEventData", 5))
+if not _bedOk then BattlefieldEventData = nil end
+local _wcdOk, WeatherConditionData = pcall(require, Content and Content:WaitForChild("WeatherConditionData", 5))
+if not _wcdOk then WeatherConditionData = nil end
 
 local BattleHUD = {}
+
+-- Time-of-day icons (user uploads, Oct 5 2026) for the turn-order bar's right end.
+-- The cycle is Dawn->Day->Dusk->Night, one phase per 1000-CT round (server clock).
+local TIME_ICON = {
+	Dawn  = "rbxassetid://139621458129215",
+	Day   = "rbxassetid://73208029569539",
+	Dusk  = "rbxassetid://83114762295560",
+	Night = "rbxassetid://105196630521814",
+}
 
 -- State
 local screenGui, rootFrame = nil, nil
@@ -44,6 +57,12 @@ local actionPanel       = nil  -- Left below active (20% × 15%)
 local inspectorPanel    = nil  -- Upper-right (20% × 25%)
 local tilePreviewPanel  = nil  -- Right below inspector (20% × 15%)
 local turnOrderBar      = nil  -- Lower-left (45% × 7%)
+local timePanel
+local alignTimePanel  -- forward-declared: ensureRoot wires watchers before the definition below
+local eventPanel
+local weatherPanel
+local _activeEventName: string? = nil
+local _weatherName: string? = nil
 local conditionsPanel   = nil  -- Next to turn order
 local battleLogPanel    = nil  -- Lower-right (25% × 20%)
 local commandBar          = nil  -- Fixed bottom-right: Execute/Back buttons
@@ -143,6 +162,143 @@ local function makeLabel(parent, text, props)
 	return lbl
 end
 
+-- ROLLING NAME: if the text is wider than its box, scroll it right-to-left in a
+-- loop (pause at start, slide until the end shows, pause, snap back). Short
+-- names stay still. The label is moved inside a clipping holder of the same box.
+local function makeMarquee(lbl: TextLabel)
+	local holder = Instance.new("Frame")
+	holder.Name = lbl.Name .. "_Marquee"
+	holder.Size = lbl.Size
+	holder.Position = lbl.Position
+	holder.BackgroundTransparency = 1
+	holder.ClipsDescendants = true
+	holder.LayoutOrder = lbl.LayoutOrder
+	holder.Parent = lbl.Parent
+	lbl.Position = UDim2.fromOffset(0, 0)
+	lbl.Size = UDim2.new(0, 0, 1, 0)
+	lbl.AutomaticSize = Enum.AutomaticSize.X
+	lbl.Parent = holder
+	task.spawn(function()
+		local SPEED, PAUSE = 30, 1.2  -- px per second, seconds held at each end
+		while holder.Parent do
+			task.wait(PAUSE)
+			if not holder.Parent then break end
+			local overflow = lbl.AbsoluteSize.X - holder.AbsoluteSize.X
+			if overflow > 1 then
+				local tw = TweenService:Create(lbl, TweenInfo.new(overflow / SPEED, Enum.EasingStyle.Linear),
+					{ Position = UDim2.fromOffset(-overflow, 0) })
+				tw:Play(); tw.Completed:Wait()
+				task.wait(PAUSE)
+				if lbl.Parent then lbl.Position = UDim2.fromOffset(0, 0) end
+			end
+		end
+	end)
+	return holder
+end
+
+-- Shared status-effect strip: a HORIZONTAL, drag-scrollable row of status icons.
+-- Tapping an icon toggles a small name+duration label beneath it. Used by the
+-- active-unit panel and the inspector so more statuses than fit are reachable by
+-- dragging sideways (user request). parent = panel; order = LayoutOrder slot.
+local function buildStatusStrip(parent, statuses, order)
+	if not parent or not statuses or #statuses == 0 then return end
+	local ICON = 28
+	local LBL_H = 14
+	local stripH = ICON + LBL_H + 4
+
+	local strip = Instance.new("ScrollingFrame")
+	strip.Name = "StatusStrip"
+	strip.Size = UDim2.new(1, 0, 0, stripH)
+	strip.BackgroundTransparency = 1
+	strip.BorderSizePixel = 0
+	strip.ScrollingDirection = Enum.ScrollingDirection.X
+	strip.AutomaticCanvasSize = Enum.AutomaticSize.X
+	strip.CanvasSize = UDim2.new(0, 0, 0, 0)
+	strip.ScrollBarThickness = 4
+	strip.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	strip.ElasticBehavior = Enum.ElasticBehavior.Always
+	strip.LayoutOrder = order or 3
+	strip.Parent = parent
+
+	local hList = Instance.new("UIListLayout", strip)
+	hList.FillDirection = Enum.FillDirection.Horizontal
+	hList.SortOrder = Enum.SortOrder.LayoutOrder
+	hList.Padding = UDim.new(0, 4)
+	hList.VerticalAlignment = Enum.VerticalAlignment.Top
+
+	for si, s in ipairs(statuses) do
+		local sName = s.id or s.name or "?"
+		local sColor = (Theme.GetStatusColor and Theme.GetStatusColor(sName)) or Theme.Colors.Warning
+		local sAsset = Theme.GetStatusIcon(sName) or s.sourceIcon
+
+		-- duration string
+		local durStr
+		if s.remainingTurns then durStr = s.remainingTurns .. "t"
+		elseif s.remainingCt then durStr = "CT " .. math.floor(s.remainingCt)
+		elseif s.sourceDuration then durStr = tostring(s.sourceDuration)
+		else durStr = "" end
+		local stackStr = (s.stacks and s.stacks > 1) and (" x" .. s.stacks) or ""
+
+		local cell = Instance.new("Frame")
+		cell.Size = UDim2.fromOffset(ICON, stripH)
+		cell.BackgroundTransparency = 1
+		cell.BorderSizePixel = 0
+		cell.LayoutOrder = si
+		cell.Parent = strip
+
+		local badge = Instance.new("ImageButton")
+		badge.Size = UDim2.fromOffset(ICON, ICON)
+		badge.Position = UDim2.fromOffset(0, 0)
+		badge.BackgroundColor3 = sColor
+		badge.BackgroundTransparency = sAsset and 1 or 0.3
+		badge.BorderSizePixel = 0
+		badge.AutoButtonColor = false
+		badge.Parent = cell
+		Instance.new("UICorner", badge).CornerRadius = UDim.new(0, 3)
+		if sAsset then
+			local img = Instance.new("ImageLabel")
+			img.Size = UDim2.fromScale(1, 1)
+			img.BackgroundTransparency = 1
+			img.Image = sAsset
+			img.ScaleType = Enum.ScaleType.Fit
+			img.Parent = badge
+		else
+			local il = Instance.new("TextLabel")
+			il.Size = UDim2.fromScale(1, 1)
+			il.BackgroundTransparency = 1
+			il.Font = Theme.Font.PrimaryBold
+			il.TextSize = Theme.Text.Small()
+			il.TextColor3 = Theme.Colors.TextPrimary
+			il.Text = string.sub(sName, 1, 2)
+			il.Parent = badge
+		end
+
+		-- name+duration label under the icon, hidden until the icon is tapped
+		local nameLbl = Instance.new("TextLabel")
+		nameLbl.Size = UDim2.new(0, math.max(ICON * 3, 80), 0, LBL_H)
+		nameLbl.Position = UDim2.fromOffset(0, ICON + 1)
+		nameLbl.BackgroundColor3 = Theme.Colors.Background
+		nameLbl.BackgroundTransparency = 0.2
+		nameLbl.BorderSizePixel = 0
+		nameLbl.Font = Theme.Font.PrimaryBold
+		nameLbl.TextSize = Theme.Text.Badge()
+		nameLbl.TextColor3 = sColor
+		nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+		nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+		nameLbl.Visible = false
+		nameLbl.ZIndex = 4
+		local durPart = (durStr ~= "") and (" (" .. durStr .. ")") or ""
+		nameLbl.Text = " " .. sName .. stackStr .. durPart
+		nameLbl.Parent = cell
+		local np = Instance.new("UIPadding", nameLbl)
+		np.PaddingLeft = UDim.new(0, 2)
+
+		badge.Activated:Connect(function()
+			nameLbl.Visible = not nameLbl.Visible
+		end)
+	end
+end
+
 local function makeButton(parent, text, props)
 	local btn = Instance.new("TextButton")
 	btn.Size = props.size or UDim2.new(0.5, -3, 0.5, -3)
@@ -187,30 +343,30 @@ local function ensureRoot()
 
 	-- UPPER-RIGHT: Active Unit Panel (20% W, height=auto)
 	activeUnitPanel = makePanel("ActiveUnit",
-		UDim2.new(0.15, 0, 0, 0),
+		UDim2.new(0.1125, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, 65), Vector2.new(1, 0), rootFrame,
-		{ autoY = true, minW = 180, maxW = 260, minH = 60, maxH = 220 })
+		{ autoY = true, minW = 135, maxW = 195, minH = 60, maxH = 220 })
 	activeUnitPanel.Visible = false
 
 	-- RIGHT: Action Panel (20% W, height=auto) — dynamically below ActiveUnit
 	actionPanel = makePanel("ActionPanel",
-		UDim2.new(0.15, 0, 0, 0),
+		UDim2.new(0.1125, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, 0), Vector2.new(1, 0), rootFrame,
-		{ autoY = true, minW = 180, maxW = 260, minH = 50, maxH = 400 })
+		{ autoY = true, minW = 135, maxW = 195, minH = 50, maxH = 400 })
 	actionPanel.Visible = false
 
 	-- RIGHT: Inspector Panel (20% W, height=auto) — below ActionPanel when visible
 	inspectorPanel = makePanel("Inspector",
-		UDim2.new(0.15, 0, 0, 0),
+		UDim2.new(0.1125, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, 0), Vector2.new(1, 0), rootFrame,
-		{ autoY = true, minW = 180, maxW = 260, minH = 60, maxH = 400 })
+		{ autoY = true, minW = 135, maxW = 195, minH = 60, maxH = 400 })
 	inspectorPanel.Visible = false
 
 	-- RIGHT: Tile/Preview Panel (20% W, height=auto) — below Inspector
 	tilePreviewPanel = makePanel("TilePreview",
-		UDim2.new(0.15, 0, 0, 0),
+		UDim2.new(0.1125, 0, 0, 0),
 		UDim2.new(1, -PAD, 0, 0), Vector2.new(1, 0), rootFrame,
-		{ autoY = true, minW = 180, maxW = 260, minH = 50, maxH = 500 })
+		{ autoY = true, minW = 135, maxW = 195, minH = 50, maxH = 500 })
 	tilePreviewPanel.Visible = false
 
 	-- BOTTOM-LEFT: Turn Order Bar (45% W × 7% H)
@@ -219,6 +375,21 @@ local function ensureRoot()
 		UDim2.new(0, PAD, 1, 0), Vector2.new(0, 1), rootFrame)
 	turnOrderBar.ClipsDescendants = true
 	turnOrderBar.Visible = false  -- hidden until UpdateTimeline populates it
+
+	-- Time-of-day panel: its own framed panel directly right of the turn-order bar,
+	-- same height (0.15 of screen), square via RelativeYY.
+	timePanel = makePanel("TimeOfDay",
+		UDim2.fromScale(0.15, 0.15),
+		UDim2.new(0.60, PAD + 4, 1, 0), Vector2.new(0, 1), rootFrame)
+	timePanel.SizeConstraint = Enum.SizeConstraint.RelativeYY
+	timePanel.Visible = false
+
+	-- Active-event and weather/crisis panels (in that order) right of the time panel.
+	-- Same square size; positioned by alignTimePanel from the turn-order bar's real rect.
+	eventPanel = makePanel("ActiveEvent", UDim2.fromScale(0.15, 0.15), UDim2.new(0.60, PAD + 4, 1, 0), Vector2.new(0, 1), rootFrame)
+	eventPanel.Visible = false
+	weatherPanel = makePanel("WeatherCrisis", UDim2.fromScale(0.15, 0.15), UDim2.new(0.60, PAD + 4, 1, 0), Vector2.new(0, 1), rootFrame)
+	weatherPanel.Visible = false
 
 	-- ADJACENT: Conditions Panel (right of turn order bar)
 	conditionsPanel = makePanel("Conditions",
@@ -231,6 +402,14 @@ local function ensureRoot()
 		UDim2.fromScale(0.25, 0.20),
 		UDim2.new(0, PAD, 0, 78), Vector2.new(0, 0), rootFrame)
 	battleLogPanel.ClipsDescendants = true
+	-- Keep the top-center Time/Event/Weather row clear of the side columns.
+	for _, watched in ipairs({ battleLogPanel, activeUnitPanel, rootFrame, actionPanel, inspectorPanel, tilePreviewPanel }) do
+		if watched then
+			watched:GetPropertyChangedSignal("AbsolutePosition"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end end)
+			watched:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end end)
+			watched:GetPropertyChangedSignal("Visible"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end end)
+		end
+	end
 	battleLogPanel.Visible = isBattleLogExpanded
 
 	-- BOTTOM-RIGHT: Fixed command bar (Execute / Back)
@@ -357,9 +536,9 @@ function BattleHUD._buildActiveUnit()
 	local tx = portraitSize + 6
 	local lineH = math.floor(portraitSize / 4)
 
-	makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, tx, 0, 0),
+	makeMarquee(makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, tx, 0, 0),
 		size = UDim2.new(1, -tx, 0, lineH), font = Theme.Font.PrimaryBold,
-		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) })
+		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) }))
 	makeLabel(topRow, d.race or "—", { pos = UDim2.new(0, tx, 0, lineH),
 		size = UDim2.new(1, -tx, 0, lineH), textSize = Theme.Text.Small(),
 		color = Theme.Colors.TextSecondary })
@@ -382,45 +561,9 @@ function BattleHUD._buildActiveUnit()
 		font = Theme.Font.Mono, textSize = Theme.Text.Body(),
 		color = Theme.Colors.TextPrimary, order = 2 })
 
-	-- === ROW 3: Status icons (horizontal) ===
+	-- === ROW 3: Status icons (horizontal, drag-scroll + tap-to-name) ===
 	if d.statuses and #d.statuses > 0 then
-		local statusRow = Instance.new("Frame")
-		statusRow.Size = UDim2.new(1, 0, 0, 28)
-		statusRow.BackgroundTransparency = 1
-		statusRow.LayoutOrder = 3; statusRow.Parent = activeUnitPanel
-		local statusLayout = Instance.new("UIListLayout", statusRow)
-		statusLayout.FillDirection = Enum.FillDirection.Horizontal
-		statusLayout.Padding = UDim.new(0, 3)
-		for si, s in ipairs(d.statuses) do
-			local icon = Instance.new("Frame")
-			icon.Size = UDim2.new(0, 28, 0, 28)
-			icon.BackgroundTransparency = 1
-			icon.BorderSizePixel = 0
-			icon.LayoutOrder = si
-			icon.Parent = statusRow
-			Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 3)
-			local statusAsset = Theme.GetStatusIcon(s.id) or s.sourceIcon
-			if statusAsset then
-				local img = Instance.new("ImageLabel")
-				img.Size = UDim2.fromScale(1, 1)
-				img.Position = UDim2.fromScale(0, 0)
-				img.BackgroundTransparency = 1
-				img.Image = statusAsset
-				img.ScaleType = Enum.ScaleType.Fit
-				img.Parent = icon
-			else
-				icon.BackgroundColor3 = Theme.GetStatusColor(s.id or "")
-				icon.BackgroundTransparency = 0.3
-				local iconLabel = Instance.new("TextLabel")
-				iconLabel.Size = UDim2.fromScale(1, 1)
-				iconLabel.BackgroundTransparency = 1
-				iconLabel.Font = Theme.Font.PrimaryBold
-				iconLabel.TextSize = Theme.Text.Small()
-				iconLabel.TextColor3 = Theme.Colors.TextPrimary
-				iconLabel.Text = string.sub(s.id, 1, 2)
-				iconLabel.Parent = icon
-			end
-		end
+		buildStatusStrip(activeUnitPanel, d.statuses, 3)
 	end
 
 end
@@ -656,9 +799,9 @@ function BattleHUD._buildInspector()
 			end
 		end)
 
-		makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, 38, 0, 0),
+		makeMarquee(makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, 38, 0, 0),
 			size = UDim2.new(1, -40, 0, 14), font = Theme.Font.PrimaryBold, textSize = Theme.Text.Body(),
-			color = Theme.GetSideColor(d.side) })
+			color = Theme.GetSideColor(d.side) }))
 		makeLabel(topRow, d.side or "", { pos = UDim2.new(0, 38, 0, 14),
 			size = UDim2.new(1, -40, 0, 12), textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary })
 
@@ -678,52 +821,7 @@ function BattleHUD._buildInspector()
 		end
 
 		if d.statuses and #d.statuses > 0 then
-			local statusRow = Instance.new("Frame")
-			statusRow.Size = UDim2.new(1, 0, 0, 28)
-			statusRow.BackgroundTransparency = 1
-			statusRow.LayoutOrder = 5; statusRow.Parent = inspectorPanel
-			local sLayout = Instance.new("UIListLayout", statusRow)
-			sLayout.FillDirection = Enum.FillDirection.Horizontal
-			sLayout.Padding = UDim.new(0, 4)
-			sLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
-			for si, s in ipairs(d.statuses) do
-				local sName = s.id or s.name or "?"
-				local sColor = Theme.GetStatusColor and Theme.GetStatusColor(sName) or Theme.Colors.Warning
-				local sAsset = Theme.GetStatusIcon(sName) or s.sourceIcon
-				local badge = Instance.new("Frame")
-				badge.Size = sAsset and UDim2.fromOffset(24, 24) or UDim2.fromOffset(0, 24)
-				badge.AutomaticSize = sAsset and Enum.AutomaticSize.None or Enum.AutomaticSize.X
-				badge.BackgroundColor3 = sColor
-				badge.BackgroundTransparency = sAsset and 1 or 0.7
-				badge.BorderSizePixel = 0
-				badge.LayoutOrder = si
-				badge.Parent = statusRow
-				Instance.new("UICorner", badge).CornerRadius = UDim.new(0, 3)
-				if sAsset then
-					local img = Instance.new("ImageLabel")
-					img.Size = UDim2.fromScale(1, 1)
-					img.Position = UDim2.fromScale(0, 0)
-					img.BackgroundTransparency = 1
-					img.Image = sAsset
-					img.ScaleType = Enum.ScaleType.Fit
-					img.Parent = badge
-				end
-				local bStroke = Instance.new("UIStroke", badge)
-				bStroke.Color = sColor; bStroke.Thickness = 1
-				if not sAsset then
-					local badgePad = Instance.new("UIPadding", badge)
-					badgePad.PaddingLeft = UDim.new(0, 4); badgePad.PaddingRight = UDim.new(0, 4)
-				end
-				local bLbl = Instance.new("TextLabel")
-				bLbl.Size = UDim2.new(0, 0, 1, 0)
-				bLbl.AutomaticSize = Enum.AutomaticSize.X
-				bLbl.BackgroundTransparency = 1
-				bLbl.Font = Theme.Font.PrimaryBold; bLbl.TextSize = Theme.Text.Small()
-				bLbl.TextColor3 = sColor
-				bLbl.Text = sName .. " " .. (s.remainingTurns or "?")
-				if not sAsset then bLbl.Parent = badge end
-			end
+			buildStatusStrip(inspectorPanel, d.statuses, 5)
 		end
 
 	elseif showObject then
@@ -754,6 +852,39 @@ end
 -- TILE/PREVIEW PANEL (right, below inspector)
 --------------------------------------------------
 
+-- Returns the inner VERTICAL scrolling content host for the preview/tile panel.
+-- The panel itself is a fixed 9-slice frame; its rows live inside this
+-- ScrollingFrame so long content (big skill previews) scrolls vertically instead
+-- of growing down behind the EXECUTE/BACK command bar. Created once, reused.
+-- clearFrame() on the panel preserves this host (it's a ScrollingFrame, and
+-- clearFrame only destroys non-UI* children) — but we also clear the HOST's
+-- children each build. Returns the host; callers parent rows into it.
+local function getPreviewHost()
+	if not tilePreviewPanel then return nil end
+	local host = tilePreviewPanel:FindFirstChild("PreviewScroll")
+	if not host then
+		host = Instance.new("ScrollingFrame")
+		host.Name = "PreviewScroll"
+		host.Size = UDim2.new(1, 0, 1, 0)
+		host.Position = UDim2.new(0, 0, 0, 0)
+		host.BackgroundTransparency = 1
+		host.BorderSizePixel = 0
+		host.ScrollingDirection = Enum.ScrollingDirection.Y
+		host.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		host.CanvasSize = UDim2.new(0, 0, 0, 0)
+		host.ScrollBarThickness = 4
+		host.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+		host.Parent = tilePreviewPanel
+	end
+	-- Clear previous rows (keep the host itself).
+	for _, child in ipairs(host:GetChildren()) do
+		if not child:IsA("UIPadding") and not child:IsA("UIListLayout") then
+			child:Destroy()
+		end
+	end
+	return host
+end
+
 function BattleHUD._buildTilePreview()
 	if not tilePreviewPanel then return end
 	clearFrame(tilePreviewPanel)
@@ -770,28 +901,31 @@ function BattleHUD._buildTilePreview()
 	tilePreviewPanel.Visible = isViewMode and (presentation.tile ~= nil)
 	if not presentation.tile then return end
 
-	-- Find-or-create UIPadding (clearFrame preserves existing UIPadding)
-	local pad = tilePreviewPanel:FindFirstChildOfClass("UIPadding")
-	if not pad then pad = Instance.new("UIPadding", tilePreviewPanel) end
-	pad.PaddingTop = UDim.new(0, 10)
-	pad.PaddingLeft = UDim.new(0, 10)
-	pad.PaddingRight = UDim.new(0, 10)
-	pad.PaddingBottom = UDim.new(0, 10)
+	-- Panel keeps a small outer padding so the scroll host doesn't touch the
+	-- 9-slice border; rows go inside the scroll host (vertical scroll).
+	local outerPad = tilePreviewPanel:FindFirstChildOfClass("UIPadding")
+	if not outerPad then outerPad = Instance.new("UIPadding", tilePreviewPanel) end
+	outerPad.PaddingTop = UDim.new(0, 10)
+	outerPad.PaddingLeft = UDim.new(0, 10)
+	outerPad.PaddingRight = UDim.new(0, 10)
+	outerPad.PaddingBottom = UDim.new(0, 10)
 
-	local layout = Instance.new("UIListLayout", tilePreviewPanel)
+	local host = getPreviewHost()
+	local layout = host:FindFirstChildOfClass("UIListLayout")
+	if not layout then layout = Instance.new("UIListLayout", host) end
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-	makeLabel(tilePreviewPanel, presentation.tile.terrainName or "Clear", {
+	makeLabel(host, presentation.tile.terrainName or "Clear", {
 		font = Theme.Font.PrimaryBold, textSize = Theme.Text.Body(), order = 1 })
-	makeLabel(tilePreviewPanel, string.format("Elev: %d  Cost: %d",
+	makeLabel(host, string.format("Elev: %d  Cost: %d",
 		presentation.tile.elevation or 1, presentation.tile.moveCost or 1), {
 		font = Theme.Font.Mono, textSize = Theme.Text.Body(), color = Theme.Colors.TextSecondary, order = 2 })
 	if presentation.tile.effect and presentation.tile.effect ~= "None" then
-		makeLabel(tilePreviewPanel, "Effect: " .. presentation.tile.effect, {
+		makeLabel(host, "Effect: " .. presentation.tile.effect, {
 			textSize = Theme.Text.Small(), color = Theme.Colors.Warning, order = 3 })
 	end
 	if presentation.tile.coords then
-		makeLabel(tilePreviewPanel, presentation.tile.coords, { textSize = Theme.Text.Body(),
+		makeLabel(host, presentation.tile.coords, { textSize = Theme.Text.Body(),
 			color = Theme.Colors.TextDisabled, order = 5 })
 	end
 end
@@ -800,21 +934,25 @@ function BattleHUD._renderDamagePreview()
 	if not tilePreviewPanel or not presentation.preview then return end
 	local p = presentation.preview
 
-	-- Find-or-create UIPadding (clearFrame preserves existing UIPadding)
-	local pad = tilePreviewPanel:FindFirstChildOfClass("UIPadding")
-	if not pad then pad = Instance.new("UIPadding", tilePreviewPanel) end
-	pad.PaddingTop = UDim.new(0, 10)
-	pad.PaddingLeft = UDim.new(0, 10)
-	pad.PaddingRight = UDim.new(0, 10)
-	pad.PaddingBottom = UDim.new(0, 30)
+	-- Outer padding keeps the scroll host off the 9-slice border; rows live inside
+	-- the vertical scroll host so long previews scroll instead of overflowing
+	-- behind the EXECUTE/BACK command bar.
+	local outerPad = tilePreviewPanel:FindFirstChildOfClass("UIPadding")
+	if not outerPad then outerPad = Instance.new("UIPadding", tilePreviewPanel) end
+	outerPad.PaddingTop = UDim.new(0, 10)
+	outerPad.PaddingLeft = UDim.new(0, 10)
+	outerPad.PaddingRight = UDim.new(0, 10)
+	outerPad.PaddingBottom = UDim.new(0, 10)
 
-	local layout = Instance.new("UIListLayout", tilePreviewPanel)
+	local host = getPreviewHost()
+	local layout = host:FindFirstChildOfClass("UIListLayout")
+	if not layout then layout = Instance.new("UIListLayout", host) end
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
 	local order = 0
 	local function row(text, color, bold)
 		order = order + 1
-		local lbl = makeLabel(tilePreviewPanel, text, {
+		local lbl = makeLabel(host, text, {
 			textSize = bold and Theme.Text.Body() or Theme.Text.Small(),
 			font = bold and Theme.Font.PrimaryBold or Theme.Font.Mono,
 			color = color or Theme.Colors.TextPrimary,
@@ -839,7 +977,7 @@ function BattleHUD._renderDamagePreview()
 		lbl.TextXAlignment = Enum.TextXAlignment.Left
 		lbl.Text = "  " .. (text or "Unit")
 		lbl.LayoutOrder = order
-		lbl.Parent = tilePreviewPanel
+		lbl.Parent = host
 		Instance.new("UICorner", lbl).CornerRadius = Theme.CornerRadius.sm
 	end
 
@@ -1015,13 +1153,279 @@ end
 -- TURN ORDER BAR (lower-left)
 --------------------------------------------------
 
-function BattleHUD.UpdateTimeline(entries)
+-- Align the time panel to the turn-order bar's ACTUAL on-screen rect (the bar's
+-- size/position come from UILayoutCoordinator per screen mode, so never hardcode).
+-- Square panel: width = bar height; same top/bottom; 4px gap to the bar's right.
+alignTimePanel = function()
+	-- Left of the right column, flush, no gaps:
+	--   Time + Weather stacked; together exactly the unit panel's height.
+	--   Event below them, same size, top aligned with the adaptive panel
+	--   (action / inspector / preview, whichever is shown under the unit panel).
+	if not (timePanel and rootFrame and activeUnitPanel) then return end
+	local rootAbs = rootFrame.AbsolutePosition
+	local aPos = activeUnitPanel.AbsolutePosition
+	local aSize = activeUnitPanel.AbsoluteSize
+	if aSize.Y <= 0 then return end
+	local side = math.floor(aSize.Y / 2)
+	local x = aPos.X - rootAbs.X - side
+	local y = aPos.Y - rootAbs.Y
+	local function place(p, py, h)
+		if not p then return end
+		p.SizeConstraint = Enum.SizeConstraint.RelativeXY
+		p.AnchorPoint = Vector2.new(0, 0)
+		p.Size = UDim2.fromOffset(side, h)
+		p.Position = UDim2.fromOffset(x, py)
+	end
+	place(timePanel, y, side)
+	place(weatherPanel, y + side, aSize.Y - side)  -- absorbs rounding so bottoms match
+	-- Event: top of the first visible adaptive panel; else directly under the pair.
+	local eventY = y + aSize.Y
+	for _, ap in ipairs({ actionPanel, inspectorPanel, tilePreviewPanel }) do
+		if ap and ap.Visible and ap.AbsoluteSize.Y > 0 then
+			eventY = ap.AbsolutePosition.Y - rootAbs.Y
+			break
+		end
+	end
+	place(eventPanel, eventY, side)
+end
+
+-- Art for these panels is pending (user will upload). Fill ids here; until then the
+-- panel shows the event / condition name as text. Keys = event name / condition id.
+local EVENT_ICON: {[string]: string} = {}
+local WEATHER_ICON: {[string]: string} = {}
+
+-- QUICK-PEEK CARD: tap the Event or Weather panel to see its full description.
+-- One card at a time, its own ScreenGui above the HUD; tap anywhere to dismiss.
+local _peekGui: ScreenGui? = nil
+local function closePeekCard()
+	if _peekGui then _peekGui:Destroy(); _peekGui = nil end
+end
+
+local function buildPeekLines(kind: string, name: string?): (string, {{string}})
+	-- Returns a title + list of {label, body} rows.
+	local rows = {}
+	if kind == "EVENT" then
+		local def = name and BattlefieldEventData and BattlefieldEventData.Events and BattlefieldEventData.Events[name]
+		if not name then return "No Active Event", { {"", "No battlefield event is active right now."} } end
+		if def then
+			if def.type then table.insert(rows, {"TYPE", def.type}) end
+			if def.behaviorEffect then table.insert(rows, {"EFFECT", def.behaviorEffect}) end
+			if def.triggerSpawn then table.insert(rows, {"APPEARS", def.triggerSpawn}) end
+		else
+			table.insert(rows, {"", "No description available."})
+		end
+		return name, rows
+	else
+		local cname = name or "Clear"
+		local def = WeatherConditionData and WeatherConditionData.Get(cname)
+		if def then
+			if def.description then table.insert(rows, {"", def.description}) end
+			if def.passive and def.passive ~= "None." then table.insert(rows, {"PASSIVE", def.passive}) end
+			if def.periodic and def.periodic ~= "None." then table.insert(rows, {"EFFECT", def.periodic}) end
+		else
+			table.insert(rows, {"", "No description available."})
+		end
+		return cname, rows
+	end
+end
+
+local function showPeekCard(kind: string, name: string?, anchorPanel: GuiObject?)
+	closePeekCard()
+	local title, rows = buildPeekLines(kind, name)
+	local player = game:GetService("Players").LocalPlayer
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "PeekCard"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.DisplayOrder = 120
+	-- Full-screen transparent dismiss layer (tap anywhere closes).
+	local dismiss = Instance.new("TextButton")
+	dismiss.Size = UDim2.fromScale(1, 1)
+	dismiss.BackgroundTransparency = 1
+	dismiss.Text = ""
+	dismiss.AutoButtonColor = false
+	dismiss.Parent = gui
+	dismiss.Activated:Connect(closePeekCard)
+	local cardW = 280
+	local card = makePanel("PeekCardFrame", UDim2.fromOffset(cardW, 0), UDim2.fromOffset(0, 0), Vector2.new(0, 1), gui,
+		{ autoY = true, minW = cardW, maxW = cardW, minH = 60, maxH = 420 })
+	card.AnchorPoint = Vector2.new(0, 0)
+	local pd = Instance.new("UIPadding")
+	pd.PaddingTop = UDim.new(0, 12); pd.PaddingBottom = UDim.new(0, 12)
+	pd.PaddingLeft = UDim.new(0, 14); pd.PaddingRight = UDim.new(0, 14)
+	pd.Parent = card
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 4)
+	list.Parent = card
+	local order = 0
+	local function addLabel(text: string, font, size: number, color: Color3)
+		order += 1
+		local l = Instance.new("TextLabel")
+		l.BackgroundTransparency = 1
+		l.Size = UDim2.new(1, 0, 0, 0)
+		l.AutomaticSize = Enum.AutomaticSize.Y
+		l.TextWrapped = true
+		l.TextXAlignment = Enum.TextXAlignment.Left
+		l.Font = font
+		l.TextSize = size
+		l.TextColor3 = color
+		l.Text = text
+		l.LayoutOrder = order
+		l.Parent = card
+	end
+	addLabel(kind, Theme.Font.PrimaryBold, Theme.Text.Tiny(), Theme.Colors.TextSecondary)
+	addLabel(string.upper(title), Theme.Font.PrimaryBold, Theme.Text.Body(), Theme.Colors.TextGold)
+	for _, r in ipairs(rows) do
+		if r[1] ~= "" then addLabel(r[1], Theme.Font.PrimaryBold, Theme.Text.Tiny(), Theme.Colors.Warning) end
+		addLabel(r[2], Theme.Font.Primary, Theme.Text.Small(), Theme.Colors.TextPrimary)
+	end
+	gui.Parent = player:WaitForChild("PlayerGui")
+	_peekGui = gui
+	-- Position just below the tapped panel, clamped on-screen.
+	task.defer(function()
+		if not (card.Parent and anchorPanel) then return end
+		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
+		local ap = anchorPanel.AbsolutePosition
+		local x = math.clamp(ap.X, 6, math.max(6, vp.X - cardW - 6))
+		local y = math.min(ap.Y + anchorPanel.AbsoluteSize.Y + 6, math.max(6, vp.Y - card.AbsoluteSize.Y - 6))
+		card.Position = UDim2.fromOffset(x, y)
+	end)
+end
+
+-- Invisible full-panel tap target. Re-created on every fill because clearFrame
+-- destroys non-layout children. kind = "EVENT" / "WEATHER".
+local function addPeekButton(panel: GuiObject, kind: string, name: string?)
+	local btn = Instance.new("TextButton")
+	btn.Name = "PeekTap"
+	btn.Size = UDim2.fromScale(1, 1)
+	btn.BackgroundTransparency = 1
+	btn.Text = ""
+	btn.AutoButtonColor = false
+	btn.ZIndex = 10
+	btn.Parent = panel
+	btn.Activated:Connect(function()
+		if _peekGui then closePeekCard() return end
+		showPeekCard(kind, name, panel)
+	end)
+end
+
+local function fillInfoPanel(panel, header: string, name: string?, iconMap)
+	if not panel then return end
+	clearFrame(panel)
+	local pd = panel:FindFirstChildOfClass("UIPadding") or Instance.new("UIPadding")
+	pd.PaddingLeft = UDim.new(0, 4); pd.PaddingRight = UDim.new(0, 4)
+	pd.PaddingTop = UDim.new(0, 4); pd.PaddingBottom = UDim.new(0, 4)
+	pd.Parent = panel
+	local img = name and iconMap[name]
+	if img and img ~= "" then
+		local icon = Instance.new("ImageLabel")
+		icon.Size = UDim2.fromScale(1, 1)
+		icon.BackgroundTransparency = 1
+		icon.ScaleType = Enum.ScaleType.Crop
+		icon.Image = img
+		icon.ZIndex = 5
+		icon.Parent = panel
+	end
+	-- No EVENT/WEATHER heading: the panel's purpose is obvious from its position.
+	if not (img and img ~= "") then
+		local nm = Instance.new("TextLabel")
+		nm.AnchorPoint = Vector2.new(0, 1)
+		nm.Position = UDim2.fromScale(0, 1)
+		nm.Size = UDim2.fromScale(1, 1)
+		nm.BackgroundTransparency = 1
+		nm.Font = Theme.Font.PrimaryBold
+		nm.TextScaled = true
+		nm.TextWrapped = true
+		nm.TextColor3 = Theme.Colors.TextPrimary
+		nm.TextStrokeTransparency = 0
+		nm.Text = string.upper(name or "None")
+		nm.ZIndex = 6
+		local tc = Instance.new("UITextSizeConstraint")
+		tc.MaxTextSize = Theme.Text.Small()
+		tc.Parent = nm
+		nm.Parent = panel
+	end
+	addPeekButton(panel, header, name)
+end
+
+local function refreshInfoPanels()
+	local show = turnOrderBar ~= nil and turnOrderBar.Visible
+	if eventPanel then
+		eventPanel.Visible = show
+		if show then fillInfoPanel(eventPanel, "EVENT", _activeEventName, EVENT_ICON) end
+	end
+	if weatherPanel then
+		weatherPanel.Visible = show
+		if show then fillInfoPanel(weatherPanel, "WEATHER", _weatherName or "Clear", WEATHER_ICON) end
+	end
+	task.defer(alignTimePanel)
+end
+
+-- Only one battlefield event is active at a time: a new announcement replaces it.
+function BattleHUD.SetActiveEvent(name: string?)
+	_activeEventName = name
+	refreshInfoPanels()
+end
+
+function BattleHUD.SetWeather(name: string?)
+	_weatherName = name
+	refreshInfoPanels()
+end
+
+function BattleHUD.UpdateTimeline(entries, timeInfo)
 	ensureRoot()
 	BattleHUD._lastTimelineEntries = entries
 	if not turnOrderBar then return end
 	clearFrame(turnOrderBar)
-	if not entries or #entries == 0 then turnOrderBar.Visible = false; return end
+	if not entries or #entries == 0 then turnOrderBar.Visible = false; if timePanel then timePanel.Visible = false end; if eventPanel then eventPanel.Visible = false end; if weatherPanel then weatherPanel.Visible = false end; return end
 	turnOrderBar.Visible = true
+
+	-- TIME-OF-DAY PANEL (separate panel right of the bar). timeInfo = { phase, ctRemaining }.
+	if timePanel then
+		clearFrame(timePanel)
+		timePanel.Visible = (timeInfo ~= nil and timeInfo.phase ~= nil)
+		if timePanel.Visible then
+			-- Small inset only so the image sits inside the ornate frame border.
+			local tpPad = timePanel:FindFirstChildOfClass("UIPadding") or Instance.new("UIPadding")
+			tpPad.PaddingLeft = UDim.new(0, 4); tpPad.PaddingRight = UDim.new(0, 4)
+			tpPad.PaddingTop = UDim.new(0, 4); tpPad.PaddingBottom = UDim.new(0, 4)
+			tpPad.Parent = timePanel
+			-- Image fills the whole panel (the phase name is baked into the art's bottom).
+			local icon = Instance.new("ImageLabel")
+			icon.Name = "TimeIcon"
+			icon.Size = UDim2.fromScale(1, 1)
+			icon.BackgroundTransparency = 1
+			icon.ScaleType = Enum.ScaleType.Crop
+			icon.Image = TIME_ICON[timeInfo.phase] or ""
+			icon.ZIndex = 5
+			icon.Parent = timePanel
+			-- CT countdown overlaid at the TOP (the art's label occupies the bottom).
+			local ctLbl = Instance.new("TextLabel")
+			ctLbl.Name = "CTCountdown"
+			ctLbl.AnchorPoint = Vector2.new(0, 0)
+			ctLbl.Position = UDim2.fromScale(0, 0)
+			ctLbl.Size = UDim2.new(1, 0, 0.24, 0)
+			ctLbl.BackgroundTransparency = 1
+			ctLbl.Font = Theme.Font.PrimaryBold
+			ctLbl.TextScaled = true
+			local _fit = Instance.new("UITextSizeConstraint")
+			_fit.MaxTextSize = Theme.Text.Small()
+			_fit.MinTextSize = 6
+			_fit.Parent = ctLbl
+			ctLbl.TextColor3 = Theme.Colors.TextPrimary
+			ctLbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+			ctLbl.TextStrokeTransparency = 0
+			ctLbl.Text = `CT {timeInfo.ctRemaining or 0}`
+			ctLbl.ZIndex = 6
+			ctLbl.Parent = timePanel
+			task.defer(alignTimePanel)
+			refreshInfoPanels()
+		end
+	end
+	-- Remove any legacy floating widget from older builds.
+	local legacy = turnOrderBar.Parent and turnOrderBar.Parent:FindFirstChild("TimeWidget")
+	if legacy then legacy:Destroy() end
 
 	local layout = Instance.new("UIListLayout", turnOrderBar)
 	layout.FillDirection = Enum.FillDirection.Horizontal
@@ -1030,7 +1434,7 @@ function BattleHUD.UpdateTimeline(entries)
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
 	layout.Padding = UDim.new(0, 3)
 
-	local pad = Instance.new("UIPadding", turnOrderBar)
+	local pad = turnOrderBar:FindFirstChildOfClass("UIPadding") or Instance.new("UIPadding", turnOrderBar)
 	pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10)
 	pad.PaddingTop = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
 
@@ -1153,10 +1557,10 @@ function BattleHUD.UpdateTimeline(entries)
 			nameL.Text = string.sub(entry.name or "?", 1, 6)
 			nameL.TextColor3 = Theme.Colors.TextGold
 		elseif isActive then
-			nameL.Text = string.sub(entry.name or "?", 1, 8)
+			nameL.Text = entry.name or "?"
 			nameL.TextColor3 = Theme.Colors.TextPrimary
 		else
-			nameL.Text = string.sub(entry.name or "?", 1, 5)
+			nameL.Text = entry.name or "?"
 			nameL.TextColor3 = isGhost and Theme.Colors.TextSecondary or Theme.Colors.TextPrimary
 		end
 		nameL.Parent = portrait
@@ -1323,9 +1727,9 @@ function BattleHUD._buildViewModeUnit()
 	local tx = portraitSize + 6
 	local lineH = math.floor(portraitSize / 4)
 
-	makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, tx, 0, 0),
+	makeMarquee(makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, tx, 0, 0),
 		size = UDim2.new(1, -tx, 0, lineH), font = Theme.Font.PrimaryBold,
-		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) })
+		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) }))
 	makeLabel(topRow, d.race or "\xE2\x80\x94", { pos = UDim2.new(0, tx, 0, lineH),
 		size = UDim2.new(1, -tx, 0, lineH), textSize = Theme.Text.Small(),
 		color = Theme.Colors.TextSecondary })
@@ -1343,43 +1747,7 @@ function BattleHUD._buildViewModeUnit()
 		color = Theme.Colors.TextPrimary, order = 2 })
 
 	if d.statuses and #d.statuses > 0 then
-		local statusRow = Instance.new("Frame")
-		statusRow.Size = UDim2.new(1, 0, 0, 28)
-		statusRow.BackgroundTransparency = 1
-		statusRow.LayoutOrder = 3; statusRow.Parent = activeUnitPanel
-		local statusLayout = Instance.new("UIListLayout", statusRow)
-		statusLayout.FillDirection = Enum.FillDirection.Horizontal
-		statusLayout.Padding = UDim.new(0, 3)
-		for si, s in ipairs(d.statuses) do
-			local icon = Instance.new("Frame")
-			icon.Size = UDim2.new(0, 28, 0, 28)
-			icon.BackgroundTransparency = 1
-			icon.BorderSizePixel = 0
-			icon.LayoutOrder = si
-			icon.Parent = statusRow
-			Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 3)
-			local statusAsset = Theme.GetStatusIcon(s.id) or s.sourceIcon
-			if statusAsset then
-				local img = Instance.new("ImageLabel")
-				img.Size = UDim2.fromScale(1, 1)
-				img.Position = UDim2.fromScale(0, 0)
-				img.BackgroundTransparency = 1
-				img.Image = statusAsset
-				img.ScaleType = Enum.ScaleType.Fit
-				img.Parent = icon
-			else
-				icon.BackgroundColor3 = Theme.GetStatusColor(s.id or "")
-				icon.BackgroundTransparency = 0.3
-				local iconLabel = Instance.new("TextLabel")
-				iconLabel.Size = UDim2.fromScale(1, 1)
-				iconLabel.BackgroundTransparency = 1
-				iconLabel.Font = Theme.Font.PrimaryBold
-				iconLabel.TextSize = Theme.Text.Small()
-				iconLabel.TextColor3 = Theme.Colors.TextPrimary
-				iconLabel.Text = string.sub(s.id, 1, 2)
-				iconLabel.Parent = icon
-			end
-		end
+		buildStatusStrip(activeUnitPanel, d.statuses, 3)
 	end
 
 end
@@ -1612,6 +1980,7 @@ function BattleHUD.ApplyLayout(layout)
 	end
 
 	-- Re-run right-side stack positioning
+	task.defer(alignTimePanel)
 	task.defer(function()
 		local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
 		local rootLeft = rootFrame and rootFrame.AbsolutePosition.X or 0
@@ -1650,7 +2019,13 @@ function BattleHUD.ApplyLayout(layout)
 			if stackX and stackW then
 				tilePreviewPanel.AnchorPoint = Vector2.new(0, 0)
 				tilePreviewPanel.Position = UDim2.new(0, stackX, 0, nextY)
-				tilePreviewPanel.Size = UDim2.new(0, stackW, 0, 0)
+				-- In Preview, Render owns the fixed height (down to the command bar);
+				-- only width is updated here so the panel doesn't collapse.
+				if presentation.state == "Preview" and tilePreviewPanel.AutomaticSize == Enum.AutomaticSize.None then
+					tilePreviewPanel.Size = UDim2.new(0, stackW, 0, tilePreviewPanel.Size.Y.Offset)
+				else
+					tilePreviewPanel.Size = UDim2.new(0, stackW, 0, 0)
+				end
 			else
 				tilePreviewPanel.Position = UDim2.new(1, -PAD, 0, nextY)
 			end
@@ -1754,6 +2129,35 @@ function BattleHUD.Render(p)
 			else
 				tilePreviewPanel.Position = UDim2.new(1, -PAD, 0, nextY)
 			end
+			-- Cap the panel height so it never grows down behind the EXECUTE/BACK
+			-- command bar: available space = from the panel's top to the command
+			-- bar's top, minus a margin. The inner PreviewScroll host then scrolls
+			-- any overflow instead of clipping. Falls back to screen bottom if the
+			-- command bar isn't visible.
+			local cons = tilePreviewPanel:FindFirstChildOfClass("UISizeConstraint")
+			if cons then
+				local panelTopAbs = tilePreviewPanel.AbsolutePosition.Y
+				local floorY
+				if commandBar and commandBar.Visible then
+					floorY = commandBar.AbsolutePosition.Y
+				elseif rootFrame then
+					floorY = rootFrame.AbsolutePosition.Y + rootFrame.AbsoluteSize.Y
+				end
+				if floorY then
+					local avail = floorY - panelTopAbs - 12  -- 12px margin above the bar
+					if avail < 60 then avail = 60 end  -- never collapse below a usable minimum
+					cons.MaxSize = Vector2.new(cons.MaxSize.X, avail)
+					-- Preview: the inner scroll host has scale height, so AutomaticSize
+					-- can't grow the panel from it (it collapsed to ~3 lines). Give the
+					-- panel a FIXED height reaching down to just above the command bar.
+					if presentation.state == "Preview" then
+						tilePreviewPanel.AutomaticSize = Enum.AutomaticSize.None
+						tilePreviewPanel.Size = UDim2.new(0, stackW or tilePreviewPanel.AbsoluteSize.X, 0, avail)
+					else
+						tilePreviewPanel.AutomaticSize = Enum.AutomaticSize.Y
+					end
+				end
+			end
 		end
 	end)
 
@@ -1773,7 +2177,12 @@ function BattleHUD.Render(p)
 		if actionPanel then actionPanel.Visible = false end
 	elseif newState == "Resolving" or newState == "BattleEnded" or newState == "Idle" then
 		if actionPanel then actionPanel.Visible = false end
+		if commandBar then commandBar.Visible = false end
 		if activeUnitPanel then activeUnitPanel.Visible = false end
+	elseif newState == "EnemyTurn" then
+		-- AI/neutral turn: show the acting unit (built above), no action menu, no Execute/Back.
+		if actionPanel then actionPanel.Visible = false end
+		if commandBar then commandBar.Visible = false end
 	elseif newState == "SkillSelection" then
 		BattleHUD._buildSkillList()
 		actionPanel.Visible = true
@@ -1992,7 +2401,7 @@ function BattleHUD.Cleanup()
 	rootFrame = nil
 	activeUnitPanel = nil; actionPanel = nil
 	inspectorPanel = nil; tilePreviewPanel = nil
-	turnOrderBar = nil; conditionsPanel = nil; battleLogPanel = nil
+	closePeekCard(); turnOrderBar = nil; timePanel = nil; eventPanel = nil; weatherPanel = nil; conditionsPanel = nil; battleLogPanel = nil
 	if viewModeDropdown then viewModeDropdown:Destroy() end
 	viewModeButtons = nil; viewModeViewBtn = nil; viewModeDropdown = nil; currentCameraMode = "Isometric"
 end

@@ -223,7 +223,7 @@ function VFXController.Init(biome)
 		local b = Instance.new("BloomEffect")
 		b.Intensity = 0.7
 		b.Size = 28
-		b.Threshold = 0.8  -- lowered 0.9->0.8 so mid-bright neon (blue move frame) blooms
+		b.Threshold = 0.9  -- raised 0.8->0.9 (Oct 4 2026) to stop bright Ice/Sand terrain textures blooming; may dim blue move-highlight glow (acceptable trade-off per user)
 		b.Parent = Lighting
 	end
 
@@ -669,6 +669,139 @@ end
 -- Expose the registry so callers can read Melee/Ranged/KO/etc. fallbacks.
 function VFXController.GetRegistry()
 	return VFXRegistry
+end
+
+--------------------------------------------------
+-- PERSISTENT WATERFALL SPLASH VFX
+-- Unlike PlayAsset (one-shot, auto-destroys), waterfall splashes must run
+-- continuously at each waterfall base for the whole battle. We clone the named
+-- asset, enable its emitters, and LEAVE it parented until the map changes.
+-- Keyed by "tx,ty" so a tile is never double-spawned; cleared on map regen.
+--------------------------------------------------
+local waterfallSplashes = {}  -- "tx,ty" -> Instance
+
+-- Spawn (or reuse) a persistent splash at a world position for tile (tx,ty).
+function VFXController.AddWaterfallSplash(tx, ty, assetName, position)
+	if type(assetName) ~= "string" or assetName == "" then return nil end
+	local key = tostring(tx) .. "," .. tostring(ty)
+	if waterfallSplashes[key] and waterfallSplashes[key].Parent then
+		return waterfallSplashes[key]  -- already present
+	end
+	local folder = getAssetFolder()
+	if not folder then return nil end
+	local template = folder:FindFirstChild(assetName)
+	if not template then return nil end  -- graceful miss (no art) — no error
+
+	local clone = template:Clone()
+	if clone:IsA("Model") then
+		clone.Parent = vfxFolder
+		pcall(function() clone:PivotTo(CFrame.new(position)) end)
+	elseif clone:IsA("BasePart") then
+		clone.Anchored = true
+		clone.CanCollide = false
+		clone.CanQuery = false
+		clone.CanTouch = false
+		clone.CFrame = CFrame.new(position)
+		clone.Parent = vfxFolder
+	elseif clone:IsA("ParticleEmitter") or clone:IsA("Attachment") then
+		local holder = Instance.new("Part")
+		holder.Name = "WaterfallSplash_" .. key
+		holder.Anchored = true
+		holder.CanCollide = false
+		holder.CanQuery = false
+		holder.CanTouch = false
+		holder.Transparency = 1
+		holder.Size = Vector3.new(1, 1, 1)
+		holder.CFrame = CFrame.new(position)
+		clone.Parent = holder  -- props before parent (NET-004)
+		holder.Parent = vfxFolder
+		clone = holder
+	else
+		clone.Parent = vfxFolder
+	end
+
+	-- Enable emitters and LEAVE them running (persistent — no stop/Debris).
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("ParticleEmitter") then d.Enabled = true end
+	end
+	if clone:IsA("ParticleEmitter") then clone.Enabled = true end
+
+	waterfallSplashes[key] = clone
+	return clone
+end
+
+-- Remove every persistent waterfall splash (call on map regenerate before
+-- re-adding, so stale splashes from the old map don't linger). MEM-002: Destroy.
+function VFXController.ClearWaterfallSplashes()
+	for key, inst in pairs(waterfallSplashes) do
+		if inst and inst.Parent then inst:Destroy() end
+		waterfallSplashes[key] = nil
+	end
+end
+
+--------------------------------------------------
+-- PERSISTENT TILE-EFFECT VFX (Burning, Poison Cloud, ...). One instance per tile,
+-- emitters left running until the effect is removed or the battle resets.
+--------------------------------------------------
+local tileEffectVfx = {}  -- "tx,ty" -> { id = effectId, inst = Instance }
+
+function VFXController.SetTileEffect(tx, ty, effectId, position)
+	local key = tostring(tx) .. "," .. tostring(ty)
+	local cur = tileEffectVfx[key]
+	if cur then
+		if cur.id == effectId and cur.inst and cur.inst.Parent then return cur.inst end
+		if cur.inst then cur.inst:Destroy() end
+		tileEffectVfx[key] = nil
+	end
+	local reg = VFXController.GetRegistry and VFXController.GetRegistry()
+	local map = reg and reg.ByTileEffect
+	local assetName = map and map[effectId]
+	if type(assetName) ~= "string" or assetName == "" then return nil end
+	local folder = getAssetFolder()
+	local template = folder and folder:FindFirstChild(assetName)
+	if not template then
+		warn(`[VFXController] Tile effect VFX asset not found: {assetName} ({effectId})`)
+		return nil
+	end
+	local clone = template:Clone()
+	local holder: Instance = clone
+	if clone:IsA("Model") then
+		clone.Parent = vfxFolder
+		pcall(function() clone:PivotTo(CFrame.new(position)) end)
+	elseif clone:IsA("BasePart") then
+		clone.Anchored = true; clone.CanCollide = false; clone.CanQuery = false; clone.CanTouch = false
+		clone.CFrame = CFrame.new(position)
+		clone.Parent = vfxFolder
+	else
+		local p = Instance.new("Part")
+		p.Name = "TileEffectVFX_" .. key
+		p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
+		p.Transparency = 1
+		p.Size = Vector3.new(4, 0.2, 4)
+		p.CFrame = CFrame.new(position)
+		clone.Parent = p
+		p.Parent = vfxFolder
+		holder = p
+	end
+	for _, d in ipairs(holder:GetDescendants()) do
+		if d:IsA("ParticleEmitter") then d.Enabled = true end
+	end
+	tileEffectVfx[key] = { id = effectId, inst = holder }
+	return holder
+end
+
+function VFXController.ClearTileEffect(tx, ty)
+	local key = tostring(tx) .. "," .. tostring(ty)
+	local cur = tileEffectVfx[key]
+	if cur and cur.inst then cur.inst:Destroy() end
+	tileEffectVfx[key] = nil
+end
+
+function VFXController.ClearAllTileEffects()
+	for key, cur in pairs(tileEffectVfx) do
+		if cur.inst then cur.inst:Destroy() end
+		tileEffectVfx[key] = nil
+	end
 end
 
 return VFXController

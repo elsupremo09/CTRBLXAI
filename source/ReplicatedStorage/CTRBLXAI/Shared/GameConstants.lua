@@ -51,6 +51,53 @@ function GameConstants.GetElevation(tileX, tileY)
 end
 
 --------------------------------------------------
+-- SPAN TILE PROTECTION + CHASM FLOORS (map_gen_rules rows 59/60/65/67)
+-- Populated by SetGeneratedMap() from MapService (protectedSpanTiles /
+-- chasmFloorTiles / floorEffects). Generated bridge spans (Plank Bridge, Rocky
+-- Causeway, Drawbridge — plus repairBridgePass safety-net tiles, which are also
+-- isBridge LAN crossings) are PROTECTED during battle: they never lose elevation,
+-- never crack / collapse, and never change terrain (a burning Plank span keeps its
+-- Wooden Floor deck and stays walkable). Tile EFFECTS (e.g. Burning) still apply.
+--------------------------------------------------
+GameConstants.SPAN_MAP        = {}   -- [y][x] = true for protected span tiles
+GameConstants.CHASM_FLOOR_MAP = {}   -- [y][x] = true for deliberate gap (chasm floor) tiles
+GameConstants.FLOOR_EFFECTS   = {}   -- { {x, y, effectId}, ... } permanent chasm-floor tile effects
+
+function GameConstants.IsProtectedSpan(tileX, tileY)
+	local row = GameConstants.SPAN_MAP[tileY]
+	return row ~= nil and row[tileX] == true
+end
+
+function GameConstants.IsChasmFloor(tileX, tileY)
+	local row = GameConstants.CHASM_FLOOR_MAP[tileY]
+	return row ~= nil and row[tileX] == true
+end
+
+-- Molten / Tainted Ground ground effects (terrain_effects rows 14 / 16) were not
+-- implemented anywhere before Slice 5. They are now applied by TileEffectService
+-- on CHASM-FLOOR tiles (map_gen_rules row 65). true = chasm floors only (current,
+-- smallest blast radius); set false to apply them on every Molten / Tainted tile
+-- once the Designer confirms map-wide activation.
+GameConstants.GROUND_EFFECTS_CHASM_ONLY = true
+
+-- Lower a tile's elevation by `amount` (floor-clamped to 1). Used by explosion
+-- tile-lowering and Cracked Ground collapse (Round 2 terrain pass 2026-09-29).
+-- Returns the ACTUAL drop applied (may be < amount near the floor).
+-- Protected span tiles never drop (map_gen_rules row 60 point 2).
+function GameConstants.LowerElevation(tileX, tileY, amount)
+	if GameConstants.IsProtectedSpan(tileX, tileY) then
+		print(string.format("[GameConstants] Span (%d,%d) is PROTECTED — elevation unchanged", tileX, tileY))
+		return 0
+	end
+	local row = GameConstants.ELEVATION_MAP[tileY]
+	if not row then return 0 end
+	local cur = row[tileX] or 1
+	local target = math.max(1, cur - (amount or 1))
+	row[tileX] = target
+	return cur - target
+end
+
+--------------------------------------------------
 -- TERRAIN TYPES  (from DB: terrain_effects)
 --------------------------------------------------
 
@@ -96,42 +143,42 @@ GameConstants.TERRAIN_TYPES = {
 		transformations = {},   -- Explosion@≥8→Cracked: needs runtime check
 	},
 	Sand = {
-		id = "Sand", moveCost = 1,
+		id = "Sand", moveCost = 1,   -- DB total 2, halved → 1 (Sep 28 2026 balance change)
 		tags = { "Solid", "Loose", "Earth" },
 		occupyBonus = { Earth = 0.15 },
-		crossCost = 1,   -- +1 move cost
+		crossCost = 0,   -- cost consolidated into moveCost (crossCost retired)
 		triggerEffect = nil,
 		transformations = { Fire = "Molten" },
 	},
 	Mud = {
-		id = "Mud", moveCost = 2,
+		id = "Mud", moveCost = 1,   -- DB total 2, halved → 1 (Sep 28 2026 balance change)
 		tags = { "Liquid", "Soft", "Conductive", "Earth", "Sticky" },
 		occupyBonus = { Earth = 0.15, Water = 0.15 },
-		crossCost = 0,   -- already baked into moveCost = 2
+		crossCost = 0,   -- cost consolidated into moveCost
 		triggerEffect = nil,
 		transformations = { Fire = "Rocky" },
 	},
 	Swamp = {
-		id = "Swamp", moveCost = 1,
+		id = "Swamp", moveCost = 1.5,   -- DB total 3, halved → 1.5 (Sep 28 2026 balance change)
 		tags = { "Liquid", "Organic", "Sticky", "Water", "Dark" },
 		occupyBonus = { Water = 0.15, Dark = 0.15 },
-		crossCost = 2,   -- +2 move cost
+		crossCost = 0,   -- cost consolidated into moveCost
 		triggerEffect = nil,
 		transformations = { Fire = "Rocky" },
 	},
 	["Shallow Water"] = {
-		id = "Shallow Water", moveCost = 1,
+		id = "Shallow Water", moveCost = 1,   -- DB total 2, halved → 1 (Sep 28 2026 balance change)
 		tags = { "Liquid", "Conductive", "Water" },
 		occupyBonus = { Water = 0.25 },
-		crossCost = 1,
+		crossCost = 0,   -- cost consolidated into moveCost
 		triggerEffect = nil,
 		transformations = { Ice = "Ice", Earth = "Mud" },
 	},
 	["Deep Water"] = {
-		id = "Deep Water", moveCost = 1,
+		id = "Deep Water", moveCost = 1.5,   -- DB total 3, halved → 1.5 (Sep 28 2026 balance change)
 		tags = { "Liquid", "Conductive", "Water", "Deep" },
 		occupyBonus = { Water = 0.30 },
-		crossCost = 2,
+		crossCost = 0,   -- cost consolidated into moveCost
 		triggerEffect = "Drowning",
 		transformations = { Ice = "Ice" },
 	},
@@ -263,6 +310,17 @@ function GameConstants.GetTerrainId(tileX, tileY)
 	return "Clear"
 end
 
+-- Set a tile's terrain id directly (no transformation lookup). Used for the
+-- runtime Rocky@Elev>=8 -> Cracked Ground crack and Cracked Ground -> Rocky
+-- collapse, neither of which is expressible via the transformations table.
+function GameConstants.SetTerrainId(tileX, tileY, terrainId)
+	if not GameConstants.TERRAIN_TYPES[terrainId] then return false end
+	local row = GameConstants.TERRAIN_MAP[tileY]
+	if not row then return false end
+	row[tileX] = terrainId
+	return true
+end
+
 --------------------------------------------------
 -- TERRAIN TRANSFORMATION
 -- When an element hits a terrain, the terrain may transform.
@@ -271,6 +329,9 @@ end
 --------------------------------------------------
 
 function GameConstants.TransformTerrain(tileX, tileY, element)
+	-- Protected spans keep their deck terrain (map_gen_rules row 60 point 4: a burnt
+	-- Plank/Drawbridge span stays a walkable span; Wooden Floor Fire -> Clear skipped).
+	if GameConstants.IsProtectedSpan(tileX, tileY) then return false, nil end
 	local terrainId = GameConstants.GetTerrainId(tileX, tileY)
 	local def = GameConstants.TERRAIN_TYPES[terrainId]
 	if not def or not def.transformations then return false, nil end
@@ -305,6 +366,14 @@ GameConstants.TILE_EFFECTS = {
 		crossEffect   = "Burn",
 		tickCt = 300, tickDamage = 0.15, tickElement = "Fire",  -- 15% MaxHP
 		reactions = { Water = "Steam" },
+		-- Spread (DB spec rows 40-43): every 500 CT, ignite orthogonally-adjacent
+		-- Flammable base terrain within |elev| <= 1. New tiles start at full 900 CT.
+		-- Base terrain is NOT transformed by spread. TRG-012 guards cadence.
+		spread = {
+			cadenceCt = 500, radius = 1, adjacency = "orthogonal",
+			elevDelta = 1, targetTag = "Flammable",
+			newDurationCt = 900, transformsTerrain = false,
+		},
 	},
 	Wet = {
 		id = "Wet", element = "Water", hazard = false,
@@ -312,13 +381,14 @@ GameConstants.TILE_EFFECTS = {
 		durationCt = 1500,
 		occupyEffect  = nil,             -- Water Skills +25% (handled as occupy bonus)
 		occupyBonus   = { Water = 0.25 },
-		reactions = { Fire = "Steam", Ice = "Frozen" },
+		reactions = { Fire = "Steam", Ice = "Frozen", Electric = "Static Cloud" },  -- Electric on Wet → Static Cloud (ruling 2026-09-29)
 	},
 	Frozen = {
 		id = "Frozen", element = "Ice", hazard = false,
 		tags = { "Frozen", "Slippery" },
 		durationCt = 900,
-		occupyBonus   = { Water = 0.25 },  -- Water +25%; Fire Recv -50%
+		occupyBonus   = { Water = 0.25 },  -- Water +25%
+		occupyDamageMod = { Fire = -0.5 },  -- Fire damage received -50% (audit row 63)
 		crossEffect   = "SlidingKnockback",
 		reactions = { Fire = "Wet" },
 	},
@@ -326,8 +396,9 @@ GameConstants.TILE_EFFECTS = {
 		id = "Steam", element = "Water", hazard = false,
 		tags = { "Airborne", "Conductive" },
 		durationCt = 900,
-		occupyBonus   = { Water = 0.25 },   -- +25% Evasion handled separately
-		reactions = { Electric = "Static Cloud", Wind = nil },  -- Wind clears
+		occupyBonus   = { Water = 0.25 },
+		occupyEvasion = 0.25,   -- +25% Evasion (audit row 57; mapping formula parked pending Electric pass)
+		reactions = { Electric = "Static Cloud", Wind = nil },  -- Wind clears; Electric on Steam → Static Cloud
 	},
 	["Static Cloud"] = {
 		id = "Static Cloud", element = "Electric", hazard = true,
@@ -342,7 +413,41 @@ GameConstants.TILE_EFFECTS = {
 		durationCt = 1500,
 		occupyEffect  = "Poison",
 		crossEffect   = "Poison",
-		reactions = { Fire = "Explosion" },  -- reduced damage if chain
+		reactions = { Fire = "Explosion" },  -- Fire → Explosion (source consumed)
+		-- Explosion (DB spec rows 47-52): generic explosion tag carries NO blanket HP
+		-- damage — damage is PER-SOURCE (barrel bomb / terrain chain supplies payload).
+		-- Intrinsic = tile-lowering + terrain-chain trigger + chain queue (TRG-011).
+		explosion = { pattern = "diamond", radius = 1, element = "Fire",
+			chainReductionFactor = 0.5, maxChainDepth = 4 },
+	},
+
+	-- ===== Effects added 2026-09-29 (were omitted; DB audit rows 60-62) =====
+	Oily = {
+		id = "Oily", element = "Oil", hazard = false,
+		tags = { "Flammable", "Slippery" },
+		durationCt = -1,   -- Unlimited (persists until removed/exploded)
+		-- Occupy: knockback slide continues until first non-Oily/non-Ice tile
+		-- (slide-extension MECHANIC, handled by TileCrossEffectService, not a status).
+		slideExtension = true,
+		reactions = { Fire = "Explosion" },  -- Fire → Explosion; Oily removed after
+		explosion = { pattern = "diamond", radius = 1, element = "Fire",
+			chainReductionFactor = 0.5, maxChainDepth = 4 },
+	},
+	["Tar Pit"] = {
+		id = "Tar Pit", element = "Earth", hazard = true,
+		tags = { "Sticky" },
+		durationCt = -1,   -- Unlimited
+		crossCostBonus = 1.5,   -- effective move cost to cross (RESOLVED 2026-09-29 = 1.5)
+		petrifyOnConsecutiveTurns = 2,  -- 2 own turn-ends on any Tar Pit → Petrify
+		reactions = { Fire = "Burning" },  -- Fire → Burning (DB terrain_effects)
+	},
+	Vines = {
+		id = "Vines", element = "Nature", hazard = false,
+		tags = { "Organic" },
+		durationCt = -1,   -- Unlimited
+		occupyEffect  = "Pinned",
+		crossEffect   = "Pinned",
+		reactions = { Fire = "Burning" },  -- Fire → Burning
 	},
 }
 -- Oily, Tar Pit, Vines omitted — unlimited duration + complex
@@ -395,6 +500,21 @@ function GameConstants.GetBlockerAt(tileX, tileY)
 	return nil
 end
 
+-- Remove ALL blocker entries at a tile (e.g. a Stone Pillar that fell and became a
+-- walkable Rocky span, or a removed/destroyed solid object). Returns how many were
+-- removed. Iterates backward so removal while looping is safe.
+function GameConstants.RemoveBlockerAt(tileX, tileY)
+	local removed = 0
+	for i = #GameConstants.BLOCKERS, 1, -1 do
+		local b = GameConstants.BLOCKERS[i]
+		if b.tileX == tileX and b.tileY == tileY then
+			table.remove(GameConstants.BLOCKERS, i)
+			removed = removed + 1
+		end
+	end
+	return removed
+end
+
 function GameConstants.HasBlockerTag(tileX, tileY, tag)
 	local b = GameConstants.GetBlockerAt(tileX, tileY)
 	if not b or not b.tags then return false end
@@ -415,6 +535,19 @@ function GameConstants.SetGeneratedMap(mapState)
 	GameConstants.TERRAIN_MAP   = mapState.terrainGrid
 	GameConstants.OBJECT_MAP    = mapState.objectGrid or {}
 	GameConstants.BLOCKERS      = mapState.blockers
+	-- Span protection + chasm floors (map_gen_rules rows 59/60/65/67).
+	local spanMap, chasmMap = {}, {}
+	for _, s in ipairs(mapState.protectedSpanTiles or {}) do
+		spanMap[s.y] = spanMap[s.y] or {}
+		spanMap[s.y][s.x] = true
+	end
+	for _, c in ipairs(mapState.chasmFloorTiles or {}) do
+		chasmMap[c.y] = chasmMap[c.y] or {}
+		chasmMap[c.y][c.x] = true
+	end
+	GameConstants.SPAN_MAP        = spanMap
+	GameConstants.CHASM_FLOOR_MAP = chasmMap
+	GameConstants.FLOOR_EFFECTS   = mapState.floorEffects or {}
 	print(string.format(
 		"[GameConstants] SetGeneratedMap: %dx%d, %d blockers",
 		#mapState.terrainGrid[1], #mapState.terrainGrid,
@@ -825,6 +958,90 @@ GameConstants.STATUSES = {
 		reapply      = "refresh",
 	},
 
+	-- Debuff Resistance -10 percentage points (Veil of Weakness, DOC-SHADOWBINDER-01,
+	-- CTRBLXAI.db skills: "reduce Debuff Resistance by 10 percentage points for
+	-- 1500 CT before resistance/boss handling"). Refresh; does not stack.
+	-- Applied in StatusService.GetDebuffResist. Id matches the existing Theme icon.
+	["Debuff Res Down"] = {
+		id           = "Debuff Res Down",
+		description  = "Debuff Resistance -10 points.",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 1500,
+		reapply      = "refresh",
+		debuffResistPenalty = 0.10,
+	},
+	-- Meditate (DOC-ASCETIC-01, 2026-10-07): Debuff Resistance +10 points for 1000 CT,
+	-- refresh. Same scale as Debuff Res Down (GetDebuffResist multiplier -0.10).
+	["Debuff Res Up"] = {
+		id           = "Debuff Res Up",
+		description  = "Debuff Resistance +10 points.",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 1000,
+		reapply      = "refresh",
+		debuffResistBonus = 0.10,
+	},
+	-- Mana Surge (DOC-ARCANIST-01, 2026-10-07): the next eligible skill committed
+	-- within 1000 CT gains Skill Potency +10%; consumed at that commit
+	-- (CommandService ValidateAndCommit). Refresh on recast.
+	["Mana Surge"] = {
+		id           = "Mana Surge",
+		description  = "Next skill: Skill Potency +10%.",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 1000,
+		reapply      = "refresh",
+		potencyBonusMult = 1.10,
+	},
+	-- Misdirection (DB skills DOC-TRICKSTER-01, 2026-10-07): one trigger; the
+	-- redirect itself is resolved in CommandService (applyMisdirection).
+	["Misdirection"] = {
+		id           = "Misdirection",
+		description  = "First enemy single-target attack on this unit is redirected to an adjacent valid target.",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 1000,
+		reapply      = "refresh",
+	},
+
+	-- Doctrine signature buffs (2026-10-07; DB skills rows DOC-VANGUARD-01 /
+	-- DOC-TACTICIAN-01 / DOC-WARLORD-01). 1000 CT, refresh, no stack.
+	-- stabilityOffset -> StatusService.GetStabilityModifier (push distance)
+	-- damageTakenMult -> StatusService.GetDamageReceivedMultiplier (direct hits)
+	-- moveRtMult      -> StatusService.GetMovementRtMultiplier
+	-- moveOffset / attackMult use the existing readers.
+	["Hold the Line"] = {
+		id              = "Hold the Line",
+		description     = "Stability +2. Direct damage received -15%.",
+		kind            = "Buff",
+		duration        = nil,
+		durationCt      = 1000,
+		reapply         = "refresh",
+		stabilityOffset = 2,
+		damageTakenMult = 0.85,
+	},
+	["Coordinated Advance"] = {
+		id           = "Coordinated Advance",
+		description  = "Movement Range +2. Movement RT -20%.",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 1000,
+		reapply      = "refresh",
+		moveOffset   = 2,
+		moveRtMult   = 0.80,
+	},
+	["War Cry"] = {
+		id              = "War Cry",
+		description     = "Direct damage dealt +10%. Stability +1.",
+		kind            = "Buff",
+		duration        = nil,
+		durationCt      = 1000,
+		reapply         = "refresh",
+		attackMult      = 1.10,
+		stabilityOffset = 1,
+	},
+
 	-- ===== HARD CONTROL =====
 
 	Sleep = {
@@ -858,6 +1075,114 @@ GameConstants.STATUSES = {
 		skipsTurn    = true,
 		implemented  = false,     -- DEFERRED: no DB definition yet
 	},
+
+	-- ===== REACTION STANCES =====
+
+	-- Shared by Riposte Stance (DOC-DUELIST-01) and Counter Stance (SKL-COUNTER-STANCE).
+	-- Developer decision 2026-09-28 (overrides DB max-2 / melee-only / single-use):
+	-- counters EVERY eligible direct hit from an attacker inside this unit's
+	-- equipped-weapon basic-attack reach; the balancer is RT — each counter adds
+	-- the unit's basic-attack RT cost to its remainingRt. The casting skill stamps
+	-- its own counter power on the instance (inst.counterPowerMult).
+	CounterStance = {
+		id           = "CounterStance",
+		description  = "Counterattacks every hit from an attacker within basic-attack reach. Each counter delays this unit's next turn.",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 1000,   -- DB: Riposte Stance / Counter Stance duration 1000 CT
+		reapply      = "refresh",
+		dispellable  = true,
+		counterPowerMult = 0.85, -- fallback only; skills stamp their own value on the instance
+	},
+
+	-- ===== MAP-OBJECT TIMED BUFFS (Slice 5) =====
+	-- Data-driven buff mechanism: these statuses carry optional modifier fields
+	-- (statPctMod / rtMultiplier / moveOffset / jumpOffset / physDamageMult /
+	-- spellDamageMult / attackMult / defenseMult) that the read paths honor.
+	-- Magnitudes/durations come from the Designer's objects_encounters catalog.
+	-- All doesNotStack=true (reapply=refresh -> one instance, refresh duration).
+	["Banner Blessing"] = {
+		id           = "Banner Blessing",
+		description  = "+15% to all primary stats.",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 1500,
+		reapply      = "refresh",
+		doesNotStack = true,
+		statPctMod   = { STR = 0.15, AGI = 0.15, INT = 0.15, VIT = 0.15, DEX = 0.15, LUK = 0.15 },
+	},
+	["Cursed Aura"] = {
+		id           = "Cursed Aura",
+		description  = "+20% base RT (acts slower).",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 1500,
+		reapply      = "refresh",
+		doesNotStack = true,
+		rtMultiplier = 1.20,
+	},
+	["Spell Focus"] = {
+		id             = "Spell Focus",
+		description    = "+20% Spell Damage.",
+		kind           = "Buff",
+		duration       = nil,
+		durationCt     = 1500,
+		reapply        = "refresh",
+		doesNotStack   = true,
+		spellDamageMult = 1.20,
+	},
+	["Battle Rage"] = {
+		id             = "Battle Rage",
+		description    = "+20% Physical Damage.",
+		kind           = "Buff",
+		duration       = nil,
+		durationCt     = 1500,
+		reapply        = "refresh",
+		doesNotStack   = true,
+		physDamageMult = 1.20,
+	},
+	["War Rhythm"] = {
+		id           = "War Rhythm",
+		description  = "-15% base RT (acts faster).",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 1500,
+		reapply      = "refresh",
+		doesNotStack = true,
+		rtMultiplier = 0.85,
+	},
+	["Rune Ward"] = {
+		id          = "Rune Ward",
+		description = "+10% Attack and +10% Defense.",
+		kind        = "Buff",
+		duration    = nil,
+		durationCt  = 1500,
+		reapply     = "refresh",
+		doesNotStack = true,
+		attackMult  = 1.10,
+		defenseMult = 1.10,
+	},
+	["Rally"] = {
+		id          = "Rally",
+		description = "+1 Move and +1 Jump.",
+		kind        = "Buff",
+		duration    = nil,
+		durationCt  = 1500,
+		reapply     = "refresh",
+		doesNotStack = true,
+		moveOffset  = 1,
+		jumpOffset  = 1,
+	},
+	["Fortune Boon"] = {
+		id           = "Fortune Boon",
+		description  = "+50% LUK (raises Fortune).",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 1500,
+		reapply      = "refresh",
+		doesNotStack = true,
+		statPctMod   = { LUK = 0.50 },
+	},
 }
 
 --------------------------------------------------
@@ -875,6 +1200,252 @@ GameConstants.STATUSES = {
 -- range = -1 means 'inherit weapon range' (resolved at runtime)
 -- mpCost is base value at L=1; level scaling applied at runtime
 -- rtMult is multiplier on Effective Weapon WT for RT cost
+
+-- ============================================================
+-- SKILL RANGE (user rulings 2026-10-07; DAT-001 / AP-021: ONE shared formula)
+-- * Minimum range comes ONLY from the weapon. A skill that follows weapon range
+--   (range = -1) uses the weapon's min AND max; a skill with its own range has
+--   NO minimum (0). No default/hardcoded minimum (e.g. projectile min 2) exists.
+-- * Each skill declares how much Bonus Skill Range it may apply (DB
+--   skills.Targeting_Range): 1.0 = 100%, 0.5 = 50%; any skill NOT listed = 0%
+--   (melee reach, self, weapon-range skills that state no share, 'Fixed N' with
+--   no share stated, and the 3 rows whose text points to an unrelated U86 note).
+-- * Bonus applied = floor(bonusSkillRange x share): a partial tile is never
+--   granted (50% of 1 = 0), keeping range in whole tiles and never overshooting
+--   the authored share.
+-- ============================================================
+GameConstants.SKILL_BONUS_RANGE_SHARE = table.freeze({
+-- 100%
+	["SKL-ARCANE-RENEWAL"] = 1.0,
+	["SKL-BLOOD-PRICE"] = 1.0,
+	["SKL-CHAIN-SPARK"] = 1.0,
+	["SKL-DARK-RESTORATION"] = 1.0,
+	["SKL-EARTHEN-LANCE"] = 1.0,
+	["SKL-FESTERING-WOUND"] = 1.0,
+	["SKL-FIRE-BOLT"] = 1.0,
+	["SKL-FROSTBIND"] = 1.0,
+	["SKL-GUARDIAN-S-PROJECTION"] = 1.0,
+	["SKL-HEALING-LIGHT"] = 1.0,
+	["SKL-HOLY-SMITE"] = 1.0,
+	["SKL-IGNITE-GROUND"] = 1.0,
+	["SKL-IGNITION-LANCE"] = 1.0,
+	["SKL-MANA-SCORCH"] = 1.0,
+	["SKL-METEOR-MARKER"] = 1.0,
+	["SKL-MIASMA-CLOUD"] = 1.0,
+	["SKL-MIND-FRACTURE"] = 1.0,
+	["SKL-PHANTOM-EXCHANGE"] = 1.0,
+	["SKL-PURGE"] = 1.0,
+	["SKL-PYROCLASM"] = 1.0,
+	["SKL-RAINFALL-ZONE"] = 1.0,
+	["SKL-TIDAL-CRASH"] = 1.0,
+	["SKL-TORRENT-SPEAR"] = 1.0,
+	["SKL-TOXIC-NEEDLE"] = 1.0,
+	["SKL-VOLTAIC-CHAIN"] = 1.0,
+	-- Doctrine skills (UAT fix 2026-10-07: DOC- rows were missing)
+	["DOC-TACTICIAN-01"] = 1.0,
+	["DOC-SHADOWBINDER-01"] = 1.0,
+	["DOC-CONJURER-02"] = 1.0,
+	["DOC-CONJURER-03"] = 1.0,
+-- 50%
+	["SKL-ARCANE-BARRIER"] = 0.5,
+	["SKL-BASTION-PROJECTION"] = 0.5,
+	["SKL-BENEDICTION"] = 0.5,
+	["SKL-FISSURE-LINE"] = 0.5,
+	["SKL-FLASH-FREEZE"] = 0.5,
+	["SKL-GLACIAL-WAVE"] = 0.5,
+	["SKL-INVIGORATE"] = 0.5,
+	["SKL-LIFE-LINK"] = 0.5,
+	["SKL-MENDING-RAIN"] = 0.5,
+	["SKL-RETRIBUTION-SHELL"] = 0.5,
+	["SKL-SEAL-OF-SILENCE"] = 0.5,
+	["SKL-STONE-PRISON"] = 0.5,
+	["SKL-SUMMON-DECOY"] = 0.5,
+	["SKL-SUMMON-TURRET"] = 0.5,
+	["SKL-SUMMON-WARD-TOTEM"] = 0.5,
+	["SKL-VITAL-BARRIER"] = 0.5,
+	["SKL-WEAPON-WARD"] = 0.5,
+	["SKL-WITHER"] = 0.5,
+	["DOC-ASCETIC-01"] = 0.5,
+	["DOC-CONJURER-01"] = 0.5,
+})
+
+function GameConstants.GetSkillBonusRangeShare(skillId)
+	return GameConstants.SKILL_BONUS_RANGE_SHARE[skillId] or 0
+end
+
+-- Returns maxRange, minRange, baseRange, appliedBonus for a skill cast by actor.
+-- raceModifier: caller-supplied (RacePassiveService is server-only), default 0.
+function GameConstants.CalcSkillRange(actor, skillDef, raceModifier)
+	local followsWeapon = (skillDef.range == -1)
+	local baseRange = followsWeapon and (actor.weaponMaxRange or 1) or (skillDef.range or 1)
+	local bonusStat = (actor.derivedStats and actor.derivedStats.bonusSkillRange)
+		or math.floor((actor.effectiveStats and actor.effectiveStats.INT or 10) / 75)
+	local appliedBonus = math.floor(bonusStat * GameConstants.GetSkillBonusRangeShare(skillDef.id))
+	local maxRange = math.max(1, baseRange + appliedBonus + (raceModifier or 0))
+	local minRange = followsWeapon and (actor.weaponMinRange or 1) or 0
+	return maxRange, minRange, baseRange, appliedBonus
+end
+
+-- ============================================================
+-- SKILL ACTIVATION TIME (2026-10-07). frameworks 10/37: Activation Time is CT,
+-- begins after Channel Time, cannot be interrupted once scheduled, and is NOT
+-- reduced by DEX. Read from the ONE content source (ReplicatedStorage.Content.
+-- SkillData, generated from CTRBLXAI.db) -- never copied into a second table
+-- (DAT-001). Deferred require: SkillData requires nothing, but loading it at
+-- call time keeps GameConstants free of new top-level dependencies (ARC-004).
+-- Missing / non-numeric value = 0 (immediate).
+-- ============================================================
+local _skillDataForActivation = nil
+function GameConstants.GetSkillActivationTime(skillId)
+	if type(skillId) ~= "string" then return 0 end
+	if _skillDataForActivation == nil then
+		local ok, data = pcall(function()
+			return require(game:GetService("ReplicatedStorage"):WaitForChild("Content", 10):WaitForChild("SkillData", 10))
+		end)
+		_skillDataForActivation = (ok and type(data) == "table") and data or false
+	end
+	local entry = _skillDataForActivation and _skillDataForActivation[skillId]
+	local ct = entry and tonumber(entry.activationTime) or 0
+	return math.max(0, math.floor(ct))
+end
+
+-- ============================================================
+-- LEVEL-BASED SKILL MP COST (2026-10-07). project_rules 43 / frameworks 8 & 33:
+--   MP Cost = round(Base + Growth x (Effective Skill Level - 1))
+--   Effective Skill Level (ESL) = caster main-hand item level; rounded ONCE at the
+--   final result (after the race/trait/doctrine/augment multipliers); may be 0.
+-- ONE data source (DAT-001): each skill's base/growth is parsed once from its
+-- mpCostFormula string in ReplicatedStorage.Content.SkillData (auto-generated from
+-- CTRBLXAI.db, same loader as activation time). Accepted forms:
+--   "round(B + G × (L - 1))"   (103 skills)
+--   "B + round(G × (Effective Skill Level - 1))"   (SKL-STEAL; B is whole, so
+--       the result equals round(B + G x (ESL - 1)))
+--   "N"   (constant, e.g. "0" for Mana Surge / Meditate / Blood Price)
+-- Anything else (or a skill absent from SkillData, e.g. summon/internal skills)
+-- falls back to the skill def's flat mpCost, warned once.
+-- ============================================================
+local _mpCostCache = {} -- [skillId] = { base, growth } | false (= use flat mpCost)
+
+local function parseMpFormula(formula)
+	if type(formula) ~= "string" then return nil end
+	local f = formula:gsub("×", "x"):gsub("%*", "x")
+	f = f:gsub("^%s+", ""):gsub("%s+$", "")
+	local b, g = f:match("^round%(%s*([%d%.]+)%s*%+%s*([%d%.]+)%s*x%s*%(%s*L%s*%-%s*1%s*%)%s*%)$")
+	if not b then
+		b, g = f:match("^([%d%.]+)%s*%+%s*round%(%s*([%d%.]+)%s*x%s*%(%s*Effective Skill Level%s*%-%s*1%s*%)%s*%)$")
+	end
+	if b then return { base = tonumber(b), growth = tonumber(g) } end
+	local n = f:match("^([%d%.]+)$")
+	if n then return { base = tonumber(n), growth = 0 } end
+	return nil
+end
+
+function GameConstants.GetSkillMpFormula(skillId)
+	if type(skillId) ~= "string" then return nil end
+	local cached = _mpCostCache[skillId]
+	if cached ~= nil then return cached or nil end
+	if _skillDataForActivation == nil then
+		local ok, data = pcall(function()
+			return require(game:GetService("ReplicatedStorage"):WaitForChild("Content", 10):WaitForChild("SkillData", 10))
+		end)
+		_skillDataForActivation = (ok and type(data) == "table") and data or false
+	end
+	local entry = _skillDataForActivation and _skillDataForActivation[skillId]
+	local parsed = entry and parseMpFormula(entry.mpCostFormula) or nil
+	if entry and not parsed then
+		warn(`[GameConstants] MP formula for {skillId} not understood ("{tostring(entry.mpCostFormula)}") — using flat mpCost`)
+	end
+	_mpCostCache[skillId] = parsed or false
+	return parsed
+end
+
+-- Effective Skill Level = caster main-hand item level (frameworks 33). Units with
+-- no main hand (summons, authored units) use ESL 1, i.e. the formula's base cost.
+function GameConstants.GetEffectiveSkillLevel(actor)
+	local mh = actor and actor.equipmentSlots and actor.equipmentSlots.MainHand
+	local lvl = mh and tonumber(mh.itemLevel) or 1
+	return math.max(1, math.floor(lvl))
+end
+
+-- Final MP cost of one cast BEFORE Mana Burn's flat extra.
+--   multiplier = product of the caster's race/trait/doctrine/augment MP modifiers
+--   (computed by CommandService, which owns those services; 1 if omitted).
+-- Rounded once at the end, never below 0.
+function GameConstants.CalcSkillMpCost(actor, skillDef, multiplier)
+	if type(skillDef) ~= "table" then return 0 end
+	local raw
+	local f = GameConstants.GetSkillMpFormula(skillDef.id)
+	if f then
+		raw = f.base + f.growth * (GameConstants.GetEffectiveSkillLevel(actor) - 1)
+	else
+		raw = skillDef.mpCost or 0
+	end
+	return math.max(0, math.round(raw * (multiplier or 1)))
+end
+
+-- ============================================================
+-- Fixed/level-based skill RT costs (DB skills.RT_Cost_Formula, authoritative
+-- 2026-10-04). These 38 skills (28 SKL + 10 level-based doctrine) do NOT use the weapon-WT skill RT formula; they
+-- charge round(base + growth × L) where L = Effective Skill Level = caster
+-- main-hand item level (project_rules 42/43). SKL-STEAL uses round(growth×(L-1)).
+-- Outer layers (Frozen ×2, Arcane Prodigy skill-RT trait) STILL apply on top,
+-- same as weapon-WT skills (user ruling 2026-10-04).
+GameConstants.SKILL_FIXED_RT = {
+	["SKL-ARCANE-RENEWAL"] = { base = 70, growth = 0.25, eslMinus1 = false },
+	["SKL-BATTLE-FURY"] = { base = 60, growth = 0.2, eslMinus1 = false },
+	["SKL-BENEDICTION"] = { base = 80, growth = 0.3, eslMinus1 = false },
+	["SKL-BLINDING-FLASH"] = { base = 70, growth = 0.25, eslMinus1 = false },
+	["SKL-BLINK"] = { base = 40, growth = 0.2, eslMinus1 = false },
+	["SKL-BULWARK-FIELD"] = { base = 80, growth = 0.3, eslMinus1 = false },
+	["SKL-CONSECRATE"] = { base = 70, growth = 0.3, eslMinus1 = false },
+	["SKL-COUNTER-STANCE"] = { base = 50, growth = 0.15, eslMinus1 = false },
+	["SKL-FATED-ESCAPE"] = { base = 55, growth = 0.25, eslMinus1 = false },
+	["SKL-FESTERING-WOUND"] = { base = 70, growth = 0.25, eslMinus1 = false },
+	["SKL-FLASH-FREEZE"] = { base = 70, growth = 0.3, eslMinus1 = false },
+	["SKL-INVIGORATE"] = { base = 70, growth = 0.25, eslMinus1 = false },
+	["SKL-LIFE-LINK"] = { base = 70, growth = 0.25, eslMinus1 = false },
+	["SKL-MENDING-RAIN"] = { base = 70, growth = 0.3, eslMinus1 = false },
+	["SKL-MIASMA-CLOUD"] = { base = 70, growth = 0.3, eslMinus1 = false },
+	["SKL-MIND-FRACTURE"] = { base = 70, growth = 0.25, eslMinus1 = false },
+	["SKL-PHANTOM-EXCHANGE"] = { base = 60, growth = 0.35, eslMinus1 = false },
+	["SKL-POISON-TRAP"] = { base = 60, growth = 0.2, eslMinus1 = false },
+	["SKL-PURGE"] = { base = 70, growth = 0.25, eslMinus1 = false },
+	["SKL-RAINFALL-ZONE"] = { base = 70, growth = 0.3, eslMinus1 = false },
+	["SKL-SEAL-OF-SILENCE"] = { base = 70, growth = 0.3, eslMinus1 = false },
+	["SKL-STATIC-FIELD"] = { base = 70, growth = 0.3, eslMinus1 = false },
+	["SKL-STEAL"] = { base = 60, growth = 0.25, eslMinus1 = true },
+	["SKL-SUMMON-DECOY"] = { base = 80, growth = 0.3, eslMinus1 = false },
+	["SKL-SUMMON-TURRET"] = { base = 90, growth = 0.35, eslMinus1 = false },
+	["SKL-SUMMON-WARD-TOTEM"] = { base = 80, growth = 0.3, eslMinus1 = false },
+	["SKL-VANISHING-STEP"] = { base = 60, growth = 0.2, eslMinus1 = false },
+	["SKL-WITHER"] = { base = 70, growth = 0.25, eslMinus1 = false },
+	-- Level-based doctrine skills (DB authoritative) — same fixed-cost treatment.
+	["DOC-ARCANIST-01"] = { base = 60, growth = 0.3, eslMinus1 = false },
+	["DOC-ASCETIC-01"] = { base = 70, growth = 0.3, eslMinus1 = false },
+	["DOC-CONJURER-01"] = { base = 90, growth = 0.35, eslMinus1 = false },
+	["DOC-CONJURER-02"] = { base = 80, growth = 0.3, eslMinus1 = false },
+	["DOC-CONJURER-03"] = { base = 85, growth = 0.3, eslMinus1 = false },
+	["DOC-DUELIST-01"] = { base = 60, growth = 0.25, eslMinus1 = false },
+	["DOC-SHADOWBINDER-01"] = { base = 80, growth = 0.35, eslMinus1 = false },
+	["DOC-TACTICIAN-01"] = { base = 60, growth = 0.3, eslMinus1 = false },
+	["DOC-TRICKSTER-01"] = { base = 60, growth = 0.25, eslMinus1 = false },
+	["DOC-WARLORD-01"] = { base = 70, growth = 0.3, eslMinus1 = false },
+}
+
+
+-- Compute a fixed/level-based skill's authored RT cost. Returns nil if the skill is
+-- NOT a fixed-cost skill (caller should then use the weapon-WT formula).
+-- level = Effective Skill Level (caster main-hand item level), default 1.
+-- SKL-STEAL form: base + round(growth × (L - 1)); all others: round(base + growth × L).
+function GameConstants.CalcFixedSkillRt(skillId, level)
+	local def = GameConstants.SKILL_FIXED_RT and GameConstants.SKILL_FIXED_RT[skillId]
+	if not def then return nil end
+	level = level or 1
+	if def.eslMinus1 then
+		return def.base + math.round(def.growth * (level - 1))
+	end
+	return math.round(def.base + def.growth * level)
+end
 
 GameConstants.SKILLS = {
 	["SKL-FIRE-BOLT"] = {
@@ -955,6 +1526,7 @@ GameConstants.SKILLS = {
 		inheritStr    = false,
 		appliesStatus = nil,
 		isHealing     = false,
+		isShield      = true,  -- shield-grant routing (2026-10-05)
 		projectileType = "Direct",
 	},
 	["SKL-RAINFALL-ZONE"] = {
@@ -1069,6 +1641,7 @@ GameConstants.SKILLS = {
 		inheritStr    = false,
 		appliesStatus = nil,
 		isHealing     = false,
+		isShield      = true,  -- shield-grant routing (2026-10-05)
 		projectileType = "Direct",
 	},
 	["SKL-FATED-ESCAPE"] = {
@@ -1213,6 +1786,7 @@ GameConstants.SKILLS = {
 		inheritStr    = true,
 		appliesStatus = nil,
 		isHealing     = false,
+		isShield      = true,  -- shield-grant routing (2026-10-05)
 		projectileType = "Direct",
 	},
 	["SKL-PURIFYING-FORM"] = {
@@ -1293,6 +1867,7 @@ GameConstants.SKILLS = {
 		inheritStr    = false,
 		appliesStatus = nil,
 		isHealing     = false,
+		isShield      = true,  -- shield-grant routing (2026-10-05)
 		projectileType = "Direct",
 	},
 	["SKL-PRECISE-DISARM"] = {
@@ -1565,6 +2140,8 @@ GameConstants.SKILLS = {
 		inheritStr    = false,
 		appliesStatus = nil,
 		isHealing     = false,
+		isSummon      = true,  -- summon-spawn routing (2026-10-05)
+		summonProfile = "idle",  -- AI behaviour tag for the spawned unit
 		projectileType = "Direct",
 	},
 	["SKL-MENDING-RAIN"] = {
@@ -1712,6 +2289,7 @@ GameConstants.SKILLS = {
 		inheritStr    = false,
 		appliesStatus = nil,
 		isHealing     = false,
+		isShield      = true,  -- shield-grant routing (2026-10-05)
 		projectileType = "Direct",
 	},
 	["SKL-RETRIBUTION-SHELL"] = {
@@ -1728,6 +2306,7 @@ GameConstants.SKILLS = {
 		inheritStr    = false,
 		appliesStatus = nil,
 		isHealing     = false,
+		isShield      = true,  -- shield-grant routing (2026-10-05)
 		projectileType = "Direct",
 	},
 	["SKL-INVIGORATE"] = {
@@ -1990,9 +2569,13 @@ GameConstants.SKILLS = {
 		mpCost        = 3,
 		rtMult        = 1.0,
 		channelTime   = 0,
-		power         = 0.6,
-		inheritStr    = true,
-		appliesStatus = nil,
+		power         = 0,     -- self-buff: no damage on cast
+		inheritStr    = false,
+		appliesStatus = "CounterStance",
+		-- DB: "Counter attack: Weapon Attack Power x 0.60" — applied to each counter hit.
+		counterPowerMult = 0.60,
+		-- DB: counter applies 30% of the defender's Weapon RT Delay to the attacker.
+		counterRtDelayMult = 0.30,
 		isHealing     = false,
 		projectileType = "Direct",
 	},
@@ -2058,6 +2641,8 @@ GameConstants.SKILLS = {
 		inheritStr    = true,
 		appliesStatus = nil,
 		isHealing     = false,
+		isSummon      = true,  -- summon-spawn routing (2026-10-05)
+		summonProfile = "turret",  -- AI behaviour tag for the spawned unit
 		projectileType = "Direct",
 	},
 	["SKL-SUMMON-WARD-TOTEM"] = {
@@ -2074,6 +2659,8 @@ GameConstants.SKILLS = {
 		inheritStr    = false,
 		appliesStatus = nil,
 		isHealing     = false,
+		isSummon      = true,  -- summon-spawn routing (2026-10-05)
+		summonProfile = "idle",  -- AI behaviour tag for the spawned unit
 		projectileType = "Direct",
 	},
 	["SKL-SHATTER-BLOW"] = {
@@ -2316,6 +2903,30 @@ GameConstants.SKILLS = {
 		isHealing     = false,
 		projectileType = "Direct",
 	},
+	["DOC-SPELLBLADE-01"] = {
+		id            = "DOC-SPELLBLADE-01",
+		name          = "Arcane Strike",
+		tags          = { "Direct Damage", "Physical" },
+		targetRules   = "Enemy Unit",
+		range         = -1,
+		aoePattern    = "InheritWeapon",
+		mpCost        = 4,
+		rtMult        = 1.0,
+		channelTime   = 0,
+		power         = 1.0,
+		inheritStr    = true,
+		appliesStatus = nil,
+		isHealing     = false,
+		projectileType = "Inherit",
+		-- Hybrid weapon/INT strike (Doctrine: Spellblade). Authored recipe
+		-- (DB/SkillData DOC-SPELLBLADE-01): Power = Weapon Attack Power x 1.00 x
+		-- Skill Potency Multiplier, PLUS a flat INT/2 bonus to Skill Power applied
+		-- before Defense. The flat INT/2 term lives in CombatResolver.EstimateSkillPower,
+		-- keyed to this id (the generic skill-power path has no INT flat term).
+		-- Castable def lives here so it supersedes the placeholder in
+		-- Main.server doctrineSkillCombatDefs (registered first; that loop skips
+		-- ids already registered).
+	},
 }
 
 --------------------------------------------------
@@ -2396,6 +3007,15 @@ function GameConstants.CalcStartingRt(baseRt, luk)
 	return math.round(baseRt * (1 - 0.30 * luk / (100 + luk)))
 end
 
+-- Player Initiative Edge (DB core_stats id 54, STEP 2 — user ruling 2026-10-02).
+-- PLAYER-ROSTER units only: Starting RT = LUK Starting RT - 10 (minimum 1), applied
+-- LAST (after any % Starting-RT modifiers). NOT for enemies, neutrals, allied NPCs,
+-- summons, or mid-battle reinforcements. STEP 1 (CalcStartingRt) is symmetric.
+GameConstants.PLAYER_INITIATIVE_EDGE_RT = 10
+function GameConstants.ApplyPlayerInitiativeEdge(startingRt)
+	return math.max(1, (startingRt or 0) - GameConstants.PLAYER_INITIATIVE_EDGE_RT)
+end
+
 -- RT Delay Resistance (VIT reduces incoming RT Delay)
 -- Rule: Incoming RT Delay × (1 - VIT / (300 + VIT))
 function GameConstants.CalcRtDelayResistance(rawDelay, targetVit)
@@ -2420,6 +3040,25 @@ end
 function GameConstants.CalcDefensePower(def, vit)
 	if def <= 0 then return 0 end
 	return def * (1 + vit / 300)
+end
+
+-- Total equipment Defense feeding Defense Power (DB core_stats id 30: "Defense comes
+-- from equipment and modifiers"; id 31/5: Defense Power = Defense x (1 + VIT / 300)).
+-- = MainHand weapon Defense + Off-Hand Defense + summed armor Defense. All three are
+-- rebuilt by EquipmentService.RebuildUnitStats (rarity Defense lines already folded
+-- into each item's profile). Units without equipment fall back to 0 (legacy).
+function GameConstants.GetUnitDefense(unit)
+	if not unit then return 0 end
+	return (unit.weaponDefense or 0) + (unit.offHandDefense or 0) + (unit.armorDefense or 0)
+end
+
+-- Effective Armor WT (DB core_stats id 2 Effective Equipment WT formula applied to the
+-- summed armor WT). Feeds Modified Base RT (DB weapons_equipment id 7:
+-- "Modified Base RT = Base RT + Effective Armor WT") — NOT the action WT term.
+function GameConstants.CalcEffectiveArmorWt(unit)
+	if not unit then return 0 end
+	local str = (unit.effectiveStats and unit.effectiveStats.STR) or 10
+	return GameConstants.CalcEffectiveWt(unit.armorWt or 0, str)
 end
 
 function GameConstants.CalcPrecision(dex)
@@ -2480,7 +3119,7 @@ function GameConstants.ComputeDerivedStats(unit)
 		-- VIT derived
 		maxHp           = 50 + vit * 4,
 		healEfficiency  = math.round(GameConstants.CalcHealEfficiency(vit) * 1000) / 1000,
-		defensePower    = math.round(GameConstants.CalcDefensePower(weaponDefense, vit) * 10) / 10,
+		defensePower    = math.round(GameConstants.CalcDefensePower(GameConstants.GetUnitDefense(unit), vit) * 10) / 10,
 		debuffResist    = math.round((1 - vit / (300 + vit)) * 1000) / 1000, -- no Calc* for this composite
 		rtDelayResist   = math.round((1 - vit / (300 + vit)) * 1000) / 1000,
 		stability       = math.floor(vit / 60),
@@ -2496,7 +3135,9 @@ function GameConstants.ComputeDerivedStats(unit)
 		startingRt      = GameConstants.CalcStartingRt(GameConstants.BASE_RT_STANDARD, luk),
 
 		-- Composite combat stats
-		basicAttackRt   = math.round(GameConstants.BASE_RT_STANDARD * GameConstants.BASIC_ATTACK_RT_FACTOR)
+		-- Basic Attack RT = round(Modified Base RT x 0.10) + Effective Weapon WT
+		-- (DB weapons_equipment id 8); Modified Base RT = Base RT + Effective Armor WT (id 7).
+		basicAttackRt   = math.round((GameConstants.BASE_RT_STANDARD + GameConstants.CalcEffectiveArmorWt(unit)) * GameConstants.BASIC_ATTACK_RT_FACTOR)
 			+ math.round(GameConstants.CalcEffectiveWt(weaponWt, str)),
 	}
 
@@ -2567,7 +3208,7 @@ GameConstants.STAT_META = {
 	mpRegen         = { label = "MP Regen",         formula = "2 + floor(INT / 40) per 1000 CT", parent = "INT" },
 	maxHp           = { label = "Max HP",           formula = "50 + VIT × 4", parent = "VIT" },
 	healEfficiency  = { label = "Heal Efficiency",  formula = "1 + VIT / 300", parent = "VIT", unit = "×" },
-	defensePower    = { label = "Defense Power",    formula = "Defense × (1 + VIT / 300)", parent = "VIT" },
+	defensePower    = { label = "Defense Power",    formula = "(Weapon + Off-Hand + Armor Defense) × (1 + VIT / 300)", parent = "VIT" },
 	debuffResist    = { label = "Debuff Resist",    formula = "1 - VIT / (300 + VIT)", parent = "VIT", unit = "×" },
 	rtDelayResist   = { label = "RT Delay Resist",  formula = "1 - VIT / (300 + VIT)", parent = "VIT", unit = "×" },
 	stability       = { label = "Stability",        formula = "floor(VIT / 60)", parent = "VIT" },
@@ -2577,7 +3218,7 @@ GameConstants.STAT_META = {
 	discoveryRadius = { label = "Discovery Radius", formula = "1 + floor(LUK / 60)", parent = "LUK" },
 	unitFortune     = { label = "Unit Fortune",     formula = "LUK / (LUK + 200)", parent = "LUK", unit = "%" },
 	startingRt      = { label = "Starting RT",      formula = "round(400 × (1 - 0.30 × LUK/(100+LUK)))", parent = "LUK" },
-	basicAttackRt   = { label = "Basic Attack RT",  formula = "round(Base RT × 0.10) + Effective WT", parent = "STR" },
+	basicAttackRt   = { label = "Basic Attack RT",  formula = "round((Base RT + Eff. Armor WT) × 0.10) + Effective Weapon WT", parent = "STR" },
 }
 
 --------------------------------------------------

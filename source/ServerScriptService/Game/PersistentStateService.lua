@@ -88,8 +88,14 @@ function PersistentStateService.UpdateMaxResources(playerId, unitId, newMaxHp, n
 	if not state then return end
 
 	-- HP
+	-- Slice 6 item 2 (2026-10-07): a KO'd unit (isKO flag or 0 HP) does NOT get
+	-- the max-HP increase added to its current HP — it stays at 0 until KO is
+	-- cleared (persistent_hp_mp_rules id 8 "KO units receive NO ... recovery").
+	local isDown = state.isKO == true or (state.currentHp or 0) <= 0
 	if newMaxHp > state.maxHp then
-		state.currentHp = state.currentHp + (newMaxHp - state.maxHp)
+		if not isDown then
+			state.currentHp = state.currentHp + (newMaxHp - state.maxHp)
+		end
 	elseif newMaxHp < state.maxHp then
 		state.currentHp = math.min(state.currentHp, newMaxHp)
 	end

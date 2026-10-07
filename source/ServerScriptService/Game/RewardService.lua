@@ -75,6 +75,108 @@ local function generateRewardSeed()
 end
 
 --------------------------------------------------
+-- PER-BATTLE REWARD MODIFIER (Battlefield Events hook, 2026-10-04)
+--
+-- Set by BattlefieldEventService during a battle (Leprechaun / Gold Golem /
+-- Crystal Golem / Doppelganger / Wandering Scholar / Wandering Mercenaries /
+-- Wandering Monster) and read here at reward time. GenerateRewards' signature is
+-- UNCHANGED — the modifier is module state. NIL-SAFE: with no modifier set every
+-- multiplier is 1 and no rarity shift applies, i.e. identical to the pre-hook
+-- behavior.
+--
+--   goldMult         multiplies battle gold
+--   materialMult     multiplies battle materials
+--   expMult          multiplies battle EXP
+--   bonusRarityTiers shifts rolled reward rarity up N tiers (capped at Legendary)
+--   minRarity        optional rarity floor (e.g. "Rare" = "guarantees Rare+ loot")
+--
+-- HONEST SCOPE: the gold / material / EXP economies (economy_framework,
+-- materials_system, unit_progression) are DESIGNED in the DB but NOT yet built in
+-- code — nothing in the game grants battle gold, materials or EXP today. The
+-- multipliers are therefore stored and exposed (GetGoldMultiplier /
+-- GetMaterialMultiplier / GetExpMultiplier / ApplyGold / ApplyMaterial /
+-- ApplyExp) for those grant paths to read when they land, and are reported in
+-- GenerateRewards' 3rd return value. The rarity shift/floor IS applied now to the
+-- items/cards GenerateRewards actually produces.
+--------------------------------------------------
+
+local MAX_LOOT_RANK = 5  -- Legendary (highest rarity in NORMAL_RARITY_WEIGHTS)
+local RANK_TO_RARITY = {
+	[0] = "Broken", [1] = "Common", [2] = "Uncommon", [3] = "Rare",
+	[4] = "Epic", [5] = "Legendary",
+}
+
+local _rewardModifier = nil  -- nil = no modifier (all ×1)
+
+local function numOr(v, default)
+	if type(v) == "number" and v == v then return v end
+	return default
+end
+
+-- Replace the active modifier. Missing fields default to neutral values.
+function RewardService.SetRewardModifier(mult)
+	if type(mult) ~= "table" then
+		_rewardModifier = nil
+		return
+	end
+	_rewardModifier = {
+		goldMult         = math.max(0, numOr(mult.goldMult, 1)),
+		materialMult     = math.max(0, numOr(mult.materialMult, 1)),
+		expMult          = math.max(0, numOr(mult.expMult, 1)),
+		bonusRarityTiers = math.max(0, math.floor(numOr(mult.bonusRarityTiers, 0))),
+		minRarity        = (type(mult.minRarity) == "string" and RARITY_RANK[mult.minRarity]) and mult.minRarity or nil,
+	}
+	print(string.format("[RewardService] Reward modifier set | gold x%.2f material x%.2f exp x%.2f rarity +%d min=%s",
+		_rewardModifier.goldMult, _rewardModifier.materialMult, _rewardModifier.expMult,
+		_rewardModifier.bonusRarityTiers, tostring(_rewardModifier.minRarity)))
+end
+
+function RewardService.ClearRewardModifier()
+	_rewardModifier = nil
+end
+
+-- Copy of the active modifier (always a full table; neutral values when unset).
+function RewardService.GetRewardModifier()
+	local m = _rewardModifier
+	return {
+		goldMult         = m and m.goldMult or 1,
+		materialMult     = m and m.materialMult or 1,
+		expMult          = m and m.expMult or 1,
+		bonusRarityTiers = m and m.bonusRarityTiers or 0,
+		minRarity        = m and m.minRarity or nil,
+	}
+end
+
+function RewardService.GetGoldMultiplier() return _rewardModifier and _rewardModifier.goldMult or 1 end
+function RewardService.GetMaterialMultiplier() return _rewardModifier and _rewardModifier.materialMult or 1 end
+function RewardService.GetExpMultiplier() return _rewardModifier and _rewardModifier.expMult or 1 end
+
+-- Convenience for the (future) gold / material / EXP grant paths.
+function RewardService.ApplyGold(amount)
+	return math.floor(numOr(amount, 0) * RewardService.GetGoldMultiplier())
+end
+function RewardService.ApplyMaterial(amount)
+	return math.floor(numOr(amount, 0) * RewardService.GetMaterialMultiplier())
+end
+function RewardService.ApplyExp(amount)
+	return math.floor(numOr(amount, 0) * RewardService.GetExpMultiplier())
+end
+
+-- Apply the rarity shift / floor to a rolled rarity. No modifier -> unchanged.
+local function applyRarityModifier(rarity)
+	local m = _rewardModifier
+	if not m then return rarity end
+	local rank = RARITY_RANK[rarity]
+	if rank == nil then return rarity end
+	rank = rank + (m.bonusRarityTiers or 0)
+	if m.minRarity and RARITY_RANK[m.minRarity] then
+		rank = math.max(rank, RARITY_RANK[m.minRarity])
+	end
+	rank = math.clamp(rank, 0, MAX_LOOT_RANK)
+	return RANK_TO_RARITY[rank] or rarity
+end
+
+--------------------------------------------------
 -- WEIGHTED ROLL HELPER
 --------------------------------------------------
 
@@ -99,9 +201,10 @@ end
 local function rollCardRarity(rng)
 	local base = weightedRoll(rng, NORMAL_RARITY_WEIGHTS, "rarity", "weight")
 	if (RARITY_RANK[base] or 0) < 3 then
-		return "Rare"
+		return applyRarityModifier("Rare")
 	end
-	return base
+	-- Battlefield-event rarity shift/floor (nil modifier -> unchanged).
+	return applyRarityModifier(base)
 end
 
 --------------------------------------------------
@@ -224,7 +327,8 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 		local category = weightedRoll(itemRng, CATEGORY_WEIGHTS, "category", "weight")
 
 		if category == "Equipment" then
-			local rarity = weightedRoll(itemRng, NORMAL_RARITY_WEIGHTS, "rarity", "weight")
+			-- Battlefield-event rarity shift/floor (nil modifier -> unchanged).
+			local rarity = applyRarityModifier(weightedRoll(itemRng, NORMAL_RARITY_WEIGHTS, "rarity", "weight"))
 			local pool = getEquipPool()
 			local item, genErr = ItemGenerator.GenerateFromPool(pool, mapLevel, rarity, seed, "Loot")
 			if not item then
@@ -318,7 +422,7 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 			local pool = getConsumablePool()
 			local conId = pool[itemRng:NextInteger(1, #pool)]
 			local def = ConsumableData.GetById(conId)
-			local rarity = weightedRoll(itemRng, NORMAL_RARITY_WEIGHTS, "rarity", "weight")
+			local rarity = applyRarityModifier(weightedRoll(itemRng, NORMAL_RARITY_WEIGHTS, "rarity", "weight"))
 			print(string.format("[RewardService] Reward %d: Consumable %s (%s) [%s]",
 				i, conId, def and def.name or "?", rarity))
 			table.insert(results, {
@@ -339,7 +443,14 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 	print(string.format("[RewardService] Done: %d equipment committed, %d total for %s",
 		equipCommitted, #results, playerId))
 
-	return results, equipCommitted
+	-- 3rd return (additive; existing callers ignore it): the battlefield-event
+	-- reward modifier in effect for this generation (gold/material/EXP multipliers
+	-- for the not-yet-built currency grant paths). Neutral values when unset.
+	local appliedModifier = RewardService.GetRewardModifier()
+	print(string.format("[RewardService] Modifier in effect | gold x%.2f material x%.2f exp x%.2f rarity +%d min=%s",
+		appliedModifier.goldMult, appliedModifier.materialMult, appliedModifier.expMult,
+		appliedModifier.bonusRarityTiers, tostring(appliedModifier.minRarity)))
+	return results, equipCommitted, appliedModifier
 end
 
 --------------------------------------------------

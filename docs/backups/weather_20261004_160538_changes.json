@@ -1,0 +1,162 @@
+{
+ "stamp": "20261004_160538",
+ "backup_db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_pre_weather_20261004_160538.db",
+ "backup_xlsx": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Game_Rules_pre_weather_20261004_160538.xlsx",
+ "backup_index": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\INDEX_pre_weather_20261004_160538.txt",
+ "counts_before": {
+  "objects_encounters": 80,
+  "terrain_effects": 77,
+  "elements_statuses": 48,
+  "biomes": 28,
+  "map_gen_rules": 69,
+  "open_decisions": 78,
+  "project_rules": 134
+ },
+ "counts_after": {
+  "objects_encounters": 81,
+  "terrain_effects": 78,
+  "elements_statuses": 48,
+  "biomes": 28,
+  "map_gen_rules": 73,
+  "open_decisions": 83,
+  "project_rules": 134
+ },
+ "updated_rows": [
+  [
+   "objects_encounters",
+   50
+  ],
+  [
+   "objects_encounters",
+   51
+  ],
+  [
+   "objects_encounters",
+   52
+  ],
+  [
+   "objects_encounters",
+   53
+  ],
+  [
+   "objects_encounters",
+   54
+  ],
+  [
+   "objects_encounters",
+   55
+  ],
+  [
+   "objects_encounters",
+   56
+  ],
+  [
+   "objects_encounters",
+   57
+  ],
+  [
+   "objects_encounters",
+   58
+  ],
+  [
+   "objects_encounters",
+   59
+  ],
+  [
+   "objects_encounters",
+   60
+  ],
+  [
+   "objects_encounters",
+   61
+  ],
+  [
+   "terrain_effects",
+   23
+  ],
+  [
+   "terrain_effects",
+   27
+  ],
+  [
+   "biomes",
+   8
+  ],
+  [
+   "biomes",
+   7
+  ],
+  [
+   "biomes",
+   10
+  ]
+ ],
+ "inserted": [
+  [
+   "objects_encounters",
+   [
+    "Snow Storm (battle condition)"
+   ]
+  ],
+  [
+   "terrain_effects",
+   [
+    "HEATWAVE TRANSFORM SET"
+   ]
+  ],
+  [
+   "map_gen_rules",
+   [
+    "Weather / Crisis Combined Exclusive Slot (P0)"
+   ]
+  ],
+  [
+   "map_gen_rules",
+   [
+    "Weather / Crisis Per-Round Re-Roll (P0)"
+   ]
+  ],
+  [
+   "map_gen_rules",
+   [
+    "Weather / Crisis Quest Start + Time Cycle (P0)"
+   ]
+  ],
+  [
+   "map_gen_rules",
+   [
+    "Weather Periodic Interval = 300 CT (P0)"
+   ]
+  ],
+  [
+   "open_decisions",
+   [
+    "Weather/Crisis rework - related-races list for Dark Eclipse Haste / Holy Aurora Slow (2026-10-04)"
+   ]
+  ],
+  [
+   "open_decisions",
+   [
+    "Weather/Crisis rework - Strong Wind Burning acceleration + Poison Cloud spread (2026-10-04)"
+   ]
+  ],
+  [
+   "open_decisions",
+   [
+    "Weather/Crisis rework - Heatwave extra transforms (2026-10-04)"
+   ]
+  ],
+  [
+   "open_decisions",
+   [
+    "Weather/Crisis rework - Snow Storm biome weights + Frozen/Fire interaction (2026-10-04)"
+   ]
+  ],
+  [
+   "open_decisions",
+   [
+    "Weather/Crisis rework - kept passives/ticks on Rain / Dark Eclipse / Holy Aurora (2026-10-04)"
+   ]
+  ]
+ ]
+}

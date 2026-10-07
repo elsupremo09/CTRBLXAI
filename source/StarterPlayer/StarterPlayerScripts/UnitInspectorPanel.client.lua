@@ -32,6 +32,13 @@ local LoadoutScreen = require(
 )
 -- MockLoadoutData owns mapServerItem (server item -> loadout UI item). Optional:
 -- if it fails to load, the inspector falls back to its local mapping.
+local ObjectData = nil
+do
+	local okOD, resOD = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("Content", 10):WaitForChild("ObjectData", 10))
+	end)
+	if okOD then ObjectData = resOD else warn("[UnitInspector] ObjectData unavailable: " .. tostring(resOD)) end
+end
 local MockLoadoutData = nil
 do
 	local ok, res = pcall(function()
@@ -49,6 +56,9 @@ local panelGui = nil
 local currentTab = "basic"
 local clickOutsideConn = nil
 local detailOverlayGui = nil
+-- Units sharing the inspected tile (alive first, then KO'd) + current index, for the cycle button.
+local tileCycleIds: {string} = {}
+local tileCycleIndex = 1
 
 --------------------------------------------------
 -- HELPERS
@@ -102,54 +112,81 @@ local function createSection(parent, title, order)
 	})
 end
 
--- Shared: render active effects block (icons + duration + damage)
-local function renderActiveEffects(content, data, startOrder)
+-- Shared: render active effects as a horizontal, drag-scrollable icon strip.
+-- Height scales with the inspector panel (panelH). Tap an icon to toggle its
+-- name + duration. Native tools: ScrollingFrame (horizontal) + UIListLayout.
+local function renderActiveEffects(content, data, startOrder, panelH)
 	local effectOrder = startOrder
+	panelH = panelH or 420
+
+	-- Strip height scales with the panel: ~16% of panel height, clamped.
+	local iconSize = math.clamp(math.floor(panelH * 0.11), 32, 56)
+	local labelH = 16
+	local stripH = iconSize + labelH + 8
+
 	if not data.statuses or #data.statuses == 0 then
 		createLabel(content, { Text = "  No active effects.", Order = effectOrder,
 			TextSize = Theme.Text.Small(), Color = Theme.Colors.TextDisabled })
 		return effectOrder + 1
 	end
 
-	for i = #data.statuses, 1, -1 do
+	-- Horizontal drag-scroll strip (sized to full width, height scales with panel)
+	local strip = Instance.new("ScrollingFrame")
+	strip.Name = "ActiveEffectsStrip"
+	strip.Size = UDim2.new(1, 0, 0, stripH)
+	strip.BackgroundTransparency = 1
+	strip.BorderSizePixel = 0
+	strip.ScrollingDirection = Enum.ScrollingDirection.X
+	strip.AutomaticCanvasSize = Enum.AutomaticSize.X
+	strip.CanvasSize = UDim2.new(0, 0, 0, 0)
+	strip.ScrollBarThickness = 4
+	strip.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	strip.ElasticBehavior = Enum.ElasticBehavior.Always
+	strip.LayoutOrder = effectOrder
+	strip.Parent = content
+
+	local hList = Instance.new("UIListLayout")
+	hList.FillDirection = Enum.FillDirection.Horizontal
+	hList.SortOrder = Enum.SortOrder.LayoutOrder
+	hList.Padding = UDim.new(0, 6)
+	hList.VerticalAlignment = Enum.VerticalAlignment.Top
+	hList.Parent = strip
+
+	for i = 1, #data.statuses do
 		local s = data.statuses[i]
 		local sid = s.id or s.name or "Unknown"
 		local def = GameConstants.STATUSES and GameConstants.STATUSES[sid] or nil
 		local sColor = Theme.GetStatusColor and Theme.GetStatusColor(sid) or Theme.Colors.Warning
 
-		-- Duration
+		-- Duration string
 		local durStr
 		if s.remainingTurns then durStr = s.remainingTurns .. " turns"
 		elseif s.remainingCt then durStr = "CT " .. math.floor(s.remainingCt) .. " left"
 		elseif def and def.durationCt then durStr = "CT " .. def.durationCt .. " left"
+		elseif s.sourceDuration then durStr = tostring(s.sourceDuration)
 		else durStr = "Permanent" end
 
-		-- Stacks
 		local stackStr = s.stacks and s.stacks > 1 and (" x" .. s.stacks) or ""
 
-		-- Row frame
-		local hasDesc = def and def.description
-		local hasDmg = s.nextDamage and s.nextDamage > 0
-		local rowH = 18
-		if hasDesc then rowH = rowH + 14 end
-		if hasDmg then rowH = rowH + 14 end
+		-- Cell holds the icon (fixed) + a name label underneath (shown on tap)
+		local cell = Instance.new("Frame")
+		cell.Size = UDim2.fromOffset(iconSize, stripH)
+		cell.BackgroundTransparency = 1
+		cell.BorderSizePixel = 0
+		cell.LayoutOrder = i
+		cell.Parent = strip
 
-		local row = Instance.new("Frame")
-		row.Size = UDim2.new(1, 0, 0, rowH)
-		row.BackgroundTransparency = 1
-		row.BorderSizePixel = 0
-		row.LayoutOrder = effectOrder
-		row.Parent = content
-
-		-- Icon badge (left)
-		local badge = Instance.new("Frame")
-		badge.Size = UDim2.fromOffset(28, 28)
-		badge.Position = UDim2.fromOffset(4, 2)
+		-- Icon button (tap to toggle name)
+		local badge = Instance.new("ImageButton")
+		badge.Size = UDim2.fromOffset(iconSize, iconSize)
+		badge.Position = UDim2.fromOffset(0, 0)
 		badge.BackgroundColor3 = sColor
 		badge.BackgroundTransparency = 1
 		badge.BorderSizePixel = 0
-		badge.Parent = row
+		badge.AutoButtonColor = false
+		badge.Parent = cell
 		Instance.new("UICorner", badge).CornerRadius = UDim.new(0, 4)
+
 		local statusAsset = Theme.GetStatusIcon(sid) or s.sourceIcon
 		if statusAsset then
 			local img = Instance.new("ImageLabel")
@@ -170,51 +207,50 @@ local function renderActiveEffects(content, data, startOrder)
 			badgeLbl.Parent = badge
 		end
 
-		-- Name + duration
+		-- Stack count badge (top-right of icon)
+		if s.stacks and s.stacks > 1 then
+			local stk = Instance.new("TextLabel")
+			stk.Size = UDim2.fromOffset(16, 14)
+			stk.AnchorPoint = Vector2.new(1, 0)
+			stk.Position = UDim2.new(1, -1, 0, 1)
+			stk.BackgroundColor3 = Theme.Colors.Background
+			stk.BackgroundTransparency = 0.25
+			stk.BorderSizePixel = 0
+			stk.Font = Theme.Font.PrimaryBold
+			stk.TextSize = Theme.Text.Badge()
+			stk.TextColor3 = Theme.Colors.TextPrimary
+			stk.Text = "x" .. s.stacks
+			stk.ZIndex = 3
+			stk.Parent = badge
+			Instance.new("UICorner", stk).CornerRadius = UDim.new(0, 3)
+		end
+
+		-- Name + duration label (hidden until tapped). Spans wider than the cell
+		-- so the full name reads; it sits under the icon.
 		local nameLbl = Instance.new("TextLabel")
-		nameLbl.Size = UDim2.new(1, -40, 0, 16)
-		nameLbl.Position = UDim2.fromOffset(38, 0)
-		nameLbl.BackgroundTransparency = 1
+		nameLbl.Size = UDim2.new(0, math.max(iconSize * 2, 90), 0, labelH)
+		nameLbl.Position = UDim2.fromOffset(0, iconSize + 2)
+		nameLbl.BackgroundColor3 = Theme.Colors.Background
+		nameLbl.BackgroundTransparency = 0.2
+		nameLbl.BorderSizePixel = 0
 		nameLbl.Font = Theme.Font.PrimaryBold
-		nameLbl.TextSize = Theme.Text.Body()
+		nameLbl.TextSize = Theme.Text.Badge()
 		nameLbl.TextColor3 = sColor
 		nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-		nameLbl.RichText = true
-		nameLbl.Text = sid .. stackStr .. "  (" .. durStr .. ")"
-		nameLbl.Parent = row
+		nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+		nameLbl.Visible = false
+		nameLbl.ZIndex = 4
+		nameLbl.Text = " " .. sid .. stackStr .. " (" .. durStr .. ")"
+		nameLbl.Parent = cell
+		local np = Instance.new("UIPadding", nameLbl)
+		np.PaddingLeft = UDim.new(0, 2)
 
-		local nextY = 16
-		-- Description
-		if hasDesc then
-			local descLbl = Instance.new("TextLabel")
-			descLbl.Size = UDim2.new(1, -40, 0, 14)
-			descLbl.Position = UDim2.fromOffset(38, nextY)
-			descLbl.BackgroundTransparency = 1
-			descLbl.Font = Theme.Font.Primary
-			descLbl.TextSize = Theme.Text.Small()
-			descLbl.TextColor3 = Theme.Colors.TextSecondary
-			descLbl.TextXAlignment = Enum.TextXAlignment.Left
-			descLbl.Text = def.description
-			descLbl.Parent = row
-			nextY = nextY + 14
-		end
-
-		-- Damage
-		if hasDmg then
-			local dmgLbl = Instance.new("TextLabel")
-			dmgLbl.Size = UDim2.new(1, -40, 0, 14)
-			dmgLbl.Position = UDim2.fromOffset(38, nextY)
-			dmgLbl.BackgroundTransparency = 1
-			dmgLbl.Font = Theme.Font.PrimaryBold
-			dmgLbl.TextSize = Theme.Text.Small()
-			dmgLbl.TextColor3 = Theme.Colors.Danger
-			dmgLbl.TextXAlignment = Enum.TextXAlignment.Left
-			dmgLbl.Text = "Next: " .. s.nextDamage .. " dmg"
-			dmgLbl.Parent = row
-		end
-
-		effectOrder = effectOrder + 1
+		badge.Activated:Connect(function()
+			nameLbl.Visible = not nameLbl.Visible
+		end)
 	end
+
+	effectOrder = effectOrder + 1
 	return effectOrder
 end
 
@@ -543,12 +579,12 @@ end
 -- TAB: BASIC (Active Effects + Traits)
 --------------------------------------------------
 
-local function renderBasicTab(content, data)
+local function renderBasicTab(content, data, panelH)
 	local order = 1
 
 	-- ACTIVE EFFECTS (moved from Stats tab)
 	createSection(content, "ACTIVE EFFECTS", order); order = order + 1
-	order = renderActiveEffects(content, data, order)
+	order = renderActiveEffects(content, data, order, panelH)
 
 	-- RACE PASSIVE
 	createSection(content, "RACE PASSIVE", order); order = order + 1
@@ -611,6 +647,39 @@ local function renderBasicTab(content, data)
 		end
 	else
 		createLabel(content, { Text = "  No doctrine assigned", Order = order,
+			TextSize = Theme.Text.Small(), Color = Theme.Colors.TextDisabled })
+		order = order + 1
+	end
+
+	-- TRAITS (Perk + Flaw) — Perks & Flaws Phase 1 (display only, no gameplay effect)
+	createSection(content, "TRAITS", order); order = order + 1
+	local function renderTrait(trait, isPerk)
+		if not trait then return end
+		local tierTxt = trait.tier and (" [" .. trait.tier:gsub("^%l", string.upper) .. "]") or ""
+		local col = isPerk and Theme.Colors.RarityEpic or Theme.Colors.Danger
+		local prefix = isPerk and "Perk: " or "Flaw: "
+		createLabel(content, {
+			Text = "  " .. prefix .. (trait.name or "Unknown") .. tierTxt,
+			Size = UDim2.new(1, 0, 0, 14),
+			Font = Theme.Font.PrimaryBold,
+			Color = col,
+			Order = order,
+		}); order = order + 1
+		if trait.effect and trait.effect ~= "" then
+			createLabel(content, {
+				Text = "  " .. trait.effect,
+				Size = UDim2.new(1, 0, 0, 28),
+				TextSize = Theme.Text.Small(),
+				Color = Theme.Colors.TextSecondary,
+				Order = order,
+			}); order = order + 1
+		end
+	end
+	if data.perk or data.flaw then
+		renderTrait(data.perk, true)
+		renderTrait(data.flaw, false)
+	else
+		createLabel(content, { Text = "  No traits assigned", Order = order,
 			TextSize = Theme.Text.Small(), Color = Theme.Colors.TextDisabled })
 		order = order + 1
 	end
@@ -1111,7 +1180,8 @@ local function buildPanel(data)
 	headerName.RichText = true
 	local sideStr = data.side and (" [" .. data.side .. "]") or ""
 	local raceStr = data.raceName or data.raceId or ""
-	headerName.Text = (data.name or "Unit") .. sideStr .. "  " .. raceStr
+	local koStr = if data.isAlive == false or (data.currentHp or 1) <= 0 then "  <font color=\"#FF5050\">[KO]</font>" else ""
+	headerName.Text = (data.name or "Unit") .. sideStr .. "  " .. raceStr .. koStr
 	headerName.Parent = frame
 
 	-- HP/MP line
@@ -1161,6 +1231,28 @@ local function buildPanel(data)
 	Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
 	closeBtn.MouseButton1Click:Connect(destroyPanel)
 
+	-- CYCLE button: only when more than one unit (alive and/or KO'd) shares this tile.
+	if #tileCycleIds > 1 then
+		local cycleBtn = Instance.new("TextButton")
+		cycleBtn.Name = "CycleUnits"
+		cycleBtn.Size = UDim2.new(0, 52, 0, 24)
+		cycleBtn.Position = UDim2.new(1, -86, 0, 7)
+		cycleBtn.BackgroundColor3 = Theme.Colors.Surface
+		cycleBtn.Font = Theme.Font.PrimaryBold
+		cycleBtn.TextSize = Theme.Text.Small()
+		cycleBtn.TextColor3 = Theme.Colors.TextPrimary
+		cycleBtn.Text = `{tileCycleIndex}/{#tileCycleIds} >`
+		cycleBtn.BorderSizePixel = 0
+		cycleBtn.Parent = frame
+		Instance.new("UICorner", cycleBtn).CornerRadius = UDim.new(0, 4)
+		cycleBtn.MouseButton1Click:Connect(function()
+			tileCycleIndex = (tileCycleIndex % #tileCycleIds) + 1
+			BattleEvents.InspectUnitRequest:FireServer(tileCycleIds[tileCycleIndex])
+		end)
+		-- Keep the name from running under the cycle button.
+		headerName.Size = UDim2.new(1, -(TEXT_LEFT + 90), 0, 18)
+	end
+
 	-- Tab bar
 	local TAB_Y = HEADER_H + 2
 	local tabBar = Instance.new("Frame")
@@ -1202,7 +1294,7 @@ local function buildPanel(data)
 		currentTab = tabName
 
 		if tabName == "basic" then
-			renderBasicTab(contentFrame, data)
+			renderBasicTab(contentFrame, data, panelH)
 		elseif tabName == "stats" then
 			renderStatsTab(contentFrame, data)
 		elseif tabName == "equipment" then
@@ -1278,10 +1370,104 @@ BattleEvents.InspectUnitResponse.OnClientEvent:Connect(function(data)
 end)
 
 -- Expose a global so BattleVisualClient can trigger inspection
-_G.CTRBLXAI_OpenInspectorPanel = function(unitId)
+_G.CTRBLXAI_OpenInspectorPanel = function(unitId, tileUnitIds)
 	if unitId then
+		if type(tileUnitIds) == "table" and #tileUnitIds > 0 then
+			tileCycleIds = tileUnitIds
+		else
+			tileCycleIds = { unitId }
+		end
+		tileCycleIndex = table.find(tileCycleIds, unitId) or 1
 		BattleEvents.InspectUnitRequest:FireServer(unitId)
 	end
 end
 
 _G.CTRBLXAI_CloseInspectorPanel = destroyPanel
+
+--------------------------------------------------
+-- MAP OBJECT INSPECTOR (same framed panel, object fields instead of unit tabs)
+--------------------------------------------------
+local function buildObjectPanel(objectName: string, tileX: number?, tileY: number?)
+	destroyPanel()
+	local def = ObjectData and ObjectData.Objects and ObjectData.Objects[objectName]
+	if not def then
+		warn(`[UnitInspector] No ObjectData entry for object: {objectName}`)
+		return
+	end
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "UnitInspectorPanel"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 140
+	gui.Parent = player:WaitForChild("PlayerGui")
+	panelGui = gui
+	local cam = workspace.CurrentCamera
+	local vpW = cam and cam.ViewportSize.X or 1920
+	local isMobile = vpW < 1024
+	local panelW = isMobile and math.min(math.floor(vpW * 0.62), 480) or 420
+	local panelH = isMobile and math.min(math.floor((cam and cam.ViewportSize.Y or 480) * 0.6), 320) or 360
+	local frame = Theme.MakePanel("InspectorFrame", UDim2.new(0, panelW, 0, panelH), UDim2.new(0, 6, 0, 6), Vector2.new(0, 0), gui)
+	frame.ClipsDescendants = true
+	local fp = Instance.new("UIPadding")
+	fp.PaddingTop = UDim.new(0, 12); fp.PaddingBottom = UDim.new(0, 12)
+	fp.PaddingLeft = UDim.new(0, 14); fp.PaddingRight = UDim.new(0, 14)
+	fp.Parent = frame
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.fromScale(1, 1)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.CanvasSize = UDim2.new()
+	scroll.ScrollBarThickness = 4
+	scroll.Parent = frame
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 4)
+	list.Parent = scroll
+	local order = 0
+	local function row(text: string, font, size: number, color: Color3)
+		order += 1
+		local l = Instance.new("TextLabel")
+		l.BackgroundTransparency = 1
+		l.Size = UDim2.new(1, -6, 0, 0)
+		l.AutomaticSize = Enum.AutomaticSize.Y
+		l.TextWrapped = true
+		l.TextXAlignment = Enum.TextXAlignment.Left
+		l.Font = font
+		l.TextSize = size
+		l.TextColor3 = color
+		l.Text = text
+		l.LayoutOrder = order
+		l.Parent = scroll
+	end
+	row("MAP OBJECT", Theme.Font.PrimaryBold, Theme.Text.Small(), Theme.Colors.TextSecondary)
+	row(objectName, Theme.Font.PrimaryBold, Theme.Text.Heading and Theme.Text.Heading() or Theme.Text.Body(), Theme.Colors.Warning)
+	if def.category then row(def.category, Theme.Font.Primary, Theme.Text.Small(), Theme.Colors.TextSecondary) end
+	if tileX and tileY then row(`Tile ({tileX}, {tileY})`, Theme.Font.Mono, Theme.Text.Small(), Theme.Colors.TextSecondary) end
+	row(if def.passable then "Passable" else "Impassable", Theme.Font.Primary, Theme.Text.Body(), if def.passable then Theme.Colors.Success else Theme.Colors.Danger)
+	if def.primaryEffect then
+		row("EFFECT", Theme.Font.PrimaryBold, Theme.Text.Small(), Theme.Colors.TextSecondary)
+		row(def.primaryEffect, Theme.Font.Primary, Theme.Text.Body(), Theme.Colors.TextPrimary)
+	end
+	if def.activation then row(`Activation: {def.activation}`, Theme.Font.Primary, Theme.Text.Small(), Theme.Colors.TextPrimary) end
+	if def.interactRT then row(`Interact RT: {def.interactRT}`, Theme.Font.Mono, Theme.Text.Small(), Theme.Colors.TextPrimary) end
+	if def.uses then row(`Uses: {def.uses}`, Theme.Font.Primary, Theme.Text.Small(), Theme.Colors.TextPrimary) end
+	if def.notes and def.notes ~= "" and def.notes ~= "\u{2014}" then
+		row(def.notes, Theme.Font.Primary, Theme.Text.Tiny(), Theme.Colors.TextSecondary)
+	end
+	-- Click outside closes (same behaviour as the unit inspector).
+	if clickOutsideConn then clickOutsideConn:Disconnect() end
+	clickOutsideConn = UserInputService.InputBegan:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+		task.defer(function()
+			if not panelGui or not frame.Parent then return end
+			local m = UserInputService:GetMouseLocation()
+			local p, sz = frame.AbsolutePosition, frame.AbsoluteSize
+			if m.X < p.X or m.X > p.X + sz.X or m.Y < p.Y or m.Y > p.Y + sz.Y then destroyPanel() end
+		end)
+	end)
+end
+
+_G.CTRBLXAI_OpenObjectInspector = function(objectName, tileX, tileY)
+	if type(objectName) == "string" and objectName ~= "" then buildObjectPanel(objectName, tileX, tileY) end
+end

@@ -22,8 +22,12 @@ local START_TRANSPARENCY = 0.35  -- streak opacity at burst start (1 = invisible
 local STREAK_THICKNESS   = 2     -- px
 local STREAK_LEN_MIN     = 0.10  -- fraction of the screen's shorter side
 local STREAK_LEN_MAX     = 0.22
-local INNER_RADIUS       = 0.55  -- start radius, fraction of half-diagonal (keeps center clear)
-local TRAVEL             = 0.10  -- slide distance during the burst, fraction of half-diagonal
+-- Streaks are anchored to the SCREEN EDGE: each streak's OUTER tip sits on the
+-- border for its angle, and it extends inward. EDGE_MARGIN pulls the outer tip
+-- in by a few px (0 = flush to the very edge). TRAVEL slides the streak along
+-- its radial during the burst, as a fraction of the shorter side.
+local EDGE_MARGIN        = 0     -- px inset from the screen edge (0 = touch the edge)
+local TRAVEL             = 0.06  -- slide distance during the burst, fraction of shorter side
 local STREAK_COLOR       = Color3.fromRGB(255, 255, 255)
 local BURST_COOLDOWN     = 0.15  -- min seconds between bursts
 local ZOOM_THRESHOLD     = 8     -- studs of accumulated zoom before a zoom pulse
@@ -82,22 +86,35 @@ local function burst(direction: number)
 	if size.X <= 0 or size.Y <= 0 then return end
 	cancelTweens()
 	local cx, cy = size.X / 2, size.Y / 2
-	local halfDiag = math.sqrt(cx * cx + cy * cy)
 	local shortSide = math.min(size.X, size.Y)
+	local travelPx = shortSide * TRAVEL
 	local info = TweenInfo.new(DURATION, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	for _, f in streaks do
 		local angle = rng:NextNumber(0, math.pi * 2)
 		local dx, dy = math.cos(angle), math.sin(angle)
+		-- Distance from center to the screen edge along this ray (ray vs rectangle).
+		-- The larger |component| hits its wall first, so divide by the max.
+		local edgeDist
+		local ax, ay = math.abs(dx), math.abs(dy)
+		if ax * cy > ay * cx then
+			edgeDist = cx / ax  -- hits a left/right wall first
+		else
+			edgeDist = cy / ay  -- hits a top/bottom wall first
+		end
+		edgeDist = math.max(0, edgeDist - EDGE_MARGIN)
 		local len = shortSide * rng:NextNumber(STREAK_LEN_MIN, STREAK_LEN_MAX)
-		local r0 = halfDiag * rng:NextNumber(INNER_RADIUS, INNER_RADIUS + 0.30)
-		local r1 = r0 - direction * halfDiag * TRAVEL
+		-- The Frame is centered on its Position (AnchorPoint 0.5). Put that center
+		-- half a length inside the edge so the OUTER tip sits on the border.
+		local rCenter = edgeDist - len / 2
+		-- Slide inward (rush) or outward per direction during the burst.
+		local rCenterEnd = rCenter - direction * travelPx
 		f.Size = UDim2.fromOffset(len, STREAK_THICKNESS)
 		f.Rotation = math.deg(angle)  -- long axis points along the radial direction
-		f.Position = UDim2.fromOffset(cx + dx * r0, cy + dy * r0)
+		f.Position = UDim2.fromOffset(cx + dx * rCenter, cy + dy * rCenter)
 		f.BackgroundTransparency = START_TRANSPARENCY
 		f.Visible = true
 		local tw = TweenService:Create(f, info, {
-			Position = UDim2.fromOffset(cx + dx * r1, cy + dy * r1),
+			Position = UDim2.fromOffset(cx + dx * rCenterEnd, cy + dy * rCenterEnd),
 			BackgroundTransparency = 1,
 		})
 		tw:Play()
