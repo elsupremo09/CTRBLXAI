@@ -166,9 +166,11 @@ local AIROLE_TO_TYPE: { [string]: string } = {
 -- the least until the Designer locks a value. Only objectives the battle loop
 -- can evaluate today are listed; the rest (Speed clear / Elite / NPC / Siege)
 -- need a locked "N turns" or Slice 5 spawn tracking and are not granted yet.
+-- USER RULING 2026-10-07: low end of each range; 'All defeated' REMOVED (it paid on
+-- every win because defeating all enemies is the only win condition today).
+-- TODO (design): more optional objectives need to be authored later.
 local OBJECTIVE_BONUS_PCT: { [string]: number } = table.freeze({
 	Flawless    = 0.20,
-	AllDefeated = 0.10,
 })
 
 local KILL_LEVEL_DIVISOR = 50          -- Kill XP = Base × (1 + Enemy Level / 50)

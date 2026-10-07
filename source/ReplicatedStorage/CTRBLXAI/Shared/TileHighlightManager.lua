@@ -99,6 +99,14 @@ local function ensureRayParams(): RaycastParams
 		local f = workspace:FindFirstChild(name)
 		if f then table.insert(excludes, f) end
 	end
+	-- Map-object models stand ON tiles: the surface is the tile under them, not the
+	-- object's top (fixes markers/highlights floating on top of objects).
+	local mf = workspace:FindFirstChild("TemplateViewerMap")
+	if mf then
+		for _, c in ipairs(mf:GetChildren()) do
+			if string.sub(c.Name, 1, 12) == "MapObjModel_" then table.insert(excludes, c) end
+		end
+	end
 	rp.FilterDescendantsInstances = excludes
 	_rayParams = rp
 	return rp
@@ -117,6 +125,21 @@ local function getSurfaceY(tx: number, ty: number): number
 		Vector3.new(0, -RAY_LENGTH, 0),
 		ensureRayParams()
 	)
+	-- Objects spawned after the exclude list was built (mid-battle RenderOneObject,
+	-- or not yet replicated when it was built): if the ray landed on one, exclude it
+	-- and cast again so the surface is the tile under the object.
+	local tries = 0
+	while result and tries < 4 do
+		local node: Instance? = result.Instance
+		while node and node.Parent and node.Parent.Name ~= "TemplateViewerMap" do node = node.Parent end
+		if not (node and string.sub(node.Name, 1, 12) == "MapObjModel_") then break end
+		local rp = ensureRayParams()
+		local list = rp.FilterDescendantsInstances
+		table.insert(list, node)
+		rp.FilterDescendantsInstances = list
+		result = workspace:Raycast(Vector3.new(wx, RAY_START_Y, wz), Vector3.new(0, -RAY_LENGTH, 0), rp)
+		tries += 1
+	end
 	local y = result and result.Position.Y or 0
 	heightCache[key] = y
 	return y
@@ -416,6 +439,7 @@ end
 --- Invalidate caches (call after map regeneration).
 function TileHighlightManager.InvalidateCache()
 	TileHighlightManager.ClearAll()
+	if TileHighlightManager.ClearInspectMarker then TileHighlightManager.ClearInspectMarker() end
 	heightCache = {}
 	_rayParams = nil
 	for _, frame in framePool do frame.part:Destroy() end
@@ -436,6 +460,83 @@ end
 --- tile via the pad's X/Y attributes with no parallax offset.
 function TileHighlightManager.GetPadFolder(): Folder?
 	return _padFolder
+end
+
+
+-- ============================================================
+-- INSPECT MARKER: one white rising/falling outline that also SPINS, marking the
+-- tile the inspector is showing. Separate from the colored highlight groups so
+-- clearing move/target highlights never removes it.
+-- ============================================================
+local INSPECT_SPIN_SECONDS = 3.0
+local _inspect = nil  -- { model = Model, conn = RBXScriptConnection, tx, ty }
+
+function TileHighlightManager.ClearInspectMarker()
+	if _inspect then
+		if _inspect.conn then _inspect.conn:Disconnect() end
+		if _inspect.model then _inspect.model:Destroy() end
+		_inspect = nil
+	end
+end
+
+-- followPart (optional): a unit's root part. While set, the marker tracks that
+-- part's X/Z every frame (so it follows a moving unit) and sits on the ground below it.
+function TileHighlightManager.SetInspectMarker(tx: number, ty: number, followPart: BasePart?)
+	if _inspect and _inspect.tx == tx and _inspect.ty == ty and _inspect.follow == followPart then return end
+	TileHighlightManager.ClearInspectMarker()
+	local wx = _mapOffsetX + (tx - 0.5) * _tileSize
+	local wz = _mapOffsetZ + (ty - 0.5) * _tileSize
+	local baseY = getSurfaceY(tx, ty) + SURFACE_OFFSET
+	local model = Instance.new("Model")
+	model.Name = "InspectMarker"
+	local size = _tileSize * 0.9
+	local edge = size / 2 - GLOW_BAR_W / 2
+	local parts = {}
+	local function bar(sx, sz, ox, oz)
+		local p = Instance.new("Part")
+		p.Anchored = true; p.CanCollide = false; p.CanQuery = false; p.CanTouch = false
+		p.CastShadow = false; p.Material = Enum.Material.Neon
+		p.Color = Color3.fromRGB(255, 255, 255)
+		p.Transparency = GLOW_OUTLINE_TRANSPARENCY
+		p.Size = Vector3.new(sx, 0.08, sz)
+		table.insert(parts, { part = p, ox = ox, oz = oz })
+		p.Parent = model
+	end
+	bar(size, GLOW_BAR_W, 0, -edge)
+	bar(size, GLOW_BAR_W, 0,  edge)
+	bar(GLOW_BAR_W, size, -edge, 0)
+	bar(GLOW_BAR_W, size,  edge, 0)
+	model.Parent = _hlFolder or workspace
+	-- One Heartbeat drives rise/fall + spin together (single connection, cleaned up
+	-- in ClearInspectMarker). Rise timing mirrors RISE_INFO: up 2.4s, down 2.4s, rest 0.6s.
+	local t0 = os.clock()
+	local RISE_T, REST_T = 2.4, 0.6
+	local cycle = RISE_T * 2 + REST_T
+	local conn = game:GetService("RunService").Heartbeat:Connect(function()
+		local t = os.clock() - t0
+		local c = t % cycle
+		local h
+		if c < RISE_T then
+			h = math.sin((c / RISE_T) * math.pi / 2)
+		elseif c < RISE_T * 2 then
+			h = math.sin(((RISE_T * 2 - c) / RISE_T) * math.pi / 2)
+		else
+			h = 0
+		end
+		local angle = (t / INSPECT_SPIN_SECONDS) * math.pi * 2
+		local cx, cz, cy = wx, wz, baseY
+		if followPart and followPart.Parent then
+			local fp = followPart.Position
+			cx, cz = fp.X, fp.Z
+			local hit = workspace:Raycast(Vector3.new(cx, RAY_START_Y, cz), Vector3.new(0, -RAY_LENGTH, 0), ensureRayParams())
+			if hit then cy = hit.Position.Y + SURFACE_OFFSET end
+		end
+		local center = CFrame.new(cx, cy + h * RISE_HEIGHT, cz) * CFrame.Angles(0, angle, 0)
+		for _, e in parts do
+			e.part.CFrame = center * CFrame.new(e.ox, 0, e.oz)
+		end
+	end)
+	_inspect = { model = model, conn = conn, tx = tx, ty = ty, follow = followPart }
 end
 
 return TileHighlightManager

@@ -39,7 +39,7 @@ local _StatusService    = nil
 local _UnitSchema       = nil
 local _TileEffectService = nil
 
-function AIService.SetDependencies(deps)
+function AIService.SetDependencies(deps: any)
 	_TargetingService  = deps.TargetingService
 	_CommandService    = deps.CommandService
 	_CombatResolver    = deps.CombatResolver
@@ -124,7 +124,7 @@ local ROLE_BY_PERSONALITY = {
 -- Neutral targeting rule (user-locked 2026-10-06): enemies ignore Neutral units
 -- unless the neutral turned hostile (side changes to "Enemy") or is a protect-the-NPC
 -- event marked enemyPriorityTarget (Lost Noble). Every hostile-target check routes here.
-local function isHostileTo(unit, target)
+local function isHostileTo(unit: any, target: any)
 	if not target or target.side == unit.side then return false end
 	if target.side == "Neutral" then
 		return target.enemyPriorityTarget == true
@@ -132,11 +132,11 @@ local function isHostileTo(unit, target)
 	return true
 end
 
-local function chebyshev(ax, ay, bx, by)
+local function chebyshev(ax: any, ay: any, bx: any, by: any)
 	return math.max(math.abs(ax - bx), math.abs(ay - by))
 end
 
-local function findNearestEnemy(unit, allUnits)
+local function findNearestEnemy(unit: any, allUnits: any)
 	local best, bestDist = nil, math.huge
 	for _, u in ipairs(allUnits) do
 		if u.isAlive and isHostileTo(unit, u) then
@@ -147,7 +147,7 @@ local function findNearestEnemy(unit, allUnits)
 	return best, bestDist
 end
 
-local function isTileHazardous(tileX, tileY)
+local function isTileHazardous(tileX: any, tileY: any)
 	if not _TileEffectService then return false end
 	local effect = _TileEffectService.GetTileEffect(tileX, tileY)
 	if effect then
@@ -157,7 +157,7 @@ local function isTileHazardous(tileX, tileY)
 	return false
 end
 
-local function findLowestAlly(unit, allUnits)
+local function _findLowestAlly(unit: any, allUnits: any)
 	local lowestAlly, lowestPct = nil, 1.0
 	for _, u in ipairs(allUnits) do
 		if u.isAlive and u.side == unit.side and u.id ~= unit.id then
@@ -173,7 +173,7 @@ end
 --------------------------------------------------
 
 -- Count living allies (same side, excluding self) within range.
-local function countAlliesInRange(unit, allUnits, range)
+local function countAlliesInRange(unit: any, allUnits: any, range: any)
 	local count = 0
 	for _, u in ipairs(allUnits) do
 		if u.isAlive and u.side == unit.side and u.id ~= unit.id then
@@ -191,7 +191,7 @@ end
 -- somewhere. A lone diver may then engage even with no ally within staging range,
 -- since it is no longer the one initiating a solo dive. Excludes the acting unit
 -- itself so its own proximity does not count as "someone else engaged".
-local function battleAlreadyEngaged(unit, allUnits)
+local function battleAlreadyEngaged(unit: any, allUnits: any)
 	for _, ally in ipairs(allUnits) do
 		if ally.isAlive and ally.side == unit.side and ally.id ~= unit.id then
 			for _, foe in ipairs(allUnits) do
@@ -207,7 +207,7 @@ local function battleAlreadyEngaged(unit, allUnits)
 end
 
 -- Count living enemies still standing on a side.
-local function countLivingSide(allUnits, side)
+local function countLivingSide(allUnits: any, side: any)
 	local n = 0
 	for _, u in ipairs(allUnits) do
 		if u.isAlive and u.side == side then n = n + 1 end
@@ -217,7 +217,7 @@ end
 
 -- Resolve a unit's personality from its doctrine, with the
 -- last-enemy-standing override (sole survivor fights Aggressive).
-local function resolvePersonality(unit, allUnits)
+local function resolvePersonality(unit: any, allUnits: any)
 	if countLivingSide(allUnits, unit.side) <= 1 then
 		return "Aggressive"
 	end
@@ -226,23 +226,23 @@ local function resolvePersonality(unit, allUnits)
 end
 
 -- Coarse role of a player unit (for profiling-based decisions).
-local function profileRole(u)
+local function _profileRole(u: any)
 	local p = DOCTRINE_PERSONALITY[u.doctrineId or ""]
 	return ROLE_BY_PERSONALITY[p or ""] or "dealer"
 end
 
-local function isRangedUnit(unit)
+local function isRangedUnit(unit: any)
 	return (unit.weaponMaxRange or 1) > RANGED_THRESHOLD
 end
 
 -- Does target already carry this status (skip redundant re-apply)?
-local function hasActiveStatus(target, statusId)
+local function hasActiveStatus(target: any, statusId: any)
 	if not statusId or not _StatusService then return false end
 	return _StatusService.HasStatus(target, statusId) ~= nil
 end
 
 -- How many player units could hit `unit` if it ends on (tx,ty)? (self-danger)
-local function exposureAt(unit, tx, ty, allUnits)
+local function exposureAt(unit: any, tx: any, ty: any, allUnits: any)
 	local count = 0
 	for _, u in ipairs(allUnits) do
 		if u.isAlive and isHostileTo(unit, u) then
@@ -260,7 +260,7 @@ end
 --------------------------------------------------
 
 -- Score a basic attack against a unit target.
-local function scoreAttack(unit, target, dials, allUnits)
+local function scoreAttack(unit: any, target: any, dials: any, allUnits: any)
 	local predicted = 0
 	if _CombatResolver then
 		local r = _CombatResolver.ResolveBasicAttack(unit, target, unit.weaponDamage or 10)
@@ -303,14 +303,14 @@ end
 -- Level-based MP cost (2026-10-07): price skills exactly as the server charges
 -- them (CommandService.GetSkillMpCost, injected) so the AI never plans a cast it
 -- cannot afford. Falls back to the flat def value if the dependency is missing.
-local function skillMpCost(unit, def)
+local function skillMpCost(unit: any, def: any)
 	if _CommandService and _CommandService.GetSkillMpCost then
 		return (_CommandService.GetSkillMpCost(unit, def, def.id))
 	end
 	return def.mpCost or 0
 end
 
-local function scoreSkill(unit, def, target, dials, allUnits)
+local function scoreSkill(unit: any, def: any, target: any, dials: any, allUnits: any)
 	local score = 0
 	local predicted = 0
 
@@ -401,7 +401,7 @@ local function scoreSkill(unit, def, target, dials, allUnits)
 end
 
 -- Score using a consumable item (heal/cure) — items are a normal option now.
-local function scoreItem(unit, slotIdx, consDef, allUnits, dials)
+local function scoreItem(unit: any, slotIdx: any, consDef: any, allUnits: any, dials: any)
 	local formula = consDef.effectFormula or ""
 	local charges = 0
 	local slot = unit.consumableSlots and unit.consumableSlots[slotIdx]
@@ -445,7 +445,7 @@ local function scoreItem(unit, slotIdx, consDef, allUnits, dials)
 end
 
 -- Score Guard (fallback / self-preservation).
-local function scoreGuard(unit, dials)
+local function scoreGuard(unit: any, dials: any)
 	local hpPct = unit.currentHp / math.max(1, unit.maxHp)
 	local base = W.GUARD_BASE + (1 - hpPct) * 40
 	-- Defenders value Guard highly; damage-first personalities barely.
@@ -456,7 +456,7 @@ end
 -- CANDIDATE ENUMERATION (reuse targeting service)
 --------------------------------------------------
 
-local function enumerateSkillEntries(unit, allUnits)
+local function enumerateSkillEntries(unit: any, allUnits: any)
 	local skills = {}
 	for _, sid in ipairs(unit.skillIds or {}) do
 		local def = _CommandService and _CommandService.GetSkill(sid)
@@ -475,7 +475,7 @@ end
 --   action = { actionType, selection, skillName, score, rtEstimate, tile }
 --------------------------------------------------
 
-function AIService.DecideAction(unit, allUnits, mapW, mapH)
+function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any): any
 	if not unit.isAlive or (unit.currentAp or 0) <= 0 then return nil end
 
 	local personality = resolvePersonality(unit, allUnits)
@@ -490,7 +490,7 @@ function AIService.DecideAction(unit, allUnits, mapW, mapH)
 	----------------------------------------------------------------
 	-- Helper: best move tile toward the nearest player (gap close).
 	----------------------------------------------------------------
-	local function bestMoveToward()
+	local function bestMoveToward(): any
 		-- PATH-AWARE ADVANCE (fix Sep 28 2026): GetMoveCandidates already BFSes
 		-- from the unit and returns ONLY reachable empty tiles (it routes THROUGH
 		-- allies but cannot STOP on them). The old ranking used straight-line
@@ -505,7 +505,7 @@ function AIService.DecideAction(unit, allUnits, mapW, mapH)
 		-- A tile reached by routing AROUND the jam has a genuine smaller
 		-- distance-to-player, so it now scores as progress instead of being ignored.
 		local curDist = chebyshev(unit.tileX, unit.tileY, nearest.tileX, nearest.tileY)
-		local best, bestScore = nil, -math.huge
+		local best: any, bestScore = nil, -math.huge
 		for _, tile in ipairs(moveTiles) do
 			local d = chebyshev(tile.tileX, tile.tileY, nearest.tileX, nearest.tileY)
 			-- Progress reward: how many tiles closer than standing still (can be
@@ -542,7 +542,7 @@ function AIService.DecideAction(unit, allUnits, mapW, mapH)
 	-- Best consumable action right now (items are a normal scored option).
 	-- Returns a committable Item action or nil. Uses scoreItem() per slot.
 	----------------------------------------------------------------
-	local function bestItemAction(u, units, d)
+	local function bestItemAction(u: any, units: any, d: any)
 		if not u.consumableSlots then return nil end
 		local bestScore, bestSlot, bestTarget = 0, nil, nil
 		for idx = 1, (u.consumableSlotCount or 3) do
@@ -591,7 +591,7 @@ function AIService.DecideAction(unit, allUnits, mapW, mapH)
 	----------------------------------------------------------------
 	-- (2) KO OVERRIDE: any single action that KOs a player → take it.
 	----------------------------------------------------------------
-	local koAction, koScore = nil, -math.huge
+	local koAction: any, koScore = nil, -math.huge
 	for _, target in ipairs(attackTargets) do
 		local _, predicted = scoreAttack(unit, target, dials, allUnits)
 		if predicted >= target.currentHp then
@@ -796,7 +796,7 @@ function AIService.DecideAction(unit, allUnits, mapW, mapH)
 		score = W.WAIT_SCORE, rtEstimate = 0, tile = nil, targetName = "wait" })
 
 	-- Pick highest score. Tie-break: lower RT estimate, then safer resulting tile.
-	table.sort(candidates, function(a, b)
+	table.sort(candidates, function(a: any, b: any)
 		if math.abs(a.score - b.score) > 0.001 then
 			return a.score > b.score
 		end
@@ -822,7 +822,7 @@ end
 -- call DecideAction directly; this shim returns a single-action list so any
 -- stray caller still works during the transition.
 --------------------------------------------------
-function AIService.PlanTurn(unit, allUnits, mapW, mapH)
+function AIService.PlanTurn(unit: any, allUnits: any, mapW: any, mapH: any)
 	local action = AIService.DecideAction(unit, allUnits, mapW, mapH)
 	if not action then return {} end
 	return { action }

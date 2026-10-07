@@ -24,7 +24,7 @@ local DoctrineDataModule = require(
 		:WaitForChild("DoctrineData", 10)
 )
 
-local MockLoadoutData = {}
+local MockLoadoutData: any = {}
 
 MockLoadoutData._useServerData = false
 MockLoadoutData._useServerSkillData = false
@@ -211,7 +211,7 @@ function MockLoadoutData.MockEquip(unitId, slot, itemId)
 	local eq = MockLoadoutData.Equipped[unitId]
 	if not eq then return end
 	if MockLoadoutData._useServerData then
-		local ok, result = pcall(function()
+		local ok, _result = pcall(function()
 			return BattleEvents.RequestEquip:InvokeServer(unitId, itemId)
 		end)
 		if ok then
@@ -228,7 +228,7 @@ function MockLoadoutData.MockUnequip(unitId, slot)
 	local eq = MockLoadoutData.Equipped[unitId]
 	if not eq then return end
 	if MockLoadoutData._useServerData then
-		local ok, result = pcall(function()
+		local ok, _result = pcall(function()
 			return BattleEvents.RequestUnequip:InvokeServer(unitId, slot)
 		end)
 		if ok then
@@ -373,7 +373,7 @@ function MockLoadoutData.LoadFromServer()
 			local STARTING_ORDER = { unit_hero = 1, unit_mage = 2, unit_ranger = 3 }
 			local units = {}
 			-- Server sends the string "none" for missing fields; treat it as empty.
-			local function field(v) if v == "none" then return nil end return v end
+			local function field(v) if v == "none" then return nil end; return v end
 			for unitId, rd in roster do
 				table.insert(units, {
 					id = unitId,
@@ -398,7 +398,7 @@ function MockLoadoutData.LoadFromServer()
 			MockLoadoutData.Units = units
 			MockLoadoutData.SelectedUnitIndex = 1
 			for i, u in units do
-				if u.id == prevId then MockLoadoutData.SelectedUnitIndex = i break end
+				if u.id == prevId then MockLoadoutData.SelectedUnitIndex = i; break end
 			end
 			print(`[LoadoutData] Loaded roster from server: {#units} unit(s)`)
 		else

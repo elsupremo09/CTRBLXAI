@@ -126,6 +126,26 @@ function DispatchService.SetAvailabilitySink(svc: any) _availabilitySink = svc e
 function DispatchService.SetRosterProvider(fn: ((string) -> ({ string }?))?) _rosterProvider = fn end
 
 --------------------------------------------------
+-- SLOTS + FEE (USER RULING 2026-10-07; economy_framework 26: 50 gold per mission)
+-- Concurrent mission slots = Guild Hall level, min 1, max 3 (guild_facilities 7
+-- "+1 dispatch slot per level up to base max"; base max 3 per economy_framework
+-- 26/34). Robux +1 slots up to 6 (economy_framework 34) are NOT built yet.
+--------------------------------------------------
+local DISPATCH_FEE_GOLD = 50
+local DISPATCH_BASE_MAX_SLOTS = 3
+local _guildHallLevelProvider: ((string) -> number)? = nil
+function DispatchService.SetGuildHallLevelProvider(fn: ((string) -> number)?) _guildHallLevelProvider = fn end
+
+function DispatchService.GetSlotCap(playerId: string): number
+	local gh = _guildHallLevelProvider and _guildHallLevelProvider(playerId) or 1
+	return math.clamp(math.floor(tonumber(gh) or 1), 1, DISPATCH_BASE_MAX_SLOTS)
+end
+
+function DispatchService.GetFeeGold(): number
+	return DISPATCH_FEE_GOLD
+end
+
+--------------------------------------------------
 -- STATE
 --   active[playerId] = {
 --     [unitId] = { missionId, tier, duration, startBattle, returnBattle, xp, matTier, matCount }
@@ -180,6 +200,15 @@ end
 
 function DispatchService.IsUnitDispatched(playerId: string, unitId: string): boolean
 	return activeOf(playerId)[unitId] ~= nil
+end
+
+-- Number of concurrent missions in use (one slot per mission, not per unit).
+function DispatchService.GetSlotsUsed(playerId: string): number
+	local missions, n = {}, 0
+	for _, rec in activeOf(playerId) do
+		if rec.missionId and not missions[rec.missionId] then missions[rec.missionId] = true; n += 1 end
+	end
+	return n
 end
 
 local function markAway(playerId: string, unitId: string, returnBattle: number)
@@ -298,6 +327,23 @@ function DispatchService.SendUnits(playerId: string, missionId: string, unitIds:
 		if ownedSet and not ownedSet[unitId] then
 			return false, string.format("Unit %s is not on the roster", unitId)
 		end
+	end
+
+	-- Slot + fee checks (nothing charged on refusal).
+	local cap = DispatchService.GetSlotCap(playerId)
+	local used = DispatchService.GetSlotsUsed(playerId)
+	if used >= cap then
+		return false, string.format("No free dispatch slot (%d/%d in use) — upgrade the Guild Hall for more", used, cap)
+	end
+	if not (_currency and _currency.GetGold and _currency.SpendGold) then
+		return false, "Gold unavailable — dispatch not sent"
+	end
+	local gold = _currency.GetGold(playerId) or 0
+	if gold < DISPATCH_FEE_GOLD then
+		return false, string.format("Not enough gold: dispatch costs %d (you have %d)", DISPATCH_FEE_GOLD, gold)
+	end
+	if not _currency.SpendGold(playerId, DISPATCH_FEE_GOLD) then
+		return false, "Gold payment failed — dispatch not sent"
 	end
 
 	local startBattle = math.max(0, math.floor(battlesCompleted or 0))

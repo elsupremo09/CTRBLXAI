@@ -33,7 +33,7 @@ local TileEffectService       = require(Game:WaitForChild("TileEffectService"))
 local TileCrossEffectService  = require(Game:WaitForChild("TileCrossEffectService"))
 local RacePassiveService      = require(Game:WaitForChild("RacePassiveService"))
 local ArmorPassiveService     = require(Game:WaitForChild("ArmorPassiveService"))
-local AugmentEffectService    = require(Game:WaitForChild("AugmentEffectService"))
+local _AugmentEffectService    = require(Game:WaitForChild("AugmentEffectService"))
 local AIService               = require(Game:WaitForChild("AIService"))
 local MapService              = require(Game:WaitForChild("MapService"))
 local MapRenderer             = require(Game:WaitForChild("MapRenderer"))
@@ -57,6 +57,10 @@ local ProgressionService      = require(Game:WaitForChild("ProgressionService"))
 -- Slice 6 temporary Guild menu (game_flow id 23): server glue for the building
 -- buttons. Requires GuildEvents itself, so the Guild remotes exist from here on.
 local GuildMenuService        = require(Game:WaitForChild("GuildMenuService"))
+-- UGC Rental & Ownership (ugc_rules 2026-10-07). Wired below GuildMenuService.Init.
+local UGCService              = require(Game:WaitForChild("UGCService"))
+local UGCOutfitService        = require(Game:WaitForChild("UGCOutfitService"))
+local UGCRemoteHandler        = require(Game:WaitForChild("UGCRemoteHandler"))
 
 
 local WeaponData = require(
@@ -375,10 +379,10 @@ local doctrineSkillCombatDefs = {
 	["DOC-DUELIST-01"]   = { id = "DOC-DUELIST-01", name = "Riposte Stance", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 3, channelTime = 0, power = 0, isHealing = false, appliesStatus = "CounterStance", counterPowerMult = 0.85, counterRtDelayMult = 0.50 },  -- DB: each Riposte deals 85% Basic Attack Power + 50% Weapon RT Delay to attacker
 	["DOC-TWINBLADE-01"] = { id = "DOC-TWINBLADE-01", name = "Crossing Blades", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 4, rtMult = 1.25, channelTime = 0, power = 1.30, isHealing = false },
 	["DOC-TWINBLADE-02"] = { id = "DOC-TWINBLADE-02", name = "Feinting Flurry", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 5, rtMult = 1.50, channelTime = 0, power = 0.60, isHealing = false },
-	["DOC-JUGGERNAUT-01"] = { id = "DOC-JUGGERNAUT-01", name = "Overwhelming Blow", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 6, rtMult = 2.00, channelTime = 0, power = 1.80, isHealing = false },
-	["DOC-CONJURER-01"]  = { id = "DOC-CONJURER-01", name = "Conjure Sentinel", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 3, pattern = "Single", mpCost = 8, channelTime = 0, power = 0, isHealing = false, isSummon = true, summonProfile = "melee" },
-	["DOC-CONJURER-02"]  = { id = "DOC-CONJURER-02", name = "Conjure Wisp", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 4, pattern = "Single", mpCost = 5, channelTime = 0, power = 0, isHealing = false, isSummon = true, summonProfile = "ranged" },
-	["DOC-CONJURER-03"]  = { id = "DOC-CONJURER-03", name = "Conjure Mender", tags = {"Summon","Healing"}, targetRules = "Empty Tile", range = 3, pattern = "Single", mpCost = 7, channelTime = 0, power = 0, isHealing = false, isSummon = true, summonProfile = "healer" },
+	["DOC-JUGGERNAUT-01"] = { id = "DOC-JUGGERNAUT-01", name = "Overwhelming Blow", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 6, rtMult = 2.00, channelTime = 200, knockbackOnHit = 1, power = 1.80, isHealing = false },
+	["DOC-CONJURER-01"]  = { id = "DOC-CONJURER-01", name = "Conjure Sentinel", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 3, pattern = "Single", mpCost = 8, channelTime = 250, power = 0, isHealing = false, isSummon = true, summonProfile = "melee" },
+	["DOC-CONJURER-02"]  = { id = "DOC-CONJURER-02", name = "Conjure Wisp", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 4, pattern = "Single", mpCost = 5, channelTime = 200, power = 0, isHealing = false, isSummon = true, summonProfile = "ranged" },
+	["DOC-CONJURER-03"]  = { id = "DOC-CONJURER-03", name = "Conjure Mender", tags = {"Summon","Healing"}, targetRules = "Empty Tile", range = 3, pattern = "Single", mpCost = 7, channelTime = 250, power = 0, isHealing = false, isSummon = true, summonProfile = "healer" },
 }
 
 for docId, docDef in pairs(doctrineSkillCombatDefs) do
@@ -458,7 +462,7 @@ local savedRaceMap = {}  -- unitId -> { raceId, perkIds, drawbackIds }
 local savedDoctrineMap = {}  -- unitId -> doctrineId
 local savedDoctrineSkillMap = {} -- unitId -> selectedDoctrineSkill
 local savedSkillLoadoutMap = {} -- unitId -> skillLoadout table
-local savedCardInventory = {} -- { skillCards = {id=qty}, augmentCards = {id=qty} }
+local savedCardInventory: any = {} -- { skillCards = {id=qty}, augmentCards = {id=qty} }
 local savedStatAllocation = {} -- unitId -> { STR = N, AGI = N, ... }
 local savedRecords = {} -- unitId -> { battlesParticipated = N, ... }
 local savedConsumableSlots = {} -- unitId -> consumableSlots table
@@ -1107,6 +1111,7 @@ local function doSave()
 		dispatch = DispatchService.Export(PLAYER_ID),
 		explore  = ExploreService.Export(PLAYER_ID),
 		guildMenu = GuildMenuService.Export(PLAYER_ID), -- Slice 6 Guild menu (battle counter + hired units)
+		ugc      = UGCService.Export(PLAYER_ID), -- UGC rentals/trials/wishlist/votes (ownership never saved)
 	}
 	local currencies = CurrencyService.Export(PLAYER_ID)
 	local ok, err = SaveService.Save(PLAYER_ID, rosterState, inventoryItems, progression, currencies)
@@ -1133,6 +1138,45 @@ GuildMenuService.Init({
 		return CommandService.GetSkill(skillId) ~= nil
 	end,
 })
+
+--------------------------------------------------
+-- UGC RENTAL & OWNERSHIP (ugc_rules 2026-10-07). Needs playerUnits + loadedSave,
+-- so it lives here. State rides progression Key 3 (doSave: progression.ugc);
+-- old saves without it load as a fresh UGC state. Remotes validated in
+-- UGCRemoteHandler (SEC-001).
+--------------------------------------------------
+UGCService.SetCurrencyService(CurrencyService)
+UGCService.SetAvailabilityProvider(UGCOutfitService.IsAvailable)
+UGCService.SetSaveModeProvider(SaveService.GetMode)
+UGCService.SetUnitRaceProvider(function(_pid, unitId)
+	local u = playerUnits[unitId]
+	if not u then return false, nil end
+	local race = u.raceId and RaceData.GetRace(u.raceId) or nil
+	return true, race and race.name or nil
+end)
+-- Rental price level = highest owned roster unit level ("player current level").
+UGCService.SetPlayerLevelProvider(function(_pid)
+	local best = 1
+	for _, u in pairs(playerUnits) do
+		if type(u.level) == "number" and u.level > best then best = u.level end
+	end
+	return best
+end)
+UGCOutfitService.SetStateProvider(UGCService)
+UGCService.InitPlayer(PLAYER_ID, player)
+UGCService.Import(PLAYER_ID, loadedSave and loadedSave.progression
+	and loadedSave.progression.ugc or nil)
+UGCRemoteHandler.Init({
+	playerId      = PLAYER_ID,
+	sessionPlayer = player,
+	ugc           = UGCService,
+	outfit        = UGCOutfitService,
+})
+UGCService.StartRatingFlush()
+task.spawn(function()
+	UGCOutfitService.RefreshAvailability() -- on-sale check first (fail closed until done)
+	UGCService.RefreshOwnership(PLAYER_ID) -- ownership is never saved; verify live
+end)
 
 --------------------------------------------------
 -- MANAGEMENT REMOTEFUNCTIONS (Slice 4D)
@@ -1940,21 +1984,21 @@ end
 -- STAT ALLOCATION & COMPARISON (Slice 4J)
 --------------------------------------------------
 
--- Human Adaptability (races row 'Human'): "Gain +1 allocable stat point every 3
--- levels." Leveling now exists (Slice 6), so this is live. Points are DERIVED from
--- the unit's current level (floor(level/3) - points spent), never stored as a
--- running total, so rejoins / level restores cannot double-grant. Non-Humans get
--- 0 base points: the DB defines stat gain as race growth only (unit_progression 49).
+-- Allocable stat points (USER RULING 2026-10-07): 3 per level-up for every unit;
+-- Humans (Adaptability) get 4 on every 3rd level-up. Points are DERIVED from the
+-- unit's current level minus points spent, never stored as a running total, so
+-- rejoins / level restores cannot double-grant. Race growth (unit_progression 49)
+-- still applies on top.
 
 local STATS_LIST = {"STR", "AGI", "INT", "VIT", "DEX", "LUK"}
 
 function getUnallocatedPoints(unit) -- assigns the forward-declared local (see GetRosterData)
-	-- No generic per-level points: stat gain is race growth (unit_progression 49).
-	local basePoints = 0
-	-- Human race bonus: +1 per 3 levels
-	if unit.raceId == "RACE-HUMAN" then
-		basePoints = basePoints + math.floor((unit.level or 1) / 3)
-	end
+	-- USER RULING 2026-10-07: every unit gains 3 allocable stat points per level-up
+	-- (on top of race growth, unit_progression 49). Humans (Adaptability) gain +1
+	-- more on every 3rd level-up (4 instead of 3). Derived from level, never stored,
+	-- so rejoins/level restores cannot double-grant. Level 1 = 0 level-ups.
+	-- Formula lives in GameConstants.CalcAllocableStatPoints (shared with enemies).
+	local basePoints = GameConstants.CalcAllocableStatPoints(unit.level, unit.raceId)
 	-- Subtract already allocated
 	local spent = 0
 	local alloc = unit.statAllocation or {}
@@ -2162,7 +2206,7 @@ local commandReceived
 -- DEV COMMANDS (Studio only -- instant win/lose/kill)
 --------------------------------------------------
 
-local devForceResult = nil -- "PlayerWin" or "PlayerLose"
+local _devForceResult = nil -- "PlayerWin" or "PlayerLose"
 
 if game:GetService("RunService"):IsStudio() then
 	BattleEvents.DevCommand.OnServerEvent:Connect(function(player, cmd)
@@ -2385,7 +2429,7 @@ if game:GetService("RunService"):IsStudio() then
 					if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
 					local inst
 					for _, si in ipairs(u.statusInstances or {}) do
-						if si.id == sid then inst = si break end
+						if si.id == sid then inst = si; break end
 					end
 					if inst and BattleVisualBroadcaster.StatusApplied then
 						BattleVisualBroadcaster.StatusApplied(u, sid, inst.remainingTurns, nil)
@@ -2603,6 +2647,14 @@ for i = 1, maxPDAnchors do
 	table.insert(deployAnchorsToShow, playerSpawns[i])
 end
 
+-- UGC (ugc_rules Enemy Outfits / enemy_outfit_apply_point): plan this battle's
+-- enemy outfits from a seeded RNG (own offset, so enemyRng is not consumed),
+-- lock UGC looks until battle end, and dress every Unit_ model as it is parented
+-- (covers the enemy, deploy and fallback spawn paths below).
+UGCOutfitService.PlanEnemyOutfits(PLAYER_ID, deployEnemyUnits, Random.new((generatedMap.seed or os.time()) + 90002))
+UGCService.SetBattleActive(PLAYER_ID, true)
+UGCOutfitService.WatchUnitModels(PLAYER_ID)
+
 -- Spawn R15 models for enemy units (they're already positioned)
 local _raceModelsFolder = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
 if _raceModelsFolder then
@@ -2742,7 +2794,7 @@ local deployConn = BattleEvents.DeployUnit.OnServerEvent:Connect(function(plr, d
 end)
 
 -- UNDEPLOY: Player removes a previously deployed unit
-local undeployConn = BattleEvents.UndeployUnit.OnServerEvent:Connect(function(plr, data)
+local _undeployConn = BattleEvents.UndeployUnit.OnServerEvent:Connect(function(plr, data)
 	if not data or not data.unitId then return end
 
 	local unit = nil
@@ -3609,7 +3661,7 @@ local function executePlayerCommand(unit, command)
 			warn("[Main] Player skill: unknown skill " .. tostring(command.skillId))
 			return nil
 		end
-		local tr = skillDef.targetRules or "Enemy Unit"
+		local _tr = skillDef.targetRules or "Enemy Unit"
 
 		if command.tileX and command.tileY and not command.targetId then
 			-- Ground targeting: create a virtual target with tile coords
@@ -3956,7 +4008,7 @@ end
 -- AI LOGIC (same as before)
 --------------------------------------------------
 
-local function findLowestAlly(unit, allUnits)
+local function _findLowestAlly(unit, allUnits)
 	local lowest = nil
 	local lowestPct = 1.0
 	for _, other in ipairs(allUnits) do
@@ -4705,6 +4757,11 @@ do
 		end
 	end
 
+	-- UGC usage (ugc_rules usage_decrement_rule): -1 per item worn by ANY deployed
+	-- roster unit, at battle END (any outcome), before the save below (BUG-013
+	-- commit -> save -> BattleEnded order unchanged). Expired items unequip everywhere.
+	UGCService.OnBattleCompleted(PLAYER_ID, deployed)
+
 	-- benched[] = owned roster MINUS deployed MINUS away on dispatch (FLAG-P2,
 	-- resolved 2026-10-07). Owned units the Guild menu benched above the
 	-- deployment cap (GuildMenuService.SyncBattleRoster removes them from
@@ -4727,7 +4784,8 @@ do
 	local objectivesMet = {}
 	if isQualifyingVictory then
 		if not anyPlayerKO then table.insert(objectivesMet, "Flawless") end
-		if not anyEnemyStanding then table.insert(objectivesMet, "AllDefeated") end
+		-- 'All defeated' removed (user ruling 2026-10-07). More optional objectives
+		-- need to be authored later.
 	end
 
 	local battleResult = {
@@ -4738,7 +4796,7 @@ do
 		deployed         = deployed,
 		benched          = benched,
 		ko               = koList,
-		objectivesMet    = objectivesMet,  -- FLAG-P4 (Flawless / AllDefeated)
+		objectivesMet    = objectivesMet,  -- FLAG-P4 (Flawless only; AllDefeated removed 2026-10-07)
 		-- Glow Crystal (Slice 6 item 3): set by ObjectEffectService on a player activation.
 		glowCrystal      = (state ~= nil and state.glowCrystalActive == true),
 	}

@@ -291,7 +291,7 @@ local function skillSatisfiesReq(skillTags: {[string]: boolean}, reqToken: strin
 		local option
 		if sepStart then
 			option = string.sub(remaining, 1, sepStart - 1)
-			remaining = string.sub(remaining, sepEnd + 1)
+			remaining = string.sub(remaining, (sepEnd :: number) + 1)
 		else
 			option = remaining
 		end
@@ -369,7 +369,7 @@ end
 --- the unit joins the RT/CT timeline naturally. Reused by BOTH SpawnReinforcement
 --- and SpawnSummon so the spawner tail lives in ONE place (not duplicated).
 --- SIDE is set by the caller BEFORE calling this; this helper never touches it.
-local function insertUnitIntoBattle(unit, state)
+local function insertUnitIntoBattle(unit: any, state: any)
 	local baseId = unit.id
 	local suffix = 0
 	local existing = {}
@@ -471,6 +471,25 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 		-- Starting RT is set in step 9 below (LUK formula on the TIER base RT,
 		-- after gear/doctrine so the final effective LUK is used).
 	})
+
+	-- 4b. Allocable stat points (USER RULING 2026-10-07): enemies get the same
+	--     per-level points as players (GameConstants.CalcAllocableStatPoints) and
+	--     spend ALL of them EVENLY across the six stats (user ruling: no doctrine
+	--     focus -- STR/INT are not melee/magic stats in this game). Deterministic,
+	--     no rng. Added to baseStats exactly like a player's saved allocation;
+	--     RebuildUnitStats (step 8) turns it into HP/MP/damage.
+	do
+		local points = GameConstants.CalcAllocableStatPoints(level, raceId)
+		local alloc = GameConstants.AutoAllocateStatPoints(points, nil) -- nil = even split
+		unit.statAllocation = alloc
+		if unit.baseStats then
+			for stat, pts in alloc do
+				if unit.baseStats[stat] then
+					unit.baseStats[stat] += pts
+				end
+			end
+		end
+	end
 
 	-- 5. Wire skills into the loadout structure the combat/AI systems read.
 	unit.selectedDoctrineSkill = doctrineSkill
@@ -715,7 +734,7 @@ end
 -- random with `rng` (user rule 2026-10-07). Pass a seeded Random to stay
 -- deterministic; with no rng the first tile in scan order is used.
 -- Returns { x, y } or nil if the map has no free tile.
-function EnemyGenerator.FindNearestFreeSpawnTile(state, cx: number, cy: number, rng: Random?)
+function EnemyGenerator.FindNearestFreeSpawnTile(state: any, cx: number, cy: number, rng: Random?): { x: number, y: number }?
 	local grid = GameConstants.TERRAIN_MAP
 	local h = grid and #grid or 0
 	local w = (h > 0 and grid[1]) and #grid[1] or 0

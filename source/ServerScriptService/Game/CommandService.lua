@@ -69,7 +69,7 @@ local CommandService = {}
 
 -- Optional: TileEffectService injected at runtime
 local _tileEffectService = nil
-function CommandService.SetTileEffectService(tes)
+function CommandService.SetTileEffectService(tes: any)
 	_tileEffectService = tes
 	-- Forward the same live TileEffectService to the map-object effect dispatcher.
 	ObjectEffectService.SetTileEffectService(tes)
@@ -80,7 +80,7 @@ end
 -- as _tileEffectService / _eventNpcResolver). nil-safe: with no generator wired a
 -- summon skill charges its cost and no-ops (logged), never crashes.
 local _enemyGenerator = nil
-function CommandService.SetEnemyGenerator(eg)
+function CommandService.SetEnemyGenerator(eg: any)
 	_enemyGenerator = eg
 end
 
@@ -138,10 +138,15 @@ local SUMMON_PROFILES = {
 	},
 }
 
+-- Map size (set by Main via SetMapDimensions). Declared ABOVE findEmptySummonTile:
+-- it was previously declared further down, so that function read empty globals.
+local _mapWidth  = 8
+local _mapHeight = 8
+
 -- Find an empty, in-bounds, unoccupied tile as close to the caster as possible
 -- (expanding Chebyshev rings). Mirrors the Summon Runtime Engine "Validate
 -- placement" step (status_summon_engines): tile must be legal + unoccupied.
-local function findEmptySummonTile(actor, state)
+local function findEmptySummonTile(actor: any, state: any)
 	local occupied = {}
 	for _, u in ipairs(state.units) do
 		if u.isAlive ~= false then
@@ -162,7 +167,7 @@ local function findEmptySummonTile(actor, state)
 			end
 		end
 	end
-	return nil
+	return nil, nil
 end
 
 -- Resolve a summon skill: compute the authored caster-% stats, place on an empty
@@ -171,7 +176,7 @@ end
 -- NO damage and grants NO rewards (flags set inside SpawnSummon). Returns ok, info.
 -- Per status_summon_engines: create the NEW summon FIRST, then retire the previous
 -- one (never delete-before-create); if placement fails, the existing summon stays.
-local function spawnSummonFor(actor, skillDef, target, state)
+local function spawnSummonFor(actor: any, skillDef: any, target: any, state: any): (boolean, any)
 	local prof = SUMMON_PROFILES[skillDef.id]
 	if not prof then
 		warn(string.format("[CommandService] SUMMON [%s] has no authored profile — spawn aborted (no invented stats)", tostring(skillDef.id)))
@@ -275,8 +280,8 @@ local function spawnSummonFor(actor, skillDef, target, state)
 			and u.summonType == prof.type then
 			u.isAlive = false
 			u.currentHp = 0
-			if BattleVisualBroadcaster.UnitKilled then
-				BattleVisualBroadcaster.UnitKilled(u)
+			if (BattleVisualBroadcaster :: any).UnitKilled then
+				(BattleVisualBroadcaster :: any).UnitKilled(u)
 			elseif BattleVisualBroadcaster.UnitStateChanged then
 				BattleVisualBroadcaster.UnitStateChanged(u)
 			end
@@ -303,7 +308,7 @@ end
 -- fn(actor, target, state) -> ok:boolean, reason:string?
 -- nil-safe: with no resolver wired, an eventNpc Interact charges cost and no-ops.
 local _eventNpcResolver = nil
-function CommandService.SetEventNpcResolver(fn)
+function CommandService.SetEventNpcResolver(fn: any)
 	_eventNpcResolver = fn
 end
 
@@ -316,7 +321,7 @@ end
 -- caller ever applied them. Fall damage is still applied separately by the caller.
 -- Turn-timed effects (Molten / Tar Pit at turn-end, Tainted at turn start) are
 -- handled by TileEffectService on the unit's own turn.
-local function applyForcedEntryEffects(target, result)
+local function applyForcedEntryEffects(target: any, result: any)
 	if not target or not target.isAlive or not result or not result.pushed then return end
 	local fx, fy = target.tileX, target.tileY
 	local terrainData = GameConstants.GetTerrainData(fx, fy)
@@ -332,6 +337,89 @@ local function applyForcedEntryEffects(target, result)
 		_tileEffectService.OnUnitEntersTile(target, fx, fy)
 	end
 end
+
+--------------------------------------------------
+-- SHARED POST-HIT EFFECTS (2026-10-07). One copy used by the INSTANT skill path,
+-- the CHANNEL/ACTIVATION (delayed) path and the Giant basic-attack knockback, so a
+-- delayed skill gets exactly the same RT delay / knockback / swap as an instant one.
+--------------------------------------------------
+
+-- Melee knockback through DisplacementService (Force - Stability). Applies the
+-- position change, wall/fall damage, collided-unit damage, landing-tile effects
+-- and the UnitPushed broadcast. Returns the push result (or nil).
+local function applyKnockback(state: any, actor: any, target: any, force: number, label: string)
+	if not (target and target.isAlive) then return nil end
+	local direction = DisplacementService.GetPushDirection(actor, target)
+	local result = DisplacementService.ResolvePush(
+		actor, target, force, direction,
+		GameConstants.KNOCKBACK_SOURCE_MODIFIERS.SkillKnockback, state.units,
+		nil, false
+	)
+	if result and result.pushed then
+		target.tileX = result.finalTileX
+		target.tileY = result.finalTileY
+		local knockDmg = 0
+		if result.wallCollision and result.wallCollision.damage > 0 then
+			knockDmg = knockDmg + result.wallCollision.damage
+		end
+		if result.fallDamage and result.fallDamage > 0 then
+			knockDmg = knockDmg + result.fallDamage
+		end
+		if knockDmg > 0 and target.isAlive then
+			UnitSchema.ApplyDamage(target, knockDmg)
+		end
+		applyForcedEntryEffects(target, result)
+		if result.wallCollision
+			and result.wallCollision.collidedUnitId
+			and result.wallCollision.collidedUnitDamage
+			and result.wallCollision.collidedUnitDamage > 0
+		then
+			for _, u in ipairs(state.units) do
+				if u.id == result.wallCollision.collidedUnitId and u.isAlive then
+					UnitSchema.ApplyDamage(u, result.wallCollision.collidedUnitDamage)
+					break
+				end
+			end
+		end
+		BattleVisualBroadcaster.UnitPushed(actor, target, result)
+		print(string.format(
+			"[CommandService] %s KNOCKBACK | %s -> %s | Moved:%d to (%d,%d) | Dmg:%d",
+			label, actor.name, target.name, result.tilesDisplaced,
+			result.finalTileX, result.finalTileY, knockDmg
+		))
+	end
+	return result
+end
+
+-- Single-target skill post-hit: weapon RT delay (Time Locker trait scaling, target
+-- VIT resistance) and authored skill knockback (skillDef.knockbackOnHit = +N Force,
+-- only after successful HP damage, e.g. Overwhelming Blow DB 'Knockback +1').
+local function applySkillPostHit(state: any, actor: any, target: any, skillDef: any, dealtDamage: number?)
+	if not target or target.isGroundTarget then return end
+	local rawDelay = (actor.weaponRtDelay or 0) * TraitEffectService.GetRtDelayInflictMultiplier(actor)
+	if rawDelay > 0 and target.isAlive then
+		local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
+		local actualDelay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), targetVit)
+		target.remainingRt = target.remainingRt + math.max(0, actualDelay)
+	end
+	if skillDef.knockbackOnHit and (dealtDamage or 0) > 0 and target.isAlive and actor.isAlive then
+		local force = (actor.derivedStats and actor.derivedStats.force or 1) + skillDef.knockbackOnHit
+		applyKnockback(state, actor, target, force, "SKILL")
+	end
+end
+
+-- Position swap with the selected ally (Phantom Exchange: 'the swap uses the
+-- selected ally's occupied tile'). Voluntary teleport: no forced-entry effects.
+local function applySwap(actor: any, target: any): boolean
+	if not (target and target.isAlive and actor.isAlive) or target.id == actor.id then return false end
+	local ax, ay = actor.tileX, actor.tileY
+	actor.tileX, actor.tileY = target.tileX, target.tileY
+	target.tileX, target.tileY = ax, ay
+	BattleVisualBroadcaster.UnitMoved(actor)
+	BattleVisualBroadcaster.UnitMoved(target)
+	print(`[CommandService] SWAP | {actor.name} <-> {target.name} | now ({actor.tileX},{actor.tileY}) / ({target.tileX},{target.tileY})`)
+	return true
+end
 --------------------------------------------------
 -- CONSTANTS
 --------------------------------------------------
@@ -345,7 +433,7 @@ local BASIC_ATTACK_RT_FACTOR = GameConstants.BASIC_ATTACK_RT_FACTOR
 
 local skillRegistry = {}
 
-function CommandService.RegisterSkill(skillDef)
+function CommandService.RegisterSkill(skillDef: any)
 	assert(
 		type(skillDef.id) == "string",
 		"RegisterSkill: skillDef must have an id string."
@@ -353,7 +441,7 @@ function CommandService.RegisterSkill(skillDef)
 	skillRegistry[skillDef.id] = skillDef
 end
 
-function CommandService.RegisterSkillAlias(aliasKey, skillDef)
+function CommandService.RegisterSkillAlias(aliasKey: any, skillDef: any)
 	-- Store the same skillDef under an alias key (e.g. legacy "skill_power_strike")
 	skillRegistry[aliasKey] = skillDef
 end
@@ -368,7 +456,7 @@ skillRegistry["SKL-MENDER-HEAL"] = {
 	isMenderHeal = true, projectileType = "Direct",
 }
 
-function CommandService.GetSkill(skillId)
+function CommandService.GetSkill(skillId: any)
 	return skillRegistry[skillId]
 end
 
@@ -376,7 +464,7 @@ function CommandService.GetAllSkills()
 	return skillRegistry
 end
 
-local function lookupSkill(skillId)
+local function lookupSkill(skillId: any)
 	return skillRegistry[skillId]
 end
 
@@ -384,10 +472,7 @@ end
 -- MAP STATE
 --------------------------------------------------
 
-local _mapWidth  = 8
-local _mapHeight = 8
-
-function CommandService.SetMapDimensions(width, height)
+function CommandService.SetMapDimensions(width: any, height: any)
 	_mapWidth  = width
 	_mapHeight = height
 end
@@ -399,11 +484,11 @@ end
 -- damage: closest to the actor, tie-broken by lowest Euclidean² (straightest
 -- line). Returns {x,y} or nil (already adjacent / no legal tile).
 --------------------------------------------------
-function CommandService.ComputeChargeLanding(actor, target, state)
+function CommandService.ComputeChargeLanding(actor: any, target: any, state: any)
 	if not (actor and target) then return nil end
 	local dist = math.max(math.abs(actor.tileX - target.tileX), math.abs(actor.tileY - target.tileY))
 	if dist <= 1 then return nil end  -- already adjacent; no move
-	local bestTile, bestDist, bestDistSq = nil, 999, 999
+	local bestTile: any, bestDist, bestDistSq = nil, 999, 999
 	for dy = -1, 1 do
 		for dx = -1, 1 do
 			if dx ~= 0 or dy ~= 0 then
@@ -436,7 +521,7 @@ end
 -- Straight-line tile path from (fromX,fromY) to (toX,toY), inclusive of the
 -- landing tile, EXCLUSIVE of the start. Bresenham-style diagonal walk (matches
 -- the 'legal straight path' the charge traverses). For the client path visual.
-function CommandService.ComputeChargePath(fromX, fromY, toX, toY)
+function CommandService.ComputeChargePath(fromX: any, fromY: any, toX: any, toY: any)
 	local path = {}
 	local x, y = fromX, fromY
 	local guard = 0
@@ -455,7 +540,7 @@ end
 -- RT CALCULATION
 --------------------------------------------------
 
-local function calcMoveRt(actor, tilesMoving)
+local function calcMoveRt(actor: any, tilesMoving: any)
 	local modBaseRt = StatusService.GetModifiedBaseRt(actor)
 	local perTile = modBaseRt * MOVE_RT_FACTOR
 	-- Frozen: all RT costs ×2. Wet: movement RT ×1.25.
@@ -466,7 +551,7 @@ local function calcMoveRt(actor, tilesMoving)
 	return math.round(perTile * tilesMoving * frozenMult * wetMult * traitMoveMult)
 end
 
-local function calcBasicAttackBaseRt(actor)
+local function calcBasicAttackBaseRt(actor: any)
 	-- DB formula: Basic Attack RT = round(Modified Base RT × 0.10) + Effective Weapon WT
 	-- Effective WT = raw WT × (1 - STR/(200+STR)) — STR reduces burden
 	-- Armor WT is NOT added here: it is part of Modified Base RT (DB weapons_equipment
@@ -514,7 +599,7 @@ end
 --     counter of its own (checked by the caller before calling this).
 --------------------------------------------------
 
-function CommandService.TriggerCounterIfEligible(defender, attacker, state, wasCounter, wasAOE, dealtDamage)
+function CommandService.TriggerCounterIfEligible(defender: any, attacker: any, state: any, wasCounter: any, wasAOE: any, dealtDamage: any)
 	-- Guard 0: only an attack that dealt DIRECT DAMAGE provokes a counter (USER
 	-- RULING 2026-10-03). Basic Attacks always deal damage; damaging skills of ANY
 	-- pattern qualify; zero-damage / pure-status / debuff-only skills (Steal,
@@ -560,7 +645,7 @@ function CommandService.TriggerCounterIfEligible(defender, attacker, state, wasC
 	-- Resolve the counter as a basic attack, reusing the weapon-pattern logic
 	-- from the Attack commit path. Every counter hit is flagged isCounter so
 	-- ApplyOutcome / the caller will not spawn a further counter.
-	local function resolveCounterHit(victim, dmgMult)
+	local function resolveCounterHit(victim: any, dmgMult: any)
 		if not victim.isAlive then return end
 		local outcome = CombatResolver.ResolveBasicAttack(defender, victim, weaponDamage)
 		outcome.isCounter = true
@@ -623,7 +708,7 @@ end
 -- targetRules from ConsumableData. Range is Chebyshev distance.
 --------------------------------------------------
 
-local function validateItemTarget(actor, target, consumableDef)
+local function validateItemTarget(actor: any, target: any, consumableDef: any): (boolean, any)
 	local rules = consumableDef.targetRules or "Self"
 	local range = consumableDef.range or 0
 
@@ -732,9 +817,9 @@ end
 -- (not yet implemented — see Main.server.lua AI turn logic).
 --------------------------------------------------
 
-local function resolveItemEffect(user, target, consumableDef, allUnits)
+local function resolveItemEffect(user: any, target: any, consumableDef: any, allUnits: any)
 	local formula = consumableDef.effectFormula or ""
-	local result = {
+	local result: any = {
 		effectType  = "Unknown",
 		amount      = 0,
 		statusId    = nil,
@@ -818,7 +903,7 @@ end
 -- PUBLIC: GetSkillCandidates (for AI and client)
 --------------------------------------------------
 
-function CommandService.GetSkillCandidates(actor, allUnits, skillId)
+function CommandService.GetSkillCandidates(actor: any, allUnits: any, skillId: any)
 	local skillDef = lookupSkill(skillId)
 	if not skillDef then return {} end
 	return TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
@@ -828,7 +913,7 @@ end
 -- PUBLIC: GetUnitSkills (for client Skill Card UI)
 --------------------------------------------------
 
-function CommandService.GetUnitSkills(unit)
+function CommandService.GetUnitSkills(unit: any)
 	local skills = {}
 	for _, sid in ipairs(unit.skillIds or {}) do
 		local def = lookupSkill(sid)
@@ -860,19 +945,19 @@ end
 -- friendly unit (BUG-004 class). Allies = same side only (recruited Neutrals and
 -- enemies excluded).
 --------------------------------------------------
-local function isPureBuffSkill(skillDef)
+local function isPureBuffSkill(skillDef: any)
 	return (skillDef.power or 0) == 0 and not skillDef.inheritStr
 		and not skillDef.isHealing and not skillDef.isShield
 		and (skillDef.appliesStatus ~= nil or skillDef.appliesStatuses ~= nil)
 end
 
 -- Caster-centred ally aura (War Cry: "Self, Allies", Circle3).
-local function isPureBuffAura(skillDef)
+local function isPureBuffAura(skillDef: any)
 	return isPureBuffSkill(skillDef) and skillDef.targetRules == "Self, Allies"
 		and skillDef.aoePattern ~= nil and skillDef.aoePattern ~= "InheritWeapon"
 end
 
-local function auraTargets(state, caster, skillDef)
+local function auraTargets(state: any, caster: any, skillDef: any)
 	local radius = tonumber(tostring(skillDef.aoePattern):match("%d+")) or 1
 	local list = {}
 	for _, u in ipairs(state.units) do
@@ -886,7 +971,7 @@ end
 
 -- Applies the skill's status(es) to each target; returns AOE-shaped entries
 -- ({ target, outcome = { finalDamage = 0, appliesStatus } }) for Main's broadcast.
-local function applyPureBuff(caster, skillDef, targets)
+local function applyPureBuff(caster: any, skillDef: any, targets: any)
 	local entries = {}
 	for _, u in ipairs(targets) do
 		local applied = nil
@@ -942,7 +1027,7 @@ end
 -- current HP, tie-break by unit id. The status is consumed on every eligible
 -- event, even when no legal redirect target exists.
 --------------------------------------------------
-local function isSingleTargetSkill(actor, skillDef, target)
+local function isSingleTargetSkill(actor: any, skillDef: any, target: any)
 	if not skillDef or not target or target.isGroundTarget then return false end
 	if (skillDef.targetRules or "Enemy Unit") ~= "Enemy Unit" then return false end
 	local aoe = skillDef.aoePattern
@@ -952,7 +1037,7 @@ local function isSingleTargetSkill(actor, skillDef, target)
 	return aoe == nil
 end
 
-local function applyMisdirection(state, actor, actionType, selection, skillDef, skillSelection)
+local function applyMisdirection(state: any, actor: any, actionType: any, selection: any, skillDef: any, skillSelection: any)
 	local holder
 	if actionType == "Attack" then
 		if (actor.weaponPattern or "Single") ~= "Single" then return selection end
@@ -1021,7 +1106,7 @@ end
 -- NOTE: the augment multiplier is now applied at COMMIT too. Before this, only
 -- validation applied it, so augment MP surcharges/discounts were never charged.
 --------------------------------------------------
-function CommandService.GetSkillMpCost(actor, skillDef, skillId)
+function CommandService.GetSkillMpCost(actor: any, skillDef: any, skillId: any)
 	if type(skillDef) ~= "table" or type(actor) ~= "table" then return 0, 0 end
 	local sid = skillId or skillDef.id
 	local mult = RacePassiveService.GetMpCostModifier(actor)
@@ -1036,14 +1121,14 @@ function CommandService.GetSkillMpCost(actor, skillDef, skillId)
 	return mpCost + manaBurnExtra, manaBurnExtra
 end
 
-function CommandService.ActivateChanneledSkill(state, unit)
+function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean, any)
 	if not unit.isChanneling or not unit.channelingData then
 		return false, "Unit is not channeling."
 	end
 
 	local data     = unit.channelingData
-	local skillDef = data.skillDef
-	local target   = data.target
+	local skillDef: any = data.skillDef
+	local target: any   = data.target
 	local mpCost   = data.mpCost or 0
 	-- Self skills (Mana Surge) resolve on the caster even if no target was stored.
 	if not target and skillDef and skillDef.targetRules == "Self" then target = unit end
@@ -1195,6 +1280,17 @@ function CommandService.ActivateChanneledSkill(state, unit)
 			skillDef.name, unit.name, target.name, actual, mpCost
 		))
 
+	elseif skillDef.swapWithTarget and target and not target.isGroundTarget then
+		-- Delayed Phantom Exchange: swap with the selected ally at activation.
+		local swapped = applySwap(unit, target)
+		result.type      = "AOE"
+		result.targets   = { { target = target, outcome = { finalDamage = 0 } } }
+		result.totalDmg  = 0
+		result.hitCount  = swapped and 1 or 0
+		result.skillName = skillDef.name
+		print(string.format("[CommandService] Channel ACTIVATE [%s] SWAP | %s <-> %s | ok:%s | MP:%d",
+			skillDef.name, unit.name, target.name, tostring(swapped), mpCost))
+
 	elseif isPureBuffAura(skillDef) then
 		-- War Cry (channeled): caster + same-side allies within the Circle radius.
 		local entries = applyPureBuff(unit, skillDef, auraTargets(state, unit, skillDef))
@@ -1293,10 +1389,6 @@ function CommandService.ActivateChanneledSkill(state, unit)
 		-- AOE elevation filter: ±2 from center tile (DB default)
 		local centerElev = GameConstants.GetElevation(target.tileX, target.tileY)
 		-- AOE is indiscriminate by default (DB: friendly fire rule)
-		local targetRules = skillDef.targetRules or "Enemy Unit"
-		local hitsAllies = targetRules == "Ally Unit, Enemy Unit, Self"
-			or targetRules == "Ground, including occupied Ground"
-			or (not targetRules:find("Ally") == nil and not targetRules:find("Enemy") == nil)
 		for _, tile in ipairs(aoeTiles) do
 			local tileElev = GameConstants.GetElevation(tile.tileX, tile.tileY)
 			if math.abs(tileElev - centerElev) <= 2 then  -- ±2 elevation limit
@@ -1329,7 +1421,6 @@ function CommandService.ActivateChanneledSkill(state, unit)
 
 		-- Skill→tile effect bridge (channeling activation)
 		if skillDef.createsTileEffect and _tileEffectService then
-			local centerElev = GameConstants.GetElevation(target.tileX, target.tileY)
 			for _, tile in ipairs(aoeTiles) do
 				local tileElev = GameConstants.GetElevation(tile.tileX, tile.tileY)
 				if math.abs(tileElev - centerElev) <= 2
@@ -1344,7 +1435,9 @@ function CommandService.ActivateChanneledSkill(state, unit)
 	else
 		-- Single target damage
 		local outcome = CombatResolver.ResolveSkill(unit, target, skillDef)
-		local actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target, unit)
+		local _actualDmg, statusApplied = CombatResolver.ApplyOutcome(outcome, target, unit)
+		-- Same post-hit effects as the instant path (RT delay, skill knockback).
+		applySkillPostHit(state, unit, target, skillDef, _actualDmg or outcome.finalDamage or 0)
 		result.type          = "Damage"
 		result.target        = target
 		result.damage        = outcome.finalDamage
@@ -1367,11 +1460,11 @@ end
 --------------------------------------------------
 
 function CommandService.ValidateAndCommit(
-	state,
-	actorId,
-	actionType,
-	selection
-)
+	state: any,
+	actorId: any,
+	actionType: any,
+	selection: any
+): (boolean, any)
 	-- STEP 1: Receive command
 	local actor = nil
 	for _, unit in ipairs(state.units) do
@@ -1712,53 +1805,9 @@ function CommandService.ValidateAndCommit(
 			if raceEntry and raceEntry.tags then
 				for _, tag in ipairs(raceEntry.tags) do
 					if tag == "Giant" then
+						-- Giant basic-attack knockback is MELEE (no ranged penalty); shared helper.
 						local force = actor.derivedStats and actor.derivedStats.force or 1
-						local direction = DisplacementService.GetPushDirection(actor, target)
-						-- Giant basic-attack knockback is MELEE (isRanged=false → no ranged penalty).
-						-- ResolvePush computes distance from Force - Stability internally.
-						local result = DisplacementService.ResolvePush(
-							actor, target, force, direction,
-							GameConstants.KNOCKBACK_SOURCE_MODIFIERS.SkillKnockback, state.units,
-							nil, false
-						)
-						if result and result.pushed then
-							-- Apply position change
-							target.tileX = result.finalTileX
-							target.tileY = result.finalTileY
-							-- Apply collision/fall damage to the knocked-back target
-							local knockDmg = 0
-							if result.wallCollision and result.wallCollision.damage > 0 then
-								knockDmg = knockDmg + result.wallCollision.damage
-							end
-							if result.fallDamage and result.fallDamage > 0 then
-								knockDmg = knockDmg + result.fallDamage
-							end
-							if knockDmg > 0 and target.isAlive then
-								UnitSchema.ApplyDamage(target, knockDmg)
-							end
-							-- Ground effect of the landing tile (chasm floors etc.).
-							applyForcedEntryEffects(target, result)
-							-- Collided unit also absorbs impact (both units take collision damage)
-							if result.wallCollision
-								and result.wallCollision.collidedUnitId
-								and result.wallCollision.collidedUnitDamage
-								and result.wallCollision.collidedUnitDamage > 0
-							then
-								for _, u in ipairs(state.units) do
-									if u.id == result.wallCollision.collidedUnitId and u.isAlive then
-										UnitSchema.ApplyDamage(u, result.wallCollision.collidedUnitDamage)
-										break
-									end
-								end
-							end
-							-- Broadcast the displacement so the client animates it
-							BattleVisualBroadcaster.UnitPushed(actor, target, result)
-							print(string.format(
-								"[CommandService] GIANT KNOCKBACK | %s -> %s | Moved:%d to (%d,%d) | Dmg:%d",
-								actor.name, target.name, result.tilesDisplaced,
-								result.finalTileX, result.finalTileY, knockDmg
-							))
-						end
+						applyKnockback(state, actor, target, force, "GIANT")
 						break
 					end
 				end
@@ -1818,7 +1867,7 @@ function CommandService.ValidateAndCommit(
 		local activationCt = GameConstants.GetSkillActivationTime(skillDef.id)
 		local hasChannel = skillDef.channelTime and skillDef.channelTime > 0
 		local deferZeroChannel = (not hasChannel) and activationCt > 0
-			and (skillDef.isShield or skillDef.isSummon or skillDef.isHealing
+			and (skillDef.isShield or skillDef.isSummon or skillDef.isHealing or skillDef.swapWithTarget
 				or (skillDef.aoePattern ~= nil and skillDef.aoePattern ~= "InheritWeapon"))
 			and not skillDef.isCharge
 		if not hasChannel and not deferZeroChannel then activationCt = 0 end
@@ -2199,6 +2248,11 @@ function CommandService.ValidateAndCommit(
 				skillDef.appliesStatus or "none", mpCost, baseRtCost, actor.currentAp
 			))
 
+			elseif skillDef.swapWithTarget and target and target.side == actor.side and target.id ~= actor.id then
+			-- Phantom Exchange (instant fallback): swap with the selected ally, no damage.
+			applySwap(actor, target)
+			BattleCoordinator.AccrueRt(state, baseRtCost)
+
 			elseif target and target.side == actor.side and target.id ~= actor.id
 				and (skillDef.power or 0) == 0
 				and (skillDef.appliesStatus or skillDef.appliesStatuses) then
@@ -2284,13 +2338,8 @@ function CommandService.ValidateAndCommit(
 			_primaryTargetDamage = actualDmg or outcome.finalDamage or 0
 			BattleCoordinator.AccrueRt(state, baseRtCost)
 
-			-- Perks & Flaws (Phase 2b): RT-delay-inflicted trait multiplier (Time Locker etc.)
-			local rawDelay = (actor.weaponRtDelay or 0) * TraitEffectService.GetRtDelayInflictMultiplier(actor)
-			if rawDelay > 0 and target.isAlive then
-				local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
-				local actualDelay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), targetVit)
-				target.remainingRt = target.remainingRt + math.max(0, actualDelay)
-			end
+			-- Shared post-hit effects (RT delay incl. Time Locker trait, skill knockback).
+			applySkillPostHit(state, actor, target, skillDef, _primaryTargetDamage)
 
 			print(string.format(
 				"[CommandService] SKILL [%s] | %s -> %s | Dmg:%d | MP:%d | RT:%d | AP left:%d%s",
@@ -2525,8 +2574,8 @@ function CommandService.ValidateAndCommit(
 		local modBaseRt = StatusService.GetModifiedBaseRt(actor)
 		-- Interact RT multiplier hook: HD-001 Quickhand Hood → ×0.75 (nil-safe → 1.0).
 		local interactRtMult = 1.0
-		if ArmorPassiveService.GetInteractRtMultiplier then
-			interactRtMult = ArmorPassiveService.GetInteractRtMultiplier(actor) or 1.0
+		if (ArmorPassiveService :: any).GetInteractRtMultiplier then
+			interactRtMult = (ArmorPassiveService :: any).GetInteractRtMultiplier(actor) or 1.0
 		end
 
 		if chosen.interactKind == "recruitEnemy" then
@@ -2550,8 +2599,8 @@ function CommandService.ValidateAndCommit(
 			target.controller = "Player"
 			target.recruited = true
 			-- HD-006 Diplomat's Veil: heal 35% max HP on recruit (nil-safe → none).
-			if ArmorPassiveService.GetRecruitHealFraction then
-				local healFrac = ArmorPassiveService.GetRecruitHealFraction(actor) or 0
+			if (ArmorPassiveService :: any).GetRecruitHealFraction then
+				local healFrac = (ArmorPassiveService :: any).GetRecruitHealFraction(actor) or 0
 				if healFrac > 0 then
 					target.currentHp = math.min(target.maxHp or 1,
 						(target.currentHp or 0) + math.ceil((target.maxHp or 1) * healFrac))
@@ -2576,8 +2625,8 @@ function CommandService.ValidateAndCommit(
 			local reduced = before - math.round(before * 0.35)
 			-- HD-004 Chronologist Monocle: extra flat −50 after the 35% cut
 			-- (nil-safe → 0). Floor at 0.
-			if ArmorPassiveService.GetAllyRtFlatBonus then
-				reduced = reduced - (ArmorPassiveService.GetAllyRtFlatBonus(actor) or 0)
+			if (ArmorPassiveService :: any).GetAllyRtFlatBonus then
+				reduced = reduced - ((ArmorPassiveService :: any).GetAllyRtFlatBonus(actor) or 0)
 			end
 			target.remainingRt = math.max(0, reduced)
 			-- Interact-on-ally RT cost = 50% of Modified Base RT.
@@ -2607,19 +2656,19 @@ function CommandService.ValidateAndCommit(
 			-- so ActivateChanneledSkill applies the revive at the deadline.
 			-- HD-017 Rescue Marshal Helm: channel 200 → 130 CT (nil-safe → 200).
 			local channelCt = 200
-			if ArmorPassiveService.GetReviveChannelCt then
-				channelCt = ArmorPassiveService.GetReviveChannelCt(actor) or 200
+			if (ArmorPassiveService :: any).GetReviveChannelCt then
+				channelCt = (ArmorPassiveService :: any).GetReviveChannelCt(actor) or 200
 			end
 			-- HD-003 Field Medic Coif: revive HP 5% → 15% (nil-safe → 0.05).
 			local reviveHpFrac = 0.05
-			if ArmorPassiveService.GetReviveHpFraction then
-				reviveHpFrac = ArmorPassiveService.GetReviveHpFraction(actor) or 0.05
+			if (ArmorPassiveService :: any).GetReviveHpFraction then
+				reviveHpFrac = (ArmorPassiveService :: any).GetReviveHpFraction(actor) or 0.05
 			end
 			-- Interact-on-KO'd-ally RT cost = 30% of Modified Base RT.
 			-- HD-016 Signal Officer Beret: 30% → 15% (nil-safe → 0.30).
 			local reviveRtPct = 0.30
-			if ArmorPassiveService.GetReviveRtPct then
-				reviveRtPct = ArmorPassiveService.GetReviveRtPct(actor) or 0.30
+			if (ArmorPassiveService :: any).GetReviveRtPct then
+				reviveRtPct = (ArmorPassiveService :: any).GetReviveRtPct(actor) or 0.30
 			end
 			local reviveSkillDef = {
 				id          = "_interact_revive",

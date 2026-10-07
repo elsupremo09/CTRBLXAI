@@ -38,20 +38,20 @@ local _rewardService = nil      -- SetRewardModifier / Clear
 local _weatherService = nil     -- RerollForNewRound / condition pick (Fortune Teller)
 local _tileReshaper = nil       -- MapRenderer.ReshapeTile(x, y, terrain, elev)
 
-function BattlefieldEventService.SetBroadcaster(b) _broadcaster = b end
-function BattlefieldEventService.SetTileEffectService(tes) _tileEffectService = tes end
-function BattlefieldEventService.SetEnemyGenerator(eg) _enemyGenerator = eg end
-function BattlefieldEventService.SetRewardService(rs) _rewardService = rs end
-function BattlefieldEventService.SetWeatherService(ws) _weatherService = ws end
-function BattlefieldEventService.SetTileReshaper(fn) _tileReshaper = fn end
+function BattlefieldEventService.SetBroadcaster(b: any) _broadcaster = b end
+function BattlefieldEventService.SetTileEffectService(tes: any) _tileEffectService = tes end
+function BattlefieldEventService.SetEnemyGenerator(eg: any) _enemyGenerator = eg end
+function BattlefieldEventService.SetRewardService(rs: any) _rewardService = rs end
+function BattlefieldEventService.SetWeatherService(ws: any) _weatherService = ws end
+function BattlefieldEventService.SetTileReshaper(fn: any) _tileReshaper = fn end
 local _unitRemover = nil
-function BattlefieldEventService.SetUnitRemover(fn) _unitRemover = fn end
+function BattlefieldEventService.SetUnitRemover(fn: any) _unitRemover = fn end
 local _targetingService = nil
-function BattlefieldEventService.SetTargetingService(ts) _targetingService = ts end
+function BattlefieldEventService.SetTargetingService(ts: any) _targetingService = ts end
 local _statusService = nil
-function BattlefieldEventService.SetStatusService(ss) _statusService = ss end
+function BattlefieldEventService.SetStatusService(ss: any) _statusService = ss end
 local _commandService = nil
-function BattlefieldEventService.SetCommandService(cs) _commandService = cs end
+function BattlefieldEventService.SetCommandService(cs: any) _commandService = cs end
 
 --------------------------------------------------------------------
 -- SHARED HELPERS
@@ -65,7 +65,7 @@ local function gridDims(): (number, number)
 	return w, h
 end
 
-local function livingUnits(state)
+local function _livingUnits(state: any)
 	local out = {}
 	for _, u in ipairs(state.units) do
 		if u.isAlive and not u.isGroundTarget then table.insert(out, u) end
@@ -73,7 +73,7 @@ local function livingUnits(state)
 	return out
 end
 
-local function livingBySide(state, side)
+local function livingBySide(state: any, side: any)
 	local out = {}
 	for _, u in ipairs(state.units) do
 		if u.isAlive and not u.isGroundTarget and u.side == side then table.insert(out, u) end
@@ -90,7 +90,7 @@ local EVENT_UNIT_NAME = {
 	["Wandering Mercenaries"] = "Mercenary",
 }
 
-local function spawnEventUnit(state, rng, spec, spawnTile, side, raceOverride, eventName, eventKind)
+local function spawnEventUnit(state: any, rng: any, spec: any, spawnTile: any, side: any, raceOverride: any, eventName: any, eventKind: any): any
 	if not _enemyGenerator or not _enemyGenerator.SpawnReinforcement then
 		warn("[BattlefieldEventService] EnemyGenerator not injected — cannot spawn " .. tostring(eventName))
 		return nil
@@ -174,7 +174,7 @@ local EVENT_RULES = {
 	["Crystal Golem"]      = { rarity = "Rare" },
 }
 
-local function eventRule(name)
+local function eventRule(name: any)
 	return EVENT_RULES[name] or { rarity = "Common" }
 end
 
@@ -185,7 +185,7 @@ end
 local Handlers = {}
 
 -- Status helpers (nil-safe via injected StatusService).
-local function applyStatusTo(unit, statusId, sourceId)
+local function applyStatusTo(unit: any, statusId: any, sourceId: any)
 	if _statusService and _statusService.ApplyStatus then
 		_statusService.ApplyStatus(unit, statusId, sourceId or "battlefieldEvent")
 	end
@@ -195,7 +195,7 @@ local BARD_BUFFS = { "Blessed", "Haste", "Rally", "Regeneration", "Battle Rage",
 local BARD_DEBUFFS = { "Cursed", "Slow", "Weakened", "Blind" }
 
 -- Pick a spawn tile near the map edge for an event unit (deterministic).
-local function edgeSpawnTile(state, rng)
+local function edgeSpawnTile(state: any, rng: any)
 	local w, h = gridDims()
 	if w == 0 or h == 0 then return { x = 1, y = 1 } end
 	local side = rng:NextInteger(1, 4)
@@ -206,7 +206,7 @@ local function edgeSpawnTile(state, rng)
 end
 
 -- Highest-friendly level (for scaling event units).
-local function highestFriendlyLevel(state)
+local function highestFriendlyLevel(state: any)
 	local lvl = 1
 	for _, u in ipairs(state.units) do
 		if u.side == "Player" and (u.level or 1) > lvl then lvl = u.level or 1 end
@@ -217,8 +217,8 @@ end
 -- ===================== NEUTRAL NPCs (spawn + behaviour tag) =====================
 
 -- Merchant Caravan — moves across map; shop payload STUBBED (no Merchant Shop system).
-Handlers["Merchant Caravan"] = function(ctx)
-	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = 1 },
+Handlers["Merchant Caravan"] = function(ctx: any)
+	local _u = spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = 1 },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Merchant Caravan", "crossMap")
 	-- STUB: Merchant Shop system does not exist yet; interacting would double next
 	-- shop items + rarity. Spawn + cross-map movement only until the shop exists.
@@ -226,7 +226,7 @@ Handlers["Merchant Caravan"] = function(ctx)
 end
 
 -- Slave Trader — moves across map; recruitment payload STUBBED (no recruitment UI).
-Handlers["Slave Trader"] = function(ctx)
+Handlers["Slave Trader"] = function(ctx: any)
 	spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = 1 },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Slave Trader", "crossMap")
 	-- STUB: recruitment system does not exist yet (doubles recruit options + rarity).
@@ -234,7 +234,7 @@ Handlers["Slave Trader"] = function(ctx)
 end
 
 -- Wandering Blacksmith — moves across map; blacksmith payload STUBBED (no blacksmith UI).
-Handlers["Wandering Blacksmith"] = function(ctx)
+Handlers["Wandering Blacksmith"] = function(ctx: any)
 	spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = 1 },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Wandering Blacksmith", "crossMap")
 	-- STUB: Blacksmith system does not exist yet (improves next blacksmith interaction).
@@ -242,7 +242,7 @@ Handlers["Wandering Blacksmith"] = function(ctx)
 end
 
 -- Wandering Scholar — passive; interacting doubles EXP (via reward hook, on interact).
-Handlers["Wandering Scholar"] = function(ctx)
+Handlers["Wandering Scholar"] = function(ctx: any)
 	spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = 1 },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Wandering Scholar", "passive")
 	-- EXP x2 is applied via RewardService.SetRewardModifier when the player interacts
@@ -251,7 +251,7 @@ Handlers["Wandering Scholar"] = function(ctx)
 end
 
 -- Wandering Mercenaries — passive; fight-for-gold is an interact choice (STUB payload).
-Handlers["Wandering Mercenaries"] = function(ctx)
+Handlers["Wandering Mercenaries"] = function(ctx: any)
 	spawnEventUnit(ctx.state, ctx.rng, { type = "Veteran", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Wandering Mercenaries", "passive")
 	-- STUB: the fight-for-half-gold contract needs the gold-economy interact flow.
@@ -259,7 +259,7 @@ Handlers["Wandering Mercenaries"] = function(ctx)
 end
 
 -- Fortune Teller — passive; interacting lets the player choose the next weather/crisis.
-Handlers["Fortune Teller"] = function(ctx)
+Handlers["Fortune Teller"] = function(ctx: any)
 	spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = 1 },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Fortune Teller", "passive")
 	-- Interact → WeatherService.SetNextCondition(playerChoice) (handled in ResolveInteract).
@@ -267,7 +267,7 @@ Handlers["Fortune Teller"] = function(ctx)
 end
 
 -- Lost Noble — passive; enemies prioritise it; survival → loot (loot-pool STUBBED).
-Handlers["Lost Noble"] = function(ctx)
+Handlers["Lost Noble"] = function(ctx: any)
 	-- Spawn on the far edge from the player deploy zone so its run home matters.
 	local spawnTile = edgeSpawnTile(ctx.state, ctx.rng)
 	local pd = ctx.state.playerDeployTiles
@@ -291,14 +291,14 @@ Handlers["Lost Noble"] = function(ctx)
 end
 
 -- Treasure Hunter — moves to nearest treasure and loots it over turns.
-Handlers["Treasure Hunter"] = function(ctx)
+Handlers["Treasure Hunter"] = function(ctx: any)
 	spawnEventUnit(ctx.state, ctx.rng, { type = "Veteran", level = 1 },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Treasure Hunter", "seekTreasure")
 	return true
 end
 
 -- Monster Hunter — hunts enemy units; drops a visible trap each of its turns.
-Handlers["Monster Hunter"] = function(ctx)
+Handlers["Monster Hunter"] = function(ctx: any)
 	spawnEventUnit(ctx.state, ctx.rng, { type = "Veteran", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Monster Hunter", "huntMonster")
 	-- Trap drop handled by OnEventUnitTurn (Snare Trap tile effect at its tile).
@@ -306,7 +306,7 @@ Handlers["Monster Hunter"] = function(ctx)
 end
 
 -- Wandering Bard — passive; while alive, applies a random buff OR debuff to all units.
-Handlers["Wandering Bard"] = function(ctx)
+Handlers["Wandering Bard"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = 1 },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Wandering Bard", "passive")
 	if u then u.bardAura = true end
@@ -318,14 +318,14 @@ end
 -- ===================== HOSTILE / COMBAT EVENTS =====================
 
 -- Champion — powerful elite comeback threat (conditional spawn).
-Handlers["Champion"] = function(ctx)
+Handlers["Champion"] = function(ctx: any)
 	spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) + 2 },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Champion", nil)
 	return true
 end
 
 -- Zombie Horde — several hostile undead, hostile to non-undead.
-Handlers["Zombie Horde"] = function(ctx)
+Handlers["Zombie Horde"] = function(ctx: any)
 	local n = ctx.rng:NextInteger(3, 5)
 	for _ = 1, n do
 		spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = highestFriendlyLevel(ctx.state) },
@@ -335,7 +335,7 @@ Handlers["Zombie Horde"] = function(ctx)
 end
 
 -- Leprechaun — defeating grants large gold (reward modifier on its death).
-Handlers["Leprechaun"] = function(ctx)
+Handlers["Leprechaun"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = 1 },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Leprechaun", nil)
 	if u then u.rewardOnDeath = { goldMult = 3.0 } end  -- applied via reward hook on defeat
@@ -343,7 +343,7 @@ Handlers["Leprechaun"] = function(ctx)
 end
 
 -- Thief — attempts Steal on friendlies; defeating recovers the stolen item.
-Handlers["Thief"] = function(ctx)
+Handlers["Thief"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Veteran", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Thief", nil)
 	if u then u.thiefBehavior = true end  -- AI/Steal path reads this
@@ -351,7 +351,7 @@ Handlers["Thief"] = function(ctx)
 end
 
 -- Chaos Necromancer — turns enemy corpses into undead each turn.
-Handlers["Chaos Necromancer"] = function(ctx)
+Handlers["Chaos Necromancer"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Chaos Necromancer", nil)
 	if u then u.raisesCorpses = true end  -- OnEventUnitTurn raises nearby corpses
@@ -359,7 +359,7 @@ Handlers["Chaos Necromancer"] = function(ctx)
 end
 
 -- Chaos Lich — casts Death Ripple each turn hitting all non-undead.
-Handlers["Chaos Lich"] = function(ctx)
+Handlers["Chaos Lich"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) + 2 },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Chaos Lich", nil)
 	if u then u.deathRipple = true end  -- OnEventUnitTurn applies the ripple
@@ -367,7 +367,7 @@ Handlers["Chaos Lich"] = function(ctx)
 end
 
 -- Wandering Monster — high level; neutral until a friendly attacks it.
-Handlers["Wandering Monster"] = function(ctx)
+Handlers["Wandering Monster"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) + ctx.rng:NextInteger(5, 10) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Wandering Monster", "passive")
 	if u then u.turnsHostileWhenAttacked = true end
@@ -375,7 +375,7 @@ Handlers["Wandering Monster"] = function(ctx)
 end
 
 -- Wandering Bandits — demand gold; refuse/attack → hostile (gold path STUB; hostile live).
-Handlers["Wandering Bandits"] = function(ctx)
+Handlers["Wandering Bandits"] = function(ctx: any)
 	local n = ctx.rng:NextInteger(2, 3)
 	for _ = 1, n do
 		local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Veteran", level = highestFriendlyLevel(ctx.state) },
@@ -388,14 +388,14 @@ Handlers["Wandering Bandits"] = function(ctx)
 end
 
 -- Vengeful Spirit — seeks a monster; interacting makes that monster Elite +10 (hostile unit).
-Handlers["Vengeful Spirit"] = function(ctx)
-	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Veteran", level = highestFriendlyLevel(ctx.state) },
+Handlers["Vengeful Spirit"] = function(ctx: any)
+	local _u = spawnEventUnit(ctx.state, ctx.rng, { type = "Veteran", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Vengeful Spirit", nil)
 	return true
 end
 
 -- Bounty Hunter — targets one friendly; immune to Taunt.
-Handlers["Bounty Hunter"] = function(ctx)
+Handlers["Bounty Hunter"] = function(ctx: any)
 	local players = livingBySide(ctx.state, "Player")
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) + 1 },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Bounty Hunter", nil)
@@ -407,7 +407,7 @@ Handlers["Bounty Hunter"] = function(ctx)
 end
 
 -- Enemy Scout — defeat before end of Round 2 or enemy gets reinforcements.
-Handlers["Enemy Scout"] = function(ctx)
+Handlers["Enemy Scout"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Enemy Scout", nil)
 	if u then u.scoutDeadline = (ctx.roundIndex or 0) + 2 end  -- OnRoundStart checks survival
@@ -415,17 +415,17 @@ Handlers["Enemy Scout"] = function(ctx)
 end
 
 -- Doppelganger — copies a friendly unit; defeating grants 5x EXP.
-Handlers["Doppelganger"] = function(ctx)
+Handlers["Doppelganger"] = function(ctx: any)
 	local players = livingBySide(ctx.state, "Player")
 	local copyLvl = (#players > 0) and (players[1].level or 1) or 1
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = copyLvl },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Doppelganger", nil)
-	if u then u.rewardOnDeath = { expMult = 5.0 } end
+	if u then u.rewardOnDeath = { expMult = 5.0 } :: any end
 	return true
 end
 
 -- Lightning Elemental — every turn strikes the unit on highest elevation (any range).
-Handlers["Lightning Elemental"] = function(ctx)
+Handlers["Lightning Elemental"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Lightning Elemental", nil)
 	if u then u.strikesHighestElevation = true end  -- OnEventUnitTurn
@@ -433,7 +433,7 @@ Handlers["Lightning Elemental"] = function(ctx)
 end
 
 -- Gold Golem — defeating yields 5x gold.
-Handlers["Gold Golem"] = function(ctx)
+Handlers["Gold Golem"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Gold Golem", nil)
 	if u then u.rewardOnDeath = { goldMult = 5.0 } end
@@ -441,17 +441,17 @@ Handlers["Gold Golem"] = function(ctx)
 end
 
 -- Crystal Golem — defeating yields 5x material.
-Handlers["Crystal Golem"] = function(ctx)
+Handlers["Crystal Golem"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Crystal Golem", nil)
-	if u then u.rewardOnDeath = { materialMult = 5.0 } end
+	if u then u.rewardOnDeath = { materialMult = 5.0 } :: any end
 	return true
 end
 
 -- ===================== HAZARD / MODIFIER / TRANSFORM EVENTS =====================
 
 -- Plague Carrier — every tile it crosses becomes Corrupted + Poison Gas.
-Handlers["Plague Carrier"] = function(ctx)
+Handlers["Plague Carrier"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Plague Carrier", nil)
 	if u then u.trailEffect = "Tainted Ground"; u.trailEffect2 = "Poison Cloud" end  -- OnEventUnitTurn
@@ -459,7 +459,7 @@ Handlers["Plague Carrier"] = function(ctx)
 end
 
 -- Fog Spirit — leaves Fog on every tile it crosses.
-Handlers["Fog Spirit"] = function(ctx)
+Handlers["Fog Spirit"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Fog Spirit", nil)
 	if u then u.trailEffect = "Fog" end
@@ -467,7 +467,7 @@ Handlers["Fog Spirit"] = function(ctx)
 end
 
 -- Fire Spirit — burns every tile it crosses.
-Handlers["Fire Spirit"] = function(ctx)
+Handlers["Fire Spirit"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Grunt", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Fire Spirit", nil)
 	if u then u.trailEffect = "Burning" end
@@ -475,7 +475,7 @@ Handlers["Fire Spirit"] = function(ctx)
 end
 
 -- Wind Spirit — while alive, flying effects and Flying race are disabled.
-Handlers["Wind Spirit"] = function(ctx)
+Handlers["Wind Spirit"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Wind Spirit", nil)
 	if u then ctx.state.flyingDisabled = true; u.disablesFlying = true end
@@ -483,7 +483,7 @@ Handlers["Wind Spirit"] = function(ctx)
 end
 
 -- Water Spirit — each turn: lowest non-water tiles → Shallow Water; Water → Deep Water.
-Handlers["Water Spirit"] = function(ctx)
+Handlers["Water Spirit"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Water Spirit", nil)
 	if u then u.floodsTiles = true end  -- OnEventUnitTurn
@@ -491,7 +491,7 @@ Handlers["Water Spirit"] = function(ctx)
 end
 
 -- Earth Elemental — triggers Earthquake crisis each turn (and blocks the natural one).
-Handlers["Earth Elemental"] = function(ctx)
+Handlers["Earth Elemental"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Earth Elemental", nil)
 	if u then
@@ -506,7 +506,7 @@ end
 -- ===================== SPECIAL EVENTS =====================
 
 -- Divine Intervention — revive all KO'd friendlies at full HP + team buff; once/battle.
-Handlers["Divine Intervention"] = function(ctx)
+Handlers["Divine Intervention"] = function(ctx: any)
 	for _, u in ipairs(ctx.state.units) do
 		if u.side == "Player" and not u.isAlive then
 			u.isAlive = true
@@ -522,7 +522,7 @@ Handlers["Divine Intervention"] = function(ctx)
 end
 
 -- Herald of XXX — a neutral Herald whose defeat spawns the boss it heralds.
-Handlers["Herald of XXX"] = function(ctx)
+Handlers["Herald of XXX"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Veteran", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Herald of XXX", "passive")
 	if u then u.spawnsBossOnDeath = true end  -- defeat → SpawnReinforcement a boss (OnDeath)
@@ -530,8 +530,8 @@ Handlers["Herald of XXX"] = function(ctx)
 end
 
 -- Mutator — defeating spawns Mutation Bench; STUBBED (Mutation Bench + perk/drawback undesigned).
-Handlers["Mutator"] = function(ctx)
-	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
+Handlers["Mutator"] = function(ctx: any)
+	local _u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Mutator", nil)
 	-- STUB: Mutation Bench + perk/drawback catalog/roll logic are NOT designed yet.
 	-- Spawn the enemy; the "spawn Mutation Bench on defeat" payload is inert until that exists.
@@ -539,7 +539,7 @@ Handlers["Mutator"] = function(ctx)
 end
 
 -- Traitor — enemy (debuffed) until <=25% original enemies alive, then becomes neutral ally + dispel.
-Handlers["Traitor"] = function(ctx)
+Handlers["Traitor"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Veteran", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Traitor", nil)
 	if u then
@@ -555,7 +555,7 @@ local NeutralBehaviors = {}
 
 -- Reachable empty tiles for a neutral unit (reuse the AI/targeting pathing so a
 -- neutral never stops on an occupied/unreachable tile). Returns {} if unavailable.
-local function moveCandidates(unit, state)
+local function moveCandidates(unit: any, state: any)
 	if not _targetingService or not _targetingService.GetMoveCandidates then return {} end
 	local w, h = gridDims()
 	return _targetingService.GetMoveCandidates(unit, state.units, w, h) or {}
@@ -563,12 +563,12 @@ end
 
 -- Pick the reachable candidate that minimises distance to (gx, gy). Returns a
 -- Move action descriptor { actionType="Move", selection=tile } or nil (→ Wait).
-local function moveTowardGoal(unit, state, gx, gy)
+local function moveTowardGoal(unit: any, state: any, gx: any, gy: any): any
 	local cands = moveCandidates(unit, state)
 	if #cands == 0 then return nil end
 	local best, bestD = nil, math.huge
 	for _, t in ipairs(cands) do
-		local tx, ty = t.tileX or t.x, t.tileY or t.y
+		local tx: number, ty: number = t.tileX or t.x, t.tileY or t.y
 		local d = math.abs(tx - gx) + math.abs(ty - gy)
 		if d < bestD then bestD, best = d, t end
 	end
@@ -577,8 +577,8 @@ local function moveTowardGoal(unit, state, gx, gy)
 end
 
 -- "Cross the map": walk toward the far edge from the unit's spawn side.
-NeutralBehaviors["crossMap"] = function(unit, state)
-	local w, h = gridDims()
+NeutralBehaviors["crossMap"] = function(unit: any, state: any)
+	local w, _h = gridDims()
 	-- Exit: once the walker reaches its goal edge, it leaves the map (unit removed),
 	-- which ends its event so the next one can fire (single-active-event model).
 	unit.crossGoalX = unit.crossGoalX or ((unit.tileX <= w / 2) and w or 1)
@@ -593,7 +593,7 @@ NeutralBehaviors["crossMap"] = function(unit, state)
 end
 
 -- "Seek nearest treasure": move toward the closest Treasure/Cursed Chest object.
-NeutralBehaviors["seekTreasure"] = function(unit, state)
+NeutralBehaviors["seekTreasure"] = function(unit: any, state: any)
 	local objs = state.objects or {}
 	local best, bestD = nil, math.huge
 	for _, o in ipairs(objs) do
@@ -608,7 +608,7 @@ end
 
 -- "Hunt nearest monster": advance toward the closest enemy-side unit. (The visible
 -- trap-drop each turn is applied by the Monster Hunter handler's turn hook.)
-NeutralBehaviors["huntMonster"] = function(unit, state)
+NeutralBehaviors["huntMonster"] = function(unit: any, state: any)
 	local best, bestD = nil, math.huge
 	for _, u in ipairs(state.units) do
 		if u.isAlive and not u.isGroundTarget and u.side == "Enemy" then
@@ -622,7 +622,7 @@ end
 
 -- Passive neutrals (Bard, Scholar, Fortune Teller, Mercenaries, Lost Noble): stand.
 -- Lost Noble: MOVE-ONLY, always runs toward the player deploy (PD) area.
-NeutralBehaviors["fleeToPD"] = function(unit, state)
+NeutralBehaviors["fleeToPD"] = function(unit: any, state: any)
 	local pd = state.playerDeployTiles
 	if not pd or #pd == 0 then return nil end
 	local best, bestD = nil, math.huge
@@ -634,7 +634,7 @@ NeutralBehaviors["fleeToPD"] = function(unit, state)
 	return moveTowardGoal(unit, state, best.x, best.y)
 end
 
-NeutralBehaviors["passive"] = function(unit, state)
+NeutralBehaviors["passive"] = function(unit: any, state: any)
 	return nil  -- Wait
 end
 
@@ -646,9 +646,9 @@ end
 -- Choose which events spawn for this battle (0-3 random eligible + register
 -- conditional/round-gated ones). Deterministic from the seeded rng.
 -- Rarity-weighted draw of ONE event from the remaining start pool (removes it).
-function BattlefieldEventService._drawStartEvent(state, rng)
+function BattlefieldEventService._drawStartEvent(state: any, rng: any)
 	local active = _weatherService and _weatherService.GetActiveCondition and _weatherService.GetActiveCondition()
-	local function eligible(def)
+	local function eligible(def: any)
 		local nd = eventRule(def.name).noDuringCondition
 		return not (nd and active == nd)
 	end
@@ -660,16 +660,16 @@ function BattlefieldEventService._drawStartEvent(state, rng)
 	local r, acc, pickIdx = rng:NextNumber() * total, 0, nil
 	for idx, def in ipairs(pool) do
 		acc = acc + (RARITY_WEIGHT[eventRule(def.name).rarity] or 1.0)
-		if r <= acc then pickIdx = idx break end
+		if r <= acc then pickIdx = idx; break end
 	end
 	pickIdx = pickIdx or #pool
 	local def = pool[pickIdx]
-	for i, d in ipairs(state.bfStartPool) do if d == def then table.remove(state.bfStartPool, i) break end end
+	for i, d in ipairs(state.bfStartPool) do if d == def then table.remove(state.bfStartPool, i); break end end
 	return def
 end
 
 -- Fire one event: announce, run its spawn handler, make it the active event.
-function BattlefieldEventService._fireEvent(state, rng, def, roundIndex)
+function BattlefieldEventService._fireEvent(state: any, rng: any, def: any, roundIndex: any)
 	local rec = { def = def, name = def.name, units = {}, spawnedUnit = nil }
 	state.battlefieldEvents = state.battlefieldEvents or {}
 	table.insert(state.battlefieldEvents, rec)
@@ -696,7 +696,7 @@ function BattlefieldEventService._fireEvent(state, rng, def, roundIndex)
 end
 
 -- Active event is over when every unit it spawned is dead or has left the map.
-local function activeEventDone(state)
+local function activeEventDone(state: any)
 	local rec = state.bfActiveEvent
 	if not rec then return true end
 	for _, u in ipairs(rec.units or {}) do
@@ -708,7 +708,7 @@ end
 -- Called every turn advance: free the slot when the active event ends, then fire
 -- the next one (queued conditional first, else a random start-pool draw if the
 -- per-battle budget allows).
-function BattlefieldEventService.OnTurnTick(state, rng, roundIndex)
+function BattlefieldEventService.OnTurnTick(state: any, rng: any, roundIndex: any)
 	if state.bfBudget == nil then return end
 	if state.bfActiveEvent and activeEventDone(state) then
 		print("[BattlefieldEventService] Event ended: " .. state.bfActiveEvent.name)
@@ -729,7 +729,7 @@ function BattlefieldEventService.OnTurnTick(state, rng, roundIndex)
 	end
 end
 
-function BattlefieldEventService.SelectEventsForBattle(state, biome, rng)
+function BattlefieldEventService.SelectEventsForBattle(state: any, biome: any, rng: any)
 	state.battlefieldEvents = {}          -- active event records this battle
 	state.battlefieldConditional = {}     -- round-gated / conditional, not yet fired
 
@@ -760,7 +760,7 @@ function BattlefieldEventService.SelectEventsForBattle(state, biome, rng)
 	-- SINGLE-ACTIVE-EVENT MODEL (user rule 2026-10-06): 0-3 events total per battle,
 	-- but only ONE may be active at a time. A new event fires only after the active one
 	-- ends (its units are defeated or leave the map; instant events end immediately).
-	table.sort(startPool, function(a, b) return a.name < b.name end)
+	table.sort(startPool, function(a: any, b: any) return a.name < b.name end)
 	state.bfStartPool    = startPool
 	state.bfBudget       = rng:NextInteger(0, 3)   -- total events this battle
 	state.bfFiredCount   = 0
@@ -779,7 +779,7 @@ function BattlefieldEventService.SelectEventsForBattle(state, biome, rng)
 end
 
 -- Evaluate conditional / round-gated spawns at each 1000-CT round boundary.
-function BattlefieldEventService.OnRoundStart(state, roundIndex, rng)
+function BattlefieldEventService.OnRoundStart(state: any, roundIndex: any, rng: any)
 	if not state.battlefieldConditional then return end
 	for name, c in pairs(state.battlefieldConditional) do
 		if not c.fired then
@@ -851,7 +851,7 @@ end
 
 -- Neutral-side turn behaviour (routed from Main.runAiTurn). Returns a simple
 -- action descriptor the caller commits, or nil for Wait.
-function BattlefieldEventService.NeutralAction(unit, state)
+function BattlefieldEventService.NeutralAction(unit: any, state: any)
 	local kind = unit and unit.eventKind
 	local fn = kind and NeutralBehaviors[kind]
 	if fn then
@@ -862,7 +862,7 @@ end
 
 -- Resolve an Interact on an event unit/NPC (routed from CommandService where
 -- applicable). Filled in the handler steps.
-function BattlefieldEventService.OnEventUnitTurn(unit, state, rng)
+function BattlefieldEventService.OnEventUnitTurn(unit: any, state: any, rng: any)
 	if not unit or not unit.isAlive then return end
 
 	if unit.thiefBehavior and _statusService and _statusService.ApplyStatus then
@@ -903,7 +903,7 @@ function BattlefieldEventService.OnEventUnitTurn(unit, state, rng)
 			if u.isAlive and not u.isGroundTarget and u.id ~= unit.id then
 				local isUndead = false
 				if u.statusInstances then
-					for _, inst in ipairs(u.statusInstances) do if inst.id == "Undead" then isUndead = true break end end
+					for _, inst in ipairs(u.statusInstances) do if inst.id == "Undead" then isUndead = true; break end end
 				end
 				if u.raceId == "RACE-ZOMBIE" or u.raceId == "RACE-VAMPIRE" then isUndead = true end
 				if not isUndead then
@@ -948,7 +948,7 @@ function BattlefieldEventService.OnEventUnitTurn(unit, state, rng)
 	end
 end
 
-function BattlefieldEventService.ResolveInteract(ctx)
+function BattlefieldEventService.ResolveInteract(ctx: any)
 	return false, "not implemented"
 end
 

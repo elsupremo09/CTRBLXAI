@@ -427,7 +427,7 @@ local INTERACT_MIN_SPACING = 3      -- min Manhattan distance between two intera
 local MAX_COPIES_PER_OBJECT = 2    -- same object may appear at most this many times per map (user rule 2026-10-06)
 
 -- Markers that require passable terrain (PD/ED/LAN).
-local PASSABLE_REQUIRED = {
+local _PASSABLE_REQUIRED = {
 	PD  = true,
 	ED  = true,
 	LAN = true,
@@ -512,11 +512,11 @@ end
 -- Gracefully skips unresolved terrain IDs.
 --------------------------------------------------
 
-local function validTerrain(id)
+local function _validTerrain(id)
 	return TerrainData.Types[id] ~= nil
 end
 
-local function validPassableTerrain(id)
+local function _validPassableTerrain(id)
 	local t = TerrainData.Types[id]
 	return t ~= nil and t.passable ~= false
 end
@@ -1183,7 +1183,7 @@ local function placeObjects(tiles, w, h, biome, rng, regionTypeMap)
 		local acc, pickIdx = 0, nil
 		for idx, c in ipairs(candidates) do
 			acc = acc + c.weight
-			if r <= acc then pickIdx = idx break end
+			if r <= acc then pickIdx = idx; break end
 		end
 		pickIdx = pickIdx or #candidates
 		local cand = table.remove(candidates, pickIdx)
@@ -1221,7 +1221,7 @@ local function placeObjects(tiles, w, h, biome, rng, regionTypeMap)
 					if isInBounds(ax, ay, w, h) then
 						local adj  = tiles[ay][ax]
 						local aDef = TerrainData.Types[adj.terrain]
-						if aDef and aDef.passable ~= false and adj.object == nil then hasAdj = true break end
+						if aDef and aDef.passable ~= false and adj.object == nil then hasAdj = true; break end
 					end
 				end
 				canPlace = hasAdj
@@ -1583,7 +1583,7 @@ function MapService.Generate(biomeId, templateId, seed)
 		end
 
 		-- Build mapState for the pass pipeline.
-		local mapState = {
+		local mapState: any = {
 			width          = w,
 			height         = h,
 			biomeId        = biomeId,

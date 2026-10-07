@@ -81,7 +81,12 @@ local presentation = {
 local battleLog       = {}
 
 -- View Mode + Battle Log toggle state
-local isViewMode          = false
+local isViewMode          = false  -- legacy; view mode retired 2026-10-07 (always false)
+-- What the unit panel shows. nil = the acting unit (presentation.actor).
+-- { kind = "unit", data = <unit> } or { kind = "object", name = <string>, x, y }
+local _selection = nil
+local tileInfoPanel  -- tile inspector, right of the turn-order bar
+local alignTileInfo  -- forward-declared: ensureRoot watchers reference it before its definition
 local isBattleLogExpanded = false
 local savedBattleState    = nil   -- presentation.state before entering view mode
 local viewModeButtons     = nil   -- top-left toggle frame
@@ -390,6 +395,10 @@ local function ensureRoot()
 	eventPanel.Visible = false
 	weatherPanel = makePanel("WeatherCrisis", UDim2.fromScale(0.15, 0.15), UDim2.new(0.60, PAD + 4, 1, 0), Vector2.new(0, 1), rootFrame)
 	weatherPanel.Visible = false
+	-- TILE INSPECTOR: right of the turn-order bar. Width >= 150 px, height = bar height.
+	-- Positioned by alignTileInfo() from the bar's real on-screen rect.
+	tileInfoPanel = makePanel("TileInfo", UDim2.fromOffset(150, 60), UDim2.new(0.60, PAD + 4, 1, 0), Vector2.new(0, 0), rootFrame)
+	tileInfoPanel.Visible = false
 
 	-- ADJACENT: Conditions Panel (right of turn order bar)
 	conditionsPanel = makePanel("Conditions",
@@ -405,9 +414,9 @@ local function ensureRoot()
 	-- Keep the top-center Time/Event/Weather row clear of the side columns.
 	for _, watched in ipairs({ battleLogPanel, activeUnitPanel, rootFrame, actionPanel, inspectorPanel, tilePreviewPanel }) do
 		if watched then
-			watched:GetPropertyChangedSignal("AbsolutePosition"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end end)
-			watched:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end end)
-			watched:GetPropertyChangedSignal("Visible"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end end)
+			watched:GetPropertyChangedSignal("AbsolutePosition"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end; if alignTileInfo then task.defer(alignTileInfo) end end)
+			watched:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end; if alignTileInfo then task.defer(alignTileInfo) end end)
+			watched:GetPropertyChangedSignal("Visible"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end; if alignTileInfo then task.defer(alignTileInfo) end end)
 		end
 	end
 	battleLogPanel.Visible = isBattleLogExpanded
@@ -469,13 +478,52 @@ end
 -- ACTIVE UNIT PANEL (upper-left)
 --------------------------------------------------
 
+local function buildObjectCard()
+	-- Map object in the unit panel: name, category, passability, effect.
+	local sel = _selection
+	local def = ObjectData and ObjectData.Objects and ObjectData.Objects[sel.name]
+	activeUnitPanel.Visible = true
+	local pad = Instance.new("UIPadding", activeUnitPanel)
+	pad.PaddingTop = UDim.new(0, 8); pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 8); pad.PaddingBottom = UDim.new(0, 6)
+	-- Content in its own auto-height frame; the tap layer sits outside the layout.
+	local content = Instance.new("Frame")
+	content.Name = "ObjContent"; content.Size = UDim2.new(1, 0, 0, 0)
+	content.AutomaticSize = Enum.AutomaticSize.Y; content.BackgroundTransparency = 1
+	content.Parent = activeUnitPanel
+	local layout = Instance.new("UIListLayout", content)
+	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
+	makeMarquee(makeLabel(content, sel.name, { size = UDim2.new(1, 0, 0, 16),
+		font = Theme.Font.PrimaryBold, textSize = Theme.Text.Heading(), color = Theme.Colors.Warning, order = 1 }))
+	if def then
+		local sub = (def.category or "Object") .. "  |  " .. (if def.passable then "Passable" else "Impassable")
+		makeLabel(content, sub, { size = UDim2.new(1, 0, 0, 14),
+			textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 2 })
+		if def.primaryEffect then
+			local eff = makeLabel(content, def.primaryEffect, { size = UDim2.new(1, 0, 0, 0),
+				textSize = Theme.Text.Small(), color = Theme.Colors.TextPrimary, wrap = true, order = 3 })
+			eff.AutomaticSize = Enum.AutomaticSize.Y
+		end
+	end
+	-- Tap the card for the full object details (same window as before, manual only).
+	local tap = Instance.new("TextButton")
+	tap.Size = UDim2.fromScale(1, 1); tap.BackgroundTransparency = 1; tap.Text = ""
+	tap.ZIndex = 10; tap.Parent = activeUnitPanel
+	tap.Activated:Connect(function()
+		if _G.CTRBLXAI_OpenObjectInspector then _G.CTRBLXAI_OpenObjectInspector(sel.name, sel.x, sel.y) end
+	end)
+end
+
 function BattleHUD._buildActiveUnit()
 	if not activeUnitPanel then return end
 	clearFrame(activeUnitPanel)
-	activeUnitPanel.Visible = (presentation.actor ~= nil)
-	if not presentation.actor then return end
-
-	local d = presentation.actor
+	if _selection and _selection.kind == "object" then
+		buildObjectCard()
+		return
+	end
+	local d = (_selection and _selection.kind == "unit" and _selection.data) or presentation.actor
+	activeUnitPanel.Visible = (d ~= nil)
+	if not d then return end
 	local pad = Instance.new("UIPadding", activeUnitPanel)
 	pad.PaddingTop = UDim.new(0, 8); pad.PaddingLeft = UDim.new(0, 8)
 	pad.PaddingRight = UDim.new(0, 8); pad.PaddingBottom = UDim.new(0, 6)
@@ -504,7 +552,7 @@ function BattleHUD._buildActiveUnit()
 	Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
 	portrait.MouseButton1Click:Connect(function()
 		if _G.CTRBLXAI_OpenInspectorPanel and d.id then
-			_G.CTRBLXAI_OpenInspectorPanel(d.id)
+			_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
 		end
 	end)
 
@@ -615,6 +663,7 @@ function BattleHUD._showActionList(actions, parentLabel)
 				size = UDim2.new(1, 0, 0, Theme.Elem.RowMedium()),
 				enabled = action.enabled,
 				onPress = function()
+					BattleHUD.ClearSelection()
 					BattleHUD._showActionList(action.subActions, "Back")
 				end,
 				order = i,
@@ -624,7 +673,10 @@ function BattleHUD._showActionList(actions, parentLabel)
 			makeButton(actionPanel, action.text, {
 				size = UDim2.new(1, 0, 0, Theme.Elem.RowMedium()),
 				enabled = action.enabled,
-				onPress = action.onPress,
+				onPress = function(...)
+					BattleHUD.ClearSelection()
+					if action.onPress then return action.onPress(...) end
+				end,
 				order = i,
 				textSize = Theme.Text.Body(),
 			})
@@ -766,7 +818,8 @@ function BattleHUD._buildInspector()
 	local showUnit = presentation.target ~= nil
 	local showObject = false -- objectData not yet in presentation
 	-- Only show non-active unit inspector in view mode
-	inspectorPanel.Visible = isViewMode and (showUnit or showObject)
+	-- Retired: the unit panel itself now shows the selected unit/object.
+	inspectorPanel.Visible = false
 
 	if not inspectorPanel.Visible then return end
 
@@ -795,7 +848,7 @@ function BattleHUD._buildInspector()
 		Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
 		portrait.MouseButton1Click:Connect(function()
 			if _G.CTRBLXAI_OpenInspectorPanel and d.id then
-				_G.CTRBLXAI_OpenInspectorPanel(d.id)
+				_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
 			end
 		end)
 
@@ -898,8 +951,9 @@ function BattleHUD._buildTilePreview()
 
 	-- Otherwise show tile info
 	-- Only show terrain inspector in view mode or during Preview
-	tilePreviewPanel.Visible = isViewMode and (presentation.tile ~= nil)
-	if not presentation.tile then return end
+	-- Retired: tile info now lives in the tile inspector next to the turn-order bar.
+	tilePreviewPanel.Visible = false
+	if true then return end
 
 	-- Panel keeps a small outer padding so the scroll host doesn't touch the
 	-- 9-slice border; rows go inside the scroll host (vertical scroll).
@@ -1196,6 +1250,30 @@ local WEATHER_ICON: {[string]: string} = {}
 
 -- QUICK-PEEK CARD: tap the Event or Weather panel to see its full description.
 -- One card at a time, its own ScreenGui above the HUD; tap anywhere to dismiss.
+-- Terrain effect text for the tile peek card (display copy, same as the old
+-- view-mode tile inspector table).
+local TERRAIN_INFO = {
+	Clear = "Neutral ground.",
+	Grassland = "Fertile field. Occupy: Holy +15%.",
+	["Clover Field"] = "Lucky meadow. Occupy: LUK +30%.",
+	["Wooden Floor"] = "Wooden structures and bridges.",
+	Rocky = "Solid stone. Occupy: Earth +30%; Knockback Immunity.",
+	Sand = "Loose desert ground. Cross: +1 Move Cost.",
+	Mud = "Soft muddy ground. Cross: +1 Move Cost.",
+	Swamp = "Marshland. Cross: +2 Move Cost.",
+	["Shallow Water"] = "Walkable water. Occupy: Water +25%.",
+	["Deep Water"] = "Deep water. Cross: +2 Move Cost; Drowning.",
+	Ice = "Frozen surface. Cross: Sliding Knockback.",
+	Metal = "Metallic flooring.",
+	Molten = "Molten surface. Occupy: Fire +30%; Burn.",
+	["Magic Circle"] = "Arcane platform. Occupy: INT +30%; Spell Range +1.",
+	["Tainted Ground"] = "Corrupted earth. Drains MP from living units.",
+	["Cracked Ground"] = "Weakened rock. May collapse under heavy units.",
+	Quicksand = "Collapsing sand. Movement prohibited.",
+	["Monolith (One-way)"] = "Ancient teleport. Random warp on end turn.",
+	["Monolith (Two-way)"] = "Linked portal. Teleports to paired portal.",
+}
+
 local _peekGui: ScreenGui? = nil
 local function closePeekCard()
 	if _peekGui then _peekGui:Destroy(); _peekGui = nil end
@@ -1204,6 +1282,12 @@ end
 local function buildPeekLines(kind: string, name: string?): (string, {{string}})
 	-- Returns a title + list of {label, body} rows.
 	local rows = {}
+	if kind == "TERRAIN" then
+		local tile = presentation.tile
+		table.insert(rows, {"EFFECT", TERRAIN_INFO[name or "Clear"] or "No special effect."})
+		table.insert(rows, {"MOVE COST", tostring(tile and tile.moveCost or 1)})
+		return name or "Clear", rows
+	end
 	if kind == "EVENT" then
 		local def = name and BattlefieldEventData and BattlefieldEventData.Events and BattlefieldEventData.Events[name]
 		if not name then return "No Active Event", { {"", "No battlefield event is active right now."} } end
@@ -1305,10 +1389,74 @@ local function addPeekButton(panel: GuiObject, kind: string, name: string?)
 	btn.ZIndex = 10
 	btn.Parent = panel
 	btn.Activated:Connect(function()
-		if _peekGui then closePeekCard() return end
+		if _peekGui then closePeekCard(); return end
 		showPeekCard(kind, name, panel)
 	end)
 end
+
+
+-- Place the tile inspector flush right of the turn-order bar, same height,
+-- at least 110 px wide.
+alignTileInfo = function()
+	if not (tileInfoPanel and turnOrderBar and rootFrame) then return end
+	local rootAbs = rootFrame.AbsolutePosition
+	local bp, bs = turnOrderBar.AbsolutePosition, turnOrderBar.AbsoluteSize
+	if bs.Y <= 0 then return end
+	-- Flush against the bar (0 gap). Width runs up to the right column's left edge
+	-- (action panel / unit panel), never below 110 px.
+	local left = bp.X + bs.X
+	local rightEdge = rootAbs.X + rootFrame.AbsoluteSize.X
+	for _, col in ipairs({ actionPanel, activeUnitPanel }) do
+		if col and col.Visible and col.AbsoluteSize.X > 0 then
+			rightEdge = math.min(rightEdge, col.AbsolutePosition.X)
+		end
+	end
+	local w = math.max(110, math.floor(rightEdge - left))
+	tileInfoPanel.AnchorPoint = Vector2.new(0, 0)
+	tileInfoPanel.Size = UDim2.fromOffset(w, bs.Y)
+	tileInfoPanel.Position = UDim2.fromOffset(left - rootAbs.X, bp.Y - rootAbs.Y)
+end
+
+local function buildTileInfo()
+	if not tileInfoPanel then return end
+	clearFrame(tileInfoPanel)
+	local t = presentation.tile
+	tileInfoPanel.Visible = (t ~= nil) and turnOrderBar ~= nil and turnOrderBar.Visible
+	if not tileInfoPanel.Visible then return end
+	local pd = tileInfoPanel:FindFirstChildOfClass("UIPadding") or Instance.new("UIPadding")
+	pd.PaddingTop = UDim.new(0, 8); pd.PaddingBottom = UDim.new(0, 8)
+	pd.PaddingLeft = UDim.new(0, 10); pd.PaddingRight = UDim.new(0, 10)
+	pd.Parent = tileInfoPanel
+	-- Rows live in their own frame: the full-size tap layer below must NOT be part
+	-- of the list layout (it was laid out first and pushed the rows to mid-panel).
+	local rows = Instance.new("Frame")
+	rows.Name = "Rows"; rows.Size = UDim2.fromScale(1, 1); rows.BackgroundTransparency = 1
+	rows.Parent = tileInfoPanel
+	local layout = Instance.new("UIListLayout", rows)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.Padding = UDim.new(0, 1)
+	local rowH = 14
+	makeLabel(rows, t.terrainName or "Clear", { size = UDim2.new(1, 0, 0, rowH),
+		font = Theme.Font.PrimaryBold, textSize = Theme.Text.Body(), order = 1 })
+	local hasEffect = t.effect ~= nil and t.effect ~= "None"
+	makeLabel(rows, if hasEffect then t.effect else "No effect", { size = UDim2.new(1, 0, 0, rowH),
+		textSize = Theme.Text.Small(), color = if hasEffect then Theme.Colors.Warning else Theme.Colors.TextDisabled, order = 2 })
+	makeLabel(rows, string.format("X:%d, Y:%d, Z:%d", t.x or 0, t.y or 0, t.elevation or 0), {
+		size = UDim2.new(1, 0, 0, rowH), font = Theme.Font.Mono, textSize = Theme.Text.Small(),
+		color = Theme.Colors.TextSecondary, order = 3 })
+	-- Tap: peek card with the terrain effect + move cost.
+	local tap = Instance.new("TextButton")
+	tap.Name = "PeekTap"; tap.Size = UDim2.fromScale(1, 1); tap.BackgroundTransparency = 1
+	tap.Text = ""; tap.AutoButtonColor = false; tap.ZIndex = 10; tap.Parent = tileInfoPanel
+	tap.Activated:Connect(function()
+		if _peekGui then closePeekCard(); return end
+		showPeekCard("TERRAIN", t.terrainName or "Clear", tileInfoPanel)
+	end)
+	task.defer(alignTileInfo)
+end
+
+function BattleHUD.RefreshTileInfo() buildTileInfo() end
 
 local function fillInfoPanel(panel, header: string, name: string?, iconMap)
 	if not panel then return end
@@ -1378,7 +1526,7 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 	BattleHUD._lastTimelineEntries = entries
 	if not turnOrderBar then return end
 	clearFrame(turnOrderBar)
-	if not entries or #entries == 0 then turnOrderBar.Visible = false; if timePanel then timePanel.Visible = false end; if eventPanel then eventPanel.Visible = false end; if weatherPanel then weatherPanel.Visible = false end; return end
+	if not entries or #entries == 0 then turnOrderBar.Visible = false; if tileInfoPanel then tileInfoPanel.Visible = false end; if timePanel then timePanel.Visible = false end; if eventPanel then eventPanel.Visible = false end; if weatherPanel then weatherPanel.Visible = false end; return end
 	turnOrderBar.Visible = true
 
 	-- TIME-OF-DAY PANEL (separate panel right of the bar). timeInfo = { phase, ctRemaining }.
@@ -1424,6 +1572,7 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 		end
 	end
 	-- Remove any legacy floating widget from older builds.
+	task.defer(alignTileInfo)
 	local legacy = turnOrderBar.Parent and turnOrderBar.Parent:FindFirstChild("TimeWidget")
 	if legacy then legacy:Destroy() end
 
@@ -1698,7 +1847,7 @@ function BattleHUD._buildViewModeUnit()
 	Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
 	portrait.MouseButton1Click:Connect(function()
 		if _G.CTRBLXAI_OpenInspectorPanel and d.id then
-			_G.CTRBLXAI_OpenInspectorPanel(d.id)
+			_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
 		end
 	end)
 
@@ -1911,12 +2060,12 @@ function BattleHUD.ToggleViewDropdown()
 	addRow("Isometric", function() BattleHUD.SetCameraMode("Isometric") end, true, currentCameraMode == "Isometric")
 	addRow("Top", function() BattleHUD.SetCameraMode("Top") end, true, currentCameraMode == "Top")
 	addRow("Side", function() BattleHUD.SetCameraMode("Side") end, true, currentCameraMode == "Side")
-	local freeEnabled = (currentCameraMode ~= "Side")
-	addRow(isViewMode and "Free View: ON" or "Free View: OFF", function() BattleHUD.ToggleViewMode(); BattleHUD.CloseViewDropdown() end, freeEnabled, isViewMode)
+	-- Free View toggle retired 2026-10-07: inspection is always on.
 	viewModeDropdown = dd
 end
 
 function BattleHUD.ToggleViewMode()
+	if true then return end  -- retired: view mode removed, inspection always on
 	isViewMode = not isViewMode
 	if isViewMode then
 		savedBattleState = presentation.state
@@ -1943,8 +2092,23 @@ function BattleHUD.ToggleBattleLog()
 end
 
 function BattleHUD.IsViewMode()
-	return isViewMode
+	return false  -- view mode retired: inspection is always on
 end
+
+-- Selection for the unit panel. Pass nil to go back to the acting unit.
+function BattleHUD.SetSelection(sel)
+	_selection = sel
+	BattleHUD._buildActiveUnit()
+end
+
+function BattleHUD.ClearSelection()
+	if _G.CTRBLXAI_MarkActiveUnit then _G.CTRBLXAI_MarkActiveUnit() end
+	if _selection == nil then return end
+	_selection = nil
+	BattleHUD._buildActiveUnit()
+end
+
+function BattleHUD.GetSelection() return _selection end
 
 --------------------------------------------------
 -- LAYOUT APPLICATION (called by UIController on viewport change)
@@ -2048,37 +2212,6 @@ function BattleHUD.Render(p)
 	local newState = presentation.state
 	ensureRoot()
 
-	-- VIEW MODE: show selected unit + tile inspector, hide combat panels
-	if isViewMode then
-		BattleHUD._buildViewModeUnit()
-		BattleHUD._buildViewModeTile()
-		-- Hide command bar during view mode — no executable actions
-		if commandBar then commandBar.Visible = false end
-		if inspectorPanel then inspectorPanel.Visible = false end
-		if tilePreviewPanel then tilePreviewPanel.Visible = false end
-		-- Position right-side stack (activeUnit on top, actionPanel below)
-		task.defer(function()
-			local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
-			local rootLeft = rootFrame and rootFrame.AbsolutePosition.X or 0
-			local nextY = 2
-			local stackW = activeUnitPanel and activeUnitPanel.AbsoluteSize.X or nil
-			local stackX = activeUnitPanel and (activeUnitPanel.AbsolutePosition.X - rootLeft) or nil
-			if activeUnitPanel and activeUnitPanel.Visible then
-				nextY = (activeUnitPanel.AbsolutePosition.Y + activeUnitPanel.AbsoluteSize.Y - rootTop)
-			end
-			if actionPanel then
-				if stackX and stackW then
-					actionPanel.AnchorPoint = Vector2.new(0, 0)
-					actionPanel.Position = UDim2.new(0, stackX, 0, nextY)
-					actionPanel.Size = UDim2.new(0, stackW, 0, 0)
-				else
-					actionPanel.Position = UDim2.new(1, -PAD, 0, nextY)
-				end
-			end
-		end)
-		return
-	end
-
 	-- Position right-side stack: ActiveUnit → ActionPanel → Inspector → TilePreview
 	task.defer(function()
 		local rootTop = rootFrame and rootFrame.AbsolutePosition.Y or 0
@@ -2165,6 +2298,7 @@ function BattleHUD.Render(p)
 	BattleHUD._buildActiveUnit()
 	BattleHUD._buildInspector()
 	BattleHUD._buildTilePreview()
+	buildTileInfo()
 
 	if newState == "ActionSelection" then
 		BattleHUD._buildActionGrid()
@@ -2178,7 +2312,8 @@ function BattleHUD.Render(p)
 	elseif newState == "Resolving" or newState == "BattleEnded" or newState == "Idle" then
 		if actionPanel then actionPanel.Visible = false end
 		if commandBar then commandBar.Visible = false end
-		if activeUnitPanel then activeUnitPanel.Visible = false end
+		-- Unit panel stays up when something is selected (inspection is always on).
+		if activeUnitPanel and not _selection and newState ~= "Idle" then activeUnitPanel.Visible = false end
 	elseif newState == "EnemyTurn" then
 		-- AI/neutral turn: show the acting unit (built above), no action menu, no Execute/Back.
 		if actionPanel then actionPanel.Visible = false end
@@ -2293,6 +2428,10 @@ end
 -- PUBLIC SETTERS
 --------------------------------------------------
 
+-- Tooltip state (module-level; previously implicit globals).
+local tooltipFrame: any = nil
+local tooltipCloseConn: any = nil
+
 function BattleHUD.ShowTooltip(props)
 	BattleHUD.HideTooltip()
 	ensureRoot()
@@ -2401,7 +2540,7 @@ function BattleHUD.Cleanup()
 	rootFrame = nil
 	activeUnitPanel = nil; actionPanel = nil
 	inspectorPanel = nil; tilePreviewPanel = nil
-	closePeekCard(); turnOrderBar = nil; timePanel = nil; eventPanel = nil; weatherPanel = nil; conditionsPanel = nil; battleLogPanel = nil
+	closePeekCard(); _selection = nil; tileInfoPanel = nil; turnOrderBar = nil; timePanel = nil; eventPanel = nil; weatherPanel = nil; conditionsPanel = nil; battleLogPanel = nil
 	if viewModeDropdown then viewModeDropdown:Destroy() end
 	viewModeButtons = nil; viewModeViewBtn = nil; viewModeDropdown = nil; currentCameraMode = "Isometric"
 end

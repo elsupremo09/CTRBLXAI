@@ -33,10 +33,10 @@ local _broadcaster = nil
 local _statusService = nil
 local _tileReshaper = nil  -- fn(x,y,terrain,elev) over the live mapFolder (from Main)
 
-function WeatherService.SetTileEffectService(tes) _tileEffectService = tes end
-function WeatherService.SetBroadcaster(b) _broadcaster = b end
-function WeatherService.SetStatusService(ss) _statusService = ss end
-function WeatherService.SetTileReshaper(fn) _tileReshaper = fn end
+function WeatherService.SetTileEffectService(tes: any) _tileEffectService = tes end
+function WeatherService.SetBroadcaster(b: any) _broadcaster = b end
+function WeatherService.SetStatusService(ss: any) _statusService = ss end
+function WeatherService.SetTileReshaper(fn: any) _tileReshaper = fn end
 
 -- Active-condition state.
 local _active = "Clear"          -- current condition id
@@ -71,7 +71,7 @@ local PASSIVE_ELEMENT_MOD = {
 --------------------------------------------------------------------
 -- PUBLIC: element passive modifier (CombatResolver reads this).
 --------------------------------------------------------------------
-function WeatherService.GetElementDamageMultiplier(element)
+function WeatherService.GetElementDamageMultiplier(element: any)
 	if not element then return 1.0 end
 	local mods = PASSIVE_ELEMENT_MOD[_active]
 	return (mods and mods[element]) or 1.0
@@ -99,7 +99,7 @@ end
 --------------------------------------------------------------------
 -- Battle start: set the biome pool + the quest-chosen starting condition.
 --------------------------------------------------------------------
-function WeatherService.Init(biomePool, startingCondition, startCt)
+function WeatherService.Init(biomePool: any, startingCondition: any, startCt: any)
 	_biomePool = biomePool
 	_active = startingCondition or "Clear"
 	_roundIndex = math.floor((startCt or 0) / 1000)
@@ -115,14 +115,14 @@ end
 
 -- Convenience: load the biome's battleConditionWeights pool by biome id (so the
 -- caller need not require BiomeData). Then Init with the quest's starting condition.
-function WeatherService.InitFromBiome(biomeId, startingCondition, startCt)
+function WeatherService.InitFromBiome(biomeId: any, startingCondition: any, startCt: any)
 	local pool = nil
 	local ok, BiomeData = pcall(function()
 		return require(
 			game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("BiomeData"))
 	end)
 	if ok and BiomeData then
-		local b = BiomeData[biomeId] or (BiomeData.Biomes and BiomeData.Biomes[biomeId])
+		local b = BiomeData[biomeId] or ((BiomeData :: any).Biomes and (BiomeData :: any).Biomes[biomeId])
 		pool = b and b.battleConditionWeights or nil
 	end
 	WeatherService.Init(pool, startingCondition, startCt)
@@ -142,7 +142,7 @@ local function gridDims()
 	return w, h
 end
 
-local function livingUnits(state)
+local function livingUnits(state: any)
 	local out = {}
 	for _, u in ipairs(state.units) do
 		if u.isAlive and not u.isGroundTarget then table.insert(out, u) end
@@ -153,7 +153,7 @@ end
 -- Apply a WEATHER-SOURCED status that must persist, undispellable, for this round.
 -- Tagged weatherLocked so RerollForNewRound can clear it and the Frozen hard-lock
 -- can block the Fire->Wet reaction. Rebuild stats after (buff/debuff may be stat).
-local function applyWeatherStatus(unit, statusId, hardLock)
+local function applyWeatherStatus(unit: any, statusId: any, hardLock: any)
 	if not _statusService then return end
 	_statusService.ApplyStatus(unit, statusId, "weather")
 	-- Mark the freshly-applied instance.
@@ -170,7 +170,7 @@ local function applyWeatherStatus(unit, statusId, hardLock)
 end
 
 -- Remove all weather-sourced statuses from every unit (called on re-roll).
-local function clearWeatherStatuses(state)
+local function clearWeatherStatuses(state: any)
 	for _, u in ipairs(state.units) do
 		if u.statusInstances then
 			for i = #u.statusInstances, 1, -1 do
@@ -186,7 +186,7 @@ local function clearWeatherStatuses(state)
 end
 
 -- Simple deterministic weighted pick over the biome condition pool.
-local function rollCondition(rng)
+local function rollCondition(rng: any)
 	if not _biomePool then return "Clear" end
 	local entries, total = {}, 0
 	for k, w in pairs(_biomePool) do
@@ -197,7 +197,7 @@ local function rollCondition(rng)
 		end
 	end
 	if total == 0 then return "Clear" end
-	table.sort(entries, function(a, b) return a.key < b.key end)
+	table.sort(entries, function(a: any, b: any) return a.key < b.key end)
 	local r = rng:NextNumber() * total
 	local acc = 0
 	for _, e in ipairs(entries) do
@@ -208,7 +208,7 @@ local function rollCondition(rng)
 end
 
 -- Elevation grid helpers (tile reshape via injected reshaper + GameConstants maps).
-local function reshapeTile(x, y, terrain, elev)
+local function reshapeTile(x: any, y: any, terrain: any, elev: any)
 	if terrain then GameConstants.SetTerrainId(x, y, terrain) end
 	if elev ~= nil and GameConstants.ELEVATION_MAP[y] then
 		GameConstants.ELEVATION_MAP[y][x] = elev
@@ -224,7 +224,7 @@ end
 
 -- Dark Eclipse / Holy Aurora target set: Undead-tag OR Undead status OR Werewolf
 -- OR Vampire OR the Demon race (user-locked set, 2026-10-04; Demon is a race not a tag).
-local function isNightAlignedUnit(unit)
+local function isNightAlignedUnit(unit: any)
 	if not unit then return false end
 	if unit.raceId == "RACE-WEREWOLF" or unit.raceId == "RACE-VAMPIRE"
 		or unit.raceId == "RACE-DEMON" then
@@ -246,7 +246,7 @@ local function isNightAlignedUnit(unit)
 	return false
 end
 
-local function applyOnset(state)
+local function applyOnset(state: any)
 	if _active == "Rain" then
 		for _, u in ipairs(livingUnits(state)) do applyWeatherStatus(u, "Wet", false) end
 	elseif _active == "Snow Storm" then
@@ -267,12 +267,12 @@ end
 --------------------------------------------------------------------
 local Periodic = {}
 
-Periodic["Rain"] = function(ctx)
+Periodic["Rain"] = function(ctx: any)
 	-- Re-assert Wet on units/tiles (undispellable); Wet reactions handled by TileEffect.
 	for _, u in ipairs(livingUnits(ctx.state)) do applyWeatherStatus(u, "Wet", false) end
 end
 
-Periodic["Mana Storm"] = function(ctx)
+Periodic["Mana Storm"] = function(ctx: any)
 	for _, u in ipairs(livingUnits(ctx.state)) do
 		local maxMp = u.maxMp or 0
 		u.currentMp = math.min(maxMp, (u.currentMp or 0) + math.floor(maxMp * 0.10))
@@ -283,7 +283,7 @@ Periodic["Mana Storm"] = function(ctx)
 	end
 end
 
-Periodic["Severe Hail"] = function(ctx)
+Periodic["Severe Hail"] = function(ctx: any)
 	local units = livingUnits(ctx.state)
 	-- Random half take 10% Max HP.
 	local n = #units
@@ -303,7 +303,7 @@ Periodic["Severe Hail"] = function(ctx)
 	end
 end
 
-Periodic["Hunger Virus"] = function(ctx)
+Periodic["Hunger Virus"] = function(ctx: any)
 	for _, u in ipairs(livingUnits(ctx.state)) do
 		local dmg = math.floor((u.maxHp or 0) * 0.05)
 		u.currentHp = math.max(0, (u.currentHp or 0) - dmg)
@@ -313,7 +313,7 @@ Periodic["Hunger Virus"] = function(ctx)
 	-- (Basic-attack lifesteal 20% is applied in CombatResolver when active; see hook.)
 end
 
-Periodic["Thunderstorm"] = function(ctx)
+Periodic["Thunderstorm"] = function(ctx: any)
 	-- Strike a random highest-elevation unit: 20% Max HP + lower that tile 1.
 	local units = livingUnits(ctx.state)
 	if #units == 0 then return end
@@ -334,7 +334,7 @@ Periodic["Thunderstorm"] = function(ctx)
 	if _broadcaster then _broadcaster.UnitStateChanged(tgt) end
 end
 
-Periodic["Earthquake"] = function(ctx)
+Periodic["Earthquake"] = function(ctx: any)
 	-- Alter 20-40% of tiles by -2..+2 elevation; units on changed tiles +150 RT.
 	local w, h = gridDims()
 	if w == 0 or h == 0 then return end
@@ -360,7 +360,7 @@ Periodic["Earthquake"] = function(ctx)
 	end
 end
 
-Periodic["Wild Growth"] = function(ctx)
+Periodic["Wild Growth"] = function(ctx: any)
 	-- Apply Vines tile effect to 15-25% of vine-less terrain.
 	if not _tileEffectService or not _tileEffectService.ApplyTileEffect then return end
 	local w, h = gridDims()
@@ -377,7 +377,7 @@ end
 -- resolve after a 300 CT delay. Pending marks live on module state.
 local _pendingStrikes = {}  -- { {resolveCt, tiles={{x,y}}, kind} }
 
-local function markStrike(ctx, kind, areaCount, areaFn)
+local function markStrike(ctx: any, kind: any, areaCount: any, areaFn: any)
 	local w, h = gridDims()
 	if w == 0 or h == 0 then return end
 	local tiles = {}
@@ -389,7 +389,7 @@ local function markStrike(ctx, kind, areaCount, areaFn)
 	table.insert(_pendingStrikes, { resolveCt = ctx.nowCt + 300, tiles = tiles, kind = kind })
 end
 
-Periodic["Meteor Storm"] = function(ctx)
+Periodic["Meteor Storm"] = function(ctx: any)
 	-- Mark 1-3 occupied tiles; resolve after 300 CT.
 	local units = livingUnits(ctx.state)
 	local n = math.min(#units, ctx.rng:NextInteger(1, 3))
@@ -412,14 +412,14 @@ Periodic["Meteor Storm"] = function(ctx)
 	table.insert(_pendingStrikes, { resolveCt = ctx.nowCt + 300, tiles = marks, kind = "Meteor" })
 end
 
-Periodic["Volcanic Eruptions"] = function(ctx)
-	markStrike(ctx, "Volcanic", ctx.rng:NextInteger(3, 5), function(cx, cy)
+Periodic["Volcanic Eruptions"] = function(ctx: any)
+	markStrike(ctx, "Volcanic", ctx.rng:NextInteger(3, 5), function(cx: any, cy: any)
 		return { {x=cx,y=cy},{x=cx+1,y=cy},{x=cx-1,y=cy},{x=cx,y=cy+1},{x=cx,y=cy-1} }
 	end)
 end
 
 -- Resolve any pending strikes whose time has come.
-local function resolvePendingStrikes(state, nowCt)
+local function resolvePendingStrikes(state: any, nowCt: any)
 	for i = #_pendingStrikes, 1, -1 do
 		local p = _pendingStrikes[i]
 		if nowCt >= p.resolveCt then
@@ -451,7 +451,7 @@ local function resolvePendingStrikes(state, nowCt)
 	end
 end
 
-Periodic["Heatwave"] = function(ctx)
+Periodic["Heatwave"] = function(ctx: any)
 	-- Terrain transforms (DB Heatwave): water->Clear, Ice->Shallow Water (melt),
 	-- Grassland/Clover->Burning, Swamp/Mud->Rocky. Each tile visited once per tick,
 	-- so a melted Ice tile won't also evaporate to Clear this same round.
@@ -476,7 +476,7 @@ end
 -- Strong Wind: remove Airborne effects (Steam/Static Cloud) via Wind reaction.
 -- Burning-accel / Poison-spread are new mechanics (Designer-defined, cadence-only);
 -- built as a cadence hook — the actual spread reuses TileEffect spread when wired.
-Periodic["Strong Wind"] = function(ctx)
+Periodic["Strong Wind"] = function(ctx: any)
 	if _tileEffectService and _tileEffectService.RemoveAirborneEffects then
 		_tileEffectService.RemoveAirborneEffects(ctx.state.units)
 	end
@@ -490,7 +490,7 @@ end
 --------------------------------------------------------------------
 -- PUBLIC: per-round re-roll (called at each 1000-CT round boundary).
 --------------------------------------------------------------------
-function WeatherService.RerollForNewRound(state, rng, nowCt)
+function WeatherService.RerollForNewRound(state: any, rng: any, nowCt: any)
 	local newRound = math.floor((nowCt or state.ct or 0) / 1000)
 	if newRound == _roundIndex then return false end
 	_roundIndex = newRound
@@ -518,7 +518,7 @@ end
 --------------------------------------------------------------------
 -- PUBLIC: periodic tick (called from BattleCoordinator with elapsed CT).
 --------------------------------------------------------------------
-function WeatherService.Tick(state, ctPassed, rng, nowCt)
+function WeatherService.Tick(state: any, ctPassed: any, rng: any, nowCt: any)
 	-- Resolve any delayed strikes first.
 	resolvePendingStrikes(state, nowCt or state.ct or 0)
 	_periodicAccumCt = _periodicAccumCt + (ctPassed or 0)
@@ -535,7 +535,7 @@ function WeatherService.Tick(state, ctPassed, rng, nowCt)
 end
 
 -- Apply onset for the STARTING condition at battle start (after Init).
-function WeatherService.ApplyStartingOnset(state)
+function WeatherService.ApplyStartingOnset(state: any)
 	applyOnset(state)
 end
 
@@ -546,7 +546,7 @@ end
 -- same steps as a round re-roll, but with an explicit id and no round gate.
 -- The next natural round boundary will still re-roll over this.
 --------------------------------------------------------------------
-function WeatherService.ForceCondition(conditionId, state)
+function WeatherService.ForceCondition(conditionId: any, state: any)
 	if type(conditionId) ~= "string" or conditionId == "" then
 		warn("[WeatherService] ForceCondition: invalid id")
 		return false
@@ -575,7 +575,7 @@ end
 
 -- Fortune Teller: choose the NEXT round's condition (consumed by the next
 -- RerollForNewRound). Must be a condition id known to the biome pool or "Clear".
-function WeatherService.SetNextCondition(conditionId)
+function WeatherService.SetNextCondition(conditionId: any)
 	if type(conditionId) ~= "string" or conditionId == "" then return false end
 	if conditionId ~= "Clear" and not (_biomePool and _biomePool[conditionId]) then
 		warn("[WeatherService] SetNextCondition: '" .. conditionId .. "' not in biome pool")
@@ -591,12 +591,12 @@ function WeatherService.GetNextCondition()
 end
 
 -- Earth Elemental: block / unblock a condition from the per-round roll.
-function WeatherService.SetConditionBlocked(conditionId, blocked)
+function WeatherService.SetConditionBlocked(conditionId: any, blocked: any)
 	if type(conditionId) ~= "string" then return end
 	_blockedConditions[conditionId] = blocked and true or nil
 end
 
-function WeatherService.IsConditionBlocked(conditionId)
+function WeatherService.IsConditionBlocked(conditionId: any)
 	return _blockedConditions[conditionId] == true
 end
 
@@ -617,7 +617,7 @@ end
 -- Run ONE firing of a condition's periodic effect on demand, independent of the
 -- active slot (Earth Elemental: "Triggers Earthquake Crisis effect every turn").
 -- Reuses the exact Periodic handler (no duplicated logic). Returns true if fired.
-function WeatherService.RunConditionEffect(conditionId, state, rng)
+function WeatherService.RunConditionEffect(conditionId: any, state: any, rng: any)
 	local fn = Periodic[conditionId]
 	if not fn or not state then return false end
 	local ok, err = pcall(fn, {

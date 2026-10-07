@@ -23,7 +23,7 @@ local ObjectEffectService = {}
 
 -- Stable siblings (server-side, same Game/ folder): direct require (LOAD-002).
 local StatusService           = require(script.Parent.StatusService)
-local BattleCoordinator       = require(script.Parent.BattleCoordinator)
+local _BattleCoordinator       = require(script.Parent.BattleCoordinator)
 local CombatResolver          = require(script.Parent.CombatResolver)
 local BattleVisualBroadcaster = require(script.Parent.BattleVisualBroadcaster)
 local RewardService           = require(script.Parent.RewardService)
@@ -63,14 +63,14 @@ local _consumed = {}
 local _usedThisTurn = {}
 -- Necro Tome Stand death-sweep snapshot (declared here so ResetBattle, defined
 -- above the Necro section, binds the module local — not an accidental global).
-local _aliveSnapshot = nil
+local _aliveSnapshot: any = nil
 
-function ObjectEffectService.SetTileEffectService(tes)
+function ObjectEffectService.SetTileEffectService(tes: any)
 	_tileEffectService = tes
 end
 
 -- Inject the runtime object renderer (Main wires a closure over its mapFolder).
-function ObjectEffectService.SetObjectRenderer(fn)
+function ObjectEffectService.SetObjectRenderer(fn: any)
 	_objectRenderer = fn
 end
 
@@ -78,13 +78,13 @@ end
 -- model/cube in the live mapFolder and clears the tile's object attributes.
 -- nil-safe: if unset, the object is still logically removed.
 local _objectVisualRemover = nil
-function ObjectEffectService.SetObjectVisualRemover(fn)
+function ObjectEffectService.SetObjectVisualRemover(fn: any)
 	_objectVisualRemover = fn
 end
 
 -- Remove a map-object instance from the live battle: state.objects entry, its
 -- blocker entry (so the tile is walkable/free again), and its visual.
-function ObjectEffectService.RemoveObjectInstance(state, inst)
+function ObjectEffectService.RemoveObjectInstance(state: any, inst: any)
 	if not (state and state.objects and inst) then return false end
 	local removed = false
 	for idx, o in ipairs(state.objects) do
@@ -110,14 +110,14 @@ end
 -- or nil. Blocking (yields until the player chooses). nil-safe: if unset, siege
 -- handlers fall back to auto-targeting the nearest enemy.
 local _directionPrompter = nil
-function ObjectEffectService.SetDirectionPrompter(fn)
+function ObjectEffectService.SetDirectionPrompter(fn: any)
 	_directionPrompter = fn
 end
 
 -- Inject the runtime tile reshaper (Main wires a closure over its mapFolder):
 -- fn(x, y, newTerrain, newElevation) -> updates the live tile Part visual.
 local _tileReshaper = nil
-function ObjectEffectService.SetTileReshaper(fn)
+function ObjectEffectService.SetTileReshaper(fn: any)
 	_tileReshaper = fn
 end
 
@@ -126,7 +126,7 @@ end
 -- death systems see it, and renders it via the injected renderer. Returns the
 -- new instance, or nil if the tile is already occupied by an object.
 local _spawnedObjectCounter = 0
-function ObjectEffectService.PlaceObjectInstance(state, objType, x, y)
+function ObjectEffectService.PlaceObjectInstance(state: any, objType: any, x: any, y: any): any
 	if not (state and state.objects and objType and x and y) then return nil end
 	-- Do not stack two objects on the same tile.
 	for _, o in ipairs(state.objects) do
@@ -166,7 +166,7 @@ function ObjectEffectService.PlaceObjectInstance(state, objType, x, y)
 	-- instead of waiting for the next unit move. ReconcileAuras only acts on recognized
 	-- aura objects, so it is a harmless no-op for non-aura objects.
 	if state.units then
-		ObjectEffectService.ReconcileAuras(state.units, state)
+		(ObjectEffectService :: any).ReconcileAuras(state.units, state)
 	end
 	print(string.format("[ObjectEffectService] PlaceObjectInstance | %s at (%d,%d) id=%s", objType, x, y, inst.id))
 	return inst
@@ -188,7 +188,7 @@ end
 local Handlers = {}
 
 -- Healing Spring — fully restore the interacting unit's HP (G1 proof handler).
-Handlers["Healing Spring"] = function(ctx)
+Handlers["Healing Spring"] = function(ctx: any): (boolean, any)
 	local actor = ctx.actor
 	if not actor or actor.maxHp == nil then
 		return false, "Healing Spring: actor has no HP."
@@ -206,7 +206,7 @@ end
 --------------------------------------------------------------------
 -- SHARED HELPERS
 --------------------------------------------------------------------
-local function livingAllies(actor, allUnits, includeSelf)
+local function livingAllies(actor: any, allUnits: any, includeSelf: any)
 	local out = {}
 	for _, u in ipairs(allUnits) do
 		if u.isAlive and u.side == actor.side and (includeSelf or u.id ~= actor.id) then
@@ -216,7 +216,7 @@ local function livingAllies(actor, allUnits, includeSelf)
 	return out
 end
 
-local function livingEnemies(actor, allUnits)
+local function livingEnemies(actor: any, allUnits: any)
 	local out = {}
 	for _, u in ipairs(allUnits) do
 		if u.isAlive and u.side ~= actor.side and not u.isGroundTarget then
@@ -226,7 +226,7 @@ local function livingEnemies(actor, allUnits)
 	return out
 end
 
-local function enemiesInRadius(actor, allUnits, cx, cy, radius)
+local function enemiesInRadius(actor: any, allUnits: any, cx: any, cy: any, radius: any)
 	local out = {}
 	for _, u in ipairs(allUnits) do
 		if u.isAlive and u.side ~= actor.side and not u.isGroundTarget
@@ -242,7 +242,7 @@ end
 -- Apply a status to a unit and rebuild its stats so stat-% buffs take effect
 -- immediately (RebuildUnitStats folds GetStatusStatModifiers; status change
 -- does not otherwise trigger a rebuild).
-local function applyAndRebuild(unit, statusId, sourceId)
+local function applyAndRebuild(unit: any, statusId: any, sourceId: any)
 	StatusService.ApplyStatus(unit, statusId, sourceId)
 	if EquipmentService and EquipmentService.RebuildUnitStats then
 		EquipmentService.RebuildUnitStats(unit)
@@ -255,7 +255,7 @@ end
 --------------------------------------------------------------------
 -- RESTORE HANDLERS
 --------------------------------------------------------------------
-Handlers["Magic Spring"] = function(ctx)
+Handlers["Magic Spring"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	if not a or a.maxMp == nil then return false, "Magic Spring: actor has no MP." end
 	local before = a.currentMp or 0
@@ -265,7 +265,7 @@ Handlers["Magic Spring"] = function(ctx)
 	return true, nil
 end
 
-Handlers["Campfire"] = function(ctx)
+Handlers["Campfire"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	if not a or a.maxHp == nil then return false, "Campfire: actor has no HP." end
 	local hpGain = math.floor((a.maxHp or 0) * 0.30)
@@ -281,8 +281,8 @@ end
 -- SELF / ALLY TIMED BUFFS (apply status to the acting side)
 -- auraStatus-free objects: Interact applies the buff to all allies incl self.
 --------------------------------------------------------------------
-local function allyBuffHandler(statusId, label)
-	return function(ctx)
+local function allyBuffHandler(statusId: any, label: any)
+	return function(ctx: any): (boolean, any)
 		local a = ctx.actor
 		local targets = livingAllies(a, ctx.allUnits, true)
 		for _, u in ipairs(targets) do
@@ -306,7 +306,7 @@ Handlers["Fountain of Fortune"] = allyBuffHandler("Fortune Boon", "Fountain of F
 --------------------------------------------------------------------
 -- ALLY MAP-WIDE UTILITY
 --------------------------------------------------------------------
-Handlers["Swan Pond"] = function(ctx)
+Handlers["Swan Pond"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	local targets = livingAllies(a, ctx.allUnits, true)
 	for _, u in ipairs(targets) do
@@ -318,7 +318,7 @@ Handlers["Swan Pond"] = function(ctx)
 	return true, nil
 end
 
-Handlers["Astrolabe"] = function(ctx)
+Handlers["Astrolabe"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	local targets = livingAllies(a, ctx.allUnits, true)
 	for _, u in ipairs(targets) do
@@ -332,7 +332,7 @@ end
 --------------------------------------------------------------------
 -- ENEMY DEBUFF / CONTROL
 --------------------------------------------------------------------
-Handlers["Obelisk"] = function(ctx)
+Handlers["Obelisk"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	local targets = livingEnemies(a, ctx.allUnits)
 	for _, u in ipairs(targets) do
@@ -343,7 +343,7 @@ Handlers["Obelisk"] = function(ctx)
 	return true, nil
 end
 
-Handlers["Cover of Darkness"] = function(ctx)
+Handlers["Cover of Darkness"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	local targets = enemiesInRadius(a, ctx.allUnits, a.tileX, a.tileY, 5)
 	for _, u in ipairs(targets) do
@@ -353,7 +353,7 @@ Handlers["Cover of Darkness"] = function(ctx)
 	return true, nil
 end
 
-Handlers["Mysterious Boulder"] = function(ctx)
+Handlers["Mysterious Boulder"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	-- Roll ONE random existing debuff from a safe pool, inflict on all enemies.
 	local pool = { "Weakened", "Blind", "Pinned", "Slow", "Bleed" }
@@ -369,12 +369,12 @@ end
 --------------------------------------------------------------------
 -- SELF-TARGET STATUS (Cursed Chest: reward + Weakened on user)
 --------------------------------------------------------------------
-Handlers["Cursed Chest"] = function(ctx)
+Handlers["Cursed Chest"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	applyAndRebuild(a, "Weakened", a.id)
 	-- Treasure component shares the Treasure Chest reward path (best-effort).
-	if ObjectEffectService._grantChestReward then
-		ObjectEffectService._grantChestReward(a, ctx)
+	if (ObjectEffectService :: any)._grantChestReward then
+		(ObjectEffectService :: any)._grantChestReward(a, ctx)
 	end
 	print(string.format("[ObjectEffectService] Cursed Chest | %s gains treasure + Weakened", a.name))
 	return true, nil
@@ -383,20 +383,20 @@ end
 --------------------------------------------------------------------
 -- HAZARD / TRIGGERED (also usable via Interact where applicable)
 --------------------------------------------------------------------
-Handlers["Bear Trap"] = function(ctx)
+Handlers["Bear Trap"] = function(ctx: any): (boolean, any)
 	applyAndRebuild(ctx.actor, "Pinned", ctx.actor.id)
 	print("[ObjectEffectService] Bear Trap | Pinned applied")
 	return true, nil
 end
 
-Handlers["Snare Trap"] = function(ctx)
+Handlers["Snare Trap"] = function(ctx: any): (boolean, any)
 	applyAndRebuild(ctx.actor, "Pinned", ctx.actor.id)
 	ctx.actor.remainingRt = (ctx.actor.remainingRt or 0) + 150
 	print("[ObjectEffectService] Snare Trap | Pinned + RT Delay")
 	return true, nil
 end
 
-Handlers["Spike Trap"] = function(ctx)
+Handlers["Spike Trap"] = function(ctx: any): (boolean, any)
 	-- Physical damage + Bleed. Damage via direct HP (environmental, no attacker stats).
 	local a = ctx.actor
 	local dmg = math.floor((a.maxHp or 0) * 0.10)
@@ -406,8 +406,8 @@ Handlers["Spike Trap"] = function(ctx)
 	return true, nil
 end
 
-local function explosionHandler(label)
-	return function(ctx)
+local function explosionHandler(label: any)
+	return function(ctx: any): (boolean, any)
 		local a, obj = ctx.actor, ctx.objInstance
 		local x = obj.x or a.tileX
 		local y = obj.y or a.tileY
@@ -425,8 +425,8 @@ end
 Handlers["Land Mine"]   = explosionHandler("Land Mine")
 Handlers["Bomb Barrel"] = explosionHandler("Bomb Barrel")
 
-local function tileEffectHandler(effectId, label)
-	return function(ctx)
+local function tileEffectHandler(effectId: any, label: any)
+	return function(ctx: any): (boolean, any)
 		local a, obj = ctx.actor, ctx.objInstance
 		local cx = obj.x or a.tileX
 		local cy = obj.y or a.tileY
@@ -450,9 +450,9 @@ Handlers["Steam Valve"] = tileEffectHandler("Steam", "Steam Valve")
 --------------------------------------------------------------------
 -- LOOT
 --------------------------------------------------------------------
-Handlers["Treasure Chest"] = function(ctx)
-	if ObjectEffectService._grantChestReward then
-		return ObjectEffectService._grantChestReward(ctx.actor, ctx)
+Handlers["Treasure Chest"] = function(ctx: any): (boolean, any)
+	if (ObjectEffectService :: any)._grantChestReward then
+		return (ObjectEffectService :: any)._grantChestReward(ctx.actor, ctx)
 	end
 	print("[ObjectEffectService] Treasure Chest | reward hook not wired (follow-up)")
 	return true, nil
@@ -462,7 +462,7 @@ end
 -- EYE OF THE MAGI — attack two random opponents for 40% of their OWN max HP.
 -- Direct HP%-damage (no weapon/operator stats). Deterministic pick via ctx.rng.
 --------------------------------------------------------------------
-Handlers["Eye of the Magi"] = function(ctx)
+Handlers["Eye of the Magi"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	local enemies = livingEnemies(a, ctx.allUnits)
 	if #enemies == 0 then
@@ -498,7 +498,7 @@ end
 -- stats"). Both are "Once per turn" -> the usage ledger (ClearTurnUsage at turn
 -- start) gates reuse.
 --------------------------------------------------------------------
-local function nearestEnemy(a, allUnits)
+local function nearestEnemy(a: any, allUnits: any)
 	local best, bestD = nil, math.huge
 	for _, u in ipairs(allUnits) do
 		if u.isAlive and u.side ~= a.side and not u.isGroundTarget and u.tileX and u.tileY then
@@ -513,7 +513,7 @@ end
 -- EITHER a Damage shape { finalDamage } OR a Healing shape { finalHealing }
 -- (Dark-weapon operator vs an Undead target converts the hit to healing).
 -- Handle BOTH so a Dark-vs-Undead siege shot is not silently dropped (DEFECT-2).
-local function applySiegeOutcome(target, outcome)
+local function applySiegeOutcome(target: any, outcome: any)
 	if not outcome then return end
 	if outcome.finalDamage then
 		target.currentHp = math.max(0, (target.currentHp or 0) - outcome.finalDamage)
@@ -527,7 +527,7 @@ local function applySiegeOutcome(target, outcome)
 	if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(target) end
 end
 
-Handlers["Ballista"] = function(ctx)
+Handlers["Ballista"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	local wd = math.floor((a.weaponDamage or 10) * 2.5)  -- 250% operator weapon dmg
 
@@ -545,7 +545,7 @@ Handlers["Ballista"] = function(ctx)
 		dir = _directionPrompter(a)
 	end
 	if not dir then
-		local tgt = nearestEnemy(a, ctx.allUnits)
+		local tgt: any = nearestEnemy(a, ctx.allUnits)
 		if not tgt then return true, nil end
 		local dx, dy = tgt.tileX - ox, tgt.tileY - oy
 		if math.abs(dx) >= math.abs(dy) then
@@ -586,9 +586,9 @@ Handlers["Ballista"] = function(ctx)
 	return true, nil
 end
 
-Handlers["Catapult"] = function(ctx)
+Handlers["Catapult"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
-	local tgt, dist = nearestEnemy(a, ctx.allUnits)
+	local tgt: any, dist = nearestEnemy(a, ctx.allUnits)
 	if not tgt then return true, nil end
 	if dist and dist > 6 then
 		print("[ObjectEffectService] Catapult | nearest enemy out of range 6")
@@ -626,7 +626,7 @@ end
 -- the "high-risk encounter" intent). Spawn tiles: near the object.
 --------------------------------------------------------------------
 -- Average level of living enemies (fallback for summon level), min 1.
-local function summonLevel(allUnits)
+local function summonLevel(allUnits: any)
 	local sum, n = 0, 0
 	for _, u in ipairs(allUnits) do
 		if u.side == "Enemy" and u.level then sum = sum + u.level; n = n + 1 end
@@ -642,7 +642,7 @@ end
 -- near the object) and by Forge (must reach radius 3 per objects_encounters).
 -- Previously this only emitted magnitude-<=1 offsets, so Forge never probed
 -- beyond radius 1 (Tester advisory, fixed).
-local function ringTiles(cx, cy, count, radius)
+local function ringTiles(cx: any, cy: any, count: any, radius: any)
 	radius = radius or 1
 	cx = cx or 1; cy = cy or 1
 	local out = {}
@@ -660,7 +660,7 @@ local function ringTiles(cx, cy, count, radius)
 	return out
 end
 
-local function doSummon(ctx, specType, countMin, countMax, side, raceOverride, label)
+local function doSummon(ctx: any, specType: any, countMin: any, countMax: any, side: any, raceOverride: any, label: any)
 	local a, obj = ctx.actor, ctx.objInstance
 	local lvl = summonLevel(ctx.allUnits)
 	local count = countMin
@@ -689,14 +689,14 @@ local function doSummon(ctx, specType, countMin, countMax, side, raceOverride, l
 end
 
 -- Dragon Utopia — summon 4-6 Dragons (Elite build, Dragonkin race).
-Handlers["Dragon Utopia"] = function(ctx)
+Handlers["Dragon Utopia"] = function(ctx: any): (boolean, any)
 	return doSummon(ctx, "Elite", 4, 6, "Enemy", "RACE-DRAGONKIN", "Dragon Utopia")
 end
 
 -- Mimic — reveal: the chest object is REPLACED by ONE Mimic enemy (Elite build)
 -- on the chest's own tile. Remove the object (and its blocker) first so the tile
 -- is free; doSummon's nearest-free search then lands on that tile.
-Handlers["Mimic"] = function(ctx)
+Handlers["Mimic"] = function(ctx: any): (boolean, any)
 	ObjectEffectService.RemoveObjectInstance(ctx.state, ctx.objInstance)
 	return doSummon(ctx, "Elite", 1, 1, "Enemy", nil, "Mimic")
 end
@@ -712,7 +712,7 @@ end
 -- not already holding an object (PlaceObjectInstance guards stacking + renders).
 -- Interactive tile-pick UI deferred (consistent with siege auto-target).
 --------------------------------------------------------------------
-Handlers["Forge"] = function(ctx)
+Handlers["Forge"] = function(ctx: any): (boolean, any)
 	local obj = ctx.objInstance
 	local cx, cy = obj.x or ctx.actor.tileX, obj.y or ctx.actor.tileY
 	-- Deterministic pick: Ballista on an even roll, Catapult on odd.
@@ -742,7 +742,7 @@ end
 -- mutated server-side (GameConstants) and the tile visuals updated via the
 -- injected reshaper. The standing pillar's own tile is cleared (it fell).
 --------------------------------------------------------------------
-Handlers["Stone Pillar"] = function(ctx)
+Handlers["Stone Pillar"] = function(ctx: any): (boolean, any)
 	local a, obj = ctx.actor, ctx.objInstance
 	local px, py = obj.x, obj.y
 	if not (px and py) then return false, "Stone Pillar: no tile." end
@@ -825,7 +825,7 @@ end
 -- small follow-up (no consumer reads it yet) — the quest is generated + stored,
 -- not yet shown on the board. Flagged, not faked.
 --------------------------------------------------------------------
-Handlers["Chaos Statue"] = function(ctx)
+Handlers["Chaos Statue"] = function(ctx: any): (boolean, any)
 	local state = ctx.state
 	local playerLevel = (state and state.mapLevel) or 1
 	local seed = (ctx.rng and ctx.rng:NextInteger(1, 2^31 - 1)) or os.time()
@@ -851,7 +851,7 @@ end
 -- Only a PLAYER-side activation counts (enemies never earn XP); an enemy that
 -- interacts still consumes the crystal (denies it) with no effect.
 --------------------------------------------------------------------
-Handlers["Glow Crystal"] = function(ctx)
+Handlers["Glow Crystal"] = function(ctx: any): (boolean, any)
 	local state, actor = ctx.state, ctx.actor
 	if not state then return false, "Glow Crystal: no battle state." end
 	if actor and actor.side == "Player" then
@@ -878,7 +878,7 @@ end
 -- objects/treasures are designed (they must carry obj.hidden = true and be
 -- withheld from the initial render), this handler reveals them unchanged.
 --------------------------------------------------------------------
-Handlers["Crystal Ball"] = function(ctx)
+Handlers["Crystal Ball"] = function(ctx: any): (boolean, any)
 	local state = ctx.state
 	local revealed = 0
 	if state and state.objects then
@@ -912,7 +912,7 @@ end
 -- priced panel. Returns true; logs the scope honestly.
 --------------------------------------------------------------------
 local _blackMarketOpened = {}  -- per-battle, once per object instance
-Handlers["Black Market"] = function(ctx)
+Handlers["Black Market"] = function(ctx: any): (boolean, any)
 	local state = ctx.state
 	local playerId = state and state.ownerPlayerId
 	local mapLevel = (state and state.mapLevel) or 1
@@ -961,14 +961,14 @@ local AURA_OBJECTS = {
 -- _auraMembership[objId] = { [unitId] = true }
 local _auraMembership = {}
 
-local function auraAppliesTo(auraDef, unit, objSide)
+local function auraAppliesTo(auraDef: any, unit: any, objSide: any)
 	if auraDef.side == "ALL" then return true end
 	return unit.side == auraDef.side
 end
 
 -- Reconcile all passive auras against current unit positions. Call on battle
 -- start and after any unit moves (CommandService Move hook).
-function ObjectEffectService.ReconcileAuras(allUnits, state)
+function ObjectEffectService.ReconcileAuras(allUnits: any, state: any)
 	if not state or not state.objects then return end
 	for _, obj in ipairs(state.objects) do
 		local auraDef = AURA_OBJECTS[obj.type]
@@ -1003,7 +1003,7 @@ end
 -- state carries the needed context it generates; otherwise it logs an honest
 -- deferral (object still consumed; reward is a small follow-up).
 --------------------------------------------------------------------
-function ObjectEffectService._grantChestReward(actor, ctx)
+function ObjectEffectService._grantChestReward(actor: any, ctx: any)
 	local state = ctx.state
 	local playerId = state and state.ownerPlayerId
 	local mapLevel = state and state.mapLevel
@@ -1033,7 +1033,7 @@ end
 -- _aliveSnapshot ({ [unitId] = true }) is declared at module top so ResetBattle
 -- (defined earlier) can clear it. Captured/refreshed each ProcessDeaths sweep.
 
-local function necroStandsOnMap(state)
+local function necroStandsOnMap(state: any)
 	local out = {}
 	if state and state.objects then
 		for _, obj in ipairs(state.objects) do
@@ -1044,7 +1044,7 @@ local function necroStandsOnMap(state)
 end
 
 -- Call after any action that may have killed a unit (battle loop hook).
-function ObjectEffectService.ProcessDeaths(allUnits, state)
+function ObjectEffectService.ProcessDeaths(allUnits: any, state: any)
 	local stands = necroStandsOnMap(state)
 	if _aliveSnapshot == nil then
 		_aliveSnapshot = {}
@@ -1089,7 +1089,7 @@ end
 -- charged AP/RT; this applies the EFFECT only. Usage ("Once"/"Once per turn")
 -- is enforced here so a consumed object is rejected before its effect runs.
 --------------------------------------------------------------------
-function ObjectEffectService.Resolve(actor, objInstance, state, allUnits)
+function ObjectEffectService.Resolve(actor: any, objInstance: any, state: any, allUnits: any): (boolean, any)
 	if not objInstance then return false, "No object instance." end
 	local archId = objInstance.type
 	local objDef = ObjectData and ObjectData.Objects and ObjectData.Objects[archId] or nil
@@ -1147,7 +1147,7 @@ function ObjectEffectService.Resolve(actor, objInstance, state, allUnits)
 end
 
 -- Clear a unit's per-turn object usage (called at that unit's turn start).
-function ObjectEffectService.ClearTurnUsage(unitId)
+function ObjectEffectService.ClearTurnUsage(unitId: any)
 	for objId, uid in pairs(_usedThisTurn) do
 		if uid == unitId then
 			_usedThisTurn[objId] = nil

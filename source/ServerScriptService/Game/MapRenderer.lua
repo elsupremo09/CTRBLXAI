@@ -501,6 +501,9 @@ function spawnObjectModel(objectName, tileChild, tileTopY, uniqueKey)
 	if not template then return nil end
 	local clone = template:Clone()
 	clone.Name = string.format("MapObjModel_%s_%s", tostring(objectName), tostring(uniqueKey or ""))
+	-- Tile identity so a click on the object resolves to the tile it stands on.
+	clone:SetAttribute("ObjTileX", tileChild:GetAttribute("X"))
+	clone:SetAttribute("ObjTileY", tileChild:GetAttribute("Y"))
 	-- Stand the model on the tile top. PivotTo places the model's pivot at the
 	-- given CFrame; map-object models are authored with their pivot at the base,
 	-- so pivot at the tile-top centre sits them on the surface.

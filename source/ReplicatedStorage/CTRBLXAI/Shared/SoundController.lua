@@ -50,7 +50,7 @@ local function categoryVol(category)
 end
 
 -- Core: play one asset id. slotKey is used for throttle/concurrency bookkeeping.
-local function playId(assetId, slotKey, category, pitchRange)
+local function playId(assetId: any, slotKey: any, category: any, pitchRange: any?): Sound?
 	if not SoundRegistry then return nil end
 	if type(assetId) ~= "string" or assetId == "" then return nil end  -- blank slot: silent
 
@@ -71,7 +71,7 @@ local function playId(assetId, slotKey, category, pitchRange)
 	s.Volume = (SoundRegistry.MasterVolume or 0.5) * categoryVol(category)
 	if pitchRange then
 		-- slight random pitch so repeats don't sound robotic
-		local lo, hi = pitchRange[1], pitchRange[2]
+		local lo: number, hi: number = pitchRange[1], pitchRange[2]
 		s.PlaybackSpeed = lo + math.random() * (hi - lo)
 	end
 	-- 2D sound: parent to SoundService so it plays globally for the local client

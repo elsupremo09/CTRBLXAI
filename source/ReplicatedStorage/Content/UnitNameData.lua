@@ -404,8 +404,8 @@ UnitNameData.DoctrineWords = {
 	["DOC-WARLORD"] = { "Warcrown", "Ironlord", "Battlelord", "Conqueror", "Dreadmarch", "Warborn", "Hostlord", "Doomrally", "Bannercrown", "Warchief", "Hostbreaker", "Dreadhorn", "Fieldcrown", "Warmonger", "Legionlord", "Marshal", "Ironrally", "Battlecrown", "Grimhost", "Warmarch", "Hostfire", "Dreadcrown", "Fellmarch", "Warhammer", "Ironhost", "Battleborn", "Warcaller", "Grimlord", "Hostcrown", "Dreadlord" },
 }
 
-for _, list in UnitNameData.FirstWords do table.freeze(list) end
-for _, list in UnitNameData.DoctrineWords do table.freeze(list) end
+for _, list in UnitNameData.FirstWords do table.freeze(list :: any) end
+for _, list in UnitNameData.DoctrineWords do table.freeze(list :: any) end
 table.freeze(UnitNameData.FirstWords)
 table.freeze(UnitNameData.DoctrineWords)
 

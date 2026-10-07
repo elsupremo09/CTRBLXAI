@@ -300,6 +300,18 @@ function GuildService.GetGuildXp(playerId: string): number
 	return stateOf(playerId).xp
 end
 
+-- Guild XP penalty (unit_progression 94, Locked; user approved 2026-10-07).
+-- state.xp is progress inside the current level, so flooring at 0 means the
+-- guild never drops below the current level's start (no delevel). Returns the
+-- amount actually removed.
+function GuildService.DeductGuildXp(playerId: string, amount: number): number
+	local state = stateOf(playerId)
+	local take = math.clamp(math.floor(tonumber(amount) or 0), 0, state.xp)
+	state.xp -= take
+	print(string.format("[GuildService] %s lost %d Guild XP (penalty) | now %d XP at L%d", playerId, take, state.xp, state.level))
+	return take
+end
+
 -- Authored/Designer path to set the Guild level directly (e.g. when a locked
 -- curve or a migration determines it). Guarded to forward direction only is NOT
 -- enforced here — a migration may legitimately correct a level downward.
