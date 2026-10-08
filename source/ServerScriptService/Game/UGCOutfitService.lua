@@ -5,11 +5,18 @@
 -- 1) AVAILABILITY (ugc_rules curation_eligibility): a curated item is usable only
 --    if MarketplaceService:GetProductInfo says it is for sale, not a limited /
 --    resale-only item, not sold out, and its AssetTypeId fits its slot.
---    Cached; FAILS CLOSED (unknown / error = not available).
+--    Cached; FAILS CLOSED (unknown / error = not available). Paired entries
+--    (ugc_rules 51): both parts must fit the slot; a bundle's own sale status
+--    decides, otherwise every part must be buyable.
+--    POOL (ugc_rules 49/50): StartAvailabilityLoop re-verifies every entry in the
+--    background (~AVAILABILITY_REFRESH_SECONDS); battles only read the cached
+--    pool and never query. Until the first pass finishes, enemies wear nothing
+--    (player units are still dressed — ApplyLook checks a missing entry itself).
 -- 2) ENEMY OUTFITS (ugc_rules Enemy Outfits): per battle, up to
 --    ENEMY_DISTINCT_ITEMS_PER_BATTLE distinct items — half pushed toward items the
---    player has NOT marked and does NOT own, the rest random from the curated
---    pool (owned items may appear only there). Pushed pool short -> random fills.
+--    player does NOT have in the cart and does NOT own, the rest random from the
+--    verified pool (owned items may appear only there). Off-sale items are never
+--    in the pool (ugc_rules 42). Pushed pool short -> random fills.
 --    Each enemy wears up to ENEMY_ITEMS_PER_ENEMY, one per slot, race slot blocks
 --    apply. Deterministic: the caller passes a seeded Random and pools are sorted.
 -- 3) LOOKS ON MODELS (enemy_outfit_apply_point: server-side at spawn): watches
@@ -21,7 +28,9 @@
 --    (DRW-002).
 --
 -- Injections (ARC-004 / ARC-006, nil-safe):
---   SetStateProvider(UGCService)  -- IsOwned / IsMarked / IsSlotAllowed / GetUnitLookIds
+--   SetStateProvider(UGCService)  -- IsOwned / IsInCart / IsSlotAllowed / GetUnitLookIds;
+--                                    also hands UGCService WasLookNotWorn / ClearLookRecords
+--                                    via SetLookFailureProvider (BUG-022)
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
@@ -38,9 +47,11 @@ local UGCOutfitService = {}
 -- CONSTANTS
 --------------------------------------------------
 
-local AVAILABLE_TTL = 600     -- seconds before re-checking a for-sale item
-local FAILED_RETRY_TTL = 60   -- seconds before re-checking after an API error
+local AVAILABLE_TTL = UGCCatalogData.AVAILABILITY_REFRESH_SECONDS -- re-verify every entry (ugc_rules 49)
+local FAILED_RETRY_TTL = 60   -- seconds before re-checking after an API error; also the loop beat
 local CHECK_SPACING = 0.1     -- seconds between GetProductInfo calls (throttle-friendly)
+local LOOK_LOOKUP_ATTEMPTS = 3 -- on-the-spot lookups for a PLAYER unit's look (BUG-022)
+local LOOK_RETRY_BACKOFF = 1.0 -- seconds; waits 1 s then 2 s between those attempts
 local MODELS_FOLDER_NAME = "UnitModels"
 local CACHE_FOLDER_NAME = "UGCAssetCache"
 local ASSET_ATTRIBUTE = "UGCAssetId"
@@ -89,19 +100,36 @@ end
 -- STATE
 --------------------------------------------------
 
-type Availability = { isAvailable: boolean, typeName: string?, checkedAt: number, reason: string? }
+type Availability = {
+	isAvailable: boolean,
+	isOffSale: boolean, -- KNOWN off sale / limited / sold out ("Off sale" marker)
+	typeName: string?,  -- part 1 asset type (kept across API errors for templates)
+	typeName2: string?, -- part 2 asset type (paired entries)
+	checkedAt: number,
+	reason: string?,
+}
 
 local _availability: { [number]: Availability } = {}
 local _templates: { [number]: Instance } = {}
 local _loadingWaiters: { [number]: { thread } } = {}
 local _enemyLooks: { [string]: { number } } = {}
+-- BUG-022 (ugc_rules 50): per-battle record of player items that were / were not
+-- put on a unit. Read and cleared by UGCService at battle end.
+local _lookWorn: { [string]: { [number]: boolean } } = {}
+local _lookFailed: { [string]: { [number]: boolean } } = {}
 local _cacheFolder: Folder? = nil
 local _watchConn: RBXScriptConnection? = nil
 local _watchPlayerId: string? = nil
 local _isRefreshing = false
+local _isPoolReady = false   -- first full availability pass finished
+local _isLoopStarted = false
 
 local _state: any = nil
-function UGCOutfitService.SetStateProvider(svc: any) _state = svc end
+function UGCOutfitService.SetStateProvider(svc: any)
+	_state = svc
+	-- Hands UGCService the look-failure query (ARC-006: no require cycle, no extra Main wiring).
+	if svc and svc.SetLookFailureProvider then svc.SetLookFailureProvider(UGCOutfitService) end
+end
 
 --------------------------------------------------
 -- AVAILABILITY
@@ -113,56 +141,100 @@ local function slotAccepts(slot: string, typeName: string): boolean
 	return table.find(names, typeName) ~= nil
 end
 
-local function evaluate(assetId: number, info: any): Availability
-	local now = os.clock()
-	local item = UGCCatalogData.Items[assetId]
-	if type(info) ~= "table" then
-		return { isAvailable = false, checkedAt = now, reason = "No product info" }
-	end
+-- Asset type of one part, if it fits the entry's slot (nil otherwise).
+local function partType(item: UGCCatalogData.UGCItem, info: any): string?
+	if type(info) ~= "table" then return nil end
 	local typeName = TYPE_NAME_BY_ID[info.AssetTypeId or -1]
-	if not item or not typeName or not slotAccepts(item.slot, typeName) then
-		return { isAvailable = false, checkedAt = now, reason = "Asset type does not match slot" }
-	end
-	if info.IsForSale ~= true then
-		return { isAvailable = false, typeName = typeName, checkedAt = now, reason = "Off sale" }
-	end
+	if typeName and slotAccepts(item.slot, typeName) then return typeName end
+	return nil
+end
+
+-- Why a product can't be bought right now (nil = buyable). Same checks for an
+-- asset or a bundle: for sale, not limited / resale-only, not sold out.
+local function saleProblem(info: any): string?
+	if type(info) ~= "table" then return "No product info" end
+	if info.IsForSale ~= true then return "Off sale" end
 	local collectible = info.CollectiblesItemDetails
 	local isLimited = info.IsLimited == true or info.IsLimitedUnique == true
 		or (type(collectible) == "table" and collectible.IsLimited == true)
-	if isLimited then
-		return { isAvailable = false, typeName = typeName, checkedAt = now, reason = "Limited / resale only" }
-	end
-	if type(info.Remaining) == "number" and info.Remaining <= 0 then
-		return { isAvailable = false, typeName = typeName, checkedAt = now, reason = "Sold out" }
-	end
-	return { isAvailable = true, typeName = typeName, checkedAt = now }
+	if isLimited then return "Limited / resale only" end
+	if type(info.Remaining) == "number" and info.Remaining <= 0 then return "Sold out" end
+	return nil
 end
 
--- Yields. Re-checks one item if its cache entry is stale.
-function UGCOutfitService.CheckAvailability(assetId: number): boolean
-	if not UGCCatalogData.Items[assetId] then return false end
-	local cached = _availability[assetId]
+local function fetchInfo(id: number, infoType: Enum.InfoType): (boolean, any)
+	return pcall(MarketplaceService.GetProductInfo, MarketplaceService, id, infoType)
+end
+
+-- Queries Roblox for one catalog entry (yields). Fails closed on any API error
+-- but keeps previously known part types so cached templates still resolve.
+local function queryEntry(entryId: number, previous: Availability?): Availability
+	local now = os.clock()
+	local item = UGCCatalogData.Items[entryId]
+	local function apiError(id: number, err: any): Availability
+		warn(`[UGCOutfitService] GetProductInfo failed for {id}: {err}`)
+		return { isAvailable = false, isOffSale = false,
+			typeName = if previous then previous.typeName else nil,
+			typeName2 = if previous then previous.typeName2 else nil,
+			checkedAt = now, reason = "API error" }
+	end
+
+	local ok, info = fetchInfo(entryId, Enum.InfoType.Asset)
+	if not ok then return apiError(entryId, info) end
+	local typeName = partType(item, info)
+	local problem = saleProblem(info)
+
+	local typeName2: string? = nil
+	local assetId2 = item.assetId2
+	if assetId2 then
+		task.wait(CHECK_SPACING)
+		local ok2, info2 = fetchInfo(assetId2, Enum.InfoType.Asset)
+		if not ok2 then return apiError(assetId2, info2) end
+		typeName2 = partType(item, info2)
+		problem = problem or saleProblem(info2)
+	end
+	if not typeName or (assetId2 ~= nil and not typeName2) then
+		return { isAvailable = false, isOffSale = false, typeName = typeName, typeName2 = typeName2,
+			checkedAt = now, reason = "Asset type does not match slot" }
+	end
+
+	local bundleId = item.bundleId
+	if bundleId then
+		-- Bundle parts are often not sold alone: the bundle's status decides.
+		task.wait(CHECK_SPACING)
+		local okB, infoB = fetchInfo(bundleId, Enum.InfoType.Bundle)
+		if not okB then return apiError(bundleId, infoB) end
+		problem = saleProblem(infoB)
+	end
+	if problem then
+		return { isAvailable = false, isOffSale = true, typeName = typeName, typeName2 = typeName2,
+			checkedAt = now, reason = problem }
+	end
+	return { isAvailable = true, isOffSale = false, typeName = typeName, typeName2 = typeName2, checkedAt = now }
+end
+
+-- Yields. Re-checks one entry only if its cache entry is stale.
+-- Returns (isAvailable, didQuery).
+local function checkEntry(entryId: number): (boolean, boolean)
+	if not UGCCatalogData.Items[entryId] then return false, false end
+	local cached = _availability[entryId]
 	if cached then
 		local ttl = if cached.reason == "API error" then FAILED_RETRY_TTL else AVAILABLE_TTL
 		if os.clock() - cached.checkedAt < ttl then
-			return cached.isAvailable
+			return cached.isAvailable, false
 		end
 	end
-	local ok, info = pcall(MarketplaceService.GetProductInfo, MarketplaceService, assetId, Enum.InfoType.Asset)
-	local result: Availability
-	if ok then
-		result = evaluate(assetId, info)
-	else
-		warn(`[UGCOutfitService] GetProductInfo failed for {assetId}: {info}`)
-		-- Fail closed, but keep a previously known type so cached templates still resolve.
-		result = { isAvailable = false, typeName = cached and cached.typeName or nil,
-			checkedAt = os.clock(), reason = "API error" }
-	end
-	_availability[assetId] = result
+	local result = queryEntry(entryId, cached)
+	_availability[entryId] = result
 	if not result.isAvailable and result.reason ~= "API error" then
-		print(`[UGCOutfitService] {assetId} excluded: {result.reason}`)
+		print(`[UGCOutfitService] {entryId} excluded: {result.reason}`)
 	end
-	return result.isAvailable
+	return result.isAvailable, true
+end
+
+-- Yields. Re-checks one entry if its cache entry is stale.
+function UGCOutfitService.CheckAvailability(assetId: number): boolean
+	return (checkEntry(assetId))
 end
 
 -- Non-yielding cached answer (fail closed). Used by UGCService.
@@ -171,20 +243,54 @@ function UGCOutfitService.IsAvailable(assetId: number): boolean
 	return cached ~= nil and cached.isAvailable
 end
 
--- Yields. Checks every curated item; call in task.spawn at startup.
+-- Non-yielding: true only when the last check KNEW the item was off sale.
+function UGCOutfitService.IsOffSale(assetId: number): boolean
+	local cached = _availability[assetId]
+	return cached ~= nil and cached.isOffSale
+end
+
+function UGCOutfitService.IsPoolReady(): boolean
+	return _isPoolReady
+end
+
+-- Yields. One pass over every curated entry; only stale entries are queried.
 function UGCOutfitService.RefreshAvailability()
 	if _isRefreshing then return end
 	_isRefreshing = true
 	local ids = {}
 	for id in UGCCatalogData.Items do table.insert(ids, id) end
 	table.sort(ids)
-	local available = 0
+	local available, queried = 0, 0
 	for _, id in ids do
-		if UGCOutfitService.CheckAvailability(id) then available += 1 end
-		task.wait(CHECK_SPACING)
+		local isAvailable, didQuery = checkEntry(id)
+		if isAvailable then available += 1 end
+		if didQuery then
+			queried += 1
+			task.wait(CHECK_SPACING)
+		end
 	end
 	_isRefreshing = false
-	print(`[UGCOutfitService] Availability refreshed: {available}/{#ids} curated item(s) usable`)
+	local wasReady = _isPoolReady
+	_isPoolReady = true
+	if queried > 0 or not wasReady then
+		print(`[UGCOutfitService] Availability refreshed: {available}/{#ids} curated item(s) usable ({queried} checked)`)
+	end
+end
+
+-- availability_pool_refresh (ugc_rules 49): first pass now (yields — call in
+-- task.spawn), then a background loop. Each beat re-queries only stale entries,
+-- so every item is re-verified about every AVAILABILITY_REFRESH_SECONDS and API
+-- errors retry after FAILED_RETRY_TTL. Battles never query (PRF-001/PRF-002).
+function UGCOutfitService.StartAvailabilityLoop()
+	if _isLoopStarted then return end
+	_isLoopStarted = true
+	UGCOutfitService.RefreshAvailability()
+	task.spawn(function()
+		while true do
+			task.wait(FAILED_RETRY_TTL)
+			UGCOutfitService.RefreshAvailability()
+		end
+	end)
 end
 
 --------------------------------------------------
@@ -226,7 +332,7 @@ end
 
 -- Yields. One template per asset per server; concurrent callers wait for the
 -- first load instead of loading twice.
-local function loadTemplate(assetId: number): Instance?
+local function loadTemplate(assetId: number, typeName: string?): Instance?
 	local cached = _templates[assetId]
 	if cached then return cached end
 	local waiters = _loadingWaiters[assetId]
@@ -237,8 +343,6 @@ local function loadTemplate(assetId: number): Instance?
 	_loadingWaiters[assetId] = {}
 
 	local result: Instance? = nil
-	local av = _availability[assetId]
-	local typeName = av and av.typeName
 	local desc = typeName and buildDescription(assetId, typeName) or nil
 	if desc then
 		local ok, model = pcall(Players.CreateHumanoidModelFromDescription, Players, desc, Enum.HumanoidRigType.R15)
@@ -288,28 +392,99 @@ local function prepareClone(template: Instance, assetId: number): Instance
 	return clone
 end
 
+local function hasPartTypes(item: UGCCatalogData.UGCItem, av: Availability?): boolean
+	return av ~= nil and av.typeName ~= nil and (item.assetId2 == nil or av.typeName2 ~= nil)
+end
+
+-- Yields. PLAYER looks only (ugc_rules 50, BUG-022): resolve an entry's part
+-- types now if the pool hasn't. API errors are retried a bounded number of
+-- times with backoff (bypasses the 60 s failed-retry TTL); a slot mismatch is
+-- not retried. Returns nil if the types still can't be resolved.
+local function resolvePartTypes(entryId: number, item: UGCCatalogData.UGCItem): Availability?
+	for attempt = 1, LOOK_LOOKUP_ATTEMPTS do
+		local av = _availability[entryId]
+		if hasPartTypes(item, av) then return av end
+		if av and av.reason ~= "API error" then break end -- definitive (slot mismatch): no retry
+		if attempt > 1 then task.wait(LOOK_RETRY_BACKOFF * (attempt - 1)) end
+		_availability[entryId] = queryEntry(entryId, av)
+	end
+	local av = _availability[entryId]
+	return if hasPartTypes(item, av) then av else nil
+end
+
+local function markLook(set: { [string]: { [number]: boolean } }, playerId: string, entryId: number)
+	local entries = set[playerId]
+	if not entries then
+		entries = {}
+		set[playerId] = entries
+	end
+	entries[entryId] = true
+end
+
 -- Yields. Replaces any previous UGC on the model with assetIds. Properties are
--- set on each clone before it is parented (NET-004).
-function UGCOutfitService.ApplyLook(model: Model, assetIds: { number })
+-- set on each clone before it is parented (NET-004). ownerPlayerId is passed
+-- for PLAYER units only: their items are recorded as worn / not worn so a
+-- battle is never charged for an item no unit visibly wore (BUG-022).
+function UGCOutfitService.ApplyLook(model: Model, assetIds: { number }, ownerPlayerId: string?)
 	local humanoid = model:FindFirstChildOfClass("Humanoid")
 	if not humanoid then return end
 	for _, child in model:GetChildren() do
 		if child:GetAttribute(ASSET_ATTRIBUTE) ~= nil then child:Destroy() end
 	end
 	local applied = 0
-	for _, assetId in assetIds do
-		local template = loadTemplate(assetId)
-		if not template or model.Parent == nil then continue end
-		local clone = prepareClone(template, assetId)
-		if clone:IsA("Accessory") then
-			humanoid:AddAccessory(clone)
-		else
-			-- Classic Shirt/Pants: the UGC piece replaces the rig's own one.
-			local existing = model:FindFirstChildOfClass(clone.ClassName)
-			if existing and existing:GetAttribute(ASSET_ATTRIBUTE) == nil then existing:Destroy() end
-			clone.Parent = model
+	for _, entryId in assetIds do
+		local item = UGCCatalogData.Items[entryId]
+		if not item then continue end
+		local av: Availability? = _availability[entryId]
+		-- availability_cold_start (ugc_rules 50): only ENEMY outfits wait for the
+		-- pool. Player units always wear what they own / trial / rent, so if the
+		-- background pass hasn't reached this entry yet, check it now (yields;
+		-- ApplyLook already runs in task.spawn). Enemy looks only ever come from
+		-- the ready pool, so the lookup practically never runs for them.
+		if not hasPartTypes(item, av) then
+			if ownerPlayerId then
+				av = resolvePartTypes(entryId, item)
+			else
+				checkEntry(entryId)
+				av = _availability[entryId]
+			end
 		end
-		applied += 1
+		-- paired_items (ugc_rules 51): both parts of an L/R pair are worn together.
+		local parts: { { id: number, typeName: string } } = {}
+		local type1 = av and av.typeName
+		local type2 = av and av.typeName2
+		if type1 and (item.assetId2 == nil or type2) then
+			table.insert(parts, { id = entryId, typeName = type1 })
+			if item.assetId2 and type2 then
+				table.insert(parts, { id = item.assetId2, typeName = type2 })
+			end
+		end
+		local partsWorn = 0
+		for _, part in parts do
+			local template = loadTemplate(part.id, part.typeName)
+			if not template or model.Parent == nil then continue end
+			local clone = prepareClone(template, entryId)
+			if clone:IsA("Accessory") then
+				humanoid:AddAccessory(clone)
+			else
+				-- Classic Shirt/Pants: the UGC piece replaces the rig's own one.
+				local existing = model:FindFirstChildOfClass(clone.ClassName)
+				if existing and existing:GetAttribute(ASSET_ATTRIBUTE) == nil then existing:Destroy() end
+				clone.Parent = model
+			end
+			applied += 1
+			partsWorn += 1
+		end
+		-- BUG-022: record the outcome for battle-end charging (player units only;
+		-- a model removed mid-dress is not recorded).
+		if ownerPlayerId and model.Parent ~= nil then
+			if #parts > 0 and partsWorn == #parts then
+				markLook(_lookWorn, ownerPlayerId, entryId)
+			else
+				markLook(_lookFailed, ownerPlayerId, entryId)
+				warn(`[UGCOutfitService] could not dress {model.Name} in {entryId} — battle not charged (unless another deployed unit wears it)`)
+			end
+		end
 	end
 	if applied > 0 then
 		print(`[UGCOutfitService] {model.Name} wears {applied} UGC item(s)`)
@@ -338,6 +513,11 @@ function UGCOutfitService.PlanEnemyOutfits(playerId: string, enemyUnits: { any }
 		warn("[UGCOutfitService] State provider not wired — no enemy outfits")
 		return
 	end
+	-- availability_cold_start (ugc_rules 50): never wait — skip this battle.
+	if not _isPoolReady then
+		print("[UGCOutfitService] Availability check not finished — enemies wear no UGC this battle")
+		return
+	end
 	local pool = {}
 	for id in UGCCatalogData.Items do
 		if UGCOutfitService.IsAvailable(id) then table.insert(pool, id) end
@@ -355,7 +535,7 @@ function UGCOutfitService.PlanEnemyOutfits(playerId: string, enemyUnits: { any }
 
 	local pushedPool = {}
 	for _, id in pool do
-		if not _state.IsOwned(playerId, id) and not _state.IsMarked(playerId, id) then
+		if not _state.IsOwned(playerId, id) and not _state.IsInCart(playerId, id) then
 			table.insert(pushedPool, id)
 		end
 	end
@@ -413,13 +593,31 @@ function UGCOutfitService.GetWornIds(playerId: string, unitId: string): { number
 	return {}
 end
 
+-- BUG-022 (ugc_rules 50): true when dressing failed for this player item on
+-- every unit that tried it this battle (lookup / template error). Non-yielding;
+-- read by UGCService.OnBattleCompleted, which then skips the charge.
+function UGCOutfitService.WasLookNotWorn(playerId: string, entryId: number): boolean
+	local failed = _lookFailed[playerId]
+	if not failed or not failed[entryId] then return false end
+	local worn = _lookWorn[playerId]
+	return not (worn and worn[entryId])
+end
+
+-- Called by UGCService after every battle-end usage step (all paths).
+function UGCOutfitService.ClearLookRecords(playerId: string)
+	_lookFailed[playerId] = nil
+	_lookWorn[playerId] = nil
+end
+
 local function onModelAdded(child: Instance)
 	if not child:IsA("Model") or not _watchPlayerId then return end
 	local unitId = string.match(child.Name, "^Unit_(.+)$")
 	if not unitId then return end
 	local ids = UGCOutfitService.GetWornIds(_watchPlayerId, unitId)
 	if #ids == 0 then return end
-	task.spawn(UGCOutfitService.ApplyLook, child, ids)
+	-- Enemy looks are not the player's items: only player units record wear (BUG-022).
+	local owner = if _enemyLooks[unitId] then nil else _watchPlayerId
+	task.spawn(UGCOutfitService.ApplyLook, child, ids, owner)
 end
 
 -- Starts dressing models parented to workspace.UnitModels (creates the folder if
@@ -439,6 +637,62 @@ function UGCOutfitService.WatchUnitModels(playerId: string)
 	for _, child in (folder :: Instance):GetChildren() do
 		onModelAdded(child)
 	end
+end
+
+--------------------------------------------------
+-- LOOK PREVIEW (Outfit tab "Preview", 2026-10-08) — read-only, changes no state.
+--------------------------------------------------
+local PREVIEW_FOLDER_NAME = "UGCPreview"
+local PREVIEW_MODEL_NAME = "PreviewModel"
+
+-- Builds a display copy of the unit's race model wearing assetIds and parents it
+-- under the player's PlayerGui (replicates only to that player). Yields while
+-- accessories load. Returns (ok, error?). Nothing here is ever saved or charged.
+function UGCOutfitService.BuildPreview(player: Player, raceName: string?, assetIds: { number }): (boolean, string?)
+	local raceModels = ServerStorage:FindFirstChild("RaceModels")
+	local template = raceName and raceModels and raceModels:FindFirstChild(raceName)
+	if not template or not template:IsA("Model") then
+		return false, "No model for this race yet"
+	end
+	local pg = player:FindFirstChildOfClass("PlayerGui")
+	if not pg then return false, "Player not ready" end
+	local folder = pg:FindFirstChild(PREVIEW_FOLDER_NAME)
+	if not folder then
+		local f = Instance.new("Folder")
+		f.Name = PREVIEW_FOLDER_NAME
+		f.Parent = pg -- NET-004
+		folder = f
+	end
+	local model = template:Clone()
+	model.Name = PREVIEW_MODEL_NAME
+	-- Display only: no scripts, no physics.
+	for _, d in model:GetDescendants() do
+		if d:IsA("BaseScript") then
+			d:Destroy() -- MEM-002
+		elseif d:IsA("BasePart") then
+			d.Anchored = true
+			d.CanCollide = false
+			d.CanTouch = false
+			d.CanQuery = false
+		end
+	end
+	-- Dress off-tree in a temporary holder so ApplyLook's "model removed" checks pass,
+	-- then swap it in for the previous preview in one step.
+	local holder = Instance.new("Folder")
+	holder.Name = "UGCPreviewBuild"
+	holder.Parent = ServerStorage
+	model.Parent = holder
+	-- nil owner: not a battle look, never recorded. Protected so the holder never leaks.
+	local ok, err = pcall(UGCOutfitService.ApplyLook, model, assetIds, nil)
+	if not ok then
+		warn(`[UGCOutfitService] Preview dressing failed: {err}`)
+		holder:Destroy() -- MEM-002: model goes with it
+		return false, "Could not build the preview"
+	end
+	for _, old in folder:GetChildren() do old:Destroy() end -- MEM-002
+	model.Parent = folder
+	holder:Destroy()
+	return true, nil
 end
 
 function UGCOutfitService.StopWatching()

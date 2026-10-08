@@ -683,6 +683,7 @@ function CommandService.TriggerCounterIfEligible(defender: any, attacker: any, s
 	print(string.format("[CommandService] COUNTER RT | %s next turn +%d RT (now %d)",
 		defender.name, counterRt, defender.remainingRt))
 	BattleVisualBroadcaster.UnitStateChanged(defender)
+	BattleVisualBroadcaster.Log("rt", `{defender.name} counterattacks; own next turn +{counterRt} RT.`, defender.id)
 
 	-- Weapon RT Delay to the ATTACKER (DB: Riposte 50% / Counter Stance 30% of the
 	-- defender's Weapon RT Delay). Separate from the counter damage — an extra
@@ -696,6 +697,7 @@ function CommandService.TriggerCounterIfEligible(defender: any, attacker: any, s
 		attacker.remainingRt = (attacker.remainingRt or 0) + math.max(0, delay)
 		print(string.format("[CommandService] COUNTER RT-DELAY | %s +%d RT (x%.2f weapon delay)",
 			attacker.name, math.max(0, delay), rtDelayMult))
+		BattleVisualBroadcaster.Log("rt", `{attacker.name} is delayed +{math.max(0, delay)} RT by the counter.`, attacker.id)
 		BattleVisualBroadcaster.UnitStateChanged(attacker)
 	end
 	return true
@@ -1180,6 +1182,7 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 			"[CommandService] INTERACT REVIVE RESOLVE | %s resuscitates %s at %d/%d HP",
 			unit.name, target.name, target.currentHp, target.maxHp or 0
 		))
+		BattleVisualBroadcaster.Log("ko", `{unit.name} resuscitates {target.name} ({target.currentHp}/{target.maxHp or 0} HP).`, target.id)
 		return true, { type = "Resuscitate", target = target, hp = target.currentHp }
 	end
 
@@ -1893,6 +1896,7 @@ function CommandService.ValidateAndCommit(
 			})
 			-- Start the looping channel VFX on the caster (damage vs heal picks the asset).
 			BattleVisualBroadcaster.ChannelStarted(actor, skillDef.isHealing == true)
+			BattleVisualBroadcaster.Log("channel", `{actor.name} begins channeling {skillDef.name or "a skill"} ({channelRt} CT).`, actor.id)
 
 			-- TWO-TIMER MODEL: the caster ends its turn NORMALLY (base + this skill's RT
 			-- cost), so it keeps a real, independent RT. The channel deadline
@@ -2392,6 +2396,7 @@ function CommandService.ValidateAndCommit(
 
 	elseif actionType == "Wait" then
 		print(string.format("[CommandService] WAIT | %s", actor.name))
+		BattleVisualBroadcaster.Log("action", `{actor.name} waits.`, actor.id)
 		BattleCoordinator.EndTurn(state)
 		return true, nil
 
@@ -2611,6 +2616,7 @@ function CommandService.ValidateAndCommit(
 				"[CommandService] INTERACT RECRUIT | %s recruits %s -> Neutral | RT:%d | AP left:%d",
 				actor.name, target.name, rt, actor.currentAp
 			))
+			BattleVisualBroadcaster.Log("action", `{actor.name} recruits {target.name} (now a neutral ally).`, actor.id)
 
 		elseif chosen.interactKind == "allyRtHelp" then
 			local target = nil
@@ -2639,6 +2645,7 @@ function CommandService.ValidateAndCommit(
 				"[CommandService] INTERACT ALLY-RT | %s aids %s | RT %d->%d | selfRT:%d | AP left:%d",
 				actor.name, target.name, before, target.remainingRt, rt, actor.currentAp
 			))
+			BattleVisualBroadcaster.Log("rt", `{actor.name} aids {target.name}: RT {before} → {target.remainingRt}.`, actor.id)
 
 		elseif chosen.interactKind == "reviveAlly" then
 			local target = nil
@@ -2695,6 +2702,7 @@ function CommandService.ValidateAndCommit(
 				"[CommandService] INTERACT REVIVE (CHANNEL) [%s] | %s -> %s | Channel:%d CT | RT:%d",
 				reviveSkillDef.name, actor.name, target.name, channelCt, rt
 			))
+			BattleVisualBroadcaster.Log("channel", `{actor.name} begins resuscitating {target.name} ({channelCt} CT).`, actor.id)
 			return true, nil -- turn ended (two-timer); revive resolves at deadline
 
 		elseif chosen.interactKind == "mapObject" then
@@ -2704,8 +2712,15 @@ function CommandService.ValidateAndCommit(
 			local objArch = chosen.archetypeId
 			local objDef = objArch and ObjectData.Objects and ObjectData.Objects[objArch] or nil
 			local activation = objDef and objDef.activation or "Interact (Consumes Action)"
-			local objRtPct = (objDef and objDef.interactRtPct) or 0.10
-			local rt = math.round(modBaseRt * objRtPct * interactRtMult)
+			-- Authored flat RT (ObjectData.interactRT, e.g. Astrolabe 400) wins; otherwise
+			-- the basic Interact cost round(ModBaseRt x 0.10). Headgear modifier applies to both.
+			local rt
+			if objDef and objDef.interactRT then
+				rt = math.round(objDef.interactRT * interactRtMult)
+			else
+				local objRtPct = (objDef and objDef.interactRtPct) or 0.10
+				rt = math.round(modBaseRt * objRtPct * interactRtMult)
+			end
 			rt = math.round(rt * StatusService.GetAllRtMultiplier(actor))
 			BattleVisualBroadcaster.ActionAnnounced(actor, "Interact")
 			-- "Interact (Free)" objects do not accrue RT; "Consumes Action" do.
@@ -2729,6 +2744,7 @@ function CommandService.ValidateAndCommit(
 				(activation == "Interact (Free)") and 0 or rt,
 				effOk and "ok" or ("FAILED: " .. tostring(effReason))
 			))
+			BattleVisualBroadcaster.Log("action", `{actor.name} activates {(objDef and objDef.name) or tostring(objArch)}{if effOk then "" else " (no effect)"}.`, actor.id)
 
 		elseif chosen.interactKind == "eventNpc" then
 			-- BATTLEFIELD-EVENT NPC (2026-10-04): authored event interaction
@@ -2755,6 +2771,7 @@ function CommandService.ValidateAndCommit(
 				"[CommandService] INTERACT EVENT-NPC | %s -> %s | RT:%d | effect:%s",
 				actor.name, target.name, rt, evOk and "ok" or ("FAILED: " .. tostring(evReason))
 			))
+			BattleVisualBroadcaster.Log("action", `{actor.name} interacts with {target.name}.`, actor.id)
 
 		else
 			return false, "Unknown Interact kind: " .. tostring(chosen.interactKind)

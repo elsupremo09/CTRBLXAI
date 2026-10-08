@@ -135,6 +135,8 @@ end
 --   biomes : optional allow-list (Zombie Horde "applicable biomes").
 --------------------------------------------------------------------
 local RARITY_WEIGHT = { Common = 1.0, Uncommon = 0.5, Rare = 0.2 }
+-- 1 in EVENT_BATTLE_ODDS battles gets random battlefield events (user ruling 2026-10-08).
+local EVENT_BATTLE_ODDS = 18
 
 local EVENT_RULES = {
 	["Merchant Caravan"]   = { rarity = "Common" },
@@ -695,6 +697,41 @@ function BattlefieldEventService._fireEvent(state: any, rng: any, def: any, roun
 	return rec
 end
 
+--------------------------------------------------------------------
+-- DEV TOOLS (dev panel: add / end / change the current battle event)
+--------------------------------------------------------------------
+-- End the active event now: its spawned units leave the map. Returns the ended name.
+function BattlefieldEventService.DevEndActiveEvent(state: any): string?
+	local rec = state and state.bfActiveEvent
+	if not rec then return nil end
+	for _, u in ipairs(rec.units or {}) do
+		if u.isAlive and not u.leftMap then
+			u.isAlive = false
+			u.leftMap = true
+			if _unitRemover then _unitRemover(u) end
+		end
+	end
+	state.bfActiveEvent = nil
+	print("[BattlefieldEventService] DEV ended event: " .. tostring(rec.name))
+	return rec.name
+end
+
+-- Fire a named event right now (ignores budget, gates and rarity). If another event
+-- is active it is ended first (= "change"). Returns true on success.
+function BattlefieldEventService.DevFireEvent(state: any, eventName: string, rng: any): boolean
+	local def = BattlefieldEventData.Events and BattlefieldEventData.Events[eventName]
+	if not def then
+		warn("[BattlefieldEventService] DEV: unknown event " .. tostring(eventName))
+		return false
+	end
+	if state.bfActiveEvent then BattlefieldEventService.DevEndActiveEvent(state) end
+	if state.bfBudget == nil then state.bfBudget = 0 end
+	local roundIndex = math.floor((state.ct or 0) / 1000)
+	BattlefieldEventService._fireEvent(state, rng or Random.new(os.clock() * 1000), def, roundIndex)
+	print("[BattlefieldEventService] DEV fired event: " .. eventName)
+	return true
+end
+
 -- Active event is over when every unit it spawned is dead or has left the map.
 local function activeEventDone(state: any)
 	local rec = state.bfActiveEvent
@@ -762,7 +799,15 @@ function BattlefieldEventService.SelectEventsForBattle(state: any, biome: any, r
 	-- ends (its units are defeated or leave the map; instant events end immediately).
 	table.sort(startPool, function(a: any, b: any) return a.name < b.name end)
 	state.bfStartPool    = startPool
-	state.bfBudget       = rng:NextInteger(0, 3)   -- total events this battle
+	-- Events are RARE (user ruling 2026-10-08): 1 in 18 battles has any random event.
+	-- When it does, 1-3 events (1 most likely). Conditional/gated events still need
+	-- their own condition. Dev panel can add/end/change events regardless of budget.
+	if rng:NextInteger(1, EVENT_BATTLE_ODDS) == 1 then
+		local r = rng:NextNumber()
+		state.bfBudget = (r < 0.70) and 1 or ((r < 0.92) and 2 or 3)
+	else
+		state.bfBudget = 0
+	end
 	state.bfFiredCount   = 0
 	state.bfActiveEvent  = nil
 	state.bfPendingQueue = {}                      -- conditional events waiting for the slot

@@ -109,8 +109,15 @@ local ENEMY_ROSTER_BY_DIFFICULTY = {
 -- REWARD TABLES
 --------------------------------------------------
 
-local BASE_GOLD = { 100, 150, 200, 300, 450 }
 local BASE_XP   = { 60, 100, 150, 250, 400 }
+
+-- Gold bases (economy_framework, LOCKED). Quest types with no own row use Normal.
+--   Quest Reward Gold (id 9)      = Base × (1 + Recommended Level / 40)
+--   Battle Completion Gold (id 8) = Base × (1 + Map Level / 50)
+local QUEST_GOLD_BASE = { Boss = 150 }          -- Normal = 50
+local QUEST_GOLD_NORMAL = 50
+local COMPLETION_GOLD_BASE = { Boss = 100, Survival = 40, Defense = 40 } -- Normal = 30
+local COMPLETION_GOLD_NORMAL = 30
 
 --------------------------------------------------
 -- HELPERS
@@ -257,17 +264,20 @@ local function generateOneQuest(questIndex, playerLevel, rng)
 		end
 	end
 
-	-- 9. Rewards
-	local baseGold = BASE_GOLD[difficulty]
+	-- 9. Rewards. Quest gold is a fixed amount shown upfront (economy_framework id 9);
+	-- kill gold and completion gold are added after the battle (Main post-battle).
 	local baseXP   = BASE_XP[difficulty]
-	local goldVariance = math.floor(baseGold * 0.25)
 	local xpVariance   = math.floor(baseXP * 0.25)
+	local questGold = math.floor((QUEST_GOLD_BASE[questType] or QUEST_GOLD_NORMAL) * (1 + recommendedLvl / 40))
+	local completionBase = COMPLETION_GOLD_BASE[questType] or COMPLETION_GOLD_NORMAL
 
 	local rewards = {
 		gold = {
-			min = baseGold - goldVariance,
-			max = baseGold + goldVariance,
+			min = questGold,
+			max = questGold,
 		},
+		questGold = questGold,
+		completionGoldBase = completionBase,
 		xp = {
 			min = baseXP - xpVariance,
 			max = baseXP + xpVariance,

@@ -92,7 +92,8 @@ local EVENT_NAMES = {
 	-- Weather/crisis (one combined slot, re-rolls each round)
 	"WeatherChanged",     -- S->C: the active weather/crisis condition changed
 	-- Action announce (AP spend label over the acting unit)
-	"ActionAnnounced",    -- S->C: { unitId, label } e.g. "Move", "Basic Attack", skill/item name
+	"ActionAnnounced",
+	"BattleLogEntry",     -- S->C: { t = turn#, c = category, x = text, u = unitId? } server-authored battle log line    -- S->C: { unitId, label } e.g. "Move", "Basic Attack", skill/item name
 	-- Channel VFX lifecycle (loop start/stop on the caster)
 	"ChannelStarted",     -- S->C: { unitId, isHealing } start looping Charging 1/2
 	"ChannelEnded",       -- S->C: { unitId } stop the channel loop (fired on execute; interrupt uses ChannelFizzled)

@@ -1,0 +1,215 @@
+--!strict
+-- UGCMerchantScreen.lua
+-- CTRBLXAI | UGC merchant — the separate screen opened from the Outfit tab's
+-- 'UGC Merchant' shortcut (loadout_ui_spec 72, ugc_rules 36 ugc_merchant).
+-- Browse every curated item with the same Type + Status filters (69/70) and
+-- start a free trial, rent (shows the current doubled price), add to / remove
+-- from the cart, or buy for Roblox Avatar. Cart checkout here is outside battle
+-- only (ugc_rules 45). Presentation only (ARC-001): every action is a server
+-- request through UGCClient; prices and access are decided by UGCService.
+-- Mobile (73): tap-only, 44 px targets, Scale-based layout.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local CTRBLXAI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10) :: Instance
+local UI = CTRBLXAI:WaitForChild("UI", 10) :: Instance
+local Content = ReplicatedStorage:WaitForChild("Content", 10) :: Instance
+local Theme = require(UI:WaitForChild("Theme", 10) :: ModuleScript) :: any
+local UGCClient = require(UI:WaitForChild("UGCClient", 10) :: ModuleScript) :: any
+local W = require(UI:WaitForChild("UGCItemWidgets", 10) :: ModuleScript) :: any
+local UGCCatalogData = require(Content:WaitForChild("UGCCatalogData", 10) :: ModuleScript) :: any
+
+local UGCMerchantScreen = {}
+
+-- Above the loadout screen (100) and its tab bar (150) so it reads as its own screen.
+local DISPLAY_ORDER = Theme.TabBar.DisplayOrder + 10
+local RETRY_TOO_FAST = 0.35
+
+local _gui: ScreenGui? = nil
+local _panel: GuiObject? = nil
+local _onClose: (() -> ())? = nil
+local _filter = W.NewFilterState()
+local _token = 0
+local _pendingMessage: string? = nil
+local _pendingIsError = false
+
+local refresh: () -> ()
+
+local function say(text: string, isError: boolean?)
+	_pendingMessage = text
+	_pendingIsError = isError == true
+end
+
+local function act(fn: () -> any, okText: string | (any) -> string)
+	task.spawn(function()
+		local res = fn()
+		if res and res.ok then
+			say(if type(okText) == "function" then okText(res.data) else okText)
+		else
+			say((res and res.error) or "Request failed", true)
+		end
+		refresh()
+	end)
+end
+
+local function itemCard(grid: Instance, item: any, order: number, view: any)
+	local actions = {}
+	local isOwned = item.status == "owned"
+	local isActive = item.status == "trial" or item.status == "rent"
+	local canStart = item.isAvailable and not item.isOffSale and not isOwned
+	if canStart and not item.isTrialUsed and not isActive then
+		table.insert(actions, { text = `Free trial ({UGCCatalogData.TRIAL_BATTLES} battles)`, color = Theme.Colors.Info,
+			onPress = function()
+				act(function() return UGCClient.StartTrial(item.assetId) end, "Free trial started — equip it in the Outfit tab")
+			end })
+	end
+	if canStart then
+		-- Renting while active adds 30 battles; the price doubles each paid rental (ugc_rules 9-12).
+		local verb = if isActive then `Rent +{UGCCatalogData.RENT_BATTLES}` elseif item.status == "expired" then "Rent again" else "Rent"
+		table.insert(actions, { text = `{verb} ({W.FormatGold(item.rentPrice)} gold)`, color = Theme.Colors.Warning,
+			enabled = (view.gold or 0) >= (item.rentPrice or 0),
+			onPress = function()
+				act(function() return UGCClient.Rent(item.assetId) end, function(d: any)
+					return `Rented — {d and d.remaining or UGCCatalogData.RENT_BATTLES} battles left. Next rental: {W.FormatGold(d and d.nextPrice)} gold`
+				end)
+			end })
+	end
+	if not isOwned then
+		local inCart = item.isInCart == true
+		table.insert(actions, { text = if inCart then "Remove from cart" else "Add to cart", color = Theme.Colors.Surface,
+			onPress = function()
+				act(function() return UGCClient.SetInCart(item.assetId, not inCart) end,
+					if inCart then "Removed from cart" else "Added to cart")
+			end })
+	end
+	local note: string? = nil
+	if item.isOffSale then
+		note = "Off sale — can't be started, rented again or bought"
+	elseif not isOwned and (item.refundOnBuy or 0) > 0 then
+		note = `Buying refunds your last rent: {W.FormatGold(item.refundOnBuy)} gold`
+	elseif canStart and (view.gold or 0) < (item.rentPrice or 0) then
+		note = "Not enough gold to rent"
+	end
+	W.MakeItemCard(grid, item, order, {
+		actions = actions, note = note, isBattleActive = view.isBattleActive,
+		onBuyResult = W.OnBuyResult(say, refresh),
+	})
+end
+
+local function build(view: any)
+	local panel = _panel
+	if not panel or panel.Parent == nil then return end
+	local old = panel:FindFirstChild("MerchantContent")
+	if old then old:Destroy() end -- MEM-002
+	local root = Instance.new("Frame")
+	root.Name = "MerchantContent"
+	root.BackgroundTransparency = 1
+	root.Size = UDim2.fromScale(1, 1)
+	local pad = Instance.new("UIPadding")
+	for _, side in { "PaddingTop", "PaddingBottom", "PaddingLeft", "PaddingRight" } do
+		(pad :: any)[side] = UDim.new(0, Theme.Spacing.lg)
+	end
+	pad.Parent = root
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, Theme.Spacing.sm)
+	list.Parent = root
+
+	local header = W.Row(root, 1)
+	local back = Theme.MakeIconButton(header, "Back", function() UGCMerchantScreen.Close() end, {
+		name = "Btn_CloseMerchant", size = UDim2.fromOffset(Theme.MinSize.TouchTarget, Theme.MinSize.TouchTarget),
+	})
+	back.LayoutOrder = 1
+	W.Label(header, "UGC MERCHANT", { size = UDim2.new(0, 0, 0, Theme.MinSize.TouchTarget), autoSize = Enum.AutomaticSize.X,
+		bold = true, color = Theme.Colors.TextGold, textSize = Theme.Text.Heading(), order = 2 })
+	W.Label(header, `Gold: {W.FormatGold(view.gold)}`, { size = UDim2.new(0, 0, 0, Theme.MinSize.TouchTarget),
+		autoSize = Enum.AutomaticSize.X, order = 3 })
+	local checkout = UGCClient.MakeTextButton(header, `Checkout cart ({view.cartCount or 0}/{view.cartCap or UGCCatalogData.CART_CAP})`,
+		Theme.Colors.Success, function() W.Checkout(say, refresh) end,
+		not view.isBattleActive and (view.cartCount or 0) > 0) -- outside battle only (45)
+	checkout.LayoutOrder = 4
+	W.Compact(checkout)
+
+	W.MakeFilterBar(root, _filter, 2, refresh)
+	local msg = W.MakeMessage(root, 3)
+	if _pendingMessage then
+		W.SetMessage(msg, _pendingMessage, _pendingIsError)
+		_pendingMessage = nil
+	end
+
+	local shown = {}
+	for _, item in view.items or {} do
+		if W.PassesFilter(item, _filter) then table.insert(shown, item) end
+	end
+	W.SortItems(shown, _filter)
+	if #shown == 0 then
+		W.EmptyState(root, if #(view.items or {}) == 0 then "No UGC items are curated yet."
+			else "No items match these filters.").LayoutOrder = 4
+	else
+		local grid = W.MakeGrid(root, 4)
+		for i, item in shown do itemCard(grid, item, i, view) end
+	end
+	root.Parent = panel -- NET-004
+end
+
+refresh = function()
+	_token += 1
+	local token = _token
+	task.spawn(function()
+		local res = UGCClient.GetView(nil) -- merchant is not unit-specific
+		if token ~= _token or not _gui then return end
+		if not res.ok and res.error == "Too fast — try again" then
+			task.delay(RETRY_TOO_FAST, function()
+				if token == _token then refresh() end
+			end)
+			return
+		end
+		if not res.ok or type(res.data) ~= "table" then
+			warn(`[UGCMerchantScreen] Could not load UGC view: {res.error}`)
+			say("UGC items are unavailable right now.", true)
+			build({ items = {}, gold = 0, cartCount = 0, isBattleActive = true })
+			return
+		end
+		build(res.data)
+	end)
+end
+
+function UGCMerchantScreen.IsOpen(): boolean
+	return _gui ~= nil and _gui.Parent ~= nil
+end
+
+-- opts.onClose: called after the screen closes (the Outfit tab reloads).
+function UGCMerchantScreen.Open(opts: any?)
+	_onClose = if type(opts) == "table" then opts.onClose else nil
+	if UGCMerchantScreen.IsOpen() then
+		refresh()
+		return
+	end
+	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+	local gui, root = Theme.MakeFullScreen("UGCMerchantScreen", playerGui)
+	gui.DisplayOrder = DISPLAY_ORDER
+	_gui = gui
+	_panel = Theme.MakePanel("MerchantPanel", UDim2.fromScale(1, 1), UDim2.new(), nil, root)
+	refresh()
+end
+
+-- Server push while open (the Outfit tab forwards UGCStateChanged).
+function UGCMerchantScreen.Refresh(message: string?)
+	if not UGCMerchantScreen.IsOpen() then return end
+	if message then say(message) end
+	refresh()
+end
+
+function UGCMerchantScreen.Close()
+	if not _gui then return end
+	if W.CloseMenu then W.CloseMenu() end -- drop any open Type/Status/Sort list
+	_token += 1
+	_gui:Destroy() -- MEM-002: buttons and their connections go with it
+	_gui, _panel = nil, nil
+	local cb = _onClose
+	_onClose = nil
+	if cb then cb() end
+end
+
+return UGCMerchantScreen

@@ -1,0 +1,164 @@
+-- BattleEvents.lua
+-- CTRBLXAI | Slice 3
+--
+-- Creates and exposes RemoteEvents for battle communication.
+--
+-- Server → Client (FireAllClients / FireClient):
+--   BattleStarted, TurnStarted, UnitMoved, UnitActed, UnitDefeated,
+--   TurnEnded, BattleEnded, StatusApplied, StatusExpired,
+--   DotDamage, SkillCardData, TargetHighlight, HealingApplied,
+--   PlayerTurnPrompt (tells client it's their turn with available actions)
+--
+-- Client → Server (FireServer):
+--   PlayerCommand (player sends their chosen action)
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local function getOrCreateFolder()
+	local CTRBLXAI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+	assert(CTRBLXAI, "BattleEvents: CTRBLXAI folder not found in ReplicatedStorage.")
+
+	local existing = CTRBLXAI:FindFirstChild("BattleRemotes")
+	if existing then return existing end
+
+	local folder = Instance.new("Folder")
+	folder.Name   = "BattleRemotes"
+	folder.Parent = CTRBLXAI
+	return folder
+end
+
+local remoteFolder = getOrCreateFolder()
+
+local EVENT_NAMES = {
+	"BattleStarted",
+	"TurnStarted",
+	"UnitMoved",
+	"UnitActed",
+	"UnitDefeated",
+	"TurnEnded",
+	"BattleEnded",
+	"StatusApplied",
+	"StatusExpired",
+	"DotDamage",
+	"SkillCardData",
+	"TargetHighlight",
+	"HealingApplied",
+	-- Player input (Slice 3)
+	"PlayerTurnPrompt",
+	"PlayerCommand",
+	"TurnOrderUpdate",
+	-- Slice 4A
+	"ChannelFizzled",
+	"GuardActivated",
+	"UnitPushed",
+	-- Unit Inspector (3-tab)
+	"InspectUnitRequest",
+	"InspectUnitResponse",
+	-- Phase 2: Status expansion
+	"TurnSkipped",
+	"StatusImmune",
+	-- Dev tools (Studio only)
+	"DevCommand",
+	-- Slice 4D: Management contracts
+	"RewardScreen",       -- S->C: reward summaries after victory
+	"RewardContinue",     -- C->S: player acknowledged rewards
+	"LoadoutHubOpen",     -- S->C: tells client to show loadout hub
+	"StartBattle",        -- C->S: player ready to fight
+	-- Tile effects (Slice 3: TileEffectService)
+	"TileEffectApplied",  -- S->C: effect placed on tile
+	"TileEffectRemoved",  -- S->C: effect removed from tile
+	"UnitStateChanged",   -- S->C: unit HP/isAlive changed (revive, etc.)
+	"MapDataSync",        -- S->C: terrain/elevation/blocker grids for client
+	-- Phase B: Quest Board
+	"QuestBoardOpen",     -- S->C: quest board data (3 quests)
+	"QuestSelected",      -- C->S: player picks a quest
+	-- Phase D: Deployment
+	"DeploymentPhase",    -- S->C: deployment data (anchors, units, map size)
+	"DeployUnit",         -- C->S: player places a unit on a tile
+	"UnitDeployed",       -- S->C: server confirms unit placement
+	"UndeployUnit",       -- C->S: player removes a deployed unit
+	"UnitUndeployed",     -- S->C: server confirms unit removal
+	"DeploymentReady",    -- C->S: all units placed, start battle
+	-- Facing system
+	"FacingPrompt",       -- S->C: asks player to choose facing direction
+	"SetFacing",          -- C->S: player's chosen facing direction
+	"FacingChanged",      -- S->C: unit facing direction changed
+	-- Item usage
+	"ItemUsed",           -- S->C: unit used a consumable item
+	-- Reinforcements (mid-battle spawn)
+	"UnitSpawned",        -- S->C: a new unit entered the battle mid-fight
+	-- Time cycle (Dawn/Day/Dusk/Night, one phase per 1000-CT round)
+	"TimePhaseChanged",   -- S->C: the battle time-of-day phase changed
+	-- Weather/crisis (one combined slot, re-rolls each round)
+	"WeatherChanged",     -- S->C: the active weather/crisis condition changed
+	-- Action announce (AP spend label over the acting unit)
+	"ActionAnnounced",    -- S->C: { unitId, label } e.g. "Move", "Basic Attack", skill/item name
+	-- Channel VFX lifecycle (loop start/stop on the caster)
+	"ChannelStarted",     -- S->C: { unitId, isHealing } start looping Charging 1/2
+	"ChannelEnded",       -- S->C: { unitId } stop the channel loop (fired on execute; interrupt uses ChannelFizzled)
+	"MultiTargetHit",     -- S->C: { unitId } attacker played a multi-target (Cleave) hit; client shows Multi-Slash on the attacker
+	-- Shield subsystem (damage-absorption pool). S->C: a unit's shield_total
+	-- changed (granted, absorbed damage, decayed, or broke). Client shows a
+	-- shield bar/pill and a grant/break flourish.
+	"ShieldChanged",      -- S->C: { unitId, shieldTotal, delta, reason, maxHp, currentHp }
+	-- Battlefield events (35-event system). S->C: a battlefield event triggered;
+	-- client shows a dramatic center-screen banner with the event's name.
+	"BattlefieldEventAnnounced",  -- S->C: { eventName }
+}
+
+-- RemoteFunctions for Slice 4D management contracts
+local FUNCTION_NAMES = {
+	"GetRosterData",
+	"GetInventoryData",
+	"RequestEquip",
+	"RequestUnequip",
+	-- Slice 4H: Doctrine management
+	"RequestDoctrineChange",
+	"RequestDoctrineSkillSelect",
+	"GetDoctrineChoices",
+	-- Slice 4I: Skill Card and Augment Card management
+	"RequestEquipSkillCard",
+	"RequestUnequipSkillCard",
+	"RequestAttachAugment",
+	"RequestDetachAugment",
+	"GetSkillLoadout",
+	-- Slice 4J: Stat allocation and comparison
+	"RequestAllocateStat",
+	"GetEquipmentComparison",
+	"GetDoctrineComparison",
+	"GetUnitFullStats",
+
+	"RequestEquipConsumable",
+	"RequestUnequipConsumable",
+	"GetConsumableSlots",
+}
+
+local BattleEvents = {}
+
+for _, name in ipairs(EVENT_NAMES) do
+	local existing = remoteFolder:FindFirstChild(name)
+
+	if existing and existing:IsA("RemoteEvent") then
+		BattleEvents[name] = existing
+	else
+		local event   = Instance.new("RemoteEvent")
+		event.Name    = name
+		event.Parent  = remoteFolder
+		BattleEvents[name] = event
+	end
+end
+
+for _, name in ipairs(FUNCTION_NAMES) do
+	local existing = remoteFolder:FindFirstChild(name)
+
+	if existing and existing:IsA("RemoteFunction") then
+		BattleEvents[name] = existing
+	else
+		local fn = Instance.new("RemoteFunction")
+		fn.Name   = name
+		fn.Parent = remoteFolder
+		BattleEvents[name] = fn
+	end
+end
+
+return BattleEvents

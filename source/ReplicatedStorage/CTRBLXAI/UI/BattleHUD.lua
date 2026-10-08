@@ -79,6 +79,7 @@ local presentation = {
 	inspectedEntityId = nil,   -- unit being examined (separate from actor)
 }
 local battleLog       = {}
+local LOG_CAP         = 80 -- mobile-friendly history cap (2026-10-08 server-authored log)
 
 -- View Mode + Battle Log toggle state
 local isViewMode          = false  -- legacy; view mode retired 2026-10-07 (always false)
@@ -147,6 +148,34 @@ local function makePanel(name, size, position, anchor, parent, opts)
 		constraint.MaxSize = Vector2.new(opts.maxW or 260, opts.maxH or 400)
 	end
 	return f
+end
+
+
+-- Fixed column layout for the Skills / Items lists (2026-10-08). The theme "Mono" font is not
+-- fixed-width, so padding with spaces can't line columns up; each column is its own label.
+local LIST_COL_W = 30
+local function listColumns(parent, name, cols, isHeader)
+	local function cell(text, size, pos, align)
+		local l = Instance.new("TextLabel")
+		l.Size = size; l.Position = pos
+		l.BackgroundTransparency = 1; l.BorderSizePixel = 0
+		l.Font = Theme.Font.Primary; l.TextSize = Theme.Text.Small()
+		l.TextColor3 = if isHeader then Theme.Colors.TextSecondary else Color3.new(1, 1, 1)
+		if not isHeader then
+			l.TextStrokeColor3 = Color3.new(0, 0, 0); l.TextStrokeTransparency = 0
+			l:SetAttribute("BarText", true)
+		end
+		l.TextXAlignment = align; l.TextYAlignment = Enum.TextYAlignment.Center
+		l.TextTruncate = Enum.TextTruncate.AtEnd
+		l.Text = text
+		l.Parent = parent -- NET-004
+	end
+	local n = #cols
+	cell(name, UDim2.new(1, -(6 + LIST_COL_W * n), 1, 0), UDim2.fromOffset(6, 0), Enum.TextXAlignment.Left)
+	for i, v in cols do
+		local x = -(LIST_COL_W * (n - i + 1))
+		cell(tostring(v), UDim2.new(0, LIST_COL_W, 1, 0), UDim2.new(1, x, 0, 0), Enum.TextXAlignment.Right)
+	end
 end
 
 local function makeLabel(parent, text, props)
@@ -478,40 +507,80 @@ end
 -- ACTIVE UNIT PANEL (upper-left)
 --------------------------------------------------
 
+-- Plain-language activation phrase for an object (part of its description).
+-- RT: the authored interactRT if the object has one, else the basic Interact cost
+-- (10% of the acting unit's base RT, per the map-object catalog fallback rule).
+local function objectActivationText(def): string?
+	local act = def.activation or ""
+	if act == "Passive" then return "Passive." end
+	if act == "Triggered" then return "Triggers when a unit steps on it." end
+	if act == "Interact (Free)" then return "Interact: free action (no RT)." end
+	if def.interactRT then return `Interact: RT {def.interactRT}.` end
+	return "Interact: basic RT (10% of base RT)."
+end
+
+local USES_TEXT = {
+	Once = "Single use.",
+	Unlimited = "Unlimited uses.",
+	["Once per turn"] = "Once per turn.",
+	["Until Destroyed"] = "Lasts until destroyed.",
+}
+
 local function buildObjectCard()
-	-- Map object in the unit panel: name, category, passability, effect.
+	-- Map object in the unit panel. Line 1: name. Line 2: one scrollable description
+	-- (passability, effect, activation/RT, uses).
 	local sel = _selection
 	local def = ObjectData and ObjectData.Objects and ObjectData.Objects[sel.name]
 	activeUnitPanel.Visible = true
 	local pad = Instance.new("UIPadding", activeUnitPanel)
 	pad.PaddingTop = UDim.new(0, 8); pad.PaddingLeft = UDim.new(0, 8)
 	pad.PaddingRight = UDim.new(0, 8); pad.PaddingBottom = UDim.new(0, 6)
-	-- Content in its own auto-height frame; the tap layer sits outside the layout.
+	local NAME_H, DESC_H = 18, 96
 	local content = Instance.new("Frame")
-	content.Name = "ObjContent"; content.Size = UDim2.new(1, 0, 0, 0)
-	content.AutomaticSize = Enum.AutomaticSize.Y; content.BackgroundTransparency = 1
+	content.Name = "ObjContent"; content.Size = UDim2.new(1, 0, 0, NAME_H + 2 + DESC_H)
+	content.BackgroundTransparency = 1
 	content.Parent = activeUnitPanel
-	local layout = Instance.new("UIListLayout", content)
-	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
-	makeMarquee(makeLabel(content, sel.name, { size = UDim2.new(1, 0, 0, 16),
-		font = Theme.Font.PrimaryBold, textSize = Theme.Text.Heading(), color = Theme.Colors.Warning, order = 1 }))
-	if def then
-		local sub = (def.category or "Object") .. "  |  " .. (if def.passable then "Passable" else "Impassable")
-		makeLabel(content, sub, { size = UDim2.new(1, 0, 0, 14),
-			textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 2 })
-		if def.primaryEffect then
-			local eff = makeLabel(content, def.primaryEffect, { size = UDim2.new(1, 0, 0, 0),
-				textSize = Theme.Text.Small(), color = Theme.Colors.TextPrimary, wrap = true, order = 3 })
-			eff.AutomaticSize = Enum.AutomaticSize.Y
-		end
-	end
-	-- Tap the card for the full object details (same window as before, manual only).
-	local tap = Instance.new("TextButton")
-	tap.Size = UDim2.fromScale(1, 1); tap.BackgroundTransparency = 1; tap.Text = ""
-	tap.ZIndex = 10; tap.Parent = activeUnitPanel
-	tap.Activated:Connect(function()
+	-- Line 1: name (tap it for the full object details window).
+	local nameBtn = Instance.new("TextButton")
+	nameBtn.Size = UDim2.new(1, 0, 0, NAME_H); nameBtn.BackgroundTransparency = 1
+	nameBtn.Text = ""; nameBtn.AutoButtonColor = false; nameBtn.Parent = content
+	makeMarquee(makeLabel(nameBtn, sel.name, { size = UDim2.fromScale(1, 1),
+		font = Theme.Font.PrimaryBold, textSize = Theme.Text.Heading(), color = Theme.Colors.Warning }))
+	nameBtn.Activated:Connect(function()
 		if _G.CTRBLXAI_OpenObjectInspector then _G.CTRBLXAI_OpenObjectInspector(sel.name, sel.x, sel.y) end
 	end)
+	-- Line 2: description, scrollable (no tap layer over it, so dragging scrolls).
+	local desc
+	if def then
+		local parts = { if def.passable then "Passable." else "Impassable." }
+		if def.primaryEffect and def.primaryEffect ~= "" then
+			local e = def.primaryEffect
+			if not string.find(e, "[%.!]$") then e ..= "." end
+			table.insert(parts, e)
+		end
+		local at = objectActivationText(def)
+		if at then table.insert(parts, at) end
+		local ut = def.uses and USES_TEXT[def.uses]
+		if ut then table.insert(parts, ut) end
+		desc = table.concat(parts, " ")
+	else
+		warn(`[BattleHUD] No ObjectData entry for selected object: {tostring(sel.name)}`)
+		desc = "No details available."
+	end
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name = "ObjDesc"
+	scroll.Position = UDim2.fromOffset(0, NAME_H + 2)
+	scroll.Size = UDim2.new(1, 0, 0, DESC_H)
+	scroll.BackgroundTransparency = 1; scroll.BorderSizePixel = 0
+	scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+	scroll.CanvasSize = UDim2.new(); scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.ScrollBarThickness = 4
+	scroll.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	scroll.Parent = content
+	local dl = makeLabel(scroll, desc, { size = UDim2.new(1, -6, 0, 0),
+		textSize = Theme.Text.Small(), color = if def then Theme.Colors.TextPrimary else Theme.Colors.TextDisabled,
+		wrap = true, vAlign = Enum.TextYAlignment.Top })
+	dl.AutomaticSize = Enum.AutomaticSize.Y
 end
 
 function BattleHUD._buildActiveUnit()
@@ -659,27 +728,18 @@ function BattleHUD._showActionList(actions, parentLabel)
 
 	for i, action in ipairs(actions) do
 		if action.isSubmenu and action.subActions then
-			makeButton(actionPanel, action.text .. " ▸", {
-				size = UDim2.new(1, 0, 0, Theme.Elem.RowMedium()),
-				enabled = action.enabled,
-				onPress = function()
-					BattleHUD.ClearSelection()
-					BattleHUD._showActionList(action.subActions, "Back")
-				end,
-				order = i,
-				textSize = Theme.Text.Body(),
-			})
+			-- Bar-button art, 24 px (user ruling 2026-10-08): navy = available, dark = unavailable.
+			Theme.MakeTabButton(actionPanel, action.text .. " ▸", if action.enabled ~= false then "Inactive" else "Disabled", function()
+				BattleHUD.ClearSelection()
+				BattleHUD._showActionList(action.subActions, "Back")
+			end, { name = "Act_" .. tostring(action.text), size = UDim2.new(1, 0, 0, Theme.MinSize.TabButton),
+				layoutOrder = i, textSize = Theme.Text.Body() })
 		else
-			makeButton(actionPanel, action.text, {
-				size = UDim2.new(1, 0, 0, Theme.Elem.RowMedium()),
-				enabled = action.enabled,
-				onPress = function(...)
-					BattleHUD.ClearSelection()
-					if action.onPress then return action.onPress(...) end
-				end,
-				order = i,
-				textSize = Theme.Text.Body(),
-			})
+			Theme.MakeTabButton(actionPanel, action.text, if action.enabled ~= false then "Inactive" else "Disabled", function()
+				BattleHUD.ClearSelection()
+				if action.onPress then action.onPress() end
+			end, { name = "Act_" .. tostring(action.text), size = UDim2.new(1, 0, 0, Theme.MinSize.TabButton),
+				layoutOrder = i, textSize = Theme.Text.Body() })
 		end
 	end
 end
@@ -1211,36 +1271,26 @@ end
 -- size/position come from UILayoutCoordinator per screen mode, so never hardcode).
 -- Square panel: width = bar height; same top/bottom; 4px gap to the bar's right.
 alignTimePanel = function()
-	-- Left of the right column, flush, no gaps:
-	--   Time + Weather stacked; together exactly the unit panel's height.
-	--   Event below them, same size, top aligned with the adaptive panel
-	--   (action / inspector / preview, whichever is shown under the unit panel).
+	-- Time | Weather | Event in ONE ROW at the very top of the screen, right-to-left
+	-- from the unit panel's left edge with no gaps (Event touches the unit panel).
+	-- Fixed size (no longer scales with the unit panel): big enough to read on mobile.
 	if not (timePanel and rootFrame and activeUnitPanel) then return end
 	local rootAbs = rootFrame.AbsolutePosition
 	local aPos = activeUnitPanel.AbsolutePosition
-	local aSize = activeUnitPanel.AbsoluteSize
-	if aSize.Y <= 0 then return end
-	local side = math.floor(aSize.Y / 2)
-	local x = aPos.X - rootAbs.X - side
+	local SIDE = 56
+	local right = aPos.X - rootAbs.X
+	-- Top edge matches the unit panel's top (it sits at the top of the screen), so the
+	-- row reads as attached to it.
 	local y = aPos.Y - rootAbs.Y
-	local function place(p, py, h)
-		if not p then return end
-		p.SizeConstraint = Enum.SizeConstraint.RelativeXY
-		p.AnchorPoint = Vector2.new(0, 0)
-		p.Size = UDim2.fromOffset(side, h)
-		p.Position = UDim2.fromOffset(x, py)
-	end
-	place(timePanel, y, side)
-	place(weatherPanel, y + side, aSize.Y - side)  -- absorbs rounding so bottoms match
-	-- Event: top of the first visible adaptive panel; else directly under the pair.
-	local eventY = y + aSize.Y
-	for _, ap in ipairs({ actionPanel, inspectorPanel, tilePreviewPanel }) do
-		if ap and ap.Visible and ap.AbsoluteSize.Y > 0 then
-			eventY = ap.AbsolutePosition.Y - rootAbs.Y
-			break
+	local order = { eventPanel, weatherPanel, timePanel }  -- nearest the unit panel first
+	for idx, p in ipairs(order) do
+		if p then
+			p.SizeConstraint = Enum.SizeConstraint.RelativeXY
+			p.AnchorPoint = Vector2.new(0, 0)
+			p.Size = UDim2.fromOffset(SIDE, SIDE)
+			p.Position = UDim2.fromOffset(right - idx * SIDE, y)
 		end
 	end
-	place(eventPanel, eventY, side)
 end
 
 -- Art for these panels is pending (user will upload). Fill ids here; until then the
@@ -1762,10 +1812,14 @@ end
 -- BATTLE LOG (lower-right)
 --------------------------------------------------
 
-function BattleHUD.AddLogEntry(text)
-	table.insert(battleLog, text)
-	if #battleLog > 20 then table.remove(battleLog, 1) end
-	BattleHUD._buildBattleLog()
+-- Accepts a server BattleLogEntry { t, c, x, u } (2026-10-08) or a plain
+-- string (legacy callers). Entries are grouped under "turn" headers.
+function BattleHUD.AddLogEntry(entry)
+	if type(entry) == "string" then entry = { c = "info", x = entry } end
+	if type(entry) ~= "table" or type(entry.x) ~= "string" then return end
+	table.insert(battleLog, entry)
+	while #battleLog > LOG_CAP do table.remove(battleLog, 1) end
+	if isBattleLogExpanded then BattleHUD._buildBattleLog() end
 end
 
 function BattleHUD._buildBattleLog()
@@ -1792,11 +1846,13 @@ function BattleHUD._buildBattleLog()
 		lbl.Size = UDim2.new(1, -8, 0, Theme.Elem.RowTiny())
 		lbl.BackgroundTransparency = 1
 		lbl.Font = Theme.Font.Primary; lbl.TextSize = Theme.Text.Body()
-		lbl.TextColor3 = Theme.Colors.TextSecondary
+		local isHeader = type(entry) == "table" and entry.c == "turn"
+		lbl.TextColor3 = if isHeader then Theme.Colors.TextGold else Theme.Colors.TextSecondary
 		lbl.TextXAlignment = Enum.TextXAlignment.Left
 		lbl.TextWrapped = true
 		lbl.AutomaticSize = Enum.AutomaticSize.Y
-		lbl.Text = entry; lbl.LayoutOrder = i
+		local text = if type(entry) == "table" then entry.x else tostring(entry)
+		lbl.Text = if isHeader then text else ("  • " .. text); lbl.LayoutOrder = i
 		lbl.Parent = scroll
 	end
 end
@@ -2350,25 +2406,20 @@ function BattleHUD._buildSkillList()
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
 	-- Header
-	makeLabel(actionPanel, "Skill            MP  RT", { font = Theme.Font.Mono,
-		textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 0 })
+	do
+		local hdr = Instance.new("Frame")
+		hdr.Size = UDim2.new(1, 0, 0, Theme.Elem.RowTiny()); hdr.BackgroundTransparency = 1; hdr.LayoutOrder = 0
+		listColumns(hdr, "Skill", { "MP", "RT" }, true)
+		hdr.Parent = actionPanel
+	end
 
 	for i, skill in ipairs(presentation.actor.skillEntries) do
 		local enabled = skill.enabled ~= false
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(1, 0, 0, Theme.Elem.RowMedium())
-		btn.BackgroundColor3 = Theme.Colors.Surface
-		btn.BackgroundTransparency = enabled and 0.5 or 0.8
-		btn.BorderSizePixel = 0
-		btn.Font = Theme.Font.Mono; btn.TextSize = Theme.Text.Body()
-		btn.TextColor3 = enabled and Theme.Colors.TextPrimary or Theme.Colors.TextDisabled
-		btn.TextXAlignment = Enum.TextXAlignment.Left
-		btn.Text = string.format(" %-14s %2d  %2d",
-			string.sub(skill.name or "?", 1, 13), skill.mpCost or 0, skill.rtCost or 0)
-		btn.AutoButtonColor = enabled; btn.Active = enabled
-		btn.LayoutOrder = i; btn.Parent = actionPanel
-		Instance.new("UICorner", btn).CornerRadius = Theme.CornerRadius.sm
-		if enabled and skill.onPress then btn.MouseButton1Click:Connect(skill.onPress) end
+		-- Bar-button art, 24 px (user ruling 2026-10-08); mono left label keeps the columns.
+		local btn = Theme.MakeTabButton(actionPanel, "",
+			if enabled then "Inactive" else "Disabled", function() if skill.onPress then skill.onPress() end end,
+			{ name = "Sub_" .. tostring(i), size = UDim2.new(1, 0, 0, Theme.MinSize.TabButton), layoutOrder = i })
+		listColumns(btn, skill.name or "?", { skill.mpCost or 0, skill.rtCost or 0 }, false)
 	end
 
 	-- Command bar: Back button during SkillSelection
@@ -2396,25 +2447,20 @@ function BattleHUD._buildItemList()
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
 	-- Header
-	makeLabel(actionPanel, "Item                 RT", { font = Theme.Font.Mono,
-		textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 0 })
+	do
+		local hdr = Instance.new("Frame")
+		hdr.Size = UDim2.new(1, 0, 0, Theme.Elem.RowTiny()); hdr.BackgroundTransparency = 1; hdr.LayoutOrder = 0
+		listColumns(hdr, "Item", { "RT" }, true)
+		hdr.Parent = actionPanel
+	end
 
 	for i, item in ipairs(presentation.actor.itemEntries) do
 		local enabled = item.enabled ~= false
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(1, 0, 0, Theme.Elem.RowMedium())
-		btn.BackgroundColor3 = Theme.Colors.Surface
-		btn.BackgroundTransparency = enabled and 0.5 or 0.8
-		btn.BorderSizePixel = 0
-		btn.Font = Theme.Font.Mono; btn.TextSize = Theme.Text.Body()
-		btn.TextColor3 = enabled and Theme.Colors.TextPrimary or Theme.Colors.TextDisabled
-		btn.TextXAlignment = Enum.TextXAlignment.Left
-		btn.Text = string.format(" %-18s %2d",
-			string.sub(item.name or "?", 1, 17), item.rtCost or 0)
-		btn.AutoButtonColor = enabled; btn.Active = enabled
-		btn.LayoutOrder = i; btn.Parent = actionPanel
-		Instance.new("UICorner", btn).CornerRadius = Theme.CornerRadius.sm
-		if enabled and item.onPress then btn.MouseButton1Click:Connect(item.onPress) end
+		-- Bar-button art, 24 px (user ruling 2026-10-08); mono left label keeps the columns.
+		local btn = Theme.MakeTabButton(actionPanel, "",
+			if enabled then "Inactive" else "Disabled", function() if item.onPress then item.onPress() end end,
+			{ name = "Sub_" .. tostring(i), size = UDim2.new(1, 0, 0, Theme.MinSize.TabButton), layoutOrder = i })
+		listColumns(btn, item.name or "?", { item.rtCost or 0 }, false)
 	end
 
 	-- Command bar: Back button during ItemSelection

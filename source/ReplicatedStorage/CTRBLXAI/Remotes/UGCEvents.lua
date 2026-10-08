@@ -7,7 +7,7 @@
 -- Direction rules (SEC-001 / SEC-002 / ARC-001):
 --   Server -> Client RemoteEvents are FACTS ("these items changed").
 --   Client -> Server RemoteFunctions are INTENTIONS or read-only queries. The
---   client sends ids only (assetId, unitId, slot, vote, isMarked) — never prices,
+--   client sends ids only (assetId, unitId, slot, vote, isInCart) — never prices,
 --   ownership or results. UGCRemoteHandler re-validates everything server-side.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -18,7 +18,7 @@ local WAIT_TIMEOUT = 10 -- seconds (LOAD-001)
 
 -- Server -> Client facts
 local EVENT_NAMES = table.freeze({
-	"UGCStateChanged", -- { reason = "purchased" | "expired", assetIds = { number } }
+	"UGCStateChanged", -- { reason = "purchased" | "refunded" | "expired" | "battleEnded", assetIds = { number }, extra = { gold }? }
 })
 
 -- Client -> Server queries / intentions
@@ -29,9 +29,12 @@ local FUNCTION_NAMES = table.freeze({
 	"RequestUGCRent",     -- (assetId) -> result (server prices it)
 	"RequestUGCEquip",    -- (unitId, assetId) -> result
 	"RequestUGCUnequip",  -- (unitId, slot) -> result
-	"RequestUGCWishlist", -- (assetId, isMarked) -> result
+	"RequestUGCCart",     -- (assetId, isInCart) -> result (adding allowed during battle)
+	"RequestUGCCheckout", -- () -> result (outside battle only; server opens the prompt)
+	"RequestUGCCartVerify", -- () -> result (after the bulk prompt closes; server re-verifies)
 	"RequestUGCRate",     -- (assetId, vote: 1 | 0 | -1) -> result
 	"RequestUGCPurchase", -- (assetId) -> result (server calls PromptPurchase)
+	"RequestUGCPreview",  -- (unitId, tryOnIds) -> result; read-only look preview (Outfit tab)
 })
 
 local UGCEvents = {}

@@ -766,7 +766,8 @@ BattleEvents.UnitDeployed.OnClientEvent:Connect(function(data)
 		pdHighlights[key] = nil
 	end
 
-	-- Check if all units deployed
+	-- Start Battle is available as soon as ONE unit is deployed (user ruling 2026-10-07).
+	showStartBattleButton()
 	local allPlaced = true
 	for _, entry in ipairs(rosterEntries) do
 		if not entry.deployed then
@@ -776,7 +777,6 @@ BattleEvents.UnitDeployed.OnClientEvent:Connect(function(data)
 	end
 
 	if allPlaced then
-		showStartBattleButton()
 		selectedUnitId = nil
 		-- Deselect all roster entries
 		for _, entry in ipairs(rosterEntries) do
@@ -821,14 +821,19 @@ BattleEvents.UnitUndeployed.OnClientEvent:Connect(function(data)
 		createPDHighlight(data.tileX, data.tileY)
 	end
 
-	-- Hide Start Battle button (no longer all deployed)
-	if startBattleBtn then
-		startBattleBtn.Visible = false
-		-- Also hide the container
-		local container = screenGui and screenGui:FindFirstChild("StartBattleBtnContainer")
-		if container then container.Visible = false end
+	-- Hide Start Battle only when NO unit is deployed any more.
+	local anyDeployed = false
+	for _, entry in ipairs(rosterEntries) do
+		if entry.deployed then anyDeployed = true; break end
 	end
-	startBattleBtn = nil
+	if not anyDeployed then
+		if startBattleBtn then
+			startBattleBtn:Destroy()
+			local container = screenGui and screenGui:FindFirstChild("StartBattleBtnContainer")
+			if container then container.Visible = false end
+		end
+		startBattleBtn = nil
+	end
 
 	-- Auto-select the undeployed unit
 	selectUnit(data.unitId)

@@ -300,7 +300,8 @@ local function populateCard(cardData, quest)
 	cardData.typeRow.Text      = quest.questType .. "       Lv " .. quest.recommendedLvl
 
 	cardData.enemyRow.Text     = quest.enemyCount .. " enemies"
-	cardData.goldRow.Text      = quest.rewards.gold.min .. "–" .. quest.rewards.gold.max .. " gold"
+	local g = quest.rewards.gold
+	cardData.goldRow.Text      = if g.min == g.max then `{g.min} gold + kills` else `{g.min}–{g.max} gold`
 	cardData.dropRow.Text      = quest.rewards.drops .. " drops"
 
 	cardData.conditionRow.Text = quest.condition

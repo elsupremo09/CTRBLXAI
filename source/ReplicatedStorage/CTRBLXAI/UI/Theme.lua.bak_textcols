@@ -1,0 +1,1158 @@
+-- Theme.lua
+-- CTRBLXAI | Slice 7A — Central Visual Theme
+--
+-- Single source of truth for all visual styling.
+-- Every UI component must reference Theme values instead of hardcoding colors,
+-- spacing, fonts, or sizes.
+--
+-- Visual direction: Restrained dark-fantasy Roblox style.
+--   Dark charcoal backgrounds, slightly raised gray panels, muted accents,
+--   thin borders, small corner radius, minimal decoration, high readability.
+
+local Theme = {}
+
+--------------------------------------------------
+-- COLORS
+--------------------------------------------------
+
+Theme.Colors = {
+	-- Backgrounds
+	Background      = Color3.fromRGB(12, 12, 18),   -- Deepest layer
+	Panel           = Color3.fromRGB(22, 22, 32),    -- Standard panel
+	PanelRaised     = Color3.fromRGB(32, 32, 44),    -- Elevated panel / hover state
+	Surface         = Color3.fromRGB(40, 40, 55),    -- Interactive surfaces (buttons bg)
+
+	-- Borders
+	Border          = Color3.fromRGB(50, 50, 65),    -- Subtle default border
+	BorderSelected  = Color3.fromRGB(100, 160, 255), -- Selected element (blue)
+	BorderFocused   = Color3.fromRGB(255, 230, 80),  -- Active/focused (gold)
+
+	-- Dark Metal Plate panel style
+	MetalOuter      = Color3.fromRGB(18, 18, 26),    -- Outer panel frame
+	MetalInner      = Color3.fromRGB(26, 26, 36),    -- Inner panel (slightly lighter)
+	MetalGlow       = Color3.fromRGB(80, 120, 200),  -- Inner glow tint (blue)
+	MetalEdge       = Color3.fromRGB(42, 42, 58),    -- Outer border
+	MetalRivet      = Color3.fromRGB(55, 55, 70),    -- Rivet highlight
+
+	-- Faction
+	Player          = Color3.fromRGB(70, 130, 220),  -- Muted blue
+	Enemy           = Color3.fromRGB(200, 70, 50),   -- Restrained red-orange
+	Neutral         = Color3.fromRGB(140, 140, 140), -- Gray
+
+	-- Text
+	TextPrimary     = Color3.fromRGB(230, 230, 235), -- Main readable text
+	TextSecondary   = Color3.fromRGB(160, 160, 175), -- Supporting text
+	TextDisabled    = Color3.fromRGB(80, 80, 95),    -- Disabled / unavailable
+	TextGold        = Color3.fromRGB(255, 220, 80),  -- Emphasis / headers
+
+	-- Resources
+	HP              = Color3.fromRGB(60, 190, 70),   -- Health bar fill
+	HPLow           = Color3.fromRGB(220, 60, 40),   -- Health critical
+	MP              = Color3.fromRGB(70, 120, 220),  -- Mana bar fill
+	MPLow           = Color3.fromRGB(140, 80, 200),  -- Mana low
+
+	-- Feedback
+	Warning         = Color3.fromRGB(240, 180, 40),  -- Amber warning
+	Danger          = Color3.fromRGB(220, 50, 50),   -- Red danger / critical
+	Success         = Color3.fromRGB(60, 200, 80),   -- Green success / heal
+	Info            = Color3.fromRGB(100, 170, 255),  -- Blue informational
+
+	-- Status effect colors (for floating text / tinting)
+	Poison          = Color3.fromRGB(80, 200, 80),
+	Burn            = Color3.fromRGB(255, 140, 40),
+	Freeze          = Color3.fromRGB(100, 200, 255),
+	Silence         = Color3.fromRGB(180, 80, 200),
+	Stun            = Color3.fromRGB(255, 255, 100),
+	Bleed           = Color3.fromRGB(180, 30, 30),
+	Slow            = Color3.fromRGB(150, 150, 200),
+
+	-- Rarity
+	RarityCommon    = Color3.fromRGB(160, 160, 160), -- Gray
+	RarityUncommon  = Color3.fromRGB(80, 200, 80),   -- Green
+	RarityRare      = Color3.fromRGB(70, 140, 255),  -- Blue
+	RarityEpic      = Color3.fromRGB(180, 80, 255),  -- Purple
+	RarityLegendary = Color3.fromRGB(255, 200, 50),  -- Gold
+
+	-- Misc
+	Overlay         = Color3.fromRGB(0, 0, 0),       -- Modal backdrop (use with transparency)
+	Defeated        = Color3.fromRGB(60, 60, 60),    -- KO'd unit tint
+
+	-- UI element backgrounds
+	BadgeBg         = Color3.fromRGB(0, 0, 0),       -- Level badges, name strip overlays
+	SelectedItem    = Color3.fromRGB(40, 35, 20),     -- Selected inventory item (gold-tint)
+	EmptySlot       = Color3.fromRGB(15, 15, 22),     -- Empty equipment tile
+	LockedSlot      = Color3.fromRGB(10, 10, 15),     -- Locked consumable slot
+
+	-- Battle tile highlights
+	TileMove        = Color3.fromRGB(50, 100, 170),   -- Movement range (blue)
+	TileTarget      = Color3.fromRGB(200, 170, 50),   -- Valid target (gold)
+	TileSelected    = Color3.fromRGB(255, 220, 60),   -- Selected tile (bright gold)
+	TileAOE         = Color3.fromRGB(200, 100, 40),   -- Area of effect (orange)
+	TileInvalid     = Color3.fromRGB(100, 30, 30),    -- Invalid target (dark red)
+
+	-- Entity portrait backgrounds (map objects/hazards)
+	EntityObject    = Color3.fromRGB(50, 50, 30),     -- Map object
+	EntityHazard    = Color3.fromRGB(60, 40, 100),    -- Hazard
+}
+
+--------------------------------------------------
+-- TRANSPARENCY PRESETS
+--------------------------------------------------
+
+Theme.Transparency = {
+	Solid           = 0,
+	PanelBg        = 0.05,
+	PanelOverlay   = 0.15,
+	ButtonDisabled = 0.5,
+	Highlight      = 0.45,
+	HighlightFaint = 0.65,
+	Overlay        = 0.4,
+	Hidden         = 1,
+}
+
+--------------------------------------------------
+-- SPACING (pixel values)
+--------------------------------------------------
+
+Theme.Spacing = {
+	xs = 2,
+	sm = 4,
+	md = 8,
+	lg = 12,
+	xl = 16,
+	xxl = 24,
+}
+
+--------------------------------------------------
+-- CORNER RADIUS
+--------------------------------------------------
+
+Theme.CornerRadius = {
+	xs = UDim.new(0, 3),
+	sm = UDim.new(0, 4),
+	md = UDim.new(0, 6),
+	lg = UDim.new(0, 8),
+	xl = UDim.new(0, 12),
+	full = UDim.new(0.5, 0), -- Circular / pill
+}
+
+--------------------------------------------------
+-- BORDER THICKNESS
+--------------------------------------------------
+
+Theme.BorderThickness = {
+	Default  = 1,
+	Selected = 2,
+	Active   = 2,
+}
+
+--------------------------------------------------
+-- FONTS
+--------------------------------------------------
+
+-- Font theme presets
+Theme._fontThemes = {
+	Tactical = {
+		name        = "Tactical",
+		label       = "⚔ Tactical",
+		Primary     = Enum.Font.Gotham,
+		PrimaryBold = Enum.Font.GothamBold,
+		Mono        = Enum.Font.Gotham,
+		Display     = Enum.Font.GothamBold,
+	},
+	Chronicle = {
+		name        = "Chronicle",
+		label       = "📜 Chronicle",
+		Primary     = Enum.Font.Fondamento,
+		PrimaryBold = Enum.Font.Fondamento,
+		Mono        = Enum.Font.Fondamento,
+		Display     = Enum.Font.Fondamento,
+	},
+	Tome = {
+		name        = "Tome",
+		label       = "📖 Tome",
+		Primary     = Enum.Font.Antique,
+		PrimaryBold = Enum.Font.Antique,
+		Mono        = Enum.Font.Antique,
+		Display     = Enum.Font.GrenzeGotisch,
+	},
+}
+Theme._fontThemeOrder = { "Tactical", "Chronicle", "Tome" }
+Theme._currentFontTheme = "Tactical"
+
+-- Active font table (updated by SetFontTheme)
+Theme.Font = {
+	Primary     = Enum.Font.Gotham,
+	PrimaryBold = Enum.Font.GothamBold,
+	Mono        = Enum.Font.Gotham,
+	Display     = Enum.Font.GothamBold,
+}
+
+function Theme.SetFontTheme(themeName)
+	local preset = Theme._fontThemes[themeName]
+	if not preset then return end
+	Theme._currentFontTheme = themeName
+	Theme.Font.Primary     = preset.Primary
+	Theme.Font.PrimaryBold = preset.PrimaryBold
+	Theme.Font.Mono        = preset.Mono
+	Theme.Font.Display     = preset.Display
+end
+
+function Theme.CycleFontTheme()
+	local order = Theme._fontThemeOrder
+	for i, name in ipairs(order) do
+		if name == Theme._currentFontTheme then
+			local next = order[(i % #order) + 1]
+			Theme.SetFontTheme(next)
+			return next
+		end
+	end
+	Theme.SetFontTheme(order[1])
+	return order[1]
+end
+
+function Theme.GetFontThemeLabel()
+	local preset = Theme._fontThemes[Theme._currentFontTheme]
+	return preset and preset.label or Theme._currentFontTheme
+end
+
+--------------------------------------------------
+-- TEXT SIZES
+--------------------------------------------------
+
+Theme.TextSize = {
+	xs    = 10,
+	sm    = 12,
+	md    = 14,
+	lg    = 18,
+	xl    = 24,
+	title = 28,
+}
+
+--------------------------------------------------
+-- ANIMATION DURATIONS (seconds)
+--------------------------------------------------
+
+Theme.Animation = {
+	Fast   = 0.15,
+	Normal = 0.3,
+	Slow   = 0.6,
+	Bar    = 0.4,   -- Resource bar fill
+	Float  = 0.9,   -- Floating text lifespan
+}
+
+--------------------------------------------------
+-- MINIMUM SIZES (for touch targets)
+--------------------------------------------------
+
+Theme.MinSize = {
+	TouchTarget  = 44,  -- Minimum tappable area (px)
+	ButtonWidth  = 80,
+	ButtonHeight = 36,
+	IconButton   = 40,
+	TabButton    = 24,  -- min height/width of the bronze/navy/dark bar buttons (user ruling 2026-10-08)
+}
+
+--------------------------------------------------
+-- DISPLAY ORDER (ScreenGui layering)
+--------------------------------------------------
+
+Theme.DisplayOrder = {
+	Background  = 1,
+	HUD         = 10,
+	Inspector   = 20,
+	ActionBar   = 30,
+	Timeline    = 35,
+	Tooltip     = 50,
+	AimOverlay  = 60,
+	Prediction  = 65,
+	Modal       = 80,
+	Notification = 90,
+}
+
+--------------------------------------------------
+-- HELPER: Get rarity color by name
+--------------------------------------------------
+
+function Theme.GetRarityColor(rarity)
+	local map = {
+		Common    = Theme.Colors.RarityCommon,
+		Uncommon  = Theme.Colors.RarityUncommon,
+		Rare      = Theme.Colors.RarityRare,
+		Epic      = Theme.Colors.RarityEpic,
+		Legendary = Theme.Colors.RarityLegendary,
+	}
+	return map[rarity] or Theme.Colors.RarityCommon
+end
+
+--------------------------------------------------
+-- HELPER: Get side/faction color
+--------------------------------------------------
+
+function Theme.GetSideColor(side)
+	if side == "Player" then
+		return Theme.Colors.Player
+	elseif side == "Enemy" then
+		return Theme.Colors.Enemy
+	end
+	return Theme.Colors.Neutral
+end
+
+--------------------------------------------------
+-- HELPER: Get status color
+--------------------------------------------------
+
+function Theme.GetStatusColor(statusId)
+	local map = {
+		Poison  = Theme.Colors.Poison,
+		Burn    = Theme.Colors.Burn,
+		Freeze  = Theme.Colors.Freeze,
+		Frozen  = Theme.Colors.Freeze,
+		Silence = Theme.Colors.Silence,
+		Mute    = Theme.Colors.Silence,
+		Stun    = Theme.Colors.Stun,
+		Bleed   = Theme.Colors.Bleed,
+		Slow    = Theme.Colors.Slow,
+		Guard   = Color3.fromRGB(100, 180, 240),
+	}
+	return map[statusId] or Theme.Colors.Info
+end
+
+--------------------------------------------------
+-- HELPER: Get HP bar color based on ratio
+--------------------------------------------------
+
+function Theme.GetHPColor(ratio)
+	if ratio <= 0.25 then
+		return Theme.Colors.HPLow
+	elseif ratio <= 0.5 then
+		return Theme.Colors.Warning
+	end
+	return Theme.Colors.HP
+end
+
+--------------------------------------------------
+-- VIEWPORT-SCALED TEXT & ELEMENT SIZING
+--------------------------------------------------
+
+-- Reference resolution (design target)
+local REF_WIDTH = 1920
+local viewportWidth = REF_WIDTH
+local currentMode = "Desktop"  -- "Desktop", "Compact", "Mobile"
+
+--- Call once per viewport change (UILayoutCoordinator → BattleHUD.ApplyLayout → here)
+function Theme.SetViewport(w, h)
+	viewportWidth = math.max(w or REF_WIDTH, 800)
+	if viewportWidth < 1024 then
+		currentMode = "Mobile"
+	elseif viewportWidth < 1280 then
+		currentMode = "Compact"
+	else
+		currentMode = "Desktop"
+	end
+end
+
+--- Returns the current layout mode string.
+function Theme.GetMode()
+	return currentMode
+end
+
+--------------------------------------------------
+-- STRICT TYPOGRAPHIC CONTRACT
+-- One font family. Six roles. No exceptions.
+-- Mobile sizes are LARGER than desktop (small physical screen = bigger text).
+--------------------------------------------------
+
+local TEXT_SIZES = {
+	--              Desktop  Compact  Mobile
+	Title   = {       16,      16,      18   },
+	Heading = {       13,      13,      15   },
+	Body    = {       11,      11,      13   },
+	Small   = {       10,      10,      12   },
+	Mono    = {       11,      11,      13   },
+	Tiny    = {        9,       9,      11   },
+	Badge   = {        7,       7,       9   },
+}
+
+local MODE_INDEX = { Desktop = 1, Compact = 2, Mobile = 3 }
+
+Theme.Text = {}
+
+function Theme.Text.Title()   return TEXT_SIZES.Title[MODE_INDEX[currentMode]]   end
+function Theme.Text.Heading() return TEXT_SIZES.Heading[MODE_INDEX[currentMode]] end
+function Theme.Text.Body()    return TEXT_SIZES.Body[MODE_INDEX[currentMode]]    end
+function Theme.Text.Small()   return TEXT_SIZES.Small[MODE_INDEX[currentMode]]   end
+function Theme.Text.Mono()    return TEXT_SIZES.Mono[MODE_INDEX[currentMode]]    end
+function Theme.Text.Tiny()    return TEXT_SIZES.Tiny[MODE_INDEX[currentMode]]    end
+function Theme.Text.Badge()   return TEXT_SIZES.Badge[MODE_INDEX[currentMode]]   end
+
+--------------------------------------------------
+-- ELEMENT SIZING (hard mode switch, same principle)
+--------------------------------------------------
+
+local ELEM_SIZES = {
+	--                 Desktop  Compact  Mobile
+	RowTall    = {       40,      38,      44   },
+	RowMedium  = {       26,      26,      30   },
+	RowSmall   = {       18,      18,      22   },
+	RowTiny    = {       14,      14,      18   },
+	Portrait   = {       36,      34,      40   },
+	IconBtn    = {       26,      26,      30   },
+	ToggleBtn  = {       26,      26,      30   },
+	Padding    = {        6,       6,       8   },
+	PaddingLg  = {        8,       8,      10   },
+}
+
+Theme.Elem = {}
+
+function Theme.Elem.RowTall()   return ELEM_SIZES.RowTall[MODE_INDEX[currentMode]]   end
+function Theme.Elem.RowMedium() return ELEM_SIZES.RowMedium[MODE_INDEX[currentMode]] end
+function Theme.Elem.RowSmall()  return ELEM_SIZES.RowSmall[MODE_INDEX[currentMode]]  end
+function Theme.Elem.RowTiny()   return ELEM_SIZES.RowTiny[MODE_INDEX[currentMode]]   end
+function Theme.Elem.Portrait()  return ELEM_SIZES.Portrait[MODE_INDEX[currentMode]]  end
+function Theme.Elem.IconBtn()   return ELEM_SIZES.IconBtn[MODE_INDEX[currentMode]]   end
+function Theme.Elem.ToggleBtn() return ELEM_SIZES.ToggleBtn[MODE_INDEX[currentMode]] end
+function Theme.Elem.Padding()   return ELEM_SIZES.Padding[MODE_INDEX[currentMode]]   end
+function Theme.Elem.PaddingLg() return ELEM_SIZES.PaddingLg[MODE_INDEX[currentMode]] end
+
+--- Legacy compat: Theme.Scaled(basePx) still works but uses mode-based scaling.
+function Theme.Scaled(basePx)
+	local multiplier = currentMode == "Mobile" and 1.15 or 1.0
+	return math.floor(basePx * multiplier + 0.5)
+end
+Theme.ScaledPx = Theme.Scaled
+
+
+--------------------------------------------------
+-- PANEL FRAME CONSTANTS (Slice 7 — locked)
+--------------------------------------------------
+
+Theme.PanelFrame = {
+	Asset       = "rbxassetid://136267806455194",
+	SliceCenter = Rect.new(163, 163, 861, 861),
+	SliceScale  = 0.06,
+	BgColor     = Color3.fromRGB(0, 0, 0),
+	BgTransparency = 0.15,
+	ImageTransparency = 0,
+	MinPadding  = 10,
+}
+
+-- Creates a standard ornate panel frame (ImageLabel).
+-- Usage: Theme.MakePanel(name, size, position, anchor, parent, opts)
+--   opts.sliceScale: override (should NOT be used — consistency rule)
+--   opts.noBg: if true, BackgroundTransparency = 1 (decorative border only)
+--   opts.autoY: enables AutomaticSize.Y with min/max constraints
+function Theme.MakePanel(name, size, position, anchor, parent, opts)
+	opts = opts or {}
+	local pf = Theme.PanelFrame
+	local f = Instance.new("ImageLabel")
+	f.Name = name or "Panel"
+	f.Size = size
+	f.Position = position or UDim2.new(0, 0, 0, 0)
+	f.AnchorPoint = anchor or Vector2.new(0, 0)
+	f.Image = pf.Asset
+	f.ScaleType = Enum.ScaleType.Slice
+	f.SliceCenter = pf.SliceCenter
+	f.SliceScale = pf.SliceScale
+	f.BackgroundColor3 = pf.BgColor
+	f.BackgroundTransparency = opts.noBg and 1 or pf.BgTransparency
+	f.ImageTransparency = pf.ImageTransparency
+	f.BorderSizePixel = 0
+	f.Active = true
+	f.ClipsDescendants = not opts.autoY
+	f.Parent = parent
+	if opts.autoY then
+		f.AutomaticSize = Enum.AutomaticSize.Y
+		local c = Instance.new("UISizeConstraint", f)
+		c.MinSize = Vector2.new(opts.minW or 180, opts.minH or 60)
+		c.MaxSize = Vector2.new(opts.maxW or 260, opts.maxH or 400)
+	end
+	return f
+end
+
+-- Creates a decorative screen border overlay (ornate corners, no fill).
+-- Usage: Theme.MakeScreenBorder(parent)
+function Theme.MakeScreenBorder(parent)
+	local pf = Theme.PanelFrame
+	local f = Instance.new("ImageLabel")
+	f.Name = "ScreenBorder"
+	f.Size = UDim2.new(1, 4, 1, 4)
+	f.Position = UDim2.new(0, -2, 0, -2)
+	f.Image = pf.Asset
+	f.ScaleType = Enum.ScaleType.Slice
+	f.SliceCenter = pf.SliceCenter
+	f.SliceScale = pf.SliceScale
+	f.BackgroundTransparency = 1
+	f.ImageTransparency = pf.ImageTransparency
+	f.BorderSizePixel = 0
+	f.Active = false
+	f.ZIndex = 10
+	f.Parent = parent
+	return f
+end
+
+--------------------------------------------------
+-- FULL-SCREEN PATTERN
+--------------------------------------------------
+-- Standard full-screen layout used by Equipment, Info, Skills,
+-- and any future full-screen panel.  IgnoreGuiInset = false so
+-- content starts below the Roblox top bar.
+
+Theme.FullScreen = {
+	DisplayOrder     = 100,
+	IgnoreGuiInset   = false,
+	BackgroundColor  = Theme.Colors.Background,
+	BackgroundTransparency = 0,
+	-- Positional gap between adjacent panels (px).
+	-- Panels touch at 0; their ornate borders create a natural divider.
+	PanelGap         = 0,
+}
+
+--------------------------------------------------
+-- PORTRAIT / TILE DESIGN RULES
+--------------------------------------------------
+-- Level badge position: ALWAYS upper-left corner of any portrait or
+-- item tile (units and items alike). No exceptions.
+Theme.LevelBadgeAnchor = "TopLeft"   -- reference constant (enforced by convention)
+
+--------------------------------------------------
+-- ITEM TILE PRESENTATION RULES
+--------------------------------------------------
+-- Standard format for displaying any item (inventory, equipped gear,
+-- shops, victory loot, battle inspector, trade, etc.)
+--
+-- Layout (top to bottom):
+--   [Level badge]  upper-left corner, small text, left-aligned
+--   [Icon]         centered horizontally, vertically ~15% from top
+--   [Name]         bottom edge of tile, centered, rarity-colored text
+--
+-- Background:  rarity color at 75% transparency (subtle tint)
+-- Border:      UIStroke colored by rarity (1.5px), gold 2px when selected
+-- Corner:      4px radius
+--
+-- Any deviation is a bug, not a design choice.
+Theme.ItemTile = {
+	BgTransparency   = 0.75,      -- rarity color shown at this transparency
+	SelectedBgColor  = Color3.fromRGB(40, 35, 20),
+	SelectedBgTransparency = 0.05,
+	StrokeThickness  = 1.5,
+	SelectedStrokeThickness = 2,
+	CornerRadius     = 4,
+	IconYScale       = 0.15,      -- icon vertical position (scale from top)
+	NameFromBottom   = 14,        -- name label offset from bottom edge (px)
+	NameBgColor      = Color3.fromRGB(0, 0, 0),
+	NameBgTransparency = 0.4,
+	NameTextColor    = Theme.Colors.TextPrimary,  -- white, always
+	NameAlignment    = "Left",    -- left-aligned, never centered
+}
+
+--- Creates a standard full-screen ScreenGui + root Frame + decorative border.
+--- Returns screenGui, rootFrame.
+--- Usage:
+---   local sg, root = Theme.MakeFullScreen("LoadoutScreen", parent)
+function Theme.MakeFullScreen(name, parent)
+	local sg = Instance.new("ScreenGui")
+	sg.Name = name or "FullScreen"
+	sg.ResetOnSpawn = false
+	sg.DisplayOrder = Theme.FullScreen.DisplayOrder
+	sg.IgnoreGuiInset = Theme.FullScreen.IgnoreGuiInset
+	sg.Parent = parent
+
+	local root = Instance.new("Frame")
+	root.Name = "Root"
+	root.Size = UDim2.fromScale(1, 1)
+	root.BackgroundColor3 = Theme.FullScreen.BackgroundColor
+	root.BackgroundTransparency = Theme.FullScreen.BackgroundTransparency
+	root.Parent = sg
+
+	Theme.MakeScreenBorder(root)
+
+	return sg, root
+end
+
+--------------------------------------------------
+-- TAB BAR PATTERN
+--------------------------------------------------
+-- Sits in the Roblox top-bar safe area (IgnoreGuiInset = true).
+-- Positioned to leave a 2px gap above the full-screen panel below.
+
+Theme.TabBar = {
+	DisplayOrder     = 150,
+	PanelWidth       = 360,
+	PanelHeight      = 45,
+	PositionXScale   = 0.5,
+	PositionXOffset  = 60,   -- right of center (avoids Roblox top-left buttons)
+	PositionY        = 14,   -- leaves 2px gap above IgnoreGuiInset=false content
+	InnerPadX        = 8,
+	InnerPadY        = 3,
+	TabWidth         = 110,
+	TabSpacing       = 4,
+	TabTextSize      = 13,
+	ActiveColor      = Theme.Colors.TextGold,
+	InactiveColor    = Theme.Colors.TextSecondary,
+	UnderlineHeight  = 2,
+}
+
+--- Creates a standard tab bar ScreenGui + ornate panel.
+--- Returns tabBarGui, tabPanel (the ImageLabel to parent tab content into).
+function Theme.MakeTabBar(name, parent)
+	local tb = Theme.TabBar
+	local sg = Instance.new("ScreenGui")
+	sg.Name = name or "TabBar"
+	sg.ResetOnSpawn = false
+	sg.DisplayOrder = tb.DisplayOrder
+	sg.IgnoreGuiInset = true
+	sg.Parent = parent
+
+	local panel = Theme.MakePanel("TabPanel",
+		UDim2.new(0, tb.PanelWidth, 0, tb.PanelHeight),
+		UDim2.new(tb.PositionXScale, tb.PositionXOffset, 0, tb.PositionY),
+		Vector2.new(0.5, 0), sg)
+
+	return sg, panel
+end
+
+--------------------------------------------------
+-- THEMED BUTTONS (9-slice ImageButton)
+--------------------------------------------------
+
+-- Button styles now map to the square icon art (user ruling 2026-10-08):
+--   Primary -> Confirm icon, Secondary -> Back icon, Tertiary -> Options icon.
+-- (Old 9-slice text-bar assets retired: 89295920306721 / 131548301376394 / 84429775461281.)
+Theme.ButtonAssets = {
+	Primary   = { Asset = "rbxassetid://106679295261353" },  -- Confirm icon (equip, attach, confirm)
+	Secondary = { Asset = "rbxassetid://121150899495320" },  -- Back icon (back, cancel)
+	Tertiary  = { Asset = "rbxassetid://83722919579541" },   -- Options icon (compare, swap, details)
+}
+
+-- Style name -> icon kind used by MakeButton.
+local ICON_FOR_STYLE = { Primary = "Confirm", Secondary = "Back", Tertiary = "Options" }
+
+-- [DIAG] Asset ID dump at load time
+
+-- Shared SliceCenter for all button assets (adjust if 9-slice guides differ)
+local BTN_SLICE_CENTER = Rect.new(12, 12, 188, 36)
+
+-- ============ TAB BUTTONS (old 9-slice text bars, user ruling 2026-10-08) ============
+-- Every tab and sub-tab uses these three bars; every other button stays square icon art
+-- (ButtonAssets / MakeButton / MakeIconButton above are unchanged).
+--   Active   -> btn_primary_bronze_200x48  (the current tab)
+--   Inactive -> btn_secondary_navy_200x48  (the other tabs)
+--   Disabled -> btn_tertiary_dark_200x48   (greyed out / unavailable)
+-- The art is 200x48 with a 12 px border on all four sides, so BTN_SLICE_CENTER
+-- (12,12)-(188,36) matches it exactly (200-188 = 12, 48-36 = 12).
+Theme.TabAssets = {
+	Active   = "rbxassetid://89295920306721",
+	Inactive = "rbxassetid://131548301376394",
+	Disabled = "rbxassetid://84429775461281",
+}
+Theme.TabTextColors = {
+	Active   = Theme.Colors.TextGold,
+	Inactive = Theme.Colors.TextSecondary,
+	Disabled = Theme.Colors.TextDisabled,
+}
+local TAB_TEXT_PAD = 10 -- keeps the label off the bar's 12 px edge art
+-- Tab bars slice only the outer 3 px (2026-10-08). With the old 12 px slice the art's
+-- right/bottom edge band stayed fixed while the centre was resampled, which left hard
+-- straight seam lines on any bar not drawn at exactly 200x48. A 3 px slice keeps the
+-- thin outline crisp and lets the rest of the art scale as one piece (no seams).
+local TAB_SLICE_CENTER = Rect.new(3, 3, 197, 45)
+
+-- Switch a tab made by MakeTabButton between "Active" | "Inactive" | "Disabled" in place,
+-- so tab bars never need rebuilding just to move the highlight (loadout_ui_spec 53).
+function Theme.SetTabState(btn, state)
+	if not btn then return end
+	local s = if Theme.TabAssets[state] then state else "Inactive"
+	btn:SetAttribute("TabState", s)
+	btn.Image = Theme.TabAssets[s]
+	btn.Active = s ~= "Disabled"
+	for _, d in btn:GetChildren() do
+		if d:IsA("TextLabel") and d.Name == "Label" then
+			d.TextColor3 = Theme.TabTextColors[s]
+		elseif d:IsA("ImageLabel") and d.Name == "Icon" then
+			d.ImageTransparency = if s == "Disabled" then 0.5 else 0
+		end
+	end
+end
+
+-- Tab / sub-tab button. state: "Active" | "Inactive" | "Disabled".
+-- opts: size (UDim2, default 110 x 44 touch height), position, anchor, name, layoutOrder,
+--       textSize (largest size; fixed-width tabs shrink text to fit), icon (asset id drawn
+--       left of the text), autoWidth (width follows the content, never under 44 px).
+-- onActivated runs on mouse, touch and gamepad (.Activated), never while Disabled.
+function Theme.MakeTabButton(parent, text, state, onActivated, opts)
+	opts = opts or {}
+	local touch = Theme.MinSize.TabButton -- 24 px (was the 44 px TouchTarget)
+	local btn = Instance.new("ImageButton")
+	btn.Name = opts.name or ("Tab_" .. text)
+	btn.Size = opts.size or UDim2.new(0, 110, 0, touch)
+	btn.Position = opts.position or UDim2.new(0, 0, 0, 0)
+	btn.AnchorPoint = opts.anchor or Vector2.new(0, 0)
+	btn.LayoutOrder = opts.layoutOrder or 0
+	btn.ScaleType = Enum.ScaleType.Slice
+	btn.SliceCenter = TAB_SLICE_CENTER
+	btn.SliceScale = 1
+	btn.BackgroundTransparency = 1
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = false
+
+	local maxText = opts.textSize or Theme.Text.Small()
+	local hasIcon = type(opts.icon) == "string" and string.find(opts.icon, "rbxassetid://") ~= nil
+	local iconPx = 18
+	local icon
+	if hasIcon then
+		icon = Instance.new("ImageLabel")
+		icon.Name = "Icon"
+		icon.Image = opts.icon
+		icon.ScaleType = Enum.ScaleType.Fit
+		icon.BackgroundTransparency = 1
+		icon.Size = UDim2.fromOffset(iconPx, iconPx)
+		icon.LayoutOrder = 1
+	end
+	local lbl = Instance.new("TextLabel")
+	lbl.Name = "Label"
+	lbl.Text = text
+	lbl.Font = Theme.Font.PrimaryBold
+	lbl.BackgroundTransparency = 1
+	lbl.BorderSizePixel = 0
+	lbl.TextXAlignment = Enum.TextXAlignment.Center
+	lbl.TextYAlignment = Enum.TextYAlignment.Center
+	lbl.LayoutOrder = 2
+
+	if opts.autoWidth then
+		-- Width follows icon + text (wrapping chip rows); the 9-slice stretches with it.
+		btn.AutomaticSize = Enum.AutomaticSize.X
+		local minW = Instance.new("UISizeConstraint")
+		minW.MinSize = Vector2.new(touch, 0)
+		minW.Parent = btn
+		local pad = Instance.new("UIPadding")
+		pad.PaddingLeft = UDim.new(0, TAB_TEXT_PAD + 2)
+		pad.PaddingRight = UDim.new(0, TAB_TEXT_PAD + 2)
+		pad.Parent = btn
+		local layout = Instance.new("UIListLayout")
+		layout.FillDirection = Enum.FillDirection.Horizontal
+		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		layout.VerticalAlignment = Enum.VerticalAlignment.Center
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 4)
+		layout.Parent = btn
+		lbl.AutomaticSize = Enum.AutomaticSize.X
+		lbl.Size = UDim2.new(0, 0, 1, 0)
+		lbl.TextSize = maxText
+	else
+		-- Fixed or Scale width: the text shrinks to fit instead of running off the bar.
+		local iconW = if hasIcon then iconPx + 4 else 0
+		if icon then
+			icon.AnchorPoint = Vector2.new(0, 0.5)
+			icon.Position = UDim2.new(0, TAB_TEXT_PAD, 0.5, 0)
+		end
+		lbl.Size = UDim2.new(1, -(TAB_TEXT_PAD * 2 + iconW), 1, -8)
+		lbl.Position = UDim2.new(0, TAB_TEXT_PAD + iconW, 0, 4)
+		lbl.TextScaled = true
+		local fit = Instance.new("UITextSizeConstraint")
+		fit.MaxTextSize = maxText
+		fit.MinTextSize = 8
+		fit.Parent = lbl
+	end
+	if icon then icon.Parent = btn end
+	lbl.Parent = btn
+
+	Theme.SetTabState(btn, state)
+	if onActivated then
+		-- Dies with the button (PRF-004). Disabled tabs never fire.
+		btn.Activated:Connect(function()
+			if btn:GetAttribute("TabState") ~= "Disabled" then onActivated() end
+		end)
+	end
+	btn.Parent = parent -- properties and children set before Parent (NET-004)
+	return btn
+end
+
+
+-- ============ FOOTER BUTTON BAR CONFIG ============
+-- All screens must use these values for bottom-right button bars.
+-- Position: anchored (1,1) at screen bottom-right with 8px margin.
+Theme.FooterBar = {
+	BTN_W   = 96,
+	BTN_H   = 35,
+	BTN_GAP = 2,
+	PAD     = 8,     -- margin from screen edge
+}
+
+-- ============ ICON BUTTONS (square art, El_Pi0818 uploads 2026-10-07) ============
+-- Back / Confirm / Options buttons use square icon art instead of a text bar.
+-- Height stays whatever the caller asked for; width is forced equal to height by
+-- a UIAspectRatioConstraint, so the button shrinks horizontally only.
+Theme.IconButtonAssets = {
+	Back    = "rbxassetid://121150899495320",
+	Confirm = "rbxassetid://106679295261353",
+	Options = "rbxassetid://83722919579541",
+}
+
+-- Button labels that are drawn as icons instead of text (matched case-insensitively).
+local ICON_FOR_TEXT = {
+	BACK = "Back", CANCEL = "Back",
+	CONFIRM = "Confirm", EXECUTE = "Confirm", CONTINUE = "Confirm",
+	EQUIP = "Confirm", ["START BATTLE"] = "Confirm",
+	OPTIONS = "Options",
+}
+
+function Theme.IconKindForText(text: string?): string?
+	if not text then return nil end
+	return ICON_FOR_TEXT[string.upper(text)]
+end
+
+-- Square icon ImageButton. kind = "Back" | "Confirm" | "Options".
+-- opts: size (UDim2; height is kept, width follows height), position, anchor, name, disabled.
+function Theme.MakeIconButton(parent: Instance?, kind: string, onClick: (() -> ())?, opts: any?): ImageButton
+	opts = opts or {}
+	local btn = Instance.new("ImageButton")
+	btn.Name = opts.name or ("Btn_" .. kind)
+	btn.Size = opts.size or UDim2.new(0, 44, 0, 44)
+	btn.Position = opts.position or UDim2.new(0, 0, 0, 0)
+	btn.AnchorPoint = opts.anchor or Vector2.new(0, 0)
+	btn.Image = Theme.IconButtonAssets[kind] or Theme.IconButtonAssets.Confirm
+	btn.ScaleType = Enum.ScaleType.Fit
+	btn.BackgroundTransparency = 1
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = false
+	btn.ImageColor3 = Color3.new(1, 1, 1)
+	local aspect = Instance.new("UIAspectRatioConstraint")
+	aspect.AspectRatio = 1
+	aspect.AspectType = Enum.AspectType.FitWithinMaxSize
+	aspect.DominantAxis = Enum.DominantAxis.Height
+	aspect.Parent = btn
+	if opts.disabled then
+		btn.ImageTransparency = 0.5
+		btn.Active = false
+		btn.ImageColor3 = Color3.fromRGB(120, 120, 120)
+	else
+		btn.MouseEnter:Connect(function() btn.ImageColor3 = Color3.fromRGB(230, 230, 230) end)
+		btn.MouseLeave:Connect(function() btn.ImageColor3 = Color3.new(1, 1, 1) end)
+		btn.MouseButton1Down:Connect(function()
+			btn.ImageColor3 = Color3.fromRGB(180, 180, 180)
+			btn.Position = btn.Position + UDim2.new(0, 0, 0, 2)
+		end)
+		btn.MouseButton1Up:Connect(function()
+			btn.ImageColor3 = Color3.new(1, 1, 1)
+			btn.Position = btn.Position - UDim2.new(0, 0, 0, 2)
+		end)
+		if onClick then btn.MouseButton1Click:Connect(onClick) end
+	end
+	btn.Parent = parent
+	return btn
+end
+
+-- style: "Primary", "Secondary", or "Tertiary"
+function Theme.MakeButton(parent, text, style, onClick, opts)
+	opts = opts or {}
+	-- Every themed button is now square icon art. A known label (Back, Cancel,
+	-- Confirm, Execute, Continue, Equip, Start Battle, Options) picks its icon;
+	-- otherwise the style does: Primary -> Confirm, Secondary -> Back, Tertiary -> Options.
+	local iconKind = Theme.IconKindForText(text) or ICON_FOR_STYLE[style or ""] or "Back"
+	if iconKind then
+		opts.name = opts.name or ("Btn_" .. text)
+		return Theme.MakeIconButton(parent, iconKind, onClick, opts)
+	end
+	local asset = Theme.ButtonAssets[style] or Theme.ButtonAssets.Secondary
+
+	local btn = Instance.new("ImageButton")
+	btn.Name = opts.name or ("Btn_" .. text)
+	btn.Size = opts.size or UDim2.new(0, 80, 0, 44)
+	btn.Position = opts.position or UDim2.new(0, 0, 0, 0)
+	btn.AnchorPoint = opts.anchor or Vector2.new(0, 0)
+	btn.Image = asset.Asset
+	btn.ScaleType = Enum.ScaleType.Slice
+	btn.SliceCenter = BTN_SLICE_CENTER
+	btn.SliceScale = 1
+	btn.ImageColor3 = Color3.new(1, 1, 1)
+	btn.BackgroundTransparency = 1
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = false
+	btn.Parent = parent
+
+	-- State handling: hover, press, disabled
+	if opts.disabled then
+		btn.ImageTransparency = 0.5
+		btn.Active = false
+		btn.ImageColor3 = Color3.fromRGB(120, 120, 120)
+	else
+		local normalY = btn.Position.Y
+		btn.MouseEnter:Connect(function()
+			btn.ImageColor3 = Color3.fromRGB(230, 230, 230)
+		end)
+		btn.MouseLeave:Connect(function()
+			btn.ImageColor3 = Color3.new(1, 1, 1)
+		end)
+		btn.MouseButton1Down:Connect(function()
+			btn.ImageColor3 = Color3.fromRGB(180, 180, 180)
+			btn.Position = btn.Position + UDim2.new(0, 0, 0, 2)
+		end)
+		btn.MouseButton1Up:Connect(function()
+			btn.ImageColor3 = Color3.new(1, 1, 1)
+			btn.Position = btn.Position - UDim2.new(0, 0, 0, 2)
+		end)
+	end
+
+	-- Text label: child of button, centered, with padding for 9-slice borders
+	local lbl = Instance.new("TextLabel")
+	lbl.Name = "Label"
+	lbl.Size = UDim2.fromScale(1, 1)
+	lbl.BackgroundTransparency = 1
+	lbl.Font = Theme.Font.PrimaryBold
+	lbl.TextScaled = false
+	lbl.TextSize = Theme.Text.Body()
+	lbl.TextTruncate = Enum.TextTruncate.None
+	if opts.textColor then
+		lbl.TextColor3 = opts.textColor
+	elseif style == "Primary" then
+		lbl.TextColor3 = Theme.Colors.TextGold
+	elseif style == "Secondary" then
+		lbl.TextColor3 = Theme.Colors.TextSecondary
+	else
+		lbl.TextColor3 = Theme.Colors.TextPrimary
+	end
+	lbl.Text = string.upper(text)
+	lbl.TextXAlignment = Enum.TextXAlignment.Center
+	lbl.TextYAlignment = Enum.TextYAlignment.Center
+	lbl.Parent = btn
+
+	-- Padding so text doesn't enter 12px slice border region
+	local lblPad = Instance.new("UIPadding")
+	lblPad.PaddingLeft = UDim.new(0, 14)
+	lblPad.PaddingRight = UDim.new(0, 14)
+	lblPad.PaddingTop = UDim.new(0, 6)
+	lblPad.PaddingBottom = UDim.new(0, 6)
+	lblPad.Parent = lbl
+
+	-- Fixed TextSize from Theme.Text.Body()
+
+	-- [DIAG] Button creation dump
+	task.defer(function()
+		if btn and btn.Parent then
+		end
+	end)
+
+	if onClick then
+		btn.MouseButton1Click:Connect(onClick)
+	end
+
+	return btn
+end
+
+--------------------------------------------------
+-- ICONS (uploaded image assets)
+--------------------------------------------------
+
+Theme.Icons = {
+	-- Equipment slot / type filters
+	MainHand   = "rbxassetid://133602692411441",
+	OffHand    = "rbxassetid://96495270865173",
+	Head       = "rbxassetid://97362668137582",
+	Torso      = "rbxassetid://84005272453086",
+	Arms       = "rbxassetid://121508765705229",
+	Legs       = "rbxassetid://81092915600570",
+	Accessory  = "rbxassetid://100332548791860",
+	Consumable = "rbxassetid://123389439567950",
+	Doctrine   = "rbxassetid://101933256038083",
+	-- Card types
+	SkillCard  = "rbxassetid://114875072968763",
+	AugmentCard = "rbxassetid://120453713458004",
+	-- Filter reset
+	AllTypes   = "rbxassetid://87409616114560",
+	-- Primary stats
+	STR = "rbxassetid://101684046584247",
+	INT = "rbxassetid://105464348895017",
+	DEX = "rbxassetid://121345574413158",
+	AGI = "rbxassetid://111815728303705",
+	VIT = "rbxassetid://113624831794919",
+	LUK = "rbxassetid://91593832326365",
+	-- Navigation / UI
+	Sort       = "rbxassetid://110139184321415",
+	Filter     = "rbxassetid://114182934986152",
+	Expand     = "rbxassetid://83560753146501",
+	Collapse   = "rbxassetid://138171978051088",
+	ArrowLeft  = "rbxassetid://80226461252890",
+	ArrowRight = "rbxassetid://81425976997479",
+	-- Skill type / element icons
+	Damage     = "rbxassetid://73538985181962",
+	Heal       = "rbxassetid://138838552429669",
+	Buff       = "rbxassetid://77404382786098",
+	Debuff     = "rbxassetid://100065477653854",
+	Utility    = "rbxassetid://140311470017954",
+	Fire       = "rbxassetid://90499553843764",
+	Ice        = "rbxassetid://138027925853937",
+	Electric   = "rbxassetid://105621023635054",
+	Holy       = "rbxassetid://88526010401352",
+	Dark       = "rbxassetid://96999711635239",
+	Poison     = "rbxassetid://137992638646487",
+	Physical   = "rbxassetid://124197323548413",
+	Reset      = "rbxassetid://87409616114560",
+}
+
+-- Outfit tab Type filter icons (UGC filter types -> existing equipment icons).
+-- PLACEHOLDER: replace Hair, Pants and Back when the user uploads hair/pants/back icons.
+-- Status filters (Permanent / Rented / Out of use) stay text only.
+Theme.UGCFilterIcons = {
+	All   = Theme.Icons.Reset,
+	Hat   = Theme.Icons.Head,
+	Hair  = Theme.Icons.Head,      -- PLACEHOLDER: replace when user uploads hair icon
+	Body  = Theme.Icons.Torso,
+	Pants = Theme.Icons.Legs,      -- PLACEHOLDER: replace when user uploads pants icon
+	Shoes = Theme.Icons.Legs,
+	Back  = Theme.Icons.Accessory, -- PLACEHOLDER: replace when user uploads back icon
+}
+
+
+--------------------------------------------------
+-- TERRAIN TEXTURES (uploaded tile surface images)
+--------------------------------------------------
+
+Theme.Terrain = {
+	["Clear"]          = "rbxassetid://74692826345872",
+	["Grassland"]      = "rbxassetid://89238035189625",
+	["Clover Field"]   = "rbxassetid://86809605502149",
+	["Forest"]         = "rbxassetid://92048265218097",
+	["Wooden Floor"]   = "rbxassetid://72918745499013",
+	["Rocky"]          = "rbxassetid://86134990751716",
+	["Sand"]           = "rbxassetid://105434745636051",
+	["Mud"]            = "rbxassetid://97058803836850",
+	["Dirt Road"]      = "rbxassetid://74896495319547",
+	["Stone Road"]     = "rbxassetid://105323659190313",
+	["Shallow Water"]  = "rbxassetid://111962301136930",
+	["Deep Water"]     = "rbxassetid://138905752952965",
+	["Swamp"]          = "rbxassetid://82636405695018",
+	["Ice"]            = "rbxassetid://93574916698714",
+	["Metal"]          = "rbxassetid://106647711046909",
+	["Molten"]         = "rbxassetid://120698732334060",
+	["Magic Circle"]   = "rbxassetid://96217583623367",
+	["Tainted Ground"] = "rbxassetid://90980399497254",
+	["Cracked Ground"] = "rbxassetid://80266846327057",
+	["Quicksand"]      = "rbxassetid://103522632282664",
+}
+
+
+--------------------------------------------------
+-- STYLESHEET LINK HELPER
+-- Call on any ScreenGui to enable StyleSheet rules.
+-- Only needed when using tag-based styling (Phase 2+).
+--------------------------------------------------
+
+function Theme.LinkStyleSheet(screenGui)
+	local styleOk, StyleBootstrap = pcall(function()
+		return require(game:GetService("ReplicatedStorage")
+			:WaitForChild("CTRBLXAI", 5):WaitForChild("Shared", 5)
+			:WaitForChild("StyleBootstrap", 5))
+	end)
+	if styleOk and StyleBootstrap and StyleBootstrap.Link then
+		StyleBootstrap.Link(screenGui)
+	end
+end
+
+--------------------------------------------------
+-- STYLESHEET BINDING (live token updates)
+-- Called by UIController after StyleBootstrap.Init().
+-- Replaces hardcoded color values with live token values.
+--------------------------------------------------
+
+function Theme.BindToStyleSheet(tokenSheet)
+	if not tokenSheet then return end
+	local bound = 0
+	for name, _ in pairs(Theme.Colors) do
+		local attr = tokenSheet:GetAttribute(name)
+		if attr and typeof(attr) == "Color3" then
+			Theme.Colors[name] = attr
+			bound = bound + 1
+		end
+	end
+	-- Listen for changes
+	tokenSheet.AttributeChanged:Connect(function(attrName)
+		local val = tokenSheet:GetAttribute(attrName)
+		if val and typeof(val) == "Color3" and Theme.Colors[attrName] ~= nil then
+			Theme.Colors[attrName] = val
+		end
+	end)
+	print(string.format("[Theme] Bound %d colors to StyleSheet tokens (live updates enabled)", bound))
+end
+
+
+--------------------------------------------------
+-- STATUS ICONS (uploaded status effect images)
+--------------------------------------------------
+
+Theme.StatusIcons = {
+	-- Direct statuses
+	["Bleed"] = "rbxassetid://104544875304364",
+	["Blessed"] = "rbxassetid://134501709564011",
+	["Blind"] = "rbxassetid://135715197401068",
+	["Break"] = "rbxassetid://82752083137056",
+	["Burn"] = "rbxassetid://127380629906495",
+	["Confuse"] = "rbxassetid://88912553984364",
+	["Cursed"] = "rbxassetid://106130370004820",
+	["Disarmed"] = "rbxassetid://98727063604020",
+	["Drowning"] = "rbxassetid://82406141494000",
+	["Enlightened"] = "rbxassetid://95850043032649",
+	["Flight"] = "rbxassetid://133476216837852",
+	["Frenzy"] = "rbxassetid://112991829266774",
+	["Frozen"] = "rbxassetid://131792217565295",
+	["Guard"] = "rbxassetid://93092271875026",
+	["Haste"] = "rbxassetid://103750088309187",
+	["Hide"] = "rbxassetid://104833271248846",
+	["Mute"] = "rbxassetid://90624828336249",
+	["Petrify"] = "rbxassetid://79048541782109",
+	["Pinned"] = "rbxassetid://105892594257666",
+	["Poison"] = "rbxassetid://94477759410466",
+	["Raptured"] = "rbxassetid://109980542058661",
+	["Recharge"] = "rbxassetid://76141685219972",
+	["Mana Surge"] = "rbxassetid://76141685219972",   -- Recharge icon (2026-10-07)
+	["Regeneration"] = "rbxassetid://135322355280867",
+	["Rush"] = "rbxassetid://130350534308838",
+	["Silence"] = "rbxassetid://77891113079501",
+	["Sinking"] = "rbxassetid://131639755942578",
+	["Slow"] = "rbxassetid://90098284289426",
+	["Stun"] = "rbxassetid://124111723287049",
+	["Taunt"] = "rbxassetid://81048950818139",
+	["Misdirection"] = "rbxassetid://104833271248846",   -- Hide icon (2026-10-07, placeholder)
+	["Undead"] = "rbxassetid://123085258262041",
+	["Venom"] = "rbxassetid://72549374501907",
+	["Weakened"] = "rbxassetid://90496607680306",
+	["Wet"] = "rbxassetid://124928366115617",
+	["Wounded"] = "rbxassetid://132434877253211",
+	-- Special effects
+	["Giant Transformation"] = "rbxassetid://111982624235278",
+	["Healing Reduction"] = "rbxassetid://117128659285814",
+	["Knock-out"] = "rbxassetid://120054515894443",
+	["Mana Burn"] = "rbxassetid://77473884983225",
+	["Marked"] = "rbxassetid://123205375175891",
+	-- Stat buffs/debuffs
+	["STR Up"] = "rbxassetid://102204044712943",
+	["STR Down"] = "rbxassetid://132312931452826",
+	["INT Up"] = "rbxassetid://135273539845715",
+	["INT Down"] = "rbxassetid://89325866053030",
+	["DEX Up"] = "rbxassetid://95605274513215",
+	["DEX Down"] = "rbxassetid://87286160614484",
+	["AGI Up"] = "rbxassetid://102738592517132",
+	["AGI Down"] = "rbxassetid://106079362821163",
+	["VIT Up"] = "rbxassetid://128028989550779",
+	["VIT Down"] = "rbxassetid://137384824243587",
+	["LUK Up"] = "rbxassetid://116441603583335",
+	["LUK Down"] = "rbxassetid://138508730225416",
+	["Defense Up"] = "rbxassetid://125326830800546",
+	["Defense Down"] = "rbxassetid://113107461369810",
+	["Damage Up"] = "rbxassetid://115159212084450",
+	["Damage Down"] = "rbxassetid://118285717297561",
+	["Evasion Up"] = "rbxassetid://139633360952925",
+	["Evasion Down"] = "rbxassetid://116710982804215",
+	["Debuff Res Up"] = "rbxassetid://106742276340514",
+	["Debuff Res Down"] = "rbxassetid://71353124191974",
+	-- Doctrine signature buffs (2026-10-07) reuse existing icons until bespoke art exists.
+	["Hold the Line"] = "rbxassetid://125326830800546",       -- Defense Up icon
+	["Coordinated Advance"] = "rbxassetid://130350534308838", -- Rush icon
+	["War Cry"] = "rbxassetid://115159212084450",             -- Damage Up icon
+}
+
+function Theme.GetStatusIcon(statusId)
+	if not statusId then return nil end
+	return Theme.StatusIcons[statusId]
+end
+return Theme
