@@ -5,6 +5,7 @@
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local GuiService        = game:GetService("GuiService")
 
 local player = Players.LocalPlayer
 
@@ -15,6 +16,10 @@ local BattleEvents = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 	:WaitForChild("Remotes", 10):WaitForChild("BattleEvents", 10))
 local ConsumableData = require(ReplicatedStorage:WaitForChild("Content", 10)
 	:WaitForChild("ConsumableData", 10))
+-- OUTFIT tab (UGC cosmetics) is its own module; this screen only hosts it (loadout_ui_spec 62).
+-- Guarded: if the UGC modules fail to load, the other loadout tabs keep working.
+local okOutfitTab, UGCOutfitTab = pcall(require, CTRBLXAI_UI:WaitForChild("UGCOutfitTab", 10))
+if not okOutfitTab then warn("[LoadoutScreen] OUTFIT tab unavailable: " .. tostring(UGCOutfitTab)); UGCOutfitTab = nil end
 
 local LoadoutScreen: any = {}
 
@@ -22,7 +27,8 @@ local screenGui, rootFrame
 local unitHeaderPanel, equippedPanel, inventoryPanel, statPanel
 local skillsPanel      -- left column for skills tab
 local infoPanel        -- left column for info tab  
-local currentTab = "EQUIPMENT" 
+local outfitPanel, outfitSidePanel -- OUTFIT tab: main (left) + worn slots (right, below unit header)
+local currentTab = "GEARS" 
 local currentFilter = "All"
 local selectedItemId = nil
 
@@ -91,6 +97,7 @@ local buildSkillLoadout
 local openSkillCardDetail, openAugmentCardDetail
 local openSkillSlotPicker, openAugmentSlotPicker
 local openEquippedSkillDetail, openEquippedAugmentDetail
+local openAugmentPickerForSlot -- declared early: skill-row augment buttons (built above) call it on click
 local openConsumableDetail, openConsumableSlotPicker, openEquippedConsumableDetail
 local buildConsumableGrid
 local openDoctrinePicker
@@ -184,149 +191,93 @@ end
 --------------------------------------------------
 
 local tabBarGui = nil
-local optionsDropdown = nil
+local tabButtons = {} -- tab name -> button made by Theme.MakeTabButton
 
 local function buildTabBar()
 	if tabBarGui then tabBarGui:Destroy() end
-	if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
 	local panel
 	tabBarGui, panel = Theme.MakeTabBar("LoadoutTabBar", getPlayerGui())
 
 	local tb = Theme.TabBar
+	-- Keep the tabs inside the ornate frame's side borders (2026-10-08): inset = the
+	-- frame's drawn border width (slice edge x SliceScale) instead of a fixed 8 px.
+	local pf = Theme.PanelFrame
+	local frameBorderX = math.ceil(pf.SliceCenter.Min.X * pf.SliceScale)
 	local bar = Instance.new("Frame")
 	bar.Name = "TabBar"
-	bar.Size = UDim2.new(1, -tb.InnerPadX * 2, 1, -tb.InnerPadY * 2)
-	bar.Position = UDim2.new(0, tb.InnerPadX, 0, tb.InnerPadY)
+	local padY = tb.InnerPadY + 1 -- +1 px clearance from the frame's top/bottom (2026-10-08)
+	bar.Size = UDim2.new(1, -frameBorderX * 2, 1, -padY * 2)
+	bar.Position = UDim2.new(0, frameBorderX, 0, padY)
 	bar.BackgroundTransparency = 1
 	bar.Parent = panel
 
 	local layout = Instance.new("UIListLayout", bar)
 	layout.FillDirection = Enum.FillDirection.Horizontal
 	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	layout.Padding = UDim.new(0, tb.TabSpacing)
+	layout.Padding = UDim.new(0, 0) -- tabs sit edge to edge (2026-10-08)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder -- was default Name sort (alphabetical order bug)
 
-	local tabs = { "INFO", "EQUIPMENT", "SKILLS" }
-	for _, name in ipairs(tabs) do
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(0, tb.TabWidth, 1, 0)
-		btn.BackgroundTransparency = 1
-		btn.Font = Theme.Font.PrimaryBold
-		btn.TextSize = tb.TabTextSize
-		btn.Text = name
-		btn.BorderSizePixel = 0
-		btn.Parent = bar
-
-		if name == currentTab then
-			btn.TextColor3 = tb.ActiveColor
-			local underline = Instance.new("Frame")
-			underline.Size = UDim2.new(0.8, 0, 0, tb.UnderlineHeight)
-			underline.Position = UDim2.new(0.1, 0, 1, -tb.UnderlineHeight)
-			underline.BackgroundColor3 = tb.ActiveColor
-			underline.BorderSizePixel = 0
-			underline.Parent = btn
-		else
-			btn.TextColor3 = tb.InactiveColor
-		end
-
-		btn.MouseButton1Click:Connect(function()
+	local tabs = { "INFO", "GEARS", "SKILLS", "OUTFIT" } -- user ruling 2026-10-08 (EQUIPMENT renamed GEARS)
+	tabButtons = {}
+	for i, name in ipairs(tabs) do
+		-- Old 9-slice text bars (2026-10-08): Active = bronze, Inactive = navy (Theme.MakeTabButton).
+		-- Height = the shared tab panel's inner height (Theme.TabBar), Scale width so 4 tabs fit (73).
+		tabButtons[name] = Theme.MakeTabButton(bar, name, if name == currentTab then "Active" else "Inactive", function()
 			if currentTab ~= name then
 				currentTab = name
 				switchTab()
 			end
-		end)
+		end, {
+			name = "Tab_" .. name,
+			size = UDim2.new(1 / #tabs, 0, 1, 0),
+			textSize = tb.TabTextSize,
+			layoutOrder = i,
+		})
 	end
 
-	-- OPTIONS button (right-aligned, outside the centered tabs)
-	local optBtn = Instance.new("TextButton")
-	optBtn.Size = UDim2.new(0, 66, 0, 24)
-	optBtn.Position = UDim2.new(1, -8, 0, 8)
-	optBtn.AnchorPoint = Vector2.new(1, 0)
-	optBtn.BackgroundColor3 = Theme.Colors.Surface
-	optBtn.BackgroundTransparency = 0.3
-	optBtn.Font = Theme.Font.PrimaryBold
-	optBtn.TextSize = Theme.Text.Small()
-	optBtn.TextColor3 = Theme.Colors.TextSecondary
-	optBtn.Text = "OPTIONS"
-	optBtn.BorderSizePixel = 0
-	optBtn.Parent = tabBarGui
-	Instance.new("UICorner", optBtn).CornerRadius = UDim.new(0, 4)
+	-- Opaque strip behind the tab bar, covering only the Roblox top-bar inset. The full-screen
+	-- root starts BELOW the inset (Theme.FullScreen.IgnoreGuiInset = false), so without this the
+	-- Guild menu underneath showed through at the top of the loadout (BUG-026).
+	local insetTopLeft = GuiService:GetGuiInset()
+	local strip = Instance.new("Frame")
+	strip.Name = "TopInsetStrip"
+	strip.Size = UDim2.new(1, 0, 0, insetTopLeft.Y)
+	strip.BackgroundColor3 = Theme.FullScreen.BackgroundColor
+	strip.BackgroundTransparency = 0
+	strip.BorderSizePixel = 0
+	strip.ZIndex = 0 -- under the tab panel and the Back button
+	strip.Active = false
+	strip.Parent = tabBarGui -- properties set before Parent (NET-004)
 
-	optBtn.MouseButton1Click:Connect(function()
-		-- Toggle dropdown
-		if optionsDropdown then
-			optionsDropdown:Destroy()
-			optionsDropdown = nil
-			return
-		end
-
-		optionsDropdown = Instance.new("ScreenGui")
-		optionsDropdown.Name = "OptionsDropdown"
-		optionsDropdown.DisplayOrder = 115
-		optionsDropdown.ResetOnSpawn = false
-		optionsDropdown.Parent = getPlayerGui()
-
-		-- Backdrop to close on outside click
-		local backdrop = Instance.new("TextButton")
-		backdrop.Size = UDim2.fromScale(1, 1)
-		backdrop.BackgroundTransparency = 1
-		backdrop.Text = ""
-		backdrop.Parent = optionsDropdown
-		backdrop.MouseButton1Click:Connect(function()
-			if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
-		end)
-
-		-- Menu panel below the OPTIONS button
-		local menuItems = {
-			{ text = "Start Battle", color = Theme.Colors.Success, action = function()
-				if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
-				LoadoutScreen.Hide()
-				BattleEvents.StartBattle:FireServer()
-			end },
-			{ text = "Save Now", color = Theme.Colors.Info, action = function()
-				BattleEvents.DevCommand:FireServer({ action = "SaveNow" })
-				if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
-			end },
-			{ text = "Delete Save", color = Theme.Colors.Danger, action = function()
-				BattleEvents.DevCommand:FireServer({ action = "DeleteSave" })
-				if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
-			end },
-		}
-
-		local rowH = 28
-		local menuW = 110
-		local menuH = #menuItems * rowH + 6
-		local menuPanel = Instance.new("Frame")
-		menuPanel.Size = UDim2.new(0, menuW, 0, menuH)
-		-- Right-align: menu's right edge aligns with button's right edge
-		local menuX = optBtn.AbsolutePosition.X + optBtn.AbsoluteSize.X - menuW
-		menuPanel.Position = UDim2.new(0, menuX, 0, optBtn.AbsolutePosition.Y + optBtn.AbsoluteSize.Y + 2)
-		menuPanel.BackgroundColor3 = Theme.Colors.Panel
-		menuPanel.BorderSizePixel = 0
-		menuPanel.Parent = optionsDropdown
-		Instance.new("UICorner", menuPanel).CornerRadius = UDim.new(0, 4)
-		Instance.new("UIStroke", menuPanel).Color = Theme.Colors.Border
-		pad(menuPanel, 3, 3, 3, 3)
-
-		local menuLayout = Instance.new("UIListLayout", menuPanel)
-		menuLayout.Padding = UDim.new(0, 2)
-		menuLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
-		for idx, mi in ipairs(menuItems) do
-			local row = Instance.new("TextButton")
-			row.Size = UDim2.new(1, 0, 0, rowH - 2)
-			row.BackgroundColor3 = mi.color
-			row.BackgroundTransparency = 0.75
-			row.Font = Theme.Font.PrimaryBold
-			row.TextSize = Theme.Text.Small()
-			row.TextColor3 = Theme.Colors.TextPrimary
-			row.Text = mi.text
-			row.BorderSizePixel = 0
-			row.LayoutOrder = idx
-			row.Parent = menuPanel
-			Instance.new("UICorner", row).CornerRadius = UDim.new(0, 3)
-			row.MouseButton1Click:Connect(mi.action)
-		end
+	-- BACK button: top-right corner of the top bar, where the retired dev OPTIONS menu sat
+	-- (Start Battle / Save Now / Delete Save, removed 2026-10-08). Not top-left: Roblox's own
+	-- menu/chat/mic buttons own that area and always draw on top of game UI.
+	-- Closes the loadout and returns to the screen underneath. The Guild menu stays enabled
+	-- below this screen (DisplayOrder 80 vs 100), so hiding is enough to go back to it. Every
+	-- loadout change is sent to the server the moment it is made, so Back never discards
+	-- anything (loadout_ui_spec 1, 9).
+	local touch = Theme.MinSize.TouchTarget -- 44 px minimum (loadout_ui_spec 73)
+	local backBtn = Theme.MakeIconButton(tabBarGui, "Back", nil, {
+		name = "Btn_BACK",
+		size = UDim2.new(0, touch, 0, touch),
+		position = UDim2.new(1, -8, 0, tb.PositionY),
+		anchor = Vector2.new(1, 0),
+	})
+	backBtn.Activated:Connect(function() -- .Activated: mouse, touch and gamepad
+		LoadoutScreen.Hide()
 	end)
+end
+
+-- Move the tab highlight in place (loadout_ui_spec 53: no rebuild on tab switch).
+-- Builds the bar only if it does not exist yet (first open, or after Hide()).
+local function refreshTabBar()
+	if not tabBarGui or tabBarGui.Parent == nil then
+		buildTabBar()
+		return
+	end
+	for name, btn in tabButtons do
+		Theme.SetTabState(btn, if name == currentTab then "Active" else "Inactive")
+	end
 end
 
 --------------------------------------------------
@@ -459,7 +410,8 @@ local function buildEquippedLoadout()
 
 	-- Tab switcher: GEAR / CONSUMABLES
 	local tabRow = Instance.new("Frame")
-	tabRow.Size = UDim2.new(1, 0, 0, 18)
+	local SUBTAB_H = 24 -- same height as the Outfit Worn/Preview sub-tabs (user ruling 2026-10-08)
+	tabRow.Size = UDim2.new(1, 0, 0, SUBTAB_H)
 	tabRow.BackgroundTransparency = 1
 	tabRow.LayoutOrder = 0
 	tabRow.Parent = equippedPanel
@@ -468,29 +420,9 @@ local function buildEquippedLoadout()
 	tabLayout.FillDirection = Enum.FillDirection.Horizontal
 	tabLayout.Padding = UDim.new(0, 6)
 
-	for _, tabDef in ipairs({ { id = "gear", label = "GEAR" }, { id = "cons", label = "CONSUMABLES" } }) do
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(0, 80, 1, 0)
-		btn.BackgroundTransparency = 1
-		btn.Font = Theme.Font.PrimaryBold
-		btn.TextSize = Theme.Text.Small()
-		btn.Text = tabDef.label
-		btn.BorderSizePixel = 0
-		btn.Parent = tabRow
-
-		if tabDef.id == equippedTab then
-			btn.TextColor3 = Theme.Colors.TextGold
-			local underline = Instance.new("Frame")
-			underline.Size = UDim2.new(0.8, 0, 0, 2)
-			underline.Position = UDim2.new(0.1, 0, 1, -2)
-			underline.BackgroundColor3 = Theme.Colors.TextGold
-			underline.BorderSizePixel = 0
-			underline.Parent = btn
-		else
-			btn.TextColor3 = Theme.Colors.TextSecondary
-		end
-
-		btn.MouseButton1Click:Connect(function()
+	for i, tabDef in ipairs({ { id = "gear", label = "GEAR" }, { id = "cons", label = "CONSUMABLES" } }) do
+		-- Old 9-slice text bars (2026-10-08); Scale width: two halves of the panel.
+		Theme.MakeTabButton(tabRow, tabDef.label, if tabDef.id == equippedTab then "Active" else "Inactive", function()
 			equippedTab = tabDef.id
 			buildEquippedLoadout()
 			if equippedTab == "cons" then
@@ -498,12 +430,16 @@ local function buildEquippedLoadout()
 			else
 				buildInventory()
 			end
-		end)
+		end, {
+			name = "SubTab_" .. tabDef.label,
+			size = UDim2.new(0.5, -3, 1, 0),
+			layoutOrder = i,
+		})
 	end
 
 	-- Content area below tabs
 	local content = Instance.new("Frame")
-	content.Size = UDim2.new(1, 0, 1, -24)
+	content.Size = UDim2.new(1, 0, 1, -(SUBTAB_H + 6)) -- below the sub-tabs + list gap
 	content.BackgroundTransparency = 1
 	content.LayoutOrder = 1
 	content.Parent = equippedPanel
@@ -2198,12 +2134,15 @@ switchTab = function()
 	if statPanel then statPanel.Visible = false end
 	if skillsPanel then skillsPanel.Visible = false end
 	if infoPanel then infoPanel.Visible = false end
+	if outfitPanel then outfitPanel.Visible = false end
+	if outfitSidePanel then outfitSidePanel.Visible = false end
+	if currentTab ~= "OUTFIT" and UGCOutfitTab then UGCOutfitTab.Unmount() end
 
 	-- Close any open overlays
 	closeDetail()
 	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
 
-	if currentTab == "EQUIPMENT" then
+	if currentTab == "GEARS" then
 		if inventoryPanel then inventoryPanel.Visible = true end
 		if equippedPanel then equippedPanel.Visible = true end
 		-- Reclaim stat panel space
@@ -2227,10 +2166,14 @@ switchTab = function()
 		if equippedPanel then equippedPanel.Size = UDim2.new(1, 0, 1, -topUsed); equippedPanel.Position = UDim2.new(0, 0, 0, topUsed) end
 		buildStatPanel()
 		buildInfoContent()
+	elseif currentTab == "OUTFIT" then
+		if outfitPanel then outfitPanel.Visible = true end
+		if outfitSidePanel then outfitSidePanel.Visible = true end
+		if UGCOutfitTab then UGCOutfitTab.Render(outfitPanel, outfitSidePanel, MockData.GetSelectedUnit()) end
 	end
 
-	-- Rebuild tab bar to update active highlight
-	buildTabBar()
+	-- Move the tab highlight in place (builds the bar only if it does not exist yet)
+	refreshTabBar()
 	-- Rebuild unit header (always visible)
 	buildUnitHeader()
 end
@@ -2415,7 +2358,7 @@ local function cleanEffects(raw)
 	-- Remove leading/trailing whitespace and semicolons
 	text = text:gsub("^[;%s]+", ""):gsub("[;%s]+$", "")
 	-- Capitalize first letter
-	if #text > 0 then
+	if text ~= "" then
 		text = text:sub(1, 1):upper() .. text:sub(2)
 	end
 	return text
@@ -2710,8 +2653,10 @@ buildSkillsContent = function()
 		end
 	end
 
-	-- Fallback: also include mock catalog if no server data
-	if #skillCards == 0 then
+	-- Fallback: placeholder catalog ONLY when the server could not be reached.
+	-- Previously this also fired when the player simply had 0 skill cards left
+	-- (all equipped), showing 6 fake early-dev cards that cannot be equipped.
+	if #skillCards == 0 and not MockData._useServerSkillData then
 		for _, sk in ipairs(MockData.SkillCatalog or {}) do
 			if not sk.isDoctrine then
 				table.insert(skillCards, {
@@ -3100,22 +3045,7 @@ buildSkillLoadout = function()
 	local loadout = MockData.GetSkillLoadout(unit.id)
 	local doctrineId = MockData.GetUnitDoctrineId(unit.id)
 
-	-- Column headers
-	local hdrRow = Instance.new("Frame")
-	hdrRow.Size = UDim2.new(1, 0, 0, 14)
-	hdrRow.Position = UDim2.new(0, 0, 0, 0)
-	hdrRow.BackgroundTransparency = 1
-	hdrRow.Parent = equippedPanel
-
-	makeLabel(hdrRow, { Text = "SKILLS",
-		Size = UDim2.new(0.6, 0, 1, 0), Position = UDim2.new(0, 24, 0, 0),
-		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
-		TextColor3 = Theme.Colors.TextSecondary })
-	makeLabel(hdrRow, { Text = "AUGMENTS",
-		Size = UDim2.new(0.35, 0, 1, 0), Position = UDim2.new(0.65, 0, 0, 0),
-		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
-		TextColor3 = Theme.Colors.TextSecondary,
-		TextXAlignment = Enum.TextXAlignment.Center })
+	-- (SKILLS / AUGMENTS column headers removed, user ruling 2026-10-08.)
 
 	-- Scrollable slot container (4 slots visible, 5th by scroll)
 	local SLOT_H = 50
@@ -3124,8 +3054,8 @@ buildSkillLoadout = function()
 
 	local slotScroll = Instance.new("ScrollingFrame")
 	slotScroll.Name = "SlotScroll"
-	slotScroll.Size = UDim2.new(1, 0, 1, -18)
-	slotScroll.Position = UDim2.new(0, 0, 0, 16)
+	slotScroll.Size = UDim2.new(1, 0, 1, -2)
+	slotScroll.Position = UDim2.new(0, 0, 0, 0)
 	slotScroll.BackgroundTransparency = 1
 	slotScroll.BorderSizePixel = 0
 	slotScroll.ScrollBarThickness = 3
@@ -3973,22 +3903,18 @@ openSkillSlotPicker = function(sk)
 	end
 
 	-- Cancel
-	local cancel = Instance.new("TextButton")
-	cancel.Size = UDim2.new(1, 0, 0, 18)
-	cancel.Position = UDim2.new(0, 0, 1, -20)
-	cancel.BackgroundTransparency = 1
-	cancel.Font = Theme.Font.Primary
-	cancel.TextSize = Theme.Text.Small()
-	cancel.TextColor3 = Theme.Colors.TextSecondary
-	cancel.Text = "Cancel"
-	cancel.Parent = popup
-	cancel.MouseButton1Click:Connect(closeDetail)
+	Theme.MakeIconButton(popup, "Back", closeDetail, {
+		name = "Btn_Cancel",
+		size = UDim2.new(0, 18, 0, 18),
+		position = UDim2.new(0.5, 0, 1, -20),
+		anchor = Vector2.new(0.5, 0),
+	})
 end
 
 -- ==================================================================
 -- openAugmentPickerForSlot: Show available augment cards to attach to a specific slot
 -- Called when clicking an empty "+" augment slot in the loadout table
-local function openAugmentPickerForSlot(unitId, slotNum, augSlotNum)
+openAugmentPickerForSlot = function(unitId, slotNum, augSlotNum)
 	closeDetail()
 	local unit = MockData.GetSelectedUnit()
 	if not unit then return end
@@ -4097,16 +4023,12 @@ local function openAugmentPickerForSlot(unitId, slotNum, augSlotNum)
 		end)
 	end
 
-	local cancel = Instance.new("TextButton")
-	cancel.Size = UDim2.new(1, 0, 0, 18)
-	cancel.Position = UDim2.new(0, 0, 1, -20)
-	cancel.BackgroundTransparency = 1
-	cancel.Font = Theme.Font.Primary
-	cancel.TextSize = Theme.Text.Small()
-	cancel.TextColor3 = Theme.Colors.TextSecondary
-	cancel.Text = "Cancel"
-	cancel.Parent = popup
-	cancel.MouseButton1Click:Connect(closeDetail)
+	Theme.MakeIconButton(popup, "Back", closeDetail, {
+		name = "Btn_Cancel",
+		size = UDim2.new(0, 18, 0, 18),
+		position = UDim2.new(0.5, 0, 1, -20),
+		anchor = Vector2.new(0.5, 0),
+	})
 end
 
 -- openAugmentSlotPicker: Show all 10 augment slots to choose from
@@ -4238,16 +4160,12 @@ openAugmentSlotPicker = function(aug)
 		end
 	end
 
-	local cancel = Instance.new("TextButton")
-	cancel.Size = UDim2.new(1, 0, 0, 18)
-	cancel.Position = UDim2.new(0, 0, 1, -20)
-	cancel.BackgroundTransparency = 1
-	cancel.Font = Theme.Font.Primary
-	cancel.TextSize = Theme.Text.Small()
-	cancel.TextColor3 = Theme.Colors.TextSecondary
-	cancel.Text = "Cancel"
-	cancel.Parent = popup
-	cancel.MouseButton1Click:Connect(closeDetail)
+	Theme.MakeIconButton(popup, "Back", closeDetail, {
+		name = "Btn_Cancel",
+		size = UDim2.new(0, 18, 0, 18),
+		position = UDim2.new(0.5, 0, 1, -20),
+		anchor = Vector2.new(0.5, 0),
+	})
 end
 
 -- ==================================================================
@@ -4486,7 +4404,7 @@ openEquippedAugmentDetail = function(slotNum, augSlotNum, augmentId)
 	local eqAugTags = {}
 	if def and def.family then table.insert(eqAugTags, def.family) end
 	local eqAugDesc = (def and def.description) or (def and def.effect) or ""
-	local eqAugDef = MockData.GetAugmentDef(augId)
+	local eqAugDef = MockData.GetAugmentDef(augmentId)
 	local nextY = buildDetailHeader(panel, {
 		iconText = "[o]",
 		iconImage = eqAugDef and eqAugDef.icon or nil,
@@ -4826,11 +4744,12 @@ openConsumableSlotPicker = function(unitId, ci)
 			end)
 		end
 	end
-	local cancel = Instance.new("TextButton"); cancel.Size = UDim2.new(1, 0, 0, 18)
-	cancel.Position = UDim2.new(0, 0, 1, -20); cancel.BackgroundTransparency = 1
-	cancel.Font = Theme.Font.Primary; cancel.TextSize = Theme.Text.Small()
-	cancel.TextColor3 = Theme.Colors.TextSecondary; cancel.Text = "Cancel"
-	cancel.Parent = popup; cancel.MouseButton1Click:Connect(closeDetail)
+	Theme.MakeIconButton(popup, "Back", closeDetail, {
+		name = "Btn_Cancel",
+		size = UDim2.new(0, 18, 0, 18),
+		position = UDim2.new(0.5, 0, 1, -20),
+		anchor = Vector2.new(0.5, 0),
+	})
 end
 
 openEquippedConsumableDetail = function(unitId, slotIdx, item)
@@ -5000,11 +4919,14 @@ buildInfoContent = function()
 	-- =============================================
 	-- LEFT COLUMN: Identity + Passives (scrollable)
 	-- =============================================
+	-- Inset both columns by the frame's drawn border so text never spills over it (2026-10-08).
+	local pfB = math.ceil(Theme.PanelFrame.SliceCenter.Min.X * Theme.PanelFrame.SliceScale)
 	local leftCol = Instance.new("ScrollingFrame")
 	leftCol.Name = "InfoLeft"
-	leftCol.Size = UDim2.new(0.50, -2, 1, 0)
-	leftCol.Position = UDim2.new(0, 0, 0, 0)
+	leftCol.Size = UDim2.new(0.50, -2 - pfB, 1, -pfB * 2)
+	leftCol.Position = UDim2.new(0, pfB, 0, pfB)
 	leftCol.BackgroundTransparency = 1; leftCol.BorderSizePixel = 0
+	leftCol.ClipsDescendants = true
 	leftCol.ScrollBarThickness = 3
 	leftCol.ScrollBarImageColor3 = Theme.Colors.Surface
 	leftCol.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -5137,9 +5059,10 @@ buildInfoContent = function()
 	-- =============================================
 	local rightCol = Instance.new("ScrollingFrame")
 	rightCol.Name = "InfoRight"
-	rightCol.Size = UDim2.new(0.50, -2, 1, 0)
-	rightCol.Position = UDim2.new(0.50, 2, 0, 0)
+	rightCol.Size = UDim2.new(0.50, -2 - pfB, 1, -pfB * 2)
+	rightCol.Position = UDim2.new(0.50, 2, 0, pfB)
 	rightCol.BackgroundTransparency = 1; rightCol.BorderSizePixel = 0
+	rightCol.ClipsDescendants = true
 	rightCol.ScrollBarThickness = 3
 	rightCol.ScrollBarImageColor3 = Theme.Colors.Surface
 	rightCol.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -5256,8 +5179,20 @@ function LoadoutScreen.Show()
 		UDim2.new(0, 0, 0, 0), nil, rootFrame)
 	infoPanel.Visible = false
 
+	-- Outfit tab (loadout_ui_spec 60-62): main panel on the left; worn-slot panel where the
+	-- equipped loadout sits, below the persistent unit header (61).
+	outfitPanel = makePanel("OutfitPanel",
+		UDim2.new(0.70, 0, 1, 0),
+		UDim2.new(0, 0, 0, 0), nil, rootFrame)
+	outfitPanel.Visible = false
+	local outfitTop = 60 + gap
+	outfitSidePanel = makePanel("OutfitSidePanel",
+		UDim2.new(1, 0, 1, -outfitTop),
+		UDim2.new(0, 0, 0, outfitTop), nil, rightCol)
+	outfitSidePanel.Visible = false
+
 	-- Show the correct tab
-	currentTab = "EQUIPMENT"
+	currentTab = "GEARS"
 	LoadoutScreen.Refresh()
 end
 
@@ -5267,8 +5202,8 @@ end
 
 function LoadoutScreen.Hide()
 	closeDetail()
+	if UGCOutfitTab then UGCOutfitTab.Unmount() end -- disconnects its listener, closes the UGC merchant (PRF-004)
 	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
-	if optionsDropdown then optionsDropdown:Destroy(); optionsDropdown = nil end
 	if tabBarGui then tabBarGui:Destroy(); tabBarGui = nil end
 	if screenGui then screenGui:Destroy(); screenGui = nil end
 	rootFrame = nil
@@ -5277,6 +5212,8 @@ function LoadoutScreen.Hide()
 	inventoryPanel = nil
 	skillsPanel = nil
 	infoPanel = nil
+	outfitPanel = nil
+	outfitSidePanel = nil
 end
 
 function LoadoutScreen.Toggle()

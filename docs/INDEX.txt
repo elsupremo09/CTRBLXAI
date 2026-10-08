@@ -516,16 +516,71 @@ game_flow (26 rows, sheet '28 Game Flow') - LOCKED 2026-10-07: full out-of-battl
 
 
 --- 2026-10-07 UGC RENTAL & OWNERSHIP (LOCKED, user-approved) - sheet '29 UGC Rental Ownership' ---
-ugc_rules (37 rows) - key/value rules. Columns: section, key, value, unit, status, notes.
-  Sections: Currency, Purpose, Try-On, Rental, Expiry, Ownership, Purchase, Rig, Enemy Outfits, Wishlist, Badges, Ratings, UI.
+ugc_rules (54 rows) - key/value rules. Columns: section, key, value, unit, status, notes.
+  Sections: Currency, Purpose, Try-On, Rental, Expiry, Ownership, Purchase, Rig, Enemy Outfits, Cart, Off-Sale, Availability, Paired, Badges, Ratings, UI.
   Query: SELECT key, value, unit, status, notes FROM ugc_rules WHERE section = 'Rental'
   Core: free try-on 5 battles once/item ever (not a rental); rental 30 battles; -1 per battle at battle END if any
   deployed unit wore it; price = 10 x level battle gold (ratio PROVISIONAL), x2 per successive rental of that item, never
   resets, no cap; PlayerOwnsAsset = free/permanent, never saved, always re-verified; PromptPurchase on first equip of
   unowned item + always-visible 'Buy for Roblox Avatar'; on-sale items only; Allow Third Party Sales required.
   Enemy outfits: <=2 items/enemy, ~4 distinct/battle (PROVISIONAL, mobile perf), half random / half pushed, seeded,
-  server-side at spawn. Wishlist cap 50. Ratings private dev data. Separate UGC merchant; Customize in unit loadout screen.
-ugc_slots (11 rows) - Hat, Hair, Face, Neck, Shoulder, Front, Back, Waist, Shirt, Pants, Shoes.
-ugc_race_slot_blocks (6 rows, PROVISIONAL) - per RACE, visual only: Fairy/Avian Back; Mermaid Pants/Shoes/Waist; Treant Hair.
-ugc_catalog (1 PLACEHOLDER row) - curated asset list; asset_id='PLACEHOLDER' is not real, delete when real IDs added.
+  server-side at spawn. Cart cap 50 (wishlist replaced). Ratings private dev data. Separate UGC merchant; Customize in unit loadout screen.
+ugc_slots (6 rows, revised 2026-10-08) - Hat, Hair, Torso, Back, Pants, Shoes. Cols: slot, sort_order, description, icon_asset_id, roblox_asset_types, notes.
+ugc_race_slot_blocks (6 rows, PROVISIONAL) - per RACE, visual only: Fairy/Avian Back; Mermaid Pants/Shoes; Treant Hair. (Mermaid/Waist removed 2026-10-08.)
+ugc_catalog (1 PLACEHOLDER row; cols asset_id, asset_id_2, bundle_id for paired items) - curated asset list; asset_id='PLACEHOLDER' is not real, delete when real IDs added.
   NOTE: battle gold payout per level for rental pricing not yet verified from RewardService - Dev to confirm.
+
+--- 2026-10-08 UGC UPDATE (ugc_rules ids 38-52 added; 9,14,15,18,21,26,29-32 revised) ---
+Try-on: unlimited concurrent trials. Rental: escalation per item; price level = highest owned roster unit level;
+  base ratio 10 still PROVISIONAL (lifetime avg ~302g/battle x (1+L/50) normalized -> ~1,538g L1 / 3,016g L50 / 4,495g L99).
+Off-sale: rental honored to expiry, stays equipped, counter continues, 'Off sale' marker, no re-rent/trials, no enemy use.
+Ownership: re-checked at battle end before charging; purchase PAUSES rental (resumes if ownership lost).
+Cart replaces Wishlist (cap 50, saved, auto-remove owned; add in battle, checkout outside battle only; bulk vs
+  sequential prompt PROVISIONAL). Availability pool re-verified ~10 min (PROVISIONAL); cold start skips enemy outfits.
+Paired items: ugc_catalog.asset_id_2 / bundle_id. Layered clothing works on all race rigs (per-race Studio spot-check).
+economy_framework 35 and loadout_ui_spec 56 notes carry UGC exceptions.
+2026-10-08 (later): id 50 clarified - cold start skips ONLY enemy outfits; player units always wear owned/trial/rented items.
+  id 17 revised - Buy button = 'Buy for Roblox Avatar' outside battle, 'Add to cart' in battle; 'Off sale' marker when off-sale. id 21 note cross-ref.
+
+
+--- 2026-10-08 UGC OUTFIT TAB + PURCHASE REFUND (LOCKED, user-approved) ---
+ugc_rules now 54 rows. Added: ingame_purchase_refund (Purchase), cart_naming (Cart).
+  Revised: id 44 rental_pause_on_purchase (in-game buy CANCELS rental + refunds last rent price in gold; website buy keeps PAUSE;
+  no clawback; rent count not reset); id 37 renamed outfit_tab_location; ids 3,21,32,45 'Customize screen' -> 'Outfit tab'.
+  2026-10-08 ruling id 53: in-game buy during a free trial still refunds the last PAID rent price if an earlier paid rental expired un-refunded.
+loadout_ui_spec section 'Outfit Tab' (14 rows) - 4th loadout tab OUTFIT, own module (not LoadoutScreen.lua), sub-tabs My Items / Cart,
+  Type + Status filters, weapon skin (Pending, separate non-UGC system), UGC merchant shortcut (companion screen), mobile rules.
+  Query: SELECT topic, rule, notes FROM loadout_ui_spec WHERE section = 'Outfit Tab'
+  Exported to Game_Rules sheet '30 Loadout UI Spec' (NEW sheet: full loadout_ui_spec table). id 56 now references Outfit tab.
+
+--- 2026-10-08 LOADOUT NAV / TAB STYLE UPDATE ---
+ugc_rules id 53 notes: 3 accepted refund limitations appended (declined-prompt ~120s window, >120s open window = no refund, ownership lookup error = no refund).
+loadout_ui_spec now 78 rows. Added ids 74-78: dev Options menu removed, Back button top-right (44x44), shared tab style (bronze/navy/dark asset IDs), main tabs 39 px exception, Outfit filter icons (Hair/Pants/Back placeholders).
+  id 43 notes: Skill/Augment Cards sub-tabs never implemented (Open, owner unassigned). id 73 notes: 39 px tab exception.
+  Query: SELECT id, topic, rule, notes FROM loadout_ui_spec WHERE id >= 74 OR id IN (43,73)
+  Re-exported Game_Rules sheets '29 UGC Rental Ownership' and '30 Loadout UI Spec'.
+
+--- 2026-10-08 MISSING STATUSES (Dev handoff) ---
+  elements_statuses: +16 rows (Rune Ward, Rally, Battle Rage, Spell Focus, War Rhythm, Cursed Aura, Banner Blessing, Fortune Boon, War Cry, Hold the Line, Coordinated Advance, Mana Surge, Debuff Res Up, Debuff Res Down, Misdirection, CounterStance), copied from code values.
+  open_decisions: +3 (Stun rule, Overflow rule, Debuff Res Up/Down add-vs-multiply). Stun NOT added; Overflow unchanged.
+  Game_Rules sheets 04 and 18 regenerated. Backup: backups\CTRBLXAI_pre_missingstatuses_20261008_missingstatuses.db
+
+--- 2026-10-08 UGC SLOTS REDUCED TO 6 (user ruling; mirrors source UGCCatalogData.lua) ---
+  ugc_slots: 11 rows -> 6 (Hat, Hair, Torso, Back, Pants, Shoes). New columns description, icon_asset_id, roblox_asset_types.
+    Hat = Hat, FaceAccessory | Hair = HairAccessory | Torso = Shirt, TShirtAccessory, ShirtAccessory, JacketAccessory, SweaterAccessory,
+    DressSkirtAccessory, FrontAccessory | Back = BackAccessory | Pants = Pants, PantsAccessory, ShortsAccessory | Shoes = LeftShoeAccessory, RightShoeAccessory.
+    Neck, Shoulder, Waist accessories not equippable for now (may expand later).
+  ugc_race_slot_blocks: id 5 (Mermaid/Waist) deleted -> 5 rows.
+  loadout_ui_spec id 69 (Type filter) = the 6 slots; id 78 (filter icons) = real slot icon IDs (placeholders retired).
+  ugc_catalog unchanged (PLACEHOLDER row slot Hat still valid).
+  Query: SELECT * FROM ugc_slots ORDER BY sort_order
+  Game_Rules sheet '30 Loadout UI Spec' re-exported (ugc_slots / race blocks have no sheet). Backup: backups\CTRBLXAI_pre_ugc6slots_20261008_ugc6slots.db
+
+--- 2026-10-08 GEARS TAB RENAME / SUB-TAB HEIGHT / MERMAID LEGS (user rulings; source\ already updated) ---
+  ugc_race_slot_blocks: Mermaid/Pants and Mermaid/Shoes deleted (Mermaids are bipedal) -> 3 rows. Reason noted on ugc_slots Pants/Shoes notes.
+  loadout_ui_spec now 82 rows. Main tabs = INFO, GEARS, SKILLS, OUTFIT ('Equipment' renamed 'Gears'): ids 1,3,5,17,25,35,40,60 updated; section 'Equipment Tab' -> 'Gears Tab' (ids 19-25).
+  id 78: 'All types' filter icon = rbxassetid://87409616114560. id 38 note: no SKILLS/AUGMENTS headers.
+  Added ids 79 (Gear/Consumables sub-tabs 24 px), 80 (Outfit Worn/Preview sub-tabs 24 px; FLAG id 63 still says My Items/Cart), 81 (Skills tab no header labels),
+  82 STANDING RULE: no helper texts or labels without user approval (mobile space).
+  Query: SELECT * FROM loadout_ui_spec WHERE id >= 79 OR id IN (1,60,78)
+  Game_Rules sheet '30 Loadout UI Spec' re-exported. Backup: backups\CTRBLXAI_pre_tabsgears_20261008.db

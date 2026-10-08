@@ -27,6 +27,10 @@ local TerrainTextures = require(
 		:WaitForChild("TerrainTextures")
 )
 
+-- Slice 7 visual polish: decorative blocker/tile props (visual only).
+-- PropService has its own TILE_SIZE = 5 mirror; keep in sync with TILE_SIZE below.
+local PropService = require(script.Parent.PropService)
+
 local MapRenderer = {}
 
 --------------------------------------------------
@@ -725,6 +729,12 @@ function MapRenderer.Render(generatedMap, viewMode)
 	-- Render blockers.
 	renderBlockers(generatedMap, mapFolder)
 
+	-- Decorative props (OBS blocker dressing + ground clutter). Visual only;
+	-- TERRAIN view only so debug colors stay readable.
+	if viewMode == "TERRAIN" then
+		PropService.Populate(generatedMap, mapFolder)
+	end
+
 	-- Grid overlay — sits above highest biome elevation.
 	local maxElev = 3
 	local elevCfg = generatedMap._biomeElevation
@@ -864,6 +874,8 @@ function MapRenderer.SetViewMode(folder, mode)
 		end
 	end
 
+	PropService.SetVisible(folder, mode == "TERRAIN")
+
 	folder:SetAttribute("InitialViewMode", mode)
 	print("[MapRenderer] View mode: " .. mode)
 end
@@ -952,6 +964,8 @@ function MapRenderer.RenderOneObject(mapFolder, instance)
 	for _, child in ipairs(mapFolder:GetChildren()) do
 		if child:GetAttribute("X") == instance.x
 			and child:GetAttribute("Y") == instance.y then
+			-- A runtime object now owns this tile: drop any decorative prop on it.
+			PropService.ClearTile(mapFolder, instance.x, instance.y)
 			-- Tag the tile with the object (matches createTile's attribute scheme).
 			child:SetAttribute("ObjectName", instance.type)
 			child:SetAttribute("ObjectCategory", "MapObject")
@@ -1033,6 +1047,8 @@ function MapRenderer.ReshapeTile(mapFolder, x, y, newTerrain, newElevation)
 	for _, child in ipairs(mapFolder:GetChildren()) do
 		if child:GetAttribute("X") == x and child:GetAttribute("Y") == y
 			and child:GetAttribute("IsTemplateTile") then
+			-- Height/terrain is changing: remove props so none float or sink.
+			PropService.ClearTile(mapFolder, x, y)
 			if newElevation then
 				local h = getTileHeight(newElevation)
 				local pos = child.Position

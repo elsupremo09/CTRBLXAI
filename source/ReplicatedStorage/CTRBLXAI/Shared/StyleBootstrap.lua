@@ -92,10 +92,12 @@ local TEXT_SIZE_TOKENS = {
 }
 
 -- Button 9-slice asset IDs
+-- Square icon art (user ruling 2026-10-08): Primary = Confirm, Secondary = Back,
+-- Tertiary = Options. Must match Theme.ButtonAssets.
 local BUTTON_ASSETS = {
-	Primary   = "rbxassetid://128127407312284",
-	Secondary = "rbxassetid://79828905582448",
-	Tertiary  = "rbxassetid://74754968977134",
+	Primary   = "rbxassetid://106679295261353",
+	Secondary = "rbxassetid://121150899495320",
+	Tertiary  = "rbxassetid://83722919579541",
 }
 
 --------------------------------------------------
@@ -209,7 +211,7 @@ function StyleBootstrap.Init()
 	addRule(ds, ".PrimaryBtn", {
 		BackgroundTransparency = 1,
 		Image = "$BtnAssetPrimary",
-		ScaleType = Enum.ScaleType.Slice,
+		ScaleType = Enum.ScaleType.Fit,
 	})
 	addRule(ds, ".PrimaryBtn:Hover", {
 		ImageColor3 = Color3.fromRGB(230, 230, 230),
@@ -221,7 +223,7 @@ function StyleBootstrap.Init()
 	addRule(ds, ".SecondaryBtn", {
 		BackgroundTransparency = 1,
 		Image = "$BtnAssetSecondary",
-		ScaleType = Enum.ScaleType.Slice,
+		ScaleType = Enum.ScaleType.Fit,
 	})
 	addRule(ds, ".SecondaryBtn:Hover", {
 		ImageColor3 = Color3.fromRGB(230, 230, 230),
@@ -233,7 +235,7 @@ function StyleBootstrap.Init()
 	addRule(ds, ".TertiaryBtn", {
 		BackgroundTransparency = 1,
 		Image = "$BtnAssetTertiary",
-		ScaleType = Enum.ScaleType.Slice,
+		ScaleType = Enum.ScaleType.Fit,
 	})
 	addRule(ds, ".TertiaryBtn:Hover", {
 		ImageColor3 = Color3.fromRGB(230, 230, 230),

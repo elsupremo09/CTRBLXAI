@@ -134,8 +134,8 @@ local function groundSurfaceY(tx, ty)
 	end
 	rp.FilterDescendantsInstances = ex
 	local res = workspace:Raycast(Vector3.new(wx, 200, wz), Vector3.new(0, -400, 0), rp)
-	if res then return res.Position.Y end
-	return tileSurfaceY(getElevation(tx, ty))  -- fallback: grid math on ray miss
+	if res then return res.Position.Y, res.Instance end
+	return tileSurfaceY(getElevation(tx, ty)), nil  -- fallback: grid math on ray miss
 end
 
 -- R15 world position grounded to the real terrain surface (see groundSurfaceY).
@@ -653,6 +653,8 @@ local function playUnitAnim(token, kind, opts)
 end
 
 -- Stop a unit's looping idle (e.g. on KO so the body doesn't keep breathing).
+local _idleRng = Random.new()  -- per-client randomness for idle desync (visual only)
+
 local function stopUnitIdle(token)
 	if token and token._animTracks and token._animTracks.Idle and token._animTracks.Idle.IsPlaying then
 		token._animTracks.Idle:Stop(0.2)
@@ -678,7 +680,11 @@ local function spawnToken(unit)
 			-- at the given CFrame. So we just need the tile surface Y, no HipHeight math.
 			-- Ground feet to the real voxel surface (not the buried tile-Part top),
 			-- matching the grounded move path so R15 units don't spawn buried.
-			local feetY = groundSurfaceY(unit.tileX, unit.tileY)
+			local feetY, hitInst = groundSurfaceY(unit.tileX, unit.tileY)
+			-- [DIAG burial 2026-10-08] remove after the cause is found.
+			local gridY = tileSurfaceY(getElevation(unit.tileX, unit.tileY))
+			local _, ext = model:GetBoundingBox()
+			print(`[BattleVisualClient][DIAG burial] {unit.name} ({unit.side}) tile ({unit.tileX},{unit.tileY}) feetY={string.format("%.2f", feetY)} gridY={string.format("%.2f", gridY)} hit={if hitInst then hitInst:GetFullName() else "MISS"} modelH={string.format("%.2f", ext.Y)}`)
 			local feetPos = Vector3.new(
 				MAP_OFFSET_X + (unit.tileX - 0.5) * TILE_SIZE,
 				feetY,
@@ -809,7 +815,19 @@ local function spawnToken(unit)
 	applyUnitNameStar(unitTokens[unit.id], unit)
 	-- Base idle animation so standing R15 units aren't frozen stiff (looped; no-op
 	-- for cylinder fallbacks). Hit/KO/Attack one-shots play over this on events.
-	playUnitAnim(unitTokens[unit.id], "Idle", { loop = true, fade = 0.3 })
+	-- Desync idles: each unit starts at a random point in the loop and breathes at a
+	-- slightly different speed, so units don't sway in unison.
+	local _idleTrack = playUnitAnim(unitTokens[unit.id], "Idle", { loop = true, fade = 0.3 })
+	if _idleTrack then
+		_idleTrack:AdjustSpeed(_idleRng:NextNumber(0.85, 1.15))
+		task.spawn(function()
+			local tries = 0
+			while _idleTrack.Length <= 0 and tries < 30 do task.wait(0.1); tries += 1 end
+			if _idleTrack.Length > 0 and _idleTrack.IsPlaying then
+				_idleTrack.TimePosition = _idleRng:NextNumber(0, _idleTrack.Length)
+			end
+		end)
+	end
 	-- Show initial facing for EVERY unit (players + enemies) from spawn. Default to
 	-- "S" if the payload omits facing so an indicator always appears.
 	orientUnitToFacing(unit.id, unit.facing or "S")
@@ -1531,7 +1549,6 @@ local function enterActionSelection()
 			{ id="Guard", text="Guard", enabled=not prompt.guardUsed, onPress=function()
 				clearHighlights(); isPlayerTurn = false; inputMode = nil
 				bp.state = "Resolving"; BattleHUD.Render(bp)
-				BattleHUD.AddLogEntry((prompt.unitName or "Unit") .. " guards.")
 				BattleEvents.PlayerCommand:FireServer({ actionType = "Guard" })
 			end },
 		}},
@@ -1540,7 +1557,6 @@ local function enterActionSelection()
 		{ id="Wait", text="Wait", enabled=true, onPress=function()
 			clearHighlights(); isPlayerTurn = false; inputMode = nil
 			bp.state = "Resolving"; BattleHUD.Render(bp)
-			BattleHUD.AddLogEntry((prompt.unitName or "Unit") .. " waits.")
 			BattleEvents.PlayerCommand:FireServer({ actionType = "Wait" })
 		end },
 	}
@@ -2732,6 +2748,22 @@ local function createDevCameraPanel()
 		"Earthquake","Hunger Virus","Wild Growth",
 	}
 	local weatherDd = makeDropdown(gStatus.container, "WX", weatherList, nil)
+	-- Battlefield events: add / change (fires now, ends current first) / end.
+	local eventList = {
+		"Merchant Caravan","Slave Trader","Wandering Scholar","Wandering Bard","Wandering Mercenaries",
+		"Champion","Zombie Horde","Leprechaun","Thief","Wandering Blacksmith","Mutator","Herald of XXX",
+		"Divine Intervention","Chaos Necromancer","Fortune Teller","Lost Noble","Treasure Hunter",
+		"Wandering Monster","Vengeful Spirit","Bounty Hunter","Monster Hunter","Wandering Bandits",
+		"Plague Carrier","Traitor","Enemy Scout","Doppelganger","Chaos Lich","Fog Spirit","Fire Spirit",
+		"Wind Spirit","Water Spirit","Lightning Elemental","Earth Elemental","Gold Golem","Crystal Golem",
+	}
+	local eventDd = makeDropdown(gStatus.container, "EVENT", eventList, nil)
+	makeBtn(gStatus.container, "START / CHANGE EVENT", function()
+		BattleEvents.DevCommand:FireServer({ action = "EventFire", eventName = eventDd.get() })
+	end, Color3.fromRGB(70, 55, 85))
+	makeBtn(gStatus.container, "END EVENT", function()
+		BattleEvents.DevCommand:FireServer({ action = "EventEnd" })
+	end, Color3.fromRGB(80, 45, 45))
 	makeBtn(gStatus.container, "SET WEATHER", function()
 		BattleEvents.DevCommand:FireServer({ action = "SetWeather", condition = weatherDd.get() })
 	end, Color3.fromRGB(40, 60, 75))
@@ -3327,19 +3359,7 @@ BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
 		-- Brief red target highlight (1s)
 		if VFXController then pcall(VFXController.SetPersistHighlight, data.targetId, tt.part, "target"); task.delay(1.0, function() pcall(VFXController.ClearHighlight, data.targetId) end) end
 	end
-	-- Battle log
-	local actorName = unitData[data.actorId] and unitData[data.actorId].name or "?"
-	local targetName = unitData[data.targetId] and unitData[data.targetId].name or "?"
-	local logText = data.skillName
-		and (actorName.." used "..data.skillName.." → "..targetName..". -"..data.damage.." HP")
-		or (actorName.." attacks "..targetName..". -"..data.damage.." HP")
-	if data.statusApplied and data.statusApplied ~= "" then
-		logText = logText .. " +" .. data.statusApplied
-	end
-	if data.rtDelay and data.rtDelay > 0 then
-		logText = logText .. " RT+" .. data.rtDelay
-	end
-	BattleHUD.AddLogEntry(logText)
+	-- Battle log: authored server-side (BattleLogEntry), not here.
 
 	-- Show resolution result in preview panel
 	bp.preview = {
@@ -3364,7 +3384,6 @@ BattleEvents.DotDamage.OnClientEvent:Connect(function(data)
 	if t then showDamageText(t.part.Position, data.damage, false)
 		showStatusText(t.part.Position, data.statusId, Theme.GetStatusColor(data.statusId)) end
 	local uName = unitData[data.unitId] and unitData[data.unitId].name or "?"
-	BattleHUD.AddLogEntry(uName.." takes "..data.damage.." "..data.statusId.." damage.")
 end)
 
 BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
@@ -3397,7 +3416,6 @@ BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
 	end
 	local actorName = unitData[data.actorId] and unitData[data.actorId].name or "?"
 	local targetName = unitData[data.targetId] and unitData[data.targetId].name or "?"
-	BattleHUD.AddLogEntry(actorName.." heals "..targetName..". +"..data.amount.." HP")
 
 	-- Show resolution result
 	bp.preview = {
@@ -4472,6 +4490,21 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		end
 	end
 
+	-- Gold earned this battle (kills + completion + quest gold), if any.
+	if type(data.gold) == "number" and data.gold > 0 then
+		local goldLabel = Instance.new("TextLabel")
+		goldLabel.Size = UDim2.new(1, 0, 0, 16)
+		goldLabel.Position = UDim2.new(0, 0, 0, recY)
+		goldLabel.BackgroundTransparency = 1
+		goldLabel.Font = Theme.Font.PrimaryBold
+		goldLabel.TextSize = Theme.Text.Body()
+		goldLabel.TextColor3 = Theme.Colors.TextGold
+		goldLabel.TextXAlignment = Enum.TextXAlignment.Left
+		goldLabel.Text = `+{data.gold} GOLD`
+		goldLabel.Parent = frame
+		recY = recY + 18
+	end
+
 	-- Loot header
 	local lootLabel = Instance.new("TextLabel")
 	lootLabel.Size = UDim2.new(1, 0, 0, 14)
@@ -4985,7 +5018,13 @@ BattleEvents.ItemUsed.OnClientEvent:Connect(function(data)
 	else
 		summary = "on " .. targetName
 	end
-	BattleHUD.AddLogEntry(string.format("%s used %s — %s", actorName, data.itemName or "item", summary))
+	-- Battle log line authored server-side (BattleLogEntry).
+end)
+
+-- BattleLogEntry (2026-10-08): the server authors every battle-log line;
+-- the client only displays it. Replaces the old per-handler log calls.
+BattleEvents.BattleLogEntry.OnClientEvent:Connect(function(data)
+	if type(data) == "table" then BattleHUD.AddLogEntry(data) end
 end)
 
 -- FacingPrompt: server asks player to choose a direction via the ground ring.

@@ -388,8 +388,8 @@ local function showItemDetail(eq, slotName)
 	local fb = Theme.FooterBar
 	local backBtn = Theme.MakeButton(gui, "BACK", "Secondary")
 	backBtn.Size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H)
-	backBtn.Position = UDim2.new(1, -fb.PAD - fb.BTN_W, 1, -fb.PAD - fb.BTN_H)
-	backBtn.AnchorPoint = Vector2.new(0, 0)
+	backBtn.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
+	backBtn.AnchorPoint = Vector2.new(1, 1)
 	backBtn.MouseButton1Click:Connect(closeDetailOverlay)
 end
 
@@ -1255,8 +1255,9 @@ local function buildPanel(data)
 
 	-- Tab bar
 	local TAB_Y = HEADER_H + 2
+	local TAB_H = Theme.MinSize.TabButton -- 24 px bar buttons (user ruling 2026-10-08)
 	local tabBar = Instance.new("Frame")
-	tabBar.Size = UDim2.new(1, 0, 0, 26)
+	tabBar.Size = UDim2.new(1, 0, 0, TAB_H + 4)
 	tabBar.Position = UDim2.fromOffset(0, TAB_Y)
 	tabBar.BackgroundColor3 = Theme.Colors.Background
 	tabBar.BackgroundTransparency = 0.3
@@ -1270,7 +1271,7 @@ local function buildPanel(data)
 	tabLayout.Parent = tabBar
 
 	-- Content area (scrolling)
-	local CONTENT_Y = TAB_Y + 30
+	local CONTENT_Y = TAB_Y + TAB_H + 8
 	local contentFrame = Instance.new("ScrollingFrame")
 	contentFrame.Name = "TabContent"
 	contentFrame.Size = UDim2.new(1, -8, 1, -(CONTENT_Y + 4))
@@ -1311,27 +1312,21 @@ local function buildPanel(data)
 
 	-- Create tab buttons — NEW ORDER: Basic, Stats, Equip, Skills
 	local tabs = { {"basic", "Basic"}, {"stats", "Stats"}, {"equipment", "Equip"}, {"skills", "Skills"} }
-	for _, tab in ipairs(tabs) do
-		local tabBtn = Instance.new("TextButton")
-		tabBtn.Size = UDim2.new(0, 70, 0, 22)
-		tabBtn.BackgroundColor3 = tab[1] == "basic" and Theme.Colors.Surface or Theme.Colors.PanelRaised
-		tabBtn.Font = Theme.Font.PrimaryBold
-		tabBtn.TextSize = Theme.Text.Body()
-		tabBtn.TextColor3 = Theme.Colors.TextPrimary
-		tabBtn.Text = tab[2]
-		tabBtn.BorderSizePixel = 0
-		tabBtn.Parent = tabBar
-		Instance.new("UICorner", tabBtn).CornerRadius = UDim.new(0, 4)
-
-		tabBtn.MouseButton1Click:Connect(function()
-			for _, child in ipairs(tabBar:GetChildren()) do
-				if child:IsA("TextButton") then
-					child.BackgroundColor3 = Theme.Colors.PanelRaised
-				end
+	-- Old 9-slice text bars (user ruling 2026-10-08): Active = bronze, Inactive = navy.
+	-- The highlight moves in place with Theme.SetTabState; .Activated works for touch too.
+	local tabBtns = {}
+	for i, tab in ipairs(tabs) do
+		tabBtns[tab[1]] = Theme.MakeTabButton(tabBar, tab[2], if tab[1] == "basic" then "Active" else "Inactive", function()
+			for id, b in pairs(tabBtns) do
+				Theme.SetTabState(b, if id == tab[1] then "Active" else "Inactive")
 			end
-			tabBtn.BackgroundColor3 = Theme.Colors.Surface
 			renderTab(tab[1])
-		end)
+		end, {
+			name = "Tab_" .. tab[2],
+			size = UDim2.new(0, 70, 0, TAB_H),
+			textSize = Theme.Text.Body(),
+			layoutOrder = i,
+		})
 	end
 
 	-- Initial render

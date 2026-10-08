@@ -331,7 +331,8 @@ local function advanceToNextReady(state)
 	-- Weather engine: per-round re-roll at each 1000-CT boundary + 300-CT periodic
 	-- tick. Deterministic rng seeded from the clock (no stored seed needed).
 	if _weatherService then
-		local wRng = Random.new(state.ct + 54321)
+		-- + per-battle seed (set by Main at battle start) so weather differs between battles.
+		local wRng = Random.new(state.ct + (state.battleSeed or 0) + 54321)
 		_weatherService.RerollForNewRound(state, wRng, state.ct)
 		_weatherService.Tick(state, minRt, wRng, state.ct)
 	end
@@ -342,7 +343,7 @@ local function advanceToNextReady(state)
 		local roundIndex = math.floor((state.ct or 0) / 1000)
 		if state.bfRound == nil or roundIndex > state.bfRound then
 			state.bfRound = roundIndex
-			local bfRng = Random.new((state.ct or 0) + 70007)
+			local bfRng = Random.new((state.ct or 0) + (state.battleSeed or 0) + 70007)
 			local ok, err = pcall(_battlefieldEventService.OnRoundStart, state, roundIndex, bfRng)
 			if not ok then
 				warn("[BattleCoordinator] BattlefieldEventService.OnRoundStart error: " .. tostring(err))

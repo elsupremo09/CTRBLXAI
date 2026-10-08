@@ -61,6 +61,7 @@ local GuildMenuService        = require(Game:WaitForChild("GuildMenuService"))
 local UGCService              = require(Game:WaitForChild("UGCService"))
 local UGCOutfitService        = require(Game:WaitForChild("UGCOutfitService"))
 local UGCRemoteHandler        = require(Game:WaitForChild("UGCRemoteHandler"))
+local UGCRatingService        = require(Game:WaitForChild("UGCRatingService")) -- split from UGCService 2026-10-08 (ARC-005)
 
 
 local WeaponData = require(
@@ -104,6 +105,13 @@ local AugmentData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
 		:WaitForChild("AugmentData")
+)
+
+-- Moved up (was declared mid-file, after the roster builder that uses it).
+local ConsumableData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ConsumableData")
 )
 
 local GameConstants = require(
@@ -313,6 +321,7 @@ BattlefieldEventService.SetBroadcaster(BattleVisualBroadcaster)
 BattlefieldEventService.SetUnitRemover(function(u)
 	clearTileOccupant(u.tileX, u.tileY)
 	BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = true })
+	BattleVisualBroadcaster.Log("ko", `{u.name} leaves the battlefield.`, u.id)
 end)
 BattlefieldEventService.SetTileEffectService(TileEffectService)
 BattlefieldEventService.SetEnemyGenerator(EnemyGenerator)
@@ -1111,7 +1120,7 @@ local function doSave()
 		dispatch = DispatchService.Export(PLAYER_ID),
 		explore  = ExploreService.Export(PLAYER_ID),
 		guildMenu = GuildMenuService.Export(PLAYER_ID), -- Slice 6 Guild menu (battle counter + hired units)
-		ugc      = UGCService.Export(PLAYER_ID), -- UGC rentals/trials/wishlist/votes (ownership never saved)
+		ugc      = UGCService.Export(PLAYER_ID), -- UGC rentals/trials/cart/votes (ownership never saved)
 	}
 	local currencies = CurrencyService.Export(PLAYER_ID)
 	local ok, err = SaveService.Save(PLAYER_ID, rosterState, inventoryItems, progression, currencies)
@@ -1147,6 +1156,8 @@ GuildMenuService.Init({
 --------------------------------------------------
 UGCService.SetCurrencyService(CurrencyService)
 UGCService.SetAvailabilityProvider(UGCOutfitService.IsAvailable)
+UGCService.SetOffSaleProvider(UGCOutfitService.IsOffSale) -- "Off sale" marker (ugc_rules 41/47)
+UGCService.SetRatingService(UGCRatingService) -- private vote aggregate
 UGCService.SetSaveModeProvider(SaveService.GetMode)
 UGCService.SetUnitRaceProvider(function(_pid, unitId)
 	local u = playerUnits[unitId]
@@ -1174,7 +1185,9 @@ UGCRemoteHandler.Init({
 })
 UGCService.StartRatingFlush()
 task.spawn(function()
-	UGCOutfitService.RefreshAvailability() -- on-sale check first (fail closed until done)
+	-- First on-sale pass (fail closed until done), then a background re-check loop
+	-- (ugc_rules 49); battles only read the cached pool (ugc_rules 50).
+	UGCOutfitService.StartAvailabilityLoop()
 	UGCService.RefreshOwnership(PLAYER_ID) -- ownership is never saved; verify live
 end)
 
@@ -1904,11 +1917,6 @@ end
 -- CONSUMABLE SLOT MANAGEMENT (Slice 4G.4)
 --------------------------------------------------
 
-local ConsumableData = require(
-	game:GetService("ReplicatedStorage")
-		:WaitForChild("Content")
-		:WaitForChild("ConsumableData")
-)
 
 -- RequestEquipConsumable: assign a consumable to a slot (1-6)
 BattleEvents.RequestEquipConsumable.OnServerInvoke = function(player, unitId, slotIndex, consumableId)
@@ -2370,7 +2378,11 @@ if game:GetService("RunService"):IsStudio() then
 				for _, u in ipairs(state.units) do if u.side == "Enemy" and u.isAlive then ec = ec + 1 end end
 				state.enemyCountAtStart = ec
 				state.playerDeployTiles = (generatedMap and generatedMap.deploymentZones and generatedMap.deploymentZones.player) or {}
-				local bfRng = Random.new((state.ct or 0) + 70007)
+				-- Seed from the map seed (varies per battle). Was state.ct + 70007, and ct is 0 at
+				-- battle start, so every battle rolled the SAME events (always Fog Spirit).
+				-- Per-battle seed, stored on state so the round/turn/weather rolls vary per battle too.
+				state.battleSeed = (generatedMap and generatedMap.seed) or os.time()
+				local bfRng = Random.new(state.battleSeed + 70007)
 				BattlefieldEventService.SelectEventsForBattle(state, activeQuest and activeQuest.biome or nil, bfRng)
 			end
 
@@ -2477,6 +2489,25 @@ if game:GetService("RunService"):IsStudio() then
 					if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
 					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u) end
 				end
+			end
+
+		elseif cmd.action == "EventFire" then
+			-- Dev: add an event now, or change the current one (ends it first).
+			if not state then warn("[Dev] EventFire: no battle running"); return end
+			local name = cmd.eventName
+			if type(name) ~= "string" or name == "" then warn("[Dev] EventFire: need eventName"); return end
+			BattlefieldEventService.DevFireEvent(state, name, Random.new(os.clock() * 1000))
+
+		elseif cmd.action == "EventEnd" then
+			-- Dev: end the current event (its units leave the map).
+			if not state then warn("[Dev] EventEnd: no battle running"); return end
+			local ended = BattlefieldEventService.DevEndActiveEvent(state)
+			if ended then
+				if BattleVisualBroadcaster.BattlefieldEventAnnounced then
+					BattleVisualBroadcaster.BattlefieldEventAnnounced(nil, true)
+				end
+			else
+				print("[Dev] EventEnd: no active event")
 			end
 
 		elseif cmd.action == "SetWeather" then
@@ -2835,11 +2866,11 @@ local _undeployConn = BattleEvents.UndeployUnit.OnServerEvent:Connect(function(p
 end)
 
 local readyConn = BattleEvents.DeploymentReady.OnServerEvent:Connect(function(plr)
-	if deployedCount >= #deployPlayerUnits then
+	-- At least ONE unit must be deployed (user ruling 2026-10-07; was: all units).
+	if deployedCount >= 1 then
 		deploymentCompleteSignal:Fire()
 	else
-		warn(string.format("[Deploy] Ready signal but only %d/%d deployed — waiting",
-			deployedCount, #deployPlayerUnits))
+		warn("[Deploy] Ready signal but no unit deployed — waiting")
 	end
 end)
 
@@ -2848,7 +2879,21 @@ deployConn:Disconnect()
 readyConn:Disconnect()
 deploymentCompleteSignal:Destroy()
 
-print(string.format("[Deploy] All %d player units deployed — starting battle", #deployPlayerUnits))
+-- Units the player left undeployed sit out this battle: remove them from the battle
+-- roster so they never enter play at tile (0,0). They stay owned (playerUnits), so the
+-- post-battle XP step counts them as benched.
+for i = #allUnitsList, 1, -1 do
+	local u = allUnitsList[i]
+	if u.side == "Player" and u.tileX == 0 and u.tileY == 0 then
+		table.remove(allUnitsList, i)
+		print(string.format("[Deploy] %s not deployed — sits out this battle", u.name))
+	end
+end
+for i = #deployPlayerUnits, 1, -1 do
+	local u = deployPlayerUnits[i]
+	if u.tileX == 0 and u.tileY == 0 then table.remove(deployPlayerUnits, i) end
+end
+print(string.format("[Deploy] %d player unit(s) deployed — starting battle", #deployPlayerUnits))
 
 -- === INITIATIVE (DB core_stats id 54, user ruling 2026-10-02) ===
 -- STEP 1 (every unit, once, at initial deployment): LUK Starting RT =
@@ -2923,7 +2968,11 @@ do
 	for _, u in ipairs(state.units) do if u.side == "Enemy" and u.isAlive then ec = ec + 1 end end
 	state.enemyCountAtStart = ec
 	state.playerDeployTiles = (generatedMap and generatedMap.deploymentZones and generatedMap.deploymentZones.player) or {}
-	local bfRng = Random.new((state.ct or 0) + 70007)
+	-- Seed from the map seed (varies per battle). Was state.ct + 70007, and ct is 0 at
+	-- battle start, so every battle rolled the SAME events (always Fog Spirit).
+	-- Per-battle seed, stored on state so the round/turn/weather rolls vary per battle too.
+	state.battleSeed = (generatedMap and generatedMap.seed) or os.time()
+	local bfRng = Random.new(state.battleSeed + 70007)
 	BattlefieldEventService.SelectEventsForBattle(state, activeQuest and activeQuest.biome or nil, bfRng)
 end
 
@@ -3045,6 +3094,7 @@ local function checkChannelInterrupt(unit, statusId)
 		-- returns false then, and the channel visual must keep running.
 		if BattleCoordinator.InterruptChanneling(unit, statusId .. " applied") then
 			BattleVisualBroadcaster.ChannelEnded(unit)
+			BattleVisualBroadcaster.Log("channel", `{unit.name}\'s channel is interrupted by {statusId}.`, unit.id)
 			return true
 		end
 	end
@@ -3323,6 +3373,7 @@ local function buildTurnPrompt(unit)
 	-- Interact button when at least one candidate exists (Button Availability
 	-- Policy). RT previews are a percentage of Modified Base RT per native kind.
 	local interactCands = TargetingService.GetInteractCandidates(unit, state.units, state)
+	local ObjectDataForInteract = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("ObjectData"))
 	local modBaseRtForInteract = StatusService.GetModifiedBaseRt(unit)
 	local interactTargets = {}
 	for _, c in ipairs(interactCands) do
@@ -3338,6 +3389,15 @@ local function buildTurnPrompt(unit)
 		elseif c.interactKind == "mapObject" then
 			rtPct = 0.10; label = "Activate"
 		end
+		local rtPreview = math.round(modBaseRtForInteract * rtPct)
+		if c.interactKind == "mapObject" then
+			local od = ObjectDataForInteract.Objects and ObjectDataForInteract.Objects[c.archetypeId]
+			if od and od.activation == "Interact (Free)" then
+				rtPreview = 0
+			elseif od and od.interactRT then
+				rtPreview = od.interactRT
+			end
+		end
 		table.insert(interactTargets, {
 			interactKind = c.interactKind,
 			id           = c.id,            -- unit targets
@@ -3346,7 +3406,7 @@ local function buildTurnPrompt(unit)
 			tileX        = c.tileX,
 			tileY        = c.tileY,
 			label        = label,
-			rtPreview    = math.round(modBaseRtForInteract * rtPct),
+			rtPreview    = rtPreview,
 		})
 	end
 
@@ -4203,6 +4263,10 @@ local function handleChannelingActivation(activeUnit)
 		BattleVisualBroadcaster.ChannelFizzled(activeUnit, channeledSkillName, result or "fizzled")
 	elseif result then
 		BattleVisualBroadcaster.ChannelEnded(activeUnit)
+		-- Resuscitate logs its own detailed line in CommandService (no duplicate).
+		if result.type ~= "Resuscitate" then
+			BattleVisualBroadcaster.Log("channel", `{activeUnit.name}\'s {channeledSkillName or "skill"} lands.`, activeUnit.id)
+		end
 		if result.type == "Healing" then
 			table.insert(actions, {
 				actionType = "Skill", unit = activeUnit, target = result.target,
@@ -4596,7 +4660,7 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 		-- Hunter trap, Lightning strike, Lich ripple, Water flood, Bard aura, Traitor
 		-- flip). Fires for any unit carrying event flags; nil-safe/no-op otherwise.
 		do
-			local bfRng = Random.new((state.ct or 0) + (activeUnit.stableOrderKey or 0) + 70007)
+			local bfRng = Random.new((state.ct or 0) + (activeUnit.stableOrderKey or 0) + (state.battleSeed or 0) + 70007)
 			local okB, errB = pcall(BattlefieldEventService.OnEventUnitTurn, activeUnit, state, bfRng)
 			if not okB then
 				warn("[Main] BattlefieldEventService.OnEventUnitTurn error: " .. tostring(errB))
@@ -4689,6 +4753,7 @@ print("====================================")
 --------------------------------------------------
 
 local isQualifyingVictory = (winner == "Player")
+local battleGoldEarned = 0 -- set by the BATTLE GOLD block below; shown on the reward screen
 
 --------------------------------------------------
 -- POST-BATTLE: UPDATE UNIT RECORDS (Slice 4K)
@@ -4801,6 +4866,47 @@ do
 		glowCrystal      = (state ~= nil and state.glowCrystalActive == true),
 	}
 	local xpSummary = ProgressionService.AwardBattleXp(PLAYER_ID, battleResult)
+
+	-- BATTLE GOLD (economy_framework ids 2-9, LOCKED; defeat rule 2026-09-14).
+	--   Kill Gold = Base × (1 + Enemy Level / 100) × overleveled band
+	--     Base: Grunt 8 / Veteran 14 / Elite 25 / Boss 50. Band uses the gap between
+	--     the party's highest level and the quest's recommended level (same bands as
+	--     XP, no underleveled bonus — id 7).
+	--   Victory: 100% kill gold + Battle Completion Gold + Quest Reward Gold.
+	--   Defeat / wipeout: 50% of kill gold only.
+	-- RewardService.ApplyGold applies battlefield-event gold multipliers (Leprechaun etc.).
+	do
+		local KILL_GOLD_BASE = { Grunt = 8, Veteran = 14, Elite = 25, Boss = 50 }
+		local recLvl = (activeQuest and activeQuest.recommendedLvl) or 1
+		local topLevel = 1
+		for _, id in ipairs(deployed) do
+			local pu = playerUnits[id]
+			if pu and type(pu.level) == "number" and pu.level > topLevel then topLevel = pu.level end
+		end
+		local gap = topLevel - recLvl
+		local band = if gap <= 5 then 1.0 elseif gap <= 10 then 0.75 elseif gap <= 15 then 0.50
+			elseif gap <= 20 then 0.25 else 0.10
+		local killGold = 0
+		for _, k in ipairs(kills) do
+			local base = KILL_GOLD_BASE[k.enemyType or ""] or KILL_GOLD_BASE.Grunt
+			killGold += base * (1 + (k.level or 0) / 100) * band
+		end
+		killGold = math.floor(killGold)
+		local completionGold, questGold = 0, 0
+		if isQualifyingVictory then
+			local r = activeQuest and activeQuest.rewards
+			local cBase = (r and r.completionGoldBase) or 30
+			completionGold = math.floor(cBase * (1 + recLvl / 50))
+			questGold = (r and r.questGold) or 0
+		else
+			killGold = math.floor(killGold * 0.5) -- keep 50% of gold dropped on defeat
+		end
+		local total = RewardService.ApplyGold(killGold + completionGold + questGold)
+		if total > 0 then CurrencyService.Credit(PLAYER_ID, { gold = total }) end
+		battleGoldEarned = total
+		print(string.format("[PostBattle] Gold +%d (kills %d, completion %d, quest %d, band x%.2f, %s)",
+			total, killGold, completionGold, questGold, band, if isQualifyingVictory then "victory" else "defeat"))
+	end
 	if xpSummary and xpSummary.flags and #xpSummary.flags > 0 then
 		for _, f in ipairs(xpSummary.flags) do
 			print("[PostBattle][XP-FLAG] " .. tostring(f))
@@ -4914,9 +5020,9 @@ for unitId, result in pairs(recovery) do
 	end
 end
 
-if #rewardSummaries > 0 then
-	print(string.format("[PostBattle] Sending %d reward(s) to client", #rewardSummaries))
-	BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary })
+if #rewardSummaries > 0 or (isQualifyingVictory and battleGoldEarned > 0) then
+	print(string.format("[PostBattle] Sending %d reward(s) + %d gold to client", #rewardSummaries, battleGoldEarned))
+	BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary, gold = battleGoldEarned })
 	rewardContinueSignal.Event:Wait()
 	print("[PostBattle] Player acknowledged rewards")
 end

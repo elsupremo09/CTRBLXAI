@@ -16,6 +16,15 @@
 --   * Remote spam / throttle abuse   -> rate limit per request type.
 --   * Ballot stuffing                -> one vote per player per item, changes only
 --     adjust the delta; totals are private (never sent to clients).
+--   * Fake bulk checkout result      -> PromptBulkPurchaseFinished is client-only,
+--     so the client only ASKS for verification; the server re-checks every
+--     pending entry with PlayerOwnsAsset (UGCService.VerifyCheckout).
+--   * Refund farming (ugc_rules 53)  -> the rent refund needs OUR prompt + live
+--     ownership, is paid once per paid rental (cleared from the save), and a
+--     declined prompt clears the marker (UGCService.ClearPendingPurchase); every
+--     marker also expires and is resolved by the server itself (BUG-025).
+--   * Mid-battle purchases / spam    -> checkout and Buy are refused during battle
+--     (buy_timing, ugc_rules 21/45); checkout/verify have longer rate limits.
 --
 -- Init(deps):
 --   deps.playerId      : string           -- Main's PLAYER_ID (save/currency key)
@@ -32,6 +41,13 @@ local UGCCatalogData = require(ReplicatedStorage:WaitForChild("Content"):WaitFor
 local UGCRemoteHandler = {}
 
 local RATE_LIMIT_SECONDS = 0.25 -- SEC-001: per-player, per-request minimum spacing
+-- Heavier requests (each opens a prompt or makes several ownership calls).
+local RATE_LIMIT_OVERRIDES: { [string]: number } = { Checkout = 2, Preview = 0.5 }
+local MAX_TRY_ON = 11 -- one per UGC slot (SEC-001: bounded input)
+-- CartVerify is never refused by the rate limit (a refused verify left purchase markers set,
+-- BUG-025): calls are serialized per player and spaced, with at most one waiting (SEC-001).
+local VERIFY_SPACING_SECONDS = 3
+local VERIFY_POLL_SECONDS = 0.25
 local MAX_UNIT_ID_LENGTH = 64
 
 local _playerId: string? = nil
@@ -39,6 +55,8 @@ local _sessionPlayer: Player? = nil
 local _ugc: any = nil
 local _outfit: any = nil
 local _lastCallAt: { [string]: number } = {}
+local _verifyBusy: { [string]: boolean } = {}
+local _verifyQueued: { [string]: boolean } = {}
 local _connections: { RBXScriptConnection } = {}
 local _isInitialized = false
 
@@ -58,14 +76,20 @@ local function fail(msg: string)
 	return { ok = false, error = msg }
 end
 
--- Common gate (SEC-001). Returns an error message or nil.
-local function guard(player: Player, key: string): string?
+-- Readiness + right player (no rate limit). Returns an error message or nil.
+local function sessionGate(player: Player): string?
 	if not _isInitialized or not _ugc or not _playerId then return "UGC not ready" end
 	if _sessionPlayer and player ~= _sessionPlayer then return "Not your session" end
+	return nil
+end
+
+-- Common gate (SEC-001). Returns an error message or nil.
+local function guard(player: Player, key: string): string?
+	local sg = sessionGate(player); if sg then return sg end
 	local now = os.clock()
 	local rk = `{player.UserId}:{key}`
 	local last = _lastCallAt[rk]
-	if last and now - last < RATE_LIMIT_SECONDS then return "Too fast — try again" end
+	if last and now - last < (RATE_LIMIT_OVERRIDES[key] or RATE_LIMIT_SECONDS) then return "Too fast — try again" end
 	_lastCallAt[rk] = now
 	return nil
 end
@@ -96,7 +120,8 @@ local function onGetWorn(player: Player, unitId: any)
 		if item then
 			table.insert(items, {
 				assetId = id, name = item.name, slot = item.slot,
-				isOwned = _ugc.IsOwned(pid, id), isMarked = _ugc.IsMarked(pid, id),
+				isOwned = _ugc.IsOwned(pid, id), isInCart = _ugc.IsInCart(pid, id),
+				isOffSale = if _outfit then _outfit.IsOffSale(id) else false,
 			})
 		end
 	end
@@ -129,16 +154,82 @@ local function onUnequip(player: Player, unitId: any, slot: any)
 	return result(_ugc.Unequip(_playerId, unitId, slot))
 end
 
-local function onWishlist(player: Player, assetId: any, isMarked: any)
-	local g = guard(player, "Wishlist"); if g then return fail(g) end
-	if not isAssetId(assetId) or type(isMarked) ~= "boolean" then return fail("Invalid request") end
-	return result(_ugc.SetWishlist(_playerId, assetId, isMarked))
+local function onCart(player: Player, assetId: any, isInCart: any)
+	local g = guard(player, "Cart"); if g then return fail(g) end
+	if not isAssetId(assetId) or type(isInCart) ~= "boolean" then return fail("Invalid request") end
+	return result(_ugc.SetInCart(_playerId, assetId, isInCart))
+end
+
+local function onCheckout(player: Player)
+	local g = guard(player, "Checkout"); if g then return fail(g) end
+	return result(_ugc.CheckoutCart(_playerId))
+end
+
+-- BUG-025: queued, never refused. One verify runs at a time per player; one more may wait
+-- its turn; further calls while one waits fold into it (it re-checks every pending entry).
+local function onCartVerify(player: Player)
+	local g = sessionGate(player); if g then return fail(g) end
+	local rk = `{player.UserId}:CartVerify`
+	if _verifyBusy[rk] then
+		if _verifyQueued[rk] then return { ok = true, data = { purchased = {}, isQueued = true } } end
+		_verifyQueued[rk] = true
+		while _verifyBusy[rk] do task.wait(VERIFY_POLL_SECONDS) end
+		_verifyQueued[rk] = nil
+	end
+	_verifyBusy[rk] = true
+	local last = _lastCallAt[rk]
+	if last and os.clock() - last < VERIFY_SPACING_SECONDS then task.wait(VERIFY_SPACING_SECONDS - (os.clock() - last)) end
+	_lastCallAt[rk] = os.clock()
+	local ok, vOk, vErr, vData = pcall(_ugc.VerifyCheckout, _playerId)
+	_verifyBusy[rk] = nil
+	if not ok then
+		warn(`[UGCRemoteHandler] VerifyCheckout failed: {vOk}`)
+		return fail("Could not check your purchase")
+	end
+	return result(vOk, vErr, vData)
 end
 
 local function onRate(player: Player, assetId: any, vote: any)
 	local g = guard(player, "Rate"); if g then return fail(g) end
 	if not isAssetId(assetId) or (vote ~= 1 and vote ~= 0 and vote ~= -1) then return fail("Invalid request") end
 	return result(_ugc.Rate(_playerId, assetId, vote))
+end
+
+-- Look preview (Outfit tab). Read-only: builds a display model, changes no state.
+-- tryOnIds: items shown on top of the worn outfit (same slot replaced). Any curated
+-- item may be tried on (previewing before renting/buying is the point); race slot
+-- blocks still apply, same as equipping.
+local function onPreview(player: Player, unitId: any, tryOnIds: any)
+	local g = guard(player, "Preview"); if g then return fail(g) end
+	if not isUnitId(unitId) then return fail("Invalid unit") end
+	if tryOnIds ~= nil and type(tryOnIds) ~= "table" then return fail("Invalid try-on list") end
+	if not _outfit or not _outfit.BuildPreview then return fail("Preview unavailable") end
+	local pid = _playerId :: string
+	local isOwnedUnit, raceName = _ugc.GetUnitRace(pid, unitId)
+	if not isOwnedUnit then return fail("Unknown unit") end
+	-- Start from what the unit wears, keyed by slot.
+	local bySlot: { [string]: number } = {}
+	local worn = if _outfit.GetWornIds then _outfit.GetWornIds(pid, unitId) else _ugc.GetUnitLookIds(pid, unitId)
+	for _, id in worn do
+		local item = UGCCatalogData.Items[id]
+		if item then bySlot[item.slot] = id end
+	end
+	local count = 0
+	for _, id in (tryOnIds or {}) :: { any } do
+		count += 1
+		if count > MAX_TRY_ON then return fail("Too many try-on items") end
+		if not isAssetId(id) then return fail("Invalid item") end
+		local item = UGCCatalogData.Items[id]
+		if not item then return fail("Not a curated item") end
+		if _ugc.IsSlotAllowed(raceName, item.slot) then bySlot[item.slot] = id end
+	end
+	local ids = {}
+	for _, slot in UGCCatalogData.SLOTS do
+		if bySlot[slot] then table.insert(ids, bySlot[slot]) end
+	end
+	local ok, err = _outfit.BuildPreview(player, raceName, ids)
+	if not ok then return fail(err or "Preview failed") end
+	return { ok = true, data = { modelName = "PreviewModel", folderName = "UGCPreview" } }
 end
 
 local function onPurchase(player: Player, assetId: any)
@@ -169,15 +260,19 @@ function UGCRemoteHandler.Init(deps: any)
 	UGCEvents.RequestUGCRent.OnServerInvoke = onRent
 	UGCEvents.RequestUGCEquip.OnServerInvoke = onEquip
 	UGCEvents.RequestUGCUnequip.OnServerInvoke = onUnequip
-	UGCEvents.RequestUGCWishlist.OnServerInvoke = onWishlist
+	UGCEvents.RequestUGCCart.OnServerInvoke = onCart
+	UGCEvents.RequestUGCCheckout.OnServerInvoke = onCheckout
+	UGCEvents.RequestUGCCartVerify.OnServerInvoke = onCartVerify
 	UGCEvents.RequestUGCRate.OnServerInvoke = onRate
 	UGCEvents.RequestUGCPurchase.OnServerInvoke = onPurchase
+	if UGCEvents.RequestUGCPreview then UGCEvents.RequestUGCPreview.OnServerInvoke = onPreview end
 
 	-- Server -> client facts (expiry at battle end, confirmed purchases).
-	_ugc.SetChangeNotifier(function(_pid: string, reason: string, assetIds: { number })
+	-- extra: e.g. { gold = n } for "refunded" (ugc_rules 53). Facts only (NET-003).
+	_ugc.SetChangeNotifier(function(_pid: string, reason: string, assetIds: { number }, extra: any?)
 		local p = _sessionPlayer
 		if p and p.Parent then
-			UGCEvents.UGCStateChanged:FireClient(p, { reason = reason, assetIds = assetIds })
+			UGCEvents.UGCStateChanged:FireClient(p, { reason = reason, assetIds = assetIds, extra = extra })
 		end
 	end)
 
@@ -185,10 +280,36 @@ function UGCRemoteHandler.Init(deps: any)
 	-- OnPurchaseFinished — the signal alone grants nothing.
 	table.insert(_connections, MarketplaceService.PromptPurchaseFinished:Connect(
 		function(player: Player, assetId: number, isPurchased: boolean)
-			if not isPurchased or not _playerId then return end
+			if not _playerId then return end
 			if _sessionPlayer and player ~= _sessionPlayer then return end
-			if not isAssetId(assetId) or not UGCCatalogData.Items[assetId] then return end
-			task.spawn(_ugc.OnPurchaseFinished, _playerId, assetId)
+			if not isAssetId(assetId) then return end
+			-- Either part of a pair resolves to its catalog entry (paired_items, id 51).
+			local entryId = UGCCatalogData.ENTRY_BY_ASSET[assetId]
+			if not entryId then return end
+			if not isPurchased then
+				-- Declined: a later Roblox-website purchase is not an in-game one (ids 44/53).
+				_ugc.ClearPendingPurchase(_playerId, entryId)
+				return
+			end
+			task.spawn(_ugc.OnPurchaseFinished, _playerId, entryId)
+		end))
+
+	-- Paired entries sold as a bundle (ugc_catalog.bundle_id). Same rule: the
+	-- signal only triggers a re-verification of every entry using that bundle.
+	table.insert(_connections, MarketplaceService.PromptBundlePurchaseFinished:Connect(
+		function(player: Player, bundleId: number, wasPurchased: boolean)
+			if not _playerId then return end
+			if _sessionPlayer and player ~= _sessionPlayer then return end
+			if not isAssetId(bundleId) then return end
+			for entryId, item in UGCCatalogData.Items do
+				if item.bundleId == bundleId then
+					if wasPurchased then
+						task.spawn(_ugc.OnPurchaseFinished, _playerId, entryId)
+					else
+						_ugc.ClearPendingPurchase(_playerId, entryId) -- declined (ids 44/53)
+					end
+				end
+			end
 		end))
 
 	print("[UGCRemoteHandler] UGC remotes wired")
@@ -198,6 +319,8 @@ function UGCRemoteHandler.Shutdown()
 	for _, c in _connections do c:Disconnect() end
 	table.clear(_connections)
 	table.clear(_lastCallAt)
+	table.clear(_verifyBusy)
+	table.clear(_verifyQueued)
 end
 
 return UGCRemoteHandler

@@ -1,24 +1,30 @@
 --!strict
 -- UGCClient.lua
--- CTRBLXAI | UGC Rental & Ownership — client helper for the Customize screen,
+-- CTRBLXAI | UGC Rental & Ownership — client helper for the Outfit tab,
 -- the UGC merchant and the inspector "worn items" list.
 --
 -- Thin, display-only (ARC-001 / ARC-003): every call is a request to the server
 -- through UGCEvents; nothing here decides prices, ownership or access. The
 -- purchase prompt on first equip is opened BY THE SERVER (UGCService.Equip), so
 -- screens only need RequestEquip. The "Buy for Roblox Avatar" button is shown on
--- every item that is not owned (trial / rent / expired / locked).
+-- every item that is not owned (trial / rent / expired / locked) — during battle
+-- it reads "Add to cart" instead; an item that is known to be off sale shows an
+-- "Off sale" marker instead (ugc_rules 17/21/41/47).
+-- Cart (ugc_rules 29-32/45-48): add/remove any time; Checkout only outside
+-- battle. The bulk prompt's finished event fires on the client only, so
+-- Checkout asks the server to VERIFY afterwards — the server never trusts it.
 --
 -- Screens own the connections they create (PRF-004): OnStateChanged returns the
 -- RBXScriptConnection, and buttons are destroyed with their parent.
 
+local MarketplaceService = game:GetService("MarketplaceService")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local CTRBLXAI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10) :: Instance
 local UI = CTRBLXAI:WaitForChild("UI", 10) :: Instance
 local Remotes = CTRBLXAI:WaitForChild("Remotes", 10) :: Instance
 local Theme = require(UI:WaitForChild("Theme", 10) :: ModuleScript) :: any
-local UIComponents = require(UI:WaitForChild("UIComponents", 10) :: ModuleScript) :: any
 local UGCEvents = require(Remotes:WaitForChild("UGCEvents", 10) :: ModuleScript) :: any
 
 local UGCClient = {}
@@ -26,7 +32,11 @@ local UGCClient = {}
 export type Result = { ok: boolean, error: string?, data: any }
 
 local BUY_TEXT = "Buy for Roblox Avatar"
+local ADD_TO_CART_TEXT = "Add to cart" -- in battle (ugc_rules 17/21, 2026-10-08)
+local IN_CART_TEXT = "In cart"
 local OWNED_TEXT = "Owned"
+local OFF_SALE_TEXT = "Off sale"
+local MIN_TOUCH = Theme.MinSize.TouchTarget -- 44 px (loadout_ui_spec 73)
 
 -- Status -> colour (Theme tokens only, DAT-001). "expired" is red per ugc_rules on_expiry.
 local STATUS_COLOR_KEY: { [string]: string } = {
@@ -58,11 +68,81 @@ function UGCClient.GetView(unitId: string?): Result return invoke("GetUGCView", 
 function UGCClient.GetWornItems(unitId: string): Result return invoke("GetUnitWornUGC", unitId) end
 function UGCClient.StartTrial(assetId: number): Result return invoke("RequestUGCTrial", assetId) end
 function UGCClient.Rent(assetId: number): Result return invoke("RequestUGCRent", assetId) end
-function UGCClient.Equip(unitId: string, assetId: number): Result return invoke("RequestUGCEquip", unitId, assetId) end
+-- One-shot: when OUR bulk prompt closes, ask the server to verify (PromptBulkPurchaseFinished is
+-- client-only). The server also resolves every purchase marker by itself (BUG-025). PRF-004.
+local function verifyWhenBulkCloses(onDone: ((Result) -> ())?)
+	local localPlayer = Players.LocalPlayer
+	local conn: RBXScriptConnection? = nil
+	conn = MarketplaceService.PromptBulkPurchaseFinished:Connect(function(player: Instance)
+		if player ~= localPlayer then return end
+		if conn then conn:Disconnect() end
+		local verified = invoke("RequestUGCCartVerify")
+		if onDone then onDone(verified) end
+	end)
+end
+
+-- First equip of an unbundled pair opens a bulk prompt (data.promptMode == "bulk"): verify on close.
+function UGCClient.Equip(unitId: string, assetId: number): Result
+	local res = invoke("RequestUGCEquip", unitId, assetId)
+	if res.ok and type(res.data) == "table" and res.data.promptMode == "bulk" then verifyWhenBulkCloses(nil) end
+	return res
+end
 function UGCClient.Unequip(unitId: string, slot: string): Result return invoke("RequestUGCUnequip", unitId, slot) end
-function UGCClient.SetMarked(assetId: number, isMarked: boolean): Result return invoke("RequestUGCWishlist", assetId, isMarked) end
+function UGCClient.SetInCart(assetId: number, isInCart: boolean): Result return invoke("RequestUGCCart", assetId, isInCart) end
 function UGCClient.Rate(assetId: number, vote: number): Result return invoke("RequestUGCRate", assetId, vote) end
 function UGCClient.Buy(assetId: number): Result return invoke("RequestUGCPurchase", assetId) end
+-- Look preview: server builds the model under PlayerGui.UGCPreview (read-only, no state change).
+function UGCClient.RequestPreview(unitId: string, tryOnIds: { number }): Result
+	return invoke("RequestUGCPreview", unitId, tryOnIds)
+end
+
+-- Cart checkout (outside battle only — the server refuses it during battle).
+-- onDone(result) runs after the purchase window closes:
+--   mode "bulk"   -> result of the server's ownership verification
+--                    (data.purchased = entries now owned)
+--   mode "single" / "bundle" (sequential fallback) -> { ok = true, data = { next = true } };
+--                    call Checkout again for the next cart item.
+-- The connections are one-shot and disconnect themselves (PRF-004).
+function UGCClient.Checkout(onDone: ((Result) -> ())?): Result
+	local res = invoke("RequestUGCCheckout")
+	if not res.ok or type(res.data) ~= "table" then return res end
+	local localPlayer = Players.LocalPlayer
+	local conns: { RBXScriptConnection } = {}
+	local function finish(r: Result)
+		for _, c in conns do c:Disconnect() end
+		table.clear(conns)
+		if onDone then onDone(r) end
+	end
+	if res.data.mode == "bulk" then
+		table.insert(conns, MarketplaceService.PromptBulkPurchaseFinished:Connect(function(player: Instance)
+			if player ~= localPlayer then return end
+			finish(invoke("RequestUGCCartVerify"))
+		end))
+	else
+		local function onSingle(player: Instance)
+			if player ~= localPlayer then return end
+			finish({ ok = true, error = nil, data = { next = true } })
+		end
+		table.insert(conns, MarketplaceService.PromptPurchaseFinished:Connect(onSingle))
+		table.insert(conns, MarketplaceService.PromptBundlePurchaseFinished:Connect(onSingle))
+	end
+	return res
+end
+
+-- Buy on an unbundled PAIR also opens a bulk prompt (data.mode == "bulk"): call
+-- this after it closes so the server re-verifies ownership.
+function UGCClient.VerifyCheckout(): Result return invoke("RequestUGCCartVerify") end
+
+-- Buy one entry ("Buy for Roblox Avatar"). For an unbundled pair the server opens
+-- a bulk prompt whose finished event is client-only, so this asks the server to
+-- verify when it closes (one-shot connection, PRF-004). onDone(verifyResult).
+function UGCClient.BuyAndVerify(assetId: number, onDone: ((Result) -> ())?): Result
+	local res = UGCClient.Buy(assetId)
+	if res.ok and type(res.data) == "table" and res.data.mode == "bulk" then
+		verifyWhenBulkCloses(onDone)
+	end
+	return res
+end
 
 -- callback({ reason = "purchased" | "expired", assetIds = { number } })
 function UGCClient.OnStateChanged(callback: (any) -> ()): RBXScriptConnection?
@@ -83,28 +163,97 @@ end
 -- Short label for an item tile, e.g. "Trial: 3 left", "Expired".
 function UGCClient.GetStatusLabel(item: any): string
 	local s = item.status
-	if s == "owned" then return OWNED_TEXT end
+	if s == "owned" then
+		return if item.isPaused then `{OWNED_TEXT} (rental paused: {item.remaining} left)` else OWNED_TEXT
+	end
 	if s == "trial" then return `Trial: {item.remaining} left` end
 	if s == "rent" then return `Rented: {item.remaining} left` end
-	if s == "expired" then return "Expired" end
+	if s == "expired" then return "Out of use" end -- loadout_ui_spec 64/70 wording
 	return "Locked"
 end
 
 -- Always-visible Buy button for any item the player does not own (ugc_rules buy_button).
+-- isBattleActive: pass view.isBattleActive (server state). In battle the button
+-- reads "Add to cart" and adds the item to the cart ("In cart" if already there);
+-- outside battle it is "Buy for Roblox Avatar" (ugc_rules 17/21). Screens rebuild
+-- buttons from a fresh GetView when the battle state changes. The server still
+-- refuses purchases during battle, whatever the client shows (SEC-002).
 -- Returns nil for owned items. onResult(result) is optional.
-function UGCClient.CreateBuyButton(parent: Instance, item: any, onResult: ((Result) -> ())?): GuiButton?
+function UGCClient.CreateBuyButton(parent: Instance, item: any, onResult: ((Result) -> ())?, isBattleActive: boolean?): GuiButton?
 	if item.status == "owned" then return nil end
-	local btn = UIComponents.PrimaryButton({
-		name = "UGCBuyButton",
-		text = BUY_TEXT,
-		color = Theme.Colors.Success,
-		onPress = function()
-			local res = UGCClient.Buy(item.assetId)
-			if onResult then onResult(res) end
-		end,
-	})
-	btn.Parent = parent
+	if item.isOffSale then
+		UGCClient.CreateOffSaleMarker(parent)
+		return nil
+	end
+	local inBattle = isBattleActive == true
+	local text = BUY_TEXT
+	if inBattle then
+		text = if item.isInCart then IN_CART_TEXT else ADD_TO_CART_TEXT
+	end
+	-- BUG-024: a text button, not UIComponents.PrimaryButton (now icon-only art).
+	-- "In cart" is shown disabled: pressing it would do nothing.
+	local btn = UGCClient.MakeTextButton(parent, text, Theme.Colors.Success, function()
+		local res = if inBattle then UGCClient.SetInCart(item.assetId, true) else UGCClient.BuyAndVerify(item.assetId, onResult)
+		if onResult then onResult(res) end
+	end, not (inBattle and item.isInCart == true))
+	btn.Name = "UGCBuyButton"
 	return btn
+end
+
+-- Text button for UGC screens. UIComponents.PrimaryButton and Theme.MakeButton now
+-- draw square icon art without text (icon migration 2026-10-08), which hid the
+-- "Buy for Roblox Avatar" label (BUG-024). Tap-safe (Activated, no hover), at
+-- least 44 x 44 px (loadout_ui_spec 73), width follows the text.
+function UGCClient.MakeTextButton(parent: Instance?, text: string, color: Color3?, onPress: (() -> ())?, enabled: boolean?): TextButton
+	local isEnabled = enabled ~= false
+	local btn = Instance.new("TextButton")
+	btn.Name = "UGCBtn_" .. text
+	btn.Text = text
+	btn.Font = Theme.Font.PrimaryBold
+	btn.TextSize = Theme.Text.Small()
+	btn.TextColor3 = if isEnabled then Theme.Colors.TextPrimary else Theme.Colors.TextDisabled
+	btn.BackgroundColor3 = if isEnabled and color then color else Theme.Colors.Surface
+	btn.BackgroundTransparency = if isEnabled then 0.15 else Theme.Transparency.ButtonDisabled
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = isEnabled
+	btn.Active = isEnabled
+	btn.AutomaticSize = Enum.AutomaticSize.X
+	btn.Size = UDim2.fromOffset(MIN_TOUCH, MIN_TOUCH)
+	local padding = Instance.new("UIPadding")
+	padding.PaddingLeft = UDim.new(0, Theme.Spacing.md)
+	padding.PaddingRight = UDim.new(0, Theme.Spacing.md)
+	padding.Parent = btn
+	local minSize = Instance.new("UISizeConstraint")
+	minSize.MinSize = Vector2.new(MIN_TOUCH, MIN_TOUCH)
+	minSize.Parent = btn
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = Theme.CornerRadius.md
+	corner.Parent = btn
+	if isEnabled and onPress then
+		btn.Activated:Connect(onPress) -- dies with the button (PRF-004)
+	end
+	btn.Parent = parent -- NET-004: properties before Parent
+	return btn
+end
+
+-- "Off sale" marker (ugc_rules 41/47): replaces the Buy button when the server
+-- knows the item can't be bought. The item stays usable until its rental ends.
+function UGCClient.CreateOffSaleMarker(parent: Instance): TextLabel
+	local marker = Instance.new("TextLabel")
+	marker.Name = "UGCOffSaleMarker"
+	marker.Text = OFF_SALE_TEXT
+	marker.Font = Theme.Font.PrimaryBold
+	marker.TextSize = Theme.Text.Badge()
+	marker.TextColor3 = Theme.Colors.TextPrimary
+	marker.BackgroundColor3 = Theme.Colors.TextDisabled
+	marker.BackgroundTransparency = 0
+	marker.BorderSizePixel = 0
+	marker.AutomaticSize = Enum.AutomaticSize.XY
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = Theme.CornerRadius.sm
+	corner.Parent = marker
+	marker.Parent = parent -- NET-004: properties before Parent
+	return marker
 end
 
 -- "Owned" badge (ugc_rules owned_badge): inspector worn-items rows and merchant tiles.

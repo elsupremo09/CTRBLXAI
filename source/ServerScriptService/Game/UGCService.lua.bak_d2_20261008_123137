@@ -1,0 +1,975 @@
+--!strict
+-- UGCService.lua
+-- CTRBLXAI | UGC Rental & Ownership — server authority (ARC-001)
+--
+-- Rules: CTRBLXAI.db ugc_rules (locked 2026-10-07), mirrored in UGCCatalogData.
+--   * Free try-on: 5 battles, once per item, ever. Any number of items at once.
+--     A trial is NOT a rental (does not raise the price).
+--   * Gold rental: 30 battles. Price = base x 2^(previous paid rentals of that
+--     item, per player). Never resets, no cap. Renting while active adds 30.
+--   * Usage: -1 per battle (at battle END only) per item worn by ANY deployed
+--     player unit, however many units wore it.
+--   * Expiry: unequips from every unit, item shown "expired" (red) until it is
+--     rented again or bought.
+--   * Owned on Roblox (PlayerOwnsAsset): free, permanent, no count, no gold.
+--     Ownership is NEVER saved — always re-verified live.
+--   * Prompt-on-first-equip: the first time an unowned item is equipped, the
+--     server calls MarketplaceService:PromptPurchase (Roblox "Experiences using
+--     Marketplace Items" policy, 2023). The Buy button is always available.
+--   * Cart (replaces the wishlist, 2026-10-08): cap 50, blocked with
+--     "Cart full (50)", auto-removed when owned, saved. Items are added during
+--     battle; checkout ONLY outside battle (one bulk prompt, max 20 lines).
+--   * Off sale (ugc_rules 41): an active trial/rental is honored to expiry and
+--     stays equippable; new trials, rentals and purchases are blocked; the view
+--     flags isOffSale so the UI shows an "Off sale" marker instead of Buy.
+--   * A purchase PAUSES a rental (ugc_rules 44); losing ownership later (refund)
+--     resumes it. Ownership is re-checked at battle end before charging (43).
+--   * Paired items (51): an entry is owned only if BOTH parts are owned.
+--   * Ratings: like/dislike per player; aggregate totals are PRIVATE developer
+--     data, batched per server into a DataStore (UpdateAsync, bounded retries).
+--
+-- This service never touches the player save DataStore: Main.server.lua folds
+-- Export() into the existing progression payload (Key 3), like GuildService.
+--
+-- Injections (ARC-004 / ARC-006 — all nil-safe):
+--   SetCurrencyService(svc)          -- CurrencyService (Debit/GetBalance)
+--   SetAvailabilityProvider(fn)      -- (assetId) -> boolean   (on-sale check, cached)
+--   SetOffSaleProvider(fn)           -- (assetId) -> boolean   (definitely off sale)
+--   SetUnitRaceProvider(fn)          -- (playerId, unitId) -> (isOwnedUnit, raceName?)
+--   SetPlayerLevelProvider(fn)       -- (playerId) -> number   (price level)
+--   SetSaveModeProvider(fn)          -- () -> "memory" | "studio" | "production"
+--   SetChangeNotifier(fn)            -- (playerId, reason, { assetId }) -> ()
+
+local DataStoreService = game:GetService("DataStoreService")
+local MarketplaceService = game:GetService("MarketplaceService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local UGCCatalogData = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("UGCCatalogData"))
+
+local UGCService = {}
+
+--------------------------------------------------
+-- CONSTANTS
+--------------------------------------------------
+
+local SAVE_VERSION = 2 -- v2 (2026-10-08): cart 'k' replaces wishlist 'w' (migrated)
+
+-- Average battle gold (rental price input). Battle gold GRANTS are not
+-- implemented in code yet (RewardService only holds multipliers), so the price
+-- is derived from the documented economy, in ONE place (avgBattleGold below):
+--   economy_framework id 42 (Verified): ~165,000 battle gold over ~547 battles
+--   economy_framework id 8 (Locked): Battle Completion Gold = Base x (1 + Map Level / 50)
+-- Level shape uses id 8's (1 + L/50); it is anchored so the L1..L99 mean equals
+-- the verified benchmark (mean of 1 + L/50 over 1..99 is exactly 2).
+-- ASSUMPTION (flagged to Designer): battles are spread evenly across levels.
+local BENCHMARK_BATTLE_GOLD = 165000
+local BENCHMARK_BATTLES = 547
+local GOLD_LEVEL_DIVISOR = 50
+local MIN_LEVEL, MAX_LEVEL = 1, 99
+local MEAN_LEVEL_FACTOR = 1 + ((MIN_LEVEL + MAX_LEVEL) / 2) / GOLD_LEVEL_DIVISOR -- = 2
+
+-- Ratings aggregate (private developer data)
+local RATING_FLUSH_SECONDS = 300
+local MAX_RETRIES = 3 -- mirrors SaveService (save_data_contract: bounded retries)
+local RETRY_DELAY = 1.0
+local OWNERSHIP_RECHECK_ATTEMPTS = 3 -- purchase ownership can lag a moment
+
+-- Roblox platform limits (MarketplaceService.PromptBulkPurchase, launched
+-- 2024-07-10): avatar items only, server scripts only, at most 20 line items.
+local BULK_PURCHASE_MAX_LINES = 20
+
+local function enumItem(enumName: string, itemName: string): EnumItem?
+	local ok, item = pcall(function()
+		return ((Enum :: any)[enumName] :: any)[itemName]
+	end)
+	return if ok then item else nil
+end
+local PRODUCT_TYPE_ASSET = enumItem("MarketplaceProductType", "AvatarAsset")
+local PRODUCT_TYPE_BUNDLE = enumItem("MarketplaceProductType", "AvatarBundle")
+
+--------------------------------------------------
+-- TYPES / STATE
+--------------------------------------------------
+
+type Rental = { mode: string, remaining: number } -- mode: "trial" | "rent"
+
+type PlayerState = {
+	player: Player?,
+	owned: { [number]: boolean },       -- live ownership cache (NEVER saved)
+	rentals: { [number]: Rental },
+	rentCount: { [number]: number },     -- paid rentals per item (price escalation)
+	trialUsed: { [number]: boolean },
+	expired: { [number]: boolean },      -- shown red until re-rented or bought
+	prompted: { [number]: boolean },     -- first-equip purchase prompt already shown
+	equips: { [string]: { [string]: number } }, -- unitId -> slot -> assetId
+	cart: { [number]: boolean },        -- saved (cart_persistence)
+	cartCount: number,
+	pendingCheckout: { number },        -- entries in the last open purchase prompt
+	isVerifying: boolean,
+	votes: { [number]: number },         -- 1 like / -1 dislike
+	isBattleActive: boolean,
+}
+
+type RatingDelta = { likes: number, dislikes: number }
+
+local _states: { [string]: PlayerState } = {}
+local _pendingRatings: { [number]: RatingDelta } = {}
+local _isFlushing = false
+local _isFlushLoopStarted = false
+
+local _currency: any = nil
+local _isAvailable: ((number) -> boolean)? = nil
+local _isOffSale: ((number) -> boolean)? = nil
+local _unitRace: ((string, string) -> (boolean, string?))? = nil
+local _playerLevel: ((string) -> number)? = nil
+local _saveMode: (() -> string)? = nil
+local _notify: ((string, string, { number }) -> ())? = nil
+
+function UGCService.SetCurrencyService(svc: any) _currency = svc end
+function UGCService.SetAvailabilityProvider(fn: (number) -> boolean) _isAvailable = fn end
+function UGCService.SetOffSaleProvider(fn: (number) -> boolean) _isOffSale = fn end
+function UGCService.SetUnitRaceProvider(fn: (string, string) -> (boolean, string?)) _unitRace = fn end
+function UGCService.SetPlayerLevelProvider(fn: (string) -> number) _playerLevel = fn end
+function UGCService.SetSaveModeProvider(fn: () -> string) _saveMode = fn end
+function UGCService.SetChangeNotifier(fn: (string, string, { number }) -> ()) _notify = fn end
+
+--------------------------------------------------
+-- HELPERS
+--------------------------------------------------
+
+local function stateOf(playerId: string): PlayerState?
+	return _states[playerId]
+end
+
+local function itemOf(assetId: number): UGCCatalogData.UGCItem?
+	return UGCCatalogData.Items[assetId]
+end
+
+local function isAvailable(assetId: number): boolean
+	-- Fail closed: no provider / unknown availability = not usable (curation_eligibility).
+	return _isAvailable ~= nil and _isAvailable(assetId) == true
+end
+
+-- True only when the availability check KNOWS the item is off sale / limited /
+-- sold out (drives the "Off sale" marker). Unknown is not off sale.
+local function isOffSale(assetId: number): boolean
+	return _isOffSale ~= nil and _isOffSale(assetId) == true
+end
+
+local function isPositiveInt(n: any): boolean
+	return type(n) == "number" and n == n and n > 0 and n < 2 ^ 53 and math.floor(n) == n
+end
+
+local function sortedIds(set: { [number]: any }): { number }
+	local ids = {}
+	for id in set do
+		table.insert(ids, id)
+	end
+	table.sort(ids)
+	return ids
+end
+
+local function notify(playerId: string, reason: string, assetIds: { number })
+	if _notify and #assetIds > 0 then
+		_notify(playerId, reason, assetIds)
+	end
+end
+
+local function unequipEverywhere(s: PlayerState, assetId: number)
+	for _, slots in s.equips do
+		for slot, id in slots do
+			if id == assetId then
+				slots[slot] = nil
+			end
+		end
+	end
+end
+
+-- Asset ids that make up one catalog entry (1, or 2 for an L/R pair).
+local function partsOf(assetId: number): { number }
+	local item = itemOf(assetId)
+	if item and item.assetId2 then
+		return { assetId, item.assetId2 }
+	end
+	return { assetId }
+end
+
+-- Live PlayerOwnsAsset for one part (yields). nil = API error.
+local function ownsPartLive(player: Player, partId: number): boolean?
+	local ok, result = pcall(MarketplaceService.PlayerOwnsAsset, MarketplaceService, player, partId)
+	if not ok then
+		warn(`[UGCService] PlayerOwnsAsset failed for {partId}: {result}`)
+		return nil
+	end
+	return result == true
+end
+
+-- Live ownership of a catalog ENTRY: every part must be owned (paired_items, 51).
+-- On API error the cached answer is kept: no NEW free use is granted on error.
+-- Losing ownership (e.g. a refund) resumes a paused rental (ugc_rules 44); with
+-- nothing left, the item is locked and comes off every unit.
+local function checkOwnedLive(s: PlayerState, assetId: number): boolean
+	local player = s.player
+	if not player or player.Parent == nil then
+		return s.owned[assetId] == true
+	end
+	for _, partId in partsOf(assetId) do
+		local owns = ownsPartLive(player, partId)
+		if owns == nil then
+			return s.owned[assetId] == true
+		end
+		if not owns then
+			local wasOwned = s.owned[assetId] == true
+			s.owned[assetId] = nil
+			if wasOwned then
+				local r = s.rentals[assetId]
+				if r and r.remaining > 0 then
+					print(`[UGCService] {assetId} no longer owned — paused {r.mode} resumes ({r.remaining} battle(s) left)`)
+				else
+					unequipEverywhere(s, assetId)
+					print(`[UGCService] {assetId} no longer owned — locked`)
+				end
+			end
+			return false
+		end
+	end
+	s.owned[assetId] = true
+	return true
+end
+
+local function removeFromCart(s: PlayerState, assetId: number)
+	if s.cart[assetId] then
+		s.cart[assetId] = nil
+		s.cartCount -= 1
+	end
+end
+
+-- Owned supersedes expiry and the cart (cart_auto_remove, id 31). A running
+-- rental is PAUSED, not deleted (rental_pause_on_purchase, id 44): it stays
+-- saved and is not charged while the item is owned.
+local function applyOwned(s: PlayerState, assetId: number)
+	s.owned[assetId] = true
+	s.expired[assetId] = nil
+	removeFromCart(s, assetId)
+end
+
+local function hasAccess(s: PlayerState, assetId: number): boolean
+	if s.owned[assetId] then return true end
+	local r = s.rentals[assetId]
+	return r ~= nil and r.remaining > 0
+end
+
+local function statusOf(s: PlayerState, assetId: number): string
+	if s.owned[assetId] then return "owned" end
+	local r = s.rentals[assetId]
+	if r and r.remaining > 0 then return r.mode end
+	if s.expired[assetId] then return "expired" end
+	return "locked"
+end
+
+--------------------------------------------------
+-- RULE QUERIES (shared with UGCOutfitService via injection)
+--------------------------------------------------
+
+-- ugc_race_slot_blocks (cosmetic). nil race = unknown race -> allowed.
+function UGCService.IsSlotAllowed(raceName: string?, slot: string): boolean
+	if not UGCCatalogData.SLOT_SET[slot] then return false end
+	if raceName == nil then return true end
+	local blocks = UGCCatalogData.RACE_SLOT_BLOCKS[raceName]
+	return not (blocks and blocks[slot])
+end
+
+function UGCService.IsOwned(playerId: string, assetId: number): boolean
+	local s = stateOf(playerId)
+	return s ~= nil and s.owned[assetId] == true
+end
+
+function UGCService.IsInCart(playerId: string, assetId: number): boolean
+	local s = stateOf(playerId)
+	return s ~= nil and s.cart[assetId] == true
+end
+
+-- THE single shared helper for average battle gold at a level (see CONSTANTS).
+local function avgBattleGold(level: number): number
+	local lvl = math.clamp(math.floor(level), MIN_LEVEL, MAX_LEVEL)
+	local benchmarkAvg = BENCHMARK_BATTLE_GOLD / BENCHMARK_BATTLES
+	return benchmarkAvg * (1 + lvl / GOLD_LEVEL_DIVISOR) / MEAN_LEVEL_FACTOR
+end
+
+local function priceLevel(playerId: string): number
+	local lvl = _playerLevel and _playerLevel(playerId) or MIN_LEVEL
+	if type(lvl) ~= "number" or lvl ~= lvl then
+		return MIN_LEVEL
+	end
+	return math.clamp(math.floor(lvl), MIN_LEVEL, MAX_LEVEL)
+end
+
+-- Rental price for the NEXT paid rental of this item for this player.
+function UGCService.GetRentPrice(playerId: string, assetId: number): number
+	local s = stateOf(playerId)
+	local count = s and s.rentCount[assetId] or 0
+	local level = priceLevel(playerId)
+	local base = UGCCatalogData.RENT_BASE_BATTLE_RATIO * avgBattleGold(level)
+	return math.round(base * UGCCatalogData.RENT_ESCALATION ^ count)
+end
+
+--------------------------------------------------
+-- LIFECYCLE
+--------------------------------------------------
+
+function UGCService.InitPlayer(playerId: string, player: Player?)
+	local s = _states[playerId]
+	if s then
+		s.player = player or s.player
+		return
+	end
+	_states[playerId] = {
+		player = player,
+		owned = {}, rentals = {}, rentCount = {}, trialUsed = {}, expired = {},
+		prompted = {}, equips = {}, cart = {}, cartCount = 0, votes = {},
+		pendingCheckout = {}, isVerifying = false,
+		isBattleActive = false,
+	}
+end
+
+-- Release per-player state (prevents a per-player leak on leave).
+function UGCService.ClearPlayer(playerId: string)
+	_states[playerId] = nil
+end
+
+-- Re-verify ownership of every curated item (yields — call in task.spawn).
+function UGCService.RefreshOwnership(playerId: string)
+	local s = stateOf(playerId)
+	if not s then return end
+	local owned = 0
+	for _, assetId in sortedIds(UGCCatalogData.Items) do
+		if checkOwnedLive(s, assetId) then
+			applyOwned(s, assetId)
+			owned += 1
+		elseif not hasAccess(s, assetId) then
+			-- Not owned and nothing left to use (e.g. refunded since the last
+			-- session): the item is locked, so it cannot stay on a unit.
+			unequipEverywhere(s, assetId)
+		end
+	end
+	print(`[UGCService] Ownership refreshed for {playerId}: {owned} curated item(s) owned`)
+end
+
+-- Equip/Unequip are locked from deployment start to battle end so the looks
+-- spawned on the models always match what gets charged at battle end.
+function UGCService.SetBattleActive(playerId: string, isActive: boolean)
+	local s = stateOf(playerId)
+	if s then s.isBattleActive = isActive end
+end
+
+--------------------------------------------------
+-- ACTIONS (every caller is server code; remotes go through UGCRemoteHandler)
+-- Return: (ok, errorMessage?, data?)
+--------------------------------------------------
+
+function UGCService.StartTrial(playerId: string, assetId: number): (boolean, string?, any)
+	local s = stateOf(playerId)
+	if not s or not itemOf(assetId) then return false, "Unknown item" end
+	if checkOwnedLive(s, assetId) then
+		applyOwned(s, assetId)
+		return false, "You own this item — it is free forever"
+	end
+	if not isAvailable(assetId) then return false, "This item is not on sale" end
+	if s.trialUsed[assetId] then return false, "Free trial already used for this item" end
+	local r = s.rentals[assetId]
+	if r and r.remaining > 0 then return false, "This item is already active" end
+	s.trialUsed[assetId] = true
+	s.expired[assetId] = nil
+	s.rentals[assetId] = { mode = "trial", remaining = UGCCatalogData.TRIAL_BATTLES }
+	print(`[UGCService] {playerId} started free trial of {assetId} ({UGCCatalogData.TRIAL_BATTLES} battles)`)
+	return true, nil, { remaining = UGCCatalogData.TRIAL_BATTLES }
+end
+
+function UGCService.Rent(playerId: string, assetId: number): (boolean, string?, any)
+	local s = stateOf(playerId)
+	if not s or not itemOf(assetId) then return false, "Unknown item" end
+	if checkOwnedLive(s, assetId) then
+		applyOwned(s, assetId)
+		return false, "You own this item — it is free forever"
+	end
+	if not isAvailable(assetId) then return false, "This item is not on sale" end
+	if not _currency then return false, "Currency not wired" end
+
+	local price = UGCService.GetRentPrice(playerId, assetId)
+	local ok, err = _currency.Debit(playerId, { gold = price })
+	if not ok then return false, err or "Insufficient gold" end
+
+	local count = (s.rentCount[assetId] or 0) + 1
+	s.rentCount[assetId] = count
+	local current = s.rentals[assetId]
+	local carry = if current and current.remaining > 0 then current.remaining else 0
+	local remaining = carry + UGCCatalogData.RENT_BATTLES
+	s.rentals[assetId] = { mode = "rent", remaining = remaining }
+	s.expired[assetId] = nil
+	print(string.format("[UGCService] %s rented %d for %d gold (rental #%d, level %d, avg battle gold %.1f) — %d battles left",
+		playerId, assetId, price, count, priceLevel(playerId), avgBattleGold(priceLevel(playerId)), remaining))
+	return true, nil, { price = price, remaining = remaining, nextPrice = UGCService.GetRentPrice(playerId, assetId) }
+end
+
+-- Bulk-prompt lines for the part(s) of an unbundled pair NOT owned yet
+-- (paired_items, id 51). Shared by Buy and cart checkout. Yields (live check per
+-- part); a failed check keeps the part in the prompt (never grants free use).
+local function unownedPartLines(player: Player, assetId: number): { any }
+	local lines = {}
+	for _, partId in partsOf(assetId) do
+		if ownsPartLive(player, partId) ~= true then
+			table.insert(lines, { Type = PRODUCT_TYPE_ASSET, Id = tostring(partId) })
+		end
+	end
+	return lines
+end
+
+-- Opens the right Roblox prompt for ONE catalog entry (paired_items, id 51):
+-- bundle -> PromptBundlePurchase; unbundled pair -> one bulk prompt holding the
+-- part(s) not yet owned; single asset -> PromptPurchase. Returns (ok, err, mode).
+local function promptEntry(player: Player, s: PlayerState, assetId: number): (boolean, string?, string?)
+	local item = itemOf(assetId) :: UGCCatalogData.UGCItem
+	local ok, err
+	local mode = "single"
+	if item.bundleId then
+		mode = "bundle"
+		ok, err = pcall(MarketplaceService.PromptBundlePurchase, MarketplaceService, player, item.bundleId)
+	elseif item.assetId2 then
+		mode = "bulk"
+		if not PRODUCT_TYPE_ASSET then return false, "Could not open the purchase prompt", nil end
+		local lines = unownedPartLines(player, assetId)
+		if #lines == 0 then return false, "You already own both parts", nil end
+		ok, err = pcall(MarketplaceService.PromptBulkPurchase, MarketplaceService, player, lines, {})
+		if ok then s.pendingCheckout = { assetId } end
+	else
+		ok, err = pcall(MarketplaceService.PromptPurchase, MarketplaceService, player, assetId)
+	end
+	if not ok then
+		warn(`[UGCService] Purchase prompt failed for {assetId}: {err}`)
+		return false, "Could not open the purchase prompt", nil
+	end
+	return true, nil, mode
+end
+
+-- "Buy for Roblox Avatar" for one curated entry. buy_timing (id 21): purchases
+-- finalize outside battle only — during battle the player adds it to the cart.
+function UGCService.PromptPurchase(playerId: string, assetId: number): (boolean, string?, any)
+	local s = stateOf(playerId)
+	if not s or not itemOf(assetId) then return false, "Unknown item" end
+	if s.isBattleActive then return false, "Add it to your cart — checkout opens after the battle" end
+	if s.owned[assetId] then return false, "You already own this item" end
+	if not isAvailable(assetId) then return false, "This item is off sale" end
+	local player = s.player
+	if not player or player.Parent == nil then return false, "Player not in game" end
+	local ok, err, mode = promptEntry(player, s, assetId)
+	if not ok then return false, err end
+	return true, nil, { mode = mode }
+end
+
+function UGCService.Equip(playerId: string, unitId: string, assetId: number): (boolean, string?, any)
+	local s = stateOf(playerId)
+	local item = itemOf(assetId)
+	if not s or not item then return false, "Unknown item" end
+	if s.isBattleActive then return false, "Looks cannot change during a battle" end
+	if not _unitRace then return false, "Roster not wired" end
+	local isOwnedUnit, raceName = _unitRace(playerId, unitId)
+	if not isOwnedUnit then return false, "Unit not found" end
+	if not UGCService.IsSlotAllowed(raceName, item.slot) then
+		return false, `{raceName or "This unit"} cannot wear {item.slot} items`
+	end
+
+	-- ownership_persistence: re-verified live on equip.
+	local isOwned = s.owned[assetId] == true or checkOwnedLive(s, assetId)
+	if isOwned then
+		applyOwned(s, assetId)
+	else
+		-- offsale_during_rental (id 41): an active trial/rental stays equippable even
+		-- if the item went off sale; it just can't be started or re-rented.
+		if not hasAccess(s, assetId) then
+			return false, "Start a free trial, rent, or buy this item first"
+		end
+	end
+
+	s.equips[unitId] = s.equips[unitId] or {}
+	s.equips[unitId][item.slot] = assetId
+
+	-- prompt_on_first_equip (policy compliance): once per unowned item. Off-sale
+	-- items can't be bought, so they are not prompted (and not marked prompted).
+	local didPrompt = false
+	if not isOwned and not s.prompted[assetId] and isAvailable(assetId) then
+		s.prompted[assetId] = true
+		didPrompt = UGCService.PromptPurchase(playerId, assetId)
+	end
+	return true, nil, { slot = item.slot, prompted = didPrompt }
+end
+
+function UGCService.Unequip(playerId: string, unitId: string, slot: string): (boolean, string?)
+	local s = stateOf(playerId)
+	if not s then return false, "No UGC state" end
+	if not UGCCatalogData.SLOT_SET[slot] then return false, "Invalid slot" end
+	if s.isBattleActive then return false, "Looks cannot change during a battle" end
+	local slots = s.equips[unitId]
+	if slots then
+		slots[slot] = nil
+		if next(slots) == nil then s.equips[unitId] = nil end
+	end
+	return true, nil
+end
+
+-- Cart (cart_add_source / cart_cap / cart_offsale_items, ids 29/30/47). Adding
+-- is allowed during battle. Removing always works, even for ids no longer in
+-- the catalog (Tester D1).
+function UGCService.SetInCart(playerId: string, assetId: number, isInCart: boolean): (boolean, string?)
+	local s = stateOf(playerId)
+	if not s then return false, "No UGC state" end
+	if not isInCart then
+		removeFromCart(s, assetId)
+		return true, nil
+	end
+	if not itemOf(assetId) then return false, "Unknown item" end
+	if s.cart[assetId] then return true, nil end
+	if s.owned[assetId] then return false, "You already own this item" end
+	if s.cartCount >= UGCCatalogData.CART_CAP then
+		return false, UGCCatalogData.CART_FULL_MESSAGE
+	end
+	s.cart[assetId] = true
+	s.cartCount += 1
+	return true, nil
+end
+
+-- cart_checkout_location (id 45): ONLY outside battle. cart_checkout_method
+-- (id 48): one PromptBulkPurchase with up to BULK_PURCHASE_MAX_LINES lines (a
+-- bundle is 1 line, an unbundled pair is 2). Off-sale items stay in the cart and
+-- are skipped (id 47). If the bulk prompt is unavailable, the first item gets a
+-- single prompt and the client calls checkout again (sequential fallback).
+function UGCService.CheckoutCart(playerId: string): (boolean, string?, any)
+	local s = stateOf(playerId)
+	if not s then return false, "No UGC state" end
+	if s.isBattleActive then return false, "Checkout opens after the battle" end
+	local player = s.player
+	if not player or player.Parent == nil then return false, "Player not in game" end
+
+	local lines, included, offSale = {}, {}, {}
+	for _, assetId in sortedIds(s.cart) do
+		local item = itemOf(assetId)
+		if not item then continue end
+		if s.owned[assetId] then
+			removeFromCart(s, assetId)
+			continue
+		end
+		if not isAvailable(assetId) then
+			table.insert(offSale, assetId)
+			continue
+		end
+		-- Same lines as Buy: a bundle is 1 line; an unbundled pair lists only its
+		-- unowned part(s) (D1 fix, paired_items id 51).
+		local entryLines: { any } = if item.bundleId
+			then { { Type = PRODUCT_TYPE_BUNDLE, Id = tostring(item.bundleId) } }
+			elseif item.assetId2 then unownedPartLines(player, assetId)
+			else { { Type = PRODUCT_TYPE_ASSET, Id = tostring(assetId) } }
+		if #entryLines == 0 then
+			applyOwned(s, assetId) -- every part confirmed owned live
+			continue
+		end
+		if #lines + #entryLines > BULK_PURCHASE_MAX_LINES then break end
+		for _, line in entryLines do
+			table.insert(lines, line)
+		end
+		table.insert(included, assetId)
+	end
+	if #included == 0 then
+		return false, if #offSale > 0 then "Everything in your cart is off sale" else "Your cart is empty"
+	end
+
+	local data: any = { itemCount = #included, offSale = offSale, cartCount = s.cartCount }
+	if PRODUCT_TYPE_ASSET and PRODUCT_TYPE_BUNDLE then
+		local ok, err = pcall(MarketplaceService.PromptBulkPurchase, MarketplaceService, player, lines, {})
+		if ok then
+			s.pendingCheckout = included
+			data.mode = "bulk"
+			print(`[UGCService] {playerId} checkout: bulk prompt for {#included} item(s), {#lines} line(s)`)
+			return true, nil, data
+		end
+		warn(`[UGCService] PromptBulkPurchase failed — single prompt fallback: {err}`)
+	end
+	local ok, err, mode = promptEntry(player, s, included[1])
+	if not ok then return false, err end
+	data.itemCount = 1
+	data.mode = mode
+	data.isSequential = true
+	return true, nil, data
+end
+
+-- PromptBulkPurchaseFinished fires on the CLIENT only, so the client asks the
+-- server to verify once the bulk prompt closes. Nothing the client says is
+-- trusted: every pending entry is re-checked with PlayerOwnsAsset (yields).
+function UGCService.VerifyCheckout(playerId: string): (boolean, string?, any)
+	local s = stateOf(playerId)
+	if not s then return false, "No UGC state" end
+	if s.isVerifying then return false, "Already checking your purchase" end
+	local remaining = s.pendingCheckout
+	if #remaining == 0 then return true, nil, { purchased = {} } end
+	s.isVerifying = true
+	s.pendingCheckout = {}
+	local purchased = {}
+	for attempt = 1, OWNERSHIP_RECHECK_ATTEMPTS do
+		local still = {}
+		for _, assetId in remaining do
+			if checkOwnedLive(s, assetId) then
+				applyOwned(s, assetId)
+				table.insert(purchased, assetId)
+			else
+				table.insert(still, assetId)
+			end
+		end
+		remaining = still
+		if #remaining == 0 then break end
+		if attempt < OWNERSHIP_RECHECK_ATTEMPTS then task.wait(RETRY_DELAY * attempt) end
+	end
+	s.isVerifying = false
+	print(`[UGCService] {playerId} checkout verified: {#purchased} item(s) now owned`)
+	notify(playerId, "purchased", purchased)
+	return true, nil, { purchased = purchased }
+end
+
+-- vote: 1 like, -1 dislike, 0 clear. Player sees only their own vote.
+function UGCService.Rate(playerId: string, assetId: number, vote: number): (boolean, string?)
+	local s = stateOf(playerId)
+	if not s or not itemOf(assetId) then return false, "Unknown item" end
+	if vote ~= 1 and vote ~= -1 and vote ~= 0 then return false, "Invalid vote" end
+	local previous = s.votes[assetId] or 0
+	if previous == vote then return true, nil end
+	s.votes[assetId] = if vote ~= 0 then vote else nil
+
+	local d = _pendingRatings[assetId] or { likes = 0, dislikes = 0 }
+	d.likes += (if vote == 1 then 1 else 0) - (if previous == 1 then 1 else 0)
+	d.dislikes += (if vote == -1 then 1 else 0) - (if previous == -1 then 1 else 0)
+	_pendingRatings[assetId] = d
+	return true, nil
+end
+
+-- Robux purchase finished (PromptPurchaseFinished said isPurchased). Never trust
+-- the signal alone: re-verify with PlayerOwnsAsset (yields).
+function UGCService.OnPurchaseFinished(playerId: string, assetId: number): boolean
+	local s = stateOf(playerId)
+	if not s or not itemOf(assetId) then return false end
+	for attempt = 1, OWNERSHIP_RECHECK_ATTEMPTS do
+		if checkOwnedLive(s, assetId) then
+			applyOwned(s, assetId)
+			print(`[UGCService] {playerId} bought {assetId} — permanent free use`)
+			notify(playerId, "purchased", { assetId })
+			return true
+		end
+		task.wait(RETRY_DELAY * attempt)
+	end
+	warn(`[UGCService] Purchase of {assetId} reported but ownership not confirmed for {playerId}`)
+	return false
+end
+
+-- Battle END (any outcome). deployedUnitIds = the player's deployed roster units.
+-- Each rented/trial item worn by >= 1 of them loses exactly 1 battle.
+function UGCService.OnBattleCompleted(playerId: string, deployedUnitIds: { string }): { decremented: { number }, expired: { number } }
+	local result = { decremented = {}, expired = {} }
+	local s = stateOf(playerId)
+	if not s then return result end
+
+	-- D3: looks/cart stay locked (isBattleActive) until the ownership re-checks
+	-- (yield) and the usage decrement are done. pcall so the lock is released on
+	-- every path, errors included.
+	local ok, err = pcall(function()
+		local worn: { [number]: boolean } = {}
+		for _, unitId in deployedUnitIds do
+			local slots = s.equips[unitId]
+			if slots then
+				for _, assetId in slots do
+					worn[assetId] = true
+				end
+			end
+		end
+
+		for _, assetId in sortedIds(worn) do
+			local r = s.rentals[assetId]
+			-- battle_end_ownership_check (id 43): re-check live before charging (yields;
+			-- only worn items with a running trial/rental). Owned = paused, no charge.
+			if r and r.remaining > 0 and checkOwnedLive(s, assetId) then
+				applyOwned(s, assetId)
+			elseif r and r.remaining > 0 then
+				r.remaining -= 1
+				table.insert(result.decremented, assetId)
+				if r.remaining <= 0 then
+					s.rentals[assetId] = nil
+					s.expired[assetId] = true
+					unequipEverywhere(s, assetId)
+					table.insert(result.expired, assetId)
+				end
+			end
+		end
+	end)
+	s.isBattleActive = false
+	if not ok then
+		warn(`[UGCService] Battle-end usage step failed for {playerId}: {err}`)
+	end
+	print(`[UGCService] Battle end for {playerId}: {#result.decremented} item use(s) counted, {#result.expired} expired`)
+	notify(playerId, "expired", result.expired)
+	return result
+end
+
+--------------------------------------------------
+-- READ
+--------------------------------------------------
+
+-- Asset ids a player unit visibly wears (only items it still has access to).
+function UGCService.GetUnitLookIds(playerId: string, unitId: string): { number }
+	local out = {}
+	local s = stateOf(playerId)
+	local slots = s and s.equips[unitId]
+	if not s or not slots then return out end
+	for _, slot in UGCCatalogData.SLOTS do
+		local id = slots[slot]
+		if id and itemOf(id) and hasAccess(s, id) then
+			table.insert(out, id)
+		end
+	end
+	return out
+end
+
+-- Customize screen / UGC merchant view. Only curated items are listed.
+-- unitId (optional): adds per-slot eligibility + that unit's equips.
+function UGCService.GetView(playerId: string, unitId: string?): any
+	local s = stateOf(playerId)
+	if not s then return nil end
+	local raceName: string? = nil
+	local hasUnit = false
+	if unitId and _unitRace then
+		hasUnit, raceName = _unitRace(playerId, unitId)
+	end
+	local items = {}
+	for _, assetId in sortedIds(UGCCatalogData.Items) do
+		local item = UGCCatalogData.Items[assetId]
+		local r = s.rentals[assetId]
+		table.insert(items, {
+			assetId = assetId,
+			name = item.name,
+			slot = item.slot,
+			status = statusOf(s, assetId), -- owned | trial | rent | expired | locked
+			remaining = if r then r.remaining else 0,
+			isTrialUsed = s.trialUsed[assetId] == true,
+			rentPrice = UGCService.GetRentPrice(playerId, assetId),
+			rentCount = s.rentCount[assetId] or 0,
+			isAvailable = isAvailable(assetId),
+			isOffSale = isOffSale(assetId), -- UI: "Off sale" marker instead of Buy (ids 41/47)
+			isPaused = s.owned[assetId] == true and r ~= nil and r.remaining > 0, -- id 44
+			isInCart = s.cart[assetId] == true,
+			assetId2 = item.assetId2,
+			bundleId = item.bundleId,
+			vote = s.votes[assetId] or 0,
+			isEligible = if hasUnit then UGCService.IsSlotAllowed(raceName, item.slot) else nil,
+		})
+	end
+	local gold = 0
+	if _currency then
+		local ok, bal = pcall(_currency.GetBalance, playerId)
+		if ok and type(bal) == "table" then gold = bal.gold or 0 end
+	end
+	return {
+		items = items,
+		gold = gold,
+		cartCount = s.cartCount,
+		cartCap = UGCCatalogData.CART_CAP,
+		isBattleActive = s.isBattleActive,
+		equips = if hasUnit and unitId then s.equips[unitId] else nil,
+	}
+end
+
+--------------------------------------------------
+-- RATINGS AGGREGATE (private; per-server batching)
+--------------------------------------------------
+
+local _ratingStore: DataStore? = nil
+
+local function ratingStore(): DataStore?
+	local mode = _saveMode and _saveMode() or "memory"
+	if mode == "memory" then return nil end
+	if _ratingStore then return _ratingStore end
+	local namespace = if mode == "studio" then "CTRBLXAI_Dev" else "CTRBLXAI_Live" -- SaveService naming
+	local ok, store = pcall(DataStoreService.GetDataStore, DataStoreService, namespace .. "_UGCRatings")
+	if not ok then
+		warn(`[UGCService] Ratings DataStore unavailable: {store}`)
+		return nil
+	end
+	_ratingStore = store
+	return store
+end
+
+function UGCService.FlushRatings()
+	if _isFlushing or next(_pendingRatings) == nil then return end
+	_isFlushing = true
+	local batch = _pendingRatings
+	_pendingRatings = {}
+	local store = ratingStore()
+	if not store then
+		print("[UGCService] Ratings flush skipped (memory mode) — batch discarded")
+		_isFlushing = false
+		return
+	end
+	for assetId, d in batch do
+		if d.likes == 0 and d.dislikes == 0 then continue end
+		local isSaved = false
+		for attempt = 1, MAX_RETRIES do
+			local ok, err = pcall(function()
+				store:UpdateAsync(`asset_{assetId}`, function(old: any)
+					local t = if type(old) == "table" then old else {}
+					t.likes = math.max(0, (tonumber(t.likes) or 0) + d.likes)
+					t.dislikes = math.max(0, (tonumber(t.dislikes) or 0) + d.dislikes)
+					return t
+				end)
+			end)
+			if ok then
+				isSaved = true
+				break
+			end
+			warn(`[UGCService] Ratings UpdateAsync {assetId} attempt {attempt}/{MAX_RETRIES} failed: {err}`)
+			task.wait(RETRY_DELAY * attempt)
+		end
+		if not isSaved then
+			-- Re-queue for the next flush rather than lose the votes.
+			local p = _pendingRatings[assetId] or { likes = 0, dislikes = 0 }
+			p.likes += d.likes
+			p.dislikes += d.dislikes
+			_pendingRatings[assetId] = p
+		end
+	end
+	_isFlushing = false
+end
+
+function UGCService.StartRatingFlush()
+	if _isFlushLoopStarted then return end
+	_isFlushLoopStarted = true
+	task.spawn(function()
+		while true do
+			task.wait(RATING_FLUSH_SECONDS)
+			UGCService.FlushRatings()
+		end
+	end)
+	game:BindToClose(function()
+		UGCService.FlushRatings()
+	end)
+end
+
+--------------------------------------------------
+-- PERSISTENCE (folded into progression Key 3 by Main.server.lua)
+-- Saved shape (string keys — DataStore JSON safe):
+--   { v = 2,
+--     r  = { ["<id>"] = { m = "t" | "r", n = remaining } },
+--     c  = { ["<id>"] = paidRentalCount },
+--     t  = { id, ... }  -- trial used
+--     x  = { id, ... }  -- expired (red)
+--     p  = { id, ... }  -- first-equip prompt shown
+--     k  = { id, ... }  -- cart (v2; v1 saves had the wishlist in w -> migrated)
+--     rv = { ["<id>"] = 1 | -1 },
+--     e  = { [unitId] = { [slot] = id } } }
+-- Ownership is NEVER saved. A paused rental of an owned item IS saved (id 44).
+-- Data for items no longer curated is KEPT (so a re-curated item keeps its price
+-- history) — except the cart, which drops them on Import (Tester D1).
+--------------------------------------------------
+
+local function idList(set: { [number]: boolean }): { number }
+	return sortedIds(set)
+end
+
+function UGCService.Export(playerId: string): any
+	local s = stateOf(playerId)
+	if not s then return nil end
+	local r, c, rv = {}, {}, {}
+	for id, rental in s.rentals do
+		if rental.remaining > 0 then
+			r[tostring(id)] = { m = if rental.mode == "trial" then "t" else "r", n = rental.remaining }
+		end
+	end
+	for id, count in s.rentCount do c[tostring(id)] = count end
+	for id, vote in s.votes do rv[tostring(id)] = vote end
+	local e = {}
+	for unitId, slots in s.equips do
+		local isKept = true
+		if _unitRace then isKept = (_unitRace(playerId, unitId)) end
+		if isKept and next(slots) ~= nil then e[unitId] = slots end
+	end
+	return {
+		v = SAVE_VERSION, r = r, c = c,
+		t = idList(s.trialUsed), x = idList(s.expired), p = idList(s.prompted),
+		k = idList(s.cart), rv = rv, e = e,
+	}
+end
+
+local function importIdSet(src: any, into: { [number]: boolean }): number
+	local n = 0
+	if type(src) ~= "table" then return n end
+	for _, id in src do
+		if isPositiveInt(id) and not into[id] then
+			into[id] = true
+			n += 1
+		end
+	end
+	return n
+end
+
+function UGCService.Import(playerId: string, data: any)
+	UGCService.InitPlayer(playerId, nil)
+	local s = _states[playerId]
+	if type(data) ~= "table" then return end -- old saves: no UGC payload
+
+	if type(data.r) == "table" then
+		for k, rental in data.r do
+			local id = tonumber(k)
+			if id and isPositiveInt(id) and type(rental) == "table" and isPositiveInt(rental.n) then
+				s.rentals[id] = { mode = if rental.m == "t" then "trial" else "rent", remaining = rental.n }
+			end
+		end
+	end
+	if type(data.c) == "table" then
+		for k, count in data.c do
+			local id = tonumber(k)
+			if id and isPositiveInt(id) and isPositiveInt(count) then s.rentCount[id] = count end
+		end
+	end
+	if type(data.rv) == "table" then
+		for k, vote in data.rv do
+			local id = tonumber(k)
+			if id and isPositiveInt(id) and (vote == 1 or vote == -1) then s.votes[id] = vote end
+		end
+	end
+	importIdSet(data.t, s.trialUsed)
+	importIdSet(data.x, s.expired)
+	importIdSet(data.p, s.prompted)
+
+	-- Cart (v2 'k'); v1 saves stored the wishlist in 'w' -> migrated into the cart.
+	-- Tester D1 fix: ids no longer in the catalog are dropped, so they never
+	-- count toward the cap.
+	local cartSrc = if type(data.k) == "table" then data.k else data.w
+	if type(cartSrc) == "table" then
+		for _, id in cartSrc do
+			if s.cartCount >= UGCCatalogData.CART_CAP then break end
+			if isPositiveInt(id) and itemOf(id) and not s.cart[id] then
+				s.cart[id] = true
+				s.cartCount += 1
+			end
+		end
+	end
+
+	if type(data.e) == "table" then
+		for unitId, slots in data.e do
+			if type(unitId) == "string" and type(slots) == "table" then
+				local clean = {}
+				for slot, id in slots do
+					if type(slot) == "string" and UGCCatalogData.SLOT_SET[slot] and isPositiveInt(id) then
+						clean[slot] = id
+					end
+				end
+				if next(clean) ~= nil then s.equips[unitId] = clean end
+			end
+		end
+	end
+	print(`[UGCService] Imported UGC state for {playerId}`)
+end
+
+return UGCService

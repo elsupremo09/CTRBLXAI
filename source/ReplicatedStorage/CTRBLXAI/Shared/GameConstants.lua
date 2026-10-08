@@ -533,7 +533,21 @@ end
 function GameConstants.SetGeneratedMap(mapState)
 	GameConstants.ELEVATION_MAP = mapState.elevationGrid
 	GameConstants.TERRAIN_MAP   = mapState.terrainGrid
-	GameConstants.OBJECT_MAP    = mapState.objectGrid or {}
+	-- objectGrid is SPARSE (most tiles have no object). Roblox remotes turn sparse
+	-- arrays into dictionaries with STRING keys ("11" instead of 11), so on the client
+	-- GetObjectAt(11, 29) found nothing. Normalize every row/column key back to a number.
+	local objMap = {}
+	for ry, row in pairs(mapState.objectGrid or {}) do
+		local y = tonumber(ry)
+		if y and type(row) == "table" then
+			objMap[y] = objMap[y] or {}
+			for rx, name in pairs(row) do
+				local x = tonumber(rx)
+				if x and name ~= nil then objMap[y][x] = name end
+			end
+		end
+	end
+	GameConstants.OBJECT_MAP    = objMap
 	GameConstants.BLOCKERS      = mapState.blockers
 	-- Span protection + chasm floors (map_gen_rules rows 59/60/65/67).
 	local spanMap, chasmMap = {}, {}

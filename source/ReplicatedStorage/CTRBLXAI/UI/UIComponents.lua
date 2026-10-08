@@ -131,6 +131,17 @@ end
 --------------------------------------------------
 
 function UIComponents.PrimaryButton(props)
+	-- Square Confirm icon (user ruling 2026-10-08). Height kept, width = height.
+	if Theme.MakeIconButton then
+		local h = (props.size and props.size.Y.Offset > 0 and props.size.Y.Offset) or Theme.MinSize.ButtonHeight
+		return Theme.MakeIconButton(nil, "Confirm", props.enabled ~= false and props.onPress or nil, {
+			name = props.name or "PrimaryBtn",
+			size = UDim2.fromOffset(h, h),
+			position = props.position,
+			anchor = props.anchorPoint,
+			disabled = props.enabled == false,
+		})
+	end
 	local enabled = props.enabled ~= false
 	local accentColor = props.color or Theme.Colors.Player
 
@@ -164,6 +175,17 @@ end
 --------------------------------------------------
 
 function UIComponents.SecondaryButton(props)
+	-- Square Back icon (user ruling 2026-10-08). Height kept, width = height.
+	if Theme.MakeIconButton then
+		local h = (props.size and props.size.Y.Offset > 0 and props.size.Y.Offset) or Theme.MinSize.ButtonHeight
+		return Theme.MakeIconButton(nil, "Back", props.enabled ~= false and props.onPress or nil, {
+			name = props.name or "SecondaryBtn",
+			size = UDim2.fromOffset(h, h),
+			position = props.position,
+			anchor = props.anchorPoint,
+			disabled = props.enabled == false,
+		})
+	end
 	local enabled = props.enabled ~= false
 
 	local btn = Instance.new("TextButton")

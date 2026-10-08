@@ -47,6 +47,31 @@ local RaceData = require(
 local BattleVisualBroadcaster = {}
 
 --------------------------------------------------
+-- BATTLE LOG (server-authored, 2026-10-08)
+-- Single source of truth for the in-game battle log. Every line is built
+-- here and fired as BattleLogEntry { t = turn#, c = category, x = text,
+-- u = unitId }. The client only displays entries (NET-001, NET-003).
+-- Categories: turn | action | rt | status | ko | channel | field | info
+--------------------------------------------------
+
+local _logTurn = 0
+
+local function unitName(u)
+	return (u and u.name) or "?"
+end
+
+local function logEntry(category, text, unitId)
+	if type(text) ~= "string" or text == "" then return end
+	BattleEvents.BattleLogEntry:FireAllClients({ t = _logTurn, c = category, x = text, u = unitId })
+end
+
+-- Public hook for services that resolve events outside this module
+-- (Interact, counters, channel landing/interrupts, removals).
+function BattleVisualBroadcaster.Log(category, text, unitId)
+	logEntry(category, text, unitId)
+end
+
+--------------------------------------------------
 -- PACING
 --------------------------------------------------
 
@@ -143,6 +168,8 @@ end
 --------------------------------------------------
 
 function BattleVisualBroadcaster.BattleStarted(units)
+	_logTurn = 0
+	logEntry("info", "Battle begins.")
 	local serialized = {}
 	for _, unit in ipairs(units) do
 		table.insert(serialized, serializeUnit(unit))
@@ -158,6 +185,8 @@ function BattleVisualBroadcaster.BattleStarted(units)
 end
 
 function BattleVisualBroadcaster.TurnStarted(unit, ct, allUnits)
+	_logTurn += 1
+	logEntry("turn", `{unitName(unit)}  ·  turn {_logTurn}  ·  CT {ct or 0}`, unit.id)
 	-- Build a compact snapshot of all units' RT for client timeline simulation
 	local allUnitsRt = {}
 	if allUnits then
@@ -206,10 +235,24 @@ function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, sk
 		statusApplied = outcome.statusApplied or nil,
 		rtDelay     = outcome.rtDelay or nil,
 	})
+	do
+		local head = if skillName
+			then `{unitName(actor)} uses {skillName} on {unitName(target)}`
+			else `{unitName(actor)} attacks {unitName(target)}`
+		local parts = { `{head}: -{outcome.finalDamage or 0} HP ({target.currentHp or 0}/{target.maxHp or 0})` }
+		if outcome.statusApplied and outcome.statusApplied ~= "" then
+			table.insert(parts, `+{outcome.statusApplied}`)
+		end
+		if outcome.rtDelay and outcome.rtDelay > 0 then
+			table.insert(parts, `target RT +{outcome.rtDelay}`)
+		end
+		logEntry("action", table.concat(parts, ", "), actor.id)
+	end
 	task.wait(PACE.Action)
 
 	if not target.isAlive then
 		BattleEvents.UnitDefeated:FireAllClients({ unitId = target.id })
+		logEntry("ko", `{unitName(target)} is knocked out.`, target.id)
 		task.wait(PACE.Defeat)
 	end
 end
@@ -223,10 +266,12 @@ function BattleVisualBroadcaster.DotDamage(unit, statusId, damage)
 		currentHp = unit.currentHp,
 		maxHp     = unit.maxHp,
 	})
+	logEntry("status", `{unitName(unit)} takes {damage or 0} {statusId} damage ({unit.currentHp or 0}/{unit.maxHp or 0})`, unit.id)
 	task.wait(PACE.Dot)
 
 	if not unit.isAlive then
 		BattleEvents.UnitDefeated:FireAllClients({ unitId = unit.id })
+		logEntry("ko", `{unitName(unit)} is knocked out.`, unit.id)
 		task.wait(PACE.Defeat)
 	end
 end
@@ -242,6 +287,7 @@ function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName
 		skillName   = skillName,
 		skillId     = skillId,  -- client VFX registry lookup
 	})
+	logEntry("action", `{unitName(actor)} heals {unitName(target)}{if skillName then ` with {skillName}` else ""}: +{amount or 0} HP ({target.currentHp or 0}/{target.maxHp or 0})`, actor.id)
 	task.wait(PACE.Healing)
 end
 
@@ -277,6 +323,7 @@ function BattleVisualBroadcaster.ChannelFizzled(actor, skillName, reason)
 		tileX     = actor.tileX,
 		tileY     = actor.tileY,
 	})
+	logEntry("channel", `{unitName(actor)}'s {skillName or "skill"} fails ({reason or "fizzled"}).`, actor.id)
 	task.wait(PACE.Action)
 end
 
@@ -333,6 +380,15 @@ function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns, s
 		sourceDesc     = sourceDesc,
 		sourceDuration = sourceDuration,
 	})
+	do
+		local dur = ""
+		if def and def.durationCt then
+			dur = ` ({def.durationCt} CT)`
+		elseif type(remainingTurns) == "number" then
+			dur = ` ({remainingTurns} turn{if remainingTurns == 1 then "" else "s"})`
+		end
+		logEntry("status", `{unitName(unit)} gains {statusId}{dur}.`, unit.id)
+	end
 	task.wait(PACE.Status)
 end
 
@@ -341,6 +397,7 @@ function BattleVisualBroadcaster.StatusExpired(unit, statusId)
 		unitId   = unit.id,
 		statusId = statusId,
 	})
+	logEntry("status", `{statusId} wears off {unitName(unit)}.`, unit.id)
 end
 
 function BattleVisualBroadcaster.TurnEnded(unit, nextRt)
@@ -350,6 +407,9 @@ function BattleVisualBroadcaster.TurnEnded(unit, nextRt)
 		statuses = StatusService.GetStatusSummary(unit),
 		currentMp = unit.currentMp or 0,
 	})
+	if unit.isAlive and type(nextRt) == "number" then
+		logEntry("rt", `{unitName(unit)} acts again in {nextRt} RT.`, unit.id)
+	end
 	task.wait(PACE.TurnEnd)
 end
 
@@ -363,6 +423,7 @@ function BattleVisualBroadcaster.BattleEnded(winner, units)
 		winner = winner,
 		units  = serialized,
 	})
+	logEntry("info", `Battle over: {tostring(winner)} wins.`)
 	task.wait(PACE.BattleEnd)
 end
 
@@ -376,6 +437,7 @@ function BattleVisualBroadcaster.GuardActivated(unit, guardRt, mitigation)
 		guardRt = guardRt,
 		mitigation = mitigation or 0.35,
 	})
+	logEntry("action", `{unitName(unit)} guards (-{math.round((mitigation or 0.35) * 100)}% damage taken), RT +{guardRt or 0}.`, unit.id)
 	task.wait(PACE.Action * 0.5)
 end
 
@@ -397,6 +459,19 @@ function BattleVisualBroadcaster.UnitPushed(pusher, target, result)
 		targetHp       = target.currentHp,
 		targetMaxHp    = target.maxHp,
 	})
+	do
+		local text
+		if result.pushed and (result.tilesDisplaced or 0) > 0 then
+			text = `{unitName(pusher)} pushes {unitName(target)} {result.tilesDisplaced} tile{if result.tilesDisplaced == 1 then "" else "s"}`
+			local wallDmg = result.wallCollision and result.wallCollision.damage or 0
+			if wallDmg > 0 then text ..= `, wall hit -{wallDmg} HP` end
+			if (result.fallDamage or 0) > 0 then text ..= `, fall -{result.fallDamage} HP` end
+			text ..= "."
+		else
+			text = `{unitName(pusher)}'s push on {unitName(target)} is blocked{if result.blockedBy then ` by {tostring(result.blockedBy)}` else ""}.`
+		end
+		logEntry("action", text, pusher.id)
+	end
 	task.wait(PACE.Action)
 end
 
@@ -411,6 +486,7 @@ function BattleVisualBroadcaster.TurnSkipped(unit, reason)
 		side      = unit.side,
 		reason    = reason,
 	})
+	logEntry("rt", `{unitName(unit)} loses the turn ({tostring(reason or "status")}).`, unit.id)
 	task.wait(PACE.Action)
 end
 
@@ -425,6 +501,7 @@ function BattleVisualBroadcaster.StatusImmune(unit, statusId, reason)
 		statusId  = statusId,
 		reason    = reason,
 	})
+	logEntry("status", `{unitName(unit)} is immune to {statusId}{if reason then ` ({tostring(reason)})` else ""}.`, unit.id)
 end
 
 --------------------------------------------------
@@ -510,6 +587,20 @@ function BattleVisualBroadcaster.ItemUsed(actor, target, itemName, effectResult)
 		targetTileX = target and target.tileX,
 		targetTileY = target and target.tileY,
 	})
+	do
+		local tName = (target and target.name) or unitName(actor)
+		local amount = effectResult.amount or 0
+		local et = effectResult.effectType
+		local summary
+		if et == "Heal" or et == "Healing" then summary = `{tName} +{amount} HP`
+		elseif et == "MpRestore" then summary = `{tName} +{amount} MP`
+		elseif et == "StatusCure" then summary = `cured {effectResult.statusId or "status"} on {tName}`
+		elseif et == "StatusApply" then summary = `{effectResult.statusId or "status"} on {tName}`
+		elseif et == "Damage" then summary = `{tName} -{amount} HP`
+		elseif et == nil or et == "Unimplemented" then summary = "no effect"
+		else summary = `on {tName}` end
+		logEntry("action", `{unitName(actor)} uses {itemName or "item"}: {summary}.`, actor.id)
+	end
 end
 
 -- Announce a single unit that entered the battle mid-fight (reinforcement).
@@ -520,16 +611,22 @@ function BattleVisualBroadcaster.UnitSpawned(unit)
 	BattleEvents.UnitSpawned:FireAllClients({
 		unit = serializeUnit(unit),
 	})
+	logEntry("ko", `{unitName(unit)} enters the battle.`, unit.id)
 end
 
 -- Time cycle: broadcast the current time-of-day phase (Dawn/Day/Dusk/Night).
 function BattleVisualBroadcaster.TimePhaseChanged(phase)
 	BattleEvents.TimePhaseChanged:FireAllClients({ phase = phase })
+	logEntry("field", `Time of day: {tostring(phase)}.`)
 end
 
 -- Weather/crisis: broadcast the active condition (one combined slot, per round).
 function BattleVisualBroadcaster.WeatherChanged(condition)
 	BattleEvents.WeatherChanged:FireAllClients({ condition = condition })
+	do
+		local n = if type(condition) == "table" then (condition.name or condition.id) else condition
+		logEntry("field", if n and n ~= "" and n ~= "None" then `Weather: {tostring(n)}.` else "Weather clears.")
+	end
 end
 
 -- Battlefield event: broadcast that a named battlefield event triggered so the
@@ -537,8 +634,15 @@ end
 -- quiet=true: update the Event panel only, no dramatic banner (used to resync
 -- start-of-battle events after BattleStarted so the banner doesn't replay).
 function BattleVisualBroadcaster.BattlefieldEventAnnounced(eventName, quiet)
-	if not eventName then return end
+	-- eventName = nil clears the Event panel (dev END EVENT); always quiet (no banner).
+	if not eventName then
+		BattleEvents.BattlefieldEventAnnounced:FireAllClients({ eventName = nil, quiet = true })
+		return
+	end
 	BattleEvents.BattlefieldEventAnnounced:FireAllClients({ eventName = eventName, quiet = quiet == true })
+	if quiet ~= true then
+		logEntry("field", `Battlefield event: {tostring(eventName)}.`)
+	end
 end
 
 --------------------------------------------------

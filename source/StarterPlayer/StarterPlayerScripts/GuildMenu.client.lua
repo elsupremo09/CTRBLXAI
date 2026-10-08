@@ -29,14 +29,16 @@ if not themeModule or not guildModule or not battleModule then
 	warn("[GuildMenu] Theme / GuildEvents / BattleEvents module missing"); return
 end
 
-local Theme: any        = require(themeModule :: ModuleScript)
-local GuildEvents: any  = require(guildModule :: ModuleScript)
-local BattleEvents: any = require(battleModule :: ModuleScript)
+-- Modules found at runtime via WaitForChild; the editor cannot follow that path, so
+-- require is called through `any` (editor-only; same module loads at runtime).
+local Theme: any        = (require :: any)(themeModule)
+local GuildEvents: any  = (require :: any)(guildModule)
+local BattleEvents: any = (require :: any)(battleModule)
 if not GuildEvents.GuildMenuOpened then
 	warn("[GuildMenu] Guild remotes unavailable — menu disabled"); return
 end
 
-local player = Players.LocalPlayer
+local player = Players.LocalPlayer :: Player
 local playerGui = player:WaitForChild("PlayerGui", WAIT)
 if not playerGui then warn("[GuildMenu] PlayerGui not found"); return end
 
@@ -76,11 +78,13 @@ local function makeText(parent: Instance, text: string, size: number, color: Col
 end
 
 local function makeButton(parent: Instance, text: string, color: Color3, onTap: () -> (), enabled: boolean?): TextButton
+	-- Loadout-screen look (2026-10-08 restyle): dark rounded button; the colour that used to
+	-- fill the button is now its outline, so Hire/Buy/Sell/Up/Down keep their meaning.
 	local isOn = enabled ~= false
 	local btn = Instance.new("TextButton")
 	btn.AutoButtonColor = isOn
 	btn.Active = isOn
-	btn.BackgroundColor3 = isOn and color or Theme.Colors.Surface
+	btn.BackgroundColor3 = Theme.Colors.Surface
 	btn.BackgroundTransparency = isOn and 0.1 or 0.5
 	btn.BorderSizePixel = 0
 	btn.Font = Theme.Font.PrimaryBold
@@ -91,9 +95,16 @@ local function makeButton(parent: Instance, text: string, color: Color3, onTap: 
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = Theme.CornerRadius.md
 	corner.Parent = btn
-	btn.Parent = parent
+	local stroke = Instance.new("UIStroke")
+	stroke.Name = "Accent"
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Color = isOn and color or Theme.Colors.Border
+	stroke.Thickness = Theme.BorderThickness.Selected
+	stroke.Transparency = isOn and 0 or 0.4
+	stroke.Parent = btn
+	btn.Parent = parent -- properties before Parent (NET-004)
 	if isOn then
-		btn.Activated:Connect(onTap) -- .Activated works for mouse, touch and gamepad
+		btn.Activated:Connect(function() onTap() end) -- .Activated works for mouse, touch and gamepad
 	end
 	return btn
 end
@@ -109,19 +120,28 @@ screenGui.Parent = playerGui
 local root = Instance.new("Frame")
 root.Name = "Root"
 root.Size = UDim2.fromScale(1, 1)
-root.BackgroundColor3 = Theme.Colors.Background
-root.BackgroundTransparency = 0.05
+root.BackgroundColor3 = Theme.FullScreen.BackgroundColor
+root.BackgroundTransparency = Theme.FullScreen.BackgroundTransparency -- same opaque backdrop as the loadout
 root.BorderSizePixel = 0
 root.Parent = screenGui
 if Theme.MakeScreenBorder then Theme.MakeScreenBorder(root) end
 
+-- Gold-framed panel wrapper (the loadout screen's ornate 9-slice frame, Theme.MakePanel).
+-- Same size/position the element had before; the element now fills the frame (styling only).
+local function framePanel(name: string, size: UDim2, position: UDim2, padX: number, padY: number): ImageLabel
+	local frame = Theme.MakePanel(name, size, position, nil, root)
+	local framePad = Instance.new("UIPadding") -- one UIPadding per frame (Roblox honours only one)
+	framePad.PaddingLeft = UDim.new(0, padX)
+	framePad.PaddingRight = UDim.new(0, padX)
+	framePad.PaddingTop = UDim.new(0, padY)
+	framePad.PaddingBottom = UDim.new(0, padY)
+	framePad.Parent = frame
+	return frame
+end
+
 -- Header: title + balance
-local header = Instance.new("Frame")
-header.Name = "Header"
-header.Size = UDim2.new(0.96, 0, 0.12, 0)
-header.Position = UDim2.fromScale(0.02, 0.02)
-header.BackgroundTransparency = 1
-header.Parent = root
+-- Wider side padding so the text clears the frame's corner ornaments.
+local header = framePanel("Header", UDim2.new(0.96, 0, 0.12, 0), UDim2.fromScale(0.02, 0.02), 14, 4)
 
 local titleLabel = makeText(header, "GUILD", Theme.Text.Title(), Theme.Colors.TextGold, true)
 titleLabel.Size = UDim2.fromScale(0.4, 0.6)
@@ -137,33 +157,34 @@ balanceLabel.Position = UDim2.fromScale(0.4, 0)
 balanceLabel.TextXAlignment = Enum.TextXAlignment.Right
 
 -- Left column: one button per building
+local navFrame = framePanel("BuildingsFrame", UDim2.new(0.28, 0, 0.8, 0), UDim2.fromScale(0.02, 0.16), 10, 10)
 local nav = Instance.new("ScrollingFrame")
 nav.Name = "Buildings"
-nav.Size = UDim2.new(0.28, 0, 0.8, 0)
-nav.Position = UDim2.fromScale(0.02, 0.16)
+nav.Size = UDim2.fromScale(1, 1)
+nav.Position = UDim2.fromScale(0, 0)
 nav.BackgroundTransparency = 1
 nav.BorderSizePixel = 0
 nav.ScrollBarThickness = 4
 nav.AutomaticCanvasSize = Enum.AutomaticSize.Y
 nav.CanvasSize = UDim2.new()
-nav.Parent = root
+nav.Parent = navFrame
 local navLayout = Instance.new("UIListLayout")
 navLayout.Padding = UDim.new(0, 6)
 navLayout.SortOrder = Enum.SortOrder.LayoutOrder
 navLayout.Parent = nav
 
 -- Right: page content
+local contentFrame = framePanel("ContentFrame", UDim2.new(0.66, 0, 0.72, 0), UDim2.fromScale(0.32, 0.16), 6, 6)
 local content = Instance.new("ScrollingFrame")
 content.Name = "Content"
-content.Size = UDim2.new(0.66, 0, 0.72, 0)
-content.Position = UDim2.fromScale(0.32, 0.16)
-content.BackgroundColor3 = Theme.Colors.Panel
-content.BackgroundTransparency = 0.2
+content.Size = UDim2.fromScale(1, 1)
+content.Position = UDim2.fromScale(0, 0)
+content.BackgroundTransparency = 1 -- the gold frame supplies the panel background
 content.BorderSizePixel = 0
 content.ScrollBarThickness = 6
 content.AutomaticCanvasSize = Enum.AutomaticSize.Y
 content.CanvasSize = UDim2.new()
-content.Parent = root
+content.Parent = contentFrame
 local contentPad = Instance.new("UIPadding")
 contentPad.PaddingLeft = UDim.new(0, 8)
 contentPad.PaddingRight = UDim.new(0, 8)
@@ -225,8 +246,13 @@ local function addRow(text: string, buttons: { RowButton }?, dim: boolean?): Fra
 	row.LayoutOrder = rowOrder
 	row.Parent = content
 	local corner = Instance.new("UICorner")
-	corner.CornerRadius = Theme.CornerRadius.sm
+	corner.CornerRadius = Theme.CornerRadius.md
 	corner.Parent = row
+	local rowStroke = Instance.new("UIStroke") -- loadout card edge
+	rowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	rowStroke.Color = Theme.Colors.Border
+	rowStroke.Thickness = Theme.BorderThickness.Default
+	rowStroke.Parent = row
 
 	local count = buttons and #buttons or 0
 	local btnShare = math.min(0.22 * count, 0.5)
@@ -236,11 +262,23 @@ local function addRow(text: string, buttons: { RowButton }?, dim: boolean?): Fra
 
 	if buttons then
 		for i, b in buttons do
-			local btn = makeButton(row, b.text, b.color, b.onTap, b.enabled)
 			local w = btnShare / count
-			btn.Size = UDim2.new(w, -6, 0, BUTTON_HEIGHT - 4)
-			btn.AnchorPoint = Vector2.new(0, 0.5)
-			btn.Position = UDim2.new(1 - btnShare + w * (i - 1), 0, 0.5, 0)
+			local iconKind = Theme.IconKindForText and Theme.IconKindForText(b.text)
+			if iconKind then
+				-- Square icon art: same height, narrower; centred in its share of the row.
+				Theme.MakeIconButton(row, iconKind, b.onTap, {
+					name = "Btn_" .. b.text,
+					size = UDim2.new(0, BUTTON_HEIGHT - 4, 0, BUTTON_HEIGHT - 4),
+					position = UDim2.new(1 - btnShare + w * (i - 0.5), 0, 0.5, 0),
+					anchor = Vector2.new(0.5, 0.5),
+					disabled = (b.enabled == false),
+				})
+			else
+				local btn = makeButton(row, b.text, b.color, b.onTap, b.enabled)
+				btn.Size = UDim2.new(w, -6, 0, BUTTON_HEIGHT - 4)
+				btn.AnchorPoint = Vector2.new(0, 0.5)
+				btn.Position = UDim2.new(1 - btnShare + w * (i - 1), 0, 0.5, 0)
+			end
 		end
 	end
 	return row
@@ -478,44 +516,60 @@ local PAGES: { [string]: () -> () } = {
 	Dev = pageDev,
 }
 
+-- The building list is a tab bar: old 9-slice text bars (user ruling 2026-10-08),
+-- the open building = Active (bronze), the others = Inactive (navy). Theme.MakeTabButton.
+local navPageOf: { [GuiButton]: string } = {}
+
+local function styleNav()
+	for btn, page in navPageOf do
+		Theme.SetTabState(btn, if page == currentPage then "Active" else "Inactive")
+	end
+end
+
+local function registerNav(btn: GuiButton, page: string)
+	navPageOf[btn] = page
+end
+
 showPage = function(name: string)
 	currentPage = name
 	clearContent()
 	local fn = PAGES[name]
 	if fn then fn() end
+	styleNav()
 end
 
 --------------------------------------------------
 -- BUILDING BUTTONS
 --------------------------------------------------
 
-local navButtons: { TextButton } = {}
+local navButtons: { GuiButton } = {}
 local leaveButton: TextButton? = nil
-local devButton: TextButton? = nil
+local devButton: GuiButton? = nil
 
 local function buildNav()
 	for _, b in navButtons do b:Destroy() end
 	navButtons = {}
+	table.clear(navPageOf) -- destroyed buttons must not stay referenced (PRF-004)
 	local entries = {
 		{ "Tavern", "Tavern" }, { "Merchant", "Merchant" }, { "Blacksmith", "Blacksmith" },
 		{ "Dispatch", "Dispatch" }, { "Units", "Units" },
 	}
 	for i, e in entries do
 		local pageName = e[2]
-		local btn = makeButton(nav, e[1], Theme.Colors.Player, function()
+		local btn: GuiButton = Theme.MakeTabButton(nav, e[1], "Inactive", function()
 			selectedMission = nil
 			setStatus("")
 			showPage(pageName)
-		end)
-		btn.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
-		btn.LayoutOrder = i
+		end, { name = "Nav_" .. pageName, size = UDim2.new(1, 0, 0, BUTTON_HEIGHT), layoutOrder = i,
+			textSize = Theme.Text.Body() })
+		registerNav(btn, pageName)
 		table.insert(navButtons, btn)
 	end
-	local dev = makeButton(nav, "Dev: Levels", Theme.Colors.Surface, function() showPage("Dev") end)
-	dev.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
-	dev.LayoutOrder = 50
+	local dev: GuiButton = Theme.MakeTabButton(nav, "Dev: Levels", "Inactive", function() showPage("Dev") end,
+		{ name = "Nav_Dev", size = UDim2.new(1, 0, 0, BUTTON_HEIGHT), layoutOrder = 50, textSize = Theme.Text.Body() })
 	dev.Visible = false
 	devButton = dev
+	registerNav(dev, "Dev")
 	table.insert(navButtons, dev)
 
 	local leave = makeButton(nav, "", Theme.Colors.Success, function()
@@ -528,6 +582,7 @@ local function buildNav()
 	leave.LayoutOrder = 100
 	leaveButton = leave
 	table.insert(navButtons, leave)
+	styleNav()
 end
 buildNav()
 

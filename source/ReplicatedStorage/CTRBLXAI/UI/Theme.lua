@@ -250,6 +250,7 @@ Theme.MinSize = {
 	ButtonWidth  = 80,
 	ButtonHeight = 36,
 	IconButton   = 40,
+	TabButton    = 24,  -- min height/width of the bronze/navy/dark bar buttons (user ruling 2026-10-08)
 }
 
 --------------------------------------------------
@@ -615,16 +616,162 @@ end
 -- THEMED BUTTONS (9-slice ImageButton)
 --------------------------------------------------
 
+-- Button styles now map to the square icon art (user ruling 2026-10-08):
+--   Primary -> Confirm icon, Secondary -> Back icon, Tertiary -> Options icon.
+-- (Old 9-slice text-bar assets retired: 89295920306721 / 131548301376394 / 84429775461281.)
 Theme.ButtonAssets = {
-	Primary   = { Asset = "rbxassetid://89295920306721" },  -- gold/bronze (equip, attach, confirm)
-	Secondary = { Asset = "rbxassetid://131548301376394" },    -- dark charcoal (back, cancel)
-	Tertiary  = { Asset = "rbxassetid://84429775461281" },   -- dark blue/steel (compare, swap)
+	Primary   = { Asset = "rbxassetid://106679295261353" },  -- Confirm icon (equip, attach, confirm)
+	Secondary = { Asset = "rbxassetid://121150899495320" },  -- Back icon (back, cancel)
+	Tertiary  = { Asset = "rbxassetid://83722919579541" },   -- Options icon (compare, swap, details)
 }
+
+-- Style name -> icon kind used by MakeButton.
+local ICON_FOR_STYLE = { Primary = "Confirm", Secondary = "Back", Tertiary = "Options" }
 
 -- [DIAG] Asset ID dump at load time
 
 -- Shared SliceCenter for all button assets (adjust if 9-slice guides differ)
 local BTN_SLICE_CENTER = Rect.new(12, 12, 188, 36)
+
+-- ============ TAB BUTTONS (old 9-slice text bars, user ruling 2026-10-08) ============
+-- Every tab and sub-tab uses these three bars; every other button stays square icon art
+-- (ButtonAssets / MakeButton / MakeIconButton above are unchanged).
+--   Active   -> btn_primary_bronze_200x48  (the current tab)
+--   Inactive -> btn_secondary_navy_200x48  (the other tabs)
+--   Disabled -> btn_tertiary_dark_200x48   (greyed out / unavailable)
+-- The art is 200x48 with a 12 px border on all four sides, so BTN_SLICE_CENTER
+-- (12,12)-(188,36) matches it exactly (200-188 = 12, 48-36 = 12).
+Theme.TabAssets = {
+	Active   = "rbxassetid://89295920306721",
+	Inactive = "rbxassetid://131548301376394",
+	Disabled = "rbxassetid://84429775461281",
+}
+-- White text with a black outline on every bar button, in every state (user ruling 2026-10-08):
+-- the bar art (bronze / navy / dark) alone shows the state, so text stays readable.
+Theme.TabTextColors = {
+	Active   = Color3.new(1, 1, 1),
+	Inactive = Color3.new(1, 1, 1),
+	Disabled = Color3.new(1, 1, 1),
+}
+local TAB_TEXT_PAD = 10 -- keeps the label off the bar's 12 px edge art
+-- Tab bars slice only the outer 3 px (2026-10-08). With the old 12 px slice the art's
+-- right/bottom edge band stayed fixed while the centre was resampled, which left hard
+-- straight seam lines on any bar not drawn at exactly 200x48. A 3 px slice keeps the
+-- thin outline crisp and lets the rest of the art scale as one piece (no seams).
+local TAB_SLICE_CENTER = Rect.new(3, 3, 197, 45)
+
+-- Switch a tab made by MakeTabButton between "Active" | "Inactive" | "Disabled" in place,
+-- so tab bars never need rebuilding just to move the highlight (loadout_ui_spec 53).
+function Theme.SetTabState(btn, state)
+	if not btn then return end
+	local s = if Theme.TabAssets[state] then state else "Inactive"
+	btn:SetAttribute("TabState", s)
+	btn.Image = Theme.TabAssets[s]
+	btn.Active = s ~= "Disabled"
+	for _, d in btn:GetChildren() do
+		if d:IsA("TextLabel") and (d.Name == "Label" or d:GetAttribute("BarText")) then
+			d.TextColor3 = Theme.TabTextColors[s]
+			d.TextStrokeColor3 = Color3.new(0, 0, 0)
+			d.TextStrokeTransparency = 0
+		elseif d:IsA("ImageLabel") and d.Name == "Icon" then
+			d.ImageTransparency = if s == "Disabled" then 0.5 else 0
+		end
+	end
+end
+
+-- Tab / sub-tab button. state: "Active" | "Inactive" | "Disabled".
+-- opts: size (UDim2, default 110 x 44 touch height), position, anchor, name, layoutOrder,
+--       textSize (largest size; fixed-width tabs shrink text to fit), icon (asset id drawn
+--       left of the text), autoWidth (width follows the content, never under 44 px).
+-- onActivated runs on mouse, touch and gamepad (.Activated), never while Disabled.
+function Theme.MakeTabButton(parent, text, state, onActivated, opts)
+	opts = opts or {}
+	local touch = Theme.MinSize.TabButton -- 24 px (was the 44 px TouchTarget)
+	local btn = Instance.new("ImageButton")
+	btn.Name = opts.name or ("Tab_" .. text)
+	btn.Size = opts.size or UDim2.new(0, 110, 0, touch)
+	btn.Position = opts.position or UDim2.new(0, 0, 0, 0)
+	btn.AnchorPoint = opts.anchor or Vector2.new(0, 0)
+	btn.LayoutOrder = opts.layoutOrder or 0
+	btn.ScaleType = Enum.ScaleType.Slice
+	btn.SliceCenter = TAB_SLICE_CENTER
+	btn.SliceScale = 1
+	btn.BackgroundTransparency = 1
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = false
+
+	local maxText = opts.textSize or Theme.Text.Small()
+	local hasIcon = type(opts.icon) == "string" and string.find(opts.icon, "rbxassetid://") ~= nil
+	local iconPx = 18
+	local icon
+	if hasIcon then
+		icon = Instance.new("ImageLabel")
+		icon.Name = "Icon"
+		icon.Image = opts.icon
+		icon.ScaleType = Enum.ScaleType.Fit
+		icon.BackgroundTransparency = 1
+		icon.Size = UDim2.fromOffset(iconPx, iconPx)
+		icon.LayoutOrder = 1
+	end
+	local lbl = Instance.new("TextLabel")
+	lbl.Name = "Label"
+	lbl.Text = text
+	lbl.Font = Theme.Font.PrimaryBold
+	lbl.BackgroundTransparency = 1
+	lbl.BorderSizePixel = 0
+	lbl.TextXAlignment = Enum.TextXAlignment.Center
+	lbl.TextYAlignment = Enum.TextYAlignment.Center
+	lbl.LayoutOrder = 2
+
+	if opts.autoWidth then
+		-- Width follows icon + text (wrapping chip rows); the 9-slice stretches with it.
+		btn.AutomaticSize = Enum.AutomaticSize.X
+		local minW = Instance.new("UISizeConstraint")
+		minW.MinSize = Vector2.new(touch, 0)
+		minW.Parent = btn
+		local pad = Instance.new("UIPadding")
+		pad.PaddingLeft = UDim.new(0, TAB_TEXT_PAD + 2)
+		pad.PaddingRight = UDim.new(0, TAB_TEXT_PAD + 2)
+		pad.Parent = btn
+		local layout = Instance.new("UIListLayout")
+		layout.FillDirection = Enum.FillDirection.Horizontal
+		layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		layout.VerticalAlignment = Enum.VerticalAlignment.Center
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+		layout.Padding = UDim.new(0, 4)
+		layout.Parent = btn
+		lbl.AutomaticSize = Enum.AutomaticSize.X
+		lbl.Size = UDim2.new(0, 0, 1, 0)
+		lbl.TextSize = maxText
+	else
+		-- Fixed or Scale width: the text shrinks to fit instead of running off the bar.
+		local iconW = if hasIcon then iconPx + 4 else 0
+		if icon then
+			icon.AnchorPoint = Vector2.new(0, 0.5)
+			icon.Position = UDim2.new(0, TAB_TEXT_PAD, 0.5, 0)
+		end
+		lbl.Size = UDim2.new(1, -(TAB_TEXT_PAD * 2 + iconW), 1, -8)
+		lbl.Position = UDim2.new(0, TAB_TEXT_PAD + iconW, 0, 4)
+		lbl.TextScaled = true
+		local fit = Instance.new("UITextSizeConstraint")
+		fit.MaxTextSize = maxText
+		fit.MinTextSize = 8
+		fit.Parent = lbl
+	end
+	if icon then icon.Parent = btn end
+	lbl.Parent = btn
+
+	Theme.SetTabState(btn, state)
+	if onActivated then
+		-- Dies with the button (PRF-004). Disabled tabs never fire.
+		btn.Activated:Connect(function()
+			if btn:GetAttribute("TabState") ~= "Disabled" then onActivated() end
+		end)
+	end
+	btn.Parent = parent -- properties and children set before Parent (NET-004)
+	return btn
+end
+
 
 -- ============ FOOTER BUTTON BAR CONFIG ============
 -- All screens must use these values for bottom-right button bars.
@@ -636,9 +783,81 @@ Theme.FooterBar = {
 	PAD     = 8,     -- margin from screen edge
 }
 
+-- ============ ICON BUTTONS (square art, El_Pi0818 uploads 2026-10-07) ============
+-- Back / Confirm / Options buttons use square icon art instead of a text bar.
+-- Height stays whatever the caller asked for; width is forced equal to height by
+-- a UIAspectRatioConstraint, so the button shrinks horizontally only.
+Theme.IconButtonAssets = {
+	Back    = "rbxassetid://121150899495320",
+	Confirm = "rbxassetid://106679295261353",
+	Options = "rbxassetid://83722919579541",
+}
+
+-- Button labels that are drawn as icons instead of text (matched case-insensitively).
+local ICON_FOR_TEXT = {
+	BACK = "Back", CANCEL = "Back",
+	CONFIRM = "Confirm", EXECUTE = "Confirm", CONTINUE = "Confirm",
+	EQUIP = "Confirm", ["START BATTLE"] = "Confirm",
+	OPTIONS = "Options",
+}
+
+function Theme.IconKindForText(text: string?): string?
+	if not text then return nil end
+	return ICON_FOR_TEXT[string.upper(text)]
+end
+
+-- Square icon ImageButton. kind = "Back" | "Confirm" | "Options".
+-- opts: size (UDim2; height is kept, width follows height), position, anchor, name, disabled.
+function Theme.MakeIconButton(parent: Instance?, kind: string, onClick: (() -> ())?, opts: any?): ImageButton
+	opts = opts or {}
+	local btn = Instance.new("ImageButton")
+	btn.Name = opts.name or ("Btn_" .. kind)
+	btn.Size = opts.size or UDim2.new(0, 44, 0, 44)
+	btn.Position = opts.position or UDim2.new(0, 0, 0, 0)
+	btn.AnchorPoint = opts.anchor or Vector2.new(0, 0)
+	btn.Image = Theme.IconButtonAssets[kind] or Theme.IconButtonAssets.Confirm
+	btn.ScaleType = Enum.ScaleType.Fit
+	btn.BackgroundTransparency = 1
+	btn.BorderSizePixel = 0
+	btn.AutoButtonColor = false
+	btn.ImageColor3 = Color3.new(1, 1, 1)
+	local aspect = Instance.new("UIAspectRatioConstraint")
+	aspect.AspectRatio = 1
+	aspect.AspectType = Enum.AspectType.FitWithinMaxSize
+	aspect.DominantAxis = Enum.DominantAxis.Height
+	aspect.Parent = btn
+	if opts.disabled then
+		btn.ImageTransparency = 0.5
+		btn.Active = false
+		btn.ImageColor3 = Color3.fromRGB(120, 120, 120)
+	else
+		btn.MouseEnter:Connect(function() btn.ImageColor3 = Color3.fromRGB(230, 230, 230) end)
+		btn.MouseLeave:Connect(function() btn.ImageColor3 = Color3.new(1, 1, 1) end)
+		btn.MouseButton1Down:Connect(function()
+			btn.ImageColor3 = Color3.fromRGB(180, 180, 180)
+			btn.Position = btn.Position + UDim2.new(0, 0, 0, 2)
+		end)
+		btn.MouseButton1Up:Connect(function()
+			btn.ImageColor3 = Color3.new(1, 1, 1)
+			btn.Position = btn.Position - UDim2.new(0, 0, 0, 2)
+		end)
+		if onClick then btn.MouseButton1Click:Connect(onClick) end
+	end
+	btn.Parent = parent
+	return btn
+end
+
 -- style: "Primary", "Secondary", or "Tertiary"
 function Theme.MakeButton(parent, text, style, onClick, opts)
 	opts = opts or {}
+	-- Every themed button is now square icon art. A known label (Back, Cancel,
+	-- Confirm, Execute, Continue, Equip, Start Battle, Options) picks its icon;
+	-- otherwise the style does: Primary -> Confirm, Secondary -> Back, Tertiary -> Options.
+	local iconKind = Theme.IconKindForText(text) or ICON_FOR_STYLE[style or ""] or "Back"
+	if iconKind then
+		opts.name = opts.name or ("Btn_" .. text)
+		return Theme.MakeIconButton(parent, iconKind, onClick, opts)
+	end
 	local asset = Theme.ButtonAssets[style] or Theme.ButtonAssets.Secondary
 
 	local btn = Instance.new("ImageButton")
@@ -773,6 +992,19 @@ Theme.Icons = {
 	Poison     = "rbxassetid://137992638646487",
 	Physical   = "rbxassetid://124197323548413",
 	Reset      = "rbxassetid://87409616114560",
+}
+
+-- Outfit tab Type filter icons (UGC filter types -> existing equipment icons).
+-- PLACEHOLDER: replace Hair, Pants and Back when the user uploads hair/pants/back icons.
+-- Status filters (Permanent / Rented / Out of use) stay text only.
+Theme.UGCFilterIcons = {
+	All   = Theme.Icons.Reset,
+	Hat   = Theme.Icons.Head,
+	Hair  = Theme.Icons.Head,      -- PLACEHOLDER: replace when user uploads hair icon
+	Body  = Theme.Icons.Torso,
+	Pants = Theme.Icons.Legs,      -- PLACEHOLDER: replace when user uploads pants icon
+	Shoes = Theme.Icons.Legs,
+	Back  = Theme.Icons.Accessory, -- PLACEHOLDER: replace when user uploads back icon
 }
 
 

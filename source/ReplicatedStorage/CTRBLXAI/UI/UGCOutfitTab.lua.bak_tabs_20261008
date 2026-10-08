@@ -1,0 +1,340 @@
+--!strict
+-- UGCOutfitTab.lua
+-- CTRBLXAI | Loadout screen — OUTFIT tab (loadout_ui_spec section 'Outfit Tab',
+-- ugc_rules 37). Its own module (loadout_ui_spec 62): LoadoutScreen only hosts
+-- the two panels and calls Render / Unmount. Presentation only (ARC-001): every
+-- action is a server request through UGCClient; the server re-checks everything.
+--
+--   Left (main) panel : sub-tabs 'My Items' and 'Cart' (63), Type + Status
+--                       filters on both (69/70), item cards, UGC Merchant
+--                       shortcut (72), Checkout all on the Cart sub-tab (45).
+--   Right (side) panel: below the persistent unit header (61) — what the
+--                       selected unit wears per slot, with Unequip, and the
+--                       slots its race cannot use (race slot blocks, 66).
+--
+-- My Items (64-66): owned, trial, rented and out-of-use items; rentals show
+-- battles left; out-of-use items are red and cannot be equipped; Buy for Roblox
+-- Avatar on every unowned item, trials included ('Off sale' marker instead).
+-- Cart (67/68): items the player added; start a free trial or buy; Remove.
+-- Rebuilds from a fresh GetView on every server change (UGCStateChanged,
+-- including battle end) and whenever the loadout screen refreshes.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local CTRBLXAI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10) :: Instance
+local UI = CTRBLXAI:WaitForChild("UI", 10) :: Instance
+local Content = ReplicatedStorage:WaitForChild("Content", 10) :: Instance
+local Theme = require(UI:WaitForChild("Theme", 10) :: ModuleScript) :: any
+local UGCClient = require(UI:WaitForChild("UGCClient", 10) :: ModuleScript) :: any
+local W = require(UI:WaitForChild("UGCItemWidgets", 10) :: ModuleScript) :: any
+local UGCMerchantScreen = require(UI:WaitForChild("UGCMerchantScreen", 10) :: ModuleScript) :: any
+local UGCCatalogData = require(Content:WaitForChild("UGCCatalogData", 10) :: ModuleScript) :: any
+
+local UGCOutfitTab = {}
+
+local SUB_MY_ITEMS, SUB_CART = "MyItems", "Cart"
+local RETRY_TOO_FAST = 0.35 -- the View remote is rate limited (SEC-001)
+local MY_ITEMS_STATUSES = { owned = true, trial = true, rent = true, expired = true }
+
+local _main: GuiObject? = nil
+local _side: GuiObject? = nil
+local _unit: any = nil -- { id, name, raceName } from the loadout's selected unit
+local _subTab = SUB_MY_ITEMS
+local _filter = W.NewFilterState()
+local _conn: RBXScriptConnection? = nil
+local _token = 0 -- drops stale responses when renders overlap
+local _pendingMessage: string? = nil
+local _pendingIsError = false
+
+--------------------------------------------------
+-- HELPERS
+--------------------------------------------------
+
+local function contentFrame(panel: GuiObject, name: string, vertical: boolean): Frame
+	local old = panel:FindFirstChild(name)
+	if old then old:Destroy() end -- MEM-002
+	local f = Instance.new("Frame")
+	f.Name = name
+	f.BackgroundTransparency = 1
+	f.Size = UDim2.fromScale(1, 1)
+	local pad = Instance.new("UIPadding")
+	for _, side in { "PaddingTop", "PaddingBottom", "PaddingLeft", "PaddingRight" } do
+		(pad :: any)[side] = UDim.new(0, Theme.Spacing.lg)
+	end
+	pad.Parent = f
+	if vertical then
+		local list = Instance.new("UIListLayout")
+		list.SortOrder = Enum.SortOrder.LayoutOrder
+		list.Padding = UDim.new(0, Theme.Spacing.sm)
+		list.Parent = f
+	end
+	return f
+end
+
+local function byName(a: any, b: any): boolean
+	return (a.name or "") < (b.name or "")
+end
+
+local refresh: () -> ()
+
+local function say(text: string, isError: boolean?)
+	_pendingMessage = text
+	_pendingIsError = isError == true
+end
+
+-- Runs a request, keeps its message for the next render, then reloads.
+local function act(fn: () -> any, okText: string)
+	task.spawn(function()
+		local res = fn()
+		if res and res.ok then say(okText) else say((res and res.error) or "Request failed", true) end
+		refresh()
+	end)
+end
+
+--------------------------------------------------
+-- CARDS
+--------------------------------------------------
+
+local function myItemsCard(grid: Instance, item: any, order: number, view: any)
+	local actions = {}
+	local note: string? = nil
+	local unitId = _unit and _unit.id
+	local hasUse = item.status == "owned" or item.status == "trial" or item.status == "rent"
+	local equips = view.equips or {}
+	local isWornHere = unitId ~= nil and equips[item.slot] == item.assetId
+	if item.status == "expired" then
+		note = "Out of use — rent again or buy to keep using it"
+		if item.isAvailable and not item.isOffSale then
+			table.insert(actions, { text = `Rent again ({W.FormatGold(item.rentPrice)} gold)`, color = Theme.Colors.Warning,
+				onPress = function()
+					act(function() return UGCClient.Rent(item.assetId) end, `Rented — {UGCCatalogData.RENT_BATTLES} battles`)
+				end })
+		end
+	elseif hasUse and not unitId then
+		note = "Select a unit to equip"
+	elseif hasUse and isWornHere then
+		table.insert(actions, { text = "Unequip", color = Theme.Colors.Surface, onPress = function()
+			act(function() return UGCClient.Unequip(unitId, item.slot) end, "Unequipped")
+		end })
+	elseif hasUse and item.isEligible == false then
+		note = `{_unit.raceName or "This unit"} cannot wear {item.slot} items` -- race slot block (66)
+	elseif hasUse then
+		table.insert(actions, { text = "Equip", color = Theme.Colors.Info, onPress = function()
+			act(function() return UGCClient.Equip(unitId, item.assetId) end, `Equipped on {_unit.name or "unit"}`)
+		end })
+	end
+	if item.status ~= "owned" and (item.refundOnBuy or 0) > 0 and not item.isOffSale then
+		local refundNote = `Buying refunds your last rent: {W.FormatGold(item.refundOnBuy)} gold`
+		note = if note then `{note}\n{refundNote}` else refundNote
+	end
+	W.MakeItemCard(grid, item, order, {
+		actions = actions, note = note, isBattleActive = view.isBattleActive, isHighlighted = isWornHere,
+		onBuyResult = W.OnBuyResult(say, refresh),
+	})
+end
+
+local function cartCard(grid: Instance, item: any, order: number, view: any)
+	local actions = {}
+	local isActive = item.status == "trial" or item.status == "rent"
+	if not item.isTrialUsed and not isActive and item.status ~= "owned" and item.isAvailable then
+		table.insert(actions, { text = `Free trial ({UGCCatalogData.TRIAL_BATTLES} battles)`, color = Theme.Colors.Info,
+			onPress = function()
+				act(function() return UGCClient.StartTrial(item.assetId) end, "Free trial started — equip it in My Items")
+			end })
+	end
+	table.insert(actions, { text = "Remove", color = Theme.Colors.Surface, onPress = function()
+		act(function() return UGCClient.SetInCart(item.assetId, false) end, "Removed from cart")
+	end })
+	local note = if item.isOffSale then "Off sale — stays in your cart but can't be bought" else nil
+	W.MakeItemCard(grid, item, order, {
+		actions = actions, note = note, isBattleActive = view.isBattleActive,
+		onBuyResult = W.OnBuyResult(say, refresh),
+	})
+end
+
+--------------------------------------------------
+-- PANELS
+--------------------------------------------------
+
+local function buildMain(view: any)
+	local main = _main
+	if not main or main.Parent == nil then return end
+	local root = contentFrame(main, "OutfitContent", true)
+
+	-- Header: sub-tabs (63) + merchant shortcut (72) + checkout (Cart only, 45)
+	local header = W.Row(root, 1)
+	local cartText = `Cart ({view.cartCount or 0}/{view.cartCap or UGCCatalogData.CART_CAP})`
+	for i, tab in { { SUB_MY_ITEMS, "My Items" }, { SUB_CART, cartText } } do
+		local isActive = _subTab == tab[1]
+		local btn = UGCClient.MakeTextButton(header, tab[2], if isActive then Theme.Colors.Player else Theme.Colors.Surface,
+			function()
+				if _subTab ~= tab[1] then
+					_subTab = tab[1]
+					refresh()
+				end
+			end)
+		btn.LayoutOrder = i
+	end
+	local merchant = UGCClient.MakeTextButton(header, "UGC Merchant", Theme.Colors.TextGold, function()
+		UGCMerchantScreen.Open({ onClose = function() refresh() end })
+	end)
+	merchant.TextColor3 = Theme.Colors.Background
+	merchant.LayoutOrder = 10
+	local msg = W.MakeMessage(root, 3)
+	if _subTab == SUB_CART then
+		-- Checkout ONLY outside battle (ugc_rules 45); the server also refuses it.
+		local checkout = UGCClient.MakeTextButton(header, "Checkout all", Theme.Colors.Success, function()
+			W.Checkout(say, refresh)
+		end, not view.isBattleActive and (view.cartCount or 0) > 0)
+		checkout.LayoutOrder = 11
+	end
+
+	W.MakeFilterBar(root, _filter, 2, refresh)
+	if _pendingMessage then
+		W.SetMessage(msg, _pendingMessage, _pendingIsError)
+		_pendingMessage = nil
+	end
+
+	local list = {}
+	for _, item in view.items or {} do
+		local isIn = if _subTab == SUB_CART then item.isInCart == true else MY_ITEMS_STATUSES[item.status] == true
+		if isIn and W.PassesFilter(item, _filter) then table.insert(list, item) end
+	end
+	table.sort(list, byName)
+
+	if #list == 0 then
+		local text = if _subTab == SUB_CART then "Your cart is empty. Add items from the UGC Merchant or from a unit's worn items in battle."
+			else "No UGC items yet. Open the UGC Merchant to start a free trial, rent or buy."
+		if (view.items and #view.items or 0) > 0 and (_filter.type ~= "All" or _filter.status ~= "All") then
+			text = "No items match these filters."
+		end
+		W.EmptyState(root, text).LayoutOrder = 4
+	else
+		local grid = W.MakeGrid(root, 4)
+		for i, item in list do
+			if _subTab == SUB_CART then cartCard(grid, item, i, view) else myItemsCard(grid, item, i, view) end
+		end
+	end
+	root.Parent = main -- NET-004: built off-tree, parented once
+end
+
+local function buildSide(view: any)
+	local side = _side
+	if not side or side.Parent == nil then return end
+	local root = contentFrame(side, "OutfitSide", true)
+	local unitName = _unit and _unit.name or "No unit selected"
+	W.Label(root, `OUTFIT — {unitName}`, { bold = true, color = Theme.Colors.TextGold, order = 1 })
+	local names: { [number]: string } = {}
+	for _, item in view.items or {} do names[item.assetId] = item.name end
+	local blocks = (_unit and _unit.raceName and UGCCatalogData.RACE_SLOT_BLOCKS[_unit.raceName]) or {}
+
+	local sf = Instance.new("ScrollingFrame")
+	sf.Name = "Slots"
+	sf.BackgroundTransparency = 1
+	sf.BorderSizePixel = 0
+	sf.Size = UDim2.fromScale(1, 0)
+	sf.CanvasSize = UDim2.new()
+	sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	sf.ScrollingDirection = Enum.ScrollingDirection.Y
+	sf.ScrollBarThickness = 6
+	sf.LayoutOrder = 2
+	local flex = Instance.new("UIFlexItem")
+	flex.FlexMode = Enum.UIFlexMode.Fill
+	flex.Parent = sf
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, Theme.Spacing.xs)
+	list.Parent = sf
+
+	local equips = view.equips or {}
+	for i, slot in UGCCatalogData.SLOTS do
+		local row = W.Row(sf, i)
+		W.Label(row, slot, { size = UDim2.new(0.3, 0, 0, Theme.MinSize.TouchTarget), autoSize = Enum.AutomaticSize.None,
+			bold = true, color = Theme.Colors.TextSecondary, order = 1 })
+		local id = equips[slot]
+		if blocks[slot] then
+			W.Label(row, `Not for {_unit.raceName}`, { size = UDim2.new(0.65, 0, 0, Theme.MinSize.TouchTarget),
+				autoSize = Enum.AutomaticSize.None, color = Theme.Colors.TextDisabled, order = 2 })
+		elseif id then
+			W.Label(row, names[id] or tostring(id), { size = UDim2.new(0.4, 0, 0, Theme.MinSize.TouchTarget),
+				autoSize = Enum.AutomaticSize.None, order = 2 })
+			local unitId = _unit and _unit.id
+			local btn = UGCClient.MakeTextButton(row, "Unequip", Theme.Colors.Surface, function()
+				act(function() return UGCClient.Unequip(unitId, slot) end, "Unequipped")
+			end, unitId ~= nil and not view.isBattleActive)
+			btn.LayoutOrder = 3
+		else
+			W.Label(row, "—", { size = UDim2.new(0.65, 0, 0, Theme.MinSize.TouchTarget), autoSize = Enum.AutomaticSize.None,
+				color = Theme.Colors.TextDisabled, order = 2 })
+		end
+	end
+	sf.Parent = root
+	root.Parent = side
+end
+
+--------------------------------------------------
+-- PUBLIC
+--------------------------------------------------
+
+refresh = function()
+	if not _main then return end -- not mounted (e.g. merchant closed during Unmount)
+	_token += 1
+	local token = _token
+	task.spawn(function()
+		local unitId = _unit and _unit.id
+		local res = UGCClient.GetView(unitId)
+		if token ~= _token then return end -- a newer render started
+		if not res.ok and res.error == "Too fast — try again" then
+			task.delay(RETRY_TOO_FAST, function()
+				if token == _token then refresh() end
+			end)
+			return
+		end
+		if not res.ok or type(res.data) ~= "table" then
+			warn(`[UGCOutfitTab] Could not load UGC view: {res.error}`)
+			if _main and _main.Parent then
+				local root = contentFrame(_main, "OutfitContent", true)
+				W.EmptyState(root, "UGC items are unavailable right now.")
+				root.Parent = _main
+			end
+			return
+		end
+		buildMain(res.data)
+		buildSide(res.data)
+	end)
+end
+
+-- Called by LoadoutScreen when the OUTFIT tab is shown or the screen refreshes
+-- (unit change included). unit = { id, name, raceName } (selected roster unit).
+function UGCOutfitTab.Render(mainPanel: GuiObject, sidePanel: GuiObject, unit: any)
+	_main, _side = mainPanel, sidePanel
+	_unit = if type(unit) == "table" then { id = unit.id, name = unit.name, raceName = unit.raceName } else nil
+	if not _conn then
+		-- Server facts: purchases, refunds, expiries, battle end (PRF-004: tracked).
+		_conn = UGCClient.OnStateChanged(function(change: any)
+			local text = W.DescribeChange(change)
+			if text then say(text) end
+			if UGCMerchantScreen.IsOpen() then UGCMerchantScreen.Refresh(text) end
+			if _main and _main.Parent then refresh() end
+		end)
+	end
+	refresh()
+end
+
+-- Called when the tab is hidden or the loadout screen closes.
+function UGCOutfitTab.Unmount()
+	if _conn then _conn:Disconnect(); _conn = nil end
+	_token += 1
+	for _, panel in { _main, _side } do
+		if panel then
+			for _, name in { "OutfitContent", "OutfitSide" } do
+				local f = panel:FindFirstChild(name)
+				if f then f:Destroy() end
+			end
+		end
+	end
+	_main, _side, _unit = nil, nil, nil
+	UGCMerchantScreen.Close() -- after unmounting, so its onClose refresh is a no-op
+end
+
+return UGCOutfitTab
