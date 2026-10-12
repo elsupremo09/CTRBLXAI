@@ -1325,6 +1325,12 @@ local WATER_TERRAINS = {
 local LAVA_TERRAINS = {
 	["Molten"] = true,
 }
+-- Terrains a required LAN marker must NOT be stranded on. NOTE (2026-10-11):
+-- Quicksand is now PASSABLE deadly terrain (not a wall), but it stays listed here
+-- on purpose — a spawn/objective marker sitting on a tile that sinks-and-KOs whoever
+-- stands there is a broken map, so this safety net still relocates it to safe ground.
+-- This is NOT a stale impassable assumption; it only ever touches accidental non-gap,
+-- non-bridge LAN tiles (deliberate gaps/spans are excluded by the isGap/isBridge guard).
 local IMPASSABLE_FIX = {
 	["Deep Water"] = true,
 	["Molten"]     = true,

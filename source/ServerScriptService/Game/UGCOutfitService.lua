@@ -37,6 +37,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
+local DataStoreService = game:GetService("DataStoreService")
 local Content = ReplicatedStorage:WaitForChild("Content")
 local UGCCatalogData = require(Content:WaitForChild("UGCCatalogData"))
 local RaceData = require(Content:WaitForChild("RaceData")) :: any
@@ -50,6 +51,16 @@ local UGCOutfitService = {}
 local AVAILABLE_TTL = UGCCatalogData.AVAILABILITY_REFRESH_SECONDS -- re-verify every entry (ugc_rules 49)
 local FAILED_RETRY_TTL = 60   -- seconds before re-checking after an API error; also the loop beat
 local CHECK_SPACING = 0.1     -- seconds between GetProductInfo calls (throttle-friendly)
+-- Body-color provider (injected by Main.server): given (playerId, unitId) returns
+-- the unit's chosen body tint as a Color3, or nil if none. Kept as an injected
+-- callback (like SetStateProvider) so UGCOutfitService needs no handle on the live
+-- units table — avoids a require cycle. nil-safe at every use.
+local _bodyColorGetter: any = nil
+function UGCOutfitService.SetBodyColorProvider(fn: any)
+	_bodyColorGetter = fn
+end
+local AVAIL_SAVE_SECONDS = 120 -- periodic persist of the availability cache (test-mode: own DataStore)
+local AVAIL_STORE_KEY = "catalog_v1" -- single key holds the whole availability map (public catalog data)
 local LOOK_LOOKUP_ATTEMPTS = 3 -- on-the-spot lookups for a PLAYER unit's look (BUG-022)
 local LOOK_RETRY_BACKOFF = 1.0 -- seconds; waits 1 s then 2 s between those attempts
 local MODELS_FOLDER_NAME = "UnitModels"
@@ -107,12 +118,17 @@ type Availability = {
 	typeName2: string?, -- part 2 asset type (paired entries)
 	checkedAt: number,
 	reason: string?,
+	isFree: boolean?,      -- live price is 0 (ugc_rules 57); only meaningful when isAvailable
+	creatorName: string?, -- part 1 creator, for the inspector worn-item popup
+	priceRobux: number?,   -- live Robux price kept for the details panel + price filter/sort (nil = unknown)
+	description: string?,  -- marketplace description kept for the details panel (nil = unknown)
 }
 
 local _availability: { [number]: Availability } = {}
 local _templates: { [number]: Instance } = {}
 local _loadingWaiters: { [number]: { thread } } = {}
 local _enemyLooks: { [string]: { number } } = {}
+local _enemyRaces: { [string]: string } = {} -- enemy unitId -> race name this battle (inspector preview)
 -- BUG-022 (ugc_rules 50): per-battle record of player items that were / were not
 -- put on a unit. Read and cleared by UGCService at battle end.
 local _lookWorn: { [string]: { [number]: boolean } } = {}
@@ -123,12 +139,22 @@ local _watchPlayerId: string? = nil
 local _isRefreshing = false
 local _isPoolReady = false   -- first full availability pass finished
 local _isLoopStarted = false
+local _saveMode: (() -> string)? = nil -- forwarded by Main (SaveService.GetMode), like UGCRatingService
+local _availStore: DataStore? = nil
+local _availDirty = false -- a query changed the cache since the last successful save
+local _availSaveStarted = false
 
 local _state: any = nil
 function UGCOutfitService.SetStateProvider(svc: any)
 	_state = svc
 	-- Hands UGCService the look-failure query (ARC-006: no require cycle, no extra Main wiring).
 	if svc and svc.SetLookFailureProvider then svc.SetLookFailureProvider(UGCOutfitService) end
+	-- Free items (ugc_rules 57): same self-wiring, so Main needs no new line.
+	if svc and svc.SetFreeProvider then svc.SetFreeProvider(UGCOutfitService.IsFree) end
+	-- Details panel data (creator / Robux price / description): same self-wiring.
+	if svc and svc.SetCreatorProvider then svc.SetCreatorProvider(UGCOutfitService.GetCreatorName) end
+	if svc and svc.SetPriceProvider then svc.SetPriceProvider(UGCOutfitService.GetPriceRobux) end
+	if svc and svc.SetDescriptionProvider then svc.SetDescriptionProvider(UGCOutfitService.GetDescription) end
 end
 
 --------------------------------------------------
@@ -149,17 +175,90 @@ local function partType(item: UGCCatalogData.UGCItem, info: any): string?
 	return nil
 end
 
--- Why a product can't be bought right now (nil = buyable). Same checks for an
--- asset or a bundle: for sale, not limited / resale-only, not sold out.
+-- Why an ASSET can't be bought right now (nil = buyable): for sale, not
+-- limited / resale-only, not sold out. Bundles use bundleSaleProblem below.
 local function saleProblem(info: any): string?
 	if type(info) ~= "table" then return "No product info" end
-	if info.IsForSale ~= true then return "Off sale" end
+	if info.IsForSale ~= true then
+		return "Off sale"
+	end
 	local collectible = info.CollectiblesItemDetails
 	local isLimited = info.IsLimited == true or info.IsLimitedUnique == true
 		or (type(collectible) == "table" and collectible.IsLimited == true)
-	if isLimited then return "Limited / resale only" end
-	if type(info.Remaining) == "number" and info.Remaining <= 0 then return "Sold out" end
+	if isLimited then
+		return "Limited / resale only"
+	end
+	-- Remaining is only a real stock count for capped items. Unlimited
+	-- "Collectible Item" UGC reports Remaining=0 and TotalQuantity=0 while on sale.
+	local hasStockCap = type(collectible) == "table" and type(collectible.TotalQuantity) == "number"
+		and collectible.TotalQuantity > 0
+	if hasStockCap and type(info.Remaining) == "number" and info.Remaining <= 0 then
+		return "Sold out"
+	end
 	return nil
+end
+
+local function positivePrice(v: any): boolean
+	return type(v) == "number" and v > 0
+end
+
+-- Why a BUNDLE can't be bought right now (nil = buyable). BUG-028 (2026-10-09):
+-- GetProductInfo(id, Enum.InfoType.Bundle) returns only BundleType, Description,
+-- Id, Items, Name, PriceDiscountDetails and UserBasePriceInRobux -- there is NO
+-- IsForSale / IsLimited / Remaining field (confirmed from a Studio log), so the
+-- asset check above always said "Off sale". A bundle is treated as buyable when
+-- Roblox reports a positive Robux price; anything else fails closed.
+-- KNOWN LIMITATION: in-game bundle info has no sale-status field, so a bundle
+-- taken off sale but still priced may show as available. Its purchase window
+-- then simply fails and nothing is granted, because ownership is always
+-- verified server-side before any access or refund (SEC-002).
+-- FREE BUNDLES (ugc_rules 57, 2026-10-09): a free bundle reports price 0, which the
+-- positive-price rule above would call "Off sale". It counts as buyable ONLY when the
+-- catalog entry carries the DB-verified isFreeBundle hint AND Roblox reports a price of
+-- exactly 0 now. A priced bundle never takes this path, and a missing price still fails
+-- closed. Same limitation as priced bundles: a free bundle taken off sale but still
+-- reported at 0 may show as available; its purchase window fails and nothing is granted.
+local function bundleSaleProblem(info: any, isFreeHint: boolean?): string?
+	if type(info) ~= "table" then return "No product info" end
+	if positivePrice(info.UserBasePriceInRobux) then return nil end
+	if isFreeHint == true and info.UserBasePriceInRobux == 0 then return nil end
+	local discount = info.PriceDiscountDetails
+	if type(discount) == "table" then
+		if positivePrice(discount.PriceInRobux) or positivePrice(discount.DiscountedPrice)
+			or positivePrice(discount.DiscountedPriceInRobux) or positivePrice(discount.OriginalPrice)
+		then
+			return nil
+		end
+	end
+	return "Off sale"
+end
+
+-- An asset is free when it is on sale at 0 Robux (some free items report no price but
+-- IsPublicDomain). Unknown price = not free: the item just keeps the paid flow.
+local function isFreeAsset(info: any): boolean
+	if type(info) ~= "table" or info.IsForSale ~= true then return false end
+	return info.PriceInRobux == 0 or (info.PriceInRobux == nil and info.IsPublicDomain == true)
+end
+
+local function creatorOf(info: any): string?
+	local c = type(info) == "table" and info.Creator or nil
+	return if type(c) == "table" and type(c.Name) == "string" then c.Name else nil
+end
+
+-- Live Robux price from the same GetProductInfo reply (nil = unknown). Kept for the
+-- details panel and the price filter/sort — no extra API call.
+local function priceOf(info: any): number?
+	if type(info) ~= "table" then return nil end
+	local p = info.PriceInRobux
+	return if type(p) == "number" then p else nil
+end
+
+-- Marketplace description from the same reply (nil/empty = none). Trimmed for display.
+local function descriptionOf(info: any): string?
+	if type(info) ~= "table" then return nil end
+	local d = info.Description
+	if type(d) ~= "string" or d == "" then return nil end
+	return d
 end
 
 local function fetchInfo(id: number, infoType: Enum.InfoType): (boolean, any)
@@ -183,6 +282,10 @@ local function queryEntry(entryId: number, previous: Availability?): Availabilit
 	if not ok then return apiError(entryId, info) end
 	local typeName = partType(item, info)
 	local problem = saleProblem(info)
+	local isFree = isFreeAsset(info)
+	local creatorName = creatorOf(info)
+	local priceRobux = priceOf(info)
+	local description = descriptionOf(info)
 
 	local typeName2: string? = nil
 	local assetId2 = item.assetId2
@@ -192,6 +295,7 @@ local function queryEntry(entryId: number, previous: Availability?): Availabilit
 		if not ok2 then return apiError(assetId2, info2) end
 		typeName2 = partType(item, info2)
 		problem = problem or saleProblem(info2)
+		isFree = isFree and isFreeAsset(info2) -- a pair is free only if both parts are
 	end
 	if not typeName or (assetId2 ~= nil and not typeName2) then
 		return { isAvailable = false, isOffSale = false, typeName = typeName, typeName2 = typeName2,
@@ -204,13 +308,21 @@ local function queryEntry(entryId: number, previous: Availability?): Availabilit
 		task.wait(CHECK_SPACING)
 		local okB, infoB = fetchInfo(bundleId, Enum.InfoType.Bundle)
 		if not okB then return apiError(bundleId, infoB) end
-		problem = saleProblem(infoB)
+		problem = bundleSaleProblem(infoB, item.isFreeBundle)
+		isFree = item.isFreeBundle == true and type(infoB) == "table" and infoB.UserBasePriceInRobux == 0
+		-- Bundle price lives in UserBasePriceInRobux; its description replaces the part's.
+		if type(infoB) == "table" then
+			local bp = infoB.UserBasePriceInRobux
+			priceRobux = if type(bp) == "number" then bp else priceRobux
+			description = descriptionOf(infoB) or description
+		end
 	end
 	if problem then
 		return { isAvailable = false, isOffSale = true, typeName = typeName, typeName2 = typeName2,
 			checkedAt = now, reason = problem }
 	end
-	return { isAvailable = true, isOffSale = false, typeName = typeName, typeName2 = typeName2, checkedAt = now }
+	return { isAvailable = true, isOffSale = false, typeName = typeName, typeName2 = typeName2, checkedAt = now,
+		isFree = isFree, creatorName = creatorName, priceRobux = priceRobux, description = description }
 end
 
 -- Yields. Re-checks one entry only if its cache entry is stale.
@@ -219,6 +331,12 @@ local function checkEntry(entryId: number): (boolean, boolean)
 	if not UGCCatalogData.Items[entryId] then return false, false end
 	local cached = _availability[entryId]
 	if cached then
+		-- skipRecheck (known free, never goes off sale): once we have a good result,
+		-- reuse it forever — the first check still runs to learn the item's part type.
+		local item = UGCCatalogData.Items[entryId]
+		if item and item.skipRecheck and cached.isAvailable and cached.reason ~= "API error" then
+			return cached.isAvailable, false
+		end
 		local ttl = if cached.reason == "API error" then FAILED_RETRY_TTL else AVAILABLE_TTL
 		if os.clock() - cached.checkedAt < ttl then
 			return cached.isAvailable, false
@@ -226,6 +344,7 @@ local function checkEntry(entryId: number): (boolean, boolean)
 	end
 	local result = queryEntry(entryId, cached)
 	_availability[entryId] = result
+	_availDirty = true -- cache changed; persist on next save beat
 	if not result.isAvailable and result.reason ~= "API error" then
 		print(`[UGCOutfitService] {entryId} excluded: {result.reason}`)
 	end
@@ -249,8 +368,132 @@ function UGCOutfitService.IsOffSale(assetId: number): boolean
 	return cached ~= nil and cached.isOffSale
 end
 
+-- Non-yielding: true only when the last check found the item on sale at 0 Robux
+-- (ugc_rules 57). Unknown / unavailable = not free (it keeps the paid flow).
+function UGCOutfitService.IsFree(assetId: number): boolean
+	local cached = _availability[assetId]
+	return cached ~= nil and cached.isAvailable and cached.isFree == true
+end
+
+-- Non-yielding: creator name from the last check, if Roblox reported one.
+function UGCOutfitService.GetCreatorName(assetId: number): string?
+	local cached = _availability[assetId]
+	return cached and cached.creatorName
+end
+
+-- Non-yielding: live Robux price from the last check (nil = unknown / not yet checked).
+function UGCOutfitService.GetPriceRobux(assetId: number): number?
+	local cached = _availability[assetId]
+	return cached and cached.priceRobux
+end
+
+-- Non-yielding: marketplace description from the last check (nil = none / unknown).
+function UGCOutfitService.GetDescription(assetId: number): string?
+	local cached = _availability[assetId]
+	return cached and cached.description
+end
+
 function UGCOutfitService.IsPoolReady(): boolean
 	return _isPoolReady
+end
+
+--------------------------------------------------
+-- AVAILABILITY PERSISTENCE (test-mode option 2+3)
+-- Public catalog sale-status, NOT per-player ownership, so it lives in its own
+-- game DataStore (mirrors UGCRatingService), never the player save. Timestamps are
+-- stored as os.time() (wall clock) and converted back to this server's os.clock()
+-- on load, so staleness (os.clock() - checkedAt vs TTL) still works after a restart.
+-- Fails safe: any DataStore problem leaves the in-memory cache as-is (empty -> rebuild).
+--------------------------------------------------
+
+function UGCOutfitService.SetSaveModeProvider(fn: () -> string) _saveMode = fn end
+
+local function availStore(): DataStore?
+	local mode = _saveMode and _saveMode() or "memory"
+	if mode == "memory" then return nil end
+	if _availStore then return _availStore end
+	local namespace = if mode == "studio" then "CTRBLXAI_Dev" else "CTRBLXAI_Live" -- SaveService naming
+	local ok, store = pcall(DataStoreService.GetDataStore, DataStoreService, namespace .. "_UGCAvailability")
+	if not ok then
+		warn(`[UGCOutfitService] Availability DataStore unavailable: {store}`)
+		return nil
+	end
+	_availStore = store
+	return store
+end
+
+-- Load the saved catalog availability into memory (yields). Converts saved
+-- wall-clock timestamps to this server's clock. Returns the number of entries loaded.
+function UGCOutfitService.LoadPersistedAvailability(): number
+	local store = availStore()
+	if not store then return 0 end
+	local ok, raw = pcall(store.GetAsync, store, AVAIL_STORE_KEY)
+	if not ok then
+		warn(`[UGCOutfitService] Availability load failed: {raw}`)
+		return 0
+	end
+	if type(raw) ~= "table" then return 0 end
+	local savedNow = tonumber(raw.savedAt)
+	local entries = raw.entries
+	if type(entries) ~= "table" or not savedNow then return 0 end
+	local nowClock = os.clock()
+	local loaded = 0
+	for key, e in entries do
+		local id = tonumber(key)
+		if id and type(e) == "table" and _availability[id] == nil then
+			-- age of the saved entry in seconds = (save time - its check time); keep it
+			-- the same age on this server's clock so TTL comparisons still hold.
+			local savedCheckedAt = tonumber(e.checkedAt) or savedNow
+			local ageSeconds = math.max(0, savedNow - savedCheckedAt)
+			_availability[id] = {
+				isAvailable = e.isAvailable == true,
+				isOffSale = e.isOffSale == true,
+				typeName = e.typeName, typeName2 = e.typeName2,
+				checkedAt = nowClock - ageSeconds,
+				reason = e.reason,
+				isFree = e.isFree, creatorName = e.creatorName,
+				priceRobux = e.priceRobux, description = e.description,
+			}
+			loaded += 1
+		end
+	end
+	if loaded > 0 then
+		_isPoolReady = true -- first battle can use last-known-good data immediately
+		print(`[UGCOutfitService] Loaded {loaded} persisted availability entr(y/ies); pool ready from save`)
+	end
+	return loaded
+end
+
+-- Persist the current availability cache under one key (yields). UpdateAsync so a
+-- future multi-server setup can't clobber the record; writes wall-clock timestamps.
+function UGCOutfitService.SavePersistedAvailability()
+	if not _availDirty then return end
+	local store = availStore()
+	if not store then return end
+	local nowClock, nowWall = os.clock(), os.time()
+	local entries: { [string]: any } = {}
+	for id, a in _availability do
+		if a.reason ~= "API error" then -- don't persist transient API failures
+			local ageSeconds = math.max(0, nowClock - a.checkedAt)
+			entries[tostring(id)] = {
+				isAvailable = a.isAvailable, isOffSale = a.isOffSale,
+				typeName = a.typeName, typeName2 = a.typeName2,
+				checkedAt = nowWall - ageSeconds, -- wall clock
+				reason = a.reason, isFree = a.isFree, creatorName = a.creatorName,
+				priceRobux = a.priceRobux, description = a.description,
+			}
+		end
+	end
+	local ok, err = pcall(function()
+		store:UpdateAsync(AVAIL_STORE_KEY, function()
+			return { savedAt = nowWall, entries = entries }
+		end)
+	end)
+	if ok then
+		_availDirty = false
+	else
+		warn(`[UGCOutfitService] Availability save failed: {err}`)
+	end
 end
 
 -- Yields. One pass over every curated entry; only stale entries are queried.
@@ -284,7 +527,20 @@ end
 function UGCOutfitService.StartAvailabilityLoop()
 	if _isLoopStarted then return end
 	_isLoopStarted = true
+	-- option 2: seed from the saved catalog so the first battle has data without waiting.
+	pcall(UGCOutfitService.LoadPersistedAvailability)
+	-- option 3: the first live pass still runs now to refresh/extend what was loaded.
 	UGCOutfitService.RefreshAvailability()
+	if not _availSaveStarted then
+		_availSaveStarted = true
+		task.spawn(function()
+			while true do
+				task.wait(AVAIL_SAVE_SECONDS)
+				UGCOutfitService.SavePersistedAvailability()
+			end
+		end)
+		game:BindToClose(function() UGCOutfitService.SavePersistedAvailability() end)
+	end
 	task.spawn(function()
 		while true do
 			task.wait(FAILED_RETRY_TTL)
@@ -425,6 +681,27 @@ end
 -- set on each clone before it is parented (NET-004). ownerPlayerId is passed
 -- for PLAYER units only: their items are recorded as worn / not worn so a
 -- battle is never charged for an item no unit visibly wore (BUG-022).
+-- Apply a player-chosen body/skin tint to an R15 model. Sets all six BodyColors
+-- regions to one Color3 (creating the BodyColors instance if the race template
+-- lacks one). Clothing/accessories are NOT affected (their textures cover the
+-- body) — only visible skin takes the tint, which is expected for R15. nil color
+-- is a no-op (model keeps its template colors). Reused by battle dressing
+-- (onModelAdded) and the loadout Preview so the tint shows in both.
+function UGCOutfitService.ApplyBodyColor(model: Model, color: Color3?)
+	if not model or typeof(color) ~= "Color3" then return end
+	local bc = model:FindFirstChildOfClass("BodyColors")
+	if not bc then
+		bc = Instance.new("BodyColors")
+		bc.Parent = model
+	end
+	bc.HeadColor3 = color
+	bc.TorsoColor3 = color
+	bc.LeftArmColor3 = color
+	bc.RightArmColor3 = color
+	bc.LeftLegColor3 = color
+	bc.RightLegColor3 = color
+end
+
 function UGCOutfitService.ApplyLook(model: Model, assetIds: { number }, ownerPlayerId: string?)
 	local humanoid = model:FindFirstChildOfClass("Humanoid")
 	if not humanoid then return end
@@ -435,6 +712,8 @@ function UGCOutfitService.ApplyLook(model: Model, assetIds: { number }, ownerPla
 	for _, entryId in assetIds do
 		local item = UGCCatalogData.Items[entryId]
 		if not item then continue end
+		-- FIT_BLOCKLIST: skip items known to attach/scale badly on the caged body.
+		if UGCCatalogData.FIT_BLOCKLIST[entryId] then continue end
 		local av: Availability? = _availability[entryId]
 		-- availability_cold_start (ugc_rules 50): only ENEMY outfits wait for the
 		-- pool. Player units always wear what they own / trial / rent, so if the
@@ -506,9 +785,47 @@ local function takeRandom(list: { number }, rng: Random): number?
 	return table.remove(list, i)
 end
 
+-- Free items (the skipRecheck set) are a FAILSAFE: they should appear on enemies
+-- much less often than paid items, but still occasionally, and still fill in when
+-- paid items run short. FREE_PICK_WEIGHT is each free item's draw weight vs a paid
+-- item's weight of 1 — lower = rarer. Weighted draw without replacement: paid items
+-- are strongly favoured, but an all-free remaining pool still returns a free item
+-- (so enemies are never left undressed).
+local FREE_PICK_WEIGHT = 0.15
+
+local function isFreeItem(id: number): boolean
+	local item = UGCCatalogData.Items[id]
+	return item ~= nil and item.skipRecheck == true
+end
+
+-- Weighted pick without replacement: paid weight 1, free weight FREE_PICK_WEIGHT.
+local function takeWeighted(list: { number }, rng: Random): number?
+	if #list == 0 then return nil end
+	local total = 0
+	for _, id in list do
+		total += if isFreeItem(id) then FREE_PICK_WEIGHT else 1
+	end
+	local roll = rng:NextNumber() * total
+	local acc = 0
+	for idx, id in list do
+		acc += if isFreeItem(id) then FREE_PICK_WEIGHT else 1
+		if roll <= acc then
+			return table.remove(list, idx)
+		end
+	end
+	return table.remove(list) -- float guard: fall back to the last item
+end
+
 -- enemyUnits: array (deterministic order). rng: seeded Random owned by caller.
 function UGCOutfitService.PlanEnemyOutfits(playerId: string, enemyUnits: { any }, rng: Random)
 	table.clear(_enemyLooks)
+	table.clear(_enemyRaces)
+	-- Inspector preview of enemy looks (loadout_ui_spec 96): remember every enemy's race,
+	-- recorded before any early return so undressed enemies still preview.
+	for _, unit in enemyUnits do
+		local rn = if type(unit.id) == "string" and not unit.isSummon then raceNameOf(unit) else nil
+		if rn then _enemyRaces[unit.id] = rn end
+	end
 	if not _state then
 		warn("[UGCOutfitService] State provider not wired — no enemy outfits")
 		return
@@ -520,7 +837,8 @@ function UGCOutfitService.PlanEnemyOutfits(playerId: string, enemyUnits: { any }
 	end
 	local pool = {}
 	for id in UGCCatalogData.Items do
-		if UGCOutfitService.IsAvailable(id) then table.insert(pool, id) end
+		-- FIT_BLOCKLIST: never put a known-misfit item on an enemy.
+		if UGCOutfitService.IsAvailable(id) and not UGCCatalogData.FIT_BLOCKLIST[id] then table.insert(pool, id) end
 	end
 	table.sort(pool)
 	if #pool == 0 then
@@ -552,7 +870,8 @@ function UGCOutfitService.PlanEnemyOutfits(playerId: string, enemyUnits: { any }
 		if not chosenSet[id] then table.insert(randomPool, id) end
 	end
 	while #chosen < distinct do
-		local id = takeRandom(randomPool, rng)
+		-- Weighted: paid items strongly preferred, free items (failsafe) rare.
+		local id = takeWeighted(randomPool, rng)
 		if not id then break end
 		table.insert(chosen, id)
 		chosenSet[id] = true
@@ -586,6 +905,11 @@ end
 -- MODEL WATCHER + INSPECTOR READ
 --------------------------------------------------
 
+-- Race of an enemy unit in the current battle (nil = not an enemy of this battle).
+function UGCOutfitService.GetEnemyRace(unitId: string): string?
+	return _enemyRaces[unitId]
+end
+
 function UGCOutfitService.GetWornIds(playerId: string, unitId: string): { number }
 	local enemyLook = _enemyLooks[unitId]
 	if enemyLook then return table.clone(enemyLook) end
@@ -613,6 +937,12 @@ local function onModelAdded(child: Instance)
 	if not child:IsA("Model") or not _watchPlayerId then return end
 	local unitId = string.match(child.Name, "^Unit_(.+)$")
 	if not unitId then return end
+	-- Body/skin tint (player choice). Enemy units never have one → nil → no-op.
+	-- Applied immediately (independent of UGC dressing); cheap and does not yield.
+	if _bodyColorGetter and not _enemyLooks[unitId] then
+		local ok, color = pcall(_bodyColorGetter, _watchPlayerId, unitId)
+		if ok and color then UGCOutfitService.ApplyBodyColor(child, color) end
+	end
 	local ids = UGCOutfitService.GetWornIds(_watchPlayerId, unitId)
 	if #ids == 0 then return end
 	-- Enemy looks are not the player's items: only player units record wear (BUG-022).
@@ -648,7 +978,7 @@ local PREVIEW_MODEL_NAME = "PreviewModel"
 -- Builds a display copy of the unit's race model wearing assetIds and parents it
 -- under the player's PlayerGui (replicates only to that player). Yields while
 -- accessories load. Returns (ok, error?). Nothing here is ever saved or charged.
-function UGCOutfitService.BuildPreview(player: Player, raceName: string?, assetIds: { number }): (boolean, string?)
+function UGCOutfitService.BuildPreview(player: Player, raceName: string?, assetIds: { number }, unitId: string?, playerId: string?): (boolean, string?)
 	local raceModels = ServerStorage:FindFirstChild("RaceModels")
 	local template = raceName and raceModels and raceModels:FindFirstChild(raceName)
 	if not template or not template:IsA("Model") then
@@ -688,6 +1018,14 @@ function UGCOutfitService.BuildPreview(player: Player, raceName: string?, assetI
 		warn(`[UGCOutfitService] Preview dressing failed: {err}`)
 		holder:Destroy() -- MEM-002: model goes with it
 		return false, "Could not build the preview"
+	end
+	-- Body/skin tint on the preview so the loadout picker shows the chosen color
+	-- live. Needs the SAME playerId key the getter stores under (not player.UserId;
+	-- the project keys units under a fixed id like "player_1"). nil unitId/playerId
+	-- (enemy inspector preview) or no chosen color → no-op.
+	if unitId and playerId and _bodyColorGetter then
+		local okC, color = pcall(_bodyColorGetter, playerId, unitId)
+		if okC and color then UGCOutfitService.ApplyBodyColor(model, color) end
 	end
 	for _, old in folder:GetChildren() do old:Destroy() end -- MEM-002
 	model.Parent = folder

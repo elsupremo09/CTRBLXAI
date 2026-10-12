@@ -6,7 +6,8 @@
 --   * Free try-on: 5 battles, once per item, ever. Any number of items at once.
 --     A trial is NOT a rental (does not raise the price).
 --   * Gold rental: 30 battles. Price = base x 2^(previous paid rentals of that
---     item, per player). Never resets, no cap. Renting while active adds 30.
+--     item, per player). Never resets, no cap. Rent only when NO trial/rental
+--     is running and the item's free trial was used (2026-10-09): no top-up.
 --   * Usage: -1 per battle (at battle END only) per item worn by ANY deployed
 --     player unit, however many units wore it.
 --   * Expiry: unequips from every unit, item shown "expired" (red) until it is
@@ -45,11 +46,15 @@
 --                                       reasons: purchased | refunded {gold} | expired | battleEnded
 --   SetLookFailureProvider(svc)      -- UGCOutfitService (self-wired): WasLookNotWorn / ClearLookRecords
 --   SetRatingService(svc)            -- UGCRatingService: RecordVote / Flush / StartFlushLoop
+--   SetFreeProvider(fn)              -- (assetId) -> boolean: live price 0 (UGCOutfitService, self-wired)
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local UGCCatalogData = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("UGCCatalogData"))
+-- Save payload encode/decode, split out 2026-10-09 (ARC-005). Required directly, not
+-- injected: save/load must never depend on wiring order (an unwired codec would wipe saves).
+local UGCSaveCodec = require((script.Parent :: Instance):WaitForChild("UGCSaveCodec") :: ModuleScript) :: any
 
 local UGCService = {}
 
@@ -57,7 +62,7 @@ local UGCService = {}
 -- CONSTANTS
 --------------------------------------------------
 
-local SAVE_VERSION = 3 -- v3 (2026-10-08): + 'lp' last paid rent price (refund, id 53). v2: cart 'k' replaced wishlist 'w'
+-- Save payload version (SAVE_VERSION = 3) lives in UGCSaveCodec (split 2026-10-09).
 
 -- Average battle gold (rental price input). Battle gold GRANTS are not
 -- implemented in code yet (RewardService only holds multipliers), so the price
@@ -123,6 +128,10 @@ local _states: { [string]: PlayerState } = {}
 local _currency: any = nil
 local _isAvailable: ((number) -> boolean)? = nil
 local _isOffSale: ((number) -> boolean)? = nil
+local _isFree: ((number) -> boolean)? = nil -- ugc_rules 57
+local _creatorOf: ((number) -> string?)? = nil   -- details panel
+local _priceOf: ((number) -> number?)? = nil     -- details panel + price filter/sort
+local _descriptionOf: ((number) -> string?)? = nil -- details panel
 local _unitRace: ((string, string) -> (boolean, string?))? = nil
 local _playerLevel: ((string) -> number)? = nil
 local _saveMode: (() -> string)? = nil
@@ -133,6 +142,10 @@ local _ratings: any = nil -- UGCRatingService (private vote aggregate)
 function UGCService.SetCurrencyService(svc: any) _currency = svc end
 function UGCService.SetAvailabilityProvider(fn: (number) -> boolean) _isAvailable = fn end
 function UGCService.SetOffSaleProvider(fn: (number) -> boolean) _isOffSale = fn end
+function UGCService.SetFreeProvider(fn: (number) -> boolean) _isFree = fn end
+function UGCService.SetCreatorProvider(fn: (number) -> string?) _creatorOf = fn end
+function UGCService.SetPriceProvider(fn: (number) -> number?) _priceOf = fn end
+function UGCService.SetDescriptionProvider(fn: (number) -> string?) _descriptionOf = fn end
 function UGCService.SetUnitRaceProvider(fn: (string, string) -> (boolean, string?)) _unitRace = fn end
 function UGCService.SetPlayerLevelProvider(fn: (string) -> number) _playerLevel = fn end
 function UGCService.SetSaveModeProvider(fn: () -> string)
@@ -169,8 +182,20 @@ local function isOffSale(assetId: number): boolean
 	return _isOffSale ~= nil and _isOffSale(assetId) == true
 end
 
-local function isPositiveInt(n: any): boolean
-	return type(n) == "number" and n == n and n > 0 and n < 2 ^ 53 and math.floor(n) == n
+-- Free items (ugc_rules 57): on sale at 0 Robux. No trial, no rent, no rent count, no refund.
+local function isFree(assetId: number): boolean
+	return _isFree ~= nil and _isFree(assetId) == true
+end
+
+-- Details-panel reads (nil-safe; nil = unknown, shown as such by the UI).
+local function creatorOf(assetId: number): string?
+	return if _creatorOf then _creatorOf(assetId) else nil
+end
+local function priceOf(assetId: number): number?
+	return if _priceOf then _priceOf(assetId) else nil
+end
+local function descriptionOf(assetId: number): string?
+	return if _descriptionOf then _descriptionOf(assetId) else nil
 end
 
 local function sortedIds(set: { [number]: any }): { number }
@@ -269,6 +294,7 @@ local function applyOwned(s: PlayerState, assetId: number)
 	s.pendingInGame[assetId] = nil
 	if not expiresAt or os.clock() > expiresAt then return end -- no / expired marker: pause, no refund (BUG-025)
 	s.rentals[assetId] = nil -- cancelled; rentCount kept (re-renting costs the next doubled price)
+	if isFree(assetId) then return end -- free item: nothing was paid, no refund (ugc_rules 57)
 	local refund = s.lastRentPrice[assetId]
 	if not refund or refund <= 0 then return end -- trial only / already refunded: no gold back
 	local ok, err = false, "Currency not wired"
@@ -315,6 +341,15 @@ local function statusOf(s: PlayerState, assetId: number): string
 	return "locked"
 end
 
+-- Rent timing (2026-10-09): Rent only when NO trial/rental is running and the
+-- free trial was used (trial first). No 'Rent +30' top-up. nil = may rent.
+local function rentBlock(s: PlayerState, assetId: number): string?
+	local r = s.rentals[assetId]
+	if r and r.remaining > 0 then return "Rent opens when the current trial or rental ends" end
+	if not s.trialUsed[assetId] then return "Start the free trial first" end
+	return nil
+end
+
 --------------------------------------------------
 -- RULE QUERIES (shared with UGCOutfitService via injection)
 --------------------------------------------------
@@ -337,6 +372,22 @@ end
 function UGCService.HasAccess(playerId: string, assetId: number): boolean
 	local s = stateOf(playerId)
 	return s ~= nil and hasAccess(s, assetId)
+end
+
+-- DEV ONLY (Studio dev panel): forget which free trials were used and how many
+-- paid rentals each item had (resets the doubling rent price). Active trials,
+-- rentals, ownership, cart and refund records are left alone. Returns counts.
+function UGCService.DevResetTrialRentRecords(playerId: string): (number, number)
+	local s = stateOf(playerId)
+	if not s then return 0, 0 end
+	local trials, rents = 0, 0
+	for _ in s.trialUsed do trials += 1 end
+	for _ in s.rentCount do rents += 1 end
+	table.clear(s.trialUsed)
+	table.clear(s.rentCount)
+	print(string.format("[UGCService] DEV reset: %d trial record(s), %d rent-price record(s) cleared for %s",
+		trials, rents, playerId))
+	return trials, rents
 end
 
 function UGCService.IsOwned(playerId: string, assetId: number): boolean
@@ -436,6 +487,7 @@ function UGCService.StartTrial(playerId: string, assetId: number): (boolean, str
 		return false, "You own this item — it is free forever"
 	end
 	if not isAvailable(assetId) then return false, "This item is not on sale" end
+	if isFree(assetId) then return false, "This item is free — use Get (Free)" end -- ugc_rules 57
 	if s.trialUsed[assetId] then return false, "Free trial already used for this item" end
 	local r = s.rentals[assetId]
 	if r and r.remaining > 0 then return false, "This item is already active" end
@@ -454,6 +506,9 @@ function UGCService.Rent(playerId: string, assetId: number): (boolean, string?, 
 		return false, "You own this item — it is free forever"
 	end
 	if not isAvailable(assetId) then return false, "This item is not on sale" end
+	if isFree(assetId) then return false, "This item is free — use Get (Free)" end -- ugc_rules 57
+	local blocked = rentBlock(s, assetId)
+	if blocked then return false, blocked end
 	if not _currency then return false, "Currency not wired" end
 
 	local price = UGCService.GetRentPrice(playerId, assetId)
@@ -463,9 +518,7 @@ function UGCService.Rent(playerId: string, assetId: number): (boolean, string?, 
 	local count = (s.rentCount[assetId] or 0) + 1
 	s.rentCount[assetId] = count
 	s.lastRentPrice[assetId] = price -- refund source if bought in game (id 53)
-	local current = s.rentals[assetId]
-	local carry = if current and current.remaining > 0 then current.remaining else 0
-	local remaining = carry + UGCCatalogData.RENT_BATTLES
+	local remaining = UGCCatalogData.RENT_BATTLES -- never added to a running trial/rental (rentBlock)
 	s.rentals[assetId] = { mode = "rent", remaining = remaining }
 	s.expired[assetId] = nil
 	print(string.format("[UGCService] %s rented %d for %d gold (rental #%d, level %d, avg battle gold %.1f) — %d battles left",
@@ -549,7 +602,7 @@ function UGCService.Equip(playerId: string, unitId: string, assetId: number): (b
 		-- offsale_during_rental (id 41): an active trial/rental stays equippable even
 		-- if the item went off sale; it just can't be started or re-rented.
 		if not hasAccess(s, assetId) then
-			return false, "Start a free trial, rent, or buy this item first"
+			return false, if isFree(assetId) then "Get this free item first" else "Start a free trial, rent, or buy this item first"
 		end
 	end
 
@@ -795,6 +848,14 @@ end
 --------------------------------------------------
 
 -- Asset ids a player unit visibly wears (only items it still has access to).
+-- Player's own status for one item (inspector worn-item popup, loadout_ui_spec 94).
+function UGCService.GetItemStatus(playerId: string, assetId: number): (string, number)
+	local s = stateOf(playerId)
+	if not s or not itemOf(assetId) then return "locked", 0 end
+	local r = s.rentals[assetId]
+	return statusOf(s, assetId), if r then r.remaining else 0
+end
+
 function UGCService.GetUnitLookIds(playerId: string, unitId: string): { number }
 	local out = {}
 	local s = stateOf(playerId)
@@ -832,11 +893,16 @@ function UGCService.GetView(playerId: string, unitId: string?): any
 			statusCategory = UGCCatalogData.STATUS_FILTER_OF[status], -- Permanent | Rented | OutOfUse | nil (loadout_ui_spec 70)
 			typeCategory = UGCCatalogData.SLOT_FILTER_TYPE[item.slot], -- Type filter (loadout_ui_spec 69)
 			isTrial = status == "trial",
-			refundOnBuy = s.lastRentPrice[assetId] or 0, -- gold back if bought in game (id 53)
+			refundOnBuy = if isFree(assetId) then 0 else (s.lastRentPrice[assetId] or 0), -- id 53; free items refund nothing (57)
 			remaining = if r then r.remaining else 0,
 			isTrialUsed = s.trialUsed[assetId] == true,
 			rentPrice = UGCService.GetRentPrice(playerId, assetId),
 			rentCount = s.rentCount[assetId] or 0,
+			-- The UI shows Free trial / Rent only when the server would accept it (2026-10-09).
+			canTrial = status ~= "owned" and isAvailable(assetId) and not isFree(assetId) and not s.trialUsed[assetId]
+				and not (r ~= nil and r.remaining > 0),
+			canRent = status ~= "owned" and isAvailable(assetId) and not isFree(assetId) and rentBlock(s, assetId) == nil,
+			isFree = isFree(assetId), -- 'Get (Free)' instead of Buy, 'Free' badge (ugc_rules 57/58)
 			isAvailable = isAvailable(assetId),
 			isOffSale = isOffSale(assetId), -- UI: "Off sale" marker instead of Buy (ids 41/47)
 			isPaused = s.owned[assetId] == true and r ~= nil and r.remaining > 0, -- id 44
@@ -845,6 +911,11 @@ function UGCService.GetView(playerId: string, unitId: string?): any
 			bundleId = item.bundleId,
 			vote = s.votes[assetId] or 0,
 			isEligible = if hasUnit then UGCService.IsSlotAllowed(raceName, item.slot) else nil,
+			-- Details panel + price filter/sort (data already fetched by the availability check).
+			creator = creatorOf(assetId),
+			priceRobux = priceOf(assetId),
+			description = descriptionOf(assetId),
+			priceCategory = UGCCatalogData.PriceBandOf(priceOf(assetId)),
 		})
 	end
 	local gold = 0
@@ -881,125 +952,24 @@ end
 
 --------------------------------------------------
 -- PERSISTENCE (folded into progression Key 3 by Main.server.lua)
--- Saved shape (string keys — DataStore JSON safe):
---   { v = 3,
---     r  = { ["<id>"] = { m = "t" | "r", n = remaining } },
---     c  = { ["<id>"] = paidRentalCount },
---     t  = { id, ... }  -- trial used
---     x  = { id, ... }  -- expired (red)
---     p  = { id, ... }  -- first-equip prompt shown
---     k  = { id, ... }  -- cart (v2; v1 saves had the wishlist in w -> migrated)
---     rv = { ["<id>"] = 1 | -1 },
---     lp = { ["<id>"] = lastPaidRentPrice },  -- v3: refund source, cleared once refunded (id 53)
---     e  = { [unitId] = { [slot] = id } } }
--- Ownership is NEVER saved. A paused rental of an owned item IS saved (id 44).
--- Data for items no longer curated is KEPT (so a re-curated item keeps its price
--- history) — except the cart, which drops them on Import (Tester D1).
+-- Encode / decode and the saved shape live in UGCSaveCodec (split 2026-10-09,
+-- ARC-005). Ownership is NEVER saved.
 --------------------------------------------------
-
-local function idList(set: { [number]: boolean }): { number }
-	return sortedIds(set)
-end
 
 function UGCService.Export(playerId: string): any
 	local s = stateOf(playerId)
 	if not s then return nil end
-	local r, c, rv, lp = {}, {}, {}, {}
-	for id, rental in s.rentals do
-		if rental.remaining > 0 then
-			r[tostring(id)] = { m = if rental.mode == "trial" then "t" else "r", n = rental.remaining }
-		end
-	end
-	for id, count in s.rentCount do c[tostring(id)] = count end
-	for id, price in s.lastRentPrice do lp[tostring(id)] = price end
-	for id, vote in s.votes do rv[tostring(id)] = vote end
-	local e = {}
-	for unitId, slots in s.equips do
-		local isKept = true
-		if _unitRace then isKept = (_unitRace(playerId, unitId)) end
-		if isKept and next(slots) ~= nil then e[unitId] = slots end
-	end
-	return {
-		v = SAVE_VERSION, r = r, c = c,
-		t = idList(s.trialUsed), x = idList(s.expired), p = idList(s.prompted),
-		k = idList(s.cart), rv = rv, e = e, lp = lp,
-	}
-end
-
-local function importIdSet(src: any, into: { [number]: boolean }): number
-	local n = 0
-	if type(src) ~= "table" then return n end
-	for _, id in src do
-		if isPositiveInt(id) and not into[id] then
-			into[id] = true
-			n += 1
-		end
-	end
-	return n
+	local unitRace = _unitRace
+	local keepUnit = if unitRace then function(unitId: string): boolean
+		return (unitRace(playerId, unitId)) == true
+	end else nil
+	return UGCSaveCodec.Encode(s, keepUnit)
 end
 
 function UGCService.Import(playerId: string, data: any)
 	UGCService.InitPlayer(playerId, nil)
-	local s = _states[playerId]
 	if type(data) ~= "table" then return end -- old saves: no UGC payload
-
-	if type(data.r) == "table" then
-		for k, rental in data.r do
-			local id = tonumber(k)
-			if id and isPositiveInt(id) and type(rental) == "table" and isPositiveInt(rental.n) then
-				s.rentals[id] = { mode = if rental.m == "t" then "trial" else "rent", remaining = rental.n }
-			end
-		end
-	end
-	if type(data.c) == "table" then
-		for k, count in data.c do
-			local id = tonumber(k)
-			if id and isPositiveInt(id) and isPositiveInt(count) then s.rentCount[id] = count end
-		end
-	end
-	if type(data.lp) == "table" then
-		for k, price in data.lp do
-			local id = tonumber(k)
-			if id and isPositiveInt(id) and isPositiveInt(price) then s.lastRentPrice[id] = price end
-		end
-	end
-	if type(data.rv) == "table" then
-		for k, vote in data.rv do
-			local id = tonumber(k)
-			if id and isPositiveInt(id) and (vote == 1 or vote == -1) then s.votes[id] = vote end
-		end
-	end
-	importIdSet(data.t, s.trialUsed)
-	importIdSet(data.x, s.expired)
-	importIdSet(data.p, s.prompted)
-
-	-- Cart (v2 'k'); v1 saves stored the wishlist in 'w' -> migrated into the cart.
-	-- Tester D1 fix: ids no longer in the catalog are dropped, so they never
-	-- count toward the cap.
-	local cartSrc = if type(data.k) == "table" then data.k else data.w
-	if type(cartSrc) == "table" then
-		for _, id in cartSrc do
-			if s.cartCount >= UGCCatalogData.CART_CAP then break end
-			if isPositiveInt(id) and itemOf(id) and not s.cart[id] then
-				s.cart[id] = true
-				s.cartCount += 1
-			end
-		end
-	end
-
-	if type(data.e) == "table" then
-		for unitId, slots in data.e do
-			if type(unitId) == "string" and type(slots) == "table" then
-				local clean = {}
-				for slot, id in slots do
-					if type(slot) == "string" and UGCCatalogData.SLOT_SET[slot] and isPositiveInt(id) then
-						clean[slot] = id
-					end
-				end
-				if next(clean) ~= nil then s.equips[unitId] = clean end
-			end
-		end
-	end
+	UGCSaveCodec.Decode(data, _states[playerId])
 	print(`[UGCService] Imported UGC state for {playerId}`)
 end
 

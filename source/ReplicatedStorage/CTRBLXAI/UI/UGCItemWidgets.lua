@@ -20,11 +20,14 @@ local UGCCatalogData = require(Content:WaitForChild("UGCCatalogData", 10) :: Mod
 
 local UGCItemWidgets = {}
 
-export type FilterState = { type: string, status: string, search: string?, sort: string? } -- "All" or a filter value
+export type FilterState = { type: string, status: string, search: string?, sort: string?, price: string? } -- "All" or a filter value
 
 local MIN_TOUCH = Theme.MinSize.TouchTarget -- 44 px
-local CARD_HEIGHT = 210 -- fits name, status, note and two wrapped rows of 44 px buttons
-local THUMB_SIZE = 44
+-- Tile grid (2026-10-09): small square tiles, ~6 per row on a phone in landscape,
+-- 8 on larger screens; one action bar under the grid holds the selected item's buttons.
+local TILE_COLUMNS_MOBILE = 6
+local TILE_COLUMNS_WIDE = 8
+local TILE_ASPECT = 0.8 -- width / height: square thumbnail plus one name line
 local ALL = "All"
 
 --------------------------------------------------
@@ -92,12 +95,13 @@ end
 --------------------------------------------------
 
 function UGCItemWidgets.NewFilterState(): FilterState
-	return { type = ALL, status = ALL, search = "", sort = "NameAsc" }
+	return { type = ALL, status = ALL, search = "", sort = "NameAsc", price = ALL }
 end
 
 function UGCItemWidgets.PassesFilter(item: any, f: FilterState): boolean
 	if f.type ~= ALL and item.typeCategory ~= f.type then return false end
 	if f.status ~= ALL and item.statusCategory ~= f.status then return false end
+	if f.price and f.price ~= ALL and item.priceCategory ~= f.price then return false end
 	local q = f.search
 	if q and q ~= "" and not string.find(string.lower(item.name or ""), string.lower(q), 1, true) then
 		return false
@@ -113,6 +117,8 @@ local SORT_OPTIONS = {
 	{ id = "NameAsc", label = "Name A-Z" },
 	{ id = "NameDesc", label = "Name Z-A" },
 	{ id = "Status", label = "Status" },
+	{ id = "PriceAsc", label = "Price: low to high" },
+	{ id = "PriceDesc", label = "Price: high to low" },
 }
 local STATUS_ORDER = { Permanent = 1, Rented = 2, OutOfUse = 3 }
 local _openMenu: ScreenGui? = nil
@@ -240,7 +246,7 @@ function UGCItemWidgets.MakeFilterBar(parent: Instance, f: FilterState, order: n
 
 	local search = Instance.new("TextBox")
 	search.Name = "Search"
-	search.Size = UDim2.new(1, -(72 * 3 + 3 * 3), 1, 0)
+	search.Size = UDim2.new(1, -(72 * 4 + 3 * 4), 1, 0) -- 4 toolbar buttons: Type/Status/Price/Sort
 	search.BackgroundColor3 = Theme.Colors.Surface
 	search.BackgroundTransparency = 0.2
 	search.BorderSizePixel = 0
@@ -281,9 +287,20 @@ function UGCItemWidgets.MakeFilterBar(parent: Instance, f: FilterState, order: n
 		showMenu(statusBtn, opts, function(v) f.status = v; onChanged() end)
 	end)
 
+	local priceLabels = UGCCatalogData.PRICE_BAND_LABELS or {}
+	local priceBtn = toolbarButton(bar, if f.price == nil or f.price == ALL then "Price" else (priceLabels[f.price] or f.price), 4,
+		f.price ~= nil and f.price ~= ALL, Theme.Icons and Theme.Icons.Filter)
+	priceBtn.Activated:Connect(function()
+		local opts = { { label = "All prices", value = ALL, active = f.price == nil or f.price == ALL } }
+		for _, b in UGCCatalogData.PRICE_BANDS do
+			table.insert(opts, { label = priceLabels[b] or b, value = b, active = f.price == b })
+		end
+		showMenu(priceBtn, opts, function(v) f.price = v; onChanged() end)
+	end)
+
 	local sortLabel = "Sort"
 	for _, s in SORT_OPTIONS do if s.id == f.sort then sortLabel = s.label end end
-	local sortBtn = toolbarButton(bar, sortLabel, 4, false, Theme.Icons and Theme.Icons.Sort)
+	local sortBtn = toolbarButton(bar, sortLabel, 5, false, Theme.Icons and Theme.Icons.Sort)
 	sortBtn.Activated:Connect(function()
 		local opts = {}
 		for _, s in SORT_OPTIONS do table.insert(opts, { label = s.label, value = s.id, active = f.sort == s.id }) end
@@ -297,6 +314,7 @@ end
 -- Sort a filtered list in place by the toolbar's sort choice.
 function UGCItemWidgets.SortItems(list: { any }, f: FilterState)
 	local function nm(x: any): string return string.lower(x.name or "") end
+	local function pr(x: any): number? return if type(x.priceRobux) == "number" then x.priceRobux else nil end
 	if f.sort == "NameDesc" then
 		table.sort(list, function(a, b) return nm(a) > nm(b) end)
 	elseif f.sort == "Status" then
@@ -306,9 +324,142 @@ function UGCItemWidgets.SortItems(list: { any }, f: FilterState)
 			if sa ~= sb then return sa < sb end
 			return nm(a) < nm(b)
 		end)
+	elseif f.sort == "PriceAsc" or f.sort == "PriceDesc" then
+		local asc = f.sort == "PriceAsc"
+		table.sort(list, function(a, b)
+			local pa, pb = pr(a), pr(b)
+			if pa == nil and pb == nil then return nm(a) < nm(b) end
+			if pa == nil then return false end
+			if pb == nil then return true end
+			if pa ~= pb then return if asc then pa < pb else pa > pb end
+			return nm(a) < nm(b)
+		end)
 	else
 		table.sort(list, function(a, b) return nm(a) < nm(b) end)
 	end
+end
+
+-- Item details popup (user decision 2026-10-12): a centered modal opened by the
+-- action bar's Details button. Shows UGC ID (selectable + Copy), creator, type,
+-- price (Robux / Free / unknown), status and marketplace description. All fields
+-- come from data the availability check already fetched (no extra Roblox call).
+function UGCItemWidgets.ShowItemDetails(item: any)
+	closeMenu()
+	if type(item) ~= "table" then return end
+	local Players = game:GetService("Players")
+	local pg = Players.LocalPlayer and Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
+	if not pg then return end
+
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "UGCItemDetails"
+	gui.DisplayOrder = 310 -- above the dropdown (300)
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	local function close() gui:Destroy() end
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
+	backdrop.BackgroundTransparency = 0.4
+	backdrop.Text = ""
+	backdrop.AutoButtonColor = false
+	backdrop.Activated:Connect(close)
+	backdrop.Parent = gui
+
+	local panel = Instance.new("Frame")
+	panel.AnchorPoint = Vector2.new(0.5, 0.5)
+	panel.Position = UDim2.fromScale(0.5, 0.5)
+	panel.Size = UDim2.fromOffset(320, 0)
+	panel.AutomaticSize = Enum.AutomaticSize.Y
+	panel.BackgroundColor3 = Theme.Colors.Panel
+	panel.BorderSizePixel = 0
+	panel.Parent = gui
+	local pc = Instance.new("UICorner"); pc.CornerRadius = UDim.new(0, 6); pc.Parent = panel
+	local ps = Instance.new("UIStroke"); ps.Color = Theme.Colors.Border; ps.Thickness = 1; ps.Parent = panel
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
+	pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10)
+	pad.Parent = panel
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder; list.Padding = UDim.new(0, 6); list.Parent = panel
+
+	local order = 0
+	local function addLabel(txt: string, bold: boolean?, gold: boolean?)
+		order += 1
+		local lbl = Instance.new("TextLabel")
+		lbl.Size = UDim2.new(1, 0, 0, 0)
+		lbl.AutomaticSize = Enum.AutomaticSize.Y
+		lbl.BackgroundTransparency = 1
+		lbl.Font = if bold then Theme.Font.Bold else Theme.Font.Primary
+		lbl.TextSize = Theme.Text.Small()
+		lbl.TextColor3 = if gold then Theme.Colors.TextGold else Theme.Colors.TextPrimary
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.TextWrapped = true
+		lbl.Text = txt
+		lbl.LayoutOrder = order
+		lbl.Parent = panel
+		return lbl
+	end
+
+	addLabel(item.name or "UGC item", true, true)
+
+	-- ID row: selectable TextBox + Copy (setclipboard works in Studio; selectable elsewhere).
+	order += 1
+	local idRow = Instance.new("Frame")
+	idRow.Size = UDim2.new(1, 0, 0, 24); idRow.BackgroundTransparency = 1; idRow.LayoutOrder = order; idRow.Parent = panel
+	local idLayout = Instance.new("UIListLayout")
+	idLayout.FillDirection = Enum.FillDirection.Horizontal; idLayout.Padding = UDim.new(0, 4)
+	idLayout.VerticalAlignment = Enum.VerticalAlignment.Center; idLayout.Parent = idRow
+	local idBox = Instance.new("TextBox")
+	idBox.Size = UDim2.new(1, -60, 1, 0)
+	idBox.BackgroundColor3 = Theme.Colors.Surface; idBox.BackgroundTransparency = 0.2; idBox.BorderSizePixel = 0
+	idBox.Font = Theme.Font.Primary; idBox.TextSize = Theme.Text.Small(); idBox.TextColor3 = Theme.Colors.TextPrimary
+	idBox.TextXAlignment = Enum.TextXAlignment.Left; idBox.ClearTextOnFocus = false; idBox.TextEditable = false
+	idBox.Text = `ID: {item.assetId}`
+	local ic = Instance.new("UICorner"); ic.CornerRadius = UDim.new(0, 3); ic.Parent = idBox
+	local ipad = Instance.new("UIPadding"); ipad.PaddingLeft = UDim.new(0, 4); ipad.Parent = idBox
+	idBox.Parent = idRow
+	local copyBtn = Instance.new("TextButton")
+	copyBtn.Size = UDim2.fromOffset(56, 24)
+	copyBtn.BackgroundColor3 = Theme.Colors.Surface; copyBtn.BorderSizePixel = 0
+	copyBtn.Font = Theme.Font.Primary; copyBtn.TextSize = Theme.Text.Small(); copyBtn.TextColor3 = Theme.Colors.TextGold
+	copyBtn.Text = "Copy"
+	local cc = Instance.new("UICorner"); cc.CornerRadius = UDim.new(0, 3); cc.Parent = copyBtn
+	copyBtn.Activated:Connect(function()
+		local setcb = (setclipboard :: any) or ((_G :: any).setclipboard)
+		if type(setcb) == "function" then
+			local ok = pcall(setcb, tostring(item.assetId))
+			copyBtn.Text = if ok then "Copied" else "Select"
+		else
+			-- No clipboard API here: select the text so the user can copy manually.
+			idBox.TextEditable = true; idBox:CaptureFocus(); copyBtn.Text = "Select"
+		end
+	end)
+	copyBtn.Parent = idRow
+
+	local function fieldRow(label: string, value: string?)
+		addLabel(`{label}: {value and value ~= "" and value or "—"}`)
+	end
+	local priceText = if item.isFree then "Free"
+		elseif type(item.priceRobux) == "number" then `{item.priceRobux} R$`
+		else "Unknown (not yet checked)"
+	fieldRow("Creator", item.creator)
+	fieldRow("Type", item.slot)
+	fieldRow("Price", priceText)
+	fieldRow("Status", item.status)
+	addLabel("Description", true)
+	addLabel(if item.description and item.description ~= "" then item.description else "No description provided.")
+
+	order += 1
+	local closeBtn = Instance.new("TextButton")
+	closeBtn.Size = UDim2.new(1, 0, 0, 28); closeBtn.LayoutOrder = order
+	closeBtn.BackgroundColor3 = Theme.Colors.Surface; closeBtn.BorderSizePixel = 0
+	closeBtn.Font = Theme.Font.Primary; closeBtn.TextSize = Theme.Text.Small(); closeBtn.TextColor3 = Theme.Colors.TextPrimary
+	closeBtn.Text = "Close"
+	local xc = Instance.new("UICorner"); xc.CornerRadius = UDim.new(0, 4); xc.Parent = closeBtn
+	closeBtn.Activated:Connect(close)
+	closeBtn.Parent = panel
+
+	gui.Parent = pg
 end
 
 -- Shrink a header button (sub-tab / text button) to the compact height.
@@ -321,16 +472,22 @@ function UGCItemWidgets.Compact(btn: GuiObject, h: number?)
 end
 
 --------------------------------------------------
--- GRID + CARDS
+-- TILE GRID + ACTION BAR (2026-10-09, replaces the per-item cards)
 --------------------------------------------------
 
--- Scrolling card grid that fills the rest of a vertical list (UIFlexItem Fill).
-function UGCItemWidgets.MakeGrid(parent: Instance, order: number): ScrollingFrame
+-- Scrolling tile grid that fills the rest of a vertical list (UIFlexItem Fill).
+-- Pixel cells sized from the grid's real width (BUG-029); see resizeCells below.
+-- opts.minRows: shrink tiles (more columns) until at least this many full rows fit
+-- the grid's height, never under the 44 px touch minimum (UGC merchant: 3).
+-- opts.size: grid Size override. Without opts the sizing is unchanged (Outfit tab).
+function UGCItemWidgets.MakeTileGrid(parent: Instance, order: number, opts: any?): ScrollingFrame
+	local o = opts or {}
+	local minRows: number? = if type(o.minRows) == "number" and o.minRows > 0 then o.minRows else nil
 	local sf = Instance.new("ScrollingFrame")
 	sf.Name = "ItemGrid"
 	sf.BackgroundTransparency = 1
 	sf.BorderSizePixel = 0
-	sf.Size = UDim2.fromScale(1, 0)
+	sf.Size = o.size or UDim2.fromScale(1, 0)
 	sf.CanvasSize = UDim2.new()
 	sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	sf.ScrollingDirection = Enum.ScrollingDirection.Y
@@ -339,13 +496,35 @@ function UGCItemWidgets.MakeGrid(parent: Instance, order: number): ScrollingFram
 	local flex = Instance.new("UIFlexItem")
 	flex.FlexMode = Enum.UIFlexMode.Fill
 	flex.Parent = sf
-	local columns = if Theme.GetMode() == "Mobile" then 2 else 3
+	local columns = if Theme.GetMode() == "Mobile" then TILE_COLUMNS_MOBILE else TILE_COLUMNS_WIDE
+	local gap = Theme.Spacing.xs
 	local grid = Instance.new("UIGridLayout")
-	grid.CellSize = UDim2.new(1 / columns, -Theme.Spacing.md, 0, CARD_HEIGHT)
-	grid.CellPadding = UDim2.fromOffset(Theme.Spacing.sm, Theme.Spacing.sm)
+	grid.CellPadding = UDim2.fromOffset(gap, gap)
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
+	-- Pixel cells from the grid's real width (BUG-029): a 0-height Scale cell plus an
+	-- aspect constraint collapsed every tile to ~0 px. Width decides, height follows TILE_ASPECT.
+	local function resizeCells()
+		local x = sf.AbsoluteSize.X - sf.ScrollBarThickness
+		local function widthFor(c: number): number
+			return math.floor((x - gap * c) / c)
+		end
+		local c = columns
+		if minRows and sf.AbsoluteSize.Y > 0 then
+			-- Tallest cell that still shows minRows full rows, then the fewest columns
+			-- whose width fits it; stop before a tile would drop under 44 px.
+			local maxH = math.floor((sf.AbsoluteSize.Y - gap * (minRows - 1)) / minRows)
+			local maxW = math.floor(maxH * TILE_ASPECT)
+			while widthFor(c) > maxW and widthFor(c + 1) >= MIN_TOUCH do
+				c += 1
+			end
+		end
+		local w = math.max(widthFor(c), MIN_TOUCH) -- 44 px minimum touch target
+		grid.CellSize = UDim2.fromOffset(w, math.floor(w / TILE_ASPECT))
+	end
 	grid.Parent = sf
+	sf:GetPropertyChangedSignal("AbsoluteSize"):Connect(resizeCells) -- freed with sf:Destroy()
 	sf.Parent = parent
+	resizeCells()
 	return sf
 end
 
@@ -356,74 +535,193 @@ local function thumbnail(item: any): string
 	return `rbxthumb://type=Asset&id={item.assetId}&w=150&h=150`
 end
 
-export type CardAction = { text: string, color: Color3?, onPress: () -> (), enabled: boolean? }
--- opts: actions { CardAction }, note string?, showBuy boolean (default true),
---       isBattleActive boolean?, onBuyResult (Result) -> ()?, isHighlighted boolean?
-function UGCItemWidgets.MakeItemCard(parent: Instance, item: any, order: number, opts: any): Frame
-	local card = Instance.new("Frame")
-	card.Name = `UGCCard_{item.assetId}`
-	card.BackgroundColor3 = Theme.Colors.PanelRaised
-	card.BackgroundTransparency = 0.1
-	card.BorderSizePixel = 0
-	card.LayoutOrder = order
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = Theme.CornerRadius.md
-	corner.Parent = card
-	local stroke = Instance.new("UIStroke")
-	-- Out-of-use items are red (loadout_ui_spec 64 / ugc_rules on_expiry).
-	stroke.Color = if item.status == "expired" then Theme.Colors.Danger
-		elseif opts.isHighlighted then Theme.Colors.BorderSelected else Theme.Colors.Border
-	stroke.Thickness = if item.status == "expired" or opts.isHighlighted then 2 else 1
-	stroke.Parent = card
-	local pad = Instance.new("UIPadding")
-	for _, side in { "PaddingTop", "PaddingBottom", "PaddingLeft", "PaddingRight" } do
-		(pad :: any)[side] = UDim.new(0, Theme.Spacing.sm)
-	end
-	pad.Parent = card
-	local list = Instance.new("UIListLayout")
-	list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.Padding = UDim.new(0, Theme.Spacing.xs)
-	list.Parent = card
+-- Short status badge for a tile: Trial N / Rent N / Owned / Off sale / Out of use /
+-- Free (free item not owned, ugc_rules 58 / loadout_ui_spec 88).
+function UGCItemWidgets.BadgeText(item: any): string?
+	local s = item.status
+	if s == "owned" then return "Owned" end
+	if s == "trial" then return `Trial {item.remaining}` end
+	if s == "rent" then return `Rent {item.remaining}` end
+	if item.isOffSale then return "Off sale" end
+	if s == "expired" then return "Out of use" end
+	if item.isFree then return "Free" end
+	return nil
+end
 
-	local top = UGCItemWidgets.Row(card, 1)
+local function tileStroke(tile: GuiObject)
+	local stroke = tile:FindFirstChildOfClass("UIStroke")
+	if not stroke then return end
+	if tile:GetAttribute("IsSelected") then
+		stroke.Color, stroke.Thickness = Theme.Colors.BorderSelected, 2
+	elseif tile:GetAttribute("IsExpired") then
+		stroke.Color, stroke.Thickness = Theme.Colors.Danger, 2 -- out of use is red (ugc_rules on_expiry)
+	elseif tile:GetAttribute("IsWorn") then
+		stroke.Color, stroke.Thickness = Theme.Colors.Success, 1 -- worn by the selected unit
+	else
+		stroke.Color, stroke.Thickness = Theme.Colors.Border, 1
+	end
+end
+
+-- Moves the selection highlight in place (no rebuild).
+function UGCItemWidgets.SetTileSelected(tile: GuiObject?, isSelected: boolean)
+	if not tile then return end
+	tile:SetAttribute("IsSelected", isSelected)
+	tileStroke(tile)
+end
+
+-- Small pill label on a tile (status / corner badges).
+local function makeTileBadge(tile: GuiObject, name: string, text: string, color: Color3, anchor: Vector2, pos: UDim2)
+	local badge = Instance.new("TextLabel")
+	badge.Name = name
+	badge.Text = text
+	badge.Font = Theme.Font.PrimaryBold
+	badge.TextSize = Theme.Text.Badge()
+	badge.TextColor3 = Theme.Colors.TextPrimary
+	badge.TextStrokeTransparency = 0.4
+	badge.BackgroundColor3 = color
+	badge.BackgroundTransparency = 0.15
+	badge.BorderSizePixel = 0
+	badge.AutomaticSize = Enum.AutomaticSize.XY
+	badge.AnchorPoint = anchor
+	badge.Position = pos
+	local bc = Instance.new("UICorner"); bc.CornerRadius = Theme.CornerRadius.sm; bc.Parent = badge
+	local bp = Instance.new("UIPadding")
+	bp.PaddingLeft = UDim.new(0, 3); bp.PaddingRight = UDim.new(0, 3)
+	bp.Parent = badge
+	badge.Parent = tile -- NET-004
+end
+
+-- One tile: thumbnail, short name, status badge. Tap selects (onSelect). opts:
+--   isWorn        green border (worn by the selected unit)
+--   cornerBadge   "Owned" | "In cart" pill in the upper-right corner (UGC merchant)
+--   statusAtBottom  status pill sits at the thumbnail's lower-left instead of the
+--                   upper-left, so it never collides with the corner badge
+function UGCItemWidgets.MakeTile(parent: Instance, item: any, order: number, isSelected: boolean,
+	onSelect: () -> (), opts: any?): TextButton
+	local o = opts or {}
+	local tile = Instance.new("TextButton")
+	tile.Name = `UGCTile_{item.assetId}`
+	tile.Text = ""
+	tile.AutoButtonColor = false
+	tile.BackgroundColor3 = Theme.Colors.PanelRaised
+	tile.BackgroundTransparency = 0.1
+	tile.BorderSizePixel = 0
+	tile.LayoutOrder = order
+	tile:SetAttribute("IsSelected", isSelected)
+	tile:SetAttribute("IsExpired", item.status == "expired")
+	tile:SetAttribute("IsWorn", o.isWorn == true)
+	local corner = Instance.new("UICorner"); corner.CornerRadius = Theme.CornerRadius.sm; corner.Parent = tile
+	local stroke = Instance.new("UIStroke")
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = tile
+	tileStroke(tile)
+
 	local img = Instance.new("ImageLabel")
 	img.Name = "Thumb"
 	img.Image = thumbnail(item)
 	img.BackgroundColor3 = Theme.Colors.Surface
 	img.BorderSizePixel = 0
-	img.Size = UDim2.fromOffset(THUMB_SIZE, THUMB_SIZE)
-	img.LayoutOrder = 1
-	img.Parent = top
-	local names = UGCItemWidgets.Row(top, 2, Enum.FillDirection.Vertical, 0)
-	names.Size = UDim2.new(1, -(THUMB_SIZE + Theme.Spacing.sm), 0, 0)
-	UGCItemWidgets.Label(names, item.name or tostring(item.assetId), { bold = true, order = 1 })
-	UGCItemWidgets.Label(names, `{item.typeCategory or item.slot} · {item.slot}`,
-		{ order = 2, color = Theme.Colors.TextSecondary, textSize = Theme.Text.Tiny() })
+	img.AnchorPoint = Vector2.new(0.5, 0)
+	img.Position = UDim2.new(0.5, 0, 0, 2)
+	img.Size = UDim2.new(1, -4, 1, -4)
+	img.ScaleType = Enum.ScaleType.Fit
+	local imgAspect = Instance.new("UIAspectRatioConstraint"); imgAspect.AspectRatio = 1; imgAspect.Parent = img
+	img.Parent = tile
 
-	local statusText = UGCClient.GetStatusLabel(item)
-	if item.isOffSale then statusText ..= " · Off sale" end
-	UGCItemWidgets.Label(card, statusText, { order = 2, bold = true, color = UGCClient.GetStatusColor(item.status) })
-	if opts.note and opts.note ~= "" then
-		UGCItemWidgets.Label(card, opts.note, { order = 3, wrap = true, color = Theme.Colors.TextSecondary,
-			textSize = Theme.Text.Tiny() })
+	local name = Instance.new("TextLabel")
+	name.Name = "Name"
+	name.Text = item.name or tostring(item.assetId)
+	name.Font = Theme.Font.Primary
+	name.TextSize = Theme.Text.Tiny()
+	name.TextColor3 = Theme.Colors.TextPrimary
+	name.TextTruncate = Enum.TextTruncate.AtEnd
+	name.BackgroundTransparency = 1
+	name.AnchorPoint = Vector2.new(0, 1)
+	name.Position = UDim2.new(0, 3, 1, -1)
+	name.Size = UDim2.new(1, -6, 0.2, 0)
+	name.Parent = tile
+
+	local badgeText = UGCItemWidgets.BadgeText(item)
+	local cornerText = if type(o.cornerBadge) == "string" then o.cornerBadge else nil
+	if cornerText and badgeText == cornerText then badgeText = nil end -- one "Owned" pill, not two
+	if badgeText then
+		local color = if item.isOffSale and item.status ~= "owned" then Theme.Colors.TextDisabled
+			else UGCClient.GetStatusColor(item.status)
+		if o.statusAtBottom then
+			-- Lower-left of the square thumbnail (just above the 20% name strip).
+			makeTileBadge(tile, "Badge", badgeText, color, Vector2.new(0, 1), UDim2.new(0, 3, 0.8, -3))
+		else
+			makeTileBadge(tile, "Badge", badgeText, color, Vector2.new(0, 0), UDim2.fromOffset(3, 3))
+		end
+	end
+	if cornerText then
+		local color = if cornerText == "Owned" then UGCClient.GetStatusColor("owned") else Theme.Colors.Info
+		makeTileBadge(tile, "CornerBadge", cornerText, color, Vector2.new(1, 0), UDim2.new(1, -3, 0, 3))
 	end
 
-	local actions = UGCItemWidgets.Row(card, 4)
-	actions.Name = "Actions"
-	for i, a in (opts.actions or {}) :: { CardAction } do
-		local btn = UGCClient.MakeTextButton(actions, a.text, a.color, a.onPress, a.enabled)
-		btn.LayoutOrder = i
+	tile.Activated:Connect(onSelect) -- tap-safe; dies with the tile (PRF-004)
+	tile.Parent = parent -- NET-004: built off-tree, parented once
+	return tile
+end
+
+-- Action bar under the grid: selected item's name + one detail line, then its buttons.
+-- Returns the bar (content is filled by the screen with BarButton / CreateBuyButton).
+function UGCItemWidgets.MakeActionBar(parent: Instance, order: number, item: any?, detail: string?): Frame
+	local bar = UGCItemWidgets.Row(parent, order, Enum.FillDirection.Horizontal, Theme.Spacing.xs)
+	bar.Name = "ActionBar"
+	if not item then return bar end
+	local info = UGCItemWidgets.Row(bar, 0, Enum.FillDirection.Vertical, 0)
+	info.Name = "Info"
+	info.Size = UDim2.new(0.28, 0, 0, MIN_TOUCH)
+	info.AutomaticSize = Enum.AutomaticSize.None
+	UGCItemWidgets.Label(info, item.name or tostring(item.assetId), { bold = true, order = 1, autoSize = Enum.AutomaticSize.None,
+		size = UDim2.new(1, 0, 0.5, 0) })
+	local d = detail or UGCClient.GetStatusLabel(item)
+	UGCItemWidgets.Label(info, d, { order = 2, autoSize = Enum.AutomaticSize.None, size = UDim2.new(1, 0, 0.5, 0),
+		color = UGCClient.GetStatusColor(item.status), textSize = Theme.Text.Tiny() })
+	return bar
+end
+
+-- Action button on the bar art. style: Primary | Secondary | Tertiary; enabled=false -> Disabled.
+function UGCItemWidgets.BarButton(parent: Instance, text: string, style: string, onPress: () -> (),
+	enabled: boolean?, order: number?): GuiButton
+	local btn = Theme.MakeBarButton(nil, text, if enabled == false then "Disabled" else style, onPress,
+		{ textSize = Theme.Text.Small() })
+	btn.LayoutOrder = order or 0
+	btn.Parent = parent -- NET-004
+	return btn
+end
+
+-- Turns a bar / Buy button into a full-width column button (UGC merchant right
+-- column): fixed 44 px height, text shrinks to fit instead of widening the button.
+function UGCItemWidgets.FillWidth(btn: GuiObject?): GuiObject?
+	if not btn then return nil end
+	btn.AutomaticSize = Enum.AutomaticSize.None
+	btn.Size = UDim2.new(1, 0, 0, MIN_TOUCH)
+	local lbl = btn:FindFirstChild("Label")
+	if lbl and lbl:IsA("TextLabel") then
+		local maxText = lbl.TextSize
+		lbl.AutomaticSize = Enum.AutomaticSize.None
+		lbl.Size = UDim2.new(1, 0, 1, -8)
+		lbl.TextScaled = true
+		if not lbl:FindFirstChildOfClass("UITextSizeConstraint") then
+			local fit = Instance.new("UITextSizeConstraint")
+			fit.MaxTextSize = maxText
+			fit.MinTextSize = 8
+			fit.Parent = lbl
+		end
 	end
-	if opts.showBuy ~= false then
-		-- Buy for Roblox Avatar on every unowned item, trials included (loadout_ui_spec 65);
-		-- "Off sale" marker instead when it can't be bought (ugc_rules 41/47).
-		local buy = UGCClient.CreateBuyButton(actions, item, opts.onBuyResult, opts.isBattleActive)
-		if buy then buy.LayoutOrder = 50 end
+	return btn
+end
+
+-- Reselect by assetId after a refresh; falls back to the first item shown.
+function UGCItemWidgets.PickSelected(list: { any }, selectedId: number?): any?
+	if selectedId then
+		for _, item in list do
+			if item.assetId == selectedId then return item end
+		end
 	end
-	local badge = UGCClient.CreateOwnedBadge(actions, item.status == "owned")
-	if badge then badge.LayoutOrder = 60 end
-	card.Parent = parent -- NET-004: built off-tree, parented once
-	return card
+	return list[1]
 end
 
 -- Put this in the vertical content list (not inside the grid).

@@ -234,7 +234,9 @@ local function addNote(text: string)
 	lbl.LayoutOrder = rowOrder
 end
 
-type RowButton = { text: string, color: Color3, onTap: () -> (), enabled: boolean? }
+-- style (2026-10-09): "Primary" | "Secondary" | "Tertiary" draws the bar art (Theme.MakeBarButton);
+-- nil keeps the existing icon / text button. Merchant Buy and Sell use Primary.
+type RowButton = { text: string, color: Color3, onTap: () -> (), enabled: boolean?, style: string? }
 
 local function addRow(text: string, buttons: { RowButton }?, dim: boolean?): Frame
 	rowOrder += 1
@@ -264,7 +266,16 @@ local function addRow(text: string, buttons: { RowButton }?, dim: boolean?): Fra
 		for i, b in buttons do
 			local w = btnShare / count
 			local iconKind = Theme.IconKindForText and Theme.IconKindForText(b.text)
-			if iconKind then
+			if b.style and Theme.MakeBarButton then
+				Theme.MakeBarButton(row, b.text, if b.enabled == false then "Disabled" else b.style, b.onTap, {
+					name = "Btn_" .. b.text,
+					size = UDim2.new(w, -6, 0, BUTTON_HEIGHT - 4),
+					position = UDim2.new(1 - btnShare + w * (i - 1), 0, 0.5, 0),
+					anchor = Vector2.new(0, 0.5),
+					autoWidth = false,
+					minHeight = BUTTON_HEIGHT - 4,
+				})
+			elseif iconKind then
 				-- Square icon art: same height, narrower; centred in its share of the row.
 				Theme.MakeIconButton(row, iconKind, b.onTap, {
 					name = "Btn_" .. b.text,
@@ -359,7 +370,7 @@ local function pageMerchant()
 	for _, o in res.stock or {} do
 		local idx = o.offerIndex
 		addRow(`{o.name}  Lv{o.level} {o.rarity}  |  {o.price} gold`, {
-			{ text = "Buy", color = Theme.Colors.Success, onTap = function()
+			{ text = "Buy", color = Theme.Colors.Success, style = "Primary", onTap = function()
 				act(GuildEvents.RequestBuy, function(r) return `Bought {r.name} for {r.price} gold` end, idx)
 			end },
 		})
@@ -369,7 +380,7 @@ local function pageMerchant()
 	for _, it in res.sellable or {} do
 		local iid = it.instanceId
 		addRow(`{it.name}  Lv{it.level} {it.rarity}`, {
-			{ text = `Sell {it.price or "?"}g`, color = Theme.Colors.Warning, enabled = it.price ~= nil, onTap = function()
+			{ text = `Sell {it.price or "?"}g`, color = Theme.Colors.Warning, enabled = it.price ~= nil, style = "Primary", onTap = function()
 				act(GuildEvents.RequestSell, function(r) return `Sold for {r.payout} gold` end, iid)
 			end },
 		})

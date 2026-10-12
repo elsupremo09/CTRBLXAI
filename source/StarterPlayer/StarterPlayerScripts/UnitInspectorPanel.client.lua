@@ -1,5 +1,5 @@
 -- UnitInspectorPanel.client.lua
--- CTRBLXAI | 4-Tab Unit Inspector (Basic / Stats / Equip / Skills)
+-- CTRBLXAI | 5-Tab Unit Inspector (Basic / Stats / Equip / Skills / Outfit)
 --
 -- Opens when player clicks unit portrait or fires InspectUnit.
 -- Server sends full data package; client renders a tabbed panel.
@@ -30,6 +30,12 @@ local LoadoutScreen = require(
 	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 		:WaitForChild("UI", 10):WaitForChild("LoadoutScreen", 10)
 )
+-- Shared portrait-overlay helper (ApplyPortrait). Acyclic: UIComponents requires
+-- only Theme, already required above.
+local UIComponents = require(
+	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+		:WaitForChild("UI", 10):WaitForChild("UIComponents", 10)
+)
 -- MockLoadoutData owns mapServerItem (server item -> loadout UI item). Optional:
 -- if it fails to load, the inspector falls back to its local mapping.
 local ObjectData = nil
@@ -46,6 +52,15 @@ do
 			:WaitForChild("UI", 10):WaitForChild("MockLoadoutData", 10))
 	end)
 	if ok then MockLoadoutData = res else warn("[UnitInspector] MockLoadoutData unavailable: " .. tostring(res)) end
+end
+-- Outfit tab (loadout_ui_spec 92-97). Optional: if UGC fails to load, the other tabs still work.
+local UGCInspectorOutfit = nil
+do
+	local okU, resU = pcall(function()
+		return require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+			:WaitForChild("UI", 10):WaitForChild("UGCInspectorOutfit", 10))
+	end)
+	if okU then UGCInspectorOutfit = resU else warn("[UnitInspector] UGCInspectorOutfit unavailable: " .. tostring(resU)) end
 end
 
 --------------------------------------------------
@@ -71,6 +86,7 @@ end
 
 local function destroyPanel()
 	closeDetailOverlay()
+	if UGCInspectorOutfit then UGCInspectorOutfit.Cleanup() end -- PRF-004
 	if panelGui then panelGui:Destroy(); panelGui = nil end
 	if clickOutsideConn then clickOutsideConn:Disconnect(); clickOutsideConn = nil end
 end
@@ -1146,6 +1162,9 @@ local function buildPanel(data)
 	initLbl.Text = initials
 	initLbl.Parent = portrait
 
+	-- Portrait face overlay (enemy/neutral/NPC). nil for players/summons → initials.
+	UIComponents.ApplyPortrait(portrait, data.portraitAssetId, initLbl)
+
 	-- Level badge (top-left of portrait)
 	if data.level then
 		local lvBadge = Instance.new("Frame")
@@ -1293,6 +1312,7 @@ local function buildPanel(data)
 			if child:IsA("GuiObject") then child:Destroy() end
 		end
 		currentTab = tabName
+		if UGCInspectorOutfit then UGCInspectorOutfit.Cleanup() end -- PRF-004: preview drag connections
 
 		if tabName == "basic" then
 			renderBasicTab(contentFrame, data, panelH)
@@ -1302,6 +1322,13 @@ local function buildPanel(data)
 			renderEquipmentTab(contentFrame, data)
 		elseif tabName == "skills" then
 			renderSkillsTab(contentFrame, data)
+		elseif tabName == "outfit" and UGCInspectorOutfit then
+			-- The popup is tracked as the detail overlay, so the click-outside guard and
+			-- closeDetailOverlay treat it like the gear popup.
+			UGCInspectorOutfit.Render(contentFrame, data, {
+				setOverlay = function(g) detailOverlayGui = g end,
+				closeOverlay = closeDetailOverlay,
+			})
 		end
 
 		-- Update canvas size
@@ -1312,6 +1339,7 @@ local function buildPanel(data)
 
 	-- Create tab buttons — NEW ORDER: Basic, Stats, Equip, Skills
 	local tabs = { {"basic", "Basic"}, {"stats", "Stats"}, {"equipment", "Equip"}, {"skills", "Skills"} }
+	if UGCInspectorOutfit then table.insert(tabs, {"outfit", "Outfit"}) end -- 5th tab (loadout_ui_spec 92)
 	-- Old 9-slice text bars (user ruling 2026-10-08): Active = bronze, Inactive = navy.
 	-- The highlight moves in place with Theme.SetTabState; .Activated works for touch too.
 	local tabBtns = {}
@@ -1323,7 +1351,8 @@ local function buildPanel(data)
 			renderTab(tab[1])
 		end, {
 			name = "Tab_" .. tab[2],
-			size = UDim2.new(0, 70, 0, TAB_H),
+			-- Scale width so 5 tabs always fit the panel on phones; text shrinks to fit.
+			size = UDim2.new(1 / #tabs, -4, 0, TAB_H),
 			textSize = Theme.Text.Body(),
 			layoutOrder = i,
 		})
@@ -1440,6 +1469,23 @@ local function buildObjectPanel(objectName: string, tileX: number?, tileY: numbe
 	if def.category then row(def.category, Theme.Font.Primary, Theme.Text.Small(), Theme.Colors.TextSecondary) end
 	if tileX and tileY then row(`Tile ({tileX}, {tileY})`, Theme.Font.Mono, Theme.Text.Small(), Theme.Colors.TextSecondary) end
 	row(if def.passable then "Passable" else "Impassable", Theme.Font.Primary, Theme.Text.Body(), if def.passable then Theme.Colors.Success else Theme.Colors.Danger)
+	-- OBS Phase 2a: blocker-prop / billboard readout (map_gen_rules rows 90/91).
+	do
+		local isOBS = false
+		if def.tags then
+			for _, tg in ipairs(def.tags) do if tg == "OBS" then isOBS = true break end end
+		end
+		if isOBS then
+			row("Blocks line of sight", Theme.Font.Primary, Theme.Text.Body(), Theme.Colors.Danger)
+			if def.isUnbreakable then
+				row("Unbreakable. Immovable. Elevation-immune.", Theme.Font.Primary, Theme.Text.Body(), Theme.Colors.TextPrimary)
+			elseif type(def.hitsToDestroy) == "number" then
+				-- Phase 2a shows full HP; Phase 2c broadcasts live decrements here.
+				row(string.format("HP %d/%d", def.hitsToDestroy, def.hitsToDestroy), Theme.Font.PrimaryBold, Theme.Text.Body(), Theme.Colors.TextPrimary)
+				row(string.format("Push: needs Force > %d", def.nativeStability or 3), Theme.Font.Primary, Theme.Text.Small(), Theme.Colors.TextSecondary)
+			end
+		end
+	end
 	if def.primaryEffect then
 		row("EFFECT", Theme.Font.PrimaryBold, Theme.Text.Small(), Theme.Colors.TextSecondary)
 		row(def.primaryEffect, Theme.Font.Primary, Theme.Text.Body(), Theme.Colors.TextPrimary)

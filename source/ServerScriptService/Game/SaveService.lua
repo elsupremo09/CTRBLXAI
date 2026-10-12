@@ -30,6 +30,11 @@ local ArmorData = require(
 		:WaitForChild("Content")
 		:WaitForChild("ArmorData")
 )
+local RaceData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("RaceData")
+)
 
 local SaveService = {}
 
@@ -51,6 +56,24 @@ local KEY_PROGRESSION = "progression_v%d_%s"
 --------------------------------------------------
 
 local _mode = "memory" -- default safe
+
+-- Load-failure guard (save_data_contract: "Never replace valid save with blank on
+-- load failure"). If Load errors for a player (DataStore down, HTTP 403 with Studio
+-- API access off, schema newer than code), that player's real save is unknown, so
+-- every Save for them is refused for the rest of the session. "No save found" (a
+-- new player) is NOT a failure and saves normally.
+local _loadFailed: { [string]: string } = {}
+
+local function failLoad(playerId, reason)
+	_loadFailed[playerId] = reason
+	warn("[SaveService] Saving DISABLED for " .. playerId .. " this session: " .. reason)
+	return nil, reason
+end
+
+-- Reason string while saving is blocked for this player, else nil.
+function SaveService.GetLoadFailure(playerId)
+	return _loadFailed[playerId]
+end
 
 function SaveService.SetMode(mode)
 	assert(mode == "memory" or mode == "studio" or mode == "production",
@@ -217,10 +240,41 @@ local function encodeUnit(unitState)
 		sap = unitState.statAllocation or nil,
 		rec = unitState.records or nil,
 		con = unitState.consumableSlots or nil,
+		-- Player-chosen 2D portrait asset ID (option B). nil = no choice yet
+		-- (display falls back to the colored box). Headshot mode (option A) is
+		-- deferred until worn-UGC is persisted, so only the asset ID is saved here.
+		por = unitState.portraitAssetId or nil,
+		-- Player-chosen body/skin tint as {r,g,b} 0-255 ints (nil = template colors).
+		bcl = unitState.bodyColor or nil,
 	}
 end
 
-local function decodeUnit(encoded)
+-- Race renames (2026-10-09): a saved race ID that was later renamed loads as the
+-- current ID (RaceData.LegacyIds). Unknown IDs are kept as-is (unchanged behaviour).
+-- Returns (raceId, wasConverted).
+local function convertSavedRaceId(raceId)
+	if raceId == nil then return nil, false end
+	local current, converted = RaceData.Resolve(raceId)
+	if converted then return current, true end
+	return raceId, false
+end
+
+local function decodeUnit(encoded, unitId)
+	-- The unit's raceId (rid) and its progression record's raceId (rec.raceId) are
+	-- both saved; convert either if it holds a legacy ID. One warning per unit.
+	local fromId, toId = nil, nil
+	local raceId, ridConverted = convertSavedRaceId(encoded.rid)
+	if ridConverted then fromId, toId = encoded.rid, raceId end
+	local records = encoded.rec or nil
+	if type(records) == "table" and records.raceId ~= nil then
+		local recRace, recConverted = convertSavedRaceId(records.raceId)
+		if recConverted and fromId == nil then fromId, toId = records.raceId, recRace end
+		records.raceId = recRace
+	end
+	if fromId then
+		warn(string.format("[SaveService] converted legacy race id %s -> %s (unit %s)",
+			tostring(fromId), tostring(toId), tostring(unitId)))
+	end
 	return {
 		currentHp = encoded.hp,
 		currentMp = encoded.mp,
@@ -229,15 +283,19 @@ local function decodeUnit(encoded)
 		isKO      = encoded.ko or false,
 		mpRegenAccumulator = 0,
 		equipSlots = encoded.eq or nil,
-		raceId     = encoded.rid or nil,
+		raceId     = raceId,
 		perkIds    = encoded.pks or {},
 		drawbackIds = encoded.dbs or {},
 		doctrineId = encoded.doc or nil,
 		selectedDoctrineSkill = encoded.dsk or nil,
 		skillLoadout = encoded.skl or nil,
 		statAllocation = encoded.sap or nil,
-		records = encoded.rec or nil,
+		records = records,
 		consumableSlots = encoded.con or nil,
+		-- Player-chosen 2D portrait asset ID (option B); nil = colored-box fallback.
+		portraitAssetId = encoded.por or nil,
+		-- Player-chosen body/skin tint {r,g,b} 0-255 ints; nil = template colors.
+		bodyColor = encoded.bcl or nil,
 	}
 end
 
@@ -250,6 +308,13 @@ end
 
 function SaveService.Save(playerId, rosterState, inventoryItems, progression, currencies)
 	assert(type(playerId) == "string", "SaveService.Save: playerId required")
+
+	-- Every save path (battle end, hub close, guild actions, dev commands) ends here.
+	if _loadFailed[playerId] then
+		warn("[Save] Skipped — load failed this session, refusing to overwrite the real save ("
+			.. _loadFailed[playerId] .. ")")
+		return false, "Save blocked: load failed this session"
+	end
 
 	-- Encode roster (Key 1)
 	local rosterData = {
@@ -345,21 +410,23 @@ function SaveService.Load(playerId)
 		rosterRaw, err = safeGetAsync(store1, getKey(KEY_ROSTER, playerId))
 		if err then
 			warn("[SaveService] LOAD FAILED (roster): " .. err)
-			return nil, "Roster load failed: " .. err
+			return failLoad(playerId, "Roster load failed: " .. err)
 		end
 
 		inventoryRaw, err = safeGetAsync(store2, getKey(KEY_INVENTORY, playerId))
 		if err then
 			warn("[SaveService] LOAD FAILED (inventory): " .. err)
-			return nil, "Inventory load failed: " .. err
+			return failLoad(playerId, "Inventory load failed: " .. err)
 		end
 
 		progressionRaw, err = safeGetAsync(store3, getKey(KEY_PROGRESSION, playerId))
 		if err then
 			warn("[SaveService] LOAD FAILED (progression): " .. err)
-			return nil, "Progression load failed: " .. err
+			return failLoad(playerId, "Progression load failed: " .. err)
 		end
 	end
+
+	_loadFailed[playerId] = nil -- reads succeeded; only a schema mismatch below re-blocks
 
 	-- No save exists (new player)
 	if not rosterRaw and not inventoryRaw and not progressionRaw then
@@ -369,14 +436,14 @@ function SaveService.Load(playerId)
 
 	-- Validate schema version
 	if rosterRaw and rosterRaw.schemaVersion and rosterRaw.schemaVersion > SCHEMA_VERSION then
-		return nil, "Save schema newer than code (v" .. rosterRaw.schemaVersion .. " > v" .. SCHEMA_VERSION .. ")"
+		return failLoad(playerId, "Save schema newer than code (v" .. rosterRaw.schemaVersion .. " > v" .. SCHEMA_VERSION .. ")")
 	end
 
 	-- Decode roster
 	local roster = {}
 	if rosterRaw and rosterRaw.units then
 		for unitId, encoded in pairs(rosterRaw.units) do
-			roster[unitId] = decodeUnit(encoded)
+			roster[unitId] = decodeUnit(encoded, unitId)
 		end
 	end
 

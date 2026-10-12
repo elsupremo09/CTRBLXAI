@@ -41,6 +41,7 @@ local ArmorData      = require(Content:WaitForChild("ArmorData"))
 local ConsumableData = require(Content:WaitForChild("ConsumableData"))
 local UnitNameData   = require(Content:WaitForChild("UnitNameData"))
 local TraitData      = require(Content:WaitForChild("TraitData"))
+local PortraitData   = require(Content:WaitForChild("PortraitData"))
 
 local EnemyGenerator = {}
 
@@ -278,6 +279,36 @@ local function shuffledCopy(rng: Random, list: {any}): {any}
 	return copy
 end
 
+--- Pick a race-matched portrait asset ID for a generated unit, deterministically.
+--- Per-battle uniqueness: `usedPortraits` is a set { [assetId] = true } shared by
+--- every enemy/neutral/NPC in ONE battle (battle-start batch + mid-battle spawns +
+--- event NPCs). We prefer an asset not yet in that set; if the race's pool is
+--- exhausted (more units of a race than it has portraits — e.g. a big Zombie
+--- Horde), we fall back to any portrait from the pool (repeat allowed) rather than
+--- leaving the unit faceless. Draws from the same `rng` so determinism holds
+--- (same seed = same portraits). Player-side units never call this, so they are
+--- exempt AND never consume from the pool. Returns the numeric asset ID or nil
+--- (nil only if the race has no portraits at all — no race currently lacks them).
+local function pickPortrait(rng: Random, raceId: string, usedPortraits: {[number]: boolean}?): number?
+	local pool = PortraitData.GetPool(raceId)
+	if not pool or #pool == 0 then return nil end
+	-- Shuffle a copy so the "first unused" scan is itself randomised per draw.
+	local shuffled = shuffledCopy(rng, pool)
+	if usedPortraits then
+		for _, assetId in ipairs(shuffled) do
+			if not usedPortraits[assetId] then
+				usedPortraits[assetId] = true
+				return assetId
+			end
+		end
+		-- Pool exhausted for this race this battle: allow a repeat (do not re-mark;
+		-- it is already in the set). Pick any shuffled entry.
+		return shuffled[1]
+	end
+	-- No tracking set supplied: just pick one at random (no uniqueness guarantee).
+	return shuffled[1]
+end
+
 --- Does a skill's tag set satisfy one augment requirement token?
 --- Tokens may be compound with " OR " (e.g. "Direct Damage OR Support"); the
 --- token is satisfied if the skill has ANY of the OR-separated options.
@@ -414,7 +445,7 @@ local function buildEnemyName(rng, unit, fallback: string): string
 	return `{firstPool[rng:NextInteger(1, #firstPool)]} {docPool[rng:NextInteger(1, #docPool)]}`
 end
 
-function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index: number, spawn: {x: number, y: number}, rng: Random): any?
+function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index: number, spawn: {x: number, y: number}, rng: Random, usedPortraits: {[number]: boolean}?): any?
 	local tierKey = TYPE_TO_TIER[spec.type]
 	if not tierKey then
 		warn("[EnemyGenerator] Unsupported enemy type (skipped): " .. tostring(spec.type))
@@ -490,6 +521,13 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 			end
 		end
 	end
+
+	-- 4c. Portrait (race-matched, per-battle unique). Draws from the same rng so
+	--     determinism holds. usedPortraits (when supplied by the caller) is the
+	--     per-battle set that keeps every enemy/neutral/NPC in one battle on a
+	--     distinct face until the race's pool is exhausted. Player units never
+	--     reach this path, so they neither get restricted nor consume the pool.
+	unit.portraitAssetId = pickPortrait(rng, raceId, usedPortraits)
 
 	-- 5. Wire skills into the loadout structure the combat/AI systems read.
 	unit.selectedDoctrineSkill = doctrineSkill
@@ -620,13 +658,16 @@ function EnemyGenerator.GenerateEnemies(enemyTypes: {any}, enemySpawns: {any}, r
 	local units = {}
 	local spawnIdx = 1
 	local created = 0
+	-- Per-battle portrait set shared by every unit in this opening roster (and by
+	-- mid-battle spawns too, once BattleCoordinator stores it on state — see below).
+	local usedPortraits: {[number]: boolean} = {}
 	for _, entry in ipairs(enemyTypes) do
 		local count = entry.count or 1
 		for _ = 1, count do
 			local spawn = enemySpawns[spawnIdx] or enemySpawns[#enemySpawns] or { x = 1, y = 1 }
 			local unit = EnemyGenerator.GenerateEnemy(
 				{ type = entry.type, level = entry.level },
-				created + 1, spawn, rng
+				created + 1, spawn, rng, usedPortraits
 			)
 			if unit then
 				table.insert(units, unit)
@@ -672,9 +713,22 @@ function EnemyGenerator.SpawnReinforcement(spec, spawnTile, state, rng, side, ra
 	local index = #state.units + _reinforcementCounter + 1000
 
 	local spawn = spawnTile or { x = 1, y = 1 }
+	-- Per-battle portrait set lives on the battle state so EVERY mid-battle spawn
+	-- (reinforcements + all BattlefieldEventService NPCs, which route through here)
+	-- shares one set with the battle-start roster. Lazily build it the first time,
+	-- seeding from portraits already assigned to living units so a reinforcement
+	-- never collides with an opening-wave face. Scoped to this battle's state;
+	-- a new battle gets a fresh state and therefore a fresh set.
+	if not state.usedPortraits then
+		local seeded: {[number]: boolean} = {}
+		for _, u in ipairs(state.units) do
+			if u.portraitAssetId then seeded[u.portraitAssetId] = true end
+		end
+		state.usedPortraits = seeded
+	end
 	local unit = EnemyGenerator.GenerateEnemy(
 		{ type = spec.type, level = spec.level or 1 },
-		index, spawn, rng
+		index, spawn, rng, state.usedPortraits
 	)
 	if not unit then
 		warn("[EnemyGenerator] SpawnReinforcement: GenerateEnemy returned nil")
@@ -691,12 +745,26 @@ function EnemyGenerator.SpawnReinforcement(spec, spawnTile, state, rng, side, ra
 	-- Optional race override (Dragon Utopia -> Dragonkin). Rebuild stats so the
 	-- race change is reflected, then top HP back to full (RebuildUnitStats only
 	-- clamps down).
-	if raceOverride and unit.raceId ~= raceOverride then
-		unit.raceId = raceOverride
+	-- raceOverride can arrive from a client DevCommand (Main), so resolve it: legacy IDs
+	-- convert (race renames 2026-10-09) and unknown IDs are ignored (SEC-001).
+	local overrideId = if raceOverride then RaceData.Resolve(raceOverride) else nil
+	if raceOverride and not overrideId then
+		warn(string.format("[EnemyGenerator] ignored unknown raceOverride %s", tostring(raceOverride)))
+	end
+	if overrideId and unit.raceId ~= overrideId then
+		unit.raceId = overrideId
 		if EquipmentService.RebuildUnitStats then
 			EquipmentService.RebuildUnitStats(unit)
 			unit.currentHp = unit.maxHp
 		end
+		-- Race changed AFTER GenerateEnemy already assigned a portrait for the
+		-- originally-rolled race (e.g. Zombie Horde forces RACE-ZOMBIE). Re-pick a
+		-- portrait from the OVERRIDDEN race so the face matches the real race. Free
+		-- the mistakenly-reserved portrait first so it is not wasted from the pool.
+		if unit.portraitAssetId and state.usedPortraits then
+			state.usedPortraits[unit.portraitAssetId] = nil
+		end
+		unit.portraitAssetId = pickPortrait(rng, overrideId, state.usedPortraits)
 	end
 
 	-- Shared insertion tail (id-uniqueness + timeline join + roster insert).

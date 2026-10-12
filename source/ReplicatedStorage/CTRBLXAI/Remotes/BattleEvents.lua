@@ -131,6 +131,14 @@ local FUNCTION_NAMES = {
 
 	"RequestEquipConsumable",
 	"RequestUnequipConsumable",
+	-- Player picks a 2D race portrait for one of their units (loadout screen).
+	-- (unitId, assetId) -> { ok, error? }; server validates assetId is in the
+	-- unit's race pool, then stores it on the unit (persisted on next save).
+	"RequestSetPortrait",
+	-- Player picks a body/skin tint for one of their units (loadout screen).
+	-- (unitId, r, g, b) -> { ok, error? }; server clamps 0-255 and stores it;
+	-- nil r clears the tint. Persisted on next save.
+	"RequestSetBodyColor",
 	"GetConsumableSlots",
 }
 

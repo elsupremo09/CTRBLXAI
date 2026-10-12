@@ -246,6 +246,17 @@ local DIR4 = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
 local function placeBlockers(gm: any, tiles: { [string]: BasePart }, out: Folder, rng: Random): number
 	local variants = getVariants("Blockers", CFG.BLOCKER_FOLDERS, PropData.Blockers :: any)
 	if next(variants) == nil then return 0 end
+	-- OBS DECORATION RETIRED (user ruling 2026-10-12, map_gen_rules rows 75-78): an OBS
+	-- strip is EITHER a raised SPIKE (bare terrain — no props) OR a BLOCKER/BILLBOARD
+	-- object materialized onto the tile (tile.object), which MapRenderer.renderBlockers
+	-- draws from ServerStorage > Map Objects (or a fallback blocker part). Decorative
+	-- blocker props must NEVER be layered on top of OBS tiles again (the over-decoration
+	-- bug). This pass therefore places nothing; the per-cluster code below is left intact
+	-- (unreferenced) in case a non-OBS decorative use is wired later.
+	return 0
+	--[==[ RETIRED 2026-10-12 (see the active note above). A LEVELED long comment is used
+	-- because the dead body below contains chained-index syntax that forms a plain
+	-- long-comment terminator and would otherwise close an unleveled comment early.
 	local w, h = gm.width, gm.height
 	local regionTypes = gm.regionTypeMap or {}
 
@@ -330,12 +341,14 @@ local function placeBlockers(gm: any, tiles: { [string]: BasePart }, out: Folder
 		end
 	end
 
-	local function put(name: string, p: Pos, jitter: number): boolean
+	local function put(name: string, p: Pos): boolean
 		local part = tiles[`{p.x},{p.y}`]
 		local vlist = variants[name]
 		if not part or not vlist then return false end
 		local v = vlist[rng:NextInteger(1, #vlist)]
-		local inst = spawnProp(v, tileTop(part), rng, true, jitter, 0)
+		-- No resize (authored size). Free yaw + small offset so neighbours never
+		-- line up like arranged decorations.
+		local inst = spawnProp(v, tileTop(part), rng, false, 0, CFG.BLOCKER_MAX_OFFSET, rng:NextNumber() * 2 * math.pi)
 		if not inst then return false end
 		tag(inst, "Blocker", p.x, p.y)
 		inst.Name = `Prop_{name}_{p.x}_{p.y}`
@@ -351,7 +364,7 @@ local function placeBlockers(gm: any, tiles: { [string]: BasePart }, out: Folder
 			for _, name in candidates(rt, nil) do
 				local solo = soloNames[name] == true
 				if not solo or soloClear(p) then
-					if put(name, p, 0) then
+					if put(name, p) then
 						uses[name] = (uses[name] or 0) + 1
 						if solo then table.insert(soloPos, p) end
 						break
@@ -374,7 +387,7 @@ local function placeBlockers(gm: any, tiles: { [string]: BasePart }, out: Folder
 				shuffle(rng, edges)
 				local soloList = candidates(rt, "S")
 				for _, p in edges do
-					if soloList[1] and soloClear(p) and put(soloList[1], p, 0) then
+					if soloList[1] and soloClear(p) and put(soloList[1], p) then
 						uses[soloList[1]] = (uses[soloList[1]] or 0) + 1
 						table.insert(soloPos, p)
 						soloTile = p
@@ -390,15 +403,31 @@ local function placeBlockers(gm: any, tiles: { [string]: BasePart }, out: Folder
 			end
 			if #picks > 0 then
 				for _, n in picks do uses[n] = (uses[n] or 0) + 1 end
+				-- Each tile avoids the names already on its 4-neighbours (when the
+				-- pick list allows) so a cluster reads as a natural mix, not a row
+				-- of identical props.
+				local assigned: { [string]: string } = {}
 				for _, p in cluster do
 					if not (soloTile and soloTile.x == p.x and soloTile.y == p.y) then
-						put(picks[rng:NextInteger(1, #picks)], p, CFG.BLOCKER_SCALE_JITTER)
+						local avoid: { [string]: boolean } = {}
+						for _, d in DIR4 do
+							local nn = assigned[`{p.x + d[1]},{p.y + d[2]}`]
+							if nn then avoid[nn] = true end
+						end
+						local options: { string } = {}
+						for _, n in picks do
+							if not avoid[n] then table.insert(options, n) end
+						end
+						if #options == 0 then options = picks end
+						local name = options[rng:NextInteger(1, #options)]
+						if put(name, p) then assigned[`{p.x},{p.y}`] = name end
 					end
 				end
 			end
 		end
 	end
 	return placed
+	]==]
 end
 
 --------------------------------------------------

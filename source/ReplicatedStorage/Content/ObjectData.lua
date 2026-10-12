@@ -711,4 +711,49 @@ ObjectData.BattleConditions["Hunger Virus"] = {
 	notes = "Encourages aggressive combat.",
 }
 
+-- -----------------------------------------------------------------
+-- OBS TWO-FORM / AD BILLBOARD OBJECTS (added 2026-10-12)
+-- Mirrors objects_encounters rows 83 (Blocker-Prop Cluster) and 84 (Ad Billboard)
+-- and map_gen_rules rows 75-92. Placed by the OBS Two-Form System (ElevationPass
+-- form roll + MapService materialization), NOT by the biome object pool. Both are
+-- impassable (passable=false) so they flow through buildBlockers -> BLOCKERS ->
+-- IsBlocked (movement + direct LoS block) and renderBlockers (visual).
+-- PHASE 1 = static placement only. The Phase-2 fields below (hitsToDestroy,
+-- nativeStability) are DATA ONLY — no runtime system reads them yet (object HP,
+-- 3-hit break, push, and the map-object inspector are the Phase-2 build).
+-- -----------------------------------------------------------------
+ObjectData.Objects["OBS Blocker"] = {
+	id = "OBS Blocker",
+	category = "Obstacle",
+	tags = { "OBS", "Blocker", "Not-Landable", "Breakable", "Blocks-LoS" },
+	passable = false,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Impassable blocker-prop OBS cluster on normal-height ground; blocks movement and direct line of sight.",
+	uses = "Permanent",
+	notes = "BLOCKER-PROP form of an OBS strip (map_gen_rules row 77/81). PHASE 1: a permanent wall — impassable to all (flight pass-over, break, and push are Phase 2). Clearing (break/push) reverts the tile to normal passable ground (Phase 2).",
+	-- Standing height in elevation levels — used by buildBlockers (blocker.height)
+	-- and height-aware LoS. A low wall-height cluster.
+	standingHeight = 3,
+	-- Phase 2 (DATA ONLY — nothing reads these yet):
+	hitsToDestroy  = 3,  -- breaks after 3 hits from any source (map_gen_rules row 82)
+	nativeStability = 3, -- flat native Stability for Push: Distance = max(0, Force-3) (row 83)
+}
+
+ObjectData.Objects["Ad Billboard"] = {
+	id = "Ad Billboard",
+	category = "Obstacle",
+	tags = { "OBS", "Blocker", "Ad", "Immersive-Ad", "Not-Landable", "AdGui", "Unbreakable", "Elevation-Immune", "Immovable", "Blocks-LoS" },
+	passable = false,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Immersive-ad billboard that REPLACES an OBS strip 1:1; impassable, blocks movement and direct line of sight.",
+	uses = "Permanent",
+	notes = "AD BILLBOARD form (map_gen_rules rows 79/85). EXCEPTION to blocker-prop rules: NOT breakable, elevation-IMMUNE, and immovable (unpushable). PHASE 1: static immovable/unbreakable wall + flat panel visual with a commented AdGui hook; real Roblox ad units are out of scope until eligibility is met (row 80).",
+	standingHeight = 3,
+	isElevationImmune = true, -- consumed by GameConstants.IsElevationImmune (elevation-reduction no-op)
+	isUnbreakable = true,     -- Phase 2 break system must skip this (DATA ONLY now)
+	isImmovable = true,       -- Phase 2 push system must skip this (DATA ONLY now)
+}
+
 return ObjectData

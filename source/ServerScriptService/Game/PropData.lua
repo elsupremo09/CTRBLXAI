@@ -36,9 +36,10 @@ PropData.Config = table.freeze({
 	-- Blockers
 	BLOCKER_USES_PER_NAME   = 2,    -- a cluster or a lone tile = 1 use
 	SOLO_PER_NAME           = 2,
-	CLUSTER_GROUPABLE_NAMES = 2,    -- distinct groupable names mixed per cluster
+	CLUSTER_GROUPABLE_NAMES = 4,    -- distinct groupable names mixed per cluster (variety > uniformity)
 	CLUSTER_SOLO_CHANCE     = 0.5,  -- chance a cluster gets one solo on an edge tile
-	BLOCKER_SCALE_JITTER    = 0.15, -- groupable repeats scale in [1-j, 1]
+	-- Blocker props are NOT resized (authored at final size, user 2026-10-09).
+	BLOCKER_MAX_OFFSET      = 0.7,  -- studs of in-tile jitter so clusters don't read as a grid
 
 	-- Tile props
 	TILE_DENSITY            = 0.12,

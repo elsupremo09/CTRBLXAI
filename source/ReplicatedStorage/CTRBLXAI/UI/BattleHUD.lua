@@ -25,6 +25,9 @@ local player = Players.LocalPlayer
 
 local CTRBLXAI_UI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10)
 local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
+-- UIComponents hosts the shared portrait-overlay helper (ApplyPortrait). Require
+-- is acyclic: UIComponents requires only Theme, which BattleHUD already requires.
+local UIComponents = require(CTRBLXAI_UI:WaitForChild("UIComponents", 10))
 
 local Shared = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("Shared", 10)
 local GameConstants = require(Shared:WaitForChild("GameConstants", 10))
@@ -112,7 +115,9 @@ end
 local function clearFrame(frame)
 	if not frame then return end
 	for _, child in ipairs(frame:GetChildren()) do
-		if not child:IsA("UICorner") and not child:IsA("UIStroke") and not child:IsA("UIPadding") and not child:IsA("UISizeConstraint") then
+		-- UIPadding is cleared too (2026-10-09): every builder re-adds its own, and keeping old
+		-- ones stacked them so the first (10 px) always won and new insets never applied.
+		if not child:IsA("UICorner") and not child:IsA("UIStroke") and not child:IsA("UISizeConstraint") then
 			child:Destroy()
 		end
 	end
@@ -153,7 +158,7 @@ end
 
 -- Fixed column layout for the Skills / Items lists (2026-10-08). The theme "Mono" font is not
 -- fixed-width, so padding with spaces can't line columns up; each column is its own label.
-local LIST_COL_W = 30
+local LIST_COL_W = 30 -- narrowed for name room; 6 px INSET keeps 3-digit values inside the bar (2026-10-09)
 local function listColumns(parent, name, cols, isHeader)
 	local function cell(text, size, pos, align)
 		local l = Instance.new("TextLabel")
@@ -171,9 +176,10 @@ local function listColumns(parent, name, cols, isHeader)
 		l.Parent = parent -- NET-004
 	end
 	local n = #cols
-	cell(name, UDim2.new(1, -(6 + LIST_COL_W * n), 1, 0), UDim2.fromOffset(6, 0), Enum.TextXAlignment.Left)
+	local INSET = 6 -- same gap on both ends so text never meets the bar edge art (2026-10-09)
+	cell(name, UDim2.new(1, -(INSET * 2 + LIST_COL_W * n), 1, 0), UDim2.fromOffset(INSET, 0), Enum.TextXAlignment.Left)
 	for i, v in cols do
-		local x = -(LIST_COL_W * (n - i + 1))
+		local x = -(INSET + LIST_COL_W * (n - i + 1))
 		cell(tostring(v), UDim2.new(0, LIST_COL_W, 1, 0), UDim2.new(1, x, 0, 0), Enum.TextXAlignment.Right)
 	end
 end
@@ -552,17 +558,35 @@ local function buildObjectCard()
 	-- Line 2: description, scrollable (no tap layer over it, so dragging scrolls).
 	local desc
 	if def then
-		local parts = { if def.passable then "Passable." else "Impassable." }
-		if def.primaryEffect and def.primaryEffect ~= "" then
-			local e = def.primaryEffect
-			if not string.find(e, "[%.!]$") then e ..= "." end
-			table.insert(parts, e)
+		-- OBS Phase 2a: blocker-prop / billboard OBS objects use the dedicated shared
+		-- readout (map_gen_rules rows 90/91); every other map object keeps the generic card.
+		local isOBS = false
+		if def.tags then
+			for _, tg in ipairs(def.tags) do if tg == "OBS" then isOBS = true break end end
 		end
-		local at = objectActivationText(def)
-		if at then table.insert(parts, at) end
-		local ut = def.uses and USES_TEXT[def.uses]
-		if ut then table.insert(parts, ut) end
-		desc = table.concat(parts, " ")
+		if isOBS then
+			local parts = { "Impassable, and blocks line of sight." }
+			if def.isUnbreakable then
+				table.insert(parts, "Unbreakable. Immovable. Elevation-immune.")
+			elseif type(def.hitsToDestroy) == "number" then
+				-- Phase 2a shows full HP; Phase 2c broadcasts live decrements here.
+				table.insert(parts, string.format("HP %d/%d.", def.hitsToDestroy, def.hitsToDestroy))
+				table.insert(parts, string.format("Push: needs Force > %d.", def.nativeStability or 3))
+			end
+			desc = table.concat(parts, " ")
+		else
+			local parts = { if def.passable then "Passable." else "Impassable." }
+			if def.primaryEffect and def.primaryEffect ~= "" then
+				local e = def.primaryEffect
+				if not string.find(e, "[%.!]$") then e ..= "." end
+				table.insert(parts, e)
+			end
+			local at = objectActivationText(def)
+			if at then table.insert(parts, at) end
+			local ut = def.uses and USES_TEXT[def.uses]
+			if ut then table.insert(parts, ut) end
+			desc = table.concat(parts, " ")
+		end
 	else
 		warn(`[BattleHUD] No ObjectData entry for selected object: {tostring(sel.name)}`)
 		desc = "No details available."
@@ -619,6 +643,8 @@ function BattleHUD._buildActiveUnit()
 	portrait.Text = string.sub(d.name or "?", 1, 2)
 	portrait.BorderSizePixel = 0; portrait.Parent = topRow
 	Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
+	-- Portrait face overlay (enemy/neutral/NPC). nil for players/summons → initials box.
+	if UIComponents.ApplyPortrait(portrait, d.portraitAssetId) then portrait.Text = "" end
 	portrait.MouseButton1Click:Connect(function()
 		if _G.CTRBLXAI_OpenInspectorPanel and d.id then
 			_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
@@ -708,9 +734,10 @@ function BattleHUD._showActionList(actions, parentLabel)
 	clearFrame(actionPanel)
 	actionPanel.Visible = true
 
+	-- Side inset 5 px: battle button standard (user ruling 2026-10-09).
 	local pad = Instance.new("UIPadding", actionPanel)
-	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
-	pad.PaddingRight = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 5)
+	pad.PaddingRight = UDim.new(0, 5); pad.PaddingBottom = UDim.new(0, 10)
 
 	local layout = Instance.new("UIListLayout", actionPanel)
 	layout.Padding = UDim.new(0, 3)
@@ -906,6 +933,8 @@ function BattleHUD._buildInspector()
 		portrait.Text = string.sub(d.name or "?", 1, 2)
 		portrait.BorderSizePixel = 0; portrait.Parent = topRow
 		Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
+		-- Portrait face overlay (enemy/neutral/NPC). nil for players/summons → initials box.
+		if UIComponents.ApplyPortrait(portrait, d.portraitAssetId) then portrait.Text = "" end
 		portrait.MouseButton1Click:Connect(function()
 			if _G.CTRBLXAI_OpenInspectorPanel and d.id then
 				_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
@@ -1319,7 +1348,7 @@ local TERRAIN_INFO = {
 	["Magic Circle"] = "Arcane platform. Occupy: INT +30%; Spell Range +1.",
 	["Tainted Ground"] = "Corrupted earth. Drains MP from living units.",
 	["Cracked Ground"] = "Weakened rock. May collapse under heavy units.",
-	Quicksand = "Collapsing sand. Movement prohibited.",
+	Quicksand = "Collapsing sand. Deadly — units sink and are lost.",
 	["Monolith (One-way)"] = "Ancient teleport. Random warp on end turn.",
 	["Monolith (Two-way)"] = "Linked portal. Teleports to paired portal.",
 }
@@ -1742,6 +1771,7 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 		-- Top label: name (skipped for split channel — halves already show caster + skill)
 		if not isSplitChannel then
 		local nameL = Instance.new("TextLabel")
+		nameL.Name = "SlotName"
 		nameL.Size = UDim2.new(1, 0, 0.55, 0)
 		nameL.Position = UDim2.new(0, 0, 0, 1)
 		nameL.BackgroundTransparency = 1
@@ -1768,6 +1798,7 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 		-- Bottom label (skipped for split channel)
 		if not isSplitChannel then
 		local bottomL = Instance.new("TextLabel")
+		bottomL.Name = "SlotBottom"
 		bottomL.Size = UDim2.new(1, 0, 0.35, 0)
 		bottomL.Position = UDim2.fromScale(0, 0.6)
 		bottomL.BackgroundTransparency = 1
@@ -1784,6 +1815,69 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 			bottomL.Text = entry.rt and tostring(entry.rt) or ""
 		end
 		bottomL.Parent = portrait
+		end
+
+		-- Portrait face overlay for real unit slots (enemy/neutral/NPC). Players and
+		-- summons have no portraitAssetId → slot keeps its colored box + name/RT text.
+		-- The image fills the slot as a BACKGROUND; ALL slot text (name + NOW/RT)
+		-- stays ON TOP, restyled white-with-black-outline for readability over any
+		-- portrait (user rule 2026-10-12 — same style as bar buttons). Earlier this
+		-- hid the name label, which buried the info behind the face.
+		if isUnit and not isSplitChannel and type(entry.portraitAssetId) == "number" then
+			-- Apply the face WITHOUT passing an abbrev label (nil) so no text is hidden.
+			local img = UIComponents.ApplyPortrait(portrait, entry.portraitAssetId, nil)
+			if img then
+				local topZ = img.ZIndex + 1
+				-- Corner layout over the portrait (user rule 2026-10-12):
+				--   NAME  -> bottom strip (full width)
+				--   RT    -> upper-left corner
+				--   STAR  -> upper-right corner (Elite gold / Veteran silver)
+				-- Both labels stay pure white + black outline (button text style).
+				local nameL = portrait:FindFirstChild("SlotName")
+				local rtL   = portrait:FindFirstChild("SlotBottom")  -- carries NOW / RT value
+				if nameL then
+					nameL.Visible = true
+					nameL.ZIndex = topZ
+					nameL.TextColor3 = Color3.new(1, 1, 1)
+					nameL.TextStrokeColor3 = Color3.new(0, 0, 0)
+					nameL.TextStrokeTransparency = 0
+					-- Move to the BOTTOM strip, full width.
+					nameL.Size = UDim2.new(1, 0, 0.34, 0)
+					nameL.Position = UDim2.new(0, 0, 0.66, 0)
+					nameL.TextXAlignment = Enum.TextXAlignment.Center
+					nameL.TextYAlignment = Enum.TextYAlignment.Bottom
+				end
+				if rtL then
+					rtL.Visible = true
+					rtL.ZIndex = topZ
+					rtL.TextColor3 = Color3.new(1, 1, 1)
+					rtL.TextStrokeColor3 = Color3.new(0, 0, 0)
+					rtL.TextStrokeTransparency = 0
+					-- Move RT (or NOW) to the UPPER-LEFT corner.
+					rtL.Size = UDim2.new(0.7, 0, 0.3, 0)
+					rtL.Position = UDim2.new(0, 1, 0, 0)
+					rtL.TextXAlignment = Enum.TextXAlignment.Left
+					rtL.TextYAlignment = Enum.TextYAlignment.Top
+				end
+				-- Tier star, UPPER-RIGHT. Only Elite (gold) / Veteran (silver); reuses
+				-- the same asset IDs as the overhead name-tag star. Grunts/players: none.
+				local TIER_STAR = {
+					Elite   = "rbxassetid://134634995983546",  -- gold
+					Veteran = "rbxassetid://126540666012445",  -- silver
+				}
+				local starImg = entry.enemyType and TIER_STAR[entry.enemyType]
+				if starImg then
+					local star = Instance.new("ImageLabel")
+					star.Name = "SlotTierStar"
+					star.BackgroundTransparency = 1
+					star.Image = starImg
+					star.Size = UDim2.fromScale(0.34, 0.34)
+					star.Position = UDim2.new(1, -1, 0, 1)
+					star.AnchorPoint = Vector2.new(1, 0)  -- hug the top-right corner
+					star.ZIndex = topZ + 1
+					star.Parent = portrait
+				end
+			end
 		end
 
 		-- Click handler
@@ -1901,6 +1995,8 @@ function BattleHUD._buildViewModeUnit()
 	portrait.Text = string.sub(d.name or "?", 1, 2)
 	portrait.BorderSizePixel = 0; portrait.Parent = topRow
 	Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
+	-- Portrait face overlay (enemy/neutral/NPC). nil for players/summons → initials box.
+	if UIComponents.ApplyPortrait(portrait, d.portraitAssetId) then portrait.Text = "" end
 	portrait.MouseButton1Click:Connect(function()
 		if _G.CTRBLXAI_OpenInspectorPanel and d.id then
 			_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
@@ -2000,7 +2096,7 @@ function BattleHUD._buildViewModeTile()
 		["Magic Circle"] = "Arcane platform. Occupy: INT +30%; Spell Range +1",
 		["Tainted Ground"] = "Corrupted earth. Drains MP from living units",
 		["Cracked Ground"] = "Weakened rock. May collapse under heavy units",
-		Quicksand = "Collapsing sand. Movement prohibited",
+		Quicksand = "Collapsing sand. Deadly — units sink and are lost",
 		["Monolith (One-way)"] = "Ancient teleport. Random warp on end turn",
 		["Monolith (Two-way)"] = "Linked portal. Teleports to paired portal",
 	}
@@ -2398,9 +2494,10 @@ function BattleHUD._buildSkillList()
 	actionPanel.Visible = true
 	if not presentation.actor or not presentation.actor.skillEntries then return end
 
+	-- Side inset 5 px: battle button standard (user ruling 2026-10-09).
 	local pad = Instance.new("UIPadding", actionPanel)
-	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
-	pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 5)
+	pad.PaddingRight = UDim.new(0, 5)
 
 	local layout = Instance.new("UIListLayout", actionPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -2439,9 +2536,10 @@ function BattleHUD._buildItemList()
 	actionPanel.Visible = true
 	if not presentation.actor or not presentation.actor.itemEntries then return end
 
+	-- Side inset 5 px: battle button standard (user ruling 2026-10-09).
 	local pad = Instance.new("UIPadding", actionPanel)
-	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
-	pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 5)
+	pad.PaddingRight = UDim.new(0, 5)
 
 	local layout = Instance.new("UIListLayout", actionPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder

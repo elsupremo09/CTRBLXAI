@@ -16,6 +16,10 @@ local BattleEvents = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 	:WaitForChild("Remotes", 10):WaitForChild("BattleEvents", 10))
 local ConsumableData = require(ReplicatedStorage:WaitForChild("Content", 10)
 	:WaitForChild("ConsumableData", 10))
+-- Shared portrait-overlay helper + per-race 2D portrait pools (player picker).
+local UIComponents = require(CTRBLXAI_UI:WaitForChild("UIComponents", 10))
+local PortraitData = require(ReplicatedStorage:WaitForChild("Content", 10)
+	:WaitForChild("PortraitData", 10))
 -- OUTFIT tab (UGC cosmetics) is its own module; this screen only hosts it (loadout_ui_spec 62).
 -- Guarded: if the UGC modules fail to load, the other loadout tabs keep working.
 local okOutfitTab, UGCOutfitTab = pcall(require, CTRBLXAI_UI:WaitForChild("UGCOutfitTab", 10))
@@ -5009,6 +5013,11 @@ buildInfoContent = function()
 	pLabel.TextColor3 = Theme.Colors.TextPrimary
 	pLabel.Text = string.sub(statsData.name or "?", 1, 2)
 	pLabel.Parent = portrait
+	-- Current chosen 2D portrait overlays the initials box (player option B).
+	-- nil → initials remain. The authoritative value comes from the server stats.
+	if UIComponents.ApplyPortrait(portrait, statsData.portraitAssetId, pLabel) then
+		pLabel.Visible = false
+	end
 	local lvBadge = Instance.new("Frame")
 	lvBadge.Size = UDim2.fromOffset(28, 16); lvBadge.Position = UDim2.fromOffset(0, 0)
 	lvBadge.BackgroundColor3 = Theme.Colors.BadgeBg; lvBadge.BorderSizePixel = 0
@@ -5039,6 +5048,105 @@ buildInfoContent = function()
 		statsData.currentHp or 0, statsData.maxHp or 0,
 		statsData.currentMp or 0, statsData.maxMp or 0),
 		66, Theme.Font.Mono, Theme.Text.Body(), Theme.Colors.TextPrimary)
+
+	-- ---- 2D PORTRAIT PICKER (player option B) ----
+	-- A face grid of this unit's race pool. Tapping a face sets it on the server
+	-- (validated against the race pool) and refreshes. The current pick gets a
+	-- gold border. No helper label (mobile space; user rule 2026-10-08).
+	do
+		local pool = statsData.raceId and PortraitData.GetPool(statsData.raceId) or nil
+		if pool and #pool > 0 then
+			local grid = Instance.new("Frame")
+			grid.Size = UDim2.new(1, -8, 0, 0)
+			grid.AutomaticSize = Enum.AutomaticSize.Y
+			grid.BackgroundTransparency = 1
+			grid.LayoutOrder = nextL(); grid.Parent = leftCol
+			local g = Instance.new("UIGridLayout", grid)
+			g.CellSize = UDim2.fromOffset(44, 44)
+			g.CellPadding = UDim2.fromOffset(4, 4)
+			g.SortOrder = Enum.SortOrder.LayoutOrder
+			local current = statsData.portraitAssetId
+			for _, assetId in ipairs(pool) do
+				local cell = Instance.new("ImageButton")
+				cell.BackgroundColor3 = Theme.GetSideColor and Theme.GetSideColor("Player") or Theme.Colors.Player
+				cell.BackgroundTransparency = 0.2
+				cell.BorderSizePixel = 0
+				cell.AutoButtonColor = true
+				cell.Image = "rbxassetid://" .. tostring(assetId)
+				cell.ScaleType = Enum.ScaleType.Crop
+				cell.Parent = grid
+				Instance.new("UICorner", cell).CornerRadius = Theme.CornerRadius.sm
+				if current == assetId then
+					local st = Instance.new("UIStroke", cell)
+					st.Color = Theme.Colors.TextGold; st.Thickness = 2
+				end
+				cell.MouseButton1Click:Connect(function()
+					-- Toggle off if tapping the already-selected face (clear → fallback box).
+					local target = (current == assetId) and nil or assetId
+					local ok, res = pcall(function()
+						return BattleEvents.RequestSetPortrait:InvokeServer(unit.id, target)
+					end)
+					if ok and res and res.ok then
+						LoadoutScreen.Refresh()
+					end
+				end)
+			end
+		end
+	end
+
+	-- ---- BODY COLOR PICKER (player body/skin tint) ----
+	-- A fixed preset swatch palette (user choice 2026-10-11). Tapping a swatch sets
+	-- the unit's body tint on the server (clamped) and refreshes; tapping the current
+	-- one clears it. Current pick gets a gold border. No helper label (mobile rule).
+	-- Any color is allowed; side readability stays on the existing highlights.
+	do
+		local PALETTE = {
+			{230, 200, 170}, {210, 160, 120}, {150, 100, 70}, {90, 60, 45},   -- skin tones
+			{235, 230, 220}, {120, 125, 135}, {40, 45, 55},                    -- neutrals
+			{80, 140, 210}, {70, 170, 140}, {120, 180, 70},                    -- cool
+			{230, 190, 60}, {220, 120, 60}, {190, 70, 90},                     -- warm
+			{150, 90, 190}, {90, 110, 200},                                    -- violet/indigo
+		}
+		local cur = statsData.bodyColor  -- {r,g,b} or nil
+		local grid = Instance.new("Frame")
+		grid.Size = UDim2.new(1, -8, 0, 0)
+		grid.AutomaticSize = Enum.AutomaticSize.Y
+		grid.BackgroundTransparency = 1
+		grid.LayoutOrder = nextL(); grid.Parent = leftCol
+		local g = Instance.new("UIGridLayout", grid)
+		g.CellSize = UDim2.fromOffset(30, 30)
+		g.CellPadding = UDim2.fromOffset(4, 4)
+		g.SortOrder = Enum.SortOrder.LayoutOrder
+		for _, rgb in ipairs(PALETTE) do
+			local sw = Instance.new("TextButton")
+			sw.Text = ""
+			sw.AutoButtonColor = true
+			sw.BorderSizePixel = 0
+			sw.BackgroundColor3 = Color3.fromRGB(rgb[1], rgb[2], rgb[3])
+			sw.Parent = grid
+			Instance.new("UICorner", sw).CornerRadius = Theme.CornerRadius.sm
+			local isCur = cur and cur[1] == rgb[1] and cur[2] == rgb[2] and cur[3] == rgb[3]
+			if isCur then
+				local st = Instance.new("UIStroke", sw)
+				st.Color = Theme.Colors.TextGold; st.Thickness = 2
+			end
+			sw.MouseButton1Click:Connect(function()
+				local ok, res
+				if isCur then
+					ok, res = pcall(function()
+						return BattleEvents.RequestSetBodyColor:InvokeServer(unit.id, nil)
+					end)
+				else
+					ok, res = pcall(function()
+						return BattleEvents.RequestSetBodyColor:InvokeServer(unit.id, rgb[1], rgb[2], rgb[3])
+					end)
+				end
+				if ok and res and res.ok then
+					LoadoutScreen.Refresh()
+				end
+			end)
+		end
+	end
 
 	-- Race passive
 	if statsData.racePassiveName then

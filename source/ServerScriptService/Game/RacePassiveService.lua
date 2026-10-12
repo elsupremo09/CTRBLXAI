@@ -121,8 +121,8 @@ function RacePassiveService.GetDamageDealtModifier(attacker, element, isAOE, tar
 		end
 	end
 
-	-- MERMAID — Tidecaller: off water, all stats -10% → damage dealt -10%
-	if raceId == "RACE-MERMAID" then
+	-- CATAU — Tidecaller: off water, all stats -10% → damage dealt -10%
+	if raceId == "RACE-CATAU" then
 		if not isOnWaterTile(attacker) then
 			mod = mod * 0.90
 		end
@@ -201,11 +201,11 @@ function RacePassiveService.GetDamageReceivedModifier(defender, element, isAOE, 
 		end
 	end
 
-	-- MERMAID — Tidecaller (races row 'Mermaid'): "All primary stats -10% while not
+	-- CATAU — Tidecaller (races row 'Catau'): "All primary stats -10% while not
 	-- occupying Water, Wet, or Ice" → as DEFENDER, off water: damage received +10%.
 	-- (BUGFIX 2026-10-03: moved here from GetDamageDealtModifier, where it read an
 	-- undefined global `defender` and so applied an unconditional +10% dealt.)
-	if raceId == "RACE-MERMAID" then
+	if raceId == "RACE-CATAU" then
 		if not isOnWaterTile(defender) then
 			mod = mod * 1.10
 		end
@@ -508,17 +508,17 @@ function RacePassiveService.OnDamageReceived(defender, actualDamage, sourceUnitI
 end
 
 --------------------------------------------------
--- LIZARDMEN — SPIKED HIDE (2026-10-02)
+-- REPTILIAN — SPIKED HIDE (2026-10-02; race renamed from Lizardmen 2026-10-09)
 -- Reflected damage the ATTACKER takes when it lands a MELEE hit on this
 -- defender from one of the 8 adjacent tiles (Chebyshev 1). The caller
 -- (CombatResolver.ApplyOutcome) owns the melee / not-AOE / adjacency gate and
 -- applies the damage DIRECTLY (not via ApplyOutcome), so a reflect can never
 -- re-trigger reflects / lifesteal / other reaction hooks (TRG-010 pattern).
--- DB races row 'Lizardmen': reflected damage = the Lizardman's current level.
+-- DB races row 'Reptilian': reflected damage = the Reptilian's current level.
 --------------------------------------------------
 
 function RacePassiveService.GetMeleeReflectDamage(defender)
-	if not isRace(defender, "RACE-LIZARDMEN") then return 0 end
+	if not isRace(defender, "RACE-REPTILIAN") then return 0 end
 	return math.max(0, math.floor(defender.level or 1))
 end
 
@@ -606,21 +606,21 @@ function RacePassiveService.GetElementStatusOverride(attacker, element)
 end
 
 --------------------------------------------------
--- MERMAID — TIDECALLER
+-- CATAU — TIDECALLER (race renamed from Mermaid 2026-10-09)
 -- Range +1 while on Water/Wet/Ice tile.
 -- All primary stats -10% while NOT on Water/Wet/Ice.
 --------------------------------------------------
 
 function RacePassiveService.GetRangeModifier(unit)
 	local raceId = getRaceId(unit)
-	if raceId ~= "RACE-MERMAID" then return 0 end
+	if raceId ~= "RACE-CATAU" then return 0 end
 	if isOnWaterTile(unit) then return 1 end
 	return 0
 end
 
-function RacePassiveService.GetMermaidStatPenalty(unit)
+function RacePassiveService.GetCatauStatPenalty(unit)
 	local raceId = getRaceId(unit)
-	if raceId ~= "RACE-MERMAID" then return nil end
+	if raceId ~= "RACE-CATAU" then return nil end
 	if isOnWaterTile(unit) then return nil end
 	-- Not on water: all primary stats -10%
 	return {
