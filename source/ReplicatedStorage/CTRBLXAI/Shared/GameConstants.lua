@@ -62,6 +62,7 @@ end
 GameConstants.SPAN_MAP        = {}   -- [y][x] = true for protected span tiles
 GameConstants.CHASM_FLOOR_MAP = {}   -- [y][x] = true for deliberate gap (chasm floor) tiles
 GameConstants.FLOOR_EFFECTS   = {}   -- { {x, y, effectId}, ... } permanent chasm-floor tile effects
+GameConstants.ELEV_IMMUNE_MAP = {}   -- [y][x] = true for elevation-immune tiles (Ad Billboard, map_gen_rules row 85)
 
 function GameConstants.IsProtectedSpan(tileX, tileY)
 	local row = GameConstants.SPAN_MAP[tileY]
@@ -70,6 +71,14 @@ end
 
 function GameConstants.IsChasmFloor(tileX, tileY)
 	local row = GameConstants.CHASM_FLOOR_MAP[tileY]
+	return row ~= nil and row[tileX] == true
+end
+
+-- Elevation-immune tiles (Ad Billboard, map_gen_rules row 85): their elevation
+-- never changes — earthquake / explosion / any elevation-reducing tag is a no-op,
+-- so a billboard may stand above lowered ground. Populated by SetGeneratedMap.
+function GameConstants.IsElevationImmune(tileX, tileY)
+	local row = GameConstants.ELEV_IMMUNE_MAP[tileY]
 	return row ~= nil and row[tileX] == true
 end
 
@@ -87,6 +96,10 @@ GameConstants.GROUND_EFFECTS_CHASM_ONLY = true
 function GameConstants.LowerElevation(tileX, tileY, amount)
 	if GameConstants.IsProtectedSpan(tileX, tileY) then
 		print(string.format("[GameConstants] Span (%d,%d) is PROTECTED — elevation unchanged", tileX, tileY))
+		return 0
+	end
+	if GameConstants.IsElevationImmune(tileX, tileY) then
+		-- Ad Billboard tile: elevation-immune (map_gen_rules row 85).
 		return 0
 	end
 	local row = GameConstants.ELEVATION_MAP[tileY]
@@ -231,10 +244,13 @@ GameConstants.TERRAIN_TYPES = {
 		transformations = {},
 	},
 	Quicksand = {
-		id = "Quicksand", moveCost = 1,
+		-- USER CORRECTION 2026-10-11: Quicksand is PASSABLE, DEADLY terrain — NOT a wall.
+		-- Move Cost 1.5 (heavy-terrain family, like Swamp/Deep Water). Any entry (walk,
+		-- forced displacement, drop, teleport) applies Sinking. Water -> Mud ends it.
+		id = "Quicksand", moveCost = 1.5,
 		tags = { "Loose", "Hazard", "Sticky" },
 		occupyBonus = {},
-		crossCost = 0,   -- movement prohibited (pathfinding blocker, not cost)
+		crossCost = 0,   -- retired field (terrain crossCost deprecated); moveCost 1.5 governs
 		triggerEffect = "Sinking",
 		transformations = { Water = "Mud" },
 	},
@@ -261,11 +277,12 @@ GameConstants.TERRAIN_TYPES = {
 GameConstants.TERRAIN_MAP = {}
 
 -- Check if a terrain type is impassable (cannot be entered by voluntary movement).
--- DB: Quicksand col_5 = "Movement prohibited"
+-- Quicksand is NO LONGER impassable (USER CORRECTION 2026-10-11): it is passable,
+-- deadly terrain (Move Cost 1.5, applies Sinking on entry). Nothing is hard-impassable
+-- here anymore; chasm/pit gating is enforced by ELEVATION DEPTH, not by this check.
 function GameConstants.IsImpassableTerrain(tileX, tileY)
 	local terrainId = GameConstants.GetTerrainId(tileX, tileY)
-	-- Quicksand: movement prohibited
-	if terrainId == "Quicksand" then return true end
+	-- (Quicksand removed 2026-10-11 — now passable deadly terrain, see TERRAIN_TYPES.)
 	-- Deep Water: impassable for non-Amphibious units (caller checks race tag)
 	-- For now, Deep Water is passable with +2 cost — Amphibious race restriction
 	-- is handled at the caller level when races are implemented.
@@ -561,6 +578,13 @@ function GameConstants.SetGeneratedMap(mapState)
 	end
 	GameConstants.SPAN_MAP        = spanMap
 	GameConstants.CHASM_FLOOR_MAP = chasmMap
+	-- Elevation-immune tiles (Ad Billboard, map_gen_rules row 85).
+	local immuneMap = {}
+	for _, e in ipairs(mapState.elevationImmuneTiles or {}) do
+		immuneMap[e.y] = immuneMap[e.y] or {}
+		immuneMap[e.y][e.x] = true
+	end
+	GameConstants.ELEV_IMMUNE_MAP = immuneMap
 	GameConstants.FLOOR_EFFECTS   = mapState.floorEffects or {}
 	print(string.format(
 		"[GameConstants] SetGeneratedMap: %dx%d, %d blockers",
@@ -695,12 +719,18 @@ GameConstants.STATUSES = {
 
 	Sinking = {
 		id           = "Sinking",
-		description  = "Cannot move. Jump penalty -1 every 500 CT. KO at -5.",
+		description  = "Cannot move. Sinks one level every 500 CT; KO at level 5 (2500 CT).",
 		kind         = "Debuff",
-		duration     = nil,       -- Unlimited while valid
-		reapply      = "none",
+		duration     = nil,       -- Unlimited while valid (ended by Water->Mud / Flight / teleport)
+		durationCt   = nil,       -- No fixed expiry; ends only via escape or KO
+		reapply      = "none",    -- Re-entry does not reset depth (handled on apply)
 		blocks       = { Move = true },
-		implemented  = false,     -- BLOCKED: needs sinking tile system
+		-- SINKING HAZARD (built 2026-10-11, user ruling). CT-interval deepening, mirrors
+		-- the Regeneration/Recharge accumulator pattern in StatusService.ProcessCtTick:
+		-- every sinkIntervalCt the unit sinks one level; at sinkMaxLevel it is KO'd.
+		sinkIntervalCt = 500,
+		sinkMaxLevel   = 5,       -- KO when sinkLevel reaches 5 (2500 CT total)
+		implemented    = true,
 	},
 
 	-- ===== DEBUFFS =====

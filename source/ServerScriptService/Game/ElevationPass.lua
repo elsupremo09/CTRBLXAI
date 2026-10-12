@@ -376,38 +376,180 @@ function ElevationPass.Run(mapState)
 		{ x =  1, y =  1 }, { x =  1, y = -1 }, { x = -1, y =  1 }, { x = -1, y = -1 },
 	}
 	do
-		-- Two-pass so an OBS tile's height is measured against NON-OBS neighbors
-		-- only (adjacent OBS tiles in a blob don't inflate each other).
-		local obsList = {}
+		-- OBS TWO-FORM SYSTEM (2026-10-12, map_gen_rules rows 75-92). Each contiguous
+		-- OBS strip picks ONE form, seeded from the map seed via mapState.rng.obsFormRng
+		-- (a dedicated child RNG created in MapService.createSeedContext; it is appended
+		-- last so it does NOT perturb the other generation streams / existing seeds):
+		--   SPIKE     -> raised +OBS_SPIKE terrain (unchanged math); scalable by high Jump.
+		--   BLOCKER   -> normal elevation, tile.obsForm='blocker'; MapService.placeObjects
+		--                materializes an impassable "OBS Blocker" object. (Flight pass-over,
+		--                3-hit break, and push are PHASE 2 — Phase 1 = permanent wall.)
+		--   BILLBOARD -> like blocker but tile.obsForm='billboard' -> "Ad Billboard" object
+		--                (elevation-immune / unbreakable / immovable). At most ONE per map,
+		--                on the OBS cluster NEAREST THE MAP CENTER (rows 79/84), any size.
+		-- V5 SAFETY (runFinalValidation): an impassable object needs an adjacent passable
+		-- interaction tile, so a cluster too THICK (any tile lacks a non-OBS passable
+		-- cardinal neighbor) is FORCED to SPIKE — V5 then always holds and reachability is
+		-- unaffected (OBS still blocks in BOTH forms: spike via elevation, blocker via object).
+		-- DETERMINISM: clusters are built row-major (stable) and rolls draw in that order,
+		-- so a given seed reproduces the same forms.
+		local obsFormRng = mapState.rng and mapState.rng.obsFormRng
+
+		-- 1) Group OBS tiles into 8-connected clusters, row-major (deterministic).
+		local seen, clusters = {}, {}
 		for y = 1, h do
 			for x = 1, w do
-				if tiles[y][x].marker == "OBS" then
-					table.insert(obsList, { x = x, y = y })
+				if tiles[y][x].marker == "OBS" and not seen[x .. "," .. y] then
+					local cluster = {}
+					local stack = { { x = x, y = y } }
+					seen[x .. "," .. y] = true
+					while #stack > 0 do
+						local p = table.remove(stack)
+						table.insert(cluster, p)
+						for _, dir in ipairs(OBS_NEIGHBORS_8) do
+							local nx, ny = p.x + dir.x, p.y + dir.y
+							if isInBounds(nx, ny, w, h) and tiles[ny][nx].marker == "OBS"
+								and not seen[nx .. "," .. ny] then
+								seen[nx .. "," .. ny] = true
+								table.insert(stack, { x = nx, y = ny })
+							end
+						end
+					end
+					table.insert(clusters, cluster)
 				end
 			end
 		end
-		local maxRaised = 0
-		for _, pos in ipairs(obsList) do
-			local tile = tiles[pos.y][pos.x]
-			-- Highest NON-OBS 8-way neighbor sets the base this spike rises above.
-			local maxNb = floorE
-			for _, dir in ipairs(OBS_NEIGHBORS_8) do
-				local nx, ny = pos.x + dir.x, pos.y + dir.y
-				if isInBounds(nx, ny, w, h) then
-					local n = tiles[ny][nx]
-					if n.marker ~= "OBS" and n.elevation > maxNb then
-						maxNb = n.elevation
+
+		-- 2) V5 thinness gate: every tile needs a non-OBS, passable-terrain cardinal neighbor.
+		local function thinEnough(cluster)
+			for _, p in ipairs(cluster) do
+				local ok = false
+				for _, dir in ipairs(CARDINAL) do
+					local nx, ny = p.x + dir.x, p.y + dir.y
+					if isInBounds(nx, ny, w, h) then
+						local n = tiles[ny][nx]
+						local tDef = TerrainData.Types[n.terrain]
+						if n.marker ~= "OBS" and tDef and tDef.passable ~= false then
+							ok = true
+							break
+						end
+					end
+				end
+				if not ok then return false end
+			end
+			return true
+		end
+
+		local function roll()
+			-- No RNG (should not happen) -> deterministic all-spike fallback (0 < 0.5 is false path).
+			return obsFormRng and obsFormRng:NextNumber() or 1
+		end
+
+		-- 3) V5 thinness per cluster (reused for billboard eligibility AND the blocker roll).
+		--    A cluster that is not thin can only ever be a SPIKE: blocker and billboard are
+		--    both impassable OBJECTS, and V5 requires every impassable tile to keep an
+		--    adjacent passable interaction tile. So a thick cluster is never billboard/blocker.
+		local thin = {}
+		for i, cluster in ipairs(clusters) do
+			thin[i] = thinEnough(cluster)
+		end
+
+		-- 4) Billboard = the ONE OBS cluster NEAREST THE MAP CENTER (map_gen_rules rows 79/84):
+		--    at most one per map, 1:1, independent of cluster size. Eligibility is limited to
+		--    THIN clusters only (an impassable billboard on a thick cluster would break V5 /
+		--    reachability exactly like a blocker would), so if the geometric centre cluster is
+		--    thick the nearest THIN cluster wins; if NO cluster is thin there is no billboard.
+		--    Distance = squared Euclidean from the cluster centroid to the map midpoint
+		--    ((w+1)/2,(h+1)/2). Reachability is unaffected: the chosen cluster is OBS and
+		--    impassable in every form, so billboard-vs-spike/blocker only changes HOW it blocks.
+		local billboardIdx = nil
+		do
+			local cx, cy = (w + 1) / 2, (h + 1) / 2
+			local bestD, tied = nil, {}
+			for i, cluster in ipairs(clusters) do
+				if thin[i] then
+					local sx, sy = 0, 0
+					for _, p in ipairs(cluster) do sx, sy = sx + p.x, sy + p.y end
+					local n = #cluster
+					local dx, dy = (sx / n) - cx, (sy / n) - cy
+					local d = dx * dx + dy * dy
+					if bestD == nil or d < bestD then
+						bestD, tied = d, { i }
+					elseif d == bestD then
+						table.insert(tied, i)
 					end
 				end
 			end
-			-- Local +OBS_SPIKE spike, clamped to the global peak (never above peakE).
-			tile.elevation  = math.min(maxNb + OBS_SPIKE, peakE)
-			tile.isObstacle = true
-			if tile.elevation > maxRaised then maxRaised = tile.elevation end
+			if #tied == 1 then
+				billboardIdx = tied[1]
+			elseif #tied > 1 then
+				-- Exact-tie break: deterministic draw from obsFormRng (seed-reproducible).
+				local pick = obsFormRng and (math.floor(obsFormRng:NextNumber() * #tied) + 1) or 1
+				if pick > #tied then pick = #tied end
+				billboardIdx = tied[pick]
+			end
 		end
-		if #obsList > 0 then
-			print(string.format("[ElevationPass] Phase 2b: raised %d OBS tile(s) to a local +%d spike (max %d, clamped to peak %d).",
-				#obsList, OBS_SPIKE, maxRaised, peakE))
+
+		-- 5) Resolve + apply each cluster's form. The nearest-centre cluster becomes the one
+		--    billboard; every OTHER cluster takes the existing spike-vs-blocker roll unchanged.
+		local spikeTiles, blockerStrips, billboardPlaced, maxRaised = 0, 0, false, 0
+		for i, cluster in ipairs(clusters) do
+			local form = "spike"
+			if i == billboardIdx then
+				form = "billboard"
+				billboardPlaced = true
+			else
+				local r = roll()
+				if thin[i] and r < 0.5 then
+					form = "blocker"
+				end
+			end
+
+			if form == "spike" then
+				-- Measure each spike against NON-OBS 8-way neighbors only (blob tiles don't
+				-- inflate each other); raise + flag isObstacle so later phases leave it intact.
+				for _, pos in ipairs(cluster) do
+					local tile = tiles[pos.y][pos.x]
+					local maxNb = floorE
+					for _, dir in ipairs(OBS_NEIGHBORS_8) do
+						local nx, ny = pos.x + dir.x, pos.y + dir.y
+						if isInBounds(nx, ny, w, h) then
+							local n = tiles[ny][nx]
+							if n.marker ~= "OBS" and n.elevation > maxNb then
+								maxNb = n.elevation
+							end
+						end
+					end
+					tile.elevation  = math.min(maxNb + OBS_SPIKE, peakE)
+					tile.isObstacle = true
+					tile.obsForm    = "spike"
+					if tile.elevation > maxRaised then maxRaised = tile.elevation end
+					spikeTiles = spikeTiles + 1
+				end
+			else
+				-- BLOCKER / BILLBOARD: elevation stays NORMAL (not raised). We DO flag
+				-- isObstacle so the generation validators that gate on it treat the strip
+				-- as the wall it will be at runtime — specifically V13 OBJ-reachability
+				-- (ValidationPass checks `not isObstacle`) runs BEFORE objects are
+				-- materialized, so without this flag an objective reachable ONLY through a
+				-- blocker strip would pass validation yet be walled off in game. Here
+				-- isObstacle means "impassable OBS, elevation-locked", NOT "raised spike":
+				-- it only steers generation (wall + no elevation grading). Runtime movement
+				-- and LoS use GameConstants.IsBlocked (the materialized tile.object), never
+				-- this flag. MapService.placeObjects materializes the object from obsForm.
+				for _, pos in ipairs(cluster) do
+					local t = tiles[pos.y][pos.x]
+					t.obsForm    = form
+					t.isObstacle = true
+				end
+				blockerStrips = blockerStrips + 1
+			end
+		end
+
+		if #clusters > 0 then
+			print(string.format("[ElevationPass] Phase 2b: OBS two-form — %d strip(s): %d spike tile(s) (max %d, peak %d), %d blocker/billboard strip(s)%s.",
+				#clusters, spikeTiles, maxRaised, peakE, blockerStrips,
+				billboardPlaced and " (incl. 1 ad billboard)" or ""))
 		end
 	end
 

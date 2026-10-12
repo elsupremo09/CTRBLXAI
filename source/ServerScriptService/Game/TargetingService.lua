@@ -25,6 +25,15 @@ local RaceData = require(
 		:WaitForChild("RaceData")
 )
 
+-- OBS object metadata (map_gen_rules rows 82/87-89, 2026-10-12). Used to tell the two
+-- OBS blocker-form objects ("OBS Blocker" / "Ad Billboard") apart from real walls so
+-- flight can pass over them and a high attacker can see over them (see isObsObjectTile).
+local ObjectData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ObjectData")
+)
+
 -- Effective Elevation: tile elevation + 5 if unit has Flight status.
 -- DB: "Flight treats unit as Tile Elevation + 5"
 local function getEffectiveElevation(unit)
@@ -155,13 +164,52 @@ local function chebyshevDistance(ax, ay, bx, by)
 	return math.max(math.abs(ax - bx), math.abs(ay - by))
 end
 
--- RABBIT FOLK — Hop Step gap tile (2026-10-02): a deliberate chasm / gap floor
--- (Slice 5 CHASM_FLOOR_MAP) or impassable pit terrain (Quicksand). Blockers
--- (walls / objects) are NOT gaps -- a hop never clears a wall.
+-- DIAGONAL CORNER-CUTTING (strict, user decision 2026-10-11): a diagonal step is
+-- blocked only when BOTH orthogonal corner tiles it passes between are corner-blockers.
+-- A corner-blocker is a solid wall/object (IsBlocked) OR a standing unit NOT on the
+-- actor's side (enemies/neutrals). Allies NEVER seal a corner (consistent with LoS id 38).
+-- Impassable terrain (e.g. Quicksand) is deliberately NOT a corner-blocker: Quicksand is
+-- deadly-but-enterable terrain by design, not a wall. Occupancy is prebuilt by the caller.
+local function isCornerBlocker(x, y, occupancy, actor)
+	if GameConstants.IsBlocked(x, y) then
+		return true
+	end
+	local occupant = occupancy[x .. "," .. y]
+	if occupant ~= nil and occupant ~= actor and occupant.side ~= actor.side then
+		return true
+	end
+	return false
+end
+
+-- RABBIT FOLK — Hop Step gap tile: a deliberate chasm / gap floor (Slice 5
+-- CHASM_FLOOR_MAP). Blockers (walls / objects) are NOT gaps — a hop never clears
+-- a wall. UPDATED 2026-10-11: Quicksand is no longer a hop gap — it is now passable
+-- deadly terrain (walk onto it and sink), so only true depth-based chasm floors count.
 local function isHopGapTile(x, y)
 	if GameConstants.IsBlocked(x, y) then return false end
 	if GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(x, y) then return true end
-	return GameConstants.IsImpassableTerrain(x, y)
+	return false
+end
+
+-- OBS objects (map_gen_rules rows 82 / 87-89, 2026-10-12): the two blocker-form OBS
+-- objects — "OBS Blocker" and "Ad Billboard" — both carry the ObjectData "OBS" tag.
+-- They differ from real walls / Stone Pillars (no "OBS" tag) in two runtime ways:
+--   (G) flight "pass over, never land": a flying mover may TRAVERSE the tile but can
+--       never END on it; walkers stay fully blocked.
+--   (H) direct-LoS: they block direct line of sight, but an attacker 3+ elevation
+--       levels ABOVE the object's tile can see over them (mirrors the enemy-unit LoS
+--       bypass and the elevation convention).
+-- Reuses blocker metadata (GetBlockerData.objectType -> ObjectData tags); invents no
+-- new flag. Returns false for non-blocked tiles and for non-OBS blockers.
+local function isObsObjectTile(x, y)
+	local b = GameConstants.GetBlockerData(x, y)
+	if not b or not b.objectType then return false end
+	local def = ObjectData.Objects[b.objectType]
+	if not def or not def.tags then return false end
+	for _, tag in ipairs(def.tags) do
+		if tag == "OBS" then return true end
+	end
+	return false
 end
 
 --------------------------------------------------
@@ -204,8 +252,29 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 			if isInsideMap(nx, ny, mapWidth, mapHeight) then
 				local key = tileKey(nx, ny)
 
-				if GameConstants.IsBlocked(nx, ny) then
-				-- skip
+				-- Phase 2b (G): flight "pass over, never land" for OBS blocker/billboard
+				-- tiles. When true, this blocked tile is NOT skipped below (flight may
+				-- traverse it) but is also NEVER inserted as a landing candidate. Only
+				-- applies to flying movers; walkers keep the hard IsBlocked skip.
+				local obsPassOver = hasFlight and isObsObjectTile(nx, ny)
+
+				-- Strict diagonal corner-cutting rule (2026-10-11): block a diagonal step
+				-- only if BOTH orthogonal corner tiles are corner-blockers (wall/enemy).
+				local diagonalSealed = false
+				if dir.dx ~= 0 and dir.dy ~= 0 then
+					local cornerAX, cornerAY = current.x + dir.dx, current.y
+					local cornerBX, cornerBY = current.x, current.y + dir.dy
+					if isCornerBlocker(cornerAX, cornerAY, occupancy, actor)
+						and isCornerBlocker(cornerBX, cornerBY, occupancy, actor)
+					then
+						diagonalSealed = true
+					end
+				end
+
+				if diagonalSealed then
+					-- skip: strict corner-cut (both diagonal corners blocked)
+				elseif GameConstants.IsBlocked(nx, ny) and not obsPassOver then
+				-- skip (hard wall / spike / non-OBS blocker; or a walker vs an OBS tile)
 			elseif GameConstants.IsImpassableTerrain(nx, ny) then
 				-- skip (Quicksand etc.)
 				else
@@ -267,7 +336,9 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 								visited[key] = newCost
 								parent[key] = tileKey(current.x, current.y)
 
-								if occupant == nil then
+								-- "never land": an OBS pass-over tile is traversed (queued
+								-- below) but is never a valid landing candidate.
+								if occupant == nil and not obsPassOver then
 									table.insert(candidates, {
 										tileX = nx, tileY = ny, pathCost = newCost
 									})
@@ -436,7 +507,23 @@ function TargetingService.HasLineOfSight(x1, y1, x2, y2, allUnits, attackerEleva
 		-- Check if this intermediate tile is a blocker
 		-- Arc projectiles fly over terrain blockers; only Direct/Channeled are stopped
 		if not isArc and GameConstants.IsBlocked(cx, cy) then
-			return false
+			-- Phase 2b (H): OBS blocker/billboard objects block DIRECT LoS, but an
+			-- attacker 3+ elevation levels ABOVE the object's tile can see over them
+			-- (map_gen_rules rows 87-89; mirrors the enemy-unit bypass below at
+			-- `atkElev < blocker.elev + 3`). Real walls / Stone Pillars carry no "OBS"
+			-- tag and always block. Arc is already exempt via the isArc guard.
+			-- NOTE: the locked rule is "3+ above the object TILE", so tile elevation is
+			-- used; GetBlockerData(cx,cy).height (standingHeight) is available if design
+			-- later wants to factor panel height.
+			if isObsObjectTile(cx, cy) then
+				local atkElev = attackerElevation or GameConstants.GetElevation(x1, y1)
+				if atkElev < GameConstants.GetElevation(cx, cy) + 3 then
+					return false
+				end
+				-- else: attacker high enough — LoS passes over this OBS object.
+			else
+				return false
+			end
 		end
 
 		-- Check if a standing unit occupies this intermediate tile

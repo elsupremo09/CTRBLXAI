@@ -114,6 +114,13 @@ local ConsumableData = require(
 		:WaitForChild("ConsumableData")
 )
 
+-- Portrait pools per race (player 2D-portrait picker validation).
+local PortraitData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("PortraitData")
+)
+
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("CTRBLXAI")
@@ -127,6 +134,75 @@ local BattleEvents = require(
 		:WaitForChild("Remotes")
 		:WaitForChild("BattleEvents")
 )
+
+--------------------------------------------------
+-- WEAPON ACCESSORY ATTACHMENT (server-side)
+--------------------------------------------------
+-- Weapons are RIGID ACCESSORIES stored at ServerStorage > Gears > Weapon,
+-- named by the archetype display name (e.g. "Sword", "Wand"). A rigid
+-- accessory already carries its own attachment, so Humanoid:AddAccessory
+-- snaps it onto the correct body part automatically -- no welds needed.
+-- Done server-side so it replicates once with the unit (NET: server
+-- simulates, client visualizes). A missing accessory is skipped with a
+-- warn so units without a model simply spawn weaponless, never erroring.
+local ServerStorage = game:GetService("ServerStorage")
+
+-- Find a weapon accessory by archetype name. Exact match first, then a
+-- case/space-insensitive fallback so minor name drift (e.g. "CrossBow" vs
+-- "Crossbow", "Great Sword" vs "Greatsword") still resolves.
+local function findWeaponAccessory(weaponName: string): Instance?
+	if not weaponName or weaponName == "none" or weaponName == "Unarmed" then return nil end
+	local gears = ServerStorage:FindFirstChild("Gears")
+	local weaponFolder = gears and gears:FindFirstChild("Weapon")
+	if not weaponFolder then
+		warn("[WeaponAttach] ServerStorage > Gears > Weapon folder not found")
+		return nil
+	end
+	local exact = weaponFolder:FindFirstChild(weaponName)
+	if exact then return exact end
+	local function norm(s: string): string return (s:lower():gsub("%s+", "")) end
+	local want = norm(weaponName)
+	for _, child in ipairs(weaponFolder:GetChildren()) do
+		if norm(child.Name) == want then return child end
+	end
+	return nil
+end
+
+-- Resolve the equipped archetype display NAME for a slot ("MainHand"/"OffHand").
+local function equippedArchetypeName(unit, slot: string): string?
+	if not (unit.equipmentSlots and unit.equipmentSlots[slot]) then return nil end
+	local item = unit.equipmentSlots[slot]
+	local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+	return arch and arch.name or nil
+end
+
+-- Attach the equipped MainHand and OffHand weapon accessories to a spawned unit.
+local function attachWeaponToUnit(charModel: Model, unit)
+	if not charModel or not unit then return end
+	local humanoid = charModel:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		warn(string.format("[WeaponAttach] %s: no Humanoid -- cannot attach weapon", unit.name or "?"))
+		return
+	end
+	for _, slot in ipairs({ "MainHand", "OffHand" }) do
+		local weaponName = equippedArchetypeName(unit, slot)
+		if weaponName then
+			local tpl = findWeaponAccessory(weaponName)
+			if not tpl then
+				warn(string.format("[WeaponAttach] %s %s: no accessory '%s' in Gears/Weapon -- skipping",
+					unit.name or "?", slot, weaponName))
+			else
+				local acc = tpl:Clone()
+				if acc:IsA("Accessory") then
+					humanoid:AddAccessory(acc)
+				else
+					acc.Parent = charModel
+				end
+				print(string.format("[WeaponAttach] %s: %s '%s' attached", unit.name or "?", slot, weaponName))
+			end
+		end
+	end
+end
 
 --------------------------------------------------
 -- TILE OCCUPANCY HELPERS
@@ -499,6 +575,10 @@ if loadedSave then
 				raceId = unitData.raceId,
 				perkIds = unitData.perkIds or {},
 				drawbackIds = unitData.drawbackIds or {},
+				-- Player-chosen 2D portrait (option B), restored onto the live unit below.
+				portraitAssetId = unitData.portraitAssetId or nil,
+				-- Player-chosen body/skin tint {r,g,b}, restored onto the live unit below.
+				bodyColor = unitData.bodyColor or nil,
 			}
 		end
 		-- Extract saved doctrine
@@ -536,7 +616,9 @@ if loadedSave then
 		ExploreService.Import(PLAYER_ID, loadedSave.progression.explore)
 	end
 elseif loadErr then
-	warn("[Main] Load failed: " .. loadErr .. " — starting fresh (retaining runtime state)")
+	-- SaveService now refuses every Save for this player this session, so the fresh
+	-- runtime state below can never overwrite the real save (save_data_contract).
+	warn("[Main] Load failed: " .. loadErr .. " — playing on fresh runtime state; saving is DISABLED this session")
 else
 	print("[Main] No save found — new session")
 end
@@ -696,6 +778,10 @@ for _, u in ipairs({ hero, mage, ranger }) do
 	if saved then
 		if saved.perkIds and #saved.perkIds > 0 then u.perkIds = saved.perkIds end
 		if saved.drawbackIds and #saved.drawbackIds > 0 then u.drawbackIds = saved.drawbackIds end
+		-- Restore the player's chosen 2D portrait so it shows in battle and on load.
+		if saved.portraitAssetId then u.portraitAssetId = saved.portraitAssetId end
+		-- Restore the player's chosen body/skin tint.
+		if saved.bodyColor then u.bodyColor = saved.bodyColor end
 	end
 	local seed = 0
 	for ci = 1, #u.id do seed = seed + string.byte(u.id, ci) end
@@ -1098,6 +1184,10 @@ local function doSave()
 			rosterState[unitId].statAllocation = unit.statAllocation or nil
 			rosterState[unitId].records = unit.records or nil
 			rosterState[unitId].consumableSlots = unit.consumableSlots or nil
+			-- Player-chosen 2D portrait (option B); nil clears it.
+			rosterState[unitId].portraitAssetId = unit.portraitAssetId or nil
+			-- Player-chosen body/skin tint {r,g,b}; nil clears it.
+			rosterState[unitId].bodyColor = unit.bodyColor or nil
 		end
 	end
 	-- Diagnostic: log equipment slot assignments being saved
@@ -1159,6 +1249,7 @@ UGCService.SetAvailabilityProvider(UGCOutfitService.IsAvailable)
 UGCService.SetOffSaleProvider(UGCOutfitService.IsOffSale) -- "Off sale" marker (ugc_rules 41/47)
 UGCService.SetRatingService(UGCRatingService) -- private vote aggregate
 UGCService.SetSaveModeProvider(SaveService.GetMode)
+UGCOutfitService.SetSaveModeProvider(SaveService.GetMode) -- availability cache persistence (own DataStore)
 UGCService.SetUnitRaceProvider(function(_pid, unitId)
 	local u = playerUnits[unitId]
 	if not u then return false, nil end
@@ -1174,6 +1265,18 @@ UGCService.SetPlayerLevelProvider(function(_pid)
 	return best
 end)
 UGCOutfitService.SetStateProvider(UGCService)
+-- Body-color provider: UGCOutfitService asks for a unit's chosen tint when it
+-- dresses the battle model / builds the loadout preview. We return a Color3 from
+-- the live unit's stored {r,g,b} (nil → no tint). playerId is the project's fixed
+-- PLAYER_ID; we look the unit up directly in playerUnits.
+UGCOutfitService.SetBodyColorProvider(function(_playerId, unitId)
+	local unit = playerUnits[unitId]
+	local c = unit and unit.bodyColor
+	if type(c) == "table" and #c == 3 then
+		return Color3.fromRGB(c[1], c[2], c[3])
+	end
+	return nil
+end)
 UGCService.InitPlayer(PLAYER_ID, player)
 UGCService.Import(PLAYER_ID, loadedSave and loadedSave.progression
 	and loadedSave.progression.ugc or nil)
@@ -1243,6 +1346,11 @@ BattleEvents.GetRosterData.OnServerInvoke = function(player)
 			racePassive = unit.raceId and RaceData.GetRace(unit.raceId) and RaceData.GetRace(unit.raceId).passiveName or "none",
 			perkIds = unit.perkIds or {},
 			drawbackIds = unit.drawbackIds or {},
+			-- Player-chosen 2D portrait asset ID (option B); nil = colored-box fallback.
+			-- The loadout portrait picker reads this to highlight the current choice.
+			portraitAssetId = unit.portraitAssetId or nil,
+			-- Player-chosen body/skin tint {r,g,b}; nil = template colors.
+			bodyColor = unit.bodyColor or nil,
 			-- Unit records (Slice 4K)
 			records = unit.records or {},
 			-- Unspent stat points for the loadout header dot (2026-10-07).
@@ -1961,6 +2069,62 @@ BattleEvents.RequestUnequipConsumable.OnServerInvoke = function(player, unitId, 
 	return { ok = true }
 end
 
+-- RequestSetPortrait: player picks a 2D race portrait for one of their units.
+-- Server-authoritative validation (SEC-001, never trust the client): the unit
+-- must be the player's, assetId must be a number, and it MUST belong to the
+-- unit's own race portrait pool. A nil assetId clears the choice (back to the
+-- colored-box fallback). The choice is stored on the live unit and persists via
+-- the normal save path (encodeUnit 'por'). Headshot mode (option A) is deferred.
+BattleEvents.RequestSetPortrait.OnServerInvoke = function(player, unitId, assetId)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+	-- Clear choice.
+	if assetId == nil then
+		unit.portraitAssetId = nil
+		return { ok = true, cleared = true }
+	end
+	if type(assetId) ~= "number" then
+		return { ok = false, reason = "Invalid portrait id" }
+	end
+	-- Must be in THIS unit's race pool.
+	local pool = unit.raceId and PortraitData.GetPool(unit.raceId) or nil
+	if not pool then return { ok = false, reason = "No portraits for this race" } end
+	local inPool = false
+	for _, id in ipairs(pool) do
+		if id == assetId then inPool = true; break end
+	end
+	if not inPool then
+		return { ok = false, reason = "Portrait not valid for this unit's race" }
+	end
+	unit.portraitAssetId = assetId
+	print(string.format("[Portrait] %s set portrait %d (race %s)",
+		unit.name, assetId, tostring(unit.raceId)))
+	return { ok = true, assetId = assetId }
+end
+
+-- RequestSetBodyColor: player picks a body/skin tint for one of their units.
+-- Server-authoritative: unit must be the player's; r/g/b must be numbers, clamped
+-- to 0-255 integers. A nil r clears the tint. Stored on the live unit as a {r,g,b}
+-- table and persisted via the save path (encodeUnit 'bcl'). The tint is applied to
+-- the model by UGCOutfitService (battle + loadout preview) via the body-color
+-- provider wired below.
+BattleEvents.RequestSetBodyColor.OnServerInvoke = function(player, unitId, r, g, b)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+	if r == nil then
+		unit.bodyColor = nil
+		return { ok = true, cleared = true }
+	end
+	if type(r) ~= "number" or type(g) ~= "number" or type(b) ~= "number" then
+		return { ok = false, reason = "Invalid color" }
+	end
+	local function clamp255(v) return math.clamp(math.floor(v + 0.5), 0, 255) end
+	unit.bodyColor = { clamp255(r), clamp255(g), clamp255(b) }
+	print(string.format("[BodyColor] %s set body color (%d,%d,%d)",
+		unit.name, unit.bodyColor[1], unit.bodyColor[2], unit.bodyColor[3]))
+	return { ok = true, color = unit.bodyColor }
+end
+
 -- GetConsumableSlots: return all consumable slot data for all player units
 BattleEvents.GetConsumableSlots.OnServerInvoke = function(player)
 	local result = {}
@@ -2082,6 +2246,11 @@ BattleEvents.GetUnitFullStats.OnServerInvoke = function(player, unitId)
 		-- Race
 		raceId = unit.raceId,
 		raceName = raceEntry and raceEntry.name or nil,
+		-- Current player-chosen 2D portrait (nil = none). Lets the Info-tab picker
+		-- highlight the selected face.
+		portraitAssetId = unit.portraitAssetId or nil,
+		-- Current player-chosen body tint {r,g,b} (nil = none) for the swatch picker.
+		bodyColor = unit.bodyColor or nil,
 		racePassiveName = raceEntry and raceEntry.passiveName or nil,
 		racePassiveEffect = raceEntry and raceEntry.passiveEffect or nil,
 		-- Doctrine
@@ -2269,6 +2438,18 @@ if game:GetService("RunService"):IsStudio() then
 				warn("[Dev] Delete failed: " .. (err or "unknown"))
 			end
 
+		elseif cmd.action == "DevAddGold" then
+			-- Dev: +10,000 gold, then save so it survives a restart.
+			local bal = CurrencyService.Credit(PLAYER_ID, { gold = 10000 })
+			print(string.format("[Dev] +10000 gold -> balance %d", bal and bal.gold or -1))
+			doSave()
+
+		elseif cmd.action == "DevResetUGCRecords" then
+			-- Dev: free trials usable again + rent price back to base. Then save.
+			local t, r = UGCService.DevResetTrialRentRecords(PLAYER_ID)
+			print(string.format("[Dev] UGC records reset (%d trials, %d rent prices)", t, r))
+			doSave()
+
 		elseif cmd.action == "SaveNow" then
 			local ok, err = doSave()
 			if ok then
@@ -2369,6 +2550,8 @@ if game:GetService("RunService"):IsStudio() then
 				-- refresh state.objects and recompute auras against the new layout
 				-- (old banners/stands are gone; new ones may cover deployed units).
 				state.objects = newMap.objects or {}
+				-- OBS Phase 2a: re-seed object HP for the regenerated map's objects.
+				ObjectEffectService.InitObjectHp(state)
 				ObjectEffectService.ReconcileAuras(state.units, state)
 			end
 
@@ -2711,6 +2894,7 @@ if _raceModelsFolder then
 				c:PivotTo(CFrame.new(_ox + (eu.tileX - 0.5) * 5, _tileTopY, _oz + (eu.tileY - 0.5) * 5))
 			end
 			c.Parent = _umf
+			attachWeaponToUnit(c, eu)
 			print(string.format("[Deploy] Enemy %s → R15 model '%s' at (%d,%d)", eu.name, _rn, eu.tileX, eu.tileY))
 		end
 	end
@@ -2817,6 +3001,7 @@ local deployConn = BattleEvents.DeployUnit.OnServerEvent:Connect(function(plr, d
 				))
 			end
 			clone.Parent = _umf
+			attachWeaponToUnit(clone, unit)
 		end
 	end
 
@@ -2937,6 +3122,10 @@ end)
 -- generatedMap.objects; the battle state carries the SAME shape (no remap).
 -- Without this, state.objects is nil and every map-object effect is inert.
 state.objects = generatedMap.objects or {}
+-- OBS Phase 2a: seed runtime HP (3) on breakable blocker-prop OBS objects so the
+-- map-object inspector shows N/3 and Phase 2c's 3-hit break can decrement it.
+-- Billboards / unbreakable objects get no hp. Dormant otherwise (nothing reads hp yet).
+ObjectEffectService.InitObjectHp(state)
 
 -- Time cycle: battle starts at Dawn (ct 0). Prime RacePassiveService + resync any
 -- day/night-dependent units (Vampire/Werewolf) and tell the client, so turn-1
@@ -3029,6 +3218,7 @@ for _, unit in ipairs(allUnitsList) do
 			clone:PivotTo(CFrame.new(tilePos))
 		end
 		clone.Parent = unitModelsFolder
+		attachWeaponToUnit(clone, unit)
 		print(string.format("[Spawn] %s → R15 model '%s' at (%d,%d)", unit.name, raceName, unit.tileX, unit.tileY))
 	else
 		print(string.format("[Spawn] %s → no model for race '%s' (cylinder fallback)", unit.name, tostring(raceName)))
@@ -4470,6 +4660,9 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		isAlive      = unit.isAlive ~= false,
 		level        = unit.level or 1,
 		raceId       = unit.raceId or nil,  -- placeholder: race system not yet implemented
+		-- Portrait face image for the detailed inspector (enemy/neutral/NPC only;
+		-- nil for player units and summons → inspector shows the initials box).
+		portraitAssetId = unit.portraitAssetId,
 		racePassiveName   = nil,  -- populated below if race assigned
 		racePassiveEffect = nil,
 		tileX        = unit.tileX,
@@ -4605,6 +4798,14 @@ while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURN
 	state.ctStatusUnits = nil
 	for _, u in ipairs(ctStatusUnits) do
 		BattleVisualBroadcaster.UnitStateChanged(u)
+		-- Sinking (and any CT-tick effect) can KO a unit mid-tick: ProcessCtTick set
+		-- isAlive=false and HP=0. Broadcast the defeat the same way every other death
+		-- does (clear the tile, remove the token) so the unit doesn't linger on the board.
+		if u.isAlive == false then
+			clearTileOccupant(u.tileX, u.tileY)
+			BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = true })
+			print(string.format("[Main] %s removed (KO via CT-tick status)", u.name))
+		end
 	end
 
 	-- Process DoT
@@ -4807,6 +5008,7 @@ do
 					enemyType = u.enemyType,          -- Grunt/Veteran/Elite/Boss (BUG-009 field)
 					aiRole    = u.aiRole,             -- fallback only
 					level     = u.level or 0,
+					goldMult  = (type(u.rewardOnDeath) == "table" and tonumber(u.rewardOnDeath.goldMult)) or nil,
 				})
 			else
 				anyEnemyStanding = true
@@ -4892,6 +5094,12 @@ do
 			killGold += base * (1 + (k.level or 0) / 100) * band
 		end
 		killGold = math.floor(killGold)
+		-- Gold events (Leprechaun x3, Gold Golem x5): defeating the event unit multiplies
+		-- this battle's gold. Largest multiplier wins; they don't stack.
+		local eventGoldMult = 1
+		for _, k in ipairs(kills) do
+			if k.goldMult and k.goldMult > eventGoldMult then eventGoldMult = k.goldMult end
+		end
 		local completionGold, questGold = 0, 0
 		if isQualifyingVictory then
 			local r = activeQuest and activeQuest.rewards
@@ -4901,11 +5109,11 @@ do
 		else
 			killGold = math.floor(killGold * 0.5) -- keep 50% of gold dropped on defeat
 		end
-		local total = RewardService.ApplyGold(killGold + completionGold + questGold)
+		local total = RewardService.ApplyGold(math.floor((killGold + completionGold + questGold) * eventGoldMult))
 		if total > 0 then CurrencyService.Credit(PLAYER_ID, { gold = total }) end
 		battleGoldEarned = total
-		print(string.format("[PostBattle] Gold +%d (kills %d, completion %d, quest %d, band x%.2f, %s)",
-			total, killGold, completionGold, questGold, band, if isQualifyingVictory then "victory" else "defeat"))
+		print(string.format("[PostBattle] Gold +%d (kills %d, completion %d, quest %d, band x%.2f, event x%.1f, %s)",
+			total, killGold, completionGold, questGold, band, eventGoldMult, if isQualifyingVictory then "victory" else "defeat"))
 	end
 	if xpSummary and xpSummary.flags and #xpSummary.flags > 0 then
 		for _, f in ipairs(xpSummary.flags) do
@@ -5020,9 +5228,10 @@ for unitId, result in pairs(recovery) do
 	end
 end
 
-if #rewardSummaries > 0 or (isQualifyingVictory and battleGoldEarned > 0) then
+if #rewardSummaries > 0 or battleGoldEarned > 0 then
 	print(string.format("[PostBattle] Sending %d reward(s) + %d gold to client", #rewardSummaries, battleGoldEarned))
-	BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary, gold = battleGoldEarned })
+	BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary, gold = battleGoldEarned,
+		defeat = not isQualifyingVictory })
 	rewardContinueSignal.Event:Wait()
 	print("[PostBattle] Player acknowledged rewards")
 end

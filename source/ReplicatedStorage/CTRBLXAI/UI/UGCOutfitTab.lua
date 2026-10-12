@@ -54,6 +54,10 @@ local _tryOnNames: { [string]: string } = {}
 local _previewConns: { RBXScriptConnection } = {}
 local _previewToken = 0
 local _lastView: any = nil
+local _lastBuiltSubTab: string? = nil -- scroll is kept only when rebuilding the same sub-tab
+-- Preview starts turned to face the camera: the camera sits on +Z looking down -Z,
+-- so a model whose front is -Z shows its back unless turned 180 degrees.
+local PREVIEW_START_YAW = 180
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
@@ -103,100 +107,120 @@ local function act(fn: () -> any, okText: string)
 end
 
 --------------------------------------------------
--- CARDS
+-- TILES + ACTION BAR (2026-10-09: small tiles, one action bar for the selection)
 --------------------------------------------------
 
 local buildSide: (any) -> ()
 
--- Tap the card (not its buttons) to try the item on in the Preview. Visual only.
--- Uses the card's own input (an overlay button would be stacked as a row by the
--- card's UIListLayout). Card buttons sink their taps, so Equip/Rent/Buy are unaffected.
--- A drag (scrolling the grid) is ignored: only a short press counts.
-local TAP_MAX_MOVE = 12 -- px
-local function addTryOnTap(card: Frame, item: any)
-	card.Active = false
-	local startPos: Vector3? = nil
-	card.InputBegan:Connect(function(input: InputObject) -- dies with the card (PRF-004)
-		local t = input.UserInputType
-		if t == Enum.UserInputType.MouseButton1 or t == Enum.UserInputType.Touch then
-			startPos = input.Position
-		end
-	end)
-	card.InputEnded:Connect(function(input: InputObject)
-		local t = input.UserInputType
-		if t ~= Enum.UserInputType.MouseButton1 and t ~= Enum.UserInputType.Touch then return end
-		local sp = startPos
-		startPos = nil
-		if not sp or (input.Position - sp).Magnitude > TAP_MAX_MOVE then return end
-		if not item.slot then return end
-		if item.isEligible == false then
-			say(`{_unit and _unit.raceName or "This unit"} cannot wear {item.slot} items`, true)
-			return
-		end
+local _selected: { [string]: number } = {} -- sub-tab -> selected assetId (reselected after refresh)
+local _tiles: { [number]: GuiObject } = {}
+local _barRoot: Frame? = nil
+local _barItem: any = nil
+local _barView: any = nil
+
+local buildBar: (any, any) -> ()
+
+-- Try on / Remove try-on: a visual preview on the selected unit only. Uses no
+-- trial, is never saved and never worn in battle; one item per slot. Cleared on
+-- unit switch, on leaving the Outfit tab and when the loadout closes (Unmount).
+local function toggleTryOn(item: any)
+	if not item.slot then return end
+	if _tryOn[item.slot] == item.assetId then
+		_tryOn[item.slot] = nil
+		_tryOnNames[item.slot] = nil
+	else
 		_tryOn[item.slot] = item.assetId
 		_tryOnNames[item.slot] = item.name or tostring(item.assetId)
 		_sideTab = SIDE_PREVIEW
-		if _lastView then buildSide(_lastView) end
-	end)
+	end
+	if _lastView then buildSide(_lastView) end
+	if _barView then buildBar(item, _barView) end
 end
 
-local function myItemsCard(grid: Instance, item: any, order: number, view: any)
-	local actions = {}
-	local note: string? = nil
+-- Buttons for the selected item (user ruling 2026-10-09):
+--   Primary   Buy for Roblox Avatar / Get (Free) ('Off sale' marker instead). HIDDEN in battle.
+--   Secondary Equip / Unequip (HIDDEN in battle), or Free trial / Rent when the item is not active
+--   Tertiary  Try on / Remove try-on, Add to / Remove from cart (always Tertiary, ugc_rules 56)
+local function fillActions(bar: Frame, item: any, view: any)
 	local unitId = _unit and _unit.id
+	local inBattle = view.isBattleActive == true
 	local hasUse = item.status == "owned" or item.status == "trial" or item.status == "rent"
 	local equips = view.equips or {}
 	local isWornHere = unitId ~= nil and equips[item.slot] == item.assetId
-	if item.status == "expired" then
-		note = "Out of use — rent again or buy to keep using it"
-		if item.isAvailable and not item.isOffSale then
-			table.insert(actions, { text = `Rent again ({W.FormatGold(item.rentPrice)} gold)`, color = Theme.Colors.Warning,
-				onPress = function()
-					act(function() return UGCClient.Rent(item.assetId) end, `Rented — {UGCCatalogData.RENT_BATTLES} battles`)
-				end })
+
+	local buy = UGCClient.CreateBuyButton(bar, item, W.OnBuyResult(say, refresh), inBattle)
+	if buy then buy.LayoutOrder = 1 end
+
+	if hasUse and unitId and item.isEligible ~= false then
+		if inBattle then
+			-- Equip / Unequip are hidden in battle, not greyed out (ugc_rules 56).
+		elseif isWornHere then
+			W.BarButton(bar, "Unequip", "Secondary", function()
+				act(function() return UGCClient.Unequip(unitId, item.slot) end, "Unequipped")
+			end, true, 2)
+		else
+			W.BarButton(bar, "Equip", "Secondary", function()
+				act(function() return UGCClient.Equip(unitId, item.assetId) end, `Equipped on {_unit.name or "unit"}`)
+			end, true, 2)
 		end
-	elseif hasUse and not unitId then
-		note = "Select a unit to equip"
-	elseif hasUse and isWornHere then
-		table.insert(actions, { text = "Unequip", color = Theme.Colors.Surface, onPress = function()
-			act(function() return UGCClient.Unequip(unitId, item.slot) end, "Unequipped")
-		end })
-	elseif hasUse and item.isEligible == false then
-		note = `{_unit.raceName or "This unit"} cannot wear {item.slot} items` -- race slot block (66)
-	elseif hasUse then
-		table.insert(actions, { text = "Equip", color = Theme.Colors.Info, onPress = function()
-			act(function() return UGCClient.Equip(unitId, item.assetId) end, `Equipped on {_unit.name or "unit"}`)
-		end })
+	elseif item.canTrial then
+		W.BarButton(bar, `Free trial ({UGCCatalogData.TRIAL_BATTLES} battles)`, "Secondary", function()
+			act(function() return UGCClient.StartTrial(item.assetId) end, "Free trial started")
+		end, true, 2)
+	elseif item.canRent then -- only once no trial/rental is running (server rule, 2026-10-09)
+		local verb = if item.status == "expired" then "Rent again" else "Rent"
+		W.BarButton(bar, `{verb} ({W.FormatGold(item.rentPrice)} gold)`, "Secondary", function()
+			act(function() return UGCClient.Rent(item.assetId) end, `Rented — {UGCCatalogData.RENT_BATTLES} battles`)
+		end, (view.gold or 0) >= (item.rentPrice or 0), 2)
 	end
-	if item.status ~= "owned" and (item.refundOnBuy or 0) > 0 and not item.isOffSale then
-		local refundNote = `Buying refunds your last rent: {W.FormatGold(item.refundOnBuy)} gold`
-		note = if note then `{note}\n{refundNote}` else refundNote
+
+	if unitId and item.slot and item.isEligible ~= false then
+		local isTrying = _tryOn[item.slot] == item.assetId
+		W.BarButton(bar, if isTrying then "Remove try-on" else "Try on", "Tertiary", function()
+			toggleTryOn(item)
+		end, true, 3)
 	end
-	local card = W.MakeItemCard(grid, item, order, {
-		actions = actions, note = note, isBattleActive = view.isBattleActive, isHighlighted = isWornHere,
-		onBuyResult = W.OnBuyResult(say, refresh),
-	})
-	addTryOnTap(card, item)
+	if item.status ~= "owned" then
+		if item.isInCart then
+			W.BarButton(bar, "Remove from cart", "Tertiary", function()
+				act(function() return UGCClient.SetInCart(item.assetId, false) end, "Removed from cart")
+			end, true, 4)
+		else -- always Tertiary, in and out of battle (ugc_rules 17/56)
+			W.BarButton(bar, "Add to cart", "Tertiary", function()
+				act(function() return UGCClient.SetInCart(item.assetId, true) end, "Added to cart")
+			end, true, 4)
+		end
+	end
+	-- Details (user decision 2026-10-12): opens the info popup (ID/creator/type/price/status/description).
+	W.BarButton(bar, "Details", "Tertiary", function() W.ShowItemDetails(item) end, true, 5)
 end
 
-local function cartCard(grid: Instance, item: any, order: number, view: any)
-	local actions = {}
-	local isActive = item.status == "trial" or item.status == "rent"
-	if not item.isTrialUsed and not isActive and item.status ~= "owned" and item.isAvailable then
-		table.insert(actions, { text = `Free trial ({UGCCatalogData.TRIAL_BATTLES} battles)`, color = Theme.Colors.Info,
-			onPress = function()
-				act(function() return UGCClient.StartTrial(item.assetId) end, "Free trial started — equip it in My Items")
-			end })
+-- Rebuilds only the action bar (selection change / try-on toggle), not the grid.
+buildBar = function(item: any, view: any)
+	local root = _barRoot
+	if not root then return end
+	local old = root:FindFirstChild("ActionBar")
+	if old then old:Destroy() end -- MEM-002
+	_barItem, _barView = item, view
+	local detail: string? = nil
+	if item then
+		detail = UGCClient.GetStatusLabel(item)
+		if item.isEligible == false then
+			detail = `{detail} · Not for {_unit and _unit.raceName or "this unit"}` -- race slot block (66)
+		elseif item.status ~= "owned" and (item.refundOnBuy or 0) > 0 and not item.isOffSale then
+			detail = `{detail} · Buy refunds {W.FormatGold(item.refundOnBuy)} gold` -- ugc_rules 53
+		end
 	end
-	table.insert(actions, { text = "Remove", color = Theme.Colors.Surface, onPress = function()
-		act(function() return UGCClient.SetInCart(item.assetId, false) end, "Removed from cart")
-	end })
-	local note = if item.isOffSale then "Off sale — stays in your cart but can't be bought" else nil
-	local card = W.MakeItemCard(grid, item, order, {
-		actions = actions, note = note, isBattleActive = view.isBattleActive,
-		onBuyResult = W.OnBuyResult(say, refresh),
-	})
-	addTryOnTap(card, item)
+	local bar = W.MakeActionBar(root, 5, item, detail)
+	if item then fillActions(bar, item, view) end
+end
+
+local function selectItem(item: any, view: any)
+	local prev = _selected[_subTab]
+	if prev and _tiles[prev] then W.SetTileSelected(_tiles[prev], false) end
+	_selected[_subTab] = item.assetId
+	W.SetTileSelected(_tiles[item.assetId], true)
+	buildBar(item, view)
 end
 
 --------------------------------------------------
@@ -206,6 +230,12 @@ end
 local function buildMain(view: any)
 	local main = _main
 	if not main or main.Parent == nil then return end
+	-- Keep the grid's scroll position across rebuilds of the same sub-tab
+	-- (add/remove cart, trial, buy all trigger a full rebuild).
+	local oldGrid = main:FindFirstChild("ItemGrid", true)
+	local keepScroll = if oldGrid and oldGrid:IsA("ScrollingFrame") and _lastBuiltSubTab == _subTab
+		then oldGrid.CanvasPosition else nil
+	_lastBuiltSubTab = _subTab
 	local root = contentFrame(main, "OutfitContent", true)
 
 	-- Header: sub-tabs (63) + merchant shortcut (72) + checkout (Cart only, 45)
@@ -234,11 +264,11 @@ local function buildMain(view: any)
 	local msg = W.MakeMessage(root, 3)
 	if _subTab == SUB_CART then
 		-- Checkout ONLY outside battle (ugc_rules 45); the server also refuses it.
-		local checkout = UGCClient.MakeTextButton(header, "Checkout all", Theme.Colors.Success, function()
+		-- Primary bar (2026-10-09); compact header height (user ruling 2026-10-08).
+		local canCheckout = not view.isBattleActive and (view.cartCount or 0) > 0
+		Theme.MakeBarButton(header, "Checkout all", if canCheckout then "Primary" else "Disabled", function()
 			W.Checkout(say, refresh)
-		end, not view.isBattleActive and (view.cartCount or 0) > 0)
-		checkout.LayoutOrder = 11
-		W.Compact(checkout)
+		end, { name = "Btn_CheckoutAll", minHeight = W.COMPACT_H, layoutOrder = 11 })
 	end
 
 	W.MakeFilterBar(root, _filter, 2, refresh)
@@ -261,13 +291,27 @@ local function buildMain(view: any)
 			text = "No items match these filters."
 		end
 		W.EmptyState(root, text).LayoutOrder = 4
+		table.clear(_tiles)
+		_barRoot, _barItem, _barView = nil, nil, nil
+		root.Parent = main -- NET-004: built off-tree, parented once
 	else
-		local grid = W.MakeGrid(root, 4)
+		local grid = W.MakeTileGrid(root, 4)
+		table.clear(_tiles)
+		_barRoot = root
+		local sel = W.PickSelected(list, _selected[_subTab]) -- reselect by assetId after a refresh
+		if sel then _selected[_subTab] = sel.assetId end
+		local equips = view.equips or {}
 		for i, item in list do
-			if _subTab == SUB_CART then cartCard(grid, item, i, view) else myItemsCard(grid, item, i, view) end
+			local isWorn = _unit ~= nil and equips[item.slot] == item.assetId
+			_tiles[item.assetId] = W.MakeTile(grid, item, i, sel ~= nil and item.assetId == sel.assetId, function()
+				selectItem(item, view)
+			end, { isWorn = isWorn })
 		end
+		buildBar(sel, view)
+		root.Parent = main -- NET-004: built off-tree, parented once
+		-- Deferred: AutomaticCanvasSize must resolve first or the position is clamped to 0.
+		if keepScroll then task.defer(function() if grid.Parent then grid.CanvasPosition = keepScroll end end) end
 	end
-	root.Parent = main -- NET-004: built off-tree, parented once
 end
 
 local function clearPreviewConns()
@@ -331,6 +375,7 @@ local function buildPreviewBody(root: Frame)
 		local clear = UGCClient.MakeTextButton(foot, "Clear try-on", Theme.Colors.Surface, function()
 			table.clear(_tryOn); table.clear(_tryOnNames)
 			if _lastView then buildSide(_lastView) end
+			if _barView then buildBar(_barItem, _barView) end -- Remove try-on -> Try on
 		end)
 		W.Compact(clear)
 		clear.AnchorPoint = Vector2.new(1, 0)
@@ -340,7 +385,7 @@ local function buildPreviewBody(root: Frame)
 	box.Parent = root
 
 	-- Drag to rotate (mouse + touch). Connections tracked; cleared on re-render/Unmount.
-	local yaw, dragging, lastX = 0, false, 0
+	local yaw, dragging, lastX = PREVIEW_START_YAW, false, 0
 	local model: Model? = nil
 	local pivot = CFrame.new()
 	local function applyYaw()
@@ -491,10 +536,12 @@ buildSide = function(view: any)
 			W.Label(row, names[id] or tostring(id), { size = UDim2.new(0.4, 0, 0, Theme.MinSize.TouchTarget),
 				autoSize = Enum.AutomaticSize.None, order = 2 })
 			local unitId = _unit and _unit.id
-			local btn = UGCClient.MakeTextButton(row, "Unequip", Theme.Colors.Surface, function()
-				act(function() return UGCClient.Unequip(unitId, slot) end, "Unequipped")
-			end, unitId ~= nil and not view.isBattleActive)
-			btn.LayoutOrder = 3
+			if unitId ~= nil and not view.isBattleActive then -- hidden in battle (ugc_rules 56)
+				local btn = UGCClient.MakeTextButton(row, "Unequip", Theme.Colors.Surface, function()
+					act(function() return UGCClient.Unequip(unitId, slot) end, "Unequipped")
+				end, true)
+				btn.LayoutOrder = 3
+			end
 		else
 			W.Label(row, "—", { size = UDim2.new(0.65, 0, 0, Theme.MinSize.TouchTarget), autoSize = Enum.AutomaticSize.None,
 				color = Theme.Colors.TextDisabled, order = 2 })
@@ -565,6 +612,9 @@ function UGCOutfitTab.Unmount()
 	_previewToken += 1
 	_lastView = nil
 	_token += 1
+	table.clear(_tryOn); table.clear(_tryOnNames) -- try-on never outlives the Outfit tab
+	table.clear(_tiles)
+	_barRoot, _barItem, _barView = nil, nil, nil
 	for _, panel in { _main, _side } do
 		if panel then
 			for _, name in { "OutfitContent", "OutfitSide" } do

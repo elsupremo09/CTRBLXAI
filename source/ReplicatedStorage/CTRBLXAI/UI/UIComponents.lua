@@ -49,6 +49,46 @@ local function applyPadding(instance, top, right, bottom, left)
 	return pad
 end
 
+--- Overlay a unit's portrait image onto an existing colored slot frame.
+--- Single source of truth for turning a numeric portrait asset ID into an
+--- ImageLabel (DAT-001: the rbxassetid:// prefix lives ONLY here, not scattered
+--- across the five UI spots that show portraits). The colored slot + its
+--- abbreviation label stay as the fallback: when assetId is nil (player units,
+--- summons, or any unit without a portrait) this is a no-op and the slot renders
+--- exactly as before. When assetId is present, a full-bleed ImageLabel is placed
+--- over the slot and the abbreviation label (if given) is hidden.
+---
+--- @param slot Instance        the colored Frame/TextButton portrait slot
+--- @param assetId number?      numeric Roblox image asset ID (nil = no portrait)
+--- @param abbrevLabel Instance?  the slot's 2-letter TextLabel to hide when an image shows
+--- @return ImageLabel?         the created image, or nil when no portrait
+function UIComponents.ApplyPortrait(slot, assetId, abbrevLabel)
+	if not slot or type(assetId) ~= "number" then
+		return nil
+	end
+	-- Reuse an existing overlay if ApplyPortrait is called twice on the same slot.
+	local existing = slot:FindFirstChild("PortraitImage")
+	local img = existing or Instance.new("ImageLabel")
+	img.Name = "PortraitImage"
+	img.BackgroundTransparency = 1
+	img.Size = UDim2.fromScale(1, 1)
+	img.Position = UDim2.fromScale(0, 0)
+	img.ScaleType = Enum.ScaleType.Crop  -- fill the square, crop overflow (portraits are transparent-bg)
+	img.Image = "rbxassetid://" .. tostring(assetId)
+	img.ZIndex = (slot.ZIndex or 1) + 1
+	-- Match the slot's rounded corners so the image doesn't poke past the frame.
+	if not img:FindFirstChildOfClass("UICorner") then
+		local c = Instance.new("UICorner")
+		c.CornerRadius = Theme.CornerRadius.sm
+		c.Parent = img
+	end
+	img.Parent = slot
+	if abbrevLabel then
+		abbrevLabel.Visible = false
+	end
+	return img
+end
+
 --- Try to display an icon. Returns ImageLabel or TextLabel.
 local function createIconOrFallback(parent, props, size)
 	size = size or UDim2.fromOffset(20, 20)
@@ -417,6 +457,7 @@ end
 --   isEvent  : boolean (channeling activation, round marker)
 --   isRound  : boolean (round boundary)
 --   size     : number? (slot width/height)
+--   portraitAssetId : number? (unit face image; overlays the colored slot when set)
 --------------------------------------------------
 
 function UIComponents.TimelineEntry(props)
@@ -463,6 +504,12 @@ function UIComponents.TimelineEntry(props)
 	nameLabel.Text = isRound and (props.name or "")
 		or string.sub(props.name or "?", 1, isActive and 4 or 3)
 	nameLabel.Parent = portrait
+
+	-- Portrait image overlay (enemy/neutral/NPC units). Round/event markers never
+	-- carry a portrait; player units pass nil → colored slot + letters unchanged.
+	if not isRound and not isEvent then
+		UIComponents.ApplyPortrait(portrait, props.portraitAssetId, nameLabel)
+	end
 
 	return portrait
 end

@@ -565,6 +565,10 @@ local function createSeedContext(seed)
 		conditionRng = Random.new(master:NextInteger(1, MAX_SEED)),
 		deployRng    = Random.new(master:NextInteger(1, MAX_SEED)),
 		featureRng   = Random.new(master:NextInteger(1, MAX_SEED)),
+		-- OBS two-form roll (2026-10-12). Appended LAST so every RNG seed above is
+		-- unchanged — only the new OBS form choices differ for a given seed (the
+		-- accepted "existing seeds now generate different maps" drift).
+		obsFormRng   = Random.new(master:NextInteger(1, MAX_SEED)),
 	}
 end
 
@@ -1087,6 +1091,25 @@ local function placeObjects(tiles, w, h, biome, rng, regionTypeMap)
 		return o ~= nil and o.passable
 	end
 
+	-- OBS TWO-FORM materialization (2026-10-12, map_gen_rules rows 75-92). ElevationPass
+	-- tagged blocker/billboard OBS tiles with tile.obsForm; convert them to impassable
+	-- objects HERE, before the pool draw, so (a) candidate gathering skips them (the
+	-- tile.object == nil guard below), (b) buildBlockers emits them as BLOCKERS (movement
+	-- + direct-LoS walls), and (c) runFinalValidation V4/V5 + post-object connectivity
+	-- treat them as walls. Spike-form OBS is raised terrain (isObstacle), NOT an object,
+	-- and is intentionally not handled here.
+	for y = 1, h do
+		for x = 1, w do
+			local tile = tiles[y][x]
+			if (tile.obsForm == "blocker" or tile.obsForm == "billboard") and tile.object == nil then
+				objectIdCounter = objectIdCounter + 1
+				local objType = (tile.obsForm == "billboard") and "Ad Billboard" or "OBS Blocker"
+				tile.object = objType
+				table.insert(placedObjects, { id = "obj_" .. objectIdCounter, type = objType, x = x, y = y })
+			end
+		end
+	end
+
 	-- Peak elevation for this biome: objects/NPCs must NOT spawn on peak tiles
 	-- (user rule 2026-10-04). placeObjects runs AFTER ElevationPass, so tile.elevation
 	-- is final here. Peak = the biome's configured max elevation.
@@ -1118,8 +1141,15 @@ local function placeObjects(tiles, w, h, biome, rng, regionTypeMap)
 						local nTile = tiles[ny][nx]
 						local tDef  = TerrainData.Types[nTile.terrain]
 						local pass  = tDef and tDef.passable ~= false
+						-- Non-blocked: an impassable object walls the flood (same rule as
+						-- validateConnectivity). This now also stops OBS blocker/billboard
+						-- objects (materialized just above) from letting pool objects spawn
+						-- in a region only reachable THROUGH a blocker strip.
+						local noBlock = nTile.object == nil
+							or (ObjectData.Objects[nTile.object]
+								and ObjectData.Objects[nTile.object].passable)
 						local elevOk = math.abs(tile.elevation - nTile.elevation) <= 1
-						if pass and elevOk then
+						if pass and noBlock and elevOk then
 							reachable[nKey] = true
 							table.insert(queue, { x = nx, y = ny })
 						end
@@ -1645,6 +1675,18 @@ function MapService.Generate(biomeId, templateId, seed)
 		-- Step 8: Place objects.
 		local objects, objectPoolAudit = placeObjects(tiles, w, h, biome, seedCtx.objectRng, regionTypeMap)
 		mapState.objectPoolAudit = objectPoolAudit
+
+		-- OBS Two-Form: Ad Billboard tiles are elevation-immune (map_gen_rules row 85).
+		-- Collect them for GameConstants.ELEV_IMMUNE_MAP (populated by SetGeneratedMap).
+		local elevationImmuneTiles = {}
+		for ey = 1, h do
+			for ex = 1, w do
+				if tiles[ey][ex].obsForm == "billboard" then
+					table.insert(elevationImmuneTiles, { x = ex, y = ey })
+				end
+			end
+		end
+		mapState.elevationImmuneTiles = elevationImmuneTiles
 
 		-- Re-check connectivity after object placement.
 		local conn2, connErr2 = validateConnectivity(tiles, w, h)

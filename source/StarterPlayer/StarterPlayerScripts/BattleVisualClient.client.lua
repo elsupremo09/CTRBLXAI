@@ -680,11 +680,7 @@ local function spawnToken(unit)
 			-- at the given CFrame. So we just need the tile surface Y, no HipHeight math.
 			-- Ground feet to the real voxel surface (not the buried tile-Part top),
 			-- matching the grounded move path so R15 units don't spawn buried.
-			local feetY, hitInst = groundSurfaceY(unit.tileX, unit.tileY)
-			-- [DIAG burial 2026-10-08] remove after the cause is found.
-			local gridY = tileSurfaceY(getElevation(unit.tileX, unit.tileY))
-			local _, ext = model:GetBoundingBox()
-			print(`[BattleVisualClient][DIAG burial] {unit.name} ({unit.side}) tile ({unit.tileX},{unit.tileY}) feetY={string.format("%.2f", feetY)} gridY={string.format("%.2f", gridY)} hit={if hitInst then hitInst:GetFullName() else "MISS"} modelH={string.format("%.2f", ext.Y)}`)
+			local feetY = groundSurfaceY(unit.tileX, unit.tileY)
 			local feetPos = Vector3.new(
 				MAP_OFFSET_X + (unit.tileX - 0.5) * TILE_SIZE,
 				feetY,
@@ -1236,11 +1232,15 @@ local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEven
 		local nowName = activeUnitId
 		local nowSide = "Player"
 		local nowTileX, nowTileY
+		local nowPortrait
+		local nowTier
 		if unitData[activeUnitId] then
 			nowName = unitData[activeUnitId].name or activeUnitId
 			nowSide = unitData[activeUnitId].side or "Player"
 			nowTileX = unitData[activeUnitId].tileX
 			nowTileY = unitData[activeUnitId].tileY
+			nowPortrait = unitData[activeUnitId].portraitAssetId
+			nowTier = unitData[activeUnitId].enemyType
 		elseif timelineSnapshot then
 			for _, s in ipairs(timelineSnapshot) do
 				if s.id == activeUnitId then nowName = s.name; nowSide = s.side; break end
@@ -1249,6 +1249,8 @@ local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEven
 		table.insert(finalEntries, {
 			id = activeUnitId, name = nowName, side = nowSide,
 			tileX = nowTileX, tileY = nowTileY,
+			portraitAssetId = nowPortrait,
+			enemyType = nowTier,
 			rt = 0, isActive = true, isGhost = false,
 			isEvent = false, isRound = false,
 		})
@@ -1309,6 +1311,11 @@ local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEven
 			if unitData[baseId] then
 				enriched.tileX = unitData[baseId].tileX
 				enriched.tileY = unitData[baseId].tileY
+				-- Portrait face for the turn-order slot (enemy/neutral/NPC only; nil
+				-- for players/summons → slot keeps its colored box + letters).
+				enriched.portraitAssetId = unitData[baseId].portraitAssetId
+				-- Tier (Elite/Veteran/Grunt) for the slot's corner star. nil for players.
+				enriched.enemyType = unitData[baseId].enemyType
 			end
 
 			-- Attach RT from snapshot
@@ -2698,6 +2705,12 @@ local function createDevCameraPanel()
 	makeBtn(gBattle.container, "SAVE NOW", function()
 		BattleEvents.DevCommand:FireServer({ action = "SaveNow" })
 	end, Color3.fromRGB(30, 60, 80))
+	makeBtn(gBattle.container, "GOLD +10,000", function()
+		BattleEvents.DevCommand:FireServer({ action = "DevAddGold" })
+	end, Color3.fromRGB(90, 75, 20))
+	makeConfirmBtn(gBattle.container, "RESET UGC TRIAL/RENT", function()
+		BattleEvents.DevCommand:FireServer({ action = "DevResetUGCRecords" })
+	end, Color3.fromRGB(70, 45, 80))
 
 	-------------------------------------------------------------
 	-- GROUP: Map
@@ -3161,6 +3174,10 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 			elevation = getElevation(_u.tileX or 0, _u.tileY or 0),
 			statuses = _u.statuses or {},
 			actions = {},
+			-- Carry the face so the active-unit header shows the enemy's portrait on
+			-- its own turn (this block only runs for side ~= "Player", so player units
+			-- stay nil → colored box). Fixes the one missed display spot.
+			portraitAssetId = _u.portraitAssetId,
 		}
 		bp.skill = nil; bp.target = nil; bp.preview = nil
 		bp.state = "EnemyTurn"
@@ -4459,7 +4476,8 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	title.Font = Theme.Font.PrimaryBold
 	title.TextSize = Theme.Text.Title()
 	title.TextColor3 = Theme.Colors.TextGold
-	title.Text = "VICTORY!"
+	title.Text = if data.defeat then "DEFEAT" else "VICTORY!"
+	if data.defeat then title.TextColor3 = Theme.Colors.Danger end
 	title.TextXAlignment = Enum.TextXAlignment.Center
 	title.Parent = frame
 
@@ -4500,7 +4518,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		goldLabel.TextSize = Theme.Text.Body()
 		goldLabel.TextColor3 = Theme.Colors.TextGold
 		goldLabel.TextXAlignment = Enum.TextXAlignment.Left
-		goldLabel.Text = `+{data.gold} GOLD`
+		goldLabel.Text = if data.defeat then `+{data.gold} GOLD kept (half of gold dropped)` else `+{data.gold} GOLD`
 		goldLabel.Parent = frame
 		recY = recY + 18
 	end

@@ -105,6 +105,65 @@ function ObjectEffectService.RemoveObjectInstance(state: any, inst: any)
 	return removed
 end
 
+-- OBS Phase 2a — object HP foundation (map_gen_rules rows 82/85, objects_encounters
+-- rows 83/84). A breakable blocker-prop OBS object carries runtime hp = its
+-- ObjectData hitsToDestroy (3). Billboards / unbreakable objects get NO hp and can
+-- never be destroyed. Only objects that DECLARE a numeric hitsToDestroy qualify, so
+-- tag-only "Breakable" props (Bomb Barrel, Stone Pillar) are unaffected.
+local function isBreakableObject(def: any): boolean
+	return def ~= nil
+		and def.isUnbreakable ~= true
+		and type(def.hitsToDestroy) == "number"
+		and def.hitsToDestroy > 0
+end
+
+-- Seed runtime hp on breakable OBS objects. Idempotent: safe to call at battle
+-- start and on any mid-battle map refresh (each call resets to full, matching a
+-- fresh/refreshed map). Billboards / unbreakable objects are explicitly set hp=nil.
+function ObjectEffectService.InitObjectHp(state: any)
+	if not (state and state.objects) then return end
+	local n = 0
+	for _, inst in ipairs(state.objects) do
+		local def = inst and inst.type and ObjectData.Objects[inst.type]
+		if isBreakableObject(def) then
+			inst.hp = def.hitsToDestroy
+			n += 1
+		else
+			inst.hp = nil
+		end
+	end
+	print(string.format("[ObjectEffectService] InitObjectHp | %d breakable object(s) seeded with hp", n))
+end
+
+-- OBS Phase 2a — DORMANT. Nothing calls this yet; Phase 2c wires attack / AOE /
+-- elevation-reduction hits to it (map_gen_rules rows 82/84). Applies `n` hits
+-- (default 1) to the breakable object at (x,y); on reaching 0 hp the object is
+-- removed via the EXISTING RemoveObjectInstance (clears the blocker, reverts the
+-- tile, removes the visual). Ad Billboard / unbreakable objects are a no-op.
+-- Returns: "destroyed" | remaining hp (number) | "immune" | "not-found".
+function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any): any
+	if not (state and state.objects and x and y) then return "not-found" end
+	for _, inst in ipairs(state.objects) do
+		if inst.x == x and inst.y == y then
+			local def = inst.type and ObjectData.Objects[inst.type]
+			if (not isBreakableObject(def)) or inst.hp == nil then
+				return "immune"
+			end
+			local dmg = math.max(1, math.floor(tonumber(n) or 1))
+			inst.hp = math.max(0, inst.hp - dmg)
+			if inst.hp <= 0 then
+				ObjectEffectService.RemoveObjectInstance(state, inst)
+				-- Phase 2c: broadcast the opened tile so clients refresh movement/LoS
+				-- highlights and the inspector HP readout.
+				return "destroyed"
+			end
+			-- Phase 2c: broadcast inst.hp so an open inspector card updates N/3 live.
+			return inst.hp
+		end
+	end
+	return "not-found"
+end
+
 -- Inject the direction prompter (Main wires promptCardinalDirection). Lets a siege
 -- handler ask the player to AIM in a cardinal direction: fn(actor) -> "N"/"E"/"S"/"W"
 -- or nil. Blocking (yields until the player chooses). nil-safe: if unset, siege

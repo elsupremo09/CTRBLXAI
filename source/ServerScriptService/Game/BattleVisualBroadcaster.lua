@@ -98,6 +98,10 @@ local function serializeUnit(unit)
 		name        = unit.name,
 		side        = unit.side,
 		enemyType   = unit.enemyType,  -- Grunt/Veteran/Elite; client shows tier star on the name
+		-- Portrait asset ID (numeric) for the unit's face image. Assigned by
+		-- EnemyGenerator to enemy/neutral/NPC units only; nil for player units
+		-- and summons (client falls back to the colored name box when nil).
+		portraitAssetId = unit.portraitAssetId,
 		tileX       = unit.tileX,
 		tileY       = unit.tileY,
 		currentHp   = unit.currentHp,

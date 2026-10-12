@@ -23,6 +23,8 @@
 --     ownership, is paid once per paid rental (cleared from the save), and a
 --     declined prompt clears the marker (UGCService.ClearPendingPurchase); every
 --     marker also expires and is resolved by the server itself (BUG-025).
+--   * Enemy preview (inspector)      -> only units the outfit service planned this battle; worn
+--     look only, no try-on; same 0.5 s Preview limit; display copy only (no state).
 --   * Mid-battle purchases / spam    -> checkout and Buy are refused during battle
 --     (buy_timing, ugc_rules 21/45); checkout/verify have longer rate limits.
 --
@@ -118,10 +120,18 @@ local function onGetWorn(player: Player, unitId: any)
 	for _, id in ids do
 		local item = UGCCatalogData.Items[id]
 		if item then
+			-- The requesting player's OWN status for each item (loadout_ui_spec 94); works for
+			-- enemy units too (their looks come from UGCOutfitService). Facts only (NET-003).
+			local status, remaining = "locked", 0
+			if _ugc.GetItemStatus then status, remaining = _ugc.GetItemStatus(pid, id) end
 			table.insert(items, {
 				assetId = id, name = item.name, slot = item.slot,
+				assetId2 = item.assetId2, bundleId = item.bundleId,
 				isOwned = _ugc.IsOwned(pid, id), isInCart = _ugc.IsInCart(pid, id),
 				isOffSale = if _outfit then _outfit.IsOffSale(id) else false,
+				isFree = if _outfit and _outfit.IsFree then _outfit.IsFree(id) else false,
+				creator = if _outfit and _outfit.GetCreatorName then _outfit.GetCreatorName(id) else nil,
+				status = status, remaining = remaining,
 			})
 		end
 	end
@@ -206,7 +216,16 @@ local function onPreview(player: Player, unitId: any, tryOnIds: any)
 	if not _outfit or not _outfit.BuildPreview then return fail("Preview unavailable") end
 	local pid = _playerId :: string
 	local isOwnedUnit, raceName = _ugc.GetUnitRace(pid, unitId)
-	if not isOwnedUnit then return fail("Unknown unit") end
+	if not isOwnedUnit then
+		-- Inspector Outfit tab (loadout_ui_spec 96): an ENEMY of the current battle may be
+		-- previewed wearing exactly its battle look. Still read-only: BuildPreview only makes
+		-- a display copy under this player's PlayerGui (no equip, save, trial or battle look).
+		-- No try-on on enemies (Try on is Outfit-tab only, id 83).
+		local enemyRace = if _outfit.GetEnemyRace then _outfit.GetEnemyRace(unitId) else nil
+		if not enemyRace then return fail("Unknown unit") end
+		if type(tryOnIds) == "table" and next(tryOnIds) ~= nil then return fail("Try on is not available here") end
+		raceName = enemyRace
+	end
 	-- Start from what the unit wears, keyed by slot.
 	local bySlot: { [string]: number } = {}
 	local worn = if _outfit.GetWornIds then _outfit.GetWornIds(pid, unitId) else _ugc.GetUnitLookIds(pid, unitId)
@@ -227,7 +246,11 @@ local function onPreview(player: Player, unitId: any, tryOnIds: any)
 	for _, slot in UGCCatalogData.SLOTS do
 		if bySlot[slot] then table.insert(ids, bySlot[slot]) end
 	end
-	local ok, err = _outfit.BuildPreview(player, raceName, ids)
+	-- Pass unitId + pid ONLY for the player's own unit so the preview shows its
+	-- body tint. Enemy previews (isOwnedUnit false) pass nil → no tint lookup.
+	local previewUnitId = if isOwnedUnit then unitId else nil
+	local previewPid = if isOwnedUnit then pid else nil
+	local ok, err = _outfit.BuildPreview(player, raceName, ids, previewUnitId, previewPid)
 	if not ok then return fail(err or "Preview failed") end
 	return { ok = true, data = { modelName = "PreviewModel", folderName = "UGCPreview" } }
 end

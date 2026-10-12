@@ -82,7 +82,7 @@ SHEET                   | TOPIC                                           | WHEN
 
 07 Doctrines            | 15 doctrines with stat packages, passives, skill choices | Implementing doctrine equip/effects
 
-08 Races                | 15 races with starting stats, growth, passives, tags | Implementing race selection/effects
+08 Races                | 25 races with race_id/legacy_race_id, starting stats, growth, passives, tags | Implementing race selection/effects
 
 09 Weapons Equipment    | BP pricing, 15 weapon archetypes, rarity, generation rules, affixes | Implementing items, loot generation
 
@@ -516,7 +516,7 @@ game_flow (26 rows, sheet '28 Game Flow') - LOCKED 2026-10-07: full out-of-battl
 
 
 --- 2026-10-07 UGC RENTAL & OWNERSHIP (LOCKED, user-approved) - sheet '29 UGC Rental Ownership' ---
-ugc_rules (54 rows) - key/value rules. Columns: section, key, value, unit, status, notes.
+ugc_rules (58 rows) - key/value rules. Columns: section, key, value, unit, status, notes.
   Sections: Currency, Purpose, Try-On, Rental, Expiry, Ownership, Purchase, Rig, Enemy Outfits, Cart, Off-Sale, Availability, Paired, Badges, Ratings, UI.
   Query: SELECT key, value, unit, status, notes FROM ugc_rules WHERE section = 'Rental'
   Core: free try-on 5 battles once/item ever (not a rental); rental 30 battles; -1 per battle at battle END if any
@@ -526,8 +526,12 @@ ugc_rules (54 rows) - key/value rules. Columns: section, key, value, unit, statu
   Enemy outfits: <=2 items/enemy, ~4 distinct/battle (PROVISIONAL, mobile perf), half random / half pushed, seeded,
   server-side at spawn. Cart cap 50 (wishlist replaced). Ratings private dev data. Separate UGC merchant; Customize in unit loadout screen.
 ugc_slots (6 rows, revised 2026-10-08) - Hat, Hair, Torso, Back, Pants, Shoes. Cols: slot, sort_order, description, icon_asset_id, roblox_asset_types, notes.
-ugc_race_slot_blocks (6 rows, PROVISIONAL) - per RACE, visual only: Fairy/Avian Back; Mermaid Pants/Shoes; Treant Hair. (Mermaid/Waist removed 2026-10-08.)
-ugc_catalog (1 PLACEHOLDER row; cols asset_id, asset_id_2, bundle_id for paired items) - curated asset list; asset_id='PLACEHOLDER' is not real, delete when real IDs added.
+ugc_race_slot_blocks (3 rows, PROVISIONAL) - per RACE, visual only: Fairy/Avian Back; Treant Hair (3 rows; former Catau/ex-Mermaid blocks removed 2026-10-08).
+ugc_catalog (83 rows, sheet '31 UGC Catalog', updated 2026-10-09 +49 free) - curated asset list; cols asset_id, name, slot, on_sale_verified,
+  status, notes, asset_id_2, bundle_id. First real TEST set (status 'Test 2026-10-09'): Hair 4, Hat 7, Torso 7, Back 5, Pants 5, Shoes 6.
+  All verified on-sale + non-Limited via Roblox economy/catalog APIs 2026-10-09. Shoes = bundles: asset_id = LeftShoe, asset_id_2 = RightShoe,
+  bundle_id = bundle. PLACEHOLDER row deleted. FLAG: 18539653755 pants include shoes in mesh.
+  Query: SELECT asset_id, asset_id_2, bundle_id, name FROM ugc_catalog WHERE slot = 'Shoes'
   NOTE: battle gold payout per level for rental pricing not yet verified from RewardService - Dev to confirm.
 
 --- 2026-10-08 UGC UPDATE (ugc_rules ids 38-52 added; 9,14,15,18,21,26,29-32 revised) ---
@@ -584,3 +588,149 @@ loadout_ui_spec now 78 rows. Added ids 74-78: dev Options menu removed, Back but
   82 STANDING RULE: no helper texts or labels without user approval (mobile space).
   Query: SELECT * FROM loadout_ui_spec WHERE id >= 79 OR id IN (1,60,78)
   Game_Rules sheet '30 Loadout UI Spec' re-exported. Backup: backups\CTRBLXAI_pre_tabsgears_20261008.db
+
+--- 2026-10-09 RACE RENAME: Mermaid -> Catau, Lizardmen -> Reptilian (user decision; source\ NOT yet updated) ---
+  races: rowid 6 name Mermaid->Catau; rowid 16 name Lizardmen->Reptilian + passive_effect text. Stats/tags/passives (Tidecaller, Spiked Hide) unchanged.
+  open_decisions 69, 70 text updated; ugc_slots 5, 6 notes updated; open_decisions 87 = rename record (Dev Pending: RACE-MERMAID/RACE-LIZARDMEN keys).
+  Older INDEX history entries above keep the old names (historical log).
+  Game_Rules sheets '08 Races' and '18 Open Decisions' updated. Backup: backups\CTRBLXAI_pre_20261009_racerename.db (+ INDEX/Game_Rules copies)
+
+--- 2026-10-09 RACE IDs: stable race_id + legacy_race_id added to races ---
+  races columns: name (display, may change), tags, start_*, growth_*, passive_name, passive_effect, race_id (TEXT UNIQUE, permanent code/save key = RaceData.lua key), legacy_race_id (TEXT nullable, old ID for save conversion).
+  All 25 filled from RaceData.lua keys (read-only). Catau=RACE-CATAU (legacy RACE-MERMAID); Reptilian=RACE-REPTILIAN (legacy RACE-LIZARDMEN). Code IDs renamed in the same change (Dev).
+  RULE (open_decisions 87): never regenerate race IDs from names; a renamed ID must keep its old ID in legacy_race_id.
+  Roadmap 'Slice 3 - Skills Combat' A83 Mermaid->Catau. Game_Rules '08 Races' (cols S-T) and '18 Open Decisions' re-exported. Backups: backups\*_pre_20261009_raceid.*
+
+--- 2026-10-09 UGC TRIAL RENAME / OUTFIT PANELS / ACTION BUTTONS / RENT TIMING (user rulings; docs only, source\ NOT updated) ---
+  ugc_rules now 55 rows. id 4 Try-On/free_tryon_battles -> Trial/free_trial_battles; id 38 tryon_concurrency -> Trial/trial_concurrency (values unchanged).
+    ids 6, 15 notes reworded (try-on -> free trial). "Try on" now = ONLY the free visual preview.
+    Added id 55 rent_offer_timing: no Rent while a trial or rental is active, no Rent +30, trial first. Cross-ref notes on ids 10, 13, 18.
+  loadout_ui_spec now 91 rows. id 63: LEFT panel My Items / Cart + Merchant shortcut; RIGHT panel Worn / Preview (3D model). id 80 flag resolved.
+    id 67 Rent timing / Try on note. id 76 note: action buttons use bar art (id 84); Back (id 75), arrows, sort/filter icons stay square.
+    Added 83 Try on, 84 action button style (Try on = Tertiary; FLAG Tertiary art = Disabled dark art), 85 Disabled state (dark art), 86 button text white + black outline,
+    87 tile grid, 88 badges, 89 selection action bar, 90 no helper text (id 82), 91 merchant note.
+  Query: SELECT * FROM loadout_ui_spec WHERE id IN (63,67,76,80) OR id >= 83; SELECT * FROM ugc_rules WHERE id IN (4,6,10,13,15,18,38,55)
+  Game_Rules sheets '29 UGC Rental Ownership' and '30 Loadout UI Spec': re-export PENDING (workbook was open in Excel). Backup: backups\CTRBLXAI_pre_20261009_ugcui.db (+ INDEX/Game_Rules copies)
+2026-10-09: loadout_ui_spec ids 84/85 (Tertiary = dark bar full brightness; Disabled = same bar faded, ImageTransparency 0.5 / TextTransparency 0.4, incl. BattleHUD), 90 (status facts 'Buy refunds N gold' / 'Not for <race>' are not helper text), 91 (Try on Outfit-tab only). PENDING: re-export of CTRBLXAI_Game_Rules.xlsx sheets '29 UGC Rental Ownership' and '30 Loadout UI Spec' - blocked, workbook open in Excel.
+
+--- 2026-10-09 CART STYLE / INSPECTOR OUTFIT TAB / FREE UGC (user rulings; docs only, source\ NOT updated) ---
+ugc_rules now 58 rows. Revised: 17 buy_button (Add to cart ALWAYS Tertiary; in battle Buy HIDDEN, Add to cart only; outside Buy Primary + cart Tertiary), 29 cart_add_source (inspector Outfit tab popup).
+  Notes appended: 21, 33. Added: 56 add_to_cart_style (Equip/Unequip HIDDEN in battle), 57 free_items + 58 free_badge (AGENT DEFAULT, user may veto: price 0 = no trial/rent, 'Get (Free)' Primary, no refund/commission, badge 'Free').
+loadout_ui_spec now 97 rows. Added section 'Inspector Outfit Tab' ids 92-97 (5th UnitInspectorPanel tab 'Outfit'; left worn list, right preview, no sub-tabs; worn-item popup with Add/Remove cart only; player + enemy units).
+  Revised 88 rule (+Free badge). Notes appended: 65, 67, 76, 84, 89.
+ugc_catalog +49 rows status 'Free 2026-10-09' (Roblox-made, 0 R$, on sale, non-limited, API-verified): Hair 12, Torso 24, Pants 9, Shoes 4 bundles (872/896/894/905). No allow-list gap; ugc_slots Hair/Torso/Pants/Shoes notes appended.
+  Query: SELECT * FROM ugc_catalog WHERE status = 'Free 2026-10-09'; SELECT * FROM loadout_ui_spec WHERE id >= 92; SELECT * FROM ugc_rules WHERE id IN (17,21,29,33,56,57,58)
+  Game_Rules sheets 29/30/31 re-exported (also clears earlier PENDING 29/30 export). Backup: backups\CTRBLXAI_pre_20261009_cartoutfitfree.db (+ INDEX/Game_Rules copies)
+
+--- 2026-10-09 UGC MERCHANT LAYOUT (user rulings; docs only, source\ NOT updated) ---
+loadout_ui_spec: new section 'UGC Merchant' ids 98 (smaller tiles, >=3 full rows visible on landscape phone, 44 px min per tile, more columns allowed), 99 (all buttons in one RIGHT-side vertical column with selected item name/status on top; grid takes remaining width; header = title + gold only; replaces bottom action bar + header Checkout/Back for merchant ONLY), 100 (upper-right corner badge 'Owned' / 'In cart', Owned priority, separate from status badge). Notes appended: 89, 91. Outfit tab unchanged.
+  Query: SELECT * FROM loadout_ui_spec WHERE section = 'UGC Merchant' OR id IN (89,91)
+  Game_Rules sheet '30 Loadout UI Spec' re-exported. Backup: backups\CTRBLXAI_pre_20261009_merchantlayout.db (+ INDEX/Game_Rules copies)
+
+--- 2026-10-09 MERCHANT NOTE REWORD: loadout_ui_spec id 91 rule text reworded to match ids 98-100 (shares tile style/filters/sort/search/badges/buttons ids 84-88; own layout 98-100; no Try on). Sheet '30 Loadout UI Spec' re-exported. Backup: backups\CTRBLXAI_pre_20261009_merchantnote.db ---
+
+
+--- 2026-10-12 OBS TWO-FORM / AD BILLBOARD RULES (Designer; map-gen OBS = obstacle designed to be hard/impossible to cross) ---
+map_gen_rules rows 74-80 (new): row 74 section header 'OBS TWO-FORM / AD BILLBOARD RULES'; then
+  'OBS Two-Form System' (each OBS strip picks ONE of two forms, seeded/deterministic from the map seed),
+  'OBS Spike Terrain Form' (strip of high-elevation tiles, jump 5+ to scale; high-Jump CAN scale it = intended vantage point,
+   reuses region terrain, no new terrain type), 'OBS Blocker-Prop Cluster Form' (blocker objects on normal-height ground,
+   passable only by flying/teleport, NEVER landable - treat like an occupied tile, walkers can't enter),
+  'OBS Over-Decoration Bug' (BUG: generator currently does BOTH forms at once - spikes elevation AND spawns blockers on top;
+   corrected rule = exactly ONE form per strip; flagged for SOURCE fix in EnemyGenerator/map-gen, Designer documents only),
+  'Ad Billboard OBS Strip' (Roblox immersive ads: ~2-tile/~10-stud OBS strip can randomly spawn AS an ad billboard that
+   REPLACES an OBS strip 1:1 - no pathing/reachability change; behaves like Blocker-Prop form; flat AdGui panel 8x4.5 to
+   32x18 studs, unobstructed LoS, clears 4.5-stud min; image and/or autoplay video, video MUTED unless unmuted,
+   one AdGui serves both, video needs EnableVideoAds), 'Ad Billboard Eligibility + Earnings Fit'
+   (NOT YET MET - public game + 2,000+ monthly uniques + owner ID-verified + 2FA + approved Maturity & Compliance = zero fill
+   until live; image ads fit top-down/isometric, autoplay video needs ~55-deg view + enough pixels so may earn less in isometric).
+objects_encounters rows 82-84 (new): row 82 section header 'OBS BLOCKER / AD OBJECTS'; 'Blocker-Prop Cluster' and
+  'Ad Billboard' catalog objects (Category Blocker; Passable = Flying/Teleport only; never landable/occupiable).
+STATUS: all new rows 'Locked 2026-10-12' EXCEPT the Ad Billboard eligibility items ('Ad Billboard Eligibility + Earnings Fit'
+  rule row and the 'Ad Billboard' object) = 'Pending (needs live game + eligibility)'. The over-decoration bug is a SOURCE bug
+  (EnemyGenerator/map-gen) flagged for Dev; Designer documented the corrected rule only. terrain_effects UNCHANGED (spike form
+  reuses existing region terrain at raised elevation). Re-exported sheets '12 Map Gen Rules' and '17 Objects Encounters'.
+  Backups in docs\backups\: CTRBLXAI_backup_20261012.db, INDEX_backup_20261012.txt, CTRBLXAI_Game_Rules_backup_20261012.xlsx.
+
+
+--- 2026-10-12 OBS BLOCKER-PROP BREAK/PUSH/ELEVATION + AD BILLBOARD EXCEPTION (USER RULINGS) ---
+Supplements the OBS TWO-FORM / AD BILLBOARD rules (map_gen_rules rows 74-80, objects_encounters rows 82-84).
+map_gen_rules NEW rows 81-86 (all 'Locked 2026-10-12'):
+  81 OBS Blocker-Prop = Tile-Occupying Object - treated like any impassable object/unit occupying a tile
+     (reuse occupied/impassable semantics); passable only by flying/teleport, never landable; clearing
+     (break OR push away) reverts the tile to normal passable, non-elevated ground.
+  82 OBS Blocker-Prop Breakable - breaks after 3 hits from ANY source (any unit's direct attack AND
+     area/explosion/elevation-tag effects); any unit may target it; on break removed + tile reverts to
+     normal passable non-elevated ground (reachability/targeting treat as open). AI MAY break to open a
+     route (AIService note).
+  83 OBS Blocker-Prop Pushable - native flat STABILITY 3 (the Push stat); Push Distance = max(0, Force-3)
+     (project_rules id 103 / core_stats id 53), so Force > 3 needed to move it; old tile passable, new tile
+     blocked (existing object/unit push semantics incl. chosen distance id 129).
+  84 OBS Blocker-Prop Elevation / Break Interaction - elevation-reducing effects (explosion/earthquake
+     'break tiles' tags) COUNT AS HITS toward the 3-hit break. FLAG: if an existing rule says
+     elevation-reduction destroys objects outright, flag the interaction rather than guess (status carries
+     the flag; Dev confirmation pending).
+  85 Ad Billboard Exception - NOT breakable (immune to 3-hit break + all damage/area/explosion), ELEVATION
+     IMMUNE (height never changes; may stand above lowered ground, accepted), effectively UNPUSHABLE/
+     immovable regardless of Force; passable only by flying/teleport, never landable.
+  86 OBS Spike Terrain Form unaffected - not an object: cannot be broken by the 3-hit rule, no native
+     Stability / unpushable, follows only existing terrain/elevation rules (high-Jump may scale it).
+map_gen_rules CHANGED rows 79 + 80 (Ad Billboard OBS Strip / Eligibility) - appended the break/elevation/push
+  immunity + cross-ref to row 85.
+objects_encounters CHANGED rows 83 (Blocker-Prop Cluster: +Breakable(3-hit)/Pushable/Stability=3) and
+  84 (Ad Billboard: +Unbreakable/Elevation-Immune/Immovable), with Primary Effect + Notes updated.
+Code owner = EnemyGenerator / map-gen + AIService; Designer documents docs\ only. Re-exported Game Rules
+  sheets '12 Map Gen Rules' and '17 Objects Encounters'. Backups: docs\backups\*_20261012_131707.*
+
+
+--- 2026-10-12 OBS BLOCKER-OBJECT LoS + INSPECTOR RULES (Designer; docs-only, follows the 2026-10-12 OBS Two-Form / Ad Billboard block) ---
+map_gen_rules NEW rows 87-92 (all 'Locked 2026-10-12'):
+  87 'Blocker-Object Line of Sight' - blocker-prop OBS objects + ad billboards BLOCK direct attacks/projectiles like high terrain;
+     clears when attacker Effective Elevation is 3+ ABOVE the blocker tile (mirrors the unit-blocker clearance). ADDITIVE to the
+     existing unit-based LoS rules - does NOT change movement_targeting id 38 (allies never block / enemies block / 3+-elev bypass).
+  88 'Arc Projectiles vs Blocker Objects - NOT blocked' - arc ignores units AND lobs over terrain/obstacles, so arc is NOT blocked by
+     blocker objects or billboards (movement_targeting ids 44/45; target-height check id 46 still applies).
+  89 'Both OBS Forms Block Direct LoS' - spike-terrain form blocks via ELEVATION (existing id 41), blocker-prop/billboard via the OBJECT; both block DIRECT LoS, neither blocks ARC.
+  90 'Blocker-Prop Object Inspectable' - blocker-prop is a valid in-battle inspector target (tap tile w/ object, no unit; living unit takes
+     priority = existing precedence). Shared desc: 'Impassable, and blocks line of sight.' PLUS live HP N/3 (3/3->2/3->1/3) + push req (Stability 3 -> Force > 3). No extra helper text (loadout_ui_spec ids 82/90).
+  91 'Ad Billboard Inspectable' - same desc, but states UNBREAKABLE + IMMOVABLE (+elevation-immune) INSTEAD of HP/push; NO HP line.
+  92 'Blocker-Object LoS - existing-rule cross-reference flag' - FLAG: id 38/44/45/46 remain accurate (additive). POSSIBLE wording issue in
+     movement_targeting id 39 ('spikes ... do not block LoS unless BlocksLoS'): OBS spike blocks via elevation (id 41) not a flag, and blocker-prop/billboards now DO block - Designer did NOT rewrite id 39/41/38; flagged for Dev/Designer to confirm whether id 39's object list should name them. Resolve before Dev build.
+  (map_gen_rules now 92 rows. Code owner = TargetingService / UnitInspectorPanel / map-gen; Designer documents only.)
+objects_encounters rows 83 (Blocker-Prop Cluster) + 84 (Ad Billboard) EDITED: tags gained 'Blocks-LoS, Inspectable'; descriptions gained the
+  LoS-blocking behavior + inspector readout (HP N/3 + push for blocker-prop; unbreakable/immovable, no HP, for the billboard). (still 84 rows.)
+movement_targeting LoS rules (ids 38/39/41/44/45/46) were NOT modified - only cross-referenced/flagged (see map_gen_rules 92).
+Re-exported Game_Rules.xlsx sheets '12 Map Gen Rules' (92 rows) + '17 Objects Encounters' (84 rows). No separate inspector/LoS sheet exists.
+Backups: backups\CTRBLXAI_20261012_132648.db, INDEX_20261012_132648.txt, CTRBLXAI_Game_Rules_20261012_132648.xlsx.
+
+--- 2026-10-12 BLOCKER-OBJECT LoS = EXISTING BlocksLoS TAG (flag closed) ---
+USER DECISION 2026-10-12: blocker-prop OBS objects (objects_encounters 'Blocker-Prop Cluster', row 83) and
+  ad billboards (objects_encounters 'Ad Billboard', row 84) block DIRECT line of sight by CARRYING THE EXISTING
+  BlocksLoS tag/flag and running through the existing LoS system -- NOT a new/parallel LoS check.
+  movement_targeting id 39 object list now names blocker-prop clusters + ad billboards as BlocksLoS-tagged objects
+  that block direct LoS (clears when attacker is 3+ elevation above the blocker tile). map_gen_rules rows 87/90/91
+  annotated with the 'via existing BlocksLoS tag' implementation note; row 92 cross-reference FLAG marked RESOLVED
+  (col_3 'Locked 2026-10-12 | RESOLVED 2026-10-12'). objects_encounters rows 83/84 already carried the Blocks-LoS
+  tag (confirmed, no change). id 38 (unit blockers) and ids 44/45/46 (arc) UNCHANGED. Re-exported sheets
+  '03 Movement Targeting', '12 Map Gen Rules', '17 Objects Encounters'.
+  Backups: backups\CTRBLXAI.db.20261012_142840.bak, INDEX.txt.20261012_142840.bak,
+  CTRBLXAI_Game_Rules.xlsx.20261012_142840.bak.
+
+
+--- 2026-10-12 AD-BILLBOARD USER DECISIONS (placement narrowing + premium/battle-pass dead billboard) ---
+map_gen_rules row 79 'Ad Billboard OBS Strip': placement NARROWED - AT MOST ONE ad billboard per battle; it
+  replaces the OBS cluster NEAREST THE MAP CENTER/MIDDLE (no longer a random OBS strip); all other OBS strips
+  stay normal OBS; NO OBS cluster -> NO billboard that battle. Determinism unaffected (center-nearest is
+  deterministic; ties broken by the existing seeded RNG stream). ~2-tile (~10 stud) size + replace-an-OBS-strip
+  1:1 (no new blocker, pathing identical) unchanged. objects_encounters row 84 'Ad Billboard' col7 reworded to match.
+map_gen_rules NEW row 93 'Ad Billboard "Dead" for Premium / Battle-Pass - themed fallback art': for Roblox PREMIUM
+  members OR owners of a specific BATTLE PASS (battle-pass id = TBD, PLACEHOLDER to set later) the billboard serves
+  NO ad and shows the developer's THEMED FALLBACK ART. The panel REMAINS a solid obstacle - identical footprint,
+  impassability (walkers blocked; flying/teleport pass-over-only, never landable), and BlocksLoS - so every player
+  plays an identical battlefield; only on-screen content differs (maps to Roblox 'ineligible user -> fallback image',
+  here gated on Premium/battle-pass). STATUS SPLIT: obstacle/LoS/themed-fallback BEHAVIOR = Locked 2026-10-12;
+  ad-serving/premium-detection = Pending (needs live game + eligibility + battle-pass id). Dev: Premium via standard
+  membership check; battle-pass via existing pass-ownership path; themed fallback art asset TBD (user to provide).
+map_gen_rules row 80 'Ad Billboard Eligibility + Earnings Fit': body + status cross-reference the new row 93 and the
+  battle-pass-id placeholder. objects_encounters row 84 col9 carries the same cross-reference.
+  Re-exported sheets: '12 Map Gen Rules', '17 Objects Encounters'.

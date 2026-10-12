@@ -771,6 +771,29 @@ function StatusService.ProcessCtTick(unit, ctElapsed)
 			end
 		end
 
+		-- SINKING (built 2026-10-11): Quicksand hazard. No remainingCt — ends only by
+		-- escape (Water->Mud / Flight / teleport, handled elsewhere) or KO here. Every
+		-- sinkIntervalCt (500) the unit sinks one level deeper; at sinkMaxLevel (5) the
+		-- unit is KO'd. Accumulator mirrors Regeneration so a large ctElapsed that crosses
+		-- several boundaries deepens once per boundary. Movement is already blocked via
+		-- def.blocks.Move. A KO event is emitted so BattleCoordinator/Main can broadcast it.
+		if def and inst.id == "Sinking" and def.sinkIntervalCt then
+			inst.sinkAccumCt = (inst.sinkAccumCt or 0) + ctElapsed
+			inst.sinkLevel = inst.sinkLevel or 0
+			while inst.sinkAccumCt >= def.sinkIntervalCt and (unit.isAlive ~= false) do
+				inst.sinkAccumCt = inst.sinkAccumCt - def.sinkIntervalCt
+				inst.sinkLevel = inst.sinkLevel + 1
+				table.insert(events, { kind = "Sink", statusId = inst.id, amount = inst.sinkLevel })
+				if inst.sinkLevel >= (def.sinkMaxLevel or 5) then
+					unit.currentHp = 0
+					unit.isAlive = false
+					table.insert(events, { kind = "KO", statusId = inst.id, reason = "Sinking" })
+					print(string.format("[StatusService] %s KO by Sinking (level %d)", unit.name, inst.sinkLevel))
+					break
+				end
+			end
+		end
+
 		-- Shield DECAY (runs for ANY shield instance, with or without a duration):
 		-- lose shieldDecayFraction (10%) of the CURRENT shield pool every
 		-- shieldDecayIntervalCt (300) CT. Mirrors the Regeneration accumulator so a

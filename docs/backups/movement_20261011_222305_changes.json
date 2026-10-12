@@ -1,0 +1,74 @@
+{
+ "stamp": "20261011_222305",
+ "backup_db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_pre_movement_20261011_222305.db",
+ "backup_xlsx": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Game_Rules_pre_movement_20261011_222305.xlsx",
+ "backup_index": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\INDEX_pre_movement_20261011_222305.txt",
+ "counts_before": {
+  "movement_targeting": 76,
+  "terrain_effects": 78,
+  "open_decisions": 87,
+  "map_gen_rules": 73
+ },
+ "counts_after": {
+  "movement_targeting": 77,
+  "terrain_effects": 78,
+  "open_decisions": 88,
+  "map_gen_rules": 73
+ },
+ "sheet_counts": {
+  "03 Movement Targeting": 78,
+  "16 Terrain Effects": 78,
+  "18 Open Decisions": 88,
+  "12 Map Gen Rules": 73
+ },
+ "updated_rows": [
+  [
+   "movement_targeting",
+   3
+  ],
+  [
+   "terrain_effects",
+   18
+  ],
+  [
+   "movement_targeting",
+   76
+  ],
+  [
+   "terrain_effects",
+   74
+  ],
+  [
+   "map_gen_rules",
+   66
+  ],
+  [
+   "map_gen_rules",
+   65
+  ]
+ ],
+ "inserted": [
+  [
+   "movement_targeting",
+   [
+    77,
+    "Movement Elevation",
+    "Diagonal corner-cutting",
+    "Strict diagonal corner-cutting: a unit may NOT make a diagonal step when BOTH of the two orthogonal corner tiles it would pass between are corner-blockers. For a diagonal step from (x,y) with delta (dx,dy), the two corner tiles are (x+dx, y) and (x, y+dy); the diagonal is skipped ONLY if BOTH are corner-blockers. If even one corner tile is open, the diagonal is allowed (strictness = both corners must be blocked to seal). A CORNER-BLOCKER is (a) a solid wall/object (an IsBlocked tile) OR (b) a standing unit that is NOT on the moving unit's side (enemy or neutral). The moving unit's OWN ALLIES never seal a corner, consistent with the LoS rule (id 38: allies never block). EXCLUSION: impassable / deadly terrain is deliberately NOT a corner-blocker for this rule - only walls/objects and enemy/neutral units seal corners (so e.g. a Quicksand or Deep Water tile at a corner does NOT prevent the diagonal). Applies to NORMAL pathfinding only: the Rabbit Folk Hop (cardinal-only) and Flight (passes over everything) are unaffected.",
+    "User ruling 2026-10-11. Implemented in TargetingService.GetMoveCandidates: for a diagonal step with delta (dx,dy) it checks corner tiles (x+dx,y) and (x,y+dy) and skips the diagonal only when BOTH are corner-blockers (IsBlocked wall/object, or a standing non-ally unit). Allies never seal (mirror of LoS id 38). Terrain is NOT a corner-blocker. See id 3 (diagonals allowed) and id 73 (Chebyshev attacks). DB brought into agreement with shipped TargetingService code (Item 1 already implemented by Dev)."
+   ]
+  ],
+  [
+   "open_decisions",
+   [
+    "Quicksand movement classification - impassable wall vs deadly enterable terrain (2026-10-11)",
+    "Resolved - Dev Pending",
+    "RESOLVED 2026-10-11 (USER CORRECTION). Quicksand is DEADLY ENTERABLE terrain, NOT impassable. RULING: (1) Quicksand is PASSABLE at Move Cost 1.5 (heavy-terrain family, like Swamp / Deep Water). (2) ANY entry - walking, pathing, forced displacement, a downward drop, a collapse, teleport - applies Sinking (Move disabled, Jump -1 / 500 CT, KO at -5 = 2500 CT; elements_statuses id 59). (3) Counterplay unchanged: a Water-element hit transforms the tile to Mud and ends Sinking; Flight is immune and can leave; Blink / teleport / swap can extract; an upward pull cannot. (4) Desert chasm floors keep Quicksand, but the chasm's impassability for ordinary walkers now comes from DEPTH (the floor is 2 levels below its banks; the far wall is un-climbable) - NOT from Quicksand blocking movement. The span remains the only ground crossing; a unit can now step DOWN into the Quicksand voluntarily and die there instead of being path-blocked at the lip. DB updated: terrain_effects Quicksand (Occupy = passable deadly, Move Cost 1.5) + 'Move Cost Model' row (Quicksand 1.5, no longer BLOCKER); movement_targeting id 76 ('Quicksand cannot be entered' removed); map_gen_rules 'Desert Quicksand Chasm' + general chasm-floor rule reconciled (depth-gated, not blocker-gated). DEV CODE CHANGES REQUIRED (movement code must match the new rule): (a) GameConstants.IsImpassableTerrain - must STOP returning true for Quicksand (Quicksand is no longer impassable). (b) GameConstants.GetTerrainCost / TERRAIN_TYPES[Quicksand].moveCost - set Quicksand moveCost = 1.5 (a real passable cost, not a blocker sentinel). (c) TargetingService movement search (GetMoveCandidates / pathfinding) - must allow stepping onto a Quicksand tile at cost 1.5 and must apply / mark Sinking on entry; must NOT treat Quicksand as an IsBlocked tile. (Per Item 1: Quicksand is also NOT a diagonal corner-blocker - only walls/objects and enemy/neutral units seal corners.) (d) Rabbit Folk isHopGapTile helper - must no longer classify Quicksand as an impassable gap tile; re-derive gap/hop detection from chasm DEPTH (elevation drop), not from Quicksand being impassable. (e) Slice 5 FeaturePass / MapService gap generation + validateGapSpans / Gap Hard Invariant - Desert gap impassability must be enforced by DEPTH (biome cliffDrop), not by Quicksand being a mover-blocker; spans stay Plank Bridge (Wooden Floor) so validation is unaffected; repairBridgePass must still ignore off-span chasm-floor tiles (they are not LAN tiles). (f) Any Sinking-on-entry hook must now fire on VOLUNTARY entry too, not only on forced displacement. Not Studio-tested.",
+    null,
+    null,
+    null,
+    null
+   ]
+  ]
+ ]
+}

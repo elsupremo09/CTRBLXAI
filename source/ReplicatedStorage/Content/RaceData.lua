@@ -46,8 +46,8 @@ RaceData.Races = {
 		passiveName = "Cunning",
 		passiveEffect = "Basic Attacks apply Poison. Damage received from traps and hazards +10%.",
 	},
-	["RACE-MERMAID"] = {
-		name = "Mermaid",
+	["RACE-CATAU"] = { -- renamed 2026-10-09 (was RACE-MERMAID / Mermaid)
+		name = "Catau",
 		tags = {"Amphibious"},
 		startingStats = {STR = 0, AGI = 1, INT = 3, VIT = 1, DEX = 1, LUK = 2},
 		growthRates = {STR = 0.1, AGI = 0.25, INT = 0.9, VIT = 0.2, DEX = 0.15, LUK = 0.4},
@@ -110,13 +110,13 @@ RaceData.Races = {
 		passiveName = "Keen Sight",
 		passiveEffect = "Discovery Radius +1. Flying tag grants permanent Flight (complete Manual Flight benefits and drawbacks). STR -15%.",
 	},
-	["RACE-LIZARDMEN"] = {
-		name = "Lizardmen",
+	["RACE-REPTILIAN"] = { -- renamed 2026-10-09 (was RACE-LIZARDMEN / Lizardmen)
+		name = "Reptilian",
 		tags = {},
 		startingStats = {STR = 2, AGI = 1, INT = 0, VIT = 3, DEX = 1, LUK = 1},
 		growthRates = {STR = 0.5, AGI = 0.3, INT = 0.1, VIT = 0.7, DEX = 0.2, LUK = 0.2},
 		passiveName = "Spiked Hide",
-		passiveEffect = "When hit by a melee attacker occupying one of the 8 adjacent tiles (Chebyshev distance 1, including diagonals), the attacker takes reflected damage equal to the Lizardman's current level. Does NOT trigger on ranged or AOE attacks.",
+		passiveEffect = "When hit by a melee attacker occupying one of the 8 adjacent tiles (Chebyshev distance 1, including diagonals), the attacker takes reflected damage equal to the Reptilian's current level. Does NOT trigger on ranged or AOE attacks.",
 	},
 	["RACE-FROC"] = {
 		name = "Froc",
@@ -235,6 +235,26 @@ RaceData.Tags = {
 -- Lookup by race ID
 function RaceData.GetRace(raceId)
 	return RaceData.Races[raceId]
+end
+
+-- Renamed race IDs: legacy ID -> current ID. Saves and other stored data may still
+-- carry an old ID; RaceData.Resolve converts it. Mirrors the CTRBLXAI.db races
+-- legacy_race_id column (2026-10-09). If this file is regenerated, the generator must
+-- emit this table from that column. Never remove an entry: a save stays unconverted
+-- until the player next loads it.
+RaceData.LegacyIds = table.freeze({
+	["RACE-MERMAID"]   = "RACE-CATAU",     -- renamed 2026-10-09
+	["RACE-LIZARDMEN"] = "RACE-REPTILIAN", -- renamed 2026-10-09
+})
+
+-- Resolve a race ID that comes from outside the code (saves, remotes, stored data).
+-- Returns (currentId, wasLegacy). currentId is nil if the ID is unknown.
+function RaceData.Resolve(raceId)
+	if type(raceId) ~= "string" then return nil, false end
+	if RaceData.Races[raceId] then return raceId, false end
+	local current = RaceData.LegacyIds[raceId]
+	if current and RaceData.Races[current] then return current, true end
+	return nil, false
 end
 
 -- Lookup by name (case-sensitive)

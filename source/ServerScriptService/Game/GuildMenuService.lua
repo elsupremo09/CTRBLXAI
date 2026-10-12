@@ -563,10 +563,15 @@ function GuildMenuService.Import(_pid: string, data: any)
 		for _, id in data.recruitOrder do
 			local d = data.recruits[id]
 			if type(id) == "string" and type(d) == "table" and type(d.raceId) == "string" then
+				-- Race renames (2026-10-09): a saved recruit may carry a legacy race ID.
+				local raceId, converted = RaceData.Resolve(d.raceId)
+				if converted then
+					warn(`[GuildMenuService] converted legacy race id {d.raceId} -> {raceId} (recruit {id})`)
+				end
 				recruitDefs[id] = {
 					name = type(d.name) == "string" and d.name or id,
 					level = math.clamp(math.floor(tonumber(d.level) or 1), 1, ITEM_LEVEL_CAP),
-					raceId = d.raceId,
+					raceId = raceId or d.raceId,
 					doctrineId = type(d.doctrineId) == "string" and d.doctrineId or nil,
 					quality = type(d.quality) == "string" and d.quality or "Standard",
 				}

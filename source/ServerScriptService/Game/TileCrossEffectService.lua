@@ -11,7 +11,7 @@
 --   Mud = +2 move cost (already in BFS, no cross effect)
 --   Ice = Sliding Knockback (continue momentum in direction of entry)
 --   Deep Water = +2 move cost + Apply Drowning (trigger_effect)
---   Quicksand = Movement prohibited (impassable) + Apply Sinking (if forced in)
+--   Quicksand = PASSABLE deadly terrain (2026-10-11) + Apply Sinking on ANY entry
 --   Burning (tile effect) = Inflict Burn
 --   Poison Cloud (tile effect) = Inflict Poison
 --   Frozen (tile effect) = Sliding Knockback
@@ -73,17 +73,15 @@ local CROSS_EFFECTS = {
 		}}
 	end,
 
-	-- Quicksand: If a unit is FORCED onto Quicksand (displacement),
-	-- apply Sinking. Voluntary movement is blocked by IsImpassableTerrain.
+	-- Quicksand: apply Sinking on ANY entry — voluntary walk, forced displacement,
+	-- drop, or teleport. (USER CORRECTION 2026-10-11: Quicksand is passable, deadly
+	-- terrain, no longer impassable, so voluntary entry now happens and must sink too.)
 	Quicksand = function(unit, tileX, tileY, entryDir, isForced)
-		if isForced then
-			return {{
-				type     = "status",
-				statusId = "Sinking",
-				reason   = "Quicksand",
-			}}
-		end
-		return {} -- voluntary entry blocked at BFS level
+		return {{
+			type     = "status",
+			statusId = "Sinking",
+			reason   = "Quicksand",
+		}}
 	end,
 }
 

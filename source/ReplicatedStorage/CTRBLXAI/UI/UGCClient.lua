@@ -7,9 +7,10 @@
 -- through UGCEvents; nothing here decides prices, ownership or access. The
 -- purchase prompt on first equip is opened BY THE SERVER (UGCService.Equip), so
 -- screens only need RequestEquip. The "Buy for Roblox Avatar" button is shown on
--- every item that is not owned (trial / rent / expired / locked) — during battle
--- it reads "Add to cart" instead; an item that is known to be off sale shows an
--- "Off sale" marker instead (ugc_rules 17/21/41/47).
+-- every item that is not owned (trial / rent / expired / locked) outside battle;
+-- it is HIDDEN during battle, where 'Add to cart' (always the Tertiary button, built
+-- by each screen) is the only purchase action. Free items read "Get (Free)". An item
+-- known to be off sale shows an "Off sale" marker instead (ugc_rules 17/41/47/56/57).
 -- Cart (ugc_rules 29-32/45-48): add/remove any time; Checkout only outside
 -- battle. The bulk prompt's finished event fires on the client only, so
 -- Checkout asks the server to VERIFY afterwards — the server never trusts it.
@@ -32,8 +33,7 @@ local UGCClient = {}
 export type Result = { ok: boolean, error: string?, data: any }
 
 local BUY_TEXT = "Buy for Roblox Avatar"
-local ADD_TO_CART_TEXT = "Add to cart" -- in battle (ugc_rules 17/21, 2026-10-08)
-local IN_CART_TEXT = "In cart"
+local GET_FREE_TEXT = "Get (Free)" -- free items (ugc_rules 57)
 local OWNED_TEXT = "Owned"
 local OFF_SALE_TEXT = "Off sale"
 local MIN_TOUCH = Theme.MinSize.TouchTarget -- 44 px (loadout_ui_spec 73)
@@ -169,34 +169,42 @@ function UGCClient.GetStatusLabel(item: any): string
 	if s == "trial" then return `Trial: {item.remaining} left` end
 	if s == "rent" then return `Rented: {item.remaining} left` end
 	if s == "expired" then return "Out of use" end -- loadout_ui_spec 64/70 wording
+	if item.isFree then return "Free" end -- ugc_rules 58
 	return "Locked"
 end
 
 -- Always-visible Buy button for any item the player does not own (ugc_rules buy_button).
--- isBattleActive: pass view.isBattleActive (server state). In battle the button
--- reads "Add to cart" and adds the item to the cart ("In cart" if already there);
--- outside battle it is "Buy for Roblox Avatar" (ugc_rules 17/21). Screens rebuild
--- buttons from a fresh GetView when the battle state changes. The server still
--- refuses purchases during battle, whatever the client shows (SEC-002).
--- Returns nil for owned items. onResult(result) is optional.
+-- isBattleActive: pass view.isBattleActive (server state). In battle there is NO
+-- Buy button (ugc_rules 17/56, 2026-10-09): screens show their own Tertiary
+-- 'Add to cart' instead. Outside battle it is "Buy for Roblox Avatar", or
+-- "Get (Free)" for free items (57). Screens rebuild buttons from a fresh GetView
+-- when the battle state changes. The server still refuses purchases during battle,
+-- whatever the client shows (SEC-002).
+-- Returns nil for owned items and during battle. onResult(result) is optional.
 function UGCClient.CreateBuyButton(parent: Instance, item: any, onResult: ((Result) -> ())?, isBattleActive: boolean?): GuiButton?
 	if item.status == "owned" then return nil end
 	if item.isOffSale then
 		UGCClient.CreateOffSaleMarker(parent)
 		return nil
 	end
-	local inBattle = isBattleActive == true
-	local text = BUY_TEXT
-	if inBattle then
-		text = if item.isInCart then IN_CART_TEXT else ADD_TO_CART_TEXT
-	end
-	-- BUG-024: a text button, not UIComponents.PrimaryButton (now icon-only art).
-	-- "In cart" is shown disabled: pressing it would do nothing.
-	local btn = UGCClient.MakeTextButton(parent, text, Theme.Colors.Success, function()
-		local res = if inBattle then UGCClient.SetInCart(item.assetId, true) else UGCClient.BuyAndVerify(item.assetId, onResult)
+	if isBattleActive == true then return nil end -- hidden in battle (ugc_rules 17/56)
+	local text = if item.isFree then GET_FREE_TEXT else BUY_TEXT
+	-- BUG-024: the label is always drawn (never icon-only art). Primary bronze bar
+	-- for the Robux purchase / free get (user ruling 2026-10-09).
+	local isEnabled = true
+	local function onPress()
+		local res = UGCClient.BuyAndVerify(item.assetId, onResult)
 		if onResult then onResult(res) end
-	end, not (inBattle and item.isInCart == true))
+	end
+	local btn: GuiButton
+	if Theme.MakeBarButton then
+		btn = Theme.MakeBarButton(nil, text, if isEnabled then "Primary" else "Disabled", onPress,
+			{ name = "UGCBuyButton", textSize = Theme.Text.Small() })
+	else
+		btn = UGCClient.MakeTextButton(nil, text, Theme.Colors.Success, onPress, isEnabled)
+	end
 	btn.Name = "UGCBuyButton"
+	btn.Parent = parent -- NET-004
 	return btn
 end
 

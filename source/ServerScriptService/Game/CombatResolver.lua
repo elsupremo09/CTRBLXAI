@@ -250,7 +250,7 @@ local function calcEffectiveDefense(attackPower, defensePower)
 	return (attackPower * defensePower) / (attackPower + defensePower)
 end
 
--- Melee-hit classification for on-hit reactions (Lizardmen Spiked Hide, 2026-10-02).
+-- Melee-hit classification for on-hit reactions (Reptilian Spiked Hide, 2026-10-02).
 -- Melee = attacker on one of the 8 adjacent tiles (Chebyshev 1), NOT AOE, and the
 -- attack's reach is melee (<= 2, same threshold as TargetingService's melee
 -- elevation rule). Skills: authored range (-1 = inherit weapon) and a Single
@@ -888,7 +888,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- hooks (StatusService owns the instance + the snapshot; ApplyOutcome, which
 	-- knows the attacker, deals the retaliation). Applied with UnitSchema_ApplyDamage
 	-- DIRECTLY (never through ApplyOutcome) so it cannot re-trigger reflects /
-	-- lifesteal / counters / another shield break — TRG-010 pattern, like Lizardmen
+	-- lifesteal / counters / another shield break — TRG-010 pattern, like Reptilian
 	-- Spiked Hide above. attacker here is the breaker (the unit that just hit the
 	-- shield holder). Only fires on a genuine break with a retribution snapshot and a
 	-- living attacker that is not the shield holder itself.
@@ -1130,8 +1130,8 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		end
 	end
 
-	-- LIZARDMEN — Spiked Hide (2026-10-02): a MELEE hit from one of the 8 adjacent
-	-- tiles reflects damage = the Lizardman's level onto the attacker. Not on ranged
+	-- REPTILIAN — Spiked Hide (2026-10-02; race renamed from Lizardmen 2026-10-09): a MELEE hit from one of the 8 adjacent
+	-- tiles reflects damage = the Reptilian's level onto the attacker. Not on ranged
 	-- or AOE hits. Applied with UnitSchema_ApplyDamage directly (never through
 	-- ApplyOutcome), so a reflect cannot re-trigger reflects / lifesteal / other
 	-- reaction hooks -- no loop (TRG-010 pattern). outcome.isReflect guards re-entry.
@@ -1141,7 +1141,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		if reflect > 0 then
 			local reflected = UnitSchema_ApplyDamage(reflect, attacker)
 			print(string.format(
-				"[CombatResolver] Lizardmen Spiked Hide: %s reflects %d to %s | HP: %d/%d%s",
+				"[CombatResolver] Reptilian Spiked Hide: %s reflects %d to %s | HP: %d/%d%s",
 				target.name, reflected, attacker.name, attacker.currentHp, attacker.maxHp,
 				attacker.isAlive and "" or " | DEFEATED"
 			))

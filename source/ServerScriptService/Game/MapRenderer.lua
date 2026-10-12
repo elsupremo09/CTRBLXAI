@@ -385,12 +385,10 @@ local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap
 	-- Effect (none at map gen).
 	tile:SetAttribute("Effect", "None")
 
-	-- Passability.
-	local passable = true
-	if terrainId == "Quicksand" then
-		passable = false
-	end
-	tile:SetAttribute("Passable", passable)
+	-- Passability. (2026-10-11: Quicksand is now PASSABLE deadly terrain — units can
+	-- walk onto it and start sinking. No base terrain is client-impassable anymore;
+	-- chasm/pit gating is enforced server-side by elevation depth, not a Passable flag.)
+	tile:SetAttribute("Passable", true)
 
 	-- OBJECT DATA
 	if objectName then
@@ -579,7 +577,6 @@ local function renderBlockers(generatedMap, mapFolder)
 				local tileTopY = child.Position.Y + tileHeight / 2
 				local modelClone = existing or spawnObjectModel(blocker.objectType, child, tileTopY, bx .. "_" .. by)
 				if not modelClone then
-					-- Fallback: visual blocker cube.
 					local blockerHeight = ELEVATION_STEP * 1.5
 					local blockerPart = Instance.new("Part")
 					blockerPart.Name = string.format("Blocker_%d_%d", bx, by)
@@ -589,12 +586,36 @@ local function renderBlockers(generatedMap, mapFolder)
 					blockerPart.CastShadow = true
 					blockerPart.Material   = Enum.Material.SmoothPlastic
 					blockerPart.Color      = BLOCKER_COLOR
-					blockerPart.Size = Vector3.new(TILE_SIZE * 0.7, blockerHeight, TILE_SIZE * 0.7)
-					blockerPart.Position = Vector3.new(
-						child.Position.X,
-						child.Position.Y + tileHeight / 2 + blockerHeight / 2,
-						child.Position.Z
-					)
+					if blocker.objectType == "Ad Billboard" then
+						-- AD BILLBOARD (map_gen_rules row 79): a tall, flat panel standing on
+						-- the strip, sized to clear Roblox's immersive-ad minimum (>= 8 x 4.5
+						-- studs). PHASE 1 = static panel only; real ad units are out of scope
+						-- until the game is ad-eligible (row 80). AdGui attach hook below.
+						local panelH = math.max(ELEVATION_STEP * 3, 5)
+						blockerPart.Name  = string.format("AdBillboard_%d_%d", bx, by)
+						blockerPart.Color = Color3.fromRGB(28, 28, 38)
+						blockerPart.Material = Enum.Material.Neon
+						blockerPart.Size  = Vector3.new(TILE_SIZE * 0.95, panelH, TILE_SIZE * 0.18)
+						blockerPart.Position = Vector3.new(
+							child.Position.X,
+							child.Position.Y + tileHeight / 2 + panelH / 2,
+							child.Position.Z
+						)
+						-- PHASE 2 / ELIGIBILITY HOOK (do NOT create now — ads not eligible yet,
+						-- map_gen_rules row 80). When live, attach a Roblox immersive-ad panel:
+						--   local adGui = Instance.new("AdGui")
+						--   adGui.Face = Enum.NormalId.Front
+						--   adGui.EnableVideoAds = true   -- image + autoplaying (muted) video
+						--   adGui.Parent = blockerPart
+					else
+						-- Fallback: visual blocker cube (OBS Blocker or any model-less object).
+						blockerPart.Size = Vector3.new(TILE_SIZE * 0.7, blockerHeight, TILE_SIZE * 0.7)
+						blockerPart.Position = Vector3.new(
+							child.Position.X,
+							child.Position.Y + tileHeight / 2 + blockerHeight / 2,
+							child.Position.Z
+						)
+					end
 					blockerPart.Parent = mapFolder
 				end
 				break
@@ -1007,7 +1028,7 @@ end
 --------------------------------------------------
 -- RUNTIME OBJECT REMOVAL (Mimic reveal). Destroys the object's model / fallback
 -- cube for a live instance and clears the tile's object attributes. Passability
--- reverts to the terrain rule createTile uses (Quicksand = impassable).
+-- reverts to the terrain rule createTile uses (all base terrain now passable).
 --------------------------------------------------
 function MapRenderer.RemoveOneObject(mapFolder, instance)
 	if not (mapFolder and instance and instance.x and instance.y) then
@@ -1028,7 +1049,7 @@ function MapRenderer.RemoveOneObject(mapFolder, instance)
 			child:SetAttribute("ObjectName", nil)
 			child:SetAttribute("ObjectCategory", nil)
 			child:SetAttribute("ObjectPassabilityImpact", nil)
-			child:SetAttribute("Passable", child:GetAttribute("Terrain") ~= "Quicksand")
+			child:SetAttribute("Passable", true)
 			return true
 		end
 	end

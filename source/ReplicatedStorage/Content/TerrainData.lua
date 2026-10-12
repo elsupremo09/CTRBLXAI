@@ -255,18 +255,22 @@ TerrainData.Types["Cracked Ground"] = {
 }
 
 TerrainData.Types["Quicksand"] = {
+	-- USER CORRECTION 2026-10-11: Quicksand is PASSABLE, DEADLY terrain — not a wall.
+	-- Walkable at Move Cost 1.5; entering it (any way) applies Sinking (KO at 2500 CT
+	-- unless Water->Mud / Flight / teleport). Chasm-floor pits stay sealed by DEPTH
+	-- (tile.isGap + gapDepth), independent of this passable flag.
 	id = "Quicksand",
 	description = "Collapsing sand",
 	tags = { "Loose", "Hazard", "Sticky" },
-	moveCost = 1,
-	crossCost = -1,
+	moveCost = 1.5,
+	crossCost = 0,
 	occupyEffect = nil,
-	crossEffect = "Movement prohibited",
+	crossEffect = "Apply Sinking",
 	triggerEffect = "Apply Sinking",
 	transformations = {
 		Water = "Mud",
 	},
-	passable = false,
+	passable = true,
 }
 
 TerrainData.Types["Monolith (One-way)"] = {

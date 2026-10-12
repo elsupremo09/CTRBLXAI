@@ -659,6 +659,9 @@ local TAB_TEXT_PAD = 10 -- keeps the label off the bar's 12 px edge art
 -- straight seam lines on any bar not drawn at exactly 200x48. A 3 px slice keeps the
 -- thin outline crisp and lets the rest of the art scale as one piece (no seams).
 local TAB_SLICE_CENTER = Rect.new(3, 3, 197, 45)
+-- Disabled fade (Tertiary shares the dark art but stays at full brightness).
+local DISABLED_IMAGE_FADE = 0.5
+local DISABLED_TEXT_FADE = 0.4
 
 -- Switch a tab made by MakeTabButton between "Active" | "Inactive" | "Disabled" in place,
 -- so tab bars never need rebuilding just to move the highlight (loadout_ui_spec 53).
@@ -668,11 +671,15 @@ function Theme.SetTabState(btn, state)
 	btn:SetAttribute("TabState", s)
 	btn.Image = Theme.TabAssets[s]
 	btn.Active = s ~= "Disabled"
+	-- Disabled = the dark bar, visibly faded, so it never looks like a working Tertiary button (2026-10-09).
+	local fade = s == "Disabled"
+	btn.ImageTransparency = if fade then DISABLED_IMAGE_FADE else 0
 	for _, d in btn:GetChildren() do
 		if d:IsA("TextLabel") and (d.Name == "Label" or d:GetAttribute("BarText")) then
 			d.TextColor3 = Theme.TabTextColors[s]
 			d.TextStrokeColor3 = Color3.new(0, 0, 0)
-			d.TextStrokeTransparency = 0
+			d.TextTransparency = if fade then DISABLED_TEXT_FADE else 0
+			d.TextStrokeTransparency = if fade then DISABLED_TEXT_FADE else 0
 		elseif d:IsA("ImageLabel") and d.Name == "Icon" then
 			d.ImageTransparency = if s == "Disabled" then 0.5 else 0
 		end
@@ -769,6 +776,52 @@ function Theme.MakeTabButton(parent, text, state, onActivated, opts)
 		end)
 	end
 	btn.Parent = parent -- properties and children set before Parent (NET-004)
+	return btn
+end
+
+-- Action buttons on the same bar art as tabs (user ruling 2026-10-09):
+--   Primary   -> bronze (Buy / Sell / Robux purchase / Checkout)
+--   Secondary -> navy   (Equip / Unequip / Free trial / Rent)
+--   Tertiary  -> dark   (Try on / cart add-remove)
+--   Disabled  -> dark, dimmed, never fires
+-- Text is always white with a black outline (user ruling 2026-10-08).
+Theme.BarAssets = {
+	Primary   = Theme.TabAssets.Active,
+	Secondary = Theme.TabAssets.Inactive,
+	Tertiary  = Theme.TabAssets.Disabled,
+	Disabled  = Theme.TabAssets.Disabled,
+}
+
+-- opts: as MakeTabButton (size, position, anchor, name, layoutOrder, textSize, icon,
+-- autoWidth - default true here) plus minHeight (default the 44 px TouchTarget;
+-- compact headers pass their own height). Tap-safe: .Activated, no hover.
+function Theme.MakeBarButton(parent, text, style, onActivated, opts)
+	opts = opts or {}
+	local s = if Theme.BarAssets[style] then style else "Secondary"
+	local minH = opts.minHeight or Theme.MinSize.TouchTarget
+	local o = table.clone(opts)
+	o.size = opts.size or UDim2.fromOffset(minH, minH)
+	if o.autoWidth == nil then o.autoWidth = true end
+	local btn = Theme.MakeTabButton(nil, text, "Inactive", nil, o) -- built off-tree (NET-004)
+	btn.Name = opts.name or ("Bar_" .. text)
+	btn.Image = Theme.BarAssets[s]
+	btn:SetAttribute("TabState", nil)
+	btn:SetAttribute("BarStyle", s)
+	local isEnabled = s ~= "Disabled"
+	btn.Active = isEnabled
+	btn.ImageTransparency = if isEnabled then 0 else DISABLED_IMAGE_FADE -- Tertiary stays full brightness
+	for _, d in btn:GetChildren() do
+		if d:IsA("UISizeConstraint") then
+			d.MinSize = Vector2.new(math.max(d.MinSize.X, minH), minH)
+		elseif d:IsA("TextLabel") and not isEnabled then
+			d.TextTransparency = DISABLED_TEXT_FADE
+			d.TextStrokeTransparency = DISABLED_TEXT_FADE
+		end
+	end
+	if onActivated and isEnabled then
+		btn.Activated:Connect(onActivated) -- dies with the button (PRF-004)
+	end
+	btn.Parent = parent
 	return btn
 end
 
