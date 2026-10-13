@@ -71,6 +71,9 @@ local panelGui = nil
 local currentTab = "basic"
 local clickOutsideConn = nil
 local detailOverlayGui = nil
+-- OBS Phase 2c-0: the OBS object tile shown in the full inspector, so ObjectChanged
+-- can refresh/close it live. nil when no object panel is open.
+local _openObjX, _openObjY, _openObjName = nil, nil, nil
 -- Units sharing the inspected tile (alive first, then KO'd) + current index, for the cycle button.
 local tileCycleIds: {string} = {}
 local tileCycleIndex = 1
@@ -89,6 +92,7 @@ local function destroyPanel()
 	if UGCInspectorOutfit then UGCInspectorOutfit.Cleanup() end -- PRF-004
 	if panelGui then panelGui:Destroy(); panelGui = nil end
 	if clickOutsideConn then clickOutsideConn:Disconnect(); clickOutsideConn = nil end
+	_openObjX, _openObjY, _openObjName = nil, nil, nil
 end
 
 local function createLabel(parent, props)
@@ -1418,6 +1422,7 @@ local function buildObjectPanel(objectName: string, tileX: number?, tileY: numbe
 		warn(`[UnitInspector] No ObjectData entry for object: {objectName}`)
 		return
 	end
+	_openObjX, _openObjY, _openObjName = tileX, tileY, objectName  -- OBS Phase 2c-0 live-refresh target
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "UnitInspectorPanel"
 	gui.ResetOnSpawn = false
@@ -1480,8 +1485,14 @@ local function buildObjectPanel(objectName: string, tileX: number?, tileY: numbe
 			if def.isUnbreakable then
 				row("Unbreakable. Immovable. Elevation-immune.", Theme.Font.Primary, Theme.Text.Body(), Theme.Colors.TextPrimary)
 			elseif type(def.hitsToDestroy) == "number" then
-				-- Phase 2a shows full HP; Phase 2c broadcasts live decrements here.
-				row(string.format("HP %d/%d", def.hitsToDestroy, def.hitsToDestroy), Theme.Font.PrimaryBold, Theme.Text.Body(), Theme.Colors.TextPrimary)
+				-- OBS Phase 2c-0: live HP from the client object-hp cache (ObjectChanged);
+				-- falls back to full HP before any hit.
+				local curHp = def.hitsToDestroy
+				if tileX and tileY and _G.CTRBLXAI_GetObjectHp then
+					local h = _G.CTRBLXAI_GetObjectHp(tileX, tileY)
+					if type(h) == "number" then curHp = h end
+				end
+				row(string.format("HP %d/%d", curHp, def.hitsToDestroy), Theme.Font.PrimaryBold, Theme.Text.Body(), Theme.Colors.TextPrimary)
 				row(string.format("Push: needs Force > %d", def.nativeStability or 3), Theme.Font.Primary, Theme.Text.Small(), Theme.Colors.TextSecondary)
 			end
 		end
@@ -1511,4 +1522,16 @@ end
 
 _G.CTRBLXAI_OpenObjectInspector = function(objectName, tileX, tileY)
 	if type(objectName) == "string" and objectName ~= "" then buildObjectPanel(objectName, tileX, tileY) end
+end
+
+-- OBS Phase 2c-0: BattleVisualClient's ObjectChanged handler calls this so an open
+-- object inspector updates live: rebuild with the new HP (read from the client
+-- cache) or close the panel when the object was destroyed.
+_G.CTRBLXAI_NotifyObjectChanged = function(x, y, newHp, destroyed)
+	if _openObjX ~= x or _openObjY ~= y then return end
+	if destroyed then
+		destroyPanel()
+	elseif _openObjName then
+		buildObjectPanel(_openObjName, x, y)
+	end
 end

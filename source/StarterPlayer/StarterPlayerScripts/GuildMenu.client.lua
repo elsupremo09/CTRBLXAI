@@ -59,6 +59,8 @@ local currentPage = "Units"
 local isBusy = false
 local selectedMission: string? = nil
 local selectedUnits: { [string]: boolean } = {}
+local cartBuys: { [number]: { name: string, price: number } } = {}  -- staged buys (offerIndex -> info)
+local cartSells: { [string]: { name: string, price: number } } = {}  -- staged sells (instanceId -> info)
 
 --------------------------------------------------
 -- UI CONSTRUCTION (one-time)
@@ -340,6 +342,105 @@ local function act(remote: RemoteFunction?, okText: (any) -> string, ...: any)
 	showPage(currentPage)
 end
 
+-- SMARTER SAVE / CART (2026-10-13): buy & sell are staged on the client and only
+-- committed when the player presses Finalize (one server call, one save). Nothing is
+-- spent or sold until then, so a mis-tap can't lose a prized item.
+local function cartCount(): number
+	local n = 0
+	for _ in cartBuys do n += 1 end
+	for _ in cartSells do n += 1 end
+	return n
+end
+
+local function finalizeCart()
+	if isBusy then return end
+	local buys: { number } = {}
+	local sells: { string } = {}
+	for idx in cartBuys do table.insert(buys, idx) end
+	for iid in cartSells do table.insert(sells, iid) end
+	if #buys == 0 and #sells == 0 then setStatus("Your cart is empty") return end
+	isBusy = true
+	local res = call(GuildEvents.FinalizeCart, { buys = buys, sells = sells })
+	isBusy = false
+	if res then
+		cartBuys = {}
+		cartSells = {}
+		setStatus(`Done -- bought {res.boughtCount or 0}, sold {res.soldCount or 0}. Gold {res.gold or 0}`)
+	end
+	refreshOverview()
+	showPage(currentPage)
+end
+
+local function clearCart()
+	cartBuys = {}
+	cartSells = {}
+	setStatus("Cart cleared")
+	showPage(currentPage)
+end
+
+local leaveDialog: TextButton? = nil
+local function closeLeaveDialog()
+	if leaveDialog then
+		leaveDialog:Destroy()
+		leaveDialog = nil
+	end
+end
+
+-- Confirm/discard when leaving with a staged cart (user choice 2026-10-13).
+local function confirmLeaveWithCart(proceed: () -> ())
+	if cartCount() == 0 then proceed() return end
+	closeLeaveDialog()
+	local nBuy, nSell = 0, 0
+	for _ in cartBuys do nBuy += 1 end
+	for _ in cartSells do nSell += 1 end
+	local overlay = Instance.new("TextButton")
+	overlay.Text = ""
+	overlay.AutoButtonColor = false
+	overlay.Modal = true
+	overlay.Size = UDim2.new(1, 0, 1, 0)
+	overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+	overlay.BackgroundTransparency = 0.4
+	overlay.BorderSizePixel = 0
+	overlay.ZIndex = 10
+	overlay.Parent = screenGui
+	overlay.Activated:Connect(function() end)  -- absorb background taps
+	leaveDialog = overlay
+	local box = Instance.new("Frame")
+	box.AnchorPoint = Vector2.new(0.5, 0.5)
+	box.Position = UDim2.new(0.5, 0, 0.5, 0)
+	box.Size = UDim2.new(0, 340, 0, 160)
+	box.BackgroundColor3 = Theme.Colors.PanelRaised
+	box.BorderSizePixel = 0
+	box.ZIndex = 10
+	box.Parent = overlay
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = Theme.CornerRadius.md
+	corner.Parent = box
+	local msg = makeText(box, `Unfinalized cart: buying {nBuy}, selling {nSell}. Commit or discard?`, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
+	msg.Size = UDim2.new(1, -24, 0, 70)
+	msg.Position = UDim2.new(0, 12, 0, 10)
+	local function mk(txt: string, color: Color3, slot: number, cb: () -> ())
+		local b = makeButton(box, txt, color, cb)
+		b.Size = UDim2.new(0.3, -8, 0, BUTTON_HEIGHT)
+		b.AnchorPoint = Vector2.new(0, 0.5)
+		b.Position = UDim2.new(0.035 + 0.323 * slot, 0, 1, -BUTTON_HEIGHT * 0.5 - 12)
+	end
+	mk("Finalize", Theme.Colors.Success, 0, function()
+		closeLeaveDialog()
+		finalizeCart()
+		if cartCount() == 0 then proceed() end
+	end)
+	mk("Discard", Theme.Colors.Warning, 1, function()
+		cartBuys = {}
+		cartSells = {}
+		closeLeaveDialog()
+		proceed()
+	end)
+	mk("Cancel", Theme.Colors.Info, 2, function()
+		closeLeaveDialog()
+	end)
+end
+
 local function pageTavern()
 	addHeading("TAVERN - hire recruits")
 	local res = call(GuildEvents.GetTavernPool)
@@ -363,27 +464,49 @@ local function pageMerchant()
 	addHeading("MERCHANT - buy")
 	local res = call(GuildEvents.GetMerchantStock)
 	if not res then return end
+	-- Cart summary row (the player explicitly asked for a buy/sell summary before commit).
+	local nBuy, buyGold = 0, 0
+	for _, v in cartBuys do nBuy += 1; buyGold += v.price end
+	local nSell, sellGold = 0, 0
+	for _, v in cartSells do nSell += 1; sellGold += v.price end
+	if nBuy + nSell > 0 then
+		addRow(`Cart: buy {nBuy} (-{buyGold}g), sell {nSell} (+{sellGold}g) = net {sellGold - buyGold}g`, {
+			{ text = "Finalize", color = Theme.Colors.Success, style = "Primary", onTap = finalizeCart },
+			{ text = "Clear", color = Theme.Colors.Warning, style = "Tertiary", onTap = clearCart },
+		})
+	end
 	addNote(`Merchant L{res.merchantLevel or 1}: one item per Merchant level. Stock refreshes every 5 battles.`)
 	if #(res.stock or {}) == 0 then
 		addNote(res.reason and tostring(res.reason) or "Sold out for now.")
 	end
 	for _, o in res.stock or {} do
 		local idx = o.offerIndex
+		local inCart = cartBuys[idx] ~= nil
 		addRow(`{o.name}  Lv{o.level} {o.rarity}  |  {o.price} gold`, {
-			{ text = "Buy", color = Theme.Colors.Success, style = "Primary", onTap = function()
-				act(GuildEvents.RequestBuy, function(r) return `Bought {r.name} for {r.price} gold` end, idx)
+			{ text = inCart and "In cart" or "Add", color = inCart and Theme.Colors.Info or Theme.Colors.Success,
+			  style = "Primary", onTap = function()
+				if cartBuys[idx] then cartBuys[idx] = nil else cartBuys[idx] = { name = o.name, price = o.price } end
+				showPage(currentPage)
 			end },
-		})
+		}, inCart)
 	end
 	addHeading("MERCHANT - sell (unequipped items)")
 	if #(res.sellable or {}) == 0 then addNote("Nothing to sell. Unequip an item first to sell it.") end
 	for _, it in res.sellable or {} do
 		local iid = it.instanceId
+		local inCart = cartSells[iid] ~= nil
 		addRow(`{it.name}  Lv{it.level} {it.rarity}`, {
-			{ text = `Sell {it.price or "?"}g`, color = Theme.Colors.Warning, enabled = it.price ~= nil, style = "Primary", onTap = function()
-				act(GuildEvents.RequestSell, function(r) return `Sold for {r.payout} gold` end, iid)
+			{ text = inCart and "In cart" or `Sell {it.price or "?"}g`,
+			  color = inCart and Theme.Colors.Info or Theme.Colors.Warning,
+			  enabled = it.price ~= nil, style = "Primary", onTap = function()
+				if cartSells[iid] then
+					cartSells[iid] = nil
+				elseif it.price ~= nil then
+					cartSells[iid] = { name = it.name, price = it.price }
+				end
+				showPage(currentPage)
 			end },
-		})
+		}, inCart)
 	end
 end
 
@@ -556,6 +679,8 @@ end
 local navButtons: { GuiButton } = {}
 local leaveButton: TextButton? = nil
 local advGuildButton: TextButton? = nil
+local sortieLocked = false
+local scoutToken = 0
 local devButton: GuiButton? = nil
 
 local function buildNav()
@@ -588,7 +713,9 @@ local function buildNav()
 	-- the server is waiting at the guild base and responds by showing the quest board.
 	local advGuild = makeButton(nav, "Adventurer's Guild", Theme.Colors.Accent or Theme.Colors.Success, function()
 		if isBusy then return end
-		BattleEvents.OpenAdventurersGuild:FireServer()
+		confirmLeaveWithCart(function()
+			BattleEvents.OpenAdventurersGuild:FireServer()
+		end)
 	end)
 	advGuild.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
 	advGuild.LayoutOrder = 90
@@ -596,10 +723,12 @@ local function buildNav()
 	table.insert(navButtons, advGuild)
 
 	local leave = makeButton(nav, "", Theme.Colors.Success, function()
-		if isBusy then return end
-		screenGui.Enabled = false
-		-- Same intention the old Loadout Hub sent; the server continues from there.
-		BattleEvents.StartBattle:FireServer()
+		if isBusy or sortieLocked then return end
+		confirmLeaveWithCart(function()
+			screenGui.Enabled = false
+			-- Same intention the old Loadout Hub sent; the server continues from there.
+			BattleEvents.StartBattle:FireServer()
+		end)
 	end)
 	leave.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT + 8)
 	leave.LayoutOrder = 100
@@ -612,6 +741,55 @@ buildNav()
 --------------------------------------------------
 -- SERVER FACTS
 --------------------------------------------------
+
+-- SCOUTING WAIT UX (2026-10-13): while the server builds the map after a quest pick, the
+-- sortie button is locked and shows an animated "Scouting the battle map..." so the player
+-- sees life instead of a frozen screen. Unlocks on BattleEvents.MapBuildComplete.
+local function stopScout()
+	scoutToken += 1  -- invalidates any running animation loop
+end
+
+local function lockSortie()
+	local lb = leaveButton
+	if not lb then return end
+	sortieLocked = true
+	lb.AutoButtonColor = false
+	lb.Active = false
+	lb.BackgroundTransparency = 0.5
+	lb.TextColor3 = Theme.Colors.TextDisabled
+	local stroke = lb:FindFirstChild("Accent")
+	if stroke and stroke:IsA("UIStroke") then
+		stroke.Color = Theme.Colors.Border
+		stroke.Transparency = 0.4
+	end
+	scoutToken += 1
+	local myToken = scoutToken
+	task.spawn(function()
+		local dots = 0
+		while myToken == scoutToken do
+			lb.Text = "Scouting the battle map" .. string.rep(".", dots)
+			dots = (dots + 1) % 4
+			task.wait(0.4)
+		end
+	end)
+end
+
+local function unlockSortie()
+	local lb = leaveButton
+	if not lb then return end
+	sortieLocked = false
+	stopScout()
+	lb.AutoButtonColor = true
+	lb.Active = true
+	lb.BackgroundTransparency = 0.1
+	lb.TextColor3 = Theme.Colors.TextPrimary
+	local stroke = lb:FindFirstChild("Accent")
+	if stroke and stroke:IsA("UIStroke") then
+		stroke.Color = Theme.Colors.Success
+		stroke.Transparency = 0
+	end
+	lb.Text = (currentPhase == "PostBattle") and "Save & Finish" or "Continue to Deployment"
+end
 
 GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	currentPhase = (type(data) == "table" and type(data.phase) == "string") and data.phase or "PreBattle"
@@ -627,7 +805,12 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	if leaveButton then
 		leaveButton.Visible = not atBase
 		if not atBase then
-			leaveButton.Text = (currentPhase == "PostBattle") and "Save & Finish" or "Continue to Deployment"
+			local scouting = (type(data) == "table" and data.scouting == true)
+			if scouting then
+				lockSortie()   -- shows "Scouting the battle map..."; unlocks on MapBuildComplete
+			else
+				unlockSortie()
+			end
 		end
 	end
 	selectedMission = nil
@@ -642,8 +825,16 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 end)
 
 GuildEvents.GuildMenuClosed.OnClientEvent:Connect(function()
+	stopScout()  -- end any running scouting animation
 	screenGui.Enabled = false
 	print("[GuildMenu] Closed")
 end)
+
+-- Battle prep finished on the server: end scouting, unlock the sortie button.
+if BattleEvents.MapBuildComplete then
+	BattleEvents.MapBuildComplete.OnClientEvent:Connect(function()
+		unlockSortie()
+	end)
+end
 
 print("[GuildMenu] Ready — waiting for GuildMenuOpened")

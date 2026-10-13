@@ -39,6 +39,7 @@ local _mapHeight = 8
 local _statusService = nil   -- injected to avoid circular require
 local _bvb = nil             -- BattleVisualBroadcaster, injected
 local _allUnits = nil        -- cached live unit list (state.units ref) for explosions
+local _objectHitCb = nil     -- (x,y) -> ONE hit on the breakable OBS object at that tile (OBS Phase 2c-D)
 
 local function tileKey(x, y) return x .. "," .. y end
 
@@ -132,6 +133,13 @@ end
 
 function TileEffectService.SetBroadcaster(bvb)
 	_bvb = bvb
+end
+
+-- OBS Phase 2c-D: object-hit callback. Main wires this to a closure over the battle
+-- `state` -> ObjectEffectService.ApplyObjectHit(state, x, y, 1). nil-safe: if unset,
+-- explosions simply don't damage OBS blocker objects (no behaviour change).
+function TileEffectService.SetObjectHitCallback(fn)
+	_objectHitCb = fn
 end
 
 --------------------------------------------------
@@ -626,6 +634,14 @@ local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits
 				-- Intrinsic effect 1: lower the tile + trigger terrain chains
 				-- (Rocky@>=8 -> Cracked Ground, Cracked Ground -> Collapse).
 				applyExplosionTerrain(tx, ty, allUnits)
+				-- OBS Phase 2c-D: an explosion on a breakable OBS blocker tile = ONE hit
+				-- (map_gen_rules 82/84). This single call covers BOTH the AOE (C) and the
+				-- explosion's own elevation reduction (D) for this tile -- one hit per
+				-- affected tile per explosion event, no double-count. Billboard/unbreakable
+				-- tiles are a no-op (ApplyObjectHit returns "immune").
+				if _objectHitCb then
+					_objectHitCb(tx, ty)
+				end
 
 				-- Intrinsic effect 2: per-source HP damage. damagePayload is a FRACTION
 				-- of Max HP (e.g. 0.25 for Barrel Bomb / Land Mine). nil/0 = none

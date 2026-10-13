@@ -68,12 +68,14 @@ local EVENT_NAMES = {
 	"TileEffectApplied",  -- S->C: effect placed on tile
 	"TileEffectRemoved",  -- S->C: effect removed from tile
 	"UnitStateChanged",   -- S->C: unit HP/isAlive changed (revive, etc.)
+	"ObjectChanged",      -- S->C: OBS object break/HP-change/move (Phase 2c-0): { x, y, newHp? | destroyed? | moved? }
 	"MapDataSync",        -- S->C: terrain/elevation/blocker grids for client
 	-- Phase B: Quest Board
 	"QuestBoardOpen",     -- S->C: quest board data (3 quests)
 	"QuestSelected",      -- C->S: player picks a quest
 	"OpenAdventurersGuild", -- C->S: player opened the Adventurer's Guild; server shows quest board (2026-10-12)
 	"AbandonQuest",      -- C->S: player cancels an accepted quest at the sortie briefing (50% penalty, 2026-10-13)
+	"MapBuildComplete",  -- S->C: battle prep (map+enemies) done; unlock the sortie button (scouting UX, 2026-10-13)
 	-- Phase D: Deployment
 	"DeploymentPhase",    -- S->C: deployment data (anchors, units, map size)
 	"DeployUnit",         -- C->S: player places a unit on a tile

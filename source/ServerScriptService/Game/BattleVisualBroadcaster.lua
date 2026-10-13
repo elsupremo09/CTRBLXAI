@@ -530,6 +530,28 @@ function BattleVisualBroadcaster.TileEffectRemoved(tileX, tileY, effectId)
 end
 
 --------------------------------------------------
+-- OBS OBJECT CHANGED (Phase 2c-0)
+-- S->C: a map OBS object's state changed (HP decrement / destroyed / moved).
+--------------------------------------------------
+
+function BattleVisualBroadcaster.ObjectChanged(x, y, info)
+	-- Fired by ObjectEffectService.ApplyObjectHit. The client updates the
+	-- inspector HP readout and, on destroy, drops its own blocker so the opened
+	-- tile is walkable/visible. No pacing wait (state sync, like UnitStateChanged).
+	--   info.newHp     (number)   -> HP decremented to this value
+	--   info.destroyed (true)     -> object broke and was removed; tile reverts
+	--   info.moved     ({toX,toY})-> pushed to a new tile (emitted from Phase 2c-E)
+	info = info or {}
+	BattleEvents.ObjectChanged:FireAllClients({
+		x         = x,
+		y         = y,
+		newHp     = info.newHp,
+		destroyed = info.destroyed == true or nil,
+		moved     = info.moved,
+	})
+end
+
+--------------------------------------------------
 -- UNIT STATE CHANGE (revive, etc.)
 -- Generic broadcast for HP/isAlive changes outside normal combat.
 --------------------------------------------------
