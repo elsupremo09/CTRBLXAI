@@ -72,6 +72,8 @@ local EVENT_NAMES = {
 	-- Phase B: Quest Board
 	"QuestBoardOpen",     -- S->C: quest board data (3 quests)
 	"QuestSelected",      -- C->S: player picks a quest
+	"OpenAdventurersGuild", -- C->S: player opened the Adventurer's Guild; server shows quest board (2026-10-12)
+	"AbandonQuest",      -- C->S: player cancels an accepted quest at the sortie briefing (50% penalty, 2026-10-13)
 	-- Phase D: Deployment
 	"DeploymentPhase",    -- S->C: deployment data (anchors, units, map size)
 	"DeployUnit",         -- C->S: player places a unit on a tile

@@ -670,6 +670,13 @@ end
 -- OPEN / CLOSE
 --------------------------------------------------
 
+-- Set the session player ONCE at boot so Open()/Close() can FireClient even on the
+-- first guild-base landing, which runs before the per-round Init() (fixes blank-screen
+-- when Open("Base") fired with _sessionPlayer still nil). 2026-10-13.
+function GuildMenuService.SetSessionPlayer(player: Player)
+	_sessionPlayer = player
+end
+
 function GuildMenuService.Open(phase: string)
 	isOpen = true
 	currentPhase = phase

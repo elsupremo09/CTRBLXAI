@@ -555,6 +555,7 @@ end
 
 local navButtons: { GuiButton } = {}
 local leaveButton: TextButton? = nil
+local advGuildButton: TextButton? = nil
 local devButton: GuiButton? = nil
 
 local function buildNav()
@@ -583,6 +584,17 @@ local function buildNav()
 	registerNav(dev, "Dev")
 	table.insert(navButtons, dev)
 
+	-- Adventurer's Guild: opens the quest board (2026-10-12). Fires OpenAdventurersGuild;
+	-- the server is waiting at the guild base and responds by showing the quest board.
+	local advGuild = makeButton(nav, "Adventurer's Guild", Theme.Colors.Accent or Theme.Colors.Success, function()
+		if isBusy then return end
+		BattleEvents.OpenAdventurersGuild:FireServer()
+	end)
+	advGuild.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
+	advGuild.LayoutOrder = 90
+	advGuildButton = advGuild
+	table.insert(navButtons, advGuild)
+
 	local leave = makeButton(nav, "", Theme.Colors.Success, function()
 		if isBusy then return end
 		screenGui.Enabled = false
@@ -602,9 +614,21 @@ buildNav()
 --------------------------------------------------
 
 GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
-	currentPhase = (type(data) == "table" and data.phase == "PostBattle") and "PostBattle" or "PreBattle"
+	currentPhase = (type(data) == "table" and type(data.phase) == "string") and data.phase or "PreBattle"
+	-- Button visibility by phase (2026-10-13 fix for the "Continue to Deployment at the
+	-- base" crash): at the Base hub the ONLY way to start something is the Adventurer's
+	-- Guild (which launches the quest activity); there is no quest/map yet, so the deploy
+	-- button must NOT appear. "Continue to Deployment" belongs only at the sortie briefing
+	-- (PreBattle); "Save & Finish" only after a battle (PostBattle).
+	local atBase = (currentPhase == "Base")
+	if advGuildButton then
+		advGuildButton.Visible = atBase
+	end
 	if leaveButton then
-		leaveButton.Text = currentPhase == "PreBattle" and "Continue to Deployment" or "Save & Finish"
+		leaveButton.Visible = not atBase
+		if not atBase then
+			leaveButton.Text = (currentPhase == "PostBattle") and "Save & Finish" or "Continue to Deployment"
+		end
 	end
 	selectedMission = nil
 	selectedUnits = {}
