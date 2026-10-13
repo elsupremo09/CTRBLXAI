@@ -1431,6 +1431,66 @@ end
 print(string.format("[Main] Boot roster ready: %d player unit(s) available at the base.",
 	(function() local n = 0 for _ in pairs(playerUnits) do n += 1 end return n end)()))
 
+--------------------------------------------------
+-- UGC RENTAL & OWNERSHIP (moved to BOOT 2026-10-13): previously sat INSIDE the per-
+-- round loop, so the UGC system (providers, player init, save import, remote wiring,
+-- availability loop) only came online AFTER a quest launched. The Outfit tab opened at
+-- the base then fetched from a server that was not listening yet and drew BLANK. It
+-- needs playerUnits (boot roster, just above), loadedSave and player -- all boot-level.
+-- Running once at boot also removes the per-round remote re-wire + duplicate
+-- availability-loop leak. Remotes validated in UGCRemoteHandler (SEC-001); state rides
+-- progression Key 3 (doSave: progression.ugc); old saves load as fresh UGC state.
+--------------------------------------------------
+UGCService.SetCurrencyService(CurrencyService)
+UGCService.SetAvailabilityProvider(UGCOutfitService.IsAvailable)
+UGCService.SetOffSaleProvider(UGCOutfitService.IsOffSale) -- "Off sale" marker (ugc_rules 41/47)
+UGCService.SetRatingService(UGCRatingService) -- private vote aggregate
+UGCService.SetSaveModeProvider(SaveService.GetMode)
+UGCOutfitService.SetSaveModeProvider(SaveService.GetMode) -- availability cache persistence (own DataStore)
+UGCService.SetUnitRaceProvider(function(_pid, unitId)
+	local u = playerUnits[unitId]
+	if not u then return false, nil end
+	local race = u.raceId and RaceData.GetRace(u.raceId) or nil
+	return true, race and race.name or nil
+end)
+-- Rental price level = highest owned roster unit level ("player current level").
+UGCService.SetPlayerLevelProvider(function(_pid)
+	local best = 1
+	for _, u in pairs(playerUnits) do
+		if type(u.level) == "number" and u.level > best then best = u.level end
+	end
+	return best
+end)
+UGCOutfitService.SetStateProvider(UGCService)
+-- Body-color provider: UGCOutfitService asks for a unit's chosen tint when it
+-- dresses the battle model / builds the loadout preview. We return a Color3 from
+-- the live unit's stored {r,g,b} (nil → no tint). playerId is the project's fixed
+-- PLAYER_ID; we look the unit up directly in playerUnits.
+UGCOutfitService.SetBodyColorProvider(function(_playerId, unitId)
+	local unit = playerUnits[unitId]
+	local c = unit and unit.bodyColor
+	if type(c) == "table" and #c == 3 then
+		return Color3.fromRGB(c[1], c[2], c[3])
+	end
+	return nil
+end)
+UGCService.InitPlayer(PLAYER_ID, player)
+UGCService.Import(PLAYER_ID, loadedSave and loadedSave.progression
+	and loadedSave.progression.ugc or nil)
+UGCRemoteHandler.Init({
+	playerId      = PLAYER_ID,
+	sessionPlayer = player,
+	ugc           = UGCService,
+	outfit        = UGCOutfitService,
+})
+UGCService.StartRatingFlush()
+task.spawn(function()
+	-- First on-sale pass (fail closed until done), then a background re-check loop
+	-- (ugc_rules 49); battles only read the cached pool (ugc_rules 50).
+	UGCOutfitService.StartAvailabilityLoop()
+	UGCService.RefreshOwnership(PLAYER_ID) -- ownership is never saved; verify live
+end)
+
 -- SAVE HELPER (moved to BOOT 2026-10-13): doSave closes over only boot-owned state
 -- (playerUnits, cardInventory, PLAYER_ID, and the boot-required services), so it is
 -- defined ONCE here, before the loop. This lets base write-actions (hire/buy/sell/
@@ -1566,6 +1626,13 @@ while true do
 
 	print(string.format("[Main] Quest selected: %s (%s/%s)", selectedQuest.name, selectedQuest.biome, selectedQuest.template))
 
+	-- SCOUTING WAIT UX (2026-10-13): show the sortie briefing IMMEDIATELY, with its
+	-- "Continue to Deployment" button LOCKED and flavoured "Scouting the battle map...",
+	-- so the player never stares at an empty world while the map builds. The button
+	-- unlocks when battle prep finishes (MapBuildComplete, below). The go/abandon gate
+	-- further down already waits on that same button, so locking it IS the gate.
+	GuildMenuService.Open("PreBattle", { scouting = true })
+
 	-- Generate map from quest parameters
 	generatedMap = MapService.Generate(selectedQuest.biome, selectedQuest.template)
 	MAP_WIDTH    = generatedMap.width
@@ -1644,6 +1711,13 @@ while true do
 	TileEffectService.Init(MAP_WIDTH, MAP_HEIGHT)
 	TileEffectService.SetStatusService(StatusService)
 	TileEffectService.SetBroadcaster(BattleVisualBroadcaster)
+	-- OBS Phase 2c-D: route explosion/elevation object hits to the breakable OBS
+	-- blocker at (x,y). Closure over the battle `state` upvalue (lazy; nil-safe
+	-- before a battle exists). Billboard/unbreakable tiles are a no-op in ApplyObjectHit.
+	TileEffectService.SetObjectHitCallback(function(x, y)
+		if state then return ObjectEffectService.ApplyObjectHit(state, x, y, 1) end
+		return nil
+	end)
 	BattleCoordinator.SetTileEffectService(TileEffectService)
 	CommandService.SetTileEffectService(TileEffectService)
 	-- Summon spawner injection (2026-10-06): lets CommandService route the six summon
@@ -1663,6 +1737,11 @@ while true do
 	WeatherService.SetTileEffectService(TileEffectService)
 	WeatherService.SetBroadcaster(BattleVisualBroadcaster)
 	WeatherService.SetStatusService(StatusService)
+	-- OBS Phase 2c-D: Earthquake downward reshape also hits breakable OBS blockers.
+	WeatherService.SetObjectHitCallback(function(x, y)
+		if state then return ObjectEffectService.ApplyObjectHit(state, x, y, 1) end
+		return nil
+	end)
 	WeatherService.SetTileReshaper(function(x, y, terrain, elev)
 		if mapFolder then MapRenderer.ReshapeTile(mapFolder, x, y, terrain, elev) end
 	end)
@@ -2013,61 +2092,9 @@ while true do
 	-- here). Every Guild request is validated inside GuildMenuService (SEC-001).
 	--------------------------------------------------
 
-	--------------------------------------------------
-	-- UGC RENTAL & OWNERSHIP (ugc_rules 2026-10-07). Needs playerUnits + loadedSave,
-	-- so it lives here. State rides progression Key 3 (doSave: progression.ugc);
-	-- old saves without it load as a fresh UGC state. Remotes validated in
-	-- UGCRemoteHandler (SEC-001).
-	--------------------------------------------------
-	UGCService.SetCurrencyService(CurrencyService)
-	UGCService.SetAvailabilityProvider(UGCOutfitService.IsAvailable)
-	UGCService.SetOffSaleProvider(UGCOutfitService.IsOffSale) -- "Off sale" marker (ugc_rules 41/47)
-	UGCService.SetRatingService(UGCRatingService) -- private vote aggregate
-	UGCService.SetSaveModeProvider(SaveService.GetMode)
-	UGCOutfitService.SetSaveModeProvider(SaveService.GetMode) -- availability cache persistence (own DataStore)
-	UGCService.SetUnitRaceProvider(function(_pid, unitId)
-		local u = playerUnits[unitId]
-		if not u then return false, nil end
-		local race = u.raceId and RaceData.GetRace(u.raceId) or nil
-		return true, race and race.name or nil
-	end)
-	-- Rental price level = highest owned roster unit level ("player current level").
-	UGCService.SetPlayerLevelProvider(function(_pid)
-		local best = 1
-		for _, u in pairs(playerUnits) do
-			if type(u.level) == "number" and u.level > best then best = u.level end
-		end
-		return best
-	end)
-	UGCOutfitService.SetStateProvider(UGCService)
-	-- Body-color provider: UGCOutfitService asks for a unit's chosen tint when it
-	-- dresses the battle model / builds the loadout preview. We return a Color3 from
-	-- the live unit's stored {r,g,b} (nil → no tint). playerId is the project's fixed
-	-- PLAYER_ID; we look the unit up directly in playerUnits.
-	UGCOutfitService.SetBodyColorProvider(function(_playerId, unitId)
-		local unit = playerUnits[unitId]
-		local c = unit and unit.bodyColor
-		if type(c) == "table" and #c == 3 then
-			return Color3.fromRGB(c[1], c[2], c[3])
-		end
-		return nil
-	end)
-	UGCService.InitPlayer(PLAYER_ID, player)
-	UGCService.Import(PLAYER_ID, loadedSave and loadedSave.progression
-		and loadedSave.progression.ugc or nil)
-	UGCRemoteHandler.Init({
-		playerId      = PLAYER_ID,
-		sessionPlayer = player,
-		ugc           = UGCService,
-		outfit        = UGCOutfitService,
-	})
-	UGCService.StartRatingFlush()
-	task.spawn(function()
-		-- First on-sale pass (fail closed until done), then a background re-check loop
-		-- (ugc_rules 49); battles only read the cached pool (ugc_rules 50).
-		UGCOutfitService.StartAvailabilityLoop()
-		UGCService.RefreshOwnership(PLAYER_ID) -- ownership is never saved; verify live
-	end)
+	-- UGC setup MOVED TO BOOT (2026-10-13): see the "UGC RENTAL & OWNERSHIP" block above
+	-- the loop. It must run once at startup so the Outfit tab works at the base before any
+	-- quest launches, and so the availability loop + remote wiring do not re-stack each round.
 
 	--------------------------------------------------
 	-- MANAGEMENT REMOTEFUNCTIONS (Slice 4D)
@@ -2246,8 +2273,11 @@ while true do
 	-- PRE-BATTLE GUILD MENU (Slice 6 temporary Guild menu, 2026-10-07). Replaces the
 	-- pre-battle Loadout Hub; its Units button opens that same loadout screen, and
 	-- leaving fires the same BattleEvents.StartBattle -> hubContinueSignal as before.
-	print("[Hub] Opening pre-battle Guild menu")
-	GuildMenuService.Open("PreBattle")
+	-- Battle prep finished — unlock the sortie button that has shown "Scouting the battle
+	-- map..." since quest selection. The sortie menu is ALREADY open (scouting state); we do
+	-- NOT re-open it (that teardown/relabel was the old flow). Just flip the button live.
+	print("[Hub] Battle prep complete — unlocking sortie")
+	BattleEvents.MapBuildComplete:FireAllClients()
 
 	-- Sync map data (terrain/elevation/blockers) to client for tile inspector
 	BattleEvents.MapDataSync:FireAllClients({
@@ -3290,21 +3320,14 @@ while true do
 		print("[PostBattle] Player acknowledged rewards")
 	end
 
-	-- Step 5: Post-battle Guild menu (Slice 6 temporary Guild menu; replaces the
-	-- post-battle Loadout Hub — its Units button opens the same loadout screen).
-	print("[Hub] Opening post-battle Guild menu")
-	GuildMenuService.Open("PostBattle")
-
-	-- Step 6: Wait for player to close the hub, then auto-save
-	-- (Equipment changes via RequestEquip update the same unit objects
-	-- that doSave reads, so this save captures any post-battle equip changes.)
-	hubContinueSignal.Event:Wait()
-	GuildMenuService.Close()
-	print("[Hub] Post-battle hub closed — saving equipment changes")
+	-- Step 5: Auto-save and return straight to the base (2026-10-13 user decision).
+	-- No separate post-battle "Save & Finish" menu: in the real flow the player is
+	-- teleported battle -> hub, so results are already persisted (the battle-end save
+	-- above wrote rewards/XP/recovery/roster). This extra save is a safety net; then the
+	-- loop returns to the top, which opens the base ("Base" phase). Post-battle loadout
+	-- changes now happen at the base, which is fully interactive.
 	doSave()
-
-	-- Keep script alive for management requests (SaveNow DevCommand also works here)
-	print("[Hub] Session active. Management requests available.")
+	print("[Hub] Battle complete — auto-saved; returning to base.")
 
 	print("[Loop] Round complete — returning to quest board for next quest.")
 end

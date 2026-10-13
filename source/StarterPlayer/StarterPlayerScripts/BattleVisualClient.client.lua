@@ -1838,7 +1838,7 @@ local function processTileClick(bx, by)
 	end
 	-- Map object (no unit on the tile): show it in the unit panel.
 	if not clickedUnit and objectName and objectName ~= "None" then
-		BattleHUD.SetSelection({ kind = "object", name = objectName, x = bx, y = by })
+		BattleHUD.SetSelection({ kind = "object", name = objectName, x = bx, y = by, hp = (_G.CTRBLXAI_GetObjectHp and _G.CTRBLXAI_GetObjectHp(bx, by)) or nil })
 	elseif not clickedUnit then
 		BattleHUD.ClearSelection()  -- empty tile: panel goes back to the acting unit
 	end
@@ -2921,6 +2921,37 @@ BattleEvents.TileEffectRemoved.OnClientEvent:Connect(function(data)
 end)
 
 _G.CTRBLXAI_GetTileEffect = function(x, y) return activeTileEffects[`{x},{y}`] end
+
+-- OBS Phase 2c-0: object state change (break / HP decrement / move). Server fires
+-- ObjectChanged{ x, y, newHp? | destroyed? | moved? } from ObjectEffectService.ApplyObjectHit.
+-- Keep per-tile live HP for the inspector; on destroy drop our own blocker so
+-- GetObjectAt / LoS / tile inspection treat the opened tile as empty (the server
+-- already removed the authoritative blocker + replicated the visual).
+local objectHpByTile: {[string]: number} = {}
+_G.CTRBLXAI_GetObjectHp = function(x, y) return objectHpByTile[`{x},{y}`] end
+BattleEvents.ObjectChanged.OnClientEvent:Connect(function(data)
+	if type(data) ~= "table" then return end
+	local x, y = data.x, data.y
+	if type(x) ~= "number" or type(y) ~= "number" then return end
+	local key = `{x},{y}`
+	if data.destroyed then
+		objectHpByTile[key] = nil
+		if GameConstants.RemoveBlockerAt then pcall(GameConstants.RemoveBlockerAt, x, y) end
+		local sel = BattleHUD.GetSelection and BattleHUD.GetSelection()
+		if sel and sel.kind == "object" and sel.x == x and sel.y == y then
+			BattleHUD.ClearSelection()
+		end
+		if _G.CTRBLXAI_NotifyObjectChanged then _G.CTRBLXAI_NotifyObjectChanged(x, y, nil, true) end
+	elseif type(data.newHp) == "number" then
+		objectHpByTile[key] = data.newHp
+		local sel = BattleHUD.GetSelection and BattleHUD.GetSelection()
+		if sel and sel.kind == "object" and sel.x == x and sel.y == y then
+			BattleHUD.SetSelection({ kind = "object", name = sel.name, x = x, y = y, hp = data.newHp })
+		end
+		if _G.CTRBLXAI_NotifyObjectChanged then _G.CTRBLXAI_NotifyObjectChanged(x, y, data.newHp, false) end
+	end
+	-- data.moved (push) is defined in the contract but only emitted from Phase 2c-E.
+end)
 -- Called by BattleHUD when tapping an action snaps the panel back to the acting unit.
 _G.CTRBLXAI_MarkActiveUnit = function()
 	local u = activeUnitId and unitData[activeUnitId]

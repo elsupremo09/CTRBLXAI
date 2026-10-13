@@ -42,6 +42,8 @@ local CARDINAL = {
 	{ x = -1, y =  0 },
 }
 
+local YIELD_INTERVAL = 100  -- yield every N tiles; matches Feature/Transition/Elevation passes
+
 local function isInBounds(x, y, w, h)
 	return x >= 1 and x <= w and y >= 1 and y <= h
 end
@@ -160,6 +162,7 @@ function ValidationPass.Run(mapState)
 	local h       = mapState.height
 	local biomeId = mapState.biomeId
 	local biomeElev = mapState.biomeElevation
+	local ops = 0  -- periodic-yield counter (read-only pass; yielding is logic-safe)
 
 	local checks = {}
 
@@ -169,6 +172,8 @@ function ValidationPass.Run(mapState)
 	local v1Violations = {}
 	for y = 1, h do
 		for x = 1, w do
+			ops = ops + 1
+			if ops % YIELD_INTERVAL == 0 then task.wait() end
 			local t = tiles[y][x].terrain
 			if t == nil then
 				table.insert(v1Violations,
@@ -194,6 +199,8 @@ function ValidationPass.Run(mapState)
 	local effectiveMax = biomeElev and biomeElev.peak  or 20
 	for y = 1, h do
 		for x = 1, w do
+			ops = ops + 1
+			if ops % YIELD_INTERVAL == 0 then task.wait() end
 			local e = tiles[y][x].elevation
 			if e == nil or e ~= e then
 				table.insert(v2Violations,
@@ -218,6 +225,8 @@ function ValidationPass.Run(mapState)
 	local seenBadTerrain = {}
 	for y = 1, h do
 		for x = 1, w do
+			ops = ops + 1
+			if ops % YIELD_INTERVAL == 0 then task.wait() end
 			local t = tiles[y][x].terrain
 			if t and not TerrainData.Types[t] and not seenBadTerrain[t] then
 				seenBadTerrain[t] = true
@@ -241,6 +250,8 @@ function ValidationPass.Run(mapState)
 	local v4Limit = 20
 	for y = 1, h do
 		for x = 1, w do
+			ops = ops + 1
+			if ops % YIELD_INTERVAL == 0 then task.wait() end
 			if #v4Violations >= v4Limit then break end
 			local tA = tiles[y][x].terrain
 			-- Check only right and down to avoid double-counting.
@@ -275,6 +286,8 @@ function ValidationPass.Run(mapState)
 	local v5Violations = {}
 	for y = 1, h do
 		for x = 1, w do
+			ops = ops + 1
+			if ops % YIELD_INTERVAL == 0 then task.wait() end
 			if tiles[y][x].terrain == "Deep Water" then
 				for _, dir in ipairs(CARDINAL) do
 					local nx, ny = x + dir.x, y + dir.y
@@ -316,6 +329,8 @@ function ValidationPass.Run(mapState)
 		local pdList, edSet = {}, {}
 		for y = 1, h do
 			for x = 1, w do
+				ops = ops + 1
+				if ops % YIELD_INTERVAL == 0 then task.wait() end
 				local m = tiles[y][x].marker
 				if m == "PD" then
 					table.insert(pdList, { x = x, y = y })
@@ -380,6 +395,8 @@ function ValidationPass.Run(mapState)
 		local objList = {}
 		for y = 1, h do
 			for x = 1, w do
+				ops = ops + 1
+				if ops % YIELD_INTERVAL == 0 then task.wait() end
 				if tiles[y][x].marker == "OBJ" then
 					table.insert(objList, { x = x, y = y })
 				end
@@ -391,6 +408,8 @@ function ValidationPass.Run(mapState)
 			local pdList = {}
 			for y = 1, h do
 				for x = 1, w do
+					ops = ops + 1
+					if ops % YIELD_INTERVAL == 0 then task.wait() end
 					if tiles[y][x].marker == "PD" then
 						table.insert(pdList, { x = x, y = y })
 					end
@@ -448,6 +467,8 @@ function ValidationPass.Run(mapState)
 	local PASSABLE_REQUIRED = { PD = true, ED = true, LAN = true, OBJ = true }
 	for y = 1, h do
 		for x = 1, w do
+			ops = ops + 1
+			if ops % YIELD_INTERVAL == 0 then task.wait() end
 			local tile = tiles[y][x]
 			if PASSABLE_REQUIRED[tile.marker] then
 				local tDef = TerrainData.Types[tile.terrain]
@@ -473,6 +494,8 @@ function ValidationPass.Run(mapState)
 	local v8Violations = {}
 	for y = 1, h do
 		for x = 1, w do
+			ops = ops + 1
+			if ops % YIELD_INTERVAL == 0 then task.wait() end
 			local tile = tiles[y][x]
 			if tile.terrain == "Quicksand" then
 				-- Protected marker check.
@@ -516,6 +539,8 @@ function ValidationPass.Run(mapState)
 	local v9Violations = {}
 	for y = 1, h do
 		for x = 1, w do
+			ops = ops + 1
+			if ops % YIELD_INTERVAL == 0 then task.wait() end
 			if tiles[y][x].terrain == "Molten" then
 				for _, dir in ipairs(CARDINAL) do
 					local nx, ny = x + dir.x, y + dir.y
@@ -546,6 +571,8 @@ function ValidationPass.Run(mapState)
 	local v10Violations = {}
 	for y = 1, h do
 		for x = 1, w do
+			ops = ops + 1
+			if ops % YIELD_INTERVAL == 0 then task.wait() end
 			local t = tiles[y][x].terrain
 			if t and CLUSTER_TERRAINS[t] then
 				local compat = CLUSTER_COMPAT[t]
@@ -581,6 +608,8 @@ function ValidationPass.Run(mapState)
 	local edCount = 0
 	for y = 1, h do
 		for x = 1, w do
+			ops = ops + 1
+			if ops % YIELD_INTERVAL == 0 then task.wait() end
 			local tile = tiles[y][x]
 			local tDef = TerrainData.Types[tile.terrain]
 			local passable   = tDef and tDef.passable ~= false
@@ -618,6 +647,8 @@ function ValidationPass.Run(mapState)
 	local terrainPresent = {}
 	for y = 1, h do
 		for x = 1, w do
+			ops = ops + 1
+			if ops % YIELD_INTERVAL == 0 then task.wait() end
 			local t = tiles[y][x].terrain
 			if t then terrainPresent[t] = true end
 		end

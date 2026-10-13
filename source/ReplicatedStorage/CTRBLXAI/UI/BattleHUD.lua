@@ -569,8 +569,10 @@ local function buildObjectCard()
 			if def.isUnbreakable then
 				table.insert(parts, "Unbreakable. Immovable. Elevation-immune.")
 			elseif type(def.hitsToDestroy) == "number" then
-				-- Phase 2a shows full HP; Phase 2c broadcasts live decrements here.
-				table.insert(parts, string.format("HP %d/%d.", def.hitsToDestroy, def.hitsToDestroy))
+				-- OBS Phase 2c-0: live HP from the selection payload (client sets sel.hp
+				-- from ObjectChanged broadcasts); falls back to full HP before any hit.
+				local curHp = if type(sel.hp) == "number" then sel.hp else def.hitsToDestroy
+				table.insert(parts, string.format("HP %d/%d.", curHp, def.hitsToDestroy))
 				table.insert(parts, string.format("Push: needs Force > %d.", def.nativeStability or 3))
 			end
 			desc = table.concat(parts, " ")

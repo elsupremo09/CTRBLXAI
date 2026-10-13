@@ -39,6 +39,7 @@ local FUNCTION_NAMES = table.freeze({
 	"GetBlacksmithItems", -- () -> items with next-level cost
 	"RequestUpgrade",   -- (instanceId) -> result (+1 level)
 	"RequestDowngrade", -- (instanceId) -> result (-1 level)
+	"FinalizeCart",     -- ({ buys = {offerIndex}, sells = {instanceId} }) -> batch commit (cart, 2026-10-13)
 	"GetDispatchBoard", -- () -> missions + unit availability
 	"RequestDispatch",  -- (missionId, { unitId }) -> result
 	"GetGuildUnits",    -- () -> unit list with level / XP / availability

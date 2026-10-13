@@ -139,8 +139,16 @@ local function mapLevel(): number
 	return math.max(1, math.floor(tonumber(lvl) or 1))
 end
 
+local _dirty = false
 local function save()
 	if _doSave then _doSave() end
+	_dirty = false
+end
+local function markDirty()
+	-- SMARTER SAVE (2026-10-13): per-action saves caused a ~2s clunk after every guild
+	-- action. Live actions mark the session dirty; the real write happens once when the
+	-- menu closes (see GuildMenuService.Close).
+	_dirty = true
 end
 
 local function sortedKeys(t: { [string]: any }): { string }
@@ -677,11 +685,15 @@ function GuildMenuService.SetSessionPlayer(player: Player)
 	_sessionPlayer = player
 end
 
-function GuildMenuService.Open(phase: string)
+function GuildMenuService.Open(phase: string, extra: { [string]: any }?)
 	isOpen = true
 	currentPhase = phase
 	if _sessionPlayer then
-		GuildEvents.GuildMenuOpened:FireClient(_sessionPlayer, { phase = phase })
+		local payload: { [string]: any } = { phase = phase }
+		if type(extra) == "table" then
+			for k, v in extra do payload[k] = v end
+		end
+		GuildEvents.GuildMenuOpened:FireClient(_sessionPlayer, payload)
 	end
 	print(`[GuildMenuService] Guild menu OPEN ({phase})`)
 end
@@ -689,6 +701,7 @@ end
 function GuildMenuService.Close()
 	if not isOpen then return end
 	isOpen = false
+	if _dirty then save() end  -- SMARTER SAVE: one write when the menu closes
 	if _sessionPlayer then
 		GuildEvents.GuildMenuClosed:FireClient(_sessionPlayer, {})
 	end
@@ -809,7 +822,7 @@ local function onRequestHire(player: Player, candidateId: any)
 	table.insert(recruitOrder, unitId)
 	if currentPhase == "PreBattle" then table.insert(pendingBattleUnits, unit) end
 	table.remove(cache.pool, idx)
-	save()
+	markDirty()
 	local gold = balance()
 	return { ok = true, unitName = unit.name, cost = result.cost, gold = gold }
 end
@@ -846,7 +859,7 @@ local function onRequestBuy(player: Player, offerIndex: any)
 	if offerIndex < 1 or offerIndex > #(res.stock or {}) then return fail("Invalid offer") end
 	local ok, result: any = MerchantService.BuyItem(_playerId, offerIndex, mapLevel(), battlesCompleted)
 	if not ok then return fail(tostring(result)) end
-	save()
+	markDirty()
 	return { ok = true, name = itemDisplayName(result.item), price = result.price, gold = (balance()) }
 end
 
@@ -857,7 +870,7 @@ local function onRequestSell(player: Player, instanceId: any)
 	if holderOf(instanceId) then return fail("Unequip that item before selling it") end
 	local ok, result: any = MerchantService.SellItem(_playerId, instanceId)
 	if not ok then return fail(tostring(result)) end
-	save()
+	markDirty()
 	return { ok = true, payout = result.payout, gold = (balance()) }
 end
 
@@ -905,7 +918,7 @@ local function onRequestUpgrade(player: Player, instanceId: any)
 	if not allowed then return fail(why or "Not allowed") end
 	local ok, result: any = BlacksmithService.CommitUpgrade(_playerId, item, item.itemLevel + 1)
 	if not ok then return fail(tostring(result)) end
-	save()
+	markDirty()
 	return { ok = true, toLevel = result.toLevel, gold = (balance()) }
 end
 
@@ -915,8 +928,61 @@ local function onRequestDowngrade(player: Player, instanceId: any)
 	if not item then return fail(err or "Invalid item") end
 	local ok, result: any = BlacksmithService.CommitDowngrade(_playerId, item, item.itemLevel - 1)
 	if not ok then return fail(tostring(result)) end
-	save()
+	markDirty()
 	return { ok = true, toLevel = result.toLevel }
+end
+
+local function onFinalizeCart(player: Player, payload: any)
+	-- SMARTER SAVE / CART (2026-10-13): buy+sell are batched client-side and committed
+	-- here in ONE call. Sells run first (free gold for the buys); buys run high-index
+	-- first because buying removes an offer and reindexes the rest. One save at the end.
+	local g = guard(player, "cart"); if g then return fail(g) end
+	if type(payload) ~= "table" then return fail("Invalid cart") end
+	local buys = (type(payload.buys) == "table") and payload.buys or {}
+	local sells = (type(payload.sells) == "table") and payload.sells or {}
+	if #buys > 50 or #sells > 50 then return fail("Cart too large") end
+
+	local soldCount, boughtCount = 0, 0
+	local soldGold, boughtGold = 0, 0
+	local problems: { string } = {}
+
+	for _, instanceId in sells do
+		if type(instanceId) == "string" and #instanceId <= 80
+			and InventoryService.OwnsItem(_playerId, instanceId) and not holderOf(instanceId) then
+			local ok, result: any = MerchantService.SellItem(_playerId, instanceId)
+			if ok then
+				soldCount += 1
+				soldGold += (result.payout or 0)
+			else
+				table.insert(problems, tostring(result))
+			end
+		else
+			table.insert(problems, "an item could not be sold (equipped or no longer owned)")
+		end
+	end
+
+	local buyIdx: { number } = {}
+	for _, idx in buys do
+		if type(idx) == "number" and idx == idx and idx % 1 == 0 then table.insert(buyIdx, idx) end
+	end
+	table.sort(buyIdx, function(a, b) return a > b end)
+	for _, idx in buyIdx do
+		local ok, result: any = MerchantService.BuyItem(_playerId, idx, mapLevel(), battlesCompleted)
+		if ok then
+			boughtCount += 1
+			boughtGold += (result.price or 0)
+		else
+			table.insert(problems, tostring(result))
+		end
+	end
+
+	if soldCount > 0 or boughtCount > 0 then
+		markDirty()
+		save()  -- commit = persist now (matches the confirm-then-save model)
+	end
+	local gold = balance()
+	return { ok = true, boughtCount = boughtCount, soldCount = soldCount,
+		boughtGold = boughtGold, soldGold = soldGold, gold = gold, problems = problems }
 end
 
 local function onGetDispatchBoard(player: Player)
@@ -968,7 +1034,7 @@ local function onRequestDispatch(player: Player, missionId: any, unitIds: any)
 	local ok, result: any = DispatchService.SendUnits(_playerId, missionId, clean, battlesCompleted)
 	if not ok then return fail(tostring(result)) end
 	table.remove(board.missions, mIdx)
-	save()
+	markDirty()
 	return { ok = true, returnBattle = result.returnBattle, xpEach = result.xpEach }
 end
 
@@ -1027,6 +1093,7 @@ function GuildMenuService.Init(deps: any)
 	GuildEvents.GetBlacksmithItems.OnServerInvoke = onGetBlacksmithItems
 	GuildEvents.RequestUpgrade.OnServerInvoke = onRequestUpgrade
 	GuildEvents.RequestDowngrade.OnServerInvoke = onRequestDowngrade
+	GuildEvents.FinalizeCart.OnServerInvoke = onFinalizeCart
 	GuildEvents.GetDispatchBoard.OnServerInvoke = onGetDispatchBoard
 	GuildEvents.RequestDispatch.OnServerInvoke = onRequestDispatch
 	GuildEvents.GetGuildUnits.OnServerInvoke = onGetGuildUnits

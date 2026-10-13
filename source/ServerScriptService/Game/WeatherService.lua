@@ -32,11 +32,15 @@ local _tileEffectService = nil
 local _broadcaster = nil
 local _statusService = nil
 local _tileReshaper = nil  -- fn(x,y,terrain,elev) over the live mapFolder (from Main)
+local _objectHitCb = nil   -- (x,y) -> ONE hit on the breakable OBS object at that tile (OBS Phase 2c-D)
 
 function WeatherService.SetTileEffectService(tes: any) _tileEffectService = tes end
 function WeatherService.SetBroadcaster(b: any) _broadcaster = b end
 function WeatherService.SetStatusService(ss: any) _statusService = ss end
 function WeatherService.SetTileReshaper(fn: any) _tileReshaper = fn end
+-- OBS Phase 2c-D: Earthquake elevation reduction counts as a hit on breakable OBS
+-- blockers (map_gen_rules row 84). Main wires this to the same closure TileEffectService uses.
+function WeatherService.SetObjectHitCallback(fn: any) _objectHitCb = fn end
 
 -- Active-condition state.
 local _active = "Clear"          -- current condition id
@@ -343,6 +347,7 @@ Periodic["Earthquake"] = function(ctx: any)
 	local count = math.floor(total * frac)
 	local occ = {}
 	for _, u in ipairs(livingUnits(ctx.state)) do occ[u.tileX .. "," .. u.tileY] = u end
+	local quakeHit = {}  -- OBS Phase 2c-D: dedup -> at most one hit per tile per quake tick
 	for _ = 1, count do
 		local x = ctx.rng:NextInteger(1, w)
 		local y = ctx.rng:NextInteger(1, h)
@@ -355,6 +360,17 @@ Periodic["Earthquake"] = function(ctx: any)
 			if u then
 				u.remainingRt = (u.remainingRt or 0) + 150
 				if _broadcaster then _broadcaster.UnitStateChanged(u) end
+			end
+			-- OBS Phase 2c-D: a downward quake (delta<0) on a breakable OBS blocker = ONE hit
+			-- per tile per quake tick (row 84). Immune/billboard tiles are skipped (also a
+			-- no-op in ApplyObjectHit). NOTE: reshapeTile above bypasses the elevation-
+			-- immunity guard (pre-existing) -- flagged for a separate fix, not changed here.
+			if delta < 0 and _objectHitCb then
+				local qk = x .. "," .. y
+				if not quakeHit[qk] and not GameConstants.IsElevationImmune(x, y) then
+					quakeHit[qk] = true
+					_objectHitCb(x, y)
+				end
 			end
 		end
 	end

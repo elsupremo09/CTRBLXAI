@@ -153,11 +153,17 @@ function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any):
 			inst.hp = math.max(0, inst.hp - dmg)
 			if inst.hp <= 0 then
 				ObjectEffectService.RemoveObjectInstance(state, inst)
-				-- Phase 2c: broadcast the opened tile so clients refresh movement/LoS
-				-- highlights and the inspector HP readout.
+				-- OBS Phase 2c-0: tell clients the tile opened so they drop their local
+				-- blocker (GetObjectAt / LoS) and refresh the inspector HP readout.
+				if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+					BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
+				end
 				return "destroyed"
 			end
-			-- Phase 2c: broadcast inst.hp so an open inspector card updates N/3 live.
+			-- OBS Phase 2c-0: broadcast the new hp so an open inspector card shows N/3 live.
+			if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+				BattleVisualBroadcaster.ObjectChanged(x, y, { newHp = inst.hp })
+			end
 			return inst.hp
 		end
 	end
