@@ -46,4 +46,14 @@ function PortraitData.GetPool(raceId)
 	return PortraitData.ByRace[raceId]
 end
 
+-- Pick a random portrait asset ID for a race (player-side default faces: starters
+-- and hired recruits). No per-battle uniqueness — enemies use EnemyGenerator's own
+-- unique picker. rng is a Random for deterministic, stable results. Returns a
+-- numeric asset ID, or nil if the race has no pool.
+function PortraitData.PickRandom(rng, raceId)
+	local pool = PortraitData.ByRace[raceId]
+	if not pool or #pool == 0 then return nil end
+	return pool[rng:NextInteger(1, #pool)]
+end
+
 return table.freeze(PortraitData)

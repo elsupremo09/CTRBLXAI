@@ -73,8 +73,10 @@ local EVENT_NAMES = {
 	-- Phase B: Quest Board
 	"QuestBoardOpen",     -- S->C: quest board data (3 quests)
 	"QuestSelected",      -- C->S: player picks a quest
+	"QuestBoardCancel",   -- C->S: player backs out of the quest board, no commit (2026-10-14)
 	"OpenAdventurersGuild", -- C->S: player opened the Adventurer's Guild; server shows quest board (2026-10-12)
 	"AbandonQuest",      -- C->S: player cancels an accepted quest at the sortie briefing (50% penalty, 2026-10-13)
+	"SelectSortieParty", -- C->S: player picks which saved party (A/B/C) to deploy at the sortie (2026-10-15)
 	"MapBuildComplete",  -- S->C: battle prep (map+enemies) done; unlock the sortie button (scouting UX, 2026-10-13)
 	-- Phase D: Deployment
 	"DeploymentPhase",    -- S->C: deployment data (anchors, units, map size)

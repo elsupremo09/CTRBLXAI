@@ -245,6 +245,32 @@ function BlacksmithService.ResolveUpgradeCost(item: any, targetLevel: number)
 	return { gold = totalGold, materials = materials }
 end
 
+-- GetUpgradeCurve (2026-10-14): per-level INCREMENTAL upgrade cost from the item's current
+-- level up to maxLevel, so the client can show a RUNNING total as the player stacks multiple
+-- upgrade levels in one visit. Gold per level is derived by differencing ResolveUpgradeCost
+-- (the single gold-formula source of truth) so there is NO duplicated gold formula; the
+-- per-level material tier/qty use this module's own rules (materialTierForLevel +
+-- MATERIAL_QTY_BY_RARITY), matching the per-level loop in ResolveUpgradeCost. Each entry is
+-- { toLevel, gold (incremental), tier, qty }. The staged commit charges the same per-step
+-- costs (onFinalizeCart loops CommitUpgrade +1 at a time), so summing the first N entries
+-- equals exactly what the server will charge to reach current+N.
+function BlacksmithService.GetUpgradeCurve(item: any, maxLevel: number)
+	if type(item) ~= "table" or type(item.itemLevel) ~= "number" then return {} end
+	local matQty = MATERIAL_QTY_BY_RARITY[item.rarityId]
+	if not matQty then return {} end
+	local cap = math.min(math.floor(tonumber(maxLevel) or 0), MAX_ITEM_LEVEL)
+	local curve = {}
+	local prevGold = 0
+	for lvl = item.itemLevel + 1, cap do
+		local c = BlacksmithService.ResolveUpgradeCost(item, lvl)
+		if not c then break end
+		local incGold = c.gold - prevGold
+		prevGold = c.gold
+		table.insert(curve, { toLevel = lvl, gold = incGold, tier = materialTierForLevel(lvl), qty = matQty })
+	end
+	return curve
+end
+
 --------------------------------------------------
 -- AFFORDABILITY CHECKS (read-only)
 --------------------------------------------------

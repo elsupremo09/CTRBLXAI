@@ -214,6 +214,15 @@ end
 -- Elevation grid helpers (tile reshape via injected reshaper + GameConstants maps).
 local function reshapeTile(x: any, y: any, terrain: any, elev: any)
 	if terrain then GameConstants.SetTerrainId(x, y, terrain) end
+	-- OBS Flag #1 fix (map_gen_rules row 85b): an elevation-immune tile (Ad Billboard)
+	-- cannot have its elevation changed by ANY effect. reshapeTile wrote ELEVATION_MAP
+	-- directly, bypassing the IsElevationImmune guard that lived only in LowerElevation,
+	-- so Earthquake/Molten/etc. could still raise or lower a billboard tile. Null the elev
+	-- here so neither the map nor the visual reshaper moves an immune tile (BOTH directions
+	-- blocked). Terrain reskin is unaffected (row 85b is elevation only).
+	if elev ~= nil and GameConstants.IsElevationImmune(x, y) then
+		elev = nil
+	end
 	if elev ~= nil and GameConstants.ELEVATION_MAP[y] then
 		GameConstants.ELEVATION_MAP[y][x] = elev
 	end
@@ -363,8 +372,8 @@ Periodic["Earthquake"] = function(ctx: any)
 			end
 			-- OBS Phase 2c-D: a downward quake (delta<0) on a breakable OBS blocker = ONE hit
 			-- per tile per quake tick (row 84). Immune/billboard tiles are skipped (also a
-			-- no-op in ApplyObjectHit). NOTE: reshapeTile above bypasses the elevation-
-			-- immunity guard (pre-existing) -- flagged for a separate fix, not changed here.
+			-- no-op in ApplyObjectHit). Billboard elevation is now protected centrally in
+			-- reshapeTile (OBS Flag #1 fix, row 85b), so a quake can neither hit nor move it.
 			if delta < 0 and _objectHitCb then
 				local qk = x .. "," .. y
 				if not quakeHit[qk] and not GameConstants.IsElevationImmune(x, y) then

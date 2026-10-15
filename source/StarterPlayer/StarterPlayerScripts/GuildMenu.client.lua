@@ -59,8 +59,20 @@ local currentPage = "Units"
 local isBusy = false
 local selectedMission: string? = nil
 local selectedUnits: { [string]: boolean } = {}
+local selectedParty: string? = nil
+local partyEdit: { [string]: boolean } = {}
+local sortiePartySlot: string? = nil   -- party chosen for THIS sortie (shown on Continue)
+local sortiePartyName: string? = nil
+local updateSortieButton: () -> () = function() end  -- reassigned once leaveButton exists
 local cartBuys: { [number]: { name: string, price: number } } = {}  -- staged buys (offerIndex -> info)
 local cartSells: { [string]: { name: string, price: number } } = {}  -- staged sells (instanceId -> info)
+local cartUpgrades: { [string]: { name: string, fromLevel: number, toLevel: number, gold: number, mats: { [number]: number }, matsText: string } } = {}  -- staged blacksmith upgrades (may span several levels)
+local cartDowngrades: { [string]: { name: string, toLevel: number } } = {}  -- staged blacksmith downgrades
+local cartDispatches: { { missionId: string, unitIds: { string }, fee: number } } = {}  -- staged dispatches
+-- Last server overview snapshot (gold + materials), refreshed by refreshOverview(). Lets
+-- the header show a LIVE projected balance as items are staged, with no server round-trip
+-- per toggle. (2026-10-14)
+local lastOverview: { gold: number, materials: { [number]: number } } = { gold = 0, materials = {} }
 
 --------------------------------------------------
 -- UI CONSTRUCTION (one-time)
@@ -321,12 +333,68 @@ end
 -- PAGES
 --------------------------------------------------
 
+-- RENDER CACHE (2026-10-14): showPage() destroys and rebuilds the whole tab on every
+-- click, and each page builder re-queries the server; that round-trip leaves the panel
+-- empty for a frame = the "black flash" per click. Client-only changes (cart toggles,
+-- dispatch mission/unit selection) do NOT change server state, so they rebuild from the
+-- last server response instead of re-fetching -- same frame, no flash. The cache is
+-- invalidated whenever server state actually changes (a live action, a Finalize commit,
+-- or reopening the menu), so displayed data is never stale.
+local pageDataCache: { [string]: any } = {}
+local function invalidatePageCache()
+	table.clear(pageDataCache)
+end
+local function cachedCall(key: string, remote: RemoteFunction?, ...: any): any?
+	if pageDataCache[key] ~= nil then return pageDataCache[key] end
+	local res = call(remote, ...)
+	if res ~= nil then pageDataCache[key] = res end
+	return res
+end
+
 local showPage: (string) -> () -- forward declaration
+
+-- Live header balance. With nothing staged it shows the real gold + materials; once a
+-- screen has staged changes it shows the PROJECTED balance (gold after sells/buys/upgrade
+-- cost/dispatch fees, plus the materials that will be spent) so the player sees the result
+-- before committing. Pure client math over the cart tables + lastOverview; no server call.
+local function updateBalanceLabel()
+	local realGold = lastOverview.gold or 0
+	local realMats = lastOverview.materials or {}
+	local goldDelta = 0
+	for _, v in cartSells do goldDelta += v.price end
+	for _, v in cartBuys do goldDelta -= v.price end
+	for _, v in cartUpgrades do goldDelta -= (v.gold or 0) end
+	for _, d in cartDispatches do goldDelta -= (d.fee or 0) end
+	local matSpend: { [number]: number } = {}
+	local anyMat = false
+	for _, v in cartUpgrades do
+		if type(v.mats) == "table" then
+			for t, q in v.mats do matSpend[t] = (matSpend[t] or 0) + q; anyMat = true end
+		end
+	end
+	local staged = goldDelta ~= 0 or anyMat
+		or next(cartSells) ~= nil or next(cartBuys) ~= nil
+		or next(cartUpgrades) ~= nil or next(cartDowngrades) ~= nil
+		or #cartDispatches > 0
+	if not staged then
+		balanceLabel.Text = `Gold {realGold}   |   {matsText(realMats)}`
+		return
+	end
+	local projGold = realGold + goldDelta
+	local goldStr = (goldDelta ~= 0) and `Gold {realGold} -> {projGold}` or `Gold {realGold}`
+	local spendParts = {}
+	for t = 1, 5 do
+		if (matSpend[t] or 0) > 0 then table.insert(spendParts, `T{t}x{matSpend[t]}`) end
+	end
+	local matStr = (#spendParts > 0) and `   |   spend {table.concat(spendParts, " ")}` or ""
+	balanceLabel.Text = goldStr .. matStr
+end
 
 local function refreshOverview()
 	local res = call(GuildEvents.GetGuildOverview)
 	if not res then return end
-	balanceLabel.Text = `Gold {res.gold or 0}   |   {matsText(res.materials)}`
+	lastOverview = { gold = res.gold or 0, materials = res.materials or {} }
+	updateBalanceLabel()
 	local b = res.buildings or {}
 	phaseLabel.Text = `{currentPhase == "PreBattle" and "Before battle" or "After battle"} | Battles done: {res.battlesCompleted or 0} | Tavern L{b.Tavern or 1}  Merchant L{b.Merchant or 1}  Blacksmith L{b.Blacksmith or 1} (temporary levels)`
 end
@@ -338,6 +406,7 @@ local function act(remote: RemoteFunction?, okText: (any) -> string, ...: any)
 	local res = call(remote, ...)
 	if res then setStatus(okText(res)) end
 	isBusy = false
+	invalidatePageCache()  -- server state changed; next render re-fetches fresh
 	refreshOverview()
 	showPage(currentPage)
 end
@@ -349,6 +418,9 @@ local function cartCount(): number
 	local n = 0
 	for _ in cartBuys do n += 1 end
 	for _ in cartSells do n += 1 end
+	for _ in cartUpgrades do n += 1 end
+	for _ in cartDowngrades do n += 1 end
+	n += #cartDispatches  -- staged dispatches (array)
 	return n
 end
 
@@ -356,17 +428,29 @@ local function finalizeCart()
 	if isBusy then return end
 	local buys: { number } = {}
 	local sells: { string } = {}
+	local upgrades: { [string]: number } = {}
+	local downgrades: { [string]: number } = {}
+	local dispatches: { any } = {}
 	for idx in cartBuys do table.insert(buys, idx) end
 	for iid in cartSells do table.insert(sells, iid) end
-	if #buys == 0 and #sells == 0 then setStatus("Your cart is empty") return end
+	for iid, v in cartUpgrades do upgrades[iid] = v.toLevel end
+	for iid, v in cartDowngrades do downgrades[iid] = v.toLevel end
+	for _, d in cartDispatches do table.insert(dispatches, { missionId = d.missionId, unitIds = d.unitIds }) end
+	if #buys == 0 and #sells == 0 and next(upgrades) == nil and next(downgrades) == nil and #dispatches == 0 then
+		setStatus("Your cart is empty") return
+	end
 	isBusy = true
-	local res = call(GuildEvents.FinalizeCart, { buys = buys, sells = sells })
+	local res = call(GuildEvents.FinalizeCart, { buys = buys, sells = sells, upgrades = upgrades, downgrades = downgrades, dispatches = dispatches })
 	isBusy = false
 	if res then
 		cartBuys = {}
 		cartSells = {}
-		setStatus(`Done -- bought {res.boughtCount or 0}, sold {res.soldCount or 0}. Gold {res.gold or 0}`)
+		cartUpgrades = {}
+		cartDowngrades = {}
+		cartDispatches = {}
+		setStatus(`Done -- bought {res.boughtCount or 0}, sold {res.soldCount or 0}, upgraded {res.upgradedCount or 0}, downgraded {res.downgradedCount or 0}, dispatched {res.dispatchedCount or 0}. Gold {res.gold or 0}`)
 	end
+	invalidatePageCache()  -- server state changed; next render re-fetches fresh
 	refreshOverview()
 	showPage(currentPage)
 end
@@ -374,8 +458,40 @@ end
 local function clearCart()
 	cartBuys = {}
 	cartSells = {}
+	cartUpgrades = {}
+	cartDowngrades = {}
+	cartDispatches = {}
 	setStatus("Cart cleared")
 	showPage(currentPage)
+end
+
+-- Unified cart summary (buy/sell/upgrade/downgrade), shown at the top of the Merchant and
+-- Blacksmith tabs so the player can review and commit from either. Net gold = sells minus
+-- buys minus upgrade gold. Per-item material cost is shown on each Blacksmith row (exact
+-- tiers); this one-line summary is a glance, Finalize commits the whole batch.
+local function addCartSummaryRow()
+	local nBuy, buyGold = 0, 0
+	for _, v in cartBuys do nBuy += 1; buyGold += v.price end
+	local nSell, sellGold = 0, 0
+	for _, v in cartSells do nSell += 1; sellGold += v.price end
+	local nUp, upGold = 0, 0
+	for _, v in cartUpgrades do nUp += 1; upGold += v.gold end
+	local nDown = 0
+	for _ in cartDowngrades do nDown += 1 end
+	local nDisp, dispFee = 0, 0
+	for _, d in cartDispatches do nDisp += 1; dispFee += (d.fee or 0) end
+	if nBuy + nSell + nUp + nDown + nDisp == 0 then return end
+	local parts = {}
+	if nBuy > 0 then table.insert(parts, `buy {nBuy}`) end
+	if nSell > 0 then table.insert(parts, `sell {nSell}`) end
+	if nUp > 0 then table.insert(parts, `upgrade {nUp}`) end
+	if nDown > 0 then table.insert(parts, `downgrade {nDown}`) end
+	if nDisp > 0 then table.insert(parts, `dispatch {nDisp}`) end
+	local netGold = sellGold - buyGold - upGold - dispFee
+	addRow(`Cart: {table.concat(parts, ", ")}  |  net {netGold}g`, {
+		{ text = "Finalize", color = Theme.Colors.Success, style = "Primary", onTap = finalizeCart },
+		{ text = "Clear", color = Theme.Colors.Warning, style = "Tertiary", onTap = clearCart },
+	})
 end
 
 local leaveDialog: TextButton? = nil
@@ -390,9 +506,12 @@ end
 local function confirmLeaveWithCart(proceed: () -> ())
 	if cartCount() == 0 then proceed() return end
 	closeLeaveDialog()
-	local nBuy, nSell = 0, 0
+	local nBuy, nSell, nUp, nDown, nDisp = 0, 0, 0, 0, 0
 	for _ in cartBuys do nBuy += 1 end
 	for _ in cartSells do nSell += 1 end
+	for _ in cartUpgrades do nUp += 1 end
+	for _ in cartDowngrades do nDown += 1 end
+	for _ in cartDispatches do nDisp += 1 end
 	local overlay = Instance.new("TextButton")
 	overlay.Text = ""
 	overlay.AutoButtonColor = false
@@ -416,16 +535,18 @@ local function confirmLeaveWithCart(proceed: () -> ())
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = Theme.CornerRadius.md
 	corner.Parent = box
-	local msg = makeText(box, `Unfinalized cart: buying {nBuy}, selling {nSell}. Commit or discard?`, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
+	local msg = makeText(box, `Unsaved changes -- buy {nBuy}, sell {nSell}, upgrade {nUp}, downgrade {nDown}, dispatch {nDisp}. Confirm or discard?`, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
 	msg.Size = UDim2.new(1, -24, 0, 70)
 	msg.Position = UDim2.new(0, 12, 0, 10)
+	msg.ZIndex = 11
 	local function mk(txt: string, color: Color3, slot: number, cb: () -> ())
 		local b = makeButton(box, txt, color, cb)
 		b.Size = UDim2.new(0.3, -8, 0, BUTTON_HEIGHT)
 		b.AnchorPoint = Vector2.new(0, 0.5)
 		b.Position = UDim2.new(0.035 + 0.323 * slot, 0, 1, -BUTTON_HEIGHT * 0.5 - 12)
+		b.ZIndex = 11  -- above box (ZIndex 10); Global ZIndexBehavior otherwise hides children
 	end
-	mk("Finalize", Theme.Colors.Success, 0, function()
+	mk("Confirm", Theme.Colors.Success, 0, function()
 		closeLeaveDialog()
 		finalizeCart()
 		if cartCount() == 0 then proceed() end
@@ -433,6 +554,9 @@ local function confirmLeaveWithCart(proceed: () -> ())
 	mk("Discard", Theme.Colors.Warning, 1, function()
 		cartBuys = {}
 		cartSells = {}
+		cartUpgrades = {}
+		cartDowngrades = {}
+		cartDispatches = {}
 		closeLeaveDialog()
 		proceed()
 	end)
@@ -443,7 +567,7 @@ end
 
 local function pageTavern()
 	addHeading("TAVERN - hire recruits")
-	local res = call(GuildEvents.GetTavernPool)
+	local res = cachedCall("Tavern", GuildEvents.GetTavernPool)
 	if not res then return end
 	addNote(`Tavern L{res.tavernLevel or 1}: one recruit per Tavern level. The pool refreshes after each battle. Fee = 200 + 15 x level (+ quality premium).`)
 	if #(res.pool or {}) == 0 then
@@ -462,19 +586,9 @@ end
 
 local function pageMerchant()
 	addHeading("MERCHANT - buy")
-	local res = call(GuildEvents.GetMerchantStock)
+	local res = cachedCall("Merchant", GuildEvents.GetMerchantStock)
 	if not res then return end
-	-- Cart summary row (the player explicitly asked for a buy/sell summary before commit).
-	local nBuy, buyGold = 0, 0
-	for _, v in cartBuys do nBuy += 1; buyGold += v.price end
-	local nSell, sellGold = 0, 0
-	for _, v in cartSells do nSell += 1; sellGold += v.price end
-	if nBuy + nSell > 0 then
-		addRow(`Cart: buy {nBuy} (-{buyGold}g), sell {nSell} (+{sellGold}g) = net {sellGold - buyGold}g`, {
-			{ text = "Finalize", color = Theme.Colors.Success, style = "Primary", onTap = finalizeCart },
-			{ text = "Clear", color = Theme.Colors.Warning, style = "Tertiary", onTap = clearCart },
-		})
-	end
+	addCartSummaryRow()
 	addNote(`Merchant L{res.merchantLevel or 1}: one item per Merchant level. Stock refreshes every 5 battles.`)
 	if #(res.stock or {}) == 0 then
 		addNote(res.reason and tostring(res.reason) or "Sold out for now.")
@@ -512,53 +626,133 @@ end
 
 local function pageBlacksmith()
 	addHeading("BLACKSMITH - upgrade / downgrade")
-	local res = call(GuildEvents.GetBlacksmithItems)
+	local res = cachedCall("Blacksmith", GuildEvents.GetBlacksmithItems)
 	if not res then return end
-	addNote(`Blacksmith L{res.blacksmithLevel or 1}: upgrades items up to level {(res.blacksmithLevel or 1) * 10}. One level per tap. Downgrades are free.`)
+	addCartSummaryRow()
+	addNote(`Blacksmith L{res.blacksmithLevel or 1}: upgrades items up to level {(res.blacksmithLevel or 1) * 10}. Queue several levels with +1 / Max; -1 removes one. Downgrades are free.`)
 	for _, it in res.items or {} do
 		local iid = it.instanceId
-		local costText = "max"
-		if it.upgradeGold then
-			local mats = {}
-			for _, m in it.upgradeMaterials or {} do table.insert(mats, `T{m.tier} x{m.qty}`) end
-			costText = `{it.upgradeGold}g + {table.concat(mats, ", ")}`
+		local curve = it.upgradeCurve or {}
+		local maxLevel = it.level + #curve  -- highest level reachable given the gated curve
+		local staged = cartUpgrades[iid]
+		local stagedTo = (staged and staged.toLevel) or it.level
+		local downStaged = cartDowngrades[iid] ~= nil
+
+		-- Sum curve steps (current+1 .. target) into gold + materials. Summing the first N
+		-- entries equals exactly what the server charges (it commits +1 at a time).
+		local function costTo(target: number)
+			local gold, mats, parts = 0, {}, {}
+			for _, step in curve do
+				if step.toLevel <= target then
+					gold += step.gold
+					mats[step.tier] = (mats[step.tier] or 0) + step.qty
+				end
+			end
+			for t = 1, 5 do if mats[t] then table.insert(parts, `T{t}x{mats[t]}`) end end
+			return gold, mats, table.concat(parts, " ")
 		end
+
+		local function stageTo(target: number)
+			if target <= it.level then
+				cartUpgrades[iid] = nil
+			else
+				local g, mats, mt = costTo(target)
+				cartUpgrades[iid] = { name = it.name, fromLevel = it.level, toLevel = target, gold = g, mats = mats, matsText = mt }
+				cartDowngrades[iid] = nil
+			end
+			showPage(currentPage)
+		end
+
 		local who = it.equippedBy and ` (on {it.equippedBy})` or ""
-		local why = (not it.canUpgrade and it.upgradeBlockedReason) and `  [{it.upgradeBlockedReason}]` or ""
-		addRow(`{it.name}  Lv{it.level} {it.rarity}{who}\nNext level: {costText}{why}`, {
-			{ text = "Up", color = Theme.Colors.Success, enabled = it.canUpgrade, onTap = function()
-				act(GuildEvents.RequestUpgrade, function(r) return `Upgraded to Lv{r.toLevel}` end, iid)
-			end },
-			{ text = "Down", color = Theme.Colors.Info, enabled = it.canDowngrade, onTap = function()
-				act(GuildEvents.RequestDowngrade, function(r) return `Downgraded to Lv{r.toLevel}` end, iid)
-			end },
-		})
+		local titleLine = (stagedTo > it.level) and `{it.name}  Lv{it.level} -> Lv{stagedTo}  {it.rarity}` or `{it.name}  Lv{it.level} {it.rarity}`
+		local costLine
+		if stagedTo > it.level then
+			local g, _, mt = costTo(stagedTo)
+			costLine = `Upgrade cost: {g}g{(mt ~= "" and (" + " .. mt)) or ""}`
+		elseif #curve > 0 then
+			local s = curve[1]
+			costLine = `Next (Lv{s.toLevel}): {s.gold}g + T{s.tier}x{s.qty}`
+		else
+			costLine = (it.upgradeBlockedReason and `[{it.upgradeBlockedReason}]`) or "At max level"
+		end
+
+		local canAdd = (stagedTo < maxLevel) and (#curve > 0) and not downStaged
+		local btns = {}
+		table.insert(btns, { text = "+1", color = Theme.Colors.Success, enabled = canAdd, onTap = function()
+			stageTo(math.min(stagedTo + 1, maxLevel))
+		end })
+		table.insert(btns, { text = "-1", color = Theme.Colors.Warning, enabled = stagedTo > it.level, onTap = function()
+			stageTo(stagedTo - 1)
+		end })
+		table.insert(btns, { text = "Max", color = Theme.Colors.Info, enabled = canAdd, onTap = function()
+			stageTo(maxLevel)
+		end })
+		if stagedTo == it.level then
+			table.insert(btns, { text = downStaged and "Down*" or "Down", color = Theme.Colors.Info,
+			  enabled = it.canDowngrade or downStaged, onTap = function()
+				if cartDowngrades[iid] then
+					cartDowngrades[iid] = nil
+				elseif it.canDowngrade then
+					cartDowngrades[iid] = { name = it.name, toLevel = it.level - 1 }
+					cartUpgrades[iid] = nil
+				end
+				showPage(currentPage)
+			end })
+		end
+
+		addRow(`{titleLine}{who}\n{costLine}`, btns)
 	end
 end
 
 local function pageDispatch()
 	addHeading("DISPATCH - send units on missions")
-	local res = call(GuildEvents.GetDispatchBoard)
+	local res = cachedCall("Dispatch", GuildEvents.GetDispatchBoard)
 	if not res then return end
-	addNote("Sent units miss battles until they return, then bring back XP and materials. At least one unit must stay home.")
+	addCartSummaryRow()
+	-- Staged-dispatch guards (2026-10-14): dispatch entries interact (one unit per mission,
+	-- one mission per group, keep >=1 home, slot cap), so staged missions are hidden, staged
+	-- units are greyed, and a stage that would empty the roster or exceed slots is blocked up
+	-- front -- rather than letting the server silently refuse part of the batch at commit.
+	local stagedUnits: { [string]: boolean } = {}
+	local stagedMissions: { [string]: boolean } = {}
+	local nStaged = 0
+	for _, d in cartDispatches do
+		nStaged += 1
+		stagedMissions[d.missionId] = true
+		for _, uid in d.unitIds do stagedUnits[uid] = true end
+	end
+	local slotsUsed = (res.slotsUsed or 0) + nStaged
+	local slotCap = res.slotCap or 1
+	local homeCount = 0
+	for _, u in res.units or {} do
+		if not u.away and not stagedUnits[u.id] then homeCount += 1 end
+	end
+	addNote(`Sent units miss battles until they return, then bring back XP and materials. Fee {res.feeGold or 50}g per mission. Keep >=1 home. Slots {slotsUsed}/{slotCap}.`)
 	if not selectedMission then
-		if #(res.missions or {}) == 0 then addNote("No missions left until the next battle.") end
+		local anyMission = false
 		for _, m in res.missions or {} do
-			local mid = m.missionId
-			addRow(`Tier {m.tier}  |  away {m.duration} battle(s)  |  {m.xp} XP each  |  T{m.rewardTier} material x{m.rewardCount}`, {
-				{ text = "Choose", color = Theme.Colors.Info, onTap = function()
-					selectedMission = mid
-					selectedUnits = {}
-					showPage("Dispatch")
-				end },
-			})
+			if not stagedMissions[m.missionId] then
+				anyMission = true
+				local mid = m.missionId
+				addRow(`Tier {m.tier}  |  away {m.duration} battle(s)  |  {m.xp} XP each  |  T{m.rewardTier} material x{m.rewardCount}`, {
+					{ text = "Choose", color = Theme.Colors.Info, enabled = slotsUsed < slotCap, onTap = function()
+						selectedMission = mid
+						selectedUnits = {}
+						showPage("Dispatch")
+					end },
+				})
+			end
 		end
+		if not anyMission then addNote("No missions available (all staged, or none left until the next battle).") end
+		if slotsUsed >= slotCap then addNote("All dispatch slots are in use (staged or active). Upgrade the Guild Hall for more.") end
 	else
-		addNote("Tap units to select them, then Send.")
+		addNote("Tap units to select them, then Add to cart. Units already staged or away cannot be picked.")
 		for _, u in res.units or {} do
 			local uid = u.id
 			if u.away then
 				addRow(`{u.name}  Lv{u.level}  |  AWAY (back after battle {u.returnBattle or "?"})`, nil, true)
+			elseif stagedUnits[uid] then
+				addRow(`{u.name}  Lv{u.level}  |  STAGED (in cart)`, nil, true)
 			else
 				local picked = selectedUnits[uid] == true
 				addRow(`{u.name}  Lv{u.level}{picked and "  [SELECTED]" or ""}`, {
@@ -572,16 +766,21 @@ local function pageDispatch()
 		local ids = {}
 		for id in selectedUnits do table.insert(ids, id) end
 		local mid = selectedMission
-		addRow(`{#ids} unit(s) selected`, {
+		addRow(`{#ids} unit(s) selected  |  staging leaves {homeCount - #ids} home`, {
 			{ text = "Back", color = Theme.Colors.Surface, onTap = function()
 				selectedMission = nil
 				selectedUnits = {}
 				showPage("Dispatch")
 			end },
-			{ text = "Send", color = Theme.Colors.Success, enabled = #ids > 0, onTap = function()
+			{ text = "Add to cart", color = Theme.Colors.Success, enabled = #ids > 0, onTap = function()
+				if #ids < 1 then return end
+				if homeCount - #ids < 1 then setStatus("Keep at least one unit home", true) return end
+				if slotsUsed >= slotCap then setStatus("No free dispatch slot", true) return end
+				table.insert(cartDispatches, { missionId = mid, unitIds = ids, fee = res.feeGold or 50 })
 				selectedMission = nil
 				selectedUnits = {}
-				act(GuildEvents.RequestDispatch, function(r) return `Sent. Back after battle {r.returnBattle} with {r.xpEach} XP each.` end, mid, ids)
+				setStatus(`Dispatch staged ({#ids} unit(s)). Finalize to send.`)
+				showPage("Dispatch")
 			end },
 		})
 	end
@@ -595,7 +794,7 @@ local function pageUnits()
 			if type(open) == "function" then open() else setStatus("Loadout screen not loaded", true) end
 		end },
 	})
-	local res = call(GuildEvents.GetGuildUnits)
+	local res = cachedCall("Units", GuildEvents.GetGuildUnits)
 	if not res then return end
 	for _, u in res.units or {} do
 		local xpText = u.atCap and "MAX" or `{u.xp}/{u.xpToNext} XP`
@@ -641,12 +840,119 @@ local function pageDev()
 	end
 end
 
+local function pageParty()
+	addHeading("PARTIES")
+	local res = cachedCall("Party", GuildEvents.GetParties)
+	if not res then return end
+	local maxSize = res.maxSize or 7
+	if not selectedParty then
+		for _, party in ipairs(res.parties or {}) do
+			local slot = party.slot
+			local names = {}
+			for _, mi in ipairs(party.memberInfo or {}) do table.insert(names, mi.name) end
+			local summary = (#names > 0) and table.concat(names, ", ") or "No units assigned"
+			-- At the sortie (PreBattle), a non-empty party can be DEPLOYED (Choose Party ->
+			-- go). Empty parties get no Deploy button -- they cannot be chosen (2026-10-15).
+			local listBtns = {}
+			if currentPhase == "PreBattle" and #names > 0 then
+				local isSel = (sortiePartySlot == slot)
+				table.insert(listBtns, { text = isSel and "Deploying" or "Select", color = isSel and Theme.Colors.Success or Theme.Colors.Info, enabled = not sortieLocked and not isSel, onTap = function()
+					sortiePartySlot = slot
+					sortiePartyName = party.name
+					BattleEvents.SelectSortieParty:FireServer(slot)
+					updateSortieButton()
+					setStatus(`{party.name} will deploy`)
+					showPage("Party")
+				end })
+			end
+			table.insert(listBtns, { text = "Edit", color = Theme.Colors.Info, onTap = function()
+				selectedParty = slot
+				partyEdit = {}
+				for _, uid in ipairs(party.members or {}) do partyEdit[uid] = true end
+				showPage("Party")
+			end })
+			addRow(`{party.name}  |  {#names}/{maxSize}\n{summary}`, listBtns)
+		end
+	else
+		local party = nil
+		for _, p in ipairs(res.parties or {}) do
+			if p.slot == selectedParty then party = p break end
+		end
+		if not party then selectedParty = nil showPage("Party") return end
+
+		rowOrder += 1
+		local nameBox = Instance.new("TextBox")
+		nameBox.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
+		nameBox.BackgroundColor3 = Theme.Colors.Surface
+		nameBox.BackgroundTransparency = 0.1
+		nameBox.BorderSizePixel = 0
+		nameBox.Font = Theme.Font.PrimaryBold
+		nameBox.TextSize = Theme.Text.Body()
+		nameBox.TextColor3 = Theme.Colors.TextPrimary
+		nameBox.Text = party.name
+		nameBox.PlaceholderText = "Party name"
+		nameBox.ClearTextOnFocus = false
+		nameBox.TextXAlignment = Enum.TextXAlignment.Left
+		nameBox.LayoutOrder = rowOrder
+		local nbCorner = Instance.new("UICorner")
+		nbCorner.CornerRadius = Theme.CornerRadius.md
+		nbCorner.Parent = nameBox
+		local nbPad = Instance.new("UIPadding")
+		nbPad.PaddingLeft = UDim.new(0, 8)
+		nbPad.PaddingRight = UDim.new(0, 8)
+		nbPad.Parent = nameBox
+		nameBox.Parent = content
+		nameBox.FocusLost:Connect(function()
+			local r = call(GuildEvents.SetPartyName, selectedParty, nameBox.Text)
+			if r then invalidatePageCache() setStatus("Party renamed") end
+		end)
+
+		local count = 0
+		for _ in partyEdit do count += 1 end
+
+		for _, u in ipairs(res.roster or {}) do
+			local uid = u.id
+			local inParty = partyEdit[uid] == true
+			if u.away then
+				addRow(`{u.name}  Lv{u.unitLevel}  |  AWAY`, nil, true)
+			else
+				addRow(`{u.name}  Lv{u.unitLevel}{inParty and "  [IN PARTY]" or ""}`, {
+					{ text = inParty and "Remove" or "Add", color = inParty and Theme.Colors.Warning or Theme.Colors.Info,
+					  enabled = inParty or count < maxSize, onTap = function()
+						if inParty then
+							partyEdit[uid] = nil
+						elseif count < maxSize then
+							partyEdit[uid] = true
+						else
+							setStatus(`A party holds up to {maxSize} units`, true)
+							return
+						end
+						local ids = {}
+						for id in partyEdit do table.insert(ids, id) end
+						call(GuildEvents.SetPartyMembers, selectedParty, ids)
+						showPage("Party")
+					end },
+				})
+			end
+		end
+
+		addRow("", {
+			{ text = "Back to parties", color = Theme.Colors.Surface, onTap = function()
+				selectedParty = nil
+				invalidatePageCache()
+				showPage("Party")
+			end },
+		})
+	end
+end
+
 local PAGES: { [string]: () -> () } = {
 	Tavern = pageTavern,
 	Merchant = pageMerchant,
 	Blacksmith = pageBlacksmith,
 	Dispatch = pageDispatch,
 	Units = pageUnits,
+	Party = pageParty,
 	Dev = pageDev,
 }
 
@@ -670,6 +976,7 @@ showPage = function(name: string)
 	local fn = PAGES[name]
 	if fn then fn() end
 	styleNav()
+	updateBalanceLabel()  -- reflect any staged changes in the header live (2026-10-14)
 end
 
 --------------------------------------------------
@@ -679,6 +986,7 @@ end
 local navButtons: { GuiButton } = {}
 local leaveButton: TextButton? = nil
 local advGuildButton: TextButton? = nil
+local changePartyButton: TextButton? = nil
 local sortieLocked = false
 local scoutToken = 0
 local devButton: GuiButton? = nil
@@ -689,20 +997,27 @@ local function buildNav()
 	table.clear(navPageOf) -- destroyed buttons must not stay referenced (PRF-004)
 	local entries = {
 		{ "Tavern", "Tavern" }, { "Merchant", "Merchant" }, { "Blacksmith", "Blacksmith" },
-		{ "Dispatch", "Dispatch" }, { "Units", "Units" },
+		{ "Dispatch", "Dispatch" }, { "Units", "Units" }, { "Party", "Party" },
 	}
 	for i, e in entries do
 		local pageName = e[2]
 		local btn: GuiButton = Theme.MakeTabButton(nav, e[1], "Inactive", function()
-			selectedMission = nil
-			setStatus("")
-			showPage(pageName)
+			-- PER-SCREEN KEEP/DISCARD (2026-10-14): switching screens with unsaved changes
+			-- prompts Confirm/Discard FIRST, so changes can't pile across screens. Same-screen
+			-- re-tap is a no-op (never prompts). Nothing pending -> switches instantly.
+			if currentPage == pageName then return end
+			confirmLeaveWithCart(function()
+				selectedMission = nil
+				selectedParty = nil
+				setStatus("")
+				showPage(pageName)
+			end)
 		end, { name = "Nav_" .. pageName, size = UDim2.new(1, 0, 0, BUTTON_HEIGHT), layoutOrder = i,
 			textSize = Theme.Text.Body() })
 		registerNav(btn, pageName)
 		table.insert(navButtons, btn)
 	end
-	local dev: GuiButton = Theme.MakeTabButton(nav, "Dev: Levels", "Inactive", function() showPage("Dev") end,
+	local dev: GuiButton = Theme.MakeTabButton(nav, "Dev: Levels", "Inactive", function() if currentPage ~= "Dev" then confirmLeaveWithCart(function() showPage("Dev") end) end end,
 		{ name = "Nav_Dev", size = UDim2.new(1, 0, 0, BUTTON_HEIGHT), layoutOrder = 50, textSize = Theme.Text.Body() })
 	dev.Visible = false
 	devButton = dev
@@ -721,6 +1036,16 @@ local function buildNav()
 	advGuild.LayoutOrder = 90
 	advGuildButton = advGuild
 	table.insert(navButtons, advGuild)
+
+	-- Change party (sortie only): opens the Party tab to pick which saved party deploys.
+	local changeParty = makeButton(nav, "Change party", Theme.Colors.Info, function()
+		if isBusy then return end
+		showPage("Party")
+	end)
+	changeParty.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
+	changeParty.LayoutOrder = 95
+	changePartyButton = changeParty
+	table.insert(navButtons, changeParty)
 
 	local leave = makeButton(nav, "", Theme.Colors.Success, function()
 		if isBusy or sortieLocked then return end
@@ -745,6 +1070,31 @@ buildNav()
 -- SCOUTING WAIT UX (2026-10-13): while the server builds the map after a quest pick, the
 -- sortie button is locked and shows an animated "Scouting the battle map..." so the player
 -- sees life instead of a frozen screen. Unlocks on BattleEvents.MapBuildComplete.
+-- Resolve which saved party is selected for this sortie. Keeps the current pick if it
+-- still has members; otherwise defaults to the first non-empty party (matches the
+-- server's default). Pure client read of the cached GetParties response. (2026-10-15)
+local function computeDefaultSortieParty()
+	local res = cachedCall("Party", GuildEvents.GetParties)
+	if not res then return end
+	if sortiePartySlot then
+		for _, p in ipairs(res.parties or {}) do
+			if p.slot == sortiePartySlot then
+				if #(p.members or {}) > 0 then sortiePartyName = p.name return end
+				break
+			end
+		end
+	end
+	sortiePartySlot = nil
+	sortiePartyName = nil
+	for _, p in ipairs(res.parties or {}) do
+		if #(p.members or {}) > 0 then
+			sortiePartySlot = p.slot
+			sortiePartyName = p.name
+			return
+		end
+	end
+end
+
 local function stopScout()
 	scoutToken += 1  -- invalidates any running animation loop
 end
@@ -788,7 +1138,19 @@ local function unlockSortie()
 		stroke.Color = Theme.Colors.Success
 		stroke.Transparency = 0
 	end
-	lb.Text = (currentPhase == "PostBattle") and "Save & Finish" or "Continue to Deployment"
+	updateSortieButton()
+end
+
+-- Reflect the chosen sortie party on the Continue button ("Continue - Party A"). Assigned
+-- here, after leaveButton exists, into the forward-declared local. (2026-10-15)
+updateSortieButton = function()
+	local lb = leaveButton
+	if not lb then return end
+	if currentPhase == "PostBattle" then
+		lb.Text = "Save & Finish"
+	else
+		lb.Text = sortiePartyName and ("Continue - " .. sortiePartyName) or "Continue to Deployment"
+	end
 end
 
 GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
@@ -815,9 +1177,22 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	end
 	selectedMission = nil
 	selectedUnits = {}
+	selectedParty = nil
 	setStatus("")
 	screenGui.Enabled = true
+	invalidatePageCache()  -- server state changed; next render re-fetches fresh
 	refreshOverview()
+	-- Sortie party display (2026-10-15): the Change-party button shows only at the sortie;
+	-- entering PreBattle resets to the default party (first non-empty) so the Continue
+	-- button reflects it once the map finishes scouting (unlockSortie -> updateSortieButton).
+	if changePartyButton then
+		changePartyButton.Visible = (currentPhase == "PreBattle")
+	end
+	if currentPhase == "PreBattle" then
+		sortiePartySlot = nil
+		computeDefaultSortieParty()
+		if not sortieLocked then updateSortieButton() end
+	end
 	local ov = call(GuildEvents.GetGuildOverview)
 	if devButton then devButton.Visible = ov ~= nil and ov.isStudio == true end
 	showPage("Units")

@@ -1585,6 +1585,11 @@ local function enterActionSelection()
 		race = prompt.race or nil,
 		tileX = actorTileX, tileY = actorTileY, elevation = actorElev,
 		statuses = actorUnit and actorUnit.statuses or {},
+		-- Player's own face: the active-unit panel reads d.portraitAssetId the same
+		-- way the enemy-turn path does. Pulled from unitData (populated by BattleStarted's
+		-- serializeUnit, which carries portraitAssetId for every side). Without this the
+		-- player active panel fell back to the initials box. (2026-10-15)
+		portraitAssetId = actorUnit and actorUnit.portraitAssetId or nil,
 		actions = actions,
 	}
 	bp.actor = storedActorData
@@ -1908,6 +1913,25 @@ local function processTileClick(bx, by)
 		elseif inputMode == "attack" then
 			for _, t in ipairs(currentPrompt.attackTargets) do
 				if t.tileX == bx and t.tileY == by then
+					if t.kind == "object" then
+						-- OBS Phase 2c-B: attack an OBS blocker object. bp.target stays nil
+						-- (BattleHUD Preview tolerates nil, same as the object push picker).
+						aimTarget = t; clearHighlights()
+						createTileHighlight(bx, by, "selected")
+						bp.target = nil
+						bp.preview = {
+							actionType = "Attack",
+							actorName = currentPrompt.unitName,
+							actorApBefore = currentPrompt.currentAp, actorApAfter = (currentPrompt.currentAp or 1) - 1,
+							actorRtAfter = (currentPrompt.attackRt or 80) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
+							targetName = t.name,
+							description = "Attack " .. (t.name or "object"),
+							onConfirm = function() commitCommand({ actionType = "Attack", targetId = t.id }) end,
+							onBack = cancelToTargeting,
+						}
+						bp.state = "Preview"; BattleHUD.Render(bp)
+						return
+					end
 					aimTarget = t; clearHighlights()
 					createTileHighlight(bx, by, "selected")
 					bp.target = unitData[t.id]
@@ -2078,6 +2102,26 @@ local function processTileClick(bx, by)
 			-- Stage 1: choose push TARGET. Then enter distance sub-stage (pick stop tile 1..max).
 			for _, t in ipairs(currentPrompt.pushTargets or {}) do
 				if t.tileX == bx and t.tileY == by then
+					if t.kind == "object" then
+						-- OBS Phase 2c-E2: object push commits at full force-driven distance
+						-- (no stop sub-stage; server PushObject computes max(0,Force-3)).
+						-- bp.target stays nil for objects (BattleHUD Preview tolerates nil).
+						aimTarget = t; clearHighlights()
+						createTileHighlight(bx, by, "selected")
+						bp.target = nil
+						bp.preview = {
+							actionType = "Push",
+							actorName = currentPrompt.unitName,
+							actorApBefore = currentPrompt.currentAp, actorApAfter = (currentPrompt.currentAp or 1) - 1,
+							actorRtAfter = (currentPrompt.pushRt or 40) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
+							targetName = t.name,
+							description = "Push " .. (t.name or "object"),
+							onConfirm = function() commitCommand({ actionType = "Push", targetId = t.id }) end,
+							onBack = cancelToTargeting,
+						}
+						bp.state = "Preview"; BattleHUD.Render(bp)
+						return
+					end
 					pushTargetSel = t
 					local actX = storedActorData and storedActorData.tileX or currentPrompt.tileX or 0
 					local actY = storedActorData and storedActorData.tileY or currentPrompt.tileY or 0
@@ -2949,8 +2993,34 @@ BattleEvents.ObjectChanged.OnClientEvent:Connect(function(data)
 			BattleHUD.SetSelection({ kind = "object", name = sel.name, x = x, y = y, hp = data.newHp })
 		end
 		if _G.CTRBLXAI_NotifyObjectChanged then _G.CTRBLXAI_NotifyObjectChanged(x, y, data.newHp, false) end
+	elseif type(data.moved) == "table" then
+		-- OBS Phase 2c-E: a pushed object relocated. The server already moved the
+		-- authoritative blocker + replicated the visual; we relocate our local blocker
+		-- cache (old tile opens, new tile blocks) and the live-HP cache so client-side
+		-- move/LoS prediction and the inspector stay correct until the next snapshot.
+		local m = data.moved
+		local fx, fy, tx, ty = m.fromX, m.fromY, m.toX, m.toY
+		if type(fx) == "number" and type(fy) == "number"
+			and type(tx) == "number" and type(ty) == "number" then
+			local fromKey = `{fx},{fy}`
+			local toKey = `{tx},{ty}`
+			objectHpByTile[toKey] = m.hp or objectHpByTile[fromKey]
+			objectHpByTile[fromKey] = nil
+			if GameConstants.RemoveBlockerAt then pcall(GameConstants.RemoveBlockerAt, fx, fy) end
+			if GameConstants.BLOCKERS then
+				table.insert(GameConstants.BLOCKERS, {
+					tileX = tx, tileY = ty, objectType = m.objType,
+					tags = { "BlocksAOE", "BlocksLoS" }, height = m.height,
+				})
+			end
+			local sel = BattleHUD.GetSelection and BattleHUD.GetSelection()
+			if sel and sel.kind == "object" and sel.x == fx and sel.y == fy then
+				BattleHUD.SetSelection({ kind = "object", name = sel.name, x = tx, y = ty, hp = objectHpByTile[toKey] })
+			end
+			-- Modal was anchored to the old tile; close it (the compact card re-points above).
+			if _G.CTRBLXAI_NotifyObjectChanged then _G.CTRBLXAI_NotifyObjectChanged(fx, fy, nil, true) end
+		end
 	end
-	-- data.moved (push) is defined in the contract but only emitted from Phase 2c-E.
 end)
 -- Called by BattleHUD when tapping an action snaps the panel back to the acting unit.
 _G.CTRBLXAI_MarkActiveUnit = function()
@@ -3221,6 +3291,9 @@ BattleEvents.TurnOrderUpdate.OnClientEvent:Connect(function(data)
 	if data.units and #data.units > 0 then
 		timelineSnapshot = data.units
 		if data.currentCt then currentBattleCt = data.currentCt end
+		if data.currentCt and VFXController and VFXController.SetBattleClock then
+			pcall(VFXController.SetBattleClock, currentBattleCt)  -- CT-driven day/night sky
+		end
 		if not aimTarget and (not isPlayerTurn or not inputMode) then updateTimeline(data.units, nil, nil) end
 	end
 end)
@@ -3232,6 +3305,9 @@ BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
 	BattleHUD.ClearSelection()  -- refocus on the acting unit
 	timelineSnapshot = prompt.timeline
 	if prompt.currentCt then currentBattleCt = prompt.currentCt end
+	if prompt.currentCt and VFXController and VFXController.SetBattleClock then
+		pcall(VFXController.SetBattleClock, currentBattleCt)  -- CT-driven day/night sky
+	end
 	isPlayerTurn = true; inputMode = nil; selectedSkill = nil
 	CameraController.EndScriptedView()  -- restore the player's last chosen zoom + view
 	enterActionSelection()
@@ -3474,6 +3550,30 @@ BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
 		healing = data.amount,
 	}
 	BattleHUD.Render(bp)
+end)
+
+-- UnitStateChanged: generic server push for HP/isAlive changes that happen OUTSIDE a
+-- normal combat action -- healing springs & other map objects, revive, regen, weather.
+-- Previously had NO client listener, so those HP changes were applied on the server but
+-- never shown (the reported "Healing Spring didn't work"). Sync the HP bar + alive state
+-- here; show a green heal number only when HP went UP so it can't double up with combat
+-- damage popups. (MP-only effects like Magic Spring need mp fields added to this payload.)
+BattleEvents.UnitStateChanged.OnClientEvent:Connect(function(data)
+	if not data or not data.unitId then return end
+	local u = unitData[data.unitId]
+	local before = u and (u.currentHp or 0) or nil
+	if u then
+		if data.hp ~= nil then u.currentHp = data.hp end
+		if data.maxHp ~= nil then u.maxHp = data.maxHp end
+		if data.isAlive ~= nil then u.isAlive = data.isAlive end
+	end
+	local hp = (u and u.currentHp) or data.hp
+	local maxHp = (u and u.maxHp) or data.maxHp or hp
+	if hp ~= nil then updateHpBar(data.unitId, hp, maxHp) end
+	local tok = unitTokens[data.unitId]
+	if tok and tok.part and before ~= nil and hp ~= nil and hp > before then
+		showDamageText(tok.part.Position, hp - before, true)
+	end
 end)
 
 BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
@@ -4552,6 +4652,40 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		goldLabel.Text = if data.defeat then `+{data.gold} GOLD kept (half of gold dropped)` else `+{data.gold} GOLD`
 		goldLabel.Parent = frame
 		recY = recY + 18
+	end
+
+	-- Returned from dispatch (XP + reward materials). Dispatch resolves at battle-end
+	-- (server OnBattleCompleted); this surfaces the returned units here. Advances recY
+	-- so the LOOT section flows below it. (2026-10-14)
+	if data.dispatch and #data.dispatch > 0 then
+		local dHeader = Instance.new("TextLabel")
+		dHeader.Size = UDim2.new(1, 0, 0, 14)
+		dHeader.Position = UDim2.new(0, 0, 0, recY)
+		dHeader.BackgroundTransparency = 1
+		dHeader.Font = Theme.Font.PrimaryBold
+		dHeader.TextSize = Theme.Text.Small()
+		dHeader.TextColor3 = Theme.Colors.TextSecondary
+		dHeader.TextXAlignment = Enum.TextXAlignment.Left
+		dHeader.Text = "RETURNED FROM DISPATCH"
+		dHeader.Parent = frame
+		recY = recY + 16
+		for _, d in ipairs(data.dispatch) do
+			local xpText = (d.xp and d.xp > 0) and ("+" .. d.xp .. " XP") or ""
+			local matText = (d.matCount and d.matCount > 0 and d.matTier)
+				and ((xpText ~= "" and "  \u{00B7}  " or "") .. "+" .. d.matCount .. " Tier " .. d.matTier .. " materials") or ""
+			local dLabel = Instance.new("TextLabel")
+			dLabel.Size = UDim2.new(1, 0, 0, 14)
+			dLabel.Position = UDim2.new(0, 0, 0, recY)
+			dLabel.BackgroundTransparency = 1
+			dLabel.Font = Theme.Font.Mono
+			dLabel.TextSize = Theme.Text.Tiny()
+			dLabel.TextColor3 = Theme.Colors.Success
+			dLabel.TextXAlignment = Enum.TextXAlignment.Left
+			dLabel.Text = (d.name or "?") .. ": " .. xpText .. matText
+			dLabel.Parent = frame
+			recY = recY + 14
+		end
+		recY = recY + 4
 	end
 
 	-- Loot header

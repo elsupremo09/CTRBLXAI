@@ -217,6 +217,94 @@ local HL_STYLE = {
 -- 1. POST-PROCESSING & ATMOSPHERE
 --==================================================
 
+--------------------------------------------------
+-- DAY/NIGHT SKY CYCLE (CT-driven; client visual only, NET-001)
+--------------------------------------------------
+-- The battle clock (CT) drives Lighting.ClockTime so the sky tracks in-world time.
+-- The server only broadcasts CT; it never touches Lighting (NET-001: client owns
+-- visuals). Mapping matches the server Dawn/Day/Dusk/Night phase cycle:
+--   one phase = 1000 CT = 6 hours; full day = 4000 CT = 24h; CT 0 = 03:00 (Dawn start).
+--   CT 333->05:00, 666->07:00, 1000->09:00 (Day), 2000->15:00 (Dusk), 3000->21:00 (Night).
+local CLOCK_CYCLE_CT   = 4000   -- CT for one full 24h sky revolution
+local CLOCK_START_HOUR = 3      -- CT 0 maps to 03:00
+local CLOCK_GLIDE_TIME = 1.5    -- seconds to glide the sun to a new clock reading
+local CLOCK_SNAP_FWD   = 18     -- a reading >18h "forward" = clock reset (new battle) -> snap
+-- Night-readability floor: this is a mobile tactics board, so even midnight must stay
+-- legible. Flooring Outdoor/Ambient keeps the darkest night readable (tunable).
+local DAY_OUTDOOR_AMBIENT   = Color3.fromRGB(90, 92, 110)   -- unchanged daytime floor
+local DAY_AMBIENT           = Color3.fromRGB(70, 72, 85)
+local NIGHT_OUTDOOR_AMBIENT = Color3.fromRGB(125, 128, 150) -- brighter night (was 90,92,110)
+local NIGHT_AMBIENT         = Color3.fromRGB(104, 107, 125) -- brighter night (was 70,72,85)
+
+local function clockHourForCt(ct: number): number
+	local c = ct % CLOCK_CYCLE_CT
+	return (CLOCK_START_HOUR + (c / CLOCK_CYCLE_CT) * 24) % 24
+end
+
+-- Blend ambient between the day floor (sun up) and the brighter night floor (sun down)
+-- from the sun's height at `clockTime`. dayWeight reaches 1 while the sun is modestly up,
+-- so the whole Day phase keeps the exact DAY_* values (daytime is never brightened), and
+-- falls to 0 at/below the horizon, lifting to NIGHT_* across dusk/night/dawn.
+local function updateAmbientForClock(clockTime: number)
+	local sunHeight = math.sin((clockTime - 6) / 12 * math.pi) -- +1 noon, 0 at 06/18, <0 at night
+	local dayWeight = math.clamp(sunHeight / 0.25, 0, 1)
+	Lighting.OutdoorAmbient = NIGHT_OUTDOOR_AMBIENT:Lerp(DAY_OUTDOOR_AMBIENT, dayWeight)
+	Lighting.Ambient        = NIGHT_AMBIENT:Lerp(DAY_AMBIENT, dayWeight)
+end
+
+-- We glide a NumberValue monotonically FORWARD and mirror it to Lighting.ClockTime
+-- via % 24, so the sun never runs backward across the midnight wrap (23:xx -> 00:xx).
+local _clockProxy: NumberValue? = nil
+local _clockConn: RBXScriptConnection? = nil
+local _clockTween: Tween? = nil
+local _clockAbs = CLOCK_START_HOUR  -- absolute (unwrapped) hours the proxy currently holds
+
+local function ensureClockProxy()
+	if _clockProxy then return end
+	local nv = Instance.new("NumberValue")
+	nv.Name = "VFXClockProxy"
+	nv.Value = _clockAbs
+	-- Left unparented on purpose: client-only, tweenable, no DataModel pollution.
+	_clockConn = nv:GetPropertyChangedSignal("Value"):Connect(function()
+		local ct = nv.Value % 24
+		Lighting.ClockTime = ct
+		updateAmbientForClock(ct)
+	end)
+	_clockProxy = nv
+end
+
+-- Snap the sky instantly to the clock for `ct` (no glide). Used at battle start.
+local function snapClock(ct: number)
+	ensureClockProxy()
+	if _clockTween then _clockTween:Cancel(); _clockTween = nil end
+	_clockAbs = clockHourForCt(ct)
+	_clockProxy.Value = _clockAbs
+	Lighting.ClockTime = _clockAbs % 24  -- force even if Value was unchanged
+	updateAmbientForClock(_clockAbs % 24)
+end
+
+-- Glide the sky toward the clock for `ct` over CLOCK_GLIDE_TIME. Forward-only.
+function VFXController.SetBattleClock(ct: number)
+	if typeof(ct) ~= "number" then return end
+	ensureClockProxy()
+	local targetHour = clockHourForCt(ct)
+	local forward = (targetHour - (_clockAbs % 24)) % 24  -- 0..24 forward distance
+	if _clockTween then _clockTween:Cancel(); _clockTween = nil end
+	if forward < 0.01 then
+		return                        -- already there; skip a zero-length tween
+	elseif forward > CLOCK_SNAP_FWD then
+		_clockAbs = targetHour         -- clock went backward (new battle / reset) -> snap
+		_clockProxy.Value = _clockAbs
+		Lighting.ClockTime = _clockAbs % 24
+		return
+	end
+	_clockAbs = _clockAbs + forward    -- keep the proxy monotonic so % 24 wraps cleanly
+	_clockTween = TweenService:Create(_clockProxy,
+		TweenInfo.new(CLOCK_GLIDE_TIME, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut),
+		{ Value = _clockAbs })
+	_clockTween:Play()
+end
+
 function VFXController.Init(biome)
 	-- Bloom: subtle glow on Neon tile highlights and skill effects
 	if not Lighting:FindFirstChildOfClass("BloomEffect") then
@@ -258,6 +346,11 @@ function VFXController.Init(biome)
 	atmo.Haze    = preset.Haze
 	atmo.Color   = preset.Color
 	atmo.Decay   = Color3.fromRGB(180, 180, 190)
+
+	-- Day/night sky: snap the sky + ambient to the battle's starting clock (Dawn / 03:00).
+	-- Ambient is clock-driven now (updateAmbientForClock), so snapClock sets it — not here.
+	-- SetBattleClock then glides both the sun and the ambient as CT climbs.
+	snapClock(0)
 
 	print(string.format("[VFX] Init: biome=%s", tostring(biome)))
 end

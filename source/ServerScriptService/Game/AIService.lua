@@ -475,6 +475,21 @@ end
 --   action = { actionType, selection, skillName, score, rtEstimate, tile }
 --------------------------------------------------
 
+-- OBS Phase 2c-I: enemy AI may break/push a blocker-prop OBS object to open a route.
+-- DORMANT + DISABLED BY DEFAULT (zero behavior change): no decision path references
+-- this yet, so unit AI is byte-unchanged. The server already supports the actions
+-- (AttackObject / PushObject via CommandService + BattleTurnController). Wiring this
+-- live requires: (1) flip OBS_BREAK_ENABLED, (2) have DecideAction, when bestMoveToward
+-- is boxed, call ConsiderObsBreak and return its action if non-nil, and (3) teach the
+-- AI command-resolution path (BattleTurnController action apply) to carry an
+-- actionType="AttackObject"/"PushObject" from an AI unit. Left as a documented
+-- extension point to avoid an un-Studio-verifiable AI pathfinding regression.
+AIService.OBS_BREAK_ENABLED = false
+-- function AIService.ConsiderObsBreak(unit, allUnits, state): any
+--   -- return { actionType = "AttackObject", selection = { objX = x, objY = y } }
+--   -- when a breakable OBS blocker adjacent/in-range materially shortens the path.
+-- end
+
 function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any): any
 	if not unit.isAlive or (unit.currentAp or 0) <= 0 then return nil end
 

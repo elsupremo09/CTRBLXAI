@@ -338,6 +338,16 @@ local function buildTurnPrompt(unit)
 		})
 	end
 
+	-- OBS Phase 2c-B: breakable blocker-prop OBS objects are also BASIC-ATTACK targets
+	-- (map_gen_rules row 82). Same range/LoS/elevation gates as unit attacks (shared
+	-- TargetingService logic); the Ad Billboard is excluded (unbreakable, rows 85/93).
+	-- The unit attack loop above is unchanged.
+	if TargetingService.GetAttackableObjectTargets then
+		for _, oc in ipairs(TargetingService.GetAttackableObjectTargets(unit, state.units, unit.weaponMaxRange or 1, state)) do
+			table.insert(attackTargets, oc)
+		end
+	end
+
 	-- Push targets: adjacent enemies (range 1, Chebyshev)
 	-- Android: extended range (up to 4), cannot target adjacent (minDistance 2)
 	local pushOverride = RacePassiveService.GetPushOverride(unit)
@@ -369,6 +379,14 @@ local function buildTurnPrompt(unit)
 					maxPushDistance = maxPushDistance, side = c.side,
 				})
 			end
+		end
+	end
+
+	-- OBS Phase 2c-E2: breakable blocker-prop OBS objects are also pushable (map_gen_rules
+	-- row 83); billboards (immovable) are excluded by the helper. Unit loop above is unchanged.
+	if ObjectEffectService.GetPushableObjectTargets then
+		for _, oc in ipairs(ObjectEffectService.GetPushableObjectTargets(state, unit, pushMinDist, pushMaxDist, pusherForce)) do
+			table.insert(pushTargets, oc)
 		end
 	end
 
@@ -685,6 +703,20 @@ local function executePlayerCommand(unit, command)
 	end
 
 	if actionType == "Push" then
+		-- OBS Phase 2c-E2: object push (targetId "obj:x,y") routes to the object path;
+		-- the unit push below is byte-unchanged.
+		if type(command.targetId) == "string" and string.sub(command.targetId, 1, 4) == "obj:" then
+			local sx, sy = string.match(command.targetId, "^obj:(%-?%d+),(%-?%d+)$")
+			local ox, oy = tonumber(sx), tonumber(sy)
+			if not (ox and oy) then warn("[Main] Object push: bad target id"); return nil end
+			local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "PushObject", { objX = ox, objY = oy })
+			if ok then
+				return { actionType = "Push", unit = unit, objectPush = true }
+			else
+				warn("[Main] Object push rejected: " .. (reason or "unknown"))
+				return nil
+			end
+		end
 		-- Find the target unit by ID
 		local target = nil
 		for _, u in ipairs(state.units) do
@@ -753,6 +785,20 @@ local function executePlayerCommand(unit, command)
 	end
 
 	if actionType == "Attack" then
+		-- OBS Phase 2c-B: object attack (targetId "obj:x,y") routes to the object path;
+		-- the unit attack below is byte-unchanged.
+		if type(command.targetId) == "string" and string.sub(command.targetId, 1, 4) == "obj:" then
+			local sx, sy = string.match(command.targetId, "^obj:(%-?%d+),(%-?%d+)$")
+			local ox, oy = tonumber(sx), tonumber(sy)
+			if not (ox and oy) then warn("[Main] Object attack: bad target id"); return nil end
+			local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "AttackObject", { objX = ox, objY = oy })
+			if ok then
+				return { actionType = "Attack", unit = unit, objectAttack = true }
+			else
+				warn("[Main] Object attack rejected: " .. (reason or "unknown"))
+				return nil
+			end
+		end
 		-- Find the target unit by ID
 		local target = nil
 		for _, u in ipairs(state.units) do

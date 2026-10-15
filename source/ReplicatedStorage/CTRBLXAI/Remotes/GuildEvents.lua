@@ -43,6 +43,9 @@ local FUNCTION_NAMES = table.freeze({
 	"GetDispatchBoard", -- () -> missions + unit availability
 	"RequestDispatch",  -- (missionId, { unitId }) -> result
 	"GetGuildUnits",    -- () -> unit list with level / XP / availability
+	"GetParties",       -- () -> { parties, roster, maxSize }
+	"SetPartyName",     -- (slot, name) -> result
+	"SetPartyMembers",  -- (slot, { unitId }) -> result
 })
 
 local GuildEvents = {}
