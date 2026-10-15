@@ -97,6 +97,11 @@ function ObjectEffectService.RemoveObjectInstance(state: any, inst: any)
 	if inst.x and inst.y and GameConstants.RemoveBlockerAt then
 		GameConstants.RemoveBlockerAt(inst.x, inst.y)
 	end
+	-- OBS Phase 2c-E2: also clear OBJECT_MAP so GetObjectAt stops reporting a
+	-- destroyed object (parity with PushObject's on-move OBJECT_MAP maintenance).
+	if inst.x and inst.y and GameConstants.OBJECT_MAP and GameConstants.OBJECT_MAP[inst.y] then
+		GameConstants.OBJECT_MAP[inst.y][inst.x] = nil
+	end
 	if _objectVisualRemover then
 		_objectVisualRemover(inst)
 	end
@@ -168,6 +173,133 @@ function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any):
 		end
 	end
 	return "not-found"
+end
+
+-- OBS Phase 2c-E — object PUSH (map_gen_rules row 83; objects_encounters 83/84).
+-- Mirrors the UNIT stepping in DisplacementService.ResolvePush (bounds / IsBlocked /
+-- elevation-up / unit-occupied; stop one tile BEFORE the first blocked tile). Objects
+-- take NO collision or fall damage. Distance = max(0, force - nativeStability) using the
+-- object's flat native Stability (3). An Ad Billboard / immovable object is a no-op
+-- (rows 85/93). On a successful move the object relocates (old tile -> passable, new tile
+-- -> blocked: BLOCKERS + OBJECT_MAP + server visual), carries its hp, and fires
+-- ObjectChanged{ moved = {...} } so clients relocate their blocker cache + inspector.
+-- Server-authoritative (SEC-002): the caller passes the actor's resolved Force; this
+-- never trusts a client. Returns: { moved=true, fromX, fromY, toX, toY, tiles }
+-- | "immovable" | "blocked" | "not-found".
+-- DORMANT in 2c-E: wired to a Push command by the Studio-paired E-2 increment.
+function ObjectEffectService.PushObject(state: any, x: any, y: any, dx: any, dy: any, force: any): any
+	if not (state and state.objects and x and y and dx and dy) then return "not-found" end
+	local sx = (dx > 0 and 1) or (dx < 0 and -1) or 0
+	local sy = (dy > 0 and 1) or (dy < 0 and -1) or 0
+	if sx == 0 and sy == 0 then return "blocked" end
+
+	-- Locate the object instance on the tile.
+	local inst = nil
+	for _, o in ipairs(state.objects) do
+		if o.x == x and o.y == y then inst = o; break end
+	end
+	if not inst then return "not-found" end
+	local def = inst.type and ObjectData.Objects[inst.type]
+	if not def or def.passable ~= false then return "not-found" end
+	-- Ad Billboard / immovable objects never move (map_gen_rules rows 85/93).
+	if def.isImmovable == true then return "immovable" end
+
+	local stability = tonumber(def.nativeStability) or 3
+	local distance = math.max(0, (tonumber(force) or 0) - stability)
+	if distance <= 0 then return "blocked" end
+
+	-- Map bounds from the elevation grid ([y][x]); off-grid = off map (GetElevation
+	-- returns 1 off-map, so an explicit bounds check is required).
+	local emap = GameConstants.ELEVATION_MAP or {}
+	local mapH = #emap
+	local mapW = (mapH > 0 and type(emap[1]) == "table") and #(emap[1] :: any) or 0
+	local function insideMap(nx: any, ny: any): boolean
+		return nx >= 1 and ny >= 1 and nx <= mapW and ny <= mapH
+	end
+	local function unitAt(nx: any, ny: any): boolean
+		for _, u in ipairs(state.units or {}) do
+			if u.isAlive and u.tileX == nx and u.tileY == ny then return true end
+		end
+		return false
+	end
+
+	-- Step tile-by-tile, stopping one tile BEFORE the first obstacle (mirror
+	-- DisplacementService.ResolvePush checks 1-4; no collision/fall damage for objects).
+	local curX, curY = x, y
+	local curElev = GameConstants.GetElevation(curX, curY)
+	local tiles = 0
+	for _ = 1, distance do
+		local nx, ny = curX + sx, curY + sy
+		if not insideMap(nx, ny) then break end                 -- edge
+		if GameConstants.IsBlocked(nx, ny) then break end        -- another blocker/object
+		local nextElev = GameConstants.GetElevation(nx, ny)
+		if nextElev > curElev then break end                     -- forced upward blocked
+		if unitAt(nx, ny) then break end                         -- occupied tile
+		curX, curY, curElev = nx, ny, nextElev
+		tiles += 1
+	end
+
+	if tiles == 0 then return "blocked" end
+
+	-- Relocate. Mirror PlaceObjectInstance's blocker-entry shape; keep OBJECT_MAP
+	-- (GetObjectAt) and the server visual consistent with the new tile.
+	local fromX, fromY = inst.x, inst.y
+	if GameConstants.RemoveBlockerAt then GameConstants.RemoveBlockerAt(fromX, fromY) end
+	if _objectVisualRemover then _objectVisualRemover(inst) end
+	if GameConstants.OBJECT_MAP then
+		if GameConstants.OBJECT_MAP[fromY] then GameConstants.OBJECT_MAP[fromY][fromX] = nil end
+		GameConstants.OBJECT_MAP[curY] = GameConstants.OBJECT_MAP[curY] or {}
+		GameConstants.OBJECT_MAP[curY][curX] = inst.type
+	end
+	inst.x, inst.y = curX, curY
+	if GameConstants.BLOCKERS then
+		table.insert(GameConstants.BLOCKERS, {
+			tileX = curX, tileY = curY, objectType = inst.type,
+			tags = { "BlocksAOE", "BlocksLoS" }, height = def.standingHeight,
+		})
+	end
+	if _objectRenderer then _objectRenderer(inst) end
+
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+		BattleVisualBroadcaster.ObjectChanged(fromX, fromY, { moved = {
+			fromX = fromX, fromY = fromY, toX = curX, toY = curY,
+			hp = inst.hp, objType = inst.type, height = def.standingHeight,
+		} })
+	end
+	print(string.format("[ObjectEffectService] PushObject | %s (%d,%d)->(%d,%d) tiles=%d force=%s",
+		tostring(inst.type), fromX, fromY, curX, curY, tiles, tostring(force)))
+	return { moved = true, fromX = fromX, fromY = fromY, toX = curX, toY = curY, tiles = tiles }
+end
+
+-- OBS Phase 2c-E2: push-candidate list for breakable blocker-prop OBS objects, used
+-- by BattleTurnController to extend its unit push candidates. Mirrors the unit push
+-- convention (Chebyshev range; maxPushDistance = max(0, Force - stability)). Billboards
+-- (isImmovable) and non-breakable objects are excluded so they are never offered.
+function ObjectEffectService.GetPushableObjectTargets(state: any, unit: any, minDist: any, maxDist: any, pusherForce: any): any
+	local out = {}
+	if not (state and state.objects and unit) then return out end
+	local ux, uy = unit.tileX, unit.tileY
+	local lo = tonumber(minDist) or 1
+	local hi = tonumber(maxDist) or 1
+	for _, inst in ipairs(state.objects) do
+		local def = inst and inst.type and ObjectData.Objects[inst.type]
+		if def and def.passable == false and def.isImmovable ~= true
+			and type(def.hitsToDestroy) == "number" and def.hitsToDestroy > 0
+			and inst.x and inst.y then
+			local dist = math.max(math.abs(inst.x - ux), math.abs(inst.y - uy))
+			if dist >= lo and dist <= hi then
+				local stability = tonumber(def.nativeStability) or 3
+				local maxPush = math.max(0, (tonumber(pusherForce) or 1) - stability)
+				table.insert(out, {
+					id = string.format("obj:%d,%d", inst.x, inst.y),
+					name = def.id or inst.type,
+					tileX = inst.x, tileY = inst.y,
+					maxPushDistance = maxPush, kind = "object",
+				})
+			end
+		end
+	end
+	return out
 end
 
 -- Inject the direction prompter (Main wires promptCardinalDirection). Lets a siege

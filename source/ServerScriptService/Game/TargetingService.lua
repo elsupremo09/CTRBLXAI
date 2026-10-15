@@ -575,6 +575,40 @@ function TargetingService.GetAttackCandidates(actor, allUnits, range)
 	return candidates
 end
 
+-- OBS Phase 2c-B: breakable blocker-prop OBS objects are valid BASIC-ATTACK targets
+-- (map_gen_rules row 82: 3 hits from ANY source, incl. a unit's direct attack, break
+-- them). Mirrors GetAttackCandidates' legality gates EXACTLY (range, minRange, direct
+-- LoS, melee elevation) but iterates state.objects; the Ad Billboard (isImmovable / no
+-- numeric hitsToDestroy) is excluded as unbreakable (rows 85/93). Returns tiles with a
+-- distinct id "obj:x,y" and kind="object", mirroring GetPushableObjectTargets.
+function TargetingService.GetAttackableObjectTargets(actor, allUnits, range, state)
+	local out = {}
+	if not (state and state.objects) then return out end
+	range = (range or 1) + RacePassiveService.GetRangeModifier(actor)
+	local minRange = actor.weaponMinRange or 1
+	for _, inst in ipairs(state.objects) do
+		local def = inst and inst.type and ObjectData.Objects[inst.type]
+		if def and def.passable == false and def.isImmovable ~= true
+			and type(def.hitsToDestroy) == "number" and def.hitsToDestroy > 0
+			and inst.x and inst.y then
+			local pseudo = { tileX = inst.x, tileY = inst.y }
+			local dist = chebyshevDistance(actor.tileX, actor.tileY, inst.x, inst.y)
+			if dist <= range and dist >= minRange
+				and TargetingService.HasLineOfSight(actor.tileX, actor.tileY, inst.x, inst.y,
+					allUnits, getEffectiveElevation(actor), actor.weaponProjectileType, actor.side)
+				and isMeleeElevationLegal(actor, pseudo, range)
+			then
+				table.insert(out, {
+					id = string.format("obj:%d,%d", inst.x, inst.y),
+					name = def.id or inst.type,
+					tileX = inst.x, tileY = inst.y, kind = "object",
+				})
+			end
+		end
+	end
+	return out
+end
+
 --------------------------------------------------
 -- SKILL CANDIDATES (Slice 3)
 -- Returns valid target units based on the skill's targetRules.

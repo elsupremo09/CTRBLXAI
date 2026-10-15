@@ -66,6 +66,8 @@ local eventPanel
 local weatherPanel
 local _activeEventName: string? = nil
 local _weatherName: string? = nil
+local _timePhase: string? = nil        -- current time-of-day phase (for the time peek card)
+local _timeCtRemaining: number? = nil  -- CT left until the next phase (for the time peek card)
 local conditionsPanel   = nil  -- Next to turn order
 local battleLogPanel    = nil  -- Lower-right (25% × 20%)
 local commandBar          = nil  -- Fixed bottom-right: Execute/Back buttons
@@ -1324,10 +1326,61 @@ alignTimePanel = function()
 	end
 end
 
--- Art for these panels is pending (user will upload). Fill ids here; until then the
 -- panel shows the event / condition name as text. Keys = event name / condition id.
-local EVENT_ICON: {[string]: string} = {}
-local WEATHER_ICON: {[string]: string} = {}
+local EVENT_ICON: {[string]: string} = {
+	["Merchant Caravan"] = "rbxassetid://84935613002912",
+	["Slave Trader"] = "rbxassetid://71614407163202",
+	["Wandering Scholar"] = "rbxassetid://115568965410569",
+	["Wandering Bard"] = "rbxassetid://119413941707788",
+	["Wandering Mercenaries"] = "rbxassetid://71987813771116",
+	["Champion"] = "rbxassetid://103518450395052",
+	["Zombie Horde"] = "rbxassetid://125433808093812",
+	["Leprechaun"] = "rbxassetid://91165401042269",
+	["Thief"] = "rbxassetid://72731800970250",
+	["Wandering Blacksmith"] = "rbxassetid://92809072500105",
+	["Mutator"] = "rbxassetid://94085738009034",
+	["Herald of XXX"] = "rbxassetid://77315510608555",
+	["Divine Intervention"] = "rbxassetid://81929288005666",
+	["Chaos Necromancer"] = "rbxassetid://75948815488000",
+	["Fortune Teller"] = "rbxassetid://128025137190142",
+	["Lost Noble"] = "rbxassetid://80545873980813",
+	["Treasure Hunter"] = "rbxassetid://104654343226798",
+	["Wandering Monster"] = "rbxassetid://115614663857559",
+	["Vengeful Spirit"] = "rbxassetid://110469668104593",
+	["Bounty Hunter"] = "rbxassetid://120541835399463",
+	["Monster Hunter"] = "rbxassetid://89005078771931",
+	["Wandering Bandits"] = "rbxassetid://73866422306779",
+	["Plague Carrier"] = "rbxassetid://113879854969714",
+	["Traitor"] = "rbxassetid://88868438622560",
+	["Enemy Scout"] = "rbxassetid://88995782067979",
+	["Doppelganger"] = "rbxassetid://130222545662488",
+	["Chaos Lich"] = "rbxassetid://115520668530804",
+	["Fog Spirit"] = "rbxassetid://94024227737921",
+	["Fire Spirit"] = "rbxassetid://110266662745957",
+	["Wind Spirit"] = "rbxassetid://140703034712489",
+	["Water Spirit"] = "rbxassetid://116770583814153",
+	["Lightning Elemental"] = "rbxassetid://123369735611951",
+	["Earth Elemental"] = "rbxassetid://129315637741007",
+	["Gold Golem"] = "rbxassetid://133238228063387",
+	["Crystal Golem"] = "rbxassetid://113164622148870",
+}
+local WEATHER_ICON: {[string]: string} = {
+	["Clear"] = "rbxassetid://76779173615924",
+	["Rain"] = "rbxassetid://76887561350380",
+	["Strong Wind"] = "rbxassetid://106935093904405",
+	["Heatwave"] = "rbxassetid://81715299062918",
+	["Dark Eclipse"] = "rbxassetid://101484322860747",
+	["Holy Aurora"] = "rbxassetid://81086406655240",
+	["Wild Growth"] = "rbxassetid://110440713281064",
+	["Mana Storm"] = "rbxassetid://119535812311510",
+	["Thunderstorm"] = "rbxassetid://74938281450761",
+	["Meteor Storm"] = "rbxassetid://127802509506244",
+	["Volcanic Eruptions"] = "rbxassetid://137055505450660",
+	["Earthquake"] = "rbxassetid://133543155255979",
+	["Severe Hail"] = "rbxassetid://77777771388131",
+	["Hunger Virus"] = "rbxassetid://80534810322788",
+	["Snow Storm"] = "rbxassetid://106032035513025",
+}
 
 -- QUICK-PEEK CARD: tap the Event or Weather panel to see its full description.
 -- One card at a time, its own ScreenGui above the HUD; tap anywhere to dismiss.
@@ -1368,6 +1421,20 @@ local function buildPeekLines(kind: string, name: string?): (string, {{string}})
 		table.insert(rows, {"EFFECT", TERRAIN_INFO[name or "Clear"] or "No special effect."})
 		table.insert(rows, {"MOVE COST", tostring(tile and tile.moveCost or 1)})
 		return name or "Clear", rows
+	end
+	if kind == "TIME" then
+		-- Explains the CT clock: current phase, CT left until the next phase, and the
+		-- fixed round order. Reads the stashed _timePhase/_timeCtRemaining (set in
+		-- UpdateTimeline) rather than the captured name, so it is always current.
+		local PHASE_ORDER = { "Dawn", "Day", "Dusk", "Night" }
+		local phase = _timePhase or name or "Dawn"
+		local nextPhase = "Day"
+		for i, p in ipairs(PHASE_ORDER) do
+			if p == phase then nextPhase = PHASE_ORDER[(i % 4) + 1]; break end
+		end
+		table.insert(rows, {"CT", string.format("%d before %s", _timeCtRemaining or 0, nextPhase)})
+		table.insert(rows, {"", "Each round is 1000 CT long, in the order: Dawn > Day > Dusk > Night."})
+		return phase, rows
 	end
 	if kind == "EVENT" then
 		local def = name and BattlefieldEventData and BattlefieldEventData.Events and BattlefieldEventData.Events[name]
@@ -1452,8 +1519,18 @@ local function showPeekCard(kind: string, name: string?, anchorPanel: GuiObject?
 		if not (card.Parent and anchorPanel) then return end
 		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
 		local ap = anchorPanel.AbsolutePosition
-		local x = math.clamp(ap.X, 6, math.max(6, vp.X - cardW - 6))
-		local y = math.min(ap.Y + anchorPanel.AbsoluteSize.Y + 6, math.max(6, vp.Y - card.AbsoluteSize.Y - 6))
+		-- Drop the card BELOW the tapped panel so it never covers the top panel row.
+		local y = ap.Y + anchorPanel.AbsoluteSize.Y + 6
+		-- Keep the card clear of the unit inspector (top-right): its right edge must
+		-- not cross the unit panel's left edge. Falls back to the screen edge when the
+		-- unit panel is hidden.
+		local rightBound = math.max(6, vp.X - cardW - 6)
+		if activeUnitPanel and activeUnitPanel.Visible then
+			rightBound = math.min(rightBound, activeUnitPanel.AbsolutePosition.X - cardW - 6)
+		end
+		rightBound = math.max(6, rightBound)
+		local x = math.clamp(ap.X, 6, rightBound)
+		y = math.min(y, math.max(6, vp.Y - card.AbsoluteSize.Y - 6))
 		card.Position = UDim2.fromOffset(x, y)
 	end)
 end
@@ -1648,6 +1725,11 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 			ctLbl.Text = `CT {timeInfo.ctRemaining or 0}`
 			ctLbl.ZIndex = 6
 			ctLbl.Parent = timePanel
+			-- Stash the clock for the time peek card, then make the panel tappable
+			-- (same quick-peek behaviour as the Event/Weather panels).
+			_timePhase = timeInfo.phase
+			_timeCtRemaining = timeInfo.ctRemaining
+			addPeekButton(timePanel, "TIME", timeInfo.phase)
 			task.defer(alignTimePanel)
 			refreshInfoPanels()
 		end

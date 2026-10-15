@@ -132,6 +132,24 @@ listLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 listLayout.Padding = UDim.new(0, CARD_GAP)
 listLayout.Parent = cardContainer
 
+-- Back-to-base button (bottom center). The quest board otherwise has no way out;
+-- backing out here is FREE -- nothing is committed until the sortie screen. (2026-10-14)
+local backBtn = Instance.new("TextButton")
+backBtn.Name = "BackBtn"
+backBtn.Size = UDim2.new(0, 190, 0, 42)
+backBtn.AnchorPoint = Vector2.new(0.5, 1)
+backBtn.Position = UDim2.new(0.5, 0, 1, -22)
+backBtn.BackgroundColor3 = Theme.Colors.PanelLight or Theme.Colors.Panel or Color3.fromRGB(48, 48, 58)
+backBtn.BorderSizePixel = 0
+backBtn.AutoButtonColor = true
+backBtn.Font = Theme.Font.PrimaryBold or Theme.Font.Primary
+backBtn.TextSize = 16
+backBtn.TextColor3 = Theme.Colors.TextSecondary or Color3.fromRGB(225, 225, 225)
+backBtn.Text = "\u{2190} Back to Base"
+backBtn.ZIndex = 5
+backBtn.Parent = overlay
+Instance.new("UICorner", backBtn).CornerRadius = UDim.new(0, 6)
+
 --------------------------------------------------
 -- CARD CREATION HELPERS
 --------------------------------------------------
@@ -363,6 +381,12 @@ for i = 1, 3 do
 		hide()
 	end)
 end
+
+backBtn.MouseButton1Click:Connect(function()
+	print("[QuestBoardUI] Back to base -- quest board cancelled")
+	BattleEvents.QuestBoardCancel:FireServer()
+	hide()
+end)
 
 --------------------------------------------------
 -- EVENT LISTENER

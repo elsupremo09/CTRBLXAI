@@ -1579,7 +1579,7 @@ function CommandService.ValidateAndCommit(
 		if not valid then return false, reason end
 
 	elseif actionType ~= "Wait" and actionType ~= "Guard" and actionType ~= "Push"
-		and actionType ~= "Interact" then
+		and actionType ~= "Interact" and actionType ~= "PushObject" and actionType ~= "AttackObject" then
 		-- Move and Attack need target/tile validation
 		local valid, reason = TargetingService.ValidateSelection(
 			actor, actionType, selection,
@@ -2541,6 +2541,75 @@ function CommandService.ValidateAndCommit(
 			actionLabel, actor.name, target.name, force,
 			result.tilesDisplaced, result.finalTileX, result.finalTileY,
 			totalPushDmg, pushRt, actor.currentAp
+		))
+
+	elseif actionType == "PushObject" then
+		-- OBS Phase 2c-E2: push a breakable blocker-prop OBS object (map_gen_rules row 83).
+		-- Mirrors the unit Push RT/force/direction; objects take NO collision/fall damage.
+		-- Same AP (1, charged in STEP 8) and RT as a unit push (user decision 2026-10-14).
+		-- The unit "Push" branch above is byte-unchanged; this is a separate branch and,
+		-- like it, falls through to the shared Momentum/EndTurn tail.
+		if type(selection) ~= "table" or not selection.objX or not selection.objY then
+			return false, "Object push requires a target tile."
+		end
+		local ox, oy = selection.objX, selection.objY
+		local pushOverride = RacePassiveService.GetPushOverride(actor)
+		local maxPushDist = pushOverride and pushOverride.maxDistance or 1
+		local minPushDist = pushOverride and pushOverride.minDistance or 1
+		local dist = math.max(math.abs(actor.tileX - ox), math.abs(actor.tileY - oy))
+		if dist > maxPushDist then return false, "Target is out of range." end
+		if dist < minPushDist then return false, "Target is too close." end
+		BattleVisualBroadcaster.ActionAnnounced(actor, "Push")
+
+		-- Push RT = round(Modified Base RT * 0.10), *2 if Frozen -- identical to unit push.
+		local modBaseRt = StatusService.GetModifiedBaseRt(actor)
+		local pushRt = math.round(modBaseRt * GameConstants.GUARD_RT_BASE_FACTOR)
+		pushRt = math.round(pushRt * StatusService.GetAllRtMultiplier(actor))
+		BattleCoordinator.AccrueRt(state, pushRt)
+
+		local force = 1
+		if actor.derivedStats and actor.derivedStats.force then
+			force = actor.derivedStats.force
+		end
+		if pushOverride and pushOverride.forceBonus then
+			force = force + pushOverride.forceBonus
+		end
+		local direction = DisplacementService.GetPushDirection(actor, { tileX = ox, tileY = oy })
+		local ddx, ddy = direction.dx, direction.dy
+		if pushOverride and pushOverride.reverseDirection then
+			ddx, ddy = -ddx, -ddy
+		end
+		local result = ObjectEffectService.PushObject(state, ox, oy, ddx, ddy, force)
+		local outcome = (type(result) == "table") and "moved" or tostring(result)
+		print(string.format(
+			"[CommandService] PUSH OBJECT | %s -> obj(%d,%d) | Force:%d | %s | RT:%d | AP left:%d",
+			actor.name, ox, oy, force, outcome, pushRt, actor.currentAp
+		))
+
+	elseif actionType == "AttackObject" then
+		-- OBS Phase 2c-B: a basic attack targeting a breakable blocker-prop OBS object
+		-- (map_gen_rules row 82: 3 hits from ANY source, incl. a direct attack, break it).
+		-- One basic attack = one hit via ObjectEffectService.ApplyObjectHit. Same AP (1,
+		-- charged in STEP 8) and the same basic-attack RT a unit attack costs. Does NOT
+		-- touch the unit isAlive/CombatResolver/crit/status path; the unit "Attack" branch
+		-- is byte-unchanged. Billboards are never offered as candidates and ApplyObjectHit
+		-- double-guards immovable/unbreakable. Falls through to the shared Momentum/EndTurn tail.
+		if type(selection) ~= "table" or not selection.objX or not selection.objY then
+			return false, "Object attack requires a target tile."
+		end
+		local ox, oy = selection.objX, selection.objY
+		local atkRange = (actor.weaponMaxRange or 1) + RacePassiveService.GetRangeModifier(actor)
+		local atkDist = math.max(math.abs(actor.tileX - ox), math.abs(actor.tileY - oy))
+		if atkDist > atkRange or atkDist < (actor.weaponMinRange or 1) then
+			return false, "Object is out of attack range."
+		end
+		BattleVisualBroadcaster.ActionAnnounced(actor, "Basic Attack")
+		local rtCost = calcBasicAttackBaseRt(actor)
+		BattleCoordinator.AccrueRt(state, rtCost)
+		local result = ObjectEffectService.ApplyObjectHit(state, ox, oy, 1)
+		print(string.format(
+			"[CommandService] ATTACK OBJECT | %s -> obj(%d,%d) | %s | RT:%d | AP left:%d",
+			actor.name, ox, oy, tostring(result), rtCost, actor.currentAp
 		))
 
 	elseif actionType == "Interact" then

@@ -43,6 +43,7 @@ local ItemGenerator          = require(Game:WaitForChild("ItemGenerator"))
 local TraitRoller            = require(Game:WaitForChild("TraitRoller"))
 local StatusService          = require(Game:WaitForChild("StatusService"))
 local PersistentStateService = require(Game:WaitForChild("PersistentStateService"))
+local PartyService           = require(Game:WaitForChild("PartyService"))
 local CurrencyService        = require(Game:WaitForChild("CurrencyService"))
 local RecruitmentService     = require(Game:WaitForChild("RecruitmentService"))
 local MerchantService        = require(Game:WaitForChild("MerchantService"))
@@ -56,6 +57,7 @@ local WeaponData   = require(Content:WaitForChild("WeaponData"))
 local ArmorData    = require(Content:WaitForChild("ArmorData"))
 local UnitNameData = require(Content:WaitForChild("UnitNameData"))
 local TraitData    = require(Content:WaitForChild("TraitData"))
+local PortraitData = require(Content:WaitForChild("PortraitData"))
 
 local GuildMenuService = {}
 
@@ -397,6 +399,10 @@ function GuildMenuService.BuildRecruitUnit(candidate: any): any?
 	unit.currentMp = unit.maxMp
 	unit.isRecruit = true
 	unit.hireQuality = candidate.quality
+	-- Hired recruits get a random race-matched default portrait (same rule as the
+	-- player starters). Deterministic from the candidate rng; persists via SaveService;
+	-- a loadout pick overrides it later. (2026-10-15)
+	unit.portraitAssetId = PortraitData.PickRandom(rng, raceId)
 
 	builtUnits[unitId] = unit
 	print(`[GuildMenuService] Built recruit {unit.name} ({unitId}) L{level} {raceId} {doctrineId}`)
@@ -424,6 +430,14 @@ function GuildMenuService.RestoreRecruits(pid: string, savedEquipMap: any, saved
 			if savedRace then
 				if savedRace.perkIds and #savedRace.perkIds > 0 then unit.perkIds = savedRace.perkIds end
 				if savedRace.drawbackIds and #savedRace.drawbackIds > 0 then unit.drawbackIds = savedRace.drawbackIds end
+				-- Restore the saved portrait (hired default, battle-recruit enemy face, or a
+				-- loadout pick) so it stays stable across logins. (2026-10-15)
+				if savedRace.portraitAssetId then unit.portraitAssetId = savedRace.portraitAssetId end
+			end
+			-- Old saves (pre-portrait) or any gap: give the recruit a random race-matched
+			-- face rather than letting it fall back to initials. Never overrides a restored one.
+			if not unit.portraitAssetId then
+				unit.portraitAssetId = PortraitData.PickRandom(Random.new(seedFromId(unitId) + 4242), unit.raceId)
 			end
 			-- Battle recruits keep exactly the traits they had (rule 133), even none:
 			-- never re-roll them on load. Tavern hires keep the old roll-if-empty.
@@ -494,6 +508,9 @@ function GuildMenuService.AdoptBattleRecruits(battleUnits: { any }): { any }
 					perkIds = src.perkIds and table.clone(src.perkIds) or nil,
 					drawbackIds = src.drawbackIds and table.clone(src.drawbackIds) or nil,
 				})
+				-- Battle recruits KEEP the face they wore as an enemy (user rule 2026-10-15):
+				-- carry the enemy's portrait onto the adopted unit so it never resets to initials.
+				unit.portraitAssetId = src.portraitAssetId
 				-- Doctrine skill kept; equipped skill cards (slots 2-4) stripped.
 				local docSkill = src.selectedDoctrineSkill
 				if docSkill and _isSkillRegistered and not _isSkillRegistered(docSkill) then
@@ -605,7 +622,7 @@ end
 
 local benchedThisBattle: { any } = {}
 
-function GuildMenuService.SyncBattleRoster(allUnitsList: { any }, deployCap: number)
+function GuildMenuService.SyncBattleRoster(allUnitsList: { any }, deployCap: number, partyMembers: { string }?)
 	-- 1) add pending hires after the last Player-side entry
 	for _, unit in pendingBattleUnits do
 		local present = false
@@ -624,6 +641,21 @@ function GuildMenuService.SyncBattleRoster(allUnitsList: { any }, deployCap: num
 		if u.side == "Player" and DispatchService.IsUnitDispatched(_playerId, u.id) then
 			table.remove(allUnitsList, i)
 			print(`[GuildMenuService] {u.name} is away on dispatch — not in this battle`)
+		end
+	end
+
+	-- 2.5) restrict to the CHOSEN PARTY (2026-10-15, game_flow id 10/27): if a party
+	-- member set is supplied, drop Player units NOT in it BEFORE the deploy-cap bench, so
+	-- the per-quest cap applies to the party. An empty/absent set means no restriction
+	-- (full roster) -- so an empty party can never soft-lock deployment.
+	if type(partyMembers) == "table" and #partyMembers > 0 then
+		local inParty = {}
+		for _, id in ipairs(partyMembers) do inParty[id] = true end
+		for i = #allUnitsList, 1, -1 do
+			local u = allUnitsList[i]
+			if u.side == "Player" and not inParty[u.id] then
+				table.remove(allUnitsList, i)
+			end
 		end
 	end
 
@@ -764,7 +796,7 @@ local function blacksmithGate(item: any): (boolean, string?)
 	local need = BLACKSMITH_RARITY_LEVEL[item.rarityId]
 	if not need then return false, `{tostring(item.rarityId)} items cannot be upgraded` end
 	if bLevel < need then return false, `{item.rarityId} upgrades need Blacksmith L{need}` end
-	return true, nil
+	return true, nil, maxLevel
 end
 
 local function describeItem(item: any): any
@@ -880,7 +912,7 @@ local function onGetBlacksmithItems(player: Player)
 	for _, item in InventoryService.GetAllItems(_playerId) do
 		if type(item.itemLevel) == "number" then
 			local d = describeItem(item)
-			local allowed, why = blacksmithGate(item)
+			local allowed, why, maxLevel = blacksmithGate(item)
 			local cost = BlacksmithService.ResolveUpgradeCost(item, item.itemLevel + 1)
 			d.canUpgrade = allowed and cost ~= nil
 			d.upgradeBlockedReason = why
@@ -889,6 +921,9 @@ local function onGetBlacksmithItems(player: Player)
 				local mats = {}
 				for tier, qty in cost.materials do table.insert(mats, { tier = tier, qty = qty }) end
 				d.upgradeMaterials = mats
+			end
+			if allowed and maxLevel then
+				d.upgradeCurve = BlacksmithService.GetUpgradeCurve(item, maxLevel)
 			end
 			d.canDowngrade = item.itemLevel > 1
 			table.insert(items, d)
@@ -940,10 +975,26 @@ local function onFinalizeCart(player: Player, payload: any)
 	if type(payload) ~= "table" then return fail("Invalid cart") end
 	local buys = (type(payload.buys) == "table") and payload.buys or {}
 	local sells = (type(payload.sells) == "table") and payload.sells or {}
-	if #buys > 50 or #sells > 50 then return fail("Cart too large") end
+	-- Blacksmith staged (2026-10-14): optional { [instanceId] = targetLevel } maps, applied
+	-- here on Save, dropped on Discard. Keeps blacksmith consistent with the buy/sell cart.
+	local upgrades = (type(payload.upgrades) == "table") and payload.upgrades or {}
+	local downgrades = (type(payload.downgrades) == "table") and payload.downgrades or {}
+	local upCount, downCount = 0, 0
+	for _ in upgrades do upCount += 1 end
+	for _ in downgrades do downCount += 1 end
+	-- Dispatch staged (2026-10-14): optional list of { missionId, unitIds }, sent on Save,
+	-- dropped on Discard. Applied sequentially below with the same checks as the live Send.
+	local dispatches = (type(payload.dispatches) == "table") and payload.dispatches or {}
+	-- Tavern staged (2026-10-14): optional list of candidateId strings, hired on Save, dropped
+	-- on Discard. Mirrors the live onRequestHire per candidate; failures go to problems.
+	local hires = (type(payload.hires) == "table") and payload.hires or {}
+	if #buys > 50 or #sells > 50 or upCount > 50 or downCount > 50 or #dispatches > 50 or #hires > 50 then return fail("Cart too large") end
 
 	local soldCount, boughtCount = 0, 0
 	local soldGold, boughtGold = 0, 0
+	local upgradedCount, downgradedCount = 0, 0
+	local dispatchedCount = 0
+	local hiredCount = 0
 	local problems: { string } = {}
 
 	for _, instanceId in sells do
@@ -976,12 +1027,125 @@ local function onFinalizeCart(player: Player, payload: any)
 		end
 	end
 
-	if soldCount > 0 or boughtCount > 0 then
+	-- Blacksmith: apply each staged item as +1 steps, re-checking the blacksmith gate AND
+	-- affordability per step (exactly like the live handler) so staging cannot bypass the
+	-- level cap. CommitUpgrade is atomic (gold+materials or nothing); nothing was charged
+	-- before this point, so a Discard upstream simply never calls this handler.
+	for instanceId, targetLevel in upgrades do
+		if type(instanceId) == "string" and #instanceId <= 80 and type(targetLevel) == "number" then
+			local item = InventoryService.GetItem(_playerId, instanceId)
+			if not item then
+				table.insert(problems, "an item to upgrade is no longer owned")
+			else
+				while item.itemLevel < targetLevel do
+					local allowed, why = blacksmithGate(item)
+					if not allowed then table.insert(problems, why or "upgrade blocked"); break end
+					local ok, result: any = BlacksmithService.CommitUpgrade(_playerId, item, item.itemLevel + 1)
+					if not ok then table.insert(problems, tostring(result)); break end
+					upgradedCount += 1
+				end
+			end
+		end
+	end
+	for instanceId, targetLevel in downgrades do
+		if type(instanceId) == "string" and #instanceId <= 80 and type(targetLevel) == "number" then
+			local item = InventoryService.GetItem(_playerId, instanceId)
+			if not item then
+				table.insert(problems, "an item to downgrade is no longer owned")
+			else
+				while item.itemLevel > targetLevel and item.itemLevel > 1 do
+					local ok, result: any = BlacksmithService.CommitDowngrade(_playerId, item, item.itemLevel - 1)
+					if not ok then table.insert(problems, tostring(result)); break end
+					downgradedCount += 1
+				end
+			end
+		end
+	end
+	-- Dispatch: apply each staged mission one at a time, re-validating against the updated
+	-- roster each time (roster membership, not-already-away, keep-one-home, mission still
+	-- offered) exactly like the live onRequestDispatch. SendUnits marks units away, so the
+	-- next staged entry sees the reduced home count. Overflow is refused into problems.
+	for _, d in dispatches do
+		if type(d) == "table" and type(d.missionId) == "string" and #d.missionId <= 64
+			and type(d.unitIds) == "table" and #d.unitIds >= 1 and #d.unitIds <= MAX_DISPATCH_PICK then
+			local live = playerUnits()
+			local seen: { [string]: boolean } = {}
+			local clean: { string } = {}
+			local okPick = true
+			for _, id in d.unitIds do
+				if type(id) ~= "string" or seen[id] then okPick = false; break end
+				if not live[id] then okPick = false; break end
+				if DispatchService.IsUnitDispatched(_playerId, id) then okPick = false; break end
+				seen[id] = true
+				table.insert(clean, id)
+			end
+			if not okPick then
+				table.insert(problems, "a dispatch had an invalid or unavailable unit")
+			elseif homeUnitCount() - #clean < 1 then
+				table.insert(problems, "a dispatch would leave no unit at home")
+			else
+				local board = dispatchBoard()
+				local mIdx = nil
+				for i, m in board.missions do if m.missionId == d.missionId then mIdx = i; break end end
+				if not mIdx then
+					table.insert(problems, "a dispatch mission is no longer offered")
+				else
+					local ok, result: any = DispatchService.SendUnits(_playerId, d.missionId, clean, battlesCompleted)
+					if ok then
+						table.remove(board.missions, mIdx)
+						dispatchedCount += 1
+					else
+						table.insert(problems, tostring(result))
+					end
+				end
+			end
+		else
+			table.insert(problems, "an invalid dispatch entry was ignored")
+		end
+	end
+	for _, candidateId in hires do
+		if type(candidateId) == "string" and #candidateId <= 64 then
+			local cache = tavernPool()
+			local idx, candidate = nil, nil
+			for i, c in cache.pool do
+				if c.candidateId == candidateId then idx, candidate = i, c; break end
+			end
+			if not candidate then
+				table.insert(problems, "a recruit is no longer available")
+			else
+				local ok, result: any = RecruitmentService.CommitHire(_playerId, candidate)
+				if not ok then
+					table.insert(problems, tostring(result))
+				else
+					local unitId = result.unitId
+					local unit = builtUnits[unitId]
+					builtUnits[unitId] = nil
+					if not unit then
+						table.insert(problems, "a hire recorded but its unit was missing")
+					else
+						if _addPlayerUnit then _addPlayerUnit(unit) end
+						recruitDefs[unitId] = {
+							name = unit.name, level = unit.level, raceId = unit.raceId,
+							doctrineId = unit.doctrineId, quality = candidate.quality,
+						}
+						table.insert(recruitOrder, unitId)
+						if currentPhase == "PreBattle" then table.insert(pendingBattleUnits, unit) end
+						table.remove(cache.pool, idx)
+						hiredCount += 1
+					end
+				end
+			end
+		end
+	end
+	if soldCount > 0 or boughtCount > 0 or upgradedCount > 0 or downgradedCount > 0 or dispatchedCount > 0 or hiredCount > 0 then
 		markDirty()
 		save()  -- commit = persist now (matches the confirm-then-save model)
 	end
 	local gold = balance()
 	return { ok = true, boughtCount = boughtCount, soldCount = soldCount,
+		upgradedCount = upgradedCount, downgradedCount = downgradedCount,
+		dispatchedCount = dispatchedCount,
+		hiredCount = hiredCount,
 		boughtGold = boughtGold, soldGold = soldGold, gold = gold, problems = problems }
 end
 
@@ -1066,6 +1230,77 @@ local function onGetGuildUnits(player: Player)
 	return { ok = true, units = list, battlesCompleted = battlesCompleted }
 end
 
+-- PARTY MANAGEMENT (game_flow id 4/10/27; activity-agnostic design, user 2026-10-14).
+-- PartyService owns the stored data; these thin handlers validate against the LIVE
+-- roster (SEC-001/ARC-001): the client sends slot + unit ids only. A unit MAY belong
+-- to multiple parties (locked design). Dispatched units are flagged (away) so the
+-- client can grey them out; membership stays permissive (being away is a deploy-time
+-- filter, not a save-time one). Edits markDirty() -> one save when the menu closes.
+local function partyMemberInfo(unitId: string): any
+	local live = playerUnits()
+	local u = live[unitId]
+	if not u then return nil end
+	local race = u.raceId and RaceData.GetRace(u.raceId) or nil
+	return {
+		id = unitId,
+		name = u.name,
+		unitLevel = u.level,
+		race = race and race.name or "?",
+		away = DispatchService.IsUnitDispatched(_playerId, unitId),
+	}
+end
+
+local function onGetParties(player: Player): any
+	local g = guard(player, "parties"); if g then return fail(g) end
+	local live = playerUnits()
+	local ownedSet = {}
+	for id in live do ownedSet[id] = true end
+	PartyService.PruneToOwned(_playerId, ownedSet)
+	local partyList = PartyService.GetParties(_playerId)
+	for _, party in ipairs(partyList) do
+		local info = {}
+		for _, uid in ipairs(party.members) do
+			local mi = partyMemberInfo(uid)
+			if mi then table.insert(info, mi) end
+		end
+		party.memberInfo = info
+	end
+	local roster = {}
+	for _, id in sortedKeys(live) do
+		local mi = partyMemberInfo(id)
+		if mi then table.insert(roster, mi) end
+	end
+	return { ok = true, parties = partyList, roster = roster, maxSize = PartyService.MAX_PARTY_SIZE }
+end
+
+local function onSetPartyName(player: Player, slot: any, name: any): any
+	local g = guard(player, "partyname"); if g then return fail(g) end
+	if type(slot) ~= "string" then return fail("Invalid party slot") end
+	local ok, err = PartyService.SetName(_playerId, slot, name)
+	if not ok then return fail(err or "Could not rename party") end
+	markDirty()
+	return { ok = true }
+end
+
+local function onSetPartyMembers(player: Player, slot: any, unitIds: any): any
+	local g = guard(player, "partymembers"); if g then return fail(g) end
+	if type(slot) ~= "string" then return fail("Invalid party slot") end
+	if type(unitIds) ~= "table" then return fail("Invalid member list") end
+	local live = playerUnits()
+	local clean = {}
+	local seen = {}
+	for _, uid in ipairs(unitIds) do
+		if type(uid) == "string" and live[uid] and not seen[uid] then
+			seen[uid] = true
+			table.insert(clean, uid)
+		end
+	end
+	local ok, err = PartyService.SetMembers(_playerId, slot, clean)
+	if not ok then return fail(err or "Could not save party") end
+	markDirty()
+	return { ok = true }
+end
+
 --------------------------------------------------
 -- INIT (Main calls once, after playerUnits and doSave exist)
 --------------------------------------------------
@@ -1097,6 +1332,9 @@ function GuildMenuService.Init(deps: any)
 	GuildEvents.GetDispatchBoard.OnServerInvoke = onGetDispatchBoard
 	GuildEvents.RequestDispatch.OnServerInvoke = onRequestDispatch
 	GuildEvents.GetGuildUnits.OnServerInvoke = onGetGuildUnits
+	GuildEvents.GetParties.OnServerInvoke = onGetParties
+	GuildEvents.SetPartyName.OnServerInvoke = onSetPartyName
+	GuildEvents.SetPartyMembers.OnServerInvoke = onSetPartyMembers
 
 	-- Dev "set building level" (Studio only) on the EXISTING DevCommand remote.
 	if RunService:IsStudio() then

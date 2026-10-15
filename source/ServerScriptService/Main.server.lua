@@ -53,6 +53,7 @@ local BlacksmithService       = require(Game:WaitForChild("BlacksmithService"))
 local GuildService            = require(Game:WaitForChild("GuildService"))
 local MerchantService         = require(Game:WaitForChild("MerchantService"))
 local DispatchService         = require(Game:WaitForChild("DispatchService"))
+local PartyService            = require(Game:WaitForChild("PartyService"))
 local ExploreService          = require(Game:WaitForChild("ExploreService"))
 local ProgressionService      = require(Game:WaitForChild("ProgressionService"))
 -- Slice 6 temporary Guild menu (game_flow id 23): server glue for the building
@@ -456,6 +457,9 @@ if loadedSave then
 	if loadedSave.progression and loadedSave.progression.dispatch then
 		DispatchService.Import(PLAYER_ID, loadedSave.progression.dispatch)
 	end
+	if loadedSave.progression and loadedSave.progression.party then
+		PartyService.Import(PLAYER_ID, loadedSave.progression.party)
+	end
 	if loadedSave.progression and loadedSave.progression.explore then
 		ExploreService.Import(PLAYER_ID, loadedSave.progression.explore)
 	end
@@ -630,6 +634,12 @@ for _, u in ipairs({ hero, mage, ranger }) do
 	local seed = 0
 	for ci = 1, #u.id do seed = seed + string.byte(u.id, ci) end
 	TraitRoller.AssignIfEmpty(u, Random.new(seed))
+	-- Default 2D portrait (2026-10-15): give each starter a random race-matched face
+	-- when it has none yet. The saved portrait (a loadout pick, or a previously-rolled
+	-- default) is restored just above, so this assign-if-empty never overrides it.
+	if not u.portraitAssetId then
+		u.portraitAssetId = PortraitData.PickRandom(Random.new(seed + 4242), u.raceId)
+	end
 	-- Perks & Flaws Phase 2 (TRAIT-MAIN-REBUILD): traits now carry static stat effects
 	-- (folded in EquipmentService.RebuildUnitStats) and were assigned AFTER this unit's
 	-- weapon equip/rebuild -- rebuild once so effectiveStats / max HP / MP include them.
@@ -1431,6 +1441,20 @@ end
 print(string.format("[Main] Boot roster ready: %d player unit(s) available at the base.",
 	(function() local n = 0 for _ in pairs(playerUnits) do n += 1 end return n end)()))
 
+-- First-run party seed (2026-10-15): if the player has never built a party (all saved
+-- parties empty), fill Party A with the current boot roster so there is always one
+-- pickable party at the sortie Choose-Party step (empty parties are greyed/unpickable).
+-- Runs AFTER PartyService.Import (saved parties already loaded above) so a returning
+-- player with real parties is never overwritten.
+do
+	local bootIds = {}
+	for id in pairs(playerUnits) do table.insert(bootIds, id) end
+	local seeded = PartyService.AutoSeedIfEmpty(PLAYER_ID, bootIds)
+	if seeded then
+		print(string.format("[Party] First-run seed: Party A filled with %d unit(s).", #bootIds))
+	end
+end
+
 --------------------------------------------------
 -- UGC RENTAL & OWNERSHIP (moved to BOOT 2026-10-13): previously sat INSIDE the per-
 -- round loop, so the UGC system (providers, player init, save import, remote wiring,
@@ -1546,6 +1570,7 @@ function doSave()
 		cardInventory = cardInventory,
 		guild    = GuildService.Export(PLAYER_ID),
 		dispatch = DispatchService.Export(PLAYER_ID),
+		party    = PartyService.Export(PLAYER_ID),
 		explore  = ExploreService.Export(PLAYER_ID),
 		guildMenu = GuildMenuService.Export(PLAYER_ID), -- Slice 6 Guild menu (battle counter + hired units)
 		ugc      = UGCService.Export(PLAYER_ID), -- UGC rentals/trials/cart/votes (ownership never saved)
@@ -1558,6 +1583,36 @@ function doSave()
 		warn("[Save] FAILED: " .. (err or "unknown"))
 	end
 	return ok, err
+end
+
+-- CLEAN-SLATE BATTLE RESET (2026-10-14): the permanent player units (hero/mage/ranger)
+-- are the SAME objects every round, so battle-scoped state would otherwise carry into the
+-- next battle. The instant-loss-after-defeat bug was a dead 'isAlive' flag surviving a loss;
+-- this resets ALL per-battle fields to their fresh-start defaults so battle N starts identical
+-- to battle 1. It deliberately does NOT touch saved progression: currentHp/currentMp are
+-- applied by the save-load right after this, and equipment/level/XP/doctrine/skills/stat
+-- allocation/portrait are untouched. Statuses are cleared by emptying statusInstances
+-- directly -- safe because EquipmentService.RebuildUnitStats recomputes effectiveStats
+-- from scratch on each call (base + doctrine + equipment + a fold of the CURRENT statuses
+-- via StatusService.GetStatusStatModifiers), so once statusInstances is empty the status
+-- contribution is zero and no stale stat delta can survive the wipe.
+local function resetUnitForNewBattle(u)
+	u.isAlive = true
+	u.currentAp = 0
+	u.statusInstances = {}
+	u.shield_total = 0
+	u.mpRegenAccumulator = 0
+	u.isChanneling = false
+	u.channelingData = nil
+	u.channelPhase = nil
+	u.channelResolveCt = nil
+	u.channelRt = nil
+	u.combatStackPct = 0
+	u.combatStackAge = 0
+	u.zombieReviveUsed = nil
+	u.tileX = 0
+	u.tileY = 0
+	u.facing = "South"
 end
 
 while true do
@@ -1610,9 +1665,22 @@ while true do
 		end
 	end)
 
+	local questCancelled = false
+	local questCancelConn = BattleEvents.QuestBoardCancel.OnServerEvent:Connect(function(plr)
+		questCancelled = true
+		questSelectedSignal:Fire()
+	end)
+
 	questSelectedSignal.Event:Wait()
 	questSelectedConn:Disconnect()
+	questCancelConn:Disconnect()
 	questSelectedSignal:Destroy()
+
+	-- Back from the quest board: nothing committed or spent -- just return to the base.
+	if questCancelled then
+		print("[Loop] Quest board cancelled -- returning to guild base.")
+		continue
+	end
 
 	-- Find selected quest
 	selectedQuest = nil
@@ -1791,6 +1859,15 @@ while true do
 			setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
 		end
 	end
+	-- CLEAN-SLATE (2026-10-14): wipe battle-scoped state on every player unit BEFORE Flight
+	-- re-application and the saved HP/MP load below, so flying units get a fresh Flight (no
+	-- double-stack) and isAlive is true before the save load (which only re-KOs a saved-KO unit).
+	for _, u in ipairs(allUnitsList) do
+		if u.side == "Player" then
+			resetUnitForNewBattle(u)
+		end
+	end
+
 
 	-- Apply permanent Flight status to units with the Flying race tag
 	-- DB: "Flying: Grants permanent Flight using complete Manual Flight benefits and drawbacks"
@@ -2294,6 +2371,13 @@ while true do
 	-- posted gold (game_flow id 28), clamped to what the player can pay so backing out is
 	-- never hard-blocked, then returns to the base WITHOUT a battle (loop restarts).
 	local departDecision = nil  -- "go" | "abandon"
+	-- Chosen party for this sortie (game_flow id 10/27 Choose Party). Default to the first
+	-- non-empty saved party (Party A is auto-seeded first-run) so a plain Continue always
+	-- deploys a valid party; the Party tab lets the player pick A/B/C (SelectSortieParty).
+	local chosenPartySlot = nil
+	for _, s in ipairs({ "A", "B", "C" }) do
+		if #PartyService.GetMembers(PLAYER_ID, s) > 0 then chosenPartySlot = s break end
+	end
 	do
 		local decided = Instance.new("BindableEvent")
 		local goConn = hubContinueSignal.Event:Connect(function()
@@ -2302,9 +2386,18 @@ while true do
 		local abandonConn = BattleEvents.AbandonQuest.OnServerEvent:Connect(function(plr)
 			if not departDecision then departDecision = "abandon"; decided:Fire() end
 		end)
+		local partyConn = BattleEvents.SelectSortieParty.OnServerEvent:Connect(function(plr, slot)
+			if departDecision then return end
+			-- SELECT-ONLY (2026-10-15): picking a party updates the pending selection but does
+			-- NOT start the battle; the player commits with Continue to Deployment (goConn path).
+			if type(slot) == "string" and #PartyService.GetMembers(PLAYER_ID, slot) > 0 then
+				chosenPartySlot = slot
+			end
+		end)
 		decided.Event:Wait()
 		goConn:Disconnect()
 		abandonConn:Disconnect()
+		partyConn:Disconnect()
 		decided:Destroy()
 	end
 
@@ -2329,7 +2422,7 @@ while true do
 	-- Guild menu effects on THIS battle's roster (in place; closures hold allUnitsList):
 	-- add units hired just now, drop units away on dispatch, bench above the cap
 	-- (deployment requires every listed unit to be placed, so over-cap would soft-lock).
-	GuildMenuService.SyncBattleRoster(allUnitsList, #playerSpawns)
+	GuildMenuService.SyncBattleRoster(allUnitsList, #playerSpawns, PartyService.GetMembers(PLAYER_ID, chosenPartySlot or ""))
 
 	-- === DEPLOYMENT PHASE ===
 	-- Player manually places each unit on PD (Player Deployment) tiles.
@@ -2365,6 +2458,20 @@ while true do
 			table.insert(deployPlayerUnits, u)
 		else
 			table.insert(deployEnemyUnits, u)
+		end
+	end
+
+	-- VISUAL CLEANUP (2026-10-15): destroy leftover unit models from the PREVIOUS battle
+	-- before this battle's models spawn. Enemy units get fresh ids each battle, so last
+	-- battle's enemy R15 clones (Unit_<oldId>) were orphaned in the UnitModels folder and
+	-- lingered -- floating over the new map during deployment. Nothing for THIS battle has
+	-- spawned yet here (enemies spawn just below; player units spawn as they deploy), so
+	-- clearing the whole folder is safe -- every current model is (re)created afterward.
+	do
+		local _staleModels = workspace:FindFirstChild("UnitModels")
+		if _staleModels then
+			_staleModels:ClearAllChildren()
+			print("[Main] Cleared leftover unit models from the previous battle.")
 		end
 	end
 
@@ -3291,7 +3398,7 @@ while true do
 	-- protected commit -> save -> BattleEnded order above (BUG-013 order unchanged):
 	-- count this battle (win or loss) and bring home dispatches that are due (their
 	-- XP goes through the wired Dispatch sink, materials through CurrencyService).
-	GuildMenuService.OnBattleCompleted()
+	local dispatchReturns = GuildMenuService.OnBattleCompleted()
 	-- Battle recruits (project_rules id 133): alive recruited Neutrals are purified and
 	-- join the roster on ANY battle end. Runs after the protected BUG-013 order above.
 	GuildMenuService.AdoptBattleRecruits(state.units)
@@ -3312,10 +3419,26 @@ while true do
 		end
 	end
 
-	if #rewardSummaries > 0 or battleGoldEarned > 0 then
-		print(string.format("[PostBattle] Sending %d reward(s) + %d gold to client", #rewardSummaries, battleGoldEarned))
+	-- Returned-dispatch summary (2026-10-14): dispatch resolves just above in
+	-- OnBattleCompleted; surface each returned unit's XP + reward materials on the
+	-- reward screen (the data was computed server-side then discarded). The unit was
+	-- away (not in state.units), so resolve its name via the roster table playerUnits.
+	local dispatchSummary = {}
+	if dispatchReturns and type(dispatchReturns.returned) == "table" then
+		for _, r in ipairs(dispatchReturns.returned) do
+			local nm = r.unitId
+			local pu = playerUnits[r.unitId]
+			if pu and pu.name then nm = pu.name end
+			table.insert(dispatchSummary, {
+				name = nm, xp = r.xp, matTier = r.matTier, matCount = r.matCount,
+			})
+		end
+	end
+
+	if #rewardSummaries > 0 or battleGoldEarned > 0 or #dispatchSummary > 0 then
+		print(string.format("[PostBattle] Sending %d reward(s) + %d gold + %d dispatch to client", #rewardSummaries, battleGoldEarned, #dispatchSummary))
 		BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary, gold = battleGoldEarned,
-			defeat = not isQualifyingVictory })
+			dispatch = dispatchSummary, defeat = not isQualifyingVictory })
 		rewardContinueSignal.Event:Wait()
 		print("[PostBattle] Player acknowledged rewards")
 	end
