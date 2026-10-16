@@ -734,3 +734,55 @@ map_gen_rules NEW row 93 'Ad Billboard "Dead" for Premium / Battle-Pass - themed
 map_gen_rules row 80 'Ad Billboard Eligibility + Earnings Fit': body + status cross-reference the new row 93 and the
   battle-pass-id placeholder. objects_encounters row 84 col9 carries the same cross-reference.
   Re-exported sheets: '12 Map Gen Rules', '17 Objects Encounters'.
+
+
+--- 2026-10-15 AD BILLBOARD: STRIP -> SINGLE-TILE MODEL (USER DECISION) ---
+map_gen_rules row 79 'Ad Billboard OBS Strip' REWRITTEN: billboard is now ONE object/model on EXACTLY ONE tile
+  (tall panel on a pole above the tile; ad size NOT limited by the 1-tile footprint). AT MOST ONE per map, placed on
+  the center-nearest ELIGIBLE OBS tile (eligible = >=1 adjacent passable, object-free neighbour, per placeObjects/V5
+  adjacency predicate); replaces that ONE OBS tile 1:1; the REST of the center OBS cluster stays normal OBS. No eligible
+  OBS tile -> no billboard (unchanged). Renders from a ServerStorage model (user's 'Old Roblox Billboard') when present,
+  else a fallback panel; ad shown as a DECAL on the model's panel face. Trade-off noted: single tile is a slightly
+  weaker obstacle than the old strip, but barrier/pathing role preserved via the rest of the cluster. Still impassable,
+  BlocksLoS, immovable, elevation-immune, non-landable (flight/teleport pass-over only), unbreakable. The old ~2-tile /
+  ~10-stud strip wording (Locked 2026-10-12) is marked SUPERSEDED 2026-10-15 (that strip model caused each tile to render
+  as its own panel and could wall itself in = BUG-042 generation crash). map_gen_rules 85 + 93 annotated for single-tile
+  consistency. objects_encounters row 84 'Ad Billboard' catalog rewritten to match + SUPERSEDED annotation + ServerStorage
+  render note. BUG-042 center-nearest-ELIGIBLE drop logic now applies to a SINGLE tile. Re-exported sheets '12 Map Gen
+  Rules' + '17 Objects Encounters'. Note: user's instruction said 'map_gen_rules rows 79/84' - map_gen_rules row 84 is the
+  OBS Blocker-Prop Elevation/Break Interaction row (no strip wording) and was LEFT INTACT; the strip wording lives in
+  map_gen_rules 79 and objects_encounters 84.
+
+
+--- 2026-10-15 AD BILLBOARD MULTI-MODEL / MULTI-FACE (USER DECISIONS 2026-10-15; supersedes single-fixed-model same day) ---
+map_gen_rules row 79 (Ad Billboard OBS Strip) + objects_encounters row 84 (Ad Billboard catalog) updated: MODEL ASSET now drawn from a
+  SEEDED RANDOM POOL of ALL ServerStorage/"Map Objects" (or ServerStorage root) models whose NAME STARTS WITH "Billboard" (normalizeName
+  casing). Old exact-name lookups 'Old Roblox Billboard' and 'Ad Billboard' DROPPED as the lookup; "Ad Billboard" no longer matches (starts
+  with "Ad"); the obstacle ObjectData/type KEY stays "Ad Billboard". Model pick is deterministic per map seed and MUST NOT perturb existing
+  map-gen RNG/obsFormRng ordering (dedicated/derived seed stream; same seed = same layout + same model) -- Dev impl detail.
+MULTI-FACE: each model may contain 1..N fixed flat Parts named AdFace1..AdFaceN (Option A fixed faces), each a static ad surface (placeholder
+  decal now, real Roblox immersive ad later), updated together; no AdFace# = obstacle only. NEVER clickable (no ClickDetector/GUI button; decal
+  display-only incl. live-ad phase; any Roblox-interactable ad surface is Roblox-controlled and must be kept clear of the active play area).
+  FALLBACK neon panel if no "Billboard"-prefixed model; all obstacle props identical across any model/fallback (one tile, impassable, BlocksLoS,
+  immovable, unbreakable, elevation-immune, non-landable). CAMERA-FACING/BillboardGui + script-rotated AdFace CONSIDERED and REJECTED (break
+  live-ad eligibility; single-player doesn't rescue it) -- fixed declared faces only. Prior single-fixed-model wording kept inline as [SUPERSEDED].
+  Also pointer-noted in map_gen_rules rows 85 (immunity exception) + 93 (Premium/battle-pass 'dead billboard' -- identical footprint now = same
+  single tile for ad vs. themed fallback). xlsx sheets "12 Map Gen Rules" + "17 Objects Encounters" re-exported (workbook not open).
+
+
+--- 2026-10-15 BILLBOARD IMAGE FOLDER + 20s CYCLE (USER DECISIONS 2026-10-15) ---
+Extends the multi-model/multi-face Ad Billboard rules. Placeholder images now come from a dedicated Studio folder ServerStorage > "Billboard Ad
+  Images" holding Decal objects (one Decal per image; asset ID in Texture/LocalizedTextureContent as rbxassetid://ID). Game reads whatever Decals
+  are present AT BATTLE START and paints them onto the model's AdFace1..AdFaceN fixed Parts at runtime (images NOT baked into models). Every
+  AdFace surface CYCLES through the folder images every 20 SECONDS, all faces together; STARTING image index seeded per map (reproducible,
+  determinism preserved -- no perturbation of map-gen RNG/obsFormRng), then advances on the 20s runtime timer. Empty/missing folder -> blank
+  AdFace surfaces or neon-panel fallback, NO error/crash. Image pool is SEPARATE from the "Billboard"-prefix MODEL pool (ServerStorage/Map
+  Objects). Placeholder-only: real Roblox immersive ads override the surface (Roblox-controlled); the user's cycle governs only the fallback/
+  placeholder display and resumes underneath when no live ad shows. NEVER clickable (display-only; no ClickDetector/GUI button). Cross-ref:
+  real-ad surfaces must be valid AdGui 8x4.5..32x18 studs with unobstructed sightline. Updated map_gen_rules row 79 (col_2) + objects_encounters
+  row 84 (col_7) full block; pointers in map_gen_rules row 85 (col_2) + objects_encounters row 84 (col_9). xlsx sheets "12 Map Gen Rules" +
+  "17 Objects Encounters" re-exported (workbook not open).
+
+
+--- 2026-10-15 AD BILLBOARD DECAL PROPERTY CORRECTION (BUG-045) ---
+Ad Billboard placeholder-image Decal property name CORRECTED in docs to match live Roblox Studio (confirmed 2026-10-15) and the implemented code (BUG-045). The working Decal image property is ColorMapContent (current Roblox SurfaceAppearance-style family: ColorMapContent / MetalnessMapContent / NormalMapContent / RoughnessMapContent), set as a Content object (Content.fromUri(assetId) / Content.fromAssetId(numericId)), NOT the legacy Texture / LocalizedTextureContent string field. Implementation sets ColorMapContent FIRST, with a guarded fallback to the legacy Texture string property only if ColorMapContent is not assignable (older runtimes). Append-only annotation added to: map_gen_rules row 79 (col_2), map_gen_rules row 85 (col_2), objects_encounters row 84 (col_7), objects_encounters row 84 (col_9) -- each tagged [2026-10-15 PROPERTY CORRECTION]; prior 'Texture/LocalizedTextureContent' wording retained above the note as history (SUPERSEDED). Unchanged: the 20s image cycle, the "Billboard Ad Images" folder name, AdFace1..N naming, seeded-start behavior, all obstacle/placement mechanics, and all gameplay numbers. xlsx sheets re-exported: "12 Map Gen Rules" and "17 Objects Encounters".

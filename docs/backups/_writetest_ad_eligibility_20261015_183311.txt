@@ -1,0 +1,1 @@
+OBSOLETE TEST ARTIFACT — safe to delete. Created during an aborted ad-eligibility documentation attempt on 2026-10-15 when the binary-safe write tool (run_python_with_write) was unavailable to the sub-agent. No DB/xlsx changes were made.

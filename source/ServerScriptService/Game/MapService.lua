@@ -1291,6 +1291,62 @@ local function placeObjects(tiles, w, h, biome, rng, regionTypeMap)
 		end
 	end
 
+	-- OBS Ad Billboard safety net (2026-10-15, BUG-042). The billboard is placed on the
+	-- centre-nearest THIN OBS cluster in ElevationPass, but that thinness test is
+	-- marker-based and runs BEFORE pool objects are drawn. A pool object (or a neighbouring
+	-- materialized OBS object) can occupy a billboard tile's only passable escape neighbour,
+	-- leaving a billboard tile with NO adjacent passable, object-free tile -> runFinalValidation
+	-- V5 then failed the ENTIRE map (all 3 attempts aborted). The Ad Billboard is cosmetic /
+	-- monetization and must NEVER fail generation. With full object knowledge here, apply V5's
+	-- EXACT predicate per billboard tile; if ANY tile of the one billboard strip is walled in,
+	-- drop the WHOLE strip (its tiles revert to normal passable ground). This realises the
+	-- locked "centre-nearest ELIGIBLE cluster, else no billboard" rule (map_gen_rules 79/84).
+	-- Opening a wall only ever improves reachability, so V13/connectivity results are preserved.
+	-- NON-billboard objects (OBS Blocker, pool) are untouched and still validate/retry as before.
+	do
+		local billboardTiles = {}
+		for _, obj in ipairs(placedObjects) do
+			if obj.type == "Ad Billboard" then
+				table.insert(billboardTiles, obj)
+			end
+		end
+		if #billboardTiles > 0 then
+			local function hasPassableNeighbor(ox, oy)
+				for _, dir in ipairs(CARDINAL) do
+					local ax, ay = ox + dir.x, oy + dir.y
+					if isInBounds(ax, ay, w, h) then
+						local adj  = tiles[ay][ax]
+						local aDef = TerrainData.Types[adj.terrain]
+						if aDef and aDef.passable ~= false and adj.object == nil then
+							return true
+						end
+					end
+				end
+				return false
+			end
+			local walledIn = false
+			for _, obj in ipairs(billboardTiles) do
+				if not hasPassableNeighbor(obj.x, obj.y) then walledIn = true; break end
+			end
+			if walledIn then
+				for _, obj in ipairs(billboardTiles) do
+					local tile = tiles[obj.y][obj.x]
+					tile.object    = nil
+					tile.obsForm    = nil
+					tile.isObstacle = nil
+				end
+				local kept = {}
+				for _, obj in ipairs(placedObjects) do
+					if obj.type ~= "Ad Billboard" then table.insert(kept, obj) end
+				end
+				placedObjects = kept
+				warn(string.format(
+					"[MapService] Ad Billboard dropped: %d billboard tile(s) had no adjacent passable tile (walled-in); generation continues with no billboard this map (BUG-042).",
+					#billboardTiles))
+			end
+		end
+	end
+
 	return placedObjects, poolAudit
 end
 
@@ -1467,8 +1523,18 @@ local function runFinalValidation(mapState)
 				end
 			end
 			if not hasAdj then
-				table.insert(errors,
-					obj.id .. " (" .. obj.type .. ") no adjacent passable tile")
+				-- BUG-042 defense-in-depth: the Ad Billboard is cosmetic/monetization and must
+				-- NEVER abort map generation. placeObjects already drops a walled-in billboard;
+				-- this covers any other path -> warn and tolerate (a walled-in billboard is just
+				-- an inaccessible decoration; V13 reachability already holds WITHOUT it). Every
+				-- NON-billboard impassable object still fails -> retry, exactly as designed.
+				if obj.type == "Ad Billboard" then
+					warn("[MapService] V5: Ad Billboard " .. obj.id ..
+						" has no adjacent passable tile - tolerated, non-fatal (BUG-042).")
+				else
+					table.insert(errors,
+						obj.id .. " (" .. obj.type .. ") no adjacent passable tile")
+				end
 			end
 		end
 	end

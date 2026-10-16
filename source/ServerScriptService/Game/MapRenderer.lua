@@ -455,7 +455,7 @@ local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap
 	-- checks for an existing model on the tile first. Only in TERRAIN view mode.
 	if viewMode == "TERRAIN" and objectName and objectName ~= "None" then
 		local tileTopY = tile.Position.Y + tileHeight / 2
-		spawnObjectModel(objectName, tile, tileTopY, x .. "_" .. y)
+		spawnObjectModel(objectName, tile, tileTopY, x .. "_" .. y, generatedMap and generatedMap.seed)
 	end
 end
 
@@ -477,14 +477,25 @@ local function normalizeName(s)
 	return string.lower((string.gsub(tostring(s), "%s+", "")))
 end
 
-local function findObjectModel(objectName)
-	local folder = getMapObjectsFolder()
-	if not folder or not objectName then return nil end
-	-- 1) exact name
-	local m = folder:FindFirstChild(objectName)
+-- AD BILLBOARD MODEL POOL (multi-model, 2026-10-15 USER DECISION; supersedes the
+-- single "Old Roblox Billboard" alias). The single-tile "Ad Billboard" object renders
+-- from a SEEDED-RANDOM pick among ALL Models in ServerStorage/"Map Objects" (or
+-- ServerStorage root) whose NAME STARTS WITH "Billboard" (normalized, case/space-
+-- insensitive). The obstacle TYPE KEY stays "Ad Billboard"; only the MODEL lookup
+-- changed. Each chosen model may carry 1..N flat ad-surface Parts named AdFace1,
+-- AdFace2, ... (see prepareBillboardAdFaces) for a future real Roblox AdGui; ads stay out of
+-- scope until the game is ad-eligible (map_gen_rules row 80). The pick is deterministic
+-- per map seed and consumes NO map-gen RNG (seedPickIndex is a pure hash of the seed),
+-- so map layout/forms are byte-identical to before for the same seed. Empty pool ->
+-- nil -> existing neon-panel fallback (no crash). See map_gen_rules rows 79/85/93 and
+-- objects_encounters row 84 (2026-10-15 multi-model/multi-face).
+local BILLBOARD_MODEL_PREFIX = "billboard"  -- normalized name prefix for the pool
+
+local function findModelInFolder(folder, name)
+	if not folder or not name then return nil end
+	local m = folder:FindFirstChild(name)
 	if m and m:IsA("Model") then return m end
-	-- 2) normalized (case/space-insensitive) fallback
-	local target = normalizeName(objectName)
+	local target = normalizeName(name)
 	for _, child in ipairs(folder:GetChildren()) do
 		if child:IsA("Model") and normalizeName(child.Name) == target then
 			return child
@@ -493,13 +504,101 @@ local function findObjectModel(objectName)
 	return nil
 end
 
+-- Collect every Model whose normalized name starts with "billboard", from the
+-- "Map Objects" folder first then ServerStorage root. De-duplicated by instance.
+-- Returned in a STABLE order (name-sorted) so the seeded pick is reproducible
+-- regardless of Explorer/child ordering.
+local function collectBillboardPool()
+	local pool = {}
+	local seen = {}
+	local function scan(folder)
+		if not folder then return end
+		for _, child in ipairs(folder:GetChildren()) do
+			if child:IsA("Model") and not seen[child]
+				and string.sub(normalizeName(child.Name), 1, #BILLBOARD_MODEL_PREFIX) == BILLBOARD_MODEL_PREFIX
+			then
+				seen[child] = true
+				table.insert(pool, child)
+			end
+		end
+	end
+	scan(getMapObjectsFolder())
+	scan(game:GetService("ServerStorage"))
+	table.sort(pool, function(a, b)
+		if a.Name == b.Name then return tostring(a) < tostring(b) end
+		return a.Name < b.Name
+	end)
+	return pool
+end
+
+-- Deterministic index in [1, n] derived purely from the map seed (no RNG stream
+-- consumed, so existing map-gen draws are unperturbed). Simple 32-bit integer hash.
+local function seedPickIndex(seed, n)
+	if n <= 0 then return nil end
+	local s = tonumber(seed) or 0
+	local h = (math.floor(s) % 2147483647 + 2147483647) % 2147483647
+	-- a couple of integer mixes so near-seeds don't map to the same model
+	h = (h * 1103515245 + 12345) % 2147483648
+	h = (h + math.floor(h / 65536)) % 2147483648
+	return (h % n) + 1
+end
+
+local function findObjectModel(objectName, seed)
+	if not objectName then return nil end
+	local folder = getMapObjectsFolder()
+	-- AD BILLBOARD: seeded-random pick from the "Billboard"-prefix model pool.
+	if objectName == "Ad Billboard" then
+		local pool = collectBillboardPool()
+		if #pool == 0 then return nil end  -- -> neon-panel fallback
+		local idx = seedPickIndex(seed, #pool) or 1
+		return pool[idx]
+	end
+	-- Non-billboard objects: exact / normalized by the object's own name, in Map
+	-- Objects (unchanged behavior for every other object type).
+	return findModelInFolder(folder, objectName)
+end
+-- AD BILLBOARD AD-FACE PREP (multi-face, 2026-10-15 USER DECISION). Finds every
+-- descendant Part named "AdFace" + an integer (AdFace1, AdFace2, ...) in a billboard
+-- model clone and marks it as a static ad surface. Our code attaches NO ClickDetector
+-- and NO GUI button (NEVER clickable, per map_gen_rules row 79 / objects_encounters
+-- row 84); it also strips any ClickDetector a model author may have left on the model
+-- or its ad faces, so the billboard can never steal a tap from tile targeting. The
+-- placeholder decal is authored on each AdFace part by the model builder (display-only).
+-- A model with NO AdFace# part still renders fine as an obstacle (no ad surface). The
+-- future real Roblox immersive-ad AdGui attaches to these tagged faces when the game
+-- is ad-eligible (map_gen_rules row 80) -- not created here.
+local function prepareBillboardAdFaces(clone)
+	if not clone then return 0 end
+	-- Never clickable: remove any ClickDetector anywhere in the model.
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("ClickDetector") then
+			d:Destroy()
+		end
+	end
+	-- Tag each AdFace#. CollectionService tag + attribute so the live-ad hook can find
+	-- them in one query later without re-scanning names (OPT-002: avoid repeat walks).
+	local CollectionService = game:GetService("CollectionService")
+	local count = 0
+	for _, d in ipairs(clone:GetDescendants()) do
+		if d:IsA("BasePart") and string.match(d.Name, "^AdFace%d+$") then
+			d:SetAttribute("IsAdFace", true)
+			CollectionService:AddTag(d, "AdFace")
+			count += 1
+		end
+	end
+	clone:SetAttribute("AdFaceCount", count)
+	return count
+end
+
 -- Spawn a map object's model standing on the tile top. Returns the clone, or nil
 -- if no model exists (caller then draws the fallback cube). Visual-only — does
 -- NOT set passability (the caller owns that from object data).
 -- NOTE: plain `function` (not `local function`) so this assigns to the forward-
 -- declared `local spawnObjectModel` above, making it visible to createTile.
-function spawnObjectModel(objectName, tileChild, tileTopY, uniqueKey)
-	local template = findObjectModel(objectName)
+function spawnObjectModel(objectName, tileChild, tileTopY, uniqueKey, seed)
+	-- `seed` (optional) selects the Ad Billboard model deterministically from the
+	-- "Billboard"-prefix pool; nil for non-billboard objects (ignored by findObjectModel).
+	local template = findObjectModel(objectName, seed)
 	if not template then return nil end
 	local clone = template:Clone()
 	clone.Name = string.format("MapObjModel_%s_%s", tostring(objectName), tostring(uniqueKey or ""))
@@ -542,6 +641,14 @@ function spawnObjectModel(objectName, tileChild, tileTopY, uniqueKey)
 		clone.Anchored = true
 		clone.CanCollide = false
 	end
+	-- AD BILLBOARD multi-face prep (2026-10-15): if this is a billboard model, mark
+	-- every AdFace1..AdFaceN part as an ad surface and GUARANTEE it is never clickable
+	-- (strip any ClickDetector a model author may have left; attach none ourselves).
+	-- The real Roblox AdGui hook (future, ads not eligible yet) attaches to these same
+	-- faces. All property writes happen BEFORE Parent (NET-004) above/here.
+	if objectName == "Ad Billboard" then
+		prepareBillboardAdFaces(clone)
+	end
 	clone.Parent = tileChild.Parent  -- same mapFolder as the tile
 	return clone
 end
@@ -575,7 +682,7 @@ local function renderBlockers(generatedMap, mapFolder)
 				-- if the mapFolder has no existing model clone for this tile.
 				local existing = mapFolder:FindFirstChild(string.format("MapObjModel_%s_%s", tostring(blocker.objectType), bx .. "_" .. by))
 				local tileTopY = child.Position.Y + tileHeight / 2
-				local modelClone = existing or spawnObjectModel(blocker.objectType, child, tileTopY, bx .. "_" .. by)
+				local modelClone = existing or spawnObjectModel(blocker.objectType, child, tileTopY, bx .. "_" .. by, generatedMap and generatedMap.seed)
 				if not modelClone then
 					local blockerHeight = ELEVATION_STEP * 1.5
 					local blockerPart = Instance.new("Part")
@@ -997,7 +1104,7 @@ function MapRenderer.RenderOneObject(mapFolder, instance)
 			-- Render the real model for EVERY object (passable or not). Model is
 			-- visual-only; passability is set above from object data.
 			local tileTopY = child.Position.Y + child.Size.Y / 2
-			local modelClone = spawnObjectModel(instance.type, child, tileTopY, instance.x .. "_" .. instance.y)
+			local modelClone = spawnObjectModel(instance.type, child, tileTopY, instance.x .. "_" .. instance.y, mapFolder:GetAttribute("Seed"))
 			if not modelClone and nonPassable then
 				-- No model AND it blocks: fall back to the blocker cube so the
 				-- impassable tile still reads as occupied. Passable objects with no
@@ -1088,6 +1195,262 @@ function MapRenderer.ReshapeTile(mapFolder, x, y, newTerrain, newElevation)
 		end
 	end
 	return false
+end
+
+--------------------------------------------------
+-- AD BILLBOARD RUNTIME IMAGE CYCLE (2026-10-15 USER DECISION; map_gen_rules 79/85,
+-- objects_encounters 84). This is the "live-ad hook" reserved by prepareBillboardAdFaces.
+--
+-- WHAT: at battle start, read the Decal objects in ServerStorage > "Billboard Ad Images"
+-- and paint their image onto every AdFace1..N part on the map (all faces show the SAME
+-- image at once, per spec), then cycle to the next image every 20 seconds. The starting
+-- image is chosen deterministically from the MAP SEED via a DEDICATED derived seed stream
+-- (mapSeed + AD_IMAGE_SEED_OFFSET) so it does NOT consume or perturb map-gen / obsFormRng
+-- RNG (project rule: same seed + content version = same result stays byte-identical).
+--
+-- WHY SERVER: the image pool lives in ServerStorage, which the client cannot read
+-- (MEM-003); the chosen image is authoritative shared state (ARC-001); and a swap every
+-- 20 s is a low-frequency property write, NOT the per-frame tween/particle/animation work
+-- NET-001 forbids on the server. Each AdFace Decal is a server instance inside mapFolder,
+-- so writing its image replicates to every client automatically (one write / face / 20 s).
+--
+-- RUNTIME IMAGE PROPERTY (CRITICAL, 2026-10-15 user runtime finding): on the user's current
+-- Studio/Roblox version the legacy Decal `Texture` property does NOTHING — the face stays
+-- blank. The working image property is the newer SurfaceAppearance-style `ColorMapContent`
+-- (Content value). So setAdFaceImage() writes `ColorMapContent` FIRST (as a Content built
+-- from the asset id), and FALLS BACK to the legacy `Texture` string only if ColorMapContent
+-- is absent / not assignable on that Decal (older runtimes). BOTH writes are pcall-guarded
+-- so a property that does not exist on a given runtime raises no error. We never set ONLY
+-- the legacy Texture.
+--
+-- NEVER CLICKABLE: we attach no ClickDetector / GUI button here; prepareBillboardAdFaces
+-- already strips any author-left ClickDetector. EMPTY / MISSING folder: faces are left on
+-- their authored placeholder decal (blank/neon), no crash, no cycle thread started.
+--------------------------------------------------
+
+-- Dedicated derived-seed offset for the ad-image stream (own stream, so map layout/forms
+-- for a given seed are unchanged). Follows the project's "+NNNNN derived seed" convention.
+local AD_IMAGE_SEED_OFFSET = 51000
+local AD_IMAGE_CYCLE_SECONDS = 20
+local AD_IMAGE_FOLDER_NAME = "Billboard Ad Images"
+
+-- Only one cycle runs at a time. A new battle / Regenerate reassigns the map folder, so we
+-- explicitly cancel the previous cycle before starting a new one (PRF-004: no leaked thread).
+local _activeAdCycleThread: thread? = nil
+
+-- Collect the ordered list of ad image asset ids from ServerStorage > "Billboard Ad Images".
+-- Each child Decal contributes its image: prefer the Decal's own ColorMapContent/Texture if
+-- the author set one, else fall back to nothing for that entry. Returns a STABLE, name-sorted
+-- list of { assetId = string?, content = Content? } so the seeded pick is reproducible. Empty
+-- list => caller leaves faces blank (no crash).
+local function collectAdImages()
+	local ServerStorage = game:GetService("ServerStorage")
+	local folder = ServerStorage:FindFirstChild(AD_IMAGE_FOLDER_NAME)
+	if not folder then
+		return {}  -- missing folder -> blank faces, no crash (spec)
+	end
+	local decals = {}
+	for _, child in ipairs(folder:GetChildren()) do
+		if child:IsA("Decal") then
+			table.insert(decals, child)
+		end
+	end
+	table.sort(decals, function(a, b)
+		if a.Name == b.Name then return tostring(a) < tostring(b) end
+		return a.Name < b.Name
+	end)
+	local images = {}
+	for _, decal in ipairs(decals) do
+		local assetId: string? = nil
+		-- Read whichever image property the author populated on the source Decal.
+		pcall(function()
+			local c = (decal :: any).ColorMapContent
+			if typeof(c) == "Content" then
+				-- Content built fromUri exposes .Uri; fromAssetId may instead expose a
+				-- numeric asset id. Read whichever is populated.
+				if c.Uri and c.Uri ~= "" then
+					assetId = c.Uri
+				elseif (c :: any).AssetId then
+					assetId = "rbxassetid://" .. tostring((c :: any).AssetId)
+				end
+			end
+		end)
+		if not assetId then
+			pcall(function()
+				local t = (decal :: any).Texture
+				if type(t) == "string" and t ~= "" then
+					assetId = t
+				end
+			end)
+		end
+		if assetId then
+			table.insert(images, assetId)
+		end
+	end
+	return images
+end
+
+-- Write one image asset id onto a single AdFace Decal. ColorMapContent FIRST (current API,
+-- the only property that renders on the user's version), legacy Texture fallback, both
+-- pcall-guarded so a missing property never errors. Returns true if either write succeeded.
+local function setAdFaceImage(decal: Decal, assetId: string): boolean
+	if not decal or not assetId or assetId == "" then return false end
+	-- ColorMapContent is the newer SurfaceAppearance-style property and is the ONLY one
+	-- that renders on the user's current Studio version. It requires a Content OBJECT
+	-- (not a raw string): Content.fromUri(uri) for a "rbxassetid://..."/URL string, or
+	-- Content.fromAssetId(number) for a bare numeric id. We build a Content first and only
+	-- treat ColorMapContent as succeeding if a Content was actually built AND assigned.
+	local content = nil
+	pcall(function()
+		-- Our collected ids are strings; prefer fromUri. If the string is a bare number,
+		-- also try fromAssetId. Guard each in case a given runtime lacks that constructor.
+		local okUri = pcall(function()
+			content = Content.fromUri(assetId)
+		end)
+		if (not okUri or content == nil) then
+			local numId = tonumber(assetId)
+			if numId then
+				pcall(function()
+					content = Content.fromAssetId(numId)
+				end)
+			end
+		end
+	end)
+	if content ~= nil then
+		local anyDecal = decal :: any
+		local okAssign = pcall(function()
+			anyDecal.ColorMapContent = content
+		end)
+		if okAssign then
+			return true
+		end
+	end
+	-- Fallback: legacy Texture (older Studio versions where ColorMapContent is absent or
+	-- the Content API/property is not assignable on this runtime). Raw string is correct here.
+	local anyDecalTex = decal :: any
+	local okTexture = pcall(function()
+		anyDecalTex.Texture = assetId
+	end)
+	return okTexture
+end
+
+-- Paint `assetId` onto every AdFace Decal under the given map folder. All faces share the
+-- SAME image (spec: cycle ALL faces together). Faces are found via the "AdFace" tag set by
+-- prepareBillboardAdFaces; for each tagged BasePart we drive its child Decal(s).
+--
+-- Broad-face auto-create (BUG-046): when an AdFace part has NO authored Decal, we create our
+-- own display-only Decal so the folder images have somewhere to live. A Decal only shows on
+-- the single Face it is assigned to, so a Front-only default renders BLANK whenever the sign's
+-- visible broad side is not the part's Front face. Instead we create a Decal on BOTH broad
+-- faces of the part -- the opposite face-pair whose normal runs along the part's THINNEST Size
+-- axis (a thin panel's two big flat faces). This makes the image readable from front and back
+-- regardless of how the model author oriented the part. Auto-created decals are named
+-- "AdFaceDecal" and REUSED across the 20s cycle (never stacked).
+local function broadFaceNormals(face: BasePart): { Enum.NormalId }
+	-- The broad faces are perpendicular to the thinnest dimension (their normal IS the thin axis).
+	local s = face.Size
+	-- thin X -> Right/Left ; thin Y -> Top/Bottom ; thin Z -> Front/Back
+	if s.X <= s.Y and s.X <= s.Z then
+		return { Enum.NormalId.Right, Enum.NormalId.Left }
+	elseif s.Y <= s.X and s.Y <= s.Z then
+		return { Enum.NormalId.Top, Enum.NormalId.Bottom }
+	else
+		return { Enum.NormalId.Front, Enum.NormalId.Back }
+	end
+end
+
+local function paintAllAdFaces(mapFolder: Instance, assetId: string)
+	local CollectionService = game:GetService("CollectionService")
+	for _, face in ipairs(CollectionService:GetTagged("AdFace")) do
+		-- Only touch faces that belong to THIS map folder (ignore stale tags from a prior map).
+		if face:IsA("BasePart") and face:IsDescendantOf(mapFolder) then
+			local painted = false
+			for _, d in ipairs(face:GetChildren()) do
+				if d:IsA("Decal") then
+					if setAdFaceImage(d, assetId) then painted = true end
+				end
+			end
+			-- No authored placeholder Decal on this face: create display-only Decals on BOTH
+			-- broad faces (BUG-046) so the sign shows regardless of part orientation. The repaint
+			-- loop above already handled any decals that exist (incl. our own on later cycles), so
+			-- `painted` is only false the FIRST time -- the broad-face create runs once; thereafter
+			-- the two "AdFaceDecal" children are found and repainted above (no pile-up). Properties
+			-- set BEFORE Parent (NET-004). Never clickable (a Decal cannot receive clicks; we add no
+			-- detector).
+			if not painted then
+				for _, normalId in ipairs(broadFaceNormals(face)) do
+					local decal = Instance.new("Decal")
+					decal.Name = "AdFaceDecal"
+					decal.Face = normalId
+					setAdFaceImage(decal, assetId)
+					decal.Parent = face
+				end
+			end
+		end
+	end
+end
+
+--- Start the ad-image cycle for a freshly rendered map folder.
+--- @param mapFolder Folder returned by MapRenderer.Render (already parented to workspace).
+--- @param mapSeed   number the generated map's seed (generatedMap.seed); drives the seeded
+---                   starting image via a DEDICATED derived stream (no map-gen perturbation).
+--- Safe to call every battle start / Regenerate: it cancels any prior cycle first. If the
+--- image folder is empty/missing, faces are left blank and NO thread is started. The cycle
+--- self-terminates when mapFolder leaves the DataModel (next map Destroy / Regenerate).
+function MapRenderer.StartAdImageCycle(mapFolder: Instance?, mapSeed: number?)
+	-- Cancel any previous cycle (prevents two loops fighting over the faces).
+	if _activeAdCycleThread then
+		pcall(task.cancel, _activeAdCycleThread)
+		_activeAdCycleThread = nil
+	end
+	if not mapFolder then return end
+
+	local images = collectAdImages()
+	if #images == 0 then
+		-- Empty / missing "Billboard Ad Images" folder: blank faces, no crash, no cycle.
+		print("[MapRenderer] Ad image cycle: no images in ServerStorage > '"
+			.. AD_IMAGE_FOLDER_NAME .. "' — faces left blank.")
+		return
+	end
+
+	-- Seeded starting index from a DEDICATED derived stream (does not touch map-gen RNG).
+	local seed = (tonumber(mapSeed) or os.time()) + AD_IMAGE_SEED_OFFSET
+	local startIndex = Random.new(seed):NextInteger(1, #images)
+
+	-- Paint the starting image immediately so faces are correct the instant the map appears.
+	paintAllAdFaces(mapFolder, images[startIndex])
+
+	if #images < 2 then
+		-- A single image never needs cycling; it is already painted. No thread needed.
+		print(string.format("[MapRenderer] Ad image cycle: 1 image, start painted (seed %d).", seed))
+		return
+	end
+
+	local index = startIndex
+	_activeAdCycleThread = task.spawn(function()
+		while true do
+			task.wait(AD_IMAGE_CYCLE_SECONDS)
+			-- Self-terminate when the map folder is gone (battle ended / Regenerate / next quest).
+			if not mapFolder or not mapFolder:IsDescendantOf(game) then
+				break
+			end
+			index = (index % #images) + 1
+			paintAllAdFaces(mapFolder, images[index])
+		end
+		_activeAdCycleThread = nil
+	end)
+	print(string.format(
+		"[MapRenderer] Ad image cycle: %d image(s), start #%d, every %ds (seed %d).",
+		#images, startIndex, AD_IMAGE_CYCLE_SECONDS, seed))
+end
+
+--- Explicitly stop the ad-image cycle (optional; the loop also self-terminates when the
+--- map folder is destroyed). Safe to call when no cycle is running.
+function MapRenderer.StopAdImageCycle()
+	if _activeAdCycleThread then
+		pcall(task.cancel, _activeAdCycleThread)
+		_activeAdCycleThread = nil
+	end
 end
 
 return MapRenderer

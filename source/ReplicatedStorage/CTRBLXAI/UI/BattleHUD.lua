@@ -612,7 +612,10 @@ local function buildObjectCard()
 end
 
 function BattleHUD._buildActiveUnit()
-	if not activeUnitPanel then return end
+	if not activeUnitPanel then
+		if _G.CTRBLXAI_DeploymentActive then print("[AU-DIAG] _buildActiveUnit: activeUnitPanel is NIL — panel not created") end
+		return
+	end
 	clearFrame(activeUnitPanel)
 	if _selection and _selection.kind == "object" then
 		buildObjectCard()
@@ -620,6 +623,18 @@ function BattleHUD._buildActiveUnit()
 	end
 	local d = (_selection and _selection.kind == "unit" and _selection.data) or presentation.actor
 	activeUnitPanel.Visible = (d ~= nil)
+	if _G.CTRBLXAI_DeploymentActive then
+		print(string.format("[AU-DIAG] built unit=%s side=%s visible=%s DO=%s parent=%s",
+			tostring(d and d.name), tostring(d and d.side), tostring(activeUnitPanel.Visible),
+			tostring(screenGui and screenGui.DisplayOrder), tostring(screenGui and screenGui.Parent and screenGui.Parent.Name)))
+		local _p = activeUnitPanel
+		task.defer(function()
+			if _p and _p.Parent then
+				print(string.format("[AU-DIAG] rect pos=(%d,%d) size=(%d,%d) visible=%s",
+					_p.AbsolutePosition.X, _p.AbsolutePosition.Y, _p.AbsoluteSize.X, _p.AbsoluteSize.Y, tostring(_p.Visible)))
+			end
+		end)
+	end
 	if not d then return end
 	local pad = Instance.new("UIPadding", activeUnitPanel)
 	pad.PaddingTop = UDim.new(0, 8); pad.PaddingLeft = UDim.new(0, 8)
@@ -2771,6 +2786,14 @@ function BattleHUD.Cleanup()
 	closePeekCard(); _selection = nil; tileInfoPanel = nil; turnOrderBar = nil; timePanel = nil; eventPanel = nil; weatherPanel = nil; conditionsPanel = nil; battleLogPanel = nil
 	if viewModeDropdown then viewModeDropdown:Destroy() end
 	viewModeButtons = nil; viewModeViewBtn = nil; viewModeDropdown = nil; currentCameraMode = "Isometric"
+end
+
+-- Raise/lower the HUD ScreenGui's DisplayOrder. Used by the deployment phase, whose
+-- own ScreenGui (DisplayOrder 15) otherwise renders ON TOP of the compact unit panel
+-- (HUD = 10), hiding it. Deployment bumps this above 15 so the panel shows; battle
+-- leaves it at the default. No-op until ensureRoot has created the ScreenGui. (2026-10-15)
+function BattleHUD.SetDisplayOrder(order: number)
+	if screenGui then screenGui.DisplayOrder = order end
 end
 
 return BattleHUD

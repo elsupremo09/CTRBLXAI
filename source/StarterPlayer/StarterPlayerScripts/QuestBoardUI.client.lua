@@ -392,12 +392,12 @@ end)
 -- EVENT LISTENER
 --------------------------------------------------
 
-BattleEvents.QuestBoardOpen.OnClientEvent:Connect(function(data)
-	if data and data.quests then
-		show(data.quests)
-	else
-		warn("[QuestBoardUI] QuestBoardOpen received with no quest data")
-	end
+-- RETIRED 2026-10-16: the quest board is now an in-menu page in GuildMenu.client.lua
+-- (Adventurer's Guild), which listens for QuestBoardOpen and renders the quests there.
+-- This standalone screen no longer shows itself. The build above is left intact (unused)
+-- to keep the diff small; the listener below is a no-op so only the in-menu page responds.
+BattleEvents.QuestBoardOpen.OnClientEvent:Connect(function(_data)
+	-- intentionally does nothing; the guild-menu Adventurer's Guild page handles quests now.
 end)
 
 print("[CTRBLXAI] QuestBoardUI initialized — waiting for QuestBoardOpen event")

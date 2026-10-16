@@ -490,13 +490,39 @@ function ElevationPass.Run(mapState)
 			end
 		end
 
-		-- 5) Resolve + apply each cluster's form. The nearest-centre cluster becomes the one
-		--    billboard; every OTHER cluster takes the existing spike-vs-blocker roll unchanged.
+		-- Single-tile Ad Billboard (2026-10-15, Option 3): within the chosen cluster the
+		-- billboard occupies exactly ONE tile — the one nearest the map centre (pure geometry,
+		-- NO RNG, row-major tie-break -> deterministic). Every tile of a THIN cluster has a
+		-- passable-terrain cardinal neighbour (thinEnough), so any tile is terrain-eligible;
+		-- the object-level walled-in safety net (MapService placeObjects, BUG-042) still drops
+		-- the single tile if a pool object leaves it with no passable neighbour.
+		local function pickBillboardTile(cluster)
+			local mcx, mcy = (w + 1) / 2, (h + 1) / 2
+			local best, bestD = nil, nil
+			for _, p in ipairs(cluster) do
+				local dx, dy = p.x - mcx, p.y - mcy
+				local d = dx * dx + dy * dy
+				if bestD == nil or d < bestD then
+					best, bestD = p, d
+				end
+			end
+			return best
+		end
+
+		-- 5) Resolve + apply each cluster's form. The nearest-centre cluster HOSTS the one
+		--    single-tile billboard (its other tiles become blocker-form OBS); every OTHER
+		--    cluster takes the existing spike-vs-blocker roll unchanged.
 		local spikeTiles, blockerStrips, billboardPlaced, maxRaised = 0, 0, false, 0
 		for i, cluster in ipairs(clusters) do
 			local form = "spike"
+			local billboardPos = nil
 			if i == billboardIdx then
-				form = "billboard"
+				-- This cluster hosts the lone Ad Billboard: its tiles are blocker-form OBS,
+				-- except the single centre-nearest tile picked here (Option 3, 2026-10-15).
+				-- (Old behaviour marked EVERY tile "billboard" -> one Ad Billboard object per
+				-- tile -> multiple panels; now it is exactly one object.)
+				form = "blocker"
+				billboardPos = pickBillboardTile(cluster)
 				billboardPlaced = true
 			else
 				local r = roll()
@@ -539,7 +565,13 @@ function ElevationPass.Run(mapState)
 				-- this flag. MapService.placeObjects materializes the object from obsForm.
 				for _, pos in ipairs(cluster) do
 					local t = tiles[pos.y][pos.x]
-					t.obsForm    = form
+					-- Single-tile billboard: only the chosen tile is "billboard"; the rest of
+					-- the cluster stays blocker-form OBS (preserves the barrier; one object).
+					if billboardPos and pos.x == billboardPos.x and pos.y == billboardPos.y then
+						t.obsForm = "billboard"
+					else
+						t.obsForm = form
+					end
 					t.isObstacle = true
 				end
 				blockerStrips = blockerStrips + 1

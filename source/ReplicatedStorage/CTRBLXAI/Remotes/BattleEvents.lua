@@ -146,6 +146,10 @@ local FUNCTION_NAMES = {
 	-- nil r clears the tint. Persisted on next save.
 	"RequestSetBodyColor",
 	"GetConsumableSlots",
+	-- Dismiss a roster unit from the Loadout Info tab (2026-10-15). Two modes:
+	-- (unitId) preview -> { ok, cost, canAfford, isAvatar, name }; (unitId, true)
+	-- commits: unequips all gear to inventory, charges 5x recruitment severance, removes the unit.
+	"RequestDismissUnit",
 }
 
 local BattleEvents = {}

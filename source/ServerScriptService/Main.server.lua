@@ -894,6 +894,13 @@ if game:GetService("RunService"):IsStudio() then
 			newFolder.Parent = workspace
 			mapFolder = newFolder
 
+			-- AD BILLBOARD image cycle (2026-10-15): (re)start the seeded ad-image cycle for
+			-- the regenerated map. StartAdImageCycle cancels any prior cycle first, so the old
+			-- map's loop (whose folder was Destroyed above) is replaced cleanly. Seeded start
+			-- from newMap.seed via a dedicated derived stream (no map-gen RNG perturbation);
+			-- empty/missing "Billboard Ad Images" folder -> blank faces, no crash, no thread.
+			MapRenderer.StartAdImageCycle(newFolder, newMap.seed)
+
 			-- Update module-level map state so services use the new map.
 			generatedMap  = newMap
 			MAP_WIDTH     = newMap.width
@@ -1157,9 +1164,14 @@ if game:GetService("RunService"):IsStudio() then
 end
 
 BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId)
-	-- Find the unit in state
+	-- Find the unit. During a live battle it is in state.units; during the DEPLOYMENT
+	-- phase the battle state does not exist yet (CreateBattleState runs at battle start),
+	-- so fall back to allUnitsList -- the same fully-built unit objects (stats, equipment,
+	-- skills) that later become state.units. This lets the detailed inspector window work
+	-- during deployment with no second data path. (2026-10-15)
 	local unit = nil
-	for _, u in ipairs(state.units) do
+	local searchList = (state and state.units) or allUnitsList or {}
+	for _, u in ipairs(searchList) do
 		if u.id == unitId then unit = u; break end
 	end
 	if not unit then return end
@@ -1640,7 +1652,10 @@ while true do
 		activityConn:Disconnect()
 		activitySignal:Destroy()
 	end
-	GuildMenuService.Close()
+	-- 2026-10-16: do NOT close the base menu here. The quest board is now an in-menu page
+	-- (Adventurer's Guild) that stays open; closing would hide it. The menu is closed once,
+	-- just before deployment (and on abandon). The client already switched to the
+	-- Adventurer's Guild page when the player opened it.
 	print(`[Loop] Activity launched: {launchedActivity}`)
 
 	-- ACTIVITY DISPATCH. Today only "quest" exists; dungeon/raid/PvP become additional
@@ -1722,6 +1737,17 @@ while true do
 	questMapFolder = MapRenderer.Render(generatedMap, "TERRAIN")
 	questMapFolder.Parent = workspace
 	mapFolder = questMapFolder
+
+	-- AD BILLBOARD image cycle (2026-10-15 USER DECISION; map_gen_rules 79/85,
+	-- objects_encounters 84). Start the seeded, 20-second ad-image cycle now that the
+	-- quest map is live in workspace. Server-owned: it reads the Decal pool from
+	-- ServerStorage > "Billboard Ad Images" (client can't see ServerStorage) and paints
+	-- the image onto every AdFace1..N via ColorMapContent (legacy Texture fallback). The
+	-- starting image is seeded from generatedMap.seed through a DEDICATED derived stream,
+	-- so map layout/forms for a given seed stay byte-identical. Empty/missing folder ->
+	-- blank faces, no crash, no cycle thread. The loop self-terminates when this folder
+	-- is Destroyed (next quest / Regenerate). Never clickable (no ClickDetector/GUI).
+	MapRenderer.StartAdImageCycle(questMapFolder, generatedMap.seed)
 
 	-- Slice 5 blocker #2: give ObjectEffectService a way to render runtime-spawned
 	-- objects (Forge, Mimic reveal) into the live mapFolder. The closure reads the
@@ -2445,6 +2471,19 @@ while true do
 					tileY      = u.tileY,
 					weaponName = wpnName,
 					enemyType  = u.enemyType,  -- tier (Grunt/Veteran/Elite) for the deployment tier star
+					level      = u.level,  -- real unit level for the deployment cell Lv badge (was unsent -> always showed Lv.1) (2026-10-15)
+					-- Unit face for the deployment roster cell (same field the battle panels use).
+					portraitAssetId = u.portraitAssetId,  -- (2026-10-15)
+					-- Live stats so the compact inspector panel shows real data during deployment
+					-- (same field expressions BattleVisualBroadcaster.serializeUnit uses). (2026-10-15)
+					currentHp   = u.currentHp,
+					maxHp       = u.maxHp,
+					currentMp   = u.currentMp or 0,
+					maxMp       = u.maxMp or 0,
+					currentAp   = u.currentAp,
+					remainingRt = u.remainingRt,
+					doctrine    = u.doctrineId and DoctrineData[u.doctrineId] and DoctrineData[u.doctrineId].name or nil,
+					race        = u.raceId and RaceData.GetRace(u.raceId) and RaceData.GetRace(u.raceId).name or nil,
 				})
 			end
 		end

@@ -64,6 +64,12 @@ local partyEdit: { [string]: boolean } = {}
 local sortiePartySlot: string? = nil   -- party chosen for THIS sortie (shown on Continue)
 local sortiePartyName: string? = nil
 local updateSortieButton: () -> () = function() end  -- reassigned once leaveButton exists
+-- ADVENTURER'S GUILD screen (2026-10-16): the guild quest board is now an in-menu page
+-- (like Tavern/Merchant), not a separate screen. guildQuests holds the server's offered
+-- quests; sortieMode flips the page from quest-selection to sortie controls after a quest
+-- is accepted (phase PreBattle). Base stays persistent -- the menu is never torn down.
+local guildQuests: { any }? = nil
+local sortieMode = false
 local cartBuys: { [number]: { name: string, price: number } } = {}  -- staged buys (offerIndex -> info)
 local cartSells: { [string]: { name: string, price: number } } = {}  -- staged sells (instanceId -> info)
 local cartUpgrades: { [string]: { name: string, fromLevel: number, toLevel: number, gold: number, mats: { [number]: number }, matsText: string } } = {}  -- staged blacksmith upgrades (may span several levels)
@@ -946,6 +952,60 @@ local function pageParty()
 	end
 end
 
+local function pageAdventurersGuild()
+	addHeading("ADVENTURER'S GUILD")
+	if sortieMode then
+		-- A quest is accepted: show the sortie controls in-screen (party + depart + abandon).
+		local pName = sortiePartyName or "your party"
+		addNote(`Deploying: {pName}. Review your loadout and party, then depart.`)
+		addRow(`Party: {pName}`, {
+			{ text = "Change party", color = Theme.Colors.Info, onTap = function()
+				showPage("Party")
+			end },
+		})
+		local departText = sortieLocked and "Scouting the battle map..." or "Continue to Deployment"
+		addRow("Depart on this quest", {
+			{ text = departText, color = Theme.Colors.Success, enabled = not sortieLocked, onTap = function()
+				if sortieLocked then return end
+				screenGui.Enabled = false
+				BattleEvents.StartBattle:FireServer()
+			end },
+		})
+		addRow("Change your mind? Abandoning forfeits half the posted gold.", {
+			{ text = "Abandon quest", color = Theme.Colors.Warning, onTap = function()
+				BattleEvents.AbandonQuest:FireServer()
+			end },
+		})
+		return
+	end
+
+	-- Quest selection: render the offered quests as rows (consistent with the other screens).
+	if not guildQuests then
+		addNote("Consulting the board for available quests...")
+		return
+	end
+	addNote("Choose a quest to embark on, or head back to base.")
+	for _, q in ipairs(guildQuests) do
+		local qid = q.id
+		local g = q.rewards and q.rewards.gold
+		local goldText = ""
+		if g then goldText = (g.min == g.max) and (`{g.min} gold + kills`) or (`{g.min}-{g.max} gold`) end
+		local line = `{q.name}\n{q.biome}  Lv {q.recommendedLvl}  |  {q.enemyCount} enemies  |  {goldText}  |  Deploy {q.playerSlots}`
+		addRow(line, {
+			{ text = "Embark", color = Theme.Colors.Success, onTap = function()
+				BattleEvents.QuestSelected:FireServer({ questId = qid })
+			end },
+		})
+	end
+	addRow("Not today", {
+		{ text = "Back to base", color = Theme.Colors.Surface, onTap = function()
+			BattleEvents.QuestBoardCancel:FireServer()
+			guildQuests = nil
+			showPage("Units")
+		end },
+	})
+end
+
 local PAGES: { [string]: () -> () } = {
 	Tavern = pageTavern,
 	Merchant = pageMerchant,
@@ -953,6 +1013,7 @@ local PAGES: { [string]: () -> () } = {
 	Dispatch = pageDispatch,
 	Units = pageUnits,
 	Party = pageParty,
+	Adventurers = pageAdventurersGuild,
 	Dev = pageDev,
 }
 
@@ -1029,7 +1090,15 @@ local function buildNav()
 	local advGuild = makeButton(nav, "Adventurer's Guild", Theme.Colors.Accent or Theme.Colors.Success, function()
 		if isBusy then return end
 		confirmLeaveWithCart(function()
-			BattleEvents.OpenAdventurersGuild:FireServer()
+			-- Open the in-menu Adventurer's Guild page. The server offers quests ONCE per base
+			-- cycle (it stops listening for OpenAdventurersGuild after the first fire, then waits
+			-- for the pick), so only REQUEST when we have no cached quests and are not mid-sortie.
+			-- Re-tapping with quests already cached just re-renders them -- wiping + re-requesting
+			-- would strand the page on "Consulting the board..." (2026-10-16 fix).
+			if not sortieMode and guildQuests == nil then
+				BattleEvents.OpenAdventurersGuild:FireServer()
+			end
+			showPage("Adventurers")
 		end)
 	end)
 	advGuild.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
@@ -1189,13 +1258,23 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 		changePartyButton.Visible = (currentPhase == "PreBattle")
 	end
 	if currentPhase == "PreBattle" then
+		sortieMode = true
 		sortiePartySlot = nil
 		computeDefaultSortieParty()
 		if not sortieLocked then updateSortieButton() end
+	else
+		sortieMode = false
+	end
+	if currentPhase == "Base" then
+		-- Fresh base cycle: drop last cycle's quests so the next Adventurer's Guild tap
+		-- re-requests from the server (which is back to listening at the activity wait).
+		guildQuests = nil
 	end
 	local ov = call(GuildEvents.GetGuildOverview)
 	if devButton then devButton.Visible = ov ~= nil and ov.isStudio == true end
-	showPage("Units")
+	-- Sortie lands on the in-screen Adventurer's Guild page (sortie controls); otherwise
+	-- the base opens on Units. (2026-10-16)
+	showPage(sortieMode and "Adventurers" or "Units")
 	print(`[GuildMenu] Opened ({currentPhase})`)
 end)
 
@@ -1205,11 +1284,24 @@ GuildEvents.GuildMenuClosed.OnClientEvent:Connect(function()
 	print("[GuildMenu] Closed")
 end)
 
--- Battle prep finished on the server: end scouting, unlock the sortie button.
+-- Battle prep finished on the server: end scouting, unlock the sortie button. Also refresh
+-- the Adventurer's Guild page so its Depart button flips from "Scouting..." to live. (2026-10-16)
 if BattleEvents.MapBuildComplete then
 	BattleEvents.MapBuildComplete.OnClientEvent:Connect(function()
 		unlockSortie()
+		if sortieMode and currentPage == "Adventurers" then showPage("Adventurers") end
 	end)
 end
+
+-- Quests offered by the server (QuestBoardOpen). The quest board is now an in-menu page,
+-- so store the quests and re-render the Adventurer's Guild page if the player is on it
+-- (quest-selection mode). The old standalone QuestBoardUI screen is retired. (2026-10-16)
+BattleEvents.QuestBoardOpen.OnClientEvent:Connect(function(data)
+	if data and data.quests then
+		guildQuests = data.quests
+		sortieMode = false
+		if currentPage == "Adventurers" then showPage("Adventurers") end
+	end
+end)
 
 print("[GuildMenu] Ready — waiting for GuildMenuOpened")

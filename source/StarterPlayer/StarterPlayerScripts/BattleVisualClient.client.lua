@@ -56,6 +56,11 @@ local _vfxOk, VFXController = pcall(require,
 		:WaitForChild("Shared", 10):WaitForChild("VFXController", 10)
 )
 if not _vfxOk then warn("[BVC] VFXController failed to load: " .. tostring(VFXController)); VFXController = nil end
+local _trOk, TileResolver = pcall(require,
+	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+		:WaitForChild("Shared", 10):WaitForChild("TileResolver", 10)
+)
+if not _trOk then warn("[BVC] TileResolver failed to load: " .. tostring(TileResolver)); TileResolver = nil end
 -- Combat sound effects (client-side; mirrors VFXController). Blank registry
 -- slots are skipped silently, so this is harmless until ids are filled in.
 local _sndOk, SoundController = pcall(require,
@@ -1621,15 +1626,14 @@ end
 -- Resolve any instance inside a map-object clone (Model OR single Part named
 -- MapObjModel_*) to the tile Part the object stands on. nil if not an object.
 local function resolveObjectTile(inst: Instance?): BasePart?
-	if not (inst and mapFolder) then return nil end
-	local node: Instance? = inst
-	while node and node.Parent ~= mapFolder do node = node.Parent end
-	if node and string.sub(node.Name, 1, 12) == "MapObjModel_" then
-		local ox, oy = node:GetAttribute("ObjTileX"), node:GetAttribute("ObjTileY")
-		if ox and oy then
-			local tp = mapFolder:FindFirstChild(string.format("Tile_%02d_%02d", ox, oy))
-			if tp and tp:IsA("BasePart") then return tp end
-		end
+	-- Delegates to the shared TileResolver so battle and deployment resolve a tapped
+	-- tile/object/blocker through ONE primitive (BUG-047 convergence, 2026-10-16). The
+	-- shared resolver is a superset of the old MapObjModel_-only logic: it also resolves
+	-- blockers (Blocker_<x>_<y>) directly to their own tile. If the module failed to
+	-- load, return nil and let getTileUnderMouse fall through to its tile-parts raycast
+	-- (unchanged) -- battle is never worse than before.
+	if TileResolver then
+		return TileResolver.ResolveTilePart(inst, mapFolder)
 	end
 	return nil
 end
@@ -2245,6 +2249,11 @@ end
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 	-- Guard: ignore clicks consumed by GUI buttons/panels
 	if gameProcessedEvent then return end
+	-- During the DEPLOYMENT phase, DeploymentUI owns world clicks (it drives the unit
+	-- inspector panel). BVC must NOT also process the click: processTileClick runs its
+	-- SetSelection/ClearSelection block (before its own deployment guard lower down),
+	-- which cleared the panel DeploymentUI had just set. Bail entirely here. (2026-10-15)
+	if _G.CTRBLXAI_DeploymentActive then return end
 	-- Only handle MOUSE left click here. Touch is handled by tap intent below.
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
@@ -2267,6 +2276,11 @@ end)
 game:GetService("RunService").Heartbeat:Connect(function()
 	local tapPos = CameraController.ConsumeTapIntent()
 	if not tapPos then return end
+	-- Deployment phase: DeploymentUI owns taps (drives the inspector). Processing the tap
+	-- here too would run processTileClick's selection/clear block and wipe the panel one
+	-- frame after DeploymentUI set it (the touch/tap path is why it only broke on mobile
+	-- layouts). Bail during deployment. (2026-10-15)
+	if _G.CTRBLXAI_DeploymentActive then return end
 
 	-- Raycast from tap position to find tile
 	local cam = workspace.CurrentCamera

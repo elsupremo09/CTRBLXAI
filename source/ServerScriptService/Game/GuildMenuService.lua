@@ -1305,6 +1305,81 @@ end
 -- INIT (Main calls once, after playerUnits and doSave exist)
 --------------------------------------------------
 
+-- UNIT DISMISSAL (Loadout Info tab, user decision 2026-10-15). Two modes on one remote:
+-- preview (confirm nil) returns the exact severance fee + flags, changing nothing; commit
+-- (confirm == true) unequips every slot (gear stays owned in inventory), charges the fee,
+-- and removes the unit from the roster + recruit save records. Severance = 5x the
+-- recruitment cost = 5 x ResolveHireCost(level, quality) (economy_framework id 22; starters
+-- and quality-less units default to Standard). The player avatar (Hero) can NEVER be
+-- dismissed (project_rules 114; is_avatar not yet flagged in code, so the Hero id is the
+-- stand-in until the Designer adds the flag). Not gated by the guild menu being open -- the
+-- Loadout screen is its own surface -- but the firing player must be the session player.
+local AVATAR_UNIT_ID = "unit_hero"
+local DISMISS_SEVERANCE_MULT = 5
+
+local function dismissFeeFor(unitId: string): (number, string, number)
+	local units = playerUnits()
+	local u = units[unitId]
+	local level = (u and tonumber(u.level)) or 1
+	local quality = (recruitDefs[unitId] and recruitDefs[unitId].quality) or "Standard"
+	local base = RecruitmentService.ResolveHireCost(level, quality)
+	return base * DISMISS_SEVERANCE_MULT, quality, level
+end
+
+local function onDismissUnit(player: Player, unitId: any, confirm: any): any
+	if _sessionPlayer and player ~= _sessionPlayer then return fail("Not your roster") end
+	if type(unitId) ~= "string" then return fail("Invalid unit") end
+	local units = playerUnits()
+	local unit = units[unitId]
+	if not unit then return fail("That unit is no longer on your roster") end
+
+	local isAvatar = (unitId == AVATAR_UNIT_ID) or (unit.is_avatar == true)
+	local fee = dismissFeeFor(unitId)
+	local gold = (CurrencyService.GetBalance(_playerId) or {}).gold or 0
+	local canAfford = gold >= fee
+
+	-- PREVIEW: no mutation. The client shows the exact cost in its confirm dialog.
+	if confirm ~= true then
+		return { ok = true, preview = true, cost = fee, canAfford = canAfford,
+			isAvatar = isAvatar, name = unit.name }
+	end
+
+	-- COMMIT.
+	if isAvatar then return fail("The Hero cannot be dismissed") end
+	if not canAfford then return fail(string.format("Not enough gold for separation pay (need %d)", fee)) end
+
+	-- 1) Unequip every slot. Items stay owned in the shared inventory (equipping is only an
+	-- assignment), so this returns all the unit's gear to inventory by clearing its slots.
+	for _, slot in ipairs({ "MainHand", "OffHand", "Head", "Body", "Gloves", "Feet", "Accessory" }) do
+		if unit.equipmentSlots and unit.equipmentSlots[slot] then
+			EquipmentService.Unequip(unit, slot)
+		end
+	end
+
+	-- 2) Charge the severance fee.
+	CurrencyService.Debit(_playerId, { gold = fee })
+
+	-- 3) Remove from the live roster (same table Main owns via the injected provider).
+	units[unitId] = nil
+
+	-- 4) Remove from the recruit save records so the unit does not return next session.
+	recruitDefs[unitId] = nil
+	builtUnits[unitId] = nil
+	for i = #recruitOrder, 1, -1 do
+		if recruitOrder[i] == unitId then table.remove(recruitOrder, i) end
+	end
+
+	-- 5) Drop the dismissed unit from every saved party (owned-set prune).
+	local ownedSet = {}
+	for id in units do ownedSet[id] = true end
+	PartyService.PruneToOwned(_playerId, ownedSet)
+
+	markDirty()
+	print(string.format("[GuildMenuService] Dismissed %s (%s) | severance %dg", unit.name, unitId, fee))
+	local balGold = (CurrencyService.GetBalance(_playerId) or {}).gold or 0
+	return { ok = true, done = true, cost = fee, gold = balGold }
+end
+
 function GuildMenuService.Init(deps: any)
 	_playerId = deps.playerId or _playerId
 	_sessionPlayer = deps.sessionPlayer
@@ -1335,6 +1410,7 @@ function GuildMenuService.Init(deps: any)
 	GuildEvents.GetParties.OnServerInvoke = onGetParties
 	GuildEvents.SetPartyName.OnServerInvoke = onSetPartyName
 	GuildEvents.SetPartyMembers.OnServerInvoke = onSetPartyMembers
+	BattleEvents.RequestDismissUnit.OnServerInvoke = onDismissUnit
 
 	-- Dev "set building level" (Studio only) on the EXISTING DevCommand remote.
 	if RunService:IsStudio() then

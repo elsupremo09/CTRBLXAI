@@ -5162,6 +5162,71 @@ buildInfoContent = function()
 		if statsData.doctrinePassiveEffect then descLabel(leftCol, statsData.doctrinePassiveEffect, nextL) end
 	end
 
+	-- DISMISS UNIT (Info tab, user decision 2026-10-15). Hidden for the Hero (protected
+	-- avatar, project_rules 114). Tapping previews the exact severance fee from the server
+	-- (5x recruitment cost), shows a Confirm dialog, then commits: equipped gear returns to
+	-- inventory, the fee is charged, and the unit is removed from the roster + save.
+	if unit.id ~= "unit_hero" then
+		local dismissBtn = Theme.MakeButton(leftCol, "Dismiss Unit", "Secondary", function()
+			local uid = unit.id
+			local okP, prev = pcall(function() return BattleEvents.RequestDismissUnit:InvokeServer(uid) end)
+			if not okP or type(prev) ~= "table" or not prev.ok then return end
+			if prev.isAvatar then return end
+
+			local overlay = Instance.new("Frame")
+			overlay.Name = "DismissConfirm"
+			overlay.Size = UDim2.fromScale(1, 1)
+			overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+			overlay.BackgroundTransparency = 0.4
+			overlay.ZIndex = 50
+			overlay.Parent = rootFrame
+
+			local box = Instance.new("Frame")
+			box.Size = UDim2.new(0, 420, 0, 190)
+			box.AnchorPoint = Vector2.new(0.5, 0.5)
+			box.Position = UDim2.fromScale(0.5, 0.5)
+			box.BackgroundColor3 = Theme.Colors.Panel or Color3.fromRGB(40, 40, 48)
+			box.BorderSizePixel = 0
+			box.ZIndex = 51
+			box.Parent = overlay
+			Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+
+			local msg = makeLabel(box, {
+				Text = prev.canAfford
+					and ("Dismiss " .. (prev.name or "this unit") .. "?\nSeparation pay: " .. prev.cost .. "g.\nEquipped gear returns to your inventory. This cannot be undone.")
+					or ("Not enough gold to dismiss " .. (prev.name or "this unit") .. ".\nSeparation pay required: " .. prev.cost .. "g."),
+				Size = UDim2.new(1, -24, 0, 120),
+				Position = UDim2.new(0, 12, 0, 12),
+				TextWrapped = true,
+				TextXAlignment = Enum.TextXAlignment.Center,
+			})
+			msg.ZIndex = 52
+
+			local function close() overlay:Destroy() end
+
+			local cancelBtn = Theme.MakeButton(box, "Cancel", "Secondary", close, {
+				size = UDim2.new(0, 120, 0, 40),
+			})
+			cancelBtn.Position = UDim2.new(0, 20, 1, -52)
+			cancelBtn.ZIndex = 52
+
+			if prev.canAfford then
+				local confirmBtn = Theme.MakeButton(box, "Dismiss", "Primary", function()
+					close()
+					local okC, res = pcall(function() return BattleEvents.RequestDismissUnit:InvokeServer(uid, true) end)
+					if okC and type(res) == "table" and res.done then
+						MockData.SelectedUnitIndex = 1
+						MockData.LoadFromServer()
+						LoadoutScreen.Refresh()
+					end
+				end, { size = UDim2.new(0, 120, 0, 40) })
+				confirmBtn.Position = UDim2.new(1, -140, 1, -52)
+				confirmBtn.ZIndex = 52
+			end
+		end, { size = UDim2.new(1, -16, 0, 36) })
+		dismissBtn.LayoutOrder = nextL()
+	end
+
 	-- =============================================
 	-- RIGHT COLUMN: Derived Stats (scrollable)
 	-- =============================================
