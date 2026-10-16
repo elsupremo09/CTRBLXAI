@@ -697,9 +697,12 @@ end
 
 -- Post-battle "return to base" bookkeeping (game_flow id 20): count the battle
 -- and resolve returning dispatches (XP via the wired sink, materials via Credit).
-function GuildMenuService.OnBattleCompleted()
+-- daysElapsed (2026-10-16): the number of DISPATCH DAYS this battle was worth
+-- (Main computes ceil(elapsed CT / 4000), min 1). Dispatch now counts down in days, not
+-- battle count; forwarded to ResolveReturns. Defaults to 1 if a caller omits it.
+function GuildMenuService.OnBattleCompleted(daysElapsed: number?)
 	battlesCompleted += 1
-	local result = DispatchService.ResolveReturns(_playerId, battlesCompleted)
+	local result = DispatchService.ResolveReturns(_playerId, daysElapsed or 1)
 	-- Boards refresh per battle (dispatch/tavern); merchant per its own interval.
 	tavernCache, dispatchCache = nil, nil
 	print(`[GuildMenuService] Battle counted ({battlesCompleted} completed) | {#(result and result.returned or {})} unit(s) returned from dispatch`)

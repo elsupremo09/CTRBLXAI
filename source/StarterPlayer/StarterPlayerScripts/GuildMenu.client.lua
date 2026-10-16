@@ -70,6 +70,16 @@ local updateSortieButton: () -> () = function() end  -- reassigned once leaveBut
 -- is accepted (phase PreBattle). Base stays persistent -- the menu is never torn down.
 local guildQuests: { any }? = nil
 local sortieMode = false
+-- Adventurer's Guild in-page step machine (2026-10-16): the guild screen walks
+-- board -> chosen (details/abandon/sortie) -> sortie (party + embark). chosenQuest is the
+-- picked quest (kept client-side for the details view); guildSortieStep is the sub-step
+-- while a quest is accepted ("overview" | "details" | "sortie"); departPending means the
+-- player tapped Embark before the map finished -- StartBattle fires automatically on
+-- MapBuildComplete. This replaces the deprecated nav 'Continue - Party X' + 'Change party'.
+local chosenQuest: any = nil
+local guildSortieStep = "overview"
+local departPending = false
+local sortieLocked = false  -- moved above its readers (L894/L1043); a Luau local is invisible above its old decl point
 local cartBuys: { [number]: { name: string, price: number } } = {}  -- staged buys (offerIndex -> info)
 local cartSells: { [string]: { name: string, price: number } } = {}  -- staged sells (instanceId -> info)
 local cartUpgrades: { [string]: { name: string, fromLevel: number, toLevel: number, gold: number, mats: { [number]: number }, matsText: string } } = {}  -- staged blacksmith upgrades (may span several levels)
@@ -671,6 +681,33 @@ local function pageBlacksmith()
 
 		local who = it.equippedBy and ` (on {it.equippedBy})` or ""
 		local titleLine = (stagedTo > it.level) and `{it.name}  Lv{it.level} -> Lv{stagedTo}  {it.rarity}` or `{it.name}  Lv{it.level} {it.rarity}`
+		-- MATERIAL AFFORDABILITY CAP (2026-10-16): the +1/Max buttons must not let the player
+		-- stage an upgrade whose materials they don't own. Materials are a SHARED pool across
+		-- every staged item, so first subtract what OTHER items already reserve, then walk this
+		-- item's curve and find the highest level whose cumulative material cost still fits the
+		-- remaining real stock. gold is checked at commit; this guard is specifically materials.
+		-- Computed BEFORE the cost line / buttons because both read maxAffordable/matCapReached.
+		local realMats = lastOverview.materials or {}
+		local remainingMats: { [number]: number } = {}
+		for t = 1, 5 do remainingMats[t] = realMats[t] or 0 end
+		for otherId, up in cartUpgrades do
+			if otherId ~= iid and type(up.mats) == "table" then
+				for t, q in up.mats do remainingMats[t] = (remainingMats[t] or 0) - q end
+			end
+		end
+		local maxAffordable = it.level
+		do
+			local run: { [number]: number } = {}
+			for _, step in curve do
+				run[step.tier] = (run[step.tier] or 0) + step.qty
+				local fits = true
+				for t = 1, 5 do
+					if (run[t] or 0) > (remainingMats[t] or 0) then fits = false; break end
+				end
+				if fits then maxAffordable = step.toLevel else break end
+			end
+		end
+		local matCapReached = (stagedTo < maxLevel) and (#curve > 0) and not downStaged and (stagedTo >= maxAffordable)
 		local costLine
 		if stagedTo > it.level then
 			local g, _, mt = costTo(stagedTo)
@@ -681,17 +718,22 @@ local function pageBlacksmith()
 		else
 			costLine = (it.upgradeBlockedReason and `[{it.upgradeBlockedReason}]`) or "At max level"
 		end
+		if matCapReached then
+			costLine = costLine .. "\nNeed more materials to upgrade further"
+		end
 
 		local canAdd = (stagedTo < maxLevel) and (#curve > 0) and not downStaged
+		-- Can only add another level if the NEXT level up is still within the affordable cap.
+		canAdd = canAdd and (stagedTo < maxAffordable)
 		local btns = {}
 		table.insert(btns, { text = "+1", color = Theme.Colors.Success, enabled = canAdd, onTap = function()
-			stageTo(math.min(stagedTo + 1, maxLevel))
+			stageTo(math.min(stagedTo + 1, maxAffordable))
 		end })
 		table.insert(btns, { text = "-1", color = Theme.Colors.Warning, enabled = stagedTo > it.level, onTap = function()
 			stageTo(stagedTo - 1)
 		end })
 		table.insert(btns, { text = "Max", color = Theme.Colors.Info, enabled = canAdd, onTap = function()
-			stageTo(maxLevel)
+			stageTo(maxAffordable)
 		end })
 		if stagedTo == it.level then
 			table.insert(btns, { text = downStaged and "Down*" or "Down", color = Theme.Colors.Info,
@@ -797,7 +839,27 @@ local function pageUnits()
 	addRow("Equipment, skills, doctrine and stats", {
 		{ text = "Open Loadout", color = Theme.Colors.Info, onTap = function()
 			local open = (_G :: any).CTRBLXAI_OpenLoadout
-			if type(open) == "function" then open() else setStatus("Loadout screen not loaded", true) end
+			if type(open) ~= "function" then setStatus("Loadout screen not loaded", true) return end
+			-- The Loadout is a separate full-screen UI. Hide the guild menu while it is up, then
+			-- restore the guild menu when Loadout closes -- otherwise opening Loadout mid-sortie
+			-- left the player with no guild screen (no Sortie/Abandon). Client-only; watches the
+			-- Loadout ScreenGui ("LoadoutScreen") in PlayerGui and re-shows + re-renders on close. (2026-10-16)
+			local pg = player:FindFirstChild("PlayerGui")
+			screenGui.Enabled = false
+			open()
+			task.spawn(function()
+				local appeared = false
+				for _ = 1, 100 do
+					local ls = pg and pg:FindFirstChild("LoadoutScreen")
+					if ls then appeared = true elseif appeared then break end
+					task.wait(0.1)
+				end
+				-- Loadout closed (or never opened): bring the guild menu back and refresh the page.
+				screenGui.Enabled = true
+				invalidatePageCache()
+				refreshOverview()
+				showPage(currentPage)
+			end)
 		end },
 	})
 	local res = cachedCall("Units", GuildEvents.GetGuildUnits)
@@ -868,7 +930,14 @@ local function pageParty()
 					BattleEvents.SelectSortieParty:FireServer(slot)
 					updateSortieButton()
 					setStatus(`{party.name} will deploy`)
-					showPage("Party")
+					-- Picking a party during a sortie returns to the Adventurer's Guild sortie step
+					-- (where Embark is), not back to this list. (2026-10-16)
+					if sortieMode then
+						guildSortieStep = "sortie"
+						showPage("Adventurers")
+					else
+						showPage("Party")
+					end
 				end })
 			end
 			table.insert(listBtns, { text = "Edit", color = Theme.Colors.Info, onTap = function()
@@ -878,6 +947,14 @@ local function pageParty()
 				showPage("Party")
 			end })
 			addRow(`{party.name}  |  {#names}/{maxSize}\n{summary}`, listBtns)
+		end
+		if sortieMode then
+			addRow("", {
+				{ text = "Back to sortie", color = Theme.Colors.Surface, onTap = function()
+					guildSortieStep = "sortie"
+					showPage("Adventurers")
+				end },
+			})
 		end
 	else
 		local party = nil
@@ -952,26 +1029,99 @@ local function pageParty()
 	end
 end
 
+-- Embark button cycling-text machinery (reuses the scout-token pattern). The button lives
+-- in the wiped-each-render content area, so the loop re-grabs the live button and self-cancels
+-- when the token advances, the button is destroyed, or scouting finishes. (2026-10-16)
+local embarkButton: TextButton? = nil
+local embarkToken = 0
+local EMBARK_PHRASES = { "Scouting the area", "Mapping the location", "Locating the target", "Scanning the terrain" }
+
 local function pageAdventurersGuild()
 	addHeading("ADVENTURER'S GUILD")
-	if sortieMode then
-		-- A quest is accepted: show the sortie controls in-screen (party + depart + abandon).
-		local pName = sortiePartyName or "your party"
-		addNote(`Deploying: {pName}. Review your loadout and party, then depart.`)
-		addRow(`Party: {pName}`, {
-			{ text = "Change party", color = Theme.Colors.Info, onTap = function()
-				showPage("Party")
+	embarkButton = nil  -- content was just wiped; drop any stale reference
+
+	if sortieMode and chosenQuest then
+		local q = chosenQuest
+
+		if guildSortieStep == "details" then
+			addNote(`{q.name}`)
+			addNote(`Location: {q.biome}   Recommended Lv {q.recommendedLvl}`)
+			addNote(`Enemies: {q.enemyCount}   Difficulty: {tostring(q.difficulty or "?")}`)
+			local g = q.rewards and q.rewards.gold
+			if g then
+				addNote("Reward gold: " .. ((g.min == g.max) and (g.min .. " + kills") or (g.min .. "-" .. g.max)))
+			end
+			if q.rewards and q.rewards.drops then addNote(`Item drops: {q.rewards.drops}`) end
+			if q.condition then addNote(`Condition: {q.condition}`) end
+			addNote(`Deploy up to {q.playerSlots} units`)
+			addRow("", {
+				{ text = "Back", color = Theme.Colors.Surface, onTap = function()
+					guildSortieStep = "overview"
+					showPage("Adventurers")
+				end },
+			})
+			return
+		end
+
+		if guildSortieStep == "sortie" then
+			local pName = sortiePartyName or "your party"
+			addRow(`Party: {pName}`, {
+				{ text = "Change party", color = Theme.Colors.Info, onTap = function()
+					showPage("Party")
+				end },
+			})
+			-- Embark: clickable immediately. If the map is not ready (sortieLocked) the label cycles
+			-- loading phrases and the tap defers -- MapBuildComplete fires StartBattle automatically.
+			rowOrder += 1
+			local btn = makeButton(content, sortieLocked and (EMBARK_PHRASES[1] .. "...") or "Embark", Theme.Colors.Success, function()
+				if sortieLocked then
+					departPending = true
+					if embarkButton then embarkButton.Text = "Departing when ready..." end
+					setStatus("The party will move out as soon as scouting is done.")
+				else
+					screenGui.Enabled = false
+					BattleEvents.StartBattle:FireServer()
+				end
+			end)
+			btn.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT + 8)
+			btn.LayoutOrder = rowOrder
+			embarkButton = btn
+			if sortieLocked then
+				embarkToken += 1
+				local myTok = embarkToken
+				task.spawn(function()
+					local idx = 1
+					while myTok == embarkToken and sortieLocked and embarkButton == btn and btn.Parent do
+						btn.Text = departPending and "Departing when ready..." or (EMBARK_PHRASES[idx] .. "...")
+						idx = (idx % #EMBARK_PHRASES) + 1
+						task.wait(2)
+					end
+				end)
+			end
+			addRow("", {
+				{ text = "Back", color = Theme.Colors.Surface, onTap = function()
+					guildSortieStep = "overview"
+					showPage("Adventurers")
+				end },
+			})
+			return
+		end
+
+		-- overview: details / sortie / abandon
+		addNote(`Accepted: {q.name}. Prepare your party, then sortie when ready.`)
+		addRow("See the full brief for this quest", {
+			{ text = "Quest details", color = Theme.Colors.Info, onTap = function()
+				guildSortieStep = "details"
+				showPage("Adventurers")
 			end },
 		})
-		local departText = sortieLocked and "Scouting the battle map..." or "Continue to Deployment"
-		addRow("Depart on this quest", {
-			{ text = departText, color = Theme.Colors.Success, enabled = not sortieLocked, onTap = function()
-				if sortieLocked then return end
-				screenGui.Enabled = false
-				BattleEvents.StartBattle:FireServer()
+		addRow("Set out -- choose your party, then embark", {
+			{ text = "Sortie", color = Theme.Colors.Success, onTap = function()
+				guildSortieStep = "sortie"
+				showPage("Adventurers")
 			end },
 		})
-		addRow("Change your mind? Abandoning forfeits half the posted gold.", {
+		addRow("Abandoning forfeits half the posted gold.", {
 			{ text = "Abandon quest", color = Theme.Colors.Warning, onTap = function()
 				BattleEvents.AbandonQuest:FireServer()
 			end },
@@ -979,21 +1129,25 @@ local function pageAdventurersGuild()
 		return
 	end
 
-	-- Quest selection: render the offered quests as rows (consistent with the other screens).
+	-- board: list the offered quests. Choosing one accepts it (fires QuestSelected -> the server
+	-- starts building the map); the server re-opens the menu in PreBattle and we land on overview.
 	if not guildQuests then
 		addNote("Consulting the board for available quests...")
 		return
 	end
 	addNote("Choose a quest to embark on, or head back to base.")
 	for _, q in ipairs(guildQuests) do
-		local qid = q.id
+		local quest = q
 		local g = q.rewards and q.rewards.gold
 		local goldText = ""
 		if g then goldText = (g.min == g.max) and (`{g.min} gold + kills`) or (`{g.min}-{g.max} gold`) end
 		local line = `{q.name}\n{q.biome}  Lv {q.recommendedLvl}  |  {q.enemyCount} enemies  |  {goldText}  |  Deploy {q.playerSlots}`
 		addRow(line, {
-			{ text = "Embark", color = Theme.Colors.Success, onTap = function()
-				BattleEvents.QuestSelected:FireServer({ questId = qid })
+			{ text = "Choose", color = Theme.Colors.Success, onTap = function()
+				chosenQuest = quest
+				guildSortieStep = "overview"
+				departPending = false
+				BattleEvents.QuestSelected:FireServer({ questId = quest.id })
 			end },
 		})
 	end
@@ -1048,7 +1202,6 @@ local navButtons: { GuiButton } = {}
 local leaveButton: TextButton? = nil
 local advGuildButton: TextButton? = nil
 local changePartyButton: TextButton? = nil
-local sortieLocked = false
 local scoutToken = 0
 local devButton: GuiButton? = nil
 
@@ -1231,10 +1384,17 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	-- (PreBattle); "Save & Finish" only after a battle (PostBattle).
 	local atBase = (currentPhase == "Base")
 	if advGuildButton then
-		advGuildButton.Visible = atBase
+		-- Visible at the base AND during the sortie (PreBattle), so after visiting another tab
+		-- (Units/Tavern/etc.) the player can return to the Adventurer's Guild sortie screen.
+		-- Hidden only PostBattle. (2026-10-16 fix: button vanished at sortie, stranding the
+		-- player with no way back to Sortie/Abandon after leaving the screen.)
+		advGuildButton.Visible = (currentPhase == "Base" or currentPhase == "PreBattle")
 	end
 	if leaveButton then
-		leaveButton.Visible = not atBase
+		-- Deprecated 2026-10-16: the sortie Depart control now lives IN the Adventurer's Guild
+		-- page. leaveButton is kept only as the scout-lock state carrier (lockSortie/unlockSortie
+		-- toggle sortieLocked through it), so it stays hidden but must keep existing.
+		leaveButton.Visible = false
 		if not atBase then
 			local scouting = (type(data) == "table" and data.scouting == true)
 			if scouting then
@@ -1255,10 +1415,21 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	-- entering PreBattle resets to the default party (first non-empty) so the Continue
 	-- button reflects it once the map finishes scouting (unlockSortie -> updateSortieButton).
 	if changePartyButton then
-		changePartyButton.Visible = (currentPhase == "PreBattle")
+		-- Deprecated 2026-10-16: "Change party" now lives in the Adventurer's Guild sortie step.
+		changePartyButton.Visible = false
 	end
 	if currentPhase == "PreBattle" then
 		sortieMode = true
+		-- Adopt the quest from the PreBattle payload if the client never captured it via a
+		-- "Choose" tap (fallback pick / old path). Without this the sortie page guard
+		-- (sortieMode and chosenQuest) failed and the screen fell through to an empty board
+		-- = the "guild screen disappeared after choosing a quest" bug. (2026-10-16)
+		if type(data) == "table" and type(data.quest) == "table" then
+			chosenQuest = data.quest
+		end
+		if guildSortieStep ~= "sortie" and guildSortieStep ~= "details" then
+			guildSortieStep = "overview"
+		end
 		sortiePartySlot = nil
 		computeDefaultSortieParty()
 		if not sortieLocked then updateSortieButton() end
@@ -1289,6 +1460,13 @@ end)
 if BattleEvents.MapBuildComplete then
 	BattleEvents.MapBuildComplete.OnClientEvent:Connect(function()
 		unlockSortie()
+		-- If the player already tapped Embark during scouting, depart now (deferred-embark).
+		if departPending then
+			departPending = false
+			screenGui.Enabled = false
+			BattleEvents.StartBattle:FireServer()
+			return
+		end
 		if sortieMode and currentPage == "Adventurers" then showPage("Adventurers") end
 	end)
 end

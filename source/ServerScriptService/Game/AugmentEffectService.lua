@@ -35,6 +35,15 @@ local GameConstants = require(
 
 local AugmentEffectService = {}
 
+-- [LOG] Augment debug spam gate (2026-10-16). GetMpCostMultiplier is called by the
+-- AI once per skill candidate during EVERY scoring pass (not once per committed
+-- action), so its per-augment "MP cost multiplier ×N" print fired hundreds of times
+-- per battle and buried real signals in Output. The computation is read-only (it only
+-- reads AugmentData.costFormula and multiplies a local — no state mutation), so this
+-- is purely a logging-volume issue. Gate the multiplier print behind this flag
+-- (default false); flip to true only when debugging augment MP math.
+local DEBUG_AUGMENT = false
+
 --------------------------------------------------
 -- MODULE STATE
 --------------------------------------------------
@@ -347,10 +356,12 @@ function AugmentEffectService.GetMpCostMultiplier(unit, skillId)
 			local mp = parseMpMultiplier(augDef.costFormula)
 			if mp then
 				finalMultiplier = finalMultiplier * mp
-				print(string.format(
-					"[AugmentEffect] %s MP cost multiplier ×%.2f",
-					augDef.name, mp
-				))
+				if DEBUG_AUGMENT then
+					print(string.format(
+						"[AugmentEffect] %s MP cost multiplier ×%.2f",
+						augDef.name, mp
+					))
+				end
 			end
 		end
 	end

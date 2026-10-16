@@ -58,6 +58,13 @@ local ALLY_STAGING_RANGE = 3     -- "don't dive alone": ally must be within N ti
 local LOW_RESOURCE_PCT  = 0.35   -- HP/MP below this = recovery-worthy
 local RANGED_THRESHOLD  = 2      -- weaponMaxRange > this counts as "ranged"
 
+-- Terrain tie-breaker cap (2026-10-16): the maximum points the high-ground
+-- footstep nudge may add to a pure-advance move's score. MUST stay strictly
+-- below the bestMoveToward progress weight (10 per true-step closer) so terrain
+-- can never outweigh getting one step closer — i.e. terrain is a pure
+-- tie-breaker among similar-progress tiles and never makes a unit hang back.
+local TERRAIN_TIEBREAK_MAX = 4
+
 -- Layer 1 — shared scorecard base weights (magnitudes before personality dials)
 local W = {
 	DAMAGE_PCT   = 100,  -- points per 1.0 (=100%) of target max HP dealt
@@ -253,6 +260,84 @@ local function exposureAt(unit: any, tx: any, ty: any, allUnits: any)
 		end
 	end
 	return count
+end
+
+-- Is tile (px,py) ON the straight segment between (ax,ay) and (bx,by)? Used by the
+-- Defender screen test: a Defender standing on the sight line between a shooter and
+-- a vulnerable ally interposes its body. Walks the Bresenham line from a->b and
+-- returns true if (px,py) is one of the interior cells (endpoints excluded — the
+-- shooter and ally tiles are not screening positions).
+local function _tileOnSegment(px: any, py: any, ax: any, ay: any, bx: any, by: any): boolean
+	if (px == ax and py == ay) or (px == bx and py == by) then return false end
+	local dx = math.abs(bx - ax)
+	local dy = math.abs(by - ay)
+	local sx = ax < bx and 1 or -1
+	local sy = ay < by and 1 or -1
+	local err = dx - dy
+	local cx, cy = ax, ay
+	while true do
+		if cx == bx and cy == by then return false end
+		local e2 = 2 * err
+		if e2 > -dy then err = err - dy; cx = cx + sx end
+		if e2 < dx then err = err + dx; cy = cy + sy end
+		if cx == px and cy == py then return true end
+	end
+end
+
+-- DEFENDER SCREENING (enemy_ai_personalities rule 4: "moving to positions that
+-- block line of sight to vulnerable allies"). Judges how much standing on tile
+-- (tx,ty) would PROTECT the Defender's vulnerable backline allies by interposing
+-- its body on the sight line between a threatening player and that ally.
+--
+-- "Vulnerable ally" = a living same-side unit (not self) that is a soft backliner:
+-- a Support/Controller by role (the healers/casters rule 4 wants shielded) OR any
+-- ally currently below 50% HP. "Threatening player" = a living hostile whose weapon
+-- could reach the ally if it had LoS (so screening actually denies a real shot).
+--
+-- Returns a count of (player, ally) sight lines this tile would newly BLOCK: the
+-- player has LoS to the ally now (from the player's tile), and placing the Defender
+-- on (tx,ty) sits on that line so the Defender's body breaks it. Reuses the public
+-- _TargetingService.HasLineOfSight — no LoS logic reinvented. The acting Defender is
+-- excluded from the board when testing "LoS now" so we measure the tile's own effect.
+local function screenValueAt(self: any, tx: any, ty: any, allUnits: any): any
+	if not _TargetingService or not _TargetingService.HasLineOfSight then return 0 end
+	-- Build the ally list (vulnerable backliners) and the hostile list once.
+	local blocked = 0
+	for _, ally in ipairs(allUnits) do
+		if ally.isAlive and ally.side == self.side and ally.id ~= self.id then
+			local role = _profileRole(ally)
+			local lowHp = (ally.currentHp / math.max(1, ally.maxHp)) < 0.5
+			-- Vulnerable = a Support-role backliner (the healer/caster rule 4 wants
+			-- shielded) OR any ally currently below half HP.
+			local vulnerable = (role == "support") or lowHp
+			if vulnerable then
+				for _, foe in ipairs(allUnits) do
+					if foe.isAlive and isHostileTo(self, foe) then
+						-- Does this player currently threaten the ally (range) AND see it?
+						local foeRange = foe.weaponMaxRange or 1
+						local foeToAlly = chebyshev(foe.tileX, foe.tileY, ally.tileX, ally.tileY)
+						if foeToAlly <= foeRange + 1 then
+							local seesNow = _TargetingService.HasLineOfSight(
+								foe.tileX, foe.tileY, ally.tileX, ally.tileY,
+								allUnits, GameConstants.GetElevation(foe.tileX, foe.tileY),
+								foe.weaponProjectileType, foe.side)
+							-- Would the Defender standing on (tx,ty) sit on that sight line?
+							-- Approximate "on the line" by: the tile is collinear-ish between
+							-- them, i.e. it is no farther from either endpoint than they are
+							-- from each other, and blocks the straight path. We test it
+							-- directly: place a virtual occupant is overkill; instead check the
+							-- tile lies between foe and ally on the Bresenham line by seeing if
+							-- it is within 1 tile of that segment at a mid point.
+							if seesNow and _tileOnSegment(tx, ty, foe.tileX, foe.tileY, ally.tileX, ally.tileY) then
+								blocked = blocked + 1
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return blocked
 end
 
 --------------------------------------------------
@@ -506,37 +591,82 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any):
 	-- Helper: best move tile toward the nearest player (gap close).
 	----------------------------------------------------------------
 	local function bestMoveToward(): any
-		-- PATH-AWARE ADVANCE (fix Sep 28 2026): GetMoveCandidates already BFSes
-		-- from the unit and returns ONLY reachable empty tiles (it routes THROUGH
-		-- allies but cannot STOP on them). The old ranking used straight-line
-		-- distance from the candidate tile to the nearest player with pathCost as a
-		-- tiny tiebreak; when the straight-line-closest lane was clogged by allies,
-		-- the reachable tiles that remained did not clearly win, so boxed-in
-		-- enemies (observed: Grunt 2 parked 7 turns, Grunt 7 6 turns) stalled.
+		-- PATH-AWARE ADVANCE (true-distance rewrite 2026-10-16).
+		-- GetMoveCandidates already returns ONLY tiles this unit can actually reach
+		-- this turn (it routes around walls/water/gaps and through allies). The job
+		-- here is to pick WHICH reachable tile best closes the gap to the player.
 		--
-		-- New ranking: among reachable tiles, strongly prefer those that REDUCE the
-		-- unit's current distance-to-nearest-player (real progress), then break ties
-		-- by shorter pathCost (cheaper step), then by lower straight-line distance.
-		-- A tile reached by routing AROUND the jam has a genuine smaller
-		-- distance-to-player, so it now scores as progress instead of being ignored.
-		local curDist = chebyshev(unit.tileX, unit.tileY, nearest.tileX, nearest.tileY)
+		-- OLD (broken): ranked tiles by chebyshev() straight-line distance to the
+		-- player. Straight-line ignores barriers, so when deep water / a wall / a gap
+		-- separated the enemy from the player, the "closest-looking" tile was a
+		-- dead-end pocket against the barrier. The enemy stepped into it every turn
+		-- and never routed around (user report Oct 16 2026).
+		--
+		-- NEW: measure TRUE walking distance to the player around the terrain, using a
+		-- flood-fill from the player's tile (TargetingService.ComputeDistanceField).
+		-- A tile on the far side of a barrier now has a genuinely LARGER true distance,
+		-- so the tile that actually leads around the barrier (toward the bridge /
+		-- chokepoint) wins. Falls back to straight-line only for tiles the field cannot
+		-- reach (no walkable route to the player at all), so behavior is never worse.
+		local distField = _TargetingService.ComputeDistanceField(nearest.tileX, nearest.tileY, mapW, mapH)
+		local function trueDist(tx: any, ty: any): any
+			local v = distField[tostring(tx) .. "," .. tostring(ty)]
+			if v ~= nil then return v end
+			-- No walkable route to the player from here: fall back to straight-line so
+			-- the tile is still comparable (and always worse than any routed tile).
+			return chebyshev(tx, ty, nearest.tileX, nearest.tileY) + 1000
+		end
+		local curDist = trueDist(unit.tileX, unit.tileY)
 		local best: any, bestScore = nil, -math.huge
 		for _, tile in ipairs(moveTiles) do
-			local d = chebyshev(tile.tileX, tile.tileY, nearest.tileX, nearest.tileY)
-			-- Progress reward: how many tiles closer than standing still (can be
-			-- negative for a tile that is farther). Weighted heavily so any genuine
-			-- advance beats a lateral/backward tile.
+			local d = trueDist(tile.tileX, tile.tileY)
+			-- Progress reward: how many steps of TRUE distance closer than standing
+			-- still (negative for a tile that is farther around the terrain). Weighted
+			-- heavily so any genuine advance beats a lateral/backward tile.
 			local progress = curDist - d
 			local s = progress * 10 - d
 			if isTileHazardous(tile.tileX, tile.tileY) then s = s - 100 end
 			s = s - (tile.pathCost or 0) * 0.1
+			-- CROSSFIRE-AWARE FOOTSTEP (added 2026-10-16, user design "tie-breaker only,
+			-- never costs aggression"): among advance tiles of SIMILAR progress, lean
+			-- toward the one where fewer player units can hit us next turn. This is a
+			-- pure-reposition path (no attack attached), so it never reduces aggression:
+			-- a plain gap-close is the only thing being ranked here. The penalty is
+			-- scaled by the unit's EXISTING personality self-danger dial (Aggressive/
+			-- Berserker ~0 → ignores danger and charges; Defender/Support > 1 → steps
+			-- more carefully). The weight (2 per exposing unit) is deliberately small
+			-- relative to the progress term (10 per step closer) so a tile that is
+			-- genuinely closer to the target ALWAYS beats a safer-but-farther tile —
+			-- danger only decides between tiles that make about the same progress.
+			local exposure = exposureAt(unit, tile.tileX, tile.tileY, allUnits)
+			s = s - exposure * 2 * (dials.selfDanger or 0)
+			-- HIGH-GROUND FOOTSTEP (added 2026-10-16, user design "pure tie-breaker —
+			-- never trade progress for terrain"): among advance tiles of SIMILAR
+			-- progress, lean toward higher ground, because the game rewards attacking
+			-- from above (GameConstants.GetPositionalModifier: +10% damage per elevation
+			-- level the attacker stands above the defender). A higher approach tile sets
+			-- up a HARDER hit next turn — this serves the bait-and-KO design (more
+			-- damage), it is NOT self-preservation.
+			--
+			-- HARD GUARANTEE (never trade progress for terrain): the whole terrain term
+			-- is CAPPED at TERRAIN_TIEBREAK_MAX (4), which is strictly less than the
+			-- progress weight (10 per true-step closer). Elevation on CTRBLXAI maps can
+			-- reach ~20 on ridge tops, so an uncapped `elev * k` term could rival a step
+			-- of progress and let a unit hang back for a tall tile — the cap makes that
+			-- impossible: even the tallest tile adds at most 4, so a tile even one step
+			-- closer always outranks any higher-but-farther tile. 0.4 per level reaches
+			-- the cap at 10 levels of height; below that it scales smoothly. On flat
+			-- approaches every tile scores equal here, so this changes nothing; it only
+			-- matters where real height lies along the path. Never adds value to Guard/Wait.
+			local tileElev = GameConstants.GetElevation(tile.tileX, tile.tileY)
+			s = s + math.min(tileElev * 0.4, TERRAIN_TIEBREAK_MAX)
 			if s > bestScore then bestScore = s; best = tile end
 		end
 		if best then
 			-- Diagnostic: if the best reachable tile does NOT reduce distance, the
 			-- unit is boxed in by allies/terrain — surface it instead of silently
 			-- appearing to "freeze" (it is stuck, not crashed).
-			local bestDist = chebyshev(best.tileX, best.tileY, nearest.tileX, nearest.tileY)
+			local bestDist = trueDist(best.tileX, best.tileY)
 			if bestDist >= curDist then
 				print(string.format(
 					"[AIService] %s cannot advance (boxed): best reachable tile (%d,%d) dist=%d >= current dist=%d — taking best available",
@@ -675,10 +805,24 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any):
 			end
 			if nearestAllyTile then
 				-- Pick the reachable tile that gets closest to the nearest ally.
-				local curToAlly = nearestAllyDist
+				-- TRUE-DISTANCE REGROUP (2026-10-16): same barrier-aware fix applied to
+				-- player-advance. The old ranking used straight-line chebyshev(tile ->
+				-- ally), which — exactly like the player-advance bug — steered a
+				-- separated melee unit into a dead-end pocket against deep water / a wall
+				-- / a gap when the ally was on the far side of it, so it never actually
+				-- rejoined formation. Now rank reachable tiles by TRUE walking distance to
+				-- the ally (flood-fill around barriers), falling back to straight-line only
+				-- for tiles with no walkable route to the ally.
+				local allyField = _TargetingService.ComputeDistanceField(nearestAllyTile.tileX, nearestAllyTile.tileY, mapW, mapH)
+				local function allyDist(tx: any, ty: any): any
+					local v = allyField[tostring(tx) .. "," .. tostring(ty)]
+					if v ~= nil then return v end
+					return chebyshev(tx, ty, nearestAllyTile.tileX, nearestAllyTile.tileY) + 1000
+				end
+				local curToAlly = allyDist(unit.tileX, unit.tileY)
 				local regroupBest, regroupScore = nil, -math.huge
 				for _, tile in ipairs(moveTiles) do
-					local d = chebyshev(tile.tileX, tile.tileY, nearestAllyTile.tileX, nearestAllyTile.tileY)
+					local d = allyDist(tile.tileX, tile.tileY)
 					local s = (curToAlly - d) * 10 - d
 					if isTileHazardous(tile.tileX, tile.tileY) then s = s - 100 end
 					s = s - (tile.pathCost or 0) * 0.1
@@ -723,6 +867,38 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any):
 	if not unit.guardUsedThisTurn then
 		table.insert(candidates, { actionType = "Guard", selection = nil, skillName = nil,
 			score = scoreGuard(unit, dials), rtEstimate = 0, tile = nil, targetName = "self" })
+	end
+
+	-- DEFENDER SCREENING MOVE (enemy_ai_personalities rule 4: "moving to positions
+	-- that block line of sight to vulnerable allies"). Defender personality only.
+	-- For each reachable tile, score it by how many shooter->vulnerable-ally sight
+	-- lines the Defender's body would block from there (screenValueAt). This gives a
+	-- Defender a protective action to choose over merely Guarding (rule 24 wants a
+	-- better-than-Guard option when one exists), and realizes the "block LoS to
+	-- vulnerable allies" clause of its locked role. Valued via the Defender's allyHelp
+	-- dial so it reads as protection; the KO-override earlier still fires first (a
+	-- Defender still takes a guaranteed kill), and this only ADDS a Move candidate —
+	-- it never lowers any attack's score, so it cannot reduce aggression.
+	if personality == "Defender" then
+		local bestScreenTile, bestScreenScore = nil, 0
+		for _, tile in ipairs(moveTiles) do
+			local blocks = screenValueAt(unit, tile.tileX, tile.tileY, allUnits)
+			if blocks > 0 then
+				-- Each blocked sight line is worth a share of ALLY_HELP scaled by the
+				-- Defender's allyHelp dial. Small hazard/pathCost discouragement reused.
+				local s = blocks * W.ALLY_HELP * 0.5 * (dials.allyHelp or 1)
+				if isTileHazardous(tile.tileX, tile.tileY) then s = s - 100 end
+				s = s - (tile.pathCost or 0) * 0.1
+				if s > bestScreenScore then bestScreenScore = s; bestScreenTile = tile end
+			end
+		end
+		if bestScreenTile then
+			table.insert(candidates, {
+				actionType = "Move", selection = bestScreenTile, skillName = nil,
+				score = bestScreenScore, rtEstimate = 0, tile = bestScreenTile,
+				targetName = string.format("screen (%d,%d)", bestScreenTile.tileX, bestScreenTile.tileY),
+			})
+		end
 	end
 
 	-- Consumable/item use as a normal scored option (decision: items are a
@@ -789,6 +965,59 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any):
 					score = baseScore * (1 + bestBonus),  -- borrow the improved attack it sets up
 					rtEstimate = 0, tile = bestTile,
 					targetName = string.format("backstab %s", target.name),
+				})
+			end
+		end
+	end
+
+	-- GENERAL ONE-STEP LOOK-AHEAD (added 2026-10-16): "a move is worth the attack it
+	-- sets up." For EVERY personality (not just Skirmisher's lowest-HP setup-KO case),
+	-- consider moving to a reachable tile FROM WHICH the unit could immediately attack
+	-- an enemy this same turn, and value that move by the best such attack (via the
+	-- shared scoreAttack, so it competes fairly with direct-attack candidates already
+	-- in the list). This stops a unit from wasting its turn shuffling forward without
+	-- lining up a hit when a reachable tile would have let it move AND strike.
+	--
+	-- Fidelity: a tile "enables an attack" on an enemy only when the same gates
+	-- GetAttackCandidates uses are met FROM THAT TILE — Chebyshev within weapon range,
+	-- at or beyond weapon min-range, and clear line of sight (reused via the public
+	-- _TargetingService.HasLineOfSight; no targeting logic is reinvented here).
+	-- Bounded: requires AP >= 2 (move + attack in one turn), and only iterates
+	-- reachable move tiles x living enemies, so cost stays within the AI budget.
+	if (unit.currentAp or 0) >= 2 then
+		local wpnMax = unit.weaponMaxRange or 1
+		local wpnMin = unit.weaponMinRange or 1
+		for _, tile in ipairs(moveTiles) do
+			local bestFromTile, bestFromScore = nil, -math.huge
+			for _, foe in ipairs(allUnits) do
+				if foe.isAlive and isHostileTo(unit, foe) then
+					local dist = chebyshev(tile.tileX, tile.tileY, foe.tileX, foe.tileY)
+					if dist <= wpnMax and dist >= wpnMin then
+						local los = _TargetingService.HasLineOfSight(
+							tile.tileX, tile.tileY, foe.tileX, foe.tileY,
+							allUnits, GameConstants.GetElevation(tile.tileX, tile.tileY),
+							unit.weaponProjectileType, unit.side)
+						if los then
+							-- Value the attack as if the unit were standing on this tile.
+							local savedX, savedY = unit.tileX, unit.tileY
+							unit.tileX, unit.tileY = tile.tileX, tile.tileY
+							local s = scoreAttack(unit, foe, dials, allUnits)
+							unit.tileX, unit.tileY = savedX, savedY
+							if s > bestFromScore then bestFromScore = s; bestFromTile = foe end
+						end
+					end
+				end
+			end
+			if bestFromTile then
+				-- Slightly discount vs. attacking from where we already stand (a direct
+				-- attack this turn is strictly better than move-then-attack when both hit
+				-- the same target), so a standing attack wins ties but a setup move still
+				-- beats a plain gap-close.
+				if isTileHazardous(tile.tileX, tile.tileY) then bestFromScore = bestFromScore - 100 end
+				table.insert(candidates, {
+					actionType = "Move", selection = tile, skillName = nil,
+					score = bestFromScore * 0.95, rtEstimate = 0, tile = tile,
+					targetName = string.format("setup-attack %s (%d,%d)", bestFromTile.name, tile.tileX, tile.tileY),
 				})
 			end
 		end

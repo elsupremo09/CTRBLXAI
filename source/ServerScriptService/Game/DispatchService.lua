@@ -356,7 +356,8 @@ function DispatchService.SendUnits(playerId: string, missionId: string, unitIds:
 			tier = mission.tier,
 			duration = mission.duration,
 			startBattle = startBattle,
-			returnBattle = returnBattle,
+			returnBattle = returnBattle,  -- legacy (battle-count); kept for save back-compat
+			remainingDays = mission.duration,  -- 2026-10-16: duration is now DAYS (1 day = 4000 CT)
 			xp = mission.xp,
 			matTier = mission.rewardTier,
 			matCount = mission.rewardCount,
@@ -393,14 +394,22 @@ end
 -- Returns: { returned = { { unitId, missionId, xp, matTier, matCount, xpGranted } } }
 --------------------------------------------------
 
-function DispatchService.ResolveReturns(playerId: string, battlesCompleted: number)
+-- daysElapsed = days this battle was worth = ceil(elapsed CT / 4000), min 1 (2026-10-16,
+-- unit_progression 77/78/99). Each completed battle burns down every active dispatch by that
+-- many days; a unit returns when its remainingDays reaches 0. (Old callers passing only a
+-- battle count still work: daysElapsed defaults to 1 = one day per battle.)
+function DispatchService.ResolveReturns(playerId: string, daysElapsed: number?)
 	assert(type(playerId) == "string", "DispatchService.ResolveReturns: playerId required")
-	local now = math.max(0, math.floor(battlesCompleted or 0))
+	local burn = math.max(1, math.floor(tonumber(daysElapsed) or 1))
 	local a = activeOf(playerId)
 	local returned = {}
 
 	for unitId, rec in a do
-		if now >= rec.returnBattle then
+		-- Back-compat: a record loaded from an old save may lack remainingDays; derive it from
+		-- the stored duration so it still counts down instead of being stuck.
+		if rec.remainingDays == nil then rec.remainingDays = math.max(1, math.floor(rec.duration or 1)) end
+		rec.remainingDays = rec.remainingDays - burn
+		if rec.remainingDays <= 0 then
 			-- 1) Mark available again on the roster path.
 			markBack(playerId, unitId)
 
@@ -492,6 +501,7 @@ function DispatchService.Export(playerId: string)
 			duration = rec.duration,
 			startBattle = rec.startBattle,
 			returnBattle = rec.returnBattle,
+			remainingDays = rec.remainingDays,
 			xp = rec.xp,
 			matTier = rec.matTier,
 			matCount = rec.matCount,
@@ -514,6 +524,7 @@ function DispatchService.Import(playerId: string, data: any)
 				xp = math.max(0, math.floor(tonumber(rec.xp) or 0)),
 				matTier = math.clamp(math.floor(tonumber(rec.matTier) or 1), MATERIAL_TIER_MIN, MATERIAL_TIER_MAX),
 				matCount = math.max(0, math.floor(tonumber(rec.matCount) or 0)),
+				remainingDays = math.max(1, math.floor(tonumber(rec.remainingDays) or tonumber(rec.duration) or 1)),
 			}
 			-- Re-assert unavailability on the roster path after load.
 			markAway(playerId, unitId, active[playerId][unitId].returnBattle)

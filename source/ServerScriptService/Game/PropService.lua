@@ -537,6 +537,53 @@ end
 -- PUBLIC
 --------------------------------------------------
 
+--------------------------------------------------
+-- OBS BLOCKER-PROP MODEL PICK (shared source of truth)
+--------------------------------------------------
+-- Returns a RAW TEMPLATE Model/BasePart (NOT a placed clone) for an OBS blocker-form
+-- object, chosen region-appropriately from the SAME PropData.Blockers + variant folders
+-- the decorative blocker pass uses. MapRenderer.spawnObjectModel consumes this exactly
+-- like it consumes findObjectModel's billboard/other results: it clones, pivots, anchors,
+-- tags ObjTileX/ObjTileY and names it MapObjModel_..., so BOTH the map-build path
+-- (renderBlockers) and the runtime push path (RenderOneObject) render + relocate it with
+-- no extra work. The pick is seeded (seed + tile key) so it is deterministic per map and
+-- STABLE when the object is pushed (same object -> same model at its new tile).
+-- Returns nil when the region has no eligible/available blocker prop; caller then draws
+-- its existing fallback. VISUAL ONLY -- never touches passability/LoS/state. (BUG-047 OBS
+-- black-box fix 2026-10-16: "OBS Blocker" never had a model of that name; its visual is a
+-- region blocker prop, per objects_encounters row 83 + the regions object-weight data.)
+function PropService.PickBlockerModel(regionType: string?, biomeId: string?, seed: any, uniqueKey: string?): Instance?
+	local variants = getVariants("Blockers", CFG.BLOCKER_FOLDERS, PropData.Blockers :: any)
+	if next(variants) == nil then return nil end
+	-- Gather every blocker-prop NAME whose entry fits this region/biome and has a model.
+	local names: { string } = {}
+	for _, e in PropData.Blockers :: any do
+		if entryFits(e, regionType, biomeId) then
+			for _, n in e.names do
+				if variants[n] then
+					table.insert(names, n)
+				end
+			end
+		end
+	end
+	if #names == 0 then return nil end
+	-- Stable order so the seeded pick is reproducible regardless of table/child order.
+	table.sort(names)
+	-- Deterministic pick from seed + tile key (no shared RNG stream consumed, so map-gen
+	-- determinism / obsFormRng ordering is unperturbed -- same approach as the billboard pick).
+	local h = 0
+	local keyStr = tostring(seed or 0) .. "|" .. tostring(uniqueKey or "")
+	for i = 1, #keyStr do
+		h = (h * 31 + string.byte(keyStr, i)) % 2147483648
+	end
+	local name = names[(h % #names) + 1]
+	local vlist = variants[name]
+	if not vlist or #vlist == 0 then return nil end
+	-- Pick a variant deterministically too (second hash so it is not always index 1).
+	local h2 = (h * 1103515245 + 12345) % 2147483648
+	return vlist[(h2 % #vlist) + 1]
+end
+
 function PropService.Populate(generatedMap: any, mapFolder: Instance)
 	if not (generatedMap and mapFolder and generatedMap.tiles) then return end
 	local existing = mapFolder:FindFirstChild(PROPS_FOLDER)

@@ -31,6 +31,12 @@ local TerrainTextures = require(
 -- PropService has its own TILE_SIZE = 5 mirror; keep in sync with TILE_SIZE below.
 local PropService = require(script.Parent.PropService)
 
+-- Object definitions (category/activation/tags). Module-level so BOTH spawnObjectModel
+-- (interactable-only PointLight gate) and RenderOneObject can read it. (2026-10-16)
+local ObjectData = require(
+	ReplicatedStorage:WaitForChild("Content"):WaitForChild("ObjectData")
+)
+
 local MapRenderer = {}
 
 --------------------------------------------------
@@ -375,6 +381,12 @@ local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap
 
 	-- REGION LAYER
 	tile:SetAttribute("RegionId", regionId or "unknown")
+	-- Store the region TYPE NAME too (e.g. "Forest"), not just the id. The runtime push
+	-- path (RenderOneObject) has no generatedMap/regionTypeMap, so the resolved type name
+	-- must travel ON the tile for OBS-blocker prop selection to work after a push. (2026-10-16)
+	local regionTypeName = generatedMap and generatedMap.regionTypeMap and regionId
+		and generatedMap.regionTypeMap[regionId] or nil
+	tile:SetAttribute("RegionType", regionTypeName or "unknown")
 	tile:SetAttribute("RegionDebugColor", regionColor)
 
 	-- TERRAIN DATA
@@ -598,7 +610,21 @@ end
 function spawnObjectModel(objectName, tileChild, tileTopY, uniqueKey, seed)
 	-- `seed` (optional) selects the Ad Billboard model deterministically from the
 	-- "Billboard"-prefix pool; nil for non-billboard objects (ignored by findObjectModel).
-	local template = findObjectModel(objectName, seed)
+	-- OBS BLOCKER (BUG-047, 2026-10-16): there is no model named "OBS Blocker". Its visual
+	-- is a REGION-APPROPRIATE blocker prop (objects_encounters row 83 + regions object-weight
+	-- data), picked from the SAME PropData.Blockers set via PropService.PickBlockerModel. The
+	-- region TYPE NAME + biome travel on the tile (RegionType/BiomeId attrs) so this resolves
+	-- identically on the map-build path AND the runtime push path. Seeded by seed + tile key
+	-- so the model is stable per map and follows the object when pushed. nil -> caller draws
+	-- its existing fallback cube (region genuinely has no available blocker prop).
+	local template
+	if objectName == "OBS Blocker" then
+		local regionType = tileChild and tileChild:GetAttribute("RegionType")
+		local biomeId = tileChild and tileChild:GetAttribute("BiomeId")
+		template = PropService.PickBlockerModel(regionType, biomeId, seed, uniqueKey)
+	else
+		template = findObjectModel(objectName, seed)
+	end
 	if not template then return nil end
 	local clone = template:Clone()
 	clone.Name = string.format("MapObjModel_%s_%s", tostring(objectName), tostring(uniqueKey or ""))
@@ -648,6 +674,58 @@ function spawnObjectModel(objectName, tileChild, tileTopY, uniqueKey, seed)
 	-- faces. All property writes happen BEFORE Parent (NET-004) above/here.
 	if objectName == "Ad Billboard" then
 		prepareBillboardAdFaces(clone)
+	end
+	-- MAP-OBJECT POINTLIGHT (user request 2026-10-16): one lightweight PointLight per
+	-- object so props read clearly, especially at night. Attached to a dedicated tiny
+	-- invisible anchor part at the model top-centre (models have no PrimaryPart), so the
+	-- light sits INSIDE the object, travels with it when pushed (RenderOneObject uses this
+	-- same spawn path), and is destroyed with it. Mobile-first: conservative Brightness/
+	-- Range + Shadows off keep per-object cost low (one light per OBJECT, not per part).
+	-- Values are eyeball-tunable; adjust on user feedback like the night-lighting pass.
+	-- Properties set BEFORE Parent (NET-004). Tagged OBJECT_POINTLIGHT for later tuning.
+	-- GLOW GATE (user ruling 2026-10-16, category rule): the light marks beneficial/useful
+	-- POINTS OF INTEREST. Every object glows EXCEPT category "Hazard" and category "Obstacle".
+	-- This lights interactables + passive-aura objects (War Banner, Cursed Statue, Necro Tome
+	-- Stand) and leaves DARK: all traps + Bomb Barrel + Ice Spike + Oil Sluice + Steam Valve
+	-- (category "Hazard") and OBS Blocker + Ad Billboard (category "Obstacle"). Darkness itself
+	-- is meant to hide hazards. Data-driven by ObjectData.category so it never drifts from a
+	-- hardcoded name list; a new object glows unless its category is Hazard/Obstacle.
+	local _objDef = ObjectData.Objects and ObjectData.Objects[objectName]
+	local _objCategory = _objDef and _objDef.category
+	local _shouldGlow = _objDef ~= nil
+		and _objCategory ~= "Hazard"
+		and _objCategory ~= "Obstacle"
+	if _shouldGlow then
+		local lightAnchor = Instance.new("Part")
+		lightAnchor.Name = "OBJECT_POINTLIGHT_ANCHOR"
+		lightAnchor.Size = Vector3.new(0.2, 0.2, 0.2)
+		lightAnchor.Transparency = 1
+		lightAnchor.Anchored = true
+		lightAnchor.CanCollide = false
+		lightAnchor.CanQuery = false
+		lightAnchor.CanTouch = false
+		lightAnchor.CastShadow = false
+		-- Position at the model/part centre, lifted slightly so the light sits within the prop.
+		local anchorPos
+		if clone:IsA("Model") then
+			local okbb, bbCf, bbSize = pcall(function() return clone:GetBoundingBox() end)
+			if okbb and bbCf then
+				anchorPos = bbCf.Position + Vector3.new(0, (bbSize and bbSize.Y or 2) * 0.25, 0)
+			else
+				anchorPos = Vector3.new(cx, tileTopY + 1.5, cz)
+			end
+		else
+			anchorPos = (clone :: any).Position
+		end
+		lightAnchor.Position = anchorPos
+		local light = Instance.new("PointLight")
+		light.Name = "OBJECT_POINTLIGHT"
+		light.Brightness = 1.4      -- modest; readable at night without washing out day
+		light.Range = 8             -- small radius so many objects do not flood the scene
+		light.Color = Color3.fromRGB(255, 244, 214)  -- warm-neutral
+		light.Shadows = false       -- shadows are the expensive part; off for mobile budget
+		light.Parent = lightAnchor
+		lightAnchor.Parent = clone
 	end
 	clone.Parent = tileChild.Parent  -- same mapFolder as the tile
 	return clone
@@ -1082,10 +1160,7 @@ function MapRenderer.RenderOneObject(mapFolder, instance)
 	if not (mapFolder and instance and instance.x and instance.y) then
 		return false
 	end
-	local ObjectData = require(
-		game:GetService("ReplicatedStorage")
-			:WaitForChild("Content"):WaitForChild("ObjectData")
-	)
+	-- ObjectData is required at module scope (top of file); no local re-require needed. (2026-10-16)
 	local def = ObjectData.Objects and ObjectData.Objects[instance.type]
 	local nonPassable = def and def.passable == false
 

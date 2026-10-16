@@ -723,6 +723,16 @@ local function spawnToken(unit)
 		part.Material = Enum.Material.SmoothPlastic
 		part.Parent = visualFolder
 		anchorPart = part
+		-- TEMP DIAG (2026-10-16): why do model-less cylinder units float? Log the tile, what
+		-- the grounding raycast actually hit (instance name + class), the ray Y, and the pure
+		-- grid-math Y for comparison. Remove once the float cause is pinned.
+		local _diagY, _diagHit = groundSurfaceY(unit.tileX, unit.tileY)
+		local _gridY = tileSurfaceY(getElevation(unit.tileX, unit.tileY))
+		warn(string.format("[CYL-DIAG] %s tile(%d,%d) rayHit=%s(%s) rayY=%.2f gridY=%.2f cylCFrameY=%.2f",
+			tostring(unit.name), unit.tileX, unit.tileY,
+			_diagHit and _diagHit.Name or "MISS",
+			_diagHit and _diagHit.ClassName or "nil",
+			_diagY, _gridY, part.Position.Y))
 	end
 
 	-- HP + MP billboard. A dedicated star column sits to the LEFT of the bars so
@@ -3813,6 +3823,15 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	if TileHL and TileHL.ClearInspectMarker then pcall(TileHL.ClearInspectMarker) end  -- after ClearSelection (it re-marks the actor)
 	isPlayerTurn = false; inputMode = nil; clearHighlights()
 	hideSelectionRing()
+	-- Clear leftover facing-arrow pads at battle END (2026-10-16). The arrow pads live in
+	-- visualFolder keyed by token.facePad, independent of the server UnitModels (which are
+	-- cleared server-side). Previously they were only wiped at the NEXT BattleStarted, so they
+	-- floated over the base / quest board / next deployment until then. Destroy them now; the
+	-- token table itself is left intact for the post-battle camera/HUD cleanup below.
+	for _, token in pairs(unitTokens) do
+		if token.facePad and token.facePad.Parent then token.facePad:Destroy() end
+		token.facePad = nil
+	end
 	bp.state = "BattleEnded"; BattleHUD.Render(bp)
 
 	-- Show result
@@ -4711,7 +4730,9 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	lootLabel.TextSize = Theme.Text.Small()
 	lootLabel.TextColor3 = Theme.Colors.TextSecondary
 	lootLabel.TextXAlignment = Enum.TextXAlignment.Left
-	lootLabel.Text = "LOOT"
+	-- On a defeat with no reward items, the loot header becomes a defeat line instead of an
+	-- empty "LOOT" + blank grid, so the defeat screen reads intentionally (2026-10-16).
+	lootLabel.Text = (data.defeat and #(data.rewards or {}) == 0) and "Your party was defeated — no spoils recovered." or "LOOT"
 	lootLabel.Parent = frame
 
 	-- Loot grid

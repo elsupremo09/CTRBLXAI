@@ -535,6 +535,11 @@ local hero = UnitSchema.Create({
 	doctrineId   = "DOC-BERSERKER",
 	skillIds     = { "skill_power_strike", "skill_sweeping_cut" },
 })
+-- The Hero is the player avatar (project_rules 114 / unit_schema is_avatar, DB 2026-10-16):
+-- unique, cannot be dismissed or lost. Flagging the real unit makes is_avatar the source of
+-- truth for dismissal protection; the unit_hero id check in GuildMenuService is now a redundant
+-- safety net rather than the only guard.
+hero.is_avatar = true
 equipGeneratedWeapon(hero, "WPN-SWORD", 5, "Uncommon", 1001)
 
 -- Starter off-hand shield (inventory only, not equipped)
@@ -729,6 +734,12 @@ local streamFocus
 --------------------------------------------------
 local hubContinueSignal = Instance.new("BindableEvent")
 local rewardContinueSignal = Instance.new("BindableEvent")
+-- Map-ready gate (2026-10-16 crash fix): the sortie opens with the Embark button locked
+-- while the map generates. If an early StartBattle still reaches the server (client lock
+-- race / stray trigger), committing into a half-built battle crashes. This authoritative
+-- flag is false while a sortie's map is building and set true when MapBuildComplete fires;
+-- StartBattle is IGNORED until then. Reset false at each sortie open.
+local mapReadyForStart = false
 
 -- forward-declared battle state (updated each round inside the loop)
 local state
@@ -744,6 +755,10 @@ local cardInventory = { skillCards = {}, augmentCards = {} }
 local doSave               -- fwd-declared; assigned inside the loop so dev actions at boot can call it
 
 BattleEvents.StartBattle.OnServerEvent:Connect(function(player)
+	if not mapReadyForStart then
+		print("[Hub] StartBattle ignored — map not ready yet (early tap)")
+		return
+	end
 	print("[Hub] Player ready to start battle")
 	hubContinueSignal:Fire()
 end)
@@ -1658,9 +1673,19 @@ while true do
 	-- Adventurer's Guild page when the player opened it.
 	print(`[Loop] Activity launched: {launchedActivity}`)
 
-	-- ACTIVITY DISPATCH. Today only "quest" exists; dungeon/raid/PvP become additional
-	-- branches here, each a self-contained session that returns to the base afterward.
-	-- (Unknown/future types fall through to the quest activity until built.)
+	-- ACTIVITY -> BATTLE ORDER -> BATTLE -> OUTCOME SEAM (2026-10-16). A battle is NOT owned
+	-- by quests. An ACTIVITY (quest today; boss raid / exploration later) sets up the battle
+	-- -- where the map comes from, where the enemies come from, the deploy cap -- and chooses
+	-- the BETWEEN-BATTLE RULE (betweenBattleMode) that the post-battle outcome below keys on.
+	-- The battle engine (map render -> enemy gen -> deploy -> turn loop) between here and the
+	-- outcome never knows which activity launched it. Adding a new activity = a new branch
+	-- here + (if needed) a new betweenBattleMode; the engine and this loop body stay put.
+	--   quest       -> procedural map + procedural enemies, mode "standalone"
+	--   (future) raid        -> fixed map + fixed enemies + daily attempt cap, mode "standalone"
+	--   (future) exploration -> per-node battle, mode "run" (carry HP/MP/charges; recover only at rest nodes)
+	-- betweenBattleMode "standalone" = the current rule: clean-slate reset each battle, full
+	-- post-battle recovery, auto-save, return to base. (The only mode today; exploration adds "run".)
+	local betweenBattleMode = "standalone"
 
 	-- Generate 3 quests
 	playerLevel = 1  -- prototype: hardcoded level 1. Future: read from save.
@@ -1714,7 +1739,16 @@ while true do
 	-- so the player never stares at an empty world while the map builds. The button
 	-- unlocks when battle prep finishes (MapBuildComplete, below). The go/abandon gate
 	-- further down already waits on that same button, so locking it IS the gate.
-	GuildMenuService.Open("PreBattle", { scouting = true })
+	-- Pass the selected quest in the PreBattle payload (2026-10-16 fix): the client sortie page
+	-- must show the quest even when chosenQuest was never set client-side (fallback pick / the
+	-- quest reached PreBattle without a "Choose" tap). Compact copy of the display fields.
+	mapReadyForStart = false  -- close the gate: this round's map starts building now
+	GuildMenuService.Open("PreBattle", { scouting = true, quest = {
+		id = selectedQuest.id, name = selectedQuest.name, biome = selectedQuest.biome,
+		recommendedLvl = selectedQuest.recommendedLvl, enemyCount = selectedQuest.enemyCount,
+		difficulty = selectedQuest.difficulty, playerSlots = selectedQuest.playerSlots,
+		condition = selectedQuest.condition, rewards = selectedQuest.rewards,
+	} })
 
 	-- Generate map from quest parameters
 	generatedMap = MapService.Generate(selectedQuest.biome, selectedQuest.template)
@@ -2380,6 +2414,7 @@ while true do
 	-- map..." since quest selection. The sortie menu is ALREADY open (scouting state); we do
 	-- NOT re-open it (that teardown/relabel was the old flow). Just flip the button live.
 	print("[Hub] Battle prep complete — unlocking sortie")
+	mapReadyForStart = true  -- map is genuinely built now; StartBattle is accepted from here
 	BattleEvents.MapBuildComplete:FireAllClients()
 
 	-- Sync map data (terrain/elevation/blockers) to client for tile inspector
@@ -3437,7 +3472,10 @@ while true do
 	-- protected commit -> save -> BattleEnded order above (BUG-013 order unchanged):
 	-- count this battle (win or loss) and bring home dispatches that are due (their
 	-- XP goes through the wired Dispatch sink, materials through CurrencyService).
-	local dispatchReturns = GuildMenuService.OnBattleCompleted()
+	-- Dispatch now counts down in DAYS, where 1 day = 4000 CT (unit_progression 77/78/99,
+	-- DB 2026-10-16). This battle was worth ceil(elapsed CT / 4000) days, minimum 1.
+	local daysElapsed = math.max(1, math.ceil((state.ct or 0) / 4000))
+	local dispatchReturns = GuildMenuService.OnBattleCompleted(daysElapsed)
 	-- Battle recruits (project_rules id 133): alive recruited Neutrals are purified and
 	-- join the roster on ANY battle end. Runs after the protected BUG-013 order above.
 	GuildMenuService.AdoptBattleRecruits(state.units)
@@ -3474,7 +3512,11 @@ while true do
 		end
 	end
 
-	if #rewardSummaries > 0 or battleGoldEarned > 0 or #dispatchSummary > 0 then
+	-- Always show the result screen on a DEFEAT too (2026-10-16): previously a defeat with no
+	-- rewards/gold/dispatch skipped this entirely, leaving only the bare 5s "DEFEAT" banner.
+	-- Firing it on defeat gives the same framed screen (DEFEAT title + a no-spoils line) with a
+	-- Continue button, and the rewardContinueSignal wait keeps the loop paced like a victory.
+	if #rewardSummaries > 0 or battleGoldEarned > 0 or #dispatchSummary > 0 or not isQualifyingVictory then
 		print(string.format("[PostBattle] Sending %d reward(s) + %d gold + %d dispatch to client", #rewardSummaries, battleGoldEarned, #dispatchSummary))
 		BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary, gold = battleGoldEarned,
 			dispatch = dispatchSummary, defeat = not isQualifyingVictory })
@@ -3489,7 +3531,7 @@ while true do
 	-- loop returns to the top, which opens the base ("Base" phase). Post-battle loadout
 	-- changes now happen at the base, which is fully interactive.
 	doSave()
-	print("[Hub] Battle complete — auto-saved; returning to base.")
+	print(`[Hub] Battle complete (mode: {betweenBattleMode}) — auto-saved; returning to base.`)
 
 	print("[Loop] Round complete — returning to quest board for next quest.")
 end

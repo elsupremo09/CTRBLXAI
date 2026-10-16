@@ -66,6 +66,21 @@ end
 
 local TargetingService = {}
 
+-- [LOG] Targeting debug spam gate (2026-10-16). The per-candidate "REJECTED …
+-- out of range / same side / no LoS" prints and the per-skill header fire once
+-- per (skill × unit) during EVERY AI scoring pass, which on a full board is
+-- thousands of lines per turn and buries real signals (defeats, weather, procs)
+-- in the Output window. They are pure logging — no gameplay effect — so they are
+-- gated behind this flag (default false). Flip to true only when debugging why a
+-- specific target was rejected. GetSkillCandidates still emits ONE summary line
+-- per skill ("N/M targets in range") regardless of this flag.
+local DEBUG_TARGETING = false
+local function debugLog(msg: string)
+	if DEBUG_TARGETING then
+		print(msg)
+	end
+end
+
 -- Optional: TileEffectService injected at runtime (DI, mirrors CommandService/
 -- BattleCoordinator) so pathfinding can honor active tile-effect move-cost bonuses
 -- (e.g. Tar Pit). Wired in Main.server.lua during init.
@@ -413,6 +428,77 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 end
 
 --------------------------------------------------
+-- TRUE DISTANCE-TO-GOAL FIELD (added 2026-10-16)
+--
+-- WHY: AIService.bestMoveToward used to rank reachable move tiles by STRAIGHT-LINE
+-- (chebyshev) distance to the nearest player. Straight-line distance ignores walls,
+-- deep water, impassable terrain and chasm gaps, so when a barrier separates the
+-- enemy from the player the "closest-looking" tile is a dead-end pocket jammed up
+-- against the barrier. The enemy walked into that pocket every turn and stalled.
+--
+-- WHAT: a flood-fill (breadth-first search) OUTWARD from the goal tile across the
+-- whole map, honoring the SAME passability rules the movement engine uses
+-- (IsBlocked walls/objects, IsImpassableTerrain, chasm-gap floors). It returns a
+-- field: field[tileKey(x,y)] = true number of steps to walk from (x,y) to the goal
+-- going AROUND barriers. Tiles with no walkable route to the goal are absent from
+-- the field (nil) and must be treated as unreachable (math.huge) by the caller.
+--
+-- This is map geometry only (no per-unit jump/flight/occupancy): it answers "how far
+-- is this tile from the player around the terrain", which is exactly what gap-closing
+-- ranking needs. The per-unit reachable set still comes from GetMoveCandidates; this
+-- field only RANKS those tiles by genuine progress toward the goal.
+--
+-- Cost: one flood-fill over the grid per call (<= mapWidth*mapHeight tiles). On a
+-- 20x30 (600-tile) map this is trivial and well within the per-unit AI budget; the
+-- game is turn-based, so there is no frame-rate pressure.
+--------------------------------------------------
+
+function TargetingService.ComputeDistanceField(goalX: any, goalY: any, mapWidth: any, mapHeight: any): any
+	local field = {}
+
+	-- Goal tile itself must be inside the map; if the goal somehow sits on a blocked
+	-- tile we still seed from it (its neighbors are what matter for ranking).
+	if not isInsideMap(goalX, goalY, mapWidth, mapHeight) then
+		return field
+	end
+
+	local goalKey = tileKey(goalX, goalY)
+	field[goalKey] = 0
+
+	local queue = { { x = goalX, y = goalY } }
+	local head = 1
+	while head <= #queue do
+		local current = queue[head]
+		head = head + 1
+		local curDist = field[tileKey(current.x, current.y)]
+
+		for _, dir in ipairs(DIRECTIONS) do
+			local nx = current.x + dir.dx
+			local ny = current.y + dir.dy
+			if isInsideMap(nx, ny, mapWidth, mapHeight) then
+				local key = tileKey(nx, ny)
+				if field[key] == nil then
+					-- Passability mirrors the walker rules in GetMoveCandidates: solid
+					-- walls/objects and impassable terrain are never traversable. Chasm
+					-- gap floors are holes in the walkable surface (only a Rabbit Folk hop
+					-- clears them, which is a per-unit exception the ranking field does not
+					-- model), so they are treated as not-walkable here too.
+					local blocked = GameConstants.IsBlocked(nx, ny)
+						or GameConstants.IsImpassableTerrain(nx, ny)
+						or (GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(nx, ny))
+					if not blocked then
+						field[key] = curDist + 1
+						table.insert(queue, { x = nx, y = ny })
+					end
+				end
+			end
+		end
+	end
+
+	return field
+end
+
+--------------------------------------------------
 -- LINE OF SIGHT (Bresenham's line through grid)
 --
 -- Returns true if there is clear LoS from (x1,y1) to (x2,y2).
@@ -623,7 +709,7 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 	-- HALFLING — Nimble Steps (2026-10-02): movement skills +1 range (race modifier).
 	local range, minRange, baseRange, bonusRange = GameConstants.CalcSkillRange(
 		actor, skillDef, RacePassiveService.GetSkillRangeModifier(actor, skillDef))
-	print(string.format("[SkillCand] %s using %s | skillRange=%s baseRange=%d bonusRange=%d range=%d | weaponMaxRange=%s INT=%s derivedBSR=%s",
+	debugLog(string.format("[SkillCand] %s using %s | skillRange=%s baseRange=%d bonusRange=%d range=%d | weaponMaxRange=%s INT=%s derivedBSR=%s",
 		actor.name, skillDef.name or skillDef.id, tostring(skillDef.range),
 		baseRange, bonusRange, range, tostring(actor.weaponMaxRange),
 		tostring(actor.effectiveStats and actor.effectiveStats.INT),
@@ -693,10 +779,10 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 		if not unit.isAlive then
 			-- skip dead units
 		elseif chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) > range then
-			print(string.format("[SkillCand] %s REJECTED %s: out of range (dist=%d > range=%d)",
+			debugLog(string.format("[SkillCand] %s REJECTED %s: out of range (dist=%d > range=%d)",
 				actor.name, unit.name, chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY), range))
 		elseif chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY) < minRange then
-			print(string.format("[SkillCand] %s REJECTED %s: inside weapon min range (dist=%d < minRange=%d)",
+			debugLog(string.format("[SkillCand] %s REJECTED %s: inside weapon min range (dist=%d < minRange=%d)",
 				actor.name, unit.name, chebyshevDistance(actor.tileX, actor.tileY, unit.tileX, unit.tileY), minRange))
 		else
 			-- LoS check: ally/healing skills skip LoS
@@ -709,18 +795,18 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 				or TargetingService.HasLineOfSight(actor.tileX, actor.tileY, unit.tileX, unit.tileY,
 					allUnits, getEffectiveElevation(actor), projType, actor.side)
 			if not hasLos then
-				print(string.format("[SkillCand] %s REJECTED %s: no LoS (proj=%s)", actor.name, unit.name, tostring(projType)))
+				debugLog(string.format("[SkillCand] %s REJECTED %s: no LoS (proj=%s)", actor.name, unit.name, tostring(projType)))
 			elseif not isMeleeElevationLegal(actor, unit, baseRange) then
-				print(string.format("[SkillCand] %s REJECTED %s: elevation (baseRange=%d)", actor.name, unit.name, baseRange))
+				debugLog(string.format("[SkillCand] %s REJECTED %s: elevation (baseRange=%d)", actor.name, unit.name, baseRange))
 			else
 				-- Allegiance filter
 				if targetRules == "Enemy Unit" then
 					if unit.side ~= actor.side and not StatusService.HasStatus(unit, "Hide") then
 						table.insert(candidates, unit)
 					elseif StatusService.HasStatus(unit, "Hide") then
-						print(string.format("[SkillCand] %s REJECTED %s: hidden (Hide status)", actor.name, unit.name))
+						debugLog(string.format("[SkillCand] %s REJECTED %s: hidden (Hide status)", actor.name, unit.name))
 					elseif unit.side == actor.side then
-						print(string.format("[SkillCand] %s REJECTED %s: same side", actor.name, unit.name))
+						debugLog(string.format("[SkillCand] %s REJECTED %s: same side", actor.name, unit.name))
 					end
 				elseif isAllyRule then
 					-- Ally Unit, Self / Self, Allies / Self, Ally Unit
@@ -732,7 +818,7 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 					if unit.side == actor.side and unit.id ~= actor.id then
 						table.insert(candidates, unit)
 					elseif unit.id == actor.id then
-						print(string.format("[SkillCand] %s REJECTED %s: self excluded (Ally Unit only)", actor.name, unit.name))
+						debugLog(string.format("[SkillCand] %s REJECTED %s: self excluded (Ally Unit only)", actor.name, unit.name))
 					end
 				elseif isIndiscriminate then
 					-- Any alive unit in range
@@ -746,6 +832,17 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 			end
 		end
 	end
+
+	-- [LOG] One always-on summary line per skill (replaces the thousands of gated
+	-- per-candidate REJECTED lines above). Counts real unit targets found; the
+	-- ground/self-target early-returns above never reach here, so this is the
+	-- unit-targeting path only.
+	local considered = 0
+	for _, u in ipairs(allUnits) do
+		if u.isAlive then considered += 1 end
+	end
+	print(string.format("[SkillCand] %s %s: %d/%d targets in range",
+		actor.name, skillDef.name or skillDef.id, #candidates, considered))
 
 	return candidates, range
 end
