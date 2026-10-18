@@ -519,6 +519,20 @@ local function buildTurnPrompt(unit)
 		skills         = skills,
 		moveCandidates = moveCandidates,
 		attackTargets  = attackTargets,
+		-- UNDO (2026-10-17): availability + grayed-button reason for the top-level
+		-- Undo command. Server owns the rule (SEC-002); client only renders the
+		-- state. Available when the newest reversible action for THIS unit exists
+		-- and triggered no reaction. undoReason feeds the disabled-button tooltip.
+		undoAvailable  = (function()
+			local e = BattleCoordinator.PeekUndo(state)
+			return e ~= nil and e.actorId == unit.id and e.reaction ~= true
+		end)(),
+		undoReason     = (function()
+			local e = BattleCoordinator.PeekUndo(state)
+			if not e or e.actorId ~= unit.id then return "Nothing to undo" end
+			if e.reaction then return "Can't undo — that move caused a reaction" end
+			return nil
+		end)(),
 		pushTargets    = pushTargets,
 		consumableSlots = consumableItems,
 		interactTargets = interactTargets,
@@ -700,6 +714,20 @@ local function executePlayerCommand(unit, command)
 			warn("[Main] Guard rejected: " .. (reason or "unknown"))
 			return nil
 		end
+	end
+
+	if actionType == "Undo" then
+		-- Reverse the most recent reversible Move/Guard (server-authoritative).
+		-- On success we return nil so the turn loop simply re-prompts the SAME
+		-- unit — AP, RT and the action menu all refresh from the fresh prompt,
+		-- exactly like the rejected-command path. The reversal's own visual
+		-- broadcasts (UnitMoved / StatusExpired / UnitStateChanged) already fired
+		-- inside UndoLastAction, so there is no action to append or broadcast here.
+		local ok, reason = CommandService.UndoLastAction(state, unit.id)
+		if not ok then
+			warn("[Main] Undo rejected: " .. (reason or "unknown"))
+		end
+		return nil
 	end
 
 	if actionType == "Push" then

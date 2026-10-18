@@ -228,7 +228,14 @@ BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId)
 		if prevId ~= unitId and prevUnit.equipmentSlots then
 			for prevSlot, prevItem in pairs(prevUnit.equipmentSlots) do
 				if prevItem.instanceId == instanceId then
-					EquipmentService.Unequip(prevUnit, prevSlot)
+					-- Moving an item off another unit. If this is that unit's only
+					-- weapon, the retention guard refuses — a unit can never be
+					-- stripped bare to arm another. Abort the whole move in that case.
+					local moveOk, moveErr = EquipmentService.Unequip(prevUnit, prevSlot)
+					if not moveOk then
+						warn(string.format("[Management] Equip FAILED: moving %s off %s — %s", archetype.name, prevUnit.name, moveErr or "cannot unequip"))
+						return { ok = false, reason = moveErr or "Cannot remove that unit's only weapon" }
+					end
 					EquipmentService.RebuildUnitStats(prevUnit)
 					print(string.format("[Management] Auto-unequipped %s from %s to equip on %s", archetype.name, prevUnit.name, unit.name))
 				end

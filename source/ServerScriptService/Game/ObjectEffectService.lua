@@ -146,7 +146,13 @@ end
 -- removed via the EXISTING RemoveObjectInstance (clears the blocker, reverts the
 -- tile, removes the visual). Ad Billboard / unbreakable objects are a no-op.
 -- Returns: "destroyed" | remaining hp (number) | "immune" | "not-found".
-function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any): any
+-- `attackElement` (optional): the element of the incoming hit (e.g. "Fire"). When the
+-- object's ObjectData defines `instantKillTags` and the attack element matches one of
+-- them, the object is destroyed in ONE hit regardless of remaining hp (e.g. Ice Spike
+-- weak to Fire). This is the reusable per-object elemental-weakness hook: every future
+-- skill-placed blocker just lists its killer element(s) in instantKillTags, no new code.
+-- Omitting attackElement preserves the old behaviour exactly (back-compatible).
+function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, attackElement: any): any
 	if not (state and state.objects and x and y) then return "not-found" end
 	for _, inst in ipairs(state.objects) do
 		if inst.x == x and inst.y == y then
@@ -154,7 +160,14 @@ function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any):
 			if (not isBreakableObject(def)) or inst.hp == nil then
 				return "immune"
 			end
-			local dmg = math.max(1, math.floor(tonumber(n) or 1))
+			-- Elemental instant-kill: attack element matches the object's instantKillTags.
+			local instant = false
+			if attackElement and type(def.instantKillTags) == "table" then
+				for _, t in ipairs(def.instantKillTags) do
+					if t == attackElement then instant = true; break end
+				end
+			end
+			local dmg = instant and inst.hp or math.max(1, math.floor(tonumber(n) or 1))
 			inst.hp = math.max(0, inst.hp - dmg)
 			if inst.hp <= 0 then
 				ObjectEffectService.RemoveObjectInstance(state, inst)

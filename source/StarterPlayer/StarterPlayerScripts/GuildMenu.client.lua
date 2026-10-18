@@ -453,7 +453,7 @@ local function finalizeCart()
 	for iid, v in cartDowngrades do downgrades[iid] = v.toLevel end
 	for _, d in cartDispatches do table.insert(dispatches, { missionId = d.missionId, unitIds = d.unitIds }) end
 	if #buys == 0 and #sells == 0 and next(upgrades) == nil and next(downgrades) == nil and #dispatches == 0 then
-		setStatus("Your cart is empty") return
+	setStatus("Nothing pending") return
 	end
 	isBusy = true
 	local res = call(GuildEvents.FinalizeCart, { buys = buys, sells = sells, upgrades = upgrades, downgrades = downgrades, dispatches = dispatches })
@@ -477,7 +477,7 @@ local function clearCart()
 	cartUpgrades = {}
 	cartDowngrades = {}
 	cartDispatches = {}
-	setStatus("Cart cleared")
+	setStatus("Pending changes discarded")
 	showPage(currentPage)
 end
 
@@ -504,9 +504,11 @@ local function addCartSummaryRow()
 	if nDown > 0 then table.insert(parts, `downgrade {nDown}`) end
 	if nDisp > 0 then table.insert(parts, `dispatch {nDisp}`) end
 	local netGold = sellGold - buyGold - upGold - dispFee
-	addRow(`Cart: {table.concat(parts, ", ")}  |  net {netGold}g`, {
-		{ text = "Finalize", color = Theme.Colors.Success, style = "Primary", onTap = finalizeCart },
-		{ text = "Clear", color = Theme.Colors.Warning, style = "Tertiary", onTap = clearCart },
+	-- Player-facing wording: no shop/dev jargon ("Cart"/"Finalize"/"Clear").
+	-- Confirm/Discard model, "Pending" for queued changes. (2026-10-17)
+	addRow(`Pending: {table.concat(parts, ", ")}  |  net {netGold}g`, {
+		{ text = "Confirm", color = Theme.Colors.Success, style = "Primary", onTap = finalizeCart },
+		{ text = "Discard", color = Theme.Colors.Warning, style = "Tertiary", onTap = clearCart },
 	})
 end
 
@@ -613,7 +615,7 @@ local function pageMerchant()
 		local idx = o.offerIndex
 		local inCart = cartBuys[idx] ~= nil
 		addRow(`{o.name}  Lv{o.level} {o.rarity}  |  {o.price} gold`, {
-			{ text = inCart and "In cart" or "Add", color = inCart and Theme.Colors.Info or Theme.Colors.Success,
+			{ text = inCart and "Queued" or "Add", color = inCart and Theme.Colors.Info or Theme.Colors.Success,
 			  style = "Primary", onTap = function()
 				if cartBuys[idx] then cartBuys[idx] = nil else cartBuys[idx] = { name = o.name, price = o.price } end
 				showPage(currentPage)
@@ -626,7 +628,7 @@ local function pageMerchant()
 		local iid = it.instanceId
 		local inCart = cartSells[iid] ~= nil
 		addRow(`{it.name}  Lv{it.level} {it.rarity}`, {
-			{ text = inCart and "In cart" or `Sell {it.price or "?"}g`,
+			{ text = inCart and "Queued" or `Sell {it.price or "?"}g`,
 			  color = inCart and Theme.Colors.Info or Theme.Colors.Warning,
 			  enabled = it.price ~= nil, style = "Primary", onTap = function()
 				if cartSells[iid] then
@@ -783,7 +785,7 @@ local function pageDispatch()
 				anyMission = true
 				local mid = m.missionId
 				addRow(`Tier {m.tier}  |  away {m.duration} battle(s)  |  {m.xp} XP each  |  T{m.rewardTier} material x{m.rewardCount}`, {
-					{ text = "Choose", color = Theme.Colors.Info, enabled = slotsUsed < slotCap, onTap = function()
+					{ text = "Select", color = Theme.Colors.Info, enabled = slotsUsed < slotCap, onTap = function()
 						selectedMission = mid
 						selectedUnits = {}
 						showPage("Dispatch")
@@ -791,16 +793,16 @@ local function pageDispatch()
 				})
 			end
 		end
-		if not anyMission then addNote("No missions available (all staged, or none left until the next battle).") end
-		if slotsUsed >= slotCap then addNote("All dispatch slots are in use (staged or active). Upgrade the Guild Hall for more.") end
+		if not anyMission then addNote("No missions available (all queued, or none left until the next battle).") end
+		if slotsUsed >= slotCap then addNote("All dispatch slots are in use (queued or active). Upgrade the Guild Hall for more.") end
 	else
-		addNote("Tap units to select them, then Add to cart. Units already staged or away cannot be picked.")
+		addNote("Tap units to select them, then Queue dispatch. Units already queued or away cannot be picked.")
 		for _, u in res.units or {} do
 			local uid = u.id
 			if u.away then
 				addRow(`{u.name}  Lv{u.level}  |  AWAY (back after battle {u.returnBattle or "?"})`, nil, true)
 			elseif stagedUnits[uid] then
-				addRow(`{u.name}  Lv{u.level}  |  STAGED (in cart)`, nil, true)
+		addRow(`{u.name}  Lv{u.level}  |  QUEUED`, nil, true)
 			else
 				local picked = selectedUnits[uid] == true
 				addRow(`{u.name}  Lv{u.level}{picked and "  [SELECTED]" or ""}`, {
@@ -814,20 +816,20 @@ local function pageDispatch()
 		local ids = {}
 		for id in selectedUnits do table.insert(ids, id) end
 		local mid = selectedMission
-		addRow(`{#ids} unit(s) selected  |  staging leaves {homeCount - #ids} home`, {
+		addRow(`{#ids} unit(s) selected  |  leaves {homeCount - #ids} home`, {
 			{ text = "Back", color = Theme.Colors.Surface, onTap = function()
 				selectedMission = nil
 				selectedUnits = {}
 				showPage("Dispatch")
 			end },
-			{ text = "Add to cart", color = Theme.Colors.Success, enabled = #ids > 0, onTap = function()
+			{ text = "Queue dispatch", color = Theme.Colors.Success, enabled = #ids > 0, onTap = function()
 				if #ids < 1 then return end
 				if homeCount - #ids < 1 then setStatus("Keep at least one unit home", true) return end
 				if slotsUsed >= slotCap then setStatus("No free dispatch slot", true) return end
 				table.insert(cartDispatches, { missionId = mid, unitIds = ids, fee = res.feeGold or 50 })
 				selectedMission = nil
 				selectedUnits = {}
-				setStatus(`Dispatch staged ({#ids} unit(s)). Finalize to send.`)
+				setStatus(`Dispatch queued ({#ids} unit(s)). Confirm to send.`)
 				showPage("Dispatch")
 			end },
 		})
@@ -837,7 +839,7 @@ end
 local function pageUnits()
 	addHeading("UNITS")
 	addRow("Equipment, skills, doctrine and stats", {
-		{ text = "Open Loadout", color = Theme.Colors.Info, onTap = function()
+		{ text = "Loadout", color = Theme.Colors.Info, onTap = function()
 			local open = (_G :: any).CTRBLXAI_OpenLoadout
 			if type(open) ~= "function" then setStatus("Loadout screen not loaded", true) return end
 			-- The Loadout is a separate full-screen UI. Hide the guild menu while it is up, then
@@ -950,7 +952,7 @@ local function pageParty()
 		end
 		if sortieMode then
 			addRow("", {
-				{ text = "Back to sortie", color = Theme.Colors.Surface, onTap = function()
+				{ text = "Back", color = Theme.Colors.Surface, onTap = function()
 					guildSortieStep = "sortie"
 					showPage("Adventurers")
 				end },
@@ -1020,7 +1022,7 @@ local function pageParty()
 		end
 
 		addRow("", {
-			{ text = "Back to parties", color = Theme.Colors.Surface, onTap = function()
+			{ text = "Back", color = Theme.Colors.Surface, onTap = function()
 				selectedParty = nil
 				invalidatePageCache()
 				showPage("Party")
@@ -1143,7 +1145,7 @@ local function pageAdventurersGuild()
 		if g then goldText = (g.min == g.max) and (`{g.min} gold + kills`) or (`{g.min}-{g.max} gold`) end
 		local line = `{q.name}\n{q.biome}  Lv {q.recommendedLvl}  |  {q.enemyCount} enemies  |  {goldText}  |  Deploy {q.playerSlots}`
 		addRow(line, {
-			{ text = "Choose", color = Theme.Colors.Success, onTap = function()
+			{ text = "Select", color = Theme.Colors.Success, onTap = function()
 				chosenQuest = quest
 				guildSortieStep = "overview"
 				departPending = false
@@ -1152,7 +1154,7 @@ local function pageAdventurersGuild()
 		})
 	end
 	addRow("Not today", {
-		{ text = "Back to base", color = Theme.Colors.Surface, onTap = function()
+		{ text = "Back", color = Theme.Colors.Surface, onTap = function()
 			BattleEvents.QuestBoardCancel:FireServer()
 			guildQuests = nil
 			showPage("Units")
@@ -1369,7 +1371,9 @@ updateSortieButton = function()
 	local lb = leaveButton
 	if not lb then return end
 	if currentPhase == "PostBattle" then
-		lb.Text = "Save & Finish"
+		-- Battles auto-save (manual save step was removed), so the post-battle
+		-- button just returns to the guild base — no "Save" wording. (2026-10-17)
+		lb.Text = "Return to Base"
 	else
 		lb.Text = sortiePartyName and ("Continue - " .. sortiePartyName) or "Continue to Deployment"
 	end

@@ -212,12 +212,23 @@ function EquipmentService.Equip(unit, itemInstance, slot)
 	return true
 end
 
-function EquipmentService.Unequip(unit, slot)
+-- opts.allowWeaponless (default false): when true, permits emptying the MainHand
+-- even though it leaves the unit with no weapon. Used ONLY by whole-unit teardown
+-- (recruit dismissal), never by the loadout screen. Every unit must always keep a
+-- weapon (2026-10-18 ruling): a weapon can be SWAPPED (Equip replaces the slot in
+-- place, which does not call this function) but never plainly removed to leave the
+-- unit bare. Off-hand may always be removed (1H alone is a valid loadout).
+function EquipmentService.Unequip(unit, slot, opts)
 	if not VALID_SLOTS[slot] then
 		return false, "Invalid slot"
 	end
 	if not unit.equipmentSlots or not unit.equipmentSlots[slot] then
 		return false, "Slot is empty"
+	end
+
+	-- Weapon-retention guard: a unit may never be left without a MainHand weapon.
+	if slot == "MainHand" and not (opts and opts.allowWeaponless) then
+		return false, "Every unit must keep a weapon — equip a replacement weapon instead of removing this one"
 	end
 
 	local removed = unit.equipmentSlots[slot]

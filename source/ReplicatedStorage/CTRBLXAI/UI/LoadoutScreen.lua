@@ -301,24 +301,27 @@ local function buildUnitHeader()
 	row.BackgroundTransparency = 1
 	row.Parent = unitHeaderPanel
 
-	-- Prev unit button (left of portrait)
-	local prevBtn = Instance.new("ImageButton")
-	prevBtn.Size = UDim2.new(0, 18, 0, 28)
-	prevBtn.Position = UDim2.new(0, 0, 0, 8)
-	prevBtn.BackgroundColor3 = Theme.Colors.Surface
-	prevBtn.BackgroundTransparency = 0.4
-	prevBtn.Image = Theme.Icons.ArrowLeft
-	prevBtn.ScaleType = Enum.ScaleType.Fit
-	prevBtn.BorderSizePixel = 0
-	prevBtn.Parent = row
-	Instance.new("UICorner", prevBtn).CornerRadius = UDim.new(0, 3)
-	prevBtn.MouseButton1Click:Connect(function()
-		MockData.PrevUnit()
-		LoadoutScreen.Refresh()
-	end)
+	-- Swap button at the RIGHT end of the header; opens the unit dropdown
+	-- (replaces the old left/right cycle arrows, user ruling 2026-10-18).
+	local SWAP_W = 28
+	local swapBtn = Instance.new("ImageButton")
+	swapBtn.Name = "SwapUnit"
+	swapBtn.Size = UDim2.new(0, SWAP_W, 0, 28)
+	swapBtn.Position = UDim2.new(1, -SWAP_W, 0, 8)
+	swapBtn.BackgroundColor3 = Theme.Colors.Surface
+	swapBtn.BackgroundTransparency = 0.4
+	-- Use the semantic compare/swap/details icon (IconButtonAssets.Options). The
+	-- earlier `Theme.Icons.Options` is nil (no such key in Theme.Icons), so it fell
+	-- through to the Sort glyph — wrong icon. (2026-10-18)
+	swapBtn.Image = (Theme.IconButtonAssets and Theme.IconButtonAssets.Options)
+		or Theme.Icons.Options or ""
+	swapBtn.ScaleType = Enum.ScaleType.Fit
+	swapBtn.BorderSizePixel = 0
+	swapBtn.Parent = row
+	Instance.new("UICorner", swapBtn).CornerRadius = UDim.new(0, 3)
 
-	-- Portrait
-	local portraitX = 22
+	-- Portrait at the LEFT edge (no more left arrow inset).
+	local portraitX = 0
 	local portrait = Instance.new("Frame")
 	portrait.Size = UDim2.new(0, 44, 0, 44)
 	portrait.Position = UDim2.new(0, portraitX, 0, 0)
@@ -336,6 +339,10 @@ local function buildUnitHeader()
 	pText.TextColor3 = Theme.Colors.TextPrimary
 	pText.Text = string.sub(unit.name, 1, 2)
 	pText.Parent = portrait
+	-- Portrait face overlay when the unit has one (nil -> initials box).
+	if UIComponents and UIComponents.ApplyPortrait and unit.portraitAssetId then
+		if UIComponents.ApplyPortrait(portrait, unit.portraitAssetId) then pText.Text = "" end
+	end
 
 	local lvlBadge = Instance.new("TextLabel")
 	lvlBadge.Size = UDim2.new(0, 28, 0, 12)
@@ -348,6 +355,10 @@ local function buildUnitHeader()
 	lvlBadge.Text = "Lv." .. unit.level
 	lvlBadge.BorderSizePixel = 0
 	lvlBadge.TextXAlignment = Enum.TextXAlignment.Left
+	-- ApplyPortrait adds the face image at (frame.ZIndex + 1); the badge must sit
+	-- ABOVE that or it hides behind the portrait. Frame is ZIndex 1 -> image 2 ->
+	-- badge 3. (2026-10-18, same fix pattern as the turn-order bar.)
+	lvlBadge.ZIndex = 3
 	lvlBadge.Parent = portrait
 
 	-- Unallocated stat points indicator (red dot, top-right of portrait)
@@ -361,30 +372,146 @@ local function buildUnitHeader()
 		Instance.new("UICorner", alertDot).CornerRadius = UDim.new(0.5, 0)
 	end
 
-	-- Name + Race
+	-- Name + "Race - Doctrine" (user ruling 2026-10-18: doctrine right after race).
 	local textX = portraitX + 52
+	local rightInset = SWAP_W + 8
 	makeLabel(row, { Text = unit.name, Position = UDim2.new(0, textX, 0, 2),
-		Size = UDim2.new(1, -(textX + 26), 0, 18), Font = Theme.Font.PrimaryBold,
+		Size = UDim2.new(1, -(textX + rightInset), 0, 18), Font = Theme.Font.PrimaryBold,
 		TextSize = Theme.Text.Heading(), TextColor3 = Theme.Colors.Player })
-	makeLabel(row, { Text = unit.raceName,
+	local raceDoc = unit.raceName or "—"
+	if unit.doctrineName and unit.doctrineName ~= "" then
+		raceDoc = raceDoc .. " - " .. unit.doctrineName
+	end
+	makeLabel(row, { Text = raceDoc,
 		Position = UDim2.new(0, textX, 0, 20),
-		Size = UDim2.new(1, -(textX + 26), 0, 14), TextSize = Theme.Text.Small(),
+		Size = UDim2.new(1, -(textX + rightInset), 0, 14), TextSize = Theme.Text.Small(),
 		TextColor3 = Theme.Colors.TextSecondary })
 
-	-- Next unit button (right side)
-	local nextBtn = Instance.new("ImageButton")
-	nextBtn.Size = UDim2.new(0, 18, 0, 28)
-	nextBtn.Position = UDim2.new(1, -18, 0, 8)
-	nextBtn.BackgroundColor3 = Theme.Colors.Surface
-	nextBtn.BackgroundTransparency = 0.4
-	nextBtn.Image = Theme.Icons.ArrowRight
-	nextBtn.ScaleType = Enum.ScaleType.Fit
-	nextBtn.BorderSizePixel = 0
-	nextBtn.Parent = row
-	Instance.new("UICorner", nextBtn).CornerRadius = UDim.new(0, 3)
-	nextBtn.MouseButton1Click:Connect(function()
-		MockData.NextUnit()
-		LoadoutScreen.Refresh()
+	-- Dropdown: full roster, each row = portrait + Lv badge, name, Race - Doctrine.
+	-- Mirrors the existing DropdownOverlay pattern (ScreenGui backdrop + menu panel)
+	-- and reuses `activeDropdown` so Hide()/outside-click tear it down. (2026-10-18)
+	local function closeUnitDropdown()
+		if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+	end
+	swapBtn.MouseButton1Click:Connect(function()
+		if activeDropdown then closeUnitDropdown(); return end
+		local units = MockData.GetAllUnits and MockData.GetAllUnits() or {}
+		local ROW_H = 46
+		local menuW = math.max(unitHeaderPanel.AbsoluteSize.X - 16, 180)
+		local menuH = math.min(#units, 6) * ROW_H + 4
+
+		activeDropdown = Instance.new("ScreenGui")
+		activeDropdown.Name = "UnitSwapDropdown"
+		activeDropdown.DisplayOrder = 105
+		activeDropdown.ResetOnSpawn = false
+		activeDropdown.Parent = getPlayerGui()
+
+		local backdrop = Instance.new("TextButton")
+		backdrop.Size = UDim2.fromScale(1, 1)
+		backdrop.BackgroundTransparency = 1
+		backdrop.Text = ""
+		backdrop.Parent = activeDropdown
+		backdrop.MouseButton1Click:Connect(closeUnitDropdown)
+
+		local menu = Instance.new("ScrollingFrame")
+		menu.Size = UDim2.new(0, menuW, 0, menuH)
+		menu.Position = UDim2.new(0, swapBtn.AbsolutePosition.X + swapBtn.AbsoluteSize.X - menuW,
+			0, swapBtn.AbsolutePosition.Y + swapBtn.AbsoluteSize.Y + 2)
+		menu.BackgroundColor3 = Theme.Colors.Panel
+		menu.BorderSizePixel = 0
+		menu.ScrollBarThickness = 3
+		menu.CanvasSize = UDim2.new(0, 0, 0, #units * ROW_H + 4)
+		menu.ZIndex = 50
+		menu.Parent = activeDropdown
+		Instance.new("UICorner", menu).CornerRadius = UDim.new(0, 4)
+		local mStroke = Instance.new("UIStroke", menu); mStroke.Color = Theme.Colors.Border; mStroke.Thickness = 1
+		local mLayout = Instance.new("UIListLayout", menu)
+		mLayout.Padding = UDim.new(0, 2); mLayout.SortOrder = Enum.SortOrder.LayoutOrder
+		pad(menu, 2, 2, 2, 2)
+
+		for idx, u in ipairs(units) do
+			local isSel = (u.id == unit.id)
+			local rowBtn = Instance.new("TextButton")
+			rowBtn.Size = UDim2.new(1, 0, 0, ROW_H - 2)
+			rowBtn.BackgroundColor3 = Theme.Colors.PanelRaised
+			rowBtn.BackgroundTransparency = isSel and 0.15 or 0.55
+			rowBtn.Text = ""
+			rowBtn.BorderSizePixel = 0
+			rowBtn.LayoutOrder = idx
+			rowBtn.ZIndex = 51
+			rowBtn.Parent = menu
+			Instance.new("UICorner", rowBtn).CornerRadius = UDim.new(0, 3)
+
+			-- portrait + level badge
+			local pFrame = Instance.new("Frame")
+			pFrame.Size = UDim2.new(0, 36, 0, 36)
+			pFrame.Position = UDim2.new(0, 4, 0.5, -18)
+			pFrame.BackgroundColor3 = Theme.Colors.Player
+			pFrame.BackgroundTransparency = 0.2
+			pFrame.BorderSizePixel = 0
+			pFrame.ZIndex = 52
+			pFrame.Parent = rowBtn
+			Instance.new("UICorner", pFrame).CornerRadius = UDim.new(0, 4)
+			local pInit = Instance.new("TextLabel")
+			pInit.Size = UDim2.fromScale(1, 1)
+			pInit.BackgroundTransparency = 1
+			pInit.Font = Theme.Font.PrimaryBold
+			pInit.TextSize = Theme.Text.Body()
+			pInit.TextColor3 = Theme.Colors.TextPrimary
+			pInit.Text = string.sub(u.name, 1, 2)
+			pInit.ZIndex = 53
+			pInit.Parent = pFrame
+			if UIComponents and UIComponents.ApplyPortrait and u.portraitAssetId then
+				if UIComponents.ApplyPortrait(pFrame, u.portraitAssetId) then pInit.Text = "" end
+			end
+			local badge = Instance.new("TextLabel")
+			badge.Size = UDim2.new(0, 26, 0, 11)
+			badge.Position = UDim2.new(0, 0, 0, 0)
+			badge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			badge.BackgroundTransparency = 0.3
+			badge.Font = Theme.Font.Mono
+			badge.TextSize = Theme.Text.Tiny()
+			badge.TextColor3 = Theme.Colors.TextPrimary
+			badge.Text = "Lv." .. u.level
+			badge.TextXAlignment = Enum.TextXAlignment.Left
+			badge.BorderSizePixel = 0
+	-- pFrame is ZIndex 52 -> ApplyPortrait face image is 53; the badge must be
+	-- 54 to sit ABOVE the portrait (53 tied with the image = unreliable). (2026-10-18)
+	badge.ZIndex = 54
+			badge.Parent = pFrame
+
+			-- name (top) + Race - Doctrine (bottom)
+			local nameLbl = Instance.new("TextLabel")
+			nameLbl.Size = UDim2.new(1, -48, 0, 18)
+			nameLbl.Position = UDim2.new(0, 44, 0, 4)
+			nameLbl.BackgroundTransparency = 1
+			nameLbl.Font = Theme.Font.PrimaryBold
+			nameLbl.TextSize = Theme.Text.Body()
+			nameLbl.TextColor3 = isSel and Theme.Colors.TextGold or Theme.Colors.Player
+			nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+			nameLbl.Text = u.name
+			nameLbl.ZIndex = 52
+			nameLbl.Parent = rowBtn
+			local rd = u.raceName or "—"
+			if u.doctrineName and u.doctrineName ~= "" then rd = rd .. " - " .. u.doctrineName end
+			local rdLbl = Instance.new("TextLabel")
+			rdLbl.Size = UDim2.new(1, -48, 0, 14)
+			rdLbl.Position = UDim2.new(0, 44, 0, 22)
+			rdLbl.BackgroundTransparency = 1
+			rdLbl.Font = Theme.Font.Primary
+			rdLbl.TextSize = Theme.Text.Small()
+			rdLbl.TextColor3 = Theme.Colors.TextSecondary
+			rdLbl.TextXAlignment = Enum.TextXAlignment.Left
+			rdLbl.Text = rd
+			rdLbl.ZIndex = 52
+			rdLbl.Parent = rowBtn
+
+			rowBtn.MouseButton1Click:Connect(function()
+				closeUnitDropdown()
+				if MockData.SetSelectedUnitById then MockData.SetSelectedUnitById(u.id) end
+				LoadoutScreen.Refresh()
+			end)
+		end
 	end)
 end
 

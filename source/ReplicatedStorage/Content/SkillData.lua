@@ -1,5 +1,5 @@
 -- SkillData.lua
--- Auto-generated Content Registry: Skills (107 entries)
+-- Auto-generated Content Registry: Skills (108 entries)
 -- Do not edit manually. Regenerate from CTRBLXAI.db.
 
 local SkillData = {
@@ -2123,6 +2123,28 @@ local SkillData = {
 		triggerType = "Active",
 		specialRules = "Control skill — no damage, pure lockdown. Pins target in place and makes surrounding area costly to traverse. Supports Warden's area-denial identity. Terrain created counts as player-created (does not synergize with Warden's natural-terrain passive — intentional anti-synergy to prevent double-dipping).",
 		meta = "Warden doctrine skill. Area denial + single-target pin. Pure control, no damage.",
+	},
+	["SKL-ICE-SPIKE"] = {
+		name = "Conjure Ice Spike",
+		icon = "rbxassetid://0",
+		description = "Conjure a spike of ice on a nearby tile, blocking movement and sight until it is destroyed. Shatters instantly to fire.",
+		tags = {"Ice", "Utility"},
+		properties = "Potency: None, Passives: None",
+		targetRules = "Empty Tile",
+		createsObject = "Ice Spike",
+		rtCostFormula = "round(60 + 0.20 × L)",
+		mpCostFormula = "round(5 + 0.12 × (L - 1))",
+		channelTime = 0,
+		activationTime = 0,
+		targetingRange = "Fixed 3; Bonus Skill Range Inheritance = 0%.",
+		pattern = "Authored Single",
+		duration = "Until Destroyed",
+		effects = "Place one Ice Spike blocker object on the selected Empty Tile. The Ice Spike is impassable (blocks movement and line of sight), destructible (3 hits, or one hit from any Fire-element attack), and pushable (native Stability 3). Deals no damage on placement. First object-placement skill: uses the generic createsObject hook (createsObject = Ice Spike, Target Rules = Empty Tile).",
+		snapshotTiming = "At commitment; persistent/created effects snapshot when created as authored",
+		killCredit = "N/A",
+		triggerType = "Active",
+		specialRules = "Ground-target object-placing skill (NOT a summon — isSummon not set). On commit the ground-target branch calls ObjectEffectService.PlaceObjectInstance(createsObject, tileX, tileY). createsObject must exactly match the ObjectData key \"Ice Spike\". Instant placement (Channel 0). No direct damage, no applied status. Area-denial / blocking utility. First of a reusable skill-placed blocker family (future: Earth Column, Magic Wall, Spike Column, Flesh Wall) sharing the same createsObject + Target Rules = Empty Tile pattern. Placeholder first-pass values (RT/MP/range) pending user tuning.",
+		meta = "First-pass draft 2026-10-17. First skill using createsObject field (object placement). Values are placeholders to be tuned.",
 	},
 }
 

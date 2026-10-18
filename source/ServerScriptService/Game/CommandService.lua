@@ -1650,9 +1650,13 @@ function CommandService.ValidateAndCommit(
 		end
 		local rtCost = calcMoveRt(actor, pathCost)
 		BattleCoordinator.AccrueRt(state, rtCost)
+		-- UNDO (2026-10-17): running total of RT this Move adds (base + any
+		-- crossCost below) so Undo can refund exactly what was accrued.
+		local undoMoveRt = rtCost
 
 		-- Save old position for facing calculation
 		local prevTileX, prevTileY = actor.tileX, actor.tileY
+		local prevFacing = actor.facing
 
 		actor.tileX = selection.tileX
 		actor.tileY = selection.tileY
@@ -1674,6 +1678,21 @@ function CommandService.ValidateAndCommit(
 
 		-- Slice 5 passive auras: the mover may have entered/left a War Banner or
 		-- Cursed Statue radius — reconcile so aura buffs/debuffs track position.
+		-- UNDO: snapshot the mover's own status-instance signature BEFORE the
+		-- reaction block. This dimension catches AURA changes (War Banner / Cursed
+		-- Statue buffs/debuffs gained or lost on landing) — those apply as statuses
+		-- to the mover, so a signature change flags them. It does NOT, on its own,
+		-- catch terrain/tile triggers that don't mutate the mover's status set
+		-- (Sinking, slides, collapse, teleport, molten) — those are detected from
+		-- the destination tile's definition below (source of truth), per the
+		-- "flag reactions at the source" fix (2026-10-17).
+		local function undoStatusSig(u)
+			local ids = {}
+			for _, inst in ipairs(u.statusInstances or {}) do ids[#ids + 1] = inst.id end
+			table.sort(ids)
+			return table.concat(ids, "|")
+		end
+		local undoSigBefore = undoStatusSig(actor)
 		ObjectEffectService.ReconcileAuras(state.units, state)
 
 		-- Flight bypasses terrain cross effects, terrain triggers (Drowning) and tile-effect
@@ -1691,6 +1710,7 @@ function CommandService.ValidateAndCommit(
 				if terrainData.crossCost and terrainData.crossCost > 0 then
 					local extraRt = math.round(terrainData.crossCost * StatusService.GetModifiedBaseRt(actor) * GameConstants.MOVE_RT_FACTOR)
 					BattleCoordinator.AccrueRt(state, extraRt)
+					undoMoveRt = undoMoveRt + extraRt
 				end
 
 				-- Terrain trigger on enter: Deep Water → Drowning, etc.
@@ -1706,6 +1726,53 @@ function CommandService.ValidateAndCommit(
 				_tileEffectService.OnUnitEntersTile(actor, actor.tileX, actor.tileY)
 			end
 		end
+
+		-- UNDO REACTION DETECTION (source-based, 2026-10-17 fix for Tester item B).
+		-- A Move is undoable ONLY if landing triggered no reaction. We decide this
+		-- from WHAT THE DESTINATION TILE IS (its terrain trigger + any active tile
+		-- effect), not by inferring from status deltas — because several reactions
+		-- (Sinking, Ice/Frozen/Oily slides, Cracked Ground collapse, RandomTeleport,
+		-- MoltenBurn, tick-only hazards like Static Cloud) do NOT change the mover's
+		-- own status set and were previously missed (false-negatives). Conservative:
+		-- if the landing tile CAN trigger any of these, undo is disabled.
+		--   Reaction = (a) mover's own status set changed this landing (auras +
+		--   crossEffect statuses), OR (b) destination terrain carries an
+		--   irreversible triggerEffect or is a slide terrain (Ice), OR (c) an active
+		--   tile effect at the destination is a hazard / applies a crossEffect /
+		--   extends a slide. Flight bypasses terrain + tile effects entirely, so a
+		--   flying mover is only gated by the aura/status dimension.
+		local IRREVERSIBLE_TRIGGERS = {
+			Drowning = true, Sinking = true, MoltenBurn = true,
+			Collapse = true, RandomTeleport = true,
+		}
+		local reactionTriggered = (undoStatusSig(actor) ~= undoSigBefore)
+		if not reactionTriggered and not actorFlying then
+			local td = GameConstants.GetTerrainData(actor.tileX, actor.tileY)
+			if td then
+				if td.triggerEffect and IRREVERSIBLE_TRIGGERS[td.triggerEffect] then
+					reactionTriggered = true
+				elseif td.id == "Ice" then
+					reactionTriggered = true  -- Sliding Knockback cross effect
+				end
+			end
+			if not reactionTriggered and _tileEffectService and _tileEffectService.GetTileEffect then
+				local te = _tileEffectService.GetTileEffect(actor.tileX, actor.tileY)
+				local tdef = te and GameConstants.TILE_EFFECTS and GameConstants.TILE_EFFECTS[te.id]
+				if tdef and (tdef.crossEffect or tdef.hazard or tdef.slideExtension) then
+					reactionTriggered = true
+				end
+			end
+		end
+		BattleCoordinator.PushUndo(state, {
+			kind       = "Move",
+			actorId    = actor.id,
+			reaction   = reactionTriggered,
+			apCost     = apCost,
+			rt         = undoMoveRt,
+			prevTileX  = prevTileX,
+			prevTileY  = prevTileY,
+			prevFacing = prevFacing,
+		})
 
 	elseif actionType == "Attack" then
 		BattleVisualBroadcaster.ActionAnnounced(actor, "Basic Attack")
@@ -2311,6 +2378,20 @@ function CommandService.ValidateAndCommit(
 					target.tileX, target.tileY, skillDef.createsTileEffect, actor.id
 				)
 			end
+			-- GENERIC OBJECT-PLACING skill (2026-10-17): a skill with createsObject = "<ObjectData
+			-- id>" drops that object on the chosen empty tile (e.g. Ice Spike). Reuses the
+			-- battle-ready ObjectEffectService.PlaceObjectInstance primitive, which guards
+			-- against stacking / placing a solid object on a living unit, renders the model,
+			-- and registers it as a real blocker (movement + LoS + HP). First of the planned
+			-- skill-placed blocker family — any future object (Earth Column, Magic Wall, ...)
+			-- reuses this branch via data alone, no new code. MP already spent + RT accrued on
+			-- this commit path; placement failing (occupied/invalid) is a no-op (object just is
+			-- not created), consistent with the createsTileEffect gap behaviour above.
+			if skillDef.createsObject and target and target.tileX then
+				ObjectEffectService.PlaceObjectInstance(
+					state, skillDef.createsObject, target.tileX, target.tileY
+				)
+			end
 			BattleCoordinator.AccrueRt(state, baseRtCost)
 			print(string.format(
 				"[CommandService] SKILL [%s] GROUND (%s) | %s | tile:(%s,%s) | MP:%d | RT:%d | AP left:%d",
@@ -2440,6 +2521,17 @@ function CommandService.ValidateAndCommit(
 		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
 		BattleVisualBroadcaster.ActionAnnounced(actor, "Guard")
 		BattleVisualBroadcaster.GuardActivated(actor, guardRt, mitigation)
+
+		-- UNDO (2026-10-17): Guard triggers no environmental reaction, so it is
+		-- always reversible within the turn. Record what to undo: the AP, the RT
+		-- Guard accrued, and the guard-stance flags/status to clear on revert.
+		BattleCoordinator.PushUndo(state, {
+			kind     = "Guard",
+			actorId  = actor.id,
+			reaction = false,
+			apCost   = apCost,
+			rt       = guardRt,
+		})
 
 	elseif actionType == "Push" then
 		-- Push: 1 AP, push adjacent target away (allies/neutrals/objects pushable).
@@ -2606,7 +2698,9 @@ function CommandService.ValidateAndCommit(
 		BattleVisualBroadcaster.ActionAnnounced(actor, "Basic Attack")
 		local rtCost = calcBasicAttackBaseRt(actor)
 		BattleCoordinator.AccrueRt(state, rtCost)
-		local result = ObjectEffectService.ApplyObjectHit(state, ox, oy, 1)
+		-- Pass the attacker's weapon element so an object weak to it (instantKillTags,
+		-- e.g. Ice Spike vs Fire) is destroyed in one hit. Default "Physical" = no weakness.
+		local result = ObjectEffectService.ApplyObjectHit(state, ox, oy, 1, actor.weaponElement or "Physical")
 		print(string.format(
 			"[CommandService] ATTACK OBJECT | %s -> obj(%d,%d) | %s | RT:%d | AP left:%d",
 			actor.name, ox, oy, tostring(result), rtCost, actor.currentAp
@@ -2902,6 +2996,79 @@ function CommandService.ValidateAndCommit(
 		BattleCoordinator.EndTurn(state)
 	end
 
+	return true, nil
+end
+
+--------------------------------------------------
+-- UNDO LAST ACTION (2026-10-17)
+--
+-- Reverses the most recent reversible action (Move or Guard) for the active
+-- unit, newest first and repeatable, as long as that action triggered no
+-- environmental reaction. Operates only within the current open turn, before
+-- EndTurn, so RT is still in state.turnRtAccrued and reversal is a clean
+-- subtraction. Server-authoritative (SEC-001/SEC-002): the client only asks;
+-- every eligibility rule is re-checked here.
+--
+-- Returns (ok: boolean, reason: string?). ok=false reasons are the same strings
+-- the client uses for the grayed-button tooltip.
+--------------------------------------------------
+function CommandService.UndoLastAction(state: any, actorId: any): (boolean, any)
+	-- Turn gate (mirror ValidateAndCommit steps 1-2)
+	local actor = nil
+	for _, unit in ipairs(state.units) do
+		if unit.id == actorId then actor = unit; break end
+	end
+	if not actor then return false, "Actor not found." end
+	if state.phase ~= "TurnOpen" then return false, "No turn is open." end
+	if state.activeUnit ~= actor then return false, actor.name .. " is not the active unit." end
+
+	local entry = BattleCoordinator.PeekUndo(state)
+	if not entry then
+		return false, "Nothing to undo."
+	end
+	if entry.actorId ~= actor.id then
+		-- Stack belongs to a different unit's turn (should not happen — reset at
+		-- turn open — but never undo across units).
+		return false, "Nothing to undo."
+	end
+	if entry.reaction then
+		return false, "Can't undo — that move caused a reaction."
+	end
+
+	-- Commit the pop now that eligibility passed.
+	BattleCoordinator.PopUndo(state)
+
+	-- Refund resources common to both kinds.
+	actor.currentAp = actor.currentAp + (entry.apCost or 0)
+	BattleCoordinator.RefundRt(state, entry.rt or 0)
+
+	if entry.kind == "Move" then
+		actor.tileX = entry.prevTileX
+		actor.tileY = entry.prevTileY
+		actor.facing = entry.prevFacing
+		-- Auras depend on position: reconcile again now that the unit is back.
+		ObjectEffectService.ReconcileAuras(state.units, state)
+		BattleVisualBroadcaster.UnitMoved(actor)
+		BattleVisualBroadcaster.FacingChanged(actor)
+		print(string.format(
+			"[CommandService] UNDO Move | %s -> (%d,%d) | +AP:%d | -RT:%d | AP now:%d",
+			actor.name, actor.tileX, actor.tileY, entry.apCost or 0, entry.rt or 0, actor.currentAp
+		))
+	elseif entry.kind == "Guard" then
+		StatusService.RemoveStatus(actor, "Guard")
+		actor.guardBonus = nil
+		actor.guardUsedThisTurn = false
+		BattleVisualBroadcaster.StatusExpired(actor, "Guard")
+		print(string.format(
+			"[CommandService] UNDO Guard | %s | +AP:%d | -RT:%d | AP now:%d",
+			actor.name, entry.apCost or 0, entry.rt or 0, actor.currentAp
+		))
+	else
+		return false, "Nothing to undo."
+	end
+
+	BattleVisualBroadcaster.UnitStateChanged(actor)
+	BattleVisualBroadcaster.Log("action", `{actor.name} undoes their {entry.kind}.`, actor.id)
 	return true, nil
 end
 

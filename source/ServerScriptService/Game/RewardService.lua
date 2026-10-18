@@ -151,6 +151,14 @@ function RewardService.GetGoldMultiplier() return _rewardModifier and _rewardMod
 function RewardService.GetMaterialMultiplier() return _rewardModifier and _rewardModifier.materialMult or 1 end
 function RewardService.GetExpMultiplier() return _rewardModifier and _rewardModifier.expMult or 1 end
 
+-- Victory loot COUNT RANGE (min,max) without rolling the RNG. Used by the live
+-- Map Details panel to show "Loot on victory: 1-2 items" honestly — the exact
+-- count is a seeded roll done only at battle end (determinism), so the live
+-- panel shows the range, never a pre-rolled number. (2026-10-17)
+function RewardService.GetRewardCountRange()
+	return MIN_REWARDS, MAX_REWARDS
+end
+
 -- Convenience for the (future) gold / material / EXP grant paths.
 function RewardService.ApplyGold(amount)
 	return math.floor(numOr(amount, 0) * RewardService.GetGoldMultiplier())

@@ -127,6 +127,11 @@ function BattleCoordinator.CreateBattleState(units)
 		winner          = nil,
 		turnCount       = 0,
 		timePhase       = "Dawn",   -- time cycle: Dawn->Day->Dusk->Night, one per 1000 CT
+		-- UNDO (2026-10-17): per-turn stack of reversible-action snapshots for the
+		-- active unit. Each entry is pushed by CommandService on a Move/Guard commit
+		-- and popped by the Undo command. Always empty outside the current open turn
+		-- (reset at every turn open); nothing here ever reaches the timeline.
+		undoStack       = {},
 	}
 
 	return state
@@ -507,6 +512,7 @@ function BattleCoordinator.AdvanceClock(state)
 	state.phase           = "TurnOpen"
 	state.turnRtAccrued   = 0
 	state.turnActionTaken = false
+	state.undoStack       = {}  -- new turn: nothing to undo yet
 
 	-- Reset once-per-turn Guard limit (Guard status expires via StatusService tick)
 	nextUnit.guardUsedThisTurn = false
@@ -569,6 +575,7 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 		state.phase           = "TurnOpen"
 		state.turnRtAccrued   = 0
 		state.turnActionTaken = false
+		state.undoStack       = {}  -- new turn: nothing to undo yet
 		unit.guardUsedThisTurn = false
 		-- Reset once-per-turn Momentum AP gain (Perks & Flaws Phase 3, TRAIT-P-162).
 		unit.momentumUsedThisTurn = false
@@ -609,6 +616,45 @@ function BattleCoordinator.AccrueRt(state, rtCost)
 
 	state.turnRtAccrued   = state.turnRtAccrued + rtCost
 	state.turnActionTaken = true
+end
+
+-- UNDO SUPPORT (2026-10-17) ------------------------------------------------
+-- The active unit may act more than once per turn (multi-AP). Undo peels back
+-- the most recent reversible action (Move/Guard that triggered no reaction),
+-- newest first, repeatable. All of this operates ONLY within the current open
+-- turn, before EndTurn — so RT lives in state.turnRtAccrued and has not reached
+-- the timeline yet. Reversal is therefore a clean subtraction, never a rewind.
+
+-- Reverse of AccrueRt: give back the RT a now-undone action added this turn.
+-- Clamped at 0 so we can never drive the accumulator negative.
+function BattleCoordinator.RefundRt(state, rtCost)
+	assert(state.phase == "TurnOpen", "RefundRt: no turn is open.")
+	assert(rtCost >= 0, "RefundRt: rtCost must be >= 0.")
+	state.turnRtAccrued = math.max(0, state.turnRtAccrued - rtCost)
+end
+
+-- Push a reversible-action snapshot onto the current turn's undo stack.
+function BattleCoordinator.PushUndo(state, entry)
+	state.undoStack = state.undoStack or {}
+	table.insert(state.undoStack, entry)
+end
+
+-- Peek the newest undo entry without removing it (nil if the stack is empty).
+function BattleCoordinator.PeekUndo(state)
+	local stack = state.undoStack
+	if not stack or #stack == 0 then return nil end
+	return stack[#stack]
+end
+
+-- Pop the newest undo entry. After a pop, turnActionTaken reflects whether any
+-- reversible action remains on the stack (so an undone-to-empty turn behaves
+-- like a fresh turn for RT-rest purposes in EndTurn).
+function BattleCoordinator.PopUndo(state)
+	local stack = state.undoStack
+	if not stack or #stack == 0 then return nil end
+	local entry = table.remove(stack)
+	state.turnActionTaken = (#stack > 0)
+	return entry
 end
 
 -- EndTurn

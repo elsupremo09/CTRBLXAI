@@ -179,6 +179,20 @@ local CARDINAL = {
 	{ x = -1, y =  0 },
 }
 
+-- 8-way neighbours (cardinals + diagonals). Interaction with a map object is 8-
+-- directional (a unit can act on an object from a diagonal tile too), so V5's
+-- interaction-adjacency check uses this, not CARDINAL. (2026-10-17)
+local EIGHT_WAY = {
+	{ x =  0, y =  1 },
+	{ x =  0, y = -1 },
+	{ x =  1, y =  0 },
+	{ x = -1, y =  0 },
+	{ x =  1, y =  1 },
+	{ x =  1, y = -1 },
+	{ x = -1, y =  1 },
+	{ x = -1, y = -1 },
+}
+
 local MAX_GENERATION_ATTEMPTS = 3
 local YIELD_INTERVAL          = 100   -- task.wait() every N operations
 local MAX_SEED                = 2147483647  -- 2^31 - 1
@@ -812,7 +826,197 @@ local function validateGapSpans(mapState)
 end
 
 --------------------------------------------------
--- STEP 11b: GAP MIX AUDIT (Round 3 tuning, advisory — never rejects a map)
+-- STEP 8b: VALIDATE LANE PASSABILITY (added 2026-10-17, user ruling)
+-- A LAN lane "guarantees engagement and traversal" (map_gen_rules marker
+-- contract). validateConnectivity (V2/V6) only proves SOME PD->ED path exists,
+-- so on a multi-lane template (e.g. T02 Split Pressure) a blocker can fully
+-- seal ONE lane while the other still connects PD->ED -- and the seal ships
+-- undetected. This pass checks EACH real lane independently and, if a lane was
+-- sealed by a GENERATION-PLACED object (e.g. a Cursed Chest), deletes the
+-- fewest such objects needed to reopen it. Template-authored walls (OBS
+-- markers, materialized as "OBS Blocker"/"Ad Billboard") are NEVER deleted --
+-- they define the map's intended shape; if only a wall seals a lane the pass
+-- fails and the attempt loop re-rolls.
+--
+-- "Real lane" = a connected group of LAN-marked tiles that, on THIS generated
+-- map BEFORE object placement, actually carries a PD->ED crossing through
+-- itself. Stub LAN groups that never cross even on the clean map (e.g. the
+-- 5-tile fragment in T04) are ignored, so the pass never misfires on them.
+--------------------------------------------------
+
+-- Same movement rule as validateConnectivity: passable terrain, elevation step
+-- <= 1, not blocked by a non-passable object. `laneSet` (optional) restricts
+-- which LAN tiles may be walked (nil = all LAN usable); `ignoreObjects`
+-- (optional set of coordKeys) treats those tiles as object-free (used to model
+-- "what if we deleted this blocker").
+local function laneReachesED(tiles, w, h, laneSet, ignoreObjects)
+	local visited, queue, head = {}, {}, 1
+	for y = 1, h do
+		for x = 1, w do
+			if tiles[y][x].marker == "PD" then
+				local k = coordKey(x, y)
+				if not visited[k] then visited[k] = true; table.insert(queue, { x = x, y = y }) end
+			end
+		end
+	end
+	while head <= #queue do
+		local cur = queue[head]; head = head + 1
+		if tiles[cur.y][cur.x].marker == "ED" then return true end
+		local tile = tiles[cur.y][cur.x]
+		for _, dir in ipairs(CARDINAL) do
+			local nx, ny = cur.x + dir.x, cur.y + dir.y
+			if isInBounds(nx, ny, w, h) then
+				local nKey = coordKey(nx, ny)
+				if not visited[nKey] then
+					local nTile = tiles[ny][nx]
+					-- A LAN tile outside the restricted lane set is treated as a wall.
+					local laneOk = (laneSet == nil) or (nTile.marker ~= "LAN") or laneSet[nKey]
+					local tDef   = TerrainData.Types[nTile.terrain]
+					local pass   = tDef and tDef.passable ~= false
+					local noBlock = nTile.object == nil
+						or (ignoreObjects and ignoreObjects[nKey])
+						or (ObjectData.Objects[nTile.object]
+							and ObjectData.Objects[nTile.object].passable)
+					local elevOk = math.abs(tile.elevation - nTile.elevation) <= 1
+					if laneOk and pass and noBlock and elevOk then
+						visited[nKey] = true
+						table.insert(queue, { x = nx, y = ny })
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+-- True if the object at (x,y) is a template-authored wall that must never be
+-- deleted to clear a lane. Authored walls are the materialized OBS two-form
+-- objects; everything else in placedObjects is generation-placed (pool) and
+-- may be removed.
+local function isAuthoredWall(objType)
+	return objType == "OBS Blocker" or objType == "Ad Billboard"
+end
+
+-- Returns ok (boolean). Mutates tiles + objects to drop any generation-
+-- placed blocker needed to keep every real lane passable. ok=false only when a
+-- lane stays sealed with no deletable blocker left (caller must re-roll).
+local function validateLanesPassable(tiles, w, h, objects)
+	-- 1) Build connected LAN groups (4-cardinal).
+	local groupOf = {}
+	local groups  = {}
+	for y = 1, h do
+		for x = 1, w do
+			if tiles[y][x].marker == "LAN" and not groupOf[coordKey(x, y)] then
+				local gid = #groups + 1
+				local members, q, head = {}, { { x = x, y = y } }, 1
+				groupOf[coordKey(x, y)] = gid
+				while head <= #q do
+					local cur = q[head]; head = head + 1
+					table.insert(members, cur)
+					for _, dir in ipairs(CARDINAL) do
+						local nx, ny = cur.x + dir.x, cur.y + dir.y
+						if isInBounds(nx, ny, w, h) and tiles[ny][nx].marker == "LAN" then
+							local nk = coordKey(nx, ny)
+							if not groupOf[nk] then
+								groupOf[nk] = gid
+								table.insert(q, { x = nx, y = ny })
+							end
+						end
+					end
+				end
+				groups[gid] = members
+			end
+		end
+	end
+	if #groups == 0 then return true end  -- template has no lanes to protect
+
+	-- 2) Keep only REAL lanes: those that carry a PD->ED crossing through
+	--    themselves on the current map, ignoring ALL generation-placed objects
+	--    (clean-map baseline). Authored walls are kept (nil ignore = walls stay).
+	local genPlacedKeys = {}
+	for _, obj in ipairs(objects) do
+		if not isAuthoredWall(obj.type) then
+			local def = ObjectData.Objects[obj.type]
+			if def and not def.passable then
+				genPlacedKeys[coordKey(obj.x, obj.y)] = true
+			end
+		end
+	end
+	local realLanes = {}
+	for gid, members in ipairs(groups) do
+		local laneSet = {}
+		for _, m in ipairs(members) do laneSet[coordKey(m.x, m.y)] = true end
+		if laneReachesED(tiles, w, h, laneSet, genPlacedKeys) then
+			table.insert(realLanes, { id = gid, laneSet = laneSet })
+		end
+	end
+
+	-- 3) For each real lane, ensure it still crosses WITH objects present.
+	--    If not, delete generation-placed blockers (deterministic order) until
+	--    it crosses again, or fail if only authored walls remain.
+	local removedCount = 0
+	for _, lane in ipairs(realLanes) do
+		if not laneReachesED(tiles, w, h, lane.laneSet, nil) then
+			-- Collect candidate deletable blockers, deterministically ordered.
+			local candidates = {}
+			for _, obj in ipairs(objects) do
+				if not isAuthoredWall(obj.type) then
+					local def = ObjectData.Objects[obj.type]
+					if def and not def.passable then
+						table.insert(candidates, obj)
+					end
+				end
+			end
+			table.sort(candidates, function(a, b)
+				if a.y ~= b.y then return a.y < b.y end
+				if a.x ~= b.x then return a.x < b.x end
+				return a.id < b.id
+			end)
+			-- Drop blockers in a fixed deterministic order, committing each
+			-- removal, and stop the moment the lane crosses again. Deterministic
+			-- order => deterministic result (same seed/content => same map). A
+			-- removal is only made while the lane is still sealed, so at most a
+			-- few decorative/pool blockers are lost; authored walls are never in
+			-- the candidate list, so the map's intended shape is preserved.
+			local dropped = {}
+			for _, obj in ipairs(candidates) do
+				if laneReachesED(tiles, w, h, lane.laneSet, nil) then break end
+				tiles[obj.y][obj.x].object = nil
+				dropped[obj.id] = true
+			end
+			if next(dropped) then
+				-- Rebuild the objects list without dropped entries.
+				local kept = {}
+				for _, obj in ipairs(objects) do
+					if dropped[obj.id] then
+						removedCount = removedCount + 1
+						warn(string.format(
+							"[MapService] Lane repair: deleted generation-placed %s at (%d,%d) sealing lane %d.",
+							obj.type, obj.x, obj.y, lane.id))
+					else
+						table.insert(kept, obj)
+					end
+				end
+				-- Replace contents of `objects` in place (same table reference).
+				for i = #objects, 1, -1 do objects[i] = nil end
+				for i, obj in ipairs(kept) do objects[i] = obj end
+			end
+			-- Final verdict for this lane.
+			if not laneReachesED(tiles, w, h, lane.laneSet, nil) then
+				return false  -- only authored walls seal it -> caller re-rolls
+			end
+		end
+	end
+	if removedCount > 0 then
+		print(string.format(
+			"[MapService] Lane repair complete: removed %d generation-placed blocker(s) to keep %d lane(s) passable.",
+			removedCount, #realLanes))
+	end
+	return true
+end
+
+--------------------------------------------------
+
 -- For every deliberate gap, on the FINAL map (terrain + elevation <= 1 +
 -- objects, four-cardinal, same rules as validateConnectivity):
 --   sealed : its two banks do NOT connect without its span, i.e. the span
@@ -1371,7 +1575,10 @@ end
 -- generated enemy count (up to ~18) so no enemies stack on one tile; player side
 -- is the quest's deployable party size (max 7). Both nil-safe (dev-locked 2026-09-26).
 local function placeDeploymentAnchors(tiles, w, h, rng, maxPlayer, maxEnemy)
-	local playerCap = maxPlayer or 7
+	-- Default 11 = ceil(MAX_PARTY_SIZE 7 * 1.5). Deployment shows ceil(questLimit
+	-- * 1.5) tiles (2026-10-18 ruling); largest quest limit 7 => up to 11 player
+	-- anchors needed. PD zone supplies 12-18 passable tiles, so enough candidates.
+	local playerCap = maxPlayer or 11
 	local enemyCap  = maxEnemy or 18
 	local pdCandidates = {}
 	local edCandidates = {}
@@ -1506,12 +1713,23 @@ local function runFinalValidation(mapState)
 		end
 	end
 
-	-- V5: Non-passable objects have an adjacent passable interaction tile.
+	-- V5: INTERACTABLE non-passable objects need an adjacent passable interaction tile.
+	-- Scope (2026-10-17): this rule exists ONLY so a unit can reach an object it INTERACTS
+	-- with (chest, ballista, etc.). PURE-WALL blockers -- impassable AND non-interactable
+	-- (activation == nil: OBS Blocker, Ad Billboard, and skill-placed blockers like Ice
+	-- Spike) -- have nothing to interact with, so a walled-in / cornered / fully-enclosed
+	-- one is perfectly valid (it is just thick wall). They are EXEMPT. Lane/pathing safety
+	-- is NOT weakened: validateConnectivity (V2/V6) independently guarantees PD->ED remains
+	-- connected through blockers, so a wall that actually seals a lane still fails there.
+	-- Interaction is 8-directional (diagonals count), so the check uses EIGHT_WAY. This
+	-- replaces the former Ad-Billboard-only tolerance with the correct general rule.
 	for _, obj in ipairs(mapState.objects) do
 		local def = ObjectData.Objects[obj.type]
-		if def and not def.passable then
+		-- Only INTERACTABLE impassable objects need a reachable neighbour. A nil activation
+		-- means "no interaction" -> pure wall -> exempt (never fails, never dropped).
+		if def and not def.passable and def.activation ~= nil then
 			local hasAdj = false
-			for _, dir in ipairs(CARDINAL) do
+			for _, dir in ipairs(EIGHT_WAY) do
 				local nx, ny = obj.x + dir.x, obj.y + dir.y
 				if isInBounds(nx, ny, w, h) then
 					local adj  = tiles[ny][nx]
@@ -1523,18 +1741,8 @@ local function runFinalValidation(mapState)
 				end
 			end
 			if not hasAdj then
-				-- BUG-042 defense-in-depth: the Ad Billboard is cosmetic/monetization and must
-				-- NEVER abort map generation. placeObjects already drops a walled-in billboard;
-				-- this covers any other path -> warn and tolerate (a walled-in billboard is just
-				-- an inaccessible decoration; V13 reachability already holds WITHOUT it). Every
-				-- NON-billboard impassable object still fails -> retry, exactly as designed.
-				if obj.type == "Ad Billboard" then
-					warn("[MapService] V5: Ad Billboard " .. obj.id ..
-						" has no adjacent passable tile - tolerated, non-fatal (BUG-042).")
-				else
-					table.insert(errors,
-						obj.id .. " (" .. obj.type .. ") no adjacent passable tile")
-				end
+				table.insert(errors,
+					obj.id .. " (" .. obj.type .. ") no adjacent passable tile")
 			end
 		end
 	end
@@ -1762,6 +1970,16 @@ function MapService.Generate(biomeId, templateId, seed)
 			continue
 		end
 
+		-- Step 8b: Per-lane passability (2026-10-17). validateConnectivity only
+		-- proves SOME PD->ED path; this guarantees EACH real lane stays open,
+		-- deleting generation-placed blockers (never authored walls) that seal
+		-- one. If a lane is sealed only by an authored wall, re-roll.
+		if not validateLanesPassable(tiles, w, h, objects) then
+			warn("[MapService] Lane passability fail: a lane is sealed by an authored wall; re-rolling.")
+			lastErrors = { "lane sealed by authored wall" }
+			continue
+		end
+
 		-- Step 9: Select battle condition.
 		local battleCondition = selectBattleCondition(biome, seedCtx.conditionRng)
 
@@ -1780,6 +1998,43 @@ function MapService.Generate(biomeId, templateId, seed)
 		mapState.terrainGrid     = terrainGrid
 		mapState.objectGrid      = objectGrid
 		mapState.blockers        = blockers
+
+		-- CENTER TILE (2026-10-17): a single walkable tile nearest the geometric middle,
+		-- determined here at generation so facing uses ONE real standable tile (not the raw
+		-- w/2,h/2 midpoint, which can land on a wall/water and gives units a uniform/wrong
+		-- facing). Spiral out from the middle to the first passable, in-bounds terrain tile.
+		do
+			local midX = math.floor(w / 2 + 0.5)
+			local midY = math.floor(h / 2 + 0.5)
+			local function passableAt(cx, cy)
+				if cx < 1 or cy < 1 or cx > w or cy > h then return false end
+				local row = terrainGrid[cy]
+				local tid = row and row[cx]
+				local tdef = tid and TerrainData.Types[tid]
+				return tdef ~= nil and tdef.passable ~= false
+			end
+			local centerTile = nil
+			if passableAt(midX, midY) then
+				centerTile = { x = midX, y = midY }
+			else
+				local maxR = math.max(w, h)
+				for r = 1, maxR do
+					for dy = -r, r do
+						for dx = -r, r do
+							if math.abs(dx) == r or math.abs(dy) == r then
+								if passableAt(midX + dx, midY + dy) then
+									centerTile = { x = midX + dx, y = midY + dy }
+									break
+								end
+							end
+						end
+						if centerTile then break end
+					end
+					if centerTile then break end
+				end
+			end
+			mapState.centerTile = centerTile or { x = midX, y = midY }  -- fallback: raw middle
+		end
 
 		-- Runtime chasm-floor + span data (consumed by GameConstants.SetGeneratedMap
 		-- and TileEffectService at battle start):

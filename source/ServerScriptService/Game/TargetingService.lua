@@ -1571,4 +1571,58 @@ function TargetingService.GetInteractCandidates(actor, allUnits, state)
 	return candidates
 end
 
+--------------------------------------------------
+-- ATTACK FOOTPRINT FROM A HYPOTHETICAL ORIGIN (Move-target range preview)
+--
+-- Returns the list of tiles { {tileX=, tileY=}, ... } that `actor` could reach
+-- with a BASIC ATTACK *if it were standing on (originX, originY)* — the attack
+-- range projected from a prospective move-landing tile. Used by the Move prompt
+-- so the client can paint the reachable attack tiles red while the player picks
+-- a destination (standard grid-SRPG move→target preview).
+--
+-- Reuses the EXACT basic-attack gates (chebyshev range band, LoS, melee
+-- elevation) via a shallow actor copy repositioned to the origin, so the LoS
+-- origin and the elevation gate both read the hypothetical landing tile. No
+-- reach rules are duplicated here — range/minRange/RangeModifier come from the
+-- same places GetAttackCandidates uses, so prompt and validation never drift.
+--
+-- This is a FOOTPRINT (every in-reach, in-LoS, elevation-legal tile), not a
+-- target list: it does not require an enemy to be present on the tile. The
+-- server stays the reach authority (ARC-001 / SEC-002); the client only renders.
+--------------------------------------------------
+function TargetingService.GetAttackTilesFromOrigin(actor, allUnits, originX, originY, mapWidth, mapHeight)
+	local tiles = {}
+	if not (actor and originX and originY) then return tiles end
+
+	-- Shallow copy so the hypothetical position does not mutate the live actor.
+	-- getEffectiveElevation / isMeleeElevationLegal read tileX/tileY + Flight off
+	-- this table, so moving the copy moves the whole evaluation to the origin.
+	local ghost = setmetatable({ tileX = originX, tileY = originY }, { __index = actor })
+
+	local range = (actor.weaponMaxRange or 1) + RacePassiveService.GetRangeModifier(actor)
+	local minRange = actor.weaponMinRange or 1
+	local atkElev = getEffectiveElevation(ghost)
+
+	for dx = -range, range do
+		for dy = -range, range do
+			local tx, ty = originX + dx, originY + dy
+			-- skip the origin itself and anything off-map
+			if (dx ~= 0 or dy ~= 0) and isInsideMap(tx, ty, mapWidth, mapHeight) then
+				local dist = chebyshevDistance(originX, originY, tx, ty)
+				if dist <= range and dist >= minRange then
+					local pseudoTarget = { tileX = tx, tileY = ty }
+					if TargetingService.HasLineOfSight(originX, originY, tx, ty,
+							allUnits, atkElev, actor.weaponProjectileType, actor.side)
+						and isMeleeElevationLegal(ghost, pseudoTarget, range)
+					then
+						table.insert(tiles, { tileX = tx, tileY = ty })
+					end
+				end
+			end
+		end
+	end
+
+	return tiles
+end
+
 return TargetingService

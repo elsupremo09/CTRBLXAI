@@ -38,6 +38,7 @@ local _CombatResolver   = nil
 local _StatusService    = nil
 local _UnitSchema       = nil
 local _TileEffectService = nil
+local _DisplacementService = nil
 
 function AIService.SetDependencies(deps: any)
 	_TargetingService  = deps.TargetingService
@@ -46,6 +47,7 @@ function AIService.SetDependencies(deps: any)
 	_StatusService     = deps.StatusService
 	_UnitSchema        = deps.UnitSchema
 	_TileEffectService = deps.TileEffectService
+	_DisplacementService = deps.DisplacementService
 end
 
 --------------------------------------------------
@@ -338,6 +340,42 @@ local function screenValueAt(self: any, tx: any, ty: any, allUnits: any): any
 		end
 	end
 	return blocked
+end
+
+-- SUPPORT POSITIONING (enemy_ai_personalities rule 5: Support "prioritizes moving
+-- behind Defenders"). Scores how good tile (tx,ty) is as a Support hiding spot:
+-- a tile is "behind a Defender" when a living allied Defender sits BETWEEN that tile
+-- and the nearest player — i.e. the Defender is closer to the threat than the tile,
+-- and roughly on the line from the tile to that player, so the Defender's body is
+-- interposed. Pairs with the Defender screening behavior (Defender blocks the lane;
+-- Support tucks in behind it).
+--
+-- Returns a numeric score (0 = not behind any Defender). Higher when a Defender is
+-- well-interposed AND the tile is low-exposure (fewer players can hit it). Reuses
+-- _tileOnSegment (shared geometry), _profileRole (to find Defender allies), and
+-- exposureAt (safety). The acting Support is `self`; `nearestPlayer` is passed in so
+-- the helper does not recompute it per tile.
+local function behindDefenderValueAt(self: any, tx: any, ty: any, nearestPlayer: any, allUnits: any): any
+	if not nearestPlayer then return 0 end
+	local best = 0
+	for _, ally in ipairs(allUnits) do
+		if ally.isAlive and ally.side == self.side and ally.id ~= self.id
+			and _profileRole(ally) == "defender" then
+			-- Defender must be between the tile and the player: closer to the player
+			-- than the tile is, and on the sight line from the tile to the player.
+			local tileToPlayer = chebyshev(tx, ty, nearestPlayer.tileX, nearestPlayer.tileY)
+			local defToPlayer  = chebyshev(ally.tileX, ally.tileY, nearestPlayer.tileX, nearestPlayer.tileY)
+			if defToPlayer < tileToPlayer
+				and _tileOnSegment(ally.tileX, ally.tileY, tx, ty, nearestPlayer.tileX, nearestPlayer.tileY) then
+				-- Behind this Defender. Value it, minus a small exposure penalty so the
+				-- Support prefers the safest covered tile.
+				local exposure = exposureAt(self, tx, ty, allUnits)
+				local v = 10 - exposure * 2
+				if v > best then best = v end
+			end
+		end
+	end
+	return best
 end
 
 --------------------------------------------------
@@ -853,6 +891,73 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any):
 			score = s, rtEstimate = 0, tile = nil, targetName = target.name })
 	end
 
+	-- OFFENSIVE PUSH (enemy_ai_personalities rule 25, added 2026-10-17): "value pushing
+	-- a target into a hazard tile or off a ledge (fall damage), scored on the total
+	-- resulting damage." For each ADJACENT hostile, dry-run the real push resolver to
+	-- predict where the shove lands them and how much damage it deals, then score the
+	-- push as that damage on the SAME scorecard as a normal attack — so a push only wins
+	-- when it out-damages the unit's best swing (e.g. a shove into lava or off a cliff),
+	-- and an off-ledge / lethal landing scores as a KILL. Any personality may use it.
+	--
+	-- Prediction is faithful, not reinvented: it mirrors CommandService's Push exactly —
+	-- force = actor.derivedStats.force (default 1), direction via GetPushDirection, and
+	-- _DisplacementService.ResolvePush (which is PURE — it returns finalTileX/Y,
+	-- fallDamage, wallCollision WITHOUT moving anyone; the commit step applies position).
+	-- fall + collision damage come straight from the resolver. A hazardous LANDING tile
+	-- (trap/quicksand/lava) is valued as a strong positive signal via isTileHazardous —
+	-- the exact per-hazard runtime damage is owned by the tile-effect system, so the
+	-- VALUATION of a hazard landing is an estimate (the push itself still resolves
+	-- correctly); only the AI's scoring of its worth is approximate. Flagged for Studio.
+	-- Guardrails: only ADDS a candidate (never lowers an attack), only pushes hostiles,
+	-- KO-override still fires first, and a zero-displacement push is never proposed.
+	if _DisplacementService and _DisplacementService.ResolvePush and _DisplacementService.GetPushDirection then
+		for _, foe in ipairs(allUnits) do
+			if foe.isAlive and isHostileTo(unit, foe)
+				and chebyshev(unit.tileX, unit.tileY, foe.tileX, foe.tileY) == 1 then
+				local force = 1
+				if unit.derivedStats and unit.derivedStats.force then
+					force = unit.derivedStats.force
+				end
+				local direction = _DisplacementService.GetPushDirection(unit, foe)
+				local ok, result = pcall(function()
+					return _DisplacementService.ResolvePush(
+						unit, foe, force, direction,
+						GameConstants.KNOCKBACK_SOURCE_MODIFIERS.GlobalPush,
+						allUnits, nil)
+				end)
+				if ok and result and result.pushed then
+					-- Damage the resolver itself predicts (fall + wall collision).
+					local predicted = (result.fallDamage or 0)
+					if result.wallCollision and result.wallCollision.collidedUnitDamage then
+						predicted = predicted + result.wallCollision.collidedUnitDamage
+					end
+					-- Hazard LANDING signal: if the shove ends the target on a hazard tile,
+					-- that is a valuable outcome whose exact damage is tile-effect-owned.
+					-- Value it as a sizeable fraction of the target's max HP so a hazard
+					-- shove competes with (and often beats) a plain attack, without
+					-- fabricating a precise hazard-damage number.
+					local landsOnHazard = isTileHazardous(result.finalTileX, result.finalTileY)
+					local hazardSignal = landsOnHazard and (0.4 * (foe.maxHp or 1)) or 0
+					local totalDmg = predicted + hazardSignal
+					if totalDmg > 0 then
+						local dmgPct = totalDmg / math.max(1, foe.maxHp)
+						local pscore = dmgPct * W.DAMAGE_PCT * dials.damage
+						-- Lethal shove (fall/collision alone kills, or a chasm off-ledge
+						-- landing): score as a KILL, same as a lethal attack.
+						if (result.fallDamage or 0) + (result.wallCollision and result.wallCollision.collidedUnitDamage or 0) >= (foe.currentHp or math.huge) then
+							pscore = pscore + W.KILL_BONUS
+						end
+						table.insert(candidates, {
+							actionType = "Push", selection = foe, skillName = nil,
+							score = pscore, rtEstimate = 0, tile = nil,
+							targetName = string.format("push %s", foe.name),
+						})
+					end
+				end
+			end
+		end
+	end
+
 	for _, entry in ipairs(skillEntries) do
 		for _, target in ipairs(entry.candidates) do
 			local s = scoreSkill(unit, entry.def, target, dials, allUnits)
@@ -897,6 +1002,36 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any):
 				actionType = "Move", selection = bestScreenTile, skillName = nil,
 				score = bestScreenScore, rtEstimate = 0, tile = bestScreenTile,
 				targetName = string.format("screen (%d,%d)", bestScreenTile.tileX, bestScreenTile.tileY),
+			})
+		end
+	end
+
+	-- SUPPORT "MOVE BEHIND DEFENDERS" (enemy_ai_personalities rule 5). Support
+	-- personality only. Among reachable tiles, prefer one that sits behind an allied
+	-- Defender relative to the nearest player (behindDefenderValueAt). This ADDS a
+	-- positioning Move option so a Support with nothing better to do tucks in behind
+	-- the frontline instead of standing exposed. It never lowers any other option:
+	-- the KO-override fires first, and a needed HEAL (Support's real job, rule 5)
+	-- scores through its very high allyHelp dial and will outscore this modest
+	-- repositioning when an ally actually needs help — so this only governs the
+	-- "no one to heal, nothing to attack" case, exactly where rule 5 wants Support
+	-- repositioning behind cover.
+	if personality == "Support" then
+		local bestHideTile, bestHideScore = nil, 0
+		for _, tile in ipairs(moveTiles) do
+			local v = behindDefenderValueAt(unit, tile.tileX, tile.tileY, nearest, allUnits)
+			if v > 0 then
+				local s = v * (dials.selfDanger or 1)
+				if isTileHazardous(tile.tileX, tile.tileY) then s = s - 100 end
+				s = s - (tile.pathCost or 0) * 0.1
+				if s > bestHideScore then bestHideScore = s; bestHideTile = tile end
+			end
+		end
+		if bestHideTile then
+			table.insert(candidates, {
+				actionType = "Move", selection = bestHideTile, skillName = nil,
+				score = bestHideScore, rtEstimate = 0, tile = bestHideTile,
+				targetName = string.format("cover (%d,%d)", bestHideTile.tileX, bestHideTile.tileY),
 			})
 		end
 	end

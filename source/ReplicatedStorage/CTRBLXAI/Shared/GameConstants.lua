@@ -3458,4 +3458,34 @@ function GameConstants.AutoAllocateStatPoints(total, weights)
 	return alloc
 end
 
+--------------------------------------------------
+-- MODEL GROUND PLACEMENT (shared, 2026-10-17)
+--------------------------------------------------
+-- Single source of truth for standing a unit model's TRUE FEET on a target
+-- surface Y. Some race rigs (Celestial, Froc, Orc, Dwarf, Goblin, Crab, ...)
+-- have their model PIVOT sitting several studs ABOVE their lowest geometry, so
+-- pivoting the model to the surface Y buries it by that gap. We correct for it
+-- generically from the model's own bounding box -- NO per-race table -- so any
+-- future model (new races, enemy-only units, bosses, summons) grounds correctly
+-- with zero extra code, as long as it is a Model with geometry.
+--
+-- gap = pivotY - boundingBoxBottomY  (0 when the pivot is already at the feet).
+-- We raise the pivot target by `gap` so the bbox bottom (true feet) lands on
+-- feetY. Facing is preserved: pass the facing CFrame (rotation used as-is; only
+-- its position Y is replaced). Deterministic -- no physics, no raycast.
+--
+-- EDGE CASE (documented, not a defect): if a model has stray geometry BELOW its
+-- feet (an effect emitter, a trailing bone), the bbox bottom sits under the real
+-- feet and the model floats slightly. The [PIVOT-CHECK] edit-mode snippet flags
+-- any such model (negative gap) at authoring time.
+function GameConstants.GroundModelPivotCFrame(model, wx, feetY, wz, facingCFrame)
+	local pivot = model:GetPivot()
+	local bboxCF, bboxSize = model:GetBoundingBox()
+	local bboxBottomY = bboxCF.Position.Y - bboxSize.Y / 2
+	local gap = pivot.Position.Y - bboxBottomY  -- >=0 when pivot is above true feet
+	local rot = facingCFrame or CFrame.new()
+	-- Keep the facing rotation, replace the position so true feet sit on feetY.
+	return CFrame.new(wx, feetY + gap, wz) * (rot - rot.Position)
+end
+
 return GameConstants

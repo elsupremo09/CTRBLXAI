@@ -54,6 +54,18 @@ local EVENT_NAMES = {
 	-- Unit Inspector (3-tab)
 	"InspectUnitRequest",
 	"InspectUnitResponse",
+	-- Move-target attack-range preview (on-demand, 2026-10-17). Client asks for
+	-- the attack footprint of ONE prospective landing tile when the player picks
+	-- it; server replies with that tile's attackable tiles. Replaces shipping the
+	-- footprint for every move candidate in the turn prompt (payload reduction).
+	"AttackRangeRequest",   -- C->S: { tileX, tileY }
+	"AttackRangeResponse",  -- S->C: { tileX, tileY, attackTiles }
+	-- Map Details panel (2026-10-17). Client asks for the current battle's quest
+	-- details, optional quests, live "if you win" gold tally, and victory loot
+	-- range; server replies with a read-only snapshot (nothing is rolled or
+	-- committed — gold/loot still finalize only at battle end).
+	"MapDetailsRequest",    -- C->S: {} (active player's open turn)
+	"MapDetailsResponse",   -- S->C: { quest, optional, goldSoFar, goldOnVictory, lootMin, lootMax }
 	-- Phase 2: Status expansion
 	"TurnSkipped",
 	"StatusImmune",

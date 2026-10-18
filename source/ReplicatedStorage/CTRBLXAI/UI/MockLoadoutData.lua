@@ -66,6 +66,23 @@ function MockLoadoutData.PrevUnit()
 	return MockLoadoutData.GetSelectedUnit()
 end
 
+-- Full roster list for the unit-swap dropdown (replaces the prev/next arrows).
+function MockLoadoutData.GetAllUnits()
+	return MockLoadoutData.Units
+end
+
+-- Select a unit directly by id (dropdown pick). Returns the newly selected unit,
+-- or the current one if the id isn't found (no-op on a bad id).
+function MockLoadoutData.SetSelectedUnitById(unitId)
+	for i, u in ipairs(MockLoadoutData.Units) do
+		if u.id == unitId then
+			MockLoadoutData.SelectedUnitIndex = i
+			break
+		end
+	end
+	return MockLoadoutData.GetSelectedUnit()
+end
+
 -- Inventory items (shared pool)
 MockLoadoutData.Inventory = {
 	-- Weapons (MainHand)
@@ -385,6 +402,11 @@ function MockLoadoutData.LoadFromServer()
 					doctrineName = field(rd.doctrineName),
 					side = "Player",
 					unallocatedPoints = rd.unallocatedPoints,
+					-- Carry the server-sent face so the unit header + swap dropdown
+					-- show a portrait instead of initials. GetRosterData already
+					-- includes portraitAssetId (LoadoutRequestHandlers L129); it was
+					-- simply not mapped here, so it was dropped on arrival. (2026-10-18)
+					portraitAssetId = rd.portraitAssetId,
 				})
 			end
 			table.sort(units, function(a, b)

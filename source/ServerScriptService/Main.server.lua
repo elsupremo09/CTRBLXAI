@@ -109,6 +109,62 @@ local AugmentData = require(
 		:WaitForChild("AugmentData")
 )
 
+--------------------------------------------------
+-- SHARED BATTLE GOLD BREAKDOWN (2026-10-17)
+-- One formula used by BOTH the battle-end payout AND the live Map Details
+-- "accumulated so far" panel, so the live projection can never drift from the
+-- real payout (no duplicated math). Pure/read-only: derives the kill list and
+-- deployed-player set from the CURRENT unit list exactly as the post-battle
+-- block does (a dead non-summon enemy = a kill), applies the level-gap band,
+-- per-kill base gold, and the largest event gold multiplier. On victory it adds
+-- completion + quest gold; on non-victory it keeps 50% of kill gold only (the
+-- locked defeat rule). Returns the breakdown; does NOT credit or mutate state.
+local KILL_GOLD_BASE = { Grunt = 8, Veteran = 14, Elite = 25, Boss = 50 }
+local function computeBattleGold(units, playerUnitsById, quest, isVictory)
+	local recLvl = (quest and quest.recommendedLvl) or 1
+	local topLevel = 1
+	local killCount = 0
+	local kills = {}
+	for _, u in ipairs(units or {}) do
+		if u.side == "Enemy" and not u.isSummon and not u.isAlive then
+			kills[#kills + 1] = {
+				enemyType = u.enemyType,
+				level = u.level or 0,
+				goldMult = (type(u.rewardOnDeath) == "table" and tonumber(u.rewardOnDeath.goldMult)) or nil,
+			}
+			killCount += 1
+		elseif u.side == "Player" and not u.isSummon and playerUnitsById and playerUnitsById[u.id] then
+			local pu = playerUnitsById[u.id]
+			if pu and type(pu.level) == "number" and pu.level > topLevel then topLevel = pu.level end
+		end
+	end
+	local gap = topLevel - recLvl
+	local band = if gap <= 5 then 1.0 elseif gap <= 10 then 0.75 elseif gap <= 15 then 0.50
+		elseif gap <= 20 then 0.25 else 0.10
+	local killGold = 0
+	local eventGoldMult = 1
+	for _, k in ipairs(kills) do
+		local base = KILL_GOLD_BASE[k.enemyType or ""] or KILL_GOLD_BASE.Grunt
+		killGold += base * (1 + (k.level or 0) / 100) * band
+		if k.goldMult and k.goldMult > eventGoldMult then eventGoldMult = k.goldMult end
+	end
+	killGold = math.floor(killGold)
+	local completionGold, questGold = 0, 0
+	if isVictory then
+		local r = quest and quest.rewards
+		local cBase = (r and r.completionGoldBase) or 30
+		completionGold = math.floor(cBase * (1 + recLvl / 50))
+		questGold = (r and r.questGold) or 0
+	else
+		killGold = math.floor(killGold * 0.5)
+	end
+	local total = math.floor((killGold + completionGold + questGold) * eventGoldMult)
+	return {
+		killGold = killGold, completionGold = completionGold, questGold = questGold,
+		eventGoldMult = eventGoldMult, band = band, total = total, killCount = killCount,
+	}
+end
+
 -- Moved up (was declared mid-file, after the roster builder that uses it).
 local ConsumableData = require(
 	game:GetService("ReplicatedStorage")
@@ -264,6 +320,7 @@ AIService.SetDependencies({
 	StatusService     = StatusService,
 	UnitSchema        = UnitSchema,
 	TileEffectService = TileEffectService,
+	DisplacementService = DisplacementService,
 })
 
 --------------------------------------------------
@@ -1418,6 +1475,79 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 	BattleEvents.InspectUnitResponse:FireClient(playerObj, response)
 end)
 
+-- Move-target attack-range preview (on-demand, 2026-10-17). The client fires
+-- this when the player selects a prospective move-destination tile; we reply
+-- with the attack footprint FROM that tile only. This replaces precomputing
+-- attackTiles for every move candidate in the turn prompt (payload reduction
+-- per Tester NET note). Server stays the reach authority (ARC-001/SEC-002):
+-- the client sends only the tile it is considering and renders what we return.
+BattleEvents.AttackRangeRequest.OnServerEvent:Connect(function(playerObj, data)
+	-- Only answer for the active unit's own open turn; ignore anything else.
+	if not state or state.phase ~= "TurnOpen" or not state.activeUnit then return end
+	if type(data) ~= "table" then return end
+	local tx, ty = data.tileX, data.tileY
+	if type(tx) ~= "number" or type(ty) ~= "number" then return end
+	if tx < 1 or ty < 1 or tx > MAP_WIDTH or ty > MAP_HEIGHT then return end
+
+	local tiles = TargetingService.GetAttackTilesFromOrigin(
+		state.activeUnit, state.units, tx, ty, MAP_WIDTH, MAP_HEIGHT
+	)
+	BattleEvents.AttackRangeResponse:FireClient(playerObj, {
+		tileX = tx, tileY = ty, attackTiles = tiles,
+	})
+end)
+
+-- Map Details panel (2026-10-17). Read-only snapshot of the current battle for
+-- the player's Map Details button: quest info, optional quests, a LIVE "if you
+-- win" gold tally, and the victory loot range. Rolls/commits NOTHING — gold and
+-- loot still finalize only at battle end (user's determinism + freeze-tally +
+-- revoke-on-defeat rulings). The gold tally reuses computeBattleGold so it can
+-- never drift from the real payout; it is computed at the VICTORY rate and
+-- labeled "if you win" on the client, since a defeat keeps only 50% kill gold.
+BattleEvents.MapDetailsRequest.OnServerEvent:Connect(function(playerObj)
+	if not state or state.phase ~= "TurnOpen" or not state.activeUnit then return end
+
+	-- Live gold at the victory rate (kill gold accrues as enemies fall; quest +
+	-- completion gold are the fixed "on victory" portion).
+	local gb = computeBattleGold(allUnitsList, playerUnits, activeQuest, true)
+	local lootMin, lootMax = 1, 2
+	if RewardService.GetRewardCountRange then
+		lootMin, lootMax = RewardService.GetRewardCountRange()
+	end
+
+	-- Quest details (exist today). Minimal fields; client formats them.
+	local quest = nil
+	if activeQuest then
+		quest = {
+			name = activeQuest.name,
+			biome = activeQuest.biome,
+			recommendedLvl = activeQuest.recommendedLvl,
+			enemyCount = activeQuest.enemyCount,
+			questType = activeQuest.questType,
+			condition = activeQuest.condition,
+		}
+	end
+
+	-- Optional quests surfaced mid-battle (may be empty; generated by events).
+	local optional = {}
+	for _, oq in ipairs((state.pendingOptionalQuests) or {}) do
+		optional[#optional + 1] = { name = oq.name, biome = oq.biome, recommendedLvl = oq.recommendedLvl }
+	end
+
+	BattleEvents.MapDetailsResponse:FireClient(playerObj, {
+		quest         = quest,
+		optional      = optional,
+		-- "goldSoFar" = kill gold banked so far (victory rate); "goldOnVictory" =
+		-- the fixed quest + completion gold added only on a win. Client shows the
+		-- sum as "if you win" and notes defeat keeps 50% kill gold only.
+		goldSoFar     = gb.killGold,
+		goldOnVictory = gb.completionGold + gb.questGold,
+		killCount     = gb.killCount,
+		lootMin       = lootMin,
+		lootMax       = lootMax,
+	})
+end)
+
 -- One-time: give GuildMenuService the session player BEFORE the loop so the
 -- round-1 guild-base landing (Open("Base")) can reach the client. 2026-10-13.
 GuildMenuService.SetSessionPlayer(player)
@@ -2481,9 +2611,12 @@ while true do
 	print("[Hub] Player ready — entering deployment phase")
 	GuildMenuService.Close()
 	-- Guild menu effects on THIS battle's roster (in place; closures hold allUnitsList):
-	-- add units hired just now, drop units away on dispatch, bench above the cap
-	-- (deployment requires every listed unit to be placed, so over-cap would soft-lock).
-	GuildMenuService.SyncBattleRoster(allUnitsList, #playerSpawns, PartyService.GetMembers(PLAYER_ID, chosenPartySlot or ""))
+	-- add units hired just now, drop units away on dispatch, bench only beyond the
+	-- PARTY CEILING (MAX_DEPLOY = 7), NOT the per-quest deploy limit (2026-10-18).
+	-- The full party attends; the quest's unit limit is enforced later as a
+	-- placement cap during deployment, not by benching here. Passing MAX_DEPLOY
+	-- (SyncBattleRoster clamps to min(MAX_DEPLOY, cap)) keeps the whole party.
+	GuildMenuService.SyncBattleRoster(allUnitsList, PartyService.MAX_PARTY_SIZE, PartyService.GetMembers(PLAYER_ID, chosenPartySlot or ""))
 
 	-- === DEPLOYMENT PHASE ===
 	-- Player manually places each unit on PD (Player Deployment) tiles.
@@ -2549,14 +2682,28 @@ while true do
 		end
 	end
 
-	-- Trim PD anchors to 2× player unit count for tactical choice variety.
-	-- MapService generates up to 6 PD anchors; we only expose the ones the
-	-- player can actually use (double their roster size).
+	-- Deployment cap + tile count (2026-10-18 user ruling).
+	-- The quest's unit limit (playerSlots) is the MAX number of units the
+	-- player may actually place. The player may still bring a full party; the
+	-- extra units simply cannot be deployed. The number of placement tiles
+	-- shown is ceil(limit * 1.5), so there are always MORE tiles than the cap
+	-- and at least a few tiles stay empty when the battle starts (tactical
+	-- choice of WHERE to place, not just whether).
+	local questDeployLimit = math.max(1, math.floor((selectedQuest and selectedQuest.playerSlots) or 7))
+	local desiredTiles     = math.ceil(questDeployLimit * 1.5)
 	local deployAnchorsToShow = {}
-	local maxPDAnchors = math.min(#playerSpawns, #deployPlayerUnits * 2)
+	local maxPDAnchors = math.min(#playerSpawns, desiredTiles)
 	for i = 1, maxPDAnchors do
 		table.insert(deployAnchorsToShow, playerSpawns[i])
 	end
+	if maxPDAnchors < desiredTiles then
+		warn(string.format(
+			"[Deploy] Map provided only %d player tile(s); quest limit %d wanted %d (ceil 1.5x). Showing %d.",
+			#playerSpawns, questDeployLimit, desiredTiles, maxPDAnchors))
+	end
+	print(string.format(
+		"[Deploy] Quest unit limit %d -> %d placement tile(s) (ceil 1.5x); full party may attend, max %d deployable.",
+		questDeployLimit, maxPDAnchors, questDeployLimit))
 
 	-- UGC (ugc_rules Enemy Outfits / enemy_outfit_apply_point): plan this battle's
 	-- enemy outfits from a seeded RNG (own offset, so enemyRng is not consumed),
@@ -2565,6 +2712,26 @@ while true do
 	UGCOutfitService.PlanEnemyOutfits(PLAYER_ID, deployEnemyUnits, Random.new((generatedMap.seed or os.time()) + 90002))
 	UGCService.SetBattleActive(PLAYER_ID, true)
 	UGCOutfitService.WatchUnitModels(PLAYER_ID)
+
+	-- Center-facing helper (2026-10-17): during deployment and at battle start, every
+	-- unit model should face the geometric CENTER of the map. We reuse the game's own
+	-- facing convention (GameConstants.FACING_VECTORS: worldDir = Vector3(dx,0,dy)) so a
+	-- model placed here looks the same way the client's orientUnitToFacing would turn it.
+	-- Returns a CFrame that stands the model's feet at (wx,wy,wz) looking toward center.
+	local function centerFacingCFrame(wx, wy, wz, tileX, tileY)
+		local pos = Vector3.new(wx, wy, wz)
+		-- Face the single center tile stamped at map generation (walkable tile nearest the
+		-- middle); fall back to the raw midpoint only if the map lacks it.
+		local _ct = generatedMap and generatedMap.centerTile
+		local cx = (_ct and _ct.x) or (MAP_WIDTH / 2)
+		local cy = (_ct and _ct.y) or (MAP_HEIGHT / 2)
+		local f = GameConstants.CalcFacingFrom(tileX, tileY, cx, cy)
+		local vec = f and GameConstants.FACING_VECTORS[f]
+		if not vec or (vec.dx == 0 and vec.dy == 0) then
+			return CFrame.new(pos)  -- unit already at center: keep default orientation
+		end
+		return CFrame.lookAt(pos, pos + Vector3.new(vec.dx, 0, vec.dy))
+	end
 
 	-- Spawn R15 models for enemy units (they're already positioned)
 	local _raceModelsFolder = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
@@ -2588,7 +2755,12 @@ while true do
 					local _elev = generatedMap.elevationGrid and generatedMap.elevationGrid[eu.tileY]
 						and generatedMap.elevationGrid[eu.tileY][eu.tileX] or 1
 					local _tileTopY = 0.6 + (_elev - 1) * 1.2  -- TILE_BASE_HEIGHT + (elev-1)*ELEVATION_STEP (dev-locked 1.2)
-					c:PivotTo(CFrame.new(_ox + (eu.tileX - 0.5) * 5, _tileTopY, _oz + (eu.tileY - 0.5) * 5))
+					-- Stand TRUE FEET on the surface via the shared bbox-bottom helper
+					-- (race rigs with pivot-above-feet otherwise bury). Facing preserved.
+					local _wx = _ox + (eu.tileX - 0.5) * 5
+					local _wz = _oz + (eu.tileY - 0.5) * 5
+					local _face = centerFacingCFrame(_wx, _tileTopY, _wz, eu.tileX, eu.tileY)
+					c:PivotTo(GameConstants.GroundModelPivotCFrame(c, _wx, _tileTopY, _wz, _face))
 				end
 				c.Parent = _umf
 				attachWeaponToUnit(c, eu)
@@ -2604,6 +2776,10 @@ while true do
 		awayUnits     = GuildMenuService.GetAwayUnitsForDeployment(), -- greyed out, not placeable
 		mapWidth      = MAP_WIDTH,
 		mapHeight     = MAP_HEIGHT,
+		-- Max units the player may actually DEPLOY this battle (quest playerSlots),
+		-- NOT the tile count (tiles = ceil(limit*1.5), always more than the cap).
+		-- Drives the deployment "deployed / max" counter in the HUD. (2026-10-18)
+		playerDeployLimit = questDeployLimit,
 	})
 
 	print(string.format("[Deploy] Phase started — %d PD anchors, %d player units to place, %d enemies pre-placed",
@@ -2637,6 +2813,18 @@ while true do
 		local tileKey = data.tileY * 100000 + data.tileX
 		if occupiedTiles[tileKey] then
 			warn(string.format("[Deploy] REJECTED: tile (%d,%d) already occupied", data.tileX, data.tileY))
+			return
+		end
+
+		-- Per-quest deploy cap (2026-10-18): at most questDeployLimit units may be
+		-- placed, even though more tiles exist and a larger party may be present.
+		-- Re-deploying an already-placed unit (handled below) does not hit this
+		-- because that path is rejected as "already deployed"; this guards NEW
+		-- placements only.
+		if deployedCount >= questDeployLimit then
+			warn(string.format(
+				"[Deploy] REJECTED: deploy cap reached (%d/%d). Undeploy a unit to move it.",
+				deployedCount, questDeployLimit))
 			return
 		end
 
@@ -2691,11 +2879,11 @@ while true do
 					local _elev = generatedMap.elevationGrid and generatedMap.elevationGrid[data.tileY]
 						and generatedMap.elevationGrid[data.tileY][data.tileX] or 1
 					local _feetY = 0.6 + (_elev - 1) * 1.2  -- TILE_BASE_HEIGHT + (elev-1)*ELEVATION_STEP (dev-locked 1.2)
-					clone:PivotTo(CFrame.new(
-						_ox + (data.tileX - 0.5) * 5,
-						_feetY,
-						_oz + (data.tileY - 0.5) * 5
-					))
+					-- Stand TRUE FEET on the surface via the shared bbox-bottom helper.
+					local _wx = _ox + (data.tileX - 0.5) * 5
+					local _wz = _oz + (data.tileY - 0.5) * 5
+					local _face = centerFacingCFrame(_wx, _feetY, _wz, data.tileX, data.tileY)
+					clone:PivotTo(GameConstants.GroundModelPivotCFrame(clone, _wx, _feetY, _wz, _face))
 				end
 				clone.Parent = _umf
 				attachWeaponToUnit(clone, unit)
@@ -2908,12 +3096,11 @@ while true do
 				local elev = generatedMap.elevationGrid and generatedMap.elevationGrid[unit.tileY]
 					and generatedMap.elevationGrid[unit.tileY][unit.tileX] or 1
 				local tileTopY = 0.6 + (elev - 1) * 1.2  -- TILE_BASE_HEIGHT + (elev-1)*ELEVATION_STEP (dev-locked 1.2)
-				local tilePos = Vector3.new(
-					offsetX + (unit.tileX - 0.5) * TILE_SZ,
-					tileTopY,  -- PivotTo places feet at tile surface
-					offsetZ + (unit.tileY - 0.5) * TILE_SZ
-				)
-				clone:PivotTo(CFrame.new(tilePos))
+				-- Stand TRUE FEET on the surface via the shared bbox-bottom helper.
+				local _wx = offsetX + (unit.tileX - 0.5) * TILE_SZ
+				local _wz = offsetZ + (unit.tileY - 0.5) * TILE_SZ
+				local _face = centerFacingCFrame(_wx, tileTopY, _wz, unit.tileX, unit.tileY)
+				clone:PivotTo(GameConstants.GroundModelPivotCFrame(clone, _wx, tileTopY, _wz, _face))
 			end
 			clone.Parent = unitModelsFolder
 			attachWeaponToUnit(clone, unit)
@@ -2927,35 +3114,24 @@ while true do
 
 	--------------------------------------------------
 	-- INITIAL FACING
-	-- Player units face toward average enemy position.
-	-- Enemy units face toward average player position.
+	-- Every unit (players and enemies) faces the geometric CENTER of the map, so
+	-- both sides are oriented inward toward the battlefield at battle start
+	-- (user decision 2026-10-17). Supersedes the old "face the opposing side's
+	-- average position" behaviour.
 	--------------------------------------------------
 	do
-		local playerAvgX, playerAvgY, playerCount = 0, 0, 0
-		local enemyAvgX, enemyAvgY, enemyCount = 0, 0, 0
-		for _, u in ipairs(allUnitsList) do
-			if u.side == "Player" then
-				playerAvgX = playerAvgX + u.tileX
-				playerAvgY = playerAvgY + u.tileY
-				playerCount = playerCount + 1
-			else
-				enemyAvgX = enemyAvgX + u.tileX
-				enemyAvgY = enemyAvgY + u.tileY
-				enemyCount = enemyCount + 1
-			end
-		end
-		if playerCount > 0 then playerAvgX = playerAvgX / playerCount; playerAvgY = playerAvgY / playerCount end
-		if enemyCount > 0 then enemyAvgX = enemyAvgX / enemyCount; enemyAvgY = enemyAvgY / enemyCount end
-
+		-- Single center tile stamped at map generation (walkable tile nearest the middle).
+		-- Fall back to the raw midpoint only if a map somehow lacks it.
+		local _ct = generatedMap and generatedMap.centerTile
+		local centerX = (_ct and _ct.x) or (MAP_WIDTH / 2)
+		local centerY = (_ct and _ct.y) or (MAP_HEIGHT / 2)
 		local facingLog = {}
 		for _, u in ipairs(allUnitsList) do
-			local targetX = (u.side == "Player") and enemyAvgX or playerAvgX
-			local targetY = (u.side == "Player") and enemyAvgY or playerAvgY
-			local f = GameConstants.CalcFacingFrom(u.tileX, u.tileY, targetX, targetY)
+			local f = GameConstants.CalcFacingFrom(u.tileX, u.tileY, centerX, centerY)
 			if f then u.facing = f end
 			table.insert(facingLog, u.name .. "→" .. (u.facing or "?"))
 		end
-		print("[Main] Initial facing: " .. table.concat(facingLog, ", "))
+		print("[Main] Initial facing (toward map center): " .. table.concat(facingLog, ", "))
 	end
 
 	BattleVisualBroadcaster.BattleStarted(state.units)
@@ -3343,38 +3519,15 @@ while true do
 		--   Defeat / wipeout: 50% of kill gold only.
 		-- RewardService.ApplyGold applies battlefield-event gold multipliers (Leprechaun etc.).
 		do
-			local KILL_GOLD_BASE = { Grunt = 8, Veteran = 14, Elite = 25, Boss = 50 }
-			local recLvl = (activeQuest and activeQuest.recommendedLvl) or 1
-			local topLevel = 1
-			for _, id in ipairs(deployed) do
-				local pu = playerUnits[id]
-				if pu and type(pu.level) == "number" and pu.level > topLevel then topLevel = pu.level end
-			end
-			local gap = topLevel - recLvl
-			local band = if gap <= 5 then 1.0 elseif gap <= 10 then 0.75 elseif gap <= 15 then 0.50
-				elseif gap <= 20 then 0.25 else 0.10
-			local killGold = 0
-			for _, k in ipairs(kills) do
-				local base = KILL_GOLD_BASE[k.enemyType or ""] or KILL_GOLD_BASE.Grunt
-				killGold += base * (1 + (k.level or 0) / 100) * band
-			end
-			killGold = math.floor(killGold)
-			-- Gold events (Leprechaun x3, Gold Golem x5): defeating the event unit multiplies
-			-- this battle's gold. Largest multiplier wins; they don't stack.
-			local eventGoldMult = 1
-			for _, k in ipairs(kills) do
-				if k.goldMult and k.goldMult > eventGoldMult then eventGoldMult = k.goldMult end
-			end
-			local completionGold, questGold = 0, 0
-			if isQualifyingVictory then
-				local r = activeQuest and activeQuest.rewards
-				local cBase = (r and r.completionGoldBase) or 30
-				completionGold = math.floor(cBase * (1 + recLvl / 50))
-				questGold = (r and r.questGold) or 0
-			else
-				killGold = math.floor(killGold * 0.5) -- keep 50% of gold dropped on defeat
-			end
-			local total = RewardService.ApplyGold(math.floor((killGold + completionGold + questGold) * eventGoldMult))
+			-- Gold now computed via the shared computeBattleGold helper so the live
+			-- Map Details projection and this real payout use ONE formula. Behavior
+			-- is identical to the former inline block (same band, per-kill base, 50%
+			-- defeat rule, largest event mult); RewardService.ApplyGold still layers
+			-- battlefield-event gold multipliers on the final total. (2026-10-17)
+			local gb = computeBattleGold(allUnitsList, playerUnits, activeQuest, isQualifyingVictory)
+			local killGold, completionGold, questGold = gb.killGold, gb.completionGold, gb.questGold
+			local band, eventGoldMult = gb.band, gb.eventGoldMult
+			local total = RewardService.ApplyGold(gb.total)
 			if total > 0 then CurrencyService.Credit(PLAYER_ID, { gold = total }) end
 			battleGoldEarned = total
 			print(string.format("[PostBattle] Gold +%d (kills %d, completion %d, quest %d, band x%.2f, event x%.1f, %s)",

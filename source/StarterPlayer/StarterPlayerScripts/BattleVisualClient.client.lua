@@ -261,6 +261,11 @@ local selectedSkill   = nil
 local selectedItem    = nil -- consumable entry selected during ItemSelection
 local highlightParts  = {}
 local aimTarget       = nil
+-- Move-target attack-range preview (on-demand): the destination tile we last
+-- asked the server about. The async AttackRangeResponse only paints if it still
+-- matches this stamp (the player may have moved on to another tile). Cleared
+-- whenever the red footprint is cleared.
+local pendingAtkRangeTile = nil
 -- Push distance sub-stage: after choosing a push target, player picks a stop tile
 -- (1..max) along the fixed away-direction. pushLandingTiles holds the legal path.
 local pushTargetSel   = nil  -- the chosen push target entry
@@ -290,6 +295,8 @@ local function clearHighlights()
 	if TileHL then TileHL.ClearGroup("path") end
 	for _, obj in ipairs(pathHighlightParts) do obj:Destroy() end -- arrows (WedgeParts)
 	pathHighlightParts = {}
+	-- Also clear the move-target attack-range footprint (red).
+	if TileHL then TileHL.ClearGroup("atkrange") end
 end
 
 -- Highlight styles — delegates to TileHighlightManager (EditableMesh terrain-conforming).
@@ -382,6 +389,11 @@ local PATH_HAZARDS = {
 
 local function clearMovePath()
 	if TileHL then TileHL.ClearGroup("path") end
+	-- The red move-target attack-range footprint is part of the destination
+	-- preview overlay, so clear it whenever the path clears (e.g. Back, or
+	-- picking a different destination). Cleared inline because the dedicated
+	-- clearAttackRange() helper is declared further down this file.
+	if TileHL then TileHL.ClearGroup("atkrange") end
 	for _, p in ipairs(pathHighlightParts) do p:Destroy() end -- arrows only
 	pathHighlightParts = {}
 end
@@ -422,6 +434,49 @@ local function renderMovePath(path, destX, destY)
 		-- (Floating white Neon arrow indicators removed Sep 25 2026 per user — the
 		-- path tile highlights above are sufficient; the arrows read as shiny white
 		-- clutter. The blue path tiles + gold destination remain via TileHL.)
+	end
+end
+
+--------------------------------------------------
+-- MOVE-TARGET ATTACK RANGE PREVIEW (red footprint)
+--
+-- When the player picks a move destination, paint — in red — the tiles the unit
+-- could basic-attack FROM that destination (standard grid-SRPG move→target
+-- range). The attackable tiles are computed server-side (reach authority) and
+-- arrive on each move candidate as `candidate.attackTiles` = { {tileX,tileY}, …}.
+--
+-- Rendered in its OWN TileHL group ("atkrange") so re-picking a destination
+-- clears just the red footprint and leaves the blue move-range intact. Only
+-- tiles OUTSIDE the move range are painted (the "attack range beyond move
+-- tiles"): overlap tiles stay blue, matching how grid RPGs show the two layers.
+--------------------------------------------------
+local ATTACK_RANGE_COLOR = Color3.fromRGB(255, 80, 80) -- red (matches SKILL_COLOR_DMG)
+
+local function clearAttackRange()
+	if TileHL then TileHL.ClearGroup("atkrange") end
+	-- Invalidate any in-flight attack-range request so a late response can't
+	-- paint red after the footprint was cleared or the destination changed.
+	pendingAtkRangeTile = nil
+end
+
+local function renderAttackRange(attackTiles)
+	clearAttackRange()
+	if not (TileHL and attackTiles) then return end
+
+	-- Build a fast lookup of move-range tiles so we only paint attack tiles that
+	-- fall OUTSIDE it (overlap tiles remain blue move-range).
+	local moveSet = {}
+	if currentPrompt and currentPrompt.moveCandidates then
+		for _, mt in ipairs(currentPrompt.moveCandidates) do
+			moveSet[mt.tileX .. "," .. mt.tileY] = true
+		end
+	end
+
+	for _, at in ipairs(attackTiles) do
+		if not moveSet[at.tileX .. "," .. at.tileY] then
+			local tx, ty = at.tileX + BATTLE_OFFSET_X, at.tileY + BATTLE_OFFSET_Y
+			TileHL.Add(tx, ty, nil, "atkrange", ATTACK_RANGE_COLOR, 0.45)
+		end
 	end
 end
 
@@ -602,7 +657,7 @@ end
 -- Roblox has no guaranteed "hit"/"death" default, so hit uses a short reaction
 -- and KO uses a fall/faint — flagged as generic until specific ids are supplied.
 local R15_ANIM = {
-	Idle       = "rbxassetid://507766666",  -- default R15 idle (looped)
+	Idle       = "rbxassetid://507766666",  -- default R15 idle (looped); see IDLE_POOL for the random set
 	Hit        = "rbxassetid://507768375",  -- default R15 "cheer"/react — generic flinch stand-in
 	KO         = "rbxassetid://507765000",  -- default R15 fall-ish — generic KO stand-in
 	Attack     = "rbxassetid://507768375",  -- generic melee swing stand-in
@@ -610,6 +665,21 @@ local R15_ANIM = {
 	Cast       = "rbxassetid://507770677",  -- default R15 point/wave — generic spell-cast stand-in
 	ItemUse    = "rbxassetid://507770239",  -- default R15 wave — generic item-use stand-in
 }
+
+-- IDLE POOL (2026-10-17): each unit picks ONE idle at random from this pool at spawn
+-- (deployment and battle), played looped at a slightly varied speed, so standing units
+-- feel organic instead of synced-stiff. TEMPORARY asset IDs — these will later be
+-- replaced by Animation objects published from ServerStorage > RBX_ANIMSAVES > Live Anim
+-- (swap this list's source then; every caller goes through pickIdleId()/playUnitAnim).
+local _idleRng = Random.new()  -- per-client randomness for idle desync + random idle pick (visual only)
+local IDLE_POOL = {
+	"rbxassetid://507766666",
+	"rbxassetid://507766951",
+	"rbxassetid://507766388",
+}
+local function pickIdleId()
+	return IDLE_POOL[_idleRng:NextInteger(1, #IDLE_POOL)]
+end
 
 -- Get-or-create the Humanoid's Animator for a token's R15 model (nil for cylinders).
 local function getUnitAnimator(token)
@@ -628,7 +698,15 @@ end
 -- R15_ANIM. opts: { loop=bool, fade=number, stopAfter=number }. Cylinders no-op.
 local function playUnitAnim(token, kind, opts)
 	opts = opts or {}
-	local id = R15_ANIM[kind]
+	-- Idle picks a random animation from IDLE_POOL (per unit, cached on first play so a
+	-- unit keeps its chosen idle); all other kinds use their fixed R15_ANIM id.
+	local id
+	if kind == "Idle" then
+		token._idleId = token._idleId or pickIdleId()
+		id = token._idleId
+	else
+		id = R15_ANIM[kind]
+	end
 	if not id then return end
 	local animator = getUnitAnimator(token)
 	if not animator then return end  -- cylinder fallback: no animations
@@ -658,8 +736,6 @@ local function playUnitAnim(token, kind, opts)
 end
 
 -- Stop a unit's looping idle (e.g. on KO so the body doesn't keep breathing).
-local _idleRng = Random.new()  -- per-client randomness for idle desync (visual only)
-
 local function stopUnitIdle(token)
 	if token and token._animTracks and token._animTracks.Idle and token._animTracks.Idle.IsPlaying then
 		token._animTracks.Idle:Stop(0.2)
@@ -677,6 +753,19 @@ local function spawnToken(unit)
 	end
 
 	if model and model:IsA("Model") then
+		-- Carried over from deployment: stop any deployment idle track still looping on this
+		-- model before the battle idle is loaded below, so a reused model doesn't end up with
+		-- TWO idle loops blending (and so KO's stopUnitIdle later stops the only idle). The
+		-- deployment idle (from _G.CTRBLXAI_PlayDeployIdle) isn't tracked in a token, so stop
+		-- every track on the model's own Animator and clear the DeployIdlePlaying guard.
+		if model:GetAttribute("DeployIdlePlaying") then
+			local _dh = model:FindFirstChildOfClass("Humanoid")
+			local _da = _dh and _dh:FindFirstChildOfClass("Animator")
+			if _da then
+				for _, tr in ipairs(_da:GetPlayingAnimationTracks()) do tr:Stop(0.15) end
+			end
+			model:SetAttribute("DeployIdlePlaying", nil)
+		end
 		-- R15 model found — use its HumanoidRootPart as the anchor
 		anchorPart = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart")
 		if anchorPart then
@@ -805,18 +894,24 @@ local function spawnToken(unit)
 	mpFill.BorderSizePixel = 0; mpFill.Parent = mpBg
 	Instance.new("UICorner", mpFill).CornerRadius = UDim.new(0,2)
 
-	-- Measure the actual pivot-to-HRP offset from the live model.
-	-- Model:GetPivot() returns the feet position; HRP.Position is the hip center.
-	-- The difference is the correct standing offset for this model.
+	-- Measure the actual feet-to-HRP offset from the live model.
+	-- True feet = bounding-box bottom (NOT the pivot: some rigs pivot above feet).
+	-- HRP.Position is the hip center. The difference is the standing offset.
 	local _hipH = R15_STAND_OFFSET_DEFAULT
 	if model and anchorPart then
-		-- PivotTo places the model's pivot (feet) at the target position.
-		-- HRP center sits above the pivot by: HipHeight + 0.5*HRP.Size.Y
-		-- But with scaling, these values may differ from the template.
-		-- Safest: measure from the live model after it's in workspace.
-		local pivotY = model:GetPivot().Position.Y
+		-- Standing offset = distance from HRP center DOWN to the model's TRUE FEET.
+		-- The move path (tileToWorldR15Grounded) places HRP at groundSurfaceY + _hipH,
+		-- so _hipH must be measured to true feet or the model re-buries on move.
+		-- NOTE (2026-10-17): true feet = bounding-box BOTTOM, NOT the pivot. Some race
+		-- rigs (Celestial, Froc, Orc, Dwarf, Goblin, ...) have their pivot sitting
+		-- several studs ABOVE their feet; measuring HRP-to-pivot understates the
+		-- offset by that gap and sinks the model after its first elevation move.
+		-- Measuring to the bbox bottom matches the server spawn grounding
+		-- (GameConstants.GroundModelPivotCFrame) so spawn and move agree.
 		local hrpY = anchorPart.Position.Y
-		_hipH = math.abs(hrpY - pivotY)
+		local bboxCF, bboxSize = model:GetBoundingBox()
+		local feetY = bboxCF.Position.Y - bboxSize.Y / 2  -- true feet, not pivot
+		_hipH = math.abs(hrpY - feetY)
 		if _hipH < 0.5 then _hipH = R15_STAND_OFFSET_DEFAULT end  -- sanity fallback
 	end
 	unitTokens[unit.id] = { part = anchorPart, model = model, fill = hpFill, mpFill = mpFill, label = lbl, star = starImg, hipHeight = _hipH }
@@ -1516,7 +1611,8 @@ local function enterActionSelection()
 
 	-- 4x2 grid: Attack, Skill, Move, Item, Guard, Interact, Wait, Stance
 	local actions = {
-		{ id="Move", text="Move", enabled=moveEnabled, onPress=function()
+		{ id="Move", text="Move", enabled=moveEnabled,
+			reason="No tiles in range to move to", onPress=function()
 			inputMode = "move"; selectedSkill = nil; clearHighlights()
 			local pRt = math.round((prompt.unitBaseRt or 400)*0.0625*2) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
 			updateTimeline(timelineSnapshot, prompt.unitId, pRt)
@@ -1528,7 +1624,8 @@ local function enterActionSelection()
 			bp.state = "TargetSelection"; BattleHUD.Render(bp)
 		end },
 		{ id="Commands", text="Commands", enabled=true, isSubmenu=true, subActions={
-			{ id="Attack", text="Attack", enabled=atkEnabled, onPress=function()
+			{ id="Attack", text="Attack", enabled=atkEnabled,
+				reason="No target in attack range", onPress=function()
 				inputMode = "attack"; selectedSkill = nil; clearHighlights()
 				bp.skill = { name="Basic Attack", tags="Physical",
 					mpCost=0, rtCost=prompt.attackRt or 0, range=prompt.weaponRange or 1, pattern="Single",
@@ -1542,6 +1639,7 @@ local function enterActionSelection()
 			end },
 			{ id="Interact", text="Interact",
 				enabled = (prompt.interactAvailable == true),
+				reason = "Nothing to interact with nearby",
 				onPress = function()
 					inputMode = "interact"; selectedSkill = nil; clearHighlights()
 					local previewRt = (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
@@ -1556,7 +1654,8 @@ local function enterActionSelection()
 					storedActorData.onBack = enterActionSelection
 					bp.state = "TargetSelection"; BattleHUD.Render(bp)
 				end },
-			{ id="Push", text="Push", enabled=#(prompt.pushTargets or {}) > 0, onPress=function()
+			{ id="Push", text="Push", enabled=#(prompt.pushTargets or {}) > 0,
+				reason="No one adjacent to push", onPress=function()
 				inputMode = "push"; selectedSkill = nil; clearHighlights()
 				local previewRt = (prompt.pushRt or 40) + (prompt.unitBaseRt or 400)
 				updateTimeline(timelineSnapshot, prompt.unitId, previewRt)
@@ -1568,14 +1667,28 @@ local function enterActionSelection()
 				storedActorData.onBack = enterActionSelection
 				bp.state = "TargetSelection"; BattleHUD.Render(bp)
 			end },
-			{ id="Guard", text="Guard", enabled=not prompt.guardUsed, onPress=function()
+			{ id="Guard", text="Guard", enabled=not prompt.guardUsed,
+				reason="Already guarded this turn", onPress=function()
 				clearHighlights(); isPlayerTurn = false; inputMode = nil
 				bp.state = "Resolving"; BattleHUD.Render(bp)
 				BattleEvents.PlayerCommand:FireServer({ actionType = "Guard" })
 			end },
 		}},
-		{ id="Skill", text="Skills", enabled=hasSkills, onPress=enterSkillSelection },
-		{ id="Item", text="Items", enabled=(prompt.consumableSlots and #prompt.consumableSlots > 0), onPress=enterItemSelection },
+		{ id="Skill", text="Skills", enabled=hasSkills,
+			reason="No skills available", onPress=enterSkillSelection },
+		{ id="Item", text="Items", enabled=(prompt.consumableSlots and #prompt.consumableSlots > 0),
+			reason="No items to use", onPress=enterItemSelection },
+		-- UNDO (2026-10-17): reverse the most recent clean Move/Guard, newest first.
+		-- Availability + grayed reason come from the server (prompt.undoAvailable /
+		-- prompt.undoReason) — the client never decides eligibility. Styled like the
+		-- sibling top-level buttons (grays out when unavailable). Firing Undo keeps
+		-- the player on their turn: the server reverses state and re-prompts, which
+		-- refreshes AP/RT and this menu — so we do NOT flip to Resolving here.
+		{ id="Undo", text="Undo", enabled=(prompt.undoAvailable == true),
+			reason=(prompt.undoReason or "Nothing to undo"), onPress=function()
+			clearHighlights(); inputMode = nil; selectedSkill = nil
+			BattleEvents.PlayerCommand:FireServer({ actionType = "Undo" })
+		end },
 		{ id="Wait", text="Wait", enabled=true, onPress=function()
 			clearHighlights(); isPlayerTurn = false; inputMode = nil
 			bp.state = "Resolving"; BattleHUD.Render(bp)
@@ -1890,6 +2003,13 @@ local function processTileClick(bx, by)
 				createTileHighlight(bx, by, "selected")
 					clearMovePath()
 					renderMovePath(tile.path, bx, by)
+					-- Attack range reachable FROM this destination (red), fetched
+					-- ON DEMAND for just this tile (payload reduction, 2026-10-17).
+					-- Stamp the tile we're asking about; the async response only
+					-- renders if it still matches the player's current selection.
+					clearAttackRange()
+					pendingAtkRangeTile = { x = bx, y = by }
+					BattleEvents.AttackRangeRequest:FireServer({ tileX = bx, tileY = by })
 					-- Build path hazard list for preview panel
 					local pathHazards = {}
 					for _, step in ipairs(tile.path or {}) do
@@ -2354,6 +2474,55 @@ end)
 local lastHoveredUnitId = nil
 
 game:GetService("RunService").RenderStepped:Connect(function()
+	-- During deployment, BVC's own unitData isn't populated yet, so the hover peek
+	-- must read the REAL deploy-time data from DeploymentUI (same source as the tap
+	-- panel) via _G.CTRBLXAI_GetDeployUnitAtTile. This shows correct name/HP/MP on
+	-- hover instead of a raw id + HP 0/0 (BUG-051) — and instead of nothing. Outside
+	-- deployment the getter is nil and the normal battle hover path below runs.
+	-- (2026-10-18)
+	if _G.CTRBLXAI_DeploymentActive then
+		local getter = _G.CTRBLXAI_GetDeployUnitAtTile
+		local tp = getter and getTileUnderMouse() or nil
+		local du = nil
+		if tp then
+			local dbx, dby = tileToBattle(tp)
+			if dbx then du = getter(dbx, dby) end
+		end
+		if du then
+			if du.id ~= lastHoveredUnitId then
+				lastHoveredUnitId = du.id
+				local hpText = string.format("HP %d/%d", du.currentHp or 0, du.maxHp or 0)
+				local mpText = string.format("MP %d/%d", du.currentMp or 0, du.maxMp or 0)
+				local sideColor = du.side == "Player" and Theme.Colors.Success or Theme.Colors.Danger
+				local tipLines = {
+					{ text = hpText, color = Theme.Colors.TextPrimary },
+					{ text = mpText, color = Theme.Colors.TextSecondary },
+				}
+				if du.statuses and #du.statuses > 0 then
+					local parts = {}
+					for _, s in ipairs(du.statuses) do
+						parts[#parts+1] = (s.id or s.name or "?") .. (s.remainingTurns and ("(" .. s.remainingTurns .. ")") or "")
+					end
+					tipLines[#tipLines+1] = { text = table.concat(parts, " "), color = Theme.Colors.Warning }
+				end
+				BattleHUD.ShowTooltip({
+					title = du.name or "Unit",
+					portrait = string.sub(du.name or "?", 1, 2),
+					portraitColor = sideColor,
+					lines = tipLines,
+					position = UDim2.new(0, mouse.X + 16, 0, mouse.Y - 10),
+					anchorPoint = Vector2.new(0, 1),
+					maxWidth = 160,
+				})
+			end
+		else
+			if lastHoveredUnitId then
+				lastHoveredUnitId = nil
+				BattleHUD.HideTooltip()
+			end
+		end
+		return
+	end
 	if not next(unitData) then
 		if lastHoveredUnitId then
 			lastHoveredUnitId = nil
@@ -2975,6 +3144,29 @@ end
 -- TILE-EFFECT VFX: server broadcasts TileEffectApplied/Removed (Burning, Poison Cloud...).
 -- Show a persistent VFX on the tile while the effect lasts (VFXRegistry.ByTileEffect).
 local activeTileEffects: {[string]: string} = {}  -- "x,y" -> effectId (for tile inspector)
+-- Move-target attack-range preview response (on-demand, 2026-10-17). Paints the
+-- red attack footprint for the selected destination — but only if the player is
+-- still choosing a move AND this response is for the tile they currently have
+-- selected (a late/stale response for a tile they moved off of is dropped).
+BattleEvents.AttackRangeResponse.OnClientEvent:Connect(function(data)
+	if not data or inputMode ~= "move" then return end
+	local p = pendingAtkRangeTile
+	if not p or p.x ~= data.tileX or p.y ~= data.tileY then return end
+	renderAttackRange(data.attackTiles)
+end)
+
+-- Map Details (2026-10-17): the HUD's Map button calls this bridge; we ask the
+-- server for the read-only battle snapshot. The response handler below renders
+-- it via BattleHUD. Nothing is rolled/committed server-side.
+_G.CTRBLXAI_RequestMapDetails = function()
+	BattleEvents.MapDetailsRequest:FireServer()
+end
+BattleEvents.MapDetailsResponse.OnClientEvent:Connect(function(data)
+	if BattleHUD and BattleHUD.ShowMapDetails then
+		BattleHUD.ShowMapDetails(data)
+	end
+end)
+
 BattleEvents.TileEffectApplied.OnClientEvent:Connect(function(data)
 	if data and data.tileX and data.tileY then activeTileEffects[`{data.tileX},{data.tileY}`] = data.effectId end
 	if not (VFXController and VFXController.SetTileEffect and data and data.tileX and data.tileY) then return end
@@ -2989,6 +3181,39 @@ BattleEvents.TileEffectRemoved.OnClientEvent:Connect(function(data)
 end)
 
 _G.CTRBLXAI_GetTileEffect = function(x, y) return activeTileEffects[`{x},{y}`] end
+
+-- Deployment idle (2026-10-17): DeploymentUI reuses the server R15 models during the
+-- deployment phase (they don't pass through spawnToken, so they'd stand stiff). This
+-- plays the SAME random desynced idle used in battle on a raw model, so deployment units
+-- breathe too. Self-contained (no token table): picks a random IDLE_POOL id, loops it at
+-- 0.85x-1.15x speed, and starts it at a random point in the loop. Returns the track (or
+-- nil for a model with no Humanoid/Animator). Safe to call repeatedly; it won't stack.
+_G.CTRBLXAI_PlayDeployIdle = function(model)
+	if not model then return nil end
+	local hum = model:FindFirstChildOfClass("Humanoid")
+	if not hum then return nil end
+	local animator = hum:FindFirstChildOfClass("Animator")
+	if not animator then animator = Instance.new("Animator"); animator.Parent = hum end
+	if model:GetAttribute("DeployIdlePlaying") then return nil end  -- don't double-start
+	local ok, track = pcall(function()
+		local anim = Instance.new("Animation")
+		anim.AnimationId = pickIdleId()
+		return animator:LoadAnimation(anim)
+	end)
+	if not ok or not track then return nil end
+	track.Looped = true
+	track:Play(0.3)
+	track:AdjustSpeed(_idleRng:NextNumber(0.85, 1.15))
+	model:SetAttribute("DeployIdlePlaying", true)
+	task.spawn(function()
+		local tries = 0
+		while track.Length <= 0 and tries < 30 do task.wait(0.1); tries += 1 end
+		if track.Length > 0 and track.IsPlaying then
+			track.TimePosition = _idleRng:NextNumber(0, track.Length)
+		end
+	end)
+	return track
+end
 
 -- OBS Phase 2c-0: object state change (break / HP decrement / move). Server fires
 -- ObjectChanged{ x, y, newHp? | destroyed? | moved? } from ObjectEffectService.ApplyObjectHit.

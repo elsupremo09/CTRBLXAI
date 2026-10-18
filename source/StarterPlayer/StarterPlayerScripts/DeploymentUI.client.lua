@@ -97,6 +97,10 @@ local enemyTokens    = {}    -- array of Parts
 local playerTokens   = {}    -- unitId -> Part
 local startBattleBtn = nil
 local inputConn      = nil
+-- Max units the player may deploy this battle (quest playerSlots, from the
+-- DeploymentPhase payload). The deploy counter shows deployed / this. Falls
+-- back to the roster size if the server didn't send it. (2026-10-18)
+local deployLimit    = 0
 -- Inspector support (2026-10-15): unitId -> compact display data (name/side/level/
 -- portrait/weapon/tile). Enemies seeded at phase start (fixed tiles); player units
 -- get their tile filled in on deploy and cleared on undeploy. Drives the shared
@@ -108,6 +112,22 @@ local deployUnitData = {}    -- unitId -> { id, name, side, level, portraitAsset
 --------------------------------------------------
 local function tileKey(x, y)
 	return x .. "_" .. y
+end
+
+-- Update the deployment header's "deployed / max" counter. Counts roster entries
+-- currently placed and shows it against deployLimit (quest playerSlots). Called
+-- after the roster builds and on every deploy/undeploy. Safe no-op if the header
+-- or screenGui isn't up yet. (2026-10-18)
+local function updateDeployCounter()
+	if not screenGui then return end
+	local header = screenGui:FindFirstChild("DeployHeader")
+	if not header then return end
+	local placed = 0
+	for _, entry in ipairs(rosterEntries) do
+		if entry.deployed then placed = placed + 1 end
+	end
+	local maxN = (deployLimit and deployLimit > 0) and deployLimit or #rosterEntries
+	header.Text = string.format("DEPLOY YOUR UNITS   %d / %d", placed, maxN)
 end
 
 local function tileSurfaceY(tx, ty)
@@ -129,6 +149,7 @@ end
 local function cleanup()
 	active = false
 	_G.CTRBLXAI_DeploymentActive = false
+	_G.CTRBLXAI_GetDeployUnitAtTile = nil  -- stop BVC hover peek reading deploy data post-deployment
 	if inputConn then inputConn:Disconnect(); inputConn = nil end
 	if deployFolder then deployFolder:Destroy(); deployFolder = nil end
 	if screenGui then screenGui:Destroy(); screenGui = nil end
@@ -165,6 +186,65 @@ end
 -- 3D PARTS: Enemy Tokens (red cylinders with name labels)
 --------------------------------------------------
 local function createEnemyToken(enemy)
+	-- If the server already built this enemy's R15 model (it does, during deployment),
+	-- reuse it instead of drawing a red cylinder, so deployment shows real models like
+	-- battle does. The name/tier label floats over the model via a BillboardGui whose
+	-- Adornee is the model's HumanoidRootPart but whose Parent is deployFolder -- so the
+	-- existing cleanup() (which Destroys deployFolder) removes the label and leaves the
+	-- real model untouched for BattleVisualClient. Mirrors the player token's model reuse.
+	-- A race with no model still falls through to the cylinder placeholder below.
+	local umf = workspace:FindFirstChild("UnitModels")
+	local serverModel = umf and umf:FindFirstChild("Unit_" .. enemy.id)
+	local modelHrp = serverModel and (serverModel.PrimaryPart or serverModel:FindFirstChild("HumanoidRootPart"))
+	if serverModel and modelHrp then
+		-- Breathe during deployment, like battle (random desynced idle on the real model).
+		if _G.CTRBLXAI_PlayDeployIdle then _G.CTRBLXAI_PlayDeployIdle(serverModel) end
+		local mbb = Instance.new("BillboardGui")
+		mbb.Name          = "EnemyDeployLabel_" .. enemy.id
+		mbb.Size          = UDim2.new(0, 68, 0, 14)
+		mbb.StudsOffset   = Vector3.new(0, 3.2, 0)
+		mbb.AlwaysOnTop   = true
+		mbb.Adornee       = modelHrp
+		mbb.Parent        = deployFolder
+		local mTierImg = enemy.enemyType and TIER_STAR_IMAGE[enemy.enemyType] or nil
+		local mNameOffsetX = 0
+		if mTierImg then
+			local star = Instance.new("ImageLabel")
+			star.Name = "TierStar"
+			star.BackgroundTransparency = 1
+			star.AnchorPoint = Vector2.new(0, 0.5)
+			star.Position = UDim2.new(0, 0, 0.5, 0)
+			star.Size = UDim2.fromOffset(12, 12)
+			star.ScaleType = Enum.ScaleType.Fit
+			star.Image = mTierImg
+			star.ZIndex = 3
+			star.Parent = mbb
+			mNameOffsetX = 14
+		end
+		local mlbl = Instance.new("TextLabel")
+		mlbl.Size                 = UDim2.new(1, -mNameOffsetX, 1, 0)
+		mlbl.Position             = UDim2.new(0, mNameOffsetX, 0, 0)
+		mlbl.BackgroundTransparency = 1
+		mlbl.TextColor3           = Theme.Colors.Enemy
+		mlbl.TextSize             = Theme.Text.Badge()
+		mlbl.Font                 = Theme.Font.PrimaryBold
+		mlbl.TextStrokeTransparency = 0.3
+		mlbl.Text                 = enemy.name
+		mlbl.Parent               = mbb
+		table.insert(enemyTokens, mbb)
+		deployUnitData[enemy.id] = {
+			id = enemy.id, name = enemy.name, side = enemy.side or "Enemy",
+			level = enemy.level, portraitAssetId = enemy.portraitAssetId,
+			weaponName = enemy.weaponName, enemyType = enemy.enemyType,
+			tileX = enemy.tileX, tileY = enemy.tileY,
+			currentHp = enemy.currentHp, maxHp = enemy.maxHp,
+			currentMp = enemy.currentMp, maxMp = enemy.maxMp,
+			currentAp = enemy.currentAp, remainingRt = enemy.remainingRt,
+			doctrine = enemy.doctrine, race = enemy.race,
+		}
+		return
+	end
+
 	local part = Instance.new("Part")
 	part.Name       = "EnemyDeploy_" .. enemy.id
 	part.Shape      = Enum.PartType.Cylinder
@@ -235,6 +315,8 @@ local function createPlayerToken(unitId, unitName, tx, ty)
 	local umf = workspace:FindFirstChild("UnitModels")
 	if umf and umf:FindFirstChild("Unit_" .. unitId) then
 		playerTokens[unitId] = umf:FindFirstChild("Unit_" .. unitId)
+		-- Breathe during deployment, like battle (random desynced idle on the real model).
+		if _G.CTRBLXAI_PlayDeployIdle then _G.CTRBLXAI_PlayDeployIdle(playerTokens[unitId]) end
 		return
 	end
 
@@ -623,6 +705,22 @@ local function unitOnTile(tx, ty)
 	return nil
 end
 
+-- Hover quick-peek bridge for BattleVisualClient. During deployment, BVC's own
+-- unitData is not populated yet, so its hover tooltip would show a raw id + HP 0/0.
+-- Expose the REAL deploy-time data (same source as the tap panel) keyed by battle
+-- tile so BVC can render a correct hover peek. Returns nil if no deployed unit sits
+-- on that tile. (2026-10-18, BUG-051 real fix: correct the data source, not suppress.)
+_G.CTRBLXAI_GetDeployUnitAtTile = function(tx, ty)
+	local ud = unitOnTile(tx, ty)
+	if not ud then return nil end
+	return {
+		id = ud.id, name = ud.name, side = ud.side,
+		currentHp = ud.currentHp, maxHp = ud.maxHp,
+		currentMp = ud.currentMp, maxMp = ud.maxMp,
+		statuses = ud.statuses,
+	}
+end
+
 local function clearInspect()
 	if BattleHUD and BattleHUD.ClearSelection then BattleHUD.ClearSelection() end
 end
@@ -726,12 +824,9 @@ local function onInputBegan(input, gameProcessed)
 		return  -- ignore non-click input silently
 	end
 
-	print(string.format("[DeploymentUI] Click detected — gameProcessed=%s active=%s selectedUnit=%s deployFolder=%s",
-		tostring(gameProcessed), tostring(active), tostring(selectedUnitId),
-		tostring(deployFolder and deployFolder.Name or "nil")))
 
-	if gameProcessed then print("[DeploymentUI] BAIL: gameProcessed=true"); return end
-	if not active then print("[DeploymentUI] BAIL: not active"); return end
+	if gameProcessed then return end
+	if not active then return end
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1
 		and input.UserInputType ~= Enum.UserInputType.Touch then
 		return
@@ -741,11 +836,11 @@ local function onInputBegan(input, gameProcessed)
 	-- needs a selected unit. (2026-10-15 fix: the selectedUnitId guard used to bail here
 	-- and block all inspection once every unit was deployed.)
 	if tryInspectAtPointer(input.Position) then return end
-	if not selectedUnitId then print("[DeploymentUI] BAIL: no selectedUnitId"); return end
-	if not deployFolder then print("[DeploymentUI] BAIL: no deployFolder"); return end
+	if not selectedUnitId then return end
+	if not deployFolder then return end
 
 	local camera = workspace.CurrentCamera
-	if not camera then print("[DeploymentUI] BAIL: no camera"); return end
+	if not camera then return end
 
 	local pos = input.Position
 	-- ScreenPointToRay accounts for the GUI inset (topbar); ViewportPointToRay does not.
@@ -770,7 +865,6 @@ local function onInputBegan(input, gameProcessed)
 						BattleEvents.DeployUnit:FireServer({ unitId = selectedUnitId, tileX = px, tileY = py })
 						return
 					end
-					print(string.format("[DeploymentUI] pad (%d,%d) not a deploy tile — falling back", px, py))
 				end
 			end
 		end
@@ -784,12 +878,10 @@ local function onInputBegan(input, gameProcessed)
 
 	local result = workspace:Raycast(unitRay.Origin, unitRay.Direction * 500, rayParams)
 	if not result or not result.Instance then
-		print("[DeploymentUI] BAIL: raycast missed — no hit in deployFolder")
 		return
 	end
 
 	local hitPart = result.Instance
-	print(string.format("[DeploymentUI] Raycast hit: %s", hitPart.Name))
 
 	-- Resolve tile coordinates: Deploy_ parts have TileX/TileY, terrain tiles have X/Y
 	local tx = hitPart:GetAttribute("TileX") or hitPart:GetAttribute("X")
@@ -800,7 +892,6 @@ local function onInputBegan(input, gameProcessed)
 	-- Only accept PD-highlighted tiles for deployment.
 	local key = tx .. "_" .. ty
 	if not pdHighlights[key] then
-		print(string.format("[DeploymentUI] tile (%d,%d) is not a deploy tile", tx, ty))
 		return
 	end
 
@@ -818,6 +909,9 @@ BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 	cleanup()
 	active = true
 	_G.CTRBLXAI_DeploymentActive = true
+	-- Max deployable units for this battle (quest playerSlots). Used by the
+	-- deploy counter; falls back to roster size in updateDeployCounter if 0.
+	deployLimit = tonumber(data.playerDeployLimit) or 0
 
 	-- Dev options panel stays AVAILABLE during deployment (user request).
 
@@ -859,21 +953,6 @@ BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 			anchor.x, anchor.y, wx, wz, GameConstants.GetElevation(anchor.x, anchor.y)))
 	end
 
-	-- DIAGNOSTIC: Compare DeploymentUI positions vs actual MapRenderer tile positions
-	do
-		local mf = workspace:FindFirstChild("TemplateViewerMap")
-		if mf then
-			for _, anchor in ipairs(data.playerAnchors or {}) do
-				local tileName = string.format("Tile_%02d_%02d", anchor.x, anchor.y)
-				local tilePart = mf:FindFirstChild(tileName)
-				local deployPart = deployFolder:FindFirstChild("Deploy_" .. anchor.x .. "_" .. anchor.y)
-				if tilePart and deployPart then
-				else
-				end
-			end
-		else
-		end
-	end
 
 	-- Create enemy tokens (red cylinders)
 	for _, enemy in ipairs(data.enemyUnits or {}) do
@@ -882,6 +961,8 @@ BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 
 	-- Create roster UI
 	createRosterUI(data.playerUnits or {}, data.awayUnits or {})
+	-- Initialize the deploy counter (0 / max) once the roster + header exist.
+	updateDeployCounter()
 
 	-- Set camera to view the battlefield
 	-- Focus camera on the PD deployment zone (average of PD anchor positions)
@@ -985,6 +1066,7 @@ BattleEvents.UnitDeployed.OnClientEvent:Connect(function(data)
 	else
 		selectNextUndeployed()
 	end
+	updateDeployCounter()
 end)
 
 BattleEvents.UnitUndeployed.OnClientEvent:Connect(function(data)
@@ -1042,6 +1124,8 @@ BattleEvents.UnitUndeployed.OnClientEvent:Connect(function(data)
 
 	-- Auto-select the undeployed unit
 	selectUnit(data.unitId)
+
+	updateDeployCounter()
 
 	print(string.format("[DeploymentUI] %s undeployed from (%d,%d)", data.unitId, data.tileX or 0, data.tileY or 0))
 end)

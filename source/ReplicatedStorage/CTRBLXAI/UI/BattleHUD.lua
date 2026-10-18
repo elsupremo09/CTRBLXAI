@@ -70,6 +70,7 @@ local _timePhase: string? = nil        -- current time-of-day phase (for the tim
 local _timeCtRemaining: number? = nil  -- CT left until the next phase (for the time peek card)
 local conditionsPanel   = nil  -- Next to turn order
 local battleLogPanel    = nil  -- Lower-right (25% × 20%)
+local mapDetailsPanel   = nil  -- Top-left popup: quest/loot/gold snapshot (2026-10-17)
 local commandBar          = nil  -- Fixed bottom-right: Execute/Back buttons
 
 -- Stored data
@@ -93,6 +94,7 @@ local isViewMode          = false  -- legacy; view mode retired 2026-10-07 (alwa
 local _selection = nil
 local tileInfoPanel  -- tile inspector, right of the turn-order bar
 local alignTileInfo  -- forward-declared: ensureRoot watchers reference it before its definition
+local resizeBattleLog  -- forward-declared: layout watchers call it before its definition below
 local isBattleLogExpanded = false
 local savedBattleState    = nil   -- presentation.state before entering view mode
 local viewModeButtons     = nil   -- top-left toggle frame
@@ -446,17 +448,56 @@ local function ensureRoot()
 	-- TOP-LEFT: Battle Log (25% W × 20% H) — right below toggle buttons, starts collapsed
 	battleLogPanel = makePanel("BattleLog",
 		UDim2.fromScale(0.25, 0.20),
-		UDim2.new(0, PAD, 0, 78), Vector2.new(0, 0), rootFrame)
+		-- Top sits just below the View/Log button row (row at y=58,
+		-- height ToggleBtn()+2, +6px gap). Height is capped at runtime by
+		-- resizeBattleLog so the panel never overlaps the turn-order bar. (2026-10-17)
+		UDim2.new(0, PAD, 0, 58 + Theme.Elem.ToggleBtn() + 8), Vector2.new(0, 0), rootFrame)
 	battleLogPanel.ClipsDescendants = true
+	-- Max-height clamp used by resizeBattleLog (keeps the log above the turn bar).
+	local logSizeCons = Instance.new("UISizeConstraint")
+	logSizeCons.Parent = battleLogPanel
 	-- Keep the top-center Time/Event/Weather row clear of the side columns.
-	for _, watched in ipairs({ battleLogPanel, activeUnitPanel, rootFrame, actionPanel, inspectorPanel, tilePreviewPanel }) do
+	for _, watched in ipairs({ battleLogPanel, activeUnitPanel, rootFrame, actionPanel, inspectorPanel, tilePreviewPanel, turnOrderBar }) do
 		if watched then
-			watched:GetPropertyChangedSignal("AbsolutePosition"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end; if alignTileInfo then task.defer(alignTileInfo) end end)
-			watched:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end; if alignTileInfo then task.defer(alignTileInfo) end end)
-			watched:GetPropertyChangedSignal("Visible"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end; if alignTileInfo then task.defer(alignTileInfo) end end)
+			watched:GetPropertyChangedSignal("AbsolutePosition"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end; if alignTileInfo then task.defer(alignTileInfo) end; if resizeBattleLog then task.defer(resizeBattleLog) end end)
+			watched:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end; if alignTileInfo then task.defer(alignTileInfo) end; if resizeBattleLog then task.defer(resizeBattleLog) end end)
+			watched:GetPropertyChangedSignal("Visible"):Connect(function() if alignTimePanel then task.defer(alignTimePanel) end; if alignTileInfo then task.defer(alignTileInfo) end; if resizeBattleLog then task.defer(resizeBattleLog) end end)
 		end
 	end
 	battleLogPanel.Visible = isBattleLogExpanded
+
+	-- Auto-scale the log so its bottom always stays a margin above the turn-order
+	-- bar (item 3, 2026-10-17). Mirrors the preview-panel floor-clamp pattern:
+	-- available height = turn bar top - log top - margin, floored at a usable min.
+	-- Falls back to the screen bottom when the turn bar is hidden.
+	resizeBattleLog = function()
+		if not (battleLogPanel and logSizeCons) then return end
+		local topAbs = battleLogPanel.AbsolutePosition.Y
+		local floorY
+		if turnOrderBar and turnOrderBar.Visible then
+			floorY = turnOrderBar.AbsolutePosition.Y
+		elseif rootFrame then
+			floorY = rootFrame.AbsolutePosition.Y + rootFrame.AbsoluteSize.Y
+		end
+		if floorY then
+			local avail = floorY - topAbs - 5  -- 5px margin above the turn bar (maximize area)
+			if avail < 60 then avail = 60 end     -- never collapse below usable
+			-- Fill the available vertical span: SET the panel's actual height to
+			-- stretch down to just above the turn-order bar (not merely cap it).
+			-- MaxSize is kept as a safety clamp; the explicit height is what makes
+			-- the log extend all the way down instead of sitting at its small
+			-- 0.20-scale default. Width keeps its scale. (2026-10-18)
+			logSizeCons.MaxSize = Vector2.new(math.huge, avail)
+			-- Guard against a feedback loop: this runs from the AbsoluteSize watcher,
+			-- and setting Size changes AbsoluteSize. Only write when the target
+			-- height actually differs (avoids redundant re-fires; value converges).
+			local curY = battleLogPanel.Size.Y.Offset
+			if math.abs(curY - avail) > 1 then
+				battleLogPanel.Size = UDim2.new(0.25, 0, 0, avail)
+			end
+		end
+	end
+	task.defer(resizeBattleLog)
 
 	-- BOTTOM-RIGHT: Fixed command bar (Execute / Back)
 	commandBar = Instance.new("Frame")
@@ -471,8 +512,10 @@ local function ensureRoot()
 	-- TOP-LEFT: View Mode + Battle Log toggles
 	viewModeButtons = Instance.new("Frame")
 	viewModeButtons.Name = "ViewModeButtons"
-	viewModeButtons.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 4 + 12, Theme.Elem.ToggleBtn() + 2)
-	viewModeButtons.Position = UDim2.new(0, PAD, 0, 55)
+	-- Widened for the third button (Map Details) added 2026-10-17.
+	viewModeButtons.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 6 + 20, Theme.Elem.ToggleBtn() + 2)
+	-- Nudged down ~3px (55 -> 58) so View/Log clear the Roblox topbar buttons. (2026-10-17)
+	viewModeButtons.Position = UDim2.new(0, PAD, 0, 58)
 	viewModeButtons.BackgroundTransparency = 1
 	viewModeButtons.Parent = rootFrame
 
@@ -491,7 +534,8 @@ local function ensureRoot()
 	viewModeViewBtn.Text = "\xF0\x9F\x91\x81 View"; viewModeViewBtn.BorderSizePixel = 0
 	viewModeViewBtn.LayoutOrder = 1; viewModeViewBtn.Parent = viewModeButtons
 	Instance.new("UICorner", viewModeViewBtn).CornerRadius = Theme.CornerRadius.sm
-	viewModeViewBtn.MouseButton1Click:Connect(function() BattleHUD.ToggleViewDropdown() end)
+	-- Tap cycles Isometric -> Top -> Side (dropdown replaced 2026-10-17).
+	viewModeViewBtn.MouseButton1Click:Connect(function() BattleHUD.CycleCameraMode() end)
 
 	local logBtn = Instance.new("TextButton")
 	logBtn.Name = "LogToggle"
@@ -504,6 +548,20 @@ local function ensureRoot()
 	logBtn.LayoutOrder = 2; logBtn.Parent = viewModeButtons
 	Instance.new("UICorner", logBtn).CornerRadius = Theme.CornerRadius.sm
 	logBtn.MouseButton1Click:Connect(function() BattleHUD.ToggleBattleLog() end)
+
+	-- Map Details button (2026-10-17): opens the quest/loot/gold snapshot panel.
+	-- Same style as Log (next to it); row is nudged down with the others.
+	local mapBtn = Instance.new("TextButton")
+	mapBtn.Name = "MapDetailsToggle"
+	mapBtn.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 2, Theme.Elem.ToggleBtn())
+	mapBtn.BackgroundColor3 = Theme.Colors.Surface
+	mapBtn.BackgroundTransparency = 0.15
+	mapBtn.Font = Theme.Font.PrimaryBold; mapBtn.TextSize = Theme.Text.Body()
+	mapBtn.TextColor3 = Theme.Colors.TextSecondary
+	mapBtn.Text = "\xF0\x9F\x97\xBA Map"; mapBtn.BorderSizePixel = 0
+	mapBtn.LayoutOrder = 3; mapBtn.Parent = viewModeButtons
+	Instance.new("UICorner", mapBtn).CornerRadius = Theme.CornerRadius.sm
+	mapBtn.MouseButton1Click:Connect(function() BattleHUD.ToggleMapDetails() end)
 
 	-- Apply stored layout if UIController already calculated one
 	if currentLayout then
@@ -775,13 +833,27 @@ function BattleHUD._showActionList(actions, parentLabel)
 	for i, action in ipairs(actions) do
 		if action.isSubmenu and action.subActions then
 			-- Bar-button art, 24 px (user ruling 2026-10-08): navy = available, dark = unavailable.
-			Theme.MakeTabButton(actionPanel, action.text .. " ▸", if action.enabled ~= false then "Inactive" else "Disabled", function()
+			-- Submenu marker uses a plain ">" to match the Loadout screen's ASCII
+			-- glyph convention ("> Equip", "DOCTRINE v") — the old "▸" (U+25B8)
+			-- renders as missing-glyph tofu in the tactical font. (2026-10-17)
+			Theme.MakeTabButton(actionPanel, action.text .. " >", if action.enabled ~= false then "Inactive" else "Disabled", function()
+				-- Disabled tap: explain why, do NOT open the submenu. (2026-10-17)
+				if action.enabled == false then
+					BattleHUD.ShowDisabledReason(action.reason)
+					return
+				end
 				BattleHUD.ClearSelection()
 				BattleHUD._showActionList(action.subActions, "Back")
 			end, { name = "Act_" .. tostring(action.text), size = UDim2.new(1, 0, 0, Theme.MinSize.TabButton),
 				layoutOrder = i, textSize = Theme.Text.Body() })
 		else
 			Theme.MakeTabButton(actionPanel, action.text, if action.enabled ~= false then "Inactive" else "Disabled", function()
+				-- Disabled tap: explain why, do NOT run the action. This also closes a
+				-- latent gap where a grayed button's onPress ran anyway. (2026-10-17)
+				if action.enabled == false then
+					BattleHUD.ShowDisabledReason(action.reason)
+					return
+				end
 				BattleHUD.ClearSelection()
 				if action.onPress then action.onPress() end
 			end, { name = "Act_" .. tostring(action.text), size = UDim2.new(1, 0, 0, Theme.MinSize.TabButton),
@@ -2271,6 +2343,19 @@ function BattleHUD.SetCameraMode(mode)
 	BattleHUD.CloseViewDropdown()
 end
 
+-- Cycle the camera view on each tap: Isometric -> Top -> Side -> Isometric.
+-- Replaces the old dropdown (2026-10-17, user request). Reuses SetCameraMode
+-- so the label update + Side free-view rule stay in one place.
+local VIEW_CYCLE = { "Isometric", "Top", "Side" }
+function BattleHUD.CycleCameraMode()
+	local idx = 1
+	for i, m in ipairs(VIEW_CYCLE) do
+		if m == currentCameraMode then idx = i; break end
+	end
+	local nextMode = VIEW_CYCLE[(idx % #VIEW_CYCLE) + 1]
+	BattleHUD.SetCameraMode(nextMode)
+end
+
 -- Open/close a small dropdown listing the three camera modes plus a Free-view
 -- toggle row. Free-view greys out (disabled) while in Side view.
 function BattleHUD.ToggleViewDropdown()
@@ -2339,11 +2424,112 @@ function BattleHUD.ToggleBattleLog()
 	if battleLogPanel then
 		battleLogPanel.Visible = isBattleLogExpanded
 		if isBattleLogExpanded then BattleHUD._buildBattleLog() end
+		if resizeBattleLog then task.defer(resizeBattleLog) end
 	end
 end
 
 function BattleHUD.IsViewMode()
 	return false  -- view mode retired: inspection is always on
+end
+
+--------------------------------------------------
+-- MAP DETAILS PANEL (2026-10-17)
+-- Toggled by the Map button next to Log. Requests a read-only battle snapshot
+-- from the server (via the client bridge) and renders quest details, optional
+-- quests, a live "if you win" gold tally, and the victory loot range. Nothing
+-- here rolls or commits loot/gold — the panel is purely a projection.
+--------------------------------------------------
+function BattleHUD.CloseMapDetails()
+	if mapDetailsPanel then mapDetailsPanel:Destroy(); mapDetailsPanel = nil end
+end
+
+function BattleHUD.ToggleMapDetails()
+	if mapDetailsPanel then BattleHUD.CloseMapDetails(); return end
+	-- Ask the client to fetch the snapshot; it calls ShowMapDetails on reply.
+	if _G.CTRBLXAI_RequestMapDetails then
+		_G.CTRBLXAI_RequestMapDetails()
+	end
+end
+
+-- Render the snapshot returned by the server. Called by the client's
+-- MapDetailsResponse handler via this module.
+function BattleHUD.ShowMapDetails(data)
+	BattleHUD.CloseMapDetails()
+	ensureRoot()
+	data = data or {}
+
+	local panel = Instance.new("Frame")
+	panel.Name = "MapDetails"
+	panel.Size = UDim2.fromOffset(240, 0)
+	panel.AutomaticSize = Enum.AutomaticSize.Y
+	panel.Position = UDim2.new(0, PAD, 0, 58 + Theme.Elem.ToggleBtn() + 8)
+	panel.BackgroundColor3 = Theme.Colors.PanelRaised
+	panel.BackgroundTransparency = 0.02
+	panel.BorderSizePixel = 0
+	panel.ZIndex = 40
+	panel.Parent = rootFrame
+	Instance.new("UICorner", panel).CornerRadius = Theme.CornerRadius.md
+	local s = Instance.new("UIStroke", panel); s.Color = Theme.Colors.Border; s.Thickness = 1
+	local pad = Instance.new("UIPadding", panel)
+	pad.PaddingTop = UDim.new(0, 8); pad.PaddingBottom = UDim.new(0, 8)
+	pad.PaddingLeft = UDim.new(0, 8); pad.PaddingRight = UDim.new(0, 8)
+	local layout = Instance.new("UIListLayout", panel)
+	layout.Padding = UDim.new(0, 3); layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	local order = 0
+	local function line(txt, color, bold)
+		order = order + 1
+		local lbl = Instance.new("TextLabel")
+		lbl.BackgroundTransparency = 1
+		lbl.Size = UDim2.new(1, 0, 0, 0)
+		lbl.AutomaticSize = Enum.AutomaticSize.Y
+		lbl.Font = bold and Theme.Font.PrimaryBold or Theme.Font.Primary
+		lbl.TextSize = Theme.Text.Body()
+		lbl.TextColor3 = color or Theme.Colors.TextPrimary
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.TextWrapped = true
+		lbl.Text = txt
+		lbl.LayoutOrder = order
+		lbl.ZIndex = 41
+		lbl.Parent = panel
+		return lbl
+	end
+
+	line("MAP DETAILS", Theme.Colors.TextGold, true)
+	local q = data.quest
+	if q then
+		line(q.name or "Quest", Theme.Colors.TextPrimary, true)
+		line(string.format("%s  Lv %s  |  %s enemies",
+			tostring(q.biome or "?"), tostring(q.recommendedLvl or "?"), tostring(q.enemyCount or "?")),
+			Theme.Colors.TextSecondary)
+		if q.condition then line("Objective: " .. tostring(q.condition), Theme.Colors.TextSecondary) end
+	else
+		line("No active quest.", Theme.Colors.TextSecondary)
+	end
+
+	-- Optional quests (may be empty).
+	if data.optional and #data.optional > 0 then
+		line("Optional:", Theme.Colors.TextGold, true)
+		for _, oq in ipairs(data.optional) do
+			line("• " .. tostring(oq.name or "Optional quest"), Theme.Colors.TextSecondary)
+		end
+	end
+
+	-- Live gold tally (victory rate) + loot range. Clearly labeled "if you win"
+	-- because a defeat keeps only 50% kill gold and no quest/completion gold.
+	local goldSoFar = data.goldSoFar or 0
+	local goldOnVictory = data.goldOnVictory or 0
+	line("Rewards (if you win):", Theme.Colors.TextGold, true)
+	line(string.format("Gold so far: %dg  (+%dg on victory)", goldSoFar, goldOnVictory), Theme.Colors.TextPrimary)
+	local lmin, lmax = data.lootMin or 1, data.lootMax or 2
+	if lmin == lmax then
+		line(string.format("Loot on victory: %d item(s)", lmin), Theme.Colors.TextSecondary)
+	else
+		line(string.format("Loot on victory: %d-%d items", lmin, lmax), Theme.Colors.TextSecondary)
+	end
+	line("Defeat keeps 50% of kill gold only.", Theme.Colors.TextDisabled)
+
+	mapDetailsPanel = panel
 end
 
 -- Selection for the unit panel. Pass nil to go back to the acting unit.
@@ -2388,9 +2574,20 @@ function BattleHUD.ApplyLayout(layout)
 	for name, panel in pairs(panels) do
 		local desc = layout[name]
 		if desc and panel then
-			if desc.Size then panel.Size = desc.Size end
-			if desc.Position then panel.Position = desc.Position end
-			if desc.AnchorPoint then panel.AnchorPoint = desc.AnchorPoint end
+			if name == "BattleLog" then
+				-- BattleLog placement is owned by the code now (fixed top just below
+				-- the View/Log/Map button row + runtime height clamp via
+				-- resizeBattleLog). A stored UIController layout carries the OLD
+				-- top-left position that overlapped the buttons; applying it dragged
+				-- the log back up behind them. Skip Position/Size for BattleLog so
+				-- our placement sticks; still honor an AnchorPoint if provided. (2026-10-18)
+				if desc.AnchorPoint then panel.AnchorPoint = desc.AnchorPoint end
+				if resizeBattleLog then task.defer(resizeBattleLog) end
+			else
+				if desc.Size then panel.Size = desc.Size end
+				if desc.Position then panel.Position = desc.Position end
+				if desc.AnchorPoint then panel.AnchorPoint = desc.AnchorPoint end
+			end
 		end
 	end
 
@@ -2764,6 +2961,35 @@ end
 function BattleHUD.HideTooltip()
 	if tooltipFrame then tooltipFrame:Destroy(); tooltipFrame = nil end
 	if tooltipCloseConn then tooltipCloseConn:Disconnect(); tooltipCloseConn = nil end
+end
+
+--------------------------------------------------
+-- DISABLED-BUTTON REASON (2026-10-17)
+-- Shows a short, auto-dismissing message explaining why a grayed-out action
+-- button can't be used right now, per the Button Availability Policy ("display
+-- a tooltip explaining why when selected"). Reuses the themed ShowTooltip box
+-- so it matches every other floating label. Applies to ALL top-level battle
+-- buttons uniformly (Move/Attack/Guard/Push/Interact/Skills/Items/Undo).
+--------------------------------------------------
+function BattleHUD.ShowDisabledReason(reasonText)
+	local text = reasonText
+	if type(text) ~= "string" or text == "" then
+		text = "Not available right now"
+	end
+	BattleHUD.ShowTooltip({
+		lines = { { text = text, color = Theme.Colors.Warning } },
+		maxWidth = 180,
+		position = UDim2.new(0.5, 0, 0.62, 0),
+		anchorPoint = Vector2.new(0.5, 0),
+	})
+	-- Auto-dismiss after a short beat, but only if THIS message is still the one
+	-- showing (a newer tooltip/hover may have replaced it in the meantime).
+	local shownFrame = tooltipFrame
+	task.delay(2, function()
+		if tooltipFrame == shownFrame then
+			BattleHUD.HideTooltip()
+		end
+	end)
 end
 
 --------------------------------------------------

@@ -1355,7 +1355,9 @@ local function onDismissUnit(player: Player, unitId: any, confirm: any): any
 	-- assignment), so this returns all the unit's gear to inventory by clearing its slots.
 	for _, slot in ipairs({ "MainHand", "OffHand", "Head", "Body", "Gloves", "Feet", "Accessory" }) do
 		if unit.equipmentSlots and unit.equipmentSlots[slot] then
-			EquipmentService.Unequip(unit, slot)
+			-- allowWeaponless: this unit is being dismissed (leaving the roster), so
+			-- emptying its weapon is legitimate teardown, exempt from the retention guard.
+			EquipmentService.Unequip(unit, slot, { allowWeaponless = true })
 		end
 	end
 

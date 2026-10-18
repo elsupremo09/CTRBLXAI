@@ -123,14 +123,23 @@ ObjectData.Objects["Stone Pillar"] = {
 
 ObjectData.Objects["Ice Spike"] = {
 	id = "Ice Spike",
-	category = "Siege",
-	tags = { "Structure", "Ice" },
+	category = "Obstacle",
+	tags = { "OBS", "Blocker", "Not-Landable", "Breakable", "Blocks-LoS", "Ice" },
 	passable = false,
-	activation = "Passive",
+	activation = nil,
 	triggerEvent = nil,
-	primaryEffect = "Blocks movement and line of travel",
+	primaryEffect = "Impassable ICE blocker on normal-height ground; blocks movement and direct line of sight.",
 	uses = "Until Destroyed",
-	notes = "Can melt from Fire",
+	notes = "ICE-SPIKE BLOCKER (reclassified 2026-10-17, user ruling): now an OBS-blocker-class object that behaves exactly like OBS Blocker (non-interactable; excluded from the point-of-interest glow; exempt from the V5 interaction-adjacency validation) PLUS a Fire weakness. A permanent wall: impassable to all, blocks direct line of sight, pushable, and breakable. Takes 3 hits from any source to destroy, OR is INSTANTLY destroyed in one hit by any Fire-tagged (Fire-element) attack regardless of remaining hits. Clearing (break/push) reverts the tile to normal passable ground. Still spawns via map generation in icy regions (RegionData weights unchanged) AND going forward via skills. First of a planned family of skill-placed blocker objects.",
+	-- Standing height in elevation levels -- used by buildBlockers (blocker.height)
+	-- and height-aware LoS. A low wall-height cluster (mirrors OBS Blocker).
+	standingHeight = 3,
+	hitsToDestroy  = 3,  -- breaks after 3 hits from any source (like OBS Blocker)
+	nativeStability = 3, -- flat native Stability for Push: Distance = max(0, Force-3) (like OBS Blocker)
+	-- Reactive per-object weakness: a Fire-element attack destroys it in ONE hit regardless of
+	-- remaining hp. Read by ObjectEffectService.ApplyObjectHit. First reusable instance of the
+	-- instantKillTags field; the skill-placed blocker family extends this (e.g. Earth Column = Water).
+	instantKillTags = { "Fire" },
 }
 
 ObjectData.Objects["Ballista"] = {
@@ -743,7 +752,7 @@ ObjectData.Objects["OBS Blocker"] = {
 ObjectData.Objects["Ad Billboard"] = {
 	id = "Ad Billboard",
 	category = "Obstacle",
-	tags = { "OBS", "Blocker", "Ad", "Immersive-Ad", "Not-Landable", "AdGui", "Unbreakable", "Elevation-Immune", "Immovable", "Blocks-LoS" },
+	tags = { "OBS", "Blocker", "Ad", "Immersive-Ad", "Not-Landable", "AdGui", "Unbreakable", "Elevation-Immune", "Immovable", "Blocks-LoS", "Non-Object" },
 	passable = false,
 	activation = nil,
 	triggerEvent = nil,
@@ -754,6 +763,12 @@ ObjectData.Objects["Ad Billboard"] = {
 	isElevationImmune = true, -- consumed by GameConstants.IsElevationImmune (elevation-reduction no-op)
 	isUnbreakable = true,     -- Phase 2 break system must skip this (DATA ONLY now)
 	isImmovable = true,       -- Phase 2 push system must skip this (DATA ONLY now)
+	-- NON-OBJECT MARKER (user ruling 2026-10-17): the Ad Billboard is the SOLE exception to the
+	-- Universal Object Marker (every non-unit entity is otherwise an object). It is EXCLUDED from any
+	-- future instant-kill-objects / object-targeting capability. Unbreakable/Immovable/Elevation-Immune
+	-- are unchanged; it carries NO hitsToDestroy (never was breakable). See project_rules
+	-- 'Universal Object Marker' + 'Ad Billboard Non-Object Exception'.
+	isNonObject = true,
 }
 
 return ObjectData
