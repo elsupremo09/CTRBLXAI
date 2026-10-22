@@ -27,6 +27,13 @@ local TerrainTextures = require(
 		:WaitForChild("TerrainTextures")
 )
 
+-- Shared tile-geometry constants (single source of truth, 2026-10-20).
+local GameConstants = require(
+	CTRBLXAI
+		:WaitForChild("Shared")
+		:WaitForChild("GameConstants")
+)
+
 -- Slice 7 visual polish: decorative blocker/tile props (visual only).
 -- PropService has its own TILE_SIZE = 5 mirror; keep in sync with TILE_SIZE below.
 local PropService = require(script.Parent.PropService)
@@ -49,7 +56,9 @@ local TILE_MATERIAL  = Enum.Material.SmoothPlastic
 -- Vertical studs per elevation level. Reduced 2.5→1.2 (dev-locked 2026-09-24)
 -- for the expanded 1–20 elevation scale: peak (20) now renders ≈ 23 studs
 -- tall instead of ≈ 48, keeping tall maps camera/LoS-friendly and proportionate.
-local ELEVATION_STEP = 1.2
+-- Now sourced from GameConstants (single source of truth, 2026-10-20) so the
+-- renderer, server placement, and client can never drift apart.
+local ELEVATION_STEP = GameConstants.ELEVATION_STEP
 
 local GRID_COLOR     = Color3.fromRGB(20, 20, 20)
 
@@ -1273,6 +1282,45 @@ function MapRenderer.ReshapeTile(mapFolder, x, y, newTerrain, newElevation)
 end
 
 --------------------------------------------------
+-- SINGLE-TILE VOXEL CLEAR (BUG-002 GAP 2 fix, 2026-10-22).
+-- VOXEL_KEEP terrains (Grassland + both Waters) render as a server Roblox-Terrain
+-- voxel column (fillTerrainVoxelColumn, FillBlock). When one of those transforms
+-- mid-battle to a NON-voxel terrain, ReshapeTile re-skins the tile Part but the
+-- stale voxel column remains visible on top (the client cannot clear voxels —
+-- workspace.Terrain is server-only). This clears ONLY that one tile's voxel column
+-- by filling Air over the SAME region the build filled, computed from the tile
+-- Part's own position/size (TILE_SIZE wide, column top = Part top, down to FLOOR_Y).
+-- CRITICAL (regression guard): this is a LOCALIZED FillBlock, NOT workspace.Terrain:Clear()
+-- (which would wipe the whole map). Neighbour tiles are untouched. Visual-only — tile
+-- elevation / move cost / occupancy are unchanged. Returns true if a column was cleared.
+function MapRenderer.ClearTileVoxelColumn(mapFolder, x, y)
+	if not (mapFolder and x and y) then return false end
+	for _, child in ipairs(mapFolder:GetChildren()) do
+		if child:GetAttribute("X") == x and child:GetAttribute("Y") == y
+			and child:GetAttribute("IsTemplateTile") then
+			-- Column geometry mirrors fillTerrainVoxelColumn: centre X/Z = Part centre,
+			-- top Y = Part top (Position.Y + Size.Y/2), size X/Z = TILE_SIZE, depth down
+			-- to FLOOR_Y clamped to >= TERRAIN_FILL_DEPTH so the lowest tiles fully clear.
+			local cx = child.Position.X
+			local cz = child.Position.Z
+			local topY = child.Position.Y + child.Size.Y / 2
+			-- Add a small top margin so the thin Shallow-Water cap (and any sub-voxel
+			-- rounding at the surface) is fully removed, and clear down to the floor.
+			local TOP_MARGIN = 2
+			local clearTop = topY + TOP_MARGIN
+			local colDepth = math.max(clearTop - FLOOR_Y, TERRAIN_FILL_DEPTH)
+			workspace.Terrain:FillBlock(
+				CFrame.new(cx, clearTop - colDepth / 2, cz),
+				Vector3.new(TILE_SIZE, colDepth, TILE_SIZE),
+				Enum.Material.Air
+			)
+			return true
+		end
+	end
+	return false
+end
+
+--------------------------------------------------
 -- AD BILLBOARD RUNTIME IMAGE CYCLE (2026-10-15 USER DECISION; map_gen_rules 79/85,
 -- objects_encounters 84). This is the "live-ad hook" reserved by prepareBillboardAdFaces.
 --
@@ -1441,7 +1489,15 @@ local function paintAllAdFaces(mapFolder: Instance, assetId: string)
 		if face:IsA("BasePart") and face:IsDescendantOf(mapFolder) then
 			local painted = false
 			for _, d in ipairs(face:GetChildren()) do
-				if d:IsA("Decal") then
+				-- A Texture is a SUBCLASS of Decal and TILES across the surface (repeats
+				-- per StudsPerTile) instead of stretching to fill, so a model that ships a
+				-- Texture on its AdFace panel rendered the ad as a repeating grid. It is NOT
+				-- a valid fill surface: destroy it (MEM-002) and do NOT mark painted, so the
+				-- broad-face create branch below makes a proper stretch-fill Decal instead.
+				if d:IsA("Texture") then
+					d:Destroy()
+				elseif d:IsA("Decal") then
+					-- A TRUE Decal (not a Texture) stretches to fill; repaint it.
 					if setAdFaceImage(d, assetId) then painted = true end
 				end
 			end

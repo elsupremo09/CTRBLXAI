@@ -29,6 +29,15 @@ local ConsumableData = require(
 		:WaitForChild("ConsumableData")
 )
 
+-- Object catalog (read-only, safe direct require like ConsumableData).
+-- Used by ConsiderObsBreak to read a blocker-prop OBS object's
+-- instantKillTags (elemental one-hit weakness) and hitsToDestroy.
+local ObjectData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ObjectData")
+)
+
 local AIService = {}
 
 -- Injected dependencies (set by Main)
@@ -607,13 +616,105 @@ end
 -- AI command-resolution path (BattleTurnController action apply) to carry an
 -- actionType="AttackObject"/"PushObject" from an AI unit. Left as a documented
 -- extension point to avoid an un-Studio-verifiable AI pathfinding regression.
-AIService.OBS_BREAK_ENABLED = false
+AIService.OBS_BREAK_ENABLED = true
+
+-- OBS Phase 2c-I (BUILT 2026-10-18): when a unit is BOXED (bestMoveToward finds no
+-- reachable tile that reduces true distance to the player), it may break a
+-- blocker-prop OBS object to open a route — but ONLY as a last resort, and only when
+-- it is genuinely worth a turn. Two cases (user-locked scope 2026-10-17):
+--   ONE-HIT: this unit's weapon element matches the object's instantKillTags → the
+--            object dies in a single AttackObject → worth it even SOLO.
+--   MULTI-HIT: a plain hit removes 1 hp → worth it ONLY when enough units on this
+--            side can target the SAME object THIS round (range + line of sight via
+--            GetAttackableObjectTargets — NOT adjacency, since ranged attacks break
+--            objects too) to bring its hp to 0 soon. A lone unit chipping a 3-hp wall
+--            by itself is the waste this guard prevents.
+-- The Ad Billboard never qualifies: GetAttackableObjectTargets only returns objects
+-- with a numeric hitsToDestroy, and the billboard has none (it is unbreakable / a
+-- non-object per the 2026-10-17 ruling), so it is excluded upstream.
+-- Returns a committable { actionType="AttackObject", selection={objX,objY} } or nil.
+-- `state` (optional) carries state.objects; without it (legacy callers / PlanTurn
+-- shim) this is a graceful no-op, so no existing behavior changes.
+function AIService.ConsiderObsBreak(unit: any, allUnits: any, state: any, dials: any): any
+	if not AIService.OBS_BREAK_ENABLED then return nil end
+	if not (state and state.objects) then return nil end
+	if not (_TargetingService and _TargetingService.GetAttackableObjectTargets) then return nil end
+
+	local range = unit.weaponMaxRange or 1
+	local attackable = _TargetingService.GetAttackableObjectTargets(unit, allUnits, range, state) or {}
+	if #attackable == 0 then return nil end
+
+	-- Live instance (for current hp) by tile.
+	local function instAt(tx: any, ty: any): any
+		for _, inst in ipairs(state.objects) do
+			if inst.x == tx and inst.y == ty then return inst end
+		end
+		return nil
+	end
+
+	-- How many units on this unit's side (incl. self) could hit the object at (tx,ty)
+	-- THIS round. Reuses GetAttackableObjectTargets per unit so the range/LoS/elevation
+	-- rules match exactly (ranged units count — breaking is not adjacency-gated).
+	local function reachersFor(tx: any, ty: any): number
+		local n = 0
+		for _, u in ipairs(allUnits) do
+			if u.isAlive and u.side == unit.side then
+				local objs = _TargetingService.GetAttackableObjectTargets(u, allUnits, u.weaponMaxRange or 1, state) or {}
+				for _, oc in ipairs(objs) do
+					if oc.tileX == tx and oc.tileY == ty then n = n + 1; break end
+				end
+			end
+		end
+		return n
+	end
+
+	local bestAction: any, bestPriority = nil, -math.huge
+	for _, oc in ipairs(attackable) do
+		local inst = instAt(oc.tileX, oc.tileY)
+		local def = inst and inst.type and ObjectData.Objects[inst.type]
+		if inst and def then
+			local hp = inst.hp or def.hitsToDestroy or 1
+			-- ONE-HIT: this unit's weapon element is one of the object's kill tags.
+			local oneShot = false
+			local we = unit.weaponElement
+			if we and type(def.instantKillTags) == "table" then
+				for _, t in ipairs(def.instantKillTags) do
+					if t == we then oneShot = true; break end
+				end
+			end
+			local worth, priority = false, 0
+			if oneShot then
+				worth = true
+				priority = 1000  -- solo one-shot: always worth it, highest priority
+			else
+				-- MULTI-HIT: only if the team can actually break it this round.
+				if reachersFor(oc.tileX, oc.tileY) >= hp then
+					worth = true
+					priority = 100 - hp  -- prefer the object closest to breaking
+				end
+			end
+			if worth and priority > bestPriority then
+				bestPriority = priority
+				bestAction = {
+					actionType = "AttackObject",
+					selection = { objX = oc.tileX, objY = oc.tileY },
+					skillName = nil, score = W.MOVE_TOWARD, rtEstimate = 0, tile = nil,
+					targetName = string.format("break %s (%d,%d)", oc.name or "object", oc.tileX, oc.tileY),
+				}
+			end
+		end
+	end
+	if bestAction then
+		print(string.format("[AIService] %s boxed -> %s", unit.name, bestAction.targetName))
+	end
+	return bestAction
+end
 -- function AIService.ConsiderObsBreak(unit, allUnits, state): any
 --   -- return { actionType = "AttackObject", selection = { objX = x, objY = y } }
 --   -- when a breakable OBS blocker adjacent/in-range materially shortens the path.
 -- end
 
-function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any): any
+function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, state: any): any
 	if not unit.isAlive or (unit.currentAp or 0) <= 0 then return nil end
 
 	local personality = resolvePersonality(unit, allUnits)
@@ -709,6 +810,11 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any):
 				print(string.format(
 					"[AIService] %s cannot advance (boxed): best reachable tile (%d,%d) dist=%d >= current dist=%d — taking best available",
 					unit.name, best.tileX, best.tileY, bestDist, curDist))
+				-- Last resort: boxed with no progress — try opening a route by breaking
+				-- a blocker-prop OBS object (one-shot solo, or multi-hit if the team can
+				-- break it this round). Only replaces the futile move if it finds one.
+				local obs = AIService.ConsiderObsBreak(unit, allUnits, state, dials)
+				if obs then return obs end
 			end
 			return { actionType = "Move", selection = best, skillName = nil,
 				score = W.MOVE_TOWARD, rtEstimate = 0, tile = best,
@@ -718,6 +824,10 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any):
 		print(string.format(
 			"[AIService] %s has NO reachable move tile (fully boxed in) — will Guard/Wait",
 			unit.name))
+		-- Last resort before giving up: a fully-boxed unit may still open a route
+		-- by breaking an in-range OBS object (same worth-it rules as above).
+		local obsFB = AIService.ConsiderObsBreak(unit, allUnits, state, dials)
+		if obsFB then return obsFB end
 		return nil
 	end
 
@@ -803,6 +913,39 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any):
 		end
 	end
 	if koAction then return koAction end
+
+	----------------------------------------------------------------
+	-- (2b) DEFENDER SELF-HEAL (enemy_ai_personalities rule 4, added 2026-10-18):
+	-- "If own HP < 35%, uses a skill or item to self-heal." Prioritized here,
+	-- AFTER the KO-override (a guaranteed kill still comes first) but BEFORE normal
+	-- scoring, because a hurt Defender's Guard score otherwise outranks a self-heal
+	-- and it would guard instead of healing (violating rule 4). Mirrors the
+	-- pushed-away recovery pattern. Defender-only; only under LOW_RESOURCE_PCT (35%);
+	-- only returns if an actual recovery/self-heal is available, otherwise falls
+	-- through to normal scoring (never forces a heal that does not exist). Additive:
+	-- changes no other personality and no non-Defender path.
+	if personality == "Defender" then
+		local hpPct = unit.currentHp / math.max(1, unit.maxHp)
+		if hpPct < LOW_RESOURCE_PCT then
+			-- (a) a recovery consumable (same primitive as pushed-away recovery).
+			local itemAction = bestItemAction(unit, allUnits, dials)
+			if itemAction then return itemAction end
+			-- (b) a self-targeting healing skill, if the Defender carries one.
+			for _, entry in ipairs(skillEntries) do
+				if entry.def.isHealing then
+					for _, cand in ipairs(entry.candidates) do
+						if cand.id == unit.id then
+							return { actionType = "Skill",
+								selection = { target = unit, skillId = entry.def.id },
+								skillName = entry.def.name, score = W.ALLY_HELP,
+								rtEstimate = entry.def.mpCost or 0, tile = nil,
+								targetName = unit.name }
+						end
+					end
+				end
+			end
+		end
+	end
 
 	----------------------------------------------------------------
 	-- (3) ENGAGEMENT STAGING — Aggressive/Skirmisher/Controller only.

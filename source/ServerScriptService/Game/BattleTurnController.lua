@@ -37,6 +37,7 @@ local ObjectEffectService     = require(Game:WaitForChild("ObjectEffectService")
 local WeatherService          = require(Game:WaitForChild("WeatherService"))
 local BattlefieldEventService = require(Game:WaitForChild("BattlefieldEventService"))
 local ItemDisplay             = require(Game:WaitForChild("ItemDisplay")) -- item->UI entry builders (extracted 2026-10-12)
+local DoctrinePassiveService  = require(Game:WaitForChild("DoctrinePassiveService")) -- Artificer consumable-range +1 (2026-10-21)
 
 -- Slice 6 services (switched on this pass). CurrencyService provides AsProvider()
 -- used by Recruitment/Blacksmith/Merchant/Dispatch; it is required FIRST so the
@@ -313,6 +314,13 @@ local function buildTurnPrompt(unit)
 
 	local moveTiles = TargetingService.GetMoveCandidates(unit, state.units, MAP_WIDTH, MAP_HEIGHT)
 	if unit.isSummon and unit.canMove == false then moveTiles = {} end  -- immobile summon (Turret/Totem/Decoy)
+	-- Status-based movement block (e.g. Pinned from Vines): if a status forbids Move,
+	-- send ZERO move tiles so the client grays the Move button, and pass the reason for
+	-- its tooltip. Uses the SAME canonical check the commit path uses (StatusService.
+	-- IsActionBlocked), so the button state always matches what the server would accept
+	-- -- no more "43 moves offered, every one rejected". (2026-10-22)
+	local moveBlocked, moveBlockReason = StatusService.IsActionBlocked(unit, "Move")
+	if moveBlocked then moveTiles = {} end
 	local moveCandidates = {}
 	for _, tile in ipairs(moveTiles) do
 		table.insert(moveCandidates, {
@@ -400,7 +408,10 @@ local function buildTurnPrompt(unit)
 			if consDef then
 				local tr = consDef.targetRules or "Self"
 				local formula = consDef.effectFormula or ""
-				local itemRange = consDef.range or 0
+				-- ARTIFICER — Applied Artifice: Consumable Item Maximum Range +1. Mirrors the
+				-- server gate (CommandService.validateItemTarget) so the client can SELECT the
+				-- farther tile; server remains the final authority. (2026-10-21)
+				local itemRange = (consDef.range or 0) + DoctrinePassiveService.GetConsumableRangeBonus(unit)
 
 				-- Classify targeting mode from targetRules
 				local isSelf   = (tr == "Self")
@@ -518,6 +529,9 @@ local function buildTurnPrompt(unit)
 		tileY          = unit.tileY,
 		skills         = skills,
 		moveCandidates = moveCandidates,
+		-- Grayed-Move tooltip reason when a status blocks movement (nil when movement
+		-- is allowed). Mirrors the undoReason pattern below. (2026-10-22)
+		moveBlockedReason = moveBlocked and moveBlockReason or nil,
 		attackTargets  = attackTargets,
 		-- UNDO (2026-10-17): availability + grayed-button reason for the top-level
 		-- Undo command. Server owns the rule (SEC-002); client only renders the
@@ -1332,7 +1346,7 @@ local function runAiTurn(unit)
 		if unit.side == "Neutral" then
 			action = BattlefieldEventService.NeutralAction(unit, state)
 		else
-			action = AIService.DecideAction(unit, allUnits, MAP_WIDTH, MAP_HEIGHT)
+			action = AIService.DecideAction(unit, allUnits, MAP_WIDTH, MAP_HEIGHT, state)
 		end
 		if not action or action.actionType == "Wait" then
 			break  -- brain chose to stop; fall through to end-of-turn Wait
@@ -1350,6 +1364,11 @@ local function runAiTurn(unit)
 			committed = tryCommit("Guard", nil, nil)
 		elseif a == "Item" then
 			committed = tryCommit("Item", action.selection, nil)
+		elseif a == "AttackObject" then
+			-- OBS Phase 2c-I: boxed AI chose to break a blocker-prop OBS object to open
+			-- a route. selection = { objX, objY }; ValidateAndCommit routes it through
+			-- the same AttackObject path the player's object-attack uses.
+			committed = tryCommit("AttackObject", action.selection, nil)
 		else
 			-- Unknown action type: stop rather than spin.
 			break

@@ -122,6 +122,13 @@ local function isBreakableObject(def: any): boolean
 		and def.hitsToDestroy > 0
 end
 
+-- Does an ObjectData def carry a given tag? (nil-safe)
+local function objHasTag(def: any, tag: any): boolean
+	if not (def and def.tags) then return false end
+	for _, t in ipairs(def.tags) do if t == tag then return true end end
+	return false
+end
+
 -- Seed runtime hp on breakable OBS objects. Idempotent: safe to call at battle
 -- start and on any mid-battle map refresh (each call resets to full, matching a
 -- fresh/refreshed map). Billboards / unbreakable objects are explicitly set hp=nil.
@@ -152,11 +159,34 @@ end
 -- weak to Fire). This is the reusable per-object elemental-weakness hook: every future
 -- skill-placed blocker just lists its killer element(s) in instantKillTags, no new code.
 -- Omitting attackElement preserves the old behaviour exactly (back-compatible).
-function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, attackElement: any): any
+-- `fromExplosion` (optional): true when this hit originates INSIDE an explosion
+-- (the explosion's per-tile object-hit callback). Explosive objects are NOT
+-- detonated here in that case — the explosion queue chains them via
+-- ConsumeExplosiveObjectAt so the 128-event cap (TRG-011) spans the whole chain
+-- with no nested QueueExplosion. A direct attack / weather hit (fromExplosion
+-- false) detonates an explosive top-level.
+function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, attackElement: any, fromExplosion: any): any
 	if not (state and state.objects and x and y) then return "not-found" end
 	for _, inst in ipairs(state.objects) do
 		if inst.x == x and inst.y == y then
 			local def = inst.type and ObjectData.Objects[inst.type]
+			-- EXPLOSIVE objects (Bomb Barrel / Land Mine) carry no hp bar — a hit
+			-- DETONATES them (objects_encounters: "Fire-tag attack, Explosion, or
+			-- Destroyed"). Inside an explosion we skip (queue chains it); otherwise
+			-- detonate top-level at this tile with the per-source 25% Max HP payload.
+			if def and objHasTag(def, "Explosive") then
+				if fromExplosion then return "immune" end
+				if _tileEffectService and _tileEffectService.QueueExplosion then
+					ObjectEffectService.RemoveObjectInstance(state, inst)
+					if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+						BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
+					end
+					_tileEffectService.QueueExplosion(x, y, 0, "object", 0.25, state.units, "box")
+					print(string.format("[ObjectEffectService] %s detonated by hit at (%d,%d)", tostring(inst.type), x, y))
+					return "detonated"
+				end
+				return "immune"
+			end
 			if (not isBreakableObject(def)) or inst.hp == nil then
 				return "immune"
 			end
@@ -609,7 +639,9 @@ end
 Handlers["Spike Trap"] = function(ctx: any): (boolean, any)
 	-- Physical damage + Bleed. Damage via direct HP (environmental, no attacker stats).
 	local a = ctx.actor
-	local dmg = math.floor((a.maxHp or 0) * 0.10)
+	-- Damage % is the authoritative DB value (ObjectData Spike Trap damagePct); no hardcode.
+	local pct = (ctx.objDef and ctx.objDef.damagePct) or 0.10
+	local dmg = math.floor((a.maxHp or 0) * pct)
 	a.currentHp = math.max(0, (a.currentHp or 0) - dmg)
 	applyAndRebuild(a, "Bleed", a.id)
 	print(string.format("[ObjectEffectService] Spike Trap | %d dmg + Bleed", dmg))
@@ -622,10 +654,11 @@ local function explosionHandler(label: any)
 		local x = obj.x or a.tileX
 		local y = obj.y or a.tileY
 		if _tileEffectService and _tileEffectService.QueueExplosion then
-			-- 25% Max HP, 3x3 box per-source payload (objects_encounters / open_decisions).
-			local payload = { damagePct = 0.25, element = "Fire", pattern = "box", radius = 1,
-				scalesWith = "MaxHp", usesCombatFortune = false }
-			_tileEffectService.QueueExplosion(x, y, 0, a.id, payload, ctx.allUnits, "box")
+			-- 25% Max HP, 3x3 box per-source (objects_encounters). QueueExplosion
+			-- expects a NUMERIC fraction payload (processOneExplosion computes
+			-- payload * reduction^depth); passing a table errored at "damagePayload > 0".
+			-- (Fix bundled with the trap-trigger wiring that first exercises this path.)
+			_tileEffectService.QueueExplosion(x, y, 0, a.id, 0.25, ctx.allUnits, "box")
 			print(string.format("[ObjectEffectService] %s | explosion queued at (%d,%d)", label, x, y))
 			return true, nil
 		end
@@ -985,6 +1018,14 @@ Handlers["Stone Pillar"] = function(ctx: any): (boolean, any)
 	-- crush any unit standing on it.
 	for _, t in ipairs(spanTiles) do
 		GameConstants.SetTerrainId(t.x, t.y, "Rocky")
+		-- BUG-002 GAP 1 (2026-10-22): the fallen-deck Rocky reskin was a silent
+		-- SetTerrainId (invisible mid-battle). Fire TerrainChanged via the directly-
+		-- required BattleVisualBroadcaster (stable sibling) so the client re-skins the
+		-- tile. Rocky is not a VOXEL_KEEP terrain, so no server voxel-clear is needed.
+		-- nil-safe like the other broadcaster calls in this module.
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.TerrainChanged then
+			BattleVisualBroadcaster.TerrainChanged(t.x, t.y, "Rocky")
+		end
 		if GameConstants.ELEVATION_MAP[t.y] then
 			GameConstants.ELEVATION_MAP[t.y][t.x] = baseElev
 		end
@@ -1363,6 +1404,102 @@ function ObjectEffectService.ClearTurnUsage(unitId: any)
 			_usedThisTurn[objId] = nil
 		end
 	end
+end
+
+--------------------------------------------------------------------
+-- STEP-ON TRAP TRIGGERS (Slice 5 — trap-trigger feature, 2026-10-20).
+--
+-- objects_encounters: Bear/Spike/Snare/Land Mine are "Triggered — Unit enters
+-- tile", passable, single-use, "Removed after activation". Before this feature
+-- the ONLY path that fired a map-object effect was the Interact action, so none
+-- of these ever went off when walked onto. These helpers are called from the
+-- movement commit (every tile crossed) and from the forced-movement apply sites.
+--
+-- Locked behaviour (user, 2026-10-20):
+--   • Fires on every tile crossed, voluntary AND forced movement.
+--   • Bear/Snare (rooting) STOP a voluntary walk at that tile; Spike and Land
+--     Mine do NOT stop it; a KO stops it. Forced movement never stops early
+--     (momentum) — it only ends if the unit is KO'd.
+--   • Flight bypasses traps entirely (handled by the caller).
+--------------------------------------------------------------------
+
+-- A step-on trap = passable object carrying the "Trap" tag (Bear/Spike/Snare/
+-- Land Mine). Bomb Barrel (non-passable, no "Trap" tag) is excluded — it is hit,
+-- not stepped on.
+local function isStepOnTrap(def: any): boolean
+	return def ~= nil and def.passable == true and objHasTag(def, "Trap")
+end
+
+-- Traps that ROOT the unit (Pinned) and therefore stop a voluntary walk.
+local TRAP_STOPS_WALK = {
+	["Bear Trap"]  = true,
+	["Snare Trap"] = true,
+}
+
+-- Return the live, not-yet-consumed step-on trap instance at (x,y), or nil.
+function ObjectEffectService.GetTriggeredTrapAt(state: any, x: any, y: any): any
+	if not (state and state.objects) then return nil end
+	for _, o in ipairs(state.objects) do
+		if o.x == x and o.y == y then
+			local def = o.type and ObjectData.Objects[o.type]
+			if isStepOnTrap(def) then return o end
+			return nil  -- one object per tile; if it's not a trap, nothing to trigger
+		end
+	end
+	return nil
+end
+
+-- Fire ONE step-on trap: run its effect via the shared Resolve dispatcher (which
+-- enforces the "Once" usage gate), then remove the object ("removed after
+-- activation") and tell clients to drop the sprite. A final UnitStateChanged
+-- guarantees any direct HP/RT mutation (e.g. Snare's +RT) reaches the client.
+-- Returns { fired, stops, killed }.
+function ObjectEffectService.TriggerTrap(actor: any, inst: any, state: any, allUnits: any): any
+	if not (actor and inst and actor.isAlive) then return { fired = false } end
+	local def = inst.type and ObjectData.Objects[inst.type]
+	if not isStepOnTrap(def) then return { fired = false } end
+	local ok = ObjectEffectService.Resolve(actor, inst, state, allUnits)
+	if not ok then return { fired = false } end
+	-- Single-use traps are removed after firing ("removed after activation").
+	-- Persistent traps (uses = "Unlimited", e.g. Spike area-denial) stay on the
+	-- tile and re-spring on the next crossing — do NOT remove or drop the sprite.
+	if (def.uses or "Once") ~= "Unlimited" then
+		ObjectEffectService.RemoveObjectInstance(state, inst)
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+			BattleVisualBroadcaster.ObjectChanged(inst.x, inst.y, { destroyed = true })
+		end
+	end
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+		BattleVisualBroadcaster.UnitStateChanged(actor)
+	end
+	local killed = (actor.isAlive == false) or ((actor.currentHp or 1) <= 0)
+	local stops = (TRAP_STOPS_WALK[inst.type] == true) or killed
+	print(string.format("[ObjectEffectService] TRAP SPRUNG | %s on %s at (%s,%s) | stops=%s killed=%s",
+		tostring(inst.type), tostring(actor.name), tostring(inst.x), tostring(inst.y),
+		tostring(stops), tostring(killed)))
+	return { fired = true, stops = stops, killed = killed }
+end
+
+-- Explosion-chain hook: if an EXPLOSIVE object (Bomb Barrel / Land Mine) sits at
+-- (x,y), remove it and signal the caller (the explosion queue) to chain a new
+-- explosion event at this tile within the SAME queue. Consume-once. Returns true
+-- if an explosive was consumed here.
+function ObjectEffectService.ConsumeExplosiveObjectAt(state: any, x: any, y: any): boolean
+	if not (state and state.objects) then return false end
+	for _, o in ipairs(state.objects) do
+		if o.x == x and o.y == y then
+			local def = o.type and ObjectData.Objects[o.type]
+			if def and objHasTag(def, "Explosive") then
+				ObjectEffectService.RemoveObjectInstance(state, o)
+				if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+					BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
+				end
+				return true
+			end
+			return false
+		end
+	end
+	return false
 end
 
 return ObjectEffectService

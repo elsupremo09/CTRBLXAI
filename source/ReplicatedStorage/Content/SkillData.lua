@@ -1,5 +1,5 @@
 -- SkillData.lua
--- Auto-generated Content Registry: Skills (108 entries)
+-- Auto-generated Content Registry: Skills (110 entries)
 -- Do not edit manually. Regenerate from CTRBLXAI.db.
 
 local SkillData = {
@@ -2145,6 +2145,52 @@ local SkillData = {
 		triggerType = "Active",
 		specialRules = "Ground-target object-placing skill (NOT a summon — isSummon not set). On commit the ground-target branch calls ObjectEffectService.PlaceObjectInstance(createsObject, tileX, tileY). createsObject must exactly match the ObjectData key \"Ice Spike\". Instant placement (Channel 0). No direct damage, no applied status. Area-denial / blocking utility. First of a reusable skill-placed blocker family (future: Earth Column, Magic Wall, Spike Column, Flesh Wall) sharing the same createsObject + Target Rules = Empty Tile pattern. Placeholder first-pass values (RT/MP/range) pending user tuning.",
 		meta = "First-pass draft 2026-10-17. First skill using createsObject field (object placement). Values are placeholders to be tuned.",
+	},
+	["SKL-RESTOCK"] = {
+		name = "Restock",
+		icon = "",
+		description = "Channel to recover one use charge to each of your equipped consumable items.",
+		tags = {"Utility", "Support"},
+		properties = "Channeled self-buff (no projectile). Potency: None, Passives: None",
+		targetRules = "Self",
+		rtCostFormula = "round(70 + 0.25 × L)",
+		mpCostFormula = "round(3 + 0.08 × (L - 1))",
+		channelTime = 100,
+		activationTime = 0,
+		powerFormula = "0",
+		rtDelayFormula = "0",
+		targetingRange = "Self (0)",
+		pattern = "Self",
+		duration = "Instant",
+		reapplicationStacking = "None",
+		effects = "Recovers 1 use charge to EACH equipped Consumable Item on the caster, capped at each item's maximum charges. No damage and no status applied; the recharge is applied once on activation.",
+		snapshotTiming = "At commitment; persistent/created effects snapshot when created as authored",
+		triggerType = "Active",
+		specialRules = "Channeled; self-target; applies no damage and no status - only restores consumable charges. Power is 0 (pure utility). Interruptible by Silence/Stun per standard channel rules.",
+		meta = "NEEDS CALIBRATION (baseline): Channel 100, RT round(70 + 0.25 x L), MP round(3 + 0.08 x (L-1)); Simulator to finalize. Power = 0 by design (no damage). Battle resolution branch PENDING (not yet wired) - to be added in CommandService.ActivateChanneledSkill.",
+	},
+	["SKL-REPAIR"] = {
+		name = "Repair",
+		icon = "",
+		description = "Channel on a nearby object or deployable to fully restore its durability.",
+		tags = {"Utility", "Support"},
+		properties = "Channeled object-target (no projectile). Potency: None, Passives: None",
+		targetRules = "Object (a friendly/neutral object/deployable/gadget; target must be an object, not a unit)",
+		rtCostFormula = "round(70 + 0.25 × L)",
+		mpCostFormula = "round(3 + 0.08 × (L - 1))",
+		channelTime = 100,
+		activationTime = 0,
+		powerFormula = "0",
+		rtDelayFormula = "0",
+		targetingRange = "Fixed 3; Bonus Skill Range Inheritance = 0%",
+		pattern = "Authored Single",
+		duration = "Instant",
+		reapplicationStacking = "None",
+		effects = "Fully restores the HP (hit points / remaining hits) of a target object within range 3, including deployables/gadgets. Restores a 3-hit gadget back to full 3 hits, or a structure's HP pool to its formula max. No damage.",
+		snapshotTiming = "At commitment; persistent/created effects snapshot when created as authored",
+		triggerType = "Active",
+		specialRules = "Channeled; targets an object/deployable within range 3; fully resets its remaining hits (or HP) to max. Power is 0 (pure utility). Interruptible per standard channel rules.",
+		meta = "NEEDS CALIBRATION (baseline): Channel 100, RT round(70 + 0.25 x L), MP round(3 + 0.08 x (L-1)); Simulator to finalize. Power = 0 by design (no damage). Battle resolution branch PENDING (not yet wired) - to be added in CommandService.ActivateChanneledSkill.",
 	},
 }
 

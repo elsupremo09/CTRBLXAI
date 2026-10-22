@@ -544,7 +544,151 @@ Theme.ItemTile = {
 	NameBgTransparency = 0.4,
 	NameTextColor    = Theme.Colors.TextPrimary,  -- white, always
 	NameAlignment    = "Left",    -- left-aligned, never centered
+	-- Extra tokens for Theme.MakeItemTile (the shared inventory-tile builder below).
+	IconInsetFactor  = 0.05,      -- icon inset = round(cellW * this), min IconInsetMin
+	IconInsetMin     = 3,
+	CountBadgeW      = 22,        -- top-right count badge width (px)
+	CountBadgeH      = 12,
+	CountBadgeFromRight = 24,     -- badge x-offset from the right edge (px)
+	CountBadgeBg     = Color3.fromRGB(0, 0, 0),
+	CountBadgeBgTransparency = 0.4,
+	NameBarHeight    = 26,        -- bottom name strip height (px) — fits TWO wrapped lines (2026-10-20)
 }
+
+--- SHARED INVENTORY ITEM TILE (2026-10-20). The single source of truth for the
+--- inventory tile look the user approved on the Loadout Consumables grid (which itself
+--- mirrors the Gears tile): a category/rarity-colored background tint + UIStroke border,
+--- an INSET square icon in the upper area, an optional top-right count badge, and a
+--- bottom name strip (accent-colored, left-aligned, truncated). Built so merchant screens
+--- and any future inventory screen render tiles identically by calling this one function
+--- instead of re-deriving the layout. Creates its own instances (does NOT depend on any
+--- screen-local makeLabel). Returns the tile TextButton so callers may parent extra
+--- overlays onto it (e.g. the Gears equipped "E" marker / NEW badge) without this builder
+--- needing to know about them.
+---
+--- opts:
+---   parent      Instance   (required) where the tile is parented (a UIGridLayout container)
+---   accentColor Color3     tints the bg, border, and name text (rarity color or category color)
+---   cellW       number     current grid cell width in px; drives the inset icon square
+---   icon        string?    rbxassetid for the icon image; if absent/non-asset, iconText is used
+---   iconText    string?    fallback glyph/letter shown when there is no image icon
+---   name        string?    bottom-strip label text
+---   countText   string?    top-right badge text (e.g. "x5"); nil = no badge
+---   selected    boolean?   selection highlight (gold stroke + highlight bg)
+---   layoutOrder number?    LayoutOrder within the grid
+---   onClick     function?  MouseButton1Click handler
+--- Returns: the tile TextButton.
+function Theme.MakeItemTile(opts)
+	opts = opts or {}
+	local t = Theme.ItemTile
+	local accent = opts.accentColor or Theme.Colors.TextSecondary
+	local cellW = opts.cellW or 72
+	local iconInset = math.max(t.IconInsetMin, math.round(cellW * t.IconInsetFactor))
+
+	local tile = Instance.new("TextButton")
+	tile.Size = UDim2.new(1, 0, 1, 0)  -- sized by the container UIGridLayout CellSize
+	if opts.selected then
+		tile.BackgroundColor3 = t.SelectedBgColor
+		tile.BackgroundTransparency = t.SelectedBgTransparency
+	else
+		tile.BackgroundColor3 = accent
+		tile.BackgroundTransparency = t.BgTransparency
+	end
+	tile.BorderSizePixel = 0
+	tile.Text = ""
+	tile.AutoButtonColor = true
+	tile.LayoutOrder = opts.layoutOrder or 0
+	tile.Parent = opts.parent
+	Instance.new("UICorner", tile).CornerRadius = UDim.new(0, t.CornerRadius)
+	local stroke = Instance.new("UIStroke", tile)
+	stroke.Color = opts.selected and Theme.Colors.TextGold or accent
+	stroke.Thickness = opts.selected and t.SelectedStrokeThickness or t.StrokeThickness
+
+	-- Count badge (top-right)
+	if opts.countText then
+		local badge = Instance.new("Frame")
+		badge.Size = UDim2.new(0, t.CountBadgeW, 0, t.CountBadgeH)
+		badge.Position = UDim2.new(1, -t.CountBadgeFromRight, 0, 2)
+		badge.BackgroundColor3 = t.CountBadgeBg
+		badge.BackgroundTransparency = t.CountBadgeBgTransparency
+		badge.BorderSizePixel = 0
+		badge.ZIndex = 3
+		badge.Parent = tile
+		Instance.new("UICorner", badge).CornerRadius = UDim.new(0, 3)
+		local bl = Instance.new("TextLabel")
+		bl.Size = UDim2.fromScale(1, 1)
+		bl.BackgroundTransparency = 1
+		bl.BorderSizePixel = 0
+		bl.Font = Theme.Font.Mono
+		bl.TextSize = Theme.Text.Badge()
+		bl.TextColor3 = Theme.Colors.TextPrimary
+		bl.Text = opts.countText
+		bl.TextXAlignment = Enum.TextXAlignment.Center
+		bl.ZIndex = 3
+		bl.Parent = badge
+	end
+
+	-- Icon: inset square in the upper area (image), else a centered text fallback.
+	if opts.icon and string.find(opts.icon, "rbxassetid://") then
+		-- Icon fills the area from the top inset down to just above the name strip (2026-10-20:
+		-- was a fixed cellW square; a 2-line name bar would have overlapped it). ScaleType.Fit
+		-- keeps the image aspect-correct and centered inside this box, and it self-adjusts to
+		-- any cell height (the tile fills the grid cell, so scale-1 height = full cell).
+		local ico = Instance.new("ImageLabel")
+		ico.Size = UDim2.new(1, -iconInset * 2, 1, -(iconInset + t.NameBarHeight + 2))
+		ico.Position = UDim2.fromOffset(iconInset, iconInset)
+		ico.BackgroundTransparency = 1
+		ico.Image = opts.icon
+		ico.ScaleType = Enum.ScaleType.Fit
+		ico.ZIndex = 2
+		ico.Parent = tile
+	elseif opts.iconText then
+		local il = Instance.new("TextLabel")
+		il.Size = UDim2.new(1, 0, 0, 28)
+		il.Position = UDim2.new(0, 0, t.IconYScale, 0)
+		il.BackgroundTransparency = 1
+		il.BorderSizePixel = 0
+		il.Font = Theme.Font.Primary
+		il.TextSize = 24
+		il.TextColor3 = Theme.Colors.TextPrimary
+		il.Text = opts.iconText
+		il.TextXAlignment = Enum.TextXAlignment.Center
+		il.ZIndex = 2
+		il.Parent = tile
+	end
+
+	-- Name strip (bottom)
+	if opts.name then
+		local nameBg = Instance.new("Frame")
+		nameBg.Size = UDim2.new(1, 0, 0, t.NameBarHeight)
+		nameBg.Position = UDim2.new(0, 0, 1, -t.NameBarHeight)
+		nameBg.BackgroundColor3 = t.NameBgColor
+		nameBg.BackgroundTransparency = t.NameBgTransparency
+		nameBg.BorderSizePixel = 0
+		nameBg.ZIndex = 3
+		nameBg.Parent = tile
+		local nl = Instance.new("TextLabel")
+		nl.Size = UDim2.new(1, -4, 1, 0)
+		nl.Position = UDim2.new(0, 2, 0, 0)
+		nl.BackgroundTransparency = 1
+		nl.BorderSizePixel = 0
+		nl.Font = Theme.Font.Primary
+		nl.TextSize = Theme.Text.Small()
+		nl.TextColor3 = accent
+		nl.Text = opts.name
+		nl.TextXAlignment = Enum.TextXAlignment.Left
+		nl.TextYAlignment = Enum.TextYAlignment.Center
+		nl.TextWrapped = true   -- 2026-10-20: wrap long names onto a second line instead of clipping
+		nl.TextTruncate = Enum.TextTruncate.AtEnd
+		nl.ZIndex = 3
+		nl.Parent = nameBg
+	end
+
+	if opts.onClick then
+		tile.MouseButton1Click:Connect(opts.onClick)
+	end
+	return tile
+end
 
 --- Creates a standard full-screen ScreenGui + root Frame + decorative border.
 --- Returns screenGui, rootFrame.
@@ -844,6 +988,15 @@ Theme.IconButtonAssets = {
 	Back    = "rbxassetid://121150899495320",
 	Confirm = "rbxassetid://106679295261353",
 	Options = "rbxassetid://83722919579541",
+	-- Expanded icon palette (2026-10-19, user: full button set, no 3-design limit).
+	-- Same dark-stone/gold square style as Back/Confirm/Options; creator El_Pi0818.
+	Help         = "rbxassetid://125262039666446",
+	Favorite     = "rbxassetid://91093365704823",
+	CycleCompare = "rbxassetid://120208247677593",
+	Cogwheel     = "rbxassetid://77828267783167",
+	X            = "rbxassetid://91768764354556",
+	Plus         = "rbxassetid://119616103667863",
+	Minus        = "rbxassetid://74853775677105",
 }
 
 -- Button labels that are drawn as icons instead of text (matched case-insensitively).
@@ -852,6 +1005,13 @@ local ICON_FOR_TEXT = {
 	CONFIRM = "Confirm", EXECUTE = "Confirm", CONTINUE = "Confirm",
 	EQUIP = "Confirm", ["START BATTLE"] = "Confirm",
 	OPTIONS = "Options",
+	-- Expanded icon palette (2026-10-19). Stat +/- and Unequip get dedicated icons.
+	-- Note: before this, "+","-","UNEQUIP" fell through to the Confirm checkmark,
+	-- so Equip and Unequip looked identical. UNEQUIP -> X fixes that everywhere.
+	["+"] = "Plus", ["-"] = "Minus",
+	["X"] = "X", UNEQUIP = "X", DETACH = "X",
+	HELP = "Help", FAVORITE = "Favorite",
+	["CYCLE COMPARE"] = "CycleCompare", COGWHEEL = "Cogwheel",
 }
 
 function Theme.IconKindForText(text: string?): string?

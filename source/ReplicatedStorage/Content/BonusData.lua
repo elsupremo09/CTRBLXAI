@@ -162,7 +162,7 @@ BonusData.NumericalAttributes = {
 }
 
 --------------------------------------------------
--- BONUS PASSIVES (36 entries)
+-- BONUS PASSIVES (55 entries)
 --------------------------------------------------
 
 BonusData.BonusPassives = {
@@ -187,7 +187,7 @@ BonusData.BonusPassives = {
 	["PAS-019"] = { name = "Electric Transformation", bpCost = 150, minRarity = "Rare", eligible = "NonElementalWeapons", slotCost = 1, desc = "Weapon gains Electric tag and approved Electric interactions." },
 	["PAS-020"] = { name = "Dark Transformation", bpCost = 170, minRarity = "Epic", eligible = "NonElementalWeapons", slotCost = 1, desc = "Weapon gains Dark tag and approved Dark interactions." },
 	["PAS-021"] = { name = "Holy Transformation", bpCost = 170, minRarity = "Epic", eligible = "NonElementalWeapons", slotCost = 1, desc = "Weapon gains Holy tag and approved Holy interactions." },
-	["PAS-022"] = { name = "Poison Transformation", bpCost = 170, minRarity = "Epic", eligible = "NonElementalWeapons", slotCost = 1, desc = "Weapon gains Poison tag and approved Poison interactions." },
+	["PAS-022"] = { name = "Poisonous", bpCost = 170, minRarity = "Epic", eligible = "Weapons", slotCost = 1, desc = "On hit, apply the Poison debuff (from elements_statuses: 5 turns, round(Max HP x 0.15 x Debuff Resistance x Boss HP% Modifier) per tick, Undead immune, reapplication refreshes duration). Does NOT re-type the weapon's damage. Distinct from the old damage-type transformation." },
 	["PAS-023"] = { name = "Cleave Conversion", bpCost = 200, minRarity = "Epic", eligible = "SingleTargetMelee", slotCost = 1, desc = "Replace Single pattern with Cleave." },
 	["PAS-024"] = { name = "Line 2 Conversion", bpCost = 200, minRarity = "Epic", eligible = "SingleTargetThrust", slotCost = 1, desc = "Replace Single pattern with Line 2." },
 	["PAS-025"] = { name = "Impact Splash Conversion", bpCost = 200, minRarity = "Epic", eligible = "SingleTargetRanged", slotCost = 1, desc = "Replace Single pattern with approved Impact Splash." },
@@ -201,7 +201,26 @@ BonusData.BonusPassives = {
 	["PAS-033"] = { name = "Holy Ward", bpCost = 170, minRarity = "Epic", eligible = "ArmorShield", slotCost = 1, desc = "Incoming Holy-tagged direct damage ×0.75." },
 	["PAS-034"] = { name = "Quickdraw Pouch", bpCost = 90, minRarity = "Uncommon", eligible = "Accessories", slotCost = 1, desc = "Item RT Cost ×0.75 after authored eligibility checks and combined-RT calculations." },
 	["PAS-035"] = { name = "Guard Bonus +15%", bpCost = 120, minRarity = "Rare", eligible = "ShieldsArmor", slotCost = 1, desc = "Guard mitigation +15 percentage points, subject to global Guard cap." },
-	["PAS-036"] = { name = "Push RT x0.75", bpCost = 60, minRarity = "Uncommon", eligible = "Gloves", slotCost = 1, desc = "Push RT Cost ×0.75 with the authored drawback if copied as the full passive." },
+	["PAS-036"] = { name = "Push RT ×0.75", bpCost = 60, minRarity = "Uncommon", eligible = "Gloves", slotCost = 1, desc = "Push RT Cost ×0.75 with the authored drawback if copied as the full passive." },
+	["PAS-037"] = { name = "Ignite", bpCost = 150, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "On hit, apply Burn. Ignite's stored Burn = round(Fire Damage Dealt x 0.25) (overrides the base Burn 20% for this source only). Additionally, if the carrier's Basic Attack or Skill would otherwise be non-elemental (Physical), it executes as Fire. Burn ticks, duration, reapplication (adds stored + refreshes), and Water removal follow the base Burn status." },
+	["PAS-038"] = { name = "Backstab", bpCost = 120, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "+50% final damage when attacking from behind (rear facing zone)." },
+	["PAS-039"] = { name = "Executioner", bpCost = 110, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "+30% final damage vs targets below 25% HP." },
+	["PAS-040"] = { name = "Drain", bpCost = 120, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "Heal 5% of final damage dealt per hit." },
+	["PAS-041"] = { name = "Bypass", bpCost = 140, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "Ignores target Guard mitigation on the hit." },
+	["PAS-042"] = { name = "True Strike", bpCost = 150, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "Hit Quality cannot go below 100% (ignores evasion-driven reduction)." },
+	["PAS-043"] = { name = "Precision Strike", bpCost = 130, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "+15% Hit Quality on Basic Attacks." },
+	["PAS-044"] = { name = "Tricky", bpCost = 130, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "Ignore 40% of target Evasiveness." },
+	["PAS-045"] = { name = "High Ground", bpCost = 100, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "When attacking from higher elevation than target, increase the elevation damage bonus by 35%. Only when attacker has elevation advantage." },
+	["PAS-046"] = { name = "Bulwark", bpCost = 150, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "Add 25% of base Weapon Defense to base Weapon Damage before STR scaling." },
+	["PAS-047"] = { name = "Reap", bpCost = 100, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "Heal 5% of total Cleave damage dealt." },
+	["PAS-048"] = { name = "Pull", bpCost = 150, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "On hit, drag target floor(Force/2) tiles toward the attacker. Force = 1 + floor(STR/60)." },
+	["PAS-049"] = { name = "Charge", bpCost = 130, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "+6% bonus damage per tile moved this turn before attacking." },
+	["PAS-050"] = { name = "Venomous", bpCost = 150, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "On hit, apply the Venom debuff (from elements_statuses: unlimited until cured, round(Max HP x 0.03 x Venom Strength x Debuff Resistance x Boss HP% Modifier) per tick, Venom Strength +1 on reapplication, each qualifying heal reduces Venom Strength by 1 and removes at 0, Undead immune). Venomous handles APPLICATION only; the Venom effect follows the authored status." },
+	["PAS-051"] = { name = "Piercing Edge", bpCost = 120, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "Use 80% of target Defense for eligible weapon attacks (effective Defense x0.80 before resolution)." },
+	["PAS-052"] = { name = "Lacerate", bpCost = 140, minRarity = "Rare", eligible = "Weapons", slotCost = 1, desc = "On hit, apply Bleed (from elements_statuses: 2000 CT, bonus damage round(Max HP x 0.05 x Debuff Resistance x Boss HP% Modifier) when physical damage reduces HP; reapplication refreshes and applies Raptured; healing removes the family; Undead immune; a fully-blocking barrier prevents the trigger)." },
+	["PAS-053"] = { name = "Freeze", bpCost = 180, minRarity = "Epic", eligible = "Weapons", slotCost = 1, desc = "On hit, apply Frozen (from elements_statuses: 3 turns, all RT costs including Movement RT x2, incoming Physical and Water damage x1.50; Fire damage x0.50 then removes Frozen; reapplication refreshes duration). Does not prevent movement or actions." },
+	["PAS-054"] = { name = "Lullaby", bpCost = 200, minRarity = "Epic", eligible = "Weapons", slotCost = 1, desc = "On hit, apply Sleep (from elements_statuses: 2 turns, target auto-Rests each turn, recovers 3% HP/MP per 200 CT, hard CC that removes Guard on application; ANY damage removes Sleep immediately, so this is only useful on very-low-damage carriers; cannot be reapplied/refreshed while active; grants Oversleep on expiry)." },
+	["PAS-055"] = { name = "Expanded Bandolier", bpCost = 150, minRarity = "Rare", eligible = "Accessories", slotCost = 1, desc = "Equipped Item slot capacity +1." },
 }
 
 --------------------------------------------------

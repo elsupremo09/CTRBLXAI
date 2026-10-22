@@ -659,7 +659,8 @@ function GuildMenuService.SyncBattleRoster(allUnitsList: { any }, deployCap: num
 		end
 	end
 
-	-- 3) bench beyond the cap (starting units first, then hires in hire order)
+	-- 3) bench beyond the cap, from the END of the list. List order is: starting units
+	--     first, then the rest in id-sorted order per the Stage 2 roster snapshot (2026-10-19).
 	benchedThisBattle = {}
 	local cap = math.max(1, math.min(MAX_DEPLOY, math.floor(deployCap or MAX_DEPLOY)))
 	local count = 0

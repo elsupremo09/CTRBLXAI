@@ -30,6 +30,25 @@ local GameConstants = require(
 		:WaitForChild("GameConstants")
 )
 
+-- Skill Potency applies ONLY to skills whose authored DB formula declares it
+-- (CTRBLXAI.db core_stats id 31: "Skill Potency does not apply to a Skill formula
+-- unless the Skill explicitly declares it"). Built once from SkillData.powerFormula
+-- (generated from the DB) so the set always matches the authored data — no hardcoded
+-- list, no drift. 65/108 skills declare it. (2026-10-19 fix: replaces an earlier
+-- blanket apply that wrongly scaled all 108.)
+local SkillData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("SkillData")
+)
+local POTENCY_DECLARED = {}
+for skillId, def in pairs(SkillData) do
+	local pf = type(def) == "table" and def.powerFormula
+	if type(pf) == "string" and string.find(string.lower(pf), "skill potency", 1, true) then
+		POTENCY_DECLARED[skillId] = true
+	end
+end
+
 local CombatResolver = {}
 
 -- Optional: TileEffectService injected at runtime (DI, mirrors CommandService/
@@ -42,6 +61,45 @@ function CombatResolver.SetTileEffectService(tes)
 	if RacePassiveService.SetTileEffectService then
 		RacePassiveService.SetTileEffectService(tes)
 	end
+end
+
+-- PHASE 2 — ELECTRIC SHOCK accumulator (project_rules 146-147). ApplyOutcome buffers
+-- each Electric hit of the CURRENT action here; CommandService calls FlushElectricShock
+-- once at the end of the action (after all targets are hit) so the shock knows the
+-- biggest final hit and can exclude ALL initial targets. _electricEvent.hits is a list
+-- of { id, x, y, dmg }. Buffer-based so multi-target (Cleave/AOE/Chain) electric
+-- attacks produce ONE shock, not one per target.
+local _electricEvent = { hits = {}, ownerId = nil }
+
+-- Buffer one Electric hit for the pending shock (called from ApplyOutcome).
+local function bufferElectricHit(target, finalDmg, attacker)
+	if not (target and target.tileX and target.tileY) then return end
+	table.insert(_electricEvent.hits, {
+		id = target.id, x = target.tileX, y = target.tileY, dmg = finalDmg or 0,
+	})
+	_electricEvent.ownerId = attacker and attacker.id or _electricEvent.ownerId
+end
+
+-- Resolve + clear the buffered Electric shock. Called by CommandService once per
+-- action, after the if/elseif action chain. nil-safe if no electric hits occurred.
+function CombatResolver.FlushElectricShock(allUnits)
+	local hits = _electricEvent.hits
+	if #hits == 0 then return end
+	local ownerId = _electricEvent.ownerId
+	-- reset buffer BEFORE resolving so a re-entrant path can't double-fire
+	_electricEvent = { hits = {}, ownerId = nil }
+	if not (_tileEffectService and _tileEffectService.ResolveElectricShock) then return end
+
+	local biggest = 0
+	local excludeIds = {}
+	local seedTiles = {}
+	for _, h in ipairs(hits) do
+		if h.dmg > biggest then biggest = h.dmg end
+		excludeIds[h.id] = true
+		table.insert(seedTiles, { x = h.x, y = h.y })  -- seed = tile the target stood on
+	end
+	if biggest <= 0 then return end
+	_tileEffectService.ResolveElectricShock(seedTiles, biggest, excludeIds, ownerId, allUnits)
 end
 
 -- Weather passive element-damage modifier (Rain/Heatwave/Dark Eclipse/Holy Aurora/
@@ -463,33 +521,30 @@ end
 function CombatResolver.EstimateSkillPower(attacker, skillDef)
 	local aStats = attacker.effectiveStats or {}
 	local weaponDamage = attacker.weaponDamage or 10
+	local int = aStats.INT or 10
 	local sp = weaponDamage * (skillDef.power or 1.0)
 	if skillDef.inheritStr then
 		sp = GameConstants.CalcAttackPower(sp, aStats.STR)
 	end
-	-- SKL-LUCKY-STRIKE signature recipe (DB skills powerFormula): its damage scales
-	-- with the caster's LUK on top of the Weapon Attack Power base, and also folds in
-	-- the Skill Potency Multiplier (the plain skill path has no potency term, so it
-	-- is applied here only for Lucky Strike). Combat Fortune still applies downstream
-	-- in ResolveSkill, unchanged (per the skill's authored notes).
+	-- Apply the authored Skill Potency Multiplier = 1 + INT/(200+INT) ONLY to skills whose
+	-- DB formula declares it (POTENCY_DECLARED, built above). This fixes the Fire Bolt
+	-- zero-damage bug (INT now scales declared skills) WITHOUT over-applying to the 43
+	-- utility/buff/summon/shield skills that do not declare potency (CTRBLXAI.db core_stats
+	-- id 31). Downstream race/doctrine/trait potency modifiers in ResolveSkill still apply.
+	if skillDef.id and POTENCY_DECLARED[skillDef.id] then
+		sp = sp * GameConstants.CalcSkillPotency(int)
+	end
+	-- SKL-LUCKY-STRIKE signature recipe (DB powerFormula): additional LUK scaling on top
+	-- of the Weapon-Attack-Power x Skill-Potency base above.
 	--   LUK Power Bonus = 0.75 x LUK / (100 + LUK)
-	--   Power = Weapon Attack Power x (1 + LUK Power Bonus) x Skill Potency Multiplier
 	if skillDef.id == "SKL-LUCKY-STRIKE" then
 		local luk = aStats.LUK or 10
-		local int = aStats.INT or 10
-		local lukPowerBonus = 0.75 * luk / (100 + luk)
-		sp = sp * (1 + lukPowerBonus) * GameConstants.CalcSkillPotency(int)
+		sp = sp * (1 + 0.75 * luk / (100 + luk))
 	end
-	-- DOC-SPELLBLADE-01 "Arcane Strike" signature recipe (DB/SkillData powerFormula):
-	-- Power = Weapon Attack Power x 1.00 x Skill Potency Multiplier, PLUS a flat
-	-- INT/2 bonus to Skill Power applied BEFORE Defense. The generic skill-power
-	-- path has no potency term and no INT flat term, so BOTH are applied here,
-	-- keyed to this id only (no other skill's damage changes). Combat Fortune and
-	-- Defense still apply downstream in ResolveSkill, unchanged. This branch sits
-	-- alongside the SKL-LUCKY-STRIKE branch above and does not alter it.
+	-- DOC-SPELLBLADE-01 "Arcane Strike" (DB powerFormula): flat +INT/2 added to Skill
+	-- Power AFTER the potency multiply above, BEFORE Defense (applied downstream).
 	if skillDef.id == "DOC-SPELLBLADE-01" then
-		local int = aStats.INT or 10
-		sp = sp * GameConstants.CalcSkillPotency(int) + int / 2
+		sp = sp + int / 2
 	end
 	return sp
 end
@@ -576,9 +631,9 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	-- Doctrine passive modifiers (Slice 4H)
 	local docSkillPotency = DoctrinePassiveService.GetSkillPotencyModifier(attacker)
 	-- Race Skill Potency (INT contribution) boost -- Celestial Holy / Demon Dark
-	-- SKILLS only (2026-10-02). NOTE: the skill DAMAGE formula has no INT Skill
-	-- Potency term today, so the boost is applied at this skill-potency slot as the
-	-- ratio (1 + 1.20p) / (1 + p) -- see RacePassiveService.GetSkillPotencyMultiplier.
+	-- SKILLS only (2026-10-02). The base Skill Potency (1 + p) is now applied in
+	-- EstimateSkillPower, so this Holy/Dark boost is the ratio (1 + 1.20p)/(1 + p),
+	-- yielding net (1 + 1.20p). See RacePassiveService.GetSkillPotencyMultiplier.
 	local raceSkillPotency = RacePassiveService.GetSkillPotencyMultiplier(attacker, skillDef.tags, aStats and aStats.INT)
 	local docDealtMod = DoctrinePassiveService.GetDamageDealtModifier(attacker, defender, skillElement, true, false, nil)
 	local docRecvMod  = DoctrinePassiveService.GetDamageReceivedModifier(defender, attacker, skillElement, true)
@@ -970,6 +1025,27 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- Skips if the same status was already applied by appliesStatus above.
 	if outcome.element and actual > 0 and target.isAlive then
 		applyElementStatusTriggers(outcome.sourceUnitId or "unknown", target, outcome.element, actual, statusApplied, attacker)
+	end
+
+	-- PHASE 3a — WEAPON/SKILL ELEMENT → TERRAIN BRIDGE. The element that hit the
+	-- target also touches the TILE the target stands on (tile-keyed reaction, rule
+	-- 140): a Fire hit on a unit standing on Grassland ignites the grass, etc. Routed
+	-- through the shared Phase 0 doorway, which handles effect reaction / deferred or
+	-- instant terrain transform / secondary. Runs on any elemental hit (Physical is a
+	-- no-op inside the doorway). Independent of whether the unit survived.
+	if outcome.element and _tileEffectService and _tileEffectService.ResolveElementOnTile
+		and target.tileX and target.tileY then
+		_tileEffectService.ResolveElementOnTile(
+			target.tileX, target.tileY, outcome.element,
+			outcome.sourceUnitId or (attacker and attacker.id) or "unknown", nil
+		)
+	end
+
+	-- PHASE 2 — buffer an Electric hit for the end-of-action shock reaction. Uses the
+	-- FINAL post-mitigation damage (actual). The shock itself resolves in
+	-- CommandService via FlushElectricShock once all targets are hit.
+	if outcome.element == "Electric" and actual > 0 then
+		bufferElectricHit(target, actual, attacker)
 	end
 
 	-- Confuse backlash: when a confused unit deals damage, it takes

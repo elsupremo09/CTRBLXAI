@@ -157,29 +157,102 @@ end
 -- STEP 4: Build eligible passive pool
 --------------------------------------------------
 
-local function step4_BuildPassivePool(rarity, archetype, bonusBp)
+-- Gear-type eligibility model (user ruling 2026-10-20):
+--   * Ordinary weapon passives roll on ANY weapon, off-hand, or gloves
+--     (off-hands use their own base stats; gloves = fist-strike inheritance).
+--   * Armor/shield/accessory/glove passives roll by gear slot.
+--   * TWO shape exceptions are kept, and they are REAL WEAPONS ONLY (never
+--     off-hands or gloves) so they can't clash with a main-hand's identity:
+--       - NonElementalWeapons: elemental transforms; excluded on already-
+--         elemental weapons.
+--       - SingleTarget* : pattern conversions; single-target weapons only.
+-- All weapon-subtype labels (HighDamageMelee, FastWeapons, etc.) collapse to
+-- the single any-weapon test by design. Weights are starting values; the
+-- Simulator agent can retune them without changing eligibility.
+local function step4_BuildPassivePool(rarity, archetype, bonusBp, archetypeId)
 	local pool = {}
-	-- Determine if this archetype is already elemental (via native passive)
+
+	-- A weapon already carrying a native elemental passive cannot take another.
 	local PASSIVE_ELEMENT = {
 		Ignite = true, Freeze = true, Venomous = true,
 	}
-	local isElemental = archetype.nativePassiveId and PASSIVE_ELEMENT[archetype.nativePassiveId] or false
+	local isElemental = archetype.nativePassiveId
+		and PASSIVE_ELEMENT[archetype.nativePassiveId] or false
+
+	-- Off-hands carry no shield/focus field, so the shield set is authored.
+	local SHIELD_OFFHANDS = {
+		["OFF-SHIELD"] = true, ["OFF-BUCKLER"] = true,
+	}
+
+	-- Gear-type facts (computed once).
+	local isWeapon    = archetype.category == "Weapon"
+	local isOffHand   = archetype.category == "OffHand"
+	local isArmor     = archetype.category == "Armor"
+	local isGloves    = isArmor and archetype.slot == "Gloves"
+	local isBody      = isArmor and archetype.slot == "Body"
+	local isAccessory = isArmor and archetype.slot == "Accessory"
+	local isShield    = isOffHand and SHIELD_OFFHANDS[archetypeId] == true
+	-- Can carry ordinary weapon passives. Shape changes are excluded below.
+	local isWeaponish = isWeapon or isOffHand or isGloves
+
 	for passiveId, passive in pairs(BonusData.BonusPassives) do
 		-- Guard: rarity + affordability checks (replaced continue for Luau safety)
 		if BonusData.MeetsMinimumRarity(rarity, passive.minRarity)
 			and passive.bpCost <= bonusBp then
 			local eligible = passive.eligible
+			local weight = nil
+
 			if eligible == "Any" then
-				table.insert(pool, { id = passiveId, passive = passive, weight = 1.0 })
-			elseif eligible == "Weapons" or eligible == "WeaponsOffHands" then
-				if archetype.category == "Weapon" or archetype.category == "OffHand" then
-					table.insert(pool, { id = passiveId, passive = passive, weight = 0.5 })
+				weight = 1.0
+			-- Ordinary weapon passives + all weapon-subtype labels -> any weapon,
+			-- off-hand, or gloves.
+			elseif eligible == "Weapons" or eligible == "WeaponsOffHands"
+				or eligible == "HighDamageMelee" or eligible == "FastWeapons"
+				or eligible == "BluntHeavy" or eligible == "Piercing"
+				or eligible == "Magical" or eligible == "NonSingleTarget"
+				or eligible == "ApprovedRanged" then
+				if isWeaponish then
+					weight = 0.4
 				end
+			-- SHAPE EXCEPTION 1: elemental transform. Real weapons only, never
+			-- an already-elemental weapon, never off-hands/gloves.
 			elseif eligible == "NonElementalWeapons" then
-				if (archetype.category == "Weapon" or archetype.category == "OffHand")
-					and not isElemental then
-					table.insert(pool, { id = passiveId, passive = passive, weight = 0.3 })
+				if isWeapon and not isElemental then
+					weight = 0.3
 				end
+			-- SHAPE EXCEPTION 2: pattern conversions. Single-target weapons only.
+			elseif eligible == "SingleTargetMelee" then
+				if isWeapon and archetype.pattern == "Single"
+					and archetype.projectileType == nil then
+					weight = 0.3
+				end
+			elseif eligible == "SingleTargetThrust" or eligible == "SingleTargetRanged" then
+				if isWeapon and archetype.pattern == "Single"
+					and archetype.projectileType ~= nil then
+					weight = 0.3
+				end
+			-- Elemental wards: any armor piece, shields, or accessories.
+			elseif eligible == "ArmorShield" then
+				if isArmor or isShield then
+					weight = 0.4
+				end
+			-- Guard bonus: shields + body armor.
+			elseif eligible == "ShieldsArmor" then
+				if isShield or isBody then
+					weight = 0.4
+				end
+			elseif eligible == "Accessories" then
+				if isAccessory then
+					weight = 0.3
+				end
+			elseif eligible == "Gloves" then
+				if isGloves then
+					weight = 0.4
+				end
+			end
+
+			if weight ~= nil then
+				table.insert(pool, { id = passiveId, passive = passive, weight = weight })
 			end
 		end
 	end
@@ -471,7 +544,7 @@ function ItemGenerator.Generate(input)
 
 	-- STEP 4: Build passive pool
 	local passivePool = step4_BuildPassivePool(
-		input.rarity, baseInfo.archetype, rarityInfo.bonusBp
+		input.rarity, baseInfo.archetype, rarityInfo.bonusBp, input.baseArchetypeId
 	)
 
 	-- STEP 5: Select passives

@@ -1,0 +1,65 @@
+{
+ "stamp": "20261020_191345",
+ "task": "consumable-slot-unlock system: 2 doctrines, 1 bonus passive, 2 skills, 1 deployable durability rule (+xref)",
+ "user_ruling_date": "2026-10-20",
+ "backup_db_main": "D:\\AI\\Projects\\CTRBLXAI\\docs\\CTRBLXAI.db.20261020_191345.bak",
+ "backup_db_labeled": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_pre_consumable_slot_system_20261020_191345.db",
+ "backup_xlsx": [
+  "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Game_Rules_pre_consumable_slot_20261020_191345.xlsx",
+  "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Build_Plan_pre_consumable_slot_20261020_191345.xlsx",
+  "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_BP_Bonus_Attributes_pre_consumable_slot_20261020_191345.xlsx"
+ ],
+ "counts_before": {
+  "doctrines": 32,
+  "skills": 108,
+  "bonus_passives": 54,
+  "objects_encounters": 84,
+  "consumable_framework": 38
+ },
+ "counts_after": {
+  "doctrines": 34,
+  "skills": 110,
+  "bonus_passives": 55,
+  "objects_encounters": 85,
+  "consumable_framework": 39
+ },
+ "inserted": {
+  "doctrines": [
+   "DOC-CHEMIST",
+   "DOC-ARTIFICER"
+  ],
+  "bonus_passives": [
+   "PAS-055 (id 55)"
+  ],
+  "skills": [
+   "SKL-RESTOCK",
+   "SKL-REPAIR"
+  ],
+  "objects_encounters": [
+   "Deployed Gadget / Object (Deployable-category consumable) [rowid 85]"
+  ],
+  "consumable_framework": [
+   "id 39 Deployable / Gadget durability cross-ref"
+  ]
+ },
+ "xlsx_regenerated": {
+  "CTRBLXAI_Game_Rules.xlsx": [
+   "07 Doctrines (34 data rows)",
+   "05b Skill Catalog (110 data rows)",
+   "17 Objects Encounters (85 rows incl header)"
+  ],
+  "CTRBLXAI_Item_Rarity_BP_Bonus_Attributes 3.xlsx": [
+   "02 Bonus Passives (55 data rows)"
+  ]
+ },
+ "xlsx_not_regenerated": {
+  "CTRBLXAI_Build_Plan.xlsx": "no sheet maps to a changed table",
+  "CTRBLXAI_Consumable_Item_Catalog.xlsx": "00 Overview is a hand-curated view, not a direct consumable_framework mirror; new id-39 row has no column slot there"
+ },
+ "convention_guesses": [
+  "doctrines AI_Personality=Controller (task allowed Controller OR Support; chose Controller per DOC-PLAGUE-DOCTOR precedent)",
+  "skills RT baseline round(70 + 0.25 x L) from SKL-INVIGORATE; MP baseline round(3 + 0.08 x (L-1)) from SKL-BLINK (task said \"e.g.\"); needs-calibration flagged in Meta",
+  "bonus_passives.status set to empty string (table convention for live passives)",
+  "Record 6 deployable durability authored in objects_encounters (home of Breakable(3-hit) convention) with a consumable_framework cross-ref row; NOTE/DEV FLAG raised that existing Deployable consumable_items still use damage-based HP formulas pending reconciliation"
+ ]
+}

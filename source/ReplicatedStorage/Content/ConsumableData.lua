@@ -36,6 +36,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤35% or to prevent probable KO.",
 		tier = "Common",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-002"] = {
 		numericId = 203,
@@ -55,6 +56,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤45%.",
 		tier = "Common",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-003"] = {
 		numericId = 204,
@@ -74,6 +76,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤30% or to prevent probable KO.",
 		tier = "Uncommon",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-004"] = {
 		numericId = 205,
@@ -93,6 +96,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤45%.",
 		tier = "Uncommon",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-005"] = {
 		numericId = 206,
@@ -112,6 +116,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤25% or to prevent probable KO.",
 		tier = "Rare",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-006"] = {
 		numericId = 207,
@@ -131,6 +136,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤35%.",
 		tier = "Rare",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-007"] = {
 		numericId = 208,
@@ -150,6 +156,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when target can survive delayed healing.",
 		tier = "Common",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-008"] = {
 		numericId = 209,
@@ -169,6 +176,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤65% before sustained pressure.",
 		tier = "Uncommon",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-009"] = {
 		numericId = 210,
@@ -188,6 +196,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when MP prevents a decisive Skill.",
 		tier = "Common",
+		icon = "rbxassetid://94088074365737",
 	},
 	["REC-010"] = {
 		numericId = 211,
@@ -207,6 +216,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at MP ≤30%.",
 		tier = "Common",
+		icon = "rbxassetid://94088074365737",
 	},
 	["REC-011"] = {
 		numericId = 212,
@@ -226,6 +236,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use for an urgent high-value Skill.",
 		tier = "Rare",
+		icon = "rbxassetid://94088074365737",
 	},
 	["REC-012"] = {
 		numericId = 213,
@@ -245,6 +256,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at MP ≤25%.",
 		tier = "Rare",
+		icon = "rbxassetid://94088074365737",
 	},
 	["REC-013"] = {
 		numericId = 214,
@@ -264,6 +276,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use on Poison or Venom Strength ≥2.",
 		tier = "Common",
+		icon = "rbxassetid://88407837432299",
 	},
 	["REC-014"] = {
 		numericId = 215,
@@ -283,6 +296,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when wound-family status is active.",
 		tier = "Uncommon",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-015"] = {
 		numericId = 216,
@@ -302,6 +316,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when Burn is active.",
 		tier = "Common",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-016"] = {
 		numericId = 217,
@@ -321,6 +336,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot remove structural conditions.",
 		aiThreshold = "Use when at least two allies benefit.",
 		tier = "Rare",
+		icon = "rbxassetid://88407837432299",
 	},
 	["REC-017"] = {
 		numericId = 218,
@@ -340,6 +356,7 @@ ConsumableData.Items = {
 		restrictions = "KO allies only; cannot restore removed units.",
 		aiThreshold = "Use for an important ally when revival tile is safe.",
 		tier = "Rare",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-018"] = {
 		numericId = 219,
@@ -359,6 +376,7 @@ ConsumableData.Items = {
 		restrictions = "KO allies only.",
 		aiThreshold = "Use to recover a key unit in a difficult encounter.",
 		tier = "Epic",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-019"] = {
 		numericId = 220,
@@ -378,6 +396,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤20%.",
 		tier = "Rare",
+		icon = "rbxassetid://128924841956387",
 	},
 	["REC-020"] = {
 		numericId = 221,
@@ -397,6 +416,7 @@ ConsumableData.Items = {
 		restrictions = "Self-centered; affects allies only.",
 		aiThreshold = "Use when at least three allies gain meaningful recovery.",
 		tier = "Epic",
+		icon = "rbxassetid://88407837432299",
 	},
 
 	-- === DAMAGE ===
@@ -418,6 +438,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-002"] = {
 		numericId = 223,
@@ -437,6 +458,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-003"] = {
 		numericId = 224,
@@ -456,6 +478,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-004"] = {
 		numericId = 225,
@@ -475,6 +498,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-005"] = {
 		numericId = 226,
@@ -494,6 +518,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-006"] = {
 		numericId = 227,
@@ -513,6 +538,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-007"] = {
 		numericId = 228,
@@ -532,6 +558,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-008"] = {
 		numericId = 229,
@@ -551,6 +578,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-009"] = {
 		numericId = 230,
@@ -570,6 +598,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-010"] = {
 		numericId = 231,
@@ -589,6 +618,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-011"] = {
 		numericId = 232,
@@ -608,6 +638,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-012"] = {
 		numericId = 233,
@@ -627,6 +658,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-013"] = {
 		numericId = 234,
@@ -646,6 +678,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-014"] = {
 		numericId = 235,
@@ -665,6 +698,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-015"] = {
 		numericId = 236,
@@ -684,6 +718,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-016"] = {
 		numericId = 237,
@@ -703,6 +738,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-017"] = {
 		numericId = 238,
@@ -722,6 +758,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-018"] = {
 		numericId = 239,
@@ -741,6 +778,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-019"] = {
 		numericId = 240,
@@ -760,6 +798,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://138199827225430",
 	},
 	["DAM-020"] = {
 		numericId = 241,
@@ -779,6 +818,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://138199827225430",
 	},
 
 	-- === CONTROL ===
@@ -800,6 +840,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-002"] = {
 		numericId = 243,
@@ -819,6 +860,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-003"] = {
 		numericId = 244,
@@ -838,6 +880,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-004"] = {
 		numericId = 245,
@@ -857,6 +900,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-005"] = {
 		numericId = 246,
@@ -876,6 +920,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-006"] = {
 		numericId = 247,
@@ -895,6 +940,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-007"] = {
 		numericId = 248,
@@ -914,6 +960,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-008"] = {
 		numericId = 249,
@@ -933,6 +980,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-009"] = {
 		numericId = 250,
@@ -952,6 +1000,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-010"] = {
 		numericId = 251,
@@ -971,6 +1020,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-011"] = {
 		numericId = 252,
@@ -990,6 +1040,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-012"] = {
 		numericId = 253,
@@ -1009,6 +1060,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-013"] = {
 		numericId = 254,
@@ -1028,6 +1080,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-014"] = {
 		numericId = 255,
@@ -1047,6 +1100,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-015"] = {
 		numericId = 256,
@@ -1066,6 +1120,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-016"] = {
 		numericId = 257,
@@ -1085,6 +1140,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-017"] = {
 		numericId = 258,
@@ -1104,6 +1160,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-018"] = {
 		numericId = 259,
@@ -1123,6 +1180,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-019"] = {
 		numericId = 260,
@@ -1142,6 +1200,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["CON-020"] = {
 		numericId = 261,
@@ -1161,6 +1220,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 
 	-- === SUPPORT ===
@@ -1182,6 +1242,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-002"] = {
 		numericId = 263,
@@ -1201,6 +1262,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-003"] = {
 		numericId = 264,
@@ -1220,6 +1282,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-004"] = {
 		numericId = 265,
@@ -1239,6 +1302,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-005"] = {
 		numericId = 266,
@@ -1258,6 +1322,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-006"] = {
 		numericId = 267,
@@ -1277,6 +1342,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-007"] = {
 		numericId = 268,
@@ -1296,6 +1362,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-008"] = {
 		numericId = 269,
@@ -1315,6 +1382,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-009"] = {
 		numericId = 270,
@@ -1334,6 +1402,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-010"] = {
 		numericId = 271,
@@ -1353,6 +1422,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-011"] = {
 		numericId = 272,
@@ -1372,6 +1442,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-012"] = {
 		numericId = 273,
@@ -1391,6 +1462,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-013"] = {
 		numericId = 274,
@@ -1410,6 +1482,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-014"] = {
 		numericId = 275,
@@ -1429,6 +1502,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-015"] = {
 		numericId = 276,
@@ -1448,6 +1522,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-016"] = {
 		numericId = 277,
@@ -1467,6 +1542,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-017"] = {
 		numericId = 278,
@@ -1486,6 +1562,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-018"] = {
 		numericId = 279,
@@ -1505,6 +1582,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-019"] = {
 		numericId = 280,
@@ -1524,6 +1602,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
+		icon = "rbxassetid://100014753110620",
 	},
 	["SUP-020"] = {
 		numericId = 281,
@@ -1543,6 +1622,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
+		icon = "rbxassetid://100014753110620",
 	},
 
 	-- === ENVIRONMENT ===
@@ -1564,6 +1644,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-002"] = {
 		numericId = 283,
@@ -1583,6 +1664,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-003"] = {
 		numericId = 284,
@@ -1602,6 +1684,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-004"] = {
 		numericId = 285,
@@ -1621,6 +1704,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-005"] = {
 		numericId = 286,
@@ -1640,6 +1724,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-006"] = {
 		numericId = 287,
@@ -1659,6 +1744,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-007"] = {
 		numericId = 288,
@@ -1678,6 +1764,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-008"] = {
 		numericId = 289,
@@ -1697,6 +1784,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-009"] = {
 		numericId = 290,
@@ -1716,6 +1804,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-010"] = {
 		numericId = 291,
@@ -1735,6 +1824,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-011"] = {
 		numericId = 292,
@@ -1754,6 +1844,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-012"] = {
 		numericId = 293,
@@ -1773,6 +1864,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-013"] = {
 		numericId = 294,
@@ -1792,6 +1884,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-014"] = {
 		numericId = 295,
@@ -1811,6 +1904,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-015"] = {
 		numericId = 296,
@@ -1830,6 +1924,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-016"] = {
 		numericId = 297,
@@ -1849,6 +1944,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Common",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-017"] = {
 		numericId = 298,
@@ -1868,6 +1964,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-018"] = {
 		numericId = 299,
@@ -1887,6 +1984,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-019"] = {
 		numericId = 300,
@@ -1906,6 +2004,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 	["ENV-020"] = {
 		numericId = 301,
@@ -1925,6 +2024,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
+		icon = "rbxassetid://120372784669630",
 	},
 
 	-- === DEPLOYABLE ===
@@ -1946,6 +2046,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://132376205026178",
 	},
 	["DEP-002"] = {
 		numericId = 303,
@@ -1965,6 +2066,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://127780214033853",
 	},
 	["DEP-003"] = {
 		numericId = 304,
@@ -1984,6 +2086,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://132376205026178",
 	},
 	["DEP-004"] = {
 		numericId = 305,
@@ -2003,6 +2106,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://132376205026178",
 	},
 	["DEP-005"] = {
 		numericId = 306,
@@ -2022,6 +2126,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://108063640572152",
 	},
 	["DEP-006"] = {
 		numericId = 307,
@@ -2041,6 +2146,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://108063640572152",
 	},
 	["DEP-007"] = {
 		numericId = 308,
@@ -2060,6 +2166,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://108063640572152",
 	},
 	["DEP-008"] = {
 		numericId = 309,
@@ -2079,6 +2186,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://127780214033853",
 	},
 	["DEP-009"] = {
 		numericId = 310,
@@ -2098,6 +2206,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://127780214033853",
 	},
 	["DEP-010"] = {
 		numericId = 311,
@@ -2117,6 +2226,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://132376205026178",
 	},
 	["DEP-011"] = {
 		numericId = 312,
@@ -2136,6 +2246,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://127780214033853",
 	},
 	["DEP-012"] = {
 		numericId = 313,
@@ -2155,6 +2266,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://127780214033853",
 	},
 	["DEP-013"] = {
 		numericId = 314,
@@ -2174,6 +2286,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://127780214033853",
 	},
 	["DEP-014"] = {
 		numericId = 315,
@@ -2193,6 +2306,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://127780214033853",
 	},
 	["DEP-015"] = {
 		numericId = 316,
@@ -2212,6 +2326,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://132376205026178",
 	},
 	["DEP-016"] = {
 		numericId = 317,
@@ -2231,6 +2346,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://127780214033853",
 	},
 	["DEP-017"] = {
 		numericId = 318,
@@ -2250,6 +2366,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://127780214033853",
 	},
 	["DEP-018"] = {
 		numericId = 319,
@@ -2269,6 +2386,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://132376205026178",
 	},
 	["DEP-019"] = {
 		numericId = 320,
@@ -2288,6 +2406,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://127780214033853",
 	},
 	["DEP-020"] = {
 		numericId = 321,
@@ -2307,6 +2426,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
+		icon = "rbxassetid://127780214033853",
 	},
 
 	-- === UTILITY ===
@@ -2328,6 +2448,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-002"] = {
 		numericId = 323,
@@ -2347,6 +2468,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-003"] = {
 		numericId = 324,
@@ -2366,6 +2488,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-004"] = {
 		numericId = 325,
@@ -2385,6 +2508,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-005"] = {
 		numericId = 326,
@@ -2404,6 +2528,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-006"] = {
 		numericId = 327,
@@ -2423,6 +2548,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-007"] = {
 		numericId = 328,
@@ -2442,6 +2568,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-008"] = {
 		numericId = 329,
@@ -2461,6 +2588,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-009"] = {
 		numericId = 330,
@@ -2480,6 +2608,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-010"] = {
 		numericId = 331,
@@ -2499,6 +2628,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-011"] = {
 		numericId = 332,
@@ -2518,6 +2648,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-012"] = {
 		numericId = 333,
@@ -2537,6 +2668,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-013"] = {
 		numericId = 334,
@@ -2556,6 +2688,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-014"] = {
 		numericId = 335,
@@ -2575,6 +2708,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-015"] = {
 		numericId = 336,
@@ -2594,6 +2728,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-016"] = {
 		numericId = 337,
@@ -2613,6 +2748,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-017"] = {
 		numericId = 338,
@@ -2632,6 +2768,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-018"] = {
 		numericId = 339,
@@ -2651,6 +2788,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-019"] = {
 		numericId = 340,
@@ -2670,6 +2808,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 	["UTI-020"] = {
 		numericId = 341,
@@ -2689,6 +2828,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
+		icon = "rbxassetid://130074402271587",
 	},
 
 }

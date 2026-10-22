@@ -1,5 +1,5 @@
 -- DoctrineData.lua
--- Auto-generated Content Registry: Doctrines (32 entries)
+-- Auto-generated Content Registry: Doctrines (34 entries)
 -- Do not edit manually. Regenerate from CTRBLXAI.db.
 
 local DoctrineData = {
@@ -601,6 +601,44 @@ local DoctrineData = {
 		activeChoiceCount = 1,
 		augmentSlotRule = "Standard 2 Augment Slots",
 		associatedSkillFamily = "Direct Damage, Physical, Debuff",
+		scarcity = "Acquisition scarcity only; exact band pending",
+	},
+	["DOC-CHEMIST"] = {
+		name = "Chemist",
+		-- icon pending (art asset); UI falls back to "[D]" placeholder via (doc.icon or "[D]")
+		identity = "Alchemical consumable specialist (precision/luck over brawn)",
+		statPackage = {STR = -15, AGI = 0, INT = -10, VIT = 0, DEX = 15, LUK = 10},
+		passiveName = "Field Chemistry",
+		passiveActivation = "Passive (always on)",
+		passiveEffect = "Equipped Item slot capacity +1; Consumable Item RT Cost -20%; Skill Potency Multiplier -25%. The -25% Skill Potency Multiplier is the intended DRAWBACK (traded for consumable mastery).",
+		passiveRangePattern = "Self",
+		passiveDuration = "Passive",
+		passiveFrequency = "Continuous",
+		passiveStacking = "Does not stack",
+		breakBehavior = "Disabled by Break; pre-existing snapshot effects persist only where explicitly stated",
+		skillChoices = {"SKL-POISON-TRAP", "SKL-TOXIC-NEEDLE", "SKL-RESTOCK"},
+		activeChoiceCount = 1,
+		augmentSlotRule = "Standard 2 Augment Slots",
+		associatedSkillFamily = "Utility, Poison, Consumable",
+		scarcity = "Acquisition scarcity only; exact band pending",
+	},
+	["DOC-ARTIFICER"] = {
+		name = "Artificer",
+		-- icon pending (art asset); UI falls back to "[D]" placeholder via (doc.icon or "[D]")
+		identity = "Deployable/gadget specialist (durable and precise)",
+		statPackage = {STR = -15, AGI = -10, INT = 0, VIT = 15, DEX = 10, LUK = 0},
+		passiveName = "Applied Artifice",
+		passiveActivation = "Passive (always on)",
+		passiveEffect = "Equipped Item slot capacity +1; Consumable Item Maximum Range +1; Bonus Skill Range -1. The -1 Bonus Skill Range is the intended DRAWBACK and is explicitly allowed to go below 0 (may produce a negative Bonus Skill Range).",
+		passiveRangePattern = "Self",
+		passiveDuration = "Passive",
+		passiveFrequency = "Continuous",
+		passiveStacking = "Does not stack",
+		breakBehavior = "Disabled by Break; pre-existing snapshot effects persist only where explicitly stated",
+		skillChoices = {"SKL-SUMMON-WARD-TOTEM", "SKL-SUMMON-DECOY", "SKL-REPAIR"},
+		activeChoiceCount = 1,
+		augmentSlotRule = "Standard 2 Augment Slots",
+		associatedSkillFamily = "Utility, Summon, Consumable",
 		scarcity = "Acquisition scarcity only; exact band pending",
 	},
 }

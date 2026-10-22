@@ -54,3 +54,45 @@
 |-------|-------|------|
 | Overleveled penalty scope | economy_framework | Row 7 says "same bands as XP" — unclear if this applies to completion/quest gold or kill gold only |
 | Benched share (updated) | unit_progression | Row 52 updated from 50% to 65% — FORMULAS.md previously had 50% |
+
+## Implemented Formulas — Combat / Skill Simulation (added 2026-10-21)
+
+**Source:** `core_stats` table (ids per row) + per-skill authored fields in the `skills` table. No Luau read.
+
+| # | Formula | DB Table | Row/id | DB Expression | Python | Match |
+|---|---|---|---|---|---|---|
+| C1 | Attack Power | core_stats | id2 | Weapon Damage x (1 + STR/200) | `w*(1+STR/200)` | OK |
+| C2 | Effective Equipment WT (>=0) | core_stats | id2 | WT x (1 - STR/(200+STR)) | `wt*(1-STR/(200+STR))` | OK |
+| C3 | Effective Equipment WT (<0) | core_stats | id2 | WT x (1 + STR/(200+STR)) | `wt*(1+STR/(200+STR))` | OK |
+| C4 | Skill Potency Multiplier | core_stats | id4 | 1 + INT/(200+INT) | `1+INT/(200+INT)` | OK |
+| C5 | Max MP | core_stats | id4 | 20 + INT*2 | `20+INT*2` | OK |
+| C6 | MP Regen /1000CT | core_stats | id49 | 2 + floor(INT/40) | `2+INT//40` | OK |
+| C7 | HP | core_stats | id5 | 50 + VIT*4 | `50+VIT*4` | OK |
+| C8 | Defense Power | core_stats | id5 | Defense x (1 + VIT/300) | `d*(1+VIT/300)` | OK |
+| C9 | Effective Defense | core_stats | id31 | (P*D)/(P+D) | `(ap*dp)/(ap+dp)` | OK |
+| C10 | Raw Damage | core_stats | id31 | P - Effective Defense | `max(0,ap-eff_def)` | OK |
+| C11 | Skill Power (standard) | skills.Power_Formula | per-skill | Weapon Attack Power x N x Skill Potency | `atkpwr*N*spm` | OK |
+| C12 | Precision | core_stats | id35 | DEX/(DEX+200) | `DEX/(DEX+200)` | OK |
+| C13 | Evasiveness | core_stats | id35 | AGI/(AGI+200) | `AGI/(AGI+200)` | OK |
+| C14 | Hit Quality | core_stats | id35 | 1 + (Precision - Evasiveness) | `1+(prec-eva)` | OK |
+| C15 | Channel Time (DEX) | core_stats | id6 | Base x (1 - DEX/(300+DEX)) | `b*(1-DEX/(300+DEX))` | OK |
+| C16 | Standard Base RT / AP | core_stats | id12 | Base RT=400, AP=2 | `400 / 2` | OK |
+| C17 | Modified Base RT | weapons_equipment | MBRT row | Base RT + Effective Armor WT | `SBR+earmwt` | OK |
+| C18 | Basic Attack RT | core_stats | id19 | round(MBRT*0.10) + Eff Weapon WT | `round(mbrt*0.10)+ewwt` | OK |
+| C19 | Skill RT (weapon-WT type) | core_stats | id20 | round((MBRT*0.10 + Eff Weapon WT) x N) | `round((mbrt*0.10+ewwt)*N)` | OK |
+| C20 | Skill MP cost (standard) | skills.MP_Cost_Formula | per-skill | round(a + b*(L-1)) | `round(a+b*(L-1))` | OK |
+| C21 | Skill RT (fixed type) | skills.RT_Cost_Formula | per-skill | round(a + b*L) | `round(a+b*L)` | OK |
+| C22 | Weapon level scaling | weapons_equipment | scaling row | 0.30 + 0.70*((il-1)/98)^0.55 | `same` | OK |
+| C23 | Rapid Assault hit count | skills.Power_Formula | SKL-RAPID-ASSAULT | min(4, 2 + floor(AGI/100)) | `min(4,2+AGI//100)` | OK |
+| C24 | Chain falloff | skills.Effects | chain skills | 100/80/64/51.2% per jump | `declining` | OK |
+| C25 | Lucky Strike LUK bonus | skills.Power_Formula | SKL-LUCKY-STRIKE | 0.75*LUK/(100+LUK) | `(reported, not ratio-priced)` | OK |
+| C26 | Stat at level | races | growth cols | floor(start + growth*(L-1)) | `floor(s+g*(L-1))` | OK |
+| C27 | Boss Base RT / AP | core_stats | id13 | Base RT=300, AP=3 | `(context only)` | OK |
+| C28 | Rest RT | core_stats | id14 | round(MBRT*0.75) | `(context only)` | OK |
+
+### Combat blockers found 2026-10-21
+| Issue | Table | Note |
+|---|---|---|
+| 7 skills NULL Channel/Activation | skills | EMPOWERING-AURA, SKYFALL-LANCE, DRAGON-DIVE, HOLY-SMITE, SANCTIFY, BARRAGE, NATURES-GRASP - cast cost unknown, priced as 0/0 (upper bound) |
+| 6 non-standard Power formulas | skills | DARK-RESTORATION, LUCKY-STRIKE, TWINBLADE-01/02, RETRIBUTION-SHELL, SUMMON-TURRET - need dual-wield/summon pricing model |
+| Wind element has 0 skills | skills | content gap (Designer); not a balance break |

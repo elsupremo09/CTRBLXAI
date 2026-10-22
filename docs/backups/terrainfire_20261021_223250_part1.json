@@ -1,0 +1,98 @@
+{
+ "stamp": "20261021_223250",
+ "backup_db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_pre_terrainfire_20261021_223250.db",
+ "backup_xlsx": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Game_Rules_pre_terrainfire_20261021_223250.xlsx",
+ "terrain_edits": [
+  [
+   "terrain_effects",
+   "Rocky",
+   "col_7",
+   "Explosion @ Elevation ≥8 → Cracked Ground",
+   "Explosion @ Elevation ≥8 → Cracked Ground; Holy → Clear; Earth → Cracked Ground"
+  ],
+  [
+   "terrain_effects",
+   "Clear",
+   "col_7",
+   "None",
+   "Holy → Grassland"
+  ],
+  [
+   "terrain_effects",
+   "Grassland",
+   "col_7",
+   "Fire → Sand; Dark → Tainted",
+   "Fire → Sand; Dark → Tainted; Holy → Clover Field"
+  ],
+  [
+   "terrain_effects",
+   "Sand",
+   "col_7",
+   "Fire → Molten",
+   "Fire → Molten; Holy → Grassland"
+  ],
+  [
+   "terrain_effects",
+   "Swamp",
+   "col_7",
+   "Fire → Rocky",
+   "Fire → Rocky; Holy → Grassland"
+  ],
+  [
+   "terrain_effects",
+   "Tainted Ground",
+   "col_7",
+   "Light → Grassland",
+   "Holy → Grassland"
+  ],
+  [
+   "terrain_effects",
+   "Shallow Water",
+   "col_7",
+   "Ice Tag → Ice Terrain; Earth → Mud",
+   "Ice Tag → Ice Terrain; Earth → Mud; Wind → Mud"
+  ],
+  [
+   "terrain_effects",
+   "Burning",
+   "col_8",
+   "Water → Steam; Wind (Strong Wind) → forced extra spread pass this tick",
+   "Water → Steam; Wind (Strong Wind) → forced extra spread pass this tick; Earth → Clear (smother)"
+  ],
+  [
+   "terrain_effects",
+   "Oily",
+   "col_8",
+   "Fire → Explosion",
+   "Fire → Explosion; Earth → Clear (smother); Holy → Clear (purify)"
+  ],
+  [
+   "terrain_effects",
+   "Tar Pit",
+   "col_8",
+   "Fire → Burning",
+   "Fire → Burning; Earth → Clear (smother); Holy → Clear (purify)"
+  ],
+  [
+   "terrain_effects",
+   "Poison Cloud",
+   "col_8",
+   "Fire → Explosion; Wind (Strong Wind) → migrate/spread to 1 adjacent compatible tile per tick",
+   "Fire → Explosion; Wind (Strong Wind) → migrate/spread to 1 adjacent compatible tile per tick; Holy → Clear (purify)"
+  ],
+  [
+   "terrain_effects",
+   "Wet",
+   "col_8",
+   "Fire → Steam; Ice → Frozen; Electric → Static Cloud",
+   "Fire → Steam; Ice → Frozen; Electric → Static Cloud; Dark → Tar Pit"
+  ],
+  [
+   "terrain_effects",
+   "Steam",
+   "col_8",
+   "Electric → Static Cloud; Wind → Clear",
+   "Electric → Static Cloud; Wind → Clear; Dark → Poison Cloud"
+  ]
+ ]
+}

@@ -6,7 +6,7 @@
 
 local ObjectData = {}
 
--- Objects (45)
+-- Objects (67)
 -- -----------------------------------------
 
 ObjectData.Objects = {}
@@ -26,13 +26,14 @@ ObjectData.Objects["Bear Trap"] = {
 ObjectData.Objects["Spike Trap"] = {
 	id = "Spike Trap",
 	category = "Hazard",
-	tags = { "Trap", "Consumable" },
+	tags = { "Trap" },
 	passable = true,
 	activation = "Triggered",
 	triggerEvent = "Unit enters tile",
-	primaryEffect = "Deals physical damage and inflicts Bleed",
-	uses = "Once",
-	notes = "Removed after activation",
+	primaryEffect = "Deals 10% of Max HP physical damage and inflicts Bleed",
+	damagePct = 0.10,
+	uses = "Unlimited",
+	notes = "Persistent area-denial hazard. Entry-triggered: re-springs on EACH crossing onto the tile (merely standing on it does not re-trigger). Persists until battle end and is NOT destructible/removable — the one reusable step-on hazard. Repeat crossings reapply Bleed per the existing StatusService Bleed reapply behavior. Damage 10% Max HP, Physical (authoritative DB value).",
 }
 
 ObjectData.Objects["Snare Trap"] = {
@@ -769,6 +770,399 @@ ObjectData.Objects["Ad Billboard"] = {
 	-- are unchanged; it carries NO hitsToDestroy (never was breakable). See project_rules
 	-- 'Universal Object Marker' + 'Ad Billboard Non-Object Exception'.
 	isNonObject = true,
+}
+
+
+-- -----------------------------------------------------------------
+-- DEPLOYABLE PLACEABLE OBJECTS (20) — added 2026-10-21
+-- The placeable-object half of the 20 DEP-* Deployable-category consumables.
+-- Mirrored 1:1 from CTRBLXAI.db objects_encounters (rowids 87-106). Durability
+-- SPLIT (2026-10-20 ruling): 4 structures carry a level-scaling HP pool
+-- (hpBase/hpPerItemLevel/hpPerVIT), 16 light gadgets carry fixed hitsToDestroy=3.
+-- FOUNDATION ONLY: placement + durability + Repair. Gadget behaviours are a later wave.
+-- -----------------------------------------------------------------
+
+ObjectData.Objects["Sentry Turret"] = {
+	id = "Sentry Turret",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "HP-Pool-Durability", "Blocker", "Not-Landable", "Blocks-LoS", "Stability=3", "Pushable", "Turret", "Physical" },
+	passable = false,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Auto-fires at enemies (3 shots, per item formula) once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-001",
+	standingHeight = 3,
+	nativeStability = 3,
+	-- HP-pool structure: maxHp computed at placement = hpBase + hpPerItemLevel*IL + hpPerVIT*VIT
+	hpBase = 22.0,
+	hpPerItemLevel = 0.65,
+	hpPerVIT = 0.4,
+}
+
+ObjectData.Objects["Healing Beacon"] = {
+	id = "Healing Beacon",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Healing", "Aura" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Pulses healing to nearby allies once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-002",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Barrier Pylon"] = {
+	id = "Barrier Pylon",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "HP-Pool-Durability", "Blocker", "Not-Landable", "Blocks-LoS", "Stability=3", "Pushable", "Barrier", "Cover" },
+	passable = false,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Solid barrier providing cover; HP scales with level.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-003",
+	standingHeight = 3,
+	nativeStability = 3,
+	-- HP-pool structure: maxHp computed at placement = hpBase + hpPerItemLevel*IL + hpPerVIT*VIT
+	hpBase = 25.0,
+	hpPerItemLevel = 0.75,
+	hpPerVIT = 0.6,
+}
+
+ObjectData.Objects["Hardlight Wall"] = {
+	id = "Hardlight Wall",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "HP-Pool-Durability", "Blocker", "Not-Landable", "Blocks-LoS", "Stability=3", "Pushable", "Barrier", "Line" },
+	passable = false,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Three-segment solid wall; each segment HP scales with level.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-004",
+	standingHeight = 3,
+	nativeStability = 3,
+	-- HP-pool structure: maxHp computed at placement = hpBase + hpPerItemLevel*IL + hpPerVIT*VIT
+	hpBase = 15.0,
+	hpPerItemLevel = 0.45,
+	hpPerVIT = 0.35,
+	segments = 3,
+}
+
+ObjectData.Objects["Mine Dispenser"] = {
+	id = "Mine Dispenser",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Trap", "Physical" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Places a mine that detonates on an enemy once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-005",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Snare Dispenser"] = {
+	id = "Snare Dispenser",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Trap", "Pinned" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Places a snare that Pins the first enemy once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-006",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Stasis Trap Emitter"] = {
+	id = "Stasis Trap Emitter",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Trap", "RT Delay" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Triggers an RT-delay burst on enemies in area once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-007",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Decoy Totem"] = {
+	id = "Decoy Totem",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "HP-Pool-Durability", "Taunt", "AI" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "High-priority decoy drawing enemy AI; HP scales with level.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-008",
+	-- HP-pool structure: maxHp computed at placement = hpBase + hpPerItemLevel*IL + hpPerVIT*VIT
+	hpBase = 12.0,
+	hpPerItemLevel = 0.4,
+	hpPerVIT = 0.25,
+}
+
+ObjectData.Objects["Hologram Projector"] = {
+	id = "Hologram Projector",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Decoy", "Vision" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Projects a false unit presence once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-009",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Supply Station"] = {
+	id = "Supply Station",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Charge Restore" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Allies Interact to restore item charges once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-010",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Scout Drone"] = {
+	id = "Scout Drone",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Reveal", "Flying" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Reveals hidden units/traps/objects in its aura once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-011",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Survey Drone"] = {
+	id = "Survey Drone",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Reveal", "Mobile" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Mobile revealer relocating each interval once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-012",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Elemental Ward Totem"] = {
+	id = "Elemental Ward Totem",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Ward", "Aura" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Reduces a chosen element damage for nearby allies once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-013",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Weather Stabilizer Totem"] = {
+	id = "Weather Stabilizer Totem",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Weather", "Aura" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Suppresses local weather modifiers in its aura once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-014",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Portable Ballista"] = {
+	id = "Portable Ballista",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Blocker", "Not-Landable", "Blocks-LoS", "Stability=3", "Pushable", "Siege", "Interact" },
+	passable = false,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Interactable siege engine firing bolts once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-015",
+	standingHeight = 3,
+	nativeStability = 3,
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Rescue Beacon"] = {
+	id = "Rescue Beacon",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Revive", "Aura" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Relocates and revives the first allied KO once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-016",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Poison Cloud Vent"] = {
+	id = "Poison Cloud Vent",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Poison", "Zone" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Emits timed Poison Cloud pulses once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-017",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Countermeasure Turret"] = {
+	id = "Countermeasure Turret",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Blocker", "Not-Landable", "Blocks-LoS", "Stability=3", "Pushable", "Defense", "Interception" },
+	passable = false,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Intercepts hostile projectiles entering its aura once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-018",
+	standingHeight = 3,
+	nativeStability = 3,
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Mender Drone"] = {
+	id = "Mender Drone",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Healing", "Mobile" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Mobile healer mending the lowest-HP ally once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-019",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Gravity Pylon"] = {
+	id = "Gravity Pylon",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Control", "Aura" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Grants Stability and blocks teleports in its aura once wired.",
+	uses = "Until Destroyed",
+	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
+	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "DEP-020",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
 }
 
 return ObjectData

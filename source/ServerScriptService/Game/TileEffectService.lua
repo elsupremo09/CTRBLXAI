@@ -38,8 +38,24 @@ local _mapWidth = 8
 local _mapHeight = 8
 local _statusService = nil   -- injected to avoid circular require
 local _bvb = nil             -- BattleVisualBroadcaster, injected
+-- Single-tile server voxel-clear, injected by Main (closure over the live
+-- mapFolder -> MapRenderer.ClearTileVoxelColumn). nil-safe: if unset, a
+-- VOXEL_KEEP->non-voxel transform still re-skins the tile Part but leaves the
+-- stale voxel column (the pre-fix behaviour). Same injection pattern as
+-- ObjectEffectService.SetObjectRenderer / SetTileReshaper (no mapFolder handle here).
+local _voxelClearer = nil    -- fn(x,y) over the live mapFolder (from Main)
 local _allUnits = nil        -- cached live unit list (state.units ref) for explosions
 local _objectHitCb = nil     -- (x,y) -> ONE hit on the breakable OBS object at that tile (OBS Phase 2c-D)
+local _explosiveObjectCb = nil -- (x,y) -> true if an EXPLOSIVE object was there (and was removed), to chain in-queue
+
+-- PHASE 1 (2026-10-21, project_rules 140-143 'Terrain Fire Reaction'): burn-then-
+-- transform. When Fire creates Burning on a BARE FLAMMABLE base terrain, the base
+-- transform is DEFERRED until the Burning ENDS. _deferredTransform[tileKey] = element
+-- records a pending transform. It fires on NATURAL EXPIRY (ProcessCtTick toRemove)
+-- and is CLEARED WITHOUT transforming on EARLY EXTINGUISH (RemoveTileEffect), so a
+-- doused tile is spared. Tiles carrying a permanent floor effect (baseFloor: Vines /
+-- Tar Pit) are exempt — they never transform on burn-out (rule 143).
+local _deferredTransform = {}
 
 local function tileKey(x, y) return x .. "," .. y end
 
@@ -98,6 +114,7 @@ function TileEffectService.Init(mapWidth, mapHeight)
 	_mapHeight = mapHeight
 	effects = {}
 	baseFloor = {}
+	_deferredTransform = {}
 end
 
 -- Register + apply a permanent chasm-floor effect (called at battle start from the
@@ -135,11 +152,28 @@ function TileEffectService.SetBroadcaster(bvb)
 	_bvb = bvb
 end
 
+-- Inject the single-tile server voxel-clear (Main wires a closure over the live
+-- mapFolder -> MapRenderer.ClearTileVoxelColumn). nil-safe until wired. Used by
+-- transformAndBroadcast when a VOXEL_KEEP origin transforms to a non-voxel terrain
+-- so the stale server voxel column is removed (BUG-002 GAP 2).
+function TileEffectService.SetVoxelClearer(fn)
+	_voxelClearer = fn
+end
+
 -- OBS Phase 2c-D: object-hit callback. Main wires this to a closure over the battle
 -- `state` -> ObjectEffectService.ApplyObjectHit(state, x, y, 1). nil-safe: if unset,
 -- explosions simply don't damage OBS blocker objects (no behaviour change).
 function TileEffectService.SetObjectHitCallback(fn)
 	_objectHitCb = fn
+end
+
+-- Explosion-chain callback. Main wires this to a closure over the battle `state`
+-- -> ObjectEffectService.ConsumeExplosiveObjectAt(state, x, y). When an explosion
+-- reaches a Bomb Barrel / Land Mine tile, the object is removed and a new
+-- explosion event is appended to the CURRENT drain queue (same 128-event cap,
+-- TRG-011) — no nested QueueExplosion. nil-safe: unset = explosives don't chain.
+function TileEffectService.SetExplosiveObjectCallback(fn)
+	_explosiveObjectCb = fn
 end
 
 --------------------------------------------------
@@ -170,6 +204,127 @@ local function resolveReaction(existingId, incomingElement)
 		return true, reactions[incomingElement]  -- reacted, result (nil = clear)
 	end
 	return false, nil  -- no reaction
+end
+
+-- PHASE 1 — is (x,y) a BARE flammable base terrain that DEFERS its Fire transform?
+-- True only for terrains tagged Flammable whose transformations[Fire] is set
+-- (Grassland, Clover Field, Wooden Floor). Non-flammable transformable terrain
+-- (Sand→Molten, Mud/Swamp→Rocky, Ice, Metal) returns false → stays instant.
+local function isDeferredFlammableTransform(tileX, tileY, element)
+	if element ~= "Fire" then return false end
+	local terrainId = GameConstants.GetTerrainId(tileX, tileY)
+	local def = GameConstants.TERRAIN_TYPES[terrainId]
+	if not def or not def.tags or not def.transformations then return false end
+	if not def.transformations.Fire then return false end
+	for _, t in ipairs(def.tags) do
+		if t == "Flammable" then return true end
+	end
+	return false
+end
+
+-- VOXEL_KEEP origin set (mirrors MapRenderer's VOXEL_KEEP). These terrains render
+-- as server-side Roblox Terrain VOXEL columns (workspace.Terrain:FillBlock), not as
+-- a textured tile Part. The CLIENT cannot clear voxels (workspace.Terrain is
+-- server-only), so when one of these transforms to a non-voxel terrain a client
+-- re-skin alone leaves the old voxel column visible on top of the re-skinned Part.
+-- See transformAndBroadcast VOXEL-NUANCE note below (BUG-002 / RULE-010).
+local VOXEL_KEEP_ORIGIN = {
+	Grassland        = true,
+	["Deep Water"]    = true,
+	["Shallow Water"] = true,
+}
+
+-- TERRAIN TRANSFORM + BROADCAST (BUG-002 fix 2026-10-22).
+-- Single choke-point for EVERY mid-battle base-terrain transform. Captures the
+-- ORIGIN terrain id BEFORE transforming, runs GameConstants.TransformTerrain, and
+-- when the terrain actually changed, broadcasts TerrainChanged({x,y,terrainId}) so
+-- the client re-skins the tile (previously invisible: TransformTerrain mutated
+-- TERRAIN_MAP with no client signal). Returns (changed, newId) — callers that use
+-- the `changed` return (ResolveElementOnTile) keep working. _bvb is the already-held
+-- BattleVisualBroadcaster reference (no new dependency). nil-safe like siblings.
+local function transformAndBroadcast(tileX, tileY, element)
+	local originTerrain = GameConstants.GetTerrainId(tileX, tileY)
+	local changed, newId = GameConstants.TransformTerrain(tileX, tileY, element)
+	if changed and newId then
+		if _bvb and _bvb.TerrainChanged then
+			_bvb.TerrainChanged(tileX, tileY, newId)
+		end
+		-- VOXEL-NUANCE (RULE-010): if the ORIGIN was a VOXEL_KEEP terrain (rendered as a
+		-- server Roblox-Terrain voxel column) and the new terrain is NOT voxel-kept, the
+		-- client re-skin cannot clear the old voxel column (workspace.Terrain is
+		-- server-only), so the stale column stays visible over the re-skinned Part. The
+		-- per-tile server voxel clear is NOT safely reachable from TileEffectService:
+		-- this module holds no mapFolder / MapRenderer handle (only _bvb), the task
+		-- forbids adding a new dependency, and every existing MapRenderer voxel helper
+		-- (ClearVoxelsForPerTile / ClearVoxelsHideTiles / SetViewMode) calls
+		-- workspace.Terrain:Clear() which wipes the WHOLE map's voxels, not one column.
+		-- MapRenderer.ReshapeTile exists for single-tile runtime edits but only recolors
+		-- the Part + sets its Terrain attribute; it does NOT clear that tile's voxel
+		-- column. FLAGGED FOLLOW-UP (RULE-011, no fake clear): extend
+		-- MapRenderer.ReshapeTile to clear the single tile's voxel column (a localized
+		-- workspace.Terrain:FillBlock(<tile region>, Enum.Material.Air) at that tile's
+		-- X/Z/elevation) and call it from the transform path via a Main-wired closure
+		-- over the live mapFolder (same injection pattern as SetObjectRenderer), so the
+		-- re-skinned Part shows underneath. Until then the broadcast + re-skin are fully
+		-- live for NON-voxel origins (Sand->Molten, Mud/Swamp->Rocky, Holy/Dark on
+		-- non-voxel terrain, etc.); voxel-origin transforms re-skin the hidden Part but
+		-- the voxel column remains until the clear above lands.
+		if VOXEL_KEEP_ORIGIN[originTerrain] and not VOXEL_KEEP_ORIGIN[newId] then
+			-- BUG-002 GAP 2 FIX (2026-10-22): the prior FOLLOW-UP is now DONE. Clear just
+			-- this one tile's voxel column via the Main-injected _voxelClearer (closure over
+			-- the live mapFolder -> MapRenderer.ClearTileVoxelColumn, a LOCALIZED
+			-- FillBlock(..., Air) over only this tile's region, NEVER workspace.Terrain:Clear()
+			-- which would wipe the whole map). nil-safe: if the clearer is not wired we fall
+			-- back to the prior flag warn (re-skin still fires; only the column remains).
+			if _voxelClearer then
+				_voxelClearer(tileX, tileY)
+				print(string.format(
+					"[TileEffectService] TerrainChanged (%d,%d): %s -> %s cleared stale VOXEL_KEEP voxel column",
+					tileX, tileY, tostring(originTerrain), tostring(newId)))
+			else
+				warn(string.format(
+				"[TileEffectService] TerrainChanged (%d,%d): %s -> %s is a VOXEL_KEEP origin; "
+				.. "client re-skins the tile Part but the server voxel column is NOT cleared "
+				.. "(no voxel-clear wired here). FOLLOW-UP: wire TileEffectService.SetVoxelClearer "
+				.. "from Main so the stale voxel column is cleared.",
+				tileX, tileY, tostring(originTerrain), tostring(newId)))
+			end
+		end
+	end
+	return changed, newId
+end
+
+-- DIRECT TERRAIN SET + BROADCAST (BUG-002 GAP 1 fix, 2026-10-22). Mid-battle sites
+-- that set a terrain id DIRECTLY (not through GameConstants.TransformTerrain) must
+-- still signal the client so the re-skin happens. This writes the new terrain via
+-- GameConstants.SetTerrainId then fires _bvb.TerrainChanged (nil-safe, the same
+-- already-held BattleVisualBroadcaster reference the rest of this module uses).
+-- Explosion crack (Rocky@>=8 -> Cracked Ground) routes through here. Runtime-only
+-- (explosion) path, never map-gen, so the broadcast never fires at map build time.
+-- Unlike transformAndBroadcast this is NOT a voxel-origin path (Rocky/Cracked are
+-- not VOXEL_KEEP), so no voxel-clear is needed.
+local function setTerrainAndBroadcast(tileX, tileY, terrainId)
+	GameConstants.SetTerrainId(tileX, tileY, terrainId)
+	if _bvb and _bvb.TerrainChanged then
+		_bvb.TerrainChanged(tileX, tileY, terrainId)
+	end
+end
+
+-- PHASE 1 — fire a tile's DEFERRED base transform (called on NATURAL Burning expiry).
+-- Honors the floor-effect exemption (rule 143): a tile with a permanent floor effect
+-- (baseFloor) never transforms — it is left for tryReinstateFloor to restore.
+local function fireDeferredTransform(key, tileX, tileY)
+	local element = _deferredTransform[key]
+	_deferredTransform[key] = nil
+	if not element then return end
+	if baseFloor[key] ~= nil then
+		-- Floor-effect exemption: base stays; floor re-establishes via tryReinstateFloor.
+		print(string.format(
+			"[TileEffectService] Burn-out transform SKIPPED at (%d,%d) — permanent floor effect (%s) exempt",
+			tileX, tileY, tostring(baseFloor[key])))
+		return
+	end
+	transformAndBroadcast(tileX, tileY, element)
 end
 
 --------------------------------------------------
@@ -248,7 +403,19 @@ function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allU
 	-- Terrain transformation: element vs base terrain (Fire on Grassland → Sand)
 	-- (protected span tiles are exempt inside GameConstants.TransformTerrain)
 	if not skipTransform then
-		GameConstants.TransformTerrain(tileX, tileY, def.element)
+		-- PHASE 1 (burn-then-transform): if this element on this bare flammable base
+		-- would transform (Fire on Grassland/Clover/Wooden Floor), DEFER it until the
+		-- just-placed Burning ends. Record the pending transform; do NOT mutate terrain
+		-- now. Everything else (Sand→Molten, Mud/Swamp→Rocky, Ice, Metal, Water→…)
+		-- transforms INSTANTLY as before.
+		if effectId == "Burning" and isDeferredFlammableTransform(tileX, tileY, def.element) then
+			_deferredTransform[key] = def.element
+			print(string.format(
+				"[TileEffectService] Transform DEFERRED at (%d,%d): %s burns first, base changes on burn-out",
+				tileX, tileY, def.element))
+		else
+			transformAndBroadcast(tileX, tileY, def.element)
+		end
 	end
 
 	if _bvb and _bvb.TileEffectApplied then
@@ -262,6 +429,16 @@ function TileEffectService.RemoveTileEffect(tileX, tileY)
 	if eff then
 		print(string.format("[TileEffectService] Removed %s from (%d,%d)", eff.id, tileX, tileY))
 		effects[key] = nil
+		-- PHASE 1: generic removal = EARLY EXTINGUISH (reaction/dispel/cleanse, e.g.
+		-- Water→Steam before expiry). A deferred burn-out transform is CANCELLED here —
+		-- the terrain is SPARED (rule 141). Natural expiry goes through ProcessCtTick
+		-- instead, which fires the transform.
+		if _deferredTransform[key] ~= nil then
+			_deferredTransform[key] = nil
+			print(string.format(
+				"[TileEffectService] Burn extinguished EARLY at (%d,%d) — terrain SPARED (no transform)",
+				tileX, tileY))
+		end
 		if _bvb and _bvb.TileEffectRemoved then
 			_bvb.TileEffectRemoved(tileX, tileY, eff.id)
 		end
@@ -342,6 +519,12 @@ function TileEffectService.ProcessCtTick(ctElapsed, allUnits)
 				_bvb.TileEffectRemoved(eff.tileX, eff.tileY, eff.id)
 			end
 			effects[key] = nil
+			-- PHASE 1: NATURAL EXPIRY — if a burn-out transform was deferred on this
+			-- tile, fire it NOW (Grassland/Clover→Sand, Wooden Floor→Clear). Done BEFORE
+			-- tryReinstateFloor so a non-floor tile becomes its transformed terrain,
+			-- while a floor-effect tile is exempted inside fireDeferredTransform and the
+			-- floor then re-establishes below.
+			fireDeferredTransform(key, eff.tileX, eff.tileY)
 			-- Transient effect gone: a permanent chasm-floor effect returns if the
 			-- ground still allows it (map_gen_rules row 67).
 			tryReinstateFloor(eff.tileX, eff.tileY)
@@ -472,6 +655,18 @@ function TileEffectService.OnUnitStartTurn(unit)
 			"[TileEffectService] Occupy effect: %s on %s (standing on %s at %d,%d)",
 			def.occupyEffect, unit.name, eff.id, unit.tileX, unit.tileY
 		))
+		-- Tell the CLIENT about this status. Occupy effects were applied silently
+		-- server-side, so the client never learned a unit was Pinned (by Vines, etc.) --
+		-- the inspector couldn't show it and the Move button couldn't gray out with a
+		-- reason. Broadcast the same way other status applications do. nil-safe, like
+		-- the sibling _bvb uses in this module. (2026-10-22)
+		if _bvb then
+			local inst = _statusService.HasStatus and _statusService.HasStatus(unit, def.occupyEffect)
+			if _bvb.StatusApplied then
+				_bvb.StatusApplied(unit, def.occupyEffect, inst and inst.remainingTurns or nil)
+			end
+			if _bvb.UnitStateChanged then _bvb.UnitStateChanged(unit) end
+		end
 	end
 end
 
@@ -608,7 +803,9 @@ local function applyExplosionTerrain(tx, ty, allUnits)
 
 	-- 2/3. Terrain chain.
 	if terrainId == "Rocky" and elevBefore >= 8 then
-		GameConstants.SetTerrainId(tx, ty, "Cracked Ground")
+		-- BUG-002 GAP 1: route through setTerrainAndBroadcast so the client re-skins
+		-- the cracked tile (was a silent SetTerrainId before).
+		setTerrainAndBroadcast(tx, ty, "Cracked Ground")
 		print(string.format("[TileEffectService] Rocky@%d CRACKED -> Cracked Ground at (%d,%d)", elevBefore, tx, ty))
 	elseif terrainId == "Cracked Ground" then
 		collapseTile(tx, ty, allUnits)
@@ -674,6 +871,14 @@ local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits
 				if eff and (eff.id == "Oily" or eff.id == "Poison Cloud") and not (tx == x and ty == y) then
 					TileEffectService.RemoveTileEffect(tx, ty)  -- source consumed once
 					table.insert(chained, { x = tx, y = ty, depth = depth + 1 })
+				end
+				-- Chain: an EXPLOSIVE OBJECT (Bomb Barrel / Land Mine) in the AOE
+				-- detonates within THIS SAME queue (TRG-011 cap spans the chain; no
+				-- nested QueueExplosion). Consume-once via the injected callback.
+				if _explosiveObjectCb and not (tx == x and ty == y) then
+					if _explosiveObjectCb(tx, ty) then
+						table.insert(chained, { x = tx, y = ty, depth = depth + 1 })
+					end
 				end
 			end
 		end
@@ -758,6 +963,177 @@ function TileEffectService.OnUnitEndTurn(unit)
 			unit.tarPitTurns = 0
 		end
 	end
+end
+
+--------------------------------------------------
+-- PHASE 2 — ELECTRIC SHOCK REACTION (2026-10-21, project_rules 145-147)
+-- A Step-5 secondary reaction (NOT a status, NOT a tile effect). On an Electric
+-- hit, if the contact seeds a conductive tile, energize the CONNECTED conductive
+-- cluster (8-way flood-fill) and deal electric damage = 1/3 of the biggest final
+-- post-mitigation hit of the triggering attack, to every unit in the cluster
+-- EXCEPT the initial target(s). Friendly fire applies. Resolves after primary
+-- damage (caller passes the final damages), so final values are known.
+--------------------------------------------------
+
+-- A tile is CONDUCTIVE if its BASE terrain OR its active tile effect carries the
+-- Conductive tag. Conductive terrains: Mud, Shallow Water, Deep Water, Metal.
+-- Conductive effects: Wet, Steam, Static Cloud.
+local function tileIsConductive(tileX, tileY)
+	local terrainDef = GameConstants.TERRAIN_TYPES[GameConstants.GetTerrainId(tileX, tileY)]
+	if terrainDef and terrainDef.tags then
+		for _, t in ipairs(terrainDef.tags) do
+			if t == "Conductive" then return true end
+		end
+	end
+	local eff = effects[tileKey(tileX, tileY)]
+	if eff then
+		local edef = GameConstants.TILE_EFFECTS[eff.id]
+		if edef and edef.tags then
+			for _, t in ipairs(edef.tags) do
+				if t == "Conductive" then return true end
+			end
+		end
+	end
+	return false
+end
+
+local SHOCK_DIRS = {
+	{-1,-1},{0,-1},{1,-1},
+	{-1, 0},        {1, 0},
+	{-1, 1},{0, 1},{1, 1},
+}
+
+-- Resolve the Electric shock. Args:
+--   seedTiles   : list of { x, y } contact tiles (the struck tile and/or the tiles
+--                 initial targets stand on). Only conductive seeds energize.
+--   biggestFinal: the biggest final post-mitigation damage dealt by the triggering
+--                 Electric attack (shock damage = floor(biggestFinal / 3)).
+--   excludeIds  : set { [unitId] = true } of the initial target(s), excluded from shock.
+--   ownerId, allUnits : attacker id (kill credit) and live unit list.
+-- Returns the number of units shocked.
+function TileEffectService.ResolveElectricShock(seedTiles, biggestFinal, excludeIds, ownerId, allUnits)
+	allUnits = allUnits or _allUnits
+	if not allUnits or not seedTiles or #seedTiles == 0 then return 0 end
+	local shockDmg = math.floor((biggestFinal or 0) / 3)
+	if shockDmg <= 0 then return 0 end
+
+	-- 8-way flood-fill the connected conductive cluster from every conductive seed.
+	local inCluster = {}      -- [tileKey] = true
+	local stack = {}
+	for _, s in ipairs(seedTiles) do
+		if s.x and s.y and tileIsConductive(s.x, s.y) then
+			local k = tileKey(s.x, s.y)
+			if not inCluster[k] then inCluster[k] = true; table.insert(stack, { x = s.x, y = s.y }) end
+		end
+	end
+	while #stack > 0 do
+		local cur = table.remove(stack)
+		for _, d in ipairs(SHOCK_DIRS) do
+			local nx, ny = cur.x + d[1], cur.y + d[2]
+			if nx >= 1 and nx <= _mapWidth and ny >= 1 and ny <= _mapHeight then
+				local nk = tileKey(nx, ny)
+				if not inCluster[nk] and tileIsConductive(nx, ny) then
+					inCluster[nk] = true
+					table.insert(stack, { x = nx, y = ny })
+				end
+			end
+		end
+	end
+
+	-- Damage every living unit standing in the cluster, except the initial target(s).
+	excludeIds = excludeIds or {}
+	local shocked = 0
+	for _, u in ipairs(allUnits) do
+		if u.isAlive and u.tileX and u.tileY and not excludeIds[u.id]
+			and inCluster[tileKey(u.tileX, u.tileY)] then
+			u.currentHp = math.max(0, (u.currentHp or 0) - shockDmg)
+			if u.currentHp <= 0 then
+				u.isAlive = false
+				if ownerId then u._killedBy = u._killedBy or ownerId end
+			end
+			shocked = shocked + 1
+			print(string.format(
+				"[TileEffectService] ELECTRIC SHOCK: %s takes %d electric at (%d,%d) | HP: %d/%d%s",
+				u.name, shockDmg, u.tileX, u.tileY, u.currentHp, u.maxHp,
+				u.isAlive and "" or " | DEFEATED"))
+			-- Reuse the existing damage broadcast so the client reflects HP (BUG-034).
+			if _bvb and _bvb.DotDamage then
+				_bvb.DotDamage(u, "Shock", shockDmg)
+			end
+		end
+	end
+	if shocked > 0 then
+		print(string.format("[TileEffectService] Electric Shock energized cluster → %d unit(s) shocked for %d each", shocked, shockDmg))
+	end
+	return shocked
+end
+
+--------------------------------------------------
+-- PHASE 0 — SHARED REACTION DOORWAY (2026-10-21)
+-- Single source-agnostic entry: "an element/tag touched tile (x,y)". Callable
+-- from any source — weapon basic attack (Phase 3), skill, item, spreading effect,
+-- weather tick, reaction. Follows the authored element-resolution order
+-- (Effect reaction → Terrain transform/create-effect → compatibility → secondary)
+-- by DELEGATING to the existing machinery — it does NOT duplicate it:
+--   * elements with a canonical created tile-effect (Fire→Burning, Water→Wet) route
+--     through ApplyTileEffect, which already resolves an existing-effect reaction,
+--     then either defers (Phase 1) or applies the base transform, and fires
+--     secondary mechanics. TRG-013 one-pass is preserved inside ApplyTileEffect.
+--   * pure terrain-transform elements (Holy, Dark, Earth, Wind, Ice-tag, etc.) with
+--     no created-effect first try to react with an existing tile effect (so e.g.
+--     Fire-on-Vines style reactions keep working for any element), and only if no
+--     effect reaction consumes the packet do they transform the base terrain.
+-- Physical (and any element with no reaction and no transform) is a no-op.
+-- Returns true if anything happened (effect placed/reacted or terrain transformed).
+--------------------------------------------------
+
+-- Canonical "this element, on contact, creates this tile effect" map. Only elements
+-- that actually spawn a persistent effect belong here. Electric is DELIBERATELY NOT
+-- here: Electric only creates Static Cloud by REACTING with Wet/Steam (handled by the
+-- REACTIONS table), never as a fresh placement on bare terrain (project_rules 145).
+local ELEMENT_CREATES_EFFECT = {
+	Fire  = "Burning",
+	Water = "Wet",
+}
+
+function TileEffectService.ResolveElementOnTile(tileX, tileY, element, ownerId, allUnits)
+	if not element or element == "Physical" then return false end
+	if tileX < 1 or tileX > _mapWidth or tileY < 1 or tileY > _mapHeight then return false end
+	if allUnits then _allUnits = allUnits end
+
+	local key = tileKey(tileX, tileY)
+	local createdEffect = ELEMENT_CREATES_EFFECT[element]
+
+	-- Path A: element spawns a canonical effect → ApplyTileEffect handles the full
+	-- pass (reaction with existing effect, then deferred/instant transform, secondary).
+	if createdEffect then
+		TileEffectService.ApplyTileEffect(tileX, tileY, createdEffect, ownerId, allUnits)
+		return true
+	end
+
+	-- Path B: no created effect. First, if a tile effect is present and reacts to
+	-- this element, resolve that reaction (consumes the packet, TRG-013 one-pass).
+	local existing = effects[key]
+	if existing then
+		local reacted, resultId = resolveReaction(existing.id, element)
+		if reacted then
+			local consumedByFloor = (baseFloor[key] ~= nil and baseFloor[key] == existing.id)
+			TileEffectService.RemoveTileEffect(tileX, tileY)
+			if resultId and resultId ~= "Explosion" then
+				TileEffectService.ApplyTileEffect(tileX, tileY, resultId, ownerId, allUnits, consumedByFloor)
+			elseif resultId == "Explosion" then
+				TileEffectService.QueueExplosion(tileX, tileY, 0, ownerId, nil, allUnits, "diamond")
+			end
+			if not effects[key] then tryReinstateFloor(tileX, tileY) end
+			return true
+		end
+	end
+
+	-- Path C: no effect reaction → transform the base terrain if this element has a
+	-- transformation for the current terrain (Holy restore ladder, Dark corrupt,
+	-- Earth→Cracked, Wind→Mud, etc.). TransformTerrain is a no-op if no mapping.
+	local changed = transformAndBroadcast(tileX, tileY, element)
+	return changed == true
 end
 
 return TileEffectService

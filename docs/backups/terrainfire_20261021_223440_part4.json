@@ -1,0 +1,26 @@
+{
+ "stamp": "20261021_223440",
+ "open_decisions_inserted": [
+  [
+   91,
+   "Wind element — no player access (weather-only)",
+   "Parked — known gap"
+  ],
+  [
+   92,
+   "Grassland→Sand→Molten fire escalation + Molten reversibility",
+   "Resolved (DEFAULT, user may veto)"
+  ],
+  [
+   93,
+   "Monolith reclassified out of base terrain",
+   "Resolved (LOCKED) — Dev reclass pending"
+  ],
+  [
+   94,
+   "Element interaction DEFAULT kits — Earth smother / Holy purify / Dark corrupt / Electric (2026-10-21)",
+   "Resolved (DEFAULT, user may veto)"
+  ]
+ ],
+ "od60_updated": true
+}

@@ -1,0 +1,44 @@
+{
+ "before": {
+  "objects_encounters_85": {
+   "MAP_OBJECT_CATALOG": "Deployed Gadget / Object (Deployable-category consumable)",
+   "col_2": "Deployable",
+   "col_3": "Deployable, Gadget, Breakable(3-hit), hitsToDestroy=3, Fixed-Hits-Durability, Repairable",
+   "col_4": "No (occupies its tile; per-item pattern/placement rules apply)",
+   "col_5": "Passive (created by using a Deployable-category Consumable Item)",
+   "col_6": "Destroyed when it takes 3 hits (any source)",
+   "col_7": "DURABILITY RULE (USER RULING 2026-10-20): Objects/deployables/gadgets created by Deployable-category Consumable Items use the SAME fixed-hits-to-destroy durability model as existing breakable blocker-prop objects - hitsToDestroy = 3: it takes 3 hits from any source to destroy, NOT a damage-based HP pool. This is the Breakable(3-hit) convention already used by Ice Spike and Blocker-Prop Cluster. Repair (SKL-REPAIR) fully resets a deployed gadget's remaining hits back to its maximum (3), i.e. a 3-hit gadget returns to full 3 hits.",
+   "col_8": "Until destroyed (3 hits) or its item-defined duration expires",
+   "col_9": "AUTHORED 2026-10-20 (consumable-slot-unlock / deployable-support system). Cross-reference: objects_encounters Ice Spike (Breakable(3-hit)) and Blocker-Prop Cluster (Breakable(3-hit)) - \"3 hits from any source to destroy\". NOTE / DEV FLAG: existing Deployable consumable_items currently express durability as damage-based HP pool formulas (e.g. Sentry Turret \"HP = 22 + 0.65xIL + 0.40xVIT\", Barrier Pylon \"Barrier HP = 25 + 0.75xIL + ...\", Hardlight Wall segments). This ruling establishes the fixed 3-hits-to-destroy model as the canonical deployable-object durability; reconciling those per-item HP formulas to the 3-hit model (or flagging intended exceptions) is a Dev/Designer follow-up. Repair (SKL-REPAIR) resets remaining hits to max. Design/DB ruling only; engine wired separately by Dev."
+  },
+  "consumable_framework_39": {
+   "id": 39,
+   "section": "Deployable",
+   "topic": "Gadget / deployable durability",
+   "rule": "Objects/deployables/gadgets created by Deployable-category Items have 3 HP and require 3 hits to destroy, using the fixed hitsToDestroy=3 model (Breakable(3-hit) convention; same as Ice Spike and Blocker-Prop Cluster in objects_encounters), NOT a damage-based HP pool. Repair (SKL-REPAIR) fully resets a deployed gadget's remaining hits to max (a 3-HP gadget returns to full 3 hits). Full spec: objects_encounters \"Deployed Gadget / Object (Deployable-category consumable)\".",
+   "notes": "USER RULING 2026-10-20. Design/DB ruling only; engine wired separately by Dev."
+  }
+ },
+ "item_before": {
+  "DEP-001": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-003": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-004": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-008": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-002": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-005": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-006": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-007": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-009": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-010": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-011": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-012": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-013": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-014": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-015": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-016": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-017": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-018": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-019": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles.",
+  "DEP-020": "One instance per user unless stated otherwise. Cannot block all legal routes or protected tiles."
+ }
+}

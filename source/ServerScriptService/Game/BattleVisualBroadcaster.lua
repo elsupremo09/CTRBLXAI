@@ -104,6 +104,13 @@ local function serializeUnit(unit)
 		portraitAssetId = unit.portraitAssetId,
 		tileX       = unit.tileX,
 		tileY       = unit.tileY,
+		-- FACING FIX (2026-10-21): the BattleStarted packet never carried facing, so the
+		-- client fell back to `unit.facing or "S"` and every unit faced plain south at
+		-- battle start (enemies visibly turned AWAY from center). The server computes the
+		-- correct center-facing (INITIAL FACING block in Main) and stores it on the unit;
+		-- carry it through so the client's orientUnitToFacing uses the real value. Tokens
+		-- are abbreviations (N/NE/E/.../NW) matching GameConstants.FACING_VECTORS keys.
+		facing      = unit.facing,
 		currentHp   = unit.currentHp,
 		maxHp       = unit.maxHp,
 		currentMp   = unit.currentMp or 0,
@@ -150,6 +157,17 @@ local function serializeUnit(unit)
 	end
 
 	return result
+end
+
+-- SHARED SERIALIZER (2026-10-22): the single source of truth for a unit's client
+-- packet. Deployment packaging (Main.serializeForDeployment) now calls THIS same
+-- function, so deployment and battle describe every unit identically -- a field can
+-- never again be present in one phase's packet and missing from the other (the root
+-- cause behind the facing / HP-MP / stats "works in battle, blank in deployment"
+-- class of bug). Callers that need a phase-specific tweak (e.g. deployment's weapon
+-- label) adjust the returned table themselves; the field SET is always the same.
+function BattleVisualBroadcaster.SerializeUnit(unit)
+	return serializeUnit(unit)
 end
 
 local function serializeSkill(skillDef)
@@ -526,6 +544,22 @@ function BattleVisualBroadcaster.TileEffectRemoved(tileX, tileY, effectId)
 		tileX    = tileX,
 		tileY    = tileY,
 		effectId = effectId,
+	})
+end
+
+-- TERRAIN CHANGED (BUG-002 fix 2026-10-22)
+-- S->C: a tile's BASE terrain transformed mid-battle (fire burn-out grass->sand,
+-- Holy restore, Dark corrupt, Earth->Cracked, Wind->Mud, weather, explosion chain).
+-- GameConstants.TransformTerrain mutates TERRAIN_MAP server-side but the client only
+-- received terrain at map-gen (MapDataSync), so every transform was invisible. Fired
+-- by TileEffectService.transformAndBroadcast for every mid-battle transform path.
+-- Minimal payload (NET-003) and visual-only on the client (NET-001). No pacing wait
+-- (state sync, like TileEffectApplied / ObjectChanged).
+function BattleVisualBroadcaster.TerrainChanged(x, y, terrainId)
+	BattleEvents.TerrainChanged:FireAllClients({
+		x         = x,
+		y         = y,
+		terrainId = terrainId,
 	})
 end
 

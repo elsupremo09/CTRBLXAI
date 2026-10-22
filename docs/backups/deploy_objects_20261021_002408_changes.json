@@ -1,0 +1,29 @@
+{
+ "stamp": "20261021_002408",
+ "backup_db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_pre_deploy_objects_20261021_002408.db",
+ "backup_xlsx": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Game_Rules_pre_deploy_objects_20261021_002408.xlsx",
+ "pre_count": 85,
+ "post_count": 106,
+ "items": [
+  "DEP-001",
+  "DEP-002",
+  "DEP-003",
+  "DEP-004",
+  "DEP-005",
+  "DEP-006",
+  "DEP-007",
+  "DEP-008",
+  "DEP-009",
+  "DEP-010",
+  "DEP-011",
+  "DEP-012",
+  "DEP-013",
+  "DEP-014",
+  "DEP-015",
+  "DEP-016",
+  "DEP-017",
+  "DEP-018",
+  "DEP-019",
+  "DEP-020"
+ ]
+}

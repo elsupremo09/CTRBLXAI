@@ -24,6 +24,7 @@ local TraitEffectService      = require(Game:WaitForChild("TraitEffectService"))
 local CombatResolver          = require(Game:WaitForChild("CombatResolver"))
 local ItemGenerator           = require(Game:WaitForChild("ItemGenerator"))
 local InventoryService        = require(Game:WaitForChild("InventoryService"))
+local DoctrineInventoryService = require(Game:WaitForChild("DoctrineInventoryService"))
 local EquipmentService        = require(Game:WaitForChild("EquipmentService"))
 local PersistentStateService  = require(Game:WaitForChild("PersistentStateService"))
 local SaveService             = require(Game:WaitForChild("SaveService"))
@@ -76,6 +77,26 @@ local RaceData = require(
 		:WaitForChild("Content")
 		:WaitForChild("RaceData")
 )
+
+-- STAT BASE ESTABLISHMENT (2026-10-19): idempotent. Base Primary Stat = race growth
+-- (CalcBaseStats from the unit's level) + permanent allocation (statAllocation). Set
+-- ABSOLUTELY (not +=), so this is safe to call anywhere, any number of times, on a
+-- reused object or a freshly-built one, with no double-apply. Called wherever a player
+-- unit is established (boot roster + battle setup) and after a level-up.
+-- (CTRBLXAI.db unit_progression ids 100-105; item_rarity_rules id 9.)
+local STAT_KEYS = {"STR", "AGI", "INT", "VIT", "DEX", "LUK"}
+local function establishBaseStats(u)
+	if not (u and u.raceId and u.baseStats) then return end
+	local raceBase = RaceData.CalcBaseStats(u.raceId, u.level or 1)
+	if not raceBase then return end
+	for _, stat in ipairs(STAT_KEYS) do
+		local alloc = (u.statAllocation and u.statAllocation[stat]) or 0
+		if raceBase[stat] ~= nil then
+			u.baseStats[stat] = raceBase[stat] + alloc
+		end
+	end
+	EquipmentService.RebuildUnitStats(u)
+end
 local TraitData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
@@ -389,6 +410,7 @@ end
 
 local PLAYER_ID = "player_1"
 InventoryService.InitPlayer(PLAYER_ID)
+DoctrineInventoryService.InitPlayer(PLAYER_ID)
 
 --------------------------------------------------
 -- SLICE 6 SERVICE STARTUP (additive, dependency-ordered)
@@ -448,6 +470,7 @@ local savedEquipMap = {} -- unitId -> { MainHand = instanceId, OffHand = instanc
 local savedRaceMap = {}  -- unitId -> { raceId, perkIds, drawbackIds }
 local savedDoctrineMap = {}  -- unitId -> doctrineId
 local savedDoctrineSkillMap = {} -- unitId -> selectedDoctrineSkill
+local savedDoctrineInstanceMap = {} -- unitId -> doctrineInstanceId (owned-instance link, 2026-10-20)
 local savedSkillLoadoutMap = {} -- unitId -> skillLoadout table
 local savedCardInventory: any = {} -- { skillCards = {id=qty}, augmentCards = {id=qty} }
 local savedStatAllocation = {} -- unitId -> { STR = N, AGI = N, ... }
@@ -461,6 +484,11 @@ if loadedSave then
 	local prog = loadedSave.progression or {}
 	if type(prog.cardInventory) == "table" then
 		savedCardInventory = prog.cardInventory
+	end
+	-- Restore owned doctrine instances (2026-10-20). Absent on pre-instance saves;
+	-- establishment then mints instances from each unit.doctrineId (migration).
+	if type(prog.doctrineInventory) == "table" then
+		DoctrineInventoryService.ImportInventory(PLAYER_ID, prog.doctrineInventory)
 	end
 	-- Restore roster persistent state
 	PersistentStateService.ImportState(PLAYER_ID, loadedSave.roster or {})
@@ -486,6 +514,9 @@ if loadedSave then
 		-- Extract saved doctrine
 		if unitData.doctrineId and unitData.doctrineId ~= "none" then
 			savedDoctrineMap[unitId] = unitData.doctrineId
+		end
+		if unitData.doctrineInstanceId then
+			savedDoctrineInstanceMap[unitId] = unitData.doctrineInstanceId
 		end
 		if unitData.selectedDoctrineSkill then
 			savedDoctrineSkillMap[unitId] = unitData.selectedDoctrineSkill
@@ -1001,7 +1032,16 @@ if game:GetService("RunService"):IsStudio() then
 			end
 
 			-- Battlefield events on regenerate: re-pick for the new map.
-			do
+			-- GUARD (2026-10-20): only when a battle is actually running. Regenerate can be
+			-- used during the DEPLOYMENT phase, before BattleCoordinator.CreateBattleState
+			-- assigns `state` at battle start — so `state` is nil then. The old unguarded
+			-- `do` block did `state.units` here and CRASHED (Main:1037 "attempt to index
+			-- nil with 'units'"), which aborted the rest of this handler — the MapDataSync
+			-- below AND the unit reposition — leaving units stranded on their OLD tiles over
+			-- the NEW terrain (they looked buried/stuck). No battle yet = no events to
+			-- re-pick, so skipping this block during deployment is correct. Mirrors the
+			-- `if state then` guard on the tile-effects block just above.
+			if state then
 				local ec = 0
 				for _, u in ipairs(state.units) do if u.side == "Enemy" and u.isAlive then ec = ec + 1 end end
 				state.enemyCountAtStart = ec
@@ -1559,7 +1599,12 @@ GuildMenuService.Init({
 	playerId       = PLAYER_ID,
 	sessionPlayer  = player,
 	getPlayerUnits = function() return playerUnits end,
-	addPlayerUnit  = function(u) playerUnits[u.id] = u end,
+	addPlayerUnit  = function(u)
+		playerUnits[u.id] = u
+		-- Every added unit (mid-session hire, battle recruit) gets a bound Doctrine
+		-- instance immediately so "always equipped" holds without waiting for relaunch.
+		DoctrineInventoryService.EnsureUnitBound(PLAYER_ID, u)
+	end,
 	-- Lazy wrapper (2026-10-13): Init runs at boot, before doSave is assigned inside
 	-- the loop, so pass a closure that calls the live doSave at call time (same pattern
 	-- as getPlayerUnits/getMapLevel). A by-value `doSave = doSave` would capture nil here.
@@ -1597,6 +1642,178 @@ for _, recruitUnit in ipairs(GuildMenuService.RestoreRecruits(PLAYER_ID, savedEq
 end
 print(string.format("[Main] Boot roster ready: %d player unit(s) available at the base.",
 	(function() local n = 0 for _ in pairs(playerUnits) do n += 1 end return n end)()))
+
+-- Full per-unit establishment from SAVE (Stage 3, 2026-10-19): doctrine + default, doctrine
+-- skill, skill loadout, stat allocation (absolute base stats), records + level reconciliation,
+-- consumable slots, and skillIds. IDEMPOTENT. As of Stage 4 (2026-10-19) this runs ONLY at
+-- boot — the base owns a unit's data; battle no longer re-establishes (it just refreshes
+-- effectiveStats). Mid-session hires are established by their hire path, not here.
+local function establishPlayerUnitFromSave(u)
+	local savedDoc = savedDoctrineMap[u.id]
+	if savedDoc then
+		u.doctrineId = savedDoc
+	end
+	-- Assign default doctrine if none set
+	if not u.doctrineId then
+		u.doctrineId = "DOC-BERSERKER"  -- placeholder default
+	end
+	-- Restore selected doctrine skill from save (Slice 4H)
+	local savedSkill = savedDoctrineSkillMap[u.id]
+	if savedSkill then
+		u.selectedDoctrineSkill = savedSkill
+	end
+	-- Auto-select first skill choice if none set
+	if not u.selectedDoctrineSkill then
+		local doc = DoctrineData[u.doctrineId]
+		if doc and doc.skillChoices and #doc.skillChoices > 0 then
+			u.selectedDoctrineSkill = doc.skillChoices[1]
+		end
+	end
+	-- Doctrine ownership (2026-10-20): restore the saved bound-instance link, then
+	-- guarantee exactly one bound DoctrineInstance (mints from the content doctrineId
+	-- if missing — covers starters, restored recruits, and pre-instance save migration).
+	local savedDocInst = savedDoctrineInstanceMap[u.id]
+	if savedDocInst then
+		u.doctrineInstanceId = savedDocInst
+	end
+	DoctrineInventoryService.EnsureUnitBound(PLAYER_ID, u)
+	print(string.format("[Main] %s doctrine: %s (skill: %s)",
+		u.name, u.doctrineId, tostring(u.selectedDoctrineSkill)))
+
+	-- Restore skill loadout from save (Slice 4I)
+	local savedLoadout = savedSkillLoadoutMap[u.id]
+	if savedLoadout then
+		u.skillLoadout = savedLoadout
+	end
+	-- Initialize empty loadout if none exists
+	if not u.skillLoadout then
+		u.skillLoadout = { slot2 = nil, slot3 = nil, slot4 = nil }
+	end
+
+	-- Establish stats from save (Slice 4J). establishBaseStats sets Base Primary Stat =
+	-- race growth(level) + allocation ABSOLUTELY, so running it at boot (and on level-up)
+	-- never double-applies. (Stage 4: battle no longer calls this — it only refreshes
+	-- effectiveStats after clearing the prior battle's statuses.)
+	local savedAlloc = savedStatAllocation[u.id]
+	if savedAlloc then
+		u.statAllocation = savedAlloc
+	end
+	establishBaseStats(u)
+
+	-- Restore or initialize unit records (Slice 4K)
+	local savedRec = savedRecords[u.id]
+	if savedRec then
+		u.records = savedRec
+	else
+		u.records = {
+			battlesParticipated = 0,
+			victoriesParticipated = 0,
+			enemiesDefeated = 0,
+			totalDamageDealt = 0,
+			totalHealingDone = 0,
+			timesKO = 0,
+		}
+	end
+
+	-- SLICE 6 LEVEL FIX (2026-10-07): ProgressionService reads level/xp/raceId
+	-- from this record and defaults a missing level to 1, so level-25 starting
+	-- units levelled up to 2. Reconcile record level with the unit's level:
+	--   * record level missing or LOWER than the unit -> raise the record to the
+	--     unit's level (seeds new records; one-time correction for old saves that
+	--     stored the bogus 1). XP toward next level is kept as-is.
+	--   * record level HIGHER than the unit -> the unit levelled up in an earlier
+	--     session (starting units are always rebuilt at 25), so restore that level
+	--     and recompute base stats from race growth + saved allocation.
+	-- Never lowers a level. (ARC-006: nil-safe on every read.)
+	do
+		local rec = u.records
+		local unitLevel = math.max(1, math.floor(tonumber(u.level) or 1))
+		local recLevel = tonumber(rec.level)
+		if recLevel == nil or math.floor(recLevel) < unitLevel then
+			if recLevel ~= nil then
+				print(string.format("[Main] Level fix: %s record level %d -> %d (save correction)",
+					u.name, math.floor(recLevel), unitLevel))
+			end
+			rec.level = unitLevel
+		elseif math.floor(recLevel) > unitLevel and u.raceId then
+			local newLevel = math.floor(recLevel)
+			local ok, stats = pcall(RaceData.CalcBaseStats, u.raceId, newLevel)
+			if ok and type(stats) == "table" then
+				u.level = newLevel
+				for stat, value in pairs(stats) do
+					local pts = (u.statAllocation and u.statAllocation[stat]) or 0
+					u.baseStats[stat] = value + pts
+				end
+				EquipmentService.RebuildUnitStats(u)
+				PersistentStateService.UpdateMaxResources(PLAYER_ID, u.id, u.maxHp, u.maxMp)
+				-- Keep the runtime HP/MP in step with the persistent state read below.
+				-- KO units stay at 0 HP. (ps may be nil at boot for an unregistered unit;
+				-- the 'if ps' guard makes that a safe no-op.)
+				local ps = PersistentStateService.GetUnitState(PLAYER_ID, u.id)
+				if ps and u.isAlive then
+					u.currentHp = math.min(ps.currentHp, u.maxHp)
+					u.currentMp = math.min(ps.currentMp, u.maxMp)
+				end
+				print(string.format("[Main] Level fix: %s restored to saved level %d", u.name, newLevel))
+			end
+		end
+		if tonumber(rec.xp) == nil then rec.xp = 0 end
+		if rec.raceId == nil then rec.raceId = u.raceId end
+	end
+
+	-- Initialize consumable slots (Slice 4G.4)
+	-- 6 slots: 1-3 open, 4-6 locked (unlock via progression)
+	local savedCons = savedConsumableSlots[u.id]
+	if savedCons then
+		u.consumableSlots = savedCons
+	end
+	if not u.consumableSlots then
+		u.consumableSlots = {}
+	end
+	u.consumableSlotCount = 3  -- open slots (4-6 locked)
+	u.maxConsumableSlots = 6
+
+	-- Build skillIds from loadout (doctrine skill + equipped skill cards)
+	u.skillIds = {}
+	if u.selectedDoctrineSkill then
+		table.insert(u.skillIds, u.selectedDoctrineSkill)
+	end
+	for _, slotKey in ipairs({"slot2", "slot3", "slot4"}) do
+		local slotData = u.skillLoadout[slotKey]
+		if slotData and slotData.skillId then
+			table.insert(u.skillIds, slotData.skillId)
+		end
+	end
+	print(string.format("[Main] %s skills: %s", u.name, table.concat(u.skillIds, ", ")))
+end
+
+-- Establish EVERY player unit fully from save at BOOT so the base/loadout screen shows
+-- correct, fully-set-up units immediately (doctrine, skills, stats, records, consumables).
+for _, u in pairs(playerUnits) do
+	if u.side == "Player" then
+		establishPlayerUnitFromSave(u)
+	end
+end
+
+-- DEV-ONLY doctrine stash seed (2026-10-20, TEMPORARY SCAFFOLDING): mint a few spare
+-- doctrine copies into the loose stash so doctrine SWAPPING is testable before real
+-- loot drops and the merchant exist. Fixed instance ids make this idempotent — once
+-- these ids are in the saved doctrine inventory, re-boot skips them (no multiplication).
+-- REMOVE this block when doctrine drops / the merchant land.
+do
+	local DEV_DOCTRINE_SEED = { "DOC-VANGUARD", "DOC-DUELIST", "DOC-CLERIC", "DOC-ASSASSIN", "DOC-ELEMENTALIST", "DOC-GEOMANCER", "DOC-CHEMIST", "DOC-ARTIFICER" }
+	for i, docId in ipairs(DEV_DOCTRINE_SEED) do
+		if DoctrineData[docId] then
+			local fixedId = "doc_devseed_" .. i
+			if not DoctrineInventoryService.GetInstance(PLAYER_ID, fixedId) then
+				DoctrineInventoryService.AddInstance(PLAYER_ID, {
+					instanceId = fixedId, doctrineId = docId, selectedSkillId = nil, boundUnitId = nil,
+				})
+			end
+		end
+	end
+	print("[Main] Dev doctrine stash seeded (temporary) — spares available for swap testing.")
+end
 
 -- First-run party seed (2026-10-15): if the player has never built a party (all saved
 -- parties empty), fill Party A with the current boot roster so there is always one
@@ -1698,6 +1915,7 @@ function doSave()
 		-- Enrich with doctrine data (Slice 4H)
 		if rosterState[unitId] then
 			rosterState[unitId].doctrineId = unit.doctrineId or nil
+			rosterState[unitId].doctrineInstanceId = unit.doctrineInstanceId or nil
 			rosterState[unitId].selectedDoctrineSkill = unit.selectedDoctrineSkill or nil
 			rosterState[unitId].skillLoadout = unit.skillLoadout or nil
 			rosterState[unitId].statAllocation = unit.statAllocation or nil
@@ -1725,6 +1943,7 @@ function doSave()
 	-- balances into Key 2 (via the optional 5th Save arg). No second store.
 	local progression = {
 		cardInventory = cardInventory,
+		doctrineInventory = DoctrineInventoryService.ExportInventory(PLAYER_ID), -- owned doctrine instances (2026-10-20)
 		guild    = GuildService.Export(PLAYER_ID),
 		dispatch = DispatchService.Export(PLAYER_ID),
 		party    = PartyService.Export(PLAYER_ID),
@@ -1769,7 +1988,11 @@ local function resetUnitForNewBattle(u)
 	u.zombieReviveUsed = nil
 	u.tileX = 0
 	u.tileY = 0
-	u.facing = "South"
+	-- Facing tokens are ABBREVIATIONS everywhere (GameConstants.FACING_VECTORS keys:
+	-- N/NE/E/SE/S/SW/W/NW). "South" (full word) has no key, so the client facing
+	-- lookup silently fails and the unit shows no facing. Use "S". (Pre-existing bug
+	-- from the 2026-10-14 reset; corrected 2026-10-21.)
+	u.facing = "S"
 end
 
 while true do
@@ -1969,12 +2192,35 @@ while true do
 	TileEffectService.Init(MAP_WIDTH, MAP_HEIGHT)
 	TileEffectService.SetStatusService(StatusService)
 	TileEffectService.SetBroadcaster(BattleVisualBroadcaster)
+	-- BUG-002 GAP 2 (2026-10-22): single-tile server voxel-clear. When a VOXEL_KEEP
+	-- origin (Grassland / Shallow / Deep Water, rendered as a Roblox-Terrain voxel
+	-- column) transforms mid-battle to a non-voxel terrain, the client re-skins the
+	-- tile Part but cannot clear the server voxel column (workspace.Terrain is
+	-- server-only). This closure reads the `mapFolder` upvalue at CALL time (correct
+	-- across Regenerate) and clears ONLY that one tile's column via a localized
+	-- FillBlock(Air) in MapRenderer.ClearTileVoxelColumn (never a whole-map Clear()).
+	-- Same injection pattern as SetObjectRenderer / SetTileReshaper above.
+	TileEffectService.SetVoxelClearer(function(x, y)
+		if mapFolder then
+			MapRenderer.ClearTileVoxelColumn(mapFolder, x, y)
+		end
+	end)
 	-- OBS Phase 2c-D: route explosion/elevation object hits to the breakable OBS
 	-- blocker at (x,y). Closure over the battle `state` upvalue (lazy; nil-safe
 	-- before a battle exists). Billboard/unbreakable tiles are a no-op in ApplyObjectHit.
 	TileEffectService.SetObjectHitCallback(function(x, y)
-		if state then return ObjectEffectService.ApplyObjectHit(state, x, y, 1) end
+		-- fromExplosion=true: an EXPLOSIVE object (Bomb Barrel / Land Mine) in the
+		-- blast is NOT detonated here — the explosion queue chains it via the
+		-- explosive callback below so the 128-event cap spans the whole chain.
+		if state then return ObjectEffectService.ApplyObjectHit(state, x, y, 1, nil, true) end
 		return nil
+	end)
+	-- Trap-trigger feature (2026-10-20): when an explosion reaches a Bomb Barrel /
+	-- Land Mine tile, remove it and chain a new explosion event in the SAME queue
+	-- (TRG-011 cap). Closure over the battle `state`; nil-safe before a battle.
+	TileEffectService.SetExplosiveObjectCallback(function(x, y)
+		if state then return ObjectEffectService.ConsumeExplosiveObjectAt(state, x, y) end
+		return false
 	end)
 	BattleCoordinator.SetTileEffectService(TileEffectService)
 	CommandService.SetTileEffectService(TileEffectService)
@@ -2002,6 +2248,15 @@ while true do
 	end)
 	WeatherService.SetTileReshaper(function(x, y, terrain, elev)
 		if mapFolder then MapRenderer.ReshapeTile(mapFolder, x, y, terrain, elev) end
+	end)
+	-- BUG-002 voxel-clear follow-up (2026-10-22): wire the single-tile voxel-clear onto
+	-- the WeatherService terrain-change path (reshapeTile), identical to the
+	-- TileEffectService.SetVoxelClearer injection above. Same live mapFolder upvalue
+	-- (reassigned on Regenerate) + localized MapRenderer.ClearTileVoxelColumn FillBlock(Air)
+	-- (never a whole-map Clear). So Heatwave drying Shallow/Deep Water -> Clear now removes
+	-- that one tile's stale water voxel column.
+	WeatherService.SetVoxelClearer(function(x, y)
+		if mapFolder then MapRenderer.ClearTileVoxelColumn(mapFolder, x, y) end
 	end)
 	BattleCoordinator.SetWeatherService(WeatherService)
 	CombatResolver.SetWeatherService(WeatherService)
@@ -2033,13 +2288,33 @@ while true do
 		enemyRng
 	)
 
-	allUnitsList = { hero, mage, ranger }
-	-- Slice 6 Guild menu: re-create units hired in earlier sessions. Inserted here,
-	-- before the enemies and before the generic roster loops below (Flight, persistent
-	-- HP/MP, doctrine, loadout, records), so recruits go through the same setup as the
-	-- starting units. Traits + saved equipment are restored inside RestoreRecruits.
-	for _, recruitUnit in ipairs(GuildMenuService.RestoreRecruits(PLAYER_ID, savedEquipMap, savedRaceMap)) do
-		table.insert(allUnitsList, recruitUnit)
+	-- STAGE 2 (2026-10-19): battle BORROWS the base roster instead of rebuilding it.
+	-- Previously this rebuilt hero/mage/ranger and re-ran RestoreRecruits (creating NEW
+	-- recruit objects) every battle -- the root of "battle is the main loop". Now battle
+	-- snapshots the already-established persistent playerUnits (hero/mage/ranger + boot-
+	-- restored recruits + any mid-session hires). allUnitsList is a fresh COPY so battle-
+	-- only mutations (SyncBattleRoster bench/dispatch, undeployed pruning, enemy inserts)
+	-- never touch the base roster. Deterministic order: starting units first, then the
+	-- rest by id. The establishment block below still re-finalizes these units idempotently.
+	allUnitsList = {}
+	local _seenStarter = {}
+	for _, starter in ipairs({ hero, mage, ranger }) do
+		if starter and playerUnits[starter.id] then
+			table.insert(allUnitsList, playerUnits[starter.id])
+			_seenStarter[starter.id] = true
+		end
+	end
+	do
+		local _restIds = {}
+		for id, u in pairs(playerUnits) do
+			if u.side == "Player" and not _seenStarter[id] then
+				table.insert(_restIds, id)
+			end
+		end
+		table.sort(_restIds)
+		for _, id in ipairs(_restIds) do
+			table.insert(allUnitsList, playerUnits[id])
+		end
 	end
 	for _, enemyUnit in ipairs(generatedEnemies) do
 		table.insert(allUnitsList, enemyUnit)
@@ -2101,139 +2376,16 @@ while true do
 		end
 	end
 
-	-- Restore or assign doctrines for player units
+	-- STAGE 4 (2026-10-19): battle no longer re-establishes unit identity. Units are fully
+	-- established by the base at boot and at hire time, and every base edit (equip / doctrine /
+	-- skill / stat allocation) keeps the LIVE unit current, so battle purely CONSUMES them.
+	-- The only battle-scoped stat work left is recomputing effectiveStats AFTER
+	-- resetUnitForNewBattle cleared the previous battle's statuses, so each fight starts from a
+	-- clean (no-status) stat line. The old stale-snapshot re-establish (which reverted
+	-- mid-session base edits) is gone.
 	for _, u in ipairs(allUnitsList) do
 		if u.side == "Player" then
-			local savedDoc = savedDoctrineMap[u.id]
-			if savedDoc then
-				u.doctrineId = savedDoc
-			end
-			-- Assign default doctrine if none set
-			if not u.doctrineId then
-				u.doctrineId = "DOC-BERSERKER"  -- placeholder default
-			end
-			-- Restore selected doctrine skill from save (Slice 4H)
-			local savedSkill = savedDoctrineSkillMap[u.id]
-			if savedSkill then
-				u.selectedDoctrineSkill = savedSkill
-			end
-			-- Auto-select first skill choice if none set
-			if not u.selectedDoctrineSkill then
-				local doc = DoctrineData[u.doctrineId]
-				if doc and doc.skillChoices and #doc.skillChoices > 0 then
-					u.selectedDoctrineSkill = doc.skillChoices[1]
-				end
-			end
-			print(string.format("[Main] %s doctrine: %s (skill: %s)",
-				u.name, u.doctrineId, tostring(u.selectedDoctrineSkill)))
-
-			-- Restore skill loadout from save (Slice 4I)
-			local savedLoadout = savedSkillLoadoutMap[u.id]
-			if savedLoadout then
-				u.skillLoadout = savedLoadout
-			end
-			-- Initialize empty loadout if none exists
-			if not u.skillLoadout then
-				u.skillLoadout = { slot2 = nil, slot3 = nil, slot4 = nil }
-			end
-
-			-- Restore stat allocation from save (Slice 4J)
-			local savedAlloc = savedStatAllocation[u.id]
-			if savedAlloc then
-				u.statAllocation = savedAlloc
-				-- Apply allocation to baseStats
-				for stat, pts in pairs(savedAlloc) do
-					if u.baseStats[stat] then
-						u.baseStats[stat] = u.baseStats[stat] + pts
-					end
-				end
-				EquipmentService.RebuildUnitStats(u)
-			end
-
-			-- Restore or initialize unit records (Slice 4K)
-			local savedRec = savedRecords[u.id]
-			if savedRec then
-				u.records = savedRec
-			else
-				u.records = {
-					battlesParticipated = 0,
-					victoriesParticipated = 0,
-					enemiesDefeated = 0,
-					totalDamageDealt = 0,
-					totalHealingDone = 0,
-					timesKO = 0,
-				}
-			end
-
-			-- SLICE 6 LEVEL FIX (2026-10-07): ProgressionService reads level/xp/raceId
-			-- from this record and defaults a missing level to 1, so level-25 starting
-			-- units levelled up to 2. Reconcile record level with the unit's level:
-			--   * record level missing or LOWER than the unit -> raise the record to the
-			--     unit's level (seeds new records; one-time correction for old saves that
-			--     stored the bogus 1). XP toward next level is kept as-is.
-			--   * record level HIGHER than the unit -> the unit levelled up in an earlier
-			--     session (starting units are always rebuilt at 25), so restore that level
-			--     and recompute base stats from race growth + saved allocation.
-			-- Never lowers a level. (ARC-006: nil-safe on every read.)
-			do
-				local rec = u.records
-				local unitLevel = math.max(1, math.floor(tonumber(u.level) or 1))
-				local recLevel = tonumber(rec.level)
-				if recLevel == nil or math.floor(recLevel) < unitLevel then
-					if recLevel ~= nil then
-						print(string.format("[Main] Level fix: %s record level %d -> %d (save correction)",
-							u.name, math.floor(recLevel), unitLevel))
-					end
-					rec.level = unitLevel
-				elseif math.floor(recLevel) > unitLevel and u.raceId then
-					local newLevel = math.floor(recLevel)
-					local ok, stats = pcall(RaceData.CalcBaseStats, u.raceId, newLevel)
-					if ok and type(stats) == "table" then
-						u.level = newLevel
-						for stat, value in pairs(stats) do
-							local pts = (u.statAllocation and u.statAllocation[stat]) or 0
-							u.baseStats[stat] = value + pts
-						end
-						EquipmentService.RebuildUnitStats(u)
-						PersistentStateService.UpdateMaxResources(PLAYER_ID, u.id, u.maxHp, u.maxMp)
-						-- Keep the runtime HP/MP in step with the persistent state (it was
-						-- copied at L792 before this recompute). KO units stay at 0 HP.
-						local ps = PersistentStateService.GetUnitState(PLAYER_ID, u.id)
-						if ps and u.isAlive then
-							u.currentHp = math.min(ps.currentHp, u.maxHp)
-							u.currentMp = math.min(ps.currentMp, u.maxMp)
-						end
-						print(string.format("[Main] Level fix: %s restored to saved level %d", u.name, newLevel))
-					end
-				end
-				if tonumber(rec.xp) == nil then rec.xp = 0 end
-				if rec.raceId == nil then rec.raceId = u.raceId end
-			end
-
-			-- Initialize consumable slots (Slice 4G.4)
-			-- 6 slots: 1-3 open, 4-6 locked (unlock via progression)
-			local savedCons = savedConsumableSlots[u.id]
-			if savedCons then
-				u.consumableSlots = savedCons
-			end
-			if not u.consumableSlots then
-				u.consumableSlots = {}
-			end
-			u.consumableSlotCount = 3  -- open slots (4-6 locked)
-			u.maxConsumableSlots = 6
-
-			-- Build skillIds from loadout (doctrine skill + equipped skill cards)
-			u.skillIds = {}
-			if u.selectedDoctrineSkill then
-				table.insert(u.skillIds, u.selectedDoctrineSkill)
-			end
-			for _, slotKey in ipairs({"slot2", "slot3", "slot4"}) do
-				local slotData = u.skillLoadout[slotKey]
-				if slotData and slotData.skillId then
-					table.insert(u.skillIds, slotData.skillId)
-				end
-			end
-			print(string.format("[Main] %s skills: %s", u.name, table.concat(u.skillIds, ", ")))
+			EquipmentService.RebuildUnitStats(u)
 		end
 	end
 
@@ -2254,7 +2406,10 @@ while true do
 	--------------------------------------------------
 	table.clear(playerUnits)  -- clear in place; the base holds a persistent reference (boot-init 2026-10-13)
 	for _, u in ipairs(allUnitsList) do
-		if u.side == "Player" then playerUnits[u.id] = u end
+		if u.side == "Player" then
+			playerUnits[u.id] = u
+			DoctrineInventoryService.EnsureUnitBound(PLAYER_ID, u)
+		end
 	end
 
 	--------------------------------------------------
@@ -2393,8 +2548,6 @@ while true do
 
 	-- GetDoctrineChoices: returns available doctrines and their skill choices
 
-	-- RequestDoctrineChange: assign a doctrine to a unit
-
 	-- RequestDoctrineSkillSelect: pick one of the 3 skill choices
 
 	--------------------------------------------------
@@ -2508,9 +2661,6 @@ while true do
 	-- unit's current level minus points spent, never stored as a running total, so
 	-- rejoins / level restores cannot double-grant. Race growth (unit_progression 49)
 	-- still applies on top.
-
-
-	-- RequestAllocateStat: spend 1 unallocated point on a stat
 
 	-- GetUnitFullStats: returns complete stat breakdown for Info tab
 
@@ -2626,33 +2776,20 @@ while true do
 		local result = {}
 		for _, u in ipairs(unitList) do
 			if u.side == side then
+				-- UNIFIED PACKAGING (2026-10-22): deployment now uses the SAME serializer
+				-- battle uses (BattleVisualBroadcaster.SerializeUnit), so both phases describe
+				-- every unit identically -- a field can never again be present in battle's
+				-- packet and missing from deployment's (the root cause behind facing / HP-MP /
+				-- stats drift). Only the weapon LABEL stays phase-specific: deployment shows the
+				-- archetype name ("Sword") while battle shows the item name, so override it here.
+				local packet = BattleVisualBroadcaster.SerializeUnit(u)
 				local wpnName = "Unarmed"
 				if u.equipmentSlots and u.equipmentSlots.MainHand then
 					local wArch = WeaponData.GetByArchetypeId(u.equipmentSlots.MainHand.baseArchetypeId)
 					if wArch then wpnName = wArch.name end
 				end
-				table.insert(result, {
-					id         = u.id,
-					name       = u.name,
-					side       = u.side,
-					tileX      = u.tileX,
-					tileY      = u.tileY,
-					weaponName = wpnName,
-					enemyType  = u.enemyType,  -- tier (Grunt/Veteran/Elite) for the deployment tier star
-					level      = u.level,  -- real unit level for the deployment cell Lv badge (was unsent -> always showed Lv.1) (2026-10-15)
-					-- Unit face for the deployment roster cell (same field the battle panels use).
-					portraitAssetId = u.portraitAssetId,  -- (2026-10-15)
-					-- Live stats so the compact inspector panel shows real data during deployment
-					-- (same field expressions BattleVisualBroadcaster.serializeUnit uses). (2026-10-15)
-					currentHp   = u.currentHp,
-					maxHp       = u.maxHp,
-					currentMp   = u.currentMp or 0,
-					maxMp       = u.maxMp or 0,
-					currentAp   = u.currentAp,
-					remainingRt = u.remainingRt,
-					doctrine    = u.doctrineId and DoctrineData[u.doctrineId] and DoctrineData[u.doctrineId].name or nil,
-					race        = u.raceId and RaceData.GetRace(u.raceId) and RaceData.GetRace(u.raceId).name or nil,
-				})
+				packet.weaponName = wpnName
+				table.insert(result, packet)
 			end
 		end
 		return result
@@ -2744,6 +2881,13 @@ while true do
 			if _tpl and _tpl:IsA("Model") then
 				local c = _tpl:Clone()
 				c.Name = "Unit_" .. eu.id
+				-- STREAMING FIX (2026-10-21): make the battle unit always-present on the
+				-- client. StreamingEnabled is on, so a server-spawned model can arrive late,
+				-- partially, or not at all for far tiles -- the documented cause of deployment
+				-- cylinders (model nil on client) and T-pose (rig parented before descendants
+				-- replicate). Persistent loads after join and never streams out. Set before
+				-- parenting so it applies on first replication.
+				c.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
 				-- Kill the R15 built-in overhead name/health tag (client HP-bar shows the name).
 				local _h1 = c:FindFirstChildOfClass("Humanoid")
 				if _h1 then _h1.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None; _h1.NameDisplayDistance = 0; _h1.HealthDisplayDistance = 0 end
@@ -2754,7 +2898,7 @@ while true do
 					local _oz = -(MAP_HEIGHT * 5) / 2
 					local _elev = generatedMap.elevationGrid and generatedMap.elevationGrid[eu.tileY]
 						and generatedMap.elevationGrid[eu.tileY][eu.tileX] or 1
-					local _tileTopY = 0.6 + (_elev - 1) * 1.2  -- TILE_BASE_HEIGHT + (elev-1)*ELEVATION_STEP (dev-locked 1.2)
+					local _tileTopY = GameConstants.TileSurfaceY(_elev)  -- shared single-source tile height
 					-- Stand TRUE FEET on the surface via the shared bbox-bottom helper
 					-- (race rigs with pivot-above-feet otherwise bury). Facing preserved.
 					local _wx = _ox + (eu.tileX - 0.5) * 5
@@ -2767,6 +2911,38 @@ while true do
 				print(string.format("[Deploy] Enemy %s → R15 model '%s' at (%d,%d)", eu.name, _rn, eu.tileX, eu.tileY))
 			end
 		end
+	end
+
+	-- PRE-BUILD PLAYER MODELS (2026-10-21): build every deployable player unit's model
+	-- up front and park it hidden below the map, exactly as enemies are built up front.
+	-- Parenting to UnitModels immediately triggers UGC dressing, so each unit's outfit
+	-- downloads during the player's orientation window. Deploying a unit then just slides
+	-- the finished, already-dressed model onto the tile (no ~3s per-unit load). Returns
+	-- the model (building it if somehow not yet built), or nil if the race has no model.
+	local PLAYER_PARK_Y = -200  -- hidden well below the battlefield; camera never looks here
+	local function ensurePlayerModelBuilt(u, idx)
+		local umf = workspace:FindFirstChild("UnitModels")
+		if not umf then umf = Instance.new("Folder"); umf.Name = "UnitModels"; umf.Parent = workspace end
+		local existing = umf:FindFirstChild("Unit_" .. u.id)
+		if existing then return existing end
+		local raceModels = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
+		local raceName = u.raceId and RaceData.GetRace(u.raceId) and RaceData.GetRace(u.raceId).name or nil
+		local template = raceName and raceModels and raceModels:FindFirstChild(raceName)
+		if not (template and template:IsA("Model")) then return nil end
+		local clone = template:Clone()
+		clone.Name = "Unit_" .. u.id
+		clone.ModelStreamingMode = Enum.ModelStreamingMode.Persistent  -- always-present (see enemy note)
+		local _h = clone:FindFirstChildOfClass("Humanoid")
+		if _h then _h.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None; _h.NameDisplayDistance = 0; _h.HealthDisplayDistance = 0 end
+		local hrp = clone.PrimaryPart or clone:FindFirstChild("HumanoidRootPart")
+		if hrp then hrp.Anchored = true end
+		clone:PivotTo(CFrame.new((idx or 0) * 6, PLAYER_PARK_Y, 0))  -- parked hidden until deployed
+		clone.Parent = umf  -- parenting here starts UGC dressing (WatchUnitModels)
+		attachWeaponToUnit(clone, u)
+		return clone
+	end
+	for idx, u in ipairs(deployPlayerUnits) do
+		ensurePlayerModelBuilt(u, idx)
 	end
 
 	BattleEvents.DeploymentPhase:FireAllClients({
@@ -2854,39 +3030,24 @@ while true do
 			tileY  = data.tileY,
 		})
 
-		-- Spawn R15 model for the deployed unit
-		local _raceModels = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
-		if _raceModels then
-			local _raceName = unit.raceId and RaceData.GetRace(unit.raceId)
-				and RaceData.GetRace(unit.raceId).name or nil
-			local _template = _raceName and _raceModels:FindFirstChild(_raceName)
-			if _template and _template:IsA("Model") then
-				local _umf = workspace:FindFirstChild("UnitModels")
-				if not _umf then _umf = Instance.new("Folder"); _umf.Name = "UnitModels"; _umf.Parent = workspace end
-				-- Remove existing model if re-deployed
-				local existing = _umf:FindFirstChild("Unit_" .. unit.id)
-				if existing then existing:Destroy() end
-				local clone = _template:Clone()
-				clone.Name = "Unit_" .. unit.id
-				local _h2 = clone:FindFirstChildOfClass("Humanoid")
-				if _h2 then _h2.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None; _h2.NameDisplayDistance = 0; _h2.HealthDisplayDistance = 0 end
-				local hrp = clone.PrimaryPart or clone:FindFirstChild("HumanoidRootPart")
-				if hrp then
-					hrp.Anchored = true
-					-- PivotTo places model's feet at the target position
-					local _ox = -(MAP_WIDTH * 5) / 2
-					local _oz = -(MAP_HEIGHT * 5) / 2
-					local _elev = generatedMap.elevationGrid and generatedMap.elevationGrid[data.tileY]
-						and generatedMap.elevationGrid[data.tileY][data.tileX] or 1
-					local _feetY = 0.6 + (_elev - 1) * 1.2  -- TILE_BASE_HEIGHT + (elev-1)*ELEVATION_STEP (dev-locked 1.2)
-					-- Stand TRUE FEET on the surface via the shared bbox-bottom helper.
-					local _wx = _ox + (data.tileX - 0.5) * 5
-					local _wz = _oz + (data.tileY - 0.5) * 5
-					local _face = centerFacingCFrame(_wx, _feetY, _wz, data.tileX, data.tileY)
-					clone:PivotTo(GameConstants.GroundModelPivotCFrame(clone, _wx, _feetY, _wz, _face))
-				end
-				clone.Parent = _umf
-				attachWeaponToUnit(clone, unit)
+		-- Place the PRE-BUILT (already-dressed) model onto the tile -- no clone/dress here,
+		-- so deploying feels instant. ensurePlayerModelBuilt returns the model parked at
+		-- deployment start (or builds it now as a safety fallback if somehow missing).
+		local model = ensurePlayerModelBuilt(unit)
+		if model then
+			local hrp = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				hrp.Anchored = true
+				local _ox = -(MAP_WIDTH * 5) / 2
+				local _oz = -(MAP_HEIGHT * 5) / 2
+				local _elev = generatedMap.elevationGrid and generatedMap.elevationGrid[data.tileY]
+					and generatedMap.elevationGrid[data.tileY][data.tileX] or 1
+				local _feetY = GameConstants.TileSurfaceY(_elev)  -- shared single-source tile height
+				-- Stand TRUE FEET on the surface via the shared bbox-bottom helper; face center.
+				local _wx = _ox + (data.tileX - 0.5) * 5
+				local _wz = _oz + (data.tileY - 0.5) * 5
+				local _face = centerFacingCFrame(_wx, _feetY, _wz, data.tileX, data.tileY)
+				model:PivotTo(GameConstants.GroundModelPivotCFrame(model, _wx, _feetY, _wz, _face))
 			end
 		end
 
@@ -2924,11 +3085,13 @@ while true do
 			tileY  = oldY,
 		})
 
-		-- Remove R15 model
+		-- Park the model hidden again instead of destroying it, so re-deploying is
+		-- instant (it stays built and dressed). Benched models are cleaned up when the
+		-- battle actually starts (below).
 		local _umf = workspace:FindFirstChild("UnitModels")
 		if _umf then
 			local existing = _umf:FindFirstChild("Unit_" .. unit.id)
-			if existing then existing:Destroy() end
+			if existing then existing:PivotTo(CFrame.new(0, -200, 0)) end
 		end
 
 		print(string.format("[Deploy] %s UNDEPLOYED from (%d,%d) — %d/%d deployed",
@@ -2962,7 +3125,14 @@ while true do
 	end
 	for i = #deployPlayerUnits, 1, -1 do
 		local u = deployPlayerUnits[i]
-		if u.tileX == 0 and u.tileY == 0 then table.remove(deployPlayerUnits, i) end
+		if u.tileX == 0 and u.tileY == 0 then
+			-- Benched (not fielded): remove its pre-built parked model so it doesn't
+			-- linger hidden below the map during the battle.
+			local _umf = workspace:FindFirstChild("UnitModels")
+			local m = _umf and _umf:FindFirstChild("Unit_" .. u.id)
+			if m then m:Destroy() end
+			table.remove(deployPlayerUnits, i)
+		end
 	end
 	print(string.format("[Deploy] %d player unit(s) deployed — starting battle", #deployPlayerUnits))
 
@@ -3087,6 +3257,8 @@ while true do
 			end
 			local clone = template:Clone()
 			clone.Name = "Unit_" .. unit.id
+			-- STREAMING FIX (2026-10-21): always-present battle unit (see enemy spawn note).
+			clone.ModelStreamingMode = Enum.ModelStreamingMode.Persistent
 			local _h3 = clone:FindFirstChildOfClass("Humanoid")
 			if _h3 then _h3.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None; _h3.NameDisplayDistance = 0; _h3.HealthDisplayDistance = 0 end
 			local hrp = clone.PrimaryPart or clone:FindFirstChild("HumanoidRootPart")
@@ -3095,7 +3267,7 @@ while true do
 				-- Position at the unit's tile
 				local elev = generatedMap.elevationGrid and generatedMap.elevationGrid[unit.tileY]
 					and generatedMap.elevationGrid[unit.tileY][unit.tileX] or 1
-				local tileTopY = 0.6 + (elev - 1) * 1.2  -- TILE_BASE_HEIGHT + (elev-1)*ELEVATION_STEP (dev-locked 1.2)
+				local tileTopY = GameConstants.TileSurfaceY(elev)  -- shared single-source tile height
 				-- Stand TRUE FEET on the surface via the shared bbox-bottom helper.
 				local _wx = offsetX + (unit.tileX - 0.5) * TILE_SZ
 				local _wz = offsetZ + (unit.tileY - 0.5) * TILE_SZ

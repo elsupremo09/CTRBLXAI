@@ -73,11 +73,10 @@ local CameraController = require(
 -- CONSTANTS (must match BattleVisualClient / MapRenderer)
 --------------------------------------------------
 local TILE_SIZE        = 5
-local TILE_BASE_HEIGHT = 0.6
 -- Must match server MapRenderer.ELEVATION_STEP (dev-locked 2026-09-24: 1.2 for the
 -- expanded 1–20 elevation scale). Used by tileSurfaceY to seat deployment tile
 -- surfaces on the rendered terrain. Keep in sync with server + BattleVisualClient.
-local ELEVATION_STEP   = 1.2
+local ELEVATION_STEP   = GameConstants.ELEVATION_STEP  -- single source of truth (2026-10-20)
 
 --------------------------------------------------
 -- STATE
@@ -132,7 +131,7 @@ end
 
 local function tileSurfaceY(tx, ty)
 	local elev = GameConstants.GetElevation(tx, ty) or 1
-	return TILE_BASE_HEIGHT + (elev - 1) * ELEVATION_STEP
+	return GameConstants.TileSurfaceY(elev)
 end
 
 local function tileToWorld(tx, ty)
@@ -149,7 +148,6 @@ end
 local function cleanup()
 	active = false
 	_G.CTRBLXAI_DeploymentActive = false
-	_G.CTRBLXAI_GetDeployUnitAtTile = nil  -- stop BVC hover peek reading deploy data post-deployment
 	if inputConn then inputConn:Disconnect(); inputConn = nil end
 	if deployFolder then deployFolder:Destroy(); deployFolder = nil end
 	if screenGui then screenGui:Destroy(); screenGui = nil end
@@ -185,6 +183,21 @@ end
 --------------------------------------------------
 -- 3D PARTS: Enemy Tokens (red cylinders with name labels)
 --------------------------------------------------
+-- Shared model lookup for BOTH enemy and player tokens (2026-10-21). The server
+-- builds each unit's real model and it may arrive on the client a moment late,
+-- so wait briefly for it (and its root) before giving up. Returns the model and
+-- its root part, or nil if it never arrives (caller then draws the placeholder
+-- cylinder). ONE routine for both sides, so a fix here covers every unit.
+local function resolveServerUnitModel(unitId)
+	local umf = workspace:FindFirstChild("UnitModels")
+	if not umf then return nil end
+	local model = umf:WaitForChild("Unit_" .. unitId, 5)
+	if not model then return nil end
+	local hrp = model.PrimaryPart or model:WaitForChild("HumanoidRootPart", 3)
+	if not hrp then return nil end
+	return model, hrp
+end
+
 local function createEnemyToken(enemy)
 	-- If the server already built this enemy's R15 model (it does, during deployment),
 	-- reuse it instead of drawing a red cylinder, so deployment shows real models like
@@ -193,9 +206,9 @@ local function createEnemyToken(enemy)
 	-- existing cleanup() (which Destroys deployFolder) removes the label and leaves the
 	-- real model untouched for BattleVisualClient. Mirrors the player token's model reuse.
 	-- A race with no model still falls through to the cylinder placeholder below.
-	local umf = workspace:FindFirstChild("UnitModels")
-	local serverModel = umf and umf:FindFirstChild("Unit_" .. enemy.id)
-	local modelHrp = serverModel and (serverModel.PrimaryPart or serverModel:FindFirstChild("HumanoidRootPart"))
+	-- Resolve the server model via the shared helper (waits briefly for late
+	-- replication). Same routine the player tokens use, so both behave identically.
+	local serverModel, modelHrp = resolveServerUnitModel(enemy.id)
 	if serverModel and modelHrp then
 		-- Breathe during deployment, like battle (random desynced idle on the real model).
 		if _G.CTRBLXAI_PlayDeployIdle then _G.CTRBLXAI_PlayDeployIdle(serverModel) end
@@ -312,11 +325,14 @@ end
 --------------------------------------------------
 local function createPlayerToken(unitId, unitName, tx, ty)
 	-- If a server-spawned R15 model exists, skip the cylinder placeholder
-	local umf = workspace:FindFirstChild("UnitModels")
-	if umf and umf:FindFirstChild("Unit_" .. unitId) then
-		playerTokens[unitId] = umf:FindFirstChild("Unit_" .. unitId)
+	-- Use the shared lookup (waits briefly for late replication) so player units
+	-- get their real model instead of a blue cylinder when it arrives a moment late
+	-- -- the same fix enemies already had. (2026-10-21)
+	local serverModel = resolveServerUnitModel(unitId)
+	if serverModel then
+		playerTokens[unitId] = serverModel
 		-- Breathe during deployment, like battle (random desynced idle on the real model).
-		if _G.CTRBLXAI_PlayDeployIdle then _G.CTRBLXAI_PlayDeployIdle(playerTokens[unitId]) end
+		if _G.CTRBLXAI_PlayDeployIdle then _G.CTRBLXAI_PlayDeployIdle(serverModel) end
 		return
 	end
 
@@ -705,22 +721,6 @@ local function unitOnTile(tx, ty)
 	return nil
 end
 
--- Hover quick-peek bridge for BattleVisualClient. During deployment, BVC's own
--- unitData is not populated yet, so its hover tooltip would show a raw id + HP 0/0.
--- Expose the REAL deploy-time data (same source as the tap panel) keyed by battle
--- tile so BVC can render a correct hover peek. Returns nil if no deployed unit sits
--- on that tile. (2026-10-18, BUG-051 real fix: correct the data source, not suppress.)
-_G.CTRBLXAI_GetDeployUnitAtTile = function(tx, ty)
-	local ud = unitOnTile(tx, ty)
-	if not ud then return nil end
-	return {
-		id = ud.id, name = ud.name, side = ud.side,
-		currentHp = ud.currentHp, maxHp = ud.maxHp,
-		currentMp = ud.currentMp, maxMp = ud.maxMp,
-		statuses = ud.statuses,
-	}
-end
-
 local function clearInspect()
 	if BattleHUD and BattleHUD.ClearSelection then BattleHUD.ClearSelection() end
 end
@@ -955,8 +955,10 @@ BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 
 
 	-- Create enemy tokens (red cylinders)
+	-- Per-enemy in task.spawn so each can WaitForChild its (Persistent) server model
+	-- without blocking the others or the rest of this handler (camera, roster UI).
 	for _, enemy in ipairs(data.enemyUnits or {}) do
-		createEnemyToken(enemy)
+		task.spawn(createEnemyToken, enemy)
 	end
 
 	-- Create roster UI
@@ -1032,7 +1034,8 @@ BattleEvents.UnitDeployed.OnClientEvent:Connect(function(data)
 
 	-- Spawn player token at deployed position
 	if unitName ~= "" then
-		createPlayerToken(data.unitId, unitName, data.tileX, data.tileY)
+		-- in task.spawn so the brief wait for the model never blocks this handler
+		task.spawn(createPlayerToken, data.unitId, unitName, data.tileX, data.tileY)
 	end
 	-- Track the deployed tile for inspect-on-tap.
 	if deployUnitData[data.unitId] then

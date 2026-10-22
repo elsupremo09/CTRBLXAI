@@ -209,6 +209,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	local wallCollisionResult = nil
 	local totalFallHeight = 0
 	local crossEffects = {}
+	local tilesPath = {}   -- ordered tiles the target is dragged ONTO (excludes origin); for trap triggers
 	local startElev = currentElev
 
 	for step = 1, pushDistance do
@@ -291,6 +292,8 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		currentY = nextY
 		currentElev = nextElev
 		tilesDisplaced = tilesDisplaced + 1
+		-- Record each tile crossed (forced-movement trap triggers walk this list).
+		table.insert(tilesPath, { x = currentX, y = currentY })
 
 		-- Resolve cross effects for the tile we just entered.
 		local tileEffects = TileCrossEffectService.OnTileEntered(
@@ -356,6 +359,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		blockedBy       = blockedBy,
 		totalFallHeight = totalFallHeight,
 		crossEffects    = #crossEffects > 0 and crossEffects or nil,
+		tilesPath       = tilesPath,
 	}
 
 	print(string.format(

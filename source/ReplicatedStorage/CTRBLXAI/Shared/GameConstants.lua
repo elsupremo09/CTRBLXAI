@@ -22,6 +22,25 @@ GameConstants.AP_PER_TURN_BOSS = 3
 GameConstants.REST_RT_MULTIPLIER = 0.75
 
 --------------------------------------------------
+-- TILE GEOMETRY (single source of truth, 2026-10-20)
+--------------------------------------------------
+-- The flat tile-surface height formula lived as bare literals (0.6 / 1.2) in
+-- three server spawn sites AND as separate local constants in BattleVisualClient,
+-- DeploymentUI, and MapRenderer. If the 1.2 ever changed, every copy had to be
+-- found by hand — miss one and server vs client disagree on how tall a tile is,
+-- which is exactly how units get buried. These are now defined ONCE here; every
+-- consumer reads them. ELEVATION_STEP is dev-locked at 1.2 for the 1-20 scale.
+GameConstants.TILE_BASE_HEIGHT = 0.6   -- world Y of an elevation-1 tile's top
+GameConstants.ELEVATION_STEP   = 1.2   -- world studs added per elevation level
+
+-- Flat grid-math surface Y for a tile at the given elevation. This is the
+-- fallback/placement height (the true rendered surface is found by raycast on
+-- the client); keep both in sync by having everyone call this one function.
+function GameConstants.TileSurfaceY(elev)
+	return GameConstants.TILE_BASE_HEIGHT + ((elev or 1) - 1) * GameConstants.ELEVATION_STEP
+end
+
+--------------------------------------------------
 -- ACTION RT COST MULTIPLIERS
 --------------------------------------------------
 

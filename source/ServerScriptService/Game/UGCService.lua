@@ -50,6 +50,7 @@
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
 local UGCCatalogData = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("UGCCatalogData"))
 -- Save payload encode/decode, split out 2026-10-09 (ARC-005). Required directly, not
@@ -861,9 +862,16 @@ function UGCService.GetUnitLookIds(playerId: string, unitId: string): { number }
 	local s = stateOf(playerId)
 	local slots = s and s.equips[unitId]
 	if not s or not slots then return out end
+	-- STUDIO TEST OVERRIDE (2026-10-21): in Studio the test account does not really
+	-- own paid catalog items, so the live ownership check (hasAccess) fails and
+	-- equipped outfits would not render during testing. In Studio ONLY, treat an
+	-- equipped, in-catalog item as wearable so looks can be tested. The live game
+	-- (not Studio) still requires real ownership/trial/rental, so the paid outfit
+	-- economy is unaffected in production.
+	local studioTest = RunService:IsStudio()
 	for _, slot in UGCCatalogData.SLOTS do
 		local id = slots[slot]
-		if id and itemOf(id) and hasAccess(s, id) then
+		if id and itemOf(id) and (studioTest or hasAccess(s, id)) then
 			table.insert(out, id)
 		end
 	end

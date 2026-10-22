@@ -25,6 +25,7 @@ local ArmorData      = require(Content:WaitForChild("ArmorData"))
 local AugmentData    = require(Content:WaitForChild("AugmentData"))
 local ConsumableData = require(Content:WaitForChild("ConsumableData"))
 local PortraitData   = require(Content:WaitForChild("PortraitData"))
+local TraitData      = require(Content:WaitForChild("TraitData"))
 
 -- Shared / Remotes
 local GameConstants = require(ReplicatedStorage:WaitForChild("CTRBLXAI"):WaitForChild("Shared"):WaitForChild("GameConstants"))
@@ -36,6 +37,7 @@ local EquipmentService       = require(Game:WaitForChild("EquipmentService"))
 local PersistentStateService = require(Game:WaitForChild("PersistentStateService"))
 local CommandService         = require(Game:WaitForChild("CommandService"))
 local ItemDisplay            = require(Game:WaitForChild("ItemDisplay"))
+local DoctrineInventoryService = require(Game:WaitForChild("DoctrineInventoryService"))
 
 local LoadoutRequestHandlers = {}
 
@@ -44,6 +46,15 @@ local playerUnits
 local cardInventory
 local doSave
 local PLAYER_ID
+
+-- Loadout save batching (2026-10-19): mutating actions mark the loadout dirty; the
+-- client fires RequestSaveLoadout at nav triggers (unit swap / tab exit / loadout exit)
+-- and we write to disk ONCE, only if something changed. Replaces per-change autosave
+-- (which caused lag). Mirrors the guild base menus' save-on-leave model.
+local loadoutDirty = false
+local function markLoadoutDirty()
+	loadoutDirty = true
+end
 
 -- Co-located loadout-only helpers (were file-scope locals in Main).
 local STATS_LIST = {"STR", "AGI", "INT", "VIT", "DEX", "LUK"}
@@ -82,6 +93,15 @@ function LoadoutRequestHandlers.Init(deps)
 	cardInventory = deps.cardInventory
 	doSave        = deps.doSave
 	PLAYER_ID     = deps.PLAYER_ID
+
+	-- Save-on-trigger (2026-10-19): client fires this on unit swap / tab exit / loadout
+	-- screen exit. Writes once, only when a change was staged since the last save.
+	BattleEvents.RequestSaveLoadout.OnServerEvent:Connect(function(_player)
+		if loadoutDirty and doSave then
+			doSave()
+			loadoutDirty = false
+		end
+	end)
 
 BattleEvents.GetRosterData.OnServerInvoke = function(player)
 	local roster = {}
@@ -196,6 +216,7 @@ BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 end
 
 BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId)
+	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then
 		warn(string.format("[Management] Equip FAILED: %s + %s — Unknown unit: %s", tostring(unitId), tostring(instanceId), tostring(unitId)))
@@ -254,6 +275,7 @@ BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId)
 end
 
 BattleEvents.RequestUnequip.OnServerInvoke = function(player, unitId, slot)
+	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then
 		warn(string.format("[Management] Unequip FAILED: %s %s — Unknown unit: %s", tostring(unitId), tostring(slot or "MainHand"), tostring(unitId)))
@@ -290,37 +312,6 @@ BattleEvents.GetDoctrineChoices.OnServerInvoke = function(player)
 	return result
 end
 
-BattleEvents.RequestDoctrineChange.OnServerInvoke = function(player, unitId, doctrineId)
-	local unit = playerUnits[unitId]
-	if not unit then
-		warn(string.format("[Doctrine] Change FAILED: %s — Unknown unit", tostring(unitId)))
-		return { ok = false, reason = "Unknown unit: " .. tostring(unitId) }
-	end
-	-- Validate doctrine exists
-	local doctrine = DoctrineData[doctrineId]
-	if not doctrine or type(doctrine) ~= "table" or not doctrine.name then
-		warn(string.format("[Doctrine] Change FAILED: %s — Unknown doctrine: %s", tostring(unitId), tostring(doctrineId)))
-		return { ok = false, reason = "Unknown doctrine: " .. tostring(doctrineId) }
-	end
-	local oldDoc = unit.doctrineId
-	unit.doctrineId = doctrineId
-	-- Clear selected doctrine skill (new doctrine has different choices)
-	unit.selectedDoctrineSkill = nil
-	-- Auto-select first skill choice as default
-	if doctrine.skillChoices and #doctrine.skillChoices > 0 then
-		unit.selectedDoctrineSkill = doctrine.skillChoices[1]
-	end
-	-- Rebuild stats (doctrine stat package changed)
-	EquipmentService.RebuildUnitStats(unit)
-	print(string.format("[Doctrine] %s doctrine changed: %s → %s (skill: %s)",
-		unit.name, tostring(oldDoc), doctrineId, tostring(unit.selectedDoctrineSkill)))
-	return {
-		ok = true,
-		doctrineName = doctrine.name,
-		selectedSkill = unit.selectedDoctrineSkill,
-	}
-end
-
 BattleEvents.RequestDoctrineSkillSelect.OnServerInvoke = function(player, unitId, skillId)
 	local unit = playerUnits[unitId]
 	if not unit then
@@ -350,8 +341,96 @@ BattleEvents.RequestDoctrineSkillSelect.OnServerInvoke = function(player, unitId
 	end
 	local oldSkill = unit.selectedDoctrineSkill
 	unit.selectedDoctrineSkill = skillId
+	-- Keep the equipped doctrine INSTANCE in sync so the choice persists with the
+	-- owned copy (2026-10-20).
+	if unit.doctrineInstanceId then
+		local inst = DoctrineInventoryService.GetInstance(PLAYER_ID, unit.doctrineInstanceId)
+		if inst then inst.selectedSkillId = skillId end
+	end
+	rebuildSkillIds(unit) -- keep the live skill list current (Stage 4, 2026-10-19)
+	markLoadoutDirty() -- save deferred to nav trigger (2026-10-19)
 	print(string.format("[Doctrine] %s skill changed: %s → %s", unit.name, tostring(oldSkill), skillId))
 	return { ok = true, selectedSkill = skillId }
+end
+
+-- Equip an OWNED doctrine instance onto a unit (2026-10-20). Reservation/swap model:
+-- the unit always has exactly one bound instance; equipping a new one returns the old
+-- one to the loose stash. Mirrors equipment equip, with the always-equipped constraint
+-- (never leaves the unit without a doctrine).
+BattleEvents.RequestEquipDoctrine.OnServerInvoke = function(player, unitId, instanceId)
+	markLoadoutDirty()
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit: " .. tostring(unitId) } end
+	if type(instanceId) ~= "string" then return { ok = false, reason = "Invalid doctrine instance" } end
+	local inst = DoctrineInventoryService.GetInstance(PLAYER_ID, instanceId)
+	if not inst then return { ok = false, reason = "Doctrine not owned" } end
+	-- Must be loose or already this unit's (cannot steal a copy reserved by another unit).
+	if inst.boundUnitId ~= nil and inst.boundUnitId ~= unitId then
+		return { ok = false, reason = "That doctrine copy is equipped on another unit" }
+	end
+	local doctrine = DoctrineData[inst.doctrineId]
+	if not doctrine or type(doctrine) ~= "table" or not doctrine.name then
+		return { ok = false, reason = "Unknown doctrine: " .. tostring(inst.doctrineId) }
+	end
+	-- Return the unit's current doctrine copy to the loose stash (swap), unless it IS this one.
+	local oldInstId = unit.doctrineInstanceId
+	if oldInstId and oldInstId ~= instanceId then
+		DoctrineInventoryService.Unbind(PLAYER_ID, oldInstId)
+	end
+	-- Bind the chosen copy + mirror its content onto the live unit (derived fields the
+	-- battle/stat pipeline reads).
+	DoctrineInventoryService.Bind(PLAYER_ID, instanceId, unitId)
+	unit.doctrineInstanceId = instanceId
+	local oldDoc = unit.doctrineId
+	unit.doctrineId = inst.doctrineId
+	-- Selected skill: keep the copy's choice if still valid, else default to first choice.
+	local sel = inst.selectedSkillId
+	local valid = false
+	if sel and doctrine.skillChoices then
+		for _, c in ipairs(doctrine.skillChoices) do if c == sel then valid = true break end end
+	end
+	if not valid then
+		sel = (doctrine.skillChoices and doctrine.skillChoices[1]) or nil
+	end
+	unit.selectedDoctrineSkill = sel
+	inst.selectedSkillId = sel
+	rebuildSkillIds(unit)
+	EquipmentService.RebuildUnitStats(unit)
+	print(string.format("[Doctrine] %s equipped %s (inst %s), was %s",
+		unit.name, inst.doctrineId, instanceId, tostring(oldDoc)))
+	return { ok = true, doctrineName = doctrine.name, doctrineId = inst.doctrineId, selectedSkill = sel }
+end
+
+-- Owned-doctrine list for the picker (2026-10-20): loose stash grouped by doctrine
+-- (consumables-style stacking with a count) PLUS the unit's currently-equipped one
+-- (marked current). Replaces the old "all 32 doctrines" placeholder source.
+BattleEvents.GetOwnedDoctrines.OnServerInvoke = function(player, unitId)
+	local unit = playerUnits[unitId]
+	local currentInstanceId = unit and unit.doctrineInstanceId or nil
+	local currentDoctrineId = unit and unit.doctrineId or nil
+	local out = {}
+	local stacks = DoctrineInventoryService.GetLooseStacks(PLAYER_ID)
+	for doctrineId, stk in pairs(stacks) do
+		local doc = DoctrineData[doctrineId]
+		if doc and doc.name then
+			table.insert(out, {
+				doctrineId = doctrineId, name = doc.name, identity = doc.identity or "",
+				icon = doc.icon or "", count = stk.count, instanceId = stk.instanceId, isCurrent = false,
+			})
+		end
+	end
+	-- The equipped copy is bound (not in the loose stacks) — add it, marked current.
+	if currentDoctrineId then
+		local doc = DoctrineData[currentDoctrineId]
+		if doc and doc.name then
+			table.insert(out, {
+				doctrineId = currentDoctrineId, name = doc.name, identity = doc.identity or "",
+				icon = doc.icon or "", count = 0, instanceId = currentInstanceId, isCurrent = true,
+			})
+		end
+	end
+	table.sort(out, function(a, b) return a.doctrineId < b.doctrineId end)
+	return { ok = true, doctrines = out, currentInstanceId = currentInstanceId }
 end
 
 BattleEvents.GetSkillLoadout.OnServerInvoke = function(player, unitId)
@@ -410,6 +489,7 @@ BattleEvents.GetSkillLoadout.OnServerInvoke = function(player, unitId)
 end
 
 BattleEvents.RequestEquipSkillCard.OnServerInvoke = function(player, unitId, slotIndex, skillId)
+	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then
 		warn("[SkillCard] Equip FAILED: Unknown unit " .. tostring(unitId))
@@ -467,6 +547,7 @@ BattleEvents.RequestEquipSkillCard.OnServerInvoke = function(player, unitId, slo
 end
 
 BattleEvents.RequestUnequipSkillCard.OnServerInvoke = function(player, unitId, slotIndex)
+	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	if slotIndex < 2 or slotIndex > 4 then return { ok = false, reason = "Invalid slot" } end
@@ -491,6 +572,7 @@ BattleEvents.RequestUnequipSkillCard.OnServerInvoke = function(player, unitId, s
 end
 
 BattleEvents.RequestAttachAugment.OnServerInvoke = function(player, unitId, slotIndex, augSlotIndex, augmentId)
+	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	if slotIndex < 1 or slotIndex > 4 then return { ok = false, reason = "Invalid skill slot" } end
@@ -564,6 +646,7 @@ BattleEvents.RequestAttachAugment.OnServerInvoke = function(player, unitId, slot
 end
 
 BattleEvents.RequestDetachAugment.OnServerInvoke = function(player, unitId, slotIndex, augSlotIndex)
+	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	if augSlotIndex < 1 or augSlotIndex > 2 then return { ok = false, reason = "Invalid augment slot" } end
@@ -586,6 +669,7 @@ BattleEvents.RequestDetachAugment.OnServerInvoke = function(player, unitId, slot
 end
 
 BattleEvents.RequestEquipConsumable.OnServerInvoke = function(player, unitId, slotIndex, consumableId)
+	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	if slotIndex < 1 or slotIndex > 6 then return { ok = false, reason = "Invalid slot (1-6)" } end
@@ -614,6 +698,7 @@ BattleEvents.RequestEquipConsumable.OnServerInvoke = function(player, unitId, sl
 end
 
 BattleEvents.RequestUnequipConsumable.OnServerInvoke = function(player, unitId, slotIndex)
+	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	if not unit.consumableSlots or not unit.consumableSlots[slotIndex] then
@@ -627,6 +712,7 @@ BattleEvents.RequestUnequipConsumable.OnServerInvoke = function(player, unitId, 
 end
 
 BattleEvents.RequestSetPortrait.OnServerInvoke = function(player, unitId, assetId)
+	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	-- Clear choice.
@@ -654,6 +740,7 @@ BattleEvents.RequestSetPortrait.OnServerInvoke = function(player, unitId, assetI
 end
 
 BattleEvents.RequestSetBodyColor.OnServerInvoke = function(player, unitId, r, g, b)
+	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	if r == nil then
@@ -696,32 +783,96 @@ BattleEvents.GetConsumableSlots.OnServerInvoke = function(player)
 	return result
 end
 
-BattleEvents.RequestAllocateStat.OnServerInvoke = function(player, unitId, stat)
+local function copyUnitForStatPreview(srcUnit)
+	-- Shallow copy + a fresh baseStats clone. RebuildUnitStats only READS equipment/
+	-- doctrine/race/status (shared refs, safe) and REASSIGNS effectiveStats/derivedStats
+	-- to new tables, so running it on this copy never mutates the live unit.
+	local copy = {}
+	for k, v in pairs(srcUnit) do
+		copy[k] = v
+	end
+	local bs = {}
+	for _, s in ipairs(STATS_LIST) do
+		bs[s] = (srcUnit.baseStats and srcUnit.baseStats[s]) or 10
+	end
+	copy.baseStats = bs
+	return copy
+end
+
+local function sanitizePendingAlloc(pending)
+	-- SEC-001: validate the client payload. Returns clean non-negative integer deltas
+	-- (one per stat) + total, or nil + reason on any bad value.
+	if typeof(pending) ~= "table" then return nil, "Bad payload", 0 end
+	local clean, total = {}, 0
+	for _, s in ipairs(STATS_LIST) do
+		local v = pending[s]
+		if v ~= nil then
+			if typeof(v) ~= "number" then return nil, "Bad value", 0 end
+			v = math.floor(v)
+			if v < 0 then return nil, "Negative not allowed", 0 end
+			clean[s] = v
+			total += v
+		else
+			clean[s] = 0
+		end
+	end
+	return clean, nil, total
+end
+
+-- PreviewStatAllocation (read-only): runs the REAL stat pipeline on a throwaway copy
+-- of the unit with the staged points added to baseStats, so the Info screen can show
+-- exact projected secondary stats while the player stages. Commits/saves NOTHING.
+BattleEvents.PreviewStatAllocation.OnServerInvoke = function(player, unitId, pending)
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
-	-- Validate stat name
-	local validStat = false
-	for _, s in ipairs(STATS_LIST) do
-		if s == stat then validStat = true; break end
-	end
-	if not validStat then return { ok = false, reason = "Invalid stat: " .. tostring(stat) } end
-	-- Check points available
+	local clean, reason, total = sanitizePendingAlloc(pending)
+	if not clean then return { ok = false, reason = reason } end
 	local available = getUnallocatedPoints(unit)
-	if available <= 0 then
-		return { ok = false, reason = "No unallocated points" }
+	if total > available then return { ok = false, reason = "Not enough points" } end
+	local shadow = copyUnitForStatPreview(unit)
+	for _, s in ipairs(STATS_LIST) do
+		shadow.baseStats[s] = shadow.baseStats[s] + (clean[s] or 0)
 	end
-	-- Allocate
-	if not unit.statAllocation then unit.statAllocation = {} end
-	unit.statAllocation[stat] = (unit.statAllocation[stat] or 0) + 1
-	-- Rebuild stats (allocation feeds into baseStats)
-	unit.baseStats[stat] = unit.baseStats[stat] + 1
-	EquipmentService.RebuildUnitStats(unit)
-	print(string.format("[StatAlloc] %s +1 %s (total alloc: %d, remaining: %d)",
-		unit.name, stat, unit.statAllocation[stat], getUnallocatedPoints(unit)))
+	EquipmentService.RebuildUnitStats(shadow)
 	return {
 		ok = true,
-		stat = stat,
-		newValue = unit.effectiveStats[stat],
+		effectiveStats = shadow.effectiveStats,
+		derivedStats = shadow.derivedStats,
+		maxHp = shadow.maxHp,
+		maxMp = shadow.maxMp,
+		remaining = available - total,
+	}
+end
+
+-- CommitStatAllocation: applies the whole staged batch to the live unit in ONE call,
+-- rebuilds, and saves once (the player's single "Confirm"). The client only ever sends
+-- non-negative deltas, so previously-confirmed points can't be refunded here.
+BattleEvents.CommitStatAllocation.OnServerInvoke = function(player, unitId, pending)
+	local unit = playerUnits[unitId]
+	if not unit then return { ok = false, reason = "Unknown unit" } end
+	local clean, reason, total = sanitizePendingAlloc(pending)
+	if not clean then return { ok = false, reason = reason } end
+	if total <= 0 then return { ok = false, reason = "Nothing to confirm" } end
+	local available = getUnallocatedPoints(unit)
+	if total > available then return { ok = false, reason = "Not enough points" } end
+	if not unit.statAllocation then unit.statAllocation = {} end
+	for _, s in ipairs(STATS_LIST) do
+		local add = clean[s] or 0
+		if add > 0 then
+			unit.statAllocation[s] = (unit.statAllocation[s] or 0) + add
+			unit.baseStats[s] = (unit.baseStats[s] or 10) + add
+		end
+	end
+	EquipmentService.RebuildUnitStats(unit)
+	markLoadoutDirty() -- save deferred to nav trigger (2026-10-19)
+	print(string.format("[StatAlloc] %s committed +%d pts, remaining %d",
+		unit.name, total, getUnallocatedPoints(unit)))
+	return {
+		ok = true,
+		effectiveStats = unit.effectiveStats,
+		derivedStats = unit.derivedStats,
+		maxHp = unit.maxHp,
+		maxMp = unit.maxMp,
 		remaining = getUnallocatedPoints(unit),
 	}
 end
@@ -734,6 +885,11 @@ BattleEvents.GetUnitFullStats.OnServerInvoke = function(player, unitId)
 	local raceEntry = unit.raceId and RaceData and RaceData.GetRace(unit.raceId) or nil
 	-- Doctrine info
 	local docEntry = unit.doctrineId and DoctrineData[unit.doctrineId] or nil
+	-- Personal trait info (2026-10-20): every unit rolls 1 perk + 1 flaw (TraitRoller);
+	-- look them up by trait_id so the Info screen can list them alongside the race and
+	-- doctrine passives. GetTrait returns nil safely if a unit somehow has no trait.
+	local perkEntry = unit.perkIds and unit.perkIds[1] and TraitData.GetTrait(unit.perkIds[1]) or nil
+	local flawEntry = unit.drawbackIds and unit.drawbackIds[1] and TraitData.GetTrait(unit.drawbackIds[1]) or nil
 
 	return {
 		ok = true,
@@ -772,6 +928,11 @@ BattleEvents.GetUnitFullStats.OnServerInvoke = function(player, unitId)
 		doctrineName = docEntry and docEntry.name or nil,
 		doctrinePassiveName = docEntry and docEntry.passiveName or nil,
 		doctrinePassiveEffect = docEntry and docEntry.passiveEffect or nil,
+		-- Personal perk + flaw (2026-10-20)
+		perkName = perkEntry and perkEntry.name or nil,
+		perkEffect = perkEntry and perkEntry.effect or nil,
+		flawName = flawEntry and flawEntry.name or nil,
+		flawEffect = flawEntry and flawEntry.effect or nil,
 	}
 end
 

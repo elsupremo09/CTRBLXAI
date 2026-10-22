@@ -358,6 +358,17 @@ local function applyKnockback(state: any, actor: any, target: any, force: number
 	if result and result.pushed then
 		target.tileX = result.finalTileX
 		target.tileY = result.finalTileY
+		-- Forced-movement trap trigger (2026-10-20): a knockback that drags the
+		-- target across step-on trap tiles springs each one. Actor-targeted effects
+		-- (Pinned/Bleed/RT/direct damage) apply to the pushed unit; a Land Mine
+		-- detonates at its tile. Forced momentum does NOT stop early (only a KO ends
+		-- the unit). Walks the crossed-tile list ResolvePush now returns.
+		if ObjectEffectService and result.tilesPath then
+			for _, tp in ipairs(result.tilesPath) do
+				local trap = ObjectEffectService.GetTriggeredTrapAt(state, tp.x, tp.y)
+				if trap then ObjectEffectService.TriggerTrap(target, trap, state, state.units) end
+			end
+		end
 		local knockDmg = 0
 		if result.wallCollision and result.wallCollision.damage > 0 then
 			knockDmg = knockDmg + result.wallCollision.damage
@@ -712,7 +723,8 @@ end
 
 local function validateItemTarget(actor: any, target: any, consumableDef: any): (boolean, any)
 	local rules = consumableDef.targetRules or "Self"
-	local range = consumableDef.range or 0
+	-- ARTIFICER — Applied Artifice: Consumable Item Maximum Range +1 (2026-10-20).
+	local range = (consumableDef.range or 0) + DoctrinePassiveService.GetConsumableRangeBonus(actor)
 
 	-- Self / Self-origin: must target self (or no explicit target needed)
 	if rules == "Self" then
@@ -1222,7 +1234,27 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 	-- Resolve the skill
 	local result = {}
 
-	if skillDef.isShield then
+	-- RESTOCK (Chemist, SKL-RESTOCK): channeled self utility — refill 1 use charge to
+	-- each equipped consumable (capped at its max). No damage/status. 2026-10-20.
+	if skillDef.id == "SKL-RESTOCK" then
+		local refilled = 0
+		for _, slot in pairs(unit.consumableSlots or {}) do
+			if slot and slot.consumableId then
+				local maxC = slot.maxCharges or 0
+				local cur = slot.currentCharges or 0
+				if cur < maxC then
+					slot.currentCharges = math.min(maxC, cur + 1)
+					refilled = refilled + 1
+				end
+			end
+		end
+		result.type = "Restock"
+		result.refilled = refilled
+		result.skillName = skillDef.name
+		print(string.format("[CommandService] Channel ACTIVATE [Restock] | %s refilled %d consumable(s) | MP:%d",
+			unit.name, refilled, mpCost))
+
+	elseif skillDef.isShield then
 		-- SHIELD GRANT (channeled resolution: Vital Barrier, Bastion Projection,
 		-- Bulwark Field, Retribution Shell) — shield subsystem 2026-10-05. Mirrors
 		-- the isHealing channeled branch: compute the authored shield amount
@@ -1658,8 +1690,50 @@ function CommandService.ValidateAndCommit(
 		local prevTileX, prevTileY = actor.tileX, actor.tileY
 		local prevFacing = actor.facing
 
-		actor.tileX = selection.tileX
-		actor.tileY = selection.tileY
+		-- TRAP TRIGGER (Slice 5, 2026-10-20) — fire step-on traps on EVERY tile
+		-- crossed, not just the destination. The client sends only the destination
+		-- + pathCost (never a trusted path), so the server REBUILDS the route from
+		-- the actor's CURRENT tile via GetMoveCandidates (the same BFS the move
+		-- prompt uses) and reads the matching candidate's reconstructed .path. We
+		-- step the actor onto each tile in turn so a Land Mine detonation is centered
+		-- on the unit correctly, then fire any trap there. Bear/Snare (root) or a KO
+		-- stop the walk at that tile; Spike and Land Mine do not. Flight bypasses.
+		local destX, destY = selection.tileX, selection.tileY
+		local trapSprung = false
+		local trapActorFlying = StatusService.HasStatus(actor, "Flight")
+		if trapActorFlying then
+			actor.tileX = destX
+			actor.tileY = destY
+		else
+			local crossed = {}
+			local moveCands = TargetingService.GetMoveCandidates(actor, state.units, _mapWidth, _mapHeight)
+			local matched = nil
+			for _, c in ipairs(moveCands) do
+				if c.tileX == destX and c.tileY == destY then matched = c; break end
+			end
+			if matched and matched.path then
+				for _, step in ipairs(matched.path) do
+					table.insert(crossed, { x = step.tileX, y = step.tileY })
+				end
+			else
+				print("[CommandService] Trap walk: no server path to destination; checking destination tile only.")
+			end
+			table.insert(crossed, { x = destX, y = destY })
+
+			local fx, fy = prevTileX, prevTileY
+			for _, tile in ipairs(crossed) do
+				actor.tileX, actor.tileY = tile.x, tile.y   -- step onto the tile
+				fx, fy = tile.x, tile.y
+				local trap = ObjectEffectService.GetTriggeredTrapAt(state, tile.x, tile.y)
+				if trap then
+					local tr = ObjectEffectService.TriggerTrap(actor, trap, state, state.units)
+					if tr.fired then trapSprung = true end
+					if tr.stops then break end
+				end
+			end
+			actor.tileX = fx
+			actor.tileY = fy
+		end
 
 		print(string.format(
 			"[CommandService] MOVE | %s -> (%d,%d) | RT:%d | AP left:%d",
@@ -1745,7 +1819,7 @@ function CommandService.ValidateAndCommit(
 			Drowning = true, Sinking = true, MoltenBurn = true,
 			Collapse = true, RandomTeleport = true,
 		}
-		local reactionTriggered = (undoStatusSig(actor) ~= undoSigBefore)
+		local reactionTriggered = (undoStatusSig(actor) ~= undoSigBefore) or trapSprung
 		if not reactionTriggered and not actorFlying then
 			local td = GameConstants.GetTerrainData(actor.tileX, actor.tileY)
 			if td then
@@ -2591,6 +2665,17 @@ function CommandService.ValidateAndCommit(
 		-- Apply position change
 		target.tileX = result.finalTileX
 		target.tileY = result.finalTileY
+		-- Forced-movement trap trigger (2026-10-20): a push that drags the target
+		-- across step-on trap tiles springs each one. Actor-targeted effects
+		-- (Pinned/Bleed/RT/direct damage) apply to the pushed unit; a Land Mine
+		-- detonates at its tile. Forced momentum does NOT stop early (only a KO ends
+		-- the unit). Walks the crossed-tile list ResolvePush now returns.
+		if ObjectEffectService and result.tilesPath then
+			for _, tp in ipairs(result.tilesPath) do
+				local trap = ObjectEffectService.GetTriggeredTrapAt(state, tp.x, tp.y)
+				if trap then ObjectEffectService.TriggerTrap(target, trap, state, state.units) end
+			end
+		end
 
 		-- Apply collision/fall damage
 		local totalPushDmg = 0
@@ -2954,6 +3039,8 @@ function CommandService.ValidateAndCommit(
 
 		-- RT cost comes from the consumable definition (fixed, not weapon-scaled)
 		local rtCost = consumableDef.rtCost or 80
+		-- CHEMIST — Field Chemistry: Consumable Item RT Cost -20% (2026-10-20)
+		rtCost = math.round(rtCost * DoctrinePassiveService.GetConsumableRtModifier(actor))
 		-- Frozen: all RT costs ×2
 		rtCost = math.round(rtCost * StatusService.GetAllRtMultiplier(actor))
 		BattleCoordinator.AccrueRt(state, rtCost)
@@ -2980,6 +3067,14 @@ function CommandService.ValidateAndCommit(
 		))
 
 	end  -- end if/elseif action chain
+
+	-- PHASE 2 — resolve the Electric Shock reaction (Step-5 secondary) once, after
+	-- the whole action's damage is done. No-op unless an Electric hit was buffered
+	-- this action. Must run before EndTurn so KO/HP changes are in state when the
+	-- turn hands off. (CombatResolver buffers each Electric hit in ApplyOutcome.)
+	if CombatResolver.FlushElectricShock then
+		CombatResolver.FlushElectricShock(state.units)
+	end
 
 	-- STEP 9: Handoff
 	-- Phase 3 Momentum (TRAIT-P-162): if this action's KO set pendingKoApGain and Momentum

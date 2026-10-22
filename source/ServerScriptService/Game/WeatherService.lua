@@ -33,11 +33,22 @@ local _broadcaster = nil
 local _statusService = nil
 local _tileReshaper = nil  -- fn(x,y,terrain,elev) over the live mapFolder (from Main)
 local _objectHitCb = nil   -- (x,y) -> ONE hit on the breakable OBS object at that tile (OBS Phase 2c-D)
+-- BUG-002 voxel-clear follow-up (2026-10-22): fn(x,y) over the live mapFolder (from
+-- Main -> MapRenderer.ClearTileVoxelColumn). nil-safe: when a VOXEL_KEEP origin terrain
+-- (Grassland / both Waters) is dried/transformed by weather (reshapeTile) to a non-voxel
+-- terrain, the tile Part re-skins + TerrainChanged broadcasts (already fixed) but the stale
+-- server Roblox-Terrain voxel column remains until this clears that ONE tile's column.
+-- Same injection pattern as _tileReshaper (no mapFolder handle here). Mirrors
+-- TileEffectService._voxelClearer exactly.
+local _voxelClearer = nil
 
 function WeatherService.SetTileEffectService(tes: any) _tileEffectService = tes end
 function WeatherService.SetBroadcaster(b: any) _broadcaster = b end
 function WeatherService.SetStatusService(ss: any) _statusService = ss end
 function WeatherService.SetTileReshaper(fn: any) _tileReshaper = fn end
+-- BUG-002 voxel-clear follow-up: Main wires this to the same mapFolder-upvalue closure
+-- TileEffectService uses (-> MapRenderer.ClearTileVoxelColumn). nil-safe until wired.
+function WeatherService.SetVoxelClearer(fn: any) _voxelClearer = fn end
 -- OBS Phase 2c-D: Earthquake elevation reduction counts as a hit on breakable OBS
 -- blockers (map_gen_rules row 84). Main wires this to the same closure TileEffectService uses.
 function WeatherService.SetObjectHitCallback(fn: any) _objectHitCb = fn end
@@ -212,8 +223,45 @@ local function rollCondition(rng: any)
 end
 
 -- Elevation grid helpers (tile reshape via injected reshaper + GameConstants maps).
+-- VOXEL_KEEP origin set (mirrors MapRenderer.VOXEL_KEEP and
+-- TileEffectService.VOXEL_KEEP_ORIGIN 1:1). These terrains render as server-side
+-- Roblox-Terrain voxel columns, not per-tile Parts. When a weather terrain change
+-- transforms one of these to a NON-voxel terrain, the re-skin alone leaves the stale
+-- voxel column; _voxelClearer removes that ONE tile's column (BUG-002 voxel-clear
+-- follow-up). Keep membership identical to the two sibling tables above.
+local VOXEL_KEEP_ORIGIN = {
+	Grassland        = true,
+	["Deep Water"]    = true,
+	["Shallow Water"] = true,
+}
+
 local function reshapeTile(x: any, y: any, terrain: any, elev: any)
-	if terrain then GameConstants.SetTerrainId(x, y, terrain) end
+	if terrain then
+		-- Capture the ORIGIN terrain BEFORE SetTerrainId mutates it (mirrors
+		-- TileEffectService.transformAndBroadcast's origin-capture-before-mutate).
+		local originTerrain = GameConstants.GetTerrainId(x, y)
+		GameConstants.SetTerrainId(x, y, terrain)
+		-- BUG-002 GAP 1 (2026-10-22): a weather terrain change was a silent SetTerrainId
+		-- with no client signal, so it was invisible mid-battle. Fire TerrainChanged via
+		-- the ALREADY-INJECTED broadcaster (_broadcaster, wired by Main via SetBroadcaster)
+		-- so the client re-skins the tile. No new require is added here: WeatherService
+		-- deliberately holds its broadcaster by injection (same pattern as _tileReshaper),
+		-- which avoids the load-order / circular-require risk a hard require would add.
+		-- nil-safe like every other _broadcaster call in this module.
+		if _broadcaster and _broadcaster.TerrainChanged then
+			_broadcaster.TerrainChanged(x, y, terrain)
+		end
+		-- BUG-002 voxel-clear follow-up (2026-10-22): if the ORIGIN was a VOXEL_KEEP
+		-- terrain (server Roblox-Terrain voxel column) and the new terrain is NOT voxel-kept
+		-- (e.g. Heatwave drying Shallow/Deep Water -> Clear), the re-skin above does not
+		-- remove the stale water voxel column. Clear just this ONE tile's column via the
+		-- Main-injected _voxelClearer (closure over the live mapFolder ->
+		-- MapRenderer.ClearTileVoxelColumn, a localized FillBlock(Air), NEVER a whole-map
+		-- Clear). nil-safe + exact VOXEL_KEEP gate, mirroring transformAndBroadcast.
+		if _voxelClearer and VOXEL_KEEP_ORIGIN[originTerrain] and not VOXEL_KEEP_ORIGIN[terrain] then
+			_voxelClearer(x, y)
+		end
+	end
 	-- OBS Flag #1 fix (map_gen_rules row 85b): an elevation-immune tile (Ad Billboard)
 	-- cannot have its elevation changed by ANY effect. reshapeTile wrote ELEVATION_MAP
 	-- directly, bypassing the IsElevationImmune guard that lived only in LowerElevation,

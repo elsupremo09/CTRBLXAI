@@ -25,6 +25,13 @@ local GameConstants = require(
 	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 		:WaitForChild("Shared", 10):WaitForChild("GameConstants", 10)
 )
+-- Shared cross-phase unit-record holder (2026-10-22, deployment->battle unification).
+-- Inert until Slice 3 reads it; deployment populates it below so the records carry
+-- across the deployment->battle boundary instead of being rebuilt from scratch.
+local UnitRecords = require(
+	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+		:WaitForChild("Shared", 10):WaitForChild("UnitRecords", 10)
+)
 local BattleHUD = require(
 	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 		:WaitForChild("UI", 10):WaitForChild("BattleHUD", 10)
@@ -79,11 +86,10 @@ if not _thlOk then warn("[BVC] TileHighlightManager failed: " .. tostring(TileHL
 --------------------------------------------------
 
 local TILE_SIZE = 5
-local TILE_BASE_HEIGHT = 0.6
 -- Must match server MapRenderer.ELEVATION_STEP (dev-locked 2026-09-24: 1.2 for the
 -- expanded 1–20 elevation scale). Drives client selection ring, camera focus,
 -- hover tooltips, and ray-miss fallback positioning. Keep in sync with server.
-local ELEVATION_STEP = 1.2
+local ELEVATION_STEP = GameConstants.ELEVATION_STEP  -- single source of truth (2026-10-20)
 local MAP_WIDTH, MAP_HEIGHT = 30, 20
 local MAP_OFFSET_X = -75
 local MAP_OFFSET_Z = -50
@@ -94,7 +100,7 @@ local elevationMap = nil
 local function getElevation(tx, ty)
 	if elevationMap then local r = elevationMap[ty]; if r then return r[tx] or 1 end end; return 1
 end
-local function tileSurfaceY(elev) return TILE_BASE_HEIGHT + ((elev or 1) - 1) * ELEVATION_STEP end
+local function tileSurfaceY(elev) return GameConstants.TileSurfaceY(elev) end
 local R15_STAND_OFFSET_DEFAULT = 2.35  -- fallback if HipHeight can't be read
 local function tileToWorld(tx, ty)
 	return Vector3.new(MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE, tileSurfaceY(getElevation(tx, ty)) + 1, MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE)
@@ -152,6 +158,51 @@ end
 -- Grounded twin of tileToWorld (surface + 1) for the cylinder fallback token.
 local function tileToWorldGrounded(tx, ty)
 	return Vector3.new(MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE, groundSurfaceY(tx, ty) + 1, MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE)
+end
+
+-- DEPLOYMENT-PHASE GROUNDING (2026-10-20): during deployment the SERVER places
+-- unit models with flat tile math (GameConstants.TileSurfaceY), which is correct
+-- on flat SurfaceGui tiles but CANNOT see VOXEL terrain (Grassland / Deep Water /
+-- Shallow Water) whose rendered surface sits a couple studs higher — so units on
+-- voxel tiles spawn buried during deployment. Only the client can raycast the real
+-- rendered surface (groundSurfaceY), and only the client runs the pivot-gap feet
+-- correction (GameConstants.GroundModelPivotCFrame). This helper applies BOTH to an
+-- already-spawned model, found by its "Unit_<id>" name under workspace.UnitModels.
+-- It reuses the exact grounding the battle-start spawn path uses (no new math) so
+-- every phase grounds identically. Returns true once the model is found+grounded,
+-- false if it hasn't replicated to the client yet (caller may retry).
+local function groundDeployedUnitModel(unitId, tileX, tileY)
+	if not (unitId and tileX and tileY) then return false end
+	local umf = workspace:FindFirstChild("UnitModels")
+	if not umf then return false end
+	local model = umf:FindFirstChild("Unit_" .. unitId)
+	if not model then return false end
+	local anchor = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart")
+	if not anchor then return false end
+	local feetY = groundSurfaceY(tileX, tileY)
+	local wx = MAP_OFFSET_X + (tileX - 0.5) * TILE_SIZE
+	local wz = MAP_OFFSET_Z + (tileY - 0.5) * TILE_SIZE
+	-- FACING-PRESERVE FIX (2026-10-21): grounding must change only HEIGHT, never
+	-- rotation. Passing nil here reset the model to identity rotation and wiped the
+	-- center-facing the SERVER baked in at placement (regression that broke unit
+	-- facing in deployment). Pass the model's CURRENT pivot as the facing arg so
+	-- GroundModelPivotCFrame keeps the existing rotation and only re-seats the feet.
+	model:PivotTo(GameConstants.GroundModelPivotCFrame(model, wx, feetY, wz, model:GetPivot()))
+	anchor.Anchored = true
+	return true
+end
+
+-- Ground now; if the model hasn't replicated yet, retry briefly. Not fatal if it
+-- never appears during deployment — the battle-start spawn path grounds every model
+-- again anyway; this only makes them sit correctly DURING deployment too.
+local function groundDeployedUnitModelWhenReady(unitId, tileX, tileY)
+	if groundDeployedUnitModel(unitId, tileX, tileY) then return end
+	task.spawn(function()
+		for _ = 1, 10 do           -- up to ~3s (10 x 0.3s)
+			task.wait(0.3)
+			if groundDeployedUnitModel(unitId, tileX, tileY) then return end
+		end
+	end)
 end
 
 -- WATERFALL SPLASH: scan the terrain grid and place a persistent "Splashing Water"
@@ -769,18 +820,22 @@ local function spawnToken(unit)
 		-- R15 model found — use its HumanoidRootPart as the anchor
 		anchorPart = model.PrimaryPart or model:FindFirstChild("HumanoidRootPart")
 		if anchorPart then
-			-- Position model feet on tile surface.
-			-- PivotTo places the model's PIVOT (which is at the feet for R15 rigs)
-			-- at the given CFrame. So we just need the tile surface Y, no HipHeight math.
-			-- Ground feet to the real voxel surface (not the buried tile-Part top),
-			-- matching the grounded move path so R15 units don't spawn buried.
+			-- Position model's TRUE FEET on the real voxel surface.
+			-- NOTE (2026-10-19): this runs at BATTLE START and re-pivots the model the
+			-- server already placed during deployment. It must ground by the model's
+			-- bounding-box BOTTOM, NOT the pivot: some race rigs (Froc, Orc, Dwarf,
+			-- Goblin, Celestial, Crab) have their pivot several studs ABOVE their feet,
+			-- so a raw PivotTo(feetY) re-buries them by that gap and undoes the server's
+			-- correct placement. Reuse the shared helper so client battle-start grounding
+			-- matches the server spawn grounding (GameConstants.GroundModelPivotCFrame).
 			local feetY = groundSurfaceY(unit.tileX, unit.tileY)
-			local feetPos = Vector3.new(
-				MAP_OFFSET_X + (unit.tileX - 0.5) * TILE_SIZE,
-				feetY,
-				MAP_OFFSET_Z + (unit.tileY - 0.5) * TILE_SIZE
-			)
-			model:PivotTo(CFrame.new(feetPos))
+			local wx = MAP_OFFSET_X + (unit.tileX - 0.5) * TILE_SIZE
+			local wz = MAP_OFFSET_Z + (unit.tileY - 0.5) * TILE_SIZE
+			-- FACING-PRESERVE FIX (2026-10-21): keep the model's CURRENT rotation (the
+			-- server's baked-in center-facing) instead of passing nil, which reset it to
+			-- identity and wiped facing at battle start. Grounding re-seats feet only;
+			-- orientUnitToFacing below still runs, but facing no longer depends on it.
+			model:PivotTo(GameConstants.GroundModelPivotCFrame(model, wx, feetY, wz, model:GetPivot()))
 			anchorPart.Anchored = true
 			-- Disable the built-in Humanoid name/health display above the model —
 			-- it duplicates the name already shown inside the HP-bar billboard.
@@ -812,16 +867,6 @@ local function spawnToken(unit)
 		part.Material = Enum.Material.SmoothPlastic
 		part.Parent = visualFolder
 		anchorPart = part
-		-- TEMP DIAG (2026-10-16): why do model-less cylinder units float? Log the tile, what
-		-- the grounding raycast actually hit (instance name + class), the ray Y, and the pure
-		-- grid-math Y for comparison. Remove once the float cause is pinned.
-		local _diagY, _diagHit = groundSurfaceY(unit.tileX, unit.tileY)
-		local _gridY = tileSurfaceY(getElevation(unit.tileX, unit.tileY))
-		warn(string.format("[CYL-DIAG] %s tile(%d,%d) rayHit=%s(%s) rayY=%.2f gridY=%.2f cylCFrameY=%.2f",
-			tostring(unit.name), unit.tileX, unit.tileY,
-			_diagHit and _diagHit.Name or "MISS",
-			_diagHit and _diagHit.ClassName or "nil",
-			_diagY, _gridY, part.Position.Y))
 	end
 
 	-- HP + MP billboard. A dedicated star column sits to the LEFT of the bars so
@@ -937,28 +982,6 @@ local function spawnToken(unit)
 	-- Show initial facing for EVERY unit (players + enemies) from spawn. Default to
 	-- "S" if the payload omits facing so an indicator always appears.
 	orientUnitToFacing(unit.id, unit.facing or "S")
-	-- [RIGPROBE] TEMPORARY: measure the R15 rig's real forward axis vs the facing
-	-- it was told to show, so the model-facing correction angle can be set exactly.
-	-- Remove once the offset is locked in. Prints only for R15 models.
-	if model and anchorPart then
-		task.defer(function()
-			local fv = GameConstants.FACING_VECTORS[unit.facing or "S"]
-			if not fv then return end
-			local mag = math.sqrt(fv.dx*fv.dx + fv.dy*fv.dy)
-			if mag == 0 then return end
-			local wantDir = Vector3.new(fv.dx/mag, 0, fv.dy/mag)  -- direction the ARROW points
-			local look = anchorPart.CFrame.LookVector  -- where the MODEL front points
-			local lookFlat = Vector3.new(look.X, 0, look.Z)
-			if lookFlat.Magnitude < 0.001 then return end
-			lookFlat = lookFlat.Unit
-			-- signed yaw from wantDir -> lookFlat, degrees (how far the rig front is off)
-			local dot = math.clamp(wantDir:Dot(lookFlat), -1, 1)
-			local cross = wantDir.X*lookFlat.Z - wantDir.Z*lookFlat.X
-			local deg = math.deg(math.atan2(cross, dot))
-			print(string.format("[RIGPROBE] %s facing=%s want=(%.2f,%.2f) look=(%.2f,%.2f) rigOffsetDeg=%.1f",
-				tostring(unit.id), tostring(unit.facing or "S"), wantDir.X, wantDir.Z, lookFlat.X, lookFlat.Z, deg))
-		end)
-	end
 end
 
 local function updateHpBar(uid, hp, maxHp)
@@ -1612,7 +1635,7 @@ local function enterActionSelection()
 	-- 4x2 grid: Attack, Skill, Move, Item, Guard, Interact, Wait, Stance
 	local actions = {
 		{ id="Move", text="Move", enabled=moveEnabled,
-			reason="No tiles in range to move to", onPress=function()
+			reason=(prompt.moveBlockedReason or "No tiles in range to move to"), onPress=function()
 			inputMode = "move"; selectedSkill = nil; clearHighlights()
 			local pRt = math.round((prompt.unitBaseRt or 400)*0.0625*2) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
 			updateTimeline(timelineSnapshot, prompt.unitId, pRt)
@@ -2474,55 +2497,6 @@ end)
 local lastHoveredUnitId = nil
 
 game:GetService("RunService").RenderStepped:Connect(function()
-	-- During deployment, BVC's own unitData isn't populated yet, so the hover peek
-	-- must read the REAL deploy-time data from DeploymentUI (same source as the tap
-	-- panel) via _G.CTRBLXAI_GetDeployUnitAtTile. This shows correct name/HP/MP on
-	-- hover instead of a raw id + HP 0/0 (BUG-051) — and instead of nothing. Outside
-	-- deployment the getter is nil and the normal battle hover path below runs.
-	-- (2026-10-18)
-	if _G.CTRBLXAI_DeploymentActive then
-		local getter = _G.CTRBLXAI_GetDeployUnitAtTile
-		local tp = getter and getTileUnderMouse() or nil
-		local du = nil
-		if tp then
-			local dbx, dby = tileToBattle(tp)
-			if dbx then du = getter(dbx, dby) end
-		end
-		if du then
-			if du.id ~= lastHoveredUnitId then
-				lastHoveredUnitId = du.id
-				local hpText = string.format("HP %d/%d", du.currentHp or 0, du.maxHp or 0)
-				local mpText = string.format("MP %d/%d", du.currentMp or 0, du.maxMp or 0)
-				local sideColor = du.side == "Player" and Theme.Colors.Success or Theme.Colors.Danger
-				local tipLines = {
-					{ text = hpText, color = Theme.Colors.TextPrimary },
-					{ text = mpText, color = Theme.Colors.TextSecondary },
-				}
-				if du.statuses and #du.statuses > 0 then
-					local parts = {}
-					for _, s in ipairs(du.statuses) do
-						parts[#parts+1] = (s.id or s.name or "?") .. (s.remainingTurns and ("(" .. s.remainingTurns .. ")") or "")
-					end
-					tipLines[#tipLines+1] = { text = table.concat(parts, " "), color = Theme.Colors.Warning }
-				end
-				BattleHUD.ShowTooltip({
-					title = du.name or "Unit",
-					portrait = string.sub(du.name or "?", 1, 2),
-					portraitColor = sideColor,
-					lines = tipLines,
-					position = UDim2.new(0, mouse.X + 16, 0, mouse.Y - 10),
-					anchorPoint = Vector2.new(0, 1),
-					maxWidth = 160,
-				})
-			end
-		else
-			if lastHoveredUnitId then
-				lastHoveredUnitId = nil
-				BattleHUD.HideTooltip()
-			end
-		end
-		return
-	end
 	if not next(unitData) then
 		if lastHoveredUnitId then
 			lastHoveredUnitId = nil
@@ -3310,17 +3284,35 @@ BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	BattleHUD.Cleanup()
 	bp = { state = "Idle", actor = nil, target = nil, skill = nil, preview = nil, tile = nil, inspectedEntityId = nil }
 	for _, c in ipairs(visualFolder:GetChildren()) do c:Destroy() end
-	unitTokens = {}; unitData = {}; elevationMap = data.elevationMap
 	for _, l in pairs(actionLabels) do if l.gui then l.gui:Destroy() end end
+	unitTokens = {}; elevationMap = data.elevationMap
 	actionLabels = {}
 	for _, lp in pairs(debuffLoops) do if lp.active and lp.active.Parent then pcall(function() lp.active:Destroy() end) end end
 	debuffLoops = {}
 	for uid in pairs(persistentLoops) do stopAllPersistentLoops(uid) end
 	persistentLoops = {}
+	-- SLICE 3 (2026-10-22): CARRY the deployment records across into battle and UPDATE
+	-- them with the authoritative battle values (facing, turn order, final stats) instead
+	-- of wiping unitData and rebuilding from scratch. The battle packet (data.units) wins
+	-- on every field it carries; unitData then points at the ONE shared record so both
+	-- phases share a single unit object. Models are already reused by spawnToken. This is
+	-- the "build once, carry across, update -- don't rebuild" switch.
+	local seenIds = {}
 	for _, unit in ipairs(data.units) do
-		unitData[unit.id] = unit; spawnToken(unit)
+		seenIds[unit.id] = true
+		UnitRecords.Update(unit.id, unit)             -- battle values layered onto the carried record
+		unitData[unit.id] = UnitRecords.Get(unit.id)  -- one shared record object across phases
+		spawnToken(unit)
 		updateHpBar(unit.id, unit.currentHp, unit.maxHp)
 		updateMpBar(unit.id, unit.currentMp or 0, unit.maxMp or 0)
+	end
+	-- We no longer wipe unitData, so drop any unit NOT in this battle (e.g. benched during
+	-- deployment, or left over from a prior match) to avoid stale entries lingering.
+	for id in pairs(unitData) do
+		if not seenIds[id] then unitData[id] = nil end
+	end
+	for id in pairs(UnitRecords.GetAll()) do
+		if not seenIds[id] then UnitRecords.Remove(id) end
 	end
 	-- VFX: init post-processing + clear stale highlights
 	local mf = workspace:FindFirstChild("TemplateViewerMap")
@@ -3334,7 +3326,10 @@ BattleEvents.UnitSpawned.OnClientEvent:Connect(function(data)
 	local unit = data and data.unit
 	if not unit or not unit.id then return end
 	if unitTokens[unit.id] then return end  -- already present; ignore duplicate
-	unitData[unit.id] = unit
+	-- Register in the shared holder too, so a mid-battle reinforcement is one record like
+	-- every other unit (Slice 3 consistency).
+	UnitRecords.Update(unit.id, unit)
+	unitData[unit.id] = UnitRecords.Get(unit.id)
 	spawnToken(unit)
 	updateHpBar(unit.id, unit.currentHp, unit.maxHp)
 	updateMpBar(unit.id, unit.currentMp or 0, unit.maxMp or 0)
@@ -4023,10 +4018,29 @@ BattleEvents.UnitPushed.OnClientEvent:Connect(function(data)
 
 	-- Animate target moving to new position
 	if targetToken and data.pushed then
-		TweenService:Create(targetToken.part,
-			TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
-			{ CFrame = CFrame.new(tileToWorld(data.finalTileX, data.finalTileY)) * CFrame.Angles(0, 0, math.rad(90)) }
-		):Play()
+		-- GROUNDING FIX (2026-10-19): a push lands the unit on its destination tile,
+		-- which may be a different elevation (shoved off a ledge / into a pit). Ground
+		-- it the SAME way the move handler does — not the old flat `tileToWorld` +
+		-- fixed +1, which left pivot-gap R15 rigs (Froc, Orc, Dwarf, ...) buried until
+		-- their next move. Branch R15 vs cylinder exactly like UnitMoved:
+		--   R15     -> tileToWorldR15Grounded (groundSurfaceY + bbox-based hipHeight),
+		--              upright, keep current facing (NO 90-degree roll — that tipped
+		--              the model on its side; the roll is a cylinder-only pose).
+		--   cylinder-> tileToWorldGrounded + the 90-degree lying-cylinder roll.
+		if targetToken.model then
+			local destPos = tileToWorldR15Grounded(data.finalTileX, data.finalTileY, targetToken.hipHeight)
+			local rot = targetToken.part.CFrame - targetToken.part.CFrame.Position  -- preserve facing
+			TweenService:Create(targetToken.part,
+				TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+				{ CFrame = CFrame.new(destPos) * rot }
+			):Play()
+		else
+			local destPos = tileToWorldGrounded(data.finalTileX, data.finalTileY)
+			TweenService:Create(targetToken.part,
+				TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
+				{ CFrame = CFrame.new(destPos) * CFrame.Angles(0, 0, math.rad(90)) }
+			):Play()
+		end
 	end
 
 	-- Show push text + damage floats
@@ -5291,13 +5305,57 @@ BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
 				tileX     = eu.tileX,
 				tileY     = eu.tileY,
 				isAlive   = true,
-				currentHp = 0,
-				maxHp     = 0,
+				currentHp = eu.currentHp or 0,
+				maxHp     = eu.maxHp or 0,
+				currentMp = eu.currentMp or 0,
+				maxMp     = eu.maxMp or 0,
 			}
 		end
 	end
-	print(string.format("[BVC] DeploymentPhase: %d enemy units added to unitData",
-		data.enemyUnits and #data.enemyUnits or 0))
+	-- Add player units with REAL name/HP/MP (same event data DeploymentUI uses for its
+	-- working panel) so the hover peek shows correct info during deployment instead of a
+	-- raw id + HP 0/0. Tile is filled in when the unit is actually deployed (UnitDeployed).
+	-- (2026-10-18, BUG-051 real fix: correct the data at its source.)
+	if data.playerUnits then
+		for _, pu in ipairs(data.playerUnits) do
+			unitData[pu.id] = {
+				id        = pu.id,
+				name      = pu.name or pu.id,
+				side      = pu.side or "Player",
+				tileX     = nil,
+				tileY     = nil,
+				isAlive   = true,
+				currentHp = pu.currentHp or 0,
+				maxHp     = pu.maxHp or 0,
+				currentMp = pu.currentMp or 0,
+				maxMp     = pu.maxMp or 0,
+			}
+		end
+	end
+	print(string.format("[BVC] DeploymentPhase: %d enemy + %d player unit(s) added to unitData",
+		data.enemyUnits and #data.enemyUnits or 0, data.playerUnits and #data.playerUnits or 0))
+
+	-- SLICE 2 (2026-10-22): populate the shared cross-phase holder with the FULL
+	-- serialized packets (facing, stats, hp/mp, etc.), so these records can carry into
+	-- battle instead of being rebuilt. Fresh match -> clear first. INERT for now:
+	-- nothing reads UnitRecords yet; Slice 3 will make battle start update from it.
+	UnitRecords.Clear()
+	if data.enemyUnits then
+		for _, eu in ipairs(data.enemyUnits) do UnitRecords.Set(eu.id, eu) end
+	end
+	if data.playerUnits then
+		for _, pu in ipairs(data.playerUnits) do UnitRecords.Set(pu.id, pu) end
+	end
+
+	-- Ground the server-placed enemy models to the REAL rendered surface so units on
+	-- VOXEL terrain (Grassland / Deep/Shallow Water) don't spawn buried during
+	-- deployment (the server used flat tile math that can't see voxel height). See
+	-- groundDeployedUnitModel. Player units are grounded on deploy (UnitDeployed).
+	if data.enemyUnits then
+		for _, eu in ipairs(data.enemyUnits) do
+			groundDeployedUnitModelWhenReady(eu.id, eu.tileX, eu.tileY)
+		end
+	end
 end)
 
 -- When a player unit is deployed, add it to unitData for inspector access
@@ -5308,6 +5366,12 @@ BattleEvents.UnitDeployed.OnClientEvent:Connect(function(data)
 		end
 		unitData[data.unitId].tileX = data.tileX
 		unitData[data.unitId].tileY = data.tileY
+		-- Keep the shared holder's tile current (Slice 2; inert until Slice 3 reads it).
+		UnitRecords.Update(data.unitId, { tileX = data.tileX, tileY = data.tileY })
+		-- Ground the just-deployed player model to the real surface (voxel-aware +
+		-- pivot-gap-aware), same as enemies — so player units on Grassland/Water
+		-- voxel tiles don't sit buried during deployment.
+		groundDeployedUnitModelWhenReady(data.unitId, data.tileX, data.tileY)
 	end
 end)
 
@@ -5316,6 +5380,8 @@ BattleEvents.UnitUndeployed.OnClientEvent:Connect(function(data)
 	if data.unitId and unitData[data.unitId] then
 		unitData[data.unitId].tileX = 0
 		unitData[data.unitId].tileY = 0
+		-- Mirror into the shared holder (Slice 2; inert until Slice 3 reads it).
+		UnitRecords.Update(data.unitId, { tileX = 0, tileY = 0 })
 	end
 end)
 -- Receive generated map data (terrain/elevation/blockers) from server
@@ -5375,6 +5441,49 @@ BattleEvents.MapDataSync.OnClientEvent:Connect(function(mapData)
 		})
 	end
 	end
+end)
+
+-- TerrainChanged: a tile's BASE terrain transformed MID-BATTLE (BUG-002 fix 2026-10-22).
+-- GameConstants.TransformTerrain mutates the server TERRAIN_MAP but the client only
+-- learned terrain at map-gen (MapDataSync), so fire burn-out (grass->sand), Holy
+-- restore, Dark corrupt, Earth/Wind transforms, weather and explosion chains were all
+-- invisible. This handler (a) updates the client's local terrain data so the tile
+-- inspector reflects the new terrain, and (b) re-skins the tile Part only — it NEVER
+-- moves or re-pivots the tile (BUG-002 guard: tiles/units must not reposition).
+BattleEvents.TerrainChanged.OnClientEvent:Connect(function(data)
+	if not (data and data.x and data.y and data.terrainId) then return end
+	-- (a) Update the client's local terrain lookup the inspector reads. SetGeneratedMap
+	-- populated GameConstants.TERRAIN_MAP; GetTerrainId (used by the inspector) reads it.
+	if GameConstants.SetTerrainId then
+		GameConstants.SetTerrainId(data.x, data.y, data.terrainId)
+	end
+	-- (b) Re-skin the tile Part (texture swap only — NO reposition). Mirrors
+	-- MapRenderer's TerrainTextures.Apply(tile, terrainId) per-tile render path.
+	local tilePart = _getTilePart(data.x, data.y)
+	if not tilePart then return end
+	if TerrainTextures and TerrainTextures.Apply then
+		-- Apply() does not clear a prior texture (it stacks SurfaceGuis), so remove the
+		-- old TerrainTexture + SideTexture_* guis first, then re-apply the new terrain.
+		for _, gui in ipairs(tilePart:GetChildren()) do
+			if gui:IsA("SurfaceGui")
+				and (gui.Name == "TerrainTexture" or string.sub(gui.Name, 1, 12) == "SideTexture_") then
+				gui:Destroy()
+			end
+		end
+		if TerrainTextures.Assets and TerrainTextures.Assets[data.terrainId] then
+			-- New terrain has a per-tile texture: reveal the Part (a VOXEL_KEEP-origin
+			-- tile was hidden under its voxel column at map-gen, Transparency = 1) and
+			-- re-skin. Transparency only — no Size/Position change (BUG-002 guard).
+			tilePart.Transparency = 0
+			TerrainTextures.Apply(tilePart, data.terrainId)
+		end
+		-- If the new terrain has NO texture (it is itself a VOXEL_KEEP terrain, e.g. a
+		-- Holy restore back up to Grassland), the client cannot fill voxels
+		-- (workspace.Terrain is server-only); the server voxel-fill follow-up owns that
+		-- case. Inspector data (a) is already correct regardless.
+	end
+	print(string.format("[BattleVisualClient] TerrainChanged (%d,%d) -> %s (tile re-skinned)",
+		data.x, data.y, tostring(data.terrainId)))
 end)
 
 --------------------------------------------------

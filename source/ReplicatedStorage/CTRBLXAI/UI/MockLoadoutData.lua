@@ -167,6 +167,23 @@ function MockLoadoutData.GetEquipped(unitId, slot)
 end
 
 -- Build a virtual item for the equipped doctrine (not a real inventory item)
+-- Resolve a doctrine's skillChoices (ids) into {id,name,desc} entries so the detail
+-- window can list the skills a doctrine OFFERS without equipping it (2026-10-20).
+local function resolveDoctrineSkills(doc)
+	local out = {}
+	if doc and type(doc.skillChoices) == "table" then
+		for _, sid in ipairs(doc.skillChoices) do
+			local sd = SkillDataModule[sid]
+			table.insert(out, {
+				id = sid,
+				name = (sd and sd.name) or sid,
+				desc = (sd and sd.description) or "",
+			})
+		end
+	end
+	return out
+end
+
 function MockLoadoutData.GetEquippedDoctrine(unitId)
 	local docId = MockLoadoutData.GetUnitDoctrineId(unitId)
 	if not docId then return nil end
@@ -174,6 +191,7 @@ function MockLoadoutData.GetEquippedDoctrine(unitId)
 	if not doc or type(doc) ~= "table" or not doc.name then return nil end
 	return {
 		id = docId,
+		doctrineId = docId,
 		name = doc.name,
 		cat = "Doctrine",
 		sub = "Doctrine",
@@ -184,6 +202,7 @@ function MockLoadoutData.GetEquippedDoctrine(unitId)
 		qty = 1,
 		isWeapon = false,
 		isDoctrine = true,
+		isCurrent = true,
 		tags = { "Doctrine" },
 		baseStats = {},
 		passives = doc.passiveName and {{
@@ -191,10 +210,28 @@ function MockLoadoutData.GetEquippedDoctrine(unitId)
 			icon = "[*]",
 			desc = doc.passiveEffect or "",
 		}} or {},
-		bonusStats = doc.statPackage or {},
+		bonusStats = {},
 		bonusPassives = {},
+		docStatPackage = doc.statPackage or {},
+		skills = resolveDoctrineSkills(doc),
 		flavor = doc.identity or "",
 	}
+end
+
+-- Per-unit doctrine comparison (2026-10-20): doctrine stat packages are PERCENTAGES,
+-- so only the server knows the real stat change for THIS unit. Returns the server
+-- { ok, before, after, deltas } or nil.
+function MockLoadoutData.GetDoctrineComparison(unitId, newDoctrineId)
+	if MockLoadoutData._useServerData then
+		local ok, result = pcall(function()
+			return BattleEvents.GetDoctrineComparison:InvokeServer(unitId, newDoctrineId)
+		end)
+		if ok and type(result) == "table" and result.ok then
+			return result
+		end
+		return nil
+	end
+	return nil
 end
 
 function MockLoadoutData.IsEquipped(itemId, unitId)
@@ -217,6 +254,46 @@ end
 
 function MockLoadoutData.GetFilteredItems(category)
 	if not category or category == "All" then return MockLoadoutData.Inventory end
+	-- Doctrines are owned instances, not entries in the gear Inventory table. Under the
+	-- Doctrine filter, return the selected unit's owned doctrines (loose stash stacked
+	-- with counts + the equipped copy marked current) mapped to the grid item shape,
+	-- so they render in the normal item panel like consumables (2026-10-20).
+	if category == "Doctrine" then
+		local unit = MockLoadoutData.GetSelectedUnit()
+		if not unit then return {} end
+		local owned = MockLoadoutData.GetOwnedDoctrines(unit.id)
+		local r = {}
+		for _, d in ipairs(owned) do
+			-- Enrich from the doctrine content def so the detail window can show the
+			-- doctrine passive + its stat package (2026-10-20). docStatPackage holds the
+			-- six signed PERCENTAGE modifiers; passives holds the doctrine passive.
+			local doc = DoctrineDataModule[d.doctrineId]
+			table.insert(r, {
+				id = d.instanceId or d.doctrineId,
+				instanceId = d.instanceId,
+				doctrineId = d.doctrineId,
+				name = d.name,
+				cat = "Doctrine",
+				sub = "Doctrine",
+				lv = 0,
+				rarity = "Legendary",
+				icon = d.icon or "[D]",
+				qty = d.count or 1,
+				isCurrent = d.isCurrent == true,
+				isDoctrine = true,
+				isWeapon = false,
+				flavor = d.identity or (doc and doc.identity) or "",
+				tags = { "Doctrine" },
+				baseStats = {},
+				bonusStats = {},
+				bonusPassives = {},
+				docStatPackage = (doc and doc.statPackage) or {},
+				skills = resolveDoctrineSkills(doc),
+				passives = (doc and doc.passiveName) and {{ name = doc.passiveName, icon = "[*]", desc = doc.passiveEffect or "" }} or {},
+			})
+		end
+		return r
+	end
 	local r = {}
 	for _, item in ipairs(MockLoadoutData.Inventory) do
 		if item.cat == category then table.insert(r, item) end
@@ -587,28 +664,6 @@ function MockLoadoutData.GetAllDoctrines()
 	return out
 end
 
--- Swap a unit's doctrine via the authoritative server RequestDoctrineChange,
--- then refresh skill data so the new doctrine + its default skill are reflected.
-function MockLoadoutData.ServerChangeDoctrine(unitId, doctrineId)
-	if MockLoadoutData._useServerData then
-		local ok, result = pcall(function()
-			return BattleEvents.RequestDoctrineChange:InvokeServer(unitId, doctrineId)
-		end)
-		if ok and type(result) == "table" and result.ok then
-			if MockLoadoutData.ServerDoctrineId then
-				MockLoadoutData.ServerDoctrineId[unitId] = doctrineId
-			end
-			MockLoadoutData.LoadSkillData(unitId)
-			return true
-		end
-		warn("[LoadoutData] ServerChangeDoctrine failed:", result and result.reason or "unknown")
-		return false
-	end
-	-- Mock fallback: just record the id locally.
-	if MockLoadoutData.ServerDoctrineId then MockLoadoutData.ServerDoctrineId[unitId] = doctrineId end
-	return true
-end
-
 function MockLoadoutData.GetUnitDoctrineId(unitId)
 	if MockLoadoutData.ServerDoctrineId and MockLoadoutData.ServerDoctrineId[unitId] then
 		return MockLoadoutData.ServerDoctrineId[unitId]
@@ -616,6 +671,49 @@ function MockLoadoutData.GetUnitDoctrineId(unitId)
 	-- Fallback to mock unit data
 	local unit = MockLoadoutData.GetSelectedUnit()
 	return unit and unit.doctrineId or "DOC-BERSERKER"
+end
+
+-- Owned-doctrine list for the picker (2026-10-20). Server returns the loose stash
+-- (grouped by doctrine, with a count) plus the unit's currently-equipped copy (marked
+-- isCurrent). Each entry: { doctrineId, name, identity, icon, count, instanceId, isCurrent }.
+function MockLoadoutData.GetOwnedDoctrines(unitId)
+	if MockLoadoutData._useServerData then
+		local ok, result = pcall(function()
+			return BattleEvents.GetOwnedDoctrines:InvokeServer(unitId)
+		end)
+		if ok and type(result) == "table" and result.ok then
+			return result.doctrines or {}
+		end
+		warn("[LoadoutData] GetOwnedDoctrines failed:", result and (result :: any).reason or "unknown")
+		return {}
+	end
+	-- Mock fallback (standalone UI dev): present all doctrines in the server shape so
+	-- the picker code is uniform; instanceId stands in as the doctrineId.
+	local out = {}
+	for _, d in ipairs(MockLoadoutData.GetAllDoctrines()) do
+		table.insert(out, { doctrineId = d.id, name = d.name, identity = d.identity,
+			icon = d.icon, count = 1, instanceId = d.id, isCurrent = false })
+	end
+	return out
+end
+
+-- Equip an owned doctrine INSTANCE on a unit via the authoritative server (swap model).
+function MockLoadoutData.ServerEquipDoctrine(unitId, instanceId)
+	if MockLoadoutData._useServerData then
+		local ok, result = pcall(function()
+			return BattleEvents.RequestEquipDoctrine:InvokeServer(unitId, instanceId)
+		end)
+		if ok and type(result) == "table" and result.ok then
+			if MockLoadoutData.ServerDoctrineId then
+				MockLoadoutData.ServerDoctrineId[unitId] = result.doctrineId
+			end
+			MockLoadoutData.LoadSkillData(unitId)
+			return true
+		end
+		warn("[LoadoutData] ServerEquipDoctrine failed:", result and (result :: any).reason or "unknown")
+		return false
+	end
+	return true
 end
 
 --------------------------------------------------

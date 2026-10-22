@@ -46,6 +46,9 @@ local EVENT_NAMES = {
 	-- Player input (Slice 3)
 	"PlayerTurnPrompt",
 	"PlayerCommand",
+	-- Loadout save-on-trigger (2026-10-19): client fires on unit swap / tab exit /
+	-- loadout screen exit; server saves once if changes were staged.
+	"RequestSaveLoadout",
 	"TurnOrderUpdate",
 	-- Slice 4A
 	"ChannelFizzled",
@@ -81,6 +84,7 @@ local EVENT_NAMES = {
 	"TileEffectRemoved",  -- S->C: effect removed from tile
 	"UnitStateChanged",   -- S->C: unit HP/isAlive changed (revive, etc.)
 	"ObjectChanged",      -- S->C: OBS object break/HP-change/move (Phase 2c-0): { x, y, newHp? | destroyed? | moved? }
+	"TerrainChanged",     -- S->C: a tile's base terrain transformed mid-battle (BUG-002 fix 2026-10-22): { x, y, terrainId } (fire burn-out, Holy/Dark/Earth/Wind transforms, weather, explosion chain). Client re-skins the tile Part + updates its local terrain data; no reposition.
 	"MapDataSync",        -- S->C: terrain/elevation/blocker grids for client
 	-- Phase B: Quest Board
 	"QuestBoardOpen",     -- S->C: quest board data (3 quests)
@@ -132,9 +136,11 @@ local FUNCTION_NAMES = {
 	"RequestEquip",
 	"RequestUnequip",
 	-- Slice 4H: Doctrine management
-	"RequestDoctrineChange",
 	"RequestDoctrineSkillSelect",
 	"GetDoctrineChoices",
+	-- Doctrine ownership (2026-10-20): equip an owned doctrine instance; list owned.
+	"RequestEquipDoctrine",
+	"GetOwnedDoctrines",
 	-- Slice 4I: Skill Card and Augment Card management
 	"RequestEquipSkillCard",
 	"RequestUnequipSkillCard",
@@ -142,10 +148,12 @@ local FUNCTION_NAMES = {
 	"RequestDetachAugment",
 	"GetSkillLoadout",
 	-- Slice 4J: Stat allocation and comparison
-	"RequestAllocateStat",
 	"GetEquipmentComparison",
 	"GetDoctrineComparison",
 	"GetUnitFullStats",
+	-- Stat allocation basket (2026-10-18): read-only preview + batched commit
+	"PreviewStatAllocation",
+	"CommitStatAllocation",
 
 	"RequestEquipConsumable",
 	"RequestUnequipConsumable",

@@ -419,7 +419,36 @@ function DoctrinePassiveService.GetSkillPotencyModifier(unit)
 		return 1.10
 	end
 
+	-- CHEMIST — Field Chemistry drawback: Skill Potency -25% (traded for consumable mastery). 2026-10-20
+	if docId == "DOC-CHEMIST" then
+		return 0.75
+	end
+
 	return 1.0
+end
+
+--------------------------------------------------
+-- CONSUMABLE ITEM MODIFIERS (2026-10-20)
+-- Chemist: Consumable Item RT Cost -20% (multiplier 0.80).
+-- Artificer: Consumable Item Maximum Range +1 (flat tile bonus).
+-- Both are doctrine passives; disabled by Break like the rest.
+--------------------------------------------------
+function DoctrinePassiveService.GetConsumableRtModifier(unit)
+	local docId = getDoctrineId(unit)
+	if not docId or isBroken(unit) then return 1.0 end
+	if docId == "DOC-CHEMIST" then
+		return 0.80
+	end
+	return 1.0
+end
+
+function DoctrinePassiveService.GetConsumableRangeBonus(unit)
+	local docId = getDoctrineId(unit)
+	if not docId or isBroken(unit) then return 0 end
+	if docId == "DOC-ARTIFICER" then
+		return 1
+	end
+	return 0
 end
 
 --------------------------------------------------

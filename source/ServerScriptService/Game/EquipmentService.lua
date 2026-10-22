@@ -251,6 +251,49 @@ end
 -- Produces the same result regardless of call count.
 --------------------------------------------------
 
+-- Consumable slot capacity (2026-10-20): base 3 open slots, hard cap 6. Extra slots are
+-- granted by sources whose descriptive text carries the marker "Equipped Item slot
+-- capacity +1" — the Utility Belt accessory (ArmorData archetype passive), the rollable
+-- Expanded Bandolier (BonusData PAS-055 on an equipped item), and the Chemist/Artificer
+-- doctrines (doctrine passiveEffect). Each matching source grants +1. Same string-match
+-- convention ArmorPassiveService uses for item RT/range passives.
+local CONSUMABLE_SLOT_GRANT_MARKER = "Equipped Item slot capacity +1"
+local CONSUMABLE_SLOT_BASE = 3
+
+function EquipmentService.ComputeConsumableSlotCount(unit)
+	local maxSlots = unit.maxConsumableSlots or 6
+	local grants = 0
+	-- (a) Doctrine grant (Chemist / Artificer)
+	if unit.doctrineId then
+		local doctrine = DoctrineData[unit.doctrineId]
+		if doctrine and doctrine.passiveEffect
+			and string.find(doctrine.passiveEffect, CONSUMABLE_SLOT_GRANT_MARKER, 1, true) then
+			grants = grants + 1
+		end
+	end
+	-- (b) Equipped gear: archetype fixed passive (Utility Belt) + rolled bonus passives (Bandolier)
+	for _, item in ipairs(EquipmentService.GetAllEquippedItems(unit)) do
+		local arch = ArmorData.GetByArchetypeId(item.baseArchetypeId)
+		if arch and arch.passiveName
+			and string.find(arch.passiveName, CONSUMABLE_SLOT_GRANT_MARKER, 1, true) then
+			grants = grants + 1
+		end
+		for _, pid in ipairs(item.bonusPassiveIds or {}) do
+			local pdef = BonusData.GetPassive(pid)
+			if pdef then
+				local txt = (pdef.desc or "") .. " " .. (pdef.name or "")
+				if string.find(txt, CONSUMABLE_SLOT_GRANT_MARKER, 1, true) then
+					grants = grants + 1
+				end
+			end
+		end
+	end
+	local count = CONSUMABLE_SLOT_BASE + grants
+	if count < CONSUMABLE_SLOT_BASE then count = CONSUMABLE_SLOT_BASE end
+	if count > maxSlots then count = maxSlots end
+	return count
+end
+
 function EquipmentService.RebuildUnitStats(unit)
 	-- 1. Start from race base stats (permanent values)
 	local base = unit.baseStats or { STR = 10, AGI = 10, INT = 10, VIT = 10, DEX = 10, LUK = 10 }
@@ -554,7 +597,18 @@ function EquipmentService.RebuildUnitStats(unit)
 		if dMod ~= 0 and derived.discoveryRadius then
 			derived.discoveryRadius = math.max(0, derived.discoveryRadius + dMod)
 		end
+		-- ARTIFICER — Applied Artifice drawback: Bonus Skill Range -1, explicitly allowed
+		-- to go below 0 (no floor). 2026-10-20.
+		if unit.doctrineId == "DOC-ARTIFICER" and derived.bonusSkillRange ~= nil then
+			derived.bonusSkillRange = derived.bonusSkillRange - 1
+		end
 	end
+
+	-- 7. Consumable slot capacity (2026-10-20): recompute from gear + doctrine grants,
+	-- clamped to [3, maxConsumableSlots]. Independent of the stat math above; runs on
+	-- every equip/unequip/doctrine change and at boot establishment (all call RebuildUnitStats).
+	unit.maxConsumableSlots = unit.maxConsumableSlots or 6
+	unit.consumableSlotCount = EquipmentService.ComputeConsumableSlotCount(unit)
 end
 
 --------------------------------------------------

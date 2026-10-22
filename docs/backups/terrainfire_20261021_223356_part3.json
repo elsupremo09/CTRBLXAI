@@ -1,0 +1,47 @@
+{
+ "stamp": "20261021_223356",
+ "project_rules_inserted": [
+  [
+   140,
+   "Terrain Fire Reaction",
+   "Model (burn-then-transform)"
+  ],
+  [
+   141,
+   "Terrain Fire Reaction",
+   "Natural expiry vs early extinguish"
+  ],
+  [
+   142,
+   "Terrain Fire Reaction",
+   "Non-flammable transformable terrain stays INSTANT"
+  ],
+  [
+   143,
+   "Terrain Fire Reaction",
+   "Floor-effect exemption"
+  ],
+  [
+   144,
+   "Push Action",
+   "Wind Displacement (guaranteed min 1)"
+  ],
+  [
+   145,
+   "Electric Shock Reaction",
+   "Electric transforms ONLY Static Cloud"
+  ],
+  [
+   146,
+   "Electric Shock Reaction",
+   "Shock reaction — definition"
+  ],
+  [
+   147,
+   "Electric Shock Reaction",
+   "Shock reaction — damage + resolution"
+  ]
+ ],
+ "electric_es_id": 9,
+ "electric_old_rule": "Element tag"
+}
