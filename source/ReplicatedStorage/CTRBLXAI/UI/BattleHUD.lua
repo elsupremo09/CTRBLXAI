@@ -94,6 +94,11 @@ local isViewMode          = false  -- legacy; view mode retired 2026-10-07 (alwa
 local _selection = nil
 local tileInfoPanel  -- tile inspector, right of the turn-order bar
 local alignTileInfo  -- forward-declared: ensureRoot watchers reference it before its definition
+-- During DEPLOYMENT there is no turn-order bar, but the roster strip is moved into the
+-- bar's bottom-left spot, so the tile inspector can anchor to the strip the SAME way it
+-- anchors to the bar in battle (one layout, both phases). DeploymentUI sets this via
+-- BattleHUD.SetTileAnchor(strip); battle leaves it nil and uses the bar. (2026-10-23)
+local _tileAnchor = nil
 local resizeBattleLog  -- forward-declared: layout watchers call it before its definition below
 local isBattleLogExpanded = false
 local savedBattleState    = nil   -- presentation.state before entering view mode
@@ -671,7 +676,6 @@ end
 
 function BattleHUD._buildActiveUnit()
 	if not activeUnitPanel then
-		if _G.CTRBLXAI_DeploymentActive then print("[AU-DIAG] _buildActiveUnit: activeUnitPanel is NIL — panel not created") end
 		return
 	end
 	clearFrame(activeUnitPanel)
@@ -681,18 +685,6 @@ function BattleHUD._buildActiveUnit()
 	end
 	local d = (_selection and _selection.kind == "unit" and _selection.data) or presentation.actor
 	activeUnitPanel.Visible = (d ~= nil)
-	if _G.CTRBLXAI_DeploymentActive then
-		print(string.format("[AU-DIAG] built unit=%s side=%s visible=%s DO=%s parent=%s",
-			tostring(d and d.name), tostring(d and d.side), tostring(activeUnitPanel.Visible),
-			tostring(screenGui and screenGui.DisplayOrder), tostring(screenGui and screenGui.Parent and screenGui.Parent.Name)))
-		local _p = activeUnitPanel
-		task.defer(function()
-			if _p and _p.Parent then
-				print(string.format("[AU-DIAG] rect pos=(%d,%d) size=(%d,%d) visible=%s",
-					_p.AbsolutePosition.X, _p.AbsolutePosition.Y, _p.AbsoluteSize.X, _p.AbsoluteSize.Y, tostring(_p.Visible)))
-			end
-		end)
-	end
 	if not d then return end
 	local pad = Instance.new("UIPadding", activeUnitPanel)
 	pad.PaddingTop = UDim.new(0, 8); pad.PaddingLeft = UDim.new(0, 8)
@@ -1643,9 +1635,13 @@ end
 -- Place the tile inspector flush right of the turn-order bar, same height,
 -- at least 110 px wide.
 alignTileInfo = function()
-	if not (tileInfoPanel and turnOrderBar and rootFrame) then return end
+	-- Anchor to the turn-order bar in battle, or the roster strip during deployment
+	-- (set via SetTileAnchor) -- the strip sits in the bar's exact bottom-left spot, so
+	-- the panel lands in the same place in both phases. (2026-10-23)
+	local anchor = (turnOrderBar and turnOrderBar.Visible) and turnOrderBar or _tileAnchor
+	if not (tileInfoPanel and anchor and rootFrame) then return end
 	local rootAbs = rootFrame.AbsolutePosition
-	local bp, bs = turnOrderBar.AbsolutePosition, turnOrderBar.AbsoluteSize
+	local bp, bs = anchor.AbsolutePosition, anchor.AbsoluteSize
 	if bs.Y <= 0 then return end
 	-- Flush against the bar (0 gap). Width runs up to the right column's left edge
 	-- (action panel / unit panel), never below 110 px.
@@ -1666,7 +1662,10 @@ local function buildTileInfo()
 	if not tileInfoPanel then return end
 	clearFrame(tileInfoPanel)
 	local t = presentation.tile
-	tileInfoPanel.Visible = (t ~= nil) and turnOrderBar ~= nil and turnOrderBar.Visible
+	-- Visible when there's tile data AND we have something to anchor to: the turn-order
+	-- bar in battle, or the roster strip during deployment (_tileAnchor). (2026-10-23)
+	local anchor = (turnOrderBar and turnOrderBar.Visible) and turnOrderBar or _tileAnchor
+	tileInfoPanel.Visible = (t ~= nil) and (anchor ~= nil)
 	if not tileInfoPanel.Visible then return end
 	local pd = tileInfoPanel:FindFirstChildOfClass("UIPadding") or Instance.new("UIPadding")
 	pd.PaddingTop = UDim.new(0, 8); pd.PaddingBottom = UDim.new(0, 8)
@@ -3010,6 +3009,7 @@ function BattleHUD.Cleanup()
 	activeUnitPanel = nil; actionPanel = nil
 	inspectorPanel = nil; tilePreviewPanel = nil
 	closePeekCard(); _selection = nil; tileInfoPanel = nil; turnOrderBar = nil; timePanel = nil; eventPanel = nil; weatherPanel = nil; conditionsPanel = nil; battleLogPanel = nil
+	_tileAnchor = nil
 	if viewModeDropdown then viewModeDropdown:Destroy() end
 	viewModeButtons = nil; viewModeViewBtn = nil; viewModeDropdown = nil; currentCameraMode = "Isometric"
 end
@@ -3020,6 +3020,15 @@ end
 -- leaves it at the default. No-op until ensureRoot has created the ScreenGui. (2026-10-15)
 function BattleHUD.SetDisplayOrder(order: number)
 	if screenGui then screenGui.DisplayOrder = order end
+end
+
+-- Set the element the tile inspector aligns to during DEPLOYMENT (the roster strip),
+-- since the turn-order bar does not exist then. Pass nil to clear (battle uses the bar).
+-- The strip is moved into the bar's bottom-left spot, so the panel lands identically in
+-- both phases. Re-align immediately so it tracks the strip's rect. (2026-10-23)
+function BattleHUD.SetTileAnchor(element: Instance?)
+	_tileAnchor = element
+	if alignTileInfo then task.defer(alignTileInfo) end
 end
 
 return BattleHUD

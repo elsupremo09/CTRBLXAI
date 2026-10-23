@@ -31,6 +31,7 @@ local TileCrossEffectService = require(script.Parent.TileCrossEffectService)
 -- Race passives (Feline Nine Lives fall immunity / collision +20%, 2026-10-02).
 local RacePassiveService = require(script.Parent.RacePassiveService)
 local StatusService = require(script.Parent.StatusService) -- status Stability buffs (2026-10-07)
+local TraitEffectService = require(script.Parent.TraitEffectService) -- Perks & Flaws: fall/collision mults (2026-10-23)
 
 local DisplacementService = {}
 
@@ -321,6 +322,16 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	if totalFallHeight >= GameConstants.FALL_DAMAGE_MIN_HEIGHT then
 		fallDamage = GameConstants.CalcFallDamage(target.maxHp, totalFallHeight)
 	end
+	-- Perks & Flaws (2026-10-23): Acrophobic (x1.5) / Sure-Footed (x0.5) scale the BASE
+	-- fall damage. CalcFallDamage has no VIT term, so its output IS the "base fall damage
+	-- before VIT bonus" the DB refers to. Applied BEFORE Feline immunity so immunity still
+	-- wins (zeroes any scaled value).
+	if fallDamage > 0 then
+		local fMult = TraitEffectService.GetFallDamageMultiplier(target)
+		if fMult ~= 1 then
+			fallDamage = math.round(fallDamage * fMult)
+		end
+	end
 	-- FELINE — Nine Lives (races row 'Feline', 2026-10-02): immune to fall damage
 	-- (any downward displacement, any height). ONLY the fall-damage term is zeroed;
 	-- cross effects and landing-tile / chasm-floor ground effects resolve normally.
@@ -331,17 +342,34 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	-- FELINE — Nine Lives: collision / knockback-impact damage received +20%, for the
 	-- pushed unit (wallCollision.damage) and/or the unit it slammed into
 	-- (collidedUnitDamage) -- whichever is Feline.
+	-- Plus Perks & Flaws (2026-10-23): Squishy / Thorny. collisionRecv scales the damage
+	-- THIS unit receives (race x trait); the collided-into unit's collisionInflict clause
+	-- ("units colliding with this unit take X") scales the PUSHED unit's damage. The
+	-- pushed unit is treated as the collider, so its own inflict clause does not apply
+	-- while it is the one being pushed.
 	if wallCollisionResult then
-		local tMult = RacePassiveService.GetCollisionDamageMultiplier(target)
-		if tMult ~= 1 and wallCollisionResult.damage then
-			wallCollisionResult.damage = math.round(wallCollisionResult.damage * tMult)
-		end
-		if wallCollisionResult.collidedUnitId and wallCollisionResult.collidedUnitDamage then
-			local collided = nil
+		-- Resolve the collided-into unit (if any) up front so both sides can read it.
+		local collided = nil
+		if wallCollisionResult.collidedUnitId then
 			for _, u in ipairs(allUnits or {}) do
 				if u.id == wallCollisionResult.collidedUnitId then collided = u; break end
 			end
-			local cMult = collided and RacePassiveService.GetCollisionDamageMultiplier(collided) or 1
+		end
+		-- PUSHED unit (target) received collision damage.
+		if wallCollisionResult.damage then
+			local tMult = RacePassiveService.GetCollisionDamageMultiplier(target)
+				* TraitEffectService.GetCollisionDamageReceivedMultiplier(target)
+			if collided then
+				tMult = tMult * TraitEffectService.GetCollisionDamageInflictedMultiplier(collided)
+			end
+			if tMult ~= 1 then
+				wallCollisionResult.damage = math.round(wallCollisionResult.damage * tMult)
+			end
+		end
+		-- COLLIDED-into unit received collision damage (its own receive-mult, race x trait).
+		if collided and wallCollisionResult.collidedUnitDamage then
+			local cMult = RacePassiveService.GetCollisionDamageMultiplier(collided)
+				* TraitEffectService.GetCollisionDamageReceivedMultiplier(collided)
 			if cMult ~= 1 then
 				wallCollisionResult.collidedUnitDamage = math.round(wallCollisionResult.collidedUnitDamage * cMult)
 			end

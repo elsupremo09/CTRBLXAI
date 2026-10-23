@@ -44,7 +44,7 @@ end
 -- ACTION RT COST MULTIPLIERS
 --------------------------------------------------
 
-GameConstants.MOVE_RT_FACTOR         = 0.0625
+GameConstants.MOVE_RT_FACTOR         = 0.0375  -- per-tile movement RT factor (user ruling 2026-10-23, final). DB movement_targeting id 8 pending Designer sync to 0.0375.
 GameConstants.BASIC_ATTACK_RT_FACTOR = 0.10
 -- Guard
 GameConstants.GUARD_MITIGATION      = 0.35   -- base 35% damage reduction
@@ -3082,10 +3082,19 @@ end
 
 -- RT Delay Resistance (VIT reduces incoming RT Delay)
 -- Rule: Incoming RT Delay × (1 - VIT / (300 + VIT))
-function GameConstants.CalcRtDelayResistance(rawDelay, targetVit)
+-- RT Delay Bonus (DB core_stats id 2): weapon RT delay a unit INFLICTS is amplified by
+-- the inflictor STR. Bonus = Base RT Delay x (1 + min(STR/(200+STR), 0.75)).
+function GameConstants.CalcRtDelayBonus(weaponRtDelay, str)
+	weaponRtDelay = weaponRtDelay or 0
+	str = str or 10
+	return weaponRtDelay * (1 + math.min(str / (200 + str), 0.75))
+end
+
+function GameConstants.CalcRtDelayResistance(rawDelay, targetVit, gearResistMult)
 	targetVit = targetVit or 10
 	local resist = 1 - targetVit / (300 + targetVit)
-	return math.round(rawDelay * resist)
+	local gm = gearResistMult or 1
+	return math.round(rawDelay * resist * gm)
 end
 
 --------------------------------------------------
@@ -3167,7 +3176,7 @@ function GameConstants.ComputeDerivedStats(unit)
 		-- STR derived
 		attackPower     = math.round(GameConstants.CalcAttackPower(weaponDamage, str) * 10) / 10,
 		effectiveWt     = math.round(GameConstants.CalcEffectiveWt(weaponWt, str)),
-		rtDelayBonus    = math.round(weaponRtDelay * (1 + math.min(str / (200 + str), 0.75)) * 10) / 10,
+		rtDelayBonus    = math.round(GameConstants.CalcRtDelayBonus(weaponRtDelay, str) * 10) / 10,
 		force           = 1 + math.floor(str / 60),
 
 		-- AGI derived
@@ -3197,6 +3206,13 @@ function GameConstants.ComputeDerivedStats(unit)
 		discoveryRadius = 1 + math.floor(luk / 60),
 		unitFortune     = math.round(luk / (luk + 200) * 1000) / 10, -- store as %
 		startingRt      = GameConstants.CalcStartingRt(GameConstants.BASE_RT_STANDARD, luk),
+
+		-- Base RT (DB core_stats id 54 / weapons_equipment id 7): own base value +
+		-- Effective Armor WT. Player units use BASE_RT_STANDARD (400). baseRtArmorWt is the
+		-- Effective Armor WT part, exposed so the Info panel can show the breakdown
+		-- (own base + armor WT). Enemies display their own-kind base elsewhere. (2026-10-23)
+		baseRtArmorWt   = math.round(GameConstants.CalcEffectiveArmorWt(unit)),
+		baseRt          = math.round(GameConstants.BASE_RT_STANDARD + GameConstants.CalcEffectiveArmorWt(unit)),
 
 		-- Composite combat stats
 		-- Basic Attack RT = round(Modified Base RT x 0.10) + Effective Weapon WT
@@ -3260,29 +3276,42 @@ end
 
 -- Stat metadata for client UI breakdown (formula strings + parent stat)
 GameConstants.STAT_META = {
-	attackPower     = { label = "Attack Power",     formula = "WeaponDmg × (1 + STR/200)", parent = "STR" },
-	effectiveWt     = { label = "Effective WT",     formula = "Weapon WT × (1 - STR/(200+STR))", parent = "STR" },
-	rtDelayBonus    = { label = "RT Delay Bonus",   formula = "Base RT Delay × (1 + min(STR/(200+STR), 0.75))", parent = "STR" },
-	force           = { label = "Force",            formula = "1 + floor(STR / 60)", parent = "STR" },
-	movementRange   = { label = "Movement Range",   formula = "3 + floor(AGI / 60)", parent = "AGI" },
-	evasiveness     = { label = "Evasiveness",      formula = "AGI / (AGI + 200)", parent = "AGI", unit = "%" },
-	skillPotency    = { label = "Skill Potency",    formula = "1 + INT / (200 + INT)", parent = "INT", unit = "×" },
-	maxMp           = { label = "Max MP",           formula = "20 + INT × 2", parent = "INT" },
-	bonusSkillRange = { label = "Bonus Skill Range", formula = "floor(INT / 75)", parent = "INT" },
-	mpRegen         = { label = "MP Regen",         formula = "2 + floor(INT / 40) per 1000 CT", parent = "INT" },
-	maxHp           = { label = "Max HP",           formula = "50 + VIT × 4", parent = "VIT" },
-	healEfficiency  = { label = "Heal Efficiency",  formula = "1 + VIT / 300", parent = "VIT", unit = "×" },
-	defensePower    = { label = "Defense Power",    formula = "(Weapon + Off-Hand + Armor Defense) × (1 + VIT / 300)", parent = "VIT" },
-	debuffResist    = { label = "Debuff Resist",    formula = "1 - VIT / (300 + VIT)", parent = "VIT", unit = "×" },
-	rtDelayResist   = { label = "RT Delay Resist",  formula = "1 - VIT / (300 + VIT)", parent = "VIT", unit = "×" },
-	stability       = { label = "Stability",        formula = "floor(VIT / 60)", parent = "VIT" },
-	precision       = { label = "Precision",        formula = "DEX / (DEX + 200)", parent = "DEX", unit = "%" },
-	jump            = { label = "Jump",             formula = "1 + floor(DEX / 60)", parent = "DEX" },
-	channelReduction = { label = "Channel Speed",   formula = "DEX / (300 + DEX) reduction", parent = "DEX", unit = "%" },
-	discoveryRadius = { label = "Discovery Radius", formula = "1 + floor(LUK / 60)", parent = "LUK" },
-	unitFortune     = { label = "Unit Fortune",     formula = "LUK / (LUK + 200)", parent = "LUK", unit = "%" },
-	startingRt      = { label = "Starting RT",      formula = "round(400 × (1 - 0.30 × LUK/(100+LUK)))", parent = "LUK" },
-	basicAttackRt   = { label = "Basic Attack RT",  formula = "round((Base RT + Eff. Armor WT) × 0.10) + Effective Weapon WT", parent = "STR" },
+	attackPower     = { label = "Attack Power",     formula = "WeaponDmg × (1 + STR/200)", parent = "STR", desc = "Your basic-attack power before the target's defense. Higher weapon damage and STR raise it." },
+	effectiveWt     = { label = "Effective WT",     formula = "Weapon WT × (1 - STR/(200+STR))", parent = "STR", desc = "Your weapon's weight after STR eases it. Adds to Basic Attack and Skill RT, so lower lets you act sooner." },
+	rtDelayBonus    = { label = "RT Delay Bonus",   formula = "Base RT Delay × (1 + min(STR/(200+STR), 0.75))", parent = "STR", desc = "How much extra RT delay your hits inflict on targets. STR amplifies it." },
+	force           = { label = "Force",            formula = "1 + floor(STR / 60)", parent = "STR", desc = "Your push strength. Tiles a target is pushed = your Force − their Stability." },
+	movementRange   = { label = "Movement Range",   formula = "3 + floor(AGI / 60)", parent = "AGI", desc = "How many tiles you can move in one Move action. AGI increases it." },
+	evasiveness     = { label = "Evasiveness",      formula = "AGI / (AGI + 200)", parent = "AGI", unit = "%", desc = "Lowers an attacker's Hit Quality against you (Hit Quality = 1 + their Precision − your Evasiveness). AGI raises it." },
+	skillPotency    = { label = "Skill Potency",    formula = "1 + INT / (200 + INT)", parent = "INT", unit = "×", desc = "Multiplier on the power of skills you use. INT raises it (shown as +% above baseline)." },
+	maxMp           = { label = "Max MP",           formula = "20 + INT × 2", parent = "INT", desc = "Your maximum MP pool for casting skills. INT raises it." },
+	bonusSkillRange = { label = "Bonus Skill Range", formula = "floor(INT / 75)", parent = "INT", desc = "Extra targeting distance for skills. Does not enlarge AOE or pattern size. INT raises it." },
+	mpRegen         = { label = "MP Regen",         formula = "2 + floor(INT / 40) per 1000 CT", parent = "INT", desc = "MP recovered per 1000 CT of battle time. INT raises it." },
+	maxHp           = { label = "Max HP",           formula = "50 + VIT × 4", parent = "VIT", desc = "Your maximum HP. VIT raises it." },
+	healEfficiency  = { label = "Heal Efficiency",  formula = "1 + VIT / 300", parent = "VIT", unit = "×", desc = "Multiplier on healing you RECEIVE. VIT raises it (shown as +% above baseline)." },
+	defensePower    = { label = "Defense Power",    formula = "(Weapon + Off-Hand + Armor Defense) × (1 + VIT / 300)", parent = "VIT", desc = "Your effective defense against incoming damage. Equipment defense and VIT raise it." },
+	debuffResist    = { label = "Debuff Resist",    formula = "1 - VIT / (300 + VIT)", parent = "VIT", unit = "×", desc = "Scales debuff strength/duration applied to you; a negative % means you take that much LESS. VIT improves it." },
+	rtDelayResist   = { label = "RT Delay Resist",  formula = "1 - VIT / (300 + VIT)", parent = "VIT", unit = "×", desc = "Scales incoming RT delay; a negative % means enemies slow you that much LESS. VIT improves it." },
+	stability       = { label = "Stability",        formula = "floor(VIT / 60)", parent = "VIT", desc = "Resists being pushed. Tiles you are pushed = attacker Force − your Stability. VIT raises it." },
+	precision       = { label = "Precision",        formula = "DEX / (DEX + 200)", parent = "DEX", unit = "%", desc = "Raises your Hit Quality — how hard your hits land (Hit Quality = 1 + your Precision − target Evasiveness). DEX raises it." },
+	jump            = { label = "Jump",             formula = "1 + floor(DEX / 60)", parent = "DEX", desc = "How many elevation levels you can step up or down while moving. DEX raises it." },
+	channelReduction = { label = "Channel Speed",   formula = "DEX / (300 + DEX) reduction", parent = "DEX", unit = "%", desc = "Cuts skill channel time so casts finish faster. DEX raises it." },
+	discoveryRadius = { label = "Discovery Radius", formula = "1 + floor(LUK / 60)", parent = "LUK", desc = "Your discovery reach for exploration outside battle. LUK raises it." },
+	unitFortune     = { label = "Unit Fortune",     formula = "LUK / (LUK + 200)", parent = "LUK", unit = "%", desc = "Your fortune factor (reward and tie-break luck). LUK raises it." },
+	startingRt      = { label = "Starting RT",      formula = "round(Modified Base RT × (1 - 0.30 × LUK/(100+LUK))) − 10 (player edge)", parent = "LUK", desc = "A ONE-TIME reduction applied at deployment to decide who acts first — lower goes sooner. Not a recurring stat; after the first turn, RT comes from Base RT." },
+	basicAttackRt   = { label = "Basic Attack RT",  formula = "round((Base RT + Eff. Armor WT) × 0.10) + Effective Weapon WT", parent = "STR", desc = "The RT your basic attack costs. Lower means your next turn comes sooner." },
+	baseRt          = { label = "Base RT",          formula = "Own base (player 400) + Effective Armor WT", desc = "Your per-turn RT baseline. Every action's RT cost derives from this, so a lower Base RT means you act more often. Heavier armor raises it." },
+}
+
+-- Plain-language role of each PRIMARY stat, shown in the stat explainer popup (user
+-- ruling 2026-10-23: clicking a stat also explains what it does). Sourced from
+-- CTRBLXAI.db core_stats ids 2-7.
+GameConstants.PRIMARY_STAT_DESC = {
+	STR = "Physical power: raises Attack Power, eases equipment weight (faster RT), inflicts more RT delay, and increases Force.",
+	AGI = "Agility: increases Movement Range, reduces movement RT, and raises Evasiveness.",
+	INT = "Intellect: raises Skill Potency, Max MP, Bonus Skill Range, and MP Regen.",
+	VIT = "Vitality: raises Max HP, healing received, Defense, Debuff and RT-Delay Resistance, and Stability.",
+	DEX = "Dexterity: raises Precision (Hit Quality), Jump height, and channel speed.",
+	LUK = "Luck: affects Combat Fortune, deployment Initiative (Starting RT), Discovery Radius, and deterministic tie-breaks.",
 }
 
 --------------------------------------------------

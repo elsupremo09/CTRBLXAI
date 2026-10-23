@@ -16,6 +16,7 @@ local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
 local AugmentEffectService = require(script.Parent.AugmentEffectService)
 local TraitEffectService = require(script.Parent.TraitEffectService) -- Perks & Flaws Phase 2
 local BattleVisualBroadcaster = require(script.Parent.BattleVisualBroadcaster)
+local WeaponPassiveService = require(script.Parent.WeaponPassiveService) -- Weapon passives (Group 1, 2026-10-23)
 
 local RaceData = require(
 	game:GetService("ReplicatedStorage")
@@ -100,6 +101,61 @@ function CombatResolver.FlushElectricShock(allUnits)
 	end
 	if biggest <= 0 then return end
 	_tileEffectService.ResolveElectricShock(seedTiles, biggest, excludeIds, ownerId, allUnits)
+end
+
+-- Ally-KO reaction buffer (Perks & Flaws 2026-10-23): units KO'd by this action's combat
+-- damage, pending nearby-ally reactions. Mirrors the electric buffer -- filled in
+-- ApplyOutcome, drained once per action by CommandService via FlushAllyKoReactions.
+local _allyKoBuffer = {}
+local ALLY_KO_RADIUS = 3 -- Chebyshev tiles; "nearby" (user default 2026-10-23)
+
+-- Resolve + clear buffered ally-KO reactions. For each unit KO'd this action, nearby LIVING
+-- same-side allies suffer Hemophage (lose a fraction of CURRENT HP) and/or Sluggish Finisher
+-- (lose 1 AP, once per turn). Reaction damage is applied DIRECTLY (not via ApplyOutcome), so a
+-- Hemophage self-KO cannot buffer a further reaction -- no chain (TRG-010 pattern). Buffer is
+-- reset BEFORE resolving so nothing re-enters. Combat deaths only; DoT / CT-tick / collision /
+-- fall deaths are not buffered (deferred).
+function CombatResolver.FlushAllyKoReactions(allUnits)
+	local dead = _allyKoBuffer
+	if #dead == 0 then return end
+	_allyKoBuffer = {}
+	if type(allUnits) ~= "table" then return end
+	for _, d in ipairs(dead) do
+		d._allyKoBuffered = nil
+		if d.tileX and d.tileY then
+			for _, u in ipairs(allUnits) do
+				if u ~= d and u.isAlive and u.side == d.side and u.tileX and u.tileY then
+					local dist = math.max(math.abs(u.tileX - d.tileX), math.abs(u.tileY - d.tileY))
+					if dist <= ALLY_KO_RADIUS then
+						local frac = TraitEffectService.GetAllyKoHpLossFraction(u)
+						if frac > 0 and (u.currentHp or 0) > 0 then
+							local loss = math.max(1, math.round((u.currentHp or 0) * frac))
+							local applied = UnitSchema_ApplyDamage(loss, u)
+							print(string.format(
+								"[CombatResolver] Hemophage: %s loses %d HP (ally %s KO'd nearby) | HP: %d/%d%s",
+								u.name, applied, d.name, u.currentHp, u.maxHp, u.isAlive and "" or " | DEFEATED"
+							))
+							if not u.isAlive then
+								u._killedBy = u._killedBy or d._killedBy
+								RacePassiveService.OnUnitKO(u)
+							end
+							if BattleVisualBroadcaster.UnitStateChanged then
+								BattleVisualBroadcaster.UnitStateChanged(u)
+							end
+						end
+						if TraitEffectService.HasAllyKoApLoss(u) and not u.sluggishApLossUsedThisTurn then
+							u.currentAp = math.max(0, (u.currentAp or 0) - 1)
+							u.sluggishApLossUsedThisTurn = true
+							print(string.format(
+								"[CombatResolver] Sluggish Finisher: %s loses 1 AP (ally %s KO'd nearby) | AP: %d",
+								u.name, d.name, u.currentAp
+							))
+						end
+					end
+				end
+			end
+		end
+	end
 end
 
 -- Weather passive element-damage modifier (Rain/Heatwave/Dark Eclipse/Holy Aurora/
@@ -219,8 +275,12 @@ end
 local function applyElementStatusTriggers(sourceUnitId: any, defender: any, element: any, actualDamage: any, alreadyApplied: any, attackerUnit: any)
 	if actualDamage <= 0 or not defender.isAlive then return end
 
+	-- Ignite (Group 2): a Fire->Burn trigger from an Ignite carrier stores 25% of the
+	-- fire damage instead of the base 20% (nil for non-Ignite -> base fraction).
+	local igniteBurnFrac = WeaponPassiveService.IgniteBurnFraction(attackerUnit)
 	local function tryApply(statusId, fireDmg)
-		local applied, _, immuneReason = StatusService.ApplyStatus(defender, statusId, sourceUnitId, fireDmg)
+		local frac = (statusId == "Burn") and igniteBurnFrac or nil
+		local applied, _, immuneReason = StatusService.ApplyStatus(defender, statusId, sourceUnitId, fireDmg, nil, frac)
 		if not applied and immuneReason then
 			BattleVisualBroadcaster.StatusImmune(defender, statusId, immuneReason)
 		end
@@ -259,9 +319,11 @@ local function calcHitQuality(attackerDex, defenderAgi, attackerUnit, defenderUn
 	-- Perks & Flaws (Phase 2b): Keen Aim/Clumsy feed Precision; Light Step/Heavy-Footed feed Evasiveness.
 	if attackerUnit then
 		precision = precision + TraitEffectService.GetPrecisionModifier(attackerUnit)
+		precision = precision + (attackerUnit.gearDerived and attackerUnit.gearDerived.precision or 0)
 	end
 	if defenderUnit then
 		evasiveness = evasiveness + TraitEffectService.GetEvasivenessModifier(defenderUnit)
+		evasiveness = evasiveness + (defenderUnit.gearDerived and defenderUnit.gearDerived.evasiveness or 0)
 	end
 	-- Blind: Final Precision = Precision × 0.50 (DB: elements_statuses)
 	if attackerUnit and StatusService.HasStatus(attackerUnit, "Blind") then
@@ -409,6 +471,12 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 		defender.tileX, defender.tileY
 	)
 
+	-- Weapon passives (Group 1, basic attack): armor penetration on the target's
+	-- effective Defense, then hit-quality passives (Tricky / Precision Strike / True
+	-- Strike). Nil-safe no-ops when the weapon carries none.
+	effectiveDefense = effectiveDefense * WeaponPassiveService.DefenseMultiplier(attacker)
+	hitQuality = WeaponPassiveService.AdjustBasicHitQuality(attacker, hitQuality, dStats.AGI)
+
 	local rawDamage   = ap - effectiveDefense
 	-- Combat Fortune: LUK difference modifies damage (step 7 in pipeline)
 	local fortuneMod = GameConstants.CalcCombatFortune(aStats.LUK, dStats.LUK)
@@ -434,10 +502,17 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	local traitDealtMod = TraitEffectService.GetDamageDealtModifier(attacker, baTraitElement, false, defender, false, traitCtx)
 	local traitRecvMod  = TraitEffectService.GetDamageReceivedModifier(defender, baTraitElement, false, true, attacker)
 	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod * docBADmgMod * docDealtMod * docRecvMod * traitDealtMod * traitRecvMod))
+	-- Minion Specialist / Skill Issues (2026-10-23): summon outgoing-damage multiplier from
+	-- the owner's trait (1 when absent / not a modified summon). Stamped on the unit at creation.
+	if attacker.summonDamageMult and attacker.summonDamageMult ~= 1 then
+		finalDamage = math.max(0, math.round(finalDamage * attacker.summonDamageMult))
+	end
 	-- Slice 5 buff: Battle Rage (+20% physical) / Rune Ward (+10% attack) on the
 	-- attacker. Basic attacks are always physical (isSpell=false).
 	finalDamage = math.max(0, math.round(finalDamage * StatusService.GetDamageDealtMultiplier(attacker, false)
 		* StatusService.GetDamageReceivedMultiplier(defender))) -- Hold the Line x0.85 (2026-10-07)
+	-- Weapon passives (Group 1): Backstab (rear +50%) / Executioner (<25% HP +30%).
+	finalDamage = math.max(0, math.round(finalDamage * WeaponPassiveService.ConditionalDamageMultiplier(attacker, defender, facingZone)))
 
 	-- Step 8: Guard and other final mitigation
 	-- Check Guard via status instances (Guard is now a proper status)
@@ -447,7 +522,7 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 			if inst.id == "Guard" then hasGuard = true; break end
 		end
 	end
-	if hasGuard then
+	if hasGuard and not WeaponPassiveService.BypassesGuard(attacker) then
 		local mitigation = GameConstants.GUARD_MITIGATION + (defender.guardBonus or 0)
 		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
 		finalDamage = math.max(0, math.round(finalDamage * (1 - mitigation)))
@@ -465,6 +540,12 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	-- Step 10: Element interactions (Phase 3)
 	-- Basic Attack element = weapon element or Physical
 	local attackElement = attacker.weaponElement or "Physical"
+	-- Ignite (PAS-037, Group 2): an otherwise-Physical basic attack executes as Fire.
+	-- Never overrides a real weapon element (transformation). DB: "would otherwise be
+	-- non-elemental (Physical)".
+	if attackElement == "Physical" and WeaponPassiveService.HasCombat(attacker, "Ignite") then
+		attackElement = "Fire"
+	end
 
 	-- Step 6b: Terrain occupy bonus — attacker's tile element bonus
 	-- Flight bypasses terrain bonuses
@@ -506,6 +587,8 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 		facingZone     = facingZone,
 		finalDamage    = finalDamage,
 		appliesStatus  = RacePassiveService.GetBasicAttackStatus(attacker, defender),
+		appliesStatuses = WeaponPassiveService.OnHitStatuses(attacker), -- weapon status-appliers (Group 1)
+		weaponDrainFrac = WeaponPassiveService.DrainFraction(attacker), -- Drain (Group 1)
 		element        = attackElement,
 		sourceUnitId   = attacker.id,
 	}
@@ -532,7 +615,7 @@ function CombatResolver.EstimateSkillPower(attacker, skillDef)
 	-- utility/buff/summon/shield skills that do not declare potency (CTRBLXAI.db core_stats
 	-- id 31). Downstream race/doctrine/trait potency modifiers in ResolveSkill still apply.
 	if skillDef.id and POTENCY_DECLARED[skillDef.id] then
-		sp = sp * GameConstants.CalcSkillPotency(int)
+		sp = sp * (GameConstants.CalcSkillPotency(int) + (attacker.gearDerived and attacker.gearDerived.skillPotency or 0))
 	end
 	-- SKL-LUCKY-STRIKE signature recipe (DB powerFormula): additional LUK scaling on top
 	-- of the Weapon-Attack-Power x Skill-Potency base above.
@@ -555,11 +638,11 @@ function CombatResolver.EstimateHealPower(caster, skillDef)
 	if skillDef and skillDef.isMenderHeal then
 		-- Authored Mender heal: (10 + 0.20L + 0.40 x Mender INT) x Skill Potency
 		local L = caster.level or 1
-		return (10 + 0.20 * L + 0.40 * int) * GameConstants.CalcSkillPotency(int)
+		return (10 + 0.20 * L + 0.40 * int) * (GameConstants.CalcSkillPotency(int) + (caster.gearDerived and caster.gearDerived.skillPotency or 0))
 	end
 	local weaponDamage = caster.weaponDamage or 10
 	-- Skill Potency Multiplier = 1 + INT / (200 + INT)
-	local skillPotency = GameConstants.CalcSkillPotency(int)
+	local skillPotency = GameConstants.CalcSkillPotency(int) + (caster.gearDerived and caster.gearDerived.skillPotency or 0)
 	-- Celestial Radiant Grace / Demon Infernal Pact (2026-10-02): the INT
 	-- contribution of a Holy / Dark tagged SKILL is boosted 20% -> 1 + 1.20p.
 	-- skillDef is optional (skill-agnostic callers, e.g. the inspector, pass none).
@@ -624,6 +707,12 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	-- Race passive modifiers (Slice 4F)
 	-- Extract element from skill tags (Phase 3)
 	local skillElement = extractElement(skillDef.tags)
+	-- Ignite (PAS-037, Group 2): an otherwise-Physical SKILL executes as Fire (DB:
+	-- "Basic Attack or Skill"). An authored-element skill keeps its own element, so the
+	-- skill still wins on a clash (user ruling 2026-10-23).
+	if skillElement == "Physical" and WeaponPassiveService.HasCombat(attacker, "Ignite") then
+		skillElement = "Fire"
+	end
 	local skillIsAOE = skillDef.aoePattern ~= nil and skillDef.aoePattern ~= "Single"
 	local skillIsPhysical = (skillElement == nil or skillElement == "Physical" or skillElement == "")
 	local raceDealtMod = RacePassiveService.GetDamageDealtModifier(attacker, skillElement, skillIsAOE, defender)
@@ -648,6 +737,11 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	-- skill-potency slot, consistent with race/doctrine potency folds above.
 	local traitSkillPotency = 1 + TraitEffectService.GetSkillPotencyModifier(attacker)
 	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod * docSkillPotency * raceSkillPotency * traitSkillPotency * docDealtMod * docRecvMod * traitDealtMod * traitRecvMod))
+	-- Minion Specialist / Skill Issues (2026-10-23): summon outgoing-damage multiplier from
+	-- the owner's trait (1 when absent / not a modified summon), on the skill path too.
+	if attacker.summonDamageMult and attacker.summonDamageMult ~= 1 then
+		finalDamage = math.max(0, math.round(finalDamage * attacker.summonDamageMult))
+	end
 	-- Slice 5 buff: Spell Focus (+20% spell) / Battle Rage (+20% physical) /
 	-- Rune Ward (+10% attack) on the caster. skillIsPhysical selects which.
 	finalDamage = math.max(0, math.round(finalDamage * StatusService.GetDamageDealtMultiplier(attacker, not skillIsPhysical)
@@ -754,8 +848,9 @@ function CombatResolver.ResolveHealing(caster, target, skillDef)
 	-- Healing Efficiency: target's VIT increases received healing
 	local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
 	local healEfficiency = GameConstants.CalcHealEfficiency(targetVit)
+	local healingOutput = (caster.gearDerived and caster.gearDerived.healingOutput) or 1
 	local finalHeal = math.max(1, math.round(healPower * healEfficiency
-		* (skillDef.potencyBonusMult or 1))) -- Mana Surge +10% potency (2026-10-07)
+		* (skillDef.potencyBonusMult or 1) * healingOutput)) -- Mana Surge +10% potency (2026-10-07); x gear Healing Output (2026-10-23)
 
 	-- Phase 3: Undead healing reversal
 	-- Non-Dark healing vs Undead → converted to damage
@@ -839,7 +934,7 @@ function CombatResolver.EstimateShield(caster, skillDef, skillLevel)
 	local L = skillLevel or 1
 	local weaponDefense = math.max(0, caster.weaponDefense or 0)
 	local weaponAttackPower = GameConstants.CalcAttackPower(caster.weaponDamage or 10, s.STR or 10)
-	local potency = GameConstants.CalcSkillPotency(int) * (skillDef.potencyBonusMult or 1) -- Mana Surge
+	local potency = (GameConstants.CalcSkillPotency(int) + (caster.gearDerived and caster.gearDerived.skillPotency or 0)) * (skillDef.potencyBonusMult or 1) -- Mana Surge
 	local id = skillDef.id
 
 	local amount
@@ -910,6 +1005,10 @@ function CombatResolver.ApplyShieldOutcome(outcome, target)
 		outcome.retributionDamage and (" | retrib " .. tostring(outcome.retributionDamage)) or "",
 		target.shield_total or 0
 	))
+	if granted ~= false then
+		-- Shield visual (2026-10-23): surface the grant to the client (pool appears).
+		BattleVisualBroadcaster.ShieldChanged(target, outcome.shieldHp, "grant")
+	end
 	return (granted ~= false) and outcome.shieldHp or 0
 end
 
@@ -934,6 +1033,12 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 
 	local actual, shieldBroke, _shieldAbsorbed, _shieldMaxAtBreak, retributionDamage =
 		UnitSchema_ApplyDamage(outcome.finalDamage, target)
+
+	-- Shield visual (2026-10-23): surface absorb/break to the client. _shieldAbsorbed
+	-- is the damage the pool soaked this hit; shieldBroke = pool emptied on this hit.
+	if (_shieldAbsorbed or 0) > 0 then
+		BattleVisualBroadcaster.ShieldChanged(target, -_shieldAbsorbed, shieldBroke and "break" or "absorb")
+	end
 
 	-- RETRIBUTION SHELL on-break (shield subsystem — 2026-10-05). The hit that
 	-- EMPTIES a Retribution Shell retaliates against the breaker. retributionDamage
@@ -988,17 +1093,23 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		if outcome.appliesStatus == "Burn" then
 			fireDmg = actual
 		end
-		local applied, _, immuneReason = StatusService.ApplyStatus(
-			target,
-			outcome.appliesStatus,
-			outcome.sourceUnitId or "unknown",
-			fireDmg,
-			outcome.statusDurationCt
-		)
-		if applied then
-			statusApplied = outcome.appliesStatus
-		elseif not applied and immuneReason then
-			BattleVisualBroadcaster.StatusImmune(target, outcome.appliesStatus, immuneReason)
+		-- Perks & Flaws Phobia (2026-10-23): a unit with the matching Phobia flaw "cannot
+		-- inflict" that status with attacks -> skip the rider. Attacker is the source unit.
+		local phobiaBlocked = attacker ~= nil
+			and TraitEffectService.HasStatusPhobia(attacker, outcome.appliesStatus)
+		if not phobiaBlocked then
+			local applied, _, immuneReason = StatusService.ApplyStatus(
+				target,
+				outcome.appliesStatus,
+				outcome.sourceUnitId or "unknown",
+				fireDmg,
+				outcome.statusDurationCt
+			)
+			if applied then
+				statusApplied = outcome.appliesStatus
+			elseif not applied and immuneReason then
+				BattleVisualBroadcaster.StatusImmune(target, outcome.appliesStatus, immuneReason)
+			end
 		end
 	end
 
@@ -1009,13 +1120,17 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- routed here (it uses the singular appliesStatus + fireDmg path).
 	if outcome.appliesStatuses and (actual > 0 or outcome.applyStatusUnconditional) and target.isAlive then
 		for _, sid in ipairs(outcome.appliesStatuses) do
-			local applied, _, immuneReason = StatusService.ApplyStatus(
-				target, sid, outcome.sourceUnitId or "unknown", nil, outcome.statusDurationCt
-			)
-			if applied then
-				statusApplied = statusApplied or sid
-			elseif not applied and immuneReason then
-				BattleVisualBroadcaster.StatusImmune(target, sid, immuneReason)
+			-- Perks & Flaws Phobia (2026-10-23): skip a status this attacker cannot inflict.
+			local phobiaBlocked = attacker ~= nil and TraitEffectService.HasStatusPhobia(attacker, sid)
+			if not phobiaBlocked then
+				local applied, _, immuneReason = StatusService.ApplyStatus(
+					target, sid, outcome.sourceUnitId or "unknown", nil, outcome.statusDurationCt
+				)
+				if applied then
+					statusApplied = statusApplied or sid
+				elseif not applied and immuneReason then
+					BattleVisualBroadcaster.StatusImmune(target, sid, immuneReason)
+				end
 			end
 		end
 	end
@@ -1025,6 +1140,48 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- Skips if the same status was already applied by appliesStatus above.
 	if outcome.element and actual > 0 and target.isAlive then
 		applyElementStatusTriggers(outcome.sourceUnitId or "unknown", target, outcome.element, actual, statusApplied, attacker)
+	end
+
+	-- ===== Perks & Flaws: Status Specialist / Phobia (Bleed/Burn/Poison/Venom) =====
+	-- Fires on basic attacks AND damaging skills (user ruling 2026-10-23): this runs in the
+	-- shared ApplyOutcome damage path, so both routes are covered. Requires a landed hit.
+	-- Specialist (perk): if the target HAS the status, trigger an early DOT tick now (status
+	-- keeps running); if the target LACKS it, inflict one standard stack (Bleed/Poison/Venom
+	-- only — Burn's DB text has no "inflict if absent" clause). Phobia is handled separately
+	-- as a block on this unit's status application (see rider gates above). Early-tick damage
+	-- is applied DIRECTLY via UnitSchema_ApplyDamage (TRG-010: cannot re-enter reactions).
+	if attacker and actual > 0 and target.isAlive then
+		for _, sid in ipairs({ "Bleed", "Poison", "Venom", "Burn" }) do
+			if TraitEffectService.HasStatusSpecialist(attacker, sid)
+				and not TraitEffectService.HasStatusPhobia(attacker, sid) then
+				if StatusService.HasStatus(target, sid) then
+					-- TRIGGER: deal the status's current DOT once now; leave it running.
+					local dot = StatusService.GetCurrentDotDamage(target, sid)
+					if dot > 0 then
+						local dealt = UnitSchema_ApplyDamage(dot, target)
+						print(string.format(
+							"[CombatResolver] %s Specialist: %s triggers %s on %s for %d%s",
+							sid, attacker.name, sid, target.name, dealt,
+							target.isAlive and "" or " | DEFEATED"
+						))
+						if not target.isAlive then
+							target._killedBy = target._killedBy or (attacker.id)
+							RacePassiveService.OnUnitKO(target)
+						end
+						if BattleVisualBroadcaster.DotDamage then
+							BattleVisualBroadcaster.DotDamage(target, sid, dealt)
+						end
+					end
+				elseif sid ~= "Burn" and target.isAlive then
+					-- INFLICT: target lacks the status -> apply one standard stack.
+					StatusService.ApplyStatus(target, sid, attacker.id)
+					print(string.format(
+						"[CombatResolver] %s Specialist: %s inflicts %s on %s",
+						sid, attacker.name, sid, target.name
+					))
+				end
+			end
+		end
 	end
 
 	-- PHASE 3a — WEAPON/SKILL ELEMENT → TERRAIN BRIDGE. The element that hit the
@@ -1065,6 +1222,17 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- Vampire lifesteal: heal attacker for % of damage dealt
 	-- TRG-010: Uses UnitSchema_ApplyHealing directly (not ApplyOutcome),
 	-- so it cannot recursively trigger lifesteal or other generated effects.
+	-- Weapon passive Drain (Group 1, PAS-040): heal attacker a fraction of final
+	-- damage dealt. Direct heal (TRG-010) so it cannot re-trigger generated effects.
+	if attacker and actual > 0 and attacker.isAlive and outcome.weaponDrainFrac and outcome.weaponDrainFrac > 0 then
+		-- No 1-HP floor (user ruling 2026-10-23): heal the literal rounded 5% of final
+		-- damage, which rounds to 0 for hits under 10 damage.
+		local drainHeal = math.round(actual * outcome.weaponDrainFrac)
+		if drainHeal > 0 then
+			UnitSchema_ApplyHealing(drainHeal, attacker)
+		end
+	end
+
 	if attacker and actual > 0 and attacker.isAlive then
 		local isAOE = outcome.isAOE or false
 		local lifesteal = RacePassiveService.GetLifestealAmount(attacker, actual, isAOE)
@@ -1103,6 +1271,14 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			attacker.currentHp = attacker.currentHp - applied
 			print(string.format("[CombatResolver] Lifeless recoil: %s takes %d (non-lethal, of %d)", attacker.name, applied, actual))
 		end
+	end
+
+	-- Ally-KO reaction buffer (Perks & Flaws 2026-10-23): if this hit left the target KO'd,
+	-- record it once so FlushAllyKoReactions (CommandService, end of action) can apply
+	-- Hemophage / Sluggish Finisher to nearby same-side allies. Combat deaths only.
+	if target and not target.isAlive and not target._allyKoBuffered then
+		target._allyKoBuffered = true
+		table.insert(_allyKoBuffer, target)
 	end
 
 	-- Phase 3: Trait on-KO-of-enemy effects (killer side). Fires when this attack kills
@@ -1228,6 +1404,23 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			if BattleVisualBroadcaster.UnitStateChanged then
 				BattleVisualBroadcaster.UnitStateChanged(attacker)
 			end
+		end
+	end
+
+	-- FROC — Toxic Skin (DB races row 'Froc'): when this defender is attacked and the
+	-- hit lands, inflict Poison on the attacker -- UNLESS the attack element is Fire,
+	-- Ice, or Electric. Mirrors the Retaliator status-to-attacker idiom; gated against
+	-- reaction re-entry (not reflect / not counter) so it cannot loop (TRG-010 pattern).
+	if attacker and actual > 0 and attacker ~= target and attacker.isAlive
+		and not outcome.isReflect and not outcome.isCounter
+		and RacePassiveService.GetToxicSkinStatus(target) then
+		local atkElement = outcome.element or attacker.weaponElement or "Physical"
+		if atkElement ~= "Fire" and atkElement ~= "Ice" and atkElement ~= "Electric" then
+			StatusService.ApplyStatus(attacker, "Poison", target.id)
+			print(string.format(
+				"[CombatResolver] Froc Toxic Skin: %s poisons %s (element=%s)",
+				target.name, attacker.name, atkElement
+			))
 		end
 	end
 

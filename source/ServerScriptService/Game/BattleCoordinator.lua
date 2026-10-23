@@ -19,6 +19,7 @@ local StatusService = require(script.Parent.StatusService)
 local RacePassiveService = require(script.Parent.RacePassiveService)
 local DoctrinePassiveService = require(script.Parent.DoctrinePassiveService)
 local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
+local TraitEffectService = require(script.Parent.TraitEffectService) -- Perks & Flaws Phase 3 turn hooks (2026-10-23)
 
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -538,6 +539,8 @@ function BattleCoordinator.AdvanceClock(state)
 	ArmorPassiveService.OnTurnStart(nextUnit)
 	-- Race start-of-turn hooks (2026-10-02): Troll Regrowth, Dragonkin resync.
 	RacePassiveService.OnTurnStart(nextUnit, state)
+	-- Trait start-of-turn hooks (2026-10-23): move-last-turn rollover, Sluggish reset, Soul Harvest latch.
+	TraitEffectService.OnTurnStart(nextUnit, state)
 
 	print(string.format(
 		"[BattleCoordinator] CT:%d | Turn %d | %s%s",
@@ -591,6 +594,8 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 		ArmorPassiveService.OnTurnStart(unit)
 		-- Race start-of-turn hooks (2026-10-02): Troll Regrowth, Dragonkin resync.
 		RacePassiveService.OnTurnStart(unit, state)
+		-- Trait start-of-turn hooks (2026-10-23): move-last-turn rollover, Sluggish reset, Soul Harvest latch.
+		TraitEffectService.OnTurnStart(unit, state)
 		print(string.format(
 			"[BattleCoordinator] CT:%d | Channel resolved -> %s takes immediate turn (was frozen at 0 RT)",
 			state.ct, unit.name

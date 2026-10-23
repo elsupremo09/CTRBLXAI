@@ -1,6 +1,7 @@
 -- EquipmentService.lua
 local RacePassiveService = require(script.Parent.RacePassiveService)
 local TraitEffectService = require(script.Parent.TraitEffectService) -- Perks & Flaws Phase 2
+local WeaponPassiveService = require(script.Parent.WeaponPassiveService) -- Weapon passives (Group 1, 2026-10-23)
 -- CTRBLXAI | Slice 4A — Equipment Foundation
 -- Slice 4G — Armor Slot Expansion
 --
@@ -500,6 +501,7 @@ function EquipmentService.RebuildUnitStats(unit)
 		unit.weaponPattern = "Single"
 		unit.weaponProjectileType = nil
 		unit.weaponHandClass = "1H"
+		unit.weaponElement = nil
 	end
 
 	-- 4a. OGRE — Brutish Bulk (races row 'Ogre', 2026-10-02): Weapon WT +20%.
@@ -544,6 +546,16 @@ function EquipmentService.RebuildUnitStats(unit)
 		if wtDmgFrac ~= 0 and unit.weaponDamage and unit.weaponWt and unit.weaponWt > 0 then
 			unit.weaponDamage = math.max(0, unit.weaponDamage + math.round(unit.weaponWt * wtDmgFrac))
 		end
+
+		-- Weapon-STAT passives (Group 1, 2026-10-23): Brutal / Bulwark (weapon damage)
+		-- and Stagger (weapon RT delay), applied on top of the finalized (trait-folded)
+		-- weapon stats so they also flow into skills that scale off weapon damage.
+		WeaponPassiveService.ApplyWeaponStatMods(unit)
+
+		-- Weapon element (2026-10-23): a rolled elemental Transformation passive on the
+		-- main hand re-types basic attacks to that element; nil = Physical. Flows into the
+		-- existing element reaction / terrain / status-trigger engine via outcome.element.
+		unit.weaponElement = WeaponData.GetInstanceElement(mainHand)
 	end
 
 	-- 4b. Off-hand defense contribution
@@ -594,6 +606,7 @@ function EquipmentService.RebuildUnitStats(unit)
 		end
 		-- Perks & Flaws (Phase 2b): Far/Near-Sighted adjust Discovery Radius. Floored at 0.
 		local dMod = TraitEffectService.GetDiscoveryRadiusModifier(unit)
+			+ RacePassiveService.GetDiscoveryRadiusModifier(unit) -- Avian Keen Sight +1
 		if dMod ~= 0 and derived.discoveryRadius then
 			derived.discoveryRadius = math.max(0, derived.discoveryRadius + dMod)
 		end
@@ -602,6 +615,43 @@ function EquipmentService.RebuildUnitStats(unit)
 		if unit.doctrineId == "DOC-ARTIFICER" and derived.bonusSkillRange ~= nil then
 			derived.bonusSkillRange = derived.bonusSkillRange - 1
 		end
+	end
+
+	-- 6c. GEAR DERIVED BONUSES (Derived family, 2026-10-23). Fold equipment's rolled
+	-- Derived / DerivedMultiplier bonus lines (Fortune / Precision / Evasiveness / Skill
+	-- Potency / Healing Output / Debuff Resistance / RT Delay Resistance) onto the unit.
+	-- unit.gearDerived = gear-only bonus the combat + loot consumers read (fraction added
+	-- for pp families; product for multiplier families). derivedStats is also updated so
+	-- the Info panel shows the combined value. Per DB item_rarity_rules: applied AFTER
+	-- Total Primary Stats and NOT scaled by Item Level (fixedValue used as-is).
+	local gearDerived = {
+		precision = 0, evasiveness = 0, fortune = 0, skillPotency = 0,
+		healingOutput = 1, debuffResist = 1, rtDelayResist = 1,
+	}
+	for _, item in ipairs(equippedItems) do
+		for _, line in ipairs(item.bonusLines or {}) do
+			local attr = BonusData.GetAttribute(line.id)
+			if attr and attr.stat and gearDerived[attr.stat] ~= nil then
+				if attr.operation == "Derived" then
+					gearDerived[attr.stat] = gearDerived[attr.stat] + (attr.fixedValue or 0)
+				elseif attr.operation == "DerivedMultiplier" then
+					gearDerived[attr.stat] = gearDerived[attr.stat] * (attr.fixedValue or 1)
+				end
+			end
+		end
+	end
+	unit.gearDerived = gearDerived
+	if derived then
+		-- Percentage-point families are stored as % in derivedStats; add gear as pp.
+		derived.precision   = derived.precision   + gearDerived.precision * 100
+		derived.evasiveness = derived.evasiveness + gearDerived.evasiveness * 100
+		derived.unitFortune = derived.unitFortune + gearDerived.fortune * 100
+		-- Multiplier / additive-multiplier families: fold the gear component in.
+		derived.skillPotency  = math.round((derived.skillPotency + gearDerived.skillPotency) * 1000) / 1000
+		derived.debuffResist  = math.round(derived.debuffResist * gearDerived.debuffResist * 1000) / 1000
+		derived.rtDelayResist = math.round(derived.rtDelayResist * gearDerived.rtDelayResist * 1000) / 1000
+		-- Healing Output is a new caster-side healing multiplier (base 1.0 x gear).
+		derived.healingOutput = math.round(gearDerived.healingOutput * 1000) / 1000
 	end
 
 	-- 7. Consumable slot capacity (2026-10-20): recompute from gear + doctrine grants,

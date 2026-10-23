@@ -340,6 +340,23 @@ function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allU
 	if allUnits then _allUnits = allUnits end
 	if tileX < 1 or tileX > _mapWidth or tileY < 1 or tileY > _mapHeight then return end
 
+	-- Perks & Flaws — Stable Land (P-114, 2026-10-23): if a unit occupying this tile has the
+	-- Stable Land perk, block any NEW tile-effect application while it stands here. (Existing
+	-- effects are untouched — they were already present; this only prevents new ones.) Uses
+	-- the cached live unit list. Deferred require avoids a load-time cycle.
+	if _allUnits then
+		for _, u in ipairs(_allUnits) do
+			if u.isAlive and u.tileX == tileX and u.tileY == tileY then
+				local _tes = (require :: any)(script.Parent.TraitEffectService)
+				if _tes.HasStableLand and _tes.HasStableLand(u) then
+					print(string.format("[TileEffectService] Stable Land: %s blocks %s on its tile (%d,%d)",
+						u.name or "?", tostring(effectId), tileX, tileY))
+					return
+				end
+			end
+		end
+	end
+
 	local def = GameConstants.TILE_EFFECTS[effectId]
 	if not def then
 		print(string.format("[TileEffectService] Unknown effect: %s", tostring(effectId)))
@@ -447,6 +464,24 @@ end
 
 function TileEffectService.GetTileEffect(tileX, tileY)
 	return effects[tileKey(tileX, tileY)]
+end
+
+-- Apply a RANDOM standard tile effect to a tile (Perks & Flaws — Unstable Footing F-114,
+-- 2026-10-23). Picks deterministically from the standard surface/hazard pool using a seed
+-- derived from the tile + owner, so replays are reproducible. Routed through ApplyTileEffect
+-- (so the Stable Land guard, element reactions, and bounds checks all still apply). No-op if
+-- the pool somehow has no valid effect.
+local UNSTABLE_FOOTING_POOL = { "Burning", "Oily", "Poison Cloud", "Static Cloud", "Steam", "Wet", "Vines" }
+function TileEffectService.ApplyRandomTileEffect(tileX, tileY, ownerId)
+	if tileX < 1 or tileX > _mapWidth or tileY < 1 or tileY > _mapHeight then return end
+	-- Deterministic pick (no combat RNG divergence): seed from tile + owner id digits.
+	local seed = tileX * 73856093 + tileY * 19349663
+		+ (tonumber(string.match(tostring(ownerId or "0"), "%d+")) or 0)
+	local idx = (Random.new(seed):NextInteger(1, #UNSTABLE_FOOTING_POOL))
+	local effectId = UNSTABLE_FOOTING_POOL[idx]
+	if not effectId or not GameConstants.TILE_EFFECTS[effectId] then return end
+	print(string.format("[TileEffectService] Unstable Footing: random %s on (%d,%d)", effectId, tileX, tileY))
+	TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId)
 end
 
 function TileEffectService.GetAllEffects()

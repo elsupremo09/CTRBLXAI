@@ -118,11 +118,11 @@ local BASE_VALUE_BY_SLOT = table.freeze({
 
 -- economy_framework — Rarity Multiplier (keyed by rarity NAME, as item.rarityId).
 local RARITY_MULT = table.freeze({
-	Broken       = 0.1,
 	Common       = 1.0,
 	Uncommon     = 1.5,
 	Rare         = 2.5,
 	Epic         = 4.0,
+	Exalted      = 5.5,
 	Legendary    = 7.0,
 	Mythic       = 12.0,
 	Transcendent = 20.0,
@@ -138,8 +138,8 @@ local MERCHANT_MAX_LEVEL = 10
 -- Rare+ never (except the Merchant-L8 facility line, FLAG-M2). Rarity rank used
 -- to pick the best rarity the Merchant level permits.
 local RARITY_RANK = table.freeze({
-	Broken = 0, Common = 1, Uncommon = 2, Rare = 3,
-	Epic = 4, Legendary = 5, Mythic = 6, Transcendent = 7, Unique = 8,
+	Common = 1, Uncommon = 2, Rare = 3,
+	Epic = 4, Exalted = 5, Legendary = 6, Mythic = 7, Transcendent = 8, Unique = 9,
 })
 
 local REROLL_BATTLE_INTERVAL = 5   -- economy_framework: reroll every 5 completed battles

@@ -817,7 +817,26 @@ local function takeWeighted(list: { number }, rng: Random): number?
 end
 
 -- enemyUnits: array (deterministic order). rng: seeded Random owned by caller.
-function UGCOutfitService.PlanEnemyOutfits(playerId: string, enemyUnits: { any }, rng: Random)
+-- excludedLookIds (OPTIONAL, nil-safe per ARC-006): UGC item ids currently equipped
+-- by ANY unit in the player's WHOLE ACTIVE (chosen saved) party — up to 7 units,
+-- INCLUDING benched units not deployed this battle. The caller reads these from the
+-- active party's current equips (a legitimate, reproducible battle input) via the
+-- existing UGCService.GetUnitLookIds accessor; passing them here does NOT touch the
+-- outfit RNG stream below, so determinism (ugc_rules 27) is preserved.
+--
+-- PRECEDENCE (ugc_rules 24/26/27, Locked 2026-10-22):
+--   (1) PLAYER-WORN EXCLUSION (ugc_rules 26) — applied FIRST: any excludedLookIds
+--       id is removed from the candidate pool at pool-build time, so zero enemies
+--       can wear it this battle (even items worn only by a benched party unit).
+--   (2) EXISTING SELECTION — unchanged: not-owned/not-carted pushed bias, weighted
+--       random fill, availability pool only, off-sale/zero-qty/resale excluded,
+--       race slot blocks (ugc_rules 26, 42, 49/50/51).
+--   (3) TEAM-WIDE PER-ITEM COPY CAP = 2 (ugc_rules 24) — enforced LAST, after the
+--       per-enemy assignment: any single item appears on AT MOST 2 enemies across
+--       the whole enemy team (upper bound 0/1/2, not a quota).
+-- EDGE CASE: if exclusion + availability shrink the pool, enemies simply wear FEWER
+-- UGC items — no error, no empty-pool crash, the exclusion is never relaxed.
+function UGCOutfitService.PlanEnemyOutfits(playerId: string, enemyUnits: { any }, rng: Random, excludedLookIds: { number }?)
 	table.clear(_enemyLooks)
 	table.clear(_enemyRaces)
 	-- Inspector preview of enemy looks (loadout_ui_spec 96): remember every enemy's race,
@@ -835,14 +854,28 @@ function UGCOutfitService.PlanEnemyOutfits(playerId: string, enemyUnits: { any }
 		print("[UGCOutfitService] Availability check not finished — enemies wear no UGC this battle")
 		return
 	end
+	-- PRECEDENCE STEP 1 — player-worn exclusion (ugc_rules 26), applied FIRST.
+	-- Build an O(1) exclusion set from the WHOLE active party's current equips the
+	-- caller passed in (up to 7 units incl. benched). nil / empty = no exclusions.
+	local excludedSet: { [number]: boolean } = {}
+	if excludedLookIds then
+		for _, id in excludedLookIds do
+			excludedSet[id] = true
+		end
+	end
 	local pool = {}
 	for id in UGCCatalogData.Items do
 		-- FIT_BLOCKLIST: never put a known-misfit item on an enemy.
-		if UGCOutfitService.IsAvailable(id) and not UGCCatalogData.FIT_BLOCKLIST[id] then table.insert(pool, id) end
+		-- excludedSet (ugc_rules 26): an item worn by ANY active-party unit is removed
+		-- from the candidate pool entirely, before any selection runs.
+		if UGCOutfitService.IsAvailable(id) and not UGCCatalogData.FIT_BLOCKLIST[id]
+			and not excludedSet[id] then
+			table.insert(pool, id)
+		end
 	end
 	table.sort(pool)
 	if #pool == 0 then
-		print("[UGCOutfitService] No available curated items — enemies wear no UGC")
+		print("[UGCOutfitService] No available curated items (after player-worn exclusion) — enemies wear no UGC")
 		return
 	end
 
@@ -898,7 +931,42 @@ function UGCOutfitService.PlanEnemyOutfits(playerId: string, enemyUnits: { any }
 			dressed += 1
 		end
 	end
-	print(`[UGCOutfitService] Enemy outfits: {#chosen} distinct item(s) ({pushedCount} pushed), {dressed} enemy unit(s) dressed`)
+
+	-- PRECEDENCE STEP 3 — team-wide per-item copy cap = 2 (ugc_rules 24), enforced
+	-- LAST, after selection. Any single item may appear on AT MOST 2 enemies across
+	-- the whole team (upper bound, not a quota). Walk enemies in the deterministic
+	-- enemyUnits order and keep a running copy count per item; once an item already
+	-- appears on 2 enemies, drop further copies from later enemies' looks. Using the
+	-- same iteration order (enemyUnits) keeps this reproducible for a given seed +
+	-- party composition (ugc_rules 27). An enemy that loses its only item simply
+	-- wears fewer UGC items — no error, no refill.
+	local COPY_CAP = UGCCatalogData.ENEMY_ITEM_TEAM_COPY_CAP
+	local copyCount: { [number]: number } = {}
+	local capped = 0
+	for _, unit in enemyUnits do
+		if unit.isSummon or type(unit.id) ~= "string" then continue end
+		local look = _enemyLooks[unit.id]
+		if not look then continue end
+		local kept: { number } = {}
+		for _, id in look do
+			local n = copyCount[id] or 0
+			if n < COPY_CAP then
+				copyCount[id] = n + 1
+				table.insert(kept, id)
+			else
+				capped += 1
+			end
+		end
+		if #kept > 0 then
+			_enemyLooks[unit.id] = kept
+		else
+			-- Lost every item to the cap: this enemy wears no UGC this battle.
+			_enemyLooks[unit.id] = nil
+			dressed -= 1
+		end
+	end
+
+	print(`[UGCOutfitService] Enemy outfits: {#chosen} distinct item(s) ({pushedCount} pushed), {dressed} enemy unit(s) dressed ({capped} copy(ies) over cap {COPY_CAP} dropped)`)
 end
 
 --------------------------------------------------

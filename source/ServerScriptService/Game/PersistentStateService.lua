@@ -156,16 +156,23 @@ end
 -- Returns: { [unitId] = { hpRecovered, mpRecovered, wasKO } }
 --------------------------------------------------
 
-function PersistentStateService.ApplyPostBattleRecovery(playerId)
+-- recoveryOverrides (optional): { [unitId] = fraction } to use INSTEAD of the default
+-- RECOVERY_FRACTION for that unit. Lets the caller apply per-unit trait modifiers
+-- (Resilient adds / Slow to Recover replaces) computed from the live units, which hold
+-- the trait ids this persistent-state layer does not. Units absent from the table use the
+-- default fraction. (Perks & Flaws 2026-10-23.)
+function PersistentStateService.ApplyPostBattleRecovery(playerId, recoveryOverrides)
 	PersistentStateService.InitPlayer(playerId)
 	local results = {}
+	recoveryOverrides = recoveryOverrides or {}
 
 	for unitId, state in pairs(unitStates[playerId]) do
 		-- KO already cleared by ClearAllKO before this runs.
 		-- Apply 35% recovery to all living units.
 		do
-			local hpRecovery = math.ceil(state.maxHp * RECOVERY_FRACTION)
-			local mpRecovery = math.ceil(state.maxMp * RECOVERY_FRACTION)
+			local frac = recoveryOverrides[unitId] or RECOVERY_FRACTION
+			local hpRecovery = math.ceil(state.maxHp * frac)
+			local mpRecovery = math.ceil(state.maxMp * frac)
 
 			local prevHp = state.currentHp
 			local prevMp = state.currentMp

@@ -264,6 +264,11 @@ function MockLoadoutData.GetFilteredItems(category)
 		local owned = MockLoadoutData.GetOwnedDoctrines(unit.id)
 		local r = {}
 		for _, d in ipairs(owned) do
+			-- Hide the WORN doctrine from the grid (user decision 2026-10-23): the equipped
+			-- copy already shows in the right-panel Doctrine slot (via GetEquippedDoctrine),
+			-- so listing it again here looked like a stack that failed to merge. The grid now
+			-- lists SPARES only; the worn one is still inspectable by tapping its slot.
+			if d.isCurrent ~= true then
 			-- Enrich from the doctrine content def so the detail window can show the
 			-- doctrine passive + its stat package (2026-10-20). docStatPackage holds the
 			-- six signed PERCENTAGE modifiers; passives holds the doctrine passive.
@@ -291,6 +296,7 @@ function MockLoadoutData.GetFilteredItems(category)
 				skills = resolveDoctrineSkills(doc),
 				passives = (doc and doc.passiveName) and {{ name = doc.passiveName, icon = "[*]", desc = doc.passiveEffect or "" }} or {},
 			})
+			end
 		end
 		return r
 	end
@@ -445,6 +451,7 @@ local function mapServerItem(si)
 		baseStats = baseStats,
 		passives = passives,
 		bonusStats = si.bonusStats or {},
+		bonusStatPcts = si.bonusStatPcts or {},
 		bonusPassives = si.bonusPassives or {},
 		flavor = si.flavor or "",
 	}

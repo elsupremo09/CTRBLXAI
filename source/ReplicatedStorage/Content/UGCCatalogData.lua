@@ -55,6 +55,13 @@ UGCCatalogData.AVAILABILITY_REFRESH_SECONDS = 600
 -- Enemy Outfits (PROVISIONAL until the mobile Render Stats test).
 UGCCatalogData.ENEMY_ITEMS_PER_ENEMY = 3
 UGCCatalogData.ENEMY_DISTINCT_ITEMS_PER_BATTLE = 12
+-- Team-wide per-item copy cap (ugc_rules 24, Locked 2026-10-22): any single UGC
+-- item may appear on AT MOST this many enemies across the WHOLE enemy team in one
+-- battle (an upper bound, not a quota — 0/1/2 copies are all fine). Distinct from
+-- ENEMY_ITEMS_PER_ENEMY above (that caps items worn per enemy). Shared constant kept
+-- here in the one catalog-data module (DAT-001) so the enemy-outfit planner reads it
+-- rather than hardcoding 2.
+UGCCatalogData.ENEMY_ITEM_TEAM_COPY_CAP = 2
 
 -- FIT BLOCKLIST (manual): item IDs that attach/scale badly on the caged body.
 -- A blocked item stays owned and in the catalog, but is never WORN (skipped in

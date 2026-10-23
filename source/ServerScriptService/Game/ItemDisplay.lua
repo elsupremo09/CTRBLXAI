@@ -20,6 +20,7 @@ local BONUS_DISPLAY_KEY = {
 
 local function resolveItemBonuses(item)
 	local stats = {}
+	local statPcts = {}
 	local passives = {}
 
 	for _, line in ipairs(item.bonusLines or {}) do
@@ -46,6 +47,18 @@ local function resolveItemBonuses(item)
 				value = math.round((attr.l99Flat or 0) * scale)
 			end
 
+			-- Two-part bonuses (PrimaryStat / BaseItemStat / WeightReduce) carry a
+			-- percentage component alongside the scaled flat. Surface it so the UI
+			-- can show BOTH halves (e.g. "LUK +2  +15%") instead of flat only.
+			local pctRaw = tonumber(attr.pct) or 0
+			if pctRaw ~= 0 and (attr.operation == "PrimaryStat"
+				or attr.operation == "BaseItemStat"
+				or attr.operation == "WeightReduce") then
+				local pctDisplay = math.round(pctRaw * 100)
+				if attr.operation == "WeightReduce" then pctDisplay = -pctDisplay end
+				statPcts[key] = (statPcts[key] or 0) + pctDisplay
+			end
+
 			if value ~= 0 then
 				stats[key] = (stats[key] or 0) + value
 			end
@@ -65,7 +78,7 @@ local function resolveItemBonuses(item)
 	if #dbgParts > 0 then
 	end
 
-	return stats, passives
+	return stats, passives, statPcts
 end
 
 -- Shared item -> UI entry builder. GetInventoryData AND InspectUnit both use it,
@@ -97,7 +110,7 @@ local function buildItemEntry(item)
 			nativePassiveId = wArch.nativePassiveId or nil,
 			nativePassiveDesc = WeaponData.GetPassiveDesc(wArch.nativePassiveId) or nil,
 			projectileType = wArch.projectileType or nil,
-			element = WeaponData.GetElement(item.baseArchetypeId) or nil,
+			element = WeaponData.GetInstanceElement(item) or nil,
 		}
 	elseif aArch then
 		local scaled = ArmorData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
@@ -136,7 +149,10 @@ local function buildItemEntry(item)
 	entry.isNew = item.isNew or false
 	entry.bonusCount = #(item.bonusLines or {})
 	entry.passiveCount = #(item.bonusPassiveIds or {})
-	entry.bonusStats, entry.bonusPassives = resolveItemBonuses(item)
+	local bStats, bPassives, bPcts = resolveItemBonuses(item)
+	entry.bonusStats = bStats
+	entry.bonusPassives = bPassives
+	entry.bonusStatPcts = bPcts
 	return entry
 end
 

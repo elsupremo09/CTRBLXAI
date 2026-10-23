@@ -124,29 +124,33 @@ local function groundSurfaceY(tx, ty)
 	local wx = MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE
 	local wz = MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE
 	local rp = RaycastParams.new()
-	rp.FilterType = Enum.RaycastFilterType.Exclude
-	local ex = {}
-	for _, name in { "UnitModels", "BattleVisuals", "DeploymentParts", "GridOverlay", "TileHighlights" } do
-		local f = workspace:FindFirstChild(name)
-		if f then table.insert(ex, f) end
-	end
-	-- Exclude map-object models (MapObjModel_*) too: they live INSIDE the map
-	-- folder next to the tile Parts, so without this a unit spawning on an object
-	-- tile would ground to the decorative model's geometry (floating or sunk)
-	-- instead of the terrain surface. Added Oct 5 2026 (burial regression after
-	-- object models were introduced).
+	-- FLOOR-FINDER HARDENING (2026-10-23): the floor ray used to be a BLOCKLIST (hit
+	-- anything EXCEPT a few named folders + MapObjModel_* objects), so any OTHER query-able
+	-- thing standing on or overhanging a tile -- a tall neighbouring ridge-spike, a
+	-- billboard, a prop, anything added later -- could be accepted as "the floor" and lift
+	-- (or sink) the unit. A blocklist can never cover every case. Flip it to an ALLOWLIST:
+	-- only ACTUAL terrain tiles (the IsTemplateTile parts) count as ground. Nothing on top
+	-- of a tile can ever be mistaken for the surface again -- closes the whole float/bury
+	-- class, not one map's instance. (Replaces the Oct 5 MapObjModel_ exclude, now moot.)
 	local mapFolder = workspace:FindFirstChild("TemplateViewerMap")
+	local tileParts = {}
 	if mapFolder then
 		for _, child in ipairs(mapFolder:GetChildren()) do
-			if string.sub(child.Name, 1, 12) == "MapObjModel_" then
-				table.insert(ex, child)
+			if child:IsA("BasePart") and child:GetAttribute("IsTemplateTile") then
+				table.insert(tileParts, child)
 			end
 		end
 	end
-	rp.FilterDescendantsInstances = ex
-	local res = workspace:Raycast(Vector3.new(wx, 200, wz), Vector3.new(0, -400, 0), rp)
-	if res then return res.Position.Y, res.Instance end
-	return tileSurfaceY(getElevation(tx, ty)), nil  -- fallback: grid math on ray miss
+	if #tileParts > 0 then
+		rp.FilterType = Enum.RaycastFilterType.Include
+		rp.FilterDescendantsInstances = tileParts
+		local res = workspace:Raycast(Vector3.new(wx, 200, wz), Vector3.new(0, -400, 0), rp)
+		if res then return res.Position.Y, res.Instance end
+	end
+	-- Ray missed a real tile (or the map folder wasn't ready): fall back to grid math.
+	-- Logged so a persistent float/bury during testing points here instead of being silent.
+	warn(string.format("[Ground] No terrain tile under (%d,%d) -- using grid-height fallback.", tx, ty))
+	return tileSurfaceY(getElevation(tx, ty)), nil
 end
 
 -- R15 world position grounded to the real terrain surface (see groundSurfaceY).
@@ -2103,7 +2107,12 @@ local function processTileClick(bx, by)
 						targetHpBefore = tgtData and tgtData.currentHp or 0,
 						targetHpAfter = tgtData and math.max(0, (tgtData.currentHp or 0) - (t.predicted or 0)) or 0,
 						estimatedDamage = t.predicted or 0,
-						targetRtDelay = GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10),
+						-- Gear RT Delay Resistance (2026-10-23): derivedStats.rtDelayResist (broadcast by
+						-- the server) already folds VIT resist x gear RT-resist, so the preview matches the
+						-- authoritative server value. Falls back to the VIT-only formula if derivedStats is absent.
+						targetRtDelay = (tgtData and tgtData.derivedStats and tgtData.derivedStats.rtDelayResist)
+							and math.round((currentPrompt.weaponRtDelay or 0) * tgtData.derivedStats.rtDelayResist)
+							or GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10),
 						statusEffect = "None",
 						onConfirm = function() commitCommand({ actionType = "Attack", targetId = t.id }) end,
 						onBack = cancelToTargeting,
@@ -2198,7 +2207,11 @@ local function processTileClick(bx, by)
 						targetHpAfter = tgtHpAfter,
 						estimatedDamage = t.predicted or 0,
 						isHealing = isHeal,
-						targetRtDelay = (not isHeal) and GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10) or 0,
+						-- Gear RT Delay Resistance (2026-10-23): use the combined derivedStats.rtDelayResist
+						-- (VIT x gear) the server broadcasts; VIT-only formula is the fallback. Heals: no delay.
+						targetRtDelay = (not isHeal) and ((tgtData and tgtData.derivedStats and tgtData.derivedStats.rtDelayResist)
+							and math.round((currentPrompt.weaponRtDelay or 0) * tgtData.derivedStats.rtDelayResist)
+							or GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10)) or 0,
 						statusEffect = statusEff,
 						statusDuration = statusDur,
 						channelTime = isChannel and selectedSkill.channelTime or nil,
@@ -2402,11 +2415,12 @@ end
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
 	-- Guard: ignore clicks consumed by GUI buttons/panels
 	if gameProcessedEvent then return end
-	-- During the DEPLOYMENT phase, DeploymentUI owns world clicks (it drives the unit
-	-- inspector panel). BVC must NOT also process the click: processTileClick runs its
-	-- SetSelection/ClearSelection block (before its own deployment guard lower down),
-	-- which cleared the panel DeploymentUI had just set. Bail entirely here. (2026-10-15)
-	if _G.CTRBLXAI_DeploymentActive then return end
+	-- MERGE (2026-10-23): BVC's single tap-handler now drives inspection in BOTH phases
+	-- (deployment + battle). The old "bail during deployment" guard is gone -- DeploymentUI
+	-- no longer runs its own inspect path, so there is no second handler to fight. The
+	-- IsOverUI check below (now including the DeployStrip roster) stops a tap on the
+	-- portrait strip from leaking to the map, and processTileClick still skips the combat
+	-- flow during deployment via its own `if _G.CTRBLXAI_DeploymentActive then return` lower down.
 	-- Only handle MOUSE left click here. Touch is handled by tap intent below.
 	if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
@@ -2429,11 +2443,11 @@ end)
 game:GetService("RunService").Heartbeat:Connect(function()
 	local tapPos = CameraController.ConsumeTapIntent()
 	if not tapPos then return end
-	-- Deployment phase: DeploymentUI owns taps (drives the inspector). Processing the tap
-	-- here too would run processTileClick's selection/clear block and wipe the panel one
-	-- frame after DeploymentUI set it (the touch/tap path is why it only broke on mobile
-	-- layouts). Bail during deployment. (2026-10-15)
-	if _G.CTRBLXAI_DeploymentActive then return end
+	-- MERGE (2026-10-23): taps now drive inspection in BOTH phases. The old deployment bail
+	-- is gone (DeploymentUI no longer runs a rival inspect path). This touch path never had
+	-- a UI guard, so add one: skip taps over any HUD panel INCLUDING the DeployStrip roster,
+	-- so a tap on a portrait never leaks through to the map behind it (mobile-safe).
+	if CameraController.IsOverUI(tapPos) then return end
 
 	-- Raycast from tap position to find tile
 	local cam = workspace.CurrentCamera
@@ -3884,6 +3898,84 @@ BattleEvents.StatusExpired.OnClientEvent:Connect(function(data)
 	if t then showStatusText(t.part.Position, "-"..data.statusId, Theme.Colors.TextSecondary) end
 end)
 
+-- Status immunity feedback. Server (CombatResolver) fires StatusImmune when a
+-- unit is immune to a would-be status (only on genuine immunity - there is no
+-- resist outcome). Mirrors the StatusExpired floating-text pattern; nil-safe on
+-- a missing token.
+BattleEvents.StatusImmune.OnClientEvent:Connect(function(data)
+	if not data or not data.unitId then return end
+	local t = unitTokens[data.unitId]
+	if not t then return end
+	-- Server fires StatusImmune ONLY on genuine immunity (CombatResolver:
+	-- `not applied and immuneReason`). There is no status-resist outcome in the
+	-- game, so the label is always IMMUNE; statusId names the blocked status.
+	-- The descriptive `data.reason` (e.g. "Undead immune to Poison") stays in
+	-- the server battle log; the floating label is kept short, house-style.
+	local label = data.statusId and ("IMMUNE " .. tostring(data.statusId)) or "IMMUNE"
+	showStatusText(t.part.Position, label, Theme.Colors.Info)
+end)
+
+-- Turn-skip feedback. Server (Main) fires TurnSkipped when a unit's turn is
+-- skipped (e.g. stun/freeze/root). Shows a floating "SKIPPED (reason)" label.
+BattleEvents.TurnSkipped.OnClientEvent:Connect(function(data)
+	if not data or not data.unitId then return end
+	local t = unitTokens[data.unitId]
+	if not t then return end
+	local label = data.reason and ("SKIPPED (" .. tostring(data.reason) .. ")") or "SKIPPED"
+	showStatusText(t.part.Position, label, Theme.Colors.Warning)
+end)
+
+-- Shield indicator (2026-10-23). Server fires ShieldChanged on grant / absorb /
+-- break / decay (BattleVisualBroadcaster.ShieldChanged, carrying the absolute
+-- shieldTotal). A small cyan number on the HP bar shows the current pool; it
+-- lazy-creates on first use from existing token refs (no change to the unit-spawn
+-- path) and hides when the pool is empty. Floating flourishes mark grant (+SHIELD)
+-- and break (SHIELD BROKE), matching the GUARD/SKIPPED house style. nil-safe.
+BattleEvents.ShieldChanged.OnClientEvent:Connect(function(data)
+	if not data or not data.unitId then return end
+	local t = unitTokens[data.unitId]
+	if not t or not t.fill then return end
+	local total = data.shieldTotal or 0
+
+	-- Lazy-create the pill once, parented to the HP background (t.fill's parent).
+	local pill = t.shieldPill
+	if not pill then
+		local hpBg = t.fill.Parent
+		if not hpBg then return end
+		pill = Instance.new("TextLabel")
+		pill.Name = "ShieldPill"
+		pill.AnchorPoint = Vector2.new(1, 0.5)
+		pill.Position = UDim2.new(1, -1, 0.5, 0)
+		pill.Size = UDim2.fromOffset(18, 8)
+		pill.BackgroundTransparency = 1
+		pill.Font = Theme.Font.PrimaryBold
+		pill.TextSize = 8
+		pill.TextColor3 = Theme.Colors.Info
+		pill.TextXAlignment = Enum.TextXAlignment.Right
+		pill.TextStrokeColor3 = Color3.new(0, 0, 0)
+		pill.TextStrokeTransparency = 0
+		pill.ZIndex = 4
+		pill.Parent = hpBg
+		t.shieldPill = pill
+	end
+
+	if total > 0 then
+		pill.Text = "[" .. tostring(total) .. "]"
+		pill.Visible = true
+	else
+		pill.Visible = false
+	end
+
+	-- Floating flourishes for the moments that matter.
+	if t.part then
+		if data.reason == "grant" and (data.delta or 0) > 0 then
+			showStatusText(t.part.Position, "+SHIELD " .. tostring(data.delta), Theme.Colors.Info)
+		elseif data.reason == "break" then
+			showStatusText(t.part.Position, "SHIELD BROKE", Theme.Colors.Warning)
+		end
+	end
+end)
+
 -- Action announce: label above the acting unit's head for ~2s (Move / Basic
 -- Attack / skill or item name / Guard / Push). Server fires on every AP commit.
 BattleEvents.ActionAnnounced.OnClientEvent:Connect(function(data)
@@ -4713,9 +4805,9 @@ local function createLoadoutHub(phase)
 		local entries = {}
 		for _, item in ipairs(items) do
 			local rarityColor = ({
-				Broken = "rgb(120,120,120)", Common = "rgb(200,200,200)",
+				Common = "rgb(200,200,200)",
 				Uncommon = "rgb(100,200,100)", Rare = "rgb(100,150,255)",
-				Epic = "rgb(180,100,255)", Legendary = "rgb(255,180,50)",
+				Epic = "rgb(180,100,255)", Exalted = "rgb(255,90,170)", Legendary = "rgb(255,180,50)",
 			})[item.rarity] or "rgb(200,200,200)"
 			local slotTag = item.equippedSlot and (" [" .. item.equippedSlot .. "]") or ""
 			local eqTag = item.equippedBy and string.format(' <font color="rgb(255,200,80)">← %s%s</font>', item.equippedBy, slotTag) or ""
@@ -4886,6 +4978,22 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 
 	-- Recovery summary
 	local recY = 26
+	-- Thin separator drawn between victory-screen sections (2026-10-23 user request).
+	-- Skips when nothing rendered above (recY still at start) and never draws two in a row.
+	local lastDivEnd = -1
+	local function addDivider()
+		if recY <= 26 then return end
+		if recY == lastDivEnd then return end
+		local dv = Instance.new("Frame")
+		dv.Size = UDim2.new(1, -4, 0, 1)
+		dv.Position = UDim2.new(0, 2, 0, recY + 2)
+		dv.BackgroundColor3 = Theme.Colors.TextSecondary
+		dv.BackgroundTransparency = 0.5
+		dv.BorderSizePixel = 0
+		dv.Parent = frame
+		recY = recY + 8
+		lastDivEnd = recY
+	end
 	if data.recovery and #data.recovery > 0 then
 		local recoveryText = ""
 		for _, r in ipairs(data.recovery) do
@@ -4911,24 +5019,11 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		end
 	end
 
-	-- Gold earned this battle (kills + completion + quest gold), if any.
-	if type(data.gold) == "number" and data.gold > 0 then
-		local goldLabel = Instance.new("TextLabel")
-		goldLabel.Size = UDim2.new(1, 0, 0, 16)
-		goldLabel.Position = UDim2.new(0, 0, 0, recY)
-		goldLabel.BackgroundTransparency = 1
-		goldLabel.Font = Theme.Font.PrimaryBold
-		goldLabel.TextSize = Theme.Text.Body()
-		goldLabel.TextColor3 = Theme.Colors.TextGold
-		goldLabel.TextXAlignment = Enum.TextXAlignment.Left
-		goldLabel.Text = if data.defeat then `+{data.gold} GOLD kept (half of gold dropped)` else `+{data.gold} GOLD`
-		goldLabel.Parent = frame
-		recY = recY + 18
-	end
-
 	-- Returned from dispatch (XP + reward materials). Dispatch resolves at battle-end
 	-- (server OnBattleCompleted); this surfaces the returned units here. Advances recY
 	-- so the LOOT section flows below it. (2026-10-14)
+	-- LAYOUT (2026-10-23 user): ALL dispatch info sits directly below the title, above Gold.
+	addDivider()
 	if data.dispatch and #data.dispatch > 0 then
 		local dHeader = Instance.new("TextLabel")
 		dHeader.Size = UDim2.new(1, 0, 0, 14)
@@ -4960,7 +5055,112 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		recY = recY + 4
 	end
 
+	-- ACTIVE DISPATCH COUNTDOWN (2026-10-23): units still away show WHEN their order ends
+	-- (remainingDays was already decremented for this battle server-side) + a button to see
+	-- which units are on each dispatch. Shown on victory AND defeat (this handler serves both).
+	local dispatchPopup = nil
+	local function showDispatchUnitsPopup(g)
+		if dispatchPopup then dispatchPopup:Destroy(); dispatchPopup = nil end
+		local back = Instance.new("TextButton")
+		back.Size = UDim2.fromScale(1, 1)
+		back.BackgroundColor3 = Theme.Colors.Overlay
+		back.BackgroundTransparency = 0.4
+		back.BorderSizePixel = 0
+		back.Text = ""
+		back.AutoButtonColor = false
+		back.ZIndex = 60
+		back.Parent = gui
+		local pop = Theme.MakePanel("DispatchUnits",
+			UDim2.new(0, 240, 0, 0),
+			UDim2.new(0.5, 0, 0.5, 0), Vector2.new(0.5, 0.5), gui)
+		pop.ZIndex = 61
+		pop.AutomaticSize = Enum.AutomaticSize.Y
+		local pad = Instance.new("UIPadding", pop)
+		pad.PaddingTop = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
+		pad.PaddingLeft = UDim.new(0, 12); pad.PaddingRight = UDim.new(0, 12)
+		local list = Instance.new("UIListLayout", pop)
+		list.SortOrder = Enum.SortOrder.LayoutOrder
+		list.Padding = UDim.new(0, 3)
+		local days = g.remainingDays or 0
+		local head = makeLabel(pop, "Tier " .. tostring(g.tier or 1) .. " dispatch \u{2014} "
+			.. days .. (days == 1 and " day left" or " days left"), {
+			size = UDim2.new(1, 0, 0, 16), font = Theme.Font.PrimaryBold,
+			textSize = Theme.Text.Small(), color = Theme.Colors.TextGold,
+			align = Enum.TextXAlignment.Left, order = 0 })
+		head.ZIndex = 61
+		for i, nm in ipairs(g.units or {}) do
+			local l = makeLabel(pop, "\u{2022} " .. tostring(nm), {
+				size = UDim2.new(1, 0, 0, 14), font = Theme.Font.Mono,
+				textSize = Theme.Text.Tiny(), color = Theme.Colors.TextPrimary,
+				align = Enum.TextXAlignment.Left, order = i })
+			l.ZIndex = 61
+		end
+		local tapClose = makeLabel(pop, "(tap anywhere to close)", {
+			size = UDim2.new(1, 0, 0, 12), font = Theme.Font.Primary,
+			textSize = Theme.Text.Tiny(), color = Theme.Colors.TextSecondary,
+			align = Enum.TextXAlignment.Center, order = #(g.units or {}) + 1 })
+		tapClose.ZIndex = 61
+		back.Activated:Connect(function()
+			if dispatchPopup then dispatchPopup:Destroy(); dispatchPopup = nil end
+			back:Destroy()
+		end)
+		dispatchPopup = pop
+	end
+
+	if data.activeDispatch and #data.activeDispatch > 0 then
+		local aHeader = Instance.new("TextLabel")
+		aHeader.Size = UDim2.new(1, 0, 0, 14)
+		aHeader.Position = UDim2.new(0, 0, 0, recY)
+		aHeader.BackgroundTransparency = 1
+		aHeader.Font = Theme.Font.PrimaryBold
+		aHeader.TextSize = Theme.Text.Small()
+		aHeader.TextColor3 = Theme.Colors.TextSecondary
+		aHeader.TextXAlignment = Enum.TextXAlignment.Left
+		local dp = tonumber(data.daysElapsed) or 0
+		aHeader.Text = (dp > 0)
+			and ("DISPATCHES IN PROGRESS   (" .. dp .. (dp == 1 and " day passed)" or " days passed)"))
+			or "DISPATCHES IN PROGRESS"
+		aHeader.Parent = frame
+		recY = recY + 16
+		for _, g in ipairs(data.activeDispatch) do
+			local days = g.remainingDays or 0
+			local g2 = g
+			-- Standard "?" help/details button, leftmost, directly beside its dispatch
+			-- line so it is clearly the "more details" affordance for THAT dispatch
+			-- (user request 2026-10-23: was a wide "Units" button floated far to the right).
+			local unitsBtn = Theme.MakeButton(frame, "Help", "Secondary", function()
+				showDispatchUnitsPopup(g2)
+			end, { size = UDim2.new(0, 16, 0, 15) })
+			unitsBtn.Position = UDim2.new(0, 0, 0, recY - 1)
+			makeLabel(frame, "Tier " .. tostring(g.tier or 1) .. " dispatch \u{2014} "
+				.. days .. (days == 1 and " day left" or " days left"), {
+				size = UDim2.new(1, -22, 0, 14), pos = UDim2.new(0, 22, 0, recY),
+				font = Theme.Font.Mono, textSize = Theme.Text.Tiny(),
+				color = Theme.Colors.TextGold, align = Enum.TextXAlignment.Left })
+			recY = recY + 16
+		end
+		recY = recY + 4
+	end
+
+	-- Gold earned this battle (kills + completion + quest gold), if any.
+	-- Relocated BELOW all dispatch info per 2026-10-23 user layout (was above dispatch).
+	addDivider()
+	if type(data.gold) == "number" and data.gold > 0 then
+		local goldLabel = Instance.new("TextLabel")
+		goldLabel.Size = UDim2.new(1, 0, 0, 16)
+		goldLabel.Position = UDim2.new(0, 0, 0, recY)
+		goldLabel.BackgroundTransparency = 1
+		goldLabel.Font = Theme.Font.PrimaryBold
+		goldLabel.TextSize = Theme.Text.Body()
+		goldLabel.TextColor3 = Theme.Colors.TextGold
+		goldLabel.TextXAlignment = Enum.TextXAlignment.Left
+		goldLabel.Text = if data.defeat then `+{data.gold} GOLD kept (half of gold dropped)` else `+{data.gold} GOLD`
+		goldLabel.Parent = frame
+		recY = recY + 18
+	end
+
 	-- Loot header
+	addDivider()
 	local lootLabel = Instance.new("TextLabel")
 	lootLabel.Size = UDim2.new(1, 0, 0, 14)
 	lootLabel.Position = UDim2.new(0, 0, 0, recY)
@@ -5295,41 +5495,30 @@ end)
 -- Deployment phase: populate unitData with enemy/player positions
 -- so processTileClick can find units for the inspector.
 BattleEvents.DeploymentPhase.OnClientEvent:Connect(function(data)
+	-- MERGE (2026-10-23): BVC now owns inspection during deployment, so its HUD panels must
+	-- render above DeploymentUI's screen (same bump DeploymentUI used to do for its own panel).
+	if BattleHUD.SetDisplayOrder then BattleHUD.SetDisplayOrder(25) end
 	-- Add enemy units to unitData (they have fixed positions)
 	if data.enemyUnits then
 		for _, eu in ipairs(data.enemyUnits) do
-			unitData[eu.id] = {
-				id        = eu.id,
-				name      = eu.name,
-				side      = eu.side or "Enemy",
-				tileX     = eu.tileX,
-				tileY     = eu.tileY,
-				isAlive   = true,
-				currentHp = eu.currentHp or 0,
-				maxHp     = eu.maxHp or 0,
-				currentMp = eu.currentMp or 0,
-				maxMp     = eu.maxMp or 0,
-			}
+			-- Store the FULL server packet (portrait, level, race, doctrine, stats, facing,
+			-- hp/mp, enemyType) so the inspector shows complete unit details during deployment
+			-- exactly as it did before the inspection merge. Copying only a handful of fields
+			-- here was the regression that blanked the portrait/details. (2026-10-23)
+			unitData[eu.id] = eu
+			eu.isAlive = true
 		end
 	end
-	-- Add player units with REAL name/HP/MP (same event data DeploymentUI uses for its
-	-- working panel) so the hover peek shows correct info during deployment instead of a
-	-- raw id + HP 0/0. Tile is filled in when the unit is actually deployed (UnitDeployed).
-	-- (2026-10-18, BUG-051 real fix: correct the data at its source.)
 	if data.playerUnits then
 		for _, pu in ipairs(data.playerUnits) do
-			unitData[pu.id] = {
-				id        = pu.id,
-				name      = pu.name or pu.id,
-				side      = pu.side or "Player",
-				tileX     = nil,
-				tileY     = nil,
-				isAlive   = true,
-				currentHp = pu.currentHp or 0,
-				maxHp     = pu.maxHp or 0,
-				currentMp = pu.currentMp or 0,
-				maxMp     = pu.maxMp or 0,
-			}
+			-- Store the FULL server packet (portrait, level, race, doctrine, stats, hp/mp) so
+			-- the inspector shows complete details during deployment, same as before the merge.
+			-- A player unit is not ON a tile until actually placed, so clear tiles here; they
+			-- are filled in by the UnitDeployed handler on placement. (2026-10-23)
+			pu.tileX = nil
+			pu.tileY = nil
+			pu.isAlive = true
+			unitData[pu.id] = pu
 		end
 	end
 	print(string.format("[BVC] DeploymentPhase: %d enemy + %d player unit(s) added to unitData",

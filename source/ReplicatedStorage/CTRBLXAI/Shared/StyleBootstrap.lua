@@ -60,6 +60,7 @@ local COLOR_TOKENS = {
 	Poison               = Color3.fromRGB(80, 200, 80),
 	RarityCommon         = Color3.fromRGB(160, 160, 160),
 	RarityEpic           = Color3.fromRGB(180, 80, 255),
+	RarityExalted        = Color3.fromRGB(255, 90, 170),
 	RarityLegendary      = Color3.fromRGB(255, 200, 50),
 	RarityRare           = Color3.fromRGB(70, 140, 255),
 	RarityUncommon       = Color3.fromRGB(80, 200, 80),
@@ -261,6 +262,9 @@ function StyleBootstrap.Init()
 	addRule(ds, ".RarityEpic", {
 		BackgroundColor3 = "$RarityEpic",
 	})
+	addRule(ds, ".RarityExalted", {
+		BackgroundColor3 = "$RarityExalted",
+	})
 	addRule(ds, ".RarityLegendary", {
 		BackgroundColor3 = "$RarityLegendary",
 	})
@@ -313,7 +317,7 @@ function StyleBootstrap.Init()
 	for _ in pairs(TEXT_SIZE_TOKENS) do sizeCount = sizeCount + 1 end
 	print(string.format(
 		"[StyleBootstrap] Initialized: %d color + %d size + 3 button tokens | "
-		.. "6 class rules | 3 button styles | 5 rarity + 7 status + 3 faction tags | "
+		.. "6 class rules | 3 button styles | 6 rarity + 7 status + 3 faction tags | "
 		.. "2 breakpoint queries",
 		colorCount, sizeCount
 	))

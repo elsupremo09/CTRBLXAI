@@ -982,6 +982,7 @@ function TargetingService.ValidateSelection(
 
 		-- Use actor's equipped weapon range for validation
 		local attackRange = (actor.weaponMaxRange or 1) + RacePassiveService.GetRangeModifier(actor)
+			+ TraitEffectService.GetAttackRangeModifier(actor) -- Restless / Sniper's Perch (2026-10-23)
 		local candidates = TargetingService.GetAttackCandidates(actor, allUnits, attackRange)
 		for _, c in ipairs(candidates) do
 			if c == selection then
@@ -1600,6 +1601,7 @@ function TargetingService.GetAttackTilesFromOrigin(actor, allUnits, originX, ori
 	local ghost = setmetatable({ tileX = originX, tileY = originY }, { __index = actor })
 
 	local range = (actor.weaponMaxRange or 1) + RacePassiveService.GetRangeModifier(actor)
+		+ TraitEffectService.GetAttackRangeModifier(actor) -- Restless / Sniper's Perch (2026-10-23)
 	local minRange = actor.weaponMinRange or 1
 	local atkElev = getEffectiveElevation(ghost)
 

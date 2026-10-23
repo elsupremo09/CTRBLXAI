@@ -97,6 +97,18 @@ local EFFECTS = {
 	["TRAIT-F-063"] = { hqMelee = -0.05 },  -- Sloppy Fighter
 	["TRAIT-P-117"] = { hqRanged = 0.05 },  -- Steady Aim
 	["TRAIT-F-117"] = { hqRanged = -0.05 }, -- Shaky Aim
+	-- Fall damage received multiplier (Acrophobic / Sure-Footed). Applied to the BASE
+	-- fall damage (GameConstants.CalcFallDamage output) in DisplacementService. That
+	-- formula has no VIT term, so its output IS the "base fall damage before VIT bonus"
+	-- the DB refers to. fallDmgMult is an additive offset: +0.5 => x1.5, -0.5 => x0.5.
+	["TRAIT-F-044"] = { fallDmgMult = 0.5 },   -- Acrophobic: base fall damage +half (x1.5)
+	["TRAIT-P-044"] = { fallDmgMult = -0.5 },  -- Sure-Footed: base fall damage -half (x0.5)
+	-- Collision damage (Squishy / Thorny). collisionRecv = offset on collision damage
+	-- THIS unit receives; collisionInflict = offset on the collision damage taken by a
+	-- unit pushed INTO this unit ("units colliding with this unit take X"). +1.0 => x2,
+	-- -1.0 => x0. A unit has at most one of a pair, so these never stack against each other.
+	["TRAIT-F-045"] = { collisionRecv = 1.0, collisionInflict = -1.0 },  -- Squishy: receive x2; colliders take x0
+	["TRAIT-P-045"] = { collisionRecv = -1.0, collisionInflict = 1.0 },  -- Thorny: receive x0; colliders take x2
 	-- Fortune: feeds LUK (Combat Fortune is relational on LUK delta). statPct LUK.
 	["TRAIT-P-037"] = { statPct = { LUK = 0.10 } },  -- Lucky
 	["TRAIT-F-037"] = { statPct = { LUK = -0.10 } }, -- Unlucky
@@ -722,6 +734,41 @@ local function sumOf(effs, field)
 	return s
 end
 
+-- Raw trait-id presence check, for CONDITIONAL / TRIGGERED traits that are NOT in the
+-- static EFFECTS map (Restless/Sniper's Perch range, Soul Harvest latch, Hemophage /
+-- Sluggish Finisher ally-KO). Checks both the perk and drawback id lists. Not Break-
+-- gated here; callers decide whether Break should suppress the effect.
+local function hasTraitId(unit, traitId)
+	if type(unit) ~= "table" then return false end
+	local lists = { unit.perkIds, unit.drawbackIds }
+	for li = 1, 2 do
+		local list = lists[li]
+		if type(list) == "table" then
+			for _, tid in ipairs(list) do
+				if tid == traitId then return true end
+			end
+		end
+	end
+	return false
+end
+
+-- Lazy runtime require of EquipmentService for conditional stat rebuilds (Soul Harvest).
+-- EquipmentService requires THIS module at load time, so requiring it back at load would
+-- be a cycle; we require it lazily at runtime (both cached by then) -- the exact pattern
+-- RacePassiveService uses for its Dragonkin / time-of-day conditional rebuilds.
+local _equipmentService = nil
+local function rebuildStats(unit)
+	if _equipmentService == nil then
+		local ok, es = pcall(function() return (require :: any)(script.Parent.EquipmentService) end)
+		_equipmentService = ok and es or false
+	end
+	if _equipmentService and _equipmentService.RebuildUnitStats then
+		_equipmentService.RebuildUnitStats(unit)
+		return true
+	end
+	return false
+end
+
 --------------------------------------------------
 -- REBUILD-TIME (static) MODIFIERS -- EquipmentService.RebuildUnitStats
 --------------------------------------------------
@@ -740,6 +787,16 @@ function TraitEffectService.GetStatModifiers(unit)
 					any = true
 				end
 			end
+		end
+	end
+	-- Soul Harvest (flaw, TRAIT-F-177): after 3000 CT in battle, all primary stats -8%
+	-- for the rest of the battle. Latched ON by OnTurnStart (sets _soulHarvestActive, then
+	-- rebuilds), so this fold runs at rebuild time -- mirroring the Dragonkin conditional
+	-- stat pattern. One-way latch: never clears mid-battle.
+	if unit and unit._soulHarvestActive and hasTraitId(unit, "TRAIT-F-177") then
+		for _, stat in ipairs(STATS) do
+			mods[stat] = (mods[stat] or 0) - 0.08
+			any = true
 		end
 	end
 	return any and mods or nil
@@ -1025,7 +1082,13 @@ end
 
 -- Evasiveness additive offset (Light Step / Heavy-Footed). Feeds Hit Quality.
 function TraitEffectService.GetEvasivenessModifier(unit)
-	return sumOf(active(unit), "evasiveness")
+	-- Static trait evasiveness (Light Step / Heavy-Footed) + per-move accumulation from
+	-- Dodger / Sitting Duck (TRAIT-P/F-134), which lasts until the unit's next turn.
+	local base = sumOf(active(unit), "evasiveness")
+	if type(unit) == "table" and unit._traitMoveEvasion then
+		base = base + unit._traitMoveEvasion
+	end
+	return base
 end
 
 -- Hit Quality flat offset, gated by attack type. isRanged=true → ranged traits,
@@ -1037,6 +1100,224 @@ function TraitEffectService.GetHitQualityModifier(unit)
 	-- by the Phase-2 melee/ranged damage traits.
 	local key = wieldsRanged(unit) and "hqRanged" or "hqMelee"
 	return sumOf(active(unit), key)
+end
+
+-- Fall damage received multiplier (Acrophobic x1.5 / Sure-Footed x0.5). Applied to
+-- the BASE fall damage (CalcFallDamage output) in DisplacementService. Floored at 0.
+function TraitEffectService.GetFallDamageMultiplier(unit)
+	return math.max(0, 1 + sumOf(active(unit), "fallDmgMult"))
+end
+
+-- Collision damage THIS unit RECEIVES (Squishy x2 / Thorny x0). Floored at 0.
+function TraitEffectService.GetCollisionDamageReceivedMultiplier(unit)
+	return math.max(0, 1 + sumOf(active(unit), "collisionRecv"))
+end
+
+-- Collision damage taken by a unit pushed INTO this unit -- the "units colliding with
+-- this unit take X" clause (Squishy x0 / Thorny x2). Floored at 0.
+function TraitEffectService.GetCollisionDamageInflictedMultiplier(unit)
+	return math.max(0, 1 + sumOf(active(unit), "collisionInflict"))
+end
+
+-- ===== PHASE 3: turn-lifecycle + conditional / triggered trait hooks (2026-10-23) =====
+
+-- Called at the START of every unit's turn from BattleCoordinator, alongside the race /
+-- doctrine / armor OnTurnStart hooks. Handles per-turn trait bookkeeping:
+--   * Move-last-turn rollover (Restless / Sniper's Perch): copy this turn's move flag
+--     into _movedLastTurn, then clear it for the turn now beginning.
+--   * Sluggish Finisher per-turn AP-loss reset.
+--   * Soul Harvest (F-177) CT>=3000 one-way latch -> -8% all stats; rebuild once.
+function TraitEffectService.OnTurnStart(unit, state)
+	if type(unit) ~= "table" then return false end
+	-- Move-last-turn rollover. _movedThisTurn is set true by the Move commit in
+	-- CommandService; voluntary Move only (not push / knockback / charge displacement).
+	unit._movedLastTurn = unit._movedThisTurn == true
+	unit._movedThisTurn = false
+	-- Sluggish Finisher (F-162): once-per-turn AP loss resets each turn.
+	unit.sluggishApLossUsedThisTurn = false
+	-- Dodger / Sitting Duck (TRAIT-P/F-134): per-tile evasion lasts "until next turn" — clear
+	-- it at the start of this unit's turn so last turn's accumulation expires.
+	unit._traitMoveEvasion = 0
+	-- Martial Footwork (P/F-175): track whether the unit has acted yet this turn. Cleared here
+	-- at turn start; set true on the unit's first committed action (Move commit / action path).
+	unit._traitActedThisTurn = false
+	-- Soul Harvest (F-177): latch on at 3000 CT, rebuild stats once so GetStatModifiers
+	-- folds the -8%. One-way (never clears). Mirrors Dragonkin's RefreshConditionalStats.
+	if unit.isAlive and not unit._soulHarvestActive and hasTraitId(unit, "TRAIT-F-177") then
+		local ct = state and state.ct or 0
+		if ct >= 3000 then
+			unit._soulHarvestActive = true
+			local rebuilt = rebuildStats(unit)
+			print(string.format(
+				"[TraitEffectService] Soul Harvest (flaw): %s past 3000 CT -> all stats -8%% (rebuilt=%s)",
+				unit.name or "?", tostring(rebuilt)
+			))
+		end
+	end
+	return true
+end
+
+-- Attack-range modifier (Restless / Sniper's Perch, +/- Greater). Applies ONLY when the
+-- unit did NOT move on its previous turn (DB text). Added to weaponMaxRange at the basic-
+-- attack range sites, mirroring RacePassiveService.GetRangeModifier. NOTE: on the FIRST
+-- turn there is no previous turn (_movedLastTurn nil) -> treated as "did not move", so the
+-- modifier applies turn 1 (flagged for designer confirmation).
+function TraitEffectService.GetAttackRangeModifier(unit)
+	if type(unit) ~= "table" then return 0 end
+	if unit._movedLastTurn then return 0 end -- moved last turn -> no modifier
+	local d = 0
+	if hasTraitId(unit, "TRAIT-P-042") then d = d + 1 end  -- Sniper's Perch
+	if hasTraitId(unit, "TRAIT-P-112") then d = d + 2 end  -- Sniper's Perch (Greater)
+	if hasTraitId(unit, "TRAIT-F-042") then d = d - 1 end  -- Restless
+	if hasTraitId(unit, "TRAIT-F-112") then d = d - 2 end  -- Restless (Greater)
+	return d
+end
+
+-- Ally-KO reactions (consumed by CombatResolver.FlushAllyKoReactions when a nearby ally
+-- is KO'd). Hemophage: lose this fraction of CURRENT HP. Sluggish Finisher: lose 1 AP
+-- once per turn. Values from unit_traits (F-131 0.15, F-156 0.18).
+function TraitEffectService.GetAllyKoHpLossFraction(unit)
+	if hasTraitId(unit, "TRAIT-F-156") then return 0.18 end -- Hemophage (Greater)
+	if hasTraitId(unit, "TRAIT-F-131") then return 0.15 end -- Hemophage
+	return 0
+end
+
+function TraitEffectService.HasAllyKoApLoss(unit)
+	return hasTraitId(unit, "TRAIT-F-162") -- Sluggish Finisher
+end
+
+-- Item effectiveness multiplier (Item Specialist / Item Fumbler). Scales the HP healed by
+-- healing consumables and the damage dealt by damaging consumables. Read on the USER of the
+-- item (resolveItemEffect). Buff/utility/status items are NOT scaled (DB: "Healing and
+-- Damaging items"). P-035 +25%, P-093 +30%, F-035 -25%, F-093 -30%. Floored at 0.
+function TraitEffectService.GetItemEffectMultiplier(unit)
+	if type(unit) ~= "table" then return 1 end
+	local d = 0
+	if hasTraitId(unit, "TRAIT-P-093") then d = d + 0.30      -- Item Specialist (Greater)
+	elseif hasTraitId(unit, "TRAIT-P-035") then d = d + 0.25 end -- Item Specialist
+	if hasTraitId(unit, "TRAIT-F-093") then d = d - 0.30      -- Item Fumbler (Greater)
+	elseif hasTraitId(unit, "TRAIT-F-035") then d = d - 0.25 end -- Item Fumbler
+	return math.max(0, 1 + d)
+end
+
+-- ===== Status Specialist / Phobia (Bleed/Burn/Poison/Venom), fires on basic attacks AND
+-- damaging skills (user ruling 2026-10-23). Specialist (perk): attacking a target that HAS
+-- the status triggers an early DOT tick; attacking a target that LACKS it inflicts one stack.
+-- Phobia (flaw): cannot inflict OR trigger the status via attacks. Burn is special (±5% base
+-- damage variant) and has no "inflict if absent" clause. =====
+local SPECIALIST_PERK = { Bleed = "TRAIT-P-155", Burn = "TRAIT-P-157", Poison = "TRAIT-P-163", Venom = "TRAIT-P-166" }
+local PHOBIA_FLAW     = { Bleed = "TRAIT-F-155", Burn = "TRAIT-F-157", Poison = "TRAIT-F-163", Venom = "TRAIT-F-166" }
+
+-- Does the attacker have the Specialist perk for this status? (triggers/inflicts)
+function TraitEffectService.HasStatusSpecialist(unit, statusId)
+	local tid = SPECIALIST_PERK[statusId]
+	return tid ~= nil and hasTraitId(unit, tid)
+end
+
+-- Does the attacker have the Phobia flaw for this status? (blocks inflict + trigger)
+function TraitEffectService.HasStatusPhobia(unit, statusId)
+	local tid = PHOBIA_FLAW[statusId]
+	return tid ~= nil and hasTraitId(unit, tid)
+end
+
+-- Summon modifiers (Minion Specialist / Skill Issues). Read on the OWNER at summon creation
+-- (owner's trait locked in once). statMult scales the summon's primary stats; damageMult
+-- scales the summon's outgoing damage. P-101 +10%/+10%, P-141 +12%/+10%, F-101 -10%/-10%,
+-- F-141 -12%/-10%. Both floored at 0. Returns (statMult, damageMult).
+function TraitEffectService.GetSummonModifiers(owner)
+	if type(owner) ~= "table" then return 1, 1 end
+	local statD, dmgD = 0, 0
+	if hasTraitId(owner, "TRAIT-P-141") then statD = statD + 0.12; dmgD = dmgD + 0.10      -- Minion Specialist (Greater)
+	elseif hasTraitId(owner, "TRAIT-P-101") then statD = statD + 0.10; dmgD = dmgD + 0.10 end -- Minion Specialist
+	if hasTraitId(owner, "TRAIT-F-141") then statD = statD - 0.12; dmgD = dmgD - 0.10      -- Skill Issues (Greater)
+	elseif hasTraitId(owner, "TRAIT-F-101") then statD = statD - 0.10; dmgD = dmgD - 0.10 end -- Skill Issues
+	return math.max(0, 1 + statD), math.max(0, 1 + dmgD)
+end
+
+-- ===== Post-battle recovery & revive HP (Resilient / Slow to Recover / Undying Will) =====
+-- Post-battle recovery fraction for this unit, given the game's baseline (default 0.35).
+-- Resilient ADDS to the baseline (user ruling 2026-10-23): +0.20 / +0.25. Slow to Recover
+-- REPLACES the baseline: -> 0.05 / 0.25. If a unit somehow had both, replace wins (flaw is
+-- the dominant, matches "recovers with ONLY x%"). Returns the final fraction (>=0).
+function TraitEffectService.GetPostBattleRecoveryFraction(unit, baseFraction)
+	local base = baseFraction or 0.35
+	-- Slow to Recover REPLACES.
+	if hasTraitId(unit, "TRAIT-F-041") then return 0.05 end  -- Slow to Recover
+	if hasTraitId(unit, "TRAIT-F-109") then return 0.25 end  -- Slow to Recover (Greater)
+	-- Resilient ADDS to baseline.
+	if hasTraitId(unit, "TRAIT-P-109") then return math.max(0, base + 0.25) end -- Resilient (Greater)
+	if hasTraitId(unit, "TRAIT-P-041") then return math.max(0, base + 0.20) end -- Resilient
+	return base
+end
+
+-- In-battle revive HP multiplier (applied to the HP a revive would grant this unit).
+-- Slow to Recover: revive HP halved (x0.5). Undying Will flaw: revive at 1 HP (handled as
+-- a hard floor by the caller, signalled by returning 0 here). Resilient's "+20% max HP on
+-- revive" is handled separately (additive, see GetReviveHpBonusFraction). Returns a multiplier.
+function TraitEffectService.GetReviveHpMultiplier(unit)
+	if hasTraitId(unit, "TRAIT-F-041") or hasTraitId(unit, "TRAIT-F-109") then return 0.5 end
+	return 1.0
+end
+
+-- Undying Will flaw (F-179): any revive brings this unit back at exactly 1 HP (overrides all).
+function TraitEffectService.HasReviveAtOneHp(unit)
+	return hasTraitId(unit, "TRAIT-F-179")
+end
+
+-- Resilient's extra "+20% of max HP when being revived" (additive fraction of max HP).
+function TraitEffectService.GetReviveHpBonusFraction(unit)
+	if hasTraitId(unit, "TRAIT-P-041") or hasTraitId(unit, "TRAIT-P-109") then return 0.20 end
+	return 0
+end
+
+-- Undying Will perk (P-179): self-revive once per battle at 25% HP after 500 CT.
+function TraitEffectService.HasUndyingWillPerk(unit)
+	return hasTraitId(unit, "TRAIT-P-179")
+end
+
+-- ===== Move-completion trait hooks (Dodger/Sitting Duck evasion, Martial Footwork,
+-- Unstable Footing/Stable Land tile effect). Called from the Move commit AFTER the unit
+-- lands. tilesTraversed = tiles moved this action. Returns nothing; mutates per-turn accums
+-- and may end the turn (Martial Footwork flaw) via the returned signal. (2026-10-23) =====
+
+-- Per-tile evasion accumulation (Dodger +5% / Sitting Duck -5% per tile, until next turn).
+-- Adds to unit._traitMoveEvasion, which GetEvasivenessModifier folds in. Uncapped (DB).
+function TraitEffectService.AccumulateMoveEvasion(unit, tilesTraversed)
+	if type(unit) ~= "table" or not tilesTraversed or tilesTraversed <= 0 then return end
+	local per = 0
+	if hasTraitId(unit, "TRAIT-P-134") then per = per + 0.05 end -- Dodger
+	if hasTraitId(unit, "TRAIT-F-134") then per = per - 0.05 end -- Sitting Duck
+	if per ~= 0 then
+		unit._traitMoveEvasion = (unit._traitMoveEvasion or 0) + per * tilesTraversed
+	end
+end
+
+-- Martial Footwork: returns "endTurn" (flaw F-175) or "grantAp" (perk P-175) or nil, but
+-- ONLY when this Move is the unit's FIRST action this turn. Caller enforces the effect.
+function TraitEffectService.GetMartialFootworkOnFirstMove(unit)
+	if type(unit) ~= "table" then return nil end
+	if unit._traitActedThisTurn then return nil end -- not the first action
+	if hasTraitId(unit, "TRAIT-P-175") then return "grantAp" end
+	if hasTraitId(unit, "TRAIT-F-175") then return "endTurn" end
+	return nil
+end
+
+-- Stable Land (P-114): block new tile-effect application to this unit's current tile.
+function TraitEffectService.HasStableLand(unit)
+	return hasTraitId(unit, "TRAIT-P-114")
+end
+
+-- Unstable Footing (F-114): landing on an effect-less tile causes a random tile effect.
+function TraitEffectService.HasUnstableFooting(unit)
+	return hasTraitId(unit, "TRAIT-F-114")
+end
+
+-- Dual Strike flaw (F-171, 2026-10-23): Basic Attack costs double RT. Returns the basic-
+-- attack RT multiplier (2.0 for F-171, else 1.0). The Dual Strike PERK (P-171, attack
+-- resolves twice) is Phase-3 deferred and intentionally NOT wired here.
+function TraitEffectService.GetBasicAttackRtMultiplier(unit)
+	if hasTraitId(unit, "TRAIT-F-171") then return 2.0 end
+	return 1.0
 end
 
 -- Base RT multiplier (Quick/Sluggish/Timeline Sovereign/Temporal Drag).

@@ -71,6 +71,7 @@ Theme.Colors = {
 	RarityUncommon  = Color3.fromRGB(80, 200, 80),   -- Green
 	RarityRare      = Color3.fromRGB(70, 140, 255),  -- Blue
 	RarityEpic      = Color3.fromRGB(180, 80, 255),  -- Purple
+	RarityExalted   = Color3.fromRGB(255, 90, 170),  -- Magenta/Pink (between Epic and Legendary)
 	RarityLegendary = Color3.fromRGB(255, 200, 50),  -- Gold
 
 	-- Misc
@@ -280,6 +281,7 @@ function Theme.GetRarityColor(rarity)
 		Uncommon  = Theme.Colors.RarityUncommon,
 		Rare      = Theme.Colors.RarityRare,
 		Epic      = Theme.Colors.RarityEpic,
+		Exalted   = Theme.Colors.RarityExalted,
 		Legendary = Theme.Colors.RarityLegendary,
 	}
 	return map[rarity] or Theme.Colors.RarityCommon

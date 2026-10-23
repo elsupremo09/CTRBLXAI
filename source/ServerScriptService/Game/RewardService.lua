@@ -45,18 +45,18 @@ local CATEGORY_WEIGHTS = {
 
 -- Equipment rarity weights (from DB loot_progression)
 local NORMAL_RARITY_WEIGHTS = {
-	{ rarity = "Broken",    weight = 0.10  },
-	{ rarity = "Common",    weight = 0.55  },
-	{ rarity = "Uncommon",  weight = 0.20  },
-	{ rarity = "Rare",      weight = 0.10  },
-	{ rarity = "Epic",      weight = 0.049 },
-	{ rarity = "Legendary", weight = 0.001 },
+	{ rarity = "Common",    weight = 0.55   },
+	{ rarity = "Uncommon",  weight = 0.2429 },
+	{ rarity = "Rare",      weight = 0.1214 },
+	{ rarity = "Epic",      weight = 0.0595 },
+	{ rarity = "Exalted",   weight = 0.025  },
+	{ rarity = "Legendary", weight = 0.0012 },
 }
 
 -- Rarity rank for card minimum clamping
 local RARITY_RANK = {
-	Broken = 0, Common = 1, Uncommon = 2, Rare = 3,
-	Epic = 4, Legendary = 5, Mythic = 6,
+	Common = 1, Uncommon = 2, Rare = 3,
+	Epic = 4, Exalted = 5, Legendary = 6, Mythic = 7,
 }
 
 local MIN_REWARDS = 1
@@ -100,10 +100,10 @@ end
 -- items/cards GenerateRewards actually produces.
 --------------------------------------------------
 
-local MAX_LOOT_RANK = 5  -- Legendary (highest rarity in NORMAL_RARITY_WEIGHTS)
+local MAX_LOOT_RANK = 6  -- Legendary (highest rarity in NORMAL_RARITY_WEIGHTS)
 local RANK_TO_RARITY = {
-	[0] = "Broken", [1] = "Common", [2] = "Uncommon", [3] = "Rare",
-	[4] = "Epic", [5] = "Legendary",
+	[1] = "Common", [2] = "Uncommon", [3] = "Rare",
+	[4] = "Epic", [5] = "Exalted", [6] = "Legendary",
 }
 
 local _rewardModifier = nil  -- nil = no modifier (all ×1)
@@ -161,7 +161,7 @@ end
 
 -- Convenience for the (future) gold / material / EXP grant paths.
 function RewardService.ApplyGold(amount)
-	return math.floor(numOr(amount, 0) * RewardService.GetGoldMultiplier())
+	return math.floor(numOr(amount, 0) * RewardService.GetGoldMultiplier() * RewardService.GetFortuneGoldMultiplier())
 end
 function RewardService.ApplyMaterial(amount)
 	return math.floor(numOr(amount, 0) * RewardService.GetMaterialMultiplier())
@@ -180,7 +180,7 @@ local function applyRarityModifier(rarity)
 	if m.minRarity and RARITY_RANK[m.minRarity] then
 		rank = math.max(rank, RARITY_RANK[m.minRarity])
 	end
-	rank = math.clamp(rank, 0, MAX_LOOT_RANK)
+	rank = math.clamp(rank, 1, MAX_LOOT_RANK)
 	return RANK_TO_RARITY[rank] or rarity
 end
 
@@ -202,6 +202,85 @@ local function weightedRoll(rng, entries, keyField, weightField)
 		end
 	end
 	return entries[1][keyField]
+end
+
+--------------------------------------------------
+-- EXPEDITION FORTUNE (loot_progression, 2026-10-23)
+--
+-- Module state, mirroring the reward modifier above. Set from the deployed team's
+-- post-gear Fortune before reward generation; neutral (0) when unset -> Fortune
+-- Multiplier 1.0, no change. Drives per-rarity Adjusted Weights (equipment only)
+-- and the Fortune Gold Multiplier. Mythic+ stay ineligible in normal encounters
+-- (absent from NORMAL_RARITY_WEIGHTS); zero base weight stays zero.
+--------------------------------------------------
+
+local _expeditionFortune = 0  -- 0 .. 1.75
+
+-- Per-rarity Fortune sensitivity (loot_progression "Fortune Sensitivity").
+local RARITY_FORTUNE_SENSITIVITY = {
+	Common = 0, Uncommon = 0.25, Rare = 0.5, Epic = 0.75, Exalted = 0.85, Legendary = 1, Mythic = 1,
+}
+
+-- Unit Fortune = LUK/(LUK+200) + summed gear Fortune (additive, DB). Floored at 0.
+local function unitFortune(u)
+	local luk = (u.effectiveStats and u.effectiveStats.LUK) or 10
+	local lukFortune = luk / (luk + 200)
+	local gearFortune = (u.gearDerived and u.gearDerived.fortune) or 0
+	return math.max(0, lukFortune + gearFortune)
+end
+
+-- Expedition Fortune = top Unit Fortune + 50% 2nd + 25% 3rd across the deployed
+-- player team (DB). Summons excluded. Returns 0 for an empty team.
+function RewardService.ComputeExpeditionFortune(units)
+	local fortunes = {}
+	for _, u in ipairs(units or {}) do
+		if u and (u.side == "Player" or u.controller == "Player") and not u.isSummon then
+			fortunes[#fortunes + 1] = unitFortune(u)
+		end
+	end
+	table.sort(fortunes, function(a, b) return a > b end)
+	return (fortunes[1] or 0) + 0.5 * (fortunes[2] or 0) + 0.25 * (fortunes[3] or 0)
+end
+
+function RewardService.SetExpeditionFortune(fortune)
+	if type(fortune) == "number" and fortune == fortune then
+		_expeditionFortune = math.clamp(fortune, 0, 1.75)
+	else
+		_expeditionFortune = 0
+	end
+end
+
+function RewardService.ClearExpeditionFortune()
+	_expeditionFortune = 0
+end
+
+-- Normalized Expedition Fortune = Expedition Fortune / 1.75 (0 .. 1).
+local function normalizedExpeditionFortune()
+	return _expeditionFortune / 1.75
+end
+
+-- Fortune Gold Multiplier = 1 + 0.50 x Normalized Expedition Fortune (<= 1.50).
+function RewardService.GetFortuneGoldMultiplier()
+	return 1 + 0.50 * normalizedExpeditionFortune()
+end
+
+-- Roll equipment rarity with Fortune quality weighting (loot_progression id 16):
+-- Adjusted Weight = Base x (1 + NormExpFortune x Sensitivity[rarity]). Zero base
+-- stays zero; no Fortune -> plain base roll. Mythic+ absent from the table so they
+-- remain impossible in normal encounters.
+local function rollEquipmentRarity(rng)
+	local nf = normalizedExpeditionFortune()
+	if nf <= 0 then
+		return weightedRoll(rng, NORMAL_RARITY_WEIGHTS, "rarity", "weight")
+	end
+	local adjusted = {}
+	for _, e in ipairs(NORMAL_RARITY_WEIGHTS) do
+		local sens = RARITY_FORTUNE_SENSITIVITY[e.rarity] or 0
+		local w = e.weight * (1 + nf * sens)
+		if w < 0 then w = 0 end
+		adjusted[#adjusted + 1] = { rarity = e.rarity, weight = w }
+	end
+	return weightedRoll(rng, adjusted, "rarity", "weight")
 end
 
 -- Card rarity: roll equipment weights but clamp to Rare minimum
@@ -336,7 +415,7 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 
 		if category == "Equipment" then
 			-- Battlefield-event rarity shift/floor (nil modifier -> unchanged).
-			local rarity = applyRarityModifier(weightedRoll(itemRng, NORMAL_RARITY_WEIGHTS, "rarity", "weight"))
+			local rarity = applyRarityModifier(rollEquipmentRarity(itemRng))
 			local pool = getEquipPool()
 			local item, genErr = ItemGenerator.GenerateFromPool(pool, mapLevel, rarity, seed, "Loot")
 			if not item then
@@ -560,7 +639,7 @@ function RewardService.BuildRewardSummaries(results)
 				nativePassiveId = (not isArmor) and (archetype and archetype.nativePassiveId or nil) or nil,
 				nativePassiveDesc = (not isArmor) and (archetype and WeaponData.GetPassiveDesc(archetype.nativePassiveId) or nil) or nil,
 				projectileType = (not isArmor) and (archetype and archetype.projectileType or nil) or nil,
-				element = (not isArmor) and (archetype and WeaponData.GetElement(item.baseArchetypeId) or nil) or nil,
+				element = (not isArmor) and WeaponData.GetInstanceElement(item) or nil,
 				hp = isArmor and (profile and profile.hp or 0) or nil,
 				mp = isArmor and (profile and profile.mp or 0) or nil,
 				slot = isArmor and (archetype and archetype.slot or nil) or nil,

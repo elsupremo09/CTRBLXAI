@@ -213,6 +213,10 @@ local function spawnSummonFor(actor: any, skillDef: any, target: any, state: any
 	local cStats = actor.effectiveStats or {}
 	local casterMaxHp = actor.maxHp or 1
 
+	-- Perks & Flaws (2026-10-23): Minion Specialist / Skill Issues on the CASTER scale the
+	-- summon's stats and outgoing damage. Read once here (owner's trait locked at creation).
+	local summonStatMult, summonDamageMult = TraitEffectService.GetSummonModifiers(actor)
+
 	-- Build the authored stat table (caster-% snapshot). Each summon stat derives
 	-- from the caster stat named in statSrc (default: same-named stat).
 	local stats
@@ -222,7 +226,7 @@ local function spawnSummonFor(actor: any, skillDef: any, target: any, state: any
 			local pct = prof.statPct and prof.statPct[k] or 0
 			local srcKey = (prof.statSrc and prof.statSrc[k]) or k
 			local srcVal = cStats[srcKey] or 10
-			stats[k] = math.max(1, math.round(srcVal * pct))
+			stats[k] = math.max(1, math.round(srcVal * pct * summonStatMult))
 		end
 	else
 		-- Decoy inherits nothing; give minimal stats so UnitSchema.Create is valid.
@@ -261,6 +265,7 @@ local function spawnSummonFor(actor: any, skillDef: any, target: any, state: any
 		turretSnapshotDamage = turretDmg,
 		baseRt = prof.baseRt,              -- optional authored Base RT override (default 400)
 		skillIds = prof.skillIds,          -- authored summon actions (Mender heal)
+		summonDamageMult = summonDamageMult, -- Minion Specialist / Skill Issues (owner trait, 2026-10-23)
 	}
 
 	-- CREATE NEW FIRST (status_summon_engines "Replace existing": never delete the
@@ -269,6 +274,12 @@ local function spawnSummonFor(actor: any, skillDef: any, target: any, state: any
 	if not newUnit then
 		warn(string.format("[CommandService] SUMMON [%s] SpawnSummon failed — existing summon (if any) kept", tostring(skillDef.id)))
 		return false, "Spawn failed."
+	end
+	-- Minion Specialist / Skill Issues (2026-10-23): stamp the owner's outgoing-damage
+	-- multiplier onto the created summon (stat scaling already applied at creation above).
+	-- Read by CombatResolver on the summon's attacks. Default 1 is a harmless no-op.
+	if summonDamageMult and summonDamageMult ~= 1 then
+		newUnit.summonDamageMult = summonDamageMult
 	end
 
 	-- RETIRE the caster's PREVIOUS same-type summon (one-at-a-time). Done only after
@@ -407,10 +418,10 @@ end
 -- only after successful HP damage, e.g. Overwhelming Blow DB 'Knockback +1').
 local function applySkillPostHit(state: any, actor: any, target: any, skillDef: any, dealtDamage: number?)
 	if not target or target.isGroundTarget then return end
-	local rawDelay = (actor.weaponRtDelay or 0) * TraitEffectService.GetRtDelayInflictMultiplier(actor)
+	local rawDelay = GameConstants.CalcRtDelayBonus(actor.weaponRtDelay or 0, (actor.effectiveStats and actor.effectiveStats.STR) or 10) * TraitEffectService.GetRtDelayInflictMultiplier(actor)
 	if rawDelay > 0 and target.isAlive then
 		local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
-		local actualDelay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), targetVit)
+		local actualDelay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), targetVit, (target.gearDerived and target.gearDerived.rtDelayResist or 1))
 		target.remainingRt = target.remainingRt + math.max(0, actualDelay)
 	end
 	if skillDef.knockbackOnHit and (dealtDamage or 0) > 0 and target.isAlive and actor.isAlive then
@@ -554,12 +565,15 @@ end
 local function calcMoveRt(actor: any, tilesMoving: any)
 	local modBaseRt = StatusService.GetModifiedBaseRt(actor)
 	local perTile = modBaseRt * MOVE_RT_FACTOR
+	-- AGI reduces Movement RT (DB movement_targeting id 8): x (1 - AGI/(200+AGI)).
+	local agi = (actor.effectiveStats and actor.effectiveStats.AGI) or 10
+	local agiFactor = 1 - agi / (200 + agi)
 	-- Frozen: all RT costs ×2. Wet: movement RT ×1.25.
 	local frozenMult = StatusService.GetAllRtMultiplier(actor)
 	local wetMult    = StatusService.GetMovementRtMultiplier(actor)
 	-- Perks & Flaws (Phase 2b): Fleet Runner/Plodding adjust movement RT specifically.
 	local traitMoveMult = TraitEffectService.GetMoveRtMultiplier(actor)
-	return math.round(perTile * tilesMoving * frozenMult * wetMult * traitMoveMult)
+	return math.round(perTile * tilesMoving * agiFactor * frozenMult * wetMult * traitMoveMult)
 end
 
 local function calcBasicAttackBaseRt(actor: any)
@@ -588,6 +602,9 @@ local function calcBasicAttackBaseRt(actor: any)
 		baseRtComponent = baseRtComponent * frenzyDef.basicAttackRtMult
 	end
 	local baseAttackRt = math.round(baseRtComponent) + math.round(effectiveWt)
+	-- Dual Strike flaw (TRAIT-F-171, 2026-10-23): Basic Attack costs double RT. Applied to the
+	-- assembled basic-attack RT, before the Frozen all-RT multiplier (composes multiplicatively).
+	baseAttackRt = math.round(baseAttackRt * TraitEffectService.GetBasicAttackRtMultiplier(actor))
 	-- Frozen: all RT costs ×2
 	return math.round(baseAttackRt * StatusService.GetAllRtMultiplier(actor))
 end
@@ -701,10 +718,10 @@ function CommandService.TriggerCounterIfEligible(defender: any, attacker: any, s
 	-- turn-order setback on whoever provoked the counter. VIT-resisted, exactly
 	-- like a normal basic attack's RT delay.
 	local rtDelayMult = (inst and inst.counterRtDelayMult) or 0
-	local rawDelay = (defender.weaponRtDelay or 0) * rtDelayMult
+	local rawDelay = GameConstants.CalcRtDelayBonus(defender.weaponRtDelay or 0, (defender.effectiveStats and defender.effectiveStats.STR) or 10) * rtDelayMult
 	if rawDelay > 0 and attacker.isAlive then
 		local atkVit = attacker.effectiveStats and attacker.effectiveStats.VIT or 10
-		local delay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), atkVit)
+		local delay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), atkVit, (attacker.gearDerived and attacker.gearDerived.rtDelayResist or 1))
 		attacker.remainingRt = (attacker.remainingRt or 0) + math.max(0, delay)
 		print(string.format("[CommandService] COUNTER RT-DELAY | %s +%d RT (x%.2f weapon delay)",
 			attacker.name, math.max(0, delay), rtDelayMult))
@@ -846,6 +863,8 @@ local function resolveItemEffect(user: any, target: any, consumableDef: any, all
 	if hpPct then
 		local pct = tonumber(hpPct)
 		local heal = math.ceil((target.maxHp or 1) * pct / 100)
+		-- Item Specialist / Fumbler (Perks & Flaws 2026-10-23): scale healing-item output by the USER's trait.
+		heal = math.max(0, math.round(heal * TraitEffectService.GetItemEffectMultiplier(user)))
 		UnitSchema.ApplyHealing(target, heal)
 		result.effectType = "HpRestore"
 		result.amount     = heal
@@ -890,6 +909,8 @@ local function resolveItemEffect(user: any, target: any, consumableDef: any, all
 		local pct = tonumber(dmgPct)
 		local attackPower = user.weaponDamage or 10
 		local damage = math.round(attackPower * pct / 100)
+		-- Item Specialist / Fumbler (Perks & Flaws 2026-10-23): scale damaging-item output by the USER's trait.
+		damage = math.max(0, math.round(damage * TraitEffectService.GetItemEffectMultiplier(user)))
 		UnitSchema.ApplyDamage(target, damage)
 		result.effectType = "Damage"
 		result.amount     = damage
@@ -1186,7 +1207,19 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 		end
 		local frac = data.reviveHpFrac or 0.05
 		target.isAlive   = true
-		target.currentHp = math.max(1, math.ceil((target.maxHp or 1) * frac))
+		-- Perks & Flaws revive modifiers (2026-10-23): Slow to Recover halves revive HP;
+		-- Resilient adds +20% max HP; Undying Will flaw forces exactly 1 HP (overrides all).
+		local maxHp = target.maxHp or 1
+		local reviveHp
+		if TraitEffectService.HasReviveAtOneHp(target) then
+			reviveHp = 1
+		else
+			local effFrac = frac * TraitEffectService.GetReviveHpMultiplier(target)
+				+ TraitEffectService.GetReviveHpBonusFraction(target)
+			reviveHp = math.max(1, math.ceil(maxHp * effFrac))
+			reviveHp = math.min(reviveHp, maxHp)
+		end
+		target.currentHp = reviveHp
 		target.remainingRt = target.startingRt or 400
 		BattleVisualBroadcaster.ActionAnnounced(unit, "Resuscitate")
 		BattleVisualBroadcaster.UnitStateChanged(target)
@@ -1671,6 +1704,10 @@ function CommandService.ValidateAndCommit(
 		if actor.isSummon and actor.canMove == false then
 			return false, "This summon cannot move."
 		end
+		-- Perks & Flaws (2026-10-23): mark a VOLUNTARY move this turn so Restless /
+		-- Sniper's Perch can read "did not move last turn" next turn. Rolled over in
+		-- TraitEffectService.OnTurnStart. Push / knockback / charge do NOT set this.
+		actor._movedThisTurn = true
 		BattleVisualBroadcaster.ActionAnnounced(actor, "Move")
 		local pathCost
 		if selection.pathCost ~= nil then
@@ -1799,6 +1836,36 @@ function CommandService.ValidateAndCommit(
 			if _tileEffectService then
 				_tileEffectService.OnUnitEntersTile(actor, actor.tileX, actor.tileY)
 			end
+		end
+
+		-- ===== Perks & Flaws move-completion hooks (2026-10-23) =====
+		-- Evaluate Martial Footwork BEFORE marking the unit as having acted — the trait needs
+		-- to know this Move was the FIRST action this turn. pathCost = tiles moved this action.
+		local martial = TraitEffectService.GetMartialFootworkOnFirstMove(actor)
+		-- Dodger / Sitting Duck: accumulate per-tile evasion (until next turn).
+		TraitEffectService.AccumulateMoveEvasion(actor, pathCost)
+		-- Unstable Footing (F-114): landing on an effect-less tile rolls a random tile effect
+		-- onto it. Stable Land (P-114) is enforced inside TileEffectService.ApplyTileEffect.
+		if TraitEffectService.HasUnstableFooting(actor) and _tileEffectService
+			and _tileEffectService.GetTileEffect and _tileEffectService.ApplyRandomTileEffect then
+			local existing = _tileEffectService.GetTileEffect(actor.tileX, actor.tileY)
+			if not existing then
+				_tileEffectService.ApplyRandomTileEffect(actor.tileX, actor.tileY, actor.id)
+			end
+		end
+		-- Revive the (previously dead) armor move-completion hook so GL-018 etc. accumulate too.
+		if ArmorPassiveService.OnMoveCompleted then
+			ArmorPassiveService.OnMoveCompleted(actor, pathCost, pathCost)
+		end
+		-- Mark that the unit has taken an action this turn (for Martial Footwork "first action").
+		actor._traitActedThisTurn = true
+		-- Apply Martial Footwork outcome now that the Move has fully resolved.
+		if martial == "grantAp" then
+			actor.currentAp = (actor.currentAp or 0) + 1
+			print(string.format("[CommandService] Martial Footwork (perk): %s replenishes 1 AP after first-move (now %d)", actor.name, actor.currentAp))
+		elseif martial == "endTurn" then
+			print(string.format("[CommandService] Martial Footwork (flaw): %s turn ends after first-move", actor.name))
+			actor.currentAp = 0
 		end
 
 		-- UNDO REACTION DETECTION (source-based, 2026-10-17 fix for Tester item B).
@@ -1935,10 +2002,10 @@ function CommandService.ValidateAndCommit(
 		-- Apply Weapon RT Delay to primary target (reduced by target VIT)
 		-- Perks & Flaws (Phase 2b): Time Locker/Time Freed/Timeline Sovereign scale the
 		-- RT delay this attacker INFLICTS, before target VIT resistance.
-		local rawDelay = (actor.weaponRtDelay or 0) * TraitEffectService.GetRtDelayInflictMultiplier(actor)
+		local rawDelay = GameConstants.CalcRtDelayBonus(actor.weaponRtDelay or 0, (actor.effectiveStats and actor.effectiveStats.STR) or 10) * TraitEffectService.GetRtDelayInflictMultiplier(actor)
 		if rawDelay > 0 and target.isAlive then
 			local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
-			local actualDelay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), targetVit)
+			local actualDelay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), targetVit, (target.gearDerived and target.gearDerived.rtDelayResist or 1))
 			target.remainingRt = target.remainingRt + math.max(0, actualDelay)
 		end
 
@@ -2776,6 +2843,7 @@ function CommandService.ValidateAndCommit(
 		end
 		local ox, oy = selection.objX, selection.objY
 		local atkRange = (actor.weaponMaxRange or 1) + RacePassiveService.GetRangeModifier(actor)
+			+ TraitEffectService.GetAttackRangeModifier(actor) -- Restless / Sniper's Perch (2026-10-23)
 		local atkDist = math.max(math.abs(actor.tileX - ox), math.abs(actor.tileY - oy))
 		if atkDist > atkRange or atkDist < (actor.weaponMinRange or 1) then
 			return false, "Object is out of attack range."
@@ -3074,6 +3142,14 @@ function CommandService.ValidateAndCommit(
 	-- turn hands off. (CombatResolver buffers each Electric hit in ApplyOutcome.)
 	if CombatResolver.FlushElectricShock then
 		CombatResolver.FlushElectricShock(state.units)
+	end
+	-- Ally-KO reactions (Perks & Flaws 2026-10-23): Hemophage / Sluggish Finisher. Drains
+	-- units that were KO'd by this action's combat damage (buffered in CombatResolver) and
+	-- applies the reaction to nearby same-side allies. Runs after the electric flush, before
+	-- EndTurn, so HP/AP changes are in state at handoff. Combat deaths only (DoT / CT-tick /
+	-- collision / fall deaths are not yet buffered -- deferred).
+	if CombatResolver.FlushAllyKoReactions then
+		CombatResolver.FlushAllyKoReactions(state.units)
 	end
 
 	-- STEP 9: Handoff

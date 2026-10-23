@@ -193,7 +193,8 @@ local function isOverUI(screenPos)
 				local n = ancestor.Name
 				if n == "ActiveUnit" or n == "ActionPanel" or n == "Inspector"
 					or n == "TilePreview" or n == "TurnOrder" or n == "BattleLog"
-					or n == "Conditions" or n == "Tooltip" or n == "DevPanel" then
+					or n == "Conditions" or n == "Tooltip" or n == "DevPanel"
+					or n == "DeployStrip" then
 					return true
 				end
 				ancestor = ancestor.Parent

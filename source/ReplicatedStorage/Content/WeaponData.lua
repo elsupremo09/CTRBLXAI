@@ -536,7 +536,7 @@ local NATIVE_PASSIVE_DESC = {
 	["Stagger"] = "Weapon RT Delay x1.25 on hit.",
 	["Tricky"] = "Ignore 40% of target Evasiveness.",
 	["TrueStrike"] = "Hit Quality cannot go below 100%.",
-	["Venomous"] = "Applies Poison on hit.",
+	["Venomous"] = "Applies Venom on hit.",
 }
 
 function WeaponData.GetPassiveDesc(passiveId)
@@ -547,14 +547,33 @@ end
 -- ELEMENT TAG (derived from native passive)
 --------------------------------------------------
 
-local PASSIVE_ELEMENT = {
-	Ignite = "Fire", Freeze = "Ice", Venomous = "Poison",
+-- Rolled ELEMENTAL TRANSFORMATION bonus passives are the ONLY source of a weapon's
+-- element (DB bonus_passives PAS-016..021: "Weapon gains X tag"). Status-applier
+-- passives (Freeze/Venomous/etc.) do NOT re-type damage, and Poison/Venom are debuffs,
+-- not elements — so the old {Ignite,Freeze,Venomous} native map was wrong and is gone
+-- (user ruling 2026-10-23). Ignite's conditional Fire re-type is deferred to Group 2.
+local TRANSFORM_ELEMENT = {
+	["PAS-016"] = "Fire", ["PAS-017"] = "Water", ["PAS-018"] = "Ice",
+	["PAS-019"] = "Electric", ["PAS-020"] = "Dark", ["PAS-021"] = "Holy",
 }
 
-function WeaponData.GetElement(archetypeId)
-	local def = WeaponData.Archetypes[archetypeId]
-	if not def or not def.nativePassiveId then return nil end
-	return PASSIVE_ELEMENT[def.nativePassiveId]
+-- Element of a specific weapon INSTANCE: the first rolled transformation passive on
+-- it, else nil (Physical). Instance-level because transformations are rolled bonuses,
+-- not archetype natives.
+function WeaponData.GetInstanceElement(itemInstance)
+	if not itemInstance or type(itemInstance.bonusPassiveIds) ~= "table" then return nil end
+	for _, pid in ipairs(itemInstance.bonusPassiveIds) do
+		local el = TRANSFORM_ELEMENT[pid]
+		if el then return el end
+	end
+	return nil
+end
+
+-- Deprecated archetype-only element lookup. No weapon archetype grants an element
+-- natively anymore (element is a rolled transformation), so this always returns nil.
+-- Kept as a safe stub for any legacy caller. Use GetInstanceElement(itemInstance).
+function WeaponData.GetElement(_archetypeId)
+	return nil
 end
 
 return WeaponData

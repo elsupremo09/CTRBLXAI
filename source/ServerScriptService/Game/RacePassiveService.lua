@@ -396,6 +396,11 @@ function RacePassiveService.GetStatModifiers(unit)
 		return { STR = -0.15 }
 	end
 
+	-- AVIAN — Keen Sight: STR -15% (permanent). DB races row 'Avian'.
+	if raceId == "RACE-AVIAN" then
+		return { STR = -0.15 }
+	end
+
 	-- DRAGONKIN — Dragonscale (races row 'Dragonkin', 2026-10-02): while a Burn
 	-- instance is active on this unit, all primary stats +15%. (Burn ticks are
 	-- nullified in StatusService.ProcessStartOfTurn, but the instance stays so
@@ -522,6 +527,21 @@ function RacePassiveService.GetMeleeReflectDamage(defender)
 	return math.max(0, math.floor(defender.level or 1))
 end
 
+-- FROC — Toxic Skin: returns "Poison" when this defender is a Froc. The caller
+-- (CombatResolver.ApplyOutcome) applies it to the ATTACKER unless the attack is
+-- Fire/Ice/Electric tagged. DB races row 'Froc'.
+function RacePassiveService.GetToxicSkinStatus(defender)
+	if isRace(defender, "RACE-FROC") then return "Poison" end
+	return nil
+end
+
+-- AVIAN — Keen Sight: Discovery Radius +1. Folded by EquipmentService.RebuildUnitStats
+-- alongside the trait Far/Near-Sighted modifier. DB races row 'Avian'.
+function RacePassiveService.GetDiscoveryRadiusModifier(unit)
+	if isRace(unit, "RACE-AVIAN") then return 1 end
+	return 0
+end
+
 --------------------------------------------------
 -- OGRE — BRUTISH BULK (2026-10-02)
 -- Weapon WT multiplier (EquipmentService.RebuildUnitStats) and on-hit target
@@ -640,8 +660,33 @@ local ZOMBIE_REVIVE_CT = 3000
 
 function RacePassiveService.ProcessZombieRevive(unit, ctPassed)
 	local raceId = getRaceId(unit)
-	if raceId ~= "RACE-ZOMBIE" then return false end
 	if unit.isAlive then return false end
+
+	-- Undying Will perk (Perks & Flaws TRAIT-P-179, 2026-10-23): self-revive ONCE per battle
+	-- at 25% Max HP after 500 CT down. Mirrors the Zombie timer but on a trait flag. Checked
+	-- before the Zombie branch so a unit that is both still revives once. 500 CT / 25% per DB.
+	-- Deferred require (call-time) of TraitEffectService — this file has no top-level require
+	-- for it, and a load-time one risks a cycle (RacePassiveService -> StatusService ->
+	-- TraitEffectService already exists). Same pattern as OnUnitKO below.
+	local _tes = (require :: any)(script.Parent.TraitEffectService)
+	if _tes.HasUndyingWillPerk(unit) and not unit.undyingWillUsed then
+		if not unit.undyingWillKoCt then unit.undyingWillKoCt = 0 end
+		unit.undyingWillKoCt = unit.undyingWillKoCt + ctPassed
+		if unit.undyingWillKoCt >= 500 then
+			unit.isAlive = true
+			unit.currentHp = math.max(1, math.ceil(unit.maxHp * 0.25))
+			unit.remainingRt = unit.startingRt or 400
+			unit.undyingWillUsed = true
+			unit.undyingWillKoCt = nil
+			print(string.format(
+				"[RacePassiveService] Undying Will (perk): %s revives with %d/%d HP",
+				unit.name, unit.currentHp, unit.maxHp
+			))
+			return true
+		end
+	end
+
+	if raceId ~= "RACE-ZOMBIE" then return false end
 
 	if not unit.zombieReviveUsed then
 		if not unit.zombieKoCt then unit.zombieKoCt = 0 end
@@ -670,6 +715,16 @@ function RacePassiveService.OnUnitKO(unit)
 		unit.zombieKoCt = 0
 		print(string.format(
 			"[RacePassiveService] Zombie Undying: %s KO'd — revive timer started",
+			unit.name
+		))
+	end
+	-- Undying Will perk (TRAIT-P-179, 2026-10-23): start the 500 CT self-revive timer on KO,
+	-- once per battle. Deferred require avoids any load-time cycle.
+	local _tes = (require :: any)(script.Parent.TraitEffectService)
+	if _tes.HasUndyingWillPerk(unit) and not unit.undyingWillUsed then
+		unit.undyingWillKoCt = 0
+		print(string.format(
+			"[RacePassiveService] Undying Will (perk): %s KO'd — revive timer started",
 			unit.name
 		))
 	end

@@ -382,16 +382,22 @@ local function selectUnit(unitId)
 			-- Deployed: keep dimmed, thin border
 			entry.stroke.Color = Theme.Colors.Border
 			entry.stroke.Thickness = 1
+			if entry.nameLabel then entry.nameLabel.TextColor3 = Theme.Colors.TextPrimary end
 		elseif entry.id == unitId then
 			-- Selected: gold highlight
 			entry.stroke.Color = Theme.Colors.BorderFocused
 			entry.stroke.Thickness = 2
 			entry.button.BackgroundTransparency = 0.1
+			-- Bold yellow name so the player can see WHICH party unit is currently armed
+			-- for placement (the portrait highlight alone was too subtle). Font is already
+			-- PrimaryBold, so coloring it gold satisfies "yellow in bold". (2026-10-22)
+			if entry.nameLabel then entry.nameLabel.TextColor3 = Theme.Colors.TextGold end
 		else
 			-- Unselected: default
 			entry.stroke.Color = Theme.Colors.Border
 			entry.stroke.Thickness = 1
 			entry.button.BackgroundTransparency = 0.15
+			if entry.nameLabel then entry.nameLabel.TextColor3 = Theme.Colors.TextPrimary end
 		end
 	end
 end
@@ -466,13 +472,18 @@ local function createRosterUI(playerUnits, awayUnits)
 	local stripW   = unitCount * cellSize + (unitCount - 1) * cellGap + stripPad * 2
 	local stripH   = cellSize + stripPad * 2
 
-	-- ── Deploy strip (ornate frame, bottom-center) ──────────
+	-- ── Deploy strip (ornate frame, bottom-LEFT — the turn-order bar's spot in battle) ──
+	-- Moved from bottom-center to the bar's bottom-left corner (2026-10-23) so the shared
+	-- tile inspector can sit flush to its right, exactly as it does beside the bar in battle.
 	local strip = Theme.MakePanel("DeployStrip",
 		UDim2.new(0, stripW, 0, stripH),
 		nil, nil, screenGui)
-	strip.Position    = UDim2.new(0.5, 0, 1, -10)
-	strip.AnchorPoint = Vector2.new(0.5, 1)
+	strip.Position    = UDim2.new(0, 6, 1, -10)
+	strip.AnchorPoint = Vector2.new(0, 1)
 	strip.ClipsDescendants = true
+	-- Point the shared tile inspector at the strip so it anchors to it during deployment
+	-- the same way it anchors to the turn-order bar in battle. (2026-10-23)
+	if BattleHUD and BattleHUD.SetTileAnchor then BattleHUD.SetTileAnchor(strip) end
 
 	local innerPad = Instance.new("UIPadding", strip)
 	innerPad.PaddingTop    = UDim.new(0, stripPad)
@@ -579,8 +590,12 @@ local function createRosterUI(playerUnits, awayUnits)
 		-- Name strip (bottom overlay)
 		local nameStrip = Instance.new("Frame")
 		nameStrip.Name = "NameStrip"
-		nameStrip.Size = UDim2.new(1, 0, 0, 13)
-		nameStrip.Position = UDim2.new(0, 0, 1, -13)
+		-- Name band hugs the BOTTOM of the portrait (2026-10-23): the earlier 26px two-row
+		-- band covered ~half the face. 18px sits low, covering much less, while still giving
+		-- a long name room to wrap to a short second line. Face-visibility wins over fitting
+		-- two full rows (user ruling 2026-10-23).
+		nameStrip.Size = UDim2.new(1, 0, 0, 18)
+		nameStrip.Position = UDim2.new(0, 0, 1, -18)
 		nameStrip.BackgroundColor3 = Theme.Colors.BadgeBg
 		nameStrip.BackgroundTransparency = 0.4
 		nameStrip.BorderSizePixel = 0
@@ -596,6 +611,8 @@ local function createRosterUI(playerUnits, awayUnits)
 		nameLabel.TextSize = Theme.Text.Badge()
 		nameLabel.Font = Theme.Font.PrimaryBold
 		nameLabel.TextXAlignment = Enum.TextXAlignment.Center
+		-- Wrap to the second row before truncating, so two-line names show in full.
+		nameLabel.TextWrapped = true
 		nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
 		nameLabel.ZIndex = 3
 		nameLabel.Parent = nameStrip
@@ -684,138 +701,8 @@ end
 --------------------------------------------------
 -- MOUSE INPUT: Raycast → find Deploy_ part → fire event
 --------------------------------------------------
--- Show a unit in the shared BattleHUD compact panel (same panel/portrait-tap-to-detail
--- behaviour as battle). Builds the same field shape as the battle enemy-turn actor. The
--- portrait tap inside the panel calls _G.CTRBLXAI_OpenInspectorPanel, whose server handler
--- now falls back to allUnitsList during deployment, so the detailed window works here too.
-local function inspectUnit(ud)
-	if not (BattleHUD and ud) then return end
-	local elev = (GameConstants.GetElevation and ud.tileX and GameConstants.GetElevation(ud.tileX, ud.tileY)) or 1
-	local actor = {
-		id = ud.id, name = ud.name, side = ud.side,
-		level = ud.level, portraitAssetId = ud.portraitAssetId,
-		weaponName = ud.weaponName,
-		tileX = ud.tileX, tileY = ud.tileY, elevation = elev,
-		-- Real stats so the compact panel shows HP/MP/AP/RT/race/doctrine, not zeros. (2026-10-15)
-		currentHp = ud.currentHp, maxHp = ud.maxHp,
-		currentMp = ud.currentMp, maxMp = ud.maxMp,
-		currentAp = ud.currentAp, maxAp = 2, remainingRt = ud.remainingRt,
-		doctrine = ud.doctrine, race = ud.race,
-		statuses = {}, actions = {},
-	}
-	_G.CTRBLXAI_TileUnitIds = { ud.id }  -- single-unit tile; detail window needs no cycle list
-	BattleHUD.SetSelection({ kind = "unit", data = actor })
-	BattleHUD.Render({ state = "Idle", actor = actor })
-	-- The compact panel lives in the HUD ScreenGui (DisplayOrder 10), but DeploymentUI's
-	-- own ScreenGui is 15 and would render over it. Raise the HUD above 15 (but below the
-	-- detailed window at 140) so the panel is visible during deployment. Render/ensureRoot
-	-- has created the ScreenGui by now, so the setter is not a no-op. (2026-10-15)
-	if BattleHUD.SetDisplayOrder then BattleHUD.SetDisplayOrder(25) end
-end
-
--- Find a unit (player or enemy) occupying a tile, for inspect-on-tap.
-local function unitOnTile(tx, ty)
-	for _, ud in pairs(deployUnitData) do
-		if ud.tileX == tx and ud.tileY == ty then return ud end
-	end
-	return nil
-end
-
-local function clearInspect()
-	if BattleHUD and BattleHUD.ClearSelection then BattleHUD.ClearSelection() end
-end
-
--- Resolve the tile under a screen point (pads first, then terrain) and, if a unit
--- occupies it, open the compact inspector. Returns true if it handled the tap (a unit
--- was inspected OR an empty non-deploy tile cleared the panel). This runs BEFORE the
--- selectedUnitId guard so inspection works even after all units are placed (no unit is
--- selected then). Deployment (DeployUnit) still requires a selected unit, handled below.
-local function tryInspectAtPointer(screenPos): boolean
-	local camera = workspace.CurrentCamera
-	if not camera then return false end
-	local ray = camera:ScreenPointToRay(screenPos.X, screenPos.Y)
-	local tx, ty
-	-- UNIT TOKENS FIRST (2026-10-15 fix): a tap on a unit hits its token — a cylinder in
-	-- deployFolder (EnemyDeploy_<id>/PlayerDeploy_<id>) or an R15 model in UnitModels
-	-- (Unit_<id>). Those parts carry NO tile attributes, so the tile raycast below read
-	-- nil X/Y off them and bailed — which is why tapping a unit did nothing. Resolve the
-	-- unit directly from the token name and inspect it.
-	do
-		local unitFolders = {}
-		if deployFolder then table.insert(unitFolders, deployFolder) end
-		local umf = workspace:FindFirstChild("UnitModels")
-		if umf then table.insert(unitFolders, umf) end
-		if #unitFolders > 0 then
-			local rpt = RaycastParams.new()
-			rpt.FilterType = Enum.RaycastFilterType.Include
-			rpt.FilterDescendantsInstances = unitFolders
-			local tres = workspace:Raycast(ray.Origin, ray.Direction * 500, rpt)
-			if tres and tres.Instance then
-				local node = tres.Instance
-				while node and node ~= workspace do
-					local uid = node.Name:match("^EnemyDeploy_(.+)")
-						or node.Name:match("^PlayerDeploy_(.+)")
-						or node.Name:match("^Unit_(.+)")
-					if uid and deployUnitData[uid] then
-						inspectUnit(deployUnitData[uid]); return true
-					end
-					node = node.Parent
-				end
-			end
-		end
-	end
-	-- Pads first (match the deploy raycast order).
-	if TileHL then
-		local padFolder = TileHL.GetPadFolder()
-		if padFolder then
-			local rpp = RaycastParams.new()
-			rpp.FilterType = Enum.RaycastFilterType.Include
-			rpp.FilterDescendantsInstances = { padFolder }
-			local pres = workspace:Raycast(ray.Origin, ray.Direction * 500, rpp)
-			if pres and pres.Instance then
-				tx = pres.Instance:GetAttribute("X"); ty = pres.Instance:GetAttribute("Y")
-			end
-		end
-	end
-	-- Fall back to terrain tiles.
-	if not (tx and ty) then
-		local rp = RaycastParams.new()
-		rp.FilterType = Enum.RaycastFilterType.Include
-		local mapF = workspace:FindFirstChild("TemplateViewerMap")
-		rp.FilterDescendantsInstances = mapF and { mapF, deployFolder } or { deployFolder }
-		local res = workspace:Raycast(ray.Origin, ray.Direction * 500, rp)
-		if res and res.Instance then
-			-- Resolve the hit to its tile via the shared TileResolver -- the SAME primitive
-			-- the battle client uses, so the two phases can no longer drift on tile/object/
-			-- blocker resolution (BUG-047 convergence, 2026-10-16). Handles plain tiles,
-			-- map-object models (ObjTileX/ObjTileY) and blockers (Blocker_<x>_<y>). If the
-			-- shared module failed to load, degrade to a direct X/Y read for a plain tile.
-			local tilePart = TileResolver and TileResolver.ResolveTilePart(res.Instance, mapF) or nil
-			if tilePart then
-				tx, ty = tilePart:GetAttribute("X"), tilePart:GetAttribute("Y")
-			elseif res.Instance:GetAttribute("IsTemplateTile") then
-				tx, ty = res.Instance:GetAttribute("X"), res.Instance:GetAttribute("Y")
-			end
-		end
-	end
-	if not (tx and ty) then return false end
-	local ud = unitOnTile(tx, ty)
-	if ud then inspectUnit(ud); return true end
-	-- No unit on the tile: a map object there is inspectable too, via the SAME shared
-	-- BattleHUD object-inspector call the battle phase uses (kind="object"). Restores
-	-- map-object inspection during deployment through this one handler. (2026-10-15)
-	local objName = GameConstants.GetObjectAt and GameConstants.GetObjectAt(tx, ty) or nil
-	if objName and objName ~= "None" then
-		BattleHUD.SetSelection({ kind = "object", name = objName, x = tx, y = ty,
-			hp = (_G.CTRBLXAI_GetObjectHp and _G.CTRBLXAI_GetObjectHp(tx, ty)) or nil })
-		if BattleHUD.SetDisplayOrder then BattleHUD.SetDisplayOrder(25) end
-		return true
-	end
-	-- Empty tile that is NOT a deploy highlight: clear the panel. (A deploy-highlight
-	-- empty tile is left for the deploy path below to place the selected unit.)
-	if not pdHighlights[tx .. "_" .. ty] then clearInspect(); return true end
-	return false
-end
+-- (Inspection helpers removed 2026-10-23: unit/object/tile inspection is now owned by
+--  BattleVisualClient's shared tap-handler in BOTH phases. DeploymentUI is placement-only.)
 
 local function onInputBegan(input, gameProcessed)
 	-- DEBUG: log every click so we can see where it bails out
@@ -831,11 +718,10 @@ local function onInputBegan(input, gameProcessed)
 		and input.UserInputType ~= Enum.UserInputType.Touch then
 		return
 	end
-	-- INSPECT FIRST (independent of selection): tapping a unit opens the compact panel
-	-- whether or not a roster unit is selected for placement. Only the deploy path below
-	-- needs a selected unit. (2026-10-15 fix: the selectedUnitId guard used to bail here
-	-- and block all inspection once every unit was deployed.)
-	if tryInspectAtPointer(input.Position) then return end
+	-- INSPECTION IS NOT HANDLED HERE ANYMORE (MERGE 2026-10-23): BattleVisualClient's single
+	-- tap-handler now drives unit/object/tile inspection in BOTH phases. DeploymentUI is
+	-- placement-only -- it just places the selected unit on a deploy tile below. This removes
+	-- the two rival inspect paths that used to fight and wipe the panel.
 	if not selectedUnitId then return end
 	if not deployFolder then return end
 
@@ -888,8 +774,8 @@ local function onInputBegan(input, gameProcessed)
 	local ty = hitPart:GetAttribute("TileY") or hitPart:GetAttribute("Y")
 	if not tx or not ty then return end
 
-	-- Deploy path only (inspection already handled by tryInspectAtPointer above).
-	-- Only accept PD-highlighted tiles for deployment.
+	-- Deploy path only: inspection is owned by BattleVisualClient now (MERGE 2026-10-23);
+	-- this handler only places the selected unit. Only accept PD-highlighted tiles.
 	local key = tx .. "_" .. ty
 	if not pdHighlights[key] then
 		return
@@ -1065,6 +951,9 @@ BattleEvents.UnitDeployed.OnClientEvent:Connect(function(data)
 		-- Deselect all roster entries
 		for _, entry in ipairs(rosterEntries) do
 			entry.stroke.Color = Theme.Colors.Border
+			-- Clear the gold selected-name tint too, so no unit looks "armed" when
+			-- nothing is selected. (2026-10-22)
+			if entry.nameLabel then entry.nameLabel.TextColor3 = Theme.Colors.TextPrimary end
 		end
 	else
 		selectNextUndeployed()

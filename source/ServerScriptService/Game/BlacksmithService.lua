@@ -37,7 +37,7 @@
 --     1H=100, 2H=150, Off-Hand=60, Body=80, Head=60, Gloves=50, Feet=50,
 --     Accessory=70.
 --   economy_framework id=12 (Rarity Multiplier, Locked):
---     Broken=0.1, Common=1.0, Uncommon=1.5, Rare=2.5, Epic=4.0, Legendary=7.0,
+--     Common=1.0, Uncommon=1.5, Rare=2.5, Epic=4.0, Exalted=5.5, Legendary=7.0,
 --     Mythic=12.0, Transcendent=20.0, Unique=15.0.
 --   economy_framework id=21 (Downgrade, Locked): Free. No gold/materials/comp.
 --
@@ -80,11 +80,11 @@ local BASE_VALUE_BY_SLOT = table.freeze({
 -- economy_framework id=12 — Rarity Multiplier (keyed by rarity NAME string,
 -- which is how item.rarityId is stored by ItemGenerator).
 local RARITY_MULT = table.freeze({
-	Broken       = 0.1,
 	Common       = 1.0,
 	Uncommon     = 1.5,
 	Rare         = 2.5,
 	Epic         = 4.0,
+	Exalted      = 5.5,
 	Legendary    = 7.0,
 	Mythic       = 12.0,
 	Transcendent = 20.0,
@@ -93,11 +93,11 @@ local RARITY_MULT = table.freeze({
 
 -- materials_system id=22 — Quantity by Rarity (materials per upgrade level)
 local MATERIAL_QTY_BY_RARITY = table.freeze({
-	Broken       = 1,  -- not normally upgraded; treat as 1 to avoid div-by-zero paths
 	Common       = 1,
 	Uncommon     = 1,
 	Rare         = 2,
 	Epic         = 3,
+	Exalted      = 3,  -- matches Epic (shares Epic's passive ceiling); user-locked 2026-10-23
 	Legendary    = 4,
 	Mythic       = 5,
 	Transcendent = 6,

@@ -210,7 +210,7 @@ end
 -- durationCtOverride (optional, 2026-10-07): a skill-authored CT duration that
 -- replaces the status default for THIS application only (e.g. Veil of Weakness
 -- Weakened 1500 CT vs default 2000). nil = status default (all other callers).
-function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt, durationCtOverride)
+function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt, durationCtOverride, burnFractionOverride)
 	local def = GameConstants.STATUSES[statusId]
 	if not def then
 		warn("[StatusService] Unknown status: " .. tostring(statusId))
@@ -266,7 +266,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 			elseif def.reapply == "accumulate" then
 				local addedBurn = 0
 				if statusId == "Burn" and fireDamageDealt then
-					addedBurn = math.round(fireDamageDealt * def.burnFraction)
+					addedBurn = math.round(fireDamageDealt * (burnFractionOverride or def.burnFraction))
 				end
 				inst.storedBurn = (inst.storedBurn or 0) + addedBurn
 				inst.remainingTurns = def.duration
@@ -352,7 +352,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 	end
 
 	if statusId == "Burn" and fireDamageDealt then
-		instance.storedBurn = math.round(fireDamageDealt * def.burnFraction)
+		instance.storedBurn = math.round(fireDamageDealt * (burnFractionOverride or def.burnFraction))
 	elseif statusId == "Burn" then
 		instance.storedBurn = 0
 	end
@@ -1009,6 +1009,31 @@ end
 --------------------------------------------------
 -- GET STATUS SUMMARY (for broadcasting)
 --------------------------------------------------
+
+-- Current DOT tick damage for a single active status on `unit`, using the SAME formulas
+-- as GetStatusSummary / ProcessStartOfTurn (the authoritative DOT math lives here). Returns
+-- 0 if the unit does not have the status or it has no current DOT. Pure (no side effects);
+-- the caller applies the damage. Added for Perks & Flaws status Specialist "trigger" (2026-10-23).
+function StatusService.GetCurrentDotDamage(unit, statusId)
+	local inst = StatusService.HasStatus(unit, statusId)
+	if not inst then return 0 end
+	local def = GameConstants.STATUSES[inst.id]
+	if inst.id == "Poison" and def and def.dotFraction then
+		return math.max(1, math.round((unit.maxHp or 1) * def.dotFraction))
+	elseif inst.id == "Burn" then
+		local stored = inst.storedBurn or 0
+		if stored > 0 and not isBurnDamageImmune(unit) then
+			return math.max(1, math.round(stored))
+		end
+		return 0
+	elseif inst.id == "Venom" then
+		local stacks = inst.stacks or 1
+		return math.max(1, math.round((unit.maxHp or 1) * 0.03 * stacks))
+	elseif inst.id == "Bleed" then
+		return math.max(1, math.round((unit.maxHp or 1) * 0.05))
+	end
+	return 0
+end
 
 function StatusService.GetStatusSummary(unit)
 	local summary = {}

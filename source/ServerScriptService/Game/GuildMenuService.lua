@@ -83,7 +83,7 @@ local MERCHANT_REFRESH_BATTLES = 5
 -- UAT D1 fix 2026-10-07: Broken is NOT in the id 13 unlock list, so it is absent
 -- here and Broken items are refused ("cannot be upgraded").
 local BLACKSMITH_RARITY_LEVEL = table.freeze({
-	Common = 1, Uncommon = 1, Rare = 3, Epic = 5, Legendary = 7, Mythic = 9,
+	Common = 1, Uncommon = 1, Rare = 3, Epic = 5, Exalted = 6, Legendary = 7, Mythic = 9,
 })
 local ITEM_LEVEL_CAP = 99
 

@@ -95,7 +95,7 @@ end
 -- LOOKUP TABLES  (hardcoded because DB effect field is prose)
 --------------------------------------------------
 
--- Status Delivery: augment ID → status to apply on DEFENDER.
+-- Debuff: augment ID → status to apply on DEFENDER.
 -- Includes future IDs the designer has planned but may not yet exist
 -- in AugmentData; the service is lenient about missing definitions.
 local STATUS_DELIVERY_MAP = {
@@ -117,7 +117,7 @@ local STATUS_DELIVERY_MAP = {
 	["AUG-STUNNING-SUPPORT"]      = "Stun",
 }
 
--- Buff Delivery: augment ID → status to apply on ATTACKER (self-buff).
+-- Buff: augment ID → status to apply on ATTACKER (self-buff).
 local BUFF_DELIVERY_MAP = {
 	["AUG-HASTE-SUPPORT"]         = "Haste",
 	["AUG-REGENERATION-SUPPORT"]  = "Regeneration",
@@ -142,8 +142,8 @@ local STAT_SCALING_MAP = {
 -- Families handled by each hook.  Used for catch-all stub logging so
 -- that unimplemented augments get a helpful message instead of silence.
 local DAMAGE_RESOLVED_FAMILIES = {
-	["Status Delivery"] = true,
-	["Buff Delivery"]   = true,
+	["Debuff"] = true,
+	["Buff"]   = true,
 	["Recovery"]        = true,
 	["Purge"]           = true,
 	["Displacement"]    = true,
@@ -472,7 +472,7 @@ end
 --
 -- Called AFTER damage is applied and target is still alive.
 -- Trigger condition: damage > 0.
--- Families: Status Delivery, Buff Delivery, Recovery, Purge,
+-- Families: Debuff, Buff, Recovery, Purge,
 --           Displacement, Terrain Effect.
 --
 -- Returns: nil

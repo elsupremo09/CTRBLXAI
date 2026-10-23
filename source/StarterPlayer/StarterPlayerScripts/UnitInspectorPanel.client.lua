@@ -712,6 +712,25 @@ end
 local function renderStatsTab(content, data)
 	local ps = data.primaryStats or {}
 	local derived = data.derivedStats or {}
+	local STAT_ORDER = {"STR", "AGI", "INT", "VIT", "DEX", "LUK"}
+
+	-- Multiplier-based stats display as signed % vs the 1.0 baseline (match Info-tab,
+	-- user ruling 2026-10-23): 0.830 -> -17.00%, 1.230 -> +23.00%, baseline -> +0.00%.
+	local PCT_SIGNED = { debuffResist = true, rtDelayResist = true, skillPotency = true, healEfficiency = true }
+	local function signedPct(v) return string.format("%+.2f%%", ((v or 1) - 1) * 100) end
+	-- One formatter so a row and its explain-popup "current value" can never disagree.
+	local function formatDerivedValue(key, val)
+		if val == nil then return "-" end
+		if PCT_SIGNED[key] then return signedPct(val) end
+		local meta = GameConstants.STAT_META and GameConstants.STAT_META[key]
+		return tostring(val) .. (meta and meta.unit or "")
+	end
+
+	-- Tap-to-explain popup (ported from the loadout Info panel, user ruling 2026-10-23).
+	-- Closes over `data` (ps/derived). Reuses the panel's existing overlay teardown
+	-- (closeDetailOverlay / detailOverlayGui) so the click-outside guard treats it like
+	-- the gear/skill detail popups. Forward-declared so addRow can reference it.
+	local openStatExplain
 
 	local function addSection(col, title, order)
 		local hdr = Instance.new("TextLabel")
@@ -729,7 +748,8 @@ local function renderStatsTab(content, data)
 		return order + 1
 	end
 
-	local function addRow(col, text, order)
+	-- statKey (optional): when set, the row is tappable and opens the explainer.
+	local function addRow(col, text, order, statKey)
 		local lbl = Instance.new("TextLabel")
 		lbl.Size = UDim2.new(1, 0, 0, 14)
 		lbl.BackgroundTransparency = 1; lbl.BorderSizePixel = 0
@@ -740,20 +760,121 @@ local function renderStatsTab(content, data)
 		lbl.RichText = true; lbl.TextWrapped = true
 		lbl.Text = " " .. text; lbl.LayoutOrder = order
 		lbl.Parent = col
+		if statKey then
+			local tap = Instance.new("TextButton")
+			tap.Size = UDim2.fromScale(1, 1)
+			tap.BackgroundTransparency = 1; tap.Text = ""
+			tap.BorderSizePixel = 0; tap.AutoButtonColor = false
+			tap.ZIndex = 2; tap.Parent = lbl
+			tap.Activated:Connect(function() openStatExplain(statKey) end)
+		end
 		return order + 1
 	end
 
 	local function addDerived(col, keys, order)
 		for _, key in ipairs(keys) do
 			local val = derived[key]
-			if val then
+			if val ~= nil then
 				local meta = GameConstants.STAT_META and GameConstants.STAT_META[key]
 				local label = meta and meta.label or key
-				local suffix = meta and meta.unit or ""
-				order = addRow(col, string.format("%s: <b>%s%s</b>", label, tostring(val), suffix), order)
+				order = addRow(col, string.format("%s: <b>%s</b>", label, formatDerivedValue(key, val)), order, key)
 			end
 		end
 		return order
+	end
+
+	-- Explain popup definition (assigned to the forward-declared local above).
+	openStatExplain = function(key)
+		closeDetailOverlay()
+		local META = GameConstants.STAT_META or {}
+		local function isPrimary(k)
+			for _, s in ipairs(STAT_ORDER) do if s == k then return true end end
+			return false
+		end
+		local gui = Instance.new("ScreenGui")
+		gui.Name = "InspectorStatExplain"
+		gui.DisplayOrder = 150
+		gui.ResetOnSpawn = false
+		gui.Parent = player:WaitForChild("PlayerGui")
+		detailOverlayGui = gui
+		local backdrop = Instance.new("TextButton")
+		backdrop.Size = UDim2.fromScale(1, 1)
+		backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
+		backdrop.BackgroundTransparency = 0.5
+		backdrop.AutoButtonColor = false
+		backdrop.Text = ""; backdrop.BorderSizePixel = 0
+		backdrop.Parent = gui
+		backdrop.MouseButton1Click:Connect(closeDetailOverlay)
+		local panel = Theme.MakePanel("InspStatExplain", UDim2.new(0, 300, 0, 240), UDim2.new(0.5, 0, 0.5, 0), Vector2.new(0.5, 0.5), gui)
+		panel.ClipsDescendants = true
+		local pp = Instance.new("UIPadding", panel)
+		pp.PaddingTop = UDim.new(0, 10); pp.PaddingLeft = UDim.new(0, 12)
+		pp.PaddingRight = UDim.new(0, 12); pp.PaddingBottom = UDim.new(0, 10)
+		local list = Instance.new("ScrollingFrame")
+		list.Size = UDim2.new(1, 0, 1, -24)
+		list.BackgroundTransparency = 1; list.BorderSizePixel = 0
+		list.ScrollBarThickness = 3
+		list.CanvasSize = UDim2.new(0, 0, 0, 0)
+		list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		list.Parent = panel
+		local ll = Instance.new("UIListLayout", list)
+		ll.Padding = UDim.new(0, 4); ll.SortOrder = Enum.SortOrder.LayoutOrder
+		local lo = 0
+		local function addLine(txt, color, bold, wrap)
+			lo += 1
+			local t = Instance.new("TextLabel")
+			t.Size = UDim2.new(1, 0, 0, 16); t.AutomaticSize = Enum.AutomaticSize.Y
+			t.BackgroundTransparency = 1
+			t.Font = bold and Theme.Font.PrimaryBold or Theme.Font.Primary
+			t.TextSize = bold and Theme.Text.Body() or Theme.Text.Small()
+			t.TextColor3 = color or Theme.Colors.TextPrimary
+			t.TextXAlignment = Enum.TextXAlignment.Left
+			t.TextWrapped = wrap ~= false
+			t.Text = txt; t.LayoutOrder = lo; t.Parent = list
+		end
+		if isPrimary(key) then
+			local info = ps[key] or {}
+			local base = info.base or 0
+			local total = info.total or base
+			local bonus = info.bonus or (total - base)
+			addLine(key, Theme.Colors.TextGold, true)
+			local pdesc = (GameConstants.PRIMARY_STAT_DESC or {})[key]
+			if pdesc then addLine(pdesc, Theme.Colors.TextPrimary, false); addLine("", nil, false) end
+			addLine("Base (race growth + allocated):  " .. base, Theme.Colors.TextSecondary)
+			local bonusNote = (bonus ~= 0) and ("  (" .. (bonus > 0 and "+" or "") .. bonus .. " from gear / doctrine / race)") or ""
+			addLine("Effective:  " .. total .. bonusNote, Theme.Colors.TextSecondary)
+			addLine("", nil, false)
+			addLine("Powers these stats:", Theme.Colors.TextPrimary, true)
+			for dkey, meta in pairs(META) do
+				if meta.parent == key then
+					addLine("- " .. (meta.label or dkey) .. ":  " .. (meta.formula or ""), Theme.Colors.TextSecondary)
+				end
+			end
+		else
+			local meta = META[key]
+			if not meta then
+				addLine(key, Theme.Colors.TextGold, true)
+				addLine("No breakdown available for this stat.", Theme.Colors.TextSecondary)
+			else
+				addLine(meta.label or key, Theme.Colors.TextGold, true)
+				if meta.desc then addLine(meta.desc, Theme.Colors.TextPrimary, false); addLine("", nil, false) end
+				addLine("Formula:  " .. (meta.formula or "-"), Theme.Colors.TextSecondary)
+				if key == "baseRt" then
+					addLine("Own base (player unit):  400", Theme.Colors.TextSecondary)
+					addLine("+ Effective Armor WT:  " .. (derived.baseRtArmorWt or 0), Theme.Colors.TextSecondary)
+				end
+				local parent = meta.parent
+				if parent then
+					local pv = ps[parent] and ps[parent].total
+					addLine("Depends on " .. parent .. (pv and ("  (currently " .. pv .. ")") or ""), Theme.Colors.TextSecondary)
+				end
+				addLine("Current value:  " .. formatDerivedValue(key, derived[key]), Theme.Colors.TextPrimary, true)
+			end
+		end
+		Theme.MakeBarButton(panel, "Close", "Secondary", closeDetailOverlay, {
+			name = "Btn_InspStatExplainClose", autoWidth = false, minHeight = 20,
+			size = UDim2.new(0, 80, 0, 20), position = UDim2.new(1, -80, 1, -20),
+		})
 	end
 
 	-- 3-column container
@@ -783,14 +904,16 @@ local function renderStatsTab(content, data)
 	-- COLUMN 1: Primary Stats + Combat
 	local o1 = 1
 	o1 = addSection(col1, "PRIMARY STATS", o1)
-	for _, stat in ipairs({"STR", "AGI", "INT", "VIT", "DEX", "LUK"}) do
+	for _, stat in ipairs(STAT_ORDER) do
 		local info = ps[stat]
 		local total = info and info.total or 0
 		local base = info and info.base or total
 		local bonus = info and info.bonus or 0
-		local bonusStr = bonus > 0 and string.format(' <font color="rgb(100,255,100)">+%d</font>', bonus)
-			or bonus < 0 and string.format(' <font color="rgb(255,100,100)">%d</font>', bonus) or ""
-		o1 = addRow(col1, string.format("%s:<b>%d</b>%s (%d)", stat, total, bonusStr, base), o1)
+		-- Display (user ruling 2026-10-23): TOTAL first, then (base +/- net modifier).
+		-- No parentheses when nothing modifies the stat. Mirrors the loadout Info panel.
+		local parenStr = bonus > 0 and string.format(' (%d <font color="rgb(100,255,100)">+ %d</font>)', base, bonus)
+			or bonus < 0 and string.format(' (%d <font color="rgb(255,100,100)">- %d</font>)', base, -bonus) or ""
+		o1 = addRow(col1, string.format("%s: <b>%d</b>%s", stat, total, parenStr), o1, stat)
 	end
 	o1 = addSection(col1, "COMBAT", o1)
 	o1 = addDerived(col1, {"attackPower", "effectiveWt", "precision", "evasiveness", "basicAttackRt"}, o1)
@@ -809,7 +932,7 @@ local function renderStatsTab(content, data)
 	o3 = addSection(col3, "SKILLS", o3)
 	o3 = addDerived(col3, {"skillPotency", "bonusSkillRange", "channelReduction", "healEfficiency"}, o3)
 	o3 = addSection(col3, "OTHER", o3)
-	o3 = addDerived(col3, {"discoveryRadius", "unitFortune", "startingRt"}, o3)
+	o3 = addDerived(col3, {"discoveryRadius", "unitFortune", "baseRt", "startingRt"}, o3)
 end
 
 --------------------------------------------------

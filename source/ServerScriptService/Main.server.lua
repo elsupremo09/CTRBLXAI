@@ -1309,7 +1309,7 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 				hp        = (_aArch and ArmorData.GetScaledProfile(itemInst.baseArchetypeId, itemInst.itemLevel) or {}).hp or 0,
 				mp        = (_aArch and ArmorData.GetScaledProfile(itemInst.baseArchetypeId, itemInst.itemLevel) or {}).mp or 0,
 				projectileType = (_wArch and _wArch.projectileType) or nil,
-				element   = _wArch and WeaponData.GetElement(itemInst.baseArchetypeId) or nil,
+				element   = _wArch and WeaponData.GetInstanceElement(itemInst) or nil,
 				archPassiveName = (_aArch and _aArch.passiveName) or nil,
 				archPassiveDesc = (_aArch and _aArch.passiveDesc) or nil,
 				itemLevel = itemInst.itemLevel or 1,
@@ -1986,6 +1986,8 @@ local function resetUnitForNewBattle(u)
 	u.combatStackPct = 0
 	u.combatStackAge = 0
 	u.zombieReviveUsed = nil
+	u.undyingWillUsed = nil   -- Undying Will perk (TRAIT-P-179): reset once-per-battle revive
+	u.undyingWillKoCt = nil
 	u.tileX = 0
 	u.tileY = 0
 	-- Facing tokens are ABBREVIATIONS everywhere (GameConstants.FACING_VECTORS keys:
@@ -2388,6 +2390,10 @@ while true do
 			EquipmentService.RebuildUnitStats(u)
 		end
 	end
+	-- Expedition Fortune for mid-battle rewards (chests / treasure / Interact): reset each
+	-- battle from the deployed team so ObjectEffectService reward hooks use THIS team's
+	-- Fortune. The post-battle block re-sets it from who actually fought. (2026-10-23)
+	RewardService.SetExpeditionFortune(RewardService.ComputeExpeditionFortune(allUnitsList))
 
 	print("====================================")
 	print("CTRBLXAI — Slice 3: Skills and Real Combat")
@@ -2846,7 +2852,28 @@ while true do
 	-- enemy outfits from a seeded RNG (own offset, so enemyRng is not consumed),
 	-- lock UGC looks until battle end, and dress every Unit_ model as it is parented
 	-- (covers the enemy, deploy and fallback spawn paths below).
-	UGCOutfitService.PlanEnemyOutfits(PLAYER_ID, deployEnemyUnits, Random.new((generatedMap.seed or os.time()) + 90002))
+	-- PLAYER-WORN EXCLUSION (ugc_rules 26, Locked 2026-10-22): collect the UGC item ids
+	-- currently equipped by ANY unit in the WHOLE active (chosen saved) party — up to 7
+	-- units, INCLUDING benched units not deployed this battle (PartyService.GetMembers
+	-- returns the full party, bench happens at placement, not here). Reuse the existing
+	-- read-only UGCService.GetUnitLookIds accessor (same path that dresses player units);
+	-- no new accessor, no RNG consumed. PlanEnemyOutfits removes these ids from the
+	-- enemy candidate pool FIRST so zero enemies advertise an item the party already
+	-- wears. Determinism holds: the set is derived from the party's current equips, a
+	-- reproducible battle input (ugc_rules 27).
+	local partyWornLookIds: { number } = {}
+	do
+		local seen: { [number]: boolean } = {}
+		for _, partyUnitId in PartyService.GetMembers(PLAYER_ID, chosenPartySlot or "") do
+			for _, wornId in UGCService.GetUnitLookIds(PLAYER_ID, partyUnitId) do
+				if not seen[wornId] then
+					seen[wornId] = true
+					table.insert(partyWornLookIds, wornId)
+				end
+			end
+		end
+	end
+	UGCOutfitService.PlanEnemyOutfits(PLAYER_ID, deployEnemyUnits, Random.new((generatedMap.seed or os.time()) + 90002), partyWornLookIds)
 	UGCService.SetBattleActive(PLAYER_ID, true)
 	UGCOutfitService.WatchUnitModels(PLAYER_ID)
 
@@ -3411,6 +3438,10 @@ while true do
 		state.ctStatusUnits = nil
 		for _, u in ipairs(ctStatusUnits) do
 			BattleVisualBroadcaster.UnitStateChanged(u)
+			-- Shield visual (2026-10-23): keep the client shield indicator in sync as the
+			-- pool decays/expires on CT ticks (absolute shield_total, read by the broadcaster).
+			-- Harmless no-op for units with no shield (shieldTotal = 0 just hides the pill).
+			BattleVisualBroadcaster.ShieldChanged(u, 0, "decay")
 			-- Sinking (and any CT-tick effect) can KO a unit mid-tick: ProcessCtTick set
 			-- isAlive=false and HP=0. Broadcast the defeat the same way every other death
 			-- does (clear the tile, remove the token) so the unit doesn't linger on the board.
@@ -3568,6 +3599,10 @@ while true do
 
 	local isQualifyingVictory = (winner == "Player")
 	local battleGoldEarned = 0 -- set by the BATTLE GOLD block below; shown on the reward screen
+	-- Expedition Fortune (loot_progression, 2026-10-23): the deployed team's post-gear
+	-- Fortune drives loot rarity quality AND the Fortune gold multiplier for THIS battle's
+	-- rewards. Computed from who actually fought (allUnitsList); neutral when LUK+gear low.
+	RewardService.SetExpeditionFortune(RewardService.ComputeExpeditionFortune(allUnitsList))
 
 	--------------------------------------------------
 	-- POST-BATTLE: UPDATE UNIT RECORDS (Slice 4K)
@@ -3729,7 +3764,17 @@ while true do
 
 	-- Step 2b: Apply 35% recovery to all survivors (regardless of outcome)
 	print("[PostBattle] Applying 35% recovery to survivors")
-	local recovery = PersistentStateService.ApplyPostBattleRecovery(PLAYER_ID)
+	-- Perks & Flaws (2026-10-23): build per-unit recovery-fraction overrides from the LIVE
+	-- units (which carry trait ids; the persistent-state layer does not). Resilient adds to
+	-- the 0.35 baseline, Slow to Recover replaces it. Units with neither are left out (default).
+	local recoveryOverrides = {}
+	for _, u in ipairs(allUnitsList) do
+		if u.side == "Player" then
+			local frac = TraitEffectService.GetPostBattleRecoveryFraction(u, 0.35)
+			if frac ~= 0.35 then recoveryOverrides[u.id] = frac end
+		end
+	end
+	local recovery = PersistentStateService.ApplyPostBattleRecovery(PLAYER_ID, recoveryOverrides)
 	for unitId, result in pairs(recovery) do
 		print(string.format("  %s: HP+%d MP+%d", unitId, result.hpRecovered, result.mpRecovered))
 	end
@@ -3837,14 +3882,35 @@ while true do
 		end
 	end
 
+	-- Active (still-away) dispatches with their day countdown, grouped by mission, so the
+	-- victory/defeat screen shows WHEN each order ends and WHO is on it. Read AFTER
+	-- OnBattleCompleted above, so remainingDays already reflects this battle's day burn and
+	-- any returned units are gone. Away units aren't in state.units -> names via playerUnits. (2026-10-23)
+	local activeDispatch = {}
+	do
+		local byMission = {}
+		for _, rec in ipairs(DispatchService.GetActiveDispatches(PLAYER_ID)) do
+			local g = byMission[rec.missionId]
+			if not g then
+				g = { missionId = rec.missionId, tier = rec.tier, remainingDays = rec.remainingDays, units = {} }
+				byMission[rec.missionId] = g
+				table.insert(activeDispatch, g)
+			end
+			local nm = rec.unitId
+			local pu = playerUnits[rec.unitId]
+			if pu and pu.name then nm = pu.name end
+			table.insert(g.units, nm)
+		end
+	end
+
 	-- Always show the result screen on a DEFEAT too (2026-10-16): previously a defeat with no
 	-- rewards/gold/dispatch skipped this entirely, leaving only the bare 5s "DEFEAT" banner.
 	-- Firing it on defeat gives the same framed screen (DEFEAT title + a no-spoils line) with a
 	-- Continue button, and the rewardContinueSignal wait keeps the loop paced like a victory.
-	if #rewardSummaries > 0 or battleGoldEarned > 0 or #dispatchSummary > 0 or not isQualifyingVictory then
-		print(string.format("[PostBattle] Sending %d reward(s) + %d gold + %d dispatch to client", #rewardSummaries, battleGoldEarned, #dispatchSummary))
+	if #rewardSummaries > 0 or battleGoldEarned > 0 or #dispatchSummary > 0 or #activeDispatch > 0 or not isQualifyingVictory then
+		print(string.format("[PostBattle] Sending %d reward(s) + %d gold + %d dispatch + %d active-dispatch to client", #rewardSummaries, battleGoldEarned, #dispatchSummary, #activeDispatch))
 		BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary, gold = battleGoldEarned,
-			dispatch = dispatchSummary, defeat = not isQualifyingVictory })
+			dispatch = dispatchSummary, activeDispatch = activeDispatch, daysElapsed = daysElapsed, defeat = not isQualifyingVictory })
 		rewardContinueSignal.Event:Wait()
 		print("[PostBattle] Player acknowledged rewards")
 	end

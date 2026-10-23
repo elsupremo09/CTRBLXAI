@@ -468,11 +468,17 @@ function DispatchService.GetActiveDispatches(playerId: string)
 	local a = activeOf(playerId)
 	local out = {}
 	for unitId, rec in a do
+		-- remainingDays drives the reward-screen countdown; derive it nil-safely for old
+		-- saves that predate the field (same fallback ResolveReturns uses). (2026-10-23)
+		local remainingDays = rec.remainingDays
+		if remainingDays == nil then remainingDays = math.max(1, math.floor(rec.duration or 1)) end
 		table.insert(out, {
 			unitId = unitId,
 			missionId = rec.missionId,
 			tier = rec.tier,
+			duration = rec.duration,
 			returnBattle = rec.returnBattle,
+			remainingDays = remainingDays,
 			xp = rec.xp,
 		})
 	end

@@ -201,6 +201,13 @@ local function step4_BuildPassivePool(rarity, archetype, bonusBp, archetypeId)
 			and passive.bpCost <= bonusBp then
 			local eligible = passive.eligible
 			local weight = nil
+			-- WEAPON-STAT passives (Brutal/Stagger/Bulwark) are MAIN-HAND WEAPONS ONLY
+			-- (user ruling 2026-10-23): they modify weapon damage / RT delay, meaningful
+			-- only on the attacking weapon. They share isWeaponish eligibility labels with
+			-- other passives, so they previously rolled onto off-hands/gloves where they
+			-- were inert. This flag rejects those slots without touching the shared labels.
+			-- Combat already excludes them from the multi-slot path (GetCombatKeys).
+			local weaponStatOnly = (passiveId == "PAS-001" or passiveId == "PAS-002" or passiveId == "PAS-046")
 
 			if eligible == "Any" then
 				weight = 1.0
@@ -251,6 +258,9 @@ local function step4_BuildPassivePool(rarity, archetype, bonusBp, archetypeId)
 				end
 			end
 
+			if weaponStatOnly and not isWeapon then
+				weight = nil  -- main-hand weapons only; reject off-hand/gloves/armor
+			end
 			if weight ~= nil then
 				table.insert(pool, { id = passiveId, passive = passive, weight = weight })
 			end

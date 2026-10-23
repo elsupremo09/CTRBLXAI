@@ -595,13 +595,27 @@ BattleEvents.RequestAttachAugment.OnServerInvoke = function(player, unitId, slot
 	if targetSkillId then
 		local skillDef = CommandService.GetSkill(targetSkillId)
 		if skillDef and augDef.requiredSkillTags then
-			local skillTags = skillDef.tags or {}
-			local hasMatch = false
-			for _, reqTag in ipairs(augDef.requiredSkillTags) do
-				for _, sTag in ipairs(skillTags) do
-					if reqTag == sTag then hasMatch = true; break end
+			-- " OR "-aware requirement match (2026-10-23). Each requiredSkillTags entry may
+			-- list alternatives joined by " OR " (e.g. "Buff OR Healing OR Support"); the entry
+			-- is satisfied if ANY alternative is one of the skill's tags, and the augment is
+			-- compatible only if EVERY entry is satisfied. Mirrors EnemyGenerator.skillSatisfiesReq
+			-- (the reference impl); fixes the bug where a compound string was compared whole.
+			local skillTagSet = {}
+			for _, sTag in ipairs(skillDef.tags or {}) do skillTagSet[sTag] = true end
+			local function entrySatisfied(entry)
+				local remaining = entry
+				while true do
+					local fs, fe = string.find(remaining, " OR ", 1, true)
+					local option = fs and string.sub(remaining, 1, fs - 1) or remaining
+					option = string.gsub(option, "^%s*(.-)%s*$", "%1")
+					if option ~= "" and skillTagSet[option] then return true end
+					if not fs then return false end
+					remaining = string.sub(remaining, fe + 1)
 				end
-				if hasMatch then break end
+			end
+			local hasMatch = true
+			for _, reqTag in ipairs(augDef.requiredSkillTags) do
+				if not entrySatisfied(reqTag) then hasMatch = false; break end
 			end
 			if not hasMatch then
 				local needed = table.concat(augDef.requiredSkillTags, "/")
