@@ -20,6 +20,10 @@ local CommandService          = require(Game:WaitForChild("CommandService"))
 local TargetingService        = require(Game:WaitForChild("TargetingService"))
 local BattleVisualBroadcaster = require(Game:WaitForChild("BattleVisualBroadcaster"))
 local StatusService           = require(Game:WaitForChild("StatusService"))
+-- Connect UnitSchema to StatusService once at boot (2026-10-26). This slot existed but was
+-- never filled, so shield bookkeeping (pill draw-down, Retribution Shell on break) and
+-- 'healing weakens Venom' in the main heal step never ran.
+UnitSchema.SetStatusService(StatusService)
 local TraitEffectService      = require(Game:WaitForChild("TraitEffectService"))
 local CombatResolver          = require(Game:WaitForChild("CombatResolver"))
 local ItemGenerator           = require(Game:WaitForChild("ItemGenerator"))
@@ -32,6 +36,7 @@ local RewardService           = require(Game:WaitForChild("RewardService"))
 local DisplacementService     = require(Game:WaitForChild("DisplacementService"))
 local TileEffectService       = require(Game:WaitForChild("TileEffectService"))
 local TileCrossEffectService  = require(Game:WaitForChild("TileCrossEffectService"))
+local PulseScheduler          = require(Game:WaitForChild("PulseScheduler"))
 local RacePassiveService      = require(Game:WaitForChild("RacePassiveService"))
 local ArmorPassiveService     = require(Game:WaitForChild("ArmorPassiveService"))
 local _AugmentEffectService    = require(Game:WaitForChild("AugmentEffectService"))
@@ -41,6 +46,7 @@ local MapRenderer             = require(Game:WaitForChild("MapRenderer"))
 local EnemyGenerator          = require(Game:WaitForChild("EnemyGenerator"))
 local TraitRoller             = require(Game:WaitForChild("TraitRoller"))
 local ObjectEffectService     = require(Game:WaitForChild("ObjectEffectService"))
+local ObjectiveService        = require(Game:WaitForChild("ObjectiveService"))
 local WeatherService          = require(Game:WaitForChild("WeatherService"))
 local BattlefieldEventService = require(Game:WaitForChild("BattlefieldEventService"))
 local ItemDisplay             = require(Game:WaitForChild("ItemDisplay")) -- item->UI entry builders (extracted 2026-10-12)
@@ -152,6 +158,7 @@ local function computeBattleGold(units, playerUnitsById, quest, isVictory)
 				enemyType = u.enemyType,
 				level = u.level or 0,
 				goldMult = (type(u.rewardOnDeath) == "table" and tonumber(u.rewardOnDeath.goldMult)) or nil,
+				goldHarvest = u._goldHarvested == true,  -- Gold Harvest augment: +25% this kill (2026-10-25)
 			}
 			killCount += 1
 		elseif u.side == "Player" and not u.isSummon and playerUnitsById and playerUnitsById[u.id] then
@@ -166,7 +173,9 @@ local function computeBattleGold(units, playerUnitsById, quest, isVictory)
 	local eventGoldMult = 1
 	for _, k in ipairs(kills) do
 		local base = KILL_GOLD_BASE[k.enemyType or ""] or KILL_GOLD_BASE.Grunt
-		killGold += base * (1 + (k.level or 0) / 100) * band
+		local kg = base * (1 + (k.level or 0) / 100) * band
+		if k.goldHarvest then kg = kg * 1.25 end  -- Gold Harvest augment (2026-10-25)
+		killGold += kg
 		if k.goldMult and k.goldMult > eventGoldMult then eventGoldMult = k.goldMult end
 	end
 	killGold = math.floor(killGold)
@@ -446,6 +455,52 @@ DispatchService.SetCurrencyCredit(function(pid, grant) return CurrencyService.Cr
 ExploreService.SetCurrencyProvider(currencyProvider)
 ExploreService.SetRewardService(RewardService)
 ExploreService.SetGuildService(GuildService)
+-- Torture objective gate (2026-10-24): tell ObjectiveService how to detect a
+-- deployed player unit carrying a targetable revive consumable ("KO Ally" rule)
+-- with charges, so Torture only rolls when reviving an enemy is actually possible.
+-- DI keeps ObjectiveService a leaf module; Main owns the ConsumableData lookup.
+ObjectiveService.SetRevivePotionChecker(function(u)
+	if not u then return false end
+	-- (1) A targetable revive CONSUMABLE ("KO Ally" rule) with charges.
+	local slots = u.consumableSlots
+	if type(slots) == "table" then
+		for _, slot in pairs(slots) do
+			if slot and slot.consumableId and (slot.currentCharges or 0) > 0 then
+				local def = ConsumableData.Items[slot.consumableId]
+				if def and def.targetRules == "KO Ally" then
+					return true
+				end
+			end
+		end
+	end
+	-- (2) An equipped revive SKILL (isRevive). skillIds is populated at battle setup
+	-- from the unit's loadout (doctrine skill + equipped skill cards). Revive skills
+	-- are equippable loot (not doctrine-locked), so a skill-only party can also revive
+	-- an enemy -> Torture must be able to roll for them too. (2026-10-24 follow-up.)
+	for _, sid in ipairs(u.skillIds or {}) do
+		local sdef = CommandService.GetSkill(sid)
+		if sdef and sdef.isRevive then
+			return true
+		end
+	end
+	return false
+end)
+-- Power of Nature gate (2026-10-24): a deployed player unit has an element source
+-- if its equipped weapon is elemental OR any of its skills carries an element tag
+-- (reuses CombatResolver.ExtractSkillElement — single source for element parsing).
+-- Lets Power of Nature roll only when the party can actually burn/transform terrain.
+ObjectiveService.SetElementSourceChecker(function(u)
+	if not u then return false end
+	local we = u.weaponElement
+	if we and we ~= "Physical" then return true end
+	for _, sid in ipairs(u.skillIds or {}) do
+		local def = CommandService.GetSkill(sid)
+		if def and CombatResolver.ExtractSkillElement(def) ~= "Physical" then
+			return true
+		end
+	end
+	return false
+end)
 -- TODO when their UIs/roster-availability land: MerchantService.SetMerchantLevelProvider(...),
 --   DispatchService.SetAvailabilitySink(...), DispatchService.SetRosterProvider(...)
 
@@ -913,6 +968,41 @@ if game:GetService("RunService"):IsStudio() then
 			print(string.format("[Dev] +10000 gold -> balance %d", bal and bal.gold or -1))
 			doSave()
 
+		elseif cmd.action == "DevGrantAllCards" then
+			-- Dev (Studio only): grant 1 copy of every skill card (SKL-) + every augment (AUG-)
+			-- to the card inventory, and 1 loose copy of every doctrine to the doctrine inventory
+			-- (NOT as a skill card). Enumerated LIVE from the content modules so any new content
+			-- (e.g. the trap-deploy skills) is covered automatically. Idempotent: skill/augment
+			-- cards are set to at least 1 (never stacked on repeat press); a doctrine is minted
+			-- only when no loose copy is already owned. Doctrine-exclusive DOC- SKILLS in SkillData
+			-- are intentionally skipped (they arrive bundled with their doctrine, not as cards).
+			local nSk, nAug, nDoc = 0, 0, 0
+			for id, def in pairs(SkillData) do
+				if type(def) == "table" and def.name and string.sub(id, 1, 4) == "SKL-" then
+					if not cardInventory.skillCards[id] then
+						cardInventory.skillCards[id] = 1
+						nSk += 1
+					end
+				end
+			end
+			for id, def in pairs(AugmentData) do
+				if type(def) == "table" and def.name then
+					if not cardInventory.augmentCards[id] then
+						cardInventory.augmentCards[id] = 1
+						nAug += 1
+					end
+				end
+			end
+			local looseStacks = DoctrineInventoryService.GetLooseStacks(PLAYER_ID)
+			for id, def in pairs(DoctrineData) do
+				if type(def) == "table" and def.name and not looseStacks[id] then
+					DoctrineInventoryService.Mint(PLAYER_ID, id)
+					nDoc += 1
+				end
+			end
+			print(string.format("[Dev] Grant-all: +%d skill cards, +%d augments, +%d doctrines", nSk, nAug, nDoc))
+			doSave()
+
 		elseif cmd.action == "DevResetUGCRecords" then
 			-- Dev: free trials usable again + rent price back to base. Then save.
 			local t, r = UGCService.DevResetTrialRentRecords(PLAYER_ID)
@@ -1046,6 +1136,7 @@ if game:GetService("RunService"):IsStudio() then
 				for _, u in ipairs(state.units) do if u.side == "Enemy" and u.isAlive then ec = ec + 1 end end
 				state.enemyCountAtStart = ec
 				state.playerDeployTiles = (generatedMap and generatedMap.deploymentZones and generatedMap.deploymentZones.player) or {}
+				state.enemyDeployTiles = (generatedMap and generatedMap.deploymentZones and generatedMap.deploymentZones.enemy) or {}  -- Fear destination + terrain protection (2026-10-26)
 				-- Seed from the map seed (varies per battle). Was state.ct + 70007, and ct is 0 at
 				-- battle start, so every battle rolled the SAME events (always Fog Spirit).
 				-- Per-battle seed, stored on state so the round/turn/weather rolls vary per battle too.
@@ -1371,14 +1462,16 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 			rtCost       = (function()
 				if not regDef then return 0 end
 				local lvl = (unit.equipmentSlots and unit.equipmentSlots.MainHand and unit.equipmentSlots.MainHand.itemLevel) or 1
+				local augRt = CommandService.GetAugmentRtMultiplier(unit, regDef.id or sid)  -- e.g. Shared Resolve x2
 				local fx = GameConstants.CalcFixedSkillRt(regDef.id or sid, lvl)
-				if fx then return fx end
+				if fx then return math.round(fx * augRt) end
 				if regDef.rtMult then
 					local baseComp = StatusService.GetModifiedBaseRt(unit) * GameConstants.BASIC_ATTACK_RT_FACTOR
 					local wWt = GameConstants.CalcEffectiveWt(unit.weaponWt or 10, (unit.effectiveStats or {}).STR or 10)
-					return math.round((baseComp + wWt) * regDef.rtMult)
+					-- Same rounding order as the charge (CommandService): skill RT first, then the augment x.
+					return math.round(math.round((baseComp + wWt) * regDef.rtMult) * augRt)
 				end
-				return regDef.rtCost or 0
+				return math.round((regDef.rtCost or 0) * augRt)
 			end)(),
 			channelTime  = regDef and regDef.channelTime or 0,
 			power        = skillPower,
@@ -1412,7 +1505,7 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		if regDef then
 			local isHeal = regDef.isHealing
 			skillsData[#skillsData].estimatedDamage = (not isHeal) and math.round(CombatResolver.EstimateSkillPower(unit, regDef)) or nil
-			skillsData[#skillsData].estimatedHeal   = isHeal and math.round(CombatResolver.EstimateHealPower(unit)) or nil
+			skillsData[#skillsData].estimatedHeal   = isHeal and math.round(CombatResolver.EstimateHealPower(unit, regDef)) or nil
 		end
 	end
 
@@ -1765,6 +1858,16 @@ local function establishPlayerUnitFromSave(u)
 	-- 6 slots: 1-3 open, 4-6 locked (unlock via progression)
 	local savedCons = savedConsumableSlots[u.id]
 	if savedCons then
+		-- Parked items (DB Status PARKED, user 2026-10-27) and items that no longer exist (deleted
+		-- CON-016 Magnetic Snare / UTI-012 Recovery Winch, user 2026-10-27) leave the slot empty.
+		for idx, s in pairs(savedCons) do
+			local cid = type(s) == "table" and s.consumableId or nil
+			local d = cid and ConsumableData.GetById(cid) or nil
+			if cid and (not d or d.parked) then
+				print(`[Main] {u.name or u.id}: {d and ("parked item " .. d.name) or ("removed item " .. tostring(cid))} cleared from consumable slot {idx}`)
+				savedCons[idx] = nil
+			end
+		end
 		u.consumableSlots = savedCons
 	end
 	if not u.consumableSlots then
@@ -1920,7 +2023,7 @@ function doSave()
 			rosterState[unitId].skillLoadout = unit.skillLoadout or nil
 			rosterState[unitId].statAllocation = unit.statAllocation or nil
 			rosterState[unitId].records = unit.records or nil
-			rosterState[unitId].consumableSlots = unit.consumableSlots or nil
+			rosterState[unitId].consumableSlots = CommandService.SaveableConsumableSlots(unit.consumableSlots) or nil
 			-- Player-chosen 2D portrait (option B); nil clears it.
 			rosterState[unitId].portraitAssetId = unit.portraitAssetId or nil
 			-- Player-chosen body/skin tint {r,g,b}; nil clears it.
@@ -1974,6 +2077,7 @@ end
 -- contribution is zero and no stale stat delta can survive the wipe.
 local function resetUnitForNewBattle(u)
 	u.isAlive = true
+	u._revivedThisBattle = nil  -- kill-credit revive stamp is battle-scoped
 	u.currentAp = 0
 	u.statusInstances = {}
 	u.shield_total = 0
@@ -1983,6 +2087,7 @@ local function resetUnitForNewBattle(u)
 	u.channelPhase = nil
 	u.channelResolveCt = nil
 	u.channelRt = nil
+	u.pendingActivationCt = nil  -- same fields as UnitSchema.ClearChannelState
 	u.combatStackPct = 0
 	u.combatStackAge = 0
 	u.zombieReviveUsed = nil
@@ -2165,6 +2270,16 @@ while true do
 			MapRenderer.ReshapeTile(mapFolder, x, y, terrain, elev)
 		end
 	end)
+	-- Excavation Drill (2026-10-26, UAT D1): a LOWERED tile must also drop its voxel column.
+	-- Clear the old column (at the old height), reshape the Part, then rebuild the column at
+	-- the new height. Single-tile FillBlocks only (never a whole-map clear).
+	ObjectEffectService.SetTileLowerer(function(x, y, terrain, elev)
+		if mapFolder then
+			MapRenderer.ClearTileVoxelColumn(mapFolder, x, y)
+			MapRenderer.ReshapeTile(mapFolder, x, y, terrain, elev)
+			MapRenderer.RebuildTileVoxelColumn(mapFolder, x, y, terrain)
+		end
+	end)
 
 	MapService.ClearCache()  -- clear so Regenerate dev tool can generate fresh
 
@@ -2224,12 +2339,48 @@ while true do
 		if state then return ObjectEffectService.ConsumeExplosiveObjectAt(state, x, y) end
 		return false
 	end)
+	-- Terrain Shaper / Terra Former objectives (2026-10-24): count player-caused
+	-- elevation changes (explosion terrain) + terrain transforms (element on tile).
+	-- Closure over the battle `state` upvalue, like the callbacks above; nil-safe.
+	TileEffectService.SetObjectiveCounter(function(key, amount)
+		if state then ObjectiveService.RecordEvent(state, key, amount) end
+	end)
 	BattleCoordinator.SetTileEffectService(TileEffectService)
 	CommandService.SetTileEffectService(TileEffectService)
+	-- Pulse scheduler wiring (2026-10-26): fixed-CT deployable/delayed pulses. Init with
+	-- the effect services it routes to, then inject into the clock (BattleCoordinator) and
+	-- the deploy path (CommandService) so item use can register pulses. Cycle-free injection.
+	PulseScheduler.Init({ UnitSchema = UnitSchema, StatusService = StatusService, TileEffectService = TileEffectService, GameConstants = GameConstants, TargetingService = TargetingService, ObjectEffectService = ObjectEffectService })
+	BattleCoordinator.SetPulseScheduler(PulseScheduler)
+	-- Firebreak zones (user ruling 2026-10-27): StatusService asks TileEffectService.
+	StatusService.SetFireGuardQuery(function(x, y) return TileEffectService.IsFirebreak(x, y) end)
+	-- Scanner Lens zones (user ruling 2026-10-27): enemies of the zone's owner cannot Hide there.
+	StatusService.SetHideBlockQuery(function(u) return ObjectEffectService.IsHideBlocked(u) end)
+	-- Rescue Beacon (2026-10-26): before every battle-end check, revive the first allied KO
+	-- near a beacon, then re-label the tiles here (tile labels live in Main).
+	BattleCoordinator.SetKoHook(function(st)
+		local revived = CommandService.ProcessRescueBeacons(st)
+		for _, r in ipairs(revived or {}) do
+			-- Clear the tile the unit fell on (UAT advisory 2026-10-26), then label the new one.
+			if r.oldX and r.oldY then clearTileOccupant(r.oldX, r.oldY) end
+			setTileOccupant(r.unit.tileX, r.unit.tileY, r.unit.name, "Unit (" .. r.unit.side .. ")", "Blocking")
+		end
+	end)
+	CommandService.SetPulseScheduler(PulseScheduler)
 	-- Summon spawner injection (2026-10-06): lets CommandService route the six summon
 	-- skills to EnemyGenerator.SpawnSummon without a hard require (cycle-free, mirrors
 	-- the TileEffectService injection above). EnemyGenerator is required at the top.
 	CommandService.SetEnemyGenerator(EnemyGenerator)
+	-- Weather beacon items (Rain/Sun/Storm) run through WeatherService from the Item branch.
+	CommandService.SetWeatherService(WeatherService)
+	-- Augment decoy/turret spawn needs the summon spawner (2026-10-24): inject the public
+	-- CommandService wrapper into AugmentEffectService. After SetEnemyGenerator so the
+	-- underlying spawnSummonFor has its generator dependency.
+	_AugmentEffectService.SetSummonHandler(CommandService.SpawnAugmentSummon)
+	_AugmentEffectService.SetInterruptHandler(BattleCoordinator.InterruptChanneling)
+	if _AugmentEffectService.SetKnockbackHandler then
+		_AugmentEffectService.SetKnockbackHandler(CommandService.ApplyAugmentKnockback)
+	end
 	-- Round 2 terrain pass (2026-09-29): pathfinding/hit-quality/slide services also
 	-- need the TileEffectService reference (Tar Pit move cost, Steam evasion, Oily slide).
 	TargetingService.SetTileEffectService(TileEffectService)
@@ -2602,6 +2753,17 @@ while true do
 			for id, qty in pairs(starterSkills) do cardInventory.skillCards[id] = qty end
 			for id, qty in pairs(starterAugments) do cardInventory.augmentCards[id] = qty end
 			print("[Main] Starter cards loaded (6 skill, 4 augment)")
+		end
+	end
+
+	-- Tags-only augment cleanup on save load (user ruling 2026-10-26): equipped augments that no
+	-- longer fit their skill are unequipped and returned to the card inventory restored above.
+	-- Idempotent. A player-facing notice listing the removed augments is pending the user's
+	-- approval of its wording (no new helper text without approval); Output logs each removal.
+	do
+		local removedAugs = LoadoutRequestHandlers.UnequipIncompatibleAugments(allUnitsList)
+		if #removedAugs > 0 then
+			print(string.format("[Main] Save-load augment cleanup: %d augment(s) returned to inventory", #removedAugs))
 		end
 	end
 
@@ -3192,7 +3354,18 @@ while true do
 
 	-- === BATTLE START ===
 	state = BattleCoordinator.CreateBattleState(allUnitsList)
-	StatusService.SetAuraUnitsProvider(function() return state and state.units end)  -- Ward Totem aura
+	-- Treasure/reward context (fix 2026-10-24): stamp the owning player id and the
+	-- map level onto the battle state so object handlers that generate rewards
+	-- (Treasure Chest, Cursed Chest via _grantChestReward, Black Market) can reach
+	-- them. These were ALWAYS the fields those handlers read (state.ownerPlayerId /
+	-- state.mapLevel); they were simply never populated, so the chest reward hit its
+	-- honest DEFERRED path and granted nothing. PLAYER_ID and the quest level are the
+	-- same sources the post-battle reward grant (RewardService.GenerateRewards) and
+	-- AwardBattleXp already use, so chest loot now matches end-of-battle loot exactly.
+	state.ownerPlayerId = PLAYER_ID
+	state.mapLevel      = (activeQuest and activeQuest.recommendedLvl) or 1
+	StatusService.SetAuraUnitsProvider(function() return state and state.units end)  -- Ward Tot
+	CombatResolver.SetUnitsProvider(function() return state and state.units end)  -- BD-014 Guardian Mantle (adjacent-ally guard share)em aura
 	-- Status conflict rules (2026-10-07): notify clients when a conflict removes a status.
 	StatusService.SetConflictRemovedHandler(function(unit, statusId)
 		if BattleVisualBroadcaster.StatusExpired then BattleVisualBroadcaster.StatusExpired(unit, statusId) end
@@ -3240,12 +3413,34 @@ while true do
 		for _, u in ipairs(state.units) do if u.side == "Enemy" and u.isAlive then ec = ec + 1 end end
 		state.enemyCountAtStart = ec
 		state.playerDeployTiles = (generatedMap and generatedMap.deploymentZones and generatedMap.deploymentZones.player) or {}
+		state.enemyDeployTiles = (generatedMap and generatedMap.deploymentZones and generatedMap.deploymentZones.enemy) or {}  -- Fear destination + terrain protection (2026-10-26)
 		-- Seed from the map seed (varies per battle). Was state.ct + 70007, and ct is 0 at
 		-- battle start, so every battle rolled the SAME events (always Fog Spirit).
 		-- Per-battle seed, stored on state so the round/turn/weather rolls vary per battle too.
 		state.battleSeed = (generatedMap and generatedMap.seed) or os.time()
 		local bfRng = Random.new(state.battleSeed + 70007)
 		BattlefieldEventService.SelectEventsForBattle(state, activeQuest and activeQuest.biome or nil, bfRng)
+	end
+
+	-- Optional in-battle objectives (Phase 1): roll this battle's optional
+	-- objectives from the encounter facts, so they can be counted as the fight
+	-- happens and checked at battle end (ObjectiveService — fail-and-erase,
+	-- victory-only reward). Deterministic: seeded from the map seed, like every
+	-- other per-battle roll. Only objectives whose counters are fully wired are
+	-- eligible to roll (ObjectiveService IMPLEMENTED allowlist).
+	do
+		local objCtx = ObjectiveService.BuildContext(allUnitsList, state.objects)
+		local objRng = Random.new((state.battleSeed or os.time()) + 13337)
+		ObjectiveService.BeginBattle(state, objCtx, objRng, 2)
+		if state.activeObjectives and #state.activeObjectives > 0 then
+			local names = {}
+			for _, a in ipairs(state.activeObjectives) do
+				names[#names + 1] = a.id .. "(" .. a.mode .. ")"
+			end
+			print("[ObjectiveService] Rolled optional objective(s): " .. table.concat(names, ", "))
+		else
+			print("[ObjectiveService] No optional objectives rolled this battle.")
+		end
 	end
 
 	-- Seed permanent chasm-floor tile effects (Vines / Tar Pit) int
@@ -3374,7 +3569,6 @@ while true do
 	-- BATTLE LOOP
 	--------------------------------------------------
 
-	local MAX_TURNS = 200
 	local turnCount = 0
 
 	-- Initialize armor passives for all units at battle start (Slice 4G.9)
@@ -3382,9 +3576,13 @@ while true do
 		ArmorPassiveService.OnBattleStart(unit)
 	end
 
-	while BattleCoordinator.GetPhase(state) ~= "BattleOver" and turnCount < MAX_TURNS do
+	while BattleCoordinator.GetPhase(state) ~= "BattleOver" do
 		local activeUnit = BattleCoordinator.AdvanceClock(state)
 		if not activeUnit then break end
+		-- TAUNT (user ruling 2026-10-27): drop / apply aura taunts before the turn plays.
+		for _, _tu in ipairs(StatusService.ReconcileTaunts(state.units)) do
+			BattleVisualBroadcaster.UnitStateChanged(_tu)
+		end
 
 		-- Time-phase change: BattleCoordinator stashes it on state (it has no
 		-- broadcaster handle); broadcast it here, before any early continue below.
@@ -3452,6 +3650,49 @@ while true do
 			end
 		end
 
+		-- Deployable / delayed PULSE effects (2026-10-26): PulseScheduler.ProcessCtTick
+		-- (run inside AdvanceClock) applied heal/damage/status to units on the clock and
+		-- stashed one event per affected unit here. Drain the list (so it never grows across
+		-- the battle) and refresh each unit: bar + heal/damage floater, and a death broadcast
+		-- if a damage pulse KO'd it — same handling as the CT-status block above.
+		local pulseEvents = state.pulseEvents or {}
+		state.pulseEvents = nil
+		local _pulseSeen = {}
+		local _pulseKoSeen = {}
+		for _, ev in ipairs(pulseEvents) do
+			local u = ev.unit
+			if u then
+				if ev.kind == "damage" and (ev.amount or 0) > 0 then
+					BattleVisualBroadcaster.DotDamage(u, ev.element or "Pulse", ev.amount)
+				end
+				-- Drone reveal: the unit's Hide status ended (client drops the pill).
+				if ev.kind == "reveal" then
+					BattleVisualBroadcaster.StatusExpired(u, "Hide")
+				end
+				-- Extraction Beacon relocation: move the token + tile-occupancy labels.
+				if ev.kind == "relocate" then
+					clearTileOccupant(ev.oldX, ev.oldY)
+					setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
+					BattleVisualBroadcaster.UnitMoved(u)
+				end
+				-- Refresh each affected unit's bars once (a unit may appear in several events
+				-- across a multi-pulse tick; collapse to one state refresh).
+				if not _pulseSeen[u] then
+					_pulseSeen[u] = true
+					BattleVisualBroadcaster.UnitStateChanged(u)
+				end
+				-- W-1 fix: a unit can appear in several pulse events in one pass; broadcast its
+				-- defeat only ONCE (a second UnitDefeated for the same unit is a client-side
+				-- double-removal). Keyed separately from the bar-refresh dedup above.
+				if u.isAlive == false and not _pulseKoSeen[u] then
+					_pulseKoSeen[u] = true
+					clearTileOccupant(u.tileX, u.tileY)
+					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = true })
+					print(string.format("[Main] %s removed (KO via pulse)", u.name))
+				end
+			end
+		end
+
 		-- Process DoT
 		local dotEvents = state.dotEvents or {}
 		state.dotEvents = nil
@@ -3466,6 +3707,28 @@ while true do
 					activeUnit.isAlive and "" or " | DEFEATED"
 				))
 				BattleVisualBroadcaster.DotDamage(activeUnit, dot.statusId, actual)
+			end
+		end
+
+		-- Venom end-of-turn damage (user ruling 2026-10-26): BattleCoordinator.EndTurn applies
+		-- it (so a KO still ends the battle); here it is shown on screen and a KO'd unit's tile
+		-- is freed. Called right before TurnEnded on both the normal and skipped-turn paths.
+		local function broadcastEndTurnDots()
+			local evs = state.endTurnDotEvents
+			state.endTurnDotEvents = nil
+			if not evs then return end
+			for _, ev in ipairs(evs) do
+				local u = ev.unit
+				if u then
+					BattleVisualBroadcaster.DotDamage(u, ev.statusId, ev.actual)
+					if not u.isAlive then
+						clearTileOccupant(u.tileX, u.tileY)
+						if u.isChanneling then
+							BattleCoordinator.InterruptChanneling(u, "death")
+							BattleVisualBroadcaster.ChannelEnded(u)
+						end
+					end
+				end
 			end
 		end
 
@@ -3487,8 +3750,10 @@ while true do
 				activeUnit.currentHp, activeUnit.maxHp
 			))
 			BattleVisualBroadcaster.TurnStarted(activeUnit, state.ct, state.units)
-			StatusService.TickStatuses(activeUnit)
+			-- Statuses count down ONCE, inside BattleCoordinator.EndTurn (2026-10-26). The extra
+			-- TickStatuses call that used to sit here made skipped-turn statuses wear off twice as fast.
 			BattleCoordinator.EndTurn(state)
+			broadcastEndTurnDots()
 			BattleVisualBroadcaster.TurnSkipped(activeUnit, skipReason)
 			BattleVisualBroadcaster.TurnEnded(activeUnit, activeUnit.remainingRt)
 		else
@@ -3518,13 +3783,73 @@ while true do
 				end
 			end
 
+			-- FEAR (CON-017, user ruling 2026-10-26): a Feared unit's FIRST AP is spent fleeing
+			-- toward its own deployment area before the player / AI gets the rest of the turn.
+			if StatusService.HasStatus(activeUnit, "Fear") and not BattleCoordinator.IsChanneling(activeUnit) then
+				local fOldX, fOldY = activeUnit.tileX, activeUnit.tileY
+				local okF, resF = pcall(CommandService.ApplyFearMove, state, activeUnit)
+				if not okF then
+					warn("[Main] Fear move error: " .. tostring(resF))
+				elseif resF and resF.moved then
+					clearTileOccupant(fOldX, fOldY)
+					setTileOccupant(activeUnit.tileX, activeUnit.tileY, activeUnit.name, "Unit (" .. activeUnit.side .. ")", "Blocking")
+					BattleVisualBroadcaster.UnitMoved(activeUnit)
+				end
+			end
+			local fearEndedTurn = BattleCoordinator.GetPhase(state) ~= "TurnOpen"
+
 			-- Determine turn handler
 			local actions
 			local wasChanneling = BattleCoordinator.IsChanneling(activeUnit)
-			if BattleCoordinator.IsChanneling(activeUnit) then
+			if fearEndedTurn then
+				-- Fear spent the unit's only AP: nothing left to play this turn.
+				actions = {}
+			elseif BattleCoordinator.IsChanneling(activeUnit) then
 				actions = BattleTurnController.handleChannelingActivation(activeUnit)
-			elseif activeUnit.isSummon and (activeUnit.summonType == "Decoy" or activeUnit.summonType == "WardTotem") then
+			elseif activeUnit.isSummon and activeUnit.summonType == "SoulEcho" then
+				-- Soul Echo (AUG-SOUL-ECHO) detonates on its own turn: Dark AOE within 1 tile to the
+				-- owner's enemies for the damage snapshotted at the kill (30% of the original kill
+				-- damage), then the echo retires. Raw UnitSchema.ApplyDamage -> no augment/counter/
+				-- death retrigger (authored recursion guard). FIDELITY NOTES (flagged for Designer):
+				-- damage is FLAT ("Dark" is nominal — no Dark resist/weakness math, since we bypass
+				-- CombatResolver by design); enemy shields absorb it normally; the blast lands on the
+				-- echo's FIRST turn (~1 turn-length after the kill). An echo is created on EVERY kill
+				-- (single-target AND each AOE loop) and multiple echoes coexist (no cap / add, user
+				-- decision 2026-10-26); each detonates independently on its own turn (see CommandService
+				-- trySpawnSoulEcho spawn site).
+				if not activeUnit._soulEchoDetonated then
+					activeUnit._soulEchoDetonated = true
+					local dmg = activeUnit._soulEchoDamage or 0
+					local ex, ey = activeUnit.tileX, activeUnit.tileY
+					local hits, total = 0, 0
+					if dmg > 0 and ex and ey then
+						for _, u in ipairs(state.units) do
+							if u.isAlive and u.side ~= activeUnit.side and not u.isGroundTarget and u.tileX
+								and math.max(math.abs(u.tileX - ex), math.abs((u.tileY or 0) - ey)) <= 1 then
+								local actual = UnitSchema.ApplyDamage(u, dmg)
+								BattleVisualBroadcaster.DotDamage(u, "Dark", actual)
+								hits += 1
+								total += (actual or 0)
+								if not u.isAlive then
+									clearTileOccupant(u.tileX, u.tileY)
+								end
+							end
+						end
+					end
+					print(string.format("[Main] Soul Echo detonates at (%s,%s): %d enemy(ies) for %d Dark",
+						tostring(ex), tostring(ey), hits, total))
+				end
+				-- End the echo's turn cleanly (same as Decoy), then retire it so it never acts again.
+				CommandService.ValidateAndCommit(state, activeUnit.id, "Wait", nil)
+				activeUnit.isAlive = false
+				activeUnit.currentHp = 0
+				clearTileOccupant(activeUnit.tileX, activeUnit.tileY)
+				BattleEvents.UnitDefeated:FireAllClients({ unitId = activeUnit.id, removeUnit = true })
+				actions = {}
+			elseif activeUnit.isItemDevice
+				or (activeUnit.isSummon and (activeUnit.summonType == "Decoy" or activeUnit.summonType == "WardTotem")) then
 				-- Decoy / Ward Totem never act (authored): skip their turn automatically.
+				-- Item devices (2026-10-26) never act either: their pulses run on the CT clock.
 				CommandService.ValidateAndCommit(state, activeUnit.id, "Wait", nil)
 				actions = {}
 			elseif activeUnit.controller == "Player" then
@@ -3570,6 +3895,7 @@ while true do
 				print(string.format("[Main] Wrathful/Meek stack expired (end of turn): %s", activeUnit.name))
 			end
 
+			broadcastEndTurnDots()
 			BattleVisualBroadcaster.TurnEnded(activeUnit, activeUnit.remainingRt)
 		end
 	end
@@ -3585,7 +3911,7 @@ while true do
 	if phase == "BattleOver" then
 		print(string.format("BATTLE OVER — %s wins! (%d turns)", winner, turnCount))
 	else
-		print(string.format("BATTLE TIMED OUT after %d turns.", turnCount))
+		warn(string.format("[Main] Battle loop exited without a resolution after %d turns (engine stall — no side eliminated and the clock produced no next event). This should not happen.", turnCount))
 	end
 	print("====================================")
 	for _, u in ipairs(allUnitsList) do
@@ -3635,6 +3961,10 @@ while true do
 	-- the Human bonus, levels up and clamps at 99. Done BEFORE HP/MP persist + save
 	-- so the new levels ride the EXISTING save payload (unit records -> Key 1/3).
 	--------------------------------------------------
+	-- Declared at loop-body scope so BOTH the battle-end evaluation (inside the XP
+	-- do-block below) and the objective-reward grant (inside the victory reward
+	-- block further down) can see the same result. (Scope fix 2026-10-24.)
+	local objResult = nil
 	do
 		-- kills[]: one entry per defeated ENEMY. enemyType is stamped by EnemyGenerator
 		-- (unit.enemyType = spec.type, EnemyGenerator L453) so Grunt/Veteran/Elite is
@@ -3675,6 +4005,9 @@ while true do
 		-- UGC usage (ugc_rules usage_decrement_rule): -1 per item worn by ANY deployed
 		-- roster unit, at battle END (any outcome), before the save below (BUG-013
 		-- commit -> save -> BattleEnded order unchanged). Expired items unequip everywhere.
+		-- Loadout Replicator (UTI-020): copied items turn back into the Replicator at battle end.
+		CommandService.RevertReplicatedItems(state.units)
+		CommandService.RevertReplicatedItems(playerUnits)
 		UGCService.OnBattleCompleted(PLAYER_ID, deployed)
 
 		-- benched[] = owned roster MINUS deployed MINUS away on dispatch (FLAG-P2,
@@ -3701,6 +4034,28 @@ while true do
 			if not anyPlayerKO then table.insert(objectivesMet, "Flawless") end
 			-- 'All defeated' removed (user ruling 2026-10-07). More optional objectives
 			-- need to be authored later.
+		end
+
+		-- Optional in-battle objectives (Phase 1): feed the end-state counter the
+		-- loop already computed (player KOs = #koList), then evaluate. Victory-only
+		-- grant; fail-and-erase happens inside Evaluate. This runs INSIDE the
+		-- protected battle-end order (before BattleEnded — BUG-013). Reward
+		-- granting (gear/skill/augment now; gold/materials Phase 3) is wired next;
+		-- this increment surfaces the result to the Output log so the roll ->
+		-- count -> check -> erase pipe can be verified in Studio.
+		if state and state.objectiveCounters then
+			state.objectiveCounters.playerKOs = #koList
+		end
+		objResult = ObjectiveService.Evaluate(state, isQualifyingVictory)
+		if objResult and #objResult.completed > 0 then
+			local onames = {}
+			for _, c in ipairs(objResult.completed) do
+				onames[#onames + 1] = c.name .. " (" .. c.mode .. ")"
+			end
+			print(string.format("[ObjectiveService] Completed %d optional objective(s): %s  -> %d reward roll(s) pending",
+				#objResult.completed, table.concat(onames, ", "), objResult.rewardCount))
+		else
+			print("[ObjectiveService] No optional objectives completed this battle.")
 		end
 
 		local battleResult = {
@@ -3792,7 +4147,34 @@ while true do
 		local MAP_LEVEL = (activeQuest and activeQuest.recommendedLvl) or 1
 		local opportunityId = string.format("battle_%s_%d", PLAYER_ID, os.clock())
 
-		local results, equipCommitted = RewardService.GenerateRewards(PLAYER_ID, MAP_LEVEL, opportunityId)
+		-- Treasure Hunter augment (2026-10-25): if any enemy was killed with a Treasure-Hunter
+		-- skill this battle (stamped _treasureHunted on the slain unit by AugmentEffectService),
+		-- bump the victory loot's rarity by 1 tier. Battle loot is a single pool (not per-kill),
+		-- so this applies the bonus once to the whole drop — the faithful mapping of "better loot
+		-- from enemies killed with this skill" onto a pooled-loot system (flagged to the user).
+		local _thBonus = 0
+		if state and state.units then
+			for _, u in ipairs(state.units) do
+				if u._treasureHunted and not u.isAlive then _thBonus = 1 break end
+			end
+		end
+		local results, equipCommitted = RewardService.GenerateRewards(PLAYER_ID, MAP_LEVEL, opportunityId,
+			_thBonus > 0 and { bonusRarityTiers = _thBonus } or nil)
+
+		-- Stolen gear (Steal / Mug, 2026-10-24): items taken in-battle are kept ONLY on a
+		-- qualifying victory. Commit each to the player's inventory and append it to the loot
+		-- results flagged stolen=true so the victory screen badges it. state.stolenItems was
+		-- filled by CommandService during the fight (nil/empty when nothing was stolen).
+		if state.stolenItems and #state.stolenItems > 0 then
+			for _, it in ipairs(state.stolenItems) do
+				local okAdd = InventoryService.AddItem(PLAYER_ID, it)
+				table.insert(results, {
+					category = "Equipment", item = it, committed = okAdd ~= false, stolen = true,
+				})
+				if okAdd ~= false then equipCommitted = equipCommitted + 1 end
+			end
+			print(string.format("[PostBattle] %d stolen item(s) added to victory loot", #state.stolenItems))
+		end
 
 		-- Commit non-equipment rewards to card inventories
 		local cardCommitted = 0
@@ -3826,6 +4208,46 @@ while true do
 		for i, result in ipairs(results) do
 			if not result.committed then
 				warn(string.format("[PostBattle] Reward %d failed: %s", i, result.error or "unknown"))
+			end
+		end
+
+		-- OPTIONAL OBJECTIVE REWARDS (Phase 1): one reward roll per completed
+		-- optional objective (Hard counts double, via objResult.rewardCount),
+		-- restricted to gear/skill/augment — consumables + doctrines are excluded
+		-- (user-locked 2026-10-24). Gold + materials are Phase 3 (grant paths not
+		-- built yet). Committed the SAME way as battle loot and appended to the
+		-- reward screen. objResult was computed above, inside the protected
+		-- battle-end order (before BattleEnded — BUG-013).
+		if objResult and objResult.rewardCount and objResult.rewardCount > 0 then
+			local objOppId = string.format("objrw_%s_%d", PLAYER_ID, os.clock())
+			local objResults = RewardService.GenerateRewards(PLAYER_ID, MAP_LEVEL, objOppId, {
+				count = objResult.rewardCount,
+				allowedCategories = ObjectiveService.REWARD_CATEGORIES,
+			})
+			local objCommitted = 0
+			for _, result in ipairs(objResults) do
+				if result.committed then
+					objCommitted = objCommitted + 1  -- equipment auto-commits in GenerateRewards
+				elseif result.cardData then
+					local cat, id = result.category, result.cardData.id
+					if cat == "SkillCard" then
+						cardInventory.skillCards[id] = (cardInventory.skillCards[id] or 0) + 1
+						result.committed = true
+						objCommitted = objCommitted + 1
+					elseif cat == "AugmentCard" then
+						cardInventory.augmentCards[id] = (cardInventory.augmentCards[id] or 0) + 1
+						result.committed = true
+						objCommitted = objCommitted + 1
+					end
+				end
+			end
+			if objCommitted > 0 then
+				local objSummaries = RewardService.BuildRewardSummaries(objResults)
+				for _, s in ipairs(objSummaries) do
+					rewardSummaries[#rewardSummaries + 1] = s
+				end
+				print(string.format("[ObjectiveService] Granted %d objective reward(s) from %d completed objective(s).",
+					objCommitted, #objResult.completed))
 			end
 		end
 	end

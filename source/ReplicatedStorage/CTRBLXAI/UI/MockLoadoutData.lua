@@ -737,6 +737,14 @@ function MockLoadoutData.GetAugmentDef(augmentId)
 	return MockLoadoutData.AugmentDefs[augmentId]
 end
 
+-- Equipped weapon shape/reach per unit, from the server's GetSkillLoadout reply (tags-only
+-- augment rule, 2026-10-26). nil until the server has answered for that unit.
+MockLoadoutData.ServerWeaponProfile = {}
+function MockLoadoutData.GetWeaponProfile(unitId)
+	if not unitId then return nil end
+	return MockLoadoutData.ServerWeaponProfile[unitId]
+end
+
 --------------------------------------------------
 -- SERVER SKILL DATA LOADING
 --------------------------------------------------
@@ -760,6 +768,8 @@ function MockLoadoutData.LoadSkillData(unitId)
 	if ok and result and result.ok then
 		-- Store slots for this unit
 		MockLoadoutData.ServerSkillSlots[unitId] = result.slots or {}
+		-- Store the equipped weapon's shape/reach (explicit copy; see BUG-056 field-drop class).
+		MockLoadoutData.ServerWeaponProfile[unitId] = result.weaponProfile
 
 		-- Store card inventories (shared across units)
 		if result.skillCards then

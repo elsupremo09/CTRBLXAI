@@ -245,10 +245,25 @@ function UnitSchema.CanAct(unit)
 	return unit.isAlive and unit.currentAp > 0
 end
 
+-- Channel state dies with the unit (UAT 2026-10-27 D-1): a unit killed mid-channel must never come
+-- back (revive, Raise Dead, Zombie, item) still holding that channel, or it fires at once on return.
+-- Returns true when there was a channel to clear.
+function UnitSchema.ClearChannelState(unit): boolean
+	local had = unit.isChanneling == true
+	unit.isChanneling        = false
+	unit.channelingData      = nil
+	unit.channelRt           = nil
+	unit.channelResolveCt    = nil
+	unit.channelPhase        = nil
+	unit.pendingActivationCt = nil
+	return had
+end
+
 function UnitSchema.Kill(unit)
 	unit.isAlive   = false
 	unit.currentHp = 0
 	unit.currentAp = 0
+	UnitSchema.ClearChannelState(unit)
 end
 
 --------------------------------------------------
@@ -287,8 +302,11 @@ function UnitSchema.SetStatusService(ss)
 	_statusService = ss
 end
 
-function UnitSchema.ApplyDamage(unit, amount)
+function UnitSchema.ApplyDamage(unit, amount, cause, shieldDamageMult)
 	assert(amount >= 0, "ApplyDamage: amount must be >= 0.")
+	-- One-Punch objective (2026-10-24): was this unit at full HP before this hit?
+	-- Captured before the shield gate / HP subtraction below.
+	local wasFull = (unit.currentHp or 0) >= (unit.maxHp or math.huge)
 
 	local shieldAbsorbed = 0
 	local shieldBroke = false
@@ -304,10 +322,17 @@ function UnitSchema.ApplyDamage(unit, amount)
 	-- HP — handled separately in StatusService.ProcessCtTick).
 	local shield = unit.shield_total or 0
 	if shield > 0 and amount > 0 then
-		local soak = math.min(shield, amount)
+		-- GL-012 Crushing Vambraces: a push/collision may drain the shield at a MULTIPLIER (x2) so the
+		-- shield is half as effective at stopping it ("collision deals double to shields"). mult defaults
+		-- to 1 for every normal caller -> identical to the original gate. shieldDrain = shield points
+		-- removed; damageStopped = incoming damage neutralized (= drain / mult, floored to stay integer).
+		local mult = shieldDamageMult or 1
+		local shieldDrain = math.min(shield, amount * mult)
+		local damageStopped = math.floor(shieldDrain / mult)
+		local soak = shieldDrain
 		shieldAbsorbed = soak
 		unit.shield_total = shield - soak
-		amount = amount - soak
+		amount = amount - damageStopped
 		-- Let StatusService draw down the live Shield status instance(s) and tell
 		-- us whether the pool just emptied (for Retribution on-break). If no
 		-- StatusService is wired, infer the break from shield_total hitting 0.
@@ -318,9 +343,25 @@ function UnitSchema.ApplyDamage(unit, amount)
 		end
 	end
 
+	-- FIXED-HIT DURABILITY (2026-10-26, DB objects_encounters "Deployed Gadget" SPLIT ruling):
+	-- a light-gadget device unit (Mender Drone, Gravity Pylon) is destroyed after a fixed
+	-- number of hits from ANY source; each damaging hit removes exactly 1, whatever its size.
+	-- Its HP pool IS the hit counter (maxHp = hitsToDestroy), so bars and KO reuse the
+	-- normal path.
+	if unit.fixedHitDurability and amount > 0 then
+		amount = 1
+	end
 	local actual = math.min(unit.currentHp, amount)
 	unit.currentHp = unit.currentHp - actual
 	if unit.currentHp <= 0 then
+		-- Optional kill-cause tag for the objective system (2026-10-24). Set only
+		-- when this lethal hit carried a cause (e.g. "push"); never overwrite an
+		-- already-stamped cause. Harmless no-op for every existing caller.
+		if cause and not unit._killCause then unit._killCause = cause end
+		-- One-Punch: a normal attack/skill (no special cause) that kills a unit
+		-- which was at full HP = a single-hit full-HP KO. Push/terrain/etc. carry a
+		-- cause and are excluded (they are not "attacks").
+		if wasFull and not cause then unit._killedFromFull = true end
 		UnitSchema.Kill(unit)
 	end
 	return actual, shieldBroke, shieldAbsorbed, shieldMaxAtBreak, shieldRetribution
@@ -328,8 +369,28 @@ end
 
 function UnitSchema.ApplyHealing(unit, amount)
 	assert(amount >= 0, "ApplyHealing: amount must be >= 0.")
+	-- Fixed-hit gadgets (Mender Drone, Gravity Pylon) are repaired, never healed: their HP
+	-- pool is a hit counter (DB "Deployed Gadget" ruling; Repair resets it).
+	if unit.fixedHitDurability then
+		return 0
+	end
+	-- Festering Wound anti-heal: reduce ALL incoming healing routed through this primitive
+	-- (skill heals, lifedrain/lifesteal, trait heals, grants, potions) while a healing-reduction
+	-- debuff is active. Scanned inline via GameConstants.STATUSES (module-scope require); StatusService
+	-- is dependency-injected here, not required, so it is NOT callable at module scope (avoids a cycle).
+	local _hrm = 1
+	for _, inst in ipairs(unit.statusInstances or {}) do
+		local d = GameConstants.STATUSES[inst.id]
+		-- Ruling 10 (2026-10-26): different healing modifiers are TOTALED, not multiplied
+		-- (mirrors StatusService.GetHealingReceivedMult).
+		if d and d.healingReceivedMult then _hrm = _hrm + (d.healingReceivedMult - 1) * (inst.valueScale or 1) end
+	end
+	_hrm = math.max(0, _hrm)
+	if _hrm ~= 1 then amount = math.max(0, math.floor(amount * _hrm)) end
 	local actual = math.min(unit.maxHp - unit.currentHp, amount)
 	unit.currentHp = unit.currentHp + actual
+	-- Healing weakens Venom (user ruling 2026-10-26): a heal that restores HP lowers Venom by 1.
+	if actual > 0 and _statusService and _statusService.WeakenVenomOnHeal then _statusService.WeakenVenomOnHeal(unit) end
 	return actual
 end
 

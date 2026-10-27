@@ -30,6 +30,8 @@ local TraitData      = require(Content:WaitForChild("TraitData"))
 -- Shared / Remotes
 local GameConstants = require(ReplicatedStorage:WaitForChild("CTRBLXAI"):WaitForChild("Shared"):WaitForChild("GameConstants"))
 local BattleEvents  = require(ReplicatedStorage:WaitForChild("CTRBLXAI"):WaitForChild("Remotes"):WaitForChild("BattleEvents"))
+-- Shared tags-only augment compatibility (2026-10-26): the screen shows the same rule.
+local AugmentCompatibility = require(ReplicatedStorage:WaitForChild("CTRBLXAI"):WaitForChild("Shared"):WaitForChild("AugmentCompatibility"))
 
 -- Sibling services / modules (same Game folder)
 local InventoryService       = require(Game:WaitForChild("InventoryService"))
@@ -485,6 +487,9 @@ BattleEvents.GetSkillLoadout.OnServerInvoke = function(player, unitId)
 		augmentCards = cardInventory.augmentCards,
 		doctrineId = unit.doctrineId,
 		doctrineChoices = docChoices,
+		-- Equipped weapon's shape/reach so the screen resolves "Weapon Shape"/"Weapon Reach"
+		-- skill tags exactly like the server attach gate (tags-only rule, 2026-10-26).
+		weaponProfile = AugmentCompatibility.WeaponProfileFromUnit(unit),
 	}
 end
 
@@ -593,34 +598,14 @@ BattleEvents.RequestAttachAugment.OnServerInvoke = function(player, unitId, slot
 		targetSkillId = slotCheck and slotCheck.skillId
 	end
 	if targetSkillId then
-		local skillDef = CommandService.GetSkill(targetSkillId)
-		if skillDef and augDef.requiredSkillTags then
-			-- " OR "-aware requirement match (2026-10-23). Each requiredSkillTags entry may
-			-- list alternatives joined by " OR " (e.g. "Buff OR Healing OR Support"); the entry
-			-- is satisfied if ANY alternative is one of the skill's tags, and the augment is
-			-- compatible only if EVERY entry is satisfied. Mirrors EnemyGenerator.skillSatisfiesReq
-			-- (the reference impl); fixes the bug where a compound string was compared whole.
-			local skillTagSet = {}
-			for _, sTag in ipairs(skillDef.tags or {}) do skillTagSet[sTag] = true end
-			local function entrySatisfied(entry)
-				local remaining = entry
-				while true do
-					local fs, fe = string.find(remaining, " OR ", 1, true)
-					local option = fs and string.sub(remaining, 1, fs - 1) or remaining
-					option = string.gsub(option, "^%s*(.-)%s*$", "%1")
-					if option ~= "" and skillTagSet[option] then return true end
-					if not fs then return false end
-					remaining = string.sub(remaining, fe + 1)
-				end
-			end
-			local hasMatch = true
-			for _, reqTag in ipairs(augDef.requiredSkillTags) do
-				if not entrySatisfied(reqTag) then hasMatch = false; break end
-			end
-			if not hasMatch then
-				local needed = table.concat(augDef.requiredSkillTags, "/")
-				return { ok = false, reason = augDef.name .. " requires [" .. needed .. "] skill — " .. (skillDef.name or targetSkillId) .. " is incompatible" }
-			end
+		-- Tags-only rule (2026-10-26), resolved against the unit's equipped weapon for
+		-- "Weapon Shape"/"Weapon Reach" skills. Same check the loadout screen greys out with.
+		local fits, missing = AugmentCompatibility.Check(
+			targetSkillId, augmentId, AugmentCompatibility.WeaponProfileFromUnit(unit))
+		if not fits then
+			local skillDef = SkillData[targetSkillId]
+			local skillName = (skillDef and skillDef.name) or targetSkillId
+			return { ok = false, reason = `{augDef.name} needs [{table.concat(missing, ", ")}] — {skillName} doesn't have it` }
 		end
 	end
 	-- Find the skill slot data
@@ -693,6 +678,8 @@ BattleEvents.RequestEquipConsumable.OnServerInvoke = function(player, unitId, sl
 	-- Validate consumable exists
 	local consDef = ConsumableData.GetById(consumableId)
 	if not consDef then return { ok = false, reason = "Unknown consumable: " .. tostring(consumableId) } end
+	-- Parked items (DB Status PARKED, user 2026-10-27) cannot be equipped (server is the authority).
+	if consDef.parked then return { ok = false, reason = consDef.name .. " is not available yet" } end
 	-- Check not already in another slot on this unit
 	for idx, existing in pairs(unit.consumableSlots or {}) do
 		if existing.consumableId == consumableId and idx ~= slotIndex then
@@ -1040,6 +1027,52 @@ BattleEvents.GetDoctrineComparison.OnServerInvoke = function(player, unitId, new
 	return { ok = true, before = before, after = after, deltas = deltas }
 end
 
+end
+
+--- Save-load cleanup (user ruling 2026-10-26): any equipped augment that no longer fits its
+--- skill under the tags-only rule is unequipped and returned to the augment card inventory.
+--- Idempotent (a second pass finds nothing). Player-side units only; enemies are generated
+--- fresh from the same rule every battle. Returns the removed entries so the caller can tell
+--- the player what came off ({ unitName, skillName, augmentName }).
+function LoadoutRequestHandlers.UnequipIncompatibleAugments(units: any): { any }
+	local removed = {}
+	if type(units) ~= "table" or type(cardInventory) ~= "table" or type(cardInventory.augmentCards) ~= "table" then
+		return removed
+	end
+	local function sweep(unit: any, skillId: any, augList: any)
+		if not skillId or type(augList) ~= "table" then return end
+		local weapon = AugmentCompatibility.WeaponProfileFromUnit(unit)
+		for i = 1, 2 do
+			local augId = augList[i]
+			if augId and not AugmentCompatibility.Check(skillId, augId, weapon) then
+				augList[i] = nil
+				cardInventory.augmentCards[augId] = (cardInventory.augmentCards[augId] or 0) + 1
+				local skillDef = SkillData[skillId]
+				local augDef = AugmentData[augId]
+				table.insert(removed, {
+					unitName = unit.name,
+					skillName = (skillDef and skillDef.name) or skillId,
+					augmentName = (augDef and augDef.name) or augId,
+				})
+				print(`[LoadoutRequestHandlers] Unequipped {augId} from {unit.name}'s {skillId}: no longer fits (tags-only rule); returned to inventory`)
+			end
+		end
+	end
+	for _, unit in units do
+		if type(unit) == "table" and unit.side == "Player" and not unit.isSummon then
+			sweep(unit, unit.selectedDoctrineSkill, unit.doctrineAugments)
+			for _, slotKey in ipairs({ "slot2", "slot3", "slot4" }) do
+				local slot = unit.skillLoadout and unit.skillLoadout[slotKey]
+				if slot then
+					sweep(unit, slot.skillId, slot.augments)
+				end
+			end
+		end
+	end
+	if #removed > 0 then
+		markLoadoutDirty()
+	end
+	return removed
 end
 
 return LoadoutRequestHandlers

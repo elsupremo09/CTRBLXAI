@@ -8,6 +8,7 @@
 local RacePassiveService = {}
 
 local StatusService = require(script.Parent.StatusService)
+local UnitSchema = require(script.Parent.UnitSchema)  -- ClearChannelState on revive (no require cycle)
 
 
 local GameConstants = require(
@@ -29,7 +30,16 @@ local RaceData = require(
 -- HELPERS
 --------------------------------------------------
 
+-- Break (rules 35/47, status row 64; audit fix 2026-10-27) switches off the Race Passive, the
+-- same way DoctrinePassiveService / TraitEffectService already honour it: a Broken unit is
+-- treated as having no race here.
+-- One shared check lives in StatusService (also used by race abilities coded elsewhere).
+local function isBrokenUnit(unit)
+	return StatusService.IsRacePassiveSuppressed(unit)
+end
+
 local function getRaceId(unit)
+	if isBrokenUnit(unit) then return nil end
 	return unit and unit.raceId or nil
 end
 
@@ -50,7 +60,7 @@ end
 -- New-race detection (2026-10-02 roster). Nil-safe: a nil or unknown raceId
 -- (RaceData.GetRace returns nil) is never treated as any race.
 local function isRace(unit, raceId)
-	local rid = unit and unit.raceId or nil
+	local rid = getRaceId(unit)  -- nil while Broken
 	if not rid then return false end
 	if not RaceData.GetRace(rid) then return false end
 	return rid == raceId
@@ -584,6 +594,18 @@ function RacePassiveService.GetCollisionDamageMultiplier(unit)
 end
 
 --------------------------------------------------
+-- GOBLIN — CUNNING, second half (DB races 'Goblin': "Damage received from traps and hazards
+-- +10%"). User ruling 2026-10-27 (narrowed): ONLY literal traps on the ground (Spike Trap,
+-- Land Mine blasts) and terrain / ground effects that deal damage (Burning grass and other
+-- tile-effect ticks, Molten / lava). Not falls, collisions, object explosions such as a Bomb
+-- Barrel, the Stone Pillar, weather or events. Switched off while Broken (isRace honours Break).
+--------------------------------------------------
+function RacePassiveService.GetHazardDamageTakenMultiplier(unit)
+	if isRace(unit, "RACE-GOBLIN") then return 1.10 end
+	return 1.0
+end
+
+--------------------------------------------------
 -- SKILL POTENCY (INT) CONTRIBUTION MODIFIER (2026-10-02)
 -- Skill Potency = 1 + p, p = INT / (200 + INT)  (GameConstants.CalcSkillPotency).
 -- Celestial / Demon boost ONLY the INT contribution p by 20% for Holy / Dark
@@ -674,7 +696,10 @@ function RacePassiveService.ProcessZombieRevive(unit, ctPassed)
 		unit.undyingWillKoCt = unit.undyingWillKoCt + ctPassed
 		if unit.undyingWillKoCt >= 500 then
 			unit.isAlive = true
+			UnitSchema.ClearChannelState(unit)  -- never return holding a pre-death channel
+			unit._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
 			unit.currentHp = math.max(1, math.ceil(unit.maxHp * 0.25))
+			StatusService.WeakenVenomOnHeal(unit)  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 			unit.remainingRt = unit.startingRt or 400
 			unit.undyingWillUsed = true
 			unit.undyingWillKoCt = nil
@@ -695,7 +720,10 @@ function RacePassiveService.ProcessZombieRevive(unit, ctPassed)
 		if unit.zombieKoCt >= ZOMBIE_REVIVE_CT then
 			-- Revive with 50% Max HP
 			unit.isAlive = true
+			UnitSchema.ClearChannelState(unit)  -- never return holding a pre-death channel
+			unit._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
 			unit.currentHp = math.ceil(unit.maxHp * 0.50)
+			StatusService.WeakenVenomOnHeal(unit)  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 			unit.remainingRt = unit.startingRt or 400
 			unit.zombieReviveUsed = true
 			unit.zombieKoCt = nil
@@ -776,6 +804,20 @@ end
 
 function RacePassiveService.RefreshConditionalStats(unit)
 	if not unit or not unit.isAlive then return false end
+	-- BREAK (user ruling 2026-10-27): when Break starts or ends, the race stat modifiers
+	-- (permanent ones like Orc / Fairy / Avian, Dragonscale +15%, Vampire / Werewolf time
+	-- of day) switch off / back on, so rebuild once on the flip and reset the conditional
+	-- flags so the checks below re-sync from scratch.
+	local broken = isBrokenUnit(unit)
+	if (unit._raceBroken == true) ~= broken then
+		unit._raceBroken = broken
+		unit._dragonscaleActive = nil
+		unit._todStatActive = nil
+		local rebuilt = rebuildStats(unit)
+		print(string.format("[RacePassiveService] Break %s on %s -> race ability %s (rebuilt=%s)",
+			broken and "started" or "ended", unit.name or "?", broken and "OFF" or "ON", tostring(rebuilt)))
+		return rebuilt
+	end
 	-- DRAGONKIN — Burn-conditional stat bonus.
 	if isRace(unit, "RACE-DRAGONKIN") then
 		local burning = (unit.statusInstances ~= nil and StatusService.HasStatus(unit, "Burn") ~= nil)
@@ -847,8 +889,13 @@ function RacePassiveService.OnTurnStart(unit, state)
 	if unit.maxHp and unit.currentHp and isRace(unit, "RACE-TROLL") then
 		local missing = unit.maxHp - unit.currentHp
 		local heal = math.round(0.20 * missing)
+		-- Festering Wound anti-heal (2026-10-25): Troll Regrowth reduced too (flagged: racial regen
+		-- is dampened by the authored "all healing" wording; Designer may exempt it).
+		local _hrm = StatusService.GetHealingReceivedMult(unit)
+		if _hrm ~= 1 then heal = math.max(0, math.floor(heal * _hrm)) end
 		if heal > 0 then
 			unit.currentHp = math.min(unit.maxHp, unit.currentHp + heal)
+			StatusService.WeakenVenomOnHeal(unit)  -- healing weakens Venom (2026-10-26)
 			print(string.format(
 				"[RacePassiveService] Troll Regrowth: %s heals %d (20%% of %d missing) | HP: %d/%d",
 				unit.name or "?", heal, missing, unit.currentHp, unit.maxHp

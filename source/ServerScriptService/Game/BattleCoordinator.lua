@@ -20,6 +20,7 @@ local RacePassiveService = require(script.Parent.RacePassiveService)
 local DoctrinePassiveService = require(script.Parent.DoctrinePassiveService)
 local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
 local TraitEffectService = require(script.Parent.TraitEffectService) -- Perks & Flaws Phase 3 turn hooks (2026-10-23)
+local WeaponPassiveService = require(script.Parent.WeaponPassiveService) -- ArcaneFlow ready-turn MP (2026-10-26)
 
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -34,6 +35,13 @@ local BattleCoordinator = {}
 local _tileEffectService = nil
 function BattleCoordinator.SetTileEffectService(tes)
 	_tileEffectService = tes
+end
+
+-- PulseScheduler (deployable/delayed fixed-CT pulse engine, 2026-10-26). Injected,
+-- cycle-free; nil-safe (no scheduler wired -> CT tick simply does not pulse).
+local _pulseScheduler = nil
+function BattleCoordinator.SetPulseScheduler(ps)
+	_pulseScheduler = ps
 end
 
 -- Weather engine (injected to avoid a require cycle; BattleCoordinator is required
@@ -260,10 +268,12 @@ end
 local function getSideAlive(state, side)
 	local count = 0
 	for _, unit in ipairs(state.units) do
-		-- Count alive units + KO'd Zombies that haven't used their revive
-		local canRevive = (not unit.isAlive) and unit.raceId == "RACE-ZOMBIE"
-			and not unit.zombieReviveUsed
-		if unit.side == side and (unit.isAlive or canRevive) then
+		-- Only living units count. A unit waiting on a revive (Zombie Undying, Undying Will perk) is
+		-- still KO'd: if nobody else on its side is standing, that side loses (USER RULING 2026-10-27
+		-- 12:26). Was: KO'd Zombies with an unused revive kept their side in the battle.
+		-- Item devices (2026-10-26: turret, drone, decoy, pylon) are equipment, not
+		-- combatants: a side whose only survivors are devices has lost.
+		if unit.side == side and unit.isAlive and not unit.isItemDevice then
 			count = count + 1
 		end
 	end
@@ -302,97 +312,171 @@ end
 -- FROZEN: skipped for turn selection until its channel resolves/disrupts, then it
 -- becomes immediately ready. Returns either a ready unit, or a channel-resolution
 -- signal { channelResolve = <unit> } when a channel deadline is the nearest event.
+-- A unit that died while channeling loses that channel (UAT 2026-10-27 D-1/D-3). Many death paths
+-- (weather, Sinking, event damage) set isAlive = false directly, so the clock clears any leftover
+-- on every step. Living units are never touched.
+local function clearDeadChannels(state)
+	for _, u in ipairs(state.units) do
+		if not u.isAlive and u.isChanneling then
+			BattleCoordinator.InterruptChanneling(u, "death")
+		end
+	end
+end
+
 local function advanceToNextReady(state)
+	clearDeadChannels(state)
 	local alive = getAliveUnits(state)
 	if #alive == 0 then return nil, 0 end
+	-- The living list is rebuilt every step and again after weather/events (UAT 2026-10-27 D-4/D-5):
+	-- units can die or be revived mid-advance, and only units alive NOW may act or resolve a channel.
 
-	-- Find the nearest event: min over (unit RT) and (channel remaining = resolveCt - ct).
-	local minRt = math.huge
-	for _, unit in ipairs(alive) do
-		-- A frozen caster (RT<=0, still channeling) does NOT contribute an RT event.
-		local frozen = unit.isChanneling and unit.remainingRt <= 0
-		if not frozen and unit.remainingRt < minRt then
-			minRt = unit.remainingRt
+	-- TWO-TIMER MODEL STALL FIX (2026-10-24): advancing to the nearest event can land
+	-- on a channeling caster whose own RT reaches 0 BEFORE its channel/activation
+	-- deadline. That caster then becomes FROZEN (correctly skipped for turn selection),
+	-- but if no other unit is ready at that same instant, the old code returned nil here.
+	-- The main battle loop reads a nil active unit as an unrecoverable timeout and ends
+	-- the battle (scored as a false DEFEAT). A frozen caster still has a finite, FUTURE
+	-- channelResolveCt, so a next event always exists: keep advancing the clock to it
+	-- instead of giving up. This loops (never polls/waits) until a unit is ready, a
+	-- channel resolves, or there is genuinely no future event left (a true stall -> nil).
+	-- Each iteration strictly advances state.ct toward a finite deadline, so it ends.
+	local ctPassedTotal = 0
+	local guard = 0
+	while true do
+		guard += 1
+		if guard > 100000 then
+			-- Impossible under the two-timer invariants; logged (LOG-002) rather than
+			-- spinning. Returns what advanced so far; caller treats nil unit safely.
+			warn("[BattleCoordinator] advanceToNextReady: safety guard tripped -- aborting clock advance")
+			return nil, ctPassedTotal
 		end
-		if unit.isChanneling and unit.channelResolveCt then
-			local chRemain = unit.channelResolveCt - state.ct
-			if chRemain < minRt then minRt = chRemain end
-		end
-	end
-	if minRt == math.huge then return nil, 0 end
-	if minRt < 0 then minRt = 0 end
 
-	state.ct = state.ct + minRt
-	for _, unit in ipairs(alive) do
-		-- Frozen casters do not tick RT (they wait at 0 for the channel).
-		local frozen = unit.isChanneling and unit.remainingRt <= 0
-		if not frozen then
-			unit.remainingRt = unit.remainingRt - minRt
-		end
-	end
+		-- Units can die mid-advance (weather, Sinking, events): drop their channels each step.
+		clearDeadChannels(state)
+		alive = getAliveUnits(state)
+		if #alive == 0 then return nil, ctPassedTotal end
 
-	-- Time cycle: advance Dawn/Day/Dusk/Night as the clock crosses 1000-CT rounds.
-	updateTimePhase(state)
-
-	-- Weather engine: per-round re-roll at each 1000-CT boundary + 300-CT periodic
-	-- tick. Deterministic rng seeded from the clock (no stored seed needed).
-	if _weatherService then
-		-- + per-battle seed (set by Main at battle start) so weather differs between battles.
-		local wRng = Random.new(state.ct + (state.battleSeed or 0) + 54321)
-		_weatherService.RerollForNewRound(state, wRng, state.ct)
-		_weatherService.Tick(state, minRt, wRng, state.ct)
-	end
-
-	-- Battlefield events: evaluate conditional/round-gated spawns once per 1000-CT
-	-- round boundary (separate from the weather slot; events layer on top).
-	if _battlefieldEventService then
-		local roundIndex = math.floor((state.ct or 0) / 1000)
-		if state.bfRound == nil or roundIndex > state.bfRound then
-			state.bfRound = roundIndex
-			local bfRng = Random.new((state.ct or 0) + (state.battleSeed or 0) + 70007)
-			local ok, err = pcall(_battlefieldEventService.OnRoundStart, state, roundIndex, bfRng)
-			if not ok then
-				warn("[BattleCoordinator] BattlefieldEventService.OnRoundStart error: " .. tostring(err))
+		-- Find the nearest event: min over (unit RT) and (channel remaining = resolveCt - ct).
+		local minRt = math.huge
+		for _, unit in ipairs(alive) do
+			-- A frozen caster (RT<=0, still channeling) does NOT contribute an RT event.
+			local frozen = unit.isChanneling and unit.remainingRt <= 0
+			if not frozen and unit.remainingRt < minRt then
+				minRt = unit.remainingRt
+			end
+			if unit.isChanneling and unit.channelResolveCt then
+				local chRemain = unit.channelResolveCt - state.ct
+				if chRemain < minRt then minRt = chRemain end
 			end
 		end
-	end
+		if minRt == math.huge then return nil, ctPassedTotal end
+		if minRt < 0 then minRt = 0 end
 
-	-- Channel resolution takes priority at its deadline: if any channeling unit's
-	-- resolveCt is now reached, fire that channel first (skill resolves independent
-	-- of whose RT is up). Pick the earliest-deadline channel if several coincide.
-	local resolveUnit = nil
-	for _, unit in ipairs(alive) do
-		if unit.isChanneling and unit.channelResolveCt and state.ct >= unit.channelResolveCt then
-			if not resolveUnit or unit.channelResolveCt < resolveUnit.channelResolveCt then
-				resolveUnit = unit
+		state.ct = state.ct + minRt
+		ctPassedTotal = ctPassedTotal + minRt
+		for _, unit in ipairs(alive) do
+			-- Frozen casters do not tick RT (they wait at 0 for the channel).
+			local frozen = unit.isChanneling and unit.remainingRt <= 0
+			if not frozen then
+				unit.remainingRt = unit.remainingRt - minRt
 			end
 		end
-	end
-	if resolveUnit then
-		return { channelResolve = resolveUnit }, minRt
-	end
 
-	-- Otherwise pick a ready unit by RT. Frozen casters (RT<=0 mid-channel) are
-	-- excluded — they cannot take a turn until their channel resolves.
-	local ready = {}
-	for _, unit in ipairs(alive) do
-		local frozen = unit.isChanneling and unit.remainingRt <= 0
-		if unit.remainingRt <= 0 and not frozen then
-			table.insert(ready, unit)
+		-- Time cycle: advance Dawn/Day/Dusk/Night as the clock crosses 1000-CT rounds.
+		updateTimePhase(state)
+
+		-- Weather engine: per-round re-roll at each 1000-CT boundary + 300-CT periodic
+		-- tick. Deterministic rng seeded from the clock (no stored seed needed).
+		if _weatherService then
+			-- + per-battle seed (set by Main at battle start) so weather differs between battles.
+			local wRng = Random.new(state.ct + (state.battleSeed or 0) + 54321)
+			_weatherService.RerollForNewRound(state, wRng, state.ct)
+			_weatherService.Tick(state, minRt, wRng, state.ct)
 		end
+
+		-- Battlefield events: evaluate conditional/round-gated spawns once per 1000-CT
+		-- round boundary (separate from the weather slot; events layer on top).
+		if _battlefieldEventService then
+			local roundIndex = math.floor((state.ct or 0) / 1000)
+			if state.bfRound == nil or roundIndex > state.bfRound then
+				state.bfRound = roundIndex
+				local bfRng = Random.new((state.ct or 0) + (state.battleSeed or 0) + 70007)
+				local ok, err = pcall(_battlefieldEventService.OnRoundStart, state, roundIndex, bfRng)
+				if not ok then
+					warn("[BattleCoordinator] BattlefieldEventService.OnRoundStart error: " .. tostring(err))
+				end
+			end
+		end
+
+		-- Weather and round-start events may have killed or revived units this step: refresh.
+		clearDeadChannels(state)
+		alive = getAliveUnits(state)
+		if #alive == 0 then return nil, ctPassedTotal end
+
+		-- Channel resolution takes priority at its deadline: if any channeling unit's
+		-- resolveCt is now reached, fire that channel first (skill resolves independent
+		-- of whose RT is up). Pick the earliest-deadline channel if several coincide.
+		local resolveUnit = nil
+		for _, unit in ipairs(alive) do
+			-- A caster killed during this advance never resolves its channel.
+			if unit.isAlive and unit.isChanneling and unit.channelResolveCt and state.ct >= unit.channelResolveCt then
+				if not resolveUnit or unit.channelResolveCt < resolveUnit.channelResolveCt then
+					resolveUnit = unit
+				end
+			end
+		end
+		if resolveUnit then
+			return { channelResolve = resolveUnit }, ctPassedTotal
+		end
+
+		-- Otherwise pick a ready unit by RT. Frozen casters (RT<=0 mid-channel) are
+		-- excluded -- they cannot take a turn until their channel resolves.
+		local ready = {}
+		for _, unit in ipairs(alive) do
+			local frozen = unit.isChanneling and unit.remainingRt <= 0
+			if unit.remainingRt <= 0 and not frozen then
+				table.insert(ready, unit)
+			end
+		end
+
+		if #ready > 0 then
+			table.sort(ready, resolveReadyTie)
+			return ready[1], ctPassedTotal
+		end
+
+		-- No unit ready and no channel resolved this step. Keep advancing while any LIVING unit still
+		-- has a future event: its own turn (RT > 0, not frozen) or a pending channel deadline. Before,
+		-- only channels counted, so a caster killed at its own deadline left no "event" and the battle
+		-- stopped with no winner (UAT 2026-10-27 D-4). Nobody alive with an event -> true stall.
+		local hasFutureEvent = false
+		for _, unit in ipairs(alive) do
+			local frozen = unit.isChanneling and unit.remainingRt <= 0
+			if (not frozen and unit.remainingRt > 0)
+				or (unit.isChanneling and unit.channelResolveCt and unit.channelResolveCt > state.ct) then
+				hasFutureEvent = true
+				break
+			end
+		end
+		if not hasFutureEvent then
+			return nil, ctPassedTotal
+		end
+		-- else: a future channel deadline remains -- continue the loop to advance to it.
 	end
-
-	if #ready == 0 then return nil, minRt end
-
-	table.sort(ready, resolveReadyTie)
-	return ready[1], minRt
 end
 
 --------------------------------------------------
 -- CHECK BATTLE END
 --------------------------------------------------
 
+-- KO hook (2026-10-26, Rescue Beacon): injected by Main. Runs right before every
+-- battle-end check, so a unit KO'd near a beacon is revived before the battle can end.
+local _koHook = nil
+function BattleCoordinator.SetKoHook(fn)
+	_koHook = fn
+end
+
 local function checkBattleEnd(state)
+	if _koHook then _koHook(state) end
 	local playersAlive = getSideAlive(state, "Player")
 	local enemiesAlive = getSideAlive(state, "Enemy")
 
@@ -427,6 +511,14 @@ function BattleCoordinator.AdvanceClock(state)
 
 	local nextUnit, ctPassed = advanceToNextReady(state)
 	if not nextUnit then
+		-- A side may have been wiped during the advance (weather, events): end the battle with a
+		-- winner instead of the loop reading nil as an engine stall.
+		checkBattleEnd(state)
+		return nil
+	end
+	-- A side wiped during the advance (weather, events) ends the battle now, instead of giving the
+	-- survivor one more turn on an empty field first (UAT 2026-10-27 A-1).
+	if checkBattleEnd(state) then
 		return nil
 	end
 
@@ -448,6 +540,24 @@ function BattleCoordinator.AdvanceClock(state)
 		end
 	end
 
+	-- AC-015 Emergency Locket (out-of-turn auto-heal): at this scheduler boundary the next unit is
+	-- chosen but its turn is NOT yet open, so firing here is "outside unit turn". For any OTHER living
+	-- unit at/below its locket HP threshold, fire an emergency heal. nextUnit is excluded (it is about
+	-- to act and can heal on its own turn, and we must not re-add RT to the unit already selected).
+	-- The once-per-turn flag (reset in that unit's OnTurnStart) caps this at one heal per turn-cycle.
+	-- Deferred require: CommandService requires BattleCoordinator at load, so resolve it at call time.
+	do
+		local _CommandService = (require :: any)(script.Parent.CommandService)
+		for _, unit in ipairs(state.units) do
+			if unit.isAlive and unit ~= nextUnit and (unit.maxHp or 0) > 0 then
+				local cfg = ArmorPassiveService.GetAutoHealConfig(unit)
+				if cfg and (unit.currentHp or 0) / unit.maxHp <= (cfg.hpThreshold or 0.25) then
+					_CommandService.TryAutoUseHeal(state, unit)
+				end
+			end
+		end
+	end
+
 	-- CT-based status tick: decrement durationCt for ALL alive units
 	if ctPassed > 0 then
 		-- Collect units that received Regeneration/Recharge periodic effects so the
@@ -460,6 +570,10 @@ function BattleCoordinator.AdvanceClock(state)
 				-- periodic effects, mutating currentHp/currentMp and returning the
 				-- events so we can refresh the client's bars.
 				local _expired, ctEvents = StatusService.ProcessCtTick(unit, ctPassed)
+				-- Break running out on the clock (user ruling 2026-10-27): race ability back on now.
+				if RacePassiveService.RefreshConditionalStats(unit) then
+					table.insert(state.ctStatusUnits, unit)
+				end
 				if ctEvents and #ctEvents > 0 then
 					for _, ev in ipairs(ctEvents) do
 						print(string.format("[StatusService] %s %s +%d on %s",
@@ -498,6 +612,15 @@ function BattleCoordinator.AdvanceClock(state)
 		end
 	end
 
+	-- Deployable / delayed pulse CT tick (2026-10-26): fire any scheduled fixed-CT
+	-- pulses (Healing Beacon, Poison Cloud, Thermite, Tesla Pylon, Meteor Marker)
+	-- whose interval the clock just crossed. Per-unit results are stashed on
+	-- state.pulseEvents for the driver (Main) to broadcast, same convention as
+	-- state.ctStatusUnits above. nil-safe when no scheduler is wired or nothing is scheduled.
+	if ctPassed > 0 and _pulseScheduler then
+		_pulseScheduler.ProcessCtTick(state, ctPassed)
+	end
+
 	-- TWO-TIMER MODEL: channel-resolution signal. The clock reached a channeling
 	-- unit's fixed deadline. Fire the skill OUTSIDE the normal turn flow (it resolves
 	-- regardless of whose RT is up). Enter a dedicated phase; the main loop calls
@@ -517,12 +640,27 @@ function BattleCoordinator.AdvanceClock(state)
 
 	-- Reset once-per-turn Guard limit (Guard status expires via StatusService tick)
 	nextUnit.guardUsedThisTurn = false
+	nextUnit._interactAmp = nil  -- UTI-016 lasts until the unit's next turn opens
 	-- Reset once-per-turn Momentum AP gain (Perks & Flaws Phase 3, TRAIT-P-162).
 	nextUnit.momentumUsedThisTurn = false
 	nextUnit.pendingKoApGain = 0
 	-- Reset per-turn on-KO recovery accumulators (Bloodbath/Soul Charge 45% cap).
 	nextUnit.koHpThisTurn = 0
 	nextUnit.koMpThisTurn = 0
+	-- Evasion Surge (augment): clear the +30% evasion one-shot at the holder's next turn start.
+	-- Priority Surge (augment, reworked 2026-10-26): track whether each unit has taken a turn in the
+	-- current 1000-CT round. At each round boundary reset all units to "not acted", then mark the unit
+	-- whose turn is opening as acted. OnDamageCalculation reads defender._actedThisRound to grant
+	-- Priority Surge +30%% vs targets that have not yet acted this round. (Evasion Surge no longer
+	-- clears here -- reworked to a stacking charge consumed per hit.)
+	do
+		local _ri = math.floor((state.ct or 0) / 1000)
+		if state._prioRound ~= _ri then
+			state._prioRound = _ri
+			for _, _u in ipairs(state.units) do _u._actedThisRound = false end
+		end
+		nextUnit._actedThisRound = true
+	end
 
 	-- Process DoT at start of turn (Poison/Burn damage)
 	local dotEvents = StatusService.ProcessStartOfTurn(nextUnit)
@@ -541,6 +679,14 @@ function BattleCoordinator.AdvanceClock(state)
 	RacePassiveService.OnTurnStart(nextUnit, state)
 	-- Trait start-of-turn hooks (2026-10-23): move-last-turn rollover, Sluggish reset, Soul Harvest latch.
 	TraitEffectService.OnTurnStart(nextUnit, state)
+	WeaponPassiveService.OnTurnStart(nextUnit)  -- reset weapon per-turn accumulators (Charge tiles)
+	-- ArcaneFlow (weapon native, Wand): recover MP = 5 + floor(INT/20) on the ready turn.
+	do
+		local _mp = WeaponPassiveService.OnReadyTurn(nextUnit)
+		if _mp > 0 then
+			print(string.format("[BattleCoordinator] Arcane Flow: %s recovers %d MP on ready turn", nextUnit.name, _mp))
+		end
+	end
 
 	print(string.format(
 		"[BattleCoordinator] CT:%d | Turn %d | %s%s",
@@ -580,12 +726,23 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 		state.turnActionTaken = false
 		state.undoStack       = {}  -- new turn: nothing to undo yet
 		unit.guardUsedThisTurn = false
+	unit._interactAmp = nil  -- UTI-016 lasts until the unit's next turn opens
 		-- Reset once-per-turn Momentum AP gain (Perks & Flaws Phase 3, TRAIT-P-162).
 		unit.momentumUsedThisTurn = false
 		unit.pendingKoApGain = 0
 		-- Reset per-turn on-KO recovery accumulators (Bloodbath/Soul Charge 45% cap).
 		unit.koHpThisTurn = 0
 		unit.koMpThisTurn = 0
+		-- Evasion Surge (augment): clear the +30% evasion one-shot at the holder's next turn start.
+		-- Priority Surge (augment, reworked 2026-10-26): per-unit acted-this-round tracking (see BeginTurn).
+		do
+			local _ri = math.floor((state.ct or 0) / 1000)
+			if state._prioRound ~= _ri then
+				state._prioRound = _ri
+				for _, _u in ipairs(state.units) do _u._actedThisRound = false end
+			end
+			unit._actedThisRound = true
+		end
 		local dotEvents = StatusService.ProcessStartOfTurn(unit)
 		state.dotEvents = dotEvents
 		UnitSchema.RefreshAp(unit)
@@ -596,6 +753,14 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 		RacePassiveService.OnTurnStart(unit, state)
 		-- Trait start-of-turn hooks (2026-10-23): move-last-turn rollover, Sluggish reset, Soul Harvest latch.
 		TraitEffectService.OnTurnStart(unit, state)
+		WeaponPassiveService.OnTurnStart(unit)  -- reset weapon per-turn accumulators (Charge tiles)
+		-- ArcaneFlow (weapon native, Wand): recover MP = 5 + floor(INT/20) on the ready turn.
+		do
+			local _mp = WeaponPassiveService.OnReadyTurn(unit)
+			if _mp > 0 then
+				print(string.format("[BattleCoordinator] Arcane Flow: %s recovers %d MP on ready turn", unit.name, _mp))
+			end
+		end
 		print(string.format(
 			"[BattleCoordinator] CT:%d | Channel resolved -> %s takes immediate turn (was frozen at 0 RT)",
 			state.ct, unit.name
@@ -612,12 +777,21 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 	return nil
 end
 
+local _rtAccrueHook = nil
+function BattleCoordinator.SetRtAccrueHook(fn)
+	_rtAccrueHook = fn
+end
+
 function BattleCoordinator.AccrueRt(state, rtCost)
 	assert(
 		state.phase == "TurnOpen",
 		"AccrueRt: no turn is open."
 	)
 	assert(rtCost >= 0, "AccrueRt: rtCost must be >= 0.")
+	-- Optional RT hook (2026-10-27, CON-020 Suppression Field): injected by CommandService.
+	if _rtAccrueHook then
+		rtCost = _rtAccrueHook(state, rtCost) or rtCost
+	end
 
 	state.turnRtAccrued   = state.turnRtAccrued + rtCost
 	state.turnActionTaken = true
@@ -636,6 +810,18 @@ function BattleCoordinator.RefundRt(state, rtCost)
 	assert(state.phase == "TurnOpen", "RefundRt: no turn is open.")
 	assert(rtCost >= 0, "RefundRt: rtCost must be >= 0.")
 	state.turnRtAccrued = math.max(0, state.turnRtAccrued - rtCost)
+end
+
+-- Recompute turnActionTaken from the undo stack (2026-10-26). RefundRt reverses the
+-- RT magnitude of an aborted action but does NOT know whether the turn still holds
+-- any OTHER action. A clean siege Cancel calls this afterward so the flag reflects
+-- reality: true only if a prior reversible action remains this turn. Mirrors the
+-- exact post-condition PopUndo uses (turnActionTaken = #stack > 0), so a
+-- cancel-then-idle turn keeps the RT-rest discount while a cancel-after-move does
+-- not. Safe to call with no stack (treated as empty -> false).
+function BattleCoordinator.RecomputeActionTaken(state)
+	local stack = state.undoStack
+	state.turnActionTaken = (stack ~= nil and #stack > 0)
 end
 
 -- Push a reversible-action snapshot onto the current turn's undo stack.
@@ -666,6 +852,23 @@ end
 -- Uses Modified Base RT from StatusService (accounts for Slow/Haste).
 -- After computing RT, ticks all statuses (decrements turns, removes expired).
 -- Returns: { expiredStatuses = { "Slow", ... } }
+-- Venom end-of-turn damage (user ruling 2026-10-26). Applied HERE, the single end-of-turn
+-- point, so a knockout is seen by checkBattleEnd below. Events are queued on
+-- state.endTurnDotEvents; Main shows them (DotDamage) and clears a KO'd unit's tile.
+local function applyEndOfTurnDots(state, unit)
+	for _, ev in ipairs(StatusService.ProcessEndOfTurn(unit)) do
+		if unit.isAlive then
+			ev.actual = UnitSchema.ApplyDamage(unit, ev.damage)
+			ev.unit = unit
+			state.endTurnDotEvents = state.endTurnDotEvents or {}
+			table.insert(state.endTurnDotEvents, ev)
+			print(string.format("[DoT] %s takes %d %s damage at end of turn | HP: %d/%d%s",
+				unit.name, ev.actual or 0, ev.statusId, unit.currentHp or 0, unit.maxHp or 0,
+				unit.isAlive and "" or " | DEFEATED"))
+		end
+	end
+end
+
 function BattleCoordinator.EndTurn(state)
 	assert(
 		state.phase == "TurnOpen",
@@ -676,13 +879,28 @@ function BattleCoordinator.EndTurn(state)
 
 	local modifiedBaseRt = StatusService.GetModifiedBaseRt(unit)
 	-- Frozen: all RT costs ×2
-	local frozenMult = StatusService.GetAllRtMultiplier(unit)
+	local frozenMult = StatusService.GetAllRtMultiplier(unit, true)  -- no Command Relay here (D1)
 
 	if not state.turnActionTaken then
 		unit.remainingRt = math.round(modifiedBaseRt * REST_RT_MULTIPLIER * frozenMult)
 	else
 		unit.remainingRt = math.max(1, math.round((modifiedBaseRt + state.turnRtAccrued) * frozenMult))
 	end
+
+	-- Augment one-shot CT modifier (2026-10-24): Quicken Self / Momentum stamp a next-turn
+	-- CT multiplier on the unit; apply it to the RT just computed, then clear (one turn only).
+	if unit._nextTurnCtMult and unit._nextTurnCtMult ~= 1 then
+		unit.remainingRt = math.max(1, math.round(unit.remainingRt * unit._nextTurnCtMult))
+	end
+	unit._nextTurnCtMult = nil
+	-- Steadfast Strike displacement-immunity is one-shot: clear at the unit's own turn end.
+	unit._displacementImmune = nil
+	-- Fortify on Kill lasts one round; Retaliation Guard is "this round" — clear both at turn end.
+	unit._fortifyMult = nil
+	unit._retaliationGuard = nil
+	unit._threatFactor = nil
+
+	applyEndOfTurnDots(state, unit)
 
 	-- Tick statuses: decrement durations, remove expired.
 	local expired = StatusService.TickStatuses(unit)
@@ -726,6 +944,7 @@ function BattleCoordinator.EndTurnChanneling(state, channelRt)
 	))
 
 	-- Tick statuses even during channeling (so Slow/Poison timers still count down)
+	applyEndOfTurnDots(state, unit)
 	local expired = StatusService.TickStatuses(unit)
 
 	-- Race end-of-turn hooks (2026-10-02): Insectoid Molt Cycle, Dragonkin resync.

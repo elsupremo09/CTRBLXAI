@@ -38,6 +38,7 @@ local WeatherService          = require(Game:WaitForChild("WeatherService"))
 local BattlefieldEventService = require(Game:WaitForChild("BattlefieldEventService"))
 local ItemDisplay             = require(Game:WaitForChild("ItemDisplay")) -- item->UI entry builders (extracted 2026-10-12)
 local DoctrinePassiveService  = require(Game:WaitForChild("DoctrinePassiveService")) -- Artificer consumable-range +1 (2026-10-21)
+local ItemEffectService       = require(Game:WaitForChild("ItemEffectService")) -- item aim range (2026-10-26)
 
 -- Slice 6 services (switched on this pass). CurrencyService provides AsProvider()
 -- used by Recruitment/Blacksmith/Merchant/Dispatch; it is required FIRST so the
@@ -221,17 +222,35 @@ local function buildTurnPrompt(unit)
 			-- Level-based MP (2026-10-07): same pricing the server charges (CommandService.GetSkillMpCost).
 			local promptMpCost = CommandService.GetSkillMpCost(unit, def, def.id)
 			local canUse = UnitSchema.HasEnoughMp(unit, promptMpCost)
+				and not CommandService.IsRelocationBlockedSkill(unit, def)  -- Phase Lock (2026-10-27)
 			local candidates, computedRange = TargetingService.GetSkillCandidates(unit, state.units, def)
+			-- TAUNT (2026-10-27): debuff / damage skills may only target the taunter.
+			candidates = StatusService.FilterTauntCandidates(unit, def, candidates, state.units)
 			local isGroundTarget = false
 			local isSelfTarget = false
 			local tr = def.targetRules or "Enemy Unit"
 			if tr == "Self" or tr == "Self (Aura)" or tr == "Ally Tile (centered on caster)"
+				or tr == "Caster Area"
 				or (tr == "Self, Allies" and (def.range or 0) == 0)
 			then
 				isSelfTarget = true
 			end
 			local targetIds = {}
 			for _, c in ipairs(candidates) do
+				-- Steal (SKL-STEAL) gating (2026-10-24): a legal steal target is one the
+				-- caster is DIRECTLY BEHIND (exact rear tile) who also has >=1 stealable
+				-- non-weapon piece. Filtering here empties the list when none qualify, so
+				-- the skill auto-grays on the client (which needs targets > 0 to enable it).
+				if def.id == "SKL-STEAL" and not (
+					GameConstants.IsCasterBehindTarget(unit, c)
+					and #GameConstants.GetStealableSlots(c) > 0
+				) then
+					continue
+				end
+				-- Skyfall Lance: hide targets with no free landing tile (validation would reject them).
+				if def.leapsAdjacent and not c.isGroundTarget and not CommandService.CanLeapTo(unit, c, state) then
+					continue
+				end
 				if c.isGroundTarget then
 					isGroundTarget = true
 					-- Ground target: no predicted damage, just a marker
@@ -249,7 +268,29 @@ local function buildTurnPrompt(unit)
 						predicted = healResult.finalHealing or 0
 						predType = "healing"
 					else
-						local dmgResult = CombatResolver.ResolveSkill(unit, c, def)
+						-- Skyfall Lance / charges strike from their landing tile, so predict from there:
+						-- the caster is placed on that tile only for this calculation and put straight
+						-- back (no yield in between; nothing is broadcast). Every position factor
+						-- (facing, elevation, high ground, terrain) then matches the real hit.
+						local previewDef = def
+						local land = nil
+						if def.leapsAdjacent then
+							land = CommandService.LeapLanding(unit, c, state)
+						elseif def.isCharge and c.isAlive then
+							land = CommandService.ComputeChargeLanding(unit, c, state)
+						end
+						local homeX, homeY = unit.tileX, unit.tileY
+						if land then
+							unit.tileX, unit.tileY = land.x, land.y
+						end
+						if def.leapsAdjacent then
+							previewDef = CommandService.LeapDamageDef(def, unit.tileX, unit.tileY, c)
+						end
+						local okPrev, dmgResult = pcall(CombatResolver.ResolveSkill, unit, c, previewDef)
+						unit.tileX, unit.tileY = homeX, homeY
+						if not okPrev then
+							error(dmgResult, 0)
+						end
 						predicted = dmgResult.finalDamage or 0
 					end
 					local tEntry = {
@@ -263,7 +304,7 @@ local function buildTurnPrompt(unit)
 					-- CHARGE preview: server computes the landing tile + straight path
 					-- (shared with the actual commit logic) so the client can highlight
 					-- the caster's landing (yellow) and the path (white) at confirmation.
-					if def.isCharge then
+					if def.isCharge or def.leapsAdjacent then
 						local landing = CommandService.ComputeChargeLanding(unit, c, state)
 						if landing then
 							tEntry.landingTileX = landing.x
@@ -285,6 +326,7 @@ local function buildTurnPrompt(unit)
 				targetRules = def.targetRules or "Enemy Unit",
 				isHealing   = def.isHealing or false,
 				isCharge    = def.isCharge or false,
+				leapsAdjacent = def.leapsAdjacent or false,  -- Skyfall Lance: show its landing tile like a charge
 				channelTime = def.channelTime or 0,
 				canUse      = canUse,
 				targets     = targetIds,
@@ -296,14 +338,16 @@ local function buildTurnPrompt(unit)
 				-- use their authored cost; weapon-WT skills use (base component + weapon WT) × N.
 				rtCost      = (function()
 					local lvl = (unit.equipmentSlots and unit.equipmentSlots.MainHand and unit.equipmentSlots.MainHand.itemLevel) or 1
+					local augRt = CommandService.GetAugmentRtMultiplier(unit, def.id)  -- e.g. Shared Resolve x2
 					local fx = GameConstants.CalcFixedSkillRt(def.id, lvl)
-					if fx then return fx end
+					if fx then return math.round(fx * augRt) end
 					if def.rtMult then
 						local baseComp = StatusService.GetModifiedBaseRt(unit) * GameConstants.BASIC_ATTACK_RT_FACTOR
 						local wWt = GameConstants.CalcEffectiveWt(unit.weaponWt or 10, (unit.effectiveStats or {}).STR or 10)
-						return math.round((baseComp + wWt) * def.rtMult)
+						-- Same rounding order as the charge (CommandService): skill RT first, then the augment x.
+						return math.round(math.round((baseComp + wWt) * def.rtMult) * augRt)
 					end
-					return def.rtCost or 60
+					return math.round((def.rtCost or 60) * augRt)
 				end)(),
 				power       = def.power or 0,
 				appliesStatus = def.appliesStatus or nil,
@@ -405,38 +449,70 @@ local function buildTurnPrompt(unit)
 		local slotData = unit.consumableSlots and unit.consumableSlots[idx]
 		if slotData and slotData.consumableId and (slotData.currentCharges or 0) > 0 then
 			local consDef = ConsumableData.GetById(slotData.consumableId)
-			if consDef then
+			-- Parked items (DB Status PARKED, user 2026-10-27) never show in battle.
+			if consDef and not consDef.parked then
 				local tr = consDef.targetRules or "Self"
 				local formula = consDef.effectFormula or ""
 				-- ARTIFICER — Applied Artifice: Consumable Item Maximum Range +1. Mirrors the
 				-- server gate (CommandService.validateItemTarget) so the client can SELECT the
 				-- farther tile; server remains the final authority. (2026-10-21)
 				local itemRange = (consDef.range or 0) + DoctrinePassiveService.GetConsumableRangeBonus(unit)
+				-- Aim range (user ruling 2, 2026-10-26): Self-origin Line/Cone items and the
+				-- teleport pick a tile even though their authored range is 0.
+				local aimRange = ItemEffectService.GetItemAimRange(unit, consDef)
+				if aimRange then itemRange = math.max(itemRange, aimRange) end
 
 				-- Classify targeting mode from targetRules
-				local isSelf   = (tr == "Self")
+				-- Battlefield / Global items (weather beacons) need no target: confirm like Self.
+				-- "Self and Allies" (REC-020) is centred on the user: confirm like Self.
+				local isSelf   = (tr == "Self" or tr == "Battlefield" or tr == "Global" or tr == "Self and Allies")
+				-- Empty Tile (deployables / emitters) and the teleport pick a tile (2026-10-26).
 				local isGround = (tr == "Ground" or tr == "Tile" or tr == "Enemy or Ground"
-					or tr == "Self-origin" or tr == "Self and Allies")
-				local isAllyTarget  = (tr == "Self or Ally" or tr == "Ally")
+					or tr == "Self-origin"
+					or tr == "Empty Tile" or tr == "Self to Empty Tile"
+					or tr == "Owned Deployable"  -- Object Recall: device from the list, then a tile
+					or tr == "Mechanical Object"  -- Maintenance Tool: tap the device / gadget
+					or tr == "Breakable Terrain"  -- Excavation Drill: tap the tile
+					or tr == "Gap Endpoints"  -- Bridge Projector: tap the gap
+					or tr == "Object or Unit")  -- Breaching Drill: tap the tile
+				local isAllyTarget  = (tr == "Self or Ally" or tr == "Ally" or tr == "Ally or Object")
 				local isEnemyTarget = (tr == "Enemy" or tr == "Enemy Unit")
-				local isAnyTarget   = (tr == "Any Unit")
+				-- Any-side unit items (Kinetic Ram / Grapple, Exchange Device), never the user.
+				local isAnyTarget   = (tr == "Any Unit" or tr == "Unit or Object" or tr == "Ally or Enemy" or tr == "Enemy or Ally")
+				-- Revive items ("KO Ally"): offer KO'd units. Widened 2026-10-24 to
+				-- offer any-side corpses (ally = original use; enemy = revive-to-
+				-- enemy / Torture). Server validateItemTarget enforces must-be-dead.
+				local isKOTarget = (tr == "KO Ally")
+				-- All-tile widening (2026-10-24): ally-only / enemy-only CONSUMABLES
+				-- widen to offer a unit of ANY side (heal/buff an enemy, damage-item an
+				-- ally). Hide still protects. Mirrors the skill path (IsWidenedSkill).
+				local isWidenedItem = TargetingService.IsWidenedItemRule(tr)
 
 				local isHealing = formula:match("Restore%s+%d+%%.-Max HP") ~= nil
 
 				-- Build unit-target candidates by side + Chebyshev range
 				local itemTargets = {}
-				if isAllyTarget or isEnemyTarget or isAnyTarget then
+				if isAllyTarget or isEnemyTarget or isAnyTarget or isWidenedItem then
 					for _, c in ipairs(state.units) do
-						if c.isAlive then
+						if c.isAlive and not StatusService.HasStatus(c, "Hide") then
 							local sameSide = (c.side == unit.side)
 							local includeAlly  = isAllyTarget and sameSide
 							local includeEnemy = isEnemyTarget and (not sameSide)
 							local includeAny   = isAnyTarget
+							-- Widened: any side is includable (self-exclusion for the bare
+							-- "Ally" rule is preserved below, consistent with ally-not-self).
+							local includeWidened = isWidenedItem
 							-- "Ally" excludes self; "Self or Ally"/"Any" include self
-							if isAllyTarget and tr == "Ally" and c.id == unit.id then
+							if isAllyTarget and (tr == "Ally" or tr == "Ally or Object") and c.id == unit.id then
 								includeAlly = false
 							end
-							if includeAlly or includeEnemy or includeAny then
+							if isWidenedItem and tr == "Ally" and c.id == unit.id then
+								includeWidened = false
+							end
+							if (tr == "Unit or Object" or tr == "Ally or Enemy" or tr == "Enemy or Ally") and c.id == unit.id then
+								includeAny = false
+							end
+							if includeAlly or includeEnemy or includeAny or includeWidened then
 								local dist = math.max(
 									math.abs(c.tileX - unit.tileX),
 									math.abs(c.tileY - unit.tileY)
@@ -447,6 +523,37 @@ local function buildTurnPrompt(unit)
 										tileX = c.tileX, tileY = c.tileY,
 									})
 								end
+							end
+						end
+					end
+				end
+				-- KO-target items: offer DEAD units of any side within range (no Hide
+				-- filter — corpses are not hidden). Client highlights these tiles.
+				if isKOTarget then
+					for _, c in ipairs(state.units) do
+						if (not c.isAlive) and not c.isSummon then
+							local dist = math.max(
+								math.abs(c.tileX - unit.tileX),
+								math.abs(c.tileY - unit.tileY)
+							)
+							if dist <= itemRange then
+								table.insert(itemTargets, {
+									id = c.id, name = c.name,
+									tileX = c.tileX, tileY = c.tileY,
+								})
+							end
+						end
+					end
+				end
+
+				-- Magnetic Snare (2026-10-26): Mechanical-race units of either side, not the user.
+				if tr == "Mechanical Unit/Object" then
+					for _, c in ipairs(state.units) do
+						if c.isAlive and c.id ~= unit.id and not StatusService.HasStatus(c, "Hide")
+							and CombatResolver.HasRaceTag and CombatResolver.HasRaceTag(c, "Mechanical") then
+							local dist = math.max(math.abs(c.tileX - unit.tileX), math.abs(c.tileY - unit.tileY))
+							if dist <= itemRange then
+								table.insert(itemTargets, { id = c.id, name = c.name, tileX = c.tileX, tileY = c.tileY })
 							end
 						end
 					end
@@ -468,6 +575,10 @@ local function buildTurnPrompt(unit)
 					selfTarget    = isSelf,
 					groundTarget  = isGround,
 					targets       = itemTargets,
+					-- Pick-list (user ruling 1, 2026-10-26): fixed choices, or "targetBuff"
+					-- (client lists the picked target's dispellable buffs).
+					choices       = ItemEffectService.GetItemChoices(consDef, unit, state),
+					choiceKind    = ItemEffectService.GetItemChoiceKind(consDef),
 				})
 			end
 		end
@@ -699,14 +810,83 @@ local function promptCardinalDirection(unit)
 	return chosen
 end
 
+--------------------------------------------------
+-- TILE PROMPT: ask the player to pick a target TILE within range of an origin.
+-- The tile analogue of promptCardinalDirection, used by the Catapult (pick a
+-- landing tile within range 6). Fires TilePrompt with the legal tile list and
+-- blocks on SetTile. Self-contained prompt-and-wait, same pattern as the facing
+-- prompt — it does NOT enter the turn-action currentPrompt/inputMode flow, so it
+-- cannot collide with Move/Push tile selection. Returns {x=,y=} or nil (timeout).
+-- Single-player: uses Players:GetPlayers()[1].
+local function promptTargetTile(unit, originX, originY, range, legalTiles)
+	local playerObj = Players:GetPlayers()[1]
+	if not playerObj then return nil end
+	BattleEvents.TilePrompt:FireClient(playerObj, {
+		unitId  = unit.id,
+		originX = originX,
+		originY = originY,
+		range   = range,
+		tiles   = legalTiles,
+		aimMode = "siege",
+	})
+	local chosen, responded = nil, false
+	local conn
+	conn = BattleEvents.SetTile.OnServerEvent:Connect(function(player, data)
+		if player == playerObj and data and data.unitId == unit.id then
+			if data.cancel == true then
+				-- Player tapped Cancel during targeting: return the CANCEL sentinel so
+				-- the siege handler aborts and the command layer refunds AP/RT (clean
+				-- cancel back to the action menu).
+				chosen = "CANCEL"
+			elseif type(data.tileX) == "number" and type(data.tileY) == "number" then
+				chosen = { x = data.tileX, y = data.tileY }
+			end
+			responded = true
+		end
+	end)
+	-- Turn-based: wait until the player chooses (no timeout), mirroring the facing prompt.
+	while not responded do
+		task.wait(0.1)
+	end
+	if conn then conn:Disconnect() end
+	return chosen
+end
+
 -- Inject the cardinal direction prompter into ObjectEffectService now that it is
 -- defined (the main OES injection block near the top runs before this function
 -- exists, so wiring it here avoids a nil-prompter forward-reference).
 if ObjectEffectService.SetDirectionPrompter then
 	ObjectEffectService.SetDirectionPrompter(promptCardinalDirection)
 end
+if ObjectEffectService.SetTilePrompter then
+	ObjectEffectService.SetTilePrompter(promptTargetTile)
+end
 
 --------------------------------------------------
+
+-- Steal slot pick (2026-10-24): prompt-and-wait like promptCardinalDirection. Fires the
+-- server-authored list of the target's stealable slots to the player and blocks until
+-- they tap one; validates the reply against that list. Single-player (first player).
+local function promptStealSlot(unit, target, slots)
+	local playerObj = Players:GetPlayers()[1]
+	if not playerObj then return slots[1] end
+	BattleEvents.StealPrompt:FireClient(playerObj, {
+		casterId = unit.id, targetId = target.id, targetName = target.name, slots = slots,
+	})
+	local chosen, responded = nil, false
+	local conn
+	conn = BattleEvents.StealChoice.OnServerEvent:Connect(function(player, data)
+		if player == playerObj and data and data.casterId == unit.id then
+			for _, legal in ipairs(slots) do
+				if legal == data.slot then chosen = data.slot break end
+			end
+			if chosen then responded = true end
+		end
+	end)
+	while not responded do task.wait(0.1) end
+	if conn then conn:Disconnect() end
+	return chosen
+end
 
 local function executePlayerCommand(unit, command)
 	local actionType = command.actionType
@@ -888,16 +1068,33 @@ local function executePlayerCommand(unit, command)
 		local _tr = skillDef.targetRules or "Enemy Unit"
 
 		if command.tileX and command.tileY and not command.targetId then
-			-- Ground targeting: create a virtual target with tile coords
-			target = {
-				tileX = command.tileX,
-				tileY = command.tileY,
-				isGroundTarget = true,
-				isAlive = true,
-				name = string.format("Ground(%d,%d)", command.tileX, command.tileY),
-				id = "_ground_" .. command.tileX .. "_" .. command.tileY,
-			}
-			print(string.format("[Main] Skill ground target: (%d,%d)", command.tileX, command.tileY))
+			-- All-tile widening (Option A, 2026-10-24): a widened skill clicked on a
+			-- tile resolves against the tile's OCCUPANT when one is present (living,
+			-- non-hidden), so damage/heal + terrain reaction run through the normal
+			-- unit path. Hidden occupants are not targetable (Hide protects). An empty
+			-- tile falls through to the ground marker (terrain reaction fires in the
+			-- CommandService ground branch).
+			if TargetingService.IsWidenedSkill(skillDef) then
+				for _, u in ipairs(state.units) do
+					if u.isAlive and u.tileX == command.tileX and u.tileY == command.tileY
+						and not StatusService.HasStatus(u, "Hide") then
+						target = u
+						break
+					end
+				end
+			end
+			if not target then
+				-- Ground targeting: create a virtual target with tile coords
+				target = {
+					tileX = command.tileX,
+					tileY = command.tileY,
+					isGroundTarget = true,
+					isAlive = true,
+					name = string.format("Ground(%d,%d)", command.tileX, command.tileY),
+					id = "_ground_" .. command.tileX .. "_" .. command.tileY,
+				}
+				print(string.format("[Main] Skill ground target: (%d,%d)", command.tileX, command.tileY))
+			end
 		else
 			-- Unit targeting: find by ID
 			for _, u in ipairs(state.units) do
@@ -926,7 +1123,17 @@ local function executePlayerCommand(unit, command)
 			burnSnapshot[u.id] = burnInst and burnInst.storedBurn or 0
 		end
 
-		local selection = { target = target, skillId = command.skillId }
+		-- Steal (SKL-STEAL) slot pick (2026-10-24): ask which non-weapon piece to take
+		-- before committing (server-authored list of the target's stealable slots). The
+		-- chosen slot rides on the selection into ValidateAndCommit and onto the channel.
+		local stealSlot = nil
+		if command.skillId == "SKL-STEAL" then
+			local sslots = GameConstants.GetStealableSlots(target)
+			if #sslots == 0 then return end
+			stealSlot = promptStealSlot(unit, target, sslots)
+			if not stealSlot then return end
+		end
+		local selection = { target = target, skillId = command.skillId, stealSlot = stealSlot }
 
 		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Skill", selection)
 		if ok then
@@ -1032,9 +1239,57 @@ local function executePlayerCommand(unit, command)
 		local mpBefore = target.currentMp or 0
 		local statusesBefore = target.statusInstances and #target.statusInstances or 0
 
-		local selection = { itemSlotIndex = slotIndex, target = target }
+		-- choice: picked value for pick-list items (string only; validated server-side).
+		local selection = { itemSlotIndex = slotIndex, target = target,
+			choice = (type(command.choice) == "string") and command.choice or nil }
+		-- Tile-occupancy refresh (2026-10-26): items can now move the user and/or the
+		-- target (push, pull, swap, teleport). Snapshot both tiles, re-label after commit.
+		local _moved = {}
+		-- (2026-10-26) every living unit: area pushes (Gale Engine, Repulsion Device) can move
+		-- several units in one item use.
+		for _, mu in ipairs(state.units) do
+			if mu and mu.isAlive and not mu.isGroundTarget and mu.tileX then
+				table.insert(_moved, { u = mu, x = mu.tileX, y = mu.tileY })
+			end
+		end
+		-- This user's live devices before the use (a new device replaces the old one).
+		local _devicesBefore = {}
+		for _, du in ipairs(state.units) do
+			if du.isAlive and du.isItemDevice and du.summonOwnerId == unit.id then
+				table.insert(_devicesBefore, { u = du, x = du.tileX, y = du.tileY })
+			end
+		end
 		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Item", selection)
 		if ok then
+			-- D-1 fix (UAT 2026-10-26): two passes. Clear every vacated tile FIRST, then
+			-- label every new tile, so a swap (each unit lands on the other's old tile)
+			-- does not wipe the label the first unit just received.
+			for _, mv in ipairs(_moved) do
+				if mv.u.tileX ~= mv.x or mv.u.tileY ~= mv.y then
+					clearTileOccupant(mv.x, mv.y)
+				end
+			end
+			for _, mv in ipairs(_moved) do
+				if (mv.u.tileX ~= mv.x or mv.u.tileY ~= mv.y) and mv.u.isAlive then
+					setTileOccupant(mv.u.tileX, mv.u.tileY, mv.u.name, "Unit (" .. mv.u.side .. ")", "Blocking")
+				end
+			end
+			-- Item devices (2026-10-26): a placed turret / drone / decoy / pylon occupies the
+			-- picked tile; label it like any unit. A replaced older device is no longer alive:
+			-- clear its old tile first.
+			-- (also covers Object Recall: a moved device's old tile is cleared)
+			for _, dv in ipairs(_devicesBefore) do
+				if not dv.u.isAlive or dv.u.tileX ~= dv.x or dv.u.tileY ~= dv.y then
+					clearTileOccupant(dv.x, dv.y)
+				end
+			end
+			if target.isGroundTarget then
+				for _, du in ipairs(state.units) do
+					if du.isAlive and du.isItemDevice and du.tileX == target.tileX and du.tileY == target.tileY then
+						setTileOccupant(du.tileX, du.tileY, du.name, "Unit (" .. du.side .. ")", "Blocking")
+					end
+				end
+			end
 			local hpDelta = (target.currentHp or 0) - hpBefore
 			local mpDelta = (target.currentMp or 0) - mpBefore
 			local newStatus = nil
@@ -1057,6 +1312,10 @@ local function executePlayerCommand(unit, command)
 			}
 		else
 			warn("[Main] Player item rejected: " .. (reason or "unknown"))
+			-- D-4 (UAT 2026-10-26): show the reason in the battle log, not only server Output.
+			if reason then
+				BattleVisualBroadcaster.Log("info", `{itemName}: {reason}`, unit.id)
+			end
 			return nil
 		end
 	end
@@ -1379,6 +1638,12 @@ local function runAiTurn(unit)
 		-- If a commit failed (state changed / illegal now), stop and end turn
 		-- rather than retrying the same rejected action forever.
 		if not committed then
+			-- D-2 (2026-10-26): a not-built item was rejected with nothing spent; the AI now
+			-- skips that item, so let it pick another action with this AP (still capped).
+			if a == "Item" and unit._unbuiltItemRetry then
+				unit._unbuiltItemRetry = nil
+				continue
+			end
 			break
 		end
 	end
@@ -1424,23 +1689,41 @@ local function handleChannelingActivation(activeUnit)
 		and (activeUnit.channelingData.skillDef.name or activeUnit.channelingData.skillDef.id)
 		or "Unknown"
 
+	local channeledDef = activeUnit.channelingData and activeUnit.channelingData.skillDef
 	local success, result = CommandService.ActivateChanneledSkill(state, activeUnit)
 	local actions = {}
 
 	if not success then
 		-- Fizzle: target died, MP insufficient, etc.
-		BattleVisualBroadcaster.ChannelFizzled(activeUnit, channeledSkillName, result or "fizzled")
+		-- The reason is text only; a refused object placement returns a table (log showed "table: ...").
+		local _reason = if type(result) == "string" then result
+			elseif type(result) == "table" and result.placed == false then "the tile is taken"
+			elseif type(result) == "table" and type(result.reason) == "string" then result.reason
+			else "fizzled"
+		BattleVisualBroadcaster.ChannelFizzled(activeUnit, channeledSkillName, _reason)
 	elseif result then
 		BattleVisualBroadcaster.ChannelEnded(activeUnit)
 		-- Resuscitate logs its own detailed line in CommandService (no duplicate).
 		if result.type ~= "Resuscitate" then
-			BattleVisualBroadcaster.Log("channel", `{activeUnit.name}\'s {channeledSkillName or "skill"} lands.`, activeUnit.id)
+			if channeledDef and channeledDef.raisesCorpses and (result.hitCount or 0) == 0 then
+				-- Raise Dead found no corpse with room to rise; it is not used up (tries again later).
+				BattleVisualBroadcaster.Log("channel", `{activeUnit.name}\'s {channeledSkillName or "Raise Dead"} finds no corpse that can rise.`, activeUnit.id)
+			else
+				BattleVisualBroadcaster.Log("channel", `{activeUnit.name}\'s {channeledSkillName or "skill"} lands.`, activeUnit.id)
+			end
 		end
 		if result.type == "Healing" then
 			table.insert(actions, {
 				actionType = "Skill", unit = activeUnit, target = result.target,
 				skillName = result.skillName, healing = result.healing, damage = 0,
 			})
+		elseif result.type == "AreaHealing" then
+			for _, entry in ipairs(result.targets or {}) do
+				table.insert(actions, {
+					actionType = "Skill", unit = activeUnit, target = entry.target,
+					skillName = result.skillName, healing = entry.healing or 0, damage = entry.damage or 0,
+				})
+			end
 		elseif result.type == "AOE" then
 			for _, entry in ipairs(result.targets or {}) do
 				table.insert(actions, {

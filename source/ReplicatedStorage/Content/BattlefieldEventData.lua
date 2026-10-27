@@ -159,7 +159,7 @@ BattlefieldEventData.Events["Chaos Necromancer"] = {
 	name = "Chaos Necromancer",
 	type = "Hostile Special Enemy",
 	triggerSpawn = "Spawns Round 2+ when >50% enemies defeated",
-	behaviorEffect = "Turns enemy corpses into random undead. Highest-level resurrected becomes Elite Undead.",
+	behaviorEffect = "Channels Raise Dead once per battle (channel 300, interruptible like any channel): every fallen unit on its side rises at once at 25% Max HP with the Undead status. Raised units count as revived (no kill credit).",
 }
 
 BattlefieldEventData.Events["Fortune Teller"] = {

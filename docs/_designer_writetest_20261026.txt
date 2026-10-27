@@ -1,0 +1,1 @@
+OBSOLETE probe file — safe to delete. Replaced by consumable_tag_handoff_20261026.md. See that file for the pending DB commit (blocked: write-enabled Python runtime unavailable this session).

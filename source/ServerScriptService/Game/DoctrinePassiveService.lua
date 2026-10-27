@@ -19,6 +19,9 @@
 local DoctrinePassiveService = {}
 
 local StatusService = require(script.Parent.StatusService)
+local GameConstants = require(
+	game:GetService("ReplicatedStorage"):WaitForChild("CTRBLXAI"):WaitForChild("Shared"):WaitForChild("GameConstants")
+)
 
 --------------------------------------------------
 -- HELPERS
@@ -98,6 +101,9 @@ local function isUndead(target)
 		return true
 	end
 	if target.tags and target.tags.Undead then return true end
+	for _, inst in ipairs(target.statusInstances or {}) do
+		if inst.id == "Undead" then return true end  -- Undead status (e.g. raised corpse)
+	end
 	return false
 end
 
@@ -113,9 +119,15 @@ end
 --- Returns true if attacker is at higher elevation than defender.
 local function hasElevationAdvantage(attacker, defender)
 	if not attacker or not defender then return false end
-	local aElev = attacker.elevation or attacker.tileZ or 0
-	local dElev = defender.elevation or defender.tileZ or 0
-	return aElev > dElev
+	-- Units never carry an .elevation field, so this used to compare 0 with 0 and the Dragoon passive
+	-- never fired. Read the tile elevation (+5 while flying, same as TargetingService).
+	if not (attacker.tileX and defender.tileX) then return false end
+	local function effElev(u)
+		local e = GameConstants.GetElevation(u.tileX, u.tileY)
+		if StatusService.HasStatus(u, "Flight") then e = e + 5 end
+		return e
+	end
+	return effElev(attacker) > effElev(defender)
 end
 
 --- Valid elemental tags for Elementalist tracking.

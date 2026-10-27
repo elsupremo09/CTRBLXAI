@@ -32,9 +32,9 @@ local EquipmentService        = require(script.Parent.EquipmentService)
 -- BattleVisualBroadcaster/EnemyGenerator do NOT require ObjectEffectService, so
 -- no cycle. EnemyGenerator builds + inserts the unit; we broadcast UnitSpawned.
 local EnemyGenerator          = require(script.Parent.EnemyGenerator)
-local QuestGenerator          = require(script.Parent.QuestGenerator)
 local InventoryService        = require(script.Parent.InventoryService)
 local ItemGenerator           = require(script.Parent.ItemGenerator)
+local ObjectiveService        = require(script.Parent.ObjectiveService)
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("CTRBLXAI")
@@ -78,6 +78,18 @@ end
 -- model/cube in the live mapFolder and clears the tile's object attributes.
 -- nil-safe: if unset, the object is still logically removed.
 local _objectVisualRemover = nil
+-- GOBLIN Cunning (user ruling 2026-10-27): +10% damage taken from traps and hazards (deferred
+-- require: no load-time dependency).
+local function hazardTakenMult(u: any): number
+	local rps = (require :: any)(script.Parent.RacePassiveService)
+	if rps and rps.GetHazardDamageTakenMultiplier then return rps.GetHazardDamageTakenMultiplier(u) end
+	return 1
+end
+
+-- REVEAL ZONES (UTI-003 Scanner Lens, user ruling 2026-10-27): { tiles = {["x,y"]=true},
+-- ct = remaining CT, side = owner side }. While a zone lasts, enemies of its owner inside it
+-- lose Hide and cannot Hide again, and hidden traps there are shown. Reset per battle.
+local _revealZones = {}
 function ObjectEffectService.SetObjectVisualRemover(fn: any)
 	_objectVisualRemover = fn
 end
@@ -147,6 +159,29 @@ function ObjectEffectService.InitObjectHp(state: any)
 	print(string.format("[ObjectEffectService] InitObjectHp | %d breakable object(s) seeded with hp", n))
 end
 
+-- Repair (SKL-REPAIR, 2026-10-26): fully restore a breakable object's durability at (x,y) by
+-- resetting inst.hp to its ObjectData hitsToDestroy, and tell clients. Returns the repaired object's
+-- type, or nil if there is no breakable object on that tile. Mirrors InitObjectHp's hp model.
+function ObjectEffectService.RepairObjectAt(state: any, x: any, y: any): any
+	if not (state and state.objects and x and y) then return nil end
+	for _, inst in ipairs(state.objects) do
+		if inst.x == x and inst.y == y then
+			local def = inst.type and ObjectData.Objects[inst.type]
+			if isBreakableObject(def) then
+				inst.hp = def.hitsToDestroy
+				if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+					BattleVisualBroadcaster.ObjectChanged(x, y, { newHp = inst.hp })
+				end
+				print(string.format("[ObjectEffectService] RepairObjectAt | %s at (%d,%d) restored to %d hp",
+					tostring(inst.type), x, y, inst.hp))
+				return inst.type
+			end
+			return nil  -- object present but not breakable: nothing to repair
+		end
+	end
+	return nil
+end
+
 -- OBS Phase 2a — DORMANT. Nothing calls this yet; Phase 2c wires attack / AOE /
 -- elevation-reduction hits to it (map_gen_rules rows 82/84). Applies `n` hits
 -- (default 1) to the breakable object at (x,y); on reaching 0 hp the object is
@@ -168,7 +203,8 @@ end
 function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, attackElement: any, fromExplosion: any): any
 	if not (state and state.objects and x and y) then return "not-found" end
 	for _, inst in ipairs(state.objects) do
-		if inst.x == x and inst.y == y then
+		-- A hidden object cannot be hit until it is revealed (no HP / break news leaks its tile).
+		if inst.x == x and inst.y == y and not inst.hidden then
 			local def = inst.type and ObjectData.Objects[inst.type]
 			-- EXPLOSIVE objects (Bomb Barrel / Land Mine) carry no hp bar — a hit
 			-- DETONATES them (objects_encounters: "Fire-tag attack, Explosion, or
@@ -181,8 +217,9 @@ function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, 
 					if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
 						BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
 					end
-					_tileEffectService.QueueExplosion(x, y, 0, "object", 0.25, state.units, "box")
-					print(string.format("[ObjectEffectService] %s detonated by hit at (%d,%d)", tostring(inst.type), x, y))
+					_tileEffectService.QueueExplosion(x, y, 0, "object", 0.25, state.units, "box", objHasTag(def, "Trap"))
+				print(string.format("[ObjectEffectService] %s detonated by hit at (%d,%d)", tostring(inst.type), x, y))
+				ObjectiveService.RecordEvent(state, "objectsBroken", 1)
 					return "detonated"
 				end
 				return "immune"
@@ -206,6 +243,7 @@ function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, 
 				if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
 					BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
 				end
+				ObjectiveService.RecordEvent(state, "objectsBroken", 1)
 				return "destroyed"
 			end
 			-- OBS Phase 2c-0: broadcast the new hp so an open inspector card shows N/3 live.
@@ -271,13 +309,15 @@ function ObjectEffectService.PushObject(state: any, x: any, y: any, dx: any, dy:
 	local curX, curY = x, y
 	local curElev = GameConstants.GetElevation(curX, curY)
 	local tiles = 0
+	local collided = false
+	local collidedX, collidedY = nil, nil
 	for _ = 1, distance do
 		local nx, ny = curX + sx, curY + sy
-		if not insideMap(nx, ny) then break end                 -- edge
-		if GameConstants.IsBlocked(nx, ny) then break end        -- another blocker/object
+		if not insideMap(nx, ny) then collided=true; collidedX,collidedY=nx,ny; break end                 -- edge
+		if GameConstants.IsBlocked(nx, ny) then collided=true; collidedX,collidedY=nx,ny; break end        -- another blocker/object
 		local nextElev = GameConstants.GetElevation(nx, ny)
-		if nextElev > curElev then break end                     -- forced upward blocked
-		if unitAt(nx, ny) then break end                         -- occupied tile
+		if nextElev > curElev then collided=true; collidedX,collidedY=nx,ny; break end                     -- forced upward blocked
+		if unitAt(nx, ny) then collided=true; collidedX,collidedY=nx,ny; break end                         -- occupied tile
 		curX, curY, curElev = nx, ny, nextElev
 		tiles += 1
 	end
@@ -311,7 +351,7 @@ function ObjectEffectService.PushObject(state: any, x: any, y: any, dx: any, dy:
 	end
 	print(string.format("[ObjectEffectService] PushObject | %s (%d,%d)->(%d,%d) tiles=%d force=%s",
 		tostring(inst.type), fromX, fromY, curX, curY, tiles, tostring(force)))
-	return { moved = true, fromX = fromX, fromY = fromY, toX = curX, toY = curY, tiles = tiles }
+	return { moved = true, fromX = fromX, fromY = fromY, toX = curX, toY = curY, tiles = tiles, collided = collided, collidedX = collidedX, collidedY = collidedY }
 end
 
 -- OBS Phase 2c-E2: push-candidate list for breakable blocker-prop OBS objects, used
@@ -354,11 +394,51 @@ function ObjectEffectService.SetDirectionPrompter(fn: any)
 	_directionPrompter = fn
 end
 
+-- Inject the TILE prompter (BattleTurnController wires promptTargetTile). The tile
+-- analogue of the direction prompter: lets an object handler ask the player to
+-- pick a target TILE within a range of an origin. Signature:
+--   fn(actor, originX, originY, range, legalTiles) -> {x=,y=} or nil
+-- Blocking (yields until the player taps a tile or it times out). nil-safe: if no
+-- prompter is injected (AI/headless), the caller falls back to auto-targeting.
+local _tilePrompter = nil
+function ObjectEffectService.SetTilePrompter(fn: any)
+	_tilePrompter = fn
+end
+
 -- Inject the runtime tile reshaper (Main wires a closure over its mapFolder):
 -- fn(x, y, newTerrain, newElevation) -> updates the live tile Part visual.
 local _tileReshaper = nil
 function ObjectEffectService.SetTileReshaper(fn: any)
 	_tileReshaper = fn
+end
+-- Remove a placed object whose time ran out (2026-10-27, Hardlight Wall) and tell clients.
+function ObjectEffectService.ExpireObject(state: any, inst: any)
+	if not (state and inst) then return end
+	ObjectEffectService.RemoveObjectInstance(state, inst)
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+		BattleVisualBroadcaster.ObjectChanged(inst.x, inst.y, { destroyed = true })
+	end
+	print(string.format("[ObjectEffectService] %s at (%s,%s) expired", tostring(inst.type), tostring(inst.x), tostring(inst.y)))
+end
+
+-- Public wrapper (2026-10-26, Excavation Drill): redraw one tile at a new terrain/elevation.
+function ObjectEffectService.ReshapeTile(x: any, y: any, terrainId: any, elevation: any)
+	if _tileReshaper then _tileReshaper(x, y, terrainId, elevation) end
+end
+-- Lowered-tile redraw (2026-10-26, Excavation Drill D1 fix): Main injects a closure that
+-- clears the tile's old voxel column, reshapes the Part, then rebuilds the voxel column at
+-- the new height. Kept separate from the shared reshaper so Stone Pillar / weather paths
+-- are unchanged. Falls back to the plain reshape when not wired.
+local _tileLowerer = nil
+function ObjectEffectService.SetTileLowerer(fn: any)
+	_tileLowerer = fn
+end
+function ObjectEffectService.LowerTileVisual(x: any, y: any, terrainId: any, elevation: any)
+	if _tileLowerer then
+		_tileLowerer(x, y, terrainId, elevation)
+	elseif _tileReshaper then
+		_tileReshaper(x, y, terrainId, elevation)
+	end
 end
 
 -- Place a NEW map-object instance into the live battle (Forge, Mimic reveal).
@@ -366,11 +446,101 @@ end
 -- death systems see it, and renders it via the injected renderer. Returns the
 -- new instance, or nil if the tile is already occupied by an object.
 local _spawnedObjectCounter = 0
-function ObjectEffectService.PlaceObjectInstance(state: any, objType: any, x: any, y: any): any
+-- OBJECT RECALL (UTI-018, user ruling 2026-10-27): teleport a placed object to (x, y).
+-- Ignores Stability. The SAME instance moves, so hp, lifeCt, shots, supplies, owner, hidden
+-- flag and aura membership (keyed by id) are kept. Moves the blocker entry and OBJECT_MAP for
+-- solid objects and re-renders unless hidden; a hidden object is moved without a broadcast.
+-- The caller has already checked the tile and cleared any trap there.
+function ObjectEffectService.MoveObjectInstance(state: any, inst: any, x: any, y: any): boolean
+	if not (state and inst and x and y and inst.x and inst.y) then return false end
+	local fromX, fromY = inst.x, inst.y
+	if fromX == x and fromY == y then return false end
+	local def = inst.type and ObjectData.Objects[inst.type]
+	local solid = def ~= nil and def.passable == false
+	if solid and GameConstants.RemoveBlockerAt then GameConstants.RemoveBlockerAt(fromX, fromY) end
+	if not inst.hidden and _objectVisualRemover then _objectVisualRemover(inst) end
+	local omap = GameConstants.OBJECT_MAP
+	if omap and omap[fromY] and omap[fromY][fromX] == inst.type then
+		omap[fromY][fromX] = nil
+		omap[y] = omap[y] or {}
+		omap[y][x] = inst.type
+	end
+	inst.x, inst.y = x, y
+	if solid and GameConstants.BLOCKERS then
+		table.insert(GameConstants.BLOCKERS, {
+			tileX = x, tileY = y, objectType = inst.type,
+			tags = { "BlocksAOE", "BlocksLoS" }, height = def.standingHeight,
+		})
+	end
+	if not inst.hidden then
+		if _objectRenderer then _objectRenderer(inst) end
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+			if solid then
+				BattleVisualBroadcaster.ObjectChanged(fromX, fromY, { moved = {
+					fromX = fromX, fromY = fromY, toX = x, toY = y,
+					hp = inst.hp, objType = inst.type, height = def.standingHeight,
+				} })
+			else
+				-- Passable objects carry no client blocker: clear the old tile, then send the hp.
+				BattleVisualBroadcaster.ObjectChanged(fromX, fromY, { destroyed = true })
+				if type(inst.hp) == "number" then
+					BattleVisualBroadcaster.ObjectChanged(x, y, { newHp = inst.hp })
+				end
+			end
+		end
+	end
+	print(string.format("[ObjectEffectService] MoveObjectInstance | %s (%d,%d)->(%d,%d)%s",
+		tostring(inst.type), fromX, fromY, x, y, inst.hidden and " [hidden]" or ""))
+	return true
+end
+
+-- Remove every Trap-tagged object on (x, y) (user ruling 2026-10-27: Forge and deployable
+-- items replace the trap on their tile). A visible trap's removal is announced; a hidden one
+-- is removed silently. It does not spring. Returns how many were removed.
+function ObjectEffectService.ClearTrapsAt(state: any, x: any, y: any): number
+	if not (state and state.objects and x and y) then return 0 end
+	local n = 0
+	for i = #state.objects, 1, -1 do
+		local o = state.objects[i]
+		local odef = o and o.type and ObjectData.Objects[o.type]
+		if o and o.x == x and o.y == y and objHasTag(odef, "Trap") then
+			local wasHidden = o.hidden == true
+			ObjectEffectService.RemoveObjectInstance(state, o)
+			if not wasHidden and BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+				BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
+			end
+			print(string.format("[ObjectEffectService] Trap %s at (%d,%d) replaced (%s)",
+				tostring(o.type), x, y, wasHidden and "hidden" or "visible"))
+			n += 1
+		end
+	end
+	return n
+end
+
+-- replaceTraps (optional, user ruling 2026-10-27): true for the Forge and deployable items --
+-- any trap on the tile (either side, visible or hidden) is replaced instead of blocking.
+function ObjectEffectService.PlaceObjectInstance(state: any, objType: any, x: any, y: any, ownerSide: any, casterId: any, replaceTraps: any): any
 	if not (state and state.objects and objType and x and y) then return nil end
-	-- Do not stack two objects on the same tile.
+	-- Do not stack two objects on the same tile. Exceptions (user rulings 2026-10-27), applied
+	-- only once every other placement check below passes, so a refusal never removes anything:
+	--   * a HIDDEN object owned by another side is replaced silently (no tile leak);
+	--   * with replaceTraps, ANY trap on the tile is replaced.
+	local _replaceObj = nil
 	for _, o in ipairs(state.objects) do
-		if o.x == x and o.y == y then return nil end
+		if o.x == x and o.y == y then
+			local odef = o.type and ObjectData.Objects[o.type]
+			if replaceTraps == true and objHasTag(odef, "Trap") then
+				_replaceObj = o
+				break
+			end
+			-- Only a placement with a known side replaces a hidden object (F1 fix): dev spawns
+			-- pass no ownerSide and must never silently delete a hidden trap.
+			if o.hidden and ownerSide ~= nil and o.ownerSide ~= nil and o.ownerSide ~= ownerSide then
+				_replaceObj = o
+				break
+			end
+			return nil
+		end
 	end
 	-- A SOLID (non-passable) object must not trap a living unit: refuse placement on a
 	-- tile a unit occupies. Passable objects (traps, springs) may share a unit's tile.
@@ -382,10 +552,56 @@ function ObjectEffectService.PlaceObjectInstance(state: any, objType: any, x: an
 			end
 		end
 	end
+	-- Max 2 traps per caster (2026-10-26, authored SkillData rule: "Maximum 2 active traps per
+	-- caster. Oldest removed if exceeded."). Applies ONLY to Trap-tagged objects placed by a known
+	-- caster (casterId); blockers / springs / other objects are unaffected. "Oldest" = earliest
+	-- still in state.objects insertion order. Remove down so the new trap leaves the caster at 2.
+	if _replaceObj then
+		-- A hidden object leaves silently (the client never saw it); a visible trap is announced.
+		local wasHidden = _replaceObj.hidden == true
+		ObjectEffectService.RemoveObjectInstance(state, _replaceObj)
+		if not wasHidden and BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+			BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
+		end
+		print(string.format("[ObjectEffectService] %s %s at (%d,%d) replaced by %s",
+			wasHidden and "Hidden" or "Visible", tostring(_replaceObj.type), x, y, tostring(objType)))
+	end
+	if casterId and placingDef and objHasTag(placingDef, "Trap") then
+		local mine = {}
+		for _, o in ipairs(state.objects) do
+			local odef = o.type and ObjectData.Objects[o.type]
+			if o.casterId == casterId and objHasTag(odef, "Trap") then
+				table.insert(mine, o)
+			end
+		end
+		while #mine >= 2 do
+			local oldest = table.remove(mine, 1)
+			ObjectEffectService.RemoveObjectInstance(state, oldest)
+			-- A hidden trap was never shown, so its removal is not announced (no tile leak).
+			if not oldest.hidden and BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+				BattleVisualBroadcaster.ObjectChanged(oldest.x, oldest.y, { destroyed = true })
+			end
+			print(string.format("[ObjectEffectService] Trap limit: removed oldest trap id=%s for caster %s",
+				tostring(oldest.id), tostring(casterId)))
+		end
+	end
 	_spawnedObjectCounter += 1
-	local inst = { id = "spawnobj_" .. _spawnedObjectCounter, type = objType, x = x, y = y }
+	local inst = { id = "spawnobj_" .. _spawnedObjectCounter, type = objType, x = x, y = y, ownerSide = ownerSide, casterId = casterId }
+	-- Placed objects get their durability too (fix 2026-10-26): InitObjectHp only runs at battle
+	-- start, so every object placed mid-battle (item traps, Portable Ballista, gadgets) had no hp
+	-- and was immune to attacks. Light gadgets break after hitsToDestroy hits (DB SPLIT ruling).
+	if isBreakableObject(placingDef) then
+		inst.hp = placingDef.hitsToDestroy
+	end
+	-- Enemy-placed traps are hidden from the player until something reveals them (user ruling
+	-- 2026-10-27). A hidden trap is not drawn, so its tile shows nothing; it still springs.
+	-- A trap placed inside one of the player's reveal zones is shown at once.
+	if ownerSide and ownerSide ~= "Player" and objHasTag(placingDef, "Trap")
+		and not ObjectEffectService.IsRevealedFor(x, y, "Player") then
+		inst.hidden = true
+	end
 	table.insert(state.objects, inst)
-	if _objectRenderer then
+	if _objectRenderer and not inst.hidden then
 		_objectRenderer(inst)
 	end
 	-- N1 fix (2026-10-04): a non-passable object must also become a real blocker so
@@ -412,8 +628,50 @@ function ObjectEffectService.PlaceObjectInstance(state: any, objType: any, x: an
 	return inst
 end
 
+-- Show one hidden object (draws it now). Returns true when it was hidden.
+function ObjectEffectService.RevealObject(o: any): boolean
+	if not (o and o.hidden) then return false end
+	o.hidden = false
+	if _objectRenderer then _objectRenderer(o) end
+	print(string.format("[ObjectEffectService] Revealed hidden %s at (%s,%s)", tostring(o.type), tostring(o.x), tostring(o.y)))
+	return true
+end
+
+-- Scanner Lens reveal zone for `side`, lasting durationCt.
+function ObjectEffectService.AddRevealZone(tileSet: any, durationCt: any, side: any)
+	if type(tileSet) ~= "table" or (tonumber(durationCt) or 0) <= 0 then return end
+	table.insert(_revealZones, { tiles = tileSet, ct = tonumber(durationCt), side = side })
+end
+function ObjectEffectService.GetRevealZones(): { any }
+	return _revealZones
+end
+-- Is tile (x, y) inside a live reveal zone owned by `side`?
+function ObjectEffectService.IsRevealedFor(x: any, y: any, side: any): boolean
+	for _, z in ipairs(_revealZones) do
+		if z.ct > 0 and z.side == side and z.tiles[x .. "," .. y] then return true end
+	end
+	return false
+end
+-- Is this unit standing in a live reveal zone owned by another side? (It cannot Hide there.)
+function ObjectEffectService.IsHideBlocked(unit: any): boolean
+	if not (unit and unit.tileX) then return false end
+	for _, z in ipairs(_revealZones) do
+		if z.ct > 0 and z.side ~= unit.side and z.tiles[unit.tileX .. "," .. unit.tileY] then return true end
+	end
+	return false
+end
+-- Run zone time down on the battle clock (PulseScheduler sweeps the zones first).
+function ObjectEffectService.TickRevealZones(ctElapsed: any)
+	for i = #_revealZones, 1, -1 do
+		local z = _revealZones[i]
+		z.ct -= (ctElapsed or 0)
+		if z.ct <= 0 then table.remove(_revealZones, i) end
+	end
+end
+
 -- Reset the usage ledger at battle start (called from Main on new battle).
 function ObjectEffectService.ResetBattle()
+	table.clear(_revealZones)
 	table.clear(_consumed)
 	table.clear(_usedThisTurn)
 	_aliveSnapshot = nil
@@ -434,7 +692,13 @@ Handlers["Healing Spring"] = function(ctx: any): (boolean, any)
 		return false, "Healing Spring: actor has no HP."
 	end
 	local before = actor.currentHp or 0
-	actor.currentHp = actor.maxHp
+	-- Festering Wound anti-heal (user ruling 2026-10-26): the spring restores the MISSING HP,
+	-- reduced like every other object heal, instead of always snapping to full.
+	local heal = (actor.maxHp or 0) - before
+	local _hrm = StatusService.GetHealingReceivedMult(actor)
+	if _hrm ~= 1 then heal = math.max(0, math.floor(heal * _hrm)) end
+	actor.currentHp = math.min(actor.maxHp, before + heal)
+	if actor.currentHp > before then StatusService.WeakenVenomOnHeal(actor) end  -- healing weakens Venom (2026-10-26)
 	if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
 		BattleVisualBroadcaster.UnitStateChanged(actor)
 	end
@@ -510,11 +774,158 @@ Handlers["Campfire"] = function(ctx: any): (boolean, any)
 	if not a or a.maxHp == nil then return false, "Campfire: actor has no HP." end
 	local hpGain = math.floor((a.maxHp or 0) * 0.30)
 	local mpGain = math.floor((a.maxMp or 0) * 0.30)
+	-- Festering Wound anti-heal (2026-10-25): environmental HP heal reduced (MP restore unaffected).
+	local _hrm = StatusService.GetHealingReceivedMult(a)
+	if _hrm ~= 1 then hpGain = math.max(0, math.floor(hpGain * _hrm)) end
+	local _hpBefore = a.currentHp or 0
 	a.currentHp = math.min(a.maxHp, (a.currentHp or 0) + hpGain)
+	if (a.currentHp or 0) > _hpBefore then StatusService.WeakenVenomOnHeal(a) end  -- healing weakens Venom (2026-10-26)
 	a.currentMp = math.min(a.maxMp or 0, (a.currentMp or 0) + mpGain)
 	if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(a) end
 	print(string.format("[ObjectEffectService] Campfire | %s +%d HP / +%d MP", a.name, hpGain, mpGain))
 	return true, nil
+end
+
+-- Potion Desk — fully recharge the INTERACTING unit's equipped consumables.
+-- Scope: interacting unit only (not map-wide), DB ruling 2026-10-03. Any side may
+-- use it (user ruling 2026-10-24): refills ctx.actor's own slots regardless of
+-- side, same as the other self-target restore objects (Healing/Magic Spring).
+--
+-- The "consumable charge-refill dependency" the DB parked this on already exists:
+-- the charge model is slot.currentCharges / slot.maxCharges (item use decrements
+-- currentCharges in CommandService), and the Chemist skill SKL-RESTOCK already
+-- refills it. Potion Desk does a FULL refill (set currentCharges = maxCharges on
+-- every equipped slot), stronger than RESTOCK's +1. UnitStateChanged is the same
+-- state-sync nudge SKL-RESTOCK relies on; the item bar re-reads charges from
+-- GetConsumableSlots. No dedicated charges-changed remote exists (not inventing
+-- one here — mirrors the proven RESTOCK path).
+Handlers["Potion Desk"] = function(ctx: any): (boolean, any)
+	local a = ctx.actor
+	if not a then return false, "Potion Desk: no actor." end
+	local refilled = 0
+	for _, slot in pairs(a.consumableSlots or {}) do
+		if slot and slot.consumableId then
+			local maxC = slot.maxCharges or 0
+			if (slot.currentCharges or 0) < maxC then
+				slot.currentCharges = maxC
+				refilled = refilled + 1
+			end
+		end
+	end
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+		BattleVisualBroadcaster.UnitStateChanged(a)
+	end
+	print(string.format("[ObjectEffectService] Potion Desk | %s fully recharged %d consumable(s)", a.name, refilled))
+	return true, nil
+end
+
+-- Witch Hut (Event/NPC, "Double EXP until battle ends; inflict Weakened (3000 CT)",
+-- Risk/Reward) — 2026-10-24. Two effects:
+--   (1) Double battle EXP: reuses the EXACT same proven wire as Glow Crystal —
+--       set state.glowCrystalActive = true. Main copies that into
+--       battleResult.glowCrystal and ProgressionService.AwardBattleXp applies the
+--       x2 on each unit's end-of-battle total. Player-side only for the EXP (same
+--       guard as Glow Crystal: enemies never earn XP, so an enemy activation just
+--       denies the object). The shared flag means a Witch Hut + a Glow Crystal in
+--       one battle still double XP ONCE (flag, not a stacking counter) — correct.
+--   (2) Weakened on the interacting unit (the "risk" half) — applied to whoever
+--       used it, no side restriction, mirroring Cursed Chest's self-Weakened.
+Handlers["Witch Hut"] = function(ctx: any): (boolean, any)
+	local state, actor = ctx.state, ctx.actor
+	if not state then return false, "Witch Hut: no battle state." end
+	-- Risk half first: Weakened on the user (any side), 3000 CT per DB.
+	applyAndRebuild(actor, "Weakened", actor.id)
+	-- Reward half: double battle EXP, player-side only (same rule as Glow Crystal).
+	if actor and actor.side == "Player" then
+		local already = state.glowCrystalActive == true
+		state.glowCrystalActive = true
+		print(string.format("[ObjectEffectService] Witch Hut | %s activated — battle XP x2 at end of battle + Weakened%s",
+			tostring(actor.name), already and " (XP already doubled; no extra stacking)" or ""))
+	else
+		print(string.format("[ObjectEffectService] Witch Hut | %s (non-player) — Weakened applied, no XP effect",
+			tostring(actor and actor.name)))
+	end
+	return true, nil
+end
+
+-- Idol of Fortune (Event/Shrine, "Improved item drop rates until battle ends",
+-- "Does not stack") — 2026-10-24.
+-- HONEST SCOPE: RewardService has a live Fortune system, but it is EXPEDITION
+-- fortune (set from the deployed team's stats via SetExpeditionFortune) — there
+-- is NO existing per-battle "an Idol was used, improve drops for the rest of this
+-- battle" consumer. So this handler sets a battle-level flag (state.idolFortuneActive)
+-- and records a normalized drop-rate bump that the chest reward path reads when it
+-- generates loot DURING this battle (see _grantChestReward). It does NOT retroactively
+-- affect end-of-battle victory loot yet — that grant path (Main AwardBattleXp/
+-- GenerateRewards) does not read this flag. Flagged, not faked: the in-battle chest
+-- drops improve; wiring the end-of-battle victory roll to this flag is a follow-up
+-- owned by the reward pipeline. "Does not stack": the flag is boolean, so a second
+-- Idol is a no-op.
+Handlers["Idol of Fortune"] = function(ctx: any): (boolean, any)
+	local state = ctx.state
+	if not state then return false, "Idol of Fortune: no battle state." end
+	local already = state.idolFortuneActive == true
+	state.idolFortuneActive = true
+	-- Normalized fortune bump (0..1) applied to in-battle reward rolls. 0.5 chosen as
+	-- a meaningful-but-not-overpowering "improved" step; exact value is a tuning knob
+	-- the Simulator/Designer can revisit. Does not stack (flag already set = no-op).
+	state.idolFortuneBump = 0.5
+	print(string.format("[ObjectEffectService] Idol of Fortune | activated — improved in-battle drop rates%s",
+		already and " (already active; does not stack)" or ""))
+	return true, nil
+end
+
+-- Pandora's Box (Event/Shrine, RT 50 flat, "Triggers a random map object effect,
+-- drawn from the FULL pool including harmful effects; triggered effect centers on
+-- the Pandora's Box tile") — 2026-10-24.
+-- Rolls ONE registered handler from a curated pool and runs it with a context
+-- re-centered on the Box's own tile (per DB: "triggered effect centers on the
+-- Pandora's Box tile"). The pool deliberately INCLUDES harmful effects (traps,
+-- explosions, enemy summons) so it can backfire on the user's side — that is the
+-- object's whole point. Excluded from the pool: Pandora's Box itself (no self-
+-- recursion), and objects whose effect needs a specific placed instance / terrain
+-- reshape that would be meaningless re-centered (Forge, Stone Pillar, Mimic, Crystal
+-- Ball). The chosen effect runs through the SAME handler table, so each sub-effect
+-- keeps its own rules. Deterministic via ctx.rng (seeded in Resolve).
+local PANDORA_POOL = {
+	-- harmful (can hit the user's side)
+	"Bomb Barrel", "Land Mine", "Spike Trap", "Bear Trap", "Snare Trap",
+	"Oil Sluice", "Steam Valve", "Obelisk", "Cover of Darkness", "Mysterious Boulder",
+	"Cursed Chest", "Dragon Utopia", "Eye of the Magi",
+	-- beneficial
+	"Healing Spring", "Magic Spring", "Campfire", "Rally Flag", "Star Axis",
+	"Burning Cauldron", "War Horn", "Runed Boulder", "Blood Fountain",
+	"Fountain of Fortune", "Swan Pond", "Astrolabe", "Treasure Chest",
+}
+Handlers["Pandora's Box"] = function(ctx: any): (boolean, any)
+	local obj = ctx.objInstance
+	-- Build the pick list from the pool, keeping only names that actually have a
+	-- registered handler (defensive: pool names must exist, skip any that don't).
+	local candidates = {}
+	for _, name in ipairs(PANDORA_POOL) do
+		if Handlers[name] and name ~= "Pandora's Box" then
+			candidates[#candidates + 1] = name
+		end
+	end
+	if #candidates == 0 then
+		print("[ObjectEffectService] Pandora's Box | no candidate effects available — no-op")
+		return true, nil
+	end
+	local pick = candidates[ctx.rng:NextInteger(1, #candidates)]
+	-- Re-center the triggered effect on the Box's own tile: hand the sub-handler a
+	-- synthetic objInstance located at the Box (so tile-centered effects like
+	-- explosions/tile-effects originate here), but keep the real actor, state,
+	-- allUnits and rng. objDef points at the picked archetype so damagePct etc.
+	-- resolve from the right object.
+	local subInst = { id = (obj and obj.id or "pandora") .. ":" .. pick, type = pick, x = obj and obj.x, y = obj and obj.y }
+	local subCtx = {
+		actor = ctx.actor, objInstance = subInst,
+		objDef = ObjectData.Objects[pick], state = ctx.state,
+		allUnits = ctx.allUnits, rng = ctx.rng,
+	}
+	print(string.format("[ObjectEffectService] Pandora's Box | rolled '%s' (centered on box tile)", pick))
+	local ok, reason = Handlers[pick](subCtx)
+	return ok, reason
 end
 
 --------------------------------------------------------------------
@@ -550,7 +961,19 @@ Handlers["Swan Pond"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	local targets = livingAllies(a, ctx.allUnits, true)
 	for _, u in ipairs(targets) do
-		StatusService.RemoveDispellable(u)
+		-- DB (objects_encounters Swan Pond): "Remove all debuffs from all allies". Was
+		-- RemoveDispellable, which strips dispellable BUFFS (2026-10-26 fix after buffs got
+		-- their DB dispellable flags). Hard-locked statuses refuse removal as usual.
+		local ids = {}
+		for _, inst in ipairs(u.statusInstances or {}) do
+			local d = GameConstants.STATUSES[inst.id]
+			if d and d.kind == "Debuff" then table.insert(ids, inst.id) end
+		end
+		for _, sid in ipairs(ids) do
+			if StatusService.RemoveStatus(u, sid) and BattleVisualBroadcaster and BattleVisualBroadcaster.StatusExpired then
+				BattleVisualBroadcaster.StatusExpired(u, sid)
+			end
+		end
 		if EquipmentService and EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
 		if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(u) end
 	end
@@ -636,14 +1059,73 @@ Handlers["Snare Trap"] = function(ctx: any): (boolean, any)
 	return true, nil
 end
 
+-- Poison Trap (2026-10-25): authored effect = Poison debuff + Venom (Strength 2) + RT Delay
+-- on the enemy that springs it. Venom reapply stacks Strength +1 (StatusService), so applying
+-- it `venomStrength` times reaches the authored Strength 2. RT delay + Venom strength are read
+-- off the ObjectData def (authored numbers; no hardcode). Enemy-only trigger + consume-once are
+-- handled upstream by TriggerTrap (ownerSide gate + uses="Once").
+-- Stasis Trap Emitter (DEP-007, 2026-10-26): RT Delay = round(rtDelayFlat + rtDelayPerIL*IL)
+-- to EVERY enemy of the trap's owner within effectRadius of the trap tile (not only the unit
+-- that sprang it). IL = the placing unit's level. Each target's VIT / gear RT-delay resistance
+-- applies through GameConstants.CalcRtDelayResistance (same as item and push RT delays).
+-- Numbers are read off the ObjectData def. Enemy-only trigger + consume-once: TriggerTrap.
+Handlers["Stasis Trap Emitter"] = function(ctx: any): (boolean, any)
+	local obj, def = ctx.objInstance, ctx.objDef or {}
+	local owner = nil
+	for _, u in ipairs(ctx.allUnits or {}) do
+		if u.id == obj.casterId then owner = u break end
+	end
+	local IL = (owner and owner.level) or 1
+	local raw = math.round((def.rtDelayFlat or 0) + (def.rtDelayPerIL or 0) * IL)
+	local r = def.effectRadius or 1
+	local cx, cy = obj.x or ctx.actor.tileX, obj.y or ctx.actor.tileY
+	local hit = 0
+	for _, u in ipairs(ctx.allUnits or {}) do
+		local hostile = (obj.ownerSide == nil) or (u.side ~= obj.ownerSide)
+		if u.isAlive and hostile and u.tileX
+			and math.max(math.abs(u.tileX - cx), math.abs(u.tileY - cy)) <= r then
+			local vit = (u.effectiveStats and u.effectiveStats.VIT) or 10
+			local gear = (u.gearDerived and u.gearDerived.rtDelayResist) or 1
+			local d = math.max(0, GameConstants.CalcRtDelayResistance(raw, vit, gear))
+			u.remainingRt = (u.remainingRt or 0) + d
+			if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+				BattleVisualBroadcaster.UnitStateChanged(u)
+			end
+			hit += 1
+		end
+	end
+	print(string.format("[ObjectEffectService] Stasis Trap | raw RT Delay %d to %d enemy(ies) around (%s,%s)",
+		raw, hit, tostring(cx), tostring(cy)))
+	return true, nil
+end
+
+Handlers["Poison Trap"] = function(ctx: any): (boolean, any)
+	local a = ctx.actor
+	applyAndRebuild(a, "Poison", a.id)
+	local vStrength = (ctx.objDef and ctx.objDef.venomStrength) or 2
+	for _ = 1, vStrength do
+		applyAndRebuild(a, "Venom", a.id)
+	end
+	local rtDelay = (ctx.objDef and ctx.objDef.rtDelay) or 30
+	a.remainingRt = (a.remainingRt or 0) + rtDelay
+	print(string.format("[ObjectEffectService] Poison Trap | Poison + Venom(str %d) + %d RT on %s",
+		vStrength, rtDelay, tostring(a.name)))
+	return true, nil
+end
+
 Handlers["Spike Trap"] = function(ctx: any): (boolean, any)
 	-- Physical damage + Bleed. Damage via direct HP (environmental, no attacker stats).
 	local a = ctx.actor
 	-- Damage % is the authoritative DB value (ObjectData Spike Trap damagePct); no hardcode.
 	local pct = (ctx.objDef and ctx.objDef.damagePct) or 0.10
 	local dmg = math.floor((a.maxHp or 0) * pct)
-	a.currentHp = math.max(0, (a.currentHp or 0) - dmg)
+	dmg = math.round(dmg * hazardTakenMult(a))  -- Goblin Cunning (trap)
+	local _shown0 = GameConstants.CapUnitDamage(a, dmg)  -- 1 for a 3-hit gadget
+	a.currentHp = math.max(0, (a.currentHp or 0) - _shown0)
 	applyAndRebuild(a, "Bleed", a.id)
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage and a.tileX and a.tileY then
+		BattleVisualBroadcaster.ObjectDamage(a.tileX, a.tileY, _shown0, true)
+	end
 	print(string.format("[ObjectEffectService] Spike Trap | %d dmg + Bleed", dmg))
 	return true, nil
 end
@@ -658,7 +1140,8 @@ local function explosionHandler(label: any)
 			-- expects a NUMERIC fraction payload (processOneExplosion computes
 			-- payload * reduction^depth); passing a table errored at "damagePayload > 0".
 			-- (Fix bundled with the trap-trigger wiring that first exercises this path.)
-			_tileEffectService.QueueExplosion(x, y, 0, a.id, 0.25, ctx.allUnits, "box")
+			_tileEffectService.QueueExplosion(x, y, 0, a.id, 0.25, ctx.allUnits, "box",
+				(ctx.objDef ~= nil and objHasTag(ctx.objDef, "Trap")) or label == "Land Mine")  -- Goblin: trap blast
 			print(string.format("[ObjectEffectService] %s | explosion queued at (%d,%d)", label, x, y))
 			return true, nil
 		end
@@ -722,11 +1205,17 @@ Handlers["Eye of the Magi"] = function(ctx: any): (boolean, any)
 		table.insert(picks, pool[idx])
 		table.remove(pool, idx)
 	end
+	local _eyeFocusDone = false
 	for _, tgt in ipairs(picks) do
 		local dmg = math.floor((tgt.maxHp or 0) * 0.40)
-		tgt.currentHp = math.max(0, (tgt.currentHp or 0) - dmg)
+		local _shown1 = GameConstants.CapUnitDamage(tgt, dmg)  -- 1 for a 3-hit gadget
+		tgt.currentHp = math.max(0, (tgt.currentHp or 0) - _shown1)
 		if tgt.currentHp <= 0 then tgt.isAlive = false end
 		if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(tgt) end
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage and tgt.tileX and tgt.tileY then
+			local _f = not _eyeFocusDone; _eyeFocusDone = true
+			BattleVisualBroadcaster.ObjectDamage(tgt.tileX, tgt.tileY, _shown1, _f)
+		end
 		print(string.format("[ObjectEffectService] Eye of the Magi | %s takes %d (40%% own MaxHP)", tgt.name, dmg))
 	end
 	return true, nil
@@ -756,37 +1245,127 @@ end
 -- EITHER a Damage shape { finalDamage } OR a Healing shape { finalHealing }
 -- (Dark-weapon operator vs an Undead target converts the hit to healing).
 -- Handle BOTH so a Dark-vs-Undead siege shot is not silently dropped (DEFECT-2).
-local function applySiegeOutcome(target: any, outcome: any)
+local function applySiegeOutcome(target: any, outcome: any, focusState: any)
 	if not outcome then return end
 	if outcome.finalDamage then
-		target.currentHp = math.max(0, (target.currentHp or 0) - outcome.finalDamage)
+		local _shown2 = GameConstants.CapUnitDamage(target, outcome.finalDamage)  -- 1 for a 3-hit gadget
+		target.currentHp = math.max(0, (target.currentHp or 0) - _shown2)
 		if target.currentHp <= 0 then target.isAlive = false end
+		-- Damage feedback (2026-10-26): floating number + impact flash on the target
+		-- tile, and a camera pan to the FIRST unit hit this interaction. focusState is
+		-- an optional { done } tracker the caller passes once per interaction so only
+		-- the first hit grabs the camera (mirrors attack/skill focus).
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage and target.tileX and target.tileY then
+			local _focus = (focusState ~= nil) and (focusState.done ~= true)
+			if _focus then focusState.done = true end
+			BattleVisualBroadcaster.ObjectDamage(target.tileX, target.tileY, _shown2, _focus)
+		end
 	elseif outcome.finalHealing then
+		-- Festering Wound anti-heal (2026-10-25): object-sourced heals (Healing/Magic Spring,
+		-- Blood Fountain, etc.) reduced too.
+		local _heal = outcome.finalHealing
+		local _hrm = StatusService.GetHealingReceivedMult(target)
+		if _hrm ~= 1 then _heal = math.max(0, math.floor(_heal * _hrm)) end
+		local _hpBefore = target.currentHp or 0
 		target.currentHp = math.min(target.maxHp or (target.currentHp or 0),
-			(target.currentHp or 0) + outcome.finalHealing)
+			(target.currentHp or 0) + _heal)
+		if (target.currentHp or 0) > _hpBefore then StatusService.WeakenVenomOnHeal(target) end  -- healing weakens Venom (2026-10-26)
 	else
 		return
 	end
 	if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(target) end
 end
 
+-- SIEGE RAY AIM (shared by the map Ballista and the Portable Ballista, user ruling 2026-10-27).
+-- Builds the 8 straight rays from (ox, oy). Only tiles minStep..maxStep steps out are on a ray
+-- (maxStep nil = to the map edge). unitAt maps "x,y" -> the living unit there (friendly fire:
+-- every unit, ally or enemy). Returns rays[dir] = { {x, y, unit}, ... } in order from the
+-- Ballista outward, the flat tile list for the tile prompter ({x, y, hit}), and tile -> dir.
+local SIEGE_DIR8 = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" }
+local function siegeRays(ox: number, oy: number, unitAt: any, minStep: number?, maxStep: number?): (any, any, any)
+	local grid = GameConstants.TERRAIN_MAP
+	local h = grid and #grid or 0
+	local w = (h > 0 and grid[1]) and #grid[1] or 0
+	local rays, flat, keyDir = {}, {}, {}
+	for _, d in ipairs(SIEGE_DIR8) do
+		local v = GameConstants.FACING_VECTORS[d]
+		local list = {}
+		if v then
+			local step = 1
+			local rx, ry = ox + v.dx, oy + v.dy
+			while rx >= 1 and rx <= w and ry >= 1 and ry <= h and (maxStep == nil or step <= maxStep) do
+				if step >= (minStep or 1) then
+					local k = rx .. "," .. ry
+					list[#list + 1] = { x = rx, y = ry, unit = unitAt[k] }
+					if not keyDir[k] then
+						keyDir[k] = d
+						flat[#flat + 1] = { x = rx, y = ry, hit = unitAt[k] ~= nil }
+					end
+				end
+				rx = rx + v.dx
+				ry = ry + v.dy
+				step = step + 1
+			end
+		end
+		rays[d] = list
+	end
+	return rays, flat, keyDir
+end
+-- Ask a PLAYER-controlled operator to tap a tile on one of the rays. Returns the ray direction,
+-- "CANCEL" (the player tapped Cancel), or nil (AI operator, no prompter, or no valid tap).
+local function promptSiegeRay(a: any, ox: number, oy: number, range: number, flat: any, keyDir: any): any
+	if not (_tilePrompter and a and a.controller == "Player") or #flat == 0 then return nil end
+	local picked = _tilePrompter(a, ox, oy, range, flat)
+	if picked == "CANCEL" then return "CANCEL" end
+	if type(picked) == "table" then
+		return keyDir[(picked.x or -1) .. "," .. (picked.y or -1)]
+	end
+	return nil
+end
+
 Handlers["Ballista"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
-	local wd = math.floor((a.weaponDamage or 10) * 2.5)  -- 250% operator weapon dmg
+	-- HD siege headgear: Interact-on-siege damage x1.5 (GetInteractSiegeDamageModifier; 1.0 default,
+	-- deferred require avoids a load cycle). Ballista fires an unbounded penetrating line, so the
+	-- siege RANGE bonus does not apply here (only to the Catapult, which has a finite range).
+	local _siegeMult = (require :: any)(script.Parent.ArmorPassiveService).GetInteractSiegeDamageModifier(a)
+	-- 250% operator weapon dmg x siege mult, PLUS a flat base = the operator's level
+	-- (user ruling 2026-10-26: flat add AFTER the x2.5 multiplier).
+	local wd = math.floor((a.weaponDamage or 10) * 2.5 * _siegeMult) + (a.level or 1)
 
-	-- Fire origin = the Ballista's tile; the bolt travels in a CARDINAL direction
-	-- (DB: "penetrating bolt, cardinal") and pierces EVERY enemy along that line.
+	-- Fire origin = the Ballista's own tile; the bolt pierces EVERY enemy along a
+	-- straight line. 8-direction aim (user ruling 2026-10-26: was cardinal-only; now
+	-- includes the 4 diagonals).
 	local obj = ctx.objInstance
 	local ox = (obj and obj.x) or a.tileX
 	local oy = (obj and obj.y) or a.tileY
 
-	-- Ask the player to AIM (reuse the facing ring, cardinal-only). If no prompter
-	-- is injected (e.g. headless/AI context), fall back to auto-aim toward the
-	-- nearest enemy's cardinal direction so the weapon still fires.
-	local dir = nil
-	if _directionPrompter then
-		dir = _directionPrompter(a)
+	local grid = GameConstants.TERRAIN_MAP
+	local h = grid and #grid or 0
+	local w = (h > 0 and grid[1]) and #grid[1] or 0
+
+	-- Index ALL living units by tile (friendly fire ON for the map Ballista, user
+	-- ruling 2026-10-26): the bolt damages whoever is on the line, ALLY OR ENEMY.
+	-- Occupied tiles are flagged (hit=true) so the aim preview also warns about
+	-- friendly units standing in the bolt's path.
+	local enemyAt = {}
+	for _, u in ipairs(ctx.allUnits) do
+		if u.isAlive and not u.isGroundTarget and u.tileX and u.tileY then
+			enemyAt[u.tileX .. "," .. u.tileY] = u
+		end
 	end
+
+	-- Build the 8 straight rays from the Ballista out to the map edge (shared siege ray aim,
+	-- 2026-10-27). The player taps any tile on a ray to fire down that ray; occupied tiles are
+	-- flagged (hit=true) so the client paints them in a hit color. AI/headless (no tile prompt)
+	-- falls back to nearest-enemy.
+	local rays, rayTiles, rayDir = siegeRays(ox, oy, enemyAt, 1, nil)
+	local pick = promptSiegeRay(a, ox, oy, math.max(w, h), rayTiles, rayDir)
+	-- Player tapped Cancel during targeting: abort with no effect. Resolve does not consume the
+	-- object on a false return, and the command layer refunds the AP/RT it charged so the turn
+	-- is given back intact (clean cancel).
+	if pick == "CANCEL" then return false, "CANCELLED" end
+	local dir = pick
 	if not dir then
 		local tgt: any = nearestEnemy(a, ctx.allUnits)
 		if not tgt then return true, nil end
@@ -797,59 +1376,234 @@ Handlers["Ballista"] = function(ctx: any): (boolean, any)
 			dir = (dy >= 0) and "S" or "N"
 		end
 	end
-
-	local vec = GameConstants.FACING_VECTORS[dir] or GameConstants.FACING_VECTORS.S
-	-- Walk the line from the ballista tile outward; hit every enemy on it.
-	local grid = GameConstants.TERRAIN_MAP
-	local h = grid and #grid or 0
-	local w = (h > 0 and grid[1]) and #grid[1] or 0
-	-- Index living enemies by tile for O(1) line hits.
-	local enemyAt = {}
-	for _, u in ipairs(ctx.allUnits) do
-		if u.isAlive and u.side ~= a.side and not u.isGroundTarget and u.tileX and u.tileY then
-			enemyAt[u.tileX .. "," .. u.tileY] = u
-		end
-	end
+	if not rays[dir] then dir = "S" end
 
 	local hits = 0
-	local cx, cy = ox + vec.dx, oy + vec.dy
-	while cx >= 1 and cx <= w and cy >= 1 and cy <= h do
-		local u = enemyAt[cx .. "," .. cy]
+	local focusState = { done = false }
+	for _, tile in ipairs(rays[dir]) do
+		local u = tile.unit
 		if u and CombatResolver and CombatResolver.ResolveBasicAttack then
 			local outcome = CombatResolver.ResolveBasicAttack(a, u, wd)
-			applySiegeOutcome(u, outcome)
+			applySiegeOutcome(u, outcome, focusState)
+			-- Objective "Siege Operator": a siege KO is tagged + credited to operator.
+			if not u.isAlive then u._killCause = u._killCause or "siege"; u._killedBy = u._killedBy or a.id end
+			print(string.format("[ObjectEffectService] Ballista | dealt %d to %s at (%d,%d)",
+				(outcome and outcome.finalDamage) or 0, tostring(u.name), tile.x, tile.y))
 			hits = hits + 1
 		end
-		cx = cx + vec.dx
-		cy = cy + vec.dy
 	end
 
-	print(string.format("[ObjectEffectService] Ballista | %s fires penetrating bolt %s from (%d,%d): %d hit(s) (250%% wpn)",
+	print(string.format("[ObjectEffectService] Ballista | %s fires %s bolt from (%d,%d): %d hit(s) (250%%+lvl wpn)",
 		a.name, dir, ox, oy, hits))
+	return true, nil
+end
+
+-- PORTABLE BALLISTA (DEP-015). User ruling 2026-10-27: works like the map Ballista through the
+-- shared siege ray aim -- 8 straight rays from the Ballista's OWN tile; the operator taps a tile
+-- and the bolt pierces EVERY unit on that ray, ally or enemy (friendly fire ON). Only tiles 3-7
+-- steps out (+ HD siege range bonus) are on a ray. Power was fixed at placement
+-- (inst.shotPower, 50 + 0.90*IL + 0.60*DEX of the placer); the operator is the attacker
+-- (rule 177), so Defense, element rules and wards apply through the item hit pipeline; HD
+-- siege headgear multiplies the power. Cancel = clean cancel (nothing spent). No enemy on any
+-- ray -> clean cancel. Removed after its last shot (2 shots).
+Handlers["Portable Ballista"] = function(ctx: any): (boolean, any)
+	local a, obj, def = ctx.actor, ctx.objInstance, ctx.objDef or {}
+	-- The command layer passes a reconstructed {id,type,x,y}; read the LIVE instance.
+	local live = nil
+	for _, o in ipairs((ctx.state and ctx.state.objects) or {}) do
+		if o.id == obj.id then live = o break end
+	end
+	if not live or not live.shotPower then
+		return false, "CANCELLED"
+	end
+	local _siege = (require :: any)(script.Parent.ArmorPassiveService)
+	local rMin = def.rangeMin or 1
+	local rMax = (def.rangeMax or 1) + (_siege.GetInteractSiegeRangeBonus(a) or 0)
+	local ox, oy = live.x, live.y
+	local unitAt = {}
+	for _, u in ipairs(ctx.allUnits or {}) do
+		if u.isAlive and not u.isGroundTarget and u.tileX and u.tileY then
+			unitAt[u.tileX .. "," .. u.tileY] = u
+		end
+	end
+	local rays, flat, keyDir = siegeRays(ox, oy, unitAt, rMin, rMax)
+	local function isFoe(u: any): boolean
+		return u.side ~= a.side and u.side ~= "Neutral"
+	end
+	local anyFoe = false
+	for _, d in ipairs(SIEGE_DIR8) do
+		for _, tile in ipairs(rays[d]) do
+			if tile.unit and isFoe(tile.unit) then anyFoe = true break end
+		end
+		if anyFoe then break end
+	end
+	if not anyFoe then
+		print("[ObjectEffectService] Portable Ballista | no enemy on any line 3-7 tiles out")
+		return false, "CANCELLED"
+	end
+	local pick = promptSiegeRay(a, ox, oy, rMax, flat, keyDir)
+	if pick == "CANCEL" then return false, "CANCELLED" end
+	local dir = pick
+	if not dir then
+		-- AI operator / no tap: the line with the most enemies, then the fewest allies (8-way
+		-- order breaks ties). A line that would hit as many allies as enemies is never chosen.
+		local bestFoes, bestFriends = 0, math.huge
+		for _, d in ipairs(SIEGE_DIR8) do
+			local foes, friends = 0, 0
+			for _, tile in ipairs(rays[d]) do
+				local u = tile.unit
+				if u then
+					if isFoe(u) then foes += 1 elseif u.side == a.side then friends += 1 end
+				end
+			end
+			if foes > friends and (foes > bestFoes or (foes == bestFoes and friends < bestFriends)) then
+				dir, bestFoes, bestFriends = d, foes, friends
+			end
+		end
+		if not dir then return false, "CANCELLED" end
+	end
+	local power = math.max(1, math.round(live.shotPower * (_siege.GetInteractSiegeDamageModifier(a) or 1)))
+	local _ies = (require :: any)(script.Parent.ItemEffectService)
+	local hits = 0
+	for _, tile in ipairs(rays[dir]) do
+		local u = tile.unit
+		if u and u.isAlive then
+			local dealt = _ies.ResolveTimedHit(a, u, "Physical", power, "Portable Ballista")
+			if not u.isAlive then u._killCause = u._killCause or "siege"; u._killedBy = u._killedBy or a.id end
+			hits += 1
+			print(string.format("[ObjectEffectService] Portable Ballista | %s's bolt hits %s at (%d,%d): %d dmg",
+				tostring(a.name), tostring(u.name), tile.x, tile.y, dealt or 0))
+		end
+	end
+	live.shotsLeft = (live.shotsLeft or 1) - 1
+	print(string.format("[ObjectEffectService] Portable Ballista | %s fires %s from (%d,%d): %d hit(s) | shots left %d",
+		tostring(a.name), tostring(dir), ox, oy, hits, live.shotsLeft))
+	if live.shotsLeft <= 0 then
+		ObjectEffectService.RemoveObjectInstance(ctx.state, live)
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+			BattleVisualBroadcaster.ObjectChanged(ox, oy, { destroyed = true })
+		end
+	end
+	return true, nil
+end
+
+-- SUPPLY STATION (DEP-010, 2026-10-26, user-approved): an allied unit next to it Interacts
+-- once (per unit, per station) to restore 1 charge to ONE of its items: the one missing the
+-- most charges (ties: first slot). The Supply Station item itself is never refilled. Holds
+-- inst.supplies (3); removed when they run out. Nothing to refill -> clean cancel.
+Handlers["Supply Station"] = function(ctx: any): (boolean, any)
+	local a, obj, def = ctx.actor, ctx.objInstance, ctx.objDef or {}
+	local live = nil
+	for _, o in ipairs((ctx.state and ctx.state.objects) or {}) do
+		if o.id == obj.id then live = o break end
+	end
+	if not live or (live.supplies or 0) <= 0 then return false, "CANCELLED" end
+	live.usedBy = live.usedBy or {}
+	if live.usedBy[a.id] then return false, "CANCELLED" end
+	local best, bestMiss = nil, 0
+	for _, s in ipairs(a.consumableSlots or {}) do
+		if s.consumableId and s.consumableId ~= "" and s.consumableId ~= def.sourceConsumableId then
+			local miss = (s.maxCharges or 0) - (s.currentCharges or 0)
+			if miss > bestMiss then best, bestMiss = s, miss end
+		end
+	end
+	if not best then
+		print(string.format("[ObjectEffectService] Supply Station | %s has no item missing a charge", tostring(a.name)))
+		return false, "CANCELLED"
+	end
+	best.currentCharges = (best.currentCharges or 0) + 1
+	live.usedBy[a.id] = true
+	live.supplies -= 1
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+		BattleVisualBroadcaster.UnitStateChanged(a)
+	end
+	print(string.format("[ObjectEffectService] Supply Station | %s restored 1 charge of %s | supplies left %d",
+		tostring(a.name), tostring(best.consumableId), live.supplies))
+	if live.supplies <= 0 then
+		ObjectEffectService.RemoveObjectInstance(ctx.state, live)
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+			BattleVisualBroadcaster.ObjectChanged(live.x, live.y, { destroyed = true })
+		end
+	end
 	return true, nil
 end
 
 Handlers["Catapult"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
-	local tgt: any, dist = nearestEnemy(a, ctx.allUnits)
-	if not tgt then return true, nil end
-	if dist and dist > 6 then
-		print("[ObjectEffectService] Catapult | nearest enemy out of range 6")
-		return true, nil
-	end
-	-- 200% weapon dmg, Cross AOE (center + 4 adjacents). Hit the target tile's
-	-- cross; each enemy on those tiles takes the resolved damage.
-	local wd = math.floor((a.weaponDamage or 10) * 2.0)
-	local crossTiles = { {tgt.tileX, tgt.tileY}, {tgt.tileX+1, tgt.tileY}, {tgt.tileX-1, tgt.tileY},
-		{tgt.tileX, tgt.tileY+1}, {tgt.tileX, tgt.tileY-1} }
-	local hitN = 0
+	-- 200% weapon dmg, Cross AOE (center + 4 adjacents), range 6 from the Catapult.
+	-- HD siege headgear: damage x1.5 (GetInteractSiegeDamageModifier) and range +2
+	-- (GetInteractSiegeRangeBonus). Both default to neutral (1.0 / 0) without the headgear.
+	local _siege = (require :: any)(script.Parent.ArmorPassiveService)
+	local wd = math.floor((a.weaponDamage or 10) * 2.0 * _siege.GetInteractSiegeDamageModifier(a))
+	local RANGE = 6 + _siege.GetInteractSiegeRangeBonus(a)
+	-- Fire origin = the Catapult's own tile (the siege engine), like the Ballista.
+	local obj = ctx.objInstance
+	local ox = (obj and obj.x) or a.tileX
+	local oy = (obj and obj.y) or a.tileY
+
+	-- Build the set of legal landing tiles: every on-map tile within Chebyshev
+	-- range 6 of the Catapult. (Catapult lobs over obstacles — no LoS requirement,
+	-- consistent with the prior nearest-enemy auto-target having no LoS check.)
+	local grid = GameConstants.TERRAIN_MAP
+	local h = grid and #grid or 0
+	local w = (h > 0 and grid[1]) and #grid[1] or 0
+	-- Index ALL living units by tile so the aim preview can flag occupied tiles
+	-- (friendly fire ON, user ruling 2026-10-26: the Cross damages ally OR enemy).
+	local unitAt = {}
 	for _, u in ipairs(ctx.allUnits) do
-		if u.isAlive and u.side ~= a.side and not u.isGroundTarget then
+		if u.isAlive and not u.isGroundTarget and u.tileX and u.tileY then
+			unitAt[u.tileX .. "," .. u.tileY] = u
+		end
+	end
+	local legal, legalKey = {}, {}
+	for ty = math.max(1, oy - RANGE), math.min(h, oy + RANGE) do
+		for tx = math.max(1, ox - RANGE), math.min(w, ox + RANGE) do
+			legal[#legal + 1] = { x = tx, y = ty, hit = unitAt[tx .. "," .. ty] ~= nil }
+			legalKey[tx .. "," .. ty] = true
+		end
+	end
+
+	-- Ask the player to pick a landing tile (reuses the object tile-prompt seam,
+	-- the tile analogue of the Ballista's direction prompt). If no prompter is
+	-- injected (AI/headless), fall back to auto-aim at the nearest enemy within
+	-- range so the weapon still fires — same fallback philosophy as the Ballista.
+	local cxTgt, cyTgt = nil, nil
+	if _tilePrompter then
+		local picked = _tilePrompter(a, ox, oy, RANGE, legal)
+		-- Player tapped Cancel during targeting: abort with no effect (command layer
+		-- refunds AP/RT for a clean cancel; Resolve won't consume on a false return).
+		if picked == "CANCEL" then return false, "CANCELLED" end
+		if picked and legalKey[(picked.x or -1) .. "," .. (picked.y or -1)] then
+			cxTgt, cyTgt = picked.x, picked.y
+		end
+	end
+	if not cxTgt then
+		local tgt: any, dist = nearestEnemy(a, ctx.allUnits)
+		if not tgt then return true, nil end
+		if dist and dist > RANGE then
+			print("[ObjectEffectService] Catapult | no tile chosen and nearest enemy out of range 6")
+			return true, nil
+		end
+		cxTgt, cyTgt = tgt.tileX, tgt.tileY
+	end
+
+	-- Cross centered on the chosen tile (center + 4 orthogonal adjacents).
+	local crossTiles = { {cxTgt, cyTgt}, {cxTgt+1, cyTgt}, {cxTgt-1, cyTgt},
+		{cxTgt, cyTgt+1}, {cxTgt, cyTgt-1} }
+	local hitN = 0
+	-- First-hit camera focus tracker: declared BEFORE the loops so only the FIRST
+	-- unit in the Cross grabs the camera (not every unit hit). (Fix 2026-10-26.)
+	local _catFocus = { done = false }
+	for _, u in ipairs(ctx.allUnits) do
+		-- Friendly fire ON (user ruling 2026-10-26): the Cross hits ANY unit, ally
+		-- or enemy, standing on a struck tile.
+		if u.isAlive and not u.isGroundTarget then
 			for _, t in ipairs(crossTiles) do
 				if u.tileX == t[1] and u.tileY == t[2] then
 					if CombatResolver and CombatResolver.ResolveBasicAttack then
 						local outcome = CombatResolver.ResolveBasicAttack(a, u, wd)
-						applySiegeOutcome(u, outcome)
+						applySiegeOutcome(u, outcome, _catFocus)
+						if not u.isAlive then u._killCause = u._killCause or "siege"; u._killedBy = u._killedBy or a.id end
 					end
 					hitN = hitN + 1
 					break
@@ -857,7 +1611,7 @@ Handlers["Catapult"] = function(ctx: any): (boolean, any)
 			end
 		end
 	end
-	print(string.format("[ObjectEffectService] Catapult | %s splashes %d enemy(s) around %s (200%% wpn, Cross)", a.name, hitN, tgt.name))
+	print(string.format("[ObjectEffectService] Catapult | %s splashes %d enemy(s) around (%d,%d) (200%% wpn, Cross)", a.name, hitN, cxTgt, cyTgt))
 	return true, nil
 end
 
@@ -922,12 +1676,21 @@ local function doSummon(ctx: any, specType: any, countMin: any, countMax: any, s
 			{ type = specType, level = lvl }, tile, ctx.state, ctx.rng, side, raceOverride)
 		if unit then
 			spawned = spawned + 1
+			-- Dragon Slayer objective: tag each Dragon-Utopia dragon and track the
+			-- live count so the death-sweep can decrement it.
+			if label == "Dragon Utopia" then
+				unit.fromDragonUtopia = true
+				ObjectiveService.RecordEvent(ctx.state, "dragonsAlive", 1)
+			end
 			if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitSpawned then
 				BattleVisualBroadcaster.UnitSpawned(unit)
 			end
 		end
 	end
 	print(string.format("[ObjectEffectService] %s | summoned %d unit(s) at L%d", label, spawned, lvl))
+	if label == "Dragon Utopia" and spawned > 0 then
+		ObjectiveService.RecordEvent(ctx.state, "dragonUtopiaTriggered", 1)
+	end
 	return true, nil
 end
 
@@ -964,7 +1727,8 @@ Handlers["Forge"] = function(ctx: any): (boolean, any)
 	-- until one is free. radius=3 per objects_encounters (Forge).
 	for _, t in ipairs(ringTiles(cx, cy, nil, 3)) do
 		if not (t.x == cx and t.y == cy) then
-			local inst = ObjectEffectService.PlaceObjectInstance(ctx.state, which, t.x, t.y)
+			-- User ruling 2026-10-27: the Forge's weapon replaces any trap on its tile.
+			local inst = ObjectEffectService.PlaceObjectInstance(ctx.state, which, t.x, t.y, nil, nil, true)
 			if inst then
 				print(string.format("[ObjectEffectService] Forge | placed %s at (%d,%d)", which, t.x, t.y))
 				return true, nil
@@ -1016,6 +1780,7 @@ Handlers["Stone Pillar"] = function(ctx: any): (boolean, any)
 
 	-- Reshape each reached tile to Rocky at base elevation (the fallen deck), and
 	-- crush any unit standing on it.
+	local elevTilesChanged = 0
 	for _, t in ipairs(spanTiles) do
 		GameConstants.SetTerrainId(t.x, t.y, "Rocky")
 		-- BUG-002 GAP 1 (2026-10-22): the fallen-deck Rocky reskin was a silent
@@ -1027,7 +1792,9 @@ Handlers["Stone Pillar"] = function(ctx: any): (boolean, any)
 			BattleVisualBroadcaster.TerrainChanged(t.x, t.y, "Rocky")
 		end
 		if GameConstants.ELEVATION_MAP[t.y] then
+			local oldElev = GameConstants.ELEVATION_MAP[t.y][t.x]
 			GameConstants.ELEVATION_MAP[t.y][t.x] = baseElev
+			if oldElev ~= baseElev then elevTilesChanged = elevTilesChanged + 1 end
 		end
 		-- The fallen pillar becomes a WALKABLE Rocky span: clear any blocker entry on
 		-- each span tile (the pillar's own standing tile + the deck tiles) so units can
@@ -1042,11 +1809,15 @@ Handlers["Stone Pillar"] = function(ctx: any): (boolean, any)
 		for _, u in ipairs(ctx.allUnits) do
 			if u.isAlive and not u.isGroundTarget and u.tileX == t.x and u.tileY == t.y then
 				local dmg = math.floor((u.maxHp or 0) * 0.70)  -- HP%-based
-				u.currentHp = math.max(0, (u.currentHp or 0) - dmg)
+				local _shown3 = GameConstants.CapUnitDamage(u, dmg)  -- 1 for a 3-hit gadget
+				u.currentHp = math.max(0, (u.currentHp or 0) - _shown3)
 				if u.currentHp <= 0 then u.isAlive = false end
 				u.remainingRt = (u.remainingRt or 0) + 100
 				StatusService.ApplyStatus(u, "Pinned", a.id)
 				if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(u) end
+				if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage and u.tileX and u.tileY then
+					BattleVisualBroadcaster.ObjectDamage(u.tileX, u.tileY, _shown3, true)
+				end
 				print(string.format("[ObjectEffectService] Stone Pillar | crushed %s for %d (70%% MaxHP) +100 RT + Pinned", u.name, dmg))
 			end
 		end
@@ -1065,31 +1836,36 @@ Handlers["Stone Pillar"] = function(ctx: any): (boolean, any)
 	end
 
 	print(string.format("[ObjectEffectService] Stone Pillar | fell %d tile(s) toward (%d,%d) as Rocky span", #spanTiles, dx, dy))
+	-- Terrain Shaper objective: a PLAYER interacting with the pillar reshaped
+	-- elevTilesChanged tiles' elevation. Player-initiated by definition (Interact).
+	if elevTilesChanged > 0 and a and a.side == "Player" then
+		ObjectiveService.RecordEvent(ctx.state, "elevationTilesChanged", elevTilesChanged)
+	end
 	return true, nil
 end
 
 --------------------------------------------------------------------
--- CHAOS STATUE (Blocker #4) — generates ONE optional quest and stashes it on
--- state.pendingOptionalQuests for the battle-end flow to surface on the Quest
--- Board. QuestGenerator.Generate returns 3; we take the first. Deterministic
--- seed from ctx.rng. NOTE: battle-end surfacing of pendingOptionalQuests is a
--- small follow-up (no consumer reads it yet) — the quest is generated + stored,
--- not yet shown on the board. Flagged, not faked.
+-- CHAOS STATUE (Blocker #4) — adds ONE in-battle optional objective to the live
+-- battle via ObjectiveService.AddOne (CONVERTED 2026-10-24 by user ruling). It
+-- no longer generates a future board-quest: optional objectives live and die
+-- inside the current battle (fail-and-erase at battle end). Deterministic seed
+-- from ctx.rng. Single use (ObjectData).
 --------------------------------------------------------------------
 Handlers["Chaos Statue"] = function(ctx: any): (boolean, any)
 	local state = ctx.state
-	local playerLevel = (state and state.mapLevel) or 1
-	local seed = (ctx.rng and ctx.rng:NextInteger(1, 2^31 - 1)) or os.time()
-	local ok, quests = pcall(function()
-		return QuestGenerator.Generate(playerLevel, seed)
-	end)
-	if ok and type(quests) == "table" and quests[1] then
-		state.pendingOptionalQuests = state.pendingOptionalQuests or {}
-		table.insert(state.pendingOptionalQuests, quests[1])
-		print(string.format("[ObjectEffectService] Chaos Statue | generated optional quest '%s' (stashed; board surfacing is a follow-up)",
-			tostring(quests[1].name)))
+	-- CONVERTED 2026-10-24 (user ruling): the Chaos Statue no longer generates a
+	-- future board-quest (which violated the "optional objectives live and die
+	-- inside the current battle" rule). It now ADDS ONE in-battle optional
+	-- objective to the live battle via ObjectiveService — rolled from the
+	-- implemented pool, gated by the live battle context, fail-and-erase at
+	-- battle end like every other optional objective. Single use (ObjectData).
+	local rng = ctx.rng or Random.new(os.time())
+	local added = ObjectiveService.AddOne(state, rng)
+	if added then
+		print(string.format("[ObjectEffectService] Chaos Statue | added in-battle optional objective '%s' (%s)",
+			added.name, added.mode))
 	else
-		print("[ObjectEffectService] Chaos Statue | quest generation failed; no quest added")
+		print("[ObjectEffectService] Chaos Statue | no eligible objective to add (all active or none applicable)")
 	end
 	return true, nil
 end
@@ -1129,15 +1905,33 @@ end
 -- objects/treasures are designed (they must carry obj.hidden = true and be
 -- withheld from the initial render), this handler reveals them unchanged.
 --------------------------------------------------------------------
+-- Area reveal (2026-10-26, user ruling 5): clear `hidden` on objects whose tile is in
+-- tileSet ({["x,y"]=true}) and render them. Shared by reveal consumables (Scanner Lens);
+-- covers hidden traps today and hidden treasure / Mimic once that content exists.
+-- revealerSide (optional, 2026-10-27): objects owned by the revealer's own side are skipped,
+-- so an enemy scan never shows the player the enemy's own traps.
+function ObjectEffectService.RevealHiddenInArea(state: any, tileSet: any, revealerSide: any): number
+	local revealed = 0
+	if state and state.objects and tileSet then
+		for _, o in ipairs(state.objects) do
+			if o.hidden and o.x and o.y and tileSet[o.x .. "," .. o.y]
+				and not (revealerSide ~= nil and o.ownerSide == revealerSide) then
+				if ObjectEffectService.RevealObject(o) then revealed += 1 end
+			end
+		end
+	end
+	return revealed
+end
+
 Handlers["Crystal Ball"] = function(ctx: any): (boolean, any)
 	local state = ctx.state
 	local revealed = 0
+	-- Reveals never show a side its own traps (user ruling 2026-10-27): skip the user's side.
+	local userSide = ctx.actor and ctx.actor.side
 	if state and state.objects then
 		for _, o in ipairs(state.objects) do
-			if o.hidden then
-				o.hidden = false
-				if _objectRenderer then _objectRenderer(o) end
-				revealed = revealed + 1
+			if o.hidden and not (userSide ~= nil and o.ownerSide == userSide) then
+				if ObjectEffectService.RevealObject(o) then revealed = revealed + 1 end
 			end
 		end
 	end
@@ -1256,15 +2050,61 @@ end
 --------------------------------------------------------------------
 function ObjectEffectService._grantChestReward(actor: any, ctx: any)
 	local state = ctx.state
+	-- Optional objective "Treasure Fever": a chest was opened (shared by Treasure
+	-- Chest and Cursed Chest). Counted once per real chest open, regardless of
+	-- what the reward roll yields. (Re-added 2026-10-24 — a prior edit did not
+	-- persist; Tester DEFECT-1.)
+	ObjectiveService.RecordEvent(state, "chestsOpened", 1)
 	local playerId = state and state.ownerPlayerId
 	local mapLevel = state and state.mapLevel
 	if playerId and mapLevel and RewardService and RewardService.GenerateRewards then
 		local oppId = "chest_" .. tostring(ctx.objInstance and ctx.objInstance.id or tostring(os.clock()))
+		-- Idol of Fortune (2026-10-24, fixed after Tester UAT): ADDITIVE fortune bump
+		-- for THIS chest roll, layered on top of the real team baseline — NOT an
+		-- absolute overwrite. SetExpeditionFortune is an absolute setter with no
+		-- getter, so we recompute the team baseline from ctx.allUnits (the same pure
+		-- function Main uses: ComputeExpeditionFortune), set baseline + bump (clamped
+		-- to the 1.75 ceiling by SetExpeditionFortune itself), generate, then RESTORE
+		-- the baseline by recomputing it again — never zero it. This guarantees the
+		-- Idol can only raise drop quality (never lower a high-Fortune team), and a
+		-- later non-Idol chest in the same battle still rolls at the correct baseline.
+		local idolBump = state and state.idolFortuneBump
+		local appliedIdol = false
+		local baseline = nil
+		if idolBump and RewardService.SetExpeditionFortune and RewardService.ComputeExpeditionFortune then
+			baseline = RewardService.ComputeExpeditionFortune(ctx.allUnits or {})
+			RewardService.SetExpeditionFortune(baseline + idolBump)
+			appliedIdol = true
+		end
 		local ok = pcall(function()
 			RewardService.GenerateRewards(playerId, mapLevel, oppId)
 		end)
+		-- Restore the real team baseline (recompute, do NOT zero) so later chests and
+		-- any other in-battle reward path keep the correct team Fortune.
+		if appliedIdol then
+			RewardService.SetExpeditionFortune(baseline)
+		end
 		if ok then
-			print("[ObjectEffectService] Treasure reward granted (opportunity " .. oppId .. ")")
+			print(string.format("[ObjectEffectService] Treasure reward granted (opportunity %s)%s",
+				oppId, appliedIdol and " [Idol of Fortune drop bonus applied]" or ""))
+			-- CHEST GOLD (2026-10-24): the design (objects_encounters "Treasure Chest" =
+			-- "Random gold, equipment, materials and runes"; loot_progression id 67 "Gold
+			-- Fortune applies to ... chests") grants gold alongside the equipment rolled
+			-- above, which was never implemented. Base = Exploration-category completion
+			-- gold (economy_framework: 25 x (1 + MapLevel/50)); ApplyGold layers the gold +
+			-- Fortune multipliers (Fortune applies to chests per loot_progression), then
+			-- CurrencyService credits it. Per-opener trait multiplier: Treasure Seeker
+			-- (+50/60%) / Spendthrift Looter (-50/60%) via GetChestGoldMultiplier.
+			local TraitEffectService = (require :: any)(script.Parent.TraitEffectService)
+			local CurrencyService = (require :: any)(script.Parent.CurrencyService)
+			local baseGold = math.round(25 * (1 + (mapLevel / 50)))
+			local traitMult = TraitEffectService.GetChestGoldMultiplier(actor)
+			local goldAmount = RewardService.ApplyGold(math.round(baseGold * traitMult))
+			if goldAmount > 0 and CurrencyService.Credit then
+				CurrencyService.Credit(playerId, { gold = goldAmount })
+				print(string.format("[ObjectEffectService] Chest gold +%d to %s (base %d x trait %.2f, after gold+fortune mults)",
+					goldAmount, playerId, baseGold, traitMult))
+			end
 			return true, nil
 		end
 	end
@@ -1304,9 +2144,15 @@ function ObjectEffectService.ProcessDeaths(allUnits: any, state: any)
 		end
 		return
 	end
+	local sweepEnemyKOs = 0
 	for _, u in ipairs(allUnits) do
 		local wasAlive = _aliveSnapshot[u.id]
 		if wasAlive and not u.isAlive then
+			-- Optional-objective kill routing (push/siege KOs, elite timing, NPC
+			-- death). Single choke-point: every death flows through this sweep,
+			-- so one call here covers all death sources without touching each.
+			ObjectiveService.OnUnitKilled(state, u)
+			if u.side == "Enemy" and not u.isSummon then sweepEnemyKOs += 1 end
 			if #stands > 0 and u.tileX and u.tileY then
 				local triggered = false
 				for _, st in ipairs(stands) do
@@ -1316,11 +2162,17 @@ function ObjectEffectService.ProcessDeaths(allUnits: any, state: any)
 				end
 				if triggered then
 					local dmg = math.floor((u.maxHp or 0) * 0.10)
+					local _necroFocusDone = false
 					for _, opp in ipairs(allUnits) do
 						if opp.isAlive and opp.side ~= u.side and not opp.isGroundTarget then
-							opp.currentHp = math.max(0, (opp.currentHp or 0) - dmg)
+							local _shown4 = GameConstants.CapUnitDamage(opp, dmg)  -- 1 for a 3-hit gadget
+							opp.currentHp = math.max(0, (opp.currentHp or 0) - _shown4)
 							if opp.currentHp <= 0 then opp.isAlive = false end
 							if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(opp) end
+							if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage and opp.tileX and opp.tileY then
+								local _f = not _necroFocusDone; _necroFocusDone = true
+								BattleVisualBroadcaster.ObjectDamage(opp.tileX, opp.tileY, _shown4, _f)
+							end
 						end
 					end
 					print(string.format("[ObjectEffectService] Necro Tome Stand | %s died in range -> %d dark dmg to opponents", u.name, dmg))
@@ -1328,10 +2180,46 @@ function ObjectEffectService.ProcessDeaths(allUnits: any, state: any)
 			end
 		end
 	end
+	-- Nuker: count enemies that died in THIS single action (one sweep = one action).
+	ObjectiveService.RecordMultiKill(state, sweepEnemyKOs)
 	_aliveSnapshot = {}
 	for _, u in ipairs(allUnits) do
 		if u.isAlive then _aliveSnapshot[u.id] = true end
 	end
+end
+
+--------------------------------------------------------------------
+-- PUBLIC: Is this map object a valid Interact target for this unit right now?
+-- (user ruling 2026-10-26). Used by TargetingService.GetInteractCandidates, so the
+-- same rule drives BOTH the Interact menu and the server re-check before any AP/RT
+-- is charged (SEC-002). Not interactable:
+--   * traps and anything that fires by itself ("Triggered": traps, Bomb Barrel)
+--   * always-on aura objects ("Passive": War Banner, Cursed Statue, Necro Tome Stand)
+--   * a single-use ("Once") object that has already been used
+--   * a "Once per turn" object this unit already used during its current turn
+--------------------------------------------------------------------
+function ObjectEffectService.IsInteractable(objInstance: any, actorId: any, actorSide: any): boolean
+	local def = objInstance and objInstance.type and ObjectData.Objects[objInstance.type]
+	if not def then return false end
+	-- Item-placed interactables (Portable Ballista, 2026-10-26) work for the owner's side only.
+	if def.isDeployable and objInstance.ownerSide and actorSide and actorSide ~= objInstance.ownerSide then
+		return false
+	end
+	-- Once-per-unit deployables (Supply Station): a unit that already used it never sees it again.
+	if objInstance.usedBy and actorId ~= nil and objInstance.usedBy[actorId] then
+		return false
+	end
+	local act = def.activation
+	if act == "Triggered" or act == "Passive" or objHasTag(def, "Trap") then
+		return false
+	end
+	local objId = objInstance.id or ("obj_@" .. tostring(objInstance.x) .. "," .. tostring(objInstance.y))
+	local uses = def.uses or "Once"
+	if uses == "Once" and _consumed[objId] then return false end
+	if uses == "Once per turn" and actorId ~= nil and _usedThisTurn[objId] == actorId then
+		return false
+	end
+	return true
 end
 
 --------------------------------------------------------------------
@@ -1458,9 +2346,21 @@ function ObjectEffectService.TriggerTrap(actor: any, inst: any, state: any, allU
 	if not (actor and inst and actor.isAlive) then return { fired = false } end
 	local def = inst.type and ObjectData.Objects[inst.type]
 	if not isStepOnTrap(def) then return { fired = false } end
+	-- Enemy-only trigger for SKILL-placed traps (2026-10-24): a skill-placed trap
+	-- carries inst.ownerSide (caster side). Units on the owner's side walk over it
+	-- safely; only enemies of the owner spring it. Map-placed traps have no ownerSide
+	-- and keep triggering on ANY unit (unchanged). Trigger-gate ONLY — once sprung,
+	-- the trap effect still follows the standing friendly-fire rule.
+	if inst.ownerSide and actor.side and actor.side == inst.ownerSide then
+		return { fired = false }
+	end
 	local ok = ObjectEffectService.Resolve(actor, inst, state, allUnits)
 	if not ok then return { fired = false } end
 	-- Single-use traps are removed after firing ("removed after activation").
+	-- A hidden persistent trap that springs is no longer a secret: draw it now.
+	if (def.uses or "Once") == "Unlimited" and inst.hidden then
+		ObjectEffectService.RevealObject(inst)
+	end
 	-- Persistent traps (uses = "Unlimited", e.g. Spike area-denial) stay on the
 	-- tile and re-spring on the next crossing — do NOT remove or drop the sprite.
 	if (def.uses or "Once") ~= "Unlimited" then
@@ -1494,12 +2394,36 @@ function ObjectEffectService.ConsumeExplosiveObjectAt(state: any, x: any, y: any
 				if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
 					BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
 				end
-				return true
+				-- Second value: was it a trap (Land Mine)? Its chained blast counts for Goblin Cunning.
+				return true, objHasTag(def, "Trap")
 			end
 			return false
 		end
 	end
 	return false
+end
+
+-- GL-007 Demolition Mitts: detonate ANY movable object at (x,y) as a Bomb Barrel-style blast --
+-- a 3x3 (box) explosion dealing damagePercent of Max HP, then remove the object. Unlike
+-- ConsumeExplosiveObjectAt this is NOT gated on the Explosive tag (the glove makes any pushed
+-- object blow up on collision). Object removed FIRST so the blast is not self-blocked. nil-safe.
+function ObjectEffectService.DetonateObjectAt(state: any, x: any, y: any, damagePercent: any, allUnits: any, ownerId: any): boolean
+	if not (state and state.objects) then return false end
+	local inst = nil
+	for _, o in ipairs(state.objects) do
+		if o.x == x and o.y == y then inst = o; break end
+	end
+	if not inst then return false end
+	ObjectEffectService.RemoveObjectInstance(state, inst)
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+		BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
+	end
+	if _tileEffectService and _tileEffectService.QueueExplosion then
+		_tileEffectService.QueueExplosion(x, y, 0, ownerId, damagePercent or 0.30, allUnits, "box")
+	end
+	print(string.format("[ObjectEffectService] Demolition Mitts: object at (%d,%d) detonated (3x3, %d%% Max HP)",
+		x, y, math.floor((damagePercent or 0.30) * 100)))
+	return true
 end
 
 return ObjectEffectService

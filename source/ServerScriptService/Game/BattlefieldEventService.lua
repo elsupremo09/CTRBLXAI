@@ -23,6 +23,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local BattlefieldEventData = require(
 	ReplicatedStorage:WaitForChild("Content"):WaitForChild("BattlefieldEventData"))
 
+local UnitSchema = require(script.Parent.UnitSchema)  -- ClearChannelState on revive (no require cycle)
 local GameConstants = require(
 	ReplicatedStorage:WaitForChild("CTRBLXAI"):WaitForChild("Shared"):WaitForChild("GameConstants"))
 
@@ -352,11 +353,16 @@ Handlers["Thief"] = function(ctx: any)
 	return true
 end
 
--- Chaos Necromancer — turns enemy corpses into undead each turn.
+-- Chaos Necromancer — channels Raise Dead (300, interruptible) once per battle: every fallen unit on
+-- its side rises at 25% Max HP as Undead (user ruling 2026-10-27). AIService gives it top priority.
 Handlers["Chaos Necromancer"] = function(ctx: any)
 	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Chaos Necromancer", nil)
-	if u then u.raisesCorpses = true end  -- OnEventUnitTurn raises nearby corpses
+	if u then
+		u.raisesCorpses = true
+		u.skillIds = u.skillIds or {}
+		table.insert(u.skillIds, "EVT-RAISE-DEAD")
+	end
 	return true
 end
 
@@ -512,7 +518,13 @@ Handlers["Divine Intervention"] = function(ctx: any)
 	for _, u in ipairs(ctx.state.units) do
 		if u.side == "Player" and not u.isAlive then
 			u.isAlive = true
+			UnitSchema.ClearChannelState(u)  -- never return holding a pre-death channel
+			u._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
 			u.currentHp = u.maxHp
+			-- Turn timing resets like every other revive (USER RULING 2026-10-27 12:21): no instant
+			-- turn just because the unit's turn was due when it fell.
+			u.remainingRt = u.startingRt or 400
+			if _statusService and _statusService.WeakenVenomOnHeal then _statusService.WeakenVenomOnHeal(u) end  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 			applyStatusTo(u, "Blessed", "Divine Intervention")
 			if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(u) end
 		elseif u.side == "Player" and u.isAlive then
@@ -937,7 +949,7 @@ function BattlefieldEventService.OnEventUnitTurn(unit: any, state: any, rng: any
 		end
 		if best then
 			local dmg = math.floor((best.maxHp or 0) * 0.20)
-			best.currentHp = math.max(0, (best.currentHp or 0) - dmg)
+			best.currentHp = math.max(0, (best.currentHp or 0) - GameConstants.CapUnitDamage(best, dmg))
 			if best.currentHp <= 0 then best.isAlive = false end
 			if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(best) end
 		end
@@ -953,7 +965,7 @@ function BattlefieldEventService.OnEventUnitTurn(unit: any, state: any, rng: any
 				if u.raceId == "RACE-ZOMBIE" or u.raceId == "RACE-VAMPIRE" then isUndead = true end
 				if not isUndead then
 					local dmg = math.floor((u.maxHp or 0) * 0.10)
-					u.currentHp = math.max(0, (u.currentHp or 0) - dmg)
+					u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 					if u.currentHp <= 0 then u.isAlive = false end
 					if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(u) end
 				end
@@ -984,8 +996,14 @@ function BattlefieldEventService.OnEventUnitTurn(unit: any, state: any, rng: any
 		if enemiesTotal > 0 and enemiesAlive <= enemiesTotal * 0.25 then
 			unit.side = "Neutral"
 			unit.traitorFlipped = true
-			if _statusService and _statusService.RemoveDispellable then
-				_statusService.RemoveDispellable(unit)
+			-- DB (battlefield_events Traitor): on flip it "dispels Traitor" -- the Weakened the
+			-- Traitor event applied (source "Traitor"). Was RemoveDispellable, which would now
+			-- strip the unit's dispellable buffs (2026-10-26 fix).
+			for i = #(unit.statusInstances or {}), 1, -1 do
+				local inst = unit.statusInstances[i]
+				if inst.id == "Weakened" and inst.sourceUnitId == "Traitor" and _statusService and _statusService.RemoveStatus then
+					_statusService.RemoveStatus(unit, "Weakened")
+				end
 			end
 			if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(unit) end
 			print("[BattlefieldEventService] Traitor flipped to Neutral ally.")

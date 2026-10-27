@@ -434,14 +434,32 @@ GameConstants.TILE_EFFECTS = {
 		durationCt = 900,
 		occupyBonus   = { Water = 0.25 },
 		occupyEvasion = 0.25,   -- +25% Evasion (audit row 57; mapping formula parked pending Electric pass)
-		reactions = { Electric = "Static Cloud", Wind = nil },  -- Wind clears; Electric on Steam → Static Cloud
+		reactions = { Electric = "Static Cloud", Wind = false },  -- Wind clears (false = cleared; live table: TileEffectService REACTIONS); Electric on Steam → Static Cloud
 	},
 	["Static Cloud"] = {
 		id = "Static Cloud", element = "Electric", hazard = true,
 		tags = { "Airborne", "Conductive", "Electric" },
 		durationCt = 900,
 		tickCt = 300, tickDamage = 0.15, tickElement = "Electric",
-		reactions = { Wind = nil },  -- Wind clears
+		reactions = { Wind = false },  -- Wind clears (false = cleared; live table: TileEffectService REACTIONS)
+	},
+	-- Augment ground patches (2026-10-25). Non-hazard floor effects placed by the
+	-- Darkened Ground / Holy Ground augments. Values: healReductionPct 20% (authored);
+	-- Holy heal 5%/turn (authored); Holy undead damage 5%/turn and both durations 1500 CT
+	-- are UNSPECIFIED-IN-DATA DEFAULTS (flagged to the user), matching Wet/Poison Cloud CT.
+	["Darkened Ground"] = {
+		id = "Darkened Ground", element = "Dark", hazard = false,
+		tags = { "Dark", "Ground" },
+		durationCt = 1500,
+		healReductionPct = 0.20,   -- units on this tile receive 20% less healing
+	},
+	["Holy Ground"] = {
+		id = "Holy Ground", element = "Holy", hazard = false,
+		tags = { "Holy", "Ground" },
+		durationCt = 1500,
+		holyGround = true,
+		holyHealPct = 0.05,        -- owner-side units heal 5% Max HP at end of their turn
+		holyUndeadPct = 0.05,      -- Undead/Demon units take 5% Max HP at end of their turn
 	},
 	["Poison Cloud"] = {
 		id = "Poison Cloud", element = "Poison", hazard = false,
@@ -449,7 +467,7 @@ GameConstants.TILE_EFFECTS = {
 		durationCt = 1500,
 		occupyEffect  = "Poison",
 		crossEffect   = "Poison",
-		reactions = { Fire = "Explosion" },  -- Fire → Explosion (source consumed)
+		reactions = { Fire = "Explosion", Wind = false },  -- Fire → Explosion (source consumed); Wind clears it (2026-10-27)
 		-- Explosion (DB spec rows 47-52): generic explosion tag carries NO blanket HP
 		-- damage — damage is PER-SOURCE (barrel bomb / terrain chain supplies payload).
 		-- Intrinsic = tile-lowering + terrain-chain trigger + chain queue (TRG-011).
@@ -655,6 +673,18 @@ GameConstants.STATUSES = {
 		rtMultiplier = 1.10,
 		dotType      = nil,
 	},
+	-- Defense-shred debuff (2026-10-24) delivered by the Shattering Death augment. Read
+	-- live by StatusService.GetDefenseMultiplier at damage time (no stat rebuild needed);
+	-- 0.80 = -20% effective Defense, matching the augment's authored number.
+	Sundered = {
+		id           = "Sundered",
+		description  = "Physical Defense reduced 20%.",
+		kind         = "Debuff",
+		duration     = 2,
+		reapply      = "refresh",
+		defenseMult  = 0.80,
+		dotType      = nil,
+	},
 	Poison = {
 		id           = "Poison",
 		description  = "Takes 15% Max HP damage each turn.",
@@ -694,10 +724,32 @@ GameConstants.STATUSES = {
 
 	Venom = {
 		id           = "Venom",
-		description  = "Takes 3% Max HP per stack each turn. Stacks on reapply.",
+		description  = "Takes 3% Max HP per stack at the end of each of its turns. Stacks on reapply.",
 		kind         = "Debuff",
 		duration     = nil,       -- Unlimited until cured
 		reapply      = "stack",   -- Venom Strength +1 on reapply
+		-- End-of-turn tick share of Max HP per Venom Strength (user ruling 2026-10-26: Venom
+		-- hurts at the END of the victim's own turn, unlike Poison/Burn at the start, so the
+		-- victim gets its turn to remove it first). Read by StatusService.ProcessEndOfTurn.
+		tickFraction = 0.03,
+	},
+	HealingReduction = {
+		id           = "HealingReduction",
+		description  = "All healing received reduced by 50%.",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 2000,
+		reapply      = "refresh",
+		healingReceivedMult = 0.5,
+	},
+	Purified = {
+		id           = "Purified",
+		description  = "Debuff Resistance +15%.",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 1000,
+		reapply      = "refresh",
+		debuffResistBonus = 0.15,
 	},
 
 	Bleed = {
@@ -1094,6 +1146,17 @@ GameConstants.STATUSES = {
 		moveOffset   = 2,
 		moveRtMult   = 0.80,
 	},
+	-- Empowering Aura (SKL-EMPOWERING-AURA, ruling 2026-10-26): allies only, +10% final damage
+	-- dealt for 3 turns (DB skills.Duration "3 turns"). Totaled with other damage buffs.
+	["Empowering Aura"] = {
+		id          = "Empowering Aura",
+		description = "Final damage dealt +10%.",
+		kind        = "Buff",
+		duration    = 3,
+		durationCt  = nil,
+		reapply     = "refresh",
+		attackMult  = 1.10,
+	},
 	["War Cry"] = {
 		id              = "War Cry",
 		description     = "Direct damage dealt +10%. Stability +1.",
@@ -1245,6 +1308,157 @@ GameConstants.STATUSES = {
 		reapply      = "refresh",
 		doesNotStack = true,
 		statPctMod   = { LUK = 0.50 },
+	},
+
+	-- === Support-consumable buff/debuff statuses (wired 2026-10-26) ===
+	-- Authored by Designer in CTRBLXAI.db elements_statuses ids 107-121. Each reuses an
+	-- EXISTING data-driven modifier hook (statPctMod / defenseMult / attackMult /
+	-- stabilityOffset / moveRtMult), so NO StatusService math change is needed. User
+	-- rulings 2026-10-26: buffs and their debuff counterparts COEXIST (no STATUS_CANCELS
+	-- entry added); primary-stat % stacking uses the engine's existing statPctMod model.
+	["Empowered"] = {
+		id = "Empowered", dispellable = true, description = "STR +15%.", kind = "Buff",
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		statPctMod = { STR = 0.15 },
+	},
+	["Focused"] = {
+		id = "Focused", dispellable = true, description = "INT +15%.", kind = "Buff",
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		statPctMod = { INT = 0.15 },
+	},
+	["Stoneskin"] = {
+		id = "Stoneskin", dispellable = true, description = "VIT +15%.", kind = "Buff",
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		statPctMod = { VIT = 0.15 },
+	},
+	["Stoneskin Lesser"] = {
+		id = "Stoneskin Lesser", dispellable = true, description = "VIT +12%.", kind = "Buff",
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		statPctMod = { VIT = 0.12 },
+	},
+	["Fleetfoot"] = {
+		id = "Fleetfoot", dispellable = true, description = "AGI +15%, Movement RT x0.95.", kind = "Buff",
+		duration = nil, durationCt = 1200, reapply = "refresh", doesNotStack = true,
+		statPctMod = { AGI = 0.15 }, moveRtMult = 0.95,
+	},
+	["Precise"] = {
+		id = "Precise", dispellable = true, description = "DEX +15%.", kind = "Buff",
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		statPctMod = { DEX = 0.15 },
+	},
+	["Fortunate"] = {
+		id = "Fortunate", dispellable = true, description = "LUK +20%.", kind = "Buff",
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		statPctMod = { LUK = 0.20 },
+	},
+	["Armored"] = {
+		id = "Armored", dispellable = true, description = "Equipment Defense +20%.", kind = "Buff",
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		-- Audit fix 2026-10-27 (status row 113): Equipment Defense, BEFORE the VIT curve.
+		equipDefenseMult = 1.20,
+	},
+	["Battle Fury"] = {
+		id = "Battle Fury", dispellable = true, description = "Direct final damage dealt +12%.", kind = "Buff",
+		duration = nil, durationCt = 1000, reapply = "refresh", doesNotStack = true,
+		attackMult = 1.12,
+	},
+	["Rally Array"] = {
+		id = "Rally Array", dispellable = true, description = "STR/INT/VIT +10%.", kind = "Buff",
+		duration = nil, durationCt = 1000, reapply = "refresh", doesNotStack = true,
+		statPctMod = { STR = 0.10, INT = 0.10, VIT = 0.10 },
+	},
+	["Enfeebled"] = {
+		id = "Enfeebled", description = "STR -20%.", kind = "Debuff",
+		duration = nil, durationCt = 1200, reapply = "refresh", doesNotStack = true,
+		statPctMod = { STR = -0.20 },
+	},
+	["Addled"] = {
+		id = "Addled", description = "INT -20%.", kind = "Debuff",
+		duration = nil, durationCt = 1200, reapply = "refresh", doesNotStack = true,
+		statPctMod = { INT = -0.20 },
+	},
+	["Armor Break"] = {
+		id = "Armor Break", description = "Equipment Defense -20%.", kind = "Debuff",
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		-- Audit fix 2026-10-27 (status row 118): Equipment Defense, BEFORE the VIT curve.
+		equipDefenseMult = 0.80,
+	},
+	["Unsteady"] = {
+		id = "Unsteady", description = "Stability -2.", kind = "Debuff",
+		duration = nil, durationCt = 1000, reapply = "refresh", doesNotStack = true,
+		stabilityOffset = -2,
+	},
+	["Gravity Anchor"] = {
+		id = "Gravity Anchor", description = "Stability +2, Movement Range -1.", kind = "Debuff",
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		-- Neutral ZONE status (CON-015): applied to ALL units in the aura (both sides) via the
+		-- item's statusRecipients="all" field. stabilityOffset read by GetStabilityModifier,
+		-- moveOffset by GetMovementRangeModifier -- both existing data-driven hooks.
+		stabilityOffset = 2,
+		moveOffset = -1,
+	},
+	["Fear"] = {
+		id = "Fear", description = "First AP each turn is spent fleeing toward its own deployment area.", kind = "Debuff",
+		-- CON-017 Fear Projector (user ruling 2026-10-26). Behaviour lives in
+		-- CommandService.ApplyFearMove (called by Main at turn start). Turn-based with no
+		-- numeric value, so Debuff Resistance shortens its turn count (min 1).
+		duration = 2, durationCt = nil, reapply = "refresh", doesNotStack = true,
+		fear = true,
+		dispellable = true,  -- user ruling 2026-10-26: cleanses can remove Fear
+	},
+	["Taunted"] = {
+		id = "Taunted", description = "Can only basic-attack, or use debuff and damage skills on, the unit that taunted it.", kind = "Debuff",
+		-- CON-018 Taunt Beacon (user ruling 2026-10-27). Applied / removed live by
+		-- StatusService.GetTaunter; ends when the taunter is KO'd or (aura) the unit leaves it.
+		duration = nil, durationCt = 1000, reapply = "refresh", doesNotStack = true,
+		taunt = true,
+		dispellable = true,
+	},
+	["Elemental Ward"] = {
+		id = "Elemental Ward", description = "Incoming direct damage of the chosen element x0.75.", kind = "Buff",
+		-- SUP-016 (user ruling 1, 2026-10-26: element picked from a list). The chosen element
+		-- is stored on the instance as wardElement; CombatResolver.applyElementInteractions
+		-- reads it. Re-applying replaces the element and refreshes the duration.
+		dispellable = true,
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		elementWardMult = 0.75,
+	},
+	-- 2026-10-27 audit statuses (DB elements_statuses #125-128).
+	["Phase Locked"] = {
+		id = "Phase Locked", description = "Cannot teleport, Blink or swap places.", kind = "Debuff",
+		dispellable = true,
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		teleportLock = true,  -- read by StatusService.IsTeleportLocked (CON-019)
+		-- User ruling 2026-10-27: Phase Lock also blocks every relocating skill / item the unit
+		-- uses on itself and the Portal Treads teleport move (it must walk normally).
+		relocationLock = true,
+	},
+	["Command Relay"] = {
+		id = "Command Relay", description = "Movement Range +1; the next non-Item action costs RT x0.80. Ends at the end of the unit's next turn.", kind = "Buff",
+		dispellable = true,
+		duration = 1, durationCt = nil, reapply = "refresh", doesNotStack = true,
+		moveOffset = 1,
+		relayRtMult = 0.80,  -- read by StatusService.GetAllRtMultiplier (SUP-017)
+	},
+	["Corroded"] = {
+		id = "Corroded", description = "Defense x0.85.", kind = "Debuff",
+		dispellable = true,
+		duration = nil, durationCt = 1000, reapply = "refresh", doesNotStack = true,
+		defenseMult = 0.85,  -- DAM-007 Acid Flask
+		stackGroup = "Corroded",  -- DB: Corroded and Corroded Lesser do not stack (strongest applies)
+	},
+	["Corroded Lesser"] = {
+		id = "Corroded Lesser", description = "Defense x0.90.", kind = "Debuff",
+		dispellable = true,
+		duration = nil, durationCt = 1000, reapply = "refresh", doesNotStack = true,
+		defenseMult = 0.90,  -- DAM-008 Corrosion Sprayer
+		stackGroup = "Corroded",
+	},
+	["Warding"] = {
+		id = "Warding", dispellable = true, description = "Debuff Resistance multiplier -0.20.", kind = "Buff",
+		-- SUP-019 Warding (user ruling 2026-10-26): totaled with Debuff Res Up / Down.
+		duration = nil, durationCt = 1500, reapply = "refresh", doesNotStack = true,
+		debuffResistBonus = 0.20,
 	},
 }
 
@@ -1472,6 +1686,11 @@ GameConstants.SKILL_FIXED_RT = {
 	["SKL-MIND-FRACTURE"] = { base = 70, growth = 0.25, eslMinus1 = false },
 	["SKL-PHANTOM-EXCHANGE"] = { base = 60, growth = 0.35, eslMinus1 = false },
 	["SKL-POISON-TRAP"] = { base = 60, growth = 0.2, eslMinus1 = false },
+	-- Trap-deploy skills (DB rows added 2026-10-27): same authored RT as Poison Trap, round(60 + 0.20 x L).
+	["SKL-SET-BEAR-TRAP"] = { base = 60, growth = 0.2, eslMinus1 = false },
+	["SKL-SET-SPIKE-TRAP"] = { base = 60, growth = 0.2, eslMinus1 = false },
+	["SKL-SET-SNARE-TRAP"] = { base = 60, growth = 0.2, eslMinus1 = false },
+	["SKL-SET-LAND-MINE"] = { base = 60, growth = 0.2, eslMinus1 = false },
 	["SKL-PURGE"] = { base = 70, growth = 0.25, eslMinus1 = false },
 	["SKL-RAINFALL-ZONE"] = { base = 70, growth = 0.3, eslMinus1 = false },
 	["SKL-SEAL-OF-SILENCE"] = { base = 70, growth = 0.3, eslMinus1 = false },
@@ -1713,6 +1932,7 @@ GameConstants.SKILLS = {
 		name          = "Fated Escape",
 		tags          = { "Utility" },
 		targetRules   = "Ally Unit",
+		relocatesAllyAdjacent = true,
 		range         = 2,
 		aoePattern    = nil,
 		mpCost        = 4,
@@ -1858,6 +2078,7 @@ GameConstants.SKILLS = {
 		name          = "Purifying Form",
 		tags          = { "Utility", "Buff" },
 		targetRules   = "Ally Unit, Self",
+		isPurify = true,
 		range         = 3,
 		aoePattern    = nil,
 		mpCost        = 4,
@@ -2221,6 +2442,7 @@ GameConstants.SKILLS = {
 		power         = 0.35,
 		inheritStr    = true,
 		appliesStatus = nil,
+		healAppliesStatus = "Wet",  -- DB: "Apply Wet to all healed targets (approved Wet duration)"
 		isHealing     = true,
 		projectileType = "Direct",
 	},
@@ -2659,6 +2881,78 @@ GameConstants.SKILLS = {
 		isHealing     = false,
 		projectileType = "Direct",
 	},
+	-- Trap-deploy skills (2026-10-24): copy of the Poison Trap shell wired to the WORKING
+	-- createsObject object system. Each places its map-trap object after a 100 CT cast delay
+	-- (activationTime in SkillData) with an enemy-only trigger (owner-side stamp). PLACEHOLDER
+	-- costs copied from Poison Trap — pending Designer CTRBLXAI.db authoring.
+	["SKL-SET-BEAR-TRAP"] = {
+		id            = "SKL-SET-BEAR-TRAP",
+		name          = "Set Bear Trap",
+		tags          = { "Utility", "Trap" },
+		targetRules   = "Empty Tile",
+		range         = 2,
+		aoePattern    = nil,
+		mpCost        = 4,
+		rtMult        = 1.0,
+		channelTime   = 0,
+		power         = 0,
+		inheritStr    = false,
+		appliesStatus = nil,
+		isHealing     = false,
+		createsObject = "Bear Trap",
+		projectileType = "Direct",
+	},
+	["SKL-SET-SPIKE-TRAP"] = {
+		id            = "SKL-SET-SPIKE-TRAP",
+		name          = "Set Spike Trap",
+		tags          = { "Utility", "Trap" },
+		targetRules   = "Empty Tile",
+		range         = 2,
+		aoePattern    = nil,
+		mpCost        = 4,
+		rtMult        = 1.0,
+		channelTime   = 0,
+		power         = 0,
+		inheritStr    = false,
+		appliesStatus = nil,
+		isHealing     = false,
+		createsObject = "Spike Trap",
+		projectileType = "Direct",
+	},
+	["SKL-SET-SNARE-TRAP"] = {
+		id            = "SKL-SET-SNARE-TRAP",
+		name          = "Set Snare Trap",
+		tags          = { "Utility", "Trap" },
+		targetRules   = "Empty Tile",
+		range         = 2,
+		aoePattern    = nil,
+		mpCost        = 4,
+		rtMult        = 1.0,
+		channelTime   = 0,
+		power         = 0,
+		inheritStr    = false,
+		appliesStatus = nil,
+		isHealing     = false,
+		createsObject = "Snare Trap",
+		projectileType = "Direct",
+	},
+	["SKL-SET-LAND-MINE"] = {
+		id            = "SKL-SET-LAND-MINE",
+		name          = "Set Land Mine",
+		tags          = { "Utility", "Trap" },
+		targetRules   = "Empty Tile",
+		range         = 2,
+		aoePattern    = nil,
+		mpCost        = 4,
+		rtMult        = 1.0,
+		channelTime   = 0,
+		power         = 0,
+		inheritStr    = false,
+		appliesStatus = nil,
+		isHealing     = false,
+		createsObject = "Land Mine",
+		projectileType = "Direct",
+	},
 	["SKL-DECIMATING-SWING"] = {
 		id            = "SKL-DECIMATING-SWING",
 		name          = "Decimating Swing",
@@ -2826,16 +3120,19 @@ GameConstants.SKILLS = {
 	["SKL-FESTERING-WOUND"] = {
 		id            = "SKL-FESTERING-WOUND",
 		name          = "Festering Wound",
-		tags          = { "Debuff", "Poison", "Dark" },
+		-- Reworked 2026-10-26 (user): now a DAMAGING debuff — deals 50% weapon damage and applies BOTH
+		-- Healing Reduction (anti-heal) and Bleed. "Direct Damage" tag added so it targets/colours and
+		-- AI-scores as a damage skill (was a pure power=0 debuff).
+		tags          = { "Direct Damage", "Debuff", "Poison", "Dark" },
 		targetRules   = "Enemy Unit",
 		range         = 4,
 		aoePattern    = nil,
 		mpCost        = 5,
 		rtMult        = 1.0,
 		channelTime   = 100,
-		power         = 0,
-		inheritStr    = false,
-		appliesStatus = nil,
+		power         = 0.5,
+		inheritStr    = true,
+		appliesStatuses = { "HealingReduction", "Bleed" },
 		isHealing     = false,
 		projectileType = "Direct",
 	},
@@ -2865,9 +3162,9 @@ GameConstants.SKILLS = {
 		mpCost        = 8,
 		rtMult        = 1.5,
 		channelTime   = 0,
-		power         = 1.0,
+		power         = 0,  -- pure buff: +10% damage to allies, never a hit (was dealing damage)
 		inheritStr    = false,
-		appliesStatus = nil,
+		appliesStatus = "Empowering Aura",
 		isHealing     = false,
 		projectileType = "Direct",
 	},
@@ -2885,6 +3182,7 @@ GameConstants.SKILLS = {
 		inheritStr    = true,
 		appliesStatus = nil,
 		isHealing     = false,
+		leapsAdjacent = true,  -- caster leaps to a free tile next to the target, then strikes (DB Effects)
 		projectileType = "Direct",
 	},
 	["SKL-DRAGON-DIVE"] = {
@@ -2901,6 +3199,7 @@ GameConstants.SKILLS = {
 		inheritStr    = true,
 		appliesStatus = nil,
 		isHealing     = false,
+		isLeapStrike  = true,  -- caster lands on the target tile after the hit (DB Effects)
 		projectileType = "Direct",
 	},
 	["SKL-HOLY-SMITE"] = {
@@ -2932,6 +3231,8 @@ GameConstants.SKILLS = {
 		power         = 0.3,
 		inheritStr    = false,
 		appliesStatus = nil,
+		healAppliesStatus = "Blessed",  -- DB: "applies Blessed status to all healed allies for 2 turns"
+		healStatusTurns   = 2,
 		isHealing     = true,
 		projectileType = "Direct",
 	},
@@ -2990,6 +3291,124 @@ GameConstants.SKILLS = {
 		-- Castable def lives here so it supersedes the placeholder in
 		-- Main.server doctrineSkillCombatDefs (registered first; that loop skips
 		-- ids already registered).
+	},
+	-- REVIVE SKILLS (2026-10-24) — MP-cost upgrades over Interact's free/slow revive.
+	-- isRevive=true routes resolution through the revive branch (sets target alive at
+	-- reviveHpPct% Max HP x Skill Potency). targetRules "KO Unit" = any KO'd unit, any
+	-- side (enemy revive allowed -> feeds Torture, like the revive potions). Numbers are
+	-- representative; authoritative balance + doctrine grant are DB-authored (design session).
+	["SKL-BATTLEFIELD-TRIAGE"] = {
+		id            = "SKL-BATTLEFIELD-TRIAGE",
+		name          = "Battlefield Triage",
+		tags          = { "Healing" },
+		targetRules   = "KO Unit",
+		range         = 3,
+		aoePattern    = nil,
+		mpCost        = 6,
+		rtMult        = 0.5,
+		channelTime   = 100,
+		power         = 0,
+		inheritStr    = false,
+		appliesStatus = nil,
+		isHealing     = true,
+		isRevive      = true,
+		reviveHpPct   = 25,
+		projectileType = "Direct",
+	},
+	-- RAISE DEAD (Chaos Necromancer event skill, USER RULING 2026-10-27; DB skills row EVT-RAISE-DEAD added 2026-10-27):
+	-- once per battle, channel 300 (interruptible like any channel), raises EVERY fallen unit on the
+	-- caster's side at 25% Max HP with the Undead status. Raised units count as revived (no kill credit).
+	["EVT-RAISE-DEAD"] = {
+		id            = "EVT-RAISE-DEAD",
+		name          = "Raise Dead",
+		tags          = { "Utility" },
+		targetRules   = "Self",
+		range         = 0,
+		aoePattern    = nil,
+		mpCost        = 0,
+		rtMult        = 1.0,
+		channelTime   = 300,
+		power         = 0,
+		inheritStr    = false,
+		appliesStatus = nil,
+		isHealing     = false,
+		raisesCorpses = true,
+		reviveHpPct   = 25,
+		projectileType = "Direct",
+	},
+	["SKL-PHOENIX-RITE"] = {
+		id            = "SKL-PHOENIX-RITE",
+		name          = "Phoenix Rite",
+		tags          = { "Healing", "Holy" },
+		targetRules   = "KO Unit",
+		range         = 2,
+		aoePattern    = nil,
+		mpCost        = 14,
+		rtMult        = 0.5,
+		channelTime   = 0,
+		power         = 0,
+		inheritStr    = false,
+		appliesStatus = nil,
+		isHealing     = true,
+		isRevive      = true,
+		reviveHpPct   = 40,
+		cleanseWound  = true,
+		reviveLowRt   = true,
+		projectileType = "Direct",
+	},
+
+	-- Three utility skills wired into the runtime registry 2026-10-26 (were authored in SkillData/DB
+	-- but never loaded here, so they could not be cast). Ice Spike reuses the createsObject pipeline;
+	-- Restock's resolver already existed in ActivateChanneledSkill; Repair's resolver is added there.
+	["SKL-ICE-SPIKE"] = {
+		id            = "SKL-ICE-SPIKE",
+		name          = "Conjure Ice Spike",
+		tags          = { "Ice", "Utility" },
+		targetRules   = "Empty Tile",
+		range         = 3,
+		aoePattern    = nil,
+		mpCost        = 5,
+		rtMult        = 1.0,
+		channelTime   = 0,
+		power         = 0,
+		inheritStr    = false,
+		appliesStatus = nil,
+		isHealing     = false,
+		createsObject = "Ice Spike",
+		projectileType = "Direct",
+	},
+	["SKL-RESTOCK"] = {
+		id            = "SKL-RESTOCK",
+		name          = "Restock",
+		tags          = { "Utility", "Support" },
+		targetRules   = "Self",
+		range         = 0,
+		aoePattern    = nil,
+		mpCost        = 3,
+		rtMult        = 1.0,
+		channelTime   = 100,
+		power         = 0,
+		inheritStr    = false,
+		appliesStatus = nil,
+		isHealing     = false,
+		projectileType = "Direct",
+	},
+	["SKL-REPAIR"] = {
+		id            = "SKL-REPAIR",
+		name          = "Repair",
+		tags          = { "Utility", "Support" },
+		targetRules   = "Ground, including occupied Ground",
+		range         = 3,
+		aoePattern    = nil,
+		mpCost        = 3,
+		rtMult        = 1.0,
+		channelTime   = 100,
+		power         = 0,
+		inheritStr    = false,
+		appliesStatus = nil,
+		isHealing     = false,
+		repairsObject = true,
+		projectileType = "Direct",
 	},
 }
 
@@ -3269,6 +3688,18 @@ function GameConstants.CalcWallCollisionDamage(targetMaxHp, blockedTiles, attack
 	return math.round(targetMaxHp * 0.04 * blockedTiles * (1 + attackerStr / 200) * collisionMult * bossMod * sourceModifier)
 end
 
+-- FIXED-HIT DURABILITY (2026-10-26, DB objects_encounters "Deployed Gadget" SPLIT ruling):
+-- a light-gadget device (Mender Drone, Gravity Pylon) loses exactly 1 hit per damaging hit,
+-- whatever the source or size. UnitSchema.ApplyDamage applies this; every service that
+-- subtracts HP directly (traps, tiles, weather, siege, events) routes its amount through
+-- here so the rule holds on every damage path. Normal units: amount unchanged.
+function GameConstants.CapUnitDamage(unit, amount)
+	if unit and unit.fixedHitDurability and (amount or 0) > 0 then
+		return 1
+	end
+	return amount
+end
+
 function GameConstants.CalcFallDamage(targetMaxHp, fallHeight)
 	if fallHeight < GameConstants.FALL_DAMAGE_MIN_HEIGHT then return 0 end
 	return math.round(targetMaxHp * 0.04 * (fallHeight - 2) ^ 1.5)
@@ -3418,6 +3849,31 @@ end
 --- Return the opposite direction.
 function GameConstants.GetOppositeFacing(facing)
 	return GameConstants.FACING_OPPOSITE[facing] or "N"
+end
+
+-- Steal / Mug shared rules (2026-10-24). Single source of truth for which slots are
+-- stealable (the generator's real armor slots; BOTH hands are excluded so a weapon can
+-- never be taken) and the "directly behind" rule. Pure reads over a unit table; used by
+-- BattleTurnController (prompt gating), CommandService (commit validate, channel resolve,
+-- Mug KO-steal). GameConstants is the canonical shared-constants home (DAT rules).
+GameConstants.STEALABLE_SLOTS = { "Head", "Body", "Gloves", "Feet", "Accessory" }
+
+function GameConstants.GetStealableSlots(target)
+	local out = {}
+	local slots = target and target.equipmentSlots
+	if slots then
+		for _, s in ipairs(GameConstants.STEALABLE_SLOTS) do
+			if slots[s] then table.insert(out, s) end
+		end
+	end
+	return out
+end
+
+function GameConstants.IsCasterBehindTarget(caster, target)
+	if not caster or not target then return false end
+	if not (caster.tileX and target.tileX and target.tileY and target.facing) then return false end
+	local rx, ry = GameConstants.GetRearTile(target.tileX, target.tileY, target.facing)
+	return caster.tileX == rx and caster.tileY == ry
 end
 
 --- Validate a facing direction string.

@@ -148,7 +148,9 @@ local EFFECTS = {
 	-- Arcane Prodigy: skill potency +/-% and skill RT cost -/+%.
 	["TRAIT-P-168"] = { skillPotencyPct = 0.12, skillRtMult = -0.08 }, -- Arcane Prodigy (perk)
 	["TRAIT-F-168"] = { skillPotencyPct = -0.12, skillRtMult = 0.08 }, -- Arcane Prodigy (flaw)
-	-- NOTE: Dual Strike (TRAIT-P-171 / TRAIT-F-171) is DEFERRED to Phase 3 (double-resolve trigger).
+	-- NOTE: Dual Strike (TRAIT-P-171 / TRAIT-F-171) has NO EFFECTS entry: it is not a static numeric
+	-- modifier. Both are wired via dedicated getters (GetBasicAttackRtMultiplier doubles RT for both;
+	-- GetBasicAttackResolveCount returns 2 for the P-171 double-resolve) consumed in CommandService.
 	-- Accessory Specialist (perk): Double the numerical Base and Bonus stats from Accessory armor (Passive effects excluded).
 	["TRAIT-P-001"] = { armorSlotMult = { Accessory = 2.0 } },
 	-- Accessory Klutz (flaw): Halve the numerical Base and Bonus stats from Accessory armor (Passive effects excluded).
@@ -1312,13 +1314,84 @@ function TraitEffectService.HasUnstableFooting(unit)
 	return hasTraitId(unit, "TRAIT-F-114")
 end
 
--- Dual Strike flaw (F-171, 2026-10-23): Basic Attack costs double RT. Returns the basic-
--- attack RT multiplier (2.0 for F-171, else 1.0). The Dual Strike PERK (P-171, attack
--- resolves twice) is Phase-3 deferred and intentionally NOT wired here.
+-- Dual Strike (2026-10-24): Basic Attack costs double RT. BOTH the flaw (F-171, "costs
+-- double RT") and the perk (P-171, "resolves twice ... Double RT cost") double the basic-
+-- attack RT; a unit has at most one (same pair). Returns the RT multiplier (2.0 / else 1.0).
 function TraitEffectService.GetBasicAttackRtMultiplier(unit)
-	if hasTraitId(unit, "TRAIT-F-171") then return 2.0 end
+	if hasTraitId(unit, "TRAIT-F-171") or hasTraitId(unit, "TRAIT-P-171") then return 2.0 end
 	return 1.0
 end
+
+-- Dual Strike perk (P-171, 2026-10-24): "Basic Attack resolves twice (both hits apply full
+-- effects)." Returns how many times the basic-attack pattern resolution runs: 2 for the perk,
+-- else 1. Action-level mechanics (RT cost, counter trigger, RT delay) still happen once; only
+-- the hit resolution repeats, so each pass re-applies full damage + on-hit effects.
+function TraitEffectService.GetBasicAttackResolveCount(unit)
+	if hasTraitId(unit, "TRAIT-P-171") then return 2 end
+	return 1
+end
+
+-- Treasure Seeker (P-122 / P-151): "Opening Treasures Cost no AP." This wires ONLY the
+-- no-AP-cost half; the gold/reward half is blocked on the chest-gold economy rule (Designer
+-- scope) and is intentionally not wired here. Returns true if the unit has either tier.
+function TraitEffectService.HasTreasureSeeker(unit)
+	return hasTraitId(unit, "TRAIT-P-122") or hasTraitId(unit, "TRAIT-P-151")
+end
+
+-- Object types that count as "treasures" for the Treasure Seeker no-AP rule. Scoped to the
+-- two actual openable chests (both route through ObjectEffectService._grantChestReward).
+-- Witch Hut also grants chest loot but is a hut, and Mimic is a disguised monster that
+-- attacks rather than being opened -- both excluded (flagged for design confirmation).
+-- Keyed by the interact candidate's object type string (candidate.archetypeId / obj.type).
+local TREASURE_CHEST_TYPES = { ["Treasure Chest"] = true, ["Cursed Chest"] = true }
+
+-- True when a Treasure Seeker unit opening an object of this type should pay no AP.
+function TraitEffectService.IsFreeTreasureInteract(unit, objType)
+	return objType ~= nil
+		and TREASURE_CHEST_TYPES[objType] == true
+		and TraitEffectService.HasTreasureSeeker(unit)
+end
+
+-- Chest GOLD multiplier for the opener (Treasure Seeker +/ Spendthrift Looter -). Applied to
+-- the gold a treasure chest grants. Treasure Seeker P-122 +50% / P-151 +60% ("more reward");
+-- Spendthrift Looter F-122 -50% / F-151 -60% ("less gold"). A unit normally has at most one,
+-- but the two are independent pairs so we sum additively and floor at 0 for safety. (The item
+-- half of "more reward" is a separate lever and intentionally not applied here.)
+function TraitEffectService.GetChestGoldMultiplier(unit)
+	if type(unit) ~= "table" then return 1 end
+	local d = 0
+	if hasTraitId(unit, "TRAIT-P-151") then d = d + 0.60      -- Treasure Seeker (Greater)
+	elseif hasTraitId(unit, "TRAIT-P-122") then d = d + 0.50 end -- Treasure Seeker
+	if hasTraitId(unit, "TRAIT-F-151") then d = d - 0.60      -- Spendthrift Looter (Greater)
+	elseif hasTraitId(unit, "TRAIT-F-122") then d = d - 0.50 end -- Spendthrift Looter
+	return math.max(0, 1 + d)
+end
+
+-- Buff manipulation on a landed hit (Purifier P-107 / Buff-Blind F-107). Fires on basic
+-- attacks AND damaging skills (user ruling 2026-10-23), on the ATTACKER. Purifier dispels one
+-- random active buff from the target; Buff-Blind grants the target one random buff instead.
+function TraitEffectService.HasPurifier(unit)
+	return hasTraitId(unit, "TRAIT-P-107")
+end
+
+function TraitEffectService.HasBuffBlind(unit)
+	return hasTraitId(unit, "TRAIT-F-107")
+end
+
+-- Grantable buff pool for Buff-Blind (TRAIT-F-107), which grants the target a RANDOM buff.
+-- This is EVERY kind=="Buff" status in GameConstants.STATUSES (27 total, verified 2026-10-23)
+-- EXCEPT three, for documented reasons:
+--   * Overflow -- unfinished (implemented=false, "Pending clarification"); nothing to grant.
+--   * Hide -- makes the target Untargetable, i.e. helps the attacker not the enemy (user ruling).
+--   * Flight -- carries "Incoming damage +30%", a drawback; not a clean gift (user ruling).
+-- Everything else kind=="Buff" is included so the grant is genuinely random. Caller applies one.
+TraitEffectService.BUFF_BLIND_POOL = {
+	"Guard", "Haste", "Frenzy", "Regeneration", "Recharge",
+	"Blessed", "Enlightened", "Giant Transformation", "Rush", "Debuff Res Up",
+	"Mana Surge", "Misdirection", "Hold the Line", "Coordinated Advance", "War Cry",
+	"Sleep Immunity", "CounterStance", "Banner Blessing", "Spell Focus", "Battle Rage",
+	"War Rhythm", "Rune Ward", "Rally", "Fortune Boon",
+}
 
 -- Base RT multiplier (Quick/Sluggish/Timeline Sovereign/Temporal Drag).
 -- Returns a multiplier: 1 + sum(baseRtMult). Lower = acts sooner.

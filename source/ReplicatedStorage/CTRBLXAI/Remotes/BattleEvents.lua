@@ -40,6 +40,11 @@ local EVENT_NAMES = {
 	"StatusApplied",
 	"StatusExpired",
 	"DotDamage",
+	-- Object-sourced damage feedback (2026-10-26): S->C { tileX, tileY, amount, focus }.
+	-- Map objects that deal damage (Ballista, Catapult, Eye of the Magi, traps,
+	-- explosions) fire this so the client shows a floating damage number + impact
+	-- flash on the tile, and pans the camera to the tile when focus=true (first hit).
+	"ObjectDamage",
 	"SkillCardData",
 	"TargetHighlight",
 	"HealingApplied",
@@ -82,6 +87,8 @@ local EVENT_NAMES = {
 	-- Tile effects (Slice 3: TileEffectService)
 	"TileEffectApplied",  -- S->C: effect placed on tile
 	"TileEffectRemoved",  -- S->C: effect removed from tile
+	"RoadChanged",        -- S->C: temporary road on a tile (ENV-019, 2026-10-27): { x, y, cut } (cut 0 = gone)
+	"MoveCostChanged",    -- S->C: temporary move-cost penalty on a tile (ENV-003, 2026-10-27): { x, y, add } (add 0 = gone)
 	"UnitStateChanged",   -- S->C: unit HP/isAlive changed (revive, etc.)
 	"ObjectChanged",      -- S->C: OBS object break/HP-change/move (Phase 2c-0): { x, y, newHp? | destroyed? | moved? }
 	"TerrainChanged",     -- S->C: a tile's base terrain transformed mid-battle (BUG-002 fix 2026-10-22): { x, y, terrainId } (fire burn-out, Holy/Dark/Earth/Wind transforms, weather, explosion chain). Client re-skins the tile Part + updates its local terrain data; no reposition.
@@ -105,6 +112,13 @@ local EVENT_NAMES = {
 	"FacingPrompt",       -- S->C: asks player to choose facing direction
 	"SetFacing",          -- C->S: player's chosen facing direction
 	"FacingChanged",      -- S->C: unit facing direction changed
+	-- Siege tile aiming (2026-10-24): object-initiated tile prompt, the tile
+	-- analogue of FacingPrompt/SetFacing. Used by the Catapult (player picks a
+	-- landing tile within range) and reusable by any future tile-targeted object.
+	-- Self-contained prompt-and-block, does NOT touch the turn-action currentPrompt
+	-- flow (stays off the inputMode state machine to avoid handler collisions).
+	"TilePrompt",         -- S->C: { unitId, originX, originY, range, tiles = {{x,y}...}, aimMode } asks player to pick a tile
+	"SetTile",            -- C->S: { unitId, tileX, tileY } player's chosen tile
 	-- Item usage
 	"ItemUsed",           -- S->C: unit used a consumable item
 	-- Reinforcements (mid-battle spawn)
@@ -127,6 +141,9 @@ local EVENT_NAMES = {
 	-- Battlefield events (35-event system). S->C: a battlefield event triggered;
 	-- client shows a dramatic center-screen banner with the event's name.
 	"BattlefieldEventAnnounced",  -- S->C: { eventName }
+	-- Steal / Mug slot pick (2026-10-24)
+	"StealPrompt",   -- S->C: { casterId, targetId, targetName, slots }
+	"StealChoice",   -- C->S: { casterId, slot }
 }
 
 -- RemoteFunctions for Slice 4D management contracts

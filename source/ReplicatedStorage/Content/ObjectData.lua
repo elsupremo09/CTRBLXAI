@@ -23,6 +23,26 @@ ObjectData.Objects["Bear Trap"] = {
 	notes = "Removed after activation",
 }
 
+-- Poison Trap object (2026-10-25): the vehicle that makes SKL-POISON-TRAP work via the
+-- proven createsObject trap pipeline (previously the skill was authored but unwired).
+-- All values are the skill's AUTHORED numbers (Venom Strength 2; RT delay base 30 from
+-- rtDelayFormula round(30 + 0.10*L) — the 0.10*L term is omitted as negligible, max +2 at
+-- L20, flagged). DB DIVERGENCE: the authoritative objects_encounters DB row is Designer-
+-- owned (docs, read-only here) and must be added to match this source object.
+ObjectData.Objects["Poison Trap"] = {
+	id = "Poison Trap",
+	category = "Hazard",
+	tags = { "Trap", "Consumable" },
+	passable = true,
+	activation = "Triggered",
+	triggerEvent = "Unit enters tile",
+	primaryEffect = "Inflicts Poison + Venom (Strength 2) and applies RT Delay",
+	uses = "Once",
+	venomStrength = 2,
+	rtDelay = 30,
+	notes = "Skill-placed (SKL-POISON-TRAP). Invisible ambush trap, enemy-only trigger via ownerSide, removed after activation.",
+}
+
 ObjectData.Objects["Spike Trap"] = {
 	id = "Spike Trap",
 	category = "Hazard",
@@ -812,7 +832,7 @@ ObjectData.Objects["Healing Beacon"] = {
 	passable = true,
 	activation = nil,
 	triggerEvent = nil,
-	primaryEffect = "Pulses healing to nearby allies once wired.",
+	primaryEffect = "Pulses 5% Max HP heal to allies within 2 every 400 CT (4 pulses), 1600 CT.",
 	uses = "Until Destroyed",
 	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
 	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
@@ -844,6 +864,32 @@ ObjectData.Objects["Barrier Pylon"] = {
 	hpBase = 25.0,
 	hpPerItemLevel = 0.75,
 	hpPerVIT = 0.6,
+	hitsToDestroy = 3, -- user ruling 2026-10-27: 3 hits until object HP pools exist (hp* fields kept for later)
+}
+
+ObjectData.Objects["Barricade"] = {
+	id = "Barricade",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "HP-Pool-Durability", "Blocker", "Not-Landable", "Blocks-LoS", "Stability=3", "Pushable", "Barrier", "Cover" },
+	passable = false,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Projected solid barricade providing cover; HP scales with level.",
+	uses = "Until Destroyed",
+	-- Barricade Projector consumable (ENV-011). Static blocker like Barrier Pylon with a
+	-- lighter HP curve; placed through the existing object-deploy path (GetDeployPlan sees
+	-- passable=false + activation/triggerEvent nil -> static blocker). Added to source from
+	-- the Designer's DB archetype (2026-10-26).
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "ENV-011",
+	standingHeight = 3,
+	nativeStability = 3,
+	hpBase = 20.0,
+	hpPerItemLevel = 0.60,
+	hpPerVIT = 0.50,
+	hitsToDestroy = 3, -- user ruling 2026-10-27: 3 hits until object HP pools exist (hp* fields kept for later)
 }
 
 ObjectData.Objects["Hardlight Wall"] = {
@@ -868,6 +914,7 @@ ObjectData.Objects["Hardlight Wall"] = {
 	hpPerItemLevel = 0.45,
 	hpPerVIT = 0.35,
 	segments = 3,
+	hitsToDestroy = 3, -- user ruling 2026-10-27: 3 hits until object HP pools exist (hp* fields kept for later)
 }
 
 ObjectData.Objects["Mine Dispenser"] = {
@@ -911,10 +958,16 @@ ObjectData.Objects["Stasis Trap Emitter"] = {
 	category = "Deployable",
 	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Trap", "RT Delay" },
 	passable = true,
-	activation = nil,
-	triggerEvent = nil,
-	primaryEffect = "Triggers an RT-delay burst on enemies in area once wired.",
-	uses = "Until Destroyed",
+	-- Runtime payload wired 2026-10-26 (DB objects_encounters "Stasis Trap Emitter" RUNTIME
+	-- PAYLOAD note): enemy-entry trap, consumed on trigger. RT Delay = round(100 + 0.35*IL)
+	-- (IL = placing unit's level) to every enemy of the owner within radius 1.
+	activation = "Triggered",
+	triggerEvent = "Unit enters tile",
+	primaryEffect = "RT Delay burst on enemies within 1 tile",
+	uses = "Once",
+	rtDelayFlat = 100,
+	rtDelayPerIL = 0.35,
+	effectRadius = 1,
 	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
 	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
 	isDeployable = true,
@@ -968,10 +1021,14 @@ ObjectData.Objects["Supply Station"] = {
 	category = "Deployable",
 	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Charge Restore" },
 	passable = true,
-	activation = nil,
+	-- Runtime behaviour wired 2026-10-26 (user-approved): each allied unit next to it may
+	-- Interact once (1 AP, normal Interact RT) to restore 1 charge to its item missing the
+	-- most charges; 3 supplies, then removed. Enemies cannot use it.
+	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
-	primaryEffect = "Allies Interact to restore item charges once wired.",
-	uses = "Until Destroyed",
+	primaryEffect = "Interact: restore 1 item charge (once per unit); 3 supplies",
+	uses = "Once per turn",
+	supplies = 3,
 	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
 	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
 	isDeployable = true,
@@ -1058,10 +1115,20 @@ ObjectData.Objects["Portable Ballista"] = {
 	category = "Deployable",
 	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Blocker", "Not-Landable", "Blocks-LoS", "Stability=3", "Pushable", "Siege", "Interact" },
 	passable = false,
-	activation = nil,
+	-- Runtime behaviour (user ruling 2026-10-27: works like the map Ballista): a unit of the
+	-- OWNER's side standing next to it Interacts and aims one of 8 straight lines from the
+	-- Ballista; the bolt pierces every unit 3-7 tiles out on that line, allies included.
+	-- Power = 50 + 0.90*IL + 0.60*DEX of the placing unit, fixed at placement; normal Defense
+	-- applies. Removed after its 2nd shot. interactRT mirrors the map Ballista.
+	activation = "Interact (Consumes Action)",
+	interactRT = 100,
 	triggerEvent = nil,
-	primaryEffect = "Interactable siege engine firing bolts once wired.",
-	uses = "Until Destroyed",
+	primaryEffect = "Fires a piercing bolt down one of 8 lines (tiles 3-7 out, hits allies too); 2 shots then removed",
+	uses = "Once per turn",
+	shots = 2,
+	rangeMin = 3,
+	rangeMax = 7,
+	shotPowerFormula = "50+0.90*IL+0.60*DEX",
 	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
 	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
 	isDeployable = true,
@@ -1078,10 +1145,17 @@ ObjectData.Objects["Rescue Beacon"] = {
 	category = "Deployable",
 	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Revive", "Aura" },
 	passable = true,
-	activation = nil,
+	-- Runtime behaviour wired 2026-10-26 (user-approved): the first allied unit KO'd within
+	-- rescueRadius tiles AFTER placement is moved to a free tile next to the beacon and
+	-- revived at rescueHpPct Max HP with rescueRt RT; the beacon is then used up. Devices and
+	-- summons don't count. No free tile -> it waits for the next KO.
+	activation = "Passive",
 	triggerEvent = nil,
-	primaryEffect = "Relocates and revives the first allied KO once wired.",
-	uses = "Until Destroyed",
+	primaryEffect = "Revives the first allied KO within 3 tiles next to it (15% HP, 400 RT)",
+	uses = "Once",
+	rescueRadius = 3,
+	rescueHpPct = 0.15,
+	rescueRt = 400,
 	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
 	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
 	isDeployable = true,
@@ -1098,7 +1172,7 @@ ObjectData.Objects["Poison Cloud Vent"] = {
 	passable = true,
 	activation = nil,
 	triggerEvent = nil,
-	primaryEffect = "Emits timed Poison Cloud pulses once wired.",
+	primaryEffect = "Every 400 CT (3 pulses) creates Poison Cloud within 2, 1200 CT.",
 	uses = "Until Destroyed",
 	-- Deployable placeable-object foundation (2026-10-21). Behaviour (turret fire,
 	-- auras, traps, drone movement, reveal, weather, interception) is a LATER WAVE.
@@ -1124,6 +1198,24 @@ ObjectData.Objects["Countermeasure Turret"] = {
 	isRepairable = true,
 	ownerScope = "Caster",
 	sourceConsumableId = "DEP-018",
+	standingHeight = 3,
+	nativeStability = 3,
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Taunt Beacon"] = {
+	id = "Taunt Beacon",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Taunt" },
+	passable = true,
+	activation = nil,
+	triggerEvent = nil,
+	primaryEffect = "Enemies within 4 tiles are Taunted by the beacon.",
+	uses = "Until Destroyed",
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "CON-018",
 	standingHeight = 3,
 	nativeStability = 3,
 	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
@@ -1162,6 +1254,24 @@ ObjectData.Objects["Gravity Pylon"] = {
 	isRepairable = true,
 	ownerScope = "Caster",
 	sourceConsumableId = "DEP-020",
+	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
+}
+
+ObjectData.Objects["Guardian Standard"] = {
+	id = "Guardian Standard",
+	category = "Deployable",
+	tags = { "Deployable", "Breakable", "Repairable", "Caster-Owned", "Breakable(3-hit)", "Guard", "Aura" },
+	passable = true,
+	activation = "Passive",
+	triggerEvent = nil,
+	primaryEffect = "Allies within 2 tiles: +5 Guard percentage points while Guarding, Stability +1",
+	uses = "Until Destroyed",
+	-- Mirrors DB objects_encounters row 108 (2026-10-27). Spawned as an item device
+	-- (deployKind summon, ref WardTotem); this row supplies its 3-hit durability.
+	isDeployable = true,
+	isRepairable = true,
+	ownerScope = "Caster",
+	sourceConsumableId = "SUP-011",
 	hitsToDestroy = 3, -- fixed hit-counter (any source removes 1)
 }
 

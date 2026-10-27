@@ -326,7 +326,8 @@ local function getSkillPool()
 	if cachedSkillPool then return cachedSkillPool end
 	local pool = {}
 	for id, def in pairs(SkillData) do
-		if type(def) == "table" and def.name then
+		-- Event-only skills (EVT-, e.g. the Chaos Necromancer's Raise Dead) are never loot.
+		if type(def) == "table" and def.name and string.sub(id, 1, 4) ~= "EVT-" then
 			table.insert(pool, id)
 		end
 	end
@@ -363,7 +364,12 @@ end
 
 local function getConsumablePool()
 	if cachedConsumablePool then return cachedConsumablePool end
-	local pool = ConsumableData.GetAllIds()
+	local pool = {}
+	-- Parked items (DB Status PARKED, user 2026-10-27) never drop as rewards.
+	for _, cid in ipairs(ConsumableData.GetAllIds()) do
+		local d = ConsumableData.GetById(cid)
+		if d and not d.parked then table.insert(pool, cid) end
+	end
 	table.sort(pool)
 	cachedConsumablePool = pool
 	return pool
@@ -384,7 +390,7 @@ end
 -- before calling BuildRewardSummaries.
 --------------------------------------------------
 
-function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
+function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 	assert(type(playerId) == "string", "RewardService: playerId required")
 	assert(type(mapLevel) == "number" and mapLevel >= 1, "RewardService: mapLevel must be >= 1")
 	assert(type(opportunityId) == "string", "RewardService: opportunityId required")
@@ -398,6 +404,30 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 	local rng = Random.new(generateRewardSeed())
 	local rewardCount = rng:NextInteger(MIN_REWARDS, MAX_REWARDS)
 
+	-- Optional caller overrides (additive; existing callers pass nothing and keep
+	-- the original behavior). opts.count forces an exact roll count; opts.allowedCategories
+	-- restricts which categories can roll — used by objective rewards, which are
+	-- gear/skill/augment only (consumables + doctrines excluded, user-locked 2026-10-24).
+	local categoryWeights = CATEGORY_WEIGHTS
+	-- Treasure Hunter augment (2026-10-25): opts.bonusRarityTiers bumps each equipment drop's
+	-- rarity by N tiers for THIS generation only (no global modifier slot touched, so it never
+	-- contends with battlefield-event reward modifiers). Default 0 = unchanged.
+	local bonusRarityTiers = (type(opts) == "table" and tonumber(opts.bonusRarityTiers)) or 0
+	if type(opts) == "table" then
+		if type(opts.count) == "number" and opts.count >= 0 then
+			rewardCount = math.floor(opts.count)
+		end
+		if type(opts.allowedCategories) == "table" then
+			local allow = {}
+			for _, c in ipairs(opts.allowedCategories) do allow[c] = true end
+			local filtered = {}
+			for _, entry in ipairs(CATEGORY_WEIGHTS) do
+				if allow[entry.category] then filtered[#filtered + 1] = entry end
+			end
+			if #filtered > 0 then categoryWeights = filtered end
+		end
+	end
+
 	print(string.format(
 		"[RewardService] Generating %d reward(s) for %s | MapLevel=%d | OpportunityId=%s",
 		rewardCount, playerId, mapLevel, opportunityId
@@ -410,12 +440,17 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId)
 		local seed = generateRewardSeed()
 		local itemRng = Random.new(seed)
 
-		-- Step 1: Roll reward category
-		local category = weightedRoll(itemRng, CATEGORY_WEIGHTS, "category", "weight")
+		-- Step 1: Roll reward category (restricted set when opts.allowedCategories given)
+		local category = weightedRoll(itemRng, categoryWeights, "category", "weight")
 
 		if category == "Equipment" then
 			-- Battlefield-event rarity shift/floor (nil modifier -> unchanged).
 			local rarity = applyRarityModifier(rollEquipmentRarity(itemRng))
+			-- Treasure Hunter per-call tier bump (2026-10-25): raise rank, clamp to max.
+			if bonusRarityTiers > 0 then
+				local rk = RARITY_RANK[rarity]
+				if rk then rarity = RANK_TO_RARITY[math.clamp(rk + bonusRarityTiers, 1, MAX_LOOT_RANK)] or rarity end
+			end
 			local pool = getEquipPool()
 			local item, genErr = ItemGenerator.GenerateFromPool(pool, mapLevel, rarity, seed, "Loot")
 			if not item then
@@ -624,6 +659,7 @@ function RewardService.BuildRewardSummaries(results)
 				itemLevel = item.itemLevel,
 				category = "Equipment",
 				isCard = false,
+				stolen = result.stolen or false,  -- Steal/Mug provenance -> client STOLEN badge (2026-10-24)
 				wt = profile and profile.wt or 0,
 				defense = profile and profile.defense or 0,
 				bonusCount = #item.bonusLines,

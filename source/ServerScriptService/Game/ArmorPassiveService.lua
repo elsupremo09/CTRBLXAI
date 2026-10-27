@@ -107,6 +107,23 @@ function ArmorPassiveService.OnTurnStart(unit)
 	-- Guard
 	unit._armorAutoGuardUsed       = false  -- BD-005 Reactive Cuirass
 	unit._armorLayeredHitCount     = 0      -- BD-006 reset per guard session
+	-- BD-015 Sentinel Carapace (imposed slow): promote a PENDING -Move-Range debuff to ACTIVE at this
+	-- unit's turn start (so it bites THIS turn = the "next turn" after an adjacent guarding Sentinel
+	-- wearer imposed it), or clear a slow that already spent its one turn. Set on the MOVER in
+	-- CommandService move-end; read in TargetingService.getMovementRange. NOT a plain reset -- the
+	-- pending->active->cleared handoff is what makes it last exactly the single "next turn".
+	if unit._sentinelSlowPending then
+		unit._sentinelSlowActive  = true
+		unit._sentinelSlowPending = false
+	else
+		unit._sentinelSlowActive  = false
+	end
+	-- Generic imposed Move-Range penalty (GL-011 Staggering Fists etc.): a separate, ACCUMULATING
+	-- source from the Sentinel boolean slow, promoted the same pending->active->cleared way so it
+	-- lasts exactly the single "next turn" after imposition. Summed with Sentinel in
+	-- GetImposedMoveRangePenalty. Magnitude is a positive number; the getter negates it.
+	unit._imposedMoveActiveMag  = unit._imposedMovePendingMag or 0
+	unit._imposedMovePendingMag = 0
 	-- Push
 	unit._armorFreePushUsed        = false  -- GL-021 Initiator's Grips
 	unit._armorTilesMovedThisTurn  = 0      -- GL-018 Momentum Bracers
@@ -114,6 +131,7 @@ function ArmorPassiveService.OnTurnStart(unit)
 	unit._armorFirstMoveUsed       = false  -- FT-011 Sprinter Boots
 	unit._armorMoveCountThisTurn   = 0      -- FT-012 Relay Boots
 	unit._armorPathCostThisTurn    = 0      -- FT-008 Skirmisher Greaves
+	unit._armorSkirmishUsed        = false  -- FT-008 Skirmisher Greaves (one-shot consume)
 	unit._armorRetreatBonusActive  = false  -- FT-009 Retreat Boots
 	unit._armorVanguardDrActive    = false  -- FT-010 Vanguard Greaves
 	unit._armorPursuerUsed         = false  -- FT-017 Pursuer Greaves
@@ -195,6 +213,35 @@ function ArmorPassiveService.GetInteractAllyRtBonus(unit)
 	local p = getPassiveInSlot(unit, "Head")
 	if p == "Interact on ally grants target -50 RT" then return -50 end
 	return 0
+end
+
+--------------------------------------------------
+-- PIPELINE NAME RECONCILIATION (2026-10-24)
+-- The battle pipeline calls these names; the working logic already lived under the
+-- sibling names below. Thin delegates reuse that logic (no duplicate matching). This
+-- activates 4 of the 8 previously-ghost call sites. The other 4 (recruit threshold,
+-- recruit heal, revive channel CT, revive RT %) have NO backing ArmorData passive and
+-- are intentionally left unwired -- their call sites already default safely.
+--------------------------------------------------
+function ArmorPassiveService.GetInteractRtMultiplier(unit)
+	return ArmorPassiveService.GetInteractRtModifier(unit)
+end
+
+function ArmorPassiveService.GetInteractRangeBonus(unit)
+	return ArmorPassiveService.GetInteractRangeModifier(unit)
+end
+
+-- Pipeline does `reduced = reduced - GetAllyRtFlatBonus(actor)`, so a -50 RT grant must
+-- return +50 here. GetInteractAllyRtBonus returns -50 for that passive, so negate it.
+function ArmorPassiveService.GetAllyRtFlatBonus(unit)
+	return -(ArmorPassiveService.GetInteractAllyRtBonus(unit))
+end
+
+-- Revive HP fraction for the pipeline's revive path: reuse the revive config's hpPercent
+-- (revive-at-15/20/25% headgear). nil -> pipeline keeps its 0.05 default.
+function ArmorPassiveService.GetReviveHpFraction(unit)
+	local c = ArmorPassiveService.GetInteractReviveConfig(unit)
+	return c and c.hpPercent or nil
 end
 
 --------------------------------------------------
@@ -474,7 +521,7 @@ end
 --- Caller adds stored damage to next BA, then zeroes the field.
 function ArmorPassiveService.GetGuardReprisalConfig(unit)
 	local p = getPassiveInSlot(unit, "Body")
-	if p and string.find(p, "store 40%% of damage mitigated", 1, true) then
+	if p and string.find(p, "store 40% of damage mitigated", 1, true) then
 		return { storePercent = 0.40 }
 	end
 	return nil
@@ -558,6 +605,21 @@ function ArmorPassiveService.GetGuardMovementPenaltyAura(unit)
 		return { radius = 1, movePenalty = 2 }
 	end
 	return nil
+end
+
+-- BD-015 Sentinel Carapace (imposed slow READ): the flat Movement-Range penalty currently on `unit`
+-- from an adjacent guarding Sentinel wearer. Returns a NEGATIVE offset (0 when none). Magnitude was
+-- captured from the aura config at imposition (_sentinelSlowMag) so it stays data-driven. Summed in
+-- TargetingService.getMovementRange alongside the other move offsets (floored at 1 there).
+function ArmorPassiveService.GetImposedMoveRangePenalty(unit)
+	if not unit then return 0 end
+	-- Sum all imposed Move-Range penalties currently active on this unit: BD-015 Sentinel Carapace
+	-- (boolean, fixed mag) + the generic accumulator (GL-011 Staggering Fists etc.). Both are negative
+	-- offsets into TargetingService.getMovementRange (floored at 1 there).
+	local total = 0
+	if unit._sentinelSlowActive then total = total + (unit._sentinelSlowMag or 0) end
+	total = total + (unit._imposedMoveActiveMag or 0)
+	return -total
 end
 
 --------------------------------------------------
@@ -1028,16 +1090,11 @@ function ArmorPassiveService.GetMoveRtModifier(unit)
 		return 2.0
 	end
 
-	-- FT-018: rescue ×2
-	if string.find(p, "end Move on ally's tile", 1, true) then
-		return 2.0
-	end
-
-	-- FT-019: kick ×2
-	if string.find(p, "end Move on enemy's tile", 1, true) then
-		return 2.0
-	end
-
+	-- FT-018 Rescue Spurs / FT-019 Kick Boots: their RT x2 is CONTEXTUAL (applies only when the
+	-- Move actually ends on an ally/enemy tile). It is applied at the Move-commit site via
+	-- GetMoveRescueConfig/GetMoveKickConfig.rtMultiplier, NOT here -- returning 2.0 here would
+	-- wrongly double every ordinary Move for a wearer. This helper returns only always-on
+	-- multipliers (FT-002 x0.75, FT-012 second-move x0.50, FT-015 teleport x2).
 	return 1.0
 end
 
@@ -1140,7 +1197,7 @@ end
 --- Caller sets unit._armorVanguardDrActive after Move.
 function ArmorPassiveService.GetMoveVanguardConfig(unit)
 	local p = getPassiveInSlot(unit, "Feet")
-	if p and string.find(p, "gain 15%% direct final damage reduction", 1, true) then
+	if p and string.find(p, "gain 15% direct final damage reduction", 1, true) then
 		return { damageReduction = 0.15 }
 	end
 	return nil
@@ -1267,7 +1324,10 @@ end
 function ArmorPassiveService.GetMoveThroughEnemyCost(unit)
 	local p = getPassiveInSlot(unit, "Feet")
 	if p and string.find(p, "May move through enemy-occupied tiles", 1, true) then
-		return 2
+		-- +1 per enemy tile (user ruling 2026-10-25, reduced from +2). NOTE: the DB text for FT-020
+		-- (nonweapon_equipment) still reads "+2 movement" -- DB reconciliation is the Designer's task;
+		-- this source value is authoritative for behavior per the user decision.
+		return 1
 	end
 	return 0
 end

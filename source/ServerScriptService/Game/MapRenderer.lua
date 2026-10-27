@@ -1189,6 +1189,37 @@ function MapRenderer.RenderOneObject(mapFolder, instance)
 			-- visual-only; passability is set above from object data.
 			local tileTopY = child.Position.Y + child.Size.Y / 2
 			local modelClone = spawnObjectModel(instance.type, child, tileTopY, instance.x .. "_" .. instance.y, mapFolder:GetAttribute("Seed"))
+			if not modelClone then
+				-- Never stack two markers on one tile (Tester W1 2026-10-27): drop any earlier
+				-- disc / cube drawn for this same object before drawing a new one.
+				local _oldMark = mapFolder:FindFirstChild(string.format("MapObject_%s_%d_%d",
+					tostring(instance.type), instance.x, instance.y))
+				if _oldMark then _oldMark:Destroy() end
+				-- LOG-002: say which model is missing so it can be added in Studio.
+				warn(string.format("[MapRenderer] No model named '%s' in ServerStorage > Map Objects -- drawing a placeholder at (%d,%d)",
+					tostring(instance.type), instance.x, instance.y))
+			end
+			if not modelClone and not nonPassable then
+				-- Placed walk-over object (item trap, gadget) with no model: draw a flat marker
+				-- disc so the player can see their own placement (2026-10-27, Mine Dispenser was
+				-- invisible). Hidden enemy traps never reach here (they are not rendered).
+				-- Named like the blocker cube so RemoveOneObject cleans it up.
+				local isHazard = def and def.category == "Hazard"
+				local disc = Instance.new("Part")
+				disc.Name = string.format("MapObject_%s_%d_%d", tostring(instance.type), instance.x, instance.y)
+				disc.Shape = Enum.PartType.Cylinder
+				disc.Anchored = true
+				disc.CanCollide = false
+				disc.CanQuery = false
+				disc.CanTouch = false
+				disc.CastShadow = false
+				disc.Material = Enum.Material.SmoothPlastic
+				disc.Color = isHazard and Color3.fromRGB(200, 60, 50) or Color3.fromRGB(90, 160, 220)
+				disc.Size = Vector3.new(0.3, TILE_SIZE * 0.55, TILE_SIZE * 0.55)
+				disc.CFrame = CFrame.new(child.Position.X, tileTopY + 0.15, child.Position.Z)
+					* CFrame.Angles(0, 0, math.rad(90))
+				disc.Parent = mapFolder  -- parent last (NET-004)
+			end
 			if not modelClone and nonPassable then
 				-- No model AND it blocks: fall back to the blocker cube so the
 				-- impassable tile still reads as occupied. Passable objects with no
@@ -1314,6 +1345,23 @@ function MapRenderer.ClearTileVoxelColumn(mapFolder, x, y)
 				Vector3.new(TILE_SIZE, colDepth, TILE_SIZE),
 				Enum.Material.Air
 			)
+			return true
+		end
+	end
+	return false
+end
+
+-- SINGLE-TILE VOXEL REBUILD (2026-10-26, Excavation Drill). After a tile's Part was
+-- lowered (ClearTileVoxelColumn first, then ReshapeTile), refill ONLY that tile's voxel
+-- column at the Part's NEW top so a voxel terrain (Grassland, waters) drops with it.
+-- No-op for terrains without voxels. Localized FillBlock, never a whole-map fill.
+function MapRenderer.RebuildTileVoxelColumn(mapFolder, x, y, terrainId)
+	if not (mapFolder and x and y and terrainId) then return false end
+	for _, child in ipairs(mapFolder:GetChildren()) do
+		if child:GetAttribute("X") == x and child:GetAttribute("Y") == y
+			and child:GetAttribute("IsTemplateTile") then
+			local topY = child.Position.Y + child.Size.Y / 2
+			fillTerrainVoxelColumn(child.Position.X, topY, child.Position.Z, TILE_SIZE, TILE_SIZE, terrainId, nil)
 			return true
 		end
 	end

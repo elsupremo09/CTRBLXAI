@@ -147,11 +147,22 @@ end
 -- applies the actual HP changes and position updates.
 --------------------------------------------------
 
-function DisplacementService.ResolvePush(pusher, target, force, direction, sourceModifier, allUnits, requestedDistance, isRanged)
+function DisplacementService.ResolvePush(pusher, target, force, direction, sourceModifier, allUnits, requestedDistance, isRanged, stabilityIgnore)
 	assert(type(pusher) == "table", "ResolvePush: pusher must be a unit table.")
 	assert(type(target) == "table", "ResolvePush: target must be a unit table.")
 	assert(type(direction) == "table" and direction.dx and direction.dy,
 		"ResolvePush: direction must be {dx, dy}.")
+
+	-- Steadfast Strike augment (2026-10-24): a unit flagged displacement-immune this round
+	-- cannot be pushed/pulled. Return the standard RESISTED shape (no movement) so every
+	-- caller stays nil-safe. Flag is set in OnSkillComplete and cleared at the unit's EndTurn.
+	if target._displacementImmune then
+		return {
+			pushed = false, tilesDisplaced = 0,
+			finalTileX = target.tileX, finalTileY = target.tileY,
+			wallCollision = nil, fallDamage = nil, blockedBy = nil, totalFallHeight = 0,
+		}
+	end
 
 	sourceModifier = sourceModifier or 1.0
 
@@ -166,8 +177,32 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	end
 	-- Status Stability buffs (Hold the Line +2, War Cry +1). Mirrored in Main push preview.
 	targetStability = math.max(0, targetStability + StatusService.GetStabilityModifier(target))
+	-- BD-004 Anchor Mail (2026-10-24): Stability +3 while Guarding. Deferred require avoids cycle.
+	if StatusService.HasStatus(target, "Guard") then
+		targetStability = targetStability
+			+ (require :: any)(script.Parent.ArmorPassiveService).GetGuardStabilityBonus(target)
+	end
 
+	-- GL-001 Reinforced Gloves: the PUSHER may ignore up to N of the target's effective Stability
+	-- (passed by the Push command via GetPushStabilityIgnore; nil/0 for all other push sources, so
+	-- knockback/augment pushes are unaffected -- consistent with how GL push-force is Push-only).
+	-- Applied AFTER all stability additions (VIT + status buffs + Anchor Mail Guard), floored at 0.
+	if stabilityIgnore and stabilityIgnore > 0 then
+		targetStability = math.max(0, targetStability - stabilityIgnore)
+	end
 	local pushDistance = math.max(0, force - targetStability)
+	-- Armor (2026-10-24): BD-002 Fortress Plate negates incoming push entirely while Guarding;
+	-- BD-008 Grounding Harness reduces forced displacement distance by 2 (always active). Deferred
+	-- require avoids any load-time cycle.
+	do
+		local _aps = (require :: any)(script.Parent.ArmorPassiveService)
+		if pushDistance > 0 and StatusService.HasStatus(target, "Guard") and _aps.CanGuardNegatePush(target) then
+			pushDistance = 0
+		else
+			local dispRed = _aps.GetDisplacementReduction(target)
+			if dispRed > 0 then pushDistance = math.max(0, pushDistance - dispRed) end
+		end
+	end
 	-- Ranged knockback penalty: knockback from a RANGED attack is reduced by 50%,
 	-- rounded up (DB: ranged knockback distance x0.5, ceil). A nonzero knockback keeps
 	-- at least 1 tile. Central hook — every ranged knockback source inherits this by
@@ -261,9 +296,14 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 			break
 		end
 
-		-- Check 4: occupancy — another unit on the tile
+		-- Check 4: occupancy — another unit on the tile. The PUSHER counts too (fix 2026-10-26,
+		-- UAT thread-b4963227de5d): a PULL travels toward the pusher, and skipping it let the target
+		-- land on or pass through the user. DB nonweapon_equipment edge-case rule (GL-005 Pull): if
+		-- remaining Force exceeds the gap, "the target collides with the acting unit; normal collision
+		-- damage to both" -- "Pull behaves identically to Push in terms of collision rules". A push
+		-- moves AWAY from the pusher, so it can never reach the pusher's tile: pushes are unchanged.
 		local occupant = getUnitAt(allUnits, nextX, nextY)
-		if occupant and occupant ~= target and occupant ~= pusher then
+		if occupant and occupant ~= target then
 			blockedBy = "unit"
 			local blockedTiles = pushDistance - tilesDisplaced
 			-- Pushed unit takes collision damage (uses pushed unit's MaxHP)
@@ -319,6 +359,24 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 
 	-- Step 4: Calculate fall damage from cumulative forced downward drop.
 	local fallDamage = 0
+	-- Armor BD-013 Feather Armor (2026-10-24): while Guarding, reduce effective fall height by 2
+	-- (fewer effective drop tiles -> less/no fall damage). Applied to the height before the calc.
+	do
+		local _aps = (require :: any)(script.Parent.ArmorPassiveService)
+		if StatusService.HasStatus(target, "Guard") then
+			local fhr = _aps.GetGuardFallHeightReduction(target)
+			if fhr > 0 then totalFallHeight = math.max(0, totalFallHeight - fhr) end
+		end
+	end
+	-- GL-010 Edgefinder Gloves (PUSHER): when the Push forces the target DOWNWARD (there is an actual
+	-- drop), treat Fall Height as +1 for the damage formula. Pusher-keyed (the glove is on the unit
+	-- doing the pushing); only applies when totalFallHeight > 0 so a flat push is unaffected. Deferred
+	-- require mirrors the Feather Armor / Collision Padding idiom above.
+	if totalFallHeight > 0 then
+		local _apsPush = (require :: any)(script.Parent.ArmorPassiveService)
+		local fhBonus = _apsPush.GetPushFallHeightBonus(pusher)
+		if fhBonus > 0 then totalFallHeight = totalFallHeight + fhBonus end
+	end
 	if totalFallHeight >= GameConstants.FALL_DAMAGE_MIN_HEIGHT then
 		fallDamage = GameConstants.CalcFallDamage(target.maxHp, totalFallHeight)
 	end
@@ -331,6 +389,12 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		if fMult ~= 1 then
 			fallDamage = math.round(fallDamage * fMult)
 		end
+	end
+	-- Armor BD-012 Collision Padding (2026-10-24): collision AND fall damage x0.5 (always active).
+	if fallDamage > 0 then
+		local _aps = (require :: any)(script.Parent.ArmorPassiveService)
+		local cfMult = _aps.GetCollisionFallDamageModifier(target)
+		if cfMult ~= 1 then fallDamage = math.round(fallDamage * cfMult) end
 	end
 	-- FELINE — Nine Lives (races row 'Feline', 2026-10-02): immune to fall damage
 	-- (any downward displacement, any height). ONLY the fall-damage term is zeroed;
@@ -359,8 +423,23 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		if wallCollisionResult.damage then
 			local tMult = RacePassiveService.GetCollisionDamageMultiplier(target)
 				* TraitEffectService.GetCollisionDamageReceivedMultiplier(target)
+				* (require :: any)(script.Parent.ArmorPassiveService).GetCollisionFallDamageModifier(target)
 			if collided then
 				tMult = tMult * TraitEffectService.GetCollisionDamageInflictedMultiplier(collided)
+			end
+			-- GL-009 Ram Gauntlets (PUSHER): wall collision damage from this unit's Push gains x1.25.
+			-- Pusher-keyed and applies to the pushed unit's wall-impact damage only (not the collided
+			-- bystander). Config via GetPushCollisionConfig (type "Ram").
+			do
+				local ram = (require :: any)(script.Parent.ArmorPassiveService).GetPushCollisionConfig(pusher)
+				if ram and ram.type == "Ram" and ram.wallDamageMultiplier and wallCollisionResult.colliderType ~= "Unit" then
+					tMult = tMult * ram.wallDamageMultiplier
+				end
+			end
+			-- Item collision multiplier (2026-10-26, DAM-016 Kinetic Ram "collision multiplier x1.25"):
+			-- the item path stamps pusher._itemCollisionMult for the duration of its one push.
+			if pusher and pusher._itemCollisionMult then
+				tMult = tMult * pusher._itemCollisionMult
 			end
 			if tMult ~= 1 then
 				wallCollisionResult.damage = math.round(wallCollisionResult.damage * tMult)
@@ -370,6 +449,10 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		if collided and wallCollisionResult.collidedUnitDamage then
 			local cMult = RacePassiveService.GetCollisionDamageMultiplier(collided)
 				* TraitEffectService.GetCollisionDamageReceivedMultiplier(collided)
+				* (require :: any)(script.Parent.ArmorPassiveService).GetCollisionFallDamageModifier(collided)
+			if pusher and pusher._itemCollisionMult then
+				cMult = cMult * pusher._itemCollisionMult  -- Kinetic Ram: the whole collision is harder
+			end
 			if cMult ~= 1 then
 				wallCollisionResult.collidedUnitDamage = math.round(wallCollisionResult.collidedUnitDamage * cMult)
 			end

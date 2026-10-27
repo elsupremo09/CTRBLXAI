@@ -259,4 +259,159 @@ function WeaponPassiveService.DrainFraction(unit: any): number
 	return WeaponPassiveService.GetCombatKeys(unit).Drain and 0.05 or 0
 end
 
+-- GuardBonus (weapon native, Shield): +15 percentage points of Guard damage mitigation while
+-- the wearer is Guarding (DB "On Guard, +15% damage mitigation"). Folded into unit.guardBonus by
+-- the Guard command alongside Race/Trait/Armor; the damage path reads guardBonus and clamps to
+-- GUARD_CAP. Returns 0 without the passive.
+function WeaponPassiveService.GetGuardMitigationBonus(unit: any): number
+	return WeaponPassiveService.GetCombatKeys(unit).GuardBonus and 0.15 or 0
+end
+
+-- Deflect (weapon native, Buckler): while Guarding, reflect 20% of the damage Guard just
+-- MITIGATED back to the attacker (DB "On Guard, reflect 20% of mitigated damage"). Keyed on the
+-- mitigated amount (not damage dealt), so it fires even on a fully-absorbed hit. Returns 0
+-- without the passive.
+function WeaponPassiveService.GetGuardDeflectPercent(unit: any): number
+	return WeaponPassiveService.GetCombatKeys(unit).Deflect and 0.20 or 0
+end
+
+-- Evasion (weapon native, Parrying Dagger): +0.15 final Evasiveness (DB "+15% final Evasiveness",
+-- read as a flat additive to match the project's other evasiveness folds and the PrecisionStrike
+-- +0.15 ruling). Defensive: folded into the defender's evasiveness in calcHitQuality, so it
+-- lowers every incoming attack's Hit Quality (basic AND skill). Returns 0 without the passive.
+function WeaponPassiveService.GetEvasivenessBonus(unit: any): number
+	return WeaponPassiveService.GetCombatKeys(unit).Evasion and 0.15 or 0
+end
+
+-- SkillPotency (weapon native, Orb off-hand): +8% Skill damage dealt (DB "+8% Skill damage
+-- dealt"). Returns a multiplicative factor (1.08) folded into the skill final-damage chain in
+-- CombatResolver.ResolveSkill alongside the doctrine/race/trait skill-potency mods. 1 without it.
+-- Pure READ -> safe in AI preview. Applies to damaging skills only (it multiplies skill damage).
+function WeaponPassiveService.GetSkillDamageMultiplier(unit: any): number
+	return WeaponPassiveService.GetCombatKeys(unit).SkillPotency and 1.08 or 1
+end
+
+-- ArcaneFlow (weapon native, Wand): recover MP = 5 + floor(INT/20) at the start of the wearer's
+-- ready turn (DB "Recover MP = 5 + floor(INT/20) on ready turn"). Called by BattleCoordinator in
+-- the OnTurnStart hook cluster (both the normal and channel-resolve turn-open paths). Grants the
+-- MP in place (clamped to maxMp) and RETURNS the amount actually restored (0 when absent / full),
+-- so the caller can log it. Mutates currentMp -> only called from the real turn-open, never AI preview.
+-- Reap (weapon native, Scythe): heal 5% of the TOTAL damage dealt by a basic attack (DB "Heal 5%
+-- of total Cleave damage dealt"). Returns 0.05 or 0. Applied by CommandService's Attack branch on
+-- the summed basic-attack damage (so a multi-target cleave heals 5% of the whole spread). BASIC-
+-- ATTACK ONLY (Cleave is a basic-attack weapon pattern; skills author their own AOE). Pure READ.
+function WeaponPassiveService.GetReapHealFraction(unit: any): number
+	return WeaponPassiveService.GetCombatKeys(unit).Reap and 0.05 or 0
+end
+
+-- Charge (weapon native, Lance): +6% damage per tile the attacker moved THIS TURN before attacking
+-- (DB "+6% damage per tile moved this turn"). Returns the final-damage multiplier bonus
+-- 0.06 * tilesMovedThisTurn, or 0 without Charge. BASIC-ATTACK ONLY (its own wording: scales with
+-- the approach, a basic-attack concept). Reads unit._chargeTilesThisTurn (accumulated by the Move
+-- commit, reset in OnTurnStart below). Pure READ.
+function WeaponPassiveService.GetChargeDamageBonus(unit: any): number
+	if not WeaponPassiveService.GetCombatKeys(unit).Charge then return 0 end
+	return 0.06 * ((unit and unit._chargeTilesThisTurn) or 0)
+end
+
+-- Fortify (weapon native, Spear): on a landed hit, the attacker gains +20% of its Weapon Defense
+-- as flat Defense (DB "On hit, gain +20% of Weapon Defense as flat Defense"). User ruling 2026-10-26
+-- (Option B): STACKS per hit within the turn (a multi-hit swing adds once per hit), RESETS at the
+-- wearer's next turn (via OnTurnStart). Hybrid: fires on basic attacks AND damaging skills (both
+-- resolve through ApplyOutcome, where the per-hit accrual lives). Two pure-READ getters:
+--   GetFortifyFlatDefensePerHit -> the flat Defense added by ONE landed hit (round(0.20 x weaponDef)).
+--   GetFortifyFlatDefense       -> the accumulated total currently protecting the unit (read into the
+--                                  defender's Defense in CombatResolver before CalcDefensePower).
+function WeaponPassiveService.GetFortifyFlatDefensePerHit(unit: any): number
+	if not WeaponPassiveService.GetCombatKeys(unit).Fortify then return 0 end
+	return math.round(0.20 * ((unit and unit.weaponDefense) or 0))
+end
+
+function WeaponPassiveService.GetFortifyFlatDefense(unit: any): number
+	return (unit and unit._fortifyFlatDefense) or 0
+end
+
+-- Start-of-turn reset for weapon-passive per-turn accumulators. Called by BattleCoordinator in the
+-- OnTurnStart hook cluster (both turn-open paths), mirroring the other passive services' OnTurnStart.
+-- Currently resets the Charge tiles-moved-this-turn counter. Nil-safe no-op otherwise.
+function WeaponPassiveService.OnTurnStart(unit: any)
+	if not unit then return end
+	unit._chargeTilesThisTurn = 0
+	unit._fortifyFlatDefense = 0  -- Fortify (Spear): on-hit flat Defense resets each turn (Option B)
+end
+
+-- Knockback (weapon native, Hammer/Club): on a landed basic attack, push the primary target
+-- floor(Force/2) tiles away (DB "Push target floor(Force/2) tiles away on hit"). Returns true when
+-- the unit carries Knockback, else false. BASIC-ATTACK ONLY (user ruling 2026-10-26: NOT on skills,
+-- because 9 damaging skills already author their own displacement -- stacking would double-push or
+-- contradict). The push itself (force, direction, collision) is applied by CommandService's Attack
+-- branch via the shared applyKnockback helper. Pure READ.
+function WeaponPassiveService.HasKnockbackOnHit(unit: any): boolean
+	return WeaponPassiveService.GetCombatKeys(unit).Knockback == true
+end
+
+-- Pull (weapon native, Chains): on a landed basic attack, drag the primary target floor(Force/2)
+-- tiles TOWARD the attacker (DB "Drag target floor(Force/2) tiles toward attacker"). Returns true
+-- when the unit carries Pull, else false. BASIC-ATTACK ONLY (same user ruling as Knockback). The
+-- drag is applied by CommandService via applyKnockback with a reversed (toward-attacker) direction
+-- override. Pure READ. Mutually exclusive in practice with Knockback (a weapon has one native).
+function WeaponPassiveService.HasPullOnHit(unit: any): boolean
+	return WeaponPassiveService.GetCombatKeys(unit).Pull == true
+end
+
+-- HighGround (weapon native, Great Bow): +35% damage when attacking from strictly higher elevation
+-- than the target (DB "+35% elevation damage bonus when attacking from above"). Returns the flat
+-- bonus 0.35 or 0; CombatResolver applies it only when attacker elevation > defender elevation.
+-- Hybrid ruling: generalizes to basic attacks AND damaging skills (a positional damage bonus).
+-- Pure READ -> safe in AI preview.
+function WeaponPassiveService.GetHighGroundBonus(unit: any): number
+	return WeaponPassiveService.GetCombatKeys(unit).HighGround and 0.35 or 0
+end
+
+-- Attunement (weapon native, Crystal): +25% elemental damage dealt (DB "+25% elemental damage
+-- dealt"). Returns 0.25 only when the unit carries Attunement AND the attack element is elemental
+-- (not nil / "Physical" / ""); else 0. Hybrid ruling: generalizes to basic attacks AND damaging
+-- skills. Pure READ -> safe in AI preview.
+function WeaponPassiveService.GetAttunementBonus(unit: any, element: any): number
+	if element == nil or element == "Physical" or element == "" then return 0 end
+	return WeaponPassiveService.GetCombatKeys(unit).Attunement and 0.25 or 0
+end
+
+-- Lore (weapon native, Tome): the APPLIER gets +30% duration on every status / buff it applies
+-- (DB "+30% applied status and buff duration"). Returns the duration multiplier (1.30) when the
+-- applier carries Lore, else 1. Consumed by StatusService.ApplyStatus keyed on the SOURCE (applier)
+-- unit, on new application only. Pure READ -> safe in AI preview.
+function WeaponPassiveService.GetAppliedStatusDurationMultiplier(unit: any): number
+	return WeaponPassiveService.GetCombatKeys(unit).Lore and 1.30 or 1
+end
+
+-- QuickDraw (weapon native, Quiver): after N basic attacks the next basic attack costs 0 RT (DB
+-- "After 2 Basic Attacks, next attack costs 0 RT"). Returns the threshold N (2) when the unit
+-- carries QuickDraw, else nil. The per-action attack counter + the RT waiver live in
+-- CommandService's Attack branch (they need the command / RT-accrual context). Pure READ.
+function WeaponPassiveService.GetQuickDrawThreshold(unit: any): number?
+	return WeaponPassiveService.GetCombatKeys(unit).QuickDraw and 2 or nil
+end
+
+-- ArcaneReach (weapon native, Staff): skills that explicitly INHERIT weapon range gain +1 Max
+-- Range (DB "Skills inheriting weapon range gain +1 Maximum Range"). Gated on skillDef.range == -1
+-- (the "follows weapon range" marker CalcSkillRange keys on), so fixed-range skills are unaffected.
+-- Returns 1 (fold into the CalcSkillRange raceModifier slot) or 0. Pure READ -> safe in AI preview.
+function WeaponPassiveService.GetSkillRangeBonus(unit: any, skillDef: any): number
+	if not skillDef or skillDef.range ~= -1 then return 0 end
+	return WeaponPassiveService.GetCombatKeys(unit).ArcaneReach and 1 or 0
+end
+
+function WeaponPassiveService.OnReadyTurn(unit: any): number
+	if not unit then return 0 end
+	if not WeaponPassiveService.GetCombatKeys(unit).ArcaneFlow then return 0 end
+	local int = (unit.effectiveStats and unit.effectiveStats.INT) or 10
+	local gain = 5 + math.floor(int / 20)
+	local maxMp = unit.maxMp or 0
+	local before = unit.currentMp or 0
+	if before >= maxMp then return 0 end
+	unit.currentMp = math.min(maxMp, before + gain)
+	return unit.currentMp - before
+end
+
 return WeaponPassiveService

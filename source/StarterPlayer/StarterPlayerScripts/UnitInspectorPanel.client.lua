@@ -175,18 +175,7 @@ local function renderActiveEffects(content, data, startOrder, panelH)
 	for i = 1, #data.statuses do
 		local s = data.statuses[i]
 		local sid = s.id or s.name or "Unknown"
-		local def = GameConstants.STATUSES and GameConstants.STATUSES[sid] or nil
 		local sColor = Theme.GetStatusColor and Theme.GetStatusColor(sid) or Theme.Colors.Warning
-
-		-- Duration string
-		local durStr
-		if s.remainingTurns then durStr = s.remainingTurns .. " turns"
-		elseif s.remainingCt then durStr = "CT " .. math.floor(s.remainingCt) .. " left"
-		elseif def and def.durationCt then durStr = "CT " .. def.durationCt .. " left"
-		elseif s.sourceDuration then durStr = tostring(s.sourceDuration)
-		else durStr = "Permanent" end
-
-		local stackStr = s.stacks and s.stacks > 1 and (" x" .. s.stacks) or ""
 
 		-- Cell holds the icon (fixed) + a name label underneath (shown on tap)
 		local cell = Instance.new("Frame")
@@ -245,28 +234,13 @@ local function renderActiveEffects(content, data, startOrder, panelH)
 			Instance.new("UICorner", stk).CornerRadius = UDim.new(0, 3)
 		end
 
-		-- Name + duration label (hidden until tapped). Spans wider than the cell
-		-- so the full name reads; it sits under the icon.
-		local nameLbl = Instance.new("TextLabel")
-		nameLbl.Size = UDim2.new(0, math.max(iconSize * 2, 90), 0, labelH)
-		nameLbl.Position = UDim2.fromOffset(0, iconSize + 2)
-		nameLbl.BackgroundColor3 = Theme.Colors.Background
-		nameLbl.BackgroundTransparency = 0.2
-		nameLbl.BorderSizePixel = 0
-		nameLbl.Font = Theme.Font.PrimaryBold
-		nameLbl.TextSize = Theme.Text.Badge()
-		nameLbl.TextColor3 = sColor
-		nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-		nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
-		nameLbl.Visible = false
-		nameLbl.ZIndex = 4
-		nameLbl.Text = " " .. sid .. stackStr .. " (" .. durStr .. ")"
-		nameLbl.Parent = cell
-		local np = Instance.new("UIPadding", nameLbl)
-		np.PaddingLeft = UDim.new(0, 2)
-
+		-- Tap the icon → open the SAME shared quick-peek card the battle HUD uses, via the
+		-- _G bridge, so there is ONE card implementation (no duplicate). Replaces the old
+		-- tiny name-only toggle, which barely told the player anything (user request
+		-- 2026-10-26). `s` carries id + live duration / next-tick / stacks; the card fills in
+		-- the status TYPE and description from the shared status definitions.
 		badge.Activated:Connect(function()
-			nameLbl.Visible = not nameLbl.Visible
+			if _G.CTRBLXAI_ShowStatusPeek then _G.CTRBLXAI_ShowStatusPeek(s, strip) end
 		end)
 	end
 
@@ -641,9 +615,25 @@ local function renderBasicTab(content, data, panelH)
 			Color = Theme.Colors.Info,
 			Order = order,
 		}); order = order + 1
-		if data.doctrine.effect or data.doctrine.description then
+		-- Doctrine passive (fixed 2026-10-23): the raw DoctrineData entry stores its passive
+		-- as passiveName/passiveEffect (NOT effect/description). The old code read keys that
+		-- never existed, so the passive line was always blank. Mirror the Loadout Info tab:
+		-- show the passive NAME (bold) then its EFFECT text. Fall back to effect/description
+		-- for any caller that still passes those.
+		local docPassiveName = data.doctrine.passiveName
+		local docPassiveEffect = data.doctrine.passiveEffect or data.doctrine.effect or data.doctrine.description
+		if docPassiveName and docPassiveName ~= "" then
 			createLabel(content, {
-				Text = "  " .. (data.doctrine.effect or data.doctrine.description or ""),
+				Text = "  " .. docPassiveName,
+				Size = UDim2.new(1, 0, 0, 14),
+				Font = Theme.Font.PrimaryBold,
+				Color = Theme.Colors.RarityEpic,
+				Order = order,
+			}); order = order + 1
+		end
+		if docPassiveEffect and docPassiveEffect ~= "" then
+			createLabel(content, {
+				Text = "  " .. docPassiveEffect,
 				Size = UDim2.new(1, 0, 0, 28),
 				TextSize = Theme.Text.Small(),
 				Color = Theme.Colors.TextSecondary,

@@ -659,6 +659,38 @@ function EquipmentService.RebuildUnitStats(unit)
 	-- every equip/unequip/doctrine change and at boot establishment (all call RebuildUnitStats).
 	unit.maxConsumableSlots = unit.maxConsumableSlots or 6
 	unit.consumableSlotCount = EquipmentService.ComputeConsumableSlotCount(unit)
+
+	-- AC Accessory "Increase equipped item use charges by 20%" (2026-10-26, unequip-safe rework): recompute
+	-- each equipped consumable's maxCharges from its CANONICAL BASE (ConsumableData) every rebuild. Runs
+	-- UNCONDITIONALLY (not only when the accessory is worn) so that removing the accessory resets the
+	-- ceiling straight back to base -- fixing the prior stale-ceiling defect. When the accessory IS worn,
+	-- newMax = base + bonus; when it is NOT, newMax = base. Fully idempotent in BOTH directions: it never
+	-- reads a stored (possibly boosted) value as the base, so it cannot compound across rebuilds/reloads.
+	-- A slot whose base cannot be resolved from ConsumableData is left UNTOUCHED (never guessed/boosted).
+	-- Runs on every equip/unequip/doctrine change and at boot -- all OUT of battle -- and currentCharges
+	-- is only CLAMPED down to the new max (never auto-granted), so no phantom charges are ever created.
+	if unit.consumableSlots then
+		local _aps = (require :: any)(script.Parent.ArmorPassiveService)
+		local chargeCfg = _aps.GetItemChargeBonus(unit)  -- nil when the +20% accessory is not equipped
+		local _cdata = (require :: any)(game:GetService("ReplicatedStorage")
+			:WaitForChild("Content"):WaitForChild("ConsumableData"))
+		for _, slot in pairs(unit.consumableSlots) do
+			if slot and slot.consumableId then
+				local cdef = _cdata.GetById and _cdata.GetById(slot.consumableId)
+					or (_cdata.Items and _cdata.Items[slot.consumableId])
+				local baseMax = cdef and cdef.maxCharges
+				if baseMax then
+					local newMax = baseMax
+					if chargeCfg then
+						local bonus = math.max(chargeCfg.minBonus or 1, math.floor(baseMax * (chargeCfg.percent or 0.20)))
+						newMax = baseMax + bonus
+					end
+					slot.maxCharges = newMax
+					if (slot.currentCharges or 0) > newMax then slot.currentCharges = newMax end
+				end
+			end
+		end
+	end
 end
 
 --------------------------------------------------

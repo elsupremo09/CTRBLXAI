@@ -42,6 +42,19 @@ local _objectHitCb = nil   -- (x,y) -> ONE hit on the breakable OBS object at th
 -- TileEffectService._voxelClearer exactly.
 local _voxelClearer = nil
 
+-- BD-011 Hazard Suit (armor, 2026-10-24): while Guarding, immune to WEATHER damage (and
+-- terrain/hazard elsewhere). Scans statusInstances for Guard directly; ArmorPassiveService via
+-- deferred require. Used to zero weather-event damage for a guarding Hazard-Suit unit.
+local function guardHazardImmune(unit)
+	if not unit or type(unit.statusInstances) ~= "table" then return false end
+	local guarding = false
+	for _, inst in ipairs(unit.statusInstances) do
+		if inst.id == "Guard" then guarding = true; break end
+	end
+	if not guarding then return false end
+	return (require :: any)(script.Parent.ArmorPassiveService).CanGuardImmuneHazard(unit)
+end
+
 function WeatherService.SetTileEffectService(tes: any) _tileEffectService = tes end
 function WeatherService.SetBroadcaster(b: any) _broadcaster = b end
 function WeatherService.SetStatusService(ss: any) _statusService = ss end
@@ -57,6 +70,7 @@ function WeatherService.SetObjectHitCallback(fn: any) _objectHitCb = fn end
 local _active = "Clear"          -- current condition id
 local _biomePool = nil           -- biome.battleConditionWeights (set at battle start)
 local _roundIndex = 0            -- floor(ct/1000); re-roll when it increments
+local _holdUntilCt: number? = nil -- item weather hold (ENV-006/007/008): no re-roll before this CT
 local _periodicAccumCt = 0       -- accumulates ctPassed; fires periodic every 300
 
 -- Battlefield-event hooks (BattlefieldEventService, 2026-10-04). Additive; inert
@@ -65,6 +79,11 @@ local _periodicAccumCt = 0       -- accumulates ctPassed; fires periodic every 3
 -- _nextConditionOverride (Fortune Teller: "choose the upcoming Weather/Crisis")
 -- replaces the NEXT round's roll once, then clears. Both reset in Init.
 local _blockedConditions = {}
+-- WEATHER SHIELD ZONES (2026-10-27, ENV-020 Weather Stabilizer): { {x, y, r, ct}, ... }.
+-- Units inside a zone (or within a living Weather Stabilizer Totem's aura, DEP-014) ignore
+-- the current weather: no new weather statuses, no weather damage, no weather element
+-- damage change. Locked weather effects (Snow Storm's locked Frozen) still apply.
+local _shieldZones: { any } = {}
 local _nextConditionOverride = nil
 
 local PERIODIC_INTERVAL = 300
@@ -118,8 +137,10 @@ function WeatherService.Init(biomePool: any, startingCondition: any, startCt: an
 	_biomePool = biomePool
 	_active = startingCondition or "Clear"
 	_roundIndex = math.floor((startCt or 0) / 1000)
+	_holdUntilCt = nil
 	_periodicAccumCt = 0
 	_blockedConditions = {}
+	_shieldZones = {}
 	_nextConditionOverride = nil
 	syncBurnSuppression()
 	print(string.format("[WeatherService] Init | starting condition=%s", _active))
@@ -157,10 +178,46 @@ local function gridDims()
 	return w, h
 end
 
+local function isShielded(unit: any, units: any): boolean
+	if not (unit and unit.tileX) then return false end
+	for _, z in ipairs(_shieldZones) do
+		if math.max(math.abs(unit.tileX - z.x), math.abs(unit.tileY - z.y)) <= z.r then return true end
+	end
+	for _, d in ipairs(units or {}) do
+		local a = d.auraSpec
+		if d.isAlive and a and a.weatherShield and d.tileX
+			and math.max(math.abs(unit.tileX - d.tileX), math.abs(unit.tileY - d.tileY)) <= (a.radius or 0) then
+			return true
+		end
+	end
+	return false
+end
+
+-- Public: is this unit protected from the current weather? (CombatResolver element mult.)
+function WeatherService.IsUnitShielded(unit: any, units: any): boolean
+	return isShielded(unit, units)
+end
+
+-- Public: add a bodiless shield zone (ENV-020). Lasts durationCt on the weather clock.
+function WeatherService.AddShieldZone(x: any, y: any, radius: any, durationCt: any)
+	if not (x and y) then return end
+	table.insert(_shieldZones, { x = x, y = y, r = radius or 0, ct = durationCt or 0 })
+	print(string.format("[WeatherService] Weather shield zone at (%d,%d) r%d for %d CT", x, y, radius or 0, durationCt or 0))
+end
+
 local function livingUnits(state: any)
 	local out = {}
 	for _, u in ipairs(state.units) do
 		if u.isAlive and not u.isGroundTarget then table.insert(out, u) end
+	end
+	return out
+end
+
+-- Living units the weather can affect (not inside a weather shield).
+local function affectedUnits(state: any)
+	local out = {}
+	for _, u in ipairs(livingUnits(state)) do
+		if not isShielded(u, state.units) then table.insert(out, u) end
 	end
 	return out
 end
@@ -309,15 +366,15 @@ end
 
 local function applyOnset(state: any)
 	if _active == "Rain" then
-		for _, u in ipairs(livingUnits(state)) do applyWeatherStatus(u, "Wet", false) end
+		for _, u in ipairs(affectedUnits(state)) do applyWeatherStatus(u, "Wet", false) end
 	elseif _active == "Snow Storm" then
 		for _, u in ipairs(livingUnits(state)) do applyWeatherStatus(u, "Frozen", true) end
 	elseif _active == "Dark Eclipse" then
-		for _, u in ipairs(livingUnits(state)) do
+		for _, u in ipairs(affectedUnits(state)) do
 			if isNightAlignedUnit(u) then applyWeatherStatus(u, "Haste", false) end
 		end
 	elseif _active == "Holy Aurora" then
-		for _, u in ipairs(livingUnits(state)) do
+		for _, u in ipairs(affectedUnits(state)) do
 			if isNightAlignedUnit(u) then applyWeatherStatus(u, "Slow", false) end
 		end
 	end
@@ -330,22 +387,23 @@ local Periodic = {}
 
 Periodic["Rain"] = function(ctx: any)
 	-- Re-assert Wet on units/tiles (undispellable); Wet reactions handled by TileEffect.
-	for _, u in ipairs(livingUnits(ctx.state)) do applyWeatherStatus(u, "Wet", false) end
+	for _, u in ipairs(affectedUnits(ctx.state)) do applyWeatherStatus(u, "Wet", false) end
 end
 
 Periodic["Mana Storm"] = function(ctx: any)
-	for _, u in ipairs(livingUnits(ctx.state)) do
+	for _, u in ipairs(affectedUnits(ctx.state)) do
 		local maxMp = u.maxMp or 0
 		u.currentMp = math.min(maxMp, (u.currentMp or 0) + math.floor(maxMp * 0.10))
 		local dmg = math.floor((u.currentMp or 0) * 0.50)
-		u.currentHp = math.max(0, (u.currentHp or 0) - dmg)
+		if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
+		u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 		if u.currentHp <= 0 then u.isAlive = false end
 		if _broadcaster then _broadcaster.UnitStateChanged(u) end
 	end
 end
 
 Periodic["Severe Hail"] = function(ctx: any)
-	local units = livingUnits(ctx.state)
+	local units = affectedUnits(ctx.state)
 	-- Random half take 10% Max HP.
 	local n = #units
 	-- DB: round(active_units / 2) — rounds up on odd counts (not floor).
@@ -358,16 +416,18 @@ Periodic["Severe Hail"] = function(ctx: any)
 	for i = 1, half do
 		local u = units[i]
 		local dmg = math.floor((u.maxHp or 0) * 0.10)
-		u.currentHp = math.max(0, (u.currentHp or 0) - dmg)
+		if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
+		u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 		if u.currentHp <= 0 then u.isAlive = false end
 		if _broadcaster then _broadcaster.UnitStateChanged(u) end
 	end
 end
 
 Periodic["Hunger Virus"] = function(ctx: any)
-	for _, u in ipairs(livingUnits(ctx.state)) do
+	for _, u in ipairs(affectedUnits(ctx.state)) do
 		local dmg = math.floor((u.maxHp or 0) * 0.05)
-		u.currentHp = math.max(0, (u.currentHp or 0) - dmg)
+		if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
+		u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 		if u.currentHp <= 0 then u.isAlive = false end
 		if _broadcaster then _broadcaster.UnitStateChanged(u) end
 	end
@@ -376,7 +436,7 @@ end
 
 Periodic["Thunderstorm"] = function(ctx: any)
 	-- Strike a random highest-elevation unit: 20% Max HP + lower that tile 1.
-	local units = livingUnits(ctx.state)
+	local units = affectedUnits(ctx.state)
 	if #units == 0 then return end
 	local best = -math.huge
 	for _, u in ipairs(units) do
@@ -389,7 +449,8 @@ Periodic["Thunderstorm"] = function(ctx: any)
 	end
 	local tgt = top[ctx.rng:NextInteger(1, #top)]
 	local dmg = math.floor((tgt.maxHp or 0) * 0.20)
-	tgt.currentHp = math.max(0, (tgt.currentHp or 0) - dmg)
+	if guardHazardImmune(tgt) then dmg = 0 end  -- BD-011 Hazard Suit
+	tgt.currentHp = math.max(0, (tgt.currentHp or 0) - GameConstants.CapUnitDamage(tgt, dmg))
 	if tgt.currentHp <= 0 then tgt.isAlive = false end
 	reshapeTile(tgt.tileX, tgt.tileY, nil, math.max(1, best - 1))
 	if _broadcaster then _broadcaster.UnitStateChanged(tgt) end
@@ -403,7 +464,8 @@ Periodic["Earthquake"] = function(ctx: any)
 	local frac = 0.20 + ctx.rng:NextNumber() * 0.20
 	local count = math.floor(total * frac)
 	local occ = {}
-	for _, u in ipairs(livingUnits(ctx.state)) do occ[u.tileX .. "," .. u.tileY] = u end
+	-- Shielded units are not delayed (user ruling 2026-10-27); the ground still shifts.
+	for _, u in ipairs(affectedUnits(ctx.state)) do occ[u.tileX .. "," .. u.tileY] = u end
 	local quakeHit = {}  -- OBS Phase 2c-D: dedup -> at most one hit per tile per quake tick
 	for _ = 1, count do
 		local x = ctx.rng:NextInteger(1, w)
@@ -497,13 +559,19 @@ local function resolvePendingStrikes(state: any, nowCt: any)
 		local p = _pendingStrikes[i]
 		if nowCt >= p.resolveCt then
 			for _, t in ipairs(p.tiles) do
-				for _, u in ipairs(livingUnits(state)) do
+				for _, u in ipairs(affectedUnits(state)) do
 					if u.tileX == t.x and u.tileY == t.y then
 						-- Per-tile pct when present (Meteor center 0.30 / splash 0.15);
 						-- otherwise kind default (Volcanic 0.15).
 						local pct = t.pct or ((p.kind == "Meteor") and 0.30 or 0.15)
 						local dmg = math.floor((u.maxHp or 0) * pct)
-						u.currentHp = math.max(0, (u.currentHp or 0) - dmg)
+						-- Firebreak zone: Meteor / Volcanic strikes are Fire -> halved (ruling 2026-10-27).
+						if _tileEffectService and _tileEffectService.IsFirebreak
+							and _tileEffectService.IsFirebreak(u.tileX, u.tileY) then
+							dmg = math.floor(dmg * 0.5)
+						end
+						if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
+						u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 						if u.currentHp <= 0 then u.isAlive = false end
 						if _broadcaster then _broadcaster.UnitStateChanged(u) end
 					end
@@ -565,6 +633,16 @@ end
 --------------------------------------------------------------------
 function WeatherService.RerollForNewRound(state: any, rng: any, nowCt: any)
 	local newRound = math.floor((nowCt or state.ct or 0) / 1000)
+	-- Item weather hold (user ruling 2026-10-27): no re-roll until the hold ends; the moment
+	-- it ends the next roll happens immediately.
+	if _holdUntilCt then
+		if (nowCt or state.ct or 0) < _holdUntilCt then
+			_roundIndex = newRound
+			return false
+		end
+		_holdUntilCt = nil
+		_roundIndex = newRound - 1
+	end
 	if newRound == _roundIndex then return false end
 	_roundIndex = newRound
 	-- Clear last round's weather-sourced statuses, pick a new condition, apply onset.
@@ -592,6 +670,12 @@ end
 -- PUBLIC: periodic tick (called from BattleCoordinator with elapsed CT).
 --------------------------------------------------------------------
 function WeatherService.Tick(state: any, ctPassed: any, rng: any, nowCt: any)
+	-- Weather shield zones count down on the battle clock.
+	for i = #_shieldZones, 1, -1 do
+		local z = _shieldZones[i]
+		z.ct -= (ctPassed or 0)
+		if z.ct <= 0 then table.remove(_shieldZones, i) end
+	end
 	-- Resolve any delayed strikes first.
 	resolvePendingStrikes(state, nowCt or state.ct or 0)
 	_periodicAccumCt = _periodicAccumCt + (ctPassed or 0)
@@ -617,9 +701,10 @@ end
 -- Clears the previous condition's weather-sourced statuses, sets the new
 -- condition, syncs burn-suppression, applies onset, and broadcasts — the
 -- same steps as a round re-roll, but with an explicit id and no round gate.
--- The next natural round boundary will still re-roll over this.
+-- With holdCt (item weather, user ruling 2026-10-27) no re-roll happens until the hold
+-- ends; without it the next natural round boundary re-rolls over this.
 --------------------------------------------------------------------
-function WeatherService.ForceCondition(conditionId: any, state: any)
+function WeatherService.ForceCondition(conditionId: any, state: any, holdCt: any)
 	if type(conditionId) ~= "string" or conditionId == "" then
 		warn("[WeatherService] ForceCondition: invalid id")
 		return false
@@ -629,6 +714,12 @@ function WeatherService.ForceCondition(conditionId: any, state: any)
 	end
 	_pendingStrikes = {}
 	_active = conditionId
+	-- Item weather (user ruling 2026-10-27): hold for the item's full time, then re-rolls resume.
+	if type(holdCt) == "number" and holdCt > 0 then
+		_holdUntilCt = ((state and state.ct) or 0) + holdCt
+	else
+		_holdUntilCt = nil
+	end
 	syncBurnSuppression()
 	if state then
 		applyOnset(state)

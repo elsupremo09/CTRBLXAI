@@ -31,11 +31,12 @@ local StatusService    = require(Game:WaitForChild("StatusService"))
 local TraitEffectService = require(Game:WaitForChild("TraitEffectService"))
 local ItemGenerator    = require(Game:WaitForChild("ItemGenerator"))
 local TraitRoller      = require(Game:WaitForChild("TraitRoller"))
+-- Shared tags-only augment compatibility (2026-10-26): same rule the loadout screen shows.
+local AugmentCompatibility = require(ReplicatedStorage:WaitForChild("CTRBLXAI"):WaitForChild("Shared"):WaitForChild("AugmentCompatibility"))
 
 -- Content registries
 local RaceData       = require(Content:WaitForChild("RaceData"))
 local DoctrineData   = require(Content:WaitForChild("DoctrineData"))
-local AugmentData    = require(Content:WaitForChild("AugmentData"))
 local SkillData      = require(Content:WaitForChild("SkillData"))
 local ArmorData      = require(Content:WaitForChild("ArmorData"))
 local ConsumableData = require(Content:WaitForChild("ConsumableData"))
@@ -309,66 +310,12 @@ local function pickPortrait(rng: Random, raceId: string, usedPortraits: {[number
 	return shuffled[1]
 end
 
---- Does a skill's tag set satisfy one augment requirement token?
---- Tokens may be compound with " OR " (e.g. "Direct Damage OR Support"); the
---- token is satisfied if the skill has ANY of the OR-separated options.
-local function skillSatisfiesReq(skillTags: {[string]: boolean}, reqToken: string): boolean
-	if reqToken == nil or reqToken == "" then return true end
-	-- Split on " OR " and trim each option.
-	local satisfied = false
-	local remaining = reqToken
-	while true do
-		local sepStart, sepEnd = string.find(remaining, " OR ", 1, true)
-		local option
-		if sepStart then
-			option = string.sub(remaining, 1, sepStart - 1)
-			remaining = string.sub(remaining, (sepEnd :: number) + 1)
-		else
-			option = remaining
-		end
-		option = string.gsub(option, "^%s*(.-)%s*$", "%1")
-		if option ~= "" and skillTags[option] then
-			satisfied = true
-			break
-		end
-		if not sepStart then break end
-	end
-	return satisfied
-end
-
---- Build a set of a skill's tags.
-local function skillTagSet(skillId: string): {[string]: boolean}
-	local set = {}
-	local def = SkillData[skillId]
-	if def and def.tags then
-		for _, t in ipairs(def.tags) do set[t] = true end
-	end
-	return set
-end
-
---- Return the list of augment IDs compatible with a given skill.
-local function compatibleAugments(skillId: string): {string}
-	local tags = skillTagSet(skillId)
-	local out = {}
-	for augId, augDef in pairs(AugmentData) do
-		local reqs = augDef.requiredSkillTags
-		local ok = true
-		if reqs and #reqs > 0 then
-			for _, reqToken in ipairs(reqs) do
-				if not skillSatisfiesReq(tags, reqToken) then
-					ok = false
-					break
-				end
-			end
-		end
-		if ok then table.insert(out, augId) end
-	end
-	return out
-end
-
 --- Choose N distinct augments compatible with a skill (may return fewer if pool small).
-local function pickAugmentsForSkill(rng: Random, skillId: string, count: number): {string}
-	local compat = compatibleAugments(skillId)
+--- Compatibility is the shared tags-only rule (AugmentCompatibility), resolved against the
+--- enemy's EQUIPPED weapon so weapon-shape/reach skills get the right augments. The list is
+--- id-sorted, so the shuffle below stays deterministic for a given rng stream.
+local function pickAugmentsForSkill(rng: Random, skillId: string, count: number, weapon: any): {string}
+	local compat = AugmentCompatibility.ListCompatible(skillId, weapon)
 	if #compat == 0 then return {} end
 	local shuffled = shuffledCopy(rng, compat)
 	local out = {}
@@ -537,7 +484,9 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 	-- effect yet). AssignIfEmpty guards re-roll; recruited enemies retain these.
 	TraitRoller.AssignIfEmpty(unit, rng)
 	unit.name = buildEnemyName(rng, unit, unit.name)
-	unit.doctrineAugments      = pickAugmentsForSkill(rng, doctrineSkill, tier.augmentsPer)
+	-- Augments are picked AFTER gear (step 8b): compatibility reads the equipped weapon's
+	-- shape/reach tags, so the weapon must exist first.
+	unit.doctrineAugments      = {}
 	unit.skillLoadout          = {}
 	local slotNames = { "slot2", "slot3", "slot4" }
 	for i, skillId in ipairs(normalSkills) do
@@ -545,7 +494,7 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 		if slotKey then
 			unit.skillLoadout[slotKey] = {
 				skillId  = skillId,
-				augments = pickAugmentsForSkill(rng, skillId, tier.augmentsPer),
+				augments = {},
 			}
 		end
 	end
@@ -598,7 +547,12 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 	unit.consumableSlots     = {}
 	unit.consumableSlotCount = 3
 	unit.maxConsumableSlots  = 6
-	local consIds = ConsumableData.GetAllIds()
+	local consIds = {}
+	-- Parked items (DB Status PARKED, user 2026-10-27) are never handed to enemies.
+	for _, cid in ipairs(ConsumableData.GetAllIds()) do
+		local d = ConsumableData.GetById(cid)
+		if d and not d.parked then table.insert(consIds, cid) end
+	end
 	local consCount = rng:NextInteger(tier.consumableMin, tier.consumableMax)
 	local consShuffled = shuffledCopy(rng, consIds)
 	for i = 1, math.min(consCount, #consShuffled, unit.consumableSlotCount) do
@@ -606,13 +560,29 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 		local cdef = ConsumableData.GetById(cid)
 		unit.consumableSlots[i] = {
 			consumableId   = cid,
-			currentCharges = (cdef and cdef.charges) or 1,
+			-- Audit B-1 fix (2026-10-27): the real key is maxCharges (there is no `charges`).
+			currentCharges = (cdef and cdef.maxCharges) or 1,
+			maxCharges     = (cdef and cdef.maxCharges) or 1,
 		}
 	end
 
 	-- 8. Rebuild effective stats from doctrine + equipment.
 	if EquipmentService.RebuildUnitStats then
 		EquipmentService.RebuildUnitStats(unit)
+	end
+
+	-- 8b. Augments (tags-only compatibility, user ruling 2026-10-26). Picked here, after the
+	--     weapon is equipped and stats are rebuilt, so "Weapon Shape"/"Weapon Reach" skills
+	--     resolve against the real weapon. Same rule the player's loadout screen enforces.
+	do
+		local weapon = AugmentCompatibility.WeaponProfileFromUnit(unit)
+		unit.doctrineAugments = pickAugmentsForSkill(rng, doctrineSkill, tier.augmentsPer, weapon)
+		for _, slotKey in ipairs(slotNames) do
+			local slot = unit.skillLoadout[slotKey]
+			if slot and slot.skillId then
+				slot.augments = pickAugmentsForSkill(rng, slot.skillId, tier.augmentsPer, weapon)
+			end
+		end
 	end
 
 	-- Full HP on spawn. UnitSchema set currentHp from the unit's BARE maxHp

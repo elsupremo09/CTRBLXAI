@@ -428,6 +428,13 @@ local function scoreAttack(unit: any, target: any, dials: any, allUnits: any)
 			score = score - (backlash / math.max(1, unit.maxHp)) * W.DAMAGE_PCT * W.COUNTER_RISK
 		end
 	end
+	-- Threat Reduction augment (2026-10-25): a unit that cast Threat Reduction is less
+	-- attractive as an attack target this round. Scale the attack score down by its threat
+	-- factor (0.80 = -20%). Flag set in OnSkillComplete, cleared at the holder's EndTurn.
+	-- Only reduces a positive score so it never flips an avoid into a prefer.
+	if target._threatFactor and target._threatFactor ~= 1 and score > 0 then
+		score = score * target._threatFactor
+	end
 	return score, predicted
 end
 
@@ -535,6 +542,17 @@ end
 -- Score using a consumable item (heal/cure) — items are a normal option now.
 local function scoreItem(unit: any, slotIdx: any, consDef: any, allUnits: any, dials: any)
 	local formula = consDef.effectFormula or ""
+	-- D-2 fix (2026-10-26): an item this unit already found not built is never re-picked.
+	if unit._unbuiltItems and unit._unbuiltItems[consDef.name] then return -math.huge, nil end
+	-- The AI only uses items on a unit (itself / an ally). Tile- and object-targeted items
+	-- (Maintenance Tool, Firebreak, deployables, ...) would just be rejected and end its
+	-- turn early, so they are never scored (2026-10-26).
+	local _tr = tostring(consDef.targetRules or "")
+	if _tr:find("Ground") or _tr:find("Tile") or _tr:find("Object") or _tr:find("origin")
+		or _tr:find("Deployable") or _tr:find("Terrain") or _tr:find("Gap")
+		or _tr == "Battlefield" or _tr == "Global" then
+		return -math.huge, nil
+	end
 	local charges = 0
 	local slot = unit.consumableSlots and unit.consumableSlots[slotIdx]
 	if slot then charges = slot.currentCharges or 0 end
@@ -557,7 +575,8 @@ local function scoreItem(unit: any, slotIdx: any, consDef: any, allUnits: any, d
 			if u.id == unit.id then s = need * W.ALLY_HELP * math.max(dials.allyHelp, dials.selfDanger * 0.5) end
 			if s > bestScore then bestScore = s; bestTarget = u end
 		end
-	elseif formula:match("Remove") then
+	elseif formula:match("Remove") and not tostring(consDef.targetRules or ""):match("Ground") then
+		-- (Ground items like Firebreak Projector are not self-cures; 2026-10-26)
 		-- Cure item → value only if self has a disabling status.
 		for _, inst in ipairs(unit.statusInstances or {}) do
 			if inst.id == "Poison" or inst.id == "Burn" or inst.id == "Silence" then
@@ -592,8 +611,33 @@ local function enumerateSkillEntries(unit: any, allUnits: any)
 	local skills = {}
 	for _, sid in ipairs(unit.skillIds or {}) do
 		local def = _CommandService and _CommandService.GetSkill(sid)
+		-- Raise Dead has its own priority rule in DecideAction; never scored as a normal skill.
+		if def and def.raisesCorpses then
+			def = nil
+		end
+		-- Phase Lock (2026-10-27): never score a relocating skill the unit cannot use.
+		if def and _CommandService and _CommandService.IsRelocationBlockedSkill
+			and _CommandService.IsRelocationBlockedSkill(unit, def) then
+			def = nil
+		end
 		if def and _UnitSchema and _UnitSchema.HasEnoughMp(unit, skillMpCost(unit, def)) then
 			local candidates = _TargetingService.GetSkillCandidates(unit, allUnits, def)
+			-- TAUNT (2026-10-27): debuff / damage skills may only target the taunter.
+			if _StatusService and _StatusService.FilterTauntCandidates then
+				candidates = _StatusService.FilterTauntCandidates(unit, def, candidates, allUnits)
+			end
+			-- Skyfall Lance: only targets the caster can land next to (same rule as validation), so the
+			-- AI never picks a cast that is rejected and loses the rest of its turn (UAT 2026-10-27 S-2).
+			if candidates and def.leapsAdjacent and _CommandService.CanLeapTo then
+				local kept = {}
+				local leapState = { units = allUnits }
+				for _, c in ipairs(candidates) do
+					if c.isGroundTarget or _CommandService.CanLeapTo(unit, c, leapState) then
+						table.insert(kept, c)
+					end
+				end
+				candidates = kept
+			end
 			if candidates and #candidates > 0 then
 				table.insert(skills, { def = def, candidates = candidates })
 			end
@@ -722,9 +766,32 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 	local nearest, nearestDist = findNearestEnemy(unit, allUnits)
 	if not nearest then return nil end  -- no players left
 
+	-- CHAOS NECROMANCER (user ruling 2026-10-27): its first priority is to channel Raise Dead once
+	-- there is at least one corpse to raise. Once per battle; validation refuses any repeat.
+	if unit.raisesCorpses and not unit._corpsesRaised and _CommandService
+		and not (_StatusService and _StatusService.IsActionBlocked
+			and _StatusService.IsActionBlocked(unit, "Skill"))  -- Silenced: act normally this turn
+		and _CommandService.CountRaisableCorpses
+		and _CommandService.CountRaisableCorpses(unit, allUnits) > 0 then
+		local raiseDef = _CommandService.GetSkill("EVT-RAISE-DEAD")
+		if raiseDef then
+			return { actionType = "Skill",
+				selection = { target = unit, skillId = raiseDef.id },
+				skillName = raiseDef.name, score = W.ALLY_HELP,
+				rtEstimate = 0, tile = nil, targetName = unit.name }
+		end
+	end
+
 	local moveTiles = _TargetingService.GetMoveCandidates(unit, allUnits, mapW, mapH) or {}
 	local attackTargets = _TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1) or {}
 	local skillEntries = enumerateSkillEntries(unit, allUnits)
+	-- TAUNT (user ruling 2026-10-27): a Taunted unit closes in on its taunter (attack and
+	-- skill candidates are already limited to the taunter).
+	local _taunter = _StatusService and _StatusService.GetTaunter and _StatusService.GetTaunter(unit, allUnits)
+	if _taunter then
+		nearest = _taunter
+		nearestDist = chebyshev(unit.tileX, unit.tileY, _taunter.tileX, _taunter.tileY)
+	end
 
 	----------------------------------------------------------------
 	-- Helper: best move tile toward the nearest player (gap close).

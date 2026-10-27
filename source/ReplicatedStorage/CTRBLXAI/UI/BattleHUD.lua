@@ -94,6 +94,9 @@ local isViewMode          = false  -- legacy; view mode retired 2026-10-07 (alwa
 local _selection = nil
 local tileInfoPanel  -- tile inspector, right of the turn-order bar
 local alignTileInfo  -- forward-declared: ensureRoot watchers reference it before its definition
+-- Forward-declared so the status-icon strip (buildStatusStrip, defined earlier) can open
+-- the shared quick-peek card, whose definition lives much further down. (2026-10-26)
+local showPeekCard
 -- During DEPLOYMENT there is no turn-order bar, but the roster strip is moved into the
 -- bar's bottom-left spot, so the tile inspector can anchor to the strip the SAME way it
 -- anchors to the bar in battle (one layout, both phases). DeploymentUI sets this via
@@ -280,14 +283,6 @@ local function buildStatusStrip(parent, statuses, order)
 		local sColor = (Theme.GetStatusColor and Theme.GetStatusColor(sName)) or Theme.Colors.Warning
 		local sAsset = Theme.GetStatusIcon(sName) or s.sourceIcon
 
-		-- duration string
-		local durStr
-		if s.remainingTurns then durStr = s.remainingTurns .. "t"
-		elseif s.remainingCt then durStr = "CT " .. math.floor(s.remainingCt)
-		elseif s.sourceDuration then durStr = tostring(s.sourceDuration)
-		else durStr = "" end
-		local stackStr = (s.stacks and s.stacks > 1) and (" x" .. s.stacks) or ""
-
 		local cell = Instance.new("Frame")
 		cell.Size = UDim2.fromOffset(ICON, stripH)
 		cell.BackgroundTransparency = 1
@@ -322,28 +317,13 @@ local function buildStatusStrip(parent, statuses, order)
 			il.Parent = badge
 		end
 
-		-- name+duration label under the icon, hidden until the icon is tapped
-		local nameLbl = Instance.new("TextLabel")
-		nameLbl.Size = UDim2.new(0, math.max(ICON * 3, 80), 0, LBL_H)
-		nameLbl.Position = UDim2.fromOffset(0, ICON + 1)
-		nameLbl.BackgroundColor3 = Theme.Colors.Background
-		nameLbl.BackgroundTransparency = 0.2
-		nameLbl.BorderSizePixel = 0
-		nameLbl.Font = Theme.Font.PrimaryBold
-		nameLbl.TextSize = Theme.Text.Badge()
-		nameLbl.TextColor3 = sColor
-		nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-		nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
-		nameLbl.Visible = false
-		nameLbl.ZIndex = 4
-		local durPart = (durStr ~= "") and (" (" .. durStr .. ")") or ""
-		nameLbl.Text = " " .. sName .. stackStr .. durPart
-		nameLbl.Parent = cell
-		local np = Instance.new("UIPadding", nameLbl)
-		np.PaddingLeft = UDim.new(0, 2)
-
+		-- Tap the icon → open the shared quick-peek card with the status's full details
+		-- (type, what it does, duration, next-tick damage, stacks). Replaces the old tiny
+		-- name-only toggle, which barely told the player anything (user request 2026-10-26).
+		-- showPeekCard closes any open card first, and the card has a tap-anywhere dismiss
+		-- layer, so no manual toggle/stacking handling is needed here.
 		badge.Activated:Connect(function()
-			nameLbl.Visible = not nameLbl.Visible
+			showPeekCard("STATUS", sName, parent, s)
 		end)
 	end
 end
@@ -1488,13 +1468,45 @@ local TERRAIN_INFO = {
 }
 
 local _peekGui: ScreenGui? = nil
+-- Live connections that keep the peek card glued below the (scaling, late-positioned)
+-- top panel cluster while it is open. Disconnected when the card closes. (2026-10-26)
+local _peekConns = {}
 local function closePeekCard()
+	for _, c in ipairs(_peekConns) do pcall(function() c:Disconnect() end) end
+	table.clear(_peekConns)
 	if _peekGui then _peekGui:Destroy(); _peekGui = nil end
 end
 
-local function buildPeekLines(kind: string, name: string?): (string, {{string}})
+local function buildPeekLines(kind: string, name: string?, extra): (string, {{string}})
 	-- Returns a title + list of {label, body} rows.
 	local rows = {}
+	if kind == "STATUS" then
+		-- Status effect card: static definition (what it does + buff/debuff) from the
+		-- shared GameConstants.STATUSES, combined with the LIVE instance (extra: remaining
+		-- turns, next-tick damage, stacks) so the player sees both the rule and the current
+		-- state. All fields optional -- only shown when present. (2026-10-26)
+		local def = name and GameConstants.STATUSES and GameConstants.STATUSES[name] or nil
+		if def and def.kind then table.insert(rows, {"TYPE", def.kind}) end
+		if def and def.description then table.insert(rows, {"", def.description}) end
+		local durStr
+		if extra and extra.remainingTurns then durStr = extra.remainingTurns .. (extra.remainingTurns == 1 and " turn left" or " turns left")
+		elseif extra and extra.remainingCt then durStr = "CT " .. math.floor(extra.remainingCt) .. " left"
+		elseif def and def.durationCt then durStr = "CT " .. def.durationCt .. " left"
+		elseif def and def.duration then durStr = def.duration .. (def.duration == 1 and " turn" or " turns") end
+		if durStr then table.insert(rows, {"DURATION", durStr}) end
+		if extra and extra.nextDamage and extra.nextDamage > 0 then
+			-- Per-turn damage (Poison, Burn, Venom) shows as NEXT TICK. Bleed / Raptured /
+			-- Wounded do not tick each turn -- they hit on a trigger (their descriptions), so
+			-- label the trigger instead of calling it a tick. (2026-10-26)
+			local TRIGGER_LABEL = { Bleed = "PER PHYSICAL HIT", Raptured = "PER TILE MOVED", Wounded = "PER ACTION" }
+			table.insert(rows, {(name and TRIGGER_LABEL[name]) or "NEXT TICK", "about " .. extra.nextDamage .. " HP"})
+		end
+		if extra and extra.stacks and extra.stacks > 1 then
+			table.insert(rows, {"STACKS", tostring(extra.stacks)})
+		end
+		if #rows == 0 then table.insert(rows, {"", "No description available."}) end
+		return name or "Status", rows
+	end
 	if kind == "TERRAIN" then
 		local tile = presentation.tile
 		table.insert(rows, {"EFFECT", TERRAIN_INFO[name or "Clear"] or "No special effect."})
@@ -1540,15 +1552,18 @@ local function buildPeekLines(kind: string, name: string?): (string, {{string}})
 	end
 end
 
-local function showPeekCard(kind: string, name: string?, anchorPanel: GuiObject?)
+showPeekCard = function(kind: string, name: string?, anchorPanel: GuiObject?, extra)
 	closePeekCard()
-	local title, rows = buildPeekLines(kind, name)
+	local title, rows = buildPeekLines(kind, name, extra)
 	local player = game:GetService("Players").LocalPlayer
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "PeekCard"
 	gui.ResetOnSpawn = false
 	gui.IgnoreGuiInset = true
-	gui.DisplayOrder = 120
+	-- Above the detailed 4-tab unit inspector (its ScreenGui is DisplayOrder 140-150). At
+	-- 120 the status peek card opened FROM that inspector rendered UNDERNEATH it -> invisible
+	-- (user report 2026-10-26). 160 keeps the card on top wherever it is opened from.
+	gui.DisplayOrder = 160
 	-- Full-screen transparent dismiss layer (tap anywhere closes).
 	local dismiss = Instance.new("TextButton")
 	dismiss.Size = UDim2.fromScale(1, 1)
@@ -1593,25 +1608,84 @@ local function showPeekCard(kind: string, name: string?, anchorPanel: GuiObject?
 	end
 	gui.Parent = player:WaitForChild("PlayerGui")
 	_peekGui = gui
-	-- Position just below the tapped panel, clamped on-screen.
-	task.defer(function()
-		if not (card.Parent and anchorPanel) then return end
+	-- The top cluster panels are created near the bottom then MOVED to the top by
+	-- alignTimePanel on a LATER deferred/settle pass, and they auto-size -- so a one-shot
+	-- read here measured them mid-move (top known, height still 0) and the card landed ON
+	-- them. Instead, recompute on EVERY settle: run now, and re-run whenever the cluster
+	-- panels, the unit panel, or the card's own size change -- the same reactive pattern
+	-- alignTimePanel's own watchers use. Connections are torn down in closePeekCard.
+	-- (2026-10-26, fixes "card on panels" by reacting to the scaling panels.)
+	local function reposition()
+		if not card.Parent then return end
 		local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1920, 1080)
-		local ap = anchorPanel.AbsolutePosition
-		-- Drop the card BELOW the tapped panel so it never covers the top panel row.
-		local y = ap.Y + anchorPanel.AbsoluteSize.Y + 6
-		-- Keep the card clear of the unit inspector (top-right): its right edge must
-		-- not cross the unit panel's left edge. Falls back to the screen edge when the
-		-- unit panel is hidden.
-		local rightBound = math.max(6, vp.X - cardW - 6)
-		if activeUnitPanel and activeUnitPanel.Visible then
-			rightBound = math.min(rightBound, activeUnitPanel.AbsolutePosition.X - cardW - 6)
+		-- ANCHOR TO THE TIME/WEATHER/EVENT (TWE) PANELS (2026-10-26, final): the info peeks
+		-- (STATUS/TIME/WEATHER/EVENT) sit DIRECTLY under the TWE row -- 0px gap -- and are
+		-- EXACTLY as wide as the visible TWE panels combined (left edge = leftmost panel's left,
+		-- right edge = rightmost panel's right). Height grows DOWNWARD to fit the text.
+		-- COORDINATE SPACE (the real root cause of every earlier miss): Roblox reports
+		-- AbsolutePosition relative to the origin BELOW the top-bar inset, while this card's
+		-- IgnoreGuiInset ScreenGui places children from the true screen top. The earlier
+		-- "garbage" readings (cBottom=4, unitTop=-52, rootTopY=-58) were all CORRECT values in
+		-- that inset-shifted space. Convert exactly, with no constants: `dismiss` is a
+		-- full-screen frame at (0,0) of THIS ScreenGui, so its AbsolutePosition IS the origin
+		-- of the card's offset space. offset = panel.AbsolutePosition - dismiss.AbsolutePosition.
+		local useCluster = (kind == "STATUS" or kind == "TIME" or kind == "WEATHER" or kind == "EVENT")
+		local origin = dismiss.AbsolutePosition
+		local cLeft, cRight, cBottom, anyVis = math.huge, -math.huge, -math.huge, false
+		if useCluster then
+			for _, p in ipairs({ timePanel, weatherPanel, eventPanel }) do
+				if p and p.Visible and p.AbsoluteSize.X > 0 then
+					anyVis = true
+					cLeft = math.min(cLeft, p.AbsolutePosition.X)
+					cRight = math.max(cRight, p.AbsolutePosition.X + p.AbsoluteSize.X)
+					cBottom = math.max(cBottom, p.AbsolutePosition.Y + p.AbsoluteSize.Y)
+				end
+			end
 		end
-		rightBound = math.max(6, rightBound)
-		local x = math.clamp(ap.X, 6, rightBound)
-		y = math.min(y, math.max(6, vp.Y - card.AbsoluteSize.Y - 6))
+		local x, y
+		local w = cardW
+		local capH = nil
+		if useCluster and anyVis then
+			x = cLeft - origin.X
+			y = cBottom - origin.Y          -- 0px gap: card top = TWE bottom edge
+			w = math.max(1, cRight - cLeft)   -- width = combined width of the TWE panels
+			-- Grow downward only; never shove the card up over the panels.
+			capH = math.max(60, vp.Y - y - 6)
+		elseif anchorPanel then
+			-- Fallback (TERRAIN, or TWE hidden e.g. deployment): unchanged behavior.
+			local ap = anchorPanel.AbsolutePosition
+			y = ap.Y + anchorPanel.AbsoluteSize.Y + 6
+			local rightBound = math.max(6, vp.X - cardW - 6)
+			if activeUnitPanel and activeUnitPanel.Visible then
+				rightBound = math.min(rightBound, activeUnitPanel.AbsolutePosition.X - cardW - 6)
+			end
+			rightBound = math.max(6, rightBound)
+			x = math.clamp(ap.X, 6, rightBound)
+			y = math.min(y, math.max(6, vp.Y - card.AbsoluteSize.Y - 6))
+		else
+			return
+		end
+		-- Width: TWE-combined for anchored cards, default cardW otherwise. Height: auto (grows
+		-- with content) up to capH (anchored) or 420 (fallback).
+		card.Size = UDim2.fromOffset(w, 0)
+		local szc = card:FindFirstChildOfClass("UISizeConstraint")
+		if szc then
+			szc.MinSize = Vector2.new(w, 60)
+			szc.MaxSize = Vector2.new(w, capH or 420)
+		end
 		card.Position = UDim2.fromOffset(x, y)
-	end)
+	end
+	-- Re-run on every relevant geometry change so the card tracks the panels as they
+	-- settle into place (and on viewport/card-size changes), then once more next frame.
+	local watched = { timePanel, weatherPanel, eventPanel, activeUnitPanel, card }
+	for _, w in ipairs(watched) do
+		if w then
+			table.insert(_peekConns, w:GetPropertyChangedSignal("AbsolutePosition"):Connect(reposition))
+			table.insert(_peekConns, w:GetPropertyChangedSignal("AbsoluteSize"):Connect(reposition))
+		end
+	end
+	reposition()
+	task.defer(reposition)
 end
 
 -- Invisible full-panel tap target. Re-created on every fill because clearFrame
@@ -1629,6 +1703,15 @@ local function addPeekButton(panel: GuiObject, kind: string, name: string?)
 		if _peekGui then closePeekCard(); return end
 		showPeekCard(kind, name, panel)
 	end)
+end
+
+-- Bridge so the SEPARATE full unit-inspector (StarterPlayerScripts/UnitInspectorPanel,
+-- a different ScreenGui that cannot see this module's locals) opens the SAME status peek
+-- card instead of duplicating it. Pass the live status instance (id + remainingTurns +
+-- nextDamage + stacks) and the panel to anchor under. (2026-10-26)
+_G.CTRBLXAI_ShowStatusPeek = function(statusInstance, anchorPanel)
+	if type(statusInstance) ~= "table" then return end
+	showPeekCard("STATUS", statusInstance.id or statusInstance.name, anchorPanel, statusInstance)
 end
 
 
@@ -1825,16 +1908,47 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 	local legacy = turnOrderBar.Parent and turnOrderBar.Parent:FindFirstChild("TimeWidget")
 	if legacy then legacy:Destroy() end
 
-	local layout = Instance.new("UIListLayout", turnOrderBar)
+	local pad = turnOrderBar:FindFirstChildOfClass("UIPadding") or Instance.new("UIPadding", turnOrderBar)
+	pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
+
+	-- DRAGGABLE TURN ORDER (2026-10-26): the slots live in a horizontal ScrollingFrame so the
+	-- player can DRAG the bar sideways to see further-ahead turns (look-ahead raised to 20 in
+	-- the client). The bar FRAME itself does not move or resize -- only its inner slots scroll
+	-- -- so the tile inspector flush to the bar's RIGHT edge stays exactly put. The bar is
+	-- rebuilt every turn (clearFrame above), so it snaps back to NOW at the start of each turn.
+	-- Mobile: finger-drag (native). Desktop: native wheel/scrollbar PLUS an explicit
+	-- click-drag-to-pan handler added after the slot loop (Roblox frames don't click-drag
+	-- on desktop by default), with a tap-vs-drag threshold so a click still selects a slot.
+	local slotScroll = Instance.new("ScrollingFrame")
+	slotScroll.Name = "SlotScroll"
+	slotScroll.Size = UDim2.fromScale(1, 1)
+	slotScroll.BackgroundTransparency = 1
+	slotScroll.BorderSizePixel = 0
+	slotScroll.ScrollingDirection = Enum.ScrollingDirection.X
+	slotScroll.ScrollingEnabled = true
+	slotScroll.AutomaticCanvasSize = Enum.AutomaticSize.X
+	slotScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	slotScroll.ScrollBarThickness = 4
+	slotScroll.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	slotScroll.ScrollBarImageTransparency = 0.3
+	slotScroll.Active = true
+	slotScroll.Parent = turnOrderBar
+	-- Set true once a press moves past the tap threshold, so the slot click handler below
+	-- knows to SKIP selection (the gesture was a pan, not a tap). (2026-10-26)
+	local scrollDidDrag = false
+	-- Forward-declared; assigned in the drag block after the slot loop. Also bound to each
+	-- slot button so DESKTOP presses (which the slot TextButtons consume, so they never reach
+	-- slotScroll.InputBegan) still start a drag -- that consumption is why drag worked on
+	-- mobile (native touch scroll) but not on laptop. (2026-10-26)
+	local beginDrag
+
+	local layout = Instance.new("UIListLayout", slotScroll)
 	layout.FillDirection = Enum.FillDirection.Horizontal
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.HorizontalAlignment = Enum.HorizontalAlignment.Left
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
 	layout.Padding = UDim.new(0, 3)
-
-	local pad = turnOrderBar:FindFirstChildOfClass("UIPadding") or Instance.new("UIPadding", turnOrderBar)
-	pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10)
-	pad.PaddingTop = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
 
 	local barH = turnOrderBar.AbsoluteSize.Y
 	-- Subtract padding (10 top + 10 bottom = 20) so slots fit inside the frame
@@ -1854,7 +1968,7 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 		portrait.Size = UDim2.new(0, slotW, 0, slotH)
 		portrait.BorderSizePixel = 0; portrait.Text = ""
 		portrait.AutoButtonColor = false
-		portrait.LayoutOrder = i; portrait.Parent = turnOrderBar
+		portrait.LayoutOrder = i; portrait.Parent = slotScroll
 
 		-- Shape: square for units, circle for non-units
 		if isUnit then
@@ -1948,6 +2062,9 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 		nameL.Font = Theme.Font.PrimaryBold
 		nameL.TextSize = isActive and Theme.Text.Body() or Theme.Text.Small()
 		nameL.TextTruncate = Enum.TextTruncate.AtEnd
+		-- Allow a long name to use a SECOND row instead of clipping (2026-10-26). Truncate
+		-- still applies only if even two rows overflow, so nothing ever spills the slot.
+		nameL.TextWrapped = true
 		if isRound then
 			nameL.Text = entry.name or ""
 			nameL.TextColor3 = Theme.Colors.TextSecondary
@@ -2011,11 +2128,15 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 					nameL.TextColor3 = Color3.new(1, 1, 1)
 					nameL.TextStrokeColor3 = Color3.new(0, 0, 0)
 					nameL.TextStrokeTransparency = 0
-					-- Move to the BOTTOM strip, full width.
-					nameL.Size = UDim2.new(1, 0, 0.34, 0)
-					nameL.Position = UDim2.new(0, 0, 0.66, 0)
+					-- Two-row name band (2026-10-26): taller + wrapped so long names use a
+					-- second line instead of clipping. The label's background is transparent
+					-- (only the TEXT sits over the face, no opaque band), and it is bottom-
+					-- aligned so a wrapped name grows UPWARD from the bottom edge.
+					nameL.Size = UDim2.new(1, 0, 0.5, 0)
+					nameL.Position = UDim2.new(0, 0, 0.5, 0)
 					nameL.TextXAlignment = Enum.TextXAlignment.Center
 					nameL.TextYAlignment = Enum.TextYAlignment.Bottom
+					nameL.TextWrapped = true
 				end
 				if rtL then
 					rtL.Visible = true
@@ -2052,6 +2173,8 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 
 		-- Click handler
 		portrait.MouseButton1Click:Connect(function()
+			-- Skip selection if this "click" was actually the end of a drag-to-pan. (2026-10-26)
+			if scrollDidDrag then return end
 			if isUnit or isEvent then
 				local tileX = entry.tileX
 				local tileY = entry.tileY
@@ -2064,11 +2187,62 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 					title = entry.name or "Round",
 					lines = {{ text = "New round begins", color = Theme.Colors.TextSecondary }},
 					position = UDim2.new(0, portrait.AbsolutePosition.X + portrait.AbsoluteSize.X / 2, 0, portrait.AbsolutePosition.Y - 4),
-					anchorPoint = Vector2.new(0.5, 1),
+				anchorPoint = Vector2.new(0.5, 1),
 					maxWidth = 140,
 				})
 			end
 		end)
+		-- Start a drag from the slot button too: on desktop the button CONSUMES the mouse
+		-- press so slotScroll.InputBegan never sees it (why drag was mobile-only). (2026-10-26)
+		portrait.InputBegan:Connect(function(inp)
+			if beginDrag then beginDrag(inp) end
+		end)
+	end
+
+	-- CLICK-DRAG-TO-PAN (2026-10-26): Roblox ScrollingFrames pan with touch-drag and the
+	-- mouse wheel, but NOT with a left-click drag on desktop -- which is why the bar felt
+	-- "not draggable" on PC. Add it explicitly: press on the bar and move to pan. A small
+	-- pixel threshold separates a DRAG (pans, suppresses the slot click) from a TAP (selects).
+	-- The move/end listeners are global (UserInputService) but live ONLY during an active
+	-- drag and are torn down on release, so nothing accumulates across per-turn rebuilds.
+	do
+		local dragging = false
+		local startX, startCanvas = 0, 0
+		local moveConn, endConn
+		local THRESH = 6  -- px before a press counts as a drag (not a tap)
+		beginDrag = function(input)
+			if input.UserInputType ~= Enum.UserInputType.MouseButton1
+				and input.UserInputType ~= Enum.UserInputType.Touch then return end
+			dragging = true
+			scrollDidDrag = false
+			startX = input.Position.X
+			startCanvas = slotScroll.CanvasPosition.X
+			if moveConn then moveConn:Disconnect() end
+			moveConn = UserInputService.InputChanged:Connect(function(move)
+				if not dragging then return end
+				if not slotScroll.Parent then dragging = false; return end
+				if move.UserInputType ~= Enum.UserInputType.MouseMovement
+					and move.UserInputType ~= Enum.UserInputType.Touch then return end
+				local delta = move.Position.X - startX
+				if math.abs(delta) > THRESH then scrollDidDrag = true end
+				local maxX = math.max(0, slotScroll.AbsoluteCanvasSize.X - slotScroll.AbsoluteSize.X)
+				slotScroll.CanvasPosition = Vector2.new(math.clamp(startCanvas - delta, 0, maxX), 0)
+			end)
+			if endConn then endConn:Disconnect() end
+			endConn = UserInputService.InputEnded:Connect(function(up)
+				if up.UserInputType == Enum.UserInputType.MouseButton1
+					or up.UserInputType == Enum.UserInputType.Touch then
+					dragging = false
+					if moveConn then moveConn:Disconnect(); moveConn = nil end
+					if endConn then endConn:Disconnect(); endConn = nil end
+					-- Clear the drag flag next frame so the slot's click (which fires on
+					-- release) still sees it, but a later genuine tap does not. (2026-10-26)
+					task.defer(function() scrollDidDrag = false end)
+				end
+			end)
+		end
+		-- Empty-bar-area presses still land on the scroll frame directly.
+		slotScroll.InputBegan:Connect(beginDrag)
 	end
 end
 

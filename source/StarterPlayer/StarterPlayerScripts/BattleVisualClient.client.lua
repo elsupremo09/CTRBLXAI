@@ -96,6 +96,10 @@ local MAP_OFFSET_Z = -50
 local BATTLE_OFFSET_X, BATTLE_OFFSET_Y = 0, 0
 
 local elevationMap = nil
+-- Temporary roads (ENV-019, 2026-10-27): ["x,y"] = move-cost cut. Read by the tile inspector.
+local roadCuts = {}
+-- Move-cost penalties (ENV-003, 2026-10-27): ["x,y"] = extra cost. Read by the tile inspector.
+local moveCostAdds = {}
 
 local function getElevation(tx, ty)
 	if elevationMap then local r = elevationMap[ty]; if r then return r[tx] or 1 end end; return 1
@@ -859,6 +863,25 @@ local function spawnToken(unit)
 		end
 	end
 
+	-- Fallback: create a placeholder if no R15 model. Soul Echo (AUG-SOUL-ECHO)
+	-- summons use a generic FLOATING SPHERE for visibility (2026-10-25, user request):
+	-- a soul/bomb hovering over the corpse tile, distinct from the normal cylinder
+	-- token. Cosmetic-only; size/float-height/color/glow are easy one-number tweaks.
+	if not anchorPart and unit.summonType == "SoulEcho" then
+		local part = Instance.new("Part")
+		part.Name = "Unit_" .. unit.id
+		part.Shape = Enum.PartType.Ball
+		part.Size = Vector3.new(2, 2, 2)
+		-- Float above the tile (tileToWorldGrounded already adds +1; lift ~2.5 more).
+		part.CFrame = CFrame.new(tileToWorldGrounded(unit.tileX, unit.tileY) + Vector3.new(0, 2.5, 0))
+		part.Anchored, part.CanCollide, part.CanQuery = true, false, true
+		part.Color = Theme.GetSideColor(unit.side)
+		part.Material = Enum.Material.Neon
+		part.Transparency = 0.2
+		part.Parent = visualFolder
+		anchorPart = part
+	end
+
 	-- Fallback: create cylinder placeholder if no R15 model
 	if not anchorPart then
 		local part = Instance.new("Part")
@@ -1356,7 +1379,10 @@ local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEven
 		BattleHUD.UpdateTimeline({}, { phase = currentTimePhase, ctRemaining = 1000 - (currentBattleCt % 1000) })
 		return
 	end
-	local tl = simulateTurnOrder(snapshot, 12, previewUnitId, previewNewRt, previewEvent)
+	-- Look-ahead raised 12 -> 20 (2026-10-26) so the player can drag the turn-order bar to
+	-- see further ahead which units act next. The bar is a horizontal scroll container, so
+	-- the extra slots are reachable by dragging without changing the bar's on-screen size.
+	local tl = simulateTurnOrder(snapshot, 20, previewUnitId, previewNewRt, previewEvent)
 
 	-- Build the final entries list:
 	-- [1] = pinned NOW active unit
@@ -1483,6 +1509,7 @@ end
 -- enterActionSelection reference it before that point. Declaring the local
 -- here ensures every closure captures the same upvalue (not a nil global).
 local commitCommand
+local commitItem  -- pick-list wrapper (defined after commitCommand)
 
 local function enterActionSelection()
 	if not currentPrompt then return end
@@ -1839,7 +1866,24 @@ local function getTileUnderMouse()
 		rp.FilterDescendantsInstances = tileParts
 		local ray = cam:ScreenPointToRay(mouse.X, mouse.Y)
 		local res = workspace:Raycast(ray.Origin, ray.Direction * 500, rp)
-		return res and res.Instance or nil
+		if res and res.Instance then return res.Instance end
+	end
+	-- FINAL FALLBACK (2026-10-26): a TALL map object (e.g. Ice Throne) can defeat both
+	-- paths above -- resolveObjectTile may not resolve it, and the tile-only ray can sail
+	-- OVER the object's own tile to a tile behind it (or off a map edge to nothing), so the
+	-- click silently resolves to nothing and no inspector opens. If the click hit SOMETHING
+	-- solid (mouse.Target set), convert the WORLD XZ of that hit point -- which is directly
+	-- above the object's tile -- straight to a tile. Height-proof: whatever stands on the
+	-- tile can't change which tile the point is over. Guarded by `target` so an empty-space
+	-- click (ray to sky -> far mouse.Hit) can never resolve to a bogus tile.
+	if target and mapFolder and mouse.Hit then
+		local hp = mouse.Hit.Position
+		local tx = math.floor((hp.X - MAP_OFFSET_X) / TILE_SIZE) + 1
+		local ty = math.floor((hp.Z - MAP_OFFSET_Z) / TILE_SIZE) + 1
+		if tx >= 1 and tx <= MAP_WIDTH and ty >= 1 and ty <= MAP_HEIGHT then
+			local tp = mapFolder:FindFirstChild(string.format("Tile_%02d_%02d", tx, ty))
+			if tp and tp:IsA("BasePart") then return tp end
+		end
 	end
 	return nil
 end
@@ -1860,6 +1904,53 @@ function commitCommand(command)
 	clearHighlights(); isPlayerTurn = false; inputMode = nil; selectedSkill = nil; selectedItem = nil; aimTarget = nil
 	bp.state = "Resolving"; BattleHUD.Render(bp)
 	BattleEvents.PlayerCommand:FireServer(command)
+end
+
+-- PICK-LIST ITEMS (user ruling 1, 2026-10-26). An item whose prompt entry carries
+-- `choices` (fixed list from the server) or choiceKind == "targetBuff" (Blessing
+-- Projector: the picked target's dispellable buffs) shows a list on the existing item
+-- list screen before committing; the picked value is sent as command.choice. Items
+-- without choices commit straight away, exactly as before.
+function commitItem(item, cmd, onBack)
+	local opts = nil
+	if item and item.choices and #item.choices > 0 then
+		opts = item.choices
+	elseif item and item.choiceKind == "targetBuff" and cmd.targetId then
+		opts = {}
+		local u = unitData[cmd.targetId]
+		local defs = (GameConstants and GameConstants.STATUSES) or {}
+		for _, st in ipairs((u and u.statuses) or {}) do
+			local d = defs[st.id]
+			if d and d.kind == "Buff" and d.dispellable == true then
+				table.insert(opts, st.id)
+			end
+		end
+	end
+	if not opts or #opts == 0 then
+		commitCommand(cmd)
+		return
+	end
+	local entries = {}
+	for _, choice in ipairs(opts) do
+		table.insert(entries, {
+			id = choice,
+			name = tostring(choice),
+			rtCost = (item and item.rtCost) or 0,
+			enabled = true,
+			onPress = function()
+				local c = table.clone(cmd)
+				c.choice = choice
+				commitCommand(c)
+			end,
+		})
+	end
+	local prevBack = storedActorData.onBack
+	storedActorData.itemEntries = entries
+	storedActorData.onBack = function()
+		storedActorData.onBack = prevBack
+		if onBack then onBack() end
+	end
+	bp.state = "ItemSelection"; BattleHUD.Render(bp)
 end
 
 local function cancelToTargeting()
@@ -1939,8 +2030,23 @@ local function processTileClick(bx, by)
 	local terrainId = GameConstants.GetTerrainId(bx, by)
 	local elevation = getElevation(bx, by)
 	local moveCost = GameConstants.GetTerrainCost(bx, by)
+	-- A temporary road lowers the cost, never below a normal step (same rule as the server).
+	local _cut = roadCuts[bx .. "," .. by]
+	if _cut and _cut > 0 and moveCost > 1 then moveCost = math.max(1, moveCost - _cut) end
+	moveCost += (moveCostAdds[bx .. "," .. by] or 0)  -- same order as the server path cost
 	-- Look up map object at this tile
 	local objectName = GameConstants.GetObjectAt(bx, by)
+	-- Objects placed mid-battle (Mine Dispenser, barricades, item traps, gadgets) are not in
+	-- the map-start object list; the server tags the tile it draws them on (MapRenderer
+	-- RenderOneObject sets the tile's ObjectName attribute). Hidden enemy traps are never
+	-- drawn, so they never tag a tile and stay uninspectable (2026-10-27).
+	if not objectName or objectName == "None" then
+		local _tp = _getTilePart(bx, by)
+		local _placed = _tp and _tp:GetAttribute("ObjectName")
+		if type(_placed) == "string" and _placed ~= "" and _placed ~= "None" then
+			objectName = _placed
+		end
+	end
 
 	bp.tile = {
 		x = bx,
@@ -2164,7 +2270,7 @@ local function processTileClick(bx, by)
 					-- tile in yellow, and draw the straight charge PATH in the white/
 					-- blooming move-path visual. Non-charge skills keep the plain
 					-- yellow 'selected' confirmation highlight on the target.
-					if selectedSkill.isCharge and t.landingTileX then
+					if (selectedSkill.isCharge or selectedSkill.leapsAdjacent) and t.landingTileX then
 						-- Draw the white charge PATH first (its destination paints the
 						-- landing tile gold), THEN overpaint the landing tile yellow and
 						-- the target tile red — so those two win the in-place recolor.
@@ -2372,7 +2478,7 @@ local function processTileClick(bx, by)
 						targetName = string.format("Ground (%d,%d)", bx, by),
 						description = "Item description placeholder.",
 						onConfirm = function()
-							commitCommand({ actionType = "Item", itemSlotIndex = selectedItem.slotIndex, tileX = bx, tileY = by })
+							commitItem(selectedItem, { actionType = "Item", itemSlotIndex = selectedItem.slotIndex, tileX = bx, tileY = by }, cancelToTargeting)
 						end,
 						onBack = cancelToTargeting,
 					}
@@ -2398,7 +2504,7 @@ local function processTileClick(bx, by)
 						isHealing = selectedItem.isHealing or false,
 						description = "Item description placeholder.",
 						onConfirm = function()
-							commitCommand({ actionType = "Item", itemSlotIndex = selectedItem.slotIndex, targetId = t.id })
+							commitItem(selectedItem, { actionType = "Item", itemSlotIndex = selectedItem.slotIndex, targetId = t.id }, cancelToTargeting)
 						end,
 						onBack = cancelToTargeting,
 					}
@@ -2494,6 +2600,33 @@ game:GetService("RunService").Heartbeat:Connect(function()
 		end)())
 		if objHit and (not result or (objHit.Position - ray.Origin).Magnitude < (result.Position - ray.Origin).Magnitude) then
 			tilePart = objTile
+		end
+	end
+	-- FINAL FALLBACK (2026-10-26): mirror the mouse-path fix for TALL map objects (e.g. Ice
+	-- Throne). If every path above left tilePart nil -- rayObjectTile missed AND the tile-only
+	-- ray sailed OVER the object's own tile -- raycast for ANY solid hit under the tap and
+	-- convert its world XZ straight to a tile. Height-proof: whatever stands on the tile can't
+	-- change which tile the point is over. Excludes unit models / VFX / overlays so it reads
+	-- the world surface, not a unit. Runs ONLY when every path above failed, so tap targeting
+	-- (move/attack) is unchanged.
+	if not tilePart and mapFolder then
+		local rpAny = RaycastParams.new()
+		rpAny.FilterType = Enum.RaycastFilterType.Exclude
+		local ex = {}
+		for _, name in { "UnitModels", "BattleVisuals", "DeploymentParts", "GridOverlay", "TileHighlights" } do
+			local f = workspace:FindFirstChild(name)
+			if f then table.insert(ex, f) end
+		end
+		rpAny.FilterDescendantsInstances = ex
+		local anyHit = workspace:Raycast(ray.Origin, ray.Direction * 500, rpAny)
+		if anyHit then
+			local hp = anyHit.Position
+			local tx = math.floor((hp.X - MAP_OFFSET_X) / TILE_SIZE) + 1
+			local ty = math.floor((hp.Z - MAP_OFFSET_Z) / TILE_SIZE) + 1
+			if tx >= 1 and tx <= MAP_WIDTH and ty >= 1 and ty <= MAP_HEIGHT then
+				local tp = mapFolder:FindFirstChild(string.format("Tile_%02d_%02d", tx, ty))
+				if tp and tp:IsA("BasePart") then tilePart = tp end
+			end
 		end
 	end
 	if not tilePart then return end
@@ -2933,6 +3066,9 @@ local function createDevCameraPanel()
 	makeBtn(gBattle.container, "GOLD +10,000", function()
 		BattleEvents.DevCommand:FireServer({ action = "DevAddGold" })
 	end, Color3.fromRGB(90, 75, 20))
+	makeBtn(gBattle.container, "GRANT ALL CARDS", function()
+		BattleEvents.DevCommand:FireServer({ action = "DevGrantAllCards" })
+	end, Color3.fromRGB(40, 80, 55))
 	makeConfirmBtn(gBattle.container, "RESET UGC TRIAL/RENT", function()
 		BattleEvents.DevCommand:FireServer({ action = "DevResetUGCRecords" })
 	end, Color3.fromRGB(70, 45, 80))
@@ -3170,6 +3306,62 @@ end)
 
 _G.CTRBLXAI_GetTileEffect = function(x, y) return activeTileEffects[`{x},{y}`] end
 
+-- Temporary road (ENV-019, 2026-10-27): a faint path tint on the tile's top face.
+BattleEvents.RoadChanged.OnClientEvent:Connect(function(data)
+	if not (data and data.x and data.y) then return end
+	local key = data.x .. "," .. data.y
+	local tilePart = _getTilePart(data.x, data.y)
+	local old = tilePart and tilePart:FindFirstChild("RoadOverlay")
+	if (data.cut or 0) <= 0 then
+		roadCuts[key] = nil
+		if old then old:Destroy() end
+		return
+	end
+	roadCuts[key] = data.cut
+	if tilePart and not old then
+		local gui = Instance.new("SurfaceGui")
+		gui.Name = "RoadOverlay"
+		gui.Face = Enum.NormalId.Top
+		gui.LightInfluence = 0
+		gui.ZOffset = 1
+		local fr = Instance.new("Frame")
+		fr.Size = UDim2.fromScale(1, 1)
+		fr.BackgroundColor3 = Color3.fromRGB(170, 130, 80)
+		fr.BackgroundTransparency = 0.55
+		fr.BorderSizePixel = 0
+		fr.Parent = gui
+		gui.Parent = tilePart  -- parent last (instance-order rule)
+	end
+end)
+
+-- Temporary move-cost penalty (ENV-003, 2026-10-27): a faint icy tint on the tile's top face.
+BattleEvents.MoveCostChanged.OnClientEvent:Connect(function(data)
+	if not (data and data.x and data.y) then return end
+	local key = data.x .. "," .. data.y
+	local tilePart = _getTilePart(data.x, data.y)
+	local old = tilePart and tilePart:FindFirstChild("SlowOverlay")
+	if (data.add or 0) <= 0 then
+		moveCostAdds[key] = nil
+		if old then old:Destroy() end
+		return
+	end
+	moveCostAdds[key] = data.add
+	if tilePart and not old then
+		local gui = Instance.new("SurfaceGui")
+		gui.Name = "SlowOverlay"
+		gui.Face = Enum.NormalId.Top
+		gui.LightInfluence = 0
+		gui.ZOffset = 1
+		local fr = Instance.new("Frame")
+		fr.Size = UDim2.fromScale(1, 1)
+		fr.BackgroundColor3 = Color3.fromRGB(150, 200, 235)
+		fr.BackgroundTransparency = 0.6
+		fr.BorderSizePixel = 0
+		fr.Parent = gui
+		gui.Parent = tilePart  -- parent last (instance-order rule)
+	end
+end)
+
 -- Deployment idle (2026-10-17): DeploymentUI reuses the server R15 models during the
 -- deployment phase (they don't pass through spawnToken, so they'd stand stiff). This
 -- plays the SAME random desynced idle used in battle on a raw model, so deployment units
@@ -3300,6 +3492,8 @@ BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	for _, c in ipairs(visualFolder:GetChildren()) do c:Destroy() end
 	for _, l in pairs(actionLabels) do if l.gui then l.gui:Destroy() end end
 	unitTokens = {}; elevationMap = data.elevationMap
+	roadCuts = {}  -- new battle: no roads yet (UAT DEFECT-1, 2026-10-27)
+	moveCostAdds = {}  -- new battle: no slowed tiles yet
 	actionLabels = {}
 	for _, lp in pairs(debuffLoops) do if lp.active and lp.active.Parent then pcall(function() lp.active:Destroy() end) end end
 	debuffLoops = {}
@@ -3771,6 +3965,10 @@ end)
 BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
 	updateHpBar(data.targetId, data.targetHp, data.targetMaxHp)
 	if unitData[data.targetId] then unitData[data.targetId].currentHp = data.targetHp end
+	if unitData[data.targetId] and data.statuses then  -- Venom weaken/cure (2026-10-26)
+		unitData[data.targetId].statuses = mergeStatusSourceIcons(data.targetId, data.statuses)
+		refreshDebuffLoop(data.targetId)
+	end
 	local tt = unitTokens[data.targetId]
 	if tt then
 		-- Camera: frame healer and target
@@ -3816,14 +4014,41 @@ end)
 -- never shown (the reported "Healing Spring didn't work"). Sync the HP bar + alive state
 -- here; show a green heal number only when HP went UP so it can't double up with combat
 -- damage popups. (MP-only effects like Magic Spring need mp fields added to this payload.)
+-- Undo the KO look when a downed unit comes back (revive skill/item, Resuscitate,
+-- Divine Intervention, Undying Will, Zombie) -- 2026-10-26. Mirrors exactly what the
+-- UnitDefeated handler sets: grey KO highlight, stopped idle + KO pose, and the dimmed
+-- body on model-less tokens (cylinder / Soul Echo sphere, restored to spawnToken's look).
+local function restoreFromKO(unitId)
+	local tok = unitTokens[unitId]
+	local u = unitData[unitId]
+	if VFXController then pcall(VFXController.ClearHighlight, unitId) end
+	if not tok or not tok.part then return end
+	if not tok.model then
+		tok.part.Color = Theme.GetSideColor(u and u.side)
+		tok.part.Transparency = if u and u.summonType == "SoulEcho" then 0.2 else 0
+	end
+	if tok._animTracks and tok._animTracks.KO and tok._animTracks.KO.IsPlaying then
+		tok._animTracks.KO:Stop(0.2)
+	end
+	playUnitAnim(tok, "Idle", { loop = true, fade = 0.3 })
+	syncStanceLoop(unitId)
+	refreshDebuffLoop(unitId)
+end
+
 BattleEvents.UnitStateChanged.OnClientEvent:Connect(function(data)
 	if not data or not data.unitId then return end
 	local u = unitData[data.unitId]
 	local before = u and (u.currentHp or 0) or nil
+	local wasDown = u ~= nil and u.isAlive == false  -- KO'd on this screen before this update
 	if u then
 		if data.hp ~= nil then u.currentHp = data.hp end
 		if data.maxHp ~= nil then u.maxHp = data.maxHp end
 		if data.isAlive ~= nil then u.isAlive = data.isAlive end
+		-- Statuses ride along so a heal that weakens/cures Venom shows at once (2026-10-26).
+		if data.statuses then
+			u.statuses = mergeStatusSourceIcons(data.unitId, data.statuses)
+			refreshDebuffLoop(data.unitId)
+		end
 	end
 	local hp = (u and u.currentHp) or data.hp
 	local maxHp = (u and u.maxHp) or data.maxHp or hp
@@ -3832,6 +4057,7 @@ BattleEvents.UnitStateChanged.OnClientEvent:Connect(function(data)
 	if tok and tok.part and before ~= nil and hp ~= nil and hp > before then
 		showDamageText(tok.part.Position, hp - before, true)
 	end
+	if wasDown and data.isAlive == true then restoreFromKO(data.unitId) end  -- revived (2026-10-26)
 end)
 
 BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
@@ -3841,13 +4067,19 @@ BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
 		for _, ex in ipairs(unitData[data.unitId].statuses) do
 			if ex.id == data.statusId then
 				ex.remainingTurns = data.remainingTurns
+				-- Keep the server's damage prediction (next-tick / per-trigger HP) so the
+				-- status peek card can show it right away, not only after the next turn
+				-- refresh. Re-application/stacking updates it too. (2026-10-26)
+				ex.nextDamage = data.nextDamage
+				ex.storedBurn = data.storedBurn
+				ex.stacks = data.stacks
 				if data.sourceIcon then ex.sourceIcon = data.sourceIcon end
 				if data.sourceDesc then ex.sourceDesc = data.sourceDesc end
 				if data.sourceDuration then ex.sourceDuration = data.sourceDuration end
 				found = true; break
 			end
 		end
-		if not found then table.insert(unitData[data.unitId].statuses, { id = data.statusId, remainingTurns = data.remainingTurns or 0, sourceIcon = data.sourceIcon, sourceDesc = data.sourceDesc, sourceDuration = data.sourceDuration }) end
+		if not found then table.insert(unitData[data.unitId].statuses, { id = data.statusId, remainingTurns = data.remainingTurns or 0, nextDamage = data.nextDamage, storedBurn = data.storedBurn, stacks = data.stacks, sourceIcon = data.sourceIcon, sourceDesc = data.sourceDesc, sourceDuration = data.sourceDuration }) end
 	end
 	refreshDebuffLoop(data.unitId)
 	-- Persistent standalone loops (NOT round-robined with debuffs):
@@ -5227,6 +5459,25 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		cardStroke.Color = rc
 		cardStroke.Thickness = 1.5
 
+		-- STOLEN badge (2026-10-24): items acquired via Steal/Mug carry item.stolen=true.
+		-- Small red tag, top-right, so theft spoils read at a glance on the victory screen.
+		if item.stolen then
+			local stLbl = Instance.new("TextLabel")
+			stLbl.Size = UDim2.new(0, 44, 0, 14)
+			stLbl.AnchorPoint = Vector2.new(1, 0)
+			stLbl.Position = UDim2.new(1, -2, 0, 2)
+			stLbl.BackgroundColor3 = Theme.Colors.Danger
+			stLbl.BackgroundTransparency = 0.15
+			stLbl.BorderSizePixel = 0
+			stLbl.Font = Theme.Font.PrimaryBold
+			stLbl.TextSize = 8
+			stLbl.TextColor3 = Color3.new(1, 1, 1)
+			stLbl.Text = "STOLEN"
+			stLbl.ZIndex = 4
+			Instance.new("UICorner", stLbl).CornerRadius = UDim.new(0, 3)
+			stLbl.Parent = card
+		end
+
 		-- Level badge (top-left)
 		local lvBg = Instance.new("Frame")
 		lvBg.Size = item.isCard and UDim2.new(0, 48, 0, 14) or UDim2.new(0, 36, 0, 14)
@@ -5588,6 +5839,8 @@ BattleEvents.MapDataSync.OnClientEvent:Connect(function(mapData)
 		-- Also update BVC's local elevation map so getElevation() returns correct values
 		-- before BattleStarted fires (e.g. during view mode / tile inspector)
 		if mapData.elevationGrid then elevationMap = mapData.elevationGrid end
+		roadCuts = {}  -- map regenerated: old roads are gone (UAT DEFECT-1, 2026-10-27)
+		moveCostAdds = {}  -- map regenerated: old slowed tiles are gone
 		-- Map changed: drop cached elevation labels so Top view rebuilds them.
 		if elevLabelFolder then elevLabelFolder:Destroy(); elevLabelFolder = nil end
 		-- Init VFX post-processing + biome atmosphere
@@ -5641,6 +5894,17 @@ end)
 -- moves or re-pivots the tile (BUG-002 guard: tiles/units must not reposition).
 BattleEvents.TerrainChanged.OnClientEvent:Connect(function(data)
 	if not (data and data.x and data.y and data.terrainId) then return end
+	-- (0) Height change (2026-10-26, Excavation Drill): keep the client height map in step so
+	-- the inspector, elevation labels and unit token heights use the NEW elevation. Sent
+	-- before the UnitMoved of any unit standing on the tile.
+	if data.elevation then
+		if elevationMap then
+			elevationMap[data.y] = elevationMap[data.y] or {}
+			elevationMap[data.y][data.x] = data.elevation
+		end
+		local em = GameConstants.ELEVATION_MAP
+		if em and em[data.y] then em[data.y][data.x] = data.elevation end
+	end
 	-- (a) Update the client's local terrain lookup the inspector reads. SetGeneratedMap
 	-- populated GameConstants.TERRAIN_MAP; GetTerrainId (used by the inspector) reads it.
 	if GameConstants.SetTerrainId then
@@ -5882,4 +6146,191 @@ BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
 	end
 
 	-- Turn-based: no timer. Arrows stay until the player chooses a facing.
+end)
+
+-- Steal slot picker (2026-10-24). Server (BattleTurnController) fires StealPrompt when the
+-- player commits Steal; we show one tap button per stealable slot and reply via StealChoice.
+-- Mirrors the facing prompt-and-wait (server blocks until a choice arrives). Touch-only
+-- buttons via UIListLayout; nil-safe. One picker at a time.
+local stealPickGui = nil
+BattleEvents.StealPrompt.OnClientEvent:Connect(function(data)
+	if not data or not data.casterId or type(data.slots) ~= "table" then return end
+	if stealPickGui then stealPickGui:Destroy(); stealPickGui = nil end
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "StealPicker"
+	gui.ResetOnSpawn = false
+	gui.DisplayOrder = 95
+	gui.IgnoreGuiInset = true
+	gui.Parent = player:WaitForChild("PlayerGui")
+	stealPickGui = gui
+
+	local panel = Instance.new("Frame")
+	panel.AnchorPoint = Vector2.new(0.5, 0.5)
+	panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+	panel.Size = UDim2.new(0, 220, 0, 48 + #data.slots * 40)
+	panel.BackgroundColor3 = Theme.Colors.Panel
+	panel.BorderSizePixel = 0
+	Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 8)
+	local pad = Instance.new("UIPadding", panel)
+	pad.PaddingTop = UDim.new(0, 8); pad.PaddingBottom = UDim.new(0, 8)
+	pad.PaddingLeft = UDim.new(0, 8); pad.PaddingRight = UDim.new(0, 8)
+	local list = Instance.new("UIListLayout", panel)
+	list.FillDirection = Enum.FillDirection.Vertical
+	list.Padding = UDim.new(0, 6)
+	list.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	panel.Parent = gui
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(1, 0, 0, 28)
+	title.BackgroundTransparency = 1
+	title.Font = Theme.Font.PrimaryBold
+	title.TextSize = 12
+	title.TextColor3 = Theme.Colors.TextGold
+	title.Text = "Steal from " .. (data.targetName or "enemy")
+	title.LayoutOrder = 0
+	title.Parent = panel
+
+	for idx, slot in ipairs(data.slots) do
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1, 0, 0, 34)
+		btn.BackgroundColor3 = Theme.Colors.Surface
+		btn.BorderSizePixel = 0
+		btn.Font = Theme.Font.PrimaryBold
+		btn.TextSize = 12
+		btn.TextColor3 = Theme.Colors.TextPrimary
+		btn.Text = tostring(slot)
+		btn.AutoButtonColor = true
+		btn.LayoutOrder = idx
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+		btn.Parent = panel
+		btn.Activated:Connect(function()
+			BattleEvents.StealChoice:FireServer({ casterId = data.casterId, slot = slot })
+			if stealPickGui then stealPickGui:Destroy(); stealPickGui = nil end
+		end)
+	end
+end)
+
+-- TilePrompt (2026-10-24): server asks the player to pick a target TILE within a
+-- range of an origin (Catapult landing tile within range 6). The tile analogue of
+-- FacingPrompt. SELF-CONTAINED: it highlights the legal tiles and places an
+-- invisible clickable carrier plane on each (same stud-free ClickDetector technique
+-- as the facing arrows). It does NOT touch inputMode / currentPrompt / commitCommand,
+-- so it cannot collide with the Move/Push turn-action tile selection — it is a
+-- one-shot prompt that fires SetTile and tears itself down, exactly like FacingPrompt.
+BattleEvents.TilePrompt.OnClientEvent:Connect(function(data)
+	if not data or not data.unitId or type(data.tiles) ~= "table" then return end
+
+	local folder = Instance.new("Folder")
+	folder.Name = "SiegeTilePrompt"
+	folder.Parent = workspace
+
+	local chosen = false
+	local conns = {}  -- PRF-004: track + disconnect on cleanup
+	local cancelGui = nil
+
+	local function cleanup()
+		for _, c in conns do c:Disconnect() end
+		table.clear(conns)
+		clearHighlights()  -- remove the tile-highlight frames we added below
+		if folder and folder.Parent then folder:Destroy() end  -- MEM-002
+		if cancelGui then cancelGui:Destroy(); cancelGui = nil end
+	end
+
+	-- Cancel button (user request 2026-10-26): a screen-space X to abort targeting
+	-- and return to the action menu with nothing spent. Tapping it fires
+	-- SetTile{cancel=true}; the server aborts the effect and refunds the AP/RT, so
+	-- the turn re-prompts intact. Uses the registered X icon. Self-contained like the
+	-- rest of this handler (never touches inputMode/currentPrompt).
+	do
+		local pg = player:FindFirstChildOfClass("PlayerGui")
+		if pg then
+			cancelGui = Instance.new("ScreenGui")
+			cancelGui.Name = "SiegeCancelGui"
+			cancelGui.ResetOnSpawn = false
+			cancelGui.IgnoreGuiInset = true
+			cancelGui.DisplayOrder = 50
+			local btn = Instance.new("ImageButton")
+			btn.Name = "SiegeCancel"
+			btn.Size = UDim2.fromOffset(56, 56)
+			btn.AnchorPoint = Vector2.new(0.5, 1)
+			btn.Position = UDim2.new(0.5, 0, 1, -24)
+			btn.BackgroundTransparency = 1
+			btn.Image = "rbxassetid://91768764354556"  -- registered X / cancel icon
+			btn.Parent = cancelGui
+			cancelGui.Parent = pg
+			table.insert(conns, btn.Activated:Connect(function()
+				if chosen then return end
+				chosen = true
+				BattleEvents.SetTile:FireServer({ unitId = data.unitId, cancel = true })
+				print(string.format("[BVC] Siege targeting cancelled: %s", data.unitId))
+				cleanup()
+			end))
+		end
+	end
+
+	for _, t in ipairs(data.tiles) do
+		local tx, ty = t.x, t.y
+		if type(tx) == "number" and type(ty) == "number" then
+			-- Visual: travel/landing tiles use the "move" style; enemy-occupied tiles
+			-- (t.hit, flagged by the server) use the "attack" (hit) color so the player
+			-- sees exactly what the shot will strike before committing.
+			createTileHighlight(tx, ty, t.hit and "attack" or "move")
+
+			-- Click target: invisible carrier plane with a ClickDetector, centered on
+			-- the tile (same technique as the facing arrows). NET-004: all properties
+			-- before parenting.
+			local wx = MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE
+			local wz = MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE
+			local wy = groundSurfaceY(tx, ty) + 0.5
+			local plane = Instance.new("Part")
+			plane.Name         = string.format("SiegeTile_%d_%d", tx, ty)
+			plane.Anchored     = true
+			plane.CanCollide   = false
+			plane.CanQuery     = true
+			plane.CastShadow   = false
+			plane.Transparency = 1
+			plane.Size         = Vector3.new(TILE_SIZE, 0.2, TILE_SIZE)
+			plane.CFrame       = CFrame.new(wx, wy, wz)
+
+			local cd = Instance.new("ClickDetector")
+			cd.MaxActivationDistance = 1000
+			cd.Parent = plane
+			plane.Parent = folder
+
+			table.insert(conns, cd.MouseClick:Connect(function()
+				if chosen then return end
+				chosen = true
+				BattleEvents.SetTile:FireServer({ unitId = data.unitId, tileX = tx, tileY = ty })
+				print(string.format("[BVC] Siege tile chosen: %s -> (%d,%d)", data.unitId, tx, ty))
+				cleanup()
+			end))
+		end
+	end
+
+	-- Turn-based: no timer. Highlights + click pads stay until the player picks a tile.
+end)
+
+-- ObjectDamage (2026-10-26): map-object damage feedback. Shows a floating damage
+-- number + impact flash on the hit tile, and when focus=true (the FIRST unit hit of
+-- the interaction) pans the camera to the tile -- the same treatment attacks/skills
+-- get, so an off-screen object hit (e.g. a Ballista bolt striking enemies across the
+-- map) is actually visible. Server fires this from ObjectEffectService / explosions.
+BattleEvents.ObjectDamage.OnClientEvent:Connect(function(data)
+	if type(data) ~= "table" then return end
+	local tx, ty = data.tileX, data.tileY
+	if type(tx) ~= "number" or type(ty) ~= "number" then return end
+	local worldPos = tileToWorld(tx, ty)
+	if type(data.amount) == "number" and data.amount > 0 then
+		showDamageText(worldPos, data.amount, false)
+	end
+	if VFXController then pcall(VFXController.DamageImpact, worldPos) end
+	if data.focus then
+		if CameraController.IsScriptedView() then
+			CameraController.ScriptedFocus(worldPos)
+		else
+			CameraController.SaveZoom()
+			CameraController.FocusActiveUnit(worldPos)
+			task.delay(1.5, function() CameraController.RestoreZoom() end)
+		end
+	end
 end)

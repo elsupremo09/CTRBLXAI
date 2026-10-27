@@ -55,6 +55,55 @@ local CombatResolver = {}
 -- Optional: TileEffectService injected at runtime (DI, mirrors CommandService/
 -- BattleCoordinator) so hit-quality can read the defender's active tile effect
 -- (e.g. Steam occupyEvasion). Wired in Main.server.lua during init.
+local _unitsProvider = nil
+function CombatResolver.SetUnitsProvider(fn) _unitsProvider = fn end
+
+-- BD-014 Guardian Mantle (2026-10-24): a Guarding ally wearing it shares 50% of its Guard damage
+-- reduction with adjacent (Chebyshev 1) same-side units, whether or not they are Guarding. Returns
+-- the best such share for `defender` (0 if none). Uses the injected units provider (mirrors
+-- StatusService.SetAuraUnitsProvider) so ApplyOutcome's signature stays untouched.
+-- SUP-011 Guardian Standard (2026-10-27): a living same-side device with auraSpec.guardBonus
+-- adds that many Guard percentage points while the defender is Guarding (best one counts).
+local function guardAuraBonus(defender)
+	if not defender or not defender.tileX or not _unitsProvider then return 0 end
+	local units = _unitsProvider()
+	if type(units) ~= "table" then return 0 end
+	local best = 0
+	for _, u in ipairs(units) do
+		local a = u.auraSpec
+		if u ~= defender and u.isAlive and a and a.guardBonus and u.side == defender.side and u.tileX
+			and math.max(math.abs(u.tileX - defender.tileX), math.abs(u.tileY - defender.tileY)) <= (a.radius or 0) then
+			best = math.max(best, a.guardBonus)
+		end
+	end
+	return best
+end
+
+local function guardianMantleShare(defender)
+	if not defender or not defender.tileX or not _unitsProvider then return 0 end
+	local units = _unitsProvider()
+	if type(units) ~= "table" then return 0 end
+	local best = 0
+	for _, ally in ipairs(units) do
+		if ally ~= defender and ally.isAlive and ally.side == defender.side
+			and ally.tileX and ally.tileY
+			and math.max(math.abs(ally.tileX - defender.tileX), math.abs(ally.tileY - defender.tileY)) == 1 then
+			local guarding = false
+			if ally.statusInstances then
+				for _, inst in ipairs(ally.statusInstances) do
+					if inst.id == "Guard" then guarding = true; break end
+				end
+			end
+			if guarding and ArmorPassiveService.GetGuardAllyProtection(ally) then
+				local allyMit = math.min(GameConstants.GUARD_MITIGATION + (ally.guardBonus or 0), GameConstants.GUARD_CAP)
+				local share = allyMit * 0.50
+				if share > best then best = share end
+			end
+		end
+	end
+	return best
+end
+
 local _tileEffectService = nil
 function CombatResolver.SetTileEffectService(tes)
 	_tileEffectService = tes
@@ -160,11 +209,57 @@ end
 
 -- Weather passive element-damage modifier (Rain/Heatwave/Dark Eclipse/Holy Aurora/
 -- Strong Wind). Injected to avoid a require cycle. nil-safe -> multiplier 1.0.
+-- RESOLUTION COUNTER (2026-10-27, Countermeasure Turret "one interception per resolution").
+-- CommandService calls BeginResolution at the start of every command / channel activation.
+local _resolutionId = 0
+function CombatResolver.BeginResolution()
+	_resolutionId += 1
+end
+
+-- COUNTERMEASURE TURRET (DEP-018): a living device with auraSpec.interceptLeft > 0 blocks a
+-- hostile RANGED hit (attacker carries a weapon projectile type -- the same rule Mirror Mail's
+-- projectile reflect uses) aimed at a unit of its side within its radius. At most one block
+-- per turret per resolution. Item hits (timed / placed-object shots) are not intercepted.
+local function tryIntercept(outcome, target, attacker)
+	if not (attacker and target and attacker ~= target and attacker.weaponProjectileType ~= nil) then return false end
+	if outcome.skillId and string.sub(tostring(outcome.skillId), 1, 5) == "ITEM-" then return false end
+	if not (target.tileX and _unitsProvider) then return false end
+	local units = _unitsProvider()
+	if type(units) ~= "table" then return false end
+	for _, u in ipairs(units) do
+		local a = u.auraSpec
+		if u.isAlive and a and (a.interceptLeft or 0) > 0 and u.side == target.side and attacker.side ~= u.side
+			and u.tileX and u._lastIntercept ~= _resolutionId
+			and math.max(math.abs(u.tileX - target.tileX), math.abs(u.tileY - target.tileY)) <= (a.radius or 0) then
+			a.interceptLeft -= 1
+			u._lastIntercept = _resolutionId
+			target._blockedRes = _resolutionId  -- read by WasLastHitBlocked (user ruling 2026-10-27)
+			print(string.format("[CombatResolver] %s intercepts %s's shot at %s | %d left",
+				tostring(u.name), tostring(attacker.name), tostring(target.name), a.interceptLeft))
+			return true
+		end
+	end
+	return false
+end
+
+-- User ruling 2026-10-27: a blocked shot does NOTHING -- callers skip the hit's after-effects
+-- (weapon RT delay, knockback / pull) when the LAST hit on this target in the current
+-- resolution was blocked. A later landed hit on the same target clears the flag.
+function CombatResolver.WasLastHitBlocked(target)
+	return target ~= nil and target._blockedRes ~= nil and target._blockedRes == _resolutionId
+end
+
 local _weatherService = nil
 function CombatResolver.SetWeatherService(ws)
 	_weatherService = ws
 end
-local function weatherElementMult(element)
+local function weatherElementMult(element, defender)
+	-- Weather shield (2026-10-27, Weather Stabilizer + Totem): a protected defender takes no
+	-- weather change to element damage.
+	if defender and _weatherService and _weatherService.IsUnitShielded
+		and _weatherService.IsUnitShielded(defender, _unitsProvider and _unitsProvider() or nil) then
+		return 1.0
+	end
 	if _weatherService and _weatherService.GetElementDamageMultiplier then
 		return _weatherService.GetElementDamageMultiplier(element)
 	end
@@ -190,14 +285,37 @@ local function extractElement(tags)
 	return "Physical"
 end
 
+-- Exported wrapper (2026-10-24, all-tile targeting): lets CommandService derive a
+-- skill's element from its tags the SAME way resolution does, so a widened skill
+-- committed on an EMPTY tile can fire the terrain reaction (ResolveElementOnTile)
+-- with the correct element. Single source of truth — never duplicate ELEMENT_SET.
+function CombatResolver.ExtractSkillElement(skillDef)
+	return extractElement(skillDef and skillDef.tags)
+end
+
 -- Returns true if unit has the Undead race tag
 local function isUndead(unit)
+	-- The Undead STATUS (e.g. raised by a Chaos Necromancer) counts the same as an Undead race.
+	for _, inst in ipairs(unit.statusInstances or {}) do
+		if inst.id == "Undead" then return true end
+	end
 	if not unit.raceId then return false end
 	local raceEntry = RaceData.GetRace(unit.raceId)
 	if raceEntry and raceEntry.tags then
 		for _, tag in ipairs(raceEntry.tags) do
 			if tag == "Undead" then return true end
 		end
+	end
+	return false
+end
+-- Public read-only alias (2026-10-26, DAM-009 Holy Water item + its target validation).
+CombatResolver.IsUndead = isUndead
+-- Generic race-tag check (2026-10-26, CON-016 Magnetic Snare "Mechanical" targets).
+function CombatResolver.HasRaceTag(unit, tag)
+	if not (unit and unit.raceId) then return false end
+	local raceEntry = RaceData.GetRace(unit.raceId)
+	for _, t in ipairs((raceEntry and raceEntry.tags) or {}) do
+		if t == tag then return true end
 	end
 	return false
 end
@@ -219,6 +337,42 @@ end
 
 local function applyElementInteractions(defender, element, finalDamage)
 	local removed = {}
+
+	-- Element wards (2026-10-26): single chokepoint for basic attacks and skills / item damage.
+	--   * Elemental Ward status (SUP-016): x0.75 vs the warded element.
+	--   * Elemental Ward Totem aura (DEP-013): x0.80 vs its picked element, for same-side
+	--     units in its radius. Several totems on the same element do not stack (the
+	--     strongest applies).
+	-- Ruling 10 (different effects are TOTALED): status + totem = 25% + 20% = 45% less.
+	do
+		local cut = 0
+		-- Firebreak zone (user ruling 2026-10-27): everyone standing in it takes half Fire damage.
+		-- Adds into the same total as the wards (capped at 100% by the max(0, ...) below).
+		if element == "Fire" and StatusService.IsFireGuarded and StatusService.IsFireGuarded(defender) then
+			cut += 0.5
+		end
+		local _ward = StatusService.HasStatus(defender, "Elemental Ward")
+		if type(_ward) == "table" and _ward.wardElement and element == _ward.wardElement then
+			local _wdef = GameConstants.STATUSES["Elemental Ward"]
+			cut += 1 - ((_wdef and _wdef.elementWardMult) or 0.75)
+		end
+		local units = _unitsProvider and _unitsProvider() or nil
+		if type(units) == "table" and defender.tileX then
+			local best = 0
+			for _, u in ipairs(units) do
+				local a = u.auraSpec
+				if u ~= defender and u.isAlive and a and a.wardMult and a.wardElement == element
+					and u.side == defender.side and u.tileX
+					and math.max(math.abs(u.tileX - defender.tileX), math.abs(u.tileY - defender.tileY)) <= (a.radius or 0) then
+					best = math.max(best, 1 - a.wardMult)
+				end
+			end
+			cut += best
+		end
+		if cut > 0 then
+			finalDamage = math.max(0, math.round(finalDamage * math.max(0, 1 - cut)))
+		end
+	end
 
 	local hasWet    = StatusService.HasStatus(defender, "Wet")
 	local hasFrozen = StatusService.HasStatus(defender, "Frozen")
@@ -324,6 +478,21 @@ local function calcHitQuality(attackerDex, defenderAgi, attackerUnit, defenderUn
 	if defenderUnit then
 		evasiveness = evasiveness + TraitEffectService.GetEvasivenessModifier(defenderUnit)
 		evasiveness = evasiveness + (defenderUnit.gearDerived and defenderUnit.gearDerived.evasiveness or 0)
+		-- FT-009 Retreat Boots: +20% Evasiveness while the retreat window is active (armed at move-end
+		-- when every step strictly increased distance from the nearest enemy; cleared at the wearer's
+		-- next turn via OnTurnStart). Fraction, same units as the trait evasiveness fold. Pure READ ->
+		-- safe inside Resolve* that AI preview calls.
+		evasiveness = evasiveness + ArmorPassiveService.GetRetreatEvasivenessBonus(defenderUnit)
+		-- Evasion Surge (reworked 2026-10-26): +0.30 evasiveness while the defender holds >=1 charge.
+		-- Pure READ (safe in AI preview); the charge is CONSUMED per incoming hit in ApplyOutcome.
+		if (defenderUnit._evasionSurgeStacks or 0) > 0 then
+			evasiveness = evasiveness + 0.30
+		end
+		-- Evasion (weapon native, Parrying Dagger): +0.15 final Evasiveness (DB "+15% final
+		-- Evasiveness", flat additive to match the project's other evasiveness folds + the
+		-- PrecisionStrike +0.15 ruling). Pure READ -> safe in AI preview. Defensive: applies to
+		-- EVERY incoming attack (basic and skill) since it modifies the defender's own stat.
+		evasiveness = evasiveness + WeaponPassiveService.GetEvasivenessBonus(defenderUnit)
 	end
 	-- Blind: Final Precision = Precision × 0.50 (DB: elements_statuses)
 	if attackerUnit and StatusService.HasStatus(attackerUnit, "Blind") then
@@ -338,7 +507,9 @@ local function calcHitQuality(attackerDex, defenderAgi, attackerUnit, defenderUn
 		for _, inst in ipairs(attackerUnit.statusInstances or {}) do
 			local sdef = GameConstants.STATUSES[inst.id]
 			if sdef and sdef.hitQualityMod then
-				hq = hq + sdef.hitQualityMod
+				-- Debuff Resistance (ruling 11, 2026-10-26): a turn-based debuff's value is
+				-- scaled by the resistance stored on the instance at application (Cursed).
+				hq = hq + sdef.hitQualityMod * (inst.valueScale or 1)
 			end
 		end
 	end
@@ -439,7 +610,9 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	local ap = GameConstants.CalcAttackPower(weaponDamage, aStats.STR)
 	-- Defense Power = Defense x (1 + VIT / 300) (DB core_stats id 31/5); Defense =
 	-- weapon + off-hand + armor Defense (core_stats id 30). Was hard-coded 0.
-	local dp = GameConstants.CalcDefensePower(GameConstants.GetUnitDefense(defender), dStats.VIT)
+	-- Fortify (weapon native, Spear): add the defender's accumulated on-hit flat Defense (0 without
+	-- the passive / before any hit this turn) to its equipment Defense before the defense-power curve.
+	local dp = GameConstants.CalcDefensePower(GameConstants.GetUnitDefense(defender) * StatusService.GetEquipDefenseMultiplier(defender) + WeaponPassiveService.GetFortifyFlatDefense(defender), dStats.VIT)
 	local effectiveDefense = calcEffectiveDefense(ap, dp)
 	-- Slice 5 buff: Rune Ward raises defender's effective Defense (defenseMult).
 	effectiveDefense = effectiveDefense * StatusService.GetDefenseMultiplier(defender)
@@ -513,6 +686,53 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 		* StatusService.GetDamageReceivedMultiplier(defender))) -- Hold the Line x0.85 (2026-10-07)
 	-- Weapon passives (Group 1): Backstab (rear +50%) / Executioner (<25% HP +30%).
 	finalDamage = math.max(0, math.round(finalDamage * WeaponPassiveService.ConditionalDamageMultiplier(attacker, defender, facingZone)))
+	-- HighGround (weapon native, Great Bow): +35% when attacking from strictly higher elevation.
+	-- Positional offensive bonus (pre-guard, like Backstab above). Hybrid: basic + skill.
+	do
+		local hgBonus = WeaponPassiveService.GetHighGroundBonus(attacker)
+		if hgBonus > 0 then
+			local aElev = GameConstants.GetElevation(attacker.tileX, attacker.tileY)
+			local dElev = GameConstants.GetElevation(defender.tileX, defender.tileY)
+			if aElev > dElev then
+				finalDamage = math.max(0, math.round(finalDamage * (1 + hgBonus)))
+			end
+		end
+	end
+
+	-- Charge (weapon native, Lance): +6% final damage per tile the attacker moved THIS TURN before
+	-- this attack (DB "+6% damage per tile moved this turn"). BASIC-ATTACK ONLY (not in ResolveSkill).
+	-- Reads the per-turn tiles accumulator via the getter; 0 without Charge or without prior movement.
+	do
+		local chargeBonus = WeaponPassiveService.GetChargeDamageBonus(attacker)
+		if chargeBonus > 0 then
+			finalDamage = math.max(0, math.round(finalDamage * (1 + chargeBonus)))
+		end
+	end
+
+	-- FT-008 Skirmisher Greaves: after moving >=3 path-cost this turn, the NEXT direct damage
+	-- ACTION gains +15% final damage -- the WHOLE action, every hit of a multi-hit swing, not just
+	-- the first (design ruling 2026-10-25: "next attack" = next action, not next hit). Pure READ
+	-- here (safe inside Resolve* that AI preview calls); the window is marked used ONCE at the END
+	-- of the action on the real path (CommandService: after the Dual Strike loop for Basic Attacks,
+	-- at the skill shared-tail for Skills), NOT per-hit here -- so all hits of the one action read
+	-- not-yet-used and get +15%, while a separate later action this turn sees it used. Re-arms at
+	-- OnTurnStart.
+	if attacker and not attacker._armorSkirmishUsed then
+		local skirmish = ArmorPassiveService.GetMoveSkirmishDamageBonus(attacker)
+		if skirmish > 0 then
+			finalDamage = math.max(0, math.round(finalDamage * (1 + skirmish)))
+		end
+	end
+
+	-- FT-010 Vanguard Greaves: incoming DIRECT damage -15% while the window is active (armed at
+	-- move-end when the defender ended its Move adjacent to an enemy; cleared at its next turn
+	-- start via OnTurnStart). Pure read -> safe inside Resolve* (AI preview reflects it too).
+	if defender._armorVanguardDrActive then
+		local vg = ArmorPassiveService.GetMoveVanguardConfig(defender)
+		if vg then
+			finalDamage = math.max(0, math.round(finalDamage * (1 - vg.damageReduction)))
+		end
+	end
 
 	-- Step 8: Guard and other final mitigation
 	-- Check Guard via status instances (Guard is now a proper status)
@@ -522,10 +742,27 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 			if inst.id == "Guard" then hasGuard = true; break end
 		end
 	end
+	local guardMitigatedAmount = 0
+	local wasGuarding = false
 	if hasGuard and not WeaponPassiveService.BypassesGuard(attacker) then
+		wasGuarding = true
+		-- BD-006 Layered Lamellar: successive-hit DR (0 until OnGuardHitReceived accrues hits) adds
+		-- into the Guard mitigation, still clamped to GUARD_CAP. 0 for units without the passive.
 		local mitigation = GameConstants.GUARD_MITIGATION + (defender.guardBonus or 0)
+			+ ArmorPassiveService.GetGuardLayeredBonus(defender)
+			+ guardAuraBonus(defender)  -- SUP-011 Guardian Standard
 		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
+		local preGuard = finalDamage
 		finalDamage = math.max(0, math.round(finalDamage * (1 - mitigation)))
+		guardMitigatedAmount = math.max(0, preGuard - finalDamage)
+	end
+	-- BD-014 Guardian Mantle: apply any adjacent-ally shared Guard DR (multiplicative, after own
+	-- guard; runs whether or not this unit is Guarding).
+	do
+		local gmShare = guardianMantleShare(defender)
+		if gmShare > 0 then
+			finalDamage = math.max(0, math.round(finalDamage * (1 - gmShare)))
+		end
 	end
 
 	-- Step 9: Petrify damage reduction
@@ -547,9 +784,20 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 		attackElement = "Fire"
 	end
 
+	-- Attunement (weapon native, Crystal): +25% elemental damage dealt (applies when the attack
+	-- element is elemental; in the element section like the terrain-element bonus). Hybrid: basic + skill.
+	do
+		local atBonus = WeaponPassiveService.GetAttunementBonus(attacker, attackElement)
+		if atBonus > 0 then
+			finalDamage = math.max(0, math.round(finalDamage * (1 + atBonus)))
+		end
+	end
+
 	-- Step 6b: Terrain occupy bonus — attacker's tile element bonus
 	-- Flight bypasses terrain bonuses
-	if not StatusService.HasStatus(attacker, "Flight") then
+	-- An item-owned timed hit (isItemSource, user ruling 2026-10-27) stands on no tile of its
+	-- own, so it gets no terrain occupy bonus.
+	if not StatusService.HasStatus(attacker, "Flight") and not attacker.isItemSource then
 		local terrainBonus = GameConstants.GetTerrainOccupyBonus(
 			GameConstants.GetTerrainId(attacker.tileX, attacker.tileY),
 			attackElement
@@ -574,7 +822,7 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 
 	finalDamage = applyElementInteractions(defender, attackElement, finalDamage)
 	-- Weather passive element modifier (Rain Fire-25%/Water+25%, Heatwave, etc.).
-	finalDamage = math.max(0, math.round(finalDamage * weatherElementMult(attackElement)))
+	finalDamage = math.max(0, math.round(finalDamage * weatherElementMult(attackElement, defender)))
 
 	return {
 		type           = "Damage",
@@ -591,6 +839,8 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 		weaponDrainFrac = WeaponPassiveService.DrainFraction(attacker), -- Drain (Group 1)
 		element        = attackElement,
 		sourceUnitId   = attacker.id,
+		guardMitigatedAmount = guardMitigatedAmount,  -- armor Guard on-hit reactions (2026-10-24)
+		wasGuarding    = wasGuarding,
 	}
 end
 
@@ -601,13 +851,27 @@ end
 -- SHARED PRE-DEFENSE POWER (used by ResolveSkill/ResolveHealing AND the unit
 -- inspector's raw-damage display, so the shown number can never drift from
 -- real combat). Skill power = weapon attack power x skill power multiplier.
-function CombatResolver.EstimateSkillPower(attacker, skillDef)
+function CombatResolver.EstimateSkillPower(attacker, skillDef, statOverride)
 	local aStats = attacker.effectiveStats or {}
 	local weaponDamage = attacker.weaponDamage or 10
 	local int = aStats.INT or 10
+	-- ITEM DAMAGE (2026-10-26): a consumable supplies a self-contained flat Power value
+	-- (e.g. "Fire Power = 18 + 0.40×IL + 0.35×INT"), already computed by ItemEffectService.
+	-- It is NOT weapon-scaled and already bakes in its own IL/stat scaling, so return it
+	-- directly and skip the Weapon-Attack-Power base and the Skill Potency multiply (either
+	-- would double-scale). Downstream ResolveSkill still runs Defense, element resistance,
+	-- and race/doctrine/trait modifiers, so item damage obeys the same resolution rules.
+	if skillDef.flatPower ~= nil then
+		return skillDef.flatPower
+	end
 	local sp = weaponDamage * (skillDef.power or 1.0)
+	-- Stat-scaling augment (AGI/DEX/INT/LUK/VIT-SCALING, 2026-10-24): redirect the
+	-- attack-power scaling stat to the augment's chosen stat (authored intent). nil → STR
+	-- as before (backward compatible; other callers pass no override).
 	if skillDef.inheritStr then
-		sp = GameConstants.CalcAttackPower(sp, aStats.STR)
+		sp = GameConstants.CalcAttackPower(sp, statOverride and (aStats[statOverride] or aStats.STR) or aStats.STR)
+	elseif statOverride then
+		sp = GameConstants.CalcAttackPower(sp, aStats[statOverride] or 10)
 	end
 	-- Apply the authored Skill Potency Multiplier = 1 + INT/(200+INT) ONLY to skills whose
 	-- DB formula declares it (POTENCY_DECLARED, built above). This fixes the Fire Bolt
@@ -632,9 +896,26 @@ function CombatResolver.EstimateSkillPower(attacker, skillDef)
 	return sp
 end
 
+-- Dark Restoration card power (DB SKL-DARK-RESTORATION Power_Formula), shared by its heal and its
+-- damage so they can never drift: (12 + 0.30L + 0.35INT + Weapon Damage x 0.35) x Skill Potency.
+-- L = Effective Skill Level = main-hand item level (project convention).
+function CombatResolver.EstimateDarkRestorationPower(caster)
+	local int = (caster.effectiveStats and caster.effectiveStats.INT) or 10
+	local mainHand = caster.equipmentSlots and caster.equipmentSlots.MainHand
+	local level = (mainHand and mainHand.itemLevel) or 1
+	local potency = GameConstants.CalcSkillPotency(int) + (caster.gearDerived and caster.gearDerived.skillPotency or 0)
+	return (12 + 0.30 * level + 0.35 * int + (caster.weaponDamage or 10) * 0.35) * potency
+end
+
 -- Pre-target heal power (before the target's VIT heal efficiency).
 function CombatResolver.EstimateHealPower(caster, skillDef)
 	local int = (caster.effectiveStats and caster.effectiveStats.INT) or 10
+	if skillDef and skillDef.id == "SKL-DARK-RESTORATION" then
+		-- Its card formula, not the generic heal (UAT 2026-10-27 A3). Dark-skill race potency
+		-- bonus (Demon Infernal Pact) applies like any Dark-tagged heal.
+		return CombatResolver.EstimateDarkRestorationPower(caster)
+			* RacePassiveService.GetSkillPotencyMultiplier(caster, skillDef.tags, int)
+	end
 	if skillDef and skillDef.isMenderHeal then
 		-- Authored Mender heal: (10 + 0.20L + 0.40 x Mender INT) x Skill Potency
 		local L = caster.level or 1
@@ -662,12 +943,28 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	local aStats = attacker.effectiveStats
 	local dStats = defender.effectiveStats
 
+	-- Augment pre-damage calc (2026-10-24 augment fix): OnDamageCalculation was defined but
+	-- never called, so stat-scaling / element-conversion / conditional-amplifier / armor-
+	-- piercing augments did nothing. Wire it here. nil-safe identity when no augments.
+	local _augCalc = { damageMultiplier = 1.0 }
+	if skillDef and skillDef.id and AugmentEffectService and AugmentEffectService.OnDamageCalculation then
+		local _augIds = AugmentEffectService.GetAugmentsForSkill(attacker, skillDef.id)
+		if _augIds and #_augIds > 0 then
+			_augCalc = AugmentEffectService.OnDamageCalculation(attacker, defender, skillDef, _augIds) or _augCalc
+		end
+	end
+
 	-- Skill Power = Weapon Attack Power × power multiplier (shared helper)
-	local sp = CombatResolver.EstimateSkillPower(attacker, skillDef)
+	local sp = CombatResolver.EstimateSkillPower(attacker, skillDef, _augCalc.statOverride)
 
 	-- Defense Power from real equipment Defense (core_stats id 30/31). Was hard-coded 0.
-	local dp = GameConstants.CalcDefensePower(GameConstants.GetUnitDefense(defender), dStats.VIT)
+	-- Fortify (weapon native, Spear): add the defender's accumulated on-hit flat Defense (skill path).
+	local dp = GameConstants.CalcDefensePower(GameConstants.GetUnitDefense(defender) * StatusService.GetEquipDefenseMultiplier(defender) + WeaponPassiveService.GetFortifyFlatDefense(defender), dStats.VIT)
 	local effectiveDefense = calcEffectiveDefense(sp, dp)
+	-- Augment armor-piercing (2026-10-24): ignore a fraction of effective Defense.
+	if _augCalc.armorPiercing and _augCalc.armorPiercing > 0 then
+		effectiveDefense = effectiveDefense * (1 - _augCalc.armorPiercing)
+	end
 	-- Slice 5 buff: Rune Ward raises defender's effective Defense (defenseMult).
 	effectiveDefense = effectiveDefense * StatusService.GetDefenseMultiplier(defender)
 	-- Phase 3: Determined / Coward -- Defense +/-30% while defender below HP threshold.
@@ -702,11 +999,15 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	-- Combat Fortune: LUK difference modifies damage (step 7 in pipeline)
 	local fortuneMod = GameConstants.CalcCombatFortune(aStats.LUK, dStats.LUK)
 
-	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod * fortuneMod))
+	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod * fortuneMod * (_augCalc.damageMultiplier or 1.0)))
 
 	-- Race passive modifiers (Slice 4F)
 	-- Extract element from skill tags (Phase 3)
 	local skillElement = extractElement(skillDef.tags)
+	-- Augment element conversion (2026-10-24): override the skill's damage element.
+	if _augCalc.elementOverride then
+		skillElement = _augCalc.elementOverride
+	end
 	-- Ignite (PAS-037, Group 2): an otherwise-Physical SKILL executes as Fire (DB:
 	-- "Basic Attack or Skill"). An authored-element skill keeps its own element, so the
 	-- skill still wins on a clash (user ruling 2026-10-23).
@@ -736,7 +1037,21 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	-- (per DB id 33 same-category additive); applied as a (1 + pct) multiplier on the
 	-- skill-potency slot, consistent with race/doctrine potency folds above.
 	local traitSkillPotency = 1 + TraitEffectService.GetSkillPotencyModifier(attacker)
-	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod * docSkillPotency * raceSkillPotency * traitSkillPotency * docDealtMod * docRecvMod * traitDealtMod * traitRecvMod))
+	-- SkillPotency (weapon native, Orb): +8% Skill damage dealt. Multiplicative on final skill
+	-- damage alongside the doctrine/race/trait potency mods. 1 without the passive. Pure READ.
+	local weaponSkillPotency = WeaponPassiveService.GetSkillDamageMultiplier(attacker)
+	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod * docSkillPotency * raceSkillPotency * traitSkillPotency * weaponSkillPotency * docDealtMod * docRecvMod * traitDealtMod * traitRecvMod))
+	-- HighGround (weapon native, Great Bow): +35% from strictly higher elevation (skill path).
+	do
+		local hgBonus = WeaponPassiveService.GetHighGroundBonus(attacker)
+		if hgBonus > 0 then
+			local aElev = GameConstants.GetElevation(attacker.tileX, attacker.tileY)
+			local dElev = GameConstants.GetElevation(defender.tileX, defender.tileY)
+			if aElev > dElev then
+				finalDamage = math.max(0, math.round(finalDamage * (1 + hgBonus)))
+			end
+		end
+	end
 	-- Minion Specialist / Skill Issues (2026-10-23): summon outgoing-damage multiplier from
 	-- the owner's trait (1 when absent / not a modified summon), on the skill path too.
 	if attacker.summonDamageMult and attacker.summonDamageMult ~= 1 then
@@ -748,6 +1063,31 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		* StatusService.GetDamageReceivedMultiplier(defender) -- Hold the Line x0.85 (2026-10-07)
 		* (skillDef.potencyBonusMult or 1))) -- Mana Surge +10% potency, snapshotted at commit
 
+	-- FT-008 Skirmisher Greaves: after moving >=3 path-cost this turn, the NEXT direct damage
+	-- ACTION gains +15% final damage -- the WHOLE action, every hit of a multi-hit swing, not just
+	-- the first (design ruling 2026-10-25: "next attack" = next action, not next hit). Pure READ
+	-- here (safe inside Resolve* that AI preview calls); the window is marked used ONCE at the END
+	-- of the action on the real path (CommandService: after the Dual Strike loop for Basic Attacks,
+	-- at the skill shared-tail for Skills), NOT per-hit here -- so all hits of the one action read
+	-- not-yet-used and get +15%, while a separate later action this turn sees it used. Re-arms at
+	-- OnTurnStart.
+	if attacker and not attacker._armorSkirmishUsed then
+		local skirmish = ArmorPassiveService.GetMoveSkirmishDamageBonus(attacker)
+		if skirmish > 0 then
+			finalDamage = math.max(0, math.round(finalDamage * (1 + skirmish)))
+		end
+	end
+
+	-- FT-010 Vanguard Greaves: incoming DIRECT damage -15% while the window is active (armed at
+	-- move-end when the defender ended its Move adjacent to an enemy; cleared at its next turn
+	-- start via OnTurnStart). Pure read -> safe inside Resolve* (AI preview reflects it too).
+	if defender._armorVanguardDrActive then
+		local vg = ArmorPassiveService.GetMoveVanguardConfig(defender)
+		if vg then
+			finalDamage = math.max(0, math.round(finalDamage * (1 - vg.damageReduction)))
+		end
+	end
+
 	-- Step 8: Guard and other final mitigation
 	local hasGuardSkill = false
 	if defender.statusInstances then
@@ -755,10 +1095,27 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 			if inst.id == "Guard" then hasGuardSkill = true; break end
 		end
 	end
+	local guardMitigatedAmount = 0
+	local wasGuarding = false
 	if hasGuardSkill then
+		wasGuarding = true
+		-- BD-006 Layered Lamellar: successive-hit DR (0 until OnGuardHitReceived accrues hits) adds
+		-- into the Guard mitigation, still clamped to GUARD_CAP. 0 for units without the passive.
 		local mitigation = GameConstants.GUARD_MITIGATION + (defender.guardBonus or 0)
+			+ ArmorPassiveService.GetGuardLayeredBonus(defender)
+			+ guardAuraBonus(defender)  -- SUP-011 Guardian Standard
 		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
+		local preGuard = finalDamage
 		finalDamage = math.max(0, math.round(finalDamage * (1 - mitigation)))
+		guardMitigatedAmount = math.max(0, preGuard - finalDamage)
+	end
+	-- BD-014 Guardian Mantle: apply any adjacent-ally shared Guard DR (multiplicative, after own
+	-- guard; runs whether or not this unit is Guarding).
+	do
+		local gmShare = guardianMantleShare(defender)
+		if gmShare > 0 then
+			finalDamage = math.max(0, math.round(finalDamage * (1 - gmShare)))
+		end
 	end
 
 	-- Step 9: Petrify damage reduction
@@ -773,7 +1130,9 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 
 	-- Step 6b: Terrain occupy bonus — attacker's tile element bonus
 	-- Flight bypasses terrain bonuses
-	if not StatusService.HasStatus(attacker, "Flight") then
+	-- An item-owned timed hit (isItemSource, user ruling 2026-10-27) stands on no tile of its
+	-- own, so it gets no terrain occupy bonus.
+	if not StatusService.HasStatus(attacker, "Flight") and not attacker.isItemSource then
 		local terrainBonusSkill = GameConstants.GetTerrainOccupyBonus(
 			GameConstants.GetTerrainId(attacker.tileX, attacker.tileY),
 			skillElement or "Physical"
@@ -782,6 +1141,14 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 			print(string.format("[CombatResolver] Terrain occupy bonus (skill): %s ×%.2f",
 				GameConstants.GetTerrainId(attacker.tileX, attacker.tileY), terrainBonusSkill))
 			finalDamage = math.max(0, math.round(finalDamage * terrainBonusSkill))
+		end
+	end
+
+	-- Attunement (weapon native, Crystal): +25% elemental damage dealt (skill path; element section).
+	do
+		local atBonus = WeaponPassiveService.GetAttunementBonus(attacker, skillElement)
+		if atBonus > 0 then
+			finalDamage = math.max(0, math.round(finalDamage * (1 + atBonus)))
 		end
 	end
 
@@ -798,7 +1165,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 
 	finalDamage = applyElementInteractions(defender, skillElement, finalDamage)
 	-- Weather passive element modifier (Rain Fire-25%/Water+25%, Heatwave, etc.).
-	finalDamage = math.max(0, math.round(finalDamage * weatherElementMult(skillElement)))
+	finalDamage = math.max(0, math.round(finalDamage * weatherElementMult(skillElement, defender)))
 
 	-- Pure-debuff detection: a skill whose intent is the status itself, not
 	-- damage (power 0/nil and no STR inheritance). Its authored status must
@@ -812,6 +1179,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		type           = "Damage",
 		targetId       = defender.id,
 		skillId        = skillDef.id or nil,
+		minRiderDamage = skillDef.minRiderDamage,  -- DAM-017 Venom Repeater (2026-10-27)
 		attackPower    = sp,
 		defensePower   = dp,
 		rawDamage      = rawDamage,
@@ -825,6 +1193,8 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		statusDurationCt = skillDef.statusDurationCt or nil, -- skill-authored CT duration (2026-10-07)
 		element        = skillElement,
 		sourceUnitId   = attacker.id,
+		guardMitigatedAmount = guardMitigatedAmount,  -- armor Guard on-hit reactions (2026-10-24)
+		wasGuarding    = wasGuarding,
 	}
 end
 
@@ -1018,9 +1388,28 @@ end
 -- Callers that have the attacker unit should pass it.
 --------------------------------------------------
 
+-- REACTION WINDOW (DB TRG-004, Locked): CommandService opens a window while one action resolves
+-- and records every unit that action hits for direct damage > 0, measured AFTER defense/Guard and
+-- BEFORE shields ("Shield-soaked damage counts"). Counter hits (isCounter) and passive follow-ups
+-- (isFollowUp) are never recorded. nil = no window open (AI preview never calls ApplyOutcome).
+local _hitRecorder = nil
+function CombatResolver.SetHitRecorder(fn)
+	_hitRecorder = fn
+end
+function CombatResolver.GetHitRecorder()
+	return _hitRecorder
+end
+
 function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	if outcome.type == "Healing" then
-		local actual = UnitSchema_ApplyHealing(outcome.finalHealing, target)
+		local healAmt = outcome.finalHealing
+		-- Darkened Ground augment (2026-10-25): a unit standing on Darkened Ground receives
+		-- reduced healing. Applied here at the skill-heal chokepoint (the primary heal path);
+		-- regen/HoT ticks are a separate path and not covered by this hook (flagged).
+		if _tileEffectService and _tileEffectService.GetHealingMultiplier and target.tileX then
+			healAmt = math.round(healAmt * _tileEffectService.GetHealingMultiplier(target.tileX, target.tileY))
+		end
+		local actual = UnitSchema_ApplyHealing(healAmt, target)
 		print(string.format(
 			"[CombatResolver] %s healed for %d | HP: %d/%d",
 			target.name, actual, target.currentHp, target.maxHp
@@ -1030,6 +1419,63 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 
 	-- Damage outcome
 	assert(outcome.type == "Damage", "ApplyOutcome: unsupported outcome type.")
+
+	-- Countermeasure Turret block (2026-10-27): the blocked hit deals nothing.
+	if tryIntercept(outcome, target, attacker) then
+		outcome.finalDamage = 0
+		outcome.intercepted = true
+		return 0, nil
+	end
+	target._blockedRes = nil  -- this hit landed
+
+	-- Augment damage-taken reduction (2026-10-25): Fortify on Kill (_fortifyMult, persists a
+	-- round) and Retaliation Guard (_retaliationGuard, next incoming hit only). Applied HERE in
+	-- ApplyOutcome (the real-hit chokepoint, never the AI preview path), and Retaliation is
+	-- consumed on this hit. Both flags cleared at the holder's EndTurn.
+	if target._fortifyMult and target._fortifyMult ~= 1 then
+		outcome.finalDamage = math.max(0, math.round((outcome.finalDamage or 0) * target._fortifyMult))
+	end
+	if target._retaliationGuard and target._retaliationGuard ~= 1 then
+		outcome.finalDamage = math.max(0, math.round((outcome.finalDamage or 0) * target._retaliationGuard))
+		target._retaliationGuard = nil
+	end
+
+	-- Pre-hit HP captured for augment overkill math (2026-10-24). Overkill = the portion
+	-- of the uncapped skill damage that exceeded the target's remaining HP.
+	local _preHitHp = target.currentHp or 0
+
+	-- BD-009 Reprisal Coat CONSUME (2026-10-24): a committed Basic Attack / damage Skill by the
+	-- attacker spends its stored reprisal damage (flat), added to this hit, then cleared. Done
+	-- HERE in ApplyOutcome (real resolution only) -- NOT in ResolveBasicAttack/ResolveSkill, which
+	-- AI scoring/preview also call (that would drain the store without attacking). Consumed ONCE
+	-- per action: the first ApplyOutcome of a multi-target attack gets it, the rest see 0 (store
+	-- already cleared). Carries across turns, no cap (user ruling).
+	if attacker and attacker ~= target then
+		local _reprisal = ArmorPassiveService.ConsumeReprisalDamage(attacker)
+		if _reprisal and _reprisal > 0 then
+			outcome.finalDamage = (outcome.finalDamage or 0) + _reprisal
+			print(string.format("[CombatResolver] Reprisal Coat: %s adds %d stored damage", attacker.name, _reprisal))
+		end
+	end
+
+	-- BD-017 Ablative Shell (armor, 2026-10-24): while Guarding, refresh a Shield = 15% Max HP
+	-- BEFORE each incoming hit resolves (user ruling: fresh shield per hit). Uses the shield
+	-- subsystem; ApplyShield's replace-semantics make it "fresh" each hit; the hit below soaks
+	-- against it. FLAGGED: occupies the single shield pool (replaces any other active shield);
+	-- an unspent remainder lingers (~short) until the next hit refreshes it or it decays.
+	if outcome.wasGuarding and attacker ~= target then
+		local shieldPct = ArmorPassiveService.GetGuardShieldPercent(target)
+		if shieldPct > 0 then
+			local shieldHp = math.max(0, math.round((target.maxHp or 0) * shieldPct))
+			if shieldHp > 0 then
+				StatusService.ApplyShield(target, shieldHp, 1000, target.id)
+			end
+		end
+	end
+
+	if _hitRecorder and not outcome.isCounter and not outcome.isFollowUp then
+		_hitRecorder(target, attacker, outcome.finalDamage or 0)
+	end
 
 	local actual, shieldBroke, _shieldAbsorbed, _shieldMaxAtBreak, retributionDamage =
 		UnitSchema_ApplyDamage(outcome.finalDamage, target)
@@ -1082,6 +1528,14 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 
 	-- Phase 2: Check for damage-triggered status removal (e.g. Sleep)
 	StatusService.OnDamageReceived(target, actual)
+
+	-- Evasion Surge (reworked 2026-10-26): a direct-damage hit resolved against this target consumes
+	-- ONE evasion charge (the +0.30 evasiveness it granted applied to THIS hit in calcHitQuality).
+	-- Consumed only here in the real apply path (never in ResolveSkill AI preview). DoT / detonation
+	-- use raw ApplyDamage (not ApplyOutcome) so they correctly do NOT consume a charge.
+	if (target._evasionSurgeStacks or 0) > 0 then
+		target._evasionSurgeStacks = target._evasionSurgeStacks - 1
+	end
 
 	local statusApplied = nil
 	-- Pure-debuff skills (applyStatusUnconditional) land their status with no
@@ -1138,7 +1592,8 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- Phase 3: Element→status triggers (Fire→Burn, Water→Wet, Ice→Frozen, Poison→Poison)
 	-- Only fires if actual damage > 0 and target alive.
 	-- Skips if the same status was already applied by appliesStatus above.
-	if outcome.element and actual > 0 and target.isAlive then
+	if outcome.element and actual > 0 and target.isAlive
+		and (outcome.minRiderDamage == nil or actual >= outcome.minRiderDamage) then
 		applyElementStatusTriggers(outcome.sourceUnitId or "unknown", target, outcome.element, actual, statusApplied, attacker)
 	end
 
@@ -1179,6 +1634,33 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 						"[CombatResolver] %s Specialist: %s inflicts %s on %s",
 						sid, attacker.name, sid, target.name
 					))
+				end
+			end
+		end
+	end
+
+	-- ===== Perks & Flaws: Buff manipulation on hit (Purifier P-107 / Buff-Blind F-107) =====
+	-- Fires on basic attacks AND damaging skills (shared ApplyOutcome path), on a landed hit.
+	-- Purifier: dispel one random active buff from the target. Buff-Blind: grant the target one
+	-- random buff from the curated pool instead. Mutually independent (a unit has at most one).
+	if attacker and actual > 0 and target.isAlive then
+		if TraitEffectService.HasPurifier(attacker) then
+			local removed = StatusService.RemoveRandomBuff(target)
+			if removed then
+				print(string.format("[CombatResolver] Purifier: %s dispels %s from %s", attacker.name, removed, target.name))
+				if BattleVisualBroadcaster.UnitStateChanged then
+					BattleVisualBroadcaster.UnitStateChanged(target)
+				end
+			end
+		end
+		if TraitEffectService.HasBuffBlind(attacker) then
+			local pool = TraitEffectService.BUFF_BLIND_POOL
+			if pool and #pool > 0 then
+				local sid = pool[math.random(1, #pool)]
+				StatusService.ApplyStatus(target, sid, attacker.id)
+				print(string.format("[CombatResolver] Buff-Blind: %s grants %s to %s", attacker.name, sid, target.name))
+				if BattleVisualBroadcaster.UnitStateChanged then
+					BattleVisualBroadcaster.UnitStateChanged(target)
 				end
 			end
 		end
@@ -1230,6 +1712,20 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		local drainHeal = math.round(actual * outcome.weaponDrainFrac)
 		if drainHeal > 0 then
 			UnitSchema_ApplyHealing(drainHeal, attacker)
+		end
+	end
+
+	-- Fortify (weapon native, Spear): on a landed hit the ATTACKER accrues +20% of its Weapon Defense
+	-- as flat Defense (round). STACKS per hit within the turn (each ApplyOutcome hit adds once -- a
+	-- multi-target swing stacks); RESET at the wearer's next turn via WeaponPassiveService.OnTurnStart.
+	-- Fires on basic AND damaging skills (Hybrid) since both resolve here. Real-resolution only
+	-- (ApplyOutcome is never called in AI preview). Matches Drain's gating (actual>0, attacker alive).
+	if attacker and attacker ~= target and actual > 0 and attacker.isAlive then
+		local fortAdd = WeaponPassiveService.GetFortifyFlatDefensePerHit(attacker)
+		if fortAdd > 0 then
+			attacker._fortifyFlatDefense = (attacker._fortifyFlatDefense or 0) + fortAdd
+			print(string.format("[CombatResolver] Fortify: %s gains +%d flat Defense on hit (total +%d this turn)",
+				attacker.name, fortAdd, attacker._fortifyFlatDefense))
 		end
 	end
 
@@ -1332,14 +1828,23 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		end
 	end
 
-	-- Augment effects (Slice 4 — AugmentEffectService)
+	-- Augment effects (Slice 4 — AugmentEffectService). skillDef + overkill context added
+	-- 2026-10-24 so kill-trigger augments (Kill-Momentum-MP, Overkill-Splash) have the data
+	-- they need. skillDef resolved from the shared registry; nil for doctrine-only ids (those
+	-- augments simply no-op, guarded below).
 	if attacker and outcome.skillId and actual > 0 then
 		local augIds = AugmentEffectService.GetAugmentsForSkill(attacker, outcome.skillId)
 		if #augIds > 0 then
-			AugmentEffectService.OnDamageResolved(attacker, target, actual, nil, augIds, nil)
-			-- OnKill: if target died
+			local _augSkillDef = GameConstants.SKILLS and GameConstants.SKILLS[outcome.skillId] or nil
+			AugmentEffectService.OnDamageResolved(attacker, target, actual, _augSkillDef, augIds, nil, _shieldAbsorbed)
+			-- OnKill: if target died. ctx carries overkill (uncapped damage beyond lethal)
+			-- and the original hit damage so splash/MP-refund augments can compute.
 			if not target.isAlive then
-				AugmentEffectService.OnKill(attacker, target, nil, augIds)
+				local _overkill = math.max(0, (outcome.finalDamage or 0) - _preHitHp)
+				AugmentEffectService.OnKill(attacker, target, _augSkillDef, augIds, {
+					overkill = _overkill,
+					hitDamage = outcome.finalDamage or 0,
+				})
 			end
 		end
 	end
@@ -1407,6 +1912,87 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		end
 	end
 
+	-- ARMOR GUARD on-hit reactions (2026-10-24): fire only when the defender was Guarding this
+	-- hit (outcome.wasGuarding) and it was a real incoming hit (not a reflect/counter re-entry).
+	-- All damage is applied DIRECTLY (TRG-010) so none can re-trigger another reaction.
+	if attacker and target and outcome.wasGuarding and not outcome.isReflect and not outcome.isCounter then
+		local _aps = (require :: any)(script.Parent.ArmorPassiveService)
+		-- BD-006 Layered Lamellar: count this hit so successive-hit DR grows next hit.
+		_aps.OnGuardHitReceived(target)
+		-- BD-009 Reprisal Coat: store 40% of the damage Guard just mitigated (carries across
+		-- turns, no cap; consumed by the unit's next Basic Attack / damage Skill).
+		if outcome.guardMitigatedAmount and outcome.guardMitigatedAmount > 0 then
+			_aps.OnGuardDamageMitigated(target, outcome.guardMitigatedAmount)
+		end
+		if actual > 0 and attacker.isAlive and attacker ~= target then
+			-- BD-007 Mirror Mail: reflect 30% of damage taken back to a PROJECTILE attacker.
+			local refl = _aps.GetGuardProjectileReflect(target)
+			if refl and (attacker.weaponProjectileType ~= nil) then
+				local dmg = math.max(0, math.round(actual * refl.reflectPercent))
+				if dmg > 0 then
+					local dealt = UnitSchema_ApplyDamage(dmg, attacker)
+					print(string.format("[CombatResolver] Mirror Mail: %s reflects %d to %s%s",
+						target.name, dealt, attacker.name, attacker.isAlive and "" or " | DEFEATED"))
+					if not attacker.isAlive then attacker._killedBy = target.id; RacePassiveService.OnUnitKO(attacker) end
+					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(attacker) end
+				end
+			end
+			-- BD-016 Spiked Plate: attacker takes 20% of the damage they dealt as retaliation.
+			local retal = _aps.GetGuardRetaliationPercent(target)
+			if retal > 0 and attacker.isAlive then
+				local dmg = math.max(0, math.round(actual * retal))
+				if dmg > 0 then
+					local dealt = UnitSchema_ApplyDamage(dmg, attacker)
+					print(string.format("[CombatResolver] Spiked Plate: %s retaliates %d to %s%s",
+						target.name, dealt, attacker.name, attacker.isAlive and "" or " | DEFEATED"))
+					if not attacker.isAlive then attacker._killedBy = target.id; RacePassiveService.OnUnitKO(attacker) end
+					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(attacker) end
+				end
+			end
+		end
+		-- Deflect (weapon native, Buckler): reflect 20% of the damage Guard just MITIGATED back to
+		-- the attacker (DB "On Guard, reflect 20% of mitigated damage"). Keyed on mitigated amount,
+		-- so it fires even on a fully-absorbed hit. Direct ApplyDamage (TRG-010, no reaction re-entry).
+		if attacker.isAlive and attacker ~= target and (outcome.guardMitigatedAmount or 0) > 0 then
+			local deflectPct = WeaponPassiveService.GetGuardDeflectPercent(target)
+			if deflectPct > 0 then
+				local dmg = math.max(0, math.round(outcome.guardMitigatedAmount * deflectPct))
+				if dmg > 0 then
+					local dealt = UnitSchema_ApplyDamage(dmg, attacker)
+					print(string.format("[CombatResolver] Deflect: %s reflects %d to %s%s",
+						target.name, dealt, attacker.name, attacker.isAlive and "" or " | DEFEATED"))
+					if not attacker.isAlive then attacker._killedBy = target.id; RacePassiveService.OnUnitKO(attacker) end
+					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(attacker) end
+				end
+			end
+		end
+	end
+
+	-- BD-005 Reactive Cuirass (2026-10-24): the FIRST hit a unit takes each turn triggers a free
+	-- auto-Guard (no AP) covering LATER hits this turn; the triggering hit itself lands full (Guard
+	-- is applied AFTER this hit resolved). Once per turn via _armorAutoGuardUsed (reset at turn start).
+	-- Skipped if already Guarding. guardBonus mirrors the Guard command's Race+Trait+Armor fold.
+	if target and target.isAlive and actual > 0 and not outcome.isReflect and not outcome.isCounter then
+		if ArmorPassiveService.CanAutoGuard(target) then
+			local alreadyGuard = false
+			if target.statusInstances then
+				for _, inst in ipairs(target.statusInstances) do
+					if inst.id == "Guard" then alreadyGuard = true; break end
+				end
+			end
+			if not alreadyGuard then
+				StatusService.ApplyStatus(target, "Guard", target.id)
+				target.guardBonus = RacePassiveService.GetGuardMitigationBonus(target)
+					+ TraitEffectService.GetGuardMitigationBonus(target)
+					+ ArmorPassiveService.GetGuardMitigationBonus(target)
+					+ WeaponPassiveService.GetGuardMitigationBonus(target)
+				target._armorAutoGuardUsed = true
+				print(string.format("[CombatResolver] Reactive Cuirass: %s auto-Guards after first hit this turn", target.name))
+				if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(target) end
+			end
+		end
+	end
+
 	-- FROC — Toxic Skin (DB races row 'Froc'): when this defender is attacked and the
 	-- hit lands, inflict Poison on the attacker -- UNLESS the attack element is Fire,
 	-- Ice, or Electric. Mirrors the Retaliator status-to-attacker idiom; gated against
@@ -1421,6 +2007,26 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 				"[CombatResolver] Froc Toxic Skin: %s poisons %s (element=%s)",
 				target.name, attacker.name, atkElement
 			))
+		end
+	end
+
+	-- AC Accessory "recharge 1 item charge" (2026-10-26): when the WEARER (defender) takes a real
+	-- hit, restore 1 use charge to ONE depleted equipped consumable (currentCharges < maxCharges).
+	-- Fires every time the wearer is hit (user default 2026-10-26; flagged for playtest). Keyed on
+	-- the TARGET's Accessory passive; nil for everyone else. Scope: direct combat hits resolved here
+	-- (DoT / push / trap damage go through other paths and do NOT trigger it -- noted).
+	if target and actual > 0 and target.isAlive and target.consumableSlots then
+		local rechargeCfg = ArmorPassiveService.GetItemRechargeOnDamageConfig(target)
+		if rechargeCfg then
+			for _, slot in pairs(target.consumableSlots) do
+				if slot and slot.consumableId and (slot.currentCharges or 0) < (slot.maxCharges or 0) then
+					slot.currentCharges = (slot.currentCharges or 0) + (rechargeCfg.chargeRestore or 1)
+					if slot.currentCharges > slot.maxCharges then slot.currentCharges = slot.maxCharges end
+					print(string.format("[CombatResolver] Item Recharge: %s restores 1 charge to %s on being hit",
+						target.name, tostring(slot.consumableId)))
+					break  -- one charge to one slot per hit
+				end
+			end
 		end
 	end
 

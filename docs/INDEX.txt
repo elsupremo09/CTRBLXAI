@@ -799,3 +799,104 @@ Two NEW constraints LAYERED ON TOP of the existing enemy-outfit advertising rule
   xlsx: sheet '29 UGC Rental Ownership' re-export REQUIRED (workbook not open; no ~$ lock). RUNTIME NOTE: this agent's runtime could not perform the binary DB/xlsx writes; change set staged for apply.
   No conflict found (per-enemy item cap id 24 is a different axis from the team-wide copy cap; no existing 'no cap' or player-worn rule). Player-unit outfit rules UNCHANGED (players always dressed; only ENEMY selection changes).
 
+--- 2026-10-25/26 POISON TRAP MADE FUNCTIONAL (Designer docs-only; source\ NOT touched here) ---
+SKL-POISON-TRAP went from authored-but-dead to working. 2026-10-25: the skill was wired through the
+  deployable-trap pipeline (createsObject) so casting it actually drops a trap. 2026-10-26: the data was
+  reconciled - a new 'Poison Trap' hazard was added to the objects_encounters catalog and the skill's
+  createsObject now points at it; the two affected xlsx sheets were re-exported (timestamped backups in
+  docs\backups\_pre_20261026_poisontrap). How the trap behaves: it triggers for ENEMIES only (ownerSide
+  gating), fires once then is consumed, and applies Poison + Venom at Strength 2 with an RT-delay effect.
+  KNOWN SIMPLIFICATION (future balance pass): the RT delay uses a flat base of 30 and omits the authored
+  per-level 0.10xL term - so it does not yet scale with level.
+  ALSO LIVE (2026-10-26): the max-2-traps-per-caster limit is now enforced in code for every trap-deploy
+  skill (not just Poison Trap).
+  This INDEX note is history only - no new table or column was added; the DB and xlsx were reconciled in
+  the prior task today and are NOT changed by this edit.
+
+
+--- 2026-10-26 SUPPORT CONSUMABLE -> STATUS DATA LINK (Designer; DB + exports only, source\ data file regenerated) ---
+consumable_items: NEW nullable TEXT column Applies_Status. Populated for 14 Support items (the status each applies):
+  SUP-001 Empowered, SUP-002 Focused, SUP-003 Stoneskin, SUP-004 Fleetfoot, SUP-005 Precise, SUP-006 Fortunate,
+  SUP-007 Armored, SUP-008 Stoneskin Lesser, SUP-010 Battle Fury, SUP-012 Enfeebled, SUP-013 Addled,
+  SUP-014 Armor Break, SUP-015 Unsteady, SUP-020 Rally Array. Left NULL for every other item incl. the 6 out-of-scope
+  Support items (SUP-009 Shield, SUP-011 Guardian Standard, SUP-016 Elemental Ward, SUP-017 Command Relay,
+  SUP-018 Blessing Projector, SUP-019 Warding). The item effect engine (ItemEffectService) reads this field to resolve
+  which status to apply; no hardcoded item->status map in source.
+STONESKIN DUAL-MAGNITUDE WRINKLE RESOLVED via OPTION (b): authored a SECOND distinct status rather than collapse magnitudes.
+  A status carries ONE magnitude, and the single-target SUP-003 (+15%) vs AOE SUP-008 (+12%) split is a deliberate
+  magnitude-for-area trade-off; collapsing both to +15% would make the single-target Infuser a strict downgrade (best-pick
+  violation). elements_statuses NEW id 122 'Stoneskin Lesser' = Buff (Dispellable), VIT +12%, 1500 CT, Refresh duration;
+  SUP-008 now maps to it. Stoneskin id 109 effect note cleaned up (no longer claims a shared dual magnitude).
+  DEV HANDOFF: add Stoneskin Lesser to GameConstants.STATUSES (kind Buff, statPctMod {VIT=0.12}, durationCt 1500,
+  reapply = refresh duration) so SUP-008 resolves; until that def exists in source the item defers.
+ConsumableData.lua (source\ReplicatedStorage\Content) regenerated: each of the 14 items now carries a Lua field
+  appliesStatus = "<status name>" (camelCase), placed right after the pattern field; absent/nil on all other items.
+  DB column Applies_Status -> Lua field appliesStatus. Header comment documents the mapping. 140 item blocks intact,
+  brace balance verified.
+CTRBLXAI_Game_Rules.xlsx sheet '04 Elements Statuses' regenerated from elements_statuses (now 80 data rows; Stoneskin
+  Lesser appended by id order). Sheet '24 Consumable Prices' is pricing-only (no status column) - no change needed.
+Backups in docs\backups\: CTRBLXAI_pre_appliesstatus_20261026_170952.db, ConsumableData_pre_appliesstatus_20261026_171050.lua,
+  CTRBLXAI_Game_Rules_pre_appliesstatus_20261026_171135.xlsx.
+
+--- 2026-10-26 ENVIRONMENT CONSUMABLE TERRAIN-TRANSFORM DATA (Designer; DB + source data file regenerated) ---
+consumable_items: NEW TEXT columns Terrain_Transforms ("A,B>C;D>E"), Terrain_Transform_Mode (all|choice), Terrain_Side_Effect (DEFER: notes).
+Populated: ENV-003/004/013/014/016/017 (transforms) + ENV-001/002/015/019 (DEFER notes only, tile-effect/state items).
+ConsumableData.lua regenerated: fields terrainTransforms {from={...},to=...}, terrainTransformMode, terrainSideEffect. Backups in docs\backups\ *_pre_terraintransforms_20261026_183450.
+
+
+--- 2026-10-26 CON-015 GRAVITY ANCHOR ZONE-STATUS LINK (Designer; DB + exports, source data file regenerated) ---
+consumable_items: NEW nullable TEXT column Status_Recipients (Lua statusRecipients). CON-015 Applies_Status='Gravity Anchor', Status_Recipients='all'
+  (neutral zone: hits every unit on the AOE tiles, both sides). All other items: Status_Recipients null.
+elements_statuses NEW id 123 'Gravity Anchor' = Debuff (Zone), 1500 CT, Stability +2 / Movement Range -1, refresh, no stack.
+ConsumableData.lua regenerated (braces balanced 314/314). Game_Rules sheet '04 Elements Statuses' row appended. Backups: backups\*_pre_gravityanchor_*.
+
+
+--- 2026-10-26 TAGS-ONLY AUGMENT COMPATIBILITY + TILE TARGETING (Designer; DB + Game_Rules xlsx; source\ NOT touched) ---
+skills: Skill_Tags gained card-visible requirement tags on all 110 skills: Single / Area / Weapon Shape; Melee / Ranged / Weapon Reach
+  (none on Self-only, Caster Area, aura); Has Number; Costs MP; Weapon Scaling. Target_Rules: 74 -> 'Any Tile', 8 -> 'Caster Area'.
+  Unit-targeted carve-outs unchanged (Steal, Mug, Phantom Exchange, Fated Escape, Life Link, Skyfall Lance, Reckless Charge; Dragon Dive kept).
+augments: compatibility is tags only. Required_Target_Rules = 'None' (except 7 pending/parked rows), Required_Pattern folded into Single/Area tags.
+  Required_Skill_Tags format: comma-separated entries = ALL required (AND); ' OR ' inside an entry = alternatives.
+  Kill rule + Kill_Credit_Dependency rewritten on the 16 kill augments; 'enemies only' / any-side wording on 8 extra-hit augments.
+Rules: movement_targeting ids 78-81 (Any Tile, Caster Area, carve-outs, enemy AI target choice); frameworks ids 76-79 (tags-only
+  compatibility, kill-credit definition, extra-hit target rules, saved-unit auto-unequip); frameworks 4/5/21/41 and project_rules 17/29/44/46
+  revised (tags only, not Target Rules); trigger_safety TRG-006/007/008 eligibility; open_decisions 106 = items pending user wording.
+Sheets regenerated: 01, 03, 05, 05b, 06, 06b, 11, 18. DEV: SkillData.lua / AugmentData.lua NOT regenerated (source\ is dev-owned).
+Backups: backups\CTRBLXAI_pre_tagsonly_20261026_191551.db (+ Game_Rules/INDEX copies). Change script: backups\tagsonly_commit_20261026.sql
+
+
+--- 2026-10-26 CONSUMABLE BUILD RULINGS + AUTO-KEY REMOVAL (Designer; DB + exports + ConsumableData.lua; other source\ NOT touched) ---
+project_rules ids 150-163: user rulings 1,2,5,6,10-18 (choice pick-list, aim tile, reveal incl. generic hidden objects, Hologram 3 hits,
+  stacking = same refreshes / different totaled, Debuff Resistance meaning, Poison Cloud Vent tile pulses, ENV-003/ENV-013, CON-015, CON-007,
+  pulse targets, trap/deployable/summon limits, terrain items skip deployment+objective tiles, UTI-007 removed).
+open_decisions rowids 107-110: 3 resolved + 1 OPEN list of 7 pending questions (Fear direction, fog/smoke cloud type, Exchange resist, Blessing Projector, Extraction Beacon, multiplier totaling, barrier summon-limit scope).
+consumable_items: UTI-007 Auto-Key DELETED (139 items). ENV-013 Terrain_Transforms 'Tainted Ground>Grassland'. NEW column Pulse_Tile_Effect (Lua pulseTileEffect);
+  DEP-017 Pulse_Kind='tileEffect', Pulse_Tile_Effect='Poison Cloud', Pulse_Status cleared, radius 2 / interval 400 / count 3.
+Exports: Consumable Item Catalog (UTI-007 row removed, counts 139), Game_Rules sheets 01 + 18 rows appended. Backups: backups\*_pre_20261026_consumablerulings.*
+
+
+--- 2026-10-26 CONSUMABLE 8 FOLLOW-UP RULINGS (Designer; DB + exports + ConsumableData.lua data only; other source\ NOT touched) ---
+project_rules ids 164-171: Fear, Fog/Smoke = Steam 1600 CT, Exchange Device resist/charge/tile triggers, Blessing Projector pick-list once-only
+  (+500 CT / +1 turn), Extraction Beacon = relocation to deployment area, stacking totaled incl. multipliers + Debuff Res/Warding, Debuff Res on
+  no-value turn debuffs (turns reduced, min 1), summon-limit scope (passive barriers unlimited). Notes appended to ids 154/155/161.
+open_decisions rowid 110 -> RESOLVED. elements_statuses: NEW id 124 Fear; Warding = -0.20 totaled; Debuff Res Up/Down, Battle Fury, Stun, Sleep notes updated.
+consumable_items NEW columns Tile_Effect / Tile_Effect_Ct / Tile_Element (Lua tileEffect/tileEffectCt/tileElement): ENV-005 + CON-011 Steam 1600,
+  ENV-001 Oily 1200, ENV-002 tileElement Water. Applies_Status: CON-017 Fear, SUP-019 Warding. Effect_Formula rewritten: CON-017, ENV-001/002/005, CON-011, UTI-005, SUP-018, UTI-019.
+Exports: Consumable Item Catalog (02 sheet effect text + 3 new columns), Game_Rules 01 / 04 / 18. Backups: backups\*_pre_rulings8_20261026_204118.*
+
+
+--- 2026-10-26 UTI-019 EMERGENCY EXTRACTION BEACON PULSE DATA (Designer; DB + ConsumableData.lua UTI-019 entry only) ---
+Pulse_Kind='relocate', Pulse_Radius=2, Pulse_Interval=500, Pulse_Count=1, Pulse_Offset_Ct=0, Pulse_Note = relocation ruling (allies of user -> own deployment area; no free tile = stay put).
+elements_statuses id 124 (Fear) notes: dispellable flag PENDING USER CONFIRMATION.
+Backups: backups\*_pre_20261026_uti019pulse.*
+
+CONSUMABLE DATA NOTES (USER RULING 2026-10-27, full reconcile)
+  consumable_items extra column families (exported to ConsumableData.lua and the Consumable Item Catalog xlsx):
+    Deploy_* (Kind/Ref/Params/Note), Pulse_* (Kind, Amount, Amount_Kind, Amount_Formula, Element, Status, Status_Ct,
+    Radius, Interval, Count, Offset_Ct, Note, Tile_Effect, Target_Mode, Requires_LoS, Anchor, Recipients, Ring_Falloff,
+    Fire_Immediate), Device_* (Hp_Formula, Lifespan_Ct, Aura_Radius, Aura_Stability, Aura_Teleport_Lock, Aura_Ward_Mult,
+    Intercept_Count, Aura_Weather_Shield, Aura_Guard_Bonus, Aura_Taunt), Tile_Effect/Tile_Effect_Ct/Tile_Element,
+    Terrain_Transforms/Terrain_Transform_Mode/Terrain_Side_Effect, Applies_Status, Status_Recipients, Icon.
+  project_rules consumable rulings: ids 150-202 (192 Loadout Replicator, 193 Cooling Gel, 194 weather beacons,
+    195 Gravity Pylon, 196 Countermeasure Turret, 197 ENV-016/017 side clauses, 198 hidden enemy traps,
+    199 parked consumables, 200 environment/utility item details, 201 known accepted behaviour, 202 build status).

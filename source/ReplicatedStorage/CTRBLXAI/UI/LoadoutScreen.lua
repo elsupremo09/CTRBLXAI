@@ -16,6 +16,9 @@ local BattleEvents = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 	:WaitForChild("Remotes", 10):WaitForChild("BattleEvents", 10))
 local GameConstants = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 	:WaitForChild("Shared", 10):WaitForChild("GameConstants", 10))
+-- Shared tags-only augment rule (2026-10-26): the screen greys out exactly what the server refuses.
+local AugmentCompatibility = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+	:WaitForChild("Shared", 10):WaitForChild("AugmentCompatibility", 10))
 local ConsumableData = require(ReplicatedStorage:WaitForChild("Content", 10)
 	:WaitForChild("ConsumableData", 10))
 -- Shared portrait-overlay helper + per-race 2D portrait pools (player picker).
@@ -3556,15 +3559,19 @@ buildSkillLoadout = function()
 			end
 
 			-- Augment icon slots (right side, 2 small squares)
+			-- An equipped augment that no longer fits (e.g. after a weapon swap) is dimmed; it does
+			-- nothing in battle until swapped (tags-only rule, 2026-10-26). Its detail says why.
+			local slotWeapon = MockData.GetWeaponProfile(unit.id)
 			for a = 1, 2 do
 				local augId = augments[a]
 				local augDef = augId and MockData.GetAugmentDef(augId)
+				local augActive = (not augDef) or AugmentCompatibility.Check(skillId, augId, slotWeapon)
 
 				local augBtn = Instance.new("TextButton")
 				augBtn.Size = UDim2.new(0, AUG_SZ, 0, AUG_SZ)
 				augBtn.Position = UDim2.new(1, -(AUG_SZ + 2) * (3 - a), 0, (SLOT_H - AUG_SZ) / 2)
 				augBtn.BackgroundColor3 = augDef and Color3.fromRGB(74, 53, 16) or Theme.Colors.Surface
-				augBtn.BackgroundTransparency = augDef and 0.3 or 0.6
+				augBtn.BackgroundTransparency = (augDef and augActive) and 0.3 or 0.6
 				augBtn.BorderSizePixel = 0
 				augBtn.Text = ""
 				augBtn.Parent = rowF
@@ -3578,6 +3585,7 @@ buildSkillLoadout = function()
 						ico.Position = UDim2.new(0, 1, 0, 1)
 						ico.BackgroundTransparency = 1
 						ico.Image = augDef.icon
+						ico.ImageTransparency = augActive and 0 or 0.6
 						ico.ScaleType = Enum.ScaleType.Fit
 						ico.Parent = augBtn
 					else
@@ -4220,24 +4228,8 @@ openAugmentPickerForSlot = function(unitId, slotNum, augSlotNum)
 			slotSkillId = sd
 		end
 	end
-	local slotTagSet = {}
-	if slotSkillId then
-		local sdef = MockData.GetSkillDef(slotSkillId)
-		for _, t in ipairs((sdef and sdef.tags) or {}) do slotTagSet[t] = true end
-	end
-	local function augFitsSlot(def)
-		local req = def and def.requiredSkillTags
-		if not req or #req == 0 then return true end
-		if not slotSkillId then return false end
-		for _, entry in ipairs(req) do
-			local matched = false
-			for option in string.gmatch(entry .. " OR ", "%s*(.-)%s* OR ") do
-				if option ~= "" and slotTagSet[option] then matched = true; break end
-			end
-			if not matched then return false end
-		end
-		return true
-	end
+	-- Shared tags-only rule (2026-10-26), resolved against this unit's equipped weapon.
+	local slotWeapon = MockData.GetWeaponProfile(unitId)
 
 	-- Build list of available augment cards
 	local augCards = {}
@@ -4298,7 +4290,7 @@ openAugmentPickerForSlot = function(unitId, slotNum, augSlotNum)
 	sLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
 	for idx, ac in ipairs(augCards) do
-		local fits = augFitsSlot(ac.def)
+		local fits, missingTags = AugmentCompatibility.Check(slotSkillId, ac.id, slotWeapon)
 		local rowBtn = Instance.new("TextButton")
 		rowBtn.Size = UDim2.new(1, 0, 0, 28)
 		rowBtn.BackgroundColor3 = Theme.Colors.PanelRaised
@@ -4322,7 +4314,7 @@ openAugmentPickerForSlot = function(unitId, slotNum, augSlotNum)
 		end
 
 		makeLabel(rowBtn, { Text = ac.name,
-			Size = UDim2.new(1, -78, 1, 0),
+			Size = UDim2.new(1, -128, 1, 0),
 			Position = UDim2.new(0, 28, 0, 0),
 			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
 			TextColor3 = fits and Theme.Colors.TextPrimary or Theme.Colors.TextDisabled })
@@ -4335,9 +4327,12 @@ openAugmentPickerForSlot = function(unitId, slotNum, augSlotNum)
 				TextColor3 = Theme.Colors.TextSecondary,
 				TextXAlignment = Enum.TextXAlignment.Right })
 		else
-			makeLabel(rowBtn, { Text = "Incompatible",
-				Size = UDim2.new(0, 70, 1, 0),
-				Position = UDim2.new(1, -72, 0, 0),
+			-- Say exactly which card tag the skill is missing (players see why, no hidden rules).
+			local whyText = (#missingTags > 0) and ("Needs " .. table.concat(missingTags, ", "))
+				or "No skill equipped"
+			makeLabel(rowBtn, { Text = whyText,
+				Size = UDim2.new(0, 98, 1, 0),
+				Position = UDim2.new(1, -100, 0, 0),
 				TextSize = Theme.Text.Badge(), Font = Theme.Font.Primary,
 				TextColor3 = Theme.Colors.TextDisabled,
 				TextXAlignment = Enum.TextXAlignment.Right })
@@ -4377,22 +4372,8 @@ openAugmentSlotPicker = function(aug)
 	-- slots are greyed out here, instead of looking valid and silently failing on the
 	-- server attach gate. Uses the same " OR "-aware match as the server.
 	local augDef = aug.def or (MockData.GetAugmentDef and MockData.GetAugmentDef(aug.id))
-	local augReq = augDef and augDef.requiredSkillTags or nil
-	local function skillSatisfiesAug(skillId)
-		if not augReq or #augReq == 0 then return true end
-		if not skillId then return false end
-		local def = MockData.GetSkillDef(skillId)
-		local tagSet = {}
-		for _, t in ipairs((def and def.tags) or {}) do tagSet[t] = true end
-		for _, entry in ipairs(augReq) do
-			local matched = false
-			for option in string.gmatch(entry .. " OR ", "%s*(.-)%s* OR ") do
-				if option ~= "" and tagSet[option] then matched = true; break end
-			end
-			if not matched then return false end
-		end
-		return true
-	end
+	-- Shared tags-only rule (2026-10-26), resolved against this unit's equipped weapon.
+	local pickerWeapon = MockData.GetWeaponProfile(unit.id)
 
 	detailOverlay = Instance.new("ScreenGui")
 	detailOverlay.Name = "AugSlotPickerOverlay"
@@ -4464,9 +4445,13 @@ openAugmentSlotPicker = function(aug)
 			disabled = true; disabledReason = "Locked"
 		elseif not skillName then
 			disabled = true; disabledReason = "No skill equipped"
-		elseif not skillSatisfiesAug(skillId) then
-			-- Skill present but this augment cannot attach to it (Bug-2 fix 2026-10-23).
-			disabled = true; disabledReason = "Incompatible"
+		else
+			-- Skill present but missing a required card tag: say which one (no hidden rules).
+			local fitsSkill, missingTags = AugmentCompatibility.Check(skillId, aug.id, pickerWeapon)
+			if not fitsSkill then
+				disabled = true
+				disabledReason = "Needs " .. table.concat(missingTags, ", ")
+			end
 		end
 
 		for augSlot = 1, 2 do
@@ -4783,7 +4768,21 @@ openEquippedAugmentDetail = function(slotNum, augSlotNum, augmentId)
 		tags = eqAugTags,
 		description = eqAugDesc,
 	})
-	makeLabel(panel, { Text = "Slot " .. slotNum .. "  |  Augment " .. augSlotNum,
+	-- If this equipped augment no longer fits its skill (e.g. after a weapon swap), say why:
+	-- it does nothing in battle until swapped (tags-only rule, 2026-10-26).
+	local slotLine = "Slot " .. slotNum .. "  |  Augment " .. augSlotNum
+	do
+		local eqLoadout = MockData.GetSkillLoadout(unit.id)
+		local eqSlot = type(eqLoadout) == "table" and eqLoadout[slotNum]
+		local eqSkillId = if type(eqSlot) == "table" then eqSlot.skillId else eqSlot
+		if eqSkillId and eqSkillId ~= "none" then
+			local fitsNow, missingNow = AugmentCompatibility.Check(eqSkillId, augmentId, MockData.GetWeaponProfile(unit.id))
+			if not fitsNow and #missingNow > 0 then
+				slotLine = slotLine .. "  |  Inactive: needs " .. table.concat(missingNow, ", ")
+			end
+		end
+	end
+	makeLabel(panel, { Text = slotLine,
 		Size = UDim2.new(1, 0, 0, 12),
 		Position = UDim2.new(0, 0, 0, nextY),
 		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.Info })
@@ -4918,7 +4917,8 @@ buildConsumableGrid = function()
 	local items = {}
 	for _, cid in ipairs(allIds) do
 		local def = ConsumableData.GetById(cid)
-		if def then
+		-- Parked items (DB Status PARKED, user 2026-10-27) are not offered.
+		if def and not def.parked then
 			local cat = def.category or "?"
 			if consFilter ~= "All" and cat ~= consFilter then continue end
 			if consSearch ~= "" and not string.find(string.lower(def.name or ""), string.lower(consSearch), 1, true) then continue end

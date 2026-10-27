@@ -1,0 +1,86 @@
+[
+ [
+  "skills",
+  "SKL-FESTERING-WOUND",
+  "Skill_Tags",
+  "Debuff, Poison, Dark",
+  "Direct Damage, Debuff, Poison, Dark"
+ ],
+ [
+  "skills",
+  "SKL-FESTERING-WOUND",
+  "Power_Formula",
+  "None",
+  "Weapon Attack Power × 0.50"
+ ],
+ [
+  "skills",
+  "SKL-FESTERING-WOUND",
+  "Effects",
+  "Apply Healing Reduction debuff to target (2000 CT, Debuff Resistance applies to duration). While active: all healing received by target is reduced by 50%. First anti-heal skill.",
+  "Direct damage (50% of weapon damage; Power 0.50, scales with STR via Weapon Attack Power). On a hit that deals real direct damage (>0), apply BOTH: Healing Reduction debuff (2000 CT, Debuff Resistance applies to duration; while active all healing received by target is reduced by 50%) AND Bleed debuff (2000 CT, Debuff Resistance applies). Standard damaging-debuff gating (like Rending Slash): the statuses land only on a hit that deals real damage, not unconditionally. First anti-heal skill; combines chip damage, a damage-over-time bleed, and sustain denial."
+ ],
+ [
+  "skills",
+  "SKL-FESTERING-WOUND",
+  "Special_Rules",
+  "Anti-sustain tool. Halves all healing on the target (Regeneration ticks, heals from allies, lifedrain, potions — everything). Does NOT prevent healing entirely, just reduces. Poison + Dark dual-tagged (festering corruption). Does not deal damage itself. Counter to heal-reliant enemies and Regeneration stacking.",
+  "Damaging anti-sustain tool. Healing Reduction halves ALL healing on the target (Regeneration ticks, heals from allies, lifedrain, potions — everything); it reduces, does not fully prevent. Bleed triggers bonus damage when the target takes Physical damage (Undead are immune to Bleed). Poison + Dark themed (festering corruption) plus Direct Damage. Both statuses are gated on dealing real direct damage (>0) — a fully negated/absorbed hit applies neither. Counter to heal-reliant enemies and Regeneration stacking. SIMULATOR FLAG (2026-10-26): reworked from pure utility (no damage) to damage + DoT + anti-heal on one skill — notable power increase, pending balance pass."
+ ],
+ [
+  "augments",
+  "AUG-EVASION-SURGE",
+  "Effect",
+  "After the supported Skill resolves, caster gains +30% evasion until caster's next turn start.",
+  "Each cast banks ONE evasion charge (bank model, replaces the old duration buff). Each banked charge grants +0.30 Evasiveness to exactly ONE incoming DIRECT-DAMAGE hit against the caster, and is consumed by that hit. Charges STACK across casts and PERSIST until consumed — no turn-expiry, no cap. DoT/status ticks and Soul Echo detonation (raw damage) do NOT consume a charge; only direct-damage hits do. SIMULATOR FLAG (2026-10-26): no cap + no expiry on banked charges is a deliberate tunable, pending balance pass."
+ ],
+ [
+  "augments",
+  "AUG-EVASION-SURGE",
+  "Trigger",
+  "After Skill resolution completes",
+  "On supported Skill cast: bank 1 charge (one per cast). A charge is then consumed when the caster is next hit by a direct-damage attack, applying +0.30 Evasiveness to that one hit."
+ ],
+ [
+  "augments",
+  "AUG-EVASION-SURGE",
+  "Conflicts",
+  "Evasion Surge does not stack with itself; refreshes duration.",
+  "Charges from repeated casts STACK (no cap); they do NOT expire. Each charge is spent by exactly one direct-damage hit. No turn-based duration to refresh."
+ ],
+ [
+  "augments",
+  "AUG-EVASION-SURGE",
+  "Delivery_Frequency",
+  "Once per supported resolution",
+  "Banks 1 charge per supported cast (stacking, no cap); each banked charge is consumed by one incoming direct-damage hit (not by DoT ticks or Soul Echo detonation)."
+ ],
+ [
+  "augments",
+  "AUG-PRIORITY-SURGE",
+  "Effect",
+  "If caster acts first in the round, supported Skill gains +15% final damage.",
+  "Supported Skill gains +30% final damage against a target that has NOT yet taken a turn in the current round. Evaluated PER TARGET, so for an AOE the bonus applies only to the not-yet-acted targets (acted targets take normal damage). Round = the existing 1000-CT round window; per-unit acted-this-round tracking resets at each round boundary. SIMULATOR FLAG (2026-10-26): on a first-move alpha strike most enemies have not acted, so this behaves as a near-flat +30% then — deliberate, pending balance pass."
+ ],
+ [
+  "augments",
+  "AUG-PRIORITY-SURGE",
+  "Trigger",
+  "At damage resolution; condition checked at commitment",
+  "At damage resolution, evaluated per target: if that target has not yet taken a turn in the current round (1000-CT window), that target takes +30% final damage."
+ ],
+ [
+  "augments",
+  "AUG-PRIORITY-SURGE",
+  "Conflicts",
+  "None",
+  "Per-target modifier. In an AOE, applies independently to each target based on whether that target has acted this round. No longer tied to the caster's acting order."
+ ],
+ [
+  "augments",
+  "AUG-PRIORITY-SURGE",
+  "Other_Requirements",
+  "Caster must be acting on first turn of a round (highest CT priority)",
+  "None (condition is now per-target: target has not yet acted this round)."
+ ]
+]

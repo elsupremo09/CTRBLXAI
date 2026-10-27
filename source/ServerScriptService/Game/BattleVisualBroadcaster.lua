@@ -306,6 +306,7 @@ function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName
 		amount      = amount,
 		targetHp    = target.currentHp,
 		targetMaxHp = target.maxHp,
+		statuses    = if target.statusInstances then StatusService.GetStatusSummary(target) else nil,  -- Venom weaken/cure (2026-10-26)
 		skillName   = skillName,
 		skillId     = skillId,  -- client VFX registry lookup
 	})
@@ -373,18 +374,18 @@ end
 
 -- Status broadcasts
 function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns, sourceIcon, sourceDesc, sourceDuration)
-	-- Include damage prediction so client can display immediately
-	local nextDamage = nil
-	local storedBurn = nil
-	local def = GameConstants.STATUSES[statusId]
-	if def then
-		if def.dotType == "Poison" then
-			nextDamage = math.max(1, math.round(unit.maxHp * def.dotFraction))
-		elseif def.dotType == "Burn" then
-			-- Find the status instance to get stored burn
-			local inst = StatusService.HasStatus(unit, statusId)
-			storedBurn = inst and inst.storedBurn or 0
-			nextDamage = storedBurn > 0 and math.max(1, math.round(storedBurn)) or nil
+	-- Damage prediction so the client can show it immediately. Pulled from the ONE shared
+	-- StatusService.GetStatusSummary (the same data TurnStarted/TurnEnded send) instead of a
+	-- local copy of the math that only covered Poison/Burn -- so every damaging debuff gets
+	-- its number the moment it is applied, and all phases agree. (2026-10-26)
+	local nextDamage, storedBurn, stacks = nil, nil, nil
+	local def = GameConstants.STATUSES[statusId]  -- still used by the battle-log line below
+	for _, entry in ipairs(StatusService.GetStatusSummary(unit)) do
+		if entry.id == statusId then
+			nextDamage = entry.nextDamage
+			storedBurn = entry.storedBurn
+			stacks = entry.stacks
+			break
 		end
 	end
 	BattleEvents.StatusApplied:FireAllClients({
@@ -393,6 +394,7 @@ function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns, s
 		remainingTurns = remainingTurns,
 		nextDamage     = nextDamage,
 		storedBurn     = storedBurn,
+		stacks         = stacks,
 		-- Fallback icon for statuses with no dedicated Theme icon: the icon of the
 		-- skill/augment that applied it. Client uses it only when GetStatusIcon is nil.
 		sourceIcon     = sourceIcon,
@@ -555,11 +557,26 @@ end
 -- by TileEffectService.transformAndBroadcast for every mid-battle transform path.
 -- Minimal payload (NET-003) and visual-only on the client (NET-001). No pacing wait
 -- (state sync, like TileEffectApplied / ObjectChanged).
-function BattleVisualBroadcaster.TerrainChanged(x, y, terrainId)
+-- Temporary road (ENV-019 Road Fabricator, 2026-10-27): the client tints the tile and
+-- shows the lowered move cost. cut = 0 removes it.
+function BattleVisualBroadcaster.RoadChanged(x, y, cut)
+	BattleEvents.RoadChanged:FireAllClients({ x = x, y = y, cut = cut or 0 })
+end
+
+-- ENV-003 move-cost zone: the client tints the tile and its inspector shows the higher cost.
+-- add = 0 removes it.
+function BattleVisualBroadcaster.MoveCostChanged(x, y, add)
+	BattleEvents.MoveCostChanged:FireAllClients({ x = x, y = y, add = add or 0 })
+end
+
+function BattleVisualBroadcaster.TerrainChanged(x, y, terrainId, elevation)
+	-- elevation (optional, 2026-10-26): the tile's NEW elevation after a dig, so the client
+	-- height map (inspector, labels, unit token height) follows. nil = unchanged.
 	BattleEvents.TerrainChanged:FireAllClients({
 		x         = x,
 		y         = y,
 		terrainId = terrainId,
+		elevation = elevation,
 	})
 end
 
@@ -596,7 +613,33 @@ function BattleVisualBroadcaster.UnitStateChanged(unit)
 		hp        = unit.currentHp,
 		maxHp     = unit.maxHp,
 		isAlive   = unit.isAlive,
+		-- Statuses ride along so a heal that weakens/cures Venom shows at once (2026-10-26).
+		statuses  = if unit.statusInstances then StatusService.GetStatusSummary(unit) else nil,
 	})
+end
+
+-- Object-sourced damage feedback (2026-10-26). Map objects that deal damage used
+-- to send only a bare HP sync (UnitStateChanged) with no number/flash/camera move,
+-- so hits felt invisible -- especially when the victim was off-screen. This fires a
+-- dedicated event the client turns into a floating damage number + impact flash on
+-- the tile, plus a camera pan to the tile when focus=true. Callers pass focus=true
+-- for the FIRST unit hit in an interaction (mirrors the attack/skill camera focus).
+function BattleVisualBroadcaster.ObjectDamage(tileX, tileY, amount, focus)
+	BattleEvents.ObjectDamage:FireAllClients({
+		tileX  = tileX,
+		tileY  = tileY,
+		amount = amount,
+		focus  = focus == true,
+	})
+end
+
+-- Explosion damage (Bomb Barrel / Land Mine). TileEffectService already CALLS
+-- BattleVisualBroadcaster.ExplosionDamage, but the function never existed (the call
+-- was a guarded silent no-op), so explosions showed no damage number. Define it now
+-- and route it through the shared ObjectDamage feedback. focus defaults to false;
+-- the explosion loop passes focus=true for its first damaged tile.
+function BattleVisualBroadcaster.ExplosionDamage(tileX, tileY, amount, focus)
+	BattleVisualBroadcaster.ObjectDamage(tileX, tileY, amount, focus == true)
 end
 
 --------------------------------------------------
@@ -657,6 +700,9 @@ function BattleVisualBroadcaster.ItemUsed(actor, target, itemName, effectResult)
 		elseif et == "StatusCure" then summary = `cured {effectResult.statusId or "status"} on {tName}`
 		elseif et == "StatusApply" then summary = `{effectResult.statusId or "status"} on {tName}`
 		elseif et == "Damage" then summary = `{tName} -{amount} HP`
+		-- Placements (2026-10-27): say what was placed, never where (hidden traps stay hidden).
+		elseif et == "Deploy" then summary = effectResult.description or "placed"
+		elseif et == "DeployFailed" then summary = "placement failed"
 		elseif et == nil or et == "Unimplemented" then summary = "no effect"
 		else summary = `on {tName}` end
 		logEntry("action", `{unitName(actor)} uses {itemName or "item"}: {summary}.`, actor.id)
@@ -667,6 +713,13 @@ end
 -- The client spawns its token/health bar/facing using the same serialized
 -- payload shape as BattleStarted, so the new unit renders identically to
 -- units present at battle start.
+-- Remove a unit's token from every client right now (2026-10-26: a replaced item
+-- device). Same payload Main sends for a KO'd unit.
+function BattleVisualBroadcaster.UnitRemoved(unit)
+	if not unit then return end
+	BattleEvents.UnitDefeated:FireAllClients({ unitId = unit.id, removeUnit = true })
+end
+
 function BattleVisualBroadcaster.UnitSpawned(unit)
 	BattleEvents.UnitSpawned:FireAllClients({
 		unit = serializeUnit(unit),

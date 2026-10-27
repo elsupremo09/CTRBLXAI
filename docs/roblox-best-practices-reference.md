@@ -729,6 +729,13 @@ end
 - Use `ZIndex` within a single ScreenGui for local ordering.
 - `ScreenGui.IgnoreGuiInset` = true for fullscreen UI (ignores top bar).
 
+### Coordinate Spaces & Attached Popups (Lesson LL-013 / Rule UI-001)
+- `AbsolutePosition` is measured from below the top-bar inset; a ScreenGui with `IgnoreGuiInset = true` places children from the true screen top (~58 px apart).
+- To place UI next to a panel in another ScreenGui, subtract the `AbsolutePosition` of a full-screen (0,0) frame in the destination ScreenGui.
+- Never guess positions from screenshots or hardcode layout offsets — read real edges and convert.
+- If a measured value looks wrong, suspect a coordinate-space mismatch first.
+- Attached popups/cards (CTRBLXAI locked rule): 0 px gap to the panel edge, same width and left/right edges, grow only away from the panel, never overlap other panels.
+
 ### Input Handling
 ```lua
 -- Modern input (recommended)

@@ -45,8 +45,54 @@ local _bvb = nil             -- BattleVisualBroadcaster, injected
 -- ObjectEffectService.SetObjectRenderer / SetTileReshaper (no mapFolder handle here).
 local _voxelClearer = nil    -- fn(x,y) over the live mapFolder (from Main)
 local _allUnits = nil        -- cached live unit list (state.units ref) for explosions
+
+-- BD-011 Hazard Suit (armor, 2026-10-24): while Guarding, a unit is immune to terrain/hazard/
+-- weather damage. Covers standing-hazard tile ticks, Molten/lava, and weather. Does NOT cover
+-- fall (Collapse -> BD-012 Collision Padding), explosions (trap/object), or the attack-derived
+-- Electric Shock chain (ResolveElectricShock) -- user rulings 2026-10-24. Scans statusInstances
+-- directly for Guard (no injected-service dependency); ArmorPassiveService via deferred require.
+local function guardHazardImmune(unit)
+	if not unit or type(unit.statusInstances) ~= "table" then return false end
+	local guarding = false
+	for _, inst in ipairs(unit.statusInstances) do
+		if inst.id == "Guard" then guarding = true; break end
+	end
+	if not guarding then return false end
+	return (require :: any)(script.Parent.ArmorPassiveService).CanGuardImmuneHazard(unit)
+end
+
+-- FT-014 Firewalker Sabatons: a wearer is immune to FIRE tile cross-effects (the Burning tile's Burn
+-- applied on crossing) AND to the Molten terrain end-of-turn burn. The DB text ("Crossing Burning or
+-- Molten tiles does not apply their cross effect") only bites for Burning as a literal cross-effect;
+-- Molten's sole damage is its end-of-turn MoltenBurn, so protecting against "Molten tiles" must cover
+-- that or the clause is vacuous (interpretation 2026-10-25, flagged for Studio). Deferred require
+-- (cycle-avoidance idiom, mirrors guardHazardImmune).
+local function firewalkerImmune(unit)
+	if not unit then return false end
+	return (require :: any)(script.Parent.ArmorPassiveService).CanAvoidFireTerrain(unit) == true
+end
 local _objectHitCb = nil     -- (x,y) -> ONE hit on the breakable OBS object at that tile (OBS Phase 2c-D)
 local _explosiveObjectCb = nil -- (x,y) -> true if an EXPLOSIVE object was there (and was removed), to chain in-queue
+-- Optional-objective counter (DI, wired by Main over the battle state, like the
+-- object-hit callback). fn(counterKey, amount) -> bumps state.objectiveCounters.
+-- Used for Terrain Shaper (player-caused elevation changes) and Terra Former
+-- (player-caused terrain transforms). nil-safe: unset = no counting, no behaviour
+-- change. Earthquake lowers elevation via WeatherService.reshapeTile (a DIFFERENT
+-- path that never calls this), so quake changes are excluded by construction.
+local _objectiveCounter = nil
+function TileEffectService.SetObjectiveCounter(fn)
+	_objectiveCounter = fn
+end
+
+-- True when ownerId belongs to a PLAYER-side unit in the live list — used to count
+-- only PLAYER-initiated terrain changes (spec: exclude non-player-initiated effects).
+local function isPlayerOwner(ownerId)
+	if not ownerId or not _allUnits then return false end
+	for _, u in ipairs(_allUnits) do
+		if u.id == ownerId then return u.side == "Player" end
+	end
+	return false
+end
 
 -- PHASE 1 (2026-10-21, project_rules 140-143 'Terrain Fire Reaction'): burn-then-
 -- transform. When Fire creates Burning on a BARE FLAMMABLE base terrain, the base
@@ -109,10 +155,30 @@ local function tryReinstateFloor(tileX, tileY)
 	return true
 end
 
+-- FIREBREAK (2026-10-26, ENV-015 Firebreak Projector): tiles that cannot take Burning
+-- (placed or spread) for a number of CT. [tileKey] = remaining CT.
+local _firebreak = {}
+-- GOBLIN Cunning (user ruling 2026-10-27): +10% damage taken from traps and hazards. Read at call
+-- time (deferred require) so this module adds no load-time dependency.
+local function hazardTakenMult(u: any): number
+	local rps = (require :: any)(script.Parent.RacePassiveService)
+	if rps and rps.GetHazardDamageTakenMultiplier then return rps.GetHazardDamageTakenMultiplier(u) end
+	return 1
+end
+-- ROAD (2026-10-26, ENV-019 Road Fabricator): [tileKey] = { ct = remaining CT, cut = N }.
+-- Movement onto the tile costs N less, never below 1.
+local _road = {}
+-- MOVE-COST ZONE (2026-10-27, ENV-003 Cryogenic Field Unit): [tileKey] = { ct = remaining CT,
+-- add = N }. Movement onto the tile costs N more until it runs out.
+local _costZone = {}
+
 function TileEffectService.Init(mapWidth, mapHeight)
 	_mapWidth = mapWidth
 	_mapHeight = mapHeight
 	effects = {}
+	_firebreak = {}
+	_road = {}
+	_costZone = {}
 	baseFloor = {}
 	_deferredTransform = {}
 end
@@ -129,6 +195,23 @@ end
 
 function TileEffectService.GetBaseFloorEffect(tileX, tileY)
 	return baseFloor[tileKey(tileX, tileY)]
+end
+
+-- Suspend a tile's permanent floor effect (2026-10-27, Bridge Projector, UAT A4): a bridge
+-- covers the chasm floor, so its floor effect (e.g. Poison Cloud at the bottom of a gap)
+-- must neither hit units on the bridge nor re-establish itself. Removes the live floor
+-- effect and the permanent registration; returns the effect id so the caller can put it
+-- back with SetBaseFloorEffect when the bridge ends. nil when the tile has none.
+function TileEffectService.SuspendFloorEffect(tileX, tileY)
+	local key = tileKey(tileX, tileY)
+	local baseId = baseFloor[key]
+	if not baseId then return nil end
+	baseFloor[key] = nil
+	local eff = effects[key]
+	if eff and eff.id == baseId then
+		TileEffectService.RemoveTileEffect(tileX, tileY)
+	end
+	return baseId
 end
 
 -- Seed every generated floor effect ({ {x, y, effectId}, ... }). Returns count applied.
@@ -186,13 +269,17 @@ end
 --------------------------------------------------
 
 local REACTIONS = {
-	-- existing effect → incoming element → result (nil = both cleared)
+	-- existing effect → incoming element → result. `false` = the effect is simply cleared.
+	-- (A Lua `nil` value is NOT stored in a table, so the old "Wind = nil" entries never
+	-- existed and Wind cleared nothing. Fixed 2026-10-27, user ruling: Wind clears clouds.)
 	Burning = { Water = "Steam",   Ice = "Steam"    },
 	Wet     = { Fire  = "Steam",   Ice = "Frozen"   },
 	Frozen  = { Fire  = "Wet"                       },
-	Steam   = { Electric = "Static Cloud", Wind = nil },
-	["Static Cloud"] = { Wind = nil                  },
-	["Poison Cloud"] = { Fire = "Explosion"          },
+	-- WIND CLEARS CLOUDS (user ruling 2026-10-27): Steam (also what fog/smoke items place),
+	-- Static Cloud and Poison Cloud are blown away. Wind never explodes Poison Cloud.
+	Steam   = { Electric = "Static Cloud", Wind = false },
+	["Static Cloud"] = { Wind = false                },
+	["Poison Cloud"] = { Fire = "Explosion", Wind = false },
 	-- terrain_effects rows 29/30 (+ GameConstants.TILE_EFFECTS reactions): Fire ignites.
 	Vines            = { Fire = "Burning"            },
 	["Tar Pit"]      = { Fire = "Burning"            },
@@ -201,7 +288,9 @@ local REACTIONS = {
 local function resolveReaction(existingId, incomingElement)
 	local reactions = REACTIONS[existingId]
 	if reactions and reactions[incomingElement] ~= nil then
-		return true, reactions[incomingElement]  -- reacted, result (nil = clear)
+		local r = reactions[incomingElement]
+		if r == false then return true, nil end  -- reacted, effect cleared
+		return true, r  -- reacted, result effect
 	end
 	return false, nil  -- no reaction
 end
@@ -310,6 +399,25 @@ local function setTerrainAndBroadcast(tileX, tileY, terrainId)
 	end
 end
 
+-- PUBLIC wrapper (2026-10-26) so other server systems (consumable terrain-transform
+-- items) can set a tile's terrain AND re-skin it on the client through the SAME path
+-- the tile-effect system uses — no duplicated broadcast logic. Also clears the tile's
+-- voxel column when leaving a water terrain (so the water block disappears), reusing
+-- the Main-injected _voxelClearer exactly as the effect-transform path does. Returns
+-- true when the terrain actually changed.
+local WATER_TERRAINS = { ["Shallow Water"] = true, ["Deep Water"] = true }
+function TileEffectService.TransformTileTerrain(tileX, tileY, terrainId)
+	local before = GameConstants.GetTerrainId(tileX, tileY)
+	if before == terrainId then return false end
+	setTerrainAndBroadcast(tileX, tileY, terrainId)
+	-- Leaving water -> clear the standing water voxel column (visual parity with the
+	-- weather dry-up path). Entering water is handled by the client re-skin.
+	if WATER_TERRAINS[before] and not WATER_TERRAINS[terrainId] and _voxelClearer then
+		_voxelClearer(tileX, tileY)
+	end
+	return true
+end
+
 -- PHASE 1 — fire a tile's DEFERRED base transform (called on NATURAL Burning expiry).
 -- Honors the floor-effect exemption (rule 143): a tile with a permanent floor effect
 -- (baseFloor) never transforms — it is left for tryReinstateFloor to restore.
@@ -331,7 +439,9 @@ end
 -- APPLY / REMOVE
 --------------------------------------------------
 
-function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allUnits, skipTransform)
+function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allUnits, skipTransform, durationCtOverride)
+	-- durationCtOverride (optional, 2026-10-26): item-authored lifetime for the placed
+	-- effect (e.g. Fog Machine Steam 1600 CT). nil = the effect's own durationCt.
 	-- skipTransform (optional): do not run the base-terrain element transform for
 	-- this placement. Used when a permanent floor effect is (re)seeded, and when the
 	-- incoming packet was consumed by reacting with a tile's base floor effect
@@ -339,7 +449,6 @@ function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allU
 	-- floor to Sand — map_gen_rules row 67).
 	if allUnits then _allUnits = allUnits end
 	if tileX < 1 or tileX > _mapWidth or tileY < 1 or tileY > _mapHeight then return end
-
 	-- Perks & Flaws — Stable Land (P-114, 2026-10-23): if a unit occupying this tile has the
 	-- Stable Land perk, block any NEW tile-effect application while it stands here. (Existing
 	-- effects are untouched — they were already present; this only prevents new ones.) Uses
@@ -398,14 +507,26 @@ function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allU
 			return
 		end
 
-		-- No reaction: new effect replaces old
+		-- No reaction: new effect replaces old (a fireproofed tile keeps what it has)
+		if effectId == "Burning" and (_firebreak[key] or 0) > 0 then
+			print(string.format("[TileEffectService] Firebreak at (%d,%d) blocks Burning", tileX, tileY))
+			return
+		end
 		TileEffectService.RemoveTileEffect(tileX, tileY)
 	end
 
+	-- Firebreak (narrowed user ruling 2026-10-27): a fireproofed tile cannot CATCH fire, but
+	-- Fire's reactions with what is already on the tile (above) still happen.
+	if effectId == "Burning" and (_firebreak[key] or 0) > 0 then
+		print(string.format("[TileEffectService] Firebreak at (%d,%d) blocks Burning", tileX, tileY))
+		return
+	end
+
 	-- Place new effect
+	local _placedCt = durationCtOverride or def.durationCt or 900
 	effects[key] = {
 		id          = effectId,
-		remainingCt = def.durationCt or 900,
+		remainingCt = _placedCt,
 		ownerId     = ownerId,
 		tickAccum   = 0,
 		tileX       = tileX,
@@ -414,7 +535,7 @@ function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allU
 
 	print(string.format(
 		"[TileEffectService] Applied %s at (%d,%d) | Duration: %d CT | Owner: %s",
-		effectId, tileX, tileY, def.durationCt or 900, tostring(ownerId)
+		effectId, tileX, tileY, _placedCt, tostring(ownerId)
 	))
 
 	-- Terrain transformation: element vs base terrain (Fire on Grassland → Sand)
@@ -436,7 +557,7 @@ function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allU
 	end
 
 	if _bvb and _bvb.TileEffectApplied then
-		_bvb.TileEffectApplied(tileX, tileY, effectId, def.durationCt or 900)
+		_bvb.TileEffectApplied(tileX, tileY, effectId, _placedCt)
 	end
 end
 
@@ -464,6 +585,47 @@ end
 
 function TileEffectService.GetTileEffect(tileX, tileY)
 	return effects[tileKey(tileX, tileY)]
+end
+
+-- Lay a temporary road on a tile (ENV-019). Re-laying keeps the longer time.
+function TileEffectService.SetRoad(tileX, tileY, durationCt, cut)
+	if tileX < 1 or tileX > _mapWidth or tileY < 1 or tileY > _mapHeight then return end
+	local key = tileKey(tileX, tileY)
+	local cur = _road[key]
+	_road[key] = { ct = math.max((cur and cur.ct) or 0, durationCt or 0), cut = math.max((cur and cur.cut) or 0, cut or 1) }
+	if _bvb and _bvb.RoadChanged then _bvb.RoadChanged(tileX, tileY, _road[key].cut) end
+end
+-- Slow a tile (ENV-003). Re-applying keeps the longer time and the bigger penalty.
+function TileEffectService.SetMoveCostZone(tileX, tileY, durationCt, add)
+	if tileX < 1 or tileX > _mapWidth or tileY < 1 or tileY > _mapHeight then return end
+	if (durationCt or 0) <= 0 or (add or 0) <= 0 then return end
+	local key = tileKey(tileX, tileY)
+	local cur = _costZone[key]
+	_costZone[key] = { ct = math.max((cur and cur.ct) or 0, durationCt), add = math.max((cur and cur.add) or 0, add) }
+	if _bvb and _bvb.MoveCostChanged then _bvb.MoveCostChanged(tileX, tileY, _costZone[key].add) end
+end
+-- Extra movement cost on this tile from a move-cost zone (0 = none).
+function TileEffectService.GetMoveCostAdd(tileX, tileY)
+	local z = _costZone[tileKey(tileX, tileY)]
+	return (z and z.ct > 0) and z.add or 0
+end
+-- Movement-cost reduction from a road on this tile (0 = none).
+function TileEffectService.GetRoadCut(tileX, tileY)
+	local r = _road[tileKey(tileX, tileY)]
+	return (r and r.ct > 0) and r.cut or 0
+end
+
+-- Is this tile fireproofed by a Firebreak (ENV-015)? Read by StatusService (Burn immunity,
+-- half Fire damage), CombatResolver and WeatherService.
+function TileEffectService.IsFirebreak(tileX, tileY)
+	return (_firebreak[tileKey(tileX, tileY)] or 0) > 0
+end
+
+-- Guard a tile against Burning for durationCt (ENV-015). Re-guarding keeps the longer time.
+function TileEffectService.SetFirebreak(tileX, tileY, durationCt)
+	if tileX < 1 or tileX > _mapWidth or tileY < 1 or tileY > _mapHeight then return end
+	local key = tileKey(tileX, tileY)
+	_firebreak[key] = math.max(_firebreak[key] or 0, durationCt or 0)
 end
 
 -- Apply a RANDOM standard tile effect to a tile (Perks & Flaws — Unstable Footing F-114,
@@ -498,6 +660,29 @@ end
 
 function TileEffectService.ProcessCtTick(ctElapsed, allUnits)
 	if allUnits then _allUnits = allUnits end
+	-- Firebreak guards count down on the battle clock.
+	for k, ct in pairs(_firebreak) do
+		local left = ct - (ctElapsed or 0)
+		_firebreak[k] = (left > 0) and left or nil
+	end
+	-- Move-cost zones too.
+	for k, z in pairs(_costZone) do
+		z.ct = z.ct - (ctElapsed or 0)
+		if z.ct <= 0 then
+			_costZone[k] = nil
+			local zx, zy = string.match(k, "^(%-?%d+),(%-?%d+)$")
+			if zx and _bvb and _bvb.MoveCostChanged then _bvb.MoveCostChanged(tonumber(zx), tonumber(zy), 0) end
+		end
+	end
+	-- Roads too.
+	for k, r in pairs(_road) do
+		r.ct = r.ct - (ctElapsed or 0)
+		if r.ct <= 0 then
+			_road[k] = nil
+			local rx, ry = string.match(k, "^(%-?%d+),(%-?%d+)$")
+			if rx and _bvb and _bvb.RoadChanged then _bvb.RoadChanged(tonumber(rx), tonumber(ry), 0) end
+		end
+	end
 	local toRemove = {}
 
 	for key, eff in pairs(effects) do
@@ -506,7 +691,7 @@ function TileEffectService.ProcessCtTick(ctElapsed, allUnits)
 			table.insert(toRemove, key)
 		else
 			-- Unlimited-duration effects (durationCt = -1: Oily, Tar Pit, Vines) never decay.
-			local unlimited = (def.durationCt == -1)
+			local unlimited = (eff.remainingCt == -1)  -- an item's own time (Oil Sprayer 1200 CT) counts down (audit fix 2026-10-27)
 			-- Decrement duration (skip for unlimited)
 			if not unlimited then
 				eff.remainingCt = eff.remainingCt - ctElapsed
@@ -524,16 +709,26 @@ function TileEffectService.ProcessCtTick(ctElapsed, allUnits)
 							for _, u in ipairs(allUnits) do
 								if u.isAlive and u.tileX == eff.tileX and u.tileY == eff.tileY then
 									local damage = math.round(u.maxHp * (def.tickDamage or 0.15))
-									if damage > 0 then
-										u.currentHp = math.max(0, u.currentHp - damage)
-										if u.currentHp <= 0 then u.isAlive = false end
+									-- Firebreak zone: Fire damage halved (user ruling 2026-10-27).
+									if def.tickElement == "Fire" and (_firebreak[tileKey(u.tileX, u.tileY)] or 0) > 0 then
+										damage = math.round(damage * 0.5)
+									end
+									damage = math.round(damage * hazardTakenMult(u))  -- Goblin Cunning
+									if damage > 0 and not guardHazardImmune(u) then
+										local _shown0 = GameConstants.CapUnitDamage(u, damage)  -- 1 for a 3-hit gadget
+										u.currentHp = math.max(0, u.currentHp - _shown0)
+									if u.currentHp <= 0 then
+										u.isAlive = false
+										-- Power of Nature objective: terrain-effect (burning/hazard tile) KO.
+										u._killCause = u._killCause or "terrain"
+									end
 										print(string.format(
 											"[TileEffectService] %s tick: %s takes %d %s damage at (%d,%d) | HP: %d/%d",
 											eff.id, u.name, damage, def.tickElement or "?",
 											eff.tileX, eff.tileY, u.currentHp, u.maxHp
 										))
 										if _bvb and _bvb.DotDamage then
-											_bvb.DotDamage(u, eff.id, damage)
+											_bvb.DotDamage(u, eff.id, _shown0)
 										end
 									end
 								end
@@ -582,11 +777,19 @@ function TileEffectService.OnUnitEntersTile(unit, tileX, tileY)
 
 	-- Cross effects: inflict status
 	if def.crossEffect and _statusService then
-		_statusService.ApplyStatus(unit, def.crossEffect, eff.ownerId or "tile")
-		print(string.format(
-			"[TileEffectService] Cross effect: %s on %s (entering %s at %d,%d)",
-			def.crossEffect, unit.name, eff.id, tileX, tileY
-		))
+		-- FT-014 Firewalker Sabatons: skip FIRE-element cross-effects (Burning tile -> Burn) for a wearer.
+		if def.element == "Fire" and firewalkerImmune(unit) then
+			print(string.format(
+				"[TileEffectService] Firewalker: %s crosses %s unharmed (fire cross-effect skipped)",
+				unit.name, eff.id
+			))
+		else
+			_statusService.ApplyStatus(unit, def.crossEffect, eff.ownerId or "tile")
+			print(string.format(
+				"[TileEffectService] Cross effect: %s on %s (entering %s at %d,%d)",
+				def.crossEffect, unit.name, eff.id, tileX, tileY
+			))
+		end
 	end
 end
 
@@ -612,7 +815,11 @@ end
 
 local _raceData = nil
 local function isUndeadOrDemon(unit)
-	if not unit or not unit.raceId then return false end
+	if not unit then return false end
+	for _, inst in ipairs(unit.statusInstances or {}) do
+		if inst.id == "Undead" then return true end  -- Undead status (e.g. raised corpse)
+	end
+	if not unit.raceId then return false end
 	if not _raceData then
 		local ok, rd = pcall(function()
 			return require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
@@ -633,6 +840,10 @@ end
 -- Nil-safe race detection via RaceData.GetRace (same lazy loader as above).
 local function isFallDamageImmune(unit)
 	if not unit or not unit.raceId then return false end
+	-- Switched off while Broken (user ruling 2026-10-27).
+	if _statusService and _statusService.IsRacePassiveSuppressed and _statusService.IsRacePassiveSuppressed(unit) then
+		return false
+	end
 	if not _raceData then
 		local ok, rd = pcall(function()
 			return require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
@@ -663,13 +874,28 @@ local function applyMoltenEndTurn(unit)
 	if GameConstants.GetTerrainId(unit.tileX, unit.tileY) ~= "Molten" then return end
 	if not groundEffectsApply(unit.tileX, unit.tileY) then return end
 	local dmg = math.round((unit.maxHp or 0) * MOLTEN_END_TURN_PCT)
+	-- Firebreak zone: Fire damage halved (user ruling 2026-10-27; Molten burns as Fire).
+	if (_firebreak[tileKey(unit.tileX, unit.tileY)] or 0) > 0 then dmg = math.round(dmg * 0.5) end
 	if dmg <= 0 then return end
-	unit.currentHp = math.max(0, unit.currentHp - dmg)
-	if unit.currentHp <= 0 then unit.isAlive = false end
+	if firewalkerImmune(unit) then
+		print(string.format("[TileEffectService] Firewalker: %s immune to Molten end-turn burn", unit.name))
+		return
+	end
+	if guardHazardImmune(unit) then
+		print(string.format("[TileEffectService] Hazard Suit: %s immune to Molten damage while Guarding", unit.name))
+		return
+	end
+	dmg = math.round(dmg * hazardTakenMult(unit))  -- Goblin Cunning
+	local _shown1 = GameConstants.CapUnitDamage(unit, dmg)  -- 1 for a 3-hit gadget
+	unit.currentHp = math.max(0, unit.currentHp - _shown1)
+	if unit.currentHp <= 0 then
+		unit.isAlive = false
+		unit._killCause = unit._killCause or "terrain"  -- Power of Nature: molten/lava KO
+	end
 	print(string.format("[TileEffectService] Molten: %s ends turn on lava, takes %d Fire damage | HP: %d/%d",
 		unit.name, dmg, unit.currentHp, unit.maxHp))
 	if _bvb and _bvb.DotDamage then
-		_bvb.DotDamage(unit, "Molten", dmg)
+		_bvb.DotDamage(unit, "Molten", _shown1)
 	end
 end
 
@@ -735,7 +961,7 @@ function TileEffectService.ProcessSpread(ctElapsed)
 						if nx >= 1 and nx <= _mapWidth and ny >= 1 and ny <= _mapHeight then
 							local tgtKey = tileKey(nx, ny)
 							-- Skip if already has ANY effect (already-Burning or incompatible)
-							if not effects[tgtKey] then
+							if not effects[tgtKey] and not ((_firebreak[tgtKey] or 0) > 0) then
 								-- Target must be Flammable BASE terrain
 								local terrainId = GameConstants.GetTerrainId(nx, ny)
 								local terrainDef = GameConstants.TERRAIN_TYPES[terrainId]
@@ -804,12 +1030,16 @@ local function collapseTile(tx, ty, allUnits)
 					fall = 0
 				end
 				if fall > 0 then
-					u.currentHp = math.max(0, u.currentHp - fall)
-					if u.currentHp <= 0 then u.isAlive = false end
+					local _shown2 = GameConstants.CapUnitDamage(u, fall)  -- 1 for a 3-hit gadget
+					u.currentHp = math.max(0, u.currentHp - _shown2)
+					if u.currentHp <= 0 then
+						u.isAlive = false
+						u._killCause = u._killCause or "terrain"  -- Power of Nature: collapse fall KO
+					end
 					print(string.format("[TileEffectService] %s takes %d fall damage from collapse | HP: %d/%d",
 						u.name, fall, u.currentHp, u.maxHp))
 					if _bvb and _bvb.DotDamage then
-						_bvb.DotDamage(u, "Collapse", fall)
+						_bvb.DotDamage(u, "Collapse", _shown2)
 					end
 				end
 			end
@@ -823,7 +1053,7 @@ end
 --   3. Cracked Ground     -> trigger Collapse (-3 drop + occupant +50 RT + fall dmg).
 -- NOTE: elevation is read BEFORE the -1 lowering for the Rocky>=8 threshold test so
 -- the crack fires on terrain that was Rocky at >=8 at the moment of the blast.
-local function applyExplosionTerrain(tx, ty, allUnits)
+local function applyExplosionTerrain(tx, ty, allUnits, ownerId)
 	-- Protected bridge spans (map_gen_rules row 60 points 2-3): no lowering, no
 	-- Rocky -> Cracked Ground crack, therefore no collapse. HP payload still applies.
 	if GameConstants.IsProtectedSpan(tx, ty) then
@@ -845,12 +1075,20 @@ local function applyExplosionTerrain(tx, ty, allUnits)
 	elseif terrainId == "Cracked Ground" then
 		collapseTile(tx, ty, allUnits)
 	end
+	-- Terrain Shaper objective: count this tile ONCE if its elevation actually
+	-- dropped and the explosion was PLAYER-initiated (ownerId = a Player unit).
+	-- One count per tile regardless of -1 vs -1+collapse(-3) on the same tile.
+	if _objectiveCounter and isPlayerOwner(ownerId)
+		and GameConstants.GetElevation(tx, ty) < elevBefore then
+		_objectiveCounter("elevationTilesChanged", 1)
+	end
 end
 
 -- Internal: process a SINGLE explosion event. Returns a list of chained
 -- explosive sources discovered in the AOE (to be appended to the drain queue
 -- by the caller). Never calls itself — chaining is queue-driven (TRG-011).
-local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits, pattern, reduction)
+-- isTrap (2026-10-27): this blast comes from a TRAP (a Land Mine), so Goblin Cunning's +10% applies.
+local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits, pattern, reduction, isTrap)
 	local dirs = (pattern == "box") and EXPLOSION_DIRS_BOX or EXPLOSION_DIRS_DIAMOND
 	local originElev = GameConstants.GetElevation(x, y)
 	local chained = {}
@@ -865,7 +1103,7 @@ local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits
 			if math.abs(tElev - originElev) <= 2 then
 				-- Intrinsic effect 1: lower the tile + trigger terrain chains
 				-- (Rocky@>=8 -> Cracked Ground, Cracked Ground -> Collapse).
-				applyExplosionTerrain(tx, ty, allUnits)
+				applyExplosionTerrain(tx, ty, allUnits, ownerId)
 				-- OBS Phase 2c-D: an explosion on a breakable OBS blocker tile = ONE hit
 				-- (map_gen_rules 82/84). This single call covers BOTH the AOE (C) and the
 				-- explosion's own elevation reduction (D) for this tile -- one hit per
@@ -885,13 +1123,15 @@ local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits
 						if u.isAlive and u.tileX == tx and u.tileY == ty then
 							local dmg = math.round(u.maxHp * payloadPct)
 							if dmg > 0 then
-								u.currentHp = math.max(0, u.currentHp - dmg)
+								if isTrap then dmg = math.round(dmg * hazardTakenMult(u)) end  -- Goblin Cunning: trap blasts only
+								local _shown3 = GameConstants.CapUnitDamage(u, dmg)  -- 1 for a 3-hit gadget
+								u.currentHp = math.max(0, u.currentHp - _shown3)
 								if u.currentHp <= 0 then u.isAlive = false end
 								print(string.format(
-									"[TileEffectService] EXPLOSION: %s takes %d Fire damage at (%d,%d) | HP: %d/%d",
+									"[TileEffectService] EXPLOSION: %s takes %d explosion damage (no element) at (%d,%d) | HP: %d/%d",
 									u.name, dmg, tx, ty, u.currentHp, u.maxHp))
 								if _bvb and _bvb.ExplosionDamage then
-									_bvb.ExplosionDamage(tx, ty, dmg)
+									_bvb.ExplosionDamage(tx, ty, _shown3)
 								elseif _bvb and _bvb.DotDamage then
 									_bvb.DotDamage(u, "Explosion", dmg)
 								end
@@ -911,8 +1151,9 @@ local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits
 				-- detonates within THIS SAME queue (TRG-011 cap spans the chain; no
 				-- nested QueueExplosion). Consume-once via the injected callback.
 				if _explosiveObjectCb and not (tx == x and ty == y) then
-					if _explosiveObjectCb(tx, ty) then
-						table.insert(chained, { x = tx, y = ty, depth = depth + 1 })
+					local _consumed, _wasTrap = _explosiveObjectCb(tx, ty)
+					if _consumed then
+						table.insert(chained, { x = tx, y = ty, depth = depth + 1, trap = _wasTrap == true })
 					end
 				end
 			end
@@ -925,14 +1166,15 @@ end
 -- Public: resolve an explosion and its full chain via a TRUE append-to-queue
 -- structure with iterative drain (TRG-011). No call-stack recursion. Hard cap
 -- of 128 explosion events per action; cooperative yield every 32 events.
-function TileEffectService.QueueExplosion(x, y, depth, ownerId, damagePayload, allUnits, pattern)
+-- trapBlast (optional, 2026-10-27): true when a trap (Land Mine) set this blast off.
+function TileEffectService.QueueExplosion(x, y, depth, ownerId, damagePayload, allUnits, pattern, trapBlast)
 	allUnits = allUnits or _allUnits
 	local def = GameConstants.TILE_EFFECTS.Oily and GameConstants.TILE_EFFECTS.Oily.explosion
 	local maxDepth = (def and def.maxChainDepth) or 4
 	local reduction = (def and def.chainReductionFactor) or 0.5
 
 	-- Persisted FIFO queue of pending explosion events (TRG-011).
-	local queue = { { x = x, y = y, depth = depth or 0 } }
+	local queue = { { x = x, y = y, depth = depth or 0, trap = trapBlast == true } }
 	local head = 1
 	local processed = 0
 	local EVENT_CAP = 128   -- TRG-011 hard cap per action
@@ -946,7 +1188,7 @@ function TileEffectService.QueueExplosion(x, y, depth, ownerId, damagePayload, a
 			print(string.format("[TileEffectService] Explosion chain terminated at depth %d (cap)", ev.depth))
 		else
 			local chained = processOneExplosion(
-				ev.x, ev.y, ev.depth, ownerId, damagePayload, allUnits, pattern, reduction
+				ev.x, ev.y, ev.depth, ownerId, damagePayload, allUnits, pattern, reduction, ev.trap == true
 			)
 			-- Append discovered chained sources to the tail of the queue.
 			for _, c in ipairs(chained) do
@@ -973,10 +1215,77 @@ end
 -- turn NOT on a Tar Pit, reset the counter to 0 (move off & back resets).
 --------------------------------------------------
 
+-- Darkened Ground (2026-10-25): healing-received multiplier for the unit on (x,y).
+-- Returns 0.80 on Darkened Ground (-20% healing), else 1.0. Read by CombatResolver's
+-- heal path. nil-safe (1.0 when no effect / no reduction field).
+function TileEffectService.GetHealingMultiplier(tileX, tileY)
+	local eff = effects[tileKey(tileX, tileY)]
+	if not eff then return 1.0 end
+	local def = GameConstants.TILE_EFFECTS[eff.id]
+	if def and def.healReductionPct then
+		return math.max(0, 1 - def.healReductionPct)
+	end
+	return 1.0
+end
+
+-- Holy Ground (2026-10-25): end-of-turn tick. Owner-side units heal holyHealPct of Max HP;
+-- Undead/Demon units take holyUndeadPct of Max HP. Owner side resolved from the effect's
+-- ownerId via the cached unit list; if the owner can't be found, allies are not healed but
+-- undead are still burned. Mirrors the applyMoltenEndTurn pattern. nil-safe throughout.
+local function applyHolyGroundEndTurn(unit)
+	if not unit or not unit.isAlive then return end
+	local eff = effects[tileKey(unit.tileX, unit.tileY)]
+	if not eff then return end
+	local def = GameConstants.TILE_EFFECTS[eff.id]
+	if not def or not def.holyGround then return end
+
+	if isUndeadOrDemon(unit) then
+		local dmg = math.round((unit.maxHp or 0) * (def.holyUndeadPct or 0.05))
+		if dmg > 0 then
+			local _shown4 = GameConstants.CapUnitDamage(unit, dmg)  -- 1 for a 3-hit gadget
+			unit.currentHp = math.max(0, (unit.currentHp or 0) - _shown4)
+			if unit.currentHp <= 0 then
+				unit.isAlive = false
+				unit._killCause = unit._killCause or "holyground"
+			end
+			if _bvb and _bvb.DotDamage then _bvb.DotDamage(unit, "Holy Ground", _shown4) end
+			print(string.format("[TileEffectService] Holy Ground: %s (Undead) takes %d Holy | HP %d/%d",
+				unit.name, dmg, unit.currentHp, unit.maxHp or 0))
+		end
+		return
+	end
+
+	local ownerSide = nil
+	if eff.ownerId and _allUnits then
+		for _, u in ipairs(_allUnits) do
+			if u.id == eff.ownerId then ownerSide = u.side break end
+		end
+	end
+	if ownerSide and unit.side == ownerSide and (unit.currentHp or 0) < (unit.maxHp or 0) then
+		local heal = math.round((unit.maxHp or 0) * (def.holyHealPct or 0.05))
+		-- Festering Wound anti-heal (2026-10-25): Holy Ground heal reduced too. Uses the injected
+		-- StatusService (module's DI convention); nil-safe if not wired.
+		if _statusService and _statusService.GetHealingReceivedMult then
+			local _hrm = _statusService.GetHealingReceivedMult(unit)
+			if _hrm ~= 1 then heal = math.max(0, math.floor(heal * _hrm)) end
+		end
+		if heal > 0 then
+			unit.currentHp = math.min(unit.maxHp, unit.currentHp + heal)
+			if _statusService and _statusService.WeakenVenomOnHeal then _statusService.WeakenVenomOnHeal(unit) end  -- healing weakens Venom (2026-10-26)
+			if _bvb and _bvb.UnitStateChanged then _bvb.UnitStateChanged(unit) end
+			print(string.format("[TileEffectService] Holy Ground: %s heals %d | HP %d/%d",
+				unit.name, heal, unit.currentHp, unit.maxHp or 0))
+		end
+	end
+end
+
 function TileEffectService.OnUnitEndTurn(unit)
 	if not unit or not unit.isAlive then return end
 	-- Molten chasm floor: end-of-own-turn burn (terrain_effects row 14).
 	applyMoltenEndTurn(unit)
+	if not unit.isAlive then return end
+	-- Holy Ground augment tick (2026-10-25): heal owner-side / burn undead.
+	applyHolyGroundEndTurn(unit)
 	if not unit.isAlive then return end
 	local eff = effects[tileKey(unit.tileX, unit.tileY)]
 	local onTarPit = eff and eff.id == "Tar Pit"
@@ -1081,7 +1390,8 @@ function TileEffectService.ResolveElectricShock(seedTiles, biggestFinal, exclude
 	for _, u in ipairs(allUnits) do
 		if u.isAlive and u.tileX and u.tileY and not excludeIds[u.id]
 			and inCluster[tileKey(u.tileX, u.tileY)] then
-			u.currentHp = math.max(0, (u.currentHp or 0) - shockDmg)
+			local _shown5 = GameConstants.CapUnitDamage(u, shockDmg)  -- 1 for a 3-hit gadget
+			u.currentHp = math.max(0, (u.currentHp or 0) - _shown5)
 			if u.currentHp <= 0 then
 				u.isAlive = false
 				if ownerId then u._killedBy = u._killedBy or ownerId end
@@ -1093,7 +1403,7 @@ function TileEffectService.ResolveElectricShock(seedTiles, biggestFinal, exclude
 				u.isAlive and "" or " | DEFEATED"))
 			-- Reuse the existing damage broadcast so the client reflects HP (BUG-034).
 			if _bvb and _bvb.DotDamage then
-				_bvb.DotDamage(u, "Shock", shockDmg)
+				_bvb.DotDamage(u, "Shock", _shown5)
 			end
 		end
 	end
@@ -1130,6 +1440,24 @@ local ELEMENT_CREATES_EFFECT = {
 	Fire  = "Burning",
 	Water = "Wet",
 }
+
+-- WIND CLEARS CLOUDS (user ruling 2026-10-27): clear a cloud on (x, y) if Wind clears it
+-- (REACTIONS: Steam / Static Cloud / Poison Cloud). Reaction-only -- never transforms the base
+-- terrain and never explodes anything. Uses the normal removal path (client tint updates) and,
+-- like every other clearing reaction, lets a base-floor effect return. Used for AOE tiles a
+-- Wind skill or item covers (occupied tiles already go through ResolveElementOnTile).
+function TileEffectService.WindClearsCloud(tileX, tileY, ownerId)
+	if tileX < 1 or tileX > _mapWidth or tileY < 1 or tileY > _mapHeight then return false end
+	local key = tileKey(tileX, tileY)
+	local existing = effects[key]
+	if not existing then return false end
+	local reacted, resultId = resolveReaction(existing.id, "Wind")
+	if not reacted or resultId ~= nil then return false end
+	TileEffectService.RemoveTileEffect(tileX, tileY)
+	if not effects[key] then tryReinstateFloor(tileX, tileY) end
+	print(string.format("[TileEffectService] Wind clears %s at (%d,%d)", tostring(existing.id), tileX, tileY))
+	return true
+end
 
 function TileEffectService.ResolveElementOnTile(tileX, tileY, element, ownerId, allUnits)
 	if not element or element == "Physical" then return false end
@@ -1168,6 +1496,12 @@ function TileEffectService.ResolveElementOnTile(tileX, tileY, element, ownerId, 
 	-- transformation for the current terrain (Holy restore ladder, Dark corrupt,
 	-- Earth→Cracked, Wind→Mud, etc.). TransformTerrain is a no-op if no mapping.
 	local changed = transformAndBroadcast(tileX, tileY, element)
+	-- Terra Former objective: count a PLAYER-initiated terrain transform (an element
+	-- the player applied to the tile actually changed its terrain type). Earthquake
+	-- never calls ResolveElementOnTile, so it is excluded by construction.
+	if changed and _objectiveCounter and isPlayerOwner(ownerId) then
+		_objectiveCounter("terrainTilesTransformed", 1)
+	end
 	return changed == true
 end
 
