@@ -140,6 +140,12 @@ local STATUS_DELIVERY_MAP = {
 }
 
 -- Buff: augment ID → status to apply on ATTACKER (self-buff).
+-- Card durations (DB augments, "apply <buff> to the target for N turns"). CT-based statuses use
+-- 1000 CT per turn (one round), the convention used elsewhere (e.g. Zombie 3000 CT = 3 turns).
+local SUPPORT_TURNS = {
+	Haste = 2, Regeneration = 3, Recharge = 3, Blessed = 2, Enlightened = 2, Rush = 1, Frenzy = 2,
+}
+
 local BUFF_DELIVERY_MAP = {
 	["AUG-HASTE-SUPPORT"]         = "Haste",
 	["AUG-REGENERATION-SUPPORT"]  = "Regeneration",
@@ -353,7 +359,10 @@ local function activeAugments(unit: any, skillId: any, list: any): { string }
 	local weapon = AugmentCompatibility.WeaponProfileFromUnit(unit)
 	for i = 1, 2 do
 		local augId = list[i]
-		if augId and AugmentCompatibility.Check(skillId, augId, weapon) then
+		-- Conflict rule (2026-10-28): an augment that conflicts with one already active is skipped,
+		-- so it neither works nor adds its MP cost (safety net; equip and save-load already prevent it).
+		if augId and AugmentCompatibility.Check(skillId, augId, weapon)
+			and not AugmentCompatibility.FindConflict(augId, out) then
 			table.insert(out, augId)
 		end
 	end
@@ -721,20 +730,8 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		-- BUFF DELIVERY  (apply buff to ATTACKER)
 		-- ===============================================
 		elseif BUFF_DELIVERY_MAP[augId] then
-			local buffToApply = BUFF_DELIVERY_MAP[augId]
-			if not shouldSkipForFrequency(augId) and attacker.isAlive then
-				StatusService.ApplyStatus(attacker, buffToApply, attacker.id)
-				markFired(augId)
-				local inst = StatusService.HasStatus(attacker, buffToApply)
-				if inst then
-					local _augIcon2 = AugmentData[augId] and AugmentData[augId].icon or nil
-					BattleVisualBroadcaster.StatusApplied(attacker, buffToApply, inst.remainingTurns, _augIcon2)
-				end
-				print(string.format(
-					"[AugmentEffect] %s triggered on %s (self-buff %s)",
-					augName, attacker.name, buffToApply
-				))
-			end
+			-- Delivered after the skill resolves, to the skill's target(s) (DB card; see
+			-- OnSkillComplete). Nothing happens on damage (was: self-buff on hit, fix 2026-10-28).
 
 		-- ===============================================
 		-- TERRAIN GROUND (2026-10-24 augment fix): lay an existing tile effect on the
@@ -951,13 +948,7 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		-- RECOVERY — Overhealing Shield  (stub shield part)
 		-- ===============================================
 		elseif augId == "AUG-OVERHEALING-SHIELD" then
-			if not shouldSkipForFrequency(augId) then
-				markFired(augId)
-				print(string.format(
-					"[AugmentEffect] %s not yet implemented (Recovery — shield conversion)",
-					augName
-				))
-			end
+			-- Built in CombatResolver.ApplyOutcome's heal branch (excess healing -> barrier), 2026-10-28.
 
 		-- ===============================================
 		-- PURGE — Purging Strike  (per qualifying target)
@@ -1289,6 +1280,52 @@ function AugmentEffectService.OnSkillComplete(attacker, skillDef, augmentIds, ct
 				end
 				print(string.format("[AugmentEffect] %s: %s %d enemies %s impact center",
 					augName, toward and "pulled" or "scattered", #victims, toward and "toward" or "from"))
+			end
+
+		-- SUPPORT DELIVERY (DB cards, built 2026-10-28): "After the supported Skill resolves, apply
+		-- <buff> to the target for N turns." Targets = the units the skill helped (ctx.supportTargets,
+		-- worked out by CommandService); units the cast damaged never get it.
+		elseif BUFF_DELIVERY_MAP[augId] then
+			local sid = BUFF_DELIVERY_MAP[augId]
+			local turns = SUPPORT_TURNS[sid]
+			local icon = AugmentData[augId] and AugmentData[augId].icon or nil
+			for _, u in ipairs(ctx.supportTargets or {}) do
+				if u.isAlive then
+					local before = StatusService.HasStatus(u, sid)
+					local r0t = before and before.remainingTurns
+					local r0c = before and before.remainingCt
+					local _, _, immuneReason = StatusService.ApplyStatus(u, sid, attacker.id)
+					if immuneReason then
+						-- Immune: nothing applied or refreshed (UAT 2026-10-28 D4).
+						BattleVisualBroadcaster.StatusImmune(u, sid, immuneReason)
+					else
+						local inst = StatusService.HasStatus(u, sid)
+						local def = GameConstants.STATUSES[sid]
+						if inst and turns and def then
+							local isCt = inst.remainingCt ~= nil
+							local card = if isCt then turns * 1000 else turns
+							if not before then
+								-- New: scale the default to the card length, so an applier bonus such
+								-- as Lore keeps its share.
+								local base = if isCt then def.durationCt else def.duration
+								if base and base > 0 then
+									local v = math.max(1, math.round((if isCt then inst.remainingCt else inst.remainingTurns) * card / base))
+									if isCt then inst.remainingCt = v else inst.remainingTurns = v end
+								end
+							else
+								-- Reapplied: an "extend" status adds the card length; others keep
+								-- whichever is longer, the old time or the card length.
+								local r0 = (if isCt then r0c else r0t) or 0
+								local v = if def.reapply == "extend" then r0 + card else math.max(r0, card)
+								if isCt then inst.remainingCt = v else inst.remainingTurns = v end
+							end
+						end
+						if inst then
+							BattleVisualBroadcaster.StatusApplied(u, sid, inst.remainingTurns, icon)
+							print(string.format("[AugmentEffect] %s: %s gets %s", augName, u.name, sid))
+						end
+					end
+				end
 			end
 
 		-- TERRAIN — Darkened Ground (2026-10-25): lay Darkened Ground (heal -20%) on the

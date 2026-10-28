@@ -818,7 +818,7 @@ end
 --------------------------------------------------
 -- HANDLER E2: REVIVE  (migrated verbatim)
 --------------------------------------------------
-local function tryRevive(target: any, formula: string, result: any): boolean
+local function tryRevive(target: any, formula: string, result: any, allUnits: any, ctx: any): boolean
 	local revPct, revRt = string.match(formula, "Revive at (%d+)%% Max HP with (%d+) remaining RT")
 	if not revPct then
 		return false
@@ -832,6 +832,19 @@ local function tryRevive(target: any, formula: string, result: any): boolean
 		result.effectType = "NoEffect"
 		result.amount = 0
 		return true
+	end
+	-- Rises on the nearest free tile if a living unit now stands on the body (2026-10-28). The
+	-- command is refused earlier when there is none; this is the safety net.
+	if UnitSchema and UnitSchema.FindReviveTile then
+		local rx, ry, moved = UnitSchema.FindReviveTile(target, allUnits,
+			ctx and ctx.mapWidth or nil, ctx and ctx.mapHeight or nil)
+		if not rx then
+			result.effectType = "NoEffect"
+			result.amount = 0
+			return true
+		end
+		target.tileX, target.tileY = rx, ry
+		result.reviveMoved = moved
 	end
 	local frac = tonumber(revPct) / 100
 	local maxHp = target.maxHp or 1
@@ -1485,6 +1498,7 @@ local function tryPulse(user: any, target: any, def: any, result: any, ctx: any)
 
 	local entry = _pulseScheduler.Register(ctx.state, {
 		ownerId = user.id,
+		sourceName = def.name,  -- battle log names the item that hit (Tesla Pylon, Meteor Marker, ...)
 		side = user.side,
 		tileX = tx, tileY = ty,
 		kind = def.pulseKind,
@@ -1938,7 +1952,7 @@ function ItemEffectService.Resolve(user: any, target: any, consumableDef: any, a
 			return result
 		end
 		if tryCure(target, formula, result) then return result end
-		if tryRevive(target, formula, result) then return result end
+		if tryRevive(target, formula, result, allUnits, ctx) then return result end
 	end
 	if tryDamage(user, target, consumableDef, formula, result, allUnits, ctx) then
 		applyDamageRiders(user, target, consumableDef, formula, result)

@@ -232,13 +232,35 @@ function StatusService.IsTauntRestrictedSkill(def)
 end
 
 -- Keeps only candidates that are the taunter (unit) or the taunter's tile (ground centre).
-function StatusService.FilterTauntCandidates(actor, def, candidates, allUnits)
+-- A tile-mode marker (ground / widened tile-click skills; it sits on the caster's tile as a
+-- placeholder) is kept but moved onto the taunter's tile, so tile skills stay usable under Taunt and
+-- an AI aims at the taunter. Dropped when the taunter is outside `range` (optional). UAT 2026-10-28 D-2.
+function StatusService.FilterTauntCandidates(actor, def, candidates, allUnits, range)
 	if type(candidates) ~= "table" or not StatusService.IsTauntRestrictedSkill(def) then return candidates end
 	local taunter = StatusService.GetTaunter(actor, allUnits)
 	if not taunter then return candidates end
+	-- An "Empty Tile" skill can never be aimed at the taunter (its tile is never empty), so under
+	-- Taunt it has no target at all (UAT 2026-10-28 D-A: traps / Summon Turret).
+	if def.targetRules == "Empty Tile" then
+		return {}
+	end
+	-- Weapon minimum range (e.g. Longshot) also applies, so the prompt never offers a tile the
+	-- server would refuse (UAT 2026-10-28 A-1). Line of sight is still checked only on commit.
+	local _, minRange = GameConstants.CalcSkillRange(actor, def, 0)
 	local kept = {}
 	for _, c in ipairs(candidates) do
-		if type(c) == "table" and (c.id == taunter.id or (c.tileX == taunter.tileX and c.tileY == taunter.tileY)) then
+		if type(c) == "table" and c.isGroundTarget then
+			local inRange = true
+			if type(range) == "number" and actor and actor.tileX and taunter.tileX then
+				local d = math.max(math.abs(actor.tileX - taunter.tileX), math.abs(actor.tileY - taunter.tileY))
+				inRange = d <= range and d >= (minRange or 0)
+			end
+			if inRange then
+				local m = table.clone(c)
+				m.tileX, m.tileY = taunter.tileX, taunter.tileY
+				table.insert(kept, m)
+			end
+		elseif type(c) == "table" and (c.id == taunter.id or (c.tileX == taunter.tileX and c.tileY == taunter.tileY)) then
 			table.insert(kept, c)
 		end
 	end
@@ -340,6 +362,11 @@ local function isBurnDamageImmune(unit)
 end
 
 function StatusService.IsImmune(unit, statusId)
+	-- Item devices (turrets, drones, totems, beacons; 2026-10-27) are machines that take no
+	-- turns, so a status could never tick or wear off on them: none can be put on them.
+	if unit and unit.isItemDevice then
+		return true, "devices are not affected by statuses"
+	end
 	-- 0. Weather Burn-suppression (Rain / Snow Storm): block Burn APPLICATION.
 	if statusId == "Burn" and _weatherBurnSuppressed then
 		return true, "weather suppresses Burn"

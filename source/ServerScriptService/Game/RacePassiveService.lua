@@ -680,7 +680,21 @@ end
 
 local ZOMBIE_REVIVE_CT = 3000
 
-function RacePassiveService.ProcessZombieRevive(unit, ctPassed)
+-- units (optional): the battle's units. A unit whose body has a living unit on it rises on the
+-- nearest free tile; with none it stays down and tries again on a later tick (2026-10-28).
+local function placeForSelfRevive(unit, units)
+	local rx, ry, moved = UnitSchema.FindReviveTile(unit, units)
+	if not rx then
+		return false
+	end
+	unit.tileX, unit.tileY = rx, ry
+	if moved then
+		unit._reviveMoved = true  -- Main shows the move when it refreshes this unit
+	end
+	return true
+end
+
+function RacePassiveService.ProcessZombieRevive(unit, ctPassed, units)
 	local raceId = getRaceId(unit)
 	if unit.isAlive then return false end
 
@@ -694,7 +708,7 @@ function RacePassiveService.ProcessZombieRevive(unit, ctPassed)
 	if _tes.HasUndyingWillPerk(unit) and not unit.undyingWillUsed then
 		if not unit.undyingWillKoCt then unit.undyingWillKoCt = 0 end
 		unit.undyingWillKoCt = unit.undyingWillKoCt + ctPassed
-		if unit.undyingWillKoCt >= 500 then
+		if unit.undyingWillKoCt >= 500 and placeForSelfRevive(unit, units) then
 			unit.isAlive = true
 			UnitSchema.ClearChannelState(unit)  -- never return holding a pre-death channel
 			unit._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
@@ -717,7 +731,7 @@ function RacePassiveService.ProcessZombieRevive(unit, ctPassed)
 		if not unit.zombieKoCt then unit.zombieKoCt = 0 end
 		unit.zombieKoCt = unit.zombieKoCt + ctPassed
 
-		if unit.zombieKoCt >= ZOMBIE_REVIVE_CT then
+		if unit.zombieKoCt >= ZOMBIE_REVIVE_CT and placeForSelfRevive(unit, units) then
 			-- Revive with 50% Max HP
 			unit.isAlive = true
 			UnitSchema.ClearChannelState(unit)  -- never return holding a pre-death channel

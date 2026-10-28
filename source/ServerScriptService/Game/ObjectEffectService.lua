@@ -1834,6 +1834,13 @@ Handlers["Stone Pillar"] = function(ctx: any): (boolean, any)
 			break
 		end
 	end
+	-- Remove the standing pillar's model and clear its tile's object tag (Tester F2 2026-10-27:
+	-- the old tile still showed "Stone Pillar" after it fell).
+	if _objectVisualRemover then _objectVisualRemover(obj) end
+	-- Also clear the server object map so GetObjectAt stops reporting the fallen pillar (Tester W2).
+	if GameConstants.OBJECT_MAP and GameConstants.OBJECT_MAP[py] then
+		GameConstants.OBJECT_MAP[py][px] = nil
+	end
 
 	print(string.format("[ObjectEffectService] Stone Pillar | fell %d tile(s) toward (%d,%d) as Rocky span", #spanTiles, dx, dy))
 	-- Terrain Shaper objective: a PLAYER interacting with the pillar reshaped

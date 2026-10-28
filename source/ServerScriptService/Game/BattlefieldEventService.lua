@@ -517,6 +517,13 @@ end
 Handlers["Divine Intervention"] = function(ctx: any)
 	for _, u in ipairs(ctx.state.units) do
 		if u.side == "Player" and not u.isAlive then
+			-- Rises on the nearest free tile if a living unit now stands on the body (2026-10-28).
+			local rx, ry, moved = UnitSchema.FindReviveTile(u, ctx.state.units)
+			if not rx then
+				print(`[BattlefieldEventService] Divine Intervention: {u.name} has no free tile to rise on; stays down`)
+				continue
+			end
+			u.tileX, u.tileY = rx, ry
 			u.isAlive = true
 			UnitSchema.ClearChannelState(u)  -- never return holding a pre-death channel
 			u._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
@@ -526,6 +533,7 @@ Handlers["Divine Intervention"] = function(ctx: any)
 			u.remainingRt = u.startingRt or 400
 			if _statusService and _statusService.WeakenVenomOnHeal then _statusService.WeakenVenomOnHeal(u) end  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 			applyStatusTo(u, "Blessed", "Divine Intervention")
+			if moved and _broadcaster and _broadcaster.UnitMoved then _broadcaster.UnitMoved(u) end
 			if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(u) end
 		elseif u.side == "Player" and u.isAlive then
 			applyStatusTo(u, "Blessed", "Divine Intervention")

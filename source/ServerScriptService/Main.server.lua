@@ -387,7 +387,7 @@ local doctrineSkillCombatDefs = {
 	["DOC-RANGER-01"]    = { id = "DOC-RANGER-01", name = "Hunter's Mark", tags = {"Direct Damage","Debuff","Physical"}, targetRules = "Enemy Unit", range = -1, pattern = "Single", mpCost = 4, rtMult = 1.00, channelTime = 0, power = 0.75, isHealing = false },
 	["DOC-VANGUARD-01"]  = { id = "DOC-VANGUARD-01", name = "Hold the Line", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 4, rtMult = 0.75, channelTime = 0, power = 0, isHealing = false, appliesStatus = "Hold the Line" }, -- DB: Stability +2, direct dmg taken -15%, 1000 CT (2026-10-07)
 	["DOC-TACTICIAN-01"] = { id = "DOC-TACTICIAN-01", name = "Coordinated Advance", tags = {"Buff","Utility"}, targetRules = "Ally Unit, Self", range = 4, pattern = "Single", mpCost = 5, channelTime = 100, power = 0, isHealing = false, appliesStatus = "Coordinated Advance" }, -- DB: Move +2, Move RT -20%, 1000 CT, channel 100 (2026-10-07)
-	["DOC-WARLORD-01"]   = { id = "DOC-WARLORD-01", name = "War Cry", tags = {"Buff","Utility"}, targetRules = "Self, Allies", range = 0, pattern = "AOE", aoePattern = "Circle3", mpCost = 6, channelTime = 100, power = 0, isHealing = false, appliesStatus = "War Cry" }, -- DB: caster + allies radius 3, dmg +10%, Stability +1, 1000 CT, channel 100 (2026-10-07)
+	["DOC-WARLORD-01"]   = { id = "DOC-WARLORD-01", name = "War Cry", tags = {"Buff","Utility"}, targetRules = "Self, Allies", range = 0, pattern = "AOE", aoePattern = "Circle3", mpCost = 6, channelTime = 100, power = 0, isHealing = false, appliesStatus = "War Cry", alliesOnly = true }, -- DB: caster + allies radius 3; allies only (user ruling 2026-10-28), dmg +10%, Stability +1, 1000 CT, channel 100 (2026-10-07)
 	["DOC-SHADOWBINDER-01"] = { id = "DOC-SHADOWBINDER-01", name = "Veil of Weakness", tags = {"Debuff","Dark"}, targetRules = "Enemy Unit", range = 4, pattern = "Single", mpCost = 5, channelTime = 150, power = 0, isHealing = false, appliesStatus = "Weakened", appliesStatuses = { "Debuff Res Down" }, statusDurationCt = 1500 }, -- DB: Weakened + Debuff Res -10 pts, 1500 CT (2026-10-07)
 	["DOC-SPELLBLADE-01"] = { id = "DOC-SPELLBLADE-01", name = "Arcane Strike", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 4, rtMult = 1.00, channelTime = 0, power = 1.10, isHealing = false }, -- rtMult 1.00 per DB (was 1.25)
 	["DOC-ASCETIC-01"]   = { id = "DOC-ASCETIC-01", name = "Meditate", tags = {"Buff","Utility"}, targetRules = "Self, Ally Unit", range = 3, pattern = "Single", mpCost = 0, channelTime = 200, power = 0, isHealing = false, appliesStatus = "Debuff Res Up", selfMpRestoreFraction = 0.15, allyMpTransferFraction = 0.12 },
@@ -889,12 +889,58 @@ local state
 local BattleTurnController
 local allUnitsList
 local undeployConn
--- Initialized at BOOT (2026-10-13) as persistent tables so base actions (hire/loadout)
--- that fire before the loop reaches the per-round refill never hit a nil table. Each
--- round the loop CLEARS and refills these in place (table.clear) instead of replacing
--- the table, so the base's reference stays valid across rounds.
+-- Initialized at BOOT (2026-10-13) as persistent tables so base actions (hire/loadout) never hit
+-- a nil table. playerUnits is cleared and refilled in place each round; cardInventory is filled
+-- once at boot and never cleared (2026-10-28). Neither table is replaced, so references stay valid.
 local playerUnits = {}
 local cardInventory = { skillCards = {}, augmentCards = {} }
+-- Card inventory: filled ONCE here at boot from the save (or starter cards for a fresh player).
+-- It then stays live for the whole session: rewards and equips change it in place and doSave
+-- writes it. It is NOT cleared or re-restored per quest round (fix 2026-10-28).
+
+-- Restore persisted card inventory from the save (progression.cardInventory).
+-- savedCardInventory is populated in the load block above when the save carried it.
+-- COPY values in (2026-10-13), never alias: cardInventory changes in place during the session
+-- (rewards, equips), so sharing savedCardInventory's subtables by reference would change the
+-- boot-time save snapshot too. Copy keeps the snapshot untouched.
+if savedCardInventory and type(savedCardInventory) == "table" then
+	if type(savedCardInventory.skillCards) == "table" then
+		for id, qty in pairs(savedCardInventory.skillCards) do cardInventory.skillCards[id] = qty end
+	end
+	if type(savedCardInventory.augmentCards) == "table" then
+		for id, qty in pairs(savedCardInventory.augmentCards) do cardInventory.augmentCards[id] = qty end
+	end
+end
+
+-- Populate starter cards ONLY when the inventory is genuinely empty (fresh player,
+-- or an old save that predates card persistence -> granted once, then persists).
+-- After the first save, cardInventory is restored above and this block is skipped,
+-- so starter cards are never re-granted (fixes the relaunch multiplication bug).
+do
+	-- A save that already carries a card inventory never gets starter cards again, even when every
+	-- card is equipped and the loose inventory is empty (that re-grant duplicated cards; 2026-10-28).
+	local savedHasCards = hasSave and loadedSave and type(loadedSave.progression) == "table"
+		and type(loadedSave.progression.cardInventory) == "table"
+	local hasAny = savedHasCards == true
+	for _ in pairs(cardInventory.skillCards) do hasAny = true; break end
+	if not hasAny then
+		for _ in pairs(cardInventory.augmentCards) do hasAny = true; break end
+	end
+	if not hasAny then
+		-- Fill in place (2026-10-13), don't replace the subtables, so every holder of
+		-- cardInventory (e.g. LoadoutRequestHandlers) keeps seeing the same tables.
+		local starterSkills = {
+			["SKL-POWER-STRIKE"] = 1, ["SKL-SWEEPING-CUT"] = 1,
+			["SKL-FIRE-BOLT"] = 1, ["SKL-HEALING-LIGHT"] = 1,
+			["SKL-CRIPPLING-SHOT"] = 1, ["SKL-VENOM-BURST"] = 1,
+		}
+		local starterAugments = { ["AUG-BLEEDING-EDGE-SUPPORT"] = 2, ["AUG-VENOMOUS-SUPPORT"] = 2 }
+		for id, qty in pairs(starterSkills) do cardInventory.skillCards[id] = qty end
+		for id, qty in pairs(starterAugments) do cardInventory.augmentCards[id] = qty end
+		print("[Main] Starter cards loaded (6 skill, 4 augment)")
+	end
+end
+
 local doSave               -- fwd-declared; assigned inside the loop so dev actions at boot can call it
 
 BattleEvents.StartBattle.OnServerEvent:Connect(function(player)
@@ -2658,11 +2704,8 @@ while true do
 	-- REUSABLE SAVE HELPER
 	--------------------------------------------------
 
-	-- Card inventory (loose, un-equipped skill/augment cards): { skillCards = {[id]=qty},
-	-- augmentCards = {[id]=qty} }. Declared BEFORE doSave so doSave captures it as an
-	-- upvalue and can persist it. Populated/restored further below (starter + save load).
-	-- Clear in place (boot-init 2026-10-13): base holds a persistent reference.
-	table.clear(cardInventory.skillCards); table.clear(cardInventory.augmentCards)
+	-- Card inventory (loose, un-equipped skill/augment cards) is filled ONCE at boot and stays live
+	-- for the session; it is never cleared here (the per-round clear was removed 2026-10-28, UAT fix 36).
 
 	-- (save helper moved to boot — see SAVE HELPER block above the loop, 2026-10-13)
 
@@ -2711,53 +2754,13 @@ while true do
 	-- SKILL CARD & AUGMENT CARD MANAGEMENT (Slice 4I)
 	--------------------------------------------------
 
-	-- Card inventory: declared earlier (before doSave) so it can be persisted.
-	-- Clear in place (boot-init 2026-10-13) before restore/starter population;
-	-- base holds a persistent reference, so don't replace the table.
-	table.clear(cardInventory.skillCards); table.clear(cardInventory.augmentCards)
-
-	-- Restore persisted card inventory from the save (progression.cardInventory).
-	-- savedCardInventory is populated in the load block above when the save carried it.
-	-- COPY values in (2026-10-13), never alias: cardInventory is cleared in place each
-	-- round, so sharing savedCardInventory's subtables by reference would let that clear
-	-- wipe the durable save snapshot (returning players lost their saved cards). Copy keeps
-	-- the snapshot untouched while filling the base's persistent cardInventory tables.
-	if savedCardInventory and type(savedCardInventory) == "table" then
-		if type(savedCardInventory.skillCards) == "table" then
-			for id, qty in pairs(savedCardInventory.skillCards) do cardInventory.skillCards[id] = qty end
-		end
-		if type(savedCardInventory.augmentCards) == "table" then
-			for id, qty in pairs(savedCardInventory.augmentCards) do cardInventory.augmentCards[id] = qty end
-		end
-	end
-
-	-- Populate starter cards ONLY when the inventory is genuinely empty (fresh player,
-	-- or an old save that predates card persistence -> granted once, then persists).
-	-- After the first save, cardInventory is restored above and this block is skipped,
-	-- so starter cards are never re-granted (fixes the relaunch multiplication bug).
-	do
-		local hasAny = false
-		for _ in pairs(cardInventory.skillCards) do hasAny = true; break end
-		if not hasAny then
-			for _ in pairs(cardInventory.augmentCards) do hasAny = true; break end
-		end
-		if not hasAny then
-			-- Fill in place (2026-10-13), don't replace the subtables, so cardInventory's
-			-- subtable identity stays stable across rounds (clear-in-place + copy-restore).
-			local starterSkills = {
-				["SKL-POWER-STRIKE"] = 1, ["SKL-SWEEPING-CUT"] = 1,
-				["SKL-FIRE-BOLT"] = 1, ["SKL-HEALING-LIGHT"] = 1,
-				["SKL-CRIPPLING-SHOT"] = 1, ["SKL-VENOM-BURST"] = 1,
-			}
-			local starterAugments = { ["AUG-BLEEDING-EDGE-SUPPORT"] = 2, ["AUG-VENOMOUS-SUPPORT"] = 2 }
-			for id, qty in pairs(starterSkills) do cardInventory.skillCards[id] = qty end
-			for id, qty in pairs(starterAugments) do cardInventory.augmentCards[id] = qty end
-			print("[Main] Starter cards loaded (6 skill, 4 augment)")
-		end
-	end
+	-- Card inventory: restored from the save and starter cards granted ONCE at boot (next to where
+	-- cardInventory is created), not every quest round. The old per-round clear-and-restore put the
+	-- inventory back to the boot-time save each time a quest launched, so cards won or equipped
+	-- earlier in the session were lost, and the base showed no cards before the first quest (2026-10-28).
 
 	-- Tags-only augment cleanup on save load (user ruling 2026-10-26): equipped augments that no
-	-- longer fit their skill are unequipped and returned to the card inventory restored above.
+	-- longer fit their skill are unequipped and returned to the live card inventory (restored at boot).
 	-- Idempotent. A player-facing notice listing the removed augments is pending the user's
 	-- approval of its wording (no new helper text without approval); Output logs each removal.
 	do
@@ -3576,8 +3579,23 @@ while true do
 		ArmorPassiveService.OnBattleStart(unit)
 	end
 
+	-- Tile labels for revived units (2026-10-28): revives happen in many services, and only Main owns
+	-- the tile labels the client's tile inspector shows. Each step, any unit that was down and is now
+	-- standing gets its tile labelled (it may have risen on a different, free tile).
+	local _aliveSeen = {}
+	for _, u in ipairs(state.units) do _aliveSeen[u] = u.isAlive end
+	local function labelRevivedUnits()
+		for _, u in ipairs(state.units) do
+			if u.isAlive and _aliveSeen[u] == false and u.tileX and u.tileY then
+				setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
+			end
+			_aliveSeen[u] = u.isAlive
+		end
+	end
+
 	while BattleCoordinator.GetPhase(state) ~= "BattleOver" do
 		local activeUnit = BattleCoordinator.AdvanceClock(state)
+		labelRevivedUnits()
 		if not activeUnit then break end
 		-- TAUNT (user ruling 2026-10-27): drop / apply aura taunts before the turn plays.
 		for _, _tu in ipairs(StatusService.ReconcileTaunts(state.units)) do
@@ -3601,40 +3619,17 @@ while true do
 			ObjectEffectService.ClearTurnUsage(activeUnit.id)
 		end
 
-		-- TWO-TIMER MODEL: channel-deadline resolution. AdvanceClock returns a signal
-		-- table { channelResolve = caster } when the clock reached a fixed channel
-		-- deadline. Fire the skill now (independent of whose RT is up), broadcast it,
-		-- then let ResolveChannelDeadline apply the resolve-timing rule: the caster
-		-- takes an immediate turn ONLY if its own RT already hit 0 (frozen); otherwise
-		-- it keeps its remaining RT. If immediate, fall through as that unit's turn.
-		if type(activeUnit) == "table" and activeUnit.channelResolve then
-			local caster = activeUnit.channelResolve
-			-- ACTIVATION TIME (2026-10-07): if the channel just completed but the skill
-			-- still owes Activation Time, schedule it (uninterruptible) instead of firing.
-			-- BeginActivationPhase returns the clock to Waiting; refresh the timeline.
-			if BattleCoordinator.BeginActivationPhase(state, caster) then
-				BattleTurnController.broadcastActions({}, caster)
-				continue
-			end
-			BattleVisualBroadcaster.TurnStarted(caster, state.ct, state.units)
-			local chActions = BattleTurnController.handleChannelingActivation(caster)
-			BattleTurnController.broadcastActions(chActions, caster)
-			local immediate = BattleCoordinator.ResolveChannelDeadline(state)
-			if not immediate then
-				-- No immediate turn — caster keeps its RT; continue the main loop.
-				continue
-			end
-			-- Immediate turn: process 'caster' as the active unit for this iteration.
-			activeUnit = immediate
-		end
-
-		turnCount = turnCount + 1
-
+		-- Clock-effect results (statuses, pulses) are shown HERE, before the channel-resolve branch,
+		-- so a tick that ends in a channel resolve still shows its kills and bar changes (UAT 2026-10-28).
 		-- Regeneration/Recharge CT-tick effects: BattleCoordinator applied the HP/MP
 		-- (mutating the units) and stashed the affected units here. Refresh their bars.
 		local ctStatusUnits = state.ctStatusUnits or {}
 		state.ctStatusUnits = nil
 		for _, u in ipairs(ctStatusUnits) do
+			if u._reviveMoved then  -- Zombie / Undying Will rose on the nearest free tile (2026-10-28)
+				u._reviveMoved = nil
+				BattleVisualBroadcaster.UnitMoved(u)
+			end
 			BattleVisualBroadcaster.UnitStateChanged(u)
 			-- Shield visual (2026-10-23): keep the client shield indicator in sync as the
 			-- pool decays/expires on CT ticks (absolute shield_total, read by the broadcaster).
@@ -3663,7 +3658,26 @@ while true do
 			local u = ev.unit
 			if u then
 				if ev.kind == "damage" and (ev.amount or 0) > 0 then
-					BattleVisualBroadcaster.DotDamage(u, ev.element or "Pulse", ev.amount)
+					if ev.sourceUnit then
+						-- Device hit (Sentry Turret, ...): shown exactly like a normal attack -- damage
+						-- number, hit flinch, shot effect, "X attacks Y" log (user ruling 2026-10-27).
+						-- UnitActed also announces the KO, so the removal broadcast below is skipped.
+						BattleVisualBroadcaster.UnitActed(ev.sourceUnit, u, { finalDamage = ev.amount }, nil, nil)
+						if u.isAlive == false and not _pulseKoSeen[u] then
+							_pulseKoSeen[u] = true
+							clearTileOccupant(u.tileX, u.tileY)
+						end
+					else
+						BattleVisualBroadcaster.DotDamage(u, ev.element or "Pulse", ev.amount, ev.source)
+						-- DotDamage already announces a KO; don't announce it a second time below (UAT 2026-10-28).
+						if u.isAlive == false and not _pulseKoSeen[u] then
+							_pulseKoSeen[u] = true
+							clearTileOccupant(u.tileX, u.tileY)
+						end
+					end
+				elseif ev.kind == "heal" and ev.sourceUnit and (ev.amount or 0) > 0 then
+					-- Device heal (Mender Drone, Healing Beacon): green number like a normal heal.
+					BattleVisualBroadcaster.HealingApplied(ev.sourceUnit, u, ev.amount)
 				end
 				-- Drone reveal: the unit's Hide status ended (client drops the pill).
 				if ev.kind == "reveal" then
@@ -3692,6 +3706,59 @@ while true do
 				end
 			end
 		end
+
+		-- A side wiped by clock effects (statuses, tile effects, pulses) ends the battle now. They tick
+		-- after AdvanceClock's own battle-end check, so without this the next unit would still get a turn
+		-- on an empty field (UAT 2026-10-28 W-1). The kills above have already been shown.
+		if BattleCoordinator.CheckBattleEnd(state) then
+			break
+		end
+
+		-- TWO-TIMER MODEL: channel-deadline resolution. AdvanceClock returns a signal
+		-- table { channelResolve = caster } when the clock reached a fixed channel
+		-- deadline. Fire the skill now (independent of whose RT is up), broadcast it,
+		-- then let ResolveChannelDeadline apply the resolve-timing rule: the caster
+		-- takes an immediate turn ONLY if its own RT already hit 0 (frozen); otherwise
+		-- it keeps its remaining RT. If immediate, fall through as that unit's turn.
+		if type(activeUnit) == "table" and activeUnit.channelResolve then
+			local caster = activeUnit.channelResolve
+			-- ACTIVATION TIME (2026-10-07): if the channel just completed but the skill
+			-- still owes Activation Time, schedule it (uninterruptible) instead of firing.
+			-- BeginActivationPhase returns the clock to Waiting; refresh the timeline.
+			if BattleCoordinator.BeginActivationPhase(state, caster) then
+				BattleTurnController.broadcastActions({}, caster)
+				continue
+			end
+			BattleVisualBroadcaster.TurnStarted(caster, state.ct, state.units)
+			local chActions = BattleTurnController.handleChannelingActivation(caster)
+			BattleTurnController.broadcastActions(chActions, caster)
+			local immediate = BattleCoordinator.ResolveChannelDeadline(state)
+			if not immediate then
+				-- No immediate turn — caster keeps its RT; continue the main loop.
+				continue
+			end
+			-- Immediate turn: process 'caster' as the active unit for this iteration.
+			activeUnit = immediate
+			-- Its turn-start hooks (e.g. Troll Regrowth, Dragonkin resync) queue bar refreshes after the
+			-- drain above already ran: show them now, or the next tick wipes them (UAT 2026-10-28 D-2).
+			local _lateUnits = state.ctStatusUnits or {}
+			state.ctStatusUnits = nil
+			for _, u in ipairs(_lateUnits) do
+				if u._reviveMoved then
+					u._reviveMoved = nil
+					BattleVisualBroadcaster.UnitMoved(u)
+				end
+				BattleVisualBroadcaster.UnitStateChanged(u)
+				BattleVisualBroadcaster.ShieldChanged(u, 0, "decay")
+				if u.isAlive == false then
+					clearTileOccupant(u.tileX, u.tileY)
+					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = true })
+					print(string.format("[Main] %s removed (KO via turn-start effect)", u.name))
+				end
+			end
+		end
+
+		turnCount = turnCount + 1
 
 		-- Process DoT
 		local dotEvents = state.dotEvents or {}

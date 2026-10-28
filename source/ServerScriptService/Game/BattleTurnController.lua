@@ -225,7 +225,7 @@ local function buildTurnPrompt(unit)
 				and not CommandService.IsRelocationBlockedSkill(unit, def)  -- Phase Lock (2026-10-27)
 			local candidates, computedRange = TargetingService.GetSkillCandidates(unit, state.units, def)
 			-- TAUNT (2026-10-27): debuff / damage skills may only target the taunter.
-			candidates = StatusService.FilterTauntCandidates(unit, def, candidates, state.units)
+			candidates = StatusService.FilterTauntCandidates(unit, def, candidates, state.units, computedRange)
 			local isGroundTarget = false
 			local isSelfTarget = false
 			local tr = def.targetRules or "Enemy Unit"
@@ -1416,10 +1416,13 @@ local function broadcastActions(actions, activeUnit)
 	-- real-time turn order changes (especially during AI turns)
 	local timelineUpdate = {}
 	for _, u in ipairs(state.units) do
-		if u.isAlive then
+		local _tlRt = u.isAlive and BattleVisualBroadcaster.TimelineRtFor(u) or nil  -- devices: next activation
+		if _tlRt then
 			table.insert(timelineUpdate, {
 				id = u.id, name = u.name, side = u.side,
-				remainingRt = u.remainingRt, isChanneling = u.isChanneling or false,
+				remainingRt = _tlRt, isChanneling = u.isChanneling or false,
+				cycleRt = u.isItemDevice and u.deviceCycleCt or nil,
+				cyclesLeft = u.isItemDevice and u.devicePulsesLeft or nil,
 				channelRt = u.channelRt or 0,
 				channelRemaining = math.max(0, (u.channelResolveCt or 0) - state.ct),
 				channelPhase = u.channelPhase, -- "Channel" | "Activation" (2026-10-07)

@@ -3565,7 +3565,8 @@ buildSkillLoadout = function()
 			for a = 1, 2 do
 				local augId = augments[a]
 				local augDef = augId and MockData.GetAugmentDef(augId)
-				local augActive = (not augDef) or AugmentCompatibility.Check(skillId, augId, slotWeapon)
+				local augActive = (not augDef) or (AugmentCompatibility.Check(skillId, augId, slotWeapon)
+					and not (a == 2 and AugmentCompatibility.ConflictsWith(augId, augments[1])))
 
 				local augBtn = Instance.new("TextButton")
 				augBtn.Size = UDim2.new(0, AUG_SZ, 0, AUG_SZ)
@@ -4219,10 +4220,12 @@ openAugmentPickerForSlot = function(unitId, slotNum, augSlotNum)
 	-- Same " OR "-aware match as the server and the slot-picker direction.
 	local slotLoadout = MockData.GetSkillLoadout(unitId)
 	local slotSkillId = nil
+	local slotAugs = {}  -- this skill's equipped augments (conflict rule, 2026-10-28)
 	do
 		local sd = type(slotLoadout) == "table" and slotLoadout[slotNum]
 		if type(sd) == "table" then
 			slotSkillId = sd.skillId
+			slotAugs = sd.augments or {}
 			if slotSkillId == "none" then slotSkillId = nil end
 		elseif sd then
 			slotSkillId = sd
@@ -4291,6 +4294,16 @@ openAugmentPickerForSlot = function(unitId, slotNum, augSlotNum)
 
 	for idx, ac in ipairs(augCards) do
 		local fits, missingTags = AugmentCompatibility.Check(slotSkillId, ac.id, slotWeapon)
+		-- Conflict rule (2026-10-28): can't share this skill with its other augment.
+		local clashId = fits and AugmentCompatibility.FindConflict(ac.id, slotAugs, augSlotNum) or nil
+		if clashId then
+			fits = false
+			local clashDef = MockData.GetAugmentDef(clashId)
+			missingTags = {}
+			ac.clashText = "Conflicts with " .. ((clashDef and clashDef.name) or clashId)
+		else
+			ac.clashText = nil
+		end
 		local rowBtn = Instance.new("TextButton")
 		rowBtn.Size = UDim2.new(1, 0, 0, 28)
 		rowBtn.BackgroundColor3 = Theme.Colors.PanelRaised
@@ -4328,7 +4341,7 @@ openAugmentPickerForSlot = function(unitId, slotNum, augSlotNum)
 				TextXAlignment = Enum.TextXAlignment.Right })
 		else
 			-- Say exactly which card tag the skill is missing (players see why, no hidden rules).
-			local whyText = (#missingTags > 0) and ("Needs " .. table.concat(missingTags, ", "))
+			local whyText = ac.clashText or ((#missingTags > 0) and ("Needs " .. table.concat(missingTags, ", ")))
 				or "No skill equipped"
 			makeLabel(rowBtn, { Text = whyText,
 				Size = UDim2.new(0, 98, 1, 0),
@@ -4457,6 +4470,17 @@ openAugmentSlotPicker = function(aug)
 		for augSlot = 1, 2 do
 			local existingAug = augments[augSlot]
 			local existingDef = existingAug and MockData.GetAugmentDef(existingAug)
+			-- Conflict rule (2026-10-28): this row is off if the skill's OTHER augment conflicts.
+			local slotDisabled, slotReason = disabled, disabledReason
+			if not disabled then
+				local clashId = AugmentCompatibility.FindConflict(aug.id, augments, augSlot)
+				if clashId then
+					local clashDef = MockData.GetAugmentDef(clashId)
+					slotDisabled = true
+					slotReason = "Conflicts with " .. ((clashDef and clashDef.name) or clashId)
+				end
+			end
+			local disabled, disabledReason = slotDisabled, slotReason
 
 			local rowBtn = Instance.new("TextButton")
 			rowBtn.Size = UDim2.new(1, 0, 0, 26)

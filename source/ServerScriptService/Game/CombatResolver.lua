@@ -1258,6 +1258,7 @@ function CombatResolver.ResolveHealing(caster, target, skillDef)
 		targetId     = target.id,
 		finalHealing = finalHeal,
 		sourceUnitId = caster.id,
+		skillId      = skillDef and skillDef.id or nil,  -- augment lookup on apply (Overhealing Shield)
 	}
 end
 
@@ -1409,11 +1410,34 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		if _tileEffectService and _tileEffectService.GetHealingMultiplier and target.tileX then
 			healAmt = math.round(healAmt * _tileEffectService.GetHealingMultiplier(target.tileX, target.tileY))
 		end
+		-- Healing the unit really receives after its healing modifiers (Festering Wound, etc.), worked
+		-- out the same way ApplyHealing does; fixed-hit gadgets receive none (UAT 2026-10-28 D2).
+		local received = 0
+		if not target.fixedHitDurability then
+			local hrm = StatusService.GetHealingReceivedMult(target)
+			received = if hrm ~= 1 then math.max(0, math.floor((healAmt or 0) * hrm)) else (healAmt or 0)
+		end
 		local actual = UnitSchema_ApplyHealing(healAmt, target)
 		print(string.format(
 			"[CombatResolver] %s healed for %d | HP: %d/%d",
 			target.name, actual, target.currentHp, target.maxHp
 		))
+		-- Overhealing Shield (DB AUG-OVERHEALING-SHIELD, built 2026-10-28): healing past Max HP becomes
+		-- a barrier, up to 20% of Max HP, for 2 turns (2000 CT). A unit holds one shield pool, so a
+		-- bigger shield it already has is kept.
+		if attacker and outcome.skillId and received > (actual or 0) then
+			for _, augId in ipairs(AugmentEffectService.GetAugmentsForSkill(attacker, outcome.skillId)) do
+				if augId == "AUG-OVERHEALING-SHIELD" then
+					local barrier = math.min(received - actual, math.round((target.maxHp or 0) * 0.20))
+					if barrier > (target.shield_total or 0)
+						and StatusService.ApplyShield(target, barrier, 2000, attacker.id) ~= false then
+						BattleVisualBroadcaster.ShieldChanged(target, barrier, "grant")
+						print(string.format("[CombatResolver] Overhealing Shield: %s gets a %d barrier", target.name, barrier))
+					end
+					break
+				end
+			end
+		end
 		return actual, nil
 	end
 

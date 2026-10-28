@@ -621,10 +621,10 @@ local function enumerateSkillEntries(unit: any, allUnits: any)
 			def = nil
 		end
 		if def and _UnitSchema and _UnitSchema.HasEnoughMp(unit, skillMpCost(unit, def)) then
-			local candidates = _TargetingService.GetSkillCandidates(unit, allUnits, def)
+			local candidates, candRange = _TargetingService.GetSkillCandidates(unit, allUnits, def)
 			-- TAUNT (2026-10-27): debuff / damage skills may only target the taunter.
 			if _StatusService and _StatusService.FilterTauntCandidates then
-				candidates = _StatusService.FilterTauntCandidates(unit, def, candidates, allUnits)
+				candidates = _StatusService.FilterTauntCandidates(unit, def, candidates, allUnits, candRange)
 			end
 			-- Skyfall Lance: only targets the caster can land next to (same rule as validation), so the
 			-- AI never picks a cast that is rejected and loses the rest of its turn (UAT 2026-10-27 S-2).

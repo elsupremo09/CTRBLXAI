@@ -847,8 +847,8 @@ function CommandService.ProcessRescueBeacons(state: any): any
 				victim.currentHp = math.min(maxHp, math.max(1, math.ceil(maxHp * (def.rescueHpPct or 0.15))))
 				victim.remainingRt = def.rescueRt or 400
 				BattleVisualBroadcaster.UnitSpawned(victim)       -- re-create the token if it was removed
+				BattleVisualBroadcaster.UnitMoved(victim)         -- move first, then state (same order as other revives)
 				BattleVisualBroadcaster.UnitStateChanged(victim)  -- client restores a greyed KO body
-				BattleVisualBroadcaster.UnitMoved(victim)
 				BattleVisualBroadcaster.Log("ko", `Rescue Beacon revives {victim.name} ({victim.currentHp}/{maxHp} HP).`, victim.id)
 				ObjectEffectService.RemoveObjectInstance(state, inst)
 				if BattleVisualBroadcaster.ObjectChanged then
@@ -1229,6 +1229,7 @@ local function resolveAreaDrain(caster: any, skillDef: any, centerX: any, center
 	if drainHeal > 0 and caster.isAlive then
 		local healed = CombatResolver.ApplyOutcome({
 			type = "Healing", targetId = caster.id, finalHealing = drainHeal, sourceUnitId = caster.id,
+			skillId = skillDef.id,  -- so Overhealing Shield on this skill sees its heal (2026-10-28)
 		}, caster, caster) or 0
 		table.insert(entries, { target = caster, healing = healed, damage = 0 })
 	end
@@ -1709,8 +1710,9 @@ end
 -- Phoenix Rite extras: cleanseWound removes one wound-family status (Bleed/Raptured/
 -- Wounded); reviveLowRt brings the unit back ready to act soon. Enemy revive is
 -- allowed (target keeps its own side) and feeds the Torture objective.
-local function applyReviveSkill(caster: any, target: any, skillDef: any, state: any): number
-	local pct = (skillDef.reviveHpPct or 5) / 100
+local function applyReviveSkill(caster: any, target: any, skillDef: any, state: any, hpScale: number?): number
+	-- hpScale: extra units revived by a spreading augment get a share of the main revive (ruling 2026-10-28).
+	local pct = (skillDef.reviveHpPct or 5) / 100 * (hpScale or 1)
 	local maxHp = target.maxHp or 1
 	local reviveHp
 	if TraitEffectService.HasReviveAtOneHp(target) then
@@ -1777,27 +1779,145 @@ end
 
 -- Nearest free tile to (x, y): on the map, not blocked, no living unit. Searches rings out to 3.
 local function nearestFreeTile(state: any, x: number, y: number): (number?, number?)
-	for r = 0, 3 do
-		for dy = -r, r do
-			for dx = -r, r do
-				if math.max(math.abs(dx), math.abs(dy)) == r then
-					local cx, cy = x + dx, y + dy
-					if cx >= 1 and cy >= 1 and cx <= _mapWidth and cy <= _mapHeight
-						and not GameConstants.IsBlocked(cx, cy) and not GameConstants.IsImpassableTerrain(cx, cy)
-						and not (GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(cx, cy)) then
-						local taken = false
-						for _, u in ipairs(state.units) do
-							if u.isAlive and u.tileX == cx and u.tileY == cy then taken = true break end
-						end
-						if not taken then
-							return cx, cy
-						end
+	-- Shared revive-tile rule (UnitSchema.FindFreeTileNear): on the map, not blocked, impassable or a
+	-- chasm floor, no living unit; rings out to 3.
+	return UnitSchema.FindFreeTileNear(state.units, x, y, _mapWidth, _mapHeight)
+end
+
+-- SPREADING REVIVES (USER RULING 2026-10-28; DB skills Battlefield Triage / Phoenix Rite): Chain Support,
+-- Line Projection and Impact Splash also revive extra KO'd units on the SAME SIDE as the main target.
+-- Extra HP = the main revive's HP fraction x the falloff: Chain 75% per jump (max 2 jumps, jump range 2,
+-- elevation +/-2, no unit twice), Line 75% for the unit directly behind the target, Splash 50% on each of
+-- the 4 cardinal tiles (elevation +/-2). Each extra follows the normal revive rules (applyReviveSkill).
+local SPREAD_REVIVE_MODES = {
+	["AUG-CHAIN-SUPPORT"] = "chain",
+	["AUG-LINE-PROJECTION"] = "line",
+	["AUG-IMPACT-SPLASH"] = "splash",
+}
+
+local function isRevivableCorpse(u: any, side: any): boolean
+	return u ~= nil and not u.isAlive and u.side == side and not u.isSummon and not u.isGroundTarget
+		and not u.leftMap and u.tileX ~= nil and u.tileY ~= nil
+end
+
+-- Extra units a spreading augment reaches, worked out from where the bodies lie before anyone rises.
+local function spreadReviveTargets(caster: any, main: any, skillDef: any, state: any): ({ any }, string?)
+	local mode = nil
+	for _, augId in ipairs(AugmentEffectService.GetAugmentsForSkill(caster, skillDef.id) or {}) do
+		mode = SPREAD_REVIVE_MODES[augId]
+		if mode then break end  -- Pattern augments conflict with each other: the first one applies
+	end
+	if not mode then
+		return {}, nil
+	end
+	local side = main.side
+	local out = {}
+	local seen = { [main.id] = true }
+	local function elevOk(ax, ay, bx, by)
+		return math.abs(GameConstants.GetElevation(ax, ay) - GameConstants.GetElevation(bx, by)) <= 2
+	end
+	local function addCorpsesAt(x, y, scale)
+		local list = {}
+		for _, u in ipairs(state.units) do
+			if not seen[u.id] and isRevivableCorpse(u, side) and u.tileX == x and u.tileY == y then
+				table.insert(list, u)
+			end
+		end
+		table.sort(list, function(a, b) return tostring(a.id) < tostring(b.id) end)
+		for _, u in ipairs(list) do
+			seen[u.id] = true
+			table.insert(out, { unit = u, scale = scale })
+		end
+	end
+	if mode == "chain" then
+		local cur, scale = main, 1
+		for _ = 1, 2 do
+			local best, bestD = nil, math.huge
+			for _, u in ipairs(state.units) do
+				if not seen[u.id] and isRevivableCorpse(u, side) then
+					local d = math.max(math.abs(u.tileX - cur.tileX), math.abs(u.tileY - cur.tileY))
+					if d <= 2 and elevOk(cur.tileX, cur.tileY, u.tileX, u.tileY)
+						and (d < bestD or (d == bestD and best and tostring(u.id) < tostring(best.id))) then
+						best, bestD = u, d
 					end
 				end
 			end
+			if not best then break end
+			scale = scale * 0.75
+			seen[best.id] = true
+			table.insert(out, { unit = best, scale = scale })
+			cur = best
+		end
+	elseif mode == "line" then
+		local dx = if main.tileX > caster.tileX then 1 elseif main.tileX < caster.tileX then -1 else 0
+		local dy = if main.tileY > caster.tileY then 1 elseif main.tileY < caster.tileY then -1 else 0
+		if dx ~= 0 or dy ~= 0 then
+			local bx, by = main.tileX + dx, main.tileY + dy
+			if elevOk(main.tileX, main.tileY, bx, by) then
+				addCorpsesAt(bx, by, 0.75)
+			end
+		end
+	else
+		for _, d in ipairs({ { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }) do
+			local x, y = main.tileX + d[1], main.tileY + d[2]
+			if elevOk(main.tileX, main.tileY, x, y) then
+				addCorpsesAt(x, y, 0.50)
+			end
 		end
 	end
-	return nil, nil
+	return out, mode
+end
+
+-- A unit about to rise stays on its tile, or moves to the nearest free tile within 3 when a living
+-- unit now stands there (same rule as Raise Dead). Returns ok, moved. ok = false: no free tile.
+local function placeForRevive(u: any, state: any): (boolean, boolean)
+	for _, o in ipairs(state.units) do
+		if o.isAlive and o ~= u and o.tileX == u.tileX and o.tileY == u.tileY then
+			local tx, ty = nearestFreeTile(state, u.tileX, u.tileY)
+			if not tx then
+				return false, false
+			end
+			u.tileX, u.tileY = tx, ty
+			return true, true
+		end
+	end
+	return true, false
+end
+
+-- Revive skill cast (Battlefield Triage, Phoenix Rite): the chosen unit, then any extra units its
+-- spreading augment reaches. Returns the chosen unit's revive HP (0 = could not rise) and the extras.
+local function resolveReviveCast(caster: any, target: any, skillDef: any, state: any): (number, number)
+	local extras, mode = spreadReviveTargets(caster, target, skillDef, state)
+	local ok, moved = placeForRevive(target, state)
+	if not ok then
+		warn(`[CommandService] REVIVE FIZZLE | {target.name} has no free tile to rise on`)
+		caster._skillFizzled = true  -- nobody rose: no once-per-cast augment effects
+		return 0, 0
+	end
+	if moved then
+		BattleVisualBroadcaster.UnitMoved(target)
+	end
+	local hp = applyReviveSkill(caster, target, skillDef, state)
+	local count = 0
+	for _, e in ipairs(extras) do
+		local u = e.unit
+		if not u.isAlive then
+			local okE, movedE = placeForRevive(u, state)
+			if okE then
+				if movedE then
+					BattleVisualBroadcaster.UnitMoved(u)
+				end
+				applyReviveSkill(caster, u, skillDef, state, e.scale)
+				count = count + 1
+			else
+				print(`[CommandService] SPREAD REVIVE | {u.name} has no free tile; stays down`)
+			end
+		end
+	end
+	if mode then
+		print(`[CommandService] SPREAD REVIVE [{mode}] | {caster.name} also revives {count} unit(s)`)
+	end
+	return hp, count
 end
 
 -- Raises every corpse at once: 25% Max HP, Undead status, counts as revived. A corpse whose tile is
@@ -1922,8 +2042,9 @@ end
 
 local function auraTargets(state: any, caster: any, skillDef: any)
 	local radius = tonumber(tostring(skillDef.aoePattern):match("%d+")) or 1
-	-- "Caster Area" affects every unit in the area, any side (ruling 2026-10-26).
-	local anySide = isCasterArea(skillDef)
+	-- "Caster Area" affects every unit in the area, any side (ruling 2026-10-26), except skills marked
+	-- alliesOnly: War Cry (user ruling 2026-10-28) buffs only the caster's side.
+	local anySide = isCasterArea(skillDef) and not skillDef.alliesOnly
 	local list = {}
 	for _, u in ipairs(state.units) do
 		if u.isAlive and (anySide or u.side == caster.side)
@@ -1950,6 +2071,63 @@ local function sharedResolveTargets(state: any, caster: any): { any }
 			and not u.isGroundTarget and not u.isObject then
 			table.insert(list, u)
 		end
+	end
+	return list
+end
+
+-- Units a cast HELPED, for Support augments ("apply <buff> to the target", DB cards 2026-10-28):
+-- Shared Resolve -> every standing ally; auras -> the aura's units; self skills -> the caster; area
+-- skills -> living units in the area; single target -> that unit (also a revived one). Units this
+-- cast damaged (the reaction-window hit list) and item devices are left out.
+local function skillSupportTargets(caster: any, skillDef: any, target: any, state: any, hitList: any): { any }
+	local hit = {}
+	for _, v in ipairs(hitList or {}) do
+		hit[v] = true
+	end
+	local list, seen = {}, {}
+	local function add(u)
+		if u and u.isAlive and not u.isGroundTarget and not u.isItemDevice and not hit[u] and not seen[u] then
+			seen[u] = true
+			table.insert(list, u)
+		end
+	end
+	if usesSharedResolve(caster, skillDef) then
+		for _, u in ipairs(sharedResolveTargets(state, caster)) do add(u) end
+	elseif isPureBuffAura(skillDef) then
+		for _, u in ipairs(auraTargets(state, caster, skillDef)) do add(u) end
+	elseif skillDef.isShield and skillDef.aoePattern then
+		-- Area shields (Bulwark Field) cover the same units the shield branch did (radius from caster).
+		for _, u in ipairs(auraTargets(state, caster, skillDef)) do add(u) end
+	elseif skillDef.isHealing and hasCardTag(skillDef, "Direct Damage")
+		and skillDef.aoePattern ~= nil and not isUnitAnchoredPattern(skillDef) then
+		-- Area drain (Siphon Pulse): it damages its area and heals the CASTER, so only the caster is
+		-- helped. Units in the area (incl. Undead it healed or units hit for 0) never get the caster's
+		-- buff (user OK 2026-10-28, UAT D5). Same test as the area-drain resolution branch.
+		add(caster)
+	elseif target and target.tileX then
+		-- Area checked BEFORE the self case: Caster Area skills (Consecrate, Sanctify) target the
+		-- caster's own tile but cover the whole area (UAT 2026-10-28 D1). Same elevation (+/-2) and
+		-- blocked-line rules as the area heal, so the buff reaches exactly the units it reached (D3).
+		local tiles = skillAffectedTiles(caster, skillDef, target.tileX, target.tileY)
+		if #tiles > 1 then
+			local cElev = GameConstants.GetElevation(target.tileX, target.tileY)
+			for _, t in ipairs(tiles) do
+				if math.abs(GameConstants.GetElevation(t.x, t.y) - cElev) <= 2
+					and not TargetingService.IsAOEBlocked(target.tileX, target.tileY, t.x, t.y) then
+					for _, u in ipairs(state.units) do
+						if u.tileX == t.x and u.tileY == t.y and not u.isObject then add(u) end
+					end
+				end
+			end
+		elseif not target.isGroundTarget then
+			add(target)
+		else
+			for _, u in ipairs(state.units) do
+				if u.tileX == target.tileX and u.tileY == target.tileY then add(u) end
+			end
+		end
+	elseif skillDef.targetRules == "Self" then
+		add(caster)
 	end
 	return list
 end
@@ -2476,6 +2654,12 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 			-- Already revived some other way during the channel — no-op.
 			return false, target.name .. " is no longer KO'd."
 		end
+		-- Rises on the nearest free tile if a living unit now stands on the body (2026-10-28).
+		local _rx, _ry, _rMoved = UnitSchema.FindReviveTile(target, state.units, _mapWidth, _mapHeight)
+		if not _rx then
+			return false, target.name .. " has no free tile to rise on."
+		end
+		target.tileX, target.tileY = _rx, _ry
 		local frac = data.reviveHpFrac or 0.05
 		target.isAlive   = true
 		UnitSchema.ClearChannelState(target)  -- never return holding a pre-death channel
@@ -2496,6 +2680,9 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 		StatusService.WeakenVenomOnHeal(target)  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 		target.remainingRt = target.startingRt or 400
 		BattleVisualBroadcaster.ActionAnnounced(unit, "Resuscitate")
+		if _rMoved then
+			BattleVisualBroadcaster.UnitMoved(target)
+		end
 		BattleVisualBroadcaster.UnitStateChanged(target)
 		print(string.format(
 			"[CommandService] INTERACT REVIVE RESOLVE | %s resuscitates %s at %d/%d HP",
@@ -2509,7 +2696,9 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 	-- markers (isGroundTarget) are not units and never 'die' -- they resolve on the
 	-- committed tile (2026-10-07 activation-time build; previously a channeled ground
 	-- skill's stat-less marker read as a dead target and fizzled).
-	if target and not target.isGroundTarget and not target.isAlive then
+	-- Revive skills (Battlefield Triage) are SUPPOSED to target a dead unit; their own branch fizzles
+	-- only if the target was already revived mid-channel (UAT 2026-10-28 D-1).
+	if target and not target.isGroundTarget and not target.isAlive and not (skillDef and skillDef.isRevive) then
 		print(string.format(
 			"[CommandService] Channel FIZZLE | %s | [%s] — target %s is dead",
 			unit.name, skillDef.name or skillDef.id, target.name
@@ -2737,10 +2926,11 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 		if not target or target.isAlive then
 			result.type = "Revive"
 			result.skillName = skillDef.name
+			unit._skillFizzled = true  -- nobody rose: no once-per-cast augment effects (UAT 2026-10-28 N4)
 			print(string.format("[CommandService] REVIVE FIZZLE | %s | %s no longer KO'd",
 				unit.name, target and target.name or "target"))
 		else
-			local hp = applyReviveSkill(unit, target, skillDef, state)
+			local hp = resolveReviveCast(unit, target, skillDef, state)
 			result.type     = "Revive"
 			result.target   = target
 			result.healing  = hp
@@ -3060,6 +3250,7 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 				centerX = target and target.tileX,
 				centerY = target and target.tileY,
 				affectedTiles = skillAffectedTiles(unit, skillDef, target and target.tileX, target and target.tileY),
+				supportTargets = skillSupportTargets(unit, skillDef, target, state, _reactionHits),
 			})
 		end
 	end
@@ -3237,6 +3428,11 @@ function CommandService.ValidateAndCommit(
 		local target = selection.target
 		local valid, reason = validateItemTarget(actor, target, consumableDef)
 		if not valid then return false, reason end
+		-- Revive item: the body must have a free tile to rise on (2026-10-28), checked before any cost.
+		if (consumableDef.targetRules == "KO Ally") and type(target) == "table" and not target.isAlive
+			and target.tileX and not UnitSchema.FindReviveTile(target, state.units, _mapWidth, _mapHeight) then
+			return false, `{target.name or "That unit"} has no free tile to rise on.`
+		end
 		-- Maintenance Tool (2026-10-26): something repairable must be on the tile, checked
 		-- BEFORE any cost so a mis-tap never wastes the charge.
 		if ItemEffectService.IsRepairItem(consumableDef) and type(target) == "table" and target.tileX then
@@ -3395,6 +3591,36 @@ function CommandService.ValidateAndCommit(
 		end
 	end
 
+	-- TAUNT (user ruling 2026-10-27): a Taunted unit may basic-attack only its taunter, and its
+	-- Debuff / Direct Damage skills must target the taunter (area skills centred on it). Judged on the
+	-- attacker's CHOSEN target, BEFORE Misdirection / Interception, so a refused command uses up and
+	-- announces nothing (UAT 2026-10-28 D-1). A ground/tile marker counts when it sits on the
+	-- taunter's tile, whatever its id (markers carry "_ground_X_Y"; UAT 2026-10-28 D-2).
+	do
+		local _taunter = StatusService.GetTaunter(actor, state.units)
+		if _taunter then
+			local function _isTaunterTarget(t: any): boolean
+				if type(t) == "string" then return t == _taunter.id end
+				return type(t) == "table" and (t.id == _taunter.id
+					or ((t.id == nil or t.isGroundTarget) and t.tileX == _taunter.tileX and t.tileY == _taunter.tileY))
+			end
+			if actionType == "Attack" and not _isTaunterTarget(selection) then
+				return false, `{actor.name} is Taunted and can only attack {_taunter.name}.`
+			elseif actionType == "AttackObject" then
+				return false, `{actor.name} is Taunted and cannot attack objects.`
+			elseif actionType == "Skill" and type(selection) == "table" and selection.skillId then
+				local _sd = CommandService.GetSkill(selection.skillId)
+				if _sd and StatusService.IsTauntRestrictedSkill(_sd) and _sd.targetRules == "Empty Tile" then
+					-- Must target the taunter, but the skill needs an empty tile: unusable while Taunted.
+					return false, `{actor.name} is Taunted: that skill can't be used while Taunted.`
+				end
+				if _sd and StatusService.IsTauntRestrictedSkill(_sd) and not _isTaunterTarget(selection.target) then
+					return false, `{actor.name} is Taunted: that skill must target {_taunter.name}.`
+				end
+			end
+		end
+	end
+
 	-- STEP 5b2: Misdirection redirect (DOC-TRICKSTER-01). Only enemy single-target
 	-- Basic Attacks / Skills aimed at a Misdirection holder; one swap per command.
 	if actionType == "Attack" or actionType == "Skill" then
@@ -3446,29 +3672,6 @@ function CommandService.ValidateAndCommit(
 		end
 		if not _ok then
 			return false, "No valid Interact target for that selection."
-		end
-	end
-
-	-- TAUNT (user ruling 2026-10-27): a Taunted unit may basic-attack only its taunter, and its
-	-- Debuff / Direct Damage skills must target the taunter (area skills centred on it).
-	do
-		local _taunter = StatusService.GetTaunter(actor, state.units)
-		if _taunter then
-			local function _isTaunterTarget(t: any): boolean
-				if type(t) == "string" then return t == _taunter.id end
-				return type(t) == "table" and (t.id == _taunter.id
-					or (t.id == nil and t.tileX == _taunter.tileX and t.tileY == _taunter.tileY))
-			end
-			if actionType == "Attack" and not _isTaunterTarget(selection) then
-				return false, `{actor.name} is Taunted and can only attack {_taunter.name}.`
-			elseif actionType == "AttackObject" then
-				return false, `{actor.name} is Taunted and cannot attack objects.`
-			elseif actionType == "Skill" and type(selection) == "table" and selection.skillId then
-				local _sd = CommandService.GetSkill(selection.skillId)
-				if _sd and StatusService.IsTauntRestrictedSkill(_sd) and not _isTaunterTarget(selection.target) then
-					return false, `{actor.name} is Taunted: that skill must target {_taunter.name}.`
-				end
-			end
 		end
 	end
 
@@ -4465,8 +4668,9 @@ function CommandService.ValidateAndCommit(
 			-- isHealing branch (revive skills also carry isHealing for VFX). Target was
 			-- validated KO'd. RT still accrues whether or not it still needs reviving.
 			if target and not target.isAlive then
-				applyReviveSkill(actor, target, skillDef, state)
+				resolveReviveCast(actor, target, skillDef, state)
 			else
+				actor._skillFizzled = true  -- nobody rose: no once-per-cast augment effects (UAT 2026-10-28 N4)
 				print(string.format("[CommandService] REVIVE FIZZLE | %s | %s no longer KO'd",
 					actor.name, target and target.name or "target"))
 			end
@@ -5202,6 +5406,7 @@ function CommandService.ValidateAndCommit(
 				AugmentEffectService.OnSkillComplete(actor, skillDef, _scAug, {
 					state = state, centerX = target.tileX, centerY = target.tileY,
 					affectedTiles = skillAffectedTiles(actor, skillDef, target.tileX, target.tileY),
+					supportTargets = skillSupportTargets(actor, skillDef, target, state, _reactionHits),
 				})
 			end
 		end
@@ -7003,6 +7208,9 @@ function CommandService.ValidateAndCommit(
 		-- A revive item can weaken Venom (user ruling 2026-10-26); refresh the revived unit's
 		-- HP + status icons the same way Divine Intervention does after its revive.
 		if effectResult and effectResult.effectType == "Revive" and target and BattleVisualBroadcaster.UnitStateChanged then
+			if effectResult.reviveMoved then
+				BattleVisualBroadcaster.UnitMoved(target)  -- rose on the nearest free tile (2026-10-28)
+			end
 			BattleVisualBroadcaster.UnitStateChanged(target)
 		end
 

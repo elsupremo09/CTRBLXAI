@@ -608,6 +608,22 @@ BattleEvents.RequestAttachAugment.OnServerInvoke = function(player, unitId, slot
 			return { ok = false, reason = `{augDef.name} needs [{table.concat(missing, ", ")}] — {skillName} doesn't have it` }
 		end
 	end
+	-- Conflict rule (user ruling 2026-10-28): refused before any card is spent. Checked even when the
+	-- slot has no skill yet (e.g. doctrine slot before a doctrine skill is picked; UAT 2026-10-28 N1).
+	do
+		local _others
+		if slotIndex == 1 then
+			_others = unit.doctrineAugments
+		else
+			local _s = unit.skillLoadout and unit.skillLoadout["slot" .. slotIndex]
+			_others = _s and _s.augments
+		end
+		local clash = AugmentCompatibility.FindConflict(augmentId, _others, augSlotIndex)
+		if clash then
+			local clashDef = AugmentData[clash]
+			return { ok = false, reason = `{augDef.name} can't share a skill with {(clashDef and clashDef.name) or clash}` }
+		end
+	end
 	-- Find the skill slot data
 	local slotKey = slotIndex == 1 and "_doctrine" or ("slot" .. slotIndex)
 	local slotData
@@ -1056,6 +1072,21 @@ function LoadoutRequestHandlers.UnequipIncompatibleAugments(units: any): { any }
 				})
 				print(`[LoadoutRequestHandlers] Unequipped {augId} from {unit.name}'s {skillId}: no longer fits (tags-only rule); returned to inventory`)
 			end
+		end
+		-- Conflict rule (user ruling 2026-10-28): a skill holding two conflicting augments keeps the
+		-- one in augment slot 1; the other goes back to the inventory.
+		local first, second = augList[1], augList[2]
+		if first and second and AugmentCompatibility.ConflictsWith(first, second) then
+			augList[2] = nil
+			cardInventory.augmentCards[second] = (cardInventory.augmentCards[second] or 0) + 1
+			local skillDef = SkillData[skillId]
+			local augDef = AugmentData[second]
+			table.insert(removed, {
+				unitName = unit.name,
+				skillName = (skillDef and skillDef.name) or skillId,
+				augmentName = (augDef and augDef.name) or second,
+			})
+			print(`[LoadoutRequestHandlers] Unequipped {second} from {unit.name}'s {skillId}: conflicts with {first}; returned to inventory`)
 		end
 	end
 	for _, unit in units do

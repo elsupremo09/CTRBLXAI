@@ -319,8 +319,14 @@ local function pickAugmentsForSkill(rng: Random, skillId: string, count: number,
 	if #compat == 0 then return {} end
 	local shuffled = shuffledCopy(rng, compat)
 	local out = {}
-	for i = 1, math.min(count, #shuffled) do
-		out[i] = shuffled[i]
+	-- Conflict rule (2026-10-28): skip an augment that conflicts with one already picked.
+	for _, augId in ipairs(shuffled) do
+		if #out >= count then
+			break
+		end
+		if not AugmentCompatibility.FindConflict(augId, out) then
+			table.insert(out, augId)
+		end
 	end
 	return out
 end

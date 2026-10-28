@@ -259,6 +259,52 @@ function UnitSchema.ClearChannelState(unit): boolean
 	return had
 end
 
+-- REVIVE TILE (2026-10-28, same rule as Raise Dead and the spreading revives): a unit coming back
+-- where a living unit now stands rises on the nearest free tile within 3 (on the map, not blocked,
+-- impassable or a chasm floor). No free tile = it cannot rise right now. mapW/mapH default to the
+-- live terrain grid.
+function UnitSchema.FindFreeTileNear(units, x, y, mapW, mapH)
+	if not (mapW and mapH) then
+		local grid = GameConstants.TERRAIN_MAP
+		mapH = mapH or (grid and #grid or 0)
+		mapW = mapW or ((grid and grid[1]) and #grid[1] or 0)
+	end
+	if (mapW or 0) <= 0 then mapW = math.huge end
+	if (mapH or 0) <= 0 then mapH = math.huge end
+	for r = 0, 3 do
+		for dy = -r, r do
+			for dx = -r, r do
+				if math.max(math.abs(dx), math.abs(dy)) == r then
+					local cx, cy = x + dx, y + dy
+					if cx >= 1 and cy >= 1 and cx <= mapW and cy <= mapH
+						and not GameConstants.IsBlocked(cx, cy) and not GameConstants.IsImpassableTerrain(cx, cy)
+						and not (GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(cx, cy)) then
+						local taken = false
+						for _, u in ipairs(units or {}) do
+							if u.isAlive and u.tileX == cx and u.tileY == cy then taken = true break end
+						end
+						if not taken then
+							return cx, cy
+						end
+					end
+				end
+			end
+		end
+	end
+	return nil, nil
+end
+
+-- Where a KO'd unit rises. Returns tileX, tileY, moved; tileX nil = no free tile within 3.
+function UnitSchema.FindReviveTile(unit, units, mapW, mapH)
+	for _, o in ipairs(units or {}) do
+		if o.isAlive and o ~= unit and o.tileX == unit.tileX and o.tileY == unit.tileY then
+			local tx, ty = UnitSchema.FindFreeTileNear(units, unit.tileX, unit.tileY, mapW, mapH)
+			return tx, ty, tx ~= nil
+		end
+	end
+	return unit.tileX, unit.tileY, false
+end
+
 function UnitSchema.Kill(unit)
 	unit.isAlive   = false
 	unit.currentHp = 0

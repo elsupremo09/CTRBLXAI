@@ -125,6 +125,83 @@ function AugmentCompatibility.Check(skillId: string?, augmentId: string?, weapon
 	return #missing == 0, missing
 end
 
+-- CONFLICTS (user ruling 2026-10-28): two augments from the same conflict group cannot share a
+-- skill. Read from each augment's Conflicts text (DB augments.Conflicts):
+--   "Conflicts with other <Family> Augments."      -> every augment of that family
+--   "Cannot stack with <Augment> on the same Skill." -> that one augment
+--   "Conflicts with <Augment>."                      -> that one augment
+-- Conflicts work both ways. Built once from AugmentData (static content).
+local conflictMap: { [string]: { [string]: boolean } }? = nil
+
+local function buildConflictMap(): { [string]: { [string]: boolean } }
+	local map: { [string]: { [string]: boolean } } = {}
+	local byName: { [string]: string } = {}
+	for id, def in AugmentData :: any do
+		if type(def) == "table" and type(def.name) == "string" then
+			byName[def.name] = id
+		end
+	end
+	local function link(a: string, b: string)
+		if a == b then
+			return
+		end
+		map[a] = map[a] or {}
+		map[b] = map[b] or {}
+		map[a][b] = true
+		map[b][a] = true
+	end
+	for id, def in AugmentData :: any do
+		local text = type(def) == "table" and def.conflicts or nil
+		if type(text) == "string" then
+			local family = string.match(text, "Conflicts with other (.-) Augments")
+			if family then
+				for otherId, otherDef in AugmentData :: any do
+					if type(otherDef) == "table" and otherDef.family == family then
+						link(id, otherId)
+					end
+				end
+			end
+			for name in string.gmatch(text, "Cannot stack with (.-) on the same Skill") do
+				if byName[name] then
+					link(id, byName[name])
+				end
+			end
+			local named = string.match(text, "^%s*Conflicts with (.-)%.")
+			if named and byName[named] then
+				link(id, byName[named])
+			end
+		end
+	end
+	return map
+end
+
+--- True when augments `a` and `b` may not be on the same skill.
+function AugmentCompatibility.ConflictsWith(a: string?, b: string?): boolean
+	if not a or not b or a == b then
+		return false
+	end
+	if not conflictMap then
+		conflictMap = buildConflictMap()
+	end
+	local set = (conflictMap :: any)[a]
+	return set ~= nil and set[b] == true
+end
+
+--- The first augment in `others` (a skill's 2-slot list; nils allowed) that conflicts with
+--- `augmentId`, skipping slot `skipIndex` (the slot being replaced). nil = no conflict.
+function AugmentCompatibility.FindConflict(augmentId: string?, others: any, skipIndex: number?): string?
+	if type(others) ~= "table" then
+		return nil
+	end
+	for i = 1, 2 do
+		local other = others[i]
+		if i ~= skipIndex and type(other) == "string" and AugmentCompatibility.ConflictsWith(augmentId, other) then
+			return other
+		end
+	end
+	return nil
+end
+
 --- Every augment that fits `skillId`, sorted by id so callers drawing from an RNG stay
 --- deterministic (same seed = same enemy loadout).
 function AugmentCompatibility.ListCompatible(skillId: string?, weapon: WeaponProfile?): { string }

@@ -1330,7 +1330,8 @@ end)
 local function simulateTurnOrder(snapshot, count, previewUnitId, previewNewRt, previewEvent)
 	local units = {}
 	for _, u in ipairs(snapshot) do
-		table.insert(units, { id = u.id, name = u.name, side = u.side, remainingRt = u.remainingRt, isEvent = false, isActive = u.isActive or false })
+		-- cycleRt / cyclesLeft (item devices, 2026-10-27): CT between timed activations and how many remain.
+		table.insert(units, { id = u.id, name = u.name, side = u.side, remainingRt = u.remainingRt, isEvent = false, isActive = u.isActive or false, cycleRt = u.cycleRt, cyclesLeft = u.cyclesLeft })
 		-- TWO-TIMER MODEL: the channel event sits at its REMAINING channel time
 		-- (deadline minus current CT), INDEPENDENT of the caster's own RT entry above.
 		-- Both entries coexist: the caster (its real RT) and the spell (its deadline).
@@ -1363,10 +1364,21 @@ local function simulateTurnOrder(snapshot, count, previewUnitId, previewNewRt, p
 
 		local ready = {}
 		for _, u in ipairs(units) do if u.remainingRt <= 0 then table.insert(ready, u) end end
-		table.sort(ready, function(a,b) return a.id < b.id end)
+		-- Exact CT tie: a device fires first, the same as the server clock (Tester W1 2026-10-28).
+		table.sort(ready, function(a,b)
+			local ad, bd = a.cycleRt ~= nil, b.cycleRt ~= nil
+			if ad ~= bd then return ad end
+			return tostring(a.id) < tostring(b.id)  -- safe even if an id is ever a number (Tester W5)
+		end)
 		for _, u in ipairs(ready) do
 			table.insert(result, { id = u.id, name = u.name, side = u.side, rt = 0, isEvent = u.isEvent, isRound = false, isActive = false, channeledSkillIcon = u.channeledSkillIcon, casterSide = u.casterSide })
-			u.remainingRt = u.isEvent and 99999 or 450
+			if u.cycleRt then
+				-- Item device: next activation one cycle later; gone after its last one.
+				u.cyclesLeft = (u.cyclesLeft or 1) - 1
+				u.remainingRt = (u.cyclesLeft > 0) and u.cycleRt or 99999
+			else
+				u.remainingRt = u.isEvent and 99999 or 450
+			end
 			if #result >= count then break end
 		end
 		if #result >= count then break end
@@ -2035,17 +2047,20 @@ local function processTileClick(bx, by)
 	if _cut and _cut > 0 and moveCost > 1 then moveCost = math.max(1, moveCost - _cut) end
 	moveCost += (moveCostAdds[bx .. "," .. by] or 0)  -- same order as the server path cost
 	-- Look up map object at this tile
-	local objectName = GameConstants.GetObjectAt(bx, by)
-	-- Objects placed mid-battle (Mine Dispenser, barricades, item traps, gadgets) are not in
-	-- the map-start object list; the server tags the tile it draws them on (MapRenderer
-	-- RenderOneObject sets the tile's ObjectName attribute). Hidden enemy traps are never
-	-- drawn, so they never tag a tile and stay uninspectable (2026-10-27).
-	if not objectName or objectName == "None" then
-		local _tp = _getTilePart(bx, by)
-		local _placed = _tp and _tp:GetAttribute("ObjectName")
-		if type(_placed) == "string" and _placed ~= "" and _placed ~= "None" then
-			objectName = _placed
+	-- The server keeps an OBJECT-ONLY tag on each tile ("MapObject", set by MapRenderer on map
+	-- build, placement, move and removal), so it is the live answer. "ObjectName" is NOT used:
+	-- unit moves also write it (Tester F1 2026-10-27). The client's map-start object list is only
+	-- a fallback for a tile Part that is not loaded (it is never updated when objects break or
+	-- move). Hidden enemy traps are never drawn, so they never tag a tile.
+	local objectName = nil
+	local _tp = _getTilePart(bx, by)
+	if _tp then
+		local _tag = _tp:GetAttribute("MapObject")
+		if type(_tag) == "string" and _tag ~= "" and _tag ~= "None" then
+			objectName = _tag
 		end
+	else
+		objectName = GameConstants.GetObjectAt(bx, by)
 	end
 
 	bp.tile = {
@@ -3853,6 +3868,9 @@ BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 end)
 
 BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
+	-- Names for the result preview below (were never defined, so the preview showed no names).
+	local actorName = unitData[data.actorId] and unitData[data.actorId].name or "?"
+	local targetName = unitData[data.targetId] and unitData[data.targetId].name or "?"
 	updateHpBar(data.targetId, data.targetHp, data.targetMaxHp)
 	if unitData[data.targetId] then unitData[data.targetId].currentHp = data.targetHp end
 	local tt = unitTokens[data.targetId]

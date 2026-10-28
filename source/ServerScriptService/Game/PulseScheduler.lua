@@ -105,6 +105,7 @@ function PulseScheduler.Register(state: any, spec: any): any
 		tileEffect = spec.tileEffect,      -- kind "tileEffect": effect id placed on each tile
 		tileEffectCt = spec.tileEffectCt,  -- optional lifetime override for that effect
 		itemId = spec.itemId,              -- source item (one-per-type deployable limit)
+		sourceName = spec.sourceName,      -- item name for the battle log when no device unit fires
 		-- Item devices (2026-10-26): a pulse anchored to a placed device UNIT follows it and
 		-- stops when it is destroyed. targetMode picks ONE recipient: "nearest" (Sentry
 		-- Turret, Tesla Pylon) or "lowestHp" (Mender Drone, lowest HP %); default "all".
@@ -136,6 +137,7 @@ function PulseScheduler.Register(state: any, spec: any): any
 		end
 	end
 
+	PulseScheduler.StampDeviceTimers(state)
 	return entry
 end
 
@@ -157,6 +159,13 @@ local function findAnchor(state: any, entry: any): any
 	for _, u in ipairs(state.units or {}) do
 		if u.id == entry.anchorUnitId then return u end
 	end
+	return nil
+end
+
+-- The placed device that fires this pulse (nil for tile- or target-anchored pulses).
+local function deviceOf(state: any, entry: any): any
+	local a = findAnchor(state, entry)
+	if a and a.isItemDevice then return a end
 	return nil
 end
 
@@ -323,7 +332,8 @@ function firePulse(state: any, entry: any)
 			UnitSchema.ApplyHealing(u, resolveAmount(entry, u))
 			local healed = (u.currentHp or 0) - before
 			if healed ~= 0 then
-				table.insert(state.pulseEvents, { unit = u, kind = "heal", amount = healed, element = entry.element })
+				table.insert(state.pulseEvents, { unit = u, kind = "heal", amount = healed, element = entry.element,
+					sourceUnit = deviceOf(state, entry) })  -- device heals show like a normal heal
 			end
 		elseif entry.kind == "damage" and UnitSchema and UnitSchema.ApplyDamage then
 			-- Pulse/DoT-style damage is applied DIRECTLY (not through CombatResolver.ApplyOutcome)
@@ -350,7 +360,14 @@ function firePulse(state: any, entry: any)
 				else
 					UnitSchema.ApplyDamage(u, dmg)
 				end
-				table.insert(state.pulseEvents, { unit = u, kind = "damage", amount = dmg, element = entry.element })
+				-- Name the shooter in the battle log (2026-10-27: a turret shot read like a DoT tick).
+				-- Devices only (Tester W1): a target-anchored pulse must never read "X hits X".
+				local _srcUnit = deviceOf(state, entry)
+				-- No device body (Tesla Pylon, Meteor Marker, Thermite): name the item instead.
+				local _src = (_srcUnit and _srcUnit.name) or entry.sourceName
+				-- sourceUnit: Main shows a device hit exactly like a normal attack (2026-10-27).
+				table.insert(state.pulseEvents, { unit = u, kind = "damage", amount = dmg, element = entry.element,
+					source = _src, sourceUnit = _srcUnit })
 				if not u.isAlive then
 					u._killedBy = u._killedBy or entry.ownerId
 				end
@@ -398,6 +415,7 @@ function PulseScheduler.ProcessCtTick(state: any, ctElapsed: any)
 			end
 		end
 	end
+	PulseScheduler.StampDeviceTimers(state)
 
 	-- Item device lifespans (2026-10-26): runs AFTER the pulses so a device's final pulse
 	-- at its last CT mark still fires before it is removed (Sentry Turret 3rd shot at
@@ -487,6 +505,7 @@ function PulseScheduler.CancelByOwnerItem(state: any, ownerId: any, itemId: any)
 			table.remove(sched, i)
 		end
 	end
+	PulseScheduler.StampDeviceTimers(state)  -- turn bar drops cancelled activations (Tester W2)
 end
 
 -- Drop all pulses owned by a unit id (called when a deployable/owner is removed).
@@ -498,6 +517,7 @@ function PulseScheduler.RefreshByAnchor(state: any, anchorUnitId: any)
 			e.accCt = 0
 		end
 	end
+	PulseScheduler.StampDeviceTimers(state)
 end
 
 function PulseScheduler.CancelByOwner(state: any, ownerId: any)
@@ -506,6 +526,33 @@ function PulseScheduler.CancelByOwner(state: any, ownerId: any)
 	for i = #sched, 1, -1 do
 		if sched[i].ownerId == ownerId then
 			table.remove(sched, i)
+		end
+	end
+	PulseScheduler.StampDeviceTimers(state)  -- turn bar drops cancelled activations (Tester W2)
+end
+
+-- TURN BAR TIMERS (user ruling 2026-10-27): item devices take no turns; the turn-order bar
+-- shows each one at its next timed activation. Stamp on every device unit: deviceNextIn (CT
+-- until it next fires), deviceCycleCt (CT between activations) and devicePulsesLeft. A device
+-- with nothing left to fire gets nil and drops out of the bar. Called after every schedule
+-- change (register, clock tick, refill); a cancelled or dead device simply stops being stamped.
+function PulseScheduler.StampDeviceTimers(state: any)
+	if not state then return end
+	for _, u in ipairs(state.units or {}) do
+		if u.isItemDevice then
+			u.deviceNextIn = nil
+			u.deviceCycleCt = nil
+			u.devicePulsesLeft = nil
+		end
+	end
+	for _, e in ipairs(state.pulseSchedule or {}) do
+		if e.anchorUnitId and (e.remainingPulses or 0) > 0 and (e.intervalCt or 0) > 0 then
+			local a = findAnchor(state, e)
+			if a and a.isItemDevice and a.isAlive then
+				a.deviceNextIn = math.max(0, e.intervalCt - (e.accCt or 0))
+				a.deviceCycleCt = e.intervalCt
+				a.devicePulsesLeft = e.remainingPulses
+			end
 		end
 	end
 end

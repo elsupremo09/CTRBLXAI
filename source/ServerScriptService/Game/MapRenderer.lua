@@ -414,10 +414,13 @@ local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap
 	-- OBJECT DATA
 	if objectName then
 		tile:SetAttribute("ObjectName", objectName)
+		-- MapObject: object-only tag (unit moves overwrite ObjectName; Tester F1 2026-10-27).
+		tile:SetAttribute("MapObject", objectName)
 		tile:SetAttribute("ObjectCategory", "MapObject")
 		tile:SetAttribute("ObjectPassabilityImpact", "Occupied")
 	else
 		tile:SetAttribute("ObjectName", "None")
+		tile:SetAttribute("MapObject", nil)
 		tile:SetAttribute("ObjectCategory", "None")
 		tile:SetAttribute("ObjectPassabilityImpact", "None")
 	end
@@ -760,6 +763,7 @@ local function renderBlockers(generatedMap, mapFolder)
 			then
 				child:SetAttribute("Passable", false)
 				child:SetAttribute("ObjectName", blocker.objectType)
+				child:SetAttribute("MapObject", blocker.objectType)
 				child:SetAttribute("ObjectCategory", "Obstacle")
 				child:SetAttribute("ObjectPassabilityImpact", "Impassable")
 
@@ -1180,6 +1184,7 @@ function MapRenderer.RenderOneObject(mapFolder, instance)
 			PropService.ClearTile(mapFolder, instance.x, instance.y)
 			-- Tag the tile with the object (matches createTile's attribute scheme).
 			child:SetAttribute("ObjectName", instance.type)
+			child:SetAttribute("MapObject", instance.type)  -- object-only tag (F1)
 			child:SetAttribute("ObjectCategory", "MapObject")
 			if nonPassable then
 				child:SetAttribute("Passable", false)
@@ -1269,6 +1274,7 @@ function MapRenderer.RemoveOneObject(mapFolder, instance)
 	for _, child in mapFolder:GetChildren() do
 		if child:GetAttribute("X") == instance.x and child:GetAttribute("Y") == instance.y then
 			child:SetAttribute("ObjectName", nil)
+			child:SetAttribute("MapObject", nil)
 			child:SetAttribute("ObjectCategory", nil)
 			child:SetAttribute("ObjectPassabilityImpact", nil)
 			child:SetAttribute("Passable", true)

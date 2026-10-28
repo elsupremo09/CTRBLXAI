@@ -206,6 +206,14 @@ function BattleVisualBroadcaster.BattleStarted(units)
 	task.wait(PACE.BattleStart)
 end
 
+-- Turn-bar time for a unit (user ruling 2026-10-27). Item devices take no turns: the bar shows
+-- them at their next timed activation (PulseScheduler stamps deviceNextIn). nil = leave the unit
+-- out of the bar (a device with nothing left to fire).
+function BattleVisualBroadcaster.TimelineRtFor(u)
+	if u.isItemDevice then return u.deviceNextIn end
+	return u.remainingRt
+end
+
 function BattleVisualBroadcaster.TurnStarted(unit, ct, allUnits)
 	_logTurn += 1
 	logEntry("turn", `{unitName(unit)}  ·  turn {_logTurn}  ·  CT {ct or 0}`, unit.id)
@@ -213,13 +221,16 @@ function BattleVisualBroadcaster.TurnStarted(unit, ct, allUnits)
 	local allUnitsRt = {}
 	if allUnits then
 		for _, u in ipairs(allUnits) do
-			if u.isAlive then
+			local _rt = u.isAlive and BattleVisualBroadcaster.TimelineRtFor(u) or nil
+			if _rt then
 				table.insert(allUnitsRt, {
 					id          = u.id,
 					name        = u.name,
 					side        = u.side,
-					remainingRt = u.remainingRt,
+					remainingRt = _rt,
 					isChanneling = u.isChanneling or false,
+					cycleRt     = u.isItemDevice and u.deviceCycleCt or nil,     -- device: CT between activations
+					cyclesLeft  = u.isItemDevice and u.devicePulsesLeft or nil,  -- device: activations left
 				})
 			end
 		end
@@ -280,7 +291,9 @@ function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, sk
 end
 
 -- Slice 3: broadcast DoT damage
-function BattleVisualBroadcaster.DotDamage(unit, statusId, damage)
+-- sourceName (optional, 2026-10-27): a device that dealt the hit (e.g. "Sentry Turret"); the
+-- battle log then names it instead of reading like a status tick.
+function BattleVisualBroadcaster.DotDamage(unit, statusId, damage, sourceName)
 	BattleEvents.DotDamage:FireAllClients({
 		unitId    = unit.id,
 		statusId  = statusId,
@@ -288,7 +301,11 @@ function BattleVisualBroadcaster.DotDamage(unit, statusId, damage)
 		currentHp = unit.currentHp,
 		maxHp     = unit.maxHp,
 	})
-	logEntry("status", `{unitName(unit)} takes {damage or 0} {statusId} damage ({unit.currentHp or 0}/{unit.maxHp or 0})`, unit.id)
+	if sourceName then
+		logEntry("action", `{sourceName} hits {unitName(unit)}: -{damage or 0} HP ({unit.currentHp or 0}/{unit.maxHp or 0})`, unit.id)
+	else
+		logEntry("status", `{unitName(unit)} takes {damage or 0} {statusId} damage ({unit.currentHp or 0}/{unit.maxHp or 0})`, unit.id)
+	end
 	task.wait(PACE.Dot)
 
 	if not unit.isAlive then

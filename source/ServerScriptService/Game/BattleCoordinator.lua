@@ -258,7 +258,9 @@ end
 local function getAliveUnits(state)
 	local alive = {}
 	for _, unit in ipairs(state.units) do
-		if unit.isAlive then
+		-- Item devices take no turns (user ruling 2026-10-27): their timed effects run on the
+		-- battle clock, and the turn bar shows them at their next activation instead.
+		if unit.isAlive and not unit.isItemDevice then
 			table.insert(alive, unit)
 		end
 	end
@@ -495,6 +497,12 @@ local function checkBattleEnd(state)
 	return false
 end
 
+-- Public battle-end check (UAT 2026-10-28 W-1): Main calls it after showing the kills from clock
+-- effects (statuses, tile effects, pulses), which tick after AdvanceClock's own check.
+function BattleCoordinator.CheckBattleEnd(state)
+	return checkBattleEnd(state)
+end
+
 --------------------------------------------------
 -- PUBLIC API
 --------------------------------------------------
@@ -595,7 +603,7 @@ function BattleCoordinator.AdvanceClock(state)
 		state.ctStatusUnits = state.ctStatusUnits or {}
 		for _, unit in ipairs(state.units) do
 			if not unit.isAlive then
-				if RacePassiveService.ProcessZombieRevive(unit, ctPassed) then
+				if RacePassiveService.ProcessZombieRevive(unit, ctPassed, state.units) then
 					table.insert(state.ctStatusUnits, unit)
 				end
 			end
