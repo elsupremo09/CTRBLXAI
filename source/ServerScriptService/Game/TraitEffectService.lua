@@ -9,7 +9,7 @@
 --
 -- Traits live on unit.perkIds / unit.drawbackIds (Phase 1, TraitRoller). Every
 -- lookup is BY trait_id via TraitData.GetTrait(id) -- NEVER by name (duplicate
--- names exist: 'Clumsy' x2, 'Sluggish' x2).
+-- names existed before the 2026-10-31 Poor Aim / Tardy renames).
 --
 -- A unit with no traits (nil / empty perkIds + drawbackIds) gets NEUTRAL values
 -- from every getter (multiplier 1.0 / offset 0 / nil stat table). Unknown or
@@ -58,7 +58,7 @@
 --   dotAll         offset              every DoT tick received
 --   dotStatus      { StatusId = offset } DoT tick of that status received
 --   healRecv       offset              skill healing received (CombatResolver.ResolveHealing)
---   xpGain         offset              STUB -- no per-unit battle-XP hook exists yet (no caller)
+--   xpGain         offset              battle XP (ProgressionService via Main provider, 2026-10-28)
 -- Multiplicative effects from the perk and the flaw MULTIPLY together; stat
 -- offsets and integer offsets SUM.
 
@@ -84,9 +84,9 @@ local EFFECTS = {
 	-- ===== PHASE 2b: derived-stat / RT modifiers (wired 2026-10-04 inline) =====
 	-- Precision (feeds Hit Quality = 1 + Precision - Evasiveness). Additive to precision fraction.
 	["TRAIT-P-036"] = { precision = 0.10 },   -- Keen Aim
-	["TRAIT-F-036"] = { precision = -0.10 },  -- Clumsy (Precision)
+	["TRAIT-F-036"] = { precision = -0.10 },  -- Poor Aim (was a 2nd "Clumsy")
 	["TRAIT-P-094"] = { precision = 0.15 },   -- Keen Aim (Greater)
-	["TRAIT-F-094"] = { precision = -0.15 },  -- Clumsy (Greater)
+	["TRAIT-F-094"] = { precision = -0.15 },  -- Poor Aim (Greater)
 	-- Evasiveness (feeds Hit Quality). Additive to evasiveness fraction.
 	["TRAIT-P-095"] = { evasiveness = 0.10 },  -- Light Step
 	["TRAIT-F-095"] = { evasiveness = -0.10 }, -- Heavy-Footed
@@ -109,14 +109,15 @@ local EFFECTS = {
 	-- -1.0 => x0. A unit has at most one of a pair, so these never stack against each other.
 	["TRAIT-F-045"] = { collisionRecv = 1.0, collisionInflict = -1.0 },  -- Squishy: receive x2; colliders take x0
 	["TRAIT-P-045"] = { collisionRecv = -1.0, collisionInflict = 1.0 },  -- Thorny: receive x0; colliders take x2
-	-- Fortune: feeds LUK (Combat Fortune is relational on LUK delta). statPct LUK.
-	["TRAIT-P-037"] = { statPct = { LUK = 0.10 } },  -- Lucky
-	["TRAIT-F-037"] = { statPct = { LUK = -0.10 } }, -- Unlucky
-	["TRAIT-P-099"] = { statPct = { LUK = 0.15 } },  -- Lucky (Greater)
-	["TRAIT-F-099"] = { statPct = { LUK = -0.15 } }, -- Unlucky (Greater)
-	-- Base RT multiplier (Quick/Sluggish). Lower base RT = acts sooner.
+	-- Fortune (USER RULING 2026-10-28): the DB "10% / 15% fortune bonus/penalty" is a direct +/-0.10 /
+-- 0.15 on Unit Fortune (same additive slot as gear Fortune), no longer LUK +/-10%.
+	["TRAIT-P-037"] = { fortuneAdd = 0.10 },  -- Lucky: +10% Unit Fortune
+	["TRAIT-F-037"] = { fortuneAdd = -0.10 }, -- Unlucky: -10% Unit Fortune
+	["TRAIT-P-099"] = { fortuneAdd = 0.15 },  -- Lucky (Greater): +15% Unit Fortune
+	["TRAIT-F-099"] = { fortuneAdd = -0.15 }, -- Unlucky (Greater): -15% Unit Fortune
+	-- Base RT multiplier (Quick/Tardy). Lower base RT = acts sooner.
 	["TRAIT-P-164"] = { baseRtMult = -0.10 },  -- Quick: 10% lower base RT
-	["TRAIT-F-164"] = { baseRtMult = 0.10 },   -- Sluggish: 10% higher base RT
+	["TRAIT-F-164"] = { baseRtMult = 0.10 },   -- Tardy (was a 2nd "Sluggish"): 10% higher base RT
 	-- Timeline Sovereign / Temporal Drag: base RT + starting RT (+ rt-delay inflicted for Sovereign).
 	["TRAIT-P-178"] = { baseRtMult = -0.10, startRtMult = -0.12, rtDelayInflictMult = 0.10 }, -- Timeline Sovereign
 	["TRAIT-F-178"] = { baseRtMult = 0.08, startRtMult = 0.15 },  -- Temporal Drag
@@ -135,13 +136,13 @@ local EFFECTS = {
 	-- Discovery radius (Far/Near-Sighted): integer-ish offset.
 	["TRAIT-P-075"] = { discoveryRadius = 1 },    -- Far-Sighted
 	["TRAIT-F-075"] = { discoveryRadius = -1 },   -- Near-Sighted
-	["TRAIT-P-135"] = { discoveryRadius = 1.2 },  -- Far-Sighted (Greater)
-	["TRAIT-F-135"] = { discoveryRadius = -1.2 }, -- Near-Sighted (Greater)
+	["TRAIT-P-135"] = { discoveryRadius = 2 },    -- Far-Sighted (Greater) (user ruling 2026-10-29: was 1.2)
+	["TRAIT-F-135"] = { discoveryRadius = -2 },   -- Near-Sighted (Greater) (user ruling 2026-10-29: was -1.2)
 	-- Interact range (Long/Short Reach): integer offset.
 	["TRAIT-P-096"] = { interactRange = 1 },  -- Long Reach
-	["TRAIT-F-096"] = { interactRange = -1 }, -- Short Reach
+	["TRAIT-F-096"] = { interactRtMult = 0.25 }, -- Short Reach: Interact RT +25% (user ruling 2026-10-29: -1 range did nothing)
 	["TRAIT-P-138"] = { interactRange = 2 },  -- Long Reach (Greater)
-	["TRAIT-F-138"] = { interactRange = -2 }, -- Short Reach (Greater)
+	["TRAIT-F-138"] = { interactRtMult = 0.50 }, -- Short Reach (Greater): Interact RT +50% (user ruling 2026-10-29)
 	-- Terrain movement cost (Pathfinder ignore / Bogged Down +50%).
 	["TRAIT-P-142"] = { terrainCostIgnore = true }, -- Pathfinder
 	["TRAIT-F-142"] = { terrainCostMult = 0.50 },   -- Bogged Down
@@ -626,7 +627,7 @@ local EFFECTS = {
 	["TRAIT-P-156"] = { koHealFrac = 0.18 },
 	["TRAIT-P-148"] = { koMpFrac = 0.15 },
 	["TRAIT-P-165"] = { koMpFrac = 0.18 },
-	["TRAIT-P-177"] = { koHealFrac = 0.12, koMpFrac = 0.08 },
+	["TRAIT-P-177"] = { koHealFrac = 0.12, koMpFrac = 0.08, koUncapped = true },  -- no 45% cap (DB row has none)
 	["TRAIT-P-162"] = { koApGain = 1 },
 	["TRAIT-F-148"] = { koMpLossFrac = 0.15 },
 	["TRAIT-F-165"] = { koMpLossFrac = 0.18 },
@@ -740,7 +741,10 @@ end
 -- static EFFECTS map (Restless/Sniper's Perch range, Soul Harvest latch, Hemophage /
 -- Sluggish Finisher ally-KO). Checks both the perk and drawback id lists. Not Break-
 -- gated here; callers decide whether Break should suppress the effect.
-local function hasTraitId(unit, traitId)
+-- USER RULING 2026-10-28: Break turns off ALL of a unit's traits, perks AND flaws (DB Break
+-- framework). hasTraitId is therefore Break-gated; hasTraitIdRaw ignores Break and is used only by
+-- post-battle effects (recovery), which happen after the battle's statuses are over.
+local function hasTraitIdRaw(unit, traitId)
 	if type(unit) ~= "table" then return false end
 	local lists = { unit.perkIds, unit.drawbackIds }
 	for li = 1, 2 do
@@ -752,6 +756,10 @@ local function hasTraitId(unit, traitId)
 		end
 	end
 	return false
+end
+local function hasTraitId(unit, traitId)
+	if isBroken(unit) then return false end
+	return hasTraitIdRaw(unit, traitId)
 end
 
 -- Lazy runtime require of EquipmentService for conditional stat rebuilds (Soul Harvest).
@@ -778,7 +786,7 @@ end
 -- { STAT = offset } or nil. Applied as round(total * (1 + offset)) right after
 -- the race stat fold (step 3b) in RebuildUnitStats.
 function TraitEffectService.GetStatModifiers(unit)
-	local effs = collect(unit)
+	local effs = active(unit)
 	local mods, any = {}, false
 	for _, e in ipairs(effs) do
 		if e.statPct then
@@ -806,12 +814,12 @@ end
 
 -- Hardy / Frail: multiplier on the VIT term of Max HP (50 + VIT*4*m + armor HP).
 function TraitEffectService.GetHpFromVitMultiplier(unit)
-	return math.max(0, 1 + sumOf(collect(unit), "hpFromVit"))
+	return math.max(0, 1 + sumOf(active(unit), "hpFromVit"))
 end
 
 -- Deep Well / Shallow Well: multiplier on the INT term of Max MP (20 + INT*2*m + armor MP).
 function TraitEffectService.GetMpFromIntMultiplier(unit)
-	return math.max(0, 1 + sumOf(collect(unit), "mpFromInt"))
+	return math.max(0, 1 + sumOf(active(unit), "mpFromInt"))
 end
 
 -- <Slot> Specialist (x2) / <Slot> Klutz (x0.5): multiplier on that armor piece's
@@ -821,7 +829,7 @@ end
 function TraitEffectService.GetArmorSlotMultiplier(unit, slot)
 	if not slot then return 1.0 end
 	local m = 1.0
-	for _, e in ipairs(collect(unit)) do
+	for _, e in ipairs(active(unit)) do
 		local t = e.armorSlotMult
 		if t and t[slot] then m = m * t[slot] end
 	end
@@ -830,14 +838,14 @@ end
 
 -- Defensive / Exposed Armor: multiplier on summed armor Defense.
 function TraitEffectService.GetArmorDefenseMultiplier(unit)
-	return math.max(0, productOf(collect(unit), "armorDefense"))
+	return math.max(0, productOf(active(unit), "armorDefense"))
 end
 
 -- Ironhide / Brittle Plating: +/- fraction of total non-weapon (armor) WT added to
 -- base armor defense. Returns a signed fraction (e.g. 0.20, 0.25, -0.20, -0.25);
 -- the caller multiplies it by the summed armor WT and rounds. Neutral = 0.
 function TraitEffectService.GetArmorFromWtFraction(unit)
-	return sumOf(collect(unit), "armorFromWtFrac")
+	return sumOf(active(unit), "armorFromWtFrac")
 end
 
 -- Strong Back / Weak Grip: Gear (weapon) WT changed by -/+ fraction, and the magnitude
@@ -846,7 +854,7 @@ end
 --   Weak Grip    -0.20/-0.25  -> weapon WT x(1 - frac) = x(1 + |frac|), STR -= round(rawWt * |frac|)
 -- Caller applies both halves atomically. Neutral = 0.
 function TraitEffectService.GetGearWtStrFraction(unit)
-	return sumOf(collect(unit), "gearWtStrFrac")
+	return sumOf(active(unit), "gearWtStrFrac")
 end
 
 -- <Weapon> Specialist / Klutz: (damageMult, wtMult) for the equipped MainHand.
@@ -854,9 +862,26 @@ local function weaponSpecMults(unit)
 	local name = mainHandWeaponName(unit)
 	if not name then return 1.0, 1.0 end
 	local dm, wm = 1.0, 1.0
-	for _, e in ipairs(collect(unit)) do
+	-- active(): Break switches off weapon Specialist / Klutz too (user ruling 2026-10-28).
+	for _, e in ipairs(active(unit)) do
 		local ws = e.weaponSpec
 		if ws and ws.weapon == name then
+			dm = dm * (1 + (ws.dmg or 0))
+			wm = wm * (1 + (ws.wt or 0))
+		end
+	end
+	return math.max(0, dm), math.max(0, wm)
+end
+
+-- <Weapon> Specialist / Klutz for a named weapon other than the main hand (Twinblade off-hand,
+-- re-check 2026-10-29: DB "When wielding a <weapon>" -- the off-hand weapon is wielded too).
+-- Returns (damageMult, wtMult).
+function TraitEffectService.GetWeaponSpecMultsFor(unit, weaponName)
+	local dm, wm = 1.0, 1.0
+	if not weaponName then return dm, wm end
+	for _, e in ipairs(active(unit)) do
+		local ws = e.weaponSpec
+		if ws and ws.weapon == weaponName then
 			dm = dm * (1 + (ws.dmg or 0))
 			wm = wm * (1 + (ws.wt or 0))
 		end
@@ -879,17 +904,17 @@ end
 -- Heavy Hitter / Feather Strikes: fraction of weapon WT added to (or, negative,
 -- subtracted from) base weapon damage.
 function TraitEffectService.GetWeaponWtDamageFraction(unit)
-	return sumOf(collect(unit), "wtToDamage")
+	return sumOf(active(unit), "wtToDamage")
 end
 
 -- Powerful Build / Frail Arms / Overwhelming Force (flaw): flat Force offset.
 function TraitEffectService.GetForceModifier(unit)
-	return sumOf(collect(unit), "force")
+	return sumOf(active(unit), "force")
 end
 
 -- Rooted / Toppling: flat Stability offset.
 function TraitEffectService.GetStabilityModifier(unit)
-	return sumOf(collect(unit), "stability")
+	return sumOf(active(unit), "stability")
 end
 
 --------------------------------------------------
@@ -924,7 +949,8 @@ function TraitEffectService.GetDamageDealtModifier(attacker, element, isAOE, tar
 		if e.dealtSkill and isSkill then
 			mod = mod * (1 + e.dealtSkill)
 		end
-		if e.dealtMelee and wieldsMelee(attacker) then
+		-- Melee weapon hits only (ctx.weaponHit; nil = old callers -> counts). Re-check 2026-10-29.
+		if e.dealtMelee and wieldsMelee(attacker) and not (ctx and ctx.weaponHit == false) then
 			mod = mod * (1 + e.dealtMelee)
 		end
 		-- Phase 3 conditional dealt-damage traits. ctx (optional) carries battlefield
@@ -989,7 +1015,8 @@ end
 -- Multiplier on final direct damage received by this unit. Folded next to
 -- RacePassiveService.GetDamageReceivedModifier in CombatResolver.
 --   attacker (optional): source unit, for melee / ranged weapon-class traits.
-function TraitEffectService.GetDamageReceivedModifier(defender, element, isAOE, isPhysical, attacker)
+-- isWeaponHit (optional, 2026-10-29): false = spell / item -> Melee / Ranged received traits skip it.
+function TraitEffectService.GetDamageReceivedModifier(defender, element, isAOE, isPhysical, attacker, isWeaponHit)
 	local effs = active(defender)
 	if #effs == 0 then return 1.0 end
 	local mod = 1.0
@@ -1006,7 +1033,7 @@ function TraitEffectService.GetDamageReceivedModifier(defender, element, isAOE, 
 		if e.recvAOE and isAOE then
 			mod = mod * (1 + e.recvAOE)
 		end
-		if e.recvMelee and attacker and wieldsMelee(attacker) then
+		if e.recvMelee and attacker and wieldsMelee(attacker) and isWeaponHit ~= false then
 			mod = mod * (1 + e.recvMelee)
 		end
 		if e.recvRanged and attacker and wieldsRanged(attacker) then
@@ -1069,8 +1096,13 @@ function TraitEffectService.GetJumpModifier(unit)
 end
 
 -- Fast Learner / Slow Learner: battle-XP multiplier.
--- STUB: no per-unit battle-XP award hook exists in source yet, so nothing calls
--- this. Nil-safe; returns 1.0 for units without these traits.
+-- Called by ProgressionService via Main's SetXpMultiplierProvider (2026-10-28). Not Break-gated:
+-- XP is awarded after the battle. Nil-safe; returns 1.0 for units without these traits.
+-- Lucky / Unlucky: additive Unit Fortune (folded into gearDerived.fortune by EquipmentService).
+function TraitEffectService.GetFortuneModifier(unit)
+	return sumOf(active(unit), "fortuneAdd")
+end
+
 function TraitEffectService.GetXpGainMultiplier(unit)
 	return math.max(0, productOf(collect(unit), "xpGain"))
 end
@@ -1222,6 +1254,30 @@ function TraitEffectService.HasStatusPhobia(unit, statusId)
 	return tid ~= nil and hasTraitId(unit, tid)
 end
 
+-- Burn Specialist / Burn Phobia (DB P/F-157): "Burn inflicted +/-5% of base damage" -- added to the
+-- stored-Burn fraction of the fire damage dealt (base 20%). 2026-10-29.
+function TraitEffectService.GetBurnInflictFractionBonus(unit)
+	local b = 0
+	if hasTraitId(unit, "TRAIT-P-157") then b += 0.05 end
+	if hasTraitId(unit, "TRAIT-F-157") then b -= 0.05 end
+	return b
+end
+
+-- Diffuser / Fragile to Blasts: AOE damage received multiplier (product of recvAOE entries), for
+-- area hits flagged AOE after resolution (weapon-pattern splash). 2026-10-29.
+function TraitEffectService.GetAoeReceivedMultiplier(unit)
+	local m = 1
+	for _, e in ipairs(active(unit)) do
+		if e.recvAOE then m = m * (1 + e.recvAOE) end
+	end
+	return math.max(0, m)
+end
+
+-- Overwhelming Force (P-176): "all melee Basic Attacks gain Knockback" (one Knockback source).
+function TraitEffectService.HasMeleeKnockback(unit)
+	return hasTraitId(unit, "TRAIT-P-176") and wieldsMelee(unit)
+end
+
 -- Summon modifiers (Minion Specialist / Skill Issues). Read on the OWNER at summon creation
 -- (owner's trait locked in once). statMult scales the summon's primary stats; damageMult
 -- scales the summon's outgoing damage. P-101 +10%/+10%, P-141 +12%/+10%, F-101 -10%/-10%,
@@ -1244,11 +1300,11 @@ end
 function TraitEffectService.GetPostBattleRecoveryFraction(unit, baseFraction)
 	local base = baseFraction or 0.35
 	-- Slow to Recover REPLACES.
-	if hasTraitId(unit, "TRAIT-F-041") then return 0.05 end  -- Slow to Recover
-	if hasTraitId(unit, "TRAIT-F-109") then return 0.25 end  -- Slow to Recover (Greater)
+	if hasTraitIdRaw(unit, "TRAIT-F-041") then return 0.05 end  -- Slow to Recover
+	if hasTraitIdRaw(unit, "TRAIT-F-109") then return 0.25 end  -- Slow to Recover (Greater)
 	-- Resilient ADDS to baseline.
-	if hasTraitId(unit, "TRAIT-P-109") then return math.max(0, base + 0.25) end -- Resilient (Greater)
-	if hasTraitId(unit, "TRAIT-P-041") then return math.max(0, base + 0.20) end -- Resilient
+	if hasTraitIdRaw(unit, "TRAIT-P-109") then return math.max(0, base + 0.25) end -- Resilient (Greater)
+	if hasTraitIdRaw(unit, "TRAIT-P-041") then return math.max(0, base + 0.20) end -- Resilient
 	return base
 end
 
@@ -1331,9 +1387,9 @@ function TraitEffectService.GetBasicAttackResolveCount(unit)
 	return 1
 end
 
--- Treasure Seeker (P-122 / P-151): "Opening Treasures Cost no AP." This wires ONLY the
--- no-AP-cost half; the gold/reward half is blocked on the chest-gold economy rule (Designer
--- scope) and is intentionally not wired here. Returns true if the unit has either tier.
+-- Treasure Seeker (P-122 / P-151): true if the unit has either tier. Used for the no-AP-cost
+-- open; the +gold and extra-item halves are GetChestGoldMultiplier / GetChestExtraItemChance
+-- below (both wired, applied in ObjectEffectService).
 function TraitEffectService.HasTreasureSeeker(unit)
 	return hasTraitId(unit, "TRAIT-P-122") or hasTraitId(unit, "TRAIT-P-151")
 end
@@ -1345,6 +1401,13 @@ end
 -- Keyed by the interact candidate's object type string (candidate.archetypeId / obj.type).
 local TREASURE_CHEST_TYPES = { ["Treasure Chest"] = true, ["Cursed Chest"] = true }
 
+-- True for the openable treasure chest types (the same set Treasure Seeker uses). Used to
+-- pick the Open Treasure animation (2026-10-28). Callers pass the DISPLAYED type, so a
+-- disguised Mimic reads as a Treasure Chest and the animation never gives it away.
+function TraitEffectService.IsTreasureChestType(objType)
+	return objType ~= nil and TREASURE_CHEST_TYPES[objType] == true
+end
+
 -- True when a Treasure Seeker unit opening an object of this type should pay no AP.
 function TraitEffectService.IsFreeTreasureInteract(unit, objType)
 	return objType ~= nil
@@ -1355,8 +1418,8 @@ end
 -- Chest GOLD multiplier for the opener (Treasure Seeker +/ Spendthrift Looter -). Applied to
 -- the gold a treasure chest grants. Treasure Seeker P-122 +50% / P-151 +60% ("more reward");
 -- Spendthrift Looter F-122 -50% / F-151 -60% ("less gold"). A unit normally has at most one,
--- but the two are independent pairs so we sum additively and floor at 0 for safety. (The item
--- half of "more reward" is a separate lever and intentionally not applied here.)
+-- but the two are independent pairs so we sum additively and floor at 0 for safety. The extra-item
+-- half is GetChestExtraItemChance below.
 function TraitEffectService.GetChestGoldMultiplier(unit)
 	if type(unit) ~= "table" then return 1 end
 	local d = 0
@@ -1365,6 +1428,15 @@ function TraitEffectService.GetChestGoldMultiplier(unit)
 	if hasTraitId(unit, "TRAIT-F-151") then d = d - 0.60      -- Spendthrift Looter (Greater)
 	elseif hasTraitId(unit, "TRAIT-F-122") then d = d - 0.50 end -- Spendthrift Looter
 	return math.max(0, 1 + d)
+end
+
+-- Treasure Seeker extra chest item (user ruling 2026-10-29, "50% / 60% more reward"): the chance that
+-- a chest this unit opens also gives ONE extra reward roll. P-122 50%, P-151 60%. 0 otherwise.
+function TraitEffectService.GetChestExtraItemChance(unit)
+	if type(unit) ~= "table" then return 0 end
+	if hasTraitId(unit, "TRAIT-P-151") then return 0.60 end
+	if hasTraitId(unit, "TRAIT-P-122") then return 0.50 end
+	return 0
 end
 
 -- Buff manipulation on a landed hit (Purifier P-107 / Buff-Blind F-107). Fires on basic
@@ -1393,7 +1465,7 @@ TraitEffectService.BUFF_BLIND_POOL = {
 	"War Rhythm", "Rune Ward", "Rally", "Fortune Boon",
 }
 
--- Base RT multiplier (Quick/Sluggish/Timeline Sovereign/Temporal Drag).
+-- Base RT multiplier (Quick/Tardy/Timeline Sovereign/Temporal Drag).
 -- Returns a multiplier: 1 + sum(baseRtMult). Lower = acts sooner.
 function TraitEffectService.GetBaseRtMultiplier(unit)
 	return 1 + sumOf(active(unit), "baseRtMult")
@@ -1430,9 +1502,14 @@ function TraitEffectService.GetDiscoveryRadiusModifier(unit)
 	return sumOf(active(unit), "discoveryRadius")
 end
 
--- Interact range additive offset (Long/Short Reach).
+-- Interact range additive offset (Long Reach).
 function TraitEffectService.GetInteractRangeModifier(unit)
 	return sumOf(active(unit), "interactRange")
+end
+
+-- Interact RT multiplier (Short Reach flaws, 2026-10-29): 1 + sum(interactRtMult).
+function TraitEffectService.GetInteractRtMultiplier(unit)
+	return math.max(0, 1 + sumOf(active(unit), "interactRtMult"))
 end
 
 -- Terrain movement-cost handling (Pathfinder ignores +costs; Bogged Down +50%).
@@ -1482,10 +1559,13 @@ end
 -- Mana Leak (flaw). Neutral = all zero.
 function TraitEffectService.GetOnKillEffects(killer)
 	local effs = active(killer)
-	local out = { healFrac = 0, mpFrac = 0, apGain = 0, mpLossFrac = 0 }
+	local out = { healFrac = 0, mpFrac = 0, apGain = 0, mpLossFrac = 0, freeHealFrac = 0, freeMpFrac = 0 }
 	for _, e in ipairs(effs) do
-		if e.koHealFrac then out.healFrac = out.healFrac + e.koHealFrac end
-		if e.koMpFrac then out.mpFrac = out.mpFrac + e.koMpFrac end
+		-- koUncapped (Soul Harvest): outside the shared 45% per-turn KO-recovery cap.
+		if e.koHealFrac and e.koUncapped then out.freeHealFrac = out.freeHealFrac + e.koHealFrac
+		elseif e.koHealFrac then out.healFrac = out.healFrac + e.koHealFrac end
+		if e.koMpFrac and e.koUncapped then out.freeMpFrac = out.freeMpFrac + e.koMpFrac
+		elseif e.koMpFrac then out.mpFrac = out.mpFrac + e.koMpFrac end
 		if e.koApGain then out.apGain = out.apGain + e.koApGain end
 		if e.koMpLossFrac then out.mpLossFrac = out.mpLossFrac + e.koMpLossFrac end
 	end
@@ -1513,7 +1593,9 @@ end
 -- can't hand out a turn-skip or passive-disable. Used by Defenseless / Lingering Curse
 -- (self) and Retaliator (attacker).
 local RANDOM_DEBUFF_POOL = {
-	"Slow", "Poison", "Burn", "Bleed", "Blind",
+	-- Burn removed 2026-10-29: Burn's damage comes from the Fire hit that causes it, so a Burn
+	-- handed out by a trait would deal nothing.
+	"Slow", "Poison", "Bleed", "Blind",
 	"Confuse", "Silence", "Disarmed", "Pinned", "Crippled", "Weakened",
 }
 

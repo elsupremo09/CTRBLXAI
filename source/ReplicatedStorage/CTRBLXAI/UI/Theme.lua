@@ -73,6 +73,10 @@ Theme.Colors = {
 	RarityEpic      = Color3.fromRGB(180, 80, 255),  -- Purple
 	RarityExalted   = Color3.fromRGB(255, 90, 170),  -- Magenta/Pink (between Epic and Legendary)
 	RarityLegendary = Color3.fromRGB(255, 200, 50),  -- Gold
+	-- Above Legendary (user request 2026-11-03): each gets its own colour instead of Common gray.
+	RarityMythic       = Color3.fromRGB(255, 120, 30),  -- Deep orange (past gold)
+	RarityTranscendent = Color3.fromRGB(70, 225, 230),  -- Bright cyan
+	RarityUnique       = Color3.fromRGB(190, 20, 60),   -- Deep crimson (darker than Danger red)
 
 	-- Misc
 	Overlay         = Color3.fromRGB(0, 0, 0),       -- Modal backdrop (use with transparency)
@@ -283,6 +287,9 @@ function Theme.GetRarityColor(rarity)
 		Epic      = Theme.Colors.RarityEpic,
 		Exalted   = Theme.Colors.RarityExalted,
 		Legendary = Theme.Colors.RarityLegendary,
+		Mythic       = Theme.Colors.RarityMythic,
+		Transcendent = Theme.Colors.RarityTranscendent,
+		Unique       = Theme.Colors.RarityUnique,
 	}
 	return map[rarity] or Theme.Colors.RarityCommon
 end

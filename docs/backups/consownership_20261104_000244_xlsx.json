@@ -1,0 +1,242 @@
+[
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "19 Persistent HP MP",
+  "E22",
+  "persistent_hp_mp_rules",
+  17,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "19 Persistent HP MP",
+  "E23",
+  "persistent_hp_mp_rules",
+  18,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "30 Loadout UI Spec",
+  "E25",
+  "loadout_ui_spec",
+  24,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "E9",
+  "guild_facilities",
+  8,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "E47",
+  "guild_facilities",
+  46,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "E60",
+  "guild_facilities",
+  59,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "E68",
+  "guild_facilities",
+  67,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "E69",
+  "guild_facilities",
+  68,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "D69",
+  "guild_facilities",
+  68,
+  "rule"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "E70",
+  "guild_facilities",
+  69,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "D70",
+  "guild_facilities",
+  69,
+  "rule"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "E71",
+  "guild_facilities",
+  70,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "E72",
+  "guild_facilities",
+  71,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "E73",
+  "guild_facilities",
+  72,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "25 Guild Facilities",
+  "E74",
+  "guild_facilities",
+  73,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Build_Plan.xlsx",
+  "14 \u2014 Save Data Contract",
+  "B5",
+  "save_data_contract",
+  1,
+  "Persistent_Fields"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "18 Open Decisions",
+  "B125",
+  "open_decisions",
+  126,
+  "col_2"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "18 Open Decisions",
+  "C125",
+  "open_decisions",
+  126,
+  "col_3"
+ ],
+ [
+  "CTRBLXAI_Unit_Traits.xlsx",
+  "unit_traits",
+  "J244",
+  "unit_traits",
+  243,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Unit_Traits.xlsx",
+  "unit_traits",
+  "J302",
+  "unit_traits",
+  301,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "17 Objects Encounters",
+  "I20",
+  "objects_encounters",
+  20,
+  "col_9"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "17 Objects Encounters",
+  "I22",
+  "objects_encounters",
+  22,
+  "col_9"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "22 Economy Framework",
+  "D50",
+  "economy_framework",
+  49,
+  "rule"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "22 Economy Framework",
+  "E50",
+  "economy_framework",
+  49,
+  "notes"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "19 Persistent HP MP",
+  "D30",
+  "persistent_hp_mp_rules",
+  25,
+  "rule"
+ ],
+ [
+  "CTRBLXAI_Game_Rules.xlsx",
+  "19 Persistent HP MP",
+  "E30",
+  "persistent_hp_mp_rules",
+  25,
+  "notes"
+ ],
+ [
+  "Game_Rules",
+  "30 Loadout UI Spec",
+  "row 102 NEW",
+  "loadout_ui_spec",
+  101,
+  ""
+ ],
+ [
+  "Game_Rules",
+  "18 Open Decisions",
+  "row 126 NEW",
+  "open_decisions",
+  127,
+  ""
+ ],
+ [
+  "Consumable_Item_Catalog",
+  "02 Item Catalog",
+  "A2",
+  "(header note)",
+  "",
+  ""
+ ],
+ [
+  "Development_Roadmap",
+  "Slice 8 - Base Multiplayer",
+  "A11",
+  "",
+  "",
+  ""
+ ]
+]

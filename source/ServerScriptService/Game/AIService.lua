@@ -145,6 +145,9 @@ local ROLE_BY_PERSONALITY = {
 local function isHostileTo(unit: any, target: any)
 	if not target or target.side == unit.side then return false end
 	if target.side == "Neutral" then
+		-- Treasure Hunter (project_rules 229): ONE narrow exception — a Mimic woken by the
+		-- Treasure Hunter (tagged huntsUnitId) treats that specific NPC as hostile.
+		if unit.huntsUnitId ~= nil and target.id == unit.huntsUnitId then return true end
 		return target.enemyPriorityTarget == true
 	end
 	return true
@@ -620,6 +623,11 @@ local function enumerateSkillEntries(unit: any, allUnits: any)
 			and _CommandService.IsRelocationBlockedSkill(unit, def) then
 			def = nil
 		end
+		-- Dual Wield exclusive skills need dual wield active (2026-10-28).
+		if def and _CommandService and _CommandService.IsDualWieldBlockedSkill
+			and _CommandService.IsDualWieldBlockedSkill(unit, def) then
+			def = nil
+		end
 		if def and _UnitSchema and _UnitSchema.HasEnoughMp(unit, skillMpCost(unit, def)) then
 			local candidates, candRange = _TargetingService.GetSkillCandidates(unit, allUnits, def)
 			-- TAUNT (2026-10-27): debuff / damage skills may only target the taunter.
@@ -714,9 +722,14 @@ function AIService.ConsiderObsBreak(unit: any, allUnits: any, state: any, dials:
 
 	local bestAction: any, bestPriority = nil, -math.huge
 	for _, oc in ipairs(attackable) do
-		local inst = instAt(oc.tileX, oc.tileY)
+		-- Never consider waking an unmasked Mimic (not a path-clearing break; AI must not
+		-- interact with disguise objects).
+		local inst = (not oc.wakesObject) and instAt(oc.tileX, oc.tileY) or nil
 		local def = inst and inst.type and ObjectData.Objects[inst.type]
-		if inst and def then
+		-- 2026-10-30 (rule 241): a DISGUISED Mimic is now in the attackable list (unflagged, so the
+		-- player can't tell it from a chest). The AI only breaks objects with real hit points, so it
+		-- never wakes a Mimic by "breaking" it (Mimic has no hitsToDestroy).
+		if inst and def and type(def.hitsToDestroy) == "number" then
 			local hp = inst.hp or def.hitsToDestroy or 1
 			-- ONE-HIT: this unit's weapon element is one of the object's kill tags.
 			local oneShot = false
@@ -757,6 +770,22 @@ end
 --   -- return { actionType = "AttackObject", selection = { objX = x, objY = y } }
 --   -- when a breakable OBS blocker adjacent/in-range materially shortens the path.
 -- end
+
+-- QUICK DRAW (Quiver, 2026-10-29): the unit is out of AP and may make one bonus Basic Attack for
+-- MP. Pick the best-scoring basic attack in reach (same scorecard as a normal attack); nil = decline.
+function AIService.DecideQuickDrawAttack(unit: any, allUnits: any): any
+	if not unit.isAlive or not _TargetingService then return nil end
+	local personality = resolvePersonality(unit, allUnits)
+	local dials = DIALS[personality] or DIALS[DEFAULT_PERSONALITY]
+	local best, bestScore = nil, 0
+	for _, t in ipairs(_TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1) or {}) do
+		local s = scoreAttack(unit, t, dials, allUnits)
+		if s > bestScore then best, bestScore = t, s end
+	end
+	if not best then return nil end
+	return { actionType = "Attack", selection = best, skillName = nil,
+		score = bestScore, rtEstimate = 0, tile = nil, targetName = best.name }
+end
 
 function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, state: any): any
 	if not unit.isAlive or (unit.currentAp or 0) <= 0 then return nil end
@@ -904,10 +933,49 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 	----------------------------------------------------------------
 	local function bestItemAction(u: any, units: any, d: any)
 		if not u.consumableSlots then return nil end
+		-- AC-014 Bomber Ring (2026-10-29): every item is a bomb (small cross, friendly fire), so the
+		-- normal per-item scoring would be wrong (it could "heal" an ally with a bomb). Aim at an enemy
+		-- whose cross holds no ally; score = estimated damage to everyone it catches.
+		local _bombRange = _CommandService and _CommandService.GetBomberRange and _CommandService.GetBomberRange(u)
+		if _bombRange then
+			local bombSlot = nil
+			for idx = 1, (u.consumableSlotCount or 3) do
+				local sl = u.consumableSlots[idx]
+				local cd = sl and sl.consumableId and ConsumableData.GetById(sl.consumableId)
+				if cd and not cd.parked and _CommandService.ItemSlotHasCharge(units, u, sl) then bombSlot = idx break end  -- AC-019 pool
+			end
+			if not bombSlot then return nil end
+			local power = _CommandService.GetBomberPower(u)
+			local bestS, bestT = 0, nil
+			for _, c in ipairs(units) do
+				if c.isAlive and c.side ~= u.side and c.tileX
+					and not (_StatusService and _StatusService.HasStatus(c, "Hide"))
+					and chebyshev(u.tileX, u.tileY, c.tileX, c.tileY) <= _bombRange then
+					local s, friendly = 0, false
+					for _, v in ipairs(units) do
+						if v.isAlive and v ~= u and v.tileX
+							and math.abs(v.tileX - c.tileX) + math.abs(v.tileY - c.tileY) <= 1 then
+							if v.side == u.side then friendly = true break end
+							s += (power / math.max(1, v.maxHp or 1)) * W.DAMAGE_PCT * d.damage
+							if power >= (v.currentHp or 0) then s += W.KILL_BONUS end
+						end
+					end
+					if not friendly and s > bestS then bestS, bestT = s, c end
+				end
+			end
+			if not bestT then return nil end
+			return {
+				actionType = "Item",
+				selection = { target = bestT, itemSlotIndex = bombSlot },
+				skillName = nil, score = bestS, rtEstimate = 0, tile = nil,
+				targetName = bestT.name or "tile",
+			}
+		end
 		local bestScore, bestSlot, bestTarget = 0, nil, nil
 		for idx = 1, (u.consumableSlotCount or 3) do
 			local slot = u.consumableSlots[idx]
-			if slot and slot.consumableId and (slot.currentCharges or 0) > 0 then
+			if slot and slot.consumableId and ((slot.currentCharges or 0) > 0
+				or (_CommandService and _CommandService.ItemSlotHasCharge(units, u, slot))) then  -- AC-019 pool
 				local consDef = ConsumableData.GetById(slot.consumableId)
 				if consDef then
 					local s, tgt = scoreItem(u, idx, consDef, units, d)

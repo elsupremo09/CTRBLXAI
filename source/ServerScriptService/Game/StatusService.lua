@@ -43,6 +43,23 @@ local _weatherBurnSuppressed = false
 -- totems from different casters each apply independently.
 local _auraUnits = nil
 function StatusService.SetAuraUnitsProvider(fn) _auraUnits = fn end
+-- Live battle unit list (nil outside battle). Used by doctrine proximity reads. 2026-10-28.
+function StatusService.GetAuraUnits() return _auraUnits and _auraUnits() or nil end
+local function findUnitById(id)
+	if not id or id == "unknown" or not _auraUnits then return nil end
+	local units = _auraUnits()
+	if type(units) ~= "table" then return nil end
+	for _, u in ipairs(units) do
+		if u.id == id then return u end
+	end
+	return nil
+end
+-- Plague Doctor Virulence: Poison / Venom ticks from this source +25%. Deferred require (cycle).
+local function doctrinePoisonTickMult(inst)
+	local src = inst and findUnitById(inst.sourceUnitId)
+	if not src then return 1 end
+	return (require :: any)(script.Parent.DoctrinePassiveService).GetPoisonTickModifier(src)
+end
 
 --------------------------------------------------
 -- STATUS CONFLICT RULES (2026-10-07, user ruling)
@@ -68,6 +85,49 @@ local STATUS_REMOVES = table.freeze({
 -- Injected removal notifier (DI, mirrors SetAuraUnitsProvider): StatusService
 -- cannot require BattleVisualBroadcaster (it requires us). Main wires this so the
 -- client drops the status pill when a conflict rule removes a status.
+-- TRG-016 (2026-10-28): Break added or removed on a Twinblade switches the off-hand weapon off / on
+-- IMMEDIATELY (one stat rebuild per Break state change). Deferred require (cycle-safe).
+-- Also (USER RULING 2026-10-28): Break turns off ALL traits, including the ones applied by the stat
+-- rebuild (stat %, HP/MP, armor, weapon Specialist/Klutz, force, stability...), so any unit with a
+-- trait is rebuilt once when Break starts or ends. HP/MP are only capped, never raised.
+local function syncBreakEquipment(unit, statusId)
+	if statusId ~= "Break" or not unit then return end
+	-- Summons / item devices / objects carry an authored stat snapshot and no Break-able passives;
+	-- never rebuild them.
+	if unit.isSummon or unit.isItemDevice or unit.isObject then return end
+	local hasTraits = (type(unit.perkIds) == "table" and #unit.perkIds > 0)
+		or (type(unit.drawbackIds) == "table" and #unit.drawbackIds > 0)
+	-- USER RULING 2026-10-28 (DB project_rules 35/47/205): Break also switches off the race passive
+	-- (incl. its stat changes, e.g. Avian STR -15%, Ogre WT +20%) and the doctrine passive (incl.
+	-- the Chemist / Artificer item slot and Artificer -1 skill range). Those are applied in the stat
+	-- rebuild, so units with a race or doctrine are rebuilt too. Race TAGS stay on.
+	local hasRaceOrDoctrine = unit.raceId ~= nil or unit.doctrineId ~= nil
+	if hasTraits or hasRaceOrDoctrine then
+		(require :: any)(script.Parent.EquipmentService).RebuildUnitStats(unit)  -- also re-syncs dual wield
+	elseif unit.doctrineId == "DOC-TWINBLADE" then
+		(require :: any)(script.Parent.DoctrinePassiveService).SyncDualWield(unit)
+	end
+end
+-- A status ENDED (removed, expired, cleansed, purged, dispelled): Break sync, plus Oversleep --
+-- DB weapons_equipment 153: when Sleep ends the unit gains Sleep Immunity until the end of its next
+-- ready turn. One place for every removal path (2026-10-29, Tester FAIL fix: cleanses were missed).
+-- Never called on APPLY (syncBreakEquipment alone is), so applying Sleep does not grant immunity.
+local function onStatusEnded(unit, statusId)
+	syncBreakEquipment(unit, statusId)
+	if statusId == "Sleep" and unit and unit.isAlive ~= false and unit.statusInstances then
+		StatusService.ApplyStatus(unit, "Sleep Immunity", unit.id)
+	end
+end
+
+-- For status removals done outside this module (augment cleanses).
+function StatusService.NotifyStatusRemoved(unit, statusId)
+	onStatusEnded(unit, statusId)
+end
+
+-- Bleed -> Raptured -> Wounded -> Bleed chain loop guard (2026-10-29): reapplying when all three are
+-- present used to recurse forever (stack overflow). Each status in one chain now refreshes once.
+local _chainVisited: any = nil
+
 local _onConflictRemoved = nil
 function StatusService.SetConflictRemovedHandler(fn) _onConflictRemoved = fn end
 
@@ -475,14 +535,24 @@ local function hasNumericValue(statusId, def)
 	return false
 end
 
-local function applyDebuffResistance(unit, statusId, def, inst)
+-- pen (2026-10-28): fraction of the target's Debuff Resistance the APPLIER ignores (Plague Doctor
+-- 0.15 on Dark / Poison debuffs). Resistance r is a multiplier (1 = none); ignoring a fraction of it
+-- gives r + (1 - r) x pen.
+local function penetrate(r, pen)
+	if pen and pen > 0 and r < 1 then
+		return r + (1 - r) * pen
+	end
+	return r
+end
+
+local function applyDebuffResistance(unit, statusId, def, inst, pen)
 	if def.kind ~= "Debuff" then
 		return
 	end
 	if DOT_FAMILY[statusId] or def.dotType or RESIST_AT_USE[statusId] then
 		return
 	end
-	local r = StatusService.GetDebuffResist(unit)
+	local r = penetrate(StatusService.GetDebuffResist(unit), pen)
 	inst.valueScale = nil
 	if r >= 1 then
 		return
@@ -519,6 +589,19 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 
 	local disruptsChannel = CHANNEL_DISRUPTORS[statusId] == true
 
+	-- Plague Doctor Virulence (2026-10-28): a debuff applied by a Dark-tagged skill (the applier's
+	-- current cast element) ignores 15% of the target's Debuff Resistance (DB Passive_Effect: Dark only).
+	local resistPen = 0
+	if def.kind == "Debuff" then
+		local _pdSrc = findUnitById(sourceUnitId)
+		if _pdSrc then
+			-- Not casting: a Dark-weapon basic attack's debuff counts as Dark too (checklist fix 2026-10-29).
+			local _pdEl = _pdSrc._docCastElement
+			if _pdEl == nil and _pdSrc.weaponElement == "Dark" then _pdEl = "Dark" end
+			resistPen = (require :: any)(script.Parent.DoctrinePassiveService).GetDebuffResistancePenetration(_pdSrc, _pdEl)
+		end
+	end
+
 	-- Conflict rules (see STATUS_CONFLICT RULES above). Runs after immunity so an
 	-- immune unit keeps its existing statuses untouched.
 	local cancelId = STATUS_CANCELS[statusId]
@@ -536,10 +619,51 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 		end
 	end
 
+	-- Iron Will / Susceptible on a RE-application (re-check 2026-10-29): the reset duration gets the
+	-- same -1/+1 turn (or -/+400 CT) as a new application (debuffs only, never below 1).
+	-- ctReset = this re-application also reset the CT timer (refresh / chain); accumulate and stack
+	-- reset turns only, so their running CT deadline is left alone (Tester note 2026-10-29).
+	-- Shadowbinder Malignancy (+20% debuff duration) and Enchanter Lingering Enchantment (+1 turn,
+	-- +10% numbers) apply to every eligible application, re-applications included (DB "Per eligible
+	-- application"), keyed on the applier like the new-application block below.
+	local function traitDebuffOffset(inst, ctReset)
+		if def.kind == "Debuff" then
+			local off = TraitEffectService.GetDebuffDurationTurnOffset(unit)
+			if off ~= 0 then
+				if inst.remainingTurns then inst.remainingTurns = math.max(1, inst.remainingTurns + off) end
+				if ctReset and inst.remainingCt then inst.remainingCt = math.max(1, inst.remainingCt + off * 400) end
+			end
+		end
+		local src = findUnitById(sourceUnitId)
+		if not src then return end
+		local _dps = (require :: any)(script.Parent.DoctrinePassiveService)
+		if def.kind == "Debuff" then
+			local m = _dps.GetDebuffDurationModifier(src)
+			if m ~= 1 then
+				if inst.remainingTurns then inst.remainingTurns = math.max(1, math.round(inst.remainingTurns * m)) end
+				if ctReset and inst.remainingCt then inst.remainingCt = math.max(1, math.round(inst.remainingCt * m)) end
+			end
+		elseif def.kind == "Buff" then
+			local add = _dps.GetBuffDurationModifier(src)
+			if add ~= 0 then
+				if inst.remainingTurns then inst.remainingTurns = inst.remainingTurns + add end
+				if ctReset and inst.remainingCt then inst.remainingCt = inst.remainingCt + add * 400 end
+			end
+			local em = _dps.GetBuffEffectModifier(src)
+			if em ~= 1 then inst.valueScale = em end
+		end
+	end
+
 	-- Check if unit already has this status.
 	for _, inst in ipairs(unit.statusInstances) do
 		if inst.id == statusId then
 			if def.reapply == "refresh" then
+				-- A permanent instance (race-granted Flight, 2026-10-29) is never shortened by a
+				-- re-application (e.g. Angel Statue): keep it permanent.
+				if inst.permanent then
+					inst.sourceUnitId = inst.sourceUnitId or sourceUnitId
+					return false, disruptsChannel
+				end
 				inst.remainingTurns = def.duration
 				-- CT-based statuses (e.g. CounterStance: durationCt=1000, duration=nil)
 				-- must refresh their CT window too — resetting remainingTurns alone
@@ -547,10 +671,12 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 				if def.durationCt then
 					inst.remainingCt = durationCtOverride or def.durationCt
 				end
+				traitDebuffOffset(inst, true)
 				inst.sourceUnitId   = sourceUnitId
 				-- D2 (2026-10-27): a refreshed Command Relay is a fresh relay -> its RT discount is back.
 				if def.relayRtMult then inst.relayState = nil end
-				applyDebuffResistance(unit, statusId, def, inst)
+				inst.resistPen = if resistPen > 0 then resistPen else nil
+				applyDebuffResistance(unit, statusId, def, inst, resistPen)
 				print(string.format(
 					"[StatusService] %s on %s REFRESHED (%s)",
 					statusId, unit.name, def.duration and (def.duration .. " turns") or "CT"
@@ -564,6 +690,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 				end
 				inst.storedBurn = (inst.storedBurn or 0) + addedBurn
 				inst.remainingTurns = def.duration
+				traitDebuffOffset(inst, false)
 				inst.sourceUnitId = sourceUnitId
 				print(string.format(
 					"[StatusService] %s on %s ACCUMULATED (+%d stored, %d turns now)",
@@ -575,6 +702,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 				-- Venom: Strength +1. Enlightened: stack +1.
 				inst.stacks = (inst.stacks or 1) + 1
 				inst.remainingTurns = def.duration  -- refresh duration
+				traitDebuffOffset(inst, false)
 				inst.sourceUnitId = sourceUnitId
 				print(string.format(
 					"[StatusService] %s on %s STACKED (now %d stacks)",
@@ -586,6 +714,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 				-- Regeneration, Overflow: add to remaining duration
 				local addTurns = def.duration or 0
 				inst.remainingTurns = (inst.remainingTurns or 0) + addTurns
+				traitDebuffOffset(inst, false)  -- Enchanter +1 turn on an extended buff too (re-check 2026-10-29)
 				inst.sourceUnitId = sourceUnitId
 				print(string.format(
 					"[StatusService] %s on %s EXTENDED (+%d, now %d turns)",
@@ -596,17 +725,34 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 			elseif def.reapply == "chain" then
 				-- Bleed→Raptured, Raptured→Wounded, Wounded→Bleed
 				inst.remainingTurns = def.duration  -- refresh self
+				-- CT-based chain statuses (Bleed, 2000 CT) refresh their CT window too (checklist fix
+				-- 2026-10-29: the old deadline kept running, so Lacerate's "refreshes Bleed" failed).
+				if def.durationCt then
+					inst.remainingCt = durationCtOverride or def.durationCt
+				end
+				traitDebuffOffset(inst, def.durationCt ~= nil)
 				inst.sourceUnitId = sourceUnitId
 				-- Apply next in chain
 				local CHAIN_NEXT = { Bleed = "Raptured", Raptured = "Wounded", Wounded = "Bleed" }
 				local nextStatus = CHAIN_NEXT[statusId]
-				if nextStatus then
+				local chainOwner = false
+				if _chainVisited == nil then
+					_chainVisited = { [statusId] = true }
+					chainOwner = true
+				end
+				if nextStatus and not _chainVisited[nextStatus] then
+					_chainVisited[nextStatus] = true
 					print(string.format(
 						"[StatusService] %s on %s CHAINED → applying %s",
 						statusId, unit.name, nextStatus
 					))
-					StatusService.ApplyStatus(unit, nextStatus, sourceUnitId)
+					local ok, err = pcall(StatusService.ApplyStatus, unit, nextStatus, sourceUnitId)
+					if not ok then
+						if chainOwner then _chainVisited = nil end
+						error(err)
+					end
 				end
+				if chainOwner then _chainVisited = nil end
 				return false, disruptsChannel
 
 			elseif def.reapply == "none" then
@@ -674,8 +820,36 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 		end
 	end
 
+	-- Doctrine duration / effect (2026-10-28), keyed on the APPLIER, new applications only:
+	--   Shadowbinder Malignancy: debuff duration +20% (before Debuff Resistance). Permanent /
+	--     unlimited (no duration) debuffs are untouched by construction.
+	--   Enchanter Lingering Enchantment: buff +1 turn (+400 CT for CT buffs, the same turn->CT
+	--     step Iron Will uses) and buff numbers +10% via valueScale (read by vscale()).
+	do
+		local _docSrc = findUnitById(sourceUnitId)
+		if _docSrc then
+			local _dps = (require :: any)(script.Parent.DoctrinePassiveService)
+			if def.kind == "Debuff" then
+				local m = _dps.GetDebuffDurationModifier(_docSrc)
+				if m ~= 1 then
+					if instance.remainingTurns then instance.remainingTurns = math.max(1, math.round(instance.remainingTurns * m)) end
+					if instance.remainingCt then instance.remainingCt = math.max(1, math.round(instance.remainingCt * m)) end
+				end
+			elseif def.kind == "Buff" then
+				local add = _dps.GetBuffDurationModifier(_docSrc)
+				if add ~= 0 then
+					if instance.remainingTurns then instance.remainingTurns = instance.remainingTurns + add end
+					if instance.remainingCt then instance.remainingCt = instance.remainingCt + add * 400 end
+				end
+				local em = _dps.GetBuffEffectModifier(_docSrc)
+				if em ~= 1 then instance.valueScale = em end
+			end
+		end
+	end
+
 	-- Debuff Resistance (ruling 11): applied last, after trait / Lore duration changes.
-	applyDebuffResistance(unit, statusId, def, instance)
+	if resistPen > 0 then instance.resistPen = resistPen end -- DoT ticks read it (Plague Doctor)
+	applyDebuffResistance(unit, statusId, def, instance, resistPen)
 
 	if statusId == "Burn" and fireDamageDealt then
 		instance.storedBurn = math.round(fireDamageDealt * (burnFractionOverride or def.burnFraction))
@@ -684,6 +858,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 	end
 
 	table.insert(unit.statusInstances, instance)
+	syncBreakEquipment(unit, statusId)
 
 	-- Recharge: immediate MP restore on application (DB elements_statuses id 78:
 	-- "On application: restore round(Max MP × 0.10), minimum 1 MP"). The periodic
@@ -874,6 +1049,9 @@ function StatusService.GetHealingReceivedMult(unit)
 			mult = mult + (d.healingReceivedMult - 1) * vscale(inst)
 		end
 	end
+	-- Blessed Recovery / Cursed Wounds (DB "healing received +/-X%"): ALL healing the unit receives,
+	-- not only skill heals (checklist fix 2026-10-29). Totaled with the status modifiers (ruling 10).
+	mult = mult + (TraitEffectService.GetHealingReceivedModifier(unit) - 1)
 	return math.max(0, mult)
 end
 
@@ -903,8 +1081,9 @@ function StatusService.ProcessStartOfTurn(unit)
 			-- skip
 		elseif def.dotType == "Poison" then
 			-- TRAIT-DOT-POISON: x unit-trait DoT-received multiplier (1.0 when no trait).
-			local damage = math.max(1, math.round(unit.maxHp * def.dotFraction * debuffResist
-				* TraitEffectService.GetDotDamageReceivedModifier(unit, inst.id)))
+			local damage = math.max(1, math.round(unit.maxHp * def.dotFraction * penetrate(debuffResist, inst.resistPen)
+				* TraitEffectService.GetDotDamageReceivedModifier(unit, inst.id)
+				* doctrinePoisonTickMult(inst))) -- Plague Doctor +25% (2026-10-28)
 			table.insert(dotEvents, {
 				statusId     = "Poison",
 				damage       = damage,
@@ -943,8 +1122,9 @@ function StatusService.ProcessEndOfTurn(unit)
 		local frac = (def and def.tickFraction) or 0.03
 		local strength = inst.stacks or 1
 		local damage = math.max(1, math.round((unit.maxHp or 1) * frac * strength
-			* StatusService.GetDebuffResist(unit)
-			* TraitEffectService.GetDotDamageReceivedModifier(unit, "Venom")))
+			* penetrate(StatusService.GetDebuffResist(unit), inst.resistPen)
+			* TraitEffectService.GetDotDamageReceivedModifier(unit, "Venom")
+			* doctrinePoisonTickMult(inst))) -- Plague Doctor +25% (2026-10-28)
 		table.insert(events, {
 			statusId     = "Venom",
 			damage       = damage,
@@ -984,6 +1164,8 @@ function StatusService.TickStatuses(unit)
 		end
 	end
 
+	-- Break sync + Oversleep, after the scan so a new Sleep Immunity is not counted down this turn.
+	for _, _rid in ipairs(removed) do onStatusEnded(unit, _rid) end
 	return removed
 end
 
@@ -1005,6 +1187,7 @@ function StatusService.RemoveStatus(unit, statusId)
 				"[StatusService] %s REMOVED from %s",
 				statusId, unit.name
 			))
+			onStatusEnded(unit, statusId)  -- Break sync + Oversleep
 			return true
 		end
 	end
@@ -1052,7 +1235,8 @@ end
 -- GET MODIFIED BASE RT
 --------------------------------------------------
 
-function StatusService.GetModifiedBaseRt(unit)
+-- permanentOnly (optional, 2026-10-28): leave out status RT multipliers (Loadout Info panel).
+function StatusService.GetModifiedBaseRt(unit, permanentOnly)
 	-- DB weapons_equipment id 7: Modified Base RT = Base RT + Effective Armor WT.
 	-- Armor weight belongs HERE (base turn time), not in the per-action WT term.
 	-- Base RT = the unit's OWN base (enemy kind sets initiativeBaseRt: Grunt 400 /
@@ -1062,7 +1246,7 @@ function StatusService.GetModifiedBaseRt(unit)
 	local baseRt = (unit.initiativeBaseRt or GameConstants.BASE_RT_STANDARD) + GameConstants.CalcEffectiveArmorWt(unit)
 	local multiplier = 1.0
 
-	for _, inst in ipairs(unit.statusInstances) do
+	for _, inst in ipairs(if permanentOnly then {} else (unit.statusInstances or {})) do
 		local def = GameConstants.STATUSES[inst.id]
 		if def and def.rtMultiplier then
 			-- Ruling 10: totaled, not multiplied.
@@ -1071,7 +1255,7 @@ function StatusService.GetModifiedBaseRt(unit)
 	end
 	multiplier = math.max(0, multiplier)
 
-	-- Perks & Flaws (Phase 2b): Quick/Sluggish/Timeline Sovereign/Temporal Drag adjust
+	-- Perks & Flaws (Phase 2b): Quick/Tardy/Timeline Sovereign/Temporal Drag adjust
 	-- base RT. Folded at this chokepoint so it propagates to every RT term derived from
 	-- Modified Base RT (move, basic attack, skill, guard). Starting RT is a separate term.
 	multiplier = multiplier * TraitEffectService.GetBaseRtMultiplier(unit)
@@ -1169,6 +1353,14 @@ end
 
 function StatusService.ProcessCtTick(unit, ctElapsed)
 	if ctElapsed <= 0 then return {} end
+	-- HD-020 Commandant Helm damage bonus runs out on the clock (2026-10-29).
+	if unit._commandantDmgCt then
+		unit._commandantDmgCt -= ctElapsed
+		if unit._commandantDmgCt <= 0 then
+			unit._commandantDmgCt = nil
+			unit._commandantDmgBonus = nil
+		end
+	end
 
 	local expired = {}
 	local events = {}   -- { { kind="Heal"|"Mana", statusId, amount }, ... }
@@ -1285,11 +1477,52 @@ function StatusService.ProcessCtTick(unit, ctElapsed)
 			i = i + 1
 		end
 	end
+	-- AC-007 Overflowing Flask (2026-10-29): item regen entries on unit._itemRegen (added by
+	-- ItemEffectService when a restoring item is used by a Flask wearer). Each entry restores a fixed
+	-- amount (7% of what the item restored) every intervalCt for remainingCt. Not a status: no icon,
+	-- not dispellable. HP ticks honour healing reduction like Regeneration does.
+	if unit._itemRegen then
+		local k = 1
+		while k <= #unit._itemRegen do
+			local e = unit._itemRegen[k]
+			local step = math.min(ctElapsed, e.remainingCt)
+			e.accumCt = (e.accumCt or 0) + step
+			e.remainingCt -= step
+			while e.accumCt >= e.intervalCt do
+				e.accumCt -= e.intervalCt
+				if e.kind == "MP" then
+					local before = unit.currentMp or 0
+					unit.currentMp = math.min(unit.maxMp or before, before + e.perTick)
+					local applied = unit.currentMp - before
+					if applied > 0 then table.insert(events, { kind = "Mana", statusId = "Overflowing Flask", amount = applied }) end
+				else
+					local heal = e.perTick
+					local _hrm = StatusService.GetHealingReceivedMult(unit)
+					if _hrm ~= 1 then heal = math.max(0, math.floor(heal * _hrm)) end
+					local before = unit.currentHp or 0
+					unit.currentHp = math.min(unit.maxHp or before, before + heal)
+					local applied = unit.currentHp - before
+					if applied > 0 then
+						table.insert(events, { kind = "Heal", statusId = "Overflowing Flask", amount = applied })
+						regenHeals += 1
+					end
+				end
+			end
+			if e.remainingCt <= 0 then
+				table.remove(unit._itemRegen, k)
+			else
+				k += 1
+			end
+		end
+		if #unit._itemRegen == 0 then unit._itemRegen = nil end
+	end
+
 	-- Healing weakens Venom (user ruling 2026-10-26): each regeneration heal counts once.
 	-- Done after the scan so removing Venom cannot shift the list mid-loop.
 	for _ = 1, regenHeals do
 		if StatusService.WeakenVenomOnHeal(unit) == nil then break end
 	end
+	for _, _rid in ipairs(expired) do onStatusEnded(unit, _rid) end
 	return expired, events
 end
 
@@ -1403,6 +1636,10 @@ function StatusService.GetDamageDealtMultiplier(unit, isSpell)
 			end
 		end
 	end
+	-- HD-020 Commandant Helm (2026-10-29): +20% damage while the timed bonus lasts (totaled, ruling 10).
+	if (unit._commandantDmgCt or 0) > 0 then
+		mult = mult + (unit._commandantDmgBonus or 0.20)
+	end
 	return math.max(0, mult)
 end
 
@@ -1506,19 +1743,27 @@ function StatusService.GetCurrentDotDamage(unit, statusId)
 	local inst = StatusService.HasStatus(unit, statusId)
 	if not inst then return 0 end
 	local def = GameConstants.STATUSES[inst.id]
+	-- Same math as the real ticks (checklist fix 2026-10-29): Debuff Resistance, DoT-received traits
+	-- (Iron Stomach / Weak Stomach, Fire-Hardened / Flammable, Antivenom / Thin Blood), Plague Doctor.
 	if inst.id == "Poison" and def and def.dotFraction then
-		return math.max(1, math.round((unit.maxHp or 1) * def.dotFraction))
+		return math.max(1, math.round((unit.maxHp or 1) * def.dotFraction
+			* penetrate(StatusService.GetDebuffResist(unit), inst.resistPen)
+			* TraitEffectService.GetDotDamageReceivedModifier(unit, "Poison")
+			* doctrinePoisonTickMult(inst)))
 	elseif inst.id == "Burn" then
-		local stored = inst.storedBurn or 0
-		if stored > 0 and not isBurnDamageImmune(unit) then
-			return math.max(1, math.round(stored))
-		end
-		return 0
+		return StatusService.GetBurnTickDamage(unit, inst)
 	elseif inst.id == "Venom" then
 		local stacks = inst.stacks or 1
-		return math.max(1, math.round((unit.maxHp or 1) * 0.03 * stacks))
+		local frac = (def and def.tickFraction) or 0.03
+		return math.max(1, math.round((unit.maxHp or 1) * frac * stacks
+			* penetrate(StatusService.GetDebuffResist(unit), inst.resistPen)
+			* TraitEffectService.GetDotDamageReceivedModifier(unit, "Venom")
+			* doctrinePoisonTickMult(inst)))
 	elseif inst.id == "Bleed" then
-		return math.max(1, math.round((unit.maxHp or 1) * 0.05))
+		-- Same as Bleed's own on-hit damage (CombatResolver ApplyOutcome): x Debuff Resistance x
+		-- Quick Clotting / Hemophiliac (2026-10-29).
+		return math.max(1, math.round((unit.maxHp or 1) * 0.05 * StatusService.GetDebuffResist(unit)
+			* TraitEffectService.GetDotDamageReceivedModifier(unit, "Bleed")))
 	end
 	return 0
 end
@@ -1554,6 +1799,10 @@ function StatusService.GetStatusSummary(unit)
 			storedBurn     = inst.storedBurn,
 			nextDamage     = nextDamage,
 			stacks         = inst.stacks,
+			-- USER RULING 2026-10-30 3:27 PM: an aura-owned status (War Banner / Cursed Statue) has no
+			-- timer while the unit stays in range; the status card shows "While in range" instead.
+			-- Owned = tagged by ObjectEffectService and not since refreshed by another source.
+			whileInRange   = (inst.auraSourceId ~= nil and inst.sourceUnitId == inst.auraSourceId) or nil,
 		})
 	end
 	return summary
@@ -1581,6 +1830,8 @@ function StatusService.RemoveDispellable(unit)
 			i = i + 1
 		end
 	end
+	-- Break sync + Oversleep, after the scan so a new Sleep Immunity is not counted down this turn.
+	for _, _rid in ipairs(removed) do onStatusEnded(unit, _rid) end
 	return removed
 end
 
@@ -1601,6 +1852,7 @@ function StatusService.RemoveRandomDebuff(unit)
 	local removedId = unit.statusInstances[pick].id
 	table.remove(unit.statusInstances, pick)
 	print(string.format("[StatusService] %s CLEANSED from %s (random debuff)", removedId, unit.name))
+	onStatusEnded(unit, removedId)  -- Break sync + Oversleep
 	return removedId
 end
 
@@ -1695,9 +1947,7 @@ function StatusService.OnDamageReceived(unit, damage)
 		table.insert(removed, "Sleep")
 		print(string.format("[StatusService] Sleep BROKEN by damage on %s", unit.name))
 
-		-- Apply Sleep Immunity (2 turns, undispellable)
-		StatusService.ApplyStatus(unit, "Sleep Immunity", unit.id)
-		print(string.format("[StatusService] Sleep Immunity applied to %s", unit.name))
+		-- Sleep Immunity (Oversleep) is applied by RemoveStatus itself (2026-10-29).
 	end
 
 	return removed

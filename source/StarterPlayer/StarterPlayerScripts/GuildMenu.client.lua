@@ -14,6 +14,7 @@
 
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService        = game:GetService("RunService")
 
 local WAIT = 10
 
@@ -28,12 +29,50 @@ local battleModule = Remotes:WaitForChild("BattleEvents", WAIT)
 if not themeModule or not guildModule or not battleModule then
 	warn("[GuildMenu] Theme / GuildEvents / BattleEvents module missing"); return
 end
+-- Merchant is its own full screen (2026-10-31, user ruling): opened from here, Back returns here.
+local merchantScreenModule = UIFolder:WaitForChild("MerchantScreen", WAIT)
+if not merchantScreenModule then warn("[GuildMenu] MerchantScreen module missing") end
 
 -- Modules found at runtime via WaitForChild; the editor cannot follow that path, so
 -- require is called through `any` (editor-only; same module loads at runtime).
 local Theme: any        = (require :: any)(themeModule)
 local GuildEvents: any  = (require :: any)(guildModule)
 local BattleEvents: any = (require :: any)(battleModule)
+local MerchantScreen: any = if merchantScreenModule then (require :: any)(merchantScreenModule) else nil
+-- Tavern is its own full screen too (2026-10-31, same design as the Merchant).
+local tavernScreenModule = UIFolder:WaitForChild("TavernScreen", WAIT)
+if not tavernScreenModule then warn("[GuildMenu] TavernScreen module missing") end
+local TavernScreen: any = if tavernScreenModule then (require :: any)(tavernScreenModule) else nil
+-- Blacksmith is its own full screen too (v2 build step 3, 2026-11-01).
+local blacksmithScreenModule = UIFolder:WaitForChild("BlacksmithScreen", WAIT)
+if not blacksmithScreenModule then warn("[GuildMenu] BlacksmithScreen module missing") end
+local BlacksmithScreen: any = if blacksmithScreenModule then (require :: any)(blacksmithScreenModule) else nil
+-- Runeforge is its own full screen too (v2 build step 5, 2026-11-01).
+local runeforgeScreenModule = UIFolder:WaitForChild("RuneforgeScreen", WAIT)
+if not runeforgeScreenModule then warn("[GuildMenu] RuneforgeScreen module missing") end
+local RuneforgeScreen: any = if runeforgeScreenModule then (require :: any)(runeforgeScreenModule) else nil
+-- Crucible gear merging (2026-11-02): its own full screen too.
+local crucibleScreenModule = UIFolder:WaitForChild("CrucibleScreen", WAIT)
+if not crucibleScreenModule then warn("[GuildMenu] CrucibleScreen module missing") end
+local CrucibleScreen: any = if crucibleScreenModule then (require :: any)(crucibleScreenModule) else nil
+-- Apothecary consumables (2026-11-03): its own full screen too.
+local apothecaryScreenModule = UIFolder:WaitForChild("ApothecaryScreen", WAIT)
+if not apothecaryScreenModule then warn("[GuildMenu] ApothecaryScreen module missing") end
+local ApothecaryScreen: any = if apothecaryScreenModule then (require :: any)(apothecaryScreenModule) else nil
+-- Training Grounds card shop (2026-11-04): its own full screen too.
+local tgScreenModule = UIFolder:WaitForChild("TrainingGroundsScreen", WAIT)
+if not tgScreenModule then warn("[GuildMenu] TrainingGroundsScreen module missing") end
+local TrainingGroundsScreen: any = if tgScreenModule then (require :: any)(tgScreenModule) else nil
+-- Always-on Studio dev panel (2026-10-31): shop refresh, building levels, gold, saves.
+local DevToolsPanel: any = nil
+if RunService:IsStudio() then
+	local devModule = script.Parent:WaitForChild("DevToolsPanel", WAIT)
+	if devModule then
+		DevToolsPanel = (require :: any)(devModule)
+	else
+		warn("[GuildMenu] DevToolsPanel module missing")
+	end
+end
 if not GuildEvents.GuildMenuOpened then
 	warn("[GuildMenu] Guild remotes unavailable — menu disabled"); return
 end
@@ -48,7 +87,6 @@ if not playerGui then warn("[GuildMenu] PlayerGui not found"); return end
 
 local ROW_HEIGHT = 56      -- >= 44 px touch target with padding
 local BUTTON_HEIGHT = 48
-local BUILDINGS_DEV = { "GuildHall", "Tavern", "Merchant", "Blacksmith" }
 
 --------------------------------------------------
 -- STATE
@@ -69,6 +107,8 @@ local updateSortieButton: () -> () = function() end  -- reassigned once leaveBut
 -- quests; sortieMode flips the page from quest-selection to sortie controls after a quest
 -- is accepted (phase PreBattle). Base stays persistent -- the menu is never torn down.
 local guildQuests: { any }? = nil
+local newDayAt: number? = nil -- os.clock() time of the next 00:00 UTC (server-sent countdown)
+local bossRewardsText: string? = nil -- "Boss rewards left today: N/3" (loot_progression 15)
 local sortieMode = false
 -- Adventurer's Guild in-page step machine (2026-10-16): the guild screen walks
 -- board -> chosen (details/abandon/sortie) -> sortie (party + embark). chosenQuest is the
@@ -82,13 +122,16 @@ local departPending = false
 local sortieLocked = false  -- moved above its readers (L894/L1043); a Luau local is invisible above its old decl point
 local cartBuys: { [number]: { name: string, price: number } } = {}  -- staged buys (offerIndex -> info)
 local cartSells: { [string]: { name: string, price: number } } = {}  -- staged sells (instanceId -> info)
-local cartUpgrades: { [string]: { name: string, fromLevel: number, toLevel: number, gold: number, mats: { [number]: number }, matsText: string } } = {}  -- staged blacksmith upgrades (may span several levels)
+local cartHires: { [string]: { name: string, price: number } } = {}  -- staged hires (candidateId -> info), 2026-10-31
+local cartUpgrades: { [string]: { name: string, fromLevel: number, toLevel: number, gold: number, mercury: number } } = {}  -- staged blacksmith upgrades (may span several levels)
 local cartDowngrades: { [string]: { name: string, toLevel: number } } = {}  -- staged blacksmith downgrades
+-- staged dismantles (instanceId -> preview yield from the server), v2 step 2/3
+local cartDismantles: { [string]: { name: string, mercury: number, crystals: number, sulfur: number, gems: number } } = {}
 local cartDispatches: { { missionId: string, unitIds: { string }, fee: number } } = {}  -- staged dispatches
--- Last server overview snapshot (gold + materials), refreshed by refreshOverview(). Lets
+-- Last server overview snapshot (gold + resources), refreshed by refreshOverview(). Lets
 -- the header show a LIVE projected balance as items are staged, with no server round-trip
--- per toggle. (2026-10-14)
-local lastOverview: { gold: number, materials: { [number]: number } } = { gold = 0, materials = {} }
+-- per toggle. (2026-10-14; v2 resources 2026-11-01)
+local lastOverview: { gold: number, resources: { [string]: number } } = { gold = 0, resources = {} }
 
 --------------------------------------------------
 -- UI CONSTRUCTION (one-time)
@@ -234,6 +277,14 @@ statusLabel.Position = UDim2.fromScale(0.32, 0.9)
 local function setStatus(text: string, isError: boolean?)
 	statusLabel.Text = text
 	statusLabel.TextColor3 = isError and Theme.Colors.Danger or Theme.Colors.Success
+	-- Mirror into an open building screen (the guild menu, and this line, are hidden then).
+	if MerchantScreen then MerchantScreen.SetStatus(text, isError) end
+	if TavernScreen then TavernScreen.SetStatus(text, isError) end
+	if BlacksmithScreen then BlacksmithScreen.SetStatus(text, isError) end
+	if RuneforgeScreen then RuneforgeScreen.SetStatus(text, isError) end
+	if CrucibleScreen then CrucibleScreen.SetStatus(text, isError) end
+	if ApothecaryScreen then ApothecaryScreen.SetStatus(text, isError) end
+	if TrainingGroundsScreen then TrainingGroundsScreen.SetStatus(text, isError) end
 end
 
 --------------------------------------------------
@@ -325,11 +376,10 @@ local function addRow(text: string, buttons: { RowButton }?, dim: boolean?): Fra
 	return row
 end
 
-local function matsText(mats: any): string
-	if type(mats) ~= "table" then return "" end
-	local parts = {}
-	for t = 1, 5 do table.insert(parts, `T{t}:{mats[t] or 0}`) end
-	return table.concat(parts, " ")
+-- Resource counters shown in the header (v2: dismantling gives crystals and sulfur).
+local function resourcesText(res: any): string
+	if type(res) ~= "table" then return "" end
+	return `Mercury {res.mercury or 0}  Crystals {res.crystals or 0}  Sulfur {res.sulfur or 0}`
 end
 
 -- Server call with busy guard + error display. Returns the server's table or nil.
@@ -375,42 +425,70 @@ local showPage: (string) -> () -- forward declaration
 -- before committing. Pure client math over the cart tables + lastOverview; no server call.
 local function updateBalanceLabel()
 	local realGold = lastOverview.gold or 0
-	local realMats = lastOverview.materials or {}
+	local realRes = lastOverview.resources or {}
 	local goldDelta = 0
 	for _, v in cartSells do goldDelta += v.price end
 	for _, v in cartBuys do goldDelta -= v.price end
 	for _, v in cartUpgrades do goldDelta -= (v.gold or 0) end
 	for _, d in cartDispatches do goldDelta -= (d.fee or 0) end
-	local matSpend: { [number]: number } = {}
-	local anyMat = false
-	for _, v in cartUpgrades do
-		if type(v.mats) == "table" then
-			for t, q in v.mats do matSpend[t] = (matSpend[t] or 0) + q; anyMat = true end
-		end
-	end
-	local staged = goldDelta ~= 0 or anyMat
+	for _, v in cartHires do goldDelta -= v.price end
+	local mercurySpend = 0
+	for _, v in cartUpgrades do mercurySpend += (v.mercury or 0) end
+	local staged = goldDelta ~= 0 or mercurySpend > 0
 		or next(cartSells) ~= nil or next(cartBuys) ~= nil
 		or next(cartUpgrades) ~= nil or next(cartDowngrades) ~= nil
-		or #cartDispatches > 0
+		or #cartDispatches > 0 or next(cartHires) ~= nil or next(cartDismantles) ~= nil
 	if not staged then
-		balanceLabel.Text = `Gold {realGold}   |   {matsText(realMats)}`
+		balanceLabel.Text = `Gold {realGold}   |   {resourcesText(realRes)}`
+		if MerchantScreen then MerchantScreen.SetGold(balanceLabel.Text) end
+		if TavernScreen then TavernScreen.SetGold(balanceLabel.Text) end
+		if BlacksmithScreen then BlacksmithScreen.SetGold(balanceLabel.Text) end
+		if RuneforgeScreen then RuneforgeScreen.SetGold(balanceLabel.Text) end
+		if CrucibleScreen then CrucibleScreen.SetGold(balanceLabel.Text) end
+		if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
+		if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
 		return
 	end
 	local projGold = realGold + goldDelta
 	local goldStr = (goldDelta ~= 0) and `Gold {realGold} -> {projGold}` or `Gold {realGold}`
-	local spendParts = {}
-	for t = 1, 5 do
-		if (matSpend[t] or 0) > 0 then table.insert(spendParts, `T{t}x{matSpend[t]}`) end
+	-- Projected resources: mercury spent on upgrades, plus what staged dismantles give.
+	local gain = { mercury = 0, crystals = 0, sulfur = 0 }
+	for _, v in cartDismantles do
+		gain.mercury += v.mercury or 0
+		gain.crystals += v.crystals or 0
+		gain.sulfur += v.sulfur or 0
 	end
-	local matStr = (#spendParts > 0) and `   |   spend {table.concat(spendParts, " ")}` or ""
+	local function proj(label: string, now: number, delta: number): string
+		return if delta ~= 0 then `{label} {now} -> {now + delta}` else `{label} {now}`
+	end
+	local matStr = `   |   {proj("Mercury", realRes.mercury or 0, gain.mercury - mercurySpend)}`
+		.. `  {proj("Crystals", realRes.crystals or 0, gain.crystals)}  {proj("Sulfur", realRes.sulfur or 0, gain.sulfur)}`
 	balanceLabel.Text = goldStr .. matStr
+	if MerchantScreen then MerchantScreen.SetGold(balanceLabel.Text) end
+	if TavernScreen then TavernScreen.SetGold(balanceLabel.Text) end
+	if BlacksmithScreen then BlacksmithScreen.SetGold(balanceLabel.Text) end
+	if RuneforgeScreen then RuneforgeScreen.SetGold(balanceLabel.Text) end
+	if CrucibleScreen then CrucibleScreen.SetGold(balanceLabel.Text) end
+	if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
+	if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
 end
 
+local shownRefillNote = false -- reset each time the menu opens after a battle
 local function refreshOverview()
 	local res = call(GuildEvents.GetGuildOverview)
 	if not res then return end
-	lastOverview = { gold = res.gold or 0, materials = res.materials or {} }
+	lastOverview = { gold = res.gold or 0, resources = res.resources or {} }
 	updateBalanceLabel()
+	-- Apothecary refill on return to base (2026-11-03, gf 69): say what was not refilled.
+	-- Base notes (refill + locked augment slots) are joined so one never hides the other.
+	local notes = {}
+	local lr = res.lastRefill
+	if type(lr) == "table" and (lr.skippedCharges or 0) > 0 and not shownRefillNote then
+		shownRefillNote = true
+		table.insert(notes, `{lr.skippedCharges} consumable charges not refilled - need {lr.needGold}g`)
+	end
+	if type(res.augmentNotice) == "string" then table.insert(notes, res.augmentNotice) end
+	if #notes > 0 then setStatus(table.concat(notes, "\n"), true) end
 	local b = res.buildings or {}
 	phaseLabel.Text = `{currentPhase == "PreBattle" and "Before battle" or "After battle"} | Battles done: {res.battlesCompleted or 0} | Tavern L{b.Tavern or 1}  Merchant L{b.Merchant or 1}  Blacksmith L{b.Blacksmith or 1} (temporary levels)`
 end
@@ -437,6 +515,8 @@ local function cartCount(): number
 	for _ in cartUpgrades do n += 1 end
 	for _ in cartDowngrades do n += 1 end
 	n += #cartDispatches  -- staged dispatches (array)
+	for _ in cartHires do n += 1 end
+	for _ in cartDismantles do n += 1 end
 	return n
 end
 
@@ -447,16 +527,21 @@ local function finalizeCart()
 	local upgrades: { [string]: number } = {}
 	local downgrades: { [string]: number } = {}
 	local dispatches: { any } = {}
+	local hires: { string } = {}
+	local dismantles: { string } = {}
+	for iid in cartDismantles do table.insert(dismantles, iid) end
 	for idx in cartBuys do table.insert(buys, idx) end
+	for cid in cartHires do table.insert(hires, cid) end
 	for iid in cartSells do table.insert(sells, iid) end
 	for iid, v in cartUpgrades do upgrades[iid] = v.toLevel end
 	for iid, v in cartDowngrades do downgrades[iid] = v.toLevel end
 	for _, d in cartDispatches do table.insert(dispatches, { missionId = d.missionId, unitIds = d.unitIds }) end
-	if #buys == 0 and #sells == 0 and next(upgrades) == nil and next(downgrades) == nil and #dispatches == 0 then
+	if #buys == 0 and #sells == 0 and next(upgrades) == nil and next(downgrades) == nil and #dispatches == 0 and #hires == 0
+		and #dismantles == 0 then
 	setStatus("Nothing pending") return
 	end
 	isBusy = true
-	local res = call(GuildEvents.FinalizeCart, { buys = buys, sells = sells, upgrades = upgrades, downgrades = downgrades, dispatches = dispatches })
+	local res = call(GuildEvents.FinalizeCart, { buys = buys, sells = sells, upgrades = upgrades, downgrades = downgrades, dispatches = dispatches, hires = hires, dismantles = dismantles })
 	isBusy = false
 	if res then
 		cartBuys = {}
@@ -464,7 +549,25 @@ local function finalizeCart()
 		cartUpgrades = {}
 		cartDowngrades = {}
 		cartDispatches = {}
-		setStatus(`Done -- bought {res.boughtCount or 0}, sold {res.soldCount or 0}, upgraded {res.upgradedCount or 0}, downgraded {res.downgradedCount or 0}, dispatched {res.dispatchedCount or 0}. Gold {res.gold or 0}`)
+		cartHires = {}
+		cartDismantles = {}
+		-- Failed buys / sells are reported, not silent (2026-10-31). Server detail goes to Output.
+		local failParts: { string } = {}
+		local buyFailed = tonumber(res.buyFailed) or 0
+		local sellFailed = tonumber(res.sellFailed) or 0
+		if buyFailed > 0 then table.insert(failParts, `{buyFailed} could not be bought`) end
+		if sellFailed > 0 then table.insert(failParts, `{sellFailed} could not be sold`) end
+		local otherFailed = #(res.problems or {}) - buyFailed - sellFailed
+		if otherFailed > 0 then table.insert(failParts, `{otherFailed} other change(s) failed`) end
+		for _, why in res.problems or {} do
+			warn(`[GuildMenu] Not completed: {tostring(why)}`)
+		end
+		local doneText = `Done -- bought {res.boughtCount or 0}, sold {res.soldCount or 0}, upgraded {res.upgradedCount or 0}, downgraded {res.downgradedCount or 0}, dismantled {res.dismantledCount or 0}, dispatched {res.dispatchedCount or 0}, hired {res.hiredCount or 0}. Gold {res.gold or 0}`
+		if #failParts > 0 then
+			setStatus(`{doneText} | {table.concat(failParts, ", ")}`, true)
+		else
+			setStatus(doneText)
+		end
 	end
 	invalidatePageCache()  -- server state changed; next render re-fetches fresh
 	refreshOverview()
@@ -477,6 +580,8 @@ local function clearCart()
 	cartUpgrades = {}
 	cartDowngrades = {}
 	cartDispatches = {}
+	cartHires = {}
+	cartDismantles = {}
 	setStatus("Pending changes discarded")
 	showPage(currentPage)
 end
@@ -496,13 +601,16 @@ local function addCartSummaryRow()
 	for _ in cartDowngrades do nDown += 1 end
 	local nDisp, dispFee = 0, 0
 	for _, d in cartDispatches do nDisp += 1; dispFee += (d.fee or 0) end
-	if nBuy + nSell + nUp + nDown + nDisp == 0 then return end
+	local nDis = 0
+	for _ in cartDismantles do nDis += 1 end
+	if nBuy + nSell + nUp + nDown + nDisp + nDis == 0 then return end
 	local parts = {}
 	if nBuy > 0 then table.insert(parts, `buy {nBuy}`) end
 	if nSell > 0 then table.insert(parts, `sell {nSell}`) end
 	if nUp > 0 then table.insert(parts, `upgrade {nUp}`) end
 	if nDown > 0 then table.insert(parts, `downgrade {nDown}`) end
 	if nDisp > 0 then table.insert(parts, `dispatch {nDisp}`) end
+	if nDis > 0 then table.insert(parts, `dismantle {nDis}`) end
 	local netGold = sellGold - buyGold - upGold - dispFee
 	-- Player-facing wording: no shop/dev jargon ("Cart"/"Finalize"/"Clear").
 	-- Confirm/Discard model, "Pending" for queued changes. (2026-10-17)
@@ -524,12 +632,15 @@ end
 local function confirmLeaveWithCart(proceed: () -> ())
 	if cartCount() == 0 then proceed() return end
 	closeLeaveDialog()
-	local nBuy, nSell, nUp, nDown, nDisp = 0, 0, 0, 0, 0
+	local nBuy, nSell, nUp, nDown, nDisp, nHire = 0, 0, 0, 0, 0, 0
+	for _ in cartHires do nHire += 1 end
 	for _ in cartBuys do nBuy += 1 end
 	for _ in cartSells do nSell += 1 end
 	for _ in cartUpgrades do nUp += 1 end
 	for _ in cartDowngrades do nDown += 1 end
 	for _ in cartDispatches do nDisp += 1 end
+	local nDis = 0
+	for _ in cartDismantles do nDis += 1 end
 	local overlay = Instance.new("TextButton")
 	overlay.Text = ""
 	overlay.AutoButtonColor = false
@@ -539,7 +650,13 @@ local function confirmLeaveWithCart(proceed: () -> ())
 	overlay.BackgroundTransparency = 0.4
 	overlay.BorderSizePixel = 0
 	overlay.ZIndex = 10
-	overlay.Parent = screenGui
+	-- Host the prompt on an open building screen (the guild menu is hidden while one is up).
+	local host: Instance? = (MerchantScreen and MerchantScreen.GetGui()) or (TavernScreen and TavernScreen.GetGui())
+		or (BlacksmithScreen and BlacksmithScreen.GetGui()) or (RuneforgeScreen and RuneforgeScreen.GetGui())
+		or (CrucibleScreen and CrucibleScreen.GetGui())
+		or (ApothecaryScreen and ApothecaryScreen.GetGui())
+		or (TrainingGroundsScreen and TrainingGroundsScreen.GetGui()) or nil
+	overlay.Parent = host or screenGui
 	overlay.Activated:Connect(function() end)  -- absorb background taps
 	leaveDialog = overlay
 	local box = Instance.new("Frame")
@@ -553,7 +670,7 @@ local function confirmLeaveWithCart(proceed: () -> ())
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = Theme.CornerRadius.md
 	corner.Parent = box
-	local msg = makeText(box, `Unsaved changes -- buy {nBuy}, sell {nSell}, upgrade {nUp}, downgrade {nDown}, dispatch {nDisp}. Confirm or discard?`, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
+	local msg = makeText(box, `Unsaved changes -- buy {nBuy}, sell {nSell}, hire {nHire}, upgrade {nUp}, downgrade {nDown}, dismantle {nDis}, dispatch {nDisp}. Confirm or discard?`, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
 	msg.Size = UDim2.new(1, -24, 0, 70)
 	msg.Position = UDim2.new(0, 12, 0, 10)
 	msg.ZIndex = 11
@@ -575,6 +692,8 @@ local function confirmLeaveWithCart(proceed: () -> ())
 		cartUpgrades = {}
 		cartDowngrades = {}
 		cartDispatches = {}
+		cartHires = {}
+		cartDismantles = {}
 		closeLeaveDialog()
 		proceed()
 	end)
@@ -583,63 +702,469 @@ local function confirmLeaveWithCart(proceed: () -> ())
 	end)
 end
 
-local function pageTavern()
-	addHeading("TAVERN - hire recruits")
-	local res = cachedCall("Tavern", GuildEvents.GetTavernPool)
-	if not res then return end
-	addNote(`Tavern L{res.tavernLevel or 1}: one recruit per Tavern level. The pool refreshes after each battle. Fee = 200 + 15 x level (+ quality premium).`)
-	if #(res.pool or {}) == 0 then
-		addNote(res.reason and tostring(res.reason) or "No recruits left until the next battle.")
+-- Tavern page moved to its own screen (TavernScreen, 2026-10-31).
+
+-- MERCHANT SCREEN (2026-10-31, user ruling): the Merchant is its own full screen
+-- (MerchantScreen + shared GuildScreen frame), like the Loadout. This menu hides while it is
+-- up; Back (after the Confirm/Discard prompt) brings the menu back. The pending buy/sell list
+-- stays here (per-screen basket); the screen only reads / toggles it, and Confirm still sends
+-- only offer indexes / instance ids (SEC-002).
+local function openTavern()
+	if not TavernScreen then
+		setStatus("Tavern screen not loaded", true)
 		return
 	end
-	for _, c in res.pool do
-		local id = c.candidateId
-		addRow(`Level {c.level} {c.quality} recruit  |  {c.cost} gold`, {
-			{ text = "Hire", color = Theme.Colors.Success, onTap = function()
-				act(GuildEvents.RequestHire, function(r) return `Hired {r.unitName} for {r.cost} gold` end, id)
-			end },
-		})
-	end
+	screenGui.Enabled = false
+	TavernScreen.Open()
+	updateBalanceLabel() -- fill the screen's gold line
 end
 
-local function pageMerchant()
-	addHeading("MERCHANT - buy")
-	local res = cachedCall("Merchant", GuildEvents.GetMerchantStock)
-	if not res then return end
-	addCartSummaryRow()
-	addNote(`Merchant L{res.merchantLevel or 1}: one item per Merchant level. Stock refreshes every 5 battles.`)
-	if #(res.stock or {}) == 0 then
-		addNote(res.reason and tostring(res.reason) or "Sold out for now.")
+local function openMerchant()
+	if not MerchantScreen then
+		setStatus("Merchant screen not loaded", true)
+		return
 	end
-	for _, o in res.stock or {} do
-		local idx = o.offerIndex
-		local inCart = cartBuys[idx] ~= nil
-		addRow(`{o.name}  Lv{o.level} {o.rarity}  |  {o.price} gold`, {
-			{ text = inCart and "Queued" or "Add", color = inCart and Theme.Colors.Info or Theme.Colors.Success,
-			  style = "Primary", onTap = function()
-				if cartBuys[idx] then cartBuys[idx] = nil else cartBuys[idx] = { name = o.name, price = o.price } end
-				showPage(currentPage)
-			end },
-		}, inCart)
-	end
-	addHeading("MERCHANT - sell (unequipped items)")
-	if #(res.sellable or {}) == 0 then addNote("Nothing to sell. Unequip an item first to sell it.") end
-	for _, it in res.sellable or {} do
-		local iid = it.instanceId
-		local inCart = cartSells[iid] ~= nil
-		addRow(`{it.name}  Lv{it.level} {it.rarity}`, {
-			{ text = inCart and "Queued" or `Sell {it.price or "?"}g`,
-			  color = inCart and Theme.Colors.Info or Theme.Colors.Warning,
-			  enabled = it.price ~= nil, style = "Primary", onTap = function()
-				if cartSells[iid] then
-					cartSells[iid] = nil
-				elseif it.price ~= nil then
-					cartSells[iid] = { name = it.name, price = it.price }
+	screenGui.Enabled = false
+	MerchantScreen.Open()
+	updateBalanceLabel() -- fill the screen's gold line
+end
+
+if MerchantScreen then
+	MerchantScreen.Init({
+		parent = playerGui,
+		getStock = function(): any?
+			return cachedCall("Merchant", GuildEvents.GetMerchantStock)
+		end,
+		isQueued = function(tab: string, key: any): boolean
+			if tab == "Buy" then return cartBuys[key] ~= nil end
+			return cartSells[key] ~= nil
+		end,
+		toggle = function(tab: string, key: any, name: string, price: number?)
+			if tab == "Buy" then
+				if cartBuys[key] then
+					cartBuys[key] = nil
+				elseif price ~= nil then
+					cartBuys[key] = { name = name, price = price }
 				end
-				showPage(currentPage)
-			end },
-		}, inCart)
+			else
+				if cartSells[key] then
+					cartSells[key] = nil
+				elseif price ~= nil then
+					cartSells[key] = { name = name, price = price }
+					cartDismantles[key] = nil -- sell OR dismantle, never both (guild_facilities 52)
+				end
+			end
+			updateBalanceLabel()
+		end,
+		pendingCount = cartCount,
+		-- Totals for the Merchant's Confirm-all / Discard-all prompts (client display only).
+		summary = function(): any
+			local s = { nBuy = 0, buyGold = 0, nSell = 0, sellGold = 0 }
+			for _, v in cartBuys do
+				s.nBuy += 1
+				s.buyGold += v.price
+			end
+			for _, v in cartSells do
+				s.nSell += 1
+				s.sellGold += v.price
+			end
+			return s
+		end,
+		confirm = finalizeCart,
+		discard = clearCart,
+		requestBack = confirmLeaveWithCart,
+		onClosed = function()
+			screenGui.Enabled = true
+			-- Status is NOT cleared here, so a "Done -- bought ..." result from the Back
+			-- prompt's Confirm stays visible on the guild menu (Tester note 2026-10-31).
+			updateBalanceLabel()
+			showPage(currentPage)
+		end,
+	})
+end
+
+-- TAVERN SCREEN (2026-10-31): same model as the Merchant. Pending hires stay in this menu's
+-- basket (cartHires); Confirm sends only candidate ids, the server re-validates and prices.
+if TavernScreen then
+	TavernScreen.Init({
+		parent = playerGui,
+		getPool = function(): any?
+			return cachedCall("Tavern", GuildEvents.GetTavernPool)
+		end,
+		isQueued = function(key: string): boolean
+			return cartHires[key] ~= nil
+		end,
+		toggle = function(key: string, name: string, price: number?)
+			if cartHires[key] then
+				cartHires[key] = nil
+			elseif price ~= nil then
+				cartHires[key] = { name = name, price = price }
+			end
+			updateBalanceLabel()
+		end,
+		pendingCount = cartCount,
+		summary = function(): any
+			local s = { nHire = 0, hireGold = 0 }
+			for _, v in cartHires do
+				s.nHire += 1
+				s.hireGold += v.price
+			end
+			return s
+		end,
+		confirm = finalizeCart,
+		discard = clearCart,
+		requestBack = confirmLeaveWithCart,
+		onClosed = function()
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage(currentPage)
+		end,
+	})
+end
+
+-- BLACKSMITH SCREEN (v2 build step 3, 2026-11-01): same model as the Merchant. Staged level
+-- changes and dismantles stay in this menu's basket (cartUpgrades / cartDowngrades /
+-- cartDismantles); Confirm sends only instance ids and target levels, the server re-prices.
+local function openBlacksmith()
+	if not BlacksmithScreen then
+		setStatus("Blacksmith screen not loaded", true)
+		return
 	end
+	screenGui.Enabled = false
+	BlacksmithScreen.Open()
+	updateBalanceLabel()
+end
+
+-- Gold + mercury to raise `it` to `target` (sum of the server's per-level curve).
+local function bsCostTo(it: any, target: number): (number, number)
+	local gold, mercury = 0, 0
+	for _, step in it.upgradeCurve or {} do
+		if step.toLevel <= target then
+			gold += step.gold or 0
+			mercury += step.mercury or 1
+		end
+	end
+	return gold, mercury
+end
+
+if BlacksmithScreen then
+	BlacksmithScreen.Init({
+		parent = playerGui,
+		getItems = function(): any?
+			return cachedCall("Blacksmith", GuildEvents.GetBlacksmithItems)
+		end,
+		stagedLevel = function(it: any): number
+			local up = cartUpgrades[it.instanceId]
+			if up then return up.toLevel end
+			local down = cartDowngrades[it.instanceId]
+			if down then return down.toLevel end
+			return it.level
+		end,
+		setTarget = function(it: any, target: number)
+			local iid = it.instanceId
+			local maxLevel = it.level + #(it.upgradeCurve or {})
+			local t = math.clamp(math.floor(target), 1, math.max(it.level, maxLevel))
+			cartUpgrades[iid] = nil
+			cartDowngrades[iid] = nil
+			if t > it.level then
+				local g, m = bsCostTo(it, t)
+				cartUpgrades[iid] = { name = it.name, fromLevel = it.level, toLevel = t, gold = g, mercury = m }
+				cartDismantles[iid] = nil
+			elseif t < it.level then
+				cartDowngrades[iid] = { name = it.name, toLevel = t }
+				cartDismantles[iid] = nil
+			end
+			updateBalanceLabel()
+		end,
+		-- Mercury is a shared pool across staged items: subtract what OTHER items reserve.
+		maxAffordable = function(it: any): number
+			local remaining = (lastOverview.resources and lastOverview.resources.mercury) or 0
+			for otherId, up in cartUpgrades do
+				if otherId ~= it.instanceId then remaining -= (up.mercury or 0) end
+			end
+			local best, run = it.level, 0
+			for _, step in it.upgradeCurve or {} do
+				run += step.mercury or 1
+				if run <= remaining then best = step.toLevel else break end
+			end
+			return best
+		end,
+		isDismantleQueued = function(instanceId: string): boolean
+			return cartDismantles[instanceId] ~= nil
+		end,
+		toggleDismantle = function(it: any)
+			local iid = it.instanceId
+			if cartDismantles[iid] then
+				cartDismantles[iid] = nil
+			elseif it.canDismantle and it.dismantle then
+				local y = it.dismantle
+				cartDismantles[iid] = { name = it.name, mercury = y.mercury or 0, crystals = y.crystals or 0,
+					sulfur = y.sulfur or 0, gems = y.gemCount or 0 }
+				cartUpgrades[iid] = nil   -- one change per item (guild_facilities 52)
+				cartDowngrades[iid] = nil
+				cartSells[iid] = nil      -- sell OR dismantle, never both
+			end
+			updateBalanceLabel()
+		end,
+		pendingCount = cartCount,
+		summary = function(): any
+			local s = { nUp = 0, upGold = 0, upMercury = 0, nDown = 0, nDis = 0,
+				gain = { mercury = 0, crystals = 0, sulfur = 0, gems = 0 } }
+			for _, v in cartUpgrades do
+				s.nUp += 1
+				s.upGold += v.gold or 0
+				s.upMercury += v.mercury or 0
+			end
+			for _ in cartDowngrades do s.nDown += 1 end
+			for _, v in cartDismantles do
+				s.nDis += 1
+				s.gain.mercury += v.mercury
+				s.gain.crystals += v.crystals
+				s.gain.sulfur += v.sulfur
+				s.gain.gems += v.gems
+			end
+			return s
+		end,
+		confirm = finalizeCart,
+		discard = clearCart,
+		requestBack = confirmLeaveWithCart,
+		onClosed = function()
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage(currentPage)
+		end,
+	})
+end
+
+-- RUNEFORGE SCREEN (v2 build step 5, 2026-11-01). Forging and rerolling commit straight away
+-- on the screen's Confirm prompt (no basket). The client sends ids only; the server prices.
+local function openRuneforge()
+	if not RuneforgeScreen then
+		setStatus("Runeforge screen not loaded", true)
+		return
+	end
+	screenGui.Enabled = false
+	RuneforgeScreen.Open()
+	updateBalanceLabel()
+end
+
+if RuneforgeScreen then
+	RuneforgeScreen.Init({
+		parent = playerGui,
+		getState = function(): any?
+			return cachedCall("Runeforge", GuildEvents.GetRuneforge)
+		end,
+		preview = function(instanceId: string, installs: { any }): any?
+			return call(GuildEvents.PreviewForge, instanceId, installs)
+		end,
+		commitForge = function(instanceId: string, installs: { any }): any?
+			local res = call(GuildEvents.CommitForge, instanceId, installs)
+			if res then setStatus(`Forged: {res.name} is now {res.newRarity}`) end
+			return res
+		end,
+		getRerollSets = function(instanceId: string): any?
+			return call(GuildEvents.GetRerollSets, instanceId)
+		end,
+		commitReroll = function(instanceId: string, choice: number): any?
+			local res = call(GuildEvents.CommitReroll, instanceId, choice)
+			if res then
+				setStatus(if res.choice == 0 then `Rerolled: kept the current lines of {res.name}` else `Rerolled: {res.name}`)
+			end
+			return res
+		end,
+		onChanged = function()
+			invalidatePageCache() -- forge / reroll changed items, gems and resources
+			refreshOverview()
+		end,
+		onClosed = function()
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage(currentPage)
+		end,
+	})
+end
+
+-- CRUCIBLE SCREEN (gear merging, 2026-11-02). Merges commit straight away on the screen's
+-- Confirm prompt (no basket). The client sends instance IDs only; the server prices.
+local function openCrucible()
+	if not CrucibleScreen then
+		setStatus("Crucible screen not loaded", true)
+		return
+	end
+	screenGui.Enabled = false
+	CrucibleScreen.Open()
+	updateBalanceLabel()
+end
+
+if CrucibleScreen then
+	CrucibleScreen.Init({
+		parent = playerGui,
+		getState = function(): any?
+			return cachedCall("Crucible", GuildEvents.GetCrucible)
+		end,
+		preview = function(ids: { string }): any?
+			return call(GuildEvents.PreviewMerge, ids)
+		end,
+		commit = function(ids: { string }): any?
+			local res = call(GuildEvents.CommitMerge, ids)
+			if res then setStatus(`Merged: {res.name} ({res.rarity}, level {res.level})`) end
+			return res
+		end,
+		onChanged = function()
+			invalidatePageCache() -- a merge changed items and resources
+			refreshOverview()
+		end,
+		onClosed = function()
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage(currentPage)
+		end,
+	})
+end
+
+-- APOTHECARY SCREEN (consumables, 2026-11-03). Buys/sells commit straight away on the screen's
+-- Confirm prompt (no basket). The client sends slots / ids only; the server prices.
+local function openApothecary()
+	if not ApothecaryScreen then
+		setStatus("Apothecary screen not loaded", true)
+		return
+	end
+	screenGui.Enabled = false
+	ApothecaryScreen.Open()
+	updateBalanceLabel()
+end
+
+if ApothecaryScreen then
+	ApothecaryScreen.Init({
+		parent = playerGui,
+		getState = function(): any?
+			return cachedCall("Apothecary", GuildEvents.GetApothecary)
+		end,
+		commit = function(cart: any): any?
+			local res = call(GuildEvents.CommitApothecary, cart)
+			if res and res.result then
+				local r = res.result
+				setStatus(if r.bought > 0 then `Bought for {r.cost} gold` else `Sold for {r.gain} gold`)
+			end
+			return res
+		end,
+		refill = function(cmd: any): any?
+			return call(GuildEvents.ApothecaryRefill, cmd)
+		end,
+		onChanged = function()
+			invalidatePageCache() -- gold and owned consumables changed
+			refreshOverview()
+		end,
+		onClosed = function()
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage(currentPage)
+		end,
+	})
+end
+
+-- UGC MERCHANT (2026-11-05, user): opens the same screen as the Loadout Outfit tab shortcut.
+local ugcMerchantModule = UIFolder:FindFirstChild("UGCMerchantScreen")
+local okUgc, UGCMerchantScreen = false, nil :: any
+if ugcMerchantModule then okUgc, UGCMerchantScreen = pcall(require, ugcMerchantModule) end
+if not okUgc then
+	warn("[GuildMenu] UGCMerchantScreen unavailable: " .. tostring(UGCMerchantScreen))
+	UGCMerchantScreen = nil
+end
+local guildMenuIsOpen = true -- false between GuildMenuClosed and the next GuildMenuOpened
+local function openUGCMerchant()
+	if not UGCMerchantScreen then
+		setStatus("UGC Merchant screen not loaded", true)
+		return
+	end
+	screenGui.Enabled = false
+	UGCMerchantScreen.Open({ onClose = function()
+		if not guildMenuIsOpen then return end -- closed by the server meanwhile: stay hidden
+		screenGui.Enabled = true
+		refreshOverview()
+		showPage(currentPage)
+	end })
+end
+
+-- TRAINING GROUNDS SCREEN (card shop, 2026-11-04). One card per Confirm prompt (no basket).
+local function openTrainingGrounds()
+	if not TrainingGroundsScreen then
+		setStatus("Training Grounds screen not loaded", true)
+		return
+	end
+	screenGui.Enabled = false
+	TrainingGroundsScreen.Open()
+	updateBalanceLabel()
+end
+
+if TrainingGroundsScreen then
+	TrainingGroundsScreen.Init({
+		parent = playerGui,
+		getState = function(): any?
+			return cachedCall("TrainingGrounds", GuildEvents.GetCardShop)
+		end,
+		action = function(cmd: any): any?
+			local res = call(GuildEvents.CardShopAction, cmd)
+			if res and res.result then
+				local r = res.result
+				setStatus(if r.cost then `Bought for {r.cost} gold` else `Sold for {r.gain} gold`)
+			end
+			return res
+		end,
+		onChanged = function()
+			invalidatePageCache() -- gold and cards changed
+			refreshOverview()
+		end,
+		onClosed = function()
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage(currentPage)
+		end,
+	})
+end
+
+-- DEV PANEL wiring (Studio only, 2026-10-31). A dev change to the shops or a building level
+-- drops pending buys and dispatches (their offer / mission ids may now point at a different
+-- offer), then redraws whatever guild screen is showing.
+local function onDevGuildChanged(what: string)
+	local dropped = #cartDispatches
+	for _ in cartBuys do dropped += 1 end
+	for _ in cartHires do dropped += 1 end
+	cartBuys = {}
+	cartDispatches = {}
+	cartHires = {} -- candidate ids change with the pool seed / Tavern level
+	invalidatePageCache()
+	refreshOverview()
+	if MerchantScreen and MerchantScreen.IsOpen() then
+		MerchantScreen.Render()
+	elseif TavernScreen and TavernScreen.IsOpen() then
+		TavernScreen.Render()
+	elseif BlacksmithScreen and BlacksmithScreen.IsOpen() then
+		BlacksmithScreen.Render()
+	elseif RuneforgeScreen and RuneforgeScreen.IsOpen() then
+		RuneforgeScreen.Render()
+	elseif CrucibleScreen and CrucibleScreen.IsOpen() then
+		CrucibleScreen.Render()
+	elseif ApothecaryScreen and ApothecaryScreen.IsOpen() then
+		ApothecaryScreen.Render()
+	elseif TrainingGroundsScreen and TrainingGroundsScreen.IsOpen() then
+		TrainingGroundsScreen.Render()
+	elseif screenGui.Enabled then
+		showPage(currentPage)
+	end
+	local note = if dropped > 0 then ` | {dropped} pending buy/hire/dispatch dropped` else ""
+	setStatus(`Dev: {what}{note}`)
+end
+
+if DevToolsPanel then
+	DevToolsPanel.Init({
+		parent = playerGui,
+		devGuild = GuildEvents.DevGuild,
+		devCommand = BattleEvents.DevCommand,
+		onShopsRefreshed = function() onDevGuildChanged("all shops refreshed") end,
+		onLevelsChanged = function() onDevGuildChanged("building level changed") end,
+		onGoldChanged = function() refreshOverview() end,
+	})
 end
 
 local function pageBlacksmith()
@@ -656,26 +1181,25 @@ local function pageBlacksmith()
 		local stagedTo = (staged and staged.toLevel) or it.level
 		local downStaged = cartDowngrades[iid] ~= nil
 
-		-- Sum curve steps (current+1 .. target) into gold + materials. Summing the first N
+		-- Sum curve steps (current+1 .. target) into gold + mercury. Summing the first N
 		-- entries equals exactly what the server charges (it commits +1 at a time).
-		local function costTo(target: number)
-			local gold, mats, parts = 0, {}, {}
+		local function costTo(target: number): (number, number)
+			local gold, mercury = 0, 0
 			for _, step in curve do
 				if step.toLevel <= target then
 					gold += step.gold
-					mats[step.tier] = (mats[step.tier] or 0) + step.qty
+					mercury += step.mercury or 1
 				end
 			end
-			for t = 1, 5 do if mats[t] then table.insert(parts, `T{t}x{mats[t]}`) end end
-			return gold, mats, table.concat(parts, " ")
+			return gold, mercury
 		end
 
 		local function stageTo(target: number)
 			if target <= it.level then
 				cartUpgrades[iid] = nil
 			else
-				local g, mats, mt = costTo(target)
-				cartUpgrades[iid] = { name = it.name, fromLevel = it.level, toLevel = target, gold = g, mats = mats, matsText = mt }
+				local g, m = costTo(target)
+				cartUpgrades[iid] = { name = it.name, fromLevel = it.level, toLevel = target, gold = g, mercury = m }
 				cartDowngrades[iid] = nil
 			end
 			showPage(currentPage)
@@ -683,45 +1207,35 @@ local function pageBlacksmith()
 
 		local who = it.equippedBy and ` (on {it.equippedBy})` or ""
 		local titleLine = (stagedTo > it.level) and `{it.name}  Lv{it.level} -> Lv{stagedTo}  {it.rarity}` or `{it.name}  Lv{it.level} {it.rarity}`
-		-- MATERIAL AFFORDABILITY CAP (2026-10-16): the +1/Max buttons must not let the player
-		-- stage an upgrade whose materials they don't own. Materials are a SHARED pool across
-		-- every staged item, so first subtract what OTHER items already reserve, then walk this
-		-- item's curve and find the highest level whose cumulative material cost still fits the
-		-- remaining real stock. gold is checked at commit; this guard is specifically materials.
-		-- Computed BEFORE the cost line / buttons because both read maxAffordable/matCapReached.
-		local realMats = lastOverview.materials or {}
-		local remainingMats: { [number]: number } = {}
-		for t = 1, 5 do remainingMats[t] = realMats[t] or 0 end
+		-- MERCURY AFFORDABILITY CAP (2026-10-16; mercury v2 2026-11-01): +1 / Max must not stage
+		-- levels the player cannot pay mercury for. Mercury is a SHARED pool across every staged
+		-- item, so subtract what OTHER items already reserve, then walk this item's curve.
+		-- Gold is checked at commit; this guard is specifically mercury.
+		local remainingMercury = (lastOverview.resources and lastOverview.resources.mercury) or 0
 		for otherId, up in cartUpgrades do
-			if otherId ~= iid and type(up.mats) == "table" then
-				for t, q in up.mats do remainingMats[t] = (remainingMats[t] or 0) - q end
-			end
+			if otherId ~= iid then remainingMercury -= (up.mercury or 0) end
 		end
 		local maxAffordable = it.level
 		do
-			local run: { [number]: number } = {}
+			local run = 0
 			for _, step in curve do
-				run[step.tier] = (run[step.tier] or 0) + step.qty
-				local fits = true
-				for t = 1, 5 do
-					if (run[t] or 0) > (remainingMats[t] or 0) then fits = false; break end
-				end
-				if fits then maxAffordable = step.toLevel else break end
+				run += step.mercury or 1
+				if run <= remainingMercury then maxAffordable = step.toLevel else break end
 			end
 		end
 		local matCapReached = (stagedTo < maxLevel) and (#curve > 0) and not downStaged and (stagedTo >= maxAffordable)
 		local costLine
 		if stagedTo > it.level then
-			local g, _, mt = costTo(stagedTo)
-			costLine = `Upgrade cost: {g}g{(mt ~= "" and (" + " .. mt)) or ""}`
+			local g, m = costTo(stagedTo)
+			costLine = `Upgrade cost: {g}g + {m} mercury`
 		elseif #curve > 0 then
 			local s = curve[1]
-			costLine = `Next (Lv{s.toLevel}): {s.gold}g + T{s.tier}x{s.qty}`
+			costLine = `Next (Lv{s.toLevel}): {s.gold}g + {s.mercury or 1} mercury`
 		else
 			costLine = (it.upgradeBlockedReason and `[{it.upgradeBlockedReason}]`) or "At max level"
 		end
 		if matCapReached then
-			costLine = costLine .. "\nNeed more materials to upgrade further"
+			costLine = costLine .. "\nNeed more mercury to upgrade further"
 		end
 
 		local canAdd = (stagedTo < maxLevel) and (#curve > 0) and not downStaged
@@ -777,14 +1291,14 @@ local function pageDispatch()
 	for _, u in res.units or {} do
 		if not u.away and not stagedUnits[u.id] then homeCount += 1 end
 	end
-	addNote(`Sent units miss battles until they return, then bring back XP and materials. Fee {res.feeGold or 50}g per mission. Keep >=1 home. Slots {slotsUsed}/{slotCap}.`)
+	addNote(`Sent units miss battles until they return, then bring back XP and mercury. Fee {res.feeGold or 50}g per mission. Keep >=1 home. Slots {slotsUsed}/{slotCap}.`)
 	if not selectedMission then
 		local anyMission = false
 		for _, m in res.missions or {} do
 			if not stagedMissions[m.missionId] then
 				anyMission = true
 				local mid = m.missionId
-				addRow(`Tier {m.tier}  |  away {m.duration} battle(s)  |  {m.xp} XP each  |  T{m.rewardTier} material x{m.rewardCount}`, {
+				addRow(`Tier {m.tier}  |  away {m.duration} battle(s)  |  {m.xp} XP each  |  {m.rewardMercury or 1} mercury`, {
 					{ text = "Select", color = Theme.Colors.Info, enabled = slotsUsed < slotCap, onTap = function()
 						selectedMission = mid
 						selectedUnits = {}
@@ -887,148 +1401,47 @@ local function pageUnits()
 	end
 end
 
-local function pageDev()
-	addHeading("DEV - temporary building levels (Studio only, not saved)")
-	local res = call(GuildEvents.GetGuildOverview)
-	if not res then return end
-	for _, name in BUILDINGS_DEV do
-		local lvl = (res.buildings and res.buildings[name]) or 1
-		addRow(`{name}  L{lvl}`, {
-			{ text = "-", color = Theme.Colors.Warning, enabled = lvl > 1, onTap = function()
-				BattleEvents.DevCommand:FireServer({ action = "SetBuildingLevel", building = name, level = lvl - 1 })
-				task.wait(0.3)
-				refreshOverview()
-				showPage("Dev")
-			end },
-			{ text = "+", color = Theme.Colors.Success, enabled = lvl < 10, onTap = function()
-				BattleEvents.DevCommand:FireServer({ action = "SetBuildingLevel", building = name, level = lvl + 1 })
-				task.wait(0.3)
-				refreshOverview()
-				showPage("Dev")
-			end },
-		})
-	end
+-- PARTIES moved into the Loadout screen as its 5th tab (USER DECISION 2026-11-04). This page
+-- now just opens that tab; in a sortie it opens in pick mode and Back returns to the Sortie.
+local function openPartiesTab()
+	local open = (_G :: any).CTRBLXAI_OpenLoadoutTab
+	if type(open) ~= "function" then setStatus("Loadout screen not loaded", true) return end
+	local pg = player:FindFirstChild("PlayerGui")
+	local pickMode = currentPhase == "PreBattle" and sortieMode
+	screenGui.Enabled = false
+	open("PARTIES", {
+		pick = pickMode,
+		onPick = function(id: string, name: string)
+			sortiePartySlot = id
+			sortiePartyName = name
+			updateSortieButton()
+			setStatus(`{name} will deploy`)
+		end,
+		onDone = function()
+			local close = (_G :: any).CTRBLXAI_CloseLoadout
+			if type(close) == "function" then close() end
+		end,
+	})
+	task.spawn(function()
+		local appeared = false
+		local waited = 0
+		while true do
+			local ls = pg and pg:FindFirstChild("LoadoutScreen")
+			if ls then appeared = true elseif appeared then break end
+			if not appeared and waited > 10 then break end -- never opened
+			task.wait(0.1)
+			waited += 0.1
+		end
+		screenGui.Enabled = true
+		invalidatePageCache()
+		refreshOverview()
+		if pickMode then guildSortieStep = "sortie" end
+		showPage(if pickMode then "Adventurers" else (if currentPage == "Party" then "Units" else currentPage))
+	end)
 end
 
 local function pageParty()
-	addHeading("PARTIES")
-	local res = cachedCall("Party", GuildEvents.GetParties)
-	if not res then return end
-	local maxSize = res.maxSize or 7
-	if not selectedParty then
-		for _, party in ipairs(res.parties or {}) do
-			local slot = party.slot
-			local names = {}
-			for _, mi in ipairs(party.memberInfo or {}) do table.insert(names, mi.name) end
-			local summary = (#names > 0) and table.concat(names, ", ") or "No units assigned"
-			-- At the sortie (PreBattle), a non-empty party can be DEPLOYED (Choose Party ->
-			-- go). Empty parties get no Deploy button -- they cannot be chosen (2026-10-15).
-			local listBtns = {}
-			if currentPhase == "PreBattle" and #names > 0 then
-				local isSel = (sortiePartySlot == slot)
-				table.insert(listBtns, { text = isSel and "Deploying" or "Select", color = isSel and Theme.Colors.Success or Theme.Colors.Info, enabled = not sortieLocked and not isSel, onTap = function()
-					sortiePartySlot = slot
-					sortiePartyName = party.name
-					BattleEvents.SelectSortieParty:FireServer(slot)
-					updateSortieButton()
-					setStatus(`{party.name} will deploy`)
-					-- Picking a party during a sortie returns to the Adventurer's Guild sortie step
-					-- (where Embark is), not back to this list. (2026-10-16)
-					if sortieMode then
-						guildSortieStep = "sortie"
-						showPage("Adventurers")
-					else
-						showPage("Party")
-					end
-				end })
-			end
-			table.insert(listBtns, { text = "Edit", color = Theme.Colors.Info, onTap = function()
-				selectedParty = slot
-				partyEdit = {}
-				for _, uid in ipairs(party.members or {}) do partyEdit[uid] = true end
-				showPage("Party")
-			end })
-			addRow(`{party.name}  |  {#names}/{maxSize}\n{summary}`, listBtns)
-		end
-		if sortieMode then
-			addRow("", {
-				{ text = "Back", color = Theme.Colors.Surface, onTap = function()
-					guildSortieStep = "sortie"
-					showPage("Adventurers")
-				end },
-			})
-		end
-	else
-		local party = nil
-		for _, p in ipairs(res.parties or {}) do
-			if p.slot == selectedParty then party = p break end
-		end
-		if not party then selectedParty = nil showPage("Party") return end
-
-		rowOrder += 1
-		local nameBox = Instance.new("TextBox")
-		nameBox.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
-		nameBox.BackgroundColor3 = Theme.Colors.Surface
-		nameBox.BackgroundTransparency = 0.1
-		nameBox.BorderSizePixel = 0
-		nameBox.Font = Theme.Font.PrimaryBold
-		nameBox.TextSize = Theme.Text.Body()
-		nameBox.TextColor3 = Theme.Colors.TextPrimary
-		nameBox.Text = party.name
-		nameBox.PlaceholderText = "Party name"
-		nameBox.ClearTextOnFocus = false
-		nameBox.TextXAlignment = Enum.TextXAlignment.Left
-		nameBox.LayoutOrder = rowOrder
-		local nbCorner = Instance.new("UICorner")
-		nbCorner.CornerRadius = Theme.CornerRadius.md
-		nbCorner.Parent = nameBox
-		local nbPad = Instance.new("UIPadding")
-		nbPad.PaddingLeft = UDim.new(0, 8)
-		nbPad.PaddingRight = UDim.new(0, 8)
-		nbPad.Parent = nameBox
-		nameBox.Parent = content
-		nameBox.FocusLost:Connect(function()
-			local r = call(GuildEvents.SetPartyName, selectedParty, nameBox.Text)
-			if r then invalidatePageCache() setStatus("Party renamed") end
-		end)
-
-		local count = 0
-		for _ in partyEdit do count += 1 end
-
-		for _, u in ipairs(res.roster or {}) do
-			local uid = u.id
-			local inParty = partyEdit[uid] == true
-			if u.away then
-				addRow(`{u.name}  Lv{u.unitLevel}  |  AWAY`, nil, true)
-			else
-				addRow(`{u.name}  Lv{u.unitLevel}{inParty and "  [IN PARTY]" or ""}`, {
-					{ text = inParty and "Remove" or "Add", color = inParty and Theme.Colors.Warning or Theme.Colors.Info,
-					  enabled = inParty or count < maxSize, onTap = function()
-						if inParty then
-							partyEdit[uid] = nil
-						elseif count < maxSize then
-							partyEdit[uid] = true
-						else
-							setStatus(`A party holds up to {maxSize} units`, true)
-							return
-						end
-						local ids = {}
-						for id in partyEdit do table.insert(ids, id) end
-						call(GuildEvents.SetPartyMembers, selectedParty, ids)
-						showPage("Party")
-					end },
-				})
-			end
-		end
-
-		addRow("", {
-			{ text = "Back", color = Theme.Colors.Surface, onTap = function()
-				selectedParty = nil
-				invalidatePageCache()
-				showPage("Party")
-			end },
-		})
-	end
+	openPartiesTab()
 end
 
 -- Embark button cycling-text machinery (reuses the scout-token pattern). The button lives
@@ -1047,11 +1460,15 @@ local function pageAdventurersGuild()
 
 		if guildSortieStep == "details" then
 			addNote(`{q.name}`)
+			if q.elite then addNote("Scouts report an elite war band! An Elite leads it, with one extra enemy. Win for extra rewards: mercury, crystals, maybe a rune gem, and a chance at better gear.") end
 			addNote(`Location: {q.biome}   Recommended Lv {q.recommendedLvl}`)
 			addNote(`Enemies: {q.enemyCount}   Difficulty: {tostring(q.difficulty or "?")}`)
 			local g = q.rewards and q.rewards.gold
 			if g then
 				addNote("Reward gold: " .. ((g.min == g.max) and (g.min .. " + kills") or (g.min .. "-" .. g.max)))
+			end
+			if q.rewards and (tonumber(q.rewards.mercury) or 0) > 0 then
+				addNote(`Reward mercury: {q.rewards.mercury}`)
 			end
 			if q.rewards and q.rewards.drops then addNote(`Item drops: {q.rewards.drops}`) end
 			if q.condition then addNote(`Condition: {q.condition}`) end
@@ -1111,6 +1528,7 @@ local function pageAdventurersGuild()
 
 		-- overview: details / sortie / abandon
 		addNote(`Accepted: {q.name}. Prepare your party, then sortie when ready.`)
+		if q.elite then addNote("Scouts report an elite war band! An Elite leads it, with one extra enemy. Win for extra rewards: mercury, crystals, maybe a rune gem, and a chance at better gear.") end
 		addRow("See the full brief for this quest", {
 			{ text = "Quest details", color = Theme.Colors.Info, onTap = function()
 				guildSortieStep = "details"
@@ -1138,11 +1556,25 @@ local function pageAdventurersGuild()
 		return
 	end
 	addNote("Choose a quest to embark on, or head back to base.")
+	for _, q in guildQuests do
+		if q.isDailyContract then
+			addNote("Daily Contract (one a day): win it for 3 mercury. Every 3rd one also gives 1 sulfur.")
+			break
+		end
+	end
+	if newDayAt then
+		local left = math.max(0, math.floor(newDayAt - os.clock()))
+		addNote(`New day in {left // 3600}h {(left % 3600) // 60}m`)
+	end
+	if bossRewardsText then addNote(bossRewardsText) end
 	for _, q in ipairs(guildQuests) do
 		local quest = q
 		local g = q.rewards and q.rewards.gold
 		local goldText = ""
 		if g then goldText = (g.min == g.max) and (`{g.min} gold + kills`) or (`{g.min}-{g.max} gold`) end
+		if q.rewards and (tonumber(q.rewards.mercury) or 0) > 0 then
+			goldText = `{goldText} + {q.rewards.mercury} mercury`
+		end
 		local line = `{q.name}\n{q.biome}  Lv {q.recommendedLvl}  |  {q.enemyCount} enemies  |  {goldText}  |  Deploy {q.playerSlots}`
 		addRow(line, {
 			{ text = "Select", color = Theme.Colors.Success, onTap = function()
@@ -1163,14 +1595,14 @@ local function pageAdventurersGuild()
 end
 
 local PAGES: { [string]: () -> () } = {
-	Tavern = pageTavern,
-	Merchant = pageMerchant,
+	-- Tavern and Merchant are their own screens (openTavern / openMerchant), 2026-10-31.
+	-- Merchant is its own screen (openMerchant), not a page of this menu (2026-10-31).
 	Blacksmith = pageBlacksmith,
 	Dispatch = pageDispatch,
 	Units = pageUnits,
 	Party = pageParty,
 	Adventurers = pageAdventurersGuild,
-	Dev = pageDev,
+	-- Building levels moved to the always-on DEV TOOLS panel (2026-10-31).
 }
 
 -- The building list is a tab bar: old 9-slice text bars (user ruling 2026-10-08),
@@ -1205,7 +1637,6 @@ local leaveButton: TextButton? = nil
 local advGuildButton: TextButton? = nil
 local changePartyButton: TextButton? = nil
 local scoutToken = 0
-local devButton: GuiButton? = nil
 
 local function buildNav()
 	for _, b in navButtons do b:Destroy() end
@@ -1213,7 +1644,12 @@ local function buildNav()
 	table.clear(navPageOf) -- destroyed buttons must not stay referenced (PRF-004)
 	local entries = {
 		{ "Tavern", "Tavern" }, { "Merchant", "Merchant" }, { "Blacksmith", "Blacksmith" },
-		{ "Dispatch", "Dispatch" }, { "Units", "Units" }, { "Party", "Party" },
+		{ "Runeforge", "Runeforge" }, { "Crucible", "Crucible" },
+		{ "Apothecary", "Apothecary" }, { "Training", "TrainingGrounds" },
+		-- "Party" removed 2026-11-05 (user): parties live in the Loadout PARTIES tab. The Sortie's
+		-- "Change party" still opens that tab through the "Party" page entry.
+		{ "Dispatch", "Dispatch" }, { "Units", "Units" },
+		{ "UGC Merchant", "UGCMerchant" }, -- 2026-11-05 (user); the Outfit tab shortcut stays
 	}
 	for i, e in entries do
 		local pageName = e[2]
@@ -1221,6 +1657,70 @@ local function buildNav()
 			-- PER-SCREEN KEEP/DISCARD (2026-10-14): switching screens with unsaved changes
 			-- prompts Confirm/Discard FIRST, so changes can't pile across screens. Same-screen
 			-- re-tap is a no-op (never prompts). Nothing pending -> switches instantly.
+			if pageName == "Tavern" then
+				-- Own full screen (2026-10-31): same keep/discard prompt first, then open it.
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openTavern()
+				end)
+				return
+			end
+			if pageName == "Merchant" then
+				-- Own full screen (2026-10-31): same keep/discard prompt first, then open it.
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openMerchant()
+				end)
+				return
+			end
+			if pageName == "UGCMerchant" then
+				-- Same UGC merchant screen as the Outfit tab shortcut (its own full screen).
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openUGCMerchant()
+				end)
+				return
+			end
+			if pageName == "TrainingGrounds" then
+				-- Own full screen (2026-11-04). It has no page fallback.
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openTrainingGrounds()
+				end)
+				return
+			end
+			if pageName == "Apothecary" then
+				-- Own full screen (2026-11-03). It has no page fallback.
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openApothecary()
+				end)
+				return
+			end
+			if pageName == "Crucible" then
+				-- Own full screen (2026-11-02). It has no page fallback.
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openCrucible()
+				end)
+				return
+			end
+			if pageName == "Runeforge" then
+				-- Own full screen (v2 step 5, 2026-11-01). It has no page fallback.
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openRuneforge()
+				end)
+				return
+			end
+			if pageName == "Blacksmith" and BlacksmithScreen then
+				-- Own full screen (v2 step 3, 2026-11-01); the old page stays only as a fallback.
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openBlacksmith()
+				end)
+				return
+			end
 			if currentPage == pageName then return end
 			confirmLeaveWithCart(function()
 				selectedMission = nil
@@ -1233,13 +1733,6 @@ local function buildNav()
 		registerNav(btn, pageName)
 		table.insert(navButtons, btn)
 	end
-	local dev: GuiButton = Theme.MakeTabButton(nav, "Dev: Levels", "Inactive", function() if currentPage ~= "Dev" then confirmLeaveWithCart(function() showPage("Dev") end) end end,
-		{ name = "Nav_Dev", size = UDim2.new(1, 0, 0, BUTTON_HEIGHT), layoutOrder = 50, textSize = Theme.Text.Body() })
-	dev.Visible = false
-	devButton = dev
-	registerNav(dev, "Dev")
-	table.insert(navButtons, dev)
-
 	-- Adventurer's Guild: opens the quest board (2026-10-12). Fires OpenAdventurersGuild;
 	-- the server is waiting at the guild base and responds by showing the quest board.
 	local advGuild = makeButton(nav, "Adventurer's Guild", Theme.Colors.Accent or Theme.Colors.Success, function()
@@ -1380,6 +1873,17 @@ updateSortieButton = function()
 end
 
 GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
+	shownRefillNote = false -- show the refill note once per visit (2026-11-03)
+	guildMenuIsOpen = true
+	-- A fresh menu open always starts on the menu itself, never inside a building screen.
+	if MerchantScreen then MerchantScreen.Hide() end
+	if TavernScreen then TavernScreen.Hide() end
+	if BlacksmithScreen then BlacksmithScreen.Hide() end
+	if RuneforgeScreen then RuneforgeScreen.Hide() end
+	if CrucibleScreen then CrucibleScreen.Hide() end
+	if ApothecaryScreen then ApothecaryScreen.Hide() end
+	if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
+	closeLeaveDialog() -- a leftover Confirm/Discard/Cancel prompt must not reappear later
 	currentPhase = (type(data) == "table" and type(data.phase) == "string") and data.phase or "PreBattle"
 	-- Button visibility by phase (2026-10-13 fix for the "Continue to Deployment at the
 	-- base" crash): at the Base hub the ONLY way to start something is the Adventurer's
@@ -1445,8 +1949,6 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 		-- re-requests from the server (which is back to listening at the activity wait).
 		guildQuests = nil
 	end
-	local ov = call(GuildEvents.GetGuildOverview)
-	if devButton then devButton.Visible = ov ~= nil and ov.isStudio == true end
 	-- Sortie lands on the in-screen Adventurer's Guild page (sortie controls); otherwise
 	-- the base opens on Units. (2026-10-16)
 	showPage(sortieMode and "Adventurers" or "Units")
@@ -1454,7 +1956,30 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 end)
 
 GuildEvents.GuildMenuClosed.OnClientEvent:Connect(function()
+	guildMenuIsOpen = false
+	-- The UGC merchant opened from the guild closes with the menu (2026-11-05).
+	if UGCMerchantScreen and UGCMerchantScreen.IsOpen() then UGCMerchantScreen.Close() end
 	stopScout()  -- end any running scouting animation
+	if MerchantScreen then MerchantScreen.Hide() end -- the building screen closes with the menu
+	if TavernScreen then TavernScreen.Hide() end
+	if BlacksmithScreen then BlacksmithScreen.Hide() end
+	if RuneforgeScreen then RuneforgeScreen.Hide() end
+	if CrucibleScreen then CrucibleScreen.Hide() end
+	if ApothecaryScreen then ApothecaryScreen.Hide() end
+	if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
+	closeLeaveDialog() -- and so does any open Confirm/Discard/Cancel prompt
+	-- Pending changes never outlive the menu (Tester D-1, 2026-10-31).
+	local pendingCount = cartCount()
+	if pendingCount > 0 then
+		warn(`[GuildMenu] Menu closed with {pendingCount} pending change(s) -- discarded`)
+		cartBuys = {}
+		cartSells = {}
+		cartUpgrades = {}
+		cartDowngrades = {}
+		cartDispatches = {}
+		cartHires = {}
+		cartDismantles = {} -- v2 step 3 D-1: a staged dismantle must never outlive the menu (BUG-065)
+	end
 	screenGui.Enabled = false
 	print("[GuildMenu] Closed")
 end)
@@ -1467,8 +1992,23 @@ if BattleEvents.MapBuildComplete then
 		-- If the player already tapped Embark during scouting, depart now (deferred-embark).
 		if departPending then
 			departPending = false
-			screenGui.Enabled = false
-			BattleEvents.StartBattle:FireServer()
+			-- Deferred departure follows the same Confirm/Discard rule as every other exit
+			-- (Tester D-1, 2026-10-31): changes made while scouting never ride into the battle.
+			-- Cancel stays at the base; tapping Embark again leaves.
+			if cartCount() > 0 and sortieMode and currentPage == "Adventurers" then
+				showPage("Adventurers") -- Embark shows live again if the player cancels
+			end
+			confirmLeaveWithCart(function()
+				if MerchantScreen then MerchantScreen.Hide() end
+				if TavernScreen then TavernScreen.Hide() end
+				if BlacksmithScreen then BlacksmithScreen.Hide() end
+				if RuneforgeScreen then RuneforgeScreen.Hide() end
+				if CrucibleScreen then CrucibleScreen.Hide() end
+				if ApothecaryScreen then ApothecaryScreen.Hide() end
+				if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
+				screenGui.Enabled = false
+				BattleEvents.StartBattle:FireServer()
+			end)
 			return
 		end
 		if sortieMode and currentPage == "Adventurers" then showPage("Adventurers") end
@@ -1481,6 +2021,9 @@ end
 BattleEvents.QuestBoardOpen.OnClientEvent:Connect(function(data)
 	if data and data.quests then
 		guildQuests = data.quests
+		newDayAt = if type(data.newDayIn) == "number" then os.clock() + data.newDayIn else nil
+		bossRewardsText = if type(data.bossRewardsLeft) == "number"
+			then `Boss rewards left today: {data.bossRewardsLeft}/{tonumber(data.bossRewardsPerDay) or 3}` else nil
 		sortieMode = false
 		if currentPage == "Adventurers" then showPage("Adventurers") end
 	end

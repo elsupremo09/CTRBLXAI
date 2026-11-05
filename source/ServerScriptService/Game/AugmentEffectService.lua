@@ -293,6 +293,7 @@ local function removeRandomDebuff(unit)
 	local pick = candidates[math.random(1, #candidates)]
 	local removedId = unit.statusInstances[pick].id
 	table.remove(unit.statusInstances, pick)
+	StatusService.NotifyStatusRemoved(unit, removedId) -- TRG-016 Twinblade Break sync
 	return removedId
 end
 
@@ -711,6 +712,12 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		-- STATUS DELIVERY  (apply debuff to DEFENDER)
 		-- ===============================================
 		local statusToApply = STATUS_DELIVERY_MAP[augId]
+		-- Bleed / Poison / Venom Phobia (DB "cannot inflict ... with attacks"): an augment rider on the
+		-- caster's attack is still an attack, so the phobia blocks it (2026-10-29, literal DB reading).
+		if statusToApply and (statusToApply == "Bleed" or statusToApply == "Poison" or statusToApply == "Venom")
+			and (require :: any)(script.Parent.TraitEffectService).HasStatusPhobia(attacker, statusToApply) then
+			statusToApply = nil
+		end
 		if statusToApply then
 			if not shouldSkipForFrequency(augId) and defender.isAlive then
 				StatusService.ApplyStatus(defender, statusToApply, attacker.id)
@@ -855,7 +862,7 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 					local dur = attacker.startingRt or 400
 					StatusService.ApplyShield(attacker, barrier, dur, attacker.id)
 					if BattleVisualBroadcaster.ShieldChanged then
-						BattleVisualBroadcaster.ShieldChanged(attacker, barrier, "grant")
+						BattleVisualBroadcaster.ShieldChanged(attacker, barrier, "grant", "Barrier on Hit")
 					end
 				end
 				markFired(augId)
@@ -875,7 +882,7 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 				if ward > 0 then
 					StatusService.ApplyShield(attacker, ward, attacker.startingRt or 400, attacker.id)
 					if BattleVisualBroadcaster.ShieldChanged then
-						BattleVisualBroadcaster.ShieldChanged(attacker, ward, "grant")
+						BattleVisualBroadcaster.ShieldChanged(attacker, ward, "grant", "Draining Ward")
 					end
 				end
 				markFired(augId)

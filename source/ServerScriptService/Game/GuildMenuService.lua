@@ -25,6 +25,7 @@
 
 local ReplicatedStorage   = game:GetService("ReplicatedStorage")
 local RunService          = game:GetService("RunService")
+local TextService         = game:GetService("TextService") -- party name / motto filter (2026-11-04)
 local ServerScriptService = game:GetService("ServerScriptService")
 
 local Game    = ServerScriptService:WaitForChild("Game")
@@ -48,8 +49,15 @@ local CurrencyService        = require(Game:WaitForChild("CurrencyService"))
 local RecruitmentService     = require(Game:WaitForChild("RecruitmentService"))
 local MerchantService        = require(Game:WaitForChild("MerchantService"))
 local BlacksmithService      = require(Game:WaitForChild("BlacksmithService"))
+local RuneforgeService       = require(Game:WaitForChild("RuneforgeService"))
+local CrucibleService        = require(Game:WaitForChild("CrucibleService")) -- gear merging (2026-11-02)
+local ApothecaryService      = require(Game:WaitForChild("ApothecaryService")) -- consumables (2026-11-03)
+local TrainingGroundsService = require(Game:WaitForChild("TrainingGroundsService")) -- 2nd augment slot (2026-11-04)
+local CardShopService        = require(Game:WaitForChild("CardShopService")) -- Training Grounds shop (2026-11-04)
 local DispatchService        = require(Game:WaitForChild("DispatchService"))
 local ProgressionService     = require(Game:WaitForChild("ProgressionService"))
+-- Item -> UI detail entry (same builder as Loadout/inspector) for the Merchant inspector (2026-10-31).
+local ItemDisplay            = require(Game:WaitForChild("ItemDisplay"))
 
 local RaceData     = require(Content:WaitForChild("RaceData"))
 local DoctrineData = require(Content:WaitForChild("DoctrineData"))
@@ -57,6 +65,7 @@ local WeaponData   = require(Content:WaitForChild("WeaponData"))
 local ArmorData    = require(Content:WaitForChild("ArmorData"))
 local UnitNameData = require(Content:WaitForChild("UnitNameData"))
 local TraitData    = require(Content:WaitForChild("TraitData"))
+local PartyArtData = require(Content:WaitForChild("PartyArtData")) -- party emblems/backgrounds (2026-11-04)
 local PortraitData = require(Content:WaitForChild("PortraitData"))
 
 local GuildMenuService = {}
@@ -69,7 +78,16 @@ local GuildMenuService = {}
 -- until Slice 8 builds real facility purchasing). ONE table, Dev-adjustable.
 local DEFAULT_BUILDING_LEVEL = 1
 local BUILDING_MIN_LEVEL, BUILDING_MAX_LEVEL = 1, 10 -- guild_facilities: Max Level 10
-local BUILDING_NAMES = table.freeze({ "GuildHall", "Tavern", "Merchant", "Blacksmith" })
+local BUILDING_NAMES = table.freeze({ "GuildHall", "Tavern", "Merchant", "Blacksmith", "Runeforge", "Crucible", "Apothecary", "TrainingGrounds" })
+-- guild_facilities 46: the Runeforge unlocks at Guild Hall L4 and can never be above the
+-- Guild Hall level. Its building level is Dev-adjustable until Slice 8 facility purchasing.
+local RUNEFORGE_UNLOCK_GUILD_HALL = 4
+-- Crucible (gear merging, USER DECISION 2026-11-02): unlocks at Guild Hall L5, never above it.
+local CRUCIBLE_UNLOCK_GUILD_HALL = 5
+-- Apothecary (USER DECISION 2026-11-03, replaces the Workshop): unlocks at Guild Hall L4, never above it.
+local APOTHECARY_UNLOCK_GUILD_HALL = 4
+-- Training Grounds (USER DECISION 2026-11-04, Training Ground + Library merged): Guild Hall L5.
+local TRAINING_GROUNDS_UNLOCK_GUILD_HALL = 5
 
 -- game_flow id 4: a party holds up to 7 units (max deployment).
 local MAX_DEPLOY = 7
@@ -116,6 +134,16 @@ for _, b in BUILDING_NAMES do buildingLevels[b] = DEFAULT_BUILDING_LEVEL end
 -- Persisted (Export/Import)
 local battlesCompleted = 0
 local hireCounter = 0
+-- Dev "Refresh all shops" counter (Studio tool, 2026-10-31). Mixed into the Merchant, Tavern
+-- and Dispatch seeds so a refresh gives new offers; saved so the refresh survives a restart.
+local devShopNonce = 0
+local DEV_NONCE_MAX = 1000000
+-- Hired Tavern recruits of the CURRENT pool (2026-10-31, user decision). The pool seed no
+-- longer includes the hire counter (hire + restart used to give a whole new list = a free
+-- reroll); hired candidates are remembered instead and stay gone until the pool refreshes.
+-- Saved as guildMenu.tavernHired = { seed, ids = { candidateId } }.
+local tavernHired: { seed: number, ids: { [string]: boolean } }? = nil
+local MAX_TAVERN_HIRED_SAVE = 20 -- load bound (pool size is at most 10)
 local recruitDefs: { [string]: any } = {} -- unitId -> { name, level, raceId, doctrineId, quality }
 local recruitOrder: { string } = {}
 
@@ -151,6 +179,16 @@ local function markDirty()
 	-- action. Live actions mark the session dirty; the real write happens once when the
 	-- menu closes (see GuildMenuService.Close).
 	_dirty = true
+end
+
+-- Save-on-quit (2026-10-31, user decision): Main calls this when the player leaves or
+-- the server shuts down. Writes only when there are unsaved guild-base changes.
+-- Returns true if a save was made.
+function GuildMenuService.SaveIfDirty(reason: string): boolean
+	if not _dirty then return false end
+	print(`[GuildMenuService] Saving unsaved guild changes ({reason})`)
+	save()
+	return true
 end
 
 local function sortedKeys(t: { [string]: any }): { string }
@@ -196,11 +234,10 @@ local function holderOf(instanceId: string): any?
 	return nil
 end
 
+-- Gold + resource counters for the client (v2 2026-11-01: mercury, crystals, sulfur).
 local function balance()
 	local b = CurrencyService.GetBalance(_playerId)
-	local mats = {}
-	for t = 1, 5 do mats[t] = (b.materials and b.materials[t]) or 0 end
-	return b.gold or 0, mats
+	return b.gold or 0, { mercury = b.mercury or 0, crystals = b.crystals or 0, sulfur = b.sulfur or 0 }
 end
 
 -- Common gate for every remote (SEC-001): right player, menu open, rate limit.
@@ -234,6 +271,48 @@ end
 
 function GuildMenuService.GetBuildingLevel(name: string): number
 	return buildingLevels[name] or DEFAULT_BUILDING_LEVEL
+end
+
+-- Effective Crucible level: 0 until Guild Hall L5, never above the Guild Hall level (2026-11-02).
+function GuildMenuService.GetCrucibleLevel(): number
+	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
+	if gh < CRUCIBLE_UNLOCK_GUILD_HALL then return 0 end
+	return math.min(buildingLevels.Crucible or DEFAULT_BUILDING_LEVEL, gh)
+end
+
+-- Highest level a merged item may reach: the current map level (the same level the Merchant
+-- shelf and loot use; there is no separate "highest unlocked map level" yet).
+function GuildMenuService.CrucibleLevelCap(): number
+	return mapLevel()
+end
+
+-- Crucible inputs may not be equipped (this also covers units out on dispatch: their gear is
+-- equipped), so BUG-050 / keep-a-weapon stay safe. Nil = allowed.
+function GuildMenuService.CrucibleBlockedReason(item: any): string?
+	local holder = item and item.instanceId and holderOf(item.instanceId) or nil
+	if holder then return `Equipped by {holder.name}` end
+	return nil
+end
+
+-- Effective Runeforge level: 0 until Guild Hall L4, never above the Guild Hall level (gf 46).
+function GuildMenuService.GetRuneforgeLevel(): number
+	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
+	if gh < RUNEFORGE_UNLOCK_GUILD_HALL then return 0 end
+	return math.min(buildingLevels.Runeforge or DEFAULT_BUILDING_LEVEL, gh)
+end
+
+-- Effective Apothecary level: 0 until Guild Hall L4, never above the Guild Hall level (gf 67).
+function GuildMenuService.GetApothecaryLevel(): number
+	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
+	if gh < APOTHECARY_UNLOCK_GUILD_HALL then return 0 end
+	return math.min(buildingLevels.Apothecary or DEFAULT_BUILDING_LEVEL, gh)
+end
+
+-- Effective Training Grounds level: 0 until Guild Hall L5, never above the Guild Hall level.
+function GuildMenuService.GetTrainingGroundsLevel(): number
+	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
+	if gh < TRAINING_GROUNDS_UNLOCK_GUILD_HALL then return 0 end
+	return math.min(buildingLevels.TrainingGrounds or DEFAULT_BUILDING_LEVEL, gh)
 end
 
 function GuildMenuService.TavernLevelProvider(_pid: string): number
@@ -329,7 +408,12 @@ local function nextRecruitId(): string
 	return `unit_recruit_{hireCounter}`
 end
 
-function GuildMenuService.BuildRecruitUnit(candidate: any): any?
+-- Everything about a recruit that its candidate seed decides: race, doctrine, perk + flaw,
+-- name, starter weapon type + seed, portrait. Pure: no ids, items or state. The hire
+-- (BuildRecruitUnit) and the Tavern preview (previewRecruit) BOTH use it, so the recruit
+-- shown in the Tavern is exactly the recruit you get (user decision 2026-10-31). The rng
+-- order matches the hire code it replaced.
+local function rollRecruit(candidate: any): any?
 	if type(candidate) ~= "table" or type(candidate.level) ~= "number" then return nil end
 	local rng = Random.new(math.floor(tonumber(candidate.seed) or 0) + 7919)
 	local raceIds = RaceData.GetAllIds()
@@ -340,7 +424,111 @@ function GuildMenuService.BuildRecruitUnit(candidate: any): any?
 	end
 	local raceId = raceIds[rng:NextInteger(1, #raceIds)]
 	local doctrineId = doctrines[rng:NextInteger(1, #doctrines)]
-	local level = math.clamp(math.floor(candidate.level), 1, ITEM_LEVEL_CAP)
+	local perkId, flawId = TraitRoller.RollPair(rng)
+	local name = buildName(rng, { perkIds = { perkId }, drawbackIds = { flawId }, doctrineId = doctrineId }, "")
+	local archetypes = weaponArchetypes()
+	local weaponArchetypeId: string? = nil
+	local weaponSeed: number? = nil
+	if #archetypes > 0 then
+		weaponArchetypeId = archetypes[rng:NextInteger(1, #archetypes)]
+		weaponSeed = rng:NextInteger(1, 2147483646)
+	end
+	return {
+		level = math.clamp(math.floor(candidate.level), 1, ITEM_LEVEL_CAP),
+		raceId = raceId,
+		doctrineId = doctrineId,
+		perkId = perkId,
+		flawId = flawId,
+		name = if name ~= "" then name else nil,
+		weaponArchetypeId = weaponArchetypeId,
+		weaponSeed = weaponSeed,
+		portraitAssetId = PortraitData.PickRandom(rng, raceId),
+	}
+end
+
+-- Per-unit setup shared by the hire and the preview (same as the starting units get), ending
+-- with the stat rebuild. The weapon is already in the MainHand when this runs.
+local function finishRecruitSetup(unit: any, r: any)
+	local doc = (DoctrineData :: any)[r.doctrineId]
+	unit.selectedDoctrineSkill = doc and doc.skillChoices and doc.skillChoices[1] or nil
+	unit.skillLoadout = { slot2 = nil, slot3 = nil, slot4 = nil }
+	unit.skillIds = unit.selectedDoctrineSkill and { unit.selectedDoctrineSkill } or {}
+	unit.records = {
+		battlesParticipated = 0, victoriesParticipated = 0, enemiesDefeated = 0,
+		totalDamageDealt = 0, totalHealingDone = 0, timesKO = 0,
+		-- ProgressionService reads level/xp/raceId from the record; seed them so the
+		-- recruit's XP bar and level-up stat recompute start from its real level.
+		level = r.level, xp = 0, raceId = r.raceId,
+	}
+	unit.consumableSlots = {}
+	unit.consumableSlotCount = 3
+	unit.maxConsumableSlots = 6
+	if raceHasTag(r.raceId, "Flying") then
+		StatusService.ApplyStatus(unit, "Flight", "RaceTag")
+	end
+	EquipmentService.RebuildUnitStats(unit)
+end
+
+-- Tavern inspector preview (2026-10-31): the recruit's permanent parts (race, perk, flaw),
+-- its doctrine and its primary stats, computed on a throwaway unit with the same setup as
+-- the hire. The starter weapon is a stand-in: Common items roll no bonus lines or passives
+-- (ItemGenerator early exit), so the stats match the real weapon without creating an item.
+local function previewRecruit(candidate: any): any?
+	local r = rollRecruit(candidate)
+	if not r then return nil end
+	local unit = UnitSchema.Create({
+		id         = `preview_{tostring(candidate.candidateId)}`,
+		name       = r.name or "Recruit",
+		level      = r.level,
+		raceId     = r.raceId,
+		side       = "Player",
+		controller = "Player",
+		tileX      = 0,
+		tileY      = 0,
+		doctrineId = r.doctrineId,
+	})
+	unit.perkIds = { r.perkId }
+	unit.drawbackIds = { r.flawId }
+	if r.weaponArchetypeId then
+		local standIn = {
+			instanceId = "preview", baseArchetypeId = r.weaponArchetypeId, itemLevel = r.level,
+			rarityId = "Common", bonusLines = {}, bonusPassiveIds = {},
+		}
+		-- Same check Equip runs; an invalid weapon is left off, as it would be on a real hire.
+		if EquipmentService.ValidateEquip(unit, standIn, "MainHand") then
+			unit.equipmentSlots = unit.equipmentSlots or {}
+			unit.equipmentSlots.MainHand = standIn
+		end
+	end
+	finishRecruitSetup(unit, r)
+	local race = RaceData.GetRace(r.raceId)
+	local doc = (DoctrineData :: any)[r.doctrineId]
+	local perk = r.perkId and TraitData.GetTrait(r.perkId) or nil
+	local flaw = r.flawId and TraitData.GetTrait(r.flawId) or nil
+	local es = unit.effectiveStats or {}
+	return {
+		name = r.name or "Recruit",
+		portraitAssetId = r.portraitAssetId,
+		raceName = race and race.name or r.raceId,
+		racePassiveName = race and race.passiveName or nil,
+		racePassiveEffect = race and race.passiveEffect or nil,
+		perkName = perk and perk.name or nil,
+		perkEffect = perk and perk.effect or nil,
+		flawName = flaw and flaw.name or nil,
+		flawEffect = flaw and flaw.effect or nil,
+		doctrineName = doc and doc.name or r.doctrineId,
+		doctrinePassiveName = doc and doc.passiveName or nil,
+		doctrinePassiveEffect = doc and doc.passiveEffect or nil,
+		stats = { STR = es.STR, AGI = es.AGI, INT = es.INT, VIT = es.VIT, DEX = es.DEX, LUK = es.LUK },
+	}
+end
+
+function GuildMenuService.BuildRecruitUnit(candidate: any): any?
+	local r = rollRecruit(candidate)
+	if not r then return nil end
+	local raceId = r.raceId
+	local doctrineId = r.doctrineId
+	local level = r.level
 	local unitId = nextRecruitId()
 
 	local unit = UnitSchema.Create({
@@ -354,18 +542,18 @@ function GuildMenuService.BuildRecruitUnit(candidate: any): any?
 		tileY      = 0,
 		doctrineId = doctrineId,
 	})
-	TraitRoller.AssignIfEmpty(unit, rng)
-	unit.name = buildName(rng, unit, unit.name)
+	unit.perkIds = { r.perkId }
+	unit.drawbackIds = { r.flawId }
+	unit.name = r.name or unit.name
 
 	-- Starter weapon: Common, at the recruit's level (starting units also get one
 	-- generated weapon each). Item goes into the shared inventory like theirs.
-	local archetypes = weaponArchetypes()
-	if #archetypes > 0 then
+	if r.weaponArchetypeId then
 		local item = ItemGenerator.Generate({
-			baseArchetypeId = archetypes[rng:NextInteger(1, #archetypes)],
+			baseArchetypeId = r.weaponArchetypeId,
 			itemLevel       = level,
 			rarity          = "Common",
-			seed            = rng:NextInteger(1, 2147483646),
+			seed            = r.weaponSeed,
 			sourceType      = "Recruit",
 		})
 		if item then
@@ -377,33 +565,15 @@ function GuildMenuService.BuildRecruitUnit(candidate: any): any?
 	end
 
 	-- Same per-unit setup Main.server.lua applies to the roster at session start.
-	local doc = (DoctrineData :: any)[doctrineId]
-	unit.selectedDoctrineSkill = doc and doc.skillChoices and doc.skillChoices[1] or nil
-	unit.skillLoadout = { slot2 = nil, slot3 = nil, slot4 = nil }
-	unit.skillIds = unit.selectedDoctrineSkill and { unit.selectedDoctrineSkill } or {}
-	unit.records = {
-		battlesParticipated = 0, victoriesParticipated = 0, enemiesDefeated = 0,
-		totalDamageDealt = 0, totalHealingDone = 0, timesKO = 0,
-		-- ProgressionService reads level/xp/raceId from the record; seed them so the
-		-- recruit's XP bar and level-up stat recompute start from its real level.
-		level = level, xp = 0, raceId = raceId,
-	}
-	unit.consumableSlots = {}
-	unit.consumableSlotCount = 3
-	unit.maxConsumableSlots = 6
-	if raceHasTag(raceId, "Flying") then
-		StatusService.ApplyStatus(unit, "Flight", "RaceTag")
-	end
-	EquipmentService.RebuildUnitStats(unit)
+	finishRecruitSetup(unit, r)
 	unit.currentHp = unit.maxHp
 	unit.currentMp = unit.maxMp
 	unit.isRecruit = true
 	unit.hireQuality = candidate.quality
 	-- Hired recruits get a random race-matched default portrait (same rule as the
-	-- player starters). Deterministic from the candidate rng; persists via SaveService;
+	-- player starters). Deterministic from the candidate roll; persists via SaveService;
 	-- a loadout pick overrides it later. (2026-10-15)
-	unit.portraitAssetId = PortraitData.PickRandom(rng, raceId)
-
+	unit.portraitAssetId = r.portraitAssetId
 	builtUnits[unitId] = unit
 	print(`[GuildMenuService] Built recruit {unit.name} ({unitId}) L{level} {raceId} {doctrineId}`)
 	return unit
@@ -576,6 +746,21 @@ function GuildMenuService.Export(_pid: string)
 		hireCounter = hireCounter,
 		recruitOrder = table.clone(recruitOrder),
 		recruits = defs,
+		buildings = table.clone(buildingLevels), -- facility levels carry over (2026-10-31)
+		apothecary = ApothecaryService.Export(), -- auto-refill switch + bought shelf slots (2026-11-03)
+		cardShop = CardShopService.Export(), -- Training Grounds bought shelf slots (2026-11-04)
+		-- Bought Merchant shelf slots stay bought after a restart / rejoin (2026-10-31).
+		merchantBought = MerchantService.ExportPurchases(_pid),
+		devShopRefresh = devShopNonce, -- dev "Refresh all shops" survives a restart (2026-10-31)
+		tavernHired = (function(): any?
+			-- Hired recruits of the current pool stay gone after a restart (2026-10-31).
+			if not tavernHired then return nil end
+			local ids: { string } = {}
+			for id in tavernHired.ids do table.insert(ids, id) end
+			if #ids == 0 then return nil end
+			table.sort(ids)
+			return { seed = tavernHired.seed, ids = ids }
+		end)(),
 	}
 end
 
@@ -583,6 +768,36 @@ function GuildMenuService.Import(_pid: string, data: any)
 	if type(data) ~= "table" then return end
 	battlesCompleted = math.max(0, math.floor(tonumber(data.battlesCompleted) or 0))
 	hireCounter = math.max(0, math.floor(tonumber(data.hireCounter) or 0))
+	devShopNonce = math.clamp(math.floor(tonumber(data.devShopRefresh) or 0), 0, DEV_NONCE_MAX)
+	-- Hired recruits of the saved pool (2026-10-31). Bad data is ignored; old saves = none.
+	tavernHired = nil
+	local th = data.tavernHired
+	if type(th) == "table" and type(th.seed) == "number" and th.seed % 1 == 0 and type(th.ids) == "table" then
+		local ids: { [string]: boolean } = {}
+		local count = 0
+		for _, id in th.ids do
+			if count >= MAX_TAVERN_HIRED_SAVE then break end
+			if type(id) == "string" and #id > 0 and #id <= 64 and not ids[id] then
+				ids[id] = true
+				count += 1
+			end
+		end
+		tavernHired = { seed = th.seed, ids = ids }
+	end
+	-- Facility levels (2026-10-31). Saves from before this keep the defaults (L1).
+	-- Unknown buildings and bad values are ignored; levels clamp to 1..10.
+	if type(data.buildings) == "table" then
+		for _, b in BUILDING_NAMES do
+			local lvl = tonumber(data.buildings[b])
+			if lvl then
+				buildingLevels[b] = math.clamp(math.floor(lvl), BUILDING_MIN_LEVEL, BUILDING_MAX_LEVEL)
+			end
+		end
+	end
+	tavernCache, merchantCache = nil, nil -- pool size / stock depend on building level
+	MerchantService.ImportPurchases(_pid, data.merchantBought) -- nil on older saves = none bought
+	ApothecaryService.Import(data.apothecary) -- nil on older saves = switch on, nothing bought
+	CardShopService.Import(data.cardShop) -- nil on older saves = nothing bought
 	recruitDefs, recruitOrder = {}, {}
 	if type(data.recruitOrder) == "table" and type(data.recruits) == "table" then
 		for _, id in data.recruitOrder do
@@ -604,7 +819,7 @@ function GuildMenuService.Import(_pid: string, data: any)
 			end
 		end
 	end
-	print(`[GuildMenuService] Imported | battles completed {battlesCompleted} | hired units {#recruitOrder}`)
+	print(`[GuildMenuService] Imported | battles completed {battlesCompleted} | hired units {#recruitOrder} | GuildHall L{buildingLevels.GuildHall} Tavern L{buildingLevels.Tavern} Merchant L{buildingLevels.Merchant} Blacksmith L{buildingLevels.Blacksmith}`)
 end
 
 function GuildMenuService.GetBattlesCompleted(): number
@@ -756,27 +971,57 @@ local function overview()
 		ok = true,
 		phase = currentPhase,
 		gold = gold,
-		materials = mats,
+		resources = mats,
 		buildings = table.clone(buildingLevels),
 		battlesCompleted = battlesCompleted,
 		rosterCount = count,
+		lastRefill = ApothecaryService.TakeLastReturn(), -- { cost, refilled, skippedCharges, needGold }; given once
+		augmentNotice = TrainingGroundsService.TakeNotice(), -- approved wording, given once (2026-11-04)
 		isStudio = RunService:IsStudio(),
 	}
 end
 
 local function tavernPool()
 	if not tavernCache then
-		local seed = 7001 + battlesCompleted * 97 + hireCounter * 13
+		-- No hire counter in the seed (2026-10-31): hiring no longer rerolls the list on the
+		-- next restart. Hired recruits of this pool are skipped instead (tavernHired).
+		local seed = 7001 + battlesCompleted * 97 + devShopNonce * 7919
 		local res = RecruitmentService.GenerateRecruitPool(_playerId, seed, nil)
-		tavernCache = { pool = res.pool or {}, reason = res.reason }
+		if not tavernHired or tavernHired.seed ~= seed then
+			tavernHired = { seed = seed, ids = {} }
+		end
+		local hired = tavernHired.ids
+		local pool = {}
+		for _, c in res.pool or {} do
+			if not hired[c.candidateId] then
+				c.preview = previewRecruit(c) -- shown in the Tavern inspector
+				table.insert(pool, c)
+			end
+		end
+		tavernCache = { pool = pool, reason = res.reason, seed = seed }
 	end
 	return tavernCache
 end
 
+-- Remember a hire so the recruit stays gone after a restart or a pool rebuild.
+local function markHired(candidateId: string)
+	local cache = tavernCache
+	if cache and tavernHired and tavernHired.seed == cache.seed then
+		tavernHired.ids[candidateId] = true
+	end
+end
+
 local function merchantStock()
-	local key = math.floor(battlesCompleted / MERCHANT_REFRESH_BATTLES)
+	-- Rebuild when the 5-battle window OR the map level changes (2026-10-31, user decision):
+	-- the base shelf (L1) and a quest shelf (its level) are different shelves, so switching
+	-- between them must show the right one at once, not the first one opened this window.
+	-- Bought slots are tracked per shelf in MerchantService, so a rebuild never restocks them.
+	local lvl = mapLevel()
+	local key = `{math.floor(battlesCompleted / MERCHANT_REFRESH_BATTLES)}:{lvl}:{devShopNonce}`
 	if not merchantCache or merchantCache.key ~= key then
-		local res = MerchantService.GetStock(_playerId, mapLevel(), battlesCompleted)
+		-- No seed until the first dev refresh, so normal shelves stay exactly as before.
+		local seed: number? = if devShopNonce > 0 then devShopNonce * 104729 else nil
+		local res = MerchantService.GetStock(_playerId, lvl, battlesCompleted, seed)
 		merchantCache = { key = key, res = res }
 	end
 	return merchantCache.res
@@ -784,7 +1029,7 @@ end
 
 local function dispatchBoard()
 	if not dispatchCache then
-		local res = DispatchService.OfferMissions(_playerId, mapLevel(), 5003 + battlesCompleted * 31)
+		local res = DispatchService.OfferMissions(_playerId, mapLevel(), 5003 + battlesCompleted * 31 + devShopNonce * 7907)
 		dispatchCache = { missions = res.missions or {} }
 	end
 	return dispatchCache
@@ -828,7 +1073,10 @@ local function onGetTavernPool(player: Player)
 	local cache = tavernPool()
 	local list = {}
 	for _, c in cache.pool do
-		table.insert(list, { candidateId = c.candidateId, level = c.level, quality = c.quality, cost = c.cost })
+		table.insert(list, {
+			candidateId = c.candidateId, level = c.level, quality = c.quality, cost = c.cost,
+			preview = c.preview, -- race, perk, flaw, doctrine, primary stats (display only)
+		})
 	end
 	return { ok = true, pool = list, reason = cache.reason, tavernLevel = GuildMenuService.GetBuildingLevel("Tavern") }
 end
@@ -858,6 +1106,7 @@ local function onRequestHire(player: Player, candidateId: any)
 	table.insert(recruitOrder, unitId)
 	if currentPhase == "PreBattle" then table.insert(pendingBattleUnits, unit) end
 	table.remove(cache.pool, idx)
+	markHired(candidateId)
 	markDirty()
 	local gold = balance()
 	return { ok = true, unitName = unit.name, cost = result.cost, gold = gold }
@@ -871,6 +1120,9 @@ local function onGetMerchantStock(player: Player)
 		table.insert(stock, {
 			offerIndex = i, name = itemDisplayName(offer.item), level = offer.itemLevel,
 			rarity = offer.rarity, price = offer.buyPrice,
+			-- Full display detail for the Merchant inspector (stats, passives, bonuses, icon).
+			-- Display-only; buying still goes by offerIndex and is re-priced server-side.
+			detail = ItemDisplay.buildItemEntry(offer.item),
 		})
 	end
 	local sellable = {}
@@ -878,12 +1130,13 @@ local function onGetMerchantStock(player: Player)
 		if not holderOf(item.instanceId) then
 			local d = describeItem(item)
 			d.price = MerchantService.PriceToSell(item)
+			d.detail = ItemDisplay.buildItemEntry(item)
 			table.insert(sellable, d)
 		end
 	end
 	table.sort(sellable, function(a: any, b: any) return a.name < b.name end)
 	return { ok = true, stock = stock, sellable = sellable, reason = res.reason,
-		merchantLevel = GuildMenuService.GetBuildingLevel("Merchant") }
+		merchantLevel = GuildMenuService.GetBuildingLevel("Merchant"), slots = res.slots }
 end
 
 local function onRequestBuy(player: Player, offerIndex: any)
@@ -921,15 +1174,30 @@ local function onGetBlacksmithItems(player: Player)
 			d.canUpgrade = allowed and cost ~= nil
 			d.upgradeBlockedReason = why
 			d.upgradeGold = cost and cost.gold or nil
-			if cost then
-				local mats = {}
-				for tier, qty in cost.materials do table.insert(mats, { tier = tier, qty = qty }) end
-				d.upgradeMaterials = mats
-			end
+			d.upgradeMercury = cost and cost.mercury or nil
 			if allowed and maxLevel then
 				d.upgradeCurve = BlacksmithService.GetUpgradeCurve(item, maxLevel)
 			end
 			d.canDowngrade = item.itemLevel > 1
+			d.minDowngradeLevel = 1 -- free and unlimited (guild_facilities 47)
+			d.detail = ItemDisplay.buildItemEntry(item) -- Blacksmith screen inspector (v2 step 3)
+			-- Dismantle preview (guild_facilities 51-52, v2 step 2). Equipped items (also on
+			-- units away on dispatch) cannot be dismantled.
+			local yield, ywhy = BlacksmithService.ResolveDismantle(item)
+			if yield then
+				local gemNames = {}
+				for gid, n in yield.gems do
+					table.insert(gemNames, if n > 1 then `{gid} x{n}` else gid)
+				end
+				table.sort(gemNames)
+				d.dismantle = {
+					mercury = yield.mercury, crystals = yield.crystals, sulfur = yield.sulfur,
+					gemCount = yield.gemCount, gems = gemNames, cappedLines = yield.cappedLines,
+					lostPassives = yield.lostPassives, aboveEpic = yield.aboveEpic, unique = yield.unique,
+				}
+			end
+			d.canDismantle = yield ~= nil and d.equippedBy == nil
+			d.dismantleBlockedReason = if d.equippedBy then `Equipped by {d.equippedBy}` elseif not yield then tostring(ywhy) else nil
 			table.insert(items, d)
 		end
 	end
@@ -938,7 +1206,7 @@ local function onGetBlacksmithItems(player: Player)
 		return a.name < b.name
 	end)
 	local gold, mats = balance()
-	return { ok = true, items = items, gold = gold, materials = mats,
+	return { ok = true, items = items, gold = gold, resources = mats,
 		blacksmithLevel = GuildMenuService.GetBuildingLevel("Blacksmith") }
 end
 
@@ -961,11 +1229,21 @@ local function onRequestUpgrade(player: Player, instanceId: any)
 	return { ok = true, toLevel = result.toLevel, gold = (balance()) }
 end
 
-local function onRequestDowngrade(player: Player, instanceId: any)
+local function onRequestDowngrade(player: Player, instanceId: any, targetLevel: any)
 	local g = guard(player, "downgrade"); if g then return fail(g) end
 	local item, err = ownedItem(instanceId)
 	if not item then return fail(err or "Invalid item") end
-	local ok, result: any = BlacksmithService.CommitDowngrade(_playerId, item, item.itemLevel - 1)
+	-- Free and unlimited (guild_facilities 47): any level from 1 up to the current level.
+	-- No target = one level down (the old behaviour).
+	local target = item.itemLevel - 1
+	if targetLevel ~= nil then
+		if type(targetLevel) ~= "number" or targetLevel ~= targetLevel or targetLevel % 1 ~= 0 then
+			return fail("Invalid level")
+		end
+		target = targetLevel
+	end
+	if target < 1 or target >= item.itemLevel then return fail("Invalid level") end
+	local ok, result: any = BlacksmithService.CommitDowngrade(_playerId, item, target)
 	if not ok then return fail(tostring(result)) end
 	markDirty()
 	return { ok = true, toLevel = result.toLevel }
@@ -992,14 +1270,27 @@ local function onFinalizeCart(player: Player, payload: any)
 	-- Tavern staged (2026-10-14): optional list of candidateId strings, hired on Save, dropped
 	-- on Discard. Mirrors the live onRequestHire per candidate; failures go to problems.
 	local hires = (type(payload.hires) == "table") and payload.hires or {}
-	if #buys > 50 or #sells > 50 or upCount > 50 or downCount > 50 or #dispatches > 50 or #hires > 50 then return fail("Cart too large") end
+	-- Blacksmith dismantle staged (v2 step 2): optional list of instanceIds, destroyed on Save.
+	local dismantles = (type(payload.dismantles) == "table") and payload.dismantles or {}
+	if #buys > 50 or #sells > 50 or upCount > 50 or downCount > 50 or #dispatches > 50 or #hires > 50
+		or #dismantles > 50 then return fail("Cart too large") end
 
 	local soldCount, boughtCount = 0, 0
 	local soldGold, boughtGold = 0, 0
+	local sellFailed, buyFailed = 0, 0 -- shown to the player (2026-10-31: failures were silent)
 	local upgradedCount, downgradedCount = 0, 0
 	local dispatchedCount = 0
 	local hiredCount = 0
+	local dismantledCount = 0
+	local dismantleGain = { mercury = 0, crystals = 0, sulfur = 0, gems = 0 }
 	local problems: { string } = {}
+
+	-- guild_facilities 52: an item staged to be sold, upgraded or downgraded in this cart
+	-- cannot also be dismantled. Collected BEFORE anything runs.
+	local stagedElsewhere: { [string]: boolean } = {}
+	for _, iid in sells do if type(iid) == "string" then stagedElsewhere[iid] = true end end
+	for iid in upgrades do if type(iid) == "string" then stagedElsewhere[iid] = true end end
+	for iid in downgrades do if type(iid) == "string" then stagedElsewhere[iid] = true end end
 
 	for _, instanceId in sells do
 		if type(instanceId) == "string" and #instanceId <= 80
@@ -1009,9 +1300,11 @@ local function onFinalizeCart(player: Player, payload: any)
 				soldCount += 1
 				soldGold += (result.payout or 0)
 			else
+				sellFailed += 1
 				table.insert(problems, tostring(result))
 			end
 		else
+			sellFailed += 1
 			table.insert(problems, "an item could not be sold (equipped or no longer owned)")
 		end
 	end
@@ -1027,6 +1320,7 @@ local function onFinalizeCart(player: Player, payload: any)
 			boughtCount += 1
 			boughtGold += (result.price or 0)
 		else
+			buyFailed += 1
 			table.insert(problems, tostring(result))
 		end
 	end
@@ -1061,6 +1355,36 @@ local function onFinalizeCart(player: Player, payload: any)
 					local ok, result: any = BlacksmithService.CommitDowngrade(_playerId, item, item.itemLevel - 1)
 					if not ok then table.insert(problems, tostring(result)); break end
 					downgradedCount += 1
+				end
+			end
+		end
+	end
+	-- Blacksmith dismantle (guild_facilities 51-52): owned, not equipped (holderOf covers units
+	-- away on dispatch, so the keep-a-weapon rule / BUG-050 stays safe), not staged for
+	-- anything else in this cart. CommitDismantle removes the item before crediting.
+	local seenDismantle: { [string]: boolean } = {}
+	for _, instanceId in dismantles do
+		if type(instanceId) ~= "string" or #instanceId > 80 or seenDismantle[instanceId] then
+			table.insert(problems, "an invalid dismantle entry was ignored")
+		else
+			seenDismantle[instanceId] = true
+			local item = InventoryService.GetItem(_playerId, instanceId)
+			if not item then
+				table.insert(problems, "an item to dismantle is no longer owned")
+			elseif holderOf(instanceId) then
+				table.insert(problems, `{itemDisplayName(item)} is equipped and was not dismantled`)
+			elseif stagedElsewhere[instanceId] then
+				table.insert(problems, `{itemDisplayName(item)} is also staged to sell or level and was not dismantled`)
+			else
+				local ok, result: any = BlacksmithService.CommitDismantle(_playerId, item)
+				if ok then
+					dismantledCount += 1
+					dismantleGain.mercury += result.yield.mercury
+					dismantleGain.crystals += result.yield.crystals
+					dismantleGain.sulfur += result.yield.sulfur
+					dismantleGain.gems += result.yield.gemCount
+				else
+					table.insert(problems, tostring(result))
 				end
 			end
 		end
@@ -1135,13 +1459,15 @@ local function onFinalizeCart(player: Player, payload: any)
 						table.insert(recruitOrder, unitId)
 						if currentPhase == "PreBattle" then table.insert(pendingBattleUnits, unit) end
 						table.remove(cache.pool, idx)
+						markHired(candidateId)
 						hiredCount += 1
 					end
 				end
 			end
 		end
 	end
-	if soldCount > 0 or boughtCount > 0 or upgradedCount > 0 or downgradedCount > 0 or dispatchedCount > 0 or hiredCount > 0 then
+	if soldCount > 0 or boughtCount > 0 or upgradedCount > 0 or downgradedCount > 0 or dispatchedCount > 0 or hiredCount > 0
+		or dismantledCount > 0 then
 		markDirty()
 		save()  -- commit = persist now (matches the confirm-then-save model)
 	end
@@ -1150,7 +1476,9 @@ local function onFinalizeCart(player: Player, payload: any)
 		upgradedCount = upgradedCount, downgradedCount = downgradedCount,
 		dispatchedCount = dispatchedCount,
 		hiredCount = hiredCount,
-		boughtGold = boughtGold, soldGold = soldGold, gold = gold, problems = problems }
+		dismantledCount = dismantledCount, dismantleGain = dismantleGain,
+		boughtGold = boughtGold, soldGold = soldGold, gold = gold, problems = problems,
+		buyFailed = buyFailed, sellFailed = sellFailed }
 end
 
 local function onGetDispatchBoard(player: Player)
@@ -1160,7 +1488,7 @@ local function onGetDispatchBoard(player: Player)
 	for _, m in board.missions do
 		table.insert(missions, {
 			missionId = m.missionId, tier = m.tier, duration = m.duration, xp = m.xp,
-			rewardTier = m.rewardTier, rewardCount = m.rewardCount,
+			rewardMercury = m.rewardMercury,
 		})
 	end
 	local units = {}
@@ -1245,13 +1573,37 @@ local function partyMemberInfo(unitId: string): any
 	local u = live[unitId]
 	if not u then return nil end
 	local race = u.raceId and RaceData.GetRace(u.raceId) or nil
+	local doc = u.doctrineId and DoctrineData[u.doctrineId] or nil
 	return {
 		id = unitId,
 		name = u.name,
 		unitLevel = u.level,
 		race = race and race.name or "?",
 		away = DispatchService.IsUnitDispatched(_playerId, unitId),
+		-- Parties tab portraits (2026-11-04): face, doctrine icon + name.
+		portraitAssetId = u.portraitAssetId,
+		doctrineName = doc and doc.name or nil,
+		doctrineIcon = doc and doc.icon or nil,
 	}
+end
+
+-- Party chosen for the current sortie (Main sets it; can't be deleted while set).
+local _sortiePartyId: string? = nil
+function GuildMenuService.SetSortieParty(id: string?)
+	_sortiePartyId = id
+end
+
+-- Roblox text filter for party name / motto (other players may see them later).
+-- Rejected when the filter changes anything; nil + message when the check fails.
+local function filterPartyText(player: Player, text: string): (boolean?, string?)
+	if text == "" then return true, nil end
+	local ok, result = pcall(function()
+		return TextService:FilterStringAsync(text, player.UserId, Enum.TextFilterContext.PublicChat)
+	end)
+	if not ok or not result then return nil, "Couldn't check the text. Try again." end
+	local ok2, out = pcall(function() return (result :: any):GetNonChatStringForBroadcastAsync() end)
+	if not ok2 or type(out) ~= "string" then return nil, "Couldn't check the text. Try again." end
+	return out == text, nil
 end
 
 local function onGetParties(player: Player): any
@@ -1274,13 +1626,21 @@ local function onGetParties(player: Player): any
 		local mi = partyMemberInfo(id)
 		if mi then table.insert(roster, mi) end
 	end
-	return { ok = true, parties = partyList, roster = roster, maxSize = PartyService.MAX_PARTY_SIZE }
+	return { ok = true, parties = partyList, roster = roster, maxSize = PartyService.MAX_PARTY_SIZE,
+		maxParties = PartyService.MAX_PARTIES, sortiePartyId = _sortiePartyId,
+		maxNameLen = PartyService.MAX_NAME_LEN, maxMottoLen = PartyService.MAX_MOTTO_LEN }
 end
 
 local function onSetPartyName(player: Player, slot: any, name: any): any
 	local g = guard(player, "partyname"); if g then return fail(g) end
 	if type(slot) ~= "string" then return fail("Invalid party slot") end
-	local ok, err = PartyService.SetName(_playerId, slot, name)
+	if type(name) ~= "string" or #name > 200 then return fail("Invalid name") end
+	local clean = PartyService.CleanName(name)
+	if clean == "" then return fail("Invalid name") end -- empty keeps the old name (approved)
+	local allowed, why = filterPartyText(player, clean)
+	if allowed == nil then return fail(why or "Couldn't check the text. Try again.") end
+	if not allowed then return fail("That name isn't allowed") end
+	local ok, err = PartyService.SetName(_playerId, slot, clean)
 	if not ok then return fail(err or "Could not rename party") end
 	markDirty()
 	return { ok = true }
@@ -1293,8 +1653,13 @@ local function onSetPartyMembers(player: Player, slot: any, unitIds: any): any
 	local live = playerUnits()
 	local clean = {}
 	local seen = {}
+	if not PartyService.Exists(_playerId, slot) then return fail("Unknown party") end
+	local already: { [string]: boolean } = {}
+	for _, uid in PartyService.GetMembers(_playerId, slot) do already[uid] = true end
 	for _, uid in ipairs(unitIds) do
-		if type(uid) == "string" and live[uid] and not seen[uid] then
+		-- Units on dispatch can't be added; members who went on dispatch stay (D-rule).
+		if type(uid) == "string" and live[uid] and not seen[uid]
+			and (already[uid] or not DispatchService.IsUnitDispatched(_playerId, uid)) then
 			seen[uid] = true
 			table.insert(clean, uid)
 		end
@@ -1303,6 +1668,44 @@ local function onSetPartyMembers(player: Player, slot: any, unitIds: any): any
 	if not ok then return fail(err or "Could not save party") end
 	markDirty()
 	return { ok = true }
+end
+
+-- Parties tab actions (2026-11-04): Create / Delete / SetMotto / SetArt.
+local function onPartyAction(player: Player, cmd: any): any
+	local g = guard(player, "partyaction"); if g then return fail(g) end
+	if type(cmd) ~= "table" or type(cmd.action) ~= "string" then return fail("Invalid request") end
+	local a = cmd.action
+	local res: any = { ok = true }
+	if a == "Create" then
+		local id, err = PartyService.Create(_playerId)
+		if not id then return fail(err or "Could not create party") end
+		res.id = id
+	elseif a == "Delete" then
+		if type(cmd.id) ~= "string" then return fail("Unknown party") end
+		if cmd.id == _sortiePartyId then return fail("This party is set to deploy") end
+		local ok, err = PartyService.Delete(_playerId, cmd.id)
+		if not ok then return fail(err or "Could not delete party") end
+	elseif a == "SetMotto" then
+		if type(cmd.id) ~= "string" or type(cmd.text) ~= "string" or #cmd.text > 400 then return fail("Invalid motto") end
+		local clean = PartyService.CleanMotto(cmd.text)
+		local allowed, why = filterPartyText(player, clean)
+		if allowed == nil then return fail(why or "Couldn't check the text. Try again.") end
+		if not allowed then return fail("That motto isn't allowed") end
+		local ok, err = PartyService.SetMotto(_playerId, cmd.id, clean)
+		if not ok then return fail(err or "Could not save motto") end
+	elseif a == "SetArt" then
+		local field = cmd.field
+		if type(cmd.id) ~= "string" or (field ~= "emblem" and field ~= "background") then return fail("Invalid choice") end
+		if cmd.key ~= nil and (type(cmd.key) ~= "string" or not PartyArtData.IsValid(field, cmd.key)) then
+			return fail("Invalid choice")
+		end
+		local ok, err = PartyService.SetArt(_playerId, cmd.id, field, cmd.key)
+		if not ok then return fail(err or "Could not save") end
+	else
+		return fail("Unknown action")
+	end
+	markDirty()
+	return res
 end
 
 --------------------------------------------------
@@ -1330,6 +1733,160 @@ local function dismissFeeFor(unitId: string): (number, string, number)
 	return base * DISMISS_SEVERANCE_MULT, quality, level
 end
 
+-- Consumable return on dismissal (2026-11-03 ownership). Injected by Main (owns cardInventory).
+local _returnConsumable: ((id: string) -> ())? = nil
+function GuildMenuService.SetConsumableReturn(fn: (id: string) -> ())
+	_returnConsumable = fn
+end
+
+-- Locked-slot sweep (Main -> LoadoutRequestHandlers.UnequipIncompatibleAugments), for level drops.
+local _sweepLockedAugments: (() -> ())? = nil
+function GuildMenuService.SetLockedAugmentSweep(fn: () -> ())
+	_sweepLockedAugments = fn
+end
+
+-- Card inventory (Main's cardInventory), for the Training Grounds card shop.
+local _getCardInventory: (() -> any)? = nil
+function GuildMenuService.SetCardInventory(fn: () -> any)
+	_getCardInventory = fn
+end
+
+local function cardShopPayload(): any
+	local lvl = CardShopService.GetLevel()
+	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
+	local gold, res = balance()
+	return {
+		ok = true,
+		level = lvl,
+		guildHallLevel = gh,
+		lockedReason = if lvl < 1 then `The Training Grounds unlocks at Guild Hall L{TRAINING_GROUNDS_UNLOCK_GUILD_HALL} (yours is L{gh})` else nil,
+		discountPct = math.max(0, 3 * (lvl - 1)),
+		slot2Open = TrainingGroundsService.IsMaxed(),
+		shelf = CardShopService.GetShelf(),
+		owned = CardShopService.GetOwned(_playerId),
+		gold = gold,
+		resources = res,
+	}
+end
+
+local function onGetCardShop(player: Player): any
+	local g = guard(player, "cardShop"); if g then return fail(g) end
+	return cardShopPayload()
+end
+
+local function onCardShopAction(player: Player, cmd: any): any
+	local g = guard(player, "cardShopAction"); if g then return fail(g) end
+	if CardShopService.GetLevel() < 1 then return fail("The Training Grounds is not built yet") end
+	if type(cmd) ~= "table" or type(cmd.action) ~= "string" then return fail("Invalid request") end
+	local res: any
+	if cmd.action == "Buy" then
+		local s = cmd.slot
+		if type(s) ~= "number" or s % 1 ~= 0 or s < 1 or s > 8 then return fail("Invalid shelf slot") end
+		res = CardShopService.Buy(_playerId, s)
+	elseif cmd.action == "Sell" then
+		if type(cmd.kind) ~= "string" or type(cmd.id) ~= "string" or #cmd.id > 64
+			or (cmd.kind ~= "Skill" and cmd.kind ~= "Augment" and cmd.kind ~= "Doctrine") then
+			return fail("Invalid card")
+		end
+		res = CardShopService.Sell(_playerId, cmd.kind, cmd.id)
+	else
+		return fail("Unknown action")
+	end
+	if not res.ok then return fail(res.error or "Refused") end
+	markDirty()
+	local p = cardShopPayload()
+	p.result = res
+	return p
+end
+
+-- Owned loose consumable copies (Main's cardInventory.consumables), for the Apothecary.
+local _getOwnedConsumables: (() -> { [string]: number })? = nil
+function GuildMenuService.SetOwnedConsumables(fn: () -> { [string]: number })
+	_getOwnedConsumables = fn
+end
+
+--------------------------------------------------
+-- APOTHECARY (2026-11-03)
+--------------------------------------------------
+
+local function apothecaryPayload(): any
+	local lvl = ApothecaryService.GetLevel()
+	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
+	local owned = (_getOwnedConsumables and _getOwnedConsumables()) or {}
+	local ownedList = {}
+	for id, n in owned do
+		table.insert(ownedList, { id = id, count = n, sellPrice = ApothecaryService.SellPrice(id) })
+	end
+	table.sort(ownedList, function(a: any, b: any) return a.id < b.id end)
+	local gold, res = balance()
+	return {
+		ok = true,
+		level = lvl,
+		buildingLevel = buildingLevels.Apothecary or DEFAULT_BUILDING_LEVEL,
+		guildHallLevel = gh,
+		lockedReason = if lvl < 1 then `The Apothecary unlocks at Guild Hall L{APOTHECARY_UNLOCK_GUILD_HALL} (yours is L{gh})` else nil,
+		refillRate = ApothecaryService.RefillRate(),
+		discountPct = ApothecaryService.BuyDiscountPct(),
+		autoRefill = ApothecaryService.GetAutoRefill(),
+		refillPreview = ApothecaryService.Refill(_playerId, false),
+		shelf = ApothecaryService.GetShelf(),
+		owned = ownedList,
+		gold = gold,
+		resources = res,
+	}
+end
+
+local function onGetApothecary(player: Player): any
+	local g = guard(player, "apothecary"); if g then return fail(g) end
+	return apothecaryPayload()
+end
+
+local function onCommitApothecary(player: Player, cart: any): any
+	local g = guard(player, "apothecaryCommit"); if g then return fail(g) end
+	if ApothecaryService.GetLevel() < 1 then return fail("The Apothecary is not built yet") end
+	if type(cart) ~= "table" then return fail("Invalid cart") end
+	local buys: { number } = {}
+	if type(cart.buys) == "table" then
+		for _, s in cart.buys do
+			if type(s) ~= "number" or s % 1 ~= 0 or s < 1 or s > 8 or #buys >= 8 then return fail("Invalid shelf slot") end
+			table.insert(buys, s)
+		end
+	end
+	local sells: { [string]: number } = {}
+	if type(cart.sells) == "table" then
+		local n = 0
+		for id, q in cart.sells do
+			n += 1
+			if n > 200 or type(id) ~= "string" or #id > 16 or type(q) ~= "number" or q % 1 ~= 0 or q < 1 or q > 999 then
+				return fail("Invalid sell list")
+			end
+			sells[id] = q
+		end
+	end
+	local res = ApothecaryService.Commit(_playerId, buys, sells)
+	if not res.ok then return fail(res.error or "Refused") end
+	markDirty()
+	local p = apothecaryPayload()
+	p.result = res
+	return p
+end
+
+local function onApothecaryRefill(player: Player, cmd: any): any
+	local g = guard(player, "apothecaryRefill"); if g then return fail(g) end
+	if type(cmd) ~= "table" or type(cmd.action) ~= "string" then return fail("Invalid request") end
+	if cmd.action == "SetAuto" then
+		if ApothecaryService.GetLevel() < 1 then return fail("The Apothecary is not built yet") end
+		ApothecaryService.SetAutoRefill(cmd.on == true)
+	elseif cmd.action == "RefillNow" then
+		local res = ApothecaryService.Refill(_playerId, true)
+		print(`[Apothecary] Refill now: {res.refilled} charge(s) for {res.cost}g`)
+	else
+		return fail("Unknown action")
+	end
+	markDirty()
+	return apothecaryPayload()
+end
+
 local function onDismissUnit(player: Player, unitId: any, confirm: any): any
 	if _sessionPlayer and player ~= _sessionPlayer then return fail("Not your roster") end
 	if type(unitId) ~= "string" then return fail("Invalid unit") end
@@ -1351,6 +1908,13 @@ local function onDismissUnit(player: Player, unitId: any, confirm: any): any
 	-- COMMIT.
 	if isAvatar then return fail("The Hero cannot be dismissed") end
 	if not canAfford then return fail(string.format("Not enough gold for separation pay (need %d)", fee)) end
+	-- Items are never destroyed (consumable_framework 1, 2026-11-03): a unit holding a partly
+	-- used consumable can't leave until it is refilled (DEV DEFAULT, replaces discarding).
+	for _, slotData in pairs(unit.consumableSlots or {}) do
+		if type(slotData) == "table" and slotData.consumableId and not ApothecaryService.IsFull(slotData) then
+			return fail(`{unit.name} has a partly used item. Refill it at the Apothecary first.`)
+		end
+	end
 
 	-- 1) Unequip every slot. Items stay owned in the shared inventory (equipping is only an
 	-- assignment), so this returns all the unit's gear to inventory by clearing its slots.
@@ -1359,6 +1923,15 @@ local function onDismissUnit(player: Player, unitId: any, confirm: any): any
 			-- allowWeaponless: this unit is being dismissed (leaving the roster), so
 			-- emptying its weapon is legitimate teardown, exempt from the retention guard.
 			EquipmentService.Unequip(unit, slot, { allowWeaponless = true })
+		end
+	end
+
+	-- 1b) Consumables (2026-11-03): every equipped item is full here (checked above) and goes
+	-- back to the owned list.
+	for idx, slotData in pairs(unit.consumableSlots or {}) do
+		if type(slotData) == "table" and slotData.consumableId then
+			if _returnConsumable then _returnConsumable(slotData.consumableId) end
+			unit.consumableSlots[idx] = nil
 		end
 	end
 
@@ -1386,6 +1959,296 @@ local function onDismissUnit(player: Player, unitId: any, confirm: any): any
 	return { ok = true, done = true, cost = fee, gold = balGold }
 end
 
+
+--------------------------------------------------
+-- RUNEFORGE (v2 build step 4, 2026-11-01). Server rules live in RuneforgeService; these
+-- handlers validate the request shape (SEC-001) and describe results for the screen.
+--------------------------------------------------
+
+local function describeLines(lineIds: { string }): { any }
+	local out = {}
+	for _, id in lineIds do
+		local d = RuneforgeService.DescribeGem(id)
+		table.insert(out, d or { id = id, kind = "unknown", name = id })
+	end
+	return out
+end
+
+local function linesOf(item: any): { string }
+	local ids = {}
+	for _, l in item.bonusLines or {} do
+		if type(l) == "table" and type(l.id) == "string" then table.insert(ids, l.id) end
+	end
+	for _, pid in item.bonusPassiveIds or {} do
+		if type(pid) == "string" then table.insert(ids, pid) end
+	end
+	return ids
+end
+
+local function validInstalls(installs: any): boolean
+	if type(installs) ~= "table" or #installs == 0 or #installs > 8 then return false end
+	for _, ins in installs do
+		if type(ins) ~= "table" or type(ins.gem) ~= "string" or #ins.gem > 64 then return false end
+		if ins.replace ~= nil and (type(ins.replace) ~= "string" or #ins.replace > 64) then return false end
+	end
+	return true
+end
+
+local function onGetRuneforge(player: Player)
+	local g = guard(player, "runeforge"); if g then return fail(g) end
+	local state = RuneforgeService.GetState()
+	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
+	local bal = CurrencyService.GetBalance(_playerId)
+	local owned = bal.gems or {}
+	local gems = {}
+	for id, count in owned do
+		local d = RuneforgeService.DescribeGem(id)
+		if d and count > 0 then
+			d.count = count
+			table.insert(gems, d)
+		end
+	end
+	table.sort(gems, function(a: any, b: any)
+		if a.kind ~= b.kind then return a.kind == "stat" end
+		if a.name ~= b.name then return a.name < b.name end
+		return a.id < b.id
+	end)
+	local items = {}
+	for _, item in InventoryService.GetAllItems(_playerId) do
+		if type(item.itemLevel) == "number" then
+			local d = describeItem(item)
+			d.detail = ItemDisplay.buildItemEntry(item)
+			d.lines = describeLines(linesOf(item))
+			local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+			d.passiveSlots = if arch and arch.handClass == "2H" then 2 else 1
+			d.runeForged = item.runeForged == true
+			local forgeable, why = RuneforgeService.IsForgeable(item)
+			d.forgeable = forgeable
+			d.forgeBlockedReason = why
+			if forgeable then
+				local compat = RuneforgeService.CompatibleGems(item)
+				local usable = {}
+				for id in owned do
+					if compat[id] then table.insert(usable, id) end
+				end
+				table.sort(usable)
+				d.compatibleGems = usable
+			end
+			d.reroll = RuneforgeService.RerollInfo(item)
+			table.insert(items, d)
+		end
+	end
+	table.sort(items, function(a: any, b: any) return a.name < b.name end)
+	local gold, res = balance()
+	return {
+		ok = true,
+		level = state.level,
+		buildingLevel = buildingLevels.Runeforge or DEFAULT_BUILDING_LEVEL,
+		guildHallLevel = gh,
+		capacity = state.capacity,
+		discountPct = state.discountPct,
+		lockedReason = if state.level < 1 then `The Runeforge unlocks at Guild Hall L{RUNEFORGE_UNLOCK_GUILD_HALL} (yours is L{gh})` else nil,
+		gems = gems,
+		items = items,
+		gold = gold,
+		resources = res,
+	}
+end
+
+local function onPreviewForge(player: Player, instanceId: any, installs: any)
+	local g = guard(player, "forgePreview"); if g then return fail(g) end
+	local item, err = ownedItem(instanceId)
+	if not item then return fail(err or "Invalid item") end
+	if not validInstalls(installs) then return fail("Invalid rune gem selection") end
+	local plan, why = RuneforgeService.PlanForge(item, installs)
+	if not plan then return fail(tostring(why)) end
+	local newIds = {}
+	for _, l in plan.lines do table.insert(newIds, l.id) end
+	for _, pid in plan.passives do table.insert(newIds, pid) end
+	local canAfford = CurrencyService.CanAfford(_playerId, { gold = plan.gold, crystals = plan.crystals, gems = plan.gems })
+	return {
+		ok = true,
+		fromRarity = item.rarityId,
+		newRarity = plan.newRarity,
+		raised = plan.raised,
+		crystals = plan.crystals,
+		gold = plan.gold,
+		forgeFee = plan.forgeFee,
+		swapFee = plan.swapFee,
+		catchUp = plan.catchUp,
+		totalBp = plan.totalBp,
+		replaced = describeLines(plan.replaced),
+		newLines = describeLines(newIds),
+		newName = ItemGenerator.ComposeName(item.baseArchetypeId, plan.lines, plan.passives),
+		canAfford = canAfford,
+	}
+end
+
+local function onCommitForge(player: Player, instanceId: any, installs: any)
+	local g = guard(player, "forge"); if g then return fail(g) end
+	local item, err = ownedItem(instanceId)
+	if not item then return fail(err or "Invalid item") end
+	if not validInstalls(installs) then return fail("Invalid rune gem selection") end
+	local ok, result: any = RuneforgeService.CommitForge(_playerId, item, installs)
+	if not ok then return fail(tostring(result)) end
+	markDirty()
+	local gold, res = balance()
+	return { ok = true, newRarity = result.plan.newRarity, name = itemDisplayName(item), gold = gold, resources = res }
+end
+
+local function onGetRerollSets(player: Player, instanceId: any)
+	local g = guard(player, "rerollSets"); if g then return fail(g) end
+	local item, err = ownedItem(instanceId)
+	if not item then return fail(err or "Invalid item") end
+	local offer, why = RuneforgeService.GetRerollOffer(item)
+	if not offer then return fail(tostring(why)) end
+	local sets = {}
+	for i, set in offer.sets do
+		local ids = {}
+		for _, l in set.bonusLines or {} do table.insert(ids, l.id) end
+		for _, pid in set.bonusPassiveIds or {} do table.insert(ids, pid) end
+		table.insert(sets, { choice = i, name = set.name, lines = describeLines(ids) })
+	end
+	return {
+		ok = true,
+		sulfur = offer.sulfur,
+		haveSulfur = CurrencyService.GetBalance(_playerId).sulfur or 0,
+		current = { name = itemDisplayName(item), lines = describeLines(linesOf(item)) },
+		sets = sets,
+	}
+end
+
+local function onCommitReroll(player: Player, instanceId: any, choice: any)
+	local g = guard(player, "reroll"); if g then return fail(g) end
+	local item, err = ownedItem(instanceId)
+	if not item then return fail(err or "Invalid item") end
+	local ok, result: any = RuneforgeService.CommitReroll(_playerId, item, choice)
+	if not ok then return fail(tostring(result)) end
+	markDirty()
+	local gold, res = balance()
+	return { ok = true, choice = result.choice, name = itemDisplayName(item), gold = gold, resources = res }
+end
+
+-- DEV TOOLS (Studio only, 2026-10-31): the always-on dev panel (DevToolsPanel) uses this
+-- RemoteFunction so it gets an answer back (the building levels after a change). Live servers
+-- refuse every request. Replaces the old DevCommand "SetBuildingLevel" listener.
+local DEV_ACTIONS = table.freeze({ GetLevels = true, SetBuildingLevel = true, RefreshShops = true })
+
+--------------------------------------------------
+-- CRUCIBLE (gear merging, 2026-11-02). Rules live in CrucibleService; these handlers check the
+-- request shape (SEC-001) and describe items for the screen. The client sends instance IDs only;
+-- the server prices everything. Merges commit straight away (no basket).
+--------------------------------------------------
+
+local function validIdList(ids: any): boolean
+	if type(ids) ~= "table" or #ids == 0 or #ids > 5 then return false end
+	for _, id in ids do
+		if type(id) ~= "string" or #id > 80 then return false end
+	end
+	return true
+end
+
+local function onGetCrucible(player: Player)
+	local g = guard(player, "crucible"); if g then return fail(g) end
+	local state = CrucibleService.GetState()
+	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
+	local items = {}
+	for _, item in InventoryService.GetAllItems(_playerId) do
+		if type(item.itemLevel) == "number" then
+			local d = describeItem(item)
+			d.detail = ItemDisplay.buildItemEntry(item)
+			d.archetypeId = item.baseArchetypeId
+			d.blockedReason = CrucibleService.ItemBlockedReason(item)
+			table.insert(items, d)
+		end
+	end
+	table.sort(items, function(a: any, b: any)
+		if a.name ~= b.name then return a.name < b.name end
+		return a.instanceId < b.instanceId
+	end)
+	local gold, res = balance()
+	return {
+		ok = true,
+		level = state.level,
+		buildingLevel = buildingLevels.Crucible or DEFAULT_BUILDING_LEVEL,
+		guildHallLevel = gh,
+		needed = state.needed,
+		boost = state.boost,
+		capacity = state.capacity,
+		discountPct = state.discountPct,
+		lockedReason = if state.level < 1 then `The Crucible unlocks at Guild Hall L{CRUCIBLE_UNLOCK_GUILD_HALL} (yours is L{gh})` else nil,
+		items = items,
+		gold = gold,
+		resources = res,
+	}
+end
+
+local function onPreviewMerge(player: Player, ids: any)
+	local g = guard(player, "mergePreview"); if g then return fail(g) end
+	if not validIdList(ids) then return fail("Invalid item selection") end
+	local plan, why = CrucibleService.PlanMerge(_playerId, ids)
+	if not plan then return fail(tostring(why)) end
+	local first = plan.items[1]
+	-- D-1 fix (2026-11-02): the plain base-item name (e.g. "Great Bow"), never an input's affix
+	-- name -- the merged item's own lines (and so its name) are rolled only when it is made.
+	local baseDef = WeaponData.GetByArchetypeId(first.baseArchetypeId) or ArmorData.GetByArchetypeId(first.baseArchetypeId)
+	return {
+		ok = true,
+		name = (baseDef and baseDef.name) or tostring(first.baseArchetypeId),
+		fromRarity = plan.fromRarity,
+		toRarity = plan.toRarity,
+		toLevel = plan.toLevel,
+		averageLevel = plan.averageLevel,
+		gold = plan.gold,
+		crystals = plan.crystals,
+		sulfur = plan.sulfur,
+		canAfford = CurrencyService.CanAfford(_playerId, { gold = plan.gold, crystals = plan.crystals, sulfur = plan.sulfur }),
+	}
+end
+
+local function onCommitMerge(player: Player, ids: any)
+	local g = guard(player, "merge"); if g then return fail(g) end
+	if not validIdList(ids) then return fail("Invalid item selection") end
+	local ok, result: any = CrucibleService.CommitMerge(_playerId, ids)
+	if not ok then return fail(tostring(result)) end
+	markDirty()
+	local gold, res = balance()
+	local item = result.item
+	return { ok = true, instanceId = item.instanceId, name = itemDisplayName(item), rarity = item.rarityId,
+		level = item.itemLevel, gold = gold, resources = res }
+end
+
+local function onDevGuild(player: Player, cmd: any): any
+	if not RunService:IsStudio() then return fail("Dev tools are Studio only") end
+	if _sessionPlayer and player ~= _sessionPlayer then return fail("Not your guild") end
+	if type(cmd) ~= "table" or type(cmd.action) ~= "string" or not DEV_ACTIONS[cmd.action] then
+		return fail("Unknown dev action")
+	end
+	if cmd.action == "SetBuildingLevel" then
+		local name, level = cmd.building, cmd.level
+		if type(name) ~= "string" or buildingLevels[name] == nil then return fail("Unknown building") end
+		if type(level) ~= "number" or level ~= level or level % 1 ~= 0 then return fail("Invalid level") end
+		buildingLevels[name] = math.clamp(level, BUILDING_MIN_LEVEL, BUILDING_MAX_LEVEL)
+		tavernCache, merchantCache = nil, nil -- pool size / stock depend on level
+		-- Apothecary L9 charges / L10 slot change unit numbers: rebuild so they apply now.
+		if name == "Apothecary" or name == "GuildHall" then
+			for _, u in playerUnits() do EquipmentService.RebuildUnitStats(u) end
+		end
+		-- Training Grounds below L10 locks slot 2 again: those augments go back to storage.
+		if (name == "TrainingGrounds" or name == "GuildHall") and _sweepLockedAugments then
+			_sweepLockedAugments()
+		end
+		markDirty() -- saved when the menu closes or on quit (facility levels carry over)
+		print(`[Dev] Building {name} set to L{buildingLevels[name]} (saved when the menu closes)`)
+	elseif cmd.action == "RefreshShops" then
+		devShopNonce = math.min(devShopNonce + 1, DEV_NONCE_MAX)
+		tavernCache, merchantCache, dispatchCache = nil, nil, nil
+		markDirty()
+		print(`[Dev] All shops refreshed (Merchant, Tavern, Dispatch) | refresh #{devShopNonce} (saved when the menu closes)`)
+	end
+	return { ok = true, buildings = table.clone(buildingLevels), shopRefresh = devShopNonce }
+end
+
 function GuildMenuService.Init(deps: any)
 	_playerId = deps.playerId or _playerId
 	_sessionPlayer = deps.sessionPlayer
@@ -1394,6 +2257,21 @@ function GuildMenuService.Init(deps: any)
 	_doSave = deps.doSave
 	_getMapLevel = deps.getMapLevel
 	_isSkillRegistered = deps.isSkillRegistered
+	TrainingGroundsService.SetLevelProvider(GuildMenuService.GetTrainingGroundsLevel)
+	CardShopService.Init({
+		getLevel = GuildMenuService.GetTrainingGroundsLevel,
+		getCards = function() return _getCardInventory and _getCardInventory() or nil end,
+		getMapLevel = mapLevel,
+		getBattles = function() return battlesCompleted end,
+		getNonce = function() return devShopNonce end,
+	})
+	ApothecaryService.Init({
+		getLevel = GuildMenuService.GetApothecaryLevel,
+		getOwned = function() return (_getOwnedConsumables and _getOwnedConsumables()) or nil end,
+		getUnits = playerUnits,
+		getBattles = function() return battlesCompleted end,
+		getNonce = function() return devShopNonce end,
+	})
 
 	-- Dispatch slots follow the temporary Guild Hall level (Dev-adjustable).
 	DispatchService.SetGuildHallLevelProvider(function(_pid: any)
@@ -1416,22 +2294,28 @@ function GuildMenuService.Init(deps: any)
 	GuildEvents.GetParties.OnServerInvoke = onGetParties
 	GuildEvents.SetPartyName.OnServerInvoke = onSetPartyName
 	GuildEvents.SetPartyMembers.OnServerInvoke = onSetPartyMembers
+	GuildEvents.PartyAction.OnServerInvoke = onPartyAction
 	BattleEvents.RequestDismissUnit.OnServerInvoke = onDismissUnit
 
-	-- Dev "set building level" (Studio only) on the EXISTING DevCommand remote.
-	if RunService:IsStudio() then
-		BattleEvents.DevCommand.OnServerEvent:Connect(function(player: Player, cmd: any)
-			if type(cmd) ~= "table" or cmd.action ~= "SetBuildingLevel" then return end
-			if _sessionPlayer and player ~= _sessionPlayer then return end
-			local name, level = cmd.building, cmd.level
-			if type(name) ~= "string" or buildingLevels[name] == nil then return end
-			if type(level) ~= "number" or level % 1 ~= 0 then return end
-			buildingLevels[name] = math.clamp(level, BUILDING_MIN_LEVEL, BUILDING_MAX_LEVEL)
-			tavernCache, merchantCache = nil, nil -- pool size / stock depend on level
-			print(`[Dev] Building {name} set to L{buildingLevels[name]} (temporary, not saved)`)
-		end)
-	end
-	print(`[GuildMenuService] Initialized | buildings at L{DEFAULT_BUILDING_LEVEL} | battles completed {battlesCompleted}`)
+	-- Runeforge (v2 build step 4).
+	GuildEvents.GetRuneforge.OnServerInvoke = onGetRuneforge
+	GuildEvents.PreviewForge.OnServerInvoke = onPreviewForge
+	GuildEvents.CommitForge.OnServerInvoke = onCommitForge
+	GuildEvents.GetRerollSets.OnServerInvoke = onGetRerollSets
+	GuildEvents.CommitReroll.OnServerInvoke = onCommitReroll
+	-- Crucible (gear merging, 2026-11-02).
+	GuildEvents.GetCrucible.OnServerInvoke = onGetCrucible
+	GuildEvents.PreviewMerge.OnServerInvoke = onPreviewMerge
+	GuildEvents.CommitMerge.OnServerInvoke = onCommitMerge
+	GuildEvents.GetApothecary.OnServerInvoke = onGetApothecary
+	GuildEvents.CommitApothecary.OnServerInvoke = onCommitApothecary
+	GuildEvents.ApothecaryRefill.OnServerInvoke = onApothecaryRefill
+	GuildEvents.GetCardShop.OnServerInvoke = onGetCardShop
+	GuildEvents.CardShopAction.OnServerInvoke = onCardShopAction
+
+	-- Studio-only dev panel requests (the handler refuses outside Studio).
+	GuildEvents.DevGuild.OnServerInvoke = onDevGuild
+	print(`[GuildMenuService] Initialized | Merchant L{buildingLevels.Merchant} | battles completed {battlesCompleted}`)
 end
 
 return GuildMenuService

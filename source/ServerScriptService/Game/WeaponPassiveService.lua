@@ -51,6 +51,16 @@ local PAS_ID_TO_KEY: { [string]: string } = {
 	["PAS-052"] = "Lacerate",
 	["PAS-053"] = "Freeze",
 	["PAS-054"] = "Lullaby",
+	-- Rolled copies of weapon natives (2026-10-28): these PAS ids had no reader. They now count as
+	-- the same key as the weapon native, so every existing reader picks them up.
+	["PAS-003"] = "Knockback",
+	["PAS-005"] = "Fortify",
+	["PAS-006"] = "ArcaneFlow",
+	["PAS-008"] = "ArcaneReach",
+	["PAS-045"] = "HighGround",
+	["PAS-047"] = "Reap",
+	["PAS-048"] = "Pull",
+	["PAS-049"] = "Charge",
 }
 
 -- Status-applier key -> status id it inflicts on hit (the statuses already exist
@@ -66,7 +76,10 @@ local ON_HIT_STATUS: { [string]: string } = {
 -- Collect the set of canonical weapon-passive keys active on a unit's main hand.
 function WeaponPassiveService.GetKeys(unit: any): { [string]: boolean }
 	local keys: { [string]: boolean } = {}
-	local mh = unit and unit.equipmentSlots and unit.equipmentSlots.MainHand
+	-- Dual wield (2026-10-28): during an off-hand hit (unit._dwHand == "OffHand") the off-hand
+	-- weapon's keys are used instead (each hand delivers its own passives).
+	local handSlot = if (unit and unit._dwHand == "OffHand") then "OffHand" else "MainHand"
+	local mh = unit and unit.equipmentSlots and unit.equipmentSlots[handSlot]
 	if not mh then return keys end
 
 	-- (1) native archetype passive (bare canonical string)
@@ -98,6 +111,11 @@ local WEAPON_STAT_KEYS: { [string]: boolean } = {
 	Brutal = true, Stagger = true, Bulwark = true,
 }
 
+-- Exported read-only (2026-10-29) so GearPassiveSummary uses the SAME rule tables as
+-- combat instead of a duplicate copy (DAT-001).
+WeaponPassiveService.PAS_ID_TO_KEY = PAS_ID_TO_KEY
+WeaponPassiveService.WEAPON_STAT_KEYS = WEAPON_STAT_KEYS
+
 -- Collect ON-HIT / ATTACK-MODIFIER weapon-passive keys from EVERY equipped slot that
 -- can carry them (main hand + off-hand + gloves), per ItemGenerator eligibility
 -- (isWeaponish = weapon/off-hand/gloves) and DB bonus_passives eligible_item_types
@@ -105,11 +123,82 @@ local WEAPON_STAT_KEYS: { [string]: boolean } = {
 -- no matter which equipped item rolled them. The weapon-STAT passives are excluded
 -- here (still main-hand-only via GetKeys). Nil-safe.
 local COMBAT_SLOTS = { "MainHand", "OffHand", "Gloves" }
+-- Same collection as GetCombatKeys, but COUNTS how many equipped sources carry each key (a native
+-- and a rolled copy, or the same passive rolled on two items). Used where the DB stacking rule is
+-- "Additive" or "Independent" (Arcane Reach, Guard Bonus, Knockback, Pull). 2026-10-28.
+function WeaponPassiveService.GetCombatKeyCounts(unit: any): { [string]: number }
+	local counts: { [string]: number } = {}
+	if not (unit and unit.equipmentSlots) then return counts end
+	for _, slot in ipairs(COMBAT_SLOTS) do
+		local item = unit.equipmentSlots[slot]
+		if item and (slot == "MainHand" or slot == "OffHand") then
+			local _a = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+			if _a and _a.category == "Weapon" then
+				local want = if unit._dwHand == "OffHand" then "OffHand" else "MainHand"
+				if slot ~= want or (slot == "OffHand" and not unit.dualWieldActive) then item = nil end
+			end
+		end
+		if item then
+			local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+			if arch and arch.nativePassiveId and not WEAPON_STAT_KEYS[arch.nativePassiveId] then
+				counts[arch.nativePassiveId] = (counts[arch.nativePassiveId] or 0) + 1
+			end
+			if type(item.bonusPassiveIds) == "table" then
+				for _, pid in ipairs(item.bonusPassiveIds) do
+					local k = PAS_ID_TO_KEY[pid]
+					if k and not WEAPON_STAT_KEYS[k] then counts[k] = (counts[k] or 0) + 1 end
+				end
+			end
+		end
+	end
+	return counts
+end
+
+-- How many equipped items (ANY slot) carry this rolled passive id. For passives that may roll on
+-- armor as well as weapons (e.g. PAS-035 Guard Bonus on body armor). An off-hand weapon held while
+-- dual wield is inactive counts as inactive.
+function WeaponPassiveService.CountRolledPassive(unit: any, passiveId: string): number
+	local n = 0
+	if not (unit and unit.equipmentSlots) then return 0 end
+	for slot, item in pairs(unit.equipmentSlots) do
+		local skip = false
+		if slot == "OffHand" and item and not unit.dualWieldActive then
+			local _a = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+			skip = _a ~= nil and _a.category == "Weapon"
+		end
+		if item and not skip and type(item.bonusPassiveIds) == "table" then
+			for _, pid in ipairs(item.bonusPassiveIds) do
+				if pid == passiveId then n += 1 end
+			end
+		end
+	end
+	return n
+end
+
+-- Knockback / Pull sources (DB stacking "Independent; displacement merges"): each source adds its
+-- own push to the attack's merged knockback.
+function WeaponPassiveService.GetKnockbackSourceCount(unit: any): number
+	return WeaponPassiveService.GetCombatKeyCounts(unit).Knockback or 0
+end
+function WeaponPassiveService.GetPullSourceCount(unit: any): number
+	return WeaponPassiveService.GetCombatKeyCounts(unit).Pull or 0
+end
+
 function WeaponPassiveService.GetCombatKeys(unit: any): { [string]: boolean }
 	local keys: { [string]: boolean } = {}
 	if not (unit and unit.equipmentSlots) then return keys end
 	for _, slot in ipairs(COMBAT_SLOTS) do
 		local item = unit.equipmentSlots[slot]
+		-- Dual wield (2026-10-28): a WEAPON in a hand slot delivers only on its own hand's hits
+		-- (main hand by default; off hand only while unit._dwHand == "OffHand", and only while dual
+		-- wield is active). Shields / off-hand items and gloves always apply.
+		if item and (slot == "MainHand" or slot == "OffHand") then
+			local _a = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+			if _a and _a.category == "Weapon" then
+				local want = if unit._dwHand == "OffHand" then "OffHand" else "MainHand"
+				if slot ~= want or (slot == "OffHand" and not unit.dualWieldActive) then item = nil end
+			end
+		end
 		if item then
 			-- native archetype passive (bare canonical string) -- weapons only carry one
 			local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
@@ -148,6 +237,24 @@ end
 -- everywhere weaponDamage/weaponRtDelay are read (basic attacks AND skills).
 -- All "before STR scaling" per DB -- weaponDamage is the pre-STR base; STR scaling
 -- happens later in CalcAttackPower. No-op when the relevant passive is absent.
+-- Same weapon-stat passives for a single weapon ITEM (used for the off-hand weapon's own profile
+-- while dual wielding, 2026-10-28). Returns adjusted damage, rtDelay.
+function WeaponPassiveService.ApplyItemStatMods(item: any, damage: number, defense: number, rtDelay: number): (number, number)
+	local keys: { [string]: boolean } = {}
+	local arch = item and WeaponData.GetByArchetypeId(item.baseArchetypeId)
+	if arch and arch.nativePassiveId then keys[arch.nativePassiveId] = true end
+	for _, pid in ipairs((item and item.bonusPassiveIds) or {}) do
+		local k = PAS_ID_TO_KEY[pid]
+		if k then keys[k] = true end
+	end
+	local dmg = damage or 0
+	if keys.Bulwark and (defense or 0) > 0 then dmg = dmg + defense * 0.25 end
+	if keys.Brutal then dmg = dmg * 1.20 end
+	local rtd = rtDelay or 0
+	if keys.Stagger then rtd = math.round(rtd * 1.25) end
+	return math.max(0, math.round(dmg)), rtd
+end
+
 function WeaponPassiveService.ApplyWeaponStatMods(unit: any)
 	if not unit then return end
 	local keys = WeaponPassiveService.GetKeys(unit)
@@ -192,14 +299,20 @@ end
 --   TrueStrike     Hit Quality cannot drop below 1.0 (PAS-042)
 -- defenderAgi is the defender's effective AGI (to recover the evasiveness that was
 -- already subtracted upstream). Returns the adjusted hit quality.
-function WeaponPassiveService.AdjustBasicHitQuality(unit: any, hitQuality: number, defenderAgi: number): number
+function WeaponPassiveService.AdjustBasicHitQuality(unit: any, hitQuality: number, defenderAgi: number, totalEvasiveness: any): number
 	local keys = WeaponPassiveService.GetCombatKeys(unit)
 	local hq = hitQuality
 
+	-- Tricky: "ignore 40% of target Evasiveness" -- the target's WHOLE Evasiveness (gear, traits,
+	-- Retreat Boots, Evasion Surge, doctrine ... as summed in CombatResolver.calcHitQuality), not just
+	-- the AGI part (checklist fix 2026-10-29). Falls back to the AGI part if no total is passed.
 	if keys.Tricky then
-		local agi = defenderAgi or 10
-		local evasiveness = agi / (agi + 200)
-		hq = hq + 0.40 * evasiveness
+		local evasiveness = totalEvasiveness
+		if type(evasiveness) ~= "number" then
+			local agi = defenderAgi or 10
+			evasiveness = agi / (agi + 200)
+		end
+		hq = hq + 0.40 * math.max(0, evasiveness)
 	end
 	if keys.PrecisionStrike then
 		-- DB "+15% Hit Quality on Basic Attacks" read as a flat additive +0.15 (user
@@ -210,6 +323,26 @@ function WeaponPassiveService.AdjustBasicHitQuality(unit: any, hitQuality: numbe
 		hq = 1.0
 	end
 
+	return hq
+end
+
+-- Hit-quality adjustment for a WEAPON SKILL (skill tagged Weapon Scaling; user ruling 2026-10-29):
+-- Tricky and True Strike apply like on a Basic Attack. Precision Strike stays Basic Attack only (its
+-- DB text says "on Basic Attacks").
+function WeaponPassiveService.AdjustWeaponSkillHitQuality(unit: any, hitQuality: number, defenderAgi: number, totalEvasiveness: any): number
+	local keys = WeaponPassiveService.GetCombatKeys(unit)
+	local hq = hitQuality
+	if keys.Tricky then
+		local evasiveness = totalEvasiveness
+		if type(evasiveness) ~= "number" then
+			local agi = defenderAgi or 10
+			evasiveness = agi / (agi + 200)
+		end
+		hq = hq + 0.40 * math.max(0, evasiveness)
+	end
+	if keys.TrueStrike and hq < 1.0 then
+		hq = 1.0
+	end
 	return hq
 end
 
@@ -264,7 +397,11 @@ end
 -- the Guard command alongside Race/Trait/Armor; the damage path reads guardBonus and clamps to
 -- GUARD_CAP. Returns 0 without the passive.
 function WeaponPassiveService.GetGuardMitigationBonus(unit: any): number
-	return WeaponPassiveService.GetCombatKeys(unit).GuardBonus and 0.15 or 0
+	-- Additive under the Guard cap (DB PAS-035 stacking): +0.15 per native Guard Bonus source plus
+	-- +0.15 per rolled PAS-035 on ANY equipped item (shields, body armor). Cap applied by callers.
+	local n = (WeaponPassiveService.GetCombatKeyCounts(unit).GuardBonus or 0)
+		+ WeaponPassiveService.CountRolledPassive(unit, "PAS-035")
+	return 0.15 * n
 end
 
 -- Deflect (weapon native, Buckler): while Guarding, reflect 20% of the damage Guard just
@@ -322,9 +459,57 @@ end
 --   GetFortifyFlatDefensePerHit -> the flat Defense added by ONE landed hit (round(0.20 x weaponDef)).
 --   GetFortifyFlatDefense       -> the accumulated total currently protecting the unit (read into the
 --                                  defender's Defense in CombatResolver before CalcDefensePower).
+-- (2026-10-29, DB PAS-005 "based on OWNING ITEM base Weapon Defense"; weapons row 154 "always use the
+-- OWNING ITEM base stat"): the amount comes from the defense of the item that carries Fortify (main-hand
+-- weapon, off-hand weapon on its own hits, shield / off-hand item, or gloves), not always the main hand.
+-- One Fortify effect: the strongest carrier counts.
+local function itemHasFortify(item: any): boolean
+	local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+	if arch and arch.nativePassiveId == "Fortify" then return true end
+	for _, pid in ipairs(item.bonusPassiveIds or {}) do
+		if PAS_ID_TO_KEY[pid] == "Fortify" then return true end
+	end
+	return false
+end
+
+local function fortifyItemDefense(unit: any, slot: string, item: any): number
+	local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+	if slot == "MainHand" then
+		return unit.weaponDefense or 0
+	elseif slot == "OffHand" and arch and arch.category == "Weapon" then
+		return (unit.offWeapon and unit.offWeapon.defense) or 0
+	elseif slot == "OffHand" then
+		local ok, prof = pcall(function()
+			return (require :: any)(script.Parent.EquipmentService).GetEffectiveWeaponProfile(item)
+		end)
+		return (ok and type(prof) == "table" and prof.defense) or 0
+	else
+		local ok, prof = pcall(function()
+			local AD = (require :: any)(Content:WaitForChild("ArmorData"))
+			return AD.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
+		end)
+		return (ok and type(prof) == "table" and prof.defense) or 0
+	end
+end
+
 function WeaponPassiveService.GetFortifyFlatDefensePerHit(unit: any): number
 	if not WeaponPassiveService.GetCombatKeys(unit).Fortify then return 0 end
-	return math.round(0.20 * ((unit and unit.weaponDefense) or 0))
+	local best = 0
+	for _, slot in ipairs(COMBAT_SLOTS) do
+		local item = unit.equipmentSlots and unit.equipmentSlots[slot]
+		-- Same hand rule as GetCombatKeys: a hand weapon only counts on its own hand's hits.
+		if item and (slot == "MainHand" or slot == "OffHand") then
+			local _a = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+			if _a and _a.category == "Weapon" then
+				local want = if unit._dwHand == "OffHand" then "OffHand" else "MainHand"
+				if slot ~= want or (slot == "OffHand" and not unit.dualWieldActive) then item = nil end
+			end
+		end
+		if item and itemHasFortify(item) then
+			best = math.max(best, math.round(0.20 * fortifyItemDefense(unit, slot, item)))
+		end
+	end
+	return best
 end
 
 function WeaponPassiveService.GetFortifyFlatDefense(unit: any): number
@@ -338,6 +523,8 @@ function WeaponPassiveService.OnTurnStart(unit: any)
 	if not unit then return end
 	unit._chargeTilesThisTurn = 0
 	unit._fortifyFlatDefense = 0  -- Fortify (Spear): on-hit flat Defense resets each turn (Option B)
+	unit._qdBaThisTurn = 0        -- Quick Draw: Basic Attack actions committed this turn
+	unit._qdUsedThisTurn = false  -- Quick Draw: once per turn
 end
 
 -- Knockback (weapon native, Hammer/Club): on a landed basic attack, push the primary target
@@ -359,9 +546,9 @@ function WeaponPassiveService.HasPullOnHit(unit: any): boolean
 	return WeaponPassiveService.GetCombatKeys(unit).Pull == true
 end
 
--- HighGround (weapon native, Great Bow): +35% damage when attacking from strictly higher elevation
--- than the target (DB "+35% elevation damage bonus when attacking from above"). Returns the flat
--- bonus 0.35 or 0; CombatResolver applies it only when attacker elevation > defender elevation.
+-- HighGround (weapon native, Great Bow + rolled PAS-045): returns 0.35 or 0. User ruling 2026-10-29:
+-- CombatResolver multiplies the HEIGHT BONUS by (1 + this) after the +30% cap (+13.5/+27/+40.5%),
+-- only when the attacker is higher.
 -- Hybrid ruling: generalizes to basic attacks AND damaging skills (a positional damage bonus).
 -- Pure READ -> safe in AI preview.
 function WeaponPassiveService.GetHighGroundBonus(unit: any): number
@@ -385,12 +572,19 @@ function WeaponPassiveService.GetAppliedStatusDurationMultiplier(unit: any): num
 	return WeaponPassiveService.GetCombatKeys(unit).Lore and 1.30 or 1
 end
 
--- QuickDraw (weapon native, Quiver): after N basic attacks the next basic attack costs 0 RT (DB
--- "After 2 Basic Attacks, next attack costs 0 RT"). Returns the threshold N (2) when the unit
--- carries QuickDraw, else nil. The per-action attack counter + the RT waiver live in
--- CommandService's Attack branch (they need the command / RT-accrual context). Pure READ.
+-- QuickDraw (weapon native, Quiver). DB weapons_equipment 141 (user ruling 2026-10-29: build as
+-- the DB says): "Once per turn, after committing 2 Basic Attack actions in same turn, pay 10% Max
+-- MP to perform 1 bonus Basic Attack at 0 AP. Bonus BA adds full Basic Attack RT. Cannot trigger
+-- Quick Draw or other additional-action effects." Returns the threshold (2 Basic Attack actions)
+-- when the unit carries QuickDraw, else nil. The offer / MP payment / 0-AP commit live in
+-- CommandService (it owns the AP and turn-end flow). Pure READ.
 function WeaponPassiveService.GetQuickDrawThreshold(unit: any): number?
 	return WeaponPassiveService.GetCombatKeys(unit).QuickDraw and 2 or nil
+end
+
+-- Quick Draw MP price: 10% of Max MP, rounded, at least 1.
+function WeaponPassiveService.GetQuickDrawMpCost(unit: any): number
+	return math.max(1, math.round(((unit and unit.maxMp) or 0) * 0.10))
 end
 
 -- ArcaneReach (weapon native, Staff): skills that explicitly INHERIT weapon range gain +1 Max
@@ -399,12 +593,18 @@ end
 -- Returns 1 (fold into the CalcSkillRange raceModifier slot) or 0. Pure READ -> safe in AI preview.
 function WeaponPassiveService.GetSkillRangeBonus(unit: any, skillDef: any): number
 	if not skillDef or skillDef.range ~= -1 then return 0 end
-	return WeaponPassiveService.GetCombatKeys(unit).ArcaneReach and 1 or 0
+	-- Additive (DB PAS-008 stacking): +1 per Arcane Reach source (native Staff + rolled copies).
+	return WeaponPassiveService.GetCombatKeyCounts(unit).ArcaneReach or 0
 end
 
 function WeaponPassiveService.OnReadyTurn(unit: any): number
 	if not unit then return 0 end
 	if not WeaponPassiveService.GetCombatKeys(unit).ArcaneFlow then return 0 end
+	-- DB weapons_equipment 106: "Does not trigger during channeling, stun, or sleep." (2026-10-29)
+	if unit.isChanneling or unit.channelPhase ~= nil then return 0 end
+	for _, inst in ipairs(unit.statusInstances or {}) do
+		if inst.id == "Stun" or inst.id == "Sleep" then return 0 end
+	end
 	local int = (unit.effectiveStats and unit.effectiveStats.INT) or 10
 	local gain = 5 + math.floor(int / 20)
 	local maxMp = unit.maxMp or 0

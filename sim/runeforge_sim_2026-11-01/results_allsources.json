@@ -1,0 +1,2108 @@
+{
+ "_blocker_object_density": "P0 | Object density / placement count | Object Weights provide relative frequency but not how many objects appear per map size. | Weighted object lists | Expose object-count budget by map size and biome as configuration. | Yes, with tunable configuration | APPROVAL NEEDED",
+ "max_lines_per_item": {
+  "Uncommon": 2,
+  "Uncommon 2H": 4,
+  "Rare": 3,
+  "Rare 2H": 6,
+  "Epic": 4,
+  "Epic 2H": 8,
+  "Exalted": 4,
+  "Exalted 2H": 9
+ },
+ "1_loops": {
+  "buy_dismantle_sell": {
+   "cases": 39600,
+   "profitable": 0,
+   "best": [
+    -200,
+    "Gloves",
+    "Common",
+    1,
+    1,
+    [
+     0,
+     0,
+     0,
+     0,
+     0
+    ]
+   ],
+   "best_dismantle_minus_sell_of_same_item": [
+    32,
+    "Gloves",
+    "Rare",
+    61,
+    1,
+    100,
+    68
+   ]
+  },
+  "buy_upgrade_dismantle_sell": {
+   "cases": 755040,
+   "profitable": 0,
+   "best": [
+    -216,
+    "Gloves",
+    "Common",
+    1,
+    2,
+    10
+   ]
+  },
+  "buy_upgrade_sell_item": {
+   "best": [
+    -204,
+    "Gloves",
+    "Common",
+    1,
+    2,
+    10
+   ]
+  },
+  "black_market_dismantle_vs_sell_per_item": {
+   "L20": {
+    "1H": {
+     "sell": 86,
+     "dismantle_gold": 5,
+     "extra_by_dismantling": -81
+    },
+    "2H": {
+     "sell": 129,
+     "dismantle_gold": 5,
+     "extra_by_dismantling": -124
+    },
+    "Off-Hand": {
+     "sell": 51,
+     "dismantle_gold": 5,
+     "extra_by_dismantling": -46
+    },
+    "Body": {
+     "sell": 69,
+     "dismantle_gold": 5,
+     "extra_by_dismantling": -64
+    },
+    "Head": {
+     "sell": 51,
+     "dismantle_gold": 5,
+     "extra_by_dismantling": -46
+    },
+    "Gloves": {
+     "sell": 43,
+     "dismantle_gold": 5,
+     "extra_by_dismantling": -38
+    },
+    "Feet": {
+     "sell": 43,
+     "dismantle_gold": 5,
+     "extra_by_dismantling": -38
+    },
+    "Accessory": {
+     "sell": 60,
+     "dismantle_gold": 5,
+     "extra_by_dismantling": -55
+    }
+   },
+   "L40": {
+    "1H": {
+     "sell": 111,
+     "dismantle_gold": 15,
+     "extra_by_dismantling": -96
+    },
+    "2H": {
+     "sell": 166,
+     "dismantle_gold": 15,
+     "extra_by_dismantling": -151
+    },
+    "Off-Hand": {
+     "sell": 66,
+     "dismantle_gold": 15,
+     "extra_by_dismantling": -51
+    },
+    "Body": {
+     "sell": 89,
+     "dismantle_gold": 15,
+     "extra_by_dismantling": -74
+    },
+    "Head": {
+     "sell": 66,
+     "dismantle_gold": 15,
+     "extra_by_dismantling": -51
+    },
+    "Gloves": {
+     "sell": 55,
+     "dismantle_gold": 15,
+     "extra_by_dismantling": -40
+    },
+    "Feet": {
+     "sell": 55,
+     "dismantle_gold": 15,
+     "extra_by_dismantling": -40
+    },
+    "Accessory": {
+     "sell": 77,
+     "dismantle_gold": 15,
+     "extra_by_dismantling": -62
+    }
+   },
+   "L41": {
+    "1H": {
+     "sell": 112,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -72
+    },
+    "2H": {
+     "sell": 168,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -128
+    },
+    "Off-Hand": {
+     "sell": 67,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -27
+    },
+    "Body": {
+     "sell": 90,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -50
+    },
+    "Head": {
+     "sell": 67,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -27
+    },
+    "Gloves": {
+     "sell": 56,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -16
+    },
+    "Feet": {
+     "sell": 56,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -16
+    },
+    "Accessory": {
+     "sell": 78,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -38
+    }
+   },
+   "L60": {
+    "1H": {
+     "sell": 136,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -96
+    },
+    "2H": {
+     "sell": 204,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -164
+    },
+    "Off-Hand": {
+     "sell": 81,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -41
+    },
+    "Body": {
+     "sell": 109,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -69
+    },
+    "Head": {
+     "sell": 81,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -41
+    },
+    "Gloves": {
+     "sell": 68,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -28
+    },
+    "Feet": {
+     "sell": 68,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -28
+    },
+    "Accessory": {
+     "sell": 95,
+     "dismantle_gold": 40,
+     "extra_by_dismantling": -55
+    }
+   },
+   "L61": {
+    "1H": {
+     "sell": 137,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -37
+    },
+    "2H": {
+     "sell": 206,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -106
+    },
+    "Off-Hand": {
+     "sell": 82,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": 18
+    },
+    "Body": {
+     "sell": 110,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -10
+    },
+    "Head": {
+     "sell": 82,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": 18
+    },
+    "Gloves": {
+     "sell": 68,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": 32
+    },
+    "Feet": {
+     "sell": 68,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": 32
+    },
+    "Accessory": {
+     "sell": 96,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": 4
+    }
+   },
+   "L80": {
+    "1H": {
+     "sell": 161,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -61
+    },
+    "2H": {
+     "sell": 241,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -141
+    },
+    "Off-Hand": {
+     "sell": 96,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": 4
+    },
+    "Body": {
+     "sell": 129,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -29
+    },
+    "Head": {
+     "sell": 96,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": 4
+    },
+    "Gloves": {
+     "sell": 80,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": 20
+    },
+    "Feet": {
+     "sell": 80,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": 20
+    },
+    "Accessory": {
+     "sell": 112,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -12
+    }
+   },
+   "L99": {
+    "1H": {
+     "sell": 185,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -85
+    },
+    "2H": {
+     "sell": 277,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -177
+    },
+    "Off-Hand": {
+     "sell": 111,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -11
+    },
+    "Body": {
+     "sell": 148,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -48
+    },
+    "Head": {
+     "sell": 111,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -11
+    },
+    "Gloves": {
+     "sell": 92,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": 8
+    },
+    "Feet": {
+     "sell": 92,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": 8
+    },
+    "Accessory": {
+     "sell": 129,
+     "dismantle_gold": 100,
+     "extra_by_dismantling": -29
+    }
+   }
+  },
+  "paid_black_market_breakeven_discount_pct": {
+   "dismantle_route": [
+    90.91,
+    "Gloves",
+    61,
+    1100,
+    100
+   ],
+   "sell_route": [
+    93.75,
+    "1H",
+    3,
+    1040,
+    65
+   ]
+  },
+  "enchant_routes_note": {
+   "recheck_X1_best": -11,
+   "recheck_X2_best": -16,
+   "recheck_ex7_best_gain": 0
+  }
+ },
+ "4_recruit": {
+  "L1 Standard": {
+   "hire": 215,
+   "dismiss": 1075,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -215,
+   "hire_dismiss_dismantle": -1290,
+   "hire_dismiss_sell_weapon_best": -1253
+  },
+  "L1 Quality": {
+   "hire": 515,
+   "dismiss": 2575,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -515,
+   "hire_dismiss_dismantle": -3090,
+   "hire_dismiss_sell_weapon_best": -3053
+  },
+  "L1 Elite": {
+   "hire": 1015,
+   "dismiss": 5075,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -1015,
+   "hire_dismiss_dismantle": -6090,
+   "hire_dismiss_sell_weapon_best": -6053
+  },
+  "L25 Standard": {
+   "hire": 575,
+   "dismiss": 2875,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -575,
+   "hire_dismiss_dismantle": -3450,
+   "hire_dismiss_sell_weapon_best": -3395
+  },
+  "L25 Quality": {
+   "hire": 875,
+   "dismiss": 4375,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -875,
+   "hire_dismiss_dismantle": -5250,
+   "hire_dismiss_sell_weapon_best": -5195
+  },
+  "L25 Elite": {
+   "hire": 1375,
+   "dismiss": 6875,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -1375,
+   "hire_dismiss_dismantle": -8250,
+   "hire_dismiss_sell_weapon_best": -8195
+  },
+  "L50 Standard": {
+   "hire": 950,
+   "dismiss": 4750,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -950,
+   "hire_dismiss_dismantle": -5700,
+   "hire_dismiss_sell_weapon_best": -5626
+  },
+  "L50 Quality": {
+   "hire": 1250,
+   "dismiss": 6250,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -1250,
+   "hire_dismiss_dismantle": -7500,
+   "hire_dismiss_sell_weapon_best": -7426
+  },
+  "L50 Elite": {
+   "hire": 1750,
+   "dismiss": 8750,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -1750,
+   "hire_dismiss_dismantle": -10500,
+   "hire_dismiss_sell_weapon_best": -10426
+  },
+  "L99 Standard": {
+   "hire": 1685,
+   "dismiss": 8425,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -1685,
+   "hire_dismiss_dismantle": -10110,
+   "hire_dismiss_sell_weapon_best": -9999
+  },
+  "L99 Quality": {
+   "hire": 1985,
+   "dismiss": 9925,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -1985,
+   "hire_dismiss_dismantle": -11910,
+   "hire_dismiss_sell_weapon_best": -11799
+  },
+  "L99 Elite": {
+   "hire": 2485,
+   "dismiss": 12425,
+   "weapon": "Common, 0 lines, never upgraded",
+   "dismantle_mats": [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "dismantle_essences": 0,
+   "hire_then_swap_weapon_then_dismantle": -2485,
+   "hire_dismiss_dismantle": -14910,
+   "hire_dismiss_sell_weapon_best": -14799
+  }
+ },
+ "2_gold_per_essence": {
+  "L20": {
+   "Uncommon": {
+    "cheapest": [
+     207.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "no trade-up",
+     414,
+     0
+    ],
+    "cheapest_without_tradeup": [
+     207.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "no trade-up",
+     414,
+     0
+    ],
+    "cheapest_numeric_only": [
+     207.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "no trade-up",
+     414,
+     0
+    ]
+   },
+   "Rare": {
+    "cheapest": [
+     513.8,
+     "Gloves",
+     "Rare",
+     {
+      "T1": 1
+     },
+     [
+      100
+     ],
+     [
+      1,
+      1,
+      0
+     ],
+     "Merchant L5+",
+     "Blacksmith L4+",
+     "Runeforge L6 trade-up",
+     690,
+     5
+    ],
+    "cheapest_without_tradeup": [
+     685.0,
+     "Gloves",
+     "Rare",
+     {
+      "T3": 1
+     },
+     [],
+     [
+      0,
+      1,
+      0
+     ],
+     "Merchant L5+",
+     "Blacksmith L4+",
+     "no trade-up",
+     690,
+     5
+    ],
+    "cheapest_numeric_only": [
+     621.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "Runeforge L6 trade-up",
+     414,
+     0
+    ]
+   },
+   "Epic": {
+    "cheapest": [
+     1541.2,
+     "Gloves",
+     "Rare",
+     {
+      "T1": 1
+     },
+     [
+      100
+     ],
+     [
+      1,
+      1,
+      0
+     ],
+     "Merchant L5+",
+     "Blacksmith L4+",
+     "Runeforge L6 trade-up",
+     690,
+     5
+    ],
+    "cheapest_without_tradeup": [
+     1651.0,
+     "Gloves",
+     "Epic",
+     {
+      "T4": 1
+     },
+     [],
+     [
+      0,
+      0,
+      1
+     ],
+     "Merchant L9+",
+     "Blacksmith L7+",
+     "no trade-up",
+     1656,
+     5
+    ],
+    "cheapest_numeric_only": [
+     1651.0,
+     "Gloves",
+     "Epic",
+     {
+      "T4": 1
+     },
+     [],
+     [
+      0,
+      0,
+      1
+     ],
+     "Merchant L9+",
+     "Blacksmith L7+",
+     "no trade-up",
+     1656,
+     5
+    ]
+   }
+  },
+  "L50": {
+   "Uncommon": {
+    "cheapest": [
+     297.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "no trade-up",
+     594,
+     0
+    ],
+    "cheapest_without_tradeup": [
+     297.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "no trade-up",
+     594,
+     0
+    ],
+    "cheapest_numeric_only": [
+     297.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "no trade-up",
+     594,
+     0
+    ]
+   },
+   "Rare": {
+    "cheapest": [
+     712.5,
+     "Gloves",
+     "Rare",
+     {
+      "T1": 1
+     },
+     [
+      100
+     ],
+     [
+      1,
+      1,
+      0
+     ],
+     "Merchant L5+",
+     "Blacksmith L4+",
+     "Runeforge L6 trade-up",
+     990,
+     40
+    ],
+    "cheapest_without_tradeup": [
+     950.0,
+     "Gloves",
+     "Rare",
+     {
+      "T3": 1
+     },
+     [],
+     [
+      0,
+      1,
+      0
+     ],
+     "Merchant L5+",
+     "Blacksmith L4+",
+     "no trade-up",
+     990,
+     40
+    ],
+    "cheapest_numeric_only": [
+     891.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "Runeforge L6 trade-up",
+     594,
+     0
+    ]
+   },
+   "Epic": {
+    "cheapest": [
+     2137.5,
+     "Gloves",
+     "Rare",
+     {
+      "T1": 1
+     },
+     [
+      100
+     ],
+     [
+      1,
+      1,
+      0
+     ],
+     "Merchant L5+",
+     "Blacksmith L4+",
+     "Runeforge L6 trade-up",
+     990,
+     40
+    ],
+    "cheapest_without_tradeup": [
+     2336.0,
+     "Gloves",
+     "Epic",
+     {
+      "T4": 1
+     },
+     [],
+     [
+      0,
+      0,
+      1
+     ],
+     "Merchant L9+",
+     "Blacksmith L7+",
+     "no trade-up",
+     2376,
+     40
+    ],
+    "cheapest_numeric_only": [
+     2336.0,
+     "Gloves",
+     "Epic",
+     {
+      "T4": 1
+     },
+     [],
+     [
+      0,
+      0,
+      1
+     ],
+     "Merchant L9+",
+     "Blacksmith L7+",
+     "no trade-up",
+     2376,
+     40
+    ]
+   }
+  },
+  "L80": {
+   "Uncommon": {
+    "cheapest": [
+     387.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "no trade-up",
+     774,
+     0
+    ],
+    "cheapest_without_tradeup": [
+     387.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "no trade-up",
+     774,
+     0
+    ],
+    "cheapest_numeric_only": [
+     387.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "no trade-up",
+     774,
+     0
+    ]
+   },
+   "Rare": {
+    "cheapest": [
+     892.5,
+     "Gloves",
+     "Rare",
+     {
+      "T1": 1
+     },
+     [
+      100
+     ],
+     [
+      1,
+      1,
+      0
+     ],
+     "Merchant L5+",
+     "Blacksmith L4+",
+     "Runeforge L6 trade-up",
+     1290,
+     100
+    ],
+    "cheapest_without_tradeup": [
+     1190.0,
+     "Gloves",
+     "Rare",
+     {
+      "T3": 1
+     },
+     [],
+     [
+      0,
+      1,
+      0
+     ],
+     "Merchant L5+",
+     "Blacksmith L4+",
+     "no trade-up",
+     1290,
+     100
+    ],
+    "cheapest_numeric_only": [
+     1161.0,
+     "Gloves",
+     "Uncommon",
+     {
+      "T1": 2
+     },
+     [],
+     [
+      2,
+      0,
+      0
+     ],
+     "Merchant L2+",
+     "Blacksmith L1+",
+     "Runeforge L6 trade-up",
+     774,
+     0
+    ]
+   },
+   "Epic": {
+    "cheapest": [
+     2677.5,
+     "Gloves",
+     "Rare",
+     {
+      "T1": 1
+     },
+     [
+      100
+     ],
+     [
+      1,
+      1,
+      0
+     ],
+     "Merchant L5+",
+     "Blacksmith L4+",
+     "Runeforge L6 trade-up",
+     1290,
+     100
+    ],
+    "cheapest_without_tradeup": [
+     2996.0,
+     "Gloves",
+     "Epic",
+     {
+      "T4": 1
+     },
+     [],
+     [
+      0,
+      0,
+      1
+     ],
+     "Merchant L9+",
+     "Blacksmith L7+",
+     "no trade-up",
+     3096,
+     100
+    ],
+    "cheapest_numeric_only": [
+     2996.0,
+     "Gloves",
+     "Epic",
+     {
+      "T4": 1
+     },
+     [],
+     [
+      0,
+      0,
+      1
+     ],
+     "Merchant L9+",
+     "Blacksmith L7+",
+     "no trade-up",
+     3096,
+     100
+    ]
+   }
+  },
+  "_whole_shelf_average": {
+   "L20 M5": {
+    "items_per_window": 3.15,
+    "ueq_per_window": 5.82,
+    "gold_per_window": 2199,
+    "gold_per_ueq": 377.8
+   },
+   "L20 M9": {
+    "items_per_window": 8.5,
+    "ueq_per_window": 23.94,
+    "gold_per_window": 9949,
+    "gold_per_ueq": 415.6
+   },
+   "L20 M10": {
+    "items_per_window": 9.0,
+    "ueq_per_window": 27.09,
+    "gold_per_window": 11950,
+    "gold_per_ueq": 441.2
+   },
+   "L50 M5": {
+    "items_per_window": 3.15,
+    "ueq_per_window": 5.82,
+    "gold_per_window": 3144,
+    "gold_per_ueq": 540.1
+   },
+   "L50 M9": {
+    "items_per_window": 8.5,
+    "ueq_per_window": 23.94,
+    "gold_per_window": 14111,
+    "gold_per_ueq": 589.4
+   },
+   "L50 M10": {
+    "items_per_window": 9.0,
+    "ueq_per_window": 27.09,
+    "gold_per_window": 16949,
+    "gold_per_ueq": 625.7
+   },
+   "L80 M5": {
+    "items_per_window": 3.15,
+    "ueq_per_window": 5.82,
+    "gold_per_window": 4080,
+    "gold_per_ueq": 700.9
+   },
+   "L80 M9": {
+    "items_per_window": 8.5,
+    "ueq_per_window": 23.94,
+    "gold_per_window": 18147,
+    "gold_per_ueq": 758.1
+   },
+   "L80 M10": {
+    "items_per_window": 9.0,
+    "ueq_per_window": 27.09,
+    "gold_per_window": 21797,
+    "gold_per_ueq": 804.8
+   }
+  }
+ },
+ "2_lifetime_purchase": {
+  "free, facilities first (spare = leftover)": {
+   "budget": 86,
+   "spent": 0,
+   "unspent": 0,
+   "items": 0.0,
+   "U": 0.0,
+   "R": 0.0,
+   "E": 0.0,
+   "ueq": 0.0,
+   "count": 0.0,
+   "band50_80": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "share_of_essence_count_pct": 0.0,
+   "share_of_ueq_pct": 0.0
+  },
+  "free, Essence-max (all facility gold -> Essences, upper bound)": {
+   "budget": 61119,
+   "spent": 61119,
+   "unspent": 0,
+   "items": 71.1,
+   "U": 115.3,
+   "R": 12.3,
+   "E": 0.0,
+   "ueq": 152.3,
+   "count": 127.7,
+   "band50_80": [
+    32.3,
+    6.3,
+    0.0
+   ],
+   "share_of_essence_count_pct": 34.8,
+   "share_of_ueq_pct": 27.4
+  },
+  "boosted, facilities first (spare = leftover)": {
+   "budget": 37598,
+   "spent": 37598,
+   "unspent": 0,
+   "items": 27.9,
+   "U": 46.4,
+   "R": 9.3,
+   "E": 0.0,
+   "ueq": 74.3,
+   "count": 55.7,
+   "band50_80": [
+    11.4,
+    2.3,
+    0.0
+   ],
+   "share_of_essence_count_pct": 18.9,
+   "share_of_ueq_pct": 15.5
+  },
+  "boosted, Essence-max (upper bound)": {
+   "budget": 108525,
+   "spent": 108525,
+   "unspent": 0,
+   "items": 120.5,
+   "U": 197.6,
+   "R": 26.0,
+   "E": 0.0,
+   "ueq": 275.6,
+   "count": 223.6,
+   "band50_80": [
+    56.9,
+    11.4,
+    0.0
+   ],
+   "share_of_essence_count_pct": 48.3,
+   "share_of_ueq_pct": 40.6
+  },
+  "boosted, Essence-max, 6 shelves per 5-battle window (quest-level switching)": {
+   "budget": 108525,
+   "spent": 108525,
+   "unspent": 0,
+   "items": 121.8,
+   "U": 199.0,
+   "R": 30.0,
+   "E": 0.0,
+   "ueq": 289.1,
+   "count": 229.0,
+   "band50_80": [
+    56.9,
+    11.4,
+    0.0
+   ],
+   "share_of_essence_count_pct": 48.9,
+   "share_of_ueq_pct": 41.7
+  }
+ },
+ "2_normal_use_shop_dismantle": {
+  "normal shop gear spend 10000g (bought to use, dismantled later)": {
+   "budget": 10000,
+   "spent": 10000,
+   "unspent": 0,
+   "items": 10.4,
+   "U": 9.0,
+   "R": 0.6,
+   "E": 0.1,
+   "ueq": 11.7,
+   "count": 9.7,
+   "band50_80": [
+    3.5,
+    0.3,
+    0.0
+   ],
+   "share_of_essence_count_pct": 3.9,
+   "share_of_ueq_pct": 2.8
+  },
+  "normal shop gear spend 20000g (bought to use, dismantled later)": {
+   "budget": 20000,
+   "spent": 20000,
+   "unspent": 0,
+   "items": 20.8,
+   "U": 18.1,
+   "R": 1.3,
+   "E": 0.2,
+   "ueq": 23.4,
+   "count": 19.5,
+   "band50_80": [
+    7.0,
+    0.6,
+    0.1
+   ],
+   "share_of_essence_count_pct": 7.5,
+   "share_of_ueq_pct": 5.5
+  },
+  "normal shop gear spend 31000g (bought to use, dismantled later)": {
+   "budget": 31000,
+   "spent": 31000,
+   "unspent": 0,
+   "items": 32.3,
+   "U": 28.0,
+   "R": 2.0,
+   "E": 0.3,
+   "ueq": 36.3,
+   "count": 30.2,
+   "band50_80": [
+    10.9,
+    1.0,
+    0.1
+   ],
+   "share_of_essence_count_pct": 11.2,
+   "share_of_ueq_pct": 8.2
+  }
+ },
+ "natural_lifetime": {
+  "drops": 60.0,
+  "loot_dismantle": 179.3,
+  "ueq": 403.7
+ },
+ "2_per_battle": {
+  "L20 (Merchant L6)": {
+   "income_per_battle": 229,
+   "stock_limited_essences_per_battle_1_shelf": 1.59,
+   "stock_limited_ueq_per_battle": 1.71,
+   "stock_limited_essences_per_battle_6_shelves": 9.53,
+   "gold_to_buy_whole_shelf": 3205,
+   "whole_shelf_in_battles_of_income": 14.0,
+   "gold_limited_U_per_battle_all_income_cheapest": 0.89,
+   "natural_ess_per_battle": {
+    "U": 0.357,
+    "R": 0.057,
+    "E": 0.023
+   }
+  },
+  "L50 (Merchant L10)": {
+   "income_per_battle": 321,
+   "stock_limited_essences_per_battle_1_shelf": 3.91,
+   "stock_limited_ueq_per_battle": 5.42,
+   "stock_limited_essences_per_battle_6_shelves": 23.44,
+   "gold_to_buy_whole_shelf": 16949,
+   "whole_shelf_in_battles_of_income": 52.7,
+   "gold_limited_U_per_battle_all_income_cheapest": 0.9,
+   "natural_ess_per_battle": {
+    "U": 0.357,
+    "R": 0.057,
+    "E": 0.023
+   }
+  },
+  "L80 (Merchant L10)": {
+   "income_per_battle": 414,
+   "stock_limited_essences_per_battle_1_shelf": 3.91,
+   "stock_limited_ueq_per_battle": 5.42,
+   "stock_limited_essences_per_battle_6_shelves": 23.44,
+   "gold_to_buy_whole_shelf": 21797,
+   "whole_shelf_in_battles_of_income": 52.6,
+   "gold_limited_U_per_battle_all_income_cheapest": 0.93,
+   "natural_ess_per_battle": {
+    "U": 0.357,
+    "R": 0.057,
+    "E": 0.023
+   }
+  }
+ },
+ "3_targets": {
+  "essence_split": {
+   "previous": {
+    "drops_pct": 25.0,
+    "dismantle_pct": 75.0
+   },
+   "normal shop gear spend 20000g (bought to use, dismantled later)": {
+    "drops_pct": 23.2,
+    "loot_dismantle_pct": 69.3,
+    "shop_pct": 7.5
+   },
+   "free, facilities first (spare = leftover)": {
+    "drops_pct": 25.1,
+    "loot_dismantle_pct": 74.9,
+    "shop_pct": 0.0
+   },
+   "free, Essence-max (all facility gold -> Essences, upper bound)": {
+    "drops_pct": 16.3,
+    "loot_dismantle_pct": 48.9,
+    "shop_pct": 34.8
+   },
+   "boosted, facilities first (spare = leftover)": {
+    "drops_pct": 20.3,
+    "loot_dismantle_pct": 60.8,
+    "shop_pct": 18.9
+   },
+   "boosted, Essence-max (upper bound)": {
+    "drops_pct": 13.0,
+    "loot_dismantle_pct": 38.7,
+    "shop_pct": 48.3
+   },
+   "boosted, Essence-max, 6 shelves per 5-battle window (quest-level switching)": {
+    "drops_pct": 12.8,
+    "loot_dismantle_pct": 38.3,
+    "shop_pct": 48.9
+   },
+   "drops vs all dismantling (normal use 20k)": {
+    "drops_pct": 23.2
+   }
+  },
+  "fill_L50_80": {
+   "natural only (= previous)": {
+    "1H Uncommon (2U)": {
+     "battles": 5.8,
+     "with_tradeup": 2.4
+    },
+    "1H Rare (3U)": {
+     "battles": 8.6,
+     "with_tradeup": 3.5
+    },
+    "1H Epic (4U)": {
+     "battles": 11.5,
+     "with_tradeup": 4.7
+    },
+    "1H Epic via T4 (2E)": {
+     "battles": 52.2,
+     "with_tradeup": 21.3
+    },
+    "2H Epic (8U)": {
+     "battles": 23.0,
+     "with_tradeup": 9.4
+    }
+   },
+   "boosted, facilities first (spare = leftover)": {
+    "1H Uncommon (2U)": {
+     "battles": 4.8,
+     "with_tradeup": 2.1
+    },
+    "1H Rare (3U)": {
+     "battles": 7.2,
+     "with_tradeup": 3.1
+    },
+    "1H Epic (4U)": {
+     "battles": 9.6,
+     "with_tradeup": 4.2
+    },
+    "1H Epic via T4 (2E)": {
+     "battles": 52.2,
+     "with_tradeup": 18.8
+    },
+    "2H Epic (8U)": {
+     "battles": 19.3,
+     "with_tradeup": 8.4
+    }
+   },
+   "free, Essence-max (all facility gold -> Essences, upper bound)": {
+    "1H Uncommon (2U)": {
+     "battles": 3.7,
+     "with_tradeup": 1.7
+    },
+    "1H Rare (3U)": {
+     "battles": 5.5,
+     "with_tradeup": 2.6
+    },
+    "1H Epic (4U)": {
+     "battles": 7.4,
+     "with_tradeup": 3.5
+    },
+    "1H Epic via T4 (2E)": {
+     "battles": 52.2,
+     "with_tradeup": 15.6
+    },
+    "2H Epic (8U)": {
+     "battles": 14.8,
+     "with_tradeup": 6.9
+    }
+   },
+   "boosted, Essence-max (upper bound)": {
+    "1H Uncommon (2U)": {
+     "battles": 2.9,
+     "with_tradeup": 1.4
+    },
+    "1H Rare (3U)": {
+     "battles": 4.4,
+     "with_tradeup": 2.2
+    },
+    "1H Epic (4U)": {
+     "battles": 5.8,
+     "with_tradeup": 2.9
+    },
+    "1H Epic via T4 (2E)": {
+     "battles": 52.2,
+     "with_tradeup": 12.9
+    },
+    "2H Epic (8U)": {
+     "battles": 11.6,
+     "with_tradeup": 5.7
+    }
+   },
+   "normal use 20k": {
+    "1H Uncommon (2U)": {
+     "battles": 5.1,
+     "with_tradeup": 2.2
+    },
+    "1H Rare (3U)": {
+     "battles": 7.7,
+     "with_tradeup": 3.3
+    },
+    "1H Epic (4U)": {
+     "battles": 10.3,
+     "with_tradeup": 4.4
+    },
+    "1H Epic via T4 (2E)": {
+     "battles": 51.4,
+     "with_tradeup": 19.9
+    },
+    "2H Epic (8U)": {
+     "battles": 20.6,
+     "with_tradeup": 8.8
+    }
+   }
+  },
+  "fill_gold_only_L65": {
+   "gold_per_ueq": 390.0,
+   "income_per_battle": 368,
+   "1H Uncommon (2U)": {
+    "gold": 780,
+    "battles_of_income": 2.1
+   },
+   "1H Rare (3U)": {
+    "gold": 1170,
+    "battles_of_income": 3.2
+   },
+   "1H Epic (4U)": {
+    "gold": 1560,
+    "battles_of_income": 4.2
+   },
+   "2H Epic (8U)": {
+    "gold": 3120,
+    "battles_of_income": 8.5
+   }
+  },
+  "crafted_epic_L50_80": {
+   "free classic (Runeforge after core 6)": {
+    "previous": 0.0,
+    "gold_limited": 0.0,
+    "essence_limited_now": 0.0,
+    "with_bought_essences": 0.0,
+    "natural": 4.0
+   },
+   "boost classic (Runeforge after core 6)": {
+    "previous": 9.1,
+    "gold_limited": 9.1,
+    "essence_limited_now": 10.4,
+    "with_bought_essences": 9.1,
+    "natural": 4.0
+   },
+   "free crafter (Runeforge inside core)": {
+    "previous": 0.0,
+    "gold_limited": 0.0,
+    "essence_limited_now": 0.0,
+    "with_bought_essences": 0.0,
+    "natural": 4.0
+   },
+   "boost crafter (Runeforge inside core)": {
+    "previous": 10.7,
+    "gold_limited": 10.7,
+    "essence_limited_now": 12.2,
+    "with_bought_essences": 10.7,
+    "natural": 4.0
+   },
+   "free rush (Guild Hall + Runeforge first)": {
+    "previous": 8.3,
+    "gold_limited": 8.3,
+    "essence_limited_now": 16.2,
+    "with_bought_essences": 8.3,
+    "natural": 4.0
+   },
+   "boost rush (Guild Hall + Runeforge first)": {
+    "previous": 14.2,
+    "gold_limited": 14.2,
+    "essence_limited_now": 16.2,
+    "with_bought_essences": 14.2,
+    "natural": 4.0
+   }
+  },
+  "facilities": {
+   "free classic (Runeforge after core 6)": {
+    "maxed": "8/10",
+    "leftover": 86,
+    "expense_ratio_pct": 105.9
+   },
+   "boost classic (Runeforge after core 6)": {
+    "maxed": "10/10",
+    "leftover": 37598,
+    "expense_ratio_pct": 83.1
+   },
+   "free crafter (Runeforge inside core)": {
+    "maxed": "8/10",
+    "leftover": 69,
+    "expense_ratio_pct": 106.5
+   },
+   "boost crafter (Runeforge inside core)": {
+    "maxed": "10/10",
+    "leftover": 36660,
+    "expense_ratio_pct": 83.5
+   },
+   "free rush (Guild Hall + Runeforge first)": {
+    "maxed": "7/10",
+    "leftover": 1592,
+    "expense_ratio_pct": 106.6
+   },
+   "boost rush (Guild Hall + Runeforge first)": {
+    "maxed": "10/10",
+    "leftover": 34978,
+    "expense_ratio_pct": 84.3
+   }
+  },
+  "wall": {
+   "previous": {
+    "no_dismantle": [
+     12,
+     13
+    ],
+    "with_dismantle": "12-15 (14-16 with conversion)"
+   },
+   "gold_per_bought_material": {
+    "T1": {
+     "gold": 500,
+     "item": "Rare Feet L1",
+     "vs_conversion": null
+    },
+    "T2": {
+     "gold": 700,
+     "item": "Rare Feet L21",
+     "vs_conversion": null
+    },
+    "T3": {
+     "gold": 900,
+     "item": "Rare Feet L41",
+     "vs_conversion": null
+    },
+    "T4": {
+     "gold": 1100,
+     "item": "Rare Feet L61",
+     "vs_conversion": "3 T3 -> 1 T4 = 2700g"
+    }
+   },
+   "gold_per_extra_item_T3_T4": 51000,
+   "extra_items_boosted_leftover": [
+    0.74,
+    0.69
+   ],
+   "extra_items_free_leftover": 0.002,
+   "extra_items_boosted_all_luxury": 2.13
+  }
+ },
+ "5_black_market": {
+  "L20 BS-cap Uncommon": {
+   "essences_U": 13.5,
+   "essences_R": 0.0,
+   "max_essences_all_2H_6xT1": 36,
+   "max_1H_type": 18,
+   "materials": "6 x T1",
+   "materials_sell": 30,
+   "sell_all_6": 405,
+   "best_gold_mixing": 405
+  },
+  "L20 BS-cap Rare": {
+   "essences_U": 11.3,
+   "essences_R": 2.2,
+   "max_essences_all_2H_6xT1": 36,
+   "max_1H_type": 18,
+   "materials": "6 x T1",
+   "materials_sell": 30,
+   "sell_all_6": 405,
+   "best_gold_mixing": 405
+  },
+  "L20 BS-cap Epic": {
+   "essences_U": 11.3,
+   "essences_R": 2.2,
+   "max_essences_all_2H_6xT1": 36,
+   "max_1H_type": 18,
+   "materials": "6 x T1",
+   "materials_sell": 30,
+   "sell_all_6": 405,
+   "best_gold_mixing": 405
+  },
+  "L50 BS-cap Uncommon": {
+   "essences_U": 13.5,
+   "essences_R": 0.0,
+   "max_essences_all_2H_6xT1": 36,
+   "max_1H_type": 18,
+   "materials": "6 x T3",
+   "materials_sell": 240,
+   "sell_all_6": 580,
+   "best_gold_mixing": 580
+  },
+  "L50 BS-cap Rare": {
+   "essences_U": 11.3,
+   "essences_R": 2.2,
+   "max_essences_all_2H_6xT1": 36,
+   "max_1H_type": 18,
+   "materials": "6 x T3",
+   "materials_sell": 240,
+   "sell_all_6": 580,
+   "best_gold_mixing": 580
+  },
+  "L50 BS-cap Epic": {
+   "essences_U": 11.3,
+   "essences_R": 2.2,
+   "max_essences_all_2H_6xT1": 36,
+   "max_1H_type": 18,
+   "materials": "6 x T3",
+   "materials_sell": 240,
+   "sell_all_6": 580,
+   "best_gold_mixing": 580
+  },
+  "L80 BS-cap Uncommon": {
+   "essences_U": 13.5,
+   "essences_R": 0.0,
+   "max_essences_all_2H_6xT1": 36,
+   "max_1H_type": 18,
+   "materials": "6 x T4",
+   "materials_sell": 600,
+   "sell_all_6": 757,
+   "best_gold_mixing": 795
+  },
+  "L80 BS-cap Rare": {
+   "essences_U": 11.3,
+   "essences_R": 2.2,
+   "max_essences_all_2H_6xT1": 36,
+   "max_1H_type": 18,
+   "materials": "6 x T4",
+   "materials_sell": 600,
+   "sell_all_6": 757,
+   "best_gold_mixing": 795
+  },
+  "L80 BS-cap Epic": {
+   "essences_U": 11.3,
+   "essences_R": 2.2,
+   "max_essences_all_2H_6xT1": 36,
+   "max_1H_type": 18,
+   "materials": "6 x T4",
+   "materials_sell": 600,
+   "sell_all_6": 757,
+   "best_gold_mixing": 795
+  },
+  "_note": "code (ObjectEffectService L2289-2298): 6 FREE Rare items per Black Market object per battle, item level = map level, archetype pool nil; DB objects_encounters 31: \"six fixed discounted high-tier items\" (no discount number). Lifetime needs object density (open_decisions 48 - not decided).",
+  "lifetime_by_assumed_rate": {
+   "0.02 events/battle": {
+    "events": 10.9,
+    "essences": 148,
+    "ueq": 196,
+    "materials": 66,
+    "share_of_count_pct": 38.2
+   },
+   "0.05 events/battle": {
+    "events": 27.4,
+    "essences": 369,
+    "ueq": 490,
+    "materials": 164,
+    "share_of_count_pct": 60.7
+   },
+   "0.1 events/battle": {
+    "events": 54.7,
+    "essences": 738,
+    "ueq": 979,
+    "materials": 328,
+    "share_of_count_pct": 75.5
+   },
+   "0.25 events/battle": {
+    "events": 136.8,
+    "essences": 1846,
+    "ueq": 2448,
+    "materials": 820,
+    "share_of_count_pct": 88.5
+   }
+  },
+  "targets_by_assumed_rate": {
+   "0.02 events/battle": {
+    "drops_share_pct": 15.5,
+    "bm_share_pct": 38.2,
+    "fill_1H_Epic_4U": 7.0,
+    "fill_1H_Uncommon_2U": 3.5,
+    "fill_2H_Epic_8U": 14.0,
+    "extra_T3": 13.3,
+    "extra_T4": 25.4,
+    "wall_extra_items": 0.52,
+    "free_gold_if_sold": 6352
+   },
+   "0.05 events/battle": {
+    "drops_share_pct": 9.9,
+    "bm_share_pct": 60.7,
+    "fill_1H_Epic_4U": 4.4,
+    "fill_1H_Uncommon_2U": 2.2,
+    "fill_2H_Epic_8U": 8.8,
+    "extra_T3": 33.3,
+    "extra_T4": 63.6,
+    "wall_extra_items": 1.31,
+    "free_gold_if_sold": 15881
+   },
+   "0.1 events/battle": {
+    "drops_share_pct": 6.1,
+    "bm_share_pct": 75.5,
+    "fill_1H_Epic_4U": 2.7,
+    "fill_1H_Uncommon_2U": 1.4,
+    "fill_2H_Epic_8U": 5.4,
+    "extra_T3": 66.6,
+    "extra_T4": 127.2,
+    "wall_extra_items": 2.61,
+    "free_gold_if_sold": 31762
+   },
+   "0.25 events/battle": {
+    "drops_share_pct": 2.9,
+    "bm_share_pct": 88.5,
+    "fill_1H_Epic_4U": 1.3,
+    "fill_1H_Uncommon_2U": 0.6,
+    "fill_2H_Epic_8U": 2.5,
+    "extra_T3": 166.5,
+    "extra_T4": 318.0,
+    "wall_extra_items": 6.53,
+    "free_gold_if_sold": 79406
+   }
+  }
+ },
+ "5_starter_debug": {
+  "Hero Sword 1H Uncommon L5 (Debug, equipped)": {
+   "essences_expected": 1.5,
+   "essences_max": 2,
+   "materials": 0,
+   "needs_replacement_weapon_first": true
+  },
+  "Mage Wand 1H Uncommon L5 (Debug, equipped)": {
+   "essences_expected": 1.5,
+   "essences_max": 2,
+   "materials": 0,
+   "needs_replacement_weapon_first": true
+  },
+  "Ranger Crossbow 2H Uncommon L5 (Debug, equipped)": {
+   "essences_expected": 3.0,
+   "essences_max": 4,
+   "materials": 0,
+   "needs_replacement_weapon_first": true
+  },
+  "Shield Off-Hand Common L5 (Debug)": {
+   "essences": 0,
+   "materials": 0
+  },
+  "5 armor pieces Common L5 (Starter)": {
+   "essences": 0,
+   "materials": 0
+  },
+  "_total": {
+   "expected": 6.0,
+   "max": 8,
+   "materials": 0,
+   "once_per_save": true
+  }
+ },
+ "db_delta_vs_prefix_backup": {
+  "guild_facilities": {
+   "rows_changed": [
+    31,
+    37,
+    38,
+    41,
+    48,
+    51,
+    55,
+    57
+   ],
+   "rule_text_changed": [
+    31,
+    38,
+    48,
+    51,
+    55,
+    57
+   ]
+  },
+  "materials_system": {
+   "rows_changed": [
+    41,
+    42
+   ],
+   "rule_text_changed": [
+    42
+   ]
+  },
+  "economy_framework": {
+   "rows_changed": [
+    15,
+    19
+   ],
+   "rule_text_changed": []
+  },
+  "loot_progression": {
+   "rows_changed": [
+    24,
+    26,
+    69
+   ],
+   "rule_text_changed": []
+  },
+  "equipment_schema": [
+   "reroll_count"
+  ]
+ },
+ "db_text_changes_since_recheck": [
+  "materials_system 42: \"(never T5)\" -> \"(never T5; kept by USER DECISION 2026-11-01)\""
+ ],
+ "_meta": {
+  "seed": 20261101,
+  "rule_checks": 28,
+  "provenance": {
+   "Dismantle per tier": {
+    "table": "guild_facilities",
+    "row": 51,
+    "col": "rule",
+    "found": true
+   },
+   "Refund summary": {
+    "table": "materials_system",
+    "row": 42,
+    "col": "rule",
+    "found": true
+   },
+   "Catch-up discount by level": {
+    "table": "guild_facilities",
+    "row": 48,
+    "col": "rule",
+    "found": true
+   },
+   "Fixed Add offers / per-line reroll / round down": {
+    "table": "guild_facilities",
+    "row": 55,
+    "col": "rule",
+    "found": true
+   },
+   "Reroll count field": {
+    "table": "equipment_schema",
+    "row": "reroll_count",
+    "col": "rule",
+    "found": true
+   },
+   "Epic fee round down": {
+    "table": "guild_facilities",
+    "row": 57,
+    "col": "rule",
+    "found": true
+   },
+   "Blacksmith gold round down": {
+    "table": "economy_framework",
+    "row": 19,
+    "col": "notes",
+    "found": true
+   },
+   "Wall benchmark": {
+    "table": "guild_facilities",
+    "row": 38,
+    "col": "rule",
+    "found": true
+   },
+   "Material income": {
+    "table": "materials_system",
+    "row": 36,
+    "col": "rule",
+    "found": true
+   },
+   "Drops estimate": {
+    "table": "loot_progression",
+    "row": 24,
+    "col": "notes",
+    "found": true
+   },
+   "Elite estimate": {
+    "table": "loot_progression",
+    "row": 26,
+    "col": "notes",
+    "found": true
+   },
+   "Elite estimate 69": {
+    "table": "loot_progression",
+    "row": 69,
+    "col": "notes",
+    "found": true
+   },
+   "Essence estimate": {
+    "table": "materials_system",
+    "row": 41,
+    "col": "notes",
+    "found": true
+   },
+   "Facility total": {
+    "table": "guild_facilities",
+    "row": 5,
+    "col": "rule",
+    "found": true
+   },
+   "Downgrade free": {
+    "table": "economy_framework",
+    "row": 21,
+    "col": "rule",
+    "found": true
+   },
+   "Conversion one-way": {
+    "table": "materials_system",
+    "row": 25,
+    "col": "rule",
+    "found": true
+   },
+   "Shop markup": {
+    "table": "economy_framework",
+    "row": 15,
+    "col": "rule",
+    "found": true
+   },
+   "Shop odds": {
+    "table": "economy_framework",
+    "row": 48,
+    "col": "rule",
+    "found": true
+   },
+   "Shelf refresh": {
+    "table": "guild_facilities",
+    "row": 15,
+    "col": "rule",
+    "found": true
+   },
+   "Material sell": {
+    "table": "materials_system",
+    "row": 28,
+    "col": "rule",
+    "found": true
+   },
+   "Trade-up": {
+    "table": "guild_facilities",
+    "row": 53,
+    "col": "rule",
+    "found": true
+   },
+   "BS extraction table": {
+    "table": "guild_facilities",
+    "row": 50,
+    "col": "rule",
+    "found": true
+   },
+   "Dismantle rule (shop clause REPLACED by ruling)": {
+    "table": "guild_facilities",
+    "row": 51,
+    "col": "rule",
+    "found": true
+   },
+   "Dismantle limits": {
+    "table": "guild_facilities",
+    "row": 52,
+    "col": "rule",
+    "found": true
+   },
+   "Hire fee": {
+    "table": "economy_framework",
+    "row": 22,
+    "col": "rule",
+    "found": true
+   },
+   "Dismissal": {
+    "table": "economy_framework",
+    "row": 49,
+    "col": "rule",
+    "found": true
+   },
+   "Rarity budgets": {
+    "table": "item_rarity_rules",
+    "row": 2,
+    "col": "rule_value",
+    "found": true
+   },
+   "Black Market (DB)": {
+    "table": "objects_encounters",
+    "row": 31,
+    "col": "col_7",
+    "found": true
+   }
+  },
+  "db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\CTRBLXAI.db",
+  "first_run_formulas": 40,
+  "source_read": [
+   "MerchantService.lua (shelf, refresh, pool)",
+   "GuildMenuService.lua (merchantStock L951-965, rollRecruit/previewRecruit/BuildRecruitUnit L359-523)",
+   "RecruitmentService.lua (ResolveHireCost, pool levels)",
+   "ObjectEffectService.lua L2262-2303 (Black Market)",
+   "Main.server.lua L642-754, 1793, 3503 (starter/debug gear, shop map level)",
+   "EquipmentService.lua L219-235 (keep-a-weapon guard, BUG-050)",
+   "QuestGenerator.lua L188-193, 328-334 (3 quests, levels)",
+   "ItemGenerator.lua L578-582 (Common: no lines)"
+  ]
+ },
+ "db_changes_since_recheck_run": "docs\\backups\\recheck_rulings_20261101_112336_changes.json: wording/record updates only (gf38 rule+notes, gf48 rule+notes, gf51 rule+notes, gf55 notes, ms41 notes, ms42 rule+notes, lp24 notes, equipment_schema reroll_count, open_decisions 23/123, implementation_plan 53). No formula or number used here changed."
+}

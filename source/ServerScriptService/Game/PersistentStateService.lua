@@ -167,12 +167,16 @@ function PersistentStateService.ApplyPostBattleRecovery(playerId, recoveryOverri
 	recoveryOverrides = recoveryOverrides or {}
 
 	for unitId, state in pairs(unitStates[playerId]) do
-		-- KO already cleared by ClearAllKO before this runs.
-		-- Apply 35% recovery to all living units.
-		do
+		-- KO'd units receive NO recovery (rule 8, BUG-071 2026-11-01). The caller runs this
+		-- BEFORE ClearAllKO, so isKO is still set here; they get a 0 result for the summary.
+		if state.isKO then
+			results[unitId] = { hpRecovered = 0, mpRecovered = 0, wasKO = true }
+			print(string.format("[PersistentState] %s KO'd -- no post-battle recovery", unitId))
+		else
 			local frac = recoveryOverrides[unitId] or RECOVERY_FRACTION
 			local hpRecovery = math.ceil(state.maxHp * frac)
-			local mpRecovery = math.ceil(state.maxMp * frac)
+			-- Resilient / Slow to Recover are HP-only in the DB; MP always uses the baseline (2026-10-29).
+			local mpRecovery = math.ceil(state.maxMp * RECOVERY_FRACTION)
 
 			local prevHp = state.currentHp
 			local prevMp = state.currentMp

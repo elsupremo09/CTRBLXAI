@@ -77,10 +77,16 @@ end
 --------------------------------------------------
 
 local _instanceCounter = 0
+-- Per-server-session nonce (2026-11-01). The counter restarts every session, so the
+-- same seed in two sessions could give two items the same ID; InventoryService then
+-- refuses the second one. The Runeforge fixes each item's Add offers from its ID
+-- (guild_facilities 55), so IDs must be unique across sessions. Item CONTENT stays
+-- deterministic from the seed; only the opaque ID string changes.
+local SESSION_NONCE = Random.new():NextInteger(1, 2^31 - 1)
 
 local function generateInstanceId(seed)
 	_instanceCounter = _instanceCounter + 1
-	return string.format("item_%d_%d", seed, _instanceCounter)
+	return string.format("item_%d_%d_%d", seed, SESSION_NONCE, _instanceCounter)
 end
 
 --------------------------------------------------
@@ -173,8 +179,10 @@ local function step4_BuildPassivePool(rarity, archetype, bonusBp, archetypeId)
 	local pool = {}
 
 	-- A weapon already carrying a native elemental passive cannot take another.
+	-- User ruling 2026-10-23: Freeze / Venomous only apply a status, they are not elements
+	-- (WeaponData TRANSFORM_ELEMENT). Ignite stays: it re-types Physical hits as Fire.
 	local PASSIVE_ELEMENT = {
-		Ignite = true, Freeze = true, Venomous = true,
+		Ignite = true,
 	}
 	local isElemental = archetype.nativePassiveId
 		and PASSIVE_ELEMENT[archetype.nativePassiveId] or false
@@ -207,7 +215,10 @@ local function step4_BuildPassivePool(rarity, archetype, bonusBp, archetypeId)
 			-- other passives, so they previously rolled onto off-hands/gloves where they
 			-- were inert. This flag rejects those slots without touching the shared labels.
 			-- Combat already excludes them from the multi-slot path (GetCombatKeys).
-			local weaponStatOnly = (passiveId == "PAS-001" or passiveId == "PAS-002" or passiveId == "PAS-046")
+			-- PAS-007 Range +1 (DB "Approved weapon families only") is read from the weapon only, so it is
+			-- weapon-only too (checklist fix 2026-10-29; was rolling on off-hands / gloves, where it is inert).
+			local weaponStatOnly = (passiveId == "PAS-001" or passiveId == "PAS-002" or passiveId == "PAS-046"
+				or passiveId == "PAS-007")
 
 			if eligible == "Any" then
 				weight = 1.0
@@ -240,7 +251,10 @@ local function step4_BuildPassivePool(rarity, archetype, bonusBp, archetypeId)
 				end
 			-- Elemental wards: any armor piece, shields, or accessories.
 			elseif eligible == "ArmorShield" then
-				if isArmor or isShield then
+				-- DB: Electric Negation / Absorption are "Armor, shields, clothing" -- no accessories
+				-- (the Wards include accessories). Checklist fix 2026-10-29.
+				local noAccessory = (passiveId == "PAS-027" or passiveId == "PAS-028")
+				if (isArmor or isShield) and not (noAccessory and isAccessory) then
 					weight = 0.4
 				end
 			-- Guard bonus: shields + body armor.
@@ -273,16 +287,27 @@ end
 -- STEP 5: Select eligible Bonus Passive(s)
 --------------------------------------------------
 
+-- DB weapons_equipment row 56 (Locked): at most ONE elemental transformation and ONE pattern
+-- conversion per generated item (a 2H item rolls up to 2 passives). Checklist fix 2026-10-29.
+local EXCLUSIVE_GROUP = {
+	["PAS-016"] = "transform", ["PAS-017"] = "transform", ["PAS-018"] = "transform",
+	["PAS-019"] = "transform", ["PAS-020"] = "transform", ["PAS-021"] = "transform",
+	["PAS-023"] = "pattern", ["PAS-024"] = "pattern", ["PAS-025"] = "pattern",
+}
+
 local function step5_SelectPassives(rng, pool, count, budgetRemaining)
 	local selected = {}
 	local usedBp = 0
 	local usedPool = {}
+	local usedGroup = {}
 
 	for i = 1, count do
 		-- Filter pool to what we can still afford
 		local affordable = {}
 		for _, entry in ipairs(pool) do
-			if not usedPool[entry.id] and entry.passive.bpCost <= (budgetRemaining - usedBp) then
+			local grp = EXCLUSIVE_GROUP[entry.id]
+			if not usedPool[entry.id] and not (grp and usedGroup[grp])
+				and entry.passive.bpCost <= (budgetRemaining - usedBp) then
 				table.insert(affordable, { item = entry.id, weight = entry.weight })
 			end
 		end
@@ -293,6 +318,7 @@ local function step5_SelectPassives(rng, pool, count, budgetRemaining)
 			table.insert(selected, chosen)
 			usedBp = usedBp + BonusData.BonusPassives[chosen].bpCost
 			usedPool[chosen] = true
+			if EXCLUSIVE_GROUP[chosen] then usedGroup[EXCLUSIVE_GROUP[chosen]] = true end
 		end
 	end
 
@@ -422,11 +448,13 @@ end
 -- STEP 10: Save generation identity
 --------------------------------------------------
 
-local function step10_BuildInstance(input, selectedPassives, selectedAttributes, rng)
+-- Display name from affixes (item_rarity_rules 23). Shared by loot and the Runeforge
+-- (forge / reroll renames, guild_facilities 58). Pure: no randomness.
+local function composeDisplayName(baseArchetypeId, selectedAttributes, selectedPassives)
 	-- Compose display name from affixes
 	local displayName = nil
-	local arch = WeaponData.GetByArchetypeId(input.baseArchetypeId)
-		or ArmorData.GetByArchetypeId(input.baseArchetypeId)
+	local arch = WeaponData.GetByArchetypeId(baseArchetypeId)
+		or ArmorData.GetByArchetypeId(baseArchetypeId)
 	local baseName = arch and arch.name or nil
 
 	if baseName and (#selectedAttributes > 0 or #selectedPassives > 0) then
@@ -490,6 +518,12 @@ local function step10_BuildInstance(input, selectedPassives, selectedAttributes,
 		end
 	end
 
+	return displayName
+end
+
+local function step10_BuildInstance(input, selectedPassives, selectedAttributes, rng)
+	local displayName = composeDisplayName(input.baseArchetypeId, selectedAttributes, selectedPassives)
+
 	return {
 		instanceId       = generateInstanceId(input.seed),
 		baseArchetypeId  = input.baseArchetypeId,
@@ -500,6 +534,11 @@ local function step10_BuildInstance(input, selectedPassives, selectedAttributes,
 		generatorVersion = 1,
 		sourceType       = input.sourceType or "Generated",
 		displayName      = displayName,
+		-- Acquisition record (equipment_schema 18/19, v2 2026-11-01): the rarity it was made
+		-- at (tracking only, no price effect) and its Runeforge reroll count. The levelling
+		-- record (equipment_schema 20) is added when the item enters the inventory.
+		startingRarity   = input.rarity,
+		rerollCount      = 0,
 	}
 end
 
@@ -617,6 +656,53 @@ function ItemGenerator.GenerateFromPool(archetypePool, itemLevel, rarity, seed, 
 		seed = seed,
 		sourceType = sourceType or "Loot",
 	})
+end
+
+--------------------------------------------------
+-- PUBLIC: Runeforge helpers (v2 build step 4, 2026-11-01). They reuse the generator's own
+-- rules so the Runeforge can never put on an item what loot could not (guild_facilities 56,
+-- BUG-054 gear-type check), and names follow the normal affix rule (guild_facilities 58).
+--------------------------------------------------
+
+-- Every bonus line ID (numeric attribute or bonus passive) this archetype can carry,
+-- by gear type only (rarity and budget are the Runeforge's own checks).
+-- Returns { [lineId] = true }.
+function ItemGenerator.GetCompatibleGems(archetypeId)
+	local archetype = WeaponData.GetByArchetypeId(archetypeId) or ArmorData.GetByArchetypeId(archetypeId)
+	local out = {}
+	if not archetype then return out end
+	for _, entry in ipairs(step4_BuildPassivePool("Transcendent", archetype, math.huge, archetypeId)) do
+		out[entry.id] = true
+	end
+	for _, entry in ipairs(step6_BuildAttributePool("Transcendent", archetype)) do
+		out[entry.id] = true
+	end
+	return out
+end
+
+-- "transform" / "pattern" for passives limited to one per item (weapons_equipment 56), else nil.
+function ItemGenerator.GetExclusiveGroup(passiveId)
+	return EXCLUSIVE_GROUP[passiveId]
+end
+
+-- Item display name for a set of lines (same rule as loot). nil when the item has no lines.
+function ItemGenerator.ComposeName(baseArchetypeId, bonusLines, bonusPassiveIds)
+	return composeDisplayName(baseArchetypeId, bonusLines or {}, bonusPassiveIds or {})
+end
+
+-- One complete bonus-line set made exactly like a loot item of this archetype, level and
+-- rarity (sulfur rerolls, guild_facilities 54). Deterministic for a seed.
+-- Returns { bonusLines, bonusPassiveIds } or nil + reason.
+function ItemGenerator.RollBonusSet(archetypeId, itemLevel, rarity, seed)
+	local inst, err = ItemGenerator.Generate({
+		baseArchetypeId = archetypeId,
+		itemLevel = itemLevel,
+		rarity = rarity,
+		seed = seed,
+		sourceType = "Reroll",
+	})
+	if not inst then return nil, err end
+	return { bonusLines = inst.bonusLines, bonusPassiveIds = inst.bonusPassiveIds }
 end
 
 return ItemGenerator

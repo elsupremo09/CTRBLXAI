@@ -9,8 +9,8 @@
 --   completed, then they return with the computed XP and rewards.
 --
 -- READS:
---   unit_progression (Dispatch XP formula), loot_progression (Dispatch Reward:
---   1-3 materials, lower tier than current content), the current content/Map
+--   unit_progression (Dispatch XP formula), materials_system 12 (Dispatch Reward:
+--   1 mercury per mission, 2 for tier 4-5 — v2 2026-11-01), the current content/Map
 --   Level and the player's completed-battle count (passed in). It READS the
 --   roster through the existing persistence path — it does not own units.
 --
@@ -89,19 +89,10 @@ local DispatchService = {}
 local DISPATCH_XP_TIER_FACTOR = 60   -- unit_progression: (Tier × 60) × Duration
 local MIN_TIER, MAX_TIER = 1, 5      -- Difficulty Tier 1-5 (Locked)
 
--- loot_progression Dispatch Reward: 1-3 materials.
-local REWARD_MIN_MATERIALS, REWARD_MAX_MATERIALS = 1, 3
-local MATERIAL_TIER_MIN, MATERIAL_TIER_MAX = 1, 5
-
--- materials_system id=21 — Tier by level band (reused to find "current content
--- tier"; FLAG-D2). This mirrors BlacksmithService.materialTierForLevel.
-local function contentMaterialTier(contentLevel: number): number
-	local lvl = math.max(1, math.floor(contentLevel or 1))
-	if lvl <= 20 then return 1
-	elseif lvl <= 40 then return 2
-	elseif lvl <= 60 then return 3
-	elseif lvl <= 80 then return 4
-	else return 5 end
+-- materials_system 12 (v2, LOCKED USER DECISION 2026-11-01): the reward is mercury,
+-- paid ONCE per mission (not per unit): 1, or 2 for tier 4-5 missions.
+local function rewardMercuryFor(tier: number): number
+	return if tier >= 4 then 2 else 1
 end
 
 --------------------------------------------------
@@ -109,13 +100,13 @@ end
 --------------------------------------------------
 
 local _currency: any = nil            -- CurrencyService.AsProvider() — Credit via grant table
-local _currencyGrant: any = nil       -- CurrencyService.Credit(playerId, grant) direct (materials)
+local _currencyGrant: any = nil       -- CurrencyService.Credit(playerId, grant) direct (mercury)
 local _unitXpSink: ((string, string, number) -> ())? = nil  -- (playerId, unitId, xp) FLAG-D3
 local _availabilitySink: any = nil    -- marks/queries unit availability on the EXISTING roster path
 local _rosterProvider: ((string) -> ({ string }?))? = nil   -- owned unit ids (read-only)
 
 function DispatchService.SetCurrencyProvider(svc: any) _currency = svc end
--- Direct Credit hook so materials can be granted all-at-once (CurrencyService.Credit).
+-- Direct Credit hook so the mercury reward is granted through CurrencyService.Credit.
 function DispatchService.SetCurrencyCredit(fn: any) _currencyGrant = fn end
 function DispatchService.SetUnitXpSink(fn: ((string, string, number) -> ())?) _unitXpSink = fn end
 -- availability sink contract (lives on the roster/persistence owner, not here):
@@ -148,7 +139,7 @@ end
 --------------------------------------------------
 -- STATE
 --   active[playerId] = {
---     [unitId] = { missionId, tier, duration, startBattle, returnBattle, xp, matTier, matCount }
+--     [unitId] = { missionId, tier, duration, startBattle, returnBattle, xp, mercury }
 --   }
 -- This is the dispatch LEDGER (who is away, how much they will earn). It is
 -- serialized through the EXISTING SaveService path via Export/Import (same
@@ -175,23 +166,6 @@ function DispatchService.ComputeDispatchXp(difficultyTier: number, durationBattl
 	local tier = math.clamp(math.floor(difficultyTier or MIN_TIER), MIN_TIER, MAX_TIER)
 	local duration = math.max(1, math.floor(durationBattles or 1))
 	return (tier * DISPATCH_XP_TIER_FACTOR) * duration
-end
-
---------------------------------------------------
--- REWARD MATERIAL RESOLUTION (FLAG-D2)
---
--- "1-3 materials, lower tier than current content." We find the content tier
--- from the Map Level band, grant ONE tier below (floored at T1), and roll the
--- count 1-3 deterministically from the mission seed. Structure only — the exact
--- count rule is flagged for the Designer.
---------------------------------------------------
-
-local function resolveRewardMaterials(contentLevel: number, seed: number): (number, number)
-	local contentTier = contentMaterialTier(contentLevel)
-	local rewardTier = math.clamp(contentTier - 1, MATERIAL_TIER_MIN, MATERIAL_TIER_MAX)
-	local rng = Random.new(seed)
-	local count = rng:NextInteger(REWARD_MIN_MATERIALS, REWARD_MAX_MATERIALS)
-	return rewardTier, count
 end
 
 --------------------------------------------------
@@ -231,14 +205,19 @@ end
 --
 -- Produces the quest-board dispatch offers. Deterministic given the seed. Each
 -- mission carries a difficulty tier (1-5), a duration (battles away), the XP it
--- will pay (locked formula), and the reward material tier/count (FLAG-D2).
+-- will pay (locked formula), and its mercury reward (materials_system 12).
+--
+-- A mission that is still away (sent earlier, units not back yet) is NOT offered
+-- again. Offers are not saved, so after a restart with no battle in between the
+-- same seed rebuilds the same mission IDs; without this the sent mission came back
+-- on the board and could be sent twice (v2 D-1, 2026-11-01).
 --
 -- FLAG-D1: the DB does not lock how many missions to offer nor the tier→duration
 -- table. We offer one mission per difficulty tier (5 total) with duration =
 -- tier as a neutral placeholder, unless the caller supplies a `missionSpec`
 -- override list of { tier, duration }.
 --
--- Returns: { missions = { { missionId, tier, duration, xp, rewardTier, rewardCount } } }
+-- Returns: { missions = { { missionId, tier, duration, xp, rewardMercury } } }
 --------------------------------------------------
 
 function DispatchService.OfferMissions(playerId: string, mapLevel: number, seed: number?, missionSpec: { any }?)
@@ -255,21 +234,27 @@ function DispatchService.OfferMissions(playerId: string, mapLevel: number, seed:
 		end
 	end
 
+	local awayMissions: { [string]: boolean } = {}
+	for _, rec in activeOf(playerId) do
+		if rec.missionId then awayMissions[rec.missionId] = true end
+	end
+
 	offered[playerId] = {}
 	for i, spec in specs do
 		local tier = math.clamp(math.floor(spec.tier or MIN_TIER), MIN_TIER, MAX_TIER)
 		local duration = math.max(1, math.floor(spec.duration or tier))
 		local xp = DispatchService.ComputeDispatchXp(tier, duration)
 		local missionSeed = baseSeed + i * 7919
-		local rewardTier, rewardCount = resolveRewardMaterials(mapLevel, missionSeed)
 		local missionId = string.format("dispatch_%d_%d", baseSeed, i)
+		if awayMissions[missionId] then
+			continue -- already sent and still away
+		end
 		local m = {
 			missionId = missionId,
 			tier = tier,
 			duration = duration,
 			xp = xp,
-			rewardTier = rewardTier,
-			rewardCount = rewardCount,
+			rewardMercury = rewardMercuryFor(tier),
 			seed = missionSeed,
 		}
 		offered[playerId][missionId] = m
@@ -317,6 +302,12 @@ function DispatchService.SendUnits(playerId: string, missionId: string, unitIds:
 	end
 
 	local a = activeOf(playerId)
+	-- One send per mission (v2 D-1): the mission reward is paid once per mission ID.
+	for _, rec in a do
+		if rec.missionId == mission.missionId then
+			return false, "This mission has already been sent"
+		end
+	end
 	for _, unitId in unitIds do
 		if type(unitId) ~= "string" then
 			return false, "Invalid unit id in selection"
@@ -359,8 +350,7 @@ function DispatchService.SendUnits(playerId: string, missionId: string, unitIds:
 			returnBattle = returnBattle,  -- legacy (battle-count); kept for save back-compat
 			remainingDays = mission.duration,  -- 2026-10-16: duration is now DAYS (1 day = 4000 CT)
 			xp = mission.xp,
-			matTier = mission.rewardTier,
-			matCount = mission.rewardCount,
+			mercury = mission.rewardMercury,
 		}
 		markAway(playerId, unitId, returnBattle)
 	end
@@ -377,8 +367,7 @@ function DispatchService.SendUnits(playerId: string, missionId: string, unitIds:
 		unitIds = unitIds,
 		returnBattle = returnBattle,
 		xpEach = mission.xp,
-		rewardTier = mission.rewardTier,
-		rewardCount = mission.rewardCount,
+		rewardMercury = mission.rewardMercury,
 	}
 end
 
@@ -391,7 +380,7 @@ end
 -- through the injected unit-XP sink (FLAG-D3), and its reward materials are
 -- credited through CurrencyService.Credit.
 --
--- Returns: { returned = { { unitId, missionId, xp, matTier, matCount, xpGranted } } }
+-- Returns: { returned = { { unitId, missionId, xp, mercury, xpGranted } } }
 --------------------------------------------------
 
 -- daysElapsed = days this battle was worth = ceil(elapsed CT / 4000), min 1 (2026-10-16,
@@ -403,6 +392,7 @@ function DispatchService.ResolveReturns(playerId: string, daysElapsed: number?)
 	local burn = math.max(1, math.floor(tonumber(daysElapsed) or 1))
 	local a = activeOf(playerId)
 	local returned = {}
+	local paidMissions: { [string]: boolean } = {}
 
 	for unitId, rec in a do
 		-- Back-compat: a record loaded from an old save may lack remainingDays; derive it from
@@ -425,17 +415,20 @@ function DispatchService.ResolveReturns(playerId: string, daysElapsed: number?)
 					unitId, rec.xp))
 			end
 
-			-- 3) Credit reward materials through CurrencyService.Credit (always
-			--    safe; no gold involved). Prefer the direct Credit hook; fall
-			--    back to the provider's AddGold-less path is N/A (materials only).
-			if rec.matCount and rec.matCount > 0 and rec.matTier then
-				local grant = { materials = { [rec.matTier] = rec.matCount } }
-				if _currencyGrant then
-					_currencyGrant(playerId, grant)
-				elseif _currency and _currency.SpendMaterials then
-					-- No direct Credit injected — cannot grant materials safely
-					-- without a credit path; flag rather than invent one.
-					warn("[DispatchService] No CurrencyService.Credit wired — reward materials not granted (recorded)")
+			-- 3) Mercury reward through CurrencyService.Credit, ONCE per mission
+			--    (materials_system 12): the first returning unit of a mission carries it.
+			local mercury = 0
+			local missionKey = tostring(rec.missionId or unitId)
+			if not paidMissions[missionKey] then
+				paidMissions[missionKey] = true
+				mercury = math.max(0, math.floor(tonumber(rec.mercury) or 0))
+				if mercury > 0 then
+					if _currencyGrant then
+						_currencyGrant(playerId, { mercury = mercury })
+					else
+						-- No credit path injected: report it rather than invent one.
+						warn("[DispatchService] No CurrencyService.Credit wired — mercury reward not granted (recorded)")
+					end
 				end
 			end
 
@@ -444,16 +437,14 @@ function DispatchService.ResolveReturns(playerId: string, daysElapsed: number?)
 				missionId = rec.missionId,
 				xp = rec.xp,
 				xpGranted = xpGranted,
-				matTier = rec.matTier,
-				matCount = rec.matCount,
+				mercury = mercury,
 			})
 
 			a[unitId] = nil
 
 			print(string.format(
-				"[DispatchService] RETURNED %s from %s | +%d XP%s | +%d T%d materials",
-				unitId, rec.missionId, rec.xp, xpGranted and "" or " (sink missing)",
-				rec.matCount or 0, rec.matTier or 0))
+				"[DispatchService] RETURNED %s from %s | +%d XP%s | +%d mercury",
+				unitId, rec.missionId, rec.xp, xpGranted and "" or " (sink missing)", mercury))
 		end
 	end
 
@@ -509,8 +500,7 @@ function DispatchService.Export(playerId: string)
 			returnBattle = rec.returnBattle,
 			remainingDays = rec.remainingDays,
 			xp = rec.xp,
-			matTier = rec.matTier,
-			matCount = rec.matCount,
+			mercury = rec.mercury,
 		}
 	end
 	return { active = copy }
@@ -521,15 +511,17 @@ function DispatchService.Import(playerId: string, data: any)
 	if type(data) ~= "table" or type(data.active) ~= "table" then return end
 	for unitId, rec in data.active do
 		if type(unitId) == "string" and type(rec) == "table" then
+			local tier = math.clamp(math.floor(tonumber(rec.tier) or MIN_TIER), MIN_TIER, MAX_TIER)
 			active[playerId][unitId] = {
 				missionId = tostring(rec.missionId),
-				tier = math.clamp(math.floor(tonumber(rec.tier) or MIN_TIER), MIN_TIER, MAX_TIER),
+				tier = tier,
 				duration = math.max(1, math.floor(tonumber(rec.duration) or 1)),
 				startBattle = math.max(0, math.floor(tonumber(rec.startBattle) or 0)),
 				returnBattle = math.max(0, math.floor(tonumber(rec.returnBattle) or 0)),
 				xp = math.max(0, math.floor(tonumber(rec.xp) or 0)),
-				matTier = math.clamp(math.floor(tonumber(rec.matTier) or 1), MATERIAL_TIER_MIN, MATERIAL_TIER_MAX),
-				matCount = math.max(0, math.floor(tonumber(rec.matCount) or 0)),
+				-- Missions sent before v2 stored a material tier/count; they now pay mercury by
+				-- the v2 rule for their tier (materials_system 12).
+				mercury = if rec.mercury ~= nil then math.max(0, math.floor(tonumber(rec.mercury) or 0)) else rewardMercuryFor(tier),
 				remainingDays = math.max(1, math.floor(tonumber(rec.remainingDays) or tonumber(rec.duration) or 1)),
 			}
 			-- Re-assert unavailability on the roster path after load.

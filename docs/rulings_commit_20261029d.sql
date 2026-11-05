@@ -1,0 +1,3 @@
+BEGIN TRANSACTION;
+UPDATE objects_encounters SET col_9 = col_9 || ' | USER RULING 2026-10-29: the shot uses NONE of the operator''s weapon passives (Armor Pierce, Piercing Edge, High Ground, Tricky, Precision/True Strike, Backstab, Executioner, Charge, Bypass, Ignite, Attunement, on-hit statuses, Drain). The weapon''s own damage stat (incl. stat passives like Brutal) still feeds the siege formula.' WHERE MAP_OBJECT_CATALOG IN ('Ballista','Catapult');
+COMMIT;

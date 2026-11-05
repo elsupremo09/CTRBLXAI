@@ -117,6 +117,11 @@ function ObjectEffectService.RemoveObjectInstance(state: any, inst: any)
 	if _objectVisualRemover then
 		_objectVisualRemover(inst)
 	end
+	-- 2026-10-30 (project_rules 241): a removed aura object (War Banner, Cursed Statue) stops
+	-- its aura at once. Looked up on the module table: ClearAuraFrom is defined further down.
+	if removed and (ObjectEffectService :: any).ClearAuraFrom then
+		(ObjectEffectService :: any).ClearAuraFrom(state, inst)
+	end
 	print(string.format("[ObjectEffectService] RemoveObjectInstance | %s at (%s,%s) removed=%s",
 		tostring(inst.type), tostring(inst.x), tostring(inst.y), tostring(removed)))
 	return removed
@@ -200,12 +205,34 @@ end
 -- ConsumeExplosiveObjectAt so the 128-event cap (TRG-011) spans the whole chain
 -- with no nested QueueExplosion. A direct attack / weather hit (fromExplosion
 -- false) detonates an explosive top-level.
-function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, attackElement: any, fromExplosion: any): any
+-- `attacker` (optional, 2026-10-28): the UNIT whose attack caused this hit. Only
+-- used to tag an explosive detonation with an instigator (Treasure Hunter escape,
+-- project_rules 230). Weather/terrain/explosion-chain callers pass nothing.
+
+-- Treasure Hunter (project_rules 230, 2026-10-28 ruling): damage from a map object a
+-- unit set off on purpose counts as an attack. Same rule shape as CombatResolver.ApplyOutcome.
+local function markHunterAttacked(target: any, instigator: any, dmg: any)
+	if target and target.eventName == "Treasure Hunter" and instigator and instigator ~= target
+		and (dmg or 0) > 0 and not target.hunterAttacked then
+		target.hunterAttacked = true
+		print(string.format("[ObjectEffectService] Treasure Hunter %s hit by object set off by %s -> will try to escape",
+			tostring(target.name), tostring(instigator.name)))
+	end
+end
+
+function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, attackElement: any, fromExplosion: any, attacker: any): any
 	if not (state and state.objects and x and y) then return "not-found" end
 	for _, inst in ipairs(state.objects) do
 		-- A hidden object cannot be hit until it is revealed (no HP / break news leaks its tile).
 		if inst.x == x and inst.y == y and not inst.hidden then
 			local def = inst.type and ObjectData.Objects[inst.type]
+			-- USER RULING 2026-10-30 (project_rules 241 B3): ANY hit on a Mimic — disguised or
+			-- unmasked, from any source — wakes it instead of damaging it. Chests are breakable now,
+			-- so a disguised Mimic must take hits too or it could be spotted by elimination.
+			if inst.type and ObjectEffectService.DISGUISES[inst.type] then
+				if ObjectEffectService.WakeByHit(state, inst, attacker) then return "woke" end
+				return "immune"
+			end
 			-- EXPLOSIVE objects (Bomb Barrel / Land Mine) carry no hp bar — a hit
 			-- DETONATES them (objects_encounters: "Fire-tag attack, Explosion, or
 			-- Destroyed"). Inside an explosion we skip (queue chains it); otherwise
@@ -213,11 +240,14 @@ function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, 
 			if def and objHasTag(def, "Explosive") then
 				if fromExplosion then return "immune" end
 				if _tileEffectService and _tileEffectService.QueueExplosion then
+					local _shownType = ObjectEffectService.GetDisplayType(inst, nil)  -- log label (never the true Mimic type)
 					ObjectEffectService.RemoveObjectInstance(state, inst)
 					if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
-						BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
+						BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true, exploded = true }, _shownType)
 					end
-					_tileEffectService.QueueExplosion(x, y, 0, "object", 0.25, state.units, "box", objHasTag(def, "Trap"))
+					-- AC-012 Trapmaker's Roll: a wearer's Land Mine set off by a hit still blasts +20% (2026-10-29).
+					_tileEffectService.QueueExplosion(x, y, 0, "object", 0.25 * (inst.trapPowerMult or 1), state.units, "box", objHasTag(def, "Trap"),
+						attacker and attacker.id or nil)
 				print(string.format("[ObjectEffectService] %s detonated by hit at (%d,%d)", tostring(inst.type), x, y))
 				ObjectiveService.RecordEvent(state, "objectsBroken", 1)
 					return "detonated"
@@ -234,16 +264,43 @@ function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, 
 					if t == attackElement then instant = true; break end
 				end
 			end
+			-- HD-009 Demolition Mask one-hit kill (USER RULING 2026-10-30 3:15 PM, nonweapon_equipment 32):
+			-- any hit from a wearer destroys an obstacle object or placed item - every breakable object
+			-- that was breakable before rule 241 (Ice Spike, OBS walls, Stone Pillar, placed items, either
+			-- side). Objects made breakable by rule 241 (newlyBreakable) still take 3 hits. Lazy require,
+			-- same as the Salvager's Cap check below.
+			if not instant and attacker and not def.newlyBreakable then
+				local _apsMask = (require :: any)(script.Parent.ArmorPassiveService)
+				if _apsMask.CanInteractBreakObjects and _apsMask.CanInteractBreakObjects(attacker) then instant = true end
+			end
 			local dmg = instant and inst.hp or math.max(1, math.floor(tonumber(n) or 1))
 			inst.hp = math.max(0, inst.hp - dmg)
 			if inst.hp <= 0 then
+				local _shownType = ObjectEffectService.GetDisplayType(inst, nil)  -- log label (Mimic-safe)
 				ObjectEffectService.RemoveObjectInstance(state, inst)
 				-- OBS Phase 2c-0: tell clients the tile opened so they drop their local
 				-- blocker (GetObjectAt / LoS) and refresh the inspector HP readout.
 				if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
-					BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
+					BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true }, _shownType)
 				end
 				ObjectiveService.RecordEvent(state, "objectsBroken", 1)
+				-- HD-011 Salvager's Cap (user ruling 2026-10-29, reward changed 2026-11-01): a player unit
+				-- wearing it that destroys a breakable object gets a little gold + 5% mercury + 5% gear
+				-- (salvage branch of _grantChestReward). Not counted as a chest opened; no Treasure Seeker bonus.
+				-- USER RULING 2026-10-30 (rule 241 B4): only objects breakable BEFORE that ruling qualify;
+				-- map objects flagged newlyBreakable in ObjectData give no salvage roll.
+				-- DEV DEFAULT 2026-11-01 (Simulator: conjured Ice Spike salvage farm): only objects the
+				-- map generated qualify; anything placed mid-battle (inst.spawned) gives no salvage roll.
+				if attacker and attacker.side == "Player" and not (def and def.newlyBreakable) and not inst.spawned then
+					local _apsSal = (require :: any)(script.Parent.ArmorPassiveService)
+					if _apsSal.CanInteractBonusLoot(attacker) then
+						print(string.format("[ObjectEffectService] Salvager's Cap: %s salvages the %s", tostring(attacker.name), tostring(_shownType)))
+						if BattleVisualBroadcaster and BattleVisualBroadcaster.Log then
+							BattleVisualBroadcaster.Log("action", `{attacker.name} salvages the wreckage.`, attacker.id)
+						end
+						ObjectEffectService._grantChestReward(attacker, { state = state, objInstance = inst, allUnits = state.units }, { salvage = true })
+					end
+				end
 				return "destroyed"
 			end
 			-- OBS Phase 2c-0: broadcast the new hp so an open inspector card shows N/3 live.
@@ -311,13 +368,14 @@ function ObjectEffectService.PushObject(state: any, x: any, y: any, dx: any, dy:
 	local tiles = 0
 	local collided = false
 	local collidedX, collidedY = nil, nil
+	local collidedKind = nil  -- "edge" / "blocker" / "elevation" / "unit" (GL-014 Chain-Push, 2026-10-29)
 	for _ = 1, distance do
 		local nx, ny = curX + sx, curY + sy
-		if not insideMap(nx, ny) then collided=true; collidedX,collidedY=nx,ny; break end                 -- edge
-		if GameConstants.IsBlocked(nx, ny) then collided=true; collidedX,collidedY=nx,ny; break end        -- another blocker/object
+		if not insideMap(nx, ny) then collided=true; collidedX,collidedY=nx,ny; collidedKind="edge"; break end
+		if GameConstants.IsBlocked(nx, ny) then collided=true; collidedX,collidedY=nx,ny; collidedKind="blocker"; break end
 		local nextElev = GameConstants.GetElevation(nx, ny)
-		if nextElev > curElev then collided=true; collidedX,collidedY=nx,ny; break end                     -- forced upward blocked
-		if unitAt(nx, ny) then collided=true; collidedX,collidedY=nx,ny; break end                         -- occupied tile
+		if nextElev > curElev then collided=true; collidedX,collidedY=nx,ny; collidedKind="elevation"; break end
+		if unitAt(nx, ny) then collided=true; collidedX,collidedY=nx,ny; collidedKind="unit"; break end
 		curX, curY, curElev = nx, ny, nextElev
 		tiles += 1
 	end
@@ -346,12 +404,13 @@ function ObjectEffectService.PushObject(state: any, x: any, y: any, dx: any, dy:
 	if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
 		BattleVisualBroadcaster.ObjectChanged(fromX, fromY, { moved = {
 			fromX = fromX, fromY = fromY, toX = curX, toY = curY,
-			hp = inst.hp, objType = inst.type, height = def.standingHeight,
-		} })
+			-- Client-visible type only (Mimic disguise: never leak the true type).
+			hp = inst.hp, objType = ObjectEffectService.GetDisplayType(inst, nil), height = def.standingHeight,
+		} }, ObjectEffectService.GetDisplayType(inst, nil))
 	end
 	print(string.format("[ObjectEffectService] PushObject | %s (%d,%d)->(%d,%d) tiles=%d force=%s",
 		tostring(inst.type), fromX, fromY, curX, curY, tiles, tostring(force)))
-	return { moved = true, fromX = fromX, fromY = fromY, toX = curX, toY = curY, tiles = tiles, collided = collided, collidedX = collidedX, collidedY = collidedY }
+	return { moved = true, fromX = fromX, fromY = fromY, toX = curX, toY = curY, tiles = tiles, collided = collided, collidedX = collidedX, collidedY = collidedY, collidedKind = collidedKind }
 end
 
 -- OBS Phase 2c-E2: push-candidate list for breakable blocker-prop OBS objects, used
@@ -478,8 +537,8 @@ function ObjectEffectService.MoveObjectInstance(state: any, inst: any, x: any, y
 			if solid then
 				BattleVisualBroadcaster.ObjectChanged(fromX, fromY, { moved = {
 					fromX = fromX, fromY = fromY, toX = x, toY = y,
-					hp = inst.hp, objType = inst.type, height = def.standingHeight,
-				} })
+					hp = inst.hp, objType = ObjectEffectService.GetDisplayType(inst, nil), height = def.standingHeight,
+				} }, ObjectEffectService.GetDisplayType(inst, nil))
 			else
 				-- Passable objects carry no client blocker: clear the old tile, then send the hp.
 				BattleVisualBroadcaster.ObjectChanged(fromX, fromY, { destroyed = true })
@@ -586,7 +645,8 @@ function ObjectEffectService.PlaceObjectInstance(state: any, objType: any, x: an
 		end
 	end
 	_spawnedObjectCounter += 1
-	local inst = { id = "spawnobj_" .. _spawnedObjectCounter, type = objType, x = x, y = y, ownerSide = ownerSide, casterId = casterId }
+	local inst = { id = "spawnobj_" .. _spawnedObjectCounter, type = objType, x = x, y = y, ownerSide = ownerSide, casterId = casterId,
+		spawned = true } -- placed mid-battle (skill, item, event): never gives a Salvager's Cap roll
 	-- Placed objects get their durability too (fix 2026-10-26): InitObjectHp only runs at battle
 	-- start, so every object placed mid-battle (item traps, Portable Ballista, gadgets) had no hp
 	-- and was immune to attacks. Light gadgets break after hitsToDestroy hits (DB SPLIT ruling).
@@ -637,6 +697,118 @@ function ObjectEffectService.RevealObject(o: any): boolean
 	return true
 end
 
+--------------------------------------------------------------------
+-- MIMIC DISGUISE (user-locked 2026-10-28). A Mimic is DISGUISED as a Treasure Chest
+-- until it is unmasked (reveal effect) or woken (interact / attack). Derived, not stored:
+-- disguised = type has a DISGUISES entry and inst.unmasked ~= true, so map-gen, spawned
+-- and regenerated Mimics all start disguised with no init step. Separate from inst.hidden
+-- (hidden = not drawn; disguised = drawn as something else). The server keeps the TRUE
+-- type for logic; everything sent to clients must use GetDisplayType (SEC-002 / NET-003).
+--------------------------------------------------------------------
+ObjectEffectService.DISGUISES = table.freeze({
+	["Mimic"] = "Treasure Chest",
+})
+
+function ObjectEffectService.IsDisguised(o: any): boolean
+	return o ~= nil and o.type ~= nil and ObjectEffectService.DISGUISES[o.type] ~= nil and o.unmasked ~= true
+end
+
+-- Type string the CLIENT may see for this instance (or for a bare type name with no
+-- instance, e.g. map-build tile data — every map object starts disguised).
+function ObjectEffectService.GetDisplayType(o: any, bareType: any): any
+	if o == nil then
+		return (bareType and ObjectEffectService.DISGUISES[bareType]) or bareType
+	end
+	if ObjectEffectService.IsDisguised(o) then
+		return ObjectEffectService.DISGUISES[o.type]
+	end
+	return o.type
+end
+
+-- Client-safe copies of the MapDataSync object grid + blocker list (true disguised
+-- types replaced by their display type). Server tables are not mutated.
+function ObjectEffectService.SanitizeMapSync(objectGrid: any, blockers: any): (any, any)
+	local grid = {}
+	for y, row in pairs(objectGrid or {}) do
+		local outRow = {}
+		for x, name in pairs(row) do
+			outRow[x] = ObjectEffectService.GetDisplayType(nil, name)
+		end
+		grid[y] = outRow
+	end
+	local bl = {}
+	for i, b in ipairs(blockers or {}) do
+		local copy = table.clone(b)
+		copy.objectType = ObjectEffectService.GetDisplayType(nil, b.objectType)
+		bl[i] = copy
+	end
+	return grid, bl
+end
+
+-- Unmask a disguised object (reveal effects). It stays DORMANT: no summon, no enemy.
+-- Re-renders with the true model + tile attributes (BUG-034: the change reaches clients
+-- through the replicated tile attributes / model). Returns true when it was disguised.
+function ObjectEffectService.UnmaskObject(o: any, revealerName: any): boolean
+	if not ObjectEffectService.IsDisguised(o) then return false end
+	-- Remove the chest visual while still disguised (names resolve to the display type).
+	if not o.hidden and _objectVisualRemover then _objectVisualRemover(o) end
+	o.unmasked = true
+	if not o.hidden and _objectRenderer then _objectRenderer(o) end
+	-- A3 (2026-10-28): an already-open inspector card refreshes to the now-true display
+	-- type. Sent only AFTER unmask (GetDisplayType is now the real type) and only for a
+	-- visible object, so nothing leaks while disguised.
+	if not o.hidden and BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+		BattleVisualBroadcaster.ObjectChanged(o.x, o.y, { objType = ObjectEffectService.GetDisplayType(o, nil) })
+	end
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.Log then
+		BattleVisualBroadcaster.Log("action", `{revealerName or "A reveal"} revealed a {o.type}!`, nil)
+	end
+	print(`[ObjectEffectService] Unmasked {o.type} at ({o.x},{o.y}) by {tostring(revealerName)}`)
+	return true
+end
+
+-- Forward declaration: the Mimic handler lives in the Handlers table below.
+local _wakeHandler: any = nil
+
+-- Wake an UNMASKED Mimic that was attacked: runs the same Mimic handler (becomes the
+-- enemy). Returns true when it woke.
+function ObjectEffectService.WakeUnmasked(state: any, o: any, actor: any): boolean
+	if not (o and o.unmasked == true and ObjectEffectService.DISGUISES[o.type] and _wakeHandler) then
+		return false
+	end
+	local objId = o.id or ("obj_@" .. tostring(o.x) .. "," .. tostring(o.y))
+	if _consumed[objId] then return false end
+	local seedBase = (state and state.ct or 0) + ((o.x or 0) * 73856093) + ((o.y or 0) * 19349663)
+	local ok = _wakeHandler({
+		actor = actor or { tileX = o.x, tileY = o.y },
+		objInstance = o, objDef = ObjectData.Objects[o.type],
+		state = state, allUnits = state and state.units or {}, rng = Random.new(seedBase),
+	})
+	if ok then
+		_consumed[objId] = true
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+			BattleVisualBroadcaster.ObjectChanged(o.x, o.y, { destroyed = true })
+		end
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.Log then
+			BattleVisualBroadcaster.Log("action", `{(actor and actor.name) or "Someone"} woke the {o.type}!`, actor and actor.id)
+		end
+	end
+	return ok == true
+end
+
+-- Wake a Mimic that was HIT, disguised or not (USER RULING 2026-10-30, project_rules 241 B3).
+-- A disguised one is unmasked first so it wakes through the same path (and is named "Mimic" in
+-- the log); if the wake fails the disguise is put back, so nothing leaks. Returns true when it woke.
+function ObjectEffectService.WakeByHit(state: any, o: any, actor: any): boolean
+	if not (o and o.type and ObjectEffectService.DISGUISES[o.type]) then return false end
+	local wasUnmasked = o.unmasked
+	o.unmasked = true
+	local ok = ObjectEffectService.WakeUnmasked(state, o, actor)
+	if not ok then o.unmasked = wasUnmasked end
+	print(`[ObjectEffectService] WakeByHit | {o.type} at ({o.x},{o.y}) woke={ok} (was unmasked={wasUnmasked == true})`)
+	return ok
+end
+
 -- Scanner Lens reveal zone for `side`, lasting durationCt.
 function ObjectEffectService.AddRevealZone(tileSet: any, durationCt: any, side: any)
 	if type(tileSet) ~= "table" or (tonumber(durationCt) or 0) <= 0 then return end
@@ -675,6 +847,10 @@ function ObjectEffectService.ResetBattle()
 	table.clear(_consumed)
 	table.clear(_usedThisTurn)
 	_aliveSnapshot = nil
+	-- 2026-10-30 aura fix: forget last battle's aura memberships (object ids repeat between maps).
+	-- Looked up on the module table: ClearAllAuras is defined further down.
+	local _clearAll = (ObjectEffectService :: any).ClearAllAuras
+	if _clearAll then _clearAll(nil) end
 	print("[ObjectEffectService] Usage ledger reset for new battle.")
 end
 
@@ -924,6 +1100,13 @@ Handlers["Pandora's Box"] = function(ctx: any): (boolean, any)
 		allUnits = ctx.allUnits, rng = ctx.rng,
 	}
 	print(string.format("[ObjectEffectService] Pandora's Box | rolled '%s' (centered on box tile)", pick))
+	-- Battle log (rules 225): say what the Box rolled. The rolled handler's own lines
+	-- already carry the "Pandora's Box" cause via Resolve's SetCause scope, so this is
+	-- the only extra line. Pool names are real display names (no Mimic in the pool).
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.Log then
+		local who = (ctx.actor and ctx.actor.name) or "Someone"
+		BattleVisualBroadcaster.Log("action", `Pandora's Box unleashed {pick} on {who}!`, ctx.actor and ctx.actor.id)
+	end
 	local ok, reason = Handlers[pick](subCtx)
 	return ok, reason
 end
@@ -1034,12 +1217,17 @@ end
 --------------------------------------------------------------------
 Handlers["Cursed Chest"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
-	applyAndRebuild(a, "Weakened", a.id)
+	-- HD-012 Locksmith Lens (user ruling 2026-10-29): the opener takes no Weakened.
+	if (require :: any)(script.Parent.ArmorPassiveService).CanInteractOpenLocks(a) then
+		print(string.format("[ObjectEffectService] Cursed Chest | Locksmith Lens: %s avoids the curse", a.name))
+	else
+		applyAndRebuild(a, "Weakened", a.id)
+	end
 	-- Treasure component shares the Treasure Chest reward path (best-effort).
 	if (ObjectEffectService :: any)._grantChestReward then
 		(ObjectEffectService :: any)._grantChestReward(a, ctx)
 	end
-	print(string.format("[ObjectEffectService] Cursed Chest | %s gains treasure + Weakened", a.name))
+	print(string.format("[ObjectEffectService] Cursed Chest | %s gains treasure", a.name))
 	return true, nil
 end
 
@@ -1054,8 +1242,10 @@ end
 
 Handlers["Snare Trap"] = function(ctx: any): (boolean, any)
 	applyAndRebuild(ctx.actor, "Pinned", ctx.actor.id)
-	ctx.actor.remainingRt = (ctx.actor.remainingRt or 0) + 150
-	print("[ObjectEffectService] Snare Trap | Pinned + RT Delay")
+	-- AC-012 Trapmaker's Roll: x1.20 RT delay on a trap placed by the wearer (inst.trapPowerMult).
+	local _snareRt = math.round(150 * ((ctx.objInstance and ctx.objInstance.trapPowerMult) or 1))
+	ctx.actor.remainingRt = (ctx.actor.remainingRt or 0) + _snareRt
+	print(string.format("[ObjectEffectService] Snare Trap | Pinned + %d RT Delay", _snareRt))
 	return true, nil
 end
 
@@ -1076,7 +1266,7 @@ Handlers["Stasis Trap Emitter"] = function(ctx: any): (boolean, any)
 		if u.id == obj.casterId then owner = u break end
 	end
 	local IL = (owner and owner.level) or 1
-	local raw = math.round((def.rtDelayFlat or 0) + (def.rtDelayPerIL or 0) * IL)
+	local raw = math.round(((def.rtDelayFlat or 0) + (def.rtDelayPerIL or 0) * IL) * (obj.trapPowerMult or 1))  -- AC-012
 	local r = def.effectRadius or 1
 	local cx, cy = obj.x or ctx.actor.tileX, obj.y or ctx.actor.tileY
 	local hit = 0
@@ -1140,8 +1330,12 @@ local function explosionHandler(label: any)
 			-- expects a NUMERIC fraction payload (processOneExplosion computes
 			-- payload * reduction^depth); passing a table errored at "damagePayload > 0".
 			-- (Fix bundled with the trap-trigger wiring that first exercises this path.)
-			_tileEffectService.QueueExplosion(x, y, 0, a.id, 0.25, ctx.allUnits, "box",
-				(ctx.objDef ~= nil and objHasTag(ctx.objDef, "Trap")) or label == "Land Mine")  -- Goblin: trap blast
+			-- Instigator (2026-10-28): the acting unit (Bomb Barrel set off / Pandora opener).
+			-- QueueExplosion drops it for a trap blast (Land Mine), so traps never count.
+			-- AC-012 Trapmaker's Roll: a Land Mine placed by the wearer blasts for 25% x 1.20 = 30%.
+			_tileEffectService.QueueExplosion(x, y, 0, a.id, 0.25 * ((obj and obj.trapPowerMult) or 1), ctx.allUnits, "box",
+				(ctx.objDef ~= nil and objHasTag(ctx.objDef, "Trap")) or label == "Land Mine",  -- Goblin: trap blast
+				a and a.id or nil)
 			print(string.format("[ObjectEffectService] %s | explosion queued at (%d,%d)", label, x, y))
 			return true, nil
 		end
@@ -1210,6 +1404,7 @@ Handlers["Eye of the Magi"] = function(ctx: any): (boolean, any)
 		local dmg = math.floor((tgt.maxHp or 0) * 0.40)
 		local _shown1 = GameConstants.CapUnitDamage(tgt, dmg)  -- 1 for a 3-hit gadget
 		tgt.currentHp = math.max(0, (tgt.currentHp or 0) - _shown1)
+		markHunterAttacked(tgt, a, _shown1)  -- Treasure Hunter: operator set the Eye off
 		if tgt.currentHp <= 0 then tgt.isAlive = false end
 		if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(tgt) end
 		if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage and tgt.tileX and tgt.tileY then
@@ -1245,12 +1440,23 @@ end
 -- EITHER a Damage shape { finalDamage } OR a Healing shape { finalHealing }
 -- (Dark-weapon operator vs an Undead target converts the hit to healing).
 -- Handle BOTH so a Dark-vs-Undead siege shot is not silently dropped (DEFECT-2).
-local function applySiegeOutcome(target: any, outcome: any, focusState: any)
+-- cause (optional, rules 225): siege object's DISPLAY name, so a hit resolved after a
+-- deferred tile prompt (outside Resolve's SetCause scope) is still labelled.
+-- attacker (optional, rules 230): the siege operator unit, so a siege hit on the
+-- Treasure Hunter counts as being attacked (user ruling 2026-10-28).
+local function applySiegeOutcome(target: any, outcome: any, focusState: any, cause: any, attacker: any)
+	cause = cause or (BattleVisualBroadcaster and BattleVisualBroadcaster.GetCause and BattleVisualBroadcaster.GetCause())
 	if not outcome then return end
 	if outcome.finalDamage then
 		local _shown2 = GameConstants.CapUnitDamage(target, outcome.finalDamage)  -- 1 for a 3-hit gadget
 		target.currentHp = math.max(0, (target.currentHp or 0) - _shown2)
 		if target.currentHp <= 0 then target.isAlive = false end
+		-- Treasure Hunter (project_rules 230): a Ballista/Catapult hit counts as being
+		-- attacked -> it stops hunting and tries to escape. Same rule as CombatResolver.ApplyOutcome.
+		if target.eventName == "Treasure Hunter" and attacker and attacker ~= target
+			and (_shown2 or 0) > 0 and not target.hunterAttacked then
+			target.hunterAttacked = true
+		end
 		-- Damage feedback (2026-10-26): floating number + impact flash on the target
 		-- tile, and a camera pan to the FIRST unit hit this interaction. focusState is
 		-- an optional { done } tracker the caller passes once per interaction so only
@@ -1258,7 +1464,7 @@ local function applySiegeOutcome(target: any, outcome: any, focusState: any)
 		if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage and target.tileX and target.tileY then
 			local _focus = (focusState ~= nil) and (focusState.done ~= true)
 			if _focus then focusState.done = true end
-			BattleVisualBroadcaster.ObjectDamage(target.tileX, target.tileY, _shown2, _focus)
+			BattleVisualBroadcaster.ObjectDamage(target.tileX, target.tileY, _shown2, _focus, cause)
 		end
 	elseif outcome.finalHealing then
 		-- Festering Wound anti-heal (2026-10-25): object-sourced heals (Healing/Magic Spring,
@@ -1273,7 +1479,7 @@ local function applySiegeOutcome(target: any, outcome: any, focusState: any)
 	else
 		return
 	end
-	if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(target) end
+	if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(target, cause) end
 end
 
 -- SIEGE RAY AIM (shared by the map Ballista and the Portable Ballista, user ruling 2026-10-27).
@@ -1323,15 +1529,43 @@ local function promptSiegeRay(a: any, ox: number, oy: number, range: number, fla
 	return nil
 end
 
+-- SIEGE DAMAGE (USER RULING 2026-10-30 6:20 PM, project_rules 242; objects_encounters 11 Ballista,
+-- 12 Catapult). Siege Power = 48 + 1.9 x operator level, x (1 + DEX / (DEX + 200)) (DEX is the siege
+-- booster, max x2). The operator's weapon damage and STR are NOT used. share = 1 (Ballista) or 0.70
+-- (Catapult, per unit hit). CombatResolver then runs the normal defense pipeline with no hit-quality
+-- step (opts.isSiege). Portable Ballista keeps its own formula.
+-- USER RULING 2026-10-30 6:34 PM: the Siege Gunner Helm (+25%) is no longer in Siege Power - it ADDS
+-- to the height modifier instead of multiplying (see siegeOpts / CombatResolver).
+local function siegePower(a: any, share: number): number
+	local lvl = tonumber(a and a.level) or 1
+	local dex = math.max(0, tonumber(a and a.effectiveStats and a.effectiveStats.DEX) or 0)
+	return math.max(1, math.floor((48 + 1.9 * lvl) * (1 + dex / (dex + 200)) * share))
+end
+
+-- Options for a siege shot through CombatResolver.ResolveBasicAttack (USER RULING 2026-10-30 6:34 PM):
+-- the height modifier is measured from the SIEGE OBJECT's tile (originX/originY), and the Helm's +25%
+-- is added to that height modifier (siegeBonus) instead of multiplying it.
+local function siegeOpts(a: any, ox: number, oy: number): any
+	local helm = (require :: any)(script.Parent.ArmorPassiveService).GetInteractSiegeDamageModifier(a) or 1
+	return { isSiege = true, originX = ox, originY = oy, siegeBonus = helm - 1 }
+end
+
+-- Elevation for the siege height rules. USER RULING 2026-10-30 6:34 PM: for siege shots a flying unit
+-- counts as the height of the ground beneath it (Flight's +5 is ignored here only).
+local function siegeElev(u: any): number
+	return GameConstants.GetElevation(u.tileX, u.tileY) or 0
+end
+
+-- TargetingService requires this module, so it is required lazily at call time (no load cycle).
+local function siegeTargeting(): any
+	return (require :: any)(script.Parent.TargetingService)
+end
+
 Handlers["Ballista"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
-	-- HD siege headgear: Interact-on-siege damage x1.5 (GetInteractSiegeDamageModifier; 1.0 default,
-	-- deferred require avoids a load cycle). Ballista fires an unbounded penetrating line, so the
-	-- siege RANGE bonus does not apply here (only to the Catapult, which has a finite range).
-	local _siegeMult = (require :: any)(script.Parent.ArmorPassiveService).GetInteractSiegeDamageModifier(a)
-	-- 250% operator weapon dmg x siege mult, PLUS a flat base = the operator's level
-	-- (user ruling 2026-10-26: flat add AFTER the x2.5 multiplier).
-	local wd = math.floor((a.weaponDamage or 10) * 2.5 * _siegeMult) + (a.level or 1)
+	-- Siege Power, full shot to every unit hit (rule 242; replaces 250% weapon + level, 2026-10-26).
+	-- Unbounded line, so the siege RANGE bonus does not apply here (Catapult only).
+	local wd = siegePower(a, 1)
 
 	-- Fire origin = the Ballista's own tile; the bolt pierces EVERY enemy along a
 	-- straight line. 8-direction aim (user ruling 2026-10-26: was cardinal-only; now
@@ -1348,18 +1582,30 @@ Handlers["Ballista"] = function(ctx: any): (boolean, any)
 	-- ruling 2026-10-26): the bolt damages whoever is on the line, ALLY OR ENEMY.
 	-- Occupied tiles are flagged (hit=true) so the aim preview also warns about
 	-- friendly units standing in the bolt's path.
+	-- DIRECT PIERCING BOLT (USER RULING 2026-10-30 6:20 PM, objects_encounters 11): a unit on the line
+	-- is hit only if (a) it is within 3 elevation levels of the Ballista tile (flight-aware), (b) it is
+	-- at least 2 tiles away (direct-projectile minimum range), and (c) the straight path from the
+	-- Ballista to it is not blocked by walls / sight-blocking objects (TargetingService.HasLineOfSight,
+	-- Direct, with NO unit list: units never stop the bolt - it pierces). Only valid targets are
+	-- indexed, so the aim preview flags exactly the units that will be hit.
+	local _ts = siegeTargeting()
+	local oElev = GameConstants.GetElevation(ox, oy) or 0
 	local enemyAt = {}
 	for _, u in ipairs(ctx.allUnits) do
 		if u.isAlive and not u.isGroundTarget and u.tileX and u.tileY then
-			enemyAt[u.tileX .. "," .. u.tileY] = u
+			local dist = math.max(math.abs(u.tileX - ox), math.abs(u.tileY - oy))
+			if dist >= 2 and math.abs(siegeElev(u) - oElev) <= 3
+				and _ts.HasLineOfSight(ox, oy, u.tileX, u.tileY, nil, oElev, "Direct", nil) then
+				enemyAt[u.tileX .. "," .. u.tileY] = u
+			end
 		end
 	end
 
 	-- Build the 8 straight rays from the Ballista out to the map edge (shared siege ray aim,
 	-- 2026-10-27). The player taps any tile on a ray to fire down that ray; occupied tiles are
 	-- flagged (hit=true) so the client paints them in a hit color. AI/headless (no tile prompt)
-	-- falls back to nearest-enemy.
-	local rays, rayTiles, rayDir = siegeRays(ox, oy, enemyAt, 1, nil)
+	-- falls back to nearest-enemy. Rays start 2 tiles out (minimum range 2, rule 242).
+	local rays, rayTiles, rayDir = siegeRays(ox, oy, enemyAt, 2, nil)
 	local pick = promptSiegeRay(a, ox, oy, math.max(w, h), rayTiles, rayDir)
 	-- Player tapped Cancel during targeting: abort with no effect. Resolve does not consume the
 	-- object on a false return, and the command layer refunds the AP/RT it charged so the turn
@@ -1383,8 +1629,8 @@ Handlers["Ballista"] = function(ctx: any): (boolean, any)
 	for _, tile in ipairs(rays[dir]) do
 		local u = tile.unit
 		if u and CombatResolver and CombatResolver.ResolveBasicAttack then
-			local outcome = CombatResolver.ResolveBasicAttack(a, u, wd)
-			applySiegeOutcome(u, outcome, focusState)
+			local outcome = CombatResolver.ResolveBasicAttack(a, u, wd, siegeOpts(a, ox, oy))
+			applySiegeOutcome(u, outcome, focusState, ObjectEffectService.GetDisplayType(ctx.objInstance, "Ballista"), a)
 			-- Objective "Siege Operator": a siege KO is tagged + credited to operator.
 			if not u.isAlive then u._killCause = u._killCause or "siege"; u._killedBy = u._killedBy or a.id end
 			print(string.format("[ObjectEffectService] Ballista | dealt %d to %s at (%d,%d)",
@@ -1393,8 +1639,8 @@ Handlers["Ballista"] = function(ctx: any): (boolean, any)
 		end
 	end
 
-	print(string.format("[ObjectEffectService] Ballista | %s fires %s bolt from (%d,%d): %d hit(s) (250%%+lvl wpn)",
-		a.name, dir, ox, oy, hits))
+	print(string.format("[ObjectEffectService] Ballista | %s fires %s bolt from (%d,%d): %d hit(s) (siege power %d)",
+		a.name, dir, ox, oy, hits, wd))
 	return true, nil
 end
 
@@ -1530,11 +1776,11 @@ end
 
 Handlers["Catapult"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
-	-- 200% weapon dmg, Cross AOE (center + 4 adjacents), range 6 from the Catapult.
-	-- HD siege headgear: damage x1.5 (GetInteractSiegeDamageModifier) and range +2
-	-- (GetInteractSiegeRangeBonus). Both default to neutral (1.0 / 0) without the headgear.
+	-- Cross AOE (center + 4 adjacents), range 2-6 from the Catapult (rule 242: ARC projectile).
+	-- Damage = 70% of Siege Power per unit hit (replaces 200% weapon damage). HD siege headgear:
+	-- damage x1.25 (inside siegePower) and range +2 (GetInteractSiegeRangeBonus).
 	local _siege = (require :: any)(script.Parent.ArmorPassiveService)
-	local wd = math.floor((a.weaponDamage or 10) * 2.0 * _siege.GetInteractSiegeDamageModifier(a))
+	local wd = siegePower(a, 0.70)
 	local RANGE = 6 + _siege.GetInteractSiegeRangeBonus(a)
 	-- Fire origin = the Catapult's own tile (the siege engine), like the Ballista.
 	local obj = ctx.objInstance
@@ -1555,11 +1801,21 @@ Handlers["Catapult"] = function(ctx: any): (boolean, any)
 			unitAt[u.tileX .. "," .. u.tileY] = u
 		end
 	end
+	-- ARC PROJECTILE (USER RULING 2026-10-30 6:20 PM, objects_encounters 12): a landing tile must be at
+	-- least 2 tiles away (projectile minimum range) and pass the normal Arc check from the Catapult's
+	-- tile (TargetingService.HasLineOfSight, Arc: never blocked by units or obstacles; the target must
+	-- not be above the arc peak = Catapult tile elevation + 3). Only legal tiles are offered to aim.
+	local _ts = siegeTargeting()
+	local oElev = GameConstants.GetElevation(ox, oy) or 0
 	local legal, legalKey = {}, {}
 	for ty = math.max(1, oy - RANGE), math.min(h, oy + RANGE) do
 		for tx = math.max(1, ox - RANGE), math.min(w, ox + RANGE) do
-			legal[#legal + 1] = { x = tx, y = ty, hit = unitAt[tx .. "," .. ty] ~= nil }
-			legalKey[tx .. "," .. ty] = true
+			-- No unit list: a flyer counts as its ground height for siege (USER RULING 2026-10-30 6:34 PM).
+			if math.max(math.abs(tx - ox), math.abs(ty - oy)) >= 2
+				and _ts.HasLineOfSight(ox, oy, tx, ty, nil, oElev, "Arc", nil) then
+				legal[#legal + 1] = { x = tx, y = ty, hit = unitAt[tx .. "," .. ty] ~= nil }
+				legalKey[tx .. "," .. ty] = true
+			end
 		end
 	end
 
@@ -1578,10 +1834,11 @@ Handlers["Catapult"] = function(ctx: any): (boolean, any)
 		end
 	end
 	if not cxTgt then
-		local tgt: any, dist = nearestEnemy(a, ctx.allUnits)
+		local tgt: any = nearestEnemy(a, ctx.allUnits)
 		if not tgt then return true, nil end
-		if dist and dist > RANGE then
-			print("[ObjectEffectService] Catapult | no tile chosen and nearest enemy out of range 6")
+		-- Auto-aim must obey the same range / minimum range / arc rules as the player's aim.
+		if not legalKey[tgt.tileX .. "," .. tgt.tileY] then
+			print("[ObjectEffectService] Catapult | no tile chosen and nearest enemy is not a legal landing tile")
 			return true, nil
 		end
 		cxTgt, cyTgt = tgt.tileX, tgt.tileY
@@ -1590,6 +1847,22 @@ Handlers["Catapult"] = function(ctx: any): (boolean, any)
 	-- Cross centered on the chosen tile (center + 4 orthogonal adjacents).
 	local crossTiles = { {cxTgt, cyTgt}, {cxTgt+1, cyTgt}, {cxTgt-1, cyTgt},
 		{cxTgt, cyTgt+1}, {cxTgt, cyTgt-1} }
+	-- CENTER SPREAD AOE (rule 242; movement_targeting 55/59/60): a cross tile is struck only if it is
+	-- on the map, within +/-2 elevation of the impact tile, and the spread from the impact tile is not
+	-- stopped by a BlocksAOE barrier (TargetingService.IsAOEBlocked).
+	do
+		local cElev = GameConstants.GetElevation(cxTgt, cyTgt) or 0
+		local struck = {}
+		for _, t in ipairs(crossTiles) do
+			local tx, ty = t[1], t[2]
+			if tx >= 1 and ty >= 1 and tx <= w and ty <= h
+				and math.abs((GameConstants.GetElevation(tx, ty) or 0) - cElev) <= 2
+				and not _ts.IsAOEBlocked(cxTgt, cyTgt, tx, ty) then
+				struck[#struck + 1] = t
+			end
+		end
+		crossTiles = struck
+	end
 	local hitN = 0
 	-- First-hit camera focus tracker: declared BEFORE the loops so only the FIRST
 	-- unit in the Cross grabs the camera (not every unit hit). (Fix 2026-10-26.)
@@ -1601,8 +1874,8 @@ Handlers["Catapult"] = function(ctx: any): (boolean, any)
 			for _, t in ipairs(crossTiles) do
 				if u.tileX == t[1] and u.tileY == t[2] then
 					if CombatResolver and CombatResolver.ResolveBasicAttack then
-						local outcome = CombatResolver.ResolveBasicAttack(a, u, wd)
-						applySiegeOutcome(u, outcome, _catFocus)
+						local outcome = CombatResolver.ResolveBasicAttack(a, u, wd, siegeOpts(a, ox, oy))
+						applySiegeOutcome(u, outcome, _catFocus, ObjectEffectService.GetDisplayType(ctx.objInstance, "Catapult"), a)
 						if not u.isAlive then u._killCause = u._killCause or "siege"; u._killedBy = u._killedBy or a.id end
 					end
 					hitN = hitN + 1
@@ -1611,7 +1884,7 @@ Handlers["Catapult"] = function(ctx: any): (boolean, any)
 			end
 		end
 	end
-	print(string.format("[ObjectEffectService] Catapult | %s splashes %d enemy(s) around (%d,%d) (200%% wpn, Cross)", a.name, hitN, cxTgt, cyTgt))
+	print(string.format("[ObjectEffectService] Catapult | %s splashes %d unit(s) around (%d,%d) (siege power %d per unit, Cross)", a.name, hitN, cxTgt, cyTgt, wd))
 	return true, nil
 end
 
@@ -1682,6 +1955,11 @@ local function doSummon(ctx: any, specType: any, countMin: any, countMax: any, s
 				unit.fromDragonUtopia = true
 				ObjectiveService.RecordEvent(ctx.state, "dragonsAlive", 1)
 			end
+			-- Treasure Hunter (project_rules 229): a Mimic woken BY the Treasure Hunter hunts that
+			-- NPC (AIService.isHostileTo narrow exception). It stays an enemy of the player too.
+			if label == "Mimic" and a and a.eventName == "Treasure Hunter" and a.id then
+				unit.huntsUnitId = a.id
+			end
 			if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitSpawned then
 				BattleVisualBroadcaster.UnitSpawned(unit)
 			end
@@ -1703,9 +1981,18 @@ end
 -- on the chest's own tile. Remove the object (and its blocker) first so the tile
 -- is free; doSummon's nearest-free search then lands on that tile.
 Handlers["Mimic"] = function(ctx: any): (boolean, any)
+	-- Treasure Fever (rules 224): a woken Mimic counts as a chest opened. This handler
+	-- is the single wake path (interact AND WakeUnmasked both call it, then the object
+	-- is removed/consumed), so it records exactly once per Mimic. No chest loot.
+	-- Treasure Hunter (project_rules 234): a Mimic woken BY the Treasure Hunter does not count.
+	if ctx.objInstance and ctx.objInstance.type == "Mimic"
+		and not (ctx.actor and ctx.actor.eventName == "Treasure Hunter") then
+		ObjectiveService.RecordEvent(ctx.state, "chestsOpened", 1)
+	end
 	ObjectEffectService.RemoveObjectInstance(ctx.state, ctx.objInstance)
 	return doSummon(ctx, "Elite", 1, 1, "Enemy", nil, "Mimic")
 end
+_wakeHandler = Handlers["Mimic"]  -- attack-wake on an unmasked Mimic reuses this handler
 
 -- Refugee Camp REMOVED from the catalog (objects_encounters DB row 7:
 -- "Refugee Camp removed 2026-10-03; War Machine Factory renamed Forge"). No
@@ -1811,6 +2098,7 @@ Handlers["Stone Pillar"] = function(ctx: any): (boolean, any)
 				local dmg = math.floor((u.maxHp or 0) * 0.70)  -- HP%-based
 				local _shown3 = GameConstants.CapUnitDamage(u, dmg)  -- 1 for a 3-hit gadget
 				u.currentHp = math.max(0, (u.currentHp or 0) - _shown3)
+				markHunterAttacked(u, a, _shown3)  -- Treasure Hunter: a unit toppled the pillar
 				if u.currentHp <= 0 then u.isAlive = false end
 				u.remainingRt = (u.remainingRt or 0) + 100
 				StatusService.ApplyStatus(u, "Pinned", a.id)
@@ -1871,6 +2159,18 @@ Handlers["Chaos Statue"] = function(ctx: any): (boolean, any)
 	if added then
 		print(string.format("[ObjectEffectService] Chaos Statue | added in-battle optional objective '%s' (%s)",
 			added.name, added.mode))
+		-- Tell the player in the battle log what the new objective asks for (2026-10-28):
+		-- same goal text as Map Details (ObjectiveService.Describe). Full progress +
+		-- reward live in Map Details.
+		local goal = nil
+		for _, d in ipairs(ObjectiveService.Describe(state)) do
+			if d.id == added.id then goal = d.goal; break end
+		end
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.Log then
+			BattleVisualBroadcaster.Log("action", string.format(
+				"Chaos Statue reveals an optional objective: %s (%s)%s. See Map Details for progress and reward.",
+				added.name, added.mode, goal and (" - " .. goal) or ""), ctx.actor and ctx.actor.id or nil)
+		end
 	else
 		print("[ObjectEffectService] Chaos Statue | no eligible objective to add (all active or none applicable)")
 	end
@@ -1917,13 +2217,19 @@ end
 -- covers hidden traps today and hidden treasure / Mimic once that content exists.
 -- revealerSide (optional, 2026-10-27): objects owned by the revealer's own side are skipped,
 -- so an enemy scan never shows the player the enemy's own traps.
-function ObjectEffectService.RevealHiddenInArea(state: any, tileSet: any, revealerSide: any): number
+-- revealerName (optional, A2 2026-10-28): who/what revealed (unit or item/device name,
+-- e.g. "Scanner Lens") -- used in the Mimic unmask log line.
+function ObjectEffectService.RevealHiddenInArea(state: any, tileSet: any, revealerSide: any, revealerName: any): number
 	local revealed = 0
 	if state and state.objects and tileSet then
 		for _, o in ipairs(state.objects) do
 			if o.hidden and o.x and o.y and tileSet[o.x .. "," .. o.y]
 				and not (revealerSide ~= nil and o.ownerSide == revealerSide) then
 				if ObjectEffectService.RevealObject(o) then revealed += 1 end
+			end
+			-- Mimic disguise: a reveal in the area also unmasks it (stays dormant).
+			if o.x and o.y and tileSet[o.x .. "," .. o.y] and ObjectEffectService.IsDisguised(o) then
+				if ObjectEffectService.UnmaskObject(o, revealerName or "A reveal") then revealed += 1 end
 			end
 		end
 	end
@@ -1940,6 +2246,11 @@ Handlers["Crystal Ball"] = function(ctx: any): (boolean, any)
 			if o.hidden and not (userSide ~= nil and o.ownerSide == userSide) then
 				if ObjectEffectService.RevealObject(o) then revealed = revealed + 1 end
 			end
+			if ObjectEffectService.IsDisguised(o) then
+				if ObjectEffectService.UnmaskObject(o, (ctx.actor and ctx.actor.name or "Someone") .. "'s Crystal Ball") then
+					revealed = revealed + 1
+				end
+			end
 		end
 	end
 	if revealed == 0 then
@@ -1951,46 +2262,20 @@ Handlers["Crystal Ball"] = function(ctx: any): (boolean, any)
 end
 
 --------------------------------------------------------------------
--- BLACK MARKET (Blocker #6) — DB intent: "opens a shop of six fixed discounted
--- high-tier items." HONEST SCOPE: there is NO persistent gold-balance economy in
--- the game yet (gold exists only as battle-end reward amounts; nothing stores or
--- spends a player's gold), and no in-battle shop UI. A true buy-with-gold shop
--- therefore cannot be built without first building a gold economy — a
--- prerequisite system, out of scope here (flagged, not faked).
---
--- What this DOES build with REAL systems: generate 6 high-tier items via
--- ItemGenerator and grant them to the player's inventory directly (a free cache,
--- not a paid shop). When a gold economy + shop UI exist, convert this to a
--- priced panel. Returns true; logs the scope honestly.
+-- BLACK MARKET (v2 build step 6b, 2026-11-01; objects_encounters 31): a paid shop. Interacting
+-- is free and repeatable; BlackMarketService rolls the 6-item stock once per object per battle
+-- and opens the shop screen for a player unit. Buying goes through its own remote. (Replaces
+-- the old free-cache stand-in, which never produced items: it passed no archetype pool.)
 --------------------------------------------------------------------
-local _blackMarketOpened = {}  -- per-battle, once per object instance
 Handlers["Black Market"] = function(ctx: any): (boolean, any)
-	local state = ctx.state
-	local playerId = state and state.ownerPlayerId
-	local mapLevel = (state and state.mapLevel) or 1
-	local objId = ctx.objInstance and ctx.objInstance.id or "blackmarket"
-	if _blackMarketOpened[objId] then
-		print("[ObjectEffectService] Black Market | already opened this battle")
-		return true, nil
+	local ok, opened = pcall(function()
+		return (require :: any)(script.Parent.BlackMarketService).Open(ctx.actor, ctx.objInstance, ctx.state)
+	end)
+	if not ok then
+		warn("[ObjectEffectService] Black Market | shop failed to open: " .. tostring(opened))
+	elseif not opened then
+		warn("[ObjectEffectService] Black Market | shop could not open (see BlackMarketService log)")
 	end
-	if not (playerId and InventoryService and ItemGenerator and ItemGenerator.GenerateFromPool) then
-		print("[ObjectEffectService] Black Market | cannot grant items — missing playerId/InventoryService/ItemGenerator (gold-shop awaits economy system)")
-		return true, nil
-	end
-	local granted = 0
-	for k = 1, 6 do
-		local seed = (ctx.rng and ctx.rng:NextInteger(1, 2^31 - 1)) or (os.time() + k)
-		local ok, item = pcall(function()
-			-- High-tier: Rare, item level scaled to map. Pool nil = any archetype.
-			return ItemGenerator.GenerateFromPool(nil, mapLevel, "Rare", seed, "BlackMarket")
-		end)
-		if ok and item then
-			InventoryService.AddItem(playerId, item)
-			granted = granted + 1
-		end
-	end
-	_blackMarketOpened[objId] = true
-	print(string.format("[ObjectEffectService] Black Market | granted %d high-tier item(s) to inventory (FREE cache — paid-shop semantics await a gold economy system)", granted))
 	return true, nil
 end
 
@@ -2013,6 +2298,67 @@ local AURA_OBJECTS = {
 -- _auraMembership[objId] = { [unitId] = true }
 local _auraMembership = {}
 
+-- Source-aware aura statuses (2026-10-30, aura fix). An aura-given instance is tagged
+-- inst.auraSourceId = objId. It is "the aura's" only while inst.sourceUnitId still equals that
+-- tag: any other source refreshing it (e.g. Buff-Blind granting Banner Blessing) takes it over,
+-- so the aura ending no longer strips it. If the unit ALREADY had the status from another source
+-- when the aura arrived, that source's remaining time is parked and handed back when the aura ends.
+local function auraApply(u: any, auraDef: any, objId: any, state: any)
+	local existing = StatusService.HasStatus(u, auraDef.status)
+	local parked = nil
+	if existing and not (existing.auraSourceId ~= nil and existing.sourceUnitId == existing.auraSourceId) then
+		parked = { src = existing.sourceUnitId, ct = existing.remainingCt, turns = existing.remainingTurns,
+			at = (state and state.ct) or 0 }
+	elseif existing then
+		parked = existing.parkedOther  -- overlapping aura: keep whatever was parked before
+	end
+	-- 2026-10-30 3:27 PM: apply here and broadcast AFTER the aura tag below (applyAndRebuild sent the
+	-- client update before the tag, so the status card could not know it is "While in range").
+	-- Same three steps as applyAndRebuild, in a different order.
+	StatusService.ApplyStatus(u, auraDef.status, objId)
+	local inst = StatusService.HasStatus(u, auraDef.status)
+	-- Only tag the instance if this aura actually owns it now (an immune unit's apply is refused).
+	if inst and inst.sourceUnitId == objId then
+		inst.auraSourceId = objId
+		inst.parkedOther = parked
+		-- USER RULING 2026-10-30 (3:15 PM): an aura status lasts while the unit stays in range — no
+		-- 1500 CT expiry. StatusService only counts down instances with a remainingCt. Any other
+		-- source refreshing it (Buff-Blind) sets its own timer and takes it over; auraRemove hands
+		-- back a parked timer or removes the status when the aura ends.
+		inst.remainingCt = nil
+		inst.remainingTurns = nil
+	end
+	if EquipmentService and EquipmentService.RebuildUnitStats then
+		EquipmentService.RebuildUnitStats(u)
+	end
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+		BattleVisualBroadcaster.UnitStateChanged(u)
+	end
+end
+
+-- Ends the aura's hold on a unit's status. Returns true if the unit's status changed.
+local function auraRemove(u: any, statusId: any, state: any): boolean
+	local inst = StatusService.HasStatus(u, statusId)
+	if not inst or inst.auraSourceId == nil then return false end
+	if inst.sourceUnitId ~= inst.auraSourceId then
+		-- Another source refreshed it since: it is theirs now; keep it, drop the stale tag.
+		inst.auraSourceId = nil; inst.parkedOther = nil
+		return false
+	end
+	local p = inst.parkedOther
+	local elapsed = ((state and state.ct) or 0) - ((p and p.at) or 0)
+	if p and ((p.ct ~= nil and p.ct - elapsed > 0) or (p.ct == nil and p.turns ~= nil)) then
+		-- Hand the status back to the source it had before the aura arrived.
+		inst.auraSourceId = nil; inst.parkedOther = nil
+		inst.sourceUnitId = p.src
+		inst.remainingCt = if p.ct ~= nil then p.ct - elapsed else inst.remainingCt
+		inst.remainingTurns = p.turns
+		return true
+	end
+	StatusService.RemoveStatus(u, statusId)
+	return true
+end
+
 local function auraAppliesTo(auraDef: any, unit: any, objSide: any)
 	if auraDef.side == "ALL" then return true end
 	return unit.side == auraDef.side
@@ -2022,6 +2368,9 @@ end
 -- start and after any unit moves (CommandService Move hook).
 function ObjectEffectService.ReconcileAuras(allUnits: any, state: any)
 	if not state or not state.objects then return end
+	-- Battle Log Coverage (rules 225): aura on/off from movement is background noise.
+	local _prevCause = BattleVisualBroadcaster and BattleVisualBroadcaster.SetCause
+		and BattleVisualBroadcaster.SetCause(BattleVisualBroadcaster.SILENT) or nil
 	for _, obj in ipairs(state.objects) do
 		local auraDef = AURA_OBJECTS[obj.type]
 		if auraDef then
@@ -2035,17 +2384,107 @@ function ObjectEffectService.ReconcileAuras(allUnits: any, state: any)
 						and auraAppliesTo(auraDef, u, nil)
 					if inRange and not member[u.id] then
 						member[u.id] = true
-						applyAndRebuild(u, auraDef.status, objId)
+						auraApply(u, auraDef, objId, state)  -- 2026-10-30: source-aware
 					elseif (not inRange) and member[u.id] then
 						member[u.id] = nil
-						StatusService.RemoveStatus(u, auraDef.status)
-						if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
-						if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(u) end
+						-- 2026-10-30 aura fix: keep it if another live aura of the same status still
+						-- covers this unit, and only strip what an aura gave (auraRemove).
+						local coveredElsewhere = false
+						for _, o2 in ipairs(state.objects) do
+							local d2 = AURA_OBJECTS[o2.type]
+							local id2 = o2.id or ("aura_" .. tostring(o2.x) .. "," .. tostring(o2.y))
+							if d2 and d2.status == auraDef.status and id2 ~= objId
+								and _auraMembership[id2] and _auraMembership[id2][u.id] then
+								coveredElsewhere = true; break
+							end
+						end
+						if not coveredElsewhere and auraRemove(u, auraDef.status, state) then
+							if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
+							if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(u) end
+						end
 					end
 				end
 			end
 		end
 	end
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.ClearCause then
+		BattleVisualBroadcaster.ClearCause(_prevCause)
+	end
+end
+
+-- Aura source removed (USER RULING 2026-10-30, project_rules 241: a broken object's effects are
+-- gone). Called by RemoveObjectInstance. Drops this object's aura from every unit it covered and
+-- forgets the source. A unit still covered by ANOTHER live aura of the same status keeps it
+-- (StatusService.RemoveStatus is not per-source). No-op for non-aura objects.
+function ObjectEffectService.ClearAuraFrom(state: any, inst: any)
+	local auraDef = inst and inst.type and AURA_OBJECTS[inst.type]
+	if not auraDef then return end
+	local objId = inst.id or ("aura_" .. tostring(inst.x) .. "," .. tostring(inst.y))
+	local member = _auraMembership[objId]
+	_auraMembership[objId] = nil
+	if not member then return end
+	-- Other live aura sources of the same status, by id.
+	local otherSources = {}
+	for _, o in ipairs((state and state.objects) or {}) do
+		local d = AURA_OBJECTS[o.type]
+		if d and d.status == auraDef.status and o ~= inst then
+			local oid = o.id or ("aura_" .. tostring(o.x) .. "," .. tostring(o.y))
+			if oid ~= objId and _auraMembership[oid] then table.insert(otherSources, _auraMembership[oid]) end
+		end
+	end
+	local _prevCause = BattleVisualBroadcaster and BattleVisualBroadcaster.SetCause
+		and BattleVisualBroadcaster.SetCause(BattleVisualBroadcaster.SILENT) or nil
+	local n = 0
+	for _, u in ipairs((state and state.units) or {}) do
+		if member[u.id] then
+			local stillCovered = false
+			for _, m in otherSources do
+				if m[u.id] then stillCovered = true; break end
+			end
+			if not stillCovered then
+				-- 2026-10-30 aura fix: only strip what an aura gave (Buff-Blind etc. keep theirs).
+				if auraRemove(u, auraDef.status, state) then
+					if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
+					if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(u) end
+					n += 1
+				end
+			end
+		end
+	end
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.ClearCause then
+		BattleVisualBroadcaster.ClearCause(_prevCause)
+	end
+	print(`[ObjectEffectService] ClearAuraFrom | {inst.type} at ({inst.x},{inst.y}) gone - {auraDef.status} removed from {n} unit(s)`)
+end
+
+-- Drop EVERY object aura (2026-10-30 aura fix). Main calls it before a mid-battle map regenerate
+-- replaces state.objects (the old banners/statues vanish without RemoveObjectInstance), and
+-- ResetBattle calls it with no state so a new battle never inherits old memberships (object ids
+-- "obj_N" repeat between maps, which made a fresh banner skip units it "already" covered).
+function ObjectEffectService.ClearAllAuras(state: any)
+	local statuses = {}
+	for _, d in AURA_OBJECTS do statuses[d.status] = true end
+	local n = 0
+	if state and state.units then
+		local _prevCause = BattleVisualBroadcaster and BattleVisualBroadcaster.SetCause
+			and BattleVisualBroadcaster.SetCause(BattleVisualBroadcaster.SILENT) or nil
+		for _, u in ipairs(state.units) do
+			local changed = false
+			for statusId in statuses do
+				if auraRemove(u, statusId, state) then changed = true end
+			end
+			if changed then
+				if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
+				if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(u) end
+				n += 1
+			end
+		end
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.ClearCause then
+			BattleVisualBroadcaster.ClearCause(_prevCause)
+		end
+	end
+	table.clear(_auraMembership)
+	print(`[ObjectEffectService] ClearAllAuras | object auras cleared from {n} unit(s)`)
 end
 
 --------------------------------------------------------------------
@@ -2055,24 +2494,107 @@ end
 -- state carries the needed context it generates; otherwise it logs an honest
 -- deferral (object still consumed; reward is a small follow-up).
 --------------------------------------------------------------------
-function ObjectEffectService._grantChestReward(actor: any, ctx: any)
+-- Reward ids must be unique for the whole Play session: RewardService refuses an id it has
+-- already seen, and map object ids (obj_1, obj_2, ...) start again on every map. A running
+-- counter keeps a later battle's obj_5 from being refused (salvage D-1 fix 2026-11-01; same
+-- pattern as _hunterLootSeq below).
+local _chestRewardSeq = 0
+
+-- CHEST / SALVAGE LOOT IS HELD UNTIL THE BATTLE ENDS (USER DECISION 2026-11-01, daily systems
+-- decision 15; defeat rules unit_progression 91/92/95). Items and cards are rolled now with
+-- noCommit and kept on state.chestLoot, gold on state.chestGold, mercury on state.chestMercury.
+-- Nothing is credited here: Main gives items, cards and mercury on a qualifying victory only, and
+-- the gold with the battle gold (50% kept on a defeat). Same model as Treasure Hunter / stolen loot.
+-- (Replaces the 2026-11-01 "commit at once" BUG-075 fix; chest cards now go through Main's
+-- battle-loot card loop.)
+local function holdChestLoot(state: any, results: any): number
+	if not state or type(results) ~= "table" then return 0 end
+	state.chestLoot = state.chestLoot or {}
+	local n = 0
+	for _, r in results do
+		if type(r) == "table" and (r.item ~= nil or type(r.cardData) == "table") then
+			table.insert(state.chestLoot, r)
+			n += 1
+		end
+	end
+	return n
+end
+local function holdChestGold(state: any, amount: number)
+	if state and amount > 0 then
+		state.chestGold = (tonumber(state.chestGold) or 0) + amount
+	end
+end
+local function holdChestMercury(state: any, amount: number)
+	if state and amount > 0 then
+		state.chestMercury = (tonumber(state.chestMercury) or 0) + amount
+	end
+end
+local function nextChestOppId(prefix: string, objId: any): string
+	_chestRewardSeq += 1
+	return `{prefix}{tostring(objId)}_{_chestRewardSeq}`
+end
+
+function ObjectEffectService._grantChestReward(actor: any, ctx: any, opts: any)
 	local state = ctx.state
+	-- opts.salvage (HD-011 Salvager's Cap): a salvage roll, not a chest -- no chest objective,
+	-- no Treasure Seeker / Spendthrift chest modifiers.
+	local isSalvage = type(opts) == "table" and opts.salvage == true
 	-- Optional objective "Treasure Fever": a chest was opened (shared by Treasure
 	-- Chest and Cursed Chest). Counted once per real chest open, regardless of
-	-- what the reward roll yields. (Re-added 2026-10-24 — a prior edit did not
+	-- what the reward roll yields. (Re-added 2026-10-24 -- a prior edit did not
 	-- persist; Tester DEFECT-1.)
-	ObjectiveService.RecordEvent(state, "chestsOpened", 1)
+	if not isSalvage then
+		ObjectiveService.RecordEvent(state, "chestsOpened", 1)
+	end
 	local playerId = state and state.ownerPlayerId
 	local mapLevel = state and state.mapLevel
+	-- SALVAGER'S CAP (USER RULING 2026-11-01): every qualifying destroyed object gives some gold
+	-- (half a chest's base gold, with the normal gold multipliers), plus two separate fixed
+	-- chances: 5% for 1 mercury and 5% for one gear item (rolled like normal loot). Held until
+	-- the battle ends like chest loot.
+	if isSalvage then
+		if not (playerId and mapLevel and RewardService) then
+			print("[ObjectEffectService] Salvage reward DEFERRED - combat state lacks ownerPlayerId/mapLevel.")
+			return true, nil
+		end
+		local SALVAGE_MERCURY_CHANCE = 0.05
+		local SALVAGE_GEAR_CHANCE = 0.05
+		local rng = Random.new()
+		local baseGold = math.round(12.5 * (1 + (mapLevel / 50)))
+		local goldAmount = if RewardService.ApplyGold then RewardService.ApplyGold(baseGold) else baseGold
+		local gotMercury = rng:NextNumber() < SALVAGE_MERCURY_CHANCE
+		local gotGear = rng:NextNumber() < SALVAGE_GEAR_CHANCE
+		holdChestGold(state, goldAmount)
+		if gotMercury then
+			holdChestMercury(state, 1)
+		end
+		if gotGear and RewardService.GenerateRewards then
+			local oppId = nextChestOppId("salvage_", ctx.objInstance and ctx.objInstance.id or "obj")
+			local okGear, results = pcall(RewardService.GenerateRewards, playerId, mapLevel, oppId,
+				{ count = 1, allowedCategories = { "Equipment" }, noCommit = true })
+			if not okGear then
+				warn("[ObjectEffectService] Salvage gear roll failed: " .. tostring(results))
+				gotGear = false
+			elseif holdChestLoot(state, results) < 1 then
+				-- Refused or not generated: report it honestly instead of "+ 1 gear item".
+				warn("[ObjectEffectService] Salvage gear roll gave no item (opportunity " .. oppId .. ")")
+				gotGear = false
+			end
+		end
+		print(string.format("[ObjectEffectService] Salvage: %s finds %d gold%s%s (held until the battle ends)",
+			tostring(actor and actor.name), goldAmount,
+			if gotMercury then " + 1 mercury" else "", if gotGear then " + 1 gear item" else ""))
+		return true, nil
+	end
 	if playerId and mapLevel and RewardService and RewardService.GenerateRewards then
-		local oppId = "chest_" .. tostring(ctx.objInstance and ctx.objInstance.id or tostring(os.clock()))
+		local oppId = nextChestOppId("chest_", ctx.objInstance and ctx.objInstance.id or "obj")
 		-- Idol of Fortune (2026-10-24, fixed after Tester UAT): ADDITIVE fortune bump
-		-- for THIS chest roll, layered on top of the real team baseline — NOT an
+		-- for THIS chest roll, layered on top of the real team baseline -- NOT an
 		-- absolute overwrite. SetExpeditionFortune is an absolute setter with no
 		-- getter, so we recompute the team baseline from ctx.allUnits (the same pure
 		-- function Main uses: ComputeExpeditionFortune), set baseline + bump (clamped
 		-- to the 1.75 ceiling by SetExpeditionFortune itself), generate, then RESTORE
-		-- the baseline by recomputing it again — never zero it. This guarantees the
+		-- the baseline by recomputing it again -- never zero it. This guarantees the
 		-- Idol can only raise drop quality (never lower a high-Fortune team), and a
 		-- later non-Idol chest in the same battle still rolls at the correct baseline.
 		local idolBump = state and state.idolFortuneBump
@@ -2083,8 +2605,20 @@ function ObjectEffectService._grantChestReward(actor: any, ctx: any)
 			RewardService.SetExpeditionFortune(baseline + idolBump)
 			appliedIdol = true
 		end
+		local held = 0
 		local ok = pcall(function()
-			RewardService.GenerateRewards(playerId, mapLevel, oppId)
+			held += holdChestLoot(state, (RewardService.GenerateRewards(playerId, mapLevel, oppId, { noCommit = true })))
+			-- Treasure Seeker (user ruling 2026-10-29): 50% / 60% chance of ONE extra reward roll from
+			-- this chest, rolled at the same Fortune (Idol bump included). Gold bonus is separate below.
+			-- Own pcall: a failure in the extra roll must not cancel the chest gold below.
+			pcall(function()
+				local _xChance = (require :: any)(script.Parent.TraitEffectService).GetChestExtraItemChance(actor)
+				if _xChance > 0 and Random.new():NextNumber() < _xChance then
+					held += holdChestLoot(state, (RewardService.GenerateRewards(playerId, mapLevel, oppId .. "_seeker",
+						{ count = 1, noCommit = true })))
+					print(string.format("[ObjectEffectService] Treasure Seeker: %s finds an extra item", tostring(actor and actor.name)))
+				end
+			end)
 		end)
 		-- Restore the real team baseline (recompute, do NOT zero) so later chests and
 		-- any other in-battle reward path keep the correct team Fortune.
@@ -2092,31 +2626,107 @@ function ObjectEffectService._grantChestReward(actor: any, ctx: any)
 			RewardService.SetExpeditionFortune(baseline)
 		end
 		if ok then
-			print(string.format("[ObjectEffectService] Treasure reward granted (opportunity %s)%s",
-				oppId, appliedIdol and " [Idol of Fortune drop bonus applied]" or ""))
-			-- CHEST GOLD (2026-10-24): the design (objects_encounters "Treasure Chest" =
-			-- "Random gold, equipment, materials and runes"; loot_progression id 67 "Gold
-			-- Fortune applies to ... chests") grants gold alongside the equipment rolled
-			-- above, which was never implemented. Base = Exploration-category completion
-			-- gold (economy_framework: 25 x (1 + MapLevel/50)); ApplyGold layers the gold +
-			-- Fortune multipliers (Fortune applies to chests per loot_progression), then
-			-- CurrencyService credits it. Per-opener trait multiplier: Treasure Seeker
-			-- (+50/60%) / Spendthrift Looter (-50/60%) via GetChestGoldMultiplier.
+			print(string.format("[ObjectEffectService] Treasure reward rolled (opportunity %s): %d reward(s) held until the battle ends%s",
+				oppId, held, appliedIdol and " [Idol of Fortune drop bonus applied]" or ""))
+			-- CHEST GOLD (2026-10-24): base = Exploration-category completion gold
+			-- (economy_framework: 25 x (1 + MapLevel/50)); ApplyGold layers the gold + Fortune
+			-- multipliers (Fortune applies to chests per loot_progression). Per-opener trait
+			-- multiplier: Treasure Seeker (+50/60%) / Spendthrift Looter (-50/60%). Held, then paid
+			-- with the battle gold (50% on a defeat).
 			local TraitEffectService = (require :: any)(script.Parent.TraitEffectService)
-			local CurrencyService = (require :: any)(script.Parent.CurrencyService)
 			local baseGold = math.round(25 * (1 + (mapLevel / 50)))
 			local traitMult = TraitEffectService.GetChestGoldMultiplier(actor)
 			local goldAmount = RewardService.ApplyGold(math.round(baseGold * traitMult))
-			if goldAmount > 0 and CurrencyService.Credit then
-				CurrencyService.Credit(playerId, { gold = goldAmount })
-				print(string.format("[ObjectEffectService] Chest gold +%d to %s (base %d x trait %.2f, after gold+fortune mults)",
-					goldAmount, playerId, baseGold, traitMult))
-			end
+			holdChestGold(state, goldAmount)
+			print(string.format("[ObjectEffectService] Chest gold %d held for %s (base %d x trait %.2f, after gold+fortune mults)",
+				goldAmount, playerId, baseGold, traitMult))
+			-- CHEST MERCURY (materials_system 10): every chest reward roll (Treasure and Cursed
+			-- Chest) gives 1 mercury. No crystals or rune gems. Fortune never applies. Held.
+			holdChestMercury(state, 1)
+			print(string.format("[ObjectEffectService] Chest mercury 1 held for %s", playerId))
 			return true, nil
 		end
 	end
-	print("[ObjectEffectService] Treasure reward DEFERRED — combat state lacks ownerPlayerId/mapLevel (follow-up).")
+	print("[ObjectEffectService] Treasure reward DEFERRED -- combat state lacks ownerPlayerId/mapLevel (follow-up).")
 	return true, nil
+end
+
+--------------------------------------------------------------------
+-- TREASURE HUNTER LOOT (project_rules 226-234, user-locked 2026-10-28). The Neutral event
+-- NPC takes a chest's loot. NEVER calls _grantChestReward (that records chestsOpened and
+-- holds loot for the player). Treasure/Cursed Chest: roll the normal reward with
+-- RewardService.GenerateRewards(..., { noCommit = true }) at NEUTRAL Fortune (no team
+-- Fortune, no Idol bump; the previous Fortune is restored right after), remove the chest,
+-- and return the held results. Cursed Chest also Weakens the NPC (3000 CT, same handler
+-- path a player gets). Disguised Mimic: wake it through the normal Resolve -> Mimic handler
+-- (which tags the Mimic huntsUnitId and skips chestsOpened for this opener).
+-- Returns kind ("loot" | "mimic" | nil), heldResults (array, may be empty).
+--------------------------------------------------------------------
+local _hunterLootSeq = 0
+function ObjectEffectService.HunterLootChest(state: any, actor: any, inst: any): (any, any)
+	if not (state and actor and inst and inst.type) then return nil, {} end
+	local objId = inst.id or ("obj_@" .. tostring(inst.x) .. "," .. tostring(inst.y))
+	if _consumed[objId] then return nil, {} end
+	local ox, oy = inst.x, inst.y
+
+	if inst.type == "Mimic" then
+		local ok = ObjectEffectService.Resolve(actor, inst, state, state.units)
+		if ok then
+			if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+				BattleVisualBroadcaster.ObjectChanged(ox, oy, { destroyed = true })
+			end
+			return "mimic", {}
+		end
+		warn(`[ObjectEffectService] HunterLootChest: Mimic wake failed at ({ox},{oy})`)
+		return nil, {}
+	end
+
+	if inst.type ~= "Treasure Chest" and inst.type ~= "Cursed Chest" then return nil, {} end
+	if inst.type == "Cursed Chest" then
+		local _prev = BattleVisualBroadcaster and BattleVisualBroadcaster.SetCause and BattleVisualBroadcaster.SetCause("Cursed Chest") or nil
+		applyAndRebuild(actor, "Weakened", actor.id)
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.ClearCause then BattleVisualBroadcaster.ClearCause(_prev) end
+	end
+
+	local held = {}
+	local playerId = state.ownerPlayerId
+	local mapLevel = state.mapLevel
+	if playerId and mapLevel and RewardService and RewardService.GenerateRewards then
+		_hunterLootSeq += 1
+		-- Unique id: own prefix (real chest opens use "chest_<id>") + NPC id + sequence.
+		local oppId = `hunterloot_{objId}_{tostring(actor.id)}_{_hunterLootSeq}`
+		local prevFortune = RewardService.GetExpeditionFortune and RewardService.GetExpeditionFortune() or nil
+		if RewardService.SetExpeditionFortune then RewardService.SetExpeditionFortune(0) end
+		local okR, resR = pcall(RewardService.GenerateRewards, playerId, mapLevel, oppId, { noCommit = true })
+		-- The chest's gold goes with the loot (daily systems decision 16, USER DECISION 2026-11-01):
+		-- the base chest gold at neutral Fortune (no opener trait), held as a { category = "Gold" }
+		-- entry and paid with the recovered loot only on a victory.
+		local hunterGold = math.round(25 * (1 + (mapLevel / 50)))
+		if RewardService.ApplyGold then hunterGold = RewardService.ApplyGold(hunterGold) end
+		if hunterGold > 0 then
+			table.insert(held, { category = "Gold", gold = hunterGold })
+		end
+		if prevFortune ~= nil and RewardService.SetExpeditionFortune then
+			RewardService.SetExpeditionFortune(prevFortune)
+		end
+		if okR and type(resR) == "table" then
+			for _, r in ipairs(resR) do
+				if r.item or r.cardData then table.insert(held, r) end
+			end
+		else
+			warn("[ObjectEffectService] HunterLootChest: reward roll failed: " .. tostring(resR))
+		end
+	else
+		warn("[ObjectEffectService] HunterLootChest: state lacks ownerPlayerId/mapLevel — NPC holds nothing")
+	end
+
+	_consumed[objId] = true
+	ObjectEffectService.RemoveObjectInstance(state, inst)
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+		BattleVisualBroadcaster.ObjectChanged(ox, oy, { destroyed = true })
+	end
+	print(`[ObjectEffectService] Treasure Hunter looted {inst.type} at ({ox},{oy}) -- holds {#held} reward(s) (gold included)`)
+	return "loot", held
 end
 
 --------------------------------------------------------------------
@@ -2175,7 +2785,7 @@ function ObjectEffectService.ProcessDeaths(allUnits: any, state: any)
 							local _shown4 = GameConstants.CapUnitDamage(opp, dmg)  -- 1 for a 3-hit gadget
 							opp.currentHp = math.max(0, (opp.currentHp or 0) - _shown4)
 							if opp.currentHp <= 0 then opp.isAlive = false end
-							if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(opp) end
+							if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(opp, "Necro Tome") end
 							if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage and opp.tileX and opp.tileY then
 								local _f = not _necroFocusDone; _necroFocusDone = true
 								BattleVisualBroadcaster.ObjectDamage(opp.tileX, opp.tileY, _shown4, _f)
@@ -2277,10 +2887,17 @@ function ObjectEffectService.Resolve(actor: any, objInstance: any, state: any, a
 		+ (tonumber(string.match(tostring(actor.id or "0"), "%d+")) or 0)
 	local rng = Random.new(seedBase)
 
-	local ok, reason = handler({
+	-- Battle Log Coverage (rules 225): every change a handler broadcasts is labelled with
+	-- the object's DISPLAY name (a disguised Mimic reads as its disguise). Scope is
+	-- restored even if the handler errors; the error is re-raised unchanged.
+	local _bvb = BattleVisualBroadcaster
+	local _prevCause = _bvb and _bvb.SetCause and _bvb.SetCause(ObjectEffectService.GetDisplayType(objInstance, nil)) or nil
+	local _pok, ok, reason = pcall(handler, {
 		actor = actor, objInstance = objInstance,
 		objDef = objDef, state = state, allUnits = allUnits, rng = rng,
 	})
+	if _bvb and _bvb.ClearCause then _bvb.ClearCause(_prevCause) end
+	if not _pok then error(ok, 0) end
 
 	if ok then
 		if uses == "Once" then
@@ -2361,8 +2978,20 @@ function ObjectEffectService.TriggerTrap(actor: any, inst: any, state: any, allU
 	if inst.ownerSide and actor.side and actor.side == inst.ownerSide then
 		return { fired = false }
 	end
+	-- Trap feedback snapshot (2026-10-28): capture pre-spring HP / statuses / hidden
+	-- so ONE battle-log line can say what just happened (BUG-034 class).
+	local hpBefore = actor.currentHp or 0
+	local statusBefore = {}
+	for _, si in ipairs(actor.statusInstances or {}) do
+		if si.id then statusBefore[si.id] = true end
+	end
+	local wasHidden = (inst.hidden == true)
 	local ok = ObjectEffectService.Resolve(actor, inst, state, allUnits)
 	if not ok then return { fired = false } end
+	-- Visual indicator BEFORE removal/ObjectChanged so the order reads naturally.
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.TrapSprung then
+		BattleVisualBroadcaster.TrapSprung(inst.x, inst.y, inst.type, actor.id, wasHidden)
+	end
 	-- Single-use traps are removed after firing ("removed after activation").
 	-- A hidden persistent trap that springs is no longer a secret: draw it now.
 	if (def.uses or "Once") == "Unlimited" and inst.hidden then
@@ -2377,10 +3006,37 @@ function ObjectEffectService.TriggerTrap(actor: any, inst: any, state: any, allU
 		end
 	end
 	if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
-		BattleVisualBroadcaster.UnitStateChanged(actor)
+		-- The trap line below already describes the actor's change (dedup, rules 225).
+		BattleVisualBroadcaster.UnitStateChanged(actor, BattleVisualBroadcaster.SILENT)
+	end
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.SyncUnit then
+		BattleVisualBroadcaster.SyncUnit(actor)
 	end
 	local killed = (actor.isAlive == false) or ((actor.currentHp or 1) <= 0)
 	local stops = (TRAP_STOPS_WALK[inst.type] == true) or killed
+	-- In-game battle-log line (single choke point for every spring path).
+	do
+		local hpLost = math.max(0, hpBefore - (actor.currentHp or 0))
+		local gained = {}
+		for _, si in ipairs(actor.statusInstances or {}) do
+			if si.id and not statusBefore[si.id] then
+				statusBefore[si.id] = true  -- dedupe stacked instances
+				table.insert(gained, tostring(si.id))
+			end
+		end
+		local who = actor.name or "?"
+		local verb = if objHasTag(def, "Explosive") then "set off" else "triggered"
+		local article = if wasHidden then "a hidden" else "a"
+		local parts = {}
+		if hpLost > 0 then table.insert(parts, `took {hpLost} damage`) end
+		for _, sid in ipairs(gained) do table.insert(parts, sid) end
+		local text = `{who} {verb} {article} {tostring(inst.type)}`
+		text = if #parts > 0 then `{text} — {table.concat(parts, ", ")}.` else `{text}.`
+		if killed then text = `{text} {who} was defeated.` end
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.Log then
+			BattleVisualBroadcaster.Log("trap", text, actor.id)
+		end
+	end
 	print(string.format("[ObjectEffectService] TRAP SPRUNG | %s on %s at (%s,%s) | stops=%s killed=%s",
 		tostring(inst.type), tostring(actor.name), tostring(inst.x), tostring(inst.y),
 		tostring(stops), tostring(killed)))
@@ -2397,9 +3053,10 @@ function ObjectEffectService.ConsumeExplosiveObjectAt(state: any, x: any, y: any
 		if o.x == x and o.y == y then
 			local def = o.type and ObjectData.Objects[o.type]
 			if def and objHasTag(def, "Explosive") then
+				local _shownType = if o.hidden then nil else ObjectEffectService.GetDisplayType(o, nil)  -- hidden: never logged
 				ObjectEffectService.RemoveObjectInstance(state, o)
 				if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
-					BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
+					BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true, exploded = true }, _shownType)
 				end
 				-- Second value: was it a trap (Land Mine)? Its chained blast counts for Goblin Cunning.
 				return true, objHasTag(def, "Trap")
@@ -2414,19 +3071,21 @@ end
 -- a 3x3 (box) explosion dealing damagePercent of Max HP, then remove the object. Unlike
 -- ConsumeExplosiveObjectAt this is NOT gated on the Explosive tag (the glove makes any pushed
 -- object blow up on collision). Object removed FIRST so the blast is not self-blocked. nil-safe.
-function ObjectEffectService.DetonateObjectAt(state: any, x: any, y: any, damagePercent: any, allUnits: any, ownerId: any): boolean
+-- instigatorId (optional, 2026-10-28): the glove wearer's unit id (Treasure Hunter escape flag).
+function ObjectEffectService.DetonateObjectAt(state: any, x: any, y: any, damagePercent: any, allUnits: any, ownerId: any, instigatorId: any): boolean
 	if not (state and state.objects) then return false end
 	local inst = nil
 	for _, o in ipairs(state.objects) do
 		if o.x == x and o.y == y then inst = o; break end
 	end
 	if not inst then return false end
+	local _shownType = ObjectEffectService.GetDisplayType(inst, nil)
 	ObjectEffectService.RemoveObjectInstance(state, inst)
 	if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
-		BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true })
+		BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true, exploded = true }, if inst.hidden then nil else _shownType)
 	end
 	if _tileEffectService and _tileEffectService.QueueExplosion then
-		_tileEffectService.QueueExplosion(x, y, 0, ownerId, damagePercent or 0.30, allUnits, "box")
+		_tileEffectService.QueueExplosion(x, y, 0, ownerId, damagePercent or 0.30, allUnits, "box", nil, instigatorId)
 	end
 	print(string.format("[ObjectEffectService] Demolition Mitts: object at (%d,%d) detonated (3x3, %d%% Max HP)",
 		x, y, math.floor((damagePercent or 0.30) * 100)))

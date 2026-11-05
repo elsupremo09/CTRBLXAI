@@ -1,0 +1,111 @@
+[
+ {
+  "table": "guild_facilities",
+  "col": "rule",
+  "key": 57,
+  "old": "(1) Catch-up fee (row 48). (2) Epic step fee (LOCKED - USER DECISION 2026-11-01): when an action raises an item to Epic, pay extra gold = 0.5 x (the item's shop Epic price - its shop price at its rarity before the enchant). Example: 1H L50 Common -> Epic = 0.5 x (4,752 - 792) = 1,980g. At L20 / L50 / L99: 1H 1,380 / 1,980 / 2,960g; 2H 2,070 / 2,970 / 4,440g. No facility discount applies to it. A crafted Epic from loot (1H L50) costs about 2,240g + Essences, roughly half the shop Epic price (4,752g). (3) Rarity never goes down. (4) Essences cannot be sold. (5) Shop-bought items give nothing when dismantled (row 51). (6) Reroll options are fixed (row 55).",
+  "new": "(1) Catch-up fee (row 48). (2) Epic step fee (LOCKED - USER DECISION 2026-11-01): when an action raises an item to Epic, pay extra gold = 0.5 x (the item's shop Epic price - its shop price at the item's STARTING rarity, equipment_schema 19). No facility discount applies to it. Same fee whichever route the player takes (straight to Epic or step by step). Remove never changes the fee basis; downgrades keep the starting rarity; items that existed before this is built use their current rarity as their starting rarity. Example: 1H L50 Common -> Epic = 0.5 x (4,752 - 792) = 1,980g. Fee at L20 / L50 / L99 by starting rarity: 1H Common 1,380 / 1,980 / 2,960g, Uncommon 1,242 / 1,782 / 2,664g, Rare 966 / 1,386 / 2,072g; 2H Common 2,070 / 2,970 / 4,440g, Uncommon 1,863 / 2,673 / 3,996g, Rare 1,449 / 2,079 / 3,108g. A single T4 line (200 BP, minimum rarity Epic) makes any item Epic, 1H or 2H, so the cheapest route to Epic is one T4 Add (2H L50: 540g, 394g at -27%). A crafted Epic from Common loot costs about 1H L50 2,240g / 2H L50 3,364g + Essences, roughly half the shop Epic price (4,752g / 7,128g). (3) Rarity never goes down. (4) Essences cannot be sold. (5) Shop-bought items give nothing when dismantled (row 51). (6) Reroll options are fixed (row 55). (7) Enchanted items sell at their STARTING rarity (economy_framework 14), so enchanting never raises sell value."
+ },
+ {
+  "table": "guild_facilities",
+  "col": "notes",
+  "key": 57,
+  "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q9). The Epic step fee formula = Designer starting value for \"priced near the shop Epic price\"; Simulator to verify. [superseded 2026-11-01: the user set the fee to half of this - see the USER DECISION below] | USER DECISION 2026-11-01 - Epic step fee LOCKED at HALF the Designer proposal: fee = 0.5 x (shop Epic price - shop price at the rarity before the enchant), no facility discount (was: OPEN; Designer proposal was the full difference, 1H L50 = 3,960g). Enchanted Epics now cost about half the shop Epic price instead of close to it - user's choice. Sell-loop re-check 2026-11-01: loot -> Uncommon / Rare / Epic -> sell loses gold at L20/50/99 for 1H and 2H, with and without the 27% Runeforge discount (smallest loss: 1H L20 to Uncommon with the discount, -22g). Designer note: the fee uses the rarity just before the step that reaches Epic, so going Common -> Rare first and then Rare -> Epic gives a smaller fee (1H L50: 0.5 x (4,752 - 1,980) = 1,386g). Every sell loop still loses gold on that route; Simulator to report Epic supply for it.",
+  "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q9). The Epic step fee formula = Designer starting value for \"priced near the shop Epic price\"; Simulator to verify. [superseded 2026-11-01: the user set the fee to half of this - see the USER DECISION below] | USER DECISION 2026-11-01 - Epic step fee LOCKED at HALF the Designer proposal: fee = 0.5 x (shop Epic price - shop price at the rarity before the enchant), no facility discount (was: OPEN; Designer proposal was the full difference, 1H L50 = 3,960g). Enchanted Epics now cost about half the shop Epic price instead of close to it - user's choice. Sell-loop re-check 2026-11-01: loot -> Uncommon / Rare / Epic -> sell loses gold at L20/50/99 for 1H and 2H, with and without the 27% Runeforge discount (smallest loss: 1H L20 to Uncommon with the discount, -22g). [superseded 2026-11-01 - Designer note about the fee using the rarity just before the Epic step (Common -> Rare -> Epic paid 1,386g at 1H L50): the fee is now counted from the starting rarity, see below] | USER DECISION 2026-11-01 (3): the fee is counted from the item's STARTING rarity (new saved field, equipment_schema 19, PLANNED - not built), so every route pays the same (1H L50 Common start = 1,980g either way). Enchant-then-sell loop fixed with option C - guard (7): enchanted items sell at their starting rarity. Correction: the earlier sell-loop table priced 2H Epic as eight T1 Adds (2H L20/50/99: 648/1,080/1,784g); one T4 Add is enough (324/540/892g, 236/394/651g at -27%). Sell-loop re-run 2026-11-01 (start Common/Uncommon/Rare x every higher target, item level 1-99, 1H and 2H, Runeforge discount 0/18/21/27%, cheapest Add route, tier unlocks ignored to be safe): best result -22g (1H L1, one T1 Add at -27%), so no loop makes gold. Under the old rule (sell at current rarity) Uncommon -> Rare made up to +3g at L1-6; now closed. NOT BUILT."
+ },
+ {
+  "table": "guild_facilities",
+  "col": "notes",
+  "key": 15,
+  "old": "USER DECISION 2026-10-30 — replaces \"each level +1 slot, L5 Uncommon, L8 Rare\".",
+  "new": "USER DECISION 2026-10-30 — replaces \"each level +1 slot, L5 Uncommon, L8 Rare\". | 2026-11-01 PLANNED UI rule (USER-APPROVED with option C, for when the Runeforge is built): the Merchant sell view shows a short note on items whose rarity was raised by the Runeforge, e.g. \"Sells as Common (enchanted)\" (economy_framework 14). NOT BUILT."
+ },
+ {
+  "table": "economy_framework",
+  "col": "rule",
+  "key": 14,
+  "old": "floor(Base Value × Rarity Mult × Level Mult × 0.25). Supplementary income source (~6% of total income).",
+  "new": "floor(Base Value × Rarity Mult × Level Mult × 0.25). Supplementary income source (~6% of total income). Enchanted items (USER DECISION 2026-11-01, option C - PLANNED, not built): an item whose rarity was raised by the Runeforge sells with this same formula using its starting rarity (equipment_schema 19) in place of its current rarity; item level and everything else stay as they are. Items never enchanted are unchanged (starting rarity = current rarity). Blacksmith level upgrades keep raising sell value as today. PLANNED UI rule: the Merchant sell view shows a short note on such items, e.g. \"Sells as Common (enchanted)\"."
+ },
+ {
+  "table": "economy_framework",
+  "col": "notes",
+  "key": 14,
+  "old": "Locked",
+  "new": "Locked | USER DECISION 2026-11-01 (option C): closes the enchant-then-sell loop (guild_facilities 57 guard 7). NOT BUILT."
+ },
+ {
+  "table": "economy_framework",
+  "col": "rule",
+  "key": 16,
+  "old": "16:1 for Common/Uncommon/Rare (Shop markup ×4.0 / Sell rate ×0.25); 24:1 for Epic and Exalted (×6.0 / ×0.25). No profitable buy-sell loops. Enchanting (2026-11-01): buy -> enchant -> sell and loot -> enchant -> sell also lose money - Add costs + the Epic step fee are higher than the extra sell value, and Essences cannot be sold (guild_facilities 55, 57).",
+  "new": "16:1 for Common/Uncommon/Rare (Shop markup ×4.0 / Sell rate ×0.25); 24:1 for Epic and Exalted (×6.0 / ×0.25). No profitable buy-sell loops. Enchanting (2026-11-01): buy -> enchant -> sell and loot -> enchant -> sell also lose money - enchanted items sell at their starting rarity (row 14), so enchanting adds no sell value, and Add costs, the Epic step fee and Essences (cannot be sold) are pure cost (guild_facilities 55, 57). Re-check 2026-11-01 (every start/target rarity, L1-99, 1H/2H, Runeforge discount 0/18/21/27%): best result -22g. Blacksmith upgrade -> sell: every level costs more gold than it adds in sell value (best case -11g per level, before materials), so no loop."
+ },
+ {
+  "table": "open_decisions",
+  "col": "col_2",
+  "key": 123,
+  "old": "RESOLVED 2026-11-01 (USER) - ALL DECIDED: facility name (Runeforge); existing-item start level USER-CONFIRMED; Epic step fee = half the shop price gap, no discount (guild_facilities 57). Simulator next.",
+  "new": "ALL DECIDED — Simulator next"
+ },
+ {
+  "table": "open_decisions",
+  "col": "col_3",
+  "key": 123,
+  "old": "QUESTIONS (all USER DECISION 2026-11-01, Designer recommendations accepted): Q1 RESOLVED - 3 Essences Uncommon/Rare/Epic, 5 -> 8 counters (materials_system 1/29/30/40). Q2 RESOLVED - dismantle refunds 25%->50% of gear materials spent (+1 Rare and up), 1 Essence per bonus line, no gold; equipped and Unique items cannot be dismantled (guild_facilities 51-52). Q3 RESOLVED - rarity after Add = higher of (rarest line's rarity, total-BP band); rarity never goes down (gf 44). Q4 RESOLVED - capacity L1-4 Uncommon, L5-9 Rare, L10 Epic, normal budget, 2H doubled; above-Epic items tune only at L10; Unique never (gf 54). Q5 RESOLVED - Remove = small fee, nothing back; Reroll = pick from a few fixed options; Modify = one tier up/down (gf 55). Q6 RESOLVED - numbers only; can remove a bonus passive, never add one (gf 56). Q7 RESOLVED - downgrade reach (gf 47); -3% gold per level (27% at L10, gold only); extraction Uncommon -> Rare (L4) -> Epic (L7); refund 25%->50% (gf 41/50, economy_framework 19). Q8 RESOLVED - unlock Guild Hall L4 (shared), Base 250 / Scale 15 = 8,919g, max L10 (gf 8/46/49/53). Q9 RESOLVED - catch-up fee (gf 48); shop-bought items give nothing when dismantled; Essences cannot be sold; Epic-level enchanting charges the Epic step fee (gf 57) = half the gap between the shop Epic price and the shop price at the rarity before the enchant, no discount (USER DECISION 2026-11-01). Q10 RESOLVED - chests 25% Uncommon, elites 75% Rare, bosses 100% Epic (Rare below L40), Fortune excluded, ~25% drops / ~75% dismantling (materials_system 19/41). E1 RESOLVED - auto-rename by the affix rule (gf 58, item_rarity_rules 23). E2 RESOLVED 2026-11-01 (USER) - facility named Runeforge (the Enchanter doctrine keeps its name); placeholder replaced in every row. E3 RESOLVED - downgrade stays free (economy_framework 21, project_rules 109). E4 RESOLVED - L81+ dismantles give T4 (materials_system 6/18). E5 RESOLVED - open_decisions 24 unparked. E6 RESOLVED - Fortune stays out of Add (gf 58). CONFLICTS UPDATED 2026-11-01: materials_system 1/6/15/18/19/26/28/29/30/31/32/33/36-39; guild_facilities 1/4/5/8/12/13/35-39; economy_framework 16/19/20/21/28/29/36/43-46; project_rules 109; open_decisions 22/23/24; implementation_plan 53; service_boundaries 15/16 + new 18; save_data_contract 3; equipment_schema 4/5 + new 16-18; item_rarity_rules 3/14/23; item_generation_steps 7/8/10; live_service_features 5. LEFT AS-IS (no conflict after these decisions): item_rarity_framework band table (covered by item_rarity_rules 14 note), item_rarity_rules 2/4, item_generation_steps 2-5, economy_framework 14/15/18 (sell/shop formulas unchanged), loot_progression 12/16 (Fortune not addable), live_service_features 2 + reward_generation 17 (Unique excluded), doctrines DOC-ENCHANTER (keeps its name). STILL PENDING: Simulator re-run of all benchmarks (gf 5/35-38, economy_framework 20/28/43-46, materials_system 15/36-39); Essence icon look (UI). Previous text superseded 2026-11-01 (kept in backups\\CTRBLXAI_before_bsench_lockall_20261101_010317.db). | 2026-11-01 UPDATE (USER DECISIONS): (1) E2 RESOLVED - the facility is named Runeforge; the Enchanter doctrine keeps its name. (2) USER-CONFIRMED - existing items count at their current level and never owe a catch-up fee; accepted side effect: dismantling them returns no gear-upgrade materials, only the +1 for Rare and up (gf 48, save_data_contract 3). (3) Epic step fee NOT locked - OPEN, user to set amount (gf 57); the Designer formula (1H L50 = 3,960g) stays as the current proposal. [superseded same day - see UPDATE 2] | 2026-11-01 UPDATE 2 (USER DECISION): Epic step fee RESOLVED - fee = 0.5 x (shop Epic price - shop price at the rarity before the enchant), no facility discount; 1H L50 = 1,980g (gf 57). Sell loops re-checked at L20/50/99, 1H and 2H, with and without the 27% discount: all lose gold. Nothing is left open in this item; Simulator next.",
+  "new": "QUESTIONS (all USER DECISION 2026-11-01, Designer recommendations accepted): Q1 RESOLVED - 3 Essences Uncommon/Rare/Epic, 5 -> 8 counters (materials_system 1/29/30/40). Q2 RESOLVED - dismantle refunds 25%->50% of gear materials spent (+1 Rare and up), 1 Essence per bonus line, no gold; equipped and Unique items cannot be dismantled (guild_facilities 51-52). Q3 RESOLVED - rarity after Add = higher of (rarest line's rarity, total-BP band); rarity never goes down (gf 44). Q4 RESOLVED - capacity L1-4 Uncommon, L5-9 Rare, L10 Epic, normal budget, 2H doubled; above-Epic items tune only at L10; Unique never (gf 54). Q5 RESOLVED - Remove = small fee, nothing back; Reroll = pick from a few fixed options; Modify = one tier up/down (gf 55). Q6 RESOLVED - numbers only; can remove a bonus passive, never add one (gf 56). Q7 RESOLVED - downgrade reach (gf 47); -3% gold per level (27% at L10, gold only); extraction Uncommon -> Rare (L4) -> Epic (L7); refund 25%->50% (gf 41/50, economy_framework 19). Q8 RESOLVED - unlock Guild Hall L4 (shared), Base 250 / Scale 15 = 8,919g, max L10 (gf 8/46/49/53). Q9 RESOLVED - catch-up fee (gf 48); shop-bought items give nothing when dismantled; Essences cannot be sold; Epic-level enchanting charges the Epic step fee (gf 57) = half the gap between the shop Epic price and the shop price at the rarity before the enchant, no discount (USER DECISION 2026-11-01). Q10 RESOLVED - chests 25% Uncommon, elites 75% Rare, bosses 100% Epic (Rare below L40), Fortune excluded, ~25% drops / ~75% dismantling (materials_system 19/41). E1 RESOLVED - auto-rename by the affix rule (gf 58, item_rarity_rules 23). E2 RESOLVED 2026-11-01 (USER) - facility named Runeforge (the Enchanter doctrine keeps its name); placeholder replaced in every row. E3 RESOLVED - downgrade stays free (economy_framework 21, project_rules 109). E4 RESOLVED - L81+ dismantles give T4 (materials_system 6/18). E5 RESOLVED - open_decisions 24 unparked. E6 RESOLVED - Fortune stays out of Add (gf 58). CONFLICTS UPDATED 2026-11-01: materials_system 1/6/15/18/19/26/28/29/30/31/32/33/36-39; guild_facilities 1/4/5/8/12/13/35-39; economy_framework 16/19/20/21/28/29/36/43-46; project_rules 109; open_decisions 22/23/24; implementation_plan 53; service_boundaries 15/16 + new 18; save_data_contract 3; equipment_schema 4/5 + new 16-18; item_rarity_rules 3/14/23; item_generation_steps 7/8/10; live_service_features 5. LEFT AS-IS (no conflict after these decisions): item_rarity_framework band table (covered by item_rarity_rules 14 note), item_rarity_rules 2/4, item_generation_steps 2-5, economy_framework 14/15/18 (sell/shop formulas unchanged), loot_progression 12/16 (Fortune not addable), live_service_features 2 + reward_generation 17 (Unique excluded), doctrines DOC-ENCHANTER (keeps its name). STILL PENDING: Simulator re-run of all benchmarks (gf 5/35-38, economy_framework 20/28/43-46, materials_system 15/36-39); Essence icon look (UI). Previous text superseded 2026-11-01 (kept in backups\\CTRBLXAI_before_bsench_lockall_20261101_010317.db). | 2026-11-01 UPDATE (USER DECISIONS): (1) E2 RESOLVED - the facility is named Runeforge; the Enchanter doctrine keeps its name. (2) USER-CONFIRMED - existing items count at their current level and never owe a catch-up fee; accepted side effect: dismantling them returns no gear-upgrade materials, only the +1 for Rare and up (gf 48, save_data_contract 3). (3) Epic step fee NOT locked - OPEN, user to set amount (gf 57); the Designer formula (1H L50 = 3,960g) stays as the current proposal. [superseded same day - see UPDATE 2] | 2026-11-01 UPDATE 2 (USER DECISION): Epic step fee RESOLVED - fee = 0.5 x (shop Epic price - shop price at the rarity before the enchant), no facility discount; 1H L50 = 1,980g (gf 57). Sell loops re-checked at L20/50/99, 1H and 2H, with and without the 27% discount: all lose gold. Nothing is left open in this item; Simulator next. | 2026-11-01 UPDATE 3 (USER DECISIONS): (1) Epic step fee counted from the item's STARTING rarity - same fee on every route; Remove and downgrades never change it; existing items use their current rarity (gf 57; new planned field equipment_schema 19; save_data_contract 3; service_boundaries 18). (2) Enchant-then-sell loop RESOLVED (option C): enchanted items sell at their starting rarity (economy_framework 14/16, gf 57 guard 7); Merchant sell-view note \"Sells as Common (enchanted)\" = PLANNED UI rule (gf 15). Re-run: best result -22g, no loop (the old rule's +3g Uncommon -> Rare loop is closed). Blacksmith upgrade-then-sell: no loop. (3) Correction: one T4 line makes a 2H item Epic (cheapest 2H Epic = 1 T4 Add, not 8 T1). Nothing left to decide. Remaining work (not decisions): Simulator re-runs; Essence icon art (UI)."
+ },
+ {
+  "table": "implementation_plan",
+  "col": "col_2",
+  "key": 53,
+  "old": "Crafting + Upgrades: UNPARKED 2026-11-01 (user decisions) - Blacksmith expansion + new Runeforge; design DECIDED 2026-11-01 (facility name Runeforge decided 2026-11-01; Epic step fee RESOLVED 2026-11-01 - half the shop price gap, guild_facilities 57); NOT BUILT, Simulator check next (guild_facilities 40-58; open_decisions 'Crafting', 'Upgrade systems' and 123). Monetization: unchanged (see open_decisions 'Monetization'). [Was: All parked. Not relevant to initial architecture.]",
+  "new": "Crafting + Upgrades: UNPARKED 2026-11-01 (user decisions) - Blacksmith expansion + new Runeforge; design DECIDED 2026-11-01 (facility name Runeforge decided 2026-11-01; Epic step fee RESOLVED 2026-11-01 - half the gap between the shop Epic price and the shop price at the item's starting rarity, guild_facilities 57; enchanted items sell at their starting rarity, economy_framework 14; new planned saved field starting_rarity, equipment_schema 19); NOT BUILT, Simulator check next (guild_facilities 40-58; open_decisions 'Crafting', 'Upgrade systems' and 123). Monetization: unchanged (see open_decisions 'Monetization'). [Was: All parked. Not relevant to initial architecture.]"
+ },
+ {
+  "table": "service_boundaries",
+  "col": "Reads",
+  "key": 18,
+  "old": "Target item (incl. starting level, reroll count), Runeforge level table (guild_facilities 53), bonus attribute pools (bonus_numerical_attributes), player gold + Essences",
+  "new": "Target item (incl. starting level, starting rarity, reroll count), Runeforge level table (guild_facilities 53), bonus attribute pools (bonus_numerical_attributes), player gold + Essences"
+ },
+ {
+  "table": "service_boundaries",
+  "col": "Must_Not_Own",
+  "key": 18,
+  "old": "New item generation, loot tables, combat, adding bonus passives, lowering rarity",
+  "new": "New item generation, loot tables, combat, adding bonus passives, lowering rarity, changing an item's starting rarity"
+ },
+ {
+  "table": "save_data_contract",
+  "col": "Persistent_Fields",
+  "key": 3,
+  "old": "instance ID, base archetype, level, rarity, bonus lines, authored roll data; PLANNED — not built (USER DECISION 2026-11-01): starting_level (level it dropped or was bought at - catch-up fee + dismantle refund), shop_bought flag (dismantling gives nothing), reroll_count (fixed reroll options)",
+  "new": "instance ID, base archetype, level, rarity, bonus lines, authored roll data; PLANNED — not built (USER DECISION 2026-11-01): starting_level (level it dropped or was bought at - catch-up fee + dismantle refund), shop_bought flag (dismantling gives nothing), reroll_count (fixed reroll options); starting_rarity (rarity it dropped or was bought at, never changed - Epic step fee + sell value, USER DECISION 2026-11-01)"
+ },
+ {
+  "table": "save_data_contract",
+  "col": "Migration_Rule",
+  "key": 3,
+  "old": "Preserve original authored roll; migrate field names/IDs only; PLANNED — not built: after enchanting, the current lines and rarity are the authority. Items saved before this is built get starting_level = current level, so they never owe a catch-up fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling them returns no gear-upgrade materials, only the +1 for Rare and up), shop_bought = no, reroll_count = 0",
+  "new": "Preserve original authored roll; migrate field names/IDs only; PLANNED — not built: after enchanting, the current lines and rarity are the authority. Items saved before this is built get starting_level = current level, so they never owe a catch-up fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling them returns no gear-upgrade materials, only the +1 for Rare and up), shop_bought = no, reroll_count = 0. Items saved before this is built get starting_rarity = current rarity (USER DECISION 2026-11-01)."
+ },
+ {
+  "table": "persistent_hp_mp_rules",
+  "col": "notes",
+  "key": 24,
+  "old": "Locked",
+  "new": "Locked | USER RULING 2026-11-01: \"low\" = current HP or MP below 35% of max. This is a separate setting (GameConstants.DEPLOY_LOW_RESOURCE_FRACTION), not tied to the 35% recovery. Display: the low unit's name band turns red (instead of a dot, because the portrait corners are already used), plus one summary line above START BATTLE. It informs only and never blocks deployment. KO members and depleted Items cannot happen at deployment today (rules 9, 17); add those warnings when expeditions / Camp exist. Built by the Dev 2026-11-01, Studio test pending."
+ },
+ {
+  "table": "equipment_schema",
+  "insert_rowid": 19,
+  "new": [
+   "starting_rarity",
+   "Enum",
+   "Persistent",
+   "Rarity the item had when it dropped or was bought; never changed (not by enchanting, Remove or downgrades). Used for the Epic step fee (guild_facilities 57) and sell value of enchanted items (economy_framework 14)",
+   "Same list as rarity_id, never above it; items saved before this is built get their current rarity; PLANNED — not built"
+  ]
+ }
+]

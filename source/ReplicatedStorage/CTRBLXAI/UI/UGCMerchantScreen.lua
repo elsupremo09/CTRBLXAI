@@ -33,6 +33,11 @@ local _filter = W.NewFilterState()
 local _token = 0
 local _pendingMessage: string? = nil
 local _pendingIsError = false
+local _stateConn: RBXScriptConnection? = nil -- server pushes while open (2026-11-05)
+local _gapConn: RBXScriptConnection? = nil -- bottom-gap resize (2026-11-05)
+-- Same bottom gap as the Loadout screen (user 2026-11-05): 3% of screen height, never under 8 px.
+local MIN_BOTTOM_GAP = 8
+local BOTTOM_GAP_SCALE = 0.03
 
 local refresh: () -> ()
 
@@ -306,12 +311,29 @@ function UGCMerchantScreen.Open(opts: any?)
 	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 	local gui, root = Theme.MakeFullScreen("UGCMerchantScreen", playerGui)
 	gui.DisplayOrder = DISPLAY_ORDER
+	local function applyBottomGap()
+		local cam = workspace.CurrentCamera
+		local h = cam and cam.ViewportSize.Y or 400
+		root.Size = UDim2.new(1, 0, 1, -math.max(MIN_BOTTOM_GAP, math.floor(h * BOTTOM_GAP_SCALE)))
+	end
+	applyBottomGap()
+	local cam = workspace.CurrentCamera
+	if cam then _gapConn = cam:GetPropertyChangedSignal("ViewportSize"):Connect(applyBottomGap) end
 	_gui = gui
 	_panel = Theme.MakePanel("MerchantPanel", UDim2.fromScale(1, 1), UDim2.new(), nil, root)
+	-- Listen for server facts (purchases, refunds, expiries) itself, so it stays current when
+	-- opened from the guild menu too, not only from the Outfit tab (PRF-004: tracked).
+	if not _stateConn then
+		_stateConn = UGCClient.OnStateChanged(function(change: any)
+			local text = W.DescribeChange(change)
+			if text then say(text) end
+			if UGCMerchantScreen.IsOpen() then refresh() end
+		end)
+	end
 	refresh()
 end
 
--- Server push while open (the Outfit tab forwards UGCStateChanged).
+-- Server push while open (the screen also listens for itself since 2026-11-05).
 function UGCMerchantScreen.Refresh(message: string?)
 	if not UGCMerchantScreen.IsOpen() then return end
 	if message then say(message) end
@@ -322,6 +344,8 @@ function UGCMerchantScreen.Close()
 	if not _gui then return end
 	if W.CloseMenu then W.CloseMenu() end -- drop any open Type/Status/Sort list
 	_token += 1
+	if _stateConn then _stateConn:Disconnect(); _stateConn = nil end
+	if _gapConn then _gapConn:Disconnect(); _gapConn = nil end
 	_gui:Destroy() -- MEM-002: buttons and their connections go with it
 	_gui, _panel = nil, nil
 	table.clear(_tiles)

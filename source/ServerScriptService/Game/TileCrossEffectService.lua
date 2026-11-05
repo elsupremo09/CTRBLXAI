@@ -181,6 +181,28 @@ end
 -- via the event queue with finite cap).
 --------------------------------------------------
 
+-- A tile continues a slide if it is Slippery BASE terrain (Ice) OR carries an active tile
+-- effect that extends slides: Oily (Slippery tag / slideExtension) or Frozen-tagged effects.
+function TileCrossEffectService.IsSlipperyTile(x, y)
+	local terrain = GameConstants.GetTerrainData(x, y)
+	if terrain and terrain.tags then
+		for _, tag in ipairs(terrain.tags) do
+			if tag == "Slippery" then return true end
+		end
+	end
+	if _tileEffectService and _tileEffectService.GetTileEffect then
+		local teff = _tileEffectService.GetTileEffect(x, y)
+		local edef = teff and GameConstants.TILE_EFFECTS[teff.id]
+		if edef then
+			if edef.slideExtension then return true end
+			for _, tag in ipairs(edef.tags or {}) do
+				if tag == "Slippery" or tag == "Frozen" then return true end
+			end
+		end
+	end
+	return false
+end
+
 function TileCrossEffectService.ResolveSlide(unit, startX, startY, dx, dy, allUnits, mapWidth, mapHeight)
 	local currentX = startX
 	local currentY = startY
@@ -225,38 +247,8 @@ function TileCrossEffectService.ResolveSlide(unit, startX, startY, dx, dy, allUn
 			if stoppedBy then break end
 		end
 
-		-- Check if the next tile continues the slide. A tile continues the slide if it
-		-- is Slippery BASE terrain (Ice/Frozen terrain) OR carries an active tile effect
-		-- that extends slides: Oily (slideExtension=true) or Frozen/Ice-tagged effects.
-		local nextTerrain = GameConstants.GetTerrainData(nextX, nextY)
-		local isSlippery = false
-		if nextTerrain and nextTerrain.tags then
-			for _, tag in ipairs(nextTerrain.tags) do
-				if tag == "Slippery" then
-					isSlippery = true
-					break
-				end
-			end
-		end
-		-- Active tile-effect slide extension (Oily / Ice / Frozen).
-		if not isSlippery and _tileEffectService and _tileEffectService.GetTileEffect then
-			local teff = _tileEffectService.GetTileEffect(nextX, nextY)
-			if teff then
-				local edef = GameConstants.TILE_EFFECTS[teff.id]
-				if edef then
-					if edef.slideExtension then
-						isSlippery = true
-					elseif edef.tags then
-						for _, tag in ipairs(edef.tags) do
-							if tag == "Slippery" or tag == "Frozen" then
-								isSlippery = true
-								break
-							end
-						end
-					end
-				end
-			end
-		end
+		-- Check if the next tile continues the slide (Slippery terrain or tile effect).
+		local isSlippery = TileCrossEffectService.IsSlipperyTile(nextX, nextY)
 
 		-- Move to the next tile
 		currentX = nextX

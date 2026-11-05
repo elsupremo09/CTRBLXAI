@@ -336,7 +336,8 @@ local function transformAndBroadcast(tileX, tileY, element)
 	local changed, newId = GameConstants.TransformTerrain(tileX, tileY, element)
 	if changed and newId then
 		if _bvb and _bvb.TerrainChanged then
-			_bvb.TerrainChanged(tileX, tileY, newId)
+			-- Battle Log Coverage: cause = the element (grouped "Fire: 2 tiles became Sand.")
+			_bvb.TerrainChanged(tileX, tileY, newId, nil, element and tostring(element) or nil)
 		end
 		-- VOXEL-NUANCE (RULE-010): if the ORIGIN was a VOXEL_KEEP terrain (rendered as a
 		-- server Roblox-Terrain voxel column) and the new terrain is NOT voxel-kept, the
@@ -392,10 +393,11 @@ end
 -- (explosion) path, never map-gen, so the broadcast never fires at map build time.
 -- Unlike transformAndBroadcast this is NOT a voxel-origin path (Rocky/Cracked are
 -- not VOXEL_KEEP), so no voxel-clear is needed.
-local function setTerrainAndBroadcast(tileX, tileY, terrainId)
+-- cause (optional, 2026-10-28): battle-log label (e.g. "The explosion").
+local function setTerrainAndBroadcast(tileX, tileY, terrainId, cause)
 	GameConstants.SetTerrainId(tileX, tileY, terrainId)
 	if _bvb and _bvb.TerrainChanged then
-		_bvb.TerrainChanged(tileX, tileY, terrainId)
+		_bvb.TerrainChanged(tileX, tileY, terrainId, nil, cause)
 	end
 end
 
@@ -524,10 +526,32 @@ function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allU
 
 	-- Place new effect
 	local _placedCt = durationCtOverride or def.durationCt or 900
+	-- Geomancer Terrain Mastery (2026-10-28): owner's terrain +1 turn (+400 CT, the project's
+	-- turn->CT step). Unit owners only (floor / tile / trap owners never match a unit id).
+	-- DB: only terrain a Geomancer creates with a SKILL counts (not its basic attacks or items). The
+	-- tile is marked so its +20% damage applies to that terrain only (checklist fix 2026-10-29).
+	local _geoSkillTerrain = false
+	if ownerId and _allUnits then
+		for _, _ou in ipairs(_allUnits) do
+			if _ou.id == ownerId then
+				local _dps = (require :: any)(script.Parent.DoctrinePassiveService)
+				if _dps.IsCastingSkill(_ou) then
+					local _add = _dps.GetTerrainDurationModifier(_ou)
+					if _add ~= 0 then
+						-- An unlimited effect (-1) stays unlimited (re-check 2026-10-29).
+						if _placedCt ~= -1 then _placedCt = _placedCt + _add * 400 end
+						_geoSkillTerrain = true
+					end
+				end
+				break
+			end
+		end
+	end
 	effects[key] = {
 		id          = effectId,
 		remainingCt = _placedCt,
 		ownerId     = ownerId,
+		geoSkillTerrain = _geoSkillTerrain or nil,
 		tickAccum   = 0,
 		tileX       = tileX,
 		tileY       = tileY,
@@ -557,7 +581,9 @@ function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allU
 	end
 
 	if _bvb and _bvb.TileEffectApplied then
-		_bvb.TileEffectApplied(tileX, tileY, effectId, _placedCt)
+		-- Battle Log Coverage: a floor re-establish (ownerId "floor") is background -> no line.
+		local _logCause = if ownerId == "floor" then nil else tostring(effectId)
+		_bvb.TileEffectApplied(tileX, tileY, effectId, _placedCt, _logCause)
 	end
 end
 
@@ -709,6 +735,15 @@ function TileEffectService.ProcessCtTick(ctElapsed, allUnits)
 							for _, u in ipairs(allUnits) do
 								if u.isAlive and u.tileX == eff.tileX and u.tileY == eff.tileY then
 									local damage = math.round(u.maxHp * (def.tickDamage or 0.15))
+									-- Geomancer Terrain Mastery: terrain damage from the owner's terrain +20%.
+									if eff.ownerId and eff.geoSkillTerrain then  -- Geomancer skill terrain only (2026-10-29)
+										for _, _ou in ipairs(allUnits) do
+											if _ou.id == eff.ownerId then
+												damage = math.round(damage * (require :: any)(script.Parent.DoctrinePassiveService).GetTerrainDamageModifier(_ou))
+												break
+											end
+										end
+									end
 									-- Firebreak zone: Fire damage halved (user ruling 2026-10-27).
 									if def.tickElement == "Fire" and (_firebreak[tileKey(u.tileX, u.tileY)] or 0) > 0 then
 										damage = math.round(damage * 0.5)
@@ -789,6 +824,10 @@ function TileEffectService.OnUnitEntersTile(unit, tileX, tileY)
 				"[TileEffectService] Cross effect: %s on %s (entering %s at %d,%d)",
 				def.crossEffect, unit.name, eff.id, tileX, tileY
 			))
+			-- Battle log (rules 225): the cross status had no broadcast; name the tile effect.
+			if _bvb and _bvb.UnitStateChanged then
+				_bvb.UnitStateChanged(unit, `{eff.id} tile`)
+			end
 		end
 	end
 end
@@ -820,6 +859,9 @@ local function isUndeadOrDemon(unit)
 		if inst.id == "Undead" then return true end  -- Undead status (e.g. raised corpse)
 	end
 	if not unit.raceId then return false end
+	-- Demon is a race, not a tag (BUG-069, 2026-11-01), so check the race itself, as
+	-- WeatherService does. Like the Undead tag, this stays on while Broken (user ruling).
+	if unit.raceId == "RACE-DEMON" then return true end
 	if not _raceData then
 		local ok, rd = pcall(function()
 			return require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
@@ -868,6 +910,10 @@ local function applyTaintedStartTurn(unit)
 	end
 	print(string.format("[TileEffectService] Tainted Ground: %s MP %d -> %d at (%d,%d)",
 		unit.name, before, unit.currentMp, unit.tileX, unit.tileY))
+	-- Battle Log Coverage (rules 225): this MP change had no client broadcast at all.
+	if _bvb and _bvb.UnitStateChanged and unit.currentMp ~= before then
+		_bvb.UnitStateChanged(unit, "Tainted Ground")
+	end
 end
 
 local function applyMoltenEndTurn(unit)
@@ -926,7 +972,7 @@ function TileEffectService.OnUnitStartTurn(unit)
 			if _bvb.StatusApplied then
 				_bvb.StatusApplied(unit, def.occupyEffect, inst and inst.remainingTurns or nil)
 			end
-			if _bvb.UnitStateChanged then _bvb.UnitStateChanged(unit) end
+			if _bvb.UnitStateChanged then _bvb.UnitStateChanged(unit, `{eff.id} tile`) end  -- rules 225 label
 		end
 	end
 end
@@ -1024,7 +1070,30 @@ local function collapseTile(tx, ty, allUnits)
 				print(string.format("[TileEffectService] %s rides collapse: +50 RT (now %d)", u.name, u.remainingRt))
 				-- Fall damage: existing fall-damage rule applies when the drop is a
 				-- forced downward displacement of >= FALL_DAMAGE_MIN_HEIGHT.
-				local fall = GameConstants.CalcFallDamage(u.maxHp, drop)
+				-- BD-013 Feather Armor: a Guarding wearer's effective fall height is 2 lower (re-check 2026-10-29).
+				local _fallH = drop
+				do
+					local _ss = (require :: any)(script.Parent.StatusService)
+					if _ss.HasStatus(u, "Guard") then
+						local _fr = (require :: any)(script.Parent.ArmorPassiveService).GetGuardFallHeightReduction(u)
+						if _fr > 0 then _fallH = math.max(0, _fallH - _fr) end
+					end
+				end
+				local fall = 0
+				if _fallH >= GameConstants.FALL_DAMAGE_MIN_HEIGHT then
+					fall = GameConstants.CalcFallDamage(u.maxHp, _fallH)
+				end
+				-- Sure-Footed / Acrophobic (re-check 2026-10-29): same fall multiplier as push falls.
+				if fall > 0 then
+					local _fm = (require :: any)(script.Parent.TraitEffectService).GetFallDamageMultiplier(u)
+					if _fm ~= 1 then fall = math.round(fall * _fm) end
+				end
+				-- BD-012 Collision Padding: fall damage x0.5 here too (the Hazard Suit note above
+				-- assigns collapse falls to BD-012; checklist fix 2026-10-29).
+				if fall > 0 then
+					local _cf = (require :: any)(script.Parent.ArmorPassiveService).GetCollisionFallDamageModifier(u)
+					if _cf ~= 1 then fall = math.round(fall * _cf) end
+				end
 				if fall > 0 and isFallDamageImmune(u) then
 					print(string.format("[TileEffectService] Feline Nine Lives: %s collapse fall damage %d -> 0", u.name, fall))
 					fall = 0
@@ -1070,7 +1139,7 @@ local function applyExplosionTerrain(tx, ty, allUnits, ownerId)
 	if terrainId == "Rocky" and elevBefore >= 8 then
 		-- BUG-002 GAP 1: route through setTerrainAndBroadcast so the client re-skins
 		-- the cracked tile (was a silent SetTerrainId before).
-		setTerrainAndBroadcast(tx, ty, "Cracked Ground")
+		setTerrainAndBroadcast(tx, ty, "Cracked Ground", "The explosion")
 		print(string.format("[TileEffectService] Rocky@%d CRACKED -> Cracked Ground at (%d,%d)", elevBefore, tx, ty))
 	elseif terrainId == "Cracked Ground" then
 		collapseTile(tx, ty, allUnits)
@@ -1088,7 +1157,22 @@ end
 -- explosive sources discovered in the AOE (to be appended to the drain queue
 -- by the caller). Never calls itself — chaining is queue-driven (TRG-011).
 -- isTrap (2026-10-27): this blast comes from a TRAP (a Land Mine), so Goblin Cunning's +10% applies.
-local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits, pattern, reduction, isTrap)
+-- instigatorId (optional, 2026-10-28, project_rules 230): id of the UNIT that set this blast off on
+-- purpose (nil = no unit instigator, e.g. traps). Used only for the Treasure Hunter escape flag.
+local function markHunterAttackedByBlast(target, instigatorId, dmg, allUnits)
+	if instigatorId == nil or not target or target.eventName ~= "Treasure Hunter" then return end
+	if target.hunterAttacked or not dmg or dmg <= 0 or instigatorId == target.id then return end
+	local found = false
+	for _, iu in ipairs(allUnits or {}) do
+		if iu.id == instigatorId then found = true break end
+	end
+	if not found then return end
+	target.hunterAttacked = true
+	print(string.format("[TileEffectService] Treasure Hunter %s hit by unit-set explosion (instigator %s) -> will try to escape",
+		tostring(target.name), tostring(instigatorId)))
+end
+
+local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits, pattern, reduction, isTrap, instigatorId)
 	local dirs = (pattern == "box") and EXPLOSION_DIRS_BOX or EXPLOSION_DIRS_DIAMOND
 	local originElev = GameConstants.GetElevation(x, y)
 	local chained = {}
@@ -1126,12 +1210,17 @@ local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits
 								if isTrap then dmg = math.round(dmg * hazardTakenMult(u)) end  -- Goblin Cunning: trap blasts only
 								local _shown3 = GameConstants.CapUnitDamage(u, dmg)  -- 1 for a 3-hit gadget
 								u.currentHp = math.max(0, u.currentHp - _shown3)
+								markHunterAttackedByBlast(u, instigatorId, _shown3, allUnits)
 								if u.currentHp <= 0 then u.isAlive = false end
 								print(string.format(
 									"[TileEffectService] EXPLOSION: %s takes %d explosion damage (no element) at (%d,%d) | HP: %d/%d",
 									u.name, dmg, tx, ty, u.currentHp, u.maxHp))
 								if _bvb and _bvb.ExplosionDamage then
 									_bvb.ExplosionDamage(tx, ty, _shown3)
+									-- HP / KO sync for the client (2026-10-30): ExplosionDamage only shows the
+									-- number, so an explosion KO never reached the screen (no death animation,
+									-- stale HP bar). SILENT: the line above already logged this hit and KO.
+									if _bvb.UnitStateChanged then _bvb.UnitStateChanged(u, _bvb.SILENT) end
 								elseif _bvb and _bvb.DotDamage then
 									_bvb.DotDamage(u, "Explosion", dmg)
 								end
@@ -1145,7 +1234,8 @@ local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits
 				local eff = effects[tileKey(tx, ty)]
 				if eff and (eff.id == "Oily" or eff.id == "Poison Cloud") and not (tx == x and ty == y) then
 					TileEffectService.RemoveTileEffect(tx, ty)  -- source consumed once
-					table.insert(chained, { x = tx, y = ty, depth = depth + 1 })
+					table.insert(chained, { x = tx, y = ty, depth = depth + 1,
+						instigator = (not isTrap) and instigatorId or nil })
 				end
 				-- Chain: an EXPLOSIVE OBJECT (Bomb Barrel / Land Mine) in the AOE
 				-- detonates within THIS SAME queue (TRG-011 cap spans the chain; no
@@ -1153,7 +1243,9 @@ local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits
 				if _explosiveObjectCb and not (tx == x and ty == y) then
 					local _consumed, _wasTrap = _explosiveObjectCb(tx, ty)
 					if _consumed then
-						table.insert(chained, { x = tx, y = ty, depth = depth + 1, trap = _wasTrap == true })
+						-- Instigator is inherited from the parent blast, but never through a trap blast.
+						table.insert(chained, { x = tx, y = ty, depth = depth + 1, trap = _wasTrap == true,
+							instigator = (not isTrap and _wasTrap ~= true) and instigatorId or nil })
 					end
 				end
 			end
@@ -1167,14 +1259,17 @@ end
 -- structure with iterative drain (TRG-011). No call-stack recursion. Hard cap
 -- of 128 explosion events per action; cooperative yield every 32 events.
 -- trapBlast (optional, 2026-10-27): true when a trap (Land Mine) set this blast off.
-function TileEffectService.QueueExplosion(x, y, depth, ownerId, damagePayload, allUnits, pattern, trapBlast)
+-- instigatorId (optional, 2026-10-28): id of the unit that set this off on purpose (nil = none).
+-- Chained entries inherit it, except through trap blasts. Ignored when trapBlast is true.
+function TileEffectService.QueueExplosion(x, y, depth, ownerId, damagePayload, allUnits, pattern, trapBlast, instigatorId)
 	allUnits = allUnits or _allUnits
 	local def = GameConstants.TILE_EFFECTS.Oily and GameConstants.TILE_EFFECTS.Oily.explosion
 	local maxDepth = (def and def.maxChainDepth) or 4
 	local reduction = (def and def.chainReductionFactor) or 0.5
 
 	-- Persisted FIFO queue of pending explosion events (TRG-011).
-	local queue = { { x = x, y = y, depth = depth or 0, trap = trapBlast == true } }
+	local queue = { { x = x, y = y, depth = depth or 0, trap = trapBlast == true,
+		instigator = (trapBlast ~= true) and instigatorId or nil } }
 	local head = 1
 	local processed = 0
 	local EVENT_CAP = 128   -- TRG-011 hard cap per action
@@ -1188,7 +1283,7 @@ function TileEffectService.QueueExplosion(x, y, depth, ownerId, damagePayload, a
 			print(string.format("[TileEffectService] Explosion chain terminated at depth %d (cap)", ev.depth))
 		else
 			local chained = processOneExplosion(
-				ev.x, ev.y, ev.depth, ownerId, damagePayload, allUnits, pattern, reduction, ev.trap == true
+				ev.x, ev.y, ev.depth, ownerId, damagePayload, allUnits, pattern, reduction, ev.trap == true, ev.instigator
 			)
 			-- Append discovered chained sources to the tail of the queue.
 			for _, c in ipairs(chained) do
@@ -1249,7 +1344,7 @@ local function applyHolyGroundEndTurn(unit)
 				unit._killCause = unit._killCause or "holyground"
 			end
 			if _bvb and _bvb.DotDamage then _bvb.DotDamage(unit, "Holy Ground", _shown4) end
-			print(string.format("[TileEffectService] Holy Ground: %s (Undead) takes %d Holy | HP %d/%d",
+			print(string.format("[TileEffectService] Holy Ground: %s (Undead/Demon) takes %d Holy | HP %d/%d",
 				unit.name, dmg, unit.currentHp, unit.maxHp or 0))
 		end
 		return
@@ -1272,7 +1367,7 @@ local function applyHolyGroundEndTurn(unit)
 		if heal > 0 then
 			unit.currentHp = math.min(unit.maxHp, unit.currentHp + heal)
 			if _statusService and _statusService.WeakenVenomOnHeal then _statusService.WeakenVenomOnHeal(unit) end  -- healing weakens Venom (2026-10-26)
-			if _bvb and _bvb.UnitStateChanged then _bvb.UnitStateChanged(unit) end
+			if _bvb and _bvb.UnitStateChanged then _bvb.UnitStateChanged(unit, "Holy Ground") end
 			print(string.format("[TileEffectService] Holy Ground: %s heals %d | HP %d/%d",
 				unit.name, heal, unit.currentHp, unit.maxHp or 0))
 		end
@@ -1299,6 +1394,9 @@ function TileEffectService.OnUnitEndTurn(unit)
 		if unit.tarPitTurns >= threshold and _statusService then
 			_statusService.ApplyStatus(unit, "Petrify", eff.ownerId or "tile")
 			print(string.format("[TileEffectService] %s PETRIFIED by Tar Pit", unit.name))
+			if _bvb and _bvb.UnitStateChanged then
+				_bvb.UnitStateChanged(unit, "Tar Pit")  -- rules 225: had no broadcast
+			end
 			unit.tarPitTurns = 0  -- reset after applying
 		end
 	else

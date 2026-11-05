@@ -91,6 +91,7 @@ local EVENT_NAMES = {
 	"MoveCostChanged",    -- S->C: temporary move-cost penalty on a tile (ENV-003, 2026-10-27): { x, y, add } (add 0 = gone)
 	"UnitStateChanged",   -- S->C: unit HP/isAlive changed (revive, etc.)
 	"ObjectChanged",      -- S->C: OBS object break/HP-change/move (Phase 2c-0): { x, y, newHp? | destroyed? | moved? }
+	"TrapSprung",         -- S->C: step-on trap fired (2026-10-28): { x, y, trapType, unitId, hidden }
 	"TerrainChanged",     -- S->C: a tile's base terrain transformed mid-battle (BUG-002 fix 2026-10-22): { x, y, terrainId } (fire burn-out, Holy/Dark/Earth/Wind transforms, weather, explosion chain). Client re-skins the tile Part + updates its local terrain data; no reposition.
 	"MapDataSync",        -- S->C: terrain/elevation/blocker grids for client
 	-- Phase B: Quest Board
@@ -144,6 +145,8 @@ local EVENT_NAMES = {
 	-- Steal / Mug slot pick (2026-10-24)
 	"StealPrompt",   -- S->C: { casterId, targetId, targetName, slots }
 	"StealChoice",   -- C->S: { casterId, slot }
+	-- Black Market paid shop (v2 build step 6b, 2026-11-01)
+	"BlackMarketOpened", -- S->C: { objectId, items = {{ slot, name, level, rarity, price, bought, detail }}, gold }
 }
 
 -- RemoteFunctions for Slice 4D management contracts
@@ -187,6 +190,11 @@ local FUNCTION_NAMES = {
 	-- (unitId) preview -> { ok, cost, canAfford, isAvatar, name }; (unitId, true)
 	-- commits: unequips all gear to inventory, charges 5x recruitment severance, removes the unit.
 	"RequestDismissUnit",
+	-- Skill hit preview (2026-10-30): (skillId, tileX, tileY) -> { ok, entries }. Read-only list of
+	-- every unit a skill would affect on that tile and the predicted amount. Battle-time only.
+	"PreviewSkillHits",
+	-- Black Market buy (v2 build step 6b, 2026-11-01): (objectId, slot) -> { ok, slot?, gold?, name?, error? }
+	"BlackMarketBuy",
 }
 
 local BattleEvents = {}

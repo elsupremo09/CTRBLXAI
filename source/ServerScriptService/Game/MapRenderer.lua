@@ -46,6 +46,28 @@ local ObjectData = require(
 
 local MapRenderer = {}
 
+-- MIMIC DISGUISE (2026-10-28): display-type resolver injected by Main
+-- (ObjectEffectService.GetDisplayType). fn(instanceOrNil, bareType) -> the type the
+-- CLIENT may see (a disguised Mimic -> "Treasure Chest"). Injected rather than required
+-- so MapRenderer gains no dependency on ObjectEffectService (no load cycle).
+local _displayType: any = nil
+local _warnedNoResolver = false
+local _warnedModelFallback: {[string]: boolean} = {}
+function MapRenderer.SetDisplayTypeResolver(fn: any)
+	_displayType = fn
+end
+local function displayTypeOf(instance: any, bareType: any): any
+	if _displayType then
+		return _displayType(instance, bareType)
+	end
+	if not _warnedNoResolver then
+		_warnedNoResolver = true
+		warn("[MapRenderer] No display-type resolver injected — disguised objects would render as their true type")
+	end
+	if instance then return instance.type end
+	return bareType
+end
+
 --------------------------------------------------
 -- CONSTANTS
 --------------------------------------------------
@@ -350,7 +372,9 @@ local function createTile(x, y, tileData, viewMode, regionColorMap, generatedMap
 	local elevation  = tileData.elevation
 	local regionId   = tileData.regionId
 	local marker     = tileData.marker
-	local objectName = tileData.object
+	-- Client-visible type (a disguised Mimic shows as Treasure Chest; every map-built
+	-- object starts disguised). Drives both the tile attributes and the model below.
+	local objectName = tileData.object and displayTypeOf(nil, tileData.object) or nil
 
 	local regionColor = regionColorMap[regionId]
 		or Color3.fromRGB(128, 128, 128)
@@ -751,6 +775,8 @@ local function renderBlockers(generatedMap, mapFolder)
 	for _, blocker in ipairs(generatedMap.blockers) do
 		local bx = blocker.tileX
 		local by = blocker.tileY
+		-- Client-visible type (Mimic disguise); the server blocker keeps the true type.
+		local shownType = displayTypeOf(nil, blocker.objectType)
 
 		local tileData  = generatedMap.tiles[by][bx]
 		local elevation = tileData.elevation
@@ -762,8 +788,8 @@ local function renderBlockers(generatedMap, mapFolder)
 				and child:GetAttribute("Y") == by
 			then
 				child:SetAttribute("Passable", false)
-				child:SetAttribute("ObjectName", blocker.objectType)
-				child:SetAttribute("MapObject", blocker.objectType)
+				child:SetAttribute("ObjectName", shownType)
+				child:SetAttribute("MapObject", shownType)
 				child:SetAttribute("ObjectCategory", "Obstacle")
 				child:SetAttribute("ObjectPassabilityImpact", "Impassable")
 
@@ -771,9 +797,9 @@ local function renderBlockers(generatedMap, mapFolder)
 				-- createTile may have ALREADY spawned a model for this tile's object
 				-- (passable+impassable pass). Avoid double-spawning: only spawn here
 				-- if the mapFolder has no existing model clone for this tile.
-				local existing = mapFolder:FindFirstChild(string.format("MapObjModel_%s_%s", tostring(blocker.objectType), bx .. "_" .. by))
+				local existing = mapFolder:FindFirstChild(string.format("MapObjModel_%s_%s", tostring(shownType), bx .. "_" .. by))
 				local tileTopY = child.Position.Y + tileHeight / 2
-				local modelClone = existing or spawnObjectModel(blocker.objectType, child, tileTopY, bx .. "_" .. by, generatedMap and generatedMap.seed)
+				local modelClone = existing or spawnObjectModel(shownType, child, tileTopY, bx .. "_" .. by, generatedMap and generatedMap.seed)
 				if not modelClone then
 					local blockerHeight = ELEVATION_STEP * 1.5
 					local blockerPart = Instance.new("Part")
@@ -1176,6 +1202,8 @@ function MapRenderer.RenderOneObject(mapFolder, instance)
 	-- ObjectData is required at module scope (top of file); no local re-require needed. (2026-10-16)
 	local def = ObjectData.Objects and ObjectData.Objects[instance.type]
 	local nonPassable = def and def.passable == false
+	-- Client-visible type (Mimic disguise). Passability above still uses the TRUE def.
+	local shownType = displayTypeOf(instance, nil)
 
 	for _, child in ipairs(mapFolder:GetChildren()) do
 		if child:GetAttribute("X") == instance.x
@@ -1183,8 +1211,8 @@ function MapRenderer.RenderOneObject(mapFolder, instance)
 			-- A runtime object now owns this tile: drop any decorative prop on it.
 			PropService.ClearTile(mapFolder, instance.x, instance.y)
 			-- Tag the tile with the object (matches createTile's attribute scheme).
-			child:SetAttribute("ObjectName", instance.type)
-			child:SetAttribute("MapObject", instance.type)  -- object-only tag (F1)
+			child:SetAttribute("ObjectName", shownType)
+			child:SetAttribute("MapObject", shownType)  -- object-only tag (F1)
 			child:SetAttribute("ObjectCategory", "MapObject")
 			if nonPassable then
 				child:SetAttribute("Passable", false)
@@ -1193,16 +1221,28 @@ function MapRenderer.RenderOneObject(mapFolder, instance)
 			-- Render the real model for EVERY object (passable or not). Model is
 			-- visual-only; passability is set above from object data.
 			local tileTopY = child.Position.Y + child.Size.Y / 2
-			local modelClone = spawnObjectModel(instance.type, child, tileTopY, instance.x .. "_" .. instance.y, mapFolder:GetAttribute("Seed"))
+			local modelClone = spawnObjectModel(shownType, child, tileTopY, instance.x .. "_" .. instance.y, mapFolder:GetAttribute("Seed"))
+			-- Unmasked disguise object with no model of its own (e.g. no "Mimic" model in
+			-- Map Objects): keep the disguise model; name/inspector still say the true type.
+			if not modelClone and instance.unmasked == true then
+				local disguiseType = displayTypeOf(nil, instance.type)
+				if disguiseType and disguiseType ~= shownType then
+					modelClone = spawnObjectModel(disguiseType, child, tileTopY, instance.x .. "_" .. instance.y, mapFolder:GetAttribute("Seed"))
+					if modelClone and not _warnedModelFallback[shownType] then
+						_warnedModelFallback[shownType] = true
+						warn(`[MapRenderer] No '{shownType}' model in ServerStorage > Map Objects — unmasked {shownType} keeps the {disguiseType} model`)
+					end
+				end
+			end
 			if not modelClone then
 				-- Never stack two markers on one tile (Tester W1 2026-10-27): drop any earlier
 				-- disc / cube drawn for this same object before drawing a new one.
 				local _oldMark = mapFolder:FindFirstChild(string.format("MapObject_%s_%d_%d",
-					tostring(instance.type), instance.x, instance.y))
+					tostring(shownType), instance.x, instance.y))
 				if _oldMark then _oldMark:Destroy() end
 				-- LOG-002: say which model is missing so it can be added in Studio.
 				warn(string.format("[MapRenderer] No model named '%s' in ServerStorage > Map Objects -- drawing a placeholder at (%d,%d)",
-					tostring(instance.type), instance.x, instance.y))
+					tostring(shownType), instance.x, instance.y))
 			end
 			if not modelClone and not nonPassable then
 				-- Placed walk-over object (item trap, gadget) with no model: draw a flat marker
@@ -1211,7 +1251,7 @@ function MapRenderer.RenderOneObject(mapFolder, instance)
 				-- Named like the blocker cube so RemoveOneObject cleans it up.
 				local isHazard = def and def.category == "Hazard"
 				local disc = Instance.new("Part")
-				disc.Name = string.format("MapObject_%s_%d_%d", tostring(instance.type), instance.x, instance.y)
+				disc.Name = string.format("MapObject_%s_%d_%d", tostring(shownType), instance.x, instance.y)
 				disc.Shape = Enum.PartType.Cylinder
 				disc.Anchored = true
 				disc.CanCollide = false
@@ -1231,7 +1271,7 @@ function MapRenderer.RenderOneObject(mapFolder, instance)
 				-- model simply show nothing (unchanged from before).
 				local blockerHeight = ELEVATION_STEP * 1.5
 				local cube = Instance.new("Part")
-				cube.Name = string.format("MapObject_%s_%d_%d", tostring(instance.type), instance.x, instance.y)
+				cube.Name = string.format("MapObject_%s_%d_%d", tostring(shownType), instance.x, instance.y)
 				cube.Anchored   = true
 				cube.CanCollide = true
 				cube.CanQuery   = false
@@ -1262,9 +1302,16 @@ function MapRenderer.RemoveOneObject(mapFolder, instance)
 		return false
 	end
 	local key = instance.x .. "_" .. instance.y
+	-- Remove under BOTH the client-visible and the true type name (a disguised / unmasked
+	-- Mimic may be drawn as either; destroying an absent name is a no-op).
+	local shownType = displayTypeOf(instance, nil)
+	local disguiseType = displayTypeOf(nil, instance.type)
 	local names = {
 		string.format("MapObjModel_%s_%s", tostring(instance.type), key),
 		string.format("MapObject_%s_%d_%d", tostring(instance.type), instance.x, instance.y),
+		string.format("MapObjModel_%s_%s", tostring(disguiseType), key),
+		string.format("MapObject_%s_%d_%d", tostring(disguiseType), instance.x, instance.y),
+		string.format("MapObjModel_%s_%s", tostring(shownType), key),
 		string.format("Blocker_%d_%d", instance.x, instance.y),
 	}
 	for _, n in names do

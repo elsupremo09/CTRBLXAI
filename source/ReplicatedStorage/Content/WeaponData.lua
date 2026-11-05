@@ -520,16 +520,16 @@ local NATIVE_PASSIVE_DESC = {
 	["Fortify"] = "On hit, gain +20% of Weapon Defense as flat Defense.",
 	["Freeze"] = "Applies Freeze on hit.",
 	["GuardBonus"] = "On Guard, +15% damage mitigation.",
-	["HighGround"] = "+35% elevation damage bonus when attacking from above.",
+	["HighGround"] = "From higher ground, the height damage bonus is 35% bigger (can go past the usual +30% cap).",
 	["Ignite"] = "Applies Burn DoT on hit.",
 	["Knockback"] = "Push target floor(Force/2) tiles away on hit.",
 	["Lacerate"] = "Applies Bleed on hit.",
 	["Lore"] = "+30% applied status and buff duration.",
 	["Lullaby"] = "Applies Sleep on hit (2 turns, damage wakes).",
-	["PiercingEdge"] = "Pending definition.",
+	["PiercingEdge"] = "Target Defense x0.80 on Basic Attacks and weapon skills.",
 	["PrecisionStrike"] = "+15% Hit Quality on Basic Attacks.",
 	["Pull"] = "Drag target floor(Force/2) tiles toward attacker.",
-	["QuickDraw"] = "After 2 Basic Attacks, next attack costs 0 RT.",
+	["QuickDraw"] = "Once per turn, after 2 Basic Attacks, pay 10% Max MP for 1 bonus Basic Attack at 0 AP.",
 	["Range+1"] = "+1 Maximum Range (Minimum unchanged).",
 	["Reap"] = "Heal 5% of total Cleave damage dealt.",
 	["SkillPotency"] = "+8% Skill damage dealt.",
@@ -541,6 +541,16 @@ local NATIVE_PASSIVE_DESC = {
 
 function WeaponData.GetPassiveDesc(passiveId)
 	return NATIVE_PASSIVE_DESC[passiveId] or ""
+end
+
+-- Player-facing name overrides for native passives whose key is not a good name
+-- (user-approved 2026-10-31). The key stays the rules id. Unlisted keys: nil.
+local NATIVE_PASSIVE_NAME = {
+	["Evasion"] = "Slippery",
+}
+
+function WeaponData.GetPassiveName(passiveId)
+	return NATIVE_PASSIVE_NAME[passiveId]
 end
 
 --------------------------------------------------

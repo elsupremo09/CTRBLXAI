@@ -32,6 +32,7 @@ local TileCrossEffectService = require(script.Parent.TileCrossEffectService)
 local RacePassiveService = require(script.Parent.RacePassiveService)
 local StatusService = require(script.Parent.StatusService) -- status Stability buffs (2026-10-07)
 local TraitEffectService = require(script.Parent.TraitEffectService) -- Perks & Flaws: fall/collision mults (2026-10-23)
+local StatCalcService = require(script.Parent.StatCalcService) -- shared Stability calculation (2026-10-28)
 
 local DisplacementService = {}
 
@@ -147,7 +148,53 @@ end
 -- applies the actual HP changes and position updates.
 --------------------------------------------------
 
-function DisplacementService.ResolvePush(pusher, target, force, direction, sourceModifier, allUnits, requestedDistance, isRanged, stabilityIgnore)
+-- How many tiles a push of `force` would move `target`, before any player-chosen stop distance.
+-- Shared by ResolvePush and the turn-prompt push preview (CommandService.GetPushPreview), so the
+-- stop tiles a player can pick always match the push (2026-10-28). Returns distance, effective
+-- Stability (after the pusher's stability ignore). Reads unit state only; never writes it.
+-- ignoreGuard (2026-10-29): GL-012 Crushing Vambraces -- Guard-based push defences (BD-002 negate,
+-- BD-004 +3 Stability) do not apply.
+function DisplacementService.CalcPushDistance(target, force, isRanged, stabilityIgnore, ignoreGuard)
+	-- Steadfast Strike augment: displacement-immune this round -> cannot be moved.
+	if target._displacementImmune then
+		return 0, 0
+	end
+	local targetStability = StatCalcService.GetStability(target, "battle", ignoreGuard)
+
+	-- GL-001 Reinforced Gloves: the PUSHER may ignore up to N of the target's effective Stability
+	-- (passed by the Push command via GetPushStabilityIgnore; nil/0 for all other push sources, so
+	-- knockback/augment pushes are unaffected -- consistent with how GL push-force is Push-only).
+	-- Applied AFTER all stability additions (VIT + status buffs + Anchor Mail Guard), floored at 0.
+	if stabilityIgnore and stabilityIgnore > 0 then
+		targetStability = math.max(0, targetStability - stabilityIgnore)
+	end
+	local pushDistance = math.max(0, force - targetStability)
+	-- Armor (2026-10-24): BD-002 Fortress Plate negates incoming push entirely while Guarding;
+	-- BD-008 Grounding Harness reduces forced displacement distance by 2 (always active). Deferred
+	-- require avoids any load-time cycle.
+	do
+		local _aps = (require :: any)(script.Parent.ArmorPassiveService)
+		if pushDistance > 0 and not ignoreGuard and StatusService.HasStatus(target, "Guard") and _aps.CanGuardNegatePush(target) then
+			pushDistance = 0
+		else
+			local dispRed = _aps.GetDisplacementReduction(target)
+			if dispRed > 0 then pushDistance = math.max(0, pushDistance - dispRed) end
+		end
+	end
+	-- Ranged knockback penalty: knockback from a RANGED attack is reduced by 50%,
+	-- rounded up (DB: ranged knockback distance x0.5, ceil). A nonzero knockback keeps
+	-- at least 1 tile. Central hook — every ranged knockback source inherits this by
+	-- passing isRanged=true. Melee/global-push sources pass false/nil (no reduction).
+	if isRanged and pushDistance > 0 then
+		pushDistance = math.ceil(pushDistance * 0.5)
+	end
+	return pushDistance, targetStability
+end
+
+-- preResolved (optional, 2026-10-28): requestedDistance is already the final distance (each hit of a
+-- multi-hit attack checked Stability on its own and the results were summed), so Stability is not
+-- applied a second time. Displacement immunity still applies.
+function DisplacementService.ResolvePush(pusher, target, force, direction, sourceModifier, allUnits, requestedDistance, isRanged, stabilityIgnore, preResolved)
 	assert(type(pusher) == "table", "ResolvePush: pusher must be a unit table.")
 	assert(type(target) == "table", "ResolvePush: target must be a unit table.")
 	assert(type(direction) == "table" and direction.dx and direction.dy,
@@ -169,46 +216,21 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	-- Step 1: Calculate push distance.
 	-- DB rule (Push Distance): Stability = floor(VIT/60). Default 0, no +1 offset,
 	-- so this matches the Main pushTargets maxPushDistance preview exactly.
-	local targetStability = 0
-	if target.derivedStats and target.derivedStats.stability then
-		targetStability = target.derivedStats.stability
-	elseif target.effectiveStats and target.effectiveStats.VIT then
-		targetStability = math.floor(target.effectiveStats.VIT / 60)
-	end
-	-- Status Stability buffs (Hold the Line +2, War Cry +1). Mirrored in Main push preview.
-	targetStability = math.max(0, targetStability + StatusService.GetStabilityModifier(target))
-	-- BD-004 Anchor Mail (2026-10-24): Stability +3 while Guarding. Deferred require avoids cycle.
-	if StatusService.HasStatus(target, "Guard") then
-		targetStability = targetStability
-			+ (require :: any)(script.Parent.ArmorPassiveService).GetGuardStabilityBonus(target)
-	end
-
-	-- GL-001 Reinforced Gloves: the PUSHER may ignore up to N of the target's effective Stability
-	-- (passed by the Push command via GetPushStabilityIgnore; nil/0 for all other push sources, so
-	-- knockback/augment pushes are unaffected -- consistent with how GL push-force is Push-only).
-	-- Applied AFTER all stability additions (VIT + status buffs + Anchor Mail Guard), floored at 0.
-	if stabilityIgnore and stabilityIgnore > 0 then
-		targetStability = math.max(0, targetStability - stabilityIgnore)
-	end
-	local pushDistance = math.max(0, force - targetStability)
-	-- Armor (2026-10-24): BD-002 Fortress Plate negates incoming push entirely while Guarding;
-	-- BD-008 Grounding Harness reduces forced displacement distance by 2 (always active). Deferred
-	-- require avoids any load-time cycle.
-	do
-		local _aps = (require :: any)(script.Parent.ArmorPassiveService)
-		if pushDistance > 0 and StatusService.HasStatus(target, "Guard") and _aps.CanGuardNegatePush(target) then
-			pushDistance = 0
-		else
-			local dispRed = _aps.GetDisplacementReduction(target)
-			if dispRed > 0 then pushDistance = math.max(0, pushDistance - dispRed) end
-		end
-	end
-	-- Ranged knockback penalty: knockback from a RANGED attack is reduced by 50%,
-	-- rounded up (DB: ranged knockback distance x0.5, ceil). A nonzero knockback keeps
-	-- at least 1 tile. Central hook — every ranged knockback source inherits this by
-	-- passing isRanged=true. Melee/global-push sources pass false/nil (no reduction).
-	if isRanged and pushDistance > 0 then
-		pushDistance = math.ceil(pushDistance * 0.5)
+	-- Effective Stability: one shared calculation (StatCalcService.GetStability, 2026-10-28) --
+	-- base (VIT + traits + PAS-014) + status buffs + BD-004 Anchor Mail while Guarding + FT-003
+	-- Heavy March Boots. The push preview and the Info panels read the same function.
+	-- Distance math moved to CalcPushDistance (2026-10-28) so the turn-prompt push preview uses
+	-- the exact same numbers: Stability, GL-001 ignore, Fortress Plate, Grounding Harness, ranged x0.5.
+	-- Push-action-only glove effects (checklist fix 2026-10-29): GL-009 Ram, GL-010 Edgefinder and
+	-- GL-012 Crushing apply to the Push action (GlobalPush source), not to skill / weapon / item
+	-- knockbacks the wearer causes (those pass SkillKnockback).
+	local isGlobalPush = (sourceModifier == GameConstants.KNOCKBACK_SOURCE_MODIFIERS.GlobalPush)
+	local _pushCfg = isGlobalPush and (require :: any)(script.Parent.ArmorPassiveService).GetPushCollisionConfig(pusher) or nil
+	local crushIgnoreGuard = _pushCfg ~= nil and _pushCfg.type == "Crush" and _pushCfg.ignoreGuard == true
+	local pushDistance, targetStability = DisplacementService.CalcPushDistance(target, force, isRanged, stabilityIgnore, crushIgnoreGuard)
+	if preResolved and requestedDistance ~= nil then
+		pushDistance = math.max(0, math.floor(requestedDistance))
+		requestedDistance = nil
 	end
 	-- Distance control: pusher may request a shorter stop distance (fixed direction).
 	-- nil = full distance (AI / legacy callers). Clamp to [0, maxDistance] (SEC-001).
@@ -248,7 +270,46 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	local tilesPath = {}   -- ordered tiles the target is dragged ONTO (excludes origin); for trap triggers
 	local startElev = currentElev
 
-	for step = 1, pushDistance do
+	-- GL-015 Throwing Gloves, Push action only (user ruling 2026-10-29: "Push uses arc projectile
+	-- rules" = the pushed unit FLIES OVER anything in its path and only stops where it lands). It lands
+	-- on the farthest tile up to the push distance that is on the map, not blocked, not occupied by
+	-- another unit and not higher than where it started. Tiles flown over are never entered (no
+	-- collision, no traps, no tile effects there). No legal landing tile = it does not move.
+	local _arcCfg = isGlobalPush and (require :: any)(script.Parent.ArmorPassiveService).GetPushArcConfig(pusher) or nil
+	local arcPush = _arcCfg ~= nil and _arcCfg.arcProjectile == true
+	if arcPush then
+		-- A pull (Android / Butcher's Gloves) never flies the target past the puller: if the puller
+		-- stands on the flight line, the farthest landing is the tile just before it (2026-10-29).
+		local arcMax = pushDistance
+		if pusher and pusher.tileX then
+			for k = 1, pushDistance do
+				if target.tileX + dx * k == pusher.tileX and target.tileY + dy * k == pusher.tileY then
+					arcMax = k - 1
+					break
+				end
+			end
+		end
+		for k = arcMax, 1, -1 do
+			local lx, ly = target.tileX + dx * k, target.tileY + dy * k
+			if isInsideMap(lx, ly) and not GameConstants.IsBlocked(lx, ly)
+				and GameConstants.GetElevation(lx, ly) <= startElev then
+				local occ = getUnitAt(allUnits, lx, ly)
+				if occ == nil or occ == target then
+					currentX, currentY = lx, ly
+					currentElev = GameConstants.GetElevation(lx, ly)
+					totalFallHeight = math.max(0, startElev - currentElev)
+					tilesDisplaced = k
+					table.insert(tilesPath, { x = lx, y = ly })
+					for _, eff in ipairs(TileCrossEffectService.OnTileEntered(target, lx, ly, direction, true, allUnits)) do
+						table.insert(crossEffects, eff)
+					end
+					break
+				end
+			end
+		end
+	end
+
+	for step = 1, (arcPush and 0 or pushDistance) do
 		local nextX = currentX + dx
 		local nextY = currentY + dy
 
@@ -345,6 +406,36 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		end
 	end
 
+	-- Step 2b: SLIDING KNOCKBACK (DB terrain_effects: Ice "Sliding Knockback"; Oily "Knockback
+	-- continues until first non-Oily/non-Ice tile"; built 2026-10-29 -- the slide was never applied).
+	-- A unit knocked onto a slippery tile without being stopped keeps going the same way until it
+	-- lands on the first non-slippery tile, or stops before a blocker / unit / map edge / height
+	-- change (TileCrossEffectService.ResolveSlide, no collision damage). Not for Throwing Gloves
+	-- throws (they land), flying units, or a unit wearing FT-013 Ice Cleats.
+	if not arcPush and tilesDisplaced > 0 and blockedBy == nil
+		and TileCrossEffectService.IsSlipperyTile(currentX, currentY)
+		and not StatusService.HasStatus(target, "Flight") then
+		local _apsSlide = (require :: any)(script.Parent.ArmorPassiveService)
+		if _apsSlide.CanAvoidIceSlide(target) then
+			print(string.format("[DisplacementService] Ice Cleats: %s does not slide", target.name))
+		else
+			local savedX, savedY = target.tileX, target.tileY
+			target.tileX, target.tileY = currentX, currentY  -- ResolveSlide skips the sliding unit by identity
+			local slide = TileCrossEffectService.ResolveSlide(target, currentX, currentY, dx, dy, allUnits, _mapWidth, _mapHeight)
+			target.tileX, target.tileY = savedX, savedY
+			for _ = 1, (slide and slide.tilesSlid or 0) do
+				currentX += dx
+				currentY += dy
+				tilesDisplaced += 1
+				table.insert(tilesPath, { x = currentX, y = currentY })
+				for _, eff in ipairs(TileCrossEffectService.OnTileEntered(target, currentX, currentY, direction, true, allUnits)) do
+					table.insert(crossEffects, eff)
+				end
+			end
+			currentElev = GameConstants.GetElevation(currentX, currentY)
+		end
+	end
+
 	-- Step 3: If pushed into an occupied tile (unit collision),
 	-- find the nearest valid empty tile for the target to land on.
 	if blockedBy == "unit" then
@@ -363,7 +454,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	-- (fewer effective drop tiles -> less/no fall damage). Applied to the height before the calc.
 	do
 		local _aps = (require :: any)(script.Parent.ArmorPassiveService)
-		if StatusService.HasStatus(target, "Guard") then
+		if not crushIgnoreGuard and StatusService.HasStatus(target, "Guard") then
 			local fhr = _aps.GetGuardFallHeightReduction(target)
 			if fhr > 0 then totalFallHeight = math.max(0, totalFallHeight - fhr) end
 		end
@@ -372,7 +463,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 	-- drop), treat Fall Height as +1 for the damage formula. Pusher-keyed (the glove is on the unit
 	-- doing the pushing); only applies when totalFallHeight > 0 so a flat push is unaffected. Deferred
 	-- require mirrors the Feather Armor / Collision Padding idiom above.
-	if totalFallHeight > 0 then
+	if totalFallHeight > 0 and isGlobalPush then
 		local _apsPush = (require :: any)(script.Parent.ArmorPassiveService)
 		local fhBonus = _apsPush.GetPushFallHeightBonus(pusher)
 		if fhBonus > 0 then totalFallHeight = totalFallHeight + fhBonus end
@@ -432,7 +523,7 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 			-- bystander). Config via GetPushCollisionConfig (type "Ram").
 			do
 				local ram = (require :: any)(script.Parent.ArmorPassiveService).GetPushCollisionConfig(pusher)
-				if ram and ram.type == "Ram" and ram.wallDamageMultiplier and wallCollisionResult.colliderType ~= "Unit" then
+				if isGlobalPush and ram and ram.type == "Ram" and ram.wallDamageMultiplier and wallCollisionResult.colliderType ~= "Unit" then
 					tMult = tMult * ram.wallDamageMultiplier
 				end
 			end

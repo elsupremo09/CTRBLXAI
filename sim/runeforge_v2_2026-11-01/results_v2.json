@@ -1,0 +1,1836 @@
+{
+ "seed": 20261101,
+ "db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\CTRBLXAI.db",
+ "provenance": {
+  "Base value by slot": {
+   "table": "economy_framework",
+   "row": 11,
+   "found": true,
+   "must": [
+    "1H = 100",
+    "2H = 150",
+    "Body = 80",
+    "Gloves = 50"
+   ]
+  },
+  "Rarity multiplier": {
+   "table": "economy_framework",
+   "row": 12,
+   "found": true,
+   "must": [
+    "Common = 1.0",
+    "Epic = 4.0",
+    "Transcendent = 20.0"
+   ]
+  },
+  "Level multiplier": {
+   "table": "economy_framework",
+   "row": 13,
+   "found": true,
+   "must": [
+    "1 + (Item Level - 1) \u00d7 0.02"
+   ]
+  },
+  "Sell value": {
+   "table": "economy_framework",
+   "row": 14,
+   "found": true,
+   "must": [
+    "floor(Base Value \u00d7 Rarity Mult \u00d7 Level Mult \u00d7 0.25)",
+    "starting rarity"
+   ]
+  },
+  "Shop price": {
+   "table": "economy_framework",
+   "row": 15,
+   "found": true,
+   "must": [
+    "round(Base Value \u00d7 Rarity Mult \u00d7 Level Mult \u00d7 Shop Markup)",
+    "\u00d74.0 for Common, Uncommon and Rare",
+    "\u00d76.0 for Epic and Exalted"
+   ]
+  },
+  "Upgrade gold": {
+   "table": "economy_framework",
+   "row": 19,
+   "found": true,
+   "must": [
+    "Base Value \u00d7 Rarity Mult \u00d7 0.30 \u00d7 (1 + Target Level / 25) \u00d7 (1 \u2212 0.03 \u00d7 (Blacksmith Level \u2212 1))"
+   ]
+  },
+  "Recruit fee": {
+   "table": "economy_framework",
+   "row": 22,
+   "found": true,
+   "must": [
+    "200 + (Unit Level \u00d7 15) + Quality Premium"
+   ]
+  },
+  "Dispatch cost": {
+   "table": "economy_framework",
+   "row": 26,
+   "found": true,
+   "must": [
+    "50 gold per dispatch mission",
+    "Base 3 concurrent slots"
+   ]
+  },
+  "Lifetime income": {
+   "table": "economy_framework",
+   "row": 42,
+   "found": true,
+   "must": [
+    "~175,800g"
+   ]
+  },
+  "Necessities": {
+   "table": "economy_framework",
+   "row": 43,
+   "found": true,
+   "must": [
+    "~127,800g"
+   ]
+  },
+  "Blacksmith share": {
+   "table": "economy_framework",
+   "row": 20,
+   "found": true,
+   "must": [
+    "~43% of lifetime income"
+   ]
+  },
+  "Shop odds": {
+   "table": "economy_framework",
+   "row": 48,
+   "found": true,
+   "must": [
+    "L10 C10 U30 R40 E15 Exalted 5",
+    "5, 5, 6, 7, 7, 8, 9, 10, 10, 10"
+   ]
+  },
+  "BS rarity unlocks": {
+   "table": "guild_facilities",
+   "row": 13,
+   "found": true,
+   "must": [
+    "L1: Common/Uncommon upgrades",
+    "L3: Rare",
+    "L5: Epic upgrades",
+    "L6: Exalted upgrades",
+    "L7: Legendary upgrades",
+    "L9: Mythic upgrades"
+   ]
+  },
+  "Facility cost formula": {
+   "table": "guild_facilities",
+   "row": 2,
+   "found": true,
+   "must": [
+    "round(Base \u00d7 (1 + Level\u00b2 / Scale))"
+   ]
+  },
+  "GH gatekeeper": {
+   "table": "guild_facilities",
+   "row": 3,
+   "found": true,
+   "must": [
+    "cannot exceed the Guild Hall level"
+   ]
+  },
+  "GH unlocks": {
+   "table": "guild_facilities",
+   "row": 8,
+   "found": true,
+   "must": [
+    "L4: Workshop, Runeforge",
+    "L7: Trophy Hall"
+   ]
+  },
+  "Normal drop": {
+   "table": "loot_progression",
+   "row": 13,
+   "found": true,
+   "must": [
+    "min(95%, 5% x Fortune Multiplier)"
+   ]
+  },
+  "Elite reward": {
+   "table": "loot_progression",
+   "row": 14,
+   "found": true,
+   "must": [
+    "min(95%, 75% x Fortune Multiplier)"
+   ]
+  },
+  "Unit Fortune": {
+   "table": "loot_progression",
+   "row": 9,
+   "found": true,
+   "must": [
+    "LUK / (LUK + 200)"
+   ]
+  },
+  "Expedition Fortune": {
+   "table": "loot_progression",
+   "row": 10,
+   "found": true,
+   "must": [
+    "Highest deployed Unit Fortune + 50% of second-highest + 25% of third-highest"
+   ]
+  },
+  "Normalized Fortune": {
+   "table": "loot_progression",
+   "row": 11,
+   "found": true,
+   "must": [
+    "Expedition Fortune / 1.75",
+    "2.00x"
+   ]
+  },
+  "Fortune quality": {
+   "table": "loot_progression",
+   "row": 16,
+   "found": true,
+   "must": [
+    "Base Rarity Weight x (1 + Normalized Expedition Fortune x Rarity Sensitivity)"
+   ]
+  },
+  "Fortune gold": {
+   "table": "loot_progression",
+   "row": 17,
+   "found": true,
+   "must": [
+    "1 + 0.50 x Normalized Expedition Fortune"
+   ]
+  },
+  "Enemies per battle": {
+   "table": "loot_progression",
+   "row": 86,
+   "found": true,
+   "must": [
+    "Normal 5, Elite 6, Boss 4 + the boss"
+   ]
+  },
+  "Drops/battle working estimate": {
+   "table": "loot_progression",
+   "row": 24,
+   "found": true,
+   "must": [
+    "about 0.40 equipment drops per battle"
+   ]
+  },
+  "Elite/boss/chest working estimate": {
+   "table": "loot_progression",
+   "row": 26,
+   "found": true,
+   "must": [
+    "elite encounters about 0.034 per battle",
+    "bosses about 0.034",
+    "treasure chests about 0.2"
+   ]
+  },
+  "Old kill material": {
+   "table": "materials_system",
+   "row": 7,
+   "found": true,
+   "must": [
+    "20% chance per kill",
+    "~1.6 per battle from 8 enemies"
+   ]
+  },
+  "Fortune excl. materials": {
+   "table": "materials_system",
+   "row": 19,
+   "found": true,
+   "must": [
+    "Fortune does NOT affect material drop rate"
+   ]
+  },
+  "Dispatch offers": {
+   "table": "unit_progression",
+   "row": 99,
+   "found": true,
+   "must": [
+    "one dispatch mission offered per difficulty tier",
+    "Duration (DAYS away) = difficulty tier"
+   ]
+  },
+  "Item scale": {
+   "table": "item_rarity_rules",
+   "row": 7,
+   "found": true,
+   "must": [
+    "Scale(L) = 0.30 + 0.70 \u00d7 ((L \u2212 1) / 98)^0.55"
+   ]
+  },
+  "Rarity budgets": {
+   "table": "item_rarity_rules",
+   "row": 2,
+   "found": true,
+   "must": [
+    "Common 0; Uncommon 100; Rare 150; Epic 200; Exalted 225; Legendary 250; Mythic 300; Transcendent 350"
+   ]
+  },
+  "Passive limit": {
+   "table": "item_rarity_rules",
+   "row": 3,
+   "found": true,
+   "must": [
+    "at most 1 Bonus Passive",
+    "A 2H weapon may spawn at most 2"
+   ]
+  },
+  "Movement": {
+   "table": "core_stats",
+   "row": 3,
+   "found": true,
+   "must": [
+    "Movement Range = 3 + floor(AGI / 60)"
+   ]
+  },
+  "Black Market": {
+   "table": "objects_encounters",
+   "row": 31,
+   "found": true,
+   "must": [
+    "six fixed discounted high-tier items (col_7)"
+   ]
+  },
+  "Lux / free benchmark": {
+   "table": "economy_framework",
+   "row": 45,
+   "found": true,
+   "must": [
+    "Maxes 6/9 facilities"
+   ]
+  }
+ },
+ "A": {
+  "T1": {
+   "1H": {
+    "needed": {
+     "early L1": 29596,
+     "mid L50": 29596,
+     "late L99": 29596
+    },
+    "BS10": {
+     "early L1": 25926,
+     "mid L50": 25926,
+     "late L99": 25926
+    },
+    "catchup_at_99_needed": 22197,
+    "common_total_needed": 7399,
+    "forge_fee_epic_RF1": 400
+   },
+   "2H": {
+    "needed": {
+     "early L1": 44395,
+     "mid L50": 44395,
+     "late L99": 44395
+    },
+    "BS10": {
+     "early L1": 38889,
+     "mid L50": 38889,
+     "late L99": 38889
+    },
+    "catchup_at_99_needed": 33297,
+    "common_total_needed": 11098,
+    "forge_fee_epic_RF1": 600
+   },
+   "Body": {
+    "needed": {
+     "early L1": 23677,
+     "mid L50": 23677,
+     "late L99": 23677
+    },
+    "BS10": {
+     "early L1": 20740,
+     "mid L50": 20740,
+     "late L99": 20740
+    },
+    "catchup_at_99_needed": 17758,
+    "common_total_needed": 5919,
+    "forge_fee_epic_RF1": 320
+   },
+   "Gloves": {
+    "needed": {
+     "early L1": 14798,
+     "mid L50": 14798,
+     "late L99": 14798
+    },
+    "BS10": {
+     "early L1": 12963,
+     "mid L50": 12963,
+     "late L99": 12963
+    },
+    "catchup_at_99_needed": 11099,
+    "common_total_needed": 3699,
+    "forge_fee_epic_RF1": 200
+   },
+   "expected": {
+    "needed": [
+     29596,
+     44395,
+     23677,
+     14798
+    ],
+    "BS10": [
+     25926,
+     38889,
+     20740,
+     12963
+    ],
+    "catchup_1H": 22197
+   },
+   "PASS": true,
+   "random_routes": {
+    "routes": 6000,
+    "orders_per_route": 4,
+    "mismatches": 0,
+    "max_diff": 0
+   }
+  },
+  "T2": {
+   "1H": {
+    "forge L1": 27725,
+    "forge L50": 27725,
+    "forge L99": 27725,
+    "steps C>U@10 >R@40 >E@80 (BS1,4,5,10)": 28104,
+    "same purchases, forge at end": 28104
+   },
+   "2H": {
+    "forge L1": 41588,
+    "forge L50": 41588,
+    "forge L99": 41588,
+    "steps C>U@10 >R@40 >E@80 (BS1,4,5,10)": 42156,
+    "same purchases, forge at end": 42156
+   },
+   "Body": {
+    "forge L1": 22180,
+    "forge L50": 22180,
+    "forge L99": 22180,
+    "steps C>U@10 >R@40 >E@80 (BS1,4,5,10)": 22483,
+    "same purchases, forge at end": 22483
+   },
+   "Gloves": {
+    "forge L1": 13862,
+    "forge L50": 13862,
+    "forge L99": 13862,
+    "steps C>U@10 >R@40 >E@80 (BS1,4,5,10)": 14052,
+    "same purchases, forge at end": 14052
+   },
+   "expected_1H_mixed": 27725,
+   "PASS": true,
+   "note_epic_early_with_gf13_BS5_minimum": 29028
+  },
+  "T3": {
+   "example": {
+    "early": [
+     20891,
+     89
+    ],
+    "middle": [
+     14420,
+     89
+    ],
+    "late": [
+     14420,
+     89
+    ],
+    "straight": [
+     12262,
+     59
+    ],
+    "D2 (old)": {
+     "early": [
+      20891,
+      89
+     ],
+     "middle": [
+      14420,
+      89
+     ],
+     "late": [
+      14420,
+      89
+     ]
+    },
+    "reset (control)": {
+     "early": [
+      20890,
+      89
+     ],
+     "middle": [
+      10780,
+      89
+     ],
+     "late": [
+      10780,
+      89
+     ]
+    }
+   },
+   "expected": {
+    "early": 20891,
+    "middle": 14420,
+    "late": 14420,
+    "straight": 12262,
+    "D2_late": 15333,
+    "reset_up_to": -13500
+   },
+   "random_exact": {
+    "routes": 20000,
+    "routes_with_downgrade": 16215,
+    "min_gold_gap_vs_same_record": 0,
+    "min_gold_gap_vs_original_arrival": 0,
+    "routes_cheaper": 0,
+    "min_merc_gap": 0,
+    "max_pairs": 7,
+    "F_lowered_ok": true
+   },
+   "random_D2": {
+    "routes": 20000,
+    "routes_with_downgrade": 16182,
+    "min_gold_gap_vs_same_record": 0,
+    "min_gold_gap_vs_original_arrival": 0,
+    "routes_cheaper": 0,
+    "min_merc_gap": 0,
+    "max_pairs": 6,
+    "F_lowered_ok": true
+   },
+   "random_reset": {
+    "routes": 20000,
+    "routes_with_downgrade": 16261,
+    "min_gold_gap_vs_same_record": -11730,
+    "min_gold_gap_vs_original_arrival": -11730,
+    "routes_cheaper": 280,
+    "min_merc_gap": 0,
+    "max_pairs": 5,
+    "F_lowered_ok": true
+   },
+   "reset_targeted": {
+    "saving": 28516,
+    "route": "2H Common L1->99 at BS10, down 1, up 1, forge Epic"
+   },
+   "PASS": true
+  },
+  "T4": {
+   "1H Common": {
+    "running": 7399,
+    "per_level": 7347,
+    "diff": 52
+   },
+   "1H Epic": {
+    "running": 29596,
+    "per_level": 29548,
+    "diff": 48
+   },
+   "2H Common": {
+    "running": 11098,
+    "per_level": 11049,
+    "diff": 49
+   },
+   "2H Epic": {
+    "running": 44395,
+    "per_level": 44348,
+    "diff": 47
+   },
+   "Off-Hand Common": {
+    "running": 4439,
+    "per_level": 4392,
+    "diff": 47
+   },
+   "Off-Hand Epic": {
+    "running": 17758,
+    "per_level": 17709,
+    "diff": 49
+   },
+   "Body Common": {
+    "running": 5919,
+    "per_level": 5867,
+    "diff": 52
+   },
+   "Body Epic": {
+    "running": 23677,
+    "per_level": 23630,
+    "diff": 47
+   },
+   "Head Common": {
+    "running": 4439,
+    "per_level": 4392,
+    "diff": 47
+   },
+   "Head Epic": {
+    "running": 17758,
+    "per_level": 17709,
+    "diff": 49
+   },
+   "Gloves Common": {
+    "running": 3699,
+    "per_level": 3649,
+    "diff": 50
+   },
+   "Gloves Epic": {
+    "running": 14798,
+    "per_level": 14755,
+    "diff": 43
+   },
+   "Feet Common": {
+    "running": 3699,
+    "per_level": 3649,
+    "diff": 50
+   },
+   "Feet Epic": {
+    "running": 14798,
+    "per_level": 14755,
+    "diff": 43
+   },
+   "Accessory Common": {
+    "running": 5179,
+    "per_level": 5130,
+    "diff": 49
+   },
+   "Accessory Epic": {
+    "running": 20717,
+    "per_level": 20667,
+    "diff": 50
+   },
+   "expected": {
+    "1H Common": 52,
+    "1H Epic": 48
+   },
+   "PASS": true
+  },
+  "T19": {
+   "Common->Uncommon": 3,
+   "Common->Rare": 9,
+   "Common->Epic": 21,
+   "Uncommon->Epic": 18,
+   "Rare->Epic": 12,
+   "steps C>U>R>E": 21,
+   "Rare swap + T4 -> Epic": 12,
+   "keep U/R/E": [
+    2,
+    4,
+    8
+   ],
+   "PASS": true,
+   "note_fee_one_forge_vs_steps_1H_RF1": {
+    "one": 400,
+    "steps": 800
+   }
+  },
+  "T6": {
+   "best_net_mercury": 0,
+   "at": "L10->L11",
+   "cases": 4851,
+   "PASS": true
+  },
+  "GOLD_LOOPS": {
+   "worst": {
+    "buy_dismantle": [
+     -200,
+     [
+      "Gloves",
+      "Common",
+      1
+     ]
+    ],
+    "buy_sell": [
+     -188,
+     [
+      "Gloves",
+      "Common",
+      1
+     ]
+    ],
+    "buy_up_sell": [
+     -199,
+     [
+      "Gloves",
+      "Common",
+      1,
+      2,
+      10
+     ]
+    ],
+    "loot_up_sell": [
+     -11,
+     [
+      "Gloves",
+      "Common",
+      1,
+      2,
+      10
+     ]
+    ],
+    "forge_sell": [
+     -146,
+     [
+      "Gloves",
+      "Common",
+      1,
+      10
+     ]
+    ]
+   },
+   "cases": 47520,
+   "note": "Mercury/crystals/gems/sulfur cannot be sold (draft 1.5, 3.1, 6.1); dismantle gives no gold; forged items sell at starting rarity (ef14).",
+   "PASS": true
+  },
+  "T5": {
+   "gold_back": 0,
+   "worst_loss": [
+    -200,
+    [
+     "Gloves",
+     "Common",
+     1
+    ]
+   ],
+   "PASS": true
+  },
+  "T10": {
+   "Common->Uncommon forge then dismantle (crystals)": -2,
+   "Common->Uncommon vs dismantling unforged (crystals)": -2,
+   "Uncommon->Rare forge then dismantle (crystals)": -4,
+   "Uncommon->Rare vs dismantling unforged (crystals)": -5,
+   "Rare->Epic forge then dismantle (crystals)": -9,
+   "Rare->Epic vs dismantling unforged (crystals)": -11,
+   "Common->Epic forge then dismantle (crystals)": -18,
+   "Common->Epic vs dismantling unforged (crystals)": -18,
+   "gems": "install k gems -> dismantle returns the same k (+ the item own lines); a swap destroys the replaced line: net gems <= 0 per cycle",
+   "sulfur_reroll_then_dismantle": {
+    "Exalted": -1,
+    "Legendary": -2,
+    "Mythic": -3,
+    "Transcendent": -4
+   },
+   "PASS": true,
+   "expected": {
+    "C>U": -2,
+    "U>R": -4,
+    "R>E": -9,
+    "C>E": -18
+   }
+  }
+ },
+ "B": {
+  "per_drop_base": {
+   "crystals": 0.7714,
+   "sulfur": 0.0274,
+   "gems": 0.9107,
+   "gem_tiers": {
+    "1": 0.5821,
+    "2": 0.2443,
+    "3": 0.0649,
+    "4": 0.0194
+   },
+   "w": {
+    "Common": 0.55,
+    "Uncommon": 0.2429,
+    "Rare": 0.1214,
+    "Epic": 0.0595,
+    "Exalted": 0.025,
+    "Legendary": 0.0012,
+    "Mythic": 0.0
+   }
+  },
+  "lines_per_item": {
+   "Uncommon": 1.69,
+   "Rare": 2.23,
+   "Epic": 2.68,
+   "Exalted": 2.68,
+   "Legendary": 3.16,
+   "Mythic": 3.51
+  },
+  "T12": {
+   "DB 5 enemies, dismantle 75%": {
+    "mercury": 1854.4,
+    "full_levellings": 18.9,
+    "battle_drops": 640.0,
+    "dispatch": 328.2,
+    "dismantle": 886.2,
+    "dismantle_share_pct": 47.8
+   },
+   "DB 5 enemies, dismantle 100%": {
+    "mercury": 2149.8,
+    "full_levellings": 21.9,
+    "battle_drops": 640.0,
+    "dispatch": 328.2,
+    "dismantle": 1181.6,
+    "dismantle_share_pct": 55.0
+   },
+   "draft 8 enemies, 75%": {
+    "mercury": 2018.5,
+    "full_levellings": 20.6,
+    "battle_drops": 804.1,
+    "dispatch": 328.2,
+    "dismantle": 886.2,
+    "dismantle_share_pct": 43.9
+   },
+   "draft 8 enemies, 100%": {
+    "mercury": 2313.9,
+    "full_levellings": 23.6,
+    "battle_drops": 804.1,
+    "dispatch": 328.2,
+    "dismantle": 1181.6,
+    "dismantle_share_pct": 51.1
+   },
+   "dispatch_range_per_battle": {
+    "draft_guess": 0.6,
+    "three_slots_tiers_1_2_3": 1.83,
+    "three_slots_tiers_3_4_5": 1.23,
+    "gold_per_mercury_tier1": 50,
+    "note": "offer refresh rate not in DB; missions cost 50g (ef26)"
+   },
+   "lifetime_dispatch_range": [
+    164,
+    1001
+   ],
+   "daily_event_per_10_events": {
+    "mercury": 50,
+    "sulfur": 10
+   },
+   "old_10_item_scenario_mercury": {
+    "estimate": 335,
+    "range": [
+     305,
+     447
+    ],
+    "basis": "ms37 670 materials / 1.5-2.2 materials per level"
+   },
+   "kill_chance_pct_for_wall": {
+    "d0.75 wall 15": -4.1,
+    "d0.75 wall 17.5": 4.9,
+    "d0.75 wall 20": 13.9,
+    "d1.0 wall 15": -14.9,
+    "d1.0 wall 17.5": -5.9,
+    "d1.0 wall 20": 3.1
+   },
+   "dispatch_per_battle_for_wall_17.5_d0.75": 0.35,
+   "dispatch_per_battle_for_wall_17.5_d1.0": -0.19,
+   "PASS": false
+  },
+  "T11": {
+   "income": {
+    "d75": 275.4,
+    "d100": 317.6,
+    "dismantle": [
+     126.6,
+     168.8
+    ],
+    "elite": 55.8,
+    "boss": 93.0
+   },
+   "per_battle": [
+    0.503,
+    0.581
+   ],
+   "need_realistic": [
+    460,
+    685
+   ],
+   "shortfall_realistic": [
+    142.39999999999998,
+    409.6
+   ],
+   "natural_epic_plus_lifetime": 18.8,
+   "full_team_45": {
+    "Uncommon": {
+     "crystals": 135,
+     "battles": [
+      233,
+      268
+     ],
+     "lifetimes": [
+      0.43,
+      0.49
+     ]
+    },
+    "Rare": {
+     "crystals": 405,
+     "battles": [
+      698,
+      804
+     ],
+     "lifetimes": [
+      1.28,
+      1.47
+     ]
+    },
+    "Epic": {
+     "crystals": 945,
+     "battles": [
+      1628,
+      1877
+     ],
+     "lifetimes": [
+      2.98,
+      3.43
+     ]
+    },
+    "Epic net of 19 natural Epic+": {
+     "crystals": 546,
+     "battles": [
+      940,
+      1084
+     ]
+    }
+   },
+   "epic_crafts_income_only": {
+    "d75": {
+     "after_20_swaps_from_Rare": 9.6,
+     "after_20_swaps_from_Common": 5.5,
+     "no_swaps_from_Rare": 22.9,
+     "no_swaps_from_Common": 13.1
+    },
+    "d100": {
+     "after_20_swaps_from_Rare": 13.1,
+     "after_20_swaps_from_Common": 7.5,
+     "no_swaps_from_Rare": 26.5,
+     "no_swaps_from_Common": 15.1
+    }
+   },
+   "shop_gold_per_crystal": {
+    "L10": {
+     "cheapest": "Gloves Rare",
+     "g_per_crystal": 295,
+     "avg_slot_rare_g_per_crystal": 457
+    },
+    "L30": {
+     "cheapest": "Gloves Rare",
+     "g_per_crystal": 395,
+     "avg_slot_rare_g_per_crystal": 612
+    },
+    "L50": {
+     "cheapest": "Gloves Rare",
+     "g_per_crystal": 495,
+     "avg_slot_rare_g_per_crystal": 767
+    },
+    "L70": {
+     "cheapest": "Gloves Rare",
+     "g_per_crystal": 595,
+     "avg_slot_rare_g_per_crystal": 922
+    },
+    "L99": {
+     "cheapest": "Gloves Rare",
+     "g_per_crystal": 740,
+     "avg_slot_rare_g_per_crystal": 1147
+    }
+   },
+   "shop_supply_crystals_per_battle_max": {
+    "rare_only": 1.6,
+    "rare_gloves_feet_only": 0.4
+   },
+   "gold_to_cover_shortfall": {
+    "142.39999999999998 crystals": [
+     87932,
+     136295
+    ],
+    "409.6 crystals": [
+     252928,
+     392038
+    ],
+    "669.6 crystals": [
+     413478,
+     640891
+    ]
+   },
+   "levers": {
+    "realistic low gap": {
+     "gap": 142,
+     "elite_boss_multiplier": 1.96,
+     "elite": 5.9,
+     "boss": 9.8,
+     "chest_crystals_per_chest_at_100pct": 1.3
+    },
+    "realistic high gap": {
+     "gap": 410,
+     "elite_boss_multiplier": 3.75,
+     "elite": 11.3,
+     "boss": 18.8,
+     "chest_crystals_per_chest_at_100pct": 3.74
+    },
+    "mid gap": {
+     "gap": 276,
+     "elite_boss_multiplier": 2.86,
+     "elite": 8.6,
+     "boss": 14.3,
+     "chest_crystals_per_chest_at_100pct": 2.52
+    },
+    "chest 25% -> 1 (draft optional lever)": 27,
+    "chest 100% -> 1": 109,
+    "step cost options (need for 25 Epics + 20 swaps)": {
+     "draft 3/6/12 keep 2/4/8": [
+      460,
+      685
+     ],
+     "2/4/8 keep 1/2/4": [
+      280,
+      430
+     ],
+     "2/3/6 keep 1/2/4": [
+      230,
+      355
+     ],
+     "1/2/4 keep 1/1/2": [
+      140,
+      215
+     ],
+     "charge highest step once (old): 3/6/12 -> max 12, keep 8": [
+      460,
+      460
+     ]
+    },
+    "income_range": [
+     275.4,
+     317.6
+    ]
+   }
+  },
+  "T11_gem_coverage": {
+   "gems_lifetime": 227.2,
+   "median": 31.1,
+   "p10": 22.2,
+   "p90": 37.8,
+   "assumption": "target = 45 gems drawn from T3/T4 numeric + passive kinds by their own drop weights; families uniform; 10% of lines are passives"
+  },
+  "T13": {
+   "d0.75": {
+    "total": 13.7,
+    "dismantle": 4.5,
+    "elite": 1.8,
+    "boss": 7.4
+   },
+   "d1.0": {
+    "total": 15.2,
+    "dismantle": 6.0,
+    "elite": 1.8,
+    "boss": 7.4
+   },
+   "rerolls_if_all_spent_on": {
+    "Exalted": [
+     13.7,
+     15.2
+    ],
+    "Legendary": [
+     6.8,
+     7.6
+    ],
+    "Mythic": [
+     4.6,
+     5.1
+    ],
+    "Transcendent": [
+     3.4,
+     3.8
+    ]
+   },
+   "natural_items_lifetime": {
+    "Exalted": 5.5,
+    "Legendary": 0.3,
+    "Mythic": 0.0
+   },
+   "sets_offered": "Exalted/Legendary 2/3/4 at RF L8/9/10; Mythic 2/3 at L9/10; Transcendent 2 at L10 only",
+   "daily_event_note": "+1 sulfur per daily event: 30 events = +30 (about 2x all loot sulfur)"
+  },
+  "T7": {
+   "L20": {
+    "free": {
+     "crystals": 12,
+     "gems": 13.4,
+     "mercury": 12,
+     "sell_value_6_rare_1H": 516
+    },
+    "paid75": {
+     "gold_for_6": 4813,
+     "g_per_crystal": 401,
+     "merchant_avg_g_per_crystal": 535,
+     "merchant_cheapest_g_per_crystal": 345
+    }
+   },
+   "L50": {
+    "free": {
+     "crystals": 12,
+     "gems": 13.4,
+     "mercury": 30,
+     "sell_value_6_rare_1H": 738
+    },
+    "paid75": {
+     "gold_for_6": 6905,
+     "g_per_crystal": 575,
+     "merchant_avg_g_per_crystal": 767,
+     "merchant_cheapest_g_per_crystal": 495
+    }
+   },
+   "L80": {
+    "free": {
+     "crystals": 12,
+     "gems": 13.4,
+     "mercury": 48,
+     "sell_value_6_rare_1H": 966
+    },
+    "paid75": {
+     "gold_for_6": 8998,
+     "g_per_crystal": 750,
+     "merchant_avg_g_per_crystal": 1000,
+     "merchant_cheapest_g_per_crystal": 645
+    }
+   },
+   "L99": {
+    "free": {
+     "crystals": 12,
+     "gems": 13.4,
+     "mercury": 60,
+     "sell_value_6_rare_1H": 1110
+    },
+    "paid75": {
+     "gold_for_6": 10323,
+     "g_per_crystal": 860,
+     "merchant_avg_g_per_crystal": 1147,
+     "merchant_cheapest_g_per_crystal": 740
+    }
+   },
+   "spawn 1%/battle": {
+    "objects": 5.5,
+    "free_crystals": 66,
+    "free_gems": 73,
+    "free_mercury": 177,
+    "free_share_of_crystal_income_pct": [
+     20.7,
+     23.8
+    ],
+    "per_object_share_pct": [
+     3.8,
+     4.4
+    ]
+   },
+   "spawn 3%/battle": {
+    "objects": 16.4,
+    "free_crystals": 197,
+    "free_gems": 220,
+    "free_mercury": 532,
+    "free_share_of_crystal_income_pct": [
+     62.0,
+     71.5
+    ],
+    "per_object_share_pct": [
+     3.8,
+     4.4
+    ]
+   },
+   "spawn 5%/battle": {
+    "objects": 27.4,
+    "free_crystals": 328,
+    "free_gems": 366,
+    "free_mercury": 886,
+    "free_share_of_crystal_income_pct": [
+     103.3,
+     119.2
+    ],
+    "per_object_share_pct": [
+     3.8,
+     4.4
+    ]
+   },
+   "spawn_assumption": "NOT IN DB: Black Market only in 4 region lists (Village 3, Castle Courtyard 1, Dock 2, Town 3) + Castle biome 2; per-battle rate assumed 1-5% (centre 3%)"
+  },
+  "T8": {
+   "L50 Standard": {
+    "fee": 950,
+    "mercury": 5,
+    "g_per_mercury": 190,
+    "shop_gloves_common_g_per_mercury": 79
+   },
+   "closest_case": {
+    "ratio_recruit_over_shop": 1.07,
+    "level": 1,
+    "quality": "Standard",
+    "recruit_g_per_m": 215,
+    "shop_g_per_m": 200
+   },
+   "PASS": true
+  }
+ },
+ "C": {
+  "T14": {
+   "free | no crafting": {
+    "extra_gold": 0,
+    "maxed": {
+     "classic": "8/10",
+     "crafter": "8/10",
+     "rusher": "7/10"
+    },
+    "spending_pressure_pct": {
+     "classic": 105.9,
+     "crafter": 106.5,
+     "rusher": 106.6
+    },
+    "rf7_at": {
+     "classic": 85.0,
+     "crafter": 53.1,
+     "rusher": 27.5
+    },
+    "rf10_at": {
+     "classic": 90.2,
+     "crafter": 88.4,
+     "rusher": 49.9
+    }
+   },
+   "boosted | no crafting": {
+    "extra_gold": 0,
+    "maxed": {
+     "classic": "10/10",
+     "crafter": "10/10",
+     "rusher": "10/10"
+    },
+    "spending_pressure_pct": {
+     "classic": 83.1,
+     "crafter": 83.5,
+     "rusher": 84.3
+    },
+    "rf7_at": {
+     "classic": 57.1,
+     "crafter": 32.2,
+     "rusher": 15.7
+    },
+    "rf10_at": {
+     "classic": 60.8,
+     "crafter": 57.4,
+     "rusher": 29.8
+    }
+   },
+   "free | realistic: 25 Epic forges + 20 Epic-keep swaps (fees only)": {
+    "extra_gold": 11439,
+    "maxed": {
+     "classic": "6/10",
+     "crafter": "4/10",
+     "rusher": "5/10"
+    },
+    "spending_pressure_pct": {
+     "classic": 112.9,
+     "crafter": 113.2,
+     "rusher": 113.2
+    },
+    "rf7_at": {
+     "classic": 97.6,
+     "crafter": 59.0,
+     "rusher": 27.5
+    },
+    "rf10_at": {
+     "classic": null,
+     "crafter": null,
+     "rusher": 57.4
+    }
+   },
+   "boosted | realistic: 25 Epic forges + 20 Epic-keep swaps (fees only)": {
+    "extra_gold": 11439,
+    "maxed": {
+     "classic": "10/10",
+     "crafter": "10/10",
+     "rusher": "10/10"
+    },
+    "spending_pressure_pct": {
+     "classic": 88.4,
+     "crafter": 88.9,
+     "rusher": 89.7
+    },
+    "rf7_at": {
+     "classic": 60.3,
+     "crafter": 32.2,
+     "rusher": 15.7
+    },
+    "rf10_at": {
+     "classic": 64.8,
+     "crafter": 60.8,
+     "rusher": 29.8
+    }
+   },
+   "free | + Epic step fee ON (avg 850g x 25)": {
+    "extra_gold": 32689,
+    "maxed": {
+     "classic": "0/10",
+     "crafter": "0/10",
+     "rusher": "1/10"
+    },
+    "spending_pressure_pct": {
+     "classic": 126.1,
+     "crafter": 127.1,
+     "rusher": 126.4
+    },
+    "rf7_at": {
+     "classic": null,
+     "crafter": null,
+     "rusher": 27.5
+    },
+    "rf10_at": {
+     "classic": null,
+     "crafter": null,
+     "rusher": null
+    }
+   },
+   "boosted | + Epic step fee ON (avg 850g x 25)": {
+    "extra_gold": 32689,
+    "maxed": {
+     "classic": "10/10",
+     "crafter": "10/10",
+     "rusher": "10/10"
+    },
+    "spending_pressure_pct": {
+     "classic": 98.3,
+     "crafter": 98.9,
+     "rusher": 99.9
+    },
+    "rf7_at": {
+     "classic": 70.7,
+     "crafter": 32.2,
+     "rusher": 15.7
+    },
+    "rf10_at": {
+     "classic": 76.2,
+     "crafter": 71.6,
+     "rusher": 29.8
+    }
+   },
+   "free | + crafted Epics levelled 20 levels at Epic instead of Uncommon price (upper sensitivity)": {
+    "extra_gold": 94093,
+    "maxed": {
+     "classic": "0/10",
+     "crafter": "0/10",
+     "rusher": "0/10"
+    },
+    "spending_pressure_pct": {
+     "classic": 162.2,
+     "crafter": 163.2,
+     "rusher": 163.2
+    },
+    "rf7_at": {
+     "classic": null,
+     "crafter": null,
+     "rusher": 27.5
+    },
+    "rf10_at": {
+     "classic": null,
+     "crafter": null,
+     "rusher": null
+    }
+   },
+   "boosted | + crafted Epics levelled 20 levels at Epic instead of Uncommon price (upper sensitivity)": {
+    "extra_gold": 94093,
+    "maxed": {
+     "classic": "0/10",
+     "crafter": "0/10",
+     "rusher": "2/10"
+    },
+    "spending_pressure_pct": {
+     "classic": 127.9,
+     "crafter": 128.8,
+     "rusher": 130.6
+    },
+    "rf7_at": {
+     "classic": null,
+     "crafter": 32.2,
+     "rusher": 15.7
+    },
+    "rf10_at": {
+     "classic": null,
+     "crafter": null,
+     "rusher": 29.8
+    }
+   },
+   "expected": "free ~106% (+-2), 8/10; boosted ~83-84%",
+   "shop_dismantle_to_close_realistic_gap_pp": [
+    50.0,
+    77.5
+   ]
+  },
+  "T9": {
+   "free classic": {
+    "rf7_at_level": 85.0,
+    "crafted_epics_L50_80_saver": [
+     0,
+     0
+    ]
+   },
+   "free crafter": {
+    "rf7_at_level": 53.1,
+    "crafted_epics_L50_80_saver": [
+     14.8,
+     16.7
+    ]
+   },
+   "free rusher": {
+    "rf7_at_level": 27.5,
+    "crafted_epics_L50_80_saver": [
+     15.0,
+     16.9
+    ]
+   },
+   "boosted classic": {
+    "rf7_at_level": 57.1,
+    "crafted_epics_L50_80_saver": [
+     14.4,
+     16.3
+    ],
+    "with_shop_dismantle_of_leftover_gold": 19.6
+   },
+   "boosted crafter": {
+    "rf7_at_level": 32.2,
+    "crafted_epics_L50_80_saver": [
+     15.0,
+     16.9
+    ],
+    "with_shop_dismantle_of_leftover_gold": 20.3
+   },
+   "boosted rusher": {
+    "rf7_at_level": 15.7,
+    "crafted_epics_L50_80_saver": [
+     15.0,
+     16.9
+    ],
+    "with_shop_dismantle_of_leftover_gold": 20.2
+   },
+   "natural_epic_plus_L50_80": 5.7,
+   "gold_per_crafted_epic_1H_fresh_drop": {
+    "forge_fee_RF7": 328,
+    "catch_up": 0,
+    "epic_step_fee_if_on": {
+     "Rare": 700,
+     "Uncommon": 900,
+     "Common": 1000
+    },
+    "shop_epic_L50": 4752,
+    "shop_epic_L80": 6192
+   },
+   "note": "v2 crafted Epics are crystal-limited, not gold-limited: a fresh drop has credit 0, so catch-up = 0; gold = forge fee only"
+  },
+  "T18": {
+   "normal team (LUK ~30 at L99, no Fortune lines)": {
+    "multiplier": 1.13,
+    "drops_lifetime": 236.6,
+    "crystals": 320.2,
+    "gems": 228.5,
+    "sulfur": 15.6,
+    "mercury": 2118.3,
+    "epic_plus_share_pct": 9.22,
+    "battle_gold_mult": 1.065
+   },
+   "Fortune cap": {
+    "multiplier": 2.0,
+    "drops_lifetime": 355.5,
+    "crystals": 466.4,
+    "gems": 385.6,
+    "sulfur": 23.0,
+    "mercury": 2696.3,
+    "epic_plus_share_pct": 12.85,
+    "battle_gold_mult": 1.5
+   },
+   "cap_vs_zero_fortune": {
+    "drops": 1.62,
+    "crystals": 1.55,
+    "gems": 1.86,
+    "sulfur": 1.58,
+    "mercury": 1.33
+   },
+   "direct_drop_chances_identical": {
+    "elite_crystals": true,
+    "boss_crystals": true,
+    "kill_mercury": true,
+    "note": "true for direct resource drops; dismantle income rises because lp13 Fortune raises ordinary equipment drop chance (x2 at cap) and lp16 raises rarity"
+   },
+   "Fortune_points_needed_per_unit_for_cap (A: additive points)": {
+    "10": 0.952,
+    "30": 0.87,
+    "60": 0.769,
+    "100": 0.667
+   },
+   "max_Fortune_from_gear_per_unit": {
+    "items": 7,
+    "T4_each": 0.2,
+    "total": 1.4,
+    "note": "one line per family per item"
+   },
+   "fortune_gems_lifetime": {
+    "base_team": 8.5,
+    "capped_team": 15.8,
+    "avg_points_per_gem": 0.074,
+    "lifetime_points_base": 0.63
+   },
+   "loop_A_natural": {
+    "cap_reached_at_level": null,
+    "M_by_level": [
+     [
+      1,
+      1.005
+     ],
+     [
+      17,
+      1.068
+     ],
+     [
+      34,
+      1.131
+     ],
+     [
+      50,
+      1.194
+     ],
+     [
+      66,
+      1.259
+     ],
+     [
+      83,
+      1.323
+     ],
+     [
+      99,
+      1.387
+     ]
+    ],
+    "final_points": [
+     0.26,
+     0.26,
+     0.26
+    ]
+   },
+   "loop_A_shop_dismantle_2_items_per_battle": {
+    "cap_reached_at_level": 64.2,
+    "M_by_level": [
+     [
+      1,
+      1.005
+     ],
+     [
+      17,
+      1.257
+     ],
+     [
+      34,
+      1.511
+     ],
+     [
+      50,
+      1.768
+     ],
+     [
+      66,
+      2.0
+     ],
+     [
+      83,
+      2.0
+     ],
+     [
+      99,
+      2.0
+     ]
+    ],
+    "final_points": [
+     1.4,
+     1.4,
+     1.4
+    ]
+   },
+   "loop_B_multiplicative": {
+    "cap_reached_at_level": null,
+    "M_by_level": [
+     [
+      1,
+      1.005
+     ],
+     [
+      17,
+      1.03
+     ],
+     [
+      34,
+      1.055
+     ],
+     [
+      50,
+      1.081
+     ],
+     [
+      66,
+      1.108
+     ],
+     [
+      83,
+      1.135
+     ],
+     [
+      99,
+      1.164
+     ]
+    ],
+    "final_points": [
+     0.24,
+     0.24,
+     0.24
+    ]
+   },
+   "PASS": true
+  },
+  "T15": {
+   "gem_kinds": 153,
+   "gem_map_bytes": {
+    "numeric_ids": 1684,
+    "text_ids": 3031
+   },
+   "record_bytes": {
+    "typical": 25,
+    "worst": 82
+   },
+   "100 items worst (60B Rare+ item + worst record) + text gem map": {
+    "bytes": 17231,
+    "pct_of_4MB": 0.41
+   },
+   "1000 items worst (60B Rare+ item + worst record) + text gem map": {
+    "bytes": 145031,
+    "pct_of_4MB": 3.46
+   },
+   "5000 items worst (60B Rare+ item + worst record) + text gem map": {
+    "bytes": 713031,
+    "pct_of_4MB": 17.0
+   },
+   "20000 items worst (60B Rare+ item + worst record) + text gem map": {
+    "bytes": 2843031,
+    "pct_of_4MB": 67.78
+   },
+   "max_items_worst_case": 29516,
+   "PASS": true
+  },
+  "T16": {
+   "attack_shape_db_text": {
+    "PAS-016": "Non-elemental weapons only",
+    "PAS-017": "Non-elemental weapons only",
+    "PAS-018": "Non-elemental weapons only",
+    "PAS-019": "Non-elemental weapons only",
+    "PAS-020": "Non-elemental weapons only",
+    "PAS-021": "Non-elemental weapons only",
+    "PAS-023": "Normally Single-target compatible melee weapons",
+    "PAS-024": "Normally Single-target compatible thrust/projectile weapons",
+    "PAS-025": "Normally Single-target compatible ranged/thrown weapons"
+   },
+   "attack_shape_text_mentions_offhand_or_gloves": [],
+   "main_hand_only_db_text": {
+    "PAS-001": "High-damage melee weapons (main-hand only)",
+    "PAS-002": "Fast/high-delay weapons (main-hand only)",
+    "PAS-046": "High-defense weapons (main-hand only)"
+   },
+   "above_epic_passives_no_gem": [
+    "PAS-027",
+    "PAS-028"
+   ],
+   "exalted_min_passives": [],
+   "free_text_needs_generator_groups": [
+    "PAS-004",
+    "PAS-007",
+    "PAS-008",
+    "PAS-023",
+    "PAS-024",
+    "PAS-025",
+    "PAS-034",
+    "PAS-035",
+    "PAS-036"
+   ],
+   "PASS_design": true
+  },
+  "T20": {
+   "fortune_rows": [
+    [
+     "DER-FORTUNE-1",
+     1,
+     "Uncommon",
+     "Any equipment"
+    ],
+    [
+     "DER-FORTUNE-2",
+     2,
+     "Uncommon",
+     "Any equipment"
+    ],
+    [
+     "DER-FORTUNE-3",
+     3,
+     "Rare",
+     "Any equipment"
+    ],
+    [
+     "DER-FORTUNE-4",
+     4,
+     "Epic",
+     "Any equipment"
+    ]
+   ],
+   "PASS": true,
+   "note": "Fortune has T1-T4 only, so an above-Epic reroll can offer Fortune T1-T4; roll weight for Fortune is text only (\"low weight\") - no number in DB"
+  },
+  "T17": {
+   "Range +1": {
+    "eligible": "Approved weapon families only",
+    "bp": 190,
+    "items": 1,
+    "max_bonus": 1,
+    "with_2H": 1
+   },
+   "Arcane Reach": {
+    "eligible": "Approved weapon families only",
+    "bp": 120,
+    "items": 1,
+    "max_bonus": 1,
+    "with_2H": 1
+   },
+   "Surveyor Visor Range": {
+    "eligible": "Any equipment",
+    "bp": 70,
+    "items": 7,
+    "max_bonus": 14,
+    "with_2H": 12
+   },
+   "Long-Throw Strap Range": {
+    "eligible": "Any equipment",
+    "bp": 80,
+    "items": 7,
+    "max_bonus": 14,
+    "with_2H": 12
+   },
+   "Movement Range +1": {
+    "eligible": "Any equipment",
+    "bp": 150,
+    "items": 7,
+    "max_bonus": 7,
+    "with_2H": 6
+   },
+   "Jump +1": {
+    "eligible": "Any equipment",
+    "bp": 100,
+    "items": 7,
+    "max_bonus": 7,
+    "with_2H": 6
+   },
+   "Force +1": {
+    "eligible": "Any equipment",
+    "bp": 150,
+    "items": 7,
+    "max_bonus": 7,
+    "with_2H": 6
+   },
+   "Stability +1": {
+    "eligible": "Any equipment",
+    "bp": 120,
+    "items": 7,
+    "max_bonus": 7,
+    "with_2H": 6
+   },
+   "Discovery Radius +1": {
+    "eligible": "Any equipment",
+    "bp": 70,
+    "items": 7,
+    "max_bonus": 7,
+    "with_2H": 6
+   },
+   "stat line example base 81 (L99), 7x T4 gem lines": {
+    "total_stat": 332,
+    "breakpoint_steps": 5,
+    "vs_no_gear": 1
+   },
+   "stat line example base 242 (L300), 7x T4 gem lines": {
+    "total_stat": 741,
+    "breakpoint_steps": 12,
+    "vs_no_gear": 4
+   },
+   "Movement max one unit (base AGI 81, 7x Epic items: Movement +1 passive + AGI T1)": 12,
+   "Movement max one unit (base AGI 81, 7x AGI T4 lines on gear, Movement +1 on 7 items needs 150+200 BP > Epic 200)": "cannot have both on one Epic item; best mix = 7 + floor(AGI/60)"
+  }
+ },
+ "D": {
+  "T3 example, downgrade done at Blacksmith L10: exact": {
+   "early": 20891,
+   "middle": 14420,
+   "late": 14420
+  },
+  "T3 example, downgrade done at Blacksmith L10: D2": {
+   "early": 20891,
+   "middle": 15333,
+   "late": 15333
+  },
+  "reroll_lines_per_set": {
+   "Exalted": {
+    "band": [
+     214.0,
+     236.0
+    ],
+    "min_lines": 2,
+    "max_lines": 4,
+    "extra_gems_from_one_reroll_max": 2
+   },
+   "Exalted 2H": {
+    "band": [
+     428.0,
+     472.0
+    ],
+    "min_lines": 3,
+    "max_lines": 9,
+    "extra_gems_from_one_reroll_max": 6
+   },
+   "Legendary": {
+    "band": [
+     237.5,
+     262.5
+    ],
+    "min_lines": 1,
+    "max_lines": 5,
+    "extra_gems_from_one_reroll_max": 4
+   },
+   "Legendary 2H": {
+    "band": [
+     475.0,
+     525.0
+    ],
+    "min_lines": 2,
+    "max_lines": 10,
+    "extra_gems_from_one_reroll_max": 8
+   },
+   "Mythic": {
+    "band": [
+     285.0,
+     315.0
+    ],
+    "min_lines": 1,
+    "max_lines": 6,
+    "extra_gems_from_one_reroll_max": 5
+   },
+   "Mythic 2H": {
+    "band": [
+     570.0,
+     630.0
+    ],
+    "min_lines": 2,
+    "max_lines": 12,
+    "extra_gems_from_one_reroll_max": 10
+   },
+   "Transcendent": {
+    "band": [
+     332.5,
+     367.5
+    ],
+    "min_lines": 2,
+    "max_lines": 7,
+    "extra_gems_from_one_reroll_max": 5
+   },
+   "Transcendent 2H": {
+    "band": [
+     665.0,
+     735.0
+    ],
+    "min_lines": 3,
+    "max_lines": 14,
+    "extra_gems_from_one_reroll_max": 11
+   }
+  }
+ },
+ "runtime_s": 3.7
+}

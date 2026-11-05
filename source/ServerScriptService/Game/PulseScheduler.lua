@@ -266,7 +266,7 @@ function firePulse(state: any, entry: any)
 			end
 		end
 		if ObjectEffectService and ObjectEffectService.RevealHiddenInArea then
-			ObjectEffectService.RevealHiddenInArea(state, tileSet, entry.side)
+			ObjectEffectService.RevealHiddenInArea(state, tileSet, entry.side, entry.sourceName)  -- A2: revealer name
 		end
 		return
 	end
@@ -340,10 +340,14 @@ function firePulse(state: any, entry: any)
 			-- so it cannot re-trigger reactions/counters/reflects -- same TRG-010 rule the tile
 			-- DoT and detonation paths follow. Deterministic flat amount (already computed).
 			local dmg = resolveAmount(entry, u)
-			-- Ring falloff (Meteor Marker): fraction by Chebyshev ring around the anchor.
+			-- Ring falloff (Meteor Marker): fraction by Chebyshev ring around the anchor. User ruling
+			-- 2026-10-29: the fraction cuts the FINAL damage after Defense (full power goes in), like
+			-- every other edge/falloff rule. A ring outside the table (fraction 0) is not hit at all.
+			local ringFrac = nil
 			if type(entry.ringFalloff) == "table" then
 				local ring = math.max(math.abs(u.tileX - entry.tileX), math.abs(u.tileY - entry.tileY))
-				dmg = math.round(dmg * (entry.ringFalloff[ring + 1] or 0))
+				ringFrac = entry.ringFalloff[ring + 1] or 0
+				if ringFrac <= 0 then dmg = 0 end
 			end
 			if dmg > 0 then
 				-- Normal damage rules (Defense, element, wards) via the item hit pipeline, using
@@ -356,9 +360,12 @@ function firePulse(state: any, entry: any)
 					end
 				end
 				if owner then
-					dmg = _hitResolver(owner, u, entry.element, dmg, entry.itemId, true) or 0  -- the item owns the hit
+					dmg = _hitResolver(owner, u, entry.element, dmg, entry.itemId, true,
+						(ringFrac and ringFrac ~= 1) and ringFrac or nil) or 0  -- the item owns the hit
 				else
-					UnitSchema.ApplyDamage(u, dmg)
+					-- No resolver / owner gone: no Defense step, so apply the fraction directly.
+					if ringFrac and ringFrac ~= 1 then dmg = math.max(0, math.round(dmg * ringFrac)) end
+					if dmg > 0 then UnitSchema.ApplyDamage(u, dmg) end
 				end
 				-- Name the shooter in the battle log (2026-10-27: a turret shot read like a DoT tick).
 				-- Devices only (Tester W1): a target-anchored pulse must never read "X hits X".
@@ -456,7 +463,7 @@ function PulseScheduler.ProcessCtTick(state: any, ctElapsed: any)
 					table.insert(state.pulseEvents, { unit = u, kind = "reveal" })
 				end
 			end
-			ObjectEffectService.RevealHiddenInArea(state, z.tiles, z.side)
+			ObjectEffectService.RevealHiddenInArea(state, z.tiles, z.side, "Scanner Lens")  -- A2: only reveal-zone source (UTI-003)
 		end
 		ObjectEffectService.TickRevealZones(ctElapsed)
 	end

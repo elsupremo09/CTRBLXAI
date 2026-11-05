@@ -46,6 +46,26 @@ local FUNCTION_NAMES = table.freeze({
 	"GetParties",       -- () -> { parties, roster, maxSize }
 	"SetPartyName",     -- (slot, name) -> result
 	"SetPartyMembers",  -- (slot, { unitId }) -> result
+	-- Parties tab (2026-11-04): create / delete / motto / emblem / background in one remote.
+	"PartyAction",      -- ({ action = "Create" | "Delete" | "SetMotto" | "SetArt", id, ... }) -> result + parties
+	"DevGuild",         -- Studio only: ({ action, ... }) -> { buildings, shopRefresh } (2026-10-31)
+	-- Runeforge (v2 build step 4, 2026-11-01). Client sends ids only; the server prices.
+	"GetRuneforge",     -- () -> level, gem storage, items with their lines and compatible gems
+	"PreviewForge",     -- (instanceId, { { gem, replace? } }) -> new rarity + cost (charges nothing)
+	"CommitForge",      -- (instanceId, { { gem, replace? } }) -> result
+	"GetRerollSets",    -- (instanceId) -> the fixed sulfur reroll sets + cost
+	"CommitReroll",     -- (instanceId, choice 0..N) -> result (0 = keep current)
+	-- Crucible gear merging (2026-11-02). Client sends instance IDs only; the server prices.
+	"GetCrucible",      -- () -> level, inputs needed, items
+	"PreviewMerge",     -- ({ instanceId }) -> result rarity, level and cost (charges nothing)
+	"CommitMerge",      -- ({ instanceId }) -> the merged item (inputs destroyed)
+	-- Apothecary (2026-11-03). Client sends shelf slots / ids only; the server prices.
+	"GetApothecary",    -- () -> level, shelf, owned copies, refill preview, auto switch
+	"CommitApothecary", -- ({ buys = { slot }, sells = { [id] = n } }) -> result
+	"ApothecaryRefill", -- ({ action = "RefillNow" | "SetAuto", on? }) -> result
+	-- Training Grounds card shop (2026-11-04). Client sends a shelf slot or a card id only.
+	"GetCardShop",      -- () -> level, shelf, owned loose cards
+	"CardShopAction",   -- ({ action = "Buy", slot } | { action = "Sell", kind, id }) -> result + state
 })
 
 local GuildEvents = {}

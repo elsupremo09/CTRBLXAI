@@ -38,6 +38,16 @@ end
 -- ITEM MANAGEMENT
 --------------------------------------------------
 
+-- Acquisition record (equipment_schema 18-20, v2 2026-11-01). Items arrive here: the
+-- levelling record starts at the current level with no bought levels (credit 0), the
+-- starting rarity is the current rarity, rerolls 0. Fills only missing fields; never
+-- overwrites.
+local function ensureAcquisitionFields(item)
+	if type(item.levellingRecord) ~= "table" then item.levellingRecord = { free = item.itemLevel, pairs = {} } end
+	if type(item.startingRarity) ~= "string" then item.startingRarity = item.rarityId end
+	if type(item.rerollCount) ~= "number" then item.rerollCount = 0 end
+end
+
 function InventoryService.AddItem(playerId, itemInstance)
 	assert(type(itemInstance) == "table", "AddItem: itemInstance must be a table.")
 	assert(type(itemInstance.instanceId) == "string", "AddItem: instanceId required.")
@@ -51,6 +61,7 @@ function InventoryService.AddItem(playerId, itemInstance)
 		return false, "Duplicate instance ID"
 	end
 
+	ensureAcquisitionFields(itemInstance)
 	inv[itemInstance.instanceId] = itemInstance
 	print(string.format(
 		"[InventoryService] Added %s to %s inventory (%d items)",
@@ -140,6 +151,9 @@ end
 function InventoryService.ImportInventory(playerId, data)
 	InventoryService.InitPlayer(playerId)
 	playerInventories[playerId] = data or {}
+	for _, item in pairs(playerInventories[playerId]) do
+		if type(item) == "table" then ensureAcquisitionFields(item) end
+	end
 end
 
 return InventoryService

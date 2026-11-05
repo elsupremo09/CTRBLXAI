@@ -1,0 +1,1860 @@
+{
+ "seed": 20261101,
+ "B8": 81,
+ "qb8_need_gold": 4260,
+ "repro_R2": {
+  "d75": 1553.54,
+  "d100": 1848.94
+ },
+ "main": {
+  "G30 d75 w80": {
+   "m_kill": 109.4,
+   "m_quest": 125.03,
+   "m_chest": 87.52,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 29.76,
+   "m_boss": 44.64,
+   "m_dis": 708.96,
+   "m_daily": 150,
+   "c_dis": 101.27,
+   "c_elite": 44.64,
+   "c_boss": 74.39,
+   "g_dis": 119.56,
+   "g_elite": 7.44,
+   "g_boss": 14.88,
+   "s_dis": 3.6,
+   "s_elite": 1.48,
+   "s_boss": 5.9,
+   "s_daily": 10,
+   "bosses": 14.88,
+   "elites": 14.88,
+   "mercury": 1419.4,
+   "crystals": 220.3,
+   "gems": 141.87,
+   "sulfur": 20.98,
+   "levellings": 14.48
+  },
+  "G30 d75 w90": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 797.58,
+   "m_daily": 150,
+   "c_dis": 113.93,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 134.5,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 10,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 1557.56,
+   "crystals": 247.83,
+   "gems": 159.61,
+   "sulfur": 22.35,
+   "levellings": 15.89
+  },
+  "G30 d75 w100": {
+   "m_kill": 136.75,
+   "m_quest": 156.29,
+   "m_chest": 109.4,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 37.2,
+   "m_boss": 55.79,
+   "m_dis": 886.2,
+   "m_daily": 150,
+   "c_dis": 126.59,
+   "c_elite": 55.79,
+   "c_boss": 92.99,
+   "g_dis": 149.45,
+   "g_elite": 9.3,
+   "g_boss": 18.6,
+   "s_dis": 4.5,
+   "s_elite": 1.84,
+   "s_boss": 7.38,
+   "s_daily": 10,
+   "bosses": 18.6,
+   "elites": 18.6,
+   "mercury": 1695.73,
+   "crystals": 275.37,
+   "gems": 177.34,
+   "sulfur": 23.72,
+   "levellings": 17.3
+  },
+  "G30 d100 w80": {
+   "m_kill": 109.4,
+   "m_quest": 125.03,
+   "m_chest": 87.52,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 29.76,
+   "m_boss": 44.64,
+   "m_dis": 945.28,
+   "m_daily": 150,
+   "c_dis": 135.03,
+   "c_elite": 44.64,
+   "c_boss": 74.39,
+   "g_dis": 159.41,
+   "g_elite": 7.44,
+   "g_boss": 14.88,
+   "s_dis": 4.8,
+   "s_elite": 1.48,
+   "s_boss": 5.9,
+   "s_daily": 10,
+   "bosses": 14.88,
+   "elites": 14.88,
+   "mercury": 1655.72,
+   "crystals": 254.05,
+   "gems": 181.73,
+   "sulfur": 22.17,
+   "levellings": 16.9
+  },
+  "G30 d100 w90": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 1063.44,
+   "m_daily": 150,
+   "c_dis": 151.9,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 179.34,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 10,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 1823.42,
+   "crystals": 285.81,
+   "gems": 204.44,
+   "sulfur": 23.7,
+   "levellings": 18.61
+  },
+  "G30 d100 w100": {
+   "m_kill": 136.75,
+   "m_quest": 156.29,
+   "m_chest": 109.4,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 37.2,
+   "m_boss": 55.79,
+   "m_dis": 1181.6,
+   "m_daily": 150,
+   "c_dis": 168.78,
+   "c_elite": 55.79,
+   "c_boss": 92.99,
+   "g_dis": 199.26,
+   "g_elite": 9.3,
+   "g_boss": 18.6,
+   "s_dis": 6.0,
+   "s_elite": 1.84,
+   "s_boss": 7.38,
+   "s_daily": 10,
+   "bosses": 18.6,
+   "elites": 18.6,
+   "mercury": 1991.13,
+   "crystals": 317.57,
+   "gems": 227.16,
+   "sulfur": 25.22,
+   "levellings": 20.32
+  },
+  "G80 d75 w80": {
+   "m_kill": 109.4,
+   "m_quest": 125.03,
+   "m_chest": 87.52,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 29.76,
+   "m_boss": 44.64,
+   "m_dis": 708.96,
+   "m_daily": 400,
+   "c_dis": 101.27,
+   "c_elite": 44.64,
+   "c_boss": 74.39,
+   "g_dis": 119.56,
+   "g_elite": 7.44,
+   "g_boss": 14.88,
+   "s_dis": 3.6,
+   "s_elite": 1.48,
+   "s_boss": 5.9,
+   "s_daily": 26,
+   "bosses": 14.88,
+   "elites": 14.88,
+   "mercury": 1669.4,
+   "crystals": 220.3,
+   "gems": 141.87,
+   "sulfur": 36.98,
+   "levellings": 17.03
+  },
+  "G80 d75 w90": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 797.58,
+   "m_daily": 400,
+   "c_dis": 113.93,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 134.5,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 26,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 1807.56,
+   "crystals": 247.83,
+   "gems": 159.61,
+   "sulfur": 38.35,
+   "levellings": 18.44
+  },
+  "G80 d75 w100": {
+   "m_kill": 136.75,
+   "m_quest": 156.29,
+   "m_chest": 109.4,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 37.2,
+   "m_boss": 55.79,
+   "m_dis": 886.2,
+   "m_daily": 400,
+   "c_dis": 126.59,
+   "c_elite": 55.79,
+   "c_boss": 92.99,
+   "g_dis": 149.45,
+   "g_elite": 9.3,
+   "g_boss": 18.6,
+   "s_dis": 4.5,
+   "s_elite": 1.84,
+   "s_boss": 7.38,
+   "s_daily": 26,
+   "bosses": 18.6,
+   "elites": 18.6,
+   "mercury": 1945.73,
+   "crystals": 275.37,
+   "gems": 177.34,
+   "sulfur": 39.72,
+   "levellings": 19.85
+  },
+  "G80 d100 w80": {
+   "m_kill": 109.4,
+   "m_quest": 125.03,
+   "m_chest": 87.52,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 29.76,
+   "m_boss": 44.64,
+   "m_dis": 945.28,
+   "m_daily": 400,
+   "c_dis": 135.03,
+   "c_elite": 44.64,
+   "c_boss": 74.39,
+   "g_dis": 159.41,
+   "g_elite": 7.44,
+   "g_boss": 14.88,
+   "s_dis": 4.8,
+   "s_elite": 1.48,
+   "s_boss": 5.9,
+   "s_daily": 26,
+   "bosses": 14.88,
+   "elites": 14.88,
+   "mercury": 1905.72,
+   "crystals": 254.05,
+   "gems": 181.73,
+   "sulfur": 38.17,
+   "levellings": 19.45
+  },
+  "G80 d100 w90": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 1063.44,
+   "m_daily": 400,
+   "c_dis": 151.9,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 179.34,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 26,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 2073.42,
+   "crystals": 285.81,
+   "gems": 204.44,
+   "sulfur": 39.7,
+   "levellings": 21.16
+  },
+  "G80 d100 w100": {
+   "m_kill": 136.75,
+   "m_quest": 156.29,
+   "m_chest": 109.4,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 37.2,
+   "m_boss": 55.79,
+   "m_dis": 1181.6,
+   "m_daily": 400,
+   "c_dis": 168.78,
+   "c_elite": 55.79,
+   "c_boss": 92.99,
+   "g_dis": 199.26,
+   "g_elite": 9.3,
+   "g_boss": 18.6,
+   "s_dis": 6.0,
+   "s_elite": 1.84,
+   "s_boss": 7.38,
+   "s_daily": 26,
+   "bosses": 18.6,
+   "elites": 18.6,
+   "mercury": 2241.13,
+   "crystals": 317.57,
+   "gems": 227.16,
+   "sulfur": 41.22,
+   "levellings": 22.87
+  },
+  "G180 d75 w80": {
+   "m_kill": 109.4,
+   "m_quest": 125.03,
+   "m_chest": 87.52,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 29.76,
+   "m_boss": 44.64,
+   "m_dis": 708.96,
+   "m_daily": 900,
+   "c_dis": 101.27,
+   "c_elite": 44.64,
+   "c_boss": 74.39,
+   "g_dis": 119.56,
+   "g_elite": 7.44,
+   "g_boss": 14.88,
+   "s_dis": 3.6,
+   "s_elite": 1.48,
+   "s_boss": 5.9,
+   "s_daily": 60,
+   "bosses": 14.88,
+   "elites": 14.88,
+   "mercury": 2169.4,
+   "crystals": 220.3,
+   "gems": 141.87,
+   "sulfur": 70.98,
+   "levellings": 22.14
+  },
+  "G180 d75 w90": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 797.58,
+   "m_daily": 900,
+   "c_dis": 113.93,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 134.5,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 60,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 2307.56,
+   "crystals": 247.83,
+   "gems": 159.61,
+   "sulfur": 72.35,
+   "levellings": 23.55
+  },
+  "G180 d75 w100": {
+   "m_kill": 136.75,
+   "m_quest": 156.29,
+   "m_chest": 109.4,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 37.2,
+   "m_boss": 55.79,
+   "m_dis": 886.2,
+   "m_daily": 900,
+   "c_dis": 126.59,
+   "c_elite": 55.79,
+   "c_boss": 92.99,
+   "g_dis": 149.45,
+   "g_elite": 9.3,
+   "g_boss": 18.6,
+   "s_dis": 4.5,
+   "s_elite": 1.84,
+   "s_boss": 7.38,
+   "s_daily": 60,
+   "bosses": 18.6,
+   "elites": 18.6,
+   "mercury": 2445.73,
+   "crystals": 275.37,
+   "gems": 177.34,
+   "sulfur": 73.72,
+   "levellings": 24.96
+  },
+  "G180 d100 w80": {
+   "m_kill": 109.4,
+   "m_quest": 125.03,
+   "m_chest": 87.52,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 29.76,
+   "m_boss": 44.64,
+   "m_dis": 945.28,
+   "m_daily": 900,
+   "c_dis": 135.03,
+   "c_elite": 44.64,
+   "c_boss": 74.39,
+   "g_dis": 159.41,
+   "g_elite": 7.44,
+   "g_boss": 14.88,
+   "s_dis": 4.8,
+   "s_elite": 1.48,
+   "s_boss": 5.9,
+   "s_daily": 60,
+   "bosses": 14.88,
+   "elites": 14.88,
+   "mercury": 2405.72,
+   "crystals": 254.05,
+   "gems": 181.73,
+   "sulfur": 72.17,
+   "levellings": 24.55
+  },
+  "G180 d100 w90": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 1063.44,
+   "m_daily": 900,
+   "c_dis": 151.9,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 179.34,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 60,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 2573.42,
+   "crystals": 285.81,
+   "gems": 204.44,
+   "sulfur": 73.7,
+   "levellings": 26.26
+  },
+  "G180 d100 w100": {
+   "m_kill": 136.75,
+   "m_quest": 156.29,
+   "m_chest": 109.4,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 37.2,
+   "m_boss": 55.79,
+   "m_dis": 1181.6,
+   "m_daily": 900,
+   "c_dis": 168.78,
+   "c_elite": 55.79,
+   "c_boss": 92.99,
+   "g_dis": 199.26,
+   "g_elite": 9.3,
+   "g_boss": 18.6,
+   "s_dis": 6.0,
+   "s_elite": 1.84,
+   "s_boss": 7.38,
+   "s_daily": 60,
+   "bosses": 18.6,
+   "elites": 18.6,
+   "mercury": 2741.13,
+   "crystals": 317.57,
+   "gems": 227.16,
+   "sulfur": 75.22,
+   "levellings": 27.97
+  }
+ },
+ "boss": {
+  "G30 d75 est": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 797.58,
+   "m_daily": 150,
+   "c_dis": 113.93,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 134.5,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 10,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 1557.56,
+   "crystals": 247.83,
+   "gems": 159.61,
+   "sulfur": 22.35,
+   "levellings": 15.89
+  },
+  "G30 d75 card": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 125.82,
+   "m_dis": 924.46,
+   "m_daily": 150,
+   "c_dis": 155.45,
+   "c_elite": 50.21,
+   "c_boss": 209.7,
+   "g_dis": 180.84,
+   "g_elite": 8.37,
+   "g_boss": 41.94,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 19.53,
+   "s_daily": 10,
+   "bosses": 41.94,
+   "elites": 16.74,
+   "mercury": 1760.05,
+   "crystals": 415.36,
+   "gems": 231.15,
+   "sulfur": 35.24,
+   "levellings": 17.96
+  },
+  "G30 d75 cap": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 236.59,
+   "m_dis": 1093.7,
+   "m_daily": 150,
+   "c_dis": 210.83,
+   "c_elite": 50.21,
+   "c_boss": 394.32,
+   "g_dis": 242.66,
+   "g_elite": 8.37,
+   "g_boss": 78.86,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 36.72,
+   "s_daily": 10,
+   "bosses": 78.86,
+   "elites": 16.74,
+   "mercury": 2040.06,
+   "crystals": 655.37,
+   "gems": 329.89,
+   "sulfur": 52.43,
+   "levellings": 20.82
+  },
+  "G30 d100 est": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 1063.44,
+   "m_daily": 150,
+   "c_dis": 151.9,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 179.34,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 10,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 1823.42,
+   "crystals": 285.81,
+   "gems": 204.44,
+   "sulfur": 23.7,
+   "levellings": 18.61
+  },
+  "G30 d100 card": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 125.82,
+   "m_dis": 1232.61,
+   "m_daily": 150,
+   "c_dis": 207.26,
+   "c_elite": 50.21,
+   "c_boss": 209.7,
+   "g_dis": 241.12,
+   "g_elite": 8.37,
+   "g_boss": 41.94,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 19.53,
+   "s_daily": 10,
+   "bosses": 41.94,
+   "elites": 16.74,
+   "mercury": 2068.2,
+   "crystals": 467.18,
+   "gems": 291.43,
+   "sulfur": 36.59,
+   "levellings": 21.1
+  },
+  "G30 d100 cap": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 236.59,
+   "m_dis": 1458.27,
+   "m_daily": 150,
+   "c_dis": 281.11,
+   "c_elite": 50.21,
+   "c_boss": 394.32,
+   "g_dis": 323.54,
+   "g_elite": 8.37,
+   "g_boss": 78.86,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 36.72,
+   "s_daily": 10,
+   "bosses": 78.86,
+   "elites": 16.74,
+   "mercury": 2404.63,
+   "crystals": 725.64,
+   "gems": 410.77,
+   "sulfur": 53.78,
+   "levellings": 24.54
+  },
+  "G80 d75 est": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 797.58,
+   "m_daily": 400,
+   "c_dis": 113.93,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 134.5,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 26,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 1807.56,
+   "crystals": 247.83,
+   "gems": 159.61,
+   "sulfur": 38.35,
+   "levellings": 18.44
+  },
+  "G80 d75 card": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 125.82,
+   "m_dis": 924.46,
+   "m_daily": 400,
+   "c_dis": 155.45,
+   "c_elite": 50.21,
+   "c_boss": 209.7,
+   "g_dis": 180.84,
+   "g_elite": 8.37,
+   "g_boss": 41.94,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 19.53,
+   "s_daily": 26,
+   "bosses": 41.94,
+   "elites": 16.74,
+   "mercury": 2010.05,
+   "crystals": 415.36,
+   "gems": 231.15,
+   "sulfur": 51.24,
+   "levellings": 20.51
+  },
+  "G80 d75 cap": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 630.91,
+   "m_dis": 1696.18,
+   "m_daily": 400,
+   "c_dis": 407.99,
+   "c_elite": 50.21,
+   "c_boss": 1051.51,
+   "g_dis": 462.7,
+   "g_elite": 8.37,
+   "g_boss": 210.3,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 97.93,
+   "s_daily": 26,
+   "bosses": 210.3,
+   "elites": 16.74,
+   "mercury": 3286.86,
+   "crystals": 1509.72,
+   "gems": 681.37,
+   "sulfur": 129.64,
+   "levellings": 33.54
+  },
+  "G80 d100 est": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 1063.44,
+   "m_daily": 400,
+   "c_dis": 151.9,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 179.34,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 26,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 2073.42,
+   "crystals": 285.81,
+   "gems": 204.44,
+   "sulfur": 39.7,
+   "levellings": 21.16
+  },
+  "G80 d100 card": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 125.82,
+   "m_dis": 1232.61,
+   "m_daily": 400,
+   "c_dis": 207.26,
+   "c_elite": 50.21,
+   "c_boss": 209.7,
+   "g_dis": 241.12,
+   "g_elite": 8.37,
+   "g_boss": 41.94,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 19.53,
+   "s_daily": 26,
+   "bosses": 41.94,
+   "elites": 16.74,
+   "mercury": 2318.2,
+   "crystals": 467.18,
+   "gems": 291.43,
+   "sulfur": 52.59,
+   "levellings": 23.66
+  },
+  "G80 d100 cap": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 630.91,
+   "m_dis": 2261.57,
+   "m_daily": 400,
+   "c_dis": 543.99,
+   "c_elite": 50.21,
+   "c_boss": 1051.51,
+   "g_dis": 616.93,
+   "g_elite": 8.37,
+   "g_boss": 210.3,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 97.93,
+   "s_daily": 26,
+   "bosses": 210.3,
+   "elites": 16.74,
+   "mercury": 3852.25,
+   "crystals": 1645.72,
+   "gems": 835.6,
+   "sulfur": 130.99,
+   "levellings": 39.31
+  },
+  "G180 d75 est": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 797.58,
+   "m_daily": 900,
+   "c_dis": 113.93,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 134.5,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 60,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 2307.56,
+   "crystals": 247.83,
+   "gems": 159.61,
+   "sulfur": 72.35,
+   "levellings": 23.55
+  },
+  "G180 d75 card": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 125.82,
+   "m_dis": 924.46,
+   "m_daily": 900,
+   "c_dis": 155.45,
+   "c_elite": 50.21,
+   "c_boss": 209.7,
+   "g_dis": 180.84,
+   "g_elite": 8.37,
+   "g_boss": 41.94,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 19.53,
+   "s_daily": 60,
+   "bosses": 41.94,
+   "elites": 16.74,
+   "mercury": 2510.05,
+   "crystals": 415.36,
+   "gems": 231.15,
+   "sulfur": 85.24,
+   "levellings": 25.61
+  },
+  "G180 d75 cap": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 863.36,
+   "m_dis": 2051.35,
+   "m_daily": 900,
+   "c_dis": 524.22,
+   "c_elite": 50.21,
+   "c_boss": 1438.94,
+   "g_dis": 592.42,
+   "g_elite": 8.37,
+   "g_boss": 287.79,
+   "s_dis": 4.05,
+   "s_elite": 1.66,
+   "s_boss": 134.01,
+   "s_daily": 60,
+   "bosses": 287.79,
+   "elites": 16.74,
+   "mercury": 4374.48,
+   "crystals": 2013.37,
+   "gems": 888.57,
+   "sulfur": 199.72,
+   "levellings": 44.64
+  },
+  "G180 d100 est": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 50.21,
+   "m_dis": 1063.44,
+   "m_daily": 900,
+   "c_dis": 151.9,
+   "c_elite": 50.21,
+   "c_boss": 83.69,
+   "g_dis": 179.34,
+   "g_elite": 8.37,
+   "g_boss": 16.74,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 6.64,
+   "s_daily": 60,
+   "bosses": 16.74,
+   "elites": 16.74,
+   "mercury": 2573.42,
+   "crystals": 285.81,
+   "gems": 204.44,
+   "sulfur": 73.7,
+   "levellings": 26.26
+  },
+  "G180 d100 card": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 125.82,
+   "m_dis": 1232.61,
+   "m_daily": 900,
+   "c_dis": 207.26,
+   "c_elite": 50.21,
+   "c_boss": 209.7,
+   "g_dis": 241.12,
+   "g_elite": 8.37,
+   "g_boss": 41.94,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 19.53,
+   "s_daily": 60,
+   "bosses": 41.94,
+   "elites": 16.74,
+   "mercury": 2818.2,
+   "crystals": 467.18,
+   "gems": 291.43,
+   "sulfur": 86.59,
+   "levellings": 28.76
+  },
+  "G180 d100 cap": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 33.48,
+   "m_boss": 863.36,
+   "m_dis": 2735.13,
+   "m_daily": 900,
+   "c_dis": 698.96,
+   "c_elite": 50.21,
+   "c_boss": 1438.94,
+   "g_dis": 789.89,
+   "g_elite": 8.37,
+   "g_boss": 287.79,
+   "s_dis": 5.4,
+   "s_elite": 1.66,
+   "s_boss": 134.01,
+   "s_daily": 60,
+   "bosses": 287.79,
+   "elites": 16.74,
+   "mercury": 5058.26,
+   "crystals": 2188.11,
+   "gems": 1086.05,
+   "sulfur": 201.07,
+   "levellings": 51.61
+  }
+ },
+ "dispatch": {
+  "G80 d75 disp0.0": 16.77,
+  "G80 d75 disp0.15": 17.61,
+  "G80 d75 disp0.3": 18.44,
+  "G80 d75 disp0.6": 20.12,
+  "G80 d75 disp1.0": 22.35,
+  "G80 d75 disp1.83": 26.98,
+  "G80 d75 disp2.0": 27.93,
+  "G80 d100 disp0.0": 19.48,
+  "G80 d100 disp0.15": 20.32,
+  "G80 d100 disp0.3": 21.16,
+  "G80 d100 disp0.6": 22.83,
+  "G80 d100 disp1.0": 25.06,
+  "G80 d100 disp1.83": 29.7,
+  "G80 d100 disp2.0": 30.65
+ },
+ "knob": {
+  "dispatch_pb": 0.094,
+  "daily_mercury": 3.588,
+  "quest_pb": 0.056,
+  "kill_chance_pct": 0.38
+ },
+ "knob_grid": {
+  "now (daily 5, dispatch 0.3)": {
+   "G30 d75": 15.89,
+   "G30 d100": 18.61,
+   "G80 d75": 18.44,
+   "G80 d100": 21.16,
+   "G180 d75": 23.55,
+   "G180 d100": 26.26
+  },
+  "daily 4": {
+   "G30 d75": 15.59,
+   "G30 d100": 18.3,
+   "G80 d75": 17.63,
+   "G80 d100": 20.34,
+   "G180 d75": 21.71,
+   "G180 d100": 24.42
+  },
+  "daily 3": {
+   "G30 d75": 15.28,
+   "G30 d100": 17.99,
+   "G80 d75": 16.81,
+   "G80 d100": 19.52,
+   "G180 d75": 19.87,
+   "G180 d100": 22.59
+  },
+  "dispatch 0.15": {
+   "G30 d75": 15.06,
+   "G30 d100": 17.77,
+   "G80 d75": 17.61,
+   "G80 d100": 20.32,
+   "G180 d75": 22.71,
+   "G180 d100": 25.42
+  },
+  "dispatch 0": {
+   "G30 d75": 14.22,
+   "G30 d100": 16.93,
+   "G80 d75": 16.77,
+   "G80 d100": 19.48,
+   "G180 d75": 21.87,
+   "G180 d100": 24.58
+  },
+  "quest 1 in 14": {
+   "G30 d75": 15.18,
+   "G30 d100": 17.89,
+   "G80 d75": 17.73,
+   "G80 d100": 20.44,
+   "G180 d75": 22.83,
+   "G180 d100": 25.54
+  },
+  "kill 3%": {
+   "G30 d75": 15.39,
+   "G30 d100": 18.11,
+   "G80 d75": 17.94,
+   "G80 d100": 20.66,
+   "G180 d75": 23.05,
+   "G180 d100": 25.76
+  }
+ },
+ "elite_scan_rate": 0.2346,
+ "elite_scan": {
+  "d75": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 230.97,
+   "m_boss": 50.21,
+   "m_dis": 1097.54,
+   "m_daily": 400,
+   "c_dis": 225.02,
+   "c_elite": 346.46,
+   "c_boss": 83.69,
+   "g_dis": 258.49,
+   "g_elite": 57.74,
+   "g_boss": 16.74,
+   "s_dis": 4.05,
+   "s_elite": 11.45,
+   "s_boss": 6.64,
+   "s_daily": 26,
+   "bosses": 16.74,
+   "elites": 115.49,
+   "mercury": 2305.02,
+   "crystals": 655.17,
+   "gems": 332.97,
+   "sulfur": 48.14,
+   "levellings": 23.52
+  },
+  "d100": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 230.97,
+   "m_boss": 50.21,
+   "m_dis": 1463.39,
+   "m_daily": 400,
+   "c_dis": 300.02,
+   "c_elite": 346.46,
+   "c_boss": 83.69,
+   "g_dis": 344.65,
+   "g_elite": 57.74,
+   "g_boss": 16.74,
+   "s_dis": 5.4,
+   "s_elite": 11.45,
+   "s_boss": 6.64,
+   "s_daily": 26,
+   "bosses": 16.74,
+   "elites": 115.49,
+   "mercury": 2670.87,
+   "crystals": 730.17,
+   "gems": 419.13,
+   "sulfur": 49.49,
+   "levellings": 27.25
+  }
+ },
+ "elite_every_win": {
+  "d75": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 984.6,
+   "m_boss": 50.21,
+   "m_dis": 2242.2,
+   "m_daily": 400,
+   "c_dis": 648.94,
+   "c_elite": 1476.9,
+   "c_boss": 83.69,
+   "g_dis": 731.61,
+   "g_elite": 246.15,
+   "g_boss": 16.74,
+   "s_dis": 4.05,
+   "s_elite": 48.83,
+   "s_boss": 6.64,
+   "s_daily": 26,
+   "bosses": 16.74,
+   "elites": 492.3,
+   "mercury": 4203.3,
+   "crystals": 2209.53,
+   "gems": 994.5,
+   "sulfur": 85.51,
+   "levellings": 42.89
+  },
+  "d100": {
+   "m_kill": 123.07,
+   "m_quest": 140.66,
+   "m_chest": 98.46,
+   "m_disp": 164.1,
+   "m_salv": 0.0,
+   "m_elite": 984.6,
+   "m_boss": 50.21,
+   "m_dis": 2989.6,
+   "m_daily": 400,
+   "c_dis": 865.25,
+   "c_elite": 1476.9,
+   "c_boss": 83.69,
+   "g_dis": 975.48,
+   "g_elite": 246.15,
+   "g_boss": 16.74,
+   "s_dis": 5.4,
+   "s_elite": 48.83,
+   "s_boss": 6.64,
+   "s_daily": 26,
+   "bosses": 16.74,
+   "elites": 492.3,
+   "mercury": 4950.7,
+   "crystals": 2425.84,
+   "gems": 1238.37,
+   "sulfur": 86.86,
+   "levellings": 50.52
+  }
+ },
+ "salv_natural": {
+  "breaks0.5": 21.96,
+  "breaks1": 22.76,
+  "breaks2": 24.37
+ },
+ "ice_spike": {
+  "L25 INT60": {
+   "mp_cost": 8,
+   "rt": 65,
+   "spikes_from_pool": 17,
+   "ct_per_extra_spike": 2667
+  },
+  "L25 INT100": {
+   "mp_cost": 8,
+   "rt": 65,
+   "spikes_from_pool": 27,
+   "ct_per_extra_spike": 2000
+  },
+  "L25 INT150": {
+   "mp_cost": 8,
+   "rt": 65,
+   "spikes_from_pool": 40,
+   "ct_per_extra_spike": 1600
+  },
+  "L50 INT60": {
+   "mp_cost": 11,
+   "rt": 70,
+   "spikes_from_pool": 12,
+   "ct_per_extra_spike": 3667
+  },
+  "L50 INT100": {
+   "mp_cost": 11,
+   "rt": 70,
+   "spikes_from_pool": 20,
+   "ct_per_extra_spike": 2750
+  },
+  "L50 INT150": {
+   "mp_cost": 11,
+   "rt": 70,
+   "spikes_from_pool": 29,
+   "ct_per_extra_spike": 2200
+  },
+  "L99 INT60": {
+   "mp_cost": 17,
+   "rt": 80,
+   "spikes_from_pool": 8,
+   "ct_per_extra_spike": 5667
+  },
+  "L99 INT100": {
+   "mp_cost": 17,
+   "rt": 80,
+   "spikes_from_pool": 12,
+   "ct_per_extra_spike": 4250
+  },
+  "L99 INT150": {
+   "mp_cost": 17,
+   "rt": 80,
+   "spikes_from_pool": 18,
+   "ct_per_extra_spike": 3400
+  }
+ },
+ "salv_spike_10_per_battle": {
+  "m_kill": 123.07,
+  "m_quest": 140.66,
+  "m_chest": 98.46,
+  "m_disp": 164.1,
+  "m_salv": 246.15,
+  "m_elite": 33.48,
+  "m_boss": 50.21,
+  "m_dis": 2392.74,
+  "m_daily": 400,
+  "c_dis": 341.78,
+  "c_elite": 50.21,
+  "c_boss": 83.69,
+  "g_dis": 403.51,
+  "g_elite": 8.37,
+  "g_boss": 16.74,
+  "s_dis": 12.14,
+  "s_elite": 1.66,
+  "s_boss": 6.64,
+  "s_daily": 26,
+  "bosses": 16.74,
+  "elites": 16.74,
+  "mercury": 3648.87,
+  "crystals": 475.69,
+  "gems": 428.61,
+  "sulfur": 46.44,
+  "levellings": 37.23
+ },
+ "salv_spike_30_per_battle": {
+  "m_kill": 123.07,
+  "m_quest": 140.66,
+  "m_chest": 98.46,
+  "m_disp": 164.1,
+  "m_salv": 738.45,
+  "m_elite": 33.48,
+  "m_boss": 50.21,
+  "m_dis": 5051.34,
+  "m_daily": 400,
+  "c_dis": 721.54,
+  "c_elite": 50.21,
+  "c_boss": 83.69,
+  "g_dis": 851.84,
+  "g_elite": 8.37,
+  "g_boss": 16.74,
+  "s_dis": 25.63,
+  "s_elite": 1.66,
+  "s_boss": 6.64,
+  "s_daily": 26,
+  "bosses": 16.74,
+  "elites": 16.74,
+  "mercury": 6799.77,
+  "crystals": 855.45,
+  "gems": 876.95,
+  "sulfur": 59.93,
+  "levellings": 69.39
+ },
+ "salv_spike_60_per_battle": {
+  "m_kill": 123.07,
+  "m_quest": 140.66,
+  "m_chest": 98.46,
+  "m_disp": 164.1,
+  "m_salv": 1476.9,
+  "m_elite": 33.48,
+  "m_boss": 50.21,
+  "m_dis": 9039.24,
+  "m_daily": 400,
+  "c_dis": 1291.18,
+  "c_elite": 50.21,
+  "c_boss": 83.69,
+  "g_dis": 1524.35,
+  "g_elite": 8.37,
+  "g_boss": 16.74,
+  "s_dis": 45.86,
+  "s_elite": 1.66,
+  "s_boss": 6.64,
+  "s_daily": 26,
+  "bosses": 16.74,
+  "elites": 16.74,
+  "mercury": 11526.12,
+  "crystals": 1425.09,
+  "gems": 1549.46,
+  "sulfur": 80.16,
+  "levellings": 117.61
+ },
+ "salv_gold_per_roll": {
+  "1": 13,
+  "50": 25,
+  "99": 37
+ },
+ "chest_hold": {
+  "chest_merc_allwin": 109.4,
+  "chest_merc_w90": 98.5,
+  "chest_gold_lifetime_base": 5465,
+  "chest_gold_lost_w90": 273
+ },
+ "prov": {
+  "Base value by slot": {
+   "table": "economy_framework",
+   "row": 11,
+   "found": true,
+   "must": [
+    "1H = 100",
+    "2H = 150",
+    "Body = 80",
+    "Gloves = 50"
+   ]
+  },
+  "Rarity multiplier": {
+   "table": "economy_framework",
+   "row": 12,
+   "found": true,
+   "must": [
+    "Common = 1.0",
+    "Epic = 4.0",
+    "Transcendent = 20.0"
+   ]
+  },
+  "Level multiplier": {
+   "table": "economy_framework",
+   "row": 13,
+   "found": true,
+   "must": [
+    "1 + (Item Level - 1) \u00d7 0.02"
+   ]
+  },
+  "Sell value": {
+   "table": "economy_framework",
+   "row": 14,
+   "found": true,
+   "must": [
+    "floor(Base Value \u00d7 Rarity Mult \u00d7 Level Mult \u00d7 0.25)",
+    "starting rarity"
+   ]
+  },
+  "Shop price": {
+   "table": "economy_framework",
+   "row": 15,
+   "found": true,
+   "must": [
+    "round(Base Value \u00d7 Rarity Mult \u00d7 Level Mult \u00d7 Shop Markup)",
+    "\u00d74.0 for Common, Uncommon and Rare",
+    "\u00d76.0 for Epic and Exalted"
+   ]
+  },
+  "Upgrade gold": {
+   "table": "economy_framework",
+   "row": 19,
+   "found": true,
+   "must": [
+    "Base Value \u00d7 Rarity Mult \u00d7 0.30 \u00d7 (1 + Target Level / 25) \u00d7 (1 \u2212 0.03 \u00d7 (Blacksmith Level \u2212 1))"
+   ]
+  },
+  "Recruit fee": {
+   "table": "economy_framework",
+   "row": 22,
+   "found": true,
+   "must": [
+    "200 + (Unit Level \u00d7 15) + Quality Premium"
+   ]
+  },
+  "Dispatch cost": {
+   "table": "economy_framework",
+   "row": 26,
+   "found": true,
+   "must": [
+    "50 gold per dispatch mission",
+    "Base 3 concurrent slots"
+   ]
+  },
+  "Lifetime income": {
+   "table": "economy_framework",
+   "row": 42,
+   "found": true,
+   "must": [
+    "~175,800g"
+   ]
+  },
+  "Necessities": {
+   "table": "economy_framework",
+   "row": 43,
+   "found": true,
+   "must": [
+    "~127,800g"
+   ]
+  },
+  "Blacksmith share": {
+   "table": "economy_framework",
+   "row": 20,
+   "found": true,
+   "must": [
+    "~43% of lifetime income"
+   ]
+  },
+  "Shop odds": {
+   "table": "economy_framework",
+   "row": 48,
+   "found": true,
+   "must": [
+    "L10 C10 U30 R40 E15 Exalted 5",
+    "5, 5, 6, 7, 7, 8, 9, 10, 10, 10"
+   ]
+  },
+  "BS rarity unlocks": {
+   "table": "guild_facilities",
+   "row": 13,
+   "found": true,
+   "must": [
+    "L1: Common/Uncommon upgrades",
+    "L3: Rare",
+    "L5: Epic upgrades",
+    "L6: Exalted upgrades",
+    "L7: Legendary upgrades",
+    "L9: Mythic upgrades"
+   ]
+  },
+  "Facility cost formula": {
+   "table": "guild_facilities",
+   "row": 2,
+   "found": true,
+   "must": [
+    "round(Base \u00d7 (1 + Level\u00b2 / Scale))"
+   ]
+  },
+  "GH gatekeeper": {
+   "table": "guild_facilities",
+   "row": 3,
+   "found": true,
+   "must": [
+    "cannot exceed the Guild Hall level"
+   ]
+  },
+  "GH unlocks": {
+   "table": "guild_facilities",
+   "row": 8,
+   "found": true,
+   "must": [
+    "L4: Workshop, Runeforge",
+    "L7: Trophy Hall"
+   ]
+  },
+  "Normal drop": {
+   "table": "loot_progression",
+   "row": 13,
+   "found": true,
+   "must": [
+    "min(95%, 5% x Fortune Multiplier)"
+   ]
+  },
+  "Elite reward": {
+   "table": "loot_progression",
+   "row": 14,
+   "found": true,
+   "must": [
+    "min(95%, 75% x Fortune Multiplier)"
+   ]
+  },
+  "Unit Fortune": {
+   "table": "loot_progression",
+   "row": 9,
+   "found": true,
+   "must": [
+    "LUK / (LUK + 200)"
+   ]
+  },
+  "Expedition Fortune": {
+   "table": "loot_progression",
+   "row": 10,
+   "found": true,
+   "must": [
+    "Highest deployed Unit Fortune + 50% of second-highest + 25% of third-highest"
+   ]
+  },
+  "Normalized Fortune": {
+   "table": "loot_progression",
+   "row": 11,
+   "found": true,
+   "must": [
+    "Expedition Fortune / 1.75",
+    "2.00x"
+   ]
+  },
+  "Fortune quality": {
+   "table": "loot_progression",
+   "row": 16,
+   "found": true,
+   "must": [
+    "Base Rarity Weight x (1 + Normalized Expedition Fortune x Rarity Sensitivity)"
+   ]
+  },
+  "Fortune gold": {
+   "table": "loot_progression",
+   "row": 17,
+   "found": true,
+   "must": [
+    "1 + 0.50 x Normalized Expedition Fortune"
+   ]
+  },
+  "Enemies per battle": {
+   "table": "loot_progression",
+   "row": 86,
+   "found": true,
+   "must": [
+    "Normal 5, Elite 6, Boss 4"
+   ]
+  },
+  "Drops/battle working estimate": {
+   "table": "loot_progression",
+   "row": 24,
+   "found": true,
+   "must": [
+    "about 0.40 equipment drops per battle"
+   ]
+  },
+  "Elite/boss/chest working estimate": {
+   "table": "loot_progression",
+   "row": 26,
+   "found": true,
+   "must": [
+    "elite encounters about 0.034 per battle",
+    "bosses about 0.034",
+    "treasure chests about 0.2"
+   ]
+  },
+  "Old kill material": {
+   "table": "materials_system",
+   "row": 7,
+   "found": true,
+   "must": [
+    "20% chance per kill",
+    "~1.6 per battle from 8 enemies"
+   ]
+  },
+  "Fortune excl. materials": {
+   "table": "materials_system",
+   "row": 19,
+   "found": true,
+   "must": [
+    "Fortune does NOT affect material drop rate"
+   ]
+  },
+  "Dispatch offers": {
+   "table": "unit_progression",
+   "row": 99,
+   "found": true,
+   "must": [
+    "one dispatch mission offered per difficulty tier",
+    "Duration (DAYS away) = difficulty tier"
+   ]
+  },
+  "Item scale": {
+   "table": "item_rarity_rules",
+   "row": 7,
+   "found": true,
+   "must": [
+    "Scale(L) = 0.30 + 0.70 \u00d7 ((L \u2212 1) / 98)^0.55"
+   ]
+  },
+  "Rarity budgets": {
+   "table": "item_rarity_rules",
+   "row": 2,
+   "found": true,
+   "must": [
+    "Common 0; Uncommon 100; Rare 150; Epic 200; Exalted 225; Legendary 250; Mythic 300; Transcendent 350"
+   ]
+  },
+  "Passive limit": {
+   "table": "item_rarity_rules",
+   "row": 3,
+   "found": true,
+   "must": [
+    "at most 1 Bonus Passive",
+    "A 2H weapon may spawn at most 2"
+   ]
+  },
+  "Movement": {
+   "table": "core_stats",
+   "row": 3,
+   "found": true,
+   "must": [
+    "Movement Range = 3 + floor(AGI / 60)"
+   ]
+  },
+  "Black Market": {
+   "table": "objects_encounters",
+   "row": 31,
+   "found": true,
+   "must": [
+    "six fixed discounted high-tier items (col_7)"
+   ]
+  },
+  "Kill mercury victory only": {
+   "table": "materials_system",
+   "row": 7,
+   "found": true,
+   "must": [
+    "5% chance per enemy kill",
+    "Paid on a victory only"
+   ]
+  },
+  "Chest mercury": {
+   "table": "materials_system",
+   "row": 10,
+   "found": true,
+   "must": [
+    "1 mercury"
+   ]
+  },
+  "Quest mercury": {
+   "table": "materials_system",
+   "row": 11,
+   "found": true,
+   "must": [
+    "1 quest in 7 offers 1-3 mercury",
+    "victory only"
+   ]
+  },
+  "Dispatch mercury": {
+   "table": "materials_system",
+   "row": 12,
+   "found": true,
+   "must": [
+    "1 mercury per mission; 2 for tier 4-5",
+    "0.3 mercury per battle",
+    "lower the dispatch amount rather than the kill chance"
+   ]
+  },
+  "Daily event": {
+   "table": "materials_system",
+   "row": 13,
+   "found": true,
+   "must": [
+    "5 mercury per completed daily event",
+    "every 3rd"
+   ]
+  },
+  "Salvage": {
+   "table": "materials_system",
+   "row": 14,
+   "found": true,
+   "must": [
+    "5% chance of 1 mercury",
+    "5% chance of one equipment item"
+   ]
+  },
+  "Lifetime battles": {
+   "table": "materials_system",
+   "row": 36,
+   "found": true,
+   "must": [
+    "547 battles"
+   ]
+  },
+  "Elite/boss grants": {
+   "table": "materials_system",
+   "row": 41,
+   "found": true,
+   "must": [
+    "3 crystals",
+    "50% chance of 1 rune gem",
+    "5 crystals, 1 rune gem"
+   ]
+  },
+  "Dismantle": {
+   "table": "materials_system",
+   "row": 42,
+   "found": true,
+   "must": [
+    "ceil(level / 10)",
+    "Uncommon 1 / Rare 2 / Epic 3"
+   ]
+  },
+  "Boss limit": {
+   "table": "loot_progression",
+   "row": 15,
+   "found": true,
+   "must": [
+    "first 3 rewarded boss completions per day"
+   ]
+  },
+  "Elite estimate": {
+   "table": "loot_progression",
+   "row": 26,
+   "found": true,
+   "must": [
+    "0.034"
+   ]
+  },
+  "Wall target": {
+   "table": "guild_facilities",
+   "row": 38,
+   "found": true,
+   "must": [
+    "target 15-20"
+   ]
+  },
+  "QB function": {
+   "table": "guild_facilities",
+   "row": 17,
+   "found": true,
+   "must": [
+    "L8: Boss quests"
+   ]
+  },
+  "GXP floor": {
+   "table": "unit_progression",
+   "row": 94,
+   "found": true,
+   "must": [
+    "cannot go below the current level"
+   ]
+  },
+  "Escape": {
+   "table": "unit_progression",
+   "row": 95,
+   "found": true,
+   "must": [
+    "same reward rules as wipeout"
+   ]
+  },
+  "Dispatch burn": {
+   "table": "unit_progression",
+   "row": 77,
+   "found": true,
+   "must": [
+    "minimum 1 day per battle"
+   ]
+  },
+  "Board refresh count": {
+   "table": "game_flow",
+   "row": 20,
+   "found": true,
+   "must": [
+    "count the battle toward shop and quest board refresh"
+   ]
+  },
+  "Abandon": {
+   "table": "game_flow",
+   "row": 28,
+   "found": true,
+   "must": [
+    "forfeits 50%"
+   ]
+  },
+  "Ice Spike skill": {
+   "table": "skills",
+   "row": "SKL-ICE-SPIKE",
+   "found": true
+  },
+  "Salvager qualifying objects": {
+   "table": "nonweapon_equipment",
+   "row": 34,
+   "found": true
+  }
+ },
+ "extra": {
+  "boss_cap1_per_day": {
+   "G30": [
+    26.3,
+    16.75,
+    19.65,
+    "cry 314-358"
+   ],
+   "G80": [
+    70.1,
+    22.69,
+    26.27,
+    "cry 598-664"
+   ],
+   "G180": [
+    157.7,
+    34.57,
+    39.52,
+    "cry 1168-1278"
+   ]
+  },
+  "card_plus_daily3_G80": [
+   18.88,
+   22.02
+  ],
+  "note": "cap1 = boss-seeker hitting a 1-per-day limit; values [bosses, levellings d75, d100]"
+ }
+}

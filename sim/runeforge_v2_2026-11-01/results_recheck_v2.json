@@ -1,0 +1,2822 @@
+{
+ "seed": 20261101,
+ "db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\CTRBLXAI.db",
+ "db_opened": "read-only (mode=ro)",
+ "db_md5": "4234bb430e47d12e633d0a1934a7e4b9",
+ "provenance_rows": 35,
+ "draft": "artifacts/blacksmith_runeforge_v2_proposal_20261101.md (FINAL, Designer thread-82c673e2fa84)",
+ "R1": {
+  "fee_tables": {
+   "1H": {
+    "one_forge_U_R_E_E10": [
+     150,
+     250,
+     400,
+     292
+    ],
+    "swap_U_R_E_E10": [
+     75,
+     125,
+     200,
+     146
+    ],
+    "swap_RF10_U_R_E": [
+     54,
+     91,
+     146
+    ]
+   },
+   "2H": {
+    "one_forge_U_R_E_E10": [
+     225,
+     375,
+     600,
+     438
+    ],
+    "swap_U_R_E_E10": [
+     112,
+     187,
+     300,
+     219
+    ],
+    "swap_RF10_U_R_E": [
+     82,
+     136,
+     219
+    ]
+   },
+   "Off-Hand": {
+    "one_forge_U_R_E_E10": [
+     90,
+     150,
+     240,
+     175
+    ],
+    "swap_U_R_E_E10": [
+     45,
+     75,
+     120,
+     87
+    ],
+    "swap_RF10_U_R_E": [
+     32,
+     54,
+     87
+    ]
+   },
+   "Body": {
+    "one_forge_U_R_E_E10": [
+     120,
+     200,
+     320,
+     233
+    ],
+    "swap_U_R_E_E10": [
+     60,
+     100,
+     160,
+     116
+    ],
+    "swap_RF10_U_R_E": [
+     43,
+     73,
+     116
+    ]
+   },
+   "Head": {
+    "one_forge_U_R_E_E10": [
+     90,
+     150,
+     240,
+     175
+    ],
+    "swap_U_R_E_E10": [
+     45,
+     75,
+     120,
+     87
+    ],
+    "swap_RF10_U_R_E": [
+     32,
+     54,
+     87
+    ]
+   },
+   "Gloves": {
+    "one_forge_U_R_E_E10": [
+     75,
+     125,
+     200,
+     146
+    ],
+    "swap_U_R_E_E10": [
+     37,
+     62,
+     100,
+     73
+    ],
+    "swap_RF10_U_R_E": [
+     27,
+     45,
+     73
+    ]
+   },
+   "Feet": {
+    "one_forge_U_R_E_E10": [
+     75,
+     125,
+     200,
+     146
+    ],
+    "swap_U_R_E_E10": [
+     37,
+     62,
+     100,
+     73
+    ],
+    "swap_RF10_U_R_E": [
+     27,
+     45,
+     73
+    ]
+   },
+   "Accessory": {
+    "one_forge_U_R_E_E10": [
+     105,
+     175,
+     280,
+     204
+    ],
+    "swap_U_R_E_E10": [
+     52,
+     87,
+     140,
+     102
+    ],
+    "swap_RF10_U_R_E": [
+     38,
+     63,
+     102
+    ]
+   }
+  },
+  "fee_table_mismatches_vs_draft": [],
+  "1H_steps_RF1": [
+   150,
+   100,
+   150
+  ],
+  "1H_steps_RF10": [
+   109,
+   73,
+   110
+  ],
+  "steps_equal_one_forge_same_RF": {
+   "paths": 880,
+   "mismatches": 0
+  },
+  "steps_with_RF_upgrades_between": {
+   "cases": 1760,
+   "max_above_price_at_first_RF": 0,
+   "max_below_price_at_last_RF": 0
+  },
+  "raise_vs_swap_1H_RF1": {
+   "C>U raise": 150,
+   "U swap": 75,
+   "U>R raise": 100,
+   "R swap": 125,
+   "R>E raise": 150,
+   "E swap": 200
+  },
+  "T1_with_fees": {
+   "1H RF1": {
+    "one forge at L1": 29996,
+    "one forge at L99": 29996,
+    "steps L1/L50/L99": 29996,
+    "steps all at L1": 29996
+   },
+   "1H RF10": {
+    "one forge at L1": 29888,
+    "one forge at L99": 29888,
+    "steps L1/L50/L99": 29888,
+    "steps all at L1": 29888
+   },
+   "2H RF1": {
+    "one forge at L1": 44995,
+    "one forge at L99": 44995,
+    "steps L1/L50/L99": 44995,
+    "steps all at L1": 44995
+   },
+   "2H RF10": {
+    "one forge at L1": 44833,
+    "one forge at L99": 44833,
+    "steps L1/L50/L99": 44833,
+    "steps all at L1": 44833
+   },
+   "Body RF1": {
+    "one forge at L1": 23997,
+    "one forge at L99": 23997,
+    "steps L1/L50/L99": 23997,
+    "steps all at L1": 23997
+   },
+   "Body RF10": {
+    "one forge at L1": 23910,
+    "one forge at L99": 23910,
+    "steps L1/L50/L99": 23910,
+    "steps all at L1": 23910
+   },
+   "Gloves RF1": {
+    "one forge at L1": 14998,
+    "one forge at L99": 14998,
+    "steps L1/L50/L99": 14998,
+    "steps all at L1": 14998
+   },
+   "Gloves RF10": {
+    "one forge at L1": 14944,
+    "one forge at L99": 14944,
+    "steps L1/L50/L99": 14944,
+    "steps all at L1": 14944
+   }
+  },
+  "T1_with_fees_all_equal": true,
+  "T1T2_random_never_downgraded": {
+   "routes": 24000,
+   "mismatches_same_RF": 0,
+   "rising_RF_outside_bounds": 0
+  },
+  "T2_mixed_1H": {
+   "levelling": 27725,
+   "fee": 400,
+   "total_one_forge": 28125,
+   "total_steps": 28125
+  },
+  "T3_with_fees": {
+   "exact": {
+    "routes_with_downgrade": 15754,
+    "routes_cheaper": 0,
+    "min_gap": 0,
+    "min_merc_gap": 0,
+    "max_pairs": 6
+   },
+   "reset": {
+    "routes_with_downgrade": 15827,
+    "routes_cheaper": 215,
+    "min_gap": -14697,
+    "min_merc_gap": 0,
+    "max_pairs": 6
+   },
+   "example_incl_400g_fee": {
+    "early": 21291,
+    "middle": 14820,
+    "late": 14820,
+    "straight": 12662
+   }
+  },
+  "craft_fee_scenarios": {
+   "RF7": {
+    "avg_epic_from_Rare": 95.25,
+    "avg_epic_from_Common": 253.875,
+    "avg_epic_swap": 126.875,
+    "low_25_from_Rare_20_swaps": 4918.75,
+    "high_25_from_Common_20_swaps": 8884.375
+   },
+   "RF10": {
+    "avg_epic_from_Rare": 85.125,
+    "avg_epic_from_Common": 226.125,
+    "avg_epic_swap": 112.875,
+    "low_25_from_Rare_20_swaps": 4385.625,
+    "high_25_from_Common_20_swaps": 7910.625
+   }
+  },
+  "T14_with_new_fees": {
+   "free | no crafting": {
+    "extra_gold": 0,
+    "maxed": {
+     "classic": "8/10",
+     "crafter": "8/10",
+     "rusher": "7/10"
+    },
+    "pressure_pct": {
+     "classic": 105.9,
+     "crafter": 106.5,
+     "rusher": 106.6
+    },
+    "rf7_at": {
+     "classic": 85.0,
+     "crafter": 53.1,
+     "rusher": 27.5
+    }
+   },
+   "boosted | no crafting": {
+    "extra_gold": 0,
+    "maxed": {
+     "classic": "10/10",
+     "crafter": "10/10",
+     "rusher": "10/10"
+    },
+    "pressure_pct": {
+     "classic": 83.1,
+     "crafter": 83.5,
+     "rusher": 84.3
+    },
+    "rf7_at": {
+     "classic": 57.1,
+     "crafter": 32.2,
+     "rusher": 15.7
+    }
+   },
+   "free | NEW 25 Epic from Rare + 20 Epic swaps, RF7": {
+    "extra_gold": 4919,
+    "maxed": {
+     "classic": "7/10",
+     "crafter": "7/10",
+     "rusher": "7/10"
+    },
+    "pressure_pct": {
+     "classic": 108.9,
+     "crafter": 109.4,
+     "rusher": 109.4
+    },
+    "rf7_at": {
+     "classic": 90.0,
+     "crafter": 55.3,
+     "rusher": 27.5
+    }
+   },
+   "boosted | NEW 25 Epic from Rare + 20 Epic swaps, RF7": {
+    "extra_gold": 4919,
+    "maxed": {
+     "classic": "10/10",
+     "crafter": "10/10",
+     "rusher": "10/10"
+    },
+    "pressure_pct": {
+     "classic": 85.4,
+     "crafter": 85.8,
+     "rusher": 86.6
+    },
+    "rf7_at": {
+     "classic": 58.3,
+     "crafter": 32.2,
+     "rusher": 15.7
+    }
+   },
+   "free | NEW 25 Epic from Common + 20 Epic swaps, RF7": {
+    "extra_gold": 8884,
+    "maxed": {
+     "classic": "6/10",
+     "crafter": "6/10",
+     "rusher": "5/10"
+    },
+    "pressure_pct": {
+     "classic": 111.4,
+     "crafter": 111.7,
+     "rusher": 111.7
+    },
+    "rf7_at": {
+     "classic": 94.5,
+     "crafter": 57.4,
+     "rusher": 27.5
+    }
+   },
+   "boosted | NEW 25 Epic from Common + 20 Epic swaps, RF7": {
+    "extra_gold": 8884,
+    "maxed": {
+     "classic": "10/10",
+     "crafter": "10/10",
+     "rusher": "10/10"
+    },
+    "pressure_pct": {
+     "classic": 87.2,
+     "crafter": 87.7,
+     "rusher": 88.5
+    },
+    "rf7_at": {
+     "classic": 59.6,
+     "crafter": 32.2,
+     "rusher": 15.7
+    }
+   },
+   "free | NEW 25 Epic from Common + 20 Epic swaps, RF10": {
+    "extra_gold": 7911,
+    "maxed": {
+     "classic": "7/10",
+     "crafter": "6/10",
+     "rusher": "6/10"
+    },
+    "pressure_pct": {
+     "classic": 110.8,
+     "crafter": 111.1,
+     "rusher": 111.1
+    },
+    "rf7_at": {
+     "classic": 93.3,
+     "crafter": 56.9,
+     "rusher": 27.5
+    }
+   },
+   "boosted | NEW 25 Epic from Common + 20 Epic swaps, RF10": {
+    "extra_gold": 7911,
+    "maxed": {
+     "classic": "10/10",
+     "crafter": "10/10",
+     "rusher": "10/10"
+    },
+    "pressure_pct": {
+     "classic": 86.8,
+     "crafter": 87.2,
+     "rusher": 88.0
+    },
+    "rf7_at": {
+     "classic": 59.2,
+     "crafter": 32.2,
+     "rusher": 15.7
+    }
+   },
+   "free | OLD previous run: 45 x full Epic fee, RF7": {
+    "extra_gold": 11439,
+    "maxed": {
+     "classic": "6/10",
+     "crafter": "4/10",
+     "rusher": "5/10"
+    },
+    "pressure_pct": {
+     "classic": 112.9,
+     "crafter": 113.2,
+     "rusher": 113.2
+    },
+    "rf7_at": {
+     "classic": 97.6,
+     "crafter": 59.0,
+     "rusher": 27.5
+    }
+   },
+   "boosted | OLD previous run: 45 x full Epic fee, RF7": {
+    "extra_gold": 11439,
+    "maxed": {
+     "classic": "10/10",
+     "crafter": "10/10",
+     "rusher": "10/10"
+    },
+    "pressure_pct": {
+     "classic": 88.4,
+     "crafter": 88.9,
+     "rusher": 89.7
+    },
+    "rf7_at": {
+     "classic": 60.3,
+     "crafter": 32.2,
+     "rusher": 15.7
+    }
+   }
+  }
+ },
+ "R2": {
+  "d75": {
+   "mercury": 1553.5,
+   "levellings": 15.85,
+   "kills": 136.8,
+   "elite": 37.2,
+   "boss": 55.8,
+   "chest": 109.4,
+   "quests": 164.1,
+   "dispatch": 164.1,
+   "dismantle": 886.2,
+   "battle_drops": 503.3,
+   "dismantle_share_pct": 57.0,
+   "sulfur_loot": 13.7
+  },
+  "d100": {
+   "mercury": 1848.9,
+   "levellings": 18.87,
+   "kills": 136.8,
+   "elite": 37.2,
+   "boss": 55.8,
+   "chest": 109.4,
+   "quests": 164.1,
+   "dispatch": 164.1,
+   "dismantle": 1181.6,
+   "battle_drops": 503.3,
+   "dismantle_share_pct": 63.9,
+   "sulfur_loot": 15.2
+  },
+  "PASS": true
+ },
+ "R3": {
+  "0 events": {
+   "d75": {
+    "mercury": 1553.5,
+    "levellings": 15.85,
+    "sulfur": 13.7,
+    "rerolls": {
+     "Exalted": 13.7,
+     "Legendary": 6.8,
+     "Mythic": 4.6,
+     "Transcendent": 3.4
+    }
+   },
+   "d100": {
+    "mercury": 1848.9,
+    "levellings": 18.87,
+    "sulfur": 15.2,
+    "rerolls": {
+     "Exalted": 15.2,
+     "Legendary": 7.6,
+     "Mythic": 5.1,
+     "Transcendent": 3.8
+    }
+   }
+  },
+  "10 events": {
+   "d75": {
+    "mercury": 1603.5,
+    "levellings": 16.36,
+    "sulfur": 16.7,
+    "rerolls": {
+     "Exalted": 16.7,
+     "Legendary": 8.3,
+     "Mythic": 5.6,
+     "Transcendent": 4.2
+    }
+   },
+   "d100": {
+    "mercury": 1898.9,
+    "levellings": 19.38,
+    "sulfur": 18.2,
+    "rerolls": {
+     "Exalted": 18.2,
+     "Legendary": 9.1,
+     "Mythic": 6.1,
+     "Transcendent": 4.5
+    }
+   }
+  },
+  "20 events": {
+   "d75": {
+    "mercury": 1653.5,
+    "levellings": 16.87,
+    "sulfur": 19.7,
+    "rerolls": {
+     "Exalted": 19.7,
+     "Legendary": 9.8,
+     "Mythic": 6.6,
+     "Transcendent": 4.9
+    }
+   },
+   "d100": {
+    "mercury": 1948.9,
+    "levellings": 19.89,
+    "sulfur": 21.2,
+    "rerolls": {
+     "Exalted": 21.2,
+     "Legendary": 10.6,
+     "Mythic": 7.1,
+     "Transcendent": 5.3
+    }
+   }
+  },
+  "50 events": {
+   "d75": {
+    "mercury": 1803.5,
+    "levellings": 18.4,
+    "sulfur": 29.7,
+    "rerolls": {
+     "Exalted": 29.7,
+     "Legendary": 14.8,
+     "Mythic": 9.9,
+     "Transcendent": 7.4
+    }
+   },
+   "d100": {
+    "mercury": 2098.9,
+    "levellings": 21.42,
+    "sulfur": 31.2,
+    "rerolls": {
+     "Exalted": 31.2,
+     "Legendary": 15.6,
+     "Mythic": 10.4,
+     "Transcendent": 7.8
+    }
+   }
+  },
+  "events_to_pass_20_levellings_d75": 82,
+  "events_where_wall_equals_20.0_d75": 81.3,
+  "events_to_pass_20_levellings_d100": 23,
+  "events_where_wall_equals_20.0_d100": 22.22
+ },
+ "R4": {
+  "lines_per_item": {
+   "Uncommon": 1.69,
+   "Rare": 2.23,
+   "Epic": 2.68,
+   "Exalted": 2.68
+  },
+  "prices": {
+   "L20": {
+    "bm_rare_avg": 802,
+    "bm_epic_avg": 1925,
+    "merchant_epic_avg": 2567,
+    "bm_1H_rare_g_per_crystal": 518,
+    "mix 75/25": {
+     "stock_cost_6": 6496,
+     "g_per_crystal": 481,
+     "g_per_gem": 462,
+     "crystals_per_object": 13.5,
+     "gems_per_object": 14.1,
+     "epics_per_object": 1.5
+    },
+    "Rare 100": {
+     "stock_cost_6": 4811,
+     "g_per_crystal": 401,
+     "g_per_gem": 359,
+     "crystals_per_object": 12.0,
+     "gems_per_object": 13.4,
+     "epics_per_object": 0.0
+    },
+    "bm_epic_slot": {
+     "g_per_crystal": 642,
+     "g_per_gem": 720
+    },
+    "bm_cheapest_rare_gloves": {
+     "g_per_crystal": 258,
+     "g_per_gem": 232
+    },
+    "merchant": {
+     "rare_avg_g_per_crystal": 535,
+     "epic_avg_g_per_crystal": 856,
+     "cheapest_g_per_crystal": [
+      "Gloves Rare",
+      345
+     ],
+     "rare_avg_g_per_gem": 479,
+     "cheapest_g_per_gem": [
+      "Gloves Uncommon",
+      245
+     ]
+    }
+   },
+   "L50": {
+    "bm_rare_avg": 1151,
+    "bm_epic_avg": 2762,
+    "merchant_epic_avg": 3683,
+    "bm_1H_rare_g_per_crystal": 742,
+    "mix 75/25": {
+     "stock_cost_6": 9321,
+     "g_per_crystal": 690,
+     "g_per_gem": 663,
+     "crystals_per_object": 13.5,
+     "gems_per_object": 14.1,
+     "epics_per_object": 1.5
+    },
+    "Rare 100": {
+     "stock_cost_6": 6904,
+     "g_per_crystal": 575,
+     "g_per_gem": 515,
+     "crystals_per_object": 12.0,
+     "gems_per_object": 13.4,
+     "epics_per_object": 0.0
+    },
+    "bm_epic_slot": {
+     "g_per_crystal": 921,
+     "g_per_gem": 1032
+    },
+    "bm_cheapest_rare_gloves": {
+     "g_per_crystal": 371,
+     "g_per_gem": 332
+    },
+    "merchant": {
+     "rare_avg_g_per_crystal": 767,
+     "epic_avg_g_per_crystal": 1228,
+     "cheapest_g_per_crystal": [
+      "Gloves Rare",
+      495
+     ],
+     "rare_avg_g_per_gem": 687,
+     "cheapest_g_per_gem": [
+      "Gloves Uncommon",
+      352
+     ]
+    }
+   },
+   "L65": {
+    "bm_rare_avg": 1325,
+    "bm_epic_avg": 3180,
+    "merchant_epic_avg": 4241,
+    "bm_1H_rare_g_per_crystal": 855,
+    "mix 75/25": {
+     "stock_cost_6": 10734,
+     "g_per_crystal": 795,
+     "g_per_gem": 764,
+     "crystals_per_object": 13.5,
+     "gems_per_object": 14.1,
+     "epics_per_object": 1.5
+    },
+    "Rare 100": {
+     "stock_cost_6": 7952,
+     "g_per_crystal": 663,
+     "g_per_gem": 594,
+     "crystals_per_object": 12.0,
+     "gems_per_object": 13.4,
+     "epics_per_object": 0.0
+    },
+    "bm_epic_slot": {
+     "g_per_crystal": 1060,
+     "g_per_gem": 1189
+    },
+    "bm_cheapest_rare_gloves": {
+     "g_per_crystal": 428,
+     "g_per_gem": 383
+    },
+    "merchant": {
+     "rare_avg_g_per_crystal": 884,
+     "epic_avg_g_per_crystal": 1414,
+     "cheapest_g_per_crystal": [
+      "Gloves Rare",
+      570
+     ],
+     "rare_avg_g_per_gem": 792,
+     "cheapest_g_per_gem": [
+      "Gloves Uncommon",
+      405
+     ]
+    }
+   },
+   "L80": {
+    "bm_rare_avg": 1499,
+    "bm_epic_avg": 3599,
+    "merchant_epic_avg": 4799,
+    "bm_1H_rare_g_per_crystal": 968,
+    "mix 75/25": {
+     "stock_cost_6": 12146,
+     "g_per_crystal": 900,
+     "g_per_gem": 864,
+     "crystals_per_object": 13.5,
+     "gems_per_object": 14.1,
+     "epics_per_object": 1.5
+    },
+    "Rare 100": {
+     "stock_cost_6": 8996,
+     "g_per_crystal": 750,
+     "g_per_gem": 672,
+     "crystals_per_object": 12.0,
+     "gems_per_object": 13.4,
+     "epics_per_object": 0.0
+    },
+    "bm_epic_slot": {
+     "g_per_crystal": 1200,
+     "g_per_gem": 1345
+    },
+    "bm_cheapest_rare_gloves": {
+     "g_per_crystal": 484,
+     "g_per_gem": 433
+    },
+    "merchant": {
+     "rare_avg_g_per_crystal": 1000,
+     "epic_avg_g_per_crystal": 1600,
+     "cheapest_g_per_crystal": [
+      "Gloves Rare",
+      645
+     ],
+     "rare_avg_g_per_gem": 896,
+     "cheapest_g_per_gem": [
+      "Gloves Uncommon",
+      459
+     ]
+    }
+   },
+   "L99": {
+    "bm_rare_avg": 1720,
+    "bm_epic_avg": 4129,
+    "merchant_epic_avg": 5506,
+    "bm_1H_rare_g_per_crystal": 1110,
+    "mix 75/25": {
+     "stock_cost_6": 13936,
+     "g_per_crystal": 1032,
+     "g_per_gem": 991,
+     "crystals_per_object": 13.5,
+     "gems_per_object": 14.1,
+     "epics_per_object": 1.5
+    },
+    "Rare 100": {
+     "stock_cost_6": 10323,
+     "g_per_crystal": 860,
+     "g_per_gem": 771,
+     "crystals_per_object": 12.0,
+     "gems_per_object": 13.4,
+     "epics_per_object": 0.0
+    },
+    "bm_epic_slot": {
+     "g_per_crystal": 1376,
+     "g_per_gem": 1544
+    },
+    "bm_cheapest_rare_gloves": {
+     "g_per_crystal": 555,
+     "g_per_gem": 497
+    },
+    "merchant": {
+     "rare_avg_g_per_crystal": 1147,
+     "epic_avg_g_per_crystal": 1835,
+     "cheapest_g_per_crystal": [
+      "Gloves Rare",
+      740
+     ],
+     "rare_avg_g_per_gem": 1028,
+     "cheapest_g_per_gem": [
+      "Gloves Uncommon",
+      526
+     ]
+    }
+   }
+  },
+  "gold_loop_sweep": {
+   "cases": 10072,
+   "best_net_gold": {
+    "buy->sell": -344,
+    "buy->dismantle": -375,
+    "buy->upgrade->sell": -373,
+    "buy->forge Epic->sell (sells as Rare)": -399,
+    "buy->swap->sell": -389
+   },
+   "at": {
+    "buy->sell": [
+     "Gloves",
+     "Rare",
+     1
+    ],
+    "buy->dismantle": [
+     "Gloves",
+     "Rare",
+     1
+    ],
+    "buy->upgrade->sell": [
+     "Gloves",
+     "Rare",
+     1,
+     2
+    ],
+    "buy->forge Epic->sell (sells as Rare)": [
+     "Gloves",
+     1
+    ],
+    "buy->swap->sell": [
+     "Gloves",
+     "Rare",
+     1
+    ]
+   },
+   "PASS": true
+  },
+  "other_currency_loops": {
+   "mercury_buy_upgrade_dismantle_best_net": 0,
+   "crystals_buy_Rare_forge_Epic_dismantle_vs_direct": -11,
+   "gems": "never more than the item own lines; swaps destroy",
+   "sulfur": "Rare/Epic give 0 sulfur, Exalted+ never stocked",
+   "sell_ratio_of_bm_price": {
+    "Rare": 0.083,
+    "Epic": 0.056
+   },
+   "PASS": true
+  },
+  "battles_L50_80": 167,
+  "objects_in_L50_80": {
+   "1%": 1.67,
+   "2%": 3.34,
+   "3%": 5.01,
+   "5%": 8.35
+  },
+  "epic_supply_L50_80": {
+   "boosted crafter | no BM": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 0,
+    "total": [
+     15.0,
+     16.9
+    ],
+    "rf7": 32.2,
+    "maxed": 10,
+    "pressure": 83.5
+   },
+   "boosted crafter | no BM, spare gold buys MERCHANT Epics (comparison)": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 8.9,
+    "total": [
+     23.9,
+     25.8
+    ],
+    "gold": 37563,
+    "maxed": 9,
+    "pressure": 101.3,
+    "rf7": 32.2
+   },
+   "boosted crafter | 1% | 75/25 buy all": {
+    "crafted": [
+     17.4,
+     19.3
+    ],
+    "bought_epics": 2.4,
+    "total": [
+     19.8,
+     21.7
+    ],
+    "bm_rares": 7.1,
+    "gold": 16774,
+    "maxed": 10,
+    "pressure": 91.4,
+    "rf7": 32.2
+   },
+   "boosted crafter | 1% | 75/25 buy Epics only": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 2.5,
+    "total": [
+     17.5,
+     19.4
+    ],
+    "bm_rares": 0.0,
+    "gold": 7840,
+    "maxed": 10,
+    "pressure": 87.2,
+    "rf7": 32.2
+   },
+   "boosted crafter | 1% | Rare 100 buy all": {
+    "crafted": [
+     18.2,
+     20.1
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     18.2,
+     20.1
+    ],
+    "bm_rares": 9.6,
+    "gold": 12635,
+    "maxed": 10,
+    "pressure": 89.4,
+    "rf7": 32.2
+   },
+   "boosted crafter | 3% | 75/25 buy all": {
+    "crafted": [
+     19.3,
+     21.7
+    ],
+    "bought_epics": 5.3,
+    "total": [
+     24.6,
+     27.0
+    ],
+    "bm_rares": 15.8,
+    "gold": 37563,
+    "maxed": 9,
+    "pressure": 101.3,
+    "rf7": 32.2
+   },
+   "boosted crafter | 3% | 75/25 buy Epics only": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 7.1,
+    "total": [
+     22.1,
+     24.0
+    ],
+    "bm_rares": 0.0,
+    "gold": 22391,
+    "maxed": 10,
+    "pressure": 94.1,
+    "rf7": 32.2
+   },
+   "boosted crafter | 3% | Rare 100 buy all": {
+    "crafted": [
+     21.1,
+     23.5
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     21.1,
+     23.5
+    ],
+    "bm_rares": 28.5,
+    "gold": 37563,
+    "maxed": 9,
+    "pressure": 101.3,
+    "rf7": 32.2
+   },
+   "boosted crafter | 5% | 75/25 buy all": {
+    "crafted": [
+     19.3,
+     21.7
+    ],
+    "bought_epics": 5.3,
+    "total": [
+     24.6,
+     27.0
+    ],
+    "bm_rares": 15.8,
+    "gold": 37563,
+    "maxed": 9,
+    "pressure": 101.3,
+    "rf7": 32.2
+   },
+   "boosted crafter | 5% | 75/25 buy Epics only": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 11.9,
+    "total": [
+     26.9,
+     28.8
+    ],
+    "bm_rares": 0.0,
+    "gold": 37563,
+    "maxed": 9,
+    "pressure": 101.3,
+    "rf7": 32.2
+   },
+   "boosted crafter | 5% | Rare 100 buy all": {
+    "crafted": [
+     21.1,
+     23.5
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     21.1,
+     23.5
+    ],
+    "bm_rares": 28.5,
+    "gold": 37563,
+    "maxed": 9,
+    "pressure": 101.3,
+    "rf7": 32.2
+   },
+   "boosted rusher | no BM": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 0,
+    "total": [
+     15.0,
+     16.9
+    ],
+    "rf7": 15.7,
+    "maxed": 10,
+    "pressure": 84.3
+   },
+   "boosted rusher | no BM, spare gold buys MERCHANT Epics (comparison)": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 8.6,
+    "total": [
+     23.6,
+     25.5
+    ],
+    "gold": 36149,
+    "maxed": 8,
+    "pressure": 102.4,
+    "rf7": 15.7
+   },
+   "boosted rusher | 1% | 75/25 buy all": {
+    "crafted": [
+     17.4,
+     19.3
+    ],
+    "bought_epics": 2.4,
+    "total": [
+     19.8,
+     21.7
+    ],
+    "bm_rares": 7.1,
+    "gold": 16886,
+    "maxed": 10,
+    "pressure": 92.4,
+    "rf7": 15.7
+   },
+   "boosted rusher | 1% | 75/25 buy Epics only": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 2.5,
+    "total": [
+     17.5,
+     19.4
+    ],
+    "bm_rares": 0.0,
+    "gold": 7800,
+    "maxed": 10,
+    "pressure": 88.0,
+    "rf7": 15.7
+   },
+   "boosted rusher | 1% | Rare 100 buy all": {
+    "crafted": [
+     18.2,
+     20.1
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     18.2,
+     20.1
+    ],
+    "bm_rares": 9.5,
+    "gold": 12455,
+    "maxed": 10,
+    "pressure": 90.2,
+    "rf7": 15.7
+   },
+   "boosted rusher | 3% | 75/25 buy all": {
+    "crafted": [
+     19.2,
+     21.6
+    ],
+    "bought_epics": 5.1,
+    "total": [
+     24.3,
+     26.7
+    ],
+    "bm_rares": 15.3,
+    "gold": 36149,
+    "maxed": 8,
+    "pressure": 102.4,
+    "rf7": 15.7
+   },
+   "boosted rusher | 3% | 75/25 buy Epics only": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 7.2,
+    "total": [
+     22.2,
+     24.1
+    ],
+    "bm_rares": 0.0,
+    "gold": 22894,
+    "maxed": 10,
+    "pressure": 95.4,
+    "rf7": 15.7
+   },
+   "boosted rusher | 3% | Rare 100 buy all": {
+    "crafted": [
+     20.9,
+     23.4
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     20.9,
+     23.4
+    ],
+    "bm_rares": 27.5,
+    "gold": 36149,
+    "maxed": 8,
+    "pressure": 102.4,
+    "rf7": 15.7
+   },
+   "boosted rusher | 5% | 75/25 buy all": {
+    "crafted": [
+     19.2,
+     21.6
+    ],
+    "bought_epics": 5.1,
+    "total": [
+     24.3,
+     26.7
+    ],
+    "bm_rares": 15.3,
+    "gold": 36149,
+    "maxed": 8,
+    "pressure": 102.4,
+    "rf7": 15.7
+   },
+   "boosted rusher | 5% | 75/25 buy Epics only": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 11.5,
+    "total": [
+     26.5,
+     28.4
+    ],
+    "bm_rares": 0.0,
+    "gold": 36149,
+    "maxed": 8,
+    "pressure": 102.4,
+    "rf7": 15.7
+   },
+   "boosted rusher | 5% | Rare 100 buy all": {
+    "crafted": [
+     20.9,
+     23.4
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     20.9,
+     23.4
+    ],
+    "bm_rares": 27.5,
+    "gold": 36149,
+    "maxed": 8,
+    "pressure": 102.4,
+    "rf7": 15.7
+   },
+   "boosted classic | no BM": {
+    "crafted": [
+     14.4,
+     16.3
+    ],
+    "bought_epics": 0,
+    "total": [
+     14.4,
+     16.3
+    ],
+    "rf7": 57.1,
+    "maxed": 10,
+    "pressure": 83.1
+   },
+   "boosted classic | no BM, spare gold buys MERCHANT Epics (comparison)": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 9.2,
+    "total": [
+     9.2,
+     9.2
+    ],
+    "gold": 38650,
+    "maxed": 9,
+    "pressure": 101.4,
+    "rf7": 86.1
+   },
+   "boosted classic | 1% | 75/25 buy all": {
+    "crafted": [
+     16.3,
+     18.1
+    ],
+    "bought_epics": 2.3,
+    "total": [
+     18.6,
+     20.4
+    ],
+    "bm_rares": 6.9,
+    "gold": 16281,
+    "maxed": 10,
+    "pressure": 90.6,
+    "rf7": 61.9
+   },
+   "boosted classic | 1% | 75/25 buy Epics only": {
+    "crafted": [
+     14.2,
+     16.1
+    ],
+    "bought_epics": 2.4,
+    "total": [
+     16.6,
+     18.5
+    ],
+    "bm_rares": 0.0,
+    "gold": 7652,
+    "maxed": 10,
+    "pressure": 86.6,
+    "rf7": 58.7
+   },
+   "boosted classic | 1% | Rare 100 buy all": {
+    "crafted": [
+     17.3,
+     19.1
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     17.3,
+     19.1
+    ],
+    "bm_rares": 9.4,
+    "gold": 12340,
+    "maxed": 10,
+    "pressure": 88.8,
+    "rf7": 60.1
+   },
+   "boosted classic | 3% | 75/25 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 5.4,
+    "total": [
+     5.4,
+     5.4
+    ],
+    "bm_rares": 16.3,
+    "gold": 38650,
+    "maxed": 9,
+    "pressure": 101.4,
+    "rf7": 86.1
+   },
+   "boosted classic | 3% | 75/25 buy Epics only": {
+    "crafted": [
+     13.3,
+     15.0
+    ],
+    "bought_epics": 6.9,
+    "total": [
+     20.2,
+     21.9
+    ],
+    "bm_rares": 0.0,
+    "gold": 21818,
+    "maxed": 10,
+    "pressure": 93.1,
+    "rf7": 65.5
+   },
+   "boosted classic | 3% | Rare 100 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     0.0,
+     0.0
+    ],
+    "bm_rares": 29.4,
+    "gold": 38650,
+    "maxed": 9,
+    "pressure": 101.4,
+    "rf7": 86.1
+   },
+   "boosted classic | 5% | 75/25 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 5.4,
+    "total": [
+     5.4,
+     5.4
+    ],
+    "bm_rares": 16.3,
+    "gold": 38650,
+    "maxed": 9,
+    "pressure": 101.4,
+    "rf7": 86.1
+   },
+   "boosted classic | 5% | 75/25 buy Epics only": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 12.2,
+    "total": [
+     12.2,
+     12.2
+    ],
+    "bm_rares": 0.0,
+    "gold": 38650,
+    "maxed": 9,
+    "pressure": 101.4,
+    "rf7": 86.1
+   },
+   "boosted classic | 5% | Rare 100 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     0.0,
+     0.0
+    ],
+    "bm_rares": 29.4,
+    "gold": 38650,
+    "maxed": 9,
+    "pressure": 101.4,
+    "rf7": 86.1
+   },
+   "free crafter | no BM": {
+    "crafted": [
+     14.8,
+     16.7
+    ],
+    "bought_epics": 0,
+    "total": [
+     14.8,
+     16.7
+    ],
+    "rf7": 53.1,
+    "maxed": 8,
+    "pressure": 106.5
+   },
+   "free crafter | no BM, spare gold buys MERCHANT Epics (comparison)": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 4.8,
+    "total": [
+     4.8,
+     4.8
+    ],
+    "gold": 20282,
+    "maxed": 2,
+    "pressure": 119.3,
+    "rf7": null
+   },
+   "free crafter | 1% | 75/25 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 2.5,
+    "total": [
+     2.5,
+     2.5
+    ],
+    "bm_rares": 7.4,
+    "gold": 17640,
+    "maxed": 3,
+    "pressure": 117.2,
+    "rf7": null
+   },
+   "free crafter | 1% | 75/25 buy Epics only": {
+    "crafted": [
+     14.6,
+     16.5
+    ],
+    "bought_epics": 2.4,
+    "total": [
+     17.0,
+     18.9
+    ],
+    "bm_rares": 0.0,
+    "gold": 7709,
+    "maxed": 6,
+    "pressure": 111.0,
+    "rf7": 54.9
+   },
+   "free crafter | 1% | Rare 100 buy all": {
+    "crafted": [
+     17.5,
+     19.4
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     17.5,
+     19.4
+    ],
+    "bm_rares": 9.7,
+    "gold": 12855,
+    "maxed": 5,
+    "pressure": 114.1,
+    "rf7": 58.2
+   },
+   "free crafter | 3% | 75/25 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 2.9,
+    "total": [
+     2.9,
+     2.9
+    ],
+    "bm_rares": 8.6,
+    "gold": 20282,
+    "maxed": 2,
+    "pressure": 119.3,
+    "rf7": null
+   },
+   "free crafter | 3% | 75/25 buy Epics only": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 6.4,
+    "total": [
+     6.4,
+     6.4
+    ],
+    "bm_rares": 0.0,
+    "gold": 20282,
+    "maxed": 2,
+    "pressure": 119.3,
+    "rf7": null
+   },
+   "free crafter | 3% | Rare 100 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     0.0,
+     0.0
+    ],
+    "bm_rares": 15.4,
+    "gold": 20282,
+    "maxed": 2,
+    "pressure": 119.3,
+    "rf7": null
+   },
+   "free crafter | 5% | 75/25 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 2.9,
+    "total": [
+     2.9,
+     2.9
+    ],
+    "bm_rares": 8.6,
+    "gold": 20282,
+    "maxed": 2,
+    "pressure": 119.3,
+    "rf7": null
+   },
+   "free crafter | 5% | 75/25 buy Epics only": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 6.4,
+    "total": [
+     6.4,
+     6.4
+    ],
+    "bm_rares": 0.0,
+    "gold": 20282,
+    "maxed": 2,
+    "pressure": 119.3,
+    "rf7": null
+   },
+   "free crafter | 5% | Rare 100 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     0.0,
+     0.0
+    ],
+    "bm_rares": 15.4,
+    "gold": 20282,
+    "maxed": 2,
+    "pressure": 119.3,
+    "rf7": null
+   },
+   "free rusher | no BM": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 0,
+    "total": [
+     15.0,
+     16.9
+    ],
+    "rf7": 27.5,
+    "maxed": 7,
+    "pressure": 106.6
+   },
+   "free rusher | no BM, spare gold buys MERCHANT Epics (comparison)": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 4.7,
+    "total": [
+     19.7,
+     21.6
+    ],
+    "gold": 19960,
+    "maxed": 3,
+    "pressure": 119.0,
+    "rf7": 27.5
+   },
+   "free rusher | 1% | 75/25 buy all": {
+    "crafted": [
+     17.5,
+     19.4
+    ],
+    "bought_epics": 2.5,
+    "total": [
+     20.0,
+     21.9
+    ],
+    "bm_rares": 7.4,
+    "gold": 17658,
+    "maxed": 3,
+    "pressure": 117.3,
+    "rf7": 27.5
+   },
+   "free rusher | 1% | 75/25 buy Epics only": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 2.4,
+    "total": [
+     17.4,
+     19.3
+    ],
+    "bm_rares": 0.0,
+    "gold": 7532,
+    "maxed": 6,
+    "pressure": 110.9,
+    "rf7": 27.5
+   },
+   "free rusher | 1% | Rare 100 buy all": {
+    "crafted": [
+     18.1,
+     20.0
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     18.1,
+     20.0
+    ],
+    "bm_rares": 9.2,
+    "gold": 12190,
+    "maxed": 4,
+    "pressure": 113.7,
+    "rf7": 27.5
+   },
+   "free rusher | 3% | 75/25 buy all": {
+    "crafted": [
+     17.8,
+     19.7
+    ],
+    "bought_epics": 2.8,
+    "total": [
+     20.6,
+     22.5
+    ],
+    "bm_rares": 8.4,
+    "gold": 19960,
+    "maxed": 3,
+    "pressure": 119.0,
+    "rf7": 27.5
+   },
+   "free rusher | 3% | 75/25 buy Epics only": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 6.3,
+    "total": [
+     21.3,
+     23.2
+    ],
+    "bm_rares": 0.0,
+    "gold": 19960,
+    "maxed": 3,
+    "pressure": 119.0,
+    "rf7": 27.5
+   },
+   "free rusher | 3% | Rare 100 buy all": {
+    "crafted": [
+     19.2,
+     21.6
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     19.2,
+     21.6
+    ],
+    "bm_rares": 15.1,
+    "gold": 19960,
+    "maxed": 3,
+    "pressure": 119.0,
+    "rf7": 27.5
+   },
+   "free rusher | 5% | 75/25 buy all": {
+    "crafted": [
+     17.8,
+     19.7
+    ],
+    "bought_epics": 2.8,
+    "total": [
+     20.6,
+     22.5
+    ],
+    "bm_rares": 8.4,
+    "gold": 19960,
+    "maxed": 3,
+    "pressure": 119.0,
+    "rf7": 27.5
+   },
+   "free rusher | 5% | 75/25 buy Epics only": {
+    "crafted": [
+     15.0,
+     16.9
+    ],
+    "bought_epics": 6.3,
+    "total": [
+     21.3,
+     23.2
+    ],
+    "bm_rares": 0.0,
+    "gold": 19960,
+    "maxed": 3,
+    "pressure": 119.0,
+    "rf7": 27.5
+   },
+   "free rusher | 5% | Rare 100 buy all": {
+    "crafted": [
+     19.2,
+     21.6
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     19.2,
+     21.6
+    ],
+    "bm_rares": 15.1,
+    "gold": 19960,
+    "maxed": 3,
+    "pressure": 119.0,
+    "rf7": 27.5
+   },
+   "free classic | no BM": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 0,
+    "total": [
+     0.0,
+     0.0
+    ],
+    "rf7": 85.0,
+    "maxed": 8,
+    "pressure": 105.9
+   },
+   "free classic | no BM, spare gold buys MERCHANT Epics (comparison)": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 5.1,
+    "total": [
+     5.1,
+     5.1
+    ],
+    "gold": 21245,
+    "maxed": 3,
+    "pressure": 119.1,
+    "rf7": null
+   },
+   "free classic | 1% | 75/25 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 2.5,
+    "total": [
+     2.5,
+     2.5
+    ],
+    "bm_rares": 7.4,
+    "gold": 17550,
+    "maxed": 4,
+    "pressure": 116.8,
+    "rf7": null
+   },
+   "free classic | 1% | 75/25 buy Epics only": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 2.5,
+    "total": [
+     2.5,
+     2.5
+    ],
+    "bm_rares": 0.0,
+    "gold": 7863,
+    "maxed": 7,
+    "pressure": 110.8,
+    "rf7": 94.0
+   },
+   "free classic | 1% | Rare 100 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     0.0,
+     0.0
+    ],
+    "bm_rares": 9.8,
+    "gold": 12883,
+    "maxed": 6,
+    "pressure": 113.8,
+    "rf7": null
+   },
+   "free classic | 3% | 75/25 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 3.0,
+    "total": [
+     3.0,
+     3.0
+    ],
+    "bm_rares": 9.0,
+    "gold": 21245,
+    "maxed": 3,
+    "pressure": 119.1,
+    "rf7": null
+   },
+   "free classic | 3% | 75/25 buy Epics only": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 6.7,
+    "total": [
+     6.7,
+     6.7
+    ],
+    "bm_rares": 0.0,
+    "gold": 21245,
+    "maxed": 3,
+    "pressure": 119.1,
+    "rf7": null
+   },
+   "free classic | 3% | Rare 100 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     0.0,
+     0.0
+    ],
+    "bm_rares": 16.2,
+    "gold": 21245,
+    "maxed": 3,
+    "pressure": 119.1,
+    "rf7": null
+   },
+   "free classic | 5% | 75/25 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 3.0,
+    "total": [
+     3.0,
+     3.0
+    ],
+    "bm_rares": 9.0,
+    "gold": 21245,
+    "maxed": 3,
+    "pressure": 119.1,
+    "rf7": null
+   },
+   "free classic | 5% | 75/25 buy Epics only": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 6.7,
+    "total": [
+     6.7,
+     6.7
+    ],
+    "bm_rares": 0.0,
+    "gold": 21245,
+    "maxed": 3,
+    "pressure": 119.1,
+    "rf7": null
+   },
+   "free classic | 5% | Rare 100 buy all": {
+    "crafted": [
+     0.0,
+     0.0
+    ],
+    "bought_epics": 0.0,
+    "total": [
+     0.0,
+     0.0
+    ],
+    "bm_rares": 16.2,
+    "gold": 21245,
+    "maxed": 3,
+    "pressure": 119.1,
+    "rf7": null
+   }
+  },
+  "lever_sweep_boosted_max_epic_supply_L50_80": {
+   "Epic 0% | spawn 1% | price 75% | 6 items": 20.1,
+   "Epic 0% | spawn 1% | price 75% | 3 items": 18.5,
+   "Epic 0% | spawn 1% | price 90% | 6 items": 20.1,
+   "Epic 0% | spawn 1% | price 90% | 3 items": 18.6,
+   "Epic 0% | spawn 2% | price 75% | 6 items": 22.2,
+   "Epic 0% | spawn 2% | price 75% | 3 items": 20.1,
+   "Epic 0% | spawn 2% | price 90% | 6 items": 22.2,
+   "Epic 0% | spawn 2% | price 90% | 3 items": 20.1,
+   "Epic 0% | spawn 3% | price 75% | 6 items": 23.5,
+   "Epic 0% | spawn 3% | price 75% | 3 items": 21.4,
+   "Epic 0% | spawn 3% | price 90% | 6 items": 22.8,
+   "Epic 0% | spawn 3% | price 90% | 3 items": 21.5,
+   "Epic 10% | spawn 1% | price 75% | 6 items": 20.8,
+   "Epic 10% | spawn 1% | price 75% | 3 items": 18.9,
+   "Epic 10% | spawn 1% | price 90% | 6 items": 20.7,
+   "Epic 10% | spawn 1% | price 90% | 3 items": 18.9,
+   "Epic 10% | spawn 2% | price 75% | 6 items": 23.9,
+   "Epic 10% | spawn 2% | price 75% | 3 items": 20.8,
+   "Epic 10% | spawn 2% | price 90% | 6 items": 24.0,
+   "Epic 10% | spawn 2% | price 90% | 3 items": 20.7,
+   "Epic 10% | spawn 3% | price 75% | 6 items": 25.1,
+   "Epic 10% | spawn 3% | price 75% | 3 items": 22.6,
+   "Epic 10% | spawn 3% | price 90% | 6 items": 24.2,
+   "Epic 10% | spawn 3% | price 90% | 3 items": 22.7,
+   "Epic 25% | spawn 1% | price 75% | 6 items": 21.7,
+   "Epic 25% | spawn 1% | price 75% | 3 items": 19.4,
+   "Epic 25% | spawn 1% | price 90% | 6 items": 21.7,
+   "Epic 25% | spawn 1% | price 90% | 3 items": 19.3,
+   "Epic 25% | spawn 2% | price 75% | 6 items": 26.6,
+   "Epic 25% | spawn 2% | price 75% | 3 items": 21.7,
+   "Epic 25% | spawn 2% | price 90% | 6 items": 25.7,
+   "Epic 25% | spawn 2% | price 90% | 3 items": 21.7,
+   "Epic 25% | spawn 3% | price 75% | 6 items": 27.0,
+   "Epic 25% | spawn 3% | price 75% | 3 items": 24.2,
+   "Epic 25% | spawn 3% | price 90% | 6 items": 25.7,
+   "Epic 25% | spawn 3% | price 90% | 3 items": 24.3
+  }
+ },
+ "R5": {
+  "lines_to_cap": {
+   "A | LUK 10 | gear only": {
+    "T1": "never",
+    "T2": "never",
+    "T3": [
+     17,
+     [
+      7,
+      7,
+      3
+     ]
+    ],
+    "T4": [
+     10,
+     [
+      7,
+      3,
+      0
+     ]
+    ]
+   },
+   "A | LUK 10 | + Lucky (Greater) on all 3": {
+    "T1": "never",
+    "T2": "never",
+    "T3": [
+     12,
+     [
+      7,
+      5,
+      0
+     ]
+    ],
+    "T4": [
+     8,
+     [
+      7,
+      1,
+      0
+     ]
+    ]
+   },
+   "A | LUK 10 | + Fountain of Fortune": {
+    "T1": "never",
+    "T2": [
+     9,
+     [
+      7,
+      2,
+      0
+     ]
+    ],
+    "T3": [
+     6,
+     [
+      5,
+      1,
+      0
+     ]
+    ],
+    "T4": [
+     4,
+     [
+      4,
+      0,
+      0
+     ]
+    ]
+   },
+   "A | LUK 10 | + Idol of Fortune": {
+    "T1": "never",
+    "T2": [
+     9,
+     [
+      7,
+      2,
+      0
+     ]
+    ],
+    "T3": [
+     6,
+     [
+      5,
+      1,
+      0
+     ]
+    ],
+    "T4": [
+     4,
+     [
+      4,
+      0,
+      0
+     ]
+    ]
+   },
+   "A | LUK 30 | gear only": {
+    "T1": "never",
+    "T2": "never",
+    "T3": [
+     14,
+     [
+      7,
+      6,
+      1
+     ]
+    ],
+    "T4": [
+     9,
+     [
+      7,
+      1,
+      1
+     ]
+    ]
+   },
+   "A | LUK 30 | + Lucky (Greater) on all 3": {
+    "T1": "never",
+    "T2": "never",
+    "T3": [
+     10,
+     [
+      7,
+      3,
+      0
+     ]
+    ],
+    "T4": [
+     7,
+     [
+      6,
+      1,
+      0
+     ]
+    ]
+   },
+   "A | LUK 30 | + Fountain of Fortune": {
+    "T1": "never",
+    "T2": [
+     7,
+     [
+      6,
+      1,
+      0
+     ]
+    ],
+    "T3": [
+     5,
+     [
+      4,
+      1,
+      0
+     ]
+    ],
+    "T4": [
+     4,
+     [
+      3,
+      1,
+      0
+     ]
+    ]
+   },
+   "A | LUK 30 | + Idol of Fortune": {
+    "T1": "never",
+    "T2": [
+     7,
+     [
+      6,
+      1,
+      0
+     ]
+    ],
+    "T3": [
+     5,
+     [
+      4,
+      1,
+      0
+     ]
+    ],
+    "T4": [
+     4,
+     [
+      3,
+      1,
+      0
+     ]
+    ]
+   },
+   "A | LUK 60 | gear only": {
+    "T1": "never",
+    "T2": "never",
+    "T3": [
+     11,
+     [
+      7,
+      4,
+      0
+     ]
+    ],
+    "T4": [
+     7,
+     [
+      7,
+      0,
+      0
+     ]
+    ]
+   },
+   "A | LUK 60 | + Lucky (Greater) on all 3": {
+    "T1": "never",
+    "T2": [
+     16,
+     [
+      7,
+      7,
+      2
+     ]
+    ],
+    "T3": [
+     8,
+     [
+      7,
+      1,
+      0
+     ]
+    ],
+    "T4": [
+     6,
+     [
+      5,
+      1,
+      0
+     ]
+    ]
+   },
+   "A | LUK 60 | + Fountain of Fortune": {
+    "T1": [
+     12,
+     [
+      7,
+      5,
+      0
+     ]
+    ],
+    "T2": [
+     5,
+     [
+      5,
+      0,
+      0
+     ]
+    ],
+    "T3": [
+     4,
+     [
+      3,
+      1,
+      0
+     ]
+    ],
+    "T4": [
+     3,
+     [
+      2,
+      1,
+      0
+     ]
+    ]
+   },
+   "A | LUK 60 | + Idol of Fortune": {
+    "T1": [
+     12,
+     [
+      7,
+      5,
+      0
+     ]
+    ],
+    "T2": [
+     5,
+     [
+      5,
+      0,
+      0
+     ]
+    ],
+    "T3": [
+     4,
+     [
+      3,
+      1,
+      0
+     ]
+    ],
+    "T4": [
+     3,
+     [
+      2,
+      1,
+      0
+     ]
+    ]
+   },
+   "A | LUK 100 | gear only": {
+    "T1": "never",
+    "T2": [
+     19,
+     [
+      7,
+      7,
+      5
+     ]
+    ],
+    "T3": [
+     9,
+     [
+      7,
+      2,
+      0
+     ]
+    ],
+    "T4": [
+     6,
+     [
+      6,
+      0,
+      0
+     ]
+    ]
+   },
+   "A | LUK 100 | + Lucky (Greater) on all 3": {
+    "T1": "never",
+    "T2": [
+     12,
+     [
+      7,
+      4,
+      1
+     ]
+    ],
+    "T3": [
+     7,
+     [
+      6,
+      1,
+      0
+     ]
+    ],
+    "T4": [
+     5,
+     [
+      5,
+      0,
+      0
+     ]
+    ]
+   },
+   "A | LUK 100 | + Fountain of Fortune": {
+    "T1": [
+     6,
+     [
+      6,
+      0,
+      0
+     ]
+    ],
+    "T2": [
+     3,
+     [
+      3,
+      0,
+      0
+     ]
+    ],
+    "T3": [
+     2,
+     [
+      2,
+      0,
+      0
+     ]
+    ],
+    "T4": [
+     2,
+     [
+      1,
+      1,
+      0
+     ]
+    ]
+   },
+   "A | LUK 100 | + Idol of Fortune": {
+    "T1": [
+     6,
+     [
+      6,
+      0,
+      0
+     ]
+    ],
+    "T2": [
+     3,
+     [
+      3,
+      0,
+      0
+     ]
+    ],
+    "T3": [
+     2,
+     [
+      2,
+      0,
+      0
+     ]
+    ],
+    "T4": [
+     2,
+     [
+      1,
+      1,
+      0
+     ]
+    ]
+   },
+   "B | LUK 10 | gear only": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 10 | + Lucky (Greater) on all 3": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 10 | + Fountain of Fortune": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 10 | + Idol of Fortune": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 30 | gear only": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 30 | + Lucky (Greater) on all 3": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 30 | + Fountain of Fortune": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 30 | + Idol of Fortune": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 60 | gear only": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 60 | + Lucky (Greater) on all 3": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 60 | + Fountain of Fortune": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 60 | + Idol of Fortune": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": [
+     14,
+     [
+      7,
+      6,
+      1
+     ]
+    ]
+   },
+   "B | LUK 100 | gear only": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 100 | + Lucky (Greater) on all 3": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": [
+     12,
+     [
+      7,
+      5,
+      0
+     ]
+    ]
+   },
+   "B | LUK 100 | + Fountain of Fortune": {
+    "T1": "never",
+    "T2": "never",
+    "T3": "never",
+    "T4": "never"
+   },
+   "B | LUK 100 | + Idol of Fortune": {
+    "T1": "never",
+    "T2": [
+     11,
+     [
+      7,
+      3,
+      1
+     ]
+    ],
+    "T3": [
+     6,
+     [
+      6,
+      0,
+      0
+     ]
+    ],
+    "T4": [
+     5,
+     [
+      4,
+      1,
+      0
+     ]
+    ]
+   }
+  },
+  "lines_to_cap_A_if_Unit_Fortune_capped_at_1.0_per_unit": {
+   "LUK 30": {
+    "T3": [
+     18,
+     [
+      6,
+      6,
+      6
+     ]
+    ],
+    "T4": [
+     15,
+     [
+      5,
+      5,
+      5
+     ]
+    ]
+   },
+   "LUK 100": {
+    "T3": [
+     15,
+     [
+      5,
+      5,
+      5
+     ]
+    ],
+    "T4": [
+     12,
+     [
+      4,
+      4,
+      4
+     ]
+    ]
+   }
+  },
+  "max_loot_mult_7xT4_on_3_units_no_extras": {
+   "A LUK 10": 2.0,
+   "A LUK 30": 2.0,
+   "A LUK 60": 2.0,
+   "A LUK 100": 2.0,
+   "B LUK 10": 1.114,
+   "B LUK 30": 1.313,
+   "B LUK 60": 1.554,
+   "B LUK 100": 1.8
+  },
+  "B_LUK_needed_for_cap_7xT4_on_3_units": 143,
+  "clamp_random_check": {
+   "A": {
+    "samples": 100000,
+    "max_loot": 2.0,
+    "min_loot": 1.0,
+    "max_gold": 1.5,
+    "control_no_clamp_max_loot": 4.46,
+    "control_no_clamp_min_loot": 0.99
+   },
+   "B flat-first": {
+    "samples": 100000,
+    "max_loot": 2.0,
+    "min_loot": 1.0,
+    "max_gold": 1.5,
+    "control_no_clamp_max_loot": 3.95,
+    "control_no_clamp_min_loot": 0.8
+   },
+   "B flat-after": {
+    "samples": 100000,
+    "max_loot": 2.0,
+    "min_loot": 1.0,
+    "max_gold": 1.5,
+    "control_no_clamp_max_loot": 3.46,
+    "control_no_clamp_min_loot": 0.89
+   }
+  },
+  "control_thief_added_after_clamp_without_reclamp_max_loot": 2.79,
+  "income_d90": {
+   "zero Fortune": {
+    "loot_mult": 1.0,
+    "gold_mult": 1.0,
+    "equipment_drops": 218.8,
+    "crystals": 300.7,
+    "gems": 207.2,
+    "sulfur": 14.6,
+    "mercury": 1730.8,
+    "epic_plus_pct": 8.6
+   },
+   "normal team (LUK ~30, no lines)": {
+    "loot_mult": 1.13,
+    "gold_mult": 1.065,
+    "equipment_drops": 236.6,
+    "crystals": 320.2,
+    "gems": 228.5,
+    "sulfur": 15.6,
+    "mercury": 1817.5,
+    "epic_plus_pct": 9.2
+   },
+   "at the cap": {
+    "loot_mult": 2.0,
+    "gold_mult": 1.5,
+    "equipment_drops": 355.5,
+    "crystals": 466.4,
+    "gems": 385.6,
+    "sulfur": 23.0,
+    "mercury": 2395.4,
+    "epic_plus_pct": 12.9
+   }
+  },
+  "feedback_loop": {
+   "A natural gems": {
+    "trials": 100,
+    "pct_reaching_cap": 0.0,
+    "median_cap_level": null,
+    "final_loot_mult_median": 1.532,
+    "final_loot_mult_p90": 1.732,
+    "max_loot_mult_ever": 1.8675,
+    "control_max_if_no_clamp": 1.867,
+    "fortune_gems_median": 12
+   },
+   "A natural + Lucky (Greater) x3": {
+    "trials": 100,
+    "pct_reaching_cap": 1.0,
+    "median_cap_level": 85.7,
+    "final_loot_mult_median": 1.725,
+    "final_loot_mult_p90": 1.903,
+    "max_loot_mult_ever": 2.0,
+    "control_max_if_no_clamp": 2.075,
+    "fortune_gems_median": 13
+   },
+   "A + 2 shop-dismantled items per battle": {
+    "trials": 100,
+    "pct_reaching_cap": 65.0,
+    "median_cap_level": 81.1,
+    "final_loot_mult_median": 2.0,
+    "final_loot_mult_p90": 2.0,
+    "max_loot_mult_ever": 2.0,
+    "control_max_if_no_clamp": 2.246,
+    "fortune_gems_median": 68
+   },
+   "A + 2 shop items + Lucky (Greater) x3": {
+    "trials": 100,
+    "pct_reaching_cap": 100.0,
+    "median_cap_level": 59.9,
+    "final_loot_mult_median": 2.0,
+    "final_loot_mult_p90": 2.0,
+    "max_loot_mult_ever": 2.0,
+    "control_max_if_no_clamp": 2.396,
+    "fortune_gems_median": 69
+   },
+   "B natural gems": {
+    "trials": 100,
+    "pct_reaching_cap": 0.0,
+    "median_cap_level": null,
+    "final_loot_mult_median": 1.181,
+    "final_loot_mult_p90": 1.203,
+    "max_loot_mult_ever": 1.2211,
+    "control_max_if_no_clamp": 1.221,
+    "fortune_gems_median": 10
+   },
+   "B natural + Lucky (Greater) x3": {
+    "trials": 100,
+    "pct_reaching_cap": 0.0,
+    "median_cap_level": null,
+    "final_loot_mult_median": 1.398,
+    "final_loot_mult_p90": 1.443,
+    "max_loot_mult_ever": 1.483,
+    "control_max_if_no_clamp": 1.483,
+    "fortune_gems_median": 12
+   },
+   "B + 2 shop-dismantled items per battle": {
+    "trials": 100,
+    "pct_reaching_cap": 0.0,
+    "median_cap_level": null,
+    "final_loot_mult_median": 1.246,
+    "final_loot_mult_p90": 1.261,
+    "max_loot_mult_ever": 1.2691,
+    "control_max_if_no_clamp": 1.269,
+    "fortune_gems_median": 58
+   },
+   "B + 2 shop items + Lucky (Greater) x3": {
+    "trials": 100,
+    "pct_reaching_cap": 0.0,
+    "median_cap_level": null,
+    "final_loot_mult_median": 1.527,
+    "final_loot_mult_p90": 1.563,
+    "max_loot_mult_ever": 1.5756,
+    "control_max_if_no_clamp": 1.576,
+    "fortune_gems_median": 63
+   }
+  },
+  "inputs": {
+   "unit_fortune": "lp9 LUK/(LUK+200)",
+   "expedition": "lp10 top + 50% 2nd + 25% 3rd",
+   "normalized": "lp11 /1.75",
+   "loot": "lp12 1+N",
+   "gold": "lp17 1+0.5N",
+   "lucky": "unit_traits 73/197 flat +10/+15%",
+   "idol": "oe32 +0.5 normalized (= +0.875 EF), clamped 1.75",
+   "fountain": "oe33 \"Fortune +50% to all allies\": read as flat +0.5 Unit Fortune under A, +50% in the multiplier pool under B (DB does not say)",
+   "thief": "doctrines 11: +50% of Thief Unit Fortune to EF for that reward",
+   "lines": "bonus_numerical_attributes 70-73 +5/10/15/20%, one per item, 7 items per unit max (1H+off-hand)",
+   "LUK_growth": "LUK = 1 + 0.3 x (L-1) (same as previous run)",
+   "fortune_gem_share": "1/22 of gem lines (previous run assumption)"
+  }
+ },
+ "previous_run": {
+  "T14_prev_free_with_crafting": {
+   "classic": 112.9,
+   "crafter": 113.2,
+   "rusher": 113.2
+  },
+  "T14_prev_boosted_with_crafting": {
+   "classic": 88.4,
+   "crafter": 88.9,
+   "rusher": 89.7
+  },
+  "T12_prev": {
+   "d75": 18.9,
+   "d100": 21.9
+  },
+  "T9_prev": {
+   "free classic": {
+    "rf7_at_level": 85.0,
+    "crafted_epics_L50_80_saver": [
+     0,
+     0
+    ]
+   },
+   "free crafter": {
+    "rf7_at_level": 53.1,
+    "crafted_epics_L50_80_saver": [
+     14.8,
+     16.7
+    ]
+   },
+   "free rusher": {
+    "rf7_at_level": 27.5,
+    "crafted_epics_L50_80_saver": [
+     15.0,
+     16.9
+    ]
+   },
+   "boosted classic": {
+    "rf7_at_level": 57.1,
+    "crafted_epics_L50_80_saver": [
+     14.4,
+     16.3
+    ],
+    "with_shop_dismantle_of_leftover_gold": 19.6
+   },
+   "boosted crafter": {
+    "rf7_at_level": 32.2,
+    "crafted_epics_L50_80_saver": [
+     15.0,
+     16.9
+    ],
+    "with_shop_dismantle_of_leftover_gold": 20.3
+   },
+   "boosted rusher": {
+    "rf7_at_level": 15.7,
+    "crafted_epics_L50_80_saver": [
+     15.0,
+     16.9
+    ],
+    "with_shop_dismantle_of_leftover_gold": 20.2
+   },
+   "natural_epic_plus_L50_80": 5.7,
+   "gold_per_crafted_epic_1H_fresh_drop": {
+    "forge_fee_RF7": 328,
+    "catch_up": 0,
+    "epic_step_fee_if_on": {
+     "Rare": 700,
+     "Uncommon": 900,
+     "Common": 1000
+    },
+    "shop_epic_L50": 4752,
+    "shop_epic_L80": 6192
+   },
+   "note": "v2 crafted Epics are crystal-limited, not gold-limited: a fresh drop has credit 0, so catch-up = 0; gold = forge fee only"
+  },
+  "T18_prev_cap": {
+   "multiplier": 2.0,
+   "drops_lifetime": 355.5,
+   "crystals": 466.4,
+   "gems": 385.6,
+   "sulfur": 23.0,
+   "mercury": 2696.3,
+   "epic_plus_share_pct": 12.85,
+   "battle_gold_mult": 1.5
+  }
+ },
+ "determinism": {
+  "two_runs_identical": true,
+  "md5_of_results_body": "f576a6212d1b59b26e5c00f2f8def9b6"
+ },
+ "code": "\nimport json, math, random, itertools, hashlib, time\nD = r'D:\\AI\\Projects\\CTRBLXAI\\sim\\runeforge_v2_2026-11-01'\nfor _f in ('v2_core.py', 'v2_tests_b.py', 'v2_tests_c.py'):\n    exec(open(D + '\\\\' + _f, encoding='utf-8').read(), globals())\nPREV = json.load(open(D + r'\\results_v2.json', encoding='utf-8'))\nSL8 = list(BASE)\ndef _compress(p):\n    out = []\n    for t, b in p:\n        if out and out[-1][1] == b: out[-1] = (t, b)\n        else: out.append((t, b))\n    return out\nP_need = _compress([(t, bs_needed(t)) for t in range(2, 100)])\n# ---------- R1 ----------\nFM10 = {'Common': 0, 'Uncommon': 15, 'Rare': 25, 'Epic': 40}\ndef dsc(rfl): return 3 * (rfl - 1)\ndef Pm(slot, rar, rfl): return BASE[slot] * FM10[rar] * (100 - dsc(rfl)) // 1000\ndef ffee(slot, old, new, rfl): return Pm(slot, new, rfl) - Pm(slot, old, rfl)\ndef sfee(slot, rar, rfl): return BASE[slot] * R10[rar] * (100 - dsc(rfl)) // 2000\nR1 = {}\nEXP_ONE = {'1H': (150, 250, 400, 292), '2H': (225, 375, 600, 438), 'Body': (120, 200, 320, 233), 'Off-Hand': (90, 150, 240, 175), 'Head': (90, 150, 240, 175), 'Accessory': (105, 175, 280, 204), 'Gloves': (75, 125, 200, 146), 'Feet': (75, 125, 200, 146)}\nEXP_SWAP = {'1H': (75, 125, 200, 146), '2H': (112, 187, 300, 219), 'Body': (60, 100, 160, 116), 'Off-Hand': (45, 75, 120, 87), 'Head': (45, 75, 120, 87), 'Accessory': (52, 87, 140, 102), 'Gloves': (37, 62, 100, 73), 'Feet': (37, 62, 100, 73)}\ntab = {}; bad = []\nfor s in SL8:\n    one = (ffee(s, 'Common', 'Uncommon', 1), ffee(s, 'Common', 'Rare', 1), ffee(s, 'Common', 'Epic', 1), ffee(s, 'Common', 'Epic', 10))\n    sw = (sfee(s, 'Uncommon', 1), sfee(s, 'Rare', 1), sfee(s, 'Epic', 1), sfee(s, 'Epic', 10))\n    tab[s] = dict(one_forge_U_R_E_E10=one, swap_U_R_E_E10=sw, swap_RF10_U_R_E=(sfee(s, 'Uncommon', 10), sfee(s, 'Rare', 10), sfee(s, 'Epic', 10)))\n    if one != EXP_ONE[s]: bad.append(('one', s, one, EXP_ONE[s]))\n    if sw != EXP_SWAP[s]: bad.append(('swap', s, sw, EXP_SWAP[s]))\nR1['fee_tables'] = tab; R1['fee_table_mismatches_vs_draft'] = bad\nR1['1H_steps_RF1'] = [ffee('1H', 'Common', 'Uncommon', 1), ffee('1H', 'Uncommon', 'Rare', 1), ffee('1H', 'Rare', 'Epic', 1)]\nR1['1H_steps_RF10'] = [ffee('1H', 'Common', 'Uncommon', 10), ffee('1H', 'Uncommon', 'Rare', 10), ffee('1H', 'Rare', 'Epic', 10)]\nLAD = ['Common', 'Uncommon', 'Rare', 'Epic']\npaths = 0; pm = 0\nfor s in SL8:\n    for rfl in range(1, 11):\n        for a in range(4):\n            for b in range(a + 1, 4):\n                mids = LAD[a + 1:b]\n                for k in range(len(mids) + 1):\n                    for sub in itertools.combinations(mids, k):\n                        seq = [LAD[a]] + list(sub) + [LAD[b]]\n                        tot = sum(ffee(s, seq[i], seq[i + 1], rfl) for i in range(len(seq) - 1))\n                        paths += 1; pm += tot != ffee(s, LAD[a], LAD[b], rfl)\nR1['steps_equal_one_forge_same_RF'] = dict(paths=paths, mismatches=pm)\nover = 0; under = 0; n = 0\nfor s in SL8:\n    for r1 in range(1, 11):\n        for r2 in range(r1, 11):\n            for r3 in range(r2, 11):\n                tot = ffee(s, 'Common', 'Uncommon', r1) + ffee(s, 'Uncommon', 'Rare', r2) + ffee(s, 'Rare', 'Epic', r3)\n                over = max(over, tot - ffee(s, 'Common', 'Epic', r1)); under = min(under, tot - ffee(s, 'Common', 'Epic', r3)); n += 1\nR1['steps_with_RF_upgrades_between'] = dict(cases=n, max_above_price_at_first_RF=over, max_below_price_at_last_RF=under)\nR1['raise_vs_swap_1H_RF1'] = {'C>U raise': ffee('1H', 'Common', 'Uncommon', 1), 'U swap': sfee('1H', 'Uncommon', 1), 'U>R raise': ffee('1H', 'Uncommon', 'Rare', 1), 'R swap': sfee('1H', 'Rare', 1), 'R>E raise': ffee('1H', 'Rare', 'Epic', 1), 'E swap': sfee('1H', 'Epic', 1)}\ndef run_route(slot, start, F, plan, forge_at, rf_at):\n    it = new_item(slot, start, F); fee = 0\n    for i in range(len(plan) + 1):\n        for tgt in forge_at.get(i, []):\n            fee += ffee(slot, it.rar, tgt, rf_at(i)); it.forge(tgt)\n        if i < len(plan): it.upgrade(*plan[i])\n    return it, fee\nT1f = {}\nfor s in ('1H', '2H', 'Body', 'Gloves'):\n    for rfl in (1, 10):\n        tots = {}; L = len(P_need)\n        for nm, fa in {'one forge at L1': {0: ['Epic']}, 'one forge at L99': {L: ['Epic']}, 'steps L1/L50/L99': {0: ['Uncommon'], 5: ['Rare'], L: ['Epic']}, 'steps all at L1': {0: ['Uncommon', 'Rare', 'Epic']}}.items():\n            it, fee = run_route(s, 'Common', 1, P_need, fa, lambda i: rfl)\n            tots[nm] = it.gold + fee\n        T1f[f'{s} RF{rfl}'] = tots\nR1['T1_with_fees'] = T1f\nR1['T1_with_fees_all_equal'] = all(len(set(v.values())) == 1 for v in T1f.values())\nrng1 = random.Random(SEED + 101)\nmism = 0; mixed_viol = 0; n = 0\nfor k in range(6000):\n    slot = rng1.choice(SL8); F = rng1.randint(1, 60); lv = F; b = rng1.randint(1, 10); plan = []\n    while lv < 99:\n        b = min(10, b + (1 if rng1.random() < 0.3 else 0)); to = min(99, lv + rng1.randint(1, 15)); plan.append((to, b)); lv = to\n    start = rng1.choice(['Common', 'Uncommon', 'Rare']); steps = LAD[LAD.index(start) + 1:]\n    ref = new_item(slot, start, F)\n    for p_ in plan: ref.upgrade(*p_)\n    rfl = rng1.randint(1, 10); target = paid(ref.C(), 40) + ffee(slot, start, 'Epic', rfl)\n    for rep in range(4):\n        pos = sorted(rng1.randint(0, len(plan)) for _ in steps); fa = {}\n        for p_, st in zip(pos, steps): fa.setdefault(p_, []).append(st)\n        it, fee = run_route(slot, start, F, plan, fa, lambda i: rfl)\n        n += 1; mism += (it.gold + fee) != target\n        r0 = rng1.randint(1, 10); rise = sorted(rng1.randint(r0, 10) for _ in range(len(plan) + 1))\n        it2, fee2 = run_route(slot, start, F, plan, fa, lambda i: rise[i])\n        mixed_viol += not (ffee(slot, start, 'Epic', rise[-1]) <= fee2 <= ffee(slot, start, 'Epic', rise[0]))\nR1['T1T2_random_never_downgraded'] = dict(routes=n, mismatches_same_RF=mism, rising_RF_outside_bounds=mixed_viol)\nit, fee = run_route('1H', 'Common', 1, [(50, 5), (99, 10)], {0: ['Epic']}, lambda i: 1)\nit2, fee2 = run_route('1H', 'Common', 1, [(50, 5), (99, 10)], {1: ['Uncommon'], 2: ['Rare', 'Epic']}, lambda i: 1)\nR1['T2_mixed_1H'] = dict(levelling=it.gold, fee=fee, total_one_forge=it.gold + fee, total_steps=it2.gold + fee2)\ndef t3_route(variant, r):\n    slot = r.choice(SL8); start = r.choice(['Common', 'Uncommon', 'Rare', 'Epic']); F = r.choice([1, 1, 1, r.randint(1, 80)])\n    it = new_item(slot, start, F, variant); bsl = r.randint(1, 10); rfl = r.randint(1, 10); downs = 0; fee = 0; rf_seen = rfl\n    for _ in range(r.randint(3, 30)):\n        op = r.random(); cap = 99 if bsl == 10 else bsl * 10\n        if op < 0.12 and bsl < 10: bsl += 1\n        elif op < 0.20 and rfl < 10: rfl += 1\n        elif op < 0.55:\n            if it.level < cap and bsl >= BS_UNLOCK[it.rar]: it.upgrade(r.randint(it.level + 1, cap), bsl)\n        elif op < 0.80:\n            if it.level > 1: it.downgrade(r.randint(1, it.level - 1), bsl); downs += 1\n        else:\n            if it.rar != 'Epic':\n                tgt = RAR[r.randint(RIDX[it.rar] + 1, RIDX['Epic'])]; fee += ffee(slot, it.rar, tgt, rfl); it.forge(tgt)\n            else: fee += sfee(slot, 'Epic', rfl)\n        rf_seen = max(rf_seen, rfl)\n    Fs, ps = it.shadow_state(); Cf = it._C_of(Fs, ps)\n    straight = paid(Cf, R10[it.rar]) + ffee(slot, start, it.rar, rf_seen)\n    return dict(gap=it.gold + fee - straight, merc_gap=it.merc - (it.level - Fs), downs=downs, pairs=it.max_pairs)\nT3f = {}\nfor variant in ('exact', 'reset'):\n    r = random.Random(SEED + 200 + (variant == 'reset')); gaps = []; mg = []; mp = 0\n    for k in range(20000):\n        d_ = t3_route(variant, r)\n        if d_['downs']: gaps.append(d_['gap']); mg.append(d_['merc_gap']); mp = max(mp, d_['pairs'])\n    T3f[variant] = dict(routes_with_downgrade=len(gaps), routes_cheaper=sum(g < 0 for g in gaps), min_gap=min(gaps), min_merc_gap=min(mg), max_pairs=mp)\nex_ = {}\nfor mode in ('early', 'middle', 'late'):\n    it = new_item('1H', 'Common', 1); fee = 0\n    if mode == 'early': fee += ffee('1H', 'Common', 'Epic', 1); it.forge('Epic')\n    it.upgrade(60, 6); it.downgrade(30, 6)\n    if mode == 'middle': fee += ffee('1H', 'Common', 'Epic', 1); it.forge('Epic')\n    it.upgrade(60, 10)\n    if mode == 'late': fee += ffee('1H', 'Common', 'Epic', 1); it.forge('Epic')\n    ex_[mode] = it.gold + fee\nst = new_item('1H', 'Common', 1); st.upgrade(30, 6); st.upgrade(60, 10); st.forge('Epic'); ex_['straight'] = st.gold + 400\nT3f['example_incl_400g_fee'] = ex_\nR1['T3_with_fees'] = T3f\ndef avg_fee(fn): return sum(fn(s) for s in SL8) / len(SL8)\nSC = {}\nfor rfl in (7, 10):\n    f_rare = avg_fee(lambda s: ffee(s, 'Rare', 'Epic', rfl)); f_com = avg_fee(lambda s: ffee(s, 'Common', 'Epic', rfl)); f_sw = avg_fee(lambda s: sfee(s, 'Epic', rfl))\n    SC[f'RF{rfl}'] = dict(avg_epic_from_Rare=f_rare, avg_epic_from_Common=f_com, avg_epic_swap=f_sw, low_25_from_Rare_20_swaps=25 * f_rare + 20 * f_sw, high_25_from_Common_20_swaps=25 * f_com + 20 * f_sw)\nR1['craft_fee_scenarios'] = SC\nscen = {'no crafting': 0, 'NEW 25 Epic from Rare + 20 Epic swaps, RF7': SC['RF7']['low_25_from_Rare_20_swaps'], 'NEW 25 Epic from Common + 20 Epic swaps, RF7': SC['RF7']['high_25_from_Common_20_swaps'],\n        'NEW 25 Epic from Common + 20 Epic swaps, RF10': SC['RF10']['high_25_from_Common_20_swaps'], 'OLD previous run: 45 x full Epic fee, RF7': 45 * AVG_SLOT * 4 * 0.82}\nT14n = {}\nfor nm, x in scen.items():\n    for who, mult in (('free', 1.0), ('boosted', 1.25)):\n        rr = {s: fac_sim(g, mult, craft_extra(x) if x else None) for s, g in STRATS.items()}\n        T14n[f'{who} | {nm}'] = dict(extra_gold=round(x), maxed={s: f\"{v['maxed']}/10\" for s, v in rr.items()}, pressure_pct={s: v['spending_pressure_pct'] for s, v in rr.items()}, rf7_at={s: v['rf7_at_level'] for s, v in rr.items()})\nR1['T14_with_new_fees'] = T14n\n# ---------- R2 / R3 ----------\nR2 = {}\nfor d_ in (0.75, 1.0):\n    lt = lifetime(d=d_, kill_p=0.05, dispatch=0.3)\n    R2[f'd{int(d_*100)}'] = dict(mercury=lt['mercury'], levellings=round(lt['mercury'] / 98, 2), kills=lt['merc_kill'], elite=lt['merc_elite'], boss=lt['merc_boss'], chest=lt['merc_chest'], quests=lt['merc_quest'],\n                                dispatch=lt['merc_dispatch'], dismantle=lt['merc_dismantle'], battle_drops=round(lt['merc_kill'] + lt['merc_elite'] + lt['merc_boss'] + lt['merc_chest'] + lt['merc_quest'], 1),\n                                dismantle_share_pct=round(100 * lt['merc_dismantle'] / lt['mercury'], 1), sulfur_loot=lt['sulfur'])\nR2['PASS'] = abs(R2['d75']['levellings'] - 15.9) <= 0.15 and abs(R2['d100']['levellings'] - 18.9) <= 0.15\nR3 = {}\nfor E in (0, 10, 20, 50):\n    row_ = {}\n    for dk in ('d75', 'd100'):\n        m = R2[dk]['mercury'] + 5 * E; s_ = R2[dk]['sulfur_loot'] + E // 3\n        row_[dk] = dict(mercury=round(m, 1), levellings=round(m / 98, 2), sulfur=round(s_, 1), rerolls=dict(Exalted=round(s_, 1), Legendary=round(s_ / 2, 1), Mythic=round(s_ / 3, 1), Transcendent=round(s_ / 4, 1)))\n    R3[f'{E} events'] = row_\nfor dk in ('d75', 'd100'):\n    need = 20 * 98 - R2[dk]['mercury']\n    R3[f'events_to_pass_20_levellings_{dk}'] = max(0, math.floor(need / 5) + 1); R3[f'events_where_wall_equals_20.0_{dk}'] = round(need / 5, 2)\n# ---------- R4 ----------\nR4 = {}\ndef bm_price(slot, rar, L, pct=75): return shop(slot, rar, L) * pct // 100\ndef mean(xs): xs = list(xs); return sum(xs) / len(xs)\nLN = {r: LINES[r] for r in ('Uncommon', 'Rare', 'Epic', 'Exalted')}\nR4['lines_per_item'] = {r: round(v, 2) for r, v in LN.items()}\nprices = {}\nfor L in (20, 50, 65, 80, 99):\n    br = mean(bm_price(s, 'Rare', L) for s in SL8); be = mean(bm_price(s, 'Epic', L) for s in SL8); mr = mean(shop(s, 'Rare', L) for s in SL8); me = mean(shop(s, 'Epic', L) for s in SL8)\n    row_ = dict(bm_rare_avg=round(br), bm_epic_avg=round(be), merchant_epic_avg=round(me), bm_1H_rare_g_per_crystal=round(bm_price('1H', 'Rare', L) / 2))\n    for nm, e in (('mix 75/25', 0.25), ('Rare 100', 0.0)):\n        pr = (1 - e) * br + e * be; cr = (1 - e) * 2 + e * 3; gm = (1 - e) * LN['Rare'] + e * LN['Epic']\n        row_[nm] = dict(stock_cost_6=round(6 * pr), g_per_crystal=round(pr / cr), g_per_gem=round(pr / gm), crystals_per_object=round(6 * cr, 1), gems_per_object=round(6 * gm, 1), epics_per_object=6 * e)\n    row_['bm_epic_slot'] = dict(g_per_crystal=round(be / 3), g_per_gem=round(be / LN['Epic']))\n    row_['bm_cheapest_rare_gloves'] = dict(g_per_crystal=round(bm_price('Gloves', 'Rare', L) / 2), g_per_gem=round(bm_price('Gloves', 'Rare', L) / LN['Rare']))\n    opts_c = {f'{s} {r}': shop(s, r, L) / DIS_CRY[r] for s in SL8 for r in ('Uncommon', 'Rare', 'Epic', 'Exalted')}\n    opts_g = {f'{s} {r}': shop(s, r, L) / LN[r] for s in SL8 for r in ('Uncommon', 'Rare', 'Epic', 'Exalted')}\n    kc = min(opts_c, key=opts_c.get); kg = min(opts_g, key=opts_g.get)\n    row_['merchant'] = dict(rare_avg_g_per_crystal=round(mr / 2), epic_avg_g_per_crystal=round(me / 3), cheapest_g_per_crystal=(kc, round(opts_c[kc])), rare_avg_g_per_gem=round(mr / LN['Rare']), cheapest_g_per_gem=(kg, round(opts_g[kg])))\n    prices[f'L{L}'] = row_\nR4['prices'] = prices\nworst = {}\ndef upd(k, v, d):\n    if k not in worst or v > worst[k][0]: worst[k] = (v, d)\nnc = 0\nfor s in SL8:\n    for rar in ('Rare', 'Epic'):\n        for L in range(1, 100):\n            p = bm_price(s, rar, L)\n            upd('buy->sell', sell(s, rar, L) - p, (s, rar, L)); upd('buy->dismantle', -p, (s, rar, L)); nc += 2\n            for e2 in sorted({min(99, L + 1), min(99, L + 10), 99}):\n                if e2 <= L: continue\n                it = new_item(s, rar, L); g = it.upgrade(e2, 10); upd('buy->upgrade->sell', sell(s, rar, e2) - g - p, (s, rar, L, e2)); nc += 1\n            if rar == 'Rare': upd('buy->forge Epic->sell (sells as Rare)', sell(s, 'Rare', L) - ffee(s, 'Rare', 'Epic', 10) - p, (s, L)); nc += 1\n            upd('buy->swap->sell', sell(s, rar, L) - sfee(s, rar, 10) - p, (s, rar, L)); nc += 1\nR4['gold_loop_sweep'] = dict(cases=nc, best_net_gold={k: v[0] for k, v in worst.items()}, at={k: v[1] for k, v in worst.items()}, PASS=all(v[0] < 0 for v in worst.values()))\nbest_m = max(dis_merc(e2) - dis_merc(s0) - (e2 - s0) for s0 in range(1, 99) for e2 in range(s0 + 1, 100))\nR4['other_currency_loops'] = dict(mercury_buy_upgrade_dismantle_best_net=best_m, crystals_buy_Rare_forge_Epic_dismantle_vs_direct=DIS_CRY['Epic'] - forge_crystals('Rare', 'Epic') - DIS_CRY['Rare'],\n    gems='never more than the item own lines; swaps destroy', sulfur='Rare/Epic give 0 sulfur, Exalted+ never stocked',\n    sell_ratio_of_bm_price=dict(Rare=round(sell('1H', 'Rare', 50) / bm_price('1H', 'Rare', 50), 3), Epic=round(sell('1H', 'Epic', 50) / bm_price('1H', 'Epic', 50), 3)), PASS=best_m <= 0)\nWIN = [b for b in range(N_B) if 50 <= lvl_at(b) < 80]\nR4['battles_L50_80'] = len(WIN); R4['objects_in_L50_80'] = {f'{int(p*100)}%': round(p * len(WIN), 2) for p in (0.01, 0.02, 0.03, 0.05)}\nMER_EPIC_PER_BATTLE = 10 * 0.15 / 5\ndef bm_obj(L, e, policy, pct=75, stock=6):\n    Lr = max(1, math.floor(L))\n    br = mean(bm_price(s, 'Rare', Lr, pct) for s in SL8); be = mean(bm_price(s, 'Epic', Lr, pct) for s in SL8)\n    if policy == 'all': return stock * ((1 - e) * br + e * be), stock * (1 - e), stock * e\n    if policy == 'epics': return stock * e * be, 0.0, stock * e\n    if policy == 'merchant epics': return MER_EPIC_PER_BATTLE * mean(shop(s, 'Epic', Lr) for s in SL8), 0.0, MER_EPIC_PER_BATTLE\ndef fac_sim_bm(groups, mult, p, e, policy, pct=75, stock=6):\n    lv = {k: 0 for k in FAC}; fund = 500.0; saved = 0.0; bsp = bs_profile(); ev = {}; rares = 0.0; epics = 0.0; spent = 0.0\n    def can(f):\n        if lv[f] >= FMAX[f]: return False\n        if f == 'Guild Hall': return True\n        return lv['Guild Hall'] >= max(UNLOCK_GH[f], lv[f] + 1)\n    for b in range(N_B):\n        L = lvl_at(b); d = (3 * (lv['Blacksmith'] - 1)) / 100 if lv['Blacksmith'] >= 1 else 0.0\n        bs_cost = bsp[b] * (1 - d); saved += bsp[b] * d; fund += INC[b] * mult - OTHER[b] - bs_cost\n        while True:\n            req = min(10, max(1, math.ceil(math.floor(L) / 10))); pick = None\n            if lv['Blacksmith'] < req: pick = 'Blacksmith' if can('Blacksmith') else 'Guild Hall'\n            else:\n                for grp in groups:\n                    if any(lv[f] < FMAX[f] for f in grp):\n                        cands = [f for f in grp if can(f)]; blocked = [f for f in grp if lv[f] < FMAX[f] and not can(f)]\n                        if blocked and can('Guild Hall') and 'Guild Hall' not in cands: cands.append('Guild Hall')\n                        if cands: pick = min(cands, key=lambda f: FAC[f][lv[f]])\n                        break\n            if pick is None or FAC[pick][lv[pick]] > fund: break\n            fund -= FAC[pick][lv[pick]]; lv[pick] += 1; ev.setdefault(pick, {})[lv[pick]] = round(L, 1)\n        if p and 50 <= L < 80:\n            cost, nr, ne = bm_obj(L, e, policy, pct, stock); q = 1.0 if policy == 'merchant epics' else p; want = q * cost\n            if want > 0:\n                sp = min(want, max(0.0, fund)); fr_ = sp / want; fund -= sp; spent += sp; rares += q * nr * fr_; epics += q * ne * fr_\n    return dict(maxed=sum(1 for f in lv if lv[f] == FMAX[f]), pressure=round(100 * (NEC - saved + 70927 + spent) / (INCOME * mult), 1), rf7=ev.get('Runeforge', {}).get(7), rares=rares, epics=epics, gold=round(spent))\ndef crafted2(d, rf7, bm_rares):\n    cry0 = sum((D0 * d * PD0['crystals'] + ELITE * 3 + BOSS * 5) for b in range(N_B) if lvl_at(b) < 80)\n    start = max(50, rf7 or 99)\n    if start >= 80: return 0.0\n    win = [b for b in range(N_B) if start <= lvl_at(b) < 80]\n    rare0 = D0 * PD0['w']['Rare'] * len(win); unc = D0 * PD0['w']['Uncommon'] * len(win); best = 0.0\n    for i in range(51):\n        x = bm_rares * i / 50; cry = cry0 + 2 * x; rare = rare0 + bm_rares - x; n = 0.0\n        k = min(rare, cry / 12); n += k; cry -= 12 * k\n        k = min(unc, cry / 18); n += k; cry -= 18 * k\n        n += cry / 21; best = max(best, n)\n    return best\nEPS = {}\nfor who, mult in (('boosted', 1.25), ('free', 1.0)):\n    for sname in ('crafter', 'rusher', 'classic'):\n        base = fac_sim_bm(STRATS[sname], mult, 0, 0, 'all'); c0 = [round(crafted2(dd, base['rf7'], 0), 1) for dd in (0.75, 1.0)]\n        EPS[f'{who} {sname} | no BM'] = dict(crafted=c0, bought_epics=0, total=c0, rf7=base['rf7'], maxed=base['maxed'], pressure=base['pressure'])\n        mo = fac_sim_bm(STRATS[sname], mult, 1, 0, 'merchant epics'); cm = [round(crafted2(dd, mo['rf7'], 0), 1) for dd in (0.75, 1.0)]\n        EPS[f'{who} {sname} | no BM, spare gold buys MERCHANT Epics (comparison)'] = dict(crafted=cm, bought_epics=round(mo['epics'], 1), total=[round(x + mo['epics'], 1) for x in cm], gold=mo['gold'], maxed=mo['maxed'], pressure=mo['pressure'], rf7=mo['rf7'])\n        for p in (0.01, 0.03, 0.05):\n            for mixn, e, pol in (('75/25 buy all', 0.25, 'all'), ('75/25 buy Epics only', 0.25, 'epics'), ('Rare 100 buy all', 0.0, 'all')):\n                rr = fac_sim_bm(STRATS[sname], mult, p, e, pol); c = [round(crafted2(dd, rr['rf7'], rr['rares']), 1) for dd in (0.75, 1.0)]\n                EPS[f'{who} {sname} | {int(p*100)}% | {mixn}'] = dict(crafted=c, bought_epics=round(rr['epics'], 1), total=[round(x + rr['epics'], 1) for x in c], bm_rares=round(rr['rares'], 1), gold=rr['gold'], maxed=rr['maxed'], pressure=rr['pressure'], rf7=rr['rf7'])\nR4['epic_supply_L50_80'] = EPS\nLEV = {}\nfor e in (0.0, 0.10, 0.25):\n    for p in (0.01, 0.02, 0.03):\n        for pct in (75, 90):\n            for stock in (6, 3):\n                best = 0\n                for sname in ('crafter', 'rusher'):\n                    for pol in ('all', 'epics'):\n                        if pol == 'epics' and e == 0: continue\n                        rr = fac_sim_bm(STRATS[sname], 1.25, p, e, pol, pct, stock)\n                        best = max(best, crafted2(1.0, rr['rf7'], rr['rares']) + rr['epics'])\n                LEV[f'Epic {int(e*100)}% | spawn {int(p*100)}% | price {pct}% | {stock} items'] = round(best, 1)\nR4['lever_sweep_boosted_max_epic_supply_L50_80'] = LEV\n# ---------- R5 ----------\nR5 = {}\nCAP = 1.75\ndef ufA(luk, X, flat=0.0, fount=False): return luk / (luk + 200) + X + flat + (0.5 if fount else 0.0)\ndef ufB(luk, X, flat=0.0, fount=False, flat_first=True):\n    b0 = luk / (luk + 200); pool = 1 + X + (0.5 if fount else 0.0)\n    return (b0 + flat) * pool if flat_first else b0 * pool + flat\ndef ef_of(ufs, idol=False, thief=None, clamp=True):\n    u = sorted(ufs, reverse=True) + [0, 0, 0]; e = u[0] + 0.5 * u[1] + 0.25 * u[2]\n    if clamp: e = min(CAP, max(0.0, e))\n    if idol: e += 0.5 * CAP\n    if clamp: e = min(CAP, max(0.0, e))\n    if thief is not None: e += 0.5 * thief\n    if clamp: e = min(CAP, max(0.0, e))\n    return e\ndef mults(e): return 1 + e / CAP, 1 + 0.5 * e / CAP\nTIERP = {1: 0.05, 2: 0.10, 3: 0.15, 4: 0.20}\nEXTRAS = {'gear only': {}, '+ Lucky (Greater) on all 3': dict(flat=0.15), '+ Fountain of Fortune': dict(fount=True), '+ Idol of Fortune': dict(idol=True)}\ndef lines_to_cap(reading, luk, T, ex, unit_cap=None):\n    best = None\n    for n1 in range(8):\n        for n2 in range(n1 + 1):\n            for n3 in range(n2 + 1):\n                ufs = []\n                for nn in (n1, n2, n3):\n                    X = nn * TIERP[T]\n                    u = ufA(luk, X, ex.get('flat', 0.0), ex.get('fount', False)) if reading == 'A' else ufB(luk, X, ex.get('flat', 0.0), ex.get('fount', False), True)\n                    ufs.append(min(unit_cap, u) if unit_cap else u)\n                if ef_of(ufs, idol=ex.get('idol', False), clamp=False) >= CAP - 1e-9:\n                    tot = n1 + n2 + n3\n                    if best is None or tot < best[0]: best = (tot, (n1, n2, n3))\n    return best\nLTC = {}\nfor reading in ('A', 'B'):\n    for luk in (10, 30, 60, 100):\n        for exn, ex in EXTRAS.items():\n            LTC[f'{reading} | LUK {luk} | {exn}'] = {f'T{T}': (lines_to_cap(reading, luk, T, ex) or 'never') for T in (1, 2, 3, 4)}\nR5['lines_to_cap'] = LTC\nR5['lines_to_cap_A_if_Unit_Fortune_capped_at_1.0_per_unit'] = {f'LUK {luk}': {f'T{T}': (lines_to_cap('A', luk, T, {}, 1.0) or 'never') for T in (3, 4)} for luk in (30, 100)}\nR5['max_loot_mult_7xT4_on_3_units_no_extras'] = {f'{rd} LUK {luk}': round(mults(ef_of([(ufA(luk, 1.4) if rd == 'A' else ufB(luk, 1.4))] * 3))[0], 3) for rd in ('A', 'B') for luk in (10, 30, 60, 100)}\nR5['B_LUK_needed_for_cap_7xT4_on_3_units'] = next(l for l in range(1, 1000) if ef_of([ufB(l, 1.4)] * 3, clamp=False) >= CAP)\nrc = random.Random(SEED + 500); stats = {}\nfor reading in ('A', 'B flat-first', 'B flat-after'):\n    mx = 0; mn = 9; mxg = 0; mx_nc = 0; mn_nc = 9\n    for k in range(100000):\n        ufs = []; fount = rc.random() < 0.3; idol = rc.random() < 0.3; thief = rc.random() < 0.3\n        for u in range(3):\n            luk = rc.randint(0, 300); nl = rc.randint(0, 7); X = sum(TIERP[rc.randint(1, 4)] for _ in range(nl)); flat = rc.choice([-0.25, -0.15, -0.10, 0, 0, 0.10, 0.15, 0.25])\n            ufs.append(ufA(luk, X, flat, fount) if reading == 'A' else ufB(luk, X, flat, fount, reading == 'B flat-first'))\n        th = max(ufs) if thief else None\n        e = ef_of(ufs, idol, th, True); e2 = ef_of(ufs, idol, th, False); m, g = mults(e); m2, _ = mults(e2)\n        mx = max(mx, m); mn = min(mn, m); mxg = max(mxg, g); mx_nc = max(mx_nc, m2); mn_nc = min(mn_nc, m2)\n    stats[reading] = dict(samples=100000, max_loot=round(mx, 4), min_loot=round(mn, 4), max_gold=round(mxg, 4), control_no_clamp_max_loot=round(mx_nc, 2), control_no_clamp_min_loot=round(mn_nc, 2))\nR5['clamp_random_check'] = stats\nR5['control_thief_added_after_clamp_without_reclamp_max_loot'] = round(mults(CAP + 0.5 * ufA(300, 1.4, 0.25, True))[0], 2)\ninc_t = {}\nfor nm, M in (('zero Fortune', 1.0), ('normal team (LUK ~30, no lines)', 1 + team_norm([30 / 230] * 3)), ('at the cap', 2.0)):\n    lt = lifetime(d=0.9, M=M, kill_p=0.05, dispatch=0.3); pd = per_drop(M - 1)\n    inc_t[nm] = dict(loot_mult=round(M, 3), gold_mult=round(1 + 0.5 * (M - 1), 3), equipment_drops=lt['drops'], crystals=lt['crystals'], gems=lt['gems'], sulfur=lt['sulfur'], mercury=lt['mercury'], epic_plus_pct=round(100 * (pd['w']['Epic'] + pd['w']['Exalted'] + pd['w']['Legendary']), 1))\nR5['income_d90'] = inc_t\n_PDC = {}\ndef per_drop_c(x):\n    k = round(x, 2)\n    if k not in _PDC: _PDC[k] = per_drop(k)\n    return _PDC[k]\nGT = PD0['gem_tiers']; GTs = sum(GT.values()); TW = [GT[t] / GTs for t in (1, 2, 3, 4)]; FORT_SHARE = 1 / 22\ndef loop_mc(reading, trials=100, shop_items=0.0, flat=0.0):\n    caps = []; finals = []; maxM = 0; maxM_nc = 0; ngem = []\n    for tr in range(trials):\n        r = random.Random(SEED + 900 + tr); gems = []; reached = None\n        for b in range(N_B):\n            L = lvl_at(b); luk = 1 + 0.3 * (L - 1); gs = sorted(gems, reverse=True)\n            X = [sum(TIERP[t] for t in gs[0:7]), sum(TIERP[t] for t in gs[7:14]), sum(TIERP[t] for t in gs[14:21])]\n            ufs = [ufA(luk, x, flat) if reading == 'A' else ufB(luk, x, flat) for x in X]\n            e = ef_of(ufs); e_nc = ef_of(ufs, clamp=False); M = mults(e)[0]\n            maxM = max(maxM, M); maxM_nc = max(maxM_nc, mults(e_nc)[0])\n            if reached is None and e >= CAP - 1e-9: reached = round(L, 1)\n            drops = KILL_EQ * M + REST_EQ\n            rate = ((drops * 0.9 + shop_items) * per_drop_c(M - 1)['gems'] + ELITE * 0.5 + BOSS) * FORT_SHARE\n            k = int(rate) + (1 if r.random() < rate - int(rate) else 0)\n            for _ in range(k): gems.append(r.choices((1, 2, 3, 4), weights=TW)[0])\n        caps.append(reached); finals.append(M); ngem.append(len(gems))\n    rn = sorted(c for c in caps if c is not None); finals.sort()\n    return dict(trials=trials, pct_reaching_cap=round(100 * len(rn) / trials, 1), median_cap_level=(rn[len(rn) // 2] if rn else None), final_loot_mult_median=round(finals[trials // 2], 3),\n                final_loot_mult_p90=round(finals[9 * trials // 10], 3), max_loot_mult_ever=round(maxM, 4), control_max_if_no_clamp=round(maxM_nc, 3), fortune_gems_median=sorted(ngem)[trials // 2])\nLOOP = {}\nfor reading in ('A', 'B'):\n    LOOP[f'{reading} natural gems'] = loop_mc(reading)\n    LOOP[f'{reading} natural + Lucky (Greater) x3'] = loop_mc(reading, flat=0.15)\n    LOOP[f'{reading} + 2 shop-dismantled items per battle'] = loop_mc(reading, shop_items=2.0)\n    LOOP[f'{reading} + 2 shop items + Lucky (Greater) x3'] = loop_mc(reading, shop_items=2.0, flat=0.15)\nR5['feedback_loop'] = LOOP\nR5['inputs'] = dict(unit_fortune='lp9 LUK/(LUK+200)', expedition='lp10 top + 50% 2nd + 25% 3rd', normalized='lp11 /1.75', loot='lp12 1+N', gold='lp17 1+0.5N', lucky='unit_traits 73/197 flat +10/+15%',\n    idol='oe32 +0.5 normalized (= +0.875 EF), clamped 1.75', fountain='oe33 \"Fortune +50% to all allies\": read as flat +0.5 Unit Fortune under A, +50% in the multiplier pool under B (DB does not say)',\n    thief='doctrines 11: +50% of Thief Unit Fortune to EF for that reward', lines='bonus_numerical_attributes 70-73 +5/10/15/20%, one per item, 7 items per unit max (1H+off-hand)', LUK_growth='LUK = 1 + 0.3 x (L-1) (same as previous run)', fortune_gem_share='1/22 of gem lines (previous run assumption)')\nDELTA = dict(T14_prev_free_with_crafting=PREV['C']['T14']['free | realistic: 25 Epic forges + 20 Epic-keep swaps (fees only)']['spending_pressure_pct'],\n             T14_prev_boosted_with_crafting=PREV['C']['T14']['boosted | realistic: 25 Epic forges + 20 Epic-keep swaps (fees only)']['spending_pressure_pct'],\n             T12_prev=dict(d75=PREV['B']['T12']['DB 5 enemies, dismantle 75%']['full_levellings'], d100=PREV['B']['T12']['DB 5 enemies, dismantle 100%']['full_levellings']),\n             T9_prev=PREV['C']['T9'], T18_prev_cap=PREV['C']['T18']['Fortune cap'])\nRESULT = dict(seed=SEED, db=DB, db_opened='read-only (mode=ro)', db_md5=hashlib.md5(open(DB, 'rb').read()).hexdigest(), provenance_rows=len(PROV),\n              draft='artifacts/blacksmith_runeforge_v2_proposal_20261101.md (FINAL, Designer thread-82c673e2fa84)', R1=R1, R2=R2, R3=R3, R4=R4, R5=R5, previous_run=DELTA)\nOUT_JSON = json.dumps(RESULT, indent=1, default=str)\n",
+ "runtime_s_two_runs": 28.1
+}

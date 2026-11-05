@@ -1213,6 +1213,27 @@ local REGION_OBJECT_SHARE = 0.5
 -- of the Town share, not 2/31). Effect: content-blocked regions generate sparse.
 local NO_OBJECT_KEY = "__no_object__"
 
+-- UNIVERSAL OBJECTS (user-locked 2026-10-28): may appear in ANY region of ANY biome.
+-- Every pool = UNIVERSAL_OBJECT_SHARE x (these ids, equal weight) +
+-- (1 - UNIVERSAL_OBJECT_SHARE) x the existing biome/region blend (unchanged).
+-- Ids missing from ObjectData are warn()ed and skipped once at load.
+local UNIVERSAL_OBJECT_SHARE = 0.2
+local UNIVERSAL_OBJECTS = table.freeze({
+	"Treasure Chest", "Mimic", "Bear Trap", "Spike Trap", "Snare Trap", "Land Mine",
+	"Angel Statue", "Forge", "Ballista", "Catapult", "Bomb Barrel", "Obelisk",
+	"Cursed Chest", "Dragon Utopia", "Chaos Statue", "Pandora's Box",
+})
+local UNIVERSAL_OBJECT_IDS = {}
+for _, uid in ipairs(UNIVERSAL_OBJECTS) do
+	if ObjectData.Objects[uid] then
+		table.insert(UNIVERSAL_OBJECT_IDS, uid)
+	else
+		warn("[MapService] UNIVERSAL_OBJECTS id not in ObjectData, skipped: " .. tostring(uid))
+	end
+end
+table.sort(UNIVERSAL_OBJECT_IDS)
+table.freeze(UNIVERSAL_OBJECT_IDS)
+
 local function resolveRegionObjectId(name)
 	if ObjectData.Objects[name] then return name end
 	local alias = REGION_OBJECT_ALIASES[name]
@@ -1273,6 +1294,23 @@ local function buildRegionObjectPool(biome, regionType, cache)
 	if rShare > 0 then
 		for _, id in ipairs(sortedKeys(regionW)) do
 			out[id] = (out[id] or 0) + rShare * regionW[id] / rTotal
+		end
+	end
+
+	-- Universal share: scale the (unchanged) biome/region blend to the remaining
+	-- share and add an equal-weight slice for every universal object. Weights add
+	-- when an id is in both. Iteration via sorted lists keeps generation deterministic.
+	local nU = #UNIVERSAL_OBJECT_IDS
+	if nU > 0 then
+		local hasBlend = next(out) ~= nil
+		local uShare = hasBlend and UNIVERSAL_OBJECT_SHARE or 1
+		if hasBlend then
+			for _, id in ipairs(sortedKeys(out)) do
+				out[id] = out[id] * (1 - UNIVERSAL_OBJECT_SHARE)
+			end
+		end
+		for _, id in ipairs(UNIVERSAL_OBJECT_IDS) do
+			out[id] = (out[id] or 0) + uShare / nU
 		end
 	end
 
@@ -1549,6 +1587,19 @@ local function placeObjects(tiles, w, h, biome, rng, regionTypeMap)
 					#billboardTiles))
 			end
 		end
+	end
+
+	-- Placement summary (helps confirm variety in Studio).
+	do
+		local counts = {}
+		for _, obj in ipairs(placedObjects) do
+			counts[obj.type] = (counts[obj.type] or 0) + 1
+		end
+		local parts = {}
+		for _, t in ipairs(sortedKeys(counts)) do
+			table.insert(parts, `{t} x{counts[t]}`)
+		end
+		print(`[MapService] objects by type ({#placedObjects} total): {table.concat(parts, ", ")}`)
 	end
 
 	return placedObjects, poolAudit

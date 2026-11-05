@@ -46,19 +46,29 @@ local MapRenderer             = require(Game:WaitForChild("MapRenderer"))
 local EnemyGenerator          = require(Game:WaitForChild("EnemyGenerator"))
 local TraitRoller             = require(Game:WaitForChild("TraitRoller"))
 local ObjectEffectService     = require(Game:WaitForChild("ObjectEffectService"))
+local DiscoveryService        = require(Game:WaitForChild("DiscoveryService")) -- Discovery Radius reveal (2026-10-28)
+local StatCalcService         = require(Game:WaitForChild("StatCalcService")) -- shared stat calculation (2026-10-28)
 local ObjectiveService        = require(Game:WaitForChild("ObjectiveService"))
 local WeatherService          = require(Game:WaitForChild("WeatherService"))
 local BattlefieldEventService = require(Game:WaitForChild("BattlefieldEventService"))
 local ItemDisplay             = require(Game:WaitForChild("ItemDisplay")) -- item->UI entry builders (extracted 2026-10-12)
+local GearPassiveSummary      = require(Game:WaitForChild("GearPassiveSummary")) -- combined gear passives (2026-10-29)
+
+-- Mimic disguise (2026-10-28): MapRenderer draws client-visible types only. Wired here,
+-- before any Render call, so the very first map build is already disguised.
+MapRenderer.SetDisplayTypeResolver(ObjectEffectService.GetDisplayType)
 
 -- Slice 6 services (switched on this pass). CurrencyService provides AsProvider()
 -- used by Recruitment/Blacksmith/Merchant/Dispatch; it is required FIRST so the
 -- provider exists before the consumers are wired below.
 local CurrencyService         = require(Game:WaitForChild("CurrencyService"))
+local DailyService            = require(Game:WaitForChild("DailyService")) -- real-day counter (2026-11-01)
 local RecruitmentService      = require(Game:WaitForChild("RecruitmentService"))
 local BlacksmithService       = require(Game:WaitForChild("BlacksmithService"))
+local RuneforgeService        = require(Game:WaitForChild("RuneforgeService"))
 local GuildService            = require(Game:WaitForChild("GuildService"))
 local MerchantService         = require(Game:WaitForChild("MerchantService"))
+local BlackMarketService      = require(Game:WaitForChild("BlackMarketService"))
 local DispatchService         = require(Game:WaitForChild("DispatchService"))
 local PartyService            = require(Game:WaitForChild("PartyService"))
 local ExploreService          = require(Game:WaitForChild("ExploreService"))
@@ -196,6 +206,8 @@ local function computeBattleGold(units, playerUnitsById, quest, isVictory)
 end
 
 -- Moved up (was declared mid-file, after the roster builder that uses it).
+local ApothecaryService = require(Game:WaitForChild("ApothecaryService")) -- paid refill (2026-11-03)
+local TrainingGroundsService = require(Game:WaitForChild("TrainingGroundsService")) -- 2nd augment slot (2026-11-04)
 local ConsumableData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
@@ -281,6 +293,17 @@ local function attachWeaponToUnit(charModel: Model, unit)
 					unit.name or "?", slot, weaponName))
 			else
 				local acc = tpl:Clone()
+				-- Twinblade off-hand WEAPON (2026-10-28): weapon accessories are authored for the right
+				-- hand; move the grip to the left hand so the two weapons do not overlap. Visual only;
+				-- the grip angle is the right-hand one mirrored by position (Studio check pending).
+				if slot == "OffHand" then
+					local offArch = WeaponData.GetByArchetypeId(unit.equipmentSlots.OffHand.baseArchetypeId)
+					if offArch and offArch.category == "Weapon" then
+						for _, d in ipairs(acc:GetDescendants()) do
+							if d:IsA("Attachment") and d.Name == "RightGripAttachment" then d.Name = "LeftGripAttachment" end
+						end
+					end
+				end
 				if acc:IsA("Accessory") then
 					humanoid:AddAccessory(acc)
 				else
@@ -340,6 +363,18 @@ else
 	player = Players.PlayerAdded:Wait()
 end
 print("[Main] Player joined: " .. player.Name)
+BlackMarketService.SetSessionPlayer(player)
+BlackMarketService.SetOpenedHandler(function(payload)
+	BattleEvents.BlackMarketOpened:FireClient(player, payload)
+end)
+BattleEvents.BlackMarketBuy.OnServerInvoke = function(plr, objectId, slot)
+	local ok, res = pcall(BlackMarketService.HandleBuy, plr, objectId, slot)
+	if not ok then
+		warn("[Main] Black Market buy failed: " .. tostring(res))
+		return { ok = false, error = "Could not buy it" }
+	end
+	return res
+end
 
 
 -- AIService dependency injection
@@ -394,8 +429,8 @@ local doctrineSkillCombatDefs = {
 	["DOC-TRICKSTER-01"] = { id = "DOC-TRICKSTER-01", name = "Misdirection", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 3, channelTime = 0, power = 0, isHealing = false, appliesStatus = "Misdirection" }, -- DB: 1000 CT, first enemy single-target attack redirected (CommandService applyMisdirection)
 	["DOC-THIEF-01"]     = { id = "DOC-THIEF-01", name = "Mug", tags = {"Direct Damage","Physical","Utility"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 2, rtMult = 1.00, channelTime = 0, power = 0.80, isHealing = false },
 	["DOC-DUELIST-01"]   = { id = "DOC-DUELIST-01", name = "Riposte Stance", tags = {"Buff","Utility"}, targetRules = "Self", range = 0, pattern = "Self", mpCost = 3, channelTime = 0, power = 0, isHealing = false, appliesStatus = "CounterStance", counterPowerMult = 0.85, counterRtDelayMult = 0.50 },  -- DB: each Riposte deals 85% Basic Attack Power + 50% Weapon RT Delay to attacker
-	["DOC-TWINBLADE-01"] = { id = "DOC-TWINBLADE-01", name = "Crossing Blades", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 4, rtMult = 1.25, channelTime = 0, power = 1.30, isHealing = false },
-	["DOC-TWINBLADE-02"] = { id = "DOC-TWINBLADE-02", name = "Feinting Flurry", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 5, rtMult = 1.50, channelTime = 0, power = 0.60, isHealing = false },
+	["DOC-TWINBLADE-01"] = { id = "DOC-TWINBLADE-01", name = "Crossing Blades", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 4, rtMult = 1.00, channelTime = 0, power = 0.80, hitCount = 2, hitRtDelayMult = 0.50, alternateHands = true, requiresDualWield = true, dualWieldRt = true, isHealing = false },  -- DB 2026-10-28: main then off-hand hit, 80% each, Dual-Wield Basic Attack RT
+	["DOC-TWINBLADE-02"] = { id = "DOC-TWINBLADE-02", name = "Feinting Flurry", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 5, rtMult = 1.20, channelTime = 100, power = 0.35, hitCount = 4, hitRtDelayMult = 0.25, alternateHands = true, requiresDualWield = true, dualWieldRt = true, feintEvasionDebuff = true, isHealing = false },  -- DB 2026-10-28: 4 alternating hits 35% each, x1.20 Dual-Wield BA RT, channel 100
 	["DOC-JUGGERNAUT-01"] = { id = "DOC-JUGGERNAUT-01", name = "Overwhelming Blow", tags = {"Direct Damage","Physical"}, targetRules = "Enemy Unit", range = 1, pattern = "Single", mpCost = 6, rtMult = 2.00, channelTime = 200, knockbackOnHit = 1, power = 1.80, isHealing = false },
 	["DOC-CONJURER-01"]  = { id = "DOC-CONJURER-01", name = "Conjure Sentinel", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 3, pattern = "Single", mpCost = 8, channelTime = 250, power = 0, isHealing = false, isSummon = true, summonProfile = "melee" },
 	["DOC-CONJURER-02"]  = { id = "DOC-CONJURER-02", name = "Conjure Wisp", tags = {"Summon","Utility"}, targetRules = "Empty Tile", range = 4, pattern = "Single", mpCost = 5, channelTime = 200, power = 0, isHealing = false, isSummon = true, summonProfile = "ranged" },
@@ -441,6 +476,9 @@ RecruitmentService.SetPersistentStateService(PersistentStateService)
 BlacksmithService.SetEquipmentService(EquipmentService)
 BlacksmithService.SetWeaponData(WeaponData)
 BlacksmithService.SetArmorData(ArmorData)
+-- v2 step 2: dismantling removes the item and reads bonus-line content for rune gems.
+BlacksmithService.SetInventoryService(InventoryService)
+BlacksmithService.SetBonusData(BonusData)
 -- TODO when their UIs land: RecruitmentService.SetUnitFactory(...),
 --   RecruitmentService.SetTavernLevelProvider(...) [Slice 8],
 --   BlacksmithService.SetItemPersist(...)
@@ -450,11 +488,20 @@ MerchantService.SetCurrencyProvider(currencyProvider)
 MerchantService.SetInventoryService(InventoryService)
 MerchantService.SetEquipmentService(EquipmentService)
 MerchantService.SetItemGenerator(ItemGenerator)
+-- Black Market paid in-battle shop (v2 build step 6b, 2026-11-01)
+BlackMarketService.SetItemGenerator(ItemGenerator)
+BlackMarketService.SetMerchantService(MerchantService)
+BlackMarketService.SetCurrencyService(CurrencyService)
+BlackMarketService.SetInventoryService(InventoryService)
+BlackMarketService.SetItemDisplay(ItemDisplay)
+BlackMarketService.SetContentData(WeaponData, ArmorData)
 DispatchService.SetCurrencyProvider(currencyProvider)
 DispatchService.SetCurrencyCredit(function(pid, grant) return CurrencyService.Credit(pid, grant) end)
 ExploreService.SetCurrencyProvider(currencyProvider)
 ExploreService.SetRewardService(RewardService)
 ExploreService.SetGuildService(GuildService)
+-- Mimic disguise (rules 224): a disguised Mimic counts toward chestCount. DI (no cycle).
+ObjectiveService.SetDisguiseChecker(ObjectEffectService.IsDisguised)
 -- Torture objective gate (2026-10-24): tell ObjectiveService how to detect a
 -- deployed player unit carrying a targetable revive consumable ("KO Ally" rule)
 -- with charges, so Torture only rolls when reviving an enemy is actually possible.
@@ -512,6 +559,30 @@ RecruitmentService.SetUnitFactory(GuildMenuService.BuildRecruitUnit)
 RecruitmentService.SetTavernLevelProvider(GuildMenuService.TavernLevelProvider)
 MerchantService.SetMerchantLevelProvider(GuildMenuService.MerchantLevelProvider)
 BlacksmithService.SetItemPersist(GuildMenuService.PersistItem)
+-- Blacksmith level drives the upgrade gold discount and the levelling record (v2, economy_framework 19).
+BlacksmithService.SetBlacksmithLevelProvider(function() return GuildMenuService.GetBuildingLevel("Blacksmith") end)
+-- Runeforge (v2 build step 4): server rules; levels follow the Guild Hall gate (gf 46).
+RuneforgeService.SetCurrencyProvider(currencyProvider)
+RuneforgeService.SetInventoryService(InventoryService)
+RuneforgeService.SetBonusData(BonusData)
+RuneforgeService.SetItemGenerator(ItemGenerator)
+RuneforgeService.SetBlacksmithService(BlacksmithService)
+RuneforgeService.SetWeaponData(WeaponData)
+RuneforgeService.SetArmorData(ArmorData)
+RuneforgeService.SetLevelProvider(GuildMenuService.GetRuneforgeLevel)
+RuneforgeService.SetItemPersist(GuildMenuService.PersistItem)
+-- Crucible gear merging (USER DECISION 2026-11-02). Wired in its own block so Main's top
+-- level does not gain another local (Main is close to the Luau local-variable limit).
+do
+	local CrucibleService = require(Game:WaitForChild("CrucibleService"))
+	CrucibleService.SetCurrencyService(CurrencyService)
+	CrucibleService.SetInventoryService(InventoryService)
+	CrucibleService.SetItemGenerator(ItemGenerator)
+	CrucibleService.SetBaseValue(BlacksmithService.GetBaseValue)
+	CrucibleService.SetLevelProvider(GuildMenuService.GetCrucibleLevel)
+	CrucibleService.SetLevelCapProvider(GuildMenuService.CrucibleLevelCap)
+	CrucibleService.SetBlockedCheck(GuildMenuService.CrucibleBlockedReason)
+end
 DispatchService.SetAvailabilitySink(GuildMenuService.AvailabilitySink)
 DispatchService.SetRosterProvider(GuildMenuService.RosterProvider)
 -- Blacksmith has no level provider in BlacksmithService; its locked level gates
@@ -593,6 +664,8 @@ if loadedSave then
 	-- progression (Key 3). All ride the EXISTING save payload; no second store.
 	if loadedSave.currencies then
 		CurrencyService.Import(PLAYER_ID, loadedSave.currencies)
+		-- Daily counters ride in the currencies table (save slot 2, daily systems decision 3).
+		DailyService.Import(PLAYER_ID, loadedSave.currencies and loadedSave.currencies.daily)
 	end
 	if loadedSave.progression and loadedSave.progression.guild then
 		GuildService.Import(PLAYER_ID, loadedSave.progression.guild)
@@ -893,7 +966,11 @@ local undeployConn
 -- a nil table. playerUnits is cleared and refilled in place each round; cardInventory is filled
 -- once at boot and never cleared (2026-10-28). Neither table is replaced, so references stay valid.
 local playerUnits = {}
-local cardInventory = { skillCards = {}, augmentCards = {} }
+local cardInventory = { skillCards = {}, augmentCards = {}, consumables = {} }
+local heroStarterConsGiven = false -- fresh-player Hero potion: once per session, not every round
+-- consumables (USER DECISION 2026-11-03, Apothecary prerequisite): owned LOOSE copies per
+-- consumable id ({ [id] = count }). Equipping takes one copy into a slot; unequipping gives it
+-- back. Saved with the card inventory (progression.cardInventory, Key 3).
 -- Card inventory: filled ONCE here at boot from the save (or starter cards for a fresh player).
 -- It then stays live for the whole session: rewards and equips change it in place and doSave
 -- writes it. It is NOT cleared or re-restored per quest round (fix 2026-10-28).
@@ -909,6 +986,14 @@ if savedCardInventory and type(savedCardInventory) == "table" then
 	end
 	if type(savedCardInventory.augmentCards) == "table" then
 		for id, qty in pairs(savedCardInventory.augmentCards) do cardInventory.augmentCards[id] = qty end
+	end
+	if type(savedCardInventory.consumables) == "table" then
+		for id, qty in pairs(savedCardInventory.consumables) do
+			local n = tonumber(qty)
+			if type(id) == "string" and n and n >= 1 and ConsumableData.GetById(id) then
+				cardInventory.consumables[id] = math.floor(n)
+			end
+		end
 	end
 end
 
@@ -938,6 +1023,21 @@ do
 		for id, qty in pairs(starterSkills) do cardInventory.skillCards[id] = qty end
 		for id, qty in pairs(starterAugments) do cardInventory.augmentCards[id] = qty end
 		print("[Main] Starter cards loaded (6 skill, 4 augment)")
+	end
+end
+
+-- Starter consumables (2026-11-03, ownership): granted ONCE when the save has never carried an
+-- owned-consumables list (fresh player, or a save from before ownership). Items already equipped
+-- on units stay equipped. DEV DEFAULT: 3 Emergency Small Healing Potion + 2 Emergency Ether.
+do
+	local savedHasCons = savedCardInventory and type(savedCardInventory) == "table"
+		and type(savedCardInventory.consumables) == "table"
+	if not savedHasCons then
+		local starterCons = { ["REC-001"] = 3, ["REC-009"] = 2 }
+		for id, qty in pairs(starterCons) do
+			cardInventory.consumables[id] = (cardInventory.consumables[id] or 0) + qty
+		end
+		print("[Main] Starter consumables granted (3x REC-001, 2x REC-009)")
 	end
 end
 
@@ -1014,6 +1114,12 @@ if game:GetService("RunService"):IsStudio() then
 			print(string.format("[Dev] +10000 gold -> balance %d", bal and bal.gold or -1))
 			doSave()
 
+		elseif cmd.action == "DevAddMercury" then
+			-- Dev (Studio only): +100 mercury for testing Blacksmith levelling, then save.
+			local bal = CurrencyService.Credit(PLAYER_ID, { mercury = 100 })
+			print(string.format("[Dev] +100 mercury -> balance %d", bal and bal.mercury or -1))
+			doSave()
+
 		elseif cmd.action == "DevGrantAllCards" then
 			-- Dev (Studio only): grant 1 copy of every skill card (SKL-) + every augment (AUG-)
 			-- to the card inventory, and 1 loose copy of every doctrine to the doctrine inventory
@@ -1039,6 +1145,16 @@ if game:GetService("RunService"):IsStudio() then
 					end
 				end
 			end
+			-- Consumables (2026-11-03 ownership): at least 1 owned copy of every available item.
+			local nCons = 0
+			for _, cid in ipairs(ConsumableData.GetAllIds()) do
+				local cdef = ConsumableData.GetById(cid)
+				if cdef and not cdef.parked and not cardInventory.consumables[cid] then
+					cardInventory.consumables[cid] = 1
+					nCons += 1
+				end
+			end
+			print(`[Dev] Grant-all: +{nCons} consumables`)
 			local looseStacks = DoctrineInventoryService.GetLooseStacks(PLAYER_ID)
 			for id, def in pairs(DoctrineData) do
 				if type(def) == "table" and def.name and not looseStacks[id] then
@@ -1161,6 +1277,9 @@ if game:GetService("RunService"):IsStudio() then
 				-- Slice 5 map objects: the new map has its own placed objects —
 				-- refresh state.objects and recompute auras against the new layout
 				-- (old banners/stands are gone; new ones may cover deployed units).
+				-- 2026-10-30 aura fix: strip the OLD map's auras first (replacing the list below
+				-- skips RemoveObjectInstance, so they would otherwise stay on units).
+				ObjectEffectService.ClearAllAuras(state)
 				state.objects = newMap.objects or {}
 				-- OBS Phase 2a: re-seed object HP for the regenerated map's objects.
 				ObjectEffectService.InitObjectHp(state)
@@ -1192,11 +1311,13 @@ if game:GetService("RunService"):IsStudio() then
 			end
 
 			-- Sync terrain, elevation, blockers, AND dimensions to client.
+			-- Mimic disguise: the client only ever sees display types (no true-type leak).
+			local _syncObjGrid, _syncBlockers = ObjectEffectService.SanitizeMapSync(newMap.objectGrid, newMap.blockers)
 			BattleEvents.MapDataSync:FireAllClients({
 				terrainGrid   = newMap.terrainGrid,
 				elevationGrid = newMap.elevationGrid,
-				objectGrid    = newMap.objectGrid,
-				blockers      = newMap.blockers,
+				objectGrid    = _syncObjGrid,
+				blockers      = _syncBlockers,
 				mapWidth      = MAP_WIDTH,
 				mapHeight     = MAP_HEIGHT,
 			})
@@ -1251,7 +1372,7 @@ if game:GetService("RunService"):IsStudio() then
 					if inst and BattleVisualBroadcaster.StatusApplied then
 						BattleVisualBroadcaster.StatusApplied(u, sid, inst.remainingTurns, nil)
 					end
-					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u) end
+					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev") end  -- rules 225 WARN-1
 					print(string.format("[Dev] GrantStatus %s -> %s", sid, u.name))
 					hit = true
 				end
@@ -1292,7 +1413,7 @@ if game:GetService("RunService"):IsStudio() then
 					end
 					-- D4 fix: rebuild stats + refresh client immediately after removal.
 					if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
-					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u) end
+					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev") end  -- rules 225 WARN-1
 				end
 			end
 
@@ -1447,8 +1568,9 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 				mp        = (_aArch and ArmorData.GetScaledProfile(itemInst.baseArchetypeId, itemInst.itemLevel) or {}).mp or 0,
 				projectileType = (_wArch and _wArch.projectileType) or nil,
 				element   = _wArch and WeaponData.GetInstanceElement(itemInst) or nil,
-				archPassiveName = (_aArch and _aArch.passiveName) or nil,
-				archPassiveDesc = (_aArch and _aArch.passiveDesc) or nil,
+				-- Display name/text (internal passiveName stays the rules key). 2026-10-31.
+				archPassiveName = (GearPassiveSummary.ArmorPassiveDisplay(_aArch)),
+				archPassiveDesc = select(2, GearPassiveSummary.ArmorPassiveDisplay(_aArch)),
 				itemLevel = itemInst.itemLevel or 1,
 				archetype = itemInst.archetype or "Unknown",
 				handClass = itemInst.handClass or "1H",
@@ -1461,7 +1583,8 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 				pattern   = profile and profile.pattern or "Single",
 				bonusLines = itemInst.bonusLines or {},
 				resolvedBonus = (function() local s, p = ItemDisplay.resolveItemBonuses(itemInst); return {stats = s, passives = p} end)(),
-				passiveName   = itemInst.nativePassiveId or nil,
+				-- Player-facing name, not the internal id (2026-10-30).
+				passiveName   = itemInst.nativePassiveId and GearPassiveSummary.NativePassiveName(itemInst.nativePassiveId) or nil,
 				passiveDesc   = itemInst.nativePassiveId and WeaponData.GetPassiveDesc(itemInst.nativePassiveId) or nil,
 				bonusPassive  = itemInst.bonusPassive or nil,
 				flavor        = (_wArch and _wArch.flavor) or (_aArch and _aArch.flavor) or nil,
@@ -1574,6 +1697,7 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 			stacks = inst and inst.stacks and inst.stacks > 1 and inst.stacks or nil,
 			nextDamage = entry.nextDamage,
 			storedBurn = entry.storedBurn,
+			whileInRange = entry.whileInRange,  -- 2026-10-30: aura status card says "While in range"
 		})
 	end
 
@@ -1583,7 +1707,7 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		side         = unit.side,
 		isAlive      = unit.isAlive ~= false,
 		level        = unit.level or 1,
-		raceId       = unit.raceId or nil,  -- placeholder: race system not yet implemented
+		raceId       = unit.raceId or nil,
 		-- Portrait face image for the detailed inspector (enemy/neutral/NPC only;
 		-- nil for player units and summons → inspector shows the initials box).
 		portraitAssetId = unit.portraitAssetId,
@@ -1651,6 +1775,8 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		if fid then response.flaw = TraitData.GetTrait(fid) end
 	end
 
+	-- Every passive from equipped gear, merged (2026-10-29). Same builder as the Loadout Info tab.
+	response.gearPassives = GearPassiveSummary.Build(unit)
 	BattleEvents.InspectUnitResponse:FireClient(playerObj, response)
 end)
 
@@ -1707,11 +1833,22 @@ BattleEvents.MapDetailsRequest.OnServerEvent:Connect(function(playerObj)
 		}
 	end
 
-	-- Optional quests surfaced mid-battle (may be empty; generated by events).
-	local optional = {}
-	for _, oq in ipairs((state.pendingOptionalQuests) or {}) do
-		optional[#optional + 1] = { name = oq.name, biome = oq.biome, recommendedLvl = oq.recommendedLvl }
+	-- Optional in-battle objectives (2026-10-28): the LIVE active list with plain-
+	-- language goal, mode, live progress and reward (ObjectiveService.Describe — the
+	-- same text the victory screen uses). Replaces the dead pendingOptionalQuests
+	-- read (the Chaos Statue no longer writes there since its conversion).
+	local optional = ObjectiveService.Describe(state)
+
+	-- XP so far (2026-10-28): projected kill XP per deployed unit, same formula as
+	-- the real payout (ProgressionService.ProjectKillXp) and the same kills snapshot
+	-- the battle-end award builds (dead, non-summon enemies). Read-only.
+	local xpKills = {}
+	for _, u in ipairs(allUnitsList or {}) do
+		if u.side == "Enemy" and not u.isSummon and not u.isAlive then
+			xpKills[#xpKills + 1] = { enemyType = u.enemyType, aiRole = u.aiRole, level = u.level or 0 }
+		end
 	end
+	local xpSoFar = ProgressionService.ProjectKillXp(xpKills, state.glowCrystalActive == true)
 
 	BattleEvents.MapDetailsResponse:FireClient(playerObj, {
 		quest         = quest,
@@ -1722,6 +1859,7 @@ BattleEvents.MapDetailsRequest.OnServerEvent:Connect(function(playerObj)
 		goldSoFar     = gb.killGold,
 		goldOnVictory = gb.completionGold + gb.questGold,
 		killCount     = gb.killCount,
+		xpSoFar       = xpSoFar,
 		lootMin       = lootMin,
 		lootMax       = lootMax,
 	})
@@ -1734,6 +1872,23 @@ GuildMenuService.SetSessionPlayer(player)
 -- at BOOT so the base is interactive on round 1. Getters read per-round values
 -- (playerUnits/activeQuest/doSave are forward-declared file-scope). Running Init
 -- once also avoids a per-round DevCommand:Connect leak inside Init. 2026-10-13.
+GuildMenuService.SetConsumableReturn(function(id: string)
+	cardInventory.consumables[id] = (cardInventory.consumables[id] or 0) + 1
+end)
+GuildMenuService.SetOwnedConsumables(function() return cardInventory.consumables end)
+GuildMenuService.SetCardInventory(function() return cardInventory end)
+-- Forward-declared (Studio UAT 2026-11-05): the sweep below runs later, after the require further down.
+local LoadoutRequestHandlers
+GuildMenuService.SetLockedAugmentSweep(function()
+	local list = {}
+	for _, u in playerUnits do table.insert(list, u) end
+	local removed = LoadoutRequestHandlers.UnequipIncompatibleAugments(list)
+	local n = 0
+	for _, r in removed do
+		if r.lockedSlot then n += 1 end
+	end
+	TrainingGroundsService.AddMoved(n)
+end)
 GuildMenuService.Init({
 	playerId       = PLAYER_ID,
 	sessionPlayer  = player,
@@ -1754,13 +1909,43 @@ GuildMenuService.Init({
 	end,
 })
 
+-- SAVE ON QUIT (2026-10-31, user decision). Guild-base changes are normally written
+-- when the player leaves the base (GuildMenuService.Close). If the player quits, or the
+-- server shuts down, while still at the base, write them now. Saves ONLY when there are
+-- unsaved guild changes (none during a battle: leaving the base already saved them).
+-- Runs once; a second trigger waits for the first save to finish so the server cannot
+-- close mid-write. SaveService still refuses to save if this session's load failed.
+local quitSaveState = "none" -- "none" | "running" | "done"
+local function saveOnQuit(reason: string)
+	if quitSaveState == "none" then
+		quitSaveState = "running"
+		local ok, err = pcall(GuildMenuService.SaveIfDirty, reason)
+		if not ok then
+			warn("[Main] Save on quit FAILED: " .. tostring(err))
+		end
+		quitSaveState = "done"
+	else
+		while quitSaveState == "running" do
+			task.wait(0.1)
+		end
+	end
+end
+Players.PlayerRemoving:Connect(function(leaving)
+	if leaving == player then
+		saveOnQuit("player left")
+	end
+end)
+game:BindToClose(function()
+	saveOnQuit("server closing")
+end)
+
 -- LOADOUT REQUEST HANDLERS (moved to BOOT 2026-10-13): registers GetRosterData /
 -- GetInventoryData / equip / doctrine / skill-card / stat handlers that the loadout
 -- screen calls. MUST be at boot so unit management works the moment the player is at
 -- the base, NOT only after a quest launches (previously this Init sat inside the loop
 -- below the quest flow, so the loadout screen's fetch went unanswered until a quest
 -- was picked). doSave uses the same lazy wrapper (assigned inside the loop).
-local LoadoutRequestHandlers = require(Game:WaitForChild("LoadoutRequestHandlers"))
+LoadoutRequestHandlers = require(Game:WaitForChild("LoadoutRequestHandlers"))
 LoadoutRequestHandlers.Init({
 	playerUnits = playerUnits,
 	cardInventory = cardInventory,
@@ -1944,25 +2129,23 @@ for _, u in pairs(playerUnits) do
 	end
 end
 
--- DEV-ONLY doctrine stash seed (2026-10-20, TEMPORARY SCAFFOLDING): mint a few spare
--- doctrine copies into the loose stash so doctrine SWAPPING is testable before real
--- loot drops and the merchant exist. Fixed instance ids make this idempotent — once
--- these ids are in the saved doctrine inventory, re-boot skips them (no multiplication).
--- REMOVE this block when doctrine drops / the merchant land.
+-- Locked 2nd augment slots (USER DECISION 2026-11-04): clean up at BOOT too, so the base never
+-- shows an augment in a locked slot. Building levels were imported above (GuildMenuService.Import).
 do
-	local DEV_DOCTRINE_SEED = { "DOC-VANGUARD", "DOC-DUELIST", "DOC-CLERIC", "DOC-ASSASSIN", "DOC-ELEMENTALIST", "DOC-GEOMANCER", "DOC-CHEMIST", "DOC-ARTIFICER" }
-	for i, docId in ipairs(DEV_DOCTRINE_SEED) do
-		if DoctrineData[docId] then
-			local fixedId = "doc_devseed_" .. i
-			if not DoctrineInventoryService.GetInstance(PLAYER_ID, fixedId) then
-				DoctrineInventoryService.AddInstance(PLAYER_ID, {
-					instanceId = fixedId, doctrineId = docId, selectedSkillId = nil, boundUnitId = nil,
-				})
-			end
-		end
+	local list = {}
+	for _, u in pairs(playerUnits) do table.insert(list, u) end
+	local removed = LoadoutRequestHandlers.UnequipIncompatibleAugments(list)
+	local n = 0
+	for _, r in removed do
+		if r.lockedSlot then n += 1 end
 	end
-	print("[Main] Dev doctrine stash seeded (temporary) — spares available for swap testing.")
+	TrainingGroundsService.AddMoved(n)
 end
+
+-- (Removed 2026-11-04: the temporary dev doctrine stash seed. Its own note said to remove it
+-- once doctrines could be acquired; the Training Grounds now sells them, and the seed re-minted
+-- sold copies every boot = free gold. Copies already in a save stay owned. Dev "Grant all
+-- cards" still gives one loose copy of every doctrine in Studio.)
 
 -- First-run party seed (2026-10-15): if the player has never built a party (all saved
 -- parties empty), fill Party A with the current boot roster so there is always one
@@ -2101,6 +2284,7 @@ function doSave()
 		ugc      = UGCService.Export(PLAYER_ID), -- UGC rentals/trials/cart/votes (ownership never saved)
 	}
 	local currencies = CurrencyService.Export(PLAYER_ID)
+	currencies.daily = DailyService.Export(PLAYER_ID) -- same save slot and step as the currencies
 	local ok, err = SaveService.Save(PLAYER_ID, rosterState, inventoryItems, progression, currencies)
 	if ok then
 		print("[Save] Successful")
@@ -2139,6 +2323,50 @@ local function resetUnitForNewBattle(u)
 	u.zombieReviveUsed = nil
 	u.undyingWillUsed = nil   -- Undying Will perk (TRAIT-P-179): reset once-per-battle revive
 	u.undyingWillKoCt = nil
+	-- Doctrine battle-scoped state (2026-10-28): Elementalist tracks the last element per BATTLE;
+	-- charges / counters must not carry into the next battle.
+	u._docElementalistLastElement = nil
+	u._docSentinelCharged = nil
+	u._docShieldbearerGuardRtReady = nil
+	u._docPaladinDrTurnsRemaining = nil
+	u._docGunnerSuppressionTurns = nil
+	u._docGunnerSuppressActive = nil
+	u._feintEvaPenalty = nil   -- Feinting Flurry debuff (2026-10-28)
+	u._feintEvaExpireCt = nil
+	u._dwHand = nil
+	u._pasElectricNegated = nil -- PAS-027 Electric Negation (2026-10-28)
+	u._armorLethalSurviveUsed = nil -- BD-020 Unyielding Aegis: once per battle (2026-10-28)
+	u._armorAlchemistBaCount = nil  -- AC-018 Field Alchemist Emblem attack counter
+	-- Checklist fixes (2026-10-28): per-battle counters that leaked into the next battle.
+	u.killsThisBattle = 0            -- Slayer / Pacifist (P/F-111, P/F-147)
+	u._fortifyFlatDefense = nil      -- Fortify (weapon native + PAS-005)
+	u._chargeTilesThisTurn = nil     -- Charge (weapon native + PAS-049)
+	u._qdBaThisTurn = nil            -- Quick Draw: Basic Attacks this turn
+	u._qdUsedThisTurn = nil          -- Quick Draw: used this turn
+	u._itemRegen = nil               -- AC-007 Overflowing Flask regen entries
+	u._amphibiousDry = nil           -- Amphibious tag: off-water Move -1 (2026-10-29)
+	u._docCastingSkill = nil         -- Geomancer skill-terrain flag (2026-10-29)
+	u._commandantDmgCt = nil         -- HD-020 Commandant Helm damage bonus (2026-10-29)
+	u._commandantDmgBonus = nil
+	u._catauDry = nil                -- Catau Tidecaller stat sync flag (2026-10-29)
+	u._movedThisTurn = false         -- Sniper's Perch / Restless
+	u._movedLastTurn = false
+	u._traitActedThisTurn = false    -- Martial Footwork
+	u._sluggishPendingAp = nil       -- Sluggish Finisher
+	u._traitMoveEvasion = 0          -- Dodger / Sitting Duck (re-check 2026-10-29)
+	u._allyKoSeen = nil              -- ally-KO scan (re-check 2026-10-29)
+	u._lastAttackedKey = nil
+	if u._soulHarvestActive then     -- Soul Harvest flaw (F-177): -8% stats latch is per battle
+		u._soulHarvestActive = nil
+		EquipmentService.RebuildUnitStats(u)
+	end
+	u._docArcanistUsedSkill = nil
+	u._docTricksterUsedUtility = nil
+	u._docMonkLastTargetId = nil
+	u._docMonkHitCount = nil
+	u._docRangerMoved = nil
+	u._docSkirmisherTilesMoved = nil
+	u._docAsceticUsedMpSkill = nil
 	u.tileX = 0
 	u.tileY = 0
 	-- Facing tokens are ABBREVIATIONS everywhere (GameConstants.FACING_VECTORS keys:
@@ -2198,7 +2426,18 @@ while true do
 	quests = QuestGenerator.Generate(playerLevel, os.time())
 
 	-- Show Quest Board to all clients
-	BattleEvents.QuestBoardOpen:FireAllClients({ quests = quests })
+	-- DAILY CONTRACT (daily systems decisions 4-6, 2026-11-01): pinned first on the board until it
+	-- is won today. A lost contract stays for a retry the same day; a missed day is simply gone.
+	if not DailyService.IsContractDone(PLAYER_ID) then
+		local okDc, dc = pcall(QuestGenerator.GenerateDailyContract, playerLevel, DailyService.ContractDay(PLAYER_ID))
+		if okDc and dc then
+			table.insert(quests, 1, dc)
+		else
+			warn("[Main] Daily Contract could not be generated: " .. tostring(dc))
+		end
+	end
+	BattleEvents.QuestBoardOpen:FireAllClients({ quests = quests, newDayIn = DailyService.SecondsUntilNewDay(),
+		bossRewardsLeft = DailyService.BossRewardsLeft(PLAYER_ID), bossRewardsPerDay = DailyService.BOSS_REWARDS_PER_DAY })
 
 	-- Wait for quest selection
 	selectedQuestId = nil
@@ -2240,6 +2479,13 @@ while true do
 
 	print(string.format("[Main] Quest selected: %s (%s/%s)", selectedQuest.name, selectedQuest.biome, selectedQuest.template))
 
+	-- ELITE ENCOUNTER (daily systems decisions 10-14, 2026-11-01): fixed by the count of completed
+	-- battles (not by the card, so abandoning cannot fish for elites); normal quests only.
+	if not selectedQuest.isDailyContract and selectedQuest.questType ~= "Boss"
+		and QuestGenerator.IsEliteBattle(PLAYER_ID, GuildMenuService.GetBattlesCompleted()) then
+		QuestGenerator.MakeEliteEncounter(selectedQuest)
+	end
+
 	-- SCOUTING WAIT UX (2026-10-13): show the sortie briefing IMMEDIATELY, with its
 	-- "Continue to Deployment" button LOCKED and flavoured "Scouting the battle map...",
 	-- so the player never stares at an empty world while the map builds. The button
@@ -2254,6 +2500,7 @@ while true do
 		recommendedLvl = selectedQuest.recommendedLvl, enemyCount = selectedQuest.enemyCount,
 		difficulty = selectedQuest.difficulty, playerSlots = selectedQuest.playerSlots,
 		condition = selectedQuest.condition, rewards = selectedQuest.rewards,
+		elite = selectedQuest.isEliteEncounter == true, -- revealed at the briefing (decision 10)
 	} })
 
 	-- Generate map from quest parameters
@@ -2476,6 +2723,11 @@ while true do
 	BattlefieldEventService.SetTargetingService(TargetingService)
 	BattlefieldEventService.SetStatusService(StatusService)
 	BattlefieldEventService.SetCommandService(CommandService)
+	BattlefieldEventService.SetDisguiseChecker(ObjectEffectService.IsDisguised)  -- rules 224 (DI, no cycle)
+	-- Treasure Hunter (project_rules 226-235): chest looting, display names, Getaway channel (DI).
+	BattlefieldEventService.SetHunterLooter(ObjectEffectService.HunterLootChest)
+	BattlefieldEventService.SetObjectDisplayNamer(function(o) return ObjectEffectService.GetDisplayType(o, nil) end)
+	BattlefieldEventService.SetBattleCoordinator(BattleCoordinator)
 	BattlefieldEventService.SetTileReshaper(function(x, y, terrain, elev)
 		if mapFolder then MapRenderer.ReshapeTile(mapFolder, x, y, terrain, elev) end
 	end)
@@ -2486,6 +2738,16 @@ while true do
 		enemySpawns,
 		enemyRng
 	)
+	-- Elite encounter (D-2 fix 2026-11-01): tag the quest's own Elite as THE leader before any
+	-- battlefield event can add another Elite. Only the leader counts for "Defeat the Elite".
+	if activeQuest.isEliteEncounter then
+		for _, eu in ipairs(generatedEnemies or {}) do
+			if eu.enemyType == "Elite" then
+				eu.isEliteLeader = true
+				break
+			end
+		end
+	end
 
 	-- STAGE 2 (2026-10-19): battle BORROWS the base roster instead of rebuilding it.
 	-- Previously this rebuilt hero/mage/ranger and re-ran RestoreRecruits (creating NEW
@@ -2544,7 +2806,15 @@ while true do
 					for _, tag in ipairs(raceEntry.tags) do
 						if tag == "Flying" then
 							StatusService.ApplyStatus(u, "Flight", "RaceTag")
-							print(string.format("[Main] %s has Flying tag — Flight status applied", u.name))
+							-- DB races 'Avian' / race_tags 'Flying': PERMANENT Flight. The Flight status
+							-- def lasts 3 turns, so strip the expiry from the race-granted copy (2026-10-29).
+							local _fi = StatusService.HasStatus(u, "Flight")
+							if type(_fi) == "table" then
+								_fi.remainingTurns = nil
+								_fi.remainingCt = nil
+								_fi.permanent = true
+							end
+							print(string.format("[Main] %s has Flying tag — permanent Flight applied", u.name))
 							break
 						end
 					end
@@ -2619,6 +2889,11 @@ while true do
 	-- SLICE 6: ProgressionService providers + unit-XP sinks
 	-- Wired HERE (after playerUnits exists) because these closures capture it.
 	--------------------------------------------------
+	-- Fast / Slow Learner (2026-10-28): battle XP x the unit's trait multiplier.
+	ProgressionService.SetXpMultiplierProvider(function(pid, unitId)
+		local u = playerUnits[unitId]
+		return if u then TraitEffectService.GetXpGainMultiplier(u) else 1
+	end)
 	ProgressionService.SetUnitRecordProvider(function(pid, unitId)
 		local u = playerUnits[unitId]
 		return u and u.records or nil
@@ -2768,6 +3043,11 @@ while true do
 		if #removedAugs > 0 then
 			print(string.format("[Main] Save-load augment cleanup: %d augment(s) returned to inventory", #removedAugs))
 		end
+		local lockedMoved = 0
+		for _, r in removedAugs do
+			if r.lockedSlot then lockedMoved += 1 end
+		end
+		TrainingGroundsService.AddMoved(lockedMoved) -- approved notice, shown once at base
 	end
 
 	-- Starter consumables: equip a healing potion on Hero if no consumables saved
@@ -2776,7 +3056,11 @@ while true do
 		for _, u in ipairs(allUnitsList) do
 			if u.id == "unit_hero" then heroUnit = u; break end
 		end
-		if heroUnit and (not heroUnit.consumableSlots or not heroUnit.consumableSlots[1]) then
+		-- Fresh player only (2026-11-03 ownership): on a loaded save an empty slot 1 is the
+		-- player's choice, and re-filling it every launch would hand out a free copy.
+		if not hasSave and not heroStarterConsGiven and heroUnit
+			and (not heroUnit.consumableSlots or not heroUnit.consumableSlots[1]) then
+			heroStarterConsGiven = true
 			heroUnit.consumableSlots = heroUnit.consumableSlots or {}
 			heroUnit.consumableSlots[1] = {
 				consumableId = "REC-001",  -- Emergency Small Healing Potion
@@ -2869,11 +3153,13 @@ while true do
 	BattleEvents.MapBuildComplete:FireAllClients()
 
 	-- Sync map data (terrain/elevation/blockers) to client for tile inspector
+	-- Mimic disguise: the client only ever sees display types (no true-type leak).
+	local _syncObjGrid, _syncBlockers = ObjectEffectService.SanitizeMapSync(generatedMap.objectGrid, generatedMap.blockers)
 	BattleEvents.MapDataSync:FireAllClients({
 		terrainGrid  = generatedMap.terrainGrid,
 		elevationGrid = generatedMap.elevationGrid,
-		objectGrid   = generatedMap.objectGrid,
-		blockers     = generatedMap.blockers,
+		objectGrid   = _syncObjGrid,
+		blockers     = _syncBlockers,
 		mapWidth     = MAP_WIDTH,
 		mapHeight    = MAP_HEIGHT,
 	})
@@ -2887,9 +3173,17 @@ while true do
 	-- non-empty saved party (Party A is auto-seeded first-run) so a plain Continue always
 	-- deploys a valid party; the Party tab lets the player pick A/B/C (SelectSortieParty).
 	local chosenPartySlot = nil
-	for _, s in ipairs({ "A", "B", "C" }) do
-		if #PartyService.GetMembers(PLAYER_ID, s) > 0 then chosenPartySlot = s break end
+	-- First party with at least one unit at home (all-away parties would deploy nobody).
+	local function partyUsable(id: string): boolean
+		for _, uid in PartyService.GetMembers(PLAYER_ID, id) do
+			if not DispatchService.IsUnitDispatched(PLAYER_ID, uid) then return true end
+		end
+		return false
 	end
+	for _, s in ipairs(PartyService.GetIds(PLAYER_ID)) do -- up to 5 parties (2026-11-04)
+		if partyUsable(s) then chosenPartySlot = s break end
+	end
+	GuildMenuService.SetSortieParty(chosenPartySlot)
 	do
 		local decided = Instance.new("BindableEvent")
 		local goConn = hubContinueSignal.Event:Connect(function()
@@ -2902,11 +3196,13 @@ while true do
 			if departDecision then return end
 			-- SELECT-ONLY (2026-10-15): picking a party updates the pending selection but does
 			-- NOT start the battle; the player commits with Continue to Deployment (goConn path).
-			if type(slot) == "string" and #PartyService.GetMembers(PLAYER_ID, slot) > 0 then
+			if type(slot) == "string" and partyUsable(slot) then
 				chosenPartySlot = slot
+				GuildMenuService.SetSortieParty(slot)
 			end
 		end)
 		decided.Event:Wait()
+		GuildMenuService.SetSortieParty(nil) -- sortie over: any party may be deleted again
 		goConn:Disconnect()
 		abandonConn:Disconnect()
 		partyConn:Disconnect()
@@ -3346,12 +3642,10 @@ while true do
 			-- Starting-RT % approved 2026-10-04).
 			-- Single rounding (DB core_stats 54): raw Modified Base RT × LUK factor × trait %,
 			-- rounded ONCE, then the flat Player Initiative Edge last.
-			local modBaseRt = StatusService.GetModifiedBaseRt(u)
-			local lukFactor = 1 - 0.30 * luk / (100 + luk)
-			local lukRt = math.round(modBaseRt * lukFactor * TraitEffectService.GetStartingRtMultiplier(u))
-			u.remainingRt = GameConstants.ApplyPlayerInitiativeEdge(lukRt)
-			print(string.format("[Initiative] %s LUK %d: %d -> %d (player edge -%d)",
-				u.name, luk, lukRt, u.remainingRt, GameConstants.PLAYER_INITIATIVE_EDGE_RT))
+			-- One shared calculation (StatCalcService.GetStartingRt, 2026-10-28), also shown on the Info panels.
+			u.remainingRt = StatCalcService.GetStartingRt(u, "battle")
+			print(string.format("[Initiative] %s LUK %d: starting RT %d (incl. player edge -%d)",
+				u.name, luk, u.remainingRt, GameConstants.PLAYER_INITIATIVE_EDGE_RT))
 		end
 	end
 
@@ -3367,8 +3661,10 @@ while true do
 	-- AwardBattleXp already use, so chest loot now matches end-of-battle loot exactly.
 	state.ownerPlayerId = PLAYER_ID
 	state.mapLevel      = (activeQuest and activeQuest.recommendedLvl) or 1
+	BlackMarketService.BeginBattle(state)  -- Black Market stocks are per battle (step 6b)
 	StatusService.SetAuraUnitsProvider(function() return state and state.units end)  -- Ward Tot
 	CombatResolver.SetUnitsProvider(function() return state and state.units end)  -- BD-014 Guardian Mantle (adjacent-ally guard share)em aura
+	CommandService.SetFreePushUnitsProvider(function() return state and state.units end, function() return state and state.objects end)  -- GL-021 Initiator's Grips at 0 AP (re-check 2026-10-29)
 	-- Status conflict rules (2026-10-07): notify clients when a conflict removes a status.
 	StatusService.SetConflictRemovedHandler(function(unit, statusId)
 		if BattleVisualBroadcaster.StatusExpired then BattleVisualBroadcaster.StatusExpired(unit, statusId) end
@@ -3433,6 +3729,13 @@ while true do
 	-- eligible to roll (ObjectiveService IMPLEMENTED allowlist).
 	do
 		local objCtx = ObjectiveService.BuildContext(allUnitsList, state.objects)
+		-- Elite encounters always carry "Defeat the Elite within N rounds" (daily systems decision
+		-- 12), counted on the tagged leader only (state.eliteLeaderOnly), even if an event added
+		-- another Elite (D-2 fix 2026-11-01).
+		if activeQuest and activeQuest.isEliteEncounter then
+			objCtx.forceObjective = "elite_slayer"
+			state.eliteLeaderOnly = true
+		end
 		local objRng = Random.new((state.battleSeed or os.time()) + 13337)
 		ObjectiveService.BeginBattle(state, objCtx, objRng, 2)
 		if state.activeObjectives and #state.activeObjectives > 0 then
@@ -3577,13 +3880,89 @@ while true do
 	-- Initialize armor passives for all units at battle start (Slice 4G.9)
 	for _, unit in ipairs(state.units) do
 		ArmorPassiveService.OnBattleStart(unit)
+		-- Catau Tidecaller (2026-10-29): stats depend on standing on water, so sync once now that
+		-- every unit is on its starting tile.
+		RacePassiveService.RefreshConditionalStats(unit)
 	end
+	-- AC-019 Quartermaster Badge (2026-10-29, DB "At battle start, choose 1 ally"): each wearer picks
+	-- the ally it shares Item charges with. The player picks from a list (same pick panel as Steal);
+	-- an enemy wearer, or a player who does not answer in 60 s, gets the ally holding the most Item
+	-- charges (ties: nearest). Set after ArmorPassiveService.OnBattleStart, which clears the link.
+	for _, qw in ipairs(state.units) do
+		if qw.isAlive and not qw.isSummon and not qw.isItemDevice and ArmorPassiveService.GetItemShareConfig(qw) then
+			local allies = {}
+			for _, a in ipairs(state.units) do
+				if a ~= qw and a.isAlive and a.side == qw.side and not a.isSummon and not a.isItemDevice and a.consumableSlots then
+					table.insert(allies, a)
+				end
+			end
+			local pick = nil
+			if #allies > 0 and qw.side == "Player" and player then
+				local labels, byLabel = {}, {}
+				for _, a in ipairs(allies) do
+					local lab = tostring(a.name or a.id)
+					if byLabel[lab] then lab = lab .. " (" .. tostring(a.id) .. ")" end
+					byLabel[lab] = a
+					table.insert(labels, lab)
+				end
+				local chosen = nil
+				local qmConn = BattleEvents.StealChoice.OnServerEvent:Connect(function(plr, data)
+					if plr == player and type(data) == "table" and data.casterId == qw.id and type(data.slot) == "string" and byLabel[data.slot] then
+						chosen = byLabel[data.slot]
+					end
+				end)
+				BattleEvents.StealPrompt:FireClient(player, { casterId = qw.id, targetId = qw.id, targetName = qw.name,
+					title = `{qw.name}: share Item charges with`, slots = labels })
+				local qmT0 = os.clock()
+				while not chosen and os.clock() - qmT0 < 60 do task.wait(0.1) end
+				qmConn:Disconnect()
+				pick = chosen
+			end
+			if not pick and #allies > 0 then
+				local bestCharges, bestDist = -1, math.huge
+				for _, a in ipairs(allies) do
+					local ch = 0
+					for _, s in pairs(a.consumableSlots or {}) do ch += (s and s.currentCharges) or 0 end
+					local dist = math.max(math.abs((a.tileX or 0) - (qw.tileX or 0)), math.abs((a.tileY or 0) - (qw.tileY or 0)))
+					if ch > bestCharges or (ch == bestCharges and dist < bestDist) then
+						pick, bestCharges, bestDist = a, ch, dist
+					end
+				end
+			end
+			qw._armorQmPartnerId = pick and pick.id or nil
+			print(string.format("[Main] Quartermaster Badge: %s shares Item charges with %s", tostring(qw.name), pick and tostring(pick.name) or "nobody"))
+		end
+	end
+
+	-- Discovery Radius, initial deployment trigger (DB loot_progression row 5): every living unit
+	-- checks once from its starting tile before the first turn.
+	DiscoveryService.RunForAll(state)
 
 	-- Tile labels for revived units (2026-10-28): revives happen in many services, and only Main owns
 	-- the tile labels the client's tile inspector shows. Each step, any unit that was down and is now
 	-- standing gets its tile labelled (it may have risen on a different, free tile).
 	local _aliveSeen = {}
 	for _, u in ipairs(state.units) do _aliveSeen[u] = u.isAlive end
+	-- Battle Log Coverage (rules 225): name the cause of a CT-tick / turn-start refresh.
+	-- Read-only inference from the unit (BattleCoordinator/StatusService have no broadcaster
+	-- handle and only stash the unit). Returns cause, logMp. Never mutates the unit.
+	local function ctTickCause(u: any): (string?, boolean)
+		local wasAlive = _aliveSeen[u]
+		if u.isAlive and wasAlive == false then
+			if u.raceId == "RACE-ZOMBIE" and u.zombieReviveUsed then return "Zombie Undying", false end
+			if u.undyingWillUsed then return "Undying Will", false end
+			return "Revive", false
+		end
+		if u.isAlive == false and StatusService.HasStatus(u, "Sinking") then return "Sinking", false end
+		if u.raceId == "RACE-TROLL" and u.currentHp and u.maxHp then
+			if not StatusService.HasStatus(u, "Regeneration") then return "Troll Regrowth", false end
+		end
+		if StatusService.HasStatus(u, "Regeneration") then
+			return "Regeneration", if StatusService.HasStatus(u, "Recharge") then true else false
+		end
+		if StatusService.HasStatus(u, "Recharge") then return "Recharge", true end
+		return nil, false
+	end
 	local function labelRevivedUnits()
 		for _, u in ipairs(state.units) do
 			if u.isAlive and _aliveSeen[u] == false and u.tileX and u.tileY then
@@ -3595,11 +3974,21 @@ while true do
 
 	while BattleCoordinator.GetPhase(state) ~= "BattleOver" do
 		local activeUnit = BattleCoordinator.AdvanceClock(state)
+		local _revivedSnapshot = table.clone(_aliveSeen)  -- read by ctTickCause before labelRevivedUnits refreshes it
 		labelRevivedUnits()
+		-- Discovery Radius: catch units displaced or placed during the clock advance (channel
+		-- resolves, pulses, revives, new summons) and check from their new tile.
+		DiscoveryService.CheckMoved(state)
+		-- Catau Tidecaller (2026-10-29): resync units moved during the clock advance.
+		for _, _cu in ipairs(state.units) do
+			if _cu.isAlive and _cu.raceId == "RACE-CATAU" and RacePassiveService.RefreshConditionalStats(_cu) then
+				BattleVisualBroadcaster.UnitStateChanged(_cu, BattleVisualBroadcaster.SILENT)
+			end
+		end
 		if not activeUnit then break end
 		-- TAUNT (user ruling 2026-10-27): drop / apply aura taunts before the turn plays.
 		for _, _tu in ipairs(StatusService.ReconcileTaunts(state.units)) do
-			BattleVisualBroadcaster.UnitStateChanged(_tu)
+			BattleVisualBroadcaster.UnitStateChanged(_tu, "Taunt")
 		end
 
 		-- Time-phase change: BattleCoordinator stashes it on state (it has no
@@ -3615,6 +4004,9 @@ while true do
 		-- "Once per turn"). activeUnit may be a channel-resolve signal table without
 		-- an .id — guard before using it as a unit.
 		ObjectEffectService.ProcessDeaths(state.units, state)
+		-- Hemophage / Sluggish Finisher for units that went down during the clock advance (DoT,
+		-- channel resolves, pulses...). The active unit's AP is already refreshed (re-check 2026-10-29).
+		CombatResolver.FlushAllyKoReactions(state.units, (activeUnit.id and activeUnit) or {})
 		if activeUnit.id then
 			ObjectEffectService.ClearTurnUsage(activeUnit.id)
 		end
@@ -3630,18 +4022,24 @@ while true do
 				u._reviveMoved = nil
 				BattleVisualBroadcaster.UnitMoved(u)
 			end
-			BattleVisualBroadcaster.UnitStateChanged(u)
+			do
+				local _seen = _aliveSeen; _aliveSeen = _revivedSnapshot
+				local _c, _mp = ctTickCause(u)
+				_aliveSeen = _seen
+				BattleVisualBroadcaster.UnitStateChanged(u, _c, _mp)
+			end
 			-- Shield visual (2026-10-23): keep the client shield indicator in sync as the
 			-- pool decays/expires on CT ticks (absolute shield_total, read by the broadcaster).
 			-- Harmless no-op for units with no shield (shieldTotal = 0 just hides the pill).
 			BattleVisualBroadcaster.ShieldChanged(u, 0, "decay")
 			-- Sinking (and any CT-tick effect) can KO a unit mid-tick: ProcessCtTick set
-			-- isAlive=false and HP=0. Broadcast the defeat the same way every other death
-			-- does (clear the tile, remove the token) so the unit doesn't linger on the board.
+			-- isAlive=false and HP=0. Broadcast the defeat like every other death. The body
+			-- STAYS on its tile so it can be revived (user ruling 2026-10-30); only an item
+			-- device is taken off the board.
 			if u.isAlive == false then
 				clearTileOccupant(u.tileX, u.tileY)
-				BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = true })
-				print(string.format("[Main] %s removed (KO via CT-tick status)", u.name))
+				BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = if u.isItemDevice then true else nil })
+				print(string.format("[Main] %s KO'd (CT-tick status)", u.name))
 			end
 		end
 
@@ -3654,6 +4052,7 @@ while true do
 		state.pulseEvents = nil
 		local _pulseSeen = {}
 		local _pulseKoSeen = {}
+		local _pulseAnimSeen = {}  -- device -> already animated this pass (W-7, 2026-10-28)
 		for _, ev in ipairs(pulseEvents) do
 			local u = ev.unit
 			if u then
@@ -3662,7 +4061,12 @@ while true do
 						-- Device hit (Sentry Turret, ...): shown exactly like a normal attack -- damage
 						-- number, hit flinch, shot effect, "X attacks Y" log (user ruling 2026-10-27).
 						-- UnitActed also announces the KO, so the removal broadcast below is skipped.
-						BattleVisualBroadcaster.UnitActed(ev.sourceUnit, u, { finalDamage = ev.amount }, nil, nil)
+						-- One device attack animation per pulse pass (W-7, 2026-10-28): the first hit keeps the
+						-- client's normal fallback (nil); later units hit by the same device get "None", since
+						-- each event is paced longer than the client's 0.5 s action lock.
+						local _devAnim = if _pulseAnimSeen[ev.sourceUnit] then "None" else nil
+						_pulseAnimSeen[ev.sourceUnit] = true
+						BattleVisualBroadcaster.UnitActed(ev.sourceUnit, u, { finalDamage = ev.amount }, nil, nil, _devAnim)
 						if u.isAlive == false and not _pulseKoSeen[u] then
 							_pulseKoSeen[u] = true
 							clearTileOccupant(u.tileX, u.tileY)
@@ -3693,7 +4097,7 @@ while true do
 				-- across a multi-pulse tick; collapse to one state refresh).
 				if not _pulseSeen[u] then
 					_pulseSeen[u] = true
-					BattleVisualBroadcaster.UnitStateChanged(u)
+					BattleVisualBroadcaster.UnitStateChanged(u, ev.source or (ev.sourceUnit and ev.sourceUnit.name) or nil)
 				end
 				-- W-1 fix: a unit can appear in several pulse events in one pass; broadcast its
 				-- defeat only ONCE (a second UnitDefeated for the same unit is a client-side
@@ -3701,12 +4105,16 @@ while true do
 				if u.isAlive == false and not _pulseKoSeen[u] then
 					_pulseKoSeen[u] = true
 					clearTileOccupant(u.tileX, u.tileY)
-					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = true })
-					print(string.format("[Main] %s removed (KO via pulse)", u.name))
+					-- A unit KO'd by a pulse keeps its body (revivable, user ruling 2026-10-30);
+					-- an expired item device is removed from the board.
+					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = if u.isItemDevice then true else nil })
+					print(string.format("[Main] %s %s (pulse)", u.name, if u.isItemDevice then "removed" else "KO'd"))
 				end
 			end
 		end
 
+		-- Battle Log Coverage: flush grouped lines for this CT-tick block (statuses/pulses/weather).
+		BattleVisualBroadcaster.FlushLog()
 		-- A side wiped by clock effects (statuses, tile effects, pulses) ends the battle now. They tick
 		-- after AdvanceClock's own battle-end check, so without this the next unit would still get a turn
 		-- on an empty field (UAT 2026-10-28 W-1). The kills above have already been shown.
@@ -3748,14 +4156,19 @@ while true do
 					u._reviveMoved = nil
 					BattleVisualBroadcaster.UnitMoved(u)
 				end
-				BattleVisualBroadcaster.UnitStateChanged(u)
+				do
+					local _c, _mp = ctTickCause(u)
+					BattleVisualBroadcaster.UnitStateChanged(u, _c, _mp)
+				end
 				BattleVisualBroadcaster.ShieldChanged(u, 0, "decay")
 				if u.isAlive == false then
 					clearTileOccupant(u.tileX, u.tileY)
-					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = true })
-					print(string.format("[Main] %s removed (KO via turn-start effect)", u.name))
+					-- Body stays for revives (user ruling 2026-10-30); item devices are removed.
+					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = if u.isItemDevice then true else nil })
+					print(string.format("[Main] %s KO'd (turn-start effect)", u.name))
 				end
 			end
+			BattleVisualBroadcaster.FlushLog()
 		end
 
 		turnCount = turnCount + 1
@@ -3821,11 +4234,18 @@ while true do
 			-- TickStatuses call that used to sit here made skipped-turn statuses wear off twice as fast.
 			BattleCoordinator.EndTurn(state)
 			broadcastEndTurnDots()
+			-- Wrathful / Meek: a skipped turn still is "the next turn" (re-check 2026-10-29).
+			if activeUnit.combatStackPct and activeUnit.combatStackPct ~= 0 then
+				activeUnit.combatStackPct = 0
+				activeUnit.combatStackAge = 0
+			end
 			BattleVisualBroadcaster.TurnSkipped(activeUnit, skipReason)
 			BattleVisualBroadcaster.TurnEnded(activeUnit, activeUnit.remainingRt)
 		else
 			-- Normal turn
 			BattleVisualBroadcaster.TurnStarted(activeUnit, state.ct, state.units)
+			-- Discovery Radius, beginning-of-ready-turn trigger (DB loot_progression row 5).
+			DiscoveryService.RunForUnit(state, activeUnit)
 
 			-- Tile occupy effect: a unit that BEGINS its turn standing on a hazard tile
 			-- receives that tile's occupy status (DB: Burning/Poison Cloud/Vines "Inflict X").
@@ -3975,6 +4395,7 @@ while true do
 	local phase  = BattleCoordinator.GetPhase(state)
 	local winner = BattleCoordinator.GetWinner(state)
 
+	BlackMarketService.EndBattle()  -- no Black Market buying once the battle has ended (step 6b)
 	if phase == "BattleOver" then
 		print(string.format("BATTLE OVER — %s wins! (%d turns)", winner, turnCount))
 	else
@@ -3991,7 +4412,19 @@ while true do
 	--------------------------------------------------
 
 	local isQualifyingVictory = (winner == "Player")
+	-- Break ends with the battle (2026-10-28): it is a battle status, and with the Break ruling it
+	-- switches traits off, so a Break left on a player unit would wrongly keep its traits off in the
+	-- hub and for post-battle effects. RemoveStatus rebuilds the unit's stats.
+	for _, u in ipairs(allUnitsList) do
+		if u.side == "Player" and StatusService.HasStatus(u, "Break") then
+			StatusService.RemoveStatus(u, "Break")
+		end
+	end
 	local battleGoldEarned = 0 -- set by the BATTLE GOLD block below; shown on the reward screen
+	local battleMercuryEarned = 0 -- kill + quest + chest/salvage mercury (block below)
+	local dailyContractResult: any = nil -- set when a Daily Contract was won (reward screen)
+	local bossRewardResult: any = nil    -- set after a boss win (reward screen + guaranteed item)
+	local eliteRewardResult: any = nil   -- set after an elite-encounter win (reward screen + item)
 	-- Expedition Fortune (loot_progression, 2026-10-23): the deployed team's post-gear
 	-- Fortune drives loot rarity quality AND the Fortune gold multiplier for THIS battle's
 	-- rewards. Computed from who actually fought (allUnitsList); neutral when LUK+gear low.
@@ -4032,6 +4465,7 @@ while true do
 	-- do-block below) and the objective-reward grant (inside the victory reward
 	-- block further down) can see the same result. (Scope fix 2026-10-24.)
 	local objResult = nil
+	local xpSummary = nil  -- victory screen: per-unit XP + level-ups (2026-10-28)
 	do
 		-- kills[]: one entry per defeated ENEMY. enemyType is stamped by EnemyGenerator
 		-- (unit.enemyType = spec.type, EnemyGenerator L453) so Grunt/Veteran/Elite is
@@ -4137,7 +4571,7 @@ while true do
 			-- Glow Crystal (Slice 6 item 3): set by ObjectEffectService on a player activation.
 			glowCrystal      = (state ~= nil and state.glowCrystalActive == true),
 		}
-		local xpSummary = ProgressionService.AwardBattleXp(PLAYER_ID, battleResult)
+		xpSummary = ProgressionService.AwardBattleXp(PLAYER_ID, battleResult)
 
 		-- BATTLE GOLD (economy_framework ids 2-9, LOCKED; defeat rule 2026-09-14).
 		--   Kill Gold = Base × (1 + Enemy Level / 100) × overleveled band
@@ -4159,8 +4593,137 @@ while true do
 			local total = RewardService.ApplyGold(gb.total)
 			if total > 0 then CurrencyService.Credit(PLAYER_ID, { gold = total }) end
 			battleGoldEarned = total
+			-- Thief Fortune Hand (2026-10-28): steal gold is kept only on a win, like stolen items.
+			-- Exact amount (Thief level per steal); battlefield gold multipliers do not apply.
+			local stealGold = (state and state.stealGold) or 0
+			if isQualifyingVictory and stealGold > 0 then
+				CurrencyService.Credit(PLAYER_ID, { gold = stealGold })
+				battleGoldEarned = battleGoldEarned + stealGold
+				print(string.format("[PostBattle] Steal gold +%d (Thief Fortune Hand)", stealGold))
+			end
+			-- Chest / salvage gold (held since the chest opened; daily systems decision 15,
+			-- 2026-11-01): full on a qualifying victory, 50% on a defeat (defeat rule, like kill gold).
+			local chestGold = (state and tonumber(state.chestGold)) or 0
+			local chestGoldKept = if isQualifyingVictory then chestGold else math.floor(chestGold * 0.5)
+			if chestGoldKept > 0 then
+				CurrencyService.Credit(PLAYER_ID, { gold = chestGoldKept })
+				battleGoldEarned = battleGoldEarned + chestGoldKept
+				print(string.format("[PostBattle] Chest/salvage gold +%d (of %d held, %s)", chestGoldKept, chestGold,
+					if isQualifyingVictory then "victory" else "defeat: half kept"))
+			end
 			print(string.format("[PostBattle] Gold +%d (kills %d, completion %d, quest %d, band x%.2f, event x%.1f, %s)",
 				total, killGold, completionGold, questGold, band, eventGoldMult, if isQualifyingVictory then "victory" else "defeat"))
+		end
+		-- BATTLE MERCURY (v2 build step 6a, 2026-11-01; materials_system 7): each defeated enemy
+		-- (summons excluded, same as kill gold) has a 5% chance of 1 mercury, on a victory only
+		-- (like item loot). Fortune never applies. Chest / salvage mercury is held since the chest
+		-- opened (state.chestMercury) and is given here on a victory only (daily systems decision 15).
+		do
+			local KILL_MERCURY_CHANCE = 0.05
+			local rng = Random.new()
+			local killMercury = 0
+			local rolled = 0
+			if isQualifyingVictory then
+				for _, u in ipairs(allUnitsList) do
+					if u.side == "Enemy" and not u.isSummon and not u.isAlive then
+						rolled += 1
+						if rng:NextNumber() < KILL_MERCURY_CHANCE then
+							killMercury += 1
+						end
+					end
+				end
+				if killMercury > 0 then
+					CurrencyService.Credit(PLAYER_ID, { mercury = killMercury })
+				end
+			end
+			-- Quest mercury (USER DECISION 2026-11-01, materials_system 11): the amount shown on
+			-- the quest, on a qualifying victory only (like quest gold).
+			local questMercury = 0
+			if isQualifyingVictory then
+				local qm = activeQuest and activeQuest.rewards and tonumber(activeQuest.rewards.mercury)
+				if qm and qm > 0 then
+					questMercury = math.floor(qm)
+					CurrencyService.Credit(PLAYER_ID, { mercury = questMercury })
+				end
+			end
+			local chestMercury = 0
+			if isQualifyingVictory then
+				chestMercury = math.floor((state and tonumber(state.chestMercury)) or 0)
+				if chestMercury > 0 then
+					CurrencyService.Credit(PLAYER_ID, { mercury = chestMercury })
+				end
+			end
+			battleMercuryEarned = killMercury + questMercury + chestMercury
+			print(string.format("[PostBattle] Mercury +%d (kills %d from %d rolls, quest %d, chests/salvage %d)",
+				battleMercuryEarned, killMercury, rolled, questMercury, chestMercury))
+		end
+		-- DAILY CONTRACT (daily systems decisions 4-6, 2026-11-01): a won contract is done for its
+		-- day and counts as a completed daily event (every 3rd also gives 1 sulfur). Its 3 mercury
+		-- is the quest mercury above. A loss changes nothing (retry the same day).
+		if isQualifyingVictory and activeQuest and activeQuest.isDailyContract then
+			DailyService.CompleteContract(PLAYER_ID, activeQuest.dailyDay)
+			local total, sulfur = CurrencyService.RecordDailyEvent(PLAYER_ID)
+			dailyContractResult = { total = total, sulfur = sulfur }
+		end
+		-- BOSS REWARD (daily systems decision 8, 2026-11-01): the first 3 boss WINS of the real day
+		-- get the guaranteed Rare-or-better item (added with the victory loot below) and the boss
+		-- grants (materials_system 41: 3 mercury, 5 crystals, 1 rune gem, + 1 sulfur at content
+		-- L60+). Later boss wins that day keep their normal quest rewards only.
+		if isQualifyingVictory and activeQuest and activeQuest.questType == "Boss" then
+			if DailyService.UseBossReward(PLAYER_ID) then
+				local lvl = (state and tonumber(state.mapLevel)) or 1
+				local okGem, gemId = pcall(RewardService.RollRuneGem, lvl)
+				if not okGem then
+					warn("[PostBattle] Boss rune gem roll failed: " .. tostring(gemId))
+					gemId = nil
+				end
+				local sulfur = if lvl >= 60 then 1 else 0
+				CurrencyService.Credit(PLAYER_ID, {
+					mercury = 3, crystals = 5, sulfur = sulfur,
+					gems = if gemId then { [gemId] = 1 } else nil,
+				})
+				battleMercuryEarned += 3
+				local gemName = nil
+				if gemId then
+					local okD, desc = pcall(RuneforgeService.DescribeGem, gemId)
+					gemName = if okD and desc then desc.name else gemId
+				end
+				bossRewardResult = { crystals = 5, sulfur = sulfur, gem = gemName,
+					left = DailyService.BossRewardsLeft(PLAYER_ID) }
+				print(string.format("[PostBattle] Boss reward: +3 mercury +5 crystals +%d sulfur, rune gem %s (%d left today)",
+					sulfur, tostring(gemId), bossRewardResult.left))
+			else
+				bossRewardResult = { limited = true }
+				print("[PostBattle] Boss reward limit reached today (3 a day): normal quest rewards only")
+			end
+		end
+		-- ELITE ENCOUNTER GRANTS (materials_system 8/41; daily systems decision 12): every won elite
+		-- encounter gives 2 mercury and 3 crystals, a 50% chance of 1 rune gem (one line of a Rare
+		-- item of the encounter level) and, at content L60+, a 25% chance of 1 sulfur. Always given;
+		-- Fortune never applies. The elite reward item is rolled with the victory loot below.
+		-- (200 Guild XP: Guild XP is not awarded for quest battles yet - not built.)
+		if isQualifyingVictory and activeQuest and activeQuest.isEliteEncounter then
+			local lvl = (state and tonumber(state.mapLevel)) or 1
+			local erng = Random.new()
+			local gemId = nil
+			if erng:NextNumber() < 0.5 then
+				local okGem, g = pcall(RewardService.RollRuneGem, lvl, "Rare")
+				gemId = if okGem then g else nil
+			end
+			local sulfur = if lvl >= 60 and erng:NextNumber() < 0.25 then 1 else 0
+			CurrencyService.Credit(PLAYER_ID, {
+				mercury = 2, crystals = 3, sulfur = sulfur,
+				gems = if gemId then { [gemId] = 1 } else nil,
+			})
+			battleMercuryEarned += 2
+			local gemName = nil
+			if gemId then
+				local okD, desc = pcall(RuneforgeService.DescribeGem, gemId)
+				gemName = if okD and desc then desc.name else gemId
+			end
+			eliteRewardResult = { crystals = 3, sulfur = sulfur, gem = gemName }
+			print(string.format("[PostBattle] Elite encounter grants: +2 mercury +3 crystals +%d sulfur, rune gem %s",
+				sulfur, tostring(gemId)))
 		end
 		if xpSummary and xpSummary.flags and #xpSummary.flags > 0 then
 			for _, f in ipairs(xpSummary.flags) do
@@ -4181,25 +4744,35 @@ while true do
 		end
 	end
 
-	-- Step 2a: Clear KO on all player units (session rule — base not implemented)
-	PersistentStateService.ClearAllKO(PLAYER_ID)
-
-	-- Step 2b: Apply 35% recovery to all survivors (regardless of outcome)
-	print("[PostBattle] Applying 35% recovery to survivors")
-	-- Perks & Flaws (2026-10-23): build per-unit recovery-fraction overrides from the LIVE
-	-- units (which carry trait ids; the persistent-state layer does not). Resilient adds to
-	-- the 0.35 baseline, Slow to Recover replaces it. Units with neither are left out (default).
-	local recoveryOverrides = {}
-	for _, u in ipairs(allUnitsList) do
-		if u.side == "Player" then
-			local frac = TraitEffectService.GetPostBattleRecoveryFraction(u, 0.35)
-			if frac ~= 0.35 then recoveryOverrides[u.id] = frac end
+	-- Step 2a: post-battle recovery -- QUALIFYING VICTORY ONLY, survivors only (BUG-071,
+	-- 2026-11-01; persistent_hp_mp_rules 3/5/8, unit_progression 96). KO'd units get nothing:
+	-- ApplyPostBattleRecovery skips isKO records, so this MUST run before ClearAllKO (step 2b).
+	local recovery = {}
+	if isQualifyingVictory then
+		print("[PostBattle] Applying 35% recovery to survivors")
+		-- Perks & Flaws (2026-10-23): build per-unit recovery-fraction overrides from the LIVE
+		-- units (which carry trait ids; the persistent-state layer does not). Resilient adds to
+		-- the 0.35 baseline, Slow to Recover replaces it. Units with neither are left out (default).
+		-- Whole roster, not just the battle list (2026-11-01): benched and dispatched units
+		-- also recover on a win (rule 4; dispatch confirmed by user), so their traits count too.
+		local recoveryOverrides = {}
+		for _, u in pairs(playerUnits) do
+			if u.side == "Player" then
+				local frac = TraitEffectService.GetPostBattleRecoveryFraction(u, 0.35)
+				if frac ~= 0.35 then recoveryOverrides[u.id] = frac end
+			end
 		end
+		recovery = PersistentStateService.ApplyPostBattleRecovery(PLAYER_ID, recoveryOverrides)
+		for unitId, result in pairs(recovery) do
+			print(string.format("  %s: HP+%d MP+%d", unitId, result.hpRecovered, result.mpRecovered))
+		end
+	else
+		print("[PostBattle] No post-battle recovery (not a qualifying victory)")
 	end
-	local recovery = PersistentStateService.ApplyPostBattleRecovery(PLAYER_ID, recoveryOverrides)
-	for unitId, result in pairs(recovery) do
-		print(string.format("  %s: HP+%d MP+%d", unitId, result.hpRecovered, result.mpRecovered))
-	end
+
+	-- Step 2b: returning to base clears KO -> Current HP 1, MP unchanged (rule 9). Runs AFTER
+	-- recovery so KO'd units come home at exactly 1 HP (rule 9: "intentionally harsh").
+	PersistentStateService.ClearAllKO(PLAYER_ID)
 
 	--------------------------------------------------
 	-- POST-BATTLE: GENERATE REWARDS (Slice 4D)
@@ -4243,6 +4816,83 @@ while true do
 			print(string.format("[PostBattle] %d stolen item(s) added to victory loot", #state.stolenItems))
 		end
 
+		-- Treasure Hunter recovered loot (project_rules 232/233, 2026-10-28): loot held by a
+		-- DEFEATED Treasure Hunter is kept ONLY on a qualifying victory (we are inside that
+		-- branch). Escaped / still-on-map NPCs hand nothing over (their loot never reaches this
+		-- list). Equipment commits here; card-type entries (SkillCard/AugmentCard/Doctrine/
+		-- Consumable) are appended uncommitted and go through the SAME card-commit loop below.
+		-- All are flagged stolen=true for the STOLEN badge. Steal/Mug path above is untouched.
+		pcall(BattlefieldEventService.SweepHunterDeaths, state)
+		if state.recoveredHunterLoot and #state.recoveredHunterLoot > 0 then
+			for _, r in ipairs(state.recoveredHunterLoot) do
+				if r.category == "Equipment" and r.item then
+					local okAdd = InventoryService.AddItem(PLAYER_ID, r.item)
+					table.insert(results, {
+						category = "Equipment", item = r.item, committed = okAdd ~= false, stolen = true,
+					})
+					if okAdd ~= false then equipCommitted = equipCommitted + 1 end
+				elseif r.cardData then
+					table.insert(results, {
+						category = r.category, cardData = r.cardData, committed = false, stolen = true,
+					})
+				elseif r.category == "Gold" and (tonumber(r.gold) or 0) > 0 then
+					-- Chest gold the Hunter carried (daily systems decision 16): paid on the victory.
+					local g = math.floor(tonumber(r.gold) or 0)
+					CurrencyService.Credit(PLAYER_ID, { gold = g })
+					battleGoldEarned = battleGoldEarned + g
+					print(string.format("[PostBattle] Treasure Hunter chest gold recovered +%d", g))
+				end
+			end
+			print(string.format("[PostBattle] %d Treasure Hunter reward(s) recovered into victory loot", #state.recoveredHunterLoot))
+			state.recoveredHunterLoot = nil
+		end
+
+		-- Chest / salvage loot (held since the chest opened; daily systems decision 15,
+		-- 2026-11-01): kept only on a qualifying victory (we are inside that branch). Equipment
+		-- commits here; cards go through the SAME card-commit loop below. chestReward = CHEST badge.
+		if state.chestLoot and #state.chestLoot > 0 then
+			for _, r in ipairs(state.chestLoot) do
+				if r.category == "Equipment" and r.item then
+					local okAdd = InventoryService.AddItem(PLAYER_ID, r.item)
+					table.insert(results, {
+						category = "Equipment", item = r.item, committed = okAdd ~= false, chestReward = true,
+					})
+					if okAdd ~= false then equipCommitted = equipCommitted + 1 end
+				elseif r.cardData then
+					table.insert(results, {
+						category = r.category, cardData = r.cardData, committed = false, chestReward = true,
+					})
+				end
+			end
+			print(string.format("[PostBattle] %d chest/salvage reward(s) added to victory loot", #state.chestLoot))
+			state.chestLoot = nil
+		end
+
+		-- Elite reward opportunity (loot_progression 26/70): one roll, 75% x Fortune (max 95%).
+		if eliteRewardResult then
+			local okE, eliteItem = pcall(RewardService.RollEliteReward, MAP_LEVEL)
+			if okE and eliteItem then
+				local okAdd = InventoryService.AddItem(PLAYER_ID, eliteItem)
+				table.insert(results, { category = "Equipment", item = eliteItem, committed = okAdd ~= false })
+				if okAdd ~= false then equipCommitted = equipCommitted + 1 end
+				eliteRewardResult.item = okAdd ~= false
+			elseif not okE then
+				warn("[PostBattle] Elite reward roll failed: " .. tostring(eliteItem))
+			end
+		end
+
+		-- Guaranteed boss item (daily systems decision 8): only when today's boss reward was used above.
+		if bossRewardResult and not bossRewardResult.limited then
+			local okB, bossItem = pcall(RewardService.RollBossItem, MAP_LEVEL)
+			if okB and bossItem then
+				local okAdd = InventoryService.AddItem(PLAYER_ID, bossItem)
+				table.insert(results, { category = "Equipment", item = bossItem, committed = okAdd ~= false })
+				if okAdd ~= false then equipCommitted = equipCommitted + 1 end
+			else
+				warn("[PostBattle] Guaranteed boss item could not be generated: " .. tostring(bossItem))
+			end
+		end
+
 		-- Commit non-equipment rewards to card inventories
 		local cardCommitted = 0
 		for _, result in ipairs(results) do
@@ -4257,7 +4907,12 @@ while true do
 					cardInventory.augmentCards[id] = (cardInventory.augmentCards[id] or 0) + 1
 					result.committed = true
 					cardCommitted = cardCommitted + 1
-				elseif cat == "Doctrine" or cat == "Consumable" then
+				elseif cat == "Consumable" then
+					-- Owned copy (2026-11-03): a consumable reward is a real item now.
+					cardInventory.consumables[id] = (cardInventory.consumables[id] or 0) + 1
+					result.committed = true
+					cardCommitted = cardCommitted + 1
+				elseif cat == "Doctrine" then
 					-- Tracked for display; ownership gating deferred
 					result.committed = true
 					cardCommitted = cardCommitted + 1
@@ -4311,6 +4966,7 @@ while true do
 			if objCommitted > 0 then
 				local objSummaries = RewardService.BuildRewardSummaries(objResults)
 				for _, s in ipairs(objSummaries) do
+					s.objectiveReward = true  -- client shows a BONUS badge (2026-10-28)
 					rewardSummaries[#rewardSummaries + 1] = s
 				end
 				print(string.format("[ObjectiveService] Granted %d objective reward(s) from %d completed objective(s).",
@@ -4338,15 +4994,23 @@ while true do
 	-- Battle recruits (project_rules id 133): alive recruited Neutrals are purified and
 	-- join the roster on ANY battle end. Runs after the protected BUG-013 order above.
 	GuildMenuService.AdoptBattleRecruits(state.units)
+	-- Apothecary paid refill on return to base (USER DECISION 2026-11-03, gf 69): every
+	-- equipped consumable missing charges, for gold; one charge at a time when short.
+	ApothecaryService.OnReturnToBase(PLAYER_ID)
 	doSave()
 
 	-- Step 4: Reward screen (if rewards earned)
 	-- Build recovery summary for client display
 	local recoverySummary = {}
 	for unitId, result in pairs(recovery) do
-		local unitName = unitId
-		for _, u in ipairs(state.units) do
-			if u.id == unitId then unitName = u.name; break end
+		-- Roster lookup (2026-11-01): benched / dispatched units are not in state.units, so the
+		-- old battle-only lookup showed their internal id instead of their name.
+		local rosterUnit = playerUnits[unitId]
+		local unitName = (rosterUnit and rosterUnit.name) or unitId
+		if unitName == unitId then
+			for _, u in ipairs(state.units) do
+				if u.id == unitId then unitName = u.name; break end
+			end
 		end
 		if result.hpRecovered > 0 or result.mpRecovered > 0 then
 			table.insert(recoverySummary, {
@@ -4366,7 +5030,7 @@ while true do
 			local pu = playerUnits[r.unitId]
 			if pu and pu.name then nm = pu.name end
 			table.insert(dispatchSummary, {
-				name = nm, xp = r.xp, matTier = r.matTier, matCount = r.matCount,
+				name = nm, xp = r.xp, mercury = r.mercury,
 			})
 		end
 	end
@@ -4396,10 +5060,39 @@ while true do
 	-- rewards/gold/dispatch skipped this entirely, leaving only the bare 5s "DEFEAT" banner.
 	-- Firing it on defeat gives the same framed screen (DEFEAT title + a no-spoils line) with a
 	-- Continue button, and the rewardContinueSignal wait keeps the loop paced like a victory.
-	if #rewardSummaries > 0 or battleGoldEarned > 0 or #dispatchSummary > 0 or #activeDispatch > 0 or not isQualifyingVictory then
+	-- Optional objectives result (2026-10-28): every objective this battle, achieved
+	-- or failed, with its goal + bonus reward count (from ObjectiveService.Evaluate).
+	local objectivesScreen = (objResult and objResult.objectives) or {}
+	-- Experience earned + level-ups (2026-10-28), from AwardBattleXp's per-unit summary.
+	-- Kill XP is granted on any outcome (locked), so this shows on defeat too.
+	local xpScreen = {}
+	if xpSummary and xpSummary.ok and type(xpSummary.units) == "table" then
+		for unitId, r in pairs(xpSummary.units) do
+			if (r.xpGranted or 0) > 0 or (r.levelsGained or 0) > 0 then
+				local pu = playerUnits[unitId]
+				xpScreen[#xpScreen + 1] = {
+					name = (pu and pu.name) or tostring(unitId),
+					xp = r.xpGranted or 0,
+					levelsGained = r.levelsGained or 0,
+					level = r.level,
+					atCap = r.atCap == true,
+					benched = (tonumber(r.rate) or 1) < 1,  -- benched units earn 65%
+				}
+			end
+		end
+		table.sort(xpScreen, function(a, b)
+			if a.xp ~= b.xp then return a.xp > b.xp end
+			return a.name < b.name
+		end)
+	end
+	if #rewardSummaries > 0 or battleGoldEarned > 0 or battleMercuryEarned > 0 or dailyContractResult ~= nil
+		or bossRewardResult ~= nil or eliteRewardResult ~= nil or #dispatchSummary > 0 or #activeDispatch > 0
+		or #objectivesScreen > 0 or #xpScreen > 0 or not isQualifyingVictory then
 		print(string.format("[PostBattle] Sending %d reward(s) + %d gold + %d dispatch + %d active-dispatch to client", #rewardSummaries, battleGoldEarned, #dispatchSummary, #activeDispatch))
 		BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary, gold = battleGoldEarned,
-			dispatch = dispatchSummary, activeDispatch = activeDispatch, daysElapsed = daysElapsed, defeat = not isQualifyingVictory })
+			mercury = battleMercuryEarned, daily = dailyContractResult, boss = bossRewardResult, elite = eliteRewardResult,
+			dispatch = dispatchSummary, activeDispatch = activeDispatch, daysElapsed = daysElapsed, defeat = not isQualifyingVictory,
+			objectives = objectivesScreen, xp = xpScreen })
 		rewardContinueSignal.Event:Wait()
 		print("[PostBattle] Player acknowledged rewards")
 	end
@@ -4410,6 +5103,21 @@ while true do
 	-- above wrote rewards/XP/recovery/roster). This extra save is a safety net; then the
 	-- loop returns to the top, which opens the base ("Base" phase). Post-battle loadout
 	-- changes now happen at the base, which is fully interactive.
+	-- BUG-068 (2026-11-01): leave the battle map. Roster units keep their battle tile until the
+	-- NEXT battle's resetUnitForNewBattle, and the time phase stays on the last round, so
+	-- battle-map-only race stats (Vampire / Werewolf day/night, Catau off-water) leaked into
+	-- the base screens. Clear both, then rebuild once so base stats (and the save) are clean.
+	RacePassiveService.SetTimePhase(nil)
+	for _, u in pairs(playerUnits) do
+		u.tileX = 0
+		u.tileY = 0
+		EquipmentService.RebuildUnitStats(u)
+		-- BUG-070: keep the saved HP/MP record in step with the rebuilt max (rules 19/20),
+		-- as every other out-of-battle rebuild does. KO is already cleared to 1 HP (BUG-071).
+		if u.maxHp and u.maxMp then
+			PersistentStateService.UpdateMaxResources(PLAYER_ID, u.id, u.maxHp, u.maxMp)
+		end
+	end
 	doSave()
 	print(`[Hub] Battle complete (mode: {betweenBattleMode}) — auto-saved; returning to base.`)
 

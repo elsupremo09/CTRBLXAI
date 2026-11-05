@@ -65,6 +65,8 @@ end
 --- Duelist equipment: naturally legal 1H main hand, empty off-hand, no Colossal Arsenal.
 local function isDuelistEquipValid(unit)
 	if not unit then return false end
+	-- Needs an actual main-hand weapon (unarmed units default weaponHandClass to "1H"). 2026-10-28.
+	if not (unit.equipmentSlots and unit.equipmentSlots.MainHand) then return false end
 	if unit.weaponHandClass ~= "1H" then return false end
 	-- Off-hand must be empty
 	if unit.equipmentSlots and unit.equipmentSlots.OffHand then return false end
@@ -89,8 +91,10 @@ local function isShieldEquipped(unit)
 	if not unit or not unit.equipmentSlots then return false end
 	local offHand = unit.equipmentSlots.OffHand
 	if not offHand then return false end
-	return offHand.type == "Shield" or offHand.category == "Shield"
-		or offHand.itemType == "shield"
+	-- Item instances carry baseArchetypeId only (the old .type/.category/.itemType checks never
+	-- matched, so Shieldbearer never saw a shield). Shield and Buckler are the off-hand shields.
+	return offHand.baseArchetypeId == "OFF-SHIELD" or offHand.baseArchetypeId == "OFF-BUCKLER"
+		or offHand.type == "Shield" or offHand.category == "Shield" or offHand.itemType == "shield"
 end
 
 --- Returns true if target has the Undead tag or an undead race.
@@ -135,6 +139,37 @@ local VALID_ELEMENTS = {
 	Fire = true, Ice = true, Water = true, Electric = true,
 	Earth = true, Poison = true, Dark = true, Holy = true,
 }
+
+local function skillHasTag(skillDef, tag)
+	if type(skillDef) ~= "table" or type(skillDef.tags) ~= "table" then return false end
+	for _, t in ipairs(skillDef.tags) do
+		if t == tag then return true end
+	end
+	return false
+end
+
+--- True when the skill carries the "Direct Damage" tag (DDS in the doctrine rules).
+function DoctrinePassiveService.IsDirectDamageSkill(skillDef)
+	return skillHasTag(skillDef, "Direct Damage")
+end
+
+--- Context + element for OnSkillResolved (2026-10-28), built from the skill tags.
+--- mpSpent = MP actually paid (0 for HP / Blood casting pays HP, not MP).
+function DoctrinePassiveService.BuildSkillContext(skillDef, mpSpent)
+	local element = nil
+	if type(skillDef) == "table" and type(skillDef.tags) == "table" then
+		for _, t in ipairs(skillDef.tags) do
+			if VALID_ELEMENTS[t] then element = t; break end
+		end
+	end
+	return {
+		spentMp = (mpSpent or 0) > 0,
+		isDirectDamageSkill = skillHasTag(skillDef, "Direct Damage"),
+		isHealingSkill = skillHasTag(skillDef, "Healing"),
+		isHolySkill = skillHasTag(skillDef, "Holy"),
+		isUtilitySkill = skillHasTag(skillDef, "Utility"),
+	}, element
+end
 
 --------------------------------------------------
 -- DAMAGE DEALT MODIFIER
@@ -182,13 +217,15 @@ function DoctrinePassiveService.GetDamageDealtModifier(attacker, defender, eleme
 
 	-- ASSASSIN — Killing Intent: DDS +20% vs targets that haven't acted this round
 	if docId == "DOC-ASSASSIN" and isSkill and isDDS then
-		if defender and not defender.hasActedThisRound then
+		-- _actedThisRound is the per-1000-CT-round flag BattleCoordinator maintains (was a wrong field
+		-- name, hasActedThisRound, which nothing ever set). 2026-10-28.
+		if defender and not defender._actedThisRound then
 			mod = mod * 1.20
 		end
 	end
 
 	-- DRAGOON — Aerial Supremacy: DDS +20% from higher elevation
-	-- (positional defense bypass handled in GetPositionalDefenseIgnore)
+	-- (melee defense-ignore from higher ground handled in GetDefenseIgnore)
 	if docId == "DOC-DRAGOON" and isSkill and isDDS then
 		if hasElevationAdvantage(attacker, defender) then
 			mod = mod * 1.20
@@ -211,13 +248,17 @@ function DoctrinePassiveService.GetDamageDealtModifier(attacker, defender, eleme
 	--   Electric Skills: +5% per additional target hit (cap +20%)
 	--   Wet bonus and multi-target bonus stack additively
 	if docId == "DOC-STORMBRINGER" and element == "Electric" then
-		if defender and hasStatus(defender, "Wet") then
-			mod = mod * 1.25
+		-- DB: the Wet bonus and the multi-target bonus stack ADDITIVELY (was multiplied). 2026-10-28.
+		local sb = 0
+		-- DB trigger: "Stormbringer's Electric-tagged SKILL hits a target that is Wet" -- Skills only (not
+		-- basic attacks or items, which now pass their element / isSkill=false). 2026-10-29.
+		if isSkill and defender and hasStatus(defender, "Wet") then
+			sb = sb + 0.25
 		end
-		if context and context.additionalTargetsHit and context.additionalTargetsHit > 0 then
-			local chainBonus = math.min(context.additionalTargetsHit * 0.05, 0.20)
-			mod = mod * (1.0 + chainBonus)
+		if isSkill and context and context.additionalTargetsHit and context.additionalTargetsHit > 0 then
+			sb = sb + math.min(context.additionalTargetsHit * 0.05, 0.20)
 		end
+		mod = mod * (1.0 + sb)
 	end
 
 	-- SKIRMISHER — Harrying Strikes: DDS +15% after moving 2+ tiles this turn
@@ -422,17 +463,25 @@ end
 -- with weapon scaling before applying this modifier.
 --------------------------------------------------
 
-function DoctrinePassiveService.GetSkillPotencyModifier(unit)
+-- skillDef / isPhysical (2026-10-28): Spellblade only boosts a Physical Direct Damage Skill with
+-- Weapon Attack Power scaling (DB). With no skillDef (Info panel) Spellblade returns 1.0.
+function DoctrinePassiveService.GetSkillPotencyModifier(unit, skillDef, isPhysical)
 	local docId = getDoctrineId(unit)
 	if not docId or isBroken(unit) then return 1.0 end
 
-	-- SPELLBLADE — Arcane Edge: Skill Potency +10%
+	-- SPELLBLADE — Arcane Edge: Skill Potency +10% on eligible Skills only
 	if docId == "DOC-SPELLBLADE" then
-		return 1.10
+		if skillDef and isPhysical and skillHasTag(skillDef, "Direct Damage") and skillHasTag(skillDef, "Weapon Scaling") then
+			return 1.10
+		end
+		return 1.0
 	end
 
 	-- CHEMIST — Field Chemistry drawback: Skill Potency -25% (traded for consumable mastery). 2026-10-20
+	-- Skills only: a consumable item (resolved as a pseudo-skill flagged isItem) is not a Skill and
+	-- must not lose 25% (checklist fix 2026-10-29).
 	if docId == "DOC-CHEMIST" then
+		if skillDef and skillDef.isItem then return 1.0 end
 		return 0.75
 	end
 
@@ -518,9 +567,11 @@ end
 -- Called from TargetingService.
 --------------------------------------------------
 
-function DoctrinePassiveService.GetProjectileRangeModifier(unit)
+-- projectileType (2026-10-28): the attack's projectile type; melee (nil / "") gets no bonus.
+function DoctrinePassiveService.GetProjectileRangeModifier(unit, projectileType)
 	local docId = getDoctrineId(unit)
 	if not docId or isBroken(unit) then return 0 end
+	if projectileType == nil or projectileType == "" then return 0 end
 
 	-- RANGER — Steady Aim: projectile Maximum Range +1 (if not moved)
 	if docId == "DOC-RANGER" then
@@ -684,6 +735,30 @@ end
 -- }
 --------------------------------------------------
 
+-- Battle-log line for doctrine effects the player otherwise cannot see (re-check 2026-10-29).
+-- Deferred require: BattleVisualBroadcaster is never needed at load time here.
+local function docLog(text, unitId)
+	local ok, bvb = pcall(function() return (require :: any)(script.Parent.BattleVisualBroadcaster) end)
+	if ok and bvb and bvb.Log then bvb.Log("buff", text, unitId) end
+end
+
+-- Paladin Divine Aegis (DB): "if the Skill healed an ally, that ally also gains +10% damage reduction
+-- for 1 turn". Called by CombatResolver.ApplyOutcome for each unit a Paladin's skill really healed.
+function DoctrinePassiveService.OnPaladinHealedAlly(caster, target, healed)
+	if not (caster and target) or caster == target or (healed or 0) <= 0 then return end
+	if target.side ~= caster.side then return end
+	if getDoctrineId(caster) ~= "DOC-PALADIN" or isBroken(caster) then return end
+	target._docPaladinDrTurnsRemaining = 1
+	print(string.format("[DoctrinePassiveService] Paladin Divine Aegis: %s grants +10%% DR to %s", caster.name, target.name))
+	docLog(`{target.name}: Divine Aegis -10% damage taken for 1 turn.`, target.id)
+end
+
+-- Geomancer Terrain Mastery (DB "Geomancer commits a Skill that creates or modifies terrain"): true
+-- only while the unit is resolving one of its own Skills (set by CommandService doctrineBeginCast).
+function DoctrinePassiveService.IsCastingSkill(unit)
+	return unit ~= nil and unit._docCastingSkill == true
+end
+
 function DoctrinePassiveService.OnSkillResolved(unit, target, element, context)
 	local docId = getDoctrineId(unit)
 	if not unit then return end
@@ -711,6 +786,7 @@ function DoctrinePassiveService.OnSkillResolved(unit, target, element, context)
 				"[DoctrinePassiveService] Sentinel Vengeful Riposte: %s consumed charge",
 				unit.name
 			))
+			docLog(`{unit.name} unleashes Vengeful Riposte (+20%).`, unit.id)
 		end
 	end
 
@@ -747,24 +823,23 @@ function DoctrinePassiveService.OnSkillResolved(unit, target, element, context)
 				"[DoctrinePassiveService] Paladin Divine Aegis: %s gains +10%% DR (1 turn)",
 				unit.name
 			))
-			-- If Skill healed a target, target also gains DR
-			if context.isHealingSkill and target and target ~= unit then
-				target._docPaladinDrTurnsRemaining = 1
-				print(string.format(
-					"[DoctrinePassiveService] Paladin Divine Aegis: %s grants +10%% DR to %s",
-					unit.name, target.name
-				))
-			end
+			docLog(`{unit.name}: Divine Aegis -10% damage taken for 1 turn.`, unit.id)
+			-- Allies the Skill actually healed get their DR in CombatResolver.ApplyOutcome
+			-- (DoctrinePassiveService.OnPaladinHealedAlly), so area heals cover every ally healed and a
+			-- target that was not healed gets nothing (checklist fix 2026-10-29).
 		end
 	end
 
+	-- Once-per-turn flags below are marked at COMMIT for channeled skills (MarkSkillCommitted);
+	-- the deferred activation (context.deferred) must not mark them again in a later turn.
+	local deferred = context and context.deferred
 	-- === Arcanist — mark first Skill consumed ===
-	if docId == "DOC-ARCANIST" and not isBroken(unit) then
+	if docId == "DOC-ARCANIST" and not isBroken(unit) and not deferred then
 		unit._docArcanistUsedSkill = true
 	end
 
 	-- === Trickster — mark first Utility Skill consumed ===
-	if docId == "DOC-TRICKSTER" and not isBroken(unit) then
+	if docId == "DOC-TRICKSTER" and not isBroken(unit) and not deferred then
 		local isUtility = context and context.isUtilitySkill
 		if isUtility then
 			unit._docTricksterUsedUtility = true
@@ -772,9 +847,19 @@ function DoctrinePassiveService.OnSkillResolved(unit, target, element, context)
 	end
 
 	-- === Shieldbearer — consume Guard RT bonus ===
-	if docId == "DOC-SHIELDBEARER" and unit._docShieldbearerGuardRtReady then
+	if docId == "DOC-SHIELDBEARER" and unit._docShieldbearerGuardRtReady and not deferred then
 		unit._docShieldbearerGuardRtReady = false
 	end
+end
+
+--- Channeled skill COMMIT (2026-10-28): its RT and MP discounts were decided now, so the
+--- once-per-turn Arcanist / Trickster / Shieldbearer flags are consumed now too.
+function DoctrinePassiveService.MarkSkillCommitted(unit, context)
+	if not unit then return end
+	local docId = getDoctrineId(unit)
+	if docId == "DOC-ARCANIST" then unit._docArcanistUsedSkill = true end
+	if docId == "DOC-TRICKSTER" and context and context.isUtilitySkill then unit._docTricksterUsedUtility = true end
+	if docId == "DOC-SHIELDBEARER" then unit._docShieldbearerGuardRtReady = false end
 end
 
 --------------------------------------------------
@@ -789,6 +874,9 @@ function DoctrinePassiveService.OnDamageTaken(unit, damageAmount, sourceUnit)
 
 	-- SENTINEL — Vengeful Riposte: after taking damage, charge next DDS +20%
 	if docId == "DOC-SENTINEL" and not isBroken(unit) then
+		if not unit._docSentinelCharged then
+			docLog(`{unit.name} is charged: next damage skill +20% (Vengeful Riposte).`, unit.id)
+		end
 		unit._docSentinelCharged = true
 		print(string.format(
 			"[DoctrinePassiveService] Sentinel Vengeful Riposte: %s is charged (+20%% next DDS)",
@@ -806,6 +894,9 @@ end
 
 function DoctrinePassiveService.OnTurnStart(unit)
 	if not unit then return end
+	unit._docCastingSkill = nil  -- safety: a cast that never reached its after-skill step
+	-- Twinblade TRG-016 safety net (Break changes also sync immediately via StatusService).
+	DoctrinePassiveService.SyncDualWield(unit)
 
 	-- Arcanist: reset first-Skill flag
 	unit._docArcanistUsedSkill = false
@@ -834,9 +925,13 @@ function DoctrinePassiveService.OnTurnStart(unit)
 		unit._docPaladinDrTurnsRemaining = unit._docPaladinDrTurnsRemaining - 1
 	end
 
-	-- Gunner Suppression: decrement turn counter on affected targets
+	-- Gunner Suppression: a pending turn becomes ACTIVE for this turn (Move -1), then counts down.
+	-- (Decrementing first, as before, ended a 1-turn suppression before the victim could move.)
 	if unit._docGunnerSuppressionTurns and unit._docGunnerSuppressionTurns > 0 then
+		unit._docGunnerSuppressActive = true
 		unit._docGunnerSuppressionTurns = unit._docGunnerSuppressionTurns - 1
+	else
+		unit._docGunnerSuppressActive = false
 	end
 end
 
@@ -958,23 +1053,24 @@ function DoctrinePassiveService.GetAllySkillRtAuraModifier(unit, allUnits)
 end
 
 --------------------------------------------------
--- POSITIONAL DEFENSE IGNORE
--- Returns fraction of target's positional defense bonus to ignore (0.0–1.0).
--- Called from CombatResolver before positional defense is applied.
---
--- Dragoon — Aerial Supremacy: ignore 50% positional defense from elevation.
+-- DEFENSE IGNORE (Dragoon Aerial Supremacy)
+-- USER RULING 2026-10-28 (replaces the DB "ignore 50% of positional defense from elevation",
+-- which could never trigger: elevation defense only exists when the TARGET is higher).
+-- Dragoon with a MELEE weapon, attacking from higher elevation than the target, ignores 50% of
+-- the target's Defense. Applies to Direct Damage Skills AND Basic Attacks (user ruling
+-- 2026-10-28). skillDef nil = Basic Attack. Returns the fraction to ignore (0.0-1.0).
+-- Called from CombatResolver.ResolveSkill / ResolveBasicAttack. Pure read (AI-preview safe).
 --------------------------------------------------
 
-function DoctrinePassiveService.GetPositionalDefenseIgnore(attacker, defender)
+function DoctrinePassiveService.GetDefenseIgnore(attacker, defender, skillDef)
 	local docId = getDoctrineId(attacker)
-	if not docId or isBroken(attacker) then return 0 end
-
-	if docId == "DOC-DRAGOON" then
-		if hasElevationAdvantage(attacker, defender) then
-			return 0.50
-		end
+	if docId ~= "DOC-DRAGOON" or isBroken(attacker) then return 0 end
+	-- Melee weapon = no projectile type (same test Juggernaut uses).
+	if attacker.weaponProjectileType and attacker.weaponProjectileType ~= "" then return 0 end
+	if skillDef ~= nil and not skillHasTag(skillDef, "Direct Damage") then return 0 end
+	if hasElevationAdvantage(attacker, defender) then
+		return 0.50
 	end
-
 	return 0
 end
 
@@ -1035,7 +1131,8 @@ function DoctrinePassiveService.GetDebuffResistancePenetration(unit, debuffEleme
 	if not docId or isBroken(unit) then return 0 end
 
 	if docId == "DOC-PLAGUE-DOCTOR" then
-		if debuffElement == "Dark" or debuffElement == "Poison" then
+		-- DB Passive_Effect: Dark-tagged debuffs only (2026-10-28; Poison removed).
+		if debuffElement == "Dark" then
 			return 0.15
 		end
 	end
@@ -1118,6 +1215,9 @@ function DoctrinePassiveService.ApplyGunnerSuppression(attacker, target, hitCoun
 	if not target then return end
 
 	local duration = math.min(hitCount or 1, 3)
+	if (target._docGunnerSuppressionTurns or 0) < duration then
+		docLog(`{target.name} is suppressed: Move -1 for {duration} turn(s).`, target.id)
+	end
 	target._docGunnerSuppressionTurns = math.max(
 		target._docGunnerSuppressionTurns or 0,
 		duration
@@ -1137,7 +1237,7 @@ end
 
 function DoctrinePassiveService.GetMovementReduction(unit)
 	if not unit then return 0 end
-	if (unit._docGunnerSuppressionTurns or 0) > 0 then
+	if unit._docGunnerSuppressActive then
 		return -1
 	end
 	return 0
@@ -1149,38 +1249,60 @@ end
 -- Functions created for forward-compatibility; return neutral values.
 --------------------------------------------------
 
---- BLOCKED: Thief — Fortune Hand
---- Requires fortune/reward system beyond current implementation.
---- Would add 50% of Thief's Fortune stat to Expedition Fortune for rewards.
-function DoctrinePassiveService.GetFortuneBonus(unit)
-	-- BLOCKED: requires fortune/reward system
-	local docId = getDoctrineId(unit)
-	if not docId or isBroken(unit) then return 0 end
-	if docId == "DOC-THIEF" then
-		-- When fortune system exists: return math.round(unit.fortune * 0.50)
-		return 0
-	end
-	return 0
+--- Thief — Fortune Hand (USER RULING 2026-10-28, replaces the DB "add 50% of Thief Fortune to
+--- Expedition Fortune for that reward", which had no reward roll to act on: Steal takes the
+--- target's real gear piece). A successful steal (Steal skill, or Mug's KO-steal) by a Thief also
+--- earns gold equal to the Thief's level. Player side only; paid with battle gold on a win.
+function DoctrinePassiveService.GetStealGold(unit)
+	if getDoctrineId(unit) ~= "DOC-THIEF" or isBroken(unit) then return 0 end
+	if unit.side ~= "Player" then return 0 end
+	return math.max(0, math.floor(unit.level or 1))
 end
 
---- BLOCKED: Twinblade — Dual-Wield Discipline
---- Requires dual-wield combat system.
---- Would permit dual wield at 75% numerical properties.
+--- Twinblade — Dual-Wield Discipline (built 2026-10-28). DB project_rules 56/63/64, TRG-016:
+--- two naturally legal 1H weapons (MainHand + a 1H weapon in OffHand), each kept at 75% of its
+--- numerical properties; Break inactivates the off hand without unequipping it. A unit that is
+--- not a Twinblade (or is Broken) keeps the off-hand weapon assigned but it does nothing.
+local DUAL_WIELD_SCALE = 0.75
+
+local function natural1HWeaponArch(item)
+	if not item then return nil end
+	local WeaponData = (require :: any)(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("WeaponData"))
+	local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+	if arch and arch.category == "Weapon" and arch.handClass == "1H" then return arch end
+	return nil
+end
+
+--- True when this archetype may go in the OffHand slot of this unit as a second weapon.
+function DoctrinePassiveService.CanEquipOffHandWeapon(unit, archetype)
+	if not (unit and archetype) then return false end
+	if getDoctrineId(unit) ~= "DOC-TWINBLADE" then return false end
+	if archetype.category ~= "Weapon" or archetype.handClass ~= "1H" then return false end
+	local mh = unit.equipmentSlots and unit.equipmentSlots.MainHand
+	return mh == nil or natural1HWeaponArch(mh) ~= nil
+end
+
+--- Dual wield is ACTIVE: Twinblade, not Broken, natural 1H weapon in both hands.
 function DoctrinePassiveService.IsDualWieldEnabled(unit)
-	-- BLOCKED: requires dual-wield system
-	local docId = getDoctrineId(unit)
-	if not docId or isBroken(unit) then return false end
-	if docId == "DOC-TWINBLADE" then
-		-- When dual-wield system exists: check two 1H weapons, return true
-		return false
-	end
-	return false
+	if getDoctrineId(unit) ~= "DOC-TWINBLADE" or isBroken(unit) then return false end
+	local slots = unit.equipmentSlots
+	if not slots then return false end
+	return natural1HWeaponArch(slots.MainHand) ~= nil and natural1HWeaponArch(slots.OffHand) ~= nil
 end
 
---- BLOCKED: Twinblade — Dual-Wield off-hand scaling factor
+--- TRG-016 (Break): if the unit's live dual-wield state no longer matches its built stats, rebuild
+--- once so the off hand goes inactive (main hand back to 100%) or active again. Idempotent: does
+--- nothing when already in sync. Deferred require of EquipmentService (cycle-safe).
+function DoctrinePassiveService.SyncDualWield(unit)
+	if not unit or getDoctrineId(unit) ~= "DOC-TWINBLADE" then return end
+	if (unit.dualWieldActive == true) ~= DoctrinePassiveService.IsDualWieldEnabled(unit) then
+		(require :: any)(script.Parent.EquipmentService).RebuildUnitStats(unit)
+	end
+end
+
+--- Numerical-property retention for each weapon while dual wielding (1.0 otherwise).
 function DoctrinePassiveService.GetDualWieldScaling(unit)
-	-- BLOCKED: requires dual-wield system
-	return 1.0
+	return if DoctrinePassiveService.IsDualWieldEnabled(unit) then DUAL_WIELD_SCALE else 1.0
 end
 
 --- BLOCKED: Conjurer — Bound Host
@@ -1191,33 +1313,68 @@ function DoctrinePassiveService.GetSummonBonuses(unit)
 	local docId = getDoctrineId(unit)
 	if not docId or isBroken(unit) then return nil end
 	if docId == "DOC-CONJURER" then
-		-- When summon system exists:
-		-- return { hpBonus = 1.10, damageBonus = 1.10, healingBonus = 1.10 }
-		return nil
+		-- Summons exist now (2026-10-28): snapshot at creation in CommandService.spawnSummonFor
+		-- (Max HP, damage via summonDamageMult, healing via summonHealMult).
+		return { hpBonus = 1.10, damageBonus = 1.10, healingBonus = 1.10 }
 	end
 	return nil
 end
 
---- BLOCKED: Warden — Earthen Resilience
---- Requires natural terrain detection and enemy movement cost modification.
---- Would grant allies +8% DR and +1 enemy movement cost within range 2.
+--- Warden — Earthen Resilience (built 2026-10-28; tile effects + move-cost hooks exist now).
+--- "Natural terrain" = the tile carries no terrain effect created by a unit (map terrain and
+--- floor effects count as natural; Geomancer / skill-made terrain does not).
+local function isOnNaturalTerrain(unit)
+	if not (unit and unit.tileX and unit.tileY) then return false end
+	local ok, tes = pcall(function() return (require :: any)(script.Parent.TileEffectService) end)
+	if not ok or not tes or not tes.GetTileEffect then return true end
+	local eff = tes.GetTileEffect(unit.tileX, unit.tileY)
+	if not eff or not eff.ownerId then return true end
+	local units = StatusService.GetAuraUnits and StatusService.GetAuraUnits() or nil
+	for _, u in ipairs(units or {}) do
+		if u.id == eff.ownerId then return false end
+	end
+	return true
+end
+
+--- A standing, unbroken Warden on natural terrain.
+local function isActiveWarden(u)
+	return u and u.isAlive and getDoctrineId(u) == "DOC-WARDEN" and not isBroken(u) and isOnNaturalTerrain(u)
+end
+
+--- Damage-received multiplier: 0.92 when this unit stands on natural terrain within Range 2 of an
+--- active same-side Warden (the Warden itself included). Multiple Wardens do not stack.
 function DoctrinePassiveService.GetWardenAuraDR(unit, allUnits)
-	-- BLOCKED: requires natural terrain system and movement cost modification
-	local docId = getDoctrineId(unit)
-	if not docId or isBroken(unit) then return 1.0 end
-	if docId == "DOC-WARDEN" then
-		-- When terrain system supports it:
-		-- if standingOnNaturalTerrain(unit) and hasAllyInRange(unit, allUnits, 2) then
-		--     return 0.92  -- +8% DR
-		-- end
-		return 1.0
+	if not unit or not allUnits or not isOnNaturalTerrain(unit) then return 1.0 end
+	for _, w in ipairs(allUnits) do
+		if w.side == unit.side and chebyshevDist(unit, w) <= 2 and isActiveWarden(w) then
+			return 0.92
+		end
 	end
 	return 1.0
 end
 
-function DoctrinePassiveService.GetWardenEnemyMoveCostIncrease(unit, allUnits)
-	-- BLOCKED: requires movement cost modification system
+--- Area denial: +1 movement cost for a mover entering a tile within Range 2 of an active
+--- ENEMY Warden. Multiple Wardens do not stack. Returns 0 or 1.
+function DoctrinePassiveService.GetWardenEnemyMoveCostIncrease(mover, tileX, tileY, allUnits)
+	if not mover or not allUnits then return 0 end
+	for _, w in ipairs(allUnits) do
+		if w.side ~= mover.side and w.tileX and w.tileY
+			and math.max(math.abs(w.tileX - tileX), math.abs(w.tileY - tileY)) <= 2
+			and isActiveWarden(w) then
+			return 1
+		end
+	end
 	return 0
+end
+
+--- Wardens on the other side that currently project area denial (for the move search).
+function DoctrinePassiveService.GetActiveEnemyWardens(mover, allUnits)
+	local out = {}
+	if not mover then return out end
+	for _, w in ipairs(allUnits or {}) do
+		if w.side ~= mover.side and w.tileX and isActiveWarden(w) then table.insert(out, w) end
+	end
+	return out
 end
 
 return DoctrinePassiveService

@@ -1,13 +1,15 @@
 -- CTRBLXAI | ItemDisplay  (extracted from Main.server.lua on 2026-10-12)
 -- Shared item -> UI entry builders used by the loadout screen (GetInventoryData)
--- and the battle inspector (InspectUnitRequest). Self-contained: requires only
--- content data modules, so NO dependency injection is needed.
+-- and the battle inspector (InspectUnitRequest). Requires content data modules plus
+-- GearPassiveSummary (passive display names); no require cycle, so NO dependency injection.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Content           = ReplicatedStorage:WaitForChild("Content")
 local BonusData         = require(Content:WaitForChild("BonusData"))
 local WeaponData        = require(Content:WaitForChild("WeaponData"))
 local ArmorData         = require(Content:WaitForChild("ArmorData"))
+-- One source for weapon/off-hand passive names on every screen (2026-10-30).
+local GearPassiveSummary = require(script.Parent:WaitForChild("GearPassiveSummary"))
 
 local ItemDisplay = {}
 
@@ -108,6 +110,7 @@ local function buildItemEntry(item)
 			icon = wArch.icon or nil,
 			flavor = wArch.flavor or nil,
 			nativePassiveId = wArch.nativePassiveId or nil,
+			nativePassiveName = wArch.nativePassiveId and GearPassiveSummary.NativePassiveName(wArch.nativePassiveId) or nil,
 			nativePassiveDesc = WeaponData.GetPassiveDesc(wArch.nativePassiveId) or nil,
 			projectileType = wArch.projectileType or nil,
 			element = WeaponData.GetInstanceElement(item) or nil,
@@ -133,8 +136,9 @@ local function buildItemEntry(item)
 			isArmor = true,
 			icon = aArch.icon or nil,
 			flavor = aArch.flavor or nil,
-			passiveName = aArch.passiveName or nil,
-			passiveDesc = aArch.passiveDesc or nil,
+			-- Display name/text (internal passiveName stays the rules key). 2026-10-31.
+			passiveName = (GearPassiveSummary.ArmorPassiveDisplay(aArch)),
+			passiveDesc = select(2, GearPassiveSummary.ArmorPassiveDisplay(aArch)),
 			actionOwnership = aArch.actionOwnership or nil,
 		}
 	else

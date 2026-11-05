@@ -35,6 +35,12 @@ local RaceData = require(
 		:WaitForChild("Content")
 		:WaitForChild("RaceData")
 )
+-- Rarity order for load validation of the starting rarity (equipment_schema 19).
+local BonusData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("BonusData")
+)
 
 local SaveService = {}
 
@@ -63,6 +69,10 @@ local _mode = "memory" -- default safe
 -- every Save for them is refused for the rest of the session. "No save found" (a
 -- new player) is NOT a failure and saves normally.
 local _loadFailed: { [string]: string } = {}
+-- Dev "Delete save" (2026-10-31, Tester D-1): once a save is deleted, every later save this
+-- session is refused, so a quit save cannot write the deleted progress back from memory.
+-- Only the Studio dev panel calls Delete.
+local _deletedThisSession: { [string]: boolean } = {}
 
 local function failLoad(playerId, reason)
 	_loadFailed[playerId] = reason
@@ -176,6 +186,58 @@ end
 -- Never saves: names, descriptions, effective stats, derived values
 --------------------------------------------------
 
+-- Levelling record (equipment_schema 20, v2 2026-11-01) as a flat array
+-- { F, hi1, b1, hi2, b2, ... }. Not written for the default (arrived at its current
+-- level, no bought levels), so most items cost no extra bytes.
+local function encodeLevellingRecord(item)
+	local rec = item.levellingRecord
+	if type(rec) ~= "table" or type(rec.free) ~= "number" or type(rec.pairs) ~= "table" then return nil end
+	if #rec.pairs == 0 and rec.free == item.itemLevel then return nil end
+	local out = { rec.free }
+	for _, pr in ipairs(rec.pairs) do
+		table.insert(out, pr[1])
+		table.insert(out, pr[2])
+	end
+	return out
+end
+
+-- Validates a saved record against the item level. A missing or broken record means
+-- the item arrived at its current level with no bought levels (credit 0) — the rule
+-- for items saved before v2 (save_data_contract 3). Pairs must rise, stay within the
+-- item level, use Blacksmith levels 1-10 and end exactly at the item level.
+local function decodeLevellingRecord(encoded)
+	local lvl = math.max(1, math.floor(tonumber(encoded.lvl) or 1))
+	local default = { free = lvl, pairs = {} }
+	local lr = encoded.lr
+	if type(lr) ~= "table" then return default end
+	local free = tonumber(lr[1])
+	if not (free and free == math.floor(free) and free >= 1 and free <= lvl) then
+		warn("[SaveService] Invalid levelling record (free level) on " .. tostring(encoded.iid) .. " -- reset")
+		return default
+	end
+	local pairsOut = {}
+	local prev = free
+	local i = 2
+	while lr[i] ~= nil do
+		local hi, b = tonumber(lr[i]), tonumber(lr[i + 1])
+		if not (hi and b and hi == math.floor(hi) and b == math.floor(b) and hi > prev and hi <= lvl and b >= 1 and b <= 10) then
+			warn("[SaveService] Invalid levelling record (pair) on " .. tostring(encoded.iid) .. " -- reset")
+			return default
+		end
+		table.insert(pairsOut, { hi, b })
+		prev = hi
+		i += 2
+	end
+	if prev ~= lvl then
+		warn("[SaveService] Levelling record does not end at the item level on " .. tostring(encoded.iid) .. " -- reset")
+		return default
+	end
+	if #pairsOut > 10 then
+		warn("[SaveService] Levelling record on " .. tostring(encoded.iid) .. " has " .. #pairsOut .. " pairs (more than 10) -- kept")
+	end
+	return { free = free, pairs = pairsOut }
+end
+
 local function encodeItem(item)
 	-- Compact: { archetypeNumericId, level, rarityId, bonusLines[], passiveIds[] }
 	local archetype = WeaponData.GetByArchetypeId(item.baseArchetypeId)
@@ -198,6 +260,14 @@ local function encodeItem(item)
 		gv  = item.generatorVersion or 1,
 		src = item.sourceType or "Generated",
 		dn  = item.displayName,
+		-- Acquisition record (equipment_schema 18-20, v2 2026-11-01). Written only when it
+		-- differs from the default, so most items cost no extra bytes: levelling record =
+		-- arrived at the current level, starting rarity = current rarity, rerolls = 0.
+		lr  = encodeLevellingRecord(item),
+		sr  = if item.startingRarity ~= nil and item.startingRarity ~= item.rarityId then item.startingRarity else nil,
+		rc  = if type(item.rerollCount) == "number" and item.rerollCount > 0 then item.rerollCount else nil,
+		-- 'rune-forged' tracking tag (USER DECISION 2026-11-01): written only when set.
+		rf  = if item.runeForged == true then 1 else nil,
 	}
 end
 
@@ -218,6 +288,22 @@ local function decodeItem(encoded)
 		generatorVersion = encoded.gv or 1,
 		sourceType       = encoded.src or "Generated",
 		displayName      = encoded.dn,
+		-- Acquisition record (equipment_schema 18-20, save_data_contract 3, v2). Missing on
+		-- older saves: those items arrived at their CURRENT level and rarity and owe no
+		-- catch-up for past levels. An old `sl` (pre-v2 starting level) is ignored.
+		levellingRecord  = decodeLevellingRecord(encoded),
+		-- Must be a known rarity and never above the current one (equipment_schema 19);
+		-- otherwise it falls back to the current rarity.
+		startingRarity   = (function()
+			local order = BonusData.RARITY_ORDER
+			local sr = encoded.sr
+			if type(sr) == "string" and order[sr] and order[encoded.rar] and order[sr] <= order[encoded.rar] then
+				return sr
+			end
+			return encoded.rar
+		end)(),
+		runeForged       = encoded.rf == 1 or encoded.rf == true,
+		rerollCount      = math.max(0, math.floor(tonumber(encoded.rc) or 0)),
 	}
 end
 
@@ -314,6 +400,10 @@ function SaveService.Save(playerId, rosterState, inventoryItems, progression, cu
 		warn("[Save] Skipped — load failed this session, refusing to overwrite the real save ("
 			.. _loadFailed[playerId] .. ")")
 		return false, "Save blocked: load failed this session"
+	end
+	if _deletedThisSession[playerId] then
+		warn("[Save] Skipped — save was deleted this session; restart to begin fresh")
+		return false, "Save blocked: save deleted this session"
 	end
 
 	-- Encode roster (Key 1)
@@ -492,6 +582,8 @@ end
 --------------------------------------------------
 
 function SaveService.Delete(playerId)
+	-- Block every later save this session (see _deletedThisSession).
+	_deletedThisSession[playerId] = true
 	if _mode == "memory" then
 		memSet(getKey(KEY_ROSTER, playerId), nil)
 		memSet(getKey(KEY_INVENTORY, playerId), nil)
@@ -506,7 +598,7 @@ function SaveService.Delete(playerId)
 	pcall(function() store1:RemoveAsync(getKey(KEY_ROSTER, playerId)) end)
 	pcall(function() store2:RemoveAsync(getKey(KEY_INVENTORY, playerId)) end)
 	pcall(function() store3:RemoveAsync(getKey(KEY_PROGRESSION, playerId)) end)
-	print("[SaveService] Deleted save for " .. playerId)
+	print("[SaveService] Deleted save for " .. playerId .. " -- saving is OFF until you restart")
 	return true
 end
 

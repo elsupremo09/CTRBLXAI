@@ -124,9 +124,12 @@ function EquipmentService.ValidateEquip(unit, itemInstance, slot)
 	end
 
 	if itemType == "weapon" then
-		-- Weapon → MainHand only
+		-- Weapon → MainHand only, except a Twinblade's second 1H weapon in OffHand (2026-10-28).
 		if archetype.category == "Weapon" and slot ~= "MainHand" then
-			return false, "Weapons can only go in MainHand"
+			local _dps = (require :: any)(script.Parent.DoctrinePassiveService)
+			if not (slot == "OffHand" and _dps.CanEquipOffHandWeapon(unit, archetype)) then
+				return false, "Weapons can only go in MainHand (Twinblades may hold a second 1H weapon in OffHand)"
+			end
 		end
 		-- OffHand → OffHand only
 		if archetype.category == "OffHand" and slot ~= "OffHand" then
@@ -264,8 +267,9 @@ local CONSUMABLE_SLOT_BASE = 3
 function EquipmentService.ComputeConsumableSlotCount(unit)
 	local maxSlots = unit.maxConsumableSlots or 6
 	local grants = 0
-	-- (a) Doctrine grant (Chemist / Artificer)
-	if unit.doctrineId then
+	-- (a) Doctrine grant (Chemist / Artificer). Off while Broken (Break disables the doctrine passive,
+	-- DB project_rules 35); an item in the lost slot is kept, just not usable until Break ends.
+	if unit.doctrineId and not (require :: any)(script.Parent.StatusService).IsRacePassiveSuppressed(unit) then
 		local doctrine = DoctrineData[unit.doctrineId]
 		if doctrine and doctrine.passiveEffect
 			and string.find(doctrine.passiveEffect, CONSUMABLE_SLOT_GRANT_MARKER, 1, true) then
@@ -273,7 +277,7 @@ function EquipmentService.ComputeConsumableSlotCount(unit)
 		end
 	end
 	-- (b) Equipped gear: archetype fixed passive (Utility Belt) + rolled bonus passives (Bandolier)
-	for _, item in ipairs(EquipmentService.GetAllEquippedItems(unit)) do
+	for _, item in ipairs(EquipmentService.GetActiveEquippedItems(unit)) do
 		local arch = ArmorData.GetByArchetypeId(item.baseArchetypeId)
 		if arch and arch.passiveName
 			and string.find(arch.passiveName, CONSUMABLE_SLOT_GRANT_MARKER, 1, true) then
@@ -289,6 +293,8 @@ function EquipmentService.ComputeConsumableSlotCount(unit)
 			end
 		end
 	end
+	-- Apothecary L10 (2026-11-03): +1 slot for every unit, inside the 3..6 clamp.
+	grants = grants + (require :: any)(script.Parent.ApothecaryService).SlotBonus()
 	local count = CONSUMABLE_SLOT_BASE + grants
 	if count < CONSUMABLE_SLOT_BASE then count = CONSUMABLE_SLOT_BASE end
 	if count > maxSlots then count = maxSlots end
@@ -330,6 +336,20 @@ function EquipmentService.RebuildUnitStats(unit)
 	local primaryFlatBonuses = { STR = 0, AGI = 0, INT = 0, VIT = 0, DEX = 0, LUK = 0 }
 
 	local equippedItems = EquipmentService.GetAllEquippedItems(unit)
+	-- An off-hand WEAPON gives no stats unless dual wield is on (Twinblade, not Broken) -- see 4a-DW.
+	-- Its bonus lines were still counted (Tester 2026-10-29); drop it from the stat lists here.
+	do
+		local _oh = unit.equipmentSlots and unit.equipmentSlots.OffHand
+		local _oa = _oh and WeaponData.GetByArchetypeId(_oh.baseArchetypeId)
+		if _oa and _oa.category == "Weapon"
+			and not (require :: any)(script.Parent.DoctrinePassiveService).IsDualWieldEnabled(unit) then
+			local _kept = {}
+			for _, it in ipairs(equippedItems) do
+				if it ~= _oh then table.insert(_kept, it) end
+			end
+			equippedItems = _kept
+		end
+	end
 	for _, item in ipairs(equippedItems) do
 		-- Perks & Flaws Phase 2 (TRAIT-ARMORSLOT-BONUS): <Slot> Specialist x2 / Klutz x0.5
 		-- scales this armor piece's primary-stat Bonus lines (weapons / no trait: slotMult = 1).
@@ -388,11 +408,45 @@ function EquipmentService.RebuildUnitStats(unit)
 	local armorHp = 0
 	local armorMp = 0
 
+	-- Rolled HP / MP / Equipment Defense / Weight Reduction lines on ARMOR, and HP / MP lines on any
+	-- item (re-check 2026-10-29): they showed on the item but were never applied anywhere. Same
+	-- formula as the weapon lines (GetEffectiveWeaponProfile): round(scaled base x pct) + scaled
+	-- flat; Weight Reduction subtracts (armor piece WT floored at 0). Slot Specialist / Klutz
+	-- scales the Defense / HP / MP parts like the piece's base values; WT is not scaled.
+	local function rolledLineTotals(item, baseHp, baseMp, baseDef, baseWt, includeDefWt)
+		local add = { hp = 0, mp = 0, defense = 0, wt = 0 }
+		for _, line in ipairs(item.bonusLines or {}) do
+			local attr = BonusData.GetAttribute(line.id)
+			if attr and (attr.operation == "BaseItemStat" or attr.operation == "WeightReduce") then
+				local st = attr.stat
+				local base = (st == "hp" and baseHp) or (st == "mp" and baseMp) or (st == "defense" and baseDef)
+					or (st == "wt" and baseWt) or nil
+				if base ~= nil and (st == "hp" or st == "mp" or includeDefWt) then
+					add[st] += math.round(base * (attr.pct or 0)) + WeaponData.ScaleProperty(attr.l99Flat, item.itemLevel)
+				end
+			end
+		end
+		return add
+	end
 	for _, item in ipairs(equippedItems) do
 		local aArch = ArmorData.GetByArchetypeId(item.baseArchetypeId)
+		if not aArch then
+			-- Weapons / off-hands: only their HP / MP lines land here (damage / defense / RT delay /
+			-- WT lines are read by GetEffectiveWeaponProfile). Weapons have no base HP / MP.
+			local add = rolledLineTotals(item, 0, 0, 0, 0, false)
+			armorHp += add.hp
+			armorMp += add.mp
+		end
 		if aArch then
 			local scaled = ArmorData.GetScaledProfile(item.baseArchetypeId, item.itemLevel)
 			if scaled then
+				local add = rolledLineTotals(item, scaled.hp or 0, scaled.mp or 0, scaled.defense or 0, scaled.wt or 0, true)
+				scaled = {
+					defense = (scaled.defense or 0) + add.defense,
+					hp = (scaled.hp or 0) + add.hp,
+					mp = (scaled.mp or 0) + add.mp,
+					wt = math.max(0, (scaled.wt or 0) - add.wt),
+				}
 				-- Perks & Flaws Phase 2 (TRAIT-ARMORSLOT-BASE): <Slot> Specialist x2 / Klutz x0.5
 				-- on this piece's Base Defense / HP / MP. Armor WT intentionally NOT scaled.
 				local sm = TraitEffectService.GetArmorSlotMultiplier(unit, aArch.slot)
@@ -430,6 +484,21 @@ function EquipmentService.RebuildUnitStats(unit)
 	-- push it negative. DESIGNER: if negative armor Defense is intended, drop this floor.
 	if armorDefense < 0 then armorDefense = 0 end
 
+	-- Strong Back / Weak Grip (DB "Gear WT reduced/increased by 20%, added to/subtracted from STR"):
+	-- gear = ALL worn gear, so armor WT counts too (main-hand and off-hand weapon WT are handled in
+	-- step 4). Literal DB reading, 2026-10-29. Break-gated via active() in the getter.
+	-- The STR change is added AFTER status % stat buffs (below, at effectiveStats), the same as the
+	-- main-hand / off-hand parts, so Banner Blessing etc. never scale it (Tester advisory 2026-10-29).
+	local armorGearStrDelta = 0
+	do
+		local _gf = TraitEffectService.GetGearWtStrFraction(unit)
+		if _gf ~= 0 and armorWt > 0 then
+			local _d = math.round(armorWt * _gf)
+			armorWt = math.max(0, armorWt - _d)
+			armorGearStrDelta = _d
+		end
+	end
+
 	unit.armorDefense = armorDefense
 	unit.armorWt = armorWt
 
@@ -459,6 +528,10 @@ function EquipmentService.RebuildUnitStats(unit)
 		if total[stat] < 0 then
 			total[stat] = 0
 		end
+	end
+	-- Strong Back / Weak Grip armor part (see 3c): flat STR change, floored at 0.
+	if armorGearStrDelta ~= 0 then
+		total.STR = math.max(0, (total.STR or 0) + armorGearStrDelta)
 	end
 	unit.effectiveStats = total
 
@@ -530,8 +603,8 @@ function EquipmentService.RebuildUnitStats(unit)
 		-- added to / subtracted from STR. STR delta uses the pre-change weapon WT so
 		-- the "amount" matches the WT actually shifted. effectiveStats was assigned
 		-- earlier (as `total`); ComputeDerivedStats runs after this, so the STR bump
-		-- flows into derived stats and STR-based WT reduction. Weapon-only scope
-		-- (DESIGNER: confirm whether "Gear WT" should include armor WT too).
+		-- flows into derived stats and STR-based WT reduction. This is the main-hand part; armor
+		-- and off-hand weapon WT are folded too (see 3c and 4a-DW, 2026-10-29).
 		local gearFrac = TraitEffectService.GetGearWtStrFraction(unit)
 		if gearFrac ~= 0 and unit.weaponWt and unit.weaponWt > 0 and unit.effectiveStats then
 			local wtDelta = math.round(unit.weaponWt * gearFrac)
@@ -558,9 +631,65 @@ function EquipmentService.RebuildUnitStats(unit)
 		unit.weaponElement = WeaponData.GetInstanceElement(mainHand)
 	end
 
-	-- 4b. Off-hand defense contribution
+	-- 4a-DW. Twinblade dual wield (2026-10-28; DB project_rules 56/63/64, TRG-016). With dual wield
+	-- active, BOTH weapons keep 75% of their numerical properties (damage, WT, RT delay, defense);
+	-- structural properties (range, pattern, projectile) are unchanged. The off-hand profile gets the
+	-- same race WT steps (Mechanical x1.15, Ogre) and its own weapon-stat passives; main-hand-only
+	-- traits stay main-hand only. Skills keep inheriting from the main hand. An off-hand weapon
+	-- held while dual wield is NOT active (not a Twinblade, or Broken) is inactive: no stats.
 	local offHand = unit.equipmentSlots and unit.equipmentSlots.OffHand
-	if offHand then
+	local offArch = offHand and WeaponData.GetByArchetypeId(offHand.baseArchetypeId)
+	local offIsWeapon = offArch ~= nil and offArch.category == "Weapon"
+	unit.offWeapon = nil
+	unit.dualWieldActive = false
+	if offIsWeapon and mainHand then
+		local _dps = (require :: any)(script.Parent.DoctrinePassiveService)
+		if _dps.IsDualWieldEnabled(unit) then
+			local sc = _dps.GetDualWieldScaling(unit)
+			local op = EquipmentService.GetEffectiveWeaponProfile(offHand)
+			local owt = op.wt
+			if unit.raceId then
+				local RaceData = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
+				local re = RaceData.GetRace(unit.raceId)
+				for _, tag in ipairs((re and re.tags) or {}) do
+					if tag == "Mechanical" then owt = math.floor(owt * 1.15) break end
+				end
+			end
+			local owm = RacePassiveService.GetWeaponWtMultiplier(unit)
+			if owm ~= 1 and owt > 0 then owt = math.floor(owt * owm + 1e-6) end
+			-- <Weapon> Specialist / Klutz on the off-hand weapon (re-check 2026-10-29).
+			local _sdm, _swm = TraitEffectService.GetWeaponSpecMultsFor(unit, offArch.name)
+			if _swm ~= 1 and owt > 0 then owt = math.floor(owt * _swm + 1e-6) end
+			-- Strong Back / Weak Grip: the off-hand weapon is gear too (2026-10-29).
+			do
+				local _gf = TraitEffectService.GetGearWtStrFraction(unit)
+				if _gf ~= 0 and owt > 0 and unit.effectiveStats then
+					local _d = math.round(owt * _gf)
+					owt = math.max(0, owt - _d)
+					unit.effectiveStats.STR = math.max(0, (unit.effectiveStats.STR or 0) + _d)
+				end
+			end
+			local od, ord = WeaponPassiveService.ApplyItemStatMods(offHand, math.round(op.damage * _sdm), op.defense, op.rtDelay)
+			unit.offWeapon = {
+				archetypeId = offHand.baseArchetypeId,
+				damage = math.max(0, math.round(od * sc)),
+				wt = math.floor(owt * sc),
+				rtDelay = math.round(ord * sc),
+				defense = math.round(op.defense * sc),
+				element = WeaponData.GetInstanceElement(offHand),
+			}
+			unit.weaponDamage = math.max(0, math.round((unit.weaponDamage or 0) * sc))
+			unit.weaponWt = math.floor((unit.weaponWt or 0) * sc)
+			unit.weaponRtDelay = math.round((unit.weaponRtDelay or 0) * sc)
+			unit.weaponDefense = math.round((unit.weaponDefense or 0) * sc)
+			unit.dualWieldActive = true
+		end
+	end
+
+	-- 4b. Off-hand defense contribution (an inactive off-hand weapon contributes nothing)
+	if offHand and offIsWeapon then
+		unit.offHandDefense = if unit.offWeapon then unit.offWeapon.defense else 0
+	elseif offHand then
 		local offProfile = EquipmentService.GetEffectiveWeaponProfile(offHand)
 		unit.offHandDefense = offProfile.defense
 	else
@@ -604,15 +733,39 @@ function EquipmentService.RebuildUnitStats(unit)
 		if sMod ~= 0 and derived.stability then
 			derived.stability = math.max(0, derived.stability + sMod)
 		end
-		-- Perks & Flaws (Phase 2b): Far/Near-Sighted adjust Discovery Radius. Floored at 0.
+		-- Discovery Radius modifiers: Far/Near-Sighted traits, Avian Keen Sight +1, and the PAS-015
+		-- "Discovery Radius +1" bonus passive (+1 per equipped item that rolled it; DB stacking_rule
+		-- Additive). Result is whole tiles (the Greater traits carry +/-1.2 in the DB) with the DB
+		-- minimum of 1 (loot_progression row 4). derived is rebuilt fresh each call, so no compounding.
 		local dMod = TraitEffectService.GetDiscoveryRadiusModifier(unit)
 			+ RacePassiveService.GetDiscoveryRadiusModifier(unit) -- Avian Keen Sight +1
-		if dMod ~= 0 and derived.discoveryRadius then
-			derived.discoveryRadius = math.max(0, derived.discoveryRadius + dMod)
+		for _, item in EquipmentService.GetActiveEquippedItems(unit) do
+			for _, pid in item.bonusPassiveIds or {} do
+				if pid == "PAS-015" then
+					dMod += 1
+				end
+			end
+		end
+		if derived.discoveryRadius then
+			derived.discoveryRadius = math.max(1, math.floor(derived.discoveryRadius + dMod + 0.5))
+		end
+		-- Threshold Bonus Passives (DB bonus_passives PAS-011..014, "Final X +1", stacking Additive,
+		-- 2026-10-28): each equipped item that rolled one adds +1 to that final stat. Folded into
+		-- derivedStats so every battle reader picks it up (movement, jump, push / knockback force,
+		-- push stability). Before this nothing read these passives at all.
+		local thresholdStat = { ["PAS-011"] = "movementRange", ["PAS-012"] = "jump", ["PAS-013"] = "force", ["PAS-014"] = "stability" }
+		for _, item in EquipmentService.GetActiveEquippedItems(unit) do
+			for _, pid in item.bonusPassiveIds or {} do
+				local key = thresholdStat[pid]
+				if key and derived[key] ~= nil then
+					derived[key] += 1
+				end
+			end
 		end
 		-- ARTIFICER — Applied Artifice drawback: Bonus Skill Range -1, explicitly allowed
 		-- to go below 0 (no floor). 2026-10-20.
-		if unit.doctrineId == "DOC-ARTIFICER" and derived.bonusSkillRange ~= nil then
+		if unit.doctrineId == "DOC-ARTIFICER" and derived.bonusSkillRange ~= nil
+			and not (require :: any)(script.Parent.StatusService).IsRacePassiveSuppressed(unit) then  -- off while Broken
 			derived.bonusSkillRange = derived.bonusSkillRange - 1
 		end
 	end
@@ -629,17 +782,25 @@ function EquipmentService.RebuildUnitStats(unit)
 		healingOutput = 1, debuffResist = 1, rtDelayResist = 1,
 	}
 	for _, item in ipairs(equippedItems) do
+		-- <Slot> Specialist / Klutz (DB "Double / Halve the numerical Base and Bonus stats" of that
+		-- armor slot): these bonus lines scale too (re-check 2026-10-29). Weapons: x1.
+		local _dArch = ArmorData.GetByArchetypeId(item.baseArchetypeId)
+		local _dsm = _dArch and TraitEffectService.GetArmorSlotMultiplier(unit, _dArch.slot) or 1
 		for _, line in ipairs(item.bonusLines or {}) do
 			local attr = BonusData.GetAttribute(line.id)
 			if attr and attr.stat and gearDerived[attr.stat] ~= nil then
 				if attr.operation == "Derived" then
-					gearDerived[attr.stat] = gearDerived[attr.stat] + (attr.fixedValue or 0)
+					gearDerived[attr.stat] = gearDerived[attr.stat] + (attr.fixedValue or 0) * _dsm
 				elseif attr.operation == "DerivedMultiplier" then
-					gearDerived[attr.stat] = gearDerived[attr.stat] * (attr.fixedValue or 1)
+					gearDerived[attr.stat] = gearDerived[attr.stat] * (1 + ((attr.fixedValue or 1) - 1) * _dsm)
 				end
 			end
 		end
 	end
+	-- Lucky / Unlucky (USER RULING 2026-10-28): +/-10% (Greater +/-15%) Unit Fortune, in the same
+	-- additive slot as gear Fortune, so rewards (RewardService.unitFortune) and the Info panel both
+	-- see it. Break-gated like every trait.
+	gearDerived.fortune = gearDerived.fortune + TraitEffectService.GetFortuneModifier(unit)
 	unit.gearDerived = gearDerived
 	if derived then
 		-- Percentage-point families are stored as % in derivedStats; add gear as pp.
@@ -671,6 +832,7 @@ function EquipmentService.RebuildUnitStats(unit)
 	-- is only CLAMPED down to the new max (never auto-granted), so no phantom charges are ever created.
 	if unit.consumableSlots then
 		local _aps = (require :: any)(script.Parent.ArmorPassiveService)
+		local _apoth = (require :: any)(script.Parent.ApothecaryService)
 		local chargeCfg = _aps.GetItemChargeBonus(unit)  -- nil when the +20% accessory is not equipped
 		local _cdata = (require :: any)(game:GetService("ReplicatedStorage")
 			:WaitForChild("Content"):WaitForChild("ConsumableData"))
@@ -678,13 +840,33 @@ function EquipmentService.RebuildUnitStats(unit)
 			if slot and slot.consumableId then
 				local cdef = _cdata.GetById and _cdata.GetById(slot.consumableId)
 					or (_cdata.Items and _cdata.Items[slot.consumableId])
-				local baseMax = cdef and cdef.maxCharges
+				-- Apothecary L9 (2026-11-03): +25% max charges, applied BEFORE the Cartridge.
+				local baseMax = cdef and _apoth.GetMaxCharges(cdef)
 				if baseMax then
 					local newMax = baseMax
 					if chargeCfg then
 						local bonus = math.max(chargeCfg.minBonus or 1, math.floor(baseMax * (chargeCfg.percent or 0.20)))
 						newMax = baseMax + bonus
 					end
+					-- AC-009 (checklist fix 2026-10-29): when the ceiling goes up on a FULL item, the item
+					-- stays full (a 5-charge item gives 6 uses). Granted once per equipped item
+					-- (_chargeBonusGiven), so unequipping / re-equipping the accessory cannot top it up.
+					local prevMax = slot.maxCharges or baseMax
+					-- Apothecary L9 (2026-11-03, Tester FAIL 1): when the item's OWN max rises
+					-- (4 -> 5), a full item stays full. Tracked once per item (_ownMaxGiven) so it
+					-- can't be topped up again by unequip / re-equip.
+					if baseMax > (slot._ownMaxGiven or cdef.maxCharges) then
+						if (slot.currentCharges or 0) >= (slot._ownMaxGiven or cdef.maxCharges) then
+							slot.currentCharges = (slot.currentCharges or 0) + (baseMax - (slot._ownMaxGiven or cdef.maxCharges))
+						end
+						slot._ownMaxGiven = baseMax
+					end
+					local bonusNow = newMax - baseMax
+					if newMax > prevMax and (slot.currentCharges or 0) >= prevMax
+						and (slot._chargeBonusGiven or 0) < bonusNow then
+						slot.currentCharges = newMax
+					end
+					if bonusNow > (slot._chargeBonusGiven or 0) then slot._chargeBonusGiven = bonusNow end
 					slot.maxCharges = newMax
 					if (slot.currentCharges or 0) > newMax then slot.currentCharges = newMax end
 				end
@@ -696,6 +878,23 @@ end
 --------------------------------------------------
 -- WEAPON PROFILE (with rarity bonuses applied)
 --------------------------------------------------
+
+-- Rolled-passive helpers for the weapon profile (2026-10-28).
+local function rolledCount(item, pid)
+	local n = 0
+	for _, p in ipairs((item and item.bonusPassiveIds) or {}) do
+		if p == pid then n += 1 end
+	end
+	return n
+end
+local PATTERN_CONVERSIONS = { { "PAS-023", "Cleave" }, { "PAS-024", "Line2" }, { "PAS-025", "ImpactSplash" } }
+local function convertedPattern(item, pattern)
+	if pattern ~= nil and pattern ~= "Single" then return pattern end
+	for _, c in ipairs(PATTERN_CONVERSIONS) do
+		if rolledCount(item, c[1]) > 0 then return c[2] end
+	end
+	return pattern
+end
 
 function EquipmentService.GetEffectiveWeaponProfile(itemInstance)
 	local archetype = WeaponData.GetByArchetypeId(itemInstance.baseArchetypeId)
@@ -745,8 +944,14 @@ function EquipmentService.GetEffectiveWeaponProfile(itemInstance)
 		rtDelay = math.max(0, finalRtDelay),
 		defense = finalDefense, -- can be negative
 		minRange = profile.minRange,
-		maxRange = profile.maxRange,
-		pattern = profile.pattern,
+		-- PAS-007 Range +1 (rolled, 2026-10-28): Maximum Weapon Range +1 per copy (Additive);
+		-- Minimum Range unchanged.
+		-- The Longbow's NATIVE "Range+1" was never read (only the rolled copy was). 2026-10-28.
+		maxRange = (profile.maxRange or 1) + rolledCount(itemInstance, "PAS-007")
+			+ (if profile.nativePassiveId == "Range+1" then 1 else 0),
+		-- PAS-023/024/025 pattern conversions (rolled): a Single-pattern weapon becomes Cleave /
+		-- Line 2 / Impact Splash. One conversion only (first in that order).
+		pattern = convertedPattern(itemInstance, profile.pattern),
 		projectileType = profile.projectileType,
 		handClass = profile.handClass,
 		nativePassiveId = profile.nativePassiveId,
@@ -772,6 +977,23 @@ function EquipmentService.GetAllEquippedItems(unit)
 		if item then
 			table.insert(items, item)
 		end
+	end
+	return items
+end
+
+-- Equipped items that give stats right now: an off-hand WEAPON counts only while dual wield is on
+-- (Twinblade, not Broken); shields and other off-hand items always count. Re-check 2026-10-29.
+function EquipmentService.GetActiveEquippedItems(unit)
+	local items = EquipmentService.GetAllEquippedItems(unit)
+	local oh = unit.equipmentSlots and unit.equipmentSlots.OffHand
+	local oa = oh and WeaponData.GetByArchetypeId(oh.baseArchetypeId)
+	if oa and oa.category == "Weapon"
+		and not (require :: any)(script.Parent.DoctrinePassiveService).IsDualWieldEnabled(unit) then
+		local kept = {}
+		for _, it in ipairs(items) do
+			if it ~= oh then table.insert(kept, it) end
+		end
+		return kept
 	end
 	return items
 end

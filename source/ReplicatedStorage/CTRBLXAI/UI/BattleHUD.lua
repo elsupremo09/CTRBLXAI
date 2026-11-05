@@ -86,6 +86,12 @@ local presentation = {
 }
 local battleLog       = {}
 local LOG_CAP         = 80 -- mobile-friendly history cap (2026-10-08 server-authored log)
+-- Newest-first battle log (user ruling 2026-10-30): remember the live scroll frame and which
+-- label shows which entry, so a rebuild can keep a reader's place (no jump while reading).
+local logScroll: ScrollingFrame? = nil
+local logLabelByEntry: { [any]: TextLabel } = {}
+local logBuildToken   = 0
+local LOG_TOP_SNAP    = 4 -- px: this close to the top counts as "at the top" (follow newest)
 
 -- View Mode + Battle Log toggle state
 local isViewMode          = false  -- legacy; view mode retired 2026-10-07 (always false)
@@ -931,8 +937,11 @@ function BattleHUD._buildActionDetail()
 		infoText = infoText .. "  " .. (presentation.skill.pattern or "Single")
 		makeLabel(actionPanel, infoText, { font = Theme.Font.Mono, textSize = Theme.Text.Body(), order = 3 })
 		if presentation.skill.effects and presentation.skill.effects ~= "" then
-			makeLabel(actionPanel, presentation.skill.effects, { textSize = Theme.Text.Small(), wrap = true,
+			local effLbl = makeLabel(actionPanel, presentation.skill.effects, { textSize = Theme.Text.Small(), wrap = true,
 				size = UDim2.new(1, 0, 0, 24), color = Theme.Colors.Success, order = 4 })
+			-- Grow to fit long skill / item text (2026-11-01); 24 px stays the minimum.
+			-- The panel itself grows with its content (autoY, capped at 400 px).
+			effLbl.AutomaticSize = Enum.AutomaticSize.Y
 		end
 	elseif state == "Preview" and presentation.preview then
 		-- Recap for move/push (no skill selected)
@@ -1166,6 +1175,9 @@ function BattleHUD._renderDamagePreview()
 			wrap = true,
 		})
 		lbl.Size = UDim2.new(1, 0, 0, 16)
+		-- Wrapped rows grow to fit (2026-11-01); 16 px stays the minimum, so one-line rows
+		-- are unchanged. The preview host scrolls when the rows outgrow the panel.
+		lbl.AutomaticSize = Enum.AutomaticSize.Y
 	end
 
 	-- Name badge: colored background box (blue=Player, red=Enemy) with white text
@@ -1283,24 +1295,59 @@ function BattleHUD._renderDamagePreview()
 		end
 
 		row("")  -- spacer
-		local targetSide = p.isHealing and "Player" or "Enemy"
-		nameRow(p.targetName or "Target", targetSide)
-		diffRow("HP", p.targetHpBefore, p.targetHpAfter, nil, true)
-		if (p.targetRtDelay or 0) > 0 then
-			row("RT Delay: +" .. p.targetRtDelay)
-		end
-
-		if p.statusEffect and p.statusEffect ~= "None" then
-			local statusText = p.statusEffect
-			if (p.statusDuration or 0) > 0 then
-				statusText = statusText .. " (" .. p.statusDuration .. " turns)"
+		local function statusRow(sid, duration)
+			local statusText = sid
+			if (duration or 0) > 0 then
+				statusText = statusText .. " (" .. duration .. " turns)"
 			end
 			local statusKind = "Debuff"
-			if GameConstants and GameConstants.STATUSES and GameConstants.STATUSES[p.statusEffect] then
-				statusKind = GameConstants.STATUSES[p.statusEffect].kind or "Debuff"
+			if GameConstants and GameConstants.STATUSES and GameConstants.STATUSES[sid] then
+				statusKind = GameConstants.STATUSES[sid].kind or "Debuff"
 			end
-			local statusColor = statusKind == "Buff" and Theme.Colors.Success or Theme.Colors.TextPrimary
-			row("+" .. statusText, statusColor)
+			row("+" .. statusText, statusKind == "Buff" and Theme.Colors.Success or Theme.Colors.TextPrimary)
+		end
+		if p.hits and #p.hits > 0 then
+			-- Every unit the skill would affect (server PreviewSkillHits, 2026-10-30).
+			if #p.hits > 1 then
+				row(string.format("AFFECTS %d UNITS", #p.hits), Theme.Colors.TextGold, true)
+			end
+			for _, h in ipairs(p.hits) do
+				nameRow(h.name, h.side)
+				if h.kind == "damage" then
+					if (h.amount or 0) > 0 then
+						diffRow("HP", h.hpBefore, h.hpAfter, nil, true)
+					else
+						row("No damage", Theme.Colors.TextSecondary)
+					end
+				elseif h.kind == "healing" then
+					diffRow("HP", h.hpBefore, h.hpAfter, nil, true)
+				elseif h.kind == "shield" then
+					row("Shield +" .. tostring(h.amount or 0), Theme.Colors.Success)
+				end
+				if h.approx then
+					row("~ estimate (multi-hit)", Theme.Colors.TextSecondary)
+				end
+				for _, sid in ipairs(h.statuses or {}) do
+					local sdef = GameConstants and GameConstants.STATUSES and GameConstants.STATUSES[sid]
+					statusRow(sid, sdef and sdef.duration or 0)
+				end
+			end
+		else
+			local targetSide = p.targetSide or (p.isHealing and "Player" or "Enemy")
+			nameRow(p.targetName or "Target", targetSide)
+			diffRow("HP", p.targetHpBefore, p.targetHpAfter, nil, true)
+			if p.hitApprox then
+				row("~ estimate (multi-hit)", Theme.Colors.TextSecondary)
+			end
+			if (p.targetRtDelay or 0) > 0 then
+				row("RT Delay: +" .. p.targetRtDelay)
+			end
+			if p.statusEffect and p.statusEffect ~= "None" then
+				statusRow(p.statusEffect, p.statusDuration)
+			end
+			if p.hitsResolved and p.hits and #p.hits == 0 then
+				row("No units affected", Theme.Colors.TextSecondary)
+			end
 		end
 
 	-- PUSH
@@ -1489,7 +1536,10 @@ local function buildPeekLines(kind: string, name: string?, extra): (string, {{st
 		if def and def.kind then table.insert(rows, {"TYPE", def.kind}) end
 		if def and def.description then table.insert(rows, {"", def.description}) end
 		local durStr
-		if extra and extra.remainingTurns then durStr = extra.remainingTurns .. (extra.remainingTurns == 1 and " turn left" or " turns left")
+		-- USER RULING 2026-10-30 3:27 PM: an aura status (War Banner / Cursed Statue) has no timer while
+		-- the unit stays in range, so it says so instead of the definition's 1500 CT.
+		if extra and extra.whileInRange then durStr = "While in range"
+		elseif extra and extra.remainingTurns then durStr = extra.remainingTurns .. (extra.remainingTurns == 1 and " turn left" or " turns left")
 		elseif extra and extra.remainingCt then durStr = "CT " .. math.floor(extra.remainingCt) .. " left"
 		elseif def and def.durationCt then durStr = "CT " .. def.durationCt .. " left"
 		elseif def and def.duration then durStr = def.duration .. (def.duration == 1 and " turn" or " turns") end
@@ -2262,7 +2312,30 @@ end
 
 function BattleHUD._buildBattleLog()
 	if not battleLogPanel then return end
+
+	-- Newest-first (user ruling 2026-10-30). If the reader has scrolled down, remember the
+	-- first entry they can see and how far below the top edge it sits, so the rebuild puts
+	-- that entry back in the same spot instead of jumping. At the top = follow the newest.
+	local anchorEntry, anchorOffset, oldY = nil, 0, 0
+	if logScroll and logScroll.Parent and logScroll.CanvasPosition.Y > LOG_TOP_SNAP then
+		oldY = logScroll.CanvasPosition.Y
+		local viewTop = logScroll.AbsolutePosition.Y
+		local bestTop = math.huge
+		for entry, lbl in logLabelByEntry do
+			if lbl.Parent then
+				local top = lbl.AbsolutePosition.Y
+				if top + lbl.AbsoluteSize.Y > viewTop and top < bestTop then
+					anchorEntry, bestTop = entry, top
+				end
+			end
+		end
+		if anchorEntry then anchorOffset = bestTop - viewTop end
+	end
+
 	clearFrame(battleLogPanel)
+	table.clear(logLabelByEntry)
+	logBuildToken += 1
+	local token = logBuildToken
 
 	local pad = Instance.new("UIPadding", battleLogPanel)
 	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 10)
@@ -2273,25 +2346,69 @@ function BattleHUD._buildBattleLog()
 	scroll.BorderSizePixel = 0
 	scroll.ScrollBarThickness = 2
 	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	scroll.CanvasPosition = Vector2.new(0, 99999)
-	scroll.Parent = battleLogPanel
+	scroll.CanvasPosition = Vector2.new(0, oldY) -- 0 = top (newest); a reader's spot is restored below
 
 	local layout = Instance.new("UIListLayout", scroll)
 	layout.Padding = UDim.new(0, 1)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-	for i, entry in ipairs(battleLog) do
+	-- Group entries into turn blocks (a "turn" header starts a block; lines before the first
+	-- header form their own block). Show blocks newest-first; inside each block the header
+	-- comes first, then that turn's lines newest-first.
+	local blocks = {}
+	local cur = nil
+	for _, entry in ipairs(battleLog) do
+		if type(entry) == "table" and entry.c == "turn" then
+			cur = { header = entry, lines = {} }
+			table.insert(blocks, cur)
+		else
+			if not cur then
+				cur = { header = nil, lines = {} }
+				table.insert(blocks, cur)
+			end
+			table.insert(cur.lines, entry)
+		end
+	end
+
+	local order = 0
+	local function addLabel(entry, isHeader)
+		order += 1
 		local lbl = Instance.new("TextLabel")
 		lbl.Size = UDim2.new(1, -8, 0, Theme.Elem.RowTiny())
 		lbl.BackgroundTransparency = 1
 		lbl.Font = Theme.Font.Primary; lbl.TextSize = Theme.Text.Body()
-		local isHeader = type(entry) == "table" and entry.c == "turn"
 		lbl.TextColor3 = if isHeader then Theme.Colors.TextGold else Theme.Colors.TextSecondary
 		lbl.TextXAlignment = Enum.TextXAlignment.Left
 		lbl.TextWrapped = true
 		lbl.AutomaticSize = Enum.AutomaticSize.Y
 		local text = if type(entry) == "table" then entry.x else tostring(entry)
-		lbl.Text = if isHeader then text else ("  • " .. text); lbl.LayoutOrder = i
+		lbl.Text = if isHeader then text else ("  • " .. text); lbl.LayoutOrder = order
 		lbl.Parent = scroll
+		logLabelByEntry[entry] = lbl
+	end
+	for b = #blocks, 1, -1 do
+		local blk = blocks[b]
+		if blk.header then addLabel(blk.header, true) end
+		for k = #blk.lines, 1, -1 do addLabel(blk.lines[k], false) end
+	end
+
+	scroll.Parent = battleLogPanel -- parent last (properties and rows set first)
+	logScroll = scroll
+
+	-- Restore the reader's place once the list layout and canvas size have settled. A newer
+	-- rebuild (token changed) or a closed panel cancels this.
+	if oldY > 0 then
+		task.defer(function()
+			task.wait()
+			if token ~= logBuildToken or not scroll.Parent then return end
+			local lbl = anchorEntry and logLabelByEntry[anchorEntry]
+			if lbl and lbl.Parent then
+				local canvasY = lbl.AbsolutePosition.Y - scroll.AbsolutePosition.Y + scroll.CanvasPosition.Y
+				scroll.CanvasPosition = Vector2.new(0, math.max(0, canvasY - anchorOffset))
+			else
+				scroll.CanvasPosition = Vector2.new(0, oldY) -- anchor dropped off the bottom (log cap)
+			end
+		end)
 	end
 end
 
@@ -2633,7 +2750,7 @@ function BattleHUD.ShowMapDetails(data)
 
 	local panel = Instance.new("Frame")
 	panel.Name = "MapDetails"
-	panel.Size = UDim2.fromOffset(240, 0)
+	panel.Size = UDim2.fromOffset(280, 0)  -- widened 240->280 for objective lines (2026-10-28)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
 	panel.Position = UDim2.new(0, PAD, 0, 58 + Theme.Elem.ToggleBtn() + 8)
 	panel.BackgroundColor3 = Theme.Colors.PanelRaised
@@ -2675,17 +2792,30 @@ function BattleHUD.ShowMapDetails(data)
 		line(string.format("%s  Lv %s  |  %s enemies",
 			tostring(q.biome or "?"), tostring(q.recommendedLvl or "?"), tostring(q.enemyCount or "?")),
 			Theme.Colors.TextSecondary)
-		if q.condition then line("Objective: " .. tostring(q.condition), Theme.Colors.TextSecondary) end
+		-- (2026-10-28) The weather/condition line was removed: it was mislabeled
+		-- "Objective" and the dedicated Weather panel already shows the live value.
 	else
 		line("No active quest.", Theme.Colors.TextSecondary)
 	end
 
-	-- Optional quests (may be empty).
+	-- Optional objectives (2026-10-28): live list from ObjectiveService.Describe.
+	-- Each shows name + mode, what to do, live progress, and the bonus reward.
+	-- Fail-and-erase: unfinished objectives fail when the battle ends.
 	if data.optional and #data.optional > 0 then
-		line("Optional:", Theme.Colors.TextGold, true)
+		line("Optional objectives:", Theme.Colors.TextGold, true)
 		for _, oq in ipairs(data.optional) do
-			line("• " .. tostring(oq.name or "Optional quest"), Theme.Colors.TextSecondary)
+			local mark = oq.done and "[DONE] " or ""
+			line(string.format("%s%s (%s)", mark, tostring(oq.name or "Objective"), tostring(oq.mode or "Normal")),
+				oq.done and Theme.Colors.Success or Theme.Colors.TextPrimary, true)
+			if oq.goal and oq.goal ~= "" then line("  " .. oq.goal, Theme.Colors.TextSecondary) end
+			if oq.progress and oq.progress ~= "" then line("  Progress: " .. oq.progress, Theme.Colors.TextSecondary) end
+			local rc = tonumber(oq.rewardCount) or 1
+			line(string.format("  Reward: %d bonus item%s (gear, skill, or augment) on victory",
+				rc, rc == 1 and "" or "s"), Theme.Colors.TextSecondary)
 		end
+		line("Unfinished objectives fail when the battle ends.", Theme.Colors.TextDisabled)
+	else
+		line("Optional objectives: none this battle.", Theme.Colors.TextSecondary)
 	end
 
 	-- Live gold tally (victory rate) + loot range. Clearly labeled "if you win"
@@ -2694,6 +2824,8 @@ function BattleHUD.ShowMapDetails(data)
 	local goldOnVictory = data.goldOnVictory or 0
 	line("Rewards (if you win):", Theme.Colors.TextGold, true)
 	line(string.format("Gold so far: %dg  (+%dg on victory)", goldSoFar, goldOnVictory), Theme.Colors.TextPrimary)
+	-- XP so far (2026-10-28): kill XP per deployed unit, same formula as the payout.
+	line(string.format("XP so far: %d per deployed unit", tonumber(data.xpSoFar) or 0), Theme.Colors.TextPrimary)
 	local lmin, lmax = data.lootMin or 1, data.lootMax or 2
 	if lmin == lmax then
 		line(string.format("Loot on victory: %d item(s)", lmin), Theme.Colors.TextSecondary)
@@ -2701,6 +2833,7 @@ function BattleHUD.ShowMapDetails(data)
 		line(string.format("Loot on victory: %d-%d items", lmin, lmax), Theme.Colors.TextSecondary)
 	end
 	line("Defeat keeps 50% of kill gold only.", Theme.Colors.TextDisabled)
+	line("Kill XP is kept on defeat. Benched units get 65%; overleveled units get less.", Theme.Colors.TextDisabled)
 
 	mapDetailsPanel = panel
 end
@@ -3174,6 +3307,9 @@ function BattleHUD.Cleanup()
 	presentation.actor = nil; presentation.target = nil; presentation.skill = nil
 	presentation.preview = nil; presentation.tile = nil; presentation.inspectedEntityId = nil
 	battleLog = {}
+	-- Newest-first log state (2026-10-30): forget the old scroll frame and cancel any
+	-- pending scroll restore so the next battle's log opens at the top.
+	logScroll = nil; table.clear(logLabelByEntry); logBuildToken += 1
 	isViewMode = false
 	isBattleLogExpanded = false
 	savedBattleState = nil

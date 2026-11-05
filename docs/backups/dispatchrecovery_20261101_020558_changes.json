@@ -1,0 +1,23 @@
+{
+ "tag": "dispatchrecovery_20261101_020558",
+ "cells": [
+  {
+   "table": "persistent_hp_mp_rules",
+   "id": 4,
+   "col": "notes",
+   "before": "Locked",
+   "after": "Locked | USER RULING 2026-11-01: units away on dispatch also recover on a qualifying victory (user ruling 2026-11-01); KO'd units still get none (rule 8). Rule text above unchanged. Game code already does this; Dev also fixed benched/dispatched units getting their Resilient / Slow to Recover trait amount (BUG-072)."
+  },
+  {
+   "xlsx": "19 Persistent HP MP!E9",
+   "before": "Locked",
+   "after": "Locked | USER RULING 2026-11-01: units away on dispatch also recover on a qualifying victory (user ruling 2026-11-01); KO'd units still get none (rule 8). Rule text above unchanged. Game code already does this; Dev also fixed benched/dispatched units getting their Resilient / Slow to Recover trait amount (BUG-072)."
+  },
+  {
+   "xlsx": "19 Persistent HP MP!E28",
+   "before": "Working",
+   "after": "Working | USER RULING 2026-10-29: see weapons_equipment 141 (object attacks count; bonus may hit objects).",
+   "why": "stale since 2026-10-29, re-synced to DB"
+  }
+ ]
+}

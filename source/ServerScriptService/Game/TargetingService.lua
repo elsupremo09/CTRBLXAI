@@ -17,6 +17,7 @@ local RacePassiveService = require(script.Parent.RacePassiveService)
 local TraitEffectService = require(script.Parent.TraitEffectService) -- Perks & Flaws Phase 2
 local ArmorPassiveService = require(script.Parent.ArmorPassiveService)
 local WeaponPassiveService = require(script.Parent.WeaponPassiveService) -- ArcaneReach skill-range (2026-10-26)
+local StatCalcService = require(script.Parent.StatCalcService) -- shared stat calculation (2026-10-28)
 local StatusService = require(script.Parent.StatusService)
 -- Map-object Interact eligibility (2026-10-26). One-way require: ObjectEffectService and
 -- everything it loads never require TargetingService, so there is no load cycle.
@@ -213,44 +214,15 @@ local DIRECTIONS = {
 --------------------------------------------------
 
 local function getMovementRange(unit)
-	local base = 0
-	if unit.derivedStats and unit.derivedStats.movementRange then
-		base = unit.derivedStats.movementRange
-	else
-		local agi = unit.effectiveStats and unit.effectiveStats.AGI or 10
-		base = BASE_MOVEMENT_RANGE + math.floor(agi / 60)
-	end
-	local raceOffset = RacePassiveService.GetMovementRangeModifier(unit)
-	local armorOffset = ArmorPassiveService.GetMovementRangeBonus(unit)
-	-- Perks & Flaws Phase 2 (TRAIT-MOVE): Long Strider / Short Strider (0 for no trait).
-	local traitOffset = TraitEffectService.GetMovementRangeModifier(unit)
-	-- Status move buffs (2026-10-07): Coordinated Advance +2, Rush +3, Rally +1.
-	-- StatusService.GetMovementRangeModifier existed but was never called here.
-	local statusOffset = StatusService.GetMovementRangeModifier(unit)
-	-- BD-015 Sentinel Carapace (imposed slow): flat negative move-range penalty currently on this unit
-	-- from an adjacent guarding Sentinel wearer (0 when none). Floored at 1 by the math.max below.
-	local imposedPenalty = ArmorPassiveService.GetImposedMoveRangePenalty(unit)
-	return math.max(1, base + raceOffset + armorOffset + traitOffset + statusOffset + imposedPenalty)
+	-- One shared calculation (StatCalcService, 2026-10-28): base + race + armor (incl. situational
+	-- FT-011 / FT-012) + trait + status + imposed penalty, min 1. The Info panels call the same
+	-- function, so the panel value and the reachable tiles cannot disagree.
+	return StatCalcService.GetMovementRange(unit, "battle")
 end
 
 local function getJump(unit)
-	-- BUGFIX 2026-10-03: derivedStats.jump is the BASE stat only
-	-- (GameConstants: 1 + floor(DEX/60)); the old early-return skipped the
-	-- racial (Elf +1) and armor (Climbing Boots +2) bonuses. Mirrors getMovementRange.
-	local base
-	if unit.derivedStats and unit.derivedStats.jump then
-		base = unit.derivedStats.jump
-	else
-		local dex = unit.effectiveStats and unit.effectiveStats.DEX or 10
-		base = 1 + math.floor(dex / 60)
-	end
-	local raceJump = RacePassiveService.GetJumpModifier(unit)
-	local armorJump = ArmorPassiveService.GetJumpBonus(unit)
-	-- Slice 5 buff: Rally (+1 Jump) via status jumpOffset.
-	local statusJump = StatusService.GetJumpModifier(unit)
-	-- Perks & Flaws Phase 2 (TRAIT-JUMP): High Jumper / Stubby Legs (0 for no trait).
-	local traitJump = TraitEffectService.GetJumpModifier(unit)
-	return base + raceJump + armorJump + statusJump + traitJump
+	-- One shared calculation (StatCalcService, 2026-10-28): base + race + armor + status + trait.
+	return StatCalcService.GetJump(unit, "battle")
 end
 
 local function getDownwardJump(unit)
@@ -365,6 +337,11 @@ end
 
 function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight)
 	local range      = getMovementRange(actor)
+	-- Move-range breakdown for player units (2026-10-28), to confirm gear bonuses apply in battle.
+	if actor.side == "Player" then
+		local _, mp = StatCalcService.GetMovementRangeParts(actor, "battle")
+		print(`[TargetingService] {actor.name} move range {range} (base {mp.base}, race {mp.race}, armor {mp.armor}, trait {mp.trait}, status {mp.status}, imposed {mp.imposed})`)
+	end
 	local jump       = getJump(actor)
 	local downJump   = getDownwardJump(actor)
 	local occupancy  = buildOccupancyMap(allUnits)
@@ -380,6 +357,11 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 	-- base cost 1.0), same effect as the Pathfinder trait. Computed once per pathfind. Bogged Down
 	-- (traitTerrainMult) is overridden -- "ignore terrain penalties" means they do not apply.
 	local armorTerrainIgnore = ArmorPassiveService.CanIgnoreTerrainCost(actor)
+	-- Amphibious tag (race_tags row 3) and FT-005 Levitation Boots ("ignore effects of Shallow Water,
+	-- Deep Water"): Shallow / Deep Water cost no extra movement (2026-10-29). Only the water's own
+	-- extra cost is removed; tile effects on top (Tar, slow zones) still apply.
+	local waterMoveIgnore = RacePassiveService.HasRaceTag(actor, "Amphibious")
+		or ArmorPassiveService.CanIgnoreWaterEffects(actor)
 	-- FT-020 Phantom Steps: may TRAVERSE enemy-occupied tiles (never LAND on one -- the candidate
 	-- insert below still requires occupant==nil). Each enemy tile stepped THROUGH adds +1 path cost
 	-- (GetMoveThroughEnemyCost; user ruling 2026-10-25, reduced from +2). Flight already crosses enemies
@@ -433,6 +415,9 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 		return candidates
 	end
 
+	-- Warden Earthen Resilience (2026-10-28): +1 cost to enter a tile within Range 2 of an active enemy
+	-- Warden (area denial, not terrain, so it also applies to flyers / Pathfinder). Listed once per search.
+	local _enemyWardens = (require :: any)(script.Parent.DoctrinePassiveService).GetActiveEnemyWardens(actor, allUnits)
 	local queue      = { { x = actor.tileX, y = actor.tileY, cost = 0 } }
 	local startKey   = tileKey(actor.tileX, actor.tileY)
 	visited[startKey] = 0
@@ -479,6 +464,12 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 				else
 					-- Base terrain + Tar Pit (full cost, max) + road cut + ENV-003 slow (shared helper).
 					local terrainCost = tileEntryCost(nx, ny)
+					if waterMoveIgnore then
+						local _tid = GameConstants.GetTerrainId(nx, ny)
+						if _tid == "Shallow Water" or _tid == "Deep Water" then
+							terrainCost = math.max(1, terrainCost - math.max(0, GameConstants.GetTerrainCost(nx, ny) - 1))
+						end
+					end
 					-- Flight ignores terrain movement costs and tile bonuses/penalties (DB id 83).
 					-- Perks & Flaws (Phase 2b): Pathfinder ignores terrain cost; Bogged Down +50%.
 					if hasFlight then
@@ -497,6 +488,14 @@ function TargetingService.GetMoveCandidates(actor, allUnits, mapWidth, mapHeight
 						local _oc = occupancy[key]
 						if _oc and _oc ~= actor and _oc.side ~= actor.side then
 							stepCost = stepCost + throughEnemyCost
+						end
+					end
+					if #_enemyWardens > 0 then
+						for _, _w in ipairs(_enemyWardens) do
+							if math.max(math.abs(_w.tileX - nx), math.abs(_w.tileY - ny)) <= 2 then
+								stepCost = stepCost + 1
+								break
+							end
 						end
 					end
 					local newCost  = current.cost + stepCost
@@ -843,7 +842,10 @@ end
 
 function TargetingService.GetAttackCandidates(actor, allUnits, range)
 	range = range or 1
-	range = range + RacePassiveService.GetRangeModifier(actor)
+	-- Race (Catau on water) and trait (Restless / Sniper's Perch) range are added HERE, once, for every
+	-- caller -- turn prompt, AI, counter reach, validation (fix 2026-10-29: the prompt and AI left the
+	-- trait out, and validation added race twice).
+	range = range + RacePassiveService.GetRangeModifier(actor) + TraitEffectService.GetAttackRangeModifier(actor)
 	-- Support minimum range (ranged weapons cannot hit adjacent targets)
 	local minRange = actor.weaponMinRange or 1
 
@@ -888,12 +890,24 @@ function TargetingService.GetAttackableObjectTargets(actor, allUnits, range, sta
 	-- TAUNT (user ruling 2026-10-27): a Taunted unit cannot attack objects.
 	if StatusService.GetTaunter(actor, allUnits) then return out end
 	if not (state and state.objects) then return out end
-	range = (range or 1) + RacePassiveService.GetRangeModifier(actor)
+	-- Same range as the AttackObject command (race + Restless / Sniper's Perch), Tester D-1 2026-10-29.
+	range = (range or 1) + RacePassiveService.GetRangeModifier(actor) + TraitEffectService.GetAttackRangeModifier(actor)
 	local minRange = actor.weaponMinRange or 1
 	for _, inst in ipairs(state.objects) do
 		local def = inst and inst.type and ObjectData.Objects[inst.type]
+		-- Mimic disguise (2026-10-28): an UNMASKED disguise object (Mimic) is also attackable —
+		-- a hit wakes it (CommandService AttackObject). A DISGUISED one is never offered (that
+		-- would give it away); hidden objects are never offered either.
+		-- USER RULING 2026-10-30 (project_rules 241 B3): chests are breakable now, so a DISGUISED
+		-- Mimic is offered too (any hit wakes it, ObjectEffectService.ApplyObjectHit), listed under
+		-- its shown name ("Treasure Chest") with no wake flag, so the list looks like a real chest.
+		local wakes = inst ~= nil and not inst.hidden
+			and ObjectEffectService.DISGUISES[inst.type] ~= nil
+		local shownName = (inst and ObjectEffectService.GetDisplayType(inst, nil)) or (def and def.id) or (inst and inst.type)
+		-- Only an UNMASKED Mimic may be flagged as "wakes" (the flag reaches the client and the AI).
+		local wakeFlag = wakes and inst.unmasked == true
 		if def and def.passable == false and def.isImmovable ~= true
-			and type(def.hitsToDestroy) == "number" and def.hitsToDestroy > 0
+			and (wakes or (type(def.hitsToDestroy) == "number" and def.hitsToDestroy > 0))
 			and inst.x and inst.y then
 			local pseudo = { tileX = inst.x, tileY = inst.y }
 			local dist = chebyshevDistance(actor.tileX, actor.tileY, inst.x, inst.y)
@@ -904,8 +918,9 @@ function TargetingService.GetAttackableObjectTargets(actor, allUnits, range, sta
 			then
 				table.insert(out, {
 					id = string.format("obj:%d,%d", inst.x, inst.y),
-					name = def.id or inst.type,
+					name = shownName,
 					tileX = inst.x, tileY = inst.y, kind = "object",
+					wakesObject = wakeFlag or nil,
 				})
 			end
 		end
@@ -927,7 +942,8 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 	-- HALFLING — Nimble Steps (2026-10-02): movement skills +1 range (race modifier).
 	local range, minRange, baseRange, bonusRange = GameConstants.CalcSkillRange(
 		actor, skillDef, RacePassiveService.GetSkillRangeModifier(actor, skillDef)
-			+ WeaponPassiveService.GetSkillRangeBonus(actor, skillDef)) -- ArcaneReach (Staff)
+			+ WeaponPassiveService.GetSkillRangeBonus(actor, skillDef) -- ArcaneReach (Staff)
+		+ (require :: any)(script.Parent.DoctrinePassiveService).GetProjectileRangeModifier(actor, skillDef.projectileType or (skillDef.range == -1 and actor.weaponProjectileType or nil))) -- Ranger
 	debugLog(string.format("[SkillCand] %s using %s | skillRange=%s baseRange=%d bonusRange=%d range=%d | weaponMaxRange=%s INT=%s derivedBSR=%s",
 		actor.name, skillDef.name or skillDef.id, tostring(skillDef.range),
 		baseRange, bonusRange, range, tostring(actor.weaponMaxRange),
@@ -1025,7 +1041,7 @@ function TargetingService.GetSkillCandidates(actor, allUnits, skillDef)
 	-- aim at ANY tile (occupied or empty). Clicking an occupied tile resolves
 	-- against the occupant (BattleTurnController occupant lookup on commit); an
 	-- empty tile fires the terrain reaction (CommandService ground branch). This
-	-- trades away the per-enemy damage preview (accepted Option-A cost) and matches
+	-- traded away the per-enemy damage preview (restored 2026-10-30 by PreviewSkillHits) and matches
 	-- the engine's tile-click design (units are selected via their tile).
 	-- GATED to controller == "Player": AI-driven units (enemies AND player-side
 	-- summons) keep their existing side-based unit targeting — the enemy AI is
@@ -1223,7 +1239,8 @@ function TargetingService.GetSkillRangeTiles(actor, skillDef, mapWidth, mapHeigh
 	-- Shared formula (DAT-001) so highlighting matches validation.
 	local range = GameConstants.CalcSkillRange(
 		actor, skillDef, RacePassiveService.GetSkillRangeModifier(actor, skillDef)
-			+ WeaponPassiveService.GetSkillRangeBonus(actor, skillDef)) -- ArcaneReach (Staff)
+			+ WeaponPassiveService.GetSkillRangeBonus(actor, skillDef) -- ArcaneReach (Staff)
+		+ (require :: any)(script.Parent.DoctrinePassiveService).GetProjectileRangeModifier(actor, skillDef.projectileType or (skillDef.range == -1 and actor.weaponProjectileType or nil))) -- Ranger
 	local tiles = {}
 
 	for dy = -range, range do
@@ -1292,8 +1309,9 @@ function TargetingService.ValidateSelection(
 		end
 
 		-- Use actor's equipped weapon range for validation
-		local attackRange = (actor.weaponMaxRange or 1) + RacePassiveService.GetRangeModifier(actor)
-			+ TraitEffectService.GetAttackRangeModifier(actor) -- Restless / Sniper's Perch (2026-10-23)
+		-- Race and trait range are added inside GetAttackCandidates (2026-10-29).
+		local attackRange = (actor.weaponMaxRange or 1)
+		+ (require :: any)(script.Parent.DoctrinePassiveService).GetProjectileRangeModifier(actor, actor.weaponProjectileType) -- Ranger (2026-10-28)
 		local candidates = TargetingService.GetAttackCandidates(actor, allUnits, attackRange)
 		for _, c in ipairs(candidates) do
 			if c == selection then
@@ -1782,6 +1800,38 @@ end
 -- Returns: array of candidate tables (possibly empty — button grays out).
 --------------------------------------------------
 
+-- HD-014 Hazard Warden Hood (2026-10-29): what makes (x, y) a hazard tile, by the DB "Hazard" tag:
+-- a Hazard-tagged tile effect (Burning) and / or Hazard-tagged terrain (Molten, Quicksand, ...).
+-- Returns effectId?, terrainId? (both nil = not a hazard).
+local function hasTagIn(tags, tag)
+	for _, t in ipairs(tags or {}) do
+		if t == tag then return true end
+	end
+	return false
+end
+function TargetingService.GetTileHazards(x, y)
+	local effId, terId = nil, nil
+	if _tileEffectService and _tileEffectService.GetTileEffect then
+		local eff = _tileEffectService.GetTileEffect(x, y)
+		local edef = eff and GameConstants.TILE_EFFECTS[eff.id]
+		if edef and hasTagIn(edef.tags, "Hazard") then effId = eff.id end
+	end
+	local tid = GameConstants.GetTerrainId(x, y)
+	local tdef = tid and GameConstants.TERRAIN_TYPES[tid]
+	if tdef and hasTagIn(tdef.tags, "Hazard") then terId = tid end
+	return effId, terId
+end
+
+-- HD-015 Mechanist Headgear (2026-10-29): can this allied placed object be refreshed? It must hold
+-- charges below its full amount (Portable Ballista shots, Supply Station supplies) or have a timer.
+function TargetingService.CanMechanistRefreshObject(obj)
+	local arch = obj and obj.type and ObjectData.Objects and ObjectData.Objects[obj.type]
+	if not arch then return false end
+	if arch.shots and (obj.shotsLeft or 0) < arch.shots then return true end
+	if arch.supplies and (obj.supplies or 0) < arch.supplies then return true end
+	return obj.lifeCt ~= nil
+end
+
 function TargetingService.GetInteractCandidates(actor, allUnits, state)
 	local candidates = {}
 	if not actor or not actor.isAlive then
@@ -1909,8 +1959,74 @@ function TargetingService.GetInteractCandidates(actor, allUnits, state)
 						interactKind = "mapObject",
 						objectId = obj.id,
 						archetypeId = obj.type,
-						name = obj.type or obj.id or "Object",
+						-- Client-visible name (Mimic disguise: a disguised Mimic reads "Treasure Chest").
+						displayType = ObjectEffectService.GetDisplayType(obj, nil),
+						name = ObjectEffectService.GetDisplayType(obj, nil) or obj.id or "Object",
 						tileX = obj.x, tileY = obj.y,
+					})
+				end
+			end
+		end
+	end
+
+	-- HD-015 Mechanist Headgear (DB "Interact on allied objects/summons: restore 1 charge or +500 CT
+	-- duration", 2026-10-29): allied item devices with a lifespan, and objects placed by the actor's
+	-- side that hold charges or a timer. Listed after the normal options on the same tile.
+	if ArmorPassiveService.GetInteractRefreshConfig(actor) and actor.side ~= "Neutral" then
+		for _, u in ipairs(allUnits) do
+			if u.isAlive and u.id ~= actor.id and u.side == actor.side and u.isItemDevice and u.deviceLifeCt ~= nil
+				and chebyshevDistance(actor.tileX, actor.tileY, u.tileX, u.tileY) <= reach then
+				table.insert(candidates, {
+					interactKind = "mechanistRefresh",
+					id = u.id, name = u.name,
+					tileX = u.tileX, tileY = u.tileY,
+				})
+			end
+		end
+		for _, obj in ipairs((state and state.objects) or {}) do
+			if obj.x and obj.y and obj.ownerSide == actor.side and TargetingService.CanMechanistRefreshObject(obj)
+				and chebyshevDistance(actor.tileX, actor.tileY, obj.x, obj.y) <= reach then
+				table.insert(candidates, {
+					interactKind = "mechanistRefresh",
+					objectId = obj.id,
+					name = ObjectEffectService.GetDisplayType(obj, nil) or obj.type or "Object",
+					tileX = obj.x, tileY = obj.y,
+				})
+			end
+		end
+	end
+
+	-- HD-010 Trapfinder Goggles (re-check 2026-10-29): a visible trap (or one of the actor's own side)
+	-- within 1 tile is an Interact target, so the wearer can always disarm it.
+	do
+		local _tc = ArmorPassiveService.GetInteractTrapConfig and ArmorPassiveService.GetInteractTrapConfig(actor) or nil
+		if _tc and state and state.objects and actor.tileX then
+			for _, ob in ipairs(state.objects) do
+				local od = ob.type and ObjectData.Objects and ObjectData.Objects[ob.type]
+				if od and hasTagIn(od.tags, "Trap") and ob.x and ob.y and (not ob.hidden or ob.ownerSide == actor.side)
+					and chebyshevDistance(actor.tileX, actor.tileY, ob.x, ob.y) <= (_tc.disarmRange or 1) then
+					table.insert(candidates, {
+						interactKind = "disarmTrap",
+						name = ObjectEffectService.GetDisplayType(ob, nil) or ob.type or "Trap",
+						tileX = ob.x, tileY = ob.y,
+					})
+				end
+			end
+		end
+	end
+
+	-- HD-014 Hazard Warden Hood (DB "Interact on hazard tile neutralizes it permanently", 2026-10-29):
+	-- every hazard tile in reach, the actor's own tile included.
+	if ArmorPassiveService.CanInteractNeutralizeHazard(actor) and actor.tileX then
+		for dx = -reach, reach do
+			for dy = -reach, reach do
+				local tx, ty = actor.tileX + dx, actor.tileY + dy
+				local effId, terId = TargetingService.GetTileHazards(tx, ty)
+				if effId or terId then
+					table.insert(candidates, {
+						interactKind = "neutralizeHazard",
+						name = effId or terId,
+						tileX = tx, tileY = ty,
 					})
 				end
 			end

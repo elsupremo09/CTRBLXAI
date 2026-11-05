@@ -432,6 +432,18 @@ local function sumObjectiveXp(battleResult: any, rawKillXp: number): number
 end
 
 -- Is this unit a Human (for the ×1.10 Adaptability bonus)?
+-- Per-unit XP multiplier hook (2026-10-28): Fast / Slow Learner traits (P/F-020, P/F-076) live on
+-- the unit, not its record, so Main injects a lookup. 1 when not wired / no trait.
+local _xpMultProvider: any = nil
+function ProgressionService.SetXpMultiplierProvider(fn: any)
+	_xpMultProvider = fn
+end
+local function traitXpMult(playerId: string, unitId: string): number
+	if not _xpMultProvider then return 1 end
+	local ok, m = pcall(_xpMultProvider, playerId, unitId)
+	return if ok and type(m) == "number" and m >= 0 then m else 1
+end
+
 local function isHuman(playerId: string, unitId: string): boolean
 	local record = _unitRecordProvider and _unitRecordProvider(playerId, unitId) or nil
 	return type(record) == "table" and record.raceId == HUMAN_RACE_ID
@@ -485,6 +497,7 @@ function ProgressionService.GrantExpeditionUnitXp(playerId: string, unitId: stri
 	if human then
 		amount = math.floor(base * HUMAN_ADAPTABILITY_MULT)
 	end
+	amount = math.floor(amount * traitXpMult(playerId, unitId) + 0.0001)  -- Fast / Slow Learner
 
 	local level, newXp, gained = applyXpToUnit(playerId, unitId, amount)
 
@@ -643,6 +656,8 @@ function ProgressionService.AwardBattleXp(playerId: string, battleResult: any)
 					subtotal *= HUMAN_ADAPTABILITY_MULT
 				end
 
+				-- Fast / Slow Learner (unit trait).
+				subtotal *= traitXpMult(playerId, unitId)
 				-- Glow Crystal: x2 on the unit's full end-of-battle total.
 				subtotal *= battleXpMult
 
@@ -695,6 +710,21 @@ function ProgressionService.AwardBattleXp(playerId: string, battleResult: any)
 		units = perUnit,
 		flags = flags,
 	}
+end
+
+--------------------------------------------------
+-- PREVIEW: ProjectKillXp (2026-10-28, Map Details "XP so far")
+--
+-- Read-only projection of the battle's kill XP so far, using the SAME formula
+-- the real payout uses (sumKillXp: Σ BaseTypeXP × (1 + level/50)) and the Glow
+-- Crystal x2. This is the per-deployed-unit base BEFORE each unit's own level
+-- penalty / Human bonus / benched 65% — the panel labels it accordingly. Grants
+-- nothing, mutates nothing (mirrors computeBattleGold's projection role).
+--------------------------------------------------
+function ProgressionService.ProjectKillXp(kills: { any }?, glowCrystal: boolean?): number
+	local total = sumKillXp(type(kills) == "table" and kills or {})
+	if glowCrystal == true then total *= GLOW_CRYSTAL_XP_MULT end
+	return math.floor(total + 0.0001)
 end
 
 --------------------------------------------------

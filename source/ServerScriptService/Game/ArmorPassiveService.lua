@@ -43,6 +43,39 @@ local function getArmorInSlot(unit, slot)
 end
 
 --- Returns the passiveName string for armor in the given slot, or nil.
+-- Rolled bonus passives (PAS-xxx) on ANY equipped item (2026-10-28). Armor archetype passives above
+-- are fixed per item; these are the random extra lines items can roll.
+local function countRolledPassive(unit, pid)
+	local n = 0
+	for slot, item in pairs((unit and unit.equipmentSlots) or {}) do
+		-- An off-hand WEAPON held while dual wield is inactive does nothing (TRG-016), so its rolled
+		-- lines do not count either. Shields / off-hand items always count.
+		local inactive = false
+		if slot == "OffHand" and item and not unit.dualWieldActive then
+			local WeaponData = (require :: any)(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("WeaponData"))
+			local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+			inactive = arch ~= nil and arch.category == "Weapon"
+		end
+		if not inactive then
+			for _, p in ipairs((item and item.bonusPassiveIds) or {}) do
+				if p == pid then n += 1 end
+			end
+		end
+	end
+	return n
+end
+function ArmorPassiveService.HasRolledPassive(unit, pid)
+	return countRolledPassive(unit, pid) > 0
+end
+
+-- PAS-026/029-033 elemental Wards (Strongest only): incoming direct damage of that element x0.75.
+local ELEMENT_WARDS = { Electric = "PAS-026", Fire = "PAS-029", Water = "PAS-030", Ice = "PAS-031", Dark = "PAS-032", Holy = "PAS-033" }
+function ArmorPassiveService.GetRolledElementWardMultiplier(unit, element)
+	local pid = element and ELEMENT_WARDS[element]
+	if pid and countRolledPassive(unit, pid) > 0 then return 0.75 end
+	return 1.0
+end
+
 local function getPassiveInSlot(unit, slot)
 	local arch = getArmorInSlot(unit, slot)
 	return arch and arch.passiveName or nil
@@ -99,6 +132,16 @@ function ArmorPassiveService.OnBattleStart(unit)
 	unit._armorLayeredHitCount   = 0       -- BD-006 Layered Lamellar
 	unit._armorAlchemistBaCount  = 0       -- AC-018 Field Alchemist Emblem
 	unit._armorQmPartnerId       = nil     -- AC-019 Quartermaster Badge
+	-- Checklist fix 2026-10-29: player units are reused between battles, so the per-turn windows /
+	-- penalties armed on the last turn of the previous battle (Reactive Cuirass, Sentinel slow,
+	-- Staggering, Retreat / Vanguard / Heavy March windows, Emergency Locket ...) must not carry over.
+	-- Clear the pending slows first, then run the normal per-turn reset.
+	unit._sentinelSlowPending    = false
+	unit._sentinelSlowActive     = false
+	unit._sentinelSlowMag        = nil
+	unit._imposedMovePendingMag  = 0
+	unit._imposedMoveActiveMag   = 0
+	ArmorPassiveService.OnTurnStart(unit)
 end
 
 --- Reset per-turn flags. Call at start of each unit turn.
@@ -166,8 +209,9 @@ end
 --- Returns an integer offset added to Interact maximum range.
 function ArmorPassiveService.GetInteractRangeModifier(unit)
 	local p = getPassiveInSlot(unit, "Head")
-	if p == "Interact Maximum Range +2" then return 2 end
-	return 0
+	local bonus = if p == "Interact Maximum Range +2" then 2 else 0
+	-- PAS-009 Surveyor Visor Range (rolled, Additive): +2 per copy on any item. 2026-10-28.
+	return bonus + 2 * countRolledPassive(unit, "PAS-009")
 end
 
 --------------------------------------------------
@@ -187,18 +231,8 @@ function ArmorPassiveService.GetInteractReviveConfig(unit, target, allUnits)
 		return { hpPercent = 0.15, requireAllyRange = 0, relocateToUser = false }
 	end
 
-	-- HD-016: requires another ally within 2 tiles of the user
-	if p == "Interact on KO'd ally: revive at 25% HP if within 2 tiles of another ally" then
-		if hasAllyInRange(unit, allUnits, 2) then
-			return { hpPercent = 0.25, requireAllyRange = 2, relocateToUser = false }
-		end
-		return nil -- condition not met
-	end
-
-	-- HD-017: revive + relocate target to user's tile
-	if p == "Interact on KO'd ally: revive at 20% HP and immediately relocate to user's tile" then
-		return { hpPercent = 0.20, requireAllyRange = 0, relocateToUser = true }
-	end
+	-- HD-016 / HD-017 were redesigned (DB 2026-10-02: revive RT -50% / channel 200 -> 130 CT); see
+	-- GetReviveRtPct / GetReviveChannelCt below. Their old revive-HP versions are gone (2026-10-28).
 
 	return nil
 end
@@ -245,25 +279,46 @@ function ArmorPassiveService.GetReviveHpFraction(unit)
 end
 
 --------------------------------------------------
--- HD-005  Recruiter's Circlet
--- "Interact on valid enemy attempts Recruitment with Success Rate +10%"
---------------------------------------------------
---- Returns the bonus percentage for recruitment success rate (0–1 float).
-function ArmorPassiveService.GetInteractRecruitBonus(unit)
-	local p = getPassiveInSlot(unit, "Head")
-	if p == "Interact on valid enemy attempts Recruitment with Success Rate +10%" then
-		return 0.10
+-- Headgear redesigned in the DB on 2026-10-02 (ArmorData synced 2026-10-28). The pipeline call
+-- sites already existed (TargetingService recruit threshold, CommandService recruit heal and
+-- revive RT / channel) but these getters did not, so the items did nothing.
+-- HD-005 Recruiter's Circlet: recruit HP threshold 5% -> 8% of max HP.
+function ArmorPassiveService.GetRecruitThreshold(unit)
+	if getPassiveInSlot(unit, "Head") == "Interact recruit HP threshold raised from <=5% to <=8% of max HP" then
+		return 0.08
+	end
+	return 0.05
+end
+-- HD-006 Diplomat's Veil: a successful recruit is healed 35% of its max HP.
+function ArmorPassiveService.GetRecruitHealFraction(unit)
+	if getPassiveInSlot(unit, "Head") == "Interact successful recruit is healed 35% of its max HP on recruitment" then
+		return 0.35
 	end
 	return 0
+end
+-- HD-016 Signal Officer Beret: revive RT cost 30% -> 15% of Modified Base RT.
+function ArmorPassiveService.GetReviveRtPct(unit)
+	if getPassiveInSlot(unit, "Head") == "Interact on KO'd ally: revive RT cost reduced by 50% (30% -> 15% of Modified Base RT)" then
+		return 0.15
+	end
+	return 0.30
+end
+-- HD-017 Rescue Marshal Helm: revive channel 200 -> 130 CT.
+function ArmorPassiveService.GetReviveChannelCt(unit)
+	if getPassiveInSlot(unit, "Head") == "Interact on KO'd ally: revive channel time reduced by 35% (200 -> 130 CT)" then
+		return 130
+	end
+	return 200
 end
 
 --------------------------------------------------
 -- HD-006  Diplomat's Veil
 -- "Interact recruitment ignores hostility threshold"
 --------------------------------------------------
-function ArmorPassiveService.CanIgnoreRecruitHostility(unit)
-	local p = getPassiveInSlot(unit, "Head")
-	return p == "Interact recruitment ignores hostility threshold"
+-- No item grants this any more: HD-006 was redesigned to the recruit heal (2026-10-02). It let the
+-- wearer recruit any eligible enemy at any HP. Kept as an always-false hook (2026-10-28).
+function ArmorPassiveService.CanIgnoreRecruitHostility(_unit)
+	return false
 end
 
 --------------------------------------------------
@@ -273,7 +328,9 @@ end
 --- Returns the damage multiplier when interacting with siege/artillery objects.
 function ArmorPassiveService.GetInteractSiegeDamageModifier(unit)
 	local p = getPassiveInSlot(unit, "Head")
-	if p == "Interact on siege/artillery object: damage \xc3\x971.5" then return 1.5 end
+	-- USER RULING 2026-10-30 6:20 PM (nonweapon_equipment 30, project_rules 242): x1.5 -> x1.25.
+	-- ArmorData passive text updated to match (this compares the exact text).
+	if p == "Interact on siege/artillery object: damage \xc3\x971.25" then return 1.25 end
 	return 1.0
 end
 
@@ -315,27 +372,32 @@ end
 -- HD-011  Salvager's Cap
 -- "Interact on destroyed objects yields bonus loot/materials"
 --------------------------------------------------
+-- Reworked by user ruling 2026-10-29; reward changed by user ruling 2026-11-01: destroying a
+-- breakable object (any way) gives a little gold + 5% mercury + 5% gear (player side only; see
+-- ObjectEffectService.ApplyObjectHit and _grantChestReward's salvage branch).
 function ArmorPassiveService.CanInteractBonusLoot(unit)
 	local p = getPassiveInSlot(unit, "Head")
-	return p == "Interact on destroyed objects yields bonus loot/materials"
+	return p == "Destroying a breakable object yields one treasure reward roll"
 end
 
 --------------------------------------------------
 -- HD-012  Locksmith Lens
 -- "Interact opens locked containers without a key"
 --------------------------------------------------
+-- Reworked by user ruling 2026-10-29 (the game has no locks): Cursed Chest gives no Weakened.
 function ArmorPassiveService.CanInteractOpenLocks(unit)
 	local p = getPassiveInSlot(unit, "Head")
-	return p == "Interact opens locked containers without a key"
+	return p == "Opening a Cursed Chest does not apply its curse"
 end
 
 --------------------------------------------------
 -- HD-013  Relic Reader Crown
 -- "Interact on discovery objects reveals full information"
 --------------------------------------------------
+-- Reworked by user ruling 2026-10-29: Interact on a disguised object (Mimic) unmasks it, dormant.
 function ArmorPassiveService.CanInteractFullDiscovery(unit)
 	local p = getPassiveInSlot(unit, "Head")
-	return p == "Interact on discovery objects reveals full information"
+	return p == "Interact on a disguised object reveals it without triggering it"
 end
 
 --------------------------------------------------
@@ -376,13 +438,14 @@ end
 -- HD-019  Oracle Diadem
 -- "Interact reveals enemy stats, skills, and AI behavior for 1000 CT"
 --------------------------------------------------
---- Returns the scout reveal duration in CT, or 0.
-function ArmorPassiveService.GetInteractScoutDuration(unit)
+-- Reworked by user ruling 2026-10-29: any committed Interact also runs a Discovery reveal with
+-- radius = Discovery Radius x1.5 + 1 (rounded like Discovery Radius). nil without the Diadem.
+function ArmorPassiveService.GetInteractRevealConfig(unit)
 	local p = getPassiveInSlot(unit, "Head")
-	if p == "Interact reveals enemy stats, skills, and AI behavior for 1000 CT" then
-		return 1000
+	if p == "Interact also reveals hidden units and objects within Discovery Radius x1.5 + 1" then
+		return { radiusMult = 1.5, radiusAdd = 1 }
 	end
-	return 0
+	return nil
 end
 
 --------------------------------------------------
@@ -728,6 +791,8 @@ function ArmorPassiveService.GetPushForceBonus(unit, context)
 
 	-- GL-018: For each tile moved this turn, Push Force +0.5 (rounded down)
 	if string.find(p, "Push Force +0.5", 1, true) then
+		-- context.permanentOnly (Info panels, 2026-10-28): per-turn bonus, not part of the permanent value.
+		if context and context.permanentOnly then return 0 end
 		local tiles = unit._armorTilesMovedThisTurn or 0
 		return math.floor(tiles * 0.5)
 	end
@@ -756,7 +821,19 @@ end
 --
 -- context: { isAlly = bool, isFreePush = bool }
 --------------------------------------------------
+-- PAS-036 Push RT x0.75 (rolled, 2026-10-28): "Strongest only" with GL-003 (no double discount);
+-- multiplies with the other glove effects. The rolled copy carries no drawback (DB: drawback only
+-- "if copied as the full passive").
 function ArmorPassiveService.GetPushRtModifier(unit, context)
+	local m = ArmorPassiveService._GetArmorPushRtModifier(unit, context)
+	if countRolledPassive(unit, "PAS-036") > 0 then
+		local g = getPassiveInSlot(unit, "Gloves")
+		local hasGl003 = g ~= nil and string.find(g, "Push RT Cost \xc3\x970.75", 1, true) ~= nil
+		if not hasGl003 then m = m * 0.75 end
+	end
+	return m
+end
+function ArmorPassiveService._GetArmorPushRtModifier(unit, context)
 	local p = getPassiveInSlot(unit, "Gloves")
 	if not p then return 1.0 end
 
@@ -1022,7 +1099,8 @@ end
 -- FT-018: −2 (rescue trade-off)
 -- FT-019: −2 (kick trade-off)
 --------------------------------------------------
-function ArmorPassiveService.GetMovementRangeBonus(unit)
+-- permanentOnly (optional, 2026-10-28): skip the situational FT-011 / FT-012 bonuses (Info panels).
+function ArmorPassiveService.GetMovementRangeBonus(unit, permanentOnly)
 	local p = getPassiveInSlot(unit, "Feet")
 	if not p then return 0 end
 
@@ -1031,13 +1109,15 @@ function ArmorPassiveService.GetMovementRangeBonus(unit)
 
 	-- FT-011: first move +3
 	if string.find(p, "First Move each turn gains Movement Range +3", 1, true) then
+		if permanentOnly then return 0 end
 		if not unit._armorFirstMoveUsed then return 3 end
 		return 0
 	end
 
 	-- FT-012: second move +2
 	if string.find(p, "Second Move same turn", 1, true) then
-		if (unit._armorMoveCountThisTurn or 0) >= 1 then return 2 end
+		if permanentOnly then return 0 end
+		if (unit._armorMoveCountThisTurn or 0) == 1 then return 2 end  -- the SECOND Move only (re-check 2026-10-29)
 		return 0
 	end
 
@@ -1081,7 +1161,7 @@ function ArmorPassiveService.GetMoveRtModifier(unit)
 
 	-- FT-012: second move ×0.50
 	if string.find(p, "Second Move same turn", 1, true) then
-		if (unit._armorMoveCountThisTurn or 0) >= 1 then return 0.50 end
+		if (unit._armorMoveCountThisTurn or 0) == 1 then return 0.50 end  -- the SECOND Move only
 		return 1.0
 	end
 
@@ -1211,12 +1291,13 @@ end
 
 --------------------------------------------------
 -- FT-013  Ice Cleats
--- "Does not slide from voluntary movement or end-of-move effects on
---  Ice/Oily tiles"
+-- "Does not slide when knocked onto Ice or Oily tiles"
 --------------------------------------------------
+-- Reworked by user ruling 2026-10-29 (walking never slides): the wearer does not slide when
+-- knocked onto Ice / Oily / Frozen tiles (DisplacementService.ResolvePush slide step).
 function ArmorPassiveService.CanAvoidIceSlide(unit)
 	local p = getPassiveInSlot(unit, "Feet")
-	return p ~= nil and string.find(p, "Does not slide from voluntary movement", 1, true) ~= nil
+	return p ~= nil and string.find(p, "Does not slide when knocked", 1, true) ~= nil
 end
 
 --------------------------------------------------
@@ -1312,8 +1393,8 @@ end
 
 --------------------------------------------------
 -- FT-020  Phantom Steps
--- "May move through enemy-occupied tiles. Each enemy tile costs +2
---  movement and triggers compatible reactions"
+-- "May move through enemy-occupied tiles. Each enemy tile costs +1 movement; no extra cost while
+--  the wearer has Flight" (user ruling 2026-10-29: the 'triggers compatible reactions' clause dropped)
 --------------------------------------------------
 function ArmorPassiveService.CanMoveThroughEnemies(unit)
 	local p = getPassiveInSlot(unit, "Feet")
@@ -1324,9 +1405,7 @@ end
 function ArmorPassiveService.GetMoveThroughEnemyCost(unit)
 	local p = getPassiveInSlot(unit, "Feet")
 	if p and string.find(p, "May move through enemy-occupied tiles", 1, true) then
-		-- +1 per enemy tile (user ruling 2026-10-25, reduced from +2). NOTE: the DB text for FT-020
-		-- (nonweapon_equipment) still reads "+2 movement" -- DB reconciliation is the Designer's task;
-		-- this source value is authoritative for behavior per the user decision.
+		-- +1 per enemy tile (user ruling 2026-10-25, reduced from +2; DB updated).
 		return 1
 	end
 	return 0
@@ -1352,7 +1431,9 @@ end
 -- AC-019  Quartermaster Badge — Item RT +20% (×1.20)
 --------------------------------------------------
 --- Returns the base RT multiplier for Item actions.
-function ArmorPassiveService.GetItemRtModifier(unit)
+-- PAS-034 Quickdraw Pouch (rolled, 2026-10-28): Item RT x0.75, "Strongest only" with the AC-002
+-- Quickdraw Pouch accessory (no double discount); multiplies with the other accessory effects.
+local function armorItemRtModifier(unit)
 	local p = getPassiveInSlot(unit, "Accessory")
 	if not p then return 1.0 end
 
@@ -1371,6 +1452,15 @@ function ArmorPassiveService.GetItemRtModifier(unit)
 
 	return 1.0
 end
+function ArmorPassiveService.GetItemRtModifier(unit)
+	local m = armorItemRtModifier(unit)
+	if m > 0.75 and countRolledPassive(unit, "PAS-034") > 0 then
+		local acc = getPassiveInSlot(unit, "Accessory")
+		local hasAc002 = acc ~= nil and string.find(acc, "Item RT Cost \xc3\x970.75", 1, true) ~= nil
+		if not hasAc002 then m = m * 0.75 end
+	end
+	return m
+end
 
 --------------------------------------------------
 -- AC-003  Long-Throw Strap
@@ -1378,8 +1468,9 @@ end
 --------------------------------------------------
 function ArmorPassiveService.GetItemRangeBonus(unit)
 	local p = getPassiveInSlot(unit, "Accessory")
-	if p == "Item Maximum Range +2" then return 2 end
-	return 0
+	local bonus = if p == "Item Maximum Range +2" then 2 else 0
+	-- PAS-010 Long-Throw Strap Range (rolled, Additive): +2 per copy on any item. 2026-10-28.
+	return bonus + 2 * countRolledPassive(unit, "PAS-010")
 end
 
 --------------------------------------------------
@@ -1491,13 +1582,14 @@ end
 
 --------------------------------------------------
 -- AC-012  Trapmaker's Roll
--- "Trap Items placed at Range +3 and remain active +500 CT"
+-- "Trap Items placed at Range +3 and their damage and RT delay +20%" (user ruling 2026-10-29: the
+--  old "+500 CT active" half did nothing -- placed traps never expire)
 --------------------------------------------------
 --- Returns the trap config or nil.
 function ArmorPassiveService.GetItemTrapConfig(unit)
 	local p = getPassiveInSlot(unit, "Accessory")
 	if p and string.find(p, "Trap Items placed at Range +3", 1, true) then
-		return { rangeBonus = 3, durationBonus = 500 }
+		return { rangeBonus = 3, powerMult = 1.20 }
 	end
 	return nil
 end

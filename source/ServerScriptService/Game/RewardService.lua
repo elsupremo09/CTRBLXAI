@@ -19,6 +19,8 @@ local Content = game:GetService("ReplicatedStorage"):WaitForChild("Content")
 
 local ItemGenerator    = require(Game:WaitForChild("ItemGenerator"))
 local InventoryService = require(Game:WaitForChild("InventoryService"))
+-- One source for weapon/off-hand passive names on every screen (2026-10-30).
+local GearPassiveSummary = require(Game:WaitForChild("GearPassiveSummary"))
 
 local BonusData       = require(Content:WaitForChild("BonusData"))
 local WeaponData      = require(Content:WaitForChild("WeaponData"))
@@ -254,6 +256,12 @@ function RewardService.ClearExpeditionFortune()
 	_expeditionFortune = 0
 end
 
+-- Read-only getter (Treasure Hunter, project_rules 227): lets a caller roll at neutral
+-- Fortune and then restore exactly what was set. Pure read; changes nothing.
+function RewardService.GetExpeditionFortune()
+	return _expeditionFortune
+end
+
 -- Normalized Expedition Fortune = Expedition Fortune / 1.75 (0 .. 1).
 local function normalizedExpeditionFortune()
 	return _expeditionFortune / 1.75
@@ -376,6 +384,104 @@ local function getConsumablePool()
 end
 
 --------------------------------------------------
+-- BOSS REWARD (daily systems decision 8, USER DECISION 2026-11-01; loot_progression 15/25/43,
+-- materials_system 41). Main calls these only for one of the first 3 boss wins of the real day.
+--   RollBossItem: the guaranteed Rare-or-better item, Mythic max. DECIDED (DEV DEFAULT): the
+--     Elite-encounter rarity column (loot_progression 48-55, the same Mythic-max ceiling; Exalted
+--     0.025 as in the normal table) limited to Rare and above, then the same Fortune quality
+--     weighting as normal equipment: Rare 61% / Epic 23% / Exalted 8% / Legendary 7% / Mythic 0.3%.
+--   RollRuneGem: one bonus line of an Epic item of the content level (Rare item below L40),
+--     random slot (materials_system 41). Returns the gem id (attribute or passive id).
+-- Neither commits anything; Main adds the item with the victory loot and credits the gem.
+--------------------------------------------------
+
+local BOSS_RARITY_WEIGHTS = {
+	{ rarity = "Rare",      weight = 0.18163636 },
+	{ rarity = "Epic",      weight = 0.06962727 },
+	{ rarity = "Exalted",   weight = 0.025 },
+	{ rarity = "Legendary", weight = 0.02018182 },
+	{ rarity = "Mythic",    weight = 0.00100909 },
+}
+
+function RewardService.RollBossItem(mapLevel: number)
+	local seed = generateRewardSeed()
+	local rng = Random.new(seed)
+	local nf = normalizedExpeditionFortune()
+	local weights = {}
+	for _, e in ipairs(BOSS_RARITY_WEIGHTS) do
+		local sens = RARITY_FORTUNE_SENSITIVITY[e.rarity] or 0
+		weights[#weights + 1] = { rarity = e.rarity, weight = e.weight * (1 + nf * sens) }
+	end
+	local rarity = weightedRoll(rng, weights, "rarity", "weight")
+	local item, err = ItemGenerator.GenerateFromPool(getEquipPool(), math.max(1, math.floor(mapLevel)), rarity, seed, "Boss")
+	if not item and rarity == "Mythic" then
+		-- Fallback if a Mythic cannot be built for this archetype/level: the next rarity down.
+		item, err = ItemGenerator.GenerateFromPool(getEquipPool(), math.max(1, math.floor(mapLevel)), "Legendary", seed, "Boss")
+	end
+	print(string.format("[RewardService] Boss reward item: %s %s", tostring(rarity),
+		if item then tostring(item.displayName or item.instanceId) else ("FAILED " .. tostring(err))))
+	return item, err
+end
+
+function RewardService.RollRuneGem(mapLevel: number, rarityOverride: string?): string?
+	local level = math.max(1, math.floor(mapLevel))
+	local rarity = rarityOverride or (if level < 40 then "Rare" else "Epic")
+	local seed = generateRewardSeed()
+	local item = ItemGenerator.GenerateFromPool(getEquipPool(), level, rarity, seed, "BossGem")
+	if not item then return nil end
+	local ids = {}
+	for _, line in ipairs(item.bonusLines or {}) do
+		if type(line) == "table" and type(line.id) == "string" then table.insert(ids, line.id) end
+	end
+	for _, pid in ipairs(item.bonusPassiveIds or {}) do
+		if type(pid) == "string" then table.insert(ids, pid) end
+	end
+	if #ids == 0 then return nil end
+	return ids[Random.new(seed + 1):NextInteger(1, #ids)]
+end
+
+-- ELITE REWARD (loot_progression 26/70/71; daily systems decision 12): each won elite encounter
+-- gives ONE elite reward opportunity: chance = min(95%, 75% x Fortune Multiplier) (Fortune
+-- Multiplier = 1 + Normalized Expedition Fortune, loot_progression 12), then an equipment item
+-- from the Elite-encounter rarity table (loot_progression 48-55, Mythic max; Exalted 0.025 as in
+-- the normal table) with the normal Fortune quality weighting. Returns the item (not committed)
+-- or nil when the chance roll fails.
+local ELITE_RARITY_WEIGHTS = {
+	{ rarity = "Common",    weight = 0.42 },
+	{ rarity = "Uncommon",  weight = 0.28254545 },
+	{ rarity = "Rare",      weight = 0.18163636 },
+	{ rarity = "Epic",      weight = 0.06962727 },
+	{ rarity = "Exalted",   weight = 0.025 },
+	{ rarity = "Legendary", weight = 0.02018182 },
+	{ rarity = "Mythic",    weight = 0.00100909 },
+}
+
+function RewardService.RollEliteReward(mapLevel: number)
+	local seed = generateRewardSeed()
+	local rng = Random.new(seed)
+	local nf = normalizedExpeditionFortune()
+	local chance = math.min(0.95, 0.75 * (1 + nf))
+	if rng:NextNumber() >= chance then
+		print(string.format("[RewardService] Elite reward chance %.0f%% missed", chance * 100))
+		return nil
+	end
+	local weights = {}
+	for _, e in ipairs(ELITE_RARITY_WEIGHTS) do
+		local sens = RARITY_FORTUNE_SENSITIVITY[e.rarity] or 0
+		weights[#weights + 1] = { rarity = e.rarity, weight = e.weight * (1 + nf * sens) }
+	end
+	local rarity = weightedRoll(rng, weights, "rarity", "weight")
+	local level = math.max(1, math.floor(mapLevel))
+	local item, err = ItemGenerator.GenerateFromPool(getEquipPool(), level, rarity, seed, "Elite")
+	if not item and rarity == "Mythic" then
+		item, err = ItemGenerator.GenerateFromPool(getEquipPool(), level, "Legendary", seed, "Elite")
+	end
+	print(string.format("[RewardService] Elite reward item (chance %.0f%%): %s %s", chance * 100, tostring(rarity),
+		if item then tostring(item.displayName or item.instanceId) else ("FAILED " .. tostring(err))))
+	return item
+end
+
+--------------------------------------------------
 -- PUBLIC: GenerateRewards
 --
 -- Returns:
@@ -413,6 +519,10 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 	-- rarity by N tiers for THIS generation only (no global modifier slot touched, so it never
 	-- contends with battlefield-event reward modifiers). Default 0 = unchanged.
 	local bonusRarityTiers = (type(opts) == "table" and tonumber(opts.bonusRarityTiers)) or 0
+	-- Treasure Hunter (project_rules 227, 2026-10-28): opts.noCommit = true rolls and RETURNS the
+	-- results without committing anything (equipment is NOT added to the inventory; every entry
+	-- comes back committed=false). Default false = existing callers unchanged.
+	local noCommit = type(opts) == "table" and opts.noCommit == true
 	if type(opts) == "table" then
 		if type(opts.count) == "number" and opts.count >= 0 then
 			rewardCount = math.floor(opts.count)
@@ -459,6 +569,10 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 					category = "Equipment", committed = false,
 					error = genErr or "Generation failed",
 				})
+			elseif noCommit then
+				-- Rolled but held (Treasure Hunter): nothing enters the inventory here.
+				print(string.format("[RewardService] Reward %d: Equipment %s HELD (noCommit)", i, tostring(item.instanceId)))
+				table.insert(results, { category = "Equipment", item = item, committed = false })
 			else
 				local ok, addErr = InventoryService.AddItem(playerId, item)
 				if ok then
@@ -553,7 +667,8 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 					id = conId,
 					name = def and def.name or conId,
 					icon = def and def.icon or nil,
-					desc = def and def.effectFormula or "",
+					-- Player-facing text first; rule text only as fallback (2026-10-30).
+					desc = def and (def.displayText or def.effectFormula) or "",
 					rarity = rarity,
 					conCategory = def and def.category or "Unknown",
 					maxCharges = def and def.maxCharges or 1,
@@ -660,6 +775,7 @@ function RewardService.BuildRewardSummaries(results)
 				category = "Equipment",
 				isCard = false,
 				stolen = result.stolen or false,  -- Steal/Mug provenance -> client STOLEN badge (2026-10-24)
+				chestReward = result.chestReward or false,  -- chest / salvage loot -> client CHEST badge (2026-11-01)
 				wt = profile and profile.wt or 0,
 				defense = profile and profile.defense or 0,
 				bonusCount = #item.bonusLines,
@@ -673,14 +789,17 @@ function RewardService.BuildRewardSummaries(results)
 				handClass = (not isArmor) and (archetype and archetype.handClass or "1H") or nil,
 				equipCategory = archetype and (isArmor and "Armor" or archetype.category) or "Unknown",
 				nativePassiveId = (not isArmor) and (archetype and archetype.nativePassiveId or nil) or nil,
+				nativePassiveName = (not isArmor) and (archetype and archetype.nativePassiveId
+					and GearPassiveSummary.NativePassiveName(archetype.nativePassiveId) or nil) or nil,
 				nativePassiveDesc = (not isArmor) and (archetype and WeaponData.GetPassiveDesc(archetype.nativePassiveId) or nil) or nil,
 				projectileType = (not isArmor) and (archetype and archetype.projectileType or nil) or nil,
 				element = (not isArmor) and WeaponData.GetInstanceElement(item) or nil,
 				hp = isArmor and (profile and profile.hp or 0) or nil,
 				mp = isArmor and (profile and profile.mp or 0) or nil,
 				slot = isArmor and (archetype and archetype.slot or nil) or nil,
-				passiveName = isArmor and (archetype and archetype.passiveName or nil) or nil,
-				passiveDesc = isArmor and (archetype and archetype.passiveDesc or nil) or nil,
+				-- Display name/text (internal passiveName stays the rules key). 2026-10-31.
+				passiveName = isArmor and (GearPassiveSummary.ArmorPassiveDisplay(archetype)) or nil,
+				passiveDesc = isArmor and select(2, GearPassiveSummary.ArmorPassiveDisplay(archetype)) or nil,
 				bonusStats = nil,
 				bonusPassives = nil,
 			}
@@ -696,6 +815,8 @@ function RewardService.BuildRewardSummaries(results)
 				category = result.category,
 				rarity = cd.rarity or "Common",
 				isCard = true,
+				stolen = result.stolen or false,  -- Treasure Hunter recovered loot -> STOLEN badge (2026-10-28)
+				chestReward = result.chestReward or false,  -- chest / salvage loot -> client CHEST badge (2026-11-01)
 				cardId = cd.id,
 				desc = cd.desc or "",
 				-- Skill-specific

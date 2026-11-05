@@ -97,6 +97,9 @@ ObjectData.Objects["Oil Sluice"] = {
 	category = "Hazard",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "Creates Tar Pit in radius 2 area",
@@ -109,6 +112,9 @@ ObjectData.Objects["Steam Valve"] = {
 	category = "Hazard",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "Creates Steam in radius 2 area",
@@ -121,6 +127,8 @@ ObjectData.Objects["Stone Pillar"] = {
 	category = "Siege",
 	tags = { "Heavy", "Breakable" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "Falls in the direction opposite the interacting unit and becomes a 4-TILE-LONG Rocky span (fallen pillar = 4 tiles long × 1 tile wide; the standing pillar is 4 elevation levels HIGH, which is why its fall reaches 4 tiles) or crushes units on the landing tiles (70% Max HP, +100 RT, Pinned)",
@@ -168,6 +176,9 @@ ObjectData.Objects["Ballista"] = {
 	category = "Siege",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 100,
 	triggerEvent = nil,
@@ -181,11 +192,14 @@ ObjectData.Objects["Catapult"] = {
 	category = "Siege",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 100,
 	triggerEvent = nil,
 	primaryEffect = "Fires a projectile (200% Weapon Damage, Cross AOE) within Range 6",
-	uses = "Unlimited",
+	uses = "Once per turn",  -- USER RULING 2026-10-30 6:20 PM (project_rules 242): every siege object, once per unit per turn
 	notes = "Splash damages objects. Cross AOE = radius-1 cross / plus-shape, 5 tiles (TargetingService.GetCrossTiles).",
 }
 
@@ -194,6 +208,9 @@ ObjectData.Objects["War Banner"] = {
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Passive",
 	triggerEvent = nil,
 	primaryEffect = "Allies within Radius 3 gain +15% to all primary stats",
@@ -206,6 +223,9 @@ ObjectData.Objects["Cursed Statue"] = {
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Passive",
 	triggerEvent = nil,
 	primaryEffect = "Units within radius 3 suffer +20% to base RT",
@@ -218,6 +238,9 @@ ObjectData.Objects["Rally Flag"] = {
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 150,
 	triggerEvent = nil,
@@ -231,6 +254,9 @@ ObjectData.Objects["Star Axis"] = {
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 150,
 	triggerEvent = nil,
@@ -244,6 +270,9 @@ ObjectData.Objects["Burning Cauldron"] = {
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 150,
 	triggerEvent = nil,
@@ -257,6 +286,9 @@ ObjectData.Objects["War Horn"] = {
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 150,
 	triggerEvent = nil,
@@ -270,6 +302,9 @@ ObjectData.Objects["Runed Boulder"] = {
 	category = "Aura",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 150,
 	triggerEvent = nil,
@@ -283,6 +318,9 @@ ObjectData.Objects["Treasure Chest"] = {
 	category = "Exploration",
 	tags = { "Container" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "Random gold, equipment, materials and runes",
@@ -307,6 +345,9 @@ ObjectData.Objects["Cursed Chest"] = {
 	category = "Exploration",
 	tags = { "Shrine" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "Random treasure; inflicts Weakened (3000 CT)",
@@ -318,7 +359,10 @@ ObjectData.Objects["Healing Spring"] = {
 	id = "Healing Spring",
 	category = "Exploration",
 	tags = { "Spring" },
-	passable = true,
+	passable = false,  -- USER RULING 2026-10-30 (project_rules 241): blocks its tile; used via Interact from an adjacent tile.
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "Fully restores HP",
@@ -330,7 +374,10 @@ ObjectData.Objects["Magic Spring"] = {
 	id = "Magic Spring",
 	category = "Exploration",
 	tags = { "Spring" },
-	passable = true,
+	passable = false,  -- USER RULING 2026-10-30 (project_rules 241): blocks its tile; used via Interact from an adjacent tile.
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "Fully restores MP",
@@ -342,7 +389,10 @@ ObjectData.Objects["Campfire"] = {
 	id = "Campfire",
 	category = "Exploration",
 	tags = { "Camp" },
-	passable = true,
+	passable = false,  -- USER RULING 2026-10-30 (project_rules 241): blocks its tile; used via Interact from an adjacent tile.
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "Restore 30% HP and MP",
@@ -355,6 +405,9 @@ ObjectData.Objects["Blood Fountain"] = {
 	category = "Exploration",
 	tags = { "Training" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 150,
 	triggerEvent = nil,
@@ -368,6 +421,9 @@ ObjectData.Objects["Astrolabe"] = {
 	category = "Exploration",
 	tags = { "Shrine" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 400,
 	triggerEvent = nil,
@@ -381,6 +437,9 @@ ObjectData.Objects["Potion Desk"] = {
 	category = "Exploration",
 	tags = { "Shrine" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "Single use. Fully recharge the interacting unit's equipped consumables.",
@@ -392,7 +451,10 @@ ObjectData.Objects["Crystal Ball"] = {
 	id = "Crystal Ball",
 	category = "Exploration",
 	tags = { "NPC" },
-	passable = true,
+	passable = false,  -- USER RULING 2026-10-30 (project_rules 241): blocks its tile; used via Interact from an adjacent tile.
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Free)",
 	triggerEvent = nil,
 	primaryEffect = "Reveals all Hidden Treasures",
@@ -404,7 +466,10 @@ ObjectData.Objects["Eye of the Magi"] = {
 	id = "Eye of the Magi",
 	category = "Exploration",
 	tags = { "Arcane" },
-	passable = true,
+	passable = false,  -- USER RULING 2026-10-30 (project_rules 241): blocks its tile; used via Interact from an adjacent tile.
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 150,
 	triggerEvent = nil,
@@ -418,6 +483,9 @@ ObjectData.Objects["Black Market"] = {
 	category = "Exploration",
 	tags = { "Shop" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Free)",
 	triggerEvent = nil,
 	primaryEffect = "Opens shop containing six fixed discounted high-tier items",
@@ -430,6 +498,9 @@ ObjectData.Objects["Idol of Fortune"] = {
 	category = "Event",
 	tags = { "Shrine" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Free)",
 	triggerEvent = nil,
 	primaryEffect = "Improved item drop rates until battle ends",
@@ -442,6 +513,9 @@ ObjectData.Objects["Fountain of Fortune"] = {
 	category = "Event",
 	tags = { "Shrine" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 150,
 	triggerEvent = nil,
@@ -467,6 +541,9 @@ ObjectData.Objects["Necro Tome Stand"] = {
 	category = "Event",
 	tags = { "Shrine" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Passive",
 	triggerEvent = "Unit dies within radius 3",
 	primaryEffect = "Passive. Whenever a unit dies within radius 3, inflict dark damage to ALL opponents equal to 10% of the DYING unit's max HP.",
@@ -479,6 +556,9 @@ ObjectData.Objects["Cover of Darkness"] = {
 	category = "Event",
 	tags = { "Shrine" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Free)",
 	triggerEvent = nil,
 	primaryEffect = "Blind all enemies within Radius 5 for 2000 CT",
@@ -491,6 +571,9 @@ ObjectData.Objects["Dragon Utopia"] = {
 	category = "Event",
 	tags = { "Encounter" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Free)",
 	triggerEvent = nil,
 	primaryEffect = "Summons 4-6 Dragons with ×3 loot rate",
@@ -502,7 +585,10 @@ ObjectData.Objects["Chaos Statue"] = {
 	id = "Chaos Statue",
 	category = "Event",
 	tags = { "NPC" },
-	passable = true,
+	passable = false,  -- USER RULING 2026-10-30 (project_rules 241): blocks its tile; used via Interact from an adjacent tile.
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Free)",
 	triggerEvent = nil,
 	primaryEffect = "Generates one optional quest",
@@ -515,6 +601,9 @@ ObjectData.Objects["Angel Statue"] = {
 	category = "Event",
 	tags = { "Settlement" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Free)",
 	triggerEvent = nil,
 	primaryEffect = "Grants Flight for 1500 CT",
@@ -527,6 +616,9 @@ ObjectData.Objects["Obelisk"] = {
 	category = "Event",
 	tags = { "Shrine" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "All enemies are inflicted +300 RT Delay",
@@ -539,6 +631,9 @@ ObjectData.Objects["Forge"] = {
 	category = "Event",
 	tags = { "Structure" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 150,
 	triggerEvent = nil,
@@ -551,7 +646,10 @@ ObjectData.Objects["Witch Hut"] = {
 	id = "Witch Hut",
 	category = "Event",
 	tags = { "NPC" },
-	passable = true,
+	passable = false,  -- USER RULING 2026-10-30 (project_rules 241): blocks its tile; used via Interact from an adjacent tile.
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "Double EXP until battle ends; inflict Weakened (3000 CT)",
@@ -564,6 +662,9 @@ ObjectData.Objects["Mysterious Boulder"] = {
 	category = "Event",
 	tags = { "Settlement" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 200,
 	triggerEvent = nil,
@@ -577,6 +678,9 @@ ObjectData.Objects["Glow Crystal"] = {
 	category = "Event",
 	tags = { "Shrine" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	triggerEvent = nil,
 	primaryEffect = "Double all experience gained at end of battle.",
@@ -589,6 +693,9 @@ ObjectData.Objects["Pandora's Box"] = {
 	category = "Event",
 	tags = { "Shrine" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 50,
 	triggerEvent = nil,
@@ -602,6 +709,9 @@ ObjectData.Objects["Swan Pond"] = {
 	category = "Event",
 	tags = { "Spring" },
 	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true, -- rule 241 B4: breaking it gives NO Salvager's Cap (HD-011) roll
 	activation = "Interact (Consumes Action)",
 	interactRT = 150,
 	triggerEvent = nil,

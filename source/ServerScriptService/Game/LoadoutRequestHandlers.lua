@@ -23,6 +23,8 @@ local DoctrineData   = require(Content:WaitForChild("DoctrineData"))
 local SkillData      = require(Content:WaitForChild("SkillData"))
 local ArmorData      = require(Content:WaitForChild("ArmorData"))
 local AugmentData    = require(Content:WaitForChild("AugmentData"))
+local TrainingGroundsService = require(game:GetService("ServerScriptService"):WaitForChild("Game"):WaitForChild("TrainingGroundsService")) -- 2nd augment slot rule (2026-11-04)
+local ApothecaryService = require(game:GetService("ServerScriptService"):WaitForChild("Game"):WaitForChild("ApothecaryService")) -- full-item rule (2026-11-03)
 local ConsumableData = require(Content:WaitForChild("ConsumableData"))
 local PortraitData   = require(Content:WaitForChild("PortraitData"))
 local TraitData      = require(Content:WaitForChild("TraitData"))
@@ -40,6 +42,8 @@ local PersistentStateService = require(Game:WaitForChild("PersistentStateService
 local CommandService         = require(Game:WaitForChild("CommandService"))
 local ItemDisplay            = require(Game:WaitForChild("ItemDisplay"))
 local DoctrineInventoryService = require(Game:WaitForChild("DoctrineInventoryService"))
+local StatCalcService = require(Game:WaitForChild("StatCalcService")) -- Info panel values (2026-10-28)
+local GearPassiveSummary = require(Game:WaitForChild("GearPassiveSummary")) -- combined gear passives (2026-10-29)
 
 local LoadoutRequestHandlers = {}
 
@@ -217,7 +221,9 @@ BattleEvents.GetInventoryData.OnServerInvoke = function(player)
 	return result
 end
 
-BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId)
+-- slotOverride (optional, 2026-10-28): "OffHand" to put a 1H weapon in a Twinblade's off hand.
+-- Any other value is ignored (slot still comes from the item). Legality is checked by ValidateEquip.
+BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId, slotOverride)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then
@@ -246,6 +252,9 @@ BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId)
 	end
 	-- Determine slot: armor uses archetype.slot, weapons use category
 	local slot = isArmor and archetype.slot or ((archetype.category == "OffHand") and "OffHand" or "MainHand")
+	if slotOverride == "OffHand" and not isArmor and archetype.category == "Weapon" then
+		slot = "OffHand"
+	end
 	-- Auto-unequip from previous holder if item is equipped elsewhere
 	for prevId, prevUnit in pairs(playerUnits) do
 		if prevId ~= unitId and prevUnit.equipmentSlots then
@@ -487,6 +496,8 @@ BattleEvents.GetSkillLoadout.OnServerInvoke = function(player, unitId)
 		augmentCards = cardInventory.augmentCards,
 		doctrineId = unit.doctrineId,
 		doctrineChoices = docChoices,
+		slot2Open = TrainingGroundsService.IsSlot2Open(unit), -- 2nd augment slot (2026-11-04)
+		slot2LockedText = TrainingGroundsService.LOCKED_SLOT_TEXT,
 		-- Equipped weapon's shape/reach so the screen resolves "Weapon Shape"/"Weapon Reach"
 		-- skill tags exactly like the server attach gate (tags-only rule, 2026-10-26).
 		weaponProfile = AugmentCompatibility.WeaponProfileFromUnit(unit),
@@ -531,8 +542,8 @@ BattleEvents.RequestEquipSkillCard.OnServerInvoke = function(player, unitId, slo
 	local existing = loadout[slotKey]
 	if existing and existing.skillId then
 		cardInventory.skillCards[existing.skillId] = (cardInventory.skillCards[existing.skillId] or 0) + 1
-		-- Return augment cards too
-		for _, augId in ipairs(existing.augments or {}) do
+		-- Return augment cards too (pairs: slot 2 may be set with slot 1 empty)
+		for _, augId in pairs(existing.augments or {}) do
 			if augId then
 				cardInventory.augmentCards[augId] = (cardInventory.augmentCards[augId] or 0) + 1
 			end
@@ -565,7 +576,7 @@ BattleEvents.RequestUnequipSkillCard.OnServerInvoke = function(player, unitId, s
 	-- Return skill card to inventory
 	cardInventory.skillCards[existing.skillId] = (cardInventory.skillCards[existing.skillId] or 0) + 1
 	-- Return augment cards
-	for _, augId in ipairs(existing.augments or {}) do
+	for _, augId in pairs(existing.augments or {}) do -- pairs: slot 2 may be set with slot 1 empty
 		if augId then
 			cardInventory.augmentCards[augId] = (cardInventory.augmentCards[augId] or 0) + 1
 		end
@@ -582,6 +593,10 @@ BattleEvents.RequestAttachAugment.OnServerInvoke = function(player, unitId, slot
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	if slotIndex < 1 or slotIndex > 4 then return { ok = false, reason = "Invalid skill slot" } end
 	if augSlotIndex < 1 or augSlotIndex > 2 then return { ok = false, reason = "Invalid augment slot (1 or 2)" } end
+	-- USER DECISION 2026-11-04: slot 2 opens at Training Grounds L10 for units level 80+.
+	if augSlotIndex == 2 and not TrainingGroundsService.IsSlot2Open(unit) then
+		return { ok = false, reason = TrainingGroundsService.LOCKED_SLOT_TEXT }
+	end
 	-- Validate augment exists
 	local augDef = AugmentData[augmentId]
 	if not augDef then return { ok = false, reason = "Unknown augment" } end
@@ -702,13 +717,41 @@ BattleEvents.RequestEquipConsumable.OnServerInvoke = function(player, unitId, sl
 			return { ok = false, reason = consDef.name .. " already in slot " .. idx }
 		end
 	end
+	-- OWNERSHIP (USER DECISION 2026-11-03): equipping takes one owned loose copy. The item that was
+	-- in the slot goes back to the owned list at its current charges' item (charges are not banked:
+	-- an owned copy is always a full item; a partly used one returned is still one copy).
+	if not cardInventory.consumables then cardInventory.consumables = {} end
+	local owned = cardInventory.consumables
+	local have = (owned and owned[consumableId]) or 0
+	local current = unit.consumableSlots and unit.consumableSlots[slotIndex]
+	if current and current.consumableId == consumableId then
+		return { ok = true, name = consDef.name, charges = current.currentCharges or 0 } -- already there
+	end
+	if have < 1 then
+		return { ok = false, reason = "You don't own a " .. consDef.name }
+	end
+	-- A partly used item can't be swapped out (it would come back as a full copy = free refill).
+	if current and current.consumableId and not ApothecaryService.IsFull(current) then
+		return { ok = false, reason = "That item is partly used. Refill it at base first." }
+	end
+	owned[consumableId] = have - 1
+	if owned[consumableId] <= 0 then owned[consumableId] = nil end
+	if current and current.consumableId then
+		owned[current.consumableId] = (owned[current.consumableId] or 0) + 1
+	end
 	-- Replace existing
 	if not unit.consumableSlots then unit.consumableSlots = {} end
+	-- An owned copy is always a full item: start at its own max (Apothecary L9 included).
+	local ownMax = ApothecaryService.GetMaxCharges(consDef)
 	unit.consumableSlots[slotIndex] = {
 		consumableId = consumableId,
-		currentCharges = consDef.maxCharges or 1,
-		maxCharges = consDef.maxCharges or 1,
+		currentCharges = ownMax,
+		maxCharges = ownMax,
+		_ownMaxGiven = ownMax,
 	}
+	-- AC-009 Reinforced Cartridge (2026-10-29): apply the +20% charges now (the rebuild keeps a
+	-- full item full), so a newly equipped item gets the extra charge.
+	EquipmentService.RebuildUnitStats(unit)
 	print(string.format("[Consumable] %s equipped %s in slot %d (charges: %d)",
 		unit.name, consDef.name, slotIndex, consDef.maxCharges or 1))
 	return { ok = true, name = consDef.name, charges = consDef.maxCharges or 1 }
@@ -722,7 +765,14 @@ BattleEvents.RequestUnequipConsumable.OnServerInvoke = function(player, unitId, 
 		return { ok = false, reason = "Slot is empty" }
 	end
 	local removed = unit.consumableSlots[slotIndex]
+	if not ApothecaryService.IsFull(removed) then
+		return { ok = false, reason = "That item is partly used. Refill it at base first." }
+	end
 	unit.consumableSlots[slotIndex] = nil
+	-- OWNERSHIP (2026-11-03): the copy goes back to the owned list.
+	if removed and removed.consumableId and cardInventory.consumables then
+		cardInventory.consumables[removed.consumableId] = (cardInventory.consumables[removed.consumableId] or 0) + 1
+	end
 	print(string.format("[Consumable] %s unequipped slot %d (%s)",
 		unit.name, slotIndex, removed.consumableId))
 	return { ok = true }
@@ -776,6 +826,8 @@ end
 
 BattleEvents.GetConsumableSlots.OnServerInvoke = function(player)
 	local result = {}
+	-- Owned loose copies ride along under a reserved key (2026-11-03); unit ids never start with "_".
+	result._owned = table.clone(cardInventory.consumables or {})
 	for unitId, unit in pairs(playerUnits) do
 		local slots = {}
 		local maxSlots = unit.maxConsumableSlots or 6
@@ -854,7 +906,7 @@ BattleEvents.PreviewStatAllocation.OnServerInvoke = function(player, unitId, pen
 	return {
 		ok = true,
 		effectiveStats = shadow.effectiveStats,
-		derivedStats = shadow.derivedStats,
+		derivedStats = StatCalcService.BuildDisplay(shadow, "permanent"), -- panel values (2026-10-28)
 		maxHp = shadow.maxHp,
 		maxMp = shadow.maxMp,
 		remaining = available - total,
@@ -887,7 +939,7 @@ BattleEvents.CommitStatAllocation.OnServerInvoke = function(player, unitId, pend
 	return {
 		ok = true,
 		effectiveStats = unit.effectiveStats,
-		derivedStats = unit.derivedStats,
+		derivedStats = StatCalcService.BuildDisplay(unit, "permanent"), -- panel values (2026-10-28)
 		maxHp = unit.maxHp,
 		maxMp = unit.maxMp,
 		remaining = getUnallocatedPoints(unit),
@@ -924,7 +976,7 @@ BattleEvents.GetUnitFullStats.OnServerInvoke = function(player, unitId)
 			INT = unit.effectiveStats.INT, VIT = unit.effectiveStats.VIT,
 			DEX = unit.effectiveStats.DEX, LUK = unit.effectiveStats.LUK,
 		},
-		derivedStats = unit.derivedStats or {},
+		derivedStats = StatCalcService.BuildDisplay(unit, "permanent") or {}, -- panel values (2026-10-28)
 		statAllocation = unit.statAllocation or {},
 		unallocatedPoints = getUnallocatedPoints(unit),
 		-- Resources
@@ -950,6 +1002,8 @@ BattleEvents.GetUnitFullStats.OnServerInvoke = function(player, unitId)
 		perkEffect = perkEntry and perkEntry.effect or nil,
 		flawName = flawEntry and flawEntry.name or nil,
 		flawEffect = flawEntry and flawEntry.effect or nil,
+		-- Every passive from equipped gear, merged (2026-10-29). Same builder as the battle inspector.
+		gearPassives = GearPassiveSummary.Build(unit),
 	}
 end
 
@@ -1075,6 +1129,21 @@ function LoadoutRequestHandlers.UnequipIncompatibleAugments(units: any): { any }
 		end
 		-- Conflict rule (user ruling 2026-10-28): a skill holding two conflicting augments keeps the
 		-- one in augment slot 1; the other goes back to the inventory.
+		-- Locked 2nd slot (USER DECISION 2026-11-04): the augment goes back to storage.
+		if augList[2] and not TrainingGroundsService.IsSlot2Open(unit) then
+			local locked = augList[2]
+			augList[2] = nil
+			cardInventory.augmentCards[locked] = (cardInventory.augmentCards[locked] or 0) + 1
+			local skillDef = SkillData[skillId]
+			local augDef = AugmentData[locked]
+			table.insert(removed, {
+				unitName = unit.name,
+				skillName = (skillDef and skillDef.name) or skillId,
+				augmentName = (augDef and augDef.name) or locked,
+				lockedSlot = true,
+			})
+			print(`[LoadoutRequestHandlers] Moved {locked} from {unit.name}'s {skillId} to storage: 2nd augment slot is locked`)
+		end
 		local first, second = augList[1], augList[2]
 		if first and second and AugmentCompatibility.ConflictsWith(first, second) then
 			augList[2] = nil

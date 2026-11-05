@@ -597,7 +597,7 @@ function UGCOutfitTab.Render(mainPanel: GuiObject, sidePanel: GuiObject, unit: a
 		_conn = UGCClient.OnStateChanged(function(change: any)
 			local text = W.DescribeChange(change)
 			if text then say(text) end
-			if UGCMerchantScreen.IsOpen() then UGCMerchantScreen.Refresh(text) end
+			-- The merchant screen now listens for itself (2026-11-05); no forwarding needed.
 			if _main and _main.Parent then refresh() end
 		end)
 	end

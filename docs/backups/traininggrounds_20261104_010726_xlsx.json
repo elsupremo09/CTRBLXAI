@@ -1,0 +1,1040 @@
+{
+ "cells": [
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D21",
+   "rule",
+   "[SUPERSEDED 2026-11-04 - merged into the Training Grounds (rows 74-83); never built.] Max Level 10. Base = 220, Scale = 16. Total cost: 7,495g. Unlock: Guild Hall L5."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E21",
+   "notes",
+   "Locked | SUPERSEDED (USER) 2026-11-04 (Training Grounds): the Training Ground and the Library were never built; they merge into one building, the Training Grounds (rows 74-83). Row kept for the record."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D22",
+   "rule",
+   "[SUPERSEDED 2026-11-04 - merged into the Training Grounds (rows 74-83); never built.] Passive XP for benched units. Each level: benched XP bonus +2% (L1: 67%, L10: 85%). Unlocks training battles and class/skill preview."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E22",
+   "notes",
+   "Locked | SUPERSEDED (USER) 2026-11-04 (Training Grounds): the Training Ground and the Library were never built; they merge into one building, the Training Grounds (rows 74-83). Row kept for the record."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D23",
+   "rule",
+   "[SUPERSEDED 2026-11-04 - merged into the Training Grounds (rows 74-83); never built.] Max Level 10. Base = 200, Scale = 18. Total cost: 6,277g. Unlock: Guild Hall L6."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E23",
+   "notes",
+   "Locked | SUPERSEDED (USER) 2026-11-04 (Training Grounds): the Training Ground and the Library were never built; they merge into one building, the Training Grounds (rows 74-83). Row kept for the record."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D24",
+   "rule",
+   "[SUPERSEDED 2026-11-04 - merged into the Training Grounds (rows 74-83); never built.] Skill Card and Augment Card management. Each level: +1 card storage. Access to card merchants (buy/trade). Card research (slow free acquisition)."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E24",
+   "notes",
+   "Locked | SUPERSEDED (USER) 2026-11-04 (Training Grounds): the Training Ground and the Library were never built; they merge into one building, the Training Grounds (rows 74-83). Row kept for the record."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D33",
+   "rule",
+   "[SUPERSEDED 2026-11-04 - merged into the Training Grounds (rows 74-83); never built.] L1:234 L2:275 L3:344 L4:440 L5:564 L6:715 L7:894 L8:1100 L9:1334 L10:1595. Total: 7,495g."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E33",
+   "notes",
+   "Locked | SUPERSEDED (USER) 2026-11-04 (Training Grounds): the Training Ground and the Library were never built; they merge into one building, the Training Grounds (rows 74-83). Row kept for the record."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D34",
+   "rule",
+   "[SUPERSEDED 2026-11-04 - merged into the Training Grounds (rows 74-83); never built.] L1:211 L2:244 L3:300 L4:378 L5:478 L6:600 L7:744 L8:911 L9:1100 L10:1311. Total: 6,277g."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E34",
+   "notes",
+   "Locked | SUPERSEDED (USER) 2026-11-04 (Training Grounds): the Training Ground and the Library were never built; they merge into one building, the Training Grounds (rows 74-83). Row kept for the record."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D6",
+   "rule",
+   "70,927g across all 10 facilities (the original 9 = 62,008g, minus the Library's 6,277g now that it is merged into the Training Grounds (2026-11-04), + the Runeforge 8,919g + the Crucible 6,277g). Simulator 2026-11-04 (sim\\training_grounds_2026-11-04; normal refills; crafting from Rare / from Common): free player, classic build order, no cards bought: about 111.4 / 114.0% of lifetime gold, 6 of 10 maxed; selling every loot card: 106.0 / 108.5%; buying the Designer card basket adds 12-14 points. Boosted player: 86.2 / 88.0%, 10/10. Crucible merge fees, card buying (row 75) and paid refills are extra gold sinks."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E6",
+   "notes",
+   "Locked — verified by simulation (9-facility version) | UPDATED USER DECISION 2026-11-01 (Q8): 10th facility added, re-simulation PENDING. Old: [62,008g across all 9 facilities. Free player maxes 6/9 (Guild Hall, Tavern, Blacksmith, Merchant, Quest Board, Workshop). Boosted player (+25%) maxes 9/9.] | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: 70,927g across all 10 facilities (the original 9 = 62,008g + the Runeforge = 8,919g). Free/boosted results are PENDING a Simulator re-run with the 10th facility, the Blacksmith gold discount and dismantling (old result: free player maxes 6/9, boosted maxes 9/9).] | RESOLVED (USER) 2026-11-02 (Crucible, gear merging). NOT BUILT. 11th facility added. [Superseded 2026-11-02 (Crucible): rule: 70,927g across all 10 facilities (the original 9 = 62,008g + the Runeforge = 8,919g). With realistic crafting at the v2 fees (Simulator re-check 2026-11-01): free player maxes 5-7 of 10 facilities (about 109-112% of lifetime gold); boosted player maxes 10/10 (about 85-89%).] | 2026-11-03 (Apothecary): the Apothecary replaced the Workshop at the same cost, so 11 facilities / 77,204g are unchanged. NEW ongoing cost: paid refills after every battle (example squad about 66g per battle at L1, about 22g at L10, about 22% / 7% of average battle gold) - Simulator check running in parallel. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: 77,204g across all 11 facilities (the original 9 = 62,008g + the Runeforge = 8,919g + the Crucible = 6,277g). Designer estimate with the Crucible (Simulator check PENDING, running 2026-11-02): free player about 113-116% of lifetime gold, maxing about 5-6 of 11 facilities; boosted player about 88-92%, still 11/11. Crucible merge fees are a small extra gold sink on top. 10-facility result (Simulator re-check 2026-11-01, v2 fees, realistic crafting): free 5-7 of 10 (about 109-112%), boosted 10/10 (about 85-89%).]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D9",
+   "rule",
+   "L1: Tavern. L2: Blacksmith, Merchant. L3: Quest Board. L4: Apothecary, Runeforge. L5: Training Grounds, Crucible. L6: no new building (the Library merged into the Training Grounds 2026-11-04; Guild Hall L6 still gives its quest and dispatch slots). L7: Trophy Hall."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E9",
+   "notes",
+   "Locked | UPDATED USER DECISION 2026-11-01 (Q8): the Runeforge shares the Guild Hall L4 unlock with the Workshop. | RESOLVED (USER) 2026-11-02 (Crucible, gear merging). NOT BUILT. [Superseded 2026-11-02 (Crucible): rule (part): L5: Training Ground.] | RESOLVED (USER) 2026-11-03 (Apothecary). BUILT 2026-11-03 (source-verified pending Tester; Studio test pending). [Superseded 2026-11-03 (Apothecary): rule (part): L4: Workshop, Runeforge.] [Superseded 2026-11-03 (consumable ownership): status NOT BUILT] | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: L1: Tavern. L2: Blacksmith, Merchant. L3: Quest Board. L4: Apothecary, Runeforge. L5: Training Ground, Crucible. L6: Library. L7: Trophy Hall.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D36",
+   "rule",
+   "Simulator 2026-11-04 (10 facilities, 70,927g; normal refills; crafting from Rare / from Common): classic build order, no cards: maxes 6 of 10, about 111.4 / 114.0% of lifetime gold; selling every loot card: 106.0 / 108.5%, 8 / 7 of 10; buying the Designer card basket adds 12-14 points. Training Grounds rush (the only free route to the 2nd augment slot): slot 2 at battle 428 (unit L80), but only 3-7 of 10 maxed (2 of 10 if cards are bought too). Normal build orders never reach Training Grounds L10."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E36",
+   "notes",
+   "Verified | 2026-11-01: measured BEFORE the Runeforge, Blacksmith discount and dismantling were decided - re-run PENDING (Simulator). | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: Maxes 6/9 facilities: Guild Hall L10, Tavern L10, Blacksmith L10, Merchant L10, Quest Board L10, Workshop L10. Training Ground L7, Library L3, Trophy Hall L0. Budget: 47,962g.] | RESOLVED (USER) 2026-11-02 (Crucible, gear merging). NOT BUILT. Crucible estimate added; 10-facility text kept. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: With realistic crafting at the v2 fees (Simulator re-check 2026-11-01): maxes 5-7 of 10 facilities, spending about 109-112% of lifetime gold. With the Crucible (11 facilities, 77,204g), Designer estimate: about 113-116%, maxing about 5-6 of 11 - Simulator check PENDING.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D37",
+   "rule",
+   "Simulator 2026-11-04 (10 facilities, 70,927g): maxes 10/10 at about 86.2 / 88.0% of lifetime gold with no cards bought (82.3 / 84.1% selling loot cards; 94.5 / 96.5% with the Designer card basket + card sales). Slot 2 opens at battle 428-467 in the classic order."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E37",
+   "notes",
+   "Verified | 2026-11-01: measured BEFORE the Runeforge, Blacksmith discount and dismantling were decided - re-run PENDING (Simulator). | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: Maxes 9/9 facilities with ~29,900g surplus. Budget: 91,902g.] | RESOLVED (USER) 2026-11-02 (Crucible, gear merging). NOT BUILT. Crucible estimate added; 10-facility text kept. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: With realistic crafting at the v2 fees (Simulator re-check 2026-11-01): maxes 10/10 facilities, spending about 85-89% of lifetime gold. With the Crucible (11 facilities, 77,204g), Designer estimate: 11/11 at about 88-92% - Simulator check PENDING.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D38",
+   "rule",
+   "Simulator 2026-11-04 (10 facilities): free player about 111.4 / 114.0% of lifetime gold with no cards (6 of 10 maxed), 106.0 / 108.5% selling loot cards, +12-14 points if the Designer card basket is bought; boosted about 86.2 / 88.0% (10/10). Keeps the intended 'can't do everything' pressure on luxury facilities for free players. Card buying is optional; in normal build orders free players barely use the card shop and never open slot 2 (accepted by the user)."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E38",
+   "notes",
+   "Verified | 2026-11-01: measured BEFORE the Runeforge, Blacksmith discount and dismantling were decided - re-run PENDING (Simulator). | USER RULING 2026-11-01: the Simulator 2026-11-01 run measured 105.9-106.6% (free) and 83.1-84.3% (boosted) with the Runeforge and the -3% Blacksmith discount; the user accepted the lower pressure (guild_facilities 41). The benchmark text above is updated after the Simulator re-check of the 2026-11-01 dismantle fixes. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: Necessities (73%) + Facilities (35%) = 108% total. Free player deficit ~14,000g. Creates the intended 'can't do everything' pressure on luxury facilities.] | RESOLVED (USER) 2026-11-02 (Crucible, gear merging). NOT BUILT. Crucible estimate added; 10-facility text kept. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: With realistic crafting at the v2 fees (Simulator re-check 2026-11-01): free player about 109-112% of lifetime gold (5-7 of 10 facilities maxed), boosted about 85-89% (10/10). With the Crucible (11 facilities), Designer estimate: free about 113-116% (5-6 of 11), boosted about 88-92% (11/11) - Simulator check PENDING. Keeps the intended 'can't do everything' pressure on luxury facilities for free players.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D60",
+   "rule",
+   "Max Level 10. Base = 200, Scale = 18 (the same curve as the Tavern and Merchant; the Library that shared it merged into the Training Grounds 2026-11-04). Total cost: 6,277g (cost table row 65). Unlock: Guild Hall L5 (shared with the Training Grounds). The 11th facility. The Crucible level can never be above the Guild Hall level (row 3), so Exalted merges (Crucible L9) need Guild Hall L9 and Legendary merges (Crucible L10) need Guild Hall L10. The consumables facility at Guild Hall L4 is now the Apothecary (rows 67-73), which replaced the unbuilt Workshop on 2026-11-03."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E60",
+   "notes",
+   "RESOLVED (USER) 2026-11-02 (Crucible, gear merging). User approved workshop_design_options_20261101.md (decisions 1 and 11) with one change (decision 2, same base item). NOT BUILT - the Dev is building it now; Simulator check running in parallel. | RESOLVED (USER) 2026-11-03 (Apothecary). BUILT 2026-11-03 (source-verified pending Tester; Studio test pending). [Superseded 2026-11-03 (Apothecary): rule (part): The existing Workshop (consumables, rows 18, 19, 31) is unchanged.] [Superseded 2026-11-03 (consumable ownership): status NOT BUILT] | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: Max Level 10. Base = 200, Scale = 18 (the same curve as the Tavern, Merchant and Library). Total cost: 6,277g (cost table row 65). Unlock: Guild Hall L5 (shared with the Training Ground). The 11th facility. The Crucible level can never be above the Guild Hall level (row 3), so Exalted merges (Crucible L9) need Guild Hall L9 and Legendary merges (Crucible L10) need Guild Hall L10. The consumables facility at Guild Hall L4 is now the Apothecary (rows 67-73), which replaced the unbuilt Workshop on 2026-11-03.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D68",
+   "rule",
+   "Max Level 10. Base = 150, Scale = 22 (the Workshop's curve). Total cost: 4,123g (cost table row 72). Unlock: Guild Hall L4 (shared with the Runeforge). It REPLACES the unbuilt Workshop (rows 18, 19, 31, superseded), so the facility count and total did not change (11 facilities, 77,204g at the time; 10 facilities, 70,927g since the 2026-11-04 Training Grounds merge). The Apothecary level can never be above the Guild Hall level (row 3), so L9 (+25% charges) needs Guild Hall L9 and L10 (+1 slot) needs Guild Hall L10. Jobs: buy and sell consumables (row 68) and refill consumable charges for gold on return to base (row 69). Level bonuses: row 70. Level table: row 71. Dev defaults: row 73."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E68",
+   "notes",
+   "RESOLVED (USER) 2026-11-03 (Apothecary). User approved apothecary_design_options_20261103.md (thread-9f5e54926677): Decision 1 = A (the Apothecary replaces the unbuilt Workshop), Decision 2 = A (refills cost gold from the start). BUILT 2026-11-03 (source-verified pending Tester; Studio test pending). Simulator check of refill gold cost running in parallel. [Superseded 2026-11-03 (consumable ownership): status NOT BUILT] | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: Max Level 10. Base = 150, Scale = 22 (the Workshop's curve). Total cost: 4,123g (cost table row 72). Unlock: Guild Hall L4 (shared with the Runeforge). It REPLACES the unbuilt Workshop (rows 18, 19, 31, superseded), so there are still 11 facilities and the 77,204g total does not change. The Apothecary level can never be above the Guild Hall level (row 3), so L9 (+25% charges) needs Guild Hall L9 and L10 (+1 slot) needs Guild Hall L10. Jobs: buy and sell consumables (row 68) and refill consumable charges for gold on return to base (row 69). Level bonuses: row 70. Level table: row 71. Dev defaults: row 73.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "D40",
+   "rule",
+   "Facility levels persist across sessions (saved with guild progression). Stored in DataStore Key 3 (progression.guildMenu.buildings) for Guild Hall, Tavern, Merchant, Blacksmith, Runeforge (buildingLevels.Runeforge; its effective level is 0 until Guild Hall L4 and is capped at the Guild Hall level - GetRuneforgeLevel). PLANNED (RESOLVED (USER) 2026-11-02, NOT BUILT): the Crucible level is saved the same way, in buildingLevels.Crucible next to the other buildings; its effective level is 0 until Guild Hall L5 and is capped at the Guild Hall level. PLANNED (RESOLVED (USER) 2026-11-04, NOT BUILT): the Training Grounds level is saved the same way, in buildingLevels next to the other buildings; its effective level is 0 until Guild Hall L5 and is capped at the Guild Hall level; like the Merchant and Apothecary it needs a per-shelf bought record so each shelf item can be bought once. Old saves without it start every building at level 1; levels clamped 1..10 on load. Real purchasing is Slice 8; today levels change only via Studio test buttons."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   "E40",
+   "notes",
+   "USER DECISION 2026-10-31 | 2026-11-01 BUILT (source-verified by Tester; Studio test pending) - v2 step 4; DECIDED (DEV DEFAULT) 2026-11-01 (loose end 2): GuildMenuService saves the Runeforge level in buildingLevels.Runeforge, the same table as the other buildings (progression.guildMenu.buildings). Reason: built in v2 step 4 and the Tester's step 4 check E6 confirmed Export includes it. [Superseded 2026-11-01 (loose ends): notes (part): 2026-11-01 PLANNED - not built: the Runeforge level must be saved with the other building levels. | rule (part): for Guild Hall, Tavern, Merchant, Blacksmith.] | RESOLVED (USER) 2026-11-02 (Crucible, gear merging). NOT BUILT. Crucible level saved with the other buildings (save_data_contract 1). | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: Facility levels persist across sessions (saved with guild progression). Stored in DataStore Key 3 (progression.guildMenu.buildings) for Guild Hall, Tavern, Merchant, Blacksmith, Runeforge (buildingLevels.Runeforge; its effective level is 0 until Guild Hall L4 and is capped at the Guild Hall level - GetRuneforgeLevel). PLANNED (RESOLVED (USER) 2026-11-02, NOT BUILT): the Crucible level is saved the same way, in buildingLevels.Crucible next to the other buildings; its effective level is 0 until Guild Hall L5 and is capped at the Guild Hall level. Old saves without it start every building at level 1; levels clamped 1..10 on load. Real purchasing is Slice 8; today levels change only via Studio test buttons.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "22 Economy Framework",
+   "D29",
+   "rule",
+   "Long-term gold sink. Luxury progression. 10 facilities totaling 70,927g (original 9 = 62,008g, minus the Library 6,277g merged into the Training Grounds 2026-11-04, + Runeforge 8,919g + Crucible 6,277g). Gold-only (no materials). Simulator 2026-11-04: free player about 111.4 / 114.0% of lifetime gold, 6 of 10 maxed (no cards bought); boosted 86.2 / 88.0%, 10/10 (guild_facilities 5, 35-37). Crucible merge fees, card buying at the Training Grounds (guild_facilities 75) and paid refills are extra gold sinks; selling loot cards gives back about 4.5% of lifetime income."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "22 Economy Framework",
+   "E29",
+   "notes",
+   "Locked — see guild_facilities table for full cost tables | UPDATED USER DECISION 2026-11-01 (Q8). Old: [Long-term gold sink. Luxury progression. 9 facilities totaling 62,008g. Gold-only (no materials). Free player maxes 6/9, boosted maxes 9/9.] | 2026-11-01: re-simulation result filled in (Simulator re-check, guild_facilities 5/36/37). [Superseded 2026-11-01: rule: Long-term gold sink. Luxury progression. 10 facilities totaling 70,927g (original 9 = 62,008g + Runeforge = 8,919g). Gold-only (no materials). Free/boosted max counts PENDING re-simulation (old: free 6/9, boosted 9/9).] | RESOLVED (USER) 2026-11-02 (Crucible, gear merging). NOT BUILT. 11th facility. [Superseded 2026-11-02 (Crucible): rule (part): 10 facilities totaling 70,927g (original 9 = 62,008g + Runeforge = 8,919g). Gold-only (no materials). Simulator re-check 2026-11-01 (v2 fees, realistic crafting): free player maxes 5-7 of 10 facilities (about 109-112% of lifetime gold); boosted player maxes 10/10 (about 85-89%) (guild_facilities 5, 36, 37).] | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: Long-term gold sink. Luxury progression. 11 facilities totaling 77,204g (original 9 = 62,008g + Runeforge = 8,919g + Crucible = 6,277g). Gold-only (no materials). Simulator re-check 2026-11-01 (10 facilities, v2 fees, realistic crafting): free player maxes 5-7 of 10 (about 109-112% of lifetime gold); boosted 10/10 (about 85-89%). With the Crucible, Designer estimate (Simulator check PENDING): free about 113-116%, about 5-6 of 11 maxed; boosted about 88-92%, 11/11 (guild_facilities 5, 35-37). Crucible merge fees are a small extra gold sink.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "22 Economy Framework",
+   "D30",
+   "rule",
+   "round(Base × (1 + Level² / Scale)). Each facility has its own Base and Scale. Total 70,927g across 10 facilities (max L10 each, Trophy Hall L5). Gold ONLY — no materials."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "22 Economy Framework",
+   "E30",
+   "notes",
+   "Locked — see guild_facilities table for per-facility parameters | UPDATED USER DECISION 2026-11-01 (Q8): 9 -> 10 facilities, 62,008g -> 70,927g. | RESOLVED (USER) 2026-11-02 (Crucible, gear merging). NOT BUILT. [Superseded 2026-11-02 (Crucible): rule (part): Total 70,927g across 10 facilities] | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: round(Base × (1 + Level² / Scale)). Each facility has its own Base and Scale. Total 77,204g across 11 facilities (max L10 each, Trophy Hall L5). Gold ONLY — no materials.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "22 Economy Framework",
+   "D45",
+   "rule",
+   "~70,900g across 10 facilities (the Training Ground and Library merged into the Training Grounds 2026-11-04; ~62,000g for the original 9). Gold-only costs. Simulator 2026-11-04: a free player maxes about 6 of 10 (classic order, no cards) — creates endgame engagement."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "22 Economy Framework",
+   "E45",
+   "notes",
+   "Verified — see guild_facilities table | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: ~62,000g (35% of income). 9 guild facilities. Gold-only costs. Cannot complete all 9 on free income — creates endgame engagement. 2026-11-01: becomes ~70,900g (~40% of income) across 10 facilities with the Runeforge - re-run PENDING.] | RESOLVED (USER) 2026-11-02 (Crucible, gear merging). NOT BUILT. [Superseded 2026-11-02 (Crucible): rule (part): ~70,900g across 10 facilities with the Runeforge (~62,000g for the original 9). Gold-only costs. With realistic crafting a free player maxes 5-7 of 10 (v2 re-check)] | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: ~77,200g across 11 facilities with the Runeforge and the Crucible (~70,900g for 10, ~62,000g for the original 9). Gold-only costs. With realistic crafting a free player maxes 5-7 of 10 (v2 re-check); with the Crucible, Designer estimate 5-6 of 11 (Simulator check PENDING) — creates endgame engagement.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "22 Economy Framework",
+   "D46",
+   "rule",
+   "Covers all basics. Simulator 2026-11-04 (10 facilities): about 111.4 / 114.0% of lifetime gold, 6 of 10 maxed with no cards; 106.0 / 108.5% selling loot cards; buying the Designer card basket adds 12-14 points. Opens the 2nd augment slot only by rushing the Training Grounds (accepted by the user)."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "22 Economy Framework",
+   "E46",
+   "notes",
+   "Verified — updated with tuned facility costs | 2026-11-01: measured before dismantling, Essences and the Blacksmith discount were decided - re-run PENDING (Simulator). | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: Covers all basics. Maxes 6/9 facilities (Guild Hall, Tavern, Blacksmith, Merchant, Quest Board, Workshop). Training Ground L7, Library L3, Trophy Hall L0.] | RESOLVED (USER) 2026-11-02 (Crucible, gear merging). NOT BUILT. Crucible estimate added; 10-facility text kept. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: Covers all basics. With realistic crafting at the v2 fees: maxes 5-7 of 10 facilities (about 109-112% of lifetime gold). With the Crucible (11 facilities): Designer estimate about 113-116%, 5-6 of 11 maxed - Simulator check PENDING.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "22 Economy Framework",
+   "D47",
+   "rule",
+   "Covers basics + all 10 facilities maxed (Simulator 2026-11-04: about 86.2 / 88.0% of lifetime gold with no cards, 94.5 / 96.5% with the Designer card basket + card sales)."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "22 Economy Framework",
+   "E47",
+   "notes",
+   "Verified — updated with tuned facility costs | 2026-11-01: measured before dismantling, Essences and the Blacksmith discount were decided - re-run PENDING (Simulator). | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: Covers basics + all 9 facilities maxed. Expense ratio 83%. ~29,900g surplus for future content.] | RESOLVED (USER) 2026-11-02 (Crucible, gear merging). NOT BUILT. Crucible estimate added; 10-facility text kept. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: Covers basics + all 10 facilities maxed (about 85-89% of lifetime gold, realistic crafting at the v2 fees). With the Crucible: Designer estimate 11/11 at about 88-92% - Simulator check PENDING.]"
+  ],
+  [
+   "CTRBLXAI_Weapons_Equipment.xlsx",
+   "Weapons & Equipment",
+   "C60",
+   "topic",
+   "Normal Skill Card rarity begins at Rare. Skill Card and Augment Card rarity represent acquisition scarcity only. Rarity does not change Skill power, level, BP, costs, timing, mechanics, formulas, procedural statistics, or Augment Slot count. Every Skill Card has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79). Augments do not receive procedural statistics or stronger numerical tiers from rarity; straightforward Augments may use Rare-equivalent scarcity and build-defining Augments may use Epic- or Legendary-equivalent scarcity without implying automatic superiority. Each card has one fixed shop rarity at the Training Grounds by these rules (guild_facilities 76-77)."
+  ],
+  [
+   "CTRBLXAI_Weapons_Equipment.xlsx",
+   "Weapons & Equipment",
+   "E60",
+   "notes",
+   "RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): topic: Normal Skill Card rarity begins at Rare. Skill Card and Augment Card rarity represent acquisition scarcity only. Rarity does not change Skill power, level, BP, costs, timing, mechanics, formulas, procedural statistics, or Augment Slot count. Every Skill Card has exactly 2 Augment Slots. Augments do not receive procedural statistics or stronger numerical tiers from rarity; straightforward Augments may use Rare-equivalent scarcity and build-defining Augments may use Epic- or Legendary-equivalent scarcity without implying automatic superiority.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "09 Weapons Equipment",
+   "B63",
+   "topic",
+   "Normal Skill Card rarity begins at Rare. Skill Card and Augment Card rarity represent acquisition scarcity only. Rarity does not change Skill power, level, BP, costs, timing, mechanics, formulas, procedural statistics, or Augment Slot count. Every Skill Card has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79). Augments do not receive procedural statistics or stronger numerical tiers from rarity; straightforward Augments may use Rare-equivalent scarcity and build-defining Augments may use Epic- or Legendary-equivalent scarcity without implying automatic superiority. Each card has one fixed shop rarity at the Training Grounds by these rules (guild_facilities 76-77)."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "09 Weapons Equipment",
+   "D63",
+   "notes",
+   "RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): topic: Normal Skill Card rarity begins at Rare. Skill Card and Augment Card rarity represent acquisition scarcity only. Rarity does not change Skill power, level, BP, costs, timing, mechanics, formulas, procedural statistics, or Augment Slot count. Every Skill Card has exactly 2 Augment Slots. Augments do not receive procedural statistics or stronger numerical tiers from rarity; straightforward Augments may use Rare-equivalent scarcity and build-defining Augments may use Epic- or Legendary-equivalent scarcity without implying automatic superiority.]"
+  ],
+  [
+   "CTRBLXAI_Weapons_Equipment.xlsx",
+   "Weapons & Equipment",
+   "C61",
+   "topic",
+   "Doctrines use one scarcity band comparable to Epic-to-Legendary equipment acquisition frequency. Scarcity does not alter the fixed three Skill choices, stat package, passive, Skill formulas, power, costs, timing, Augment Slots, or mechanics. Doctrines are sold at the Training Grounds at one flat price (card value 1,000, no rarity multiplier; guild_facilities 75). The doctrine skill row follows the same locked slot-2 rule as every skill (guild_facilities 79)."
+  ],
+  [
+   "CTRBLXAI_Weapons_Equipment.xlsx",
+   "Weapons & Equipment",
+   "E61",
+   "notes",
+   "RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): topic: Doctrines use one scarcity band comparable to Epic-to-Legendary equipment acquisition frequency. Scarcity does not alter the fixed three Skill choices, stat package, passive, Skill formulas, power, costs, timing, Augment Slots, or mechanics.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "09 Weapons Equipment",
+   "B64",
+   "topic",
+   "Doctrines use one scarcity band comparable to Epic-to-Legendary equipment acquisition frequency. Scarcity does not alter the fixed three Skill choices, stat package, passive, Skill formulas, power, costs, timing, Augment Slots, or mechanics. Doctrines are sold at the Training Grounds at one flat price (card value 1,000, no rarity multiplier; guild_facilities 75). The doctrine skill row follows the same locked slot-2 rule as every skill (guild_facilities 79)."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "09 Weapons Equipment",
+   "D64",
+   "notes",
+   "RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): topic: Doctrines use one scarcity band comparable to Epic-to-Legendary equipment acquisition frequency. Scarcity does not alter the fixed three Skill choices, stat package, passive, Skill formulas, power, costs, timing, Augment Slots, or mechanics.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "30 Loadout UI Spec",
+   "D40",
+   "rule",
+   "Five Skill rows. Each: slot number, skill icon, skill name, main effect, MP cost, RT cost, augment slot 1, augment slot 2 (slot 2 shows a lock with the tooltip \"Unlocks at Training Grounds Lv 10 and unit Lv 80.\" until it opens; guild_facilities 79, 83)."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "30 Loadout UI Spec",
+   "E40",
+   "notes",
+   "RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: Five Skill rows. Each: slot number, skill icon, skill name, main effect, MP cost, RT cost, augment slot 1, augment slot 2.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "30 Loadout UI Spec",
+   "D41",
+   "rule",
+   "Reserved for Doctrine Skill. Doctrine provides 3 fixed choices, player selects one. Cannot accept normal Skill Card. Cannot be empty if rules require Doctrine Skill. Supports 2 Augment Cards (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79). Refreshes choices on Doctrine change. Doctrine swapping in Gears, Doctrine Skill selection in Skills."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "30 Loadout UI Spec",
+   "E41",
+   "notes",
+   "Locked | 2026-10-08: Equipment tab renamed Gears. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: Reserved for Doctrine Skill. Doctrine provides 3 fixed choices, player selects one. Cannot accept normal Skill Card. Cannot be empty if rules require Doctrine Skill. Supports 2 Augment Cards. Refreshes choices on Doctrine change. Doctrine swapping in Gears, Doctrine Skill selection in Skills.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "30 Loadout UI Spec",
+   "D42",
+   "rule",
+   "Accept equippable Skill Cards. Each has 2 Augment attachment slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "30 Loadout UI Spec",
+   "E42",
+   "notes",
+   "RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): rule: Accept equippable Skill Cards. Each has 2 Augment attachment slots.]"
+  ],
+  [
+   "CTRBLXAI_Build_Plan.xlsx",
+   "14 — Save Data Contract",
+   "F9",
+   "Load_Validation",
+   "0..1 Augments, or 0..2 when slot 2 is open for that unit (Training Grounds L10 + unit L80, guild_facilities 79); compatibility and conflicts pass [Superseded 2026-11-04 (Training Grounds): 0..2 Augments; compatibility and conflicts pass]"
+  ],
+  [
+   "CTRBLXAI_Build_Plan.xlsx",
+   "14 — Save Data Contract",
+   "G9",
+   "Migration_Rule",
+   "Map deprecated IDs; revalidate attachments; an augment in a locked slot 2 goes back to storage with the approved notice (guild_facilities 79, 83; RESOLVED (USER) 2026-11-04, NOT BUILT)"
+  ],
+  [
+   "CTRBLXAI_Build_Plan.xlsx",
+   "14 — Save Data Contract",
+   "B5",
+   "Persistent_Fields",
+   "profile_id, guild progression, guild facility levels, unlocks, currencies, inventory instance IDs, roster IDs; Guild menu records saved with the guild progression (next to the building levels, guild_facilities 39); Crucible level: buildingLevels.Crucible, saved with the other building levels (guild_facilities 39) - RESOLVED (USER) 2026-11-02, NOT BUILT - RESOLVED (USER) 2026-10-31, BUILT, Studio test pending: guildMenu.merchantBought (per-shelf Merchant purchase records, newest 12 shelves; BUG-064); guildMenu.devShopRefresh (Studio-only dev shop refresh number); guildMenu.tavernHired (hired recruits remembered per Tavern seed; BUG-067).; Apothecary (RESOLVED (USER) 2026-11-03, BUILT 2026-11-03 (source-verified pending Tester; Studio test pending)): buildingLevels.Apothecary (replaces the never-built Workshop level), a per-shelf Apothecary bought record (like guildMenu.merchantBought), and the auto-refill switch (on by default). Each consumable's current charges must be saved between sessions so partly used items stay partly used - Dev to confirm.; Owned consumables (RESOLVED (USER) 2026-11-03, BUILT 2026-11-03 (source-verified pending Tester; Studio test pending)): progression.cardInventory.consumables = {consumable id: count} of loose owned copies (equipped copies sit in the unit's consumable slots, not in this list). A save with no owned list gets the starter copies once (consumable_framework 41 (a), DEV DEFAULT).; Training Grounds (RESOLVED (USER) 2026-11-04, NOT BUILT): its level saved in buildingLevels with the other buildings (replaces the never-built Training Ground and Library levels), plus a per-shelf bought record like guildMenu.merchantBought (guild_facilities 39)."
+  ],
+  [
+   "CTRBLXAI_Build_Plan.xlsx",
+   "05 Skill & Augment Schemas",
+   "B22",
+   "col_2",
+   "0..1 IDs, or 0..2 when slot 2 is open (guild_facilities 79) [Superseded 2026-11-04 (Training Grounds): 0..2 IDs]"
+  ],
+  [
+   "CTRBLXAI_Build_Plan.xlsx",
+   "17 — Validation Matrix",
+   "B19",
+   "Invariant",
+   "0..1, or 0..2 when slot 2 is open (Training Grounds L10 + unit L80, guild_facilities 79); all requirements pass; conflict groups unique; an augment in a locked slot 2 is refused [Superseded 2026-11-04 (Training Grounds): 0..2; all requirements pass; conflict groups unique]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "10 Loot Progression",
+   "E43",
+   "notes",
+   "Locked / Some parked | 2026-11-04 (Training Grounds, Dev default 18): the card loot label shows the card's fixed shop rarity (guild_facilities 76-77) instead of a random roll; cosmetic, nothing saved. RESOLVED (USER) 2026-11-04, NOT BUILT."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "18 Open Decisions",
+   "B15",
+   "col_2",
+   "Partly resolved (USER) 2026-11-04"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "18 Open Decisions",
+   "C15",
+   "col_3",
+   "Shop route decided: the Training Grounds buys and sells skill cards, augment cards and doctrines (guild_facilities 74-83). Card scarcity from loot stays as it is (parked). [Superseded 2026-11-04 (Training Grounds): col_2: Parked; col_3: Acquisition scarcity remains parked.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "18 Open Decisions",
+   "B29",
+   "col_2",
+   "1. Representative baseline Skill Card simulation and numerical calibration; 2. Focus passive definitions and normal BP pricing; 3. Focus archetype endpoint completion; 4. Consumable Architecture; 5. Skill Card Acquisition and Scarcity; 6. Augment Card Acquisition and Scarcity; 7. Doctrine Acquisition, Rarity, and Fortune; 8. Armor BP Framework; 9. Accessory BP Framework; 10. Shield and Armor Off-Hand BP Framework. Skill Card BP Builder remains parked until simulations demonstrate that baseline Skill Cards are reasonably balanced. All 29 representative Skills now have explicit provisional working targeting rules. Non-spatial and comparative spatial simulations may proceed using the working profiles. Targeting ranges remain subject to numerical and tactical calibration and are not final balance. 2026-11-04 (Training Grounds): items 5-7 partly answered - skill cards, augment cards and doctrines can now be bought and sold at the Training Grounds (guild_facilities 74-83); loot rates unchanged, doctrine loot still display-only."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "18 Open Decisions",
+   "B34",
+   "col_2",
+   "Resolved / Locked - UPDATED (USER) 2026-11-04"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "18 Open Decisions",
+   "C34",
+   "col_3",
+   "Every Skill Card has 2 Augment Slots, including Doctrine-provided Skills, regardless of type, rarity, source, tags, power, or complexity. Slot 2 is locked until the owner's Training Grounds is L10 and the unit is level 80+ (USER RULING 2026-11-04, guild_facilities 79). No per-Skill slot-count review remains. [Superseded 2026-11-04 (Training Grounds): col_2: Resolved / Locked; col_3: Every Skill Card has exactly 2 Augment Slots, including Doctrine-provided Skills, regardless of type, rarity, source, tags, power, or complexity. No per-Skill slot-count review remains.]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "18 Open Decisions",
+   "C56",
+   "col_3",
+   "Enemy AI brain level (Basic/Elite/Boss) is assigned by build TIER, not by enemy species. Currently lives in code as TIER_BUILD in EnemyGenerator.lua (dev-locked 2026-09-26, marked for later DB migration). Defines Grunt=Basic, Elite=Elite, Veteran=Basic (RT, skill count, augments, gear band, consumables per tier). Procedural generation already reads tier.aiRole automatically. Decision: whether TIER_BUILD should migrate to a DB table and when. Recommendation: wait until procedural enemy generation is implemented, then migrate — schema should follow working code. Boss tier: PARKED — bosses will be unique hand-authored units, not procedurally generated, so no Boss build entry is needed. Recorded from Dev session hand-off 2026-09-26. CANON NOTE 2026-10-04 (USER RULING, three-layer RT model): the per-tier RT in TIER_BUILD (Grunt 400 / Veteran 380 / Elite 350) is the Layer-1 Base RT per enemy kind — applied BEFORE gear WT and modifiers — and it feeds Modified Base RT for EVERY per-turn cost (previously it only shaped the opener). See core_stats 'Starting RT applies to ALL units' and weapons_equipment 'Modified Base RT'. Any future DB migration of TIER_BUILD must keep this meaning. USER RULING 2026-11-04 (Training Grounds): Elite augments per skill 2 -> 1; enemies at level 80+ roll a 2nd augment per skill row (Elite 100% / Veteran 50% / Grunt 25%, seeded) only when the quest owner's Training Grounds is L10 (guild_facilities 79). NOT BUILT - the Dev is building it now."
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB2",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG2",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB3",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG3",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB4",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG4",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB5",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG5",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB6",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG6",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB7",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG7",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB8",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG8",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB9",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG9",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB10",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG10",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB11",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG11",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB13",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG13",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB15",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG15",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB16",
+   "Augment_Slot_Rule",
+   "Every Doctrine Skill has 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG16",
+   "Notes",
+   "Dedicated v0.9 authoritative record | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Every Doctrine Skill has exactly 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB17",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG17",
+   "Notes",
+   "Primary healer doctrine. Passive rewards keeping allies alive with amplified healing when targets are critical. INT+15 boosts healing formulas. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB18",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG18",
+   "Notes",
+   "Pure magic DPS. Passive rewards element-switching across turns (anti-spam design). Distinct from Arcanist (efficiency) — this is raw damage output. Glass cannon stats (STR-15, VIT-10). | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB19",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG19",
+   "Notes",
+   "Reactive tank/DPS hybrid. Takes hits to power up counterstrikes. VIT+15 for survivability, STR+10 for counter damage. Rewards positioning where enemies will attack you. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB20",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG20",
+   "Notes",
+   "Zone control specialist. Passive extends terrain duration AND boosts terrain damage. Synergizes strongly with Terrain Effect augment family. DEX+10 for targeting precision at range. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB21",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG21",
+   "Notes",
+   "Shield tank distinct from Vanguard. Vanguard = DR aura near allies (team-dependent). Shieldbearer = personal DR + Guard reward (self-sufficient, gear-dependent). Requires shield in off-hand — identity-locked gear. Uses existing Guard action mechanics only; no dependency on parked Shield BP Framework. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB22",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG22",
+   "Notes",
+   "Glass cannon with speed. AGI+15 ensures early turns — passive rewards acting before enemies. Extreme VIT-15 means one hit can kill them. High risk, high burst. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB23",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG23",
+   "Notes",
+   "Tank-healer hybrid. Healing allies makes both tankier. Moderate stats across the board — jack of all trades. Distinct from Cleric (pure healing power) and Vanguard (pure tanking). | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB24",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG24",
+   "Notes",
+   "Combo fighter. Rewards spending multiple AP on the same target in one turn. Escalating damage (+10/20/30%) makes finishing a single enemy very efficient. Anti-spread — focused on one target. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB25",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG25",
+   "Notes",
+   "Distinct from Shadowbinder (duration extension on all debuffs). Plague Doctor amplifies Poison/Dark TICK DAMAGE and bypasses resistance. More offensive debuff identity. Dark Restoration provides self-sustain. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB26",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG26",
+   "Notes",
+   "Buff mirror of Shadowbinder. Shadowbinder extends debuffs, Enchanter extends buffs. +1 turn duration + 10% power amplification makes support skills more impactful. Synergizes with Buff Delivery augments. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB28",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG28",
+   "Notes",
+   "Self-sustaining Dark DPS. Built-in lifesteal for Dark damage specifically — pairs with Dark Conversion augment to make any skill sustain. Low VIT (-10) compensated by drain. Kill bonus rewards finishing blows. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB29",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG29",
+   "Notes",
+   "Offensive Holy specialist. Distinct from Paladin (defensive healer). Templar deals damage, particularly against Undead. STR+10 INT+10 hybrid stats for weapon and spell scaling. Holy already does 2x vs Undead — passive stacks with that for devastating anti-Undead output. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB30",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG30",
+   "Notes",
+   "Element-specialized mage (Electric only). Two-part passive: Wet combo bonus (+30%) and multi-target scaling (+5% per extra target). Rewards setting up Wet then chain-lightning. Synergizes with Wetting Support augment on allies. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB31",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG31",
+   "Notes",
+   "Ranged DPS with suppression utility. Distinct from Ranger (accuracy/range from staying still). Gunner is about volume of fire and movement denial. DEX+15 for ranged scaling. Multi-hit extends suppression duration. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB32",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG32",
+   "Notes",
+   "Defensive support aura with area denial. Distinct from Vanguard (personal DR) and Tactician (RT reduction). Warden makes an area HARDER to enter for enemies — positional control. VIT+15 for personal tankiness. Natural terrain condition prevents stacking with Geomancer's created terrain. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB33",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG33",
+   "Notes",
+   "Hit-and-run fighter. Must move before attacking for passive to fire — encourages aggressive repositioning every turn. Free Bleed application rewards sustained aggression. AGI+10 for movement range. | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB34",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG34",
+   "Notes",
+   "Chemist trades Skill Potency (-25%) for consumable mastery: +1 Equipped Item slot and Consumable Item RT Cost -20%. High DEX (+15) / LUK (+10) precision-and-luck identity; low STR (-15) / INT (-10). Part of the consumable-slot-unlock system (base 3 slots, engine clamps total to max 6). | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AB35",
+   "Augment_Slot_Rule",
+   "Standard 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79)"
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "07 Doctrines",
+   "AG35",
+   "Notes",
+   "Artificer trades Bonus Skill Range (-1, may go negative) for deployable/gadget mastery: +1 Equipped Item slot and Consumable Item Maximum Range +1. High VIT (+15) / DEX (+10) durable-and-precise identity; low STR (-15) / AGI (-10). Part of the consumable-slot-unlock system (base 3 slots, engine clamps total to max 6). | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): Augment_Slot_Rule: Standard 2 Augment Slots]"
+  ]
+ ],
+ "new_rows": [
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   75,
+   74
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   76,
+   75
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   77,
+   76
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   78,
+   77
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   79,
+   78
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   80,
+   79
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   81,
+   80
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   82,
+   81
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   83,
+   82
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "25 Guild Facilities",
+   84,
+   83
+  ],
+  [
+   "CTRBLXAI_Game_Rules.xlsx",
+   "18 Open Decisions",
+   127,
+   "rowid 128"
+  ]
+ ],
+ "not_changed": [
+  [
+   "game_flow",
+   8,
+   0,
+   []
+  ],
+  [
+   "development_slices",
+   8,
+   0,
+   []
+  ],
+  [
+   "project_rules",
+   48,
+   0,
+   []
+  ],
+  [
+   "project_rules",
+   65,
+   0,
+   []
+  ],
+  [
+   "project_rules",
+   55,
+   0,
+   []
+  ],
+  [
+   "project_rules",
+   57,
+   0,
+   []
+  ],
+  [
+   "project_rules",
+   52,
+   0,
+   []
+  ],
+  [
+   "frameworks",
+   26,
+   0,
+   []
+  ],
+  [
+   "frameworks",
+   32,
+   0,
+   []
+  ],
+  [
+   "frameworks",
+   34,
+   0,
+   []
+  ],
+  [
+   "frameworks",
+   68,
+   0,
+   []
+  ],
+  [
+   "doctrines",
+   "DOC-THIEF",
+   0,
+   []
+  ],
+  [
+   "doctrines",
+   "DOC-TWINBLADE",
+   0,
+   []
+  ],
+  [
+   "doctrines",
+   "DOC-DRAGOON",
+   0,
+   []
+  ]
+ ]
+}

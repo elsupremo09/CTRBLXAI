@@ -1,0 +1,645 @@
+--!strict
+-- RuneforgeScreen.lua
+-- CTRBLXAI | Runeforge full screen (v2 build step 5, 2026-11-01). Same frame as the Merchant /
+-- Blacksmith screens (GuildScreen + item tile grid).
+--
+-- Layout:
+--   LEFT   item tile grid (Forge tab: Common-Epic items; Reroll tab: items above Epic)
+--   RIGHT  [Forge][Reroll] sub-tabs, then a scroll list: the item's current lines, the rune gems
+--          that fit it, the gems picked so far, and the server's price / result preview
+--   BOTTOM ONE row, lower right:
+--          Forge tab:  [Minus = remove last pick] [Confirm] [X = clear picks] [Back]
+--          Reroll tab: [Confirm] [Back]
+--   Confirm always opens a prompt that needs a second confirmation.
+-- Forging and rerolling commit straight away on Confirm (no basket). Every price and result
+-- comes from the server (PreviewForge / GetRerollSets); the client sends ids only (SEC-002).
+-- Display + input only (ARC-001). Context is nil-safe (ARC-006).
+
+local WAIT = 10
+
+local uiFolder = script.Parent
+local themeModule = uiFolder:WaitForChild("Theme", WAIT)
+local guildScreenModule = uiFolder:WaitForChild("GuildScreen", WAIT)
+local inspectorModule = uiFolder:WaitForChild("MerchantInspector", WAIT)
+if not themeModule or not guildScreenModule or not inspectorModule then
+	error("[RuneforgeScreen] Theme / GuildScreen / MerchantInspector module not found")
+end
+-- Found at runtime via WaitForChild; the editor cannot follow that path (editor-only cast).
+local Theme: any = (require :: any)(themeModule)
+local GuildScreen: any = (require :: any)(guildScreenModule)
+local MerchantInspector: any = (require :: any)(inspectorModule)
+
+local RuneforgeScreen = {}
+
+--------------------------------------------------
+-- TYPES / STATE
+--------------------------------------------------
+
+export type Context = {
+	parent: Instance,                                         -- PlayerGui
+	getState: () -> any?,                                     -- GetRuneforge answer (cached)
+	preview: (instanceId: string, installs: { any }) -> any?, -- PreviewForge answer, nil on error
+	commitForge: (instanceId: string, installs: { any }) -> any?,
+	getRerollSets: (instanceId: string) -> any?,
+	commitReroll: (instanceId: string, choice: number) -> any?,
+	onChanged: () -> (),                                      -- server state changed: refresh caches
+	onClosed: () -> (),
+}
+
+local BUTTON_ROWS = 1
+local SUBTAB_H = 24
+local SUBTAB_GAP = 6
+local LIST_ROW_H = 44          -- touch target (Theme.MinSize.TouchTarget)
+local PREVIEW_DELAY = 0.35     -- s; coalesces fast taps (server rate limit is 0.2 s)
+
+local ctx: Context? = nil
+local screen: any = nil
+local isOpen = false
+local currentTab = "Forge"
+local selectedKey: { [string]: any } = {}
+
+-- Forge picks for the selected item (cleared when the item changes).
+local pickFor: string? = nil
+local picks: { { gem: string, replace: string? } } = {}
+local replaceTarget: string? = nil
+local previewRes: any = nil
+local previewToken = 0
+local previewBusy = false
+
+-- Reroll offer for the selected item.
+local rerollFor: string? = nil
+local rerollRes: any = nil
+local rerollChoice: number? = nil
+
+--------------------------------------------------
+-- SMALL HELPERS (properties before Parent, NET-004)
+--------------------------------------------------
+
+local function makeRow(parent: Instance, order: number): Frame
+	local row = Instance.new("Frame")
+	row.Name = `Row{order}`
+	row.Size = UDim2.new(1, 0, 0, GuildScreen.ROW_H)
+	row.BackgroundTransparency = 1
+	row.BorderSizePixel = 0
+	row.LayoutOrder = order
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.Padding = UDim.new(0, GuildScreen.ROW_GAP)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = row
+	row.Parent = parent
+	return row
+end
+
+local function iconButton(row: Instance, kind: string, name: string, order: number, enabled: boolean, onTap: () -> ())
+	local b = Theme.MakeIconButton(nil, kind, if enabled then onTap else nil, {
+		name = name,
+		size = UDim2.fromOffset(GuildScreen.ROW_H, GuildScreen.ROW_H),
+		disabled = not enabled,
+	})
+	b.LayoutOrder = order
+	b.Parent = row
+end
+
+local function makeNote(parent: Instance, text: string, order: number, color: Color3?, bold: boolean?)
+	local lbl = Instance.new("TextLabel")
+	lbl.BackgroundTransparency = 1
+	lbl.BorderSizePixel = 0
+	lbl.Font = if bold then Theme.Font.PrimaryBold else Theme.Font.Primary
+	lbl.TextSize = Theme.Text.Small()
+	lbl.TextColor3 = color or Theme.Colors.TextSecondary
+	lbl.TextWrapped = true
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Size = UDim2.new(1, 0, 0, 0)
+	lbl.AutomaticSize = Enum.AutomaticSize.Y
+	lbl.LayoutOrder = order
+	lbl.Text = text
+	lbl.Parent = parent
+end
+
+-- One tappable list row (current line / gem / pick / reroll set). Tap-only (.Activated).
+local function listButton(parent: Instance, text: string, order: number, selected: boolean, enabled: boolean, onTap: () -> ())
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, 0, 0, 0)
+	b.AutomaticSize = Enum.AutomaticSize.Y
+	b.BackgroundColor3 = if selected then Theme.Colors.SelectedItem else Theme.Colors.PanelRaised
+	b.BackgroundTransparency = if enabled then 0.1 else 0.5
+	b.BorderSizePixel = 0
+	b.AutoButtonColor = enabled
+	b.Font = Theme.Font.Primary
+	b.TextSize = Theme.Text.Small()
+	b.TextColor3 = if enabled then Theme.Colors.TextPrimary else Theme.Colors.TextDisabled
+	b.TextWrapped = true
+	b.TextXAlignment = Enum.TextXAlignment.Left
+	b.Text = text
+	b.LayoutOrder = order
+	local minH = Instance.new("UISizeConstraint")
+	minH.MinSize = Vector2.new(0, LIST_ROW_H)
+	minH.Parent = b
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 8)
+	pad.PaddingRight = UDim.new(0, 8)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
+	pad.Parent = b
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = Theme.CornerRadius.md
+	corner.Parent = b
+	if selected then
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = Theme.Colors.TextGold
+		stroke.Thickness = 1.5
+		stroke.Parent = b
+	end
+	if enabled then
+		b.Activated:Connect(onTap)
+	end
+	b.Parent = parent
+end
+
+local function lineNames(lines: { any }?): string
+	local names = {}
+	for _, l in lines or {} do
+		table.insert(names, tostring(l.name or l.id))
+	end
+	return if #names > 0 then table.concat(names, ", ") else "no bonus lines"
+end
+
+local function findItem(state: any, instanceId: string?): any?
+	if not state or not instanceId then return nil end
+	for _, it in state.items or {} do
+		if it.instanceId == instanceId then return it end
+	end
+	return nil
+end
+
+local function gemInfo(state: any, gemId: string): any?
+	for _, g in state.gems or {} do
+		if g.id == gemId then return g end
+	end
+	return nil
+end
+
+local function pickedCount(gemId: string): number
+	local n = 0
+	for _, p in picks do
+		if p.gem == gemId then n += 1 end
+	end
+	return n
+end
+
+local function resetPicks(instanceId: string?)
+	pickFor = instanceId
+	table.clear(picks)
+	replaceTarget = nil
+	previewRes = nil
+	previewToken += 1
+	previewBusy = false
+end
+
+--------------------------------------------------
+-- RENDER
+--------------------------------------------------
+
+local render: () -> () -- forward declaration (callbacks re-render)
+
+-- Ask the server what the current picks cost. Fast taps are coalesced into one request.
+local function schedulePreview()
+	local c = ctx
+	previewToken += 1
+	local token = previewToken
+	previewRes = nil
+	if not c or not pickFor or #picks == 0 then
+		previewBusy = false
+		return
+	end
+	previewBusy = true
+	local iid = pickFor :: string
+	local installs = table.clone(picks)
+	task.delay(PREVIEW_DELAY, function()
+		if token ~= previewToken or not isOpen then return end
+		local res = c.preview(iid, installs)
+		if token ~= previewToken then return end
+		previewRes = res
+		previewBusy = false
+		render()
+	end)
+end
+
+local function buildEntries(state: any, isForge: boolean): { any }
+	local entries = {}
+	if not state then return entries end
+	for _, it in state.items or {} do
+		local show = if isForge then it.forgeable == true else it.reroll ~= nil
+		if show then
+			table.insert(entries, {
+				key = it.instanceId, detail = it.detail, name = it.name, level = it.level,
+				rarity = it.rarity, price = nil, queued = false, row = it,
+			})
+		end
+	end
+	return entries
+end
+
+local function buildMain(state: any, isForge: boolean, entries: { any }, selected: any?)
+	local main = screen.Main
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 4)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = main
+
+	if state then
+		if state.lockedReason then
+			makeNote(main, tostring(state.lockedReason), 1, Theme.Colors.Warning, true)
+		elseif isForge then
+			makeNote(main, `Runeforge L{state.level}: forges items up to {state.capacity or "Uncommon"}. Pick an item, then the rune gems to install. Raising rarity costs crystals for every step.`, 1)
+		else
+			makeNote(main, "Items above Epic change only with sulfur rerolls (Runeforge L8 and up). You pick one of the offered sets or keep the current lines. The sulfur is paid either way.", 1)
+		end
+		if #entries == 0 then
+			makeNote(main, if isForge then "No items that can be forged." else "No items above Epic.", 2)
+		end
+	end
+	if #entries == 0 then return end
+
+	local grid = Instance.new("ScrollingFrame")
+	grid.Name = "Grid"
+	grid.Size = UDim2.fromScale(1, 0)
+	grid.BackgroundTransparency = 1
+	grid.BorderSizePixel = 0
+	grid.ScrollBarThickness = 4
+	grid.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	grid.CanvasSize = UDim2.new()
+	grid.LayoutOrder = 10
+	local flex = Instance.new("UIFlexItem")
+	flex.FlexMode = Enum.UIFlexMode.Fill
+	flex.Parent = grid
+	MerchantInspector.BuildGrid(grid, {
+		entries = entries,
+		selectedKey = if selected then selected.key else nil,
+		width = math.max(240, main.AbsoluteSize.X - 6),
+		onSelect = function(key: any)
+			selectedKey[currentTab] = key
+			render()
+		end,
+	})
+	grid.Parent = main
+end
+
+-- Forge side panel content (inside the scroll list).
+local function fillForge(list: Instance, state: any, it: any)
+	local order = 0
+	local function nextOrder(): number
+		order += 1
+		return order
+	end
+	local locked = state.lockedReason ~= nil
+
+	makeNote(list, "CURRENT LINES (tap one to replace it with the next gem)", nextOrder(), Theme.Colors.TextGold, true)
+	if #(it.lines or {}) == 0 then
+		makeNote(list, "No bonus lines yet.", nextOrder())
+	end
+	for _, line in it.lines or {} do
+		local armed = replaceTarget == line.id
+		local label = if armed then `Replace: {line.name}` else tostring(line.name)
+		listButton(list, label, nextOrder(), armed, not locked, function()
+			replaceTarget = if replaceTarget == line.id then nil else line.id
+			render()
+		end)
+	end
+
+	makeNote(list, "RUNE GEMS THAT FIT (tap to add)", nextOrder(), Theme.Colors.TextGold, true)
+	local anyGem = false
+	for _, gid in it.compatibleGems or {} do
+		local g = gemInfo(state, gid)
+		if g then
+			anyGem = true
+			local left = (g.count or 0) - pickedCount(gid)
+			listButton(list, `{g.name}  x{left}`, nextOrder(), false, left > 0 and not locked, function()
+				table.insert(picks, { gem = gid, replace = replaceTarget })
+				replaceTarget = nil
+				schedulePreview()
+				render()
+			end)
+		end
+	end
+	if not anyGem then
+		makeNote(list, "You have no rune gems that fit this item. Dismantle items at the Blacksmith to get gems.", nextOrder())
+	end
+
+	if #picks > 0 then
+		makeNote(list, "TO INSTALL (tap to remove)", nextOrder(), Theme.Colors.TextGold, true)
+		for i, p in picks do
+			local g = gemInfo(state, p.gem)
+			local name = if g then g.name else p.gem
+			local text = name
+			if p.replace then
+				for _, line in it.lines or {} do
+					if line.id == p.replace then text = `{name} (replaces {line.name})` end
+				end
+			end
+			listButton(list, text, nextOrder(), false, true, function()
+				table.remove(picks, i)
+				schedulePreview()
+				render()
+			end)
+		end
+		local text
+		if previewBusy then
+			text = "Working out the cost..."
+		elseif previewRes then
+			local parts = { `Result: {previewRes.newRarity}{if previewRes.raised then " (rarity up)" else ""}` }
+			table.insert(parts, `Cost: {previewRes.gold} gold + {previewRes.crystals} crystals`)
+			if (previewRes.catchUp or 0) > 0 then
+				table.insert(parts, `(includes {previewRes.catchUp} gold to bring its past levels up to {previewRes.newRarity})`)
+			end
+			if #(previewRes.replaced or {}) > 0 then
+				table.insert(parts, `Destroyed (no gem back): {lineNames(previewRes.replaced)}`)
+			end
+			if previewRes.newName then table.insert(parts, `New name: {previewRes.newName}`) end
+			if previewRes.canAfford == false then table.insert(parts, "Not enough gold or crystals.") end
+			text = table.concat(parts, "\n")
+		else
+			text = "This combination can't be forged. See the message at the top."
+		end
+		makeNote(list, text, nextOrder(), Theme.Colors.TextPrimary, true)
+	end
+end
+
+-- Reroll side panel content.
+local function fillReroll(list: Instance, state: any, it: any)
+	local c = ctx
+	local order = 0
+	local function nextOrder(): number
+		order += 1
+		return order
+	end
+	makeNote(list, `CURRENT LINES: {lineNames(it.lines)}`, nextOrder(), Theme.Colors.TextSecondary)
+
+	local info = it.reroll
+	if not info or not info.setCount then
+		makeNote(list, `{it.rarity} rerolls need Runeforge L{(info and info.unlockLevel) or 8} (yours is L{state.level or 0}).`, nextOrder(), Theme.Colors.Warning, true)
+		return
+	end
+	if rerollFor ~= it.instanceId then
+		rerollFor = it.instanceId
+		rerollChoice = nil
+		rerollRes = if c then c.getRerollSets(it.instanceId) else nil
+	end
+	local res = rerollRes
+	if not res then
+		makeNote(list, "Could not load the reroll options. See the message at the top.", nextOrder(), Theme.Colors.Warning)
+		return
+	end
+	makeNote(list, `Each reroll costs {res.sulfur} sulfur (you have {res.haveSulfur}). The sulfur is paid even if you keep the current lines. The options stay the same until you pay for a reroll.`, nextOrder())
+	makeNote(list, "PICK ONE", nextOrder(), Theme.Colors.TextGold, true)
+	listButton(list, `Keep current: {lineNames(res.current and res.current.lines)}`, nextOrder(), rerollChoice == 0, true, function()
+		rerollChoice = 0
+		render()
+	end)
+	for _, set in res.sets or {} do
+		local title = if set.name then `{set.name}: ` else ""
+		listButton(list, `Set {set.choice}: {title}{lineNames(set.lines)}`, nextOrder(), rerollChoice == set.choice, true, function()
+			rerollChoice = set.choice
+			render()
+		end)
+	end
+end
+
+local function buildSide(state: any, selected: any?, isForge: boolean)
+	local side = screen.Side
+	local tabs = Instance.new("Frame")
+	tabs.Name = "SubTabs"
+	tabs.Size = UDim2.new(1, 0, 0, SUBTAB_H)
+	tabs.BackgroundTransparency = 1
+	tabs.BorderSizePixel = 0
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.Padding = UDim.new(0, SUBTAB_GAP)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = tabs
+	for i, tab in { "Forge", "Reroll" } do
+		Theme.MakeTabButton(tabs, tab, if currentTab == tab then "Active" else "Inactive", function()
+			if currentTab == tab then return end
+			currentTab = tab
+			render()
+		end, {
+			name = `SubTab_{tab}`,
+			size = UDim2.new(0.5, -SUBTAB_GAP // 2, 1, 0),
+			layoutOrder = i,
+		})
+	end
+	tabs.Parent = side
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name = "Panel"
+	scroll.Size = UDim2.new(1, 0, 1, -(SUBTAB_H + SUBTAB_GAP))
+	scroll.Position = UDim2.fromOffset(0, SUBTAB_H + SUBTAB_GAP)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 4
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.CanvasSize = UDim2.new()
+	local pad = Instance.new("UIPadding")
+	pad.PaddingRight = UDim.new(0, 8)
+	pad.Parent = scroll
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 4)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = scroll
+
+	if selected and state then
+		local it = selected.row
+		local tag = if it.runeForged then "  (rune-forged)" else ""
+		makeNote(scroll, `{it.name}  Lv{it.level}  {it.rarity}{tag}`, 0, Theme.GetRarityColor(it.rarity or "Common"), true)
+		if it.equippedBy then
+			makeNote(scroll, `Equipped by {it.equippedBy}.`, 0)
+		end
+		local body = Instance.new("Frame")
+		body.Name = "Body"
+		body.Size = UDim2.new(1, 0, 0, 0)
+		body.AutomaticSize = Enum.AutomaticSize.Y
+		body.BackgroundTransparency = 1
+		body.BorderSizePixel = 0
+		body.LayoutOrder = 1
+		local bodyList = Instance.new("UIListLayout")
+		bodyList.Padding = UDim.new(0, 4)
+		bodyList.SortOrder = Enum.SortOrder.LayoutOrder
+		bodyList.Parent = body
+		if isForge then
+			fillForge(body, state, it)
+		else
+			fillReroll(body, state, it)
+		end
+		body.Parent = scroll
+	end
+	scroll.Parent = side
+end
+
+local function promptForge(it: any)
+	local c = ctx
+	if not c or not screen or not previewRes then return end
+	local p = previewRes
+	local lines = { `Forge {it.name}?` }
+	table.insert(lines, `It becomes {p.newRarity}. Costs {p.gold} gold and {p.crystals} crystals.`)
+	if #(p.replaced or {}) > 0 then
+		table.insert(lines, `Destroyed, no gem back: {lineNames(p.replaced)}.`)
+	end
+	table.insert(lines, "This can't be undone.")
+	local iid: string = it.instanceId
+	local installs = table.clone(picks)
+	screen.Prompt(table.concat(lines, "\n"), "Confirm", "Primary", function()
+		local res = c.commitForge(iid, installs)
+		if res then
+			resetPicks(iid)
+			c.onChanged()
+		end
+		render()
+	end)
+end
+
+local function promptReroll(it: any)
+	local c = ctx
+	local res = rerollRes
+	if not c or not screen or not res or rerollChoice == nil then return end
+	local choice = rerollChoice :: number
+	local msg = if choice == 0
+		then `Pay {res.sulfur} sulfur and keep the current lines of {it.name}? The next reroll will offer new sets.`
+		else `Pay {res.sulfur} sulfur and replace ALL bonus lines of {it.name} with set {choice}? This can't be undone.`
+	local iid: string = it.instanceId
+	screen.Prompt(msg, "Confirm", "Primary", function()
+		local done = c.commitReroll(iid, choice)
+		if done then
+			rerollFor = nil -- the sets change after a paid reroll
+			rerollRes = nil
+			rerollChoice = nil
+			c.onChanged()
+		end
+		render()
+	end)
+end
+
+local function buildButtons(state: any, selected: any?, isForge: boolean)
+	local c = ctx
+	if not c then return end
+	local row = makeRow(screen.Buttons, 1)
+	local it = selected and selected.row or nil
+	if isForge then
+		local hasPicks = #picks > 0
+		iconButton(row, "Minus", "Btn_RemovePick", 1, hasPicks, function()
+			table.remove(picks)
+			schedulePreview()
+			render()
+		end)
+		local canForge = it ~= nil and hasPicks and not previewBusy and previewRes ~= nil
+			and previewRes.canAfford ~= false and state and state.lockedReason == nil
+		iconButton(row, "Confirm", "Btn_Forge", 2, canForge, function()
+			if it then promptForge(it) end
+		end)
+		iconButton(row, "X", "Btn_ClearPicks", 3, hasPicks, function()
+			resetPicks(pickFor)
+			render()
+		end)
+	else
+		local res = rerollRes
+		local canPay = res ~= nil and (res.haveSulfur or 0) >= (res.sulfur or math.huge)
+		iconButton(row, "Confirm", "Btn_Reroll", 2, it ~= nil and rerollChoice ~= nil and canPay, function()
+			if it then promptReroll(it) end
+		end)
+	end
+	iconButton(row, "Back", "Btn_BACK", 10, true, function()
+		RuneforgeScreen.Close()
+	end)
+end
+
+render = function()
+	local c = ctx
+	if not c or not screen or not isOpen then return end
+	screen.Clear()
+	local isForge = currentTab == "Forge"
+	local state = c.getState()
+	local entries = buildEntries(state, isForge)
+	local selected = MerchantInspector.ResolveSelected(entries, selectedKey[currentTab])
+	local selId = if selected then selected.key else nil
+	if isForge and selId ~= pickFor then
+		resetPicks(selId)
+	end
+	if not isForge and selId ~= rerollFor then
+		rerollFor = nil
+		rerollRes = nil
+		rerollChoice = nil
+	end
+	buildMain(state, isForge, entries, selected)
+	buildSide(state, selected, isForge)
+	buildButtons(state, selected, isForge)
+end
+
+--------------------------------------------------
+-- PUBLIC
+--------------------------------------------------
+
+function RuneforgeScreen.Init(c: Context)
+	ctx = c
+end
+
+function RuneforgeScreen.IsOpen(): boolean
+	return isOpen
+end
+
+function RuneforgeScreen.GetGui(): ScreenGui?
+	return if isOpen and screen then screen.Gui else nil
+end
+
+function RuneforgeScreen.Open()
+	local c = ctx
+	if not c then
+		warn("[RuneforgeScreen] Open called before Init")
+		return
+	end
+	if not screen then
+		screen = GuildScreen.Create({ name = "RuneforgeScreen", title = "RUNEFORGE", parent = c.parent })
+		screen.SetButtonRows(BUTTON_ROWS)
+	end
+	currentTab = "Forge"
+	resetPicks(nil)
+	rerollFor, rerollRes, rerollChoice = nil, nil, nil
+	isOpen = true
+	screen.SetStatus("")
+	screen.Show()
+	render()
+	print("[RuneforgeScreen] Opened")
+end
+
+-- Unsent picks are only a selection (nothing is charged until Confirm), so Back just closes.
+function RuneforgeScreen.Close()
+	if not isOpen then return end
+	isOpen = false
+	resetPicks(nil)
+	if screen then screen.Hide() end
+	local c = ctx
+	if c then c.onClosed() end
+	print("[RuneforgeScreen] Closed")
+end
+
+function RuneforgeScreen.Hide()
+	if not isOpen then return end
+	isOpen = false
+	resetPicks(nil)
+	if screen then screen.Hide() end
+end
+
+function RuneforgeScreen.Render()
+	render()
+end
+
+function RuneforgeScreen.SetGold(text: string)
+	if screen then screen.SetGold(text) end
+end
+
+function RuneforgeScreen.SetStatus(text: string, isError: boolean?)
+	if screen then screen.SetStatus(text, isError) end
+end
+
+return table.freeze(RuneforgeScreen)

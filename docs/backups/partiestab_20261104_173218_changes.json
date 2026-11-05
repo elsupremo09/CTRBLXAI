@@ -1,0 +1,438 @@
+[
+ [
+  "loadout_ui_spec",
+  1,
+  [
+   1,
+   "Structure",
+   "Tabs",
+   "Four tabs, in order: INFO, GEARS, SKILLS, OUTFIT. Tabs at top of screen.",
+   "All tabs share: top navigation, persistent unit header, selected management unit, responsive layout, Theme, back/exit behavior. | 2026-10-08: fourth tab OUTFIT added (UGC cosmetics) - see section 'Outfit Tab'. | 2026-10-08: 'Equipment' tab renamed 'Gears'; tab order locked (user ruling)."
+  ],
+  [
+   1,
+   "Structure",
+   "Tabs",
+   "Five tabs, in order: INFO, GEARS, SKILLS, OUTFIT, PARTIES. Tabs at top of screen.",
+   "All tabs share: top navigation, persistent unit header, selected management unit, responsive layout, Theme, back/exit behavior. | 2026-10-08: fourth tab OUTFIT added (UGC cosmetics) - see section 'Outfit Tab'. | 2026-10-08: 'Equipment' tab renamed 'Gears'; tab order locked (user ruling). | [Superseded 2026-11-04 (Parties tab): Four tabs, in order: INFO, GEARS, SKILLS, OUTFIT. Tabs at top of screen.] RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now): fifth tab PARTIES added (section 'Parties Tab', ids 102-116). The persistent unit header is shared by all tabs EXCEPT PARTIES, where it is hidden (ids 3, 61, 109)."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  3,
+  [
+   3,
+   "Persistent Unit Header",
+   "Location",
+   "Upper-right on all loadout tabs. Must remain compact.",
+   "2026-10-08: was 'all three tabs' (now four)."
+  ],
+  [
+   3,
+   "Persistent Unit Header",
+   "Location",
+   "Upper-right on the INFO, GEARS, SKILLS and OUTFIT tabs. Hidden on the PARTIES tab (id 109). Must remain compact.",
+   "2026-10-08: was 'all three tabs' (now four). | [Superseded 2026-11-04 (Parties tab): Upper-right on all loadout tabs. Must remain compact.] RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now): hidden on PARTIES - it is about one unit and the space is needed for 7 portraits."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  56,
+  [
+   56,
+   "Excluded Features",
+   "Not included without approval",
+   "Unit renaming, locking/favorites, loadout presets, auto-equip recommendation, auto-skill recommendation, Clear All Augments, respec, race change, cosmetics, equipment upgrading, crafting, blacksmith, selling/disposing, recruitment, tavern, guild upgrades, formation, deployment selection beyond resource state.",
+   "Locked | Exception: UGC cosmetics approved via ugc_rules id 37 - handled in the loadout screen's 'Outfit' tab (loadout_ui_spec section 'Outfit Tab'), 2026-10-08. Dismissal lifted + implemented 2026-10-15 (user decision): unit dismissal added to the Loadout Info tab with a gold severance cost (see economy_framework). Avatar cannot be dismissed (project_rules 114)."
+  ],
+  [
+   56,
+   "Excluded Features",
+   "Not included without approval",
+   "Unit renaming, locking/favorites, loadout presets, auto-equip recommendation, auto-skill recommendation, Clear All Augments, respec, race change, cosmetics, equipment upgrading, crafting, blacksmith, selling/disposing, recruitment, tavern, guild upgrades, formation, deployment selection beyond resource state.",
+   "Locked | Exception: UGC cosmetics approved via ugc_rules id 37 - handled in the loadout screen's 'Outfit' tab (loadout_ui_spec section 'Outfit Tab'), 2026-10-08. Dismissal lifted + implemented 2026-10-15 (user decision): unit dismissal added to the Loadout Info tab with a gold severance cost (see economy_framework). Avatar cannot be dismissed (project_rules 114). | RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now): party management exception - the PARTIES tab (ids 102-116) is approved by the user for managing saved parties only. Loadout presets, formation and position editing stay excluded."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  60,
+  [
+   60,
+   "Outfit Tab",
+   "Tab name",
+   "Loadout screen has a tab named 'Outfit' (not 'Customize'). Tab order: INFO, GEARS, SKILLS, OUTFIT.",
+   "Locked 2026-10-08. ugc_rules id 37. Tab order position is an assumption - confirm. | 2026-10-08: tab order CONFIRMED by user (assumption resolved); 'Equipment' renamed 'Gears'."
+  ],
+  [
+   60,
+   "Outfit Tab",
+   "Tab name",
+   "Loadout screen has a tab named 'Outfit' (not 'Customize'). Tab order: INFO, GEARS, SKILLS, OUTFIT, PARTIES.",
+   "Locked 2026-10-08. ugc_rules id 37. Tab order position is an assumption - confirm. | 2026-10-08: tab order CONFIRMED by user (assumption resolved); 'Equipment' renamed 'Gears'. | [Superseded 2026-11-04 (Parties tab): Loadout screen has a tab named 'Outfit' (not 'Customize'). Tab order: INFO, GEARS, SKILLS, OUTFIT.] RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now): PARTIES added after OUTFIT (id 1)."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  61,
+  [
+   61,
+   "Outfit Tab",
+   "Unit picker",
+   "Persistent unit picker/header panel stays in place, as on the other loadout tabs (ids 3-9 apply).",
+   "Locked 2026-10-08"
+  ],
+  [
+   61,
+   "Outfit Tab",
+   "Unit picker",
+   "Persistent unit picker/header panel stays in place, as on the INFO, GEARS and SKILLS tabs (ids 3-9 apply). Not shown on PARTIES (id 109).",
+   "Locked 2026-10-08 | [Superseded 2026-11-04 (Parties tab): Persistent unit picker/header panel stays in place, as on the other loadout tabs (ids 3-9 apply).] RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now): the header is hidden on PARTIES only; Outfit unchanged."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  75,
+  [
+   75,
+   "Structure",
+   "Back button",
+   "A Back button (square Back icon, 44x44) sits at the TOP-RIGHT of the loadout tab bar and returns to the Guild menu. Guild building screens (RESOLVED (USER) 2026-10-31, BUILT, Studio test pending): Back sits at the lower right, in one row with all the other buttons - unlike the Loadout screen's top-right Back.",
+   "Locked 2026-10-08. Top-right chosen because Roblox's own top-left buttons would cover it (see ids 2, 53). Must not overlap the persistent unit header (id 3). | RESOLVED (USER) 2026-10-31, BUILT, Studio test pending: guild building screens put Back lower-right with the other buttons (one row); the Loadout screen keeps its top-right Back."
+  ],
+  [
+   75,
+   "Structure",
+   "Back button",
+   "A Back button (square Back icon, 44x44) sits at the TOP-RIGHT of the loadout tab bar and returns to the Guild menu - except when the PARTIES tab was opened from the Sortie step, where Back returns to the Sortie step (id 114). Guild building screens (RESOLVED (USER) 2026-10-31, BUILT, Studio test pending): Back sits at the lower right, in one row with all the other buttons - unlike the Loadout screen's top-right Back.",
+   "Locked 2026-10-08. Top-right chosen because Roblox's own top-left buttons would cover it (see ids 2, 53). Must not overlap the persistent unit header (id 3). | RESOLVED (USER) 2026-10-31, BUILT, Studio test pending: guild building screens put Back lower-right with the other buttons (one row); the Loadout screen keeps its top-right Back. | [Superseded 2026-11-04 (Parties tab): A Back button (square Back icon, 44x44) sits at the TOP-RIGHT of the loadout tab bar and returns to the Guild menu. Guild building screens (RESOLVED (USER) 2026-10-31, BUILT, Studio test pending): Back sits at the lower right, in one row with all the other buttons - unlike the Loadout screen's top-right Back.] RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now): Back from Sortie returns to the Sortie step."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  82,
+  [
+   82,
+   "Player-Facing Rules",
+   "No unapproved helper text",
+   "No helper texts or labels may be added to any UI without the user's approval. Reason: mobile screen space is limited.",
+   "Locked 2026-10-08. Standing rule from the user - applies to all screens and all agents."
+  ],
+  [
+   82,
+   "Player-Facing Rules",
+   "No unapproved helper text",
+   "No helper texts or labels may be added to any UI without the user's approval. Reason: mobile screen space is limited.",
+   "Locked 2026-10-08. Standing rule from the user - applies to all screens and all agents. | RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now): all PARTIES tab text approved by the user (list in id 116). No other new text."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  90,
+  [
+   90,
+   "Outfit Tab",
+   "No helper text",
+   "No helper or explanation text in the Outfit tab or UGC merchant beyond button labels and badges (standing rule id 82).",
+   "Locked 2026-10-09. Restates id 82 for the Outfit tab. | 2026-10-09: The action bar's short status facts are allowed and are NOT helper text: 'Buy refunds N gold' (ugc_rules id 53) and 'Not for <race>' (race slot block reason, ugc_race_slot_blocks; required by the Outfit tab spec). No other instructional text."
+  ],
+  [
+   90,
+   "Outfit Tab",
+   "No helper text",
+   "No helper or explanation text in the Outfit tab or UGC merchant beyond button labels and badges (standing rule id 82).",
+   "Locked 2026-10-09. Restates id 82 for the Outfit tab. | 2026-10-09: The action bar's short status facts are allowed and are NOT helper text: 'Buy refunds N gold' (ugc_rules id 53) and 'Not for <race>' (race slot block reason, ugc_race_slot_blocks; required by the Outfit tab spec). No other instructional text. | RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now): PARTIES tab text approved by the user (id 116); this row still governs the Outfit tab and UGC merchant only."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  102,
+  null,
+  [
+   102,
+   "Parties Tab",
+   "Tab",
+   "Fifth Loadout tab PARTIES, after OUTFIT. Replaces the guild menu Party page: the guild menu Party button and the Sortie \"Change party\" step both open this tab. The old guild menu Party page is retired.",
+   "RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8). D12."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  103,
+  null,
+  [
+   103,
+   "Parties Tab",
+   "Module and fit",
+   "Built as its own module like OUTFIT (id 62); the Loadout screen only hosts the tab. Five tabs fit on a phone at about 96 px each at the locked 39 px tab height (id 77; about 650 of 750 px).",
+   "RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8). D13, D17."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  104,
+  null,
+  [
+   104,
+   "Parties Tab",
+   "Parties: count, create, order",
+   "Up to 5 parties; the player creates and deletes them. CREATE PARTY (phone: a + icon) makes an empty party named \"Party N\" straight away (lowest free number), with the default emblem and background, and selects it - no prompt. At 5/5 the button is faded (id 85). Parties are listed in creation order, no reordering. Switching parties is instant, no confirm. New players start with 1 party filled with their starting units. Old saves: parties A, B, C become 1, 2, 3, keeping names, members and order; created and last-edited dates are set to the date of the change.",
+   "User ruling (up to 5, player create/delete). RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8). D1, D2, D7, D16."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  105,
+  null,
+  [
+   105,
+   "Parties Tab",
+   "Delete party",
+   "\"...\" > Delete party opens a confirm prompt (text id 116). Disabled (faded, reason shown on tap) for the player's last party and for the party currently chosen for a Sortie. Deleting never touches units.",
+   "RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8). D3, D4."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  106,
+  null,
+  [
+   106,
+   "Parties Tab",
+   "Name and motto",
+   "Each party has a name, motto, emblem, header background and up to 7 members (game_flow 4). Name up to 24 characters, motto up to 80, counted in characters (not bytes); trimmed, length-capped, then passed through the Roblox text filter. If the filter changes anything the old text is kept and a short message shows (never saved with ###). An empty name goes back to the previous name; an empty motto is allowed and shows nothing. Edited in place; saves on Enter or tap-away.",
+   "RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8). D6. Today's game counts bytes and has no filter - both change."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  107,
+  null,
+  [
+   107,
+   "Parties Tab",
+   "Emblems and backgrounds",
+   "Emblems and backgrounds come from a shared list of Roblox asset IDs the user will upload; the save stores a short key. The list has a \"default\" entry: before art exists the emblem is drawn as a navy tile with a bronze border and the party number, and the background is the plain theme navy; when art arrives \"default\" points to the first emblem and background, so uncustomised parties update by themselves. A removed key falls back to \"default\"; keys are never reused. The background fills only the party header strip - no portrait background. Grid picker: tapping an option previews it at once, Done saves, Cancel reverts.",
+   "User rulings (shared asset ID list + short key; no portrait background). RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8)."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  108,
+  null,
+  [
+   108,
+   "Parties Tab",
+   "Members and leader",
+   "Member slot 1 is the leader. The leader is display only and changes nothing in battle. \"Make leader\" swaps that unit into slot 1. Filled portrait tap: View loadout / Make leader (not shown for slot 1) / Remove. Empty \"+\" tap: Add units picker (roster in the Loadout portrait style; units already in the party ticked; units on dispatch greyed and not tappable; pick several, then Done or Cancel). Units on dispatch can't be added; members who go on dispatch stay in the party, greyed with a dispatch icon, and are skipped at deployment. A unit can belong to more than one party (locked 2026-10-14). Units sold or lost leave every party automatically. \"View loadout\" opens INFO with that unit selected.",
+   "User ruling (leader display only). RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8). D5, D8, D11."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  109,
+  null,
+  [
+   109,
+   "Parties Tab",
+   "Unit header and saving",
+   "The persistent unit header (ids 3-9) is hidden on PARTIES. Edits save immediately - no pending or confirm step except Delete - so switching tabs loses nothing (id 9). Picking a party never changes battle state (id 8).",
+   "RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8). D10, D11."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  110,
+  null,
+  [
+   110,
+   "Parties Tab",
+   "Phone layout",
+   "Phone (about 750x382, landscape): left rail 64 px wide with one 52 px emblem button per party (selected = bronze frame, small member-count badge) and the + (create) button at the bottom; party header strip 64 px with the background, emblem (tap to change), name and motto (tap or pencil to edit), [i] and [...] buttons; then 7 portraits in the Loadout portrait style (level badge top-left, doctrine icon top-right, name in two rows at the bottom): leader about 170x240 with a LEADER banner, others about 135x115, empty slots show only a +. [i] opens Party Details and Doctrines as a panel sliding in from the right with a close button. Every tap target at least 44x44.",
+   "RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8)."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  111,
+  null,
+  [
+   111,
+   "Parties Tab",
+   "Desktop layout",
+   "Desktop: three columns. Left: \"My Parties x/5\" list (number, emblem, name, member count, up to 7 small faces per row) with CREATE PARTY at the bottom. Centre: 140 px header with the background, 96 px emblem, name and motto, [...] menu, then the large leader portrait and the other 6. Right: Party Details, then Doctrines.",
+   "RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8)."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  112,
+  null,
+  [
+   112,
+   "Parties Tab",
+   "Right column",
+   "Party Details: Members x/7, On dispatch n (only when above 0), Created, Last edited; dates shown as \"Nov 4, 2026\"; Last edited updates on any change, members included. Doctrines: each doctrine in the party with its icon and count, e.g. \"Warlord x2\". No synergy section and no \"coming soon\" box - party synergy is not designed (game_flow 32 stays open).",
+   "User ruling (synergy not designed). RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8). D14, D15."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  113,
+  null,
+  [
+   113,
+   "Parties Tab",
+   "\"...\" menu",
+   "Change emblem / Change background / Delete party. Nothing else for now.",
+   "RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8)."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  114,
+  null,
+  [
+   114,
+   "Parties Tab",
+   "Sortie pick mode",
+   "Sortie \"Change party\" opens PARTIES in pick mode. The selected party shows Select, or Deploying if it is already the pick. Select and Back both return to the Sortie step (id 75). Editing is still allowed (game_flow 10). Default pick unchanged: the current pick if it still has a ready unit, otherwise the first party that does. An empty party (including one whose members are all on dispatch) can be viewed and edited, but Select is faded. If the quest cap is below the party size, units are pre-ticked in slot order, leader first, and the player can still change who goes (game_flow 16).",
+   "RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8)."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  115,
+  null,
+  [
+   115,
+   "Parties Tab",
+   "Saved data",
+   "Per party: name, motto, emblem key, background key, created date, edited date, member list (save_data_contract ProfileSave). The 200-byte limit covers the party's own fields only; the member list is saved today already and is not counted. 5 full parties come to about 1.5 KB. The old never-used logo field is dropped.",
+   "RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8). D9 (200 bytes, party's own fields only - user approved)."
+  ]
+ ],
+ [
+  "loadout_ui_spec",
+  116,
+  null,
+  [
+   116,
+   "Parties Tab",
+   "Approved text",
+   "Tab: PARTIES. Desktop left title: My Parties {x}/5. Create: CREATE PARTY (phone: + icon). Default name: Party {N} (1-5). Placeholders: Party name (exists today), Add a motto. Leader banner: LEADER. Level badge: Lv {n} (existing style). Details: Party Details; Members {x}/7, On dispatch {n} (only when above 0), Created {date}, Last edited {date}. Doctrines; \"{doctrine} x{n}\". Menu: Change emblem, Change background, Delete party. Pickers: Choose emblem, Choose background, Add units, Done, Cancel. Member menu: View loadout, Make leader, Remove. Delete prompt: Delete {name}? / Its units stay in your guild. / Delete / Cancel. Disabled Delete reasons: You need at least one party; This party is set to deploy. Filter: That name isn't allowed; That motto isn't allowed; Couldn't check the text. Try again. Status: Party renamed (exists today). Sortie: Select, Deploying (exist today).",
+   "APPROVED BY USER 2026-11-04 (allowed under ids 82/90). RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). User approved artifacts/parties_tab_design_options_20261104.md as written (Designer thread-bec1b00de3b8)."
+  ]
+ ],
+ [
+  "game_flow",
+  4,
+  [
+   4,
+   "1 Base",
+   4,
+   "HQ: Party management",
+   "Saved parties (Party A, B, C...) each with a name and logo. A saved party holds UP TO 7 units (7 = the maximum deployment ceiling, NOT a required or fixed count): a player with fewer units (e.g. 3) still forms a valid party and can go on quests, fielding what they have. The per-quest deployable cap (see Deployment) limits how many of the party actually deploy, resolved at the deployment phase. Units away on dispatch show greyed out and cannot be picked.",
+   "8",
+   "Locked 2026-10-12 (clarified from 'holds up to 7 units (max deployment)' Locked 2026-10-07; made explicit that 7 is a MAXIMUM ceiling, not a fixed/required count — a smaller party is valid. NOTE: staged migration's 'EXACTLY 7 fixed slots' was rejected per user correction 2026-10-12)."
+  ],
+  [
+   4,
+   "1 Base",
+   4,
+   "HQ: Party management",
+   "Saved parties: up to 5, numbered Party 1-5, created and deleted by the player, each with a name, motto, emblem and header background, managed on the Loadout PARTIES tab (loadout_ui_spec 102-116). Member slot 1 is the leader (display only). A saved party holds UP TO 7 units (7 = the maximum deployment ceiling, NOT a required or fixed count): a player with fewer units (e.g. 3) still forms a valid party and can go on quests, fielding what they have. The per-quest deployable cap (see Deployment) limits how many of the party actually deploy, resolved at the deployment phase. Units away on dispatch show greyed out and cannot be picked.",
+   "8",
+   "Locked 2026-10-12 (clarified from 'holds up to 7 units (max deployment)' Locked 2026-10-07; made explicit that 7 is a MAXIMUM ceiling, not a fixed/required count — a smaller party is valid. NOTE: staged migration's 'EXACTLY 7 fixed slots' was rejected per user correction 2026-10-12). | [Superseded 2026-11-04 (Parties tab): Saved parties (Party A, B, C...) each with a name and logo. A saved party holds UP TO 7 units (7 = the maximum deployment ceiling, NOT a required or fixed count): a player with fewer units (e.g. 3) still forms a valid party and can go on quests, fielding what they have. The per-quest deployable cap (see Deployment) limits how many of the party actually deploy, resolved at the deployment phase. Units away on dispatch show greyed out and cannot be picked.] RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now). 'Logo' becomes 'emblem' (shared list of uploaded Roblox asset IDs; the save stores a short key). Rest of the row unchanged. [Superseded 2026-11-04 (Parties tab): earlier decision 2026-10-14 'parties have names only, logo kept for later' (was not recorded as its own row) - replaced by the user's emblem/background ruling.] A unit can still belong to more than one party (locked 2026-10-14)."
+  ]
+ ],
+ [
+  "game_flow",
+  10,
+  [
+   10,
+   "2 Preparation",
+   2,
+   "Choose party",
+   "Pick a saved party, edit the roster, and adjust any units loadout. If the quest allows fewer units than the party holds, the player chooses who goes.",
+   "4/8",
+   "Locked 2026-10-07"
+  ],
+  [
+   10,
+   "2 Preparation",
+   2,
+   "Choose party",
+   "Pick a saved party, edit the roster, and adjust any units loadout. 'Change party' opens the Loadout PARTIES tab in pick mode (loadout_ui_spec 114); Select or Back returns to this step. If the quest allows fewer units than the party holds, the player chooses who goes.",
+   "4/8",
+   "Locked 2026-10-07 | [Superseded 2026-11-04 (Parties tab): Pick a saved party, edit the roster, and adjust any units loadout. If the quest allows fewer units than the party holds, the player chooses who goes.] RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now): choose party / edit roster now happen on the PARTIES tab, not the guild menu Party page."
+  ]
+ ],
+ [
+  "game_flow",
+  27,
+  [
+   27,
+   "2 Preparation",
+   5,
+   "Quest prep submenu",
+   "After a quest is ACCEPTED, the player enters a mostly-optional prep menu. OPTIONAL items: Manage Unit Loadout (existing loadout screen) and Edit Party Roster (assign units to a party). MANDATORY, ORDERED spine: Choose Party to deploy -> Sortie. 'Sortie' is the final confirmation screen (it is the existing Depart briefing, id 11) showing the quest, the generated map, and battle details, with a go / back-out choice. Nothing in this menu is load-bearing for timing (asset availability is checked at server start, not here).",
+   "4/6/7",
+   "Locked 2026-10-12 — prep-submenu structure; Sortie = the existing Depart briefing (id 11)"
+  ],
+  [
+   27,
+   "2 Preparation",
+   5,
+   "Quest prep submenu",
+   "After a quest is ACCEPTED, the player enters a mostly-optional prep menu. OPTIONAL items: Manage Unit Loadout (existing loadout screen) and Edit Party Roster (opens the Loadout PARTIES tab). MANDATORY, ORDERED spine: Choose Party to deploy (opens the PARTIES tab in pick mode) -> Sortie. 'Sortie' is the final confirmation screen (it is the existing Depart briefing, id 11) showing the quest, the generated map, and battle details, with a go / back-out choice. Nothing in this menu is load-bearing for timing (asset availability is checked at server start, not here).",
+   "4/6/7",
+   "Locked 2026-10-12 — prep-submenu structure; Sortie = the existing Depart briefing (id 11) | [Superseded 2026-11-04 (Parties tab): After a quest is ACCEPTED, the player enters a mostly-optional prep menu. OPTIONAL items: Manage Unit Loadout (existing loadout screen) and Edit Party Roster (assign units to a party). MANDATORY, ORDERED spine: Choose Party to deploy -> Sortie. 'Sortie' is the final confirmation screen (it is the existing Depart briefing, id 11) showing the quest, the generated map, and battle details, with a go / back-out choice. Nothing in this menu is load-bearing for timing (asset availability is checked at server start, not here).] RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now): both party steps open the PARTIES tab (loadout_ui_spec 102-116)."
+  ]
+ ],
+ [
+  "game_flow",
+  32,
+  [
+   32,
+   "9 Open",
+   4,
+   "Party combination bonuses",
+   "The actual party-combination bonus designs (which unit groupings grant what bonuses) are not decided. Enabled by the UP-TO-7-unit party (id 4). Designs pending.",
+   "4/6",
+   "Open 2026-10-12"
+  ],
+  [
+   32,
+   "9 Open",
+   4,
+   "Party combination bonuses",
+   "The actual party-combination bonus designs (which unit groupings grant what bonuses) are not decided. Enabled by the UP-TO-7-unit party (id 4). Designs pending.",
+   "4/6",
+   "Open 2026-10-12 | 2026-11-04: still open - user ruling: synergy not designed. The PARTIES tab shows Party Details + a Doctrines count instead, with no synergy box (loadout_ui_spec 112)."
+  ]
+ ],
+ [
+  "save_data_contract",
+  "ProfileSave",
+  [
+   "ProfileSave",
+   "profile_id, guild progression, guild facility levels, unlocks, currencies, inventory instance IDs, roster IDs; Guild menu records saved with the guild progression (next to the building levels, guild_facilities 39); Crucible level: buildingLevels.Crucible, saved with the other building levels (guild_facilities 39) - RESOLVED (USER) 2026-11-02, NOT BUILT - RESOLVED (USER) 2026-10-31, BUILT, Studio test pending: guildMenu.merchantBought (per-shelf Merchant purchase records, newest 12 shelves; BUG-064); guildMenu.devShopRefresh (Studio-only dev shop refresh number); guildMenu.tavernHired (hired recruits remembered per Tavern seed; BUG-067).; Apothecary (RESOLVED (USER) 2026-11-03, BUILT 2026-11-03 (source-verified pending Tester; Studio test pending)): buildingLevels.Apothecary (replaces the never-built Workshop level), a per-shelf Apothecary bought record (like guildMenu.merchantBought), and the auto-refill switch (on by default). Each consumable's current charges must be saved between sessions so partly used items stay partly used - Dev to confirm.; Owned consumables (RESOLVED (USER) 2026-11-03, BUILT 2026-11-03 (source-verified pending Tester; Studio test pending)): progression.cardInventory.consumables = {consumable id: count} of loose owned copies (equipped copies sit in the unit's consumable slots, not in this list). A save with no owned list gets the starter copies once (consumable_framework 41 (a), DEV DEFAULT).; Training Grounds (RESOLVED (USER) 2026-11-04, NOT BUILT): its level saved in buildingLevels with the other buildings (replaces the never-built Training Ground and Library levels), plus a per-shelf bought record like guildMenu.merchantBought (guild_facilities 39).",
+   "Caches, UI state",
+   "UnitSave, ItemInstance, DoctrineInstance, content IDs",
+   "save_schema_version + content_version",
+   "All IDs unique/resolvable; balances nonnegative; facility levels clamped 1..max level; missing = level 1",
+   "Migrate schema before content validation",
+   "Reject corrupt section with explicit diagnostic; never invent rewards. Unsaved guild-base changes are saved when the player leaves or the server shuts down (only if there are unsaved changes; never mid-battle). USER DECISION 2026-10-31. PRE-MULTIPLAYER SAFETY ITEM (Dev-confirmed 2026-11-01 (daily systems)): the save does NOT stop two servers loading the same player at once, and the 3 save slots are written one after another, not in one atomic step. Must be fixed before multiplayer / public launch (risk: duplicated or rolled-back rewards). This is why the daily counters sit in slot 2 next to the currencies they limit (save_data_contract 3). NOT BUILT."
+  ],
+  [
+   "ProfileSave",
+   "profile_id, guild progression, guild facility levels, unlocks, currencies, inventory instance IDs, roster IDs; Guild menu records saved with the guild progression (next to the building levels, guild_facilities 39); Crucible level: buildingLevels.Crucible, saved with the other building levels (guild_facilities 39) - RESOLVED (USER) 2026-11-02, NOT BUILT - RESOLVED (USER) 2026-10-31, BUILT, Studio test pending: guildMenu.merchantBought (per-shelf Merchant purchase records, newest 12 shelves; BUG-064); guildMenu.devShopRefresh (Studio-only dev shop refresh number); guildMenu.tavernHired (hired recruits remembered per Tavern seed; BUG-067).; Apothecary (RESOLVED (USER) 2026-11-03, BUILT 2026-11-03 (source-verified pending Tester; Studio test pending)): buildingLevels.Apothecary (replaces the never-built Workshop level), a per-shelf Apothecary bought record (like guildMenu.merchantBought), and the auto-refill switch (on by default). Each consumable's current charges must be saved between sessions so partly used items stay partly used - Dev to confirm.; Owned consumables (RESOLVED (USER) 2026-11-03, BUILT 2026-11-03 (source-verified pending Tester; Studio test pending)): progression.cardInventory.consumables = {consumable id: count} of loose owned copies (equipped copies sit in the unit's consumable slots, not in this list). A save with no owned list gets the starter copies once (consumable_framework 41 (a), DEV DEFAULT).; Training Grounds (RESOLVED (USER) 2026-11-04, NOT BUILT): its level saved in buildingLevels with the other buildings (replaces the never-built Training Ground and Library levels), plus a per-shelf bought record like guildMenu.merchantBought (guild_facilities 39).; Parties (RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now)): up to 5 party records saved alongside guild progression (as today, never written down before), each = name (24 characters), motto (80 characters), emblem key, background key (short keys into the shared uploaded-art list), created date, edited date, member list (unit ids, slot 1 = leader). Under 200 bytes per party for its own fields; the member list is not counted (loadout_ui_spec 115). The old unused logo field is dropped.",
+   "Caches, UI state",
+   "UnitSave, ItemInstance, DoctrineInstance, content IDs",
+   "save_schema_version + content_version",
+   "All IDs unique/resolvable; balances nonnegative; facility levels clamped 1..max level; missing = level 1",
+   "Migrate schema before content validation; Parties (RESOLVED (USER) 2026-11-04, NOT BUILT (the Dev is building it now)): old parties A, B, C become parties 1, 2, 3 with names, members and order kept; created/edited set to the migration date; missing emblem/background keys = 'default'.",
+   "Reject corrupt section with explicit diagnostic; never invent rewards. Unsaved guild-base changes are saved when the player leaves or the server shuts down (only if there are unsaved changes; never mid-battle). USER DECISION 2026-10-31. PRE-MULTIPLAYER SAFETY ITEM (Dev-confirmed 2026-11-01 (daily systems)): the save does NOT stop two servers loading the same player at once, and the 3 save slots are written one after another, not in one atomic step. Must be fixed before multiplayer / public launch (risk: duplicated or rolled-back rewards). This is why the daily counters sit in slot 2 next to the currencies they limit (save_data_contract 3). NOT BUILT."
+  ]
+ ]
+]

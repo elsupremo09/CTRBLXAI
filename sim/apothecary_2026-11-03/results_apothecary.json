@@ -1,0 +1,2333 @@
+{
+ "seed": 20261103,
+ "db_md5_start": "d2cda0a8b3b369fee127bab7ac457faf",
+ "catalog": {
+  "n": 137,
+  "tiers": {
+   "Common": 52,
+   "Uncommon": 4,
+   "Rare": 79,
+   "Epic": 2
+  },
+  "charges": {
+   "1": 38,
+   "5": 3,
+   "4": 22,
+   "3": 31,
+   "2": 43
+  },
+  "cats": {
+   "Recovery": 20,
+   "Utility": 18,
+   "Environment": 20,
+   "Control": 19,
+   "Damage": 20,
+   "Support": 20,
+   "Deployable": 20
+  },
+  "parked": 6,
+  "price_mismatch": 0,
+  "avg_price": 173.1,
+  "avg_per_charge": 118.8
+ },
+ "battle_gold": {
+  "L1": 160,
+  "L25": 229,
+  "L50": 302,
+  "L75": 374,
+  "L99": 444,
+  "avg": 302
+ },
+ "Q1": {
+  "light (5% of battle gold)": {
+   "L0": {
+    "gold_avg": 11.3,
+    "pct_avg": 3.7,
+    "by_level": {
+     "map1": {
+      "g": 6.0,
+      "pct": 3.8
+     },
+     "map25": {
+      "g": 8.6,
+      "pct": 3.8
+     },
+     "map50": {
+      "g": 11.3,
+      "pct": 3.8
+     },
+     "map99": {
+      "g": 16.6,
+      "pct": 3.8
+     }
+    }
+   },
+   "L1": {
+    "gold_avg": 11.3,
+    "pct_avg": 3.7,
+    "by_level": {
+     "map1": {
+      "g": 6.0,
+      "pct": 3.8
+     },
+     "map25": {
+      "g": 8.6,
+      "pct": 3.8
+     },
+     "map50": {
+      "g": 11.3,
+      "pct": 3.8
+     },
+     "map99": {
+      "g": 16.6,
+      "pct": 3.8
+     }
+    }
+   },
+   "L5": {
+    "gold_avg": 8.0,
+    "pct_avg": 2.6,
+    "by_level": {
+     "map1": {
+      "g": 4.2,
+      "pct": 2.7
+     },
+     "map25": {
+      "g": 6.1,
+      "pct": 2.6
+     },
+     "map50": {
+      "g": 8.0,
+      "pct": 2.7
+     },
+     "map99": {
+      "g": 11.8,
+      "pct": 2.7
+     }
+    }
+   },
+   "L10": {
+    "gold_avg": 3.8,
+    "pct_avg": 1.2,
+    "by_level": {
+     "map1": {
+      "g": 2.0,
+      "pct": 1.3
+     },
+     "map25": {
+      "g": 2.9,
+      "pct": 1.2
+     },
+     "map50": {
+      "g": 3.8,
+      "pct": 1.2
+     },
+     "map99": {
+      "g": 5.5,
+      "pct": 1.2
+     }
+    }
+   }
+  },
+  "normal (10% of battle gold)": {
+   "L0": {
+    "gold_avg": 22.6,
+    "pct_avg": 7.5,
+    "by_level": {
+     "map1": {
+      "g": 12.0,
+      "pct": 7.5
+     },
+     "map25": {
+      "g": 17.2,
+      "pct": 7.5
+     },
+     "map50": {
+      "g": 22.7,
+      "pct": 7.5
+     },
+     "map99": {
+      "g": 33.3,
+      "pct": 7.5
+     }
+    }
+   },
+   "L1": {
+    "gold_avg": 22.6,
+    "pct_avg": 7.5,
+    "by_level": {
+     "map1": {
+      "g": 12.0,
+      "pct": 7.5
+     },
+     "map25": {
+      "g": 17.2,
+      "pct": 7.5
+     },
+     "map50": {
+      "g": 22.7,
+      "pct": 7.5
+     },
+     "map99": {
+      "g": 33.3,
+      "pct": 7.5
+     }
+    }
+   },
+   "L5": {
+    "gold_avg": 16.0,
+    "pct_avg": 5.3,
+    "by_level": {
+     "map1": {
+      "g": 8.5,
+      "pct": 5.3
+     },
+     "map25": {
+      "g": 12.2,
+      "pct": 5.3
+     },
+     "map50": {
+      "g": 16.0,
+      "pct": 5.3
+     },
+     "map99": {
+      "g": 23.5,
+      "pct": 5.3
+     }
+    }
+   },
+   "L10": {
+    "gold_avg": 7.5,
+    "pct_avg": 2.5,
+    "by_level": {
+     "map1": {
+      "g": 4.0,
+      "pct": 2.5
+     },
+     "map25": {
+      "g": 5.7,
+      "pct": 2.5
+     },
+     "map50": {
+      "g": 7.6,
+      "pct": 2.5
+     },
+     "map99": {
+      "g": 11.1,
+      "pct": 2.5
+     }
+    }
+   }
+  },
+  "heavy (20% of battle gold)": {
+   "L0": {
+    "gold_avg": 45.2,
+    "pct_avg": 15.0,
+    "by_level": {
+     "map1": {
+      "g": 24.0,
+      "pct": 15.0
+     },
+     "map25": {
+      "g": 34.4,
+      "pct": 15.0
+     },
+     "map50": {
+      "g": 45.3,
+      "pct": 15.0
+     },
+     "map99": {
+      "g": 66.5,
+      "pct": 15.0
+     }
+    }
+   },
+   "L1": {
+    "gold_avg": 45.2,
+    "pct_avg": 15.0,
+    "by_level": {
+     "map1": {
+      "g": 24.0,
+      "pct": 15.0
+     },
+     "map25": {
+      "g": 34.4,
+      "pct": 15.0
+     },
+     "map50": {
+      "g": 45.3,
+      "pct": 15.0
+     },
+     "map99": {
+      "g": 66.5,
+      "pct": 15.0
+     }
+    }
+   },
+   "L5": {
+    "gold_avg": 32.0,
+    "pct_avg": 10.6,
+    "by_level": {
+     "map1": {
+      "g": 16.9,
+      "pct": 10.6
+     },
+     "map25": {
+      "g": 24.3,
+      "pct": 10.6
+     },
+     "map50": {
+      "g": 32.0,
+      "pct": 10.6
+     },
+     "map99": {
+      "g": 47.0,
+      "pct": 10.6
+     }
+    }
+   },
+   "L10": {
+    "gold_avg": 15.1,
+    "pct_avg": 5.0,
+    "by_level": {
+     "map1": {
+      "g": 8.0,
+      "pct": 5.0
+     },
+     "map25": {
+      "g": 11.5,
+      "pct": 5.0
+     },
+     "map50": {
+      "g": 15.1,
+      "pct": 5.0
+     },
+     "map99": {
+      "g": 22.2,
+      "pct": 5.0
+     }
+    }
+   }
+  },
+  "flat normal (30g list/battle)": {
+   "L0": {
+    "gold_avg": 22.5,
+    "pct_avg": 7.5,
+    "by_level": {
+     "map1": {
+      "g": 22.5,
+      "pct": 14.1
+     },
+     "map25": {
+      "g": 22.5,
+      "pct": 9.8
+     },
+     "map50": {
+      "g": 22.5,
+      "pct": 7.4
+     },
+     "map99": {
+      "g": 22.5,
+      "pct": 5.1
+     }
+    }
+   },
+   "L1": {
+    "gold_avg": 22.5,
+    "pct_avg": 7.5,
+    "by_level": {
+     "map1": {
+      "g": 22.5,
+      "pct": 14.1
+     },
+     "map25": {
+      "g": 22.5,
+      "pct": 9.8
+     },
+     "map50": {
+      "g": 22.5,
+      "pct": 7.4
+     },
+     "map99": {
+      "g": 22.5,
+      "pct": 5.1
+     }
+    }
+   },
+   "L5": {
+    "gold_avg": 15.9,
+    "pct_avg": 5.3,
+    "by_level": {
+     "map1": {
+      "g": 15.9,
+      "pct": 10.0
+     },
+     "map25": {
+      "g": 15.9,
+      "pct": 6.9
+     },
+     "map50": {
+      "g": 15.9,
+      "pct": 5.3
+     },
+     "map99": {
+      "g": 15.9,
+      "pct": 3.6
+     }
+    }
+   },
+   "L10": {
+    "gold_avg": 7.5,
+    "pct_avg": 2.5,
+    "by_level": {
+     "map1": {
+      "g": 7.5,
+      "pct": 4.7
+     },
+     "map25": {
+      "g": 7.5,
+      "pct": 3.3
+     },
+     "map50": {
+      "g": 7.5,
+      "pct": 2.5
+     },
+     "map99": {
+      "g": 7.5,
+      "pct": 1.7
+     }
+    }
+   }
+  },
+  "flat heavy (60g list/battle)": {
+   "L0": {
+    "gold_avg": 45.0,
+    "pct_avg": 14.9,
+    "by_level": {
+     "map1": {
+      "g": 45.0,
+      "pct": 28.2
+     },
+     "map25": {
+      "g": 45.0,
+      "pct": 19.6
+     },
+     "map50": {
+      "g": 45.0,
+      "pct": 14.9
+     },
+     "map99": {
+      "g": 45.0,
+      "pct": 10.1
+     }
+    }
+   },
+   "L1": {
+    "gold_avg": 45.0,
+    "pct_avg": 14.9,
+    "by_level": {
+     "map1": {
+      "g": 45.0,
+      "pct": 28.2
+     },
+     "map25": {
+      "g": 45.0,
+      "pct": 19.6
+     },
+     "map50": {
+      "g": 45.0,
+      "pct": 14.9
+     },
+     "map99": {
+      "g": 45.0,
+      "pct": 10.1
+     }
+    }
+   },
+   "L5": {
+    "gold_avg": 31.8,
+    "pct_avg": 10.5,
+    "by_level": {
+     "map1": {
+      "g": 31.8,
+      "pct": 19.9
+     },
+     "map25": {
+      "g": 31.8,
+      "pct": 13.9
+     },
+     "map50": {
+      "g": 31.8,
+      "pct": 10.5
+     },
+     "map99": {
+      "g": 31.8,
+      "pct": 7.2
+     }
+    }
+   },
+   "L10": {
+    "gold_avg": 15.0,
+    "pct_avg": 5.0,
+    "by_level": {
+     "map1": {
+      "g": 15.0,
+      "pct": 9.4
+     },
+     "map25": {
+      "g": 15.0,
+      "pct": 6.5
+     },
+     "map50": {
+      "g": 15.0,
+      "pct": 5.0
+     },
+     "map99": {
+      "g": 15.0,
+      "pct": 3.4
+     }
+    }
+   }
+  },
+  "design-doc squad (87.5g list/battle)": {
+   "L0": {
+    "gold_avg": 65.6,
+    "pct_avg": 21.8,
+    "by_level": {
+     "map1": {
+      "g": 65.6,
+      "pct": 41.1
+     },
+     "map25": {
+      "g": 65.6,
+      "pct": 28.6
+     },
+     "map50": {
+      "g": 65.6,
+      "pct": 21.7
+     },
+     "map99": {
+      "g": 65.6,
+      "pct": 14.8
+     }
+    }
+   },
+   "L1": {
+    "gold_avg": 65.6,
+    "pct_avg": 21.8,
+    "by_level": {
+     "map1": {
+      "g": 65.6,
+      "pct": 41.1
+     },
+     "map25": {
+      "g": 65.6,
+      "pct": 28.6
+     },
+     "map50": {
+      "g": 65.6,
+      "pct": 21.7
+     },
+     "map99": {
+      "g": 65.6,
+      "pct": 14.8
+     }
+    }
+   },
+   "L5": {
+    "gold_avg": 46.4,
+    "pct_avg": 15.4,
+    "by_level": {
+     "map1": {
+      "g": 46.4,
+      "pct": 29.0
+     },
+     "map25": {
+      "g": 46.4,
+      "pct": 20.2
+     },
+     "map50": {
+      "g": 46.4,
+      "pct": 15.3
+     },
+     "map99": {
+      "g": 46.4,
+      "pct": 10.5
+     }
+    }
+   },
+   "L10": {
+    "gold_avg": 21.9,
+    "pct_avg": 7.3,
+    "by_level": {
+     "map1": {
+      "g": 21.9,
+      "pct": 13.7
+     },
+     "map25": {
+      "g": 21.9,
+      "pct": 9.5
+     },
+     "map50": {
+      "g": 21.9,
+      "pct": 7.2
+     },
+     "map99": {
+      "g": 21.9,
+      "pct": 4.9
+     }
+    }
+   }
+  }
+ },
+ "charge_examples_normal_avg": {
+  "Common Routine 4ch (12.5g/ch)": 2.4,
+  "Common Standard 3ch (25g/ch)": 1.2,
+  "Rare Standard 3ch (50g/ch)": 0.6,
+  "Rare Heavy 2ch (110g/ch)": 0.27
+ },
+ "Q2": {
+  "free | craft from Rare": {
+   "repro 2026-11-02 (Workshop, free refills)": {
+    "maxed": "7/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 112.5,
+    "necessities_plus_refills_pct": 65.8,
+    "refill_gold": 0,
+    "refill_pct": 0.0,
+    "buy_discount_saved": 0,
+    "apoth_L1_map": 14.6,
+    "apoth_L5_map": 23.6,
+    "apoth_L10_map": 73.7,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 10,
+     "Crucible": 7
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "free refills + 3%/level buy discount only": {
+    "maxed": "8/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 110.3,
+    "necessities_plus_refills_pct": 63.6,
+    "refill_gold": 0,
+    "refill_pct": 0.0,
+    "buy_discount_saved": 3468,
+    "apoth_L1_map": 14.6,
+    "apoth_L5_map": 23.4,
+    "apoth_L10_map": 71.1,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 3,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | light (5% of battle gold)": {
+    "maxed": "7/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 112.6,
+    "necessities_plus_refills_pct": 65.9,
+    "refill_gold": 3281,
+    "refill_pct": 1.9,
+    "buy_discount_saved": 3335,
+    "apoth_L1_map": 16.4,
+    "apoth_L5_map": 25.7,
+    "apoth_L10_map": 75.2,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 10,
+     "Crucible": 7
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | normal (10% of battle gold)": {
+    "maxed": "6/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 115.0,
+    "necessities_plus_refills_pct": 68.3,
+    "refill_gold": 6837,
+    "refill_pct": 3.9,
+    "buy_discount_saved": 3178,
+    "apoth_L1_map": 18.6,
+    "apoth_L5_map": 28.6,
+    "apoth_L10_map": 79.7,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 9,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | heavy (20% of battle gold)": {
+    "maxed": "3/11",
+    "core6_maxed": "3/6",
+    "pressure_pct": 121.0,
+    "necessities_plus_refills_pct": 74.2,
+    "refill_gold": 16147,
+    "refill_pct": 9.2,
+    "buy_discount_saved": 2469,
+    "apoth_L1_map": 28.1,
+    "apoth_L5_map": 39.3,
+    "apoth_L10_map": 97.7,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 9,
+     "Blacksmith": 10,
+     "Merchant": 9,
+     "Quest Board": 9,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 0,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | flat normal (30g list/battle)": {
+    "maxed": "6/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 115.8,
+    "necessities_plus_refills_pct": 69.1,
+    "refill_gold": 7917,
+    "refill_pct": 4.5,
+    "buy_discount_saved": 2989,
+    "apoth_L1_map": 24.1,
+    "apoth_L5_map": 34.0,
+    "apoth_L10_map": 84.5,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 8,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | flat heavy (60g list/battle)": {
+    "maxed": "3/11",
+    "core6_maxed": "3/6",
+    "pressure_pct": 123.0,
+    "necessities_plus_refills_pct": 76.3,
+    "refill_gold": 18888,
+    "refill_pct": 10.7,
+    "buy_discount_saved": 2071,
+    "apoth_L1_map": 37.2,
+    "apoth_L5_map": 57.6,
+    "apoth_L10_map": 97.2,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 8,
+     "Blacksmith": 10,
+     "Merchant": 7,
+     "Quest Board": 9,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 0,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | design-doc squad (87.5g list/battle)": {
+    "maxed": "0/11",
+    "core6_maxed": "0/6",
+    "pressure_pct": 137.9,
+    "necessities_plus_refills_pct": 91.2,
+    "refill_gold": 35897,
+    "refill_pct": 20.4,
+    "buy_discount_saved": 0,
+    "apoth_L1_map": null,
+    "apoth_L5_map": null,
+    "apoth_L10_map": null,
+    "apoth_final": 0,
+    "levels": {
+     "Guild Hall": 8,
+     "Tavern": 0,
+     "Blacksmith": 7,
+     "Merchant": 0,
+     "Quest Board": 0,
+     "Workshop": 0,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 0,
+     "Crucible": 0
+    },
+    "cash_min": -722,
+    "cash_min_map": 23.6
+   },
+   "Apothecary first after Guild Hall | light (5% of battle gold)": {
+    "maxed": "7/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 111.9,
+    "necessities_plus_refills_pct": 65.2,
+    "refill_gold": 2608,
+    "refill_pct": 1.5,
+    "buy_discount_saved": 4101,
+    "apoth_L1_map": 7.1,
+    "apoth_L5_map": 14.3,
+    "apoth_L10_map": 40.2,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 10,
+     "Crucible": 8
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | normal (10% of battle gold)": {
+    "maxed": "7/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 113.6,
+    "necessities_plus_refills_pct": 66.9,
+    "refill_gold": 5363,
+    "refill_pct": 3.1,
+    "buy_discount_saved": 4018,
+    "apoth_L1_map": 8.2,
+    "apoth_L5_map": 16.0,
+    "apoth_L10_map": 45.4,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 10,
+     "Crucible": 4
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | heavy (20% of battle gold)": {
+    "maxed": "6/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 117.6,
+    "necessities_plus_refills_pct": 70.9,
+    "refill_gold": 11846,
+    "refill_pct": 6.7,
+    "buy_discount_saved": 3697,
+    "apoth_L1_map": 14.3,
+    "apoth_L5_map": 23.8,
+    "apoth_L10_map": 56.4,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 6,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | flat normal (30g list/battle)": {
+    "maxed": "7/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 114.2,
+    "necessities_plus_refills_pct": 67.5,
+    "refill_gold": 6284,
+    "refill_pct": 3.6,
+    "buy_discount_saved": 3874,
+    "apoth_L1_map": 10.5,
+    "apoth_L5_map": 19.3,
+    "apoth_L10_map": 48.7,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 10,
+     "Crucible": 1
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | flat heavy (60g list/battle)": {
+    "maxed": "4/11",
+    "core6_maxed": "4/6",
+    "pressure_pct": 120.5,
+    "necessities_plus_refills_pct": 73.8,
+    "refill_gold": 16007,
+    "refill_pct": 9.1,
+    "buy_discount_saved": 2995,
+    "apoth_L1_map": 29.5,
+    "apoth_L5_map": 38.6,
+    "apoth_L10_map": 69.4,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 9,
+     "Blacksmith": 10,
+     "Merchant": 9,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 0,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | design-doc squad (87.5g list/battle)": {
+    "maxed": "0/11",
+    "core6_maxed": "0/6",
+    "pressure_pct": 137.9,
+    "necessities_plus_refills_pct": 91.2,
+    "refill_gold": 35897,
+    "refill_pct": 20.4,
+    "buy_discount_saved": 0,
+    "apoth_L1_map": null,
+    "apoth_L5_map": null,
+    "apoth_L10_map": null,
+    "apoth_final": 0,
+    "levels": {
+     "Guild Hall": 8,
+     "Tavern": 0,
+     "Blacksmith": 7,
+     "Merchant": 0,
+     "Quest Board": 0,
+     "Workshop": 0,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 0,
+     "Crucible": 0
+    },
+    "cash_min": -722,
+    "cash_min_map": 23.6
+   }
+  },
+  "free | craft from Common": {
+   "repro 2026-11-02 (Workshop, free refills)": {
+    "maxed": "6/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 115.0,
+    "necessities_plus_refills_pct": 66.0,
+    "refill_gold": 0,
+    "refill_pct": 0.0,
+    "buy_discount_saved": 0,
+    "apoth_L1_map": 14.6,
+    "apoth_L5_map": 23.6,
+    "apoth_L10_map": 77.3,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 9,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "free refills + 3%/level buy discount only": {
+    "maxed": "7/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 112.8,
+    "necessities_plus_refills_pct": 63.8,
+    "refill_gold": 0,
+    "refill_pct": 0.0,
+    "buy_discount_saved": 3426,
+    "apoth_L1_map": 14.6,
+    "apoth_L5_map": 23.4,
+    "apoth_L10_map": 74.3,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 10,
+     "Crucible": 6
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | light (5% of battle gold)": {
+    "maxed": "6/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 115.1,
+    "necessities_plus_refills_pct": 66.2,
+    "refill_gold": 3330,
+    "refill_pct": 1.9,
+    "buy_discount_saved": 3279,
+    "apoth_L1_map": 16.4,
+    "apoth_L5_map": 25.7,
+    "apoth_L10_map": 78.9,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 9,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | normal (10% of battle gold)": {
+    "maxed": "6/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 117.5,
+    "necessities_plus_refills_pct": 68.6,
+    "refill_gold": 7042,
+    "refill_pct": 4.0,
+    "buy_discount_saved": 3060,
+    "apoth_L1_map": 18.6,
+    "apoth_L5_map": 28.6,
+    "apoth_L10_map": 87.0,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 6,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | heavy (20% of battle gold)": {
+    "maxed": "3/11",
+    "core6_maxed": "3/6",
+    "pressure_pct": 123.6,
+    "necessities_plus_refills_pct": 74.7,
+    "refill_gold": 16475,
+    "refill_pct": 9.4,
+    "buy_discount_saved": 2377,
+    "apoth_L1_map": 28.1,
+    "apoth_L5_map": 39.3,
+    "apoth_L10_map": 98.5,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 7,
+     "Blacksmith": 10,
+     "Merchant": 7,
+     "Quest Board": 9,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 0,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | flat normal (30g list/battle)": {
+    "maxed": "6/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 118.3,
+    "necessities_plus_refills_pct": 69.3,
+    "refill_gold": 8117,
+    "refill_pct": 4.6,
+    "buy_discount_saved": 2851,
+    "apoth_L1_map": 24.1,
+    "apoth_L5_map": 34.0,
+    "apoth_L10_map": 88.8,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 4,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | flat heavy (60g list/battle)": {
+    "maxed": "2/11",
+    "core6_maxed": "2/6",
+    "pressure_pct": 126.4,
+    "necessities_plus_refills_pct": 77.4,
+    "refill_gold": 20147,
+    "refill_pct": 11.5,
+    "buy_discount_saved": 1598,
+    "apoth_L1_map": 37.2,
+    "apoth_L5_map": 68.5,
+    "apoth_L10_map": null,
+    "apoth_final": 8,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 6,
+     "Blacksmith": 10,
+     "Merchant": 6,
+     "Quest Board": 7,
+     "Workshop": 8,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 0,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | design-doc squad (87.5g list/battle)": {
+    "maxed": "0/11",
+    "core6_maxed": "0/6",
+    "pressure_pct": 141.6,
+    "necessities_plus_refills_pct": 92.6,
+    "refill_gold": 35897,
+    "refill_pct": 20.4,
+    "buy_discount_saved": 0,
+    "apoth_L1_map": null,
+    "apoth_L5_map": null,
+    "apoth_L10_map": null,
+    "apoth_final": 0,
+    "levels": {
+     "Guild Hall": 5,
+     "Tavern": 0,
+     "Blacksmith": 4,
+     "Merchant": 0,
+     "Quest Board": 0,
+     "Workshop": 0,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 0,
+     "Crucible": 0
+    },
+    "cash_min": -722,
+    "cash_min_map": 23.6
+   },
+   "Apothecary first after Guild Hall | light (5% of battle gold)": {
+    "maxed": "7/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 114.3,
+    "necessities_plus_refills_pct": 65.3,
+    "refill_gold": 2609,
+    "refill_pct": 1.5,
+    "buy_discount_saved": 4101,
+    "apoth_L1_map": 7.1,
+    "apoth_L5_map": 14.3,
+    "apoth_L10_map": 40.4,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 10,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | normal (10% of battle gold)": {
+    "maxed": "6/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 116.0,
+    "necessities_plus_refills_pct": 67.0,
+    "refill_gold": 5372,
+    "refill_pct": 3.1,
+    "buy_discount_saved": 4013,
+    "apoth_L1_map": 8.2,
+    "apoth_L5_map": 16.0,
+    "apoth_L10_map": 46.3,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 8,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | heavy (20% of battle gold)": {
+    "maxed": "5/11",
+    "core6_maxed": "5/6",
+    "pressure_pct": 120.0,
+    "necessities_plus_refills_pct": 71.0,
+    "refill_gold": 11936,
+    "refill_pct": 6.8,
+    "buy_discount_saved": 3672,
+    "apoth_L1_map": 14.3,
+    "apoth_L5_map": 23.8,
+    "apoth_L10_map": 59.2,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 9,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 0,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | flat normal (30g list/battle)": {
+    "maxed": "6/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 116.6,
+    "necessities_plus_refills_pct": 67.7,
+    "refill_gold": 6300,
+    "refill_pct": 3.6,
+    "buy_discount_saved": 3865,
+    "apoth_L1_map": 10.5,
+    "apoth_L5_map": 19.3,
+    "apoth_L10_map": 50.1,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 7,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | flat heavy (60g list/battle)": {
+    "maxed": "3/11",
+    "core6_maxed": "3/6",
+    "pressure_pct": 123.1,
+    "necessities_plus_refills_pct": 74.1,
+    "refill_gold": 16423,
+    "refill_pct": 9.3,
+    "buy_discount_saved": 2860,
+    "apoth_L1_map": 29.5,
+    "apoth_L5_map": 38.6,
+    "apoth_L10_map": 76.8,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 8,
+     "Blacksmith": 10,
+     "Merchant": 7,
+     "Quest Board": 9,
+     "Workshop": 10,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 0,
+     "Crucible": 0
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | design-doc squad (87.5g list/battle)": {
+    "maxed": "0/11",
+    "core6_maxed": "0/6",
+    "pressure_pct": 141.6,
+    "necessities_plus_refills_pct": 92.6,
+    "refill_gold": 35897,
+    "refill_pct": 20.4,
+    "buy_discount_saved": 0,
+    "apoth_L1_map": null,
+    "apoth_L5_map": null,
+    "apoth_L10_map": null,
+    "apoth_final": 0,
+    "levels": {
+     "Guild Hall": 5,
+     "Tavern": 0,
+     "Blacksmith": 4,
+     "Merchant": 0,
+     "Quest Board": 0,
+     "Workshop": 0,
+     "Training Ground": 0,
+     "Library": 0,
+     "Trophy Hall": 0,
+     "Runeforge": 0,
+     "Crucible": 0
+    },
+    "cash_min": -722,
+    "cash_min_map": 23.6
+   }
+  },
+  "boosted | craft from Rare": {
+   "repro 2026-11-02 (Workshop, free refills)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 88.2,
+    "necessities_plus_refills_pct": 50.9,
+    "refill_gold": 0,
+    "refill_pct": 0.0,
+    "buy_discount_saved": 0,
+    "apoth_L1_map": 8.5,
+    "apoth_L5_map": 13.9,
+    "apoth_L10_map": 46.1,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "free refills + 3%/level buy discount only": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 86.3,
+    "necessities_plus_refills_pct": 49.0,
+    "refill_gold": 0,
+    "refill_pct": 0.0,
+    "buy_discount_saved": 4049,
+    "apoth_L1_map": 8.5,
+    "apoth_L5_map": 13.7,
+    "apoth_L10_map": 45.3,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | light (5% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 87.7,
+    "necessities_plus_refills_pct": 50.3,
+    "refill_gold": 2687,
+    "refill_pct": 1.2,
+    "buy_discount_saved": 4013,
+    "apoth_L1_map": 9.1,
+    "apoth_L5_map": 14.6,
+    "apoth_L10_map": 46.7,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | normal (10% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 89.0,
+    "necessities_plus_refills_pct": 51.7,
+    "refill_gold": 5440,
+    "refill_pct": 2.5,
+    "buy_discount_saved": 3975,
+    "apoth_L1_map": 9.6,
+    "apoth_L5_map": 15.3,
+    "apoth_L10_map": 48.3,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | heavy (20% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 92.0,
+    "necessities_plus_refills_pct": 54.6,
+    "refill_gold": 11216,
+    "refill_pct": 5.1,
+    "buy_discount_saved": 3879,
+    "apoth_L1_map": 11.0,
+    "apoth_L5_map": 17.5,
+    "apoth_L10_map": 51.9,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | flat normal (30g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 89.5,
+    "necessities_plus_refills_pct": 52.1,
+    "refill_gold": 6145,
+    "refill_pct": 2.8,
+    "buy_discount_saved": 3926,
+    "apoth_L1_map": 10.7,
+    "apoth_L5_map": 16.6,
+    "apoth_L10_map": 49.7,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | flat heavy (60g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 93.1,
+    "necessities_plus_refills_pct": 55.7,
+    "refill_gold": 13052,
+    "refill_pct": 5.9,
+    "buy_discount_saved": 3749,
+    "apoth_L1_map": 14.1,
+    "apoth_L5_map": 20.9,
+    "apoth_L10_map": 55.3,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | design-doc squad (87.5g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 97.2,
+    "necessities_plus_refills_pct": 59.8,
+    "refill_gold": 20573,
+    "refill_pct": 9.4,
+    "buy_discount_saved": 3493,
+    "apoth_L1_map": 19.5,
+    "apoth_L5_map": 27.0,
+    "apoth_L10_map": 61.9,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | light (5% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 88.0,
+    "necessities_plus_refills_pct": 50.6,
+    "refill_gold": 2331,
+    "refill_pct": 1.1,
+    "buy_discount_saved": 4418,
+    "apoth_L1_map": 4.0,
+    "apoth_L5_map": 7.3,
+    "apoth_L10_map": 23.8,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | normal (10% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 89.2,
+    "necessities_plus_refills_pct": 51.8,
+    "refill_gold": 4691,
+    "refill_pct": 2.1,
+    "buy_discount_saved": 4402,
+    "apoth_L1_map": 4.2,
+    "apoth_L5_map": 7.6,
+    "apoth_L10_map": 24.6,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | heavy (20% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 91.6,
+    "necessities_plus_refills_pct": 54.2,
+    "refill_gold": 9548,
+    "refill_pct": 4.3,
+    "buy_discount_saved": 4355,
+    "apoth_L1_map": 4.9,
+    "apoth_L5_map": 8.7,
+    "apoth_L10_map": 26.6,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | flat normal (30g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 89.5,
+    "necessities_plus_refills_pct": 52.1,
+    "refill_gold": 5114,
+    "refill_pct": 2.3,
+    "buy_discount_saved": 4372,
+    "apoth_L1_map": 4.8,
+    "apoth_L5_map": 8.3,
+    "apoth_L10_map": 25.7,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | flat heavy (60g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 92.3,
+    "necessities_plus_refills_pct": 54.9,
+    "refill_gold": 10738,
+    "refill_pct": 4.9,
+    "buy_discount_saved": 4273,
+    "apoth_L1_map": 6.4,
+    "apoth_L5_map": 10.9,
+    "apoth_L10_map": 29.5,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | design-doc squad (87.5g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 95.4,
+    "necessities_plus_refills_pct": 58.0,
+    "refill_gold": 16888,
+    "refill_pct": 7.7,
+    "buy_discount_saved": 4102,
+    "apoth_L1_map": 9.6,
+    "apoth_L5_map": 16.4,
+    "apoth_L10_map": 35.2,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   }
+  },
+  "boosted | craft from Common": {
+   "repro 2026-11-02 (Workshop, free refills)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 90.1,
+    "necessities_plus_refills_pct": 50.9,
+    "refill_gold": 0,
+    "refill_pct": 0.0,
+    "buy_discount_saved": 0,
+    "apoth_L1_map": 8.5,
+    "apoth_L5_map": 13.9,
+    "apoth_L10_map": 46.7,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "free refills + 3%/level buy discount only": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 88.2,
+    "necessities_plus_refills_pct": 49.0,
+    "refill_gold": 0,
+    "refill_pct": 0.0,
+    "buy_discount_saved": 4047,
+    "apoth_L1_map": 8.5,
+    "apoth_L5_map": 13.7,
+    "apoth_L10_map": 45.6,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | light (5% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 89.5,
+    "necessities_plus_refills_pct": 50.3,
+    "refill_gold": 2689,
+    "refill_pct": 1.2,
+    "buy_discount_saved": 4010,
+    "apoth_L1_map": 9.1,
+    "apoth_L5_map": 14.6,
+    "apoth_L10_map": 47.2,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | normal (10% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 90.9,
+    "necessities_plus_refills_pct": 51.7,
+    "refill_gold": 5445,
+    "refill_pct": 2.5,
+    "buy_discount_saved": 3972,
+    "apoth_L1_map": 9.6,
+    "apoth_L5_map": 15.3,
+    "apoth_L10_map": 48.8,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | heavy (20% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 93.8,
+    "necessities_plus_refills_pct": 54.6,
+    "refill_gold": 11240,
+    "refill_pct": 5.1,
+    "buy_discount_saved": 3872,
+    "apoth_L1_map": 11.0,
+    "apoth_L5_map": 17.5,
+    "apoth_L10_map": 52.8,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | flat normal (30g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 91.3,
+    "necessities_plus_refills_pct": 52.2,
+    "refill_gold": 6150,
+    "refill_pct": 2.8,
+    "buy_discount_saved": 3923,
+    "apoth_L1_map": 10.7,
+    "apoth_L5_map": 16.6,
+    "apoth_L10_map": 50.3,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | flat heavy (60g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 95.0,
+    "necessities_plus_refills_pct": 55.8,
+    "refill_gold": 13085,
+    "refill_pct": 6.0,
+    "buy_discount_saved": 3740,
+    "apoth_L1_map": 14.1,
+    "apoth_L5_map": 20.9,
+    "apoth_L10_map": 56.4,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "classic (Apothecary in core 6) | design-doc squad (87.5g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 99.1,
+    "necessities_plus_refills_pct": 59.9,
+    "refill_gold": 20667,
+    "refill_pct": 9.4,
+    "buy_discount_saved": 3474,
+    "apoth_L1_map": 19.5,
+    "apoth_L5_map": 27.0,
+    "apoth_L10_map": 63.5,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | light (5% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 89.9,
+    "necessities_plus_refills_pct": 50.7,
+    "refill_gold": 2331,
+    "refill_pct": 1.1,
+    "buy_discount_saved": 4418,
+    "apoth_L1_map": 4.0,
+    "apoth_L5_map": 7.3,
+    "apoth_L10_map": 23.8,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | normal (10% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 91.0,
+    "necessities_plus_refills_pct": 51.8,
+    "refill_gold": 4691,
+    "refill_pct": 2.1,
+    "buy_discount_saved": 4402,
+    "apoth_L1_map": 4.2,
+    "apoth_L5_map": 7.6,
+    "apoth_L10_map": 24.6,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | heavy (20% of battle gold)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 93.4,
+    "necessities_plus_refills_pct": 54.2,
+    "refill_gold": 9548,
+    "refill_pct": 4.3,
+    "buy_discount_saved": 4355,
+    "apoth_L1_map": 4.9,
+    "apoth_L5_map": 8.7,
+    "apoth_L10_map": 26.6,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | flat normal (30g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 91.3,
+    "necessities_plus_refills_pct": 52.1,
+    "refill_gold": 5114,
+    "refill_pct": 2.3,
+    "buy_discount_saved": 4372,
+    "apoth_L1_map": 4.8,
+    "apoth_L5_map": 8.3,
+    "apoth_L10_map": 25.7,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | flat heavy (60g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 94.2,
+    "necessities_plus_refills_pct": 55.0,
+    "refill_gold": 10738,
+    "refill_pct": 4.9,
+    "buy_discount_saved": 4273,
+    "apoth_L1_map": 6.4,
+    "apoth_L5_map": 10.9,
+    "apoth_L10_map": 29.5,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   },
+   "Apothecary first after Guild Hall | design-doc squad (87.5g list/battle)": {
+    "maxed": "11/11",
+    "core6_maxed": "6/6",
+    "pressure_pct": 97.3,
+    "necessities_plus_refills_pct": 58.1,
+    "refill_gold": 16888,
+    "refill_pct": 7.7,
+    "buy_discount_saved": 4102,
+    "apoth_L1_map": 9.6,
+    "apoth_L5_map": 16.4,
+    "apoth_L10_map": 35.2,
+    "apoth_final": 10,
+    "levels": {
+     "Guild Hall": 10,
+     "Tavern": 10,
+     "Blacksmith": 10,
+     "Merchant": 10,
+     "Quest Board": 10,
+     "Workshop": 10,
+     "Training Ground": 10,
+     "Library": 10,
+     "Trophy Hall": 5,
+     "Runeforge": 10,
+     "Crucible": 10
+    },
+    "cash_min": 500,
+    "cash_min_map": 1.0
+   }
+  }
+ },
+ "payback_normal": {
+  "L1": {
+   "cost": 157,
+   "save_per_battle": 0.0,
+   "payback_battles": null
+  },
+  "L2": {
+   "cost": 177,
+   "save_per_battle": 2.77,
+   "payback_battles": 64
+  },
+  "L3": {
+   "cost": 211,
+   "save_per_battle": 2.47,
+   "payback_battles": 85
+  },
+  "L4": {
+   "cost": 259,
+   "save_per_battle": 2.77,
+   "payback_battles": 94
+  },
+  "L5": {
+   "cost": 320,
+   "save_per_battle": 2.47,
+   "payback_battles": 130
+  },
+  "L6": {
+   "cost": 395,
+   "save_per_battle": 2.77,
+   "payback_battles": 143
+  },
+  "L7": {
+   "cost": 484,
+   "save_per_battle": 2.47,
+   "payback_battles": 196
+  },
+  "L8": {
+   "cost": 586,
+   "save_per_battle": 2.77,
+   "payback_battles": 212
+  },
+  "L9": {
+   "cost": 702,
+   "save_per_battle": 2.47,
+   "payback_battles": 284
+  },
+  "L10": {
+   "cost": 832,
+   "save_per_battle": 2.77,
+   "payback_battles": 300
+  }
+ },
+ "payback_full_L10_light (5% of battle gold)": 255,
+ "payback_full_L10_heavy (20% of battle gold)": 106,
+ "payback_full_L10_normal": 174,
+ "Q3_loops": {
+  "refill u -> sell (owned empty item)": {
+   "max_gain": -1,
+   "at": [
+    "UTI-014",
+    9,
+    6,
+    1
+   ]
+  },
+  "one-at-a-time refill saving vs batch": {
+   "max_gain": 0,
+   "at": [
+    "REC-001",
+    0,
+    1,
+    1
+   ]
+  },
+  "buy -> sell full": {
+   "max_gain": -13,
+   "at": [
+    "REC-001",
+    10,
+    1,
+    "round"
+   ]
+  },
+  "buy -> use u -> refill -> sell": {
+   "max_gain": -20,
+   "at": [
+    "REC-001",
+    10,
+    1,
+    1
+   ]
+  },
+  "sell-used+buy-new minus refill (gain if >0)": {
+   "max_gain": -6,
+   "at": [
+    "REC-001",
+    1,
+    1,
+    1
+   ]
+  },
+  "L9 variant: sell uses base max (uncapped)": {
+   "max_gain": -1,
+   "at": [
+    "UTI-014",
+    10,
+    6
+   ]
+  },
+  "L9 variant: refill by base max, sell by new max": {
+   "max_gain": -5,
+   "at": [
+    "UTI-014",
+    10,
+    6
+   ]
+  }
+ },
+ "L9_per_charge": {
+  "4->5 ch": {
+   "L8_rate_per_charge_pct_list": 9.0,
+   "L9_new_max": 6.2,
+   "L9_if_base_max": 7.75,
+   "L10_new_max": 5.0
+  },
+  "5->6 ch": {
+   "L8_rate_per_charge_pct_list": 7.2,
+   "L9_new_max": 5.17,
+   "L9_if_base_max": 6.2,
+   "L10_new_max": 4.17
+  }
+ },
+ "AC009_free_charge_value": {
+  "Common Routine 4ch 50g": {
+   "L0": 9.4,
+   "L5": 6.6,
+   "L10": 3.1
+  },
+  "Common Standard 3ch 75g": {
+   "L0": 18.8,
+   "L5": 13.2,
+   "L10": 6.2
+  },
+  "Rare Standard 3ch 150g": {
+   "L0": 37.5,
+   "L5": 26.5,
+   "L10": 12.5
+  },
+  "Rare Heavy 2ch 220g": {
+   "L0": 82.5,
+   "L5": 58.3,
+   "L10": 27.5
+  }
+ },
+ "restock_mp_cost": {
+  "L1": 3,
+  "L25": 5,
+  "L50": 7,
+  "L99": 11
+ },
+ "restock_gold_saved_3_common_standard": {
+  "L0": 56.2,
+  "L5": 39.8,
+  "L10": 18.8
+ },
+ "db_md5_end": "d2cda0a8b3b369fee127bab7ac457faf"
+}

@@ -438,6 +438,23 @@ local function showStartBattleButton()
 end
 
 --------------------------------------------------
+-- READINESS (persistent_hp_mp_rules 24, 2026-11-01)
+-- Informs only, never blocks deployment. "Low" = below
+-- GameConstants.DEPLOY_LOW_RESOURCE_FRACTION of max. KO and empty items cannot
+-- occur here today (the base clears KO and refills charges, rules 9/17).
+--------------------------------------------------
+local function readinessFlags(unitInfo)
+	local frac = GameConstants.DEPLOY_LOW_RESOURCE_FRACTION
+	local maxHp = tonumber(unitInfo.maxHp) or 0
+	local maxMp = tonumber(unitInfo.maxMp) or 0
+	local curHp = tonumber(unitInfo.currentHp) or maxHp
+	local curMp = tonumber(unitInfo.currentMp) or maxMp
+	local lowHp = maxHp > 0 and curHp < maxHp * frac
+	local lowMp = maxMp > 0 and curMp < maxMp * frac
+	return lowHp, lowMp
+end
+
+--------------------------------------------------
 -- ROSTER UI
 --------------------------------------------------
 local function createRosterUI(playerUnits, awayUnits)
@@ -516,6 +533,8 @@ local function createRosterUI(playerUnits, awayUnits)
 
 	-- ── Build unit cells ────────────────────────────────────
 	rosterEntries = {}
+	local lowHpCount = 0
+	local lowMpCount = 0
 	for i, unitInfo in ipairs(playerUnits) do
 		if i > 8 then break end
 
@@ -640,6 +659,15 @@ local function createRosterUI(playerUnits, awayUnits)
 		checkText.ZIndex = 4
 		checkText.Parent = checkBadge
 
+		-- Readiness mark: a low unit's name band turns red. The corners are already used
+		-- (Lv badge, deployed check) and cells can be 40 px, so the band carries the mark.
+		local lowHp, lowMp = readinessFlags(unitInfo)
+		if lowHp then lowHpCount += 1 end
+		if lowMp then lowMpCount += 1 end
+		if lowHp or lowMp then
+			nameStrip.BackgroundColor3 = Theme.Colors.Danger
+		end
+
 		entry.button     = cell
 		entry.stroke     = cellStroke
 		entry.initials   = initials
@@ -668,6 +696,33 @@ local function createRosterUI(playerUnits, awayUnits)
 		end)
 
 		table.insert(rosterEntries, entry)
+	end
+
+	-- Readiness summary line, above where START BATTLE appears (bottom-right).
+	if lowHpCount > 0 or lowMpCount > 0 then
+		local parts = {}
+		if lowHpCount > 0 then
+			table.insert(parts, `{lowHpCount} unit{if lowHpCount == 1 then "" else "s"} low on HP`)
+		end
+		if lowMpCount > 0 then
+			table.insert(parts, `{lowMpCount} unit{if lowMpCount == 1 then "" else "s"} low on MP`)
+		end
+		local warnLabel = Instance.new("TextLabel")
+		warnLabel.Name = "DeployReadiness"
+		warnLabel.Size = UDim2.new(0, 260, 0, 16)
+		-- START BATTLE renders as a 44x44 icon button at (1,-12,1,-12) (Theme.MakeButton ignores
+		-- the width/height passed in), so sit 6 px above its top edge.
+		warnLabel.Position = UDim2.new(1, -12, 1, -12 - 44 - 6)
+		warnLabel.AnchorPoint = Vector2.new(1, 1)
+		warnLabel.BackgroundTransparency = 1
+		warnLabel.Text = table.concat(parts, "  |  ")
+		warnLabel.TextColor3 = Theme.Colors.Danger
+		warnLabel.TextSize = Theme.Text.Small()
+		warnLabel.Font = Theme.Font.PrimaryBold
+		warnLabel.TextXAlignment = Enum.TextXAlignment.Right
+		warnLabel.TextStrokeTransparency = 0.4
+		warnLabel.Parent = screenGui
+		print(`[DeploymentUI] Readiness: {warnLabel.Text}`)
 	end
 
 	-- Greyed, non-interactive cells for units that cannot deploy this battle.

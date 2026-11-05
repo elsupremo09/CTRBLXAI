@@ -1,0 +1,1039 @@
+{
+ "seed": 20261102,
+ "spare": 0.118,
+ "determinism_rerun_equal": true,
+ "Exalted-only x1 shelves | random picker (B4) | spare gold": {
+  "fee": 328.33,
+  "cry": 9.09,
+  "sul": 0.21,
+  "merc_lost": 25.16,
+  "cry_lost": 0.68,
+  "sul_lost": 0.04,
+  "buy_gold": 4844.62,
+  "bought": 0.8,
+  "max_res_over_map": 4,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 1.82,
+   "U>R": 0.56,
+   "R>E": 0.4,
+   "E>Ex": 0.05,
+   "Ex>L": 0.08
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 1.82,
+   "Rare": 0.56,
+   "Epic": 0.4,
+   "Exalted": 0.05,
+   "Legendary": 0.08
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 0.8,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.15,
+   "Uncommon": 43.9,
+   "Rare": 30.6,
+   "Epic": 13.87,
+   "Exalted": 5.7,
+   "Legendary": 1.38,
+   "Mythic": 0.04
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 2,
+  "P_at_least_1_legendary_merge": 0.08
+ },
+ "Exalted-only x10 shelves | random picker (B4) | spare gold": {
+  "fee": 604.24,
+  "cry": 18.81,
+  "sul": 2.07,
+  "merc_lost": 31.79,
+  "cry_lost": 6.04,
+  "sul_lost": 0.98,
+  "buy_gold": 19206.97,
+  "bought": 3.68,
+  "max_res_over_map": 2,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 1.58,
+   "U>R": 0.52,
+   "R>E": 0.27,
+   "E>Ex": 0.04,
+   "Ex>L": 1.02
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 1.58,
+   "Rare": 0.52,
+   "Epic": 0.27,
+   "Exalted": 0.04,
+   "Legendary": 1.02
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 3.68,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.61,
+   "Uncommon": 44.77,
+   "Rare": 30.68,
+   "Epic": 14.42,
+   "Exalted": 5.76,
+   "Legendary": 1.36,
+   "Mythic": 0.06
+  },
+  "legendary_merges_p90": 2,
+  "legendary_merges_max": 3,
+  "P_at_least_1_legendary_merge": 0.78
+ },
+ "Exalted-only x10 shelves | random picker (B4) | 30% of income diverted": {
+  "fee": 1139.68,
+  "cry": 31.52,
+  "sul": 4.12,
+  "merc_lost": 47.23,
+  "cry_lost": 12.15,
+  "sul_lost": 2.02,
+  "buy_gold": 34579.76,
+  "bought": 5.76,
+  "max_res_over_map": 4,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 1.71,
+   "U>R": 0.52,
+   "R>E": 0.29,
+   "E>Ex": 0.03,
+   "Ex>L": 2.05
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 1.71,
+   "Rare": 0.52,
+   "Epic": 0.29,
+   "Exalted": 0.03,
+   "Legendary": 2.05
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 5.76,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.13,
+   "Uncommon": 44.13,
+   "Rare": 30.56,
+   "Epic": 13.9,
+   "Exalted": 5.49,
+   "Legendary": 1.26,
+   "Mythic": 0.07
+  },
+  "legendary_merges_p90": 4,
+  "legendary_merges_max": 5,
+  "P_at_least_1_legendary_merge": 0.873
+ },
+ "Exalted-only x1 shelves | boss hunter (B4, 80 contracts) | spare gold": {
+  "fee": 1507.65,
+  "cry": 43.81,
+  "sul": 3.05,
+  "merc_lost": 59.44,
+  "cry_lost": 25.19,
+  "sul_lost": -0.9,
+  "buy_gold": 14520.69,
+  "bought": 2.56,
+  "max_res_over_map": 5,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 0.01,
+   "U>R": 0.04,
+   "R>E": 3.69,
+   "E>Ex": 1.62,
+   "Ex>L": 0.72
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 0.01,
+   "Rare": 0.04,
+   "Epic": 3.69,
+   "Exalted": 1.62,
+   "Legendary": 0.72
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 2.56,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.61,
+   "Uncommon": 43.84,
+   "Rare": 165.19,
+   "Epic": 65.44,
+   "Exalted": 24.43,
+   "Legendary": 16.48,
+   "Mythic": 0.81
+  },
+  "legendary_merges_p90": 2,
+  "legendary_merges_max": 4,
+  "P_at_least_1_legendary_merge": 0.533
+ },
+ "Exalted-only x10 shelves | boss hunter (B4, 80 contracts) | spare gold": {
+  "fee": 1649.63,
+  "cry": 50.18,
+  "sul": 4.02,
+  "merc_lost": 64.94,
+  "cry_lost": 28.06,
+  "sul_lost": -0.06,
+  "buy_gold": 22320.52,
+  "bought": 4.84,
+  "max_res_over_map": 4,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 0.0,
+   "U>R": 0.05,
+   "R>E": 3.85,
+   "E>Ex": 1.38,
+   "Ex>L": 1.32
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.05,
+   "Epic": 3.85,
+   "Exalted": 1.38,
+   "Legendary": 1.32
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 4.84,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.39,
+   "Uncommon": 44.11,
+   "Rare": 166.44,
+   "Epic": 65.85,
+   "Exalted": 23.7,
+   "Legendary": 16.0,
+   "Mythic": 0.79
+  },
+  "legendary_merges_p90": 2,
+  "legendary_merges_max": 4,
+  "P_at_least_1_legendary_merge": 0.837
+ },
+ "Exalted-only x10 shelves | boss hunter (B4, 80 contracts) | 30% of income diverted": {
+  "fee": 2505.45,
+  "cry": 77.13,
+  "sul": 8.74,
+  "merc_lost": 91.6,
+  "cry_lost": 41.37,
+  "sul_lost": 2.57,
+  "buy_gold": 61084.26,
+  "bought": 12.01,
+  "max_res_over_map": 4,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 0.0,
+   "U>R": 0.03,
+   "R>E": 3.7,
+   "E>Ex": 1.2,
+   "Ex>L": 3.77
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.03,
+   "Epic": 3.7,
+   "Exalted": 1.2,
+   "Legendary": 3.77
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 12.01,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.79,
+   "Uncommon": 44.18,
+   "Rare": 166.0,
+   "Epic": 65.26,
+   "Exalted": 24.45,
+   "Legendary": 16.19,
+   "Mythic": 0.78
+  },
+  "legendary_merges_p90": 5,
+  "legendary_merges_max": 7,
+  "P_at_least_1_legendary_merge": 0.997
+ },
+ "A slot-group matching | boosted | random picker (B4) | loot | cap 30": {
+  "fee": 3992.59,
+  "cry": 84.9,
+  "sul": 2.36,
+  "merc_lost": 314.86,
+  "cry_lost": 23.12,
+  "sul_lost": -1.52,
+  "buy_gold": 0.0,
+  "bought": 0.0,
+  "max_res_over_map": 5,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 10.08,
+   "U>R": 6.64,
+   "R>E": 4.51,
+   "E>Ex": 1.8,
+   "Ex>L": 0.28
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 10.08,
+   "Rare": 6.64,
+   "Epic": 4.51,
+   "Exalted": 1.8,
+   "Legendary": 0.28
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.84,
+   "Uncommon": 44.61,
+   "Rare": 30.17,
+   "Epic": 14.09,
+   "Exalted": 5.48,
+   "Legendary": 1.44,
+   "Mythic": 0.05
+  },
+  "legendary_merges_p90": 1,
+  "legendary_merges_max": 2,
+  "P_at_least_1_legendary_merge": 0.263
+ },
+ "A slot-group matching | boosted | random picker (B4) | buying spare gold | cap 30": {
+  "fee": 5016.53,
+  "cry": 109.37,
+  "sul": 1.46,
+  "merc_lost": 514.8,
+  "cry_lost": 20.45,
+  "sul_lost": -1.22,
+  "buy_gold": 25197.12,
+  "bought": 46.15,
+  "max_res_over_map": 5,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 16.05,
+   "U>R": 10.99,
+   "R>E": 5.49,
+   "E>Ex": 1.3,
+   "Ex>L": 0.08
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 16.05,
+   "Rare": 10.99,
+   "Epic": 5.49,
+   "Exalted": 1.3,
+   "Legendary": 0.08
+  },
+  "bought_by": {
+   "Common": 32.79,
+   "Uncommon": 10.97,
+   "Rare": 2.36,
+   "Epic": 0.03,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 98.16,
+   "Uncommon": 44.38,
+   "Rare": 29.98,
+   "Epic": 14.09,
+   "Exalted": 5.29,
+   "Legendary": 1.24,
+   "Mythic": 0.06
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 2,
+  "P_at_least_1_legendary_merge": 0.077
+ },
+ "A slot-group matching | free crafter | random picker (B4) | loot | cap 30": {
+  "fee": 4040.31,
+  "cry": 93.88,
+  "sul": 3.6,
+  "merc_lost": 244.62,
+  "cry_lost": 42.13,
+  "sul_lost": -3.6,
+  "buy_gold": 0.0,
+  "bought": 0.0,
+  "max_res_over_map": 4,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 6.95,
+   "U>R": 5.23,
+   "R>E": 5.91,
+   "E>Ex": 3.6,
+   "Ex>L": 0.0
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 6.95,
+   "Rare": 5.23,
+   "Epic": 5.91,
+   "Exalted": 3.6,
+   "Legendary": 0.0
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 98.03,
+   "Uncommon": 43.8,
+   "Rare": 30.94,
+   "Epic": 13.96,
+   "Exalted": 5.7,
+   "Legendary": 1.38,
+   "Mythic": 0.04
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 0,
+  "P_at_least_1_legendary_merge": 0.0
+ },
+ "A slot-group matching | boosted | boss hunter (B4, 80 contracts) | loot | cap 30": {
+  "fee": 13052.1,
+  "cry": 293.04,
+  "sul": 24.35,
+  "merc_lost": 574.72,
+  "cry_lost": 167.41,
+  "sul_lost": -8.51,
+  "buy_gold": 0.0,
+  "bought": 0.0,
+  "max_res_over_map": 5,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 1.18,
+   "U>R": 0.61,
+   "R>E": 19.19,
+   "E>Ex": 13.79,
+   "Ex>L": 5.28
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 1.18,
+   "Rare": 0.61,
+   "Epic": 19.19,
+   "Exalted": 13.79,
+   "Legendary": 5.28
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 96.61,
+   "Uncommon": 44.78,
+   "Rare": 165.1,
+   "Epic": 65.38,
+   "Exalted": 24.1,
+   "Legendary": 16.13,
+   "Mythic": 0.74
+  },
+  "legendary_merges_p90": 7,
+  "legendary_merges_max": 10,
+  "P_at_least_1_legendary_merge": 1.0
+ },
+ "A slot-group matching | boosted | boss hunter (B4, 80 contracts) | buying spare gold | cap 30": {
+  "fee": 13996.4,
+  "cry": 314.41,
+  "sul": 24.45,
+  "merc_lost": 700.62,
+  "cry_lost": 168.09,
+  "sul_lost": -8.43,
+  "buy_gold": 24596.68,
+  "bought": 38.41,
+  "max_res_over_map": 5,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 4.28,
+   "U>R": 3.16,
+   "R>E": 20.36,
+   "E>Ex": 13.77,
+   "Ex>L": 5.34
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 4.28,
+   "Rare": 3.16,
+   "Epic": 20.36,
+   "Exalted": 13.77,
+   "Legendary": 5.34
+  },
+  "bought_by": {
+   "Common": 23.78,
+   "Uncommon": 5.6,
+   "Rare": 8.93,
+   "Epic": 0.1,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.79,
+   "Uncommon": 44.28,
+   "Rare": 165.5,
+   "Epic": 66.08,
+   "Exalted": 24.13,
+   "Legendary": 16.29,
+   "Mythic": 0.79
+  },
+  "legendary_merges_p90": 7,
+  "legendary_merges_max": 9,
+  "P_at_least_1_legendary_merge": 0.997
+ },
+ "A slot-group matching | free crafter | boss hunter (B4, 80 contracts) | loot | cap 30": {
+  "fee": 7127.94,
+  "cry": 154.26,
+  "sul": 9.62,
+  "merc_lost": 332.41,
+  "cry_lost": 101.1,
+  "sul_lost": -9.62,
+  "buy_gold": 0.0,
+  "bought": 0.0,
+  "max_res_over_map": 4,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 0.98,
+   "U>R": 0.38,
+   "R>E": 12.37,
+   "E>Ex": 9.62,
+   "Ex>L": 0.0
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 0.98,
+   "Rare": 0.38,
+   "Epic": 12.37,
+   "Exalted": 9.62,
+   "Legendary": 0.0
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.69,
+   "Uncommon": 44.75,
+   "Rare": 165.11,
+   "Epic": 65.7,
+   "Exalted": 24.35,
+   "Legendary": 16.45,
+   "Mythic": 0.86
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 0,
+  "P_at_least_1_legendary_merge": 0.0
+ },
+ "A slot-group matching + stop at Exalted | boosted | random picker (B4) | buying spare gold | cap 30": {
+  "fee": 4979.4,
+  "cry": 108.34,
+  "sul": 1.3,
+  "merc_lost": 513.03,
+  "cry_lost": 20.02,
+  "sul_lost": -1.3,
+  "buy_gold": 25200.25,
+  "bought": 46.14,
+  "max_res_over_map": 5,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 16.01,
+   "U>R": 10.98,
+   "R>E": 5.49,
+   "E>Ex": 1.3,
+   "Ex>L": 0.0
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 16.01,
+   "Rare": 10.98,
+   "Epic": 5.49,
+   "Exalted": 1.3,
+   "Legendary": 0.0
+  },
+  "bought_by": {
+   "Common": 32.78,
+   "Uncommon": 10.97,
+   "Rare": 2.37,
+   "Epic": 0.03,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 98.16,
+   "Uncommon": 44.38,
+   "Rare": 29.98,
+   "Epic": 14.09,
+   "Exalted": 5.29,
+   "Legendary": 1.24,
+   "Mythic": 0.06
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 0,
+  "P_at_least_1_legendary_merge": 0.0
+ },
+ "A slot-group matching + stop at Exalted | boosted | boss hunter (B4, 80 contracts) | buying spare gold | cap 30": {
+  "fee": 9055.97,
+  "cry": 204.95,
+  "sul": 11.59,
+  "merc_lost": 489.65,
+  "cry_lost": 112.55,
+  "sul_lost": -11.59,
+  "buy_gold": 23766.89,
+  "bought": 37.12,
+  "max_res_over_map": 5,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 3.76,
+   "U>R": 2.51,
+   "R>E": 16.19,
+   "E>Ex": 11.59,
+   "Ex>L": 0.0
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 3.76,
+   "Rare": 2.51,
+   "Epic": 16.19,
+   "Exalted": 11.59,
+   "Legendary": 0.0
+  },
+  "bought_by": {
+   "Common": 23.27,
+   "Uncommon": 4.94,
+   "Rare": 8.73,
+   "Epic": 0.18,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.79,
+   "Uncommon": 44.28,
+   "Rare": 165.5,
+   "Epic": 66.08,
+   "Exalted": 24.13,
+   "Legendary": 16.29,
+   "Mythic": 0.79
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 0,
+  "P_at_least_1_legendary_merge": 0.0
+ },
+ "B same base, 3 inputs at all levels | boosted | random picker (B4) | loot | cap 30": {
+  "fee": 128.94,
+  "cry": 3.5,
+  "sul": 0.06,
+  "merc_lost": 7.49,
+  "cry_lost": 0.76,
+  "sul_lost": -0.03,
+  "buy_gold": 0.0,
+  "bought": 0.0,
+  "max_res_over_map": 0,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 0.44,
+   "U>R": 0.3,
+   "R>E": 0.22,
+   "E>Ex": 0.04,
+   "Ex>L": 0.01
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 0.44,
+   "Rare": 0.3,
+   "Epic": 0.22,
+   "Exalted": 0.04,
+   "Legendary": 0.01
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.12,
+   "Uncommon": 44.94,
+   "Rare": 30.42,
+   "Epic": 14.31,
+   "Exalted": 5.39,
+   "Legendary": 1.32,
+   "Mythic": 0.07
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 1,
+  "P_at_least_1_legendary_merge": 0.01
+ },
+ "B same base, 3 inputs at all levels | boosted | random picker (B4) | buying spare gold | cap 30": {
+  "fee": 1281.75,
+  "cry": 36.4,
+  "sul": 0.34,
+  "merc_lost": 80.03,
+  "cry_lost": 13.59,
+  "sul_lost": -0.34,
+  "buy_gold": 23199.11,
+  "bought": 24.07,
+  "max_res_over_map": 5,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 1.78,
+   "U>R": 2.8,
+   "R>E": 3.62,
+   "E>Ex": 0.34,
+   "Ex>L": 0.0
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 1.78,
+   "Rare": 2.8,
+   "Epic": 3.62,
+   "Exalted": 0.34,
+   "Legendary": 0.0
+  },
+  "bought_by": {
+   "Common": 7.71,
+   "Uncommon": 6.61,
+   "Rare": 8.59,
+   "Epic": 1.12,
+   "Exalted": 0.03,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.58,
+   "Uncommon": 44.08,
+   "Rare": 30.45,
+   "Epic": 14.08,
+   "Exalted": 5.48,
+   "Legendary": 1.31,
+   "Mythic": 0.06
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 0,
+  "P_at_least_1_legendary_merge": 0.0
+ },
+ "B same base, 3 inputs at all levels | free crafter | random picker (B4) | loot | cap 30": {
+  "fee": 132.4,
+  "cry": 3.46,
+  "sul": 0.02,
+  "merc_lost": 7.13,
+  "cry_lost": 0.54,
+  "sul_lost": -0.02,
+  "buy_gold": 0.0,
+  "bought": 0.0,
+  "max_res_over_map": 0,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 0.53,
+   "U>R": 0.31,
+   "R>E": 0.22,
+   "E>Ex": 0.02,
+   "Ex>L": 0.0
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 0.53,
+   "Rare": 0.31,
+   "Epic": 0.22,
+   "Exalted": 0.02,
+   "Legendary": 0.0
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.62,
+   "Uncommon": 44.13,
+   "Rare": 30.52,
+   "Epic": 13.88,
+   "Exalted": 5.74,
+   "Legendary": 1.4,
+   "Mythic": 0.03
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 0,
+  "P_at_least_1_legendary_merge": 0.0
+ },
+ "B same base, 3 inputs at all levels | boosted | boss hunter (B4, 80 contracts) | loot | cap 30": {
+  "fee": 470.89,
+  "cry": 13.99,
+  "sul": 1.04,
+  "merc_lost": 15.81,
+  "cry_lost": 7.77,
+  "sul_lost": -0.66,
+  "buy_gold": 0.0,
+  "bought": 0.0,
+  "max_res_over_map": 2,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 0.0,
+   "U>R": 0.01,
+   "R>E": 1.03,
+   "E>Ex": 0.78,
+   "Ex>L": 0.13
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.01,
+   "Epic": 1.03,
+   "Exalted": 0.78,
+   "Legendary": 0.13
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 96.83,
+   "Uncommon": 44.12,
+   "Rare": 164.68,
+   "Epic": 65.58,
+   "Exalted": 24.25,
+   "Legendary": 16.28,
+   "Mythic": 0.73
+  },
+  "legendary_merges_p90": 1,
+  "legendary_merges_max": 2,
+  "P_at_least_1_legendary_merge": 0.117
+ },
+ "B same base, 3 inputs at all levels | boosted | boss hunter (B4, 80 contracts) | buying spare gold | cap 30": {
+  "fee": 1151.09,
+  "cry": 34.37,
+  "sul": 2.0,
+  "merc_lost": 50.05,
+  "cry_lost": 17.67,
+  "sul_lost": -1.24,
+  "buy_gold": 18742.73,
+  "bought": 14.93,
+  "max_res_over_map": 5,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 0.38,
+   "U>R": 0.51,
+   "R>E": 2.84,
+   "E>Ex": 1.5,
+   "Ex>L": 0.25
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 0.38,
+   "Rare": 0.51,
+   "Epic": 2.84,
+   "Exalted": 1.5,
+   "Legendary": 0.25
+  },
+  "bought_by": {
+   "Common": 5.18,
+   "Uncommon": 2.13,
+   "Rare": 5.29,
+   "Epic": 1.66,
+   "Exalted": 0.67,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.45,
+   "Uncommon": 43.88,
+   "Rare": 164.81,
+   "Epic": 65.57,
+   "Exalted": 23.81,
+   "Legendary": 16.39,
+   "Mythic": 0.85
+  },
+  "legendary_merges_p90": 1,
+  "legendary_merges_max": 2,
+  "P_at_least_1_legendary_merge": 0.23
+ },
+ "B same base, 3 inputs at all levels | free crafter | boss hunter (B4, 80 contracts) | loot | cap 30": {
+  "fee": 417.01,
+  "cry": 12.17,
+  "sul": 0.64,
+  "merc_lost": 14.17,
+  "cry_lost": 6.49,
+  "sul_lost": -0.64,
+  "buy_gold": 0.0,
+  "bought": 0.0,
+  "max_res_over_map": 0,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 0.11,
+   "U>R": 0.03,
+   "R>E": 1.12,
+   "E>Ex": 0.64,
+   "Ex>L": 0.0
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 0.11,
+   "Rare": 0.03,
+   "Epic": 1.12,
+   "Exalted": 0.64,
+   "Legendary": 0.0
+  },
+  "bought_by": {
+   "Common": 0.0,
+   "Uncommon": 0.0,
+   "Rare": 0.0,
+   "Epic": 0.0,
+   "Exalted": 0.0,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 98.99,
+   "Uncommon": 44.25,
+   "Rare": 165.69,
+   "Epic": 65.36,
+   "Exalted": 24.31,
+   "Legendary": 16.34,
+   "Mythic": 0.79
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 0,
+  "P_at_least_1_legendary_merge": 0.0
+ },
+ "B same base, 3 inputs at all levels + stop at Exalted | boosted | random picker (B4) | buying spare gold | cap 30": {
+  "fee": 1281.75,
+  "cry": 36.4,
+  "sul": 0.34,
+  "merc_lost": 80.03,
+  "cry_lost": 13.59,
+  "sul_lost": -0.34,
+  "buy_gold": 23199.11,
+  "bought": 24.07,
+  "max_res_over_map": 5,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 1.78,
+   "U>R": 2.8,
+   "R>E": 3.62,
+   "E>Ex": 0.34,
+   "Ex>L": 0.0
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 1.78,
+   "Rare": 2.8,
+   "Epic": 3.62,
+   "Exalted": 0.34,
+   "Legendary": 0.0
+  },
+  "bought_by": {
+   "Common": 7.71,
+   "Uncommon": 6.61,
+   "Rare": 8.59,
+   "Epic": 1.12,
+   "Exalted": 0.03,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.58,
+   "Uncommon": 44.08,
+   "Rare": 30.45,
+   "Epic": 14.08,
+   "Exalted": 5.48,
+   "Legendary": 1.31,
+   "Mythic": 0.06
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 0,
+  "P_at_least_1_legendary_merge": 0.0
+ },
+ "B same base, 3 inputs at all levels + stop at Exalted | boosted | boss hunter (B4, 80 contracts) | buying spare gold | cap 30": {
+  "fee": 1051.66,
+  "cry": 31.19,
+  "sul": 1.49,
+  "merc_lost": 46.79,
+  "cry_lost": 16.07,
+  "sul_lost": -1.49,
+  "buy_gold": 18662.92,
+  "bought": 14.89,
+  "max_res_over_map": 5,
+  "maint": 0.0,
+  "merges": {
+   "C>U": 0.38,
+   "U>R": 0.51,
+   "R>E": 2.83,
+   "E>Ex": 1.49,
+   "Ex>L": 0.0
+  },
+  "out": {
+   "Common": 0.0,
+   "Uncommon": 0.38,
+   "Rare": 0.51,
+   "Epic": 2.83,
+   "Exalted": 1.49,
+   "Legendary": 0.0
+  },
+  "bought_by": {
+   "Common": 5.18,
+   "Uncommon": 2.13,
+   "Rare": 5.27,
+   "Epic": 1.64,
+   "Exalted": 0.67,
+   "Legendary": 0.0
+  },
+  "loot": {
+   "Common": 97.45,
+   "Uncommon": 43.88,
+   "Rare": 164.81,
+   "Epic": 65.57,
+   "Exalted": 23.81,
+   "Legendary": 16.39,
+   "Mythic": 0.85
+  },
+  "legendary_merges_p90": 0,
+  "legendary_merges_max": 0,
+  "P_at_least_1_legendary_merge": 0.0
+ }
+}

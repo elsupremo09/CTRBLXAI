@@ -43,6 +43,15 @@ local function getRaceId(unit)
 	return unit and unit.raceId or nil
 end
 
+-- Wet tile effect on (x, y)? Deferred require (TileEffectService must not be a load-time
+-- dependency of this module). DB Catau / Amphibious: "Water, Wet, or Ice".
+local function hasWetTileEffect(x, y)
+	local ok, tes = pcall(function() return (require :: any)(script.Parent.TileEffectService) end)
+	if not ok or not tes or not tes.GetTileEffect then return false end
+	local e = tes.GetTileEffect(x, y)
+	return e ~= nil and e.id == "Wet"
+end
+
 local function isOnWaterTile(unit)
 	if not unit or not unit.tileX or not unit.tileY then return false end
 	local terrainId = GameConstants.GetTerrainId(unit.tileX, unit.tileY)
@@ -50,6 +59,22 @@ local function isOnWaterTile(unit)
 		or terrainId == "Deep Water"
 		or terrainId == "Ice"
 		or terrainId == "Swamp"
+		or hasWetTileEffect(unit.tileX, unit.tileY)
+end
+
+-- On the battle map (not the loadout screen / between battles, where tileX is nil or 0).
+local function isOnBattleMap(unit)
+	return unit ~= nil and type(unit.tileX) == "number" and unit.tileX >= 1 and type(unit.tileY) == "number" and unit.tileY >= 1
+end
+
+-- Race TAG check that ignores Break (tags stay on while Broken, user ruling 2026-10-27).
+function RacePassiveService.HasRaceTag(unit, tag)
+	if not (unit and unit.raceId) then return false end
+	local entry = RaceData.GetRace(unit.raceId)
+	for _, t in ipairs((entry and entry.tags) or {}) do
+		if t == tag then return true end
+	end
+	return false
 end
 
 local function isElemental(element)
@@ -74,14 +99,13 @@ local function hasTag(tags, wanted)
 	return false
 end
 
--- TIME OF DAY -- no day/night system exists yet.
--- TODO(day/night): when a time-of-day system is built, return "Day" / "Dusk" /
--- "Night" here (and resync stats on a phase change -- see RefreshConditionalStats).
--- Until then this returns nil, so every day/night-gated race passive (Werewolf
--- Moonblood; Vampire's day/night stat swing, also DEFERRED) is DORMANT / no-op.
+-- TIME OF DAY (built 2026-10-04). Werewolf Moonblood and Vampire's day/night stat
+-- swing read this; RefreshConditionalStats resyncs them on a phase change.
 -- Time-of-day cycle (Dawn/Day/Dusk/Night, one phase per 1000-CT round). Set by
 -- BattleCoordinator via SetTimePhase as the battle clock crosses each round
--- boundary. nil until a battle sets it (passives then no-op, as before).
+-- boundary. nil until a battle sets it (passives then no-op). Never cleared after a
+-- battle; Main clears it (and unit tiles) when the battle ends. The Vampire / Werewolf
+-- swings also require isOnBattleMap (BUG-068).
 local _currentTimePhase = nil
 function RacePassiveService.SetTimePhase(phase)
 	_currentTimePhase = phase
@@ -131,12 +155,9 @@ function RacePassiveService.GetDamageDealtModifier(attacker, element, isAOE, tar
 		end
 	end
 
-	-- CATAU — Tidecaller: off water, all stats -10% → damage dealt -10%
-	if raceId == "RACE-CATAU" then
-		if not isOnWaterTile(attacker) then
-			mod = mod * 0.90
-		end
-	end
+	-- CATAU — Tidecaller: the off-water "-10% all primary stats" is now applied to the STATS
+	-- themselves (GetStatModifiers + RefreshConditionalStats, 2026-10-29); the old damage-dealt
+	-- x0.90 stand-in was removed so it is not counted twice.
 
 	-- TREANT — Forest Wrath (races row 'Treant', 2026-10-02): +15% damage dealt to
 	-- targets standing on Grassland / Forest / Clover Field terrain, or on a tile
@@ -215,11 +236,7 @@ function RacePassiveService.GetDamageReceivedModifier(defender, element, isAOE, 
 	-- occupying Water, Wet, or Ice" → as DEFENDER, off water: damage received +10%.
 	-- (BUGFIX 2026-10-03: moved here from GetDamageDealtModifier, where it read an
 	-- undefined global `defender` and so applied an unconditional +10% dealt.)
-	if raceId == "RACE-CATAU" then
-		if not isOnWaterTile(defender) then
-			mod = mod * 1.10
-		end
-	end
+	-- (Catau damage-received x1.10 stand-in removed 2026-10-29: the -10% is on the stats now.)
 
 	-- CELESTIAL — Radiant Grace (races row 'Celestial', 2026-10-02): Dark damage received +20%
 	if element == "Dark" and isRace(defender, "RACE-CELESTIAL") then
@@ -411,6 +428,16 @@ function RacePassiveService.GetStatModifiers(unit)
 		return { STR = -0.15 }
 	end
 
+	-- CATAU — Tidecaller (races row 'Catau'): "All primary stats -10% while not occupying Water,
+	-- Wet, or Ice." Only on the battle map (no penalty on the loadout screen). Kept in sync when
+	-- the unit changes tile by RefreshConditionalStats (2026-10-29).
+	if raceId == "RACE-CATAU" then
+		if isOnBattleMap(unit) and not isOnWaterTile(unit) then
+			return { STR = -0.10, AGI = -0.10, INT = -0.10, VIT = -0.10, DEX = -0.10, LUK = -0.10 }
+		end
+		return nil
+	end
+
 	-- DRAGONKIN — Dragonscale (races row 'Dragonkin', 2026-10-02): while a Burn
 	-- instance is active on this unit, all primary stats +15%. (Burn ticks are
 	-- nullified in StatusService.ProcessStartOfTurn, but the instance stays so
@@ -424,7 +451,9 @@ function RacePassiveService.GetStatModifiers(unit)
 	-- +10% during dusk and night. Reads getTimeOfDay() (time cycle, 2026-10-04).
 	-- VAMPIRE — Vampirism day/night swing (races row 'Vampire'): all primary stats
 	-- -25% during DAY, +25% during NIGHT (dawn/dusk neutral). Reads the same cycle.
-	if isRace(unit, "RACE-VAMPIRE") then
+	-- Battle map only (BUG-068, 2026-11-01): the phase is left on the last battle's value,
+	-- so without this the loadout / guild screens showed the swing between battles.
+	if isRace(unit, "RACE-VAMPIRE") and isOnBattleMap(unit) then
 		local tod = getTimeOfDay()
 		if tod == "Day" then
 			return { STR = -0.25, AGI = -0.25, INT = -0.25, VIT = -0.25, DEX = -0.25, LUK = -0.25 }
@@ -433,7 +462,7 @@ function RacePassiveService.GetStatModifiers(unit)
 		end
 	end
 
-	if isRace(unit, "RACE-WEREWOLF") then
+	if isRace(unit, "RACE-WEREWOLF") and isOnBattleMap(unit) then
 		local tod = getTimeOfDay()
 		if tod == "Dusk" or tod == "Night" then
 			return { STR = 0.10, AGI = 0.10, INT = 0.10, VIT = 0.10, DEX = 0.10, LUK = 0.10 }
@@ -478,8 +507,16 @@ end
 --
 -- DB (Vampire passive): Heal 15% of direct damage dealt,
 -- reduced to 5% for AOE damage.
--- Day/night stat modifier: DEFERRED (no time-of-day system).
+-- Day/night stat swing: GetStatModifiers (time cycle, built 2026-10-04).
 --------------------------------------------------
+
+-- FAIRY — Fae Grace "AOE damage received -25%" for area hits that are only marked AOE AFTER
+-- resolution (weapon-pattern splash / cleave etc.). CombatResolver.ApplyOutcome calls this only when
+-- the hit was not already treated as AOE inside the resolver (outcome.aoeResolved). 2026-10-29.
+function RacePassiveService.GetLateAoeReceivedMultiplier(defender)
+	if isRace(defender, "RACE-FAIRY") then return 0.75 end
+	return 1
+end
 
 function RacePassiveService.GetLifestealAmount(attacker, actualDamage, isAOE)
 	local raceId = getRaceId(attacker)
@@ -712,7 +749,7 @@ function RacePassiveService.ProcessZombieRevive(unit, ctPassed, units)
 			unit.isAlive = true
 			UnitSchema.ClearChannelState(unit)  -- never return holding a pre-death channel
 			unit._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
-			unit.currentHp = math.max(1, math.ceil(unit.maxHp * 0.25))
+			unit.currentHp = UnitSchema.ReviveHp(unit, 0.25)  -- revive traits apply (re-check 2026-10-29)
 			StatusService.WeakenVenomOnHeal(unit)  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 			unit.remainingRt = unit.startingRt or 400
 			unit.undyingWillUsed = true
@@ -736,7 +773,7 @@ function RacePassiveService.ProcessZombieRevive(unit, ctPassed, units)
 			unit.isAlive = true
 			UnitSchema.ClearChannelState(unit)  -- never return holding a pre-death channel
 			unit._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
-			unit.currentHp = math.ceil(unit.maxHp * 0.50)
+			unit.currentHp = UnitSchema.ReviveHp(unit, 0.50)  -- revive traits apply (re-check 2026-10-29)
 			StatusService.WeakenVenomOnHeal(unit)  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 			unit.remainingRt = unit.startingRt or 400
 			unit.zombieReviveUsed = true
@@ -784,7 +821,7 @@ function RacePassiveService.GetPushOverride(unit)
 	if raceId ~= "RACE-ANDROID" then return nil end
 	return {
 		reverseDirection = true,  -- Pull instead of Push
-		forceBonus = 3,           -- +3 Force
+		-- (forceBonus +3 removed 2026-10-29: the DB passive grants Push Range +3, not Force.)
 		minDistance = 2,          -- Cannot target adjacent
 		maxDistance = 4,          -- Extended reach (1 base + 3 bonus)
 		label = "Pull",          -- Display label
@@ -798,7 +835,7 @@ end
 -- canonical, idempotent rebuild ONLY when the condition flips, so effectiveStats /
 -- derivedStats track the Burn instance mid-battle.
 -- Called from CombatResolver.ApplyOutcome and the BattleCoordinator turn hooks.
--- TODO(day/night): add the Werewolf time-of-day flip here once it exists.
+-- Vampire / Werewolf time-of-day flips are handled below (built 2026-10-04).
 --------------------------------------------------
 
 local _equipmentService = nil
@@ -827,6 +864,7 @@ function RacePassiveService.RefreshConditionalStats(unit)
 		unit._raceBroken = broken
 		unit._dragonscaleActive = nil
 		unit._todStatActive = nil
+		unit._catauDry = nil
 		local rebuilt = rebuildStats(unit)
 		print(string.format("[RacePassiveService] Break %s on %s -> race ability %s (rebuilt=%s)",
 			broken and "started" or "ended", unit.name or "?", broken and "OFF" or "ON", tostring(rebuilt)))
@@ -842,6 +880,17 @@ function RacePassiveService.RefreshConditionalStats(unit)
 			"[RacePassiveService] Dragonkin Dragonscale: %s Burn %s -> primary stats %s (rebuilt=%s)",
 			unit.name or "?", burning and "ACTIVE" or "ended", burning and "+15%" or "normal", tostring(rebuilt)
 		))
+		return rebuilt
+	end
+
+	-- CATAU — Tidecaller: rebuild when the unit moves onto / off Water, Wet or Ice (2026-10-29).
+	if isRace(unit, "RACE-CATAU") then
+		local dry = isOnBattleMap(unit) and not isOnWaterTile(unit)
+		if unit._catauDry == dry then return false end
+		unit._catauDry = dry
+		local rebuilt = rebuildStats(unit)
+		print(string.format("[RacePassiveService] Catau Tidecaller: %s %s -> primary stats %s (rebuilt=%s)",
+			unit.name or "?", dry and "off water" or "on water", dry and "-10%" or "normal", tostring(rebuilt)))
 		return rebuilt
 	end
 
@@ -897,6 +946,16 @@ function RacePassiveService.OnTurnStart(unit, state)
 	end
 
 	if not unit or not unit.isAlive then return end
+
+	-- AMPHIBIOUS tag (race_tags row 3, 2026-10-29): "At start of turn, if not on Shallow Water,
+	-- Deep Water, Ice, or Wet tile, apply Movement Range -1 until next turn." A race TAG, so it
+	-- stays on while Broken. Read by StatCalcService (battle movement).
+	if RacePassiveService.HasRaceTag(unit, "Amphibious") then
+		-- Same water rule as Catau Tidecaller (Swamp counts: the DB tags it Water), re-check 2026-10-29.
+		unit._amphibiousDry = not isOnWaterTile(unit)
+	else
+		unit._amphibiousDry = nil
+	end
 
 	-- TROLL — Regrowth (races row 'Troll'): at the start of each of its turns,
 	-- regenerate 20% of MISSING HP = round(0.20 x (Max HP - Current HP)).

@@ -208,7 +208,7 @@ end
 local HL_STYLE = {
 	active  = { out = Color3.fromRGB(255, 200, 80),  outT = 0,   fill = Color3.fromRGB(255, 220, 100), fillT = 0.85 },
 	target  = { out = Color3.fromRGB(255, 60, 60),   outT = 0,   fill = Color3.fromRGB(255, 80, 80),   fillT = 0.80 },
-	ko      = { out = Color3.fromRGB(80, 80, 80),    outT = 0.3, fill = Color3.fromRGB(40, 40, 40),    fillT = 0.60 },
+	ko      = { out = Color3.fromRGB(120, 120, 120), outT = 1,   fill = Color3.fromRGB(140, 140, 140), fillT = 0.35 },  -- grey wash, no outline (2026-10-30)
 	channel = { out = Color3.fromRGB(100, 150, 255),  outT = 0,   fill = Color3.fromRGB(120, 170, 255), fillT = 0.75 },
 	guard   = { out = Color3.fromRGB(100, 180, 255),  outT = 0,   fill = Color3.fromRGB(100, 200, 255), fillT = 0.80 },
 }

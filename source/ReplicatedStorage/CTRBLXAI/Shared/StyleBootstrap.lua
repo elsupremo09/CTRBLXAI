@@ -62,6 +62,9 @@ local COLOR_TOKENS = {
 	RarityEpic           = Color3.fromRGB(180, 80, 255),
 	RarityExalted        = Color3.fromRGB(255, 90, 170),
 	RarityLegendary      = Color3.fromRGB(255, 200, 50),
+	RarityMythic         = Color3.fromRGB(255, 120, 30),
+	RarityTranscendent   = Color3.fromRGB(70, 225, 230),
+	RarityUnique         = Color3.fromRGB(190, 20, 60),
 	RarityRare           = Color3.fromRGB(70, 140, 255),
 	RarityUncommon       = Color3.fromRGB(80, 200, 80),
 	SelectedItem         = Color3.fromRGB(40, 35, 20),
@@ -267,6 +270,15 @@ function StyleBootstrap.Init()
 	})
 	addRule(ds, ".RarityLegendary", {
 		BackgroundColor3 = "$RarityLegendary",
+	})
+	addRule(ds, ".RarityMythic", {
+		BackgroundColor3 = "$RarityMythic",
+	})
+	addRule(ds, ".RarityTranscendent", {
+		BackgroundColor3 = "$RarityTranscendent",
+	})
+	addRule(ds, ".RarityUnique", {
+		BackgroundColor3 = "$RarityUnique",
 	})
 
 	-- Status effect tag rules

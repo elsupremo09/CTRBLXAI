@@ -1,0 +1,1024 @@
+{
+ "_choices_by_RF_level": {
+  "1": 3,
+  "2": 3,
+  "3": 4,
+  "4": 4,
+  "5": 4,
+  "6": 5,
+  "7": 5,
+  "8": 6,
+  "9": 6,
+  "10": null
+ },
+ "db_delta_vs_prefix_backup": {
+  "guild_facilities": {
+   "rows_changed": [
+    31,
+    37,
+    38,
+    41,
+    48,
+    51,
+    55,
+    57
+   ],
+   "rule_text_changed": [
+    31,
+    38,
+    48,
+    51,
+    55,
+    57
+   ]
+  },
+  "materials_system": {
+   "rows_changed": [
+    41,
+    42
+   ],
+   "rule_text_changed": [
+    42
+   ]
+  },
+  "economy_framework": {
+   "rows_changed": [
+    15,
+    19
+   ],
+   "rule_text_changed": []
+  },
+  "loot_progression": {
+   "rows_changed": [
+    24,
+    26,
+    69
+   ],
+   "rule_text_changed": []
+  },
+  "equipment_schema": [
+   "reroll_count"
+  ]
+ },
+ "rounding": {
+  "int_vs_exact_mismatches": 0,
+  "float_vs_int_level_mismatches": 98,
+  "twoH_common_L1_99_0pct": 13279,
+  "twoH_epic_L1_99_0pct": 53233,
+  "oneH_unc_to_rare_L1_50_0pct": 3018,
+  "epic_fee_half_gold_cases": 158,
+  "half_cases_rounded_down_correctly": true,
+  "half_cases_in_1H_2H": 0,
+  "offhand_rare_L2": [
+   [
+    "Off-Hand",
+    "Rare",
+    2,
+    "857/2",
+    428
+   ]
+  ],
+  "epic_fee_table_unchanged": {
+   "1H L20": [
+    1380,
+    1242,
+    966
+   ],
+   "1H L50": [
+    1980,
+    1782,
+    1386
+   ],
+   "1H L99": [
+    2960,
+    2664,
+    2072
+   ],
+   "2H L20": [
+    2070,
+    1863,
+    1449
+   ],
+   "2H L50": [
+    2970,
+    2673,
+    2079
+   ],
+   "2H L99": [
+    4440,
+    3996,
+    3108
+   ]
+  }
+ },
+ "X3": {
+  "1H": {
+   "fee": 22201,
+   "fee_mats": [
+    38,
+    40,
+    40,
+    40,
+    38
+   ],
+   "expected": 22201,
+   "honest_enchant_first": 29548,
+   "upgrade_common_then_enchant": 29548,
+   "saving": 0,
+   "old_fee_at_BS10": 19441
+  },
+  "2H": {
+   "fee": 33299,
+   "fee_mats": [
+    38,
+    40,
+    40,
+    40,
+    38
+   ],
+   "expected": 33299,
+   "honest_enchant_first": 44348,
+   "upgrade_common_then_enchant": 44348,
+   "saving": 0,
+   "old_fee_at_BS10": 29166
+  },
+  "Off-Hand": {
+   "fee": 13317,
+   "fee_mats": [
+    38,
+    40,
+    40,
+    40,
+    38
+   ],
+   "expected": null,
+   "honest_enchant_first": 17709,
+   "upgrade_common_then_enchant": 17709,
+   "saving": 0,
+   "old_fee_at_BS10": 11666
+  },
+  "Body": {
+   "fee": 17763,
+   "fee_mats": [
+    38,
+    40,
+    40,
+    40,
+    38
+   ],
+   "expected": 17763,
+   "honest_enchant_first": 23630,
+   "upgrade_common_then_enchant": 23630,
+   "saving": 0,
+   "old_fee_at_BS10": 15555
+  },
+  "Head": {
+   "fee": 13317,
+   "fee_mats": [
+    38,
+    40,
+    40,
+    40,
+    38
+   ],
+   "expected": null,
+   "honest_enchant_first": 17709,
+   "upgrade_common_then_enchant": 17709,
+   "saving": 0,
+   "old_fee_at_BS10": 11666
+  },
+  "Gloves": {
+   "fee": 11106,
+   "fee_mats": [
+    38,
+    40,
+    40,
+    40,
+    38
+   ],
+   "expected": null,
+   "honest_enchant_first": 14755,
+   "upgrade_common_then_enchant": 14755,
+   "saving": 0,
+   "old_fee_at_BS10": 9721
+  },
+  "Feet": {
+   "fee": 11106,
+   "fee_mats": [
+    38,
+    40,
+    40,
+    40,
+    38
+   ],
+   "expected": null,
+   "honest_enchant_first": 14755,
+   "upgrade_common_then_enchant": 14755,
+   "saving": 0,
+   "old_fee_at_BS10": 9721
+  },
+  "Accessory": {
+   "fee": 15537,
+   "fee_mats": [
+    38,
+    40,
+    40,
+    40,
+    38
+   ],
+   "expected": null,
+   "honest_enchant_first": 20667,
+   "upgrade_common_then_enchant": 20667,
+   "saving": 0,
+   "old_fee_at_BS10": 13611
+  },
+  "per_level_cases": 25872,
+  "per_level_positive_savings": 0,
+  "per_level_max_saving": [
+   0,
+   "1H",
+   "Common",
+   "Uncommon",
+   2,
+   1
+  ],
+  "boosted_late_enchant_extra_cost_1H": 2760,
+  "boosted_late_enchant_extra_cost_2H": 4133,
+  "downgrade_trick_max_saving": [
+   -31,
+   "Gloves",
+   1,
+   30,
+   29
+  ]
+ },
+ "X2": {
+  "common_gloves_L1_61_BS10": {
+   "gold": 1455,
+   "spent": [
+    19,
+    20,
+    20,
+    1,
+    0
+   ],
+   "refund": [
+    9,
+    10,
+    10,
+    0,
+    0
+   ],
+   "expected_refund": [
+    9,
+    10,
+    10,
+    0,
+    0
+   ],
+   "mats_in_sell": 1295,
+   "refund_sell": 595,
+   "net": -2155
+  },
+  "old_profitable_setups": [
+   {
+    "slot": "Gloves",
+    "rarity": "Common",
+    "L": "1->61",
+    "BS": 10,
+    "old_profit": 250,
+    "new_refund": [
+     9,
+     10,
+     10,
+     0,
+     0
+    ],
+    "new_profit": -2155
+   },
+   {
+    "slot": "Gloves",
+    "rarity": "Common",
+    "L": "1->62",
+    "BS": 10,
+    "old_profit": 112,
+    "new_refund": [
+     9,
+     10,
+     10,
+     1,
+     0
+    ],
+    "new_profit": -2193
+   },
+   {
+    "slot": "Gloves",
+    "rarity": "Common",
+    "L": "1->63",
+    "BS": 10,
+    "old_profit": 74,
+    "new_refund": [
+     9,
+     10,
+     10,
+     1,
+     0
+    ],
+    "new_profit": -2331
+   },
+   {
+    "slot": "Feet",
+    "rarity": "Common",
+    "L": "1->61",
+    "BS": 10,
+    "old_profit": 250,
+    "new_refund": [
+     9,
+     10,
+     10,
+     0,
+     0
+    ],
+    "new_profit": -2155
+   },
+   {
+    "slot": "Feet",
+    "rarity": "Common",
+    "L": "1->62",
+    "BS": 10,
+    "old_profit": 112,
+    "new_refund": [
+     9,
+     10,
+     10,
+     1,
+     0
+    ],
+    "new_profit": -2193
+   },
+   {
+    "slot": "Feet",
+    "rarity": "Common",
+    "L": "1->63",
+    "BS": 10,
+    "old_profit": 74,
+    "new_refund": [
+     9,
+     10,
+     10,
+     1,
+     0
+    ],
+    "new_profit": -2331
+   }
+  ],
+  "epic_L1_80_BS10": {
+   "T4_spent": 60,
+   "T4_back": 31,
+   "T4_back_without_plus1": 30,
+   "pct_incl_plus1": 51.7,
+   "old": 119
+  },
+  "t5_as_t4_example_common_1H_L80_99_BS10": {
+   "T5_spent": 19,
+   "refund": [
+    0,
+    0,
+    0,
+    9,
+    0
+   ]
+  },
+  "exhaustive": {
+   "cases": 1208064,
+   "profitable": 0,
+   "best": [
+    -16,
+    "Gloves",
+    "Common",
+    1,
+    2,
+    10,
+    [
+     0,
+     0,
+     0,
+     0,
+     0
+    ]
+   ],
+   "any_T5_returned": 0,
+   "best_by_rarity": {
+    "Common": [
+     -16,
+     "Gloves",
+     1,
+     2,
+     10
+    ],
+    "Uncommon": [
+     -22,
+     "Gloves",
+     1,
+     2,
+     10
+    ],
+    "Rare": [
+     -29,
+     "Gloves",
+     1,
+     2,
+     10
+    ],
+    "Epic": [
+     -52,
+     "Gloves",
+     1,
+     2,
+     10
+    ],
+    "Exalted": [
+     -70,
+     "Gloves",
+     1,
+     2,
+     10
+    ],
+    "Legendary": [
+     -87,
+     "Gloves",
+     1,
+     2,
+     10
+    ],
+    "Mythic": [
+     -151,
+     "Gloves",
+     1,
+     2,
+     10
+    ],
+    "Transcendent": [
+     -246,
+     "Gloves",
+     1,
+     2,
+     10
+    ]
+   }
+  },
+  "t4_t5_rounding_reading_max_diff": 1
+ },
+ "X1": {
+  "cases": 953568,
+  "profitable": 0,
+  "best": [
+   -11,
+   "Gloves",
+   "Common",
+   "Uncommon",
+   1,
+   1,
+   1,
+   [
+    1
+   ]
+  ],
+  "uncommon_gloves_feet_L61_99_fresh_best": [
+   -37,
+   "Gloves",
+   61,
+   37,
+   [
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    0,
+    0,
+    0,
+    0,
+    0
+   ]
+  ],
+  "uncommon_to_rare_fresh_plus1_count": [
+   0,
+   7920
+  ]
+ },
+ "exploit_search_7": {
+  "cases": 331968,
+  "best_downgrade_first_gain": [
+   0,
+   "1H",
+   "Rare",
+   1,
+   10,
+   9,
+   1
+  ],
+  "best_upgrade_first_gain": [
+   -54,
+   "Gloves",
+   "Rare",
+   1,
+   19,
+   20,
+   10
+  ],
+  "t5_to_t4_route": {
+   "Gloves Common": {
+    "T5_in": 19,
+    "T4_out": 9,
+    "gold": 947,
+    "gold_per_T4": 105.2,
+    "sell_value_lost": 4797
+   },
+   "Gloves Rare": {
+    "T5_in": 38,
+    "T4_out": 19,
+    "gold": 2384,
+    "gold_per_T4": 125.5,
+    "sell_value_lost": 9984
+   },
+   "Gloves Epic": {
+    "T5_in": 57,
+    "T4_out": 28,
+    "gold": 3817,
+    "gold_per_T4": 136.3,
+    "sell_value_lost": 15267
+   },
+   "1H Common": {
+    "T5_in": 19,
+    "T4_out": 9,
+    "gold": 1903,
+    "gold_per_T4": 211.4,
+    "sell_value_lost": 5753
+   },
+   "1H Rare": {
+    "T5_in": 38,
+    "T4_out": 19,
+    "gold": 4776,
+    "gold_per_T4": 251.4,
+    "sell_value_lost": 12376
+   },
+   "1H Epic": {
+    "T5_in": 57,
+    "T4_out": 28,
+    "gold": 7643,
+    "gold_per_T4": 273.0,
+    "sell_value_lost": 19093
+   },
+   "2H Common": {
+    "T5_in": 19,
+    "T4_out": 9,
+    "gold": 2861,
+    "gold_per_T4": 317.9,
+    "sell_value_lost": 6711
+   },
+   "2H Rare": {
+    "T5_in": 38,
+    "T4_out": 19,
+    "gold": 7169,
+    "gold_per_T4": 377.3,
+    "sell_value_lost": 14769
+   },
+   "2H Epic": {
+    "T5_in": 57,
+    "T4_out": 28,
+    "gold": 11474,
+    "gold_per_T4": 409.8,
+    "sell_value_lost": 22924
+   }
+  }
+ },
+ "X4": {
+  "rejoin_changes": 0,
+  "remove_add_changes": 0,
+  "keep_reroll_add_changes": 0,
+  "upgrade_changes": 0,
+  "rf_level_not_prefix": 0,
+  "history_mismatch": 0,
+  "keep_reroll_same_options_after": 0,
+  "lines_same_options": 0,
+  "line_pairs": 287,
+  "steps": 24000,
+  "rerolls": 400,
+  "paid_walk_1H_empty_item": {
+   "RF L1": {
+    "shown": 3,
+    "deepest_reachable": 4,
+    "cost_per_extra": "1 T1 Add + 1 Remove (1.5x Add-T1 gold) + 1 Uncommon Essence, not refunded"
+   },
+   "RF L2": {
+    "shown": 3,
+    "deepest_reachable": 4,
+    "cost_per_extra": "1 T1 Add + 1 Remove (1.5x Add-T1 gold) + 1 Uncommon Essence, not refunded"
+   },
+   "RF L3": {
+    "shown": 4,
+    "deepest_reachable": 5,
+    "cost_per_extra": "1 T1 Add + 1 Remove (1.5x Add-T1 gold) + 1 Uncommon Essence, not refunded"
+   },
+   "RF L4": {
+    "shown": 4,
+    "deepest_reachable": 5,
+    "cost_per_extra": "1 T1 Add + 1 Remove (1.5x Add-T1 gold) + 1 Uncommon Essence, not refunded"
+   },
+   "RF L5": {
+    "shown": 4,
+    "deepest_reachable": 6,
+    "cost_per_extra": "1 T1 Add + 1 Remove (1.5x Add-T1 gold) + 1 Uncommon Essence, not refunded"
+   },
+   "RF L6": {
+    "shown": 5,
+    "deepest_reachable": 7,
+    "cost_per_extra": "1 T1 Add + 1 Remove (1.5x Add-T1 gold) + 1 Uncommon Essence, not refunded"
+   },
+   "RF L7": {
+    "shown": 5,
+    "deepest_reachable": 7,
+    "cost_per_extra": "1 T1 Add + 1 Remove (1.5x Add-T1 gold) + 1 Uncommon Essence, not refunded"
+   },
+   "RF L8": {
+    "shown": 6,
+    "deepest_reachable": 8,
+    "cost_per_extra": "1 T1 Add + 1 Remove (1.5x Add-T1 gold) + 1 Uncommon Essence, not refunded"
+   },
+   "RF L9": {
+    "shown": 6,
+    "deepest_reachable": 8,
+    "cost_per_extra": "1 T1 Add + 1 Remove (1.5x Add-T1 gold) + 1 Uncommon Essence, not refunded"
+   },
+   "RF L10": "full list"
+  },
+  "walk_cost_1H_L50_RF_L1": 135
+ },
+ "L6": {
+  "upgrade_dismantle_sell_max": -16,
+  "enchant_dismantle_sell_max_marginal": -11,
+  "enchant_sell_best": {
+   "1H": [
+    -22,
+    "Common",
+    "Uncommon",
+    1,
+    27
+   ],
+   "2H": [
+    -34,
+    "Common",
+    "Uncommon",
+    1,
+    27
+   ],
+   "Off-Hand": [
+    -13,
+    "Common",
+    "Uncommon",
+    1,
+    27
+   ],
+   "Body": [
+    -18,
+    "Common",
+    "Uncommon",
+    1,
+    27
+   ],
+   "Head": [
+    -13,
+    "Common",
+    "Uncommon",
+    1,
+    27
+   ],
+   "Gloves": [
+    -11,
+    "Common",
+    "Uncommon",
+    1,
+    27
+   ],
+   "Feet": [
+    -11,
+    "Common",
+    "Uncommon",
+    1,
+    27
+   ],
+   "Accessory": [
+    -15,
+    "Common",
+    "Uncommon",
+    1,
+    27
+   ]
+  },
+  "facility_total": 70927,
+  "workshop_table": [
+   157,
+   177,
+   211,
+   259,
+   320,
+   395,
+   484,
+   586,
+   702,
+   832
+  ],
+  "facilities": {
+   "free classic (Runeforge after core 6)": {
+    "maxed": "8/10",
+    "leftover": 86,
+    "expense_ratio_pct": 105.9
+   },
+   "boost classic (Runeforge after core 6)": {
+    "maxed": "10/10",
+    "leftover": 37598,
+    "expense_ratio_pct": 83.1
+   },
+   "free crafter (Runeforge inside core)": {
+    "maxed": "8/10",
+    "leftover": 69,
+    "expense_ratio_pct": 106.5
+   },
+   "boost crafter (Runeforge inside core)": {
+    "maxed": "10/10",
+    "leftover": 36660,
+    "expense_ratio_pct": 83.5
+   },
+   "free rush (Guild Hall + Runeforge first)": {
+    "maxed": "7/10",
+    "leftover": 1592,
+    "expense_ratio_pct": 106.6
+   },
+   "boost rush (Guild Hall + Runeforge first)": {
+    "maxed": "10/10",
+    "leftover": 34978,
+    "expense_ratio_pct": 84.3
+   }
+  },
+  "essence_drop_share_base": 25.0,
+  "essence_share_sensitivity": {
+   "drops 0.2 / elite 0.017": 37.1,
+   "drops 0.2 / elite 0.034": 40.0,
+   "drops 0.2 / elite 0.068": 45.2,
+   "drops 0.4 / elite 0.017": 22.8,
+   "drops 0.4 / elite 0.034": 25.0,
+   "drops 0.4 / elite 0.068": 29.2,
+   "drops 0.8 / elite 0.017": 12.9,
+   "drops 0.8 / elite 0.034": 14.3,
+   "drops 0.8 / elite 0.068": 17.1,
+   "drops 1.0 / elite 0.017": 10.6,
+   "drops 1.0 / elite 0.034": 11.8,
+   "drops 1.0 / elite 0.068": 14.1
+  },
+  "epic_supply_L50_80": {
+   "free classic (Runeforge after core 6)": {
+    "RF10_at": 90.2,
+    "crafted": 0.0,
+    "natural": 4.0
+   },
+   "boost classic (Runeforge after core 6)": {
+    "RF10_at": 60.8,
+    "crafted": 9.1,
+    "natural": 4.0
+   },
+   "free crafter (Runeforge inside core)": {
+    "RF10_at": 88.4,
+    "crafted": 0.0,
+    "natural": 4.0
+   },
+   "boost crafter (Runeforge inside core)": {
+    "RF10_at": 57.4,
+    "crafted": 10.7,
+    "natural": 4.0
+   },
+   "free rush (Guild Hall + Runeforge first)": {
+    "RF10_at": 49.9,
+    "crafted": 8.3,
+    "natural": 4.0
+   },
+   "boost rush (Guild Hall + Runeforge first)": {
+    "RF10_at": 29.8,
+    "crafted": 14.2,
+    "natural": 4.0
+   }
+  },
+  "epic_supply_sensitivity": {
+   "drops 0.2": {
+    "free rush (Guild Hall + Runeforge first)": {
+     "natural": 2.0,
+     "crafted": 8.3
+    },
+    "boost rush (Guild Hall + Runeforge first)": {
+     "natural": 2.0,
+     "crafted": 8.3
+    },
+    "boost classic (Runeforge after core 6)": {
+     "natural": 2.0,
+     "crafted": 5.3
+    },
+    "boost crafter (Runeforge inside core)": {
+     "natural": 2.0,
+     "crafted": 6.3
+    }
+   },
+   "drops 0.4": {
+    "free rush (Guild Hall + Runeforge first)": {
+     "natural": 4.0,
+     "crafted": 8.3
+    },
+    "boost rush (Guild Hall + Runeforge first)": {
+     "natural": 4.0,
+     "crafted": 14.2
+    },
+    "boost classic (Runeforge after core 6)": {
+     "natural": 4.0,
+     "crafted": 9.1
+    },
+    "boost crafter (Runeforge inside core)": {
+     "natural": 4.0,
+     "crafted": 10.7
+    }
+   },
+   "drops 0.8": {
+    "free rush (Guild Hall + Runeforge first)": {
+     "natural": 7.9,
+     "crafted": 8.3
+    },
+    "boost rush (Guild Hall + Runeforge first)": {
+     "natural": 7.9,
+     "crafted": 14.2
+    },
+    "boost classic (Runeforge after core 6)": {
+     "natural": 7.9,
+     "crafted": 9.1
+    },
+    "boost crafter (Runeforge inside core)": {
+     "natural": 7.9,
+     "crafted": 10.7
+    }
+   }
+  },
+  "wall": {
+   "_definition": "breaks at = first item count that no longer fits (same as guild_facilities 38 \"break at 12 items\"); [no conversion, with 3:1 conversion]",
+   "R0 no dismantling": [
+    12,
+    13
+   ],
+   "R1 every item dismantled after its band (late refunds)": [
+    12,
+    14
+   ],
+   "R3 mid-band replacement (refund usable in tier)": [
+    14,
+    16
+   ],
+   "R3 + Rare-start +1 on every item": [
+    15,
+    16
+   ],
+   "natural_RarePlus_plus1_supply": {
+    "T3": 8.3,
+    "T4": 15.8
+   },
+   "R3 + natural Rare+ loot dismantled (+1)": [
+    15,
+    16
+   ],
+   "pool upper bound (every refund 50%, usable in tier)": [
+    23,
+    29
+   ],
+   "T5->T4 dismantle route only (upper bound: T5 must be in hand during L61-80)": [
+    12,
+    15
+   ],
+   "R3 + T5->T4 route (upper bound)": [
+    14,
+    18
+   ],
+   "pct_of_T3T4_budget": {
+    "10": 89.2,
+    "12": 107.0,
+    "13": 115.9,
+    "15": 133.7
+   },
+   "first_run": {
+    "no_dismantle": 12,
+    "with_dismantle": "12-15",
+    "with_X1": 17
+   }
+  }
+ },
+ "_meta": {
+  "seed": 20261101,
+  "formulas_loaded_first_run": 40,
+  "rule_checks_added": 16,
+  "provenance_recheck": {
+   "Dismantle per tier": {
+    "table": "guild_facilities",
+    "row": 51,
+    "col": "rule",
+    "found": true
+   },
+   "Refund summary": {
+    "table": "materials_system",
+    "row": 42,
+    "col": "rule",
+    "found": true
+   },
+   "Catch-up discount by level": {
+    "table": "guild_facilities",
+    "row": 48,
+    "col": "rule",
+    "found": true
+   },
+   "Fixed Add offers / per-line reroll / round down": {
+    "table": "guild_facilities",
+    "row": 55,
+    "col": "rule",
+    "found": true
+   },
+   "Reroll count field": {
+    "table": "equipment_schema",
+    "row": "reroll_count",
+    "col": "rule",
+    "found": true
+   },
+   "Epic fee round down": {
+    "table": "guild_facilities",
+    "row": 57,
+    "col": "rule",
+    "found": true
+   },
+   "Blacksmith gold round down": {
+    "table": "economy_framework",
+    "row": 19,
+    "col": "notes",
+    "found": true
+   },
+   "Wall benchmark": {
+    "table": "guild_facilities",
+    "row": 38,
+    "col": "rule",
+    "found": true
+   },
+   "Material income": {
+    "table": "materials_system",
+    "row": 36,
+    "col": "rule",
+    "found": true
+   },
+   "Drops estimate": {
+    "table": "loot_progression",
+    "row": 24,
+    "col": "notes",
+    "found": true
+   },
+   "Elite estimate": {
+    "table": "loot_progression",
+    "row": 26,
+    "col": "notes",
+    "found": true
+   },
+   "Elite estimate 69": {
+    "table": "loot_progression",
+    "row": 69,
+    "col": "notes",
+    "found": true
+   },
+   "Essence estimate": {
+    "table": "materials_system",
+    "row": 41,
+    "col": "notes",
+    "found": true
+   },
+   "Facility total": {
+    "table": "guild_facilities",
+    "row": 5,
+    "col": "rule",
+    "found": true
+   },
+   "Downgrade free": {
+    "table": "economy_framework",
+    "row": 21,
+    "col": "rule",
+    "found": true
+   },
+   "Conversion one-way": {
+    "table": "materials_system",
+    "row": 25,
+    "col": "rule",
+    "found": true
+   }
+  },
+  "db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\CTRBLXAI.db"
+ }
+}

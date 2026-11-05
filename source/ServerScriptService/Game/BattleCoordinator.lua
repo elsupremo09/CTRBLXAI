@@ -275,7 +275,10 @@ local function getSideAlive(state, side)
 		-- 12:26). Was: KO'd Zombies with an unused revive kept their side in the battle.
 		-- Item devices (2026-10-26: turret, drone, decoy, pylon) are equipment, not
 		-- combatants: a side whose only survivors are devices has lost.
-		if unit.side == side and unit.isAlive and not unit.isItemDevice then
+		-- Summoned units (USER RULING 2026-10-30, both sides: Conjure Sentinel/Wisp/Mender,
+		-- Summon Decoy/Turret/Ward Totem) don't count either: a side whose only survivors
+		-- are summons has lost. Was: an enemy Sentinel or Decoy kept the battle going.
+		if unit.side == side and unit.isAlive and not unit.isItemDevice and not unit.isSummon then
 			count = count + 1
 		end
 	end
@@ -554,6 +557,15 @@ function BattleCoordinator.AdvanceClock(state)
 	-- to act and can heal on its own turn, and we must not re-add RT to the unit already selected).
 	-- The once-per-turn flag (reset in that unit's OnTurnStart) caps this at one heal per turn-cycle.
 	-- Deferred require: CommandService requires BattleCoordinator at load, so resolve it at call time.
+	-- Feinting Flurry evasion debuff (DOC-TWINBLADE-02, 2026-10-28): -15% Evasiveness for 1000 CT.
+	-- Pure-code timer (no authored status exists yet); expires here on the clock.
+	for _, u in ipairs(state.units) do
+		if u._feintEvaExpireCt and (state.ct or 0) >= u._feintEvaExpireCt then
+			u._feintEvaPenalty = nil
+			u._feintEvaExpireCt = nil
+		end
+	end
+
 	do
 		local _CommandService = (require :: any)(script.Parent.CommandService)
 		for _, unit in ipairs(state.units) do
@@ -665,7 +677,8 @@ function BattleCoordinator.AdvanceClock(state)
 		local _ri = math.floor((state.ct or 0) / 1000)
 		if state._prioRound ~= _ri then
 			state._prioRound = _ri
-			for _, _u in ipairs(state.units) do _u._actedThisRound = false end
+			-- Doctrine round end (2026-10-28): Sentinel charge / Shieldbearer RT bonus expire.
+			for _, _u in ipairs(state.units) do _u._actedThisRound = false; DoctrinePassiveService.OnRoundEnd(_u); _u._pasElectricNegated = nil end
 		end
 		nextUnit._actedThisRound = true
 	end
@@ -679,6 +692,11 @@ function BattleCoordinator.AdvanceClock(state)
 	-- We still give AP so EndTurn doesn't error, but the unit won't use it.
 	UnitSchema.RefreshAp(nextUnit)
 	nextUnit.currentAp = AP_PER_TURN_STANDARD
+	-- Sluggish Finisher (F-162): AP lost while it was not this unit's turn is taken now. 2026-10-28.
+	if nextUnit._sluggishPendingAp then
+		nextUnit._sluggishPendingAp = nil
+		nextUnit.currentAp = math.max(0, nextUnit.currentAp - 1)
+	end
 
 	-- Reset doctrine per-turn state (Slice 4H)
 	DoctrinePassiveService.OnTurnStart(nextUnit)
@@ -747,7 +765,7 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 			local _ri = math.floor((state.ct or 0) / 1000)
 			if state._prioRound ~= _ri then
 				state._prioRound = _ri
-				for _, _u in ipairs(state.units) do _u._actedThisRound = false end
+				for _, _u in ipairs(state.units) do _u._actedThisRound = false; DoctrinePassiveService.OnRoundEnd(_u); _u._pasElectricNegated = nil end
 			end
 			unit._actedThisRound = true
 		end
@@ -755,6 +773,10 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 		state.dotEvents = dotEvents
 		UnitSchema.RefreshAp(unit)
 		unit.currentAp = AP_PER_TURN_STANDARD
+		if unit._sluggishPendingAp then  -- Sluggish Finisher (F-162), see above
+			unit._sluggishPendingAp = nil
+			unit.currentAp = math.max(0, unit.currentAp - 1)
+		end
 		DoctrinePassiveService.OnTurnStart(unit)
 		ArmorPassiveService.OnTurnStart(unit)
 		-- Race start-of-turn hooks (2026-10-02): Troll Regrowth, Dragonkin resync.
@@ -903,6 +925,9 @@ function BattleCoordinator.EndTurn(state)
 	unit._nextTurnCtMult = nil
 	-- Steadfast Strike displacement-immunity is one-shot: clear at the unit's own turn end.
 	unit._displacementImmune = nil
+	-- FT-008 Skirmisher Greaves: "next direct damage action THIS turn" -- the window closes at the
+	-- wearer's turn end, so counter-attacks on enemy turns no longer get +15% (2026-10-29).
+	unit._armorPathCostThisTurn = 0
 	-- Fortify on Kill lasts one round; Retaliation Guard is "this round" — clear both at turn end.
 	unit._fortifyMult = nil
 	unit._retaliationGuard = nil

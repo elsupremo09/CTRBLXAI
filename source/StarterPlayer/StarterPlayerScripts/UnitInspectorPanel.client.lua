@@ -1,5 +1,5 @@
 -- UnitInspectorPanel.client.lua
--- CTRBLXAI | 5-Tab Unit Inspector (Basic / Stats / Equip / Skills / Outfit)
+-- CTRBLXAI | 5-Tab Unit Inspector (Stats / Passive / Gears / Skills / Outfit)
 --
 -- Opens when player clicks unit portrait or fires InspectUnit.
 -- Server sends full data package; client renders a tabbed panel.
@@ -7,8 +7,12 @@
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
+local GuiService        = game:GetService("GuiService")
 
 local player = Players.LocalPlayer
+-- Forward-declared (2026-10-29) so the Passive tab's Gear Passives list can use the same slot
+-- labels as the Gears tab; assigned with the equipment-tab constants further down.
+local SLOT_LABELS
 
 local BattleEvents = require(
 	ReplicatedStorage
@@ -68,7 +72,7 @@ end
 --------------------------------------------------
 
 local panelGui = nil
-local currentTab = "basic"
+local currentTab = "stats" -- first tab (2026-10-29: Stats > Passive > Gears > Skills > Outfit)
 local clickOutsideConn = nil
 local detailOverlayGui = nil
 -- OBS Phase 2c-0: the OBS object tile shown in the full inspector, so ObjectChanged
@@ -110,6 +114,8 @@ local function createLabel(parent, props)
 	lbl.Text = props.Text or ""
 	lbl.BorderSizePixel = 0
 	lbl.LayoutOrder = props.Order or 0
+	-- Optional: grow to fit wrapped text (2026-10-29, the Passive tab's half-width columns).
+	if props.AutoY then lbl.AutomaticSize = Enum.AutomaticSize.Y end
 	lbl.Parent = parent
 	if props.Padding then
 		local pad = Instance.new("UIPadding")
@@ -573,72 +579,127 @@ end
 -- TAB: BASIC (Active Effects + Traits)
 --------------------------------------------------
 
-local function renderBasicTab(content, data, panelH)
+local function renderPassiveTab(content, data, panelH)
 	local order = 1
 
-	-- ACTIVE EFFECTS (moved from Stats tab)
+	-- ACTIVE EFFECTS stays full width on top (battle-only status strip).
 	createSection(content, "ACTIVE EFFECTS", order); order = order + 1
 	order = renderActiveEffects(content, data, order, panelH)
 
-	-- RACE PASSIVE
-	createSection(content, "RACE PASSIVE", order); order = order + 1
-	if data.racePassiveName then
-		createLabel(content, {
-			Text = "  " .. data.racePassiveName,
-			Size = UDim2.new(1, 0, 0, 14),
+	-- Two columns below (user 2026-10-29), mirroring the Loadout Info > Passives view:
+	-- left = the unit's own passives (perk, flaw, race, doctrine), right = gear passives.
+	-- Labels grow to fit (AutoY) because the columns are half width.
+	local cols = Instance.new("Frame")
+	cols.Name = "PassiveColumns"
+	cols.Size = UDim2.new(1, 0, 0, 0)
+	cols.AutomaticSize = Enum.AutomaticSize.Y
+	cols.BackgroundTransparency = 1; cols.BorderSizePixel = 0
+	cols.LayoutOrder = order; order = order + 1
+	local function makeCol(name: string, xScale: number, xOffset: number): Frame
+		local c = Instance.new("Frame")
+		c.Name = name
+		c.Size = UDim2.new(0.5, -3, 0, 0)
+		c.Position = UDim2.new(xScale, xOffset, 0, 0)
+		c.AutomaticSize = Enum.AutomaticSize.Y
+		c.BackgroundTransparency = 1; c.BorderSizePixel = 0
+		local lay = Instance.new("UIListLayout")
+		lay.Padding = UDim.new(0, 1)
+		lay.SortOrder = Enum.SortOrder.LayoutOrder
+		lay.Parent = c
+		c.Parent = cols
+		return c
+	end
+	local left = makeCol("OwnPassives", 0, 0)
+	local right = makeCol("GearPassives", 0.5, 3)
+	cols.Parent = content -- parent last (NET-004)
+
+	local lo = 0
+	local function nl() lo = lo + 1; return lo end
+	local ro = 0
+	local function nr() ro = ro + 1; return ro end
+
+	-- ===== LEFT: Perk, Flaw, Race, Doctrine (same order as the Loadout Info tab) =====
+	local function renderTrait(trait, isPerk)
+		createSection(left, isPerk and "PERSONAL PERK" or "PERSONAL FLAW", nl())
+		local tierTxt = trait.tier and (" [" .. trait.tier:gsub("^%l", string.upper) .. "]") or ""
+		createLabel(left, {
+			Text = "  " .. (trait.name or "Unknown") .. tierTxt,
+			Size = UDim2.new(1, 0, 0, 14), AutoY = true,
 			Font = Theme.Font.PrimaryBold,
-			Color = Theme.Colors.RarityEpic,
-			Order = order,
-		}); order = order + 1
-		if data.racePassiveEffect and data.racePassiveEffect ~= "" then
-			createLabel(content, {
-				Text = "  " .. data.racePassiveEffect,
-				Size = UDim2.new(1, 0, 0, 28),
+			Color = isPerk and Theme.Colors.RarityEpic or Theme.Colors.Danger,
+			Order = nl(),
+		})
+		if trait.effect and trait.effect ~= "" then
+			createLabel(left, {
+				Text = "  " .. trait.effect,
+				Size = UDim2.new(1, 0, 0, 0), AutoY = true,
 				TextSize = Theme.Text.Small(),
 				Color = Theme.Colors.TextSecondary,
-				Order = order,
-			}); order = order + 1
+				Order = nl(),
+			})
 		end
+	end
+	if data.perk or data.flaw then
+		if data.perk then renderTrait(data.perk, true) end
+		if data.flaw then renderTrait(data.flaw, false) end
 	else
-		createLabel(content, { Text = "  No race assigned", Order = order,
+		createSection(left, "PERSONAL TRAITS", nl())
+		createLabel(left, { Text = "  No traits assigned", Order = nl(), AutoY = true,
 			TextSize = Theme.Text.Small(), Color = Theme.Colors.TextDisabled })
-		order = order + 1
 	end
 
-	-- DOCTRINE
-	createSection(content, "DOCTRINE", order); order = order + 1
+	createSection(left, "RACE PASSIVE", nl())
+	if data.racePassiveName then
+		createLabel(left, {
+			Text = "  " .. data.racePassiveName,
+			Size = UDim2.new(1, 0, 0, 14), AutoY = true,
+			Font = Theme.Font.PrimaryBold,
+			Color = Theme.Colors.RarityEpic,
+			Order = nl(),
+		})
+		if data.racePassiveEffect and data.racePassiveEffect ~= "" then
+			createLabel(left, {
+				Text = "  " .. data.racePassiveEffect,
+				Size = UDim2.new(1, 0, 0, 0), AutoY = true,
+				TextSize = Theme.Text.Small(),
+				Color = Theme.Colors.TextSecondary,
+				Order = nl(),
+			})
+		end
+	else
+		createLabel(left, { Text = "  No race assigned", Order = nl(), AutoY = true,
+			TextSize = Theme.Text.Small(), Color = Theme.Colors.TextDisabled })
+	end
+
+	createSection(left, "DOCTRINE", nl())
 	if data.doctrine then
-		createLabel(content, {
+		createLabel(left, {
 			Text = "  " .. (data.doctrine.name or data.doctrineId or "Unknown"),
-			Size = UDim2.new(1, 0, 0, 14),
+			Size = UDim2.new(1, 0, 0, 14), AutoY = true,
 			Font = Theme.Font.PrimaryBold,
 			Color = Theme.Colors.Info,
-			Order = order,
-		}); order = order + 1
-		-- Doctrine passive (fixed 2026-10-23): the raw DoctrineData entry stores its passive
-		-- as passiveName/passiveEffect (NOT effect/description). The old code read keys that
-		-- never existed, so the passive line was always blank. Mirror the Loadout Info tab:
-		-- show the passive NAME (bold) then its EFFECT text. Fall back to effect/description
-		-- for any caller that still passes those.
+			Order = nl(),
+		})
+		-- The raw DoctrineData entry stores its passive as passiveName/passiveEffect (2026-10-23).
 		local docPassiveName = data.doctrine.passiveName
 		local docPassiveEffect = data.doctrine.passiveEffect or data.doctrine.effect or data.doctrine.description
 		if docPassiveName and docPassiveName ~= "" then
-			createLabel(content, {
+			createLabel(left, {
 				Text = "  " .. docPassiveName,
-				Size = UDim2.new(1, 0, 0, 14),
+				Size = UDim2.new(1, 0, 0, 14), AutoY = true,
 				Font = Theme.Font.PrimaryBold,
 				Color = Theme.Colors.RarityEpic,
-				Order = order,
-			}); order = order + 1
+				Order = nl(),
+			})
 		end
 		if docPassiveEffect and docPassiveEffect ~= "" then
-			createLabel(content, {
+			createLabel(left, {
 				Text = "  " .. docPassiveEffect,
-				Size = UDim2.new(1, 0, 0, 28),
+				Size = UDim2.new(1, 0, 0, 0), AutoY = true,
 				TextSize = Theme.Text.Small(),
 				Color = Theme.Colors.TextSecondary,
-				Order = order,
-			}); order = order + 1
+				Order = nl(),
+			})
 		end
 		-- Stat package
 		if data.doctrine.statPackage then
@@ -650,48 +711,52 @@ local function renderBasicTab(content, data, panelH)
 				end
 			end
 			if #parts > 0 then
-				createLabel(content, { Text = "  Stats: " .. table.concat(parts, "  "),
-					Order = order, Padding = 8 })
-				order = order + 1
+				createLabel(left, { Text = "  Stats: " .. table.concat(parts, "  "),
+					Order = nl(), Padding = 8, AutoY = true })
 			end
 		end
 	else
-		createLabel(content, { Text = "  No doctrine assigned", Order = order,
+		createLabel(left, { Text = "  No doctrine assigned", Order = nl(), AutoY = true,
 			TextSize = Theme.Text.Small(), Color = Theme.Colors.TextDisabled })
-		order = order + 1
 	end
 
-	-- TRAITS (Perk + Flaw) — Perks & Flaws Phase 1 (display only, no gameplay effect)
-	createSection(content, "TRAITS", order); order = order + 1
-	local function renderTrait(trait, isPerk)
-		if not trait then return end
-		local tierTxt = trait.tier and (" [" .. trait.tier:gsub("^%l", string.upper) .. "]") or ""
-		local col = isPerk and Theme.Colors.RarityEpic or Theme.Colors.Danger
-		local prefix = isPerk and "Perk: " or "Flaw: "
-		createLabel(content, {
-			Text = "  " .. prefix .. (trait.name or "Unknown") .. tierTxt,
-			Size = UDim2.new(1, 0, 0, 14),
-			Font = Theme.Font.PrimaryBold,
-			Color = col,
-			Order = order,
-		}); order = order + 1
-		if trait.effect and trait.effect ~= "" then
-			createLabel(content, {
-				Text = "  " .. trait.effect,
-				Size = UDim2.new(1, 0, 0, 28),
-				TextSize = Theme.Text.Small(),
-				Color = Theme.Colors.TextSecondary,
-				Order = order,
-			}); order = order + 1
-		end
+	-- ===== RIGHT: GEAR PASSIVES (same server-built list as the Loadout Info tab) =====
+	-- Slot name first, then one "Name - description" line per passive; switched-off
+	-- passives dimmed with the reason.
+	createSection(right, "GEAR PASSIVES", nr())
+	local function esc(t)
+		return (string.gsub(tostring(t), "[&<>]", { ["&"] = "&amp;", ["<"] = "&lt;", [">"] = "&gt;" }))
 	end
-	if data.perk or data.flaw then
-		renderTrait(data.perk, true)
-		renderTrait(data.flaw, false)
+	local function gpLabel(text, color, bold, rich)
+		local t = Instance.new("TextLabel")
+		t.Size = UDim2.new(1, 0, 0, 0); t.AutomaticSize = Enum.AutomaticSize.Y
+		t.BackgroundTransparency = 1; t.BorderSizePixel = 0
+		t.Font = bold and Theme.Font.PrimaryBold or Theme.Font.Primary
+		t.TextSize = Theme.Text.Small(); t.TextColor3 = color
+		t.TextXAlignment = Enum.TextXAlignment.Left; t.TextYAlignment = Enum.TextYAlignment.Top
+		t.TextWrapped = true; t.RichText = rich == true
+		t.Text = "  " .. text
+		t.LayoutOrder = nr()
+		t.Parent = right -- parent last (NET-004)
+	end
+	local groups = data.gearPassives
+	if type(groups) ~= "table" or #groups == 0 then
+		gpLabel("No passives from equipped gear", Theme.Colors.TextDisabled, false)
 	else
-		createLabel(content, { Text = "  No traits assigned", Order = order,
-			TextSize = Theme.Text.Small(), Color = Theme.Colors.TextDisabled })
-		order = order + 1
+		local nameHex = Theme.Colors.TextPrimary:ToHex()
+		for _, g in ipairs(groups) do
+			gpLabel((SLOT_LABELS and SLOT_LABELS[g.slot]) or string.upper(tostring(g.slot)), Theme.Colors.TextGold, true)
+			for _, p in ipairs(g.passives or {}) do
+				local on = p.active == true
+				local cnt = tonumber(p.count) or 1
+				local nm = esc(p.name) .. (cnt > 1 and (" ×" .. cnt) or "")
+				local line = on and ('<font color="#' .. nameHex .. '"><b>' .. nm .. "</b></font>") or ("<b>" .. nm .. "</b>")
+				if p.desc and p.desc ~= "" then line = line .. " - " .. esc(p.desc) end
+				if p.note then line = line .. "  ·  " .. esc(p.note) end
+				if p.reason then line = line .. "  ·  " .. esc(p.reason) end
+				gpLabel(line, on and Theme.Colors.TextSecondary or Theme.Colors.TextDisabled, false, true)
+			end
+		end
 	end
 end
 
@@ -930,7 +995,7 @@ end
 --------------------------------------------------
 
 local SLOT_ORDER = {"MainHand", "OffHand", "Head", "Body", "Gloves", "Feet", "Accessory", "Doctrine"}
-local SLOT_LABELS = {
+SLOT_LABELS = {
 	MainHand = "MAIN HAND", OffHand = "OFF-HAND", Head = "HEAD",
 	Body = "BODY", Gloves = "GLOVES", Feet = "FEET",
 	Accessory = "ACCESSORY", Doctrine = "DOCTRINE",
@@ -1231,19 +1296,40 @@ local function buildPanel(data)
 	gui.Name = "UnitInspectorPanel"
 	gui.ResetOnSpawn = false
 	gui.DisplayOrder = 140
+	-- Full-screen coordinates like the BattleHUD (IgnoreGuiInset = true), so the window can
+	-- line up with the HUD's View / Log / Map row (user 2026-10-29). Also makes the
+	-- click-outside test below (GetMouseLocation vs AbsolutePosition) use one coordinate space.
+	gui.IgnoreGuiInset = true
 	gui.Parent = player:WaitForChild("PlayerGui")
 	panelGui = gui
 
 	local cam = workspace.CurrentCamera
 	local vpW = cam and cam.ViewportSize.X or 1920
+	local vpH = cam and cam.ViewportSize.Y or 480
 	local isMobile = vpW < 1024
 	local panelW = isMobile and math.min(math.floor(vpW * 0.62), 480) or 420
-	local panelH = isMobile and math.min(math.floor((cam and cam.ViewportSize.Y or 480) * 0.85), 420) or 500
+	-- Top edge = top of the BattleHUD View / Log / Map row, measured live and converted into
+	-- this ScreenGui's space (UI-001). Height runs down to Theme.FooterBar.PAD above the
+	-- screen bottom (same margin as the command bar) so the frame never touches the edge.
+	-- Fallback when the HUD row is missing: the old spot (6 px below the Roblox top bar).
+	local panelTop = GuiService:GetGuiInset().Y + 6
+	local hudGui = player.PlayerGui:FindFirstChild("BattleHUD")
+	local vmRow = hudGui and hudGui:FindFirstChild("ViewModeButtons", true)
+	if vmRow and vmRow:IsA("GuiObject") then
+		local originMark = Instance.new("Frame")
+		originMark.Size = UDim2.fromOffset(0, 0); originMark.BackgroundTransparency = 1
+		originMark.Parent = gui
+		panelTop = math.floor(vmRow.AbsolutePosition.Y - originMark.AbsolutePosition.Y + 0.5)
+		originMark:Destroy()
+	end
+	local bottomPad = (Theme.FooterBar and Theme.FooterBar.PAD) or 8
+	local screenH = if gui.AbsoluteSize.Y > 0 then gui.AbsoluteSize.Y else vpH
+	local panelH = math.max(200, math.min(screenH - panelTop - bottomPad, if isMobile then 420 else 500))
 
 	-- Main frame (9-slice ornate panel)
 	local frame = Theme.MakePanel("InspectorFrame",
 		UDim2.new(0, panelW, 0, panelH),
-		UDim2.new(0, 6, 0, 6),
+		UDim2.new(0, 6, 0, panelTop),
 		Vector2.new(0, 0),
 		gui)
 	frame.ClipsDescendants = true
@@ -1404,6 +1490,10 @@ local function buildPanel(data)
 	tabLayout.FillDirection = Enum.FillDirection.Horizontal
 	tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	tabLayout.Padding = UDim.new(0, 4)
+	-- Sort by each tab's layoutOrder (2026-10-30). Without this the default Name sort put the
+	-- tabs in alphabetical order (Gears, Outfit, Passive, Skills, Stats) instead of
+	-- Stats > Passive > Gears > Skills > Outfit. Same fix as the Loadout tab bar.
+	tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	tabLayout.Parent = tabBar
 
 	-- Content area (scrolling)
@@ -1422,6 +1512,12 @@ local function buildPanel(data)
 	contentLayout.Padding = UDim.new(0, 1)
 	contentLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	contentLayout.Parent = contentFrame
+	-- Keep the canvas in sync when content height changes after the first pass (2026-10-29):
+	-- auto-sized text (Gear Passives) can finish sizing after the one-time task.defer measure
+	-- in renderTab, which would clip the bottom section. Lives as long as the layout (no leak).
+	contentLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+		contentFrame.CanvasSize = UDim2.new(0, 0, 0, contentLayout.AbsoluteContentSize.Y + 10)
+	end)
 
 	-- Tab rendering
 	local function renderTab(tabName)
@@ -1431,8 +1527,8 @@ local function buildPanel(data)
 		currentTab = tabName
 		if UGCInspectorOutfit then UGCInspectorOutfit.Cleanup() end -- PRF-004: preview drag connections
 
-		if tabName == "basic" then
-			renderBasicTab(contentFrame, data, panelH)
+		if tabName == "passive" then
+			renderPassiveTab(contentFrame, data, panelH)
 		elseif tabName == "stats" then
 			renderStatsTab(contentFrame, data)
 		elseif tabName == "equipment" then
@@ -1454,14 +1550,15 @@ local function buildPanel(data)
 		end)
 	end
 
-	-- Create tab buttons — NEW ORDER: Basic, Stats, Equip, Skills
-	local tabs = { {"basic", "Basic"}, {"stats", "Stats"}, {"equipment", "Equip"}, {"skills", "Skills"} }
+	-- Tab order matches the Loadout screen (user 2026-10-29): Stats, Passive, Gears, Skills,
+	-- then Outfit last. Opens on Stats, like the Loadout Info tab.
+	local tabs = { {"stats", "Stats"}, {"passive", "Passive"}, {"equipment", "Gears"}, {"skills", "Skills"} }
 	if UGCInspectorOutfit then table.insert(tabs, {"outfit", "Outfit"}) end -- 5th tab (loadout_ui_spec 92)
 	-- Old 9-slice text bars (user ruling 2026-10-08): Active = bronze, Inactive = navy.
 	-- The highlight moves in place with Theme.SetTabState; .Activated works for touch too.
 	local tabBtns = {}
 	for i, tab in ipairs(tabs) do
-		tabBtns[tab[1]] = Theme.MakeTabButton(tabBar, tab[2], if tab[1] == "basic" then "Active" else "Inactive", function()
+		tabBtns[tab[1]] = Theme.MakeTabButton(tabBar, tab[2], if tab[1] == "stats" then "Active" else "Inactive", function()
 			for id, b in pairs(tabBtns) do
 				Theme.SetTabState(b, if id == tab[1] then "Active" else "Inactive")
 			end
@@ -1476,7 +1573,7 @@ local function buildPanel(data)
 	end
 
 	-- Initial render
-	renderTab("basic")
+	renderTab("stats")
 
 	-- Click-outside-to-close
 	if clickOutsideConn then clickOutsideConn:Disconnect() end
@@ -1617,8 +1714,10 @@ local function buildObjectPanel(objectName: string, tileX: number?, tileY: numbe
 	if def.activation then row(`Activation: {def.activation}`, Theme.Font.Primary, Theme.Text.Small(), Theme.Colors.TextPrimary) end
 	if def.interactRT then row(`Interact RT: {def.interactRT}`, Theme.Font.Mono, Theme.Text.Small(), Theme.Colors.TextPrimary) end
 	if def.uses then row(`Uses: {def.uses}`, Theme.Font.Primary, Theme.Text.Small(), Theme.Colors.TextPrimary) end
-	if def.notes and def.notes ~= "" and def.notes ~= "\u{2014}" then
-		row(def.notes, Theme.Font.Primary, Theme.Text.Tiny(), Theme.Colors.TextSecondary)
+	-- Player note only (2026-10-30, user-approved). def.notes is designer-only and is
+	-- never shown (loadout_ui_spec 54). playerNote is nil until authored in the DB.
+	if def.playerNote and def.playerNote ~= "" and def.playerNote ~= "\u{2014}" then
+		row(def.playerNote, Theme.Font.Primary, Theme.Text.Tiny(), Theme.Colors.TextSecondary)
 	end
 	-- Click outside closes (same behaviour as the unit inspector).
 	if clickOutsideConn then clickOutsideConn:Disconnect() end
@@ -1640,10 +1739,13 @@ end
 -- OBS Phase 2c-0: BattleVisualClient's ObjectChanged handler calls this so an open
 -- object inspector updates live: rebuild with the new HP (read from the client
 -- cache) or close the panel when the object was destroyed.
-_G.CTRBLXAI_NotifyObjectChanged = function(x, y, newHp, destroyed)
+-- newName (optional, A3 2026-10-28): post-unmask display type -> rebuild under that name.
+_G.CTRBLXAI_NotifyObjectChanged = function(x, y, newHp, destroyed, newName)
 	if _openObjX ~= x or _openObjY ~= y then return end
 	if destroyed then
 		destroyPanel()
+	elseif type(newName) == "string" and newName ~= "" then
+		buildObjectPanel(newName, x, y)
 	elseif _openObjName then
 		buildObjectPanel(_openObjName, x, y)
 	end

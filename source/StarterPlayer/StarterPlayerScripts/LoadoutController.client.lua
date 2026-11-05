@@ -9,20 +9,6 @@ if not CTRBLXAI then warn("[LoadoutController] CTRBLXAI folder not found"); retu
 local UI = CTRBLXAI:WaitForChild("UI", 30)
 if not UI then warn("[LoadoutController] UI folder not found"); return end
 
--- DEBUG: List all children of UI folder
-print("[LoadoutController] UI folder children:")
-for _, child in ipairs(UI:GetChildren()) do
-	print("  ", child.Name, child.ClassName)
-end
-
--- Try test module first
-local testModule = UI:FindFirstChild("LoadoutScreenTest")
-if testModule then
-	print("[LoadoutController] TEST MODULE FOUND — Rojo syncs new files OK")
-else
-	print("[LoadoutController] TEST MODULE NOT FOUND — Rojo is NOT syncing new files")
-end
-
 -- Try LoadoutScreen
 local loadoutModule = UI:FindFirstChild("LoadoutScreen")
 if not loadoutModule then
@@ -31,7 +17,12 @@ if not loadoutModule then
 end
 
 if not loadoutModule then
-	warn("[LoadoutController] LoadoutScreen not found in UI folder. Contents listed above.")
+	-- Only list the UI folder when the module is actually missing (diagnostic, LOG-002).
+	local names = {}
+	for _, child in UI:GetChildren() do
+		table.insert(names, `{child.Name} ({child.ClassName})`)
+	end
+	warn(`[LoadoutController] LoadoutScreen not found in UI folder. Contents: {table.concat(names, ", ")}`)
 	return
 end
 
@@ -39,6 +30,8 @@ local ok, LoadoutScreen = pcall(require, loadoutModule)
 if not ok then warn("[LoadoutController] Failed to require LoadoutScreen:", LoadoutScreen); return end
 
 _G.CTRBLXAI_OpenLoadout = function() LoadoutScreen.Show() end
+-- Open on a given tab (PARTIES from the guild menu / Sortie, 2026-11-04).
+_G.CTRBLXAI_OpenLoadoutTab = function(tab, opts) LoadoutScreen.ShowTab(tab, opts) end
 _G.CTRBLXAI_CloseLoadout = function() LoadoutScreen.Hide() end
 _G.CTRBLXAI_ToggleLoadout = function() LoadoutScreen.Toggle() end
 

@@ -53,6 +53,19 @@ local _statusService = nil
 function BattlefieldEventService.SetStatusService(ss: any) _statusService = ss end
 local _commandService = nil
 function BattlefieldEventService.SetCommandService(cs: any) _commandService = cs end
+-- Mimic disguise (rules 224): ObjectEffectService.IsDisguised, injected by Main (DI —
+-- avoids a new require edge). nil-safe: no checker -> Mimics are not chest targets.
+local _disguiseChecker = nil
+function BattlefieldEventService.SetDisguiseChecker(fn: any) _disguiseChecker = fn end
+-- Treasure Hunter (project_rules 226-235): chest looting + display-name helpers, injected by
+-- Main (ObjectEffectService.HunterLootChest / GetDisplayType) — DI, no new require edge.
+-- BattleCoordinator injected for StartChanneling (Getaway). All nil-safe.
+local _hunterLooter = nil
+function BattlefieldEventService.SetHunterLooter(fn: any) _hunterLooter = fn end
+local _displayNamer = nil
+function BattlefieldEventService.SetObjectDisplayNamer(fn: any) _displayNamer = fn end
+local _battleCoordinator = nil
+function BattlefieldEventService.SetBattleCoordinator(bc: any) _battleCoordinator = bc end
 
 --------------------------------------------------------------------
 -- SHARED HELPERS
@@ -527,14 +540,14 @@ Handlers["Divine Intervention"] = function(ctx: any)
 			u.isAlive = true
 			UnitSchema.ClearChannelState(u)  -- never return holding a pre-death channel
 			u._revivedThisBattle = true  -- kill-credit rule (2026-10-26): revived units never trigger kill augments
-			u.currentHp = u.maxHp
+			u.currentHp = UnitSchema.ReviveHp(u, 1)  -- full HP, revive traits apply (re-check 2026-10-29)
 			-- Turn timing resets like every other revive (USER RULING 2026-10-27 12:21): no instant
 			-- turn just because the unit's turn was due when it fell.
 			u.remainingRt = u.startingRt or 400
 			if _statusService and _statusService.WeakenVenomOnHeal then _statusService.WeakenVenomOnHeal(u) end  -- a revive weakens Venom like a heal (user ruling 2026-10-26)
 			applyStatusTo(u, "Blessed", "Divine Intervention")
 			if moved and _broadcaster and _broadcaster.UnitMoved then _broadcaster.UnitMoved(u) end
-			if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(u) end
+			if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(u, "Divine Intervention") end
 		elseif u.side == "Player" and u.isAlive then
 			applyStatusTo(u, "Blessed", "Divine Intervention")
 		end
@@ -615,17 +628,183 @@ NeutralBehaviors["crossMap"] = function(unit: any, state: any)
 end
 
 -- "Seek nearest treasure": move toward the closest Treasure/Cursed Chest object.
-NeutralBehaviors["seekTreasure"] = function(unit: any, state: any)
+-- SUPERSEDED 2026-10-28 by the Treasure Hunter looting resolver registered below (walk-only
+-- original, kept unregistered so the edit never touches its non-ASCII comment line).
+local function _seekTreasureWalkOnly(unit: any, state: any)
 	local objs = state.objects or {}
 	local best, bestD = nil, math.huge
 	for _, o in ipairs(objs) do
-		if o.type == "Treasure Chest" or o.type == "Cursed Chest" then
+		-- A DISGUISED Mimic is a chest to the NPC (rules 224); an unmasked one is not.
+		local isChest = o.type == "Treasure Chest" or o.type == "Cursed Chest"
+			or (o.type == "Mimic" and _disguiseChecker ~= nil and _disguiseChecker(o) == true)
+		if isChest then
 			local d = math.abs((o.x or 0) - unit.tileX) + math.abs((o.y or 0) - unit.tileY)
 			if d < bestD then bestD, best = d, o end
 		end
 	end
 	if not best then return nil end  -- no treasure left → Wait
 	return moveTowardGoal(unit, state, best.x, best.y)
+end
+
+-- TREASURE HUNTER (project_rules 226-235, user-locked 2026-10-28).
+local function hunterLog(text: string, unitId: any)
+	if _broadcaster and _broadcaster.Log then _broadcaster.Log("action", text, unitId) end
+end
+
+local function hunterShownName(o: any): string
+	return (_displayNamer and _displayNamer(o)) or (o and o.type) or "chest"
+end
+
+-- A chest to the NPC: Treasure/Cursed Chest, or a DISGUISED Mimic (an unmasked one is not).
+local function isHunterChest(o: any): boolean
+	if not o then return false end
+	return o.type == "Treasure Chest" or o.type == "Cursed Chest"
+		or (o.type == "Mimic" and _disguiseChecker ~= nil and _disguiseChecker(o) == true)
+end
+
+local function findObjectById(state: any, id: any): any
+	if id == nil then return nil end
+	for _, o in ipairs(state.objects or {}) do
+		if o.id == id then return o end
+	end
+	return nil
+end
+
+-- End the NPC's turn without the generic "waits." line (the action already logged).
+local function hunterEndTurn(state: any)
+	if _battleCoordinator and _battleCoordinator.GetPhase and _battleCoordinator.GetPhase(state) == "TurnOpen" then
+		_battleCoordinator.EndTurn(state)
+	end
+end
+
+-- Getaway completes: the NPC leaves the map; its held loot is LOST (project_rules 230/231).
+-- Called from CommandService.ActivateChanneledSkill (interactResolve "hunterGetaway") via DI.
+function BattlefieldEventService.HunterGetawayComplete(unit: any)
+	if not unit then return end
+	local n = 0
+	for _, r in ipairs(unit.heldLoot or {}) do
+		if r.item or r.cardData then n += 1 end -- the held chest gold is not an item
+	end
+	unit.heldLoot = {}
+	unit.leftMap = true
+	unit.isAlive = false
+	if n > 0 then
+		hunterLog(`{unit.name} escaped with {n} item(s).`, unit.id)
+	else
+		hunterLog(`{unit.name} escaped empty-handed.`, unit.id)
+	end
+	if _unitRemover then _unitRemover(unit) end
+	print(`[BattlefieldEventService] Treasure Hunter escaped - {n} held item(s) lost`)
+end
+
+-- Start the NPC-only escape channel "Getaway" (200 CT) through the shared channel system.
+local GETAWAY_SKILL = table.freeze({ id = "_npc_getaway", name = "Getaway", isHealing = false, channelTime = 200, targetRules = "Self" })
+local function hunterStartGetaway(unit: any, state: any)
+	if not (_battleCoordinator and _battleCoordinator.StartChanneling) then
+		warn("[BattlefieldEventService] BattleCoordinator not injected - Treasure Hunter cannot start Getaway")
+		return
+	end
+	_battleCoordinator.StartChanneling(state, unit, {
+		skillDef = GETAWAY_SKILL, target = unit, mpCost = 0,
+		channelRt = GETAWAY_SKILL.channelTime, activationCt = 0,
+		interactResolve = "hunterGetaway",
+	})
+	-- double-cast at channel start (2026-10-28 ruling: Getaway plays like a channel spell).
+	if _broadcaster and _broadcaster.ChannelStarted then _broadcaster.ChannelStarted(unit, false, "DoubleCast") end
+	if not unit.hunterEscapeLogged then
+		unit.hunterEscapeLogged = true
+		hunterLog(`{unit.name} was attacked and is trying to escape!`, unit.id)
+	end
+	if _broadcaster and _broadcaster.Log then
+		_broadcaster.Log("channel", `{unit.name} begins channeling Getaway ({GETAWAY_SKILL.channelTime} CT).`, unit.id)
+	end
+	hunterEndTurn(state)
+end
+
+-- "Seek nearest treasure": walk to the closest chest, unlock it (1 turn), take the loot
+-- (next turn, held on the NPC). Once attacked: stop hunting, channel Getaway each turn.
+NeutralBehaviors["seekTreasure"] = function(unit: any, state: any)
+	-- ESCAPE (project_rules 230): attacked -> no more hunting; start Getaway on its turn.
+	if unit.hunterAttacked then
+		if not unit.isChanneling then hunterStartGetaway(unit, state) end
+		return nil
+	end
+
+	-- Validate the stored target; re-target if it vanished or changed (opened / revealed).
+	local target = findObjectById(state, unit.hunterTargetId)
+	if unit.hunterTargetId ~= nil and not isHunterChest(target) then
+		unit.hunterTargetId = nil
+		unit.hunterUnlockingId = nil
+		target = nil
+	end
+	if not target then
+		local bestD = math.huge
+		for _, o in ipairs(state.objects or {}) do
+			if isHunterChest(o) then
+				local d = math.abs((o.x or 0) - unit.tileX) + math.abs((o.y or 0) - unit.tileY)
+				if d < bestD then bestD, target = d, o end
+			end
+		end
+		if not target then return nil end  -- no treasure left -> Wait
+		unit.hunterTargetId = target.id
+		unit.hunterUnlockingId = nil
+	end
+
+	local adjacent = math.max(math.abs((target.x or 0) - unit.tileX), math.abs((target.y or 0) - unit.tileY)) <= 1
+	if not adjacent then
+		return moveTowardGoal(unit, state, target.x, target.y)
+	end
+
+	local shown = hunterShownName(target)
+	if unit.hunterUnlockingId ~= target.id then
+		-- Turn 1: unlocking.
+		unit.hunterUnlockingId = target.id
+		hunterLog(`{unit.name} is unlocking a {shown}.`, unit.id)
+		hunterEndTurn(state)
+		return nil
+	end
+
+	-- Turn 2: take the loot (never committed to the player, never counts for objectives).
+	unit.hunterTargetId = nil
+	unit.hunterUnlockingId = nil
+	if not _hunterLooter then
+		warn("[BattlefieldEventService] Hunter looter not injected - Treasure Hunter cannot loot")
+		hunterEndTurn(state)
+		return nil
+	end
+	local kind, held = _hunterLooter(state, unit, target)
+	if kind == "mimic" then
+		hunterLog(`{unit.name} opened a {shown} - it's a Mimic!`, unit.id)
+	elseif kind == "loot" then
+		unit.heldLoot = unit.heldLoot or {}
+		for _, r in ipairs(held or {}) do table.insert(unit.heldLoot, r) end
+		hunterLog(`{unit.name} took the loot from a {shown}.`, unit.id)
+	end
+	hunterEndTurn(state)
+	return nil
+end
+
+-- DEFEATED (project_rules 232): a Treasure Hunter that died (not escaped) hands its held
+-- loot to state.recoveredHunterLoot, committed by Main ONLY on a player victory. Idempotent
+-- (unit.hunterLootRecovered); called every turn tick and once more at battle end.
+function BattlefieldEventService.SweepHunterDeaths(state: any)
+	if not (state and state.units) then return end
+	for _, u in ipairs(state.units) do
+		if u.eventName == "Treasure Hunter" and not u.isAlive and not u.leftMap and not u.hunterLootRecovered then
+			u.hunterLootRecovered = true
+			state.recoveredHunterLoot = state.recoveredHunterLoot or {}
+			for _, r in ipairs(u.heldLoot or {}) do table.insert(state.recoveredHunterLoot, r) end
+			local n = 0
+			for _, r in ipairs(u.heldLoot or {}) do
+				if r.item or r.cardData then n += 1 end -- the held chest gold is not an item
+			end
+			u.heldLoot = {}
+			if n > 0 then
+				hunterLog(`{u.name} was defeated - its loot will be recovered if you win.`, u.id)
+			end
+			print(`[BattlefieldEventService] Treasure Hunter defeated - {n} item(s) set aside for a victory`)
+		end
+	end
 end
 
 -- "Hunt nearest monster": advance toward the closest enemy-side unit. (The visible
@@ -766,6 +945,7 @@ end
 -- the next one (queued conditional first, else a random start-pool draw if the
 -- per-battle budget allows).
 function BattlefieldEventService.OnTurnTick(state: any, rng: any, roundIndex: any)
+	BattlefieldEventService.SweepHunterDeaths(state)  -- Treasure Hunter defeated -> loot set aside
 	if state.bfBudget == nil then return end
 	if state.bfActiveEvent and activeEventDone(state) then
 		print("[BattlefieldEventService] Event ended: " .. state.bfActiveEvent.name)
@@ -959,7 +1139,7 @@ function BattlefieldEventService.OnEventUnitTurn(unit: any, state: any, rng: any
 			local dmg = math.floor((best.maxHp or 0) * 0.20)
 			best.currentHp = math.max(0, (best.currentHp or 0) - GameConstants.CapUnitDamage(best, dmg))
 			if best.currentHp <= 0 then best.isAlive = false end
-			if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(best) end
+			if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(best, unit.name or "Lightning") end
 		end
 	end
 
@@ -975,7 +1155,7 @@ function BattlefieldEventService.OnEventUnitTurn(unit: any, state: any, rng: any
 					local dmg = math.floor((u.maxHp or 0) * 0.10)
 					u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 					if u.currentHp <= 0 then u.isAlive = false end
-					if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(u) end
+					if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(u, "Death Ripple") end
 				end
 			end
 		end
@@ -1013,7 +1193,7 @@ function BattlefieldEventService.OnEventUnitTurn(unit: any, state: any, rng: any
 					_statusService.RemoveStatus(unit, "Weakened")
 				end
 			end
-			if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(unit) end
+			if _broadcaster and _broadcaster.UnitStateChanged then _broadcaster.UnitStateChanged(unit, "Traitor") end
 			print("[BattlefieldEventService] Traitor flipped to Neutral ally.")
 		end
 	end

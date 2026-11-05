@@ -9,7 +9,7 @@
 -- Dev-locked design (2026-09-26):
 --   Grunt: doctrine skill + 2 pool skills (3 total), 1 augment each, 1-2 consumables,
 --          3-5 gear pieces incl. weapon, gear rarity Common..Rare, base RT 400.
---   Elite: doctrine skill + 3 pool skills (4 total), 2 augments each, full consumables,
+--   Elite: doctrine skill + 3 pool skills (4 total), 1 augment each (2nd via Training Grounds, 2026-11-04), full consumables,
 --          full gear set, gear rarity Uncommon..Epic, base RT 350.
 --   Boss:  authored separately (NOT handled here).
 --   Stats: from race + level only (no tier multiplier). Race is fully random
@@ -29,9 +29,11 @@ local GameConstants    = require(ReplicatedStorage:WaitForChild("CTRBLXAI"):Wait
 local EquipmentService = require(Game:WaitForChild("EquipmentService"))
 local StatusService    = require(Game:WaitForChild("StatusService"))
 local TraitEffectService = require(Game:WaitForChild("TraitEffectService"))
+local StatCalcService = require(Game:WaitForChild("StatCalcService")) -- shared starting RT (2026-10-28)
 local ItemGenerator    = require(Game:WaitForChild("ItemGenerator"))
 local TraitRoller      = require(Game:WaitForChild("TraitRoller"))
 -- Shared tags-only augment compatibility (2026-10-26): same rule the loadout screen shows.
+local TrainingGroundsService = require(Game:WaitForChild("TrainingGroundsService")) -- 2nd augment rule (2026-11-04)
 local AugmentCompatibility = require(ReplicatedStorage:WaitForChild("CTRBLXAI"):WaitForChild("Shared"):WaitForChild("AugmentCompatibility"))
 
 -- Content registries
@@ -206,7 +208,7 @@ local TIER_BUILD = {
 		baseRt        = 350,
 		aiRole        = "Elite",
 		normalSkills  = 3,           -- + doctrine/anchor skill = 4 total
-		augmentsPer   = 2,
+		augmentsPer   = 1,           -- was 2; 2nd only via the Training Grounds rule (2026-11-04)
 		gearMin       = 7,           -- full set (weapon + offhand + 5 armor)
 		gearMax       = 7,
 		gearRarities  = { "Uncommon", "Rare", "Epic" },
@@ -364,6 +366,27 @@ local function insertUnitIntoBattle(unit: any, state: any)
 	end
 	unit.stableOrderKey = #state.units + 1
 	table.insert(state.units, unit)
+	-- Flying race tag (Fairy, Avian...): permanent Flight for units added mid-battle too, the same
+	-- way Main grants it at battle start (re-check 2026-10-29).
+	if unit.raceId then
+		local okR, RaceDataM = pcall(function()
+			return require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
+		end)
+		local re = okR and RaceDataM and RaceDataM.GetRace(unit.raceId) or nil
+		for _, tag in ipairs((re and re.tags) or {}) do
+			if tag == "Flying" then
+				local SS = (require :: any)(script.Parent.StatusService)
+				SS.ApplyStatus(unit, "Flight", "RaceTag")
+				local fi = SS.HasStatus(unit, "Flight")
+				if type(fi) == "table" then
+					fi.remainingTurns = nil
+					fi.remainingCt = nil
+					fi.permanent = true
+				end
+				break
+			end
+		end
+	end
 end
 
 --------------------------------------------------
@@ -516,14 +539,32 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 	end
 	local seedBase = rng:NextInteger(1, 2147483647)
 
+	-- Twinblade enemies (2026-10-28): dual wield is the doctrine's identity, so they always get two
+	-- 1H weapons (main + off hand) instead of a random weapon + maybe an off-hand item.
+	local isTwinblade = unit.doctrineId == "DOC-TWINBLADE"
+	local mainPool: {string} = WEAPON_ARCHETYPES
+	if isTwinblade then
+		local WeaponData: any = require(Content:WaitForChild("WeaponData"))
+		local oneHand: {string} = {}
+		for _, aid in ipairs(WEAPON_ARCHETYPES) do
+			local d = WeaponData.GetByArchetypeId(aid)
+			if d and d.category == "Weapon" and d.handClass == "1H" then table.insert(oneHand, aid) end
+		end
+		if #oneHand > 0 then mainPool = oneHand end
+	end
 	-- Weapon (mandatory).
-	equipGenerated(unit, pick(rng, WEAPON_ARCHETYPES), itemLevel, rarityRoll(), seedBase, "MainHand")
+	equipGenerated(unit, pick(rng, mainPool), itemLevel, rarityRoll(), seedBase, "MainHand")
 	local placed = 1
+	if isTwinblade and mainPool ~= WEAPON_ARCHETYPES then
+		if equipGenerated(unit, pick(rng, mainPool), itemLevel, rarityRoll(), seedBase + 7919, "OffHand") then
+			placed += 1
+		end
+	end
 
 	-- Remaining gear: shuffle armor slots + offer offhand, fill until gearCount.
 	local remainingSlots = shuffledCopy(rng, ARMOR_SLOTS)
 	-- 50/50 chance to include an offhand first (skipped for 2H weapons by ValidateEquip).
-	if placed < gearCount and rng:NextNumber() < 0.5 then
+	if not isTwinblade and placed < gearCount and rng:NextNumber() < 0.5 then
 		if equipGenerated(unit, pick(rng, OFFHAND_ARCHETYPES), itemLevel, rarityRoll(), seedBase + placed, "OffHand") then
 			placed += 1
 		end
@@ -582,11 +623,20 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 	--     resolve against the real weapon. Same rule the player's loadout screen enforces.
 	do
 		local weapon = AugmentCompatibility.WeaponProfileFromUnit(unit)
-		unit.doctrineAugments = pickAugmentsForSkill(rng, doctrineSkill, tier.augmentsPer, weapon)
+		-- 2nd augment (USER DECISION 2026-11-04): only level 80+ enemies, only once the quest
+		-- owner's Training Grounds is L10; Elite 100%, Veteran 50%, Grunt 25% per skill row.
+		-- No extra rng draw when the chance is 0, so other enemies roll exactly as before.
+		local chance2 = TrainingGroundsService.EnemySlot2Chance(spec.type, level)
+		local function countFor(): number
+			if chance2 <= 0 then return tier.augmentsPer end
+			if chance2 >= 100 or rng:NextInteger(1, 100) <= chance2 then return 2 end
+			return 1
+		end
+		unit.doctrineAugments = pickAugmentsForSkill(rng, doctrineSkill, countFor(), weapon)
 		for _, slotKey in ipairs(slotNames) do
 			local slot = unit.skillLoadout[slotKey]
 			if slot and slot.skillId then
-				slot.augments = pickAugmentsForSkill(rng, slot.skillId, tier.augmentsPer, weapon)
+				slot.augments = pickAugmentsForSkill(rng, slot.skillId, countFor(), weapon)
 			end
 		end
 	end
@@ -611,7 +661,8 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 	-- Single rounding (DB core_stats 54): raw Modified Base RT × LUK factor × trait %.
 	local egModBaseRt = StatusService.GetModifiedBaseRt(unit)
 	local egLukFactor = 1 - 0.30 * lukNow / (100 + lukNow)
-	unit.remainingRt = math.round(egModBaseRt * egLukFactor * TraitEffectService.GetStartingRtMultiplier(unit))
+	-- One shared calculation (StatCalcService.GetStartingRt, 2026-10-28; enemies get no player edge).
+	unit.remainingRt = StatCalcService.GetStartingRt(unit, "battle")
 
 	print(string.format("[EnemyGenerator] %s (%s) L%d | race=%s doctrine=%s | skills=%d gear=%d/%d cons=%d | startRT=%d (tierBase %d, LUK %d)",
 		unit.name, spec.type, level, tostring(raceId), doctrineId,

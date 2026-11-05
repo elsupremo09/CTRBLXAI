@@ -25,6 +25,8 @@ local DoctrineDataModule = require(
 )
 
 local MockLoadoutData: any = {}
+-- Server equipment slot -> loadout UI slot id (exported 2026-10-29 for the Gear Passives list).
+MockLoadoutData.SERVER_SLOT_TO_UI = table.freeze({ Body = "Torso", Gloves = "Arms", Feet = "Legs" })
 
 MockLoadoutData._useServerData = false
 MockLoadoutData._useServerSkillData = false
@@ -312,7 +314,8 @@ function MockLoadoutData.MockEquip(unitId, slot, itemId)
 	if not eq then return end
 	if MockLoadoutData._useServerData then
 		local ok, _result = pcall(function()
-			return BattleEvents.RequestEquip:InvokeServer(unitId, itemId)
+			-- slot is passed so a Twinblade can put a 1H weapon in its OffHand (server validates). 2026-10-28.
+			return BattleEvents.RequestEquip:InvokeServer(unitId, itemId, slot)
 		end)
 		if ok then
 			print("[LoadoutData] Server equip:", unitId, slot, itemId)
@@ -400,8 +403,11 @@ local function mapServerItem(si)
 			RTDelay = si.rtDelay or 0,
 		}
 	else
+		-- Real armor HP/MP from the server entry (ItemDisplay.buildItemEntry). Was hard-coded 0,
+		-- so Loadout never showed them; user ruling 2026-10-31: show on Loadout AND Merchant.
+		-- Rows that are 0 stay hidden by the detail view (LoadoutScreen non-weapon zero filter).
 		baseStats = {
-			Defense = si.defense or 0, HP = 0, MP = 0, WT = si.wt or 0,
+			Defense = si.defense or 0, HP = si.hp or 0, MP = si.mp or 0, WT = si.wt or 0,
 		}
 	end
 
@@ -409,7 +415,8 @@ local function mapServerItem(si)
 	local passives = {}
 	if si.nativePassiveId then
 		table.insert(passives, {
-			name = PASSIVE_NAMES[si.nativePassiveId] or si.nativePassiveId,
+			-- Server-supplied name first (same as the Info tab, 2026-10-30); old map as fallback.
+			name = si.nativePassiveName or PASSIVE_NAMES[si.nativePassiveId] or si.nativePassiveId,
 			icon = "[*]",
 			desc = si.nativePassiveDesc or "",
 		})
@@ -551,6 +558,9 @@ function MockLoadoutData.LoadFromServer()
 			end)
 			if csOk and consSlots then
 				local totalCons = 0
+				-- Owned loose copies (2026-11-03 ownership) under the reserved "_owned" key.
+				MockLoadoutData.ConsOwned = consSlots._owned or {}
+				consSlots._owned = nil
 				for unitId, slots in pairs(consSlots) do
 					if not MockLoadoutData.Equipped[unitId] then
 						MockLoadoutData.Equipped[unitId] = {}
@@ -584,6 +594,10 @@ function MockLoadoutData.LoadFromServer()
 	end
 end
 
+
+--------------------------------------------------
+-- Owned consumable copies { [id] = count } (filled from GetConsumableSlots; 2026-11-03).
+MockLoadoutData.ConsOwned = MockLoadoutData.ConsOwned or {}
 
 --------------------------------------------------
 -- MOCK SKILL DATA (for Skills Tab)
@@ -770,6 +784,10 @@ function MockLoadoutData.LoadSkillData(unitId)
 		MockLoadoutData.ServerSkillSlots[unitId] = result.slots or {}
 		-- Store the equipped weapon's shape/reach (explicit copy; see BUG-056 field-drop class).
 		MockLoadoutData.ServerWeaponProfile[unitId] = result.weaponProfile
+		-- 2nd augment slot lock (USER DECISION 2026-11-04).
+		MockLoadoutData.Slot2Open = MockLoadoutData.Slot2Open or {}
+		MockLoadoutData.Slot2Open[unitId] = result.slot2Open == true
+		MockLoadoutData.Slot2LockedText = result.slot2LockedText
 
 		-- Store card inventories (shared across units)
 		if result.skillCards then

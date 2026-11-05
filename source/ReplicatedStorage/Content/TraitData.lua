@@ -2,7 +2,7 @@
 -- Auto-generated Content Registry: Unit Traits (358 entries: perks + flaws)
 -- Do not edit manually. Regenerate from CTRBLXAI.db (unit_traits table).
 -- Phase 1: data + lookup only. Effect text is NOT interpreted here (Phase 2/3 wire gameplay).
--- CRITICAL: look traits up BY trait_id, never by name (duplicate names exist, e.g. 'Clumsy', 'Sluggish').
+-- CRITICAL: look traits up BY trait_id, never by name (names were once duplicated; ids are the only stable key).
 
 local TraitData = {}
 
@@ -291,7 +291,7 @@ TraitData.Traits = {
 	["TRAIT-F-036"] = {
 		kind = "flaw",
 		pairId = "TRAIT-036",
-		name = "Clumsy",
+		name = "Poor Aim", -- renamed from "Clumsy" (duplicate name), USER DECISION 2026-10-31
 		tier = "common",
 		effect = "Precision -10%",
 		category = "General",
@@ -301,7 +301,7 @@ TraitData.Traits = {
 		pairId = "TRAIT-037",
 		name = "Unlucky",
 		tier = "common",
-		effect = "10% fortune penalty",
+		effect = "Unit Fortune -10% (flat)",
 		category = "General",
 	},
 	["TRAIT-F-038"] = {
@@ -755,7 +755,7 @@ TraitData.Traits = {
 	["TRAIT-F-094"] = {
 		kind = "flaw",
 		pairId = "TRAIT-094",
-		name = "Clumsy (Greater)",
+		name = "Poor Aim (Greater)", -- renamed from "Clumsy (Greater)", USER DECISION 2026-10-31
 		tier = "uncommon",
 		effect = "Precision -15%",
 		category = "General",
@@ -773,7 +773,7 @@ TraitData.Traits = {
 		pairId = "TRAIT-096",
 		name = "Short Reach",
 		tier = "common",
-		effect = "-1 interact range",
+		effect = "Interact RT +25%",
 		category = "Utility",
 	},
 	["TRAIT-F-097"] = {
@@ -797,7 +797,7 @@ TraitData.Traits = {
 		pairId = "TRAIT-099",
 		name = "Unlucky (Greater)",
 		tier = "uncommon",
-		effect = "15% fortune penalty",
+		effect = "Unit Fortune -15% (flat)",
 		category = "General",
 	},
 	["TRAIT-F-100"] = {
@@ -1085,7 +1085,7 @@ TraitData.Traits = {
 		pairId = "TRAIT-135",
 		name = "Near-Sighted (Greater)",
 		tier = "rare",
-		effect = "Discovery radius -1.2",
+		effect = "Discovery radius -2",
 		category = "General",
 	},
 	["TRAIT-F-136"] = {
@@ -1109,7 +1109,7 @@ TraitData.Traits = {
 		pairId = "TRAIT-138",
 		name = "Short Reach (Greater)",
 		tier = "rare",
-		effect = "-2 interact range",
+		effect = "Interact RT +50%",
 		category = "Utility",
 	},
 	["TRAIT-F-139"] = {
@@ -1315,7 +1315,7 @@ TraitData.Traits = {
 	["TRAIT-F-164"] = {
 		kind = "flaw",
 		pairId = "TRAIT-164",
-		name = "Sluggish",
+		name = "Tardy", -- renamed from "Sluggish" (duplicate name), USER DECISION 2026-10-31
 		tier = "epic",
 		effect = "10% higher base RT",
 		category = "General",
@@ -1733,7 +1733,7 @@ TraitData.Traits = {
 		pairId = "TRAIT-037",
 		name = "Lucky",
 		tier = "common",
-		effect = "10% fortune bonus",
+		effect = "Unit Fortune +10% (flat)",
 		category = "General",
 	},
 	["TRAIT-P-038"] = {
@@ -2229,7 +2229,7 @@ TraitData.Traits = {
 		pairId = "TRAIT-099",
 		name = "Lucky (Greater)",
 		tier = "uncommon",
-		effect = "15% fortune bonus",
+		effect = "Unit Fortune +15% (flat)",
 		category = "General",
 	},
 	["TRAIT-P-100"] = {
@@ -2413,7 +2413,7 @@ TraitData.Traits = {
 		pairId = "TRAIT-122",
 		name = "Treasure Seeker",
 		tier = "uncommon",
-		effect = "Opening Treasures Cost no AP. Gain 50% more reward from treasures chests unit opened.",
+		effect = "Opening Treasures Cost no AP. Chests this unit opens give +50% gold and a 50% chance of one extra item.",
 		category = "General",
 	},
 	["TRAIT-P-123"] = {
@@ -2517,7 +2517,7 @@ TraitData.Traits = {
 		pairId = "TRAIT-135",
 		name = "Far-Sighted (Greater)",
 		tier = "rare",
-		effect = "Discovery radius +1.2",
+		effect = "Discovery radius +2",
 		category = "General",
 	},
 	["TRAIT-P-136"] = {
@@ -2645,7 +2645,7 @@ TraitData.Traits = {
 		pairId = "TRAIT-151",
 		name = "Treasure Seeker (Greater)",
 		tier = "rare",
-		effect = "Opening Treasures Cost no AP. Gain 60% more reward from treasures chests unit opened.",
+		effect = "Opening Treasures Cost no AP. Chests this unit opens give +60% gold and a 60% chance of one extra item.",
 		category = "General",
 	},
 	["TRAIT-P-152"] = {
@@ -2869,7 +2869,7 @@ TraitData.Traits = {
 		pairId = "TRAIT-179",
 		name = "Undying Will",
 		tier = "legendary",
-		effect = "On first KO: revive with 25% HP after 500 CT (once per battle)",
+		effect = "On first KO: revive with 25% HP after 500 CT (once per battle). A unit waiting to revive counts as KO'd; if no ally is standing, its side loses.",
 		category = "General",
 	},
 }

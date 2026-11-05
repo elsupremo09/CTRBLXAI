@@ -635,12 +635,16 @@ end
 -- Compute an item's self-contained flat Power from its parsed formula spec.
 -- (base + ilCoeff*IL + statCoeff*STAT), then the user's item trait + accessory
 -- multipliers, consistent with the single-target path.
-local function computeItemPower(user: any, spec: any): number
+-- noDamageBonus (re-check 2026-10-29): hits resolved through resolveItemHitOnUnit get AC-004 Grenadier
+-- on their FINAL damage (DB "+15% final damage") instead of on Power; direct pulse damage keeps it here.
+local function computeItemPower(user: any, spec: any, noDamageBonus: any): number
 	local IL = user.level or 1
 	local statVal = (user.effectiveStats and user.effectiveStats[spec.stat]) or 10
 	local power = spec.base + spec.ilCoeff * IL + spec.statCoeff * statVal
 	power = power * TraitEffectService.GetItemEffectMultiplier(user)
-	power = power * (1 + ArmorPassiveService.GetItemDamageBonus(user))
+	if not noDamageBonus then
+		power = power * (1 + ArmorPassiveService.GetItemDamageBonus(user))
+	end
 	return math.max(1, math.round(power))
 end
 
@@ -659,11 +663,18 @@ end
 -- applied only when applyRider is true (the primary/first unit), honouring
 -- "first target gains X" without over-applying to a whole area. Accumulates into
 -- result so multi-hit / AOE report a combined amount.
-local function resolveItemHitOnUnit(user: any, unit: any, element: string, power: number, rider: any, applyRider: boolean, def: any, result: any, isAOE: any): number
+local function resolveItemHitOnUnit(user: any, unit: any, element: string, power: number, rider: any, applyRider: boolean, def: any, result: any, isAOE: any, damageMult: any): number
 	local pseudoSkill = {
 		id = "ITEM-" .. tostring(def.name or "?"),
 		tags = { element },
 		flatPower = power,
+		-- (2026-10-29) An item is NOT a Skill: skill-only bonuses / drawbacks (Celestial / Demon
+		-- potency, Chemist -25%, Elementalist, Stormbringer, trait / Orb skill potency, Armor Pierce
+		-- on skills) are skipped for it in CombatResolver.ResolveSkill.
+		isItem = true,
+		-- An area item hit is AOE for race / trait AOE rules resolved INSIDE ResolveSkill (Fairy
+		-- -25% received, Vampire 5% lifesteal). Was only flagged after resolution.
+		aoePattern = isAOE and "Area" or nil,
 		appliesStatus = (applyRider and rider) or nil,
 		-- DAM-017 Venom Repeater "2+ HP hits apply Poison" (2026-10-27): element status
 		-- riders only on hits that deal at least this much.
@@ -673,6 +684,16 @@ local function resolveItemHitOnUnit(user: any, unit: any, element: string, power
 	result._hitUnits = result._hitUnits or {}
 	table.insert(result._hitUnits, unit)
 	local outcome = CombatResolver.ResolveSkill(user, unit, pseudoSkill)
+	-- damageMult (AC-005 Wide-Fuse splash, 2026-10-29): scales the FINAL damage after Defense,
+	-- the same way the shared Impact Splash does for weapons and skills (finalDamage x dmgMult).
+	if type(damageMult) == "number" and damageMult ~= 1 then
+		outcome.finalDamage = math.max(0, math.round((outcome.finalDamage or 0) * damageMult))
+	end
+	-- AC-004 Grenadier Satchel: +15% FINAL damage for a consumable's own hits (def with a formula).
+	if def and type(def.effectFormula) == "string" and def.effectFormula ~= "" then
+		local _gb = ArmorPassiveService.GetItemDamageBonus(user)
+		if _gb ~= 0 then outcome.finalDamage = math.max(0, math.round((outcome.finalDamage or 0) * (1 + _gb))) end
+	end
 	if isAOE then outcome.isAOE = true end  -- same flag area skills set (race / augment AOE rules)
 	local actual, statusApplied = CombatResolver.ApplyOutcome(outcome, unit, user)
 	result.amount = (result.amount or 0) + (actual or 0)
@@ -719,13 +740,121 @@ local function makeItemSource(owner: any, unit: any, itemName: any): any
 	}
 end
 
-function ItemEffectService.ResolveTimedHit(owner: any, unit: any, element: any, power: number, itemName: any, asItem: any): number
+-- damageMult (optional, 2026-10-29 user ruling): scales the FINAL damage after Defense (Meteor
+-- Marker ring falloff). nil = full damage; existing callers pass nothing and are unchanged.
+function ItemEffectService.ResolveTimedHit(owner: any, unit: any, element: any, power: number, itemName: any, asItem: any, damageMult: any): number
 	if not (owner and unit and unit.isAlive) or (power or 0) <= 0 then return 0 end
 	local result: any = { amount = 0 }
 	local source = if asItem then makeItemSource(owner, unit, itemName) else owner
 	resolveItemHitOnUnit(source, unit, element or "Physical", math.max(1, math.round(power)), nil, false,
-		{ name = itemName or "Timed" }, result)
+		{ name = itemName or "Timed" }, result, nil, damageMult)
 	return result.amount or 0
+end
+
+-- AC-005 Wide-Fuse Kit (2026-10-29): "Single-target damage Items gain Impact Splash (adjacent
+-- tiles at 50% damage)". Uses the shared Impact Splash rule (TargetingService.GetImpactSplashTargets:
+-- the four cardinal tiles, friendly fire, +-2 elevation, never the user). Splash hits carry no rider.
+local function applyWideFuseSplash(user: any, victim: any, element: string, power: number, def: any, result: any, allUnits: any)
+	local cfg = ArmorPassiveService.GetItemSplashConfig(user)
+	if not cfg or not TargetingService or type(victim) ~= "table" or not victim.tileX then return end
+	local list = TargetingService.GetImpactSplashTargets(user, victim, allUnits or {}) or {}
+	-- Full item power through Defense, then the final damage is halved (Tester FAIL fix 2026-10-29:
+	-- DB "50% damage" = half of the damage actually dealt, matching the shared Impact Splash rule).
+	local splashPct = cfg.splashPercent or 0.5
+	-- Splash is damage only: it must not feed the item's riders (debuff / drain / RT delay read
+	-- result._hitUnits and result.amount after the hits), so both are restored below and the splash
+	-- total is reported separately.
+	local keepHits = (result._hitUnits and #result._hitUnits) or 0
+	local keepAmount = result.amount or 0
+	local hit = 0
+	for i, entry in ipairs(list) do
+		local u = entry.unit
+		if i > 1 and u and u.isAlive and u ~= user then
+			resolveItemHitOnUnit(user, u, element, power, nil, false, def, result, true, entry.dmgMult or splashPct)
+			result.affectedUnits = result.affectedUnits or {}
+			table.insert(result.affectedUnits, u)  -- client bar refresh (CommandService Item branch)
+			hit += 1
+		end
+	end
+	if result._hitUnits then
+		for k = #result._hitUnits, keepHits + 1, -1 do table.remove(result._hitUnits, k) end
+	end
+	result.splashAmount = (result.amount or 0) - keepAmount
+	result.amount = keepAmount
+	if hit > 0 then
+		print(string.format("[ItemEffectService] Wide-Fuse Kit: %s splash hits %d unit(s) at %d%% damage (%d dealt)",
+			tostring(def.name), hit, math.round(splashPct * 100), result.splashAmount))
+	end
+end
+
+-- AC-007 Overflowing Flask (2026-10-29): "Restoring Items also grant regen equal to 7% of restored
+-- amount per 100 CT for 500 CT." Adds a regen entry to the restored unit (ticked by
+-- StatusService.ProcessCtTick). kind "HP" or "MP"; restored = what the item actually restored.
+local function grantFlaskRegen(user: any, unit: any, kind: string, restored: number)
+	local cfg = ArmorPassiveService.GetItemRegenConfig(user)
+	if not cfg or type(unit) ~= "table" or not unit.isAlive or (restored or 0) <= 0 then return end
+	local per = math.max(1, math.round(restored * cfg.regenPercent))
+	unit._itemRegen = unit._itemRegen or {}
+	table.insert(unit._itemRegen, { kind = kind, perTick = per, intervalCt = cfg.tickCt,
+		remainingCt = cfg.durationCt, accumCt = 0 })
+	print(string.format("[ItemEffectService] Overflowing Flask: %s regains %d %s every %d CT for %d CT",
+		tostring(unit.name), per, kind, cfg.tickCt, cfg.durationCt))
+end
+
+-- AC-012 Trapmaker's Roll (2026-10-29): Trap-tagged items (DEP-005/006/007) placed at Range +3.
+function ItemEffectService.GetTrapRangeBonus(user: any, def: any): number
+	if def and hasTag(def, "Trap") then
+		local cfg = ArmorPassiveService.GetItemTrapConfig(user)
+		if cfg then return cfg.rangeBonus or 0 end
+	end
+	return 0
+end
+
+-- AC-012 Trapmaker's Roll (user ruling 2026-10-29): a trap item placed by the wearer deals +20%
+-- damage and RT delay when it springs. Stamped on the placed trap (inst.trapPowerMult). 1 = none.
+function ItemEffectService.GetTrapPowerMult(user: any, def: any): number
+	if def and hasTag(def, "Trap") then
+		local cfg = ArmorPassiveService.GetItemTrapConfig(user)
+		if cfg then return cfg.powerMult or 1 end
+	end
+	return 1
+end
+
+-- AC-014 Bomber Ring (2026-10-29): the item is replaced by a bomb for this use. DB: "range 3, AoE,
+-- RT 110; Bomb_Damage = round((50 + Level x 4) x 0.18); goes through normal Defense; original
+-- effects do not occur." Shape (user ruling 2026-10-29): small cross = Impact 1 tiles (aimed tile +
+-- 4 cardinal). Every tile takes full bomb damage (no 50% edge). Area-item rules: hits every living
+-- unit on the tiles except the user (friendly fire), tile within +-2 elevation of the aimed tile and
+-- not behind a BlocksAOE object. Physical, no rider. Power is level-only (no item multipliers).
+function ItemEffectService.ResolveBomb(user: any, target: any, allUnits: any, ctx: any, power: number): any
+	local result: any = { effectType = "Damage", amount = 0, element = "Physical", description = "Bomb" }
+	if not (TargetingService and type(target) == "table" and target.tileX and target.tileY) then return result end
+	local cx, cy = target.tileX, target.tileY
+	local mapW = (ctx and ctx.mapWidth) or 8
+	local mapH = (ctx and ctx.mapHeight) or 8
+	local tiles = TargetingService.GetAOETargetTiles("Impact1", user, cx, cy, mapW, mapH) or {}
+	if #tiles == 0 then tiles = { { tileX = cx, tileY = cy } } end
+	local centerElev = GameConstants.GetElevation(cx, cy)
+	local onTile = {}
+	for _, t in ipairs(tiles) do
+		if math.abs(GameConstants.GetElevation(t.tileX, t.tileY) - centerElev) <= 2
+			and not (TargetingService.IsAOEBlocked and TargetingService.IsAOEBlocked(cx, cy, t.tileX, t.tileY)) then
+			onTile[t.tileX .. "," .. t.tileY] = true
+		end
+	end
+	local def = { name = "Bomb", effectFormula = "" }
+	local p = math.max(1, math.round(power or 1))
+	local hit = 0
+	for _, u in ipairs(allUnits or {}) do
+		if u.isAlive and u ~= user and u.id ~= user.id and u.tileX and onTile[u.tileX .. "," .. u.tileY] then
+			resolveItemHitOnUnit(user, u, "Physical", p, nil, false, def, result, true)
+			result.affectedUnits = result.affectedUnits or {}
+			table.insert(result.affectedUnits, u)  -- client bar refresh (CommandService Item branch)
+			hit += 1
+		end
+	end
+	result.description = string.format("Bomb hit %d unit(s)", hit)
+	return result
 end
 
 local function parsePowerFormula(formula: string): any
@@ -772,7 +901,7 @@ local function tryRestore(user: any, target: any, formula: string, result: any):
 		heal = math.max(0, math.round(heal * TraitEffectService.GetItemEffectMultiplier(user)))
 		-- AC Accessory: healing-item output +50% (0 without the accessory).
 		heal = math.max(0, math.round(heal * (1 + ArmorPassiveService.GetItemHealBonus(user))))
-		UnitSchema.ApplyHealing(target, heal)
+		result._restored = UnitSchema.ApplyHealing(target, heal) or 0  -- actual HP restored (Overflowing Flask)
 		result.effectType = "HpRestore"
 		result.amount = heal
 		return true
@@ -782,6 +911,8 @@ local function tryRestore(user: any, target: any, formula: string, result: any):
 	if mpPct then
 		local pct = tonumber(mpPct)
 		local restore = math.max(1, math.ceil((target.maxMp or 1) * pct / 100))
+		-- AC-006 Medic's Case: "Items restore +50% HP/MP" -- MP too (checklist fix 2026-10-29).
+		restore = math.max(1, math.round(restore * (1 + ArmorPassiveService.GetItemHealBonus(user))))
 		local before = target.currentMp or 0
 		target.currentMp = math.min((target.maxMp or 1), before + restore)
 		result.effectType = "MpRestore"
@@ -905,6 +1036,16 @@ local function applyItemStatus(user: any, unit: any, statusName: string, durCt: 
 		for _, inst in ipairs(unit.statusInstances) do
 			if inst.id == statusName and inst.remainingTurns and sdef and (sdef.duration or 0) > 0 then
 				inst.remainingTurns = math.max(1, math.round(turns * inst.remainingTurns / sdef.duration))
+				break
+			end
+		end
+	end
+	-- AC-010 Expiry Extender on a TURN-timed status (re-check 2026-10-29): +500 CT = +1 turn (the
+	-- project's 1 turn = 400 CT step, rounded). CT-timed statuses got the CT above.
+	if _durBonus > 0 and not durCt and unit.statusInstances then
+		for _, inst in ipairs(unit.statusInstances) do
+			if inst.id == statusName and inst.remainingTurns and not inst.remainingCt then
+				inst.remainingTurns = inst.remainingTurns + math.max(1, math.round(_durBonus / 400))
 				break
 			end
 		end
@@ -1110,7 +1251,7 @@ local function tryDamage(user: any, target: any, def: any, formula: string, resu
 		-- A non-Undead enemy is refused by target validation before any cost is paid.
 		if type(target) ~= "table" or not target.isAlive or target.isGroundTarget then return false end
 		if CombatResolver.IsUndead and CombatResolver.IsUndead(target) then
-			resolveItemHitOnUnit(user, target, spec.element, computeItemPower(user, spec), nil, true, def, result)
+			resolveItemHitOnUnit(user, target, spec.element, computeItemPower(user, spec, true), nil, true, def, result)
 			result.effectType = "Damage"
 			return true
 		end
@@ -1121,6 +1262,7 @@ local function tryDamage(user: any, target: any, def: any, formula: string, resu
 			heal = math.max(0, math.round(heal * (1 + ArmorPassiveService.GetItemHealBonus(user))))
 			result.amount = UnitSchema.ApplyHealing(target, heal) or 0
 			result.effectType = "HpRestore"
+			grantFlaskRegen(user, target, "HP", result.amount)  -- AC-007 Overflowing Flask
 			return true
 		end
 		return false
@@ -1128,7 +1270,7 @@ local function tryDamage(user: any, target: any, def: any, formula: string, resu
 
 	local pattern = tostring(def.pattern or "Single")
 	local normPattern = (pattern:gsub("%s+", ""))  -- "Impact 1" -> "Impact1"
-	local power = computeItemPower(user, spec)
+	local power = computeItemPower(user, spec, true)
 	local rider = deriveRider(spec.element, formula)
 
 	-- ===== SINGLE TARGET =====
@@ -1154,6 +1296,7 @@ local function tryDamage(user: any, target: any, def: any, formula: string, resu
 			return false
 		end
 		resolveItemHitOnUnit(user, victim, spec.element, power, rider, true, def, result)
+		applyWideFuseSplash(user, victim, spec.element, power, def, result, allUnits)  -- AC-005 Wide-Fuse Kit
 		result.effectType = "Damage"
 		return true
 	end
@@ -1166,6 +1309,9 @@ local function tryDamage(user: any, target: any, def: any, formula: string, resu
 			if not target.isAlive then break end
 			resolveItemHitOnUnit(user, target, spec.element, power, rider, i == 1, def, result)
 		end
+		-- AC-005 Wide-Fuse Kit: a multi-hit item is still single-target; splash ONCE per use
+		-- (50% of one hit), not once per hit.
+		applyWideFuseSplash(user, target, spec.element, power, def, result, allUnits)
 		result.effectType = "Damage"
 		return true
 	end
@@ -1186,8 +1332,10 @@ local function tryDamage(user: any, target: any, def: any, formula: string, resu
 		end
 		for i, u in ipairs(chain) do
 			local mult = falloff[i] or falloff[#falloff] or 1.0
-			local hopPower = math.max(1, math.round(power * mult))
-			resolveItemHitOnUnit(user, u, spec.element, hopPower, rider, i == 1, def, result)
+			-- User ruling 2026-10-29: each jump takes full power through Defense, then the FINAL
+			-- damage is cut to 70% / 50% (was: power cut before Defense, so later jumps could hit 0).
+			resolveItemHitOnUnit(user, u, spec.element, power, rider, i == 1, def, result, nil,
+				(mult ~= 1) and mult or nil)
 		end
 		result.effectType = "Damage"
 		return true
@@ -1272,8 +1420,11 @@ local function tryDamage(user: any, target: any, def: any, formula: string, resu
 	end
 	for i, u in ipairs(victims) do
 		local mult = tileMult[u.tileX .. "," .. u.tileY] or 1.0
-		local hitPower = (mult < 1) and math.max(1, math.round(power * mult)) or power
-		resolveItemHitOnUnit(user, u, spec.element, hitPower, rider, i == primaryIdx, def, result, true)
+		-- Impact edge tiles (user ruling 2026-10-29): full item power through Defense, then the FINAL
+		-- damage is halved -- same as weapon / skill Impact Splash and Wide-Fuse. (Was: power halved
+		-- before Defense, so edge targets took far less than half, sometimes 0.)
+		resolveItemHitOnUnit(user, u, spec.element, power, rider, i == primaryIdx, def, result, true,
+			(mult < 1) and mult or nil)
 	end
 	result.effectType = "Damage"
 	return true
@@ -1593,6 +1744,9 @@ local function tryRtDelay(user: any, target: any, def: any, formula: string, res
 	end
 	local IL = user.level or 1
 	local rawDelay = math.round(tonumber(base) + (ilc and tonumber(ilc) or 0) * IL)
+	-- Time Locker / Time Freed / Timeline Sovereign: "RT delay caused" covers item RT delay too
+	-- (re-check 2026-10-29).
+	rawDelay = math.round(rawDelay * TraitEffectService.GetRtDelayInflictMultiplier(user))
 	local targetVit = (target.effectiveStats and target.effectiveStats.VIT) or 10
 	local gearResist = (target.gearDerived and target.gearDerived.rtDelayResist) or 1
 	local actualDelay = GameConstants.CalcRtDelayResistance(rawDelay, targetVit, gearResist)
@@ -1675,11 +1829,16 @@ local function tryAreaRestore(user: any, def: any, formula: string, result: any,
 				local heal = math.ceil((u.maxHp or 0) * hpPct / 100)
 				heal = math.max(0, math.round(heal * TraitEffectService.GetItemEffectMultiplier(user)))
 				heal = math.max(0, math.round(heal * (1 + ArmorPassiveService.GetItemHealBonus(user))))
-				total += (UnitSchema.ApplyHealing(u, heal) or 0)
+				local _applied = UnitSchema.ApplyHealing(u, heal) or 0
+				total += _applied
+				grantFlaskRegen(user, u, "HP", _applied)  -- AC-007 Overflowing Flask
 			end
 			if mpPct and (u.maxMp or 0) > 0 then
 				local restore = math.max(1, math.ceil(u.maxMp * mpPct / 100))
-				u.currentMp = math.min(u.maxMp, (u.currentMp or 0) + restore)
+				restore = math.max(1, math.round(restore * (1 + ArmorPassiveService.GetItemHealBonus(user))))  -- AC-006
+				local _mpBefore = u.currentMp or 0
+				u.currentMp = math.min(u.maxMp, _mpBefore + restore)
+				grantFlaskRegen(user, u, "MP", u.currentMp - _mpBefore)  -- AC-007 Overflowing Flask
 			end
 			table.insert(result.affectedUnits, u)
 		end
@@ -1949,6 +2108,12 @@ function ItemEffectService.Resolve(user: any, target: any, consumableDef: any, a
 		end
 		if tryRestore(user, target, formula, result) then
 			applyRestoreRiders(user, target, formula, result, _preHpFrac)
+			-- AC-007 Overflowing Flask: regen from what this item actually restored.
+			if result.effectType == "MpRestore" then
+				grantFlaskRegen(user, target, "MP", result.amount or 0)
+			else
+				grantFlaskRegen(user, target, "HP", result._restored or 0)
+			end
 			return result
 		end
 		if tryCure(target, formula, result) then return result end

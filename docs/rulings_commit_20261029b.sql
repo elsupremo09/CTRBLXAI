@@ -1,0 +1,11 @@
+BEGIN TRANSACTION;
+UPDATE nonweapon_equipment SET rule = 'Does not slide when knocked onto Ice or Oily tiles. (50 BP)' WHERE id = 99;
+UPDATE nonweapon_equipment SET rule = 'Destroying a breakable object yields one treasure reward roll. (50 BP)' WHERE id = 34;
+UPDATE nonweapon_equipment SET rule = 'Opening a Cursed Chest does not apply its curse. (60 BP)' WHERE id = 35;
+UPDATE nonweapon_equipment SET rule = 'Interact on a disguised object reveals it without triggering it. (40 BP)' WHERE id = 36;
+UPDATE nonweapon_equipment SET rule = 'Interact also reveals hidden units and objects within Discovery Radius x1.5 + 1. (100 BP)' WHERE id = 42;
+UPDATE unit_traits SET effect = 'Discovery radius +2' WHERE trait_id = 'TRAIT-P-135';
+UPDATE unit_traits SET effect = 'Discovery radius -2' WHERE trait_id = 'TRAIT-F-135';
+UPDATE unit_traits SET effect = 'Interact RT +25%' WHERE trait_id = 'TRAIT-F-096';
+UPDATE unit_traits SET effect = 'Interact RT +50%' WHERE trait_id = 'TRAIT-F-138';
+COMMIT;

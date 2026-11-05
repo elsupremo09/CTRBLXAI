@@ -76,3 +76,13 @@ Scope of this run: the three movement/RT wiring fixes (movement_targeting id 8, 
 ---
 ### BLOCKERS this run
 None. All formulas needed for movement-RT and STR-RT-delay validation are present in the DB.
+
+---
+### 2026-11-02 — Crucible check
+Registry for this run: sim\crucible_2026-11-02\FORMULAS_crucible.md (10 new DB rows asserted + 8 Crucible rules from the user-approved design snapshot, not yet in the DB). Economy base: sim\runeforge_v2_2026-11-01\FORMULAS_v2.md.
+
+---
+### 2026-11-03 — Apothecary paid-refill check
+Registry for this run: sim\apothecary_2026-11-03\FORMULAS_apothecary.md (consumable pricing rows + Apothecary rules from the user decision 2026-11-03, not yet in the DB).
+
+- 2026-11-04 Training Grounds check: see sim\training_grounds_2026-11-04\FORMULAS_tg.md (proposal rules not in DB; XP rows unit_progression 30/32/33/52/60-62/86).

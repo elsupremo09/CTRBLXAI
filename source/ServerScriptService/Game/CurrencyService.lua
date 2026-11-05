@@ -2,47 +2,44 @@
 -- CurrencyService.lua
 -- CTRBLXAI | Slice 6 — Currency & Materials Store (foundation for Base Mgmt)
 --
--- OWNS (per service_boundaries 'Currency Service', LOCKED):
---   The player's running gold balance and the 5 material tier counters
---   (T1..T5). Atomic credit/debit transactions.
+-- OWNS (per service_boundaries 'Currency Service', LOCKED; v2 USER DECISION 2026-11-01):
+--   The player's gold, the 3 resource counters (mercury, crystals, sulfur), the rune gem
+--   storage (count per gem ID) and the lifetime daily-event counter (materials_system
+--   1-5, 29; save_data_contract 3). Atomic credit/debit transactions.
 --
 -- READS:
 --   economy_framework (gold sources/sinks — amounts are passed IN by callers),
---   materials_system (counters, drop grants), save_data_contract Key 2.
+--   materials_system (resources), save_data_contract Key 2.
 --
 -- WRITES:
---   Updated gold + material counts handed to the EXISTING persistence path
---   (SaveService Key 2 — Inventory + Currencies). It does NOT create a second
---   save store; Main.server.lua folds Export() into the Slice 4 Save call and
---   feeds the saved sub-table back via Import() on load — the same pattern
---   GuildService uses for Key 3.
+--   Updated balances handed to the EXISTING persistence path (SaveService Key 2 —
+--   Inventory + Currencies). It does NOT create a second save store; Main.server.lua
+--   folds Export() into the Save call and feeds the saved sub-table back via Import().
 --
 -- MUST NOT OWN:
---   Reward generation, item generation, combat, or pricing formulas. This
---   service READS the amounts to charge from its callers; it never defines a
---   price, a drop amount, or a recipe.
+--   Reward generation, item generation, combat, or pricing formulas. This service
+--   READS the amounts to charge from its callers; it never defines a price, a drop
+--   amount, or a recipe.
 --
 -- PRIMARY INTERFACE (LOCKED):
---   GetBalance(playerId)                      -> { gold = n, materials = {1..5=n} }
+--   GetBalance(playerId) -> { gold, mercury, crystals, sulfur, gems = { [gemId] = n },
+--                             dailyEventsCompleted }
 --   CanAfford(playerId, cost)                 -> boolean
---   Credit(playerId, grant)                   -> newBalance        (add gold/materials)
+--   Credit(playerId, grant)                   -> newBalance
 --   Debit(playerId, cost)                     -> boolean, reason?  (atomic multi-cost)
 --
---   `cost` / `grant` shape (either field optional):
---     { gold = number?, materials = { [tier:number(1..5)] = qty:number }? }
+--   `cost` / `grant` shape (every field optional):
+--     { gold = n?, mercury = n?, crystals = n?, sulfur = n?, gems = { [gemId] = n }? }
+--   The old `materials` (T1-T5) and `essences` fields are REMOVED (v2): a cost that
+--   still uses them is refused, a grant that uses them is ignored with a warning.
 --
 -- FAILURE BOUNDARY (LOCKED):
---   Debit is ALL-OR-NOTHING. If gold is insufficient OR any required material
---   tier is insufficient, the ENTIRE charge is cancelled — no partial spend.
---   A balance is never allowed to go negative.
+--   Debit is ALL-OR-NOTHING. If any part of the cost cannot be paid, NOTHING is
+--   deducted. A balance is never allowed to go negative.
 --
 -- STARTING BALANCE (LOCKED 2026-10-05):
---   economy_framework 'Starting Gold' now LOCKS the new-player starting gold:
---   "New players begin with 500 gold" (enough for one early hire or a cheap
---   purchase so shop/blacksmith are usable on a fresh save; trivial against
---   lifetime income). Materials still start at 0 (always earned, never granted
---   at start). STARTING_GOLD below is the single source of this number — read
---   verbatim from economy_framework; do not scatter or re-tune it.
+--   "New players begin with 500 gold". Resources start at 0 (always earned, never
+--   granted at start). STARTING_GOLD below is the single source of this number.
 --
 -- ─────────────────────────────────────────────────────────────────────────
 -- DEPENDENCIES ARE INJECTED (dependency injection, not require) so this module
@@ -62,15 +59,31 @@ local CurrencyService = {}
 -- number — do not scatter it.
 local STARTING_GOLD = 500
 
-local MATERIAL_TIERS = 5 -- materials_system id29: T1..T5 (5 integer counters)
+-- Rune gem IDs are content IDs (a numeric attribute ID such as "NUM-WEAPONATTACK-1",
+-- or a passive ID such as "PAS-049"); materials_system 4. Length guard only (SEC-001:
+-- never trust a shape); content validity is checked where gems are used.
+local MAX_GEM_ID_LEN = 64
+
+-- materials_system 6 (v2): old saves stored 5 gear tiers; they convert to mercury 1:1.
+local LEGACY_MATERIAL_TIERS = 5
 
 --------------------------------------------------
 -- STATE STORAGE
---   balances[playerId] = { gold = int, materials = { [1]=int, .. [5]=int } }
+--   balances[playerId] = { gold, mercury, crystals, sulfur, gems = { [gemId] = int },
+--                          dailyEventsCompleted }
 -- All values are non-negative integers at all times (invariant).
 --------------------------------------------------
 
-local balances: { [string]: { gold: number, materials: { [number]: number } } } = {}
+type Balance = {
+	gold: number,
+	mercury: number,
+	crystals: number,
+	sulfur: number,
+	gems: { [string]: number },
+	dailyEventsCompleted: number,
+}
+
+local balances: { [string]: Balance } = {}
 
 --------------------------------------------------
 -- INTERNAL HELPERS
@@ -92,29 +105,23 @@ local function toNonNegInt(n: any): number
 	return i
 end
 
-local function isValidTier(tier: any): boolean
-	return type(tier) == "number" and tier >= 1 and tier <= MATERIAL_TIERS and math.floor(tier) == tier
+local function isValidGemId(id: any): boolean
+	return type(id) == "string" and #id > 0 and #id <= MAX_GEM_ID_LEN
 end
 
-local function freshState()
-	local mats: { [number]: number } = {}
-	for t = 1, MATERIAL_TIERS do
-		mats[t] = 0
-	end
-	return { gold = STARTING_GOLD, materials = mats }
+local function usesRemovedFields(t: any): boolean
+	return t.materials ~= nil or t.essences ~= nil
 end
 
-local function stateOf(playerId: string)
+local function freshState(): Balance
+	return { gold = STARTING_GOLD, mercury = 0, crystals = 0, sulfur = 0, gems = {}, dailyEventsCompleted = 0 }
+end
+
+local function stateOf(playerId: string): Balance
 	local s = balances[playerId]
 	if not s then
 		s = freshState()
 		balances[playerId] = s
-	end
-	-- Defensive: ensure all 5 counters exist even if an old import was partial.
-	for t = 1, MATERIAL_TIERS do
-		if type(s.materials[t]) ~= "number" then
-			s.materials[t] = 0
-		end
 	end
 	return s
 end
@@ -124,13 +131,13 @@ end
 --------------------------------------------------
 
 -- Called when a player joins (before Import). A brand-new player starts at
--- STARTING_GOLD and zero materials.
+-- STARTING_GOLD and zero resources.
 function CurrencyService.InitPlayer(playerId: string)
 	assert(type(playerId) == "string", "CurrencyService.InitPlayer: playerId required")
 	if not balances[playerId] then
 		balances[playerId] = freshState()
-		print(string.format("[CurrencyService] Init %s | gold %d (starting) | materials 0×%d",
-			playerId, STARTING_GOLD, MATERIAL_TIERS))
+		print(string.format("[CurrencyService] Init %s | gold %d (starting) | mercury 0 | crystals 0 | sulfur 0",
+			playerId, STARTING_GOLD))
 	end
 end
 
@@ -140,66 +147,56 @@ end
 
 --------------------------------------------------
 -- PRIMARY INTERFACE: GetBalance
---
--- Returns a COPY of the player's balance (callers cannot mutate internal
--- state by holding the returned table).
---   { gold = n, materials = { [1]=n, [2]=n, [3]=n, [4]=n, [5]=n } }
+-- Returns a COPY (callers cannot mutate internal state by holding it).
 --------------------------------------------------
 
 function CurrencyService.GetBalance(playerId: string)
 	local s = stateOf(playerId)
-	local matsCopy: { [number]: number } = {}
-	for t = 1, MATERIAL_TIERS do
-		matsCopy[t] = s.materials[t]
-	end
-	return { gold = s.gold, materials = matsCopy }
+	return {
+		gold = s.gold,
+		mercury = s.mercury,
+		crystals = s.crystals,
+		sulfur = s.sulfur,
+		gems = table.clone(s.gems),
+		dailyEventsCompleted = s.dailyEventsCompleted,
+	}
 end
 
 --------------------------------------------------
 -- PRIMARY INTERFACE: CanAfford
---
--- Read-only. Returns true only if EVERY component of `cost` is satisfied:
--- the gold line AND every material tier line. Charges nothing.
---   cost = { gold = number?, materials = { [tier] = qty }? }
+-- Read-only. True only if EVERY part of `cost` can be paid. Charges nothing.
 --------------------------------------------------
 
 function CurrencyService.CanAfford(playerId: string, cost: any): boolean
 	if type(cost) ~= "table" then
 		return false
 	end
-	local s = stateOf(playerId)
-
-	-- Gold line.
-	local needGold = toNonNegInt(cost.gold)
-	if s.gold < needGold then
+	if usesRemovedFields(cost) then
+		warn(`[CurrencyService] CanAfford refused a cost using removed fields (materials/essences) for {playerId}`)
 		return false
 	end
-
-	-- Material lines (all tiers must be satisfied).
-	if type(cost.materials) == "table" then
-		for tier, qty in cost.materials do
-			if not isValidTier(tier) then
-				-- Unknown tier requested — cannot be satisfied.
+	local s = stateOf(playerId)
+	if s.gold < toNonNegInt(cost.gold) then return false end
+	if s.mercury < toNonNegInt(cost.mercury) then return false end
+	if s.crystals < toNonNegInt(cost.crystals) then return false end
+	if s.sulfur < toNonNegInt(cost.sulfur) then return false end
+	if type(cost.gems) == "table" then
+		for id, qty in cost.gems do
+			if not isValidGemId(id) then
 				return false
 			end
-			local need = toNonNegInt(qty)
-			if s.materials[tier] < need then
+			if (s.gems[id] or 0) < toNonNegInt(qty) then
 				return false
 			end
 		end
 	end
-
 	return true
 end
 
 --------------------------------------------------
 -- PRIMARY INTERFACE: Credit
---
--- Adds gold and/or materials. Credit is always safe (no negative result
--- possible). Amounts are coerced to non-negative integers. The amount comes
--- from the caller (e.g. the reward grant path) — this service does not decide
--- how much to grant.
---   grant = { gold = number?, materials = { [tier] = qty }? }
+-- Adds gold and/or resources. Always safe (no negative result possible). The amount
+-- comes from the caller — this service does not decide how much to grant.
 -- Returns the new balance (same shape as GetBalance).
 --------------------------------------------------
 
@@ -208,101 +205,88 @@ function CurrencyService.Credit(playerId: string, grant: any)
 	if type(grant) ~= "table" then
 		return CurrencyService.GetBalance(playerId)
 	end
-
-	local addGold = toNonNegInt(grant.gold)
-	if addGold > 0 then
-		s.gold += addGold
+	if usesRemovedFields(grant) then
+		warn(`[CurrencyService] Credit ignored removed fields (materials/essences) for {playerId}`)
 	end
-
-	if type(grant.materials) == "table" then
-		for tier, qty in grant.materials do
-			if isValidTier(tier) then
+	-- materials_system 31: no cap on any resource.
+	s.gold += toNonNegInt(grant.gold)
+	s.mercury += toNonNegInt(grant.mercury)
+	s.crystals += toNonNegInt(grant.crystals)
+	s.sulfur += toNonNegInt(grant.sulfur)
+	if type(grant.gems) == "table" then
+		for id, qty in grant.gems do
+			if isValidGemId(id) then
 				local add = toNonNegInt(qty)
 				if add > 0 then
-					s.materials[tier] += add -- materials_system id31: no cap
+					s.gems[id] = (s.gems[id] or 0) + add
 				end
 			else
-				warn(string.format("[CurrencyService] Credit ignored unknown material tier %s for %s",
-					tostring(tier), playerId))
+				warn(`[CurrencyService] Credit ignored an invalid rune gem id {tostring(id)} for {playerId}`)
 			end
 		end
 	end
-
 	return CurrencyService.GetBalance(playerId)
+end
+
+-- DAILY EVENTS (materials_system 13, locked): one lifetime counter that never resets; every 3rd
+-- completed daily event (3rd, 6th, 9th, ...) also gives 1 sulfur. Returns (new total, sulfur given).
+function CurrencyService.RecordDailyEvent(playerId: string): (number, number)
+	local s = stateOf(playerId)
+	s.dailyEventsCompleted += 1
+	local sulfur = if s.dailyEventsCompleted % 3 == 0 then 1 else 0
+	s.sulfur += sulfur
+	print(string.format("[CurrencyService] Daily event %d completed by %s%s", s.dailyEventsCompleted, playerId,
+		if sulfur > 0 then " (+1 sulfur, every 3rd)" else ""))
+	return s.dailyEventsCompleted, sulfur
 end
 
 --------------------------------------------------
 -- PRIMARY INTERFACE: Debit  (atomic multi-cost — LOCKED failure boundary)
---
--- Charges gold AND materials together, all-or-nothing. If the full cost cannot
--- be met, NOTHING is deducted and the balance is unchanged (no partial spend;
--- balance never goes negative).
---   cost = { gold = number?, materials = { [tier] = qty }? }
+-- Charges every part together, all-or-nothing.
 -- Returns: ok(boolean), reason(string|nil)
 --------------------------------------------------
 
 function CurrencyService.Debit(playerId: string, cost: any): (boolean, string?)
-	if type(cost) ~= "table" then
+	if type(cost) ~= "table" or usesRemovedFields(cost) then
 		return false, "Invalid cost"
 	end
 
 	-- Check EVERYTHING first (atomic): if any line fails, charge nothing.
-	if not CurrencyService.CanAfford(playerId, cost) then
-		-- Distinguish the reason for logging/UX without leaking partial state.
-		local s = stateOf(playerId)
-		local needGold = toNonNegInt(cost.gold)
-		if s.gold < needGold then
-			return false, "Insufficient gold"
-		end
-		return false, "Insufficient materials"
-	end
-
 	local s = stateOf(playerId)
-
-	-- Apply gold.
-	local spendGold = toNonNegInt(cost.gold)
-	if spendGold > 0 then
-		s.gold -= spendGold
-		if s.gold < 0 then
-			-- Should be impossible after CanAfford, but enforce the invariant.
-			s.gold = 0
-		end
+	if not CurrencyService.CanAfford(playerId, cost) then
+		if s.gold < toNonNegInt(cost.gold) then return false, "Insufficient gold" end
+		if s.mercury < toNonNegInt(cost.mercury) then return false, "Not enough mercury" end
+		if s.crystals < toNonNegInt(cost.crystals) then return false, "Not enough crystals" end
+		if s.sulfur < toNonNegInt(cost.sulfur) then return false, "Not enough sulfur" end
+		return false, "Not enough rune gems"
 	end
 
-	-- Apply materials.
-	if type(cost.materials) == "table" then
-		for tier, qty in cost.materials do
-			if isValidTier(tier) then
-				local spend = toNonNegInt(qty)
-				if spend > 0 then
-					s.materials[tier] -= spend
-					if s.materials[tier] < 0 then
-						s.materials[tier] = 0
-					end
-				end
-			end
+	s.gold = math.max(0, s.gold - toNonNegInt(cost.gold))
+	s.mercury = math.max(0, s.mercury - toNonNegInt(cost.mercury))
+	s.crystals = math.max(0, s.crystals - toNonNegInt(cost.crystals))
+	s.sulfur = math.max(0, s.sulfur - toNonNegInt(cost.sulfur))
+	if type(cost.gems) == "table" then
+		for id, qty in cost.gems do
+			local left = (s.gems[id] or 0) - toNonNegInt(qty)
+			s.gems[id] = if left > 0 then left else nil
 		end
 	end
-
 	return true, nil
 end
 
 --------------------------------------------------
 -- CURRENCY-PROVIDER ADAPTER
 --
--- The already-shipped batch-1 services (RecruitmentService, BlacksmithService)
--- expect an injected `_currency` object with the method names below. This
--- adapter exposes that exact contract on top of the locked interface above so
--- those services wire in with NO change to their code:
---     GetGold(playerId)                 -> number
---     SpendGold(playerId, amount)       -> boolean
---     AddGold(playerId, amount)         -> number (new gold)   [Blacksmith refund]
---     GetMaterial(playerId, tier)       -> number
---     SpendMaterials(playerId, {[tier]=qty}) -> boolean
---
--- Usage in Main.server.lua:
---     RecruitmentService.SetCurrencyProvider(CurrencyService.AsProvider())
---     BlacksmithService.SetCurrencyProvider(CurrencyService.AsProvider())
+-- Services that get an injected `_currency` object (Recruitment, Blacksmith, Merchant,
+-- Dispatch, Explore) use these names:
+--     GetGold(playerId)            -> number
+--     SpendGold(playerId, amount)  -> boolean
+--     AddGold(playerId, amount)    -> number (new gold)
+--     GetMercury(playerId)         -> number
+--     CanAfford(playerId, cost)    -> boolean          (full cost shape, see header)
+--     Debit(playerId, cost)        -> boolean, reason? (atomic, see header)
+--     Credit(playerId, grant)      -> new balance      (full grant shape, see header)
+-- (GetMaterial / SpendMaterials were removed with the T1-T5 tiers, v2 2026-11-01.)
 --------------------------------------------------
 
 local _provider: any = nil
@@ -314,7 +298,7 @@ function CurrencyService.AsProvider()
 
 	_provider = {
 		GetGold = function(playerId: string): number
-			return CurrencyService.GetBalance(playerId).gold
+			return stateOf(playerId).gold
 		end,
 
 		SpendGold = function(playerId: string, amount: number): boolean
@@ -327,16 +311,20 @@ function CurrencyService.AsProvider()
 			return bal.gold
 		end,
 
-		GetMaterial = function(playerId: string, tier: number): number
-			if not isValidTier(tier) then
-				return 0
-			end
-			return CurrencyService.GetBalance(playerId).materials[tier]
+		GetMercury = function(playerId: string): number
+			return stateOf(playerId).mercury
 		end,
 
-		SpendMaterials = function(playerId: string, materials: { [number]: number }): boolean
-			local ok = CurrencyService.Debit(playerId, { materials = materials })
-			return ok
+		CanAfford = function(playerId: string, cost: any): boolean
+			return CurrencyService.CanAfford(playerId, cost)
+		end,
+
+		Debit = function(playerId: string, cost: any): (boolean, string?)
+			return CurrencyService.Debit(playerId, cost)
+		end,
+
+		Credit = function(playerId: string, grant: any)
+			return CurrencyService.Credit(playerId, grant)
 		end,
 	}
 
@@ -346,52 +334,80 @@ end
 --------------------------------------------------
 -- SAVE INTEGRATION (SaveService Key 2 — Inventory + Currencies)
 --
--- CurrencyService does NOT touch DataStore. Main.server.lua folds Export() into
--- the Slice 4 Save call (as the Key 2 `currencies` sub-table) and feeds the
--- saved sub-table back via Import() on load. This reuses the Slice 4 contract
--- rather than creating a second store (save_data_contract: 3 keys, Key 2 holds
--- currencies; materials_system id30: Key 2 alongside gold, 5 integers).
---
--- Export shape (compact — one int for gold, 5 ints for materials):
---   { gold = int, mats = { int, int, int, int, int } }   -- array index == tier
+-- Export shape (compact):
+--   { gold = int, mer = int, cry = int, sul = int, gem = { [gemId] = int }, dec = int }
+-- Saves from before v2 have `mats` (5 tier counts) and maybe `ess` (3 Essences) and no
+-- `mer`: Import turns T1+T2+T3+T4+T5 into mercury 1:1 and drops the Essences
+-- (materials_system 6, save_data_contract 3). The next save writes the new shape.
 --------------------------------------------------
 
 function CurrencyService.Export(playerId: string)
 	local s = stateOf(playerId)
-	local mats: { number } = {}
-	for t = 1, MATERIAL_TIERS do
-		mats[t] = s.materials[t]
+	local gems: { [string]: number } = {}
+	for id, count in s.gems do
+		if count > 0 then
+			gems[id] = count
+		end
 	end
-	return { gold = s.gold, mats = mats }
+	return {
+		gold = s.gold,
+		mer = s.mercury,
+		cry = s.crystals,
+		sul = s.sulfur,
+		gem = gems,
+		dec = s.dailyEventsCompleted,
+	}
 end
 
 function CurrencyService.Import(playerId: string, data: any)
 	CurrencyService.InitPlayer(playerId)
 	if type(data) ~= "table" then
-		-- No saved currency section (e.g. pre-currency save or new player):
-		-- keep the freshly-initialised starting balance. Do NOT invent values.
+		-- No saved currency section (e.g. new player): keep the starting balance.
+		-- Do NOT invent values.
 		return
 	end
-	local s = balances[playerId]
+	local s = stateOf(playerId)
 
 	-- Gold (nonnegative integer — save_data_contract Load_Validation).
 	s.gold = toNonNegInt(data.gold)
 
-	-- Materials: accept the compact array ({ [1..5] = int }). Any missing tier
-	-- stays 0. Tolerate a dictionary form too, for forward-compat.
-	local mats = data.mats or data.materials
-	if type(mats) == "table" then
-		for t = 1, MATERIAL_TIERS do
-			s.materials[t] = toNonNegInt(mats[t])
-		end
+	if data.mer ~= nil then
+		s.mercury = toNonNegInt(data.mer)
 	else
-		for t = 1, MATERIAL_TIERS do
-			s.materials[t] = 0
+		local mats = data.mats or data.materials
+		local total = 0
+		if type(mats) == "table" then
+			for t = 1, LEGACY_MATERIAL_TIERS do
+				total += toNonNegInt(mats[t])
+			end
+		end
+		s.mercury = total
+		if total > 0 or type(data.ess) == "table" then
+			print(`[CurrencyService] Converted old materials for {playerId}: T1-T5 total {total} -> {total} mercury; Essences removed`)
 		end
 	end
+	s.crystals = toNonNegInt(data.cry)
+	s.sulfur = toNonNegInt(data.sul)
 
-	print(string.format("[CurrencyService] Imported %s | gold %d | materials %d/%d/%d/%d/%d",
-		playerId, s.gold, s.materials[1], s.materials[2], s.materials[3], s.materials[4], s.materials[5]))
+	table.clear(s.gems)
+	if type(data.gem) == "table" then
+		for id, count in data.gem do
+			if isValidGemId(id) then
+				local c = toNonNegInt(count)
+				if c > 0 then
+					s.gems[id] = c
+				end
+			else
+				warn(`[CurrencyService] Import dropped an invalid rune gem id {tostring(id)} for {playerId}`)
+			end
+		end
+	end
+	s.dailyEventsCompleted = toNonNegInt(data.dec)
+
+	local kinds = 0
+	for _ in s.gems do kinds += 1 end
+	print(string.format("[CurrencyService] Imported %s | gold %d | mercury %d | crystals %d | sulfur %d | rune gem kinds %d | daily events %d",
+		playerId, s.gold, s.mercury, s.crystals, s.sulfur, kinds, s.dailyEventsCompleted))
 end
 
 --------------------------------------------------
@@ -400,8 +416,10 @@ end
 
 function CurrencyService.Describe(playerId: string): string
 	local s = stateOf(playerId)
-	return string.format("gold:%d T1:%d T2:%d T3:%d T4:%d T5:%d",
-		s.gold, s.materials[1], s.materials[2], s.materials[3], s.materials[4], s.materials[5])
+	local kinds = 0
+	for _ in s.gems do kinds += 1 end
+	return string.format("gold:%d mercury:%d crystals:%d sulfur:%d gemKinds:%d dailyEvents:%d",
+		s.gold, s.mercury, s.crystals, s.sulfur, kinds, s.dailyEventsCompleted)
 end
 
 return CurrencyService

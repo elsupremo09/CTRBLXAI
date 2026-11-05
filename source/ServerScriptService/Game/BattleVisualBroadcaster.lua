@@ -60,15 +60,360 @@ local function unitName(u)
 	return (u and u.name) or "?"
 end
 
-local function logEntry(category, text, unitId)
+local function fireLogRaw(category, text, unitId)
 	if type(text) ~= "string" or text == "" then return end
 	BattleEvents.BattleLogEntry:FireAllClients({ t = _logTurn, c = category, x = text, u = unitId })
+end
+
+--------------------------------------------------
+-- BATTLE LOG COVERAGE (project_rules 225, 2026-10-28)
+-- Cause labels + per-unit snapshot diff + batch grouping.
+--   * CAUSE: callers name the cause by passing a trailing `cause` string, or by
+--     scoping one with SetCause(label) ... ClearCause(prev). "__silent" = absorb the
+--     change without logging (aura reconcile, passive MP regen).
+--   * SNAPSHOT: _snap[unitId] = {hp, mp, alive, st = {[statusId]=true}} -- what the
+--     log last described. UnitStateChanged logs only the diff. Every function that
+--     already logs a change refreshes the matching snapshot fields (dedup).
+--   * GROUPING: diff/object/terrain lines are buffered; on flush, >= GROUP_MIN lines
+--     sharing cause+kind become one summary. Any direct log line flushes the buffer
+--     first, so chronological order is preserved. Flush points: FlushLog() from
+--     CommandService (end of command) and Main (end of CT-tick block), plus a
+--     task.defer fallback. Logging never touches game state (read-only on units).
+--------------------------------------------------
+
+local SILENT = "__silent"
+BattleVisualBroadcaster.SILENT = SILENT
+local GROUP_MIN = 3  -- agent default threshold (vetoable)
+
+local _scopedCause = nil   -- SetCause/ClearCause scope
+local _snap = {}           -- [unitId] = snapshot
+local _unitsById = {}      -- [unitId] = unit (registry for tile lookup)
+local _buffer = {}         -- pending entries {kind, cause, unitId, name, amount, statusName, label, text, category}
+local _deferScheduled = false
+
+local function statusName(id)
+	local def = GameConstants.STATUSES and GameConstants.STATUSES[id]
+	return (def and def.name) or tostring(id)
+end
+
+local function statusSet(unit)
+	local set = {}
+	if unit and unit.statusInstances then
+		for _, e in ipairs(StatusService.GetStatusSummary(unit)) do
+			if e.id then set[e.id] = true end
+		end
+	end
+	return set
+end
+
+local function seedUnit(unit)
+	if not unit or unit.id == nil then return end
+	_unitsById[unit.id] = unit
+	_snap[unit.id] = {
+		hp = unit.currentHp or 0,
+		mp = unit.currentMp or 0,
+		alive = unit.isAlive ~= false,
+		st = statusSet(unit),
+	}
+end
+
+local function rangeText(lo, hi)
+	if lo == hi then return tostring(lo) end
+	return `{lo}–{hi}`
+end
+
+-- Single-line text for one buffered entry.
+local function entryText(e)
+	if e.text then return e.text end
+	local c, n = e.cause, e.name
+	if e.kind == "hpLoss" then
+		return if c then `{c} hit {n} for {e.amount}.` else `{n} lost {e.amount} HP.`
+	elseif e.kind == "hpGain" then
+		return if c then `{c} healed {n} for {e.amount}.` else `{n} recovered {e.amount} HP.`
+	elseif e.kind == "ko" then
+		return if c then `{n} was defeated ({c}).` else `{n} was defeated.`
+	elseif e.kind == "revive" then
+		return if c then `{n} was revived ({c}).` else `{n} was revived.`
+	elseif e.kind == "statusAdd" then
+		return if c then `{n} is now {e.statusName} ({c}).` else `{n} is now {e.statusName}.`
+	elseif e.kind == "statusRem" then
+		return if c then `{n} is no longer {e.statusName} ({c}).` else `{n} is no longer {e.statusName}.`
+	elseif e.kind == "mpLoss" then
+		return `{c}: {n} lost {e.amount} MP.`
+	elseif e.kind == "mpGain" then
+		return `{c}: {n} gained {e.amount} MP.`
+	elseif e.kind == "tileEffect" then
+		return `{c} spread to a tile.`
+	elseif e.kind == "terrain" then
+		return `{c}: a tile became {e.label}.`
+	elseif e.kind == "objDestroyed" then
+		return `{e.label} was destroyed.`
+	elseif e.kind == "objExploded" then
+		return `{e.label} exploded.`
+	elseif e.kind == "objPushed" then
+		return `{e.label} was pushed.`
+	end
+	return nil
+end
+
+-- Summary text for k >= GROUP_MIN entries sharing cause+kind (+status/label).
+local function groupText(list)
+	local e = list[1]
+	local c, k = e.cause, #list
+	local lo, hi = math.huge, -math.huge
+	for _, x in ipairs(list) do
+		local a = x.amount or 0
+		if a < lo then lo = a end
+		if a > hi then hi = a end
+	end
+	if e.kind == "hpLoss" then return `{c} hit {k} units for {rangeText(lo, hi)}.`
+	elseif e.kind == "hpGain" then return `{c} healed {k} units for {rangeText(lo, hi)}.`
+	elseif e.kind == "statusAdd" then
+		if e.statusName == "Wet" then return `{c} soaked {k} units.` end
+		return `{c}: {k} units are now {e.statusName}.`
+	elseif e.kind == "statusRem" then return `{c}: {k} units are no longer {e.statusName}.`
+	elseif e.kind == "mpLoss" then return `{c}: {k} units lost {rangeText(lo, hi)} MP.`
+	elseif e.kind == "mpGain" then return `{c}: {k} units gained {rangeText(lo, hi)} MP.`
+	elseif e.kind == "tileEffect" then return `{c} spread to {k} tiles.`
+	elseif e.kind == "terrain" then return `{c}: {k} tiles became {e.label}.`
+	elseif e.kind == "objDestroyed" then return `{k}× {e.label} were destroyed.`
+	elseif e.kind == "objExploded" then return `{k}× {e.label} exploded.`
+	elseif e.kind == "objPushed" then return `{k}× {e.label} were pushed.`
+	end
+	return nil
+end
+
+local GROUPABLE = {
+	hpLoss = true, hpGain = true, statusAdd = true, statusRem = true, mpLoss = true, mpGain = true,
+	tileEffect = true, terrain = true, objDestroyed = true, objExploded = true, objPushed = true,
+}
+
+local function flushLog()
+	_deferScheduled = false
+	if #_buffer == 0 then return end
+	local pending = _buffer
+	_buffer = {}
+	-- Bucket by cause+kind(+status/label); emit in order of first appearance.
+	local buckets, order = {}, {}
+	for i, e in ipairs(pending) do
+		local key
+		if e.cause and GROUPABLE[e.kind] then
+			key = `{e.cause}|{e.kind}|{e.statusName or ""}|{e.label or ""}`
+		else
+			key = `#{i}`
+		end
+		if not buckets[key] then
+			buckets[key] = {}
+			table.insert(order, key)
+		end
+		table.insert(buckets[key], e)
+	end
+	for _, key in ipairs(order) do
+		local list = buckets[key]
+		if #list >= GROUP_MIN then
+			fireLogRaw(list[1].category or "field", groupText(list), nil)
+		else
+			for _, e in ipairs(list) do
+				if e.trace then warn(`[BattleLog] uncaused {e.kind} for {e.name}\n{e.trace}`) end
+				fireLogRaw(e.category or "status", entryText(e), e.unitId)
+			end
+		end
+	end
+end
+
+local function bufferEntry(e)
+	table.insert(_buffer, e)
+	if not _deferScheduled then
+		_deferScheduled = true
+		task.defer(flushLog)  -- fallback so nothing is held forever
+	end
+end
+
+-- Remove not-yet-flushed diff entries for a unit that a following logging
+-- broadcast is about to describe itself (dedup when state sync came first).
+-- amount (optional): only retract HP entries of exactly this size, so a DIFFERENT
+-- earlier change (e.g. a recoil hit) is never swallowed.
+local function retract(unitId, kinds, statusId, amount)
+	if unitId == nil or #_buffer == 0 then return end
+	for i = #_buffer, 1, -1 do
+		local e = _buffer[i]
+		if e.unitId == unitId and kinds[e.kind] and (statusId == nil or e.statusId == statusId)
+			and (amount == nil or e.amount == nil or e.amount == amount) then
+			table.remove(_buffer, i)
+		end
+	end
+end
+
+local HP_KINDS = { hpLoss = true, hpGain = true, ko = true, revive = true }
+
+-- Causes whose MP change is a real effect (rules 225). Others: MP absorbed silently.
+-- Callers can force it per call with UnitStateChanged(unit, cause, true).
+local MP_CAUSES = {
+	["Mana Storm"] = true, ["Tainted Ground"] = true, ["Magic Spring"] = true,
+	["Campfire"] = true, ["Recharge"] = true, ["MP drain"] = true,
+}
+local _mpCauseOverride = false
+function BattleVisualBroadcaster.RegisterMpCause(label)
+	if type(label) == "string" then MP_CAUSES[label] = true end
+end
+
+-- A cause that arrives right after an uncaused sync of the same unit (e.g. code that
+-- calls UnitStateChanged(u) then ObjectDamage(..., "Spike Trap")) names the line that
+-- is already buffered instead of adding a second one.
+local function relabel(unitId, cause)
+	if unitId == nil or type(cause) ~= "string" or cause == SILENT then return end
+	for _, e in ipairs(_buffer) do
+		if e.unitId == unitId and e.cause == nil and HP_KINDS[e.kind] then
+			e.cause = cause
+			e.trace = nil
+		end
+	end
+end
+local STATUS_ADD_KIND = { statusAdd = true }
+local STATUS_REM_KIND = { statusRem = true }
+
+-- Refresh snapshot fields after a broadcast that logged them itself.
+local function syncHp(unit)
+	if not unit or unit.id == nil then return end
+	local s = _snap[unit.id]
+	if not s then seedUnit(unit) return end
+	retract(unit.id, HP_KINDS)
+	s.hp = unit.currentHp or 0
+	s.alive = unit.isAlive ~= false
+end
+
+local function syncStatus(unit, statusId, present)
+	if not unit or unit.id == nil or statusId == nil then return end
+	local s = _snap[unit.id]
+	if not s then seedUnit(unit) return end
+	retract(unit.id, if present then STATUS_ADD_KIND else STATUS_REM_KIND, statusId)
+	s.st[statusId] = if present then true else nil
+end
+
+local function logEntry(category, text, unitId)
+	if type(text) ~= "string" or text == "" then return end
+	flushLog()  -- keep chronological order with buffered lines
+	fireLogRaw(category, text, unitId)
+end
+
+-- Captured at diff time, warned at flush time only if the line survived dedup.
+local function uncausedTrace()
+	return debug.traceback("", 3)
+end
+
+-- Diff one unit against its snapshot and buffer log lines for what changed.
+local function diffUnit(unit, cause)
+	if not unit or unit.id == nil then return end
+	local s = _snap[unit.id]
+	if not s then
+		seedUnit(unit)  -- first sight: seed, don't dump the whole state
+		return
+	end
+	_unitsById[unit.id] = unit
+	local silent = cause == SILENT
+	local c = if silent then nil else cause
+	local name = unitName(unit)
+	local hp = unit.currentHp or 0
+	local mp = unit.currentMp or 0
+	local alive = unit.isAlive ~= false
+	local st = statusSet(unit)
+
+	if not silent then
+		local dHp = hp - s.hp
+		if dHp < 0 then
+			bufferEntry({ kind = "hpLoss", cause = c, unitId = unit.id, name = name, amount = -dHp, category = "action",
+				trace = if c then nil else uncausedTrace() })
+		elseif dHp > 0 then
+			bufferEntry({ kind = "hpGain", cause = c, unitId = unit.id, name = name, amount = dHp, category = "action" })
+		end
+		if s.alive and not alive then
+			bufferEntry({ kind = "ko", cause = c, unitId = unit.id, name = name, category = "ko",
+				trace = if c then nil else uncausedTrace() })
+		elseif (not s.alive) and alive then
+			bufferEntry({ kind = "revive", cause = c, unitId = unit.id, name = name, category = "ko" })
+		end
+		for id in pairs(st) do
+			if not s.st[id] then
+				bufferEntry({ kind = "statusAdd", cause = c, unitId = unit.id, name = name,
+					statusId = id, statusName = statusName(id), category = "status" })
+			end
+		end
+		for id in pairs(s.st) do
+			if not st[id] then
+				bufferEntry({ kind = "statusRem", cause = c, unitId = unit.id, name = name,
+					statusId = id, statusName = statusName(id), category = "status" })
+			end
+		end
+		-- MP is only logged when an effect caused it (passive regen stays silent).
+		-- Passive regen mutates MP without any broadcast, so a later caused sync (e.g.
+		-- Hail) would otherwise report the regen too: MP lines are opt-in per cause.
+		local dMp = mp - s.mp
+		if c and dMp ~= 0 and (MP_CAUSES[c] or _mpCauseOverride) then
+			bufferEntry({ kind = if dMp < 0 then "mpLoss" else "mpGain", cause = c, unitId = unit.id,
+				name = name, amount = math.abs(dMp), category = "status" })
+		end
+	end
+	s.hp = hp
+	s.mp = mp
+	s.alive = alive
+	s.st = st
+end
+
+local function unitAtTile(x, y)
+	local fallback = nil
+	for id, u in pairs(_unitsById) do
+		if u.tileX == x and u.tileY == y then
+			local s = _snap[id]
+			if s and (s.hp ~= (u.currentHp or 0) or s.alive ~= (u.isAlive ~= false)) then
+				return u  -- the unit whose state just changed
+			end
+			if u.isAlive then fallback = fallback or u end
+		end
+	end
+	return fallback
 end
 
 -- Public hook for services that resolve events outside this module
 -- (Interact, counters, channel landing/interrupts, removals).
 function BattleVisualBroadcaster.Log(category, text, unitId)
 	logEntry(category, text, unitId)
+end
+
+-- Scoped cause label for code that broadcasts indirectly. Returns the previous
+-- label; pass it to ClearCause to restore (supports nesting).
+function BattleVisualBroadcaster.SetCause(label)
+	local prev = _scopedCause
+	_scopedCause = label
+	return prev
+end
+
+function BattleVisualBroadcaster.ClearCause(prev)
+	_scopedCause = prev
+end
+
+function BattleVisualBroadcaster.GetCause()
+	return _scopedCause
+end
+
+-- Flush buffered/grouped log lines now (end of command, end of CT-tick block).
+function BattleVisualBroadcaster.FlushLog()
+	flushLog()
+end
+
+-- Refresh a unit's log snapshot to its current state WITHOUT logging -- for code
+-- that logged the change itself via Log() (e.g. ObjectEffectService.TriggerTrap).
+function BattleVisualBroadcaster.SyncUnit(unit)
+	if not unit or unit.id == nil then return end
+	retract(unit.id, { hpLoss = true, hpGain = true, ko = true, revive = true, statusAdd = true, statusRem = true, mpLoss = true, mpGain = true })
+	seedUnit(unit)
+end
+
+-- Clear all log snapshots (battle end / reset).
+function BattleVisualBroadcaster.ResetLogState()
+	flushLog()
+	table.clear(_snap)
+	table.clear(_unitsById)
+	_scopedCause = nil
 end
 
 --------------------------------------------------
@@ -91,6 +436,18 @@ local PACE = {
 --------------------------------------------------
 -- HELPERS
 --------------------------------------------------
+
+-- Info-panel stat values (2026-10-28): a COPY of derivedStats with CURRENT values from the same
+-- calculation the battle uses (gear / race / trait / doctrine + active buffs and debuffs).
+-- unit.derivedStats is never changed. Deferred require keeps this module free of load-order ties.
+local function displayDerived(unit)
+	if not unit.derivedStats then return nil end
+	local ok, svc = pcall(require, script.Parent.StatCalcService)
+	if ok and svc and svc.BuildDisplay then
+		return svc.BuildDisplay(unit, "current")
+	end
+	return unit.derivedStats
+end
 
 local function serializeUnit(unit)
 	local result = {
@@ -128,7 +485,7 @@ local function serializeUnit(unit)
 		remainingRt = unit.remainingRt,
 		skillIds    = unit.skillIds or {},
 		statuses    = StatusService.GetStatusSummary(unit),
-		derivedStats = unit.derivedStats or nil,
+		derivedStats = displayDerived(unit),
 		primaryStats = unit.primaryStats or nil,
 		level        = unit.level or 1,
 		-- Compact weapon summary for battle UI display
@@ -191,10 +548,12 @@ end
 
 function BattleVisualBroadcaster.BattleStarted(units)
 	_logTurn = 0
+	BattleVisualBroadcaster.ResetLogState()
 	logEntry("info", "Battle begins.")
 	local serialized = {}
 	for _, unit in ipairs(units) do
 		table.insert(serialized, serializeUnit(unit))
+		seedUnit(unit)  -- Battle Log Coverage: first UnitStateChanged must not dump state
 	end
 
 	BattleEvents.BattleStarted:FireAllClients({
@@ -255,7 +614,9 @@ function BattleVisualBroadcaster.UnitMoved(unit)
 	task.wait(PACE.Move)
 end
 
-function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, skillId)
+-- animKind (optional, 2026-10-28): AnimationRegistry kind the actor plays (nil = client
+-- fallback, "None" = nothing). The server only names it; the client animates (NET-001).
+function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, skillId, animKind)
 	BattleEvents.UnitActed:FireAllClients({
 		actorId     = actor.id,
 		actionType  = skillName and "Skill" or "Attack",
@@ -263,6 +624,7 @@ function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, sk
 		damage      = outcome.finalDamage,
 		skillName   = skillName,
 		skillId     = skillId,  -- client VFX registry lookup (element/tags)
+		animKind    = animKind,
 		targetHp    = target.currentHp,
 		targetMaxHp = target.maxHp,
 		statusApplied = outcome.statusApplied or nil,
@@ -280,6 +642,8 @@ function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, sk
 			table.insert(parts, `target RT +{outcome.rtDelay}`)
 		end
 		logEntry("action", table.concat(parts, ", "), actor.id)
+		syncHp(target, "loss", outcome.finalDamage)
+		if outcome.statusApplied and outcome.statusApplied ~= "" then syncStatus(target, outcome.statusApplied, true) end
 	end
 	task.wait(PACE.Action)
 
@@ -306,6 +670,7 @@ function BattleVisualBroadcaster.DotDamage(unit, statusId, damage, sourceName)
 	else
 		logEntry("status", `{unitName(unit)} takes {damage or 0} {statusId} damage ({unit.currentHp or 0}/{unit.maxHp or 0})`, unit.id)
 	end
+	syncHp(unit, "loss", damage)
 	task.wait(PACE.Dot)
 
 	if not unit.isAlive then
@@ -316,7 +681,8 @@ function BattleVisualBroadcaster.DotDamage(unit, statusId, damage, sourceName)
 end
 
 -- Slice 3: broadcast healing
-function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName, skillId)
+-- animKind (optional, 2026-10-28): caster animation kind, same contract as UnitActed.
+function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName, skillId, animKind)
 	BattleEvents.HealingApplied:FireAllClients({
 		actorId     = actor.id,
 		targetId    = target.id,
@@ -326,8 +692,11 @@ function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName
 		statuses    = if target.statusInstances then StatusService.GetStatusSummary(target) else nil,  -- Venom weaken/cure (2026-10-26)
 		skillName   = skillName,
 		skillId     = skillId,  -- client VFX registry lookup
+		animKind    = animKind,
 	})
 	logEntry("action", `{unitName(actor)} heals {unitName(target)}{if skillName then ` with {skillName}` else ""}: +{amount or 0} HP ({target.currentHp or 0}/{target.maxHp or 0})`, actor.id)
+	syncHp(target, "gain", amount)
+	if target and target.statusInstances and target.id ~= nil and _snap[target.id] then _snap[target.id].st = statusSet(target) end
 	task.wait(PACE.Healing)
 end
 
@@ -335,9 +704,11 @@ end
 -- Channel loop start: client plays a looping Charging VFX on the caster
 -- (Charging 1 for damage skills, Charging 2 for healing) until ChannelEnded
 -- (executed) or ChannelFizzled (interrupted).
-function BattleVisualBroadcaster.ChannelStarted(unit, isHealing)
+-- animKind (optional, 2026-10-28): caster animation at channel start (double-cast for a
+-- channeled skill, quick cast for an activation-delayed one, Interact for Resuscitate).
+function BattleVisualBroadcaster.ChannelStarted(unit, isHealing, animKind)
 	if not unit then return end
-	BattleEvents.ChannelStarted:FireAllClients({ unitId = unit.id, isHealing = isHealing == true })
+	BattleEvents.ChannelStarted:FireAllClients({ unitId = unit.id, isHealing = isHealing == true, animKind = animKind })
 end
 
 -- Channel loop stop on successful execution (interruption is signalled by
@@ -429,6 +800,7 @@ function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns, s
 			dur = ` ({remainingTurns} turn{if remainingTurns == 1 then "" else "s"})`
 		end
 		logEntry("status", `{unitName(unit)} gains {statusId}{dur}.`, unit.id)
+		syncStatus(unit, statusId, true)
 	end
 	task.wait(PACE.Status)
 end
@@ -439,6 +811,7 @@ function BattleVisualBroadcaster.StatusExpired(unit, statusId)
 		statusId = statusId,
 	})
 	logEntry("status", `{statusId} wears off {unitName(unit)}.`, unit.id)
+	syncStatus(unit, statusId, false)
 end
 
 function BattleVisualBroadcaster.TurnEnded(unit, nextRt)
@@ -465,6 +838,7 @@ function BattleVisualBroadcaster.BattleEnded(winner, units)
 		units  = serialized,
 	})
 	logEntry("info", `Battle over: {tostring(winner)} wins.`)
+	BattleVisualBroadcaster.ResetLogState()
 	task.wait(PACE.BattleEnd)
 end
 
@@ -499,6 +873,10 @@ function BattleVisualBroadcaster.UnitPushed(pusher, target, result)
 		blockedBy      = result.blockedBy,
 		targetHp       = target.currentHp,
 		targetMaxHp    = target.maxHp,
+		-- Unit the target was shoved into (2026-10-30, visual only): its HP after the
+		-- collision, so the client can update its bar and show a collision KO.
+		collidedId     = result.wallCollision and result.wallCollision.collidedUnitId or nil,
+		collidedHp     = result.wallCollision and result.wallCollision.collidedUnitHpAfter or nil,
 	})
 	do
 		local text
@@ -512,6 +890,9 @@ function BattleVisualBroadcaster.UnitPushed(pusher, target, result)
 			text = `{unitName(pusher)}'s push on {unitName(target)} is blocked{if result.blockedBy then ` by {tostring(result.blockedBy)}` else ""}.`
 		end
 		logEntry("action", text, pusher.id)
+		local _pd = (result.wallCollision and result.wallCollision.damage or 0) + (result.fallDamage or 0)
+		if _pd > 0 then syncHp(target, "loss", _pd)
+		elseif target and target.id ~= nil and _snap[target.id] then _snap[target.id].alive = target.isAlive ~= false end
 	end
 	task.wait(PACE.Action)
 end
@@ -543,19 +924,27 @@ function BattleVisualBroadcaster.StatusImmune(unit, statusId, reason)
 		reason    = reason,
 	})
 	logEntry("status", `{unitName(unit)} is immune to {statusId}{if reason then ` ({tostring(reason)})` else ""}.`, unit.id)
+	syncStatus(unit, statusId, false)
 end
 
 --------------------------------------------------
 -- TILE EFFECTS (TileEffectService)
 --------------------------------------------------
 
-function BattleVisualBroadcaster.TileEffectApplied(tileX, tileY, effectId, durationCt)
+-- cause (optional, Battle Log Coverage 2026-10-28): a meaningful spread/placement
+-- ("Fire") gets a grouped line ("Fire spread to 4 tiles."). nil = no line -- floor
+-- re-establish and other background re-sends stay silent.
+function BattleVisualBroadcaster.TileEffectApplied(tileX, tileY, effectId, durationCt, cause)
 	BattleEvents.TileEffectApplied:FireAllClients({
 		tileX      = tileX,
 		tileY      = tileY,
 		effectId   = effectId,
 		durationCt = durationCt,
 	})
+	cause = cause or _scopedCause
+	if type(cause) == "string" and cause ~= SILENT then
+		bufferEntry({ kind = "tileEffect", cause = cause, category = "field" })
+	end
 end
 
 function BattleVisualBroadcaster.TileEffectRemoved(tileX, tileY, effectId)
@@ -586,7 +975,9 @@ function BattleVisualBroadcaster.MoveCostChanged(x, y, add)
 	BattleEvents.MoveCostChanged:FireAllClients({ x = x, y = y, add = add or 0 })
 end
 
-function BattleVisualBroadcaster.TerrainChanged(x, y, terrainId, elevation)
+-- cause (optional, 2026-10-28): names a meaningful transform ("Fire", "The explosion")
+-- -> grouped "Fire: 2 tiles became Sand." nil = background, no line.
+function BattleVisualBroadcaster.TerrainChanged(x, y, terrainId, elevation, cause)
 	-- elevation (optional, 2026-10-26): the tile's NEW elevation after a dig, so the client
 	-- height map (inspector, labels, unit token height) follows. nil = unchanged.
 	BattleEvents.TerrainChanged:FireAllClients({
@@ -595,6 +986,13 @@ function BattleVisualBroadcaster.TerrainChanged(x, y, terrainId, elevation)
 		terrainId = terrainId,
 		elevation = elevation,
 	})
+	cause = cause or _scopedCause
+	if type(cause) == "string" and cause ~= SILENT then
+		local label = tostring(terrainId)
+		local tdef = GameConstants.TERRAIN_TYPES and GameConstants.TERRAIN_TYPES[terrainId]
+		if type(tdef) == "table" and type(tdef.name) == "string" then label = tdef.name end
+		bufferEntry({ kind = "terrain", cause = cause, label = label, category = "field" })
+	end
 end
 
 --------------------------------------------------
@@ -602,7 +1000,11 @@ end
 -- S->C: a map OBS object's state changed (HP decrement / destroyed / moved).
 --------------------------------------------------
 
-function BattleVisualBroadcaster.ObjectChanged(x, y, info)
+-- label (optional, 2026-10-28): the object's DISPLAY type (GetDisplayType -- never the
+-- true type of a disguised Mimic). When given, destroyed / moved / exploded changes get a
+-- grouped log line. info.exploded = true -> "Bomb Barrel exploded." instead of destroyed.
+-- Hidden objects are never broadcast, so they are never logged.
+function BattleVisualBroadcaster.ObjectChanged(x, y, info, label)
 	-- Fired by ObjectEffectService.ApplyObjectHit. The client updates the
 	-- inspector HP readout and, on destroy, drops its own blocker so the opened
 	-- tile is walkable/visible. No pacing wait (state sync, like UnitStateChanged).
@@ -616,6 +1018,32 @@ function BattleVisualBroadcaster.ObjectChanged(x, y, info)
 		newHp     = info.newHp,
 		destroyed = info.destroyed == true or nil,
 		moved     = info.moved,
+		objType   = info.objType,  -- A3: post-unmask display type refresh (nil otherwise)
+	})
+	if type(label) == "string" and label ~= "" and label ~= SILENT then
+		local kind = nil
+		if info.exploded == true then kind = "objExploded"
+		elseif info.destroyed == true then kind = "objDestroyed"
+		elseif info.moved then kind = "objPushed" end
+		if kind then
+			bufferEntry({ kind = kind, cause = label, label = label, category = "field" })
+		end
+	end
+end
+
+--------------------------------------------------
+-- TRAP SPRUNG (2026-10-28)
+-- S->C: a step-on trap fired at (x,y). Display-only floating indicator; fired by
+-- ObjectEffectService.TriggerTrap (covers hidden traps the client never drew).
+--------------------------------------------------
+
+function BattleVisualBroadcaster.TrapSprung(x, y, trapType, unitId, hidden)
+	BattleEvents.TrapSprung:FireAllClients({
+		x        = x,
+		y        = y,
+		trapType = trapType,
+		unitId   = unitId,
+		hidden   = hidden == true,
 	})
 end
 
@@ -624,7 +1052,18 @@ end
 -- Generic broadcast for HP/isAlive changes outside normal combat.
 --------------------------------------------------
 
-function BattleVisualBroadcaster.UnitStateChanged(unit)
+-- cause (optional, Battle Log Coverage 2026-10-28): names what changed the unit
+-- ("Hail", "Retribution"). nil falls back to the SetCause scope; still nil = the HP/KO
+-- line uses neutral wording plus a [BattleLog] warn; MP changes with no cause stay
+-- silent. SILENT ("__silent") absorbs the change without logging.
+function BattleVisualBroadcaster.UnitStateChanged(unit, cause, logMp)
+	if unit then
+		local c = cause or _scopedCause
+		relabel(unit.id, c)
+		_mpCauseOverride = logMp == true
+		diffUnit(unit, c)
+		_mpCauseOverride = false
+	end
 	BattleEvents.UnitStateChanged:FireAllClients({
 		unitId    = unit.id,
 		hp        = unit.currentHp,
@@ -641,13 +1080,24 @@ end
 -- dedicated event the client turns into a floating damage number + impact flash on
 -- the tile, plus a camera pan to the tile when focus=true. Callers pass focus=true
 -- for the FIRST unit hit in an interaction (mirrors the attack/skill camera focus).
-function BattleVisualBroadcaster.ObjectDamage(tileX, tileY, amount, focus)
+-- cause (optional, 2026-10-28): the object/source name ("Spike Trap", "Ballista").
+-- Logs "<cause> hit <name> for N." for the unit on the tile, relabelling any uncaused
+-- line a preceding UnitStateChanged already buffered (one event = one line).
+function BattleVisualBroadcaster.ObjectDamage(tileX, tileY, amount, focus, cause)
 	BattleEvents.ObjectDamage:FireAllClients({
 		tileX  = tileX,
 		tileY  = tileY,
 		amount = amount,
 		focus  = focus == true,
 	})
+	local c = cause or _scopedCause
+	if c ~= nil then
+		local u = unitAtTile(tileX, tileY)
+		if u then
+			relabel(u.id, c)
+			diffUnit(u, c)
+		end
+	end
 end
 
 -- Explosion damage (Bomb Barrel / Land Mine). TileEffectService already CALLS
@@ -655,8 +1105,10 @@ end
 -- was a guarded silent no-op), so explosions showed no damage number. Define it now
 -- and route it through the shared ObjectDamage feedback. focus defaults to false;
 -- the explosion loop passes focus=true for its first damaged tile.
-function BattleVisualBroadcaster.ExplosionDamage(tileX, tileY, amount, focus)
-	BattleVisualBroadcaster.ObjectDamage(tileX, tileY, amount, focus == true)
+-- Explosions write HP directly and send no UnitStateChanged, so this is their only log
+-- line (DotDamage is only the no-ExplosionDamage fallback). Default cause "The explosion".
+function BattleVisualBroadcaster.ExplosionDamage(tileX, tileY, amount, focus, cause)
+	BattleVisualBroadcaster.ObjectDamage(tileX, tileY, amount, focus == true, cause or _scopedCause or "The explosion")
 end
 
 --------------------------------------------------
@@ -671,9 +1123,11 @@ end
 -- the unit's head for ~2s. No pacing wait - the action's own event follows.
 --------------------------------------------------
 
-function BattleVisualBroadcaster.ActionAnnounced(unit, label)
+-- animKind (optional, 2026-10-28): animation the announcing unit plays with the label
+-- (Push / Interact / Open Treasure / Big Spell). nil = label only.
+function BattleVisualBroadcaster.ActionAnnounced(unit, label, animKind)
 	if not unit or type(label) ~= "string" or label == "" then return end
-	BattleEvents.ActionAnnounced:FireAllClients({ unitId = unit.id, label = label })
+	BattleEvents.ActionAnnounced:FireAllClients({ unitId = unit.id, label = label, animKind = animKind })
 end
 
 function BattleVisualBroadcaster.FacingChanged(unit)
@@ -717,12 +1171,21 @@ function BattleVisualBroadcaster.ItemUsed(actor, target, itemName, effectResult)
 		elseif et == "StatusCure" then summary = `cured {effectResult.statusId or "status"} on {tName}`
 		elseif et == "StatusApply" then summary = `{effectResult.statusId or "status"} on {tName}`
 		elseif et == "Damage" then summary = `{tName} -{amount} HP`
+		elseif et == "Revive" then summary = `revived {tName}`
 		-- Placements (2026-10-27): say what was placed, never where (hidden traps stay hidden).
 		elseif et == "Deploy" then summary = effectResult.description or "placed"
 		elseif et == "DeployFailed" then summary = "placement failed"
 		elseif et == nil or et == "Unimplemented" then summary = "no effect"
 		else summary = `on {tName}` end
 		logEntry("action", `{unitName(actor)} uses {itemName or "item"}: {summary}.`, actor.id)
+		-- dedup: the item line already described this; refresh the target snapshot.
+		if target then
+			if et == "Heal" or et == "Healing" then syncHp(target, "gain", amount)
+			elseif et == "Damage" then syncHp(target, "loss", amount)
+			elseif et == "MpRestore" and target.id ~= nil and _snap[target.id] then _snap[target.id].mp = target.currentMp or 0
+			elseif et == "StatusCure" then syncStatus(target, effectResult.statusId, false)
+			elseif et == "StatusApply" then syncStatus(target, effectResult.statusId, true) end
+		end
 	end
 end
 
@@ -741,6 +1204,7 @@ function BattleVisualBroadcaster.UnitSpawned(unit)
 	BattleEvents.UnitSpawned:FireAllClients({
 		unit = serializeUnit(unit),
 	})
+	seedUnit(unit)
 	logEntry("ko", `{unitName(unit)} enters the battle.`, unit.id)
 end
 
@@ -784,7 +1248,9 @@ end
 -- decay ticks are stashed through state.ctStatusUnits (drained by Main).
 --------------------------------------------------
 
-function BattleVisualBroadcaster.ShieldChanged(unit, delta, reason)
+-- cause (optional, 2026-10-28): names a grant ("Iron Barrier"). Logs grants and breaks
+-- only; absorb/decay ticks stay silent.
+function BattleVisualBroadcaster.ShieldChanged(unit, delta, reason, cause)
 	if not unit then return end
 	BattleEvents.ShieldChanged:FireAllClients({
 		unitId      = unit.id,
@@ -794,6 +1260,15 @@ function BattleVisualBroadcaster.ShieldChanged(unit, delta, reason)
 		maxHp       = unit.maxHp,
 		currentHp   = unit.currentHp,
 	})
+	local c = cause or _scopedCause
+	if c ~= SILENT then
+		if reason == "grant" and (delta or 0) > 0 then
+			bufferEntry({ text = if c then `{unitName(unit)} gained a {delta} shield ({c}).` else `{unitName(unit)} gained a {delta} shield.`,
+				kind = "shield", unitId = unit.id, category = "status" })
+		elseif reason == "break" then
+			bufferEntry({ text = `{unitName(unit)}'s shield broke.`, kind = "shield", unitId = unit.id, category = "status" })
+		end
+	end
 end
 
 return BattleVisualBroadcaster

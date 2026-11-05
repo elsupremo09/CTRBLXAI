@@ -51,7 +51,7 @@ local QUEST_TYPE_WEIGHTS = {
 	{ type = "Crossing", weight = 15 },
 	{ type = "Ambush",   weight = 15 },
 	{ type = "Defense",  weight = 10 },
-	{ type = "Boss",     weight = 10 },
+	{ type = "Boss",     weight = 3 },  -- USER DECISION 2026-11-01 (boss income): was 10 (1 in 10 cards); now about 1 in 31
 	{ type = "Survival", weight = 15 },
 }
 
@@ -167,9 +167,17 @@ end
 -- SINGLE QUEST GENERATION
 --------------------------------------------------
 
-local function generateOneQuest(questIndex, playerLevel, rng)
+-- Quest types a Daily Contract can be (never a boss: daily systems decision 4, 2026-11-01).
+local NON_BOSS_TYPE_WEIGHTS = {}
+for _, entry in ipairs(QUEST_TYPE_WEIGHTS) do
+	if entry.type ~= "Boss" then table.insert(NON_BOSS_TYPE_WEIGHTS, entry) end
+end
+
+-- opts (optional; nil keeps the normal board unchanged): noBoss = never a boss quest,
+-- noMercuryRoll = skip the 1-in-7 quest mercury roll.
+local function generateOneQuest(questIndex, playerLevel, rng, opts)
 	-- 1. Quest type (weighted)
-	local questType = weightedPick(rng, QUEST_TYPE_WEIGHTS)
+	local questType = weightedPick(rng, if opts and opts.noBoss then NON_BOSS_TYPE_WEIGHTS else QUEST_TYPE_WEIGHTS)
 
 	-- 2. Biome (uniform from all biomes — prototype has no gating)
 	local biome = pickRandom(rng, ALL_BIOMES)
@@ -297,6 +305,13 @@ local function generateOneQuest(questIndex, playerLevel, rng)
 	local inhab = pickRandom(rng, inhabitants)
 	local description = inhab .. " threaten the area."
 
+	-- 12. Quest mercury (USER DECISION 2026-11-01, materials_system 11): about 1 quest in 7
+	-- offers 1-3 mercury, shown upfront (about 0.3 per battle). Rolled LAST so every earlier
+	-- roll (enemies, rewards, name, description) is unchanged for the same seed.
+	if not (opts and opts.noMercuryRoll) and rng:NextInteger(1, 7) == 1 then
+		rewards.mercury = rng:NextInteger(1, 3)
+	end
+
 	-- Build quest table
 	local quest = {
 		id             = string.format("quest_%03d", questIndex),
@@ -320,6 +335,75 @@ end
 --------------------------------------------------
 -- PUBLIC API
 --------------------------------------------------
+
+-- DAILY CONTRACT (daily systems decisions 4-6, USER DECISION 2026-11-01): one per real day,
+-- built from a seed fixed by the day, so refreshing the board always shows the same contract.
+-- A normal battle (never a boss; never an elite once elites exist). Reward = normal quest rewards
+-- + 3 mercury (materials_system 13, paid as its quest mercury; was 5 until 2026-11-01); every 3rd one also gives 1 sulfur
+-- (Main / CurrencyService). It replaces the random quest-mercury roll.
+local DAILY_CONTRACT_MERCURY = 3 -- USER DECISION 2026-11-01 (Simulator boss/daily check): was 5
+
+function QuestGenerator.GenerateDailyContract(playerLevel, day)
+	local rng = Random.new(day * 1000003 + 424241)
+	local quest = generateOneQuest(0, playerLevel, rng, { noBoss = true, noMercuryRoll = true })
+	quest.id = string.format("daily_%d", day)
+	quest.name = "Daily Contract: " .. quest.name
+	quest.isDailyContract = true
+	quest.dailyDay = day
+	quest.rewards.mercury = DAILY_CONTRACT_MERCURY
+	print(string.format("[QuestGenerator] Daily Contract for day %d: %s | %s/%s | Lv %d | %d enemies",
+		day, quest.name, quest.biome, quest.template, quest.recommendedLvl, quest.enemyCount))
+	return quest
+end
+
+-- ELITE ENCOUNTERS (daily systems decisions 10-14, USER DECISION 2026-11-01; loot_progression 69).
+-- About 1 in 30 normal quest battles (0.034) is an elite encounter, hidden until the departure
+-- briefing. Anti-fishing (DEV DEFAULT 2026-11-01, Simulator finding): the roll is fixed by the
+-- player's count of COMPLETED battles, not by the card, so abandoning a quest or picking another
+-- card can never produce more elites. Fortune is never used. Never on boss cards or the Daily
+-- Contract.
+local ELITE_ENCOUNTER_CHANCE = 0.034
+
+local function hashString(s: string): number
+	local h = 0
+	for i = 1, #s do
+		h = (h * 31 + string.byte(s, i)) % 2147483647
+	end
+	return h
+end
+
+function QuestGenerator.IsEliteBattle(playerId, battlesCompleted)
+	local seed = (hashString(tostring(playerId)) + (tonumber(battlesCompleted) or 0) * 7919 + 99991) % 2147483647
+	return Random.new(seed):NextNumber() < ELITE_ENCOUNTER_CHANCE
+end
+
+-- Turns a normal quest into an elite encounter (once). DEV DEFAULT 2026-11-01: the design's
+-- "6 enemies" is the planning value (Normal 5 / Elite 6, loot_progression 86, not read by code);
+-- real battles use 2-2.5x the deploy slots, so an elite keeps the card's enemy count + 1 extra
+-- Veteran, with exactly ONE Elite (the leader; any other Elites become Veterans) so the
+-- "Defeat the Elite within N rounds" objective (Elite Slayer) can run.
+function QuestGenerator.MakeEliteEncounter(quest)
+	if quest.isEliteEncounter then return quest end
+	local recLvl = quest.recommendedLvl or 1
+	-- D-1 fix (2026-11-01): the result is always the card's own count + 1. Every Elite on the
+	-- card becomes a Veteran, then the Elite leader is added, so a card that had 0 Elites and a
+	-- card that had 1 both end with exactly one Elite and one extra enemy.
+	local kept, oldTotal = {}, 0
+	for _, et in ipairs(quest.enemyTypes or {}) do
+		oldTotal += et.count
+		if et.type == "Elite" then
+			table.insert(kept, { type = "Veteran", level = et.level, count = et.count })
+		else
+			table.insert(kept, et)
+		end
+	end
+	table.insert(kept, 1, { type = "Elite", level = recLvl + 2, count = 1, isLeader = true })
+	quest.enemyTypes = kept
+	quest.enemyCount = oldTotal + 1
+	quest.isEliteEncounter = true
+	print(string.format("[QuestGenerator] Elite encounter: %s | %d enemies, Elite leader Lv %d", quest.name, quest.enemyCount, recLvl + 2))
+	return quest
+end
 
 --- Generate 3 quests for the quest board.
 --- @param playerLevel number Current player level (prototype: 1)

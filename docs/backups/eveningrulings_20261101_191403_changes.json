@@ -1,0 +1,934 @@
+{
+ "ts": "20261101_191403",
+ "db": [
+  {
+   "k": [
+    "materials_system",
+    7,
+    "rule"
+   ],
+   "old": "5% chance per enemy kill → 1 mercury (DECIDED (DEV DEFAULT); 5 enemies per normal battle, loot_progression 86 → 0.25 per battle). Fortune never applies.",
+   "new": "5% chance per enemy kill → 1 mercury (DECIDED (DEV DEFAULT); 5 enemies per normal battle, loot_progression 86 → 0.25 per battle). Fortune never applies. Paid on a victory only, like item loot: a defeat gives no kill mercury."
+  },
+  {
+   "k": [
+    "materials_system",
+    7,
+    "notes"
+   ],
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: 20% chance per kill. 1 material. Tier based on enemy level range. Primary source (~1.6 per battle from 8 enemies).]",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6a. Victory-only recorded 2026-11-01. [Superseded 2026-11-01 by v2: rule: 20% chance per kill. 1 material. Tier based on enemy level range. Primary source (~1.6 per battle from 8 enemies).]"
+  },
+  {
+   "k": [
+    "materials_system",
+    8,
+    "notes"
+   ],
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: 75% chance (1 guaranteed if rewarded). 2-3 materials. Tier = enemy level range.]",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT (status 2026-11-01): elite encounters do not exist in the game code yet, so this grant has nothing to come from. The mercury currency itself is BUILT (step 1). [Superseded 2026-11-01 by v2: rule: 75% chance (1 guaranteed if rewarded). 2-3 materials. Tier = enemy level range.]"
+  },
+  {
+   "k": [
+    "materials_system",
+    9,
+    "rule"
+   ],
+   "old": "3 mercury. The boss crystal / rune gem / sulfur grant is separate (row 41).",
+   "new": "3 mercury. The boss crystal / rune gem / sulfur grant is separate (row 41). ON HOLD - RESOLVED (USER) 2026-11-01 (ruling 1): not built until a daily boss reward limit system exists in the game (there is no day counter yet). Reason: without the limit, bosses could be replayed for unlimited crystals."
+  },
+  {
+   "k": [
+    "materials_system",
+    9,
+    "notes"
+   ],
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: 100% guaranteed. 3-5 materials. Tier = boss level range.]",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT - ON HOLD (RESOLVED (USER) 2026-11-01, ruling 1; see loot_progression 15). [Superseded 2026-11-01 by v2: rule: 100% guaranteed. 3-5 materials. Tier = boss level range.]"
+  },
+  {
+   "k": [
+    "materials_system",
+    10,
+    "rule"
+   ],
+   "old": "100% on Interact. 1 mercury + other loot. No crystals and no rune gems (DECIDED (DEV DEFAULT)).",
+   "new": "100% on Interact. 1 mercury + other loot. No crystals and no rune gems (DECIDED (DEV DEFAULT)). Cursed Chest gives the same 1 mercury (RESOLVED (USER) 2026-11-01: it is riskier - it inflicts Weakened - so it should not pay less; objects_encounters Cursed Chest). Chest mercury is credited when the chest opens, so it is kept even if the battle is lost (same as chest gold)."
+  },
+  {
+   "k": [
+    "materials_system",
+    10,
+    "notes"
+   ],
+   "old": "Locked — already in objects_encounters | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: 100% on Interact. 1-2 materials + other loot.]",
+   "new": "Locked — already in objects_encounters | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6a. Cursed Chest mercury (RESOLVED (USER) 2026-11-01) built in step 6a. [Superseded 2026-11-01 by v2: rule: 100% on Interact. 1-2 materials + other loot.]"
+  },
+  {
+   "k": [
+    "materials_system",
+    11,
+    "rule"
+   ],
+   "old": "1-3 mercury, shown upfront before acceptance (about 0.3 per battle).",
+   "new": "About 1 quest in 7 offers 1-3 mercury, shown on the quest board before accepting. Paid on a qualifying victory only. Expected value 2/7 ≈ 0.29 mercury per quest, which keeps the about-0.3-per-battle total (RESOLVED (USER) 2026-11-01)."
+  },
+  {
+   "k": [
+    "materials_system",
+    11,
+    "notes"
+   ],
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: Shown upfront before acceptance. Varies by quest type and recommended level.]",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6c. [Superseded 2026-11-01 by v2: rule: Shown upfront before acceptance. Varies by quest type and recommended level.] [Superseded 2026-11-01 (ruling 2): rule: 1-3 mercury, shown upfront before acceptance (about 0.3 per battle).]"
+  },
+  {
+   "k": [
+    "materials_system",
+    13,
+    "notes"
+   ],
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: 100% event reward. T5 Ethereal Essence exclusively. Only reliable T5 source.]",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT (status 2026-11-01): the game has no daily event system yet. [Superseded 2026-11-01 by v2: rule: 100% event reward. T5 Ethereal Essence exclusively. Only reliable T5 source.]"
+  },
+  {
+   "k": [
+    "materials_system",
+    14,
+    "rule"
+   ],
+   "old": "30% chance with Salvager's Cap passive. 1 mercury (unchanged).",
+   "new": "Salvager's Cap (nonweapon_equipment 34; RESOLVED (USER) 2026-11-01, ruling 4 - replaces the treasure-chest reward roll): EVERY time the wearer destroys a qualifying object it gives gold = round(12.5 × (1 + Map Level / 50)) - half a chest's base gold (L1 13 / L50 25 / L99 37) - then the normal gold multipliers (RewardService.ApplyGold); plus a separate fixed 5% chance of 1 mercury; plus a separate fixed 5% chance of one equipment item, rolled like normal loot. Fortune does not raise either chance. Only objects that were breakable before rule 241; it never counts as a chest opened; Treasure Seeker does not apply. Salvage mercury is kept even if the battle is lost (credited at once, like chest gold). Reward details: DECIDED (DEV DEFAULT)."
+  },
+  {
+   "k": [
+    "materials_system",
+    14,
+    "notes"
+   ],
+   "old": "Locked — already in nonweapon_equipment | 2026-10-30: only pre-ruling breakables (OBS blocker props, Stone Pillar, Deployables; Bomb Barrel explodes = no roll, corrected 2026-10-30) - see nonweapon_equipment 34. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: 30% chance with Salvager's Cap passive. 1 material.]",
+   "new": "Locked — already in nonweapon_equipment | 2026-10-30: only pre-ruling breakables (OBS blocker props, Stone Pillar, Deployables; Bomb Barrel explodes = no roll, corrected 2026-10-30) - see nonweapon_equipment 34. | LOCKED - USER DECISION 2026-11-01 (v2). Salvage mercury BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6a. New Salvager's Cap reward (ruling 4): code written 2026-11-01, Tester source check running - not yet verified. [Superseded 2026-11-01 by v2: rule: 30% chance with Salvager's Cap passive. 1 material.] | RESOLVED (USER) 2026-11-01 (ruling 4): resolves the conflict between this row ('30% chance') and nonweapon_equipment 34 ('always'): the reward triggers EVERY time, and the reward is the gold + 5% mercury + 5% gear above. [Superseded 2026-11-01: rule: 30% chance with Salvager's Cap passive. 1 mercury (unchanged).]"
+  },
+  {
+   "k": [
+    "materials_system",
+    41,
+    "rule"
+   ],
+   "old": "Separate from the equipment roll; always given, Fortune never applies. Elite encounter (each completed one): 3 crystals (WORKING ESTIMATE, G10), 50% chance of 1 rune gem (rolled as one line of a Rare item of the encounter level, random slot), content L60+: 25% chance of 1 sulfur; plus 2 mercury (row 8). Boss (counts toward the 3-per-day boss reward limit, loot_progression 15): 5 crystals, 1 rune gem (one line of an Epic item; Rare item below L40), content L60+: 1 sulfur; plus 3 mercury (row 9). Normal kills and treasure chests: no crystals or gems. Fortune gems can be rolled here like any other line, but Fortune never changes these chances. Gem drop weights = WORKING ESTIMATE (G6): equal weights across gem families and tiers, 10% of gem rolls are passives.",
+   "new": "Separate from the equipment roll; always given, Fortune never applies. Elite encounter (each completed one): 3 crystals (WORKING ESTIMATE, G10), 50% chance of 1 rune gem (rolled as one line of a Rare item of the encounter level, random slot), content L60+: 25% chance of 1 sulfur; plus 2 mercury (row 8). Boss - ON HOLD (RESOLVED (USER) 2026-11-01, ruling 1: not built until a daily boss reward limit system exists in the game - there is no day counter yet - because without the limit bosses could be replayed for unlimited crystals; once built it counts toward the 3-per-day boss reward limit, loot_progression 15): 5 crystals, 1 rune gem (one line of an Epic item; Rare item below L40), content L60+: 1 sulfur; plus 3 mercury (row 9). Normal kills and treasure chests: no crystals or gems. Fortune gems can be rolled here like any other line, but Fortune never changes these chances. Gem drop weights = WORKING ESTIMATE (G6): equal weights across gem families and tiers, 10% of gem rolls are passives."
+  },
+  {
+   "k": [
+    "materials_system",
+    41,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01 (Q10). NOT BUILT. \"1 Essence per drop\" = Designer assumption. | WORKING ESTIMATES (Simulator 2026-11-01), not design decisions - confirm later: elite rate about 0.034 per battle (loot_progression 26) and about 0.40 equipment drops per battle (loot_progression 24). With these, drops = 25.0% of Essence income (range 11.8-28.4%; 12% at 1 drop per battle). Essences per battle: Uncommon 0.357, Rare 0.057, Epic 0.023. | WORKING ESTIMATE note (Simulator re-check 2026-11-01, note C) - not a decision, no number locked: the Essence drop share depends on equipment drops per battle - 37-45% at 0.2 drops/battle, 23-29% at 0.4, 13-17% at 0.8, 11-14% at 1.0 (ranges = elite rate 0.017-0.068). The ~25% target only holds near 0.40. Natural Epics scale with drops (2.0 / 4.0 / 7.9 at 0.2 / 0.4 / 0.8) while crafted Epics do not (limited by gold). Lock the real drop rate before tuning Essence drops. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Essence Drop Sources; rule: Normal kills: none. Treasure chest: 25% chance of 1 Uncommon Essence. Elite encounter: 75% chance of 1 Rare Essence. Boss encounter: 100%, 1 Epic Essence (1 Rare Essence from bosses in content below L40). Quests may show Essences up front. Fortune never applies. Target: ~25% of Essence income from drops, ~75% from dismantling (Simulator to verify).]",
+   "new": "USER DECISION 2026-11-01 (Q10). NOT BUILT. \"1 Essence per drop\" = Designer assumption. | WORKING ESTIMATES (Simulator 2026-11-01), not design decisions - confirm later: elite rate about 0.034 per battle (loot_progression 26) and about 0.40 equipment drops per battle (loot_progression 24). With these, drops = 25.0% of Essence income (range 11.8-28.4%; 12% at 1 drop per battle). Essences per battle: Uncommon 0.357, Rare 0.057, Epic 0.023. | WORKING ESTIMATE note (Simulator re-check 2026-11-01, note C) - not a decision, no number locked: the Essence drop share depends on equipment drops per battle - 37-45% at 0.2 drops/battle, 23-29% at 0.4, 13-17% at 0.8, 11-14% at 1.0 (ranges = elite rate 0.017-0.068). The ~25% target only holds near 0.40. Natural Epics scale with drops (2.0 / 4.0 / 7.9 at 0.2 / 0.4 / 0.8) while crafted Epics do not (limited by gold). Lock the real drop rate before tuning Essence drops. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT (status 2026-11-01): elite part - elite encounters do not exist in the game code yet; boss part - ON HOLD (ruling 1). [Superseded 2026-11-01 by v2: topic: Essence Drop Sources; rule: Normal kills: none. Treasure chest: 25% chance of 1 Uncommon Essence. Elite encounter: 75% chance of 1 Rare Essence. Boss encounter: 100%, 1 Epic Essence (1 Rare Essence from bosses in content below L40). Quests may show Essences up front. Fortune never applies. Target: ~25% of Essence income from drops, ~75% from dismantling (Simulator to verify).] [Superseded 2026-11-01 (ruling 1): rule (part): Boss (counts toward the 3-per-day boss reward limit, loot_progression 15):]"
+  },
+  {
+   "k": [
+    "materials_system",
+    4,
+    "notes"
+   ],
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: section: Material Tiers; topic: T3 — Polished Core; rule: Blue. Drops from L40-70 content. Elite encounters, late-mid drops.] | CORRECTION 2026-11-01 (Tester): was \"about 153 kinds (25 numeric families x T1-T4 = 100, including Fortune, + 53 passives)\".",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: section: Material Tiers; topic: T3 — Polished Core; rule: Blue. Drops from L40-70 content. Elite encounters, late-mid drops.] | CORRECTION 2026-11-01 (Tester): was \"about 153 kinds (25 numeric families x T1-T4 = 100, including Fortune, + 53 passives)\". | INFORMATION (Tester step 4 question 3, recorded 2026-11-01): reroll sets depend on what the game's bonus content file (BonusData) holds, so regenerating it - for example adding the 5 DB-only families - changes every item's reroll offers (guild_facilities 54)."
+  },
+  {
+   "k": [
+    "loot_progression",
+    15,
+    "notes"
+   ],
+   "old": "Replay may continue after the daily reward limit, but additional completions do not produce another Mythic-eligible guaranteed boss equipment reward.",
+   "new": "Replay may continue after the daily reward limit, but additional completions do not produce another Mythic-eligible guaranteed boss equipment reward. | RESOLVED (USER) 2026-11-01 (ruling 1): this daily limit is not in the game yet (no day counter). Boss resource grants (materials_system 9, 41) are ON HOLD until it is built - without it bosses could be replayed for unlimited crystals."
+  },
+  {
+   "k": [
+    "nonweapon_equipment",
+    34,
+    "rule"
+   ],
+   "old": "Destroying a breakable object yields one treasure reward roll. (50 BP) [USER RULING 2026-10-30: applies ONLY to objects breakable before this ruling - OBS blocker props (Ice Spike, Blocker-Prop Cluster), Stone Pillar, and placed items (Deployable). Map objects made breakable on 2026-10-30 give NO salvage roll. CORRECTION 2026-10-30 (user: match the game as built): a Bomb Barrel set off by a hit EXPLODES rather than being destroyed, so it gives NO salvage roll.]",
+   "new": "Destroying a breakable object gives a little gold - round(12.5 × (1 + Map Level / 50)), half a chest's base gold (L1 13 / L50 25 / L99 37), then the normal gold multipliers - plus a separate fixed 5% chance of 1 mercury and a separate fixed 5% chance of one equipment item rolled like normal loot. Triggers every time; Fortune does not raise the chances; never counts as a chest opened; Treasure Seeker does not apply (materials_system 14). (50 BP) [USER RULING 2026-10-30: applies ONLY to objects breakable before this ruling - OBS blocker props (Ice Spike, Blocker-Prop Cluster), Stone Pillar, and placed items (Deployable). Map objects made breakable on 2026-10-30 give NO salvage roll. CORRECTION 2026-10-30 (user: match the game as built): a Bomb Barrel set off by a hit EXPLODES rather than being destroyed, so it gives NO salvage roll.] [USER RULING 2026-11-01 (ruling 4, RESOLVED (USER) 2026-11-01; reward details DECIDED (DEV DEFAULT)): replaces the treasure reward roll; code written 2026-11-01, Tester source check running.] [Superseded 2026-11-01: rule: Destroying a breakable object yields one treasure reward roll. | restriction: Once per object; no roll if the object has no salvage table, for objects made breakable on 2026-10-30, or for a Bomb Barrel that explodes. | display_text: Destroying a breakable object gives one treasure reward roll.]"
+  },
+  {
+   "k": [
+    "nonweapon_equipment",
+    34,
+    "restriction"
+   ],
+   "old": "Once per object; no roll if the object has no salvage table, for objects made breakable on 2026-10-30, or for a Bomb Barrel that explodes.",
+   "new": "Once per object. Only objects that were breakable before 2026-10-30 (rule 241); nothing for objects made breakable on 2026-10-30 or for a Bomb Barrel that explodes."
+  },
+  {
+   "k": [
+    "nonweapon_equipment",
+    34,
+    "display_text"
+   ],
+   "old": "Destroying a breakable object gives one treasure reward roll.",
+   "new": "Destroying a breakable object gives a little gold, plus a 5% chance of 1 mercury and a 5% chance of a gear item."
+  },
+  {
+   "k": [
+    "objects_encounters",
+    22,
+    "col_7"
+   ],
+   "old": "Random treasure; inflicts Weakened (3000 CT)",
+   "new": "Random treasure (including 1 mercury, same as a Treasure Chest); inflicts Weakened (3000 CT)"
+  },
+  {
+   "k": [
+    "objects_encounters",
+    22,
+    "col_9"
+   ],
+   "old": "Reward IMPLEMENTED 2026-10-24 (source-verified Tester PASS; Studio runtime pending). Shares the chest reward hook (_grantChestReward); previously a DEFERRED no-op because the battle state lacked ownerPlayerId/mapLevel. Fixed: Main.server.lua now stamps state.ownerPlayerId and state.mapLevel after CreateBattleState, so Cursed Chest now generates loot (and still inflicts Weakened 3000 CT). Removed after use [2026-10-28 UNIVERSAL OBJECT: may spawn in any region of any biome via the Universal list - see map_gen_rules row 95.] [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] Broken chest: loot lost, does NOT count as a chest opened (Treasure Fever / chestsOpened), DOES count as objectsBroken; Treasure Hunter re-targets the next chest.",
+   "new": "Reward IMPLEMENTED 2026-10-24 (source-verified Tester PASS; Studio runtime pending). Shares the chest reward hook (_grantChestReward); previously a DEFERRED no-op because the battle state lacked ownerPlayerId/mapLevel. Fixed: Main.server.lua now stamps state.ownerPlayerId and state.mapLevel after CreateBattleState, so Cursed Chest now generates loot (and still inflicts Weakened 3000 CT). Removed after use [2026-10-28 UNIVERSAL OBJECT: may spawn in any region of any biome via the Universal list - see map_gen_rules row 95.] [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] Broken chest: loot lost, does NOT count as a chest opened (Treasure Fever / chestsOpened), DOES count as objectsBroken; Treasure Hunter re-targets the next chest. | RESOLVED (USER) 2026-11-01: 1 mercury, the same as a Treasure Chest (materials_system 10) - it is riskier (Weakened), so it should not pay less. BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6a. Mercury is credited when the chest opens, so it is kept even if the battle is lost. [Superseded 2026-11-01: col_7: Random treasure; inflicts Weakened (3000 CT)]"
+  },
+  {
+   "k": [
+    "objects_encounters",
+    20,
+    "col_9"
+   ],
+   "old": "Reward IMPLEMENTED 2026-10-24 (source-verified Tester PASS; Studio runtime pending). Previously the chest reward (_grantChestReward) always hit a DEFERRED no-op because the battle state never carried ownerPlayerId/mapLevel, so chests granted nothing. Fixed: Main.server.lua now stamps state.ownerPlayerId and state.mapLevel right after CreateBattleState, so the chest now generates loot via RewardService.GenerateRewards at the correct map level. Removed after use [2026-10-28 UNIVERSAL OBJECT: may spawn in any region of any biome via the Universal list - see map_gen_rules row 95.] [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] Broken chest: loot lost, does NOT count as a chest opened (Treasure Fever / chestsOpened), DOES count as objectsBroken; Treasure Hunter re-targets the next chest. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: col_7: Random gold, equipment, materials and runes]",
+   "new": "Reward IMPLEMENTED 2026-10-24 (source-verified Tester PASS; Studio runtime pending). Previously the chest reward (_grantChestReward) always hit a DEFERRED no-op because the battle state never carried ownerPlayerId/mapLevel, so chests granted nothing. Fixed: Main.server.lua now stamps state.ownerPlayerId and state.mapLevel right after CreateBattleState, so the chest now generates loot via RewardService.GenerateRewards at the correct map level. Removed after use [2026-10-28 UNIVERSAL OBJECT: may spawn in any region of any biome via the Universal list - see map_gen_rules row 95.] [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] Broken chest: loot lost, does NOT count as a chest opened (Treasure Fever / chestsOpened), DOES count as objectsBroken; Treasure Hunter re-targets the next chest. | LOCKED - USER DECISION 2026-11-01 (v2). Chest mercury BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6a; it is credited when the chest opens, so it is kept even if the battle is lost (same as chest gold). [Superseded 2026-11-01 by v2: col_7: Random gold, equipment, materials and runes]"
+  },
+  {
+   "k": [
+    "objects_encounters",
+    31,
+    "col_9"
+   ],
+   "old": "Shop inventory fixed for the battle [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] | PAID SHOP (RESOLVED (USER) Q4, 2026-11-01; code change built later - today's code gives 6 free Rare items): stock of 6 items rolled once per object per battle from the battle seed + object ID, never refills, each item bought once; interacting stays free and repeatable. Each slot rolls Rare 75% / Epic 25%, never Exalted or above (RESOLVED (USER)). Item level = the current Map Level ceiling, random slot, normal loot bonus lines. Price = floor(Merchant price × 75 / 100), Merchant price = round(Base Value × Rarity Mult × Level Mult × Shop Markup) (economy_framework 15); Merchant facility level, Fortune and Gold Boost never change it. Gold comes straight from the player's balance during the battle; Buy is greyed out ('Not enough gold') if the player cannot afford it; no credit, no refund. Bought items go to the inventory at once and are kept whatever the battle result (DECIDED (DEV DEFAULT)). Breaking the object ends further buying. Simulator re-check: 575-690g per crystal on average at L50 (Rare-only 575g, 75/25 mix 690g), always 25% below the same Merchant item; no loop (10,072 routes, best −344g; sells back for 5.6-8.3% of its price). Spawn rate = WORKING ESTIMATE (G4, 1-5% of battles), part of open_decisions 48, which stays open. UI: 'Black Market — 25% off Merchant prices. Each item can be bought once. Gold: {balance}.' | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: col_7: Opens shop containing six fixed discounted high-tier items; col_8: Unlimited]",
+   "new": "Shop inventory fixed for the battle [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] | PAID SHOP (RESOLVED (USER) Q4, 2026-11-01; built 2026-11-01, v2 step 6b): stock of 6 items rolled once per object per battle from the battle seed + object ID, never refills, each item bought once; interacting stays free and repeatable. Each slot rolls Rare 75% / Epic 25%, never Exalted or above (RESOLVED (USER)). Item level = the current Map Level ceiling, random slot, normal loot bonus lines. Price = floor(Merchant price × 75 / 100), Merchant price = round(Base Value × Rarity Mult × Level Mult × Shop Markup) (economy_framework 15); Merchant facility level, Fortune and Gold Boost never change it. Gold comes straight from the player's balance during the battle; Buy is greyed out ('Not enough gold') if the player cannot afford it; no credit, no refund. Bought items go to the inventory at once and are kept whatever the battle result (DECIDED (DEV DEFAULT)). Breaking the object ends further buying. Simulator re-check: 575-690g per crystal on average at L50 (Rare-only 575g, 75/25 mix 690g), always 25% below the same Merchant item; no loop (10,072 routes, best −344g; sells back for 5.6-8.3% of its price). Spawn rate = WORKING ESTIMATE (G4, 1-5% of battles), part of open_decisions 48, which stays open. UI: 'Black Market — 25% off Merchant prices. Each item can be bought once. Gold: {balance}.' | LOCKED - USER DECISION 2026-11-01 (v2). Paid shop BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6b. Note: the old free cache never actually produced items. DECIDED (DEV DEFAULT) 2026-11-01: 'interacting stays free' means no RT but still 1 AP, as for every 'Interact (Free)' object; shopping is allowed during enemy turns - the shop does not pause the battle. [Superseded 2026-11-01 by v2: col_7: Opens shop containing six fixed discounted high-tier items; col_8: Unlimited] [Superseded 2026-11-01 (build): code change built later - today's code gives 6 free Rare items]"
+  },
+  {
+   "k": [
+    "guild_facilities",
+    44,
+    "rule"
+   ],
+   "old": "Pick 1 or more rune gems and install them on a Common-Epic item; each gem is a new line or replaces an existing line (destroyed, no gem back). One line per attribute family (item_generation_steps 7): a gem of a family the item already has replaces that line. Bonus passive slots still apply: at most 1 bonus passive (2H: 2); a passive gem needs a free slot or replaces the existing bonus passive. New rarity = the highest of (a) the current rarity (rarity never goes down), (b) the minimum rarity of the rarest line (T1 and T2 = Uncommon, T3 = Rare, T4 = Epic; a passive = its minimum rarity), (c) the lowest rarity whose normal budget holds the total BP (Uncommon 100 / Rare 150 / Epic 200; 2H doubled). Example: Common sword + STR T2 (100) = Uncommon; + VIT T2 (total 200) = Epic. A single T4 gem makes any item Epic, 1H or 2H. The result must fit the Runeforge capacity rarity and BP (row 54). Fortune gems are allowed (row 58). Raising rarity charges the crystal steps (row 43), the forge fee and the levelling catch-up (rows 48, 55). After every forge the item is renamed (row 58).",
+   "new": "Pick 1 or more rune gems and install them on a Common-Epic item; each gem is a new line or replaces an existing line (destroyed, no gem back). One line per attribute family (item_generation_steps 7): a gem of a family the item already has replaces that line. Bonus passive slots still apply: at most 1 bonus passive (2H: 2); a passive gem needs a free slot or replaces the existing bonus passive. New rarity = the highest of (a) the current rarity (rarity never goes down), (b) the minimum rarity of the rarest line (T1 and T2 = Uncommon, T3 = Rare, T4 = Epic; a passive = its minimum rarity), (c) the budget check: bonus points the item already has never count against it. The check raises the rarity only when the new total is above BOTH the current rarity's normal budget (Uncommon 100 / Rare 150 / Epic 200; 2H doubled) AND the item's own total before this forge; then the new rarity is the lowest one whose budget holds the new total. An Epic over 200 can be forged as long as its total does not rise above its own total (RESOLVED (USER) 2026-11-01). Example: Common sword + STR T2 (100) = Uncommon; + VIT T2 (total 200) = Epic. A single T4 gem makes any item Epic, 1H or 2H. The result must fit the Runeforge capacity rarity and BP (row 54). Fortune gems are allowed (row 58). Raising rarity charges the crystal steps (row 43), the forge fee and the levelling catch-up (rows 48, 55). After every forge the item is renamed (row 58)."
+  },
+  {
+   "k": [
+    "guild_facilities",
+    44,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Add Rule; rule: Add installs one bonus attribute from the offered choices, limited by the Runeforge's BP capacity (row 54). Rarity after Add = the higher of (a) the minimum rarity of the rarest line on the item and (b) the lowest rarity whose normal budget holds the total BP (Uncommon 100 / Rare 150 / Epic 200; 2H doubled). Rarity never goes down (Remove and Modify-down keep it). Example: Common sword + STR T1 (50 BP) = Uncommon; + HP T1 = 100 = Uncommon (full); + AGI T1 = 150 = Rare; + DEX T1 = 200 = Epic (max level only). Add refuses a family already on the item (use Modify). Fortune is never offered (row 58). Raising rarity charges the catch-up fee (row 48); reaching Epic also charges the Epic step fee (row 57).]",
+   "new": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4; over-budget rule (c) v2 step 6c. [Superseded 2026-11-01 by v2: topic: Add Rule; rule: Add installs one bonus attribute from the offered choices, limited by the Runeforge's BP capacity (row 54). Rarity after Add = the higher of (a) the minimum rarity of the rarest line on the item and (b) the lowest rarity whose normal budget holds the total BP (Uncommon 100 / Rare 150 / Epic 200; 2H doubled). Rarity never goes down (Remove and Modify-down keep it). Example: Common sword + STR T1 (50 BP) = Uncommon; + HP T1 = 100 = Uncommon (full); + AGI T1 = 150 = Rare; + DEX T1 = 200 = Epic (max level only). Add refuses a family already on the item (use Modify). Fortune is never offered (row 58). Raising rarity charges the catch-up fee (row 48); reaching Epic also charges the Epic step fee (row 57).] | RESOLVED (USER) 2026-11-01 (ruling 5). Tester note: the allowance is the item's total at EACH forge, so if a forge lowers an over-budget Epic from 215 to 205, a later forge back up to 215 is refused. [Superseded 2026-11-01 (ruling 5): rule (c) the lowest rarity whose normal budget holds the total BP (Uncommon 100 / Rare 150 / Epic 200; 2H doubled).]"
+  },
+  {
+   "k": [
+    "guild_facilities",
+    54,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q4) | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Capacity + Items Above Epic; rule: Capacity = the normal rarity budget, not the generated maximum: L1-4 Uncommon 100 BP, L5-9 Rare 150, L10 Epic 200; 2H weapons double (200 / 300 / 400). Add and Modify-up cannot push the total BP above the capacity. Reroll, Modify-down and Remove never raise the total. Items above Epic (Exalted, Legendary, Mythic, Transcendent): tune only, at L10 - Reroll / Modify / Remove existing lines within their own budget using T1-T4 only; no Add, no rarity change; removing a T5/T6 line shows a permanent-loss warning. Unique items: never.]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q4) | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Capacity + Items Above Epic; rule: Capacity = the normal rarity budget, not the generated maximum: L1-4 Uncommon 100 BP, L5-9 Rare 150, L10 Epic 200; 2H weapons double (200 / 300 / 400). Add and Modify-up cannot push the total BP above the capacity. Reroll, Modify-down and Remove never raise the total. Items above Epic (Exalted, Legendary, Mythic, Transcendent): tune only, at L10 - Reroll / Modify / Remove existing lines within their own budget using T1-T4 only; no Add, no rarity change; removing a T5/T6 line shows a permanent-loss warning. Unique items: never.] | RESOLVED (USER) 2026-11-01 (ruling 6, answers Tester step 4 question 2): confirmed as written - a forge that keeps the rarity (a swap) still needs the Runeforge level for that rarity: Rare L4, Epic L7. | INFORMATION (Tester step 4 question 3, recorded 2026-11-01): reroll sets depend on what the game's bonus content file (BonusData) holds, so regenerating it - for example adding the 5 DB-only families - changes every item's reroll offers (materials_system 4)."
+  },
+  {
+   "k": [
+    "guild_facilities",
+    42,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: New facility (the 10th). Add, remove, reroll or modify bonus attributes on equipment, paying gold + Essences. Lets the player put their preferred attributes on gear. Can raise item rarity, up to Epic at max level (row 54). Never adds bonus passives (row 56). Unique items: never.]",
+   "new": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. Runeforge screen: v2 step 5, BUILT 2026-11-01 (source-verified by Tester; Studio test pending). [Superseded 2026-11-01 by v2: rule: New facility (the 10th). Add, remove, reroll or modify bonus attributes on equipment, paying gold + Essences. Lets the player put their preferred attributes on gear. Can raise item rarity, up to Epic at max level (row 54). Never adds bonus passives (row 56). Unique items: never.]"
+  },
+  {
+   "k": [
+    "guild_facilities",
+    43,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: Gold + Essences (never T1-T5 gear materials). Essences come from dismantling at the Blacksmith (~75%) and loot drops (~25%) - materials_system 40-41. Action costs: row 55. Guards: rows 48, 57.]",
+   "new": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: rule: Gold + Essences (never T1-T5 gear materials). Essences come from dismantling at the Blacksmith (~75%) and loot drops (~25%) - materials_system 40-41. Action costs: row 55. Guards: rows 48, 57.]"
+  },
+  {
+   "k": [
+    "guild_facilities",
+    45,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: Each level: lower gold cost (-3% per level above L1, L10 = -27%, gold only), more attribute choices, stronger tiers and more actions. Full table: row 53.]",
+   "new": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: rule: Each level: lower gold cost (-3% per level above L1, L10 = -27%, gold only), more attribute choices, stronger tiers and more actions. Full table: row 53.]"
+  },
+  {
+   "k": [
+    "guild_facilities",
+    46,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01 (Q8). NOT BUILT. Old: [PENDING - unlock point (Guild Hall level), Base/Scale cost, max level and per-level numbers are not decided. Facility count, total investment and unlock schedule (rows 5, 8, 35-38) are unchanged until decided.] | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: Max Level 10. Base = 250, Scale = 15. Total cost: 8,919g (same curve as the Guild Hall; table row 49). Unlock: Guild Hall L4 (shared with the Workshop).]",
+   "new": "USER DECISION 2026-11-01 (Q8). NOT BUILT. Old: [PENDING - unlock point (Guild Hall level), Base/Scale cost, max level and per-level numbers are not decided. Facility count, total investment and unlock schedule (rows 5, 8, 35-38) are unchanged until decided.] | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: rule: Max Level 10. Base = 250, Scale = 15. Total cost: 8,919g (same curve as the Guild Hall; table row 49). Unlock: Guild Hall L4 (shared with the Workshop).]"
+  },
+  {
+   "k": [
+    "guild_facilities",
+    53,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q4, Q8) | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Level Table; rule: Unlocks / capacity (1H / 2H) / tiers / choices shown / gold discount. L1: Add + Remove / 100 / 200 (Uncommon) / T1-T2 / 3 / 0%. L2: Reroll / - / - / 3 / 3%. L3: - / - / - / 4 / 6%. L4: Modify / - / - / 4 / 9%. L5: - / 150 / 300 (Rare) / T3 / 4 / 12%. L6: Essence trade-up (3 lower -> 1 higher) / - / - / 5 / 15%. L7: - / - / - / 5 / 18%. L8: - / - / - / 6 / 21%. L9: - / - / - / 6 / 24%. L10: Tune above-Epic items / 200 / 400 (Epic) / T4 / full list / 27%.]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q4, Q8) | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Level Table; rule: Unlocks / capacity (1H / 2H) / tiers / choices shown / gold discount. L1: Add + Remove / 100 / 200 (Uncommon) / T1-T2 / 3 / 0%. L2: Reroll / - / - / 3 / 3%. L3: - / - / - / 4 / 6%. L4: Modify / - / - / 4 / 9%. L5: - / 150 / 300 (Rare) / T3 / 4 / 12%. L6: Essence trade-up (3 lower -> 1 higher) / - / - / 5 / 15%. L7: - / - / - / 5 / 18%. L8: - / - / - / 6 / 21%. L9: - / - / - / 6 / 24%. L10: Tune above-Epic items / 200 / 400 (Epic) / T4 / full list / 27%.]"
+  },
+  {
+   "k": [
+    "guild_facilities",
+    55,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q5). Modify-down factor 0.5 = Designer starting value. | USER DECISION 2026-11-01 (Simulator fix X4 + report Section 4 #5-#7, report_runeforge_economy_2026-11-01): Add offers fixed per item (Remove + Add with leave/rejoin could fish for an exact attribute); Reroll options per line; a reroll counts once paid; all gold fees round down. LOCKED. Fixed order from the item ID (so no extra saved number) = USER-ACCEPTED 2026-11-01 (was a Designer detail of the user's \"works like the Reroll rule\"); relies on the item's saved ID never changing; Dev to confirm in code before building. | Simulator re-check 2026-11-01 PASS (note A): a paid add-a-throwaway-line-then-remove 'walk' reaches 1-2 more list positions at full gold + Essence cost - the rule working as written, nothing re-drawn; holds only if the item ID never changes and the order is worked out on the server. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Actions + Costs; rule: Add = pick 1 of the offered eligible attributes (count by level, row 53). Add offers are FIXED (LOCKED - USER DECISION 2026-11-01): each item has one fixed order of eligible attributes, worked out from the item's saved ID (no new saved field); the Add list shows the first 3-6 attributes in that order that the item does not already have (count by Runeforge level, row 53; L10 shows the full list). Leaving and rejoining, Remove + Add, rerolls and upgrades never change the list; a higher Runeforge level only adds choices to the end of the same list. Remove = delete one line for a small gold fee, nothing back, rarity stays. Reroll = shows a few fixed options at the same tier; the player picks one or keeps the old line (cost paid either way); options are fixed by the item + its reroll count, so leaving and rejoining never changes them. Options are PER LINE (LOCKED - USER DECISION 2026-11-01): each line has its own option list, worked out from the item's ID, that line's attribute and tier, and the item's reroll count (equipment_schema 18). Every paid reroll raises the item's reroll count by 1, also when the player keeps the old line - a reroll counts once it is paid - so after any paid reroll every line on that item shows a new list next time. Modify = move one line one tier up or down in its family; up costs the new tier's Essences and must fit capacity and unlocked tiers; down costs a little gold, no refund. Gold (starting value, Simulator to tune) = floor(item base value x 0.30 x (1 + item level / 25) x factor x (1 - Runeforge discount)); factor: Add = tier number (T1 1 ... T4 4), Reroll 1, Modify-up = tier difference, Modify-down 0.5, Remove 0.5. Example: 1H L50 Add T2 = 180g at L1. Essences: T1 = 1 Uncommon, T2 = 2 Uncommon, T3 = 2 Rare, T4 = 2 Epic; Reroll = 1 Essence of the line's rarity. The discount is gold only. Rounding (LOCKED - USER DECISION 2026-11-01): every Runeforge and Blacksmith gold fee rounds DOWN to a whole gold piece - Add, Reroll, Modify, Remove, Blacksmith upgrades, the catch-up fee (row 48) and the Epic step fee (row 57). The Dev computes them in whole numbers (implementation_plan 53).]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q5). Modify-down factor 0.5 = Designer starting value. | USER DECISION 2026-11-01 (Simulator fix X4 + report Section 4 #5-#7, report_runeforge_economy_2026-11-01): Add offers fixed per item (Remove + Add with leave/rejoin could fish for an exact attribute); Reroll options per line; a reroll counts once paid; all gold fees round down. LOCKED. Fixed order from the item ID (so no extra saved number) = USER-ACCEPTED 2026-11-01 (was a Designer detail of the user's \"works like the Reroll rule\"); relies on the item's saved ID never changing; Dev to confirm in code before building. | Simulator re-check 2026-11-01 PASS (note A): a paid add-a-throwaway-line-then-remove 'walk' reaches 1-2 more list positions at full gold + Essence cost - the rule working as written, nothing re-drawn; holds only if the item ID never changes and the order is worked out on the server. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Actions + Costs; rule: Add = pick 1 of the offered eligible attributes (count by level, row 53). Add offers are FIXED (LOCKED - USER DECISION 2026-11-01): each item has one fixed order of eligible attributes, worked out from the item's saved ID (no new saved field); the Add list shows the first 3-6 attributes in that order that the item does not already have (count by Runeforge level, row 53; L10 shows the full list). Leaving and rejoining, Remove + Add, rerolls and upgrades never change the list; a higher Runeforge level only adds choices to the end of the same list. Remove = delete one line for a small gold fee, nothing back, rarity stays. Reroll = shows a few fixed options at the same tier; the player picks one or keeps the old line (cost paid either way); options are fixed by the item + its reroll count, so leaving and rejoining never changes them. Options are PER LINE (LOCKED - USER DECISION 2026-11-01): each line has its own option list, worked out from the item's ID, that line's attribute and tier, and the item's reroll count (equipment_schema 18). Every paid reroll raises the item's reroll count by 1, also when the player keeps the old line - a reroll counts once it is paid - so after any paid reroll every line on that item shows a new list next time. Modify = move one line one tier up or down in its family; up costs the new tier's Essences and must fit capacity and unlocked tiers; down costs a little gold, no refund. Gold (starting value, Simulator to tune) = floor(item base value x 0.30 x (1 + item level / 25) x factor x (1 - Runeforge discount)); factor: Add = tier number (T1 1 ... T4 4), Reroll 1, Modify-up = tier difference, Modify-down 0.5, Remove 0.5. Example: 1H L50 Add T2 = 180g at L1. Essences: T1 = 1 Uncommon, T2 = 2 Uncommon, T3 = 2 Rare, T4 = 2 Epic; Reroll = 1 Essence of the line's rarity. The discount is gold only. Rounding (LOCKED - USER DECISION 2026-11-01): every Runeforge and Blacksmith gold fee rounds DOWN to a whole gold piece - Add, Reroll, Modify, Remove, Blacksmith upgrades, the catch-up fee (row 48) and the Epic step fee (row 57). The Dev computes them in whole numbers (implementation_plan 53).] | BUG-073 FIXED 2026-11-01: 2H weapons had been priced as 1H (slot value 100 instead of 150, economy_framework 11) in the Blacksmith, Runeforge and Merchant since Slice 6; the 2H prices in this row are what the game now charges. BUILT 2026-11-01 (source-verified by Tester; Studio test pending)."
+  },
+  {
+   "k": [
+    "guild_facilities",
+    56,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q6) | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Bonus Passives; rule: Numbers only. The Runeforge never adds bonus passives (they stay loot-only). It may REMOVE one (frees its BP and its slot; rarity stays).]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q6) | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Bonus Passives; rule: Numbers only. The Runeforge never adds bonus passives (they stay loot-only). It may REMOVE one (frees its BP and its slot; rarity stays).]"
+  },
+  {
+   "k": [
+    "guild_facilities",
+    57,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q9). The Epic step fee formula = Designer starting value for \"priced near the shop Epic price\"; Simulator to verify. [superseded 2026-11-01: the user set the fee to half of this - see the USER DECISION below] | USER DECISION 2026-11-01 - Epic step fee LOCKED at HALF the Designer proposal: fee = 0.5 x (shop Epic price - shop price at the rarity before the enchant) [superseded 2026-11-01: counted from the item's STARTING rarity, see USER DECISION (3) below], no facility discount (was: OPEN; Designer proposal was the full difference, 1H L50 = 3,960g). Enchanted Epics now cost about half the shop Epic price instead of close to it - user's choice. Sell-loop re-check 2026-11-01: loot -> Uncommon / Rare / Epic -> sell loses gold at L20/50/99 for 1H and 2H, with and without the 27% Runeforge discount (smallest loss: 1H L20 to Uncommon with the discount, -22g). [superseded 2026-11-01 - Designer note about the fee using the rarity just before the Epic step (Common -> Rare -> Epic paid 1,386g at 1H L50): the fee is now counted from the starting rarity, see below] | USER DECISION 2026-11-01 (3): the fee is counted from the item's STARTING rarity (new saved field, equipment_schema 19, PLANNED - not built), so every route pays the same (1H L50 Common start = 1,980g either way). Enchant-then-sell loop fixed with option C - guard (7): enchanted items sell at their starting rarity. Correction: the earlier sell-loop table priced 2H Epic as eight T1 Adds (2H L20/50/99: 648/1,080/1,784g); one T4 Add is enough (324/540/892g, 236/394/651g at -27%). Sell-loop re-run 2026-11-01 (start Common/Uncommon/Rare x every higher target, item level 1-99, 1H and 2H, Runeforge discount 0/18/21/27%, cheapest Add route, tier unlocks ignored to be safe): best result -22g (1H L1, one T1 Add at -27%), so no loop makes gold. Under the old rule (sell at current rarity) Uncommon -> Rare made up to +3g at L1-6; now closed. NOT BUILT. | USER RULING 2026-11-01 (Simulator supply flag, report_runeforge_economy_2026-11-01 checks D/E): cheap crafted Epics for Runeforge-rushers and Gold Boost players are ACCEPTED - it rewards planning, and normal build orders are unaffected. Simulator supply numbers for item levels 50-80: free classic and crafter players reach Runeforge L10 at L88-90, so they make 0 crafted Epics there; a free rusher reaches L10 at L50 and can make up to 8 crafted Epics vs ~4 natural drops and 0 from the shop; a boosted player reaches L10 at L30-61 and makes 9-14. A crafted Epic costs 30-50% of the shop Epic (1H L50 from a Rare start 1,451g vs 4,752g). No extra level gate and no fee change (the Simulator's options were not taken). | USER DECISION 2026-11-01: the Epic step fee rounds down to whole gold (a half gold piece in 158 slot / level / start cases, all off-hand, armor and accessory slots); 1H / 2H table values unchanged. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Exploit Guards; rule: (1) Catch-up fee (row 48). (2) Epic step fee (LOCKED - USER DECISION 2026-11-01): when an action raises an item to Epic, pay extra gold = 0.5 x (the item's shop Epic price - its shop price at the item's STARTING rarity, equipment_schema 19), rounded down to whole gold (USER DECISION 2026-11-01; e.g. Off-Hand Rare L2 428.5 -> 428g; the 1H / 2H values below are already whole). No facility discount applies to it. Same fee whichever route the player takes (straight to Epic or step by step). Remove never changes the fee basis; downgrades keep the starting rarity; items that existed before this is built use their current rarity as their starting rarity. Example: 1H L50 Common -> Epic = 0.5 x (4,752 - 792) = 1,980g. Fee at L20 / L50 / L99 by starting rarity: 1H Common 1,380 / 1,980 / 2,960g, Uncommon 1,242 / 1,782 / 2,664g, Rare 966 / 1,386 / 2,072g; 2H Common 2,070 / 2,970 / 4,440g, Uncommon 1,863 / 2,673 / 3,996g, Rare 1,449 / 2,079 / 3,108g. A single T4 line (200 BP, minimum rarity Epic) makes any item Epic, 1H or 2H, so the cheapest route to Epic is one T4 Add (2H L50: 540g, 394g at -27%). A crafted Epic from Common loot costs about 1H L50 2,240g / 2H L50 3,364g + Essences, roughly half the shop Epic price (4,752g / 7,128g). (3) Rarity never goes down. (4) Essences cannot be sold. (5) Shop-bought items give nothing when dismantled (row 51). (6) Reroll options are fixed (row 55). (7) Enchanted items sell at their STARTING rarity (economy_framework 14), so enchanting never raises sell value.] | USER RULING 2026-11-01 (rune-forged = normal loot): guard (7) of the old list and option C (enchanted / forged items sell at their STARTING rarity) are SUPERSEDED, and there is no \"Sells as ...\" note. [Superseded 2026-11-01: rule guard (2): (2) forged items sell at their starting rarity (economy_framework 14);]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q9). The Epic step fee formula = Designer starting value for \"priced near the shop Epic price\"; Simulator to verify. [superseded 2026-11-01: the user set the fee to half of this - see the USER DECISION below] | USER DECISION 2026-11-01 - Epic step fee LOCKED at HALF the Designer proposal: fee = 0.5 x (shop Epic price - shop price at the rarity before the enchant) [superseded 2026-11-01: counted from the item's STARTING rarity, see USER DECISION (3) below], no facility discount (was: OPEN; Designer proposal was the full difference, 1H L50 = 3,960g). Enchanted Epics now cost about half the shop Epic price instead of close to it - user's choice. Sell-loop re-check 2026-11-01: loot -> Uncommon / Rare / Epic -> sell loses gold at L20/50/99 for 1H and 2H, with and without the 27% Runeforge discount (smallest loss: 1H L20 to Uncommon with the discount, -22g). [superseded 2026-11-01 - Designer note about the fee using the rarity just before the Epic step (Common -> Rare -> Epic paid 1,386g at 1H L50): the fee is now counted from the starting rarity, see below] | USER DECISION 2026-11-01 (3): the fee is counted from the item's STARTING rarity (new saved field, equipment_schema 19, PLANNED - not built), so every route pays the same (1H L50 Common start = 1,980g either way). Enchant-then-sell loop fixed with option C - guard (7): enchanted items sell at their starting rarity. Correction: the earlier sell-loop table priced 2H Epic as eight T1 Adds (2H L20/50/99: 648/1,080/1,784g); one T4 Add is enough (324/540/892g, 236/394/651g at -27%). Sell-loop re-run 2026-11-01 (start Common/Uncommon/Rare x every higher target, item level 1-99, 1H and 2H, Runeforge discount 0/18/21/27%, cheapest Add route, tier unlocks ignored to be safe): best result -22g (1H L1, one T1 Add at -27%), so no loop makes gold. Under the old rule (sell at current rarity) Uncommon -> Rare made up to +3g at L1-6; now closed. NOT BUILT. | USER RULING 2026-11-01 (Simulator supply flag, report_runeforge_economy_2026-11-01 checks D/E): cheap crafted Epics for Runeforge-rushers and Gold Boost players are ACCEPTED - it rewards planning, and normal build orders are unaffected. Simulator supply numbers for item levels 50-80: free classic and crafter players reach Runeforge L10 at L88-90, so they make 0 crafted Epics there; a free rusher reaches L10 at L50 and can make up to 8 crafted Epics vs ~4 natural drops and 0 from the shop; a boosted player reaches L10 at L30-61 and makes 9-14. A crafted Epic costs 30-50% of the shop Epic (1H L50 from a Rare start 1,451g vs 4,752g). No extra level gate and no fee change (the Simulator's options were not taken). | USER DECISION 2026-11-01: the Epic step fee rounds down to whole gold (a half gold piece in 158 slot / level / start cases, all off-hand, armor and accessory slots); 1H / 2H table values unchanged. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Exploit Guards; rule: (1) Catch-up fee (row 48). (2) Epic step fee (LOCKED - USER DECISION 2026-11-01): when an action raises an item to Epic, pay extra gold = 0.5 x (the item's shop Epic price - its shop price at the item's STARTING rarity, equipment_schema 19), rounded down to whole gold (USER DECISION 2026-11-01; e.g. Off-Hand Rare L2 428.5 -> 428g; the 1H / 2H values below are already whole). No facility discount applies to it. Same fee whichever route the player takes (straight to Epic or step by step). Remove never changes the fee basis; downgrades keep the starting rarity; items that existed before this is built use their current rarity as their starting rarity. Example: 1H L50 Common -> Epic = 0.5 x (4,752 - 792) = 1,980g. Fee at L20 / L50 / L99 by starting rarity: 1H Common 1,380 / 1,980 / 2,960g, Uncommon 1,242 / 1,782 / 2,664g, Rare 966 / 1,386 / 2,072g; 2H Common 2,070 / 2,970 / 4,440g, Uncommon 1,863 / 2,673 / 3,996g, Rare 1,449 / 2,079 / 3,108g. A single T4 line (200 BP, minimum rarity Epic) makes any item Epic, 1H or 2H, so the cheapest route to Epic is one T4 Add (2H L50: 540g, 394g at -27%). A crafted Epic from Common loot costs about 1H L50 2,240g / 2H L50 3,364g + Essences, roughly half the shop Epic price (4,752g / 7,128g). (3) Rarity never goes down. (4) Essences cannot be sold. (5) Shop-bought items give nothing when dismantled (row 51). (6) Reroll options are fixed (row 55). (7) Enchanted items sell at their STARTING rarity (economy_framework 14), so enchanting never raises sell value.] | USER RULING 2026-11-01 (rune-forged = normal loot): guard (7) of the old list and option C (enchanted / forged items sell at their STARTING rarity) are SUPERSEDED, and there is no \"Sells as ...\" note. [Superseded 2026-11-01: rule guard (2): (2) forged items sell at their starting rarity (economy_framework 14);]"
+  },
+  {
+   "k": [
+    "guild_facilities",
+    58,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (E1, E6) | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: After every change the item is renamed automatically by the normal affix naming rule (item_rarity_rules 23). Fortune is never offered by Add, Reroll or Modify; an item that rolled Fortune as loot keeps it and may reroll it away, move it down or remove it, but never move it up.]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (E1, E6) | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: rule: After every change the item is renamed automatically by the normal affix naming rule (item_rarity_rules 23). Fortune is never offered by Add, Reroll or Modify; an item that rolled Fortune as loot keeps it and may reroll it away, move it down or remove it, but never move it up.]"
+  },
+  {
+   "k": [
+    "guild_facilities",
+    48,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-11-01 (option Q9-A, fixes the upgrade-as-Common-then-enchant cost dodge). Design first, build later. NOT BUILT. Simulator to confirm details (Blacksmith discount, downgraded items). Item save rows (save_data_contract 3, equipment_schema 4/5) not updated yet. Other exploit guards still OPEN (open_decisions 123 Q9). | 2026-11-01: saved fields recorded as PLANNED - not built (save_data_contract 3, equipment_schema 16-18). Discount and downgrade handling = Designer assumption, Simulator to verify. Facility name: Runeforge (USER DECISION 2026-11-01). | 2026-11-01 USER-CONFIRMED: existing items count at their current level and never owe a catch-up fee (dismantling them returns no gear-upgrade materials, only the +1 for Rare and up). | USER DECISION 2026-11-01 (Simulator fix X3, report_runeforge_economy_2026-11-01): LOCKED - per-level discount of the Blacksmith level needed to reach that level. Old: [using the player's current Blacksmith gold discount]. This closes the late-enchant saving (upgrade as Common, enchant at Blacksmith L10: 1H -2,760g, 2H -4,133g, Body -2,208g, about 9%). The earlier \"Discount handling = Designer assumption, Simulator to verify\" is superseded; downgrade handling was verified by the Simulator (no saving). | USER DECISION 2026-11-01 (Simulator re-check report_recheck_2026-11-01, Section 4 #3): ACCEPTED - enchanting late costs more when the Blacksmith is ahead of the item (1H +2,760g, 2H +4,133g at Blacksmith L10). Safe, no exploit. Old rule text: [Every route (upgrade then enchant, or enchant then upgrade) costs the same total.] | 2026-11-01 PLANNED UI rule (USER DECISION, for when the Runeforge screen is built): show the hint \"Enchant before upgrading to pay less.\" (exact wording); if it does not fit a small label, use \"Enchant first, pay less.\" NOT BUILT. | LOCKED - USER DECISION 2026-11-01 (v2). Levelling record BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1. Runeforge catch-up: NOT BUILT (step 4). [Superseded 2026-11-01 by v2: topic: Rarity Catch-Up Fee; rule: When enchanting raises an item's rarity, the player pays the upgrade cost difference they skipped: what the item's Blacksmith upgrades from its starting level to its current level cost at the new rarity, minus what they cost at the old rarity (gold + gear-upgrade materials). Every route (upgrade then enchant, or enchant then upgrade) costs the same total while the Blacksmith level matches the item's level; when the Blacksmith is ahead of the item, enchanting late costs more (ACCEPTED - USER DECISION 2026-11-01: Common -> Epic L1-99 with the Blacksmith at L10 all game, 1H +2,760g, 2H +4,133g). PLANNED UI rule (not built): the Runeforge screen shows the hint \"Enchant before upgrading to pay less.\" (short label if it does not fit: \"Enchant first, pay less.\"). Each item stores one extra saved number: the item level it dropped or was bought at. How it is worked out: for each level from the item's starting level to its current level, (normal Blacksmith upgrade cost at the new rarity - cost at the old rarity), gold and gear materials. Discount (LOCKED - USER DECISION 2026-11-01): each level uses the Blacksmith gold discount of the Blacksmith level needed to reach that level, 3% x (ceil(level / 10) - 1) - levels 2-10 0%, 11-20 3%, 21-30 6% ... 81-90 24%, 91-99 27% - NOT the player's current discount. Each level's cost is rounded down to whole gold first (economy_framework 19), so the fee is always whole gold. Example, Common -> Epic, item level 1 -> 99: 1H 22,201g, 2H 33,299g, Body 17,763g (+196 gear materials, materials are never discounted). Downgrading an item below its starting level lowers the starting level to the new level. Items that existed before this is built start at their current level, so they never owe a fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling such items returns no gear-upgrade materials, only the +1 for Rare and up).]",
+   "new": "USER DECISION 2026-11-01 (option Q9-A, fixes the upgrade-as-Common-then-enchant cost dodge). Design first, build later. NOT BUILT. Simulator to confirm details (Blacksmith discount, downgraded items). Item save rows (save_data_contract 3, equipment_schema 4/5) not updated yet. Other exploit guards still OPEN (open_decisions 123 Q9). | 2026-11-01: saved fields recorded as PLANNED - not built (save_data_contract 3, equipment_schema 16-18). Discount and downgrade handling = Designer assumption, Simulator to verify. Facility name: Runeforge (USER DECISION 2026-11-01). | 2026-11-01 USER-CONFIRMED: existing items count at their current level and never owe a catch-up fee (dismantling them returns no gear-upgrade materials, only the +1 for Rare and up). | USER DECISION 2026-11-01 (Simulator fix X3, report_runeforge_economy_2026-11-01): LOCKED - per-level discount of the Blacksmith level needed to reach that level. Old: [using the player's current Blacksmith gold discount]. This closes the late-enchant saving (upgrade as Common, enchant at Blacksmith L10: 1H -2,760g, 2H -4,133g, Body -2,208g, about 9%). The earlier \"Discount handling = Designer assumption, Simulator to verify\" is superseded; downgrade handling was verified by the Simulator (no saving). | USER DECISION 2026-11-01 (Simulator re-check report_recheck_2026-11-01, Section 4 #3): ACCEPTED - enchanting late costs more when the Blacksmith is ahead of the item (1H +2,760g, 2H +4,133g at Blacksmith L10). Safe, no exploit. Old rule text: [Every route (upgrade then enchant, or enchant then upgrade) costs the same total.] | 2026-11-01 PLANNED UI rule (USER DECISION, for when the Runeforge screen is built): show the hint \"Enchant before upgrading to pay less.\" (exact wording); if it does not fit a small label, use \"Enchant first, pay less.\" NOT BUILT. | LOCKED - USER DECISION 2026-11-01 (v2). Levelling record BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1. Runeforge catch-up: BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Rarity Catch-Up Fee; rule: When enchanting raises an item's rarity, the player pays the upgrade cost difference they skipped: what the item's Blacksmith upgrades from its starting level to its current level cost at the new rarity, minus what they cost at the old rarity (gold + gear-upgrade materials). Every route (upgrade then enchant, or enchant then upgrade) costs the same total while the Blacksmith level matches the item's level; when the Blacksmith is ahead of the item, enchanting late costs more (ACCEPTED - USER DECISION 2026-11-01: Common -> Epic L1-99 with the Blacksmith at L10 all game, 1H +2,760g, 2H +4,133g). PLANNED UI rule (not built): the Runeforge screen shows the hint \"Enchant before upgrading to pay less.\" (short label if it does not fit: \"Enchant first, pay less.\"). Each item stores one extra saved number: the item level it dropped or was bought at. How it is worked out: for each level from the item's starting level to its current level, (normal Blacksmith upgrade cost at the new rarity - cost at the old rarity), gold and gear materials. Discount (LOCKED - USER DECISION 2026-11-01): each level uses the Blacksmith gold discount of the Blacksmith level needed to reach that level, 3% x (ceil(level / 10) - 1) - levels 2-10 0%, 11-20 3%, 21-30 6% ... 81-90 24%, 91-99 27% - NOT the player's current discount. Each level's cost is rounded down to whole gold first (economy_framework 19), so the fee is always whole gold. Example, Common -> Epic, item level 1 -> 99: 1H 22,201g, 2H 33,299g, Body 17,763g (+196 gear materials, materials are never discounted). Downgrading an item below its starting level lowers the starting level to the new level. Items that existed before this is built start at their current level, so they never owe a fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling such items returns no gear-upgrade materials, only the +1 for Rare and up).]"
+  },
+  {
+   "k": [
+    "economy_framework",
+    11,
+    "notes"
+   ],
+   "old": "Locked",
+   "new": "Locked | BUG-073 FIXED 2026-11-01: since Slice 6 the Blacksmith, Runeforge and Merchant priced 2H weapons with the 1H base value (100 instead of 150); they now use 2H = 150 (economy_framework 15, 19; guild_facilities 55). BUILT 2026-11-01 (source-verified by Tester; Studio test pending)."
+  },
+  {
+   "k": [
+    "economy_framework",
+    15,
+    "notes"
+   ],
+   "old": "USER DECISION 2026-10-30 — Epic/Exalted markup raised ×4.0→×6.0 after Simulator check found ×4.0 shop Epics roughly doubled Epic supply in the L50-80 tight phase. ×6.0 puts an Epic 1H at ~15.6 battles of income, Exalted 1H at ~21.4 (near loot pace). Built in MerchantService. | v2 2026-11-01 (DECIDED (DEV DEFAULT)): CRAFTED Epics, item levels L50-80: up to about 15-17 (free) / 14-20 (boosted) - the most possible, for a player who saves every crystal (upper bound). Information: including bought Epics (Merchant + Black Market at 1-3% spawn), a boosted player can hold about 24-27 (the Merchant alone already allows 23.6-25.8). LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: USER RULING 2026-11-01: Runeforge-crafted Epics undercut this markup for Runeforge-rushers and Gold Boost players in L50-80 (free rusher up to 8 crafted vs ~4 natural drops; boosted 9-14; normal free players 0) - ACCEPTED, see guild_facilities 57.]",
+   "new": "USER DECISION 2026-10-30 — Epic/Exalted markup raised ×4.0→×6.0 after Simulator check found ×4.0 shop Epics roughly doubled Epic supply in the L50-80 tight phase. ×6.0 puts an Epic 1H at ~15.6 battles of income, Exalted 1H at ~21.4 (near loot pace). Built in MerchantService. | v2 2026-11-01 (DECIDED (DEV DEFAULT)): CRAFTED Epics, item levels L50-80: up to about 15-17 (free) / 14-20 (boosted) - the most possible, for a player who saves every crystal (upper bound). Information: including bought Epics (Merchant + Black Market at 1-3% spawn), a boosted player can hold about 24-27 (the Merchant alone already allows 23.6-25.8). LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: USER RULING 2026-11-01: Runeforge-crafted Epics undercut this markup for Runeforge-rushers and Gold Boost players in L50-80 (free rusher up to 8 crafted vs ~4 natural drops; boosted 9-14; normal free players 0) - ACCEPTED, see guild_facilities 57.] | BUG-073 FIXED 2026-11-01: Merchant prices for 2H weapons now use Base Value 150 (they were priced as 1H = 100 since Slice 6; economy_framework 11). BUILT 2026-11-01 (source-verified by Tester; Studio test pending)."
+  },
+  {
+   "k": [
+    "economy_framework",
+    19,
+    "notes"
+   ],
+   "old": "Locked — materials system pending | UPDATED USER DECISION 2026-11-01 (Q7): Blacksmith gold discount added. Old: [floor(Base Value × Rarity Mult × 0.30 × (1 + Target Level / 25)). Per level. Plus materials (separate design).] | USER RULING 2026-11-01: the Blacksmith discount stays -3% per level (L10 -27%). Simulator 2026-11-01: it frees about 11.4-14.3k gold over a lifetime (more than the Runeforge costs, 8,919g), so the free player spends about 106% of income (105.9-106.6%) instead of 108%; boosted 83.1-84.3%. The user accepted the lower spending pressure; the Simulator options of -2% or -1.5% per level were not taken. | USER DECISION 2026-11-01: every Blacksmith gold cost rounds down to whole gold (as the floor above); the Dev computes it in whole numbers (implementation_plan 53). | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1. (running-total gold + Blacksmith discount). [Superseded 2026-11-01 by v2: rule: floor(Base Value × Rarity Mult × 0.30 × (1 + Target Level / 25) × (1 − 0.03 × (Blacksmith Level − 1))). Per level. Blacksmith gold discount: L1 0% ... L10 −27% (gold only; materials are not discounted). Plus materials (materials_system).]",
+   "new": "Locked — materials system pending | UPDATED USER DECISION 2026-11-01 (Q7): Blacksmith gold discount added. Old: [floor(Base Value × Rarity Mult × 0.30 × (1 + Target Level / 25)). Per level. Plus materials (separate design).] | USER RULING 2026-11-01: the Blacksmith discount stays -3% per level (L10 -27%). Simulator 2026-11-01: it frees about 11.4-14.3k gold over a lifetime (more than the Runeforge costs, 8,919g), so the free player spends about 106% of income (105.9-106.6%) instead of 108%; boosted 83.1-84.3%. The user accepted the lower spending pressure; the Simulator options of -2% or -1.5% per level were not taken. | USER DECISION 2026-11-01: every Blacksmith gold cost rounds down to whole gold (as the floor above); the Dev computes it in whole numbers (implementation_plan 53). | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1. (running-total gold + Blacksmith discount). [Superseded 2026-11-01 by v2: rule: floor(Base Value × Rarity Mult × 0.30 × (1 + Target Level / 25) × (1 − 0.03 × (Blacksmith Level − 1))). Per level. Blacksmith gold discount: L1 0% ... L10 −27% (gold only; materials are not discounted). Plus materials (materials_system).] | BUG-073 FIXED 2026-11-01: Blacksmith upgrade gold for 2H weapons now uses Base Value 150 (it was priced as 1H = 100 since Slice 6; economy_framework 11). BUILT 2026-11-01 (source-verified by Tester; Studio test pending)."
+  },
+  {
+   "k": [
+    "equipment_schema",
+    21,
+    "Validation"
+   ],
+   "old": "old items = false; PLANNED — not built (Runeforge build step 4)",
+   "new": "old items = false; BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4"
+  },
+  {
+   "k": [
+    "save_data_contract",
+    3,
+    "Persistent_Fields"
+   ],
+   "old": "instance ID, base archetype, level, rarity, bonus lines, authored roll data; PLANNED — not built (v2): levelling_record (free level F + at most 10 item level / Blacksmith level pairs; replaces starting_level - catch-up + downgrades), reroll_count (fixes the reroll sets), starting_rarity (rarity it dropped or was bought at, never changed - tracking only, no price effect, USER RULING 2026-11-01), rune_forged (true once the Runeforge changes the item - forge, swap or reroll; never cleared; tracking/filtering only, USER DECISION 2026-11-01; PLANNED — not built, Runeforge step 4). shop_bought dropped. Profile currencies (Key 2): mercury, crystals, sulfur (3 whole numbers), rune gem map (count per gem ID, at most 133 kinds in the game content, materials_system 4), daily_events_completed (lifetime count, never resets - every 3rd gives 1 sulfur); the T1-T5 and 3 Essence counters are removed",
+   "new": "instance ID, base archetype, level, rarity, bonus lines, authored roll data; PLANNED — not built (v2): levelling_record (free level F + at most 10 item level / Blacksmith level pairs; replaces starting_level - catch-up + downgrades), reroll_count (fixes the reroll sets), starting_rarity (rarity it dropped or was bought at, never changed - tracking only, no price effect, USER RULING 2026-11-01), rune_forged (true once the Runeforge changes the item - forge, swap or reroll; never cleared; tracking/filtering only, USER DECISION 2026-11-01; BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4). shop_bought dropped. Profile currencies (Key 2): mercury, crystals, sulfur (3 whole numbers), rune gem map (count per gem ID, at most 133 kinds in the game content, materials_system 4), daily_events_completed (lifetime count, never resets - every 3rd gives 1 sulfur); the T1-T5 and 3 Essence counters are removed"
+  },
+  {
+   "k": [
+    "save_data_contract",
+    3,
+    "Failure_Behavior"
+   ],
+   "old": "Mark unusable with diagnostic if content removed | LOCKED - USER DECISION 2026-11-01 (v2). Profile currencies + levelling_record BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1; rune_forged and the Runeforge parts NOT BUILT. [Superseded 2026-11-01 by v2: Persistent_Fields: instance ID, base archetype, level, rarity, bonus lines, authored roll data; PLANNED — not built (USER DECISION 2026-11-01): starting_level (level it dropped or was bought at - catch-up fee + dismantle refund), shop_bought flag (dismantling gives nothing), reroll_count (fixed reroll options); starting_rarity (rarity it dropped or was bought at, never changed - Epic step fee + sell value, USER DECISION 2026-11-01); Load_Validation: Re-run structural validation and source eligibility where available; PLANNED — not built: enchanted items may hold 0 up to their rarity normal budget (the ±5% band is for newly generated items only); Migration_Rule: Preserve original authored roll; migrate field names/IDs only; PLANNED — not built: after enchanting, the current lines and rarity are the authority. Items saved before this is built get starting_level = current level, so they never owe a catch-up fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling them returns no gear-upgrade materials, only the +1 for Rare and up), shop_bought = no, reroll_count = 0. Items saved before this is built get starting_rarity = current rarity (USER DECISION 2026-11-01).]",
+   "new": "Mark unusable with diagnostic if content removed | LOCKED - USER DECISION 2026-11-01 (v2). Profile currencies + levelling_record BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1; rune_forged BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4; the other Runeforge parts of this row (reroll_count, forged-item load check) are not yet confirmed as built. [Superseded 2026-11-01 by v2: Persistent_Fields: instance ID, base archetype, level, rarity, bonus lines, authored roll data; PLANNED — not built (USER DECISION 2026-11-01): starting_level (level it dropped or was bought at - catch-up fee + dismantle refund), shop_bought flag (dismantling gives nothing), reroll_count (fixed reroll options); starting_rarity (rarity it dropped or was bought at, never changed - Epic step fee + sell value, USER DECISION 2026-11-01); Load_Validation: Re-run structural validation and source eligibility where available; PLANNED — not built: enchanted items may hold 0 up to their rarity normal budget (the ±5% band is for newly generated items only); Migration_Rule: Preserve original authored roll; migrate field names/IDs only; PLANNED — not built: after enchanting, the current lines and rarity are the authority. Items saved before this is built get starting_level = current level, so they never owe a catch-up fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling them returns no gear-upgrade materials, only the +1 for Rare and up), shop_bought = no, reroll_count = 0. Items saved before this is built get starting_rarity = current rarity (USER DECISION 2026-11-01).]"
+  },
+  {
+   "k": [
+    "implementation_plan",
+    53,
+    "col_2"
+   ],
+   "old": "Crafting + Upgrades: Blacksmith + Runeforge v2 LOCKED - USER DECISION 2026-11-01 (v2). BUILD STATUS 2026-11-01: steps 1-3 BUILT (1 mercury switch, 2 Blacksmith rules, 3 Blacksmith screen; source-verified by Tester, Studio test pending); step 4 (Runeforge rules) IN PROGRESS; battle mercury drops = step 6 (guild_facilities 40-58; materials_system; open_decisions 124). Monetization: unchanged (see open_decisions 'Monetization'). IMPLEMENTATION NOTES: (1) compute the Blacksmith and Runeforge gold formulas (economy_framework 19; guild_facilities 48, 55) in whole numbers, not floating point - multiply first, divide last, round down once at the end; every gold fee rounds down to whole gold. (2) Fortune clamp order (DECIDED (DEV DEFAULT)): Unit Fortune = LUK/(LUK+200) + flat bonuses (Lucky traits, gear Fortune lines +0.05-0.20), no per-unit limit → Expedition Fortune = highest + 50% of 2nd + 25% of 3rd → clamp → Fountain / Idol → clamp → Thief (per reward) → clamp. The clamp to 0-1.75 MUST be applied again after the Thief bonus, otherwise loot reaches ×2.79. (3) Black Market: replace the 6-free-Rares code with the paid shop (objects_encounters 31), stock 75% Rare / 25% Epic. (4) Swap fee stays × 0.5; do not 'fix' the raise-vs-swap quirk (guild_facilities 55). (5) Dispatch: the reward's material tier / count become the mercury amount (materials_system 12). | LOCKED - USER DECISION 2026-11-01 (v2). Steps 1-3 BUILT 2026-11-01 (source-verified by Tester; Studio test pending); step 4 in progress. [Superseded 2026-11-01 by v2: col_2: Crafting + Upgrades: UNPARKED 2026-11-01 (user decisions) - Blacksmith expansion + new Runeforge; design DECIDED 2026-11-01 (facility name Runeforge decided 2026-11-01; Epic step fee RESOLVED 2026-11-01 - half the gap between the shop Epic price and the shop price at the item's starting rarity, guild_facilities 57; enchanted items sell at their starting rarity, economy_framework 14; new planned saved field starting_rarity, equipment_schema 19); NOT BUILT; Simulator re-check PASS 2026-11-01 (all 26 checks), design FINAL; next: Dev build plan (user approval before code) (guild_facilities 40-58; open_decisions 'Crafting', 'Upgrade systems' and 123). Monetization: unchanged (see open_decisions 'Monetization'). [Was: All parked. Not relevant to initial architecture.] | IMPLEMENTATION NOTE (USER DECISION 2026-11-01, Simulator report Section 4 #6): the Dev must compute the Blacksmith and Runeforge gold formulas (economy_framework 19; guild_facilities 48, 55, 57) in whole numbers, not floating point - keep percentages and multipliers as whole numbers or fractions, multiply first, divide last, and round down once at the end. Floating point loses 1 gold at exact values (150 x 1.0 x 0.30 x 2 lands just under 90 and becomes 89; 98 Blacksmith level costs and 13 Runeforge costs come out 1g low this way). Every one of these gold fees rounds down to whole gold (guild_facilities 55).]",
+   "new": "Crafting + Upgrades: Blacksmith + Runeforge v2 LOCKED - USER DECISION 2026-11-01 (v2). BUILD STATUS 2026-11-01 (evening): steps 1-6 BUILT (1 mercury switch, 2 Blacksmith rules, 3 Blacksmith screen, 4 Runeforge rules, 5 Runeforge screen, 6a kill / chest / salvage mercury, 6b paid Black Market, 6c quest mercury + Runeforge over-budget rule; source-verified by Tester, Studio test pending); BUG-073 fixed (2H weapons were priced as 1H in the Blacksmith, Runeforge and Merchant since Slice 6); Salvager's Cap new reward (materials_system 14): code written, Tester source check running. NOT BUILT: elite encounter grants (materials_system 8, 41 - elite encounters do not exist in code), daily events (materials_system 13 - no daily event system), boss grants (materials_system 9, 41, loot_progression 15 - ON HOLD until a daily boss reward limit exists) (guild_facilities 40-58; materials_system; open_decisions 124). Monetization: unchanged (see open_decisions 'Monetization'). IMPLEMENTATION NOTES: (1) compute the Blacksmith and Runeforge gold formulas (economy_framework 19; guild_facilities 48, 55) in whole numbers, not floating point - multiply first, divide last, round down once at the end; every gold fee rounds down to whole gold. (2) Fortune clamp order (DECIDED (DEV DEFAULT)): Unit Fortune = LUK/(LUK+200) + flat bonuses (Lucky traits, gear Fortune lines +0.05-0.20), no per-unit limit → Expedition Fortune = highest + 50% of 2nd + 25% of 3rd → clamp → Fountain / Idol → clamp → Thief (per reward) → clamp. The clamp to 0-1.75 MUST be applied again after the Thief bonus, otherwise loot reaches ×2.79. (3) Black Market: replace the 6-free-Rares code with the paid shop (objects_encounters 31), stock 75% Rare / 25% Epic. DONE 2026-11-01 (step 6b). (4) Swap fee stays × 0.5; do not 'fix' the raise-vs-swap quirk (guild_facilities 55). (5) Dispatch: the reward's material tier / count become the mercury amount (materials_system 12). | LOCKED - USER DECISION 2026-11-01 (v2). Steps 1-6 BUILT 2026-11-01 (source-verified by Tester; Studio test pending), except the NOT BUILT items listed above. [Superseded 2026-11-01 by v2: col_2: Crafting + Upgrades: UNPARKED 2026-11-01 (user decisions) - Blacksmith expansion + new Runeforge; design DECIDED 2026-11-01 (facility name Runeforge decided 2026-11-01; Epic step fee RESOLVED 2026-11-01 - half the gap between the shop Epic price and the shop price at the item's starting rarity, guild_facilities 57; enchanted items sell at their starting rarity, economy_framework 14; new planned saved field starting_rarity, equipment_schema 19); NOT BUILT; Simulator re-check PASS 2026-11-01 (all 26 checks), design FINAL; next: Dev build plan (user approval before code) (guild_facilities 40-58; open_decisions 'Crafting', 'Upgrade systems' and 123). Monetization: unchanged (see open_decisions 'Monetization'). [Was: All parked. Not relevant to initial architecture.] | IMPLEMENTATION NOTE (USER DECISION 2026-11-01, Simulator report Section 4 #6): the Dev must compute the Blacksmith and Runeforge gold formulas (economy_framework 19; guild_facilities 48, 55, 57) in whole numbers, not floating point - keep percentages and multipliers as whole numbers or fractions, multiply first, divide last, and round down once at the end. Floating point loses 1 gold at exact values (150 x 1.0 x 0.30 x 2 lands just under 90 and becomes 89; 98 Blacksmith level costs and 13 Runeforge costs come out 1g low this way). Every one of these gold fees rounds down to whole gold (guild_facilities 55).] [Superseded 2026-11-01 (evening build status): BUILD STATUS 2026-11-01: steps 1-3 BUILT (1 mercury switch, 2 Blacksmith rules, 3 Blacksmith screen; source-verified by Tester, Studio test pending); step 4 (Runeforge rules) IN PROGRESS; battle mercury drops = step 6; Steps 1-3 BUILT 2026-11-01 (source-verified by Tester; Studio test pending); step 4 in progress.]"
+  }
+ ],
+ "xlsx": [
+  {
+   "db": [
+    "materials_system",
+    7,
+    "rule"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "C8",
+   "old": "5% chance per enemy kill → 1 mercury (DECIDED (DEV DEFAULT); 5 enemies per normal battle, loot_progression 86 → 0.25 per battle). Fortune never applies.",
+   "new": "5% chance per enemy kill → 1 mercury (DECIDED (DEV DEFAULT); 5 enemies per normal battle, loot_progression 86 → 0.25 per battle). Fortune never applies. Paid on a victory only, like item loot: a defeat gives no kill mercury."
+  },
+  {
+   "db": [
+    "materials_system",
+    7,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "D8",
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: 20% chance per kill. 1 material. Tier based on enemy level range. Primary source (~1.6 per battle from 8 enemies).]",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6a. Victory-only recorded 2026-11-01. [Superseded 2026-11-01 by v2: rule: 20% chance per kill. 1 material. Tier based on enemy level range. Primary source (~1.6 per battle from 8 enemies).]"
+  },
+  {
+   "db": [
+    "materials_system",
+    8,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "D9",
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: 75% chance (1 guaranteed if rewarded). 2-3 materials. Tier = enemy level range.]",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT (status 2026-11-01): elite encounters do not exist in the game code yet, so this grant has nothing to come from. The mercury currency itself is BUILT (step 1). [Superseded 2026-11-01 by v2: rule: 75% chance (1 guaranteed if rewarded). 2-3 materials. Tier = enemy level range.]"
+  },
+  {
+   "db": [
+    "materials_system",
+    9,
+    "rule"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "C10",
+   "old": "3 mercury. The boss crystal / rune gem / sulfur grant is separate (row 41).",
+   "new": "3 mercury. The boss crystal / rune gem / sulfur grant is separate (row 41). ON HOLD - RESOLVED (USER) 2026-11-01 (ruling 1): not built until a daily boss reward limit system exists in the game (there is no day counter yet). Reason: without the limit, bosses could be replayed for unlimited crystals."
+  },
+  {
+   "db": [
+    "materials_system",
+    9,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "D10",
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: 100% guaranteed. 3-5 materials. Tier = boss level range.]",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT - ON HOLD (RESOLVED (USER) 2026-11-01, ruling 1; see loot_progression 15). [Superseded 2026-11-01 by v2: rule: 100% guaranteed. 3-5 materials. Tier = boss level range.]"
+  },
+  {
+   "db": [
+    "materials_system",
+    10,
+    "rule"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "C11",
+   "old": "100% on Interact. 1 mercury + other loot. No crystals and no rune gems (DECIDED (DEV DEFAULT)).",
+   "new": "100% on Interact. 1 mercury + other loot. No crystals and no rune gems (DECIDED (DEV DEFAULT)). Cursed Chest gives the same 1 mercury (RESOLVED (USER) 2026-11-01: it is riskier - it inflicts Weakened - so it should not pay less; objects_encounters Cursed Chest). Chest mercury is credited when the chest opens, so it is kept even if the battle is lost (same as chest gold)."
+  },
+  {
+   "db": [
+    "materials_system",
+    10,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "D11",
+   "old": "Locked — already in objects_encounters | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: 100% on Interact. 1-2 materials + other loot.]",
+   "new": "Locked — already in objects_encounters | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6a. Cursed Chest mercury (RESOLVED (USER) 2026-11-01) built in step 6a. [Superseded 2026-11-01 by v2: rule: 100% on Interact. 1-2 materials + other loot.]"
+  },
+  {
+   "db": [
+    "materials_system",
+    11,
+    "rule"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "C12",
+   "old": "1-3 mercury, shown upfront before acceptance (about 0.3 per battle).",
+   "new": "About 1 quest in 7 offers 1-3 mercury, shown on the quest board before accepting. Paid on a qualifying victory only. Expected value 2/7 ≈ 0.29 mercury per quest, which keeps the about-0.3-per-battle total (RESOLVED (USER) 2026-11-01)."
+  },
+  {
+   "db": [
+    "materials_system",
+    11,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "D12",
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: Shown upfront before acceptance. Varies by quest type and recommended level.]",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6c. [Superseded 2026-11-01 by v2: rule: Shown upfront before acceptance. Varies by quest type and recommended level.] [Superseded 2026-11-01 (ruling 2): rule: 1-3 mercury, shown upfront before acceptance (about 0.3 per battle).]"
+  },
+  {
+   "db": [
+    "materials_system",
+    13,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "D14",
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: 100% event reward. T5 Ethereal Essence exclusively. Only reliable T5 source.]",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT (status 2026-11-01): the game has no daily event system yet. [Superseded 2026-11-01 by v2: rule: 100% event reward. T5 Ethereal Essence exclusively. Only reliable T5 source.]"
+  },
+  {
+   "db": [
+    "materials_system",
+    14,
+    "rule"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "C15",
+   "old": "30% chance with Salvager's Cap passive. 1 mercury (unchanged).",
+   "new": "Salvager's Cap (nonweapon_equipment 34; RESOLVED (USER) 2026-11-01, ruling 4 - replaces the treasure-chest reward roll): EVERY time the wearer destroys a qualifying object it gives gold = round(12.5 × (1 + Map Level / 50)) - half a chest's base gold (L1 13 / L50 25 / L99 37) - then the normal gold multipliers (RewardService.ApplyGold); plus a separate fixed 5% chance of 1 mercury; plus a separate fixed 5% chance of one equipment item, rolled like normal loot. Fortune does not raise either chance. Only objects that were breakable before rule 241; it never counts as a chest opened; Treasure Seeker does not apply. Salvage mercury is kept even if the battle is lost (credited at once, like chest gold). Reward details: DECIDED (DEV DEFAULT)."
+  },
+  {
+   "db": [
+    "materials_system",
+    14,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "D15",
+   "old": "Locked — already in nonweapon_equipment | 2026-10-30: only pre-ruling breakables (OBS blocker props, Stone Pillar, Deployables; Bomb Barrel explodes = no roll, corrected 2026-10-30) - see nonweapon_equipment 34. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT yet: battle mercury drops come in v2 build step 6 (the mercury currency itself is BUILT, step 1). [Superseded 2026-11-01 by v2: rule: 30% chance with Salvager's Cap passive. 1 material.]",
+   "new": "Locked — already in nonweapon_equipment | 2026-10-30: only pre-ruling breakables (OBS blocker props, Stone Pillar, Deployables; Bomb Barrel explodes = no roll, corrected 2026-10-30) - see nonweapon_equipment 34. | LOCKED - USER DECISION 2026-11-01 (v2). Salvage mercury BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6a. New Salvager's Cap reward (ruling 4): code written 2026-11-01, Tester source check running - not yet verified. [Superseded 2026-11-01 by v2: rule: 30% chance with Salvager's Cap passive. 1 material.] | RESOLVED (USER) 2026-11-01 (ruling 4): resolves the conflict between this row ('30% chance') and nonweapon_equipment 34 ('always'): the reward triggers EVERY time, and the reward is the gold + 5% mercury + 5% gear above. [Superseded 2026-11-01: rule: 30% chance with Salvager's Cap passive. 1 mercury (unchanged).]"
+  },
+  {
+   "db": [
+    "materials_system",
+    41,
+    "rule"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "C42",
+   "old": "Separate from the equipment roll; always given, Fortune never applies. Elite encounter (each completed one): 3 crystals (WORKING ESTIMATE, G10), 50% chance of 1 rune gem (rolled as one line of a Rare item of the encounter level, random slot), content L60+: 25% chance of 1 sulfur; plus 2 mercury (row 8). Boss (counts toward the 3-per-day boss reward limit, loot_progression 15): 5 crystals, 1 rune gem (one line of an Epic item; Rare item below L40), content L60+: 1 sulfur; plus 3 mercury (row 9). Normal kills and treasure chests: no crystals or gems. Fortune gems can be rolled here like any other line, but Fortune never changes these chances. Gem drop weights = WORKING ESTIMATE (G6): equal weights across gem families and tiers, 10% of gem rolls are passives.",
+   "new": "Separate from the equipment roll; always given, Fortune never applies. Elite encounter (each completed one): 3 crystals (WORKING ESTIMATE, G10), 50% chance of 1 rune gem (rolled as one line of a Rare item of the encounter level, random slot), content L60+: 25% chance of 1 sulfur; plus 2 mercury (row 8). Boss - ON HOLD (RESOLVED (USER) 2026-11-01, ruling 1: not built until a daily boss reward limit system exists in the game - there is no day counter yet - because without the limit bosses could be replayed for unlimited crystals; once built it counts toward the 3-per-day boss reward limit, loot_progression 15): 5 crystals, 1 rune gem (one line of an Epic item; Rare item below L40), content L60+: 1 sulfur; plus 3 mercury (row 9). Normal kills and treasure chests: no crystals or gems. Fortune gems can be rolled here like any other line, but Fortune never changes these chances. Gem drop weights = WORKING ESTIMATE (G6): equal weights across gem families and tiers, 10% of gem rolls are passives."
+  },
+  {
+   "db": [
+    "materials_system",
+    41,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "D42",
+   "old": "USER DECISION 2026-11-01 (Q10). NOT BUILT. \"1 Essence per drop\" = Designer assumption. | WORKING ESTIMATES (Simulator 2026-11-01), not design decisions - confirm later: elite rate about 0.034 per battle (loot_progression 26) and about 0.40 equipment drops per battle (loot_progression 24). With these, drops = 25.0% of Essence income (range 11.8-28.4%; 12% at 1 drop per battle). Essences per battle: Uncommon 0.357, Rare 0.057, Epic 0.023. | WORKING ESTIMATE note (Simulator re-check 2026-11-01, note C) - not a decision, no number locked: the Essence drop share depends on equipment drops per battle - 37-45% at 0.2 drops/battle, 23-29% at 0.4, 13-17% at 0.8, 11-14% at 1.0 (ranges = elite rate 0.017-0.068). The ~25% target only holds near 0.40. Natural Epics scale with drops (2.0 / 4.0 / 7.9 at 0.2 / 0.4 / 0.8) while crafted Epics do not (limited by gold). Lock the real drop rate before tuning Essence drops. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Essence Drop Sources; rule: Normal kills: none. Treasure chest: 25% chance of 1 Uncommon Essence. Elite encounter: 75% chance of 1 Rare Essence. Boss encounter: 100%, 1 Epic Essence (1 Rare Essence from bosses in content below L40). Quests may show Essences up front. Fortune never applies. Target: ~25% of Essence income from drops, ~75% from dismantling (Simulator to verify).]",
+   "new": "USER DECISION 2026-11-01 (Q10). NOT BUILT. \"1 Essence per drop\" = Designer assumption. | WORKING ESTIMATES (Simulator 2026-11-01), not design decisions - confirm later: elite rate about 0.034 per battle (loot_progression 26) and about 0.40 equipment drops per battle (loot_progression 24). With these, drops = 25.0% of Essence income (range 11.8-28.4%; 12% at 1 drop per battle). Essences per battle: Uncommon 0.357, Rare 0.057, Epic 0.023. | WORKING ESTIMATE note (Simulator re-check 2026-11-01, note C) - not a decision, no number locked: the Essence drop share depends on equipment drops per battle - 37-45% at 0.2 drops/battle, 23-29% at 0.4, 13-17% at 0.8, 11-14% at 1.0 (ranges = elite rate 0.017-0.068). The ~25% target only holds near 0.40. Natural Epics scale with drops (2.0 / 4.0 / 7.9 at 0.2 / 0.4 / 0.8) while crafted Epics do not (limited by gold). Lock the real drop rate before tuning Essence drops. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT (status 2026-11-01): elite part - elite encounters do not exist in the game code yet; boss part - ON HOLD (ruling 1). [Superseded 2026-11-01 by v2: topic: Essence Drop Sources; rule: Normal kills: none. Treasure chest: 25% chance of 1 Uncommon Essence. Elite encounter: 75% chance of 1 Rare Essence. Boss encounter: 100%, 1 Epic Essence (1 Rare Essence from bosses in content below L40). Quests may show Essences up front. Fortune never applies. Target: ~25% of Essence income from drops, ~75% from dismantling (Simulator to verify).] [Superseded 2026-11-01 (ruling 1): rule (part): Boss (counts toward the 3-per-day boss reward limit, loot_progression 15):]"
+  },
+  {
+   "db": [
+    "materials_system",
+    4,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "23 Materials System",
+   "cell": "D5",
+   "old": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: section: Material Tiers; topic: T3 — Polished Core; rule: Blue. Drops from L40-70 content. Elite encounters, late-mid drops.] | CORRECTION 2026-11-01 (Tester): was \"about 153 kinds (25 numeric families x T1-T4 = 100, including Fortune, + 53 passives)\".",
+   "new": "Locked | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: section: Material Tiers; topic: T3 — Polished Core; rule: Blue. Drops from L40-70 content. Elite encounters, late-mid drops.] | CORRECTION 2026-11-01 (Tester): was \"about 153 kinds (25 numeric families x T1-T4 = 100, including Fortune, + 53 passives)\". | INFORMATION (Tester step 4 question 3, recorded 2026-11-01): reroll sets depend on what the game's bonus content file (BonusData) holds, so regenerating it - for example adding the 5 DB-only families - changes every item's reroll offers (guild_facilities 54)."
+  },
+  {
+   "db": [
+    "loot_progression",
+    15,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "10 Loot Progression",
+   "cell": "E16",
+   "old": "Replay may continue after the daily reward limit, but additional completions do not produce another Mythic-eligible guaranteed boss equipment reward.",
+   "new": "Replay may continue after the daily reward limit, but additional completions do not produce another Mythic-eligible guaranteed boss equipment reward. | RESOLVED (USER) 2026-11-01 (ruling 1): this daily limit is not in the game yet (no day counter). Boss resource grants (materials_system 9, 41) are ON HOLD until it is built - without it bosses could be replayed for unlimited crystals."
+  },
+  {
+   "db": [
+    "nonweapon_equipment",
+    34,
+    "rule"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "27 Non-Weapon Equipment",
+   "cell": "D35",
+   "old": "Destroying a breakable object yields one treasure reward roll. (50 BP) [USER RULING 2026-10-30: applies ONLY to objects breakable before this ruling - OBS blocker props (Ice Spike, Blocker-Prop Cluster), Stone Pillar, and placed items (Deployable). Map objects made breakable on 2026-10-30 give NO salvage roll. CORRECTION 2026-10-30 (user: match the game as built): a Bomb Barrel set off by a hit EXPLODES rather than being destroyed, so it gives NO salvage roll.]",
+   "new": "Destroying a breakable object gives a little gold - round(12.5 × (1 + Map Level / 50)), half a chest's base gold (L1 13 / L50 25 / L99 37), then the normal gold multipliers - plus a separate fixed 5% chance of 1 mercury and a separate fixed 5% chance of one equipment item rolled like normal loot. Triggers every time; Fortune does not raise the chances; never counts as a chest opened; Treasure Seeker does not apply (materials_system 14). (50 BP) [USER RULING 2026-10-30: applies ONLY to objects breakable before this ruling - OBS blocker props (Ice Spike, Blocker-Prop Cluster), Stone Pillar, and placed items (Deployable). Map objects made breakable on 2026-10-30 give NO salvage roll. CORRECTION 2026-10-30 (user: match the game as built): a Bomb Barrel set off by a hit EXPLODES rather than being destroyed, so it gives NO salvage roll.] [USER RULING 2026-11-01 (ruling 4, RESOLVED (USER) 2026-11-01; reward details DECIDED (DEV DEFAULT)): replaces the treasure reward roll; code written 2026-11-01, Tester source check running.] [Superseded 2026-11-01: rule: Destroying a breakable object yields one treasure reward roll. | restriction: Once per object; no roll if the object has no salvage table, for objects made breakable on 2026-10-30, or for a Bomb Barrel that explodes. | display_text: Destroying a breakable object gives one treasure reward roll.]"
+  },
+  {
+   "db": [
+    "nonweapon_equipment",
+    34,
+    "rule"
+   ],
+   "wb": "CTRBLXAI_NonWeapon_Equipment_Export.xlsx",
+   "sheet": "Items",
+   "cell": "J13",
+   "old": "Destroying a breakable object yields one treasure reward roll. [USER RULING 2026-10-30: applies ONLY to objects breakable before this ruling - OBS blocker props (Ice Spike, Blocker-Prop Cluster), Stone Pillar, and placed items (Deployable). Map objects made breakable on 2026-10-30 give NO salvage roll. CORRECTION 2026-10-30 (user: match the game as built): a Bomb Barrel set off by a hit EXPLODES rather than being destroyed, so it gives NO salvage roll.]",
+   "new": "Destroying a breakable object gives a little gold - round(12.5 × (1 + Map Level / 50)), half a chest's base gold (L1 13 / L50 25 / L99 37), then the normal gold multipliers - plus a separate fixed 5% chance of 1 mercury and a separate fixed 5% chance of one equipment item rolled like normal loot. Triggers every time; Fortune does not raise the chances; never counts as a chest opened; Treasure Seeker does not apply (materials_system 14). [USER RULING 2026-10-30: applies ONLY to objects breakable before this ruling - OBS blocker props (Ice Spike, Blocker-Prop Cluster), Stone Pillar, and placed items (Deployable). Map objects made breakable on 2026-10-30 give NO salvage roll. CORRECTION 2026-10-30 (user: match the game as built): a Bomb Barrel set off by a hit EXPLODES rather than being destroyed, so it gives NO salvage roll.] [USER RULING 2026-11-01 (ruling 4, RESOLVED (USER) 2026-11-01; reward details DECIDED (DEV DEFAULT)): replaces the treasure reward roll; code written 2026-11-01, Tester source check running.] [Superseded 2026-11-01: rule: Destroying a breakable object yields one treasure reward roll. | restriction: Once per object; no roll if the object has no salvage table, for objects made breakable on 2026-10-30, or for a Bomb Barrel that explodes. | display_text: Destroying a breakable object gives one treasure reward roll.]"
+  },
+  {
+   "db": [
+    "nonweapon_equipment",
+    34,
+    "restriction"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "27 Non-Weapon Equipment",
+   "cell": "G35",
+   "old": "Once per object; no roll if the object has no salvage table, for objects made breakable on 2026-10-30, or for a Bomb Barrel that explodes.",
+   "new": "Once per object. Only objects that were breakable before 2026-10-30 (rule 241); nothing for objects made breakable on 2026-10-30 or for a Bomb Barrel that explodes."
+  },
+  {
+   "db": [
+    "nonweapon_equipment",
+    34,
+    "restriction"
+   ],
+   "wb": "CTRBLXAI_NonWeapon_Equipment_Export.xlsx",
+   "sheet": "Items",
+   "cell": "L13",
+   "old": "Once per object; no roll if the object has no salvage table, for objects made breakable on 2026-10-30, or for a Bomb Barrel that explodes.",
+   "new": "Once per object. Only objects that were breakable before 2026-10-30 (rule 241); nothing for objects made breakable on 2026-10-30 or for a Bomb Barrel that explodes."
+  },
+  {
+   "db": [
+    "nonweapon_equipment",
+    34,
+    "display_text"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "27 Non-Weapon Equipment",
+   "cell": "I35",
+   "old": "Destroying a breakable object gives one treasure reward roll.",
+   "new": "Destroying a breakable object gives a little gold, plus a 5% chance of 1 mercury and a 5% chance of a gear item."
+  },
+  {
+   "db": [
+    "objects_encounters",
+    22,
+    "col_7"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "17 Objects Encounters",
+   "cell": "G22",
+   "old": "Random treasure; inflicts Weakened (3000 CT)",
+   "new": "Random treasure (including 1 mercury, same as a Treasure Chest); inflicts Weakened (3000 CT)"
+  },
+  {
+   "db": [
+    "objects_encounters",
+    22,
+    "col_9"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "17 Objects Encounters",
+   "cell": "I22",
+   "old": "Reward IMPLEMENTED 2026-10-24 (source-verified Tester PASS; Studio runtime pending). Shares the chest reward hook (_grantChestReward); previously a DEFERRED no-op because the battle state lacked ownerPlayerId/mapLevel. Fixed: Main.server.lua now stamps state.ownerPlayerId and state.mapLevel after CreateBattleState, so Cursed Chest now generates loot (and still inflicts Weakened 3000 CT). Removed after use [2026-10-28 UNIVERSAL OBJECT: may spawn in any region of any biome via the Universal list - see map_gen_rules row 95.] [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] Broken chest: loot lost, does NOT count as a chest opened (Treasure Fever / chestsOpened), DOES count as objectsBroken; Treasure Hunter re-targets the next chest.",
+   "new": "Reward IMPLEMENTED 2026-10-24 (source-verified Tester PASS; Studio runtime pending). Shares the chest reward hook (_grantChestReward); previously a DEFERRED no-op because the battle state lacked ownerPlayerId/mapLevel. Fixed: Main.server.lua now stamps state.ownerPlayerId and state.mapLevel after CreateBattleState, so Cursed Chest now generates loot (and still inflicts Weakened 3000 CT). Removed after use [2026-10-28 UNIVERSAL OBJECT: may spawn in any region of any biome via the Universal list - see map_gen_rules row 95.] [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] Broken chest: loot lost, does NOT count as a chest opened (Treasure Fever / chestsOpened), DOES count as objectsBroken; Treasure Hunter re-targets the next chest. | RESOLVED (USER) 2026-11-01: 1 mercury, the same as a Treasure Chest (materials_system 10) - it is riskier (Weakened), so it should not pay less. BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6a. Mercury is credited when the chest opens, so it is kept even if the battle is lost. [Superseded 2026-11-01: col_7: Random treasure; inflicts Weakened (3000 CT)]"
+  },
+  {
+   "db": [
+    "objects_encounters",
+    20,
+    "col_9"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "17 Objects Encounters",
+   "cell": "I20",
+   "old": "Reward IMPLEMENTED 2026-10-24 (source-verified Tester PASS; Studio runtime pending). Previously the chest reward (_grantChestReward) always hit a DEFERRED no-op because the battle state never carried ownerPlayerId/mapLevel, so chests granted nothing. Fixed: Main.server.lua now stamps state.ownerPlayerId and state.mapLevel right after CreateBattleState, so the chest now generates loot via RewardService.GenerateRewards at the correct map level. Removed after use [2026-10-28 UNIVERSAL OBJECT: may spawn in any region of any biome via the Universal list - see map_gen_rules row 95.] [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] Broken chest: loot lost, does NOT count as a chest opened (Treasure Fever / chestsOpened), DOES count as objectsBroken; Treasure Hunter re-targets the next chest. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: col_7: Random gold, equipment, materials and runes]",
+   "new": "Reward IMPLEMENTED 2026-10-24 (source-verified Tester PASS; Studio runtime pending). Previously the chest reward (_grantChestReward) always hit a DEFERRED no-op because the battle state never carried ownerPlayerId/mapLevel, so chests granted nothing. Fixed: Main.server.lua now stamps state.ownerPlayerId and state.mapLevel right after CreateBattleState, so the chest now generates loot via RewardService.GenerateRewards at the correct map level. Removed after use [2026-10-28 UNIVERSAL OBJECT: may spawn in any region of any biome via the Universal list - see map_gen_rules row 95.] [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] Broken chest: loot lost, does NOT count as a chest opened (Treasure Fever / chestsOpened), DOES count as objectsBroken; Treasure Hunter re-targets the next chest. | LOCKED - USER DECISION 2026-11-01 (v2). Chest mercury BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6a; it is credited when the chest opens, so it is kept even if the battle is lost (same as chest gold). [Superseded 2026-11-01 by v2: col_7: Random gold, equipment, materials and runes]"
+  },
+  {
+   "db": [
+    "objects_encounters",
+    31,
+    "col_9"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "17 Objects Encounters",
+   "cell": "I31",
+   "old": "Shop inventory fixed for the battle [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] | PAID SHOP (RESOLVED (USER) Q4, 2026-11-01; code change built later - today's code gives 6 free Rare items): stock of 6 items rolled once per object per battle from the battle seed + object ID, never refills, each item bought once; interacting stays free and repeatable. Each slot rolls Rare 75% / Epic 25%, never Exalted or above (RESOLVED (USER)). Item level = the current Map Level ceiling, random slot, normal loot bonus lines. Price = floor(Merchant price × 75 / 100), Merchant price = round(Base Value × Rarity Mult × Level Mult × Shop Markup) (economy_framework 15); Merchant facility level, Fortune and Gold Boost never change it. Gold comes straight from the player's balance during the battle; Buy is greyed out ('Not enough gold') if the player cannot afford it; no credit, no refund. Bought items go to the inventory at once and are kept whatever the battle result (DECIDED (DEV DEFAULT)). Breaking the object ends further buying. Simulator re-check: 575-690g per crystal on average at L50 (Rare-only 575g, 75/25 mix 690g), always 25% below the same Merchant item; no loop (10,072 routes, best −344g; sells back for 5.6-8.3% of its price). Spawn rate = WORKING ESTIMATE (G4, 1-5% of battles), part of open_decisions 48, which stays open. UI: 'Black Market — 25% off Merchant prices. Each item can be bought once. Gold: {balance}.' | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: col_7: Opens shop containing six fixed discounted high-tier items; col_8: Unlimited]",
+   "new": "Shop inventory fixed for the battle [USER RULING 2026-10-30: BREAKABLE - destroyed after 3 hits from any source (hitsToDestroy = 3; each hit = 1, as OBS blockers map_gen_rules 82). When broken the object and ALL its effects are gone. No Salvager's Cap roll (project_rules 'Universal object breakability').] | PAID SHOP (RESOLVED (USER) Q4, 2026-11-01; built 2026-11-01, v2 step 6b): stock of 6 items rolled once per object per battle from the battle seed + object ID, never refills, each item bought once; interacting stays free and repeatable. Each slot rolls Rare 75% / Epic 25%, never Exalted or above (RESOLVED (USER)). Item level = the current Map Level ceiling, random slot, normal loot bonus lines. Price = floor(Merchant price × 75 / 100), Merchant price = round(Base Value × Rarity Mult × Level Mult × Shop Markup) (economy_framework 15); Merchant facility level, Fortune and Gold Boost never change it. Gold comes straight from the player's balance during the battle; Buy is greyed out ('Not enough gold') if the player cannot afford it; no credit, no refund. Bought items go to the inventory at once and are kept whatever the battle result (DECIDED (DEV DEFAULT)). Breaking the object ends further buying. Simulator re-check: 575-690g per crystal on average at L50 (Rare-only 575g, 75/25 mix 690g), always 25% below the same Merchant item; no loop (10,072 routes, best −344g; sells back for 5.6-8.3% of its price). Spawn rate = WORKING ESTIMATE (G4, 1-5% of battles), part of open_decisions 48, which stays open. UI: 'Black Market — 25% off Merchant prices. Each item can be bought once. Gold: {balance}.' | LOCKED - USER DECISION 2026-11-01 (v2). Paid shop BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 6b. Note: the old free cache never actually produced items. DECIDED (DEV DEFAULT) 2026-11-01: 'interacting stays free' means no RT but still 1 AP, as for every 'Interact (Free)' object; shopping is allowed during enemy turns - the shop does not pause the battle. [Superseded 2026-11-01 by v2: col_7: Opens shop containing six fixed discounted high-tier items; col_8: Unlimited] [Superseded 2026-11-01 (build): code change built later - today's code gives 6 free Rare items]"
+  },
+  {
+   "db": [
+    "guild_facilities",
+    44,
+    "rule"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "D45",
+   "old": "Pick 1 or more rune gems and install them on a Common-Epic item; each gem is a new line or replaces an existing line (destroyed, no gem back). One line per attribute family (item_generation_steps 7): a gem of a family the item already has replaces that line. Bonus passive slots still apply: at most 1 bonus passive (2H: 2); a passive gem needs a free slot or replaces the existing bonus passive. New rarity = the highest of (a) the current rarity (rarity never goes down), (b) the minimum rarity of the rarest line (T1 and T2 = Uncommon, T3 = Rare, T4 = Epic; a passive = its minimum rarity), (c) the lowest rarity whose normal budget holds the total BP (Uncommon 100 / Rare 150 / Epic 200; 2H doubled). Example: Common sword + STR T2 (100) = Uncommon; + VIT T2 (total 200) = Epic. A single T4 gem makes any item Epic, 1H or 2H. The result must fit the Runeforge capacity rarity and BP (row 54). Fortune gems are allowed (row 58). Raising rarity charges the crystal steps (row 43), the forge fee and the levelling catch-up (rows 48, 55). After every forge the item is renamed (row 58).",
+   "new": "Pick 1 or more rune gems and install them on a Common-Epic item; each gem is a new line or replaces an existing line (destroyed, no gem back). One line per attribute family (item_generation_steps 7): a gem of a family the item already has replaces that line. Bonus passive slots still apply: at most 1 bonus passive (2H: 2); a passive gem needs a free slot or replaces the existing bonus passive. New rarity = the highest of (a) the current rarity (rarity never goes down), (b) the minimum rarity of the rarest line (T1 and T2 = Uncommon, T3 = Rare, T4 = Epic; a passive = its minimum rarity), (c) the budget check: bonus points the item already has never count against it. The check raises the rarity only when the new total is above BOTH the current rarity's normal budget (Uncommon 100 / Rare 150 / Epic 200; 2H doubled) AND the item's own total before this forge; then the new rarity is the lowest one whose budget holds the new total. An Epic over 200 can be forged as long as its total does not rise above its own total (RESOLVED (USER) 2026-11-01). Example: Common sword + STR T2 (100) = Uncommon; + VIT T2 (total 200) = Epic. A single T4 gem makes any item Epic, 1H or 2H. The result must fit the Runeforge capacity rarity and BP (row 54). Fortune gems are allowed (row 58). Raising rarity charges the crystal steps (row 43), the forge fee and the levelling catch-up (rows 48, 55). After every forge the item is renamed (row 58)."
+  },
+  {
+   "db": [
+    "economy_framework",
+    11,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "22 Economy Framework",
+   "cell": "E12",
+   "old": "Locked",
+   "new": "Locked | BUG-073 FIXED 2026-11-01: since Slice 6 the Blacksmith, Runeforge and Merchant priced 2H weapons with the 1H base value (100 instead of 150); they now use 2H = 150 (economy_framework 15, 19; guild_facilities 55). BUILT 2026-11-01 (source-verified by Tester; Studio test pending)."
+  },
+  {
+   "db": [
+    "economy_framework",
+    15,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "22 Economy Framework",
+   "cell": "E16",
+   "old": "USER DECISION 2026-10-30 — Epic/Exalted markup raised ×4.0→×6.0 after Simulator check found ×4.0 shop Epics roughly doubled Epic supply in the L50-80 tight phase. ×6.0 puts an Epic 1H at ~15.6 battles of income, Exalted 1H at ~21.4 (near loot pace). Built in MerchantService. | v2 2026-11-01 (DECIDED (DEV DEFAULT)): CRAFTED Epics, item levels L50-80: up to about 15-17 (free) / 14-20 (boosted) - the most possible, for a player who saves every crystal (upper bound). Information: including bought Epics (Merchant + Black Market at 1-3% spawn), a boosted player can hold about 24-27 (the Merchant alone already allows 23.6-25.8). LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: USER RULING 2026-11-01: Runeforge-crafted Epics undercut this markup for Runeforge-rushers and Gold Boost players in L50-80 (free rusher up to 8 crafted vs ~4 natural drops; boosted 9-14; normal free players 0) - ACCEPTED, see guild_facilities 57.]",
+   "new": "USER DECISION 2026-10-30 — Epic/Exalted markup raised ×4.0→×6.0 after Simulator check found ×4.0 shop Epics roughly doubled Epic supply in the L50-80 tight phase. ×6.0 puts an Epic 1H at ~15.6 battles of income, Exalted 1H at ~21.4 (near loot pace). Built in MerchantService. | v2 2026-11-01 (DECIDED (DEV DEFAULT)): CRAFTED Epics, item levels L50-80: up to about 15-17 (free) / 14-20 (boosted) - the most possible, for a player who saves every crystal (upper bound). Information: including bought Epics (Merchant + Black Market at 1-3% spawn), a boosted player can hold about 24-27 (the Merchant alone already allows 23.6-25.8). LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: USER RULING 2026-11-01: Runeforge-crafted Epics undercut this markup for Runeforge-rushers and Gold Boost players in L50-80 (free rusher up to 8 crafted vs ~4 natural drops; boosted 9-14; normal free players 0) - ACCEPTED, see guild_facilities 57.] | BUG-073 FIXED 2026-11-01: Merchant prices for 2H weapons now use Base Value 150 (they were priced as 1H = 100 since Slice 6; economy_framework 11). BUILT 2026-11-01 (source-verified by Tester; Studio test pending)."
+  },
+  {
+   "db": [
+    "economy_framework",
+    19,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "22 Economy Framework",
+   "cell": "E20",
+   "old": "Locked — materials system pending | UPDATED USER DECISION 2026-11-01 (Q7): Blacksmith gold discount added. Old: [floor(Base Value × Rarity Mult × 0.30 × (1 + Target Level / 25)). Per level. Plus materials (separate design).] | USER RULING 2026-11-01: the Blacksmith discount stays -3% per level (L10 -27%). Simulator 2026-11-01: it frees about 11.4-14.3k gold over a lifetime (more than the Runeforge costs, 8,919g), so the free player spends about 106% of income (105.9-106.6%) instead of 108%; boosted 83.1-84.3%. The user accepted the lower spending pressure; the Simulator options of -2% or -1.5% per level were not taken. | USER DECISION 2026-11-01: every Blacksmith gold cost rounds down to whole gold (as the floor above); the Dev computes it in whole numbers (implementation_plan 53). | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1. (running-total gold + Blacksmith discount). [Superseded 2026-11-01 by v2: rule: floor(Base Value × Rarity Mult × 0.30 × (1 + Target Level / 25) × (1 − 0.03 × (Blacksmith Level − 1))). Per level. Blacksmith gold discount: L1 0% ... L10 −27% (gold only; materials are not discounted). Plus materials (materials_system).]",
+   "new": "Locked — materials system pending | UPDATED USER DECISION 2026-11-01 (Q7): Blacksmith gold discount added. Old: [floor(Base Value × Rarity Mult × 0.30 × (1 + Target Level / 25)). Per level. Plus materials (separate design).] | USER RULING 2026-11-01: the Blacksmith discount stays -3% per level (L10 -27%). Simulator 2026-11-01: it frees about 11.4-14.3k gold over a lifetime (more than the Runeforge costs, 8,919g), so the free player spends about 106% of income (105.9-106.6%) instead of 108%; boosted 83.1-84.3%. The user accepted the lower spending pressure; the Simulator options of -2% or -1.5% per level were not taken. | USER DECISION 2026-11-01: every Blacksmith gold cost rounds down to whole gold (as the floor above); the Dev computes it in whole numbers (implementation_plan 53). | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1. (running-total gold + Blacksmith discount). [Superseded 2026-11-01 by v2: rule: floor(Base Value × Rarity Mult × 0.30 × (1 + Target Level / 25) × (1 − 0.03 × (Blacksmith Level − 1))). Per level. Blacksmith gold discount: L1 0% ... L10 −27% (gold only; materials are not discounted). Plus materials (materials_system).] | BUG-073 FIXED 2026-11-01: Blacksmith upgrade gold for 2H weapons now uses Base Value 150 (it was priced as 1H = 100 since Slice 6; economy_framework 11). BUILT 2026-11-01 (source-verified by Tester; Studio test pending)."
+  },
+  {
+   "db": [
+    "equipment_schema",
+    21,
+    "Validation"
+   ],
+   "wb": "CTRBLXAI_Build_Plan.xlsx",
+   "sheet": "04 — Equipment Runtime Schema",
+   "cell": "E25",
+   "old": "old items = false; PLANNED — not built (Runeforge build step 4)",
+   "new": "old items = false; BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4"
+  },
+  {
+   "db": [
+    "save_data_contract",
+    3,
+    "Persistent_Fields"
+   ],
+   "wb": "CTRBLXAI_Build_Plan.xlsx",
+   "sheet": "14 — Save Data Contract",
+   "cell": "B7",
+   "old": "instance ID, base archetype, level, rarity, bonus lines, authored roll data; PLANNED — not built (v2): levelling_record (free level F + at most 10 item level / Blacksmith level pairs; replaces starting_level - catch-up + downgrades), reroll_count (fixes the reroll sets), starting_rarity (rarity it dropped or was bought at, never changed - tracking only, no price effect, USER RULING 2026-11-01), rune_forged (true once the Runeforge changes the item - forge, swap or reroll; never cleared; tracking/filtering only, USER DECISION 2026-11-01; PLANNED — not built, Runeforge step 4). shop_bought dropped. Profile currencies (Key 2): mercury, crystals, sulfur (3 whole numbers), rune gem map (count per gem ID, at most 133 kinds in the game content, materials_system 4), daily_events_completed (lifetime count, never resets - every 3rd gives 1 sulfur); the T1-T5 and 3 Essence counters are removed",
+   "new": "instance ID, base archetype, level, rarity, bonus lines, authored roll data; PLANNED — not built (v2): levelling_record (free level F + at most 10 item level / Blacksmith level pairs; replaces starting_level - catch-up + downgrades), reroll_count (fixes the reroll sets), starting_rarity (rarity it dropped or was bought at, never changed - tracking only, no price effect, USER RULING 2026-11-01), rune_forged (true once the Runeforge changes the item - forge, swap or reroll; never cleared; tracking/filtering only, USER DECISION 2026-11-01; BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4). shop_bought dropped. Profile currencies (Key 2): mercury, crystals, sulfur (3 whole numbers), rune gem map (count per gem ID, at most 133 kinds in the game content, materials_system 4), daily_events_completed (lifetime count, never resets - every 3rd gives 1 sulfur); the T1-T5 and 3 Essence counters are removed"
+  },
+  {
+   "db": [
+    "save_data_contract",
+    3,
+    "Failure_Behavior"
+   ],
+   "wb": "CTRBLXAI_Build_Plan.xlsx",
+   "sheet": "14 — Save Data Contract",
+   "cell": "H7",
+   "old": "Mark unusable with diagnostic if content removed | LOCKED - USER DECISION 2026-11-01 (v2). Profile currencies + levelling_record BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1; rune_forged and the Runeforge parts NOT BUILT. [Superseded 2026-11-01 by v2: Persistent_Fields: instance ID, base archetype, level, rarity, bonus lines, authored roll data; PLANNED — not built (USER DECISION 2026-11-01): starting_level (level it dropped or was bought at - catch-up fee + dismantle refund), shop_bought flag (dismantling gives nothing), reroll_count (fixed reroll options); starting_rarity (rarity it dropped or was bought at, never changed - Epic step fee + sell value, USER DECISION 2026-11-01); Load_Validation: Re-run structural validation and source eligibility where available; PLANNED — not built: enchanted items may hold 0 up to their rarity normal budget (the ±5% band is for newly generated items only); Migration_Rule: Preserve original authored roll; migrate field names/IDs only; PLANNED — not built: after enchanting, the current lines and rarity are the authority. Items saved before this is built get starting_level = current level, so they never owe a catch-up fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling them returns no gear-upgrade materials, only the +1 for Rare and up), shop_bought = no, reroll_count = 0. Items saved before this is built get starting_rarity = current rarity (USER DECISION 2026-11-01).]",
+   "new": "Mark unusable with diagnostic if content removed | LOCKED - USER DECISION 2026-11-01 (v2). Profile currencies + levelling_record BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1; rune_forged BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4; the other Runeforge parts of this row (reroll_count, forged-item load check) are not yet confirmed as built. [Superseded 2026-11-01 by v2: Persistent_Fields: instance ID, base archetype, level, rarity, bonus lines, authored roll data; PLANNED — not built (USER DECISION 2026-11-01): starting_level (level it dropped or was bought at - catch-up fee + dismantle refund), shop_bought flag (dismantling gives nothing), reroll_count (fixed reroll options); starting_rarity (rarity it dropped or was bought at, never changed - Epic step fee + sell value, USER DECISION 2026-11-01); Load_Validation: Re-run structural validation and source eligibility where available; PLANNED — not built: enchanted items may hold 0 up to their rarity normal budget (the ±5% band is for newly generated items only); Migration_Rule: Preserve original authored roll; migrate field names/IDs only; PLANNED — not built: after enchanting, the current lines and rarity are the authority. Items saved before this is built get starting_level = current level, so they never owe a catch-up fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling them returns no gear-upgrade materials, only the +1 for Rare and up), shop_bought = no, reroll_count = 0. Items saved before this is built get starting_rarity = current rarity (USER DECISION 2026-11-01).]"
+  },
+  {
+   "db": [
+    "implementation_plan",
+    53,
+    "col_2"
+   ],
+   "wb": "CTRBLXAI_Build_Plan.xlsx",
+   "sheet": "19 Implementation Plan",
+   "cell": "B64",
+   "old": "Crafting + Upgrades: Blacksmith + Runeforge v2 LOCKED - USER DECISION 2026-11-01 (v2). BUILD STATUS 2026-11-01: steps 1-3 BUILT (1 mercury switch, 2 Blacksmith rules, 3 Blacksmith screen; source-verified by Tester, Studio test pending); step 4 (Runeforge rules) IN PROGRESS; battle mercury drops = step 6 (guild_facilities 40-58; materials_system; open_decisions 124). Monetization: unchanged (see open_decisions 'Monetization'). IMPLEMENTATION NOTES: (1) compute the Blacksmith and Runeforge gold formulas (economy_framework 19; guild_facilities 48, 55) in whole numbers, not floating point - multiply first, divide last, round down once at the end; every gold fee rounds down to whole gold. (2) Fortune clamp order (DECIDED (DEV DEFAULT)): Unit Fortune = LUK/(LUK+200) + flat bonuses (Lucky traits, gear Fortune lines +0.05-0.20), no per-unit limit → Expedition Fortune = highest + 50% of 2nd + 25% of 3rd → clamp → Fountain / Idol → clamp → Thief (per reward) → clamp. The clamp to 0-1.75 MUST be applied again after the Thief bonus, otherwise loot reaches ×2.79. (3) Black Market: replace the 6-free-Rares code with the paid shop (objects_encounters 31), stock 75% Rare / 25% Epic. (4) Swap fee stays × 0.5; do not 'fix' the raise-vs-swap quirk (guild_facilities 55). (5) Dispatch: the reward's material tier / count become the mercury amount (materials_system 12). | LOCKED - USER DECISION 2026-11-01 (v2). Steps 1-3 BUILT 2026-11-01 (source-verified by Tester; Studio test pending); step 4 in progress. [Superseded 2026-11-01 by v2: col_2: Crafting + Upgrades: UNPARKED 2026-11-01 (user decisions) - Blacksmith expansion + new Runeforge; design DECIDED 2026-11-01 (facility name Runeforge decided 2026-11-01; Epic step fee RESOLVED 2026-11-01 - half the gap between the shop Epic price and the shop price at the item's starting rarity, guild_facilities 57; enchanted items sell at their starting rarity, economy_framework 14; new planned saved field starting_rarity, equipment_schema 19); NOT BUILT; Simulator re-check PASS 2026-11-01 (all 26 checks), design FINAL; next: Dev build plan (user approval before code) (guild_facilities 40-58; open_decisions 'Crafting', 'Upgrade systems' and 123). Monetization: unchanged (see open_decisions 'Monetization'). [Was: All parked. Not relevant to initial architecture.] | IMPLEMENTATION NOTE (USER DECISION 2026-11-01, Simulator report Section 4 #6): the Dev must compute the Blacksmith and Runeforge gold formulas (economy_framework 19; guild_facilities 48, 55, 57) in whole numbers, not floating point - keep percentages and multipliers as whole numbers or fractions, multiply first, divide last, and round down once at the end. Floating point loses 1 gold at exact values (150 x 1.0 x 0.30 x 2 lands just under 90 and becomes 89; 98 Blacksmith level costs and 13 Runeforge costs come out 1g low this way). Every one of these gold fees rounds down to whole gold (guild_facilities 55).]",
+   "new": "Crafting + Upgrades: Blacksmith + Runeforge v2 LOCKED - USER DECISION 2026-11-01 (v2). BUILD STATUS 2026-11-01 (evening): steps 1-6 BUILT (1 mercury switch, 2 Blacksmith rules, 3 Blacksmith screen, 4 Runeforge rules, 5 Runeforge screen, 6a kill / chest / salvage mercury, 6b paid Black Market, 6c quest mercury + Runeforge over-budget rule; source-verified by Tester, Studio test pending); BUG-073 fixed (2H weapons were priced as 1H in the Blacksmith, Runeforge and Merchant since Slice 6); Salvager's Cap new reward (materials_system 14): code written, Tester source check running. NOT BUILT: elite encounter grants (materials_system 8, 41 - elite encounters do not exist in code), daily events (materials_system 13 - no daily event system), boss grants (materials_system 9, 41, loot_progression 15 - ON HOLD until a daily boss reward limit exists) (guild_facilities 40-58; materials_system; open_decisions 124). Monetization: unchanged (see open_decisions 'Monetization'). IMPLEMENTATION NOTES: (1) compute the Blacksmith and Runeforge gold formulas (economy_framework 19; guild_facilities 48, 55) in whole numbers, not floating point - multiply first, divide last, round down once at the end; every gold fee rounds down to whole gold. (2) Fortune clamp order (DECIDED (DEV DEFAULT)): Unit Fortune = LUK/(LUK+200) + flat bonuses (Lucky traits, gear Fortune lines +0.05-0.20), no per-unit limit → Expedition Fortune = highest + 50% of 2nd + 25% of 3rd → clamp → Fountain / Idol → clamp → Thief (per reward) → clamp. The clamp to 0-1.75 MUST be applied again after the Thief bonus, otherwise loot reaches ×2.79. (3) Black Market: replace the 6-free-Rares code with the paid shop (objects_encounters 31), stock 75% Rare / 25% Epic. DONE 2026-11-01 (step 6b). (4) Swap fee stays × 0.5; do not 'fix' the raise-vs-swap quirk (guild_facilities 55). (5) Dispatch: the reward's material tier / count become the mercury amount (materials_system 12). | LOCKED - USER DECISION 2026-11-01 (v2). Steps 1-6 BUILT 2026-11-01 (source-verified by Tester; Studio test pending), except the NOT BUILT items listed above. [Superseded 2026-11-01 by v2: col_2: Crafting + Upgrades: UNPARKED 2026-11-01 (user decisions) - Blacksmith expansion + new Runeforge; design DECIDED 2026-11-01 (facility name Runeforge decided 2026-11-01; Epic step fee RESOLVED 2026-11-01 - half the gap between the shop Epic price and the shop price at the item's starting rarity, guild_facilities 57; enchanted items sell at their starting rarity, economy_framework 14; new planned saved field starting_rarity, equipment_schema 19); NOT BUILT; Simulator re-check PASS 2026-11-01 (all 26 checks), design FINAL; next: Dev build plan (user approval before code) (guild_facilities 40-58; open_decisions 'Crafting', 'Upgrade systems' and 123). Monetization: unchanged (see open_decisions 'Monetization'). [Was: All parked. Not relevant to initial architecture.] | IMPLEMENTATION NOTE (USER DECISION 2026-11-01, Simulator report Section 4 #6): the Dev must compute the Blacksmith and Runeforge gold formulas (economy_framework 19; guild_facilities 48, 55, 57) in whole numbers, not floating point - keep percentages and multipliers as whole numbers or fractions, multiply first, divide last, and round down once at the end. Floating point loses 1 gold at exact values (150 x 1.0 x 0.30 x 2 lands just under 90 and becomes 89; 98 Blacksmith level costs and 13 Runeforge costs come out 1g low this way). Every one of these gold fees rounds down to whole gold (guild_facilities 55).] [Superseded 2026-11-01 (evening build status): BUILD STATUS 2026-11-01: steps 1-3 BUILT (1 mercury switch, 2 Blacksmith rules, 3 Blacksmith screen; source-verified by Tester, Studio test pending); step 4 (Runeforge rules) IN PROGRESS; battle mercury drops = step 6; Steps 1-3 BUILT 2026-11-01 (source-verified by Tester; Studio test pending); step 4 in progress.]"
+  },
+  {
+   "db": [
+    "guild_facilities",
+    42,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E43",
+   "old": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: New facility (the 10th). Add, remove, reroll or modify bonus attributes on equipment, paying gold + Essences. Lets the player put their preferred attributes on gear. Can raise item rarity, up to Epic at max level (row 54). Never adds bonus passives (row 56). Unique items: never.]",
+   "new": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. Runeforge screen: v2 step 5, BUILT 2026-11-01 (source-verified by Tester; Studio test pending). [Superseded 2026-11-01 by v2: rule: New facility (the 10th). Add, remove, reroll or modify bonus attributes on equipment, paying gold + Essences. Lets the player put their preferred attributes on gear. Can raise item rarity, up to Epic at max level (row 54). Never adds bonus passives (row 56). Unique items: never.]"
+  },
+  {
+   "db": [
+    "guild_facilities",
+    43,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E44",
+   "old": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: Gold + Essences (never T1-T5 gear materials). Essences come from dismantling at the Blacksmith (~75%) and loot drops (~25%) - materials_system 40-41. Action costs: row 55. Guards: rows 48, 57.]",
+   "new": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: rule: Gold + Essences (never T1-T5 gear materials). Essences come from dismantling at the Blacksmith (~75%) and loot drops (~25%) - materials_system 40-41. Action costs: row 55. Guards: rows 48, 57.]"
+  },
+  {
+   "db": [
+    "guild_facilities",
+    44,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E45",
+   "old": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Add Rule; rule: Add installs one bonus attribute from the offered choices, limited by the Runeforge's BP capacity (row 54). Rarity after Add = the higher of (a) the minimum rarity of the rarest line on the item and (b) the lowest rarity whose normal budget holds the total BP (Uncommon 100 / Rare 150 / Epic 200; 2H doubled). Rarity never goes down (Remove and Modify-down keep it). Example: Common sword + STR T1 (50 BP) = Uncommon; + HP T1 = 100 = Uncommon (full); + AGI T1 = 150 = Rare; + DEX T1 = 200 = Epic (max level only). Add refuses a family already on the item (use Modify). Fortune is never offered (row 58). Raising rarity charges the catch-up fee (row 48); reaching Epic also charges the Epic step fee (row 57).]",
+   "new": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4; over-budget rule (c) v2 step 6c. [Superseded 2026-11-01 by v2: topic: Add Rule; rule: Add installs one bonus attribute from the offered choices, limited by the Runeforge's BP capacity (row 54). Rarity after Add = the higher of (a) the minimum rarity of the rarest line on the item and (b) the lowest rarity whose normal budget holds the total BP (Uncommon 100 / Rare 150 / Epic 200; 2H doubled). Rarity never goes down (Remove and Modify-down keep it). Example: Common sword + STR T1 (50 BP) = Uncommon; + HP T1 = 100 = Uncommon (full); + AGI T1 = 150 = Rare; + DEX T1 = 200 = Epic (max level only). Add refuses a family already on the item (use Modify). Fortune is never offered (row 58). Raising rarity charges the catch-up fee (row 48); reaching Epic also charges the Epic step fee (row 57).] | RESOLVED (USER) 2026-11-01 (ruling 5). Tester note: the allowance is the item's total at EACH forge, so if a forge lowers an over-budget Epic from 215 to 205, a later forge back up to 215 is refused. [Superseded 2026-11-01 (ruling 5): rule (c) the lowest rarity whose normal budget holds the total BP (Uncommon 100 / Rare 150 / Epic 200; 2H doubled).]"
+  },
+  {
+   "db": [
+    "guild_facilities",
+    45,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E46",
+   "old": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: Each level: lower gold cost (-3% per level above L1, L10 = -27%, gold only), more attribute choices, stronger tiers and more actions. Full table: row 53.]",
+   "new": "USER DECISION 2026-11-01 - DECIDED. Design first, build later. NOT BUILT. Facility name DECIDED 2026-11-01 (USER, open_decisions 123 E2 RESOLVED): Runeforge; the Enchanter doctrine keeps its name. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: rule: Each level: lower gold cost (-3% per level above L1, L10 = -27%, gold only), more attribute choices, stronger tiers and more actions. Full table: row 53.]"
+  },
+  {
+   "db": [
+    "guild_facilities",
+    46,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E47",
+   "old": "USER DECISION 2026-11-01 (Q8). NOT BUILT. Old: [PENDING - unlock point (Guild Hall level), Base/Scale cost, max level and per-level numbers are not decided. Facility count, total investment and unlock schedule (rows 5, 8, 35-38) are unchanged until decided.] | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: Max Level 10. Base = 250, Scale = 15. Total cost: 8,919g (same curve as the Guild Hall; table row 49). Unlock: Guild Hall L4 (shared with the Workshop).]",
+   "new": "USER DECISION 2026-11-01 (Q8). NOT BUILT. Old: [PENDING - unlock point (Guild Hall level), Base/Scale cost, max level and per-level numbers are not decided. Facility count, total investment and unlock schedule (rows 5, 8, 35-38) are unchanged until decided.] | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: rule: Max Level 10. Base = 250, Scale = 15. Total cost: 8,919g (same curve as the Guild Hall; table row 49). Unlock: Guild Hall L4 (shared with the Workshop).]"
+  },
+  {
+   "db": [
+    "guild_facilities",
+    48,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E49",
+   "old": "USER DECISION 2026-11-01 (option Q9-A, fixes the upgrade-as-Common-then-enchant cost dodge). Design first, build later. NOT BUILT. Simulator to confirm details (Blacksmith discount, downgraded items). Item save rows (save_data_contract 3, equipment_schema 4/5) not updated yet. Other exploit guards still OPEN (open_decisions 123 Q9). | 2026-11-01: saved fields recorded as PLANNED - not built (save_data_contract 3, equipment_schema 16-18). Discount and downgrade handling = Designer assumption, Simulator to verify. Facility name: Runeforge (USER DECISION 2026-11-01). | 2026-11-01 USER-CONFIRMED: existing items count at their current level and never owe a catch-up fee (dismantling them returns no gear-upgrade materials, only the +1 for Rare and up). | USER DECISION 2026-11-01 (Simulator fix X3, report_runeforge_economy_2026-11-01): LOCKED - per-level discount of the Blacksmith level needed to reach that level. Old: [using the player's current Blacksmith gold discount]. This closes the late-enchant saving (upgrade as Common, enchant at Blacksmith L10: 1H -2,760g, 2H -4,133g, Body -2,208g, about 9%). The earlier \"Discount handling = Designer assumption, Simulator to verify\" is superseded; downgrade handling was verified by the Simulator (no saving). | USER DECISION 2026-11-01 (Simulator re-check report_recheck_2026-11-01, Section 4 #3): ACCEPTED - enchanting late costs more when the Blacksmith is ahead of the item (1H +2,760g, 2H +4,133g at Blacksmith L10). Safe, no exploit. Old rule text: [Every route (upgrade then enchant, or enchant then upgrade) costs the same total.] | 2026-11-01 PLANNED UI rule (USER DECISION, for when the Runeforge screen is built): show the hint \"Enchant before upgrading to pay less.\" (exact wording); if it does not fit a small label, use \"Enchant first, pay less.\" NOT BUILT. | LOCKED - USER DECISION 2026-11-01 (v2). Levelling record BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1. Runeforge catch-up: NOT BUILT (step 4). [Superseded 2026-11-01 by v2: topic: Rarity Catch-Up Fee; rule: When enchanting raises an item's rarity, the player pays the upgrade cost difference they skipped: what the item's Blacksmith upgrades from its starting level to its current level cost at the new rarity, minus what they cost at the old rarity (gold + gear-upgrade materials). Every route (upgrade then enchant, or enchant then upgrade) costs the same total while the Blacksmith level matches the item's level; when the Blacksmith is ahead of the item, enchanting late costs more (ACCEPTED - USER DECISION 2026-11-01: Common -> Epic L1-99 with the Blacksmith at L10 all game, 1H +2,760g, 2H +4,133g). PLANNED UI rule (not built): the Runeforge screen shows the hint \"Enchant before upgrading to pay less.\" (short label if it does not fit: \"Enchant first, pay less.\"). Each item stores one extra saved number: the item level it dropped or was bought at. How it is worked out: for each level from the item's starting level to its current level, (normal Blacksmith upgrade cost at the new rarity - cost at the old rarity), gold and gear materials. Discount (LOCKED - USER DECISION 2026-11-01): each level uses the Blacksmith gold discount of the Blacksmith level needed to reach that level, 3% x (ceil(level / 10) - 1) - levels 2-10 0%, 11-20 3%, 21-30 6% ... 81-90 24%, 91-99 27% - NOT the player's current discount. Each level's cost is rounded down to whole gold first (economy_framework 19), so the fee is always whole gold. Example, Common -> Epic, item level 1 -> 99: 1H 22,201g, 2H 33,299g, Body 17,763g (+196 gear materials, materials are never discounted). Downgrading an item below its starting level lowers the starting level to the new level. Items that existed before this is built start at their current level, so they never owe a fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling such items returns no gear-upgrade materials, only the +1 for Rare and up).]",
+   "new": "USER DECISION 2026-11-01 (option Q9-A, fixes the upgrade-as-Common-then-enchant cost dodge). Design first, build later. NOT BUILT. Simulator to confirm details (Blacksmith discount, downgraded items). Item save rows (save_data_contract 3, equipment_schema 4/5) not updated yet. Other exploit guards still OPEN (open_decisions 123 Q9). | 2026-11-01: saved fields recorded as PLANNED - not built (save_data_contract 3, equipment_schema 16-18). Discount and downgrade handling = Designer assumption, Simulator to verify. Facility name: Runeforge (USER DECISION 2026-11-01). | 2026-11-01 USER-CONFIRMED: existing items count at their current level and never owe a catch-up fee (dismantling them returns no gear-upgrade materials, only the +1 for Rare and up). | USER DECISION 2026-11-01 (Simulator fix X3, report_runeforge_economy_2026-11-01): LOCKED - per-level discount of the Blacksmith level needed to reach that level. Old: [using the player's current Blacksmith gold discount]. This closes the late-enchant saving (upgrade as Common, enchant at Blacksmith L10: 1H -2,760g, 2H -4,133g, Body -2,208g, about 9%). The earlier \"Discount handling = Designer assumption, Simulator to verify\" is superseded; downgrade handling was verified by the Simulator (no saving). | USER DECISION 2026-11-01 (Simulator re-check report_recheck_2026-11-01, Section 4 #3): ACCEPTED - enchanting late costs more when the Blacksmith is ahead of the item (1H +2,760g, 2H +4,133g at Blacksmith L10). Safe, no exploit. Old rule text: [Every route (upgrade then enchant, or enchant then upgrade) costs the same total.] | 2026-11-01 PLANNED UI rule (USER DECISION, for when the Runeforge screen is built): show the hint \"Enchant before upgrading to pay less.\" (exact wording); if it does not fit a small label, use \"Enchant first, pay less.\" NOT BUILT. | LOCKED - USER DECISION 2026-11-01 (v2). Levelling record BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 1. Runeforge catch-up: BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Rarity Catch-Up Fee; rule: When enchanting raises an item's rarity, the player pays the upgrade cost difference they skipped: what the item's Blacksmith upgrades from its starting level to its current level cost at the new rarity, minus what they cost at the old rarity (gold + gear-upgrade materials). Every route (upgrade then enchant, or enchant then upgrade) costs the same total while the Blacksmith level matches the item's level; when the Blacksmith is ahead of the item, enchanting late costs more (ACCEPTED - USER DECISION 2026-11-01: Common -> Epic L1-99 with the Blacksmith at L10 all game, 1H +2,760g, 2H +4,133g). PLANNED UI rule (not built): the Runeforge screen shows the hint \"Enchant before upgrading to pay less.\" (short label if it does not fit: \"Enchant first, pay less.\"). Each item stores one extra saved number: the item level it dropped or was bought at. How it is worked out: for each level from the item's starting level to its current level, (normal Blacksmith upgrade cost at the new rarity - cost at the old rarity), gold and gear materials. Discount (LOCKED - USER DECISION 2026-11-01): each level uses the Blacksmith gold discount of the Blacksmith level needed to reach that level, 3% x (ceil(level / 10) - 1) - levels 2-10 0%, 11-20 3%, 21-30 6% ... 81-90 24%, 91-99 27% - NOT the player's current discount. Each level's cost is rounded down to whole gold first (economy_framework 19), so the fee is always whole gold. Example, Common -> Epic, item level 1 -> 99: 1H 22,201g, 2H 33,299g, Body 17,763g (+196 gear materials, materials are never discounted). Downgrading an item below its starting level lowers the starting level to the new level. Items that existed before this is built start at their current level, so they never owe a fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling such items returns no gear-upgrade materials, only the +1 for Rare and up).]"
+  },
+  {
+   "db": [
+    "guild_facilities",
+    53,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E54",
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q4, Q8) | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Level Table; rule: Unlocks / capacity (1H / 2H) / tiers / choices shown / gold discount. L1: Add + Remove / 100 / 200 (Uncommon) / T1-T2 / 3 / 0%. L2: Reroll / - / - / 3 / 3%. L3: - / - / - / 4 / 6%. L4: Modify / - / - / 4 / 9%. L5: - / 150 / 300 (Rare) / T3 / 4 / 12%. L6: Essence trade-up (3 lower -> 1 higher) / - / - / 5 / 15%. L7: - / - / - / 5 / 18%. L8: - / - / - / 6 / 21%. L9: - / - / - / 6 / 24%. L10: Tune above-Epic items / 200 / 400 (Epic) / T4 / full list / 27%.]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q4, Q8) | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Level Table; rule: Unlocks / capacity (1H / 2H) / tiers / choices shown / gold discount. L1: Add + Remove / 100 / 200 (Uncommon) / T1-T2 / 3 / 0%. L2: Reroll / - / - / 3 / 3%. L3: - / - / - / 4 / 6%. L4: Modify / - / - / 4 / 9%. L5: - / 150 / 300 (Rare) / T3 / 4 / 12%. L6: Essence trade-up (3 lower -> 1 higher) / - / - / 5 / 15%. L7: - / - / - / 5 / 18%. L8: - / - / - / 6 / 21%. L9: - / - / - / 6 / 24%. L10: Tune above-Epic items / 200 / 400 (Epic) / T4 / full list / 27%.]"
+  },
+  {
+   "db": [
+    "guild_facilities",
+    54,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E55",
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q4) | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Capacity + Items Above Epic; rule: Capacity = the normal rarity budget, not the generated maximum: L1-4 Uncommon 100 BP, L5-9 Rare 150, L10 Epic 200; 2H weapons double (200 / 300 / 400). Add and Modify-up cannot push the total BP above the capacity. Reroll, Modify-down and Remove never raise the total. Items above Epic (Exalted, Legendary, Mythic, Transcendent): tune only, at L10 - Reroll / Modify / Remove existing lines within their own budget using T1-T4 only; no Add, no rarity change; removing a T5/T6 line shows a permanent-loss warning. Unique items: never.]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q4) | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Capacity + Items Above Epic; rule: Capacity = the normal rarity budget, not the generated maximum: L1-4 Uncommon 100 BP, L5-9 Rare 150, L10 Epic 200; 2H weapons double (200 / 300 / 400). Add and Modify-up cannot push the total BP above the capacity. Reroll, Modify-down and Remove never raise the total. Items above Epic (Exalted, Legendary, Mythic, Transcendent): tune only, at L10 - Reroll / Modify / Remove existing lines within their own budget using T1-T4 only; no Add, no rarity change; removing a T5/T6 line shows a permanent-loss warning. Unique items: never.] | RESOLVED (USER) 2026-11-01 (ruling 6, answers Tester step 4 question 2): confirmed as written - a forge that keeps the rarity (a swap) still needs the Runeforge level for that rarity: Rare L4, Epic L7. | INFORMATION (Tester step 4 question 3, recorded 2026-11-01): reroll sets depend on what the game's bonus content file (BonusData) holds, so regenerating it - for example adding the 5 DB-only families - changes every item's reroll offers (materials_system 4)."
+  },
+  {
+   "db": [
+    "guild_facilities",
+    55,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E56",
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q5). Modify-down factor 0.5 = Designer starting value. | USER DECISION 2026-11-01 (Simulator fix X4 + report Section 4 #5-#7, report_runeforge_economy_2026-11-01): Add offers fixed per item (Remove + Add with leave/rejoin could fish for an exact attribute); Reroll options per line; a reroll counts once paid; all gold fees round down. LOCKED. Fixed order from the item ID (so no extra saved number) = USER-ACCEPTED 2026-11-01 (was a Designer detail of the user's \"works like the Reroll rule\"); relies on the item's saved ID never changing; Dev to confirm in code before building. | Simulator re-check 2026-11-01 PASS (note A): a paid add-a-throwaway-line-then-remove 'walk' reaches 1-2 more list positions at full gold + Essence cost - the rule working as written, nothing re-drawn; holds only if the item ID never changes and the order is worked out on the server. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Actions + Costs; rule: Add = pick 1 of the offered eligible attributes (count by level, row 53). Add offers are FIXED (LOCKED - USER DECISION 2026-11-01): each item has one fixed order of eligible attributes, worked out from the item's saved ID (no new saved field); the Add list shows the first 3-6 attributes in that order that the item does not already have (count by Runeforge level, row 53; L10 shows the full list). Leaving and rejoining, Remove + Add, rerolls and upgrades never change the list; a higher Runeforge level only adds choices to the end of the same list. Remove = delete one line for a small gold fee, nothing back, rarity stays. Reroll = shows a few fixed options at the same tier; the player picks one or keeps the old line (cost paid either way); options are fixed by the item + its reroll count, so leaving and rejoining never changes them. Options are PER LINE (LOCKED - USER DECISION 2026-11-01): each line has its own option list, worked out from the item's ID, that line's attribute and tier, and the item's reroll count (equipment_schema 18). Every paid reroll raises the item's reroll count by 1, also when the player keeps the old line - a reroll counts once it is paid - so after any paid reroll every line on that item shows a new list next time. Modify = move one line one tier up or down in its family; up costs the new tier's Essences and must fit capacity and unlocked tiers; down costs a little gold, no refund. Gold (starting value, Simulator to tune) = floor(item base value x 0.30 x (1 + item level / 25) x factor x (1 - Runeforge discount)); factor: Add = tier number (T1 1 ... T4 4), Reroll 1, Modify-up = tier difference, Modify-down 0.5, Remove 0.5. Example: 1H L50 Add T2 = 180g at L1. Essences: T1 = 1 Uncommon, T2 = 2 Uncommon, T3 = 2 Rare, T4 = 2 Epic; Reroll = 1 Essence of the line's rarity. The discount is gold only. Rounding (LOCKED - USER DECISION 2026-11-01): every Runeforge and Blacksmith gold fee rounds DOWN to a whole gold piece - Add, Reroll, Modify, Remove, Blacksmith upgrades, the catch-up fee (row 48) and the Epic step fee (row 57). The Dev computes them in whole numbers (implementation_plan 53).]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q5). Modify-down factor 0.5 = Designer starting value. | USER DECISION 2026-11-01 (Simulator fix X4 + report Section 4 #5-#7, report_runeforge_economy_2026-11-01): Add offers fixed per item (Remove + Add with leave/rejoin could fish for an exact attribute); Reroll options per line; a reroll counts once paid; all gold fees round down. LOCKED. Fixed order from the item ID (so no extra saved number) = USER-ACCEPTED 2026-11-01 (was a Designer detail of the user's \"works like the Reroll rule\"); relies on the item's saved ID never changing; Dev to confirm in code before building. | Simulator re-check 2026-11-01 PASS (note A): a paid add-a-throwaway-line-then-remove 'walk' reaches 1-2 more list positions at full gold + Essence cost - the rule working as written, nothing re-drawn; holds only if the item ID never changes and the order is worked out on the server. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Actions + Costs; rule: Add = pick 1 of the offered eligible attributes (count by level, row 53). Add offers are FIXED (LOCKED - USER DECISION 2026-11-01): each item has one fixed order of eligible attributes, worked out from the item's saved ID (no new saved field); the Add list shows the first 3-6 attributes in that order that the item does not already have (count by Runeforge level, row 53; L10 shows the full list). Leaving and rejoining, Remove + Add, rerolls and upgrades never change the list; a higher Runeforge level only adds choices to the end of the same list. Remove = delete one line for a small gold fee, nothing back, rarity stays. Reroll = shows a few fixed options at the same tier; the player picks one or keeps the old line (cost paid either way); options are fixed by the item + its reroll count, so leaving and rejoining never changes them. Options are PER LINE (LOCKED - USER DECISION 2026-11-01): each line has its own option list, worked out from the item's ID, that line's attribute and tier, and the item's reroll count (equipment_schema 18). Every paid reroll raises the item's reroll count by 1, also when the player keeps the old line - a reroll counts once it is paid - so after any paid reroll every line on that item shows a new list next time. Modify = move one line one tier up or down in its family; up costs the new tier's Essences and must fit capacity and unlocked tiers; down costs a little gold, no refund. Gold (starting value, Simulator to tune) = floor(item base value x 0.30 x (1 + item level / 25) x factor x (1 - Runeforge discount)); factor: Add = tier number (T1 1 ... T4 4), Reroll 1, Modify-up = tier difference, Modify-down 0.5, Remove 0.5. Example: 1H L50 Add T2 = 180g at L1. Essences: T1 = 1 Uncommon, T2 = 2 Uncommon, T3 = 2 Rare, T4 = 2 Epic; Reroll = 1 Essence of the line's rarity. The discount is gold only. Rounding (LOCKED - USER DECISION 2026-11-01): every Runeforge and Blacksmith gold fee rounds DOWN to a whole gold piece - Add, Reroll, Modify, Remove, Blacksmith upgrades, the catch-up fee (row 48) and the Epic step fee (row 57). The Dev computes them in whole numbers (implementation_plan 53).] | BUG-073 FIXED 2026-11-01: 2H weapons had been priced as 1H (slot value 100 instead of 150, economy_framework 11) in the Blacksmith, Runeforge and Merchant since Slice 6; the 2H prices in this row are what the game now charges. BUILT 2026-11-01 (source-verified by Tester; Studio test pending)."
+  },
+  {
+   "db": [
+    "guild_facilities",
+    56,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E57",
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q6) | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Bonus Passives; rule: Numbers only. The Runeforge never adds bonus passives (they stay loot-only). It may REMOVE one (frees its BP and its slot; rarity stays).]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q6) | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Bonus Passives; rule: Numbers only. The Runeforge never adds bonus passives (they stay loot-only). It may REMOVE one (frees its BP and its slot; rarity stays).]"
+  },
+  {
+   "db": [
+    "guild_facilities",
+    57,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E58",
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q9). The Epic step fee formula = Designer starting value for \"priced near the shop Epic price\"; Simulator to verify. [superseded 2026-11-01: the user set the fee to half of this - see the USER DECISION below] | USER DECISION 2026-11-01 - Epic step fee LOCKED at HALF the Designer proposal: fee = 0.5 x (shop Epic price - shop price at the rarity before the enchant) [superseded 2026-11-01: counted from the item's STARTING rarity, see USER DECISION (3) below], no facility discount (was: OPEN; Designer proposal was the full difference, 1H L50 = 3,960g). Enchanted Epics now cost about half the shop Epic price instead of close to it - user's choice. Sell-loop re-check 2026-11-01: loot -> Uncommon / Rare / Epic -> sell loses gold at L20/50/99 for 1H and 2H, with and without the 27% Runeforge discount (smallest loss: 1H L20 to Uncommon with the discount, -22g). [superseded 2026-11-01 - Designer note about the fee using the rarity just before the Epic step (Common -> Rare -> Epic paid 1,386g at 1H L50): the fee is now counted from the starting rarity, see below] | USER DECISION 2026-11-01 (3): the fee is counted from the item's STARTING rarity (new saved field, equipment_schema 19, PLANNED - not built), so every route pays the same (1H L50 Common start = 1,980g either way). Enchant-then-sell loop fixed with option C - guard (7): enchanted items sell at their starting rarity. Correction: the earlier sell-loop table priced 2H Epic as eight T1 Adds (2H L20/50/99: 648/1,080/1,784g); one T4 Add is enough (324/540/892g, 236/394/651g at -27%). Sell-loop re-run 2026-11-01 (start Common/Uncommon/Rare x every higher target, item level 1-99, 1H and 2H, Runeforge discount 0/18/21/27%, cheapest Add route, tier unlocks ignored to be safe): best result -22g (1H L1, one T1 Add at -27%), so no loop makes gold. Under the old rule (sell at current rarity) Uncommon -> Rare made up to +3g at L1-6; now closed. NOT BUILT. | USER RULING 2026-11-01 (Simulator supply flag, report_runeforge_economy_2026-11-01 checks D/E): cheap crafted Epics for Runeforge-rushers and Gold Boost players are ACCEPTED - it rewards planning, and normal build orders are unaffected. Simulator supply numbers for item levels 50-80: free classic and crafter players reach Runeforge L10 at L88-90, so they make 0 crafted Epics there; a free rusher reaches L10 at L50 and can make up to 8 crafted Epics vs ~4 natural drops and 0 from the shop; a boosted player reaches L10 at L30-61 and makes 9-14. A crafted Epic costs 30-50% of the shop Epic (1H L50 from a Rare start 1,451g vs 4,752g). No extra level gate and no fee change (the Simulator's options were not taken). | USER DECISION 2026-11-01: the Epic step fee rounds down to whole gold (a half gold piece in 158 slot / level / start cases, all off-hand, armor and accessory slots); 1H / 2H table values unchanged. | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: topic: Exploit Guards; rule: (1) Catch-up fee (row 48). (2) Epic step fee (LOCKED - USER DECISION 2026-11-01): when an action raises an item to Epic, pay extra gold = 0.5 x (the item's shop Epic price - its shop price at the item's STARTING rarity, equipment_schema 19), rounded down to whole gold (USER DECISION 2026-11-01; e.g. Off-Hand Rare L2 428.5 -> 428g; the 1H / 2H values below are already whole). No facility discount applies to it. Same fee whichever route the player takes (straight to Epic or step by step). Remove never changes the fee basis; downgrades keep the starting rarity; items that existed before this is built use their current rarity as their starting rarity. Example: 1H L50 Common -> Epic = 0.5 x (4,752 - 792) = 1,980g. Fee at L20 / L50 / L99 by starting rarity: 1H Common 1,380 / 1,980 / 2,960g, Uncommon 1,242 / 1,782 / 2,664g, Rare 966 / 1,386 / 2,072g; 2H Common 2,070 / 2,970 / 4,440g, Uncommon 1,863 / 2,673 / 3,996g, Rare 1,449 / 2,079 / 3,108g. A single T4 line (200 BP, minimum rarity Epic) makes any item Epic, 1H or 2H, so the cheapest route to Epic is one T4 Add (2H L50: 540g, 394g at -27%). A crafted Epic from Common loot costs about 1H L50 2,240g / 2H L50 3,364g + Essences, roughly half the shop Epic price (4,752g / 7,128g). (3) Rarity never goes down. (4) Essences cannot be sold. (5) Shop-bought items give nothing when dismantled (row 51). (6) Reroll options are fixed (row 55). (7) Enchanted items sell at their STARTING rarity (economy_framework 14), so enchanting never raises sell value.] | USER RULING 2026-11-01 (rune-forged = normal loot): guard (7) of the old list and option C (enchanted / forged items sell at their STARTING rarity) are SUPERSEDED, and there is no \"Sells as ...\" note. [Superseded 2026-11-01: rule guard (2): (2) forged items sell at their starting rarity (economy_framework 14);]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q9). The Epic step fee formula = Designer starting value for \"priced near the shop Epic price\"; Simulator to verify. [superseded 2026-11-01: the user set the fee to half of this - see the USER DECISION below] | USER DECISION 2026-11-01 - Epic step fee LOCKED at HALF the Designer proposal: fee = 0.5 x (shop Epic price - shop price at the rarity before the enchant) [superseded 2026-11-01: counted from the item's STARTING rarity, see USER DECISION (3) below], no facility discount (was: OPEN; Designer proposal was the full difference, 1H L50 = 3,960g). Enchanted Epics now cost about half the shop Epic price instead of close to it - user's choice. Sell-loop re-check 2026-11-01: loot -> Uncommon / Rare / Epic -> sell loses gold at L20/50/99 for 1H and 2H, with and without the 27% Runeforge discount (smallest loss: 1H L20 to Uncommon with the discount, -22g). [superseded 2026-11-01 - Designer note about the fee using the rarity just before the Epic step (Common -> Rare -> Epic paid 1,386g at 1H L50): the fee is now counted from the starting rarity, see below] | USER DECISION 2026-11-01 (3): the fee is counted from the item's STARTING rarity (new saved field, equipment_schema 19, PLANNED - not built), so every route pays the same (1H L50 Common start = 1,980g either way). Enchant-then-sell loop fixed with option C - guard (7): enchanted items sell at their starting rarity. Correction: the earlier sell-loop table priced 2H Epic as eight T1 Adds (2H L20/50/99: 648/1,080/1,784g); one T4 Add is enough (324/540/892g, 236/394/651g at -27%). Sell-loop re-run 2026-11-01 (start Common/Uncommon/Rare x every higher target, item level 1-99, 1H and 2H, Runeforge discount 0/18/21/27%, cheapest Add route, tier unlocks ignored to be safe): best result -22g (1H L1, one T1 Add at -27%), so no loop makes gold. Under the old rule (sell at current rarity) Uncommon -> Rare made up to +3g at L1-6; now closed. NOT BUILT. | USER RULING 2026-11-01 (Simulator supply flag, report_runeforge_economy_2026-11-01 checks D/E): cheap crafted Epics for Runeforge-rushers and Gold Boost players are ACCEPTED - it rewards planning, and normal build orders are unaffected. Simulator supply numbers for item levels 50-80: free classic and crafter players reach Runeforge L10 at L88-90, so they make 0 crafted Epics there; a free rusher reaches L10 at L50 and can make up to 8 crafted Epics vs ~4 natural drops and 0 from the shop; a boosted player reaches L10 at L30-61 and makes 9-14. A crafted Epic costs 30-50% of the shop Epic (1H L50 from a Rare start 1,451g vs 4,752g). No extra level gate and no fee change (the Simulator's options were not taken). | USER DECISION 2026-11-01: the Epic step fee rounds down to whole gold (a half gold piece in 158 slot / level / start cases, all off-hand, armor and accessory slots); 1H / 2H table values unchanged. | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: topic: Exploit Guards; rule: (1) Catch-up fee (row 48). (2) Epic step fee (LOCKED - USER DECISION 2026-11-01): when an action raises an item to Epic, pay extra gold = 0.5 x (the item's shop Epic price - its shop price at the item's STARTING rarity, equipment_schema 19), rounded down to whole gold (USER DECISION 2026-11-01; e.g. Off-Hand Rare L2 428.5 -> 428g; the 1H / 2H values below are already whole). No facility discount applies to it. Same fee whichever route the player takes (straight to Epic or step by step). Remove never changes the fee basis; downgrades keep the starting rarity; items that existed before this is built use their current rarity as their starting rarity. Example: 1H L50 Common -> Epic = 0.5 x (4,752 - 792) = 1,980g. Fee at L20 / L50 / L99 by starting rarity: 1H Common 1,380 / 1,980 / 2,960g, Uncommon 1,242 / 1,782 / 2,664g, Rare 966 / 1,386 / 2,072g; 2H Common 2,070 / 2,970 / 4,440g, Uncommon 1,863 / 2,673 / 3,996g, Rare 1,449 / 2,079 / 3,108g. A single T4 line (200 BP, minimum rarity Epic) makes any item Epic, 1H or 2H, so the cheapest route to Epic is one T4 Add (2H L50: 540g, 394g at -27%). A crafted Epic from Common loot costs about 1H L50 2,240g / 2H L50 3,364g + Essences, roughly half the shop Epic price (4,752g / 7,128g). (3) Rarity never goes down. (4) Essences cannot be sold. (5) Shop-bought items give nothing when dismantled (row 51). (6) Reroll options are fixed (row 55). (7) Enchanted items sell at their STARTING rarity (economy_framework 14), so enchanting never raises sell value.] | USER RULING 2026-11-01 (rune-forged = normal loot): guard (7) of the old list and option C (enchanted / forged items sell at their STARTING rarity) are SUPERSEDED, and there is no \"Sells as ...\" note. [Superseded 2026-11-01: rule guard (2): (2) forged items sell at their starting rarity (economy_framework 14);]"
+  },
+  {
+   "db": [
+    "guild_facilities",
+    58,
+    "notes"
+   ],
+   "wb": "CTRBLXAI_Game_Rules.xlsx",
+   "sheet": "25 Guild Facilities",
+   "cell": "E59",
+   "old": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (E1, E6) | LOCKED - USER DECISION 2026-11-01 (v2). NOT BUILT. [Superseded 2026-11-01 by v2: rule: After every change the item is renamed automatically by the normal affix naming rule (item_rarity_rules 23). Fortune is never offered by Add, Reroll or Modify; an item that rolled Fortune as loot keeps it and may reroll it away, move it down or remove it, but never move it up.]",
+   "new": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (E1, E6) | LOCKED - USER DECISION 2026-11-01 (v2). BUILT 2026-11-01 (source-verified by Tester; Studio test pending) - v2 step 4. [Superseded 2026-11-01 by v2: rule: After every change the item is renamed automatically by the normal affix naming rule (item_rarity_rules 23). Fortune is never offered by Add, Reroll or Modify; an item that rolled Fortune as loot keeps it and may reroll it away, move it down or remove it, but never move it up.]"
+  }
+ ]
+}

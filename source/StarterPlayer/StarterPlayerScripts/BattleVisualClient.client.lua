@@ -58,6 +58,12 @@ local CameraController = require(
 	player:WaitForChild("PlayerScripts")
 		:WaitForChild("CameraController", 10)
 )
+-- Unit combat animations (2026-10-28): KO hold, idle fidgets, Thinking, per-action kinds.
+-- Asset ids live in Shared/AnimationRegistry; playback lives in this module.
+local UnitAnimController = require(
+	player:WaitForChild("PlayerScripts")
+		:WaitForChild("UnitAnimController", 10)
+)
 local _vfxOk, VFXController = pcall(require,
 	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 		:WaitForChild("Shared", 10):WaitForChild("VFXController", 10)
@@ -271,20 +277,50 @@ end
 
 local unitTokens   = {}
 local unitData     = {}
+-- Animation controller reads tokens / alive state through these (dependency injection).
+UnitAnimController.Init(
+	function() return unitTokens end,
+	function(unitId) local u = unitData[unitId]; return u ~= nil and u.isAlive ~= false end
+)
 
 -- Compute legal push landing tiles along the FIXED away-direction from pusher→target.
 -- Mirrors DisplacementService.ResolvePush interrupt logic: stops at map edge, blocker,
 -- forced-upward elevation, or an occupied tile. Returns array of {tileX,tileY,distance}
 -- for distances 1..maxDist that the target can actually reach (clear tiles only).
-local function computePushLandingTiles(actorX, actorY, targetX, targetY, maxDist)
+-- dirX/dirY/fromX/fromY (optional, 2026-10-28): the server-supplied ray for a Pull (toward the
+-- pusher) or a Grappler swap-throw (from the pusher's tile). Omitted = the plain away-push ray.
+-- isArc (GL-015 Throwing Gloves, 2026-10-29): the pushed unit flies over the path, so obstacles on the
+-- way don't stop the list; a tile is offered if it is on the map, not blocked, free and not higher
+-- than the start (same rule as the server, DisplacementService.ResolvePush).
+local function computePushLandingTiles(actorX, actorY, targetX, targetY, maxDist, dirX, dirY, fromX, fromY, isArc)
 	local rawDx, rawDy = targetX - actorX, targetY - actorY
 	local dx, dy = 0, 0
 	if rawDx > 0 then dx = 1 elseif rawDx < 0 then dx = -1 end
 	if rawDy > 0 then dy = 1 elseif rawDy < 0 then dy = -1 end
 	if dx == 0 and dy == 0 then dx = 1 end
+	if dirX and dirY then dx, dy = dirX, dirY end
 	local tiles = {}
-	local cx, cy = targetX, targetY
+	local cx, cy = fromX or targetX, fromY or targetY
 	local curElev = getElevation(cx, cy)
+	if isArc then
+		local startElev = curElev
+		for step = 1, math.max(0, maxDist) do
+			local nx, ny = cx + dx * step, cy + dy * step
+			-- A pull never flies past the puller (matches the server, 2026-10-29).
+			if nx == actorX and ny == actorY then break end
+			if nx >= 1 and nx <= MAP_WIDTH and ny >= 1 and ny <= MAP_HEIGHT
+				and not GameConstants.IsBlocked(nx, ny) and getElevation(nx, ny) <= startElev then
+				local occupied = false
+				for _, d in pairs(unitData) do
+					if d.isAlive ~= false and d.tileX == nx and d.tileY == ny then occupied = true; break end
+				end
+				if not occupied then
+					table.insert(tiles, { tileX = nx, tileY = ny, distance = step })
+				end
+			end
+		end
+		return tiles
+	end
 	for step = 1, math.max(0, maxDist) do
 		local nx, ny = cx + dx, cy + dy
 		-- map bounds
@@ -710,95 +746,18 @@ local function applyUnitNameStar(token, u)
 	end
 end
 
--- Base R15 animations played on character models in response to combat events.
--- Free default R15 animation ids are used for now (user may swap specific ids
--- later, same as the walk track). Reliable free ids: idle/walk/run/jump exist;
--- Roblox has no guaranteed "hit"/"death" default, so hit uses a short reaction
--- and KO uses a fall/faint — flagged as generic until specific ids are supplied.
-local R15_ANIM = {
-	Idle       = "rbxassetid://507766666",  -- default R15 idle (looped); see IDLE_POOL for the random set
-	Hit        = "rbxassetid://507768375",  -- default R15 "cheer"/react — generic flinch stand-in
-	KO         = "rbxassetid://507765000",  -- default R15 fall-ish — generic KO stand-in
-	Attack     = "rbxassetid://507768375",  -- generic melee swing stand-in
-	Projectile = "rbxassetid://507767714",  -- default R15 run-ish — generic bow/gun draw stand-in
-	Cast       = "rbxassetid://507770677",  -- default R15 point/wave — generic spell-cast stand-in
-	ItemUse    = "rbxassetid://507770239",  -- default R15 wave — generic item-use stand-in
-}
-
--- IDLE POOL (2026-10-17): each unit picks ONE idle at random from this pool at spawn
--- (deployment and battle), played looped at a slightly varied speed, so standing units
--- feel organic instead of synced-stiff. TEMPORARY asset IDs — these will later be
--- replaced by Animation objects published from ServerStorage > RBX_ANIMSAVES > Live Anim
--- (swap this list's source then; every caller goes through pickIdleId()/playUnitAnim).
-local _idleRng = Random.new()  -- per-client randomness for idle desync + random idle pick (visual only)
-local IDLE_POOL = {
-	"rbxassetid://507766666",
-	"rbxassetid://507766951",
-	"rbxassetid://507766388",
-}
+-- Unit animations (2026-10-28): every asset id lives in Shared/AnimationRegistry and
+-- playback (track cache, KO hold, fidgets, Thinking) lives in UnitAnimController. These
+-- thin wrappers keep the existing call sites unchanged.
+local _idleRng = Random.new()  -- per-client randomness for the deployment idle desync (visual only)
 local function pickIdleId()
-	return IDLE_POOL[_idleRng:NextInteger(1, #IDLE_POOL)]
+	return UnitAnimController.BaseIdleAssetId()
 end
 
--- Get-or-create the Humanoid's Animator for a token's R15 model (nil for cylinders).
-local function getUnitAnimator(token)
-	if not token or not token.model then return nil end
-	local hum = token.model:FindFirstChildOfClass("Humanoid")
-	if not hum then return nil end
-	local animator = hum:FindFirstChildOfClass("Animator")
-	if not animator then
-		animator = Instance.new("Animator")
-		animator.Parent = hum
-	end
-	return animator
-end
-
--- Play (and cache) a named base animation on a unit's model. kind is a key in
--- R15_ANIM. opts: { loop=bool, fade=number, stopAfter=number }. Cylinders no-op.
+-- Play an animation kind (AnimationRegistry.Kinds) on a unit's model. opts:
+-- { loop=bool, fade=number, stopAfter=number, force=bool }. Cylinders no-op.
 local function playUnitAnim(token, kind, opts)
-	opts = opts or {}
-	-- Idle picks a random animation from IDLE_POOL (per unit, cached on first play so a
-	-- unit keeps its chosen idle); all other kinds use their fixed R15_ANIM id.
-	local id
-	if kind == "Idle" then
-		token._idleId = token._idleId or pickIdleId()
-		id = token._idleId
-	else
-		id = R15_ANIM[kind]
-	end
-	if not id then return end
-	local animator = getUnitAnimator(token)
-	if not animator then return end  -- cylinder fallback: no animations
-	token._animTracks = token._animTracks or {}
-	local track = token._animTracks[kind]
-	if not track then
-		local ok, t = pcall(function()
-			local anim = Instance.new("Animation")
-			anim.AnimationId = id
-			return animator:LoadAnimation(anim)
-		end)
-		if ok and t then
-			track = t
-			track.Looped = opts.loop == true
-			token._animTracks[kind] = track
-		end
-	end
-	if not track then return end
-	track.Looped = opts.loop == true
-	track:Play(opts.fade or 0.1)
-	if opts.stopAfter and not opts.loop then
-		task.delay(opts.stopAfter, function()
-			if track and track.IsPlaying then track:Stop(0.15) end
-		end)
-	end
-	return track
-end
-
--- Stop a unit's looping idle (e.g. on KO so the body doesn't keep breathing).
-local function stopUnitIdle(token)
-	if token and token._animTracks and token._animTracks.Idle and token._animTracks.Idle.IsPlaying then
-		token._animTracks.Idle:Stop(0.2)
-	end
+	return UnitAnimController.Play(token, kind, opts)
 end
 
 local function spawnToken(unit)
@@ -814,7 +773,7 @@ local function spawnToken(unit)
 	if model and model:IsA("Model") then
 		-- Carried over from deployment: stop any deployment idle track still looping on this
 		-- model before the battle idle is loaded below, so a reused model doesn't end up with
-		-- TWO idle loops blending (and so KO's stopUnitIdle later stops the only idle). The
+		-- TWO idle loops blending (and so the KO hold later stops every track on the model). The
 		-- deployment idle (from _G.CTRBLXAI_PlayDeployIdle) isn't tracked in a token, so stop
 		-- every track on the model's own Animator and clear the DeployIdlePlaying guard.
 		if model:GetAttribute("DeployIdlePlaying") then
@@ -986,26 +945,14 @@ local function spawnToken(unit)
 		_hipH = math.abs(hrpY - feetY)
 		if _hipH < 0.5 then _hipH = R15_STAND_OFFSET_DEFAULT end  -- sanity fallback
 	end
-	unitTokens[unit.id] = { part = anchorPart, model = model, fill = hpFill, mpFill = mpFill, label = lbl, star = starImg, hipHeight = _hipH }
+	unitTokens[unit.id] = { part = anchorPart, model = model, bar = barBb, fill = hpFill, mpFill = mpFill, label = lbl, star = starImg, hipHeight = _hipH }
 	-- Set the tier star (gold Elite / silver Veteran / hidden otherwise). Tier is
 	-- fixed for the battle, so applying once at spawn is enough; the star is its
 	-- own ImageLabel so HP/turn label updates never disturb it.
 	applyUnitNameStar(unitTokens[unit.id], unit)
-	-- Base idle animation so standing R15 units aren't frozen stiff (looped; no-op
-	-- for cylinder fallbacks). Hit/KO/Attack one-shots play over this on events.
-	-- Desync idles: each unit starts at a random point in the loop and breathes at a
-	-- slightly different speed, so units don't sway in unison.
-	local _idleTrack = playUnitAnim(unitTokens[unit.id], "Idle", { loop = true, fade = 0.3 })
-	if _idleTrack then
-		_idleTrack:AdjustSpeed(_idleRng:NextNumber(0.85, 1.15))
-		task.spawn(function()
-			local tries = 0
-			while _idleTrack.Length <= 0 and tries < 30 do task.wait(0.1); tries += 1 end
-			if _idleTrack.Length > 0 and _idleTrack.IsPlaying then
-				_idleTrack.TimePosition = _idleRng:NextNumber(0, _idleTrack.Length)
-			end
-		end)
-	end
+	-- Base idle (looped, desynced speed + start point per unit; no-op for cylinders).
+	-- Random alternate idles (fidgets) and every one-shot play over it on events.
+	UnitAnimController.StartBaseIdle(unitTokens[unit.id])
 	-- Show initial facing for EVERY unit (players + enemies) from spawn. Default to
 	-- "S" if the payload omits facing so an indicator always appears.
 	orientUnitToFacing(unit.id, unit.facing or "S")
@@ -1523,6 +1470,61 @@ end
 local commitCommand
 local commitItem  -- pick-list wrapper (defined after commitCommand)
 
+-- SKILL HIT PREVIEW (2026-10-30): once a tile-aimed (or caster-area / self) skill opens its preview,
+-- ask the server who the skill would hit and for how much, then fill the preview in. Read-only; the
+-- command sent on Execute is unchanged. A newer click, Back, or another preview discards a late
+-- answer (token + skill + tile check).
+local hitPreviewToken = nil
+local function requestSkillHitPreview(skillId, tx, ty)
+	local token = {}
+	hitPreviewToken = token
+	task.spawn(function()
+		local ok, res = pcall(function()
+			return BattleEvents.PreviewSkillHits:InvokeServer(skillId, tx, ty)
+		end)
+		if hitPreviewToken ~= token then return end
+		if not ok then
+			warn("[BattleVisualClient] Skill hit preview failed: " .. tostring(res))
+			return
+		end
+		if type(res) ~= "table" or not res.ok or type(res.entries) ~= "table" then return end
+		local p = bp.preview
+		if bp.state ~= "Preview" or not p or p._hitSkillId ~= skillId or p._hitTileX ~= tx or p._hitTileY ~= ty then
+			return
+		end
+		local entries = res.entries
+		p.hits = entries
+		p.hitsResolved = true
+		local e = entries[1]
+		if #entries == 1 and (e.kind == "damage" or e.kind == "healing") then
+			-- One unit: fill the classic single-target layout.
+			local tgtData = unitData[e.unitId]
+			p.targetName = e.name
+			p.targetSide = e.side
+			p.targetHpBefore = e.hpBefore
+			p.targetHpAfter = e.hpAfter
+			p.estimatedDamage = e.amount
+			p.isHealing = e.kind == "healing"
+			p.hitApprox = e.approx
+			local sid = e.statuses and e.statuses[1]
+			if sid then
+				p.statusEffect = sid
+				local sdef = GameConstants.STATUSES and GameConstants.STATUSES[sid]
+				p.statusDuration = sdef and sdef.duration or 0
+			end
+			if e.kind == "damage" then
+				-- Same RT delay estimate as the unit-click preview (VIT x gear, broadcast by the server).
+				local wDelay = (currentPrompt and currentPrompt.weaponRtDelay) or 0
+				p.targetRtDelay = (tgtData and tgtData.derivedStats and tgtData.derivedStats.rtDelayResist)
+					and math.round(wDelay * tgtData.derivedStats.rtDelayResist)
+					or GameConstants.CalcRtDelayResistance(wDelay, tgtData and tgtData.stats and tgtData.stats.VIT or 10)
+			end
+			p.hits = nil
+		end
+		BattleHUD.Render(bp)
+	end)
+end
+
 local function enterActionSelection()
 	if not currentPrompt then return end
 	local prompt = currentPrompt
@@ -1568,11 +1570,13 @@ local function enterActionSelection()
 							actorApBefore = prompt.currentAp, actorApAfter = (prompt.currentAp or 1) - 1,
 							actorRtAfter = skillRtCost + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0),
 							targetName = prompt.unitName .. " (Self)",
+							_hitSkillId = skill.id, _hitTileX = storedActorData.tileX or 0, _hitTileY = storedActorData.tileY or 0,
 							channelTime = isChannel and skill.channelTime or nil,
 							onConfirm = function() commitCommand({ actionType = "Skill", skillId = skill.id, targetId = prompt.unitId }) end,
 							onBack = enterSkillSelection,
 						}
 						bp.state = "Preview"; BattleHUD.Render(bp)
+						requestSkillHitPreview(skill.id, storedActorData.tileX or 0, storedActorData.tileY or 0)
 						return
 					end
 					selectedSkill = skill; inputMode = "skill"; clearHighlights()
@@ -1589,9 +1593,12 @@ local function enterActionSelection()
 					if skill.groundTarget then
 						-- Ground targeting: highlight all tiles in range (reuse move highlight pattern)
 						local gr = skill.computedRange or 5
+						local minR = skill.computedMinRange or 0  -- skip tiles inside weapon min range (2026-10-30)
 						for dy = -gr, gr do
 							for dx = -gr, gr do
-								createTileHighlight((storedActorData.tileX or 0) + dx, (storedActorData.tileY or 0) + dy, c, 0.5)
+								if math.max(math.abs(dx), math.abs(dy)) >= minR then
+									createTileHighlight((storedActorData.tileX or 0) + dx, (storedActorData.tileY or 0) + dy, c, 0.5)
+								end
 							end
 						end
 					else
@@ -1637,9 +1644,9 @@ local function enterActionSelection()
 							actorRtAfter = (item.rtCost or 80) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0),
 							targetName = prompt.unitName .. " (Self)",
 							isHealing = item.isHealing or false,
-							description = "Item description placeholder.",
+							description = item.displayText or item.effectFormula or "Item description placeholder.",
 							onConfirm = function()
-								commitCommand({ actionType = "Item", itemSlotIndex = item.slotIndex, targetId = prompt.unitId })
+								commitItem(item, { actionType = "Item", itemSlotIndex = item.slotIndex, targetId = prompt.unitId }, enterItemSelection)
 							end,
 							onBack = enterItemSelection,
 						}
@@ -1653,7 +1660,7 @@ local function enterActionSelection()
 					-- Show the item's description panel during targeting (like skills).
 					bp.skill = { name = item.name or "Item", tags = item.category or "",
 						mpCost = 0, rtCost = item.rtCost or 0, range = item.range or 0,
-						pattern = item.pattern or "Single", effects = "Item description placeholder." }
+						pattern = item.pattern or "Single", effects = item.displayText or item.effectFormula or "Item description placeholder." }
 					local c = itemTargetColor(item)
 					if item.groundTarget then
 						local gr = item.range or 0
@@ -1923,6 +1930,59 @@ end
 -- Projector: the picked target's dispellable buffs) shows a list on the existing item
 -- list screen before committing; the picked value is sent as command.choice. Items
 -- without choices commit straight away, exactly as before.
+-- AC-020 Masterwork Toolchain (2026-10-29): after the first Item and its target are chosen, offer
+-- the second Items that have a legal target there (server re-checks). "Use alone" commits as before.
+local function commitWithBundle(item, cmd, onBack)
+	local opts = {}
+	local tx, ty = cmd.tileX, cmd.tileY
+	if cmd.targetId and unitData[cmd.targetId] then
+		tx, ty = unitData[cmd.targetId].tileX, unitData[cmd.targetId].tileY
+	end
+	for _, b in ipairs((item and item.bundleOptions) or {}) do
+		local ok = false
+		if cmd.targetId then
+			if b.selfTarget and cmd.targetId == currentPrompt.unitId then ok = true end
+			for _, t in ipairs(b.targets or {}) do
+				if t.id == cmd.targetId then ok = true break end
+			end
+		end
+		if not ok and b.groundTarget and tx and ty then
+			local ax = storedActorData and storedActorData.tileX or currentPrompt.tileX or 0
+			local ay = storedActorData and storedActorData.tileY or currentPrompt.tileY or 0
+			ok = math.max(math.abs(tx - ax), math.abs(ty - ay)) <= (b.range or 0)
+		end
+		if ok then table.insert(opts, b) end
+	end
+	if #opts == 0 then
+		commitCommand(cmd)
+		return
+	end
+	local entries = {
+		{ id = "_alone", name = (item.name or "Item") .. " alone", rtCost = item.rtCost or 0, enabled = true,
+			onPress = function() commitCommand(cmd) end },
+	}
+	for _, b in ipairs(opts) do
+		table.insert(entries, {
+			id = "_bundle_" .. tostring(b.slotIndex),
+			name = "+ " .. tostring(b.name) .. " (bundle)",
+			rtCost = (item.rtCost or 0) + math.round((b.rtCost or 0) * 0.5),
+			enabled = true,
+			onPress = function()
+				local c = table.clone(cmd)
+				c.bundleSlotIndex = b.slotIndex
+				commitCommand(c)
+			end,
+		})
+	end
+	local prevBack = storedActorData.onBack
+	storedActorData.itemEntries = entries
+	storedActorData.onBack = function()
+		storedActorData.onBack = prevBack
+		if onBack then onBack() end
+	end
+	bp.state = "ItemSelection"; BattleHUD.Render(bp)
+end
+
 function commitItem(item, cmd, onBack)
 	local opts = nil
 	if item and item.choices and #item.choices > 0 then
@@ -1939,7 +1999,7 @@ function commitItem(item, cmd, onBack)
 		end
 	end
 	if not opts or #opts == 0 then
-		commitCommand(cmd)
+		commitWithBundle(item, cmd, onBack)
 		return
 	end
 	local entries = {}
@@ -1984,9 +2044,12 @@ local function cancelToTargeting()
 			-- caster, not the .targets marker — mirror enterSkillSelection so back-out
 			-- re-shows the range instead of just the caster tile.
 			local gr = selectedSkill.computedRange or 5
+			local minR = selectedSkill.computedMinRange or 0  -- skip tiles inside weapon min range (2026-10-30)
 			for dy = -gr, gr do
 				for dx = -gr, gr do
-					createTileHighlight((storedActorData.tileX or 0) + dx, (storedActorData.tileY or 0) + dy, c, 0.5)
+					if math.max(math.abs(dx), math.abs(dy)) >= minR then
+						createTileHighlight((storedActorData.tileX or 0) + dx, (storedActorData.tileY or 0) + dy, c, 0.5)
+					end
 				end
 			end
 		else
@@ -2249,6 +2312,9 @@ local function processTileClick(bx, by)
 				local actX = storedActorData.tileX or 0
 				local actY = storedActorData.tileY or 0
 				local dist = math.max(math.abs(bx - actX), math.abs(by - actY))
+				-- Inside the weapon minimum range (2026-10-30): the server would refuse this tile, so
+				-- ignore the click entirely (do not fall through to unit matching).
+				if dist < (selectedSkill.computedMinRange or 0) then return end
 				if dist <= gr then
 					aimTarget = { tileX = bx, tileY = by }; clearHighlights()
 					createTileHighlight(bx, by, "selected")
@@ -2265,6 +2331,7 @@ local function processTileClick(bx, by)
 						actorApAfter = (currentPrompt.currentAp or 1) - 1,
 						actorRtAfter = skillRtCost + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
 						targetName = string.format("Ground (%d,%d)", bx, by),
+						_hitSkillId = selectedSkill.id, _hitTileX = bx, _hitTileY = by,
 						channelTime = isChannel and selectedSkill.channelTime or nil,
 						channelResolveCt = isChannel and (currentBattleCt or 0) + (selectedSkill.channelTime or 0) or nil,
 						onConfirm = function()
@@ -2273,6 +2340,7 @@ local function processTileClick(bx, by)
 						onBack = cancelToTargeting,
 					}
 					bp.state = "Preview"; BattleHUD.Render(bp)
+					requestSkillHitPreview(selectedSkill.id, bx, by)
 					return
 				end
 			end
@@ -2350,8 +2418,19 @@ local function processTileClick(bx, by)
 		elseif inputMode == "interact" then
 			-- Click an Interact candidate tile → Preview → commit. One stage:
 			-- the server re-validates the kind + target and dispatches the native.
-			for _, t in ipairs(currentPrompt.interactTargets or {}) do
-				if t.tileX == bx and t.tileY == by then
+			-- Several options on one tile (e.g. Activate or Refresh): tapping the tile again picks the
+			-- next one (2026-10-29).
+			local _onTile = {}
+			for _, it in ipairs(currentPrompt.interactTargets or {}) do
+				if it.tileX == bx and it.tileY == by then table.insert(_onTile, it) end
+			end
+			local _pick = 1
+			if #_onTile > 1 and aimTarget and aimTarget._ikIdx and aimTarget.tileX == bx and aimTarget.tileY == by then
+				_pick = (aimTarget._ikIdx % #_onTile) + 1
+			end
+			for _ikI, t in ipairs(_onTile) do
+				if _ikI == _pick then
+					t._ikIdx = _ikI
 					aimTarget = t; clearHighlights()
 					createTileHighlight(bx, by, "selected")
 					if t.id then bp.target = unitData[t.id] end
@@ -2364,9 +2443,16 @@ local function processTileClick(bx, by)
 						desc = "Resuscitate " .. (t.name or "ally") .. " (channeled) — revives at low HP."
 					elseif t.interactKind == "mapObject" then
 						desc = "Activate " .. (t.name or "object") .. "."
+					elseif t.interactKind == "disarmTrap" then
+						desc = "Disarm the " .. (t.name or "trap") .. " (and every trap next to you)."
+					elseif t.interactKind == "neutralizeHazard" then
+						desc = "Neutralize the " .. (t.name or "hazard") .. " on this tile for good."
+					elseif t.interactKind == "mechanistRefresh" then
+						desc = "Refresh " .. (t.name or "it") .. ": +1 charge, or +500 CT if it has no charges to restore."
 					else
 						desc = "Interact with " .. (t.name or "target") .. "."
 					end
+					if #_onTile > 1 then desc = desc .. " (Tap the tile again for another option.)" end
 					bp.preview = {
 						actionType = "Interact",
 						actorName = currentPrompt.unitName,
@@ -2380,6 +2466,7 @@ local function processTileClick(bx, by)
 								interactKind = t.interactKind,
 								targetId = t.id,
 								objectId = t.objectId,
+								tileX = t.tileX, tileY = t.tileY,
 							})
 						end,
 						onBack = cancelToTargeting,
@@ -2406,7 +2493,7 @@ local function processTileClick(bx, by)
 							actorApBefore = currentPrompt.currentAp, actorApAfter = (currentPrompt.currentAp or 1) - 1,
 							actorRtAfter = (currentPrompt.pushRt or 40) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
 							targetName = t.name,
-							description = "Push " .. (t.name or "object"),
+							description = (if t.isPull then "Pull " else "Push ") .. (t.name or "object"),
 							onConfirm = function() commitCommand({ actionType = "Push", targetId = t.id }) end,
 							onBack = cancelToTargeting,
 						}
@@ -2416,7 +2503,20 @@ local function processTileClick(bx, by)
 					pushTargetSel = t
 					local actX = storedActorData and storedActorData.tileX or currentPrompt.tileX or 0
 					local actY = storedActorData and storedActorData.tileY or currentPrompt.tileY or 0
-					pushLandingTiles = computePushLandingTiles(actX, actY, t.tileX, t.tileY, t.maxPushDistance or 0)
+					if t.vectorDirs and #t.vectorDirs > 0 then
+						-- GL-013 Vector Gloves: landing tiles along every outward direction (2026-10-29).
+						pushLandingTiles = {}
+						for _, vd in ipairs(t.vectorDirs) do
+							for _, vt in ipairs(computePushLandingTiles(actX, actY, t.tileX, t.tileY, t.maxPushDistance or 0,
+								vd.dx, vd.dy, t.tileX, t.tileY, t.isArc)) do
+								vt.dirX, vt.dirY = vd.dx, vd.dy
+								table.insert(pushLandingTiles, vt)
+							end
+						end
+					else
+						pushLandingTiles = computePushLandingTiles(actX, actY, t.tileX, t.tileY, t.maxPushDistance or 0,
+							t.pushDirX, t.pushDirY, t.pushFromX, t.pushFromY, t.isArc)
+					end
 					if #pushLandingTiles == 0 then
 						-- No reachable clear tile (blocked/resisted). Preserve legacy: commit full push.
 						aimTarget = t; clearHighlights()
@@ -2462,8 +2562,13 @@ local function processTileClick(bx, by)
 						actorApBefore = currentPrompt.currentAp, actorApAfter = (currentPrompt.currentAp or 1) - 1,
 						actorRtAfter = (currentPrompt.pushRt or 40) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
 						targetName = t.name,
-						description = string.format("Push %s %d tile%s away", t.name or "target", chosenDist, chosenDist == 1 and "" or "s"),
-						onConfirm = function() commitCommand({ actionType = "Push", targetId = t.id, pushDistance = chosenDist }) end,
+						description = if t.isPull
+							then string.format("Pull %s %d tile%s closer", t.name or "target", chosenDist, chosenDist == 1 and "" or "s")
+							elseif t.isSwap
+							then string.format("Swap with %s, then throw %d tile%s", t.name or "target", chosenDist, chosenDist == 1 and "" or "s")
+							else string.format("Push %s %d tile%s away", t.name or "target", chosenDist, chosenDist == 1 and "" or "s"),
+						onConfirm = function() commitCommand({ actionType = "Push", targetId = t.id, pushDistance = chosenDist,
+							pushDirX = lt.dirX, pushDirY = lt.dirY }) end,  -- GL-013 chosen direction (nil = straight away)
 						onBack = function()
 							inputMode = "push"; pushLandingTiles = nil; pushTargetSel = nil
 							cancelToTargeting()
@@ -2491,7 +2596,7 @@ local function processTileClick(bx, by)
 						actorApAfter = (currentPrompt.currentAp or 1) - 1,
 						actorRtAfter = (selectedItem.rtCost or 80) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
 						targetName = string.format("Ground (%d,%d)", bx, by),
-						description = "Item description placeholder.",
+						description = selectedItem.displayText or selectedItem.effectFormula or "Item description placeholder.",
 						onConfirm = function()
 							commitItem(selectedItem, { actionType = "Item", itemSlotIndex = selectedItem.slotIndex, tileX = bx, tileY = by }, cancelToTargeting)
 						end,
@@ -2517,7 +2622,7 @@ local function processTileClick(bx, by)
 						actorRtAfter = (selectedItem.rtCost or 80) + (currentPrompt.unitBaseRt or 400) + (currentPrompt.turnRtAccrued or 0),
 						targetName = t.name,
 						isHealing = selectedItem.isHealing or false,
-						description = "Item description placeholder.",
+						description = selectedItem.displayText or selectedItem.effectFormula or "Item description placeholder.",
 						onConfirm = function()
 							commitItem(selectedItem, { actionType = "Item", itemSlotIndex = selectedItem.slotIndex, targetId = t.id }, cancelToTargeting)
 						end,
@@ -3072,21 +3177,8 @@ local function createDevCameraPanel()
 			warn("[Dev] No unit selected -- click a unit first, then KILL AT TILE")
 		end
 	end, Color3.fromRGB(80, 50, 20))
-	makeConfirmBtn(gBattle.container, "DELETE SAVE", function()
-		BattleEvents.DevCommand:FireServer({ action = "DeleteSave" })
-	end, Color3.fromRGB(80, 20, 20))
-	makeBtn(gBattle.container, "SAVE NOW", function()
-		BattleEvents.DevCommand:FireServer({ action = "SaveNow" })
-	end, Color3.fromRGB(30, 60, 80))
-	makeBtn(gBattle.container, "GOLD +10,000", function()
-		BattleEvents.DevCommand:FireServer({ action = "DevAddGold" })
-	end, Color3.fromRGB(90, 75, 20))
-	makeBtn(gBattle.container, "GRANT ALL CARDS", function()
-		BattleEvents.DevCommand:FireServer({ action = "DevGrantAllCards" })
-	end, Color3.fromRGB(40, 80, 55))
-	makeConfirmBtn(gBattle.container, "RESET UGC TRIAL/RENT", function()
-		BattleEvents.DevCommand:FireServer({ action = "DevResetUGCRecords" })
-	end, Color3.fromRGB(70, 45, 80))
+	-- Delete save / Save now / Gold / Grant all cards / Reset UGC moved to the always-on
+	-- blue DEV TOOLS panel (DevToolsPanel.lua, 2026-10-31) so they work on every screen.
 
 	-------------------------------------------------------------
 	-- GROUP: Map
@@ -3380,7 +3472,7 @@ end)
 -- Deployment idle (2026-10-17): DeploymentUI reuses the server R15 models during the
 -- deployment phase (they don't pass through spawnToken, so they'd stand stiff). This
 -- plays the SAME random desynced idle used in battle on a raw model, so deployment units
--- breathe too. Self-contained (no token table): picks a random IDLE_POOL id, loops it at
+-- breathe too. Self-contained (no token table): plays the base Idle (AnimationRegistry), loops it at
 -- 0.85x-1.15x speed, and starts it at a random point in the loop. Returns the track (or
 -- nil for a model with no Humanoid/Animator). Safe to call repeatedly; it won't stack.
 _G.CTRBLXAI_PlayDeployIdle = function(model)
@@ -3464,6 +3556,14 @@ BattleEvents.ObjectChanged.OnClientEvent:Connect(function(data)
 			-- Modal was anchored to the old tile; close it (the compact card re-points above).
 			if _G.CTRBLXAI_NotifyObjectChanged then _G.CTRBLXAI_NotifyObjectChanged(fx, fy, nil, true) end
 		end
+	elseif type(data.objType) == "string" then
+		-- A3 (2026-10-28): a disguised object was unmasked; the server sends its now-true
+		-- display type only AFTER unmask. Refresh an open compact card + inspector modal.
+		local sel = BattleHUD.GetSelection and BattleHUD.GetSelection()
+		if sel and sel.kind == "object" and sel.x == x and sel.y == y then
+			BattleHUD.SetSelection({ kind = "object", name = data.objType, x = x, y = y, hp = objectHpByTile[key] })
+		end
+		if _G.CTRBLXAI_NotifyObjectChanged then _G.CTRBLXAI_NotifyObjectChanged(x, y, nil, false, data.objType) end
 	end
 end)
 -- Called by BattleHUD when tapping an action snaps the panel back to the acting unit.
@@ -3475,6 +3575,7 @@ end
 
 BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	if SoundController then SoundController.StopAllChannels() end
+	UnitAnimController.StartFidgets()  -- random alternate idles for every unit (2026-10-28)
 	if VFXController and VFXController.ClearAllTileEffects then pcall(VFXController.ClearAllTileEffects) end
 	table.clear(activeTileEffects)
 	if BattleHUD.SetActiveEvent then BattleHUD.SetActiveEvent(nil) end
@@ -3683,6 +3784,8 @@ end)
 
 BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	activeUnitId = data.unitId
+	-- A new turn ends any Thinking loop; a player unit restarts it from its command prompt.
+	UnitAnimController.EndThinking()
 	-- Every new turn refocuses the unit panel on the acting unit.
 	BattleHUD.ClearSelection()
 	local _au = unitData[data.unitId]
@@ -3778,6 +3881,9 @@ BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
 	isPlayerTurn = true; inputMode = nil; selectedSkill = nil
 	CameraController.EndScriptedView()  -- restore the player's last chosen zoom + view
 	enterActionSelection()
+	-- Waiting for a command: Thinking now (first prompt of the turn), then after every 15s
+	-- without an action (2026-10-28).
+	UnitAnimController.OnCommandPrompt(prompt.unitId)
 end)
 
 BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
@@ -3813,32 +3919,9 @@ BattleEvents.UnitMoved.OnClientEvent:Connect(function(data)
 			-- Flat movement: simple tween
 			TweenService:Create(token.part, TweenInfo.new(0.45, Enum.EasingStyle.Quad), {CFrame = lookCF}):Play()
 		end
-		-- Play walk animation during tween.
-		-- AnimateScript (LocalScript) doesn't run in workspace Models,
-		-- so we create an Animator if needed and load the animation directly.
-		local humanoid = token.model:FindFirstChildOfClass("Humanoid")
-		if humanoid then
-			local animator = humanoid:FindFirstChildOfClass("Animator")
-			if not animator then
-				animator = Instance.new("Animator")
-				animator.Parent = humanoid
-			end
-			if not token._walkTrack then
-				local ok, track = pcall(function()
-					local walkAnim = Instance.new("Animation")
-					walkAnim.AnimationId = "rbxassetid://507777826"  -- default R15 walk
-					return animator:LoadAnimation(walkAnim)
-				end)
-				if ok and track then token._walkTrack = track end
-			end
-			if token._walkTrack then token._walkTrack:Play() end
-			-- Stop walk after tween completes
-			task.delay(0.5, function()
-				if token._walkTrack and token._walkTrack.IsPlaying then
-					token._walkTrack:Stop(0.2)
-				end
-			end)
-		end
+		-- Run animation during the move tween (custom Run, 2026-10-28). Idle filler (fidget /
+		-- Thinking) is cut first so it never blends with the run.
+		UnitAnimController.PlayRun(token, 0.5)
 	else
 		-- Cylinder fallback: keep 90-degree rotation (grounded to real surface)
 		local destPos = tileToWorldGrounded(data.tileX, data.tileY)
@@ -3874,6 +3957,26 @@ BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
 	updateHpBar(data.targetId, data.targetHp, data.targetMaxHp)
 	if unitData[data.targetId] then unitData[data.targetId].currentHp = data.targetHp end
 	local tt = unitTokens[data.targetId]
+	-- Actor animation: the server names the kind (animKind: Throw / Bow / Pistol /
+	-- QuickCast / ShieldBash / Taunt / ...; "None" = already shown on announce). With no
+	-- kind (device hits) fall back to the old heuristic: skill -> cast, range>7.5 ->
+	-- projectile stand-in, else melee stand-in. Runs even when the target has no token
+	-- (a skill aimed at an empty tile), so ground casts still animate (2026-10-28 F-2).
+	do
+		local _at = unitTokens[data.actorId]
+		if _at then
+			local _kind = data.animKind
+			if not _kind then
+				_kind = "Attack"
+				if data.skillId then
+					_kind = "Cast"
+				elseif tt and tt.part and _at.part and (_at.part.Position - tt.part.Position).Magnitude > 7.5 then
+					_kind = "Projectile"
+				end
+			end
+			playUnitAnim(_at, _kind)
+		end
+	end
 	if tt then
 		-- Camera: frame both actor and target during action resolution
 		local _actorToken = unitTokens[data.actorId]
@@ -3893,24 +3996,12 @@ BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
 		-- Only show a damage number when real damage landed. Self-target / no-hit
 		-- skills (e.g. Riposte Stance) resolve with damage=0 and must NOT show '-0'.
 		if (data.damage or 0) > 0 then showDamageText(tt.part.Position, data.damage, false) end
-		-- Base animations: brief hit-reaction flinch on the target when damage lands,
-		-- and an attack swing on the actor. One-shots over the looped idle (R15 only).
-		if (data.damage or 0) > 0 then playUnitAnim(tt, "Hit", { stopAfter = 0.6 }) end
-		-- Actor action animation: a SKILL plays a cast motion; a basic attack from
-		-- range (same dist>7.5 proxy the VFX uses just below) plays a projectile
-		-- draw/shoot; an adjacent basic attack plays the melee swing. Free-default
-		-- stand-ins (swap specific ids later). One-shots over the looped idle.
-		do
-			local _at = unitTokens[data.actorId]
-			if _at then
-				local _kind = "Attack"
-				if data.skillId then
-					_kind = "Cast"
-				elseif tt and tt.part and _at.part and (_at.part.Position - tt.part.Position).Magnitude > 7.5 then
-					_kind = "Projectile"
-				end
-				playUnitAnim(_at, _kind, { stopAfter = 0.6 })
-			end
+		-- Target reaction (2026-10-28): a SURVIVING hit plays Block while Guarding, otherwise a
+		-- random Hit (Hit / Hit 2 / Hit 3 / 1 Hand Hit). A lethal hit plays nothing here --
+		-- UnitDefeated plays and holds the KO.
+		if (data.damage or 0) > 0 and (data.targetHp or 0) > 0 then
+			local _guarding = unitData[data.targetId] and unitData[data.targetId].isGuarding
+			playUnitAnim(tt, if _guarding then "Block" else "Hit")
 		end
 		-- VFX: prefer a pre-made asset resolved from the skill (element/tags) or the
 		-- melee/ranged fallback; keep the programmatic beam/slash if no asset maps.
@@ -3950,8 +4041,20 @@ BattleEvents.UnitActed.OnClientEvent:Connect(function(data)
 			end
 		end
 		if VFXController then pcall(VFXController.DamageImpact, tt.part.Position) end
-		-- Brief red target highlight (1s)
-		if VFXController then pcall(VFXController.SetPersistHighlight, data.targetId, tt.part, "target"); task.delay(1.0, function() pcall(VFXController.ClearHighlight, data.targetId) end) end
+		-- Brief red target highlight (1s). A KO'd unit keeps its grey KO tint (2026-10-30):
+		-- no flash on a body that is already down, and if the unit was KO'd while the flash
+		-- was up (hit + defeat arriving close together), the timer puts the grey back
+		-- instead of clearing it.
+		if VFXController and not tt._isKO then
+			pcall(VFXController.SetPersistHighlight, data.targetId, tt.part, "target")
+			task.delay(1.0, function()
+				if tt._isKO then
+					pcall(VFXController.SetPersistHighlight, data.targetId, tt.model or tt.part, "ko")
+				else
+					pcall(VFXController.ClearHighlight, data.targetId)
+				end
+			end)
+		end
 	end
 	-- Battle log: authored server-side (BattleLogEntry), not here.
 
@@ -3999,6 +4102,8 @@ BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
 			task.delay(1.5, function() CameraController.RestoreZoom() end)
 		end
 		if data.skillName then local at = unitTokens[data.actorId]; if at then showFloatingText(at.part.Position, data.skillName, Theme.Colors.Success, 1.1) end end
+		-- Caster animation named by the server (2026-10-28; nil/"None" = nothing).
+		do local _ha = unitTokens[data.actorId]; if _ha and data.animKind then playUnitAnim(_ha, data.animKind) end end
 		showDamageText(tt.part.Position, data.amount, true)
 		if SoundController then SoundController.PlayHeal() end
 		-- VFX: pre-made heal asset if mapped, else programmatic heal particles.
@@ -4045,12 +4150,46 @@ local function restoreFromKO(unitId)
 		tok.part.Color = Theme.GetSideColor(u and u.side)
 		tok.part.Transparency = if u and u.summonType == "SoulEcho" then 0.2 else 0
 	end
-	if tok._animTracks and tok._animTracks.KO and tok._animTracks.KO.IsPlaying then
-		tok._animTracks.KO:Stop(0.2)
-	end
-	playUnitAnim(tok, "Idle", { loop = true, fade = 0.3 })
+	-- Release the KO hold and return to the base idle (2026-10-28).
+	UnitAnimController.RestoreFromKO(tok)
+	if tok.bar then tok.bar.Enabled = true end  -- HP/MP bar + name back on revive (2026-10-30)
 	syncStanceLoop(unitId)
 	refreshDebuffLoop(unitId)
+end
+
+-- KO look for a defeated unit (2026-10-30): greyed-out body, HP/MP bar hidden, KO sound,
+-- and KO dramatic held on its last frame (no smoke puff -- user ruling 2026-10-30). Shared by UnitDefeated AND UnitStateChanged, because
+-- map-object and event kills (Catapult, Ballista, Eye of the Magi, Stone Pillar, Necro
+-- Tome, Lightning, Death Ripple, terrain, weather ...) only send UnitStateChanged with
+-- isAlive=false -- they never fire UnitDefeated, so those units used to keep idling.
+-- Runs once per KO: a token already down (_isKO, set by PlayKO) is skipped.
+local function showUnitKO(unitId)
+	local t = unitTokens[unitId]
+	if t and t._isKO then return end
+	UnitAnimController.EndThinking(unitId)
+	if t and t.part and not t.model then
+		-- Cylinder fallback: dim the part directly
+		t.part.Color = Color3.fromRGB(60,60,60); t.part.Transparency = 0.4
+	end
+	if unitData[unitId] then unitData[unitId].isAlive = false end
+	refreshDebuffLoop(unitId)  -- unit dead -> loop self-clears
+	clearActionLabel(unitId)
+	stopAllPersistentLoops(unitId)
+	if SoundController then
+		SoundController.StopChannel(unitId)  -- stop any channel loop on death
+		SoundController.PlayKO()
+	end
+	if t and t.part then
+		-- Grey the whole body: the highlight goes on the MODEL. On the invisible root part
+		-- (t.part) it only tinted that part, so R15 bodies were never greyed.
+		if VFXController then pcall(VFXController.SetPersistHighlight, unitId, t.model or t.part, "ko") end
+		-- Hide the HP/MP bar (and the name inside it) so downed units don't clutter the
+		-- screen; the unit inspector still shows KO'd units. Revive turns it back on.
+		if t.bar then t.bar.Enabled = false end
+		-- KO dramatic plays once and is HELD on its last frame, so the body stays lying
+		-- down; nothing else plays on the unit until a revive releases it.
+		UnitAnimController.PlayKO(t)
+	end
 end
 
 BattleEvents.UnitStateChanged.OnClientEvent:Connect(function(data)
@@ -4076,6 +4215,9 @@ BattleEvents.UnitStateChanged.OnClientEvent:Connect(function(data)
 		showDamageText(tok.part.Position, hp - before, true)
 	end
 	if wasDown and data.isAlive == true then restoreFromKO(data.unitId) end  -- revived (2026-10-26)
+	-- Killed by a map object / event (no UnitDefeated is sent for those): show the KO now.
+	-- HP must be 0 so a unit that merely left the map is never shown as KO'd.
+	if not wasDown and data.isAlive == false and (hp or 0) <= 0 then showUnitKO(data.unitId) end
 end)
 
 BattleEvents.StatusApplied.OnClientEvent:Connect(function(data)
@@ -4143,7 +4285,11 @@ BattleEvents.StatusExpired.OnClientEvent:Connect(function(data)
 		for i, s in ipairs(unitData[data.unitId].statuses) do if s.id == data.statusId then table.remove(unitData[data.unitId].statuses, i); break end end
 	end
 	refreshDebuffLoop(data.unitId)
-	if data.statusId == "Guard" then stopPersistentLoop(data.unitId, "guard") end
+	if data.statusId == "Guard" then
+		stopPersistentLoop(data.unitId, "guard")
+		-- Guard dispelled/expired early: hits after this are no longer Blocks (2026-10-28).
+		if unitData[data.unitId] then unitData[data.unitId].isGuarding = false end
+	end
 	local t = unitTokens[data.unitId]
 	if t then showStatusText(t.part.Position, "-"..data.statusId, Theme.Colors.TextSecondary) end
 end)
@@ -4231,6 +4377,13 @@ end)
 BattleEvents.ActionAnnounced.OnClientEvent:Connect(function(data)
 	if not data or not data.unitId then return end
 	showActionAnnounce(data.unitId, data.label)
+	-- Any announced action counts as activity (restarts the Thinking timer), and some carry
+	-- their own animation: Push / Interact / Open Treasure / Big Spell (2026-10-28).
+	UnitAnimController.NoteActivity(data.unitId)
+	if data.animKind then
+		local _t = unitTokens[data.unitId]
+		if _t then playUnitAnim(_t, data.animKind) end
+	end
 end)
 
 BattleEvents.ChannelFizzled.OnClientEvent:Connect(function(data)
@@ -4247,6 +4400,12 @@ BattleEvents.ChannelStarted.OnClientEvent:Connect(function(data)
 	local asset = reg and (data.isHealing and reg.ChannelHeal or reg.ChannelDamage) or nil
 	if asset then startPersistentLoop(data.unitId, "channel", asset) end
 	if SoundController then SoundController.StartChannel(data.unitId) end
+	-- Caster animation (2026-10-28): double-cast (channel), quick cast (activation delay),
+	-- Interact (Resuscitate). Plays once; it does not loop for the channel's duration.
+	if data.animKind then
+		local _ct = unitTokens[data.unitId]
+		if _ct then playUnitAnim(_ct, data.animKind) end
+	end
 end)
 
 BattleEvents.ChannelEnded.OnClientEvent:Connect(function(data)
@@ -4266,6 +4425,7 @@ BattleEvents.MultiTargetHit.OnClientEvent:Connect(function(data)
 end)
 
 BattleEvents.TurnEnded.OnClientEvent:Connect(function(data)
+	UnitAnimController.EndThinking(data.unitId)
 	local t = unitTokens[data.unitId]; if t then t.label.TextColor3 = unitNameColor(unitData[data.unitId]) end
 	hideSelectionRing()
 	if unitData[data.unitId] then
@@ -4280,6 +4440,7 @@ BattleEvents.UnitDefeated.OnClientEvent:Connect(function(data)
 	local t = unitTokens[data.unitId]
 	-- Unit LEFT the map (e.g. Merchant Caravan exit): vanish quietly — no KO
 	-- smoke/sound/anim/grey body — and forget the token. Real defeats never set this.
+	UnitAnimController.EndThinking(data.unitId)
 	if data and data.removeUnit then
 		if t then
 			stopAllPersistentLoops(data.unitId)
@@ -4295,33 +4456,12 @@ BattleEvents.UnitDefeated.OnClientEvent:Connect(function(data)
 		unitData[data.unitId] = nil
 		return
 	end
-	if t then
-		if not t.model then
-			-- Cylinder fallback: dim the part directly
-			t.part.Color = Color3.fromRGB(60,60,60); t.part.Transparency = 0.4
-		end
-		-- R15 and cylinder both get VFX highlight (handled below)
-	end
-	if unitData[data.unitId] then unitData[data.unitId].isAlive = false end
-	refreshDebuffLoop(data.unitId)  -- unit dead -> loop self-clears
-	clearActionLabel(data.unitId)
-	stopAllPersistentLoops(data.unitId)
-	if SoundController then
-		SoundController.StopChannel(data.unitId)  -- stop any channel loop on death
-		SoundController.PlayKO()
-	end
-	-- VFX: KO smoke puff + persistent grey highlight
-	if t then
-		if VFXController then pcall(VFXController.KOEffect, t.part.Position) end
-		if VFXController then pcall(VFXController.SetPersistHighlight, data.unitId, t.part, "ko") end
-		-- Base KO animation: stop the looped idle and play a fall/faint one-shot (R15 only).
-		stopUnitIdle(t)
-		playUnitAnim(t, "KO", { stopAfter = 2.0 })
-	end
+	showUnitKO(data.unitId)  -- shared KO look (also used by object/event kills)
 end)
 
 BattleEvents.GuardActivated.OnClientEvent:Connect(function(data)
 	local token = unitTokens[data.unitId]
+	UnitAnimController.NoteActivity(data.unitId)  -- Guard is an action (Thinking timer)
 	local mitigationPct = math.round((data.mitigation or 0.35) * 100)
 
 	if token then
@@ -4394,6 +4534,19 @@ BattleEvents.UnitPushed.OnClientEvent:Connect(function(data)
 		showFloatingText(targetToken.part.Position, "-" .. totalDmg, Color3.fromRGB(255, 100, 40))
 		updateHpBar(data.targetId, data.targetHp, data.targetMaxHp)
 	end
+	-- Push / wall / fall KO (2026-10-30): a push sends no defeat event, so show the KO here.
+	-- showUnitKO runs once per KO, so a later defeat event for the same unit is ignored.
+	if targetToken and data.targetHp ~= nil and data.targetHp <= 0 then
+		if unitData[data.targetId] then unitData[data.targetId].currentHp = 0 end
+		showUnitKO(data.targetId)
+	end
+	-- The unit the target was shoved into: update its HP bar, and show its KO if it died.
+	if data.collidedId and data.collidedHp ~= nil and unitTokens[data.collidedId] then
+		local cu = unitData[data.collidedId]
+		if cu then cu.currentHp = data.collidedHp end
+		updateHpBar(data.collidedId, data.collidedHp, cu and cu.maxHp or nil)
+		if data.collidedHp <= 0 then showUnitKO(data.collidedId) end
+	end
 end)
 
 BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
@@ -4404,6 +4557,16 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	if TileHL and TileHL.ClearInspectMarker then pcall(TileHL.ClearInspectMarker) end  -- after ClearSelection (it re-marks the actor)
 	isPlayerTurn = false; inputMode = nil; clearHighlights()
 	hideSelectionRing()
+	-- Animations (2026-10-28): stop fidgets + Thinking; surviving units of the winning side
+	-- loop a random Victory / Victory 2. KO'd bodies keep their KO hold.
+	UnitAnimController.StopFidgets()
+	UnitAnimController.EndThinking()
+	for _, su in ipairs(data.units or {}) do
+		if su.isAlive and su.side == data.winner then
+			local _vt = unitTokens[su.id]
+			if _vt then UnitAnimController.PlayVictory(_vt) end
+		end
+	end
 	-- Clear leftover facing-arrow pads at battle END (2026-10-16). The arrow pads live in
 	-- visualFolder keyed by token.facePad, independent of the server UnitModels (which are
 	-- cleared server-side). Previously they were only wiped at the NEXT BattleStarted, so they
@@ -5058,6 +5221,7 @@ local function createLoadoutHub(phase)
 				Common = "rgb(200,200,200)",
 				Uncommon = "rgb(100,200,100)", Rare = "rgb(100,150,255)",
 				Epic = "rgb(180,100,255)", Exalted = "rgb(255,90,170)", Legendary = "rgb(255,180,50)",
+				Mythic = "rgb(255,120,30)", Transcendent = "rgb(70,225,230)", Unique = "rgb(190,20,60)",
 			})[item.rarity] or "rgb(200,200,200)"
 			local slotTag = item.equippedSlot and (" [" .. item.equippedSlot .. "]") or ""
 			local eqTag = item.equippedBy and string.format(' <font color="rgb(255,200,80)">← %s%s</font>', item.equippedBy, slotTag) or ""
@@ -5288,8 +5452,8 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		recY = recY + 16
 		for _, d in ipairs(data.dispatch) do
 			local xpText = (d.xp and d.xp > 0) and ("+" .. d.xp .. " XP") or ""
-			local matText = (d.matCount and d.matCount > 0 and d.matTier)
-				and ((xpText ~= "" and "  \u{00B7}  " or "") .. "+" .. d.matCount .. " Tier " .. d.matTier .. " materials") or ""
+			local matText = (d.mercury and d.mercury > 0)
+				and ((xpText ~= "" and "  \u{00B7}  " or "") .. "+" .. d.mercury .. " mercury") or ""
 			local dLabel = Instance.new("TextLabel")
 			dLabel.Size = UDim2.new(1, 0, 0, 14)
 			dLabel.Position = UDim2.new(0, 0, 0, recY)
@@ -5333,7 +5497,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		list.Padding = UDim.new(0, 3)
 		local days = g.remainingDays or 0
 		local head = makeLabel(pop, "Tier " .. tostring(g.tier or 1) .. " dispatch \u{2014} "
-			.. days .. (days == 1 and " day left" or " days left"), {
+			.. days .. (days == 1 and " battle left" or " battles left"), {
 			size = UDim2.new(1, 0, 0, 16), font = Theme.Font.PrimaryBold,
 			textSize = Theme.Text.Small(), color = Theme.Colors.TextGold,
 			align = Enum.TextXAlignment.Left, order = 0 })
@@ -5368,7 +5532,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		aHeader.TextXAlignment = Enum.TextXAlignment.Left
 		local dp = tonumber(data.daysElapsed) or 0
 		aHeader.Text = (dp > 0)
-			and ("DISPATCHES IN PROGRESS   (" .. dp .. (dp == 1 and " day passed)" or " days passed)"))
+			and ("DISPATCHES IN PROGRESS   (" .. dp .. (dp == 1 and " battle passed)" or " battles passed)"))
 			or "DISPATCHES IN PROGRESS"
 		aHeader.Parent = frame
 		recY = recY + 16
@@ -5383,7 +5547,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 			end, { size = UDim2.new(0, 16, 0, 15) })
 			unitsBtn.Position = UDim2.new(0, 0, 0, recY - 1)
 			makeLabel(frame, "Tier " .. tostring(g.tier or 1) .. " dispatch \u{2014} "
-				.. days .. (days == 1 and " day left" or " days left"), {
+				.. days .. (days == 1 and " battle left" or " battles left"), {
 				size = UDim2.new(1, -22, 0, 14), pos = UDim2.new(0, 22, 0, recY),
 				font = Theme.Font.Mono, textSize = Theme.Text.Tiny(),
 				color = Theme.Colors.TextGold, align = Enum.TextXAlignment.Left })
@@ -5407,6 +5571,145 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		goldLabel.Text = if data.defeat then `+{data.gold} GOLD kept (half of gold dropped)` else `+{data.gold} GOLD`
 		goldLabel.Parent = frame
 		recY = recY + 18
+	end
+	-- Mercury earned this battle (v2 build step 6a, 2026-11-01): kills + chests + salvage.
+	if type(data.mercury) == "number" and data.mercury > 0 then
+		local mercuryLabel = Instance.new("TextLabel")
+		mercuryLabel.Size = UDim2.new(1, 0, 0, 16)
+		mercuryLabel.Position = UDim2.new(0, 0, 0, recY)
+		mercuryLabel.BackgroundTransparency = 1
+		mercuryLabel.Font = Theme.Font.PrimaryBold
+		mercuryLabel.TextSize = Theme.Text.Body()
+		mercuryLabel.TextColor3 = Theme.Colors.TextPrimary
+		mercuryLabel.TextXAlignment = Enum.TextXAlignment.Left
+		mercuryLabel.Text = `+{data.mercury} MERCURY`
+		mercuryLabel.Parent = frame
+		recY = recY + 18
+	end
+	-- Daily Contract won (daily systems, 2026-11-01): every 3rd one also gives 1 sulfur.
+	if type(data.daily) == "table" then
+		local dailyLabel = Instance.new("TextLabel")
+		dailyLabel.Size = UDim2.new(1, 0, 0, 16)
+		dailyLabel.Position = UDim2.new(0, 0, 0, recY)
+		dailyLabel.BackgroundTransparency = 1
+		dailyLabel.Font = Theme.Font.PrimaryBold
+		dailyLabel.TextSize = Theme.Text.Body()
+		dailyLabel.TextColor3 = Theme.Colors.TextGold
+		dailyLabel.TextXAlignment = Enum.TextXAlignment.Left
+		local sulfur = tonumber(data.daily.sulfur) or 0
+		dailyLabel.Text = if sulfur > 0 then `DAILY CONTRACT COMPLETE  +{sulfur} SULFUR` else "DAILY CONTRACT COMPLETE"
+		dailyLabel.Parent = frame
+		recY = recY + 18
+	end
+	-- Elite encounter won (daily systems, 2026-11-01).
+	if type(data.elite) == "table" then
+		local eliteLabel = Instance.new("TextLabel")
+		eliteLabel.Size = UDim2.new(1, 0, 0, 16)
+		eliteLabel.Position = UDim2.new(0, 0, 0, recY)
+		eliteLabel.BackgroundTransparency = 1
+		eliteLabel.Font = Theme.Font.PrimaryBold
+		eliteLabel.TextSize = Theme.Text.Small()
+		eliteLabel.TextColor3 = Theme.Colors.TextGold
+		eliteLabel.TextXAlignment = Enum.TextXAlignment.Left
+		eliteLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		local parts = { `ELITE DEFEATED  +{tonumber(data.elite.crystals) or 0} CRYSTALS` }
+		if data.elite.gem then table.insert(parts, `+1 RUNE GEM ({tostring(data.elite.gem)})`) end
+		if (tonumber(data.elite.sulfur) or 0) > 0 then table.insert(parts, `+{data.elite.sulfur} SULFUR`) end
+		eliteLabel.Text = table.concat(parts, "  ")
+		eliteLabel.Parent = frame
+		recY = recY + 18
+	end
+	-- Boss reward (daily systems, 2026-11-01): first 3 boss wins a day.
+	if type(data.boss) == "table" then
+		local bossLabel = Instance.new("TextLabel")
+		bossLabel.Size = UDim2.new(1, 0, 0, 32)
+		bossLabel.Position = UDim2.new(0, 0, 0, recY)
+		bossLabel.BackgroundTransparency = 1
+		bossLabel.Font = Theme.Font.PrimaryBold
+		bossLabel.TextSize = Theme.Text.Small()
+		bossLabel.TextColor3 = if data.boss.limited then Theme.Colors.TextSecondary else Theme.Colors.TextGold
+		bossLabel.TextXAlignment = Enum.TextXAlignment.Left
+		bossLabel.TextYAlignment = Enum.TextYAlignment.Top
+		bossLabel.TextWrapped = true
+		if data.boss.limited then
+			bossLabel.Text = "Boss rewards used up for today (3 a day). New ones at the next 00:00 UTC."
+		else
+			local parts = { `BOSS REWARD  +{tonumber(data.boss.crystals) or 0} CRYSTALS` }
+			if data.boss.gem then table.insert(parts, `+1 RUNE GEM ({tostring(data.boss.gem)})`) end
+			if (tonumber(data.boss.sulfur) or 0) > 0 then table.insert(parts, `+{data.boss.sulfur} SULFUR`) end
+			bossLabel.Text = table.concat(parts, "  ") .. `\nBoss rewards left today: {tonumber(data.boss.left) or 0}`
+		end
+		bossLabel.Parent = frame
+		recY = recY + 34
+	end
+
+	-- Small helper for the two sections below (2026-10-28): one wrapped text row at
+	-- recY, advancing recY by the row height. Same positional layout as Gold above.
+	local function addRow(text, color, font, size, height)
+		local lbl = Instance.new("TextLabel")
+		lbl.Size = UDim2.new(1, 0, 0, height or 14)
+		lbl.Position = UDim2.new(0, 0, 0, recY)
+		lbl.BackgroundTransparency = 1
+		lbl.Font = font or Theme.Font.Primary
+		lbl.TextSize = size or Theme.Text.Small()
+		lbl.TextColor3 = color or Theme.Colors.TextPrimary
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.TextTruncate = Enum.TextTruncate.AtEnd
+		lbl.Text = text
+		lbl.Parent = frame
+		recY = recY + (height or 14) + 2
+		return lbl
+	end
+
+	-- EXPERIENCE earned this battle + level-ups (2026-10-28). Kill XP is granted on
+	-- any outcome, so this also shows on a defeat.
+	if data.xp and #data.xp > 0 then
+		addDivider()
+		addRow("EXPERIENCE", Theme.Colors.TextSecondary, Theme.Font.PrimaryBold, Theme.Text.Small(), 14)
+		-- Deployed first, then benched (65%); 3 units per row so long rosters wrap.
+		local function xpRows(benched, label)
+			local parts = {}
+			for _, x in ipairs(data.xp) do
+				if (x.benched == true) == benched then
+					parts[#parts + 1] = string.format("%s +%d", tostring(x.name), tonumber(x.xp) or 0)
+				end
+			end
+			for i = 1, #parts, 3 do
+				local chunk = table.concat(parts, "   ", i, math.min(i + 2, #parts))
+				addRow((i == 1 and label or "") .. chunk, Theme.Colors.TextPrimary, Theme.Font.Mono, Theme.Text.Tiny(), 13)
+			end
+		end
+		xpRows(false, "Deployed: ")
+		xpRows(true, "Benched (65%): ")
+		for _, x in ipairs(data.xp) do
+			if (tonumber(x.levelsGained) or 0) > 0 then
+				addRow(string.format("LEVEL UP! %s reached Lv %s%s", tostring(x.name), tostring(x.level or "?"),
+					x.atCap and " (max level)" or ""), Theme.Colors.TextGold, Theme.Font.PrimaryBold, Theme.Text.Small(), 14)
+			end
+		end
+	end
+
+	-- OPTIONAL OBJECTIVES result (2026-10-28): every objective this battle, achieved
+	-- or failed, with what it asked for and its bonus reward (marked BONUS in loot).
+	if data.objectives and #data.objectives > 0 then
+		addDivider()
+		addRow("OPTIONAL OBJECTIVES", Theme.Colors.TextSecondary, Theme.Font.PrimaryBold, Theme.Text.Small(), 14)
+		for _, o in ipairs(data.objectives) do
+			local status, col
+			if o.achieved then
+				local rc = tonumber(o.rewardCount) or 0
+				status = string.format("ACHIEVED: +%d bonus item%s (marked BONUS below)", rc, rc == 1 and "" or "s")
+				col = Theme.Colors.Success
+			else
+				status = "FAILED" .. (o.reason and (": " .. tostring(o.reason)) or "")
+				col = Theme.Colors.Danger
+			end
+			addRow(string.format("%s (%s)  %s", tostring(o.name), tostring(o.mode or "Normal"), status),
+				col, Theme.Font.PrimaryBold, Theme.Text.Small(), 14)
+			if o.goal and o.goal ~= "" then
+				addRow("  " .. tostring(o.goal), Theme.Colors.TextSecondary, Theme.Font.Primary, Theme.Text.Tiny(), 12)
+			end
+		end
 	end
 
 	-- Loot header
@@ -5494,6 +5797,47 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 			stLbl.ZIndex = 4
 			Instance.new("UICorner", stLbl).CornerRadius = UDim.new(0, 3)
 			stLbl.Parent = card
+		end
+
+		-- BONUS badge (2026-10-28): items granted by a completed optional objective
+		-- carry item.objectiveReward=true. Gold tag, top-right (below STOLEN if both).
+		if item.objectiveReward then
+			local bLbl = Instance.new("TextLabel")
+			bLbl.Size = UDim2.new(0, 40, 0, 14)
+			bLbl.AnchorPoint = Vector2.new(1, 0)
+			bLbl.Position = UDim2.new(1, -2, 0, item.stolen and 18 or 2)
+			bLbl.BackgroundColor3 = Theme.Colors.TextGold
+			bLbl.BackgroundTransparency = 0.1
+			bLbl.BorderSizePixel = 0
+			bLbl.Font = Theme.Font.PrimaryBold
+			bLbl.TextSize = 8
+			bLbl.TextColor3 = Color3.new(0, 0, 0)
+			bLbl.Text = "BONUS"
+			bLbl.ZIndex = 4
+			Instance.new("UICorner", bLbl).CornerRadius = UDim.new(0, 3)
+			bLbl.Parent = card
+		end
+
+		-- CHEST badge (2026-11-01): found in a chest or by salvage during the battle (already
+		-- granted then). Blue tag, top-right (below STOLEN / BONUS if present).
+		if item.chestReward then
+			local chY = 2 + (if item.stolen then 16 else 0) + (if item.objectiveReward then 16 else 0)
+			local chLbl = Instance.new("TextLabel")
+			chLbl.Size = UDim2.new(0, 40, 0, 14)
+			chLbl.AnchorPoint = Vector2.new(1, 0)
+			chLbl.Position = UDim2.new(1, -2, 0, chY)
+			chLbl.BackgroundColor3 = Theme.Colors.Info
+			chLbl.BackgroundTransparency = 0.1
+			chLbl.BorderSizePixel = 0
+			chLbl.Font = Theme.Font.PrimaryBold
+			chLbl.TextSize = 8
+			chLbl.TextColor3 = Color3.new(1, 1, 1)
+			chLbl.Text = "CHEST"
+			chLbl.ZIndex = 4
+			local chCorner = Instance.new("UICorner")
+			chCorner.CornerRadius = UDim.new(0, 3)
+			chCorner.Parent = chLbl
+			chLbl.Parent = card
 		end
 
 		-- Level badge (top-left)
@@ -5691,7 +6035,8 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 				if item.element then table.insert(uiItem.tags, item.element) end
 				if item.nativePassiveId then
 					table.insert(uiItem.passives, {
-						name = item.nativePassiveId,
+						-- Server-supplied player name, internal id only as fallback (2026-10-30).
+						name = item.nativePassiveName or item.nativePassiveId,
 						icon = "[*]",
 						desc = item.nativePassiveDesc or "",
 					})
@@ -5997,9 +6342,12 @@ BattleEvents.ItemUsed.OnClientEvent:Connect(function(data)
 		elseif effectType == "Damage" then _cat = "Damage" end
 		SoundController.PlayItem(_cat)
 	end
-	-- Base animation: the actor plays a generic item-use motion (free-default
-	-- stand-in; R15 models only, cylinders no-op).
-	do local _au = data.actorId and unitTokens[data.actorId]; if _au then playUnitAnim(_au, "ItemUse", { stopAfter = 0.7 }) end end
+	-- Item animation (2026-10-28): Throw Object when the consumable is used on another unit
+	-- or a tile; a self-target consumable plays nothing.
+	do
+		local _au = data.actorId and unitTokens[data.actorId]
+		if _au and data.targetId ~= nil and data.targetId ~= data.actorId then playUnitAnim(_au, "ThrowObject") end
+	end
 
 	-- Refresh the target unit's bars from the effect result. The server already
 	-- mutated HP/MP; pull the freshest values we know client-side and nudge bars.
@@ -6204,7 +6552,7 @@ BattleEvents.StealPrompt.OnClientEvent:Connect(function(data)
 	title.Font = Theme.Font.PrimaryBold
 	title.TextSize = 12
 	title.TextColor3 = Theme.Colors.TextGold
-	title.Text = "Steal from " .. (data.targetName or "enemy")
+	title.Text = data.title or ("Steal from " .. (data.targetName or "enemy"))  -- title: other pick lists (Quartermaster)
 	title.LayoutOrder = 0
 	title.Parent = panel
 
@@ -6351,4 +6699,15 @@ BattleEvents.ObjectDamage.OnClientEvent:Connect(function(data)
 			task.delay(1.5, function() CameraController.RestoreZoom() end)
 		end
 	end
+end)
+
+-- TrapSprung (2026-10-28): display-only "Bear Trap!" / "Hidden Bear Trap!" at the
+-- tile so a sprung (possibly never-drawn hidden) trap is visible. Server-authored.
+BattleEvents.TrapSprung.OnClientEvent:Connect(function(data)
+	if type(data) ~= "table" then return end
+	local tx, ty = data.x, data.y
+	if type(tx) ~= "number" or type(ty) ~= "number" then return end
+	local name = tostring(data.trapType or "Trap")
+	local text = if data.hidden then `Hidden {name}!` else `{name}!`
+	showFloatingText(tileToWorld(tx, ty) + Vector3.new(0, 1.5, 0), text, Theme.Colors.Warning, 1.6)
 end)

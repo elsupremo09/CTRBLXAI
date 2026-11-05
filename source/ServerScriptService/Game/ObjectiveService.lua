@@ -69,6 +69,15 @@ function ObjectiveService.SetElementSourceChecker(fn)
 	_elementChecker = fn
 end
 
+-- Disguise checker (DI, set by Main = ObjectEffectService.IsDisguised). A disguised
+-- Mimic counts as a chest (project_rules 224). DI because ObjectEffectService
+-- requires ObjectiveService (direct require would be circular, ARC DI pattern).
+-- nil-safe: with no checker wired, Mimics are simply not counted.
+local _disguiseChecker = nil
+function ObjectiveService.SetDisguiseChecker(fn)
+	_disguiseChecker = fn
+end
+
 -- Each entry:
 --   id            stable key
 --   name          player-facing label
@@ -341,7 +350,9 @@ function ObjectiveService.BuildContext(units, objects)
 	end
 	for _, o in ipairs(objects or {}) do
 		local t = o.type
-		if t == "Treasure Chest" or t == "Cursed Chest" then ctx.chestCount += 1
+		-- Disguised Mimic counts as a chest (rules 224); waking it records chestsOpened.
+		local disguisedMimic = t == "Mimic" and _disguiseChecker ~= nil and _disguiseChecker(o) == true
+		if t == "Treasure Chest" or t == "Cursed Chest" or disguisedMimic then ctx.chestCount += 1
 		elseif t == "Ballista" or t == "Catapult" or t == "Portable Ballista" then ctx.hasSiege = true
 		elseif t == "Dragon Utopia" then ctx.hasDragonUtopia = true end
 		if o.hp ~= nil then ctx.breakableCount += 1 end
@@ -381,6 +392,30 @@ function ObjectiveService.BeginBattle(state, ctx, rng, maxActive)
 	end
 	table.sort(pool, function(a, b) return a.id < b.id end) -- deterministic order
 
+	-- ctx.forceObjective (2026-11-01, elite encounters): this objective is always one of the
+	-- active ones ("Defeat the Elite within N rounds" in an elite encounter). It skips the
+	-- spawnable check, so an event that adds a second Elite cannot drop it (D-2 fix); the caller
+	-- makes it count the tagged leader only (state.eliteLeaderOnly).
+	local forced = ctx and ctx.forceObjective
+	if forced then
+		for i, def in ipairs(pool) do
+			if def.id == forced then
+				table.remove(pool, i)
+				break
+			end
+		end
+		local def = Catalog[forced]
+		if def and IMPLEMENTED[def.id] then
+			local mode = NORMAL
+			if def.thresholds[HARD] ~= nil then
+				mode = (rng and rng:NextNumber() < 0.35) and HARD or NORMAL
+			end
+			state.activeObjectives[#state.activeObjectives + 1] = { id = def.id, mode = mode }
+		else
+			warn("[ObjectiveService] Forced objective not available: " .. tostring(forced))
+		end
+	end
+
 	-- Deterministic pick of up to maxActive objectives; each rolls a mode.
 	while #pool > 0 and #state.activeObjectives < maxActive do
 		local i = rng and rng:NextInteger(1, #pool) or 1
@@ -396,26 +431,142 @@ function ObjectiveService.BeginBattle(state, ctx, rng, maxActive)
 	return state.activeObjectives
 end
 
+--------------------------------------------------------------------
+-- PLAYER-FACING TEXT (2026-10-28): plain-language goal + live progress for every
+-- objective. Single source for BOTH Map Details (mid-battle) and the victory
+-- screen, so the two can never disagree. Pure reads — never mutates state.
+--------------------------------------------------------------------
+local function liveKOs(state)
+	local n = 0
+	for _, u in ipairs((state and state.units) or {}) do
+		if u.side == "Player" and not u.isSummon and not u.isAlive then n += 1 end
+	end
+	return n
+end
+
+local function counterText(key, goalFmt)
+	return {
+		goal = function(t) return string.format(goalFmt, t) end,
+		progress = function(state, t) return string.format("%d / %d", counter(state, key), t) end,
+		done = function(state, t) return counter(state, key) >= t end,
+	}
+end
+
+local TEXT = {
+	strategist = {
+		goal = function(t)
+			if t == 0 then return "Win without any of your units being KO'd" end
+			return string.format("Win with no more than %d of your units KO'd", t)
+		end,
+		progress = function(state, t) return string.format("%d KO'd so far (limit %d)", liveKOs(state), t) end,
+	},
+	speed_clear = {
+		goal = function(t) return string.format("Win within %d rounds (before %d CT)", t, t * CT_PER_ROUND) end,
+		progress = function(state, t) return string.format("Round %d of %d", roundOf(state) + 1, t) end,
+	},
+	elite_slayer = {
+		goal = function(t) return string.format("Defeat the Elite within %d rounds", t) end,
+		progress = function(state, t)
+			local r = counter(state, "eliteSlainRound1")
+			if r > 0 then return string.format("Elite defeated in round %d", r) end
+			return string.format("Round %d of %d, Elite still standing", roundOf(state) + 1, t)
+		end,
+		done = function(state, t)
+			local r = counter(state, "eliteSlainRound1")
+			return r >= 1 and r <= t
+		end,
+	},
+	dragon_slayer = {
+		goal = function() return "Trigger the Dragon Utopia, then defeat every dragon it summons" end,
+		progress = function(state)
+			if counter(state, "dragonUtopiaTriggered") <= 0 then return "Dragon Utopia not triggered yet" end
+			return string.format("%d dragon(s) remaining", math.max(0, counter(state, "dragonsAlive")))
+		end,
+	},
+	npc_survive = {
+		goal = function() return "Keep the protected NPC alive until the battle ends" end,
+		progress = function(state)
+			if counter(state, "npcDied") > 0 then return "The NPC has fallen" end
+			return "NPC is alive"
+		end,
+	},
+	treasure_fever = counterText("chestsOpened",            "Open %d treasure chest(s)"),
+	glutton        = counterText("chargesUsed",             "Use %d consumable charges"),
+	demolition     = counterText("objectsBroken",           "Destroy %d map objects"),
+	recruit        = counterText("enemiesRecruited",        "Recruit %d enemy unit(s) with Interact"),
+	torture        = counterText("enemiesRevived",          "Revive %d KO'd enemy unit(s)"),
+	one_punch      = counterText("oneShotFullKOs",          "KO %d full-HP enemy unit(s) with a single hit each"),
+	nuker          = counterText("maxKOsInOneAction",       "KO %d or more enemies with a single attack"),
+	siege          = counterText("siegeKOs",                "KO %d enemy unit(s) with a Ballista or Catapult"),
+	pusher         = counterText("pushKOs",                 "KO %d enemy unit(s) by push, collision, or fall"),
+	power_nature   = counterText("terrainKOs",              "KO %d enemy unit(s) with terrain (burning, lava, collapse)"),
+	terrain_shaper = counterText("elevationTilesChanged",   "Change the elevation of %d tiles (explosions, Stone Pillar)"),
+	terra_former   = counterText("terrainTilesTransformed", "Transform %d terrain tiles with elemental attacks"),
+}
+
+local function rewardCountFor(mode) return (mode == HARD) and 2 or 1 end
+
+local function goalFor(def, mode)
+	local tx = TEXT[def.id]
+	local t = def.thresholds[mode]
+	return (tx and tx.goal and tx.goal(t)) or def.name
+end
+
+-- Mid-battle view of the active objectives (Map Details). Returns a list of
+-- { id, name, mode, goal, progress, done, rewardCount }. Empty list if none.
+function ObjectiveService.Describe(state)
+	local out = {}
+	if not state or not state.activeObjectives then return out end
+	for _, active in ipairs(state.activeObjectives) do
+		local def = Catalog[active.id]
+		if def then
+			local tx = TEXT[def.id]
+			local t = def.thresholds[active.mode]
+			out[#out + 1] = {
+				id = def.id,
+				name = def.name,
+				mode = active.mode,
+				goal = goalFor(def, active.mode),
+				progress = (tx and tx.progress and tx.progress(state, t)) or "",
+				done = (tx and tx.done and tx.done(state, t)) or false,
+				rewardCount = rewardCountFor(active.mode),
+			}
+		end
+	end
+	return out
+end
+
 -- Evaluate at battle end. Only grants on victory (won=true); on defeat every
--- optional objective is simply erased with no reward and no penalty.
--- Returns { completed = { {id,mode,name}, ... }, rewardCount = N }.
+-- optional objective fails with no reward and no penalty. Always erases.
+-- Returns {
+--   completed = { {id,mode,name}, ... }, rewardCount = N,
+--   objectives = { {id,name,mode,goal,achieved,rewardCount,reason}, ... }  -- every
+--     objective this battle, achieved OR failed (for the victory/defeat screen).
+-- }
 function ObjectiveService.Evaluate(state, won)
-	local result = { completed = {}, rewardCount = 0 }
+	local result = { completed = {}, rewardCount = 0, objectives = {} }
 	if not state or not state.activeObjectives then return result end
 
-	if won then
-		for _, active in ipairs(state.activeObjectives) do
-			local def = Catalog[active.id]
-			if def and def.evaluate and def.evaluate(state, active.mode) then
-				result.completed[#result.completed + 1] =
-					{ id = def.id, mode = active.mode, name = def.name }
+	for _, active in ipairs(state.activeObjectives) do
+		local def = Catalog[active.id]
+		if def then
+			local achieved = false
+			if won and def.evaluate then
+				achieved = def.evaluate(state, active.mode) == true
 			end
-		end
-		-- Hard objectives grant more/higher-quality reward than Normal. One
-		-- reward per completed objective; Hard counts double toward the roll
-		-- count the battle-end reward path will honor in Phase 3 wiring.
-		for _, c in ipairs(result.completed) do
-			result.rewardCount = result.rewardCount + (c.mode == HARD and 2 or 1)
+			-- Hard objectives grant more reward than Normal: 2 rolls vs 1.
+			local rc = achieved and rewardCountFor(active.mode) or 0
+			result.objectives[#result.objectives + 1] = {
+				id = def.id, name = def.name, mode = active.mode,
+				goal = goalFor(def, active.mode),
+				achieved = achieved,
+				rewardCount = rc,
+				reason = (not won) and "Battle lost" or ((not achieved) and "Not completed" or nil),
+			}
+			if achieved then
+				result.completed[#result.completed + 1] = { id = def.id, mode = active.mode, name = def.name }
+				result.rewardCount = result.rewardCount + rc
+			end
 		end
 	end
 
@@ -480,7 +631,9 @@ function ObjectiveService.OnUnitKilled(state, u)
 	elseif cause == "terrain" then
 		state.objectiveCounters.terrainKOs = (state.objectiveCounters.terrainKOs or 0) + 1
 	end
-	if u.enemyType == "Elite" and (state.objectiveCounters.eliteSlainRound1 or 0) == 0 then
+	-- Elite encounters count only the tagged leader (D-2 fix 2026-11-01); other battles any Elite.
+	if u.enemyType == "Elite" and (not state.eliteLeaderOnly or u.isEliteLeader)
+		and (state.objectiveCounters.eliteSlainRound1 or 0) == 0 then
 		state.objectiveCounters.eliteSlainRound1 = roundOf(state) + 1
 	end
 	if u._killedFromFull then

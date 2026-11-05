@@ -68,7 +68,7 @@ RaceData.Races = {
 		startingStats = {STR = 2, AGI = 0, INT = 0, VIT = 3, DEX = 0, LUK = 3},
 		growthRates = {STR = 0.4, AGI = 0.1, INT = 0.1, VIT = 1.0, DEX = 0.1, LUK = 0.3},
 		passiveName = "Undying",
-		passiveEffect = "Revive three turns after KO with 50% HP. Movement Range -1.",
+		passiveEffect = "Revive three turns after KO with 50% HP. Movement Range -1. A Zombie waiting to revive counts as KO'd; if no ally is standing, its side loses. If a Zombie is KO'd while Broken, its Undying revive does not trigger.",
 	},
 	["RACE-VAMPIRE"] = {
 		name = "Vampire",
@@ -140,7 +140,7 @@ RaceData.Races = {
 		startingStats = {STR = 3, AGI = 2, INT = 0, VIT = 1, DEX = 1, LUK = 1},
 		growthRates = {STR = 0.8, AGI = 0.5, INT = 0.1, VIT = 0.2, DEX = 0.2, LUK = 0.2},
 		passiveName = "Moonblood",
-		passiveEffect = "All primary stats +10% during dusk and night. REQUIRES a day/night time-of-day system (not yet implemented — dormant until built, same dependency as Vampire's day/night passive).",
+		passiveEffect = "All primary stats +10% during dusk and night.",
 	},
 	["RACE-TREANT"] = {
 		name = "Treant",
@@ -164,7 +164,7 @@ RaceData.Races = {
 		startingStats = {STR = 3, AGI = 1, INT = 2, VIT = 1, DEX = 1, LUK = 0},
 		growthRates = {STR = 0.7, AGI = 0.2, INT = 0.6, VIT = 0.2, DEX = 0.2, LUK = 0.1},
 		passiveName = "Infernal Pact",
-		passiveEffect = "Dark SKILL potency +20% (applies to the Skill Potency secondary stat contribution of Dark-tagged skills only — NOT basic attacks or items). Holy damage received +20%. NOTE: Demon is a RACE, not a tag; the Tainted Ground 'Undead/Demon gains mana' clause will not auto-detect Demon without a separate hook.",
+		passiveEffect = "Dark SKILL potency +20% (applies to the Skill Potency secondary stat contribution of Dark-tagged skills only — NOT basic attacks or items). Holy damage received +20%.",
 	},
 	["RACE-DRAGONKIN"] = {
 		name = "Dragonkin",

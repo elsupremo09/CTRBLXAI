@@ -295,6 +295,20 @@ function UnitSchema.FindFreeTileNear(units, x, y, mapW, mapH)
 end
 
 -- Where a KO'd unit rises. Returns tileX, tileY, moved; tileX nil = no free tile within 3.
+-- Revive HP with the revive traits applied (re-check 2026-10-29, one rule for every revive):
+-- Undying Will flaw -> exactly 1 HP; otherwise baseFrac x Slow to Recover (x0.5) + Resilient
+-- (+20% max HP), at least 1, at most max HP. Same formula the revive skills and items use.
+function UnitSchema.ReviveHp(unit, baseFrac)
+	local maxHp = (unit and unit.maxHp) or 1
+	local ok, tes = pcall(function() return (require :: any)(script.Parent.TraitEffectService) end)
+	if not ok or not tes then
+		return math.min(maxHp, math.max(1, math.ceil(maxHp * (baseFrac or 0))))
+	end
+	if tes.HasReviveAtOneHp(unit) then return 1 end
+	local eff = (baseFrac or 0) * tes.GetReviveHpMultiplier(unit) + tes.GetReviveHpBonusFraction(unit)
+	return math.min(maxHp, math.max(1, math.ceil(maxHp * eff)))
+end
+
 function UnitSchema.FindReviveTile(unit, units, mapW, mapH)
 	for _, o in ipairs(units or {}) do
 		if o.isAlive and o ~= unit and o.tileX == unit.tileX and o.tileY == unit.tileY then
@@ -425,11 +439,16 @@ function UnitSchema.ApplyHealing(unit, amount)
 	-- debuff is active. Scanned inline via GameConstants.STATUSES (module-scope require); StatusService
 	-- is dependency-injected here, not required, so it is NOT callable at module scope (avoids a cycle).
 	local _hrm = 1
-	for _, inst in ipairs(unit.statusInstances or {}) do
-		local d = GameConstants.STATUSES[inst.id]
-		-- Ruling 10 (2026-10-26): different healing modifiers are TOTALED, not multiplied
-		-- (mirrors StatusService.GetHealingReceivedMult).
-		if d and d.healingReceivedMult then _hrm = _hrm + (d.healingReceivedMult - 1) * (inst.valueScale or 1) end
+	if _statusService and _statusService.GetHealingReceivedMult then
+		-- One formula (2026-10-29): statuses + Blessed Recovery / Cursed Wounds traits.
+		_hrm = _statusService.GetHealingReceivedMult(unit)
+	else
+		for _, inst in ipairs(unit.statusInstances or {}) do
+			local d = GameConstants.STATUSES[inst.id]
+			-- Ruling 10 (2026-10-26): different healing modifiers are TOTALED, not multiplied
+			-- (mirrors StatusService.GetHealingReceivedMult).
+			if d and d.healingReceivedMult then _hrm = _hrm + (d.healingReceivedMult - 1) * (inst.valueScale or 1) end
+		end
 	end
 	_hrm = math.max(0, _hrm)
 	if _hrm ~= 1 then amount = math.max(0, math.floor(amount * _hrm)) end

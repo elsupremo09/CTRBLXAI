@@ -237,7 +237,8 @@ local function applyWeatherStatus(unit: any, statusId: any, hardLock: any)
 		end
 	end
 	if _broadcaster and _broadcaster.UnitStateChanged then
-		_broadcaster.UnitStateChanged(unit)
+		-- Battle Log Coverage (rules 225): name the weather; grouped e.g. "Rain soaked 6 units."
+		_broadcaster.UnitStateChanged(unit, _active)
 	end
 end
 
@@ -251,7 +252,7 @@ local function clearWeatherStatuses(state: any)
 				end
 			end
 			if _broadcaster and _broadcaster.UnitStateChanged then
-				_broadcaster.UnitStateChanged(u)
+				_broadcaster.UnitStateChanged(u, "Weather change")
 			end
 		end
 	end
@@ -306,7 +307,7 @@ local function reshapeTile(x: any, y: any, terrain: any, elev: any)
 		-- which avoids the load-order / circular-require risk a hard require would add.
 		-- nil-safe like every other _broadcaster call in this module.
 		if _broadcaster and _broadcaster.TerrainChanged then
-			_broadcaster.TerrainChanged(x, y, terrain)
+			_broadcaster.TerrainChanged(x, y, terrain, nil, _active)  -- log cause (grouped)
 		end
 		-- BUG-002 voxel-clear follow-up (2026-10-22): if the ORIGIN was a VOXEL_KEEP
 		-- terrain (server Roblox-Terrain voxel column) and the new terrain is NOT voxel-kept
@@ -398,7 +399,7 @@ Periodic["Mana Storm"] = function(ctx: any)
 		if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
 		u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 		if u.currentHp <= 0 then u.isAlive = false end
-		if _broadcaster then _broadcaster.UnitStateChanged(u) end
+		if _broadcaster then _broadcaster.UnitStateChanged(u, "Mana Storm") end
 	end
 end
 
@@ -419,7 +420,7 @@ Periodic["Severe Hail"] = function(ctx: any)
 		if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
 		u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 		if u.currentHp <= 0 then u.isAlive = false end
-		if _broadcaster then _broadcaster.UnitStateChanged(u) end
+		if _broadcaster then _broadcaster.UnitStateChanged(u, "Hail") end
 	end
 end
 
@@ -427,9 +428,14 @@ Periodic["Hunger Virus"] = function(ctx: any)
 	for _, u in ipairs(affectedUnits(ctx.state)) do
 		local dmg = math.floor((u.maxHp or 0) * 0.05)
 		if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
+		-- Mechanical race tag (DB race_tags): immune to the Hunger Virus HP drain (re-check 2026-10-29).
+		do
+			local okR, cr = pcall(function() return (require :: any)(script.Parent.CombatResolver) end)
+			if okR and cr and cr.HasRaceTag and cr.HasRaceTag(u, "Mechanical") then dmg = 0 end
+		end
 		u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 		if u.currentHp <= 0 then u.isAlive = false end
-		if _broadcaster then _broadcaster.UnitStateChanged(u) end
+		if _broadcaster then _broadcaster.UnitStateChanged(u, "Hunger Virus") end
 	end
 	-- (Basic-attack lifesteal 20% is applied in CombatResolver when active; see hook.)
 end
@@ -453,7 +459,7 @@ Periodic["Thunderstorm"] = function(ctx: any)
 	tgt.currentHp = math.max(0, (tgt.currentHp or 0) - GameConstants.CapUnitDamage(tgt, dmg))
 	if tgt.currentHp <= 0 then tgt.isAlive = false end
 	reshapeTile(tgt.tileX, tgt.tileY, nil, math.max(1, best - 1))
-	if _broadcaster then _broadcaster.UnitStateChanged(tgt) end
+	if _broadcaster then _broadcaster.UnitStateChanged(tgt, "Lightning") end
 end
 
 Periodic["Earthquake"] = function(ctx: any)
@@ -478,7 +484,7 @@ Periodic["Earthquake"] = function(ctx: any)
 			local u = occ[x .. "," .. y]
 			if u then
 				u.remainingRt = (u.remainingRt or 0) + 150
-				if _broadcaster then _broadcaster.UnitStateChanged(u) end
+				if _broadcaster then _broadcaster.UnitStateChanged(u, "Earthquake") end
 			end
 			-- OBS Phase 2c-D: a downward quake (delta<0) on a breakable OBS blocker = ONE hit
 			-- per tile per quake tick (row 84). Immune/billboard tiles are skipped (also a
@@ -573,7 +579,7 @@ local function resolvePendingStrikes(state: any, nowCt: any)
 						if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
 						u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 						if u.currentHp <= 0 then u.isAlive = false end
-						if _broadcaster then _broadcaster.UnitStateChanged(u) end
+						if _broadcaster then _broadcaster.UnitStateChanged(u, if p.kind == "Meteor" then "Meteor" else "Eruption") end
 					end
 				end
 				if p.kind == "Meteor" then

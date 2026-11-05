@@ -164,21 +164,60 @@ local ALLY_KO_RADIUS = 3 -- Chebyshev tiles; "nearby" (user default 2026-10-23)
 -- Hemophage self-KO cannot buffer a further reaction -- no chain (TRG-010 pattern). Buffer is
 -- reset BEFORE resolving so nothing re-enters. Combat deaths only; DoT / CT-tick / collision /
 -- fall deaths are not buffered (deferred).
-function CombatResolver.FlushAllyKoReactions(allUnits)
+-- activeUnit (optional, 2026-10-28): the unit whose turn it is. Sluggish Finisher's lost AP is
+-- applied now only on the holder's own turn; otherwise it is held and taken right after its next
+-- turn's AP refresh (BattleCoordinator), instead of being wiped by that refresh.
+function CombatResolver.FlushAllyKoReactions(allUnits, activeUnit)
+	-- Re-check 2026-10-29: ANY KO counts, not only deaths from an attack (DoT, falls, collisions,
+	-- traps, tiles, Wounded...). Every call scans the board for units that went down since the
+	-- last scan (_allyKoSeen), so callers just call this after each command and each clock advance.
+	-- Item devices are skipped; a summon counts only when something killed it (not an expiry).
+	if type(allUnits) == "table" then
+		for _, u in ipairs(allUnits) do
+			if u.isAlive then
+				u._allyKoSeen = nil
+			elseif not u._allyKoSeen then
+				u._allyKoSeen = true
+				if not u._allyKoBuffered and not u.isItemDevice
+					and (not u.isSummon or u._killedBy ~= nil or u._killCause ~= nil) then
+					u._allyKoBuffered = true
+					table.insert(_allyKoBuffer, u)
+				end
+			end
+		end
+	end
 	local dead = _allyKoBuffer
 	if #dead == 0 then return end
 	_allyKoBuffer = {}
 	if type(allUnits) ~= "table" then return end
 	for _, d in ipairs(dead) do
 		d._allyKoBuffered = nil
+		d._allyKoSeen = true
 		if d.tileX and d.tileY then
 			for _, u in ipairs(allUnits) do
 				if u ~= d and u.isAlive and u.side == d.side and u.tileX and u.tileY then
 					local dist = math.max(math.abs(u.tileX - d.tileX), math.abs(u.tileY - d.tileY))
+					-- Sluggish Finisher (DB "lose 1 AP when an ally is KO'd"): any distance (re-check 2026-10-29).
+					if TraitEffectService.HasAllyKoApLoss(u) and not u.sluggishApLossUsedThisTurn then
+						if activeUnit == nil or u == activeUnit then
+							u.currentAp = math.max(0, (u.currentAp or 0) - 1)
+						else
+							u._sluggishPendingAp = true
+						end
+						u.sluggishApLossUsedThisTurn = true
+						print(string.format(
+							"[CombatResolver] Sluggish Finisher: %s loses 1 AP (ally %s KO'd) | AP: %d",
+							u.name, d.name, u.currentAp
+						))
+						if BattleVisualBroadcaster.Log then
+							BattleVisualBroadcaster.Log("info", `{u.name} loses 1 AP (Sluggish Finisher).`, u.id)
+						end
+					end
 					if dist <= ALLY_KO_RADIUS then
 						local frac = TraitEffectService.GetAllyKoHpLossFraction(u)
-						if frac > 0 and (u.currentHp or 0) > 0 then
-							local loss = math.max(1, math.round((u.currentHp or 0) * frac))
+						if frac > 0 and (u.currentHp or 0) > 1 and math.floor((u.currentHp or 0) * frac) > 0 then
+							-- DB "lose 15% of CURRENT HP": a share of current HP can never KO (2026-10-29).
+							local loss = math.min(math.floor((u.currentHp or 0) * frac), (u.currentHp or 0) - 1)
 							local applied = UnitSchema_ApplyDamage(loss, u)
 							print(string.format(
 								"[CombatResolver] Hemophage: %s loses %d HP (ally %s KO'd nearby) | HP: %d/%d%s",
@@ -189,16 +228,8 @@ function CombatResolver.FlushAllyKoReactions(allUnits)
 								RacePassiveService.OnUnitKO(u)
 							end
 							if BattleVisualBroadcaster.UnitStateChanged then
-								BattleVisualBroadcaster.UnitStateChanged(u)
+								BattleVisualBroadcaster.UnitStateChanged(u, "Hemophage")
 							end
-						end
-						if TraitEffectService.HasAllyKoApLoss(u) and not u.sluggishApLossUsedThisTurn then
-							u.currentAp = math.max(0, (u.currentAp or 0) - 1)
-							u.sluggishApLossUsedThisTurn = true
-							print(string.format(
-								"[CombatResolver] Sluggish Finisher: %s loses 1 AP (ally %s KO'd nearby) | AP: %d",
-								u.name, d.name, u.currentAp
-							))
 						end
 					end
 				end
@@ -420,6 +451,12 @@ local function applyElementInteractions(defender, element, finalDamage)
 
 	-- Electric: no interactions yet (DB: "Future interactions not finalized")
 
+	-- Battle log (rules 225): a status stripped by the element interaction is named by
+	-- the element ("Hero is no longer Wet (Fire)."). Runs before damage, so no HP diff.
+	if #removed > 0 and BattleVisualBroadcaster.UnitStateChanged then
+		BattleVisualBroadcaster.UnitStateChanged(defender, tostring(element))
+	end
+
 	return finalDamage, removed
 end
 
@@ -433,7 +470,20 @@ local function applyElementStatusTriggers(sourceUnitId: any, defender: any, elem
 	-- fire damage instead of the base 20% (nil for non-Ignite -> base fraction).
 	local igniteBurnFrac = WeaponPassiveService.IgniteBurnFraction(attackerUnit)
 	local function tryApply(statusId, fireDmg)
+		-- Bleed / Poison / Venom Phobia: "cannot inflict ... with attacks" also covers element
+		-- triggers (Poison element). Burn Phobia does not block (checklist fix 2026-10-29).
+		if statusId ~= "Burn" and attackerUnit and TraitEffectService.HasStatusPhobia(attackerUnit, statusId) then
+			return
+		end
 		local frac = (statusId == "Burn") and igniteBurnFrac or nil
+		-- Burn Specialist / Burn Phobia: Burn inflicted +/-5% of base damage (DB P/F-157).
+		if statusId == "Burn" and attackerUnit then
+			local _bb = TraitEffectService.GetBurnInflictFractionBonus(attackerUnit)
+			if _bb ~= 0 then
+				local _bd = GameConstants.STATUSES and GameConstants.STATUSES.Burn
+				frac = math.max(0, (frac or (_bd and _bd.burnFraction) or 0.20) + _bb)
+			end
+		end
 		local applied, _, immuneReason = StatusService.ApplyStatus(defender, statusId, sourceUnitId, fireDmg, nil, frac)
 		if not applied and immuneReason then
 			BattleVisualBroadcaster.StatusImmune(defender, statusId, immuneReason)
@@ -493,12 +543,20 @@ local function calcHitQuality(attackerDex, defenderAgi, attackerUnit, defenderUn
 		-- PrecisionStrike +0.15 ruling). Pure READ -> safe in AI preview. Defensive: applies to
 		-- EVERY incoming attack (basic and skill) since it modifies the defender's own stat.
 		evasiveness = evasiveness + WeaponPassiveService.GetEvasivenessBonus(defenderUnit)
+		-- Duelist Single-Weapon Mastery: Evasiveness +10% (fraction). 2026-10-28.
+		evasiveness = evasiveness + DoctrinePassiveService.GetEvasivenessModifier(defenderUnit)
+		-- Feinting Flurry: target Evasiveness -15% for 1000 CT (set by the skill, cleared by the clock).
+		evasiveness = evasiveness - (defenderUnit._feintEvaPenalty or 0)
 	end
 	-- Blind: Final Precision = Precision × 0.50 (DB: elements_statuses)
 	if attackerUnit and StatusService.HasStatus(attackerUnit, "Blind") then
 		precision = precision * 0.50
 	end
 	local hq = 1 + (precision - evasiveness)
+	-- Doctrine Hit Quality (2026-10-28): Ranger Steady Aim +0.15 (has not moved this turn), Duelist +0.15.
+	if attackerUnit then
+		hq = hq + DoctrinePassiveService.GetHitQualityModifier(attackerUnit)
+	end
 	-- Blessed / Cursed: additive Final Hit Quality modifier on the attacker.
 	-- DB (elements_statuses): Blessed +0.25, Cursed -0.25. Applied to the
 	-- afflicted unit's OWN attacks, after the precision/evasiveness term so it
@@ -532,7 +590,8 @@ local function calcHitQuality(attackerDex, defenderAgi, attackerUnit, defenderUn
 			end
 		end
 	end
-	return hq
+	-- Second value: the defender's total Evasiveness (Tricky ignores 40% of it, 2026-10-29).
+	return hq, evasiveness
 end
 
 local function calcEffectiveDefense(attackPower, defensePower)
@@ -553,11 +612,21 @@ local function isMeleeHit(outcome, attacker, target)
 	local dist = math.max(math.abs(attacker.tileX - target.tileX), math.abs(attacker.tileY - target.tileY))
 	if dist ~= 1 then return false end
 	local reach
+	if outcome.isItem then return false end  -- a thrown / used item is not a melee attack (2026-10-29)
 	if outcome.skillId then
 		local sd = GameConstants.SKILLS and GameConstants.SKILLS[outcome.skillId]
-		if not sd then return false end
-		if sd.aoePattern ~= nil and sd.aoePattern ~= "Single" then return false end
-		reach = (sd.range == -1) and (attacker.weaponMaxRange or 1) or (sd.range or 1)
+		-- Doctrine skills (DOC-*) are not in GameConstants.SKILLS: use the shape the resolver stamped
+		-- on the outcome (checklist fix 2026-10-29, Reptilian Spiked Hide).
+		local sRange, sAoe = nil, nil
+		if sd then
+			sRange, sAoe = sd.range, sd.aoePattern
+		elseif outcome.skillRange ~= nil then
+			sRange, sAoe = outcome.skillRange, outcome.skillAoePattern
+		else
+			return false
+		end
+		if sAoe ~= nil and sAoe ~= "Single" then return false end
+		reach = (sRange == -1) and (attacker.weaponMaxRange or 1) or (sRange or 1)
 	else
 		reach = attacker.weaponMaxRange or 1
 	end
@@ -565,9 +634,8 @@ local function isMeleeHit(outcome, attacker, target)
 end
 
 -- Build the conditional-trait context passed to TraitEffectService.GetDamageDealtModifier.
--- Carries battlefield facts the resolver owns. enemiesWithin2 / killCount are left nil
--- here (the resolver has no unit list); the traits that need them (Crowd Fighter,
--- Slayer) stay dormant until that plumbing is added. facingZone is "Front"/"Side"/"Back".
+-- Carries battlefield facts the resolver owns, incl. enemiesWithin2 (Crowd Fighter) and
+-- killCount (Slayer). facingZone is "Front"/"Side"/"Back".
 local function buildTraitCtx(attacker, defender, facingZone)
 	local ctx = {}
 	if attacker.maxHp and attacker.maxHp > 0 then
@@ -591,6 +659,20 @@ local function buildTraitCtx(attacker, defender, facingZone)
 	end
 	-- Kill count this battle (incremented by the on-KO hook) — feeds Slayer / Pacifist.
 	ctx.killCount = attacker.killsThisBattle
+	-- Crowd Fighter / Claustrophobic (P/F-013, P/F-067): living enemies within 2 tiles (Chebyshev) of
+	-- the attacker. Was never filled, so both traits did nothing. 2026-10-28.
+	local _ctxUnits = _unitsProvider and _unitsProvider() or nil
+	if type(_ctxUnits) == "table" and attacker.tileX and attacker.tileY then
+		local n = 0
+		for _, u in ipairs(_ctxUnits) do
+			-- Enemies only (re-check 2026-10-29): Player and Neutral (recruits, refugees) are one team.
+			if u.isAlive and ((u.side == "Enemy") ~= (attacker.side == "Enemy")) and u.tileX and u.tileY
+				and math.max(math.abs(u.tileX - attacker.tileX), math.abs(u.tileY - attacker.tileY)) <= 2 then
+				n += 1
+			end
+		end
+		ctx.enemiesWithin2 = n
+	end
 	return ctx
 end
 
@@ -598,7 +680,8 @@ end
 -- PUBLIC: RESOLVE BASIC ATTACK
 --------------------------------------------------
 
-function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
+-- opts (optional, 2026-10-28): { isSiege = true } for Ballista / Catapult shots fired by an operator.
+function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage, opts)
 	assert(
 		type(attacker) == "table" and type(defender) == "table",
 		"ResolveBasicAttack: attacker and defender must be unit tables."
@@ -606,8 +689,17 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 
 	local aStats = attacker.effectiveStats
 	local dStats = defender.effectiveStats
+	-- Siege shot (Ballista / Catapult, user ruling 2026-10-29): the siege engine fires, so NONE of
+	-- the operator's weapon passives apply (Armor Pierce, Piercing Edge, High Ground, Tricky,
+	-- Precision / True Strike, Backstab, Executioner, Charge, Bypass, Ignite, Attunement, on-hit
+	-- statuses, Drain). Damage still comes from the authored siege formula (weapon damage x 2.5 / x 2.0).
+	local _wp = not (opts and opts.isSiege)
 
-	local ap = GameConstants.CalcAttackPower(weaponDamage, aStats.STR)
+	-- SIEGE DAMAGE (USER RULING 2026-10-30 6:20 PM, project_rules 242): the caller passes the final
+	-- Siege Power (48 + 1.9 x level, DEX boost, Helm, Catapult share), so a siege shot gets NO STR
+	-- scaling. Every other attack keeps Attack Power = Weapon Damage x (1 + STR / 200).
+	local _isSiege = (opts and opts.isSiege) == true
+	local ap = if _isSiege then weaponDamage else GameConstants.CalcAttackPower(weaponDamage, aStats.STR)
 	-- Defense Power = Defense x (1 + VIT / 300) (DB core_stats id 31/5); Defense =
 	-- weapon + off-hand + armor Defense (core_stats id 30). Was hard-coded 0.
 	-- Fortify (weapon native, Spear): add the defender's accumulated on-hit flat Defense (0 without
@@ -622,7 +714,7 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 			and ((defender.currentHp or defender.maxHp) / defender.maxHp) or nil
 		effectiveDefense = effectiveDefense * TraitEffectService.GetDefenseMultiplier(defender, dHpFrac)
 	end
-	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI, attacker, defender)
+	local hitQuality, baTotalEvasiveness = calcHitQuality(aStats.DEX, dStats.AGI, attacker, defender)
 
 	-- Hide: +50% hit quality when attacking from Hide
 	if StatusService.HasStatus(attacker, "Hide") then
@@ -638,17 +730,49 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	)
 	local facingBonus = GameConstants.GetFacingPrecisionBonus(facingZone)
 	hitQuality = hitQuality + facingBonus
+	-- SIEGE (rule 242): siege shots skip the hit-quality step entirely - no DEX-vs-AGI accuracy (DEX
+	-- already boosts Siege Power), no side/back facing bonus, no Hide bonus.
+	if _isSiege then
+		hitQuality = 1
+	end
 
+	-- SIEGE (USER RULING 2026-10-30 6:34 PM, rule 242): the height modifier is measured from the siege
+	-- OBJECT's tile (opts.originX/Y), not the operator's tile. Tile elevation only, so a flyer counts
+	-- as its ground height.
+	local _posX = if _isSiege and opts.originX then opts.originX else attacker.tileX
+	local _posY = if _isSiege and opts.originY then opts.originY else attacker.tileY
 	local positionalMod = GameConstants.GetPositionalModifier(
-		attacker.tileX, attacker.tileY,
+		_posX, _posY,
 		defender.tileX, defender.tileY
 	)
+	-- HighGround (Great Bow native + rolled PAS-045), user ruling 2026-10-29 (DB literal): "increase
+	-- the elevation damage bonus by 35%" = the height bonus itself x1.35, applied after the normal
+	-- +30% cap so it can go past it (+10/+20/+30% -> +13.5/+27/+40.5%). Only with height advantage.
+	do
+		local hgBonus = _wp and WeaponPassiveService.GetHighGroundBonus(attacker) or 0
+		if hgBonus > 0 and positionalMod > 1 then
+			positionalMod = 1 + (positionalMod - 1) * (1 + hgBonus)
+		end
+	end
 
 	-- Weapon passives (Group 1, basic attack): armor penetration on the target's
 	-- effective Defense, then hit-quality passives (Tricky / Precision Strike / True
 	-- Strike). Nil-safe no-ops when the weapon carries none.
-	effectiveDefense = effectiveDefense * WeaponPassiveService.DefenseMultiplier(attacker)
-	hitQuality = WeaponPassiveService.AdjustBasicHitQuality(attacker, hitQuality, dStats.AGI)
+	effectiveDefense = effectiveDefense * (_wp and WeaponPassiveService.DefenseMultiplier(attacker) or 1)
+	-- Dragoon Aerial Supremacy (user ruling 2026-10-28): melee weapon Basic Attack from higher
+	-- elevation ignores 50% of the target's Defense (nil skillDef = Basic Attack). Not for siege shots
+	-- (a Ballista / Catapult is not the Dragoon's melee weapon).
+	if not (opts and opts.isSiege) then
+		effectiveDefense = effectiveDefense * (1 - DoctrinePassiveService.GetDefenseIgnore(attacker, defender, nil))
+	end
+	if _wp then
+		hitQuality = WeaponPassiveService.AdjustBasicHitQuality(attacker, hitQuality, dStats.AGI, baTotalEvasiveness)
+	end
+	-- SIEGE (USER RULING 2026-10-30 6:34 PM): the Siege Gunner Helm's +25% ADDS to the height modifier
+	-- instead of multiplying (max height 1.30 + 0.25 = x1.55; low ground 0.70 + 0.25 = x0.95).
+	if _isSiege and opts.siegeBonus then
+		positionalMod = positionalMod + opts.siegeBonus
+	end
 
 	local rawDamage   = ap - effectiveDefense
 	-- Combat Fortune: LUK difference modifies damage (step 7 in pipeline)
@@ -657,24 +781,47 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	local finalDamage = math.max(0, math.round(rawDamage * hitQuality * positionalMod * fortuneMod))
 
 	-- Race passive modifiers (Slice 4F)
-	-- Basic Attack: element=nil, isAOE=false, isPhysical=true
-	local raceDealtMod = RacePassiveService.GetDamageDealtModifier(attacker, nil, false, defender)
-	local raceRecvMod  = RacePassiveService.GetDamageReceivedModifier(defender, nil, false, true)
+	-- Basic Attack element (checklist fix 2026-10-29): the weapon's element (Ignite -> Fire), so
+	-- element-keyed race / doctrine rules (Dragonkin Ice +50%, Celestial Dark / Demon Holy +20%
+	-- received, Templar Holy +15%, Dwarf "Physical" only) see the real element. Was always nil.
+	-- Siege shots (rule 242) are plain Physical: no element borrowed from the operator's weapon.
+	local baModElement = if _isSiege then "Physical" else (attacker.weaponElement or "Physical")
+	if baModElement == "Physical" and _wp and WeaponPassiveService.HasCombat(attacker, "Ignite") then
+		baModElement = "Fire"
+	end
+	local baModPhysical = (baModElement == "Physical" or baModElement == "")
+	local raceDealtMod = RacePassiveService.GetDamageDealtModifier(attacker, baModElement, false, defender)
+	local raceRecvMod  = RacePassiveService.GetDamageReceivedModifier(defender, baModElement, false, baModPhysical)
 	-- Doctrine passive modifiers (Slice 4H)
 	local docBADmgMod = DoctrinePassiveService.GetBasicAttackDamageModifier(attacker)
-	local docDealtMod = DoctrinePassiveService.GetDamageDealtModifier(attacker, defender, nil, false, true, nil)
-	local docRecvMod  = DoctrinePassiveService.GetDamageReceivedModifier(defender, attacker, nil, false)
+	local docDealtMod = DoctrinePassiveService.GetDamageDealtModifier(attacker, defender, baModElement, false, true, nil)
+	local docRecvMod  = DoctrinePassiveService.GetDamageReceivedModifier(defender, attacker, baModElement, false)
 	-- Perks & Flaws Phase 2 (TRAIT-DMG-BA): unit-trait dealt / received multipliers, folded
 	-- alongside the race mods. Basic Attack = weapon element (or Physical), not AOE,
 	-- physical, not a skill. Neutral 1.0 for units without Phase-2 traits.
-	local baTraitElement = attacker.weaponElement or "Physical"
+	local baTraitElement = baModElement  -- Ignite -> Fire, same as race / doctrine (re-check 2026-10-29)
 	-- Phase 3 conditional context (battlefield facts the resolver owns). killCount is
-	-- populated (Slayer/Pacifist live); only adjacency (enemiesWithin2) stays nil, so
-	-- Crowd Fighter / Claustrophobic remain dormant until unit-list plumbing lands.
-	local traitCtx = buildTraitCtx(attacker, defender, facingZone)
+	-- populated (Slayer/Pacifist live) and enemiesWithin2 is filled (Crowd Fighter / Claustrophobic live,
+-- 2026-10-28).
+	-- Siege shots (rule 242) get no side/back facing bonus, so facing-based traits (e.g. Backstabber,
+	-- Scrupulous, TraitEffectService dealtSideBack) see a siege shot as a front attack. Tester S2 fix
+	-- 2026-10-30.
+	local traitCtx = buildTraitCtx(attacker, defender, if _isSiege then nil else facingZone)
+	-- Siege: height-based traits also measure from the siege object's tile (rule 242, 6:34 PM).
+	if _isSiege and opts.originX and opts.originY then
+		traitCtx.elevDiff = (GameConstants.GetElevation(defender.tileX, defender.tileY) or 1)
+			- (GameConstants.GetElevation(opts.originX, opts.originY) or 1)
+	end
+	traitCtx.weaponHit = true
 	local traitDealtMod = TraitEffectService.GetDamageDealtModifier(attacker, baTraitElement, false, defender, false, traitCtx)
-	local traitRecvMod  = TraitEffectService.GetDamageReceivedModifier(defender, baTraitElement, false, true, attacker)
-	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod * docBADmgMod * docDealtMod * docRecvMod * traitDealtMod * traitRecvMod))
+	local traitRecvMod  = TraitEffectService.GetDamageReceivedModifier(defender, baTraitElement, false, true, attacker, true)
+	-- Doctrine proximity / aura mods (2026-10-28): Vanguard -10% / Shieldbearer -12% / Paladin Divine
+	-- Aegis -10% damage received; Warlord ally aura +10% damage dealt. Need the live unit list.
+	local _docUnits = _unitsProvider and _unitsProvider() or nil
+	local docDrMod = DoctrinePassiveService.GetDamageReductionModifier(defender, _docUnits)
+		* DoctrinePassiveService.GetWardenAuraDR(defender, _docUnits) -- Warden Earthen Resilience -8%
+	local docAuraMod = DoctrinePassiveService.GetAllyDamageAuraModifier(attacker, _docUnits)
+	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod * docBADmgMod * docDealtMod * docRecvMod * docDrMod * docAuraMod * traitDealtMod * traitRecvMod))
 	-- Minion Specialist / Skill Issues (2026-10-23): summon outgoing-damage multiplier from
 	-- the owner's trait (1 when absent / not a modified summon). Stamped on the unit at creation.
 	if attacker.summonDamageMult and attacker.summonDamageMult ~= 1 then
@@ -685,25 +832,16 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	finalDamage = math.max(0, math.round(finalDamage * StatusService.GetDamageDealtMultiplier(attacker, false)
 		* StatusService.GetDamageReceivedMultiplier(defender))) -- Hold the Line x0.85 (2026-10-07)
 	-- Weapon passives (Group 1): Backstab (rear +50%) / Executioner (<25% HP +30%).
-	finalDamage = math.max(0, math.round(finalDamage * WeaponPassiveService.ConditionalDamageMultiplier(attacker, defender, facingZone)))
-	-- HighGround (weapon native, Great Bow): +35% when attacking from strictly higher elevation.
-	-- Positional offensive bonus (pre-guard, like Backstab above). Hybrid: basic + skill.
-	do
-		local hgBonus = WeaponPassiveService.GetHighGroundBonus(attacker)
-		if hgBonus > 0 then
-			local aElev = GameConstants.GetElevation(attacker.tileX, attacker.tileY)
-			local dElev = GameConstants.GetElevation(defender.tileX, defender.tileY)
-			if aElev > dElev then
-				finalDamage = math.max(0, math.round(finalDamage * (1 + hgBonus)))
-			end
-		end
+	if _wp then
+		finalDamage = math.max(0, math.round(finalDamage * WeaponPassiveService.ConditionalDamageMultiplier(attacker, defender, facingZone)))
 	end
+	-- (HighGround moved into the positional modifier above, user ruling 2026-10-29.)
 
 	-- Charge (weapon native, Lance): +6% final damage per tile the attacker moved THIS TURN before
 	-- this attack (DB "+6% damage per tile moved this turn"). BASIC-ATTACK ONLY (not in ResolveSkill).
 	-- Reads the per-turn tiles accumulator via the getter; 0 without Charge or without prior movement.
 	do
-		local chargeBonus = WeaponPassiveService.GetChargeDamageBonus(attacker)
+		local chargeBonus = _wp and WeaponPassiveService.GetChargeDamageBonus(attacker) or 0
 		if chargeBonus > 0 then
 			finalDamage = math.max(0, math.round(finalDamage * (1 + chargeBonus)))
 		end
@@ -744,7 +882,7 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	end
 	local guardMitigatedAmount = 0
 	local wasGuarding = false
-	if hasGuard and not WeaponPassiveService.BypassesGuard(attacker) then
+	if hasGuard and not (_wp and WeaponPassiveService.BypassesGuard(attacker)) then
 		wasGuarding = true
 		-- BD-006 Layered Lamellar: successive-hit DR (0 until OnGuardHitReceived accrues hits) adds
 		-- into the Guard mitigation, still clamped to GUARD_CAP. 0 for units without the passive.
@@ -776,18 +914,19 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 
 	-- Step 10: Element interactions (Phase 3)
 	-- Basic Attack element = weapon element or Physical
-	local attackElement = attacker.weaponElement or "Physical"
+	-- Siege shots (rule 242): always plain Physical.
+	local attackElement = if _isSiege then "Physical" else (attacker.weaponElement or "Physical")
 	-- Ignite (PAS-037, Group 2): an otherwise-Physical basic attack executes as Fire.
 	-- Never overrides a real weapon element (transformation). DB: "would otherwise be
 	-- non-elemental (Physical)".
-	if attackElement == "Physical" and WeaponPassiveService.HasCombat(attacker, "Ignite") then
+	if attackElement == "Physical" and _wp and WeaponPassiveService.HasCombat(attacker, "Ignite") then
 		attackElement = "Fire"
 	end
 
 	-- Attunement (weapon native, Crystal): +25% elemental damage dealt (applies when the attack
 	-- element is elemental; in the element section like the terrain-element bonus). Hybrid: basic + skill.
 	do
-		local atBonus = WeaponPassiveService.GetAttunementBonus(attacker, attackElement)
+		local atBonus = _wp and WeaponPassiveService.GetAttunementBonus(attacker, attackElement) or 0
 		if atBonus > 0 then
 			finalDamage = math.max(0, math.round(finalDamage * (1 + atBonus)))
 		end
@@ -821,6 +960,8 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 	end
 
 	finalDamage = applyElementInteractions(defender, attackElement, finalDamage)
+	-- Rolled elemental Ward (PAS-026/029-033, 2026-10-28): defender takes x0.75 from that element.
+	finalDamage = math.max(0, math.round(finalDamage * ArmorPassiveService.GetRolledElementWardMultiplier(defender, attackElement)))
 	-- Weather passive element modifier (Rain Fire-25%/Water+25%, Heatwave, etc.).
 	finalDamage = math.max(0, math.round(finalDamage * weatherElementMult(attackElement, defender)))
 
@@ -835,8 +976,8 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage)
 		facingZone     = facingZone,
 		finalDamage    = finalDamage,
 		appliesStatus  = RacePassiveService.GetBasicAttackStatus(attacker, defender),
-		appliesStatuses = WeaponPassiveService.OnHitStatuses(attacker), -- weapon status-appliers (Group 1)
-		weaponDrainFrac = WeaponPassiveService.DrainFraction(attacker), -- Drain (Group 1)
+		appliesStatuses = _wp and WeaponPassiveService.OnHitStatuses(attacker) or {}, -- weapon status-appliers (Group 1)
+		weaponDrainFrac = _wp and WeaponPassiveService.DrainFraction(attacker) or 0, -- Drain (Group 1)
 		element        = attackElement,
 		sourceUnitId   = attacker.id,
 		guardMitigatedAmount = guardMitigatedAmount,  -- armor Guard on-hit reactions (2026-10-24)
@@ -973,7 +1114,16 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 			and ((defender.currentHp or defender.maxHp) / defender.maxHp) or nil
 		effectiveDefense = effectiveDefense * TraitEffectService.GetDefenseMultiplier(defender, dHpFrac)
 	end
-	local hitQuality = calcHitQuality(aStats.DEX, dStats.AGI, attacker, defender)
+	local hitQuality, skTotalEvasiveness = calcHitQuality(aStats.DEX, dStats.AGI, attacker, defender)
+	-- Weapon skill (user ruling 2026-10-29): a skill tagged Weapon Scaling (not an item) also carries
+	-- the weapon's on-hit passives -- Tricky, True Strike, Backstab, Executioner, Bypass, Drain and the
+	-- on-hit status weapons (Lacerate, Lullaby, Venomous, ...), as on a Basic Attack.
+	local _wsHit = false
+	if not skillDef.isItem then
+		for _, _t in ipairs(skillDef.tags or {}) do
+			if _t == "Weapon Scaling" then _wsHit = true break end
+		end
+	end
 
 	-- Hide: +50% hit quality when attacking from Hide
 	if StatusService.HasStatus(attacker, "Hide") then
@@ -994,7 +1144,35 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		attacker.tileX, attacker.tileY,
 		defender.tileX, defender.tileY
 	)
+	-- HighGround (Great Bow native + rolled PAS-045), user ruling 2026-10-29 (DB literal): "increase
+	-- the elevation damage bonus by 35%" = the height bonus itself x1.35, applied after the normal
+	-- +30% cap so it can go past it (+10/+20/+30% -> +13.5/+27/+40.5%). Only with height advantage.
+	-- Items are not attacks: no High Ground for item hits (re-check 2026-10-29).
+	if not skillDef.isItem then
+		local hgBonus = WeaponPassiveService.GetHighGroundBonus(attacker)
+		if hgBonus > 0 and positionalMod > 1 then
+			positionalMod = 1 + (positionalMod - 1) * (1 + hgBonus)
+		end
+	end
 
+	-- Dragoon Aerial Supremacy (user ruling 2026-10-28): melee weapon + Direct Damage Skill from
+	-- higher elevation ignores 50% of the target's Defense.
+	effectiveDefense = effectiveDefense * (1 - DoctrinePassiveService.GetDefenseIgnore(attacker, defender, skillDef))
+	-- (2026-10-29) A consumable item resolves through here as a pseudo-skill; it is not a Skill.
+	local isItemHit = skillDef.isItem == true
+	-- Armor Pierce (Crossbow x0.70) / Piercing Edge (Dagger x0.80): DB "Applies to Basic Attack and
+	-- Skills that inherit weapon damage" = skills tagged Weapon Scaling (checklist fix 2026-10-29).
+	if not isItemHit then
+		for _, _t in ipairs(skillDef.tags or {}) do
+			if _t == "Weapon Scaling" then
+				effectiveDefense = effectiveDefense * WeaponPassiveService.DefenseMultiplier(attacker)
+				break
+			end
+		end
+	end
+	if _wsHit then
+		hitQuality = WeaponPassiveService.AdjustWeaponSkillHitQuality(attacker, hitQuality, dStats.AGI, skTotalEvasiveness)
+	end
 	local rawDamage   = sp - effectiveDefense
 	-- Combat Fortune: LUK difference modifies damage (step 7 in pipeline)
 	local fortuneMod = GameConstants.CalcCombatFortune(aStats.LUK, dStats.LUK)
@@ -1011,7 +1189,8 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	-- Ignite (PAS-037, Group 2): an otherwise-Physical SKILL executes as Fire (DB:
 	-- "Basic Attack or Skill"). An authored-element skill keeps its own element, so the
 	-- skill still wins on a clash (user ruling 2026-10-23).
-	if skillElement == "Physical" and WeaponPassiveService.HasCombat(attacker, "Ignite") then
+	-- Items never take Ignite (DB "Basic Attack or Skill"; re-check 2026-10-29).
+	if skillElement == "Physical" and not skillDef.isItem and WeaponPassiveService.HasCombat(attacker, "Ignite") then
 		skillElement = "Fire"
 	end
 	local skillIsAOE = skillDef.aoePattern ~= nil and skillDef.aoePattern ~= "Single"
@@ -1019,39 +1198,50 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	local raceDealtMod = RacePassiveService.GetDamageDealtModifier(attacker, skillElement, skillIsAOE, defender)
 	local raceRecvMod  = RacePassiveService.GetDamageReceivedModifier(defender, skillElement, skillIsAOE, skillIsPhysical)
 	-- Doctrine passive modifiers (Slice 4H)
-	local docSkillPotency = DoctrinePassiveService.GetSkillPotencyModifier(attacker)
+	local docSkillPotency = DoctrinePassiveService.GetSkillPotencyModifier(attacker, skillDef, skillIsPhysical)  -- Chemist skips items itself
 	-- Race Skill Potency (INT contribution) boost -- Celestial Holy / Demon Dark
 	-- SKILLS only (2026-10-02). The base Skill Potency (1 + p) is now applied in
 	-- EstimateSkillPower, so this Holy/Dark boost is the ratio (1 + 1.20p)/(1 + p),
 	-- yielding net (1 + 1.20p). See RacePassiveService.GetSkillPotencyMultiplier.
-	local raceSkillPotency = RacePassiveService.GetSkillPotencyMultiplier(attacker, skillDef.tags, aStats and aStats.INT)
-	local docDealtMod = DoctrinePassiveService.GetDamageDealtModifier(attacker, defender, skillElement, true, false, nil)
-	local docRecvMod  = DoctrinePassiveService.GetDamageReceivedModifier(defender, attacker, skillElement, true)
+	-- DB Celestial / Demon: "NOT basic attacks or items" -> no boost for an item (2026-10-29).
+	local raceSkillPotency = isItemHit and 1 or RacePassiveService.GetSkillPotencyMultiplier(attacker, skillDef.tags, aStats and aStats.INT)
+	-- Doctrine DDS context (2026-10-28): was passed nil, so every "Direct Damage Skill" doctrine bonus
+	-- (Juggernaut, Assassin, Dragoon, Skirmisher, Monk, Sentinel) never applied.
+	local docDealtMod = DoctrinePassiveService.GetDamageDealtModifier(attacker, defender, skillElement, not isItemHit, false,
+		{ isDirectDamageSkill = DoctrinePassiveService.IsDirectDamageSkill(skillDef),
+		  -- Stormbringer: units this cast hits, counted once at cast start (CommandService). 2026-10-28.
+		  additionalTargetsHit = math.max(0, (attacker._docCastTargetCount or 1) - 1) })
+	local docRecvMod  = DoctrinePassiveService.GetDamageReceivedModifier(defender, attacker, skillElement, not isItemHit)
 	-- Perks & Flaws Phase 2 (TRAIT-DMG-SKILL): unit-trait dealt / received multipliers,
 	-- element / AOE / skill aware, folded alongside the race mods. Neutral 1.0 for no traits.
 	-- Phase 3 conditional context also applies to skills (Adrenaline/Backstabber/elevation/etc.).
 	local skillTraitCtx = buildTraitCtx(attacker, defender, facingZone)
-	local traitDealtMod = TraitEffectService.GetDamageDealtModifier(attacker, skillElement, skillIsAOE, defender, true, skillTraitCtx)
-	local traitRecvMod  = TraitEffectService.GetDamageReceivedModifier(defender, skillElement, skillIsAOE, skillIsPhysical, attacker)
+	-- Melee Specialist / Clumsy (DB "damage ... with melee weapon", re-check 2026-10-29): only skills
+	-- that use the weapon (tagged Weapon Scaling) count; spells and items do not.
+	local _skillWeaponHit = false
+	if not isItemHit then
+		for _, _t in ipairs(skillDef.tags or {}) do
+			if _t == "Weapon Scaling" then _skillWeaponHit = true break end
+		end
+	end
+	skillTraitCtx.weaponHit = _skillWeaponHit
+	local traitDealtMod = TraitEffectService.GetDamageDealtModifier(attacker, skillElement, skillIsAOE, defender, not isItemHit, skillTraitCtx)
+	local traitRecvMod  = TraitEffectService.GetDamageReceivedModifier(defender, skillElement, skillIsAOE, skillIsPhysical, attacker, _skillWeaponHit)
 	-- Perks & Flaws (Phase 2b): Arcane Prodigy skill-potency +/-12%. Additive potency %
 	-- (per DB id 33 same-category additive); applied as a (1 + pct) multiplier on the
 	-- skill-potency slot, consistent with race/doctrine potency folds above.
-	local traitSkillPotency = 1 + TraitEffectService.GetSkillPotencyModifier(attacker)
+	local traitSkillPotency = isItemHit and 1 or (1 + TraitEffectService.GetSkillPotencyModifier(attacker))
 	-- SkillPotency (weapon native, Orb): +8% Skill damage dealt. Multiplicative on final skill
 	-- damage alongside the doctrine/race/trait potency mods. 1 without the passive. Pure READ.
-	local weaponSkillPotency = WeaponPassiveService.GetSkillDamageMultiplier(attacker)
-	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod * docSkillPotency * raceSkillPotency * traitSkillPotency * weaponSkillPotency * docDealtMod * docRecvMod * traitDealtMod * traitRecvMod))
-	-- HighGround (weapon native, Great Bow): +35% from strictly higher elevation (skill path).
-	do
-		local hgBonus = WeaponPassiveService.GetHighGroundBonus(attacker)
-		if hgBonus > 0 then
-			local aElev = GameConstants.GetElevation(attacker.tileX, attacker.tileY)
-			local dElev = GameConstants.GetElevation(defender.tileX, defender.tileY)
-			if aElev > dElev then
-				finalDamage = math.max(0, math.round(finalDamage * (1 + hgBonus)))
-			end
-		end
-	end
+	local weaponSkillPotency = isItemHit and 1 or WeaponPassiveService.GetSkillDamageMultiplier(attacker)
+	-- Doctrine proximity / aura mods (2026-10-28): Vanguard -10% / Shieldbearer -12% / Paladin Divine
+	-- Aegis -10% damage received; Warlord ally aura +10% damage dealt. Need the live unit list.
+	local _docUnits = _unitsProvider and _unitsProvider() or nil
+	local docDrMod = DoctrinePassiveService.GetDamageReductionModifier(defender, _docUnits)
+		* DoctrinePassiveService.GetWardenAuraDR(defender, _docUnits) -- Warden Earthen Resilience -8%
+	local docAuraMod = DoctrinePassiveService.GetAllyDamageAuraModifier(attacker, _docUnits)
+	finalDamage = math.max(0, math.round(finalDamage * raceDealtMod * raceRecvMod * docSkillPotency * raceSkillPotency * traitSkillPotency * weaponSkillPotency * docDealtMod * docRecvMod * docDrMod * docAuraMod * traitDealtMod * traitRecvMod))
+	-- (HighGround moved into the positional modifier above, user ruling 2026-10-29.)
 	-- Minion Specialist / Skill Issues (2026-10-23): summon outgoing-damage multiplier from
 	-- the owner's trait (1 when absent / not a modified summon), on the skill path too.
 	if attacker.summonDamageMult and attacker.summonDamageMult ~= 1 then
@@ -1062,6 +1252,10 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	finalDamage = math.max(0, math.round(finalDamage * StatusService.GetDamageDealtMultiplier(attacker, not skillIsPhysical)
 		* StatusService.GetDamageReceivedMultiplier(defender) -- Hold the Line x0.85 (2026-10-07)
 		* (skillDef.potencyBonusMult or 1))) -- Mana Surge +10% potency, snapshotted at commit
+	-- Weapon skill: Backstab (rear +50%) / Executioner (<25% HP +30%), as on a Basic Attack.
+	if _wsHit then
+		finalDamage = math.max(0, math.round(finalDamage * WeaponPassiveService.ConditionalDamageMultiplier(attacker, defender, facingZone)))
+	end
 
 	-- FT-008 Skirmisher Greaves: after moving >=3 path-cost this turn, the NEXT direct damage
 	-- ACTION gains +15% final damage -- the WHOLE action, every hit of a multi-hit swing, not just
@@ -1097,7 +1291,8 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	end
 	local guardMitigatedAmount = 0
 	local wasGuarding = false
-	if hasGuardSkill then
+	-- Bypass on a weapon skill ignores Guard, as on a Basic Attack (user ruling 2026-10-29).
+	if hasGuardSkill and not (_wsHit and WeaponPassiveService.BypassesGuard(attacker)) then
 		wasGuarding = true
 		-- BD-006 Layered Lamellar: successive-hit DR (0 until OnGuardHitReceived accrues hits) adds
 		-- into the Guard mitigation, still clamped to GUARD_CAP. 0 for units without the passive.
@@ -1164,6 +1359,8 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	end
 
 	finalDamage = applyElementInteractions(defender, skillElement, finalDamage)
+	-- Rolled elemental Ward (PAS-026/029-033, 2026-10-28): defender takes x0.75 from that element.
+	finalDamage = math.max(0, math.round(finalDamage * ArmorPassiveService.GetRolledElementWardMultiplier(defender, skillElement)))
 	-- Weather passive element modifier (Rain Fire-25%/Water+25%, Heatwave, etc.).
 	finalDamage = math.max(0, math.round(finalDamage * weatherElementMult(skillElement, defender)))
 
@@ -1174,6 +1371,22 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	-- (See ApplyOutcome. Damaging skills leave this false and stay gated.)
 	local isPureStatusSkill = (skillDef.appliesStatus ~= nil or skillDef.appliesStatuses ~= nil)
 		and (not skillDef.inheritStr) and ((skillDef.power or 0) == 0)
+	-- Weapon skill: the weapon's on-hit statuses ride along with the skill's own (no duplicates).
+	local _skAppliesStatuses = skillDef.appliesStatuses or nil
+	if _wsHit then
+		local _wst = WeaponPassiveService.OnHitStatuses(attacker)
+		if #_wst > 0 then
+			local merged, seen = {}, {}
+			if skillDef.appliesStatus then seen[skillDef.appliesStatus] = true end
+			for _, sid in ipairs(skillDef.appliesStatuses or {}) do
+				if not seen[sid] then seen[sid] = true; table.insert(merged, sid) end
+			end
+			for _, sid in ipairs(_wst) do
+				if not seen[sid] then seen[sid] = true; table.insert(merged, sid) end
+			end
+			_skAppliesStatuses = merged
+		end
+	end
 
 	return {
 		type           = "Damage",
@@ -1188,13 +1401,20 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		facingZone     = facingZone,
 		finalDamage    = finalDamage,
 		appliesStatus  = skillDef.appliesStatus or nil,
-		appliesStatuses = skillDef.appliesStatuses or nil,
+		appliesStatuses = _skAppliesStatuses,
+		weaponDrainFrac = _wsHit and WeaponPassiveService.DrainFraction(attacker) or nil, -- Drain on weapon skills
 		applyStatusUnconditional = isPureStatusSkill,
 		statusDurationCt = skillDef.statusDurationCt or nil, -- skill-authored CT duration (2026-10-07)
 		element        = skillElement,
 		sourceUnitId   = attacker.id,
 		guardMitigatedAmount = guardMitigatedAmount,  -- armor Guard on-hit reactions (2026-10-24)
 		wasGuarding    = wasGuarding,
+		-- (2026-10-29) for on-hit reactions that need the skill's shape without a GameConstants.SKILLS
+		-- entry (doctrine DOC-* skills), and to know the AOE rules already ran inside the resolver.
+		isItem         = isItemHit,
+		skillRange     = skillDef.range,
+		skillAoePattern = skillDef.aoePattern,
+		aoeResolved    = skillIsAOE,
 	}
 end
 
@@ -1220,7 +1440,13 @@ function CombatResolver.ResolveHealing(caster, target, skillDef)
 	local healEfficiency = GameConstants.CalcHealEfficiency(targetVit)
 	local healingOutput = (caster.gearDerived and caster.gearDerived.healingOutput) or 1
 	local finalHeal = math.max(1, math.round(healPower * healEfficiency
-		* (skillDef.potencyBonusMult or 1) * healingOutput)) -- Mana Surge +10% potency (2026-10-07); x gear Healing Output (2026-10-23)
+		* (skillDef.potencyBonusMult or 1) * healingOutput
+		-- Doctrine (2026-10-28): Cleric Sacred Bond +15% / +25% under 30% HP; Chemist Skill Potency -25%.
+		* DoctrinePassiveService.GetHealingModifier(caster, target)
+		* (caster.summonHealMult or 1) -- Conjurer Bound Host: owner's summon healing +10% (2026-10-28)
+		* DoctrinePassiveService.GetSkillPotencyModifier(caster, skillDef, false) -- Mana Surge +10% potency (2026-10-07); x gear Healing Output (2026-10-23)
+		-- Arcane Prodigy (perk / flaw): Skill Potency +/-12% covers healing skills too (2026-10-29).
+		* (1 + TraitEffectService.GetSkillPotencyModifier(caster))))
 
 	-- Phase 3: Undead healing reversal
 	-- Non-Dark healing vs Undead → converted to damage
@@ -1248,10 +1474,8 @@ function CombatResolver.ResolveHealing(caster, target, skillDef)
 	-- Perks & Flaws Phase 2 (TRAIT-HEAL): Blessed Recovery / Cursed Wounds -- skill healing
 	-- RECEIVED by the target x(1 +/- 25%/35%). Applied only to real healing (after the
 	-- Undead reversal branch above). Neutral path leaves finalHeal untouched.
-	local healRecvMod = TraitEffectService.GetHealingReceivedModifier(target)
-	if healRecvMod ~= 1 then
-		finalHeal = math.max(1, math.round(finalHeal * healRecvMod))
-	end
+	-- (Blessed Recovery / Cursed Wounds now apply to ALL healing received, inside
+	-- UnitSchema.ApplyHealing via StatusService.GetHealingReceivedMult -- 2026-10-29.)
 
 	return {
 		type         = "Healing",
@@ -1378,7 +1602,7 @@ function CombatResolver.ApplyShieldOutcome(outcome, target)
 	))
 	if granted ~= false then
 		-- Shield visual (2026-10-23): surface the grant to the client (pool appears).
-		BattleVisualBroadcaster.ShieldChanged(target, outcome.shieldHp, "grant")
+		BattleVisualBroadcaster.ShieldChanged(target, outcome.shieldHp, "grant", outcome.skillName or (outcome.retributionDamage and "Retribution Shell") or nil)
 	end
 	return (granted ~= false) and outcome.shieldHp or 0
 end
@@ -1422,6 +1646,10 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			"[CombatResolver] %s healed for %d | HP: %d/%d",
 			target.name, actual, target.currentHp, target.maxHp
 		))
+		-- Paladin Divine Aegis: an ally this skill really healed gains +10% DR for 1 turn (2026-10-29).
+		if attacker and outcome.skillId then
+			DoctrinePassiveService.OnPaladinHealedAlly(attacker, target, actual)
+		end
 		-- Overhealing Shield (DB AUG-OVERHEALING-SHIELD, built 2026-10-28): healing past Max HP becomes
 		-- a barrier, up to 20% of Max HP, for 2 turns (2000 CT). A unit holds one shield pool, so a
 		-- bigger shield it already has is kept.
@@ -1431,7 +1659,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 					local barrier = math.min(received - actual, math.round((target.maxHp or 0) * 0.20))
 					if barrier > (target.shield_total or 0)
 						and StatusService.ApplyShield(target, barrier, 2000, attacker.id) ~= false then
-						BattleVisualBroadcaster.ShieldChanged(target, barrier, "grant")
+						BattleVisualBroadcaster.ShieldChanged(target, barrier, "grant", "Overhealing Shield")
 						print(string.format("[CombatResolver] Overhealing Shield: %s gets a %d barrier", target.name, barrier))
 					end
 					break
@@ -1459,6 +1687,16 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	if target._fortifyMult and target._fortifyMult ~= 1 then
 		outcome.finalDamage = math.max(0, math.round((outcome.finalDamage or 0) * target._fortifyMult))
 	end
+	-- Fairy Fae Grace (2026-10-29): an area hit marked AOE only after resolution (weapon-pattern
+	-- splash / cleave) still takes the -25%. Hits resolved as AOE inside ResolveSkill already had it.
+	if outcome.isAOE and not outcome.aoeResolved then
+		-- Diffuser / Fragile to Blasts (2026-10-29): the trait AOE-received modifier too.
+		local _lateAoe = RacePassiveService.GetLateAoeReceivedMultiplier(target)
+			* TraitEffectService.GetAoeReceivedMultiplier(target)
+		if _lateAoe ~= 1 then
+			outcome.finalDamage = math.max(0, math.round((outcome.finalDamage or 0) * _lateAoe))
+		end
+	end
 	if target._retaliationGuard and target._retaliationGuard ~= 1 then
 		outcome.finalDamage = math.max(0, math.round((outcome.finalDamage or 0) * target._retaliationGuard))
 		target._retaliationGuard = nil
@@ -1474,7 +1712,10 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- AI scoring/preview also call (that would drain the store without attacking). Consumed ONCE
 	-- per action: the first ApplyOutcome of a multi-target attack gets it, the rest see 0 (store
 	-- already cleared). Carries across turns, no cap (user ruling).
-	if attacker and attacker ~= target then
+	-- Items and counter-attacks do not spend it (re-check 2026-10-29; DB "next Basic Attack", user ruling
+	-- extends it to damage skills).
+	local _isItemOutcome = outcome.skillId ~= nil and string.sub(tostring(outcome.skillId), 1, 5) == "ITEM-"
+	if attacker and attacker ~= target and not outcome.isCounter and not _isItemOutcome then
 		local _reprisal = ArmorPassiveService.ConsumeReprisalDamage(attacker)
 		if _reprisal and _reprisal > 0 then
 			outcome.finalDamage = (outcome.finalDamage or 0) + _reprisal
@@ -1497,12 +1738,86 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		end
 	end
 
+	-- Rolled Electric defenses (2026-10-28, real hits only): PAS-028 Electric Absorption turns the
+	-- hit into healing (excess discarded); otherwise PAS-027 Electric Negation makes the FIRST
+	-- Electric hit each 1000-CT round deal 0 (flag cleared by BattleCoordinator at the round boundary).
+	if (outcome.finalDamage or 0) > 0 and outcome.element == "Electric" then
+		if ArmorPassiveService.HasRolledPassive(target, "PAS-028") then
+			local _absorb = outcome.finalDamage
+			outcome.finalDamage = 0
+			local _healed = UnitSchema_ApplyHealing(_absorb, target)
+			print(string.format("[CombatResolver] Electric Absorption: %s absorbs %d (healed %d)", target.name, _absorb, _healed or 0))
+			BattleVisualBroadcaster.UnitStateChanged(target, "Electric Absorption")
+		elseif ArmorPassiveService.HasRolledPassive(target, "PAS-027") and not target._pasElectricNegated then
+			target._pasElectricNegated = true
+			print(string.format("[CombatResolver] Electric Negation: %s negates %d", target.name, outcome.finalDamage))
+			outcome.finalDamage = 0
+		end
+	end
+
+	-- BD-020 Unyielding Aegis (2026-10-28): once per battle, lethal DIRECT damage leaves the wearer at
+	-- 1 HP. The check used to sit only in an unused fallback path. Direct damage = this hit (attacks,
+	-- skills, item hits); fall, collision and hazards never pass here (DB). Shield soaks first.
+	if (outcome.finalDamage or 0) > 0 and not target.fixedHitDurability
+		and ArmorPassiveService.CanSurviveLethalDamage(target) then
+		local _soak = target.shield_total or 0
+		if outcome.finalDamage - _soak >= (target.currentHp or 0) then
+			outcome.finalDamage = math.max(0, _soak + (target.currentHp or 0) - 1)
+			target._armorLethalSurviveUsed = true
+			print(string.format("[CombatResolver] Unyielding Aegis: %s survives at 1 HP", target.name))
+		end
+	end
+
+	-- HD-009 Demolition Mask one-hit kill (USER RULING 2026-10-30 3:15 PM, nonweapon_equipment 32): ANY
+	-- attack or skill hit from a wearer destroys a PLACED ITEM that lives as a unit (Sentry Turret,
+	-- Decoy Totem, drones, pylons... isItemDevice), from either side, any range. Summoned units
+	-- (summon skills) are NOT placed items and are unaffected. The hit already landed (an intercepted
+	-- hit returned above). A light gadget's HP is a 1-per-hit counter, so that clamp is dropped for
+	-- this killing blow; shields are covered by adding them to the damage.
+	if attacker and target.isItemDevice and target.isAlive
+		and ArmorPassiveService.CanInteractBreakObjects and ArmorPassiveService.CanInteractBreakObjects(attacker) then
+		target.fixedHitDurability = nil
+		outcome.finalDamage = (target.currentHp or 0) + (target.shield_total or 0)
+		print(`[CombatResolver] Demolition Mask: {attacker.name} destroys {target.name} in one hit`)
+	end
+
 	if _hitRecorder and not outcome.isCounter and not outcome.isFollowUp then
 		_hitRecorder(target, attacker, outcome.finalDamage or 0)
 	end
 
 	local actual, shieldBroke, _shieldAbsorbed, _shieldMaxAtBreak, retributionDamage =
 		UnitSchema_ApplyDamage(outcome.finalDamage, target)
+
+	-- BLEED (DB elements_statuses 54, 2026-10-28; it never dealt its own damage before): when a
+	-- PHYSICAL hit reduces HP, a Bleeding target takes bonus round(Max HP x 0.05 x Debuff Resistance)
+	-- (x Quick Clotting / Hemophiliac). A barrier that soaks the whole hit means no trigger. Applied
+	-- directly (TRG-010), real hits only (ApplyOutcome is never called by AI previews). The DB Boss HP%
+	-- modifier has no system yet (Poison does not use it either).
+	if (actual or 0) > 0 and target.isAlive then
+		local _el = outcome.element
+		-- Bleed Phobia (DB "cannot ... trigger bleed with attacks"): the attacker's hit does not trigger it.
+		local _bleed = (_el == nil or _el == "Physical" or _el == "") and StatusService.HasStatus(target, "Bleed")
+			and not (attacker and TraitEffectService.HasStatusPhobia(attacker, "Bleed"))
+		if _bleed then
+			local _bd = math.max(1, math.round((target.maxHp or 1) * 0.05 * StatusService.GetDebuffResist(target)
+				* TraitEffectService.GetDotDamageReceivedModifier(target, "Bleed")))
+			UnitSchema_ApplyDamage(_bd, target)
+			print(string.format("[CombatResolver] Bleed: %s takes %d bonus | HP: %d/%d", target.name, _bd,
+				target.currentHp or 0, target.maxHp or 0))
+			if not target.isAlive then
+				target._killedBy = target._killedBy or (attacker and attacker.id) or _bleed.sourceUnitId
+			end
+			BattleVisualBroadcaster.UnitStateChanged(target, "Bleed")
+		end
+	end
+
+	-- Treasure Hunter (project_rules 230): damage from a UNIT's attack/skill (this chokepoint —
+	-- traps, weather, terrain, tile ticks and DoTs never reach ApplyOutcome) flags the NPC so it
+	-- stops hunting and tries to escape. BattlefieldEventService reads the flag on its turn.
+	if target.eventName == "Treasure Hunter" and attacker and attacker ~= target
+		and ((actual or 0) > 0 or (_shieldAbsorbed or 0) > 0) and not target.hunterAttacked then
+		target.hunterAttacked = true
+	end
 
 	-- Shield visual (2026-10-23): surface absorb/break to the client. _shieldAbsorbed
 	-- is the damage the pool soaked this hit; shieldBroke = pool emptied on this hit.
@@ -1540,7 +1855,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			attacker._killedBy = outcome.retributionCasterId or target._shieldCasterId or attacker._killedBy
 			RacePassiveService.OnUnitKO(attacker)
 			if BattleVisualBroadcaster.UnitStateChanged then
-				BattleVisualBroadcaster.UnitStateChanged(attacker)
+				BattleVisualBroadcaster.UnitStateChanged(attacker, "Retribution")
 			end
 		end
 	end
@@ -1573,15 +1888,26 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		end
 		-- Perks & Flaws Phobia (2026-10-23): a unit with the matching Phobia flaw "cannot
 		-- inflict" that status with attacks -> skip the rider. Attacker is the source unit.
-		local phobiaBlocked = attacker ~= nil
+		-- Burn Phobia does NOT block inflicting Burn (DB F-157: "Cannot trigger accumulated burn
+		-- damage ... Burn inflicted -5% of base damage"); Burn Specialist/Phobia adjust its store.
+		local phobiaBlocked = attacker ~= nil and outcome.appliesStatus ~= "Burn"
 			and TraitEffectService.HasStatusPhobia(attacker, outcome.appliesStatus)
+		local riderBurnFrac = nil
+		if outcome.appliesStatus == "Burn" and attacker then
+			local _bb = TraitEffectService.GetBurnInflictFractionBonus(attacker)
+			if _bb ~= 0 then
+				local _bd = GameConstants.STATUSES and GameConstants.STATUSES.Burn
+				riderBurnFrac = math.max(0, ((_bd and _bd.burnFraction) or 0.20) + _bb)
+			end
+		end
 		if not phobiaBlocked then
 			local applied, _, immuneReason = StatusService.ApplyStatus(
 				target,
 				outcome.appliesStatus,
 				outcome.sourceUnitId or "unknown",
 				fireDmg,
-				outcome.statusDurationCt
+				outcome.statusDurationCt,
+				riderBurnFrac
 			)
 			if applied then
 				statusApplied = outcome.appliesStatus
@@ -1633,7 +1959,12 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		for _, sid in ipairs({ "Bleed", "Poison", "Venom", "Burn" }) do
 			if TraitEffectService.HasStatusSpecialist(attacker, sid)
 				and not TraitEffectService.HasStatusPhobia(attacker, sid) then
-				if StatusService.HasStatus(target, sid) then
+				local _elS = outcome.element
+				local _baseBleedFired = sid == "Bleed" and (_elS == nil or _elS == "Physical" or _elS == "")
+				if _baseBleedFired and StatusService.HasStatus(target, sid) then
+					-- Bleed Specialist (re-check 2026-10-29): a Physical hit already triggered Bleed above
+					-- (every Physical hit does); the perk adds the trigger to the other hits, not a second one.
+				elseif StatusService.HasStatus(target, sid) then
 					-- TRIGGER: deal the status's current DOT once now; leave it running.
 					local dot = StatusService.GetCurrentDotDamage(target, sid)
 					if dot > 0 then
@@ -1673,7 +2004,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			if removed then
 				print(string.format("[CombatResolver] Purifier: %s dispels %s from %s", attacker.name, removed, target.name))
 				if BattleVisualBroadcaster.UnitStateChanged then
-					BattleVisualBroadcaster.UnitStateChanged(target)
+					BattleVisualBroadcaster.UnitStateChanged(target, "Purifier")
 				end
 			end
 		end
@@ -1684,7 +2015,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 				StatusService.ApplyStatus(target, sid, attacker.id)
 				print(string.format("[CombatResolver] Buff-Blind: %s grants %s to %s", attacker.name, sid, target.name))
 				if BattleVisualBroadcaster.UnitStateChanged then
-					BattleVisualBroadcaster.UnitStateChanged(target)
+					BattleVisualBroadcaster.UnitStateChanged(target, "Buff-Blind")
 				end
 			end
 		end
@@ -1722,6 +2053,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			print(string.format(
 				"[CombatResolver] Confuse backlash: %s takes %d self-damage", attacker.name, backlash
 			))
+			BattleVisualBroadcaster.UnitStateChanged(attacker, "Confuse")  -- rules 225: backlash
 		end
 	end
 
@@ -1750,6 +2082,9 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			attacker._fortifyFlatDefense = (attacker._fortifyFlatDefense or 0) + fortAdd
 			print(string.format("[CombatResolver] Fortify: %s gains +%d flat Defense on hit (total +%d this turn)",
 				attacker.name, fortAdd, attacker._fortifyFlatDefense))
+			if BattleVisualBroadcaster.Log then  -- visibility (re-check 2026-10-29)
+				BattleVisualBroadcaster.Log("buff", `{attacker.name}: Fortify +{attacker._fortifyFlatDefense} Defense until its next turn.`, attacker.id)
+			end
 		end
 	end
 
@@ -1762,17 +2097,23 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 				"[CombatResolver] Vampire lifesteal: %s heals %d (%.0f%% of %d)",
 				attacker.name, lifesteal, isAOE and 5 or 15, actual
 			))
+			-- Battle log (rules 225): name the source of the heal.
+			BattleVisualBroadcaster.UnitStateChanged(attacker, "Vampire Lifesteal")
 		end
 	end
 
 	-- Doctrine lifesteal: Reaper Soul Rend (Slice 4H)
 	if attacker and actual > 0 and attacker.isAlive then
-		local docLifesteal = DoctrinePassiveService.GetLifestealAmount(attacker, actual, outcome.isAOE or false)
+		-- Reaper Soul Rend (fixed 2026-10-28): only DARK damage to an ENEMY counts, and the kill bonus
+		-- needs this hit to defeat the target (was: any damage, and "kill" read from outcome.isAOE).
+		local _darkDmg = if (outcome.element == "Dark" and target and target.side ~= attacker.side) then actual else 0
+		local docLifesteal = DoctrinePassiveService.GetLifestealAmount(attacker, _darkDmg, target ~= nil and not target.isAlive)
 		if docLifesteal > 0 then
 			UnitSchema_ApplyHealing(docLifesteal, attacker)
 			print(string.format(
 				"[CombatResolver] Doctrine lifesteal: %s heals %d", attacker.name, docLifesteal
 			))
+			BattleVisualBroadcaster.UnitStateChanged(attacker, "Soul Rend")  -- rules 225: Reaper doctrine
 		end
 	end
 
@@ -1784,12 +2125,16 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		if traitHeal > 0 then
 			UnitSchema_ApplyHealing(traitHeal, attacker)
 			print(string.format("[CombatResolver] Trait lifesteal: %s heals %d (of %d)", attacker.name, traitHeal, actual))
+			BattleVisualBroadcaster.UnitStateChanged(attacker, "Lifesteal")  -- rules 225: Lifesteal perk
 		end
 		local recoil = TraitEffectService.GetRecoilAmount(attacker, actual)
 		if recoil > 0 and attacker.currentHp and attacker.currentHp > 1 then
 			local applied = math.min(recoil, attacker.currentHp - 1) -- non-lethal clamp
 			attacker.currentHp = attacker.currentHp - applied
 			print(string.format("[CombatResolver] Lifeless recoil: %s takes %d (non-lethal, of %d)", attacker.name, applied, actual))
+			if applied > 0 then
+				BattleVisualBroadcaster.UnitStateChanged(attacker, "Lifeless")  -- rules 225: flaw recoil
+			end
 		end
 	end
 
@@ -1840,6 +2185,13 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 				attacker.koMpThisTurn = used + grant
 			end
 		end
+		-- Soul Harvest (P-177, re-check 2026-10-29): the DB row has no cap, so its share is granted in full.
+		if (ko.freeHealFrac or 0) > 0 and attacker.maxHp then
+			UnitSchema_ApplyHealing(math.round(attacker.maxHp * ko.freeHealFrac), attacker)
+		end
+		if (ko.freeMpFrac or 0) > 0 and attacker.maxMp then
+			attacker.currentMp = math.min(attacker.maxMp, (attacker.currentMp or 0) + math.round(attacker.maxMp * ko.freeMpFrac))
+		end
 		if ko.mpLossFrac > 0 and attacker.currentMp then
 			attacker.currentMp = math.max(0, attacker.currentMp - math.round(attacker.currentMp * ko.mpLossFrac))
 		end
@@ -1847,7 +2199,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			-- Flag it; CommandService STEP 9 grants the AP once per turn (before end-turn check).
 			attacker.pendingKoApGain = (attacker.pendingKoApGain or 0) + ko.apGain
 		end
-		if ko.healFrac > 0 or ko.mpFrac > 0 or ko.mpLossFrac > 0 or ko.apGain > 0 then
+		if ko.healFrac > 0 or ko.mpFrac > 0 or ko.mpLossFrac > 0 or ko.apGain > 0 or (ko.freeHealFrac or 0) > 0 then
 			print(string.format("[CombatResolver] On-KO traits: %s (kills=%d)", attacker.name, attacker.killsThisBattle))
 		end
 	end
@@ -1875,8 +2227,41 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 
 	-- Shadow Hide-on-hit: defender gains Hide after taking damage
 	if actual > 0 then
+		local _hadHide = StatusService.HasStatus(target, "Hide")
 		RacePassiveService.OnDamageReceived(target, actual, outcome.sourceUnitId)
-		DoctrinePassiveService.OnDamageTaken(target)
+		-- Battle log (rules 225): Umbral Veil's Hide had no broadcast; log it as a status
+		-- line only (StatusApplied touches no HP snapshot, so the hit's own line is unaffected).
+		if not _hadHide and StatusService.HasStatus(target, "Hide") and BattleVisualBroadcaster.StatusApplied then
+			BattleVisualBroadcaster.StatusApplied(target, "Hide", 1)
+		end
+		-- Sentinel Vengeful Riposte (DB): only direct HP damage from an ENEMY SKILL charges it
+		-- (not basic attacks, items, allies or self). 2026-10-28.
+		local _sid = outcome.skillId
+		if _sid and string.sub(tostring(_sid), 1, 5) ~= "ITEM-" and attacker and attacker ~= target
+			and attacker.side ~= target.side then
+			DoctrinePassiveService.OnDamageTaken(target)
+		end
+		-- Skirmisher Harrying Strikes: a Direct Damage Skill after moving 2+ tiles this turn applies
+		-- 1 stack of Bleed to each target it damages. 2026-10-28.
+		if _sid and attacker and attacker ~= target and target.isAlive
+			and DoctrinePassiveService.ShouldApplyBleed(attacker)
+			and not TraitEffectService.HasStatusPhobia(attacker, "Bleed") then  -- Bleed Phobia (2026-10-29)
+			local _sd = GameConstants.SKILLS and GameConstants.SKILLS[_sid]
+			if _sd and DoctrinePassiveService.IsDirectDamageSkill(_sd) then
+				StatusService.ApplyStatus(target, "Bleed", attacker.id)
+			end
+		end
+		-- Gunner Suppressive Fire: a ranged (range >= 3) Direct Damage Skill hit gives the target
+		-- Move -1 on its next turn; multi-hit skills extend 1 turn per extra hit (cap 3). 2026-10-28.
+		if _sid and attacker and attacker ~= target and target.isAlive and attacker.side ~= target.side then
+			local _gsd = GameConstants.SKILLS and GameConstants.SKILLS[_sid]
+			if _gsd and DoctrinePassiveService.IsDirectDamageSkill(_gsd) then
+				local _gRange = if _gsd.range == -1 then (attacker.weaponMaxRange or 1) else (_gsd.range or 0)
+				if _gRange >= 3 then
+					DoctrinePassiveService.ApplyGunnerSuppression(attacker, target, _gsd.hitCount or _gsd.hits or 1)
+				end
+			end
+		end
 	end
 
 	-- Phase 3 on-hit-received debuff traits (fire on a landed hit). Status application
@@ -1884,7 +2269,11 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- (user 2026-10-04): a reaction must not trigger another reaction unless it says so.
 	-- A counter-attack IS a reaction, so a counter's hit (outcome.isCounter) must NOT
 	-- provoke Retaliator / Defenseless / Lingering Curse. Gate on `not outcome.isCounter`.
-	if actual > 0 and target.isAlive and not outcome.isCounter then
+	-- Once per ATTACK, not per hit (re-check 2026-10-29, DB "every time unit is attacked"): a multi-hit
+	-- skill, dual wield or Dual Strike against the same target in one action counts once.
+	local _atkKey = tostring(_resolutionId) .. ":" .. tostring(attacker and attacker.id)
+	if actual > 0 and target.isAlive and not outcome.isCounter and target._lastAttackedKey ~= _atkKey then
+		target._lastAttackedKey = _atkKey
 		-- Defenseless / Lingering Curse: target takes 1 random debuff from the curated pool.
 		if TraitEffectService.HasSelfDebuffOnHit(target) then
 			local dbf = TraitEffectService.RollRandomDebuff()
@@ -1893,7 +2282,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		end
 		-- Retaliator: inflict the target's per-unit rolled debuff on the attacker.
 		if attacker and attacker.isAlive and TraitEffectService.HasDebuffAttackerOnHit(target) then
-			if not target.retaliatorDebuff then
+			if not target.retaliatorDebuff or target.retaliatorDebuff == "Burn" then  -- Burn left the pool 2026-10-29
 				target.retaliatorDebuff = TraitEffectService.RollRandomDebuff()
 			end
 			StatusService.ApplyStatus(attacker, target.retaliatorDebuff, target.id)
@@ -1908,6 +2297,9 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		if stackStep ~= 0 then
 			target.combatStackPct = (target.combatStackPct or 0) + stackStep
 			print(string.format("[CombatResolver] Wrathful/Meek: %s stack now %+.2f", target.name, target.combatStackPct))
+			if BattleVisualBroadcaster.Log then  -- visibility (re-check 2026-10-29)
+				BattleVisualBroadcaster.Log("buff", `{target.name}: {if stackStep > 0 then "Wrathful" else "Meek"} now {string.format("%+d", math.round(target.combatStackPct * 100))}% damage until the end of its next turn.`, target.id)
+			end
 		end
 	end
 
@@ -1931,7 +2323,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 				RacePassiveService.OnUnitKO(attacker)
 			end
 			if BattleVisualBroadcaster.UnitStateChanged then
-				BattleVisualBroadcaster.UnitStateChanged(attacker)
+				BattleVisualBroadcaster.UnitStateChanged(attacker, "Spiked Hide")
 			end
 		end
 	end
@@ -1941,6 +2333,10 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- All damage is applied DIRECTLY (TRG-010) so none can re-trigger another reaction.
 	if attacker and target and outcome.wasGuarding and not outcome.isReflect and not outcome.isCounter then
 		local _aps = (require :: any)(script.Parent.ArmorPassiveService)
+		-- Shieldbearer Aegis Protocol: damage taken while Guarding readies next Skill RT -25%.
+		if actual > 0 then
+			DoctrinePassiveService.OnGuardDamageTaken(target)
+		end
 		-- BD-006 Layered Lamellar: count this hit so successive-hit DR grows next hit.
 		_aps.OnGuardHitReceived(target)
 		-- BD-009 Reprisal Coat: store 40% of the damage Guard just mitigated (carries across
@@ -1951,14 +2347,34 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		if actual > 0 and attacker.isAlive and attacker ~= target then
 			-- BD-007 Mirror Mail: reflect 30% of damage taken back to a PROJECTILE attacker.
 			local refl = _aps.GetGuardProjectileReflect(target)
-			if refl and (attacker.weaponProjectileType ~= nil) then
+			-- Projectile = the HIT, not the attacker's weapon (re-check 2026-10-29): a basic attack uses the
+			-- weapon; a skill uses its own projectileType ("Inherit" / weapon-range skills use the weapon);
+			-- items are not reflected.
+			local _isProj = attacker.weaponProjectileType ~= nil
+			if outcome.skillId ~= nil then
+				local _sid = tostring(outcome.skillId)
+				if string.sub(_sid, 1, 5) == "ITEM-" then
+					_isProj = false
+				else
+					local _sd = GameConstants.SKILLS and GameConstants.SKILLS[_sid]
+					local _pt = _sd and _sd.projectileType
+					if _pt == "Arc" or _pt == "Direct" then
+						_isProj = true
+					elseif _pt == "Inherit" or (_sd and _sd.range == -1) then
+						_isProj = attacker.weaponProjectileType ~= nil
+					elseif _sd then
+						_isProj = false
+					end
+				end
+			end
+			if refl and _isProj then
 				local dmg = math.max(0, math.round(actual * refl.reflectPercent))
 				if dmg > 0 then
 					local dealt = UnitSchema_ApplyDamage(dmg, attacker)
 					print(string.format("[CombatResolver] Mirror Mail: %s reflects %d to %s%s",
 						target.name, dealt, attacker.name, attacker.isAlive and "" or " | DEFEATED"))
 					if not attacker.isAlive then attacker._killedBy = target.id; RacePassiveService.OnUnitKO(attacker) end
-					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(attacker) end
+					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(attacker, "Mirror Mail") end
 				end
 			end
 			-- BD-016 Spiked Plate: attacker takes 20% of the damage they dealt as retaliation.
@@ -1970,7 +2386,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 					print(string.format("[CombatResolver] Spiked Plate: %s retaliates %d to %s%s",
 						target.name, dealt, attacker.name, attacker.isAlive and "" or " | DEFEATED"))
 					if not attacker.isAlive then attacker._killedBy = target.id; RacePassiveService.OnUnitKO(attacker) end
-					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(attacker) end
+					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(attacker, "Spiked Plate") end
 				end
 			end
 		end
@@ -1986,7 +2402,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 					print(string.format("[CombatResolver] Deflect: %s reflects %d to %s%s",
 						target.name, dealt, attacker.name, attacker.isAlive and "" or " | DEFEATED"))
 					if not attacker.isAlive then attacker._killedBy = target.id; RacePassiveService.OnUnitKO(attacker) end
-					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(attacker) end
+					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(attacker, "Deflect") end
 				end
 			end
 		end
@@ -2012,7 +2428,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 					+ WeaponPassiveService.GetGuardMitigationBonus(target)
 				target._armorAutoGuardUsed = true
 				print(string.format("[CombatResolver] Reactive Cuirass: %s auto-Guards after first hit this turn", target.name))
-				if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(target) end
+				if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(target, "Reactive Cuirass") end
 			end
 		end
 	end
@@ -2039,7 +2455,10 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- Fires every time the wearer is hit (user default 2026-10-26; flagged for playtest). Keyed on
 	-- the TARGET's Accessory passive; nil for everyone else. Scope: direct combat hits resolved here
 	-- (DoT / push / trap damage go through other paths and do NOT trigger it -- noted).
-	if target and actual > 0 and target.isAlive and target.consumableSlots then
+	-- DB AC-008: "When taking direct damage from ENEMY" -- an ally's friendly-fire hit does not
+	-- recharge (checklist fix 2026-10-29).
+	if target and actual > 0 and target.isAlive and target.consumableSlots
+		and attacker and attacker.side ~= target.side then
 		local rechargeCfg = ArmorPassiveService.GetItemRechargeOnDamageConfig(target)
 		if rechargeCfg then
 			for _, slot in pairs(target.consumableSlots) do
@@ -2059,6 +2478,10 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- (not passed through VIT RT-delay resistance).
 	if attacker and actual > 0 and attacker ~= target and target.isAlive then
 		local ogreDelay = RacePassiveService.GetOnHitRtDelay(attacker)
+		-- Time Locker family: Ogre's on-hit delay is RT delay caused too (re-check 2026-10-29).
+		if ogreDelay > 0 then
+			ogreDelay = math.round(ogreDelay * TraitEffectService.GetRtDelayInflictMultiplier(attacker))
+		end
 		if ogreDelay > 0 then
 			target.remainingRt = (target.remainingRt or 0) + ogreDelay
 			print(string.format(
@@ -2134,6 +2557,7 @@ function UnitSchema_ApplyDamage(amount, unit)
 	if unit.currentHp <= 0 then
 		-- Armor passive: survive lethal damage at 1 HP (once per battle)
 		if ArmorPassiveService.CanSurviveLethalDamage(unit) then
+			unit._armorLethalSurviveUsed = true
 			unit.currentHp = 1
 			print(string.format("[CombatResolver] %s survived lethal damage via armor passive (1 HP)", unit.name))
 			return actual - 1

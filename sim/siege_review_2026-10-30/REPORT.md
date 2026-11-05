@@ -1,0 +1,5 @@
+# Siege Weapon Balance Review — 2026-10-30
+Seed: none needed (deterministic, no RNG). Script: sim\siege_review_2026-10-30\siege_review.py, raw: results.json
+Bands: 1/10/20/30/50/99 (DB level cap = 99, unit_progression 48).
+Formulas from DB: core_stats 2,5,6,7,31,34,35 (AP, DP, eff. defense, hit quality, fortune); weapons_equipment 157 + nonweapon 11 (item scale); unit_progression 49/100/104 (growth + 3 pts/level, enemy even split); elements_statuses 79 (Hide +0.50 HQ); project_rules 80 (elevation 0.70-1.30); nonweapon HD-007; objects_encounters Ballista/Catapult.
+Assumptions: operators spend points 2:1 (Orc STR:VIT Sword; Feline DEX:AGI Longbow; Elf INT:VIT Wand, plus Elf Bell as worst case). Targets = enemies (even allocation), light=Feline+lowest-Def gear, medium=Human+avg gear+Sword, heavy=Dwarf+highest-Def gear+Sword Breaker. Item level = unit level. No race/doctrine/trait passives, no Guard, equal elevation, front facing (DB has no side/back HQ value -> not modelled). Worst case = Helm x1.5 + Hide +0.50 HQ + elevation 1.30.

@@ -52,6 +52,11 @@ GameConstants.GUARD_CAP             = 0.80   -- maximum Guard mitigation (passiv
 GameConstants.GUARD_RT_BASE_FACTOR  = 0.10   -- round(Modified Base RT × this)
 GameConstants.GUARD_OFFHAND_WT_FACTOR = 0.50 -- + 50% of Effective Armor Off-Hand WT
 
+-- Deployment readiness warning (persistent_hp_mp_rules 24; user ruling 2026-11-01):
+-- a unit is "low" when current HP (or MP) is below this fraction of its max. Same 35%
+-- as post-battle recovery by user choice, but a separate setting.
+GameConstants.DEPLOY_LOW_RESOURCE_FRACTION = 0.35
+
 
 --------------------------------------------------
 -- ELEVATION  (from DB: movement_targeting — Elevation & Displacement)
@@ -1182,9 +1187,10 @@ GameConstants.STATUSES = {
 
 	["Sleep Immunity"] = {
 		id           = "Sleep Immunity",
-		description  = "Immune to Sleep.",
+		description  = "Immune to Sleep (Oversleep) until the end of its next turn.",
 		kind         = "Buff",
-		duration     = 2,
+		-- DB weapons_equipment 153: "until end of target next ready turn" (was 2 turns). 2026-10-29.
+		duration     = 1,
 		reapply      = "refresh",
 		undispellable = true,
 	},
@@ -1657,7 +1663,11 @@ function GameConstants.CalcSkillMpCost(actor, skillDef, multiplier)
 	else
 		raw = skillDef.mpCost or 0
 	end
-	return math.max(0, math.round(raw * (multiplier or 1)))
+	-- A positive authored cost never drops to 0 from discounts (DB Arcanist "minimum positive ordinary
+	-- cost 1"); a multiplier of exactly 0 (a deliberate free cast) still gives 0. Re-check 2026-10-29.
+	local cost = math.max(0, math.round(raw * (multiplier or 1)))
+	if cost == 0 and raw > 0 and (multiplier or 1) > 0 then cost = 1 end
+	return cost
 end
 
 -- ============================================================
@@ -2124,6 +2134,9 @@ GameConstants.SKILLS = {
 	},
 	["SKL-RAPID-ASSAULT"] = {
 		id            = "SKL-RAPID-ASSAULT",
+		-- Multi-hit (DB: Hit Count = min(4, 2 + floor(AGI / 100)); RT delay x0.25 per hit).
+		hitCountAgi   = true,
+		hitRtDelayMult = 0.25,
 		name          = "Rapid Assault",
 		tags          = { "Direct Damage", "Physical" },
 		targetRules   = "Enemy Unit",
@@ -2783,6 +2796,9 @@ GameConstants.SKILLS = {
 	},
 	["SKL-TWIN-FANGS"] = {
 		id            = "SKL-TWIN-FANGS",
+		-- Multi-hit (DB skills: "Two sequential hits", RT delay x0.40 per hit). 2026-10-28.
+		hitCount      = 2,
+		hitRtDelayMult = 0.40,
 		name          = "Twin Fangs",
 		tags          = { "Direct Damage", "Physical" },
 		targetRules   = "Enemy Unit",
@@ -2799,6 +2815,10 @@ GameConstants.SKILLS = {
 	},
 	["SKL-STORM-BARRAGE"] = {
 		id            = "SKL-STORM-BARRAGE",
+		-- Multi-hit (DB: 3 hits with the weapon pattern; RT delay x0.25 per hit, third hit x0.50).
+		hitCount      = 3,
+		hitRtDelayMult = 0.25,
+		lastHitRtDelayMult = 0.50,
 		name          = "Storm Barrage",
 		tags          = { "Direct Damage", "Electric" },
 		targetRules   = "Enemy Unit",
@@ -2971,6 +2991,11 @@ GameConstants.SKILLS = {
 	},
 	["SKL-FLURRY-OF-BLADES"] = {
 		id            = "SKL-FLURRY-OF-BLADES",
+		-- Multi-hit (DB: 4 hits alternating main/off-hand, Dual Wield exclusive, RT delay x0.20 per hit).
+		hitCount      = 4,
+		hitRtDelayMult = 0.20,
+		alternateHands = true,
+		requiresDualWield = true,
 		name          = "Flurry of Blades",
 		tags          = { "Direct Damage", "Physical" },
 		targetRules   = "Enemy Unit",
@@ -3238,6 +3263,12 @@ GameConstants.SKILLS = {
 	},
 	["SKL-BARRAGE"] = {
 		id            = "SKL-BARRAGE",
+		-- Multi-hit (DB: 4 hits, each rolls Hit Quality separately). DB RT delay "round(Weapon RT Delay
+		-- x 0.60)" is NOT marked per hit (unlike the other multi-hit skills), so it is applied ONCE, on
+		-- the last hit; hits 1-3 add none.
+		hitCount      = 4,
+		hitRtDelayMult = 0,
+		lastHitRtDelayMult = 0.60,
 		name          = "Barrage",
 		tags          = { "Direct Damage", "Physical" },
 		targetRules   = "Enemy Unit",
@@ -3726,7 +3757,7 @@ GameConstants.STAT_META = {
 	precision       = { label = "Precision",        formula = "DEX / (DEX + 200)", parent = "DEX", unit = "%", desc = "Raises your Hit Quality — how hard your hits land (Hit Quality = 1 + your Precision − target Evasiveness). DEX raises it." },
 	jump            = { label = "Jump",             formula = "1 + floor(DEX / 60)", parent = "DEX", desc = "How many elevation levels you can step up or down while moving. DEX raises it." },
 	channelReduction = { label = "Channel Speed",   formula = "DEX / (300 + DEX) reduction", parent = "DEX", unit = "%", desc = "Cuts skill channel time so casts finish faster. DEX raises it." },
-	discoveryRadius = { label = "Discovery Radius", formula = "1 + floor(LUK / 60)", parent = "LUK", desc = "Your discovery reach for exploration outside battle. LUK raises it." },
+	discoveryRadius = { label = "Discovery Radius", formula = "1 + floor(LUK / 60)", parent = "LUK", desc = "How many tiles around this unit it can spot hidden traps, objects and enemies. LUK raises it." },
 	unitFortune     = { label = "Unit Fortune",     formula = "LUK / (LUK + 200)", parent = "LUK", unit = "%", desc = "Your fortune factor (reward and tie-break luck). LUK raises it." },
 	startingRt      = { label = "Starting RT",      formula = "round(Modified Base RT × (1 - 0.30 × LUK/(100+LUK))) − 10 (player edge)", parent = "LUK", desc = "A ONE-TIME reduction applied at deployment to decide who acts first — lower goes sooner. Not a recurring stat; after the first turn, RT comes from Base RT." },
 	basicAttackRt   = { label = "Basic Attack RT",  formula = "round((Base RT + Eff. Armor WT) × 0.10) + Effective Weapon WT", parent = "STR", desc = "The RT your basic attack costs. Lower means your next turn comes sooner." },

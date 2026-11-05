@@ -1,0 +1,215 @@
+{
+ "ts": "20261101_112336",
+ "backups": {
+  "db": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_before_recheck_rulings_20261101_112336.db",
+  "gr": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Game_Rules_before_recheck_rulings_20261101_112336.xlsx",
+  "bp": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\CTRBLXAI_Build_Plan_before_recheck_rulings_20261101_112336.xlsx",
+  "ix": "D:\\AI\\Projects\\CTRBLXAI\\docs\\backups\\INDEX_before_recheck_rulings_20261101_112336.txt"
+ },
+ "changes": [
+  {
+   "table": "guild_facilities",
+   "key": "id=38",
+   "column": "rule",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "25 Guild Facilities",
+    "D39"
+   ],
+   "before": "Equipment upgrades break at 12 items (T3/T4 run out), measured on the database's own lifetime income row (materials_system 36: ~286 per tier), with no dismantling. 10 upgrades = 89% of the T3/T4 budget (comfortable). 12 = 107% (over budget - this is the wall). 15 = deficit requiring ~27 targeted battles (old ~311-per-tier basis, re-check pending). Documented as intentional soft wall. [Old text: break at 13 items, 12 = 98% - those figures used ~311 per tier from the 2026-09-16 run, not the DB income row.] With dismantling: 12-15 items under the old refund rule (Simulator 2026-11-01); re-check with the per-tier refund (row 51) PENDING.",
+   "after": "Equipment upgrades break at 12 items (T3/T4 run out), measured on the database's own lifetime income row (materials_system 36: ~286 per tier), with no dismantling. 10 upgrades = 89% of the T3/T4 budget (comfortable). 12 = 107% (over budget - this is the wall). Documented as intentional soft wall. [Old text: break at 13 items, 12 = 98% - those figures used ~311 per tier from the 2026-09-16 run, not the DB income row.] 12–15 items with per-tier dismantling (14–16 with T5→T4 conversion); 12 with no dismantling (materials_system 36, ~286 per tier). Simulator re-check 2026-11-01."
+  },
+  {
+   "table": "guild_facilities",
+   "key": "id=38",
+   "column": "notes",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "25 Guild Facilities",
+    "E39"
+   ],
+   "before": "Verified — per Simulator agent | 2026-11-01: measured BEFORE dismantling was decided - re-run PENDING (Simulator). The dismantle refund (25%->50% of gear materials spent on the item, row 51) is meant to keep this wall. | 2026-11-01 record fix (Simulator report_runeforge_economy_2026-11-01, check F + Section 4 #8): wall corrected 13 -> 12 items using materials_system 36 (~286 per tier); 10 items = 89.2%.",
+   "after": "Verified — per Simulator agent | 2026-11-01: measured BEFORE dismantling was decided - re-run DONE (Simulator re-check 2026-11-01). The dismantle refund (25%->50% of gear materials spent on the item, row 51) is meant to keep this wall. | 2026-11-01 record fix (Simulator report_runeforge_economy_2026-11-01, check F + Section 4 #8): wall corrected 13 -> 12 items using materials_system 36 (~286 per tier); 10 items = 89.2%. | 2026-11-01 cleanup (Simulator re-check report_recheck_2026-11-01, Section 4 #1): removed [15 = deficit requiring ~27 targeted battles (old ~311-per-tier basis, re-check pending)] and [With dismantling: 12-15 items under the old refund rule (Simulator 2026-11-01); re-check with the per-tier refund (row 51) PENDING]; replaced with the re-check figures. No dismantling + 3:1 conversion: 13 items."
+  },
+  {
+   "table": "guild_facilities",
+   "key": "id=48",
+   "column": "rule",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "25 Guild Facilities",
+    "D49"
+   ],
+   "before": "When enchanting raises an item's rarity, the player pays the upgrade cost difference they skipped: what the item's Blacksmith upgrades from its starting level to its current level cost at the new rarity, minus what they cost at the old rarity (gold + gear-upgrade materials). Every route (upgrade then enchant, or enchant then upgrade) costs the same total. Each item stores one extra saved number: the item level it dropped or was bought at. How it is worked out: for each level from the item's starting level to its current level, (normal Blacksmith upgrade cost at the new rarity - cost at the old rarity), gold and gear materials. Discount (LOCKED - USER DECISION 2026-11-01): each level uses the Blacksmith gold discount of the Blacksmith level needed to reach that level, 3% x (ceil(level / 10) - 1) - levels 2-10 0%, 11-20 3%, 21-30 6% ... 81-90 24%, 91-99 27% - NOT the player's current discount. Each level's cost is rounded down to whole gold first (economy_framework 19), so the fee is always whole gold. Example, Common -> Epic, item level 1 -> 99: 1H 22,201g, 2H 33,299g, Body 17,763g (+196 gear materials, materials are never discounted). Downgrading an item below its starting level lowers the starting level to the new level. Items that existed before this is built start at their current level, so they never owe a fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling such items returns no gear-upgrade materials, only the +1 for Rare and up).",
+   "after": "When enchanting raises an item's rarity, the player pays the upgrade cost difference they skipped: what the item's Blacksmith upgrades from its starting level to its current level cost at the new rarity, minus what they cost at the old rarity (gold + gear-upgrade materials). Every route (upgrade then enchant, or enchant then upgrade) costs the same total while the Blacksmith level matches the item's level; when the Blacksmith is ahead of the item, enchanting late costs more (ACCEPTED - USER DECISION 2026-11-01: Common -> Epic L1-99 with the Blacksmith at L10 all game, 1H +2,760g, 2H +4,133g). PLANNED UI rule (not built): the Runeforge screen shows the hint \"Enchant before upgrading to pay less.\" (short label if it does not fit: \"Enchant first, pay less.\"). Each item stores one extra saved number: the item level it dropped or was bought at. How it is worked out: for each level from the item's starting level to its current level, (normal Blacksmith upgrade cost at the new rarity - cost at the old rarity), gold and gear materials. Discount (LOCKED - USER DECISION 2026-11-01): each level uses the Blacksmith gold discount of the Blacksmith level needed to reach that level, 3% x (ceil(level / 10) - 1) - levels 2-10 0%, 11-20 3%, 21-30 6% ... 81-90 24%, 91-99 27% - NOT the player's current discount. Each level's cost is rounded down to whole gold first (economy_framework 19), so the fee is always whole gold. Example, Common -> Epic, item level 1 -> 99: 1H 22,201g, 2H 33,299g, Body 17,763g (+196 gear materials, materials are never discounted). Downgrading an item below its starting level lowers the starting level to the new level. Items that existed before this is built start at their current level, so they never owe a fee (USER-CONFIRMED 2026-11-01; accepted side effect: dismantling such items returns no gear-upgrade materials, only the +1 for Rare and up)."
+  },
+  {
+   "table": "guild_facilities",
+   "key": "id=48",
+   "column": "notes",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "25 Guild Facilities",
+    "E49"
+   ],
+   "before": "USER DECISION 2026-11-01 (option Q9-A, fixes the upgrade-as-Common-then-enchant cost dodge). Design first, build later. NOT BUILT. Simulator to confirm details (Blacksmith discount, downgraded items). Item save rows (save_data_contract 3, equipment_schema 4/5) not updated yet. Other exploit guards still OPEN (open_decisions 123 Q9). | 2026-11-01: saved fields recorded as PLANNED - not built (save_data_contract 3, equipment_schema 16-18). Discount and downgrade handling = Designer assumption, Simulator to verify. Facility name: Runeforge (USER DECISION 2026-11-01). | 2026-11-01 USER-CONFIRMED: existing items count at their current level and never owe a catch-up fee (dismantling them returns no gear-upgrade materials, only the +1 for Rare and up). | USER DECISION 2026-11-01 (Simulator fix X3, report_runeforge_economy_2026-11-01): LOCKED - per-level discount of the Blacksmith level needed to reach that level. Old: [using the player's current Blacksmith gold discount]. This closes the late-enchant saving (upgrade as Common, enchant at Blacksmith L10: 1H -2,760g, 2H -4,133g, Body -2,208g, about 9%). The earlier \"Discount handling = Designer assumption, Simulator to verify\" is superseded; downgrade handling was verified by the Simulator (no saving).",
+   "after": "USER DECISION 2026-11-01 (option Q9-A, fixes the upgrade-as-Common-then-enchant cost dodge). Design first, build later. NOT BUILT. Simulator to confirm details (Blacksmith discount, downgraded items). Item save rows (save_data_contract 3, equipment_schema 4/5) not updated yet. Other exploit guards still OPEN (open_decisions 123 Q9). | 2026-11-01: saved fields recorded as PLANNED - not built (save_data_contract 3, equipment_schema 16-18). Discount and downgrade handling = Designer assumption, Simulator to verify. Facility name: Runeforge (USER DECISION 2026-11-01). | 2026-11-01 USER-CONFIRMED: existing items count at their current level and never owe a catch-up fee (dismantling them returns no gear-upgrade materials, only the +1 for Rare and up). | USER DECISION 2026-11-01 (Simulator fix X3, report_runeforge_economy_2026-11-01): LOCKED - per-level discount of the Blacksmith level needed to reach that level. Old: [using the player's current Blacksmith gold discount]. This closes the late-enchant saving (upgrade as Common, enchant at Blacksmith L10: 1H -2,760g, 2H -4,133g, Body -2,208g, about 9%). The earlier \"Discount handling = Designer assumption, Simulator to verify\" is superseded; downgrade handling was verified by the Simulator (no saving). | USER DECISION 2026-11-01 (Simulator re-check report_recheck_2026-11-01, Section 4 #3): ACCEPTED - enchanting late costs more when the Blacksmith is ahead of the item (1H +2,760g, 2H +4,133g at Blacksmith L10). Safe, no exploit. Old rule text: [Every route (upgrade then enchant, or enchant then upgrade) costs the same total.] | 2026-11-01 PLANNED UI rule (USER DECISION, for when the Runeforge screen is built): show the hint \"Enchant before upgrading to pay less.\" (exact wording); if it does not fit a small label, use \"Enchant first, pay less.\" NOT BUILT."
+  },
+  {
+   "table": "guild_facilities",
+   "key": "id=51",
+   "column": "rule",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "25 Guild Facilities",
+    "D52"
+   ],
+   "before": "Destroys the item. Gives NO gold (selling = gold, dismantling = materials). Gear materials are refunded TIER BY TIER (LOCKED - USER DECISION 2026-11-01): for each material tier, refund = round down (refund % from row 50 x the gear materials of THAT tier that the normal recipe charges for this item from its starting level to its current level at its current rarity), paid in that same tier. The T5 part (levels 81-99) is paid as the same number of T4, never T5 (E4). Plus 1 extra gear material if the item's STARTING rarity is Rare or higher (equipment_schema 19, the same basis as the sell rule, economy_framework 14), in the tier of the item's current level band (L1-20 T1, L21-40 T2, L41-60 T3, L61-99 T4); enchanting an item up to Rare never earns the +1. Example: Common Gloves upgraded L1 -> 61, dismantled at Blacksmith L10 (50%): spent 19 T1 / 20 T2 / 20 T3 / 1 T4, refund 9 T1 / 10 T2 / 10 T3 / 0 T4. Essences = 1 per bonus line (numbers or bonus passive) at that line's rarity (tiers 1-2 Uncommon, tier 3 Rare, tier 4+ Epic; a passive uses its minimum rarity), capped at the Blacksmith's extraction rarity (row 50). Common items (no lines) give gear materials only. Shop-bought items give nothing (no materials, no Essences).",
+   "after": "Destroys the item. Gives NO gold (selling = gold, dismantling = materials). Gear materials are refunded TIER BY TIER (LOCKED - USER DECISION 2026-11-01): for each material tier, refund = round down (refund % from row 50 x the gear materials of THAT tier that the normal recipe charges for this item from its starting level to its current level at its current rarity), paid in that same tier. Each tier's refund is rounded down SEPARATELY - the T4 part and the T5 part are each rounded on their own, never added together first. The T5 part (levels 81-99) is paid as the same number of T4, never T5 (E4; kept by USER DECISION 2026-11-01). Example: Common 1H L80 -> 99, 19 T5 spent, at 50% -> 9 T4. Plus 1 extra gear material if the item's STARTING rarity is Rare or higher (equipment_schema 19, the same basis as the sell rule, economy_framework 14), in the tier of the item's current level band (USER-ACCEPTED 2026-11-01; L1-20 T1, L21-40 T2, L41-60 T3, L61-99 T4); enchanting an item up to Rare never earns the +1. Example: Common Gloves upgraded L1 -> 61, dismantled at Blacksmith L10 (50%): spent 19 T1 / 20 T2 / 20 T3 / 1 T4, refund 9 T1 / 10 T2 / 10 T3 / 0 T4. Essences = 1 per bonus line (numbers or bonus passive) at that line's rarity (tiers 1-2 Uncommon, tier 3 Rare, tier 4+ Epic; a passive uses its minimum rarity), capped at the Blacksmith's extraction rarity (row 50). Common items (no lines) give gear materials only. Shop-bought items give nothing (no materials, no Essences)."
+  },
+  {
+   "table": "guild_facilities",
+   "key": "id=51",
+   "column": "notes",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "25 Guild Facilities",
+    "E52"
+   ],
+   "before": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q2, Q9, E4). Passive-line rarity and the round-down = Designer detail, Simulator to verify. | USER DECISION 2026-11-01 (Simulator fixes X1 + X2, report_runeforge_economy_2026-11-01): LOCKED - refund per tier in its own tier, +1 from STARTING rarity. Old: [Gear materials = round down (refund % x the gear materials the normal recipe charges ... at its current rarity), +1 extra for Rare and up. Tier = the item's current level band (L1-20 T1, L21-40 T2, L41-60 T3, L61-80 T4); L81+ items give T4, never T5.] The old rule made gold: X2 upgrade -> dismantle paid every refund in the current band's tier (+250g per cycle, Gloves/Feet at Blacksmith L10); X1 enchant Uncommon to Rare -> dismantle earned the +1 T4 (+45 to +63g per item). T5 part paid as T4, not \"nothing\": the Simulator allowed either; T4 matches E4 and cannot make a loop (at most 1 T4 back per 2 T5 spent; T5 sells for 250g, T4 for 100g). Round-down and passive-line rarity verified by the Simulator 2026-11-01.",
+   "after": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q2, Q9, E4). Passive-line rarity and the round-down = USER-ACCEPTED 2026-11-01 (verified by the Simulator). | USER DECISION 2026-11-01 (Simulator fixes X1 + X2, report_runeforge_economy_2026-11-01): LOCKED - refund per tier in its own tier, +1 from STARTING rarity. Old: [Gear materials = round down (refund % x the gear materials the normal recipe charges ... at its current rarity), +1 extra for Rare and up. Tier = the item's current level band (L1-20 T1, L21-40 T2, L41-60 T3, L61-80 T4); L81+ items give T4, never T5.] The old rule made gold: X2 upgrade -> dismantle paid every refund in the current band's tier (+250g per cycle, Gloves/Feet at Blacksmith L10); X1 enchant Uncommon to Rare -> dismantle earned the +1 T4 (+45 to +63g per item). T5 part paid as T4, not \"nothing\": the Simulator allowed either; T4 matches E4 and cannot make a loop (at most 1 T4 back per 2 T5 spent; T5 sells for 250g, T4 for 100g). Round-down and passive-line rarity verified by the Simulator 2026-11-01. | USER DECISION 2026-11-01 (Simulator re-check report_recheck_2026-11-01, Section 3 + Section 4 #2): KEEP refunding the T5 part as T4. The user accepts the new T5 -> T4 conversion route: it is not a gold exploit (every route loses gold), it lifts the material wall by about 2-3 items at most, and it only matters when a player has T5 while still needing T4. Simulator numbers: 19 T5 + 947g gives 9 T4 (Common Gloves: free downgrade to L80, upgrade L80 -> 99, dismantle at Blacksmith L10); the wall becomes 12-15 items (14-16 with conversion). The Simulator's alternatives (1 T4 per 3 T5, or nothing) were not taken. | USER-ACCEPTED 2026-11-01: the +1 comes in the tier of the item's current level band. | 2026-11-01 wording fix (Section 4 #4): each tier's refund is rounded down separately (T4 and T5 parts rounded on their own); the two readings differed by at most 1 material."
+  },
+  {
+   "table": "materials_system",
+   "key": "id=42",
+   "column": "rule",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "23 Materials System",
+    "C43"
+   ],
+   "before": "Dismantling refunds 25% (Blacksmith L1) up to 50% (L10) of the gear materials spent on the item, tier by tier: each tier comes back in its own tier, and the T5 part comes back as T4 (never T5). +1 for items whose STARTING rarity is Rare and up. Shop-bought items give nothing. Full rule: guild_facilities 50-52.",
+   "after": "Dismantling refunds 25% (Blacksmith L1) up to 50% (L10) of the gear materials spent on the item, tier by tier: each tier comes back in its own tier, each tier's refund is rounded down SEPARATELY (the T4 and T5 parts are rounded on their own), and the T5 part comes back as T4 (never T5; kept by USER DECISION 2026-11-01). +1 for items whose STARTING rarity is Rare and up, in the tier of the item's current level band (USER-ACCEPTED 2026-11-01). Shop-bought items give nothing. Full rule: guild_facilities 50-52."
+  },
+  {
+   "table": "materials_system",
+   "key": "id=42",
+   "column": "notes",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "23 Materials System",
+    "D43"
+   ],
+   "before": "USER DECISION 2026-11-01 (Q2, Q7, E4). NOT BUILT. | USER DECISION 2026-11-01 (Simulator fixes X1 + X2): refund per tier + \"+1\" from starting rarity LOCKED. Old: [tier = the item level band, L81+ items give T4 (never T5); +1 for Rare and up].",
+   "after": "USER DECISION 2026-11-01 (Q2, Q7, E4). NOT BUILT. | USER DECISION 2026-11-01 (Simulator fixes X1 + X2): refund per tier + \"+1\" from starting rarity LOCKED. Old: [tier = the item level band, L81+ items give T4 (never T5); +1 for Rare and up]. | USER DECISION 2026-11-01 (Simulator re-check report_recheck_2026-11-01): KEEP the T5 part as T4. Accepted T5 -> T4 conversion route: not a gold exploit, lifts the wall by about 2-3 items at most, only matters when a player has T5 while still needing T4. Simulator: 19 T5 + 947g gives 9 T4; wall 12-15 items (14-16 with conversion). | USER-ACCEPTED 2026-11-01: the +1 comes in the tier of the item's current level band. | 2026-11-01 wording: each tier rounded down separately. Old: [tier by tier: each tier comes back in its own tier, and the T5 part comes back as T4 (never T5). +1 for items whose STARTING rarity is Rare and up.]"
+  },
+  {
+   "table": "guild_facilities",
+   "key": "id=55",
+   "column": "notes",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "25 Guild Facilities",
+    "E56"
+   ],
+   "before": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q5). Modify-down factor 0.5 = Designer starting value. | USER DECISION 2026-11-01 (Simulator fix X4 + report Section 4 #5-#7, report_runeforge_economy_2026-11-01): Add offers fixed per item (Remove + Add with leave/rejoin could fish for an exact attribute); Reroll options per line; a reroll counts once paid; all gold fees round down. LOCKED. Fixed order from the item ID (so no extra saved number) = Designer detail of the user's \"works like the Reroll rule\".",
+   "after": "USER DECISION 2026-11-01. Design first, build later. NOT BUILT. (Q5). Modify-down factor 0.5 = Designer starting value. | USER DECISION 2026-11-01 (Simulator fix X4 + report Section 4 #5-#7, report_runeforge_economy_2026-11-01): Add offers fixed per item (Remove + Add with leave/rejoin could fish for an exact attribute); Reroll options per line; a reroll counts once paid; all gold fees round down. LOCKED. Fixed order from the item ID (so no extra saved number) = USER-ACCEPTED 2026-11-01 (was a Designer detail of the user's \"works like the Reroll rule\"); relies on the item's saved ID never changing; Dev to confirm in code before building. | Simulator re-check 2026-11-01 PASS (note A): a paid add-a-throwaway-line-then-remove 'walk' reaches 1-2 more list positions at full gold + Essence cost - the rule working as written, nothing re-drawn; holds only if the item ID never changes and the order is worked out on the server."
+  },
+  {
+   "table": "equipment_schema",
+   "key": "rowid=18",
+   "column": "Meaning",
+   "xlsx": [
+    "CTRBLXAI_Build_Plan.xlsx",
+    "04 — Equipment Runtime Schema",
+    "D22"
+   ],
+   "before": "Times rerolled at the Runeforge (every paid reroll counts, also when the old line is kept); fixes the reroll options of every line on the item (guild_facilities 55). Add offers need no saved number (fixed by the item ID)",
+   "after": "Times rerolled at the Runeforge (every paid reroll counts, also when the old line is kept); fixes the reroll options of every line on the item (guild_facilities 55). Add offers need no saved number (fixed by the item ID - USER-ACCEPTED 2026-11-01; relies on the item's saved ID never changing; Dev to confirm in code before building)"
+  },
+  {
+   "table": "materials_system",
+   "key": "id=41",
+   "column": "notes",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "23 Materials System",
+    "D42"
+   ],
+   "before": "USER DECISION 2026-11-01 (Q10). NOT BUILT. \"1 Essence per drop\" = Designer assumption. | WORKING ESTIMATES (Simulator 2026-11-01), not design decisions - confirm later: elite rate about 0.034 per battle (loot_progression 26) and about 0.40 equipment drops per battle (loot_progression 24). With these, drops = 25.0% of Essence income (range 11.8-28.4%; 12% at 1 drop per battle). Essences per battle: Uncommon 0.357, Rare 0.057, Epic 0.023.",
+   "after": "USER DECISION 2026-11-01 (Q10). NOT BUILT. \"1 Essence per drop\" = Designer assumption. | WORKING ESTIMATES (Simulator 2026-11-01), not design decisions - confirm later: elite rate about 0.034 per battle (loot_progression 26) and about 0.40 equipment drops per battle (loot_progression 24). With these, drops = 25.0% of Essence income (range 11.8-28.4%; 12% at 1 drop per battle). Essences per battle: Uncommon 0.357, Rare 0.057, Epic 0.023. | WORKING ESTIMATE note (Simulator re-check 2026-11-01, note C) - not a decision, no number locked: the Essence drop share depends on equipment drops per battle - 37-45% at 0.2 drops/battle, 23-29% at 0.4, 13-17% at 0.8, 11-14% at 1.0 (ranges = elite rate 0.017-0.068). The ~25% target only holds near 0.40. Natural Epics scale with drops (2.0 / 4.0 / 7.9 at 0.2 / 0.4 / 0.8) while crafted Epics do not (limited by gold). Lock the real drop rate before tuning Essence drops."
+  },
+  {
+   "table": "loot_progression",
+   "key": "id=24",
+   "column": "notes",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "10 Loot Progression",
+    "E25"
+   ],
+   "before": "Locked | WORKING ESTIMATE (Simulator 2026-11-01), not a design decision - confirm later: about 0.40 equipment drops per battle (back-derived from the ~10,800g lifetime sell income, economy_framework 42; ~10% of drops kept). High case 1.0 per battle (design doc figure) also tested. No table defines this number yet.",
+   "after": "Locked | WORKING ESTIMATE (Simulator 2026-11-01), not a design decision - confirm later: about 0.40 equipment drops per battle (back-derived from the ~10,800g lifetime sell income, economy_framework 42; ~10% of drops kept). High case 1.0 per battle (design doc figure) also tested. No table defines this number yet. | WORKING ESTIMATE note (Simulator re-check 2026-11-01) - nothing locked: the Essence drop share is 37-45% at 0.2 drops/battle, 23-29% at 0.4 and 11-14% at 1.0; natural Epics scale with drops, crafted ones do not (materials_system 41). Lock the real drop rate before tuning Essence drops."
+  },
+  {
+   "table": "open_decisions",
+   "key": "rowid=23",
+   "column": "col_2",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "18 Open Decisions",
+    "B23"
+   ],
+   "before": "DECIDED 2026-11-01 (user) - design locked, all decided (facility name Runeforge; Epic step fee = half the shop price gap, guild_facilities 57); NOT BUILT, Simulator next",
+   "after": "DECIDED 2026-11-01 (user) - design locked, all decided (facility name Runeforge; Epic step fee = half the shop price gap, guild_facilities 57); NOT BUILT; Simulator re-check PASS 2026-11-01; next: Dev build plan"
+  },
+  {
+   "table": "open_decisions",
+   "key": "rowid=23",
+   "column": "col_3",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "18 Open Decisions",
+    "C23"
+   ],
+   "before": "USER DECISION 2026-11-01: crafting is no longer parked. Scope = Blacksmith expansion (dismantle items into gear-upgrade materials + Essences; Blacksmith level effects) + a new facility, Runeforge (add/remove/reroll/modify bonus attributes; raise rarity up to Epic). All design questions DECIDED 2026-11-01 (open_decisions 123); only the facility name is OPEN. Design first, build later. See guild_facilities 40-58, materials_system 40-42. [Was: Parked for future approval.]",
+   "after": "USER DECISION 2026-11-01: crafting is no longer parked. Scope = Blacksmith expansion (dismantle items into gear-upgrade materials + Essences; Blacksmith level effects) + a new facility, Runeforge (add/remove/reroll/modify bonus attributes; raise rarity up to Epic). ALL DECIDED (facility name Runeforge 2026-11-01); Simulator re-check PASS 2026-11-01; next: Dev build plan. (open_decisions 123) [Was: only the facility name is OPEN.] Design first, build later. See guild_facilities 40-58, materials_system 40-42. [Was: Parked for future approval.]"
+  },
+  {
+   "table": "open_decisions",
+   "key": "rowid=123",
+   "column": "col_2",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "18 Open Decisions",
+    "B122"
+   ],
+   "before": "ALL DECIDED — Simulator next",
+   "after": "ALL DECIDED — Simulator re-check PASS 2026-11-01, design FINAL; next: Dev build plan (user approval before code)"
+  },
+  {
+   "table": "open_decisions",
+   "key": "rowid=123",
+   "column": "col_3",
+   "xlsx": [
+    "CTRBLXAI_Game_Rules.xlsx",
+    "18 Open Decisions",
+    "C122"
+   ],
+   "before": "QUESTIONS (all USER DECISION 2026-11-01, Designer recommendations accepted): Q1 RESOLVED - 3 Essences Uncommon/Rare/Epic, 5 -> 8 counters (materials_system 1/29/30/40). Q2 RESOLVED - dismantle refunds 25%->50% of gear materials spent (+1 Rare and up), 1 Essence per bonus line, no gold; equipped and Unique items cannot be dismantled (guild_facilities 51-52). Q3 RESOLVED - rarity after Add = higher of (rarest line's rarity, total-BP band); rarity never goes down (gf 44). Q4 RESOLVED - capacity L1-4 Uncommon, L5-9 Rare, L10 Epic, normal budget, 2H doubled; above-Epic items tune only at L10; Unique never (gf 54). Q5 RESOLVED - Remove = small fee, nothing back; Reroll = pick from a few fixed options; Modify = one tier up/down (gf 55). Q6 RESOLVED - numbers only; can remove a bonus passive, never add one (gf 56). Q7 RESOLVED - downgrade reach (gf 47); -3% gold per level (27% at L10, gold only); extraction Uncommon -> Rare (L4) -> Epic (L7); refund 25%->50% (gf 41/50, economy_framework 19). Q8 RESOLVED - unlock Guild Hall L4 (shared), Base 250 / Scale 15 = 8,919g, max L10 (gf 8/46/49/53). Q9 RESOLVED - catch-up fee (gf 48); shop-bought items give nothing when dismantled; Essences cannot be sold; Epic-level enchanting charges the Epic step fee (gf 57) = half the gap between the shop Epic price and the shop price at the rarity before the enchant [superseded 2026-11-01: counted from the item's STARTING rarity, UPDATE 3], no discount (USER DECISION 2026-11-01). Q10 RESOLVED - chests 25% Uncommon, elites 75% Rare, bosses 100% Epic (Rare below L40), Fortune excluded, ~25% drops / ~75% dismantling (materials_system 19/41). E1 RESOLVED - auto-rename by the affix rule (gf 58, item_rarity_rules 23). E2 RESOLVED 2026-11-01 (USER) - facility named Runeforge (the Enchanter doctrine keeps its name); placeholder replaced in every row. E3 RESOLVED - downgrade stays free (economy_framework 21, project_rules 109). E4 RESOLVED - L81+ dismantles give T4 (materials_system 6/18). E5 RESOLVED - open_decisions 24 unparked. E6 RESOLVED - Fortune stays out of Add (gf 58). CONFLICTS UPDATED 2026-11-01: materials_system 1/6/15/18/19/26/28/29/30/31/32/33/36-39; guild_facilities 1/4/5/8/12/13/35-39; economy_framework 16/19/20/21/28/29/36/43-46; project_rules 109; open_decisions 22/23/24; implementation_plan 53; service_boundaries 15/16 + new 18; save_data_contract 3; equipment_schema 4/5 + new 16-18; item_rarity_rules 3/14/23; item_generation_steps 7/8/10; live_service_features 5. LEFT AS-IS (no conflict after these decisions): item_rarity_framework band table (covered by item_rarity_rules 14 note), item_rarity_rules 2/4, item_generation_steps 2-5, economy_framework 14/15/18 (sell/shop formulas unchanged), loot_progression 12/16 (Fortune not addable), live_service_features 2 + reward_generation 17 (Unique excluded), doctrines DOC-ENCHANTER (keeps its name). STILL PENDING: Simulator re-run of all benchmarks (gf 5/35-38, economy_framework 20/28/43-46, materials_system 15/36-39); Essence icon look (UI). Previous text superseded 2026-11-01 (kept in backups\\CTRBLXAI_before_bsench_lockall_20261101_010317.db). | 2026-11-01 UPDATE (USER DECISIONS): (1) E2 RESOLVED - the facility is named Runeforge; the Enchanter doctrine keeps its name. (2) USER-CONFIRMED - existing items count at their current level and never owe a catch-up fee; accepted side effect: dismantling them returns no gear-upgrade materials, only the +1 for Rare and up (gf 48, save_data_contract 3). (3) Epic step fee NOT locked - OPEN, user to set amount (gf 57); the Designer formula (1H L50 = 3,960g) stays as the current proposal. [superseded same day - see UPDATE 2] | 2026-11-01 UPDATE 2 (USER DECISION): Epic step fee RESOLVED - fee = 0.5 x (shop Epic price - shop price at the rarity before the enchant [superseded 2026-11-01: counted from the item's STARTING rarity, UPDATE 3]), no facility discount; 1H L50 = 1,980g (gf 57). Sell loops re-checked at L20/50/99, 1H and 2H, with and without the 27% discount: all lose gold. Nothing is left open in this item; Simulator next. | 2026-11-01 UPDATE 3 (USER DECISIONS): (1) Epic step fee counted from the item's STARTING rarity - same fee on every route; Remove and downgrades never change it; existing items use their current rarity (gf 57; new planned field equipment_schema 19; save_data_contract 3; service_boundaries 18). (2) Enchant-then-sell loop RESOLVED (option C): enchanted items sell at their starting rarity (economy_framework 14/16, gf 57 guard 7); Merchant sell-view note \"Sells as Common (enchanted)\" = PLANNED UI rule (gf 15). Re-run: best result -22g, no loop (the old rule's +3g Uncommon -> Rare loop is closed). Blacksmith upgrade-then-sell: no loop. (3) Correction: one T4 line makes a 2H item Epic (cheapest 2H Epic = 1 T4 Add, not 8 T1). Nothing left to decide. Remaining work (not decisions): Simulator re-runs; Essence icon art (UI). | 2026-11-01 UPDATE 4 (USER DECISIONS after the Simulator run, report_runeforge_economy_2026-11-01): all suggested fixes LOCKED. (1) Dismantle refunds each tier in its own tier, the T5 part as T4 (gf 51, materials_system 42) - closes X2. (2) The dismantle +1 counts from STARTING rarity (gf 51) - closes X1. (3) Catch-up fee: each level uses the discount of the Blacksmith level needed to reach it, 3% x (ceil(level/10) - 1) (gf 48) - closes X3. (4) Add offers fixed per item; Reroll options per line; a paid reroll always raises the reroll count (gf 55) - closes X4. (5) Every Runeforge and Blacksmith gold fee rounds down; the Dev uses whole-number math (gf 55/57, implementation_plan 53). USER RULINGS (no rule change): crafted-Epic supply for rushers / boosted players accepted (gf 57, economy_framework 15); Blacksmith discount stays 3% per level (gf 41, gf 37, economy_framework 19). Record fixes: Workshop cost table (gf 31), material wall 12 items (gf 38), working estimates for elite rate and drops per battle (loot_progression 24/26/69, materials_system 41 - NOT decisions). Next: Simulator re-check.",
+   "after": "QUESTIONS (all USER DECISION 2026-11-01, Designer recommendations accepted): Q1 RESOLVED - 3 Essences Uncommon/Rare/Epic, 5 -> 8 counters (materials_system 1/29/30/40). Q2 RESOLVED - dismantle refunds 25%->50% of gear materials spent (+1 Rare and up), 1 Essence per bonus line, no gold; equipped and Unique items cannot be dismantled (guild_facilities 51-52). Q3 RESOLVED - rarity after Add = higher of (rarest line's rarity, total-BP band); rarity never goes down (gf 44). Q4 RESOLVED - capacity L1-4 Uncommon, L5-9 Rare, L10 Epic, normal budget, 2H doubled; above-Epic items tune only at L10; Unique never (gf 54). Q5 RESOLVED - Remove = small fee, nothing back; Reroll = pick from a few fixed options; Modify = one tier up/down (gf 55). Q6 RESOLVED - numbers only; can remove a bonus passive, never add one (gf 56). Q7 RESOLVED - downgrade reach (gf 47); -3% gold per level (27% at L10, gold only); extraction Uncommon -> Rare (L4) -> Epic (L7); refund 25%->50% (gf 41/50, economy_framework 19). Q8 RESOLVED - unlock Guild Hall L4 (shared), Base 250 / Scale 15 = 8,919g, max L10 (gf 8/46/49/53). Q9 RESOLVED - catch-up fee (gf 48); shop-bought items give nothing when dismantled; Essences cannot be sold; Epic-level enchanting charges the Epic step fee (gf 57) = half the gap between the shop Epic price and the shop price at the rarity before the enchant [superseded 2026-11-01: counted from the item's STARTING rarity, UPDATE 3], no discount (USER DECISION 2026-11-01). Q10 RESOLVED - chests 25% Uncommon, elites 75% Rare, bosses 100% Epic (Rare below L40), Fortune excluded, ~25% drops / ~75% dismantling (materials_system 19/41). E1 RESOLVED - auto-rename by the affix rule (gf 58, item_rarity_rules 23). E2 RESOLVED 2026-11-01 (USER) - facility named Runeforge (the Enchanter doctrine keeps its name); placeholder replaced in every row. E3 RESOLVED - downgrade stays free (economy_framework 21, project_rules 109). E4 RESOLVED - L81+ dismantles give T4 (materials_system 6/18). E5 RESOLVED - open_decisions 24 unparked. E6 RESOLVED - Fortune stays out of Add (gf 58). CONFLICTS UPDATED 2026-11-01: materials_system 1/6/15/18/19/26/28/29/30/31/32/33/36-39; guild_facilities 1/4/5/8/12/13/35-39; economy_framework 16/19/20/21/28/29/36/43-46; project_rules 109; open_decisions 22/23/24; implementation_plan 53; service_boundaries 15/16 + new 18; save_data_contract 3; equipment_schema 4/5 + new 16-18; item_rarity_rules 3/14/23; item_generation_steps 7/8/10; live_service_features 5. LEFT AS-IS (no conflict after these decisions): item_rarity_framework band table (covered by item_rarity_rules 14 note), item_rarity_rules 2/4, item_generation_steps 2-5, economy_framework 14/15/18 (sell/shop formulas unchanged), loot_progression 12/16 (Fortune not addable), live_service_features 2 + reward_generation 17 (Unique excluded), doctrines DOC-ENCHANTER (keeps its name). STILL PENDING: Simulator re-run of all benchmarks (gf 5/35-38, economy_framework 20/28/43-46, materials_system 15/36-39); Essence icon look (UI). Previous text superseded 2026-11-01 (kept in backups\\CTRBLXAI_before_bsench_lockall_20261101_010317.db). | 2026-11-01 UPDATE (USER DECISIONS): (1) E2 RESOLVED - the facility is named Runeforge; the Enchanter doctrine keeps its name. (2) USER-CONFIRMED - existing items count at their current level and never owe a catch-up fee; accepted side effect: dismantling them returns no gear-upgrade materials, only the +1 for Rare and up (gf 48, save_data_contract 3). (3) Epic step fee NOT locked - OPEN, user to set amount (gf 57); the Designer formula (1H L50 = 3,960g) stays as the current proposal. [superseded same day - see UPDATE 2] | 2026-11-01 UPDATE 2 (USER DECISION): Epic step fee RESOLVED - fee = 0.5 x (shop Epic price - shop price at the rarity before the enchant [superseded 2026-11-01: counted from the item's STARTING rarity, UPDATE 3]), no facility discount; 1H L50 = 1,980g (gf 57). Sell loops re-checked at L20/50/99, 1H and 2H, with and without the 27% discount: all lose gold. Nothing is left open in this item; Simulator next. | 2026-11-01 UPDATE 3 (USER DECISIONS): (1) Epic step fee counted from the item's STARTING rarity - same fee on every route; Remove and downgrades never change it; existing items use their current rarity (gf 57; new planned field equipment_schema 19; save_data_contract 3; service_boundaries 18). (2) Enchant-then-sell loop RESOLVED (option C): enchanted items sell at their starting rarity (economy_framework 14/16, gf 57 guard 7); Merchant sell-view note \"Sells as Common (enchanted)\" = PLANNED UI rule (gf 15). Re-run: best result -22g, no loop (the old rule's +3g Uncommon -> Rare loop is closed). Blacksmith upgrade-then-sell: no loop. (3) Correction: one T4 line makes a 2H item Epic (cheapest 2H Epic = 1 T4 Add, not 8 T1). Nothing left to decide. Remaining work (not decisions): Simulator re-runs; Essence icon art (UI). | 2026-11-01 UPDATE 4 (USER DECISIONS after the Simulator run, report_runeforge_economy_2026-11-01): all suggested fixes LOCKED. (1) Dismantle refunds each tier in its own tier, the T5 part as T4 (gf 51, materials_system 42) - closes X2. (2) The dismantle +1 counts from STARTING rarity (gf 51) - closes X1. (3) Catch-up fee: each level uses the discount of the Blacksmith level needed to reach it, 3% x (ceil(level/10) - 1) (gf 48) - closes X3. (4) Add offers fixed per item; Reroll options per line; a paid reroll always raises the reroll count (gf 55) - closes X4. (5) Every Runeforge and Blacksmith gold fee rounds down; the Dev uses whole-number math (gf 55/57, implementation_plan 53). USER RULINGS (no rule change): crafted-Epic supply for rushers / boosted players accepted (gf 57, economy_framework 15); Blacksmith discount stays 3% per level (gf 41, gf 37, economy_framework 19). Record fixes: Workshop cost table (gf 31), material wall 12 items (gf 38), working estimates for elite rate and drops per battle (loot_progression 24/26/69, materials_system 41 - NOT decisions). Next: Simulator re-check. | 2026-11-01 UPDATE 5 (Simulator re-check report_recheck_2026-11-01: all 26 checks PASS, no gold exploit) - design FINAL. USER DECISIONS: (1) the T5 part of a dismantle stays refunded as T4 (gf 51, materials_system 42; 19 T5 + 947g -> 9 T4; wall 12-15 items, 14-16 with conversion). (2) Enchanting late costs more when the Blacksmith is ahead of the item (1H +2,760g, 2H +4,133g at Blacksmith L10) - accepted; PLANNED UI hint \"Enchant before upgrading to pay less.\" (gf 48). (3) USER-ACCEPTED: the fixed Add list comes from the item's saved ID (gf 55, equipment_schema 18; relies on the ID never changing - Dev to confirm in code before building) and the dismantle +1 comes in the tier of the item's current level band (gf 51, materials_system 42). Cleanups: gf 38 wall text; each tier rounded down separately (gf 51, materials_system 42); open_decisions 23; drop-rate sensitivity (materials_system 41, loot_progression 24 - working estimates, nothing locked). Next: Dev build plan (user approval before code). Not decisions, still to do: working estimates (drop rate, elite rate); Essence icon art (UI)."
+  },
+  {
+   "table": "implementation_plan",
+   "key": "rowid=53",
+   "column": "col_2",
+   "xlsx": [
+    "CTRBLXAI_Build_Plan.xlsx",
+    "19 Implementation Plan",
+    "B64"
+   ],
+   "before": "Crafting + Upgrades: UNPARKED 2026-11-01 (user decisions) - Blacksmith expansion + new Runeforge; design DECIDED 2026-11-01 (facility name Runeforge decided 2026-11-01; Epic step fee RESOLVED 2026-11-01 - half the gap between the shop Epic price and the shop price at the item's starting rarity, guild_facilities 57; enchanted items sell at their starting rarity, economy_framework 14; new planned saved field starting_rarity, equipment_schema 19); NOT BUILT, Simulator check next (guild_facilities 40-58; open_decisions 'Crafting', 'Upgrade systems' and 123). Monetization: unchanged (see open_decisions 'Monetization'). [Was: All parked. Not relevant to initial architecture.] | IMPLEMENTATION NOTE (USER DECISION 2026-11-01, Simulator report Section 4 #6): the Dev must compute the Blacksmith and Runeforge gold formulas (economy_framework 19; guild_facilities 48, 55, 57) in whole numbers, not floating point - keep percentages and multipliers as whole numbers or fractions, multiply first, divide last, and round down once at the end. Floating point loses 1 gold at exact values (150 x 1.0 x 0.30 x 2 lands just under 90 and becomes 89; 98 Blacksmith level costs and 13 Runeforge costs come out 1g low this way). Every one of these gold fees rounds down to whole gold (guild_facilities 55).",
+   "after": "Crafting + Upgrades: UNPARKED 2026-11-01 (user decisions) - Blacksmith expansion + new Runeforge; design DECIDED 2026-11-01 (facility name Runeforge decided 2026-11-01; Epic step fee RESOLVED 2026-11-01 - half the gap between the shop Epic price and the shop price at the item's starting rarity, guild_facilities 57; enchanted items sell at their starting rarity, economy_framework 14; new planned saved field starting_rarity, equipment_schema 19); NOT BUILT; Simulator re-check PASS 2026-11-01 (all 26 checks), design FINAL; next: Dev build plan (user approval before code) (guild_facilities 40-58; open_decisions 'Crafting', 'Upgrade systems' and 123). Monetization: unchanged (see open_decisions 'Monetization'). [Was: All parked. Not relevant to initial architecture.] | IMPLEMENTATION NOTE (USER DECISION 2026-11-01, Simulator report Section 4 #6): the Dev must compute the Blacksmith and Runeforge gold formulas (economy_framework 19; guild_facilities 48, 55, 57) in whole numbers, not floating point - keep percentages and multipliers as whole numbers or fractions, multiply first, divide last, and round down once at the end. Floating point loses 1 gold at exact values (150 x 1.0 x 0.30 x 2 lands just under 90 and becomes 89; 98 Blacksmith level costs and 13 Runeforge costs come out 1g low this way). Every one of these gold fees rounds down to whole gold (guild_facilities 55)."
+  }
+ ]
+}
