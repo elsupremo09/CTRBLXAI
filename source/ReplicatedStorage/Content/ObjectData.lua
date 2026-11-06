@@ -529,11 +529,15 @@ ObjectData.Objects["Tavern"] = {
 	category = "Event",
 	tags = { "Settlement" },
 	passable = false,
-	activation = "Interact (Free)",
+	-- USER RULING 2026-11-06 12:23 PM (DB objects_encounters 'Tavern', re-added): replaces the old
+	-- "free, +50% quest rewards" Tavern. Breakable 3 hits (project_rules 241), no Salvager's Cap roll.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Interact (Consumes Action)", -- default Interact RT (G1: round(Modified Base RT x 0.10))
 	triggerEvent = nil,
-	primaryEffect = "Increase quest rewards by 50% after battle",
+	primaryEffect = "+3 recruit choices in the next Tavern refresh after the battle (WIN ONLY)",
 	uses = "Once",
-	notes = "Does not stack",
+	notes = "Player side only. Several Taverns in one battle do not stack (max +3). Bonus used up by that one refresh.",
 }
 
 ObjectData.Objects["Necro Tome Stand"] = {

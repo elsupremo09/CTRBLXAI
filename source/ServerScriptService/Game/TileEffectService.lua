@@ -988,19 +988,32 @@ end
 
 local SPREAD_DIRS = { {0,1}, {0,-1}, {1,0}, {-1,0} }  -- orthogonal only
 
-function TileEffectService.ProcessSpread(ctElapsed)
+-- forced (Strong Wind, 2026-11-06): run ONE extra spread pass for every Burning source NOW,
+-- without touching its normal 500 CT timer (DB objects_encounters Strong Wind (a): cadence
+-- accelerated, reach NOT widened). nowCt (optional): tiles ignited by a spread at this same
+-- clock value cannot spread again until the clock moves on (TRG-012), so the Strong Wind pass
+-- and the normal pass at the same moment never chain into each other.
+function TileEffectService.ProcessSpread(ctElapsed, forced, nowCt)
 	-- Snapshot current Burning sources eligible to spread this call.
 	-- Accumulate per-source spread timer; only fire when cadence reached.
 	local newIgnitions = {}   -- collected first, applied after (no same-tick chain)
 
 	for key, eff in pairs(effects) do
-		if eff.id == "Burning" then
+		if eff.id == "Burning" and not (nowCt ~= nil and eff.spreadBornCt == nowCt) then
 			local def = GameConstants.TILE_EFFECTS.Burning
 			local spread = def and def.spread
 			if spread then
-				eff.spreadAccum = (eff.spreadAccum or 0) + ctElapsed
-				if eff.spreadAccum >= spread.cadenceCt then
-					eff.spreadAccum = eff.spreadAccum - spread.cadenceCt
+				local fire = false
+				if forced then
+					fire = true
+				else
+					eff.spreadAccum = (eff.spreadAccum or 0) + (ctElapsed or 0)
+					if eff.spreadAccum >= spread.cadenceCt then
+						eff.spreadAccum = eff.spreadAccum - spread.cadenceCt
+						fire = true
+					end
+				end
+				if fire then
 					local srcElev = GameConstants.GetElevation(eff.tileX, eff.tileY)
 					for _, d in ipairs(SPREAD_DIRS) do
 						local nx, ny = eff.tileX + d[1], eff.tileY + d[2]
@@ -1033,11 +1046,93 @@ function TileEffectService.ProcessSpread(ctElapsed)
 
 	-- Apply collected ignitions (deterministic; new tiles get full duration).
 	for _, ig in pairs(newIgnitions) do
-		if not effects[tileKey(ig.x, ig.y)] then
-			print(string.format("[TileEffectService] Burning SPREAD → (%d,%d)", ig.x, ig.y))
+		local igKey = tileKey(ig.x, ig.y)
+		if not effects[igKey] then
+			print(string.format("[TileEffectService] Burning SPREAD%s → (%d,%d)", forced and " (Strong Wind)" or "", ig.x, ig.y))
 			TileEffectService.ApplyTileEffect(ig.x, ig.y, "Burning", ig.owner)
+			if effects[igKey] and effects[igKey].id == "Burning" then
+				effects[igKey].spreadBornCt = nowCt
+			end
 		end
 	end
+end
+
+--------------------------------------------------
+-- STRONG WIND (DB objects_encounters 'Strong Wind', 2026-10-04 user ruling; built 2026-11-06)
+-- Every 300 CT Wind tick:
+--   * Steam and Static Cloud clear (Wind-tag reactions). Poison Cloud is NOT cleared by the
+--     weather tick - it drifts instead (elements_statuses row 10: the Strong Wind effects are
+--     separate from a Wind hit).
+--   * Burning runs one extra spread pass (ProcessSpread forced).
+--   * Each Poison Cloud creates a Poison Cloud on ONE seeded orthogonally-adjacent tile that
+--     has no tile effect on it (cap 1 new tile per source per tick, TRG-012). The source cloud
+--     keeps its duration; the new cloud gets the normal Poison Cloud duration.
+--------------------------------------------------
+
+local WIND_TICK_CLEARS = { Steam = true, ["Static Cloud"] = true }
+
+function TileEffectService.RemoveAirborneEffects(allUnits)
+	if allUnits then _allUnits = allUnits end
+	local toClear = {}
+	for _, eff in pairs(effects) do
+		if WIND_TICK_CLEARS[eff.id] then
+			table.insert(toClear, { x = eff.tileX, y = eff.tileY, id = eff.id })
+		end
+	end
+	for _, c in ipairs(toClear) do
+		TileEffectService.RemoveTileEffect(c.x, c.y)
+		if not effects[tileKey(c.x, c.y)] then tryReinstateFloor(c.x, c.y) end
+		print(string.format("[TileEffectService] Strong Wind clears %s at (%d,%d)", c.id, c.x, c.y))
+	end
+	return #toClear
+end
+
+function TileEffectService.ProcessPoisonCloudDrift(nowCt, allUnits)
+	if allUnits then _allUnits = allUnits end
+	local newClouds = {}   -- collected first, applied after (new clouds never drift this tick)
+	for _, eff in pairs(effects) do
+		if eff.id == "Poison Cloud" and not (nowCt ~= nil and eff.driftBornCt == nowCt) then
+			local cands = {}
+			for _, d in ipairs(SPREAD_DIRS) do
+				local nx, ny = eff.tileX + d[1], eff.tileY + d[2]
+				-- W3 (2026-11-06) "Airborne-compatible": on the map, no tile effect, and not a wall /
+				-- solid object tile (GameConstants.BLOCKERS holds solid objects only) or impassable terrain.
+				if nx >= 1 and nx <= _mapWidth and ny >= 1 and ny <= _mapHeight
+					and not effects[tileKey(nx, ny)]
+					and not (GameConstants.IsBlocked and GameConstants.IsBlocked(nx, ny))
+					and not (GameConstants.IsImpassableTerrain and GameConstants.IsImpassableTerrain(nx, ny)) then
+					table.insert(cands, { x = nx, y = ny })
+				end
+			end
+			if #cands > 0 then
+				-- Seeded, deterministic pick (same pattern as Unstable Footing).
+				local seed = (tonumber(nowCt) or 0) * 31 + eff.tileX * 73856093 + eff.tileY * 19349663
+				local pick = cands[Random.new(seed):NextInteger(1, #cands)]
+				table.insert(newClouds, { x = pick.x, y = pick.y, owner = eff.ownerId,
+					fromX = eff.tileX, fromY = eff.tileY })
+			end
+		end
+	end
+	-- Fixed order (pairs() order is not stable) so the same board always drifts the same way.
+	table.sort(newClouds, function(a, b)
+		if a.fromY ~= b.fromY then return a.fromY < b.fromY end
+		return a.fromX < b.fromX
+	end)
+	local made = 0
+	for _, nc in ipairs(newClouds) do
+		local k = tileKey(nc.x, nc.y)
+		if not effects[k] then  -- two clouds may pick the same tile: first one wins
+			-- skipTransform: a drifting cloud never changes the ground under it.
+			TileEffectService.ApplyTileEffect(nc.x, nc.y, "Poison Cloud", nc.owner, _allUnits, true)
+			if effects[k] and effects[k].id == "Poison Cloud" then
+				effects[k].driftBornCt = nowCt
+				made += 1
+				print(string.format("[TileEffectService] Strong Wind: Poison Cloud drifts (%d,%d) → (%d,%d)",
+					nc.fromX, nc.fromY, nc.x, nc.y))
+			end
+		end
+	end
+	return made
 end
 
 --------------------------------------------------

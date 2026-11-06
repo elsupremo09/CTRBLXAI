@@ -917,9 +917,18 @@ end
 -- Grant / replace a unit's shield. shieldHp and durationCt are authored per skill.
 -- retributionDamage (optional) is the snapshot Physical damage dealt to whoever
 -- breaks the shield (Retribution Shell only; nil for the other five).
-function StatusService.ApplyShield(unit, shieldHp, durationCt, sourceUnitId, retributionDamage)
+function StatusService.ApplyShield(unit, shieldHp, durationCt, sourceUnitId, retributionDamage, elementalOnly)
 	shieldHp = math.max(0, math.round(shieldHp or 0))
 	if shieldHp <= 0 then
+		return false
+	end
+	-- Draining Ward (user rulings 2026-11-05): whenever a ward is involved (ward vs normal shield,
+	-- either order, or ward vs ward) the BIGGER shield is kept; ties keep the existing one. Two
+	-- normal shields keep the original rule (newest replaces).
+	local curWard = unit.shieldElementalOnly == true
+	if (elementalOnly == true or curWard) and (unit.shield_total or 0) >= shieldHp and (unit.shield_total or 0) > 0 then
+		print(string.format("[StatusService] Shield on %s kept (%d >= new %d%s)", unit.name, unit.shield_total, shieldHp,
+			elementalOnly and ", ward ignored" or ", replaces ward refused"))
 		return false
 	end
 
@@ -947,6 +956,7 @@ function StatusService.ApplyShield(unit, shieldHp, durationCt, sourceUnitId, ret
 
 	-- Resync the aggregate pool: drop the replaced shield, add the new one.
 	unit.shield_total = math.max(0, (unit.shield_total or 0) - existingHp) + shieldHp
+	unit.shieldElementalOnly = (elementalOnly == true) or nil
 
 	print(string.format(
 		"[StatusService] Shield GRANTED on %s | %d HP | dur %s CT%s",
@@ -994,6 +1004,7 @@ function StatusService.OnShieldAbsorb(unit, soak)
 	-- and treat "pool now empty" as the break signal (covers the 1:1 case).
 	if (unit.shield_total or 0) <= 0 then
 		unit.shield_total = 0
+		unit.shieldElementalOnly = nil  -- ward broke (2026-11-05)
 		if brokeInstance then
 			return true, shieldMaxAtBreak, retributionDamage
 		end
@@ -1223,7 +1234,9 @@ end
 --------------------------------------------------
 
 function StatusService.HasStatus(unit, statusId)
-	for _, inst in ipairs(unit.statusInstances) do
+	-- Ground-target markers ({ tileX, tileY, isGroundTarget }) carry no status list: they have no
+	-- statuses. A tile pick on a unit-target item crashed the turn here (sweep 2026-11-06, SUP-016).
+	for _, inst in ipairs((unit and unit.statusInstances) or {}) do
 		if inst.id == statusId then
 			return inst
 		end
@@ -1424,7 +1437,10 @@ function StatusService.ProcessCtTick(unit, ctElapsed)
 				inst.sinkAccumCt = inst.sinkAccumCt - def.sinkIntervalCt
 				inst.sinkLevel = inst.sinkLevel + 1
 				table.insert(events, { kind = "Sink", statusId = inst.id, amount = inst.sinkLevel })
-				if inst.sinkLevel >= (def.sinkMaxLevel or 5) then
+				if inst.sinkLevel >= (def.sinkMaxLevel or 5) and GameConstants.IsGodProtected and GameConstants.IsGodProtected(unit) then
+					-- Dev god mode (2026-11-06): a protected unit never sinks to a KO.
+					inst.sinkLevel = (def.sinkMaxLevel or 5) - 1
+				elseif inst.sinkLevel >= (def.sinkMaxLevel or 5) then
 					unit.currentHp = 0
 					unit.isAlive = false
 					table.insert(events, { kind = "KO", statusId = inst.id, reason = "Sinking" })
@@ -1465,6 +1481,7 @@ function StatusService.ProcessCtTick(unit, ctElapsed)
 				-- Drop its remaining capacity from the aggregate pool.
 				if inst.shieldHp then
 					unit.shield_total = math.max(0, (unit.shield_total or 0) - inst.shieldHp)
+				if (unit.shield_total or 0) <= 0 then unit.shieldElementalOnly = nil end  -- ward expired (2026-11-05)
 					table.insert(events, { kind = "Shield", statusId = inst.id, amount = -(inst.shieldHp), reason = "expire" })
 				end
 				table.insert(expired, inst.id)

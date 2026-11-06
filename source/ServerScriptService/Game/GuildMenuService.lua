@@ -143,7 +143,13 @@ local DEV_NONCE_MAX = 1000000
 -- reroll); hired candidates are remembered instead and stay gone until the pool refreshes.
 -- Saved as guildMenu.tavernHired = { seed, ids = { candidateId } }.
 local tavernHired: { seed: number, ids: { [string]: boolean } }? = nil
-local MAX_TAVERN_HIRED_SAVE = 20 -- load bound (pool size is at most 10)
+local MAX_TAVERN_HIRED_SAVE = 20 -- load bound (pool size is at most 10, 13 with the Tavern bonus)
+-- Tavern map-object bonus (user ruling 2026-11-06): the pool built for this battlesCompleted
+-- value gets +3 recruit choices. Set only by a WON battle in which a player unit used a Tavern.
+-- Tied to the post-battle pool, so the dev "Refresh all shops" re-roll keeps it; the next
+-- completed battle moves battlesCompleted on and the bonus is gone (used up by that refresh).
+local TAVERN_BONUS_SLOTS = 3
+local tavernBonusFor: number? = nil
 local recruitDefs: { [string]: any } = {} -- unitId -> { name, level, raceId, doctrineId, quality }
 local recruitOrder: { string } = {}
 
@@ -752,6 +758,7 @@ function GuildMenuService.Export(_pid: string)
 		-- Bought Merchant shelf slots stay bought after a restart / rejoin (2026-10-31).
 		merchantBought = MerchantService.ExportPurchases(_pid),
 		devShopRefresh = devShopNonce, -- dev "Refresh all shops" survives a restart (2026-10-31)
+		tavernBonusFor = tavernBonusFor, -- Tavern map-object bonus pending for this pool (2026-11-06)
 		tavernHired = (function(): any?
 			-- Hired recruits of the current pool stay gone after a restart (2026-10-31).
 			if not tavernHired then return nil end
@@ -769,6 +776,9 @@ function GuildMenuService.Import(_pid: string, data: any)
 	battlesCompleted = math.max(0, math.floor(tonumber(data.battlesCompleted) or 0))
 	hireCounter = math.max(0, math.floor(tonumber(data.hireCounter) or 0))
 	devShopNonce = math.clamp(math.floor(tonumber(data.devShopRefresh) or 0), 0, DEV_NONCE_MAX)
+	-- Tavern bonus (2026-11-06): only kept if it is for the CURRENT pool; anything else = none.
+	local tbf = tonumber(data.tavernBonusFor)
+	tavernBonusFor = (tbf and tbf % 1 == 0 and tbf == battlesCompleted) and tbf or nil
 	-- Hired recruits of the saved pool (2026-10-31). Bad data is ignored; old saves = none.
 	tavernHired = nil
 	local th = data.tavernHired
@@ -916,8 +926,13 @@ end
 -- daysElapsed (2026-10-16): the number of DISPATCH DAYS this battle was worth
 -- (Main computes ceil(elapsed CT / 4000), min 1). Dispatch now counts down in days, not
 -- battle count; forwarded to ResolveReturns. Defaults to 1 if a caller omits it.
-function GuildMenuService.OnBattleCompleted(daysElapsed: number?)
+function GuildMenuService.OnBattleCompleted(daysElapsed: number?, tavernBonus: boolean?)
 	battlesCompleted += 1
+	if tavernBonus == true then
+		tavernBonusFor = battlesCompleted
+		markDirty()
+		print(`[GuildMenuService] Tavern bonus earned: the next Tavern list has +{TAVERN_BONUS_SLOTS} recruit choices`)
+	end
 	local result = DispatchService.ResolveReturns(_playerId, daysElapsed or 1)
 	-- Boards refresh per battle (dispatch/tavern); merchant per its own interval.
 	tavernCache, dispatchCache = nil, nil
@@ -986,7 +1001,8 @@ local function tavernPool()
 		-- No hire counter in the seed (2026-10-31): hiring no longer rerolls the list on the
 		-- next restart. Hired recruits of this pool are skipped instead (tavernHired).
 		local seed = 7001 + battlesCompleted * 97 + devShopNonce * 7919
-		local res = RecruitmentService.GenerateRecruitPool(_playerId, seed, nil)
+		local bonus = (tavernBonusFor ~= nil and tavernBonusFor == battlesCompleted) and TAVERN_BONUS_SLOTS or 0
+		local res = RecruitmentService.GenerateRecruitPool(_playerId, seed, { bonusSlots = bonus })
 		if not tavernHired or tavernHired.seed ~= seed then
 			tavernHired = { seed = seed, ids = {} }
 		end

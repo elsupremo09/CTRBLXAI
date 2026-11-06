@@ -620,17 +620,21 @@ Periodic["Heatwave"] = function(ctx: any)
 	end
 end
 
--- Strong Wind: remove Airborne effects (Steam/Static Cloud) via Wind reaction.
--- Burning-accel / Poison-spread are new mechanics (Designer-defined, cadence-only);
--- built as a cadence hook — the actual spread reuses TileEffect spread when wired.
+-- Strong Wind (DB objects_encounters; built 2026-11-06). Each 300 CT Wind tick:
+-- Steam / Static Cloud clear, Burning runs one extra spread pass (reach not widened),
+-- and every Poison Cloud drifts onto one seeded adjacent empty tile.
+-- (Before 2026-11-06 this called a function that did not exist and a spread pass with
+-- 0 elapsed CT, so the whole periodic effect did nothing.)
 Periodic["Strong Wind"] = function(ctx: any)
-	if _tileEffectService and _tileEffectService.RemoveAirborneEffects then
+	if not _tileEffectService then return end
+	if _tileEffectService.RemoveAirborneEffects then
 		_tileEffectService.RemoveAirborneEffects(ctx.state.units)
 	end
-	-- Burning-accel / Poison-Cloud-spread: trigger an extra spread cadence if the
-	-- TileEffectService exposes it (nil-safe; inert until that hook exists).
-	if _tileEffectService and _tileEffectService.ProcessSpread then
-		_tileEffectService.ProcessSpread(0)  -- cadence-only nudge; no reach widening
+	if _tileEffectService.ProcessSpread then
+		_tileEffectService.ProcessSpread(0, true, ctx.nowCt)
+	end
+	if _tileEffectService.ProcessPoisonCloudDrift then
+		_tileEffectService.ProcessPoisonCloudDrift(ctx.nowCt, ctx.state.units)
 	end
 end
 

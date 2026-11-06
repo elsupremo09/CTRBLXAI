@@ -356,6 +356,48 @@ function QuestGenerator.GenerateDailyContract(playerLevel, day)
 	return quest
 end
 
+-- TEST ARENA (user request 2026-11-05): a persistent STUDIO-ONLY quest on the 8x8 T99 map so
+-- units can fight on turn 1. Counts as a real battle (normal rewards/progress, user ruling).
+-- 5 deployable vs 6 mixed enemies (3 Grunt, 2 Veteran, 1 Elite) at the given level. Plains
+-- (random weather),
+-- never a boss, no quest-mercury roll, never turned into an elite encounter (Main).
+function QuestGenerator.GenerateTestArena(level)
+	local lvl = math.max(1, math.floor(tonumber(level) or 1))
+	local rng = Random.new(990099)
+	local quest = generateOneQuest(0, lvl, rng, { noBoss = true, noMercuryRoll = true })
+	quest.id = "test_arena"
+	quest.name = "Test Arena (Studio)"
+	quest.description = "8x8 test map. Enemies are in reach on turn 1."
+	quest.isTestArena = true
+	quest.questType = "Standard"
+	quest.biome = "Plains"
+	quest.template = "T99"
+	-- Weather is random (user rulings 2026-11-05/06): the card says "Random" and the battle
+	-- uses the map generator's Plains roll (Main battle start).
+	quest.condition = "Random"
+	quest.playerSlots = 5
+	quest.recommendedLvl = lvl
+	quest.enemyTypes = {
+		{ type = "Grunt",   level = lvl, count = 3 },
+		{ type = "Veteran", level = lvl, count = 2 },
+		{ type = "Elite",   level = lvl, count = 1 },
+	}
+	quest.enemyCount = 6
+	-- Re-derive everything the discarded random roll fed (Tester UAT 2026-11-05, c1): the posted
+	-- gold, completion gold, drops and difficulty must match THIS quest (Standard, level lvl).
+	-- Difficulty 4 = the roster tier that carries exactly one Elite (ENEMY_ROSTER_BY_DIFFICULTY).
+	quest.difficulty = 4
+	local questGold = math.floor(QUEST_GOLD_NORMAL * (1 + lvl / 40))
+	quest.rewards.gold = { min = questGold, max = questGold }
+	quest.rewards.questGold = questGold
+	quest.rewards.completionGoldBase = COMPLETION_GOLD_NORMAL
+	local baseXP = BASE_XP[quest.difficulty]
+	local xpVar = math.floor(baseXP * 0.25)
+	quest.rewards.xp = { min = baseXP - xpVar, max = baseXP + xpVar }
+	quest.rewards.drops = "Equipment"
+	return quest
+end
+
 -- ELITE ENCOUNTERS (daily systems decisions 10-14, USER DECISION 2026-11-01; loot_progression 69).
 -- About 1 in 30 normal quest battles (0.034) is an elite encounter, hidden until the departure
 -- briefing. Anti-fishing (DEV DEFAULT 2026-11-01, Simulator finding): the roll is fixed by the

@@ -201,6 +201,30 @@ local SKILL_COMPLETE_FAMILIES = {
 	["Defensive"] = true,
 }
 
+-- Timing/Defensive augments whose effect is implemented on ANOTHER hook (on-hit,
+-- on-kill, damage-calc, or CommandService). The OnSkillComplete catch-all must not
+-- report them as "not yet implemented" (false alarm, live Studio sweep 2026-11-05).
+-- Message-only: these entries change no augment behaviour.
+local HANDLED_ON_OTHER_HOOK = {
+	["AUG-BARRIER-ON-HIT"]  = true, -- OnDamageResolved
+	["AUG-DELAY-STRIKE"]    = true, -- OnDamageResolved
+	["AUG-DRAINING-WARD"]   = true, -- OnDamageResolved
+	["AUG-INTERRUPT"]       = true, -- OnDamageResolved
+	["AUG-SLUGGISH-BLOW"]   = true, -- STATUS_DELIVERY_MAP (on hit)
+	["AUG-MOMENTUM"]        = true, -- OnKill
+	["AUG-FORTIFY-ON-KILL"] = true, -- OnKill
+	["AUG-PRIORITY-SURGE"]  = true, -- OnDamageCalculation
+	["AUG-EVASION-SURGE"]   = true, -- CommandService
+	-- Non-Timing/Defensive augments implemented on OnSkillComplete or CommandService; the
+	-- OnDamageResolved / OnKill family catch-alls must not report them either (2026-11-05).
+	["AUG-SELF-CLEANSE"]    = true, -- OnSkillComplete
+	["AUG-SCATTER-STRIKE"]  = true, -- OnSkillComplete
+	["AUG-VORTEX-STRIKE"]   = true, -- OnSkillComplete
+	["AUG-DARKENED-GROUND"] = true, -- OnSkillComplete
+	["AUG-HOLY-GROUND"]     = true, -- OnSkillComplete
+	["AUG-CHAIN-KILL"]      = true, -- CommandService
+}
+
 --------------------------------------------------
 -- INTERNAL HELPERS
 --------------------------------------------------
@@ -860,8 +884,8 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 				local barrier = math.floor((damage or 0) * 0.15)
 				if barrier > 0 then
 					local dur = attacker.startingRt or 400
-					StatusService.ApplyShield(attacker, barrier, dur, attacker.id)
-					if BattleVisualBroadcaster.ShieldChanged then
+					local granted = StatusService.ApplyShield(attacker, barrier, dur, attacker.id)
+					if granted ~= false and BattleVisualBroadcaster.ShieldChanged then
 						BattleVisualBroadcaster.ShieldChanged(attacker, barrier, "grant", "Barrier on Hit")
 					end
 				end
@@ -871,17 +895,16 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 
 		-- ===============================================
 		-- DEFENSIVE — Draining Ward (2026-10-25): after dealing damage, caster gains a small
-		-- absorb ward = 20% of damage dealt, via the shield system. FIDELITY NOTE: the authored
-		-- intent is "absorbs the next MAGIC damage" — shields here are untyped, so this ward
-		-- currently absorbs ANY damage (not magic-only). Upgrading to element-typed absorb is a
-		-- small follow-up; flagged, not silently diverged.
+		-- absorb ward = 20% of damage dealt, via the shield system. USER RULING 2026-11-05: the game
+		-- has no magic type, so the ward is ELEMENTAL-ONLY — it soaks only direct hits carrying a real
+		-- element (UnitSchema.ApplyDamage gate); Physical/DoT/tile/push/fall hits go straight to HP.
 		-- ===============================================
 		elseif augId == "AUG-DRAINING-WARD" then
 			if not shouldSkipForFrequency(augId) and attacker.isAlive then
 				local ward = math.floor((damage or 0) * 0.20)
 				if ward > 0 then
-					StatusService.ApplyShield(attacker, ward, attacker.startingRt or 400, attacker.id)
-					if BattleVisualBroadcaster.ShieldChanged then
+					local granted = StatusService.ApplyShield(attacker, ward, attacker.startingRt or 400, attacker.id, nil, true)  -- elemental-only (2026-11-05)
+					if granted ~= false and BattleVisualBroadcaster.ShieldChanged then
 						BattleVisualBroadcaster.ShieldChanged(attacker, ward, "grant", "Draining Ward")
 					end
 				end
@@ -1019,7 +1042,7 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		-- ===============================================
 		-- CATCH-ALL STUBS for families handled by this hook
 		-- ===============================================
-		elseif DAMAGE_RESOLVED_FAMILIES[family] then
+		elseif DAMAGE_RESOLVED_FAMILIES[family] and not HANDLED_ON_OTHER_HOOK[augId] then
 			if not shouldSkipForFrequency(augId) then
 				markFired(augId)
 				print(string.format(
@@ -1219,7 +1242,7 @@ function AugmentEffectService.OnKill(attacker, defender, skillDef, augmentIds, c
 			print(string.format("[AugmentEffect] %s: %s will drop higher-rarity loot", augName, defender.name))
 
 		-- ===== CATCH-ALL STUBS for kill-phase families =====
-		elseif KILL_FAMILIES[family] then
+		elseif KILL_FAMILIES[family] and not HANDLED_ON_OTHER_HOOK[augId] then
 			if not shouldSkipForFrequency(augId) then
 				markFired(augId)
 				print(string.format(
@@ -1402,7 +1425,7 @@ function AugmentEffectService.OnSkillComplete(attacker, skillDef, augmentIds, ct
 			end
 			print(string.format("[AugmentEffect] %s: laid %s on %d tile(s)", augName, tostring(effectId), #(tiles or {})))
 
-		elseif SKILL_COMPLETE_FAMILIES[family] then
+		elseif SKILL_COMPLETE_FAMILIES[family] and not HANDLED_ON_OTHER_HOOK[augId] then
 			print(string.format(
 				"[AugmentEffect] %s not yet implemented (%s — needs RT/reactive trigger system)",
 				augName, family

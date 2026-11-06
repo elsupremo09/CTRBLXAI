@@ -1074,6 +1074,21 @@ function BattleVisualBroadcaster.UnitStateChanged(unit, cause, logMp)
 	})
 end
 
+-- Status-only refresh (sweep 2026-11-06): sends the unit's current HP/statuses to clients WITHOUT
+-- writing a battle-log HP diff. Used mid-hit (status conflict removals, e.g. Wet clearing Burn during
+-- an attack) so the hit's own caused broadcast still logs the HP change; the old full
+-- UnitStateChanged here logged it as an "uncaused hpLoss".
+function BattleVisualBroadcaster.StatusSync(unit)
+	if not unit then return end
+	BattleEvents.UnitStateChanged:FireAllClients({
+		unitId    = unit.id,
+		hp        = unit.currentHp,
+		maxHp     = unit.maxHp,
+		isAlive   = unit.isAlive,
+		statuses  = if unit.statusInstances then StatusService.GetStatusSummary(unit) else nil,
+	})
+end
+
 -- Object-sourced damage feedback (2026-10-26). Map objects that deal damage used
 -- to send only a bare HP sync (UnitStateChanged) with no number/flash/camera move,
 -- so hits felt invisible -- especially when the victim was off-screen. This fires a

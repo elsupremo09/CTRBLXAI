@@ -62,9 +62,21 @@ screenGui.IgnoreGuiInset = false
 screenGui.Enabled = false
 screenGui.Parent = playerGui
 
--- Link StyleSheet tokens to this ScreenGui
+-- Link StyleSheet tokens to this ScreenGui. UIController runs StyleBootstrap.Init(),
+-- and client script order is not guaranteed, so wait (bounded) for DesignSheet
+-- before linking instead of linking at load time (2026-11-05 startup-order fix).
 if StyleBootstrap and StyleBootstrap.Link then
-	StyleBootstrap.Link(screenGui)
+	task.spawn(function()
+		local deadline = os.clock() + 10
+		while not StyleBootstrap.DesignSheet and os.clock() < deadline do
+			task.wait(0.1)
+		end
+		if StyleBootstrap.DesignSheet then
+			StyleBootstrap.Link(screenGui)
+		else
+			warn("[QuestBoardUI] StyleBootstrap not initialized after 10s -- skipping style link")
+		end
+	end)
 end
 
 -- Viewport change listener: recompute card sizes on resize

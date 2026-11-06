@@ -1867,6 +1867,7 @@ function CommandService.TriggerCounterIfEligible(defender: any, attacker: any, s
 		local outcome = CombatResolver.ResolveBasicAttack(defender, victim, weaponDamage)
 		outcome.isCounter = true
 		outcome.finalDamage = math.max(0, math.round((outcome.finalDamage or 0) * mult * (dmgMult or 1.0)))
+		if outcome.type == "Healing" and outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * mult * (dmgMult or 1.0))) end -- Dark vs Undead heal reduced like damage (user ruling 2026-11-06)
 		if (dmgMult or 1.0) < 1.0 then outcome.isAOE = true end
 		CombatResolver.ApplyOutcome(outcome, victim, defender)
 		BattleVisualBroadcaster.UnitStateChanged(victim)
@@ -2899,14 +2900,15 @@ function CommandService.PayCastCost(actor: any, skillDef: any, mpCost: any)
 	if hp then
 		local need = (mpCost or 0) * 2
 		if need > 0 then actor.currentHp = math.max(1, (actor.currentHp or 1) - need) end
-		if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(actor) end
+		-- Cause label so the battle log attributes the HP cost (was an 'uncaused hpLoss' warn, sweep 2026-11-06).
+		if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(actor, "HP Casting") end
 		return
 	end
 	UnitSchema.SpendMp(actor, mpCost)
 	if blood then
 		local need = (mpCost or 0) * 3
 		if need > 0 then actor.currentHp = math.max(1, (actor.currentHp or 1) - need) end
-		if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(actor) end
+		if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(actor, "Blood Casting") end
 	end
 end
 
@@ -3124,7 +3126,8 @@ function CommandService.PreviewSkillHits(state: any, actor: any, baseDef: any, t
 		local n = nHits or 1
 		local o = CombatResolver.ResolveSkill(actor, u, def)
 		if o.type == "Healing" then
-			add(u, "healing", (o.finalHealing or 0) * n, n > 1)
+			-- Dark vs Undead heal shown with the same falloff as damage (user ruling 2026-11-06).
+			add(u, "healing", math.max(0, math.round((o.finalHealing or 0) * (mult or 1))) * n, n > 1)
 		elseif (def.power or 0) == 0 and (o.finalDamage or 0) == 0 then
 			add(u, "status", 0)
 		else
@@ -3871,7 +3874,7 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 			if t.isAlive then
 				local outcome = CombatResolver.ResolveSkill(unit, t, skillDef)
 				CombatResolver.ApplyOutcome(outcome, t, unit)
-				totalDmg = totalDmg + outcome.finalDamage
+				totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 				hitCount = hitCount + 1
 				table.insert(allOutcomes, { target = t, outcome = outcome })
 			end
@@ -3901,10 +3904,10 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 		for _, u in ipairs(chainTargets) do
 			if u.isAlive then
 				local outcome = CombatResolver.ResolveSkill(unit, u, skillDef)
-				outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * falloff))
+				if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * falloff)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * falloff)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 				outcome.isAOE = true
 				CombatResolver.ApplyOutcome(outcome, u, unit)
-				totalDmg = totalDmg + outcome.finalDamage
+				totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 				hitCount = hitCount + 1
 				table.insert(allOutcomes, { target = u, outcome = outcome })
 				falloff = falloff * falloffRate
@@ -3932,10 +3935,10 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 		for _, entry in ipairs(aoeTargets) do
 			if entry.unit.isAlive then
 				local outcome = CombatResolver.ResolveSkill(unit, entry.unit, skillDef)
-				outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * entry.dmgMult))
+				if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * entry.dmgMult)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * entry.dmgMult)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 				if entry.dmgMult < 1.0 then outcome.isAOE = true end
 				CombatResolver.ApplyOutcome(outcome, entry.unit, unit)
-				totalDmg = totalDmg + outcome.finalDamage
+				totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 				hitCount = hitCount + 1
 				table.insert(allOutcomes, { target = entry.unit, outcome = outcome })
 				if not entry.unit.isAlive then
@@ -3984,7 +3987,7 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 					local outcome = CombatResolver.ResolveSkill(unit, u, skillDef)
 					outcome.isAOE = true
 					CombatResolver.ApplyOutcome(outcome, u, unit)
-					totalDmg = totalDmg + outcome.finalDamage
+					totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 					hitCount = hitCount + 1
 					table.insert(allOutcomes, { target = u, outcome = outcome })
 				end
@@ -5355,10 +5358,10 @@ function CommandService.ValidateAndCommit(
 			for _, entry in ipairs(splashTargets) do
 				if entry.unit.isAlive then
 					local outcome = CombatResolver.ResolveBasicAttack(actor, entry.unit, weaponDamage)
-					outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * entry.dmgMult))
+					if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * entry.dmgMult)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * entry.dmgMult)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 					if entry.dmgMult < 1.0 then outcome.isAOE = true end
 					CombatResolver.ApplyOutcome(outcome, entry.unit, actor)
-					totalDmg = totalDmg + outcome.finalDamage
+					totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 					hitCount = hitCount + 1
 				end
 			end
@@ -5368,7 +5371,7 @@ function CommandService.ValidateAndCommit(
 				if entry.unit.isAlive then
 					local outcome = CombatResolver.ResolveBasicAttack(actor, entry.unit, weaponDamage)
 					CombatResolver.ApplyOutcome(outcome, entry.unit, actor)
-					totalDmg = totalDmg + outcome.finalDamage
+					totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 					hitCount = hitCount + 1
 				end
 			end
@@ -5378,11 +5381,11 @@ function CommandService.ValidateAndCommit(
 				if u.isAlive then
 					local outcome = CombatResolver.ResolveBasicAttack(actor, u, weaponDamage)
 					if u.id ~= target.id then
-						outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * 0.5))
+						if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * 0.5)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * 0.5)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 						outcome.isAOE = true
 					end
 					CombatResolver.ApplyOutcome(outcome, u, actor)
-					totalDmg = totalDmg + outcome.finalDamage
+					totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 					hitCount = hitCount + 1
 				end
 			end
@@ -5393,11 +5396,11 @@ function CommandService.ValidateAndCommit(
 				if u.isAlive then
 					local outcome = CombatResolver.ResolveBasicAttack(actor, u, weaponDamage)
 					if u.id ~= target.id then
-						outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * 0.5))
+						if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * 0.5)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * 0.5)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 						outcome.isAOE = true
 					end
 					CombatResolver.ApplyOutcome(outcome, u, actor)
-					totalDmg = totalDmg + outcome.finalDamage
+					totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 					hitCount = hitCount + 1
 				end
 			end
@@ -5405,7 +5408,7 @@ function CommandService.ValidateAndCommit(
 			-- Single-target (default)
 			local outcome = CombatResolver.ResolveBasicAttack(actor, target, weaponDamage)
 			CombatResolver.ApplyOutcome(outcome, target, actor)
-			totalDmg = totalDmg + outcome.finalDamage
+			totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 			hitCount = hitCount + 1
 		end
 		_accrueKnockback()  -- this hit's own knockback (primary target), moved at the end
@@ -5945,11 +5948,15 @@ function CommandService.ValidateAndCommit(
 			end
 			BattleCoordinator.AccrueRt(state, baseRtCost)
 
+			-- Undead healing reversal returns a damage outcome (finalHealing nil): log either
+			-- result instead of crashing the turn (Studio sweep 2026-11-06, SKL-PURGE on an Undead).
 			print(string.format(
-				"[CommandService] SKILL [%s] | %s -> %s | Heal:%d | MP:%d | RT:%d | AP left:%d",
+				"[CommandService] SKILL [%s] | %s -> %s | Heal:%s | MP:%d | RT:%d | AP left:%d",
 				skillDef.name or skillDef.id,
 				actor.name, target.name,
-				outcome.finalHealing, mpCost, baseRtCost, actor.currentAp
+				if outcome.finalHealing ~= nil then tostring(outcome.finalHealing)
+					else ("reversed to " .. tostring(outcome.finalDamage or 0) .. " dmg"),
+				mpCost, baseRtCost, actor.currentAp
 			))
 
 		elseif isPureBuffAura(skillDef) then
@@ -5972,7 +5979,7 @@ function CommandService.ValidateAndCommit(
 				if t.isAlive then
 					local outcome = CombatResolver.ResolveSkill(actor, t, skillDef)
 					CombatResolver.ApplyOutcome(outcome, t, actor)
-					totalDmg = totalDmg + outcome.finalDamage
+					totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 					if t.id == target.id then _primaryTargetDamage = outcome.finalDamage or 0 end
 					hitCount = hitCount + 1
 					if not t.isAlive then table.insert(_soulEchoKills, { v = t, dmg = outcome.finalDamage or 0 }) end
@@ -6002,10 +6009,10 @@ function CommandService.ValidateAndCommit(
 				if u.isAlive then
 					local outcome = CombatResolver.ResolveSkill(actor, u, skillDef)
 					-- Apply chain falloff
-					outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * falloff))
+					if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * falloff)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * falloff)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 					outcome.isAOE = true
 					CombatResolver.ApplyOutcome(outcome, u, actor)
-					totalDmg = totalDmg + outcome.finalDamage
+					totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 					if u.id == target.id then _primaryTargetDamage = outcome.finalDamage or 0 end
 					hitCount = hitCount + 1
 					falloff = falloff * falloffRate
@@ -6044,7 +6051,7 @@ function CommandService.ValidateAndCommit(
 						local outcome = CombatResolver.ResolveSkill(actor, u, skillDef)
 						outcome.isAOE = true
 						CombatResolver.ApplyOutcome(outcome, u, actor)
-						totalDmg = totalDmg + outcome.finalDamage
+						totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 						if u.id == target.id then _primaryTargetDamage = outcome.finalDamage or 0 end
 						hitCount = hitCount + 1
 						if not u.isAlive then table.insert(_soulEchoKills, { v = u, dmg = outcome.finalDamage or 0 }) end
@@ -6111,10 +6118,10 @@ function CommandService.ValidateAndCommit(
 					for _, entry in ipairs(aoeTargets) do
 						if entry.unit.isAlive then
 							local outcome = CombatResolver.ResolveSkill(actor, entry.unit, skillDef)
-							outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * entry.dmgMult))
+							if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * entry.dmgMult)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * entry.dmgMult)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 							if entry.dmgMult < 1.0 then outcome.isAOE = true end
 							CombatResolver.ApplyOutcome(outcome, entry.unit, actor)
-							totalDmg = totalDmg + outcome.finalDamage
+							totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 							if entry.unit.id == target.id then _primaryTargetDamage = _primaryTargetDamage + (outcome.finalDamage or 0) end
 							hitCount = hitCount + 1
 							if not entry.unit.isAlive then table.insert(_soulEchoKills, { v = entry.unit, dmg = outcome.finalDamage or 0 }) end
@@ -6514,10 +6521,11 @@ function CommandService.ValidateAndCommit(
 						if u.isAlive then
 							local o = CombatResolver.ResolveSkill(actor, u, skillDef)
 							o.finalDamage = math.max(0, math.round((o.finalDamage or 0) * _patMult))
+							if o.type == "Healing" and o.finalHealing then o.finalHealing = math.max(0, math.round(o.finalHealing * _patMult)) end -- Dark vs Undead heal reduced like damage (user ruling 2026-11-06)
 							o.isAOE = true
 							CombatResolver.ApplyOutcome(o, u, actor)
 							secHits = secHits + 1
-							secDmg = secDmg + o.finalDamage
+							secDmg = secDmg + (o.finalDamage or 0)
 						end
 					end
 					if secHits > 0 then
@@ -6557,6 +6565,7 @@ function CommandService.ValidateAndCommit(
 						actor._chainKillFiring = true
 						local o = CombatResolver.ResolveSkill(actor, best, skillDef)
 						o.finalDamage = math.max(0, math.round((o.finalDamage or 0) * 0.70))
+						if o.type == "Healing" and o.finalHealing then o.finalHealing = math.max(0, math.round(o.finalHealing * 0.70)) end -- Dark vs Undead heal reduced like damage (user ruling 2026-11-06)
 						o.isFollowUp = true  -- passive follow-up: never provokes a reaction (TRG-004)
 						CombatResolver.ApplyOutcome(o, best, actor)
 						actor._chainKillFiring = nil
@@ -8679,7 +8688,8 @@ function CommandService.ValidateAndCommit(
 		-- Area items report the units they changed; refresh those bars on the client.
 		if effectResult and effectResult.affectedUnits and BattleVisualBroadcaster.UnitStateChanged then
 			for _, au in ipairs(effectResult.affectedUnits) do
-				BattleVisualBroadcaster.UnitStateChanged(au)
+				-- Cause label: the battle log attributes the HP change to the item (was 'uncaused', sweep 2026-11-06).
+				BattleVisualBroadcaster.UnitStateChanged(au, consumableDef and consumableDef.name or nil)
 			end
 		end
 
@@ -8997,7 +9007,28 @@ do
 	local commandServiceAny: any = CommandService
 	local validateAndCommitImpl = commandServiceAny.ValidateAndCommit
 	commandServiceAny.ValidateAndCommit = function(state: any, ...: any)
+		-- Dev god mode (attempt 3, 2026-11-06): HP is never refilled here (only at turn start, see
+		-- BattleCoordinator), so every damage number stays real. MP/AP refill after each command for
+		-- unlimited actions. Bundled second Items are part of the same action: no refill mid-action.
+		local _, actorIdArg, actionTypeArg, selArg = state, ...
+		local godActive = UnitSchema.DevGodMode and not (type(selArg) == "table" and selArg._bundled == true)
 		local results = table.pack(validateAndCommitImpl(state, ...))
+		if godActive then
+			local endGuardTurn = false
+			for _, u in ipairs((state and state.units) or {}) do
+				if u.isAlive and UnitSchema.IsGodProtected(u) then
+					UnitSchema.GodRefill(u, true)
+					-- Guard ends the turn under god mode (unlimited AP would otherwise keep it open).
+					if results[1] and actionTypeArg == "Guard" and u.id == actorIdArg then
+						u.currentAp = 0
+						endGuardTurn = true
+					end
+				end
+			end
+			if endGuardTurn and state and state.phase == "TurnOpen" then
+				BattleCoordinator.EndTurn(state)
+			end
+		end
 		if results[1] then
 			DiscoveryService.CheckMoved(state)
 			-- Catau Tidecaller (2026-10-29): stats change when a Catau steps onto / off water (its own

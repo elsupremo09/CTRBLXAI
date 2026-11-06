@@ -1761,6 +1761,10 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	if (outcome.finalDamage or 0) > 0 and not target.fixedHitDurability
 		and ArmorPassiveService.CanSurviveLethalDamage(target) then
 		local _soak = target.shield_total or 0
+		-- Draining Ward (2026-11-05): an elemental-only ward does not soak a non-elemental hit.
+		if target.shieldElementalOnly and (outcome.element == nil or outcome.element == "" or outcome.element == "Physical") then
+			_soak = 0
+		end
 		if outcome.finalDamage - _soak >= (target.currentHp or 0) then
 			outcome.finalDamage = math.max(0, _soak + (target.currentHp or 0) - 1)
 			target._armorLethalSurviveUsed = true
@@ -1786,7 +1790,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	end
 
 	local actual, shieldBroke, _shieldAbsorbed, _shieldMaxAtBreak, retributionDamage =
-		UnitSchema_ApplyDamage(outcome.finalDamage, target)
+		UnitSchema_ApplyDamage(outcome.finalDamage, target, outcome.element)  -- element: Draining Ward (2026-11-05)
 
 	-- BLEED (DB elements_statuses 54, 2026-10-28; it never dealt its own damage before): when a
 	-- PHYSICAL hit reduces HP, a Bleeding target takes bonus round(Max HP x 0.05 x Debuff Resistance)
@@ -2543,13 +2547,13 @@ function CombatResolver.BindApplyHealing(fn)
 	_applyHealing = fn
 end
 
-function UnitSchema_ApplyDamage(amount, unit)
+function UnitSchema_ApplyDamage(amount, unit, element)
 	if _applyDamage then
 		-- Forward ALL returns from the bound UnitSchema.ApplyDamage:
 		-- actual, shieldBroke, shieldAbsorbed, shieldMaxAtBreak, retributionDamage.
 		-- The 5th (retributionDamage) carries a broken Retribution Shell's snapshot
 		-- so ApplyOutcome can retaliate against the breaker (shield subsystem).
-		return _applyDamage(unit, amount)
+		return _applyDamage(unit, amount, nil, nil, element)
 	end
 	-- Fallback path (no bound ApplyDamage): no shield plumbing available.
 	local actual = math.min(unit.currentHp, amount)

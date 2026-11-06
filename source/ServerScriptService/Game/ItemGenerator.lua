@@ -401,8 +401,22 @@ local function step7_SelectNumericalTiers(rng, pool, remainingBp, minBand, maxBa
 		end
 
 		if not bestCandidate then
+			-- 2026-11-05: only warn on a REAL failure. Leftover BP smaller than the cheapest
+			-- unused-family tier is the expected "closest valid result below the minimum band"
+			-- (item_rarity_rules 14) — usually after a Bonus Passive ate most of the budget.
+			-- A real failure = no unused family left at all (pool empty / every family used)
+			-- while still below the band.
 			if spentBp < minBand then
-				warn("[ItemGen] step7: no candidate found, pool exhausted at " .. spentBp .. "BP")
+				local hasUnusedFamily = false
+				for _, entry in ipairs(shuffled) do
+					if not usedFamilies[entry.attr.family] then
+						hasUnusedFamily = true
+						break
+					end
+				end
+				if not hasUnusedFamily then
+					warn("[ItemGen] step7: no attribute families left, pool exhausted at " .. spentBp .. "BP")
+				end
 			end
 			break
 		end

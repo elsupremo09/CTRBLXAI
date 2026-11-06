@@ -319,7 +319,42 @@ function UnitSchema.FindReviveTile(unit, units, mapW, mapH)
 	return unit.tileX, unit.tileY, false
 end
 
+-- DEV GOD MODE (user request 2026-11-06, Studio only): every PLAYER-side unit can't be KO'd (a
+-- lethal hit stops at 1 HP). Damage still lands and shows (user ruling). HP refills once at the
+-- START of each protected unit's turn (BattleCoordinator); MP/AP refill after every command
+-- (CommandService wrapper) for unlimited actions. Off by default.
+UnitSchema.DevGodMode = false
+function UnitSchema.IsGodProtected(unit): boolean
+	return UnitSchema.DevGodMode == true and unit ~= nil and unit.side == "Player"
+		and game:GetService("RunService"):IsStudio()
+end
+GameConstants.IsGodProtected = function(u) return UnitSchema.IsGodProtected(u) end
+
+function UnitSchema.GodRefill(unit, skipHp)
+	if not UnitSchema.IsGodProtected(unit) then return end
+	if not skipHp then unit.currentHp = unit.maxHp or unit.currentHp end
+	unit.currentMp = unit.maxMp or unit.currentMp
+	unit.currentAp = math.max(unit.currentAp or 0, 2)
+end
+
+-- Dev kill commands (InstantLose / KillAtTile) must kill even with god mode on.
+function UnitSchema.ForceKill(unit)
+	unit.isAlive   = false
+	unit.currentHp = 0
+	unit.currentAp = 0
+	UnitSchema.ClearChannelState(unit)
+end
+
 function UnitSchema.Kill(unit)
+	if UnitSchema.IsGodProtected(unit) and unit.isAlive ~= false then
+		-- Survive at 1 HP so the hit still reads as damage; HP refills at the start of this unit's
+		-- next turn (BattleCoordinator). Clear kill tags so objectives don't count a death.
+		unit.isAlive = true
+		unit.currentHp = math.max(1, unit.currentHp or 0)
+		unit._killCause = nil
+		unit._killedFromFull = nil
+		return
+	end
 	unit.isAlive   = false
 	unit.currentHp = 0
 	unit.currentAp = 0
@@ -362,7 +397,7 @@ function UnitSchema.SetStatusService(ss)
 	_statusService = ss
 end
 
-function UnitSchema.ApplyDamage(unit, amount, cause, shieldDamageMult)
+function UnitSchema.ApplyDamage(unit, amount, cause, shieldDamageMult, element)
 	assert(amount >= 0, "ApplyDamage: amount must be >= 0.")
 	-- One-Punch objective (2026-10-24): was this unit at full HP before this hit?
 	-- Captured before the shield gate / HP subtraction below.
@@ -381,6 +416,13 @@ function UnitSchema.ApplyDamage(unit, amount, cause, shieldDamageMult)
 	-- SHIELD GATE: soak before HP. Decay never routes here (decay cannot damage
 	-- HP — handled separately in StatusService.ProcessCtTick).
 	local shield = unit.shield_total or 0
+	-- ELEMENTAL-ONLY SHIELD (Draining Ward, user ruling 2026-11-05): it soaks only DIRECT hits
+	-- that carry a real element (Fire, Ice, Wind...). `element` is optional; callers that do not
+	-- pass it (DoTs, tiles, weather, push, fall, explosions) count as non-elemental and bypass
+	-- the ward straight to HP. Every existing caller is unchanged when no ward is present.
+	if shield > 0 and unit.shieldElementalOnly and (element == nil or element == "" or element == "Physical") then
+		shield = 0
+	end
 	if shield > 0 and amount > 0 then
 		-- GL-012 Crushing Vambraces: a push/collision may drain the shield at a MULTIPLIER (x2) so the
 		-- shield is half as effective at stopping it ("collision deals double to shields"). mult defaults
@@ -411,6 +453,7 @@ function UnitSchema.ApplyDamage(unit, amount, cause, shieldDamageMult)
 	if unit.fixedHitDurability and amount > 0 then
 		amount = 1
 	end
+	local hpBeforeHit = unit.currentHp
 	local actual = math.min(unit.currentHp, amount)
 	unit.currentHp = unit.currentHp - actual
 	if unit.currentHp <= 0 then
@@ -423,6 +466,8 @@ function UnitSchema.ApplyDamage(unit, amount, cause, shieldDamageMult)
 		-- cause and are excluded (they are not "attacks").
 		if wasFull and not cause then unit._killedFromFull = true end
 		UnitSchema.Kill(unit)
+		-- God mode kept the unit at 1 HP: report the real HP lost (lifesteal, DoT numbers).
+		if unit.isAlive then actual = hpBeforeHit - unit.currentHp end
 	end
 	return actual, shieldBroke, shieldAbsorbed, shieldMaxAtBreak, shieldRetribution
 end

@@ -3724,9 +3724,17 @@ end
 -- whatever the source or size. UnitSchema.ApplyDamage applies this; every service that
 -- subtracts HP directly (traps, tiles, weather, siege, events) routes its amount through
 -- here so the rule holds on every damage path. Normal units: amount unchanged.
+-- Dev god mode (2026-11-06): set by UnitSchema at load (no require cycle). Returns true for a
+-- protected unit; used below so direct-write damage paths can never KO it.
+GameConstants.IsGodProtected = nil
+
 function GameConstants.CapUnitDamage(unit, amount)
 	if unit and unit.fixedHitDurability and (amount or 0) > 0 then
 		return 1
+	end
+	-- God mode: the hit still shows its real size unless it would KO; then it stops at 1 HP.
+	if unit and (amount or 0) > 0 and GameConstants.IsGodProtected and GameConstants.IsGodProtected(unit) then
+		return math.min(amount, math.max(0, (unit.currentHp or 0) - 1))
 	end
 	return amount
 end

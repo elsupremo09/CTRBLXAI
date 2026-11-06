@@ -1350,6 +1350,20 @@ function TargetingService.ValidateSelection(
 					target.tileX, target.tileY, skillMinRange, dist
 				)
 			end
+			-- "Empty Tile" skills (Blink, Ice Spike, traps, summons) need an unoccupied tile; an
+			-- occupied pick used to spend MP/RT with no effect (Studio sweep 2026-11-06).
+			if targetRules == "Empty Tile" then
+				for _, u in ipairs(allUnits or {}) do
+					if u.isAlive and not u.isGroundTarget and u.tileX == target.tileX and u.tileY == target.tileY then
+						return false, string.format("Tile (%d,%d) is occupied.", target.tileX, target.tileY)
+					end
+				end
+				-- Solid objects (Ice Spike, blockers, barricades) also make a tile non-empty: a movement
+				-- skill used to land inside an Ice Spike (sweep 2026-11-06).
+				if GameConstants.GetBlockerData(target.tileX, target.tileY) then
+					return false, string.format("Tile (%d,%d) is blocked by an object.", target.tileX, target.tileY)
+				end
+			end
 			return true, nil
 		end
 
@@ -1952,7 +1966,11 @@ function TargetingService.GetInteractCandidates(actor, allUnits, state)
 			-- Skip objects that can't be interacted with right now: traps, self-firing and
 			-- always-on objects, used single-use objects, and once-per-turn objects this unit
 			-- already used this turn (user ruling 2026-10-26; see IsInteractable).
-			if obj.x and obj.y and ObjectEffectService.IsInteractable(obj, actor.id, actor.side) then
+			-- HD-009 Demolition Mask (2026-11-06): a wearer may still target a no-effect breakable
+			-- obstacle to break it (the Interact fix removed those from the normal list).
+			local _maskBreak = ObjectEffectService.IsMaskBreakTarget and ObjectEffectService.IsMaskBreakTarget(obj, actor.side)
+				and ArmorPassiveService.CanInteractBreakObjects and ArmorPassiveService.CanInteractBreakObjects(actor)
+			if obj.x and obj.y and (_maskBreak or ObjectEffectService.IsInteractable(obj, actor.id, actor.side, state)) then
 				local dist = chebyshevDistance(actor.tileX, actor.tileY, obj.x, obj.y)
 				if dist <= reach then
 					table.insert(candidates, {

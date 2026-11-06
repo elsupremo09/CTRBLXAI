@@ -1079,7 +1079,7 @@ if game:GetService("RunService"):IsStudio() then
 			print("[Dev] Instant Lose triggered")
 			for _, u in ipairs(allUnitsList) do
 				if u.side == "Player" and u.isAlive then
-					UnitSchema.Kill(u)
+					UnitSchema.ForceKill(u)  -- god mode bypass (2026-11-06)
 					clearTileOccupant(u.tileX, u.tileY)
 					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
 					print(string.format("[Dev] Killed %s", u.name))
@@ -1089,13 +1089,90 @@ if game:GetService("RunService"):IsStudio() then
 			state.winner = "Enemy"
 			BattleTurnController.ForceEndTurn()
 
+		elseif cmd.action == "GodMode" then
+			-- Dev god mode (2026-11-06): unlimited AP/HP/MP for every player unit, Studio only.
+			UnitSchema.DevGodMode = cmd.enabled == true
+			print("[Dev] God mode " .. (UnitSchema.DevGodMode and "ON" or "OFF"))
+			if UnitSchema.DevGodMode and state and state.units then
+				for _, u in ipairs(state.units) do
+					if u.isAlive and u.side == "Player" then
+						UnitSchema.GodRefill(u)
+						if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev") end
+					end
+				end
+			end
+			BattleEvents.DevCommand:FireClient(player, { action = "GodModeState", enabled = UnitSchema.DevGodMode })
+
+		-- STUDIO TEST TOOLING (2026-11-06, full Studio sweep): read live battle state and set up
+		-- loadouts for automated tests. Same Studio-only handler as the rest of the dev panel.
+		elseif cmd.action == "DevSnapshot" then
+			local lines = {}
+			for _, u in ipairs((state and state.units) or allUnitsList or {}) do
+				local sts = {}
+				for _, si in ipairs(u.statusInstances or {}) do table.insert(sts, si.id) end
+				table.insert(lines, string.format("%s|%s|%s|hp=%d/%d|mp=%d/%d|ap=%d|rt=%d|tile=%d,%d|alive=%s|shield=%d|st=%s",
+					tostring(u.id), tostring(u.side), tostring(u.name), u.currentHp or 0, u.maxHp or 0,
+					u.currentMp or 0, u.maxMp or 0, u.currentAp or 0, u.remainingRt or 0, u.tileX or 0, u.tileY or 0,
+					tostring(u.isAlive), u.shield_total or 0, table.concat(sts, ",")))
+			end
+			print("[DevSnap] phase=" .. tostring(state and state.phase) .. " active=" .. tostring(state and state.activeUnit and state.activeUnit.id)
+				.. " ct=" .. tostring(state and state.ct) .. " objects=" .. tostring(state and state.objects and #state.objects) .. "\n" .. table.concat(lines, "\n"))
+			-- Same data to the requesting client (test harness reads unit positions / objects).
+			local data = { units = {}, objects = {} }
+			for _, u in ipairs((state and state.units) or allUnitsList or {}) do
+				table.insert(data.units, { id = u.id, side = u.side, name = u.name, hp = u.currentHp, maxHp = u.maxHp,
+					mp = u.currentMp, ap = u.currentAp, x = u.tileX, y = u.tileY, alive = u.isAlive,
+					summon = (u.isSummon or u.isItemDevice or u.summonOwnerId ~= nil) and true or false })
+			end
+			for _, o in ipairs((state and state.objects) or {}) do
+				table.insert(data.objects, { id = o.id, type = o.type, x = o.x, y = o.y })
+			end
+			BattleEvents.DevCommand:FireClient(player, { action = "DevSnapshotData", data = data })
+		elseif cmd.action == "DevSetConsumable" then
+			local def = ConsumableData.Items[cmd.consumableId or ""]
+			if not def then warn("[Dev] DevSetConsumable: unknown " .. tostring(cmd.consumableId)) return end
+			for _, u in ipairs(allUnitsList) do
+				if u.id == cmd.unitId then
+					u.consumableSlots = u.consumableSlots or {}
+					local mc = def.maxCharges or 1
+					u.consumableSlots[cmd.slotIndex or 1] = { consumableId = cmd.consumableId, currentCharges = mc, maxCharges = mc }
+					print(string.format("[Dev] DevSetConsumable %s slot %d = %s", u.name, cmd.slotIndex or 1, cmd.consumableId))
+				end
+			end
+		elseif cmd.action == "DevSetSkillAugments" then
+			for _, u in ipairs(allUnitsList) do
+				if u.id == cmd.unitId then
+					u.skillLoadout = u.skillLoadout or {}
+					u.skillLoadout.slot2 = { skillId = cmd.skillId, augments = cmd.augmentIds or {} }
+					print(string.format("[Dev] DevSetSkillAugments %s slot2 = %s + [%s]", u.name, tostring(cmd.skillId),
+						table.concat(cmd.augmentIds or {}, ",")))
+				end
+			end
+		elseif cmd.action == "DevMoveUnit" then
+			for _, u in ipairs(allUnitsList) do
+				if u.id == cmd.unitId and u.isAlive and cmd.tileX and cmd.tileY then
+					clearTileOccupant(u.tileX, u.tileY)
+					u.tileX, u.tileY = cmd.tileX, cmd.tileY
+					setTileOccupant(u.tileX, u.tileY, u.name, "Unit (" .. u.side .. ")", "Blocking")
+					BattleEvents.UnitMoved:FireAllClients({ unitId = u.id, tileX = u.tileX, tileY = u.tileY })
+					print(string.format("[Dev] DevMoveUnit %s -> (%d,%d)", u.name, u.tileX, u.tileY))
+				end
+			end
+		elseif cmd.action == "DevSetHp" then
+			for _, u in ipairs(allUnitsList) do
+				if u.id == cmd.unitId and u.isAlive then
+					u.currentHp = math.clamp(math.floor(tonumber(cmd.hp) or u.currentHp), 1, u.maxHp or 1)
+					if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(u, "Dev") end
+					print(string.format("[Dev] DevSetHp %s -> %d", u.name, u.currentHp))
+				end
+			end
 		elseif cmd.action == "KillAtTile" then
 			local tx, ty = cmd.tileX, cmd.tileY
 			if not tx or not ty then return end
 			for _, u in ipairs(allUnitsList) do
 				if u.tileX == tx and u.tileY == ty and u.isAlive then
 					print(string.format("[Dev] Kill unit at (%d,%d): %s HP:%d->0", tx, ty, u.name, u.currentHp))
-					UnitSchema.Kill(u)
+					UnitSchema.ForceKill(u)  -- god mode bypass (2026-11-06)
 					clearTileOccupant(u.tileX, u.tileY)
 					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
 				end
@@ -1967,6 +2044,15 @@ end
 print(string.format("[Main] Boot roster ready: %d player unit(s) available at the base.",
 	(function() local n = 0 for _ in pairs(playerUnits) do n += 1 end return n end)()))
 
+-- Wire the unit-record provider at BOOT (2026-11-05) so base screens (Units panel)
+-- read real level/XP before the first battle. Previously wired only inside the battle
+-- loop, so GetUnitLevelProgress fell back to "level 1, 0 XP" at the hub. The in-loop
+-- re-wire (identical closure over the same playerUnits table) stays and is harmless.
+ProgressionService.SetUnitRecordProvider(function(_pid, unitId)
+	local u = playerUnits[unitId]
+	return u and u.records or nil
+end)
+
 -- Full per-unit establishment from SAVE (Stage 3, 2026-10-19): doctrine + default, doctrine
 -- skill, skill loadout, stat allocation (absolute base stats), records + level reconciliation,
 -- consumable slots, and skillIds. IDEMPOTENT. As of Stage 4 (2026-10-19) this runs ONLY at
@@ -2311,6 +2397,7 @@ local function resetUnitForNewBattle(u)
 	u.currentAp = 0
 	u.statusInstances = {}
 	u.shield_total = 0
+	u.shieldElementalOnly = nil  -- Draining Ward flag is battle-scoped (2026-11-05)
 	u.mpRegenAccumulator = 0
 	u.isChanneling = false
 	u.channelingData = nil
@@ -2436,6 +2523,19 @@ while true do
 			warn("[Main] Daily Contract could not be generated: " .. tostring(dc))
 		end
 	end
+	-- TEST ARENA (user request 2026-11-05): persistent Studio-only quest, pinned first.
+	if game:GetService("RunService"):IsStudio() then
+		local arenaLvl = 1
+		for _, u in pairs(playerUnits) do
+			if (u.level or 1) > arenaLvl then arenaLvl = u.level end
+		end
+		local okTa, ta = pcall(QuestGenerator.GenerateTestArena, arenaLvl)
+		if okTa and ta then
+			table.insert(quests, 1, ta)
+		else
+			warn("[Main] Test Arena quest could not be generated: " .. tostring(ta))
+		end
+	end
 	BattleEvents.QuestBoardOpen:FireAllClients({ quests = quests, newDayIn = DailyService.SecondsUntilNewDay(),
 		bossRewardsLeft = DailyService.BossRewardsLeft(PLAYER_ID), bossRewardsPerDay = DailyService.BOSS_REWARDS_PER_DAY })
 
@@ -2481,7 +2581,7 @@ while true do
 
 	-- ELITE ENCOUNTER (daily systems decisions 10-14, 2026-11-01): fixed by the count of completed
 	-- battles (not by the card, so abandoning cannot fish for elites); normal quests only.
-	if not selectedQuest.isDailyContract and selectedQuest.questType ~= "Boss"
+	if not selectedQuest.isDailyContract and not selectedQuest.isTestArena and selectedQuest.questType ~= "Boss"
 		and QuestGenerator.IsEliteBattle(PLAYER_ID, GuildMenuService.GetBattlesCompleted()) then
 		QuestGenerator.MakeEliteEncounter(selectedQuest)
 	end
@@ -3668,7 +3768,8 @@ while true do
 	-- Status conflict rules (2026-10-07): notify clients when a conflict removes a status.
 	StatusService.SetConflictRemovedHandler(function(unit, statusId)
 		if BattleVisualBroadcaster.StatusExpired then BattleVisualBroadcaster.StatusExpired(unit, statusId) end
-		if BattleVisualBroadcaster.UnitStateChanged then BattleVisualBroadcaster.UnitStateChanged(unit) end
+		-- Status-only sync: no battle-log HP diff mid-hit (was an "uncaused hpLoss" warn, sweep 2026-11-06).
+		if BattleVisualBroadcaster.StatusSync then BattleVisualBroadcaster.StatusSync(unit) end
 	end)
 
 	-- Slice 5 map objects: seed the battle state with the generated map's placed
@@ -3695,7 +3796,14 @@ while true do
 	-- biome pool + the starting condition the map generator selected, then apply the
 	-- starting condition's onset statuses (e.g. Rain Wet, Snow Storm Frozen) so turn-1
 	-- is correct before the first clock tick. Re-rolls each round thereafter.
-	WeatherService.InitFromBiome(selectedQuest.biome, generatedMap.battleCondition, state.ct)
+	-- Card = battle (user ruling 2026-11-06): the starting weather is the one the quest card
+	-- showed. Only a card that says "Random" (Test Arena) uses the map generator's own roll.
+	local startCondition = generatedMap.battleCondition
+	if type(selectedQuest.condition) == "string" and selectedQuest.condition ~= ""
+		and selectedQuest.condition ~= "Random" then
+		startCondition = selectedQuest.condition
+	end
+	WeatherService.InitFromBiome(selectedQuest.biome, startCondition, state.ct)
 	WeatherService.ApplyStartingOnset(state)
 
 	-- Slice 5 map objects: reset the per-battle object usage ledger, then apply any
@@ -3974,6 +4082,11 @@ while true do
 
 	while BattleCoordinator.GetPhase(state) ~= "BattleOver" do
 		local activeUnit = BattleCoordinator.AdvanceClock(state)
+		-- Dev god mode (2026-11-06): show the start-of-turn HP/MP refill on the client.
+		if type(activeUnit) == "table" and activeUnit._godTurnRefilled then
+			activeUnit._godTurnRefilled = nil
+			BattleVisualBroadcaster.UnitStateChanged(activeUnit, BattleVisualBroadcaster.SILENT)
+		end
 		local _revivedSnapshot = table.clone(_aliveSeen)  -- read by ctTickCause before labelRevivedUnits refreshes it
 		labelRevivedUnits()
 		-- Discovery Radius: catch units displaced or placed during the clock advance (channel
@@ -4097,7 +4210,13 @@ while true do
 				-- across a multi-pulse tick; collapse to one state refresh).
 				if not _pulseSeen[u] then
 					_pulseSeen[u] = true
-					BattleVisualBroadcaster.UnitStateChanged(u, ev.source or (ev.sourceUnit and ev.sourceUnit.name) or nil)
+					-- An item device whose lifespan ran out has no damage source: refresh it silently
+					-- instead of logging a false "uncaused hpLoss / ko" warning (Studio 2026-11-06).
+					local _cause = ev.source or (ev.sourceUnit and ev.sourceUnit.name) or nil
+					if _cause == nil and u.isItemDevice and u.isAlive == false then
+						_cause = BattleVisualBroadcaster.SILENT
+					end
+					BattleVisualBroadcaster.UnitStateChanged(u, _cause)
 				end
 				-- W-1 fix: a unit can appear in several pulse events in one pass; broadcast its
 				-- defeat only ONCE (a second UnitDefeated for the same unit is a client-side
@@ -4353,6 +4472,20 @@ while true do
 			-- Safety close
 			if BattleCoordinator.GetPhase(state) == "TurnOpen" then
 				CommandService.ValidateAndCommit(state, activeUnit.id, "Wait", nil)
+			end
+			-- A unit that died during its OWN turn (e.g. an AI walking onto a Land Mine) cannot
+			-- Wait - commands from a dead actor are refused - so the turn stayed open and the next
+			-- AdvanceClock raised "phase must be Waiting" and stopped the battle loop (found in
+			-- Studio 2026-11-06). Close it the same way the died-to-DoT branch above does.
+			if BattleCoordinator.GetPhase(state) == "TurnOpen" and not activeUnit.isAlive then
+				clearTileOccupant(activeUnit.tileX, activeUnit.tileY)
+				if activeUnit.isChanneling then
+					BattleCoordinator.InterruptChanneling(activeUnit, "death")
+					BattleVisualBroadcaster.ChannelEnded(activeUnit)
+				end
+				BattleCoordinator.EndTurn(state)
+				BattleVisualBroadcaster.TurnEnded(activeUnit, 0)
+				print(string.format("[Main] %s died during its own turn - turn closed", tostring(activeUnit.name)))
 			end
 
 			-- Tile end-of-turn hook: Tar Pit consecutive-turn Petrify counter
@@ -4990,7 +5123,9 @@ while true do
 	-- Dispatch now counts down in DAYS, where 1 day = 4000 CT (unit_progression 77/78/99,
 	-- DB 2026-10-16). This battle was worth ceil(elapsed CT / 4000) days, minimum 1.
 	local daysElapsed = math.max(1, math.ceil((state.ct or 0) / 4000))
-	local dispatchReturns = GuildMenuService.OnBattleCompleted(daysElapsed)
+	-- Tavern map object (user ruling 2026-11-06): +3 recruit choices next refresh, WIN ONLY.
+	local dispatchReturns = GuildMenuService.OnBattleCompleted(daysElapsed,
+		isQualifyingVictory and state.tavernBonusEarned == true)
 	-- Battle recruits (project_rules id 133): alive recruited Neutrals are purified and
 	-- join the roster on ANY battle end. Runs after the protected BUG-013 order above.
 	GuildMenuService.AdoptBattleRecruits(state.units)

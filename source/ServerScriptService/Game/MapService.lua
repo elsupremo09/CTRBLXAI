@@ -158,6 +158,13 @@ local TemplateRegistry = {
 			:WaitForChild("Templates")
 			:WaitForChild("T20_RiverVale")
 	),
+	-- Studio test map (2026-11-05): only used by the Studio-only Test Arena quest.
+	T99 = require(
+		ReplicatedStorage
+			:WaitForChild("CTRBLXAI")
+			:WaitForChild("Templates")
+			:WaitForChild("T99_TestArena")
+	),
 }
 
 local MapService = {}

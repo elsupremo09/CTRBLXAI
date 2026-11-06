@@ -1056,6 +1056,33 @@ local function promptStealSlot(unit, target, slots)
 	return chosen
 end
 
+-- Object choice pick (2026-11-06, Forge: Ballista / Catapult / Cancel). Reuses the steal pick
+-- list (StealPrompt with a title -> StealChoice), the same way the Quartermaster list does.
+-- The reply is accepted only if it is one of the offered options (SEC-001). Single-player.
+local function promptObjectChoice(unit, title, options)
+	local playerObj = Players:GetPlayers()[1]
+	if not playerObj or type(options) ~= "table" or #options == 0 then return nil end
+	BattleEvents.StealPrompt:FireClient(playerObj, {
+		casterId = unit.id, targetId = unit.id, targetName = unit.name, slots = options, title = title,
+	})
+	local chosen, responded = nil, false
+	local conn
+	conn = BattleEvents.StealChoice.OnServerEvent:Connect(function(player, data)
+		if player == playerObj and type(data) == "table" and data.casterId == unit.id then
+			for _, legal in ipairs(options) do
+				if legal == data.slot then chosen = legal break end
+			end
+			if chosen then responded = true end
+		end
+	end)
+	while not responded do task.wait(0.1) end
+	if conn then conn:Disconnect() end
+	return chosen
+end
+if ObjectEffectService.SetChoicePrompter then
+	ObjectEffectService.SetChoicePrompter(promptObjectChoice)
+end
+
 local function executePlayerCommand(unit, command)
 	local actionType = command.actionType
 

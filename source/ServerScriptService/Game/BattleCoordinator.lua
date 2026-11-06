@@ -628,7 +628,7 @@ function BattleCoordinator.AdvanceClock(state)
 		-- Burning spread: secondary post-tick propagation (TRG-012 cadence guard
 		-- lives inside ProcessSpread). Runs after ProcessCtTick per element Step 5.
 		if _tileEffectService.ProcessSpread then
-			_tileEffectService.ProcessSpread(ctPassed)
+			_tileEffectService.ProcessSpread(ctPassed, false, state.ct)
 		end
 	end
 
@@ -692,6 +692,12 @@ function BattleCoordinator.AdvanceClock(state)
 	-- We still give AP so EndTurn doesn't error, but the unit won't use it.
 	UnitSchema.RefreshAp(nextUnit)
 	nextUnit.currentAp = AP_PER_TURN_STANDARD
+	-- Dev god mode (2026-11-06): full HP/MP once at the start of a protected unit's turn, so damage
+	-- taken during other turns was already shown with its real numbers. Flagged for a HUD sync.
+	if UnitSchema.IsGodProtected(nextUnit) and nextUnit.isAlive then
+		UnitSchema.GodRefill(nextUnit)
+		nextUnit._godTurnRefilled = true
+	end
 	-- Sluggish Finisher (F-162): AP lost while it was not this unit's turn is taken now. 2026-10-28.
 	if nextUnit._sluggishPendingAp then
 		nextUnit._sluggishPendingAp = nil

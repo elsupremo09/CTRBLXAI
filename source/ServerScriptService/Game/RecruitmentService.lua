@@ -67,7 +67,9 @@ local TAVERN_MAX_LEVEL = 10
 -- of 0 (facility not built — Slice 8) yields an empty pool, which is correct:
 -- recruitment requires the Tavern.
 
-local REROLL_MAX_POOL_SIZE = TAVERN_MAX_LEVEL  -- hard upper bound on pool size
+local REROLL_MAX_POOL_SIZE = TAVERN_MAX_LEVEL  -- hard upper bound on the level-based pool size
+-- Tavern map-object bonus (user ruling 2026-11-06): up to +3 choices on top (max 13 total).
+local TAVERN_BONUS_MAX = 3
 
 --------------------------------------------------
 -- INJECTED DEPENDENCIES
@@ -164,6 +166,11 @@ end
 function RecruitmentService.GenerateRecruitPool(playerId: string, seed: number, context: any)
 	assert(type(playerId) == "string", "GenerateRecruitPool: playerId required")
 	local poolSize = math.min(tavernLevel(playerId), REROLL_MAX_POOL_SIZE)
+	local bonusSlots = 0
+	if context and type(context.bonusSlots) == "number" then
+		bonusSlots = math.clamp(math.floor(context.bonusSlots), 0, TAVERN_BONUS_MAX)
+	end
+	if poolSize > 0 then poolSize += bonusSlots end -- no Tavern built = still no recruits
 	if poolSize <= 0 then
 		-- Tavern not built (Slice 8) — no recruits. This is intended, not a fault.
 		return { pool = {}, poolSize = 0, reason = "Tavern not available" }
@@ -197,8 +204,9 @@ function RecruitmentService.GenerateRecruitPool(playerId: string, seed: number, 
 		})
 	end
 
-	print(string.format("[RecruitmentService] Generated pool for %s | size %d | tiers %s",
-		playerId, poolSize, table.concat(qualities, "/")))
+	print(string.format("[RecruitmentService] Generated pool for %s | size %d%s | tiers %s",
+		playerId, poolSize, bonusSlots > 0 and string.format(" (incl. +%d Tavern bonus)", bonusSlots) or "",
+		table.concat(qualities, "/")))
 	return { pool = pool, poolSize = poolSize }
 end
 

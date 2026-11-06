@@ -464,6 +464,14 @@ function ObjectEffectService.SetTilePrompter(fn: any)
 	_tilePrompter = fn
 end
 
+-- Inject the CHOICE prompter (BattleTurnController wires promptObjectChoice, 2026-11-06 Forge).
+-- fn(actor, title, options) -> one of the options (validated by the prompter) or nil.
+-- Blocking. nil-safe: if unset, the caller makes an automatic pick.
+local _choicePrompter = nil
+function ObjectEffectService.SetChoicePrompter(fn: any)
+	_choicePrompter = fn
+end
+
 -- Inject the runtime tile reshaper (Main wires a closure over its mapFolder):
 -- fn(x, y, newTerrain, newElevation) -> updates the live tile Part visual.
 local _tileReshaper = nil
@@ -1133,7 +1141,27 @@ Handlers["Star Axis"]        = allyBuffHandler("Spell Focus", "Star Axis")
 Handlers["Burning Cauldron"] = allyBuffHandler("Battle Rage", "Burning Cauldron")
 Handlers["War Horn"]         = allyBuffHandler("War Rhythm", "War Horn")
 Handlers["Runed Boulder"]    = allyBuffHandler("Rune Ward", "Runed Boulder")
-Handlers["Angel Statue"]     = allyBuffHandler("Flight", "Angel Statue")
+-- Angel Statue (DB objects_encounters: "Grants Flight for 1500 CT"). Flight's status default is
+-- 3 TURNS, so the plain ally-buff handler gave turns instead of the authored 1500 CT (Studio sweep
+-- 2026-11-06). Same targets as before; each NEW / refreshed non-permanent Flight instance is
+-- converted to a 1500 CT window (StatusService ticks any instance that carries remainingCt).
+local ANGEL_FLIGHT_CT = 1500
+local _angelBase = allyBuffHandler("Flight", "Angel Statue")
+Handlers["Angel Statue"] = function(ctx: any): (boolean, any)
+	local ok, reason = _angelBase(ctx)
+	for _, u in ipairs(livingAllies(ctx.actor, ctx.allUnits, true)) do
+		local inst = StatusService.HasStatus(u, "Flight")
+		if inst and not inst.permanent then
+			inst.remainingCt = ANGEL_FLIGHT_CT
+			inst.remainingTurns = nil
+			-- The ally-buff handler already broadcast "3 turns"; resend the status list (no log diff).
+			if BattleVisualBroadcaster and BattleVisualBroadcaster.StatusSync then
+				BattleVisualBroadcaster.StatusSync(u)
+			end
+		end
+	end
+	return ok, reason
+end
 Handlers["Blood Fountain"]   = allyBuffHandler("Regeneration", "Blood Fountain")
 Handlers["Fountain of Fortune"] = allyBuffHandler("Fortune Boon", "Fountain of Fortune")
 
@@ -1326,6 +1354,21 @@ local function explosionHandler(label: any)
 		local x = obj.x or a.tileX
 		local y = obj.y or a.tileY
 		if _tileEffectService and _tileEffectService.QueueExplosion then
+			-- Consume the exploding object BEFORE its blast resolves (Studio sweep 2026-11-06): the blast
+			-- runs immediately, so a Land Mine still on its tile was re-detonated by a chained Bomb
+			-- Barrel blast (one mine exploded twice: 36 + 9 on the same unit). Only the live object of
+			-- this type on this tile is removed; the callers' later removal is then a harmless no-op.
+			if ctx.state and ctx.state.objects and obj and obj.id then
+				for _, o in ipairs(ctx.state.objects) do
+					if o.id == obj.id and o.type == label then
+						ObjectEffectService.RemoveObjectInstance(ctx.state, o)
+						if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
+							BattleVisualBroadcaster.ObjectChanged(o.x, o.y, { destroyed = true })
+						end
+						break
+					end
+				end
+			end
 			-- 25% Max HP, 3x3 box per-source (objects_encounters). QueueExplosion
 			-- expects a NUMERIC fraction payload (processOneExplosion computes
 			-- payload * reduction^depth); passing a table errored at "damagePayload > 0".
@@ -2000,29 +2043,138 @@ _wakeHandler = Handlers["Mimic"]  -- attack-wake on an unmasked Mimic reuses thi
 -- via doSummon(..., "Neutral") / SpawnReinforcement for any future neutral summon.
 
 --------------------------------------------------------------------
--- FORGE (Blocker #2) — summon one Ballista or Catapult OBJECT on a tile within
--- radius 3 of the Forge. First functional build: auto-pick the first ring tile
--- not already holding an object (PlaceObjectInstance guards stacking + renders).
--- Interactive tile-pick UI deferred (consistent with siege auto-target).
+-- FORGE (DB objects_encounters 'Forge'; player choice built 2026-11-06, user: "db is correct").
+-- "Summon one Ballista or Catapult on a chosen tile within radius 3 of the object."
+-- Interact (Consumes Action), RT 150, Once, removed after use.
+--   * Player unit: picks Ballista or Catapult (choice prompt, with Cancel), then picks a tile
+--     from the server-built legal list (tile prompt, with Cancel). Either Cancel = clean cancel
+--     (nothing spent, the Forge stays). Every answer is re-checked here (SEC-001/002).
+--   * AI unit / no prompter: automatic pick, as before (random engine, nearest legal tile).
+-- Legal tile: on the map, Chebyshev distance 1..3 from the Forge, no living unit, no wall or
+-- other solid blocker, no visible non-trap object. A trap on the tile (either side, visible or
+-- hidden) is replaced (user ruling 2026-10-27). Hidden objects are NOT used to filter the list,
+-- so the list never gives a hidden object away; placement still settles them the normal way.
+-- No legal tile: the player's Interact is cleanly cancelled; nothing is spawned (DB row 7:
+-- "reason-coded failure without partial spawn").
 --------------------------------------------------------------------
-Handlers["Forge"] = function(ctx: any): (boolean, any)
-	local obj = ctx.objInstance
-	local cx, cy = obj.x or ctx.actor.tileX, obj.y or ctx.actor.tileY
-	-- Deterministic pick: Ballista on an even roll, Catapult on odd.
-	local which = (ctx.rng:NextInteger(0, 1) == 0) and "Ballista" or "Catapult"
-	-- Probe tiles within radius 3 (nearest-first), skipping the Forge's own tile,
-	-- until one is free. radius=3 per objects_encounters (Forge).
-	for _, t in ipairs(ringTiles(cx, cy, nil, 3)) do
-		if not (t.x == cx and t.y == cy) then
-			-- User ruling 2026-10-27: the Forge's weapon replaces any trap on its tile.
-			local inst = ObjectEffectService.PlaceObjectInstance(ctx.state, which, t.x, t.y, nil, nil, true)
-			if inst then
-				print(string.format("[ObjectEffectService] Forge | placed %s at (%d,%d)", which, t.x, t.y))
-				return true, nil
-			end
+local FORGE_RADIUS = 3
+local FORGE_ENGINES = { "Ballista", "Catapult" }
+
+local function forgeLegalTiles(state: any, cx: number, cy: number, viewerSide: any): ({ any }, { [string]: boolean })
+	local grid = GameConstants.TERRAIN_MAP
+	local h = grid and #grid or 0
+	local w = (h > 0 and grid[1]) and #grid[1] or 0
+	local unitAt, visibleSolidObj = {}, {}
+	for _, u in ipairs((state and state.units) or {}) do
+		-- W1 (2026-11-06): a HIDDEN unit of another side is NOT used to filter the list, so the
+		-- list never gives its position away. Picking that tile fails at placement (the engine
+		-- can't go on a unit) and is refunded like any other blocked placement.
+		local hiddenFoe = viewerSide ~= nil and u.side ~= viewerSide
+			and StatusService.HasStatus and StatusService.HasStatus(u, "Hide")
+		if u.isAlive and u.tileX and u.tileY and not hiddenFoe then unitAt[u.tileX .. "," .. u.tileY] = true end
+	end
+	for _, o in ipairs((state and state.objects) or {}) do
+		local odef = o.type and ObjectData.Objects[o.type]
+		if o.x and o.y and not o.hidden and not objHasTag(odef, "Trap") then
+			visibleSolidObj[o.x .. "," .. o.y] = true
 		end
 	end
-	print("[ObjectEffectService] Forge | no free tile within radius 3")
+	local list, key = {}, {}
+	for _, t in ipairs(ringTiles(cx, cy, nil, FORGE_RADIUS)) do
+		local k = t.x .. "," .. t.y
+		if not (t.x == cx and t.y == cy)
+			and t.x >= 1 and t.y >= 1 and t.x <= w and t.y <= h
+			and not unitAt[k] and not visibleSolidObj[k]
+			and not (GameConstants.IsBlocked and GameConstants.IsBlocked(t.x, t.y))
+			and not (GameConstants.IsImpassableTerrain and GameConstants.IsImpassableTerrain(t.x, t.y)) then
+			table.insert(list, { x = t.x, y = t.y, hit = false })
+			key[k] = true
+		end
+	end
+	return list, key
+end
+
+Handlers["Forge"] = function(ctx: any): (boolean, any)
+	local a, obj = ctx.actor, ctx.objInstance
+	local cx, cy = obj.x or a.tileX, obj.y or a.tileY
+	local legal, legalKey = forgeLegalTiles(ctx.state, cx, cy, a and a.side)
+	local isPlayer = a and a.controller == "Player"
+	if #legal == 0 then
+		-- W2 (2026-11-06): reason-coded failure for EVERY controller (DB row 7: "Return
+		-- reason-coded failure without partial spawn"). CANCELLED = CommandService refunds
+		-- AP/RT and keeps the Forge; nothing is spent.
+		print("[ObjectEffectService] Forge | FORGE_NO_LEGAL_TILE: no legal tile within radius 3 - nothing summoned, nothing spent")
+		return false, "CANCELLED"
+	end
+
+	local which, tx, ty = nil, nil, nil
+	if isPlayer and _choicePrompter and _tilePrompter then
+		local opts = { "Ballista", "Catapult", "Cancel" }
+		local pick = _choicePrompter(a, "Forge: summon which engine?", opts)
+		if pick == "Ballista" or pick == "Catapult" then
+			which = pick
+		else
+			print(string.format("[ObjectEffectService] Forge | %s cancelled the engine choice", tostring(a.name)))
+			return false, "CANCELLED"
+		end
+		local picked = _tilePrompter(a, cx, cy, FORGE_RADIUS, legal)
+		if picked == "CANCEL" or type(picked) ~= "table" then
+			print(string.format("[ObjectEffectService] Forge | %s cancelled the tile choice", tostring(a.name)))
+			return false, "CANCELLED"
+		end
+		if not legalKey[(picked.x or -1) .. "," .. (picked.y or -1)] then
+			warn(string.format("[ObjectEffectService] Forge | rejected illegal tile (%s,%s) from %s",
+				tostring(picked.x), tostring(picked.y), tostring(a.name)))
+			return false, "CANCELLED"
+		end
+		tx, ty = picked.x, picked.y
+	else
+		-- Automatic pick (AI / headless): random engine, nearest legal tile (ring order).
+		which = FORGE_ENGINES[ctx.rng:NextInteger(1, #FORGE_ENGINES)]
+		tx, ty = legal[1].x, legal[1].y
+	end
+
+	-- User ruling 2026-10-27: the summoned engine replaces any trap on its tile.
+	local inst = ObjectEffectService.PlaceObjectInstance(ctx.state, which, tx, ty, nil, nil, true)
+	if not inst then
+		-- Something the list could not show (e.g. a hidden unit) holds the tile.
+		print(string.format("[ObjectEffectService] Forge | FORGE_TILE_OCCUPIED: %s could not be placed at (%d,%d) - refunded, Forge stays", which, tx, ty))
+		if isPlayer and BattleVisualBroadcaster and BattleVisualBroadcaster.Log then
+			BattleVisualBroadcaster.Log("action", "The Forge can't place an engine there - the tile is occupied.", a.id)
+		end
+		return false, "CANCELLED"
+	end
+	print(string.format("[ObjectEffectService] Forge | %s summons %s at (%d,%d)%s", tostring(a.name), which, tx, ty,
+		(isPlayer and _choicePrompter and _tilePrompter) and " (player choice)" or " (auto)"))
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.Log then
+		BattleVisualBroadcaster.Log("action", `The Forge summons a {which}.`, a.id)
+	end
+	return true, nil
+end
+
+--------------------------------------------------------------------
+-- TAVERN (DB objects_encounters 'Tavern', user ruling 2026-11-06 12:23 PM).
+-- Interact (Consumes Action), Once, removed after use. A PLAYER-side user marks this battle as
+-- having earned the Tavern bonus: if the player WINS, the next guild Tavern refresh shows +3
+-- recruit choices (GuildMenuService.OnBattleCompleted). It is a flag, so several Taverns in one
+-- battle still give +3. Enemy/Neutral use does nothing (no recruit pool).
+--------------------------------------------------------------------
+Handlers["Tavern"] = function(ctx: any): (boolean, any)
+	local a = ctx.actor
+	if not (a and a.side == "Player") then
+		print(string.format("[ObjectEffectService] Tavern | %s (%s) used it - no effect for this side",
+			tostring(a and a.name), tostring(a and a.side)))
+		return true, nil
+	end
+	local already = ctx.state and ctx.state.tavernBonusEarned == true
+	if ctx.state then ctx.state.tavernBonusEarned = true end
+	print(string.format("[ObjectEffectService] Tavern | %s secured the Tavern bonus%s (+3 recruit choices after a WIN)",
+		tostring(a.name), already and " (already secured - does not stack)" or ""))
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.Log then
+		BattleVisualBroadcaster.Log("action", already
+			and "The Tavern bonus is already secured this battle (it does not stack)."
+			or "Win this battle for +3 recruit choices at the next Tavern refresh.", a.id)
+	end
 	return true, nil
 end
 
@@ -2058,6 +2210,13 @@ Handlers["Stone Pillar"] = function(ctx: any): (boolean, any)
 	local spanTiles = {}
 	for step = 1, FALL_LEN do
 		local tx, ty = px + dx * step, py + dy * step
+		-- Map edge (Studio sweep 2026-11-06): GetElevation returns 1 off the grid, so a pillar near
+		-- the edge "fell" onto off-map tiles (terrain/blocker writes + client re-skins for tiles that
+		-- don't exist). The span stops at the edge, like it stops at a rise.
+		local _row = GameConstants.ELEVATION_MAP[ty]
+		if not (_row and _row[tx] ~= nil) then
+			break
+		end
 		local tElev = GameConstants.GetElevation(tx, ty)
 		if tElev - baseElev >= 2 then
 			break  -- fall stops short at the rise
@@ -2815,7 +2974,21 @@ end
 --   * a single-use ("Once") object that has already been used
 --   * a "Once per turn" object this unit already used during its current turn
 --------------------------------------------------------------------
-function ObjectEffectService.IsInteractable(objInstance: any, actorId: any, actorSide: any): boolean
+-- HD-009 Demolition Mask (2026-11-06): a breakable obstacle with NO interact effect is still an
+-- Interact target for a Mask wearer (CommandService breaks it up front). Exported for targeting.
+function ObjectEffectService.IsMaskBreakTarget(objInstance: any, actorSide: any): boolean
+	local def = objInstance and objInstance.type and ObjectData.Objects[objInstance.type]
+	if not def or Handlers[objInstance.type] then return false end
+	-- Same owner-side gate as IsInteractable: never the OTHER side's placed deployables (keeps the
+	-- pre-2026-11-06 scope; the Mask only regains what it could break before the Interact fix).
+	if def.isDeployable and objInstance.ownerSide and actorSide and actorSide ~= objInstance.ownerSide then
+		return false
+	end
+	if def.activation ~= nil then return false end
+	return isBreakableObject(def)
+end
+
+function ObjectEffectService.IsInteractable(objInstance: any, actorId: any, actorSide: any, state: any): boolean
 	local def = objInstance and objInstance.type and ObjectData.Objects[objInstance.type]
 	if not def then return false end
 	-- Item-placed interactables (Portable Ballista, 2026-10-26) work for the owner's side only.
@@ -2830,11 +3003,23 @@ function ObjectEffectService.IsInteractable(objInstance: any, actorId: any, acto
 	if act == "Triggered" or act == "Passive" or objHasTag(def, "Trap") then
 		return false
 	end
+	-- No interact effect implemented (blockers, item gadgets): never offer Interact, so a
+	-- unit can't spend AP/RT for nothing (Studio-confirmed bug 2026-11-06). Resolve() keeps its
+	-- own no-handler log as a safety net.
+	if not Handlers[objInstance.type] then
+		return false
+	end
 	local objId = objInstance.id or ("obj_@" .. tostring(objInstance.x) .. "," .. tostring(objInstance.y))
 	local uses = def.uses or "Once"
 	if uses == "Once" and _consumed[objId] then return false end
 	if uses == "Once per turn" and actorId ~= nil and _usedThisTurn[objId] == actorId then
 		return false
+	end
+	-- W2 (2026-11-06): a Forge with no legal tile in radius 3 is not offered at all (the
+	-- handler also fails cleanly as a safety net). Optional state; old callers unaffected.
+	if objInstance.type == "Forge" and state and objInstance.x and objInstance.y then
+		local legal = forgeLegalTiles(state, objInstance.x, objInstance.y, actorSide)
+		if #legal == 0 then return false end
 	end
 	return true
 end

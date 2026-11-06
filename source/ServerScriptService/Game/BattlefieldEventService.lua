@@ -941,11 +941,36 @@ local function activeEventDone(state: any)
 	return true
 end
 
+-- HERALD OF XXX (battlefield_events 12): a defeated Herald summons the "boss" it heralds.
+-- USER RULING 2026-11-05: spawn a regular ELITE for now (real boss pool not designed yet),
+-- Enemy side, at the Herald's level-scaling (highest friendly level), next to where it fell.
+-- NOTE: the DB rule "counts toward the 3-per-day boss reward limit" is NOT applied — an
+-- Elite placeholder is not a boss. Revisit when real Herald bosses exist.
+-- Idempotent (unit.heraldBossSpawned); swept every turn tick, same pattern as the hunter sweep.
+function BattlefieldEventService.SweepHeraldDeaths(state: any, rng: any)
+	if not (state and state.units) then return end
+	for _, u in ipairs(state.units) do
+		if u.spawnsBossOnDeath and not u.isAlive and not u.leftMap and not u.heraldBossSpawned then
+			u.heraldBossSpawned = true
+			local spawnRng = rng or Random.new(os.clock() * 1000)
+			local tile = { x = u.tileX or 1, y = u.tileY or 1 }
+			local boss = spawnEventUnit(state, spawnRng,
+				{ type = "Elite", level = highestFriendlyLevel(state) }, tile, "Enemy", nil, nil, nil)
+			if boss then
+				print(`[BattlefieldEventService] Herald defeated - summoned Elite {boss.name} at ({boss.tileX},{boss.tileY})`)
+			else
+				warn("[BattlefieldEventService] Herald defeated but its Elite could not be spawned")
+			end
+		end
+	end
+end
+
 -- Called every turn advance: free the slot when the active event ends, then fire
 -- the next one (queued conditional first, else a random start-pool draw if the
--- per-battle budget allows).
+-- battle's event budget is not used up).
 function BattlefieldEventService.OnTurnTick(state: any, rng: any, roundIndex: any)
 	BattlefieldEventService.SweepHunterDeaths(state)  -- Treasure Hunter defeated -> loot set aside
+	BattlefieldEventService.SweepHeraldDeaths(state, rng)  -- Herald defeated -> summon Elite (2026-11-05)
 	if state.bfBudget == nil then return end
 	if state.bfActiveEvent and activeEventDone(state) then
 		print("[BattlefieldEventService] Event ended: " .. state.bfActiveEvent.name)

@@ -3168,6 +3168,25 @@ local function createDevCameraPanel()
 	makeConfirmBtn(gBattle.container, "INSTANT LOSE", function()
 		BattleEvents.DevCommand:FireServer({ action = "InstantLose" })
 	end, Color3.fromRGB(80, 30, 30))
+	-- Dev god mode toggle (2026-11-06): unlimited AP/HP/MP for every player unit (Studio only).
+	do
+		local godOn = false
+		local godBtn
+		godBtn = makeBtn(gBattle.container, "GOD MODE: OFF", function()
+			godOn = not godOn
+			godBtn.Text = godOn and "GOD MODE: ON" or "GOD MODE: OFF"
+			godBtn.BackgroundColor3 = godOn and Color3.fromRGB(150, 120, 20) or Color3.fromRGB(50, 50, 65)
+			BattleEvents.DevCommand:FireServer({ action = "GodMode", enabled = godOn })
+		end)
+		-- Keep the button in sync with the server (e.g. after a client script reload).
+		BattleEvents.DevCommand.OnClientEvent:Connect(function(msg)
+			if type(msg) == "table" and msg.action == "GodModeState" then
+				godOn = msg.enabled == true
+				godBtn.Text = godOn and "GOD MODE: ON" or "GOD MODE: OFF"
+				godBtn.BackgroundColor3 = godOn and Color3.fromRGB(150, 120, 20) or Color3.fromRGB(50, 50, 65)
+			end
+		end)
+	end
 	makeConfirmBtn(gBattle.container, "KILL AT TILE", function()
 		local iid = bp and bp.inspectedEntityId
 		local idata = iid and unitData[iid]
