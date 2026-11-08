@@ -67,6 +67,8 @@ local WIDENABLE_TARGET_RULES = {
 	-- "Any Tile" (DB Target_Rules, user ruling 2026-10-26): the card itself says the skill
 	-- affects whatever is on the tile. The legacy strings below stay for the carve-outs.
 	["Any Tile"]        = true,
+	-- Venom Burst (USER RULING 2026-11-08): aimed like an "Any Tile" skill; its 3x3 comes from Circle1.
+	["Aimed Area (centred on target)"] = true,
 	["Enemy Unit"]      = true,
 	["Ally Unit"]       = true,
 	["Ally Unit, Self"] = true,
@@ -271,6 +273,21 @@ local function isCornerBlocker(x, y, occupancy, actor)
 		return true
 	end
 	return false
+end
+
+-- LUNGE STEP / RECOIL HOP (agent default 2026-11-08, vetoable): CommandService uses walking's own
+-- height limits and diagonal corner rule for these one-tile self-moves, so they never disagree with Move.
+-- Rise allowed up to Jump; drop allowed up to the downward jump (Jump + 2, incl. Halfling Nimble Steps).
+function TargetingService.GetWalkJumpLimits(unit: any): (number, number)
+	return getJump(unit), getDownwardJump(unit)
+end
+
+-- True when a one-tile diagonal step from (fromX, fromY) to (toX, toY) passes between two corner-blockers
+-- (wall/object or a non-allied unit), exactly as the walking search refuses it. Straight steps: false.
+function TargetingService.IsDiagonalStepSealed(actor: any, allUnits: any, fromX: number, fromY: number, toX: number, toY: number): boolean
+	if fromX == toX or fromY == toY then return false end
+	local occupancy = buildOccupancyMap(allUnits or {})
+	return isCornerBlocker(toX, fromY, occupancy, actor) and isCornerBlocker(fromX, toY, occupancy, actor)
 end
 
 -- RABBIT FOLK — Hop Step gap tile: a deliberate chasm / gap floor (Slice 5
@@ -1490,6 +1507,24 @@ function TargetingService.GetRingTiles(centerX, centerY, radius, mapWidth, mapHe
 	return tiles
 end
 
+-- Diamond ring (Static Field, USER RULING 2026-11-08): tiles at EXACTLY N steps away counting
+-- straight (non-diagonal) steps, i.e. |dx| + |dy| == N. N = 2 gives 8 tiles: 2 straight out in each
+-- direction plus the 4 one-step diagonals. Centre never included. (Ring = Chebyshev edge, unchanged.)
+function TargetingService.GetDiamondRingTiles(centerX, centerY, radius, mapWidth, mapHeight)
+	local tiles = {}
+	for dy = -radius, radius do
+		for dx = -radius, radius do
+			if math.abs(dx) + math.abs(dy) == radius then
+				local tx, ty = centerX + dx, centerY + dy
+				if isInsideMap(tx, ty, mapWidth, mapHeight) then
+					table.insert(tiles, { tileX = tx, tileY = ty })
+				end
+			end
+		end
+	end
+	return tiles
+end
+
 -- Cross: cardinal lines of length N from center (+ center itself)
 function TargetingService.GetCrossTiles(centerX, centerY, radius, mapWidth, mapHeight)
 	local tiles = { { tileX = centerX, tileY = centerY } }
@@ -1592,6 +1627,9 @@ function TargetingService.GetAOETargetTiles(aoePattern, actor, targetTileX, targ
 
 	elseif patternType == "Ring" then
 		return TargetingService.GetRingTiles(targetTileX, targetTileY, param, mapWidth, mapHeight)
+
+	elseif patternType == "DiamondRing" then
+		return TargetingService.GetDiamondRingTiles(targetTileX, targetTileY, param, mapWidth, mapHeight)
 
 	elseif patternType == "Cross" then
 		return TargetingService.GetCrossTiles(targetTileX, targetTileY, param, mapWidth, mapHeight)
@@ -2107,6 +2145,96 @@ function TargetingService.GetAttackTilesFromOrigin(actor, allUnits, originX, ori
 	end
 
 	return tiles
+end
+
+--------------------------------------------------
+-- AREA / SPLASH HITS ON MAP OBJECTS (project_rules 250, USER RULING 2026-11-07 10:53 PM)
+-- Tile lists only; ObjectEffectService.HitObjectsOnTiles lands the hits. Unit hits and tile-effect
+-- spread keep using IsAOEBlocked / GetCleaveTargets / ... unchanged.
+--------------------------------------------------
+
+-- Rule 250 (2): an object that blocks area spread is itself hit; only tiles BEHIND it are shielded.
+-- Same walk as IsAOEBlocked, without its "target tile itself is a blocker" refusal.
+function TargetingService.IsAOEBlockedForObject(centerX, centerY, targetX, targetY)
+	local dx = targetX - centerX
+	local dy = targetY - centerY
+	local steps = math.max(math.abs(dx), math.abs(dy))
+	if steps <= 1 then return false end  -- adjacent tiles never blocked
+	for i = 1, steps - 1 do
+		local t = i / steps
+		local ix = centerX + math.floor(dx * t + 0.5)
+		local iy = centerY + math.floor(dy * t + 0.5)
+		if GameConstants.HasBlockerTag(ix, iy, "BlocksAOE") then
+			return true
+		end
+	end
+	return false
+end
+
+-- Tiles a tile-area pattern strikes, for object hits: the pattern's tiles within +/-2 elevation of
+-- the centre and not behind a BlocksAOE object (same centre and limits as the unit hits).
+-- Returns { {x=, y=}, ... }.
+function TargetingService.GetAreaObjectTiles(aoePattern, actor, centerX, centerY, mapWidth, mapHeight)
+	local out = {}
+	if not (aoePattern and actor and centerX and centerY) then return out end
+	local ok, tiles = pcall(TargetingService.GetAOETargetTiles, aoePattern, actor, centerX, centerY, mapWidth, mapHeight)
+	if not ok or type(tiles) ~= "table" then return out end
+	local cElev = GameConstants.GetElevation(centerX, centerY)
+	for _, t in ipairs(tiles) do
+		if t.tileX and t.tileY and math.abs(GameConstants.GetElevation(t.tileX, t.tileY) - cElev) <= 2
+			and not TargetingService.IsAOEBlockedForObject(centerX, centerY, t.tileX, t.tileY) then
+			table.insert(out, { x = t.tileX, y = t.tileY })
+		end
+	end
+	return out
+end
+
+-- Tiles a weapon-shaped splash strikes BESIDE its primary tile (px, py), same geometry and +/-2
+-- elevation rules as the unit helpers: "Cleave" / "Adjacent" / "arc" = the 2 flank tiles next to the
+-- attacker (GetCleaveTargets); "ImpactSplash" / "splash" = the 4 cardinal tiles (GetImpactSplashTargets);
+-- "Line2" / "line" = the tile behind (GetLine2Targets). primaryUnit (optional) = the unit on the
+-- primary tile, for its effective elevation. Returns { {x=, y=}, ... }; never the primary tile.
+function TargetingService.GetSplashTilesBeside(actor, pattern, px, py, primaryUnit)
+	local out = {}
+	if not (actor and actor.tileX and actor.tileY and px and py) then return out end
+	if pattern == "Cleave" or pattern == "Adjacent" or pattern == "arc" then
+		local dx = px - actor.tileX
+		local dy = py - actor.tileY
+		local p1x, p1y, p2x, p2y
+		if dx == 0 then
+			p1x, p1y, p2x, p2y = -1, dy, 1, dy
+		elseif dy == 0 then
+			p1x, p1y, p2x, p2y = dx, -1, dx, 1
+		else
+			p1x, p1y, p2x, p2y = dx, 0, 0, dy
+		end
+		local atkElev = getEffectiveElevation(actor)
+		for _, t in ipairs({ { x = actor.tileX + p1x, y = actor.tileY + p1y }, { x = actor.tileX + p2x, y = actor.tileY + p2y } }) do
+			if not (t.x == px and t.y == py) and math.abs(GameConstants.GetElevation(t.x, t.y) - atkElev) <= 2 then
+				table.insert(out, t)
+			end
+		end
+	elseif pattern == "ImpactSplash" or pattern == "splash" then
+		local e = if primaryUnit then getEffectiveElevation(primaryUnit) else GameConstants.GetElevation(px, py)
+		for _, t in ipairs({ { x = px, y = py - 1 }, { x = px, y = py + 1 }, { x = px - 1, y = py }, { x = px + 1, y = py } }) do
+			if math.abs(GameConstants.GetElevation(t.x, t.y) - e) <= 2 then
+				table.insert(out, t)
+			end
+		end
+	elseif pattern == "Line2" or pattern == "line" then
+		local rdx = px - actor.tileX
+		local rdy = py - actor.tileY
+		local dx = if rdx == 0 then 0 elseif rdx > 0 then 1 else -1
+		local dy = if rdy == 0 then 0 elseif rdy > 0 then 1 else -1
+		if dx ~= 0 or dy ~= 0 then
+			local e = if primaryUnit then getEffectiveElevation(primaryUnit) else GameConstants.GetElevation(px, py)
+			local bx, by = px + dx, py + dy
+			if math.abs(GameConstants.GetElevation(bx, by) - e) <= 2 then
+				table.insert(out, { x = bx, y = by })
+			end
+		end
+	end
+	return out
 end
 
 return TargetingService

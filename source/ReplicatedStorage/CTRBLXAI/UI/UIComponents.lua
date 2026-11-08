@@ -203,7 +203,7 @@ function UIComponents.PrimaryButton(props)
 	applyCorner(btn, Theme.CornerRadius.md)
 
 	if enabled and props.onPress then
-		btn.MouseButton1Click:Connect(props.onPress)
+		btn.Activated:Connect(props.onPress)
 	end
 
 	return btn
@@ -247,7 +247,7 @@ function UIComponents.SecondaryButton(props)
 	applyStroke(btn, Theme.Colors.Border, Theme.BorderThickness.Default)
 
 	if enabled and props.onPress then
-		btn.MouseButton1Click:Connect(props.onPress)
+		btn.Activated:Connect(props.onPress)
 	end
 
 	return btn
@@ -286,7 +286,7 @@ function UIComponents.IconButton(props)
 	createIconOrFallback(btn, props, UDim2.fromScale(0.7, 0.7))
 
 	if enabled and props.onPress then
-		btn.MouseButton1Click:Connect(props.onPress)
+		btn.Activated:Connect(props.onPress)
 	end
 
 	return btn
@@ -340,7 +340,7 @@ function UIComponents.ActionButton(props)
 	end
 
 	if enabled and props.onPress then
-		btn.MouseButton1Click:Connect(props.onPress)
+		btn.Activated:Connect(props.onPress)
 	end
 
 	return btn
@@ -721,7 +721,7 @@ function UIComponents.ModalPanel(props)
 		closeBtn.BorderSizePixel = 0
 		closeBtn.Parent = panel
 		applyCorner(closeBtn, Theme.CornerRadius.sm)
-		closeBtn.MouseButton1Click:Connect(props.onClose)
+		closeBtn.Activated:Connect(props.onClose)
 	end
 
 	-- Content area (caller adds children to this)

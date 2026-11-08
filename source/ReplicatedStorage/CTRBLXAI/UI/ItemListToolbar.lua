@@ -7,11 +7,22 @@
 --
 -- Use:
 --   local tb = ItemListToolbar.new()                 -- one state per screen (kept while open)
---   tb.Build(parentFrame, layoutOrder, onChanged)    -- draws the 24 px bar; onChanged re-renders
+--   tb.Build(parentFrame, layoutOrder, onChanged)    -- draws the bar (24 px, the Loadout bar); onChanged re-renders
 --   entries = tb.Apply(entries)                      -- filter + search + sort a grid entry list
 --   tb.Reset()                                       -- back to All / All / Lv down / ""
+-- Optional config (opt-in, 2026-11-07, Runeforge Gems tab; other screens pass nothing and get
+-- the gear bar unchanged): ItemListToolbar.new({ typeFilters = {{id,label,icon}}, typeOf =
+-- fn(entry) -> id, rarityOptions = {...}, sortOptions = {{label, compare = fn(a,b) -> bool?}},
+-- searchPlaceholder = "...", toggle = { label = "Fits only", default = true } }).
+-- tb.ToggleOn() reads the toggle (the screen applies it; Apply doesn't know what "fits").
+-- 2026-11-08 (user: "Loadout screen is our model"; Blacksmith too): every bar is drawn with the
+-- Loadout's OWN controls (InventoryControls: 24 px bar, the Loadout Type / Rarity / sort buttons,
+-- its compact 22 px menu with icon rows), on every device. Button and menu text is white with a
+-- black outline; the active state is the gold-tint background. The toggle is a Loadout-style
+-- button with its full label. The old separate phone bar (44 px / Blacksmith 27 px) is gone.
+-- (The loadoutStyle config key from 2026-11-08 is still accepted and has no effect.)
 -- Entries are MerchantInspector grid entries: { key, name, level, rarity, detail = buildItemEntry }.
--- Display only (ARC-001). Tap-only (MouseButton1Click works for touch). Instances are children of
+-- Display only (ARC-001). Tap-only (.Activated: touch, mouse and gamepad). Instances are children of
 -- the parent, so screen.Clear() cleans them; the dropdown overlay is destroyed on every close.
 
 local Players = game:GetService("Players")
@@ -22,6 +33,11 @@ if not themeModule then
 	error("[ItemListToolbar] Theme module not found")
 end
 local Theme: any = (require :: any)(themeModule)
+local controlsModule = script.Parent:WaitForChild("InventoryControls", WAIT)
+if not controlsModule then
+	error("[ItemListToolbar] InventoryControls module not found")
+end
+local InventoryControls: any = (require :: any)(controlsModule)
 
 local ItemListToolbar = {}
 
@@ -50,20 +66,30 @@ local SORT_OPTIONS = {
 	{ label = "Rarity", field = "rarity", desc = true },
 }
 
-local function typeLabel(id: string): string
-	for _, f in TYPE_FILTERS do
-		if f.id == id then return f.label end
-	end
-	return id
-end
+local GAP = 3
+local FIXED_BTNS_W = 195 -- Type + Rarity + sort (62 each) + their three 3 px gaps
 
 local function slotOf(entry: any): string?
 	local d = entry.detail
 	return d and d.slot or nil
 end
 
-function ItemListToolbar.new()
+function ItemListToolbar.new(config: any?)
 	local self: any = {}
+	local cfg: any = config or {}
+	local typeFilters = cfg.typeFilters or TYPE_FILTERS
+	local rarityOptions = cfg.rarityOptions or RARITY_OPTIONS
+	local sortOptions = cfg.sortOptions or SORT_OPTIONS
+	local typeOf = cfg.typeOf or slotOf
+	local toggleCfg = cfg.toggle
+	local toggleDefault = if toggleCfg then toggleCfg.default ~= false else false
+	local toggleOn = toggleDefault
+	local function typeLabelOf(id: string): string
+		for _, f in typeFilters do
+			if f.id == id then return f.label end
+		end
+		return id
+	end
 	local typeFilter = "All"
 	local rarityFilter = "All"
 	local sortIndex = 1
@@ -83,128 +109,55 @@ function ItemListToolbar.new()
 		local player = Players.LocalPlayer
 		local playerGui = player and player:FindFirstChildOfClass("PlayerGui")
 		if not playerGui then return end
-		local rowH = 22
-		local gui = Instance.new("ScreenGui")
-		gui.Name = "ToolbarDropdown"
-		gui.DisplayOrder = 205 -- above the guild screens (100) and their prompts
-		gui.ResetOnSpawn = false
-		gui.IgnoreGuiInset = true
-		local backdrop = Instance.new("TextButton")
-		backdrop.Size = UDim2.fromScale(1, 1)
-		backdrop.BackgroundTransparency = 1
-		backdrop.Text = ""
-		backdrop.MouseButton1Click:Connect(closeDropdown)
-		backdrop.Parent = gui
-		local inset = game:GetService("GuiService"):GetGuiInset()
-		local menu = Instance.new("Frame")
-		menu.Size = UDim2.fromOffset(math.max(anchor.AbsoluteSize.X, 96), #options * rowH + 4)
-		menu.Position = UDim2.fromOffset(anchor.AbsolutePosition.X, anchor.AbsolutePosition.Y + inset.Y + anchor.AbsoluteSize.Y + 2)
-		menu.BackgroundColor3 = Theme.Colors.Panel
-		menu.BorderSizePixel = 0
-		menu.ZIndex = 50
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 4)
-		corner.Parent = menu
-		local stroke = Instance.new("UIStroke")
-		stroke.Color = Theme.Colors.Border
-		stroke.Thickness = 1
-		stroke.Parent = menu
-		local layout = Instance.new("UIListLayout")
-		layout.SortOrder = Enum.SortOrder.LayoutOrder
-		layout.Parent = menu
-		local pad = Instance.new("UIPadding")
-		pad.PaddingTop = UDim.new(0, 2)
-		pad.PaddingBottom = UDim.new(0, 2)
-		pad.PaddingLeft = UDim.new(0, 2)
-		pad.PaddingRight = UDim.new(0, 2)
-		pad.Parent = menu
-		for idx, opt in options do
-			local row = Instance.new("TextButton")
-			row.Size = UDim2.new(1, 0, 0, rowH)
-			row.BackgroundColor3 = Theme.Colors.PanelRaised
-			row.BackgroundTransparency = if opt.active then 0.2 else 0.6
-			row.BorderSizePixel = 0
-			row.Font = Theme.Font.Primary
-			row.TextSize = Theme.Text.Small()
-			row.TextColor3 = if opt.active then Theme.Colors.TextGold else (opt.color or Theme.Colors.TextPrimary)
-			row.Text = opt.label
-			row.LayoutOrder = idx
-			row.ZIndex = 51
-			local rc = Instance.new("UICorner")
-			rc.CornerRadius = UDim.new(0, 3)
-			rc.Parent = row
-			row.MouseButton1Click:Connect(function()
-				closeDropdown()
-				onSelect(opt.value)
-			end)
-			row.Parent = menu
-		end
-		menu.Parent = gui
-		gui.Parent = playerGui
-		dropdown = gui
+		-- The Loadout's own menu; above the guild screens (100) and their prompts.
+		dropdown = InventoryControls.ShowMenu(playerGui, anchor, options, function(v: any)
+			onSelect(v)
+		end, closeDropdown, 205)
 	end
 
 	local function makeButton(row: Instance, text: string, order: number, active: boolean, icon: string?): TextButton
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(0, 62, 1, 0)
-		btn.BackgroundColor3 = Theme.Colors.Surface
-		btn.BackgroundTransparency = 0.2
-		btn.BorderSizePixel = 0
-		btn.Text = ""
-		btn.LayoutOrder = order
-		local bc = Instance.new("UICorner")
-		bc.CornerRadius = UDim.new(0, 3)
-		bc.Parent = btn
-		if icon then
-			local ico = Instance.new("ImageLabel")
-			ico.Size = UDim2.fromOffset(14, 14)
-			ico.Position = UDim2.new(0, 3, 0.5, -7)
-			ico.BackgroundTransparency = 1
-			ico.Image = icon
-			ico.ScaleType = Enum.ScaleType.Fit
-			ico.ImageColor3 = if active then Theme.Colors.TextGold else Theme.Colors.TextSecondary
-			ico.Parent = btn
-		end
-		local lbl = Instance.new("TextLabel")
-		lbl.Size = UDim2.new(1, -19, 1, 0)
-		lbl.Position = UDim2.fromOffset(19, 0)
-		lbl.BackgroundTransparency = 1
-		lbl.Font = Theme.Font.Primary
-		lbl.TextSize = Theme.Text.Small()
-		lbl.TextColor3 = if active then Theme.Colors.TextGold else Theme.Colors.TextSecondary
-		lbl.TextXAlignment = Enum.TextXAlignment.Left
-		lbl.TextTruncate = Enum.TextTruncate.AtEnd
-		lbl.Text = text
-		lbl.Parent = btn
-		btn.Parent = row
-		return btn
+		return InventoryControls.MakeFilterButton(row, text, order, active, icon)
 	end
 
 	-- Draws the bar into `parent` (a list layout child at `order`). onChanged re-renders the screen.
+	local function toggleLabel(): string
+		if not toggleCfg then return "" end
+		return toggleCfg.label or "Toggle"
+	end
+	local function toggleWidth(): number
+		if not toggleCfg then return 0 end
+		local tw = Theme.MeasureText(toggleLabel(), Theme.Text.Small(), Theme.Font.Primary).X
+		return math.max(62, math.ceil(tw) + 25)
+	end
+
 	function self.Build(parent: Instance, order: number, onChanged: () -> ())
 		closeDropdown()
 		local row = Instance.new("Frame")
 		row.Name = "Toolbar"
-		row.Size = UDim2.new(1, 0, 0, 24)
+		row.Size = UDim2.new(1, 0, 0, InventoryControls.BarHeight)
 		row.BackgroundTransparency = 1
 		row.BorderSizePixel = 0
 		row.LayoutOrder = order
 		local layout = Instance.new("UIListLayout")
 		layout.FillDirection = Enum.FillDirection.Horizontal
-		layout.Padding = UDim.new(0, 3)
+		layout.Padding = UDim.new(0, GAP)
 		layout.VerticalAlignment = Enum.VerticalAlignment.Center
 		layout.SortOrder = Enum.SortOrder.LayoutOrder
 		layout.Parent = row
 
 		local search = Instance.new("TextBox")
-		search.Size = UDim2.new(1, -195, 1, 0)
+		-- The optional toggle is sized to its own label (icon 19 px + text + 6 px) so it never
+		-- truncates; the search box gives up that width plus one 3 px gap.
+		local toggleW = toggleWidth()
+		local reserved = FIXED_BTNS_W + (if toggleCfg then GAP + toggleW else 0)
+		search.Size = UDim2.new(1, -reserved, 1, 0)
 		search.BackgroundColor3 = Theme.Colors.Surface
 		search.BackgroundTransparency = 0.2
 		search.BorderSizePixel = 0
 		search.Font = Theme.Font.Primary
 		search.TextSize = Theme.Text.Small()
 		search.TextColor3 = Theme.Colors.TextPrimary
-		search.PlaceholderText = "Search items..."
+		search.PlaceholderText = cfg.searchPlaceholder or "Search items..."
 		search.PlaceholderColor3 = Theme.Colors.TextDisabled
 		search.Text = searchText
 		search.ClearTextOnFocus = false
@@ -220,12 +173,13 @@ function ItemListToolbar.new()
 		end)
 		search.Parent = row
 
-		local typeBtn = makeButton(row, if typeFilter == "All" then "Type" else typeLabel(typeFilter), 2,
+		local typeBtn = makeButton(row, if typeFilter == "All" then "Type" else typeLabelOf(typeFilter), 2,
 			typeFilter ~= "All", Theme.Icons.Filter)
-		typeBtn.MouseButton1Click:Connect(function()
+		typeBtn.Activated:Connect(function()
 			local opts = {}
-			for _, f in TYPE_FILTERS do
-				table.insert(opts, { label = f.label, value = f.id, active = typeFilter == f.id })
+			for _, f in typeFilters do
+				-- The Loadout Type menu has icon rows.
+				table.insert(opts, { label = f.label, value = f.id, active = typeFilter == f.id, icon = f.icon })
 			end
 			showDropdown(typeBtn, opts, function(v: any)
 				typeFilter = v
@@ -236,13 +190,11 @@ function ItemListToolbar.new()
 
 		local rarityBtn = makeButton(row, if rarityFilter == "All" then "Rarity" else rarityFilter, 3,
 			rarityFilter ~= "All", Theme.Icons.Filter)
-		rarityBtn.MouseButton1Click:Connect(function()
+		rarityBtn.Activated:Connect(function()
 			local opts = {}
-			for _, r in RARITY_OPTIONS do
-				table.insert(opts, {
-					label = if r == "All" then "All Rarities" else r, value = r, active = rarityFilter == r,
-					color = if r == "All" then nil else Theme.GetRarityColor(r),
-				})
+			for _, r in rarityOptions do
+				-- Same as the Loadout Rarity menu: plain rows (no rarity colours).
+				table.insert(opts, { label = if r == "All" then "All Rarities" else r, value = r, active = rarityFilter == r })
 			end
 			showDropdown(rarityBtn, opts, function(v: any)
 				rarityFilter = v
@@ -250,10 +202,10 @@ function ItemListToolbar.new()
 			end)
 		end)
 
-		local sortBtn = makeButton(row, SORT_OPTIONS[sortIndex].label, 4, false, Theme.Icons.Sort)
-		sortBtn.MouseButton1Click:Connect(function()
+		local sortBtn = makeButton(row, (sortOptions[sortIndex] or sortOptions[1]).label, 4, false, Theme.Icons.Sort)
+		sortBtn.Activated:Connect(function()
 			local opts = {}
-			for i, s in SORT_OPTIONS do
+			for i, s in sortOptions do
 				table.insert(opts, { label = s.label, value = i, active = sortIndex == i })
 			end
 			showDropdown(sortBtn, opts, function(v: any)
@@ -261,6 +213,16 @@ function ItemListToolbar.new()
 				onChanged()
 			end)
 		end)
+
+		-- Optional on/off toggle (opt-in), same button art as the others; gold-tint when on.
+		if toggleCfg then
+			local tb2 = makeButton(row, toggleLabel(), 5, toggleOn, Theme.Icons.Filter)
+			tb2.Size = UDim2.new(0, toggleW, 1, 0)
+			tb2.Activated:Connect(function()
+				toggleOn = not toggleOn
+				onChanged()
+			end)
+		end
 
 		row.Parent = parent
 	end
@@ -271,15 +233,18 @@ function ItemListToolbar.new()
 		local out = {}
 		for _, e in entries do
 			local ok = true
-			if typeFilter ~= "All" and slotOf(e) ~= typeFilter then ok = false end
+			if typeFilter ~= "All" and typeOf(e) ~= typeFilter then ok = false end
 			if ok and rarityFilter ~= "All" and e.rarity ~= rarityFilter then ok = false end
 			if ok and q ~= "" and not string.find(string.lower(tostring(e.name or "")), q, 1, true) then ok = false end
 			if ok then table.insert(out, e) end
 		end
-		local s = SORT_OPTIONS[sortIndex] or SORT_OPTIONS[1]
+		local s = sortOptions[sortIndex] or sortOptions[1]
 		table.sort(out, function(a: any, b: any): boolean
 			local an, bn = tostring(a.name or ""), tostring(b.name or "")
-			if s.field == "level" then
+			if s.compare then
+				local r = s.compare(a, b)
+				if r ~= nil then return r end
+			elseif s.field == "level" then
 				local la, lb = tonumber(a.level) or 0, tonumber(b.level) or 0
 				if la ~= lb then return if s.desc then la > lb else la < lb end
 			elseif s.field == "rarity" then
@@ -296,9 +261,14 @@ function ItemListToolbar.new()
 		return typeFilter ~= "All" or rarityFilter ~= "All" or searchText ~= ""
 	end
 
+	function self.ToggleOn(): boolean
+		return toggleOn
+	end
+
 	function self.Reset()
 		closeDropdown()
 		typeFilter, rarityFilter, sortIndex, searchText = "All", "All", 1, ""
+		toggleOn = toggleDefault
 	end
 
 	function self.Close()

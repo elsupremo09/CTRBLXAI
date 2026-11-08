@@ -45,6 +45,20 @@ end
 function PulseScheduler.SetHitResolver(fn: any)
 	_hitResolver = fn
 end
+-- Electric Shock release (R1a fix 2026-11-08): injected by CommandService.SetPulseScheduler
+-- (CombatResolver.FlushElectricShock). An Electric damage pulse (Tesla Pylon) buffers its hits like
+-- any Electric hit; the shock is released at the end of THAT pulse instead of riding into the next
+-- command. nil = not wired (old behaviour).
+local _shockFlusher: any = nil
+function PulseScheduler.SetShockFlusher(fn: any)
+	_shockFlusher = fn
+end
+-- Life Link clock (2026-11-08): injected by CommandService.SetPulseScheduler (LifeLinkService.Tick).
+-- Runs on every CT advance: counts the link's 2000 CT down and re-checks KO / 6-tile range.
+local _lifeLinkTicker: any = nil
+function PulseScheduler.SetLifeLinkTicker(fn: any)
+	_lifeLinkTicker = fn
+end
 
 function PulseScheduler.Init(deps: any)
 	UnitSchema    = deps.UnitSchema
@@ -230,6 +244,35 @@ local function selectTargets(state: any, entry: any, targets: { any }): { any }
 	return { pool[1] }
 end
 
+-- D7 (USER DECISION 2026-11-08 9:25 AM, project_rules 250): a DAMAGING AREA pulse (targetMode
+-- "all": Thermite Projector, Meteor Marker) lands one hit per pulse on every breakable object in its
+-- area - the same tiles its unit hits use (radius, "cross" shape, ring falloff above 0) - through
+-- ObjectEffectService.HitObjectsOnTiles with the item's owner as the attacker. Single-target pulses
+-- (Sentry Turret, Tesla Pylon) and non-damaging pulses (heal, status, reveal, tile effect,
+-- relocate) never hit objects. Runs after the pulse's unit hits.
+local function hitPulseObjects(state: any, entry: any)
+	if entry.kind ~= "damage" or (entry.targetMode or "all") ~= "all" then return end
+	if (entry.amountKind or "flat") == "flat" and (entry.amount or 0) <= 0 then return end
+	if not (ObjectEffectService and ObjectEffectService.HitObjectsOnTiles) then return end
+	local r = entry.radius or 0
+	local tiles = {}
+	for dy = -r, r do
+		for dx = -r, r do
+			local ring = math.max(math.abs(dx), math.abs(dy))
+			local inShape = entry.shape ~= "cross" or dx == 0 or dy == 0
+			local frac = if type(entry.ringFalloff) == "table" then (entry.ringFalloff[ring + 1] or 0) else 1
+			if inShape and frac > 0 then
+				table.insert(tiles, { x = entry.tileX + dx, y = entry.tileY + dy })
+			end
+		end
+	end
+	local owner = nil
+	for _, o in ipairs(state.units or {}) do
+		if o.id == entry.ownerId then owner = o break end
+	end
+	ObjectEffectService.HitObjectsOnTiles(state, tiles, owner, entry.element or "Physical", {})
+end
+
 -- Fire one pulse of one entry. Routes to the owning system. Records per-unit
 -- events on state.pulseEvents so the driver (Main) can refresh client bars /
 -- show floaters, matching the state.ctStatusUnits / state.dotEvents convention.
@@ -323,7 +366,10 @@ function firePulse(state: any, entry: any)
 	else
 		targets = selectTargets(state, entry, collectTargets(state, entry))
 	end
-	if #targets == 0 then return end
+	if #targets == 0 then
+		hitPulseObjects(state, entry)  -- D7: no unit in the area, objects are still hit
+		return
+	end
 	state.pulseEvents = state.pulseEvents or {}
 
 	for _, u in ipairs(targets) do
@@ -384,6 +430,8 @@ function firePulse(state: any, entry: any)
 			table.insert(state.pulseEvents, { unit = u, kind = "status", statusId = entry.statusId })
 		end
 	end
+	-- D7 (rule 250): after the unit hits, a damaging area pulse hits the objects in its area.
+	hitPulseObjects(state, entry)
 end
 
 --------------------------------------------------
@@ -414,6 +462,8 @@ function PulseScheduler.ProcessCtTick(state: any, ctElapsed: any)
 				while entry.remainingPulses > 0 and entry.accCt >= entry.intervalCt do
 					entry.accCt -= entry.intervalCt
 					firePulse(state, entry)
+					-- R1a fix (2026-11-08): release this pulse's Electric Shock now (no-op if none).
+					if _shockFlusher then _shockFlusher(state.units) end
 					entry.remainingPulses -= 1
 				end
 				if entry.remainingPulses <= 0 then
@@ -422,6 +472,7 @@ function PulseScheduler.ProcessCtTick(state: any, ctElapsed: any)
 			end
 		end
 	end
+	if _lifeLinkTicker then _lifeLinkTicker(state, ctElapsed) end  -- Life Link (2026-11-08)
 	PulseScheduler.StampDeviceTimers(state)
 
 	-- Item device lifespans (2026-10-26): runs AFTER the pulses so a device's final pulse
@@ -466,6 +517,12 @@ function PulseScheduler.ProcessCtTick(state: any, ctElapsed: any)
 			ObjectEffectService.RevealHiddenInArea(state, z.tiles, z.side, "Scanner Lens")  -- A2: only reveal-zone source (UTI-003)
 		end
 		ObjectEffectService.TickRevealZones(ctElapsed)
+	end
+	-- Map-object clock (2026-11-07, 18 new map objects): Volcanic Vent eruptions, Venus Man-Trap
+	-- ticks, delayed Arcane Cannon / Heavy Artillery shots. Results ride state.pulseEvents (Main
+	-- shows damage + KOs exactly like pulse damage). nil-safe.
+	if ObjectEffectService and ObjectEffectService.ProcessObjectClock then
+		ObjectEffectService.ProcessObjectClock(state, ctElapsed)
 	end
 	-- Timed placed objects (DEP-004 Hardlight Wall segments) are removed when their time is up.
 	if state.objects and ObjectEffectService and ObjectEffectService.ExpireObject then

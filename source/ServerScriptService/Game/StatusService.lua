@@ -677,6 +677,14 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 				if def.relayRtMult then inst.relayState = nil end
 				inst.resistPen = if resistPen > 0 then resistPen else nil
 				applyDebuffResistance(unit, statusId, def, inst, resistPen)
+				-- D5 (2026-11-07): a unit held by a Venus Man-Trap keeps its endless hold. Another
+				-- source's Pin runs on its own timer (venusOtherCt) under the hold; the hold itself never
+				-- gets a timer, and when the plant lets go that other Pin carries on for its time left.
+				if inst.venusHold then
+					inst.venusOtherCt = math.max(inst.venusOtherCt or 0, inst.remainingCt or 0)
+					inst.remainingCt = nil
+					inst.remainingTurns = nil
+				end
 				print(string.format(
 					"[StatusService] %s on %s REFRESHED (%s)",
 					statusId, unit.name, def.duration and (def.duration .. " turns") or "CT"
@@ -1127,6 +1135,18 @@ end
 function StatusService.ProcessEndOfTurn(unit)
 	local events = {}
 	if not (unit and unit.isAlive and unit.statusInstances) then return events end
+	-- Mana Fountain (objects_encounters row 118, 2026-11-07): recover 20% of MISSING MP at the end of
+	-- the unit's own turn. MP only, no event (Main logs it: unit._manaFountainGain, cause "Mana Fountain").
+	if StatusService.HasStatus(unit, "Mana Fountain") then
+		local mfDef = GameConstants.STATUSES["Mana Fountain"]
+		local missing = math.max(0, (unit.maxMp or 0) - (unit.currentMp or 0))
+		if missing > 0 then
+			local gain = math.min(missing, math.max(1, math.round(missing * ((mfDef and mfDef.missingMpRestoreFraction) or 0.20))))
+			unit.currentMp = (unit.currentMp or 0) + gain
+			unit._manaFountainGain = gain
+			print(string.format("[StatusService] Mana Fountain | %s +%d MP at end of turn", tostring(unit.name), gain))
+		end
+	end
 	local inst = StatusService.HasStatus(unit, "Venom")
 	if inst then
 		local def = GameConstants.STATUSES.Venom
@@ -1213,6 +1233,23 @@ end
 -- A qualifying heal = one that actually restores HP. Call once per heal.
 -- Returns the new strength (0 = Venom removed), or nil if the unit had no Venom.
 --------------------------------------------------
+
+--------------------------------------------------
+-- HEAL-GAINED NOTIFY (Life Link, USER RULING 2026-11-08). Every place that restores HP calls this
+-- once with the HP the unit ACTUALLY gained (after caps; overheal not counted). The listener is
+-- injected by CommandService (LifeLinkService.OnHealGained) so this module requires nothing new
+-- (no cycle). nil listener / gained <= 0 = no-op.
+--------------------------------------------------
+local _healGainedListener: any = nil
+function StatusService.SetHealGainedListener(fn: any)
+	_healGainedListener = fn
+end
+
+function StatusService.NotifyHealGained(unit: any, gained: number?)
+	if _healGainedListener and unit and (gained or 0) > 0 then
+		_healGainedListener(unit, gained)
+	end
+end
 
 function StatusService.WeakenVenomOnHeal(unit)
 	if not unit or not unit.statusInstances then return nil end
@@ -1405,6 +1442,7 @@ function StatusService.ProcessCtTick(unit, ctElapsed)
 					if applied > 0 then
 						table.insert(events, { kind = "Heal", statusId = inst.id, amount = applied })
 						regenHeals += 1
+						StatusService.NotifyHealGained(unit, applied)  -- Life Link share (2026-11-08)
 					end
 				end
 			end
@@ -1473,6 +1511,18 @@ function StatusService.ProcessCtTick(unit, ctElapsed)
 			end
 		end
 
+		-- D5 (2026-11-07): another source's Pin under a Venus hold counts down on its own; the
+		-- Venus hold itself never expires on the clock (only the plant lets go).
+		if inst.venusHold then
+			if inst.remainingCt then
+				inst.venusOtherCt = math.max(inst.venusOtherCt or 0, inst.remainingCt)
+				inst.remainingCt = nil
+			end
+			if inst.venusOtherCt then
+				inst.venusOtherCt = inst.venusOtherCt - ctElapsed
+				if inst.venusOtherCt <= 0 then inst.venusOtherCt = nil end
+			end
+		end
 		if inst.remainingCt then
 			inst.remainingCt = inst.remainingCt - ctElapsed
 			if inst.remainingCt <= 0 then
@@ -1522,6 +1572,7 @@ function StatusService.ProcessCtTick(unit, ctElapsed)
 					if applied > 0 then
 						table.insert(events, { kind = "Heal", statusId = "Overflowing Flask", amount = applied })
 						regenHeals += 1
+						StatusService.NotifyHealGained(unit, applied)  -- Life Link share (2026-11-08)
 					end
 				end
 			end

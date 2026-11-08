@@ -68,6 +68,37 @@ function PersistentStateService.RegisterNewUnit(playerId, unitId, maxHp, maxMp)
 end
 
 --------------------------------------------------
+-- UNIT REMOVAL (2026-11-06)
+-- A dismissed unit must leave this table too: post-battle recovery iterates every
+-- record here, and the table is saved, so a leftover record kept "recovering" a unit
+-- that was no longer on the roster (Studio-found 2026-11-06).
+--------------------------------------------------
+
+function PersistentStateService.RemoveUnit(playerId, unitId)
+	PersistentStateService.InitPlayer(playerId)
+	if unitStates[playerId][unitId] ~= nil then
+		unitStates[playerId][unitId] = nil
+		print(string.format("[PersistentState] Removed %s (left the roster)", tostring(unitId)))
+	end
+end
+
+-- Defensive sweep: drop any record whose unit id is not in ownedSet ({ [unitId] = true }).
+-- Cleans saves written before RemoveUnit existed. Returns the number removed.
+function PersistentStateService.PruneToOwned(playerId, ownedSet)
+	PersistentStateService.InitPlayer(playerId)
+	if type(ownedSet) ~= "table" then return 0 end
+	local stale = {}
+	for unitId in pairs(unitStates[playerId]) do
+		if not ownedSet[unitId] then table.insert(stale, unitId) end
+	end
+	for _, unitId in ipairs(stale) do
+		unitStates[playerId][unitId] = nil
+		warn(string.format("[PersistentState] Dropped stale record %s (not on the roster)", tostring(unitId)))
+	end
+	return #stale
+end
+
+--------------------------------------------------
 -- GET UNIT STATE (for battle start)
 --------------------------------------------------
 

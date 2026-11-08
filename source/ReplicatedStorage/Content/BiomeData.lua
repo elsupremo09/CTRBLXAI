@@ -24,6 +24,9 @@ BiomeData["Plains"] = {
 		["War Banner"] = 3,
 		["Rally Flag"] = 3,
 		["Healing Spring"] = 2,
+		-- 2026-11-07 new map objects (biomes table, agent default weights, vetoable)
+		["Garden of Revelation"] = 2,
+		["Wasp Nest"] = 1,
 	},
 	typicalInhabitants = { "Human kingdoms", "beasts", "goblins", "travelers" },
 	battleConditionWeights = {
@@ -59,6 +62,12 @@ BiomeData["Forest"] = {
 		["Witch Hut"] = 2,
 		Scholar = 2,
 		Mimic = 1,
+		-- 2026-11-07 new map objects (biomes table, agent default weights, vetoable)
+		["Snake Jar"] = 1,
+		["Redwood Observatory"] = 2,
+		["Garden of Revelation"] = 1,
+		["Wasp Nest"] = 2,
+		["Venus Man-Trap"] = 2,
 	},
 	typicalInhabitants = { "Beasts", "elves", "goblins", "witches", "forest spirits" },
 	battleConditionWeights = {
@@ -89,6 +98,10 @@ BiomeData["Desert"] = {
 		["Stone Pillar"] = 4,
 		Scholar = 2,
 		["Warrior's Tomb"] = 2,
+		-- 2026-11-07 new map objects (biomes table, agent default weights, vetoable)
+		["Snake Jar"] = 2,
+		["Oasis"] = 3,
+		["Bone Pillar"] = 1,
 	},
 	typicalInhabitants = { "Nomads", "bandits", "beasts", "undead" },
 	battleConditionWeights = {
@@ -119,6 +132,10 @@ BiomeData["Swamp"] = {
 		["Witch Hut"] = 3,
 		["Cursed Statue"] = 2,
 		["Magic Spring"] = 2,
+		-- 2026-11-07 new map objects (biomes table, agent default weights, vetoable)
+		["Snake Jar"] = 2,
+		["Wasp Nest"] = 1,
+		["Venus Man-Trap"] = 3,
 	},
 	typicalInhabitants = { "Naga", "slimes", "insects", "undead" },
 	battleConditionWeights = {
@@ -153,6 +170,9 @@ BiomeData["Highlands"] = {
 		["Rally Flag"] = 2,
 		Arena = 2,
 		["Dragon Utopia"] = 1,
+		-- 2026-11-07 new map objects (biomes table, agent default weights, vetoable)
+		["Redwood Observatory"] = 1,
+		["Iron Curtain"] = 1,
 	},
 	typicalInhabitants = { "Mountain tribes", "dragons", "beasts", "gryphons" },
 	battleConditionWeights = {
@@ -183,6 +203,8 @@ BiomeData["Tundra"] = {
 		["Healing Spring"] = 3,
 		["Magic Spring"] = 3,
 		Scholar = 2,
+		-- 2026-11-07 new map objects (biomes table, agent default weights, vetoable)
+		["Mana Fountain"] = 1,
 	},
 	typicalInhabitants = { "Arctic beasts", "undead", "frost creatures" },
 	battleConditionWeights = {
@@ -213,6 +235,8 @@ BiomeData["Volcano"] = {
 		["Treasure Chest"] = 5,
 		["Stone Pillar"] = 3,
 		["Dragon Utopia"] = 2,
+		-- 2026-11-07 new map objects (biomes table, agent default weights, vetoable)
+		["Volcanic Vent"] = 4,
 	},
 	typicalInhabitants = { "Dragons", "demons", "fire creatures" },
 	battleConditionWeights = {
@@ -243,6 +267,10 @@ BiomeData["Cave"] = {
 		Campfire = 3,
 		["Healing Spring"] = 2,
 		["Warrior's Tomb"] = 2,
+		-- 2026-11-07 new map objects (biomes table, agent default weights, vetoable)
+		["Bone Pillar"] = 2,
+		["Soul Well"] = 1,
+		["Volcanic Vent"] = 1,
 	},
 	typicalInhabitants = { "Undead", "slimes", "beasts", "cave dwellers" },
 	battleConditionWeights = {
@@ -276,6 +304,9 @@ BiomeData["Ruins"] = {
 		["Library of Enlightenment"] = 2,
 		Scholar = 2,
 		Cartographer = 2,
+		-- 2026-11-07 new map objects (biomes table, agent default weights, vetoable)
+		["Mana Fountain"] = 2,
+		["Soul Well"] = 1,
 	},
 	typicalInhabitants = { "Undead guardians", "mercenaries", "constructs" },
 	battleConditionWeights = {
@@ -313,6 +344,9 @@ BiomeData["Castle"] = {
 		["Black Market"] = 2,
 		["Marletto Tower"] = 2,
 		["Mercenary Camp"] = 2,
+		-- 2026-11-07 new map objects (biomes table, agent default weights, vetoable)
+		["Mana Fountain"] = 1,
+		["Iron Curtain"] = 1,
 	},
 	typicalInhabitants = { "Soldiers", "knights", "guards", "constructs" },
 	battleConditionWeights = {
@@ -347,6 +381,9 @@ BiomeData["Corrupted"] = {
 		["Altar of Sacrifice"] = 2,
 		["Cover of Darkness"] = 2,
 		["Seer's Hut"] = 1,
+		-- 2026-11-07 new map objects (biomes table, agent default weights, vetoable)
+		["Bone Pillar"] = 3,
+		["Soul Well"] = 2,
 	},
 	typicalInhabitants = { "Undead", "demons", "corrupted beasts", "cultists" },
 	battleConditionWeights = {

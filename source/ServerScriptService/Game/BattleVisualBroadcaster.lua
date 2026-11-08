@@ -152,6 +152,8 @@ local function entryText(e)
 		return `{e.label} exploded.`
 	elseif e.kind == "objPushed" then
 		return `{e.label} was pushed.`
+	elseif e.kind == "objHit" then  -- F4 (2026-11-08, rule 225): an object took a hit and survived
+		return if c then `{c} hit {e.label}.` else `{e.label} was hit.`
 	end
 	return nil
 end
@@ -179,6 +181,7 @@ local function groupText(list)
 	elseif e.kind == "objDestroyed" then return `{k}× {e.label} were destroyed.`
 	elseif e.kind == "objExploded" then return `{k}× {e.label} exploded.`
 	elseif e.kind == "objPushed" then return `{k}× {e.label} were pushed.`
+	elseif e.kind == "objHit" then return `{c} hit {k}× {e.label}.`
 	end
 	return nil
 end
@@ -186,6 +189,7 @@ end
 local GROUPABLE = {
 	hpLoss = true, hpGain = true, statusAdd = true, statusRem = true, mpLoss = true, mpGain = true,
 	tileEffect = true, terrain = true, objDestroyed = true, objExploded = true, objPushed = true,
+	objHit = true,
 }
 
 local function flushLog()
@@ -257,6 +261,17 @@ function BattleVisualBroadcaster.RegisterMpCause(label)
 	if type(label) == "string" then MP_CAUSES[label] = true end
 end
 
+-- Causes whose own heal line REPLACES the skill's heal line (2026-11-08, Studio bug 1). Vitality Surge
+-- logs "Vitality Surge healed X for N." itself; the turn controller later reports the same caster HP
+-- gain as "X heals X with <skill>". HealingApplied skips that second line when it matches the heal
+-- this cause already logged (same unit, same amount, HP unchanged since). Same opt-in idea as MP_CAUSES.
+local HEAL_CAUSES = {
+	["Vitality Surge"] = true,
+}
+function BattleVisualBroadcaster.RegisterHealCause(label)
+	if type(label) == "string" then HEAL_CAUSES[label] = true end
+end
+
 -- A cause that arrives right after an uncaused sync of the same unit (e.g. code that
 -- calls UnitStateChanged(u) then ObjectDamage(..., "Spike Trap")) names the line that
 -- is already buffered instead of adding a second one.
@@ -278,6 +293,7 @@ local function syncHp(unit)
 	local s = _snap[unit.id]
 	if not s then seedUnit(unit) return end
 	retract(unit.id, HP_KINDS)
+	if s.hp ~= (unit.currentHp or 0) then s.loggedGain = nil end  -- HEAL_CAUSES record is out of date
 	s.hp = unit.currentHp or 0
 	s.alive = unit.isAlive ~= false
 end
@@ -352,6 +368,11 @@ local function diffUnit(unit, cause)
 			bufferEntry({ kind = if dMp < 0 then "mpLoss" else "mpGain", cause = c, unitId = unit.id,
 				name = name, amount = math.abs(dMp), category = "status" })
 		end
+	end
+	-- HEAL_CAUSES (2026-11-08): remember a heal this cause just logged, so HealingApplied can skip
+	-- describing the same HP gain again. Any other HP change replaces / clears the record.
+	if hp ~= s.hp then
+		s.loggedGain = if c ~= nil and HEAL_CAUSES[c] and hp > s.hp then { amount = hp - s.hp, hp = hp } else nil
 	end
 	s.hp = hp
 	s.mp = mp
@@ -694,7 +715,17 @@ function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName
 		skillId     = skillId,  -- client VFX registry lookup
 		animKind    = animKind,
 	})
-	logEntry("action", `{unitName(actor)} heals {unitName(target)}{if skillName then ` with {skillName}` else ""}: +{amount or 0} HP ({target.currentHp or 0}/{target.maxHp or 0})`, actor.id)
+	-- HEAL_CAUSES (2026-11-08): a self-heal already logged under its own cause (e.g. "Vitality Surge
+	-- healed Mage for 5.") is not logged again as "Mage heals Mage with <skill>" (one event = one line,
+	-- rules 225). The heal number / HP bar event above still fires.
+	local _ts = if actor and target and actor.id ~= nil and actor.id == target.id then _snap[target.id] else nil
+	local _lg = _ts and _ts.loggedGain
+	if _lg and _lg.amount == amount and _lg.hp == (target.currentHp or 0) then
+		_ts.loggedGain = nil
+		flushLog()  -- the cause's own line goes out now, in order
+	else
+		logEntry("action", `{unitName(actor)} heals {unitName(target)}{if skillName then ` with {skillName}` else ""}: +{amount or 0} HP ({target.currentHp or 0}/{target.maxHp or 0})`, actor.id)
+	end
 	syncHp(target, "gain", amount)
 	if target and target.statusInstances and target.id ~= nil and _snap[target.id] then _snap[target.id].st = statusSet(target) end
 	task.wait(PACE.Healing)
@@ -1024,8 +1055,11 @@ function BattleVisualBroadcaster.ObjectChanged(x, y, info, label)
 		local kind = nil
 		if info.exploded == true then kind = "objExploded"
 		elseif info.destroyed == true then kind = "objDestroyed"
-		elseif info.moved then kind = "objPushed" end
-		if kind then
+		elseif info.moved then kind = "objPushed"
+		elseif info.hit == true then kind = "objHit" end  -- F4: info.by = what hit it (nil = unknown)
+		if kind == "objHit" then
+			bufferEntry({ kind = kind, cause = info.by, label = label, category = "field" })
+		elseif kind then
 			bufferEntry({ kind = kind, cause = label, label = label, category = "field" })
 		end
 	end
@@ -1036,6 +1070,23 @@ end
 -- S->C: a step-on trap fired at (x,y). Display-only floating indicator; fired by
 -- ObjectEffectService.TriggerTrap (covers hidden traps the client never drew).
 --------------------------------------------------
+
+--------------------------------------------------
+-- OBJECT MARKER (2026-11-07, 18 new map objects)
+-- S->C: tiles a map object will hit (Volcanic Vent next targets, Arcane Cannon danger line,
+-- Heavy Artillery red cross). key = one marker set per source; an empty tile list clears it.
+-- Display-only, no log line, no pacing wait. Payload = tile pairs only (NET-003).
+--------------------------------------------------
+function BattleVisualBroadcaster.ObjectMarker(key, tiles)
+	if type(key) ~= "string" then return end
+	local out = {}
+	for _, t in ipairs(tiles or {}) do
+		if type(t.x) == "number" and type(t.y) == "number" then
+			out[#out + 1] = { t.x, t.y }
+		end
+	end
+	BattleEvents.ObjectMarker:FireAllClients({ key = key, tiles = out })
+end
 
 function BattleVisualBroadcaster.TrapSprung(x, y, trapType, unitId, hidden)
 	BattleEvents.TrapSprung:FireAllClients({
@@ -1068,6 +1119,10 @@ function BattleVisualBroadcaster.UnitStateChanged(unit, cause, logMp)
 		unitId    = unit.id,
 		hp        = unit.currentHp,
 		maxHp     = unit.maxHp,
+		-- D4 (2026-11-07): MP rides along so object MP changes (Garden of Revelation's new max MP,
+		-- Magic Spring / Oasis restores) show at once instead of at the unit's next turn start.
+		mp        = unit.currentMp,
+		maxMp     = unit.maxMp,
 		isAlive   = unit.isAlive,
 		-- Statuses ride along so a heal that weakens/cures Venom shows at once (2026-10-26).
 		statuses  = if unit.statusInstances then StatusService.GetStatusSummary(unit) else nil,

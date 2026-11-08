@@ -724,6 +724,341 @@ ObjectData.Objects["Swan Pond"] = {
 	notes = "all allies = MAP-WIDE (2026-10-03 ruling).",
 }
 
+-- =========================================================================================
+-- 18 NEW MAP OBJECTS (USER DECISION 2026-11-07 9:59 PM; objects_encounters rows 112-129;
+-- shared rules project_rules 249). Added in the generated style; the DB rows are the authority.
+-- All are newlyBreakable (they were not breakable before rule 241), so none gives a Salvager's
+-- Cap (HD-011) roll. Extra fields below the DB columns are read by ObjectEffectService.
+-- =========================================================================================
+
+ObjectData.Objects["Toxic Crate"] = {
+	id = "Toxic Crate",
+	category = "Hazard",
+	tags = { "Container", "Poison", "Breakable" },
+	passable = false,
+	-- EXCEPTION to rule 241 (project_rules 249): ANY one hit from any source breaks it.
+	hitsToDestroy = 1,
+	newlyBreakable = true,
+	activation = "Triggered",
+	triggerEvent = "Hit by anything (incl. splash)",
+	primaryEffect = "Breaks and creates Poison Cloud on its tile + radius 1",
+	uses = "Once",
+	notes = "UNIVERSAL OBJECT (map_gen_rules 95). Blocks its tile; any one hit breaks it, like Bomb Barrel. Radius 1 incl. diagonals (9 tiles), its own tile included once it is gone; tile effects skip blocked tiles (rule 246). Poison Cloud works as normal. The breaking hit does NOT ignite the new cloud, even a Fire hit [agent default, vetoable]. Friendly fire.",
+	breakTileEffect = "Poison Cloud", -- ObjectEffectService break effect
+	breakRadius = 1,
+	breakGuardsOwnTile = true,        -- the breaking hit's element does not react on its own tile
+}
+
+ObjectData.Objects["Sludge Barrel"] = {
+	id = "Sludge Barrel",
+	category = "Hazard",
+	tags = { "Container", "Sticky", "Breakable" },
+	passable = false,
+	-- EXCEPTION to rule 241 (project_rules 249): ANY one hit from any source breaks it.
+	hitsToDestroy = 1,
+	newlyBreakable = true,
+	activation = "Triggered",
+	triggerEvent = "Hit by anything (incl. splash)",
+	primaryEffect = "Breaks and creates Tar Pit on its tile + radius 1",
+	uses = "Once",
+	notes = "UNIVERSAL OBJECT (map_gen_rules 95). Blocks its tile; any one hit breaks it, like Bomb Barrel. Radius 1 incl. diagonals (9 tiles), its own tile included once it is gone; tile effects skip blocked tiles (rule 246). Tar Pit works as normal (1.5 move cost, 2 own turn-ends on tar = Petrify, Fire -> Burning). Friendly fire.",
+	breakTileEffect = "Tar Pit", -- ObjectEffectService break effect
+	breakGuardsOwnTile = true,   -- row 113: the breaking hit does not react with its own Tar Pit (like Toxic Crate / Water Barrel)
+	breakRadius = 1,
+}
+
+ObjectData.Objects["Water Barrel"] = {
+	id = "Water Barrel",
+	category = "Hazard",
+	tags = { "Container", "Water", "Breakable" },
+	passable = false,
+	-- EXCEPTION to rule 241 (project_rules 249): ANY one hit from any source breaks it.
+	hitsToDestroy = 1,
+	newlyBreakable = true,
+	activation = "Triggered",
+	triggerEvent = "Hit by anything (incl. splash)",
+	primaryEffect = "Breaks and creates Wet on its tile + radius 1",
+	uses = "Once",
+	notes = "UNIVERSAL OBJECT (map_gen_rules 95). Blocks its tile; any one hit breaks it, like Bomb Barrel. Radius 1 incl. diagonals (9 tiles), its own tile included once it is gone; tile effects skip blocked tiles (rule 246). Wet works as normal (Electric -> Static Cloud, Ice -> Frozen, Fire -> Steam, Dark -> Tar Pit). The breaking hit does NOT react with the new Wet [agent default, vetoable]. Friendly fire.",
+	breakTileEffect = "Wet", -- ObjectEffectService break effect
+	breakRadius = 1,
+	breakGuardsOwnTile = true,
+}
+
+ObjectData.Objects["Snake Jar"] = {
+	id = "Snake Jar",
+	category = "Hazard",
+	tags = { "Container", "Poison", "Breakable" },
+	passable = false,
+	-- EXCEPTION to rule 241 (project_rules 249): ANY one hit from any source breaks it.
+	hitsToDestroy = 1,
+	newlyBreakable = true,
+	activation = "Triggered",
+	triggerEvent = "Hit by anything (incl. splash)",
+	primaryEffect = "Breaks; every unit within radius 1 gains Venom (Strength 1)",
+	uses = "Once",
+	notes = "Biomes: Desert 2, Swamp 2, Forest 1 [agent default, vetoable]. Blocks its tile; any one hit breaks it, like Bomb Barrel. No tile effect. Hits every unit within 1 tile (diagonals count), any side, including the attacker if adjacent. Uses the normal Venom status (stacks +1 on reapply, cured by heals, Undead immune).",
+	breakStatus = "Venom",   -- ObjectEffectService break effect: status to every unit in breakRadius
+	breakStatusStacks = 1,   -- Venom Strength 1 (one application)
+	breakRadius = 1,
+}
+
+ObjectData.Objects["Redwood Observatory"] = {
+	id = "Redwood Observatory",
+	category = "Aura",
+	tags = { "Structure", "Reveal", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Passive",
+	triggerEvent = nil,
+	primaryEffect = "Radius 3, both sides: no unit can Hide or stay hidden; hidden traps/objects inside are revealed",
+	uses = "Passive",
+	notes = "Biomes: Forest 2, Highlands 1 [agent default, vetoable]. A hidden unit that enters or starts inside loses Hide; Hide cannot be gained inside. Reveals hidden traps and hidden objects inside, and unmasks a disguised Mimic (stays dormant), same as other reveal effects. Revealed traps stay revealed after leaving range [agent default, vetoable].",
+	revealRadius = 3, -- ObjectEffectService (Hide block + reveal sweep)
+}
+
+ObjectData.Objects["Oasis"] = {
+	id = "Oasis",
+	category = "Exploration",
+	tags = { "Spring", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Interact (Free - no AP)", -- costs no AP (CommandService STEP 6) but adds interactRT
+	interactRT = 120,
+	triggerEvent = nil,
+	primaryEffect = "Restores 20% Max HP and 20% Max MP to the interacting unit",
+	uses = "Once per turn",
+	notes = "Biomes: Desert 3 [agent default, vetoable]. Used from an adjacent tile (reach 1). Costs no AP but adds RT 120. Once per unit per turn (resets at the start of that unit's turn), unlimited across the battle.",
+	restoreHpPct = 0.20, -- ObjectEffectService Oasis handler
+	restoreMpPct = 0.20,
+}
+
+ObjectData.Objects["Mana Fountain"] = {
+	id = "Mana Fountain",
+	category = "Exploration",
+	tags = { "Spring", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Interact (Consumes Action)",
+	interactRT = 100,
+	triggerEvent = nil,
+	primaryEffect = "Every ally on the map (MAP-WIDE) recovers 20% of missing MP at the end of each of their own turns for 2000 CT",
+	uses = "Once",
+	notes = "Biomes: Ruins 2, Tundra 1, Castle 1 [agent default, vetoable]. New object; the existing Magic Spring is unchanged (user decision 2026-11-07). Given as a normal timed buff (status 'Mana Fountain': dispellable like other buffs; reapply refreshes) [agent default, vetoable]. Removed after use.",
+}
+
+ObjectData.Objects["Learning Stone"] = {
+	id = "Learning Stone",
+	category = "Event",
+	tags = { "Shrine", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Interact (Consumes Action)",
+	interactRT = 150,
+	triggerEvent = nil,
+	primaryEffect = "The interacting unit gains bonus XP = half the gold earned this battle (WIN ONLY)",
+	uses = "Once",
+	notes = "UNIVERSAL OBJECT (map_gen_rules 95). Only the unit that used it. Bonus XP = floor(0.5 x total battle gold reward), paid at the end of a won battle; nothing on loss/retreat. If the unit dies it still gets it on a win [agent default, vetoable]. USER RULING 2026-11-07: uses the existing after-battle experience award (Main grants it right after the battle gold is known).",
+	bonusXpGoldShare = 0.5, -- Main post-battle (state.learningStoneUnits)
+}
+
+ObjectData.Objects["Garden of Revelation"] = {
+	id = "Garden of Revelation",
+	category = "Event",
+	tags = { "Shrine", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Interact (Consumes Action)",
+	interactRT = 150,
+	triggerEvent = nil,
+	primaryEffect = "Every ally on the map (MAP-WIDE) gains +20% Max MP and restores that amount, until battle end",
+	uses = "Once",
+	notes = "Biomes: Plains 2, Forest 1 [agent default, vetoable]. A second Garden does not stack (no extra +20%) [agent default, vetoable]. Allies who join later (summons, revives after) do not get it [agent default, vetoable]. Removed after use. USER RULING 2026-11-07: battle-only max-MP bonus applied when the unit's stats are rebuilt (cleared at battle end).",
+	maxMpBonusPct = 0.20, -- EquipmentService battleMaxMpBonusPct
+}
+
+ObjectData.Objects["Bone Pillar"] = {
+	id = "Bone Pillar",
+	category = "Blocker",
+	tags = { "Structure", "Bone", "Immovable", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	-- Collisions do NOT count as hits on it (no collision path calls ApplyObjectHit).
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	isImmovable = true, -- cannot be pushed (GetPushableObjectTargets skips it)
+	activation = "Passive",
+	triggerEvent = "Unit forced into it",
+	primaryEffect = "A unit pushed into it takes collision damage + 15% Max HP and gets Bleed",
+	uses = "Passive",
+	notes = "Biomes: Corrupted 3, Cave 2, Desert 1 [agent default, vetoable]. FIT TO WALL-COLLISION RULE (movement_targeting 15-16): normal wall-collision damage with impact multiplier 1.3x (same as Pillar), THEN a flat extra round(Max HP x 0.15 x Boss HP% Modifier) once per collision (not multiplied by blocked tiles, STR or knockback source), then Bleed (Undead immune). Collision damage stays non-direct (no Guard, no Combat Fortune).",
+	collisionExtraMaxHpPct = 0.15, -- DisplacementService (flat extra per collision)
+	collisionStatus = "Bleed",     -- CommandService applyForcedEntryEffects
+}
+
+ObjectData.Objects["Soul Well"] = {
+	id = "Soul Well",
+	category = "Aura",
+	tags = { "Structure", "Dark", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Passive",
+	triggerEvent = "Skill cast inside",
+	primaryEffect = "Radius 2, both sides: skills cast from inside get x1.2 potency (healing too); caster then loses HP = the skill MP cost (5% Max HP if it costs no MP)",
+	uses = "Passive",
+	notes = "Biomes: Corrupted 2, Ruins 1, Cave 1 [agent default, vetoable]. Checked on the caster's tile when the skill is committed. x1.2 multiplies the skill's damage/heal/shield amount (Skill Power step) [agent default, vetoable]; status durations unchanged. Self-damage after the cast: cannot be reduced, goes through Shield first, never drops below 1 HP, not physical so no Bleed trigger [agent default, vetoable]. Basic Attack and items are not skills - unaffected.",
+	auraRadius = 2,          -- CommandService skill commit (ObjectEffectService.IsInSoulWell)
+	skillPotencyMult = 1.2,
+	noMpHpCostPct = 0.05,
+}
+
+ObjectData.Objects["Iron Curtain"] = {
+	id = "Iron Curtain",
+	category = "Aura",
+	tags = { "Structure", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Passive",
+	triggerEvent = nil,
+	primaryEffect = "Radius 3, both sides: damage received -30%",
+	uses = "Passive",
+	notes = "Biomes: Castle 1, Highlands 1 (kept rare) [agent default, vetoable]. STACKING RULE: armour (Defense, step 2) works as now; the 30% is ADDED to Guard and other final reductions in step 8, sharing the existing 80% cap (Guard 35% + Curtain 30% = 65%; + Guardian Standard 5 pts = 70%). USER RULING 2026-11-07: reduces DIRECT hits only (attacks, skills, item hits); Poison, Bleed and other damage-over-time, collisions, falls and hazards are NOT reduced. BALANCE CONCERN: very strong; kept rare and two-sided; breaking it (3 hits) is the counterplay.",
+	auraRadius = 3,              -- CombatResolver step 8 (ironCurtainReduction)
+	damageTakenReduction = 0.30,
+}
+
+ObjectData.Objects["Wasp Nest"] = {
+	id = "Wasp Nest",
+	category = "Hazard",
+	tags = { "Nest", "Poison", "Breakable" },
+	passable = false,
+	-- EXCEPTION to rule 241 (project_rules 249): 5 hits to break.
+	hitsToDestroy = 5,
+	newlyBreakable = true,
+	activation = "Triggered",
+	triggerEvent = "Each hit on it",
+	primaryEffect = "The 2 nearest non-poisoned units within radius 2 (any side, attacker included) take 15% Max HP damage, Poison and +100 RT Delay",
+	uses = "Until destroyed",
+	notes = "Biomes: Forest 2, Plains 1, Swamp 1 [agent default, vetoable]. Every hit sets it off, including the breaking 5th hit [agent default, vetoable]. Target order tie-break (project_rules 249): nearest by tile distance (diagonals count as 1), then lowest row, then lowest column. Damage = round(Max HP x 0.15 x Boss HP% Modifier), hazard damage (no Guard/Fortune). Undead take the damage and delay, immune to Poison - so they stay valid targets [agent default, vetoable]. Already-poisoned units are skipped. INSTANT KILL (no sting): any attack that applies Poison, or a Poison Cloud created on or spreading onto its tile (a cloud that would cover it destroys it instead).",
+	instantKillTags = { "Poison" }, -- a Poison packet (Poison Cloud on its tile) destroys it in one hit, no sting
+	stingTargets = 2,               -- ObjectEffectService per-hit sting
+	stingRadius = 2,
+	stingMaxHpPct = 0.15,
+	stingStatus = "Poison",
+	stingRtDelay = 100,
+}
+
+ObjectData.Objects["Volcanic Vent"] = {
+	id = "Volcanic Vent",
+	category = "Hazard",
+	tags = { "Vent", "Fire", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Passive (timed)",
+	triggerEvent = "Every 400 CT from CT 1000",
+	primaryEffect = "Deals 15% Max HP Fire damage to the 2 nearest units within radius 2",
+	uses = "Passive",
+	notes = "Biomes: Volcano 4, Cave 1 [agent default, vetoable]. Fires at battle CT 1000, 1400, 1800, ... Target order tie-break (project_rules 249): nearest by tile distance (diagonals count as 1), then lowest row, then lowest column. Any side. Next targets are shown in advance: a live marker shows who would be hit right now; at each eruption it hits whoever are the 2 nearest at that moment (user decision 2026-11-07). Damage = round(Max HP x 0.15 x element modifier x Boss HP% Modifier), hazard damage (no Guard/Fortune). Hits units only - does not set tiles Burning [agent default, vetoable].",
+	eruptFirstCt = 1000, -- ObjectEffectService.ProcessObjectClock
+	eruptEveryCt = 400,
+	eruptTargets = 2,
+	eruptRadius = 2,
+	eruptMaxHpPct = 0.15,
+	eruptElement = "Fire",
+}
+
+ObjectData.Objects["Venus Man-Trap"] = {
+	id = "Venus Man-Trap",
+	category = "Hazard",
+	tags = { "Plant", "Organic", "Visible", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Triggered",
+	triggerEvent = "First unit to move into or through a tile within radius 1",
+	primaryEffect = "Pins that unit while the plant stands; it takes 10% Max HP every 300 CT",
+	uses = "One unit at a time; re-arms",
+	notes = "Biomes: Swamp 3, Forest 2 [agent default, vetoable]. Trigger tiles = the 8 tiles around it. Triggers on any side. Holds one unit at a time. Pin lasts while the plant stands (no 1000 CT expiry, cannot be cleansed while held) [agent default, vetoable]. Damage = round(Max HP x 0.10), hazard damage. Freed when the plant breaks, or if the unit is pushed/teleported out of range [agent default, vetoable]. If the held unit dies or is freed by being moved, the plant re-arms. Bosses immune; flying units do not trigger it [agent default, vetoable].",
+	triggerRadius = 1,     -- ObjectEffectService (GetTriggeredTrapAt / TriggerTrap)
+	holdTickCt = 300,      -- ObjectEffectService.ProcessObjectClock
+	holdMaxHpPct = 0.10,
+}
+
+ObjectData.Objects["Harpoon Shooter"] = {
+	id = "Harpoon Shooter",
+	category = "Siege",
+	tags = { "Structure", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Interact (Consumes Action)",
+	interactRT = 60,
+	triggerEvent = nil,
+	primaryEffect = "Target a unit within 6 tiles in direct line of sight: 80% of a Ballista shot, pull it next to the shooter and Pin it for 2000 CT",
+	uses = "Once per turn", -- project_rules 242/249: every siege object, once per unit per turn
+	notes = "UNIVERSAL OBJECT (map_gen_rules 95). Siege: rule-242 Siege Power (48 + 1.9 x operator level, x DEX boost, height bonus measured from this object's tile, Siege Gunner Helm +0.25 added), no weapon passives, plain Physical, skips hit quality, friendly fire, free cancel during aiming. Direct shot from the shooter's tile, range 2-6, normal direct line-of-sight rules, one target. Pull: target is moved to the free tile next to the shooter nearest to the target (same tie-break); placed directly (no collision or fall damage); if no free tile, no pull [agent default, vetoable]. Pinned for 2000 CT. Bosses and units that can't be pushed take the damage and are NOT pulled; they are still Pinned [agent default, vetoable].",
+	siegeShare = 0.80,     -- x Siege Power (Ballista = 1.0)
+	rangeMin = 2,
+	rangeMax = 6,
+	pinCt = 2000,
+}
+
+ObjectData.Objects["Arcane Cannon"] = {
+	id = "Arcane Cannon",
+	category = "Siege",
+	tags = { "Structure", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Interact (Consumes Action)",
+	interactRT = 100,
+	triggerEvent = nil,
+	primaryEffect = "Pick one of 8 lines; after 200 CT deals 120% of a Ballista shot to every unit on that line",
+	uses = "Once per turn", -- project_rules 242/249: every siege object, once per unit per turn
+	notes = "UNIVERSAL OBJECT (map_gen_rules 95). Siege: rule-242 Siege Power, no weapon passives, plain Physical, skips hit quality, friendly fire, free cancel during aiming. Same 8 lines and reach rules as Ballista (height within 3 of the cannon tile, min range 2, stopped by terrain/LoS objects, units never stop it), checked when it FIRES. Hits tiles, not locked units: whoever is on the line at the moment it fires is hit. Danger line shown to everyone during the 200 CT. Power = operator's Siege Power when aimed [agent default, vetoable]. If the cannon is broken during the delay, the shot is cancelled [agent default, vetoable].",
+	siegeShare = 1.20,     -- x Siege Power (Ballista = 1.0)
+	fireDelayCt = 200,     -- ObjectEffectService.ProcessObjectClock
+}
+
+ObjectData.Objects["Heavy Artillery"] = {
+	id = "Heavy Artillery",
+	category = "Siege",
+	tags = { "Structure", "Breakable" },
+	passable = false,
+	-- USER RULING 2026-10-30 (project_rules 241): breakable map object, 3 hits from any source.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Interact (Consumes Action)",
+	interactRT = 100,
+	triggerEvent = nil,
+	primaryEffect = "Pick a tile like Catapult; red cross marked; after 200 CT deals 120% of a Catapult shot to units there and lowers each hit tile by 1 elevation",
+	uses = "Once per turn", -- project_rules 242/249: every siege object, once per unit per turn
+	notes = "UNIVERSAL OBJECT (map_gen_rules 95). Siege: rule-242 Siege Power, no weapon passives, plain Physical, skips hit quality, friendly fire, free cancel during aiming. Same targeting as Catapult (arc, range 2-6, plus-shaped blast within +/-2 height). Each unit hit takes 0.84 x Siege Power (120% of the Catapult's 70%). Power = operator's Siege Power when aimed [agent default, vetoable]. Cancelled if broken during the delay [agent default, vetoable]. TILE LOWERING [agent default, vetoable]: each blast tile drops 1 level; tiles already at the minimum elevation, bridge/span tiles, water tiles and chasm/gap tiles are not lowered. Units and objects on a lowered tile drop with it (1 level = no fall damage). Paths, jumps and line of sight are recalculated at once. USER RULING 2026-11-07: Heavy Artillery CAN seal routes - no route-protection check. Tile effects stay on the tile.",
+	siegeShare = 0.84,     -- x Siege Power (Catapult = 0.70)
+	rangeMax = 6,          -- + siege headgear range bonus, like Catapult
+	fireDelayCt = 200,
+	lowerTiles = 1,
+}
+
 -- Battle Conditions (14)
 -- -----------------------------------------
 

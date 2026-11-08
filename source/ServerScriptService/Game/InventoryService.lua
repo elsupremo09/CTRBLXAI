@@ -48,7 +48,10 @@ local function ensureAcquisitionFields(item)
 	if type(item.rerollCount) ~= "number" then item.rerollCount = 0 end
 end
 
-function InventoryService.AddItem(playerId, itemInstance)
+-- opts.markNew (USER RULING 2026-11-08): new loot, purchases and crafted items arrive flagged
+-- isNew (NEW badge on Loadout + Runeforge tiles) until the player opens the item or equips it
+-- (MarkSeen). Starter / recruit gear and put-backs after a failed transaction are not marked.
+function InventoryService.AddItem(playerId, itemInstance, opts)
 	assert(type(itemInstance) == "table", "AddItem: itemInstance must be a table.")
 	assert(type(itemInstance.instanceId) == "string", "AddItem: instanceId required.")
 	assert(type(playerId) == "string", "AddItem: playerId required.")
@@ -62,12 +65,25 @@ function InventoryService.AddItem(playerId, itemInstance)
 	end
 
 	ensureAcquisitionFields(itemInstance)
+	if type(opts) == "table" and opts.markNew == true then itemInstance.isNew = true end
 	inv[itemInstance.instanceId] = itemInstance
 	print(string.format(
 		"[InventoryService] Added %s to %s inventory (%d items)",
 		itemInstance.instanceId, playerId, InventoryService.GetItemCount(playerId)
 	))
 	return true
+end
+
+-- Clears the NEW flag (USER RULING 2026-11-08). Returns true only when it changed.
+function InventoryService.MarkSeen(playerId, instanceId)
+	local inv = playerInventories[playerId]
+	local item = inv and inv[instanceId]
+	if type(item) ~= "table" then return false, "Item not found" end
+	if item.isNew == true then
+		item.isNew = nil
+		return true
+	end
+	return false
 end
 
 function InventoryService.RemoveItem(playerId, instanceId)

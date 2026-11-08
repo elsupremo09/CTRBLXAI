@@ -488,7 +488,19 @@ local function scoreSkill(unit: any, def: any, target: any, dials: any, allUnits
 	else
 		-- Damage factor.
 		if _CombatResolver and isHostileTo(unit, target) then
-			local r = _CombatResolver.ResolveSkill(unit, target, def)
+			-- Lunge (2026-11-08): the hit lands from the step tile, so predict from there (the unit is put
+			-- straight back; read-only, no yield in between).
+			local _step = def.stepsToTargetFirst and _CommandService and _CommandService.LungeStepTile
+				and _CommandService.LungeStepTile(unit, target, { units = allUnits }) or nil
+			local homeX, homeY = unit.tileX, unit.tileY
+			if _step then
+				unit.tileX, unit.tileY = _step.x, _step.y
+			end
+			local okR, r = pcall(_CombatResolver.ResolveSkill, unit, target, def)
+			unit.tileX, unit.tileY = homeX, homeY
+			if not okR then
+				error(r, 0)
+			end
 			predicted = r.finalDamage or 0
 		end
 		local dmgPct = predicted / math.max(1, target.maxHp)
@@ -623,9 +635,19 @@ local function enumerateSkillEntries(unit: any, allUnits: any)
 			and _CommandService.IsRelocationBlockedSkill(unit, def) then
 			def = nil
 		end
+		-- Pinned (rule 253, 2026-11-08): never plan a leap / dash / step skill while Pinned.
+		if def and _CommandService and _CommandService.IsPinBlockedSkill
+			and _CommandService.IsPinBlockedSkill(unit, def) then
+			def = nil
+		end
 		-- Dual Wield exclusive skills need dual wield active (2026-10-28).
 		if def and _CommandService and _CommandService.IsDualWieldBlockedSkill
 			and _CommandService.IsDualWieldBlockedSkill(unit, def) then
+			def = nil
+		end
+		-- Blood Price (2026-11-08): never planned at 15% HP or less (validation would reject it).
+		if def and _CommandService and _CommandService.IsHpCostBlockedSkill
+			and _CommandService.IsHpCostBlockedSkill(unit, def) then
 			def = nil
 		end
 		if def and _UnitSchema and _UnitSchema.HasEnoughMp(unit, skillMpCost(unit, def)) then
@@ -641,6 +663,18 @@ local function enumerateSkillEntries(unit: any, allUnits: any)
 				local leapState = { units = allUnits }
 				for _, c in ipairs(candidates) do
 					if c.isGroundTarget or _CommandService.CanLeapTo(unit, c, leapState) then
+						table.insert(kept, c)
+					end
+				end
+				candidates = kept
+			end
+			-- Lunge (2026-11-08): only targets exactly 2 tiles away with a free step tile (same rule as
+			-- validation), so the AI never plans a cast that is refused.
+			if candidates and def.stepsToTargetFirst and _CommandService.LungeStepTile then
+				local kept = {}
+				local lungeState = { units = allUnits }
+				for _, c in ipairs(candidates) do
+					if _CommandService.LungeStepTile(unit, c, lungeState) then
 						table.insert(kept, c)
 					end
 				end

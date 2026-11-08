@@ -38,6 +38,7 @@ local GuildEvents: any  = require(CTRBLXAI:WaitForChild("Remotes"):WaitForChild(
 local BattleEvents: any = require(CTRBLXAI:WaitForChild("Remotes"):WaitForChild("BattleEvents"))
 
 local UnitSchema             = require(Game:WaitForChild("UnitSchema"))
+local DevAccess              = require(Game:WaitForChild("DevAccess")) -- dev-tool gate (2026-11-06)
 local EquipmentService       = require(Game:WaitForChild("EquipmentService"))
 local InventoryService       = require(Game:WaitForChild("InventoryService"))
 local ItemGenerator          = require(Game:WaitForChild("ItemGenerator"))
@@ -190,6 +191,12 @@ end
 -- Save-on-quit (2026-10-31, user decision): Main calls this when the player leaves or
 -- the server shuts down. Writes only when there are unsaved guild-base changes.
 -- Returns true if a save was made.
+-- Lets other server modules flag an unsaved change so the save-on-quit path writes it
+-- (2026-11-08: NEW-item seen clears from LoadoutRequestHandlers).
+function GuildMenuService.MarkDirty()
+	markDirty()
+end
+
 function GuildMenuService.SaveIfDirty(reason: string): boolean
 	if not _dirty then return false end
 	print(`[GuildMenuService] Saving unsaved guild changes ({reason})`)
@@ -297,6 +304,8 @@ end
 function GuildMenuService.CrucibleBlockedReason(item: any): string?
 	local holder = item and item.instanceId and holderOf(item.instanceId) or nil
 	if holder then return `Equipped by {holder.name}` end
+	-- An open (paid) Runeforge reroll must be chosen first (USER RULING 2026-11-07).
+	if RuneforgeService.HasPendingReroll(item) then return RuneforgeService.PENDING_REROLL_REASON end
 	return nil
 end
 
@@ -1963,6 +1972,13 @@ local function onDismissUnit(player: Player, unitId: any, confirm: any): any
 	for i = #recruitOrder, 1, -1 do
 		if recruitOrder[i] == unitId then table.remove(recruitOrder, i) end
 	end
+	-- 4b) Remove its saved HP/MP record, or post-battle recovery keeps listing it (2026-11-06).
+	PersistentStateService.RemoveUnit(_playerId, unitId)
+	-- 4c) A same-session hire still waiting to join this battle must not join it (2026-11-06).
+	for i = #pendingBattleUnits, 1, -1 do
+		local pu = pendingBattleUnits[i]
+		if pu == unit or (type(pu) == "table" and pu.id == unitId) then table.remove(pendingBattleUnits, i) end
+	end
 
 	-- 5) Drop the dismissed unit from every saved party (owned-set prune).
 	local ownedSet = {}
@@ -1981,10 +1997,22 @@ end
 -- handlers validate the request shape (SEC-001) and describe results for the screen.
 --------------------------------------------------
 
-local function describeLines(lineIds: { string }): { any }
+-- Effect text of gems in the Runeforge gem list: shown at this item level (gems are not on an
+-- item yet; the bonus inspector says so). Display only.
+local GEM_EFFECT_LEVEL = 99
+
+local function describeLines(lineIds: { string }, itemLevel: number?): { any }
 	local out = {}
 	for _, id in lineIds do
 		local d = RuneforgeService.DescribeGem(id)
+		-- Exclusive group (one elemental change / one attack-shape change per item) so the
+		-- Runeforge screen can grey out gems the server will refuse. Display only (SEC-002).
+		if d then d.group = ItemGenerator.GetExclusiveGroup(id) end
+		-- What the line does on this item (bonus inspector, 2026-11-07). Display only.
+		if d and itemLevel then
+			d.effect, d.effectScales = ItemDisplay.DescribeBonusEffect(id, itemLevel)
+			d.effectLevel = itemLevel
+		end
 		table.insert(out, d or { id = id, kind = "unknown", name = id })
 	end
 	return out
@@ -2001,13 +2029,23 @@ local function linesOf(item: any): { string }
 	return ids
 end
 
-local function validInstalls(installs: any): boolean
-	if type(installs) ~= "table" or #installs == 0 or #installs > 8 then return false end
-	for _, ins in installs do
-		if type(ins) ~= "table" or type(ins.gem) ~= "string" or #ins.gem > 64 then return false end
-		if ins.replace ~= nil and (type(ins.replace) ~= "string" or #ins.replace > 64) then return false end
+local function validPickList(list: any, minN: number, maxN: number): boolean
+	if type(list) ~= "table" or #list < minN or #list > maxN then return false end
+	for _, ins in list do
+		if type(ins) ~= "table" then return false end
+		if ins.remove ~= nil then
+			-- Remove-a-line pick (gf 84, 2026-11-07): a line id only, nothing else.
+			if type(ins.remove) ~= "string" or #ins.remove > 64 or ins.gem ~= nil or ins.replace ~= nil then return false end
+		else
+			if type(ins.gem) ~= "string" or #ins.gem > 64 then return false end
+			if ins.replace ~= nil and (type(ins.replace) ~= "string" or #ins.replace > 64) then return false end
+		end
 	end
 	return true
+end
+
+local function validInstalls(installs: any): boolean
+	return validPickList(installs, 1, RuneforgeService.MAX_INSTALLS)
 end
 
 local function onGetRuneforge(player: Player)
@@ -2021,6 +2059,9 @@ local function onGetRuneforge(player: Player)
 		local d = RuneforgeService.DescribeGem(id)
 		if d and count > 0 then
 			d.count = count
+			d.group = ItemGenerator.GetExclusiveGroup(id) -- display only, see describeLines
+			d.effect, d.effectScales = ItemDisplay.DescribeBonusEffect(id, GEM_EFFECT_LEVEL) -- bonus inspector
+			d.effectLevel = GEM_EFFECT_LEVEL
 			table.insert(gems, d)
 		end
 	end
@@ -2034,7 +2075,7 @@ local function onGetRuneforge(player: Player)
 		if type(item.itemLevel) == "number" then
 			local d = describeItem(item)
 			d.detail = ItemDisplay.buildItemEntry(item)
-			d.lines = describeLines(linesOf(item))
+			d.lines = describeLines(linesOf(item), item.itemLevel)
 			local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
 			d.passiveSlots = if arch and arch.handClass == "2H" then 2 else 1
 			d.runeForged = item.runeForged == true
@@ -2049,6 +2090,8 @@ local function onGetRuneforge(player: Player)
 				end
 				table.sort(usable)
 				d.compatibleGems = usable
+				-- Bonus-point budget as it is now (display only, numbers from RuneforgeService).
+				d.budget = RuneforgeService.BudgetOf(item)
 			end
 			d.reroll = RuneforgeService.RerollInfo(item)
 			table.insert(items, d)
@@ -2063,6 +2106,9 @@ local function onGetRuneforge(player: Player)
 		guildHallLevel = gh,
 		capacity = state.capacity,
 		discountPct = state.discountPct,
+		maxInstalls = RuneforgeService.MAX_INSTALLS, -- gems per forge (screen greys out past it)
+		capacitySteps = RuneforgeService.CapacitySteps(), -- display only: (?) guide level caps
+		rerollMinLevel = RuneforgeService.RerollMinLevel(), -- display only: (?) guide
 		lockedReason = if state.level < 1 then `The Runeforge unlocks at Guild Hall L{RUNEFORGE_UNLOCK_GUILD_HALL} (yours is L{gh})` else nil,
 		gems = gems,
 		items = items,
@@ -2087,17 +2133,38 @@ local function onPreviewForge(player: Player, instanceId: any, installs: any)
 		fromRarity = item.rarityId,
 		newRarity = plan.newRarity,
 		raised = plan.raised,
+		dropped = plan.dropped,
 		crystals = plan.crystals,
 		gold = plan.gold,
 		forgeFee = plan.forgeFee,
 		swapFee = plan.swapFee,
 		catchUp = plan.catchUp,
+		removalFee = plan.removalFee,
+		removed = describeLines(plan.removed),
 		totalBp = plan.totalBp,
+		maxBp = plan.maxBp,
 		replaced = describeLines(plan.replaced),
 		newLines = describeLines(newIds),
-		newName = ItemGenerator.ComposeName(item.baseArchetypeId, plan.lines, plan.passives),
+		-- No lines left (gf 84): the plain base name, the same fallback itemDisplayName uses.
+		newName = ItemGenerator.ComposeName(item.baseArchetypeId, plan.lines, plan.passives)
+			or (if #newIds == 0 then itemDisplayName({ baseArchetypeId = item.baseArchetypeId }) else nil),
 		canAfford = canAfford,
 	}
+end
+
+-- Which next gems would the server accept? (2026-11-06) Display only: the screen greys out the
+-- rest. The answer comes from RuneforgeService.PlanForge itself (bonus-point budget, rarity and
+-- level caps, gem limit), so there is one formula, on the server (SEC-002).
+local function onCheckForgeGems(player: Player, instanceId: any, installs: any, candidates: any)
+	local g = guard(player, "forgeCheck"); if g then return fail(g) end
+	local item, err = ownedItem(instanceId)
+	if not item then return fail(err or "Invalid item") end
+	if not validPickList(installs, 0, RuneforgeService.MAX_INSTALLS) then return fail("Invalid rune gem selection") end
+	if not validPickList(candidates, 0, RuneforgeService.MAX_CANDIDATES) then return fail("Invalid rune gem list") end
+	local fits, over = RuneforgeService.CheckCandidates(item, installs, candidates)
+	-- over: points over the budget per refused candidate; budget: { used, max } with the
+	-- current picks. Both display only (2026-11-07), from PlanForge itself.
+	return { ok = true, fits = fits, over = over, budget = RuneforgeService.BudgetOf(item, installs) }
 end
 
 local function onCommitForge(player: Player, instanceId: any, installs: any)
@@ -2112,26 +2179,51 @@ local function onCommitForge(player: Player, instanceId: any, installs: any)
 	return { ok = true, newRarity = result.plan.newRarity, name = itemDisplayName(item), gold = gold, resources = res }
 end
 
+-- What the Reroll tab shows for one item (USER RULING 2026-11-07, pay first): the cost, the
+-- current lines and - ONLY once the sulfur is paid - the saved sets. Every line is described at
+-- the item's level, the same way the Forge tab describes lines (name + what it does).
+local function rerollView(item: any): any
+	local offer, why = RuneforgeService.GetRerollOffer(item)
+	if not offer then return fail(tostring(why)) end
+	local sets = {}
+	if offer.pending then
+		for i, set in offer.sets do
+			local ids = {}
+			for _, l in set.bonusLines or {} do table.insert(ids, l.id) end
+			for _, pid in set.bonusPassiveIds or {} do table.insert(ids, pid) end
+			table.insert(sets, { choice = i, name = set.name, lines = describeLines(ids, item.itemLevel) })
+		end
+	end
+	local gold, res = balance()
+	return {
+		ok = true,
+		pending = offer.pending == true,
+		sulfur = offer.sulfur,
+		setCount = offer.setCount,
+		haveSulfur = CurrencyService.GetBalance(_playerId).sulfur or 0,
+		current = { name = itemDisplayName(item), lines = describeLines(linesOf(item), item.itemLevel) },
+		sets = sets,
+		gold = gold,
+		resources = res,
+	}
+end
+
 local function onGetRerollSets(player: Player, instanceId: any)
 	local g = guard(player, "rerollSets"); if g then return fail(g) end
 	local item, err = ownedItem(instanceId)
 	if not item then return fail(err or "Invalid item") end
-	local offer, why = RuneforgeService.GetRerollOffer(item)
-	if not offer then return fail(tostring(why)) end
-	local sets = {}
-	for i, set in offer.sets do
-		local ids = {}
-		for _, l in set.bonusLines or {} do table.insert(ids, l.id) end
-		for _, pid in set.bonusPassiveIds or {} do table.insert(ids, pid) end
-		table.insert(sets, { choice = i, name = set.name, lines = describeLines(ids) })
-	end
-	return {
-		ok = true,
-		sulfur = offer.sulfur,
-		haveSulfur = CurrencyService.GetBalance(_playerId).sulfur or 0,
-		current = { name = itemDisplayName(item), lines = describeLines(linesOf(item)) },
-		sets = sets,
-	}
+	return rerollView(item)
+end
+
+-- Pay the sulfur; the answer already holds the new sets so the screen can show them at once.
+local function onPayReroll(player: Player, instanceId: any)
+	local g = guard(player, "rerollPay"); if g then return fail(g) end
+	local item, err = ownedItem(instanceId)
+	if not item then return fail(err or "Invalid item") end
+	local ok, result: any = RuneforgeService.PayReroll(_playerId, item)
+	if not ok then return fail(tostring(result)) end
+	markDirty()
+	return rerollView(item)
 end
 
 local function onCommitReroll(player: Player, instanceId: any, choice: any)
@@ -2235,7 +2327,10 @@ local function onCommitMerge(player: Player, ids: any)
 end
 
 local function onDevGuild(player: Player, cmd: any): any
-	if not RunService:IsStudio() then return fail("Dev tools are Studio only") end
+	if not DevAccess.IsAllowed(player) then
+		warn(string.format("[Dev] DevGuild rejected for %s (%d): dev tools not allowed", player.Name, player.UserId))
+		return fail("Dev tools are not available")
+	end
 	if _sessionPlayer and player ~= _sessionPlayer then return fail("Not your guild") end
 	if type(cmd) ~= "table" or type(cmd.action) ~= "string" or not DEV_ACTIONS[cmd.action] then
 		return fail("Unknown dev action")
@@ -2316,8 +2411,10 @@ function GuildMenuService.Init(deps: any)
 	-- Runeforge (v2 build step 4).
 	GuildEvents.GetRuneforge.OnServerInvoke = onGetRuneforge
 	GuildEvents.PreviewForge.OnServerInvoke = onPreviewForge
+	GuildEvents.CheckForgeGems.OnServerInvoke = onCheckForgeGems
 	GuildEvents.CommitForge.OnServerInvoke = onCommitForge
 	GuildEvents.GetRerollSets.OnServerInvoke = onGetRerollSets
+	GuildEvents.PayReroll.OnServerInvoke = onPayReroll -- pay first, then the sets (2026-11-07)
 	GuildEvents.CommitReroll.OnServerInvoke = onCommitReroll
 	-- Crucible (gear merging, 2026-11-02).
 	GuildEvents.GetCrucible.OnServerInvoke = onGetCrucible
@@ -2329,7 +2426,7 @@ function GuildMenuService.Init(deps: any)
 	GuildEvents.GetCardShop.OnServerInvoke = onGetCardShop
 	GuildEvents.CardShopAction.OnServerInvoke = onCardShopAction
 
-	-- Studio-only dev panel requests (the handler refuses outside Studio).
+	-- Dev panel requests (the handler refuses unless DevAccess allows the player: Studio or owner).
 	GuildEvents.DevGuild.OnServerInvoke = onDevGuild
 	print(`[GuildMenuService] Initialized | Merchant L{buildingLevels.Merchant} | battles completed {battlesCompleted}`)
 end

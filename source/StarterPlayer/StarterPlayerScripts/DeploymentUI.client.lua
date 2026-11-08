@@ -214,7 +214,10 @@ local function createEnemyToken(enemy)
 		if _G.CTRBLXAI_PlayDeployIdle then _G.CTRBLXAI_PlayDeployIdle(serverModel) end
 		local mbb = Instance.new("BillboardGui")
 		mbb.Name          = "EnemyDeployLabel_" .. enemy.id
-		mbb.Size          = UDim2.new(0, 68, 0, 14)
+		-- Fit the floating label to the name (2026-11-07: 10px phone badge text spilled out of 68px).
+		local mStarW = (enemy.enemyType and TIER_STAR_IMAGE[enemy.enemyType]) and 14 or 0
+		mbb.Size          = UDim2.new(0, math.min(160, Theme.BadgeFitW(tostring(enemy.name or ""), Theme.Font.PrimaryBold, 68 - mStarW) + mStarW),
+			0, math.max(14, Theme.Text.Badge() + 4))
 		mbb.StudsOffset   = Vector3.new(0, 3.2, 0)
 		mbb.AlwaysOnTop   = true
 		mbb.Adornee       = modelHrp
@@ -272,7 +275,10 @@ local function createEnemyToken(enemy)
 	part.Parent     = deployFolder
 
 	local bb = Instance.new("BillboardGui")
-	bb.Size           = UDim2.new(0, 68, 0, 14)
+	-- Fit the floating label to the name (2026-11-07: 10px phone badge text spilled out of 68px).
+	local starW = (enemy.enemyType and TIER_STAR_IMAGE[enemy.enemyType]) and 14 or 0
+	bb.Size           = UDim2.new(0, math.min(160, Theme.BadgeFitW(tostring(enemy.name or ""), Theme.Font.PrimaryBold, 68 - starW) + starW),
+		0, math.max(14, Theme.Text.Badge() + 4))
 	bb.StudsOffset    = Vector3.new(0, 1.5, 0)
 	bb.AlwaysOnTop    = true
 	bb.Parent         = part
@@ -354,7 +360,9 @@ local function createPlayerToken(unitId, unitName, tx, ty)
 		{ Size = Vector3.new(1.8, 1.8, 1.8) }):Play()
 
 	local bb = Instance.new("BillboardGui")
-	bb.Size           = UDim2.new(0, 60, 0, 14)
+	-- Fit the floating label to the name (2026-11-07, 10px phone badge text).
+	bb.Size           = UDim2.new(0, math.min(160, Theme.BadgeFitW(tostring(unitName or ""), Theme.Font.PrimaryBold, 60)),
+		0, math.max(14, Theme.Text.Badge() + 4))
 	bb.StudsOffset    = Vector3.new(0, 1.5, 0)
 	bb.AlwaysOnTop    = true
 	bb.Parent         = part
@@ -430,7 +438,7 @@ local function showStartBattleButton()
 	startBattleBtn.Position = UDim2.new(1, -12, 1, -12)
 	startBattleBtn.AnchorPoint = Vector2.new(1, 1)
 
-	startBattleBtn.MouseButton1Click:Connect(function()
+	startBattleBtn.Activated:Connect(function()
 		active = false
 		BattleEvents.DeploymentReady:FireServer({})
 		if startBattleBtn then startBattleBtn.Visible = false end
@@ -587,7 +595,10 @@ local function createRosterUI(playerUnits, awayUnits)
 		local lvl = unitInfo.level or 1
 		local badge = Instance.new("Frame")
 		badge.Name = "LvBadge"
-		badge.Size = UDim2.new(0, math.floor(cellSize * 0.5), 0, 11)
+		-- Sized from the measured "Lv.N" text (2026-11-07): "Lv.10"+ overflowed at the 10px phone size.
+		local lvBadgeW = Theme.BadgeFitW("Lv." .. lvl, Theme.Font.Mono, math.floor(cellSize * 0.5))
+		local lvBadgeH = math.max(11, Theme.Text.Badge() + 2)
+		badge.Size = UDim2.new(0, lvBadgeW, 0, lvBadgeH)
 		badge.Position = UDim2.new(0, 1, 0, 1)
 		badge.BackgroundColor3 = Theme.Colors.BadgeBg
 		badge.BackgroundTransparency = 0.25
@@ -613,8 +624,12 @@ local function createRosterUI(playerUnits, awayUnits)
 		-- band covered ~half the face. 18px sits low, covering much less, while still giving
 		-- a long name room to wrap to a short second line. Face-visibility wins over fitting
 		-- two full rows (user ruling 2026-10-23).
-		nameStrip.Size = UDim2.new(1, 0, 0, 18)
-		nameStrip.Position = UDim2.new(0, 0, 1, -18)
+		-- 2026-11-07: height = two lines at the current badge text size (+2), never below the
+		-- 18px of 2026-10-23. At the 10px phone floor 18px only held ONE line, so two-line names
+		-- were cut to one line + "...". Desktop (7px text) keeps 18px.
+		local nameStripH = math.max(18, Theme.Text.Badge() * 2 + 2)
+		nameStrip.Size = UDim2.new(1, 0, 0, nameStripH)
+		nameStrip.Position = UDim2.new(0, 0, 1, -nameStripH)
 		nameStrip.BackgroundColor3 = Theme.Colors.BadgeBg
 		nameStrip.BackgroundTransparency = 0.4
 		nameStrip.BorderSizePixel = 0
@@ -639,8 +654,24 @@ local function createRosterUI(playerUnits, awayUnits)
 		-- Deployed check badge (top-right, hidden until deployed)
 		local checkBadge = Instance.new("Frame")
 		checkBadge.Name = "CheckBadge"
-		checkBadge.Size = UDim2.new(0, 14, 0, 14)
-		checkBadge.Position = UDim2.new(1, -15, 0, 1)
+		-- 2026-11-07: a wide "Lv.NN" badge (10px phone text) can reach the top-right check. Then
+		-- the check drops to just below the Lv row on the right (12px, above the name band), so
+		-- both stay readable and the face is covered no more than before.
+		if 1 + lvBadgeW + 1 > cellSize - 15 then
+			checkBadge.Size = UDim2.new(0, 12, 0, 12)
+			local belowLv = 1 + lvBadgeH + 1
+			if belowLv + 12 <= cellSize - nameStripH then
+				checkBadge.Position = UDim2.new(1, -13, 0, belowLv)
+			else
+				-- Tiny cells (40px, viewport height <= 307): no gap above the name band, so the
+				-- check sits in the band's right end and the name keeps clear of it.
+				checkBadge.Position = UDim2.new(1, -13, 1, -nameStripH + math.floor((nameStripH - 12) / 2))
+				nameLabel.Size = UDim2.new(1, -16, 1, 0)
+			end
+		else
+			checkBadge.Size = UDim2.new(0, 14, 0, 14)
+			checkBadge.Position = UDim2.new(1, -15, 0, 1)
+		end
 		checkBadge.BackgroundColor3 = Theme.Colors.Success
 		checkBadge.BackgroundTransparency = 0.2
 		checkBadge.BorderSizePixel = 0
@@ -685,7 +716,7 @@ local function createRosterUI(playerUnits, awayUnits)
 			doctrine = unitInfo.doctrine, race = unitInfo.race,
 		}
 
-		cell.MouseButton1Click:Connect(function()
+		cell.Activated:Connect(function()
 			if not active then return end
 			if entry.deployed then
 				-- Undeploy: remove unit from the tile

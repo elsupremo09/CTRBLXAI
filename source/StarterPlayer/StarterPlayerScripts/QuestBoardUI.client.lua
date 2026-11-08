@@ -389,7 +389,7 @@ end
 
 for i = 1, 3 do
 	local card = cardFrames[i]
-	card.selectBtn.MouseButton1Click:Connect(function()
+	card.selectBtn.Activated:Connect(function()
 		if not card.questId then return end
 		print("[QuestBoardUI] Selected quest: " .. card.questId)
 		BattleEvents.QuestSelected:FireServer({ questId = card.questId })
@@ -397,7 +397,7 @@ for i = 1, 3 do
 	end)
 end
 
-backBtn.MouseButton1Click:Connect(function()
+backBtn.Activated:Connect(function()
 	print("[QuestBoardUI] Back to base -- quest board cancelled")
 	BattleEvents.QuestBoardCancel:FireServer()
 	hide()

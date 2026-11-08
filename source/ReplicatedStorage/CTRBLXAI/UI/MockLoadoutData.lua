@@ -467,6 +467,17 @@ end
 -- Public: lets the battle unit inspector reuse the exact loadout mapping.
 MockLoadoutData.MapServerItem = mapServerItem
 
+-- NEW badge (USER RULING 2026-11-08): the player opened this item. Clears the local flag and
+-- tells the server (it checks ownership and saves). Returns true when it was NEW.
+function MockLoadoutData.MarkSeen(item: any): boolean
+	if type(item) ~= "table" or item.isNew ~= true then return false end
+	item.isNew = false
+	if MockLoadoutData._useServerData and type(item.id) == "string" and BattleEvents.MarkItemSeen then
+		BattleEvents.MarkItemSeen:FireServer(item.id)
+	end
+	return true
+end
+
 function MockLoadoutData.LoadFromServer()
 	print("[LoadoutData] Attempting to fetch inventory from server...")
 

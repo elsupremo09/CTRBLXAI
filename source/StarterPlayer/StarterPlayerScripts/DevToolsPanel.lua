@@ -95,7 +95,9 @@ local function makeBtn(parent: Instance, text: string, color: Color3, order: num
 	btn.AutoButtonColor = true
 	btn.Font = Enum.Font.SourceSansBold
 	btn.TextSize = 11
-	btn.TextColor3 = COLOR_TEXT
+	btn.TextColor3 = Color3.new(1, 1, 1) -- bar/tab button rule: pure white text
+	btn.TextStrokeColor3 = Color3.new(0, 0, 0) -- + black outline (same method as Theme)
+	btn.TextStrokeTransparency = 0
 	btn.LayoutOrder = order
 	btn.Text = text
 	local corner = Instance.new("UICorner")
@@ -322,19 +324,24 @@ local function build(c: Context)
 		setStatus("Mercury +100 requested")
 		task.delay(GOLD_REFRESH_DELAY, c.onGoldChanged)
 	end)
-	makeBtn(gGeneral, "GRANT ALL CARDS", Color3.fromRGB(40, 80, 55), 3, function()
+	makeBtn(gGeneral, "GRANT +100 ALL MATERIALS", Color3.fromRGB(75, 60, 95), 3, function()
+		devCommand("DevGrantAllMaterials")
+		setStatus("+100 gold/mercury/crystals/sulfur requested")
+		task.delay(GOLD_REFRESH_DELAY, c.onGoldChanged)
+	end)
+	makeBtn(gGeneral, "GRANT ALL CARDS", Color3.fromRGB(40, 80, 55), 4, function()
 		devCommand("DevGrantAllCards")
 		setStatus("Grant all cards requested (see Output)")
 	end)
-	makeBtn(gGeneral, "SAVE NOW", Color3.fromRGB(30, 60, 80), 4, function()
+	makeBtn(gGeneral, "SAVE NOW", Color3.fromRGB(30, 60, 80), 5, function()
 		devCommand("SaveNow")
 		setStatus("Save requested (see Output)")
 	end)
-	makeConfirmBtn(gGeneral, "DELETE SAVE", Color3.fromRGB(80, 20, 20), 5, function()
+	makeConfirmBtn(gGeneral, "DELETE SAVE", Color3.fromRGB(80, 20, 20), 6, function()
 		devCommand("DeleteSave")
 		setStatus("Delete save requested -- restart to begin fresh")
 	end)
-	makeConfirmBtn(gGeneral, "RESET UGC TRIAL/RENT", Color3.fromRGB(70, 45, 80), 6, function()
+	makeConfirmBtn(gGeneral, "RESET UGC TRIAL/RENT", Color3.fromRGB(70, 45, 80), 7, function()
 		devCommand("DevResetUGCRecords")
 		setStatus("UGC reset requested (see Output)")
 	end)
@@ -406,7 +413,7 @@ function DevToolsPanel.Init(c: Context)
 	ctx = c
 	if gui then return end
 	build(c)
-	print("[DevToolsPanel] Ready (Studio only) -- drag the blue DEV TOOLS bar")
+	print("[DevToolsPanel] Ready (Studio or owner dev access) -- drag the blue DEV TOOLS bar")
 end
 
 return table.freeze(DevToolsPanel)

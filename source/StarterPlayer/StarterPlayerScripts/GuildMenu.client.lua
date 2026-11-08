@@ -63,16 +63,24 @@ local ApothecaryScreen: any = if apothecaryScreenModule then (require :: any)(ap
 local tgScreenModule = UIFolder:WaitForChild("TrainingGroundsScreen", WAIT)
 if not tgScreenModule then warn("[GuildMenu] TrainingGroundsScreen module missing") end
 local TrainingGroundsScreen: any = if tgScreenModule then (require :: any)(tgScreenModule) else nil
--- Always-on Studio dev panel (2026-10-31): shop refresh, building levels, gold, saves.
+-- Always-on dev panel (2026-10-31): shop refresh, building levels, gold, saves.
+-- Shown in Studio, or when the server marks this player as an allow-listed owner (the
+-- "DevAccess" attribute, 2026-11-06). Display only: the server re-checks every dev request.
 local DevToolsPanel: any = nil
-if RunService:IsStudio() then
+local function devPanelAllowed(): boolean
+	return RunService:IsStudio() or (Players.LocalPlayer :: Player):GetAttribute("DevAccess") == true
+end
+local function loadDevToolsPanel(): any
+	if DevToolsPanel then return DevToolsPanel end
 	local devModule = script.Parent:WaitForChild("DevToolsPanel", WAIT)
 	if devModule then
 		DevToolsPanel = (require :: any)(devModule)
 	else
 		warn("[GuildMenu] DevToolsPanel module missing")
 	end
+	return DevToolsPanel
 end
+if devPanelAllowed() then loadDevToolsPanel() end
 if not GuildEvents.GuildMenuOpened then
 	warn("[GuildMenu] Guild remotes unavailable — menu disabled"); return
 end
@@ -957,6 +965,16 @@ if RuneforgeScreen then
 		preview = function(instanceId: string, installs: { any }): any?
 			return call(GuildEvents.PreviewForge, instanceId, installs)
 		end,
+		-- Quiet: a refused or failed check only means "don't grey anything out" (no red status).
+		checkGems = function(instanceId: string, installs: { any }, candidates: { any }): any?
+			local remote = GuildEvents.CheckForgeGems
+			if not remote then return nil end
+			local ok, res = pcall(remote.InvokeServer, remote, instanceId, installs, candidates)
+			if not ok or type(res) ~= "table" or res.ok ~= true or type(res.fits) ~= "table" then return nil end
+			-- fits = { [i] = true | reason }, over = { [i] = points over budget }, budget = { used, max }
+			return { fits = res.fits, over = if type(res.over) == "table" then res.over else {},
+				budget = if type(res.budget) == "table" then res.budget else nil }
+		end,
 		commitForge = function(instanceId: string, installs: { any }): any?
 			local res = call(GuildEvents.CommitForge, instanceId, installs)
 			if res then setStatus(`Forged: {res.name} is now {res.newRarity}`) end
@@ -965,12 +983,23 @@ if RuneforgeScreen then
 		getRerollSets = function(instanceId: string): any?
 			return call(GuildEvents.GetRerollSets, instanceId)
 		end,
+		-- Pay first (2026-11-07): the answer holds the new sets (same shape as getRerollSets).
+		payReroll = function(instanceId: string): any?
+			local res = call(GuildEvents.PayReroll, instanceId)
+			if res then setStatus(`Paid {res.sulfur} sulfur: pick a new set or keep the current lines`) end
+			return res
+		end,
 		commitReroll = function(instanceId: string, choice: number): any?
 			local res = call(GuildEvents.CommitReroll, instanceId, choice)
 			if res then
 				setStatus(if res.choice == 0 then `Rerolled: kept the current lines of {res.name}` else `Rerolled: {res.name}`)
 			end
 			return res
+		end,
+		-- NEW badge (2026-11-08): server checks ownership and clears the flag; fire-and-forget.
+		markSeen = function(instanceId: string)
+			local remote = BattleEvents.MarkItemSeen
+			if remote then remote:FireServer(instanceId) end
 		end,
 		onChanged = function()
 			invalidatePageCache() -- forge / reroll changed items, gems and resources
@@ -1156,8 +1185,13 @@ local function onDevGuildChanged(what: string)
 	setStatus(`Dev: {what}{note}`)
 end
 
-if DevToolsPanel then
-	DevToolsPanel.Init({
+local devPanelInited = false
+local function initDevPanel()
+	if devPanelInited or not devPanelAllowed() then return end
+	local panel = loadDevToolsPanel()
+	if not panel then return end
+	devPanelInited = true
+	panel.Init({
 		parent = playerGui,
 		devGuild = GuildEvents.DevGuild,
 		devCommand = BattleEvents.DevCommand,
@@ -1166,6 +1200,9 @@ if DevToolsPanel then
 		onGoldChanged = function() refreshOverview() end,
 	})
 end
+initDevPanel()
+-- The server's DevAccess attribute may arrive after this script starts (published game).
+player:GetAttributeChangedSignal("DevAccess"):Connect(initDevPanel)
 
 local function pageBlacksmith()
 	addHeading("BLACKSMITH - upgrade / downgrade")

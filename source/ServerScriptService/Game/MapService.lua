@@ -39,129 +39,108 @@ local ValidationPass  = require(script.Parent:WaitForChild("ValidationPass"))
 -- Template registry — add future templates here.
 local TemplateRegistry = {
 	T01 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T01_FrontlinePressure")
 	),
 	T02 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T02_SplitPressure")
 	),
 	T03 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T03_BrokenCrossing")
 	),
 	T04 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T04_BossRingFixed")
 	),
 	T05 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T05_DefenseCenter")
 	),
 	T06 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T06_AdvantageContest")
 	),
 	T07 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T07_WaveSurvival")
 	),
 	T08 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T08_AmbushPincer")
 	),
 	T09 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T09_HazardGauntlet")
 	),
 	T10 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T10_ObstacleWarren")
 	),
 	T11 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T11_ObjectiveStandoff")
 	),
 	T12 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T12_ElevatedObjective")
 	),
 	T13 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T13_HighlandContest")
 	),
 	T14 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T14_BrokenHighlands")
 	),
 	T15 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T15_ObjectiveSiege")
 	),
 	T16 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T16_TreasureWarren")
 	),
 	T17 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T17_WideHazardFront")
 	),
 	T18 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T18_WatlandExpanse")
 	),
 	T19 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T19_GreatDivide")
 	),
 	T20 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T20_RiverVale")
 	),
 	-- Studio test map (2026-11-05): only used by the Studio-only Test Arena quest.
 	T99 = require(
-		ReplicatedStorage
-			:WaitForChild("CTRBLXAI")
+		ServerScriptService
 			:WaitForChild("Templates")
 			:WaitForChild("T99_TestArena")
 	),
@@ -1229,6 +1208,10 @@ local UNIVERSAL_OBJECTS = table.freeze({
 	"Treasure Chest", "Mimic", "Bear Trap", "Spike Trap", "Snare Trap", "Land Mine",
 	"Angel Statue", "Forge", "Ballista", "Catapult", "Bomb Barrel", "Obelisk",
 	"Cursed Chest", "Dragon Utopia", "Chaos Statue", "Pandora's Box",
+	-- USER DECISION 2026-11-07 (map_gen_rules 95, project_rules 249): list grows 16 -> 23, still
+	-- equal weights (each ~1/23 of the 20% universal share).
+	"Toxic Crate", "Sludge Barrel", "Water Barrel", "Learning Stone",
+	"Arcane Cannon", "Heavy Artillery", "Harpoon Shooter",
 })
 local UNIVERSAL_OBJECT_IDS = {}
 for _, uid in ipairs(UNIVERSAL_OBJECTS) do

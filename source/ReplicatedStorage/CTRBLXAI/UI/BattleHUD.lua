@@ -20,6 +20,7 @@ local Players           = game:GetService("Players")
 local TweenService      = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService  = game:GetService("UserInputService")
+local TextService       = game:GetService("TextService")
 
 local player = Players.LocalPlayer
 
@@ -118,6 +119,37 @@ local viewModeDropdown    = nil   -- the open dropdown frame, if any
 
 -- Padding constant
 local PAD = 6
+
+-- PHONE TOUCH SIZING (user ruling 2026-11-06): on PHONES ONLY the battle buttons get
+-- the 44 px minimum touch target (Theme.MinSize.TouchTarget; CTRBLXAI.db
+-- loadout_ui_spec 73). Desktop and non-touch narrow windows keep their old sizes.
+-- Phone = touch screen AND the Mobile width breakpoint (< 1024 px, same rule as
+-- Theme.SetViewport). Read from the camera directly so it is right even before the
+-- first ApplyLayout (the toggles are built before Theme's mode is set).
+local PHONE_MAX_W = 1024
+-- Right column width on phones. 135 px fit one column of 24 px buttons; the 6 actions
+-- at 44 px only fit the phone's height as a 2-wide grid, and 180 px keeps those
+-- half-width labels readable. Shared by unit / action / inspector / preview panels.
+local PHONE_COL_W = 180
+-- Turn-order slots on phones (user report 2026-11-06): the bar was 17% of a 382 px phone
+-- (65 px), leaving 40 px slots whose 20 px name band fit only ONE 12 px line, so long
+-- names were cut to a few letters. 60 px slots give the name band ~30-33 px = two full
+-- lines, stay well above the 44 px touch target, and still show ~7 slots in the bar.
+-- Bar height = slot + 24 (10 px top/bottom padding + 4 px scrollbar). Phones only.
+local PHONE_TURN_SLOT = 60
+local PHONE_TURN_BAR_H = PHONE_TURN_SLOT + 24
+local PHONE_TURN_MIN_TEXT = 9
+local function isPhone(): boolean
+	local cam = workspace.CurrentCamera
+	local w = if cam then cam.ViewportSize.X else 1920
+	return UserInputService.TouchEnabled and w > 1 and w < PHONE_MAX_W
+end
+-- Height for a tappable control: unchanged off phones, at least 44 px on phones.
+local function touchH(defaultH: number): number
+	if isPhone() then return math.max(defaultH, Theme.MinSize.TouchTarget) end
+	return defaultH
+end
+local function toggleH(): number return touchH(Theme.Elem.ToggleBtn()) end
 
 -- Layout (set by UIController via ApplyLayout, consumed by ensureRoot and SetState)
 local currentLayout = nil
@@ -351,7 +383,7 @@ local function makeButton(parent, text, props)
 	btn.Parent = parent
 	Instance.new("UICorner", btn).CornerRadius = Theme.CornerRadius.sm
 	if props.enabled ~= false and props.onPress then
-		btn.MouseButton1Click:Connect(props.onPress)
+		btn.Activated:Connect(props.onPress)
 	end
 	return btn
 end
@@ -359,6 +391,62 @@ end
 --------------------------------------------------
 -- ROOT CREATION
 --------------------------------------------------
+
+-- Re-applies the phone-only touch sizes (2026-11-06). Runs after the root is built and
+-- on every ApplyLayout, so a viewport/mode change keeps toggles, the battle-log top and
+-- the right-column width in step. Off phones it restores the old toggle sizes and
+-- leaves the column width to the layout table.
+local function applyTouchSizes()
+	if viewModeButtons then
+		local h = toggleH()
+		viewModeButtons.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 6 + 20, h + 2)
+		for _, b in ipairs(viewModeButtons:GetChildren()) do
+			if b:IsA("GuiButton") then b.Size = UDim2.fromOffset(b.Size.X.Offset, h) end
+		end
+	end
+	if battleLogPanel then
+		battleLogPanel.Position = UDim2.new(0, PAD, 0, 58 + toggleH() + 8)
+		if resizeBattleLog then task.defer(resizeBattleLog) end
+	end
+	if isPhone() then
+		-- One shared width for the whole right column (unit / action / inspector /
+		-- preview). The stack code copies the unit panel's width to the others.
+		for _, p in ipairs({ activeUnitPanel, actionPanel, inspectorPanel, tilePreviewPanel }) do
+			if p then p.Size = UDim2.new(0, PHONE_COL_W, 0, p.Size.Y.Offset) end
+		end
+		-- Taller turn-order bar (bottom-anchored, so it grows upward; the battle log and
+		-- tile-info panel already follow the bar's top edge / height).
+		if turnOrderBar then
+			turnOrderBar.Size = UDim2.new(turnOrderBar.Size.X.Scale, turnOrderBar.Size.X.Offset, 0, PHONE_TURN_BAR_H)
+		end
+	end
+end
+
+-- Phone turn-order names (2026-11-06): pick the largest text size (start size down to
+-- PHONE_TURN_MIN_TEXT) at which the name wraps to at most TWO lines inside the band and
+-- no single word is wider than the slot (wrapping only breaks at spaces). The full name
+-- is kept; if even the minimum size overflows, the existing AtEnd truncation applies.
+local function fitTurnName(lb: TextLabel, w: number, h: number)
+	if w <= 2 or h <= 0 or lb.Text == "" then return end
+	local maxW = w - 2
+	local size = lb.TextSize
+	while size > PHONE_TURN_MIN_TEXT do
+		local fits = true
+		for word in string.gmatch(lb.Text, "%S+") do
+			if TextService:GetTextSize(word, size, lb.Font, Vector2.new(10000, 10000)).X > maxW then
+				fits = false; break
+			end
+		end
+		if fits then
+			local b = TextService:GetTextSize(lb.Text, size, lb.Font, Vector2.new(maxW, 10000))
+			if b.Y <= h and b.Y <= size * 2 + 2 then break end
+		end
+		size -= 1
+	end
+	lb.TextScaled = false
+	lb.TextWrapped = true
+	lb.TextSize = size
+end
 
 local function ensureRoot()
 	if screenGui and screenGui.Parent then return end
@@ -442,7 +530,7 @@ local function ensureRoot()
 		-- Top sits just below the View/Log button row (row at y=58,
 		-- height ToggleBtn()+2, +6px gap). Height is capped at runtime by
 		-- resizeBattleLog so the panel never overlaps the turn-order bar. (2026-10-17)
-		UDim2.new(0, PAD, 0, 58 + Theme.Elem.ToggleBtn() + 8), Vector2.new(0, 0), rootFrame)
+		UDim2.new(0, PAD, 0, 58 + toggleH() + 8), Vector2.new(0, 0), rootFrame)
 	battleLogPanel.ClipsDescendants = true
 	-- Max-height clamp used by resizeBattleLog (keeps the log above the turn bar).
 	local logSizeCons = Instance.new("UISizeConstraint")
@@ -493,7 +581,7 @@ local function ensureRoot()
 	-- BOTTOM-RIGHT: Fixed command bar (Execute / Back)
 	commandBar = Instance.new("Frame")
 	commandBar.Name = "CommandBar"
-	commandBar.Size = UDim2.new(0, 2 * Theme.FooterBar.BTN_W + Theme.FooterBar.BTN_GAP, 0, Theme.FooterBar.BTN_H)
+	commandBar.Size = UDim2.new(0, 2 * Theme.FooterBar.BTN_W + Theme.FooterBar.BTN_GAP, 0, touchH(Theme.FooterBar.BTN_H))
 	commandBar.Position = UDim2.new(1, -Theme.FooterBar.PAD, 1, -Theme.FooterBar.PAD)
 	commandBar.AnchorPoint = Vector2.new(1, 1)
 	commandBar.BackgroundTransparency = 1
@@ -504,7 +592,7 @@ local function ensureRoot()
 	viewModeButtons = Instance.new("Frame")
 	viewModeButtons.Name = "ViewModeButtons"
 	-- Widened for the third button (Map Details) added 2026-10-17.
-	viewModeButtons.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 6 + 20, Theme.Elem.ToggleBtn() + 2)
+	viewModeButtons.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 6 + 20, toggleH() + 2)
 	-- Nudged down ~3px (55 -> 58) so View/Log clear the Roblox topbar buttons. (2026-10-17)
 	viewModeButtons.Position = UDim2.new(0, PAD, 0, 58)
 	viewModeButtons.BackgroundTransparency = 1
@@ -517,7 +605,7 @@ local function ensureRoot()
 
 	viewModeViewBtn = Instance.new("TextButton")
 	viewModeViewBtn.Name = "ViewToggle"
-	viewModeViewBtn.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 2 + 4, Theme.Elem.ToggleBtn())
+	viewModeViewBtn.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 2 + 4, toggleH())
 	viewModeViewBtn.BackgroundColor3 = Theme.Colors.Surface
 	viewModeViewBtn.BackgroundTransparency = isViewMode and 0 or 0.15
 	viewModeViewBtn.Font = Theme.Font.PrimaryBold; viewModeViewBtn.TextSize = Theme.Text.Body()
@@ -526,11 +614,11 @@ local function ensureRoot()
 	viewModeViewBtn.LayoutOrder = 1; viewModeViewBtn.Parent = viewModeButtons
 	Instance.new("UICorner", viewModeViewBtn).CornerRadius = Theme.CornerRadius.sm
 	-- Tap cycles Isometric -> Top -> Side (dropdown replaced 2026-10-17).
-	viewModeViewBtn.MouseButton1Click:Connect(function() BattleHUD.CycleCameraMode() end)
+	viewModeViewBtn.Activated:Connect(function() BattleHUD.CycleCameraMode() end)
 
 	local logBtn = Instance.new("TextButton")
 	logBtn.Name = "LogToggle"
-	logBtn.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 2, Theme.Elem.ToggleBtn())
+	logBtn.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 2, toggleH())
 	logBtn.BackgroundColor3 = Theme.Colors.Surface
 	logBtn.BackgroundTransparency = 0.15
 	logBtn.Font = Theme.Font.PrimaryBold; logBtn.TextSize = Theme.Text.Body()
@@ -538,13 +626,13 @@ local function ensureRoot()
 	logBtn.Text = "\xF0\x9F\x93\x9C Log"; logBtn.BorderSizePixel = 0
 	logBtn.LayoutOrder = 2; logBtn.Parent = viewModeButtons
 	Instance.new("UICorner", logBtn).CornerRadius = Theme.CornerRadius.sm
-	logBtn.MouseButton1Click:Connect(function() BattleHUD.ToggleBattleLog() end)
+	logBtn.Activated:Connect(function() BattleHUD.ToggleBattleLog() end)
 
 	-- Map Details button (2026-10-17): opens the quest/loot/gold snapshot panel.
 	-- Same style as Log (next to it); row is nudged down with the others.
 	local mapBtn = Instance.new("TextButton")
 	mapBtn.Name = "MapDetailsToggle"
-	mapBtn.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 2, Theme.Elem.ToggleBtn())
+	mapBtn.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 2, toggleH())
 	mapBtn.BackgroundColor3 = Theme.Colors.Surface
 	mapBtn.BackgroundTransparency = 0.15
 	mapBtn.Font = Theme.Font.PrimaryBold; mapBtn.TextSize = Theme.Text.Body()
@@ -552,11 +640,13 @@ local function ensureRoot()
 	mapBtn.Text = "\xF0\x9F\x97\xBA Map"; mapBtn.BorderSizePixel = 0
 	mapBtn.LayoutOrder = 3; mapBtn.Parent = viewModeButtons
 	Instance.new("UICorner", mapBtn).CornerRadius = Theme.CornerRadius.sm
-	mapBtn.MouseButton1Click:Connect(function() BattleHUD.ToggleMapDetails() end)
+	mapBtn.Activated:Connect(function() BattleHUD.ToggleMapDetails() end)
 
 	-- Apply stored layout if UIController already calculated one
 	if currentLayout then
 		BattleHUD.ApplyLayout(currentLayout)
+	else
+		applyTouchSizes()
 	end
 end
 
@@ -700,7 +790,7 @@ function BattleHUD._buildActiveUnit()
 	Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
 	-- Portrait face overlay (enemy/neutral/NPC). nil for players/summons → initials box.
 	if UIComponents.ApplyPortrait(portrait, d.portraitAssetId) then portrait.Text = "" end
-	portrait.MouseButton1Click:Connect(function()
+	portrait.Activated:Connect(function()
 		if _G.CTRBLXAI_OpenInspectorPanel and d.id then
 			_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
 		end
@@ -794,9 +884,20 @@ function BattleHUD._showActionList(actions, parentLabel)
 	pad.PaddingTop = UDim.new(0, 10); pad.PaddingLeft = UDim.new(0, 5)
 	pad.PaddingRight = UDim.new(0, 5); pad.PaddingBottom = UDim.new(0, 10)
 
-	local layout = Instance.new("UIListLayout", actionPanel)
-	layout.Padding = UDim.new(0, 3)
-	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	local actionH = touchH(Theme.MinSize.TabButton)
+	if isPhone() then
+		-- Phones: a 2-wide grid of 44 px buttons. Six rows of 44 px do not fit a phone's
+		-- height under the unit panel; three rows do (user ruling 2026-11-06).
+		local grid = Instance.new("UIGridLayout")
+		grid.CellSize = UDim2.new(0.5, -2, 0, actionH)
+		grid.CellPadding = UDim2.fromOffset(3, 3)
+		grid.SortOrder = Enum.SortOrder.LayoutOrder
+		grid.Parent = actionPanel
+	else
+		local layout = Instance.new("UIListLayout", actionPanel)
+		layout.Padding = UDim.new(0, 3)
+		layout.SortOrder = Enum.SortOrder.LayoutOrder
+	end
 
 	-- Command bar: Back button when inside a submenu
 	if parentLabel then
@@ -822,7 +923,7 @@ function BattleHUD._showActionList(actions, parentLabel)
 				end
 				BattleHUD.ClearSelection()
 				BattleHUD._showActionList(action.subActions, "Back")
-			end, { name = "Act_" .. tostring(action.text), size = UDim2.new(1, 0, 0, Theme.MinSize.TabButton),
+			end, { name = "Act_" .. tostring(action.text), size = UDim2.new(1, 0, 0, actionH),
 				layoutOrder = i, textSize = Theme.Text.Body() })
 		else
 			Theme.MakeTabButton(actionPanel, action.text, if action.enabled ~= false then "Inactive" else "Disabled", function()
@@ -834,9 +935,31 @@ function BattleHUD._showActionList(actions, parentLabel)
 				end
 				BattleHUD.ClearSelection()
 				if action.onPress then action.onPress() end
-			end, { name = "Act_" .. tostring(action.text), size = UDim2.new(1, 0, 0, Theme.MinSize.TabButton),
+			end, { name = "Act_" .. tostring(action.text), size = UDim2.new(1, 0, 0, actionH),
 				layoutOrder = i, textSize = Theme.Text.Body() })
 		end
+	end
+	if isPhone() then
+		-- Half-width phone cells: keep each label on ONE line at the largest size that
+		-- fits, instead of TextScaled wrapping "Commands >" onto two lines. (TextScaled
+		-- with wrapping off drops to the 8 px minimum, so the size is measured here.)
+		-- Runs after layout so the label's real width is known. (2026-11-06)
+		local maxSize = Theme.Text.Body()
+		task.defer(function()
+			for _, b in ipairs(actionPanel:GetChildren()) do
+				local lb = b:IsA("GuiButton") and b:FindFirstChild("Label")
+				if lb and lb:IsA("TextLabel") and lb.AbsoluteSize.X > 0 then
+					local size = maxSize
+					while size > 8 and TextService:GetTextSize(lb.Text, size, lb.Font,
+						Vector2.new(10000, 10000)).X > lb.AbsoluteSize.X do
+						size -= 1
+					end
+					lb.TextScaled = false
+					lb.TextWrapped = false
+					lb.TextSize = size
+				end
+			end
+		end)
 	end
 end
 
@@ -869,7 +992,10 @@ function BattleHUD.ShowCommandBar(buttons)
 
 	local btnCount = #buttons
 	local fb = Theme.FooterBar
-	commandBar.Size = UDim2.new(0, btnCount * fb.BTN_W + (btnCount - 1) * fb.BTN_GAP, 0, fb.BTN_H)
+	-- Phones: 44 px square buttons (they are square icon art anyway); desktop unchanged.
+	local btnH = touchH(fb.BTN_H)
+	local btnW = if isPhone() then btnH else fb.BTN_W
+	commandBar.Size = UDim2.new(0, btnCount * btnW + (btnCount - 1) * fb.BTN_GAP, 0, btnH)
 
 	for i, b in ipairs(buttons) do
 		-- Map color to button style
@@ -883,16 +1009,23 @@ function BattleHUD.ShowCommandBar(buttons)
 		elseif bText == "Back" or bText == "Cancel" then
 			style = "Secondary"
 		end
-		local fb = Theme.FooterBar
 		local btn = Theme.MakeButton(commandBar, bText, style, nil, {
-			size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H),
+			size = UDim2.new(0, btnW, 0, btnH),
 			textColor = b.textColor or Theme.Colors.TextPrimary,
 			disabled = (b.enabled == false),
 		})
 		btn.LayoutOrder = i
 		if b.onPress and b.enabled ~= false then
-			btn.MouseButton1Click:Connect(function()
-				if b.disableOnPress then btn.ImageTransparency = 0.5; btn.Active = false end
+			-- Press lock (2026-11-06): a disableOnPress button (Execute) runs its action at most
+			-- once per built command bar. Active=false + dimming alone did not provably stop a fast
+			-- double tap. The lock lives with this button, so a rebuilt bar starts unlocked.
+			local pressed = false
+			btn.Activated:Connect(function()
+				if b.disableOnPress then
+					if pressed then return end
+					pressed = true
+					btn.ImageTransparency = 0.5; btn.Active = false
+				end
 				b.onPress()
 			end)
 		end
@@ -902,6 +1035,49 @@ end
 function BattleHUD.HideCommandBar()
 	ensureRoot()
 	if commandBar then commandBar.Visible = false end
+end
+
+-- CARD TEXT BOX (2026-11-08): the battle action panel shows a skill's FULL card text. The text
+-- lives in its own scroll box ("CardTextScroll"). This sizes the box to the whole text (measured
+-- with TextService at the label's real width), capped so the panel's bottom stays CARD_TEXT_GAP
+-- px above the command bar (Execute / Back) and inside the panel's own max height. Measured from
+-- the live edges every time the right column is placed (UI-001), so on a phone a long card
+-- scrolls inside the box instead of covering the command buttons. Short text looks unchanged.
+local CARD_TEXT_MIN_H = 24
+local CARD_TEXT_GAP = 12
+local function fitActionCardText()
+	if not actionPanel then return end
+	local box = actionPanel:FindFirstChild("CardTextScroll")
+	local lbl = box and box:FindFirstChildOfClass("TextLabel")
+	if not (box and lbl and box:IsA("ScrollingFrame")) then return end
+	local pad = actionPanel:FindFirstChildOfClass("UIPadding")
+	local layout = actionPanel:FindFirstChildOfClass("UIListLayout")
+	local padTop = if pad then pad.PaddingTop.Offset else 0
+	local padX = if pad then pad.PaddingLeft.Offset + pad.PaddingRight.Offset else 0
+	local gap = if layout then layout.Padding.Offset else 0
+	-- Rows above the box (name / tags / costs) have fixed heights.
+	local headerH = padTop
+	for _, child in ipairs(actionPanel:GetChildren()) do
+		if child:IsA("GuiObject") and child ~= box and child.LayoutOrder < box.LayoutOrder then
+			headerH += child.AbsoluteSize.Y + gap
+		end
+	end
+	local textW = math.max(40, actionPanel.AbsoluteSize.X - padX - 6)  -- label is box width - 6
+	local h = TextService:GetTextSize(lbl.Text, lbl.TextSize, lbl.Font, Vector2.new(textW, 10000)).Y + 4
+	local floorY = nil
+	if commandBar and commandBar.Visible then
+		floorY = commandBar.AbsolutePosition.Y
+	elseif rootFrame then
+		floorY = rootFrame.AbsolutePosition.Y + rootFrame.AbsoluteSize.Y
+	end
+	if floorY then
+		h = math.min(h, floorY - CARD_TEXT_GAP - actionPanel.AbsolutePosition.Y - headerH)
+	end
+	local cons = actionPanel:FindFirstChildOfClass("UISizeConstraint")
+	if cons then
+		h = math.min(h, cons.MaxSize.Y - headerH)
+	end
+	box.Size = UDim2.new(1, 0, 0, math.max(CARD_TEXT_MIN_H, math.floor(h)))
 end
 
 -- ACTION PANEL — Phase 2: Skill/Action Detail + Back
@@ -937,10 +1113,22 @@ function BattleHUD._buildActionDetail()
 		infoText = infoText .. "  " .. (presentation.skill.pattern or "Single")
 		makeLabel(actionPanel, infoText, { font = Theme.Font.Mono, textSize = Theme.Text.Body(), order = 3 })
 		if presentation.skill.effects and presentation.skill.effects ~= "" then
-			local effLbl = makeLabel(actionPanel, presentation.skill.effects, { textSize = Theme.Text.Small(), wrap = true,
-				size = UDim2.new(1, 0, 0, 24), color = Theme.Colors.Success, order = 4 })
-			-- Grow to fit long skill / item text (2026-11-01); 24 px stays the minimum.
-			-- The panel itself grows with its content (autoY, capped at 400 px).
+			-- Full card text (2026-11-08) in its own scroll box, sized by fitActionCardText: the
+			-- whole text when it fits, else the space left above the command bar (then it scrolls).
+			local box = Instance.new("ScrollingFrame")
+			box.Name = "CardTextScroll"
+			box.Size = UDim2.new(1, 0, 0, CARD_TEXT_MIN_H)
+			box.BackgroundTransparency = 1
+			box.BorderSizePixel = 0
+			box.ScrollingDirection = Enum.ScrollingDirection.Y
+			box.CanvasSize = UDim2.new()
+			box.AutomaticCanvasSize = Enum.AutomaticSize.Y
+			box.ScrollBarThickness = 4
+			box.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+			box.LayoutOrder = 4
+			box.Parent = actionPanel
+			local effLbl = makeLabel(box, presentation.skill.effects, { textSize = Theme.Text.Small(), wrap = true,
+				size = UDim2.new(1, -6, 0, 0), color = Theme.Colors.Success, vAlign = Enum.TextYAlignment.Top })
 			effLbl.AutomaticSize = Enum.AutomaticSize.Y
 		end
 	elseif state == "Preview" and presentation.preview then
@@ -964,6 +1152,9 @@ function BattleHUD._buildActionDetail()
 			  onPress = presentation.actor and presentation.actor.onBack or nil },
 		})
 	end
+	-- First fit now that the command bar is up; the right-column stack code refits once the
+	-- panel has its final position.
+	fitActionCardText()
 end
 
 --------------------------------------------------
@@ -1007,7 +1198,7 @@ function BattleHUD._buildInspector()
 		Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
 		-- Portrait face overlay (enemy/neutral/NPC). nil for players/summons → initials box.
 		if UIComponents.ApplyPortrait(portrait, d.portraitAssetId) then portrait.Text = "" end
-		portrait.MouseButton1Click:Connect(function()
+		portrait.Activated:Connect(function()
 			if _G.CTRBLXAI_OpenInspectorPanel and d.id then
 				_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
 			end
@@ -1323,6 +1514,10 @@ function BattleHUD._renderDamagePreview()
 					diffRow("HP", h.hpBefore, h.hpAfter, nil, true)
 				elseif h.kind == "shield" then
 					row("Shield +" .. tostring(h.amount or 0), Theme.Colors.Success)
+				end
+				-- Turn delay this unit would take (server PreviewSkillHits, 2026-11-08 7:14 PM).
+				if (h.rtDelay or 0) > 0 then
+					row("RT Delay: +" .. h.rtDelay)
 				end
 				if h.approx then
 					row("~ estimate (multi-hit)", Theme.Colors.TextSecondary)
@@ -2003,6 +2198,12 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 	local barH = turnOrderBar.AbsoluteSize.Y
 	-- Subtract padding (10 top + 10 bottom = 20) so slots fit inside the frame
 	local slotH = math.max(barH - 24, 32)
+	local phoneBar = isPhone()
+	if phoneBar then
+		-- Fixed phone slot size (2026-11-06); the bar itself is sized in applyTouchSizes.
+		turnOrderBar.Size = UDim2.new(turnOrderBar.Size.X.Scale, turnOrderBar.Size.X.Offset, 0, PHONE_TURN_BAR_H)
+		slotH = PHONE_TURN_SLOT
+	end
 
 	for i, entry in ipairs(entries) do
 		local isActive = entry.isActive or false
@@ -2221,8 +2422,17 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 			end
 		end
 
+		-- Phone: two-line name that fits the slot (2026-11-06). Units only (round/event
+		-- slots keep their short labels). Band height comes from the label's own scale.
+		if phoneBar and isUnit then
+			local nl = portrait:FindFirstChild("SlotName")
+			if nl and nl:IsA("TextLabel") then
+				fitTurnName(nl, slotW, math.floor(nl.Size.Y.Scale * slotH + nl.Size.Y.Offset))
+			end
+		end
+
 		-- Click handler
-		portrait.MouseButton1Click:Connect(function()
+		portrait.Activated:Connect(function()
 			-- Skip selection if this "click" was actually the end of a drag-to-pan. (2026-10-26)
 			if scrollDidDrag then return end
 			if isUnit or isEvent then
@@ -2285,9 +2495,10 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 					dragging = false
 					if moveConn then moveConn:Disconnect(); moveConn = nil end
 					if endConn then endConn:Disconnect(); endConn = nil end
-					-- Clear the drag flag next frame so the slot's click (which fires on
-					-- release) still sees it, but a later genuine tap does not. (2026-10-26)
-					task.defer(function() scrollDidDrag = false end)
+					-- 2026-11-06: do NOT clear scrollDidDrag here. The order of this global release
+					-- vs the slot's Activated is not guaranteed, so a deferred clear could let a drag
+					-- also select a unit. The flag is reset at the start of the next press instead
+					-- (beginDrag, called from every slot press and the bar itself).
 				end
 			end)
 		end
@@ -2458,7 +2669,7 @@ function BattleHUD._buildViewModeUnit()
 	Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
 	-- Portrait face overlay (enemy/neutral/NPC). nil for players/summons → initials box.
 	if UIComponents.ApplyPortrait(portrait, d.portraitAssetId) then portrait.Text = "" end
-	portrait.MouseButton1Click:Connect(function()
+	portrait.Activated:Connect(function()
 		if _G.CTRBLXAI_OpenInspectorPanel and d.id then
 			_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
 		end
@@ -2656,7 +2867,7 @@ function BattleHUD.ToggleViewDropdown()
 	dd.BackgroundColor3 = Theme.Colors.Surface
 	dd.BackgroundTransparency = 0.05
 	dd.BorderSizePixel = 0
-	dd.Position = UDim2.new(0, PAD, 0, 55 + Theme.Elem.ToggleBtn() + 4)
+	dd.Position = UDim2.new(0, PAD, 0, 55 + toggleH() + 4)
 	dd.Size = UDim2.fromOffset(132, 0)
 	dd.AutomaticSize = Enum.AutomaticSize.Y
 	dd.ZIndex = 50
@@ -2671,7 +2882,7 @@ function BattleHUD.ToggleViewDropdown()
 	local function addRow(label, onClick, enabled, checked)
 		order = order + 1
 		local b = Instance.new("TextButton")
-		b.Size = UDim2.new(1, 0, 0, Theme.Elem.ToggleBtn())
+		b.Size = UDim2.new(1, 0, 0, toggleH())
 		b.BackgroundColor3 = Theme.Colors.Panel
 		b.BackgroundTransparency = enabled and 0.1 or 0.6
 		b.BorderSizePixel = 0
@@ -2680,7 +2891,7 @@ function BattleHUD.ToggleViewDropdown()
 		b.Text = (checked and "* " or "") .. label
 		b.LayoutOrder = order; b.ZIndex = 51; b.Parent = dd
 		Instance.new("UICorner", b).CornerRadius = Theme.CornerRadius.xs
-		if enabled then b.MouseButton1Click:Connect(onClick) end
+		if enabled then b.Activated:Connect(onClick) end
 		return b
 	end
 	addRow("Isometric", function() BattleHUD.SetCameraMode("Isometric") end, true, currentCameraMode == "Isometric")
@@ -2752,7 +2963,7 @@ function BattleHUD.ShowMapDetails(data)
 	panel.Name = "MapDetails"
 	panel.Size = UDim2.fromOffset(280, 0)  -- widened 240->280 for objective lines (2026-10-28)
 	panel.AutomaticSize = Enum.AutomaticSize.Y
-	panel.Position = UDim2.new(0, PAD, 0, 58 + Theme.Elem.ToggleBtn() + 8)
+	panel.Position = UDim2.new(0, PAD, 0, 58 + toggleH() + 8)
 	panel.BackgroundColor3 = Theme.Colors.PanelRaised
 	panel.BackgroundTransparency = 0.02
 	panel.BorderSizePixel = 0
@@ -2897,6 +3108,10 @@ function BattleHUD.ApplyLayout(layout)
 		end
 	end
 
+	-- Phone-only touch sizes (2026-11-06): after the layout table so the phone column
+	-- width wins over the table's scale width.
+	applyTouchSizes()
+
 	-- Re-run right-side stack positioning
 	task.defer(alignTimePanel)
 	task.defer(function()
@@ -2917,6 +3132,7 @@ function BattleHUD.ApplyLayout(layout)
 			else
 				actionPanel.Position = UDim2.new(1, -PAD, 0, nextY)
 			end
+			fitActionCardText()  -- refit after a layout / screen-size change
 			if actionPanel.Visible then
 				nextY = (actionPanel.AbsolutePosition.Y + actionPanel.AbsoluteSize.Y - rootTop)
 			end
@@ -2988,6 +3204,7 @@ function BattleHUD.Render(p)
 			else
 				actionPanel.Position = UDim2.new(1, -PAD, 0, nextY)
 			end
+			fitActionCardText()  -- card text stays above the command bar at the final position
 			if actionPanel.Visible then
 				nextY = (actionPanel.AbsolutePosition.Y + actionPanel.AbsoluteSize.Y - rootTop)
 			end
@@ -3087,6 +3304,51 @@ function BattleHUD.GetInspectedEntityId() return presentation.inspectedEntityId 
 function BattleHUD.GetPresentation() return presentation end
 
 --------------------------------------------------
+-- PHONE LIST SCROLL (2026-11-06)
+--------------------------------------------------
+-- Phones: skill / item rows are 44 px tall, so a long list would run down behind the
+-- Back button. The rows go in a scroll box whose height stops just above the command
+-- bar (or the screen bottom); shorter lists stay their natural height.
+local function makePhoneListScroll(parent: GuiObject, order: number): ScrollingFrame
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name = "PhoneListScroll"
+	scroll.Size = UDim2.new(1, 0, 0, Theme.MinSize.TouchTarget)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.ScrollBarThickness = 4
+	scroll.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	scroll.LayoutOrder = order
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 2)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = scroll
+	local function fit()
+		if not scroll.Parent or not rootFrame then return end
+		local floorY
+		if commandBar and commandBar.Visible then
+			floorY = commandBar.AbsolutePosition.Y
+		else
+			floorY = rootFrame.AbsolutePosition.Y + rootFrame.AbsoluteSize.Y - PAD
+		end
+		local avail = math.floor(floorY - scroll.AbsolutePosition.Y - 6)
+		local content = list.AbsoluteContentSize.Y
+		local h = math.max(Theme.MinSize.TouchTarget, math.min(content, avail))
+		if math.abs(scroll.Size.Y.Offset - h) > 1 then
+			scroll.Size = UDim2.new(1, 0, 0, h)
+		end
+	end
+	-- Connections die with the scroll box when the panel is cleared (PRF-004).
+	scroll:GetPropertyChangedSignal("AbsolutePosition"):Connect(function() task.defer(fit) end)
+	list:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function() task.defer(fit) end)
+	scroll.Parent = parent
+	task.defer(fit)
+	return scroll
+end
+
+--------------------------------------------------
 -- SKILL LIST (replaces action grid during SkillSelection)
 --------------------------------------------------
 
@@ -3112,12 +3374,15 @@ function BattleHUD._buildSkillList()
 		hdr.Parent = actionPanel
 	end
 
+	-- Phones: 44 px rows in a capped scroll box (2026-11-06); desktop unchanged.
+	local rowH = touchH(Theme.MinSize.TabButton)
+	local rowParent = if isPhone() then makePhoneListScroll(actionPanel, 1) else actionPanel
 	for i, skill in ipairs(presentation.actor.skillEntries) do
 		local enabled = skill.enabled ~= false
 		-- Bar-button art, 24 px (user ruling 2026-10-08); mono left label keeps the columns.
-		local btn = Theme.MakeTabButton(actionPanel, "",
+		local btn = Theme.MakeTabButton(rowParent, "",
 			if enabled then "Inactive" else "Disabled", function() if skill.onPress then skill.onPress() end end,
-			{ name = "Sub_" .. tostring(i), size = UDim2.new(1, 0, 0, Theme.MinSize.TabButton), layoutOrder = i })
+			{ name = "Sub_" .. tostring(i), size = UDim2.new(1, 0, 0, rowH), layoutOrder = i })
 		listColumns(btn, skill.name or "?", { skill.mpCost or 0, skill.rtCost or 0 }, false)
 	end
 
@@ -3154,12 +3419,15 @@ function BattleHUD._buildItemList()
 		hdr.Parent = actionPanel
 	end
 
+	-- Phones: 44 px rows in a capped scroll box (2026-11-06); desktop unchanged.
+	local rowH = touchH(Theme.MinSize.TabButton)
+	local rowParent = if isPhone() then makePhoneListScroll(actionPanel, 1) else actionPanel
 	for i, item in ipairs(presentation.actor.itemEntries) do
 		local enabled = item.enabled ~= false
 		-- Bar-button art, 24 px (user ruling 2026-10-08); mono left label keeps the columns.
-		local btn = Theme.MakeTabButton(actionPanel, "",
+		local btn = Theme.MakeTabButton(rowParent, "",
 			if enabled then "Inactive" else "Disabled", function() if item.onPress then item.onPress() end end,
-			{ name = "Sub_" .. tostring(i), size = UDim2.new(1, 0, 0, Theme.MinSize.TabButton), layoutOrder = i })
+			{ name = "Sub_" .. tostring(i), size = UDim2.new(1, 0, 0, rowH), layoutOrder = i })
 		listColumns(btn, item.name or "?", { item.rtCost or 0 }, false)
 	end
 

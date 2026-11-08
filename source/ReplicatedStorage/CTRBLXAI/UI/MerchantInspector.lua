@@ -20,6 +20,9 @@ if not themeModule then
 end
 -- Found at runtime via WaitForChild; the editor cannot follow that path (editor-only cast).
 local Theme: any = (require :: any)(themeModule)
+-- Loadout tiles (Runeforge, 2026-11-08): the Loadout's own grid spacing and level label.
+local controlsModule = script.Parent:WaitForChild("InventoryControls", WAIT)
+local InventoryControls: any = if controlsModule then (require :: any)(controlsModule) else nil
 
 local MerchantInspector = {}
 
@@ -35,6 +38,10 @@ export type Entry = {
 	rarity: string?,
 	price: number?,     -- nil = not sellable (+ button faded)
 	queued: boolean,    -- already pending (dimmed tile; the screen shows - instead of +)
+	-- Loadout tiles only (Runeforge, 2026-11-08): the Loadout "E" / NEW markers. equippedBy = the
+	-- holder's name (server data); there is no selected unit here, so E is the grey "another unit" E.
+	equippedBy: string?,
+	isNew: boolean?,
 }
 
 export type GridOptions = {
@@ -42,6 +49,12 @@ export type GridOptions = {
 	selectedKey: any?,
 	width: number,      -- px width of the grid area (drives tile size)
 	onSelect: (key: any) -> (),
+	-- 2026-11-07 (Runeforge): true = Loadout-size tiles (Theme.ItemTileCell from the grid's
+	-- real height, kept up to date if it changes). nil/false = the merchant sizing below.
+	-- 2026-11-08: also the Loadout grid itself (no inner padding, its cell spacing, its grey
+	-- "Lv.N" label instead of the merchant level badge; user: "the Loadout is our model").
+	loadoutTiles: boolean?,
+	heightHint: number?, -- px grid height to use until the real height is known
 }
 
 local GRID_GAP = 4
@@ -269,22 +282,44 @@ end
 -- pending items dimmed). Tapping a tile calls opts.onSelect(key).
 function MerchantInspector.BuildGrid(scroll: ScrollingFrame, opts: GridOptions)
 	local selected = MerchantInspector.ResolveSelected(opts.entries, opts.selectedKey)
-	local gridW = math.max(MIN_CELL * 3, opts.width - 8)
-	local cols = math.clamp(math.floor(gridW / 90), 3, 8)
-	local cellW = math.max(MIN_CELL, math.floor((gridW - GRID_GAP * (cols - 1)) / cols))
-	local cellH = cellW + Theme.ItemTile.NameBarHeight // 2
+	local cellW, cellH
+	if opts.loadoutTiles then
+		local h = scroll.AbsoluteSize.Y
+		if h < 100 then h = opts.heightHint or 0 end
+		cellW, cellH = Theme.ItemTileCell(h)
+	else
+		local gridW = math.max(MIN_CELL * 3, opts.width - 8)
+		local cols = math.clamp(math.floor(gridW / 90), 3, 8)
+		cellW = math.max(MIN_CELL, math.floor((gridW - GRID_GAP * (cols - 1)) / cols))
+		cellH = cellW + Theme.ItemTile.NameBarHeight // 2
+	end
 
-	local gridPad = Instance.new("UIPadding")
-	gridPad.PaddingTop = UDim.new(0, 3)
-	gridPad.PaddingLeft = UDim.new(0, 3)
-	gridPad.PaddingRight = UDim.new(0, 3)
-	gridPad.PaddingBottom = UDim.new(0, 3)
-	gridPad.Parent = scroll
+	local loadoutGrid = opts.loadoutTiles == true and InventoryControls ~= nil
+	if not loadoutGrid then
+		local gridPad = Instance.new("UIPadding")
+		gridPad.PaddingTop = UDim.new(0, 3)
+		gridPad.PaddingLeft = UDim.new(0, 3)
+		gridPad.PaddingRight = UDim.new(0, 3)
+		gridPad.PaddingBottom = UDim.new(0, 3)
+		gridPad.Parent = scroll
+	end
 	local gridLayout = Instance.new("UIGridLayout")
 	gridLayout.CellSize = UDim2.fromOffset(cellW, cellH)
-	gridLayout.CellPadding = UDim2.fromOffset(GRID_GAP, GRID_GAP)
+	gridLayout.CellPadding = if loadoutGrid then InventoryControls.GridCellPadding else UDim2.fromOffset(GRID_GAP, GRID_GAP)
 	gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	gridLayout.Parent = scroll
+	if opts.loadoutTiles then
+		-- The grid's real height is only known after layout (UI-001): re-fit once it is.
+		-- Owned by the grid, so it goes away with it. Changing CellSize never resizes the grid.
+		scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+			local h = scroll.AbsoluteSize.Y
+			if h < 100 then return end
+			local w2, h2 = Theme.ItemTileCell(h)
+			if gridLayout.CellSize.X.Offset ~= w2 or gridLayout.CellSize.Y.Offset ~= h2 then
+				gridLayout.CellSize = UDim2.fromOffset(w2, h2)
+			end
+		end)
+	end
 
 	for i, e in opts.entries do
 		local detail = e.detail
@@ -302,7 +337,12 @@ function MerchantInspector.BuildGrid(scroll: ScrollingFrame, opts: GridOptions)
 				opts.onSelect(key)
 			end,
 		})
-		addTileBadge(tile, `Lv{e.level or 1}`, false)
+		if loadoutGrid then
+			local _lv, lvW = InventoryControls.MakeLevelLabel(tile, `Lv.{e.level or 1}`)
+			InventoryControls.AddTileMarkers(tile, cellW, lvW, false, e.equippedBy ~= nil, e.isNew == true, false)
+		else
+			addTileBadge(tile, `Lv{e.level or 1}`, false)
+		end
 		if e.price ~= nil then addTileBadge(tile, `{e.price}g`, true) end
 		if e.queued then addDimOverlay(tile) end
 	end

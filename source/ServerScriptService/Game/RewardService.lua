@@ -574,7 +574,7 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 				print(string.format("[RewardService] Reward %d: Equipment %s HELD (noCommit)", i, tostring(item.instanceId)))
 				table.insert(results, { category = "Equipment", item = item, committed = false })
 			else
-				local ok, addErr = InventoryService.AddItem(playerId, item)
+				local ok, addErr = InventoryService.AddItem(playerId, item, { markNew = true })
 				if ok then
 					equipCommitted = equipCommitted + 1
 					local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)

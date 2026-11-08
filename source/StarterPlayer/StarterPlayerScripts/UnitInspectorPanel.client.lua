@@ -370,7 +370,7 @@ local function showItemDetail(eq, slotName)
 
 	-- Close only when clicking OUTSIDE the panel.
 	-- The panel is an ImageLabel (does not consume clicks), so we check bounds manually.
-	backdrop.MouseButton1Click:Connect(function()
+	backdrop.Activated:Connect(function()
 		local mouse = game:GetService("UserInputService"):GetMouseLocation()
 		local pos = panel.AbsolutePosition
 		local sz = panel.AbsoluteSize
@@ -390,7 +390,7 @@ local function showItemDetail(eq, slotName)
 	backBtn.Size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H)
 	backBtn.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
 	backBtn.AnchorPoint = Vector2.new(1, 1)
-	backBtn.MouseButton1Click:Connect(closeDetailOverlay)
+	backBtn.Activated:Connect(closeDetailOverlay)
 end
 
 -- Raw power line (before target defense / hit quality / facing). Server computes
@@ -426,7 +426,7 @@ local function showSkillDetail(skill)
 	backdrop.BackgroundTransparency = 0.5
 	backdrop.Text = ""; backdrop.BorderSizePixel = 0
 	backdrop.Parent = gui
-	backdrop.MouseButton1Click:Connect(closeDetailOverlay)
+	backdrop.Activated:Connect(closeDetailOverlay)
 
 	local panel = Theme.MakePanel("InspSkillDetail",
 		UDim2.new(0.55, 0, 0.8, 0),
@@ -859,7 +859,7 @@ local function renderStatsTab(content, data)
 		backdrop.AutoButtonColor = false
 		backdrop.Text = ""; backdrop.BorderSizePixel = 0
 		backdrop.Parent = gui
-		backdrop.MouseButton1Click:Connect(closeDetailOverlay)
+		backdrop.Activated:Connect(closeDetailOverlay)
 		local panel = Theme.MakePanel("InspStatExplain", UDim2.new(0, 300, 0, 240), UDim2.new(0.5, 0, 0.5, 0), Vector2.new(0.5, 0.5), gui)
 		panel.ClipsDescendants = true
 		local pp = Instance.new("UIPadding", panel)
@@ -1051,7 +1051,7 @@ local function renderEquipmentTab(content, data)
 			nameLbl.TextXAlignment = Enum.TextXAlignment.Left
 			nameLbl.Text = docName; nameLbl.Parent = tile
 			-- Doctrine click → detail
-			tile.MouseButton1Click:Connect(function() showItemDetail({name = docName, rarity = "Legendary", icon = data.doctrine and data.doctrine.icon, itemLevel = 0}, "DOCTRINE") end)
+			tile.Activated:Connect(function() showItemDetail({name = docName, rarity = "Legendary", icon = data.doctrine and data.doctrine.icon, itemLevel = 0}, "DOCTRINE") end)
 		elseif item then
 			local rc = Theme.GetRarityColor(item.rarity)
 			tile.BackgroundColor3 = rc
@@ -1098,7 +1098,7 @@ local function renderEquipmentTab(content, data)
 			infoLbl.TextXAlignment = Enum.TextXAlignment.Left
 			infoLbl.Text = "Lv." .. (item.itemLevel or 1) .. " " .. (item.rarity or "")
 			infoLbl.Parent = tile
-			tile.MouseButton1Click:Connect(function() showItemDetail(item, SLOT_LABELS[slot] or slot) end)
+			tile.Activated:Connect(function() showItemDetail(item, SLOT_LABELS[slot] or slot) end)
 		else
 			tile.BackgroundColor3 = Theme.Colors.Panel
 			tile.BackgroundTransparency = 0.6
@@ -1279,7 +1279,7 @@ local function renderSkillsTab(content, data)
 			tagLbl.Parent = row
 		end
 
-		row.MouseButton1Click:Connect(function() showSkillDetail(skill) end)
+		row.Activated:Connect(function() showSkillDetail(skill) end)
 		order = order + 1
 	end
 end
@@ -1371,7 +1371,8 @@ local function buildPanel(data)
 	-- Level badge (top-left of portrait)
 	if data.level then
 		local lvBadge = Instance.new("Frame")
-		lvBadge.Size = UDim2.fromOffset(22, 12)
+		-- Fit "LvN" at the badge text size (2026-11-07: "Lv10"+ clipped 22px at the 10px phone floor).
+		lvBadge.Size = UDim2.fromOffset(Theme.BadgeFitW("Lv" .. tostring(data.level), Theme.Font.Mono, 22), math.max(12, Theme.Text.Badge() + 2))
 		lvBadge.Position = UDim2.fromOffset(0, 0)
 		lvBadge.BackgroundColor3 = Theme.Colors.BadgeBg
 		lvBadge.BackgroundTransparency = 0.3
@@ -1451,7 +1452,7 @@ local function buildPanel(data)
 	closeBtn.BorderSizePixel = 0
 	closeBtn.Parent = frame
 	Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
-	closeBtn.MouseButton1Click:Connect(destroyPanel)
+	closeBtn.Activated:Connect(destroyPanel)
 
 	-- CYCLE button: only when more than one unit (alive and/or KO'd) shares this tile.
 	if #tileCycleIds > 1 then
@@ -1467,7 +1468,7 @@ local function buildPanel(data)
 		cycleBtn.BorderSizePixel = 0
 		cycleBtn.Parent = frame
 		Instance.new("UICorner", cycleBtn).CornerRadius = UDim.new(0, 4)
-		cycleBtn.MouseButton1Click:Connect(function()
+		cycleBtn.Activated:Connect(function()
 			tileCycleIndex = (tileCycleIndex % #tileCycleIds) + 1
 			BattleEvents.InspectUnitRequest:FireServer(tileCycleIds[tileCycleIndex])
 		end)

@@ -366,6 +366,56 @@ function Theme.GetMode()
 	return currentMode
 end
 
+-- PHONE TEXT FROM FIRST DRAW (user ruling 2026-11-06): currentMode used to stay "Desktop"
+-- until BattleHUD.ApplyLayout first called SetViewport, so anything built before that
+-- (HUD toggles, deployment screen, guild screens) drew at desktop sizes on a phone.
+-- On a PHONE (touch screen AND the Mobile width < 1024, same rule as SetViewport and
+-- BattleHUD's isPhone) the Mobile mode is set as soon as Theme loads. Desktop and
+-- non-touch windows are untouched: they keep "Desktop" until the normal layout pass.
+-- Only promotes to Mobile and only until the first explicit SetViewport call.
+do
+	local RunService = game:GetService("RunService")
+	if RunService:IsClient() then
+		local UserInputService = game:GetService("UserInputService")
+		local viewportSetExplicitly = false
+		local origSetViewport = Theme.SetViewport
+		Theme.SetViewport = function(w, h)
+			viewportSetExplicitly = true
+			origSetViewport(w, h)
+		end
+		local function tryPhoneInit(): boolean
+			if viewportSetExplicitly then return true end
+			local cam = workspace.CurrentCamera
+			if not cam then return false end
+			local vs = cam.ViewportSize
+			if vs.X <= 1 then return false end -- camera not sized yet
+			if UserInputService.TouchEnabled and vs.X < 1024 then
+				origSetViewport(vs.X, vs.Y)
+			end
+			return true
+		end
+		if not tryPhoneInit() then
+			-- Camera not ready at load: resolve once it gets a real size, then stop listening.
+			local conn
+			local function onReady()
+				if tryPhoneInit() and conn then conn:Disconnect(); conn = nil end
+			end
+			local cam = workspace.CurrentCamera
+			if cam then
+				conn = cam:GetPropertyChangedSignal("ViewportSize"):Connect(onReady)
+			else
+				conn = workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+					if workspace.CurrentCamera and conn then
+						conn:Disconnect()
+						conn = workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(onReady)
+						onReady()
+					end
+				end)
+			end
+		end
+	end
+end
+
 --------------------------------------------------
 -- STRICT TYPOGRAPHIC CONTRACT
 -- One font family. Six roles. No exceptions.
@@ -380,7 +430,7 @@ local TEXT_SIZES = {
 	Small   = {       10,      10,      12   },
 	Mono    = {       11,      11,      13   },
 	Tiny    = {        9,       9,      11   },
-	Badge   = {        7,       7,       9   },
+	Badge   = {        7,       7,      10   },  -- Mobile 10: phone text floor (user ruling 2026-11-07)
 }
 
 local MODE_INDEX = { Desktop = 1, Compact = 2, Mobile = 3 }
@@ -394,6 +444,26 @@ function Theme.Text.Small()   return TEXT_SIZES.Small[MODE_INDEX[currentMode]]  
 function Theme.Text.Mono()    return TEXT_SIZES.Mono[MODE_INDEX[currentMode]]    end
 function Theme.Text.Tiny()    return TEXT_SIZES.Tiny[MODE_INDEX[currentMode]]    end
 function Theme.Text.Badge()   return TEXT_SIZES.Badge[MODE_INDEX[currentMode]]   end
+
+-- FIT-TO-TEXT (2026-11-07). Badge boxes used fixed pixel sizes picked for 7-9px text; with the
+-- 10px phone floor (Badge above) some clipped. Boxes now grow from the measured text instead.
+-- Desktop keeps its old sizes because every caller takes math.max(oldSize, measured).
+local TextService = game:GetService("TextService")
+function Theme.MeasureText(text: string, size: number, font: Enum.Font, maxWidth: number?): Vector2
+	local ok, v = pcall(function()
+		return TextService:GetTextSize(text, size, font, Vector2.new(maxWidth or 10000, 10000))
+	end)
+	if ok and typeof(v) == "Vector2" then return v end
+	return Vector2.new(math.ceil(#text * size * 0.6), size)
+end
+-- One badge-size text line plus 2px headroom; never below the old 10px rows.
+function Theme.Text.BadgeLineH(): number
+	return math.max(10, Theme.Text.Badge() + 2)
+end
+-- Width of a badge box that fits `text` at badge size with 2px padding each side.
+function Theme.BadgeFitW(text: string, font: Enum.Font, minW: number): number
+	return math.max(minW, Theme.MeasureText(text, Theme.Text.Badge(), font).X + 4)
+end
 
 --------------------------------------------------
 -- ELEMENT SIZING (hard mode switch, same principle)
@@ -562,7 +632,26 @@ Theme.ItemTile = {
 	CountBadgeBg     = Color3.fromRGB(0, 0, 0),
 	CountBadgeBgTransparency = 0.4,
 	NameBarHeight    = 26,        -- bottom name strip height (px) — fits TWO wrapped lines (2026-10-20)
+	-- Inventory grid cell (2026-11-07, DAT-001/AP-021): the Loadout gear/skill/consumable
+	-- formula, kept here once so every screen that wants Loadout-sized tiles uses it.
+	GridMinCell      = 48,        -- px
+	GridMaxCell      = 96,        -- px
+	GridAspect       = 1.2,       -- cell height = width * this
+	GridGap          = 4,         -- px between rows
+	GridRows         = 3,         -- height-first: at least this many rows fit
+	GridFallbackH    = 300,       -- px, used while the container has no real size yet (< 100)
 }
+
+--- Loadout-size inventory grid cell for a container of the given height (px). Height-first:
+--- GridRows rows always fit, width clamped to GridMinCell..GridMaxCell. Returns cellW, cellH.
+function Theme.ItemTileCell(containerH: number?): (number, number)
+	local t = Theme.ItemTile
+	local h = containerH or 0
+	if h < 100 then h = t.GridFallbackH end
+	local maxCellH = math.floor((h - 2 * t.GridGap) / t.GridRows)
+	local cellW = math.clamp(math.floor(maxCellH / t.GridAspect), t.GridMinCell, t.GridMaxCell)
+	return cellW, math.floor(cellW * t.GridAspect)
+end
 
 --- SHARED INVENTORY ITEM TILE (2026-10-20). The single source of truth for the
 --- inventory tile look the user approved on the Loadout Consumables grid (which itself
@@ -585,7 +674,7 @@ Theme.ItemTile = {
 ---   countText   string?    top-right badge text (e.g. "x5"); nil = no badge
 ---   selected    boolean?   selection highlight (gold stroke + highlight bg)
 ---   layoutOrder number?    LayoutOrder within the grid
----   onClick     function?  MouseButton1Click handler
+---   onClick     function?  Activated (tap) handler
 --- Returns: the tile TextButton.
 function Theme.MakeItemTile(opts)
 	opts = opts or {}
@@ -694,7 +783,7 @@ function Theme.MakeItemTile(opts)
 	end
 
 	if opts.onClick then
-		tile.MouseButton1Click:Connect(opts.onClick)
+		tile.Activated:Connect(opts.onClick)
 	end
 	return tile
 end
@@ -1053,8 +1142,7 @@ function Theme.MakeIconButton(parent: Instance?, kind: string, onClick: (() -> (
 		btn.Active = false
 		btn.ImageColor3 = Color3.fromRGB(120, 120, 120)
 	else
-		btn.MouseEnter:Connect(function() btn.ImageColor3 = Color3.fromRGB(230, 230, 230) end)
-		btn.MouseLeave:Connect(function() btn.ImageColor3 = Color3.new(1, 1, 1) end)
+		-- Tap-only (user ruling 2026-11-06): no hover colour. Press visuals below fire for touch too.
 		btn.MouseButton1Down:Connect(function()
 			btn.ImageColor3 = Color3.fromRGB(180, 180, 180)
 			btn.Position = btn.Position + UDim2.new(0, 0, 0, 2)
@@ -1063,7 +1151,7 @@ function Theme.MakeIconButton(parent: Instance?, kind: string, onClick: (() -> (
 			btn.ImageColor3 = Color3.new(1, 1, 1)
 			btn.Position = btn.Position - UDim2.new(0, 0, 0, 2)
 		end)
-		if onClick then btn.MouseButton1Click:Connect(onClick) end
+		if onClick then btn.Activated:Connect(onClick) end
 	end
 	btn.Parent = parent
 	return btn
@@ -1097,19 +1185,14 @@ function Theme.MakeButton(parent, text, style, onClick, opts)
 	btn.AutoButtonColor = false
 	btn.Parent = parent
 
-	-- State handling: hover, press, disabled
+	-- State handling: press, disabled (no hover - tap-only)
 	if opts.disabled then
 		btn.ImageTransparency = 0.5
 		btn.Active = false
 		btn.ImageColor3 = Color3.fromRGB(120, 120, 120)
 	else
 		local normalY = btn.Position.Y
-		btn.MouseEnter:Connect(function()
-			btn.ImageColor3 = Color3.fromRGB(230, 230, 230)
-		end)
-		btn.MouseLeave:Connect(function()
-			btn.ImageColor3 = Color3.new(1, 1, 1)
-		end)
+		-- Tap-only (user ruling 2026-11-06): no hover colour. Press visuals below fire for touch too.
 		btn.MouseButton1Down:Connect(function()
 			btn.ImageColor3 = Color3.fromRGB(180, 180, 180)
 			btn.Position = btn.Position + UDim2.new(0, 0, 0, 2)
@@ -1160,7 +1243,7 @@ function Theme.MakeButton(parent, text, style, onClick, opts)
 	end)
 
 	if onClick then
-		btn.MouseButton1Click:Connect(onClick)
+		btn.Activated:Connect(onClick)
 	end
 
 	return btn
@@ -1193,6 +1276,27 @@ Theme.Icons = {
 	AGI = "rbxassetid://111815728303705",
 	VIT = "rbxassetid://113624831794919",
 	LUK = "rbxassetid://91593832326365",
+	-- Secondary stats (uploaded by the owner 2026-11-07; Runeforge gem portraits)
+	StatAttack          = "rbxassetid://72928487978553",
+	StatDefense         = "rbxassetid://72966750380546",
+	StatHP              = "rbxassetid://95296977450993",
+	StatMP              = "rbxassetid://124890280279111",
+	StatWT              = "rbxassetid://129338189874827",
+	StatWeaponWTReduction = "rbxassetid://129011880946836",
+	StatRT              = "rbxassetid://107531305940944",
+	StatRTDelay         = "rbxassetid://87418287536058",
+	StatRTDelayResist   = "rbxassetid://123660748376135",
+	StatPrecision       = "rbxassetid://76225531091303",
+	StatEvasiveness     = "rbxassetid://128457268755069",
+	StatFortune         = "rbxassetid://107941794185677",
+	StatSkillPotency    = "rbxassetid://139423882385213",
+	StatHealing         = "rbxassetid://124663898089052",
+	StatDebuffResist    = "rbxassetid://95505629758307",
+	StatSkillRange      = "rbxassetid://95771190911722",
+	StatMovement        = "rbxassetid://122214746123036",
+	StatJump            = "rbxassetid://94628391052336",
+	StatStability       = "rbxassetid://110949418664653",
+	StatForce           = "rbxassetid://105656159179327",
 	-- Navigation / UI
 	Sort       = "rbxassetid://110139184321415",
 	Filter     = "rbxassetid://114182934986152",
@@ -1215,6 +1319,36 @@ Theme.Icons = {
 	Physical   = "rbxassetid://124197323548413",
 	Reset      = "rbxassetid://87409616114560",
 }
+
+-- Bonus family -> icon (2026-11-07, Runeforge gem portraits). Keyed by the BonusData
+-- NumericalAttributes `family`; the ONE place this mapping lives (DAT-001). Bonus passives have
+-- no icon (Theme.GetBonusIcon returns nil -> plain tile).
+Theme.BonusFamilyIcons = table.freeze({
+	["STR Bonus"]           = Theme.Icons.STR,
+	["AGI Bonus"]           = Theme.Icons.AGI,
+	["INT Bonus"]           = Theme.Icons.INT,
+	["VIT Bonus"]           = Theme.Icons.VIT,
+	["DEX Bonus"]           = Theme.Icons.DEX,
+	["LUK Bonus"]           = Theme.Icons.LUK,
+	["Weapon Attack"]       = Theme.Icons.StatAttack,
+	["Weapon Defense"]      = Theme.Icons.StatDefense,
+	["Equipment Defense"]   = Theme.Icons.StatDefense,
+	["Weapon RT Delay"]     = Theme.Icons.StatRTDelay,
+	["Weight Reduction"]    = Theme.Icons.StatWeaponWTReduction,
+	["HP"]                  = Theme.Icons.StatHP,
+	["MP"]                  = Theme.Icons.StatMP,
+	["Precision"]           = Theme.Icons.StatPrecision,
+	["Evasiveness"]         = Theme.Icons.StatEvasiveness,
+	["Fortune"]             = Theme.Icons.StatFortune,
+	["Skill Potency Bonus"] = Theme.Icons.StatSkillPotency,
+	["Healing Output"]      = Theme.Icons.StatHealing,
+	["Debuff Resistance"]   = Theme.Icons.StatDebuffResist,
+	["RT Delay Resistance"] = Theme.Icons.StatRTDelayResist,
+})
+
+function Theme.GetBonusIcon(family: string?): string?
+	return if family then Theme.BonusFamilyIcons[family] else nil
+end
 
 -- Outfit tab Type filter icons (UGC filter types -> existing equipment icons).
 -- PLACEHOLDER: replace Hair, Pants and Back when the user uploads hair/pants/back icons.

@@ -66,6 +66,11 @@ local _displayNamer = nil
 function BattlefieldEventService.SetObjectDisplayNamer(fn: any) _displayNamer = fn end
 local _battleCoordinator = nil
 function BattlefieldEventService.SetBattleCoordinator(bc: any) _battleCoordinator = bc end
+-- Monster Hunter trap drop (fix 2026-11-06): Snare Trap is a map OBJECT, not a tile effect.
+-- Main injects fn(state, x, y) -> inst|nil that places a VISIBLE Neutral-owned Snare Trap via
+-- ObjectEffectService.PlaceObjectInstance (DI, no new require edge; ARC-004/006). nil-safe.
+local _trapPlacer = nil
+function BattlefieldEventService.SetTrapPlacer(fn: any) _trapPlacer = fn end
 
 --------------------------------------------------------------------
 -- SHARED HELPERS
@@ -317,7 +322,7 @@ end
 Handlers["Monster Hunter"] = function(ctx: any)
 	spawnEventUnit(ctx.state, ctx.rng, { type = "Veteran", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Neutral", nil, "Monster Hunter", "huntMonster")
-	-- Trap drop handled by OnEventUnitTurn (Snare Trap tile effect at its tile).
+	-- Trap drop handled by OnEventUnitTurn (visible Snare Trap OBJECT at its tile).
 	return true
 end
 
@@ -598,10 +603,16 @@ end
 
 -- Pick the reachable candidate that minimises distance to (gx, gy). Returns a
 -- Move action descriptor { actionType="Move", selection=tile } or nil (→ Wait).
-local function moveTowardGoal(unit: any, state: any, gx: any, gy: any): any
+-- onlyIfCloser (Monster Hunter, fix 2026-11-06): also refuse any tile that is not strictly
+-- closer than staying put, so a unit already as close as it can get waits instead of
+-- stepping off and back each turn (seen (3,3)<->(4,4) / (4,5)->(3,5)->(4,5)).
+local function moveTowardGoal(unit: any, state: any, gx: any, gy: any, onlyIfCloser: any): any
 	local cands = moveCandidates(unit, state)
 	if #cands == 0 then return nil end
 	local best, bestD = nil, math.huge
+	if onlyIfCloser then
+		bestD = math.abs(unit.tileX - gx) + math.abs(unit.tileY - gy)
+	end
 	for _, t in ipairs(cands) do
 		local tx: number, ty: number = t.tileX or t.x, t.tileY or t.y
 		local d = math.abs(tx - gx) + math.abs(ty - gy)
@@ -809,7 +820,22 @@ end
 
 -- "Hunt nearest monster": advance toward the closest enemy-side unit. (The visible
 -- trap-drop each turn is applied by the Monster Hunter handler's turn hook.)
+-- Fix 2026-11-06 (DB battlefield_events 21 "Hunts monsters"): the Hunter only ever moved, so
+-- once beside its prey it spent its AP stepping off and back. Now: basic-attack an Enemy-side
+-- unit in weapon reach (never a Player or another Neutral; the server re-validates the
+-- Attack), otherwise move toward the nearest monster only if that gets it strictly closer.
 NeutralBehaviors["huntMonster"] = function(unit: any, state: any)
+	if _targetingService and _targetingService.GetAttackCandidates then
+		local prey, preyHp = nil, math.huge
+		for _, t in ipairs(_targetingService.GetAttackCandidates(unit, state.units, unit.weaponMaxRange or 1) or {}) do
+			if t.side == "Enemy" and not t.isGroundTarget and (t.currentHp or 0) < preyHp then
+				prey, preyHp = t, (t.currentHp or 0)
+			end
+		end
+		if prey then
+			return { actionType = "Attack", selection = prey, skillName = nil }
+		end
+	end
 	local best, bestD = nil, math.huge
 	for _, u in ipairs(state.units) do
 		if u.isAlive and not u.isGroundTarget and u.side == "Enemy" then
@@ -818,7 +844,7 @@ NeutralBehaviors["huntMonster"] = function(unit: any, state: any)
 		end
 	end
 	if not best then return nil end
-	return moveTowardGoal(unit, state, best.tileX, best.tileY)
+	return moveTowardGoal(unit, state, best.tileX, best.tileY, true)
 end
 
 -- Passive neutrals (Bard, Scholar, Fortune Teller, Mercenaries, Lost Noble): stand.
@@ -1148,8 +1174,10 @@ function BattlefieldEventService.OnEventUnitTurn(unit: any, state: any, rng: any
 		end
 	end
 
-	if unit.eventName == "Monster Hunter" and _tileEffectService and _tileEffectService.ApplyTileEffect then
-		_tileEffectService.ApplyTileEffect(unit.tileX, unit.tileY, "Snare Trap", unit.id, state.units)
+	-- DB battlefield_events 21: "Spawns visible traps every turn." One visible Snare Trap on the
+	-- Hunter's tile each of its turns (refused if the tile already holds an object - no stacking).
+	if unit.eventName == "Monster Hunter" and _trapPlacer then
+		_trapPlacer(state, unit.tileX, unit.tileY)
 	end
 
 	if unit.strikesHighestElevation then

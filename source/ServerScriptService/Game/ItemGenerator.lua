@@ -381,10 +381,15 @@ local function step7_SelectNumericalTiers(rng, pool, remainingBp, minBand, maxBa
 	local attempts = 0
 	local maxAttempts = 200
 
-	while spentBp < minBand and attempts < maxAttempts do
+	-- 2026-11-07 (Closest to budget, user-approved): keep adding tiers while a line brings
+	-- the total STRICTLY closer to the budget target (an exact tie rounds UP), not just until
+	-- the total enters the band. Below the band the closest line is always taken (unchanged).
+	-- Never above maxBand, never a reused family; seeded shuffle order unchanged.
+	while attempts < maxAttempts do
 		attempts = attempts + 1
 		local bestCandidate = nil
 		local bestDiff = math.huge
+		local currentDiff = math.abs(spentBp - targetBp)
 
 		for _, entry in ipairs(shuffled) do
 			local attr = entry.attr
@@ -418,6 +423,13 @@ local function step7_SelectNumericalTiers(rng, pool, remainingBp, minBand, maxBa
 					warn("[ItemGen] step7: no attribute families left, pool exhausted at " .. spentBp .. "BP")
 				end
 			end
+			break
+		end
+
+		-- Inside the band: stop unless this line gets closer to the target (tie = go up).
+		local improves = bestDiff < currentDiff
+			or (bestDiff == currentDiff and spentBp < targetBp)
+		if spentBp >= minBand and not improves then
 			break
 		end
 

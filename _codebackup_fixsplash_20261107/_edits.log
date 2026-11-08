@@ -1,0 +1,308 @@
+Sat Nov  7 23:32:50 2026 | ServerScriptService\Game\TileEffectService.lua | TES-1 D1/D2 guard + blastFresh decl | new x1=True old gone=True len ok=True
+Sat Nov  7 23:32:56 2026 | ServerScriptService\Game\TileEffectService.lua | TES-2 D1 mark fresh placements | new x1=True old gone=True len ok=True
+Sat Nov  7 23:33:01 2026 | ServerScriptService\Game\TileEffectService.lua | TES-3 D1 blastFresh local | new x1=True old gone=True len ok=True
+Sat Nov  7 23:33:07 2026 | ServerScriptService\Game\TileEffectService.lua | TES-4 D1 wrap object hit | new x1=True old gone=True len ok=True
+Sat Nov  7 23:33:11 2026 | ServerScriptService\Game\TileEffectService.lua | TES-5 D1 chain skips fresh | new x1=True old gone=True len ok=True
+Sat Nov  7 23:33:35 2026 | ServerScriptService\Game\CommandService.lua | CS-1 D2 clear guard ground skill | new x1=True old gone=True len ok=True
+Sat Nov  7 23:33:40 2026 | ServerScriptService\Game\CommandService.lua | CS-2 D2 clear guard AttackObject | new x1=True old gone=True len ok=True
+Sat Nov  7 23:34:03 2026 | ServerScriptService\Game\CommandService.lua | CS-3 D3 summon | new x1=True old gone=True len ok=True
+Sat Nov  7 23:34:03 2026 | ServerScriptService\Game\CommandService.lua | CS-4 D3 object placing | new x1=True old gone=True len ok=True
+Sat Nov  7 23:34:03 2026 | ServerScriptService\Game\CommandService.lua | CS-5 D3 repair | new x1=True old gone=True len ok=True
+Sat Nov  7 23:34:03 2026 | ServerScriptService\Game\CommandService.lua | CS-6 D3 resuscitate | new x1=True old gone=True len ok=True
+Sat Nov  7 23:34:33 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | BVB-1 D4 MP in UnitStateChanged | new x1=True old gone=True len ok=True
+Sat Nov  7 23:34:42 2026 | StarterPlayer\StarterPlayerScripts\BattleVisualClient.client.lua | BVC-1 D4 store MP on UnitStateChanged | new x1=True old gone=True len ok=True
+Sat Nov  7 23:34:48 2026 | StarterPlayer\StarterPlayerScripts\BattleVisualClient.client.lua | BVC-2 D4 TurnStarted max MP | new x1=True old gone=True len ok=True
+Sat Nov  7 23:35:13 2026 | ServerScriptService\Game\StatusService.lua | SS-1 D5 refresh keeps Venus hold | new x1=True old gone=True len ok=True
+Sat Nov  7 23:35:20 2026 | ServerScriptService\Game\StatusService.lua | SS-2 D5 tick | new x1=True old gone=True len ok=True
+Sat Nov  7 23:35:40 2026 | ServerScriptService\Game\ObjectEffectService.lua | OES-1 D5 release keeps other Pin | new x1=True old gone=True len ok=True
+Sat Nov  7 23:35:46 2026 | ServerScriptService\Game\ObjectEffectService.lua | OES-2 D5 capture keeps prior Pin | new x1=True old gone=True len ok=True
+Sat Nov  7 23:36:30 2026 | ServerScriptService\Game\TargetingService.lua | TS-1 rule 250 tile helpers | new x1=True old gone=True len ok=True
+Sat Nov  7 23:36:45 2026 | ServerScriptService\Game\ObjectEffectService.lua | OES-3 rule 250 HitObjectsOnTiles | new x1=True old gone=True len ok=True
+Sat Nov  7 23:37:11 2026 | ServerScriptService\Game\CommandService.lua | CS-7 rule 250 skill splash helper | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:32 2026 | ServerScriptService\Game\CommandService.lua | A1 rule 250 channel skill splash on objects | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:32 2026 | ServerScriptService\Game\CommandService.lua | A2 rule 250 instant skill splash on objects | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:32 2026 | ServerScriptService\Game\CommandService.lua | A3 rule 250 basic attack splash list | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:32 2026 | ServerScriptService\Game\CommandService.lua | A4 rule 250 basic attack collect hand splash | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:32 2026 | ServerScriptService\Game\CommandService.lua | A5 rule 250 basic attack hit objects | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:32 2026 | ServerScriptService\Game\CommandService.lua | A6 rule 250 counter splash on objects | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:32 2026 | ServerScriptService\Game\CommandService.lua | A7 rule 250 item area hits on objects | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:49 2026 | ServerScriptService\Game\ItemEffectService.lua | A8 rule 250 item area object tiles | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:49 2026 | ServerScriptService\Game\ItemEffectService.lua | A9 rule 250 Wide-Fuse object tiles | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:49 2026 | ServerScriptService\Game\ItemEffectService.lua | A10 rule 250 Bomber Ring object tiles | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:49 2026 | ServerScriptService\Game\ObjectEffectService.lua | A11 rule 250 siege cross object tiles helper | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:49 2026 | ServerScriptService\Game\ObjectEffectService.lua | A12 rule 250 Catapult object hits | new x1=True old gone=True len ok=True
+Sun Nov  8 09:23:49 2026 | ServerScriptService\Game\ObjectEffectService.lua | A13 rule 250 Heavy Artillery object hits | new x1=True old gone=True len ok=True
+Sun Nov  8 09:24:04 2026 | ServerScriptService\Game\ObjectEffectService.lua | B1 Wasp Nest venom param | new x1=True old gone=True len ok=True
+Sun Nov  8 09:24:05 2026 | ServerScriptService\Game\ObjectEffectService.lua | B2 Wasp Nest venom no instant kill | new x1=True old gone=True len ok=True
+Sun Nov  8 09:24:05 2026 | ServerScriptService\Game\ObjectEffectService.lua | B3 HitObjectsOnTiles venom param | new x1=True old gone=True len ok=True
+Sun Nov  8 09:24:05 2026 | ServerScriptService\Game\ObjectEffectService.lua | B4 HitObjectsOnTiles pass venom | new x1=True old gone=True len ok=True
+Sun Nov  8 09:24:05 2026 | ServerScriptService\Game\CommandService.lua | B5 skillAppliesVenom helper | new x1=True old gone=True len ok=True
+Sun Nov  8 09:24:05 2026 | ServerScriptService\Game\CommandService.lua | B6 splash passes venom | new x1=True old gone=True len ok=True
+Sun Nov  8 09:24:05 2026 | ServerScriptService\Game\CommandService.lua | B7 channel empty-tile venom | new x1=True old gone=True len ok=True
+Sun Nov  8 09:24:05 2026 | ServerScriptService\Game\CommandService.lua | B8 instant empty-tile venom | new x1=True old gone=True len ok=True
+Sun Nov  8 09:24:05 2026 | ServerScriptService\Game\CommandService.lua | B9 ground skill venom | new x1=True old gone=True len ok=True
+Sun Nov  8 09:24:15 2026 | ReplicatedStorage\Content\ObjectData.lua | C1 Sludge Barrel break guard | new x1=True old gone=True len ok=True
+Sun Nov  8 09:24:15 2026 | ServerScriptService\Game\CommandService.lua | D1 knockback into adjacent wall collides | new x1=True old gone=True len ok=True
+Sun Nov  8 09:52:41 2026 | ServerScriptService\Game\CommandService.lua | D6 skill Adjacent object tiles = unit tiles | new x1=True old gone=True len ok=True
+Sun Nov  8 09:52:58 2026 | ServerScriptService\Main.server.lua | PRE-D8 BACKUP of current state (other session 09:19:39 changes kept) -> Main.server.lua.pre_D8 sha256=f4218dd7b191dac1f8ce235172e4811e1b213a85989fa27d7ae08ce6cf27d5b1; mtime record refreshed to Sun Nov  8 09:19:39 2026
+Sun Nov  8 09:53:04 2026 | ServerScriptService\Main.server.lua | D8a Learning Stone uses all battle gold incl Treasure Hunter | new x1=True old gone=True len ok=True
+Sun Nov  8 09:53:12 2026 | ServerScriptService\Main.server.lua | D8b Learning Stone log shows full gold total | new x1=True old gone=True len ok=True
+Sun Nov  8 10:05:22 2026 | ServerScriptService\Game\ObjectEffectService.lua | D7-1 siege line object tiles helper | new x1=True old gone=True len ok=True
+Sun Nov  8 10:05:27 2026 | ServerScriptService\Game\ObjectEffectService.lua | D7-2 Ballista bolt hits objects | new x1=True old gone=True len ok=True
+Sun Nov  8 10:05:32 2026 | ServerScriptService\Game\ObjectEffectService.lua | D7-3 Arcane Cannon line hits objects | new x1=True old gone=True len ok=True
+Sun Nov  8 10:05:41 2026 | ServerScriptService\Game\PulseScheduler.lua | D7-4 pulse object-hit helper | new x1=True old gone=True len ok=True
+Sun Nov  8 10:05:45 2026 | ServerScriptService\Game\PulseScheduler.lua | D7-5 pulse with no unit still hits objects | new x1=True old gone=True len ok=True
+Sun Nov  8 10:05:49 2026 | ServerScriptService\Game\PulseScheduler.lua | D7-6 pulse hits objects after unit hits | new x1=True old gone=True len ok=True
+Sun Nov  8 10:05:54 2026 | ServerScriptService\Game\CommandService.lua | D9 skillAffectedTiles uses skill's own Adjacent tiles | new x1=True old gone=True len ok=True
+Sun Nov  8 10:14:51 2026 | ServerScriptService\Game\ObjectEffectService.lua | D10 Portable Ballista bolt hits objects on its line | new x1=True old gone=True len ok=True
+Sun Nov  8 13:16:04 2026 | ServerScriptService\Game\TileEffectService.lua | PRE-STUDIOFIX BACKUP -> TileEffectService.lua.pre_studiofix sha256=4927f61c46348d6fac81ccf44af7d0198b8d88ed2336683fdebb89e6853443c2 copy ok=True
+Sun Nov  8 13:16:04 2026 | ServerScriptService\Game\ObjectEffectService.lua | PRE-STUDIOFIX BACKUP -> ObjectEffectService.lua.pre_studiofix sha256=f39091894315b9728df4bbbb7f92184c4492b51ad32e689d2d3b9c2d63410265 copy ok=True
+Sun Nov  8 13:16:04 2026 | ServerScriptService\Game\CommandService.lua | PRE-STUDIOFIX BACKUP -> CommandService.lua.pre_studiofix sha256=e6f53c3e2f08910f0118b27091b69583a199608655a363f3c7021f3101150849 copy ok=True
+Sun Nov  8 13:16:04 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | PRE-STUDIOFIX BACKUP -> BattleVisualBroadcaster.lua.pre_studiofix sha256=9b4a3df70c440197124d960e5c3471e1ada65ac13ab1b484841bc547157d3084 copy ok=True
+Sun Nov  8 13:16:04 2026 | StarterPlayer\StarterPlayerScripts\BattleVisualClient.client.lua | PRE-STUDIOFIX BACKUP -> BattleVisualClient.client.lua.pre_studiofix sha256=f0a33662ce636224d7cceea7f520d027d35b4e04a510aef295619d311707a088 copy ok=True
+Sun Nov  8 13:16:11 2026 | ServerScriptService\Game\TileEffectService.lua | F1 Wet + Electric -> Static Cloud | new x1=True old gone=True len ok=True
+Sun Nov  8 13:16:34 2026 | ServerScriptService\Game\TileEffectService.lua | F2-T1 release guard API | new x1=True old gone=True len ok=True
+Sun Nov  8 13:16:44 2026 | ServerScriptService\Game\TileEffectService.lua | F2-T2 guard tiles the release lands on | new x1=True old gone=True len ok=True
+Sun Nov  8 13:16:44 2026 | ServerScriptService\Game\TileEffectService.lua | F2-T3 effect reaction skips guarded tile | new x1=True old gone=True len ok=True
+Sun Nov  8 13:16:55 2026 | ServerScriptService\Game\TileEffectService.lua | F2-T4 explosion chain skips guarded tile | new x1=True old gone=True len ok=True
+Sun Nov  8 13:17:00 2026 | ServerScriptService\Game\TileEffectService.lua | F2-T5 element doorway guard lasts the action | new x1=True old gone=True len ok=True
+Sun Nov  8 13:17:05 2026 | ServerScriptService\Game\TileEffectService.lua | F2-T6 Wind clear skips guarded tile | new x1=True old gone=True len ok=True
+Sun Nov  8 13:17:12 2026 | ServerScriptService\Game\ObjectEffectService.lua | F2-O1 container release guarded for the action | new x1=True old gone=True len ok=True
+Sun Nov  8 13:17:18 2026 | ServerScriptService\Game\ObjectEffectService.lua | F2-O2 splash no longer clears guards mid-action | new x1=True old gone=True len ok=True
+Sun Nov  8 13:17:22 2026 | ServerScriptService\Game\ObjectEffectService.lua | F2-O3 splash doc comment | new x1=True old gone=True len ok=True
+Sun Nov  8 13:17:29 2026 | ServerScriptService\Game\CommandService.lua | F2-C1 clear guards at action start | new x1=True old gone=True len ok=True
+Sun Nov  8 13:17:34 2026 | ServerScriptService\Game\CommandService.lua | F2-C2 ground skill keeps guard to action end | new x1=True old gone=True len ok=True
+Sun Nov  8 13:17:39 2026 | ServerScriptService\Game\CommandService.lua | F2-C3 attack object keeps guard to action end | new x1=True old gone=True len ok=True
+Sun Nov  8 13:17:44 2026 | ServerScriptService\Game\CommandService.lua | F2-C4 clear guards at action end | new x1=True old gone=True len ok=True
+Sun Nov  8 13:18:01 2026 | StarterPlayer\StarterPlayerScripts\BattleVisualClient.client.lua | F3-a capture MP before update | new x1=True old gone=True len ok=True
+Sun Nov  8 13:18:10 2026 | StarterPlayer\StarterPlayerScripts\BattleVisualClient.client.lua | F3-b refresh unit panel on MP change | new x1=True old gone=True len ok=True
+Sun Nov  8 13:18:23 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | F4-b1 objHit single line | new x1=True old gone=True len ok=True
+Sun Nov  8 13:18:28 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | F4-b2 objHit grouped line | new x1=True old gone=True len ok=True
+Sun Nov  8 13:18:32 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | F4-b3 objHit groupable | new x1=True old gone=True len ok=True
+Sun Nov  8 13:18:37 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | F4-b4 ObjectChanged buffers objHit | new x1=True old gone=True len ok=True
+Sun Nov  8 13:18:44 2026 | ServerScriptService\Game\ObjectEffectService.lua | F4-o1 object hit log line | new x1=True old gone=True len ok=True
+Sun Nov  8 13:18:56 2026 | ServerScriptService\Game\ObjectEffectService.lua | F4-o2 Portable Ballista bolt logged with own cause | new x1=True old gone=True len ok=True
+Sun Nov  8 13:27:01 2026 | ServerScriptService\Game\TargetingService.lua | BACKUP current state as .pre_venomburst | ok=True
+Sun Nov  8 13:27:01 2026 | ReplicatedStorage\Content\SkillData.lua | BACKUP (venomburst) | ok=True
+Sun Nov  8 13:27:01 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | BACKUP (venomburst) | ok=True
+Sun Nov  8 13:27:06 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | VB-1 Venom Burst aimed 3x3 (range 1, Circle1) | new x1=True old gone=True len ok=True
+Sun Nov  8 13:27:18 2026 | ReplicatedStorage\Content\SkillData.lua | VB-2 SkillData Venom Burst row matches DB (aimed 3x3) | new x1=True old gone=True len ok=True
+Sun Nov  8 13:27:23 2026 | ServerScriptService\Game\TargetingService.lua | VB-3 Aimed Area target rule uses tile targeting | new x1=True old gone=True len ok=True
+Sun Nov  8 14:33:41 2026 | ServerScriptService\Main.server.lua | BACKUP current state as .pre_job3 (changed by another session since Sun Nov  8 09:53:12 2026; kept) | ok=True
+Sun Nov  8 14:33:46 2026 | ServerScriptService\Main.server.lua | J1-a channel deadline path releases Electric Shock | new x1=True old gone=True len ok=True
+Sun Nov  8 14:33:50 2026 | ServerScriptService\Main.server.lua | J1-b channel-as-turn path releases Electric Shock | new x1=True old gone=True len ok=True
+Sun Nov  8 14:33:55 2026 | ServerScriptService\Game\PulseScheduler.lua | J1-c shock flusher injection | new x1=True old gone=True len ok=True
+Sun Nov  8 14:33:59 2026 | ServerScriptService\Game\PulseScheduler.lua | J1-d clock pulse releases its shock | new x1=True old gone=True len ok=True
+Sun Nov  8 14:34:04 2026 | ServerScriptService\Game\CommandService.lua | J1-e wire shock flusher into PulseScheduler | new x1=True old gone=True len ok=True
+Sun Nov  8 14:34:15 2026 | ServerScriptService\Game\ObjectEffectService.lua | J2-a placed objects join the server object grid | new x1=True old gone=True len ok=True
+Sun Nov  8 14:34:20 2026 | ServerScriptService\Game\ObjectEffectService.lua | J2-b grid comment updated | new x1=True old gone=True len ok=True
+Sun Nov  8 14:34:24 2026 | ReplicatedStorage\Content\SkillData.lua | J3 Venom Burst card text (Designer thread-ccac694858c9) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:03:53 2026 | ServerScriptService\Game\BattleTurnController.lua | BACKUP (cardtext, first backup of this file; mtime Fri Nov  6 12:25:06 2026) | ok=True
+Sun Nov  8 16:03:53 2026 | ReplicatedStorage\CTRBLXAI\UI\BattleHUD.lua | BACKUP (cardtext, first backup of this file; mtime Fri Nov  6 15:22:42 2026) | ok=True
+Sun Nov  8 16:04:02 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | BACKUP current state as .pre_cardtext (mtime matches last known) | ok=True
+Sun Nov  8 16:04:02 2026 | ServerScriptService\Game\CommandService.lua | BACKUP current state as .pre_cardtext (mtime matches last known) | ok=True
+Sun Nov  8 16:04:02 2026 | ReplicatedStorage\Content\SkillData.lua | BACKUP current state as .pre_cardtext (mtime matches last known) | ok=True
+Sun Nov  8 16:04:08 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | CT-J1a Decimating Swing cleaveHitsAnySide flag | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:14 2026 | ServerScriptService\Game\CommandService.lua | CT-J1b cleaveAnySide helper | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:19 2026 | ServerScriptService\Game\CommandService.lua | CT-J1c Stormbringer hit count uses cleaveAnySide | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:24 2026 | ServerScriptService\Game\CommandService.lua | CT-J1d hit preview Cleave uses cleaveAnySide | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:30 2026 | ServerScriptService\Game\CommandService.lua | CT-J1e channeled Cleave unit pass uses cleaveAnySide | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:34 2026 | ServerScriptService\Game\CommandService.lua | CT-J1f instant Cleave unit pass uses cleaveAnySide | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:44 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-DARK-RESTORATION card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:44 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-RAINFALL-ZONE card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:44 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-PRECISE-DISARM card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:44 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-SHADOW-RAKE card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:44 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-SIPHON-PULSE card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:44 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-MENDING-RAIN card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:44 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-BATTLE-FURY card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:45 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-VANISHING-STEP card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:45 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-FESTERING-WOUND card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:45 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-DRAGON-DIVE card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:45 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-SANCTIFY card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:45 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-ICE-SPIKE card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:45 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-SET-SPIKE-TRAP card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:45 2026 | ReplicatedStorage\Content\SkillData.lua | CT-J2 SKL-SET-LAND-MINE card text (Designer thread-653d486e5eca pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:55 2026 | ServerScriptService\Game\BattleTurnController.lua | CT-J3a skillCardText helper | new x1=True old gone=True len ok=True
+Sun Nov  8 16:04:59 2026 | ServerScriptService\Game\BattleTurnController.lua | CT-J3b turn prompt sends full card text | new x1=True old gone=True len ok=True
+Sun Nov  8 16:06:07 2026 | ReplicatedStorage\CTRBLXAI\UI\BattleHUD.lua | CT-J3c fitActionCardText helper (card text fits above command bar) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:06:30 2026 | ReplicatedStorage\CTRBLXAI\UI\BattleHUD.lua | CT-J3d action panel card text in fitted scroll box | new x1=True old gone=True len ok=True
+Sun Nov  8 16:06:37 2026 | ReplicatedStorage\CTRBLXAI\UI\BattleHUD.lua | CT-J3e Render stack refits card text | new x1=True old gone=True len ok=True
+Sun Nov  8 16:06:43 2026 | ReplicatedStorage\CTRBLXAI\UI\BattleHUD.lua | CT-J3f layout-change stack refits card text | new x1=True old gone=True len ok=True
+Sun Nov  8 16:48:40 2026 | RULE252 batch start: backups made (UnitSchema, RacePassiveService, AIService new; .pre_rule252 copies)
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G1 Movement Slow status | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders GALE-THRUST | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders BLINDING-FLASH | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders DECIMATING-SWING | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders THUNDERCLAP | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders STATIC-FIELD | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders SHADOW-RAKE | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders DRAGON-DIVE | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders SWEEPING-CUT | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders METEOR-MARKER | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders PYROCLASM | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders TIDAL-CRASH | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders VENOM-BURST | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders FISSURE-LINE | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders GLACIAL-WAVE | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders SIPHON-PULSE | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders CHAIN-SPARK | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G2 riders VOLTAIC-CHAIN | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G3 Static Field DiamondRing2 | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G4 Sanctify allies only | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G5 Bulwark allies only | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G6 Consecrate allies only | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G7 Life Link fields | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:22 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | R252 G8 Blood Price HP cost | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:39 2026 | ServerScriptService\Game\TargetingService.lua | R252 T1 GetDiamondRingTiles | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:39 2026 | ServerScriptService\Game\TargetingService.lua | R252 T2 DiamondRing pattern | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:59 2026 | ServerScriptService\Game\StatusService.lua | R252 S1 NotifyHealGained + listener | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:59 2026 | ServerScriptService\Game\StatusService.lua | R252 S2 regen tick notify | new x1=True old gone=True len ok=True
+Sun Nov  8 16:49:59 2026 | ServerScriptService\Game\StatusService.lua | R252 S3 Overflowing Flask tick notify | new x1=True old gone=True len ok=True
+Sun Nov  8 16:50:18 2026 | ServerScriptService\Game\UnitSchema.lua | R252 U1 ApplyHealing notify | new x1=True old gone=True len ok=True
+Sun Nov  8 16:50:18 2026 | ServerScriptService\Game\ObjectEffectService.lua | R252 O1 Healing Spring notify | new x1=True old gone=True len ok=True
+Sun Nov  8 16:50:18 2026 | ServerScriptService\Game\ObjectEffectService.lua | R252 O2 Campfire notify | new x1=True old gone=True len ok=True
+Sun Nov  8 16:50:18 2026 | ServerScriptService\Game\ObjectEffectService.lua | R252 O3 object outcome heal notify | new x1=True old gone=True len ok=True
+Sun Nov  8 16:50:18 2026 | ServerScriptService\Game\ObjectEffectService.lua | R252 O4 Oasis notify | new x1=True old gone=True len ok=True
+Sun Nov  8 16:50:18 2026 | ServerScriptService\Game\ObjectEffectService.lua | R252 O5 object pulse heal notify | new x1=True old gone=True len ok=True
+Sun Nov  8 16:50:18 2026 | ServerScriptService\Game\RacePassiveService.lua | R252 R1 Troll Regrowth notify | new x1=True old gone=True len ok=True
+Sun Nov  8 16:50:18 2026 | ServerScriptService\Game\TileEffectService.lua | R252 TE1 Holy Ground notify | new x1=True old gone=True len ok=True
+Sun Nov  8 16:51:09 2026 | ServerScriptService\Game\LifeLinkService.lua | R252 L0 NEW FILE LifeLinkService.lua (delete to undo) | lines=167
+Sun Nov  8 16:51:16 2026 | ServerScriptService\Game\PulseScheduler.lua | R252 P1 SetLifeLinkTicker | new x1=True old gone=True len ok=True
+Sun Nov  8 16:51:22 2026 | ServerScriptService\Game\PulseScheduler.lua | R252 P2 tick Life Link | new x1=True old gone=True len ok=True
+Sun Nov  8 16:51:37 2026 | ServerScriptService\Game\CombatResolver.lua | R252 C1 appliesStatusRequires | new x1=True old gone=True len ok=True
+Sun Nov  8 16:51:37 2026 | ServerScriptService\Game\CombatResolver.lua | R252 C2 use conditional status | new x1=True old gone=True len ok=True
+Sun Nov  8 16:51:38 2026 | ServerScriptService\Game\CombatResolver.lua | R252 C3 Sanctify undead 50% | new x1=True old gone=True len ok=True
+Sun Nov  8 16:52:18 2026 | ServerScriptService\Game\CommandService.lua | R252 CS1 require LifeLinkService | new x1=True old gone=True len ok=True
+Sun Nov  8 16:52:18 2026 | ServerScriptService\Game\CommandService.lua | R252 CS2 wire heal listener | new x1=True old gone=True len ok=True
+Sun Nov  8 16:52:18 2026 | ServerScriptService\Game\CommandService.lua | R252 CS3 Life Link ticker | new x1=True old gone=True len ok=True
+Sun Nov  8 16:52:18 2026 | ServerScriptService\Game\CommandService.lua | R252 CS4 knockback life link check | new x1=True old gone=True len ok=True
+Sun Nov  8 16:52:45 2026 | ServerScriptService\Game\CommandService.lua | R252 CS5 rider delay/knockback/status + applyAreaRiders | new x1=True old gone=True len ok=True
+Sun Nov  8 16:52:56 2026 | ServerScriptService\Game\CommandService.lua | R252 CS6 area heal alliesOnly | new x1=True old gone=True len ok=True
+Sun Nov  8 16:52:56 2026 | ServerScriptService\Game\CommandService.lua | R252 CS7 area drain riders | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:19 2026 | ServerScriptService\Game\CommandService.lua | R252 CS8 riderHitsFromOutcomes | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:19 2026 | ServerScriptService\Game\CommandService.lua | R252 CS9 channel Cleave riders | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:19 2026 | ServerScriptService\Game\CommandService.lua | R252 CS10 channel chain last-only status | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:19 2026 | ServerScriptService\Game\CommandService.lua | R252 CS11 channel chain riders | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:19 2026 | ServerScriptService\Game\CommandService.lua | R252 CS12 channel tile-area riders | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:41 2026 | ServerScriptService\Game\CommandService.lua | R252 CS13 instant Cleave riders | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:41 2026 | ServerScriptService\Game\CommandService.lua | R252 CS14 instant chain last-only status | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:41 2026 | ServerScriptService\Game\CommandService.lua | R252 CS15 instant chain riders | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:41 2026 | ServerScriptService\Game\CommandService.lua | R252 CS16 instant tile-area hit list | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:41 2026 | ServerScriptService\Game\CommandService.lua | R252 CS17 instant tile-area riders | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:56 2026 | ServerScriptService\Game\CommandService.lua | R252 CS18 channel area shield alliesOnly | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:56 2026 | ServerScriptService\Game\CommandService.lua | R252 CS19 instant area shield alliesOnly | new x1=True old gone=True len ok=True
+Sun Nov  8 16:53:56 2026 | ServerScriptService\Game\CommandService.lua | R252 CS20 preview area shield alliesOnly | new x1=True old gone=True len ok=True
+Sun Nov  8 16:54:17 2026 | ServerScriptService\Game\CommandService.lua | R252 CS21 support targets alliesOnly | new x1=True old gone=True len ok=True
+Sun Nov  8 16:54:17 2026 | ServerScriptService\Game\CommandService.lua | R252 CS22 preview rider statuses | new x1=True old gone=True len ok=True
+Sun Nov  8 16:54:17 2026 | ServerScriptService\Game\CommandService.lua | R252 CS23 preview per-unit statuses | new x1=True old gone=True len ok=True
+Sun Nov  8 16:54:17 2026 | ServerScriptService\Game\CommandService.lua | R252 CS24 preview area heal alliesOnly + Life Link | new x1=True old gone=True len ok=True
+Sun Nov  8 16:54:17 2026 | ServerScriptService\Game\CommandService.lua | R252 CS25 preview chain last-only status | new x1=True old gone=True len ok=True
+Sun Nov  8 16:54:40 2026 | ServerScriptService\Game\CommandService.lua | R252 CS26 channel Life Link branch | new x1=True old gone=True len ok=True
+Sun Nov  8 16:54:40 2026 | ServerScriptService\Game\CommandService.lua | R252 CS27 instant Life Link branch | new x1=True old gone=True len ok=True
+Sun Nov  8 16:55:00 2026 | ServerScriptService\Game\CommandService.lua | R252 CS28 Blood Price helpers | new x1=True old gone=True len ok=True
+Sun Nov  8 16:55:00 2026 | ServerScriptService\Game\CommandService.lua | R252 CS29 CanPayCastCost Blood Price | new x1=True old gone=True len ok=True
+Sun Nov  8 16:55:00 2026 | ServerScriptService\Game\CommandService.lua | R252 CS30 PayCastCost Blood Price | new x1=True old gone=True len ok=True
+Sun Nov  8 16:55:00 2026 | ServerScriptService\Game\CommandService.lua | R252 CS31 validation Blood Price + Life Link self | new x1=True old gone=True len ok=True
+Sun Nov  8 16:55:11 2026 | ServerScriptService\Game\BattleTurnController.lua | R252 BT1 prompt greys Blood Price | new x1=True old gone=True len ok=True
+Sun Nov  8 16:55:11 2026 | ServerScriptService\Game\AIService.lua | R252 AI1 skip Blood Price at low HP | new x1=True old gone=True len ok=True
+Sun Nov  8 16:55:17 2026 | ServerScriptService\Game\CommandService.lua | R252 CS32 recruit heal notify | new x1=True old gone=True len ok=True
+Sun Nov  8 16:56:51 2026 | ReplicatedStorage\Content\SkillData.lua | R252 J6 card text SKL-GALE-THRUST (Designer pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:56:51 2026 | ReplicatedStorage\Content\SkillData.lua | R252 J6 card text SKL-BLINDING-FLASH (Designer pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:56:51 2026 | ReplicatedStorage\Content\SkillData.lua | R252 J6 card text SKL-DECIMATING-SWING (Designer pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:56:51 2026 | ReplicatedStorage\Content\SkillData.lua | R252 J6 card text SKL-THUNDERCLAP (Designer pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:56:51 2026 | ReplicatedStorage\Content\SkillData.lua | R252 J6 card text SKL-STATIC-FIELD (Designer pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:56:51 2026 | ReplicatedStorage\Content\SkillData.lua | R252 J6 card text SKL-SANCTIFY (Designer pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:56:51 2026 | ReplicatedStorage\Content\SkillData.lua | R252 J6 card text SKL-LIFE-LINK (Designer pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:56:51 2026 | ReplicatedStorage\Content\SkillData.lua | R252 J6 card text SKL-BLOOD-PRICE (Designer pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:56:52 2026 | ReplicatedStorage\Content\SkillData.lua | R252 J6 card text SKL-BULWARK-FIELD (Designer pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:56:52 2026 | ReplicatedStorage\Content\SkillData.lua | R252 J6 card text SKL-CONSECRATE (Designer pending text, game-checked) | new x1=True old gone=True len ok=True
+Sun Nov  8 16:57:33 2026 | RULE252 batch done (Jobs 1-6). Source-only; no Studio run.
+Sun Nov  8 17:16:02 2026 | RULE253 batch start: backups (AugmentEffectService new; .pre_rule253 for CommandService, BattleTurnController, AIService, SkillData)
+Sun Nov  8 17:16:08 2026 | ServerScriptService\Game\AugmentEffectService.lua | R253 J1 AUG healUnit reports heal to Life Link | new x1=True old gone=True len ok=True
+Sun Nov  8 17:16:18 2026 | ServerScriptService\Game\CommandService.lua | R253 CS1 IsPinBlockedSkill helper | new x1=True old gone=True len ok=True
+Sun Nov  8 17:16:28 2026 | ServerScriptService\Game\CommandService.lua | R253 CS2 validation rejects pin-blocked skill | new x1=True old gone=True len ok=True
+Sun Nov  8 17:16:37 2026 | ServerScriptService\Game\BattleTurnController.lua | R253 BT1 prompt greys pin-blocked skill | new x1=True old gone=True len ok=True
+Sun Nov  8 17:16:37 2026 | ServerScriptService\Game\AIService.lua | R253 AI1 AI skips pin-blocked skill | new x1=True old gone=True len ok=True
+Sun Nov  8 17:16:55 2026 | ReplicatedStorage\Content\SkillData.lua | R253 J3 Static Field note matches built behaviour | new x1=True old gone=True len ok=True
+Sun Nov  8 17:17:17 2026 | RULE253 batch done (Jobs 1-3: Life Link augment heals, Pinned skill block, Static Field note). Source-only; no Studio run.
+Sun Nov  8 19:08:18 2026 | LUNGE/RECOIL batch start: backups .pre_lungerecoil for CommandService, BattleTurnController, AIService, GameConstants, BattleVisualClient
+Sun Nov  8 19:08:28 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | LR G1 CalcSkillRange honours minSkillRange | new x1=True old gone=True len ok=True
+Sun Nov  8 19:08:28 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | LR G2 Lunge flags (exact range 2, step first) | new x1=True old gone=True len ok=True
+Sun Nov  8 19:08:28 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | LR G3 Recoil Shot flag (hop after) | new x1=True old gone=True len ok=True
+Sun Nov  8 19:09:29 2026 | ServerScriptService\Game\CommandService.lua | LR C1 shared Lunge step / Recoil hop tile rules | new x1=True old gone=True len ok=True
+Sun Nov  8 19:09:43 2026 | ServerScriptService\Game\CommandService.lua | LR C2 self-step entry + Lunge step + Recoil hop helpers | new x1=True old gone=True len ok=True
+Sun Nov  8 19:09:51 2026 | ServerScriptService\Game\CommandService.lua | LR C3 Phase Lock also refuses Lunge | new x1=True old gone=True len ok=True
+Sun Nov  8 19:09:52 2026 | ServerScriptService\Game\CommandService.lua | LR C4 Misdirection redirect honours Lunge step | new x1=True old gone=True len ok=True
+Sun Nov  8 19:09:52 2026 | ServerScriptService\Game\CommandService.lua | LR C5 Interception redirect honours Lunge step | new x1=True old gone=True len ok=True
+Sun Nov  8 19:10:00 2026 | ServerScriptService\Game\CommandService.lua | LR C6 hit preview shows Lunge hit from the step tile | new x1=True old gone=True len ok=True
+Sun Nov  8 19:10:11 2026 | ServerScriptService\Game\CommandService.lua | LR C7 Pinned/Phase Locked mid-wait cancels self-moving skill, cost refunded | new x1=True old gone=True len ok=True
+Sun Nov  8 19:10:24 2026 | ServerScriptService\Game\CommandService.lua | LR C8 validation refuses Lunge without exact range 2 / step tile | new x1=True old gone=True len ok=True
+Sun Nov  8 19:10:24 2026 | ServerScriptService\Game\CommandService.lua | LR C9 redirect safety net for Lunge | new x1=True old gone=True len ok=True
+Sun Nov  8 19:10:45 2026 | ServerScriptService\Game\CommandService.lua | LR C10 Lunge step before the hit (+ Recoil origin) | new x1=True old gone=True len ok=True
+Sun Nov  8 19:10:45 2026 | ServerScriptService\Game\CommandService.lua | LR C11 Recoil Shot hop after the shot | new x1=True old gone=True len ok=True
+Sun Nov  8 19:10:54 2026 | ServerScriptService\Game\CommandService.lua | LR C12 Ram Gauntlets: Pinned user stays put | new x1=True old gone=True len ok=True
+Sun Nov  8 19:11:05 2026 | ServerScriptService\Game\BattleTurnController.lua | LR B1 prompt hides Lunge targets with no step tile | new x1=True old gone=True len ok=True
+Sun Nov  8 19:11:05 2026 | ServerScriptService\Game\BattleTurnController.lua | LR B2 prompt damage preview from Lunge step tile | new x1=True old gone=True len ok=True
+Sun Nov  8 19:11:05 2026 | ServerScriptService\Game\BattleTurnController.lua | LR B3 prompt sends Lunge/Recoil end tile | new x1=True old gone=True len ok=True
+Sun Nov  8 19:11:05 2026 | ServerScriptService\Game\BattleTurnController.lua | LR B4 skill payload flag for end-tile highlight | new x1=True old gone=True len ok=True
+Sun Nov  8 19:11:15 2026 | StarterPlayer\StarterPlayerScripts\BattleVisualClient.client.lua | LR V1 client highlights Lunge/Recoil end tile | new x1=True old gone=True len ok=True
+Sun Nov  8 19:11:15 2026 | ServerScriptService\Game\AIService.lua | LR A1 AI predicts Lunge hit from step tile | new x1=True old gone=True len ok=True
+Sun Nov  8 19:11:15 2026 | ServerScriptService\Game\AIService.lua | LR A2 AI keeps only Lunge targets with a step tile | new x1=True old gone=True len ok=True
+Sun Nov  8 19:13:35 2026 | LUNGE/RECOIL batch done (Jobs 1-4). Block balance checked (function/if/do vs end) on all 5 files. Source-only; no Studio run.
+Sun Nov  8 19:32:16 2026 | D1LUNGE batch start: backups .pre_d1lunge for TargetingService, CommandService, BattleTurnController, BattleVisualClient
+Sun Nov  8 19:32:24 2026 | ServerScriptService\Game\TargetingService.lua | D1L T1 walking jump limits + diagonal corner rule shared for Lunge/Recoil | new x1=True old gone=True len ok=True
+Sun Nov  8 19:32:36 2026 | ServerScriptService\Game\CommandService.lua | D1L C1 Lunge step / Recoil hop use walking height limits + diagonal corner rule (Job 3 defaults) | new x1=True old gone=True len ok=True
+Sun Nov  8 19:32:44 2026 | ServerScriptService\Game\BattleTurnController.lua | D1L B1 hasLungeAimTile helper for player tile-aim Lunge | new x1=True old gone=True len ok=True
+Sun Nov  8 19:32:51 2026 | ServerScriptService\Game\BattleTurnController.lua | D1L B2 Lunge filter lets the player tile-aim marker pass (D1) | new x1=True old gone=True len ok=True
+Sun Nov  8 19:32:58 2026 | ServerScriptService\Game\BattleTurnController.lua | D1L B3 hit preview answer carries Lunge/Recoil end tile for the aimed tile | new x1=True old gone=True len ok=True
+Sun Nov  8 19:33:19 2026 | StarterPlayer\StarterPlayerScripts\BattleVisualClient.client.lua | D1L V1 tile-aim mode draws Lunge/Recoil end tile from the server preview answer | new x1=True old gone=True len ok=True
+Sun Nov  8 19:33:43 2026 | D1LUNGE batch done (Jobs 1-3). Block balance identical to .pre_d1lunge on all 4 files. Source-only; no Studio run.
+Sun Nov  8 20:13:21 2026 | BALANCE1114 batch start: backups .pre_balance1114 for GameConstants, CommandService, BattleVisualClient, BattleHUD, SkillData, AugmentEffectService
+Sun Nov  8 20:13:33 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | BAL J1-G1 Dragon Dive side-tile delay x0.50 of full | new x1=True old gone=True len ok=True
+Sun Nov  8 20:13:33 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | BAL J1-G2 Decimating Swing other-target delay x0.50 of full | new x1=True old gone=True len ok=True
+Sun Nov  8 20:13:48 2026 | ServerScriptService\Game\CommandService.lua | BAL J1-C1 shared actual-delay formula + main/side delay helpers | new x1=True old gone=True len ok=True
+Sun Nov  8 20:13:55 2026 | ServerScriptService\Game\CommandService.lua | BAL J1-C2 applyAreaRiders takes the main target | new x1=True old gone=True len ok=True
+Sun Nov  8 20:14:01 2026 | ServerScriptService\Game\CommandService.lua | BAL J1-C3 area riders: side units get the delay share | new x1=True old gone=True len ok=True
+Sun Nov  8 20:14:25 2026 | ServerScriptService\Game\CommandService.lua | BAL J1-C4 channelled Cleave passes its main target | new x1=True old gone=True len ok=True
+Sun Nov  8 20:14:25 2026 | ServerScriptService\Game\CommandService.lua | BAL J1-C7 instant tile area passes its aimed tile | new x1=True old gone=True len ok=True
+Sun Nov  8 20:14:25 2026 | ServerScriptService\Game\CommandService.lua | BAL J1-C5 channelled tile area passes its aimed tile | new x1=True old gone=True len ok=True
+Sun Nov  8 20:14:25 2026 | ServerScriptService\Game\CommandService.lua | BAL J1-C6 instant Cleave passes its main target | new x1=True old gone=True len ok=True
+Sun Nov  8 20:14:40 2026 | ServerScriptService\Game\CommandService.lua | BAL J1-P1 preview body becomes a local (public wrapper follows) | new x1=True old gone=True len ok=True
+Sun Nov  8 20:15:07 2026 | ServerScriptService\Game\CommandService.lua | BAL J1-P2 public preview wrapper adds per-unit turn delay | new x1=True old gone=True len ok=True
+Sun Nov  8 20:15:21 2026 | ReplicatedStorage\CTRBLXAI\UI\BattleHUD.lua | BAL J1-H1 multi-unit hit preview shows each unit's turn delay | new x1=True old gone=True len ok=True
+Sun Nov  8 20:15:21 2026 | StarterPlayer\StarterPlayerScripts\BattleVisualClient.client.lua | BAL J1-V1 one-unit hit preview uses the server turn delay | new x1=True old gone=True len ok=True
+Sun Nov  8 20:15:30 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | BAL J2-G1 Blood Price range 3 -> 1 | new x1=True old gone=True len ok=True
+Sun Nov  8 20:15:30 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | BAL J2-G2 Blood Price gets no Bonus Skill Range | new x1=True old gone=True len ok=True
+Sun Nov  8 20:15:38 2026 | ReplicatedStorage\Content\SkillData.lua | BAL J2-S1 Blood Price card text (no 'at range') + Melee tag (DB skills.Skill_Tags) | new x1=True old gone=True len ok=True
+Sun Nov  8 20:15:44 2026 | ReplicatedStorage\Content\SkillData.lua | BAL J2-S2 Blood Price range text Fixed 1 (DB skills.Targeting_Range) | new x1=True old gone=True len ok=True
+Sun Nov  8 20:15:50 2026 | ServerScriptService\Game\AugmentEffectService.lua | BAL J3-A1 per-caster record of units an area skill damaged (Scatter/Vortex) | new x1=True old gone=True len ok=True
+Sun Nov  8 20:15:58 2026 | ServerScriptService\Game\AugmentEffectService.lua | BAL J3-A2 Scatter/Vortex record every unit damaged by the area skill | new x1=True old gone=True len ok=True
+Sun Nov  8 20:16:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | BAL J3-A3 Scatter/Vortex move every damaged unit (allies too) | new x1=True old gone=True len ok=True
+Sun Nov  8 20:16:19 2026 | ServerScriptService\Game\AugmentEffectService.lua | BAL J3-A4 Scatter/Vortex log says units (allies can be moved now) | new x1=True old gone=True len ok=True
+Sun Nov  8 20:16:19 2026 | ServerScriptService\Game\CommandService.lua | BAL J3-C1 channelled OnSkillComplete gets this cast's hit list | new x1=True old gone=True len ok=True
+Sun Nov  8 20:16:24 2026 | ServerScriptService\Game\CommandService.lua | BAL J3-C2 instant OnSkillComplete gets this cast's hit list | new x1=True old gone=True len ok=True
+Sun Nov  8 20:17:11 2026 | BALANCE1114 batch done (Jobs 1-3). Block keywords (function/do/if vs end) balanced vs .pre_balance1114 on all 6 files. Source-only; no Studio run. BattleCoordinator/BattleEvents untouched (other session changes kept).
+Sun Nov  8 20:35:03 2026 | ServerScriptService\Game\CombatResolver.lua | VSURGE C1 OnDamageResolved gets this cast's resolution id | new x1=True old gone=True len ok=True
+Sun Nov  8 20:35:08 2026 | ServerScriptService\Game\AugmentEffectService.lua | VSURGE A1 per-caster record of the cast that already healed | new x1=True old gone=True len ok=True
+Sun Nov  8 20:35:12 2026 | ServerScriptService\Game\AugmentEffectService.lua | VSURGE A2 OnDamageResolved accepts the resolution id | new x1=True old gone=True len ok=True
+Sun Nov  8 20:35:20 2026 | ServerScriptService\Game\AugmentEffectService.lua | VSURGE A3 Vitality Surge heals once per cast + one log line | new x1=True old gone=True len ok=True
+Sun Nov  8 20:35:36 2026 | VSURGE batch done (4 edits: CombatResolver C1, AugmentEffectService A1-A3). Block keywords balanced vs .pre_vsurge (AES +1 = the new if-expression, not a block). Source-only; no Studio run. Other files untouched.
+Sun Nov  8 20:46:43 2026 | KILLRESET start: .pre_killreset backups for CombatResolver, AugmentEffectService, Main.server, AugmentData (AugmentData added to _mtimes.json; last changed Sun Nov  1 01:37:03 2026)
+Sun Nov  8 20:46:50 2026 | ServerScriptService\Game\CombatResolver.lua | KILLRESET C1 BeginResolution also resets AES fired-list (once per cast) | new x1=True old gone=True len ok=True
+Sun Nov  8 20:46:55 2026 | ServerScriptService\Game\AugmentEffectService.lua | KILLRESET A1 log when a once-per-cast augment is held back | new x1=True old gone=True len ok=True
+Sun Nov  8 20:47:05 2026 | ServerScriptService\Main.server.lua | KILLRESET M1 new battle clears AES fired-list | new x1=True old gone=True len ok=True
+Sun Nov  8 20:47:09 2026 | ReplicatedStorage\Content\AugmentData.lua | KILLRESET D1 Vitality Surge description (USER OK 2026-11-08 8:33 PM) | new x1=True old gone=True len ok=True
+Sun Nov  8 20:47:29 2026 | KILLRESET batch done (4 edits: CombatResolver C1, AugmentEffectService A1, Main M1, AugmentData D1). Block keywords unchanged vs .pre_killreset on all 4 files. Vitality Surge logic (_vitalitySurgeRes) and per-hit augments untouched. Source-only; no Studio run. BattleCoordinator/BattleEvents mtime drift is older (09:19/10:24), not this session, untouched.
+Sun Nov  8 22:06:15 2026 | PRECOMMIT start: .pre_precommit backups for BattleVisualBroadcaster, CommandService, SkillData, BattleTurnController (mtimes matched _mtimes.json)
+Sun Nov  8 22:06:24 2026 | ServerScriptService\Game\BattleTurnController.lua | PRECOMMIT J3-B1 remove TEMP STEAL-DIAG block (USER APPROVED 2026-11-08 8:47 PM) | new x1=False old gone=True len ok=True
+Sun Nov  8 22:06:42 2026 | NOTE J3-B1: 'new x1=False' is a helper artefact (new text is empty, str.count('') != 1). Manually verified: file == .pre_precommit minus exactly the 16-line block (1127 chars), 0 STEAL-DIAG / TEMP DIAGNOSTIC left.
+Sun Nov  8 22:06:42 2026 | ServerScriptService\Game\CommandService.lua | PRECOMMIT J2-C1 LungeStepTile returns no step tile while Pinned / Phase Locked (match RecoilHopTile) | new x1=True old gone=True len ok=True
+Sun Nov  8 22:06:50 2026 | ReplicatedStorage\Content\SkillData.lua | PRECOMMIT J2-S1 Lunge card text (DB skills.Card_Text_Pending 2026-11-08) | new x1=True old gone=True len ok=True
+Sun Nov  8 22:06:57 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | PRECOMMIT J1-B1 HEAL_CAUSES list (Vitality Surge) + RegisterHealCause | new x1=True old gone=True len ok=True
+Sun Nov  8 22:07:04 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | PRECOMMIT J1-B2 diffUnit records a heal logged by a HEAL_CAUSES cause | new x1=True old gone=True len ok=True
+Sun Nov  8 22:07:10 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | PRECOMMIT J1-B3 syncHp clears the HEAL_CAUSES record when HP changed | new x1=True old gone=True len ok=True
+Sun Nov  8 22:07:17 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | PRECOMMIT J1-B4 HealingApplied skips the duplicate self-heal line for a HEAL_CAUSES heal | new x1=True old gone=True len ok=True
+Sun Nov  8 22:08:09 2026 | PRECOMMIT batch done (7 edits: BVB J1-B1..B4, CommandService J2-C1, SkillData J2-S1, BattleTurnController J3-B1). Block keywords balanced vs .pre_precommit (BVB +2 = two new if-expressions, not blocks). Vitality Surge heal logic untouched. Source-only; no Studio run. BattleCoordinator/BattleEvents drift is older (09:19/10:24), untouched.
+Sun Nov  8 22:38:01 2026 | SKILLOWN start: .pre_skillown backup for CommandService (mtime matched _mtimes.json). Investigation only before this; no other files touched.
+Sun Nov  8 22:38:08 2026 | ServerScriptService\Game\CommandService.lua | SKILLOWN C1 refuse a player skill the unit doesn't have (SEC-001/002) | new x1=True old gone=True len ok=True
+Sun Nov  8 22:38:21 2026 | SKILLOWN batch done (1 edit: CommandService C1 at L4987-5004, inside ValidateAndCommit STEP 5 right after the unknown-skill check). Re-read from disk: block keywords +3 if/then, +1 for/do, +4 end vs .pre_skillown (balanced, one new if-block group + loop). Player-only (actor.controller == 'Player'); AI path untouched. Source-only; no Studio run. BattleCoordinator/BattleEvents drift is older (09:19/10:24), untouched.

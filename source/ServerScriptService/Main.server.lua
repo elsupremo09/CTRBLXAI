@@ -15,6 +15,7 @@ local Players             = game:GetService("Players")
 local Game = ServerScriptService:WaitForChild("Game")
 
 local UnitSchema              = require(Game:WaitForChild("UnitSchema"))
+local DevAccess               = require(Game:WaitForChild("DevAccess")) -- dev-tool gate: Studio or owner allow-list (2026-11-06)
 local BattleCoordinator       = require(Game:WaitForChild("BattleCoordinator"))
 local CommandService          = require(Game:WaitForChild("CommandService"))
 local TargetingService        = require(Game:WaitForChild("TargetingService"))
@@ -959,6 +960,9 @@ local mapReadyForStart = false
 
 -- forward-declared battle state (updated each round inside the loop)
 local state
+-- True only while the battle turn loop runs. `state` keeps the last finished battle, so it can't
+-- tell hub/deployment apart from a live battle (Tester 2026-11-08). Dev Instant Win/Lose/Kill use this.
+local battleRunning = false
 local BattleTurnController
 local allUnitsList
 local undeployConn
@@ -1057,11 +1061,21 @@ BattleEvents.RewardContinue.OnServerEvent:Connect(function(player)
 	rewardContinueSignal:Fire()
 end)
 
-if game:GetService("RunService"):IsStudio() then
+do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-checked on EVERY call.
 	BattleEvents.DevCommand.OnServerEvent:Connect(function(player, cmd)
+		if not DevAccess.IsAllowed(player) then
+			warn(string.format("[Dev] DevCommand rejected for %s (%d): dev tools not allowed", player.Name, player.UserId))
+			return
+		end
 		if not cmd or type(cmd) ~= "table" then return end
 
 		if cmd.action == "InstantWin" then
+			-- No battle running (hub or still deploying): ignore instead of crashing on a nil
+			-- battle state and killing enemies before the fight starts (Studio test 2026-11-08).
+			if not battleRunning or not state then
+				warn("[Dev] Instant Win ignored: no battle in progress")
+				return
+			end
 			print("[Dev] Instant Win triggered")
 			for _, u in ipairs(allUnitsList) do
 				if u.side == "Enemy" and u.isAlive then
@@ -1076,6 +1090,10 @@ if game:GetService("RunService"):IsStudio() then
 			BattleTurnController.ForceEndTurn()
 
 		elseif cmd.action == "InstantLose" then
+			if not battleRunning or not state then
+				warn("[Dev] Instant Lose ignored: no battle in progress")
+				return
+			end
 			print("[Dev] Instant Lose triggered")
 			for _, u in ipairs(allUnitsList) do
 				if u.side == "Player" and u.isAlive then
@@ -1169,6 +1187,7 @@ if game:GetService("RunService"):IsStudio() then
 		elseif cmd.action == "KillAtTile" then
 			local tx, ty = cmd.tileX, cmd.tileY
 			if not tx or not ty then return end
+			if not battleRunning then warn("[Dev] Kill At Tile ignored: no battle in progress") return end
 			for _, u in ipairs(allUnitsList) do
 				if u.tileX == tx and u.tileY == ty and u.isAlive then
 					print(string.format("[Dev] Kill unit at (%d,%d): %s HP:%d->0", tx, ty, u.name, u.currentHp))
@@ -1195,6 +1214,44 @@ if game:GetService("RunService"):IsStudio() then
 			-- Dev (Studio only): +100 mercury for testing Blacksmith levelling, then save.
 			local bal = CurrencyService.Credit(PLAYER_ID, { mercury = 100 })
 			print(string.format("[Dev] +100 mercury -> balance %d", bal and bal.mercury or -1))
+			doSave()
+
+		elseif cmd.action == "DevGrantAllMaterials" then
+			-- Dev (owner/Studio, gated by DevAccess above): +100 to every currency/resource
+			-- counter CurrencyService holds (gold, mercury, crystals, sulfur), plus 100 rune
+			-- gems in total, each an independently random valid gem ID (user ruling
+			-- 2026-11-06). Valid gem IDs = the same set the Runeforge accepts: numeric
+			-- bonus attributes up to tier 4, and bonus passives whose minRarity is Epic or
+			-- lower (BonusData). The server decides everything; nothing in cmd is read.
+			local GRANT = 100
+			local keys = { "gold", "mercury", "crystals", "sulfur" }
+			local grant = {}
+			for _, k in ipairs(keys) do grant[k] = GRANT end
+			local gemIds = {}
+			local epicOrder = BonusData.RARITY_ORDER["Epic"] or 0
+			for id, attr in pairs(BonusData.NumericalAttributes or {}) do
+				if (attr.tier or 0) <= 4 then table.insert(gemIds, id) end
+			end
+			for id, def in pairs(BonusData.BonusPassives or {}) do
+				if (BonusData.RARITY_ORDER[def.minRarity] or 0) <= epicOrder then table.insert(gemIds, id) end
+			end
+			table.sort(gemIds)
+			local gems = {}
+			if #gemIds > 0 then
+				local rng = Random.new()
+				for _ = 1, GRANT do
+					local id = gemIds[rng:NextInteger(1, #gemIds)]
+					gems[id] = (gems[id] or 0) + 1
+				end
+				grant.gems = gems
+			end
+			local bal = CurrencyService.Credit(PLAYER_ID, grant)
+			local gemParts = {}
+			for id, n in pairs(gems) do table.insert(gemParts, id .. "=" .. n) end
+			table.sort(gemParts)
+			print(string.format("[Dev] DevGrantAllMaterials +%d gold/mercury/crystals/sulfur, +%d random gems: %s -> gold %d | mercury %d | crystals %d | sulfur %d",
+				GRANT, (#gemIds > 0) and GRANT or 0, table.concat(gemParts, ", "), bal and bal.gold or -1,
+				bal and bal.mercury or -1, bal and bal.crystals or -1, bal and bal.sulfur or -1))
 			doSave()
 
 		elseif cmd.action == "DevGrantAllCards" then
@@ -1607,7 +1664,7 @@ if game:GetService("RunService"):IsStudio() then
 			end
 		end
 	end)
-	print("[Dev] DevCommand handler active (Studio only)")
+	print("[Dev] DevCommand handler active (Studio, or allow-listed owner accounts via DevAccess)")
 end
 
 BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId)
@@ -2523,8 +2580,9 @@ while true do
 			warn("[Main] Daily Contract could not be generated: " .. tostring(dc))
 		end
 	end
-	-- TEST ARENA (user request 2026-11-05): persistent Studio-only quest, pinned first.
-	if game:GetService("RunService"):IsStudio() then
+	-- TEST ARENA (user request 2026-11-05): persistent dev-only quest, pinned first. Studio, or a
+	-- published server where every player is an allow-listed owner (DevAccess, 2026-11-06).
+	if DevAccess.SessionAllowed() then
 		local arenaLvl = 1
 		for _, u in pairs(playerUnits) do
 			if (u.level or 1) > arenaLvl then arenaLvl = u.level end
@@ -2718,11 +2776,13 @@ while true do
 	-- OBS Phase 2c-D: route explosion/elevation object hits to the breakable OBS
 	-- blocker at (x,y). Closure over the battle `state` upvalue (lazy; nil-safe
 	-- before a battle exists). Billboard/unbreakable tiles are a no-op in ApplyObjectHit.
-	TileEffectService.SetObjectHitCallback(function(x, y)
+	TileEffectService.SetObjectHitCallback(function(x, y, elem)
 		-- fromExplosion=true: an EXPLOSIVE object (Bomb Barrel / Land Mine) in the
 		-- blast is NOT detonated here — the explosion queue chains it via the
 		-- explosive callback below so the 128-event cap spans the whole chain.
-		if state then return ObjectEffectService.ApplyObjectHit(state, x, y, 1, nil, true) end
+		-- elem (optional, 2026-11-07): "Poison" when a Poison Cloud lands on a Wasp Nest (its
+		-- instant-kill tag). Explosions pass none, exactly as before.
+		if state then return ObjectEffectService.ApplyObjectHit(state, x, y, 1, elem, true) end
 		return nil
 	end)
 	-- Trap-trigger feature (2026-10-20): when an explosion reaches a Bomb Barrel /
@@ -2828,6 +2888,12 @@ while true do
 	BattlefieldEventService.SetHunterLooter(ObjectEffectService.HunterLootChest)
 	BattlefieldEventService.SetObjectDisplayNamer(function(o) return ObjectEffectService.GetDisplayType(o, nil) end)
 	BattlefieldEventService.SetBattleCoordinator(BattleCoordinator)
+-- Monster Hunter drops a VISIBLE Neutral Snare Trap object (DB battlefield_events 21, fix 2026-11-06).
+BattlefieldEventService.SetTrapPlacer(function(st, x, y)
+	local inst = ObjectEffectService.PlaceObjectInstance(st, "Snare Trap", x, y, "Neutral")
+	if inst and inst.hidden then ObjectEffectService.RevealObject(inst) end
+	return inst
+end)
 	BattlefieldEventService.SetTileReshaper(function(x, y, terrain, elev)
 		if mapFolder then MapRenderer.ReshapeTile(mapFolder, x, y, terrain, elev) end
 	end)
@@ -3810,6 +3876,8 @@ while true do
 	-- passive auras (War Banner / Cursed Statue) to units already standing in range
 	-- at deployment. Subsequent entries/exits are reconciled on each Move.
 	ObjectEffectService.ResetBattle()
+	-- 2026-11-08 (kill-augment reset): new battle starts with an empty augment "already fired" list.
+	if _AugmentEffectService.EndResolution then _AugmentEffectService.EndResolution() end
 	ObjectEffectService.ReconcileAuras(state.units, state)
 
 	-- Battlefield events: pick this battle's events (0-3 random + conditional) and
@@ -4080,6 +4148,7 @@ while true do
 		end
 	end
 
+	battleRunning = true  -- turn loop starting: dev battle commands allowed (2026-11-08)
 	while BattleCoordinator.GetPhase(state) ~= "BattleOver" do
 		local activeUnit = BattleCoordinator.AdvanceClock(state)
 		-- Dev god mode (2026-11-06): show the start-of-turn HP/MP refill on the client.
@@ -4259,6 +4328,16 @@ while true do
 			BattleVisualBroadcaster.TurnStarted(caster, state.ct, state.units)
 			local chActions = BattleTurnController.handleChannelingActivation(caster)
 			BattleTurnController.broadcastActions(chActions, caster)
+			-- R1a fix (2026-11-08): a channelled skill's held-back Electric Shock is released here, at
+			-- the end of its own resolution and after its hits are shown, so it is not carried into
+			-- (and logged under) the next action. No-op when no Electric hit was buffered.
+			CombatResolver.FlushElectricShock(state.units)
+			-- A dev Instant Win/Lose can land while the channel resolves (the activation yields
+			-- for visuals), leaving the battle already over: end it here instead of crashing on
+			-- ResolveChannelDeadline's phase assert (Studio-found 2026-11-06).
+			if state.phase == "BattleOver" then
+				break
+			end
 			local immediate = BattleCoordinator.ResolveChannelDeadline(state)
 			if not immediate then
 				-- No immediate turn — caster keeps its RT; continue the main loop.
@@ -4313,6 +4392,11 @@ while true do
 		-- it (so a KO still ends the battle); here it is shown on screen and a KO'd unit's tile
 		-- is freed. Called right before TurnEnded on both the normal and skipped-turn paths.
 		local function broadcastEndTurnDots()
+			-- Mana Fountain (2026-11-07): end-of-turn MP restore set by StatusService.ProcessEndOfTurn.
+			if activeUnit and activeUnit._manaFountainGain then
+				activeUnit._manaFountainGain = nil
+				BattleVisualBroadcaster.UnitStateChanged(activeUnit, "Mana Fountain", true)
+			end
 			local evs = state.endTurnDotEvents
 			state.endTurnDotEvents = nil
 			if not evs then return end
@@ -4338,7 +4422,11 @@ while true do
 				BattleCoordinator.InterruptChanneling(activeUnit, "death")
 				BattleVisualBroadcaster.ChannelEnded(activeUnit)
 			end
-			BattleCoordinator.EndTurn(state)
+			-- Guard (2026-11-06): a dev InstantWin/InstantLose mid-turn already set phase BattleOver;
+			-- EndTurn asserts TurnOpen, so only close a turn that is still open.
+			if BattleCoordinator.GetPhase(state) == "TurnOpen" then
+				BattleCoordinator.EndTurn(state)
+			end
 			BattleVisualBroadcaster.TurnEnded(activeUnit, 0)
 		elseif StatusService.ShouldSkipTurn(activeUnit) then
 			-- Turn skip: Sleep / Petrify / Stun / Knock-out
@@ -4468,6 +4556,11 @@ while true do
 			if activeUnit.controller ~= "Player" or wasChanneling then
 				BattleTurnController.broadcastActions(actions, activeUnit)
 			end
+			-- R1a fix (2026-11-08): a channel that resolved as this unit's turn releases its Electric
+			-- Shock now, after its hits are shown (same as the channel-deadline path above).
+			if wasChanneling then
+				CombatResolver.FlushElectricShock(state.units)
+			end
 
 			-- Safety close
 			if BattleCoordinator.GetPhase(state) == "TurnOpen" then
@@ -4519,6 +4612,7 @@ while true do
 			BattleVisualBroadcaster.TurnEnded(activeUnit, activeUnit.remainingRt)
 		end
 	end
+	battleRunning = false  -- turn loop finished: dev battle commands are ignored again (2026-11-08)
 
 	--------------------------------------------------
 	-- RESULT
@@ -4747,6 +4841,45 @@ while true do
 			print(string.format("[PostBattle] Gold +%d (kills %d, completion %d, quest %d, band x%.2f, event x%.1f, %s)",
 				total, killGold, completionGold, questGold, band, eventGoldMult, if isQualifyingVictory then "victory" else "defeat"))
 		end
+		-- LEARNING STONE (objects_encounters row 119, USER RULING 2026-11-07): each unit that used one
+		-- gains floor(0.5 x the battle gold earned) XP, on a WIN only (dead users still get it). Paid
+		-- here because the gold is only known now; same unit-XP grant as the rest of the post-battle
+		-- award, and added to that unit's victory-screen XP line.
+		if isQualifyingVictory and state and type(state.learningStoneUnits) == "table" then
+			-- Share read from ObjectData (Learning Stone bonusXpGoldShare = 0.5, DB row 119); Main does not
+			-- require ObjectData at the top, so it is required here, nil-safe.
+			local _lsOk, _lsObjData = pcall(function()
+				return require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("ObjectData"))
+			end)
+			local _lsDef = _lsOk and _lsObjData and _lsObjData.Objects and _lsObjData.Objects["Learning Stone"]
+			local _lsShare = (_lsDef and _lsDef.bonusXpGoldShare) or 0.5
+			-- D8 (ruling 249h): ALL battle gold counts, incl. a defeated Treasure Hunter's chest gold, which
+			-- is only credited later (victory loot block). Sweep now (idempotent) and add that same gold here.
+			pcall(BattlefieldEventService.SweepHunterDeaths, state)
+			local _lsGold = battleGoldEarned or 0
+			for _, r in ipairs(state.recoveredHunterLoot or {}) do
+				if not (r.category == "Equipment" and r.item) and not r.cardData
+					and r.category == "Gold" and (tonumber(r.gold) or 0) > 0 then
+					_lsGold += math.floor(tonumber(r.gold) or 0)
+				end
+			end
+			local _lsXp = math.floor(_lsShare * _lsGold)
+			for _lsId, _lsCount in pairs(state.learningStoneUnits) do
+				if playerUnits[_lsId] and _lsXp > 0 then
+					local _lsRes = ProgressionService.GrantUnitXp(PLAYER_ID, _lsId, _lsXp * (tonumber(_lsCount) or 1))
+					if xpSummary and xpSummary.ok and type(xpSummary.units) == "table" then
+						local r = xpSummary.units[_lsId] or { xpGranted = 0, levelsGained = 0, rate = 1 }
+						r.xpGranted = (r.xpGranted or 0) + (_lsRes.xpGranted or 0)
+						r.levelsGained = (r.levelsGained or 0) + (_lsRes.levelsGained or 0)
+						r.level = _lsRes.level
+						r.atCap = _lsRes.atCap
+						xpSummary.units[_lsId] = r
+					end
+					print(string.format("[PostBattle] Learning Stone | %s +%d bonus XP (half of %d battle gold)",
+						tostring(playerUnits[_lsId].name), _lsRes.xpGranted or 0, _lsGold))
+				end
+			end
+		end
 		-- BATTLE MERCURY (v2 build step 6a, 2026-11-01; materials_system 7): each defeated enemy
 		-- (summons excluded, same as kill gold) has a 5% chance of 1 mercury, on a victory only
 		-- (like item loot). Fortune never applies. Chest / salvage mercury is held since the chest
@@ -4865,9 +4998,19 @@ while true do
 		end
 	end
 
-	-- Step 1: Persist final HP/MP for all player units
+	-- Garden of Revelation (2026-11-07): the +20% max MP lasts until battle end only. Drop it and
+	-- rebuild BEFORE HP/MP are persisted (RebuildUnitStats clamps current MP to the normal max).
 	for _, u in ipairs(allUnitsList) do
-		if u.side == "Player" then
+		if u.battleMaxMpBonusPct then
+			u.battleMaxMpBonusPct = nil
+			EquipmentService.RebuildUnitStats(u)
+		end
+	end
+
+	-- Step 1: Persist final HP/MP for all player ROSTER units. Player-side summons and item
+	-- devices are not roster members and must not get a persistent record (2026-11-06).
+	for _, u in ipairs(allUnitsList) do
+		if u.side == "Player" and playerUnits[u.id] then
 			PersistentStateService.PersistBattleEnd(
 				PLAYER_ID, u.id,
 				u.currentHp, u.currentMp,
@@ -4881,6 +5024,13 @@ while true do
 	-- 2026-11-01; persistent_hp_mp_rules 3/5/8, unit_progression 96). KO'd units get nothing:
 	-- ApplyPostBattleRecovery skips isKO records, so this MUST run before ClearAllKO (step 2b).
 	local recovery = {}
+	-- Defensive (2026-11-06): drop saved records for units no longer on the roster (older
+	-- saves still hold dismissed recruits), so recovery only ever lists real roster units.
+	do
+		local ownedSet = {}
+		for id in pairs(playerUnits) do ownedSet[id] = true end
+		PersistentStateService.PruneToOwned(PLAYER_ID, ownedSet)
+	end
 	if isQualifyingVictory then
 		print("[PostBattle] Applying 35% recovery to survivors")
 		-- Perks & Flaws (2026-10-23): build per-unit recovery-fraction overrides from the LIVE
@@ -4940,7 +5090,7 @@ while true do
 		-- filled by CommandService during the fight (nil/empty when nothing was stolen).
 		if state.stolenItems and #state.stolenItems > 0 then
 			for _, it in ipairs(state.stolenItems) do
-				local okAdd = InventoryService.AddItem(PLAYER_ID, it)
+				local okAdd = InventoryService.AddItem(PLAYER_ID, it, { markNew = true })
 				table.insert(results, {
 					category = "Equipment", item = it, committed = okAdd ~= false, stolen = true,
 				})
@@ -4959,7 +5109,7 @@ while true do
 		if state.recoveredHunterLoot and #state.recoveredHunterLoot > 0 then
 			for _, r in ipairs(state.recoveredHunterLoot) do
 				if r.category == "Equipment" and r.item then
-					local okAdd = InventoryService.AddItem(PLAYER_ID, r.item)
+					local okAdd = InventoryService.AddItem(PLAYER_ID, r.item, { markNew = true })
 					table.insert(results, {
 						category = "Equipment", item = r.item, committed = okAdd ~= false, stolen = true,
 					})
@@ -4986,7 +5136,7 @@ while true do
 		if state.chestLoot and #state.chestLoot > 0 then
 			for _, r in ipairs(state.chestLoot) do
 				if r.category == "Equipment" and r.item then
-					local okAdd = InventoryService.AddItem(PLAYER_ID, r.item)
+					local okAdd = InventoryService.AddItem(PLAYER_ID, r.item, { markNew = true })
 					table.insert(results, {
 						category = "Equipment", item = r.item, committed = okAdd ~= false, chestReward = true,
 					})
@@ -5005,7 +5155,7 @@ while true do
 		if eliteRewardResult then
 			local okE, eliteItem = pcall(RewardService.RollEliteReward, MAP_LEVEL)
 			if okE and eliteItem then
-				local okAdd = InventoryService.AddItem(PLAYER_ID, eliteItem)
+				local okAdd = InventoryService.AddItem(PLAYER_ID, eliteItem, { markNew = true })
 				table.insert(results, { category = "Equipment", item = eliteItem, committed = okAdd ~= false })
 				if okAdd ~= false then equipCommitted = equipCommitted + 1 end
 				eliteRewardResult.item = okAdd ~= false
@@ -5018,7 +5168,7 @@ while true do
 		if bossRewardResult and not bossRewardResult.limited then
 			local okB, bossItem = pcall(RewardService.RollBossItem, MAP_LEVEL)
 			if okB and bossItem then
-				local okAdd = InventoryService.AddItem(PLAYER_ID, bossItem)
+				local okAdd = InventoryService.AddItem(PLAYER_ID, bossItem, { markNew = true })
 				table.insert(results, { category = "Equipment", item = bossItem, committed = okAdd ~= false })
 				if okAdd ~= false then equipCommitted = equipCommitted + 1 end
 			else

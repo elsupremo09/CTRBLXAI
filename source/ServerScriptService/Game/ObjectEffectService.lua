@@ -220,7 +220,8 @@ local function markHunterAttacked(target: any, instigator: any, dmg: any)
 	end
 end
 
-function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, attackElement: any, fromExplosion: any, attacker: any): any
+-- isVenom (optional, 2026-11-08): the hit comes from a Venom attack (Toxic Needle) - never a Poison kill.
+function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, attackElement: any, fromExplosion: any, attacker: any, isVenom: any): any
 	if not (state and state.objects and x and y) then return "not-found" end
 	for _, inst in ipairs(state.objects) do
 		-- A hidden object cannot be hit until it is revealed (no HP / break news leaks its tile).
@@ -261,7 +262,9 @@ function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, 
 			local instant = false
 			if attackElement and type(def.instantKillTags) == "table" then
 				for _, t in ipairs(def.instantKillTags) do
-					if t == attackElement then instant = true; break end
+					-- Wasp Nest ruling (objects_encounters 124, 2026-11-07 11:05 PM): only a Poison-ELEMENT attack
+					-- or a Poison Cloud kills on Poison; a Venom attack (Toxic Needle) is one normal hit.
+					if t == attackElement and not (isVenom and t == "Poison") then instant = true; break end
 				end
 			end
 			-- HD-009 Demolition Mask one-hit kill (USER RULING 2026-10-30 3:15 PM, nonweapon_equipment 32):
@@ -284,6 +287,11 @@ function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, 
 					BattleVisualBroadcaster.ObjectChanged(x, y, { destroyed = true }, _shownType)
 				end
 				ObjectiveService.RecordEvent(state, "objectsBroken", 1)
+				-- 18 new map objects (2026-11-07, project_rules 249): break effects (containers) and
+				-- per-hit effects (Wasp Nest). Defined further down; looked up on the module table.
+				if (ObjectEffectService :: any)._onObjectHit then
+					(ObjectEffectService :: any)._onObjectHit(state, inst, def, attacker, true, instant, attackElement)
+				end
 				-- HD-011 Salvager's Cap (user ruling 2026-10-29, reward changed 2026-11-01): a player unit
 				-- wearing it that destroys a breakable object gets a little gold + 5% mercury + 5% gear
 				-- (salvage branch of _grantChestReward). Not counted as a chest opened; no Treasure Seeker bonus.
@@ -304,13 +312,69 @@ function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, 
 				return "destroyed"
 			end
 			-- OBS Phase 2c-0: broadcast the new hp so an open inspector card shows N/3 live.
+			-- F4 (2026-11-08, rule 225): every hit an object survives gets its own battle-log line naming
+			-- what hit it - the scoped cause (e.g. "Portable Ballista"), else the attacker, else an
+			-- explosion. A SILENT scope logs nothing. Label = display type (never a Mimic's true type).
 			if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectChanged then
-				BattleVisualBroadcaster.ObjectChanged(x, y, { newHp = inst.hp })
+				local _scope = BattleVisualBroadcaster.GetCause and BattleVisualBroadcaster.GetCause() or nil
+				local _silent = _scope ~= nil and _scope == BattleVisualBroadcaster.SILENT
+				local _hitBy = if _scope ~= nil and not _silent then _scope
+					elseif attacker and attacker.name then attacker.name
+					elseif fromExplosion and attackElement == nil then "The explosion"
+					else nil
+				BattleVisualBroadcaster.ObjectChanged(x, y, { newHp = inst.hp, hit = true, by = _hitBy },
+					if _silent then nil else ObjectEffectService.GetDisplayType(inst, nil))
+			end
+			-- 18 new map objects (2026-11-07): per-hit effect on a surviving object (Wasp Nest).
+			if (ObjectEffectService :: any)._onObjectHit then
+				(ObjectEffectService :: any)._onObjectHit(state, inst, def, attacker, false, instant, attackElement)
 			end
 			return inst.hp
 		end
 	end
 	return "not-found"
+end
+
+-- AREA / SPLASH HITS ON OBJECTS (project_rules 250, USER RULING 2026-11-07 10:53 PM). A DAMAGING
+-- area or splash hit lands ONE hit on every object on a struck tile, through ApplyObjectHit with the
+-- attacker, so every existing reaction and battle-log line applies (Bomb Barrel detonates, Mimic
+-- wakes, Wasp Nest stings, containers break, Demolition Mask, element instant-kill tags, Salvager's
+-- Cap, friendly fire). One hit per object per action: `seen` (["x,y"] = true) may be shared by the
+-- caller across one action. Map traps are not attackable (rule 241) and are skipped; hidden objects,
+-- Ad Billboard and objects with no hit count are left to ApplyObjectHit (not-found / immune).
+-- Callers run this AFTER the action's unit hits and tile effects, so a container's new effect is
+-- never set off by the same action (rows 112 / 114); the break guard lasts until the action ends (F2).
+-- tiles: { {x=, y=} } or { {tileX=, tileY=} }. Returns the number of objects that took the hit.
+function ObjectEffectService.HitObjectsOnTiles(state: any, tiles: any, attacker: any, element: any, seen: any, isVenom: any): number
+	if not (state and state.objects and type(tiles) == "table") then return 0 end
+	local done = seen or {}
+	local targets = {}
+	for _, t in ipairs(tiles) do
+		local x = t.x or t.tileX
+		local y = t.y or t.tileY
+		if x and y and not done[`{x},{y}`] then
+			for _, o in ipairs(state.objects) do
+				if o.x == x and o.y == y and not o.hidden then
+					local def = o.type and ObjectData.Objects[o.type]
+					if not (def and objHasTag(def, "Trap")) then
+						done[`{x},{y}`] = true
+						table.insert(targets, { x = x, y = y })
+					end
+					break
+				end
+			end
+		end
+	end
+	local n = 0
+	for _, t in ipairs(targets) do
+		local res = ObjectEffectService.ApplyObjectHit(state, t.x, t.y, 1, element or "Physical", nil, attacker, isVenom)
+		if res ~= "not-found" and res ~= "immune" then n += 1 end
+		print(string.format("[ObjectEffectService] Splash hit on object at (%d,%d) by %s -> %s",
+			t.x, t.y, tostring(attacker and attacker.name), tostring(res)))
+	end
+	-- F2 (2026-11-08): container break guards now last until the ACTION ends (CommandService clears
+	-- them), so they are no longer cleared here mid-action.
+	return n
 end
 
 -- OBS Phase 2c-E — object PUSH (map_gen_rules row 83; objects_encounters 83/84).
@@ -669,6 +733,15 @@ function ObjectEffectService.PlaceObjectInstance(state: any, objType: any, x: an
 		inst.hidden = true
 	end
 	table.insert(state.objects, inst)
+	-- USER RULING 2026-11-08 1:09 PM (project_rules 249): a placed / created object joins the
+	-- server object grid (OBJECT_MAP / GetObjectAt) like a map-generated one, so the grid-read
+	-- effects (Soul Well, Iron Curtain, Redwood Observatory, Wasp Nest) work for it. Server-only
+	-- copy: clients get their grid from MapDataSync, never from this table. Removal, push and
+	-- recall already keep the grid in sync, so the effect stops when the object is gone.
+	if GameConstants.OBJECT_MAP then
+		GameConstants.OBJECT_MAP[y] = GameConstants.OBJECT_MAP[y] or {}
+		GameConstants.OBJECT_MAP[y][x] = objType
+	end
 	if _objectRenderer and not inst.hidden then
 		_objectRenderer(inst)
 	end
@@ -830,6 +903,9 @@ function ObjectEffectService.IsRevealedFor(x: any, y: any, side: any): boolean
 	for _, z in ipairs(_revealZones) do
 		if z.ct > 0 and z.side == side and z.tiles[x .. "," .. y] then return true end
 	end
+	-- Redwood Observatory (2026-11-07, row 116): its radius reveals for both sides.
+	local _obs = (ObjectEffectService :: any)._observatoryCovers
+	if _obs and x and y and _obs(x, y) then return true end
 	return false
 end
 -- Is this unit standing in a live reveal zone owned by another side? (It cannot Hide there.)
@@ -838,6 +914,9 @@ function ObjectEffectService.IsHideBlocked(unit: any): boolean
 	for _, z in ipairs(_revealZones) do
 		if z.ct > 0 and z.side ~= unit.side and z.tiles[unit.tileX .. "," .. unit.tileY] then return true end
 	end
+	-- Redwood Observatory (2026-11-07, row 116): no unit of either side can Hide inside radius 3.
+	local _obs = (ObjectEffectService :: any)._observatoryCovers
+	if _obs and _obs(unit.tileX, unit.tileY) then return true end
 	return false
 end
 -- Run zone time down on the battle clock (PulseScheduler sweeps the zones first).
@@ -859,6 +938,9 @@ function ObjectEffectService.ResetBattle()
 	-- Looked up on the module table: ClearAllAuras is defined further down.
 	local _clearAll = (ObjectEffectService :: any).ClearAllAuras
 	if _clearAll then _clearAll(nil) end
+	-- 18 new map objects (2026-11-07): drop pending delayed shots, plant holds and markers.
+	local _batchReset = (ObjectEffectService :: any)._batchReset
+	if _batchReset then _batchReset() end
 	print("[ObjectEffectService] Usage ledger reset for new battle.")
 end
 
@@ -883,6 +965,7 @@ Handlers["Healing Spring"] = function(ctx: any): (boolean, any)
 	if _hrm ~= 1 then heal = math.max(0, math.floor(heal * _hrm)) end
 	actor.currentHp = math.min(actor.maxHp, before + heal)
 	if actor.currentHp > before then StatusService.WeakenVenomOnHeal(actor) end  -- healing weakens Venom (2026-10-26)
+	StatusService.NotifyHealGained(actor, actor.currentHp - before)  -- Life Link share (2026-11-08)
 	if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
 		BattleVisualBroadcaster.UnitStateChanged(actor)
 	end
@@ -964,6 +1047,7 @@ Handlers["Campfire"] = function(ctx: any): (boolean, any)
 	local _hpBefore = a.currentHp or 0
 	a.currentHp = math.min(a.maxHp, (a.currentHp or 0) + hpGain)
 	if (a.currentHp or 0) > _hpBefore then StatusService.WeakenVenomOnHeal(a) end  -- healing weakens Venom (2026-10-26)
+	StatusService.NotifyHealGained(a, (a.currentHp or 0) - _hpBefore)  -- Life Link share (2026-11-08)
 	a.currentMp = math.min(a.maxMp or 0, (a.currentMp or 0) + mpGain)
 	if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(a) end
 	print(string.format("[ObjectEffectService] Campfire | %s +%d HP / +%d MP", a.name, hpGain, mpGain))
@@ -1519,6 +1603,7 @@ local function applySiegeOutcome(target: any, outcome: any, focusState: any, cau
 		target.currentHp = math.min(target.maxHp or (target.currentHp or 0),
 			(target.currentHp or 0) + _heal)
 		if (target.currentHp or 0) > _hpBefore then StatusService.WeakenVenomOnHeal(target) end  -- healing weakens Venom (2026-10-26)
+		StatusService.NotifyHealGained(target, (target.currentHp or 0) - _hpBefore)  -- Life Link share (2026-11-08)
 	else
 		return
 	end
@@ -1604,6 +1689,25 @@ local function siegeTargeting(): any
 	return (require :: any)(script.Parent.TargetingService)
 end
 
+-- D7 (USER DECISION 2026-11-08 9:25 AM, project_rules 250): object tiles a siege LINE strikes (map
+-- Ballista bolt, Arcane Cannon line) in direction dir. Walking out from the engine (2+ steps out,
+-- minimum range 2), every tile up to AND INCLUDING the first object that blocks line of sight; tiles
+-- behind it are shielded. A tile counts only within 3 height levels of the engine tile (same limits
+-- as for units). Returns { {x=, y=}, ... } for ObjectEffectService.HitObjectsOnTiles.
+local function siegeObjectLineTiles(ox: number, oy: number, dir: string): { any }
+	local _ts = siegeTargeting()
+	local oElev = GameConstants.GetElevation(ox, oy) or 0
+	local rays = siegeRays(ox, oy, {}, 2, nil)
+	local out = {}
+	for _, t in ipairs(rays[dir] or {}) do
+		if not _ts.HasLineOfSight(ox, oy, t.x, t.y, nil, oElev, "Direct", nil) then break end
+		if math.abs((GameConstants.GetElevation(t.x, t.y) or 0) - oElev) <= 3 then
+			out[#out + 1] = { x = t.x, y = t.y }
+		end
+	end
+	return out
+end
+
 Handlers["Ballista"] = function(ctx: any): (boolean, any)
 	local a = ctx.actor
 	-- Siege Power, full shot to every unit hit (rule 242; replaces 250% weapon + level, 2026-10-26).
@@ -1681,6 +1785,9 @@ Handlers["Ballista"] = function(ctx: any): (boolean, any)
 			hits = hits + 1
 		end
 	end
+	-- D7 (rule 250): after the unit hits, the bolt lands one hit on every breakable object on its
+	-- line, up to and including the first sight-blocking object. The operator is the attacker.
+	ObjectEffectService.HitObjectsOnTiles(ctx.state, siegeObjectLineTiles(ox, oy, dir), a, "Physical", {})
 
 	print(string.format("[ObjectEffectService] Ballista | %s fires %s bolt from (%d,%d): %d hit(s) (siege power %d)",
 		a.name, dir, ox, oy, hits, wd))
@@ -1759,11 +1866,23 @@ Handlers["Portable Ballista"] = function(ctx: any): (boolean, any)
 		if u and u.isAlive then
 			local dealt = _ies.ResolveTimedHit(a, u, "Physical", power, "Portable Ballista")
 			if not u.isAlive then u._killCause = u._killCause or "siege"; u._killedBy = u._killedBy or a.id end
+			-- F4 (2026-11-08, rule 225): log + show the bolt's own damage NOW, under its own cause, so a
+			-- Wasp Nest sting from the object hits below is a separate line (was merged: 77 + 41 = 118).
+			if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+				BattleVisualBroadcaster.UnitStateChanged(u, "Portable Ballista")
+			end
+			if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage and (dealt or 0) > 0 then
+				BattleVisualBroadcaster.ObjectDamage(tile.x, tile.y, dealt, hits == 0, "Portable Ballista")
+			end
 			hits += 1
 			print(string.format("[ObjectEffectService] Portable Ballista | %s's bolt hits %s at (%d,%d): %d dmg",
 				tostring(a.name), tostring(u.name), tile.x, tile.y, dealt or 0))
 		end
 	end
+	-- D10 (USER DECISION 2026-11-08 10:02 AM, project_rules 250): after the unit hits, the bolt lands
+	-- one hit on every breakable object on the chosen line (same 3-7 + siege-range tiles as its unit
+	-- hits). It ignores line of sight, so no object shields the tiles behind it. Operator = attacker.
+	ObjectEffectService.HitObjectsOnTiles(ctx.state, rays[dir], a, "Physical", {})
 	live.shotsLeft = (live.shotsLeft or 1) - 1
 	print(string.format("[ObjectEffectService] Portable Ballista | %s fires %s from (%d,%d): %d hit(s) | shots left %d",
 		tostring(a.name), tostring(dir), ox, oy, hits, live.shotsLeft))
@@ -1815,6 +1934,23 @@ Handlers["Supply Station"] = function(ctx: any): (boolean, any)
 		end
 	end
 	return true, nil
+end
+
+-- Rule 250 (2026-11-08): plus-shaped siege blast tiles for MAP-OBJECT hits (Catapult, Heavy
+-- Artillery). Same +/-2 elevation limit as the unit tiles, judged on each object's own tile; a
+-- spread-blocking object's own tile is included (only tiles behind it are shielded).
+local function siegeCrossObjectTiles(cx: number, cy: number): { any }
+	local _ts = siegeTargeting()
+	local cElev = GameConstants.GetElevation(cx, cy) or 0
+	local out = {}
+	for _, d in ipairs({ { 0, 0 }, { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+		local tx, ty = cx + d[1], cy + d[2]
+		if math.abs((GameConstants.GetElevation(tx, ty) or 0) - cElev) <= 2
+			and not (_ts.IsAOEBlockedForObject and _ts.IsAOEBlockedForObject(cx, cy, tx, ty)) then
+			out[#out + 1] = { x = tx, y = ty }
+		end
+	end
+	return out
 end
 
 Handlers["Catapult"] = function(ctx: any): (boolean, any)
@@ -1926,6 +2062,10 @@ Handlers["Catapult"] = function(ctx: any): (boolean, any)
 				end
 			end
 		end
+	end
+	-- Rule 250 (2026-11-08): the blast also lands one hit on every map object on a struck tile.
+	if ctx.state then
+		ObjectEffectService.HitObjectsOnTiles(ctx.state, siegeCrossObjectTiles(cxTgt, cyTgt), a, "Physical", {})
 	end
 	print(string.format("[ObjectEffectService] Catapult | %s splashes %d unit(s) around (%d,%d) (siege power %d per unit, Cross)", a.name, hitN, cxTgt, cyTgt, wd))
 	return true, nil
@@ -2569,6 +2709,11 @@ function ObjectEffectService.ReconcileAuras(allUnits: any, state: any)
 	if BattleVisualBroadcaster and BattleVisualBroadcaster.ClearCause then
 		BattleVisualBroadcaster.ClearCause(_prevCause)
 	end
+	-- 18 new map objects (2026-11-07): position-based object effects that must follow every move
+	-- (Redwood Observatory reveal sweep, Venus Man-Trap release). Defined in the batch section.
+	if (ObjectEffectService :: any)._afterReconcileAuras then
+		(ObjectEffectService :: any)._afterReconcileAuras(allUnits, state)
+	end
 end
 
 -- Aura source removed (USER RULING 2026-10-30, project_rules 241: a broken object's effects are
@@ -3143,6 +3288,9 @@ function ObjectEffectService.GetTriggeredTrapAt(state: any, x: any, y: any): any
 			return nil  -- one object per tile; if it's not a trap, nothing to trigger
 		end
 	end
+	-- Venus Man-Trap (2026-11-07, row 126): an armed plant next to (x, y) acts as the trap here.
+	local _venusAt = (ObjectEffectService :: any)._venusTriggerAt
+	if _venusAt then return _venusAt(state, x, y) end
 	return nil
 end
 
@@ -3153,6 +3301,10 @@ end
 -- Returns { fired, stops, killed }.
 function ObjectEffectService.TriggerTrap(actor: any, inst: any, state: any, allUnits: any): any
 	if not (actor and inst and actor.isAlive) then return { fired = false } end
+	-- Venus Man-Trap (2026-11-07): catch-and-hold instead of a one-shot trap effect.
+	if inst.type == "Venus Man-Trap" and (ObjectEffectService :: any)._venusCapture then
+		return (ObjectEffectService :: any)._venusCapture(actor, inst, state)
+	end
 	local def = inst.type and ObjectData.Objects[inst.type]
 	if not isStepOnTrap(def) then return { fired = false } end
 	-- Enemy-only trigger for SKILL-placed traps (2026-10-24): a skill-placed trap
@@ -3276,5 +3428,947 @@ function ObjectEffectService.DetonateObjectAt(state: any, x: any, y: any, damage
 		x, y, math.floor((damagePercent or 0.30) * 100)))
 	return true
 end
+
+--------------------------------------------------------------------
+-- 18 NEW MAP OBJECTS (USER DECISION 2026-11-07 9:59 PM; objects_encounters rows 112-129;
+-- shared rules project_rules 249). Kept in one section. Friendly fire unless a row says
+-- otherwise; every pick is deterministic (fixed tie-break, no RNG). Battle log (rule 225):
+-- every HP change / status / break below runs under the object's name as the cause.
+--------------------------------------------------------------------
+
+-- Fixed target order (project_rules 249 (4), agent default): nearest by tile distance
+-- (diagonals = 1), then lowest row (north first), then lowest column (west first).
+local function batchSortNearest(list: { any }, cx: number, cy: number)
+	table.sort(list, function(a: any, b: any): boolean
+		local da = math.max(math.abs(a.tileX - cx), math.abs(a.tileY - cy))
+		local db = math.max(math.abs(b.tileX - cx), math.abs(b.tileY - cy))
+		if da ~= db then return da < db end
+		if a.tileY ~= b.tileY then return a.tileY < b.tileY end
+		return a.tileX < b.tileX
+	end)
+end
+
+-- Run fn under a battle-log cause label, restoring the previous label even if fn errors.
+local function batchWithCause(label: string, fn: any, ...: any): any
+	local bvb = BattleVisualBroadcaster
+	local prev = bvb and bvb.SetCause and bvb.SetCause(label) or nil
+	local ok, res = pcall(fn, ...)
+	if bvb and bvb.ClearCause then bvb.ClearCause(prev) end
+	if not ok then error(res, 0) end
+	return res
+end
+
+-- CONTAINER BREAK (Toxic Crate / Sludge Barrel / Water Barrel): lay the authored tile effect
+-- on the container's own tile + radius (diagonals count). The object is already removed, so
+-- its own tile is open; TileEffectService skips every other blocked tile (rule 246).
+local function containerBreakEffect(state: any, inst: any, def: any, attacker: any, attackElement: any)
+	if not (_tileEffectService and _tileEffectService.ApplyTileEffect) then
+		warn("[ObjectEffectService] " .. tostring(inst.type) .. " broke but TileEffectService is not wired - no tile effect")
+		return
+	end
+	local r = tonumber(def.breakRadius) or 1
+	-- F2 (2026-11-08, row 112 / rule 249): every tile the release lands on is guarded for the rest of
+	-- the action that broke the container (its own element hits, tile reactions and explosion chain).
+	local _guardRelease = def.breakGuardsOwnTile == true and _tileEffectService.SetReleaseGuard ~= nil
+	local _prevGuard = if _guardRelease then _tileEffectService.SetReleaseGuard(true) else nil
+	local _okRel, _errRel = pcall(batchWithCause, def.id or inst.type, function()
+		for dy = -r, r do
+			for dx = -r, r do
+				_tileEffectService.ApplyTileEffect(inst.x + dx, inst.y + dy, def.breakTileEffect, "object", state.units)
+			end
+		end
+	end)
+	if _guardRelease then _tileEffectService.SetReleaseGuard(_prevGuard) end
+	if not _okRel then error(_errRel, 0) end
+	-- The breaking hit does NOT react with the new effect (Toxic Crate / Water Barrel rows,
+	-- agent default): the same command's element reaction on this tile is skipped once.
+	if def.breakGuardsOwnTile and attackElement and attackElement ~= "Physical"
+		and _tileEffectService.GuardTileFromElement then
+		_tileEffectService.GuardTileFromElement(inst.x, inst.y)
+	end
+	print(string.format("[ObjectEffectService] %s broke at (%d,%d) -> %s on radius %d",
+		tostring(inst.type), inst.x, inst.y, tostring(def.breakTileEffect), r))
+end
+
+-- Called by ApplyObjectHit after every hit that reached a breakable object (destroyed = it broke).
+-- instant = the hit was an elemental instant kill (instantKillTags) or a Demolition Mask kill.
+function ObjectEffectService._onObjectHit(state: any, inst: any, def: any, attacker: any, destroyed: boolean, instant: any, attackElement: any)
+	if not (state and inst and def and inst.x and inst.y) then return end
+	if destroyed and def.breakTileEffect then
+		containerBreakEffect(state, inst, def, attacker, attackElement)
+	end
+	-- Snake Jar (row 115): every living unit within the radius (any side, attacker included)
+	-- gains the status once per stack. StatusService applies immunities (Undead vs Venom).
+	if destroyed and def.breakStatus then
+		local r = tonumber(def.breakRadius) or 1
+		local n = 0
+		batchWithCause(def.id or inst.type, function()
+			for _, u in ipairs(state.units or {}) do
+				if u.isAlive and not u.isGroundTarget and u.tileX and u.tileY
+					and math.max(math.abs(u.tileX - inst.x), math.abs(u.tileY - inst.y)) <= r then
+					for _ = 1, (tonumber(def.breakStatusStacks) or 1) do
+						applyAndRebuild(u, def.breakStatus, "object")
+					end
+					n += 1
+				end
+			end
+		end)
+		print(string.format("[ObjectEffectService] %s broke at (%d,%d) -> %s on %d unit(s) in radius %d",
+			tostring(inst.type), inst.x, inst.y, tostring(def.breakStatus), n, r))
+	end
+	-- Wasp Nest (row 124): EVERY hit stings, the breaking hit too - except a Poison instant kill.
+	if def.stingTargets and not (instant and attackElement == "Poison") then
+		local pool = {}
+		local r = tonumber(def.stingRadius) or 2
+		for _, u in ipairs(state.units or {}) do
+			if u.isAlive and not u.isGroundTarget and u.tileX and u.tileY
+				and math.max(math.abs(u.tileX - inst.x), math.abs(u.tileY - inst.y)) <= r
+				and not StatusService.HasStatus(u, "Poison") then
+				table.insert(pool, u)
+			end
+		end
+		batchSortNearest(pool, inst.x, inst.y)
+		local label = def.id or inst.type
+		local focus = true
+		for i = 1, math.min(#pool, tonumber(def.stingTargets) or 2) do
+			local u = pool[i]
+			batchWithCause(label, function()
+				-- Hazard damage: HP% based, no Guard / Combat Fortune; Boss HP% Modifier = 1 (no boss system yet).
+				local dmg = math.round((u.maxHp or 0) * (tonumber(def.stingMaxHpPct) or 0.15))
+				dmg = math.round(dmg * hazardTakenMult(u))  -- Goblin Cunning (+10% from hazards)
+				local shown = GameConstants.CapUnitDamage(u, dmg)
+				u.currentHp = math.max(0, (u.currentHp or 0) - shown)
+				markHunterAttacked(u, attacker, shown)
+				if u.currentHp <= 0 then
+					u.isAlive = false
+					u._killedBy = u._killedBy or (attacker and attacker.id)
+				end
+				if u.isAlive then
+					StatusService.ApplyStatus(u, def.stingStatus or "Poison", "object")
+					u.remainingRt = (u.remainingRt or 0) + (tonumber(def.stingRtDelay) or 100)
+				end
+				if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectDamage then
+					BattleVisualBroadcaster.ObjectDamage(u.tileX, u.tileY, shown, focus, label)
+				end
+				focus = false
+				if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+					BattleVisualBroadcaster.UnitStateChanged(u, label)
+				end
+				print(string.format("[ObjectEffectService] Wasp Nest at (%d,%d) stings %s: %d dmg + Poison + %d RT",
+					inst.x, inst.y, tostring(u.name), shown, tonumber(def.stingRtDelay) or 100))
+			end)
+		end
+	elseif def.stingTargets then
+		print(string.format("[ObjectEffectService] Wasp Nest at (%d,%d) killed by Poison - no sting", inst.x, inst.y))
+	end
+	-- Venus Man-Trap (row 126): a broken plant frees the unit it holds at once.
+	if destroyed and inst.type == "Venus Man-Trap" and inst.id and (ObjectEffectService :: any)._venusRelease then
+		(ObjectEffectService :: any)._venusRelease(state, inst.id, "plant broken")
+	end
+	-- [BATCH18 HIT HOOKS]
+end
+
+-- Is a live map object of this type within radius r of (x, y)? Reads the server object grid
+-- (map-generated AND placed objects since 2026-11-08; a broken / removed object is cleared from it
+-- by RemoveObjectInstance, a pushed / recalled one moves with it).
+local function batchObjectWithin(typeName: string, x: number, y: number, r: number): boolean
+	local omap = GameConstants.OBJECT_MAP
+	if not omap then return false end
+	for oy = y - r, y + r do
+		local row = omap[oy]
+		if row then
+			for ox = x - r, x + r do
+				if row[ox] == typeName then return true end
+			end
+		end
+	end
+	return false
+end
+
+-- REDWOOD OBSERVATORY (row 116): radius 3, both sides. Used by IsHideBlocked / IsRevealedFor.
+local OBSERVATORY_RADIUS = (ObjectData.Objects["Redwood Observatory"] and ObjectData.Objects["Redwood Observatory"].revealRadius) or 3
+function ObjectEffectService._observatoryCovers(x: any, y: any): boolean
+	if type(x) ~= "number" or type(y) ~= "number" then return false end
+	return batchObjectWithin("Redwood Observatory", x, y, OBSERVATORY_RADIUS)
+end
+
+-- Sweep after every move / battle start: hidden units inside lose Hide; hidden traps / objects
+-- inside are shown and a disguised Mimic is unmasked (stays dormant). Revealed things stay revealed.
+local function observatorySweep(allUnits: any, state: any)
+	for _, o in ipairs(state.objects or {}) do
+		if o.type == "Redwood Observatory" and not o.hidden and o.x and o.y then
+			for _, u in ipairs(allUnits or {}) do
+				if u.isAlive and u.tileX and u.tileY
+					and math.max(math.abs(u.tileX - o.x), math.abs(u.tileY - o.y)) <= OBSERVATORY_RADIUS
+					and StatusService.HasStatus(u, "Hide") and StatusService.RemoveStatus(u, "Hide") then
+					-- One caused log line; the status list rides along so clients drop the Hide pill.
+					if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+						BattleVisualBroadcaster.UnitStateChanged(u, "Redwood Observatory")
+					end
+					print(string.format("[ObjectEffectService] Redwood Observatory | %s loses Hide at (%d,%d)",
+						tostring(u.name), u.tileX, u.tileY))
+				end
+			end
+			local tiles = {}
+			for dy = -OBSERVATORY_RADIUS, OBSERVATORY_RADIUS do
+				for dx = -OBSERVATORY_RADIUS, OBSERVATORY_RADIUS do
+					tiles[(o.x + dx) .. "," .. (o.y + dy)] = true
+				end
+			end
+			local n = ObjectEffectService.RevealHiddenInArea(state, tiles, nil, "Redwood Observatory")
+			if n > 0 then
+				print(string.format("[ObjectEffectService] Redwood Observatory at (%d,%d) revealed %d object(s)", o.x, o.y, n))
+			end
+		end
+	end
+end
+
+-- OASIS (row 117): the interacting unit restores 20% Max HP and 20% Max MP. Once per unit per
+-- turn (uses = "Once per turn"); no AP, RT 120 (CommandService reads the activation / interactRT).
+-- Object heals follow the shared anti-heal + Venom rules, like Campfire.
+BattleVisualBroadcaster.RegisterMpCause("Oasis")
+Handlers["Oasis"] = function(ctx: any): (boolean, any)
+	local a, def = ctx.actor, ctx.objDef or {}
+	if not a or a.maxHp == nil then return false, "Oasis: actor has no HP." end
+	local hpGain = math.floor((a.maxHp or 0) * (def.restoreHpPct or 0.20))
+	local mpGain = math.floor((a.maxMp or 0) * (def.restoreMpPct or 0.20))
+	local _hrm = StatusService.GetHealingReceivedMult(a)
+	if _hrm ~= 1 then hpGain = math.max(0, math.floor(hpGain * _hrm)) end
+	local hpBefore = a.currentHp or 0
+	a.currentHp = math.min(a.maxHp, hpBefore + hpGain)
+	if (a.currentHp or 0) > hpBefore then StatusService.WeakenVenomOnHeal(a) end
+	StatusService.NotifyHealGained(a, (a.currentHp or 0) - hpBefore)  -- Life Link share (2026-11-08)
+	a.currentMp = math.min(a.maxMp or 0, (a.currentMp or 0) + mpGain)
+	if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(a, "Oasis") end
+	print(string.format("[ObjectEffectService] Oasis | %s +%d HP / +%d MP", tostring(a.name), hpGain, mpGain))
+	return true, nil
+end
+
+-- MANA FOUNTAIN (row 118): every living ally on the map (incl. the user) gains the timed
+-- "Mana Fountain" buff (2000 CT); StatusService.ProcessEndOfTurn restores the MP.
+Handlers["Mana Fountain"] = allyBuffHandler("Mana Fountain", "Mana Fountain")
+
+-- LEARNING STONE (row 119): marks the INTERACTING unit; Main pays floor(0.5 x battle gold) XP to
+-- it after a WON battle (same post-battle XP award path as Glow Crystal). Player roster units only
+-- earn XP, so an enemy use just consumes the stone. Each stone used counts once.
+Handlers["Learning Stone"] = function(ctx: any): (boolean, any)
+	local state, a = ctx.state, ctx.actor
+	if not state then return false, "Learning Stone: no battle state." end
+	if a and a.side == "Player" and a.id then
+		state.learningStoneUnits = state.learningStoneUnits or {}
+		state.learningStoneUnits[a.id] = (state.learningStoneUnits[a.id] or 0) + 1
+		print(string.format("[ObjectEffectService] Learning Stone | %s will earn bonus XP (half the battle gold) on a win",
+			tostring(a.name)))
+	else
+		print(string.format("[ObjectEffectService] Learning Stone | used by non-player %s - no XP effect", tostring(a and a.name)))
+	end
+	return true, nil
+end
+
+-- GARDEN OF REVELATION (row 120): every living ally on the map (incl. the user) gets a battle-only
+-- +20% Max MP (EquipmentService reads unit.battleMaxMpBonusPct on rebuild) and gains the added MP.
+-- A unit that already has it gets nothing extra (no stacking). Main clears it at battle end.
+BattleVisualBroadcaster.RegisterMpCause("Garden of Revelation")
+Handlers["Garden of Revelation"] = function(ctx: any): (boolean, any)
+	local a, def = ctx.actor, ctx.objDef or {}
+	local pct = tonumber(def.maxMpBonusPct) or 0.20
+	local n = 0
+	for _, u in ipairs(livingAllies(a, ctx.allUnits or {}, true)) do
+		if not u.battleMaxMpBonusPct then
+			local before = u.maxMp or 0
+			u.battleMaxMpBonusPct = pct
+			if EquipmentService and EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
+			local added = math.max(0, (u.maxMp or 0) - before)
+			u.currentMp = math.min(u.maxMp or 0, (u.currentMp or 0) + added)
+			if BattleVisualBroadcaster then BattleVisualBroadcaster.UnitStateChanged(u, "Garden of Revelation", true) end
+			n += 1
+		end
+	end
+	print(string.format("[ObjectEffectService] Garden of Revelation | %s -> %d ally(s) gain +%d%% Max MP for the battle",
+		tostring(a and a.name), n, math.round(pct * 100)))
+	return true, nil
+end
+
+-- SOUL WELL (row 122): radius 2, both sides, checked on the caster's tile at skill commit.
+local SOUL_WELL_DEF = ObjectData.Objects["Soul Well"] or {}
+function ObjectEffectService.IsInSoulWell(unit: any): boolean
+	if not (unit and unit.tileX and unit.tileY) then return false end
+	return batchObjectWithin("Soul Well", unit.tileX, unit.tileY, tonumber(SOUL_WELL_DEF.auraRadius) or 2)
+end
+function ObjectEffectService.GetSoulWellPotency(): number
+	return tonumber(SOUL_WELL_DEF.skillPotencyMult) or 1.2
+end
+function ObjectEffectService.GetSoulWellHpCost(unit: any, mpCost: any): number
+	if (tonumber(mpCost) or 0) > 0 then return math.floor(mpCost) end
+	return math.max(1, math.round(((unit and unit.maxHp) or 0) * (tonumber(SOUL_WELL_DEF.noMpHpCostPct) or 0.05)))
+end
+-- The caster pays the HP after the cast: not reduced, Shield first, never below 1 HP, not physical.
+function ObjectEffectService.SoulWellBacklash(unit: any, skillDef: any)
+	local cost = skillDef and tonumber(skillDef.soulWellHpCost)
+	if not (unit and unit.isAlive and cost and cost > 0) then return end
+	local shield = if unit.shieldElementalOnly then 0 else math.max(0, unit.shield_total or 0)
+	local amount = math.min(cost, shield + math.max(0, (unit.currentHp or 1) - 1))
+	if amount > 0 then
+		local _us = (require :: any)(script.Parent.UnitSchema)
+		_us.ApplyDamage(unit, amount, "soulWell")
+		if unit.currentHp < 1 then unit.currentHp = 1; unit.isAlive = true end  -- safety: never a KO
+	end
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+		BattleVisualBroadcaster.UnitStateChanged(unit, "Soul Well")
+	end
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.ShieldChanged and shield > 0 then
+		BattleVisualBroadcaster.ShieldChanged(unit, 0, "decay")
+	end
+	print(string.format("[ObjectEffectService] Soul Well | %s pays %d HP (cost %d) for casting %s inside",
+		tostring(unit.name), amount, cost, tostring(skillDef.name or skillDef.id)))
+end
+
+--------------------------------------------------------------------
+-- BATCH18 CLOCK + MARKERS (Volcanic Vent, Venus Man-Trap, delayed siege shots)
+--------------------------------------------------------------------
+-- Pending delayed siege shots: { kind, objId, operator, fireCt, power, tiles = {{x,y}}, ... }
+local _pendingSiege: { any } = {}
+-- Venus Man-Trap holds: [objId] = { inst, unitId, acc }
+local _venusHolds: { [string]: any } = {}
+-- Last marker payload per key, so a marker is only re-sent when it changes.
+local _markerSig: { [string]: string } = {}
+
+-- Clock damage (hazard / delayed shot) is applied here and handed to Main through
+-- state.pulseEvents (kind "damage" + source), which shows the number, the "<source> hits"
+-- log line and any KO exactly like pulse damage.
+local function batchPushDamage(state: any, u: any, amount: number, element: any, source: string)
+	state.pulseEvents = state.pulseEvents or {}
+	table.insert(state.pulseEvents, { unit = u, kind = "damage", amount = amount, element = element, source = source })
+end
+
+-- Direct hazard damage: HP%-based amount already computed, no Guard / Fortune / shield
+-- (same as traps and explosions). Goblin Cunning applies. Returns the HP actually lost.
+local function batchHazardHit(state: any, u: any, amount: number, element: any, source: string, killerId: any): number
+	local dmg = math.round((tonumber(amount) or 0) * hazardTakenMult(u))
+	local shown = GameConstants.CapUnitDamage(u, dmg)
+	if shown <= 0 then return 0 end
+	u.currentHp = math.max(0, (u.currentHp or 0) - shown)
+	if u.currentHp <= 0 then
+		u.isAlive = false
+		u._killedBy = u._killedBy or killerId
+	end
+	batchPushDamage(state, u, shown, element, source)
+	return shown
+end
+
+local function batchUnitsWithin(state: any, cx: number, cy: number, r: number): { any }
+	local out = {}
+	for _, u in ipairs(state.units or {}) do
+		if u.isAlive and not u.isGroundTarget and u.tileX and u.tileY
+			and math.max(math.abs(u.tileX - cx), math.abs(u.tileY - cy)) <= r then
+			table.insert(out, u)
+		end
+	end
+	return out
+end
+
+-- VOLCANIC VENT (row 125): the 2 nearest units within radius 2 (any side) right now.
+local function ventTargets(state: any, o: any, def: any): { any }
+	local pool = batchUnitsWithin(state, o.x, o.y, tonumber(def.eruptRadius) or 2)
+	batchSortNearest(pool, o.x, o.y)
+	local out = {}
+	for i = 1, math.min(#pool, tonumber(def.eruptTargets) or 2) do out[i] = pool[i] end
+	return out
+end
+
+local function ventErupt(state: any, o: any, def: any, atCt: number)
+	local targets = ventTargets(state, o, def)
+	for _, u in ipairs(targets) do
+		-- Element modifier: no shared hazard element-modifier function exists (CombatResolver's
+		-- element handling is local to attack resolution), so x1 here; Boss HP% Modifier = 1.
+		local raw = math.round((u.maxHp or 0) * (tonumber(def.eruptMaxHpPct) or 0.15))
+		local lost = batchHazardHit(state, u, raw, def.eruptElement or "Fire", "Volcanic Vent", nil)
+		print(string.format("[ObjectEffectService] Volcanic Vent (%d,%d) erupts at CT %d: %s takes %d Fire",
+			o.x, o.y, atCt, tostring(u.name), lost))
+	end
+	if #targets == 0 then
+		print(string.format("[ObjectEffectService] Volcanic Vent (%d,%d) erupts at CT %d: nobody in range", o.x, o.y, atCt))
+	end
+end
+
+-- Send every object marker that changed (vent next targets + pending siege shots).
+local function refreshObjectMarkers(state: any)
+	if not (BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectMarker) then return end
+	local want: { [string]: { any } } = {}
+	for _, o in ipairs((state and state.objects) or {}) do
+		local def = o.type and ObjectData.Objects[o.type]
+		if def and def.eruptEveryCt and not o.hidden and o.x and o.y then
+			local tiles = {}
+			for _, u in ipairs(ventTargets(state, o, def)) do
+				tiles[#tiles + 1] = { x = u.tileX, y = u.tileY }
+			end
+			want["vent:" .. tostring(o.id)] = tiles
+		end
+	end
+	for _, p in ipairs(_pendingSiege) do
+		want["siege:" .. tostring(p.key)] = p.tiles or {}
+	end
+	for key, tiles in pairs(want) do
+		local parts = {}
+		for _, t in ipairs(tiles) do parts[#parts + 1] = t.x .. "," .. t.y end
+		local sig = table.concat(parts, ";")
+		if _markerSig[key] ~= sig then
+			_markerSig[key] = sig
+			BattleVisualBroadcaster.ObjectMarker(key, tiles)
+		end
+	end
+	for key in pairs(_markerSig) do
+		if want[key] == nil then
+			_markerSig[key] = nil
+			BattleVisualBroadcaster.ObjectMarker(key, {})
+		end
+	end
+end
+ObjectEffectService._refreshObjectMarkers = refreshObjectMarkers
+
+-- VENUS MAN-TRAP (row 126). An armed plant (holding nobody) catches the first unit that moves
+-- into or through one of its 8 surrounding tiles (via the step-on trap path, so Flight bypass and
+-- walk-stop work as for traps). The unit is Pinned while the plant stands (no expiry, hard-locked
+-- so cleanses cannot remove it) and takes round(Max HP x 0.10) every 300 CT.
+local function findLiveObject(state: any, objId: any): any
+	for _, o in ipairs((state and state.objects) or {}) do
+		if o.id == objId then return o end
+	end
+	return nil
+end
+
+local function findUnitById(state: any, unitId: any): any
+	for _, u in ipairs((state and state.units) or {}) do
+		if u.id == unitId then return u end
+	end
+	return nil
+end
+
+-- Free the unit a plant holds (plant broke / unit moved out) and re-arm the plant.
+local function venusRelease(state: any, objId: any, reason: string)
+	local hold = _venusHolds[objId]
+	_venusHolds[objId] = nil
+	if not hold then return end
+	local u = findUnitById(state, hold.unitId)
+	if u and u.isAlive then
+		local pin = StatusService.HasStatus(u, "Pinned")
+		if pin and pin.venusHold == objId then
+			pin.hardLock = nil
+			pin.venusHold = nil
+			-- D5 (2026-11-07): the plant only ends its OWN hold. If another source's Pin is still
+			-- running under it (e.g. a Harpoon's 2000 CT), the unit stays Pinned for the time left.
+			local _otherCt = tonumber(pin.venusOtherCt) or 0
+			pin.venusOtherCt = nil
+			if _otherCt > 0 then
+				pin.remainingCt = _otherCt
+			else
+				StatusService.RemoveStatus(u, "Pinned")
+			end
+			if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+				BattleVisualBroadcaster.UnitStateChanged(u, "Venus Man-Trap")
+			end
+		end
+	end
+	print(string.format("[ObjectEffectService] Venus Man-Trap %s releases %s (%s) - re-armed",
+		tostring(objId), tostring(u and u.name or hold.unitId), reason))
+end
+ObjectEffectService._venusRelease = venusRelease
+
+-- Armed plant whose trigger ring contains (x, y), or nil. Fixed order: lowest row, then column.
+function ObjectEffectService._venusTriggerAt(state: any, x: any, y: any): any
+	local best: any = nil
+	for _, o in ipairs((state and state.objects) or {}) do
+		if o.type == "Venus Man-Trap" and not o.hidden and o.x and o.y and not _venusHolds[o.id] then
+			local def = ObjectData.Objects[o.type] or {}
+			local d = math.max(math.abs(o.x - x), math.abs(o.y - y))
+			if d >= 1 and d <= (tonumber(def.triggerRadius) or 1) then
+				if not best or o.y < best.y or (o.y == best.y and o.x < best.x) then best = o end
+			end
+		end
+	end
+	return best
+end
+
+-- Catch `actor` (called by TriggerTrap). Bosses are immune. Returns the TriggerTrap result shape.
+function ObjectEffectService._venusCapture(actor: any, inst: any, state: any): any
+	if not (actor and actor.isAlive and inst and inst.id) or _venusHolds[inst.id] then return { fired = false } end
+	if actor.enemyType == "Boss" or actor.isBoss then
+		print(string.format("[ObjectEffectService] Venus Man-Trap ignores boss %s", tostring(actor.name)))
+		return { fired = false }
+	end
+	local pin: any = nil
+	-- D5 (2026-11-07): a Pin the unit already had from another source keeps its time left under the hold.
+	local _prior: any = StatusService.HasStatus(actor, "Pinned")
+	local _priorCt: any = if type(_prior) == "table" and not _prior.venusHold then tonumber(_prior.remainingCt) else nil
+	batchWithCause("Venus Man-Trap", function()
+		StatusService.ApplyStatus(actor, "Pinned", "object")
+		pin = StatusService.HasStatus(actor, "Pinned")
+		if pin then
+			pin.venusOtherCt = _priorCt
+			pin.remainingCt = nil      -- lasts while the plant stands
+			pin.remainingTurns = nil
+			pin.hardLock = true        -- cannot be cleansed while held
+			pin.venusHold = inst.id
+		end
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+			BattleVisualBroadcaster.UnitStateChanged(actor, "Venus Man-Trap")
+		end
+	end)
+	if not pin then return { fired = false } end
+	_venusHolds[inst.id] = { inst = inst, unitId = actor.id, acc = 0 }
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.TrapSprung then
+		BattleVisualBroadcaster.TrapSprung(inst.x, inst.y, inst.type, actor.id, false)
+	end
+	print(string.format("[ObjectEffectService] Venus Man-Trap at (%d,%d) catches %s", inst.x, inst.y, tostring(actor.name)))
+	return { fired = true, stops = true, killed = false }
+end
+
+-- Drop / free holds whose plant is gone, whose unit died, or whose unit left the ring.
+local function venusSweep(state: any)
+	for objId, hold in pairs(_venusHolds) do
+		local plant = findLiveObject(state, objId)
+		local u = findUnitById(state, hold.unitId)
+		if not plant then
+			venusRelease(state, objId, "plant gone")
+		elseif not (u and u.isAlive) then
+			_venusHolds[objId] = nil  -- the held unit died: re-arm
+			print(string.format("[ObjectEffectService] Venus Man-Trap %s re-armed (held unit down)", tostring(objId)))
+		elseif math.max(math.abs(u.tileX - plant.x), math.abs(u.tileY - plant.y)) > 1 then
+			venusRelease(state, objId, "moved out of reach")
+		end
+	end
+end
+
+-- HARPOON SHOOTER (row 129). Siege, once per unit per turn. One target 2-6 tiles from the
+-- shooter in normal direct line of sight (enemies/neutrals block, allies never do). 80% of a
+-- Ballista shot (rule-242 Siege Power, plain Physical, no hit quality). A surviving target is
+-- pulled to the free tile next to the shooter nearest to it (placed directly: no collision, no
+-- fall, no traps) and Pinned for 2000 CT; bosses / unpushable units are not pulled but Pinned.
+Handlers["Harpoon Shooter"] = function(ctx: any): (boolean, any)
+	local a, obj, def = ctx.actor, ctx.objInstance, ctx.objDef or {}
+	local ox, oy = obj.x, obj.y
+	if not (a and ox and oy) then return false, "CANCELLED" end
+	local _ts = siegeTargeting()
+	local oElev = GameConstants.GetElevation(ox, oy) or 0
+	local rMin, rMax = tonumber(def.rangeMin) or 2, tonumber(def.rangeMax) or 6
+	local cands, legal, byKey = {}, {}, {}
+	for _, u in ipairs(ctx.allUnits or {}) do
+		if u.isAlive and not u.isGroundTarget and u.tileX and u.tileY then
+			local d = math.max(math.abs(u.tileX - ox), math.abs(u.tileY - oy))
+			if d >= rMin and d <= rMax
+				and _ts.HasLineOfSight(ox, oy, u.tileX, u.tileY, ctx.allUnits, oElev, "Direct", a.side) then
+				table.insert(cands, u)
+				legal[#legal + 1] = { x = u.tileX, y = u.tileY, hit = true }
+				byKey[u.tileX .. "," .. u.tileY] = u
+			end
+		end
+	end
+	if #cands == 0 then
+		print("[ObjectEffectService] Harpoon Shooter | no unit 2-6 tiles away in line of sight - nothing spent")
+		return false, "CANCELLED"
+	end
+	local tgt: any = nil
+	if _tilePrompter and a.controller == "Player" then
+		local picked = _tilePrompter(a, ox, oy, rMax, legal)
+		if picked == "CANCEL" or type(picked) ~= "table" then return false, "CANCELLED" end
+		tgt = byKey[(picked.x or -1) .. "," .. (picked.y or -1)]
+		if not tgt then return false, "CANCELLED" end
+	else
+		-- AI / headless: the nearest enemy of the operator (fixed tie-break); never an ally.
+		local foes = {}
+		for _, u in ipairs(cands) do
+			if u.side ~= a.side and u.side ~= "Neutral" then table.insert(foes, u) end
+		end
+		if #foes == 0 then return false, "CANCELLED" end
+		batchSortNearest(foes, ox, oy)
+		tgt = foes[1]
+	end
+	local power = siegePower(a, tonumber(def.siegeShare) or 0.80)
+	local outcome = CombatResolver.ResolveBasicAttack(a, tgt, power, siegeOpts(a, ox, oy))
+	applySiegeOutcome(tgt, outcome, { done = false }, ObjectEffectService.GetDisplayType(obj, "Harpoon Shooter"), a)
+	if not tgt.isAlive then tgt._killCause = tgt._killCause or "siege"; tgt._killedBy = tgt._killedBy or a.id end
+	if tgt.isAlive then
+		local unpushable = tgt.enemyType == "Boss" or tgt.isBoss or tgt._displacementImmune
+			or (StatusService.IsRelocationLocked and StatusService.IsRelocationLocked(tgt))
+		local pulled = false
+		if not unpushable then
+			local grid = GameConstants.TERRAIN_MAP
+			local h = grid and #grid or 0
+			local w = (h > 0 and grid[1]) and #grid[1] or 0
+			local spots = {}
+			for dy = -1, 1 do
+				for dx = -1, 1 do
+					local x, y = ox + dx, oy + dy
+					if (dx ~= 0 or dy ~= 0) and x >= 1 and y >= 1 and x <= w and y <= h
+						and not GameConstants.IsBlocked(x, y)
+						and not (GameConstants.IsImpassableTerrain and GameConstants.IsImpassableTerrain(x, y)) then
+						local busy = false
+						for _, u in ipairs(ctx.allUnits or {}) do
+							if u.isAlive and u ~= tgt and u.tileX == x and u.tileY == y then busy = true break end
+						end
+						if not busy then table.insert(spots, { tileX = x, tileY = y }) end
+					end
+				end
+			end
+			if #spots > 0 then
+				batchSortNearest(spots, tgt.tileX, tgt.tileY)
+				if not (spots[1].tileX == tgt.tileX and spots[1].tileY == tgt.tileY) then
+					tgt.tileX, tgt.tileY = spots[1].tileX, spots[1].tileY
+					pulled = true
+					if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitMoved then BattleVisualBroadcaster.UnitMoved(tgt) end
+				end
+			end
+		end
+		batchWithCause("Harpoon Shooter", function()
+			StatusService.ApplyStatus(tgt, "Pinned", a.id, nil, tonumber(def.pinCt) or 2000)
+			if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+				BattleVisualBroadcaster.UnitStateChanged(tgt, "Harpoon Shooter")
+			end
+		end)
+		if pulled and ctx.state then ObjectEffectService.ReconcileAuras(ctx.state.units or ctx.allUnits, ctx.state) end
+		print(string.format("[ObjectEffectService] Harpoon Shooter | %s harpoons %s (%s) -> (%d,%d), Pinned %d CT",
+			tostring(a.name), tostring(tgt.name), if pulled then "pulled" elseif unpushable then "cannot be pulled" else "no free tile",
+			tgt.tileX, tgt.tileY, tonumber(def.pinCt) or 2000))
+	end
+	return true, nil
+end
+
+-- DELAYED SIEGE SHOTS (Arcane Cannon row 127, Heavy Artillery row 128). Aimed now, fired by the
+-- battle clock 200 CT later at whoever stands on the marked tiles THEN. Power = the operator's
+-- Siege Power when aimed. A broken engine cancels its shot. Damage runs the normal siege defense
+-- pipeline (CombatResolver.ResolveBasicAttack, isSiege) and reaches Main as pulse damage.
+local function siegeDelayedHit(state: any, p: any, u: any)
+	local op = p.operator
+	if not (op and u and u.isAlive) then return end
+	local outcome = CombatResolver.ResolveBasicAttack(op, u, p.power, siegeOpts(op, p.ox, p.oy))
+	if not outcome then return end
+	if outcome.finalDamage then
+		local shown = GameConstants.CapUnitDamage(u, outcome.finalDamage)
+		u.currentHp = math.max(0, (u.currentHp or 0) - shown)
+		markHunterAttacked(u, op, shown)
+		if u.currentHp <= 0 then
+			u.isAlive = false
+			u._killCause = u._killCause or "siege"
+			u._killedBy = u._killedBy or op.id
+		end
+		if shown > 0 then batchPushDamage(state, u, shown, "Physical", p.label) end
+	elseif outcome.finalHealing then
+		local heal = outcome.finalHealing
+		local _hrm = StatusService.GetHealingReceivedMult(u)
+		if _hrm ~= 1 then heal = math.max(0, math.floor(heal * _hrm)) end
+		local before = u.currentHp or 0
+		u.currentHp = math.min(u.maxHp or before, before + heal)
+		if (u.currentHp or 0) > before then StatusService.WeakenVenomOnHeal(u) end
+		StatusService.NotifyHealGained(u, (u.currentHp or 0) - before)  -- Life Link share (2026-11-08)
+		if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+			BattleVisualBroadcaster.UnitStateChanged(u, p.label)
+		end
+	end
+end
+
+-- Arcane Cannon line tiles from (ox, oy) in direction dir: 2+ steps out, to the map edge, while
+-- the straight path is not blocked by walls / sight-blocking objects (units never stop it).
+local function cannonLineTiles(ox: number, oy: number, dir: string): { any }
+	local _ts = siegeTargeting()
+	local oElev = GameConstants.GetElevation(ox, oy) or 0
+	local rays = siegeRays(ox, oy, {}, 2, nil)
+	local out = {}
+	for _, t in ipairs(rays[dir] or {}) do
+		if not _ts.HasLineOfSight(ox, oy, t.x, t.y, nil, oElev, "Direct", nil) then break end
+		out[#out + 1] = { x = t.x, y = t.y }
+	end
+	return out
+end
+
+local function fireCannon(state: any, p: any)
+	local oElev = GameConstants.GetElevation(p.ox, p.oy) or 0
+	local hits = 0
+	for _, t in ipairs(cannonLineTiles(p.ox, p.oy, p.dir)) do
+		for _, u in ipairs(state.units or {}) do
+			if u.isAlive and not u.isGroundTarget and u.tileX == t.x and u.tileY == t.y
+				and math.abs(siegeElev(u) - oElev) <= 3 then
+				siegeDelayedHit(state, p, u)
+				hits += 1
+			end
+		end
+	end
+	-- D7 (rule 250): after the unit hits, the line (as it is when it fires) lands one hit on every
+	-- breakable object on it, up to and including the first sight-blocking object. Operator = attacker.
+	ObjectEffectService.HitObjectsOnTiles(state, siegeObjectLineTiles(p.ox, p.oy, p.dir), p.operator, "Physical", {})
+	print(string.format("[ObjectEffectService] Arcane Cannon (%d,%d) fires %s: %d unit(s) hit (power %d)", p.ox, p.oy, p.dir, hits, p.power))
+end
+
+Handlers["Arcane Cannon"] = function(ctx: any): (boolean, any)
+	local a, obj, def = ctx.actor, ctx.objInstance, ctx.objDef or {}
+	local ox, oy = obj.x, obj.y
+	if not (a and ox and oy and ctx.state) then return false, "CANCELLED" end
+	-- Preview: units that would be hit right now (the shot itself re-checks when it fires).
+	local _ts = siegeTargeting()
+	local oElev = GameConstants.GetElevation(ox, oy) or 0
+	local unitAt = {}
+	for _, u in ipairs(ctx.allUnits or {}) do
+		if u.isAlive and not u.isGroundTarget and u.tileX and u.tileY
+			and math.max(math.abs(u.tileX - ox), math.abs(u.tileY - oy)) >= 2
+			and math.abs(siegeElev(u) - oElev) <= 3
+			and _ts.HasLineOfSight(ox, oy, u.tileX, u.tileY, nil, oElev, "Direct", nil) then
+			unitAt[u.tileX .. "," .. u.tileY] = u
+		end
+	end
+	local grid = GameConstants.TERRAIN_MAP
+	local h = grid and #grid or 0
+	local w = (h > 0 and grid[1]) and #grid[1] or 0
+	local rays, flat, keyDir = siegeRays(ox, oy, unitAt, 2, nil)
+	local dir = promptSiegeRay(a, ox, oy, math.max(w, h), flat, keyDir)
+	if dir == "CANCEL" then return false, "CANCELLED" end
+	if not dir then
+		-- AI / no tap: the line with the most enemies, then the fewest allies (fixed 8-way order);
+		-- a line hitting as many allies as enemies is never chosen (Portable Ballista rule).
+		local bestFoes, bestFriends = 0, math.huge
+		for _, d in ipairs(SIEGE_DIR8) do
+			local foes, friends = 0, 0
+			for _, t in ipairs(rays[d]) do
+				local u = t.unit
+				if u then
+					if u.side ~= a.side and u.side ~= "Neutral" then foes += 1 elseif u.side == a.side then friends += 1 end
+				end
+			end
+			if foes > friends and (foes > bestFoes or (foes == bestFoes and friends < bestFriends)) then
+				dir, bestFoes, bestFriends = d, foes, friends
+			end
+		end
+		if not dir then return false, "CANCELLED" end
+	end
+	local p = {
+		kind = "cannon", key = tostring(obj.id) .. "@" .. tostring(ctx.state.ct or 0),
+		objId = obj.id, operator = a, ox = ox, oy = oy, dir = dir,
+		power = siegePower(a, tonumber(def.siegeShare) or 1.20),
+		fireCt = (tonumber(ctx.state.ct) or 0) + (tonumber(def.fireDelayCt) or 200),
+		label = ObjectEffectService.GetDisplayType(obj, "Arcane Cannon"),
+	}
+	p.tiles = cannonLineTiles(ox, oy, dir)
+	table.insert(_pendingSiege, p)
+	refreshObjectMarkers(ctx.state)  -- danger line for everyone (no extra log wording: "activates" line covers it)
+	print(string.format("[ObjectEffectService] Arcane Cannon | %s aims %s from (%d,%d), fires at CT %d (power %d, %d tiles marked)",
+		tostring(a.name), dir, ox, oy, p.fireCt, p.power, #p.tiles))
+	return true, nil
+end
+
+-- HEAVY ARTILLERY blast tiles: the plus-shape around (cx, cy), on the map, within +/-2 elevation
+-- of the impact tile and not cut off by a BlocksAOE object (same Center Spread rule as Catapult).
+local function artilleryCross(cx: number, cy: number): { any }
+	local _ts = siegeTargeting()
+	local grid = GameConstants.TERRAIN_MAP
+	local h = grid and #grid or 0
+	local w = (h > 0 and grid[1]) and #grid[1] or 0
+	local cElev = GameConstants.GetElevation(cx, cy) or 0
+	local out = {}
+	for _, d in ipairs({ { 0, 0 }, { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }) do
+		local tx, ty = cx + d[1], cy + d[2]
+		if tx >= 1 and ty >= 1 and tx <= w and ty <= h
+			and math.abs((GameConstants.GetElevation(tx, ty) or 0) - cElev) <= 2
+			and not _ts.IsAOEBlocked(cx, cy, tx, ty) then
+			out[#out + 1] = { x = tx, y = ty }
+		end
+	end
+	return out
+end
+
+-- Lower one blast tile by 1 (agent default rules): never water / liquid tiles or chasm floors;
+-- protected spans, elevation-immune tiles and the elevation floor are refused inside
+-- GameConstants.LowerElevation. No route-protection check (USER RULING 2026-11-07).
+local function artilleryLowerTile(state: any, x: number, y: number, levels: number): boolean
+	local tid = GameConstants.GetTerrainId(x, y)
+	local tdef = tid and GameConstants.TERRAIN_TYPES[tid]
+	for _, tg in ipairs((tdef and tdef.tags) or {}) do
+		if tg == "Water" or tg == "Liquid" or tg == "Deep" then return false end
+	end
+	if GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(x, y) then return false end
+	if GameConstants.LowerElevation(x, y, levels) <= 0 then return false end
+	local newElev = GameConstants.GetElevation(x, y)
+	ObjectEffectService.LowerTileVisual(x, y, tid, newElev)
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.TerrainChanged then
+		BattleVisualBroadcaster.TerrainChanged(x, y, tid, newElev, "Heavy Artillery")
+	end
+	-- Units and objects on the tile ride it down (1 level: no fall damage).
+	for _, u in ipairs(state.units or {}) do
+		if u.isAlive and u.tileX == x and u.tileY == y and BattleVisualBroadcaster and BattleVisualBroadcaster.UnitMoved then
+			BattleVisualBroadcaster.UnitMoved(u)
+		end
+	end
+	for _, o in ipairs(state.objects or {}) do
+		if o.x == x and o.y == y and not o.hidden then
+			if _objectVisualRemover then _objectVisualRemover(o) end
+			if _objectRenderer then _objectRenderer(o) end
+		end
+	end
+	return true
+end
+
+local function fireArtillery(state: any, p: any)
+	local struck = artilleryCross(p.cx, p.cy)
+	local hits, lowered = 0, 0
+	for _, t in ipairs(struck) do
+		for _, u in ipairs(state.units or {}) do
+			if u.isAlive and not u.isGroundTarget and u.tileX == t.x and u.tileY == t.y then
+				siegeDelayedHit(state, p, u)
+				hits += 1
+			end
+		end
+	end
+	-- Rule 250 (2026-11-08): the blast lands one hit on every map object on a struck tile, before the
+	-- tiles drop. The operator is credited only while still alive.
+	ObjectEffectService.HitObjectsOnTiles(state, siegeCrossObjectTiles(p.cx, p.cy),
+		if p.operator and p.operator.isAlive then p.operator else nil, "Physical", {})
+	batchWithCause(p.label, function()
+		for _, t in ipairs(struck) do
+			if artilleryLowerTile(state, t.x, t.y, p.lowerBy or 1) then lowered += 1 end
+		end
+	end)
+	print(string.format("[ObjectEffectService] Heavy Artillery (%d,%d) lands on (%d,%d): %d unit(s) hit, %d tile(s) lowered (power %d)",
+		p.ox, p.oy, p.cx, p.cy, hits, lowered, p.power))
+end
+
+Handlers["Heavy Artillery"] = function(ctx: any): (boolean, any)
+	local a, obj, def = ctx.actor, ctx.objInstance, ctx.objDef or {}
+	local ox, oy = obj.x, obj.y
+	if not (a and ox and oy and ctx.state) then return false, "CANCELLED" end
+	local _siege = (require :: any)(script.Parent.ArmorPassiveService)
+	local RANGE = (tonumber(def.rangeMax) or 6) + (_siege.GetInteractSiegeRangeBonus(a) or 0)
+	local _ts = siegeTargeting()
+	local oElev = GameConstants.GetElevation(ox, oy) or 0
+	local grid = GameConstants.TERRAIN_MAP
+	local h = grid and #grid or 0
+	local w = (h > 0 and grid[1]) and #grid[1] or 0
+	local unitAt = {}
+	for _, u in ipairs(ctx.allUnits or {}) do
+		if u.isAlive and not u.isGroundTarget and u.tileX and u.tileY then unitAt[u.tileX .. "," .. u.tileY] = u end
+	end
+	local legal, legalKey = {}, {}
+	for ty = math.max(1, oy - RANGE), math.min(h, oy + RANGE) do
+		for tx = math.max(1, ox - RANGE), math.min(w, ox + RANGE) do
+			if math.max(math.abs(tx - ox), math.abs(ty - oy)) >= 2
+				and _ts.HasLineOfSight(ox, oy, tx, ty, nil, oElev, "Arc", nil) then
+				legal[#legal + 1] = { x = tx, y = ty, hit = unitAt[tx .. "," .. ty] ~= nil }
+				legalKey[tx .. "," .. ty] = true
+			end
+		end
+	end
+	if #legal == 0 then return false, "CANCELLED" end
+	local cx: any, cy: any = nil, nil
+	if _tilePrompter and a.controller == "Player" then
+		local picked = _tilePrompter(a, ox, oy, RANGE, legal)
+		if picked == "CANCEL" or type(picked) ~= "table" then return false, "CANCELLED" end
+		if not legalKey[(picked.x or -1) .. "," .. (picked.y or -1)] then return false, "CANCELLED" end
+		cx, cy = picked.x, picked.y
+	else
+		-- AI / headless: the nearest enemy standing on a legal tile (fixed tie-break), like Catapult.
+		local foes = {}
+		for _, u in ipairs(ctx.allUnits or {}) do
+			if u.isAlive and not u.isGroundTarget and u.side ~= a.side and u.side ~= "Neutral"
+				and u.tileX and legalKey[u.tileX .. "," .. u.tileY] then
+				table.insert(foes, u)
+			end
+		end
+		if #foes == 0 then return false, "CANCELLED" end
+		batchSortNearest(foes, ox, oy)
+		cx, cy = foes[1].tileX, foes[1].tileY
+	end
+	local p = {
+		kind = "artillery", key = tostring(obj.id) .. "@" .. tostring(ctx.state.ct or 0),
+		objId = obj.id, operator = a, ox = ox, oy = oy, cx = cx, cy = cy,
+		power = siegePower(a, tonumber(def.siegeShare) or 0.84),
+		fireCt = (tonumber(ctx.state.ct) or 0) + (tonumber(def.fireDelayCt) or 200),
+		lowerBy = tonumber(def.lowerTiles) or 1,
+		label = ObjectEffectService.GetDisplayType(obj, "Heavy Artillery"),
+	}
+	p.tiles = artilleryCross(cx, cy)  -- red cross for everyone (re-checked when it fires)
+	table.insert(_pendingSiege, p)
+	refreshObjectMarkers(ctx.state)
+	print(string.format("[ObjectEffectService] Heavy Artillery | %s targets (%d,%d) from (%d,%d), fires at CT %d (power %d)",
+		tostring(a.name), cx, cy, ox, oy, p.fireCt, p.power))
+	return true, nil
+end
+
+-- Fire every pending delayed shot whose time has come (engine still standing), in aim order.
+local function processPendingSiege(state: any)
+	local now = tonumber(state.ct) or 0
+	local i = 1
+	while i <= #_pendingSiege do
+		local p = _pendingSiege[i]
+		if now >= (p.fireCt or 0) then
+			table.remove(_pendingSiege, i)
+			if findLiveObject(state, p.objId) then
+				batchWithCause(p.label, function()
+					if p.kind == "cannon" then fireCannon(state, p) else fireArtillery(state, p) end
+				end)
+			else
+				print(string.format("[ObjectEffectService] %s shot cancelled - the engine was broken during the delay", tostring(p.label)))
+			end
+		else
+			i += 1
+		end
+	end
+end
+
+-- [BATCH18 CLOCK HELPERS]
+
+-- Battle clock (PulseScheduler.ProcessCtTick -> here). state.ct is already the NEW time.
+function ObjectEffectService.ProcessObjectClock(state: any, ctElapsed: any)
+	if not (state and state.objects) or (tonumber(ctElapsed) or 0) <= 0 then return end
+	local now = tonumber(state.ct) or 0
+	local before = now - ctElapsed
+	-- Volcanic Vent eruptions whose time is in (before, now].
+	for _, o in ipairs(state.objects) do
+		local def = o.type and ObjectData.Objects[o.type]
+		if def and def.eruptEveryCt and o.x and o.y and not o.hidden then
+			local first, every = tonumber(def.eruptFirstCt) or 1000, tonumber(def.eruptEveryCt) or 400
+			local t = if before < first then first else first + (math.floor((before - first) / every) + 1) * every
+			while t <= now do
+				ventErupt(state, o, def, t)
+				t += every
+			end
+		end
+	end
+	-- Redwood Observatory: also sweep on the clock (pushes / teleports do not reconcile auras).
+	observatorySweep(state.units, state)
+	-- Venus Man-Trap: free / re-arm first, then 10% Max HP per 300 CT to each held unit.
+	venusSweep(state)
+	for objId, hold in pairs(_venusHolds) do
+		local u = findUnitById(state, hold.unitId)
+		local vdef = ObjectData.Objects["Venus Man-Trap"] or {}
+		local every = tonumber(vdef.holdTickCt) or 300
+		hold.acc = (hold.acc or 0) + ctElapsed
+		while u and u.isAlive and hold.acc >= every do
+			hold.acc -= every
+			local lost = batchHazardHit(state, u, math.round((u.maxHp or 0) * (tonumber(vdef.holdMaxHpPct) or 0.10)), nil, "Venus Man-Trap", nil)
+			print(string.format("[ObjectEffectService] Venus Man-Trap %s squeezes %s for %d", tostring(objId), tostring(u.name), lost))
+		end
+	end
+	-- Delayed siege shots (Arcane Cannon / Heavy Artillery) whose 200 CT are up.
+	processPendingSiege(state)
+	-- [BATCH18 CLOCK STEPS]
+	refreshObjectMarkers(state)
+end
+
+-- New battle: forget pending shots, holds and markers (ResetBattle).
+function ObjectEffectService._batchReset()
+	table.clear(_pendingSiege)
+	table.clear(_venusHolds)
+	table.clear(_markerSig)
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.ObjectMarker then
+		BattleVisualBroadcaster.ObjectMarker("*", {})
+	end
+end
+
+-- Called at the end of ReconcileAuras (battle start + after every move / placement).
+function ObjectEffectService._afterReconcileAuras(allUnits: any, state: any)
+	if not (state and state.objects) then return end
+	observatorySweep(allUnits, state)
+	venusSweep(state)  -- a held unit pushed / teleported out of reach is freed at once
+	-- [BATCH18 RECONCILE HOOKS]
+	refreshObjectMarkers(state)
+end
+
+-- [BATCH18 END]
 
 return ObjectEffectService

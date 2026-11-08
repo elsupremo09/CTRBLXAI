@@ -164,6 +164,47 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 	}
 	local buttonRows = 1
 
+	-- KEEP SCROLL (2026-11-06, user bug): every screen rebuilds Main on each tap (select an
+	-- item, stage a level, queue a dismantle), which destroyed the item grid and jumped the
+	-- list back to the top. Clear(scrollKey) remembers the grid's scroll position, and the
+	-- rebuilt grid gets it back when the key is the same (same tab). A different key (tab
+	-- switch), Show() (a fresh visit) or ResetScroll() (new search/filter) start at the top.
+	local lastScrollKey: string? = nil
+	local pendingScroll: Vector2? = nil
+
+	local function restoreScroll(grid: ScrollingFrame, pos: Vector2)
+		-- AutomaticCanvasSize resolves during layout; until then the position clamps to 0,
+		-- so apply now and again when the canvas size settles (before the frame draws).
+		local function apply(): boolean
+			if grid.Parent == nil then return true end
+			local maxY = math.max(0, grid.AbsoluteCanvasSize.Y - grid.AbsoluteWindowSize.Y)
+			grid.CanvasPosition = Vector2.new(0, math.min(pos.Y, maxY))
+			return maxY >= pos.Y
+		end
+		if apply() then return end
+		local conn: RBXScriptConnection? = nil
+		conn = grid:GetPropertyChangedSignal("AbsoluteCanvasSize"):Connect(function()
+			if apply() and conn then conn:Disconnect() end
+		end)
+		-- A shorter list (items removed) never reaches the old position: stop listening.
+		task.delay(1, function()
+			if conn and conn.Connected then conn:Disconnect() end
+		end)
+	end
+
+	-- Same keep-scroll for any other scroll list a screen rebuilds (2026-11-07: the
+	-- Runeforge side panel). Caller passes the rebuilt frame and the position it saved.
+	self.RestoreScroll = restoreScroll
+
+	-- The connection lives with Main (destroyed with the ScreenGui, PRF-004).
+	main.DescendantAdded:Connect(function(d: Instance)
+		local pos = pendingScroll
+		if pos and d.Name == "Grid" and d:IsA("ScrollingFrame") then
+			pendingScroll = nil
+			restoreScroll(d, pos)
+		end
+	end)
+
 	-- Positions depend on the Roblox top bar, so they are recomputed on every Show().
 	local function layout()
 		local insetY = GuiService:GetGuiInset().Y
@@ -276,14 +317,29 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 		prompt = overlay
 	end
 
-	-- Empties Main / Side / Buttons for a full re-render.
-	function self.Clear()
+	-- Empties Main / Side / Buttons for a full re-render. scrollKey (e.g. the current tab):
+	-- when it matches the previous Clear, the rebuilt "Grid" keeps its scroll position.
+	function self.Clear(scrollKey: string?)
+		local old = main:FindFirstChild("Grid", true)
+		if scrollKey ~= nil and scrollKey == lastScrollKey and old and old:IsA("ScrollingFrame") then
+			pendingScroll = old.CanvasPosition
+		else
+			pendingScroll = nil
+		end
+		lastScrollKey = scrollKey
 		clearChildren(main)
 		clearChildren(side)
 		clearChildren(buttons)
 	end
 
+	-- The next rebuild starts the grid at the top (new search or filter).
+	function self.ResetScroll()
+		lastScrollKey = nil
+		pendingScroll = nil
+	end
+
 	function self.Show()
+		self.ResetScroll() -- each visit starts at the top
 		layout()
 		gui.Enabled = true
 	end

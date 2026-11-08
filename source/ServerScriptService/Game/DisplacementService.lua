@@ -33,6 +33,12 @@ local RacePassiveService = require(script.Parent.RacePassiveService)
 local StatusService = require(script.Parent.StatusService) -- status Stability buffs (2026-10-07)
 local TraitEffectService = require(script.Parent.TraitEffectService) -- Perks & Flaws: fall/collision mults (2026-10-23)
 local StatCalcService = require(script.Parent.StatCalcService) -- shared Stability calculation (2026-10-28)
+-- Map-object data (Bone Pillar collision extra, 2026-11-07). Content module, no cycle.
+local ObjectData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ObjectData")
+)
 
 local DisplacementService = {}
 
@@ -547,6 +553,18 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 			if cMult ~= 1 then
 				wallCollisionResult.collidedUnitDamage = math.round(wallCollisionResult.collidedUnitDamage * cMult)
 			end
+		end
+		-- BONE PILLAR (objects_encounters row 121; movement_targeting 16, 2026-11-07): after the normal
+		-- wall-collision damage (1.3x impact), add a flat round(Max HP x 0.15 x Boss HP% Modifier) ONCE
+		-- per collision - not scaled by blocked tiles, STR, knockback source or the collision mults
+		-- above. Boss HP% Modifier = 1 (same stub as GameConstants.CalcWallCollisionDamage). The
+		-- Bleed is applied by the caller (CommandService applyForcedEntryEffects). Read-only here.
+		if wallCollisionResult.colliderType == "Bone Pillar" and (wallCollisionResult.damage or 0) > 0 then
+			local _bpDef = ObjectData and ObjectData.Objects and ObjectData.Objects["Bone Pillar"]
+			local _bpPct = (_bpDef and _bpDef.collisionExtraMaxHpPct) or 0.15
+			local _bossMod = 1.0
+			wallCollisionResult.damage = wallCollisionResult.damage + math.round((target.maxHp or 0) * _bpPct * _bossMod)
+			wallCollisionResult.bonePillar = true
 		end
 	end
 

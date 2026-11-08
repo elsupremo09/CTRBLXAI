@@ -31,6 +31,8 @@ local MerchantInspector: any = (require :: any)(inspectorModule)
 local toolbarModule = uiFolder:WaitForChild("ItemListToolbar", WAIT)
 local ItemListToolbar: any = if toolbarModule then (require :: any)(toolbarModule) else nil
 if not toolbarModule then warn("[BlacksmithScreen] ItemListToolbar module missing; no filter bar") end
+-- The Loadout's own bar and menus (user ruling 2026-11-08: Blacksmith matches the Loadout; the
+-- 27 px phone bar from 2026-11-07 no longer applies): 24 px bar, compact icon menus, white text.
 local toolbar: any = if ItemListToolbar then ItemListToolbar.new() else nil
 
 local BlacksmithScreen = {}
@@ -190,7 +192,7 @@ local function buildMain(res: any, isUpgrade: boolean, entries: { any }, selecte
 		else
 			makeNote(main, "Dismantling destroys an item for mercury, crystals and rune gems (sulfur from Exalted and above). It gives no gold. Equipped items are not listed.", 1)
 		end
-		if toolbar then toolbar.Build(main, 2, function() render() end) end
+		if toolbar then toolbar.Build(main, 2, function() screen.ResetScroll(); render() end) end
 		if #entries == 0 then
 			makeNote(main, if toolbar and toolbar.IsFiltering() then "No items match the search or filters."
 				elseif isUpgrade then "No items." else "Nothing to dismantle. Unequip an item first.", 3)
@@ -417,7 +419,7 @@ end
 render = function()
 	local c = ctx
 	if not c or not screen or not isOpen then return end
-	screen.Clear()
+	screen.Clear(currentTab) -- same tab keeps the grid's scroll position
 	local isUpgrade = currentTab == "Upgrade"
 	local res = c.getItems()
 	local entries = buildEntries(res, isUpgrade)

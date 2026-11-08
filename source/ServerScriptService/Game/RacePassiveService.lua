@@ -967,8 +967,10 @@ function RacePassiveService.OnTurnStart(unit, state)
 		local _hrm = StatusService.GetHealingReceivedMult(unit)
 		if _hrm ~= 1 then heal = math.max(0, math.floor(heal * _hrm)) end
 		if heal > 0 then
+			local _llBefore = unit.currentHp
 			unit.currentHp = math.min(unit.maxHp, unit.currentHp + heal)
 			StatusService.WeakenVenomOnHeal(unit)  -- healing weakens Venom (2026-10-26)
+			StatusService.NotifyHealGained(unit, unit.currentHp - _llBefore)  -- Life Link share (2026-11-08)
 			print(string.format(
 				"[RacePassiveService] Troll Regrowth: %s heals %d (20%% of %d missing) | HP: %d/%d",
 				unit.name or "?", heal, missing, unit.currentHp, unit.maxHp

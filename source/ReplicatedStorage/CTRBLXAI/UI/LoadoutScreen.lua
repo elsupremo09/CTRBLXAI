@@ -12,6 +12,9 @@ local player = Players.LocalPlayer
 
 local CTRBLXAI_UI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10)
 local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
+-- The inventory bar / menus / level label / grid spacing / sub-tabs, shared with the Runeforge
+-- (user 2026-11-08: the Loadout is the model; one copy of these pieces).
+local InventoryControls = require(CTRBLXAI_UI:WaitForChild("InventoryControls", 10))
 local MockData    = require(CTRBLXAI_UI:WaitForChild("MockLoadoutData", 10))
 local BattleEvents = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 	:WaitForChild("Remotes", 10):WaitForChild("BattleEvents", 10))
@@ -478,7 +481,7 @@ local function buildUnitHeader()
 	local function closeUnitDropdown()
 		if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
 	end
-	swapBtn.MouseButton1Click:Connect(function()
+	swapBtn.Activated:Connect(function()
 		if activeDropdown then closeUnitDropdown(); return end
 		local units = MockData.GetAllUnits and MockData.GetAllUnits() or {}
 		local ROW_H = 46
@@ -496,7 +499,7 @@ local function buildUnitHeader()
 		backdrop.BackgroundTransparency = 1
 		backdrop.Text = ""
 		backdrop.Parent = activeDropdown
-		backdrop.MouseButton1Click:Connect(closeUnitDropdown)
+		backdrop.Activated:Connect(closeUnitDropdown)
 
 		local menu = Instance.new("ScrollingFrame")
 		menu.Size = UDim2.new(0, menuW, 0, menuH)
@@ -591,7 +594,7 @@ local function buildUnitHeader()
 			rdLbl.ZIndex = 52
 			rdLbl.Parent = rowBtn
 
-			rowBtn.MouseButton1Click:Connect(function()
+			rowBtn.Activated:Connect(function()
 				closeUnitDropdown()
 				BattleEvents.RequestSaveLoadout:FireServer() -- save the unit we're leaving (2026-10-19)
 				if MockData.SetSelectedUnitById then MockData.SetSelectedUnitById(u.id) end
@@ -625,34 +628,18 @@ local function buildEquippedLoadout()
 	layout.Padding = UDim.new(0, 3)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-	-- Tab switcher: GEAR / CONSUMABLES
-	local tabRow = Instance.new("Frame")
-	local SUBTAB_H = 24 -- same height as the Outfit Worn/Preview sub-tabs (user ruling 2026-10-08)
-	tabRow.Size = UDim2.new(1, 0, 0, SUBTAB_H)
-	tabRow.BackgroundTransparency = 1
-	tabRow.LayoutOrder = 0
-	tabRow.Parent = equippedPanel
-
-	local tabLayout = Instance.new("UIListLayout", tabRow)
-	tabLayout.FillDirection = Enum.FillDirection.Horizontal
-	tabLayout.Padding = UDim.new(0, 6)
-
-	for i, tabDef in ipairs({ { id = "gear", label = "GEAR" }, { id = "cons", label = "CONSUMABLES" } }) do
-		-- Old 9-slice text bars (2026-10-08); Scale width: two halves of the panel.
-		Theme.MakeTabButton(tabRow, tabDef.label, if tabDef.id == equippedTab then "Active" else "Inactive", function()
-			equippedTab = tabDef.id
+	-- Tab switcher: GEAR / CONSUMABLES (shared InventoryControls.MakeSubTabs, 2026-11-08)
+	local SUBTAB_H = InventoryControls.SubTabHeight -- same height as the Outfit Worn/Preview sub-tabs (user ruling 2026-10-08)
+	InventoryControls.MakeSubTabs(equippedPanel, { { id = "gear", label = "GEAR" }, { id = "cons", label = "CONSUMABLES" } },
+		equippedTab, function(id)
+			equippedTab = id
 			buildEquippedLoadout()
 			if equippedTab == "cons" then
 				buildConsumableGrid()
 			else
 				buildInventory()
 			end
-		end, {
-			name = "SubTab_" .. tabDef.label,
-			size = UDim2.new(0.5, -3, 1, 0),
-			layoutOrder = i,
-		})
-	end
+		end, 0)
 
 	-- Content area below tabs
 	local content = Instance.new("Frame")
@@ -804,7 +791,7 @@ local function buildEquippedLoadout()
 			end
 
 			-- Click: filter inventory to this slot type
-			tile.MouseButton1Click:Connect(function()
+			tile.Activated:Connect(function()
 				if isOffHandDisabled then return end
 				-- Every slot (2026-10-20): filter the inventory to this slot's category AND, if
 				-- something is equipped, open its detail on top of the filtered list. The Doctrine
@@ -885,7 +872,7 @@ local function buildEquippedLoadout()
 					Position = UDim2.new(0, 2, 1, -14),
 					TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary,
 					TextXAlignment = Enum.TextXAlignment.Center })
-				cell.MouseButton1Click:Connect(function()
+				cell.Activated:Connect(function()
 					openEquippedConsumableDetail(unit.id, i, item)
 				end)
 			else
@@ -936,7 +923,7 @@ local function _buildFilterBar(parent)
 			stroke.Thickness = 1
 		end
 
-		chip.MouseButton1Click:Connect(function()
+		chip.Activated:Connect(function()
 			currentFilter = f.id
 			selectedItemId = nil
 			buildInventory()
@@ -963,24 +950,13 @@ local function buildItemGrid(parent)
 	itemGrid.Parent = parent
 
 	local grid = Instance.new("UIGridLayout", itemGrid)
-	grid.CellPadding = UDim2.new(0, 4, 0, 3)
+	grid.CellPadding = InventoryControls.GridCellPadding
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
 	grid.FillDirection = Enum.FillDirection.Horizontal
 
-	-- Compute cell size: responsive to screen — minimum 3 rows visible, max 96px wide
-	local MAX_CELL = 96
-	local MIN_CELL = 48
-	local ASPECT = 1.2
-	local GAP = 4
-	local containerW = itemGrid.AbsoluteSize.X - 16 -- subtract padding
-	local containerH = itemGrid.AbsoluteSize.Y
-	if containerW < 100 then containerW = 400 end -- fallback
-	if containerH < 100 then containerH = 300 end -- fallback
-	-- Height-first: ensure 3 rows fit
-	local maxCellH = math.floor((containerH - 2 * GAP) / 3)
-	local cellW = math.floor(maxCellH / ASPECT)
-	cellW = math.clamp(cellW, MIN_CELL, MAX_CELL)
-	local cellH = math.floor(cellW * ASPECT)
+	-- Compute cell size: responsive to screen — minimum 3 rows visible, max 96px wide.
+	-- Shared formula (Theme.ItemTileCell, 2026-11-07) so the Runeforge uses the same tiles.
+	local cellW, cellH = Theme.ItemTileCell(itemGrid.AbsoluteSize.Y)
 	grid.CellSize = UDim2.new(0, cellW, 0, cellH)
 	local iconFrame = math.max(3, math.round(cellW * 0.05))
 
@@ -1080,6 +1056,7 @@ local function buildItemGrid(parent)
 		-- never collides with the top-right equipped "E" marker.
 		local isCountItem = (item.cat == "Doctrine") or (item.cat == "Consumable")
 		local hasCountBadge = false
+		local gearLvW = 0  -- width of the top-left Lv label (gear only); NEW badge drops below it if they would touch
 		if isCountItem then
 			local showCount = not (item.cat == "Doctrine" and item.isCurrent)
 			if showCount then
@@ -1099,46 +1076,17 @@ local function buildItemGrid(parent)
 				if qLbl then qLbl.ZIndex = 3 end
 			end
 		else
-			local lvLbl = makeLabel(card, { Text = "Lv." .. (item.lv or 1), Size = UDim2.new(0, 36, 0, 12),
-				Position = UDim2.new(0, 3, 0, 2),
-				TextSize = 9, TextColor3 = Theme.Colors.TextSecondary,
-				Font = Theme.Font.Mono })
-			if lvLbl then lvLbl.ZIndex = 3 end
+			-- 2026-11-07: never below the phone badge floor (was a fixed 9px), width from the text.
+			-- Shared label (InventoryControls.MakeLevelLabel, 2026-11-08), same look as before.
+			local _lvLbl
+			_lvLbl, gearLvW = InventoryControls.MakeLevelLabel(card, "Lv." .. (item.lv or 1))
 		end
 
-		-- Equipped marker (top-right): gold = this unit, grey = another unit
-		if isEquipped or isEquippedByOther then
-			local marker = Instance.new("Frame")
-			marker.Size = UDim2.new(0, 14, 0, 12)
-			marker.Position = UDim2.new(1, -16, 0, 2)
-			marker.BackgroundColor3 = isEquipped and Theme.Colors.TextGold or Theme.Colors.TextDisabled
-			marker.BorderSizePixel = 0
-			marker.ZIndex = 3
-			marker.Parent = card
-			Instance.new("UICorner", marker).CornerRadius = UDim.new(0, 2)
-			local eLbl = makeLabel(marker, { Text = "E", Size = UDim2.fromScale(1, 1),
-				TextSize = 8, Font = Theme.Font.PrimaryBold,
-				TextColor3 = Color3.fromRGB(0, 0, 0),
-				TextXAlignment = Enum.TextXAlignment.Center })
-			if eLbl then eLbl.ZIndex = 3 end
-		end
-
-		-- NEW badge (top-right, below equipped marker if both)
-		if item.isNew then
-			local newBadge = Instance.new("Frame")
-			newBadge.Size = UDim2.new(0, 22, 0, 12)
-			newBadge.Position = UDim2.new(1, -24, 0, (isEquipped or hasCountBadge) and 16 or 2)
-			newBadge.BackgroundColor3 = Theme.Colors.Success
-			newBadge.BorderSizePixel = 0
-			newBadge.ZIndex = 3
-			newBadge.Parent = card
-			Instance.new("UICorner", newBadge).CornerRadius = UDim.new(0, 2)
-			local newLbl = makeLabel(newBadge, { Text = "NEW", Size = UDim2.fromScale(1, 1),
-				TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
-				TextColor3 = Color3.fromRGB(0, 0, 0),
-				TextXAlignment = Enum.TextXAlignment.Center })
-			if newLbl then newLbl.ZIndex = 3 end
-		end
+		-- Equipped marker (top-right): gold = this unit, grey = another unit, and the NEW badge.
+		-- Shared with the Runeforge gear tiles (InventoryControls.AddTileMarkers, 2026-11-08); the code
+		-- moved there unchanged (2026-11-07 badge size / narrow-tile rules included).
+		InventoryControls.AddTileMarkers(card, cellW, gearLvW, isEquipped == true, isEquippedByOther == true,
+			item.isNew == true, hasCountBadge)
 
 		-- Icon (center) — use uploaded image if available, else text
 		if item.icon and string.find(item.icon, "rbxassetid://") then
@@ -1176,7 +1124,9 @@ local function buildItemGrid(parent)
 			TextXAlignment = Enum.TextXAlignment.Left, TextWrapped = true })
 		if nameLbl then nameLbl.ZIndex = 3 end
 
-		card.MouseButton1Click:Connect(function()
+		card.Activated:Connect(function()
+			local newBadge = card:FindFirstChild("NewBadge") -- seen now (2026-11-08)
+			if newBadge then newBadge:Destroy() end
 			if item.cat == "Doctrine" then
 				-- Open the doctrine's info window like weapons/consumables (2026-10-20). The
 				-- equipped copy opens info-only (isEquippedMode); a spare shows an EQUIP action.
@@ -1200,9 +1150,9 @@ buildInventory = function()
 	clearChildren(inventoryPanel)
 	pad(inventoryPanel, 8, 8, 8, 8)
 
-	-- Single toolbar row: Search + Type + Rarity + Sort
+	-- Single toolbar row: Search + Type + Rarity + Sort (bar height: InventoryControls)
 	local ctrlRow = Instance.new("Frame")
-	ctrlRow.Size = UDim2.new(1, 0, 0, 24)
+	ctrlRow.Size = UDim2.new(1, 0, 0, InventoryControls.BarHeight)
 	ctrlRow.Position = UDim2.new(0, 0, 0, 0)
 	ctrlRow.BackgroundTransparency = 1
 	ctrlRow.Parent = inventoryPanel
@@ -1241,132 +1191,17 @@ buildInventory = function()
 
 	local function showDropdown(anchorBtn, options, onSelect)
 		closeDropdown()
-
-		local rowH = 22
-		local menuH = #options * rowH + 4
-		local menuW = math.max(anchorBtn.AbsoluteSize.X, 80)
-
-		-- ScreenGui overlay to capture outside clicks
-		activeDropdown = Instance.new("ScreenGui")
-		activeDropdown.Name = "DropdownOverlay"
-		activeDropdown.DisplayOrder = 105
-		activeDropdown.ResetOnSpawn = false
-		activeDropdown.Parent = getPlayerGui()
-
-		-- Invisible full-screen backdrop to close on outside click
-		local ddBackdrop = Instance.new("TextButton")
-		ddBackdrop.Size = UDim2.fromScale(1, 1)
-		ddBackdrop.BackgroundTransparency = 1
-		ddBackdrop.Text = ""
-		ddBackdrop.Parent = activeDropdown
-		ddBackdrop.MouseButton1Click:Connect(closeDropdown)
-
-		-- Menu panel, positioned below the anchor button
-		local menuPanel = Instance.new("Frame")
-		menuPanel.Size = UDim2.new(0, menuW, 0, menuH)
-		menuPanel.Position = UDim2.new(0, anchorBtn.AbsolutePosition.X, 0, anchorBtn.AbsolutePosition.Y + anchorBtn.AbsoluteSize.Y + 2)
-		menuPanel.BackgroundColor3 = Theme.Colors.Panel
-		menuPanel.BorderSizePixel = 0
-		menuPanel.ZIndex = 50
-		menuPanel.Parent = activeDropdown
-		Instance.new("UICorner", menuPanel).CornerRadius = UDim.new(0, 4)
-		local menuStroke = Instance.new("UIStroke", menuPanel)
-		menuStroke.Color = Theme.Colors.Border
-		menuStroke.Thickness = 1
-
-		local menuLayout = Instance.new("UIListLayout", menuPanel)
-		menuLayout.Padding = UDim.new(0, 0)
-		menuLayout.SortOrder = Enum.SortOrder.LayoutOrder
-		pad(menuPanel, 2, 2, 2, 2)
-
-		for idx, opt in ipairs(options) do
-			local row = Instance.new("TextButton")
-			row.Size = UDim2.new(1, 0, 0, rowH)
-			row.BackgroundColor3 = Theme.Colors.PanelRaised
-			row.BackgroundTransparency = opt.active and 0.2 or 0.6
-			row.Font = Theme.Font.Primary
-			row.TextSize = Theme.Text.Small()
-			row.TextColor3 = opt.active and Theme.Colors.TextGold or Theme.Colors.TextPrimary
-			row.BorderSizePixel = 0
-			row.LayoutOrder = idx
-			row.ZIndex = 51
-			row.Parent = menuPanel
-			Instance.new("UICorner", row).CornerRadius = UDim.new(0, 3)
-			-- Icon + text layout
-			local hasImage = opt.icon and string.find(opt.icon, "rbxassetid://")
-			if hasImage then
-				row.Text = ""
-				local ico = Instance.new("ImageLabel")
-				ico.Size = UDim2.new(0, 16, 0, 16)
-				ico.Position = UDim2.new(0, 4, 0.5, -8)
-				ico.BackgroundTransparency = 1
-				ico.Image = opt.icon
-				ico.ScaleType = Enum.ScaleType.Fit
-				ico.ZIndex = 52
-				ico.Parent = row
-				local lbl = Instance.new("TextLabel")
-				lbl.Size = UDim2.new(1, -24, 1, 0)
-				lbl.Position = UDim2.new(0, 22, 0, 0)
-				lbl.BackgroundTransparency = 1
-				lbl.Font = Theme.Font.Primary
-				lbl.TextSize = Theme.Text.Small()
-				lbl.TextColor3 = opt.active and Theme.Colors.TextGold or Theme.Colors.TextPrimary
-				lbl.TextXAlignment = Enum.TextXAlignment.Left
-				lbl.Text = opt.label
-				lbl.ZIndex = 52
-				lbl.Parent = row
-			else
-				row.Text = opt.label
-			end
-			row.MouseButton1Click:Connect(function()
-				closeDropdown()
-				onSelect(opt.value, idx)
-			end)
-		end
+		-- Shared Loadout menu (InventoryControls.ShowMenu, 2026-11-08): unchanged look.
+		activeDropdown = InventoryControls.ShowMenu(getPlayerGui(), anchorBtn, options, onSelect, closeDropdown)
 	end
 
 	local function makeDropdown(text, order, isActive, iconAsset)
-		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(0, 62, 1, 0)
-		btn.BackgroundColor3 = Theme.Colors.Surface
-		btn.BackgroundTransparency = 0.2
-		btn.BorderSizePixel = 0
-		btn.LayoutOrder = order
-		btn.Parent = ctrlRow
-		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 3)
-		if iconAsset then
-			btn.Text = ""
-			local ico = Instance.new("ImageLabel")
-			ico.Size = UDim2.new(0, 14, 0, 14)
-			ico.Position = UDim2.new(0, 3, 0.5, -7)
-			ico.BackgroundTransparency = 1
-			ico.Image = iconAsset
-			ico.ScaleType = Enum.ScaleType.Fit
-			ico.ImageColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
-			ico.Parent = btn
-			local lbl = Instance.new("TextLabel")
-			lbl.Size = UDim2.new(1, -19, 1, 0)
-			lbl.Position = UDim2.new(0, 19, 0, 0)
-			lbl.BackgroundTransparency = 1
-			lbl.Font = Theme.Font.Primary
-			lbl.TextSize = Theme.Text.Small()
-			lbl.TextColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
-			lbl.TextXAlignment = Enum.TextXAlignment.Left
-			lbl.TextTruncate = Enum.TextTruncate.AtEnd
-			lbl.Text = text
-			lbl.Parent = btn
-		else
-			btn.Font = Theme.Font.Primary
-			btn.TextSize = Theme.Text.Small()
-			btn.TextColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
-			btn.Text = text
-		end
-		return btn
+		return InventoryControls.MakeFilterButton(ctrlRow, text, order, isActive, iconAsset)
 	end
 
 	-- Type filter button — cycles through category filters
 	local typeBtn = makeDropdown(filterLabel, 2, currentFilter ~= "All", Theme.Icons.Filter)
-	typeBtn.MouseButton1Click:Connect(function()
+	typeBtn.Activated:Connect(function()
 		local opts = {}
 		for _, f in ipairs(CATEGORY_FILTERS) do
 			table.insert(opts, { label = f.label, value = f.id, icon = f.icon, active = (currentFilter == f.id) })
@@ -1383,7 +1218,7 @@ buildInventory = function()
 
 	-- Rarity filter button — cycles through rarity options
 	local rarityBtn = makeDropdown(rarityLabel, 3, currentRarity ~= "All", Theme.Icons.Filter)
-	rarityBtn.MouseButton1Click:Connect(function()
+	rarityBtn.Activated:Connect(function()
 		local opts = {}
 		for _, r in ipairs(RARITY_OPTIONS) do
 			local _clr = r == "All" and Theme.Colors.TextPrimary or getRarityColor(r)
@@ -1399,7 +1234,7 @@ buildInventory = function()
 
 	-- Sort button — cycles through sort modes
 	local sortBtn = makeDropdown(sortLabel, 4, false, Theme.Icons.Sort)
-	sortBtn.MouseButton1Click:Connect(function()
+	sortBtn.Activated:Connect(function()
 		local opts = {}
 		for si, s in ipairs(SORT_OPTIONS) do
 			table.insert(opts, { label = s.label, value = si, active = (currentSort == si) })
@@ -1427,6 +1262,7 @@ openItemDetail = function(item, compareItem, isEquippedMode)
 	closeDetail()
 	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
 	if not item then return end
+	MockData.MarkSeen(item) -- opening the detail = seen (NEW badge, 2026-11-08)
 
 	local unit = MockData.GetSelectedUnit()
 
@@ -1445,7 +1281,7 @@ openItemDetail = function(item, compareItem, isEquippedMode)
 	backdrop.Text = ""
 	backdrop.BorderSizePixel = 0
 	backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Activated:Connect(closeDetail)
 
 	-- Center panel
 	-- Anchored to left edge. Width: 55% solo, 70% comparison.
@@ -1466,7 +1302,7 @@ openItemDetail = function(item, compareItem, isEquippedMode)
 		buildComparisonContent(panel, item, compareItem, unit)
 	else
 		-- ============ SOLO DETAIL MODE ============
-		buildSoloDetailContent(panel, item)
+		buildSoloDetailContent(panel, item, unit and unit.id)
 	end
 
 	-- ============ BUTTON BAR (fixed bottom-right of SCREEN, outside the panel) ============
@@ -1671,6 +1507,32 @@ end
 local DETAIL_PORTRAIT = 52
 local DETAIL_TEXT_X = DETAIL_PORTRAIT + 8
 
+-- "Equipped by" line (2026-11-06): which OTHER unit currently wears this gear, so the
+-- detail tells the player before EQUIP moves it (server auto-unequips the previous
+-- holder, LoadoutRequestHandlers RequestEquip). Display only; read from the client's
+-- copy of the server inventory (MockData.Equipped) and roster names (MockData.Units).
+local HOLDER_SLOT_NAMES = { MainHand = "Main Hand", OffHand = "Off-Hand", Head = "Head",
+	Torso = "Torso", Arms = "Arms", Legs = "Legs", Accessory = "Accessory" }
+local function findOtherHolder(itemId, viewerUnitId)
+	if not itemId or not viewerUnitId then return nil end
+	for unitId, eq in pairs(MockData.Equipped or {}) do
+		if unitId ~= viewerUnitId and type(eq) == "table" then
+			-- Gear slots only (W1): doctrine/consumable keys can never match.
+			for slot in pairs(HOLDER_SLOT_NAMES) do
+				local eqId = eq[slot]
+				if eqId ~= nil and eqId == itemId then
+					local name = unitId
+					for _, u in ipairs(MockData.GetAllUnits() or {}) do
+						if u.id == unitId then name = u.name or unitId; break end
+					end
+					return name, HOLDER_SLOT_NAMES[slot] or tostring(slot)
+				end
+			end
+		end
+	end
+	return nil
+end
+
 local function buildDetailHeader(parent, opts)
 	local iconFrame = Instance.new("Frame")
 	iconFrame.Size = UDim2.new(0, DETAIL_PORTRAIT, 0, DETAIL_PORTRAIT)
@@ -1732,6 +1594,27 @@ local function buildDetailHeader(parent, opts)
 			TextColor3 = opts.subtitleColor or Theme.Colors.TextSecondary })
 		tagY = tagY + 16
 	end
+	if opts.holderText and opts.holderText ~= "" then
+		local holderLbl = makeLabel(parent, { Text = opts.holderText,
+			Size = UDim2.new(1, -DETAIL_TEXT_X, 0, 14),
+			Position = UDim2.new(0, DETAIL_TEXT_X, 0, tagY),
+			TextSize = Theme.Text.Small(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Color3.new(1, 1, 1) })
+		holderLbl.Name = "EquippedByLine"
+		holderLbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+		holderLbl.TextStrokeTransparency = 0
+		-- Long unit names wrap to a second line instead of being cut with "...".
+		holderLbl.TextWrapped = true
+		holderLbl.TextTruncate = Enum.TextTruncate.None
+		local holderH = 14
+		local holderW = holderLbl.AbsoluteSize.X
+		if holderW > 0 then
+			local hb = TextService:GetTextSize(opts.holderText, holderLbl.TextSize, holderLbl.Font, Vector2.new(holderW, 10000))
+			holderH = math.max(14, math.ceil(hb.Y) + 2)
+		end
+		holderLbl.Size = UDim2.new(1, -DETAIL_TEXT_X, 0, holderH)
+		tagY = tagY + holderH + 2
+	end
 	local tags = opts.tags or {}
 	if #tags > 0 then
 		local tagRow = Instance.new("Frame")
@@ -1781,8 +1664,11 @@ local function buildDetailHeader(parent, opts)
 end
 
 
-buildSoloDetailContent = function(panel, item)
+buildSoloDetailContent = function(panel, item, viewerUnitId)
 	local rc = getRarityColor(item.rarity)
+	local holderName, holderSlot = findOtherHolder(item.id, viewerUnitId)
+	local holderText = holderName
+		and string.format("Equipped by %s (%s) · EQUIP moves it", holderName, holderSlot) or nil
 
 	-- Unified header
 	local divY = buildDetailHeader(panel, {
@@ -1798,6 +1684,7 @@ buildSoloDetailContent = function(panel, item)
 		level = item.lv,
 		rarity = item.rarity,
 		subtitleColor = rc,
+		holderText = holderText,
 	})
 
 	-- Divider
@@ -2047,7 +1934,7 @@ buildSoloDetailContent = function(panel, item)
 	toggleIcon.ScaleType = Enum.ScaleType.Fit
 	toggleIcon.ImageColor3 = Theme.Colors.TextSecondary
 	toggleIcon.Parent = toggleBtn
-	toggleBtn.MouseButton1Click:Connect(function()
+	toggleBtn.Activated:Connect(function()
 		showingBonus = not showingBonus
 		if showingBonus then
 			buildBonusView()
@@ -2072,6 +1959,20 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 	local headerY = 0
 	local cardH = 40
 	local halfW = 0.46
+	-- 'On <unit>' line on the SELECTED card (W2): Small text (>=10px on phone), wraps,
+	-- and both cards grow so nothing below overlaps. Desktop never shrinks (min 40).
+	local selHolder = findOtherHolder(selectedItem.id, unit and unit.id)
+	local selLvText = "Lv." .. (selectedItem.lv or 0) .. (selHolder and ("  · On " .. selHolder) or "")
+	local selLvSize = Theme.Text.Small()
+	local selLvH = 12
+	if selHolder then
+		local panelW = panel.AbsoluteSize.X
+		local lineW = (panelW > 0 and (panelW * halfW - 32)) or 120
+		if lineW < 40 then lineW = 120 end
+		local b = TextService:GetTextSize(selLvText, selLvSize, Theme.Font.Primary, Vector2.new(lineW, 10000))
+		selLvH = math.max(12, math.ceil(b.Y))
+		cardH = math.max(cardH, 18 + selLvH + 4)
+	end
 
 	-- CURRENT label + card (left)
 	makeLabel(panel, { Text = "CURRENT", Size = UDim2.new(halfW, 0, 0, 12),
@@ -2123,9 +2024,14 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 		Size = UDim2.new(1, -32, 0, 14), Position = UDim2.new(0, 30, 0, 3),
 		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
 		TextColor3 = Theme.Colors.TextPrimary })
-	makeLabel(selCard, { Text = "Lv." .. (selectedItem.lv or 0),
-		Size = UDim2.new(1, -32, 0, 12), Position = UDim2.new(0, 30, 0, 18),
-		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary })
+	local selLvLbl = makeLabel(selCard, { Text = selLvText,
+		Size = UDim2.new(1, -32, 0, selLvH), Position = UDim2.new(0, 30, 0, 18),
+		TextSize = selHolder and selLvSize or Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+		TextWrapped = selHolder ~= nil })
+	if selHolder then
+		selLvLbl.TextTruncate = Enum.TextTruncate.None
+		selLvLbl.TextYAlignment = Enum.TextYAlignment.Top
+	end
 
 	-- Divider
 	local divY = headerY + 14 + cardH + 4
@@ -2143,6 +2049,38 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 	contentFrame.Position = UDim2.new(0, 0, 0, bodyY)
 	contentFrame.BackgroundTransparency = 1
 	contentFrame.Parent = panel
+
+	-- Re-measure the 'On <unit>' line at the label's REAL width once layout is known
+	-- (build-time width can be 0 -> 120px guess; a narrow phone line is ~106px).
+	-- Updates both cards, the divider and the content area together. The connection
+	-- lives on the label, so it is cleaned up when the panel is cleared. Only acts when
+	-- the measured height changes; height never feeds back into width, so no loop.
+	if selHolder then
+		local function relayout()
+			local w = selLvLbl.AbsoluteSize.X
+			if w <= 0 then return end
+			local b = TextService:GetTextSize(selLvText, selLvSize, Theme.Font.Primary, Vector2.new(w, 10000))
+			local h = math.max(12, math.ceil(b.Y))
+			if h == selLvH then return end
+			selLvH = h
+			local newCardH = math.max(40, 18 + h + 4)
+			if newCardH == cardH then
+				selLvLbl.Size = UDim2.new(1, -32, 0, h)
+				return
+			end
+			cardH = newCardH
+			curCard.Size = UDim2.new(halfW, 0, 0, cardH)
+			selCard.Size = UDim2.new(halfW, 0, 0, cardH)
+			selLvLbl.Size = UDim2.new(1, -32, 0, h)
+			divY = headerY + 14 + cardH + 4
+			div.Position = UDim2.new(0, 0, 0, divY)
+			bodyY = divY + 4
+			contentFrame.Size = UDim2.new(1, 0, 1, -(bodyY + 30))
+			contentFrame.Position = UDim2.new(0, 0, 0, bodyY)
+		end
+		selLvLbl:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
+		relayout()
+	end
 
 	local showingBonus = false
 
@@ -2437,7 +2375,7 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 	toggleIcon.ScaleType = Enum.ScaleType.Fit
 	toggleIcon.ImageColor3 = Theme.Colors.TextSecondary
 	toggleIcon.Parent = toggleBtn
-	toggleBtn.MouseButton1Click:Connect(function()
+	toggleBtn.Activated:Connect(function()
 		showingBonus = not showingBonus
 		if showingBonus then
 			buildBonusCompare()
@@ -2819,7 +2757,7 @@ buildSkillsContent = function()
 		ddBack.BackgroundTransparency = 1
 		ddBack.Text = ""
 		ddBack.Parent = activeDropdown
-		ddBack.MouseButton1Click:Connect(closeDD)
+		ddBack.Activated:Connect(closeDD)
 
 		local mPanel = Instance.new("Frame")
 		mPanel.Size = UDim2.new(0, menuW, 0, menuH)
@@ -2876,7 +2814,7 @@ buildSkillsContent = function()
 			else
 				row.Text = opt.label
 			end
-			row.MouseButton1Click:Connect(function()
+			row.Activated:Connect(function()
 				closeDD()
 				onSelect(opt.value, idx)
 			end)
@@ -2926,7 +2864,7 @@ buildSkillsContent = function()
 	-- Type filter (All / Skill / Augment + subtypes)
 	local typeLbl = skillTypeFilter == "All" and "Type" or (skillTypeFilter )
 	local typeBtn = makeDDBtn(typeLbl, 2, skillTypeFilter ~= "All", Theme.Icons.Filter)
-	typeBtn.MouseButton1Click:Connect(function()
+	typeBtn.Activated:Connect(function()
 		local opts = {}
 		local TYPE_ICONS = {
 				All = Theme.Icons.Reset, Damage = Theme.Icons.Damage,
@@ -2946,7 +2884,7 @@ buildSkillsContent = function()
 	-- Tag filter
 	local tagLbl = skillTagFilter == "All" and "Tags" or (skillTagFilter )
 	local tagBtn = makeDDBtn(tagLbl, 3, skillTagFilter ~= "All", Theme.Icons.Filter)
-	tagBtn.MouseButton1Click:Connect(function()
+	tagBtn.Activated:Connect(function()
 		local opts = {}
 		local TAG_ICONS = {
 				All = Theme.Icons.Reset, Fire = Theme.Icons.Fire,
@@ -2967,7 +2905,7 @@ buildSkillsContent = function()
 	-- Sort
 	local sortOpt = SKILL_SORT_OPTIONS_SK[skillSortIndex] or SKILL_SORT_OPTIONS_SK[1]
 	local sortBtn = makeDDBtn(sortOpt.label , 4, false, Theme.Icons.Sort)
-	sortBtn.MouseButton1Click:Connect(function()
+	sortBtn.Activated:Connect(function()
 		local opts = {}
 		for si, s in ipairs(SKILL_SORT_OPTIONS_SK) do
 			table.insert(opts, { label = s.label, value = si, active = (skillSortIndex == si) })
@@ -3146,20 +3084,8 @@ buildSkillsContent = function()
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
 	grid.FillDirection = Enum.FillDirection.Horizontal
 
-	-- Compute cell size: same logic as equipment grid
-	local SK_MAX_CELL = 96
-	local SK_MIN_CELL = 48
-	local SK_ASPECT = 1.2
-	local SK_GAP = 4
-	local skContainerW = cardGrid.AbsoluteSize.X - 16
-	local skContainerH = cardGrid.AbsoluteSize.Y
-	if skContainerW < 100 then skContainerW = 400 end
-	if skContainerH < 100 then skContainerH = 300 end
-	-- Height-first: ensure 3 rows fit
-	local skMaxCellH = math.floor((skContainerH - 2 * SK_GAP) / 3)
-	local skCellW = math.floor(skMaxCellH / SK_ASPECT)
-	skCellW = math.clamp(skCellW, SK_MIN_CELL, SK_MAX_CELL)
-	local skCellH = math.floor(skCellW * SK_ASPECT)
+	-- Compute cell size: same logic as equipment grid (shared Theme.ItemTileCell, 2026-11-07)
+	local skCellW, skCellH = Theme.ItemTileCell(cardGrid.AbsoluteSize.Y)
 	grid.CellSize = UDim2.new(0, skCellW, 0, skCellH)
 	local skIconFrame = math.max(3, math.round(skCellW * 0.05))
 
@@ -3228,8 +3154,8 @@ buildSkillsContent = function()
 
 		-- Name strip (bottom)
 		local nameBg = Instance.new("Frame")
-		nameBg.Size = UDim2.new(1, 0, 0, 22)
-		nameBg.Position = UDim2.new(0, 0, 1, -22)
+		nameBg.Size = UDim2.new(1, 0, 0, 12 + Theme.Text.BadgeLineH())  -- 22 desktop; +2 on phone for the 10px tag line (2026-11-07)
+		nameBg.Position = UDim2.new(0, 0, 1, -(12 + Theme.Text.BadgeLineH()))
 		nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		nameBg.BackgroundTransparency = 0.45
 		nameBg.BorderSizePixel = 0
@@ -3245,12 +3171,12 @@ buildSkillsContent = function()
 		local elem = getElement(sk.tags)
 		local tagStr = table.concat(sk.tags or {}, "  |  ")
 		makeLabel(nameBg, { Text = tagStr,
-			Size = UDim2.new(1, -4, 0, 10),
+			Size = UDim2.new(1, -4, 0, Theme.Text.BadgeLineH()),
 			Position = UDim2.new(0, 2, 0, 12),
 			TextSize = Theme.Text.Badge(),
 			TextColor3 = elem and ELEM_COLORS[elem] or Theme.Colors.TextSecondary })
 
-		card.MouseButton1Click:Connect(function()
+		card.Activated:Connect(function()
 			openSkillCardDetail(sk)
 		end)
 
@@ -3335,8 +3261,8 @@ buildSkillsContent = function()
 
 		-- Name strip (bottom)
 		local nameBg = Instance.new("Frame")
-		nameBg.Size = UDim2.new(1, 0, 0, 22)
-		nameBg.Position = UDim2.new(0, 0, 1, -22)
+		nameBg.Size = UDim2.new(1, 0, 0, 12 + Theme.Text.BadgeLineH())  -- 22 desktop; +2 on phone for the 10px tag line (2026-11-07)
+		nameBg.Position = UDim2.new(0, 0, 1, -(12 + Theme.Text.BadgeLineH()))
 		nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		nameBg.BackgroundTransparency = 0.45
 		nameBg.BorderSizePixel = 0
@@ -3347,11 +3273,11 @@ buildSkillsContent = function()
 			TextSize = Theme.Text.Tiny(), Font = Theme.Font.PrimaryBold,
 			TextColor3 = Theme.Colors.TextPrimary })
 		makeLabel(nameBg, { Text = aug.family or "",
-			Size = UDim2.new(1, -4, 0, 10),
+			Size = UDim2.new(1, -4, 0, Theme.Text.BadgeLineH()),
 			Position = UDim2.new(0, 2, 0, 12),
 			TextSize = Theme.Text.Badge(), TextColor3 = Theme.Colors.TextGold })
 
-		card.MouseButton1Click:Connect(function()
+		card.Activated:Connect(function()
 			openAugmentCardDetail(aug)
 		end)
 
@@ -3510,7 +3436,7 @@ buildSkillLoadout = function()
 				def = capturedDef,
 				mockSkill = capturedMock,
 			}
-			sIco.MouseButton1Click:Connect(function()
+			sIco.Activated:Connect(function()
 				-- Equipped skill cards (slots 2-4) open the EQUIPPED detail (has UNEQUIP);
 				-- slot 1 is the doctrine-granted skill (not unequippable) and keeps the
 				-- read-only card detail. (2026-10-20)
@@ -3540,13 +3466,13 @@ buildSkillLoadout = function()
 					Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
 					TextColor3 = Theme.Colors.TextGold })
 				makeLabel(nameBtn, { Text = "DOCTRINE v",
-					Size = UDim2.new(1, 0, 0, 10),
-					Position = UDim2.new(0, 0, 1, -10),
+					Size = UDim2.new(1, 0, 0, Theme.Text.BadgeLineH()),
+					Position = UDim2.new(0, 0, 1, -Theme.Text.BadgeLineH()),
 					TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
 					TextColor3 = Theme.Colors.TextMuted or Theme.Colors.TextDisabled })
 
 				-- Click name -> doctrine dropdown
-				nameBtn.MouseButton1Click:Connect(function()
+				nameBtn.Activated:Connect(function()
 					local choices = MockData.GetDoctrineChoices(doctrineId)
 					local opts = {}
 					for _, cid in ipairs(choices) do
@@ -3575,7 +3501,7 @@ buildSkillLoadout = function()
 					ddBack.BackgroundTransparency = 1
 					ddBack.Text = ""
 					ddBack.Parent = activeDropdown
-					ddBack.MouseButton1Click:Connect(closeDD)
+					ddBack.Activated:Connect(closeDD)
 					local mPanel = Instance.new("Frame")
 					mPanel.Size = UDim2.new(0, 140, 0, menuH)
 					mPanel.Position = UDim2.new(0,
@@ -3605,7 +3531,7 @@ buildSkillLoadout = function()
 						mRow.ZIndex = 51
 						mRow.Parent = mPanel
 						Instance.new("UICorner", mRow).CornerRadius = UDim.new(0, 3)
-						mRow.MouseButton1Click:Connect(function()
+						mRow.Activated:Connect(function()
 							closeDD()
 							if MockData.ServerSelectDoctrineSkill then
 								MockData.ServerSelectDoctrineSkill(unit.id, opt.value)
@@ -3667,7 +3593,7 @@ buildSkillLoadout = function()
 
 					local cSlot = slot
 					local cAug = a
-					augBtn.MouseButton1Click:Connect(function()
+					augBtn.Activated:Connect(function()
 						openEquippedAugmentDetail(cSlot, cAug, augId)
 					end)
 				elseif a == 2 and not (MockData.Slot2Open or {})[unit.id] then
@@ -3678,7 +3604,7 @@ buildSkillLoadout = function()
 						TextXAlignment = Enum.TextXAlignment.Center })
 					-- Tap shows the approved locked-slot text in the augment picker's locked row.
 					local cSlot2 = slot
-					augBtn.MouseButton1Click:Connect(function()
+					augBtn.Activated:Connect(function()
 						openAugmentPickerForSlot(unit.id, cSlot2, 2)
 					end)
 				else
@@ -3689,7 +3615,7 @@ buildSkillLoadout = function()
 						TextXAlignment = Enum.TextXAlignment.Center })
 					local cSlot = slot
 					local cAug = a
-					augBtn.MouseButton1Click:Connect(function()
+					augBtn.Activated:Connect(function()
 						-- Open a picker showing all augment cards to attach to this specific slot
 						openAugmentPickerForSlot(unit.id, cSlot, cAug)
 					end)
@@ -3737,7 +3663,7 @@ openSkillCardDetail = function(sk)
 	backdrop.Text = ""
 	backdrop.BorderSizePixel = 0
 	backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Activated:Connect(closeDetail)
 
 	-- Detail panel (left-docked, 55% width)
 	local panel = Theme.MakePanel("SkillDetailPanel",
@@ -3836,7 +3762,7 @@ openSkillCardDetail = function(sk)
 			pf.BackgroundTransparency = 0.3
 			Instance.new("UICorner", pf).CornerRadius = UDim.new(0, 4)
 			makeLabel(pf, { Text = "POWER",
-				Size = UDim2.new(1, -8, 0, 10),
+				Size = UDim2.new(1, -8, 0, Theme.Text.BadgeLineH()),
 				Position = UDim2.new(0, 4, 0, 2),
 				TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
 				TextColor3 = Theme.Colors.TextSecondary })
@@ -3855,7 +3781,7 @@ openSkillCardDetail = function(sk)
 			ef.BackgroundTransparency = 0.2
 			Instance.new("UICorner", ef).CornerRadius = UDim.new(0, 4)
 			makeLabel(ef, { Text = "DESCRIPTION",
-				Size = UDim2.new(1, -8, 0, 10),
+				Size = UDim2.new(1, -8, 0, Theme.Text.BadgeLineH()),
 				Position = UDim2.new(0, 4, 0, 2),
 				TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
 				TextColor3 = Theme.Colors.TextSecondary })
@@ -3952,7 +3878,7 @@ openAugmentCardDetail = function(aug)
 	backdrop.Text = ""
 	backdrop.BorderSizePixel = 0
 	backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Activated:Connect(closeDetail)
 
 	local panel = Theme.MakePanel("AugmentDetailPanel",
 		UDim2.new(0.55, 0, 0.90, 0),
@@ -4056,7 +3982,7 @@ openAugmentCardDetail = function(aug)
 		ef.BackgroundTransparency = 0.2
 		Instance.new("UICorner", ef).CornerRadius = UDim.new(0, 4)
 		makeLabel(ef, { Text = "EFFECT",
-			Size = UDim2.new(1, -8, 0, 10),
+			Size = UDim2.new(1, -8, 0, Theme.Text.BadgeLineH()),
 			Position = UDim2.new(0, 4, 0, 2),
 			TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
 			TextColor3 = Theme.Colors.TextSecondary })
@@ -4106,7 +4032,7 @@ openAugmentCardDetail = function(aug)
 		cf.BackgroundTransparency = 0.4
 		Instance.new("UICorner", cf).CornerRadius = UDim.new(0, 4)
 		makeLabel(cf, { Text = "[!] CONFLICTS",
-			Size = UDim2.new(1, -8, 0, 10),
+			Size = UDim2.new(1, -8, 0, Theme.Text.BadgeLineH()),
 			Position = UDim2.new(0, 4, 0, 2),
 			TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold, TextColor3 = Theme.Colors.Danger })
 		makeLabel(cf, { Text = def.conflicts,
@@ -4177,7 +4103,7 @@ openSkillSlotPicker = function(sk)
 	backdrop.Text = ""
 	backdrop.BorderSizePixel = 0
 	backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Activated:Connect(closeDetail)
 
 	local popup = Theme.MakePanel("SlotPicker",
 		UDim2.new(0, 280, 0, 240),
@@ -4266,7 +4192,7 @@ openSkillSlotPicker = function(sk)
 
 		if not disabled then
 			local capturedSlot = slot
-			rowBtn.MouseButton1Click:Connect(function()
+			rowBtn.Activated:Connect(function()
 				closeDetail()
 				-- Equip: server auto-handles unequip of existing + augment return
 				if MockData.ServerEquipSkillCard then
@@ -4350,7 +4276,7 @@ openAugmentPickerForSlot = function(unitId, slotNum, augSlotNum)
 	backdrop.Text = ""
 	backdrop.BorderSizePixel = 0
 	backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Activated:Connect(closeDetail)
 
 	local popup = Theme.MakePanel("AugPickerForSlot",
 		UDim2.new(0, 280, 0, 300),
@@ -4449,7 +4375,7 @@ openAugmentPickerForSlot = function(unitId, slotNum, augSlotNum)
 		end
 
 		if fits then
-			rowBtn.MouseButton1Click:Connect(function()
+			rowBtn.Activated:Connect(function()
 				closeDetail()
 				if MockData.ServerAttachAugment then
 					local res = MockData.ServerAttachAugment(unitId, slotNum, augSlotNum, ac.id)
@@ -4498,7 +4424,7 @@ openAugmentSlotPicker = function(aug)
 	backdrop.Text = ""
 	backdrop.BorderSizePixel = 0
 	backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Activated:Connect(closeDetail)
 
 	local popup = Theme.MakePanel("AugSlotPicker",
 		UDim2.new(0, 320, 0, 360),
@@ -4619,7 +4545,7 @@ openAugmentSlotPicker = function(aug)
 
 			if not disabled then
 				local cSlot, cAug = slot, augSlot
-				rowBtn.MouseButton1Click:Connect(function()
+				rowBtn.Activated:Connect(function()
 					closeDetail()
 					if MockData.ServerAttachAugment then
 						-- Respect the server result; incompatible slots are already greyed out
@@ -4685,7 +4611,7 @@ openEquippedSkillDetail = function(slotNum, skillId, augments)
 	backdrop.Text = ""
 	backdrop.BorderSizePixel = 0
 	backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Activated:Connect(closeDetail)
 
 	local panel = Theme.MakePanel("EquippedSkillPanel",
 		UDim2.new(0.55, 0, 0.90, 0),
@@ -4874,7 +4800,7 @@ openEquippedAugmentDetail = function(slotNum, augSlotNum, augmentId)
 	backdrop.Text = ""
 	backdrop.BorderSizePixel = 0
 	backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Activated:Connect(closeDetail)
 
 	local panel = Theme.MakePanel("EquippedAugPanel",
 		UDim2.new(0.55, 0, 0.70, 0),
@@ -5035,7 +4961,7 @@ buildConsumableGrid = function()
 	catBtn.LayoutOrder = 2
 	catBtn.Parent = ctrlRow
 	Instance.new("UICorner", catBtn).CornerRadius = UDim.new(0, 3)
-	catBtn.MouseButton1Click:Connect(function()
+	catBtn.Activated:Connect(function()
 		local curIdx = 1
 		for idx, cat in ipairs(CONS_CATEGORY_ORDER) do
 			if cat == consFilter then curIdx = idx; break end
@@ -5089,18 +5015,8 @@ buildConsumableGrid = function()
 	-- this used a divergent copy (GAP 3, no -16 padding, 200px height fallback) which made
 	-- the tiles smaller. Constants, containerW-16, <100 fallbacks (400/300), GAP 4, ASPECT
 	-- 1.2 and CellPadding (0,4,0,3) now all match buildItemGrid exactly.
-	local MAX_CELL = 96
-	local MIN_CELL = 48
-	local ASPECT = 1.2
-	local GAP = 4
-	local containerW = scrollFrame.AbsoluteSize.X - 16
-	local containerH = scrollFrame.AbsoluteSize.Y
-	if containerW < 100 then containerW = 400 end
-	if containerH < 100 then containerH = 300 end
-	local maxCellH = math.floor((containerH - 2 * GAP) / 3)
-	local cellW = math.floor(maxCellH / ASPECT)
-	cellW = math.clamp(cellW, MIN_CELL, MAX_CELL)
-	local cellH = math.floor(cellW * ASPECT)
+	-- 2026-11-07: the formula itself now lives once in Theme.ItemTileCell (DAT-001).
+	local cellW, cellH = Theme.ItemTileCell(scrollFrame.AbsoluteSize.Y)
 	local gridLayout = Instance.new("UIGridLayout", scrollFrame)
 	gridLayout.CellSize = UDim2.new(0, cellW, 0, cellH)
 	gridLayout.CellPadding = UDim2.new(0, 4, 0, 3)
@@ -5144,7 +5060,7 @@ openConsumableDetail = function(ci)
 	backdrop.Size = UDim2.fromScale(1, 1)
 	backdrop.BackgroundColor3 = Theme.Colors.Overlay; backdrop.BackgroundTransparency = 0.5
 	backdrop.Text = ""; backdrop.BorderSizePixel = 0
-	backdrop.Parent = detailOverlay; backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Parent = detailOverlay; backdrop.Activated:Connect(closeDetail)
 	local panel = Theme.MakePanel("ConsDetail", UDim2.new(0.55, 0, 0.9, 0),
 		UDim2.new(0, 8, 0.05, 0), Vector2.new(0, 0), detailOverlay)
 	panel.ClipsDescendants = true; pad(panel, 10, 10, 10, 10)
@@ -5195,9 +5111,9 @@ openConsumableDetail = function(ci)
 	btnLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	btnLayout.Padding = UDim.new(0, fb.BTN_GAP)
 	local backBtn = Theme.MakeButton(btnBar, "BACK", "Secondary"); backBtn.LayoutOrder = 2
-	backBtn.MouseButton1Click:Connect(closeDetail)
+	backBtn.Activated:Connect(closeDetail)
 	local equipBtn = Theme.MakeButton(btnBar, "EQUIP", "Primary"); equipBtn.LayoutOrder = 1
-	equipBtn.MouseButton1Click:Connect(function() closeDetail(); openConsumableSlotPicker(unit.id, ci) end)
+	equipBtn.Activated:Connect(function() closeDetail(); openConsumableSlotPicker(unit.id, ci) end)
 end
 
 openConsumableSlotPicker = function(unitId, ci)
@@ -5210,7 +5126,7 @@ openConsumableSlotPicker = function(unitId, ci)
 	local backdrop = Instance.new("TextButton"); backdrop.Size = UDim2.fromScale(1, 1)
 	backdrop.BackgroundColor3 = Theme.Colors.Overlay; backdrop.BackgroundTransparency = 0.5
 	backdrop.Text = ""; backdrop.BorderSizePixel = 0; backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Activated:Connect(closeDetail)
 	local popup = Theme.MakePanel("ConsSlotPicker", UDim2.new(0, 260, 0, 240),
 		UDim2.new(0.5, 0, 0.5, 0), Vector2.new(0.5, 0.5), detailOverlay)
 	popup.ClipsDescendants = true; pad(popup, 10, 10, 10, 10)
@@ -5241,7 +5157,7 @@ openConsumableSlotPicker = function(unitId, ci)
 			Font = Theme.Font.Primary, TextSize = Theme.Text.Small(),
 			TextColor3 = locked and Theme.Colors.TextDisabled or Theme.Colors.TextPrimary })
 		if not locked then
-			rowBtn.MouseButton1Click:Connect(function()
+			rowBtn.Activated:Connect(function()
 				local result = BattleEvents.RequestEquipConsumable:InvokeServer(unitId, slotIdx, ci.id)
 				if not (result and result.ok) then
 					-- Refused: show the reason on the row (e.g. the item there is partly used).
@@ -5300,7 +5216,7 @@ openEquippedConsumableDetail = function(unitId, slotIdx, item)
 	local backdrop = Instance.new("TextButton"); backdrop.Size = UDim2.fromScale(1, 1)
 	backdrop.BackgroundColor3 = Theme.Colors.Overlay; backdrop.BackgroundTransparency = 0.5
 	backdrop.Text = ""; backdrop.BorderSizePixel = 0; backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Activated:Connect(closeDetail)
 	local catColor = CONS_CATEGORY_COLORS[ci.category] or Theme.Colors.TextSecondary
 	local panel = Theme.MakePanel("ConsEqDetail", UDim2.new(0.55, 0, 0.9, 0),
 		UDim2.new(0, 8, 0.05, 0), Vector2.new(0, 0), detailOverlay)
@@ -5348,9 +5264,9 @@ openEquippedConsumableDetail = function(unitId, slotIdx, item)
 	btnLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
 	btnLayout.Padding = UDim.new(0, fb.BTN_GAP)
 	local backBtn = Theme.MakeButton(btnBar, "BACK", "Secondary"); backBtn.LayoutOrder = 2
-	backBtn.MouseButton1Click:Connect(closeDetail)
+	backBtn.Activated:Connect(closeDetail)
 	local unBtn = Theme.MakeButton(btnBar, "UNEQUIP", "Primary"); unBtn.LayoutOrder = 1
-	unBtn.MouseButton1Click:Connect(function()
+	unBtn.Activated:Connect(function()
 		local result = BattleEvents.RequestUnequipConsumable:InvokeServer(unitId, slotIdx)
 		if not (result and result.ok) then
 			-- Refused (e.g. partly used: refill at base first). Keep the panel open and say why.
@@ -5525,7 +5441,7 @@ openStatExplain = function(key)
 	backdrop.AutoButtonColor = false
 	backdrop.Text = ""; backdrop.BorderSizePixel = 0
 	backdrop.Parent = detailOverlay
-	backdrop.MouseButton1Click:Connect(closeDetail)
+	backdrop.Activated:Connect(closeDetail)
 	local panel = Theme.MakePanel("StatExplain", UDim2.new(0, 300, 0, 220), UDim2.new(0.5, 0, 0.5, 0), Vector2.new(0.5, 0.5), detailOverlay)
 	panel.ClipsDescendants = true
 	pad(panel, 10, 12, 12, 10)
@@ -5681,7 +5597,7 @@ buildStatPanel = function()
 		if hasPoints then
 			minusBtn = Theme.MakeButton(row, "-", "Primary", nil, { size = UDim2.fromOffset(24, 18), position = UDim2.new(1, -56, 0, 1) })
 			minusBtn.ZIndex = 3
-			minusBtn.MouseButton1Click:Connect(function()
+			minusBtn.Activated:Connect(function()
 				if (pendingAlloc[stat] or 0) <= 0 then return end
 				pendingAlloc[stat] = pendingAlloc[stat] - 1
 				refreshStatRowsInPlace()
@@ -5689,7 +5605,7 @@ buildStatPanel = function()
 			end)
 			plusBtn = Theme.MakeButton(row, "+", "Primary", nil, { size = UDim2.fromOffset(24, 18), position = UDim2.new(1, -28, 0, 1) })
 			plusBtn.ZIndex = 3
-			plusBtn.MouseButton1Click:Connect(function()
+			plusBtn.Activated:Connect(function()
 				local remaining = (statsCache.unallocatedPoints or 0) - pendingTotalFn()
 				if remaining <= 0 then return end
 				pendingAlloc[stat] = (pendingAlloc[stat] or 0) + 1
@@ -5948,7 +5864,8 @@ buildInfoContent = function()
 		pLabel.Visible = false
 	end
 	local lvBadge = Instance.new("Frame")
-	lvBadge.Size = UDim2.fromOffset(28, 16); lvBadge.Position = UDim2.fromOffset(0, 0)
+	lvBadge.Size = UDim2.fromOffset(Theme.BadgeFitW("Lv" .. tostring(statsData.level or 1), Theme.Font.PrimaryBold, 28), 16)  -- 2026-11-07: fits Lv100 at 10px
+	lvBadge.Position = UDim2.fromOffset(0, 0)
 	lvBadge.BackgroundColor3 = Theme.Colors.BadgeBg; lvBadge.BorderSizePixel = 0
 	lvBadge.ZIndex = 3; lvBadge.Parent = portrait
 	Instance.new("UICorner", lvBadge).CornerRadius = UDim.new(0, 3)
@@ -6005,7 +5922,7 @@ buildInfoContent = function()
 		backdrop.BackgroundTransparency = 0.5; backdrop.AutoButtonColor = false
 		backdrop.Text = ""; backdrop.BorderSizePixel = 0; backdrop.Parent = overlay
 		local function close() overlay:Destroy() end
-		backdrop.MouseButton1Click:Connect(close)
+		backdrop.Activated:Connect(close)
 		local panel = Theme.MakePanel("PortraitPickerPanel", UDim2.new(0, 280, 0, 300), UDim2.new(0.5, 0, 0.5, 0), Vector2.new(0.5, 0.5), overlay)
 		panel.ClipsDescendants = true
 		pad(panel, 10, 12, 12, 10)
@@ -6034,7 +5951,7 @@ buildInfoContent = function()
 			if current == assetId then
 				local st = Instance.new("UIStroke", cell); st.Color = Theme.Colors.TextGold; st.Thickness = 2
 			end
-			cell.MouseButton1Click:Connect(function()
+			cell.Activated:Connect(function()
 				local target = (current == assetId) and nil or assetId
 				local okP, res = pcall(function()
 					return BattleEvents.RequestSetPortrait:InvokeServer(unit.id, target)

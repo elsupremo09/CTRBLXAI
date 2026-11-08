@@ -37,6 +37,9 @@ local RaceData = require(
 		:WaitForChild("RaceData")
 )
 
+-- Dev-tool gate (2026-11-06): Studio, or a server where every player is an allow-listed owner.
+local DevAccess = require(script.Parent:WaitForChild("DevAccess"))
+
 local UnitSchema = {}
 
 --------------------------------------------------
@@ -319,14 +322,14 @@ function UnitSchema.FindReviveTile(unit, units, mapW, mapH)
 	return unit.tileX, unit.tileY, false
 end
 
--- DEV GOD MODE (user request 2026-11-06, Studio only): every PLAYER-side unit can't be KO'd (a
+-- DEV GOD MODE (user request 2026-11-06; Studio or allow-listed owner via DevAccess): every PLAYER-side unit can't be KO'd (a
 -- lethal hit stops at 1 HP). Damage still lands and shows (user ruling). HP refills once at the
 -- START of each protected unit's turn (BattleCoordinator); MP/AP refill after every command
 -- (CommandService wrapper) for unlimited actions. Off by default.
 UnitSchema.DevGodMode = false
 function UnitSchema.IsGodProtected(unit): boolean
 	return UnitSchema.DevGodMode == true and unit ~= nil and unit.side == "Player"
-		and game:GetService("RunService"):IsStudio()
+		and DevAccess.SessionAllowed()
 end
 GameConstants.IsGodProtected = function(u) return UnitSchema.IsGodProtected(u) end
 
@@ -501,6 +504,8 @@ function UnitSchema.ApplyHealing(unit, amount)
 	unit.currentHp = unit.currentHp + actual
 	-- Healing weakens Venom (user ruling 2026-10-26): a heal that restores HP lowers Venom by 1.
 	if actual > 0 and _statusService and _statusService.WeakenVenomOnHeal then _statusService.WeakenVenomOnHeal(unit) end
+	-- Life Link (2026-11-08): report the HP actually gained (skills, lifesteal, drain, items, pulses).
+	if actual > 0 and _statusService and _statusService.NotifyHealGained then _statusService.NotifyHealGained(unit, actual) end
 	return actual
 end
 

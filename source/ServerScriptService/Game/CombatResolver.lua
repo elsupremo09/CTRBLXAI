@@ -58,6 +58,35 @@ local CombatResolver = {}
 local _unitsProvider = nil
 function CombatResolver.SetUnitsProvider(fn) _unitsProvider = fn end
 
+-- IRON CURTAIN map object (objects_encounters row 123, USER RULINGS 2026-11-07): a unit within
+-- radius 3 of a standing Iron Curtain (either side) takes 30% less from DIRECT hits (attacks,
+-- skills, item hits, siege). Only the step-8 blocks below read it, so DoT, collisions, falls and
+-- hazards (which never pass through ResolveBasicAttack / ResolveSkill) are not reduced. It is
+-- ADDED to Guard and shares GUARD_CAP. Reads the server object grid (a broken curtain is cleared).
+local _ObjectDataIC = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("ObjectData")
+)
+local IRON_CURTAIN_DEF = (_ObjectDataIC.Objects and _ObjectDataIC.Objects["Iron Curtain"]) or {}
+local function ironCurtainReduction(defender)
+	if not (defender and defender.tileX and defender.tileY) then return 0 end
+	local omap = GameConstants.OBJECT_MAP
+	if not omap then return 0 end
+	local r = tonumber(IRON_CURTAIN_DEF.auraRadius) or 3
+	for oy = defender.tileY - r, defender.tileY + r do
+		local row = omap[oy]
+		if row then
+			for ox = defender.tileX - r, defender.tileX + r do
+				if row[ox] == "Iron Curtain" then
+					return tonumber(IRON_CURTAIN_DEF.damageTakenReduction) or 0.30
+				end
+			end
+		end
+	end
+	return 0
+end
+
 -- BD-014 Guardian Mantle (2026-10-24): a Guarding ally wearing it shares 50% of its Guard damage
 -- reduction with adjacent (Chebyshev 1) same-side units, whether or not they are Guarding. Returns
 -- the best such share for `defender` (0 if none). Uses the injected units provider (mirrors
@@ -245,6 +274,9 @@ end
 local _resolutionId = 0
 function CombatResolver.BeginResolution()
 	_resolutionId += 1
+	-- 2026-11-08 (kill-augment reset): a new cast also clears the augment "already fired" list, so
+	-- "Once per Skill execution" augments (Executioner, Blood Harvest, ...) fire once per cast, every cast.
+	if AugmentEffectService.BeginResolution then AugmentEffectService.BeginResolution() end
 end
 
 -- COUNTERMEASURE TURRET (DEP-018): a living device with auraSpec.interceptLeft > 0 blocks a
@@ -882,6 +914,7 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage, opt
 	end
 	local guardMitigatedAmount = 0
 	local wasGuarding = false
+	local _icRed = ironCurtainReduction(defender)  -- Iron Curtain (2026-11-07): added in this step
 	if hasGuard and not (_wp and WeaponPassiveService.BypassesGuard(attacker)) then
 		wasGuarding = true
 		-- BD-006 Layered Lamellar: successive-hit DR (0 until OnGuardHitReceived accrues hits) adds
@@ -889,10 +922,14 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage, opt
 		local mitigation = GameConstants.GUARD_MITIGATION + (defender.guardBonus or 0)
 			+ ArmorPassiveService.GetGuardLayeredBonus(defender)
 			+ guardAuraBonus(defender)  -- SUP-011 Guardian Standard
-		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
+		local guardOnly = math.min(mitigation, GameConstants.GUARD_CAP)
+		mitigation = math.min(mitigation + _icRed, GameConstants.GUARD_CAP)  -- Iron Curtain shares the cap
 		local preGuard = finalDamage
 		finalDamage = math.max(0, math.round(finalDamage * (1 - mitigation)))
-		guardMitigatedAmount = math.max(0, preGuard - finalDamage)
+		-- Guard's own share (Guard passives read this), not the Iron Curtain part.
+		guardMitigatedAmount = math.max(0, preGuard - math.round(preGuard * (1 - guardOnly)))
+	elseif _icRed > 0 then
+		finalDamage = math.max(0, math.round(finalDamage * (1 - math.min(_icRed, GameConstants.GUARD_CAP))))
 	end
 	-- BD-014 Guardian Mantle: apply any adjacent-ally shared Guard DR (multiplicative, after own
 	-- guard; runs whether or not this unit is Guarding).
@@ -1291,6 +1328,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	end
 	local guardMitigatedAmount = 0
 	local wasGuarding = false
+	local _icRed = ironCurtainReduction(defender)  -- Iron Curtain (2026-11-07): added in this step
 	-- Bypass on a weapon skill ignores Guard, as on a Basic Attack (user ruling 2026-10-29).
 	if hasGuardSkill and not (_wsHit and WeaponPassiveService.BypassesGuard(attacker)) then
 		wasGuarding = true
@@ -1299,10 +1337,14 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		local mitigation = GameConstants.GUARD_MITIGATION + (defender.guardBonus or 0)
 			+ ArmorPassiveService.GetGuardLayeredBonus(defender)
 			+ guardAuraBonus(defender)  -- SUP-011 Guardian Standard
-		mitigation = math.min(mitigation, GameConstants.GUARD_CAP)
+		local guardOnly = math.min(mitigation, GameConstants.GUARD_CAP)
+		mitigation = math.min(mitigation + _icRed, GameConstants.GUARD_CAP)  -- Iron Curtain shares the cap
 		local preGuard = finalDamage
 		finalDamage = math.max(0, math.round(finalDamage * (1 - mitigation)))
-		guardMitigatedAmount = math.max(0, preGuard - finalDamage)
+		-- Guard's own share (Guard passives read this), not the Iron Curtain part.
+		guardMitigatedAmount = math.max(0, preGuard - math.round(preGuard * (1 - guardOnly)))
+	elseif _icRed > 0 then
+		finalDamage = math.max(0, math.round(finalDamage * (1 - math.min(_icRed, GameConstants.GUARD_CAP))))
 	end
 	-- BD-014 Guardian Mantle: apply any adjacent-ally shared Guard DR (multiplicative, after own
 	-- guard; runs whether or not this unit is Guarding).
@@ -1371,6 +1413,14 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	-- (See ApplyOutcome. Damaging skills leave this false and stay gated.)
 	local isPureStatusSkill = (skillDef.appliesStatus ~= nil or skillDef.appliesStatuses ~= nil)
 		and (not skillDef.inheritStr) and ((skillDef.power or 0) == 0)
+	-- Conditional rider (USER RULING 2026-11-08, rule 252): Glacial Wave freezes only units that are
+	-- already Wet (appliesStatusRequires = "Wet"). Others take the damage only. Same check for every
+	-- path (area, single target, preview, AI) because they all resolve through here.
+	local _skAppliesStatus = skillDef.appliesStatus
+	if _skAppliesStatus and skillDef.appliesStatusRequires
+		and not StatusService.HasStatus(defender, skillDef.appliesStatusRequires) then
+		_skAppliesStatus = nil
+	end
 	-- Weapon skill: the weapon's on-hit statuses ride along with the skill's own (no duplicates).
 	local _skAppliesStatuses = skillDef.appliesStatuses or nil
 	if _wsHit then
@@ -1400,7 +1450,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		positionalMod  = positionalMod,
 		facingZone     = facingZone,
 		finalDamage    = finalDamage,
-		appliesStatus  = skillDef.appliesStatus or nil,
+		appliesStatus  = _skAppliesStatus or nil,
 		appliesStatuses = _skAppliesStatuses,
 		weaponDrainFrac = _wsHit and WeaponPassiveService.DrainFraction(attacker) or nil, -- Drain on weapon skills
 		applyStatusUnconditional = isPureStatusSkill,
@@ -1452,6 +1502,11 @@ function CombatResolver.ResolveHealing(caster, target, skillDef)
 	-- Non-Dark healing vs Undead → converted to damage
 	local healElement = extractElement(skillDef.tags)
 	if isUndead(target) and healElement ~= "Dark" then
+		-- Sanctify (USER RULING 2026-11-08 4:28 PM): Undead take holy damage = 50% of the heal
+		-- (skillDef.undeadDamageMult). Other heals keep the full amount.
+		if skillDef and skillDef.undeadDamageMult then
+			finalHeal = math.max(1, math.round(finalHeal * skillDef.undeadDamageMult))
+		end
 		print(string.format(
 			"[CombatResolver] Undead healing reversal: %s receives %d damage instead of healing",
 			target.name, finalHeal
@@ -2216,7 +2271,8 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		local augIds = AugmentEffectService.GetAugmentsForSkill(attacker, outcome.skillId)
 		if #augIds > 0 then
 			local _augSkillDef = GameConstants.SKILLS and GameConstants.SKILLS[outcome.skillId] or nil
-			AugmentEffectService.OnDamageResolved(attacker, target, actual, _augSkillDef, augIds, nil, _shieldAbsorbed)
+			-- _resolutionId (2026-11-08): lets Vitality Surge heal once per cast, not once per unit hit.
+			AugmentEffectService.OnDamageResolved(attacker, target, actual, _augSkillDef, augIds, nil, _shieldAbsorbed, _resolutionId)
 			-- OnKill: if target died. ctx carries overkill (uncapped damage beyond lethal)
 			-- and the original hit damage so splash/MP-refund augments can compute.
 			if not target.isAlive then

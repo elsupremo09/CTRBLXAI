@@ -248,7 +248,7 @@ function BlackMarketService.HandleBuy(plr: Player, objectId: any, slot: any): an
 	-- No partial transaction: charge, then add; if the add fails, give the gold back.
 	local paid, why = _currency.Debit(playerId, { gold = entry.price })
 	if not paid then return { ok = false, error = why or "Not enough gold" } end
-	local added, addErr = _inventory.AddItem(playerId, entry.item)
+	local added, addErr = _inventory.AddItem(playerId, entry.item, { markNew = true })
 	if not added then
 		if _currency.Credit then _currency.Credit(playerId, { gold = entry.price }) end
 		warn(`[BlackMarketService] AddItem failed, gold returned: {tostring(addErr)}`)

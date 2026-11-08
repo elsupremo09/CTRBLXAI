@@ -211,7 +211,7 @@ render = function()
 	elseif state ~= nil then
 		stateRetries = STATE_RETRY_MAX
 	end
-	screen.Clear()
+	screen.Clear("Main") -- keeps the grid's scroll position across rebuilds
 
 	-- Drop picks that no longer exist (merged / sold elsewhere).
 	if state then

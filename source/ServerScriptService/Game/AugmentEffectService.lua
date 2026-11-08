@@ -74,6 +74,16 @@ local _firedThisResolution = {}
 -- effect was triggered.
 local _pendingDisplacement = nil
 
+-- Scatter / Vortex Strike (USER RULING 2026-11-08 7:14 PM): units each caster's current skill dealt
+-- HP damage to, recorded by OnDamageResolved and moved once by OnSkillComplete.
+-- [attackerId] = { skillId = string?, units = { unit }, seen = { [unitId] = true } }
+local _areaDisplaceHits = {}
+
+-- Vitality Surge (USER RULING 2026-11-08 8:06 PM): heals the caster ONCE per cast, however many units
+-- the skill hits. [attackerId] = CombatResolver resolution id of that caster's last Vitality Surge heal.
+-- Resolution ids only ever go up, so an old entry can never match a later cast.
+local _vitalitySurgeRes = {}
+
 --------------------------------------------------
 -- RESOLUTION LIFECYCLE
 --------------------------------------------------
@@ -334,6 +344,9 @@ local function healUnit(unit, amount)
 	local actual = math.min(missing, math.max(0, math.floor(amount)))
 	unit.currentHp = (unit.currentHp or 0) + actual
 	if actual > 0 then StatusService.WeakenVenomOnHeal(unit) end  -- healing weakens Venom (2026-10-26)
+	-- Life Link (rule 253 batch, 2026-11-08): report the HP actually gained, same as every other
+	-- heal source, so Lifesteal / Vitality Surge / Blood Harvest heals are shared too.
+	if actual > 0 then StatusService.NotifyHealGained(unit, actual) end
 	return actual
 end
 
@@ -356,7 +369,10 @@ local function shouldSkipForFrequency(augmentId)
 		or freq == "Once per supported resolution" then
 		return false
 	end
-	return true  -- truly once-per-skill (future use)
+	-- 2026-11-08 (kill-augment reset): "Once per Skill execution" augments; the list is cleared at each cast
+	-- start (CombatResolver.BeginResolution). This line shows a 2nd trigger in the SAME cast being held back.
+	print(`[AugmentEffect] {getAugmentName(augmentId)} already fired this cast ({freq}) -- skipped`)
+	return true
 end
 
 --------------------------------------------------
@@ -720,7 +736,7 @@ local TERRAIN_GROUND_MAP = {
 	["AUG-ELECTRIC-FIELD"] = "Static Cloud",
 }
 
-function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skillDef, augmentIds, allUnits, shieldAbsorbed)
+function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skillDef, augmentIds, allUnits, shieldAbsorbed, resolutionId)
 	if _processingAugment then return end
 	if not augmentIds or #augmentIds == 0 then return end
 	if damage <= 0 then return end
@@ -866,11 +882,20 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		-- damaging hit (not damage-based). Reuses healUnit.
 		-- ===============================================
 		elseif augId == "AUG-VITALITY-SURGE" then
-			if not shouldSkipForFrequency(augId) and attacker.isAlive then
+			-- USER RULING 2026-11-08 8:06 PM: ONE 5% max-HP heal per cast (per resolution; a channelled
+			-- skill's activation is its resolution), on the first hit that deals HP damage. Later hits of
+			-- the same cast skip it. No resolution id (unknown caller) = old per-hit behaviour.
+			local _vsDone = resolutionId ~= nil and attacker.id ~= nil and _vitalitySurgeRes[attacker.id] == resolutionId
+			if not _vsDone and not shouldSkipForFrequency(augId) and attacker.isAlive then
+				if resolutionId ~= nil and attacker.id ~= nil then _vitalitySurgeRes[attacker.id] = resolutionId end
 				local heal = math.floor((attacker.maxHp or 0) * 0.05)
-				if heal > 0 then healUnit(attacker, heal) end
+				local healed = if heal > 0 then healUnit(attacker, heal) else 0
 				markFired(augId)
-				print(string.format("[AugmentEffect] %s: %s recovered %d HP (5%% max HP)", augName, attacker.name, heal))
+				-- One battle-log line per cast ("Vitality Surge healed <caster> for N."); same pattern as Lifesteal.
+				if healed > 0 and BattleVisualBroadcaster.UnitStateChanged then
+					BattleVisualBroadcaster.UnitStateChanged(attacker, augName)
+				end
+				print(string.format("[AugmentEffect] %s: %s recovered %d HP (5%% max HP, once this cast)", augName, attacker.name, healed))
 			end
 
 		-- ===============================================
@@ -1039,6 +1064,25 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 					removedBuff or "none", removedDebuff or "none"
 				))
 			end
+		-- ===============================================
+		-- AREA DISPLACEMENT record (USER RULING 2026-11-08 7:14 PM): Scatter / Vortex Strike move EVERY
+		-- unit the area skill dealt HP damage to, allies included (DB: "After dealing HP damage ...
+		-- each hit target"). Recorded here per hit; OnSkillComplete moves them after the whole skill.
+		-- ===============================================
+		elseif augId == "AUG-SCATTER-STRIKE" or augId == "AUG-VORTEX-STRIKE" then
+			if defender.isAlive and defender.id and attacker.id and defender.id ~= attacker.id then
+				local sid = skillDef and skillDef.id or nil
+				local rec = _areaDisplaceHits[attacker.id]
+				if not rec or rec.skillId ~= sid then
+					rec = { skillId = sid, units = {}, seen = {} }
+					_areaDisplaceHits[attacker.id] = rec
+				end
+				if not rec.seen[defender.id] then
+					rec.seen[defender.id] = true
+					table.insert(rec.units, defender)
+				end
+			end
+
 		-- ===============================================
 		-- CATCH-ALL STUBS for families handled by this hook
 		-- ===============================================
@@ -1294,11 +1338,34 @@ function AugmentEffectService.OnSkillComplete(attacker, skillDef, augmentIds, ct
 		-- center; vortex pulls them 1 tile TOWARD it. Center comes from ctx; affected set is
 		-- enemies within Chebyshev radius 2 of center (faithful footprint approximation —
 		-- flagged in handoff). Push distance 1 is authored. Reuses DisplacementService.
+		-- USER RULING 2026-11-08 7:14 PM: the units moved are the ones this skill dealt HP damage to
+		-- (recorded in OnDamageResolved), allies included -- no longer "enemies within 2 of the centre".
+		-- ctx.hitUnits (this cast's hit list from CommandService) drops anything left over from a cast
+		-- that never reached this hook. Each unit's own push rules (immunity, blocked tiles) still apply.
 		elseif augId == "AUG-SCATTER-STRIKE" or augId == "AUG-VORTEX-STRIKE" then
+			local rec = attacker.id and _areaDisplaceHits[attacker.id] or nil
+			if attacker.id then
+				_areaDisplaceHits[attacker.id] = nil
+			end
 			if ctx.centerX and ctx.centerY then
 				local toward = (augId == "AUG-VORTEX-STRIKE")
 				local force = (attacker.derivedStats and attacker.derivedStats.force) or 1
-				local victims = enemiesWithin(ctx.centerX, ctx.centerY, 2, attacker.side)
+				local victims = {}
+				if rec and (rec.skillId == nil or rec.skillId == (skillDef and skillDef.id)) then
+					local hitNow = nil
+					if type(ctx.hitUnits) == "table" then
+						hitNow = {}
+						for _, v in ipairs(ctx.hitUnits) do
+							if v.id then hitNow[v.id] = true end
+						end
+					end
+					for _, u in ipairs(rec.units) do
+						if u.isAlive and not u.isObject and not u.isGroundTarget and u.tileX and u.tileY
+							and u.id ~= attacker.id and (hitNow == nil or hitNow[u.id]) then
+							table.insert(victims, u)
+						end
+					end
+				end
 				for _, u in ipairs(victims) do
 					local rawx = (u.tileX or ctx.centerX) - ctx.centerX
 					local rawy = (u.tileY or ctx.centerY) - ctx.centerY
@@ -1308,7 +1375,7 @@ function AugmentEffectService.OnSkillComplete(attacker, skillDef, augmentIds, ct
 					if dir.dx == 0 and dir.dy == 0 then dir.dx = 1 end
 					augDisplace(attacker, u, force, dir, 1, toward)  -- vortex = pull toward the impact centre
 				end
-				print(string.format("[AugmentEffect] %s: %s %d enemies %s impact center",
+				print(string.format("[AugmentEffect] %s: %s %d units %s impact center",
 					augName, toward and "pulled" or "scattered", #victims, toward and "toward" or "from"))
 			end
 

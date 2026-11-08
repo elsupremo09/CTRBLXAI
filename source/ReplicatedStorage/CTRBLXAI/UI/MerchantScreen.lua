@@ -278,7 +278,7 @@ end
 render = function()
 	local c = ctx
 	if not c or not screen or not isOpen then return end
-	screen.Clear()
+	screen.Clear(currentTab) -- same tab keeps the grid's scroll position
 	local isBuy = currentTab == "Buy"
 	local res = c.getStock() -- nil on a server error (the error is shown in the status line)
 	local entries = buildEntries(res, isBuy)

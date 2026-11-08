@@ -498,7 +498,7 @@ function MerchantService.BuyItem(playerId: string, offerIndex: number, mapLevel:
 	end
 
 	-- 2) Hand the item into the EXISTING inventory path.
-	local added, addErr = _inventory.AddItem(playerId, offer.item)
+	local added, addErr = _inventory.AddItem(playerId, offer.item, { markNew = true })
 	if not added then
 		-- Refund so no partial transaction remains.
 		if _currency.AddGold then
@@ -568,6 +568,11 @@ function MerchantService.SellItem(playerId: string, instanceId: string)
 	-- the equipped flag. If the item is equipped, refuse (no partial state).
 	if item.equipped == true or item.isEquipped == true then
 		return false, "Item is equipped — unequip before selling"
+	end
+	-- An open (paid) Runeforge reroll must be chosen first (USER RULING 2026-11-07); same
+	-- wording as RuneforgeService.PENDING_REROLL_REASON.
+	if type(item.pendingReroll) == "table" then
+		return false, "Reroll choice pending: pick a set or keep the current lines at the Runeforge first"
 	end
 
 	local payout = MerchantService.PriceToSell(item)

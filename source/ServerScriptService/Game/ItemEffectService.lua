@@ -758,6 +758,9 @@ local function applyWideFuseSplash(user: any, victim: any, element: string, powe
 	local cfg = ArmorPassiveService.GetItemSplashConfig(user)
 	if not cfg or not TargetingService or type(victim) ~= "table" or not victim.tileX then return end
 	local list = TargetingService.GetImpactSplashTargets(user, victim, allUnits or {}) or {}
+	-- Rule 250 (2026-11-08): the 4 splash tiles also hit map objects (CommandService lands them).
+	result.objectTiles = TargetingService.GetSplashTilesBeside(user, "splash", victim.tileX, victim.tileY, victim)
+	result.objectElement = element
 	-- Full item power through Defense, then the final damage is halved (Tester FAIL fix 2026-10-29:
 	-- DB "50% damage" = half of the damage actually dealt, matching the shared Impact Splash rule).
 	local splashPct = cfg.splashPercent or 0.5
@@ -853,6 +856,9 @@ function ItemEffectService.ResolveBomb(user: any, target: any, allUnits: any, ct
 			hit += 1
 		end
 	end
+	-- Rule 250 (2026-11-08): the bomb's cross also hits map objects (CommandService lands them).
+	result.objectTiles = TargetingService.GetAreaObjectTiles("Impact1", user, cx, cy, mapW, mapH)
+	result.objectElement = "Physical"
 	result.description = string.format("Bomb hit %d unit(s)", hit)
 	return result
 end
@@ -1374,6 +1380,10 @@ local function tryDamage(user: any, target: any, def: any, formula: string, resu
 			tileMult[t.tileX .. "," .. t.tileY] = (isImpact and not (t.tileX == centerX and t.tileY == centerY)) and 0.5 or 1.0
 		end
 	end
+	-- Rule 250 (2026-11-08): the tiles this item struck, for map-object hits (CommandService lands
+	-- them after the unit hits). Same limits, except a spread-blocking object is itself hit.
+	result.objectTiles = TargetingService.GetAreaObjectTiles(normPattern, user, centerX, centerY, mapW, mapH)
+	result.objectElement = spec.element
 	-- WIND CLEARS CLOUDS (user ruling 2026-10-27): a Wind area item blows clouds off every
 	-- affected tile, occupied or not. Deferred require: no load-time dependency.
 	if spec.element == "Wind" then

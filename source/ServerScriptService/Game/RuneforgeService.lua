@@ -4,7 +4,8 @@
 --
 -- OWNS (service_boundaries 18, v2 LOCKED USER DECISION 2026-11-01):
 --   Forge transactions (install rune gems on Common-Epic items, raise rarity) and sulfur
---   rerolls of items above Epic. Rarity never goes down.
+--   rerolls of items above Epic. Gems never lower the rarity; removing a line can
+--   (guild_facilities 84, USER DECISION 2026-11-07).
 --
 -- READS:
 --   Target item (bonus lines, rarity, level, levelling record via BlacksmithService,
@@ -37,8 +38,17 @@
 --   guild_facilities 54: rerolls of Exalted / Legendary (2/3/4 sets at L8/9/10), Mythic (2/3 at
 --     L9/10), Transcendent (2 at L10); sulfur 1/2/3/4; sets fixed by item ID + reroll count;
 --     'Keep current' always offered; sulfur paid either way; rarity never changes.
+--     USER RULING 2026-11-07 (pay first): the sets are made and shown only AFTER the sulfur is
+--     paid (PayReroll). The paid sets are saved on the item (item.pendingReroll) until the
+--     player picks one or keeps the current lines (CommitReroll). While a choice is open the
+--     item cannot be rerolled again, forged, sold, dismantled or merged.
 --   guild_facilities 56: a gem goes only on gear that could roll it as loot (ItemGenerator's
 --     own gear-type check, BUG-054); at most one elemental transform / pattern conversion.
+--   guild_facilities 84 (USER DECISION 2026-11-07): a pick may REMOVE a line ({ remove = id })
+--     for gold only (the swap fee of gf 55 at the current rarity, per removed line); the line
+--     is destroyed (no gem back). With a removal in the forge the rarity follows the new total
+--     (lowest rarity whose budget holds it, never below the rarest remaining line) and the
+--     over-budget-loot allowance no longer applies. Removing every line leaves a Common item.
 --   USER DECISION 2026-11-01: rune-forged items get a tracking tag (item.runeForged) and are
 --     otherwise treated exactly like any other item (selling, dismantling).
 --
@@ -72,6 +82,11 @@ local REROLL_SETS = table.freeze({
 	Transcendent = table.freeze({ [10] = 2 }),
 })
 local REROLL_UNLOCK = table.freeze({ Exalted = 8, Legendary = 8, Mythic = 9, Transcendent = 10 })
+
+-- Shown by every service that refuses an item with an open (paid, not yet chosen) reroll
+-- (USER RULING 2026-11-07). BlacksmithService / MerchantService use the same wording.
+local PENDING_REROLL_REASON = "Reroll choice pending: pick a set or keep the current lines at the Runeforge first"
+RuneforgeService.PENDING_REROLL_REASON = PENDING_REROLL_REASON
 
 --------------------------------------------------
 -- INJECTED DEPENDENCIES
@@ -186,12 +201,38 @@ function RuneforgeService.CompatibleGems(item: any): { [string]: boolean }
 	return _itemGen.GetCompatibleGems(item.baseArchetypeId)
 end
 
+-- BONUS-POINT BUDGET (2026-11-07, user request: show the budget on the Runeforge screen).
+-- ONE formula, used by PlanForge and BudgetOf (DAT-001 / AP-021): the screen only shows these
+-- numbers, it never works them out.
+local function linesBp(lines: { any }, passives: { string }): number
+	local bp = 0
+	for _, l in lines do
+		local a = _bonusData.GetAttribute(l.id)
+		if a then bp += a.bpCost or 0 end
+	end
+	for _, pid in passives do
+		local p = _bonusData.GetPassive(pid)
+		if p then bp += p.bpCost or 0 end
+	end
+	return bp
+end
+
+-- Most bonus points a forge may leave on the item (gf 44 c + gf 54): the capacity rarity's
+-- budget at this Runeforge level, or the item's own total before the forge if that is higher.
+local function maxBudgetBp(rarity: string?, twoHanded: boolean, originalBp: number, level: number): number
+	local currentBudget = if rarity == "Common" or rarity == nil then 0 else _bonusData.GetBonusBp(rarity, twoHanded)
+	local cap = capacityRarity(level)
+	local capBudget = if cap then _bonusData.GetBonusBp(cap, twoHanded) else 0
+	return math.max(currentBudget, originalBp, capBudget)
+end
+
 --------------------------------------------------
 -- FORGE PLAN (pure: prices and validates, changes nothing)
 --
--- installs = { { gem = gemId, replace = existingLineId? }, ... }
--- Returns plan or nil + reason. plan = { newRarity, raised, lines, passives, totalBp,
---   crystals, gold, forgeFee, swapFee, catchUp, gems = { [gemId] = n }, replaced = { id } }
+-- installs = { { gem = gemId, replace = existingLineId? } | { remove = existingLineId }, ... }
+-- Returns plan or nil + reason. plan = { newRarity, raised, dropped, lines, passives, totalBp,
+--   crystals, gold, forgeFee, swapFee, catchUp, removalFee, gems = { [gemId] = n },
+--   replaced = { id }, removed = { id } }
 --------------------------------------------------
 
 function RuneforgeService.PlanForge(item: any, installs: any)
@@ -209,11 +250,14 @@ function RuneforgeService.PlanForge(item: any, installs: any)
 	if rarity == "Unique" then
 		return nil, "Unique items cannot be rune-forged"
 	end
+	if type(item.pendingReroll) == "table" then
+		return nil, PENDING_REROLL_REASON
+	end
 	if not FORGEABLE[rarity] then
 		return nil, `{tostring(rarity)} items cannot take rune gems (sulfur rerolls only)`
 	end
 	if type(installs) ~= "table" or #installs == 0 then
-		return nil, "Choose at least one rune gem"
+		return nil, "Choose at least one rune gem or a line to remove"
 	end
 	if #installs > MAX_INSTALLS then
 		return nil, "Too many rune gems in one forge"
@@ -238,15 +282,8 @@ function RuneforgeService.PlanForge(item: any, installs: any)
 	for _, l in lines do original[l.id] = true end
 	for _, pid in passives do original[pid] = true end
 	-- The item's own total before the forge (over-budget loot ruling, 2026-11-01).
-	local originalBp = 0
-	for _, l in lines do
-		local a = _bonusData.GetAttribute(l.id)
-		if a then originalBp += a.bpCost or 0 end
-	end
-	for _, pid in passives do
-		local p = _bonusData.GetPassive(pid)
-		if p then originalBp += p.bpCost or 0 end
-	end
+	local originalBp = linesBp(lines, passives)
+	local maxBp = maxBudgetBp(rarity, twoHanded, originalBp, level)
 
 	local function removeLine(id: string): boolean
 		for i, l in lines do
@@ -262,8 +299,27 @@ function RuneforgeService.PlanForge(item: any, installs: any)
 	local replaced: { string } = {}
 	local newFamilies: { [string]: boolean } = {}
 	local replacedSet: { [string]: boolean } = {}
+	local removed: { string } = {}
 
 	for _, ins in installs do
+		-- Remove a line (gf 84): gold only, the line is destroyed. A removed line counts as
+		-- taken, so no gem can replace it in the same forge and it can't be removed twice.
+		if type(ins) == "table" and ins.remove ~= nil then
+			local rem = ins.remove
+			if type(rem) ~= "string" or #rem > 64 or ins.gem ~= nil or ins.replace ~= nil then
+				return nil, "Invalid line to remove"
+			end
+			if not original[rem] then
+				return nil, "The line to remove is not on this item"
+			end
+			if replacedSet[rem] then
+				return nil, "That line is already being replaced by another gem in this forge"
+			end
+			removeLine(rem)
+			replacedSet[rem] = true
+			table.insert(removed, rem)
+			continue
+		end
 		if type(ins) ~= "table" or type(ins.gem) ~= "string" or #ins.gem > 64 then
 			return nil, "Invalid rune gem"
 		end
@@ -277,8 +333,11 @@ function RuneforgeService.PlanForge(item: any, installs: any)
 			return nil, `{if d then d.name else gem} cannot go on this item`
 		end
 		if rep ~= nil then
-			if not original[rep] or replacedSet[rep] then
+			if not original[rep] then
 				return nil, "The line to replace is not on this item"
+			end
+			if replacedSet[rep] then
+				return nil, "That line is already being replaced by another gem in this forge"
 			end
 		end
 
@@ -334,33 +393,64 @@ function RuneforgeService.PlanForge(item: any, installs: any)
 	end
 
 	-- New rarity (gf 44): current, rarest line, budget.
-	local totalBp = 0
+	local totalBp = linesBp(lines, passives)
 	local rarest = rarity
 	for _, l in lines do
 		local a = _bonusData.GetAttribute(l.id)
-		if a then
-			totalBp += a.bpCost or 0
-			if order(a.minRarity) > order(rarest) then rarest = a.minRarity end
-		end
+		if a and order(a.minRarity) > order(rarest) then rarest = a.minRarity end
 	end
 	for _, pid in passives do
 		local p = _bonusData.GetPassive(pid)
-		if p then
-			totalBp += p.bpCost or 0
-			if order(p.minRarity) > order(rarest) then rarest = p.minRarity end
-		end
+		if p and order(p.minRarity) > order(rarest) then rarest = p.minRarity end
 	end
+	-- Budget numbers for the screen (display only): returned with a refusal that is caused
+	-- by going over the budget, so the screen can say "over budget by N".
+	-- A forge with a removal (gf 84): the rarity follows the new total, so the rarest line only
+	-- counts from the lines that stay, and the over-budget allowance is used up. The most it
+	-- may hold is then the capacity rarity's budget (gf 54).
+	local hasRemoval = #removed > 0
+	if hasRemoval then
+		rarest = "Common"
+		for _, l in lines do
+			local a = _bonusData.GetAttribute(l.id)
+			if a and order(a.minRarity) > order(rarest) then rarest = a.minRarity end
+		end
+		for _, pid in passives do
+			local p = _bonusData.GetPassive(pid)
+			if p and order(p.minRarity) > order(rarest) then rarest = p.minRarity end
+		end
+		local capR = capacityRarity(level)
+		maxBp = if capR then _bonusData.GetBonusBp(capR, twoHanded) else 0
+	end
+	local budget = { used = totalBp, max = maxBp }
 	-- Over-budget loot (USER DECISION 2026-11-01): a total that stays within the current
 	-- rarity's budget, or within the item's own total before the forge, keeps the rarity.
 	local currentBudget = if rarity == "Common" then 0 else _bonusData.GetBonusBp(rarity, twoHanded)
 	local allowance = math.max(currentBudget, originalBp)
-	local byBudget = if totalBp <= allowance then rarity else budgetRarity(totalBp, twoHanded)
-	if not byBudget then
-		return nil, "Too many bonus points: the total is above the Epic budget"
+	local byBudget
+	-- A forge that only removes lines (gf 84, USER RULING 2026-11-07): rarity may drop or
+	-- stay, never rise. Without this cap an over-budget loot item would lose its allowance
+	-- and could be raised for the removal fee alone (Tester F-1).
+	local removalOnly = false
+	if hasRemoval then
+		local gemPicks = 0
+		for _, n in gemsUsed do gemPicks += n end
+		removalOnly = gemPicks == 0
+		byBudget = budgetRarity(totalBp, twoHanded)
+		if removalOnly and (byBudget == nil or order(byBudget) > order(rarity)) then
+			byBudget = rarity
+		end
+	else
+		byBudget = if totalBp <= allowance then rarity else budgetRarity(totalBp, twoHanded)
 	end
-	local newRarity = rarity
+	if not byBudget then
+		return nil, "Too many bonus points: the total is above the Epic budget", budget
+	end
+	-- Without a removal the rarity never goes down (gf 44 a); with one it starts from Common.
+	local newRarity = if hasRemoval then "Common" else rarity
 	if order(rarest) > order(newRarity) then newRarity = rarest end
 	if order(byBudget) > order(newRarity) then newRarity = byBudget end
+	if removalOnly and order(newRarity) > order(rarity) then newRarity = rarity end
 	if not FORGEABLE[newRarity] then
 		return nil, "These gems would make the item rarer than Epic"
 	end
@@ -369,21 +459,30 @@ function RuneforgeService.PlanForge(item: any, installs: any)
 	local cap = capacityRarity(level) :: string
 	if order(newRarity) > order(cap) then
 		local need = if newRarity == "Epic" then 7 else 4
-		return nil, `{newRarity} forging needs Runeforge L{need} (yours is L{level})`
+		return nil, `{newRarity} forging needs Runeforge L{need} (yours is L{level})`, budget
 	end
 
 	local raised = order(newRarity) > order(rarity)
+	local dropped = order(newRarity) < order(rarity)
+	local gemCount = 0
+	for _, n in gemsUsed do gemCount += n end
 
-	-- Crystals (gf 43).
+	-- Gem-part price rarity (USER RULING 2026-11-07, gf 84): when a forge both removes a line
+	-- and installs a gem and the rarity DROPS, the gem part (crystals + swap fee) is priced at
+	-- the new, lower rarity. Every other case keeps the starting rarity. Removal fee unchanged.
+	local priceRarity = if hasRemoval and dropped then newRarity else rarity
+	-- Crystals (gf 43). A forge that only removes lines costs gold only (gf 84).
 	local crystals = 0
-	if raised then
+	if gemCount == 0 then
+		crystals = 0
+	elseif raised then
 		for _, r in STEP_RARITIES do
 			if order(r) > order(rarity) and order(r) <= order(newRarity) then
 				crystals += STEP_CRYSTALS[r]
 			end
 		end
 	else
-		crystals = KEEP_CRYSTALS[rarity] or 0
+		crystals = KEEP_CRYSTALS[priceRarity] or 0
 	end
 
 	-- Gold (gf 48 / 55), whole-number maths, rounded down.
@@ -393,7 +492,11 @@ function RuneforgeService.PlanForge(item: any, installs: any)
 	end
 	local d = discountPct(level)
 	local forgeFee, swapFee, catchUp = 0, 0, 0
-	if raised then
+	-- Removal fee (gf 84): the swap fee of gf 55 at the item's current rarity, per removed line.
+	local removalFee = #removed * ((base * (SWAP_R10[rarity] or 0) * (100 - d)) // 2000)
+	if gemCount == 0 then
+		-- Only removals: no forge / swap fee, no catch-up.
+	elseif raised then
 		local function p(r: string): number
 			return (base * FORGE_M10[r] * (100 - d)) // 1000
 		end
@@ -404,24 +507,103 @@ function RuneforgeService.PlanForge(item: any, installs: any)
 		end
 		catchUp = cu
 	else
-		swapFee = (base * SWAP_R10[rarity] * (100 - d)) // 2000
+		swapFee = (base * (SWAP_R10[priceRarity] or 0) * (100 - d)) // 2000
 	end
 
 	return {
 		newRarity = newRarity,
 		raised = raised,
+		dropped = dropped,
 		lines = lines,
 		passives = passives,
 		totalBp = totalBp,
+		maxBp = maxBp,
 		crystals = crystals,
-		gold = forgeFee + swapFee + catchUp,
+		gold = forgeFee + swapFee + catchUp + removalFee,
 		forgeFee = forgeFee,
 		swapFee = swapFee,
 		catchUp = catchUp,
+		removalFee = removalFee,
 		gems = gemsUsed,
 		replaced = replaced,
+		removed = removed,
 		runeforgeLevel = level,
 	}
+end
+
+--------------------------------------------------
+-- CANDIDATE CHECK (2026-11-06). For each candidate gem, would the forge still be accepted if it
+-- were added to the current installs? Runs PlanForge itself, so the bonus-point budget, the
+-- rarity cap, the Runeforge level cap and the gem limit all come from the ONE server formula;
+-- the screen only greys out what this says no to. Pure: changes nothing.
+-- candidates = { { gem = gemId, replace = lineId? }, ... }. Returns { [i] = true | reason }.
+--------------------------------------------------
+
+RuneforgeService.MAX_INSTALLS = MAX_INSTALLS
+
+-- Display only ((?) guide, 2026-11-07): where each forge rarity cap starts and the lowest
+-- reroll unlock level, built from the same rule tables (capacityRarity / REROLL_UNLOCK).
+function RuneforgeService.CapacitySteps(): { { level: number, rarity: string } }
+	local out, last = {}, nil
+	for lvl = 0, MAX_RUNEFORGE_LEVEL do
+		local r = capacityRarity(lvl)
+		if r and r ~= last then
+			table.insert(out, { level = lvl, rarity = r })
+			last = r
+		end
+	end
+	return out
+end
+function RuneforgeService.RerollMinLevel(): number
+	local m = MAX_RUNEFORGE_LEVEL
+	for _, l in REROLL_UNLOCK do
+		if l < m then m = l end
+	end
+	return m
+end
+RuneforgeService.MAX_CANDIDATES = 256 -- request bound (SEC-001); an item fits ~110 gem types
+
+-- Second result (2026-11-07): { [i] = points over the budget, 0 if not a budget refusal }
+-- for every candidate, so the screen can show "over budget by N" (numbers from PlanForge itself).
+function RuneforgeService.CheckCandidates(item: any, installs: any, candidates: any): ({ any }, { [number]: number })
+	local out: { any } = {}
+	local over: { [number]: number } = {}
+	if type(candidates) ~= "table" then return out, over end
+	local base: { any } = if type(installs) == "table" then installs else {}
+	for i, cand in candidates do
+		if i > RuneforgeService.MAX_CANDIDATES then break end
+		local trial = table.clone(base)
+		table.insert(trial, cand)
+		local plan, why, budget = RuneforgeService.PlanForge(item, trial)
+		out[i] = if plan then true else tostring(why)
+		-- Dense list (0 = not a budget refusal): sparse number keys would arrive as text keys
+		-- over a remote.
+		over[i] = if not plan and type(budget) == "table" and budget.used > budget.max
+			then budget.used - budget.max else 0
+	end
+	return out, over
+end
+
+-- Budget of the item with the given picks (none = as it is now): { used, max } or nil.
+-- Display only (2026-11-07). With picks it is PlanForge's own total; with none it uses the
+-- same two helpers PlanForge uses.
+function RuneforgeService.BudgetOf(item: any, installs: any?): { used: number, max: number }?
+	if not (_bonusData and _itemGen and _blacksmith) or type(item) ~= "table" then return nil end
+	if type(installs) == "table" and #installs > 0 then
+		local plan, _, budget = RuneforgeService.PlanForge(item, installs)
+		if plan then return { used = plan.totalBp, max = plan.maxBp } end
+		return if type(budget) == "table" then budget else nil
+	end
+	local lines: { any } = {}
+	for _, l in item.bonusLines or {} do
+		if type(l) == "table" and type(l.id) == "string" then table.insert(lines, { id = l.id }) end
+	end
+	local passives: { string } = {}
+	for _, pid in item.bonusPassiveIds or {} do
+		if type(pid) == "string" then table.insert(passives, pid) end
+	end
+	local used = linesBp(lines, passives)
+	return { used = used, max = maxBudgetBp(item.rarityId, is2H(item), used, currentLevel()) }
 end
 
 --------------------------------------------------
@@ -452,7 +634,11 @@ function RuneforgeService.CommitForge(playerId: string, item: any, installs: any
 	item.rarityId = plan.newRarity
 	item.runeForged = true -- tracking tag only (USER DECISION 2026-11-01)
 	local newName = _itemGen.ComposeName(item.baseArchetypeId, plan.lines, plan.passives)
-	if newName then item.displayName = newName end
+	if newName then
+		item.displayName = newName
+	elseif #plan.lines == 0 and #plan.passives == 0 then
+		item.displayName = nil -- no lines left (gf 84): plain base name, like a Common loot item
+	end
 
 	if _persistItem then
 		_persistItem(playerId, item)
@@ -460,21 +646,47 @@ function RuneforgeService.CommitForge(playerId: string, item: any, installs: any
 
 	local gemCount = 0
 	for _, n in plan.gems do gemCount += n end
-	print(string.format("[RuneforgeService] FORGED %s %s -> %s | %d gem(s), %d replaced | -%dg (forge %d, swap %d, catch-up %d) -%d crystals | Runeforge L%d",
-		tostring(item.instanceId), tostring(fromRarity), plan.newRarity, gemCount, #plan.replaced,
-		plan.gold, plan.forgeFee, plan.swapFee, plan.catchUp, plan.crystals, plan.runeforgeLevel))
+	print(string.format("[RuneforgeService] FORGED %s %s -> %s | %d gem(s), %d replaced, %d removed | -%dg (forge %d, swap %d, catch-up %d, removal %d) -%d crystals | Runeforge L%d",
+		tostring(item.instanceId), tostring(fromRarity), plan.newRarity, gemCount, #plan.replaced, #plan.removed,
+		plan.gold, plan.forgeFee, plan.swapFee, plan.catchUp, plan.removalFee, plan.crystals, plan.runeforgeLevel))
 
 	return true, { instanceId = item.instanceId, fromRarity = fromRarity, plan = plan }
 end
 
 --------------------------------------------------
 -- SULFUR REROLLS (gf 54) — items above Epic
+--
+-- PAY FIRST (USER RULING 2026-11-07):
+--   1. PayReroll: sulfur is debited, THEN the N sets are made (same seed as always: item ID +
+--      reroll count + set number), the reroll count goes up by 1, and the sets are saved on the
+--      item as item.pendingReroll = { sets = { { bonusLines, bonusPassiveIds, name } }, sulfur }.
+--   2. CommitReroll: the player picks one of those saved sets (1..N) or keeps the current lines
+--      (0). Either way the open choice is cleared. Nothing is charged here.
+--   Leaving / rejoining in between shows the SAME saved sets again (SaveService keeps them).
 --------------------------------------------------
 
--- The N fixed sets offered for this item now. Free to look at; the sets only change after
--- a PAID reroll (reroll count + 1), so leaving and rejoining never changes them.
--- Returns { sets = { { lines, passives, name } }, sulfur, setCount } or nil + reason.
-function RuneforgeService.GetRerollOffer(item: any)
+-- PAY FIRST (USER RULING 2026-11-07):
+--   1. PayReroll: sulfur is debited, THEN the N sets are made (same seed as always: item ID +
+--      reroll count + set number), the reroll count goes up by 1, and the sets are saved on the
+--      item as item.pendingReroll = { sets = { { bonusLines, bonusPassiveIds, name } }, sulfur }.
+--   2. CommitReroll: the player picks one of those saved sets (1..N) or keeps the current lines
+--      (0). Either way the open choice is cleared. Nothing is charged here.
+--   Leaving / rejoining in between shows the SAME saved sets again (SaveService keeps them).
+
+-- The open (paid, not yet chosen) reroll on this item, or nil.
+local function pendingOf(item: any): any?
+	local p = if type(item) == "table" then item.pendingReroll else nil
+	if type(p) == "table" and type(p.sets) == "table" and #p.sets > 0 then return p end
+	return nil
+end
+
+function RuneforgeService.HasPendingReroll(item: any): boolean
+	return pendingOf(item) ~= nil
+end
+
+-- May a NEW reroll be paid for this item now? Returns { sulfur, setCount, runeforgeLevel } or
+-- nil + reason. Pure: builds nothing, charges nothing.
+local function rerollTerms(item: any)
 	if not (_bonusData and _itemGen) then
 		return nil, "Runeforge not wired"
 	end
@@ -497,26 +709,56 @@ function RuneforgeService.GetRerollOffer(item: any)
 		end
 		return nil, `{rarity} rerolls need Runeforge L{REROLL_UNLOCK[rarity]} (yours is L{level})`
 	end
-	local sets = {}
-	for k = 1, count do
-		local set = _itemGen.RollBonusSet(item.baseArchetypeId, item.itemLevel, rarity, setSeed(item, k))
-		if not set then
-			return nil, "Could not build the reroll options"
-		end
-		set.name = _itemGen.ComposeName(item.baseArchetypeId, set.bonusLines, set.bonusPassiveIds)
-		table.insert(sets, set)
-	end
-	return { sets = sets, sulfur = sulfur, setCount = count, runeforgeLevel = level }
+	return { sulfur = sulfur, setCount = count, runeforgeLevel = level }
 end
 
--- choice 0 = keep the current lines, 1..N = take that set. Sulfur is paid either way.
-function RuneforgeService.CommitReroll(playerId: string, item: any, choice: any)
-	local offer, why = RuneforgeService.GetRerollOffer(item)
-	if not offer then
-		return false, why or "Cannot reroll"
+-- The N sets for the item's CURRENT reroll count (deterministic: gf 54 seed). Copies, so the
+-- saved offer never shares tables with the generator. nil if a set cannot be built.
+local function buildSets(item: any, count: number): { any }?
+	local sets = {}
+	for k = 1, count do
+		local set = _itemGen.RollBonusSet(item.baseArchetypeId, item.itemLevel, item.rarityId, setSeed(item, k))
+		if not set then
+			return nil
+		end
+		local lines = {}
+		for _, l in set.bonusLines or {} do
+			if type(l) == "table" and type(l.id) == "string" then table.insert(lines, table.clone(l)) end
+		end
+		local passives = {}
+		for _, pid in set.bonusPassiveIds or {} do
+			if type(pid) == "string" then table.insert(passives, pid) end
+		end
+		table.insert(sets, {
+			bonusLines = lines,
+			bonusPassiveIds = passives,
+			name = _itemGen.ComposeName(item.baseArchetypeId, lines, passives),
+		})
 	end
-	if type(choice) ~= "number" or choice ~= choice or choice % 1 ~= 0 or choice < 0 or choice > offer.setCount then
-		return false, "Invalid choice"
+	return sets
+end
+
+-- What the Reroll tab shows. With an open choice: { pending = true, sets, sulfur, setCount }.
+-- Without: { pending = false, sulfur, setCount } (NO sets: they exist only after paying).
+-- nil + reason when the item cannot be rerolled at all.
+function RuneforgeService.GetRerollOffer(item: any)
+	local p = pendingOf(item)
+	if p then
+		return { pending = true, sets = p.sets, sulfur = tonumber(p.sulfur) or 0, setCount = #p.sets }
+	end
+	local terms, why = rerollTerms(item)
+	if not terms then return nil, why end
+	return { pending = false, sulfur = terms.sulfur, setCount = terms.setCount, runeforgeLevel = terms.runeforgeLevel }
+end
+
+-- Pay the sulfur, then make and save the sets. Returns ok, { setCount, rerollCount } | reason.
+function RuneforgeService.PayReroll(playerId: string, item: any)
+	if pendingOf(item) then
+		return false, "Choose from the reroll you already paid for first"
+	end
+	local terms, why = rerollTerms(item)
+	if not terms then
+		return false, why or "Cannot reroll"
 	end
 	if not (_currency and _currency.Debit) then
 		return false, "Currency path not wired"
@@ -524,18 +766,18 @@ function RuneforgeService.CommitReroll(playerId: string, item: any, choice: any)
 	if not (_inventory and _inventory.GetItem and _inventory.GetItem(playerId, item.instanceId) == item) then
 		return false, "Item not owned"
 	end
-	local paid, payWhy = _currency.Debit(playerId, { sulfur = offer.sulfur })
+	-- Build first so a failure never costs sulfur; the player only SEES them after paying.
+	local sets = buildSets(item, terms.setCount)
+	if not sets then
+		return false, "Could not build the reroll options -- nothing charged"
+	end
+	local paid, payWhy = _currency.Debit(playerId, { sulfur = terms.sulfur })
 	if not paid then
 		return false, `{tostring(payWhy or "Payment failed")} -- nothing charged`
 	end
 
-	if choice > 0 then
-		local set = offer.sets[choice]
-		item.bonusLines = set.bonusLines
-		item.bonusPassiveIds = set.bonusPassiveIds
-		if set.name then item.displayName = set.name end
-	end
-	-- Every PAID reroll counts, also 'Keep current' (gf 54).
+	item.pendingReroll = { sets = sets, sulfur = terms.sulfur }
+	-- Every PAID reroll counts, also one that ends in 'Keep current' (gf 54).
 	item.rerollCount = math.max(0, math.floor(tonumber(item.rerollCount) or 0)) + 1
 	item.runeForged = true -- tracking tag only (USER DECISION 2026-11-01)
 
@@ -543,9 +785,43 @@ function RuneforgeService.CommitReroll(playerId: string, item: any, choice: any)
 		_persistItem(playerId, item)
 	end
 
-	print(string.format("[RuneforgeService] REROLLED %s (%s) | choice %d of %d%s | -%d sulfur | reroll count %d",
-		tostring(item.instanceId), tostring(item.rarityId), choice, offer.setCount,
-		if choice == 0 then " (kept current)" else "", offer.sulfur, item.rerollCount))
+	print(string.format("[RuneforgeService] REROLL PAID %s (%s) | -%d sulfur | %d sets saved, waiting for a choice | reroll count %d",
+		tostring(item.instanceId), tostring(item.rarityId), terms.sulfur, #sets, item.rerollCount))
+
+	return true, { instanceId = item.instanceId, setCount = #sets, rerollCount = item.rerollCount }
+end
+
+-- Close the open choice: 0 = keep the current lines, 1..N = take that saved set. Charges
+-- nothing (the sulfur was paid in PayReroll).
+function RuneforgeService.CommitReroll(playerId: string, item: any, choice: any)
+	local p = pendingOf(item)
+	if not p then
+		return false, "No paid reroll to choose from -- pay for a reroll first"
+	end
+	if type(choice) ~= "number" or choice ~= choice or choice % 1 ~= 0 or choice < 0 or choice > #p.sets then
+		return false, "Invalid choice"
+	end
+	if not (_inventory and _inventory.GetItem and _inventory.GetItem(playerId, item.instanceId) == item) then
+		return false, "Item not owned"
+	end
+
+	if choice > 0 then
+		local set = p.sets[choice]
+		local lines = {}
+		for _, l in set.bonusLines or {} do table.insert(lines, table.clone(l)) end
+		item.bonusLines = lines
+		item.bonusPassiveIds = table.clone(set.bonusPassiveIds or {})
+		if set.name then item.displayName = set.name end
+	end
+	item.pendingReroll = nil
+
+	if _persistItem then
+		_persistItem(playerId, item)
+	end
+
+	print(string.format("[RuneforgeService] REROLL CHOSEN %s (%s) | choice %d of %d%s | reroll count %d",
+		tostring(item.instanceId), tostring(item.rarityId), choice, #p.sets,
+		if choice == 0 then " (kept current)" else "", tonumber(item.rerollCount) or 0))
 
 	return true, { instanceId = item.instanceId, choice = choice, rerollCount = item.rerollCount }
 end
@@ -573,10 +849,13 @@ function RuneforgeService.RerollInfo(item: any): any?
 	local sulfur = REROLL_SULFUR[item.rarityId]
 	if not sulfur then return nil end
 	local level = currentLevel()
+	local p = pendingOf(item)
 	return {
-		sulfur = sulfur,
-		setCount = REROLL_SETS[item.rarityId][level],
+		sulfur = if p then tonumber(p.sulfur) or sulfur else sulfur,
+		setCount = if p then #p.sets else REROLL_SETS[item.rarityId][level],
 		unlockLevel = REROLL_UNLOCK[item.rarityId],
+		-- A paid reroll is waiting for a choice (USER RULING 2026-11-07).
+		pending = p ~= nil,
 	}
 end
 

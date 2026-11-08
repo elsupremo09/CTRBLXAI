@@ -1492,6 +1492,18 @@ local function requestSkillHitPreview(skillId, tx, ty)
 		if bp.state ~= "Preview" or not p or p._hitSkillId ~= skillId or p._hitTileX ~= tx or p._hitTileY ~= ty then
 			return
 		end
+		-- Lunge step / Recoil Shot hop (D1 fix 2026-11-08): in tile-aim mode the server answer carries the
+		-- tile the caster would end on for the aimed tile. Draw it like the unit-click path: white path,
+		-- yellow end tile, aimed tile kept in the skill colour. No end tile in the answer = nothing extra.
+		if selectedSkill and selectedSkill.id == skillId and selectedSkill.showsLandingTile
+			and type(res.landingTileX) == "number" and type(res.landingTileY) == "number"
+		then
+			if type(res.chargePath) == "table" then
+				renderMovePath(res.chargePath, res.landingTileX, res.landingTileY)
+			end
+			createTileHighlight(res.landingTileX, res.landingTileY, "selected")  -- end tile = yellow
+			createTileHighlight(tx, ty, skillTargetColor(selectedSkill), 0.4)    -- aimed tile keeps skill colour
+		end
 		local entries = res.entries
 		p.hits = entries
 		p.hitsResolved = true
@@ -1518,6 +1530,11 @@ local function requestSkillHitPreview(skillId, tx, ty)
 				p.targetRtDelay = (tgtData and tgtData.derivedStats and tgtData.derivedStats.rtDelayResist)
 					and math.round(wDelay * tgtData.derivedStats.rtDelayResist)
 					or GameConstants.CalcRtDelayResistance(wDelay, tgtData and tgtData.stats and tgtData.stats.VIT or 10)
+			end
+			-- Server-worked turn delay for this unit (2026-11-08 7:14 PM, area turn delay skills such as
+			-- Dragon Dive / Decimating Swing): same number the real hit adds, so it wins over the estimate.
+			if type(e.rtDelay) == "number" then
+				p.targetRtDelay = e.rtDelay
 			end
 			p.hits = nil
 		end
@@ -2353,7 +2370,8 @@ local function processTileClick(bx, by)
 					-- tile in yellow, and draw the straight charge PATH in the white/
 					-- blooming move-path visual. Non-charge skills keep the plain
 					-- yellow 'selected' confirmation highlight on the target.
-					if (selectedSkill.isCharge or selectedSkill.leapsAdjacent) and t.landingTileX then
+					-- Lunge step / Recoil Shot hop (2026-11-08) show their end tile the same way.
+					if (selectedSkill.isCharge or selectedSkill.leapsAdjacent or selectedSkill.showsLandingTile) and t.landingTileX then
 						-- Draw the white charge PATH first (its destination paints the
 						-- landing tile gold), THEN overpaint the landing tile yellow and
 						-- the target tile red — so those two win the in-place recolor.
@@ -2857,7 +2875,9 @@ local devPanelConnections = {} -- F-A: input connections to disconnect on destro
 local _devSelectedTile = nil -- {x, y} for Kill Unit targeting
 
 local function createDevCameraPanel()
-	if not RunService:IsStudio() then return end
+	-- Studio, or the server marked this player as an allow-listed owner (display only; the
+	-- server re-checks every DevCommand). 2026-11-06.
+	if not (RunService:IsStudio() or Players.LocalPlayer:GetAttribute("DevAccess") == true) then return end
 	if devCameraPanel then devCameraPanel:Destroy() end
 	-- F-A: clear any connections from a prior panel instance (recreated on BattleStarted
 	-- and on MapDataSync/Regenerate) so UserInputService listeners don't pile up.
@@ -2996,7 +3016,7 @@ local function createDevCameraPanel()
 		cl.Padding = UDim.new(0, 2); cl.SortOrder = Enum.SortOrder.LayoutOrder
 
 		local g = { header = header, container = container, open = false }
-		header.MouseButton1Click:Connect(function()
+		header.Activated:Connect(function()
 			g.open = not g.open
 			container.Visible = g.open
 			header.Text = (g.open and "- " or "+ ") .. name
@@ -3015,7 +3035,7 @@ local function createDevCameraPanel()
 		btn.Text = text; btn.LayoutOrder = nextOrder()
 		btn.BorderSizePixel = 0; btn.Parent = parent
 		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
-		btn.MouseButton1Click:Connect(callback)
+		btn.Activated:Connect(callback)
 		return btn
 	end
 
@@ -3121,7 +3141,7 @@ local function createDevCameraPanel()
 					row.TextColor3 = Color3.fromRGB(225, 225, 225)
 					row.Text = tostring(item)
 					row.ZIndex = 52; row.BorderSizePixel = 0; row.Parent = listScroll
-					row.MouseButton1Click:Connect(function()
+					row.Activated:Connect(function()
 						state.value = item
 						btn.Text = labelPrefix .. ": " .. tostring(item)
 						closePop()
@@ -3135,7 +3155,7 @@ local function createDevCameraPanel()
 			rebuild(search.Text)
 		end)
 
-		btn.MouseButton1Click:Connect(function()
+		btn.Activated:Connect(function()
 			if pop.Visible then closePop(); return end
 			if openDropdown and openDropdown ~= pop then openDropdown.Visible = false end
 			-- position under the button (absolute coords)
@@ -3313,7 +3333,7 @@ local function createDevCameraPanel()
 	-------------------------------------------------------------
 	-- Expand / collapse (title) + viewport height cap
 	-------------------------------------------------------------
-	title.MouseButton1Click:Connect(function()
+	title.Activated:Connect(function()
 		-- F-B: a click that ended a real drag must NOT toggle the panel.
 		if dragMoved then dragMoved = false; return end
 		devExpanded = not devExpanded
@@ -3840,6 +3860,8 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 				if s.id == "Guard" then table.remove(unitData[data.unitId].statuses, i); break end
 			end
 		end
+		-- D4 (2026-11-07): keep the server's max MP too (Garden of Revelation raises it mid-battle).
+		if data.maxMp and data.maxMp > 0 then unitData[data.unitId].maxMp = data.maxMp end
 		if data.currentMp then unitData[data.unitId].currentMp = data.currentMp
 			updateMpBar(data.unitId, data.currentMp, data.maxMp or unitData[data.unitId].maxMp or 0) end
 	end
@@ -4215,10 +4237,15 @@ BattleEvents.UnitStateChanged.OnClientEvent:Connect(function(data)
 	if not data or not data.unitId then return end
 	local u = unitData[data.unitId]
 	local before = u and (u.currentHp or 0) or nil
+	local mpBefore = u and u.currentMp or nil     -- F3: did this update change MP / max MP?
+	local maxMpBefore = u and u.maxMp or nil
 	local wasDown = u ~= nil and u.isAlive == false  -- KO'd on this screen before this update
 	if u then
 		if data.hp ~= nil then u.currentHp = data.hp end
 		if data.maxHp ~= nil then u.maxHp = data.maxHp end
+		-- D4 (2026-11-07): server MP (Garden of Revelation max MP, Magic Spring / Oasis restores).
+		if data.maxMp ~= nil then u.maxMp = data.maxMp end
+		if data.mp ~= nil then u.currentMp = data.mp end
 		if data.isAlive ~= nil then u.isAlive = data.isAlive end
 		-- Statuses ride along so a heal that weakens/cures Venom shows at once (2026-10-26).
 		if data.statuses then
@@ -4229,6 +4256,29 @@ BattleEvents.UnitStateChanged.OnClientEvent:Connect(function(data)
 	local hp = (u and u.currentHp) or data.hp
 	local maxHp = (u and u.maxHp) or data.maxHp or hp
 	if hp ~= nil then updateHpBar(data.unitId, hp, maxHp) end
+	if u and (data.mp ~= nil or data.maxMp ~= nil) then
+		updateMpBar(data.unitId, u.currentMp or 0, u.maxMp or 0)  -- D4: bar shows the new values now
+		-- F3 (2026-11-08): also refresh the unit panel at once (Mana Fountain, Magic Spring, Oasis,
+		-- Garden max MP). The acting unit's panel shows a COPY (bp.actor, built from the turn prompt),
+		-- so copy the new values into it; a tapped unit / the target are unitData itself (just redraw).
+		local redraw = false
+		local a = bp.actor
+		if a and a.id == data.unitId and (a.currentMp ~= u.currentMp or a.maxMp ~= u.maxMp) then
+			a.currentMp = u.currentMp
+			a.maxMp = u.maxMp
+			a.currentHp = u.currentHp
+			a.maxHp = u.maxHp
+			redraw = true
+		end
+		if u.currentMp ~= mpBefore or u.maxMp ~= maxMpBefore then
+			local sel = BattleHUD.GetSelection and BattleHUD.GetSelection()
+			if (sel and sel.kind == "unit" and sel.data and sel.data.id == data.unitId)
+				or (bp.target and bp.target.id == data.unitId) then
+				redraw = true
+			end
+		end
+		if redraw then BattleHUD.Render(bp) end
+	end
 	local tok = unitTokens[data.unitId]
 	if tok and tok.part and before ~= nil and hp ~= nil and hp > before then
 		showDamageText(tok.part.Position, hp - before, true)
@@ -5140,7 +5190,7 @@ local function createLoadoutHub(phase)
 			btn.Parent = outputFrame
 			Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 2)
 			if entry.onClick then
-				btn.MouseButton1Click:Connect(entry.onClick)
+				btn.Activated:Connect(entry.onClick)
 			end
 		end
 	end
@@ -5201,7 +5251,7 @@ local function createLoadoutHub(phase)
 		btn.Text = text; btn.LayoutOrder = order
 		btn.BorderSizePixel = 0; btn.Parent = btnRow
 		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
-		btn.MouseButton1Click:Connect(callback)
+		btn.Activated:Connect(callback)
 		return btn
 	end
 
@@ -5304,7 +5354,7 @@ local function createLoadoutHub(phase)
 	confirmEquip.BorderSizePixel = 0
 	confirmEquip.Parent = inputRow
 	Instance.new("UICorner", confirmEquip).CornerRadius = UDim.new(0, 3)
-	confirmEquip.MouseButton1Click:Connect(function()
+	confirmEquip.Activated:Connect(function()
 		local uid = unitInput.Text
 		local iid = itemInput.Text
 		if uid == "" or iid == "" then setOutput("Enter both unit ID and item ID."); return end
@@ -5327,7 +5377,7 @@ local function createLoadoutHub(phase)
 	confirmUnequip.BorderSizePixel = 0
 	confirmUnequip.Parent = inputRow
 	Instance.new("UICorner", confirmUnequip).CornerRadius = UDim.new(0, 3)
-	confirmUnequip.MouseButton1Click:Connect(function()
+	confirmUnequip.Activated:Connect(function()
 		local uid = unitInput.Text
 		if uid == "" then setOutput("Enter unit ID."); return end
 		setOutput("Unequipping...")
@@ -5936,7 +5986,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		nameLabel.Parent = nameBg
 
 		-- Click -> detail view
-		card.MouseButton1Click:Connect(function()
+		card.Activated:Connect(function()
 			closeRewardDetail()
 
 			-- Build detail panel (left side, like loadout detail)
@@ -6729,4 +6779,53 @@ BattleEvents.TrapSprung.OnClientEvent:Connect(function(data)
 	local name = tostring(data.trapType or "Trap")
 	local text = if data.hidden then `Hidden {name}!` else `{name}!`
 	showFloatingText(tileToWorld(tx, ty) + Vector3.new(0, 1.5, 0), text, Theme.Colors.Warning, 1.6)
+end)
+
+-- ObjectMarker (2026-11-07, 18 new map objects): server-authored danger tiles (Volcanic Vent next
+-- targets, Arcane Cannon line, Heavy Artillery cross). Visual only (NET-001). One flat plate per
+-- tile in the existing "target" highlight colour; kept apart from TileHighlightManager so targeting
+-- highlights and click pads are never replaced. key "*" clears every marker.
+local _objMarkerFolder: Folder? = nil
+local _objMarkers: { [string]: { BasePart } } = {}
+local function clearObjMarker(key: string)
+	for _, p in ipairs(_objMarkers[key] or {}) do p:Destroy() end
+	_objMarkers[key] = nil
+end
+BattleEvents.ObjectMarker.OnClientEvent:Connect(function(data)
+	if type(data) ~= "table" or type(data.key) ~= "string" then return end
+	if data.key == "*" then
+		for k in pairs(_objMarkers) do clearObjMarker(k) end
+		return
+	end
+	clearObjMarker(data.key)
+	if type(data.tiles) ~= "table" or #data.tiles == 0 then return end
+	if not _objMarkerFolder then
+		local f = Instance.new("Folder")
+		f.Name = "ObjectMarkers"
+		f.Parent = visualFolder
+		_objMarkerFolder = f
+	end
+	local style = TileHL and TileHL.Styles and TileHL.Styles.target
+	local color = (style and style.color) or Color3.fromRGB(255, 80, 80)
+	local list = {}
+	for _, t in ipairs(data.tiles) do
+		local tx, ty = t[1], t[2]
+		if type(tx) == "number" and type(ty) == "number" then
+			local plate = Instance.new("Part")
+			plate.Name = `ObjMarker_{tx}_{ty}`
+			plate.Anchored = true
+			plate.CanCollide = false
+			plate.CanQuery = false   -- never blocks tile taps / floor rays
+			plate.CanTouch = false
+			plate.CastShadow = false
+			plate.Material = Enum.Material.Neon
+			plate.Color = color
+			plate.Transparency = 0.55
+			plate.Size = Vector3.new(TILE_SIZE * 0.9, 0.15, TILE_SIZE * 0.9)
+			plate.CFrame = CFrame.new(tileToWorldGrounded(tx, ty) - Vector3.new(0, 0.85, 0))
+			plate.Parent = _objMarkerFolder  -- parent last (NET-004)
+			list[#list + 1] = plate
+		end
+	end
+	_objMarkers[data.key] = list
 end)

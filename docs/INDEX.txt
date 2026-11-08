@@ -32,6 +32,11 @@ DATA ACCESS RULES
 
   - Query example: SELECT * FROM skills WHERE Skill_Name = 'Power Strike'
 
+SKILL CARD TEXT (added 2026-11-08)
+  skills.Card_Text         = the exact text shown on each skill card in the game (copied from the game's skill file).
+  skills.Card_Text_Pending = proposed new card text waiting for a game check; move it into Card_Text only after the builder confirms the skill plays that way.
+  RULE: when a skill changes, also update its card text (or add a pending one).
+
 
 
 SOURCE CODE
@@ -1460,3 +1465,20 @@ Spreadsheets (exact whole-row matches only, read back): Game_Rules 30 Loadout UI
 Backups: CTRBLXAI.db / CTRBLXAI_Game_Rules.xlsx / CTRBLXAI_Build_Plan.xlsx / INDEX.txt + .bak_20261104_173218_partiestab
 
 2026-11-05 Parties BUILT: loadout_ui_spec 72,75,102-116 changed + NEW 117 (frames/buttons), 118 (bottom gap 3%/min 8 px); game_flow 4,10,27 status; open_decisions 129 NEW. Guild Party button removed, guild UGC Merchant button added, party art defaults em_r0c0 / Volcanic Forge Hall. Old text kept as [Superseded 2026-11-05 (Parties built): ...]. Backups .bak_20261105_190041_partiesbuilt.
+
+== 2026-11-06/07 UI + DEV ACCESS + TILE EFFECTS + RUNEFORGE REMOVE LINE (index pointers) ==
+UI Layout:
+ - Tap-only input, all GUI buttons (no hover behaviour) -> project_rules 243
+ - Phone sizing, battle UI (touch + window under 1024 px; 44 px buttons, 2-wide grid) -> project_rules 244
+ - Runeforge screen layout (Gears | Gems tabs, BUILT) -> project_rules 247
+Dev Access:
+ - Owner dev tools allowed in published game (owner account only) -> project_rules 245
+ - LAUNCH BLOCKER: remove owner dev access before public launch (OPEN) -> open_decisions 130
+Terrain / Tile Effects:
+ - Tile effects skip blocked tiles (walls, solid objects, Ballista, Catapult; ground still changes) -> project_rules 246
+Runeforge:
+ - Remove Bonus Line (Common-Epic, gold only = one swap fee, line destroyed, rarity can drop) -> guild_facilities 84 + project_rules 248
+Parties tab:
+ - Parties tab built (2026-11-04/05) -> open_decisions 129
+
+- 2026-11-08: NEW badge on new gear (user ruling, built) -> project_rules 251 (UI Layout, next to 243/244/247); Game Rules xlsx '01 Project Identity' row 248. Cross-ref note added to project_rules 236 (STOLEN badge).

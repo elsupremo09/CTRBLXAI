@@ -1,0 +1,117 @@
+{
+ "ReplicatedStorage\\Content\\ObjectData.lua": {
+  "mtime": 1794062747.777696,
+  "sha": "2fb3d40a8eec57ab5f8c4da6d32bceb6ef9ad4720105a1c6b01f83bf7ba8c18b",
+  "orig_mtime": 1793940518.411524
+ },
+ "ServerScriptService\\Game\\ObjectEffectService.lua": {
+  "mtime": 1794063047.974355,
+  "sha": "f86cc3cad9e4d1a3128c5d9ff1349d8ba1c9d7480c5762376edcfe1a891d7eb2",
+  "orig_mtime": 1793941144.499683
+ },
+ "ServerScriptService\\Game\\PulseScheduler.lua": {
+  "mtime": 1794062455.9235282,
+  "sha": "427d3fc987c17c13208030147bd912810b86d6cd7c6440afde799a72a8784e64",
+  "orig_mtime": 1793206750.0033913
+ },
+ "ServerScriptService\\Game\\MapService.lua": {
+  "mtime": 1794062804.3459265,
+  "sha": "b774177d07e3606862aec0577bd18b2c23c83bf8dba568aafa07d1e29f381749",
+  "orig_mtime": 1793891176.210684
+ },
+ "ReplicatedStorage\\Content\\BiomeData.lua": {
+  "mtime": 1794062895.8442218,
+  "sha": "19151193194b2cc5eb0652cae6a8f41d846309f446f647c906889707eeee36b8",
+  "orig_mtime": 1791104874.482796
+ },
+ "ReplicatedStorage\\Content\\RegionData.lua": {
+  "mtime": 1791294904.3280852,
+  "sha": "ab481e6824b672b67037460e36331b8afdd19e4d7d0dd77c5ffa10ed9996ced6",
+  "orig_mtime": 1791294904.3280852
+ },
+ "ServerScriptService\\Game\\CombatResolver.lua": {
+  "mtime": 1794062281.1888776,
+  "sha": "079dbc002380c460dff6d272bd6545ade4c259d1b3ba9bd34eaba68c2f7525b3",
+  "orig_mtime": 1793890229.728204
+ },
+ "ServerScriptService\\Game\\CommandService.lua": {
+  "mtime": 1794062217.348912,
+  "sha": "4bfab050ff351a6109f8043b3fdaecd1e4502c3d295cea25da27a9fecab4cf77",
+  "orig_mtime": 1793945934.6271057
+ },
+ "ServerScriptService\\Game\\DisplacementService.lua": {
+  "mtime": 1794062077.6312237,
+  "sha": "0a6624d2a92b6788adac65495c8e9edfef34910d2086939fa01f80d6d1e98bc2",
+  "orig_mtime": 1793255692.9007974
+ },
+ "ServerScriptService\\Game\\EquipmentService.lua": {
+  "mtime": 1794062027.1313872,
+  "sha": "a2c480fe4ba7504d73f0123e5a6077449b3e752a100388810feb4f46454203a0",
+  "orig_mtime": 1793722316.8346417
+ },
+ "ServerScriptService\\Main.server.lua": {
+  "mtime": 1794062335.8951852,
+  "sha": "1b50e60ca748c308a0b65ab4959b646cb4e6a2eecf14c401d287f0c5491b5c4e",
+  "orig_mtime": 1793968493.3283696
+ },
+ "ServerScriptService\\Game\\ProgressionService.lua": {
+  "mtime": 1793202507.9808817,
+  "sha": "6b5c41ee526cced1292c5623bac28b1b63c72621b9b46ae432ab4e10196e474a",
+  "orig_mtime": 1793202507.9808817
+ },
+ "ServerScriptService\\Game\\TileEffectService.lua": {
+  "mtime": 1794062349.5378666,
+  "sha": "98afb94fee7c3de017768dea3af9f6055a63e94f2d08fdebb6a7fc6590ca8767",
+  "orig_mtime": 1793953956.705428
+ },
+ "ServerScriptService\\Game\\StatusService.lua": {
+  "mtime": 1794061920.7589097,
+  "sha": "b398e041b3308e858f327dbb08dff72171d4eb060d780b04ecc47c99bc042c0c",
+  "orig_mtime": 1793930916.460385
+ },
+ "ReplicatedStorage\\CTRBLXAI\\Shared\\GameConstants.lua": {
+  "mtime": 1794062065.2944446,
+  "sha": "078e941351dc0ed46ab4e32009ca6d16fe06514169cbea0b12e8fbc6344faefb",
+  "orig_mtime": 1793899389.8208284
+ },
+ "ReplicatedStorage\\CTRBLXAI\\Remotes\\BattleEvents.lua": {
+  "mtime": 1794062422.9129088,
+  "sha": "e6d797a759e869183514d5a1d3fd27f4eada0b4e07aedb6717c2c2fad806e646",
+  "orig_mtime": 1793528685.4613094
+ },
+ "StarterPlayer\\StarterPlayerScripts\\BattleVisualClient.client.lua": {
+  "mtime": 1794062447.1492286,
+  "sha": "7b847acd62867f4e7d3e5b940a1cca2de1fc4e7e6d71e7942686894f95d99ee0",
+  "orig_mtime": 1793952457.7780635
+ },
+ "ServerScriptService\\Game\\BattleVisualBroadcaster.lua": {
+  "mtime": 1794062422.8820436,
+  "sha": "33924ef8b8eb687939de4110e18175112242156df6eff59b94393373186fb8ca",
+  "orig_mtime": 1793934600.387541
+ },
+ "ServerScriptService\\Game\\BattleCoordinator.lua": {
+  "mtime": 1793958159.9046729,
+  "sha": "bf7ef899557e6c79fcc185b13eb291a814e593c42758f2ff73fdbfae8d7ce36f",
+  "orig_mtime": 1793958159.9046729
+ },
+ "ServerScriptService\\Game\\TargetingService.lua": {
+  "mtime": 1793940425.6731884,
+  "sha": "ec64925659e98265380384b78b372d54be048de86ffcf945ef31e62f80f5c8b0",
+  "orig_mtime": 1793940425.6731884
+ },
+ "ServerScriptService\\Game\\BattleTurnController.lua": {
+  "mtime": 1793939106.1112723,
+  "sha": "87494f18735b8590fb56f0ea7bb3db4542267c83dac8e84be57710165ffa1878",
+  "orig_mtime": 1793939106.1112723
+ },
+ "ReplicatedStorage\\CTRBLXAI\\Shared\\TileHighlightManager.lua": {
+  "mtime": 1791383288.3525765,
+  "sha": "d4b3d1aa507e7f3d4d3087210bc84b6b1a3bd34850e8df244d1e1be4246db752",
+  "orig_mtime": 1791383288.3525765
+ },
+ "ServerScriptService\\Game\\AIService.lua": {
+  "mtime": 1793297598.164048,
+  "sha": "f570bab6c5fd1a71f02e597a16307c8e9104169e95b4b2b13208d01462c293ab",
+  "orig_mtime": 1793297598.164048
+ }
+}

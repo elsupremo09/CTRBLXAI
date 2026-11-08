@@ -709,6 +709,12 @@ function EquipmentService.RebuildUnitStats(unit)
 	if mpFromInt ~= 1 then intMp = math.round(intMp * mpFromInt) end
 	unit.maxHp = 50 + vitHp + armorHp
 	unit.maxMp = 20 + intMp + armorMp
+	-- Garden of Revelation (objects_encounters row 120, USER RULING 2026-11-07): battle-only max-MP
+	-- bonus (+20%). Set by ObjectEffectService for the rest of the battle; Main clears it at battle
+	-- end before HP/MP are persisted, so the saved maximum never includes it.
+	if type(unit.battleMaxMpBonusPct) == "number" and unit.battleMaxMpBonusPct > 0 then
+		unit.maxMp = unit.maxMp + math.round(unit.maxMp * unit.battleMaxMpBonusPct)
+	end
 
 	-- Clamp current to new max (don't increase current beyond max)
 	if unit.currentHp and unit.currentHp > unit.maxHp then

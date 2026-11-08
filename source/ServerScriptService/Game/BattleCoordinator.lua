@@ -745,6 +745,13 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 	local unit = state.channelResolveUnit
 	state.channelResolveUnit = nil
 
+	-- The resolved skill may have KO'd the last unit on a side (2026-11-06, UAT W-1): end the
+	-- battle now, the same check AdvanceClock runs, so no one gets an immediate turn on an
+	-- empty field. checkBattleEnd sets phase = "BattleOver"; the main loop then exits.
+	if checkBattleEnd(state) then
+		return nil
+	end
+
 	if not unit or not unit.isAlive then
 		state.phase = "Waiting"
 		return nil
@@ -906,6 +913,11 @@ local function applyEndOfTurnDots(state, unit)
 end
 
 function BattleCoordinator.EndTurn(state)
+	-- The battle already ended mid-command (dev Instant Win/Lose while a unit's command was
+	-- still resolving): nothing to close. Any other phase is still a real error (2026-11-08).
+	if state.phase == "BattleOver" then
+		return
+	end
 	assert(
 		state.phase == "TurnOpen",
 		"EndTurn: no turn is open."

@@ -102,8 +102,43 @@ end
 -- doused tile is spared. Tiles carrying a permanent floor effect (baseFloor: Vines /
 -- Tar Pit) are exempt — they never transform on burn-out (rule 143).
 local _deferredTransform = {}
+-- BLOCKED-TILE GROUND CHANGE (USER RULING 2026-11-06 4:04 PM): a tile effect aimed at a
+-- blocked tile (wall / solid object / impassable) is NOT placed, but the ground underneath
+-- still changes as if it had landed. Fire on a bare flammable base burns out of sight and
+-- transforms on its natural burn-out time. [tileKey] = { element = "Fire", ct = remaining CT }.
+-- No visible effect, no damage/status, no reaction partner, never a spread source.
+local _hiddenBurnOut = {}
 
 local function tileKey(x, y) return x .. "," .. y end
+
+-- CONTAINER BREAK GUARD (2026-11-07, objects_encounters 112-114 / project_rules 249): what a
+-- container releases does NOT react with the action that broke it. F2 (2026-11-08): the guard
+-- covers EVERY tile the release landed on (SetReleaseGuard marks them while the release is laid)
+-- for the WHOLE action - the attacker's own element/tile reactions later in that action, effect-on-
+-- effect reactions, Wind clearing and the explosion chain all skip a guarded tile. CommandService
+-- clears the guards when an action starts and when it ends (ClearElementGuards), and the battle
+-- clock clears any leftover (ProcessCtTick), so later actions react normally (D2 kept).
+-- [tileKey] = true.
+local _elementGuard = {}
+function TileEffectService.GuardTileFromElement(tileX, tileY)
+	_elementGuard[tileKey(tileX, tileY)] = true
+end
+function TileEffectService.ClearElementGuards()
+	table.clear(_elementGuard)
+end
+-- While true, every tile effect ApplyTileEffect places is guarded (a container release being laid).
+-- Returns the previous value so the caller can restore it.
+local _releaseGuardOn = false
+function TileEffectService.SetReleaseGuard(on)
+	local prev = _releaseGuardOn
+	_releaseGuardOn = on == true
+	return prev
+end
+-- EXPLOSION BREAKING HIT (fix D1, 2026-11-07): while an explosion event hits the object on one of
+-- its tiles, every tile effect that hit creates (a broken Toxic Crate's Poison Cloud) is noted
+-- here, and that same explosion event does not chain through it. Later blasts and later Fire
+-- react normally. [tileKey] = true while an explosion object hit runs; nil otherwise.
+local _blastFresh: any = nil
 
 -- PER-TILE BASE FLOOR-EFFECT SLOT (map_gen_rules row 67 'Chasm-Floor Effect
 -- Permanence', Slice 5 2026-10-02). baseFloor[tileKey] = effectId of the PERMANENT
@@ -181,6 +216,7 @@ function TileEffectService.Init(mapWidth, mapHeight)
 	_costZone = {}
 	baseFloor = {}
 	_deferredTransform = {}
+	_hiddenBurnOut = {}
 end
 
 -- Register + apply a permanent chasm-floor effect (called at battle start from the
@@ -273,7 +309,8 @@ local REACTIONS = {
 	-- (A Lua `nil` value is NOT stored in a table, so the old "Wind = nil" entries never
 	-- existed and Wind cleared nothing. Fixed 2026-10-27, user ruling: Wind clears clouds.)
 	Burning = { Water = "Steam",   Ice = "Steam"    },
-	Wet     = { Fire  = "Steam",   Ice = "Frozen"   },
+	-- Electric on Wet -> Static Cloud (terrain_effects Wet row / GameConstants, ruling 2026-09-29; F1 2026-11-08).
+	Wet     = { Fire  = "Steam",   Ice = "Frozen", Electric = "Static Cloud" },
 	Frozen  = { Fire  = "Wet"                       },
 	-- WIND CLEARS CLOUDS (user ruling 2026-10-27): Steam (also what fog/smoke items place),
 	-- Static Cloud and Poison Cloud are blown away. Wind never explodes Poison Cloud.
@@ -438,6 +475,98 @@ local function fireDeferredTransform(key, tileX, tileY)
 end
 
 --------------------------------------------------
+-- OPEN-TILE PLACEMENT (USER RULINGS 2026-11-06)
+--------------------------------------------------
+-- No tile effect is ever placed on a blocked tile: walls / solid objects
+-- (GameConstants.BLOCKERS — OBS blockers, Ballista/Catapult engines, …) or impassable
+-- terrain. First ruled for clouds / Steam / gas (1:55 PM), then extended to EVERY tile
+-- effect (2:44 PM: Burning, Wet, Frozen, Oily, Darkened Ground, Holy Ground, Tar Pit,
+-- Vines, …). One check shared by every placement path (items, devices, skills,
+-- augments, objects, weather, reactions, Burning spread) and by Strong Wind Poison
+-- Cloud drift. Map-authored floor seeding (owner "floor") is exempt — it is map data.
+function TileEffectService.IsOpenEffectTile(x, y)
+	if x < 1 or x > _mapWidth or y < 1 or y > _mapHeight then return false end
+	if GameConstants.IsBlocked and GameConstants.IsBlocked(x, y) then return false end
+	if GameConstants.IsImpassableTerrain and GameConstants.IsImpassableTerrain(x, y) then return false end
+	return true
+end
+
+-- Ground side ONLY of a placement on a blocked tile (USER RULING 2026-11-06 4:04 PM). Mirrors
+-- the normal path's terrain step: honours skipTransform, Firebreak, the floor-effect exemption
+-- (rule 143) and burn-then-transform (rules 140-142: Fire on bare Grassland / Clover / Wooden
+-- Floor defers to burn-out; everything else transforms at once). An effect already sitting on
+-- the tile from before the object arrived is left as it is (ruling), so the ground is not touched.
+-- Geomancer Terrain Mastery (2026-10-28): owner's terrain +1 turn (+400 CT, the project's
+-- turn->CT step). Unit owners only (floor / tile / trap owners never match a unit id).
+-- DB: only terrain a Geomancer creates with a SKILL counts (not its basic attacks or items).
+-- Returns (durationCt, geoSkillTerrain). ONE helper shared by the visible placement and the
+-- hidden burn under a blocked tile, so both last exactly as long (USER RULING 2026-11-06 4:30 PM).
+local function geomancerTerrainDuration(ownerId, baseCt)
+	local ct, geo = baseCt, false
+	if ownerId and _allUnits then
+		for _, _ou in ipairs(_allUnits) do
+			if _ou.id == ownerId then
+				local _dps = (require :: any)(script.Parent.DoctrinePassiveService)
+				if _dps.IsCastingSkill(_ou) then
+					local _add = _dps.GetTerrainDurationModifier(_ou)
+					if _add ~= 0 then
+						-- An unlimited effect (-1) stays unlimited (re-check 2026-10-29).
+						if ct ~= -1 then ct = ct + _add * 400 end
+						geo = true
+					end
+				end
+				break
+			end
+		end
+	end
+	return ct, geo
+end
+
+local function blockedTileGroundChange(tileX, tileY, effectId, skipTransform, durationCtOverride, ownerId)
+	local def = GameConstants.TILE_EFFECTS[effectId]
+	if not def then return end
+	local key = tileKey(tileX, tileY)
+	local pending = _hiddenBurnOut[key]
+	if pending then
+		-- The ground is burning out of sight. Treat the incoming element like it met Burning:
+		-- the burn ends EARLY, so the terrain is spared (rule 141); a reaction result then
+		-- changes the ground in its own right, a non-reacting effect replaces the burn.
+		_hiddenBurnOut[key] = nil
+		print(string.format(
+			"[TileEffectService] Hidden burn under blocked tile (%d,%d) ended early by %s - terrain SPARED",
+			tileX, tileY, tostring(effectId)))
+		local reacted, resultId = resolveReaction("Burning", def.element)
+		if reacted then
+			if resultId and resultId ~= "Explosion" then
+				blockedTileGroundChange(tileX, tileY, resultId, false, nil, ownerId)
+			end
+			return
+		end
+	elseif effects[key] then
+		return
+	end
+	if skipTransform then return end
+	if baseFloor[key] ~= nil then return end
+	if effectId == "Burning" and (_firebreak[key] or 0) > 0 then return end
+	if effectId == "Burning" and isDeferredFlammableTransform(tileX, tileY, def.element) then
+		-- Same lifetime as the visible fire would get, incl. Geomancer Terrain Mastery.
+		local ct = geomancerTerrainDuration(ownerId, durationCtOverride or def.durationCt or 900)
+		if ct ~= -1 then
+			_hiddenBurnOut[key] = { element = def.element, ct = ct }
+			print(string.format(
+				"[TileEffectService] Ground under blocked tile (%d,%d) burns out of sight - base changes in %d CT",
+				tileX, tileY, ct))
+		end
+	else
+		local changed = transformAndBroadcast(tileX, tileY, def.element)
+		if changed then
+			print(string.format("[TileEffectService] Ground under blocked tile (%d,%d) changed by %s",
+				tileX, tileY, tostring(effectId)))
+		end
+	end
+end
+
+--------------------------------------------------
 -- APPLY / REMOVE
 --------------------------------------------------
 
@@ -473,13 +602,41 @@ function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allU
 		print(string.format("[TileEffectService] Unknown effect: %s", tostring(effectId)))
 		return
 	end
+	-- USER RULINGS 2026-11-06: every tile effect skips blocked tiles (map-authored floor
+	-- seeding is exempt — it is map data, not a placement).
+	if ownerId ~= "floor" and not TileEffectService.IsOpenEffectTile(tileX, tileY) then
+		-- Wasp Nest (objects_encounters row 124, 2026-11-07): a Poison Cloud created on or spreading
+		-- onto its (blocked) tile destroys it instead (Poison instant kill, no sting). Other objects
+		-- are untouched. The cloud is still not placed there (rule 246).
+		if effectId == "Poison Cloud" and _objectHitCb and GameConstants.GetObjectAt
+			and GameConstants.GetObjectAt(tileX, tileY) == "Wasp Nest" then
+			_objectHitCb(tileX, tileY, "Poison")
+		end
+		print(string.format("[TileEffectService] %s skipped at (%d,%d) - blocked tile", tostring(effectId), tileX, tileY))
+		blockedTileGroundChange(tileX, tileY, effectId, skipTransform, durationCtOverride, ownerId)
+		return
+	end
 
 	local key = tileKey(tileX, tileY)
 	local existing = effects[key]
+	-- A real placement on a tile whose ground was burning out of sight (its blocker has since
+	-- gone): that hidden burn ends early, so the terrain is spared (rule 141).
+	if _hiddenBurnOut[key] then
+		_hiddenBurnOut[key] = nil
+		print(string.format("[TileEffectService] Hidden burn at (%d,%d) ended by %s - terrain SPARED",
+			tileX, tileY, tostring(effectId)))
+	end
 
 	-- Check element reaction with existing effect
 	if existing then
 		local reacted, resultId = resolveReaction(existing.id, def.element)
+		-- F2 (2026-11-08): a container release on this tile does not react with the action that
+		-- broke it (e.g. that Fire Bolt's own Burning on the crate's new Poison Cloud).
+		if reacted and _elementGuard[key] then
+			print(string.format("[TileEffectService] %s on %s at (%d,%d) skipped - container release guard (no reaction)",
+				tostring(effectId), tostring(existing.id), tileX, tileY))
+			return
+		end
 		if reacted then
 			print(string.format(
 				"[TileEffectService] Reaction: %s + %s → %s at (%d,%d)",
@@ -525,28 +682,9 @@ function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allU
 	end
 
 	-- Place new effect
-	local _placedCt = durationCtOverride or def.durationCt or 900
-	-- Geomancer Terrain Mastery (2026-10-28): owner's terrain +1 turn (+400 CT, the project's
-	-- turn->CT step). Unit owners only (floor / tile / trap owners never match a unit id).
-	-- DB: only terrain a Geomancer creates with a SKILL counts (not its basic attacks or items). The
-	-- tile is marked so its +20% damage applies to that terrain only (checklist fix 2026-10-29).
-	local _geoSkillTerrain = false
-	if ownerId and _allUnits then
-		for _, _ou in ipairs(_allUnits) do
-			if _ou.id == ownerId then
-				local _dps = (require :: any)(script.Parent.DoctrinePassiveService)
-				if _dps.IsCastingSkill(_ou) then
-					local _add = _dps.GetTerrainDurationModifier(_ou)
-					if _add ~= 0 then
-						-- An unlimited effect (-1) stays unlimited (re-check 2026-10-29).
-						if _placedCt ~= -1 then _placedCt = _placedCt + _add * 400 end
-						_geoSkillTerrain = true
-					end
-				end
-				break
-			end
-		end
-	end
+	-- Geomancer Terrain Mastery via the shared helper. The tile is marked so its +20% damage
+	-- applies to that terrain only (checklist fix 2026-10-29).
+	local _placedCt, _geoSkillTerrain = geomancerTerrainDuration(ownerId, durationCtOverride or def.durationCt or 900)
 	effects[key] = {
 		id          = effectId,
 		remainingCt = _placedCt,
@@ -556,6 +694,10 @@ function TileEffectService.ApplyTileEffect(tileX, tileY, effectId, ownerId, allU
 		tileX       = tileX,
 		tileY       = tileY,
 	}
+	-- D1 (2026-11-07): placed by an explosion's breaking hit on an object -> that blast won't chain it.
+	if _blastFresh then _blastFresh[key] = true end
+	-- F2 (2026-11-08): placed by a container release -> guarded for the rest of the action that broke it.
+	if _releaseGuardOn then _elementGuard[key] = true end
 
 	print(string.format(
 		"[TileEffectService] Applied %s at (%d,%d) | Duration: %d CT | Owner: %s",
@@ -686,10 +828,26 @@ end
 
 function TileEffectService.ProcessCtTick(ctElapsed, allUnits)
 	if allUnits then _allUnits = allUnits end
+	-- Container break guards only last for the command that broke the container (2026-11-07).
+	table.clear(_elementGuard)
 	-- Firebreak guards count down on the battle clock.
 	for k, ct in pairs(_firebreak) do
 		local left = ct - (ctElapsed or 0)
 		_firebreak[k] = (left > 0) and left or nil
+	end
+	-- Hidden burns under blocked tiles: natural burn-out fires the base transform, exactly as
+	-- a visible Burning's natural expiry does (floor-effect tiles stay exempt, rule 143).
+	for k, hb in pairs(_hiddenBurnOut) do
+		hb.ct = hb.ct - (ctElapsed or 0)
+		if hb.ct <= 0 then
+			_hiddenBurnOut[k] = nil
+			local hx, hy = string.match(k, "^(%-?%d+),(%-?%d+)$")
+			hx, hy = tonumber(hx), tonumber(hy)
+			if hx and hy and baseFloor[k] == nil then
+				print(string.format("[TileEffectService] Hidden burn-out at (%d,%d) - base transforms", hx, hy))
+				transformAndBroadcast(hx, hy, hb.element)
+			end
+		end
 	end
 	-- Move-cost zones too.
 	for k, z in pairs(_costZone) do
@@ -1019,8 +1177,15 @@ function TileEffectService.ProcessSpread(ctElapsed, forced, nowCt)
 						local nx, ny = eff.tileX + d[1], eff.tileY + d[2]
 						if nx >= 1 and nx <= _mapWidth and ny >= 1 and ny <= _mapHeight then
 							local tgtKey = tileKey(nx, ny)
-							-- Skip if already has ANY effect (already-Burning or incompatible)
-							if not effects[tgtKey] and not ((_firebreak[tgtKey] or 0) > 0) then
+							-- Skip if already has ANY effect (already-Burning or incompatible).
+							-- A BLOCKED tile still qualifies (USER RULING 2026-11-06 4:30 PM): the fire
+							-- never appears there, but the ground under it burns out of sight
+							-- (ApplyTileEffect's skip branch -> blockedTileGroundChange). A blocked tile
+							-- whose ground is ALREADY burning out of sight is skipped, so later spread
+							-- passes never restart (or spare) that hidden burn.
+							local _open = TileEffectService.IsOpenEffectTile(nx, ny)
+							if not effects[tgtKey] and not ((_firebreak[tgtKey] or 0) > 0)
+								and (_open or not _hiddenBurnOut[tgtKey]) then
 								-- Target must be Flammable BASE terrain
 								local terrainId = GameConstants.GetTerrainId(nx, ny)
 								local terrainDef = GameConstants.TERRAIN_TYPES[terrainId]
@@ -1047,7 +1212,7 @@ function TileEffectService.ProcessSpread(ctElapsed, forced, nowCt)
 	-- Apply collected ignitions (deterministic; new tiles get full duration).
 	for _, ig in pairs(newIgnitions) do
 		local igKey = tileKey(ig.x, ig.y)
-		if not effects[igKey] then
+		if not effects[igKey] and not (_hiddenBurnOut[igKey] and not TileEffectService.IsOpenEffectTile(ig.x, ig.y)) then
 			print(string.format("[TileEffectService] Burning SPREAD%s → (%d,%d)", forced and " (Strong Wind)" or "", ig.x, ig.y))
 			TileEffectService.ApplyTileEffect(ig.x, ig.y, "Burning", ig.owner)
 			if effects[igKey] and effects[igKey].id == "Burning" then
@@ -1097,10 +1262,11 @@ function TileEffectService.ProcessPoisonCloudDrift(nowCt, allUnits)
 				local nx, ny = eff.tileX + d[1], eff.tileY + d[2]
 				-- W3 (2026-11-06) "Airborne-compatible": on the map, no tile effect, and not a wall /
 				-- solid object tile (GameConstants.BLOCKERS holds solid objects only) or impassable terrain.
-				if nx >= 1 and nx <= _mapWidth and ny >= 1 and ny <= _mapHeight
-					and not effects[tileKey(nx, ny)]
-					and not (GameConstants.IsBlocked and GameConstants.IsBlocked(nx, ny))
-					and not (GameConstants.IsImpassableTerrain and GameConstants.IsImpassableTerrain(nx, ny)) then
+				if TileEffectService.IsOpenEffectTile(nx, ny) and not effects[tileKey(nx, ny)] then
+					table.insert(cands, { x = nx, y = ny })
+				elseif GameConstants.GetObjectAt and GameConstants.GetObjectAt(nx, ny) == "Wasp Nest" then
+					-- Wasp Nest (row 124, 2026-11-07): a cloud may drift onto it - ApplyTileEffect then
+					-- destroys the nest instead of placing the cloud (blocked-tile branch).
 					table.insert(cands, { x = nx, y = ny })
 				end
 			end
@@ -1271,6 +1437,9 @@ local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits
 	local dirs = (pattern == "box") and EXPLOSION_DIRS_BOX or EXPLOSION_DIRS_DIAMOND
 	local originElev = GameConstants.GetElevation(x, y)
 	local chained = {}
+	-- D1 (2026-11-07): tiles whose effect THIS blast's object hits just created (a broken Toxic
+	-- Crate's Poison Cloud). This blast never chains through them; later blasts still can.
+	local blastFresh = {}
 
 	print(string.format("[TileEffectService] EXPLOSION at (%d,%d) depth %d | payload=%s | pattern=%s",
 		x, y, depth, tostring(damagePayload), pattern or "diamond"))
@@ -1289,7 +1458,13 @@ local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits
 				-- affected tile per explosion event, no double-count. Billboard/unbreakable
 				-- tiles are a no-op (ApplyObjectHit returns "immune").
 				if _objectHitCb then
-					_objectHitCb(tx, ty)
+					-- D1: whatever this object hit lays (a broken crate's cloud) belongs to this blast's
+					-- breaking hit, so the chain check below skips it for this blast only.
+					local _prevFresh = _blastFresh
+					_blastFresh = blastFresh
+					local _okHit, _errHit = pcall(_objectHitCb, tx, ty)
+					_blastFresh = _prevFresh
+					if not _okHit then error(_errHit, 0) end
 				end
 
 				-- Intrinsic effect 2: per-source HP damage. damagePayload is a FRACTION
@@ -1327,7 +1502,9 @@ local function processOneExplosion(x, y, depth, ownerId, damagePayload, allUnits
 				-- Chain: a secondary explosive source in the AOE is COLLECTED (not
 				-- recursed). The caller appends it to the persisted drain queue.
 				local eff = effects[tileKey(tx, ty)]
-				if eff and (eff.id == "Oily" or eff.id == "Poison Cloud") and not (tx == x and ty == y) then
+				if eff and (eff.id == "Oily" or eff.id == "Poison Cloud") and not (tx == x and ty == y)
+					and not blastFresh[tileKey(tx, ty)]  -- D1: not the cloud this blast's breaking hit made
+					and not _elementGuard[tileKey(tx, ty)] then  -- F2: nor any container release of this action
 					TileEffectService.RemoveTileEffect(tx, ty)  -- source consumed once
 					table.insert(chained, { x = tx, y = ty, depth = depth + 1,
 						instigator = (not isTrap) and instigatorId or nil })
@@ -1460,8 +1637,10 @@ local function applyHolyGroundEndTurn(unit)
 			if _hrm ~= 1 then heal = math.max(0, math.floor(heal * _hrm)) end
 		end
 		if heal > 0 then
+			local _llBefore = unit.currentHp
 			unit.currentHp = math.min(unit.maxHp, unit.currentHp + heal)
 			if _statusService and _statusService.WeakenVenomOnHeal then _statusService.WeakenVenomOnHeal(unit) end  -- healing weakens Venom (2026-10-26)
+			if _statusService and _statusService.NotifyHealGained then _statusService.NotifyHealGained(unit, unit.currentHp - _llBefore) end  -- Life Link share (2026-11-08)
 			if _bvb and _bvb.UnitStateChanged then _bvb.UnitStateChanged(unit, "Holy Ground") end
 			print(string.format("[TileEffectService] Holy Ground: %s heals %d | HP %d/%d",
 				unit.name, heal, unit.currentHp, unit.maxHp or 0))
@@ -1644,6 +1823,7 @@ function TileEffectService.WindClearsCloud(tileX, tileY, ownerId)
 	local key = tileKey(tileX, tileY)
 	local existing = effects[key]
 	if not existing then return false end
+	if _elementGuard[key] then return false end  -- F2: a container release of this action stays
 	local reacted, resultId = resolveReaction(existing.id, "Wind")
 	if not reacted or resultId ~= nil then return false end
 	TileEffectService.RemoveTileEffect(tileX, tileY)
@@ -1658,6 +1838,13 @@ function TileEffectService.ResolveElementOnTile(tileX, tileY, element, ownerId, 
 	if allUnits then _allUnits = allUnits end
 
 	local key = tileKey(tileX, tileY)
+	-- Container break guard (2026-11-07; F2 2026-11-08): a container release on this tile does not
+	-- react with ANY element of the action that broke it. Kept until the action ends (not used up).
+	if _elementGuard[key] then
+		print(string.format("[TileEffectService] %s on (%d,%d) skipped - container release guard (no reaction)",
+			tostring(element), tileX, tileY))
+		return false
+	end
 	local createdEffect = ELEMENT_CREATES_EFFECT[element]
 
 	-- Path A: element spawns a canonical effect → ApplyTileEffect handles the full

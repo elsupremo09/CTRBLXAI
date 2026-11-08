@@ -153,6 +153,19 @@ local function skillAnimKind(def, caster, target, dealtDamage)
 		caster and caster.weaponMaxRange or nil)  -- weapon reach for range -1 skills (melee-by-reach rule)
 end
 
+-- Battle-menu skill text (approved 2026-11-08): the skill's full card text from Content.SkillData
+-- (one source, DAT-001), so the battle action panel and the self-target preview show exactly what
+-- the card says. The old auto-text is only a fallback for a skill with no card text (e.g. the
+-- internal SKL-MENDER-HEAL, which has no SkillData row).
+local function skillCardText(def)
+	local card = def and def.id and SkillData[def.id] or nil
+	local text = card and card.description
+	if type(text) == "string" and text ~= "" then
+		return text
+	end
+	return def.isHealing and "Heals ally" or (def.appliesStatus and ("Applies " .. def.appliesStatus) or "Damages target")
+end
+
 -- Basic-attack animation kind from the attacker's equipped weapons (nil = client stand-in).
 local function basicAttackAnimKind(unit)
 	local slots = unit and unit.equipmentSlots
@@ -227,6 +240,25 @@ end
 --   - Attack candidates (enemies in melee range)
 --------------------------------------------------
 
+-- LUNGE tile-aim (D1 fix 2026-11-08): a player's Lunge aims at a tile, and its target list is one ground
+-- marker on the caster's own tile. The marker is offered only when at least one on-map tile exactly 2 away
+-- has a legal step tile (same CommandService.LungeStepTile that validation uses), so Lunge greys out when
+-- nothing can be lunged at. The tile actually aimed at is still checked by validation before any cost.
+local function hasLungeAimTile(unit: any): boolean
+	for dy = -2, 2 do
+		for dx = -2, 2 do
+			local tx, ty = unit.tileX + dx, unit.tileY + dy
+			if math.max(math.abs(dx), math.abs(dy)) == 2
+				and tx >= 1 and ty >= 1 and tx <= (MAP_WIDTH or tx) and ty <= (MAP_HEIGHT or ty)
+				and CommandService.LungeStepTile(unit, { tileX = tx, tileY = ty }, state) ~= nil
+			then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 local function buildTurnPrompt(unit)
 	-- Timeline data: all alive units sorted by remainingRt (who acts soonest)
 	local timeline = {}
@@ -263,7 +295,9 @@ local function buildTurnPrompt(unit)
 			local promptMpCost = CommandService.GetSkillMpCost(unit, def, def.id)
 			local canUse = UnitSchema.HasEnoughMp(unit, promptMpCost)
 				and not CommandService.IsRelocationBlockedSkill(unit, def)  -- Phase Lock (2026-10-27)
+				and not CommandService.IsPinBlockedSkill(unit, def)  -- Pinned: no leap/dash/step skills (rule 253, 2026-11-08)
 				and not CommandService.IsDualWieldBlockedSkill(unit, def)  -- Dual Wield exclusive (2026-10-28)
+				and not CommandService.IsHpCostBlockedSkill(unit, def)  -- Blood Price at <= 15% HP (2026-11-08)
 			local candidates, computedRange = TargetingService.GetSkillCandidates(unit, state.units, def)
 			-- Weapon minimum range (2026-10-30): same shared formula the server validates with
 			-- (CalcSkillRange 2nd return = weapon min for weapon-range skills, else 0; it does not
@@ -282,22 +316,6 @@ local function buildTurnPrompt(unit)
 				isSelfTarget = true
 			end
 			local targetIds = {}
-			-- TEMP DIAGNOSTIC (2026-10-28) — REMOVE once the "can't cast Steal" report is resolved.
-			-- Logs the three values the Steal gate checks, per candidate. No behaviour change.
-			if def.id == "SKL-STEAL" then
-				print(string.format("[BattleTurnController] STEAL-DIAG | caster %s at (%s,%s) | enemies in range: %d",
-					tostring(unit.name), tostring(unit.tileX), tostring(unit.tileY), #candidates))
-				for _, c in ipairs(candidates) do
-					local rx, ry = nil, nil
-					if c.tileX and c.tileY and c.facing then rx, ry = GameConstants.GetRearTile(c.tileX, c.tileY, c.facing) end
-					local keys = {}
-					for k in pairs(c.equipmentSlots or {}) do table.insert(keys, tostring(k)) end
-					print(string.format("[BattleTurnController] STEAL-DIAG |   %s at (%s,%s) facing %s -> its rear tile (%s,%s) | behind=%s | stealable=%d | worn slots: %s",
-						tostring(c.name), tostring(c.tileX), tostring(c.tileY), tostring(c.facing), tostring(rx), tostring(ry),
-						tostring(GameConstants.IsCasterBehindTarget(unit, c)), #GameConstants.GetStealableSlots(c),
-						(#keys > 0) and table.concat(keys, ",") or "none"))
-				end
-			end
 			for _, c in ipairs(candidates) do
 				-- Steal (SKL-STEAL) gating (2026-10-24): a legal steal target is one the
 				-- caster is DIRECTLY BEHIND (exact rear tile) who also has >=1 stealable
@@ -312,6 +330,18 @@ local function buildTurnPrompt(unit)
 				-- Skyfall Lance: hide targets with no free landing tile (validation would reject them).
 				if def.leapsAdjacent and not c.isGroundTarget and not CommandService.CanLeapTo(unit, c, state) then
 					continue
+				end
+				-- Lunge (2026-11-08): only targets exactly 2 tiles away with a free tile to step onto.
+				-- A player's tile-aim marker sits on the caster's own tile, so it passes when any tile
+				-- 2 away can be lunged at (D1 fix 2026-11-08); AI unit targets are checked as before.
+				if def.stepsToTargetFirst then
+					if c.isGroundTarget then
+						if not hasLungeAimTile(unit) then
+							continue
+						end
+					elseif not CommandService.LungeStepTile(unit, c, state) then
+						continue
+					end
 				end
 				if c.isGroundTarget then
 					isGroundTarget = true
@@ -340,6 +370,8 @@ local function buildTurnPrompt(unit)
 							land = CommandService.LeapLanding(unit, c, state)
 						elseif def.isCharge and c.isAlive then
 							land = CommandService.ComputeChargeLanding(unit, c, state)
+						elseif def.stepsToTargetFirst then
+							land = CommandService.LungeStepTile(unit, c, state)  -- Lunge hits from its step tile
 						end
 						local homeX, homeY = unit.tileX, unit.tileY
 						if land then
@@ -373,6 +405,15 @@ local function buildTurnPrompt(unit)
 							tEntry.landingTileY = landing.y
 							tEntry.chargePath = CommandService.ComputeChargePath(unit.tileX, unit.tileY, landing.x, landing.y)
 						end
+					elseif def.stepsToTargetFirst or def.hopsBackAfter then
+						-- Lunge step / Recoil Shot hop (2026-11-08): show the tile the caster will end on.
+						local landing = if def.stepsToTargetFirst then CommandService.LungeStepTile(unit, c, state)
+							else CommandService.RecoilHopTile(unit, c, state)
+						if landing then
+							tEntry.landingTileX = landing.x
+							tEntry.landingTileY = landing.y
+							tEntry.chargePath = CommandService.ComputeChargePath(unit.tileX, unit.tileY, landing.x, landing.y)
+						end
 					end
 					table.insert(targetIds, tEntry)
 				end
@@ -395,6 +436,7 @@ local function buildTurnPrompt(unit)
 				isHealing   = def.isHealing or false,
 				isCharge    = def.isCharge or false,
 				leapsAdjacent = def.leapsAdjacent or false,  -- Skyfall Lance: show its landing tile like a charge
+				showsLandingTile = (def.stepsToTargetFirst or def.hopsBackAfter) == true,  -- Lunge / Recoil Shot end tile
 				channelTime = def.channelTime or 0,
 				canUse      = canUse,
 				targets     = targetIds,
@@ -423,7 +465,7 @@ local function buildTurnPrompt(unit)
 				end)(),
 				power       = def.power or 0,
 				appliesStatus = def.appliesStatus or nil,
-				description = def.isHealing and "Heals ally" or (def.appliesStatus and ("Applies " .. def.appliesStatus) or "Damages target"),
+				description = skillCardText(def),  -- full card text (SkillData), auto-text only as fallback
 			})
 		end
 	end
@@ -898,7 +940,21 @@ BattleEvents.PreviewSkillHits.OnServerInvoke = function(plr: any, skillId: any, 
 		warn("[BattleTurnController] PreviewSkillHits failed for " .. skillId .. ": " .. tostring(entries))
 		return { ok = false }
 	end
-	return { ok = true, skillId = skillId, tileX = tileX, tileY = tileY, entries = entries }
+	local result = { ok = true, skillId = skillId, tileX = tileX, tileY = tileY, entries = entries }
+	-- Lunge step / Recoil Shot hop (D1 fix 2026-11-08): the tile the caster would end on for THIS aimed tile,
+	-- from the same server functions validation and resolution use, so player tile-aim mode can light it
+	-- yellow (ARC-001: the client never works the tile out itself). No end tile = nothing extra is drawn.
+	if def.stepsToTargetFirst or def.hopsBackAfter then
+		local aimed = { tileX = tileX, tileY = tileY }
+		local landing = if def.stepsToTargetFirst then CommandService.LungeStepTile(unit, aimed, state)
+			else CommandService.RecoilHopTile(unit, aimed, state)
+		if landing then
+			result.landingTileX = landing.x
+			result.landingTileY = landing.y
+			result.chargePath = CommandService.ComputeChargePath(unit.tileX, unit.tileY, landing.x, landing.y)
+		end
+	end
+	return result
 end
 
 --------------------------------------------------

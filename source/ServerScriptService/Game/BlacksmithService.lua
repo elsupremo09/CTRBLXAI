@@ -469,6 +469,11 @@ function BlacksmithService.ResolveDismantle(item: any)
 	if DISMANTLE_CRYSTALS[rarity] == nil then
 		return nil, "Unknown rarity: " .. tostring(rarity)
 	end
+	-- An open (paid) Runeforge reroll must be chosen first (USER RULING 2026-11-07); same
+	-- wording as RuneforgeService.PENDING_REROLL_REASON.
+	if type(item.pendingReroll) == "table" then
+		return nil, "Reroll choice pending: pick a set or keep the current lines at the Runeforge first"
+	end
 	if not _bonusData then
 		return nil, "Bonus data not wired"
 	end

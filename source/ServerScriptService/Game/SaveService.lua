@@ -238,6 +238,59 @@ local function decodeLevellingRecord(encoded)
 	return { free = free, pairs = pairsOut }
 end
 
+-- Open (paid, not yet chosen) Runeforge reroll (USER RULING 2026-11-07): the paid sets are
+-- saved on the item so leaving and rejoining shows the SAME sets. Written only while a choice
+-- is open. Compact: { s = sulfur paid, o = { { bln = {{id, tier}}, bps = {id}, dn = name? } } }.
+local MAX_PENDING_SETS = 8
+local function encodePendingReroll(item)
+	local p = item.pendingReroll
+	if type(p) ~= "table" or type(p.sets) ~= "table" or #p.sets == 0 then return nil end
+	local o = {}
+	for _, set in ipairs(p.sets) do
+		local bln = {}
+		for _, line in ipairs(set.bonusLines or {}) do
+			table.insert(bln, { line.id, line.tier })
+		end
+		table.insert(o, { bln = bln, bps = set.bonusPassiveIds or {}, dn = set.name })
+	end
+	return { s = p.sulfur, o = o }
+end
+
+-- Anything malformed is dropped (warned), never half-loaded.
+local function decodePendingReroll(encoded)
+	local e = encoded.prr
+	if e == nil then return nil end
+	if type(e) ~= "table" or type(e.o) ~= "table" or #e.o == 0 or #e.o > MAX_PENDING_SETS then
+		warn(`[SaveService] Dropped a malformed open reroll on item {tostring(encoded.iid)}`)
+		return nil
+	end
+	local sets = {}
+	for _, s in ipairs(e.o) do
+		if type(s) ~= "table" or type(s.bln) ~= "table" or type(s.bps) ~= "table" then
+			warn(`[SaveService] Dropped a malformed open reroll on item {tostring(encoded.iid)}`)
+			return nil
+		end
+		local lines = {}
+		for _, bl in ipairs(s.bln) do
+			if type(bl) ~= "table" or type(bl[1]) ~= "string" then
+				warn(`[SaveService] Dropped a malformed open reroll on item {tostring(encoded.iid)}`)
+				return nil
+			end
+			table.insert(lines, { id = bl[1], tier = bl[2] })
+		end
+		local passives = {}
+		for _, pid in ipairs(s.bps) do
+			if type(pid) == "string" then table.insert(passives, pid) end
+		end
+		table.insert(sets, {
+			bonusLines = lines,
+			bonusPassiveIds = passives,
+			name = if type(s.dn) == "string" then s.dn else nil,
+		})
+	end
+	return { sets = sets, sulfur = math.max(0, math.floor(tonumber(e.s) or 0)) }
+end
+
 local function encodeItem(item)
 	-- Compact: { archetypeNumericId, level, rarityId, bonusLines[], passiveIds[] }
 	local archetype = WeaponData.GetByArchetypeId(item.baseArchetypeId)
@@ -268,6 +321,10 @@ local function encodeItem(item)
 		rc  = if type(item.rerollCount) == "number" and item.rerollCount > 0 then item.rerollCount else nil,
 		-- 'rune-forged' tracking tag (USER DECISION 2026-11-01): written only when set.
 		rf  = if item.runeForged == true then 1 else nil,
+		-- Open reroll choice (USER RULING 2026-11-07): written only while one is open.
+		prr = encodePendingReroll(item),
+		-- NEW badge (USER RULING 2026-11-08): written only while the item is unseen.
+		nw  = if item.isNew == true then 1 else nil,
 	}
 end
 
@@ -304,6 +361,10 @@ local function decodeItem(encoded)
 		end)(),
 		runeForged       = encoded.rf == 1 or encoded.rf == true,
 		rerollCount      = math.max(0, math.floor(tonumber(encoded.rc) or 0)),
+		-- Missing on older saves and on items with no open reroll choice (no migration).
+		pendingReroll    = decodePendingReroll(encoded),
+		-- NEW badge (2026-11-08): missing on older saves = already seen.
+		isNew            = if encoded.nw == 1 or encoded.nw == true then true else nil,
 	}
 end
 

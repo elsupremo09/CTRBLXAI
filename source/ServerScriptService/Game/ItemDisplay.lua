@@ -83,6 +83,37 @@ local function resolveItemBonuses(item)
 	return stats, passives, statPcts
 end
 
+-- One bonus line's effect as short UI text ("STR  +7  +9%"; a passive returns its description),
+-- worked out with the SAME math as the item bonus view above (2026-11-07, Runeforge bonus
+-- inspector). Display only. itemLevel: the item the line is on (gems: a reference level).
+-- Second return: true when the value grows with item level (the same operations the bonus view
+-- scales above: PrimaryStat / BaseItemStat / WeightReduce); fixed "Derived" values don't.
+local LEVEL_SCALED_OPS = { PrimaryStat = true, BaseItemStat = true, WeightReduce = true }
+function ItemDisplay.DescribeBonusEffect(lineId: string, itemLevel: number?): (string?, boolean)
+	if type(lineId) ~= "string" then return nil, false end
+	local passive = BonusData.BonusPassives[lineId]
+	if passive then
+		return (if passive.desc and passive.desc ~= "" then passive.desc else nil), false
+	end
+	local attr = BonusData.NumericalAttributes[lineId]
+	if not attr then return nil, false end
+	local scales = LEVEL_SCALED_OPS[attr.operation] == true
+	local stats, _, pcts = resolveItemBonuses({ bonusLines = { { id = lineId } }, itemLevel = itemLevel or 1 })
+	local keys = {}
+	for k in stats do keys[k] = true end
+	for k in pcts do keys[k] = true end
+	local parts = {}
+	for k in keys do
+		local v, p = stats[k], pcts[k]
+		local s = k
+		if v and v ~= 0 then s ..= `  {if v > 0 then "+" else ""}{v}` end
+		if p and p ~= 0 then s ..= `  {if p > 0 then "+" else ""}{p}%` end
+		table.insert(parts, s)
+	end
+	table.sort(parts)
+	return (if #parts > 0 then table.concat(parts, ", ") else nil), scales
+end
+
 -- Shared item -> UI entry builder. GetInventoryData AND InspectUnit both use it,
 -- so the battle inspector's item detail always matches the loadout screen.
 local function buildItemEntry(item)

@@ -166,7 +166,7 @@ render = function()
 	elseif state ~= nil then
 		stateRetries = STATE_RETRY_MAX
 	end
-	screen.Clear()
+	screen.Clear(currentTab) -- same tab keeps the grid's scroll position
 
 	local locked = state == nil or state.lockedReason ~= nil
 	local entries = if locked then {} else buildEntries(state)

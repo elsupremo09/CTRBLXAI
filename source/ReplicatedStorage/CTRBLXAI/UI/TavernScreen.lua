@@ -322,7 +322,7 @@ end
 render = function()
 	local c = ctx
 	if not c or not screen or not isOpen then return end
-	screen.Clear()
+	screen.Clear("Main") -- keeps the grid's scroll position across rebuilds
 	local res = c.getPool() -- nil on a server error (shown in the status line)
 	local entries = buildEntries(res)
 	local selected = TileGrid.ResolveSelected(entries, selectedKey)

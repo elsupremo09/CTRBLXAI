@@ -263,7 +263,7 @@ function CrucibleService.CommitMerge(playerId: string, instanceIds: any)
 		table.insert(removed, item)
 	end
 
-	local added = _inventory.AddItem(playerId, newItem)
+	local added = _inventory.AddItem(playerId, newItem, { markNew = true })
 	if added == false then
 		for _, back in removed do _inventory.AddItem(playerId, back) end
 		if _currency.Credit then _currency.Credit(playerId, cost) end

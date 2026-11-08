@@ -45,6 +45,8 @@ local DoctrineInventoryService = require(Game:WaitForChild("DoctrineInventorySer
 local StatCalcService = require(Game:WaitForChild("StatCalcService")) -- Info panel values (2026-10-28)
 local GearPassiveSummary = require(Game:WaitForChild("GearPassiveSummary")) -- combined gear passives (2026-10-29)
 
+local PlayersService = game:GetService("Players")
+
 local LoadoutRequestHandlers = {}
 
 -- Injected by Main.Init (nil until then).
@@ -108,6 +110,42 @@ function LoadoutRequestHandlers.Init(deps)
 			loadoutDirty = false
 		end
 	end)
+
+	-- NEW item badge (USER RULING 2026-11-08). The client reports an item the player opened
+	-- (Loadout detail) or picked (Runeforge). Only the id is read; ownership is checked here
+	-- and nothing but the flag changes. Rate-limited per player (SEC-001). The save is
+	-- coalesced (one write at most every 3 s) so browsing many items stays cheap.
+	local seenWindow: { [number]: { t: number, n: number } } = {}
+	local seenSavePending = false
+	BattleEvents.MarkItemSeen.OnServerEvent:Connect(function(player, instanceId)
+		if typeof(player) ~= "Instance" or not player:IsA("Player") then return end
+		if type(instanceId) ~= "string" or #instanceId == 0 or #instanceId > 80 then return end
+		local now = os.clock()
+		local w = seenWindow[player.UserId]
+		if not w or now - w.t > 1 then w = { t = now, n = 0 }; seenWindow[player.UserId] = w end
+		w.n += 1
+		if w.n > 10 then return end
+		if not InventoryService.OwnsItem(PLAYER_ID, instanceId) then
+			warn(string.format("[Management] MarkItemSeen refused: %s not owned", instanceId))
+			return
+		end
+		if InventoryService.MarkSeen(PLAYER_ID, instanceId) then
+			print(string.format("[Management] Item seen: %s (NEW cleared)", instanceId))
+			-- Save-on-quit only writes when GuildMenuService is dirty; flag it so a clear made
+			-- in the last 3 s before leaving is not lost (Tester WARN 2026-11-08). Lazy require
+			-- avoids any load-order cycle.
+			local okG, GMS = pcall(require, Game:WaitForChild("GuildMenuService"))
+			if okG and GMS and GMS.MarkDirty then GMS.MarkDirty() end
+			if not seenSavePending and doSave then
+				seenSavePending = true
+				task.delay(3, function()
+					seenSavePending = false
+					if doSave then doSave() end
+				end)
+			end
+		end
+	end)
+	PlayersService.PlayerRemoving:Connect(function(p) seenWindow[p.UserId] = nil end)
 
 BattleEvents.GetRosterData.OnServerInvoke = function(player)
 	local roster = {}
@@ -276,6 +314,7 @@ BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId, 
 	end
 	local ok, err = EquipmentService.Equip(unit, item, slot)
 	if ok then
+		item.isNew = nil -- equipping counts as seen (NEW badge, 2026-11-08); saved with the loadout
 		EquipmentService.RebuildUnitStats(unit)
 		print(string.format("[Management] %s equipped %s [%s] in %s", unit.name, archetype.name, instanceId, slot))
 		return { ok = true, slot = slot, name = archetype.name }

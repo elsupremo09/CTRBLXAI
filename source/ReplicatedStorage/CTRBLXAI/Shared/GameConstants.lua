@@ -1151,6 +1151,19 @@ GameConstants.STATUSES = {
 		moveOffset   = 2,
 		moveRtMult   = 0.80,
 	},
+	-- Movement Slow (USER RULING 2026-11-08, project_rules 252 / skill rows): the "Movement RT x1.50"
+	-- debuff of Static Field (800 CT) and Fissure Line (600 CT, skill-authored override). Same status
+	-- re-applied refreshes (resets) the timer, never stacks. Debuff Resistance shortens the CT time only.
+	-- Runtime name (the rows give no status name) -- Designer to confirm or rename.
+	["Movement Slow"] = {
+		id           = "Movement Slow",
+		description  = "Movement RT x1.50.",
+		kind         = "Debuff",
+		duration     = nil,
+		durationCt   = 800,
+		reapply      = "refresh",
+		moveRtMult   = 1.50,
+	},
 	-- Empowering Aura (SKL-EMPOWERING-AURA, ruling 2026-10-26): allies only, +10% final damage
 	-- dealt for 3 turns (DB skills.Duration "3 turns"). Totaled with other damage buffs.
 	["Empowering Aura"] = {
@@ -1314,6 +1327,22 @@ GameConstants.STATUSES = {
 		reapply      = "refresh",
 		doesNotStack = true,
 		statPctMod   = { LUK = 0.50 },
+	},
+
+	-- Mana Fountain map object (objects_encounters row 118, USER DECISION 2026-11-07): every ally
+	-- on the map recovers 20% of missing MP at the end of each of its own turns for 2000 CT.
+	-- Normal timed buff: dispellable, reapply refreshes [agent default, vetoable]. Applied by
+	-- StatusService.ProcessEndOfTurn (round, min 1 while MP is missing - same rounding as Recharge).
+	["Mana Fountain"] = {
+		id           = "Mana Fountain",
+		dispellable  = true,
+		description  = "Recovers 20% of missing MP at the end of each of its own turns.",
+		kind         = "Buff",
+		duration     = nil,
+		durationCt   = 2000,
+		reapply      = "refresh",
+		doesNotStack = true,
+		missingMpRestoreFraction = 0.20,
 	},
 
 	-- === Support-consumable buff/debuff statuses (wired 2026-10-26) ===
@@ -1500,7 +1529,7 @@ GameConstants.STATUSES = {
 GameConstants.SKILL_BONUS_RANGE_SHARE = table.freeze({
 -- 100%
 	["SKL-ARCANE-RENEWAL"] = 1.0,
-	["SKL-BLOOD-PRICE"] = 1.0,
+	-- SKL-BLOOD-PRICE removed 2026-11-08 7:14 PM (user ruling): range 1, no Bonus Skill Range bonus.
 	["SKL-CHAIN-SPARK"] = 1.0,
 	["SKL-DARK-RESTORATION"] = 1.0,
 	["SKL-EARTHEN-LANCE"] = 1.0,
@@ -1565,7 +1594,8 @@ function GameConstants.CalcSkillRange(actor, skillDef, raceModifier)
 		or math.floor((actor.effectiveStats and actor.effectiveStats.INT or 10) / 75)
 	local appliedBonus = math.floor(bonusStat * GameConstants.GetSkillBonusRangeShare(skillDef.id))
 	local maxRange = math.max(1, baseRange + appliedBonus + (raceModifier or 0))
-	local minRange = followsWeapon and (actor.weaponMinRange or 1) or 0
+	-- minSkillRange (2026-11-08): a fixed-range skill that needs a minimum distance (Lunge: exactly 2).
+	local minRange = followsWeapon and (actor.weaponMinRange or 1) or (skillDef.minSkillRange or 0)
 	return maxRange, minRange, baseRange, appliedBonus
 end
 
@@ -1856,6 +1886,8 @@ GameConstants.SKILLS = {
 	},
 	["SKL-CHAIN-SPARK"] = {
 		id            = "SKL-CHAIN-SPARK",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.25,  -- per affected target
 		name          = "Chain Spark",
 		tags          = { "Direct Damage", "Electric" },
 		targetRules   = "Enemy Unit",
@@ -1873,6 +1905,8 @@ GameConstants.SKILLS = {
 	},
 	["SKL-METEOR-MARKER"] = {
 		id            = "SKL-METEOR-MARKER",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.50,
 		name          = "Meteor Marker",
 		tags          = { "Direct Damage", "Fire", "Debuff" },
 		targetRules   = "Ground, including occupied Ground",
@@ -1972,6 +2006,8 @@ GameConstants.SKILLS = {
 	},
 	["SKL-SWEEPING-CUT"] = {
 		id            = "SKL-SWEEPING-CUT",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.75,
 		name          = "Sweeping Cut",
 		tags          = { "Direct Damage", "Physical" },
 		targetRules   = "Enemy Unit",
@@ -2234,6 +2270,8 @@ GameConstants.SKILLS = {
 	},
 	["SKL-PYROCLASM"] = {
 		id            = "SKL-PYROCLASM",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.40,
 		name          = "Pyroclasm",
 		tags          = { "Direct Damage", "Fire" },
 		targetRules   = "Ground, including occupied Ground",
@@ -2250,6 +2288,9 @@ GameConstants.SKILLS = {
 	},
 	["SKL-GALE-THRUST"] = {
 		id            = "SKL-GALE-THRUST",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.60,  -- turn delay round(Weapon RT Delay x 0.60)
+		knockbackForceMult = 0.5,     -- knockback max(0, floor(Force x 0.5) - Stability)
 		name          = "Gale Thrust",
 		tags          = { "Direct Damage", "Physical", "Utility" },
 		targetRules   = "Enemy Unit",
@@ -2266,6 +2307,8 @@ GameConstants.SKILLS = {
 	},
 	["SKL-TIDAL-CRASH"] = {
 		id            = "SKL-TIDAL-CRASH",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.50,
 		name          = "Tidal Crash",
 		tags          = { "Direct Damage", "Water" },
 		targetRules   = "Ground, including occupied Ground",
@@ -2282,11 +2325,14 @@ GameConstants.SKILLS = {
 	},
 	["SKL-STATIC-FIELD"] = {
 		id            = "SKL-STATIC-FIELD",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayFlat = 30, riderDelayPerL = 0.10,  -- turn delay round(30 + 0.10 x L)
+		riderStatus = "Movement Slow", riderStatusCt = 800,  -- Movement RT x1.50 for 800 CT
 		name          = "Static Field",
 		tags          = { "Debuff", "Electric" },
 		targetRules   = "Enemy Unit",
 		range         = 0,
-		aoePattern    = "Ring2",
+		aoePattern    = "DiamondRing2",  -- DB: tiles at exactly distance 2 in steps (8 tiles); Ring1 stays the 8 around
 		mpCost        = 5,
 		rtMult        = 1.0,
 		channelTime   = 100,
@@ -2298,11 +2344,13 @@ GameConstants.SKILLS = {
 	},
 	["SKL-VENOM-BURST"] = {
 		id            = "SKL-VENOM-BURST",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.50,
 		name          = "Venom Burst",
 		tags          = { "Direct Damage", "Poison", "Debuff" },
 		targetRules   = "Enemy Unit",
-		range         = 0,
-		aoePattern    = "Adjacent",
+		range         = 1,              -- melee reach (USER RULING 2026-11-08: aimed at a target)
+		aoePattern    = "Circle1",      -- 3x3 centred on the target: target tile + the 8 around it
 		mpCost        = 4,
 		rtMult        = 1.4,
 		channelTime   = 0,
@@ -2314,6 +2362,9 @@ GameConstants.SKILLS = {
 	},
 	["SKL-FISSURE-LINE"] = {
 		id            = "SKL-FISSURE-LINE",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.40,
+		riderStatus = "Movement Slow", riderStatusCt = 600,  -- Movement RT x1.50 for 600 CT
 		name          = "Fissure Line",
 		tags          = { "Direct Damage", "Earth", "Debuff" },
 		targetRules   = "Ground, including occupied Ground",
@@ -2330,6 +2381,7 @@ GameConstants.SKILLS = {
 	},
 	["SKL-CONSECRATE"] = {
 		id            = "SKL-CONSECRATE",
+		alliesOnly = true,  -- USER RULING 2026-11-08 3:51 PM (movement_targeting 79): allies only
 		name          = "Consecrate",
 		tags          = { "Healing", "Buff", "Holy" },
 		targetRules   = "Self, Allies",
@@ -2346,6 +2398,8 @@ GameConstants.SKILLS = {
 	},
 	["SKL-SHADOW-RAKE"] = {
 		id            = "SKL-SHADOW-RAKE",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.60,
 		name          = "Shadow Rake",
 		tags          = { "Direct Damage", "Dark" },
 		targetRules   = "Enemy Unit",
@@ -2362,6 +2416,9 @@ GameConstants.SKILLS = {
 	},
 	["SKL-GLACIAL-WAVE"] = {
 		id            = "SKL-GLACIAL-WAVE",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.35,
+		appliesStatusRequires = "Wet",  -- Frozen only on units already Wet (DB Effects)
 		name          = "Glacial Wave",
 		tags          = { "Direct Damage", "Ice", "Debuff" },
 		targetRules   = "Ground, including occupied Ground",
@@ -2394,6 +2451,8 @@ GameConstants.SKILLS = {
 	},
 	["SKL-BLINDING-FLASH"] = {
 		id            = "SKL-BLINDING-FLASH",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayFlat = 20, riderDelayPerL = 0.08,  -- turn delay round(20 + 0.08 x L)
 		name          = "Blinding Flash",
 		tags          = { "Debuff", "Holy" },
 		targetRules   = "Enemy Unit",
@@ -2410,6 +2469,8 @@ GameConstants.SKILLS = {
 	},
 	["SKL-SIPHON-PULSE"] = {
 		id            = "SKL-SIPHON-PULSE",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.40,
 		name          = "Siphon Pulse",
 		tags          = { "Direct Damage", "Dark", "Healing" },
 		targetRules   = "Enemy Unit",
@@ -2461,6 +2522,9 @@ GameConstants.SKILLS = {
 	},
 	["SKL-VOLTAIC-CHAIN"] = {
 		id            = "SKL-VOLTAIC-CHAIN",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.30,  -- per affected target
+		statusLastChainOnly = true,   -- Pinned on the last target of the chain only (DB Effects)
 		name          = "Voltaic Chain",
 		tags          = { "Direct Damage", "Electric", "Debuff" },
 		targetRules   = "Enemy Unit",
@@ -2576,6 +2640,7 @@ GameConstants.SKILLS = {
 	},
 	["SKL-BULWARK-FIELD"] = {
 		id            = "SKL-BULWARK-FIELD",
+		alliesOnly = true,  -- USER RULING 2026-11-08 3:51 PM (movement_targeting 79): allies only
 		name          = "Bulwark Field",
 		tags          = { "Shield", "Buff" },
 		targetRules   = "Self, Allies",
@@ -2839,6 +2904,8 @@ GameConstants.SKILLS = {
 		tags          = { "Direct Damage", "Physical", "Utility" },
 		targetRules   = "Enemy Unit",
 		range         = 2,
+		minSkillRange = 2,     -- target exactly 2 tiles away (DB Targeting_Range)
+		stepsToTargetFirst = true,  -- 1-tile step next to the target BEFORE the hit (USER RULING 2026-11-08 5:07 PM)
 		aoePattern    = nil,
 		mpCost        = 3,
 		rtMult        = 1.2,
@@ -2855,6 +2922,7 @@ GameConstants.SKILLS = {
 		tags          = { "Direct Damage", "Physical", "Utility" },
 		targetRules   = "Enemy Unit",
 		range         = -1,
+		hopsBackAfter = true,  -- 1-tile hop away from the target AFTER the shot (USER RULING 2026-11-08 5:07 PM)
 		aoePattern    = nil,
 		mpCost        = 3,
 		rtMult        = 1.1,
@@ -2975,11 +3043,19 @@ GameConstants.SKILLS = {
 	},
 	["SKL-DECIMATING-SWING"] = {
 		id            = "SKL-DECIMATING-SWING",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 1.50,
+		-- Turn delay split (USER RULING 2026-11-08 7:14 PM, exception to rule 252): full x1.50 on the
+		-- main target only; every other unit hit gets this share of it (x0.75).
+		riderDelaySideFrac = 0.50,
 		name          = "Decimating Swing",
 		tags          = { "Direct Damage", "Physical" },
 		targetRules   = "Enemy Unit",
 		range         = -1,
 		aoePattern    = "Cleave",
+		-- USER RULING 2026-11-08 3:32 PM (DB SKL-DECIMATING-SWING): hits EVERY unit in the arc,
+		-- allies too. Sweeping Cut and weapon Cleave keep enemy-only flank tiles.
+		cleaveHitsAnySide = true,
 		mpCost        = 5,
 		rtMult        = 1.6,
 		channelTime   = 100,
@@ -3096,6 +3172,8 @@ GameConstants.SKILLS = {
 	},
 	["SKL-LIFE-LINK"] = {
 		id            = "SKL-LIFE-LINK",
+		-- USER RULING 2026-11-08 4:21 PM: lasting link, not a one-off heal (LifeLinkService).
+		isLifeLink = true, lifeLinkCt = 2000, lifeLinkShare = 0.5, lifeLinkMaxDist = 6,
 		name          = "Life Link",
 		tags          = { "Buff", "Healing", "Utility" },
 		targetRules   = "Ally Unit",
@@ -3128,10 +3206,14 @@ GameConstants.SKILLS = {
 	},
 	["SKL-BLOOD-PRICE"] = {
 		id            = "SKL-BLOOD-PRICE",
+		-- USER RULING 2026-11-08 4:21 PM: costs round(Max HP x 0.15) HP (min 1) at commit; blocked at <= 15% HP.
+		hpCostMaxHpFrac = 0.15,
 		name          = "Blood Price",
 		tags          = { "Direct Damage", "Dark" },
 		targetRules   = "Enemy Unit",
-		range         = 3,
+		-- USER RULING 2026-11-08 7:14 PM (applies the 2026-10-22 ruling): range 1 (adjacent, diagonals
+		-- included), no INT / Bonus Skill Range bonus (removed from SKILL_BONUS_RANGE_SHARE).
+		range         = 1,
 		aoePattern    = nil,
 		mpCost        = 0,
 		rtMult        = 0.8,
@@ -3163,6 +3245,8 @@ GameConstants.SKILLS = {
 	},
 	["SKL-THUNDERCLAP"] = {
 		id            = "SKL-THUNDERCLAP",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 0.60,
 		name          = "Thunderclap",
 		tags          = { "Direct Damage", "Electric", "Debuff" },
 		targetRules   = "Enemy Unit",
@@ -3212,6 +3296,11 @@ GameConstants.SKILLS = {
 	},
 	["SKL-DRAGON-DIVE"] = {
 		id            = "SKL-DRAGON-DIVE",
+		-- Area riders (USER RULING 2026-11-08, project_rules 252): applied to EVERY unit hit.
+		riderDelayWeaponMult = 1.40,
+		-- Turn delay split (USER RULING 2026-11-08 7:14 PM, exception to rule 252): full x1.40 only on
+		-- the unit on the landing tile; every other unit hit gets this share of it (x0.70).
+		riderDelaySideFrac = 0.50,
 		name          = "Dragon Dive",
 		tags          = { "Direct Damage", "Physical", "Utility" },
 		targetRules   = "Enemy Tile",
@@ -3245,6 +3334,9 @@ GameConstants.SKILLS = {
 	},
 	["SKL-SANCTIFY"] = {
 		id            = "SKL-SANCTIFY",
+		-- USER RULING 2026-11-08 4:28 PM: allies only (caster + allies); Undead allies take holy damage = 50% of the heal.
+		alliesOnly = true,
+		undeadDamageMult = 0.5,
 		name          = "Sanctify",
 		tags          = { "Healing", "Buff", "Holy" },
 		targetRules   = "Ally Tile (centered on caster)",
@@ -3704,6 +3796,9 @@ GameConstants.COLLISION_MULTIPLIERS = {
 	StoneWall  = 1.2,
 	Pillar     = 1.3,
 	Spikes     = 1.6,
+	-- Bone Pillar map object (movement_targeting 16 note, 2026-11-07): same as Pillar. Its flat
+	-- +15% Max HP extra and Bleed are added by DisplacementService / CommandService.
+	["Bone Pillar"] = 1.3,
 }
 
 GameConstants.KNOCKBACK_SOURCE_MODIFIERS = {

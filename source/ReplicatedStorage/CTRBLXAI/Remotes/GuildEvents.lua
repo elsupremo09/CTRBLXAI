@@ -52,9 +52,12 @@ local FUNCTION_NAMES = table.freeze({
 	-- Runeforge (v2 build step 4, 2026-11-01). Client sends ids only; the server prices.
 	"GetRuneforge",     -- () -> level, gem storage, items with their lines and compatible gems
 	"PreviewForge",     -- (instanceId, { { gem, replace? } }) -> new rarity + cost (charges nothing)
+	"CheckForgeGems",   -- (instanceId, picks, candidates) -> which candidate gems the server would accept next (2026-11-06)
 	"CommitForge",      -- (instanceId, { { gem, replace? } }) -> result
-	"GetRerollSets",    -- (instanceId) -> the fixed sulfur reroll sets + cost
-	"CommitReroll",     -- (instanceId, choice 0..N) -> result (0 = keep current)
+	-- Pay first (USER RULING 2026-11-07): the sets exist only after PayReroll.
+	"GetRerollSets",    -- (instanceId) -> cost + current lines; the saved sets only once paid
+	"PayReroll",        -- (instanceId) -> pays the sulfur, saves + returns the new sets
+	"CommitReroll",     -- (instanceId, choice 0..N) -> closes the paid choice (0 = keep current)
 	-- Crucible gear merging (2026-11-02). Client sends instance IDs only; the server prices.
 	"GetCrucible",      -- () -> level, inputs needed, items
 	"PreviewMerge",     -- ({ instanceId }) -> result rarity, level and cost (charges nothing)

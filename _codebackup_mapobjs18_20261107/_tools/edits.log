@@ -1,0 +1,113 @@
+2026-11-07 22:22:12 BACKUP ReplicatedStorage\Content\ObjectData.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\ObjectEffectService.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\PulseScheduler.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\MapService.lua
+2026-11-07 22:22:12 BACKUP ReplicatedStorage\Content\BiomeData.lua
+2026-11-07 22:22:12 BACKUP ReplicatedStorage\Content\RegionData.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\CombatResolver.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\CommandService.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\DisplacementService.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\EquipmentService.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Main.server.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\ProgressionService.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\TileEffectService.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\StatusService.lua
+2026-11-07 22:22:12 BACKUP ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua
+2026-11-07 22:22:12 BACKUP ReplicatedStorage\CTRBLXAI\Remotes\BattleEvents.lua
+2026-11-07 22:22:12 BACKUP StarterPlayer\StarterPlayerScripts\BattleVisualClient.client.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\BattleVisualBroadcaster.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\BattleCoordinator.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\TargetingService.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\BattleTurnController.lua
+2026-11-07 22:22:12 BACKUP ReplicatedStorage\CTRBLXAI\Shared\TileHighlightManager.lua
+2026-11-07 22:22:12 BACKUP ServerScriptService\Game\AIService.lua
+2026-11-07 22:28:02 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Toxic Crate] +1555 chars
+2026-11-07 22:28:09 EDIT ServerScriptService\Game\ObjectEffectService.lua [ApplyObjectHit destroy hook] +346 chars
+2026-11-07 22:28:15 EDIT ServerScriptService\Game\ObjectEffectService.lua [ApplyObjectHit survive hook] +254 chars
+2026-11-07 22:28:46 EDIT ServerScriptService\Game\ObjectEffectService.lua [batch18 section + Toxic Crate break] +3411 chars
+2026-11-07 22:28:57 EDIT ServerScriptService\Game\TileEffectService.lua [element guard api] +506 chars
+2026-11-07 22:28:57 EDIT ServerScriptService\Game\TileEffectService.lua [element guard check] +316 chars
+2026-11-07 22:29:04 EDIT ServerScriptService\Game\TileEffectService.lua [element guard clear on tick] +120 chars
+2026-11-07 22:29:22 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Sludge Barrel] +905 chars
+2026-11-07 22:29:22 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Water Barrel] +961 chars
+2026-11-07 22:29:42 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Snake Jar] +959 chars
+2026-11-07 22:29:42 EDIT ServerScriptService\Game\ObjectEffectService.lua [Snake Jar break] +851 chars
+2026-11-07 22:30:11 EDIT ServerScriptService\Game\ObjectEffectService.lua [Observatory hide/reveal queries] +422 chars
+2026-11-07 22:30:11 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Redwood Observatory] +909 chars
+2026-11-07 22:30:19 EDIT ServerScriptService\Game\ObjectEffectService.lua [ReconcileAuras after-hook] +322 chars
+2026-11-07 22:31:09 EDIT ServerScriptService\Game\ObjectEffectService.lua [Redwood Observatory sweep] +2752 chars
+2026-11-07 22:31:27 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Oasis] +812 chars
+2026-11-07 22:31:27 EDIT ServerScriptService\Game\ObjectEffectService.lua [Oasis handler] +1216 chars
+2026-11-07 22:31:35 EDIT ServerScriptService\Game\CommandService.lua [Oasis no-AP] +426 chars
+2026-11-07 22:32:00 EDIT ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua [Mana Fountain status] +703 chars
+2026-11-07 22:32:00 EDIT ServerScriptService\Game\StatusService.lua [Mana Fountain end-of-turn] +740 chars
+2026-11-07 22:32:00 EDIT ServerScriptService\Main.server.lua [Mana Fountain MP log] +277 chars
+2026-11-07 22:32:15 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Mana Fountain] +818 chars
+2026-11-07 22:32:15 EDIT ServerScriptService\Game\ObjectEffectService.lua [Mana Fountain handler] +252 chars
+2026-11-07 22:32:56 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Learning Stone] +937 chars
+2026-11-07 22:32:56 EDIT ServerScriptService\Main.server.lua [Learning Stone XP grant] +1448 chars
+2026-11-07 22:32:56 EDIT ServerScriptService\Game\ObjectEffectService.lua [Learning Stone handler] +935 chars
+2026-11-07 22:33:14 EDIT ServerScriptService\Main.server.lua [Learning Stone share lookup fix] +376 chars
+2026-11-07 22:33:47 EDIT ServerScriptService\Game\EquipmentService.lua [Garden battle max MP] +440 chars
+2026-11-07 22:33:47 EDIT ServerScriptService\Main.server.lua [Garden clear at battle end] +343 chars
+2026-11-07 22:34:01 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Garden] +933 chars
+2026-11-07 22:34:01 EDIT ServerScriptService\Game\ObjectEffectService.lua [Garden handler] +1256 chars
+2026-11-07 22:34:25 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Bone Pillar] +1232 chars
+2026-11-07 22:34:25 EDIT ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua [Bone Pillar collision mult] +201 chars
+2026-11-07 22:34:25 EDIT ServerScriptService\Game\DisplacementService.lua [Bone Pillar flat extra] +924 chars
+2026-11-07 22:34:37 EDIT ServerScriptService\Game\DisplacementService.lua [DisplacementService ObjectData require] +213 chars
+2026-11-07 22:34:45 EDIT ServerScriptService\Game\CommandService.lua [Bone Pillar Bleed] +837 chars
+2026-11-07 22:34:57 EDIT ServerScriptService\Game\CommandService.lua [knockback forced-entry always] +174 chars
+2026-11-07 22:36:37 EDIT ServerScriptService\Game\ObjectEffectService.lua [Soul Well functions] +1952 chars
+2026-11-07 22:36:37 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Soul Well] +1143 chars
+2026-11-07 22:36:47 EDIT ServerScriptService\Game\CommandService.lua [Soul Well commit] +914 chars
+2026-11-07 22:36:57 EDIT ServerScriptService\Game\CommandService.lua [Soul Well backlash instant] +246 chars
+2026-11-07 22:36:57 EDIT ServerScriptService\Game\CommandService.lua [Soul Well backlash channel] +239 chars
+2026-11-07 22:37:38 EDIT ServerScriptService\Game\CombatResolver.lua [Iron Curtain helper] +1244 chars
+2026-11-07 22:37:38 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Iron Curtain] +1073 chars
+2026-11-07 22:37:50 EDIT ServerScriptService\Game\CombatResolver.lua [Iron Curtain step8 basic] +436 chars
+2026-11-07 22:38:01 EDIT ServerScriptService\Game\CombatResolver.lua [Iron Curtain step8 skill] +436 chars
+2026-11-07 22:38:38 EDIT ServerScriptService\Game\ObjectEffectService.lua [Wasp Nest sting] +2140 chars
+2026-11-07 22:38:38 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Wasp Nest] +1433 chars
+2026-11-07 22:38:55 EDIT ServerScriptService\Main.server.lua [object hit callback elem] +161 chars
+2026-11-07 22:38:55 EDIT ServerScriptService\Game\TileEffectService.lua [Wasp Nest poison cloud kill] +452 chars
+2026-11-07 22:39:09 EDIT ServerScriptService\Game\TileEffectService.lua [Wasp Nest drift candidate] +308 chars
+2026-11-07 22:40:22 EDIT ServerScriptService\Game\BattleVisualBroadcaster.lua [ObjectMarker broadcast] +750 chars
+2026-11-07 22:40:22 EDIT ReplicatedStorage\CTRBLXAI\Remotes\BattleEvents.lua [ObjectMarker remote] +170 chars
+2026-11-07 22:40:47 EDIT StarterPlayer\StarterPlayerScripts\BattleVisualClient.client.lua [client ObjectMarker handler] +1967 chars
+2026-11-07 22:40:55 EDIT ServerScriptService\Game\PulseScheduler.lua [object clock hook] +387 chars
+2026-11-07 22:41:02 EDIT ServerScriptService\Game\ObjectEffectService.lua [ResetBattle batch hook] +191 chars
+2026-11-07 22:41:28 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Volcanic Vent] +1239 chars
+2026-11-07 22:41:56 EDIT ServerScriptService\Game\ObjectEffectService.lua [clock infra + Volcanic Vent] +5734 chars
+2026-11-07 22:42:42 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Venus] +1264 chars
+2026-11-07 22:42:42 EDIT ServerScriptService\Game\ObjectEffectService.lua [Venus core] +4359 chars
+2026-11-07 22:42:54 EDIT ServerScriptService\Game\ObjectEffectService.lua [Venus clock damage] +686 chars
+2026-11-07 22:42:54 EDIT ServerScriptService\Game\ObjectEffectService.lua [Venus reconcile sweep] +85 chars
+2026-11-07 22:43:10 EDIT ServerScriptService\Game\ObjectEffectService.lua [TriggerTrap venus] +246 chars
+2026-11-07 22:43:10 EDIT ServerScriptService\Game\ObjectEffectService.lua [Venus release on break] +272 chars
+2026-11-07 22:43:10 EDIT ServerScriptService\Game\ObjectEffectService.lua [GetTriggeredTrapAt venus] +209 chars
+2026-11-07 22:44:19 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Harpoon] +1445 chars
+2026-11-07 22:44:43 EDIT ServerScriptService\Game\ObjectEffectService.lua [Harpoon handler] +4589 chars
+2026-11-07 22:44:56 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Arcane Cannon] +1331 chars
+2026-11-07 22:45:27 EDIT ServerScriptService\Game\ObjectEffectService.lua [Arcane Cannon] +5407 chars
+2026-11-07 22:45:35 EDIT ServerScriptService\Game\ObjectEffectService.lua [Arcane Cannon no extra log] +-124 chars
+2026-11-07 22:45:47 EDIT ReplicatedStorage\Content\ObjectData.lua [ObjectData Heavy Artillery] +1684 chars
+2026-11-07 22:46:23 EDIT ServerScriptService\Game\ObjectEffectService.lua [clock: pending siege] +107 chars
+2026-11-07 22:46:23 EDIT ServerScriptService\Game\ObjectEffectService.lua [Heavy Artillery] +6592 chars
+2026-11-07 22:46:44 EDIT ServerScriptService\Game\MapService.lua [universal list 23] +277 chars
+2026-11-07 22:47:12 EDIT ReplicatedStorage\Content\BiomeData.lua [biome Plains] +136 chars
+2026-11-07 22:47:21 EDIT ReplicatedStorage\Content\BiomeData.lua [biome Forest] +217 chars
+2026-11-07 22:47:27 EDIT ReplicatedStorage\Content\BiomeData.lua [biome Desert] +145 chars
+2026-11-07 22:47:34 EDIT ReplicatedStorage\Content\BiomeData.lua [biome Swamp] +152 chars
+2026-11-07 22:47:40 EDIT ReplicatedStorage\Content\BiomeData.lua [biome Highlands] +138 chars
+2026-11-07 22:47:45 EDIT ReplicatedStorage\Content\BiomeData.lua [biome Tundra] +107 chars
+2026-11-07 22:47:52 EDIT ReplicatedStorage\Content\BiomeData.lua [biome Volcano] +107 chars
+2026-11-07 22:47:57 EDIT ReplicatedStorage\Content\BiomeData.lua [biome Cave] +153 chars
+2026-11-07 22:48:03 EDIT ReplicatedStorage\Content\BiomeData.lua [biome Ruins] +129 chars
+2026-11-07 22:48:09 EDIT ReplicatedStorage\Content\BiomeData.lua [biome Castle] +132 chars
+2026-11-07 22:48:15 EDIT ReplicatedStorage\Content\BiomeData.lua [biome Corrupted] +127 chars
+2026-11-07 22:48:47 EDIT ServerScriptService\Game\ObjectEffectService.lua [observatory sweep on clock] +132 chars
+2026-11-07 22:50:31 EDIT ServerScriptService\Game\ObjectEffectService.lua [strict: venus pin type] +5 chars
+2026-11-07 22:50:36 EDIT ServerScriptService\Game\ObjectEffectService.lua [strict: venus best type] +5 chars
+2026-11-07 22:50:42 EDIT ServerScriptService\Game\ObjectEffectService.lua [strict: harpoon tgt type] +5 chars
+2026-11-07 22:50:47 EDIT ServerScriptService\Game\ObjectEffectService.lua [strict: artillery cx cy type] +10 chars
