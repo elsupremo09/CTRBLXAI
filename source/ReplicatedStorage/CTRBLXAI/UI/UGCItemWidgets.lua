@@ -402,7 +402,7 @@ function UGCItemWidgets.ShowItemDetails(item: any)
 
 	addLabel(item.name or "UGC item", true, true)
 
-	-- ID row: selectable TextBox + Copy (setclipboard works in Studio; selectable elsewhere).
+	-- ID row: selectable TextBox + button that selects the ID for manual copy.
 	order += 1
 	local idRow = Instance.new("Frame")
 	idRow.Size = UDim2.new(1, 0, 0, 24); idRow.BackgroundTransparency = 1; idRow.LayoutOrder = order; idRow.Parent = panel
@@ -425,14 +425,8 @@ function UGCItemWidgets.ShowItemDetails(item: any)
 	copyBtn.Text = "Copy"
 	local cc = Instance.new("UICorner"); cc.CornerRadius = UDim.new(0, 3); cc.Parent = copyBtn
 	copyBtn.Activated:Connect(function()
-		local setcb = (setclipboard :: any) or ((_G :: any).setclipboard)
-		if type(setcb) == "function" then
-			local ok = pcall(setcb, tostring(item.assetId))
-			copyBtn.Text = if ok then "Copied" else "Select"
-		else
-			-- No clipboard API here: select the text so the user can copy manually.
-			idBox.TextEditable = true; idBox:CaptureFocus(); copyBtn.Text = "Select"
-		end
+		-- Game scripts have no clipboard API: select the text so the user can copy manually.
+		idBox.TextEditable = true; idBox:CaptureFocus(); copyBtn.Text = "Select"
 	end)
 	copyBtn.Parent = idRow
 

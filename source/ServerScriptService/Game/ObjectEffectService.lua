@@ -28,6 +28,9 @@ local CombatResolver          = require(script.Parent.CombatResolver)
 local BattleVisualBroadcaster = require(script.Parent.BattleVisualBroadcaster)
 local RewardService           = require(script.Parent.RewardService)
 local EquipmentService        = require(script.Parent.EquipmentService)
+-- Mutation Bench (2026-11-09): trait re-roll. TraitRoller only requires TraitData (no cycle).
+local TraitRoller             = require(script.Parent.TraitRoller)
+local TraitData               = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("TraitData"))
 -- Mid-battle summons (Dragon Utopia / Mimic). One-way require:
 -- BattleVisualBroadcaster/EnemyGenerator do NOT require ObjectEffectService, so
 -- no cycle. EnemyGenerator builds + inserts the unit; we broadcast UnitSpawned.
@@ -2314,6 +2317,79 @@ Handlers["Tavern"] = function(ctx: any): (boolean, any)
 		BattleVisualBroadcaster.Log("action", already
 			and "The Tavern bonus is already secured this battle (it does not stack)."
 			or "Win this battle for +3 recruit choices at the next Tavern refresh.", a.id)
+	end
+	return true, nil
+end
+
+--------------------------------------------------------------------
+-- MUTATION BENCH (DB battlefield_events 11 'Mutator', built 2026-11-09). Placed where a defeated
+-- Mutator fell. Interact (Consumes Action), Once (one use per battle), any unit of any side.
+-- The user chooses Perk or Flaw; that trait is replaced by a random DIFFERENT trait of the same
+-- kind, rolled with the normal recruit tier chances (TraitRoller). project_rules 116: swap, never
+-- remove - the unit keeps exactly 1 perk + 1 flaw. Permanent: battle units ARE the roster units,
+-- so the next save keeps it. Stats are rebuilt at once (HP/MP clamp to the new max, no heal).
+--   * Player unit: Perk / Flaw / Cancel prompt (Cancel = nothing spent, the bench stays).
+--   * AI / no prompter: random Perk or Flaw.
+--------------------------------------------------------------------
+local MUTATION_REROLL_TRIES = 25
+
+Handlers["Mutation Bench"] = function(ctx: any): (boolean, any)
+	local a = ctx.actor
+	if not a then return false, "CANCELLED" end
+	local which = nil
+	if a.controller == "Player" and _choicePrompter then
+		-- Each option names the trait it would replace, so the player knows what they risk.
+		local function curName(key: string): string
+			local l = a[key]
+			local t = (type(l) == "table" and l[1]) and TraitData.GetTrait(l[1]) or nil
+			return (t and t.name) or "none"
+		end
+		local perkOpt = "Perk: " .. curName("perkIds")
+		local flawOpt = "Flaw: " .. curName("drawbackIds")
+		local pick = _choicePrompter(a, "Mutation Bench: mutate which trait?", { perkOpt, flawOpt, "Cancel" })
+		if pick == perkOpt then
+			which = "Perk"
+		elseif pick == flawOpt then
+			which = "Flaw"
+		else
+			print(string.format("[ObjectEffectService] Mutation Bench | %s cancelled the choice", tostring(a.name)))
+			return false, "CANCELLED"
+		end
+	else
+		which = (ctx.rng:NextInteger(1, 2) == 1) and "Perk" or "Flaw"
+	end
+	local isPerk = which == "Perk"
+	local listKey = isPerk and "perkIds" or "drawbackIds"
+	local list = a[listKey]
+	local oldId = (type(list) == "table") and list[1] or nil
+	local newId = nil
+	for _ = 1, MUTATION_REROLL_TRIES do
+		local id = if isPerk then TraitRoller.RollPerk(ctx.rng) else TraitRoller.RollFlaw(ctx.rng)
+		if id and id ~= oldId then
+			newId = id
+			break
+		end
+	end
+	if not newId then
+		warn(string.format("[ObjectEffectService] Mutation Bench | no different %s could be rolled for %s - nothing spent",
+			which, tostring(a.name)))
+		return false, "CANCELLED"
+	end
+	a[listKey] = { newId }
+	if EquipmentService and EquipmentService.RebuildUnitStats then
+		EquipmentService.RebuildUnitStats(a)
+	end
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.UnitStateChanged then
+		BattleVisualBroadcaster.UnitStateChanged(a)
+	end
+	local oldT = oldId and TraitData.GetTrait(oldId)
+	local newT = TraitData.GetTrait(newId)
+	local oldName = (oldT and oldT.name) or "none"
+	local newName = (newT and newT.name) or tostring(newId)
+	print(string.format("[ObjectEffectService] Mutation Bench | %s mutated %s: %s (%s) -> %s (%s, %s)",
+		tostring(a.name), which, oldName, tostring(oldId), newName, newId, tostring(newT and newT.tier)))
+	if BattleVisualBroadcaster and BattleVisualBroadcaster.Log then
+		BattleVisualBroadcaster.Log("action", `{a.name}'s {string.lower(which)} mutated: {oldName} -> {newName}.`, a.id)
 	end
 	return true, nil
 end

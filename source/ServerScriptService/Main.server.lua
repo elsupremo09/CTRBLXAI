@@ -634,6 +634,8 @@ if loadedSave then
 				drawbackIds = unitData.drawbackIds or {},
 				-- Player-chosen 2D portrait (option B), restored onto the live unit below.
 				portraitAssetId = unitData.portraitAssetId or nil,
+				-- Player removed the portrait on purpose (2026-11-09); blocks the default roll.
+				portraitCleared = unitData.portraitCleared or nil,
 				-- Player-chosen body/skin tint {r,g,b}, restored onto the live unit below.
 				bodyColor = unitData.bodyColor or nil,
 			}
@@ -850,6 +852,8 @@ for _, u in ipairs({ hero, mage, ranger }) do
 		if saved.drawbackIds and #saved.drawbackIds > 0 then u.drawbackIds = saved.drawbackIds end
 		-- Restore the player's chosen 2D portrait so it shows in battle and on load.
 		if saved.portraitAssetId then u.portraitAssetId = saved.portraitAssetId end
+		-- A portrait the player removed stays removed (2026-11-09).
+		if saved.portraitCleared and not u.portraitAssetId then u.portraitCleared = true end
 		-- Restore the player's chosen body/skin tint.
 		if saved.bodyColor then u.bodyColor = saved.bodyColor end
 	end
@@ -859,7 +863,8 @@ for _, u in ipairs({ hero, mage, ranger }) do
 	-- Default 2D portrait (2026-10-15): give each starter a random race-matched face
 	-- when it has none yet. The saved portrait (a loadout pick, or a previously-rolled
 	-- default) is restored just above, so this assign-if-empty never overrides it.
-	if not u.portraitAssetId then
+	-- Skipped when the player removed the face on purpose (portraitCleared, 2026-11-09).
+	if not u.portraitAssetId and not u.portraitCleared then
 		u.portraitAssetId = PortraitData.PickRandom(Random.new(seed + 4242), u.raceId)
 	end
 	-- Perks & Flaws Phase 2 (TRAIT-MAIN-REBUILD): traits now carry static stat effects
@@ -1162,6 +1167,11 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 				if u.id == cmd.unitId then
 					u.skillLoadout = u.skillLoadout or {}
 					u.skillLoadout.slot2 = { skillId = cmd.skillId, augments = cmd.augmentIds or {} }
+					-- 2026-11-09: also add the skill to the battle skill list, so a mid-battle test can cast it
+					-- (validation refuses skills missing from u.skillIds).
+					if cmd.skillId and type(u.skillIds) == "table" and not table.find(u.skillIds, cmd.skillId) then
+						table.insert(u.skillIds, cmd.skillId)
+					end
 					print(string.format("[Dev] DevSetSkillAugments %s slot2 = %s + [%s]", u.name, tostring(cmd.skillId),
 						table.concat(cmd.augmentIds or {}, ",")))
 				end
@@ -1807,7 +1817,7 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		-- (Old code read derivedStats.attackPower, which is never populated -> always 0.)
 		if regDef then
 			local isHeal = regDef.isHealing
-			skillsData[#skillsData].estimatedDamage = (not isHeal) and math.round(CombatResolver.EstimateSkillPower(unit, regDef)) or nil
+			skillsData[#skillsData].estimatedDamage = (not isHeal) and math.round(CombatResolver.EstimateSkillPower(unit, regDef, nil, _AugmentEffectService.GetWeaponScalingMult(unit, regDef.id or sid))) or nil  -- item 7 cost
 			skillsData[#skillsData].estimatedHeal   = isHeal and math.round(CombatResolver.EstimateHealPower(unit, regDef)) or nil
 		end
 	end
@@ -1856,7 +1866,18 @@ BattleEvents.InspectUnitRequest.OnServerEvent:Connect(function(playerObj, unitId
 		currentAp    = unit.currentAp or 0,
 		remainingRt  = unit.remainingRt or 0,
 		primaryStats = unit.primaryStats,
-		derivedStats = unit.derivedStats,
+		-- B4 (Studio 2026-11-09): the Stats tab read Max HP / Max MP from derivedStats, which holds only the
+		-- stat term (50 + VIT x 4, 20 + INT x 2). The real maximum lives on the unit (adds armor / rolled HP-MP
+		-- lines, Hardy / Frail, Garden of Revelation) and is what the header, HP bar and battle use. Send a
+		-- copy with those two values, so both show the same number. unit.derivedStats is not changed.
+		derivedStats = (function()
+			local d = unit.derivedStats
+			if type(d) ~= "table" then return d end
+			local copy = table.clone(d)
+			copy.maxHp = unit.maxHp or copy.maxHp
+			copy.maxMp = unit.maxMp or copy.maxMp
+			return copy
+		end)(),
 		equipment    = equipData,
 		skills       = skillsData,
 		consumables  = (function()
@@ -2398,6 +2419,8 @@ function doSave()
 			rosterState[unitId].consumableSlots = CommandService.SaveableConsumableSlots(unit.consumableSlots) or nil
 			-- Player-chosen 2D portrait (option B); nil clears it.
 			rosterState[unitId].portraitAssetId = unit.portraitAssetId or nil
+			-- Player removed the portrait on purpose (2026-11-09); nil = never cleared.
+			rosterState[unitId].portraitCleared = unit.portraitCleared or nil
 			-- Player-chosen body/skin tint {r,g,b}; nil clears it.
 			rosterState[unitId].bodyColor = unit.bodyColor or nil
 		end
@@ -2893,6 +2916,10 @@ BattlefieldEventService.SetTrapPlacer(function(st, x, y)
 	local inst = ObjectEffectService.PlaceObjectInstance(st, "Snare Trap", x, y, "Neutral")
 	if inst and inst.hidden then ObjectEffectService.RevealObject(inst) end
 	return inst
+end)
+-- Mutator defeat -> Mutation Bench (2026-11-09). No owner side (any unit may use it).
+BattlefieldEventService.SetObjectPlacer(function(st, objType, x, y)
+	return ObjectEffectService.PlaceObjectInstance(st, objType, x, y, nil)
 end)
 	BattlefieldEventService.SetTileReshaper(function(x, y, terrain, elev)
 		if mapFolder then MapRenderer.ReshapeTile(mapFolder, x, y, terrain, elev) end

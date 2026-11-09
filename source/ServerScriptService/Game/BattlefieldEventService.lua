@@ -71,6 +71,10 @@ function BattlefieldEventService.SetBattleCoordinator(bc: any) _battleCoordinato
 -- ObjectEffectService.PlaceObjectInstance (DI, no new require edge; ARC-004/006). nil-safe.
 local _trapPlacer = nil
 function BattlefieldEventService.SetTrapPlacer(fn: any) _trapPlacer = fn end
+-- Mutator bench drop (2026-11-09): Main injects fn(state, objType, x, y) -> inst|nil that places a
+-- map object via ObjectEffectService.PlaceObjectInstance (DI, no new require edge). nil-safe.
+local _objectPlacer = nil
+function BattlefieldEventService.SetObjectPlacer(fn: any) _objectPlacer = fn end
 
 --------------------------------------------------------------------
 -- SHARED HELPERS
@@ -569,12 +573,12 @@ Handlers["Herald of XXX"] = function(ctx: any)
 	return true
 end
 
--- Mutator — defeating spawns Mutation Bench; STUBBED (Mutation Bench + perk/drawback undesigned).
+-- Mutator (battlefield_events 11) — defeating it spawns a Mutation Bench where it fell
+-- (built 2026-11-09; see SweepMutatorDeaths + ObjectEffectService Handlers["Mutation Bench"]).
 Handlers["Mutator"] = function(ctx: any)
-	local _u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
+	local u = spawnEventUnit(ctx.state, ctx.rng, { type = "Elite", level = highestFriendlyLevel(ctx.state) },
 		edgeSpawnTile(ctx.state, ctx.rng), "Enemy", nil, "Mutator", nil)
-	-- STUB: Mutation Bench + perk/drawback catalog/roll logic are NOT designed yet.
-	-- Spawn the enemy; the "spawn Mutation Bench on defeat" payload is inert until that exists.
+	if u then u.spawnsMutationBenchOnDeath = true end  -- defeat -> Mutation Bench (SweepMutatorDeaths)
 	return true
 end
 
@@ -991,12 +995,55 @@ function BattlefieldEventService.SweepHeraldDeaths(state: any, rng: any)
 	end
 end
 
+-- MUTATOR (battlefield_events 11): "Defeating spawns Mutation Bench (one use per battle)."
+-- Swept every turn tick like the Herald. The bench goes on the Mutator's tile, else the nearest
+-- open tile within 3 (ring order): on the map, not a wall/solid blocker, not impassable, no living
+-- unit, no object (PlaceObjectInstance refuses units/objects itself). Idempotent per Mutator.
+local MUTATION_BENCH_SEARCH_RADIUS = 3
+function BattlefieldEventService.SweepMutatorDeaths(state: any)
+	if not (state and state.units) then return end
+	for _, u in ipairs(state.units) do
+		if u.spawnsMutationBenchOnDeath and not u.isAlive and not u.leftMap and not u.mutationBenchSpawned then
+			u.mutationBenchSpawned = true
+			if not _objectPlacer then
+				warn("[BattlefieldEventService] Mutator defeated but no object placer is injected - no Mutation Bench")
+				continue
+			end
+			local w, h = gridDims()
+			local cx, cy = u.tileX or 1, u.tileY or 1
+			local placed = nil
+			for d = 0, MUTATION_BENCH_SEARCH_RADIUS do
+				for y = cy - d, cy + d do
+					for x = cx - d, cx + d do
+						if not placed and math.max(math.abs(x - cx), math.abs(y - cy)) == d
+							and x >= 1 and y >= 1 and x <= w and y <= h
+							and not (GameConstants.IsBlocked and GameConstants.IsBlocked(x, y))
+							and not (GameConstants.IsImpassableTerrain and GameConstants.IsImpassableTerrain(x, y)) then
+							placed = _objectPlacer(state, "Mutation Bench", x, y)
+						end
+					end
+				end
+				if placed then break end
+			end
+			if placed then
+				print(`[BattlefieldEventService] Mutator defeated - Mutation Bench placed at ({placed.x},{placed.y}) (fell at ({cx},{cy}))`)
+				if _broadcaster and _broadcaster.Log then
+					_broadcaster.Log("action", "The Mutator leaves behind a Mutation Bench.", nil)
+				end
+			else
+				warn(`[BattlefieldEventService] Mutator defeated at ({cx},{cy}) but no open tile within {MUTATION_BENCH_SEARCH_RADIUS} - no Mutation Bench`)
+			end
+		end
+	end
+end
+
 -- Called every turn advance: free the slot when the active event ends, then fire
 -- the next one (queued conditional first, else a random start-pool draw if the
 -- battle's event budget is not used up).
 function BattlefieldEventService.OnTurnTick(state: any, rng: any, roundIndex: any)
 	BattlefieldEventService.SweepHunterDeaths(state)  -- Treasure Hunter defeated -> loot set aside
 	BattlefieldEventService.SweepHeraldDeaths(state, rng)  -- Herald defeated -> summon Elite (2026-11-05)
+	BattlefieldEventService.SweepMutatorDeaths(state)  -- Mutator defeated -> Mutation Bench (2026-11-09)
 	if state.bfBudget == nil then return end
 	if state.bfActiveEvent and activeEventDone(state) then
 		print("[BattlefieldEventService] Event ended: " .. state.bfActiveEvent.name)

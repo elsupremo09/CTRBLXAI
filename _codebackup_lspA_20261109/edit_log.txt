@@ -1,0 +1,5 @@
+Dev-lspA 2026-11-09
+1. LoadoutScreen.lua:5960 `(current == assetId) and nil or assetId` -> comment + `if current == assetId then nil else assetId` (now L5960-5961). Re-read OK.
+2. UGCItemWidgets.lua:427-436 copyBtn handler: removed setclipboard lookup/branch; handler now only runs the old fallback (TextEditable, CaptureFocus, Text='Select'). Now L427-430. Re-read OK.
+3. UGCItemWidgets.lua:405 comment updated (no longer mentions setclipboard). Re-read OK.
+Backups: LoadoutScreen.lua.pre_lspA, UGCItemWidgets.lua.pre_lspA

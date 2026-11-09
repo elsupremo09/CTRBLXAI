@@ -365,14 +365,100 @@ local function shouldSkipForFrequency(augmentId)
 	if not hasFired(augmentId) then return false end
 	local freq = getDeliveryFrequency(augmentId)
 	-- Per-target frequencies: fire on every hit/target, no skip
+	-- USER RULING 2026-11-08 11:52 PM: kill augments ("Once per Skill execution") fire on EVERY qualifying
+	-- kill, several in one cast included. Their per-turn caps (DB TRG-006/007) are enforced by
+	-- AugmentEffectService.TryUseTurnCap instead, reset at the unit's turn start.
 	if freq == "Per qualifying target" or freq == "Per successful hit"
-		or freq == "Once per supported resolution" then
+		or freq == "Once per supported resolution" or freq == "Once per Skill execution" then
 		return false
 	end
-	-- 2026-11-08 (kill-augment reset): "Once per Skill execution" augments; the list is cleared at each cast
-	-- start (CombatResolver.BeginResolution). This line shows a 2nd trigger in the SAME cast being held back.
 	print(`[AugmentEffect] {getAugmentName(augmentId)} already fired this cast ({freq}) -- skipped`)
 	return true
+end
+
+--------------------------------------------------
+-- USER RULINGS 2026-11-08 11:52 PM (items 2, 4, 7)
+--------------------------------------------------
+
+-- Item 2: caster-side rewards (MP gain, shields) are given ONCE per cast, like Vitality Surge, on the
+-- first hit of the cast that qualifies. [attackerId .. "|" .. augId] = CombatResolver resolution id of
+-- that caster's last reward. Resolution ids only go up, so an old entry never matches a later cast.
+-- Target add-ons stay per unit hit; Lifesteal stays per hit.
+local _casterRewardRes: { [string]: number } = {}
+local function casterRewardDone(augId: string, attacker: any, resolutionId: number?): boolean
+	if resolutionId == nil or attacker == nil or attacker.id == nil then
+		return false  -- unknown caller: old per-hit behaviour
+	end
+	return _casterRewardRes[`{attacker.id}|{augId}`] == resolutionId
+end
+local function markCasterReward(augId: string, attacker: any, resolutionId: number?)
+	if resolutionId ~= nil and attacker ~= nil and attacker.id ~= nil then
+		_casterRewardRes[`{attacker.id}|{augId}`] = resolutionId
+	end
+end
+
+-- Item 4: per-turn caps on kill augments (DB augments.Turn__Action__Target_Limit, trigger_safety
+-- TRG-006 / TRG-007 "3 successful trigger rewards per unit turn per effect"; Executioner = 1 per turn
+-- by user ruling item 5). Counters live on the unit (_killAugTurnUses) and are cleared at that unit's
+-- turn start in BattleCoordinator. Kill augments not listed here have no per-turn cap.
+local KILL_TURN_CAPS: { [string]: number } = table.freeze({
+	["AUG-EXECUTIONER"]     = 1,
+	["AUG-BLOOD-HARVEST"]   = 3,
+	["AUG-SOUL-HARVEST"]    = 3,
+	["AUG-PURIFYING-KILL"]  = 3,
+	["AUG-GOLD-HARVEST"]    = 3,
+	["AUG-TREASURE-HUNTER"] = 3,
+	["AUG-MOMENTUM"]        = 1,
+	["AUG-CHAIN-KILL"]      = 1,
+})
+
+-- Uses one of the unit's per-turn triggers for this augment. Returns false (and logs) when the cap
+-- for this turn is already used up. Augments with no cap always return true.
+function AugmentEffectService.TryUseTurnCap(unit: any, augId: string): boolean
+	local cap = KILL_TURN_CAPS[augId]
+	if cap == nil or unit == nil then
+		return true
+	end
+	unit._killAugTurnUses = unit._killAugTurnUses or {}
+	local used = unit._killAugTurnUses[augId] or 0
+	if used >= cap then
+		print(`[AugmentEffect] {getAugmentName(augId)}: {tostring(unit.name)} already used it {used}/{cap} times this turn -- skipped`)
+		return false
+	end
+	unit._killAugTurnUses[augId] = used + 1
+	return true
+end
+
+-- Item 7: weapon-damage scaling costs, applied to the supported skill's weapon damage (CombatResolver
+-- EstimateSkillPower), so the hit preview and the real hit use the same number. Only these three are
+-- applied (user ruling); the multiplier itself is read from the augment's costFormula.
+local WEAPON_SCALING_COST_IDS = table.freeze({
+	["AUG-EXECUTIONER"]    = true,  -- Weapon Damage scaling x0.75
+	["AUG-GOLD-HARVEST"]   = true,  -- Weapon Damage scaling x0.90
+	["AUG-VITALITY-SURGE"] = true,  -- Weapon Damage scaling x0.90
+})
+local function weaponScalingFor(augmentIds: any): number
+	local mult = 1.0
+	if type(augmentIds) ~= "table" then
+		return mult
+	end
+	for _, augId in augmentIds do
+		local def = WEAPON_SCALING_COST_IDS[augId] and AugmentData[augId] or nil
+		local f = def and def.costFormula
+		local num = f and tonumber(string.match(f, "Weapon Damage scaling[^%d]*(%d+%.?%d*)"))
+		if num then
+			mult *= num
+		end
+	end
+	return mult
+end
+
+-- Same multiplier for callers that only have the unit + skill (skill menu estimate).
+function AugmentEffectService.GetWeaponScalingMult(unit: any, skillId: any): number
+	if not unit or not skillId then
+		return 1.0
+	end
+	return weaponScalingFor(AugmentEffectService.GetAugmentsForSkill(unit, skillId))
 end
 
 --------------------------------------------------
@@ -622,6 +708,10 @@ function AugmentEffectService.OnDamageCalculation(attacker, defender, skillDef, 
 		end
 	end
 
+	-- Item 7 (user ruling 2026-11-08 11:52 PM): weapon-damage scaling cost of the supported skill
+	-- (Executioner x0.75, Gold Harvest x0.90, Vitality Surge x0.90). Read by ResolveSkill.
+	result.weaponScaling = weaponScalingFor(augmentIds)
+
 	return result
 end
 
@@ -666,9 +756,10 @@ local _knockbackHandler = nil
 function AugmentEffectService.SetKnockbackHandler(fn)
 	if type(fn) == "function" then _knockbackHandler = fn end
 end
-local function augDisplace(pusher, target, force, dir, distance, isPull)
+local function augDisplace(pusher, target, force, dir, distance, isPull, cause)
 	if _knockbackHandler then
-		return _knockbackHandler(pusher, target, force, dir, distance, isPull)
+		-- cause (optional, 2026-11-08 11:52 PM item 8): augment name for the battle-log collision line.
+		return _knockbackHandler(pusher, target, force, dir, distance, isPull, cause)
 	end
 	warn("[AugmentEffect] knockback handler not wired -- displacement skipped")
 	return nil
@@ -870,11 +961,18 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		-- by the target's shield this hit (from UnitSchema.ApplyDamage via CombatResolver).
 		-- ===============================================
 		elseif augId == "AUG-SIPHON-BARRIER" then
-			if not shouldSkipForFrequency(augId) and attacker.isAlive and (shieldAbsorbed or 0) > 0 then
+			-- Item 2 (2026-11-08 11:52 PM): once per cast, on the first hit that removes a barrier.
+			if not shouldSkipForFrequency(augId) and attacker.isAlive and (shieldAbsorbed or 0) > 0
+				and not casterRewardDone(augId, attacker, resolutionId) then
+				markCasterReward(augId, attacker, resolutionId)
 				local mp = math.floor((shieldAbsorbed or 0) * 0.20)
-				if mp > 0 then restoreMp(attacker, mp) end
+				local _sbGot = if mp > 0 then restoreMp(attacker, mp) else 0
+				-- 2026-11-09: show the MP gain at once (MP bar + battle log), like Vitality Surge.
+				if _sbGot > 0 and BattleVisualBroadcaster.UnitStateChanged then
+					BattleVisualBroadcaster.UnitStateChanged(attacker, augName, true)
+				end
 				markFired(augId)
-				print(string.format("[AugmentEffect] %s: %s siphoned %d MP (20%% of %d barrier removed)", augName, attacker.name, mp, shieldAbsorbed))
+				print(string.format("[AugmentEffect] %s: %s siphoned %d MP (20%% of %d barrier removed, once this cast)", augName, attacker.name, mp, shieldAbsorbed))
 			end
 
 		-- ===============================================
@@ -905,7 +1003,10 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		-- turn length in CT (base RT), so it naturally lapses around their next action.
 		-- ===============================================
 		elseif augId == "AUG-BARRIER-ON-HIT" then
-			if not shouldSkipForFrequency(augId) and attacker.isAlive then
+			-- Item 2 (2026-11-08 11:52 PM): once per cast, from the first hit of the cast that deals HP damage.
+			if not shouldSkipForFrequency(augId) and attacker.isAlive
+				and not casterRewardDone(augId, attacker, resolutionId) then
+				markCasterReward(augId, attacker, resolutionId)
 				local barrier = math.floor((damage or 0) * 0.15)
 				if barrier > 0 then
 					local dur = attacker.startingRt or 400
@@ -915,7 +1016,7 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 					end
 				end
 				markFired(augId)
-				print(string.format("[AugmentEffect] %s: %s gained a %d barrier (15%% of %d dmg)", augName, attacker.name, barrier, damage or 0))
+				print(string.format("[AugmentEffect] %s: %s gained a %d barrier (15%% of %d dmg, once this cast)", augName, attacker.name, barrier, damage or 0))
 			end
 
 		-- ===============================================
@@ -925,7 +1026,10 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		-- element (UnitSchema.ApplyDamage gate); Physical/DoT/tile/push/fall hits go straight to HP.
 		-- ===============================================
 		elseif augId == "AUG-DRAINING-WARD" then
-			if not shouldSkipForFrequency(augId) and attacker.isAlive then
+			-- Item 2 (2026-11-08 11:52 PM): once per cast, from the first hit of the cast that deals HP damage.
+			if not shouldSkipForFrequency(augId) and attacker.isAlive
+				and not casterRewardDone(augId, attacker, resolutionId) then
+				markCasterReward(augId, attacker, resolutionId)
 				local ward = math.floor((damage or 0) * 0.20)
 				if ward > 0 then
 					local granted = StatusService.ApplyShield(attacker, ward, attacker.startingRt or 400, attacker.id, nil, true)  -- elemental-only (2026-11-05)
@@ -934,7 +1038,7 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 					end
 				end
 				markFired(augId)
-				print(string.format("[AugmentEffect] %s: %s gained a %d ward (20%% of %d dmg)", augName, attacker.name, ward, damage or 0))
+				print(string.format("[AugmentEffect] %s: %s gained a %d ward (20%% of %d dmg, once this cast)", augName, attacker.name, ward, damage or 0))
 			end
 
 		-- ===============================================
@@ -942,11 +1046,18 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		-- ===============================================
 		elseif augId == "AUG-LIFESTEAL" then
 			if not shouldSkipForFrequency(augId) and attacker.isAlive then
-				local healAmount = math.floor(damage * 0.20)
+				-- 10% of actual HP damage dealt (DB augments AUG-LIFESTEAL; was 20% in code, 2026-11-09).
+				local healAmount = math.floor(damage * 0.10)
 				if healAmount > 0 then
 					local actual = healUnit(attacker, healAmount)
+					-- 2026-11-09: tell clients right away (green heal number, HP bar, battle log line), same as
+					-- Vitality Surge. Without it the heal happened on the server but showed nowhere until the
+					-- unit's next sync (most visible after Blood Price's HP cost).
+					if actual > 0 and BattleVisualBroadcaster.UnitStateChanged then
+						BattleVisualBroadcaster.UnitStateChanged(attacker, augName)
+					end
 					print(string.format(
-						"[AugmentEffect] %s triggered: %s heals %d (20%% of %d damage)",
+						"[AugmentEffect] %s triggered: %s heals %d (10%% of %d damage)",
 						augName, attacker.name, actual, damage
 					))
 				end
@@ -957,12 +1068,24 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 		-- RECOVERY — Mana Leech
 		-- ===============================================
 		elseif augId == "AUG-MANA-LEECH" then
-			if not shouldSkipForFrequency(augId) and attacker.isAlive then
-				local mpAmount = math.floor(damage * 0.15)
+			-- Item 2 (2026-11-08 11:52 PM): once per cast, from the first hit of the cast that deals HP damage.
+			if not shouldSkipForFrequency(augId) and attacker.isAlive
+				and not casterRewardDone(augId, attacker, resolutionId) then
+				-- 10% of actual HP damage dealt (DB augments AUG-MANA-LEECH; was 15% in code, 2026-11-09).
+				local mpAmount = math.floor(damage * 0.10)
 				if mpAmount > 0 then
 					local actual = restoreMp(attacker, mpAmount)
+					-- 2026-11-09: the once-per-cast reward is used up only when MP was actually gained,
+					-- so a 0-damage first hit no longer wastes it for the rest of the cast.
+					if actual > 0 then
+						markCasterReward(augId, attacker, resolutionId)
+					end
+					-- 2026-11-09: tell clients right away (MP bar + battle log line), same as Vitality Surge.
+					if actual > 0 and BattleVisualBroadcaster.UnitStateChanged then
+						BattleVisualBroadcaster.UnitStateChanged(attacker, augName, true)
+					end
 					print(string.format(
-						"[AugmentEffect] %s triggered: %s restores %d MP (15%% of %d damage)",
+						"[AugmentEffect] %s triggered: %s restores %d MP (10%% of %d damage, once this cast)",
 						augName, attacker.name, actual, damage
 					))
 				end
@@ -1025,18 +1148,20 @@ function AugmentEffectService.OnDamageResolved(attacker, defender, damage, skill
 			end
 
 		-- ===============================================
-		-- PURGE — Mass Purge  (AOE skills only)
+		-- PURGE — Mass Purge  (USER RULING 2026-11-08 11:52 PM, item 1): remove 1 buff from each ENEMY
+		-- the skill hits. Allies, neutrals and the caster keep their buffs. (Was: every buff, any side.)
 		-- ===============================================
 		elseif augId == "AUG-MASS-PURGE" then
 			local isAOE = skillDef
 				and skillDef.aoePattern
 				and skillDef.aoePattern ~= "Single"
-			if isAOE and defender.isAlive then
-				local removed = removeAllBuffs(defender)
-				if #removed > 0 then
+			local isEnemy = defender.side ~= attacker.side and defender.side ~= "Neutral"
+			if isAOE and defender.isAlive and isEnemy then
+				local removed = removeRandomBuff(defender)
+				if removed then
 					print(string.format(
-						"[AugmentEffect] %s triggered on %s (removed %d buffs: %s)",
-						augName, defender.name, #removed, table.concat(removed, ", ")
+						"[AugmentEffect] %s triggered on %s (removed 1 buff: %s)",
+						augName, defender.name, removed
 					))
 				else
 					print(string.format(
@@ -1133,26 +1258,30 @@ function AugmentEffectService.OnKill(attacker, defender, skillDef, augmentIds, c
 		local augName = getAugmentName(augId)
 		local family  = getAugmentFamily(augId)
 
-		-- ===== KILL TRIGGER — Executioner =====
+		-- ===== KILL TRIGGER — Executioner (USER RULING 2026-11-08 11:52 PM, item 5): recover 1 AP, max
+		-- once per turn. The AP is handed over by CommandService STEP 9 (before the out-of-AP end-turn
+		-- check, same as the Momentum perk); a kill off the caster's own turn gives nothing (the flag is
+		-- cleared at the caster's turn start). =====
 		if augId == "AUG-EXECUTIONER" then
-			if not shouldSkipForFrequency(augId) then
-				local mpRestore = math.floor((attacker.maxMp or 0) * 0.10)
-				if mpRestore > 0 then
-					local actual = restoreMp(attacker, mpRestore)
-					print(string.format(
-						"[AugmentEffect] %s triggered: %s restores %d MP (10%% maxMP) on kill",
-						augName, attacker.name, actual
-					))
-				end
+			if not shouldSkipForFrequency(augId) and AugmentEffectService.TryUseTurnCap(attacker, augId) then
+				attacker._executionerApPending = true
 				markFired(augId)
+				print(string.format(
+					"[AugmentEffect] %s triggered: %s will recover 1 AP on kill (once per turn)",
+					augName, attacker.name
+				))
 			end
 
-		-- ===== KILL TRIGGER — Blood Harvest =====
+		-- ===== KILL TRIGGER — Blood Harvest (max 3 per turn, DB) =====
 		elseif augId == "AUG-BLOOD-HARVEST" then
-			if not shouldSkipForFrequency(augId) then
+			if not shouldSkipForFrequency(augId) and AugmentEffectService.TryUseTurnCap(attacker, augId) then
 				local healAmount = math.floor((attacker.maxHp or 0) * 0.15)
 				if healAmount > 0 then
 					local actual = healUnit(attacker, healAmount)
+					-- 2026-11-09: show the heal at once (green number, HP bar, battle log), like Vitality Surge.
+					if actual > 0 and BattleVisualBroadcaster.UnitStateChanged then
+						BattleVisualBroadcaster.UnitStateChanged(attacker, augName)
+					end
 					print(string.format(
 						"[AugmentEffect] %s triggered: %s heals %d HP (15%% maxHP) on kill",
 						augName, attacker.name, actual
@@ -1161,20 +1290,26 @@ function AugmentEffectService.OnKill(attacker, defender, skillDef, augmentIds, c
 				markFired(augId)
 			end
 
-		-- ===== KILL TRIGGER — Soul Harvest =====
+		-- ===== KILL TRIGGER — Soul Harvest (USER RULING 2026-11-08 11:52 PM, item 6): recover 10% max MP
+		-- (was: Haste). Max 3 per turn (DB TRG-007). =====
 		elseif augId == "AUG-SOUL-HARVEST" then
-			if not shouldSkipForFrequency(augId) then
-				StatusService.ApplyStatus(attacker, "Haste", attacker.id)
+			if not shouldSkipForFrequency(augId) and AugmentEffectService.TryUseTurnCap(attacker, augId) then
+				local mpAmount = math.floor((attacker.maxMp or 0) * 0.10)
+				local actual = if mpAmount > 0 then restoreMp(attacker, mpAmount) else 0
+				-- 2026-11-09: show the MP gain at once (MP bar + battle log), like Vitality Surge.
+				if actual > 0 and BattleVisualBroadcaster.UnitStateChanged then
+					BattleVisualBroadcaster.UnitStateChanged(attacker, augName, true)
+				end
 				markFired(augId)
 				print(string.format(
-					"[AugmentEffect] %s triggered: %s gains Haste on kill",
-					augName, attacker.name
+					"[AugmentEffect] %s triggered: %s restores %d MP (10%% maxMP) on kill",
+					augName, attacker.name, actual
 				))
 			end
 
-		-- ===== KILL TRIGGER — Purifying Kill (2026-10-24 augment fix) =====
+		-- ===== KILL TRIGGER — Purifying Kill (2026-10-24 augment fix; max 3 per turn, DB TRG-007) =====
 		elseif augId == "AUG-PURIFYING-KILL" then
-			if not shouldSkipForFrequency(augId) then
+			if not shouldSkipForFrequency(augId) and AugmentEffectService.TryUseTurnCap(attacker, augId) then
 				StatusService.RemoveRandomDebuff(attacker)
 				markFired(augId)
 				print(string.format("[AugmentEffect] %s: removed a debuff from %s on kill", augName, attacker.name))
@@ -1224,7 +1359,11 @@ function AugmentEffectService.OnKill(attacker, defender, skillDef, augmentIds, c
 			if not shouldSkipForFrequency(augId) and skillDef then
 				local baseMp = GameConstants.CalcSkillMpCost(attacker, skillDef, 1.0) or 0
 				local refund = math.floor(baseMp * 0.30)
-				if refund > 0 then restoreMp(attacker, refund) end
+				local _kmGot = if refund > 0 then restoreMp(attacker, refund) else 0
+				-- 2026-11-09: show the MP refund at once (MP bar + battle log), like Vitality Surge.
+				if _kmGot > 0 and BattleVisualBroadcaster.UnitStateChanged then
+					BattleVisualBroadcaster.UnitStateChanged(attacker, augName, true)
+				end
 				markFired(augId)
 				print(string.format("[AugmentEffect] %s: %s refunded %d MP (30%% of skill cost) on kill", augName, attacker.name, refund))
 			end
@@ -1255,8 +1394,11 @@ function AugmentEffectService.OnKill(attacker, defender, skillDef, augmentIds, c
 		-- ===== TIMING — Momentum (2026-10-24): on kill, reduce caster next-turn CT by 30%
 		-- (one-shot mult consumed by EndTurn). =====
 		elseif augId == "AUG-MOMENTUM" then
-			attacker._nextTurnCtMult = (attacker._nextTurnCtMult or 1) * 0.70
-			print(string.format("[AugmentEffect] %s: %s next-turn CT -30%% on kill", augName, attacker.name))
+			-- Max 1 trigger per unit turn (DB), so several kills no longer stack the -30%.
+			if AugmentEffectService.TryUseTurnCap(attacker, augId) then
+				attacker._nextTurnCtMult = (attacker._nextTurnCtMult or 1) * 0.70
+				print(string.format("[AugmentEffect] %s: %s next-turn CT -30%% on kill", augName, attacker.name))
+			end
 
 		-- ===== DEATH — Shattering Death (2026-10-24): enemies within 2 tiles of the corpse
 		-- get Sundered (-20% Physical Defense, 2 turns). =====
@@ -1274,16 +1416,21 @@ function AugmentEffectService.OnKill(attacker, defender, skillDef, augmentIds, c
 			print(string.format("[AugmentEffect] %s: %s fortified (-25%% damage taken this round)", augName, attacker.name))
 
 		-- ===== REWARD — Gold Harvest (2026-10-25): stamp the slain enemy so battle-end gold
-		-- (computeBattleGold) pays +25% for this kill. =====
+		-- (computeBattleGold) pays +25% for this kill. Max 3 per unit turn (DB TRG-007). =====
 		elseif augId == "AUG-GOLD-HARVEST" then
-			defender._goldHarvested = true
-			print(string.format("[AugmentEffect] %s: %s will drop +25%% gold", augName, defender.name))
+			if AugmentEffectService.TryUseTurnCap(attacker, augId) then
+				defender._goldHarvested = true
+				print(string.format("[AugmentEffect] %s: %s will drop +25%% gold", augName, defender.name))
+			end
 
 		-- ===== REWARD — Treasure Hunter (2026-10-25): stamp the slain enemy so battle-end loot
-		-- generation bumps rarity by 1 tier (Main reads the flag, passes bonusRarityTiers). =====
+		-- generation bumps rarity by 1 tier (Main reads the flag, passes bonusRarityTiers).
+		-- Max 3 per unit turn (DB TRG-007). =====
 		elseif augId == "AUG-TREASURE-HUNTER" then
-			defender._treasureHunted = true
-			print(string.format("[AugmentEffect] %s: %s will drop higher-rarity loot", augName, defender.name))
+			if AugmentEffectService.TryUseTurnCap(attacker, augId) then
+				defender._treasureHunted = true
+				print(string.format("[AugmentEffect] %s: %s will drop higher-rarity loot", augName, defender.name))
+			end
 
 		-- ===== CATCH-ALL STUBS for kill-phase families =====
 		elseif KILL_FAMILIES[family] and not HANDLED_ON_OTHER_HOOK[augId] then
@@ -1366,17 +1513,26 @@ function AugmentEffectService.OnSkillComplete(attacker, skillDef, augmentIds, ct
 						end
 					end
 				end
+				local moved = 0
 				for _, u in ipairs(victims) do
 					local rawx = (u.tileX or ctx.centerX) - ctx.centerX
 					local rawy = (u.tileY or ctx.centerY) - ctx.centerY
 					local sgx = (rawx > 0 and 1) or (rawx < 0 and -1) or 0
 					local sgy = (rawy > 0 and 1) or (rawy < 0 and -1) or 0
+					if toward and sgx == 0 and sgy == 0 then
+						-- B2 (Studio 2026-11-09): a unit already ON the impact centre has nowhere to be pulled
+						-- (DB: "pull ... toward the AOE center"). It used to get the +x fallback below and was
+						-- moved 1 tile AWAY from the centre. Scatter keeps its fallback (unchanged).
+						print(`[AugmentEffect] {augName}: {u.name} is on the impact centre - not moved`)
+						continue
+					end
 					local dir = toward and { dx = -sgx, dy = -sgy } or { dx = sgx, dy = sgy }
 					if dir.dx == 0 and dir.dy == 0 then dir.dx = 1 end
-					augDisplace(attacker, u, force, dir, 1, toward)  -- vortex = pull toward the impact centre
+					augDisplace(attacker, u, force, dir, 1, toward, augName)  -- vortex = pull toward the impact centre; augName = log cause (item 8)
+					moved += 1
 				end
 				print(string.format("[AugmentEffect] %s: %s %d units %s impact center",
-					augName, toward and "pulled" or "scattered", #victims, toward and "toward" or "from"))
+					augName, toward and "pulled" or "scattered", moved, toward and "toward" or "from"))
 			end
 
 		-- SUPPORT DELIVERY (DB cards, built 2026-10-28): "After the supported Skill resolves, apply

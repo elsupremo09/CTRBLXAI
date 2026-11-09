@@ -1,0 +1,4 @@
+{
+  "_how": "See RULES.md. Each claim: {session, task, files:[paths relative to project root] or ['STUDIO'], started (ISO, Asia/Manila), expires_hours}",
+  "claims": []
+}

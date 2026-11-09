@@ -40,6 +40,12 @@ local UIComponents = require(
 	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 		:WaitForChild("UI", 10):WaitForChild("UIComponents", 10)
 )
+-- Shared Loadout level label (MakeLevelLabel) for the Gears tab cards (2026-11-09).
+-- Acyclic: InventoryControls requires only Theme.
+local InventoryControls = require(
+	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+		:WaitForChild("UI", 10):WaitForChild("InventoryControls", 10)
+)
 -- MockLoadoutData owns mapServerItem (server item -> loadout UI item). Optional:
 -- if it fails to load, the inspector falls back to its local mapping.
 local ObjectData = nil
@@ -351,6 +357,7 @@ local function showItemDetail(eq, slotName)
 	backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
 	backdrop.BackgroundTransparency = 0.5
 	backdrop.Text = ""; backdrop.BorderSizePixel = 0
+	backdrop.AutoButtonColor = false -- no hover colour (project_rules 243)
 	backdrop.Parent = gui
 
 	-- Panel (left-docked, matching loadout screen layout)
@@ -425,6 +432,7 @@ local function showSkillDetail(skill)
 	backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
 	backdrop.BackgroundTransparency = 0.5
 	backdrop.Text = ""; backdrop.BorderSizePixel = 0
+	backdrop.AutoButtonColor = false -- no hover colour (project_rules 243)
 	backdrop.Parent = gui
 	backdrop.Activated:Connect(closeDetailOverlay)
 
@@ -1001,18 +1009,98 @@ SLOT_LABELS = {
 	Accessory = "ACCESSORY", Doctrine = "DOCTRINE",
 }
 
+-- GEARS TAB CARDS (user 2026-11-08 11:52 PM): 3 columns. Columns 1-2 = the gear slots, column 3 =
+-- the unit's equipped consumables (data.consumables from InspectUnit, built from the same
+-- unit.consumableSlots as the battle Items menu - no new remote). Each card: icon on the left with
+-- the level badge on it (gear) or the uses badge (consumable), then the text right next to the icon:
+-- slot label, then the name on two rows. Rarity = frame colour only (the "Lv.X Rarity" line is gone).
+-- Cards are 52 px tall (>= 44 px touch target, project_rules 244); widths are Scale (mobile-first).
+local CARD_H = 52
+local CARD_ICON = 44
+local CARD_PAD = 4
+local CARD_TEXT_X = CARD_PAD + CARD_ICON + 4
+
+-- White text with a black outline (the game-wide text style, project_rules 243/244 notes).
+local function outlineText(lbl: TextLabel, color: Color3?)
+	lbl.TextColor3 = color or Color3.new(1, 1, 1)
+	lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+	lbl.TextStrokeTransparency = 0
+end
+
+-- One text line/block in the card's text column (left-aligned, starts right after the icon).
+local function cardText(card: Instance, text: string, y: number, h: number, size: number, font: Enum.Font,
+	wrap: boolean, color: Color3?): TextLabel
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, -(CARD_TEXT_X + 3), 0, h)
+	lbl.Position = UDim2.fromOffset(CARD_TEXT_X, y)
+	lbl.BackgroundTransparency = 1; lbl.BorderSizePixel = 0
+	lbl.Font = font; lbl.TextSize = size
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextYAlignment = Enum.TextYAlignment.Top
+	lbl.TextWrapped = wrap
+	lbl.TextTruncate = Enum.TextTruncate.AtEnd
+	lbl.Text = text
+	outlineText(lbl, color)
+	lbl.ZIndex = 2
+	lbl.Parent = card
+	return lbl
+end
+
+-- Icon square on the left of a card. Returns the holder so a badge can sit on the icon.
+local function cardIcon(card: Instance, icon: string?): Frame
+	local holder = Instance.new("Frame")
+	holder.Name = "Icon"
+	holder.Size = UDim2.fromOffset(CARD_ICON, CARD_ICON)
+	holder.Position = UDim2.fromOffset(CARD_PAD, CARD_PAD)
+	holder.BackgroundTransparency = 1; holder.BorderSizePixel = 0
+	if icon and string.find(icon, "rbxassetid://") then
+		local ico = Instance.new("ImageLabel")
+		ico.Size = UDim2.fromScale(1, 1)
+		ico.BackgroundTransparency = 1
+		ico.Image = icon
+		ico.ScaleType = Enum.ScaleType.Fit
+		ico.Parent = holder
+	end
+	holder.Parent = card
+	return holder
+end
+
+-- Empty slot card body: "- Empty -" centred, dimmed.
+local function cardEmptyText(card: Instance)
+	local emptyLbl = Instance.new("TextLabel")
+	emptyLbl.Size = UDim2.new(1, 0, 0, 20)
+	emptyLbl.Position = UDim2.new(0, 0, 0.5, -10)
+	emptyLbl.BackgroundTransparency = 1; emptyLbl.BorderSizePixel = 0
+	emptyLbl.Font = Theme.Font.Primary; emptyLbl.TextSize = Theme.Text.Small()
+	emptyLbl.Text = "- Empty -"
+	outlineText(emptyLbl, Theme.Colors.TextDisabled)
+	emptyLbl.Parent = card
+end
+
 local function renderEquipmentTab(content, data)
-	-- 2-col x 4-row grid
+	local slotH = Theme.Text.Tiny() + 2
+	local nameY = 3 + slotH
+	local nameH = Theme.Text.Small() * 2 + 4 -- two rows (TextWrapped)
+
+	-- Row holding the 2-column gear grid (left 2/3) and the consumable column (right 1/3).
+	local row = Instance.new("Frame")
+	row.Name = "GearsColumns"
+	row.Size = UDim2.new(1, 0, 0, 0)
+	row.AutomaticSize = Enum.AutomaticSize.Y
+	row.BackgroundTransparency = 1; row.BorderSizePixel = 0
+	row.LayoutOrder = 1
+
 	local grid = Instance.new("Frame")
-	grid.Size = UDim2.new(1, 0, 0, 0)
+	grid.Name = "GearGrid"
+	grid.Size = UDim2.new(2 / 3, -2, 0, 0)
 	grid.AutomaticSize = Enum.AutomaticSize.Y
 	grid.BackgroundTransparency = 1; grid.BorderSizePixel = 0
-	grid.LayoutOrder = 1; grid.Parent = content
-
-	local gridLayout = Instance.new("UIGridLayout", grid)
-	gridLayout.CellSize = UDim2.new(0.5, -3, 0, 52)
+	local gridLayout = Instance.new("UIGridLayout")
+	gridLayout.CellSize = UDim2.new(0.5, -2, 0, CARD_H)
 	gridLayout.CellPadding = UDim2.new(0, 4, 0, 4)
 	gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	gridLayout.Parent = grid
+	grid.Parent = row
 
 	for idx, slot in ipairs(SLOT_ORDER) do
 		local item = data.equipment and data.equipment[slot]
@@ -1022,82 +1110,37 @@ local function renderEquipmentTab(content, data)
 		local tile = Instance.new("TextButton")
 		tile.Text = ""
 		tile.BorderSizePixel = 0
-		tile.AutoButtonColor = (item ~= nil) or isDoctrine
+		tile.AutoButtonColor = false -- no mouse-over colour change (project_rules 243); tap still works
 		tile.LayoutOrder = idx
-		tile.Parent = grid
 		Instance.new("UICorner", tile).CornerRadius = UDim.new(0, 4)
 
 		if isDoctrine then
-			-- Doctrine tile
+			-- Doctrine card (user default 2026-11-09): same layout as the gear cards - icon spot on the
+			-- left (stays empty if the doctrine has no icon), "DOCTRINE" + the name on two rows beside it,
+			-- white text with a black outline. Gold accent kept as the card tint. No new data.
 			tile.BackgroundColor3 = Theme.Colors.RarityLegendary
 			tile.BackgroundTransparency = 0.75
 			local docName = data.doctrine and data.doctrine.name or "None"
-			-- Slot label (top-left)
-			local slotLbl = Instance.new("TextLabel")
-			slotLbl.Size = UDim2.new(1, -4, 0, 12)
-			slotLbl.Position = UDim2.fromOffset(4, 2)
-			slotLbl.BackgroundTransparency = 1; slotLbl.BorderSizePixel = 0
-			slotLbl.Font = Theme.Font.Primary; slotLbl.TextSize = Theme.Text.Tiny()
-			slotLbl.TextColor3 = Theme.Colors.TextDisabled
-			slotLbl.TextXAlignment = Enum.TextXAlignment.Left
-			slotLbl.Text = "DOCTRINE"; slotLbl.Parent = tile
-			-- Name
-			local nameLbl = Instance.new("TextLabel")
-			nameLbl.Size = UDim2.new(1, -4, 0, 14)
-			nameLbl.Position = UDim2.fromOffset(4, 34)
-			nameLbl.BackgroundTransparency = 1; nameLbl.BorderSizePixel = 0
-			nameLbl.Font = Theme.Font.PrimaryBold; nameLbl.TextSize = Theme.Text.Small()
-			nameLbl.TextColor3 = Theme.Colors.TextGold
-			nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-			nameLbl.Text = docName; nameLbl.Parent = tile
+			cardIcon(tile, data.doctrine and data.doctrine.icon)
+			cardText(tile, "DOCTRINE", 3, slotH, Theme.Text.Tiny(), Theme.Font.Primary, false)
+			cardText(tile, docName, nameY, nameH, Theme.Text.Small(), Theme.Font.PrimaryBold, true)
 			-- Doctrine click → detail
 			tile.Activated:Connect(function() showItemDetail({name = docName, rarity = "Legendary", icon = data.doctrine and data.doctrine.icon, itemLevel = 0}, "DOCTRINE") end)
 		elseif item then
 			local rc = Theme.GetRarityColor(item.rarity)
 			tile.BackgroundColor3 = rc
-			tile.BackgroundTransparency = 0.75
-			-- Rarity border
+			tile.BackgroundTransparency = Theme.ItemTile.BgTransparency
+			-- Rarity border (the only rarity cue now)
 			local stroke = Instance.new("UIStroke", tile)
-			stroke.Color = rc; stroke.Thickness = 1.5
-			-- Icon (left side, square)
-			if item.icon and string.find(item.icon, "rbxassetid://") then
-				local ico = Instance.new("ImageLabel")
-				ico.Size = UDim2.new(0, 44, 0, 44)
-				ico.Position = UDim2.fromOffset(4, 4)
-				ico.BackgroundTransparency = 1
-				ico.Image = item.icon
-				ico.ScaleType = Enum.ScaleType.Fit
-				ico.Parent = tile
-			end
-			-- Slot label (top-right)
-			local slotLbl = Instance.new("TextLabel")
-			slotLbl.Size = UDim2.new(0.5, -4, 0, 12)
-			slotLbl.Position = UDim2.new(0.5, 0, 0, 2)
-			slotLbl.BackgroundTransparency = 1; slotLbl.BorderSizePixel = 0
-			slotLbl.Font = Theme.Font.Primary; slotLbl.TextSize = Theme.Text.Tiny()
-			slotLbl.TextColor3 = Theme.Colors.TextDisabled
-			slotLbl.TextXAlignment = Enum.TextXAlignment.Left
-			slotLbl.Text = SLOT_LABELS[slot] or slot; slotLbl.Parent = tile
-			-- Item name
-			local nameLbl = Instance.new("TextLabel")
-			nameLbl.Size = UDim2.new(0.5, -4, 0, 14)
-			nameLbl.Position = UDim2.new(0.5, 0, 0, 14)
-			nameLbl.BackgroundTransparency = 1; nameLbl.BorderSizePixel = 0
-			nameLbl.Font = Theme.Font.PrimaryBold; nameLbl.TextSize = Theme.Text.Small()
-			nameLbl.TextColor3 = rc
-			nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-			nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
-			nameLbl.Text = item.displayName or item.name or "?"; nameLbl.Parent = tile
-			-- Level + Rarity
-			local infoLbl = Instance.new("TextLabel")
-			infoLbl.Size = UDim2.new(0.5, -4, 0, 12)
-			infoLbl.Position = UDim2.new(0.5, 0, 0, 28)
-			infoLbl.BackgroundTransparency = 1; infoLbl.BorderSizePixel = 0
-			infoLbl.Font = Theme.Font.Mono; infoLbl.TextSize = Theme.Text.Tiny()
-			infoLbl.TextColor3 = Theme.Colors.TextSecondary
-			infoLbl.TextXAlignment = Enum.TextXAlignment.Left
-			infoLbl.Text = "Lv." .. (item.itemLevel or 1) .. " " .. (item.rarity or "")
-			infoLbl.Parent = tile
+			stroke.Color = rc; stroke.Thickness = Theme.ItemTile.StrokeThickness
+			-- Icon (left) with the level badge on it: the shared Loadout level label, top-left.
+			local iconHolder = cardIcon(tile, item.icon)
+			local lvLbl = InventoryControls.MakeLevelLabel(iconHolder, "Lv." .. (item.itemLevel or 1))
+			outlineText(lvLbl)
+			-- Text right next to the icon: slot label, then the name on two rows.
+			cardText(tile, SLOT_LABELS[slot] or slot, 3, slotH, Theme.Text.Tiny(), Theme.Font.Primary, false)
+			cardText(tile, item.displayName or item.name or "?", nameY, nameH, Theme.Text.Small(),
+				Theme.Font.PrimaryBold, true)
 			tile.Activated:Connect(function() showItemDetail(item, SLOT_LABELS[slot] or slot) end)
 		else
 			tile.BackgroundColor3 = Theme.Colors.Panel
@@ -1109,81 +1152,81 @@ local function renderEquipmentTab(content, data)
 			slotLbl.Position = UDim2.fromOffset(4, 2)
 			slotLbl.BackgroundTransparency = 1; slotLbl.BorderSizePixel = 0
 			slotLbl.Font = Theme.Font.Primary; slotLbl.TextSize = Theme.Text.Tiny()
-			slotLbl.TextColor3 = Theme.Colors.TextDisabled
 			slotLbl.TextXAlignment = Enum.TextXAlignment.Left
-			slotLbl.Text = SLOT_LABELS[slot] or slot; slotLbl.Parent = tile
-			-- Empty indicator
-			local emptyLbl = Instance.new("TextLabel")
-			emptyLbl.Size = UDim2.new(1, 0, 0, 20)
-			emptyLbl.Position = UDim2.fromOffset(0, 18)
-			emptyLbl.BackgroundTransparency = 1; emptyLbl.BorderSizePixel = 0
-			emptyLbl.Font = Theme.Font.Primary; emptyLbl.TextSize = Theme.Text.Small()
-			emptyLbl.TextColor3 = Theme.Colors.TextDisabled
-			emptyLbl.Text = "- Empty -"; emptyLbl.Parent = tile
+			slotLbl.Text = SLOT_LABELS[slot] or slot
+			outlineText(slotLbl, Theme.Colors.TextDisabled)
+			slotLbl.Parent = tile
+			cardEmptyText(tile)
 		end
+		tile.Parent = grid -- parent last (NET-004)
 	end
 
-	-- CONSUMABLES (equipped slots, from InspectUnit)
-	createSection(content, "CONSUMABLES", 2)
+	-- COLUMN 3: equipped consumables (one card per slot the server sends: filled + unlocked empty).
+	local consCol = Instance.new("Frame")
+	consCol.Name = "ConsumableColumn"
+	consCol.Size = UDim2.new(1 / 3, -2, 0, 0)
+	consCol.Position = UDim2.new(2 / 3, 2, 0, 0)
+	consCol.AutomaticSize = Enum.AutomaticSize.Y
+	consCol.BackgroundTransparency = 1; consCol.BorderSizePixel = 0
+	local consLayout = Instance.new("UIListLayout")
+	consLayout.Padding = UDim.new(0, 4)
+	consLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	consLayout.Parent = consCol
+
 	local cons = data.consumables or {}
 	if #cons == 0 then
-		createLabel(content, { Text = "  No consumables equipped.", Order = 3,
-			Color = Theme.Colors.TextDisabled })
-		return
+		cons = { { slotIndex = 1, empty = true } } -- no slots sent: show one empty card, not a blank column
 	end
-	local cGrid = Instance.new("Frame")
-	cGrid.Size = UDim2.new(1, 0, 0, 0)
-	cGrid.AutomaticSize = Enum.AutomaticSize.Y
-	cGrid.BackgroundTransparency = 1; cGrid.BorderSizePixel = 0
-	cGrid.LayoutOrder = 3
-	local cLayout = Instance.new("UIGridLayout")
-	cLayout.CellSize = UDim2.new(0.5, -3, 0, 40)
-	cLayout.CellPadding = UDim2.new(0, 4, 0, 4)
-	cLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	cLayout.Parent = cGrid
-	cGrid.Parent = content
+	local catColors = LoadoutScreen.ConsCategoryColors or {}
 	for i, c in ipairs(cons) do
-		local tile = Instance.new("Frame")
-		tile.BackgroundColor3 = c.empty and Theme.Colors.Panel or Theme.Colors.PanelRaised
-		tile.BackgroundTransparency = c.empty and 0.6 or 0.3
-		tile.BorderSizePixel = 0
-		tile.LayoutOrder = c.slotIndex or i
-		Instance.new("UICorner", tile).CornerRadius = UDim.new(0, 4)
-		local textX = 4
-		if (not c.empty) and c.icon and string.find(c.icon, "rbxassetid://") then
-			local ico = Instance.new("ImageLabel")
-			ico.Size = UDim2.fromOffset(34, 34)
-			ico.Position = UDim2.fromOffset(3, 3)
-			ico.BackgroundTransparency = 1
-			ico.Image = c.icon
-			ico.ScaleType = Enum.ScaleType.Fit
-			ico.Parent = tile
-			textX = 40
+		local card = Instance.new("Frame")
+		card.Name = "Consumable" .. tostring(c.slotIndex or i)
+		card.Size = UDim2.new(1, 0, 0, CARD_H)
+		card.BorderSizePixel = 0
+		card.LayoutOrder = c.slotIndex or i
+		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
+		if c.empty then
+			card.BackgroundColor3 = Theme.Colors.Panel
+			card.BackgroundTransparency = 0.6
+			cardEmptyText(card)
+		else
+			-- Same card style as gear: category colour tint + border (the Loadout consumable colours).
+			local cc = catColors[c.category] or Theme.Colors.TextSecondary
+			card.BackgroundColor3 = cc
+			card.BackgroundTransparency = Theme.ItemTile.BgTransparency
+			local stroke = Instance.new("UIStroke", card)
+			stroke.Color = cc; stroke.Thickness = Theme.ItemTile.StrokeThickness
+			local iconHolder = cardIcon(card, c.icon)
+			-- Uses badge on the icon, top-right (the Loadout count-badge look: Theme.ItemTile tokens).
+			local usesText = string.format("x%d/%d", c.currentCharges or 0, c.maxCharges or 0)
+			local t = Theme.ItemTile
+			local badge = Instance.new("TextLabel")
+			badge.Size = UDim2.fromOffset(Theme.BadgeFitW(usesText, Theme.Font.Mono, t.CountBadgeW),
+				math.max(t.CountBadgeH, Theme.Text.BadgeLineH()))
+			badge.AnchorPoint = Vector2.new(1, 0)
+			badge.Position = UDim2.new(1, 0, 0, 0)
+			badge.BackgroundColor3 = t.CountBadgeBg
+			badge.BackgroundTransparency = t.CountBadgeBgTransparency
+			badge.BorderSizePixel = 0
+			badge.Font = Theme.Font.Mono
+			badge.TextSize = Theme.Text.Badge()
+			badge.Text = usesText
+			-- Used up = red (as before); otherwise white. Black outline either way.
+			outlineText(badge, if (c.currentCharges or 0) > 0 then nil else Theme.Colors.Danger)
+			badge.ZIndex = 3
+			Instance.new("UICorner", badge).CornerRadius = UDim.new(0, 3)
+			badge.Parent = iconHolder
+			-- Text next to the icon: category (in the slot-label row), then the name on two rows.
+			if c.category and c.category ~= "" then
+				cardText(card, string.upper(c.category), 3, slotH, Theme.Text.Tiny(), Theme.Font.Primary, false)
+			end
+			cardText(card, c.name or "?", nameY, nameH, Theme.Text.Small(), Theme.Font.PrimaryBold, true)
 		end
-		local nameLbl = Instance.new("TextLabel")
-		nameLbl.Size = UDim2.new(1, -textX - 2, 0, 16)
-		nameLbl.Position = UDim2.fromOffset(textX, 3)
-		nameLbl.BackgroundTransparency = 1; nameLbl.BorderSizePixel = 0
-		nameLbl.Font = c.empty and Theme.Font.Primary or Theme.Font.PrimaryBold
-		nameLbl.TextSize = Theme.Text.Small()
-		nameLbl.TextColor3 = c.empty and Theme.Colors.TextDisabled or Theme.Colors.TextPrimary
-		nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-		nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
-		nameLbl.Text = c.empty and ("SLOT " .. tostring(c.slotIndex or i) .. " - Empty -") or (c.name or "?")
-		nameLbl.Parent = tile
-		if not c.empty then
-			local chLbl = Instance.new("TextLabel")
-			chLbl.Size = UDim2.new(1, -textX - 2, 0, 12)
-			chLbl.Position = UDim2.fromOffset(textX, 21)
-			chLbl.BackgroundTransparency = 1; chLbl.BorderSizePixel = 0
-			chLbl.Font = Theme.Font.Mono; chLbl.TextSize = Theme.Text.Tiny()
-			chLbl.TextColor3 = (c.currentCharges or 0) > 0 and Theme.Colors.TextSecondary or Theme.Colors.Danger
-			chLbl.TextXAlignment = Enum.TextXAlignment.Left
-			chLbl.Text = string.format("x%d/%d  %s", c.currentCharges or 0, c.maxCharges or 0, c.category or "")
-			chLbl.Parent = tile
-		end
-		tile.Parent = cGrid
+		card.Parent = consCol -- parent last (NET-004)
 	end
+	consCol.Parent = row
+
+	row.Parent = content -- parent last (NET-004)
 end
 
 --------------------------------------------------
@@ -1205,7 +1248,7 @@ local function renderSkillsTab(content, data)
 		row.Size = UDim2.new(1, 0, 0, 48)
 		row.BackgroundColor3 = Theme.Colors.PanelRaised
 		row.BackgroundTransparency = 0.4
-		row.Text = ""; row.AutoButtonColor = true
+		row.Text = ""; row.AutoButtonColor = false -- no hover colour (project_rules 243)
 		row.BorderSizePixel = 0
 		row.LayoutOrder = order
 		row.Parent = content
@@ -1450,6 +1493,7 @@ local function buildPanel(data)
 	closeBtn.TextColor3 = Theme.Colors.TextPrimary
 	closeBtn.Text = "X"
 	closeBtn.BorderSizePixel = 0
+	closeBtn.AutoButtonColor = false -- no hover colour (project_rules 243)
 	closeBtn.Parent = frame
 	Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 4)
 	closeBtn.Activated:Connect(destroyPanel)
@@ -1466,6 +1510,7 @@ local function buildPanel(data)
 		cycleBtn.TextColor3 = Theme.Colors.TextPrimary
 		cycleBtn.Text = `{tileCycleIndex}/{#tileCycleIds} >`
 		cycleBtn.BorderSizePixel = 0
+		cycleBtn.AutoButtonColor = false -- no hover colour (project_rules 243)
 		cycleBtn.Parent = frame
 		Instance.new("UICorner", cycleBtn).CornerRadius = UDim.new(0, 4)
 		cycleBtn.Activated:Connect(function()
@@ -1622,6 +1667,23 @@ _G.CTRBLXAI_OpenInspectorPanel = function(unitId, tileUnitIds)
 end
 
 _G.CTRBLXAI_CloseInspectorPanel = destroyPanel
+
+-- 2026-11-09: lets panels drawn UNDER the inspector (e.g. the turn-order bar) ignore taps
+-- that land on the inspector window. Without this, a tap on the inspector's lower part
+-- also reached the turn-order slot underneath and swapped/closed the inspector.
+-- Uses the same screen space as the click-outside check (GetMouseLocation includes the
+-- top-bar inset, so add it back for ScreenGuis that do not ignore the inset).
+_G.CTRBLXAI_IsTapOverInspector = function(): boolean
+	if not panelGui or not panelGui.Parent then return false end
+	local frame = panelGui:FindFirstChild("InspectorFrame")
+	if not frame or not frame:IsA("GuiObject") or not frame.Visible then return false end
+	local m = UserInputService:GetMouseLocation()
+	local p, sz = frame.AbsolutePosition, frame.AbsoluteSize
+	if not panelGui.IgnoreGuiInset then
+		p += GuiService:GetGuiInset()
+	end
+	return m.X >= p.X and m.X <= p.X + sz.X and m.Y >= p.Y and m.Y <= p.Y + sz.Y
+end
 
 --------------------------------------------------
 -- MAP OBJECT INSPECTOR (same framed panel, object fields instead of unit tabs)

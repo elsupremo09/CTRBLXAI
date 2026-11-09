@@ -1029,9 +1029,11 @@ end
 -- SHARED PRE-DEFENSE POWER (used by ResolveSkill/ResolveHealing AND the unit
 -- inspector's raw-damage display, so the shown number can never drift from
 -- real combat). Skill power = weapon attack power x skill power multiplier.
-function CombatResolver.EstimateSkillPower(attacker, skillDef, statOverride)
+function CombatResolver.EstimateSkillPower(attacker, skillDef, statOverride, weaponScaling)
 	local aStats = attacker.effectiveStats or {}
-	local weaponDamage = attacker.weaponDamage or 10
+	-- weaponScaling (optional, user ruling 2026-11-08 11:52 PM item 7): augment weapon-damage scaling cost
+	-- (Executioner x0.75, Gold Harvest x0.90, Vitality Surge x0.90). nil = no cost.
+	local weaponDamage = (attacker.weaponDamage or 10) * (weaponScaling or 1)
 	local int = aStats.INT or 10
 	-- ITEM DAMAGE (2026-10-26): a consumable supplies a self-contained flat Power value
 	-- (e.g. "Fire Power = 18 + 0.40×IL + 0.35×INT"), already computed by ItemEffectService.
@@ -1133,7 +1135,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	end
 
 	-- Skill Power = Weapon Attack Power × power multiplier (shared helper)
-	local sp = CombatResolver.EstimateSkillPower(attacker, skillDef, _augCalc.statOverride)
+	local sp = CombatResolver.EstimateSkillPower(attacker, skillDef, _augCalc.statOverride, _augCalc.weaponScaling)  -- item 7 cost
 
 	-- Defense Power from real equipment Defense (core_stats id 30/31). Was hard-coded 0.
 	-- Fortify (weapon native, Spear): add the defender's accumulated on-hit flat Defense (skill path).
@@ -1936,6 +1938,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	end
 
 	local statusApplied = nil
+	local immuneStatus = nil  -- B3 (2026-11-09): rider blocked by immunity (already announced)
 	-- Pure-debuff skills (applyStatusUnconditional) land their status with no
 	-- damage; damaging attacks still require actual>0 so a fully-mitigated hit
 	-- does not apply its rider status.
@@ -1972,6 +1975,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 				statusApplied = outcome.appliesStatus
 			elseif not applied and immuneReason then
 				BattleVisualBroadcaster.StatusImmune(target, outcome.appliesStatus, immuneReason)
+				immuneStatus = outcome.appliesStatus
 			end
 		end
 	end
@@ -2003,7 +2007,10 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- Skips if the same status was already applied by appliesStatus above.
 	if outcome.element and actual > 0 and target.isAlive
 		and (outcome.minRiderDamage == nil or actual >= outcome.minRiderDamage) then
-		applyElementStatusTriggers(outcome.sourceUnitId or "unknown", target, outcome.element, actual, statusApplied, attacker)
+		-- B3 (Studio 2026-11-09): a rider the target was just shown to be immune to (e.g. Venom Burst's Poison on
+		-- a Poison-immune unit) counts as already tried, so the same-element trigger (Poison -> Poison) does not
+		-- try it again and print "is immune to Poison" a second time. Immunity can't change in between.
+		applyElementStatusTriggers(outcome.sourceUnitId or "unknown", target, outcome.element, actual, statusApplied or immuneStatus, attacker)
 	end
 
 	-- ===== Perks & Flaws: Status Specialist / Phobia (Bleed/Burn/Poison/Venom) =====

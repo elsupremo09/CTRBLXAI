@@ -16,6 +16,7 @@
 --   3: Preview (target + damage preview + confirm/back)
 --   4: Resolving (visual effects + battle log)
 
+local ContentProvider = game:GetService("ContentProvider")
 local Players           = game:GetService("Players")
 local TweenService      = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -2038,18 +2039,10 @@ local function fillInfoPanel(panel, header: string, name: string?, iconMap)
 	pd.PaddingTop = UDim.new(0, 4); pd.PaddingBottom = UDim.new(0, 4)
 	pd.Parent = panel
 	local img = name and iconMap[name]
-	if img and img ~= "" then
-		local icon = Instance.new("ImageLabel")
-		icon.Size = UDim2.fromScale(1, 1)
-		icon.BackgroundTransparency = 1
-		icon.ScaleType = Enum.ScaleType.Crop
-		icon.Image = img
-		icon.ZIndex = 5
-		icon.Parent = panel
-	end
-	-- No EVENT/WEATHER heading: the panel's purpose is obvious from its position.
-	if not (img and img ~= "") then
+	local function addNameText()
+		if not (panel and panel.Parent) or panel:FindFirstChild("PanelNameText") then return end
 		local nm = Instance.new("TextLabel")
+		nm.Name = "PanelNameText"
 		nm.AnchorPoint = Vector2.new(0, 1)
 		nm.Position = UDim2.fromScale(0, 1)
 		nm.Size = UDim2.fromScale(1, 1)
@@ -2066,6 +2059,32 @@ local function fillInfoPanel(panel, header: string, name: string?, iconMap)
 		tc.Parent = nm
 		nm.Parent = panel
 	end
+	if img and img ~= "" then
+		local icon = Instance.new("ImageLabel")
+		icon.Size = UDim2.fromScale(1, 1)
+		icon.BackgroundTransparency = 1
+		icon.ScaleType = Enum.ScaleType.Crop
+		icon.Image = img
+		icon.ZIndex = 5
+		icon.Parent = panel
+		-- Icon failed to load (e.g. live-game asset/moderation problem): show the name instead
+		-- of an empty square (2026-11-09, Mutator panel blank on phone).
+		task.spawn(function()
+			local okPre, err = pcall(function()
+				ContentProvider:PreloadAsync({ icon }, function(_, status)
+					if status ~= Enum.AssetFetchStatus.Success and icon.Parent then
+						warn(string.format("[BattleHUD] %s icon failed to load (%s): %s - showing name text", header, tostring(status), img))
+						icon:Destroy()
+						addNameText()
+					end
+				end)
+			end)
+			if not okPre then warn("[BattleHUD] icon preload error: " .. tostring(err)) end
+		end)
+	else
+		addNameText()
+	end
+	-- No EVENT/WEATHER heading: the panel's purpose is obvious from its position.
 	addPeekButton(panel, header, name)
 end
 
@@ -2435,6 +2454,9 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 		portrait.Activated:Connect(function()
 			-- Skip selection if this "click" was actually the end of a drag-to-pan. (2026-10-26)
 			if scrollDidDrag then return end
+			-- 2026-11-09: the unit inspector window sits on top of this bar; a tap on the
+			-- window must not also select the slot underneath it.
+			if _G.CTRBLXAI_IsTapOverInspector and _G.CTRBLXAI_IsTapOverInspector() then return end
 			if isUnit or isEvent then
 				local tileX = entry.tileX
 				local tileY = entry.tileY
@@ -2473,6 +2495,8 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 		beginDrag = function(input)
 			if input.UserInputType ~= Enum.UserInputType.MouseButton1
 				and input.UserInputType ~= Enum.UserInputType.Touch then return end
+			-- 2026-11-09: don't pan the bar when the press lands on the inspector window above it.
+			if _G.CTRBLXAI_IsTapOverInspector and _G.CTRBLXAI_IsTapOverInspector() then return end
 			dragging = true
 			scrollDidDrag = false
 			startX = input.Position.X

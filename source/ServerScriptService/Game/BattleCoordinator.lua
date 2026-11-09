@@ -506,6 +506,14 @@ function BattleCoordinator.CheckBattleEnd(state)
 	return checkBattleEnd(state)
 end
 
+-- B1 (Studio 2026-11-09): pure count, no KO hook. True when a side has no units left that count
+-- for winning (same getSideAlive rule: summons and item devices don't count, rule 240). The turn
+-- loops call it after each action and only then run CheckBattleEnd (which runs the Rescue Beacon
+-- hook first), so beacon timing is unchanged unless a side was just wiped.
+function BattleCoordinator.IsSideWiped(state): boolean
+	return getSideAlive(state, "Player") == 0 or getSideAlive(state, "Enemy") == 0
+end
+
 --------------------------------------------------
 -- PUBLIC API
 --------------------------------------------------
@@ -664,6 +672,9 @@ function BattleCoordinator.AdvanceClock(state)
 	-- Reset once-per-turn Momentum AP gain (Perks & Flaws Phase 3, TRAIT-P-162).
 	nextUnit.momentumUsedThisTurn = false
 	nextUnit.pendingKoApGain = 0
+	-- Kill-augment per-turn caps + pending Executioner AP reset (user ruling 2026-11-08 11:52 PM items 4/5).
+	nextUnit._killAugTurnUses = nil
+	nextUnit._executionerApPending = nil
 	-- Reset per-turn on-KO recovery accumulators (Bloodbath/Soul Charge 45% cap).
 	nextUnit.koHpThisTurn = 0
 	nextUnit.koMpThisTurn = 0
@@ -769,6 +780,9 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 		-- Reset once-per-turn Momentum AP gain (Perks & Flaws Phase 3, TRAIT-P-162).
 		unit.momentumUsedThisTurn = false
 		unit.pendingKoApGain = 0
+		-- Kill-augment per-turn caps + pending Executioner AP reset (items 4/5, 2026-11-08 11:52 PM).
+		unit._killAugTurnUses = nil
+		unit._executionerApPending = nil
 		-- Reset per-turn on-KO recovery accumulators (Bloodbath/Soul Charge 45% cap).
 		unit.koHpThisTurn = 0
 		unit.koMpThisTurn = 0
@@ -850,6 +864,12 @@ end
 -- Reverse of AccrueRt: give back the RT a now-undone action added this turn.
 -- Clamped at 0 so we can never drive the accumulator negative.
 function BattleCoordinator.RefundRt(state, rtCost)
+	-- The battle already ended while a player pick screen was open (dev Instant Win/Lose closes
+	-- the pick and the caller takes its normal Cancel refund path): no turn left to refund into.
+	-- Same rule as EndTurn; any other phase is still a real error (2026-11-09).
+	if state.phase == "BattleOver" then
+		return
+	end
 	assert(state.phase == "TurnOpen", "RefundRt: no turn is open.")
 	assert(rtCost >= 0, "RefundRt: rtCost must be >= 0.")
 	state.turnRtAccrued = math.max(0, state.turnRtAccrued - rtCost)

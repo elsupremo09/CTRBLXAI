@@ -4912,6 +4912,9 @@ local CONS_CATEGORY_COLORS = {
 	Environment = Color3.fromRGB(120, 180, 80),
 	Deployable = Color3.fromRGB(180, 140, 100),
 }
+-- Read-only export (2026-11-09): the battle inspector's Gears tab consumable cards use the same
+-- category colours (DAT-001: one colour table, no copy). Callers must not modify it.
+LoadoutScreen.ConsCategoryColors = CONS_CATEGORY_COLORS
 
 local consFilter = "All"
 local consSearch = ""
@@ -5035,6 +5038,8 @@ buildConsumableGrid = function()
 			name = ci.name,
 			countText = "x" .. (ci.owned or 0), -- owned copies (charges shown in the detail)
 			layoutOrder = idx,
+			-- 2026-11-09 user request: Skills/Augments-size square portrait + two-row name.
+			portrait = true,
 			onClick = function() openConsumableDetail(ci) end,
 		})
 	end
@@ -5952,11 +5957,14 @@ buildInfoContent = function()
 				local st = Instance.new("UIStroke", cell); st.Color = Theme.Colors.TextGold; st.Thickness = 2
 			end
 			cell.Activated:Connect(function()
-				local target = (current == assetId) and nil or assetId
+				-- Tapping the already-chosen portrait clears it (server treats nil as clear).
+				local target = if current == assetId then nil else assetId
 				local okP, res = pcall(function()
 					return BattleEvents.RequestSetPortrait:InvokeServer(unit.id, target)
 				end)
-				if okP and res and res.ok then close(); LoadoutScreen.Refresh() end
+				-- Reload the cached roster first (same path as Dismiss) so the top bar and
+				-- unit list show the new face / initials straight away. (2026-11-09)
+				if okP and res and res.ok then close(); MockData.LoadFromServer(); LoadoutScreen.Refresh() end
 			end)
 		end
 		Theme.MakeBarButton(panel, "Close", "Secondary", close, {

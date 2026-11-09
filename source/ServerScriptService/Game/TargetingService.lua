@@ -170,6 +170,8 @@ local function isMeleeElevationLegal(actor, target, attackRange)
 	end
 	return elevDiff <= maxDiff
 end
+-- Job 3 (2026-11-09): shared with CommandService's channel-release reach re-check (same rule as the cast).
+TargetingService.IsMeleeElevationLegal = isMeleeElevationLegal
 
 -- [LOG] Targeting debug spam gate (2026-10-16). The per-candidate "REJECTED …
 -- out of range / same side / no LoS" prints and the per-skill header fire once
@@ -1641,6 +1643,28 @@ function TargetingService.GetAOETargetTiles(aoePattern, actor, targetTileX, targ
 		local dx = ddx ~= 0 and (ddx > 0 and 1 or -1) or 0
 		local dy = ddy ~= 0 and (ddy > 0 and 1 or -1) or 0
 		return TargetingService.GetLineTiles(actor.tileX, actor.tileY, dx, dy, param, mapWidth, mapHeight)
+
+	elseif patternType == "TileLine" then
+		-- Tile-origin line (USER RULING 2026-11-09 12:04 AM, rule 255; Fissure Line, DB "range selects the Line
+		-- origin tile"): the line STARTS on the picked tile (tile 1 of N) and runs on away from the caster.
+		-- Direction = caster -> picked tile, same 8-way rule as Line. _tileLineFromX/Y is set only while a
+		-- channel resolves for a caster moved during its wait, so the line keeps its committed direction.
+		local fromX = actor._tileLineFromX or actor.tileX
+		local fromY = actor._tileLineFromY or actor.tileY
+		local ddx = targetTileX - fromX
+		local ddy = targetTileY - fromY
+		local dx = ddx ~= 0 and (ddx > 0 and 1 or -1) or 0
+		local dy = ddy ~= 0 and (ddy > 0 and 1 or -1) or 0
+		local tiles = {}
+		if isInsideMap(targetTileX, targetTileY, mapWidth, mapHeight) then
+			table.insert(tiles, { tileX = targetTileX, tileY = targetTileY })
+		end
+		if dx ~= 0 or dy ~= 0 then
+			for _, t in ipairs(TargetingService.GetLineTiles(targetTileX, targetTileY, dx, dy, param - 1, mapWidth, mapHeight)) do
+				table.insert(tiles, t)
+			end
+		end
+		return tiles
 
 	elseif patternType == "Cone" then
 		local ddx = targetTileX - actor.tileX

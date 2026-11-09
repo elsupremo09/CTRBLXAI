@@ -1,0 +1,11 @@
+2026-11-09T19:15:36 | source\ServerScriptService\Game\LoadoutRequestHandlers.lua | L824 | clear path sets portraitCleared + [Portrait] print | verified=True
+2026-11-09T19:15:42 | source\ServerScriptService\Game\LoadoutRequestHandlers.lua | L846 | set path resets portraitCleared | verified=True
+2026-11-09T19:15:47 | source\ServerScriptService\Game\SaveService.lua | L393 | encodeUnit pcl | verified=True
+2026-11-09T19:15:51 | source\ServerScriptService\Game\SaveService.lua | L446 | decodeUnit portraitCleared | verified=True
+2026-11-09T19:15:58 | source\ServerScriptService\Main.server.lua | L636 | savedRaceMap carries portraitCleared | verified=True
+2026-11-09T19:16:03 | source\ServerScriptService\Main.server.lua | L854 | restore portraitCleared onto starter unit | verified=True
+2026-11-09T19:16:07 | source\ServerScriptService\Main.server.lua | L865 | default roll skips cleared starters | verified=True
+2026-11-09T19:16:11 | source\ServerScriptService\Main.server.lua | L2421 | doSave writes portraitCleared | verified=True
+2026-11-09T19:16:15 | source\ServerScriptService\Game\GuildMenuService.lua | L620 | restore portraitCleared onto recruit | verified=True
+2026-11-09T19:16:20 | source\ServerScriptService\Game\GuildMenuService.lua | L625 | default roll skips cleared recruits | verified=True
+2026-11-09T19:16:35 | source\ReplicatedStorage\CTRBLXAI\UI\LoadoutScreen.lua | L5965 | portrait pick/clear reloads roster cache before Refresh | verified=True

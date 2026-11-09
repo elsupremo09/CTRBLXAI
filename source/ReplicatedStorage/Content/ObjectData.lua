@@ -540,6 +540,24 @@ ObjectData.Objects["Tavern"] = {
 	notes = "Player side only. Several Taverns in one battle do not stack (max +3). Bonus used up by that one refresh.",
 }
 
+-- MUTATION BENCH (2026-11-09, DB battlefield_events 11 'Mutator'): never map-generated; only
+-- placed where a defeated Mutator fell (BattlefieldEventService.SweepMutatorDeaths).
+-- DB DIVERGENCE: no objects_encounters row yet (Designer-owned docs) - add one to match this.
+ObjectData.Objects["Mutation Bench"] = {
+	id = "Mutation Bench",
+	category = "Event",
+	tags = { "Encounter" },
+	passable = false,
+	-- Same as every other Event object (project_rules 241): breakable, 3 hits, no Salvager's Cap roll.
+	hitsToDestroy = 3,
+	newlyBreakable = true,
+	activation = "Interact (Consumes Action)",
+	triggerEvent = nil,
+	primaryEffect = "Choose Perk or Flaw: that trait mutates into a random different one of the same kind (permanent)",
+	uses = "Once",
+	notes = "One use per battle. Any unit can use it. Swaps, never removes (project_rules 116).",
+}
+
 ObjectData.Objects["Necro Tome Stand"] = {
 	id = "Necro Tome Stand",
 	category = "Event",

@@ -218,6 +218,14 @@ function BattleTurnController.ForceEndTurn()
 	if commandReceived then commandReceived:Fire() end
 end
 
+-- Battle already decided (dev Instant Win/Lose sets the phase straight to BattleOver, 2026-11-09).
+-- The player prompt waits below (facing, siege direction/tile, steal and choice lists) have no
+-- timeout by design, so they also stop once this is true; otherwise the battle never reached
+-- Victory/Defeat while a player prompt was open. Normal play never ends a battle mid-prompt.
+local function battleDecided(): boolean
+	return state ~= nil and BattleCoordinator.GetPhase(state) == "BattleOver"
+end
+
 local function checkChannelInterrupt(unit, statusId)
 	if unit.isChanneling and StatusService.IsChannelDisruptor(statusId) then
 		-- Activation phase is uninterruptible (2026-10-07): InterruptChanneling
@@ -989,11 +997,12 @@ local function promptPlayerFacing(unit, playerObj)
 			responded = true
 		end
 	end)
-	-- Turn-based: wait until the player actually chooses (no timeout).
-	while not responded do
+	-- Turn-based: wait until the player actually chooses (no timeout). Stops if the battle is decided.
+	while not responded and not battleDecided() do
 		task.wait(0.1)
 	end
 	if conn then conn:Disconnect() end
+	if not responded then print(string.format("[BattleTurnController] %s facing prompt closed: battle over", unit.name)) end
 end
 
 --------------------------------------------------
@@ -1027,11 +1036,11 @@ local function promptCardinalDirection(unit)
 			end
 		end
 	end)
-	while not responded do
+	while not responded and not battleDecided() do
 		task.wait(0.1)
 	end
 	if conn then conn:Disconnect() end
-	return chosen
+	return chosen  -- nil when the battle ended first (same as no player)
 end
 
 --------------------------------------------------
@@ -1069,10 +1078,11 @@ local function promptTargetTile(unit, originX, originY, range, legalTiles)
 		end
 	end)
 	-- Turn-based: wait until the player chooses (no timeout), mirroring the facing prompt.
-	while not responded do
+	while not responded and not battleDecided() do
 		task.wait(0.1)
 	end
 	if conn then conn:Disconnect() end
+	if not responded then return "CANCEL" end  -- battle ended first: the normal Cancel path (refund, no effect)
 	return chosen
 end
 
@@ -1107,9 +1117,9 @@ local function promptStealSlot(unit, target, slots)
 			if chosen then responded = true end
 		end
 	end)
-	while not responded do task.wait(0.1) end
+	while not responded and not battleDecided() do task.wait(0.1) end
 	if conn then conn:Disconnect() end
-	return chosen
+	return chosen  -- nil when the battle ended first: callers treat it as no pick
 end
 
 -- Object choice pick (2026-11-06, Forge: Ballista / Catapult / Cancel). Reuses the steal pick
@@ -1131,9 +1141,9 @@ local function promptObjectChoice(unit, title, options)
 			if chosen then responded = true end
 		end
 	end)
-	while not responded do task.wait(0.1) end
+	while not responded and not battleDecided() do task.wait(0.1) end
 	if conn then conn:Disconnect() end
-	return chosen
+	return chosen  -- nil when the battle ended first: callers treat it as no pick
 end
 if ObjectEffectService.SetChoicePrompter then
 	ObjectEffectService.SetChoicePrompter(promptObjectChoice)
@@ -1412,7 +1422,20 @@ local function executePlayerCommand(unit, command)
 						end
 					end
 				end
-				if hpDiff ~= 0 or newStatus then
+				-- 2026-11-09: the caster's OWN HP change on a skill aimed at someone else (Blood Price / HP
+				-- Casting cost, Lifesteal / Vitality Surge heal) is not a hit on the caster. When clients were
+				-- already sent that change under its own cause, don't list the caster as a target too (it
+				-- logged "Hero uses Blood Price on Hero: -23 HP" as a second line for the HP cost).
+				-- B3 (Studio 2026-11-09): a Shield the caster gains from its own skill aimed at someone else is an
+				-- augment / passive reward (e.g. Barrier on Hit). ShieldChanged already sent and logged it with its
+				-- cause ("gained a 1 shield (Barrier on Hit)"), so it is not a hit on the caster: listing it here
+				-- added "Mage uses Sweeping Cut on Mage: -0 HP, +Shield" and "Mage gains Shield" as two more lines.
+				if newStatus == "Shield" and u == unit and u ~= target then
+					newStatus = nil
+				end
+				local _casterSelfChangeShown = u == unit and u ~= target and not newStatus
+					and BattleVisualBroadcaster.IsHpShown(u)
+				if (hpDiff ~= 0 or newStatus) and not _casterSelfChangeShown then
 					local rtAdded = u.remainingRt - (rtSnapshot[u.id] or 0)
 					table.insert(results, {
 						actionType    = "Skill",
@@ -1605,7 +1628,16 @@ end
 --------------------------------------------------
 
 local function broadcastActions(actions, activeUnit)
-	for _, action in ipairs(actions) do
+	-- Item 10 (2026-11-08 11:52 PM): which entry of this batch knocked each target out. An entry with no KO
+	-- of its own logs no KO line, except the LAST entry for a target that died some other way this turn.
+	local _koHit, _lastFor = {}, {}
+	for _i, _a in ipairs(actions) do
+		if _a.target then
+			_lastFor[_a.target] = _i
+			if _a.targetKoHere then _koHit[_a.target] = true end
+		end
+	end
+	for _actIdx, action in ipairs(actions) do
 		if action.actionType == "Move" then
 			clearTileOccupant(action.oldTileX, action.oldTileY)
 			local u = action.unit
@@ -1632,6 +1664,11 @@ local function broadcastActions(actions, activeUnit)
 						type          = "Damage",
 						statusApplied = action.statusApplied,
 						rtDelay       = action.rtDelay,
+						-- Item 10: this hit's own HP / KO for the log line (nil = read the live unit, as before).
+						targetHpAfter = action.targetHpAfter,
+						koHere        = if action.targetKoHere == false and not _koHit[target] and _lastFor[target] == _actIdx
+							then nil else action.targetKoHere,
+						pushTag       = action.pushTag,  -- Job 1: send this action's held push right after the hit
 					}
 					BattleVisualBroadcaster.UnitActed(
 						action.unit, target, outcome, action.skillName, action.skillId, _animKind
@@ -1696,7 +1733,15 @@ local function broadcastActions(actions, activeUnit)
 			end
 			-- Interact visuals already broadcast by CommandService
 		end
+		-- Job 1: a push this AI action held that no hit claimed (e.g. a unit shoved without damage).
+		if action.pushTag then BattleVisualBroadcaster.ReleaseHeldPushes(nil, action.pushTag) end
 	end
+	-- Job 1: everything still held (player / channel batches, pushes with no hit), then end the hold.
+	BattleVisualBroadcaster.FlushHeldPushes()
+
+	-- Rulings R7 (handoff 1, 2026-11-09): a push / collision KO that no hit line of this batch claimed
+	-- gets its one KO line now, after the batch's hit lines.
+	if BattleVisualBroadcaster.FlushPendingKo then BattleVisualBroadcaster.FlushPendingKo() end
 
 	-- After each broadcast batch, send updated timeline so client sees
 	-- real-time turn order changes (especially during AI turns)
@@ -1735,7 +1780,17 @@ local function runPlayerTurn(unit)
 	while BattleCoordinator.GetPhase(state) == "TurnOpen"
 		and (unit.currentAp > 0 or CommandService.IsQuickDrawReady(unit) or CommandService.IsFreePushReady(unit)) and unit.isAlive do
 		local command = waitForPlayerCommand(unit, playerObj)
+		-- Battle decided while waiting (dev Instant Win/Lose queues a Wait to wake this loop): stop
+		-- here instead of running that Wait, whose facing prompt would hold the battle open.
+		if BattleCoordinator.GetPhase(state) ~= "TurnOpen" then
+			break
+		end
+		-- Job 1 (2026-11-09, rule 256, attempt 2): a hit command holds its push / collision visuals until its
+		-- hit is shown (broadcastActions below). A Push command has no hit and is never held.
+		local _holdHit = type(command) == "table" and (command.actionType == "Attack" or command.actionType == "Skill")
+		BattleVisualBroadcaster.HoldPushes(_holdHit)
 		local action = executePlayerCommand(unit, command)
+		BattleVisualBroadcaster.HoldPushes(false)
 
 		if action then
 			-- Handle MultiHit (AOE) results
@@ -1766,6 +1821,16 @@ local function runPlayerTurn(unit)
 			end
 		else
 			-- Command rejected — send prompt again
+			BattleVisualBroadcaster.FlushHeldPushes()  -- Job 1: no hit to wait for
+		end
+
+		-- B1 (Studio 2026-11-09): the action just shown may have left one side with no units (e.g. an area
+		-- skill killing the last enemies). End the battle now instead of prompting this unit again; before,
+		-- the battle only ended at the next Wait (EndTurn's check). CheckBattleEnd sets BattleOver, so the
+		-- close below is skipped, same as a dev Instant Win.
+		if BattleCoordinator.IsSideWiped(state) and BattleCoordinator.CheckBattleEnd(state) then
+			print(`[BattleTurnController] Battle decided during {unit.name}'s turn - ending it now`)
+			break
 		end
 	end
 
@@ -1821,14 +1886,22 @@ local function runAiTurn(unit)
 			targetUnit = nil
 		end
 		local hpBefore = targetUnit and targetUnit.currentHp or 0
+		-- Item 10 (2026-11-08 11:52 PM): AI hit lines are broadcast at the END of the AI turn, so every line used
+		-- to show the end-of-turn HP and a KO. Record this hit's own result for the battle log instead.
+		local aliveBefore = targetUnit ~= nil and targetUnit.isAlive == true
 		local statusesBefore = (targetUnit and targetUnit.statusInstances) and #targetUnit.statusInstances or 0
 
 		local oldTileX = unit.tileX
 		local oldTileY = unit.tileY
 
+		-- Job 1 (2026-11-09): hold this hit's push / collision visuals until its hit is shown at the end of the
+		-- AI turn (broadcastActions); the tag ties them to this action.
+		BattleVisualBroadcaster.HoldPushes(actionType == "Attack" or actionType == "Skill")
 		local ok, _ = CommandService.ValidateAndCommit(
 			state, unit.id, actionType, selection
 		)
+		BattleVisualBroadcaster.HoldPushes(false)
+		local _pushTag = BattleVisualBroadcaster.TagHeldPushes()
 
 		if ok and actionType ~= "Wait" then
 			local damage = 0
@@ -1867,6 +1940,9 @@ local function runAiTurn(unit)
 				damage         = damage,
 				healing        = healing,
 				statusApplied  = newStatus,
+				targetHpAfter  = targetUnit and targetUnit.currentHp or nil,  -- item 10: this hit's HP, not end-of-turn
+				targetKoHere   = if targetUnit then (aliveBefore and not targetUnit.isAlive) else nil,  -- item 10
+				pushTag        = _pushTag,  -- Job 1: its held push visuals
 				isChanneling   = unit.isChanneling,
 				animKind       = if actionType == "Skill" and selection and selection.skillId
 					then skillAnimKind(CommandService.GetSkill(selection.skillId), unit, targetUnit, damage > 0)
@@ -1930,6 +2006,13 @@ local function runAiTurn(unit)
 		end
 
 		actionsThisTurn = actionsThisTurn + 1
+
+		-- B1 (Studio 2026-11-09): same rule as the player loop -- a side wiped by this action ends the
+		-- battle now; the AI does not keep acting on an empty field. Its hits are shown by Main afterwards.
+		if committed and BattleCoordinator.IsSideWiped(state) and BattleCoordinator.CheckBattleEnd(state) then
+			print(`[BattleTurnController] Battle decided during {unit.name}'s turn - ending it now`)
+			break
+		end
 
 		-- If a commit failed (state changed / illegal now), stop and end turn
 		-- rather than retrying the same rejected action forever.
@@ -2000,7 +2083,13 @@ local function handleChannelingActivation(activeUnit)
 		or "Unknown"
 
 	local channeledDef = activeUnit.channelingData and activeUnit.channelingData.skillDef
+	-- Job 1 (2026-11-09): hold the release's push / collision visuals until its hits are shown.
+	BattleVisualBroadcaster.HoldPushes(true)
 	local success, result = CommandService.ActivateChanneledSkill(state, activeUnit)
+	BattleVisualBroadcaster.HoldPushes(false)
+	-- Job 2 (2026-11-09): the committed-direction override of a tile-origin line (Fissure Line) ends with the cast.
+	activeUnit._tileLineFromX = nil
+	activeUnit._tileLineFromY = nil
 	local actions = {}
 
 	if not success then

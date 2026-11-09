@@ -821,9 +821,13 @@ BattleEvents.RequestSetPortrait.OnServerInvoke = function(player, unitId, assetI
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
-	-- Clear choice.
+	-- Clear choice. portraitCleared (2026-11-09) is a server-only marker, saved with the
+	-- unit, so the load-time default face roll skips this unit after a rejoin.
 	if assetId == nil then
 		unit.portraitAssetId = nil
+		unit.portraitCleared = true
+		print(string.format("[Portrait] %s cleared portrait (race %s)",
+			unit.name, tostring(unit.raceId)))
 		return { ok = true, cleared = true }
 	end
 	if type(assetId) ~= "number" then
@@ -840,6 +844,7 @@ BattleEvents.RequestSetPortrait.OnServerInvoke = function(player, unitId, assetI
 		return { ok = false, reason = "Portrait not valid for this unit's race" }
 	end
 	unit.portraitAssetId = assetId
+	unit.portraitCleared = nil -- a picked face replaces any earlier "cleared" choice
 	print(string.format("[Portrait] %s set portrait %d (race %s)",
 		unit.name, assetId, tostring(unit.raceId)))
 	return { ok = true, assetId = assetId }

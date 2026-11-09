@@ -1,0 +1,100 @@
+Sun Nov  8 23:53:59 2026 | RULINGS session start. Fresh _mtimes.json (173 files) from disk after user commit 2026-11-08 11:52 PM.
+Mon Nov  9 00:09:07 2026 | ServerScriptService\Game\AugmentEffectService.lua | BACKUP .pre_rulings
+Mon Nov  9 00:09:07 2026 | ServerScriptService\Game\CombatResolver.lua | BACKUP .pre_rulings
+Mon Nov  9 00:09:07 2026 | ServerScriptService\Game\CommandService.lua | BACKUP .pre_rulings
+Mon Nov  9 00:09:07 2026 | ServerScriptService\Game\BattleCoordinator.lua | BACKUP .pre_rulings
+Mon Nov  9 00:09:07 2026 | ServerScriptService\Game\BattleTurnController.lua | BACKUP .pre_rulings
+Mon Nov  9 00:09:07 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | BACKUP .pre_rulings
+Mon Nov  9 00:09:07 2026 | ReplicatedStorage\Content\AugmentData.lua | BACKUP .pre_rulings
+Mon Nov  9 00:09:07 2026 | ServerScriptService\Main.server.lua | BACKUP .pre_rulings
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R3 kill augments fire on every kill (no once-per-cast skip) | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R2/R4/R7 helpers: once-per-cast rewards, kill turn caps, weapon scaling cost | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R7 OnDamageCalculation returns weaponScaling | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R8 augDisplace passes cause | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R2 Siphon Barrier once per cast | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R2 Barrier on Hit once per cast | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R2 Draining Ward once per cast | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R2 Mana Leech once per cast | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R1 Mass Purge 1 buff, enemies only | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R3/R4/R5/R6 Executioner AP, Soul Harvest MP, caps on Blood/Soul Harvest/Purifying Kill | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R4 caps on Momentum/Gold Harvest/Treasure Hunter | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | ServerScriptService\Game\AugmentEffectService.lua | RULINGS R8 Scatter/Vortex pass augment name as cause | new x1=True old gone=True len ok=True
+Mon Nov  9 00:12:10 2026 | RULINGS AES batch done (12 edits)
+Mon Nov  9 00:16:29 2026 | ServerScriptService\Game\CombatResolver.lua | RULINGS R7 EstimateSkillPower takes weapon scaling cost | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:29 2026 | ServerScriptService\Game\CombatResolver.lua | RULINGS R7 ResolveSkill passes augment weapon scaling cost | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:29 2026 | ServerScriptService\Game\CommandService.lua | RULINGS R8 applyKnockback takes optional log cause | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:29 2026 | ServerScriptService\Game\CommandService.lua | RULINGS R8 UnitPushed gets the cause | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:29 2026 | ServerScriptService\Game\CommandService.lua | RULINGS R8 ApplyAugmentKnockback forwards the cause | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:29 2026 | ServerScriptService\Game\CommandService.lua | RULINGS R4 Chain Kill max 1 per turn | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:29 2026 | ServerScriptService\Game\CommandService.lua | RULINGS R5 Executioner +1 AP at STEP 9 | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:29 2026 | ServerScriptService\Game\BattleCoordinator.lua | RULINGS R4/R5 reset kill caps at turn start (BeginTurn) | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ServerScriptService\Game\BattleCoordinator.lua | RULINGS R4/R5 reset kill caps at turn start (channel immediate turn) | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ServerScriptService\Game\BattleTurnController.lua | RULINGS R10 AI tryCommit records alive-before | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ServerScriptService\Game\BattleTurnController.lua | RULINGS R10 AI action keeps this hit's HP/KO | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ServerScriptService\Game\BattleTurnController.lua | RULINGS R10 broadcastActions finds the KO hit per target | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ServerScriptService\Game\BattleTurnController.lua | RULINGS R10 broadcastActions passes this hit's HP/KO | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | RULINGS R10 UnitActed log shows this hit's HP | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | RULINGS R10 UnitActed logs the KO only on the KO hit | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | RULINGS R10 StatusApplied: no second line for the same application | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | RULINGS R8 UnitPushed takes optional cause | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | RULINGS R8 UnitPushed logs collision damage on both units, with cause | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ReplicatedStorage\Content\AugmentData.lua | RULINGS R7 Vitality Surge card text adds the weapon scaling cost | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | ServerScriptService\Main.server.lua | RULINGS R7 skill menu estimate includes weapon scaling cost | new x1=True old gone=True len ok=True
+Mon Nov  9 00:16:30 2026 | RULINGS rest batch done (20 edits)
+Mon Nov  9 00:17:11 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | RULINGS R8 UnitPushed KO lines only if not already reported | new x1=True old gone=True len ok=True
+Mon Nov  9 00:17:45 2026 | RULINGS session done: 33 edits in 8 files (AES 12, CR 2, CS 5, BC 2, BTC 4, BVB 6, AD 1, Main 1). Block keywords balanced vs .pre_rulings (BTC +2 / BVB +8 'if' are if-expressions). Item 9 no edit (caster-centred channels already target the caster unit). Source-only; no Studio run. UnitInspectorPanel / LoadoutScreen untouched (other builder).
+Mon Nov  9 00:42:23 2026 | HANDOFF 1+2 session start (attempt 1 of 2): R7/R9 log+KO display (BVB, BTC), R8 caster-centred channels (CS)
+Mon Nov  9 00:42:23 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | BACKUP .pre_handoff
+Mon Nov  9 00:42:23 2026 | ServerScriptService\Game\BattleTurnController.lua | BACKUP .pre_handoff
+Mon Nov  9 00:42:23 2026 | ServerScriptService\Game\CommandService.lua | BACKUP .pre_handoff
+Mon Nov  9 00:42:35 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R7 pending-KO helpers (logKo / queueKo / FlushPendingKo) | new x1=True old gone=True len ok=True
+Mon Nov  9 00:42:35 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R7 syncHp clears koLogged when alive | new x1=True old gone=True len ok=True
+Mon Nov  9 00:42:35 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R7 diffUnit clears koLogged when alive | new x1=True old gone=True len ok=True
+Mon Nov  9 00:42:35 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R7 diff-log KO marks koLogged | new x1=True old gone=True len ok=True
+Mon Nov  9 00:42:56 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R7 ResetLogState drops held KOs | new x1=True old gone=True len ok=True
+Mon Nov  9 00:42:56 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R7 BattleEnded logs held KOs first | new x1=True old gone=True len ok=True
+Mon Nov  9 00:42:56 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R7 TurnStarted logs held KOs first | new x1=True old gone=True len ok=True
+Mon Nov  9 00:42:56 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R9 UnitActed sends this hit's HP to the client | new x1=True old gone=True len ok=True
+Mon Nov  9 00:42:56 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R9/R7 UnitActed: defeated event + KO line only on the KO hit, once | new x1=True old gone=True len ok=True
+Mon Nov  9 00:42:56 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R7 DotDamage KO line via logKo | new x1=True old gone=True len ok=True
+Mon Nov  9 00:42:56 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R7 push line shows the pushed unit's HP | new x1=True old gone=True len ok=True
+Mon Nov  9 00:42:56 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | HANDOFF1 R7 UnitPushed holds push/collision KOs (no direct KO line) | new x1=True old gone=True len ok=True
+Mon Nov  9 00:43:07 2026 | ServerScriptService\Game\BattleTurnController.lua | HANDOFF1 R7 broadcastActions logs unclaimed held KOs at batch end | new x1=True old gone=True len ok=True
+Mon Nov  9 00:43:46 2026 | ServerScriptService\Game\CommandService.lua | HANDOFF2 R8 channel commit stores caster tile + aim tile | new x1=True old gone=True len ok=True
+Mon Nov  9 00:43:46 2026 | ServerScriptService\Game\CommandService.lua | HANDOFF2 R8 caster-centred channel re-anchors on a moved caster | new x1=True old gone=True len ok=True
+Mon Nov  9 00:44:40 2026 | HANDOFF session done: 12 edits in 3 files (BVB 10, BTC 1, CS 2 -> CS commit data + ActivateChanneledSkill). Block balance vs .pre_handoff OK (BVB +2 / CS +4 openers are if-expressions). Source-only; no Studio run. UnitInspectorPanel / LoadoutScreen untouched.
+Mon Nov  9 00:44:46 2026 | CORRECTION to previous line: 15 edits total (BVB 12, BTC 1, CS 2).
+Mon Nov  9 10:59:58 2026 | FINAL session start (Job1 attempt 2 of 2 push/KO display; Job2 Fissure Line; Job3 melee channel reach; Job4 weapon-pattern follow). Pre-check: only BattleHUD, LoadoutScreen, UnitInspectorPanel differ from _mtimes.json (other session) - not touched.
+Mon Nov  9 10:59:58 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | BACKUP .pre_final
+Mon Nov  9 10:59:58 2026 | ServerScriptService\Game\BattleTurnController.lua | BACKUP .pre_final
+Mon Nov  9 10:59:58 2026 | ServerScriptService\Game\TargetingService.lua | BACKUP .pre_final
+Mon Nov  9 10:59:58 2026 | ServerScriptService\Game\CommandService.lua | BACKUP .pre_final
+Mon Nov  9 10:59:58 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | BACKUP .pre_final
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | FINAL JOB1 held-push state | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | FINAL JOB1 ResetLogState drops held pushes | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | FINAL JOB1 held-push helpers | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | FINAL JOB1 TurnStarted sends leftover held pushes | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | FINAL JOB1 UnitMoved sends this unit's held push first | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | FINAL JOB1 UnitActed sends its held push after the hit, before the KO | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | FINAL JOB1 BattleEnded sends held pushes first | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | FINAL JOB1 UnitPushed builds its payload | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | FINAL JOB1 UnitPushed sends now only when not held | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | FINAL JOB1 UnitPushed holds its log line with the event | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleVisualBroadcaster.lua | FINAL JOB1 UnitPushed pause only when sent | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleTurnController.lua | FINAL JOB1 player hit command holds its push visuals | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleTurnController.lua | FINAL JOB1 rejected player command sends anything held | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleTurnController.lua | FINAL JOB1 AI hit commit holds + tags its push visuals | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleTurnController.lua | FINAL JOB1 AI action records its push tag | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleTurnController.lua | FINAL JOB1 broadcastActions passes the push tag to the hit | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleTurnController.lua | FINAL JOB1 broadcastActions sends unclaimed held pushes | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\BattleTurnController.lua | FINAL JOB1/JOB2 channel release holds push visuals; clears line override | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\TargetingService.lua | FINAL JOB2 TileLine pattern (line starts on the picked tile) | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\TargetingService.lua | FINAL JOB3 expose melee height rule | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ReplicatedStorage\CTRBLXAI\Shared\GameConstants.lua | FINAL JOB2 Fissure Line uses TileLine4 | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\CommandService.lua | FINAL JOB3 melee-reach channel helper | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\CommandService.lua | FINAL JOB4 weapon-pattern channels follow when the pattern is next to the caster | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\CommandService.lua | FINAL JOB2 Fissure Line keeps tile + committed direction when caster moved | new x1=True old gone=True len ok=True
+Mon Nov  9 11:01:43 2026 | ServerScriptService\Game\CommandService.lua | FINAL JOB3 melee channel fizzles if out of reach after the caster moved | new x1=True old gone=True len ok=True
+Mon Nov  9 11:02:20 2026 | FINAL session done: 25 edits in 5 files (BVB 11 Job1, BTC 7 Job1/Job2-clear, TS 2 Job2/Job3, GC 1 Job2, CS 4 Job2/3/4). Re-read: all 5 files match the planned text exactly; block keywords and brackets net 0 per file vs .pre_final. Source-only; no Studio run. BattleHUD / LoadoutScreen / UnitInspectorPanel untouched (changed by another session).
+Mon Nov  9 11:27:39 2026 | ServerScriptService\Game\CommandService.lua | BACKUP .pre_spear
+Mon Nov  9 11:27:39 2026 | ServerScriptService\Game\CommandService.lua | SPEAR reach-weapon channel fizzles like melee when caster moved out of reach | new x1=True old gone=True len ok=True

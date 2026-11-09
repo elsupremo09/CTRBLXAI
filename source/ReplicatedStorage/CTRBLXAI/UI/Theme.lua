@@ -631,6 +631,8 @@ Theme.ItemTile = {
 	CountBadgeFromRight = 24,     -- badge x-offset from the right edge (px)
 	CountBadgeBg     = Color3.fromRGB(0, 0, 0),
 	CountBadgeBgTransparency = 0.4,
+	PortraitNameLineH = 12,       -- portrait tiles (2026-11-09): px per name row, strip = 2 rows
+	PortraitNameMinDesktop = 8,   -- smallest desktop name text on portrait tiles (phone floor is 10)
 	NameBarHeight    = 26,        -- bottom name strip height (px) — fits TWO wrapped lines (2026-10-20)
 	-- Inventory grid cell (2026-11-07, DAT-001/AP-021): the Loadout gear/skill/consumable
 	-- formula, kept here once so every screen that wants Loadout-sized tiles uses it.
@@ -675,6 +677,11 @@ end
 ---   selected    boolean?   selection highlight (gold stroke + highlight bg)
 ---   layoutOrder number?    LayoutOrder within the grid
 ---   onClick     function?  Activated (tap) handler
+---   portrait    boolean?   (2026-11-09, Loadout Consumables) Skills/Augments-tile layout:
+---                          a full-width SQUARE icon (side cellW - 2*inset) at the top inset,
+---                          and a bottom name strip that always reserves TWO rows (bold Tiny
+---                          text, shrinks to the phone floor only if a long name needs it).
+---                          Off = the original layout (Merchant / Runeforge gems unchanged).
 --- Returns: the tile TextButton.
 function Theme.MakeItemTile(opts)
 	opts = opts or {}
@@ -733,7 +740,12 @@ function Theme.MakeItemTile(opts)
 		-- keeps the image aspect-correct and centered inside this box, and it self-adjusts to
 		-- any cell height (the tile fills the grid cell, so scale-1 height = full cell).
 		local ico = Instance.new("ImageLabel")
-		ico.Size = UDim2.new(1, -iconInset * 2, 1, -(iconInset + t.NameBarHeight + 2))
+		if opts.portrait then
+			-- Same box as the Loadout Skills/Augments tiles: full-width square from the top inset.
+			ico.Size = UDim2.new(1, -iconInset * 2, 0, cellW - iconInset * 2)
+		else
+			ico.Size = UDim2.new(1, -iconInset * 2, 1, -(iconInset + t.NameBarHeight + 2))
+		end
 		ico.Position = UDim2.fromOffset(iconInset, iconInset)
 		ico.BackgroundTransparency = 1
 		ico.Image = opts.icon
@@ -756,7 +768,42 @@ function Theme.MakeItemTile(opts)
 	end
 
 	-- Name strip (bottom)
-	if opts.name then
+	if opts.name and opts.portrait then
+		-- Two-row name strip (2026-11-09): rows of PortraitNameLineH px; text is bold Tiny,
+		-- stepped down (never below the phone floor / desktop min) until the name fits 2 rows.
+		local rowH = t.PortraitNameLineH
+		local barH = rowH * 2
+		local nameBg = Instance.new("Frame")
+		nameBg.Size = UDim2.new(1, 0, 0, barH)
+		nameBg.Position = UDim2.new(0, 0, 1, -barH)
+		nameBg.BackgroundColor3 = t.NameBgColor
+		nameBg.BackgroundTransparency = t.NameBgTransparency
+		nameBg.BorderSizePixel = 0
+		nameBg.ZIndex = 3
+		nameBg.Parent = tile
+		local font = Theme.Font.PrimaryBold
+		local labelW = math.max(10, cellW - 4)
+		local minSize = (Theme.GetMode() == "Mobile") and 10 or t.PortraitNameMinDesktop
+		local size = Theme.Text.Tiny()
+		while size > minSize and Theme.MeasureText(opts.name, size, font, labelW).Y > barH do
+			size -= 1
+		end
+		local nl = Instance.new("TextLabel")
+		nl.Size = UDim2.new(1, -4, 1, 0)
+		nl.Position = UDim2.new(0, 2, 0, 0)
+		nl.BackgroundTransparency = 1
+		nl.BorderSizePixel = 0
+		nl.Font = font
+		nl.TextSize = size
+		nl.TextColor3 = accent
+		nl.Text = opts.name
+		nl.TextXAlignment = Enum.TextXAlignment.Left
+		nl.TextYAlignment = Enum.TextYAlignment.Center
+		nl.TextWrapped = true
+		nl.TextTruncate = Enum.TextTruncate.AtEnd
+		nl.ZIndex = 3
+		nl.Parent = nameBg
+	elseif opts.name then
 		local nameBg = Instance.new("Frame")
 		nameBg.Size = UDim2.new(1, 0, 0, t.NameBarHeight)
 		nameBg.Position = UDim2.new(0, 0, 1, -t.NameBarHeight)

@@ -874,7 +874,7 @@ end
 -- and the UnitPushed broadcast. Returns the push result (or nil).
 -- preResolved (optional, 2026-10-28): requestedDistance is a final, already Stability-checked total
 -- (multi-hit knockback sum). Passed straight to ResolvePush.
-local function applyKnockback(state: any, actor: any, target: any, force: number, label: string, dirOverride: any, requestedDistance: any, stabilityIgnore: any, pullOverride: any, preResolved: any)
+local function applyKnockback(state: any, actor: any, target: any, force: number, label: string, dirOverride: any, requestedDistance: any, stabilityIgnore: any, pullOverride: any, preResolved: any, cause: any)
 	if not (target and target.isAlive) then return nil end
 	-- dirOverride (optional): explicit {dx,dy} push direction. Used by FT-019 Kick Boots to knock the
 	-- enemy in ITS OWN facing direction. When nil, falls back to the standard away-from-attacker push.
@@ -948,7 +948,7 @@ local function applyKnockback(state: any, actor: any, target: any, force: number
 				end
 			end
 		end
-		BattleVisualBroadcaster.UnitPushed(actor, target, result)
+		BattleVisualBroadcaster.UnitPushed(actor, target, result, cause)  -- cause: battle-log label (item 8, 2026-11-08 11:52 PM)
 		LifeLinkService.CheckUnit(target)  -- a push can carry a linked unit past 6 tiles (2026-11-08)
 		print(string.format(
 			"[CommandService] %s KNOCKBACK | %s -> %s | Moved:%d to (%d,%d) | Dmg:%d",
@@ -1013,9 +1013,10 @@ end
 if BattleCoordinator.SetRtAccrueHook then
 	BattleCoordinator.SetRtAccrueHook(suppressionRtHook)
 end
-function CommandService.ApplyAugmentKnockback(pusher: any, target: any, force: any, dir: any, distance: any, isPull: any): any
+function CommandService.ApplyAugmentKnockback(pusher: any, target: any, force: any, dir: any, distance: any, isPull: any, cause: any): any
 	if not (_augKnockState and pusher and target and target.isAlive and dir) then return nil end
-	return applyKnockback(_augKnockState, pusher, target, force or 1, "AUGMENT", dir, distance, nil, isPull)
+	-- cause (optional, item 8): the augment's name, shown in the battle-log collision line.
+	return applyKnockback(_augKnockState, pusher, target, force or 1, "AUGMENT", dir, distance, nil, isPull, nil, cause)
 end
 
 -- RESCUE BEACON (DEP-016, 2026-10-26, user-approved). Called by Main before every
@@ -3900,6 +3901,31 @@ function CommandService.SaveableConsumableSlots(slots: any): any
 	return out
 end
 
+-- Job 3 (USER RULING 2026-11-09 12:04 AM, rule 255): a channelled single-target skill whose reach is melee:
+-- fixed range 1 (Crushing Advance, Field Dressing, Feinting Flurry, Overwhelming Blow, Mug) or weapon range
+-- with a melee weapon (no projectile type: Shatter Point, Rapid Assault, Precise Disarm, Execution Stroke on a
+-- Single-pattern weapon). Steal keeps its own rear-tile check; leaps / dashes / steps move the caster
+-- themselves; revives and summons keep their own rules.
+local function isMeleeReachChannel(unit: any, skillDef: any): boolean
+	if skillDef.id == "SKL-STEAL" or skillDef.isLeapStrike or skillDef.leapsAdjacent
+		or skillDef.stepsToTargetFirst or skillDef.isRevive or skillDef.isSummon then
+		return false
+	end
+	local p = skillDef.aoePattern
+	-- USER RULING 2026-11-09 10:44 AM: a weapon-pattern skill (Execution Stroke, Storm Barrage) on a reach weapon
+	-- whose pattern is not next to the caster (Spear Line2) neither follows nor stays put: it fizzles like a
+	-- Single weapon when the moved caster is out of reach. Cleave / Adjacent keep the Job 4 follow rule.
+	local wp = unit.weaponPattern or "Single"
+	local single = p == nil or p == "Single" or (p == "InheritWeapon" and wp ~= "Cleave" and wp ~= "Adjacent")
+	if not single then
+		return false
+	end
+	if skillDef.range == 1 then
+		return true
+	end
+	return skillDef.range == -1 and unit.weaponProjectileType == nil
+end
+
 function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean, any)
 	unit._skillFizzled = false
 	if not unit.isChanneling or not unit.channelingData then
@@ -3925,6 +3951,67 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 	unit.channelResolveCt = nil
 	unit.channelPhase   = nil
 	unit.pendingActivationCt = nil
+
+	-- Rulings R8 (handoff 2, 2026-11-09; USER RULING 2026-11-08 11:52 PM, decision 139 / rule 255): a
+	-- CASTER-CENTRED channel follows a caster that was pushed (or otherwise moved) during the wait. The aim
+	-- keeps its direction and distance from the caster and is re-anchored on the caster's tile now; whoever
+	-- stands on that tile is the main target (empty tile = empty-tile cast, as for any aimed tile).
+	-- Caster-centred = Cleave arc (Decimating Swing), caster-origin Line / Cone, "Caster Area". Tile-aimed
+	-- skills (area on a picked tile, Chain, leaps, summons, traps) and single-target skills are unchanged.
+	-- A channel committed without casterX / aimX (before this build) resolves as before.
+	if target and target ~= unit and skillDef and data.casterX and data.aimX
+		and (unit.tileX ~= data.casterX or unit.tileY ~= data.casterY) then
+		local p = skillDef.aoePattern
+		local offX = data.aimX - data.casterX
+		local offY = data.aimY - data.casterY
+		local casterCentred = not skillDef.isLeapStrike and (isCasterArea(skillDef)
+			or ((offX ~= 0 or offY ~= 0) and (p == "Cleave"
+				or (type(p) == "string" and (string.sub(p, 1, 4) == "Line" or string.sub(p, 1, 4) == "Cone"))))
+			-- Job 4 (USER RULING 2026-11-09 10:42 AM, rule 255): a weapon-pattern skill (Execution Stroke, Storm
+			-- Barrage) follows too when the weapon's pattern sits next to the caster: a Cleave / Adjacent weapon
+			-- aimed at an adjacent tile. Any other weapon pattern stays on its aimed tile.
+			or (p == "InheritWeapon" and (unit.weaponPattern == "Cleave" or unit.weaponPattern == "Adjacent")
+				and math.max(math.abs(offX), math.abs(offY)) == 1))
+		if casterCentred then
+			local fromX, fromY = target.tileX, target.tileY
+			if isCasterArea(skillDef) then
+				target = unit
+			else
+				local stepX = if offX > 0 then 1 elseif offX < 0 then -1 else 0
+				local stepY = if offY > 0 then 1 elseif offY < 0 then -1 else 0
+				local ax = unit.tileX + offX
+				local ay = unit.tileY + offY
+				local function onMap(x: number, y: number): boolean
+					return x >= 1 and y >= 1 and x <= _mapWidth and y <= _mapHeight
+				end
+				-- Past the map edge: shorten the reach toward the caster (same direction) until it fits.
+				for _ = 1, math.max(math.abs(offX), math.abs(offY)) do
+					if onMap(ax, ay) then break end
+					if math.abs(ax - unit.tileX) > 1 then ax -= stepX end
+					if math.abs(ay - unit.tileY) > 1 then ay -= stepY end
+				end
+				if not onMap(ax, ay) then
+					print(string.format("[CommandService] Channel FIZZLE | %s | [%s] -- moved to the map edge, aim off the map",
+						unit.name, skillDef.name or skillDef.id))
+					return false, "No room to strike after being moved."
+				end
+				target = findLiveTileOccupant(state, ax, ay)
+					or { id = "_ground_target", name = "Ground", tileX = ax, tileY = ay, isGroundTarget = true }
+			end
+			print(string.format("[CommandService] Channel FOLLOW | %s | [%s] caster moved (%d,%d)->(%d,%d) | aim (%s,%s)->(%d,%d) %s",
+				unit.name, skillDef.name or skillDef.id, data.casterX, data.casterY, unit.tileX, unit.tileY,
+				tostring(fromX), tostring(fromY), target.tileX, target.tileY, tostring(target.name)))
+		end
+		-- Job 2 (USER RULING 2026-11-09 12:04 AM, rule 255): a tile-origin line (Fissure Line) is tile-aimed: it
+		-- stays on its picked tile AND keeps the direction it was committed in (from where the caster stood),
+		-- not the moved caster's tile. BattleTurnController clears this after the release.
+		if type(p) == "string" and string.sub(p, 1, 8) == "TileLine" then
+			unit._tileLineFromX = data.casterX
+			unit._tileLineFromY = data.casterY
+			print(string.format("[CommandService] Channel STAYS | %s | [%s] caster moved (%d,%d)->(%d,%d) | line stays on (%d,%d), committed direction kept",
+				unit.name, skillDef.name or skillDef.id, data.casterX, data.casterY, unit.tileX, unit.tileY, data.aimX, data.aimY))
+		end
+	end
 
 	-- SUMMON skill (channeled Decoy/Turret/Ward Totem). Resolve the summon spawn
 	-- here, BEFORE the target-alive fizzle below: the channel target is a stat-less
@@ -4099,6 +4186,26 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 			target = occupant
 		else
 			_emptyTileCast = true
+		end
+	end
+
+	-- Job 3 (USER RULING 2026-11-09 12:04 AM, rule 255): a melee single-target channel whose caster was moved
+	-- during the wait (push, pull, swap, teleport) fizzles if its target is now out of reach. Same reach rule as
+	-- the cast (shared range formula + melee height limit), same pattern as the Steal re-check above: it returns
+	-- before the cost is paid, so no MP is spent (the turn was already spent at commit).
+	if target and target ~= unit and target.tileX and skillDef and data.casterX
+		and (unit.tileX ~= data.casterX or unit.tileY ~= data.casterY)
+		and isMeleeReachChannel(unit, skillDef) then
+		local maxR, minR, baseR = GameConstants.CalcSkillRange(unit, skillDef,
+			RacePassiveService.GetSkillRangeModifier(unit, skillDef)
+				+ WeaponPassiveService.GetSkillRangeBonus(unit, skillDef)
+				+ DoctrinePassiveService.GetProjectileRangeModifier(unit, skillDef.projectileType or (skillDef.range == -1 and unit.weaponProjectileType or nil)))
+		local dist = math.max(math.abs(target.tileX - unit.tileX), math.abs(target.tileY - unit.tileY))
+		if dist > maxR or dist < minR or not TargetingService.IsMeleeElevationLegal(unit, target, baseR) then
+			print(string.format("[CommandService] Channel FIZZLE | %s | [%s] -- caster moved (%d,%d)->(%d,%d), target %s out of reach (dist %d, reach %d-%d)",
+				unit.name, skillDef.name or skillDef.id, data.casterX, data.casterY, unit.tileX, unit.tileY,
+				tostring(target.name), dist, minR, maxR))
+			return false, "Target out of reach after being moved."
 		end
 	end
 
@@ -6407,6 +6514,12 @@ function CommandService.ValidateAndCommit(
 			BattleCoordinator.StartChanneling(state, actor, {
 				skillDef  = skillDef,
 				target    = target,
+				-- Rulings R8 (handoff 2, 2026-11-09): where the caster stood and the tile it aimed at, so a
+				-- caster-centred channel can follow a pushed caster at release (ActivateChanneledSkill).
+				casterX   = actor.tileX,
+				casterY   = actor.tileY,
+				aimX      = if target then target.tileX else nil,
+				aimY      = if target then target.tileY else nil,
 				mpCost    = mpCost,
 				channelRt = channelRt,
 				activationCt = activationCt,
@@ -7301,7 +7414,8 @@ function CommandService.ValidateAndCommit(
 							if d <= reach and d < bestD then best, bestD = u, d end
 						end
 					end
-					if best then
+					-- Max 1 chain per unit turn (DB; user ruling 2026-11-08 11:52 PM item 4). Counted only when it fires.
+					if best and AugmentEffectService.TryUseTurnCap(actor, "AUG-CHAIN-KILL") then
 						actor._chainKillFiring = true
 						local o = CombatResolver.ResolveSkill(actor, best, skillDef)
 						o.finalDamage = math.max(0, math.round((o.finalDamage or 0) * 0.70))
@@ -9632,6 +9746,15 @@ function CommandService.ValidateAndCommit(
 		actor.momentumUsedThisTurn = true
 		actor.pendingKoApGain = 0
 		print(string.format("[CommandService] Momentum: %s gains +1 AP on KO (now %d)", actor.name, actor.currentAp))
+	end
+	-- Executioner augment (USER RULING 2026-11-08 11:52 PM item 5): +1 AP after a qualifying kill, max once
+	-- per turn (AugmentEffectService.TryUseTurnCap). Granted here, before the out-of-AP check, so a kill
+	-- made with the last AP keeps the turn open. The flag is cleared at the unit's turn start.
+	if actor._executionerApPending and actor.isAlive then
+		actor._executionerApPending = nil
+		actor.currentAp = (actor.currentAp or 0) + 1
+		print(string.format("[CommandService] Executioner: %s recovers 1 AP on kill (now %d)", actor.name, actor.currentAp))
+		BattleVisualBroadcaster.Log("info", `{actor.name} recovers 1 AP (Executioner).`, actor.id)
 	end
 	-- Out of AP ends the turn, unless Quick Draw's bonus attack is now on offer (the player / AI may
 	-- take it or Wait).

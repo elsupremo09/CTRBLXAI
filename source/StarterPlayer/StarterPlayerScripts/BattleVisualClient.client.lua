@@ -3313,7 +3313,7 @@ local function createDevCameraPanel()
 		{ cat = "Hazard",      items = { "Bear Trap", "Spike Trap", "Snare Trap", "Land Mine", "Bomb Barrel", "Oil Sluice", "Steam Valve" } },
 		{ cat = "Exploration", items = { "Treasure Chest", "Mimic", "Cursed Chest", "Healing Spring", "Magic Spring", "Campfire", "Blood Fountain", "Astrolabe", "Potion Desk", "Crystal Ball", "Eye of the Magi", "Black Market" } },
 		{ cat = "Aura",        items = { "War Banner", "Cursed Statue", "Rally Flag", "Star Axis", "Burning Cauldron", "War Horn", "Runed Boulder" } },
-		{ cat = "Event",       items = { "Idol of Fortune", "Fountain of Fortune", "Tavern", "Necro Tome Stand", "Cover of Darkness", "Dragon Utopia", "Chaos Statue", "Angel Statue", "Obelisk", "Forge", "Witch Hut", "Mysterious Boulder", "Glow Crystal", "Pandora's Box", "Swan Pond" } },
+		{ cat = "Event",       items = { "Idol of Fortune", "Fountain of Fortune", "Tavern", "Necro Tome Stand", "Cover of Darkness", "Dragon Utopia", "Chaos Statue", "Angel Statue", "Obelisk", "Forge", "Witch Hut", "Mysterious Boulder", "Glow Crystal", "Pandora's Box", "Swan Pond", "Mutation Bench" } },
 	}
 	local catNames = {}
 	for _, c in ipairs(objCats) do catNames[#catNames + 1] = c.cat end
@@ -4644,6 +4644,21 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	for _, token in pairs(unitTokens) do
 		if token.facePad and token.facePad.Parent then token.facePad:Destroy() end
 		token.facePad = nil
+	end
+	-- Close any player prompt still open when the battle ends (2026-11-09): dev Instant Win/Lose can
+	-- end a battle while the facing arrows, siege tile/cancel prompt or a pick list is showing. The
+	-- server stops waiting on them; remove them here so nothing is left to tap.
+	for _, inst in ipairs(workspace:GetChildren()) do
+		if inst.Name == "FacingArrows" or inst.Name == "SiegeTilePrompt" then inst:Destroy() end
+	end
+	do
+		local pg = player:FindFirstChildOfClass("PlayerGui")
+		if pg then
+			for _, n in ipairs({ "StealPicker", "SiegeCancelGui" }) do
+				local g = pg:FindFirstChild(n)
+				while g do g:Destroy(); g = pg:FindFirstChild(n) end
+			end
+		end
 	end
 	bp.state = "BattleEnded"; BattleHUD.Render(bp)
 

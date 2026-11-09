@@ -618,10 +618,13 @@ function GuildMenuService.RestoreRecruits(pid: string, savedEquipMap: any, saved
 				-- Restore the saved portrait (hired default, battle-recruit enemy face, or a
 				-- loadout pick) so it stays stable across logins. (2026-10-15)
 				if savedRace.portraitAssetId then unit.portraitAssetId = savedRace.portraitAssetId end
+				-- A portrait the player removed stays removed (2026-11-09).
+				if savedRace.portraitCleared and not unit.portraitAssetId then unit.portraitCleared = true end
 			end
 			-- Old saves (pre-portrait) or any gap: give the recruit a random race-matched
-			-- face rather than letting it fall back to initials. Never overrides a restored one.
-			if not unit.portraitAssetId then
+			-- face rather than letting it fall back to initials. Never overrides a restored one,
+			-- and skipped when the player removed the face on purpose (2026-11-09).
+			if not unit.portraitAssetId and not unit.portraitCleared then
 				unit.portraitAssetId = PortraitData.PickRandom(Random.new(seedFromId(unitId) + 4242), unit.raceId)
 			end
 			-- Battle recruits keep exactly the traits they had (rule 133), even none:

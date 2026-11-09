@@ -391,6 +391,9 @@ local function encodeUnit(unitState)
 		-- (display falls back to the colored box). Headshot mode (option A) is
 		-- deferred until worn-UGC is persisted, so only the asset ID is saved here.
 		por = unitState.portraitAssetId or nil,
+		-- 1 = the player removed the portrait on purpose (2026-11-09); written only when
+		-- set, so units that never cleared one save exactly as before.
+		pcl = if unitState.portraitCleared == true then 1 else nil,
 		-- Player-chosen body/skin tint as {r,g,b} 0-255 ints (nil = template colors).
 		bcl = unitState.bodyColor or nil,
 	}
@@ -441,6 +444,8 @@ local function decodeUnit(encoded, unitId)
 		consumableSlots = encoded.con or nil,
 		-- Player-chosen 2D portrait asset ID (option B); nil = colored-box fallback.
 		portraitAssetId = encoded.por or nil,
+		-- Player removed the portrait on purpose. Missing on older saves = never cleared.
+		portraitCleared = if encoded.pcl == 1 or encoded.pcl == true then true else nil,
 		-- Player-chosen body/skin tint {r,g,b} 0-255 ints; nil = template colors.
 		bodyColor = encoded.bcl or nil,
 	}

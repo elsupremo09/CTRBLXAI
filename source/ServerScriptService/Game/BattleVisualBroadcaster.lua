@@ -220,6 +220,9 @@ local function flushLog()
 			for _, e in ipairs(list) do
 				if e.trace then warn(`[BattleLog] uncaused {e.kind} for {e.name}\n{e.trace}`) end
 				fireLogRaw(e.category or "status", entryText(e), e.unitId)
+				-- R7: a diff KO line counts as this KO's line (no second one from a hit / push).
+				local _ks = if e.kind == "ko" and e.unitId ~= nil then _snap[e.unitId] else nil
+				if _ks and _ks.alive == false then _ks.koLogged = true end
 			end
 		end
 	end
@@ -296,6 +299,7 @@ local function syncHp(unit)
 	if s.hp ~= (unit.currentHp or 0) then s.loggedGain = nil end  -- HEAL_CAUSES record is out of date
 	s.hp = unit.currentHp or 0
 	s.alive = unit.isAlive ~= false
+	if s.alive then s.koLogged = nil end  -- R7: alive again, a later KO gets its own line
 end
 
 local function syncStatus(unit, statusId, present)
@@ -310,6 +314,51 @@ local function logEntry(category, text, unitId)
 	if type(text) ~= "string" or text == "" then return end
 	flushLog()  -- keep chronological order with buffered lines
 	fireLogRaw(category, text, unitId)
+end
+
+-- Rulings R7 (handoff 1, 2026-11-09, rule 256): ONE "is knocked out." line per KO. A push / collision KO
+-- is HELD here (queueKo) instead of logged at once: the hit line of the same attack / skill logs it right
+-- after itself (UnitActed -> logKo). FlushPendingKo() logs any KO that no hit line claimed (end of each
+-- broadcast batch, next turn start, battle end). s.koLogged = this KO already has its line (cleared
+-- when the unit is seen alive again).
+local _pendingKo = {}       -- [unitId] = unit, KO line held back
+local _pendingKoOrder = {}  -- unitIds in the order they went down
+-- Job 1 (2026-11-09, rule 256 / ruling 140, attempt 2): push / collision visuals HELD while a hit command
+-- resolves. BattleTurnController turns the hold on around Attack / Skill commits and channel releases.
+-- UnitPushed then keeps its client event + log line here instead of sending them, and they are sent right
+-- AFTER the hit that caused them (UnitActed), so the client never sees a push's HP drop / KO before that
+-- hit. Unclaimed ones go at the end of the batch (FlushHeldPushes). A Push command (no hit) is never held.
+-- tag = which AI action of the turn held it (nil = the commit running now).
+local _holdPushes = false
+local _heldPushes: { any } = {}  -- { targetId, payload, text, pusherId, tag }
+local function logKo(unit)
+	if not unit or unit.id == nil then return end
+	_pendingKo[unit.id] = nil
+	if not _snap[unit.id] then seedUnit(unit) end
+	local s = _snap[unit.id]
+	if s.koLogged then return end
+	s.koLogged = true
+	logEntry("ko", `{unitName(unit)} is knocked out.`, unit.id)
+end
+local function queueKo(unit)
+	if not unit or unit.id == nil or unit.isAlive ~= false then return end
+	local s = _snap[unit.id]
+	if (s and s.koLogged) or _pendingKo[unit.id] then return end
+	_pendingKo[unit.id] = unit
+	table.insert(_pendingKoOrder, unit.id)
+end
+local function flushPendingKo()
+	if #_pendingKoOrder == 0 then return end
+	local order = _pendingKoOrder
+	_pendingKoOrder = {}
+	for _, id in ipairs(order) do
+		local u = _pendingKo[id]
+		_pendingKo[id] = nil
+		if u and u.isAlive == false then logKo(u) end
+	end
+end
+function BattleVisualBroadcaster.FlushPendingKo()
+	flushPendingKo()
 end
 
 -- Captured at diff time, warned at flush time only if the line survived dedup.
@@ -377,6 +426,7 @@ local function diffUnit(unit, cause)
 	s.hp = hp
 	s.mp = mp
 	s.alive = alive
+	if alive then s.koLogged = nil end  -- R7: alive again, a later KO gets its own line
 	s.st = st
 end
 
@@ -421,6 +471,14 @@ function BattleVisualBroadcaster.FlushLog()
 	flushLog()
 end
 
+-- True when the unit's current HP is what clients were last sent (every HP change so far already
+-- went out with its own cause, e.g. Blood Price's HP cost or a Lifesteal heal). 2026-11-09.
+function BattleVisualBroadcaster.IsHpShown(unit): boolean
+	if not unit or unit.id == nil then return false end
+	local s = _snap[unit.id]
+	return s ~= nil and s.hp == (unit.currentHp or 0)
+end
+
 -- Refresh a unit's log snapshot to its current state WITHOUT logging -- for code
 -- that logged the change itself via Log() (e.g. ObjectEffectService.TriggerTrap).
 function BattleVisualBroadcaster.SyncUnit(unit)
@@ -432,6 +490,10 @@ end
 -- Clear all log snapshots (battle end / reset).
 function BattleVisualBroadcaster.ResetLogState()
 	flushLog()
+	table.clear(_pendingKo)       -- R7: a held KO never carries into another battle
+	table.clear(_pendingKoOrder)
+	table.clear(_heldPushes)  -- Job 1: a held push never carries into another battle
+	_holdPushes = false
 	table.clear(_snap)
 	table.clear(_unitsById)
 	_scopedCause = nil
@@ -453,6 +515,52 @@ local PACE = {
 	Dot          = 0.8,
 	Healing      = 0.8,
 }
+
+-- Job 1 (2026-11-09): send held push visuals (client event, then its log line, then the push pause).
+-- targetId nil = any unit; anyTag = ignore the tag.
+local function releaseHeldPushes(targetId: any, tag: any, anyTag: boolean)
+	if #_heldPushes == 0 then return end
+	local send = {}
+	local keep = {}
+	for _, h in ipairs(_heldPushes) do
+		if (targetId == nil or h.targetId == targetId) and (anyTag or h.tag == tag) then
+			table.insert(send, h)
+		else
+			table.insert(keep, h)
+		end
+	end
+	if #send == 0 then return end
+	_heldPushes = keep
+	for _, h in ipairs(send) do
+		BattleEvents.UnitPushed:FireAllClients(h.payload)
+		logEntry("action", h.text, h.pusherId)
+		task.wait(PACE.Action)
+	end
+end
+
+function BattleVisualBroadcaster.HoldPushes(on: boolean)
+	_holdPushes = on == true
+end
+
+-- Stamp the pushes held by the commit that just ran with a new tag (an AI turn batches several commits).
+local _pushTagSeq = 0
+function BattleVisualBroadcaster.TagHeldPushes(): number
+	_pushTagSeq += 1
+	for _, h in ipairs(_heldPushes) do
+		if h.tag == nil then h.tag = _pushTagSeq end
+	end
+	return _pushTagSeq
+end
+
+function BattleVisualBroadcaster.ReleaseHeldPushes(targetId: any, tag: any)
+	releaseHeldPushes(targetId, tag, false)
+end
+
+-- Everything still held, in order; also ends the hold.
+function BattleVisualBroadcaster.FlushHeldPushes()
+	_holdPushes = false
+	releaseHeldPushes(nil, nil, true)
+end
 
 --------------------------------------------------
 -- HELPERS
@@ -595,6 +703,12 @@ function BattleVisualBroadcaster.TimelineRtFor(u)
 end
 
 function BattleVisualBroadcaster.TurnStarted(unit, ct, allUnits)
+	-- Job 1: a held push is never carried into the next turn (should not happen: each batch sends its own).
+	if #_heldPushes > 0 then
+		warn(`[BattleVisualBroadcaster] {#_heldPushes} held push visual(s) were not sent by their batch; sending now.`)
+	end
+	BattleVisualBroadcaster.FlushHeldPushes()
+	flushPendingKo()  -- R7 fallback: a held KO no hit line claimed goes before the next turn header
 	_logTurn += 1
 	logEntry("turn", `{unitName(unit)}  ·  turn {_logTurn}  ·  CT {ct or 0}`, unit.id)
 	-- Build a compact snapshot of all units' RT for client timeline simulation
@@ -627,6 +741,8 @@ function BattleVisualBroadcaster.TurnStarted(unit, ct, allUnits)
 end
 
 function BattleVisualBroadcaster.UnitMoved(unit)
+	-- Job 1: a held push of this unit is shown before its next move, so the token never jumps back.
+	if #_heldPushes > 0 then releaseHeldPushes(unit.id, nil, true) end
 	BattleEvents.UnitMoved:FireAllClients({
 		unitId = unit.id,
 		tileX  = unit.tileX,
@@ -646,7 +762,9 @@ function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, sk
 		skillName   = skillName,
 		skillId     = skillId,  -- client VFX registry lookup (element/tags)
 		animKind    = animKind,
-		targetHp    = target.currentHp,
+		-- Rulings R9 (handoff 1, 2026-11-09): this hit's own HP when the caller recorded it (AI turns are
+		-- sent after the whole turn), so the bar steps down hit by hit; otherwise the live HP, as before.
+		targetHp    = if outcome.targetHpAfter ~= nil then outcome.targetHpAfter else target.currentHp,
 		targetMaxHp = target.maxHp,
 		statusApplied = outcome.statusApplied or nil,
 		rtDelay     = outcome.rtDelay or nil,
@@ -655,7 +773,10 @@ function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, sk
 		local head = if skillName
 			then `{unitName(actor)} uses {skillName} on {unitName(target)}`
 			else `{unitName(actor)} attacks {unitName(target)}`
-		local parts = { `{head}: -{outcome.finalDamage or 0} HP ({target.currentHp or 0}/{target.maxHp or 0})` }
+		-- Item 10 (2026-11-08 11:52 PM): HP after THIS hit when the caller recorded it (AI turns are logged
+		-- after the whole turn); otherwise the live HP, as before.
+		local hpShown = if outcome.targetHpAfter ~= nil then outcome.targetHpAfter else target.currentHp
+		local parts = { `{head}: -{outcome.finalDamage or 0} HP ({hpShown or 0}/{target.maxHp or 0})` }
 		if outcome.statusApplied and outcome.statusApplied ~= "" then
 			table.insert(parts, `+{outcome.statusApplied}`)
 		end
@@ -667,10 +788,16 @@ function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, sk
 		if outcome.statusApplied and outcome.statusApplied ~= "" then syncStatus(target, outcome.statusApplied, true) end
 	end
 	task.wait(PACE.Action)
+	-- Job 1 (2026-11-09): this hit's held knockback / collision now -- after the hit, before the KO below.
+	releaseHeldPushes(target.id, outcome.pushTag, false)
 
-	if not target.isAlive then
+	-- Rulings R9 (handoff 1, 2026-11-09): the defeated event AND the KO line go only with the hit that
+	-- knocked the unit out (koHere == false: an earlier, non-lethal hit of this AI turn), so the client
+	-- never shows the unit down before its last hit. R7: logKo writes one line per KO, after this hit line
+	-- (a push / collision KO of this target was held back for it).
+	if not target.isAlive and outcome.koHere ~= false then
 		BattleEvents.UnitDefeated:FireAllClients({ unitId = target.id })
-		logEntry("ko", `{unitName(target)} is knocked out.`, target.id)
+		logKo(target)
 		task.wait(PACE.Defeat)
 	end
 end
@@ -696,7 +823,7 @@ function BattleVisualBroadcaster.DotDamage(unit, statusId, damage, sourceName)
 
 	if not unit.isAlive then
 		BattleEvents.UnitDefeated:FireAllClients({ unitId = unit.id })
-		logEntry("ko", `{unitName(unit)} is knocked out.`, unit.id)
+		logKo(unit)  -- R7: one KO line per KO
 		task.wait(PACE.Defeat)
 	end
 end
@@ -830,8 +957,23 @@ function BattleVisualBroadcaster.StatusApplied(unit, statusId, remainingTurns, s
 		elseif type(remainingTurns) == "number" then
 			dur = ` ({remainingTurns} turn{if remainingTurns == 1 then "" else "s"})`
 		end
-		logEntry("status", `{unitName(unit)} gains {statusId}{dur}.`, unit.id)
+		-- Item 10 (2026-11-08 11:52 PM): one application = one line. An augment (e.g. Pinning Support) announces
+		-- its status when it lands; the action summary (BattleTurnController) then announced the same status
+		-- again. Skip the line when this exact instance (same table, same time left) was already logged.
+		local _inst = StatusService.HasStatus(unit, statusId)
+		local _stamp = if _inst then `{tostring(_inst.remainingCt)}|{tostring(_inst.remainingTurns)}` else nil
+		local _s = if unit and unit.id ~= nil then _snap[unit.id] else nil
+		local _prev = _s and _s.statusLogged and _s.statusLogged[statusId]
+		local _dup = _inst ~= nil and _prev ~= nil and _prev.inst == _inst and _prev.stamp == _stamp
+		if not _dup then
+			logEntry("status", `{unitName(unit)} gains {statusId}{dur}.`, unit.id)
+		end
 		syncStatus(unit, statusId, true)
+		_s = if unit and unit.id ~= nil then _snap[unit.id] else nil  -- syncStatus may have just seeded it
+		if _s and _inst then
+			_s.statusLogged = _s.statusLogged or {}
+			_s.statusLogged[statusId] = { inst = _inst, stamp = _stamp }
+		end
 	end
 	task.wait(PACE.Status)
 end
@@ -859,6 +1001,7 @@ function BattleVisualBroadcaster.TurnEnded(unit, nextRt)
 end
 
 function BattleVisualBroadcaster.BattleEnded(winner, units)
+	BattleVisualBroadcaster.FlushHeldPushes()  -- Job 1: nothing held is lost at battle end
 	local serialized = {}
 	for _, unit in ipairs(units) do
 		table.insert(serialized, serializeUnit(unit))
@@ -868,6 +1011,7 @@ function BattleVisualBroadcaster.BattleEnded(winner, units)
 		winner = winner,
 		units  = serialized,
 	})
+	flushPendingKo()  -- R7: a held KO line still goes before the result line
 	logEntry("info", `Battle over: {tostring(winner)} wins.`)
 	BattleVisualBroadcaster.ResetLogState()
 	task.wait(PACE.BattleEnd)
@@ -891,8 +1035,10 @@ end
 -- PUSH
 --------------------------------------------------
 
-function BattleVisualBroadcaster.UnitPushed(pusher, target, result)
-	BattleEvents.UnitPushed:FireAllClients({
+function BattleVisualBroadcaster.UnitPushed(pusher, target, result, cause)
+	-- Job 1 (2026-11-09): built now (this push's own HP values); sent now, or held for the hit that caused it.
+	local held = _holdPushes
+	local payload = {
 		pusherId       = pusher.id,
 		targetId       = target.id,
 		pushed         = result.pushed,
@@ -908,24 +1054,58 @@ function BattleVisualBroadcaster.UnitPushed(pusher, target, result)
 		-- collision, so the client can update its bar and show a collision KO.
 		collidedId     = result.wallCollision and result.wallCollision.collidedUnitId or nil,
 		collidedHp     = result.wallCollision and result.wallCollision.collidedUnitHpAfter or nil,
-	})
+	}
+	if not held then BattleEvents.UnitPushed:FireAllClients(payload) end
 	do
 		local text
+		local wallDmg = result.wallCollision and result.wallCollision.damage or 0
+		-- Item 8 (2026-11-08 11:52 PM): the unit it was shoved / pulled into (e.g. Vortex Strike pulling a unit
+		-- into its caster) also takes collision damage: log it, with the cause when the caller gives one.
+		local hitId = result.wallCollision and result.wallCollision.collidedUnitId or nil
+		local hitDmg = result.wallCollision and result.wallCollision.collidedUnitDamage or 0
+		local hitUnit = if hitId ~= nil then _unitsById[hitId] else nil
+		local hitText = if hitUnit and hitDmg > 0
+			then `, {unitName(hitUnit)} -{hitDmg} HP ({hitUnit.currentHp or 0}/{hitUnit.maxHp or 0})` else ""
+		local causeText = if cause then ` ({tostring(cause)})` else ""
 		if result.pushed and (result.tilesDisplaced or 0) > 0 then
 			text = `{unitName(pusher)} pushes {unitName(target)} {result.tilesDisplaced} tile{if result.tilesDisplaced == 1 then "" else "s"}`
-			local wallDmg = result.wallCollision and result.wallCollision.damage or 0
 			if wallDmg > 0 then text ..= `, wall hit -{wallDmg} HP` end
 			if (result.fallDamage or 0) > 0 then text ..= `, fall -{result.fallDamage} HP` end
-			text ..= "."
+			text ..= ` ({target.currentHp or 0}/{target.maxHp or 0})`  -- R7 (handoff 1): the pushed unit's own HP
+			text ..= hitText .. causeText .. "."
+		elseif wallDmg > 0 or hitText ~= "" then
+			-- Blocked, but it still collided (a pull into the puller, a push into an adjacent wall).
+			local into = if hitUnit then unitName(hitUnit) elseif result.blockedBy then tostring(result.blockedBy) else "an obstacle"
+			text = `{unitName(target)} collides with {into}: -{wallDmg} HP ({target.currentHp or 0}/{target.maxHp or 0}){hitText}{causeText}.`
 		else
 			text = `{unitName(pusher)}'s push on {unitName(target)} is blocked{if result.blockedBy then ` by {tostring(result.blockedBy)}` else ""}.`
 		end
-		logEntry("action", text, pusher.id)
+		if held then
+			table.insert(_heldPushes, { targetId = target.id, payload = payload, text = text, pusherId = pusher.id })
+		else
+			logEntry("action", text, pusher.id)
+		end
 		local _pd = (result.wallCollision and result.wallCollision.damage or 0) + (result.fallDamage or 0)
-		if _pd > 0 then syncHp(target, "loss", _pd)
+		-- KO lines only when the log still shows the unit standing (no second KO line if another
+		-- broadcast already reported it).
+		local function shownAlive(u: any): boolean
+			local s = u and u.id ~= nil and _snap[u.id]
+			return s ~= nil and s ~= false and s.alive == true
+		end
+		-- Rulings R7 (handoff 1, 2026-11-09): the KO is HELD (queueKo), not logged here, so it comes once,
+		-- after the hit line of the same attack / skill (UnitActed); unclaimed ones at the batch end.
+		if _pd > 0 then
+			local wasShown = shownAlive(target)
+			syncHp(target, "loss", _pd)
+			if wasShown then queueKo(target) end
 		elseif target and target.id ~= nil and _snap[target.id] then _snap[target.id].alive = target.isAlive ~= false end
+		if hitUnit and hitDmg > 0 then
+			local wasShown = shownAlive(hitUnit)
+			syncHp(hitUnit)
+			if wasShown then queueKo(hitUnit) end
+		end
 	end
-	task.wait(PACE.Action)
+	if not held then task.wait(PACE.Action) end  -- held: the pause is taken when it is sent
 end
 
 --------------------------------------------------

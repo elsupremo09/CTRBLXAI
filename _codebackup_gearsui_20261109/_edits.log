@@ -1,0 +1,16 @@
+Sun Nov  8 23:57:14 2026 | GEARSUI session start. Fresh _mtimes.json (173 files). Targets: UnitInspectorPanel.client.lua (+ LoadoutScreen.lua 1-line export)
+Sun Nov  8 23:57:14 2026 | StarterPlayer\StarterPlayerScripts\UnitInspectorPanel.client.lua | BACKUP .pre_gearsui
+Sun Nov  8 23:57:14 2026 | ReplicatedStorage\CTRBLXAI\UI\LoadoutScreen.lua | BACKUP .pre_gearsui
+Sun Nov  8 23:57:59 2026 | ReplicatedStorage\CTRBLXAI\UI\LoadoutScreen.lua | E1 export ConsCategoryColors | new x1=True old gone=True len ok=True
+Sun Nov  8 23:58:04 2026 | StarterPlayer\StarterPlayerScripts\UnitInspectorPanel.client.lua | E2 require InventoryControls | new x1=True old gone=True len ok=True
+Sun Nov  8 23:58:47 2026 | StarterPlayer\StarterPlayerScripts\UnitInspectorPanel.client.lua | E3 Gears tab 3-column cards | new x1=True old gone=True len ok=True
+Sun Nov  8 23:59:35 2026 | GEARSUI done: E1 LoadoutScreen export, E2 inspector require, E3 Gears tab 3-column cards. Not Studio-tested.
+Mon Nov  9 00:05:44 2026 | StarterPlayer\StarterPlayerScripts\UnitInspectorPanel.client.lua | BACKUP .pre_gearsui2 (GEARSUI2: doctrine card + no-hover)
+Mon Nov  9 00:05:44 2026 | StarterPlayer\StarterPlayerScripts\UnitInspectorPanel.client.lua | E4 Doctrine card matches gear cards | new x1=True old gone=True len ok=True
+Mon Nov  9 00:05:55 2026 | StarterPlayer\StarterPlayerScripts\UnitInspectorPanel.client.lua | E5 gear tile no hover | new x1=True old gone=True len ok=True
+Mon Nov  9 00:05:55 2026 | StarterPlayer\StarterPlayerScripts\UnitInspectorPanel.client.lua | E6 skill row no hover | new x1=True old gone=True len ok=True
+Mon Nov  9 00:05:55 2026 | StarterPlayer\StarterPlayerScripts\UnitInspectorPanel.client.lua | E7 item-detail backdrop no hover | new x1=True old gone=True len ok=True
+Mon Nov  9 00:05:55 2026 | StarterPlayer\StarterPlayerScripts\UnitInspectorPanel.client.lua | E8 skill-detail backdrop no hover | new x1=True old gone=True len ok=True
+Mon Nov  9 00:05:55 2026 | StarterPlayer\StarterPlayerScripts\UnitInspectorPanel.client.lua | E9 close X no hover | new x1=True old gone=True len ok=True
+Mon Nov  9 00:05:55 2026 | StarterPlayer\StarterPlayerScripts\UnitInspectorPanel.client.lua | E10 cycle button no hover | new x1=True old gone=True len ok=True
+Mon Nov  9 00:06:00 2026 | GEARSUI2 done: E4 doctrine card, E5-E10 AutoButtonColor=false (gear tile, skill row, 2 backdrops, close X, cycle). UnitInspectorPanel only. Not Studio-tested.

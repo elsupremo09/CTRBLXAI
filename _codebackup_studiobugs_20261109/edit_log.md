@@ -1,0 +1,9 @@
+- 15:33 source\ServerScriptService\Game\BattleCoordinator.lua: B1: added BattleCoordinator.IsSideWiped (pure side count, no hook)
+- 15:33 source\ServerScriptService\Game\BattleTurnController.lua: B1: player turn loop ends the battle right after an action that wipes a side
+- 15:34 source\ServerScriptService\Game\BattleTurnController.lua: B1: AI turn loop ends the battle right after an action that wipes a side
+- 15:34 source\ServerScriptService\Game\AugmentEffectService.lua: B2: Vortex Strike skips a unit already on the impact centre (no +x fallback pull)
+- 15:34 source\ServerScriptService\Game\CombatResolver.lua: B3 edit 1/3: declare immuneStatus
+- 15:34 source\ServerScriptService\Game\CombatResolver.lua: B3 edit 2/3: remember the immune-blocked rider
+- 15:34 source\ServerScriptService\Game\CombatResolver.lua: B3 edit 3/3: pass immune-blocked rider as alreadyApplied to element triggers
+- 15:34 source\ServerScriptService\Game\BattleTurnController.lua: B3: caster's own reward Shield no longer listed as a skill hit on the caster
+- 15:34 source\ServerScriptService\Main.server.lua: B4: inspector payload Stats tab Max HP/MP = unit.maxHp/maxMp (display only)
