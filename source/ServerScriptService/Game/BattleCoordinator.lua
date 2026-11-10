@@ -84,18 +84,28 @@ end
 --------------------------------------------------
 
 -- Time-of-day cycle: one phase per 1000-CT round, in order. phase index =
--- floor(ct / 1000) % 4. Battle starts at Dawn (ct 0).
+-- (floor(ct / 1000) + startOffset) % 4. The starting phase is RANDOM per battle (user ruling
+-- 2026-11-10; map_gen_rules 72: the battle sets the starting phase), set once by
+-- BattleCoordinator.SetStartTimePhase before the first turn. Default offset 0 = Dawn.
 local TIME_PHASES = { "Dawn", "Day", "Dusk", "Night" }
-local function timePhaseForCt(ct)
-	local idx = math.floor((ct or 0) / 1000) % 4
+local function timePhaseForCt(ct, startOffset)
+	local idx = (math.floor((ct or 0) / 1000) + (startOffset or 0)) % 4
 	return TIME_PHASES[idx + 1]
+end
+
+-- Set the battle's starting phase (index 1..4 into TIME_PHASES). Call at battle setup, ct 0.
+function BattleCoordinator.SetStartTimePhase(state, phaseIndex: number)
+	local idx = math.clamp(math.floor(phaseIndex or 1), 1, #TIME_PHASES)
+	state.timePhaseOffset = idx - 1
+	state.timePhase = TIME_PHASES[idx]
+	return state.timePhase
 end
 
 -- Recompute state.timePhase from the clock; on a change, inform RacePassiveService
 -- and flag day/night-dependent units (Vampire/Werewolf) for a stat resync so their
 -- +/- bonuses flip at the boundary. Returns true if the phase changed.
 local function updateTimePhase(state)
-	local newPhase = timePhaseForCt(state.ct)
+	local newPhase = timePhaseForCt(state.ct, state.timePhaseOffset)
 	if newPhase == state.timePhase then return false end
 	state.timePhase = newPhase
 	RacePassiveService.SetTimePhase(newPhase)

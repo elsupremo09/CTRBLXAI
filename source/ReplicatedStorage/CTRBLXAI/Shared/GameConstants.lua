@@ -305,7 +305,6 @@ GameConstants.TERRAIN_MAP = {}
 -- deadly terrain (Move Cost 1.5, applies Sinking on entry). Nothing is hard-impassable
 -- here anymore; chasm/pit gating is enforced by ELEVATION DEPTH, not by this check.
 function GameConstants.IsImpassableTerrain(tileX, tileY)
-	local terrainId = GameConstants.GetTerrainId(tileX, tileY)
 	-- (Quicksand removed 2026-10-11 — now passable deadly terrain, see TERRAIN_TYPES.)
 	-- Deep Water: impassable for non-Amphibious units (caller checks race tag)
 	-- For now, Deep Water is passable with +2 cost — Amphibious race restriction
@@ -3712,7 +3711,6 @@ function GameConstants.ComputeDerivedStats(unit)
 	local weaponDamage  = unit.weaponDamage or 10
 	local weaponWt      = unit.weaponWt or 20
 	local weaponRtDelay = unit.weaponRtDelay or 0
-	local weaponDefense = unit.weaponDefense or 0
 
 	local derived = {
 		-- STR derived
@@ -4125,5 +4123,11 @@ function GameConstants.GroundModelPivotCFrame(model, wx, feetY, wz, facingCFrame
 	-- Keep the facing rotation, replace the position so true feet sit on feetY.
 	return CFrame.new(wx, feetY + gap, wz) * (rot - rot.Position)
 end
+
+-- ROSTER CAPACITY (user ruling 2026-11-10): starting unit capacity 10. A future Guild Level
+-- (max 99) adds capacity every 5 levels; that curve is not decided, so only the base exists.
+-- Read through GuildMenuService.GetRosterCapacity(), never this constant directly, so the
+-- Guild Level bonus can be added in one place later.
+GameConstants.ROSTER_BASE_CAPACITY = 10
 
 return GameConstants

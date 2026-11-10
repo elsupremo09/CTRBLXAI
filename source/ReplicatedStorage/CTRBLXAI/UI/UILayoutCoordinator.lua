@@ -30,7 +30,6 @@ end
 function UILayoutCoordinator.GetLayout(viewportSize)
 	local mode = UILayoutCoordinator.GetLayoutMode(viewportSize)
 	local w = viewportSize.X
-	local h = viewportSize.Y
 	local PAD = 6
 
 	if mode == "Desktop" then

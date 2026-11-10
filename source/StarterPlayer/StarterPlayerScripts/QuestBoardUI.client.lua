@@ -353,7 +353,7 @@ end
 -- SHOW / HIDE
 --------------------------------------------------
 
-local function show(quests)
+local function _show(quests)
 	-- Recompute card dimensions in case viewport changed since init
 	CARD_WIDTH, CARD_HEIGHT, CARD_GAP = computeCardDimensions()
 	local tw = CARD_WIDTH * 3 + CARD_GAP * 2

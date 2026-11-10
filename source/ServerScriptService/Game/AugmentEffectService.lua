@@ -296,7 +296,7 @@ local function removeRandomBuff(unit)
 end
 
 --- Remove ALL purgeable buffs.  Returns list of removed status IDs.
-local function removeAllBuffs(unit)
+local function _removeAllBuffs(unit)
 	if not unit.statusInstances then return {} end
 	local removed = {}
 	local i = 1
@@ -614,7 +614,6 @@ function AugmentEffectService.OnDamageCalculation(attacker, defender, skillDef, 
 
 	for _, augId in ipairs(augmentIds) do
 		local augName = getAugmentName(augId)
-		local family  = getAugmentFamily(augId)
 
 		-- ===== STAT SCALING =====
 		if STAT_SCALING_MAP[augId] then

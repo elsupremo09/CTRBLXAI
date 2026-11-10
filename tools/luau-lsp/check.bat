@@ -9,6 +9,7 @@ cd /d "%P%"
 call rojo sourcemap default.project.json -o sourcemap.json
 robocopy "%P%\source" "%W%\source" /MIR /NFL /NDL /NJH /NJS /NP >nul
 copy /y "%P%\sourcemap.json" "%W%\" >nul
+copy /y "%P%\.luaurc" "%W%\" >nul
 copy /y "%P%\tools\luau-lsp\luau-lsp.exe" "%W%\" >nul
 copy /y "%P%\tools\luau-lsp\roblox.d.luau" "%W%\" >nul
 cd /d "%W%"

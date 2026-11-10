@@ -73,6 +73,17 @@ function MockLoadoutData.GetAllUnits()
 	return MockLoadoutData.Units
 end
 
+-- Roster capacity for the unit-picker header (2026-11-10). Display only: the server enforces
+-- it (GuildMenuService.GetRosterCapacity). Same shared constant, so the numbers agree until
+-- the Guild Level bonus lands -- then this must read the server value instead.
+function MockLoadoutData.GetRosterCapacity()
+	local ok, GC = pcall(function()
+		return require(game:GetService("ReplicatedStorage"):WaitForChild("CTRBLXAI", 10)
+			:WaitForChild("Shared", 10):WaitForChild("GameConstants", 10))
+	end)
+	return if ok and GC then GC.ROSTER_BASE_CAPACITY else nil
+end
+
 -- Select a unit directly by id (dropdown pick). Returns the newly selected unit,
 -- or the current one if the id isn't found (no-op on a bad id).
 function MockLoadoutData.SetSelectedUnitById(unitId)
@@ -150,6 +161,15 @@ MockLoadoutData.Equipped = {
 }
 
 MockLoadoutData.ConsSlotLocked = { Cons1=false, Cons2=false, Cons3=false, Cons4=true, Cons5=true, Cons6=true }
+-- PER-UNIT slot locks (2026-11-10 fix): open slots differ per unit (Utility Belt, Bandolier,
+-- Chemist/Artificer each +1). The shared table above was overwritten by every unit in turn,
+-- so the LAST unit read set the count shown for all units. Keyed [unitId]["ConsN"].
+MockLoadoutData.ConsSlotLockedByUnit = {}
+function MockLoadoutData.IsConsSlotLocked(unitId, slotKey)
+	local per = unitId and MockLoadoutData.ConsSlotLockedByUnit[unitId]
+	if per and per[slotKey] ~= nil then return per[slotKey] end
+	return MockLoadoutData.ConsSlotLocked[slotKey] -- default 3 open (no server data yet)
+end
 
 function MockLoadoutData.GetItem(id)
 	for _, item in ipairs(MockLoadoutData.Inventory) do
@@ -576,10 +596,12 @@ function MockLoadoutData.LoadFromServer()
 					if not MockLoadoutData.Equipped[unitId] then
 						MockLoadoutData.Equipped[unitId] = {}
 					end
-					-- Update slot lock state from server (same for all units)
+					-- Slot lock state from server, PER UNIT (see ConsSlotLockedByUnit).
+					local per = {}
 					for idx, sd in pairs(slots) do
-						MockLoadoutData.ConsSlotLocked["Cons" .. idx] = (sd.locked == true)
+						per["Cons" .. idx] = (sd.locked == true)
 					end
+					MockLoadoutData.ConsSlotLockedByUnit[unitId] = per
 					for idx, sd in pairs(slots) do
 						local slotKey = "Cons" .. idx
 						if sd.consumableId and not sd.empty then

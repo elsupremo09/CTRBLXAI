@@ -1063,6 +1063,14 @@ function UGCOutfitService.BuildPreview(player: Player, raceName: string?, assetI
 	end
 	local model = template:Clone()
 	model.Name = PREVIEW_MODEL_NAME
+	-- No overhead name tag: the preview lives in PlayerGui and its Humanoid would
+	-- otherwise draw "PreviewModel" over the battle screen (2026-11-09).
+	local previewHum = model:FindFirstChildOfClass("Humanoid")
+	if previewHum then
+		previewHum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+		previewHum.NameDisplayDistance = 0
+		previewHum.HealthDisplayDistance = 0
+	end
 	-- Display only: no scripts, no physics.
 	for _, d in model:GetDescendants() do
 		if d:IsA("BaseScript") then

@@ -283,14 +283,6 @@ local function lineNames(lines: { any }?): string
 	return if #names > 0 then table.concat(names, ", ") else "no bonus lines"
 end
 
-local function findItem(state: any, instanceId: string?): any?
-	if not state or not instanceId then return nil end
-	for _, it in state.items or {} do
-		if it.instanceId == instanceId then return it end
-	end
-	return nil
-end
-
 local function gemInfo(state: any, gemId: string): any?
 	for _, g in state.gems or {} do
 		if g.id == gemId then return g end
@@ -804,7 +796,7 @@ local function gemCells(state: any, it: any?): ({ any }, number, string?)
 		local g = e.g
 		local gid = g.id
 		local left = e.count
-		local fits, effRep, why = checkPick(sim, state, gid, replaceTarget, fit, over)
+		local fits, _effRep, why = checkPick(sim, state, gid, replaceTarget, fit, over)
 		local enabled = left > 0 and not locked and fits
 		if enabled or not fitsOnly then
 			local cell = gemCell(g, left)

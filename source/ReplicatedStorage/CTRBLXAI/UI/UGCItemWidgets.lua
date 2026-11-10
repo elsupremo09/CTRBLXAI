@@ -389,7 +389,7 @@ function UGCItemWidgets.ShowItemDetails(item: any)
 		lbl.Size = UDim2.new(1, 0, 0, 0)
 		lbl.AutomaticSize = Enum.AutomaticSize.Y
 		lbl.BackgroundTransparency = 1
-		lbl.Font = if bold then Theme.Font.Bold else Theme.Font.Primary
+		lbl.Font = if bold then Theme.Font.PrimaryBold else Theme.Font.Primary
 		lbl.TextSize = Theme.Text.Small()
 		lbl.TextColor3 = if gold then Theme.Colors.TextGold else Theme.Colors.TextPrimary
 		lbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -402,7 +402,7 @@ function UGCItemWidgets.ShowItemDetails(item: any)
 
 	addLabel(item.name or "UGC item", true, true)
 
-	-- ID row: selectable TextBox + button that selects the ID for manual copy.
+	-- ID row: read-only ID text (user 2026-11-09: Copy button removed; no clipboard API for game scripts).
 	order += 1
 	local idRow = Instance.new("Frame")
 	idRow.Size = UDim2.new(1, 0, 0, 24); idRow.BackgroundTransparency = 1; idRow.LayoutOrder = order; idRow.Parent = panel
@@ -410,7 +410,7 @@ function UGCItemWidgets.ShowItemDetails(item: any)
 	idLayout.FillDirection = Enum.FillDirection.Horizontal; idLayout.Padding = UDim.new(0, 4)
 	idLayout.VerticalAlignment = Enum.VerticalAlignment.Center; idLayout.Parent = idRow
 	local idBox = Instance.new("TextBox")
-	idBox.Size = UDim2.new(1, -60, 1, 0)
+	idBox.Size = UDim2.new(1, 0, 1, 0)
 	idBox.BackgroundColor3 = Theme.Colors.Surface; idBox.BackgroundTransparency = 0.2; idBox.BorderSizePixel = 0
 	idBox.Font = Theme.Font.Primary; idBox.TextSize = Theme.Text.Small(); idBox.TextColor3 = Theme.Colors.TextPrimary
 	idBox.TextXAlignment = Enum.TextXAlignment.Left; idBox.ClearTextOnFocus = false; idBox.TextEditable = false
@@ -418,17 +418,6 @@ function UGCItemWidgets.ShowItemDetails(item: any)
 	local ic = Instance.new("UICorner"); ic.CornerRadius = UDim.new(0, 3); ic.Parent = idBox
 	local ipad = Instance.new("UIPadding"); ipad.PaddingLeft = UDim.new(0, 4); ipad.Parent = idBox
 	idBox.Parent = idRow
-	local copyBtn = Instance.new("TextButton")
-	copyBtn.Size = UDim2.fromOffset(56, 24)
-	copyBtn.BackgroundColor3 = Theme.Colors.Surface; copyBtn.BorderSizePixel = 0
-	copyBtn.Font = Theme.Font.Primary; copyBtn.TextSize = Theme.Text.Small(); copyBtn.TextColor3 = Theme.Colors.TextGold
-	copyBtn.Text = "Copy"
-	local cc = Instance.new("UICorner"); cc.CornerRadius = UDim.new(0, 3); cc.Parent = copyBtn
-	copyBtn.Activated:Connect(function()
-		-- Game scripts have no clipboard API: select the text so the user can copy manually.
-		idBox.TextEditable = true; idBox:CaptureFocus(); copyBtn.Text = "Select"
-	end)
-	copyBtn.Parent = idRow
 
 	local function fieldRow(label: string, value: string?)
 		addLabel(`{label}: {value and value ~= "" and value or "—"}`)

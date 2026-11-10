@@ -110,7 +110,6 @@ end
 local function getTagElevationRange(terrainId, cfg, tile)
 	-- Sea-level model (dev-locked 2026-09-24): sea = cfg.seaLevel, floor = cfg.floor.
 	-- Water rests at/below sea level; rock rises toward the biome max.
-	local bMin  = cfg.min          -- land band minimum
 	local bMax  = cfg.max          -- land band maximum (biome peak)
 	local sea   = cfg.seaLevel or 5
 	local floor = cfg.floor  or 1

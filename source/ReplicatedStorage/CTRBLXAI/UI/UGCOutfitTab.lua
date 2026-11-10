@@ -27,6 +27,7 @@ local Content = ReplicatedStorage:WaitForChild("Content", 10) :: Instance
 local Theme = require(UI:WaitForChild("Theme", 10) :: ModuleScript) :: any
 local UGCClient = require(UI:WaitForChild("UGCClient", 10) :: ModuleScript) :: any
 local W = require(UI:WaitForChild("UGCItemWidgets", 10) :: ModuleScript) :: any
+local PreviewIdle = require(UI:WaitForChild("PreviewIdle", 10) :: ModuleScript) :: any
 local UGCMerchantScreen = require(UI:WaitForChild("UGCMerchantScreen", 10) :: ModuleScript) :: any
 local UGCCatalogData = require(Content:WaitForChild("UGCCatalogData", 10) :: ModuleScript) :: any
 
@@ -52,6 +53,7 @@ local _sideTab = SIDE_WORN
 local _tryOn: { [string]: number } = {} -- slot -> assetId
 local _tryOnNames: { [string]: string } = {}
 local _previewConns: { RBXScriptConnection } = {}
+local _previewTrack: AnimationTrack? = nil -- preview idle (PreviewIdle, 2026-11-09); stopped in clearPreviewConns
 local _previewToken = 0
 local _lastView: any = nil
 local _lastBuiltSubTab: string? = nil -- scroll is kept only when rebuilding the same sub-tab
@@ -317,6 +319,8 @@ end
 local function clearPreviewConns()
 	for _, c in _previewConns do c:Disconnect() end -- PRF-004
 	table.clear(_previewConns)
+	PreviewIdle.Stop(_previewTrack) -- PRF-004: idle track dies with the preview (rebuild / Worn tab / Unmount)
+	_previewTrack = nil
 end
 
 local function tryOnIds(): { number }
@@ -466,6 +470,9 @@ local function buildPreviewBody(root: Frame)
 		applyZoom()
 		copy.Parent = world -- NET-004: local copy, framed before showing
 		model = copy :: Model
+		-- Idle instead of the T-pose (2026-11-09): same base idle as the battle units, local copy only.
+		PreviewIdle.Stop(_previewTrack)
+		_previewTrack = PreviewIdle.Play(copy :: Model)
 		applyYaw()
 		status.Visible = false
 	end)

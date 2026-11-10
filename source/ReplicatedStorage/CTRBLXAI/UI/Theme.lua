@@ -701,7 +701,7 @@ function Theme.MakeItemTile(opts)
 	end
 	tile.BorderSizePixel = 0
 	tile.Text = ""
-	tile.AutoButtonColor = true
+	tile.AutoButtonColor = false -- project rule 243: no mouse-over colour change (2026-11-09)
 	tile.LayoutOrder = opts.layoutOrder or 0
 	tile.Parent = opts.parent
 	Instance.new("UICorner", tile).CornerRadius = UDim.new(0, t.CornerRadius)
@@ -1238,7 +1238,6 @@ function Theme.MakeButton(parent, text, style, onClick, opts)
 		btn.Active = false
 		btn.ImageColor3 = Color3.fromRGB(120, 120, 120)
 	else
-		local normalY = btn.Position.Y
 		-- Tap-only (user ruling 2026-11-06): no hover colour. Press visuals below fire for touch too.
 		btn.MouseButton1Down:Connect(function()
 			btn.ImageColor3 = Color3.fromRGB(180, 180, 180)
@@ -1562,4 +1561,33 @@ function Theme.GetStatusIcon(statusId)
 	if not statusId then return nil end
 	return Theme.StatusIcons[statusId]
 end
+-- DRAG-TO-SCROLL (2026-11-10): Roblox ScrollingFrames pan with touch drag and the mouse
+-- wheel but not with a left-click drag. Adds click/touch drag on a vertical ScrollingFrame.
+-- Move/end listeners exist only during a drag and are torn down on release (PRF-003).
+function Theme.MakeDragScroll(sf: ScrollingFrame)
+	local UIS = game:GetService("UserInputService")
+	local moveConn: RBXScriptConnection? = nil
+	local endConn: RBXScriptConnection? = nil
+	local function stop()
+		if moveConn then moveConn:Disconnect(); moveConn = nil end
+		if endConn then endConn:Disconnect(); endConn = nil end
+	end
+	sf.InputBegan:Connect(function(input)
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end -- touch pans natively
+		stop()
+		local startY = input.Position.Y
+		local startCanvas = sf.CanvasPosition.Y
+		moveConn = UIS.InputChanged:Connect(function(m)
+			if not sf.Parent then stop(); return end
+			if m.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+			local maxY = math.max(0, sf.AbsoluteCanvasSize.Y - sf.AbsoluteWindowSize.Y)
+			sf.CanvasPosition = Vector2.new(0, math.clamp(startCanvas - (m.Position.Y - startY), 0, maxY))
+		end)
+		endConn = UIS.InputEnded:Connect(function(u)
+			if u.UserInputType == Enum.UserInputType.MouseButton1 then stop() end
+		end)
+	end)
+	sf.Destroying:Connect(stop)
+end
+
 return Theme

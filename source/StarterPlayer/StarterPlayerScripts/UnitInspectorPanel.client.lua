@@ -78,7 +78,6 @@ end
 --------------------------------------------------
 
 local panelGui = nil
-local currentTab = "stats" -- first tab (2026-10-29: Stats > Passive > Gears > Skills > Outfit)
 local clickOutsideConn = nil
 local detailOverlayGui = nil
 -- OBS Phase 2c-0: the OBS object tile shown in the full inspector, so ObjectChanged
@@ -95,6 +94,13 @@ local tileCycleIndex = 1
 local closeDetailOverlay  -- forward declaration
 closeDetailOverlay = function()
 	if detailOverlayGui then detailOverlayGui:Destroy(); detailOverlayGui = nil end
+end
+
+-- Mouse position in the SAME space as GuiObject.AbsolutePosition (2026-11-10 fix).
+-- GetMouseLocation includes the top-bar inset; AbsolutePosition does not (logged: frame
+-- AbsolutePosition.Y = 0 while it drew at the inset line), so subtract the inset.
+local function mouseInGuiSpace(): Vector2
+	return UserInputService:GetMouseLocation() - GuiService:GetGuiInset()
 end
 
 local function destroyPanel()
@@ -378,7 +384,7 @@ local function showItemDetail(eq, slotName)
 	-- Close only when clicking OUTSIDE the panel.
 	-- The panel is an ImageLabel (does not consume clicks), so we check bounds manually.
 	backdrop.Activated:Connect(function()
-		local mouse = game:GetService("UserInputService"):GetMouseLocation()
+		local mouse = mouseInGuiSpace()  -- same space as AbsolutePosition (2026-11-10)
 		local pos = panel.AbsolutePosition
 		local sz = panel.AbsoluteSize
 		if mouse.X >= pos.X and mouse.X <= pos.X + sz.X
@@ -1570,7 +1576,6 @@ local function buildPanel(data)
 		for _, child in ipairs(contentFrame:GetChildren()) do
 			if child:IsA("GuiObject") then child:Destroy() end
 		end
-		currentTab = tabName
 		if UGCInspectorOutfit then UGCInspectorOutfit.Cleanup() end -- PRF-004: preview drag connections
 
 		if tabName == "passive" then
@@ -1631,8 +1636,8 @@ local function buildPanel(data)
 		task.defer(function()
 			if not panelGui or not frame or not frame.Parent then return end
 			-- Don't close inspector while a detail overlay is open (it has its own dismiss logic)
-			if detailOverlayGui then print("[DIAG-CLOSE] InputBegan BLOCKED by detailOverlayGui guard"); return end
-			local mousePos = UserInputService:GetMouseLocation()
+			if detailOverlayGui then return end
+			local mousePos = mouseInGuiSpace()
 			local absPos = frame.AbsolutePosition
 			local absSize = frame.AbsoluteSize
 			if mousePos.X < absPos.X or mousePos.X > absPos.X + absSize.X
@@ -1677,11 +1682,8 @@ _G.CTRBLXAI_IsTapOverInspector = function(): boolean
 	if not panelGui or not panelGui.Parent then return false end
 	local frame = panelGui:FindFirstChild("InspectorFrame")
 	if not frame or not frame:IsA("GuiObject") or not frame.Visible then return false end
-	local m = UserInputService:GetMouseLocation()
+	local m = mouseInGuiSpace()
 	local p, sz = frame.AbsolutePosition, frame.AbsoluteSize
-	if not panelGui.IgnoreGuiInset then
-		p += GuiService:GetGuiInset()
-	end
 	return m.X >= p.X and m.X <= p.X + sz.X and m.Y >= p.Y and m.Y <= p.Y + sz.Y
 end
 
@@ -1788,7 +1790,7 @@ local function buildObjectPanel(objectName: string, tileX: number?, tileY: numbe
 		if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
 		task.defer(function()
 			if not panelGui or not frame.Parent then return end
-			local m = UserInputService:GetMouseLocation()
+			local m = mouseInGuiSpace()
 			local p, sz = frame.AbsolutePosition, frame.AbsoluteSize
 			if m.X < p.X or m.X > p.X + sz.X or m.Y < p.Y or m.Y > p.Y + sz.Y then destroyPanel() end
 		end)

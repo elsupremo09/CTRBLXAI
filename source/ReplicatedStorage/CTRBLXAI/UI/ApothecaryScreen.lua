@@ -216,6 +216,8 @@ render = function()
 			flex.FlexMode = Enum.UIFlexMode.Fill
 			flex.Parent = grid
 			MerchantInspector.BuildGrid(grid, {
+				-- Loadout tile size from the grid's height (2026-11-10: same tiles on every guild screen).
+				heightHint = MerchantInspector.GridHeightHint(main, list),
 				entries = entries,
 				selectedKey = tappedKey,
 				width = math.max(240, main.AbsoluteSize.X - 6),

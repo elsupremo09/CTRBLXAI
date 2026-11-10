@@ -1,0 +1,529 @@
+--- a/source/ReplicatedStorage/CTRBLXAI/Shared/GameConstants.lua
++++ b/source/ReplicatedStorage/CTRBLXAI/Shared/GameConstants.lua
+@@ -307,3 +307,2 @@
+ function GameConstants.IsImpassableTerrain(tileX, tileY)
+-	local terrainId = GameConstants.GetTerrainId(tileX, tileY)
+ 	-- (Quicksand removed 2026-10-11 — now passable deadly terrain, see TERRAIN_TYPES.)
+@@ -3714,3 +3713,2 @@
+ 	local weaponRtDelay = unit.weaponRtDelay or 0
+-	local weaponDefense = unit.weaponDefense or 0
+ 
+--- a/source/ReplicatedStorage/CTRBLXAI/UI/BattleHUD.lua
++++ b/source/ReplicatedStorage/CTRBLXAI/UI/BattleHUD.lua
+@@ -367,24 +367,2 @@
+ 	end
+-end
+-
+-local function makeButton(parent, text, props)
+-	local btn = Instance.new("TextButton")
+-	btn.Size = props.size or UDim2.new(0.5, -3, 0.5, -3)
+-	btn.Position = props.pos or UDim2.new(0, 0, 0, 0)
+-	btn.BackgroundColor3 = props.enabled ~= false and Theme.Colors.Surface or Theme.Colors.Panel
+-	btn.BackgroundTransparency = props.enabled ~= false and 0.3 or 0.7
+-	btn.BorderSizePixel = 0
+-	btn.Font = Theme.Font.Primary
+-	btn.TextSize = props.textSize or Theme.Text.Body()
+-	btn.TextColor3 = props.enabled ~= false and Theme.Colors.TextPrimary or Theme.Colors.TextDisabled
+-	btn.Text = text or ""
+-	btn.AutoButtonColor = props.enabled ~= false
+-	btn.Active = props.enabled ~= false
+-	btn.LayoutOrder = props.order or 0
+-	btn.Parent = parent
+-	Instance.new("UICorner", btn).CornerRadius = Theme.CornerRadius.sm
+-	if props.enabled ~= false and props.onPress then
+-		btn.Activated:Connect(props.onPress)
+-	end
+-	return btn
+ end
+--- a/source/ReplicatedStorage/CTRBLXAI/UI/LoadoutScreen.lua
++++ b/source/ReplicatedStorage/CTRBLXAI/UI/LoadoutScreen.lua
+@@ -4409,3 +4409,2 @@
+ 	-- server attach gate. Uses the same " OR "-aware match as the server.
+-	local augDef = aug.def or (MockData.GetAugmentDef and MockData.GetAugmentDef(aug.id))
+ 	-- Shared tags-only rule (2026-10-26), resolved against this unit's equipped weapon.
+@@ -4509,3 +4508,3 @@
+ 			end
+-			local disabled, disabledReason = slotDisabled, slotReason
++			local rowDisabled, rowDisabledReason = slotDisabled, slotReason
+ 
+@@ -4514,6 +4513,6 @@
+ 			rowBtn.BackgroundColor3 = Theme.Colors.PanelRaised
+-			rowBtn.BackgroundTransparency = disabled and 0.6 or 0.2
++			rowBtn.BackgroundTransparency = rowDisabled and 0.6 or 0.2
+ 			rowBtn.BorderSizePixel = 0
+ 			rowBtn.Text = ""
+-			rowBtn.AutoButtonColor = not disabled
++			rowBtn.AutoButtonColor = not rowDisabled
+ 			rowBtn.LayoutOrder = rowOrder
+@@ -4524,4 +4523,4 @@
+ 			local occLabel = "Empty"
+-			if disabled then
+-				occLabel = disabledReason or "Unavailable"
++			if rowDisabled then
++				occLabel = rowDisabledReason or "Unavailable"
+ 			elseif existingDef then
+@@ -4534,3 +4533,3 @@
+ 				Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+-				TextColor3 = disabled and Theme.Colors.TextDisabled or Theme.Colors.TextPrimary })
++				TextColor3 = rowDisabled and Theme.Colors.TextDisabled or Theme.Colors.TextPrimary })
+ 			makeLabel(rowBtn, { Text = skillName or (slot == 5 and "Locked" or "-"),
+@@ -4542,6 +4541,6 @@
+ 				Position = UDim2.new(0.62, 0, 0, 0),
+-				TextSize = Theme.Text.Badge(), TextColor3 = disabled and Theme.Colors.TextDisabled or Theme.Colors.Warning,
++				TextSize = Theme.Text.Badge(), TextColor3 = rowDisabled and Theme.Colors.TextDisabled or Theme.Colors.Warning,
+ 				TextXAlignment = Enum.TextXAlignment.Right })
+ 
+-			if not disabled then
++			if not rowDisabled then
+ 				local cSlot, cAug = slot, augSlot
+@@ -6080,3 +6079,3 @@
+ 		dismissRow.LayoutOrder = 100000 -- always last in the left column
+-		local dismissBtn = Theme.MakeIconButton(dismissRow, "X", function()
++		local _dismissBtn = Theme.MakeIconButton(dismissRow, "X", function()
+ 			local uid = unit.id
+--- a/source/ReplicatedStorage/CTRBLXAI/UI/PartiesTab.lua
++++ b/source/ReplicatedStorage/CTRBLXAI/UI/PartiesTab.lua
+@@ -104,9 +104,2 @@
+ 	return nil
+-end
+-
+-local function fmtDate(t: any): string
+-	if type(t) ~= "number" or t <= 0 then return "-" end
+-	local d = os.date("*t", t) :: any
+-	local months = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
+-	return `{months[d.month]} {d.day}, {d.year}`
+ end
+--- a/source/ReplicatedStorage/CTRBLXAI/UI/RuneforgeScreen.lua
++++ b/source/ReplicatedStorage/CTRBLXAI/UI/RuneforgeScreen.lua
+@@ -283,10 +283,2 @@
+ 	return if #names > 0 then table.concat(names, ", ") else "no bonus lines"
+-end
+-
+-local function findItem(state: any, instanceId: string?): any?
+-	if not state or not instanceId then return nil end
+-	for _, it in state.items or {} do
+-		if it.instanceId == instanceId then return it end
+-	end
+-	return nil
+ end
+@@ -806,3 +798,3 @@
+ 		local left = e.count
+-		local fits, effRep, why = checkPick(sim, state, gid, replaceTarget, fit, over)
++		local fits, _effRep, why = checkPick(sim, state, gid, replaceTarget, fit, over)
+ 		local enabled = left > 0 and not locked and fits
+--- a/source/ReplicatedStorage/CTRBLXAI/UI/Theme.lua
++++ b/source/ReplicatedStorage/CTRBLXAI/UI/Theme.lua
+@@ -1240,3 +1240,2 @@
+ 	else
+-		local normalY = btn.Position.Y
+ 		-- Tap-only (user ruling 2026-11-06): no hover colour. Press visuals below fire for touch too.
+--- a/source/ReplicatedStorage/CTRBLXAI/UI/UILayoutCoordinator.lua
++++ b/source/ReplicatedStorage/CTRBLXAI/UI/UILayoutCoordinator.lua
+@@ -32,3 +32,2 @@
+ 	local w = viewportSize.X
+-	local h = viewportSize.Y
+ 	local PAD = 6
+--- a/source/ServerScriptService/Game/ArmorPassiveService.lua
++++ b/source/ServerScriptService/Game/ArmorPassiveService.lua
+@@ -91,3 +91,3 @@
+ --- Returns true if at least one standing ally is within Chebyshev range.
+-local function hasAllyInRange(unit, allUnits, range)
++local function _hasAllyInRange(unit, allUnits, range)
+ 	if not allUnits then return false end
+--- a/source/ServerScriptService/Game/AugmentEffectService.lua
++++ b/source/ServerScriptService/Game/AugmentEffectService.lua
+@@ -298,3 +298,3 @@
+ --- Remove ALL purgeable buffs.  Returns list of removed status IDs.
+-local function removeAllBuffs(unit)
++local function _removeAllBuffs(unit)
+ 	if not unit.statusInstances then return {} end
+@@ -616,3 +616,2 @@
+ 		local augName = getAugmentName(augId)
+-		local family  = getAugmentFamily(augId)
+ 
+--- a/source/ServerScriptService/Game/BattleTurnController.lua
++++ b/source/ServerScriptService/Game/BattleTurnController.lua
+@@ -16,14 +16,3 @@
+ local StatusService           = require(Game:WaitForChild("StatusService"))
+-local TraitEffectService      = require(Game:WaitForChild("TraitEffectService"))
+ local CombatResolver          = require(Game:WaitForChild("CombatResolver"))
+-local ItemGenerator           = require(Game:WaitForChild("ItemGenerator"))
+-local InventoryService        = require(Game:WaitForChild("InventoryService"))
+-local EquipmentService        = require(Game:WaitForChild("EquipmentService"))
+-local PersistentStateService  = require(Game:WaitForChild("PersistentStateService"))
+-local SaveService             = require(Game:WaitForChild("SaveService"))
+-local RewardService           = require(Game:WaitForChild("RewardService"))
+-local DisplacementService     = require(Game:WaitForChild("DisplacementService"))
+-local TileEffectService       = require(Game:WaitForChild("TileEffectService"))
+-local TileCrossEffectService  = require(Game:WaitForChild("TileCrossEffectService"))
+-local RacePassiveService      = require(Game:WaitForChild("RacePassiveService"))
+ local ArmorPassiveService     = require(Game:WaitForChild("ArmorPassiveService"))
+@@ -31,10 +20,4 @@
+ local AIService               = require(Game:WaitForChild("AIService"))
+-local MapService              = require(Game:WaitForChild("MapService"))
+-local MapRenderer             = require(Game:WaitForChild("MapRenderer"))
+-local EnemyGenerator          = require(Game:WaitForChild("EnemyGenerator"))
+-local TraitRoller             = require(Game:WaitForChild("TraitRoller"))
+ local ObjectEffectService     = require(Game:WaitForChild("ObjectEffectService"))
+-local WeatherService          = require(Game:WaitForChild("WeatherService"))
+ local BattlefieldEventService = require(Game:WaitForChild("BattlefieldEventService"))
+-local ItemDisplay             = require(Game:WaitForChild("ItemDisplay")) -- item->UI entry builders (extracted 2026-10-12)
+ local DoctrinePassiveService  = require(Game:WaitForChild("DoctrinePassiveService")) -- Artificer consumable-range +1 (2026-10-21)
+@@ -43,13 +26,2 @@
+ 
+--- Slice 6 services (switched on this pass). CurrencyService provides AsProvider()
+--- used by Recruitment/Blacksmith/Merchant/Dispatch; it is required FIRST so the
+--- provider exists before the consumers are wired below.
+-local CurrencyService         = require(Game:WaitForChild("CurrencyService"))
+-local RecruitmentService      = require(Game:WaitForChild("RecruitmentService"))
+-local BlacksmithService       = require(Game:WaitForChild("BlacksmithService"))
+-local GuildService            = require(Game:WaitForChild("GuildService"))
+-local MerchantService         = require(Game:WaitForChild("MerchantService"))
+-local DispatchService         = require(Game:WaitForChild("DispatchService"))
+-local ExploreService          = require(Game:WaitForChild("ExploreService"))
+-local ProgressionService      = require(Game:WaitForChild("ProgressionService"))
+ -- Slice 6 temporary Guild menu (game_flow id 23): server glue for the building
+@@ -58,6 +30,3 @@
+ -- UGC Rental & Ownership (ugc_rules 2026-10-07). Wired below GuildMenuService.Init.
+-local UGCService              = require(Game:WaitForChild("UGCService"))
+-local UGCOutfitService        = require(Game:WaitForChild("UGCOutfitService"))
+ local UGCRemoteHandler        = require(Game:WaitForChild("UGCRemoteHandler"))
+-local UGCRatingService        = require(Game:WaitForChild("UGCRatingService")) -- split from UGCService 2026-10-08 (ARC-005)
+ 
+@@ -73,7 +42,2 @@
+ 		:WaitForChild("RaceData")
+-)
+-local TraitData = require(
+-	game:GetService("ReplicatedStorage")
+-		:WaitForChild("Content")
+-		:WaitForChild("TraitData")
+ )
+@@ -90,19 +54,2 @@
+ 
+-local BonusData = require(
+-	game:GetService("ReplicatedStorage")
+-		:WaitForChild("Content")
+-		:WaitForChild("BonusData")
+-)
+-local ArmorData = require(
+-	game:GetService("ReplicatedStorage")
+-		:WaitForChild("Content")
+-		:WaitForChild("ArmorData")
+-)
+-
+-local AugmentData = require(
+-	game:GetService("ReplicatedStorage")
+-		:WaitForChild("Content")
+-		:WaitForChild("AugmentData")
+-)
+-
+ -- Moved up (was declared mid-file, after the roster builder that uses it).
+@@ -112,9 +59,2 @@
+ 		:WaitForChild("ConsumableData")
+-)
+-
+--- Portrait pools per race (player 2D-portrait picker validation).
+-local PortraitData = require(
+-	game:GetService("ReplicatedStorage")
+-		:WaitForChild("Content")
+-		:WaitForChild("PortraitData")
+ )
+--- a/source/ServerScriptService/Game/BattleVisualBroadcaster.lua
++++ b/source/ServerScriptService/Game/BattleVisualBroadcaster.lua
+@@ -786,3 +786,3 @@
+ 		logEntry("action", table.concat(parts, ", "), actor.id)
+-		syncHp(target, "loss", outcome.finalDamage)
++		syncHp(target)
+ 		if outcome.statusApplied and outcome.statusApplied ~= "" then syncStatus(target, outcome.statusApplied, true) end
+@@ -820,3 +820,3 @@
+ 	end
+-	syncHp(unit, "loss", damage)
++	syncHp(unit)
+ 	task.wait(PACE.Dot)
+@@ -855,3 +855,3 @@
+ 	end
+-	syncHp(target, "gain", amount)
++	syncHp(target)
+ 	if target and target.statusInstances and target.id ~= nil and _snap[target.id] then _snap[target.id].st = statusSet(target) end
+@@ -1098,3 +1098,3 @@
+ 			local wasShown = shownAlive(target)
+-			syncHp(target, "loss", _pd)
++			syncHp(target)
+ 			if wasShown then queueKo(target) end
+@@ -1432,4 +1432,4 @@
+ 		if target then
+-			if et == "Heal" or et == "Healing" then syncHp(target, "gain", amount)
+-			elseif et == "Damage" then syncHp(target, "loss", amount)
++			if et == "Heal" or et == "Healing" then syncHp(target)
++			elseif et == "Damage" then syncHp(target)
+ 			elseif et == "MpRestore" and target.id ~= nil and _snap[target.id] then _snap[target.id].mp = target.currentMp or 0
+--- a/source/ServerScriptService/Game/ElevationPass.lua
++++ b/source/ServerScriptService/Game/ElevationPass.lua
+@@ -112,3 +112,2 @@
+ 	-- Water rests at/below sea level; rock rises toward the biome max.
+-	local bMin  = cfg.min          -- land band minimum
+ 	local bMax  = cfg.max          -- land band maximum (biome peak)
+--- a/source/ServerScriptService/Game/EnemyGenerator.lua
++++ b/source/ServerScriptService/Game/EnemyGenerator.lua
+@@ -30,3 +30,2 @@
+ local StatusService    = require(Game:WaitForChild("StatusService"))
+-local TraitEffectService = require(Game:WaitForChild("TraitEffectService"))
+ local StatCalcService = require(Game:WaitForChild("StatCalcService")) -- shared starting RT (2026-10-28)
+@@ -40,4 +39,2 @@
+ local RaceData       = require(Content:WaitForChild("RaceData"))
+-local DoctrineData   = require(Content:WaitForChild("DoctrineData"))
+-local SkillData      = require(Content:WaitForChild("SkillData"))
+ local ArmorData      = require(Content:WaitForChild("ArmorData"))
+@@ -659,7 +656,2 @@
+ 	-- modifiers flow into the first turn too (initiativeBaseRt set above feeds it).
+-	-- Trait Starting-RT % (Timeline Sovereign/Temporal Drag) layers on the one-time
+-	-- reduction (symmetric with players; enemies get no Player Initiative Edge).
+-	-- Single rounding (DB core_stats 54): raw Modified Base RT × LUK factor × trait %.
+-	local egModBaseRt = StatusService.GetModifiedBaseRt(unit)
+-	local egLukFactor = 1 - 0.30 * lukNow / (100 + lukNow)
+ 	-- One shared calculation (StatCalcService.GetStartingRt, 2026-10-28; enemies get no player edge).
+--- a/source/ServerScriptService/Game/EquipmentService.lua
++++ b/source/ServerScriptService/Game/EquipmentService.lua
+@@ -152,7 +152,2 @@
+ 			end
+-		end
+-		-- If equipping a 2H weapon, off-hand must be cleared
+-		-- Titan: Colossal Arsenal — 2H melee equipped as 1H, OffHand NOT cleared
+-		if slot == "MainHand" and archetype.handClass == "2H" and not RacePassiveService.CanEquip2HAsWith1H(unit) then
+-			-- This is allowed; OffHand will be force-cleared during equip
+ 		end
+--- a/source/ServerScriptService/Game/FeaturePass.lua
++++ b/source/ServerScriptService/Game/FeaturePass.lua
+@@ -889,3 +889,3 @@
+ 	local targetSize = rng:NextInteger(minSize, math.max(minSize, maxSize))
+-	local blob, blobSet = growBlob(
++	local blob, _blobSet = growBlob(
+ 		seed, targetSize, rng, tiles, w, h, regionId, usedSet)
+@@ -2826,3 +2826,2 @@
+ 									local dx  = nxt.x - cur.x
+-									local dy  = nxt.y - cur.y
+ 									local perpDirs
+@@ -2951,3 +2950,2 @@
+ 							local dx  = nxt.x - cur.x
+-							local dy  = nxt.y - cur.y
+ 							local perpDirs
+@@ -3079,3 +3077,2 @@
+ 										local dx  = nxt.x - cur.x
+-										local dy  = nxt.y - cur.y
+ 										local perpDirs
+--- a/source/ServerScriptService/Game/MerchantService.lua
++++ b/source/ServerScriptService/Game/MerchantService.lua
+@@ -73,5 +73,2 @@
+ --   2026-10-30 user decision above.)
+-
+-local ServerScriptService = game:GetService("ServerScriptService")
+-local Game = ServerScriptService:WaitForChild("Game")
+ 
+--- a/source/ServerScriptService/Game/ObjectEffectService.lua
++++ b/source/ServerScriptService/Game/ObjectEffectService.lua
+@@ -37,4 +37,2 @@
+ local EnemyGenerator          = require(script.Parent.EnemyGenerator)
+-local InventoryService        = require(script.Parent.InventoryService)
+-local ItemGenerator           = require(script.Parent.ItemGenerator)
+ local ObjectiveService        = require(script.Parent.ObjectiveService)
+--- a/source/ServerScriptService/Game/TargetingService.lua
++++ b/source/ServerScriptService/Game/TargetingService.lua
+@@ -201,4 +201,2 @@
+ --------------------------------------------------
+-
+-local BASE_MOVEMENT_RANGE = 3
+ 
+@@ -1940,4 +1938,2 @@
+ 		and ArmorPassiveService.CanIgnoreRecruitHostility(actor) or false
+-
+-	local actorElev = getEffectiveElevation(actor)
+ 
+--- a/source/ServerScriptService/Game/TileEffectService.lua
++++ b/source/ServerScriptService/Game/TileEffectService.lua
+@@ -412,7 +412,7 @@
+ 				warn(string.format(
+-				"[TileEffectService] TerrainChanged (%d,%d): %s -> %s is a VOXEL_KEEP origin; "
+-				.. "client re-skins the tile Part but the server voxel column is NOT cleared "
+-				.. "(no voxel-clear wired here). FOLLOW-UP: wire TileEffectService.SetVoxelClearer "
+-				.. "from Main so the stale voxel column is cleared.",
+-				tileX, tileY, tostring(originTerrain), tostring(newId)))
++					"[TileEffectService] TerrainChanged (%d,%d): %s -> %s is a VOXEL_KEEP origin; "
++					.. "client re-skins the tile Part but the server voxel column is NOT cleared "
++					.. "(no voxel-clear wired here). FOLLOW-UP: wire TileEffectService.SetVoxelClearer "
++					.. "from Main so the stale voxel column is cleared.",
++					tileX, tileY, tostring(originTerrain), tostring(newId)))
+ 			end
+--- a/source/ServerScriptService/Game/UnitSchema.lua
++++ b/source/ServerScriptService/Game/UnitSchema.lua
+@@ -61,3 +61,2 @@
+ local DEFAULT_AP = 3
+-local DEFAULT_RT = 100
+ 
+--- a/source/ServerScriptService/Main.server.lua
++++ b/source/ServerScriptService/Main.server.lua
+@@ -2993,3 +2993,2 @@
+ 	do
+-		local RaceData = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
+ 		for _, u in ipairs(allUnitsList) do
+@@ -4732,3 +4731,2 @@
+ 		local anyPlayerKO = false
+-		local anyEnemyStanding = false
+ 		for _, u in ipairs(allUnitsList) do
+@@ -4745,4 +4743,2 @@
+ 					})
+-				else
+-					anyEnemyStanding = true
+ 				end
+--- a/source/StarterPlayer/StarterPlayerScripts/BattleVisualClient.client.lua
++++ b/source/StarterPlayer/StarterPlayerScripts/BattleVisualClient.client.lua
+@@ -94,6 +94,2 @@
+ local TILE_SIZE = 5
+--- Must match server MapRenderer.ELEVATION_STEP (dev-locked 2026-09-24: 1.2 for the
+--- expanded 1–20 elevation scale). Drives client selection ring, camera focus,
+--- hover tooltips, and ray-miss fallback positioning. Keep in sync with server.
+-local ELEVATION_STEP = GameConstants.ELEVATION_STEP  -- single source of truth (2026-10-20)
+ local MAP_WIDTH, MAP_HEIGHT = 30, 20
+@@ -4123,3 +4119,2 @@
+ 		showStatusText(t.part.Position, data.statusId, Theme.GetStatusColor(data.statusId)) end
+-	local uName = unitData[data.unitId] and unitData[data.unitId].name or "?"
+ end)
+@@ -6306,3 +6301,3 @@
+ 	if TileHL then
+-		local mf = workspace:FindFirstChild("TemplateViewerMap")
++		local tileMapFolder = workspace:FindFirstChild("TemplateViewerMap")
+ 		local mw = mapData.width or MAP_WIDTH
+@@ -6312,3 +6307,3 @@
+ 		TileHL.Init({
+-			mapFolder    = mf,
++			mapFolder    = tileMapFolder,
+ 			tileSize     = TILE_SIZE,
+@@ -6413,6 +6408,2 @@
+ 	if not data then return end
+-	local actorName  = (data.actorId and unitData[data.actorId] and unitData[data.actorId].name)
+-		or data.actorName or "?"
+-	local targetName = (data.targetId and unitData[data.targetId] and unitData[data.targetId].name)
+-		or data.targetName or "?"
+ 	local amount     = data.amount or 0
+@@ -6460,17 +6451,2 @@
+ 
+-	-- Build a readable effect summary for the battle log.
+-	local summary
+-	if effectType == "HpRestore" then
+-		summary = "healed " .. targetName .. " +" .. amount .. " HP"
+-	elseif effectType == "MpRestore" then
+-		summary = "restored " .. amount .. " MP to " .. targetName
+-	elseif effectType == "StatusCure" then
+-		summary = "cured " .. (data.statusId or "status") .. " on " .. targetName
+-	elseif effectType == "StatusApply" then
+-		summary = "applied " .. (data.statusId or "status") .. " to " .. targetName
+-	elseif effectType == "Damage" then
+-		summary = "dealt " .. amount .. " " .. (data.element or "") .. " to " .. targetName
+-	else
+-		summary = "on " .. targetName
+-	end
+ 	-- Battle log line authored server-side (BattleLogEntry).
+--- a/source/StarterPlayer/StarterPlayerScripts/CameraController.lua
++++ b/source/StarterPlayer/StarterPlayerScripts/CameraController.lua
+@@ -26,3 +26,2 @@
+ local TweenService     = game:GetService("TweenService")
+-local StarterGui       = game:GetService("StarterGui")
+ local GuiService       = game:GetService("GuiService")
+@@ -727,4 +726,4 @@
+ 	-- Classify BEFORE removing
+-	local classification = "ignored"
+-	local tapEmitted = 0
++	local _classification = "ignored"
++	local _tapEmitted = 0
+ 
+@@ -733,8 +732,8 @@
+ 		pendingTapPos = touch.Position
+-		tapEmitted = 1
+-		classification = "tap"
++		_tapEmitted = 1
++		_classification = "tap"
+ 	elseif entry.inMultitouch then
+-		classification = "multitouch"
++		_classification = "multitouch"
+ 	else
+-		classification = "pan"
++		_classification = "pan"
+ 	end
+--- a/source/StarterPlayer/StarterPlayerScripts/DeploymentUI.client.lua
++++ b/source/StarterPlayer/StarterPlayerScripts/DeploymentUI.client.lua
+@@ -75,6 +75,2 @@
+ local TILE_SIZE        = 5
+--- Must match server MapRenderer.ELEVATION_STEP (dev-locked 2026-09-24: 1.2 for the
+--- expanded 1–20 elevation scale). Used by tileSurfaceY to seat deployment tile
+--- surfaces on the rendered terrain. Keep in sync with server + BattleVisualClient.
+-local ELEVATION_STEP   = GameConstants.ELEVATION_STEP  -- single source of truth (2026-10-20)
+ 
+--- a/source/StarterPlayer/StarterPlayerScripts/GuildMenu.client.lua
++++ b/source/StarterPlayer/StarterPlayerScripts/GuildMenu.client.lua
+@@ -107,4 +107,2 @@
+ local selectedUnits: { [string]: boolean } = {}
+-local selectedParty: string? = nil
+-local partyEdit: { [string]: boolean } = {}
+ local sortiePartySlot: string? = nil   -- party chosen for THIS sortie (shown on Continue)
+@@ -501,14 +499,2 @@
+ 	phaseLabel.Text = `{currentPhase == "PreBattle" and "Before battle" or "After battle"} | Battles done: {res.battlesCompleted or 0} | Tavern L{b.Tavern or 1}  Merchant L{b.Merchant or 1}  Blacksmith L{b.Blacksmith or 1} (temporary levels)`
+-end
+-
+--- Run an action, then refresh the balance and the current page.
+-local function act(remote: RemoteFunction?, okText: (any) -> string, ...: any)
+-	if isBusy then return end
+-	isBusy = true
+-	local res = call(remote, ...)
+-	if res then setStatus(okText(res)) end
+-	isBusy = false
+-	invalidatePageCache()  -- server state changed; next render re-fetches fresh
+-	refreshOverview()
+-	showPage(currentPage)
+ end
+@@ -1763,3 +1749,2 @@
+ 				selectedMission = nil
+-				selectedParty = nil
+ 				setStatus("")
+@@ -1953,3 +1938,2 @@
+ 	selectedUnits = {}
+-	selectedParty = nil
+ 	setStatus("")
+--- a/source/StarterPlayer/StarterPlayerScripts/QuestBoardUI.client.lua
++++ b/source/StarterPlayer/StarterPlayerScripts/QuestBoardUI.client.lua
+@@ -355,3 +355,3 @@
+ 
+-local function show(quests)
++local function _show(quests)
+ 	-- Recompute card dimensions in case viewport changed since init
+--- a/source/StarterPlayer/StarterPlayerScripts/UI/UIController.client.lua
++++ b/source/StarterPlayer/StarterPlayerScripts/UI/UIController.client.lua
+@@ -11,7 +11,3 @@
+ 
+-local Players           = game:GetService("Players")
+-local RunService        = game:GetService("RunService")
+ local ReplicatedStorage = game:GetService("ReplicatedStorage")
+-
+-local player = Players.LocalPlayer
+ 
+@@ -28,3 +24,2 @@
+ local UIFormatting      = require(CTRBLXAI_UI:WaitForChild("UIFormatting", 10))
+-local UIConstants       = require(CTRBLXAI_UI:WaitForChild("UIConstants", 10))
+ local UILayoutCoordinator = require(CTRBLXAI_UI:WaitForChild("UILayoutCoordinator", 10))
+@@ -49,3 +44,2 @@
+ local currentMode = nil      -- "Desktop", "CompactLandscape", "MobileLandscape"
+-local currentLayout = nil    -- last computed layout table
+ local debounceThread = nil   -- pending debounce task
+@@ -100,4 +94,2 @@
+ 	end
+-
+-	currentLayout = layout
+ 
+--- a/source/StarterPlayer/StarterPlayerScripts/UnitInspectorPanel.client.lua
++++ b/source/StarterPlayer/StarterPlayerScripts/UnitInspectorPanel.client.lua
+@@ -80,3 +80,2 @@
+ local panelGui = nil
+-local currentTab = "stats" -- first tab (2026-10-29: Stats > Passive > Gears > Skills > Outfit)
+ local clickOutsideConn = nil
+@@ -1572,3 +1571,2 @@
+ 		end
+-		currentTab = tabName
+ 		if UGCInspectorOutfit then UGCInspectorOutfit.Cleanup() end -- PRF-004: preview drag connections

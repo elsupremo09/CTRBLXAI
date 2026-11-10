@@ -105,8 +105,6 @@ local currentPage = "Units"
 local isBusy = false
 local selectedMission: string? = nil
 local selectedUnits: { [string]: boolean } = {}
-local selectedParty: string? = nil
-local partyEdit: { [string]: boolean } = {}
 local sortiePartySlot: string? = nil   -- party chosen for THIS sortie (shown on Continue)
 local sortiePartyName: string? = nil
 local updateSortieButton: () -> () = function() end  -- reassigned once leaveButton exists
@@ -499,18 +497,6 @@ local function refreshOverview()
 	if #notes > 0 then setStatus(table.concat(notes, "\n"), true) end
 	local b = res.buildings or {}
 	phaseLabel.Text = `{currentPhase == "PreBattle" and "Before battle" or "After battle"} | Battles done: {res.battlesCompleted or 0} | Tavern L{b.Tavern or 1}  Merchant L{b.Merchant or 1}  Blacksmith L{b.Blacksmith or 1} (temporary levels)`
-end
-
--- Run an action, then refresh the balance and the current page.
-local function act(remote: RemoteFunction?, okText: (any) -> string, ...: any)
-	if isBusy then return end
-	isBusy = true
-	local res = call(remote, ...)
-	if res then setStatus(okText(res)) end
-	isBusy = false
-	invalidatePageCache()  -- server state changed; next render re-fetches fresh
-	refreshOverview()
-	showPage(currentPage)
 end
 
 -- SMARTER SAVE / CART (2026-10-13): buy & sell are staged on the client and only
@@ -1761,7 +1747,6 @@ local function buildNav()
 			if currentPage == pageName then return end
 			confirmLeaveWithCart(function()
 				selectedMission = nil
-				selectedParty = nil
 				setStatus("")
 				showPage(pageName)
 			end)
@@ -1951,7 +1936,6 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	end
 	selectedMission = nil
 	selectedUnits = {}
-	selectedParty = nil
 	setStatus("")
 	screenGui.Enabled = true
 	invalidatePageCache()  -- server state changed; next render re-fetches fresh

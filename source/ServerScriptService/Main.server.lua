@@ -933,6 +933,57 @@ local quests
 local generatedMap
 local MAP_WIDTH
 local MAP_HEIGHT
+
+-- Mid-battle unit models (2026-11-10): same clone / ground / weapon steps as the battle-start
+-- spawn below, for units added after it (BattleVisualBroadcaster.UnitSpawned calls this).
+-- Skips if the unit already has a model (revive, deployment) or its race has no template.
+BattleVisualBroadcaster.SetUnitModelBuilder(function(unit)
+	if not (unit and unit.id and unit.tileX and unit.tileY) then return end
+	local umf = workspace:FindFirstChild("UnitModels")
+	if not umf then umf = Instance.new("Folder"); umf.Name = "UnitModels"; umf.Parent = workspace end
+	if umf:FindFirstChild("Unit_" .. unit.id) then return end
+	-- Facing (2026-11-10): new mid-battle units face the map centre, same rule as battle start
+	-- (INITIAL FACING block). Server state, so back/side attacks use it. Revives keep their
+	-- facing: they already have a model, so they return above and never reach here.
+	do
+		local ct = generatedMap and generatedMap.centerTile
+		local cx = (ct and ct.x) or ((MAP_WIDTH or 8) / 2)
+		local cy = (ct and ct.y) or ((MAP_HEIGHT or 8) / 2)
+		local f = GameConstants.CalcFacingFrom(unit.tileX, unit.tileY, cx, cy)
+		if f then unit.facing = f end
+	end
+	local rf = game:GetService("ServerStorage"):FindFirstChild("RaceModels")
+	local race = unit.raceId and RaceData.GetRace(unit.raceId)
+	local template = rf and race and rf:FindFirstChild(race.name)
+	if not (template and template:IsA("Model")) then
+		print(`[Spawn] {unit.name} (mid-battle) → no model for race '{tostring(race and race.name)}' (cylinder fallback)`)
+		return
+	end
+	local clone = template:Clone()
+	clone.Name = "Unit_" .. unit.id
+	clone.ModelStreamingMode = Enum.ModelStreamingMode.Persistent -- same streaming fix as battle start
+	local hum = clone:FindFirstChildOfClass("Humanoid")
+	if hum then hum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None; hum.NameDisplayDistance = 0; hum.HealthDisplayDistance = 0 end
+	local hrp = clone.PrimaryPart or clone:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		hrp.Anchored = true
+		local w = MAP_WIDTH or 8
+		local h = MAP_HEIGHT or 8
+		local wx = -(w * 5) / 2 + (unit.tileX - 0.5) * 5
+		local wz = -(h * 5) / 2 + (unit.tileY - 0.5) * 5
+		local feetY = GameConstants.TileSurfaceY(GameConstants.GetElevation(unit.tileX, unit.tileY))
+		local face = CFrame.new(wx, feetY, wz)
+		local vec = unit.facing and GameConstants.FACING_VECTORS[unit.facing]
+		if vec and not (vec.dx == 0 and vec.dy == 0) then
+			face = CFrame.lookAt(Vector3.new(wx, feetY, wz), Vector3.new(wx + vec.dx, feetY, wz + vec.dy))
+		end
+		clone:PivotTo(GameConstants.GroundModelPivotCFrame(clone, wx, feetY, wz, face))
+	end
+	clone.Parent = umf -- parent last (NET-004)
+	attachWeaponToUnit(clone, unit)
+	print(`[Spawn] {unit.name} (mid-battle) → R15 model '{race.name}' at ({unit.tileX},{unit.tileY})`)
+end)
+
 local playerSpawns
 local enemySpawns
 local questMapFolder
@@ -2268,8 +2319,11 @@ local function establishPlayerUnitFromSave(u)
 	if not u.consumableSlots then
 		u.consumableSlots = {}
 	end
-	u.consumableSlotCount = 3  -- open slots (4-6 locked)
+	-- Open slots = 3 + gear/doctrine grants + Apothecary L10, max 6 (2026-11-10 fix). This used to
+	-- hard-set 3 AFTER RebuildUnitStats had computed the real count, so boot wiped every bonus
+	-- until the unit's next equip/unequip.
 	u.maxConsumableSlots = 6
+	u.consumableSlotCount = EquipmentService.ComputeConsumableSlotCount(u)
 
 	-- Build skillIds from loadout (doctrine skill + equipped skill cards)
 	u.skillIds = {}
@@ -2991,7 +3045,6 @@ end)
 	-- Apply permanent Flight status to units with the Flying race tag
 	-- DB: "Flying: Grants permanent Flight using complete Manual Flight benefits and drawbacks"
 	do
-		local RaceData = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
 		for _, u in ipairs(allUnitsList) do
 			if u.raceId then
 				local raceEntry = RaceData.GetRace(u.raceId)
@@ -3876,7 +3929,16 @@ end)
 	-- Billboards / unbreakable objects get no hp. Dormant otherwise (nothing reads hp yet).
 	ObjectEffectService.InitObjectHp(state)
 
-	-- Time cycle: battle starts at Dawn (ct 0). Prime RacePassiveService + resync any
+	-- Random starting time phase (user ruling 2026-11-10): Dawn / Day / Dusk / Night, equal odds,
+	-- from the map seed through its own derived stream (deterministic per map; does not shift
+	-- any other roll). Vampire / Werewolf day-night passives read it from turn 1.
+	do
+		local seed = ((generatedMap and generatedMap.seed) or os.time()) + 40417
+		local startIdx = Random.new(seed):NextInteger(1, 4)
+		local ph = BattleCoordinator.SetStartTimePhase(state, startIdx)
+		print(`[Main] Starting time phase: {ph} (map seed {tostring(generatedMap and generatedMap.seed)}, roll {startIdx})`)
+	end
+	-- Time cycle: starting phase set above (ct 0). Prime RacePassiveService + resync any
 	-- day/night-dependent units (Vampire/Werewolf) and tell the client, so turn-1
 	-- stats and UI are correct before the clock first advances.
 	RacePassiveService.SetTimePhase(state.timePhase or "Dawn")
@@ -3940,7 +4002,9 @@ end)
 			state.eliteLeaderOnly = true
 		end
 		local objRng = Random.new((state.battleSeed or os.time()) + 13337)
-		ObjectiveService.BeginBattle(state, objCtx, objRng, 2)
+		-- Default ONE optional objective per battle (user 2026-11-10); more come only from events
+	-- or the Chaos Statue (ObjectiveService.AddOne).
+	ObjectiveService.BeginBattle(state, objCtx, objRng, 1)
 		if state.activeObjectives and #state.activeObjectives > 0 then
 			local names = {}
 			for _, a in ipairs(state.activeObjectives) do
@@ -4730,7 +4794,6 @@ end)
 		local koList = {}
 		-- Slice 6 item 2: objective checks the battle loop can evaluate today.
 		local anyPlayerKO = false
-		local anyEnemyStanding = false
 		for _, u in ipairs(allUnitsList) do
 			if u.side == "Enemy" and not u.isSummon then
 				-- Summons are not Grunt/Veteran/Elite/Boss and are rewardEligible=false
@@ -4743,8 +4806,6 @@ end)
 						level     = u.level or 0,
 						goldMult  = (type(u.rewardOnDeath) == "table" and tonumber(u.rewardOnDeath.goldMult)) or nil,
 					})
-				else
-					anyEnemyStanding = true
 				end
 			elseif u.side == "Player" and not u.isSummon and playerUnits[u.id] then
 				-- Summons are temporary battle entities: no unit XP (not roster units).
@@ -5097,6 +5158,18 @@ end)
 		local MAP_LEVEL = (activeQuest and activeQuest.recommendedLvl) or 1
 		local opportunityId = string.format("battle_%s_%d", PLAYER_ID, os.clock())
 
+		-- Idol of Fortune (open_decisions follow-up, USER RULING 2026-11-10: ITEMS ONLY).
+		-- The card says "Improved item drop rates until battle ends", so the Idol bump is
+		-- layered on the team Fortune ONLY around the item rolls below (victory, elite, boss,
+		-- objective). Battle gold was already paid above at normal Fortune. Same additive +
+		-- restore method as the in-battle chest roll (ObjectEffectService); clamped to 1.75.
+		local idolBaseline: number? = nil
+		if state and state.idolFortuneActive and type(state.idolFortuneBump) == "number" then
+			idolBaseline = RewardService.GetExpeditionFortune()
+			RewardService.SetExpeditionFortune(idolBaseline + state.idolFortuneBump)
+			print(`[PostBattle] Idol of Fortune: item-roll Fortune {idolBaseline} -> {RewardService.GetExpeditionFortune()}`)
+		end
+
 		-- Treasure Hunter augment (2026-10-25): if any enemy was killed with a Treasure-Hunter
 		-- skill this battle (stamped _treasureHunted on the slain unit by AugmentEffectService),
 		-- bump the victory loot's rarity by 1 tier. Battle loot is a single pool (not per-kill),
@@ -5282,6 +5355,10 @@ end)
 				print(string.format("[ObjectiveService] Granted %d objective reward(s) from %d completed objective(s).",
 					objCommitted, #objResult.completed))
 			end
+		end
+		-- Idol of Fortune: restore the team Fortune after the item rolls (items only).
+		if idolBaseline ~= nil then
+			RewardService.SetExpeditionFortune(idolBaseline)
 		end
 	end
 

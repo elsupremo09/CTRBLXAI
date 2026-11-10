@@ -9,11 +9,7 @@
 --
 -- Does NOT own battle state, panel content, or camera.
 
-local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local player = Players.LocalPlayer
 
 --------------------------------------------------
 -- MODULE LOADING
@@ -26,7 +22,6 @@ local CTRBLXAI_UI = ReplicatedStorage
 local Theme             = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 local UIComponents      = require(CTRBLXAI_UI:WaitForChild("UIComponents", 10))
 local UIFormatting      = require(CTRBLXAI_UI:WaitForChild("UIFormatting", 10))
-local UIConstants       = require(CTRBLXAI_UI:WaitForChild("UIConstants", 10))
 local UILayoutCoordinator = require(CTRBLXAI_UI:WaitForChild("UILayoutCoordinator", 10))
 
 local BattleHUD = require(CTRBLXAI_UI:WaitForChild("BattleHUD", 10))
@@ -47,7 +42,6 @@ end
 --------------------------------------------------
 
 local currentMode = nil      -- "Desktop", "CompactLandscape", "MobileLandscape"
-local currentLayout = nil    -- last computed layout table
 local debounceThread = nil   -- pending debounce task
 local DEBOUNCE_SEC = 0.15    -- debounce for rapid resize events
 
@@ -98,8 +92,6 @@ local function applyLayout(viewportSize)
 			math.round(viewportSize.X), math.round(viewportSize.Y), newMode))
 		currentMode = newMode
 	end
-
-	currentLayout = layout
 
 	-- Apply to BattleHUD if it has panels
 	BattleHUD.ApplyLayout(layout)

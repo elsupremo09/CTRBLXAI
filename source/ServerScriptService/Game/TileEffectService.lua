@@ -410,11 +410,11 @@ local function transformAndBroadcast(tileX, tileY, element)
 					tileX, tileY, tostring(originTerrain), tostring(newId)))
 			else
 				warn(string.format(
-				"[TileEffectService] TerrainChanged (%d,%d): %s -> %s is a VOXEL_KEEP origin; "
-				.. "client re-skins the tile Part but the server voxel column is NOT cleared "
-				.. "(no voxel-clear wired here). FOLLOW-UP: wire TileEffectService.SetVoxelClearer "
-				.. "from Main so the stale voxel column is cleared.",
-				tileX, tileY, tostring(originTerrain), tostring(newId)))
+					"[TileEffectService] TerrainChanged (%d,%d): %s -> %s is a VOXEL_KEEP origin; "
+					.. "client re-skins the tile Part but the server voxel column is NOT cleared "
+					.. "(no voxel-clear wired here). FOLLOW-UP: wire TileEffectService.SetVoxelClearer "
+					.. "from Main so the stale voxel column is cleared.",
+					tileX, tileY, tostring(originTerrain), tostring(newId)))
 			end
 		end
 	end

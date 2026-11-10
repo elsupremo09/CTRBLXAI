@@ -887,7 +887,7 @@ local function placeCorruptionSpread(candidates, minSize, maxSize, minCluster, o
 	if not seed then return 0 end
 
 	local targetSize = rng:NextInteger(minSize, math.max(minSize, maxSize))
-	local blob, blobSet = growBlob(
+	local blob, _blobSet = growBlob(
 		seed, targetSize, rng, tiles, w, h, regionId, usedSet)
 
 	if #blob < minCluster then return 0 end
@@ -2824,7 +2824,6 @@ function FeaturePass.Run(mapState)
 									local cur = path[pi]
 									local nxt = path[pi + 1]
 									local dx  = nxt.x - cur.x
-									local dy  = nxt.y - cur.y
 									local perpDirs
 									if dx == 0 then
 										perpDirs = {
@@ -2949,7 +2948,6 @@ function FeaturePass.Run(mapState)
 							local cur = riverPath[pi]
 							local nxt = riverPath[pi + 1]
 							local dx  = nxt.x - cur.x
-							local dy  = nxt.y - cur.y
 							local perpDirs
 							if dx == 0 then
 								perpDirs = {
@@ -3077,7 +3075,6 @@ function FeaturePass.Run(mapState)
 										local cur = path[pi]
 										local nxt = path[pi + 1]
 										local dx  = nxt.x - cur.x
-										local dy  = nxt.y - cur.y
 										local perpDirs
 										if dx == 0 then
 											perpDirs = {

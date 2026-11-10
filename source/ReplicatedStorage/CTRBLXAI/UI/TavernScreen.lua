@@ -232,6 +232,8 @@ local function buildMain(res: any, entries: { any }, selected: any?)
 	flex.FlexMode = Enum.UIFlexMode.Fill
 	flex.Parent = grid
 	TileGrid.BuildGrid(grid, {
+		-- Loadout tile size from the grid's height (2026-11-10: same tiles on every guild screen).
+		heightHint = TileGrid.GridHeightHint(main, list),
 		entries = entries,
 		selectedKey = if selected then selected.key else nil,
 		width = math.max(240, main.AbsoluteSize.X - 6),
@@ -270,7 +272,15 @@ local function promptConfirm()
 	local c = ctx
 	if not c or not screen then return end
 	local s = c.summary()
-	screen.Prompt(`Hire {s.nHire} {plural(s.nHire)}: -{s.hireGold} gold`, "Confirm", "Primary", function()
+	-- Capacity + dismiss-cost note (user 2026-11-10). Pool answer carries count / capacity.
+	local pool = c.getPool()
+	local cnt, cap = pool and pool.rosterCount, pool and pool.rosterCapacity
+	local capNote = if cap then `\nUnits {cnt or 0} / {cap} -> {(cnt or 0) + s.nHire} / {cap}.` else ""
+	local msg = `Hire {s.nHire} {plural(s.nHire)}: -{s.hireGold} gold.{capNote}`
+	if cap and (cnt or 0) + s.nHire > cap then
+		msg ..= `\nOnly {math.max(0, cap - (cnt or 0))} slot(s) free: extra hires will be refused (no gold charged).`
+	end
+	screen.Prompt(msg, "Confirm", "Primary", function()
 		c.confirm()
 		render()
 	end)

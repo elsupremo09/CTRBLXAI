@@ -89,7 +89,7 @@ local function chebyshevDist(a, b)
 end
 
 --- Returns true if at least one standing ally is within Chebyshev range.
-local function hasAllyInRange(unit, allUnits, range)
+local function _hasAllyInRange(unit, allUnits, range)
 	if not allUnits then return false end
 	for _, other in ipairs(allUnits) do
 		if other ~= unit

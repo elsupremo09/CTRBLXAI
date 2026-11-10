@@ -137,9 +137,13 @@ local PHONE_COL_W = 180
 -- names were cut to a few letters. 60 px slots give the name band ~30-33 px = two full
 -- lines, stay well above the 44 px touch target, and still show ~7 slots in the bar.
 -- Bar height = slot + 24 (10 px top/bottom padding + 4 px scrollbar). Phones only.
-local PHONE_TURN_SLOT = 60
-local PHONE_TURN_BAR_H = PHONE_TURN_SLOT + 24
-local PHONE_TURN_MIN_TEXT = 9
+-- 2026-11-10 (user): whole bar 25% smaller: 84 -> 63 px (slot 45 + 18 px padding; the
+-- scrollbar is gone). Names use ONE fixed size on phones (PHONE_TURN_TEXT, the 10 px phone
+-- minimum) whatever the name length, so every slot reads the same.
+local PHONE_TURN_SLOT = 45
+local PHONE_TURN_BAR_H = PHONE_TURN_SLOT + 18
+local PHONE_TURN_PAD = 9
+local PHONE_TURN_TEXT = 10
 local function isPhone(): boolean
 	local cam = workspace.CurrentCamera
 	local w = if cam then cam.ViewportSize.X else 1920
@@ -367,28 +371,6 @@ local function buildStatusStrip(parent, statuses, order)
 	end
 end
 
-local function makeButton(parent, text, props)
-	local btn = Instance.new("TextButton")
-	btn.Size = props.size or UDim2.new(0.5, -3, 0.5, -3)
-	btn.Position = props.pos or UDim2.new(0, 0, 0, 0)
-	btn.BackgroundColor3 = props.enabled ~= false and Theme.Colors.Surface or Theme.Colors.Panel
-	btn.BackgroundTransparency = props.enabled ~= false and 0.3 or 0.7
-	btn.BorderSizePixel = 0
-	btn.Font = Theme.Font.Primary
-	btn.TextSize = props.textSize or Theme.Text.Body()
-	btn.TextColor3 = props.enabled ~= false and Theme.Colors.TextPrimary or Theme.Colors.TextDisabled
-	btn.Text = text or ""
-	btn.AutoButtonColor = props.enabled ~= false
-	btn.Active = props.enabled ~= false
-	btn.LayoutOrder = props.order or 0
-	btn.Parent = parent
-	Instance.new("UICorner", btn).CornerRadius = Theme.CornerRadius.sm
-	if props.enabled ~= false and props.onPress then
-		btn.Activated:Connect(props.onPress)
-	end
-	return btn
-end
-
 --------------------------------------------------
 -- ROOT CREATION
 --------------------------------------------------
@@ -398,11 +380,16 @@ end
 -- the right-column width in step. Off phones it restores the old toggle sizes and
 -- leaves the column width to the layout table.
 local function applyTouchSizes()
+	-- Battlefield button: accepted EXCEPTION to the phone 44 px rule (project_rules 244,
+	-- user ruling 2026-11-10): it keeps its own 35%-smaller size, so it is not resized
+	-- here. Its menu items (View / Log / Mission) still get the 44 px phone height.
 	if viewModeButtons then
 		local h = toggleH()
-		viewModeButtons.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 6 + 20, h + 2)
-		for _, b in ipairs(viewModeButtons:GetChildren()) do
-			if b:IsA("GuiButton") then b.Size = UDim2.fromOffset(b.Size.X.Offset, h) end
+		local menu = viewModeButtons:FindFirstChild("BattlefieldMenu")
+		if menu then
+			for _, b in ipairs(menu:GetChildren()) do
+				if b:IsA("GuiButton") then b.Size = UDim2.fromOffset(b.Size.X.Offset, h) end
+			end
 		end
 	end
 	if battleLogPanel then
@@ -427,26 +414,11 @@ end
 -- PHONE_TURN_MIN_TEXT) at which the name wraps to at most TWO lines inside the band and
 -- no single word is wider than the slot (wrapping only breaks at spaces). The full name
 -- is kept; if even the minimum size overflows, the existing AtEnd truncation applies.
-local function fitTurnName(lb: TextLabel, w: number, h: number)
-	if w <= 2 or h <= 0 or lb.Text == "" then return end
-	local maxW = w - 2
-	local size = lb.TextSize
-	while size > PHONE_TURN_MIN_TEXT do
-		local fits = true
-		for word in string.gmatch(lb.Text, "%S+") do
-			if TextService:GetTextSize(word, size, lb.Font, Vector2.new(10000, 10000)).X > maxW then
-				fits = false; break
-			end
-		end
-		if fits then
-			local b = TextService:GetTextSize(lb.Text, size, lb.Font, Vector2.new(maxW, 10000))
-			if b.Y <= h and b.Y <= size * 2 + 2 then break end
-		end
-		size -= 1
-	end
+local function fitTurnName(lb: TextLabel, _w: number, _h: number)
+	-- Fixed size (2026-11-10): no per-name shrinking; long names wrap to 2 rows then truncate.
 	lb.TextScaled = false
 	lb.TextWrapped = true
-	lb.TextSize = size
+	lb.TextSize = PHONE_TURN_TEXT
 end
 
 local function ensureRoot()
@@ -589,59 +561,94 @@ local function ensureRoot()
 	commandBar.Parent = rootFrame
 	commandBar.Visible = false
 
-	-- TOP-LEFT: View Mode + Battle Log toggles
+	-- TOP-LEFT: single "Battlefield" button (user 2026-11-10) that opens a vertical menu with
+	-- the former View / Log / Mission buttons. Frame keeps the name "ViewModeButtons" because
+	-- UnitInspectorPanel anchors its top edge to it.
 	viewModeButtons = Instance.new("Frame")
 	viewModeButtons.Name = "ViewModeButtons"
-	-- Widened for the third button (Map Details) added 2026-10-17.
-	viewModeButtons.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 6 + 20, toggleH() + 2)
-	-- Nudged down ~3px (55 -> 58) so View/Log clear the Roblox topbar buttons. (2026-10-17)
+	local BF_W = Theme.Elem.IconBtn() * 3 + 8            -- menu item width (unchanged)
+	-- Battlefield button itself 35% smaller (user 2026-11-10): 0.65 x width / height / text.
+	local BF_SCALE = 0.65
+	local BF_BTN_W = math.round(BF_W * BF_SCALE)
+	local BF_BTN_H = math.round(toggleH() * BF_SCALE)
+	viewModeButtons.Size = UDim2.fromOffset(BF_BTN_W, BF_BTN_H + 2)
 	viewModeButtons.Position = UDim2.new(0, PAD, 0, 58)
 	viewModeButtons.BackgroundTransparency = 1
 	viewModeButtons.Parent = rootFrame
 
-	local vmLayout = Instance.new("UIListLayout", viewModeButtons)
-	vmLayout.FillDirection = Enum.FillDirection.Horizontal
+	local bfBtn = Instance.new("TextButton")
+	bfBtn.Name = "BattlefieldToggle"
+	bfBtn.Size = UDim2.fromOffset(BF_BTN_W, BF_BTN_H)
+	bfBtn.BackgroundColor3 = Theme.Colors.Surface
+	bfBtn.BackgroundTransparency = 0.15
+	bfBtn.AutoButtonColor = false
+	bfBtn.Font = Theme.Font.PrimaryBold; bfBtn.TextSize = math.max(8, math.round(Theme.Text.Body() * BF_SCALE))
+	bfBtn.TextColor3 = Theme.Colors.TextPrimary
+	-- Hamburger drawn as 3 bars: the UI font has no U+2630 glyph (rendered as a box).
+	bfBtn.Text = "Battlefield"; bfBtn.BorderSizePixel = 0
+	bfBtn.TextXAlignment = Enum.TextXAlignment.Left
+	local bfPad = Instance.new("UIPadding", bfBtn); bfPad.PaddingLeft = UDim.new(0, 17)
+	for bi = 0, 2 do
+		local bar = Instance.new("Frame")
+		bar.Size = UDim2.fromOffset(8, 1)
+		bar.AnchorPoint = Vector2.new(0, 0.5)
+		bar.Position = UDim2.new(0, -12, 0.5, (bi - 1) * 3)
+		bar.BackgroundColor3 = Theme.Colors.TextPrimary
+		bar.BorderSizePixel = 0
+		bar.Parent = bfBtn
+	end
+	Instance.new("UICorner", bfBtn).CornerRadius = Theme.CornerRadius.sm
+	local bfStroke = Instance.new("UIStroke", bfBtn)
+	bfStroke.Color = Theme.Colors.Border; bfStroke.Thickness = 1
+	bfStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	bfBtn.Parent = viewModeButtons
+
+	local bfMenu = Instance.new("Frame")
+	bfMenu.Name = "BattlefieldMenu"
+	bfMenu.Size = UDim2.fromOffset(BF_W, 0)
+	bfMenu.AutomaticSize = Enum.AutomaticSize.Y
+	bfMenu.Position = UDim2.fromOffset(0, BF_BTN_H + 4)
+	bfMenu.BackgroundTransparency = 1
+	bfMenu.Visible = false
+	bfMenu.ZIndex = 30
+	local vmLayout = Instance.new("UIListLayout", bfMenu)
+	vmLayout.FillDirection = Enum.FillDirection.Vertical
 	vmLayout.Padding = UDim.new(0, 4)
 	vmLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	bfMenu.Parent = viewModeButtons
 
-	viewModeViewBtn = Instance.new("TextButton")
-	viewModeViewBtn.Name = "ViewToggle"
-	viewModeViewBtn.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 2 + 4, toggleH())
-	viewModeViewBtn.BackgroundColor3 = Theme.Colors.Surface
-	viewModeViewBtn.BackgroundTransparency = isViewMode and 0 or 0.15
-	viewModeViewBtn.Font = Theme.Font.PrimaryBold; viewModeViewBtn.TextSize = Theme.Text.Body()
-	viewModeViewBtn.TextColor3 = isViewMode and Theme.Colors.TextGold or Theme.Colors.TextPrimary
-	viewModeViewBtn.Text = "\xF0\x9F\x91\x81 View"; viewModeViewBtn.BorderSizePixel = 0
-	viewModeViewBtn.LayoutOrder = 1; viewModeViewBtn.Parent = viewModeButtons
-	Instance.new("UICorner", viewModeViewBtn).CornerRadius = Theme.CornerRadius.sm
-	-- Tap cycles Isometric -> Top -> Side (dropdown replaced 2026-10-17).
+	local function closeBfMenu() bfMenu.Visible = false end
+	bfBtn.Activated:Connect(function() bfMenu.Visible = not bfMenu.Visible end)
+
+	local function menuButton(name: string, text: string, order: number, color: Color3): TextButton
+		local b = Instance.new("TextButton")
+		b.Name = name
+		b.Size = UDim2.fromOffset(BF_W, toggleH())
+		b.BackgroundColor3 = Theme.Colors.Surface
+		b.BackgroundTransparency = 0.15
+		b.AutoButtonColor = false
+		b.Font = Theme.Font.PrimaryBold; b.TextSize = Theme.Text.Body()
+		b.TextColor3 = color
+		b.TextXAlignment = Enum.TextXAlignment.Left
+		b.Text = text; b.BorderSizePixel = 0
+		b.LayoutOrder = order; b.ZIndex = 31
+		Instance.new("UICorner", b).CornerRadius = Theme.CornerRadius.sm
+		local bp = Instance.new("UIPadding", b); bp.PaddingLeft = UDim.new(0, 8)
+		b.Parent = bfMenu
+		return b
+	end
+
+	-- View stays open after a tap so the player can cycle Isometric -> Top -> Side.
+	viewModeViewBtn = menuButton("ViewToggle", "\xF0\x9F\x91\x81 " .. currentCameraMode, 1,
+		isViewMode and Theme.Colors.TextGold or Theme.Colors.TextPrimary)
 	viewModeViewBtn.Activated:Connect(function() BattleHUD.CycleCameraMode() end)
 
-	local logBtn = Instance.new("TextButton")
-	logBtn.Name = "LogToggle"
-	logBtn.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 2, toggleH())
-	logBtn.BackgroundColor3 = Theme.Colors.Surface
-	logBtn.BackgroundTransparency = 0.15
-	logBtn.Font = Theme.Font.PrimaryBold; logBtn.TextSize = Theme.Text.Body()
-	logBtn.TextColor3 = Theme.Colors.TextSecondary
-	logBtn.Text = "\xF0\x9F\x93\x9C Log"; logBtn.BorderSizePixel = 0
-	logBtn.LayoutOrder = 2; logBtn.Parent = viewModeButtons
-	Instance.new("UICorner", logBtn).CornerRadius = Theme.CornerRadius.sm
-	logBtn.Activated:Connect(function() BattleHUD.ToggleBattleLog() end)
+	local logBtn = menuButton("LogToggle", "\xF0\x9F\x93\x9C Log", 2, Theme.Colors.TextSecondary)
+	logBtn.Activated:Connect(function() closeBfMenu(); BattleHUD.ToggleBattleLog() end)
 
-	-- Map Details button (2026-10-17): opens the quest/loot/gold snapshot panel.
-	-- Same style as Log (next to it); row is nudged down with the others.
-	local mapBtn = Instance.new("TextButton")
-	mapBtn.Name = "MapDetailsToggle"
-	mapBtn.Size = UDim2.fromOffset(Theme.Elem.IconBtn() * 2, toggleH())
-	mapBtn.BackgroundColor3 = Theme.Colors.Surface
-	mapBtn.BackgroundTransparency = 0.15
-	mapBtn.Font = Theme.Font.PrimaryBold; mapBtn.TextSize = Theme.Text.Body()
-	mapBtn.TextColor3 = Theme.Colors.TextSecondary
-	mapBtn.Text = "\xF0\x9F\x97\xBA Map"; mapBtn.BorderSizePixel = 0
-	mapBtn.LayoutOrder = 3; mapBtn.Parent = viewModeButtons
-	Instance.new("UICorner", mapBtn).CornerRadius = Theme.CornerRadius.sm
-	mapBtn.Activated:Connect(function() BattleHUD.ToggleMapDetails() end)
+	-- "Map" renamed "Mission" (user 2026-11-10); opens the quest/loot/gold snapshot.
+	local mapBtn = menuButton("MapDetailsToggle", "\xF0\x9F\x93\x8B Mission", 3, Theme.Colors.TextSecondary)
+	mapBtn.Activated:Connect(function() closeBfMenu(); BattleHUD.ToggleMapDetails() end)
 
 	-- Apply stored layout if UIController already calculated one
 	if currentLayout then
@@ -1753,6 +1760,34 @@ local function buildPeekLines(kind: string, name: string?, extra): (string, {{st
 		if #rows == 0 then table.insert(rows, {"", "No description available."}) end
 		return name or "Status", rows
 	end
+	if kind == "SKILL" then
+		-- Turn-order channel / delayed-skill entry (2026-11-10). extra = server PeekChannel result.
+		if not extra then return name or "Skill", { {"", "Details unavailable."} } end
+		local who = extra.casterName or "Unknown"
+		if extra.phase == "Activation" then who ..= " (landing, cannot be interrupted)" end
+		table.insert(rows, {"CASTER", who})
+		if extra.targetName then table.insert(rows, {"TARGET", extra.targetName}) end
+		if extra.description then table.insert(rows, {"", extra.description}) end
+		if type(extra.hits) == "table" and #extra.hits > 0 then
+			local lines = {}
+			for _, h in ipairs(extra.hits) do
+				local s = h.name or "?"
+				if h.kind == "damage" then
+					s ..= if (h.amount or 0) > 0 then ` -{h.amount} HP ({h.hpBefore} > {h.hpAfter})` else " no damage"
+				elseif h.kind == "healing" then
+					s ..= ` +{h.amount or 0} HP ({h.hpBefore} > {h.hpAfter})`
+				elseif h.kind == "shield" then
+					s ..= ` shield +{h.amount or 0}`
+				end
+				if (h.rtDelay or 0) > 0 then s ..= `, RT +{h.rtDelay}` end
+				if type(h.statuses) == "table" and #h.statuses > 0 then s ..= ", " .. table.concat(h.statuses, ", ") end
+				if h.approx then s ..= " (estimate)" end
+				table.insert(lines, s)
+			end
+			table.insert(rows, {"PREDICTED (if it landed now)", table.concat(lines, "\n")})
+		end
+		return extra.skillName or name or "Skill", rows
+	end
 	if kind == "TERRAIN" then
 		local tile = presentation.tile
 		table.insert(rows, {"EFFECT", TERRAIN_INFO[name or "Clear"] or "No special effect."})
@@ -2173,8 +2208,9 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 	if legacy then legacy:Destroy() end
 
 	local pad = turnOrderBar:FindFirstChildOfClass("UIPadding") or Instance.new("UIPadding", turnOrderBar)
-	pad.PaddingLeft = UDim.new(0, 10); pad.PaddingRight = UDim.new(0, 10)
-	pad.PaddingTop = UDim.new(0, 10); pad.PaddingBottom = UDim.new(0, 10)
+	local barPad = if isPhone() then PHONE_TURN_PAD else 10
+	pad.PaddingLeft = UDim.new(0, barPad); pad.PaddingRight = UDim.new(0, barPad)
+	pad.PaddingTop = UDim.new(0, barPad); pad.PaddingBottom = UDim.new(0, barPad)
 
 	-- DRAGGABLE TURN ORDER (2026-10-26): the slots live in a horizontal ScrollingFrame so the
 	-- player can DRAG the bar sideways to see further-ahead turns (look-ahead raised to 20 in
@@ -2193,9 +2229,9 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 	slotScroll.ScrollingEnabled = true
 	slotScroll.AutomaticCanvasSize = Enum.AutomaticSize.X
 	slotScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-	slotScroll.ScrollBarThickness = 4
-	slotScroll.ScrollBarImageColor3 = Theme.Colors.TextSecondary
-	slotScroll.ScrollBarImageTransparency = 0.3
+	-- No visible scroll bar (user 2026-11-10): the portraits themselves drag-pan the bar.
+	-- Scrolling stays enabled so wheel / touch / click-drag still work.
+	slotScroll.ScrollBarThickness = 0
 	slotScroll.Active = true
 	slotScroll.Parent = turnOrderBar
 	-- Set true once a press moves past the tap threshold, so the slot click handler below
@@ -2448,6 +2484,9 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 			if nl and nl:IsA("TextLabel") then
 				fitTurnName(nl, slotW, math.floor(nl.Size.Y.Scale * slotH + nl.Size.Y.Offset))
 			end
+			-- RT / NOW corner label: same fixed phone size (2026-11-10).
+			local bl = portrait:FindFirstChild("SlotBottom")
+			if bl and bl:IsA("TextLabel") then bl.TextScaled = false; bl.TextSize = PHONE_TURN_TEXT end
 		end
 
 		-- Click handler
@@ -2457,7 +2496,20 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 			-- 2026-11-09: the unit inspector window sits on top of this bar; a tap on the
 			-- window must not also select the slot underneath it.
 			if _G.CTRBLXAI_IsTapOverInspector and _G.CTRBLXAI_IsTapOverInspector() then return end
-			if isUnit or isEvent then
+			if isEvent and entry.casterId and _G.CTRBLXAI_PeekChannel then
+				-- Channel / delayed skill (2026-11-10): highlight the caster's tile as before, then
+				-- show a peek card with caster, target, description and predicted hits.
+				if entry.tileX and entry.tileY and _G.CTRBLXAI_TimelineClickTile then
+					_G.CTRBLXAI_TimelineClickTile(entry.tileX, entry.tileY)
+				end
+				local casterId = entry.casterId
+				local skillName = entry.name
+				task.spawn(function()
+					local info = _G.CTRBLXAI_PeekChannel(casterId)
+					if not portrait.Parent then return end  -- bar rebuilt while waiting
+					showPeekCard("SKILL", skillName, turnOrderBar, info)
+				end)
+			elseif isUnit or isEvent then
 				local tileX = entry.tileX
 				local tileY = entry.tileY
 				-- Always inspect the unit's tile (highlights tile + updates inspector)
@@ -2964,7 +3016,9 @@ end
 -- quests, a live "if you win" gold tally, and the victory loot range. Nothing
 -- here rolls or commits loot/gold — the panel is purely a projection.
 --------------------------------------------------
+local missionOutsideConn: RBXScriptConnection? = nil
 function BattleHUD.CloseMapDetails()
+	if missionOutsideConn then missionOutsideConn:Disconnect(); missionOutsideConn = nil end
 	if mapDetailsPanel then mapDetailsPanel:Destroy(); mapDetailsPanel = nil end
 end
 
@@ -2983,23 +3037,58 @@ function BattleHUD.ShowMapDetails(data)
 	ensureRoot()
 	data = data or {}
 
-	local panel = Instance.new("Frame")
-	panel.Name = "MapDetails"
-	panel.Size = UDim2.fromOffset(280, 0)  -- widened 240->280 for objective lines (2026-10-28)
-	panel.AutomaticSize = Enum.AutomaticSize.Y
-	panel.Position = UDim2.new(0, PAD, 0, 58 + toggleH() + 8)
-	panel.BackgroundColor3 = Theme.Colors.PanelRaised
-	panel.BackgroundTransparency = 0.02
-	panel.BorderSizePixel = 0
+	-- Standard framed panel (user 2026-11-10), centred, never touching the screen edge
+	-- (12 px margin). Content scrolls / drags when it is taller than the panel.
+	-- Height from the HUD root's REAL size (measured, not the camera viewport: on the phone
+	-- emulator the camera reports 382 while the drawable area is smaller, which pushed the
+	-- top 46 px off-screen). Centred inside the root with EDGE px clear top and bottom.
+	local rootH = if rootFrame.AbsoluteSize.Y > 0 then rootFrame.AbsoluteSize.Y else 382
+	local EDGE = 12
+	local maxH = math.max(120, rootH - EDGE * 2)
+	local panel = Theme.MakePanel("MapDetails", UDim2.fromOffset(300, maxH),
+		UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), rootFrame)
 	panel.ZIndex = 40
-	panel.Parent = rootFrame
-	Instance.new("UICorner", panel).CornerRadius = Theme.CornerRadius.md
-	local s = Instance.new("UIStroke", panel); s.Color = Theme.Colors.Border; s.Thickness = 1
-	local pad = Instance.new("UIPadding", panel)
-	pad.PaddingTop = UDim.new(0, 8); pad.PaddingBottom = UDim.new(0, 8)
-	pad.PaddingLeft = UDim.new(0, 8); pad.PaddingRight = UDim.new(0, 8)
-	local layout = Instance.new("UIListLayout", panel)
+	local framePad = Instance.new("UIPadding", panel)
+	framePad.PaddingTop = UDim.new(0, 10); framePad.PaddingBottom = UDim.new(0, 10)
+	framePad.PaddingLeft = UDim.new(0, 12); framePad.PaddingRight = UDim.new(0, 12)
+	local body = Instance.new("ScrollingFrame")
+	body.Name = "MissionScroll"
+	body.Size = UDim2.fromScale(1, 1)
+	body.BackgroundTransparency = 1
+	body.BorderSizePixel = 0
+	body.ScrollingDirection = Enum.ScrollingDirection.Y
+	body.ScrollBarThickness = 3
+	body.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	body.CanvasSize = UDim2.new()
+	body.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	body.ZIndex = 41
+	body.Parent = panel
+	Theme.MakeDragScroll(body)
+	local layout = Instance.new("UIListLayout", body)
 	layout.Padding = UDim.new(0, 3); layout.SortOrder = Enum.SortOrder.LayoutOrder
+	-- Shrink the panel to its content when it fits; cap at maxH (then it scrolls).
+	local function fit()
+		if not panel.Parent then return end
+		local h = math.min(maxH, layout.AbsoluteContentSize.Y + 20 + 2)
+		panel.Size = UDim2.fromOffset(300, h)
+	end
+	layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(fit)
+	task.defer(fit)
+	-- Click / tap outside closes (user 2026-11-10). Same mouse-space fix as the inspector:
+	-- GetMouseLocation includes the top-bar inset, AbsolutePosition does not.
+	-- Deferred one frame so the tap that opened the panel does not close it.
+	task.defer(function()
+		if mapDetailsPanel ~= panel then return end
+		missionOutsideConn = UserInputService.InputBegan:Connect(function(input)
+			if input.UserInputType ~= Enum.UserInputType.MouseButton1
+				and input.UserInputType ~= Enum.UserInputType.Touch then return end
+			local m = UserInputService:GetMouseLocation() - game:GetService("GuiService"):GetGuiInset()
+			local p, sz = panel.AbsolutePosition, panel.AbsoluteSize
+			if m.X < p.X or m.X > p.X + sz.X or m.Y < p.Y or m.Y > p.Y + sz.Y then
+				task.defer(BattleHUD.CloseMapDetails)
+			end
+		end)
+	end)
 
 	local order = 0
 	local function line(txt, color, bold)
@@ -3015,12 +3104,12 @@ function BattleHUD.ShowMapDetails(data)
 		lbl.TextWrapped = true
 		lbl.Text = txt
 		lbl.LayoutOrder = order
-		lbl.ZIndex = 41
-		lbl.Parent = panel
+		lbl.ZIndex = 42
+		lbl.Parent = body
 		return lbl
 	end
 
-	line("MAP DETAILS", Theme.Colors.TextGold, true)
+	line("MISSION", Theme.Colors.TextGold, true)
 	local q = data.quest
 	if q then
 		line(q.name or "Quest", Theme.Colors.TextPrimary, true)

@@ -38,6 +38,16 @@ local GameConstants = require(
 -- PropService has its own TILE_SIZE = 5 mirror; keep in sync with TILE_SIZE below.
 local PropService = require(script.Parent.PropService)
 
+-- Flat 2D trap images (2026-11-10). A trap with an image draws a flat plate on the tile
+-- instead of a 3D model. pcall-guarded: a missing module just means "no images".
+local _tidOk, TileImageData = pcall(function()
+	return require(CTRBLXAI:WaitForChild("Shared"):WaitForChild("TileImageData", 10))
+end)
+if not _tidOk then
+	warn("[MapRenderer] TileImageData require failed: " .. tostring(TileImageData))
+	TileImageData = nil
+end
+
 -- Object definitions (category/activation/tags). Module-level so BOTH spawnObjectModel
 -- (interactable-only PointLight gate) and RenderOneObject can read it. (2026-10-16)
 local ObjectData = require(
@@ -643,7 +653,60 @@ end
 -- NOT set passability (the caller owns that from object data).
 -- NOTE: plain `function` (not `local function`) so this assigns to the forward-
 -- declared `local spawnObjectModel` above, making it visible to createTile.
+-- TRAP IMAGE PLATE (2026-11-10): an invisible, non-queryable thin Part carrying a top-face
+-- SurfaceGui image (same carrier pattern as TileHighlightManager / TerrainTextures). Named
+-- MapObjModel_<type>_<key> like a model, so RemoveOneObject and renderBlockers treat it as
+-- the object's visual. Returns nil when the trap has no image (caller uses the model path).
+local function spawnTrapImage(objectName, tileChild, tileTopY, uniqueKey)
+	local images = TileImageData and TileImageData.Traps
+	local imageId = images and images[objectName]
+	if type(imageId) ~= "string" or imageId == "" then return nil end
+	local plate = Instance.new("Part")
+	plate.Name = string.format("MapObjModel_%s_%s", tostring(objectName), tostring(uniqueKey or ""))
+	plate.Anchored = true
+	plate.CanCollide = false
+	plate.CanQuery = false   -- clicks fall through to the tile
+	plate.CanTouch = false
+	plate.CastShadow = false
+	plate.Transparency = 1   -- DRW-003: carrier is fully invisible; the SurfaceGui draws
+	plate.Size = Vector3.new(TILE_SIZE, 0.05, TILE_SIZE)
+	-- Voxel tiles (Grassland / water): the visible voxel surface can sit above the flat
+	-- tile top, so raycast the Terrain and use whichever surface is higher.
+	local surfaceY = tileTopY
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Include
+	rp.FilterDescendantsInstances = { workspace.Terrain }
+	local hit = workspace:Raycast(Vector3.new(tileChild.Position.X, 200, tileChild.Position.Z), Vector3.new(0, -400, 0), rp)
+	if hit and hit.Position.Y > surfaceY then surfaceY = hit.Position.Y end
+	plate.CFrame = CFrame.new(tileChild.Position.X, surfaceY + TileImageData.TRAP_LIFT, tileChild.Position.Z)
+	plate:SetAttribute("ObjTileX", tileChild:GetAttribute("X"))
+	plate:SetAttribute("ObjTileY", tileChild:GetAttribute("Y"))
+	plate:SetAttribute("TrapImage", true)
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "TrapImage"
+	gui.Face = Enum.NormalId.Top
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = TileImageData.PIXELS_PER_STUD
+	gui.LightInfluence = 1
+	local img = Instance.new("ImageLabel")
+	img.Name = "Image"
+	local trapScale = TileImageData.TRAP_IMAGE_SCALE or 1
+	img.Size = UDim2.fromScale(trapScale, trapScale)
+	img.Position = UDim2.fromScale(0.5, 0.5)
+	img.AnchorPoint = Vector2.new(0.5, 0.5)  -- centred on the tile
+	img.BackgroundTransparency = 1
+	img.Image = imageId
+	img.ScaleType = Enum.ScaleType.Fit
+	img.Parent = gui
+	gui.Parent = plate
+	plate.Parent = tileChild.Parent  -- NET-004: parent last
+	return plate
+end
+
 function spawnObjectModel(objectName, tileChild, tileTopY, uniqueKey, seed)
+	-- Trap with a 2D image: flat plate instead of a 3D model (2026-11-10).
+	local trapPlate = spawnTrapImage(objectName, tileChild, tileTopY, uniqueKey)
+	if trapPlate then return trapPlate end
 	-- `seed` (optional) selects the Ad Billboard model deterministically from the
 	-- "Billboard"-prefix pool; nil for non-billboard objects (ignored by findObjectModel).
 	-- OBS BLOCKER (BUG-047, 2026-10-16): there is no model named "OBS Blocker". Its visual

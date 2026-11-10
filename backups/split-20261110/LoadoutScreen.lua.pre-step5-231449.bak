@@ -1,0 +1,3389 @@
+-- LoadoutScreen.lua
+-- CTRBLXAI | Slice 7 — Equipment Loadout Screen
+-- Replaces pre/post-battle loadout. Uses ornate 9-slice panel frames.
+-- Presentation only — no gameplay logic.
+
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local GuiService        = game:GetService("GuiService")
+local TextService       = game:GetService("TextService")
+
+local player = Players.LocalPlayer
+
+local CTRBLXAI_UI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10)
+local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
+-- The inventory bar / menus / level label / grid spacing / sub-tabs, shared with the Runeforge
+-- (user 2026-11-08: the Loadout is the model; one copy of these pieces).
+local InventoryControls = require(CTRBLXAI_UI:WaitForChild("InventoryControls", 10))
+local MockData    = require(CTRBLXAI_UI:WaitForChild("MockLoadoutData", 10))
+local BattleEvents = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+	:WaitForChild("Remotes", 10):WaitForChild("BattleEvents", 10))
+local GameConstants = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+	:WaitForChild("Shared", 10):WaitForChild("GameConstants", 10))
+-- Shared tags-only augment rule (2026-10-26): the screen greys out exactly what the server refuses.
+local AugmentCompatibility = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+	:WaitForChild("Shared", 10):WaitForChild("AugmentCompatibility", 10))
+local ConsumableData = require(ReplicatedStorage:WaitForChild("Content", 10)
+	:WaitForChild("ConsumableData", 10))
+-- Shared portrait-overlay helper + per-race 2D portrait pools (player picker).
+local UIComponents = require(CTRBLXAI_UI:WaitForChild("UIComponents", 10))
+local PortraitData = require(ReplicatedStorage:WaitForChild("Content", 10)
+	:WaitForChild("PortraitData", 10))
+-- Doctrine icons for the unit-picker tiles (2026-11-10). Guarded: no icon = name only.
+local okDoctrineData, DoctrineData = pcall(function()
+	return require(ReplicatedStorage:WaitForChild("Content", 10):WaitForChild("DoctrineData", 10))
+end)
+if not okDoctrineData then warn("[LoadoutScreen] DoctrineData require failed: " .. tostring(DoctrineData)); DoctrineData = nil end
+-- OUTFIT tab (UGC cosmetics) is its own module; this screen only hosts it (loadout_ui_spec 62).
+-- Guarded: if the UGC modules fail to load, the other loadout tabs keep working.
+local okOutfitTab, UGCOutfitTab = pcall(require, CTRBLXAI_UI:WaitForChild("UGCOutfitTab", 10))
+if not okOutfitTab then warn("[LoadoutScreen] OUTFIT tab unavailable: " .. tostring(UGCOutfitTab)); UGCOutfitTab = nil end
+-- PARTIES tab (USER DECISION 2026-11-04) is its own module too, hosted the same way.
+local okPartiesTab, PartiesTab = pcall(require, CTRBLXAI_UI:WaitForChild("PartiesTab", 10))
+if not okPartiesTab then warn("[LoadoutScreen] PARTIES tab unavailable: " .. tostring(PartiesTab)); PartiesTab = nil end
+
+local LoadoutScreen: any = {}
+
+local screenGui, rootFrame
+local unitHeaderPanel, equippedPanel, inventoryPanel, statPanel
+local skillsPanel      -- left column for skills tab
+local infoPanel        -- left column for info tab  
+local outfitPanel, outfitSidePanel -- OUTFIT tab: main (left) + worn slots (right, below unit header)
+local partiesPanel -- PARTIES tab: full width, unit header hidden (2026-11-04)
+local viewportConn: RBXScriptConnection? = nil -- bottom-gap resize (2026-11-04)
+local LOADOUT_MIN_BOTTOM_GAP = 8       -- px, never less (user 2026-11-04)
+local LOADOUT_BOTTOM_GAP_SCALE = 0.03  -- 3% of screen height
+local rightColFrame
+local currentTab = "GEARS" 
+local infoView = "stats" -- Info tab sub-view: "stats" | "passives" (user decision 2026-10-29)
+local currentFilter = "All"
+local detailFromSlot: string? = nil -- slot tile that opened the equipped detail (2026-10-28)
+local selectedItemId = nil
+
+-- Drag state
+local currentRarity = "All"
+local RARITY_OPTIONS = { "All", "Common", "Uncommon", "Rare", "Epic", "Legendary" }
+
+-- Active dropdown (only one open at a time)
+local activeDropdown = nil
+
+local currentSort = 1
+local SORT_OPTIONS = {
+	{ label = "Lv \xe2\x86\x93", field = "lv", desc = true },
+	{ label = "Lv \xe2\x86\x91", field = "lv", desc = false },
+	{ label = "Name", field = "name", desc = false },
+	{ label = "Rarity", field = "rarity", desc = true },
+	{ label = "New First", field = "new", desc = true },
+	{ label = "New Last", field = "new", desc = false },
+}
+
+local CATEGORY_FILTERS = {
+	{ id = "All",       label = "All",    icon = Theme.Icons.AllTypes },
+	{ id = "MainHand",  label = "Main",   icon = Theme.Icons.MainHand },
+	{ id = "OffHand",   label = "Off",    icon = Theme.Icons.OffHand },
+	{ id = "Head",      label = "Head",   icon = Theme.Icons.Head },
+	{ id = "Torso",     label = "Torso",  icon = Theme.Icons.Torso },
+	{ id = "Arms",      label = "Arms",   icon = Theme.Icons.Arms },
+	{ id = "Legs",      label = "Legs",   icon = Theme.Icons.Legs },
+	{ id = "Accessory", label = "Acc",    icon = Theme.Icons.Accessory },
+	{ id = "Consumable",label = "Use",    icon = Theme.Icons.Consumable },
+	{ id = "Doctrine",  label = "Doct",   icon = Theme.Icons.Doctrine },
+}
+
+local EQUIP_SLOTS = {
+	{ slot = "MainHand",  label = "MAIN HAND" },
+	{ slot = "OffHand",   label = "OFF-HAND" },
+	{ slot = "Head",      label = "HEAD" },
+	{ slot = "Torso",     label = "TORSO" },
+	{ slot = "Arms",      label = "ARMS" },
+	{ slot = "Legs",      label = "LEGS" },
+	{ slot = "Accessory", label = "ACCESSORY" },
+	{ slot = "Doctrine",  label = "DOCTRINE" },
+}
+
+local _STAT_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK" }
+
+local BONUS_STAT_ORDER = {
+	"STR", "INT", "DEX", "AGI", "VIT", "LUK",
+	"HP", "MP", "Attack", "Defense", "RT Delay", "WT",
+	"Precision", "Evasiveness", "Fortune", "Skill Potency",
+	"Healing", "Debuff Resist", "RT Delay Resist",
+}
+
+--------------------------------------------------
+-- CONSUMABLE PICKER POPUP
+--------------------------------------------------
+
+--------------------------------------------------
+-- FORWARD DECLARATIONS (functions used before definition)
+--------------------------------------------------
+local buildInventory
+local openItemDetail, closeDetail
+local buildSoloDetailContent, buildComparisonContent
+local switchTab, buildSkillsContent, buildInfoContent, buildStatPanel
+local buildSkillLoadout
+local openSkillCardDetail, openAugmentCardDetail
+local openSkillSlotPicker, openAugmentSlotPicker
+local openEquippedSkillDetail, openEquippedAugmentDetail
+local openAugmentPickerForSlot -- declared early: skill-row augment buttons (built above) call it on click
+local openConsumableDetail, openConsumableSlotPicker, openEquippedConsumableDetail
+local buildConsumableGrid
+local ELEM_COLORS, STYPE_COLORS, STYPE_ICONS, buildSkillDescription, cleanEffects, getElement, getSkillType, simplifyPattern, simplifyRange -- bound to LoadoutSkillUtil (split step 3)
+
+
+-- Skills tab state
+local selectedSkillCardId = nil
+local _skillSubTab = "SKILL"     -- "SKILL" or "AUGMENT"
+local skillTypeFilter = "All"
+local skillTagFilter = "All"
+local skillSortIndex = 1
+local skillSearchText = ""
+
+local SKILL_SORT_OPTIONS_SK = {
+	{ label = "Name", field = "name", desc = false },
+	{ label = "MP v", field = "mpCost", desc = true },
+	{ label = "MP ^", field = "mpCost", desc = false },
+	{ label = "RT v", field = "rtCost", desc = true },
+	{ label = "RT ^", field = "rtCost", desc = false },
+}
+
+local SKILL_TYPE_FILTERS = { "All", "Damage", "Heal", "Buff", "Debuff", "Utility" }
+local SKILL_TAG_FILTERS = { "All", "Fire", "Ice", "Electric", "Holy", "Dark", "Poison", "Physical" }
+
+--------------------------------------------------
+-- HELPERS
+--------------------------------------------------
+
+local function getPlayerGui()
+	return player:WaitForChild("PlayerGui")
+end
+
+-- Public: build item detail content into any panel (for reuse by victory screen etc.)
+function LoadoutScreen.BuildItemDetail(panel, item)
+	buildSoloDetailContent(panel, item)
+end
+
+local function clearChildren(frame)
+	if not frame then return end
+	for _, child in ipairs(frame:GetChildren()) do
+		if not child:IsA("UICorner") and not child:IsA("UIPadding") and not child:IsA("UISizeConstraint") then
+			child:Destroy()
+		end
+	end
+end
+
+local function makePanel(name, size, position, anchor, parent, opts)
+	return Theme.MakePanel(name, size, position, anchor, parent, opts)
+end
+
+local function makeLabel(parent, props)
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = props.Size or UDim2.new(1, 0, 0, 14)
+	lbl.Position = props.Position or UDim2.new(0, 0, 0, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.BorderSizePixel = 0
+	lbl.Font = props.Font or Theme.Font.Primary
+	lbl.TextSize = props.TextSize or Theme.Text.Body()
+	lbl.TextColor3 = props.TextColor3 or Theme.Colors.TextPrimary
+	lbl.Text = props.Text or ""
+	lbl.TextXAlignment = props.TextXAlignment or Enum.TextXAlignment.Left
+	lbl.TextTruncate = Enum.TextTruncate.AtEnd
+	lbl.LayoutOrder = props.LayoutOrder or 0
+	lbl.RichText = props.RichText or false
+	if props.TextWrapped then lbl.TextWrapped = true end
+	lbl.Parent = parent
+	return lbl
+end
+
+-- Auto-sizing passive/skill info card: its height grows to FULLY show the
+-- wrapped description instead of clipping at a fixed box (2026-10-23 fix).
+-- Parent should drive vertical flow with a UIListLayout (cards have no manual
+-- Y). Name is single-line (ellipsis if absurdly long); description wraps and
+-- is never truncated.
+local function makeDescCard(parent, titleText, titleColor, descText, bgColor, bgTransparency, layoutOrder)
+	local card = Instance.new("Frame")
+	card.Size = UDim2.new(1, 0, 0, 0)
+	card.AutomaticSize = Enum.AutomaticSize.Y
+	card.BackgroundColor3 = bgColor or Theme.Colors.PanelRaised
+	card.BackgroundTransparency = bgTransparency or 0.3
+	card.BorderSizePixel = 0
+	card.LayoutOrder = layoutOrder or 0
+	card.Parent = parent
+	Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
+	local cpad = Instance.new("UIPadding", card)
+	cpad.PaddingTop = UDim.new(0, 3); cpad.PaddingBottom = UDim.new(0, 4)
+	cpad.PaddingLeft = UDim.new(0, 4); cpad.PaddingRight = UDim.new(0, 4)
+	local clist = Instance.new("UIListLayout", card)
+	clist.FillDirection = Enum.FillDirection.Vertical
+	clist.SortOrder = Enum.SortOrder.LayoutOrder
+	clist.Padding = UDim.new(0, 2)
+	local nameLbl = Instance.new("TextLabel")
+	nameLbl.BackgroundTransparency = 1
+	nameLbl.BorderSizePixel = 0
+	nameLbl.Size = UDim2.new(1, 0, 0, 14)
+	nameLbl.Font = Theme.Font.PrimaryBold
+	nameLbl.TextSize = Theme.Text.Small()
+	nameLbl.TextColor3 = titleColor or Theme.Colors.Success
+	nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+	nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+	nameLbl.LayoutOrder = 0
+	nameLbl.Text = titleText or ""
+	nameLbl.Parent = card
+	if descText and descText ~= "" then
+		local d = Instance.new("TextLabel")
+		d.BackgroundTransparency = 1
+		d.BorderSizePixel = 0
+		d.Size = UDim2.new(1, 0, 0, 0)
+		d.AutomaticSize = Enum.AutomaticSize.Y
+		d.Font = Theme.Font.Primary
+		d.TextSize = Theme.Text.Tiny()
+		d.TextColor3 = Theme.Colors.TextSecondary
+		d.TextXAlignment = Enum.TextXAlignment.Left
+		d.TextYAlignment = Enum.TextYAlignment.Top
+		d.TextWrapped = true
+		d.TextTruncate = Enum.TextTruncate.None
+		d.LayoutOrder = 1
+		d.Text = descText
+		d.Parent = card
+	end
+	return card
+end
+
+local function getRarityColor(rarity)
+	local map = {
+		Common = Theme.Colors.RarityCommon,
+		Uncommon = Theme.Colors.RarityUncommon,
+		Rare = Theme.Colors.RarityRare,
+		Epic = Theme.Colors.RarityEpic,
+		Exalted = Theme.Colors.RarityExalted,
+		Legendary = Theme.Colors.RarityLegendary,
+		Mythic = Theme.Colors.RarityMythic,
+		Transcendent = Theme.Colors.RarityTranscendent,
+		Unique = Theme.Colors.RarityUnique,
+	}
+	return map[rarity] or Theme.Colors.RarityCommon
+end
+
+local function pad(frame, top, left, right, bottom)
+	local p = Instance.new("UIPadding", frame)
+	p.PaddingTop = UDim.new(0, top or 10)
+	p.PaddingLeft = UDim.new(0, left or 10)
+	p.PaddingRight = UDim.new(0, right or 10)
+	p.PaddingBottom = UDim.new(0, bottom or 10)
+end
+
+--------------------------------------------------
+-- TAB BAR
+--------------------------------------------------
+
+local tabBarGui = nil
+local tabButtons = {} -- tab name -> button made by Theme.MakeTabButton
+
+local function buildTabBar()
+	if tabBarGui then tabBarGui:Destroy() end
+	local panel
+	tabBarGui, panel = Theme.MakeTabBar("LoadoutTabBar", getPlayerGui())
+
+	local tb = Theme.TabBar
+	-- Keep the tabs inside the ornate frame's side borders (2026-10-08): inset = the
+	-- frame's drawn border width (slice edge x SliceScale) instead of a fixed 8 px.
+	local pf = Theme.PanelFrame
+	local frameBorderX = math.ceil(pf.SliceCenter.Min.X * pf.SliceScale)
+	local bar = Instance.new("Frame")
+	bar.Name = "TabBar"
+	local padY = tb.InnerPadY + 1 -- +1 px clearance from the frame's top/bottom (2026-10-08)
+	bar.Size = UDim2.new(1, -frameBorderX * 2, 1, -padY * 2)
+	bar.Position = UDim2.new(0, frameBorderX, 0, padY)
+	bar.BackgroundTransparency = 1
+	bar.Parent = panel
+
+	local layout = Instance.new("UIListLayout", bar)
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.Padding = UDim.new(0, 0) -- tabs sit edge to edge (2026-10-08)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder -- was default Name sort (alphabetical order bug)
+
+	local tabs = { "INFO", "GEARS", "SKILLS", "OUTFIT", "PARTIES" } -- PARTIES added 2026-11-04 (user)
+	tabButtons = {}
+	for i, name in ipairs(tabs) do
+		-- Old 9-slice text bars (2026-10-08): Active = bronze, Inactive = navy (Theme.MakeTabButton).
+		-- Height = the shared tab panel's inner height (Theme.TabBar), Scale width so 4 tabs fit (73).
+		tabButtons[name] = Theme.MakeTabButton(bar, name, if name == currentTab then "Active" else "Inactive", function()
+			if currentTab ~= name then
+				BattleEvents.RequestSaveLoadout:FireServer() -- save the tab we're leaving (2026-10-19)
+				currentTab = name
+				if name == "INFO" then infoView = "stats" end -- Info always opens on Stats (2026-10-29)
+				switchTab()
+			end
+		end, {
+			name = "Tab_" .. name,
+			size = UDim2.new(1 / #tabs, 0, 1, 0),
+			textSize = tb.TabTextSize,
+			layoutOrder = i,
+		})
+	end
+
+	-- Opaque strip behind the tab bar, covering only the Roblox top-bar inset. The full-screen
+	-- root starts BELOW the inset (Theme.FullScreen.IgnoreGuiInset = false), so without this the
+	-- Guild menu underneath showed through at the top of the loadout (BUG-026).
+	local insetTopLeft = GuiService:GetGuiInset()
+	local strip = Instance.new("Frame")
+	strip.Name = "TopInsetStrip"
+	strip.Size = UDim2.new(1, 0, 0, insetTopLeft.Y)
+	strip.BackgroundColor3 = Theme.FullScreen.BackgroundColor
+	strip.BackgroundTransparency = 0
+	strip.BorderSizePixel = 0
+	strip.ZIndex = 0 -- under the tab panel and the Back button
+	strip.Active = false
+	strip.Parent = tabBarGui -- properties set before Parent (NET-004)
+
+	-- BACK button: top-right corner of the top bar, where the retired dev OPTIONS menu sat
+	-- (Start Battle / Save Now / Delete Save, removed 2026-10-08). Not top-left: Roblox's own
+	-- menu/chat/mic buttons own that area and always draw on top of game UI.
+	-- Closes the loadout and returns to the screen underneath. The Guild menu stays enabled
+	-- below this screen (DisplayOrder 80 vs 100), so hiding is enough to go back to it. Every
+	-- loadout change is sent to the server the moment it is made, so Back never discards
+	-- anything (loadout_ui_spec 1, 9).
+	local touch = Theme.MinSize.TouchTarget -- 44 px minimum (loadout_ui_spec 73)
+	local backBtn = Theme.MakeIconButton(tabBarGui, "Back", nil, {
+		name = "Btn_BACK",
+		size = UDim2.new(0, touch, 0, touch),
+		position = UDim2.new(1, -8, 0, tb.PositionY),
+		anchor = Vector2.new(1, 0),
+	})
+	backBtn.Activated:Connect(function() -- .Activated: mouse, touch and gamepad
+		LoadoutScreen.Hide()
+	end)
+end
+
+-- Move the tab highlight in place (loadout_ui_spec 53: no rebuild on tab switch).
+-- Builds the bar only if it does not exist yet (first open, or after Hide()).
+local function refreshTabBar()
+	if not tabBarGui or tabBarGui.Parent == nil then
+		buildTabBar()
+		return
+	end
+	for name, btn in tabButtons do
+		Theme.SetTabState(btn, if name == currentTab then "Active" else "Inactive")
+	end
+end
+
+--------------------------------------------------
+-- UNIT HEADER (upper-right, compact)
+--------------------------------------------------
+
+local function buildUnitHeader()
+	if not unitHeaderPanel then return end
+	clearChildren(unitHeaderPanel)
+	pad(unitHeaderPanel, 8, 10, 10, 8)
+
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, 0, 0, 44)
+	row.BackgroundTransparency = 1
+	row.Parent = unitHeaderPanel
+
+	-- Swap button at the RIGHT end of the header; opens the unit dropdown
+	-- (replaces the old left/right cycle arrows, user ruling 2026-10-18).
+	local SWAP_W = 28
+	local swapBtn = Instance.new("ImageButton")
+	swapBtn.Name = "SwapUnit"
+	swapBtn.Size = UDim2.new(0, SWAP_W, 0, 28)
+	swapBtn.Position = UDim2.new(1, -SWAP_W, 0, 8)
+	swapBtn.BackgroundColor3 = Theme.Colors.Surface
+	swapBtn.BackgroundTransparency = 0.4
+	-- Use the semantic compare/swap/details icon (IconButtonAssets.Options). The
+	-- earlier `Theme.Icons.Options` is nil (no such key in Theme.Icons), so it fell
+	-- through to the Sort glyph — wrong icon. (2026-10-18)
+	swapBtn.Image = (Theme.IconButtonAssets and Theme.IconButtonAssets.Options)
+		or Theme.Icons.Options or ""
+	swapBtn.ScaleType = Enum.ScaleType.Fit
+	swapBtn.BorderSizePixel = 0
+	swapBtn.Parent = row
+	Instance.new("UICorner", swapBtn).CornerRadius = UDim.new(0, 3)
+
+	-- Portrait at the LEFT edge (no more left arrow inset).
+	local portraitX = 0
+	local portrait = Instance.new("Frame")
+	portrait.Size = UDim2.new(0, 44, 0, 44)
+	portrait.Position = UDim2.new(0, portraitX, 0, 0)
+	portrait.BackgroundColor3 = Theme.Colors.Player
+	portrait.BackgroundTransparency = 0.2
+	portrait.BorderSizePixel = 0
+	portrait.Parent = row
+	Instance.new("UICorner", portrait).CornerRadius = UDim.new(0, 5)
+
+	local pText = Instance.new("TextLabel")
+	pText.Size = UDim2.new(1, 0, 0, 32)
+	pText.BackgroundTransparency = 1
+	pText.Font = Theme.Font.PrimaryBold
+	pText.TextSize = Theme.Text.Title()
+	pText.TextColor3 = Theme.Colors.TextPrimary
+	pText.Text = string.sub(unit.name, 1, 2)
+	pText.Parent = portrait
+	-- Portrait face overlay when the unit has one (nil -> initials box).
+	if UIComponents and UIComponents.ApplyPortrait and unit.portraitAssetId then
+		if UIComponents.ApplyPortrait(portrait, unit.portraitAssetId) then pText.Text = "" end
+	end
+
+	local lvlBadge = Instance.new("TextLabel")
+	lvlBadge.Size = UDim2.new(0, 28, 0, 12)
+	lvlBadge.Position = UDim2.new(0, 0, 0, 0)
+	lvlBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	lvlBadge.BackgroundTransparency = 0.3
+	lvlBadge.Font = Theme.Font.Mono
+	lvlBadge.TextSize = Theme.Text.Tiny()
+	lvlBadge.TextColor3 = Theme.Colors.TextPrimary
+	lvlBadge.Text = "Lv." .. unit.level
+	lvlBadge.BorderSizePixel = 0
+	lvlBadge.TextXAlignment = Enum.TextXAlignment.Left
+	-- ApplyPortrait adds the face image at (frame.ZIndex + 1); the badge must sit
+	-- ABOVE that or it hides behind the portrait. Frame is ZIndex 1 -> image 2 ->
+	-- badge 3. (2026-10-18, same fix pattern as the turn-order bar.)
+	lvlBadge.ZIndex = 3
+	lvlBadge.Parent = portrait
+
+	-- Unallocated stat points indicator (red dot, top-right of portrait)
+	if unit.unallocatedPoints and unit.unallocatedPoints > 0 then
+		local alertDot = Instance.new("Frame")
+		alertDot.Size = UDim2.new(0, 10, 0, 10)
+		alertDot.Position = UDim2.new(1, -12, 0, 2)
+		alertDot.BackgroundColor3 = Theme.Colors.Danger
+		alertDot.BorderSizePixel = 0
+		alertDot.Parent = portrait
+		Instance.new("UICorner", alertDot).CornerRadius = UDim.new(0.5, 0)
+	end
+
+	-- Name + "Race - Doctrine" (user ruling 2026-10-18: doctrine right after race).
+	local textX = portraitX + 52
+	local rightInset = SWAP_W + 8
+	-- Name always gets TWO rows (user 2026-10-29) so long names wrap instead of clipping.
+	local HDR_NAME_H = 2 * (Theme.Text.Heading() + 2)
+	local hdrName = Instance.new("TextLabel")
+	hdrName.Size = UDim2.new(1, -(textX + rightInset), 0, HDR_NAME_H)
+	hdrName.Position = UDim2.new(0, textX, 0, 0)
+	hdrName.BackgroundTransparency = 1; hdrName.BorderSizePixel = 0
+	hdrName.Font = Theme.Font.PrimaryBold; hdrName.TextSize = Theme.Text.Heading()
+	hdrName.TextColor3 = Theme.Colors.Player
+	hdrName.TextXAlignment = Enum.TextXAlignment.Left
+	hdrName.TextYAlignment = Enum.TextYAlignment.Top
+	hdrName.TextWrapped = true; hdrName.TextTruncate = Enum.TextTruncate.AtEnd
+	hdrName.Text = unit.name
+	hdrName.Parent = row -- parent last (NET-004)
+	local raceDoc = unit.raceName or "—"
+	if unit.doctrineName and unit.doctrineName ~= "" then
+		raceDoc = raceDoc .. " - " .. unit.doctrineName
+	end
+	makeLabel(row, { Text = raceDoc,
+		Position = UDim2.new(0, textX, 0, HDR_NAME_H),
+		Size = UDim2.new(1, -(textX + rightInset), 0, 12), TextSize = Theme.Text.Small(),
+		TextColor3 = Theme.Colors.TextSecondary })
+
+	-- Dropdown: full roster, each row = portrait + Lv badge, name, Race - Doctrine.
+	-- Mirrors the existing DropdownOverlay pattern (ScreenGui backdrop + menu panel)
+	-- and reuses `activeDropdown` so Hide()/outside-click tear it down. (2026-10-18)
+	local function closeUnitDropdown()
+		if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+	end
+	-- UNIT PICKER POPUP (user request 2026-11-10): replaces the row dropdown. Centred modal with
+	-- the roster as tiles (portrait, Lv, name, doctrine badge) and a unit-count header. Reuses
+	-- `activeDropdown` so Hide()/backdrop tap tear it down like before.
+	local function openUnitPicker()
+		if activeDropdown then closeUnitDropdown(); return end
+		local units = MockData.GetAllUnits and MockData.GetAllUnits() or {}
+		local cam = workspace.CurrentCamera
+		local vp = cam and cam.ViewportSize or Vector2.new(1280, 720)
+		-- Same footprint as the portrait picker (user 2026-11-10): 280x300 panel, 56 px cells
+		-- + a short name row, 6 px gaps (4 per row).
+		local TILE_W, TILE_H = 56, 72
+		local GAP = 6
+		local popW = 280
+		local popH = math.min(vp.Y - 24, 300)
+
+		activeDropdown = Instance.new("ScreenGui")
+		activeDropdown.Name = "UnitPickerPopup"
+		-- Above LoadoutTabBar (150) so the tab bar cannot cover the popup header (2026-11-10).
+		activeDropdown.DisplayOrder = 160
+		activeDropdown.ResetOnSpawn = false
+		activeDropdown.IgnoreGuiInset = true
+
+		local backdrop = Instance.new("TextButton")
+		backdrop.Size = UDim2.fromScale(1, 1)
+		backdrop.BackgroundColor3 = Color3.new(0, 0, 0)
+		backdrop.BackgroundTransparency = 0.45
+		backdrop.AutoButtonColor = false
+		backdrop.Text = ""
+		backdrop.Parent = activeDropdown
+		backdrop.Activated:Connect(closeUnitDropdown)
+
+		local pop = Theme.MakePanel("UnitPickerPanel", UDim2.fromOffset(popW, popH),
+			UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), activeDropdown)
+		pop.ZIndex = 50
+		pad(pop, 10, 12, 12, 10)
+
+		-- Header: title + unit count (capacity indicator).
+		makeLabel(pop, { Text = "Choose Unit",
+			Size = UDim2.new(1, -40, 0, 20), Position = UDim2.new(0, 0, 0, 0),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextGold })
+		local cap = MockData.GetRosterCapacity and MockData.GetRosterCapacity() or nil
+		local countText = if cap then `Units {#units} / {cap}` else `Units {#units}`
+		makeLabel(pop, { Text = countText,
+			Size = UDim2.new(0, 90, 0, 20), Position = UDim2.new(1, -118, 0, 0),
+			TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary,
+			TextXAlignment = Enum.TextXAlignment.Right })
+		local closeBtn = Instance.new("TextButton")
+		closeBtn.Size = UDim2.fromOffset(32, 24)
+		closeBtn.Position = UDim2.new(1, -32, 0, -2)
+		closeBtn.BackgroundTransparency = 1
+		closeBtn.Font = Theme.Font.PrimaryBold
+		closeBtn.TextSize = Theme.Text.Heading()
+		closeBtn.TextColor3 = Theme.Colors.TextSecondary
+		closeBtn.Text = "X"
+		closeBtn.ZIndex = 52
+		closeBtn.Parent = pop
+		closeBtn.Activated:Connect(closeUnitDropdown)
+
+		local grid = Instance.new("ScrollingFrame")
+		grid.Size = UDim2.new(1, 0, 1, -28)
+		grid.Position = UDim2.new(0, 0, 0, 28)
+		grid.BackgroundTransparency = 1
+		grid.BorderSizePixel = 0
+		grid.ScrollBarThickness = 4
+		grid.ScrollingDirection = Enum.ScrollingDirection.Y
+		grid.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		grid.CanvasSize = UDim2.new()
+		grid.ZIndex = 51
+		grid.Parent = pop
+		local gl = Instance.new("UIGridLayout")
+		gl.CellSize = UDim2.fromOffset(TILE_W, TILE_H)
+		gl.CellPadding = UDim2.fromOffset(GAP, GAP)
+		gl.SortOrder = Enum.SortOrder.LayoutOrder
+		gl.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		gl.Parent = grid
+
+		for idx, u in ipairs(units) do
+			local isSel = (u.id == unit.id)
+			local tile = Instance.new("TextButton")
+			tile.BackgroundColor3 = Theme.Colors.PanelRaised
+			tile.BackgroundTransparency = isSel and 0.1 or 0.45
+			tile.AutoButtonColor = false -- no hover colour (project_rules 243)
+			tile.Text = ""
+			tile.BorderSizePixel = 0
+			tile.LayoutOrder = idx
+			tile.ZIndex = 52
+			Instance.new("UICorner", tile).CornerRadius = UDim.new(0, 4)
+			local st = Instance.new("UIStroke")
+			st.Color = if isSel then Theme.Colors.TextGold else Theme.Colors.Border
+			st.Thickness = if isSel then 2 else 1
+			st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+			st.Parent = tile
+
+			local pSize = TILE_W - 4
+			local pFrame = Instance.new("Frame")
+			pFrame.Size = UDim2.fromOffset(pSize, pSize)
+			pFrame.Position = UDim2.new(0.5, -pSize / 2, 0, 2)
+			pFrame.BackgroundColor3 = Theme.Colors.Player
+			pFrame.BackgroundTransparency = 0.2
+			pFrame.BorderSizePixel = 0
+			pFrame.ZIndex = 53
+			Instance.new("UICorner", pFrame).CornerRadius = UDim.new(0, 4)
+			local pInit = Instance.new("TextLabel")
+			pInit.Size = UDim2.fromScale(1, 1)
+			pInit.BackgroundTransparency = 1
+			pInit.Font = Theme.Font.PrimaryBold
+			pInit.TextSize = Theme.Text.Body()
+			pInit.TextColor3 = Theme.Colors.TextPrimary
+			pInit.Text = string.sub(u.name, 1, 2)
+			pInit.ZIndex = 54
+			pInit.Parent = pFrame
+			pFrame.Parent = tile
+			if UIComponents and UIComponents.ApplyPortrait and u.portraitAssetId then
+				if UIComponents.ApplyPortrait(pFrame, u.portraitAssetId) then pInit.Text = "" end
+			end
+			-- Level badge (top-left of portrait); ZIndex above the portrait image (53+1).
+			local badge = Instance.new("TextLabel")
+			badge.Size = UDim2.fromOffset(Theme.BadgeFitW and Theme.BadgeFitW("Lv." .. u.level, Theme.Font.Mono, 28) or 30, 13)
+			badge.BackgroundColor3 = Color3.new(0, 0, 0)
+			badge.BackgroundTransparency = 0.3
+			badge.Font = Theme.Font.Mono
+			badge.TextSize = Theme.Text.Tiny()
+			badge.TextColor3 = Theme.Colors.TextPrimary
+			badge.Text = "Lv." .. u.level
+			badge.BorderSizePixel = 0
+			badge.ZIndex = 56
+			badge.Parent = pFrame
+			-- Doctrine badge (bottom-right of portrait): the doctrine's own icon.
+			local docDef = DoctrineData and u.doctrineId and DoctrineData[u.doctrineId]
+			local docIcon = docDef and docDef.icon
+			if type(docIcon) == "string" and docIcon ~= "" then
+				local db = Instance.new("ImageLabel")
+				db.Name = "DoctrineBadge"
+				db.Size = UDim2.fromOffset(16, 16)
+				db.AnchorPoint = Vector2.new(1, 1)
+				db.Position = UDim2.new(1, -2, 1, -2)
+				db.BackgroundColor3 = Color3.new(0, 0, 0)
+				db.BackgroundTransparency = 0.25
+				db.Image = docIcon
+				db.ScaleType = Enum.ScaleType.Fit
+				db.ZIndex = 56
+				Instance.new("UICorner", db).CornerRadius = UDim.new(0.5, 0)
+				db.Parent = pFrame
+			end
+			-- Name (two rows) under the portrait.
+			local nameLbl = Instance.new("TextLabel")
+			nameLbl.Size = UDim2.new(1, -2, 0, TILE_H - pSize - 4)
+			nameLbl.Position = UDim2.new(0, 1, 0, pSize + 3)
+			nameLbl.BackgroundTransparency = 1
+			nameLbl.Font = Theme.Font.PrimaryBold
+			nameLbl.TextSize = Theme.Text.Tiny()
+			nameLbl.TextColor3 = isSel and Theme.Colors.TextGold or Theme.Colors.Player
+			nameLbl.TextWrapped = false  -- one row at this size; long names end in "..."
+			nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+			nameLbl.TextYAlignment = Enum.TextYAlignment.Top
+			nameLbl.Text = u.name
+			nameLbl.ZIndex = 53
+			nameLbl.Parent = tile
+			tile.Parent = grid -- parent last (NET-004)
+
+			tile.Activated:Connect(function()
+				closeUnitDropdown()
+				if isSel then return end
+				BattleEvents.RequestSaveLoadout:FireServer() -- save the unit we're leaving (2026-10-19)
+				if MockData.SetSelectedUnitById then MockData.SetSelectedUnitById(u.id) end
+				LoadoutScreen.Refresh()
+			end)
+		end
+		activeDropdown.Parent = getPlayerGui()
+	end
+	swapBtn.Activated:Connect(openUnitPicker)
+	-- Studio test hook (2026-11-10): lets tooling open the picker without simulated clicks.
+	LoadoutScreen._OpenUnitPicker = openUnitPicker
+end
+
+
+--------------------------------------------------
+-- PRIMARY STATS (3x2 grid below header)
+--------------------------------------------------
+
+
+--------------------------------------------------
+-- EQUIPPED LOADOUT (4 columns x 2 rows + consumables)
+--------------------------------------------------
+
+local equippedTab = "gear"  -- "gear" or "cons"
+
+local function buildEquippedLoadout()
+	if not equippedPanel then return end
+	clearChildren(equippedPanel)
+	pad(equippedPanel, 6, 6, 6, 6)
+
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	local layout = Instance.new("UIListLayout", equippedPanel)
+	layout.Padding = UDim.new(0, 3)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+	-- Tab switcher: GEAR / CONSUMABLES (shared InventoryControls.MakeSubTabs, 2026-11-08)
+	local SUBTAB_H = InventoryControls.SubTabHeight -- same height as the Outfit Worn/Preview sub-tabs (user ruling 2026-10-08)
+	InventoryControls.MakeSubTabs(equippedPanel, { { id = "gear", label = "GEAR" }, { id = "cons", label = "CONSUMABLES" } },
+		equippedTab, function(id)
+			equippedTab = id
+			buildEquippedLoadout()
+			if equippedTab == "cons" then
+				buildConsumableGrid()
+			else
+				buildInventory()
+			end
+		end, 0)
+
+	-- Content area below tabs
+	local content = Instance.new("Frame")
+	content.Size = UDim2.new(1, 0, 1, -(SUBTAB_H + 6)) -- below the sub-tabs + list gap
+	content.BackgroundTransparency = 1
+	content.LayoutOrder = 1
+	content.Parent = equippedPanel
+
+	if equippedTab == "gear" then
+		-- 4 col x 2 row equipment grid (icon-only, no slot labels)
+		local eqGrid = Instance.new("Frame")
+		eqGrid.Size = UDim2.new(1, 0, 1, 0)
+		eqGrid.BackgroundTransparency = 1
+		eqGrid.Parent = content
+
+		local gridLayout = Instance.new("UIGridLayout", eqGrid)
+		gridLayout.CellSize = UDim2.new(0.5, -2, 0.25, -2)
+		gridLayout.CellPadding = UDim2.new(0, 3, 0, 3)
+		gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+		-- Check if main hand weapon is 2H (disables off-hand)
+		local mainItem = MockData.GetEquipped(unit.id, "MainHand")
+		local mainIs2H = mainItem and (mainItem.hands == "Two-Handed" or mainItem.hands == "2H") or false
+
+
+		for i, slotDef in ipairs(EQUIP_SLOTS) do
+			local item = MockData.GetEquipped(unit.id, slotDef.slot)
+			-- Doctrine is not a regular inventory item — build from server data
+			if not item and slotDef.slot == "Doctrine" then
+				item = MockData.GetEquippedDoctrine(unit.id)
+			end
+			local isOffHandDisabled = (slotDef.slot == "OffHand" and mainIs2H)
+
+
+			local tile = Instance.new("TextButton")
+			if item then
+				local rc = getRarityColor(item.rarity)
+				tile.BackgroundColor3 = rc
+				tile.BackgroundTransparency = 0.75
+			else
+				tile.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
+				tile.BackgroundTransparency = 0.6
+			end
+			tile.BorderSizePixel = 0
+			if isOffHandDisabled then
+				tile.BackgroundColor3 = Theme.Colors.Background
+				tile.BackgroundTransparency = 0.3
+				tile.AutoButtonColor = false
+			end
+
+			tile.Text = ""
+			tile.AutoButtonColor = true
+			tile.LayoutOrder = i
+			tile.Parent = eqGrid
+			Instance.new("UICorner", tile).CornerRadius = UDim.new(0, 4)
+
+			if item then
+				-- Icon (centered) — use uploaded image if available
+				if item.icon and string.find(item.icon, "rbxassetid://") then
+					local PAD = 2
+					local ico = Instance.new("ImageLabel")
+					-- Square: side length = tile height minus 2*PAD
+					ico.Size = UDim2.new(1, -2*PAD, 1, -2*PAD)
+					ico.SizeConstraint = Enum.SizeConstraint.RelativeYY
+					ico.Position = UDim2.new(1, -PAD, 0, PAD)
+					ico.AnchorPoint = Vector2.new(1, 0)
+					ico.BackgroundTransparency = 1
+					ico.Image = item.icon
+					ico.ScaleType = Enum.ScaleType.Fit
+					ico.Parent = tile
+				else
+					makeLabel(tile, { Text = item.icon or "?", Size = UDim2.new(1, 0, 0, 24),
+						Position = UDim2.new(0, 0, 0.15, 0),
+						TextSize = 22, TextXAlignment = Enum.TextXAlignment.Center })
+				end
+
+				-- Slot type label (left side, vertically centered)
+				local slotLbl = makeLabel(tile, { Text = slotDef.label,
+					Size = UDim2.new(0.5, 0, 0.5, 0),
+					Position = UDim2.new(0, 3, 0.15, 0),
+					TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+					TextColor3 = Theme.Colors.TextDisabled,
+					TextXAlignment = Enum.TextXAlignment.Left,
+					TextWrapped = true })
+				if slotLbl then slotLbl.ZIndex = 3 end
+
+				-- Name (bottom area)
+				local nameBg = Instance.new("Frame")
+				nameBg.Size = UDim2.new(1, 0, 0, 14)
+				nameBg.Position = UDim2.new(0, 0, 1, -14)
+				nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				nameBg.BackgroundTransparency = 0.4
+				nameBg.BorderSizePixel = 0
+				nameBg.ZIndex = 3
+				nameBg.Parent = tile
+				local eqNameLbl = makeLabel(nameBg, { Text = item.name, Size = UDim2.new(1, -4, 1, 0),
+					Position = UDim2.new(0, 2, 0, 0),
+					TextSize = Theme.Text.Small(), TextColor3 = getRarityColor(item.rarity),
+					TextXAlignment = Enum.TextXAlignment.Left })
+				if eqNameLbl then eqNameLbl.ZIndex = 3 end
+
+				-- Level
+				if item.lv and item.lv > 0 then
+					local eqLvLbl = makeLabel(tile, { Text = "Lv" .. item.lv, Size = UDim2.new(0, 28, 0, 10),
+						Position = UDim2.new(0, 2, 0, 2),
+						TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary,
+						TextXAlignment = Enum.TextXAlignment.Left })
+					if eqLvLbl then eqLvLbl.ZIndex = 3 end
+				end
+			else
+				-- Empty slot or disabled off-hand
+				if isOffHandDisabled then
+					makeLabel(tile, { Text = "2H", Size = UDim2.new(1, 0, 0, 20),
+						Position = UDim2.new(0, 0, 0.3, 0),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextDisabled,
+						TextXAlignment = Enum.TextXAlignment.Center,
+						Font = Theme.Font.PrimaryBold })
+					makeLabel(tile, { Text = "OFF-HAND", Size = UDim2.new(1, 0, 0, 12),
+						Position = UDim2.new(0, 0, 1, -14),
+						TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextDisabled,
+						TextXAlignment = Enum.TextXAlignment.Center })
+				else
+					-- Empty slot: show slot icon image + label
+					local SLOT_ICON_MAP = {
+						MainHand = Theme.Icons.MainHand, OffHand = Theme.Icons.OffHand,
+						Head = Theme.Icons.Head, Torso = Theme.Icons.Torso,
+						Arms = Theme.Icons.Arms, Legs = Theme.Icons.Legs,
+						Accessory = Theme.Icons.Accessory, Doctrine = Theme.Icons.Doctrine,
+					}
+					local slotIcon = SLOT_ICON_MAP[slotDef.slot]
+					if slotIcon then
+						local ico = Instance.new("ImageLabel")
+						ico.Size = UDim2.new(0.55, 0, 0.55, 0)
+						ico.Position = UDim2.new(0.5, 0, 0.45, 0)
+						ico.AnchorPoint = Vector2.new(0.5, 0.5)
+						ico.BackgroundTransparency = 1
+						ico.Image = slotIcon
+						ico.ScaleType = Enum.ScaleType.Fit
+						ico.ImageTransparency = 0.5
+						ico.Parent = tile
+					end
+					makeLabel(tile, { Text = slotDef.label,
+						Size = UDim2.new(1, -4, 0, 12),
+						Position = UDim2.new(0, 2, 1, -14),
+						TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold,
+						TextColor3 = Theme.Colors.TextDisabled,
+						TextXAlignment = Enum.TextXAlignment.Center })
+				end
+			end
+
+			-- Click: filter inventory to this slot type
+			tile.Activated:Connect(function()
+				if isOffHandDisabled then return end
+				-- Every slot (2026-10-20): filter the inventory to this slot's category AND, if
+				-- something is equipped, open its detail on top of the filtered list. The Doctrine
+				-- slot value is "Doctrine", so the same path filters doctrines too.
+				currentFilter = slotDef.slot
+				detailFromSlot = slotDef.slot  -- which slot the equipped detail belongs to (off-hand weapon)
+				selectedItemId = nil
+				buildInventory()
+				if item then
+					-- Doctrine opens info-only (always one equipped); gear opens with UNEQUIP.
+					openItemDetail(item, nil, true)
+				end
+			end)
+		end
+
+	else -- consumables tab
+		local consGrid = Instance.new("Frame")
+		consGrid.Size = UDim2.new(1, 0, 1, 0)
+		consGrid.BackgroundTransparency = 1
+		consGrid.Parent = content
+
+		-- Slot tiles (2026-11-09 user request): the SAME tile as the Consumables inventory grid
+		-- (Theme.MakeItemTile portrait: inset square icon, category border, top-right xN badge,
+		-- two-row name strip). Cells keep the inventory tile shape (Theme.ItemTile.GridAspect),
+		-- as large as fits 3 x 2 here, clamped to the inventory grid min/max cell width.
+		local tileT = Theme.ItemTile
+		local SLOT_GAP = 3
+		local areaW, areaH = consGrid.AbsoluteSize.X, consGrid.AbsoluteSize.Y
+		local slotW
+		if areaW < 100 or areaH < 100 then
+			slotW = (Theme.ItemTileCell(areaH)) -- panel not measured yet: inventory-grid size
+		else
+			slotW = math.floor(math.min((areaW - SLOT_GAP * 2) / 3, (areaH - SLOT_GAP) / 2 / tileT.GridAspect))
+			slotW = math.clamp(slotW, tileT.GridMinCell, tileT.GridMaxCell)
+		end
+		local slotH = math.floor(slotW * tileT.GridAspect)
+
+		local gridLayout = Instance.new("UIGridLayout", consGrid)
+		gridLayout.CellSize = UDim2.fromOffset(slotW, slotH)
+		gridLayout.CellPadding = UDim2.fromOffset(SLOT_GAP, SLOT_GAP)
+		gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+		-- White text with a black outline so slot numbers / [X] read on any tile tint.
+		local function outlinedLabel(parent, text, size, pos, textSize, align)
+			local lbl = makeLabel(parent, { Text = text, Size = size, Position = pos, TextSize = textSize,
+				Font = Theme.Font.PrimaryBold, TextColor3 = Theme.Colors.TextPrimary, TextXAlignment = align })
+			lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+			lbl.TextStrokeTransparency = 0
+			lbl.ZIndex = 4
+			return lbl
+		end
+
+		for i = 1, 6 do
+			local slotKey = "Cons" .. i
+			local locked = MockData.IsConsSlotLocked(unit.id, slotKey)
+			local item = MockData.GetEquipped(unit.id, slotKey)
+
+			local cell
+			if item and not locked then
+				-- The equipped-slot item carries a placeholder icon "?" (server-side), so the real
+				-- icon and category come from ConsumableData by id (2026-10-20 lookup kept).
+				local cdef = ConsumableData.GetById(item.consumableId or item.id)
+				local cat = cdef and cdef.category
+				-- Read via the module export: CONS_CATEGORY_COLORS is declared further down this file.
+				local accent = (cat and LoadoutScreen.ConsCategoryColors and LoadoutScreen.ConsCategoryColors[cat])
+					or Theme.Colors.TextSecondary
+				cell = Theme.MakeItemTile({
+					parent = consGrid,
+					accentColor = accent,
+					cellW = slotW,
+					icon = cdef and cdef.icon or nil,
+					iconText = item.icon or "[C]",
+					name = item.name,
+					countText = "x" .. (item.qty or 1),
+					layoutOrder = i,
+					portrait = true,
+					onClick = function()
+						openEquippedConsumableDetail(unit.id, i, item)
+					end,
+				})
+			else
+				-- Locked ([X]) or empty (—) slot: same tile frame (corner + thin border), no tap action.
+				cell = Instance.new("TextButton")
+				cell.Size = UDim2.fromScale(1, 1)
+				cell.BackgroundColor3 = if locked then Theme.Colors.LockedSlot else Theme.Colors.Panel
+				cell.BackgroundTransparency = if locked then 0.7 else 0.3
+				cell.BorderSizePixel = 0
+				cell.Text = ""
+				cell.AutoButtonColor = false -- rule 243: no mouse-over colour
+				cell.LayoutOrder = i
+				Instance.new("UICorner", cell).CornerRadius = UDim.new(0, tileT.CornerRadius)
+				local stroke = Instance.new("UIStroke", cell)
+				stroke.Color = Theme.Colors.TextDisabled
+				stroke.Thickness = tileT.StrokeThickness
+				outlinedLabel(cell, if locked then "[X]" else "—", UDim2.fromScale(1, 1), UDim2.new(),
+					if locked then 18 else 20, Enum.TextXAlignment.Center)
+				cell.Parent = consGrid -- NET-004: parent last
+			end
+
+			-- Slot number (top-left), over the tile.
+			outlinedLabel(cell, tostring(i), UDim2.new(0, 14, 0, 14), UDim2.new(0, 3, 0, 1),
+				Theme.Text.Small(), Enum.TextXAlignment.Left)
+		end
+	end
+end
+
+--------------------------------------------------
+-- INVENTORY BROWSER (left side, full)
+--------------------------------------------------
+
+local filterBar, itemGrid, footerLabel
+
+local function _buildFilterBar(parent)
+	if filterBar then clearChildren(filterBar) end
+	filterBar = Instance.new("Frame")
+	filterBar.Size = UDim2.new(1, 0, 0, 36)
+	filterBar.BackgroundTransparency = 1
+	filterBar.LayoutOrder = 1
+	filterBar.Parent = parent
+
+	local fl = Instance.new("UIListLayout", filterBar)
+	fl.FillDirection = Enum.FillDirection.Horizontal
+	fl.Padding = UDim.new(0, 3)
+	fl.VerticalAlignment = Enum.VerticalAlignment.Center
+
+	for i, f in ipairs(CATEGORY_FILTERS) do
+		local chip = Instance.new("TextButton")
+		chip.Size = UDim2.new(0, 52, 0, 32)
+		chip.BackgroundColor3 = Theme.Colors.Panel
+		chip.BackgroundTransparency = (currentFilter == f.id) and 0.1 or 0.5
+		chip.BorderSizePixel = 0
+		chip.Font = Theme.Font.Primary
+		chip.TextSize = 9
+		chip.TextColor3 = (currentFilter == f.id) and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+		chip.Text = f.icon .. "\n" .. f.label
+		chip.LayoutOrder = i
+		chip.Parent = filterBar
+		Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 4)
+
+		if currentFilter == f.id then
+			local stroke = Instance.new("UIStroke", chip)
+			stroke.Color = Theme.Colors.TextGold
+			stroke.Thickness = 1
+		end
+
+		chip.Activated:Connect(function()
+			currentFilter = f.id
+			selectedItemId = nil
+			buildInventory()
+		end)
+	end
+end
+
+local function buildItemGrid(parent)
+	if itemGrid then itemGrid:Destroy() end
+
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	itemGrid = Instance.new("ScrollingFrame")
+	itemGrid.Name = "ItemGrid"
+	itemGrid.Size = UDim2.new(1, 0, 1, -30)
+	itemGrid.Position = UDim2.new(0, 0, 0, 28)
+	itemGrid.BackgroundTransparency = 1
+	itemGrid.BorderSizePixel = 0
+	itemGrid.ScrollBarThickness = 4
+	itemGrid.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	itemGrid.CanvasSize = UDim2.new(0, 0, 0, 0)
+	itemGrid.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	itemGrid.Parent = parent
+
+	local grid = Instance.new("UIGridLayout", itemGrid)
+	grid.CellPadding = InventoryControls.GridCellPadding
+	grid.SortOrder = Enum.SortOrder.LayoutOrder
+	grid.FillDirection = Enum.FillDirection.Horizontal
+
+	-- Compute cell size: responsive to screen — minimum 3 rows visible, max 96px wide.
+	-- Shared formula (Theme.ItemTileCell, 2026-11-07) so the Runeforge uses the same tiles.
+	local cellW, cellH = Theme.ItemTileCell(itemGrid.AbsoluteSize.Y)
+	grid.CellSize = UDim2.new(0, cellW, 0, cellH)
+
+	local items = MockData.GetFilteredItems(currentFilter)
+	-- Twinblade dual wield (2026-10-28): the OFF-HAND list also offers 1H weapons, which then
+	-- equip into the off hand (server re-checks the Twinblade / 1H rules).
+	if currentFilter == "OffHand" then
+		local _u = MockData.GetSelectedUnit()
+		if _u and MockData.GetUnitDoctrineId and MockData.GetUnitDoctrineId(_u.id) == "DOC-TWINBLADE" then
+			local merged = table.clone(items)
+			for _, it in ipairs(MockData.GetFilteredItems("MainHand")) do
+				if it.hands == "1H" or it.hands == "One-Handed" then table.insert(merged, it) end
+			end
+			items = merged
+		end
+	end
+
+	-- Rarity filter
+	if currentRarity ~= "All" then
+		local filtered = {}
+		for _, item in ipairs(items) do
+			if item.rarity == currentRarity then table.insert(filtered, item) end
+		end
+		items = filtered
+	end
+
+	-- Sort
+	local RARITY_RANK = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4, Exalted = 5, Legendary = 6 }
+	local sortOpt = SORT_OPTIONS[currentSort] or SORT_OPTIONS[1]
+	table.sort(items, function(a, b)
+		if sortOpt.field == "name" then
+			return (a.name or "") < (b.name or "")
+		elseif sortOpt.field == "rarity" then
+			local ra, rb = RARITY_RANK[a.rarity] or 0, RARITY_RANK[b.rarity] or 0
+			if ra ~= rb then
+				if sortOpt.desc then return ra > rb else return ra < rb end
+			end
+			return false
+		elseif sortOpt.field == "new" then
+			local na = a.isNew and 1 or 0
+			local nb = b.isNew and 1 or 0
+			if na ~= nb then
+				-- desc = "New First" (new items on top), asc = "New Last" (new at bottom)
+				if sortOpt.desc then return na > nb else return na < nb end
+			end
+			-- Tie-break: sort by name within same new/old group
+			return (a.name or "") < (b.name or "")
+		else -- lv (default)
+			local la, lb = a.lv or 0, b.lv or 0
+			if la ~= lb then
+				if sortOpt.desc then return la > lb else return la < lb end
+			end
+			return false
+		end
+	end)
+
+	for i, item in ipairs(items) do
+		local isEquipped, isEquippedByOther
+		if item.cat == "Doctrine" then
+			isEquipped = item.isCurrent == true
+			isEquippedByOther = false
+		else
+			isEquipped = MockData.IsEquipped(item.id, unit.id)
+			isEquippedByOther = false
+			if not isEquipped then
+				isEquippedByOther = MockData.IsEquippedByAny(item.id)
+			end
+		end
+		local isSelected = (selectedItemId == item.id)
+
+		-- Shared tile (Theme.MakeItemTile portrait, 2026-11-09 user request): the same look and
+		-- size as the Consumables grid — equal top/left/right inset around a square icon, two-row
+		-- name strip, rarity tint + border, gold when selected, no hover colour (rule 243). The
+		-- extras are layered on top exactly as before: Lv label (top-left), xN count for stackable
+		-- items (top-right), equipped "E" + NEW markers (InventoryControls.AddTileMarkers).
+		-- Stackable items (Doctrine, Consumable) show their count, never a level; the current
+		-- doctrine shows no count (only one is ever held). A count item is never gear-equipped
+		-- here, so the count badge never collides with the top-right "E" marker.
+		local isCountItem = (item.cat == "Doctrine") or (item.cat == "Consumable")
+		local hasCountBadge = isCountItem and not (item.cat == "Doctrine" and item.isCurrent)
+		local card = Theme.MakeItemTile({
+			parent = itemGrid,
+			accentColor = getRarityColor(item.rarity),
+			cellW = cellW,
+			icon = item.icon,
+			iconText = item.icon or "?", -- shown only when there is no uploaded image
+			name = item.name,
+			countText = if hasCountBadge then "x" .. (item.qty or 1) else nil,
+			selected = isSelected,
+			layoutOrder = i,
+			portrait = true,
+		})
+		local gearLvW = 0  -- width of the top-left Lv label (gear only); NEW badge drops below it if they would touch
+		local _lvLbl
+		if not isCountItem then
+			_lvLbl, gearLvW = InventoryControls.MakeLevelLabel(card, "Lv." .. (item.lv or 1))
+		end
+		InventoryControls.AddTileMarkers(card, cellW, gearLvW, isEquipped == true, isEquippedByOther == true,
+			item.isNew == true, hasCountBadge)
+		-- OVER-LEVEL GEAR (user 2026-11-10): item level above this unit's level cannot be
+		-- equipped (server refuses, LoadoutRequestHandlers). Grey the tile + red Lv so it reads
+		-- before the tap. Still tappable so the detail can be read.
+		if not isCountItem and (item.lv or 1) > (tonumber(unit.level) or 1) then
+			local shade = Instance.new("Frame")
+			shade.Name = "OverLevelShade"
+			shade.Size = UDim2.fromScale(1, 1)
+			shade.BackgroundColor3 = Color3.new(0, 0, 0)
+			shade.BackgroundTransparency = 0.45
+			shade.BorderSizePixel = 0
+			shade.ZIndex = 8
+			shade.Active = false
+			Instance.new("UICorner", shade).CornerRadius = UDim.new(0, 4)
+			shade.Parent = card
+			if _lvLbl then
+				_lvLbl.TextColor3 = Theme.Colors.Danger
+				_lvLbl.ZIndex = 9
+			end
+		end
+
+		card.Activated:Connect(function()
+			local newBadge = card:FindFirstChild("NewBadge") -- seen now (2026-11-08)
+			if newBadge then newBadge:Destroy() end
+			if item.cat == "Doctrine" then
+				-- Open the doctrine's info window like weapons/consumables (2026-10-20). The
+				-- equipped copy opens info-only (isEquippedMode); a spare shows an EQUIP action.
+				openItemDetail(item, nil, item.isCurrent == true)
+				return
+			end
+			openItemDetail(item, nil)
+		end)
+	end
+
+	-- Footer
+	if footerLabel then footerLabel:Destroy() end
+	footerLabel = makeLabel(parent, { Text = "Owned: " .. #MockData.Inventory .. " / 50",
+		Size = UDim2.new(1, 0, 0, 16),
+		Position = UDim2.new(0, 10, 1, -18),
+		TextSize = 9, TextColor3 = Theme.Colors.TextDisabled })
+end
+
+buildInventory = function()
+	if not inventoryPanel then return end
+	clearChildren(inventoryPanel)
+	pad(inventoryPanel, 8, 8, 8, 8)
+
+	-- Single toolbar row: Search + Type + Rarity + Sort (bar height: InventoryControls)
+	local ctrlRow = Instance.new("Frame")
+	ctrlRow.Size = UDim2.new(1, 0, 0, InventoryControls.BarHeight)
+	ctrlRow.Position = UDim2.new(0, 0, 0, 0)
+	ctrlRow.BackgroundTransparency = 1
+	ctrlRow.Parent = inventoryPanel
+
+	local ctrlLayout = Instance.new("UIListLayout", ctrlRow)
+	ctrlLayout.FillDirection = Enum.FillDirection.Horizontal
+	ctrlLayout.Padding = UDim.new(0, 3)
+	ctrlLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+
+	-- Search box
+	local search = Instance.new("TextBox")
+	search.Size = UDim2.new(1, -195, 1, 0)
+	search.BackgroundColor3 = Theme.Colors.Surface
+	search.BackgroundTransparency = 0.2
+	search.Font = Theme.Font.Primary
+	search.TextSize = Theme.Text.Small()
+	search.TextColor3 = Theme.Colors.TextPrimary
+	search.PlaceholderText = "Search items..."
+	search.PlaceholderColor3 = Theme.Colors.TextDisabled
+	search.Text = ""
+	search.BorderSizePixel = 0
+	search.ClearTextOnFocus = false
+	search.LayoutOrder = 1
+	search.Parent = ctrlRow
+	Instance.new("UICorner", search).CornerRadius = UDim.new(0, 3)
+
+	-- Type / Rarity / Sort dropdown buttons
+	local filterLabel = currentFilter == "All" and "Type" or (currentFilter )
+	local rarityLabel = currentRarity == "All" and "Rarity" or (currentRarity )
+	local sortLabel = SORT_OPTIONS[currentSort].label 
+
+	-- Shared dropdown helper: opens a menu below the anchor button
+	local function closeDropdown()
+		if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+	end
+
+	local function showDropdown(anchorBtn, options, onSelect)
+		closeDropdown()
+		-- Shared Loadout menu (InventoryControls.ShowMenu, 2026-11-08): unchanged look.
+		activeDropdown = InventoryControls.ShowMenu(getPlayerGui(), anchorBtn, options, onSelect, closeDropdown)
+	end
+
+	local function makeDropdown(text, order, isActive, iconAsset)
+		return InventoryControls.MakeFilterButton(ctrlRow, text, order, isActive, iconAsset)
+	end
+
+	-- Type filter button — cycles through category filters
+	local typeBtn = makeDropdown(filterLabel, 2, currentFilter ~= "All", Theme.Icons.Filter)
+	typeBtn.Activated:Connect(function()
+		local opts = {}
+		for _, f in ipairs(CATEGORY_FILTERS) do
+			table.insert(opts, { label = f.label, value = f.id, icon = f.icon, active = (currentFilter == f.id) })
+		end
+		showDropdown(typeBtn, opts, function(val)
+			currentFilter = val
+			if val == "All" then
+				currentRarity = "All"  -- reset rarity too for full reset
+			end
+			selectedItemId = nil
+			buildInventory()
+		end)
+	end)
+
+	-- Rarity filter button — cycles through rarity options
+	local rarityBtn = makeDropdown(rarityLabel, 3, currentRarity ~= "All", Theme.Icons.Filter)
+	rarityBtn.Activated:Connect(function()
+		local opts = {}
+		for _, r in ipairs(RARITY_OPTIONS) do
+			local _clr = r == "All" and Theme.Colors.TextPrimary or getRarityColor(r)
+			local displayLabel = r == "All" and "All Rarities" or r
+			table.insert(opts, { label = displayLabel, value = r, active = (currentRarity == r) })
+		end
+		showDropdown(rarityBtn, opts, function(val)
+			currentRarity = val
+			selectedItemId = nil
+			buildInventory()
+		end)
+	end)
+
+	-- Sort button — cycles through sort modes
+	local sortBtn = makeDropdown(sortLabel, 4, false, Theme.Icons.Sort)
+	sortBtn.Activated:Connect(function()
+		local opts = {}
+		for si, s in ipairs(SORT_OPTIONS) do
+			table.insert(opts, { label = s.label, value = si, active = (currentSort == si) })
+		end
+		showDropdown(sortBtn, opts, function(val)
+			currentSort = val
+			buildInventory()
+		end)
+	end)
+
+	buildItemGrid(inventoryPanel)
+end
+
+--------------------------------------------------
+-- ITEM DETAIL OVERLAY (full-screen modal)
+--------------------------------------------------
+
+local detailOverlay = nil
+
+closeDetail = function()
+	if detailOverlay then detailOverlay:Destroy(); detailOverlay = nil end
+end
+
+openItemDetail = function(item, compareItem, isEquippedMode)
+	closeDetail()
+	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+	if not item then return end
+	MockData.MarkSeen(item) -- opening the detail = seen (NEW badge, 2026-11-08)
+
+	local unit = MockData.GetSelectedUnit()
+
+	-- Full-screen overlay
+	detailOverlay = Instance.new("ScreenGui")
+	detailOverlay.Name = "ItemDetailOverlay"
+	detailOverlay.DisplayOrder = 110
+	detailOverlay.ResetOnSpawn = false
+	detailOverlay.Parent = getPlayerGui()
+
+	-- Dim backdrop
+	local backdrop = Instance.new("TextButton")
+	backdrop.Size = UDim2.fromScale(1, 1)
+	backdrop.BackgroundColor3 = Theme.Colors.Overlay
+	backdrop.BackgroundTransparency = 0.4
+	backdrop.Text = ""
+	backdrop.BorderSizePixel = 0
+	backdrop.Parent = detailOverlay
+	backdrop.Activated:Connect(closeDetail)
+
+	-- Center panel
+	-- Anchored to left edge. Width: 55% solo, 70% comparison.
+	-- Full height minus small top/bottom margin.
+	local wScale = compareItem and 0.70 or 0.55
+	local hScale = 0.90
+	local panel = Theme.MakePanel("DetailPanel",
+		UDim2.new(wScale, 0, hScale, 0),
+		UDim2.new(0, 6, 0.5, 0),
+		Vector2.new(0, 0.5),
+		detailOverlay)
+	panel.ClipsDescendants = true
+
+	pad(panel, 10, 12, 12, 10)
+
+	if compareItem then
+		-- ============ COMPARISON MODE ============
+		buildComparisonContent(panel, item, compareItem, unit)
+	else
+		-- ============ SOLO DETAIL MODE ============
+		buildSoloDetailContent(panel, item, unit and unit.id)
+	end
+
+	-- ============ BUTTON BAR (fixed bottom-right of SCREEN, outside the panel) ============
+	-- Matches battle UI Execute/Back position: bottom-right, anchored (1,1).
+
+	-- Collect buttons: COMPARE(1) | EQUIP(2) | BACK(3) right-aligned
+	local btnDefs = {}
+	local order = 1
+
+	-- Tertiary: COMPARE or DETAILS (leftmost, optional)
+	if not compareItem and unit and item.cat ~= "Doctrine" then
+		local slot = item.cat
+		local equippedItem = MockData.GetEquipped(unit.id, slot)
+		if equippedItem and equippedItem.id ~= item.id then
+			table.insert(btnDefs, { text = "COMPARE", style = "Tertiary", order = order, onClick = function()
+				openItemDetail(item, equippedItem)
+			end })
+			order = order + 1
+		end
+	end
+	-- Doctrine COMPARE (2026-10-20): spare doctrine vs the unit's equipped doctrine, using
+	-- the server's per-unit delta path (percentage packages -> real stat changes).
+	if not compareItem and unit and item.cat == "Doctrine" and not isEquippedMode then
+		local equippedDoc = MockData.GetEquippedDoctrine and MockData.GetEquippedDoctrine(unit.id)
+		if equippedDoc and equippedDoc.doctrineId ~= item.doctrineId then
+			table.insert(btnDefs, { text = "COMPARE", style = "Tertiary", order = order, onClick = function()
+				openItemDetail(item, equippedDoc)
+			end })
+			order = order + 1
+		end
+	end
+	if compareItem then
+		table.insert(btnDefs, { text = "DETAILS", style = "Tertiary", order = order, onClick = function()
+			openItemDetail(item, nil)
+		end })
+		order = order + 1
+	end
+
+	-- Primary: EQUIP or UNEQUIP
+	if isEquippedMode then
+		local eqSlot = item.cat
+		-- A weapon shown from the OFF-HAND slot is unequipped from the off hand (Twinblade).
+		if detailFromSlot == "OffHand" and item.cat == "MainHand" then eqSlot = "OffHand" end
+		if eqSlot ~= "Doctrine" then
+			table.insert(btnDefs, { text = "UNEQUIP", style = "Primary", order = order, onClick = function()
+				if unit then
+					MockData.MockUnequip(unit.id, eqSlot)
+					closeDetail()
+					LoadoutScreen.Refresh()
+				end
+			end })
+			order = order + 1
+		end
+	else
+		table.insert(btnDefs, { text = "EQUIP", style = "Primary", order = order, onClick = function()
+			if unit then
+				if item.cat == "Doctrine" then
+					-- Doctrines equip by owned-instance (swap); replaced copy returns to the stash.
+					if item.instanceId and MockData.ServerEquipDoctrine then
+						MockData.ServerEquipDoctrine(unit.id, item.instanceId)
+					end
+				else
+					local slot = item.cat
+					-- Browsing the OFF-HAND list: a 1H weapon goes to the off hand (Twinblade).
+					if currentFilter == "OffHand" and item.cat == "MainHand" then slot = "OffHand" end
+					MockData.MockEquip(unit.id, slot, item.id)
+				end
+				closeDetail()
+				LoadoutScreen.Refresh()
+			end
+		end })
+		order = order + 1
+	end
+
+	-- Secondary: BACK (always rightmost)
+	table.insert(btnDefs, { text = "BACK", style = "Secondary", order = order, onClick = closeDetail })
+
+	-- Build button row: bottom-right of SCREEN, on the overlay ScreenGui
+	local btnCount = #btnDefs
+	local fb = Theme.FooterBar
+	local totalW = btnCount * fb.BTN_W + (btnCount - 1) * fb.BTN_GAP
+	local btnBar = Instance.new("Frame")
+	btnBar.Name = "DetailBtnBar"
+	btnBar.Size = UDim2.new(0, totalW, 0, fb.BTN_H)
+	btnBar.BackgroundTransparency = 1
+	btnBar.AnchorPoint = Vector2.new(1, 1)
+	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD)
+	btnBar.Parent = detailOverlay
+
+	local rowLayout = Instance.new("UIListLayout")
+	rowLayout.FillDirection = Enum.FillDirection.Horizontal
+	rowLayout.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	rowLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	rowLayout.Padding = UDim.new(0, fb.BTN_GAP)
+	rowLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	rowLayout.Parent = btnBar
+
+	for _, def in ipairs(btnDefs) do
+		local btn = Theme.MakeButton(btnBar, def.text, def.style, def.onClick, {
+			size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H),
+		})
+		btn.LayoutOrder = def.order
+	end
+
+	-- [DIAG] COMPARE gating conditions
+	if not compareItem and unit then
+		local diagSlot = item.cat
+		local diagEquipped = MockData.GetEquipped(unit.id, diagSlot)
+		if diagEquipped then
+		end
+	end
+	for _, def in ipairs(btnDefs) do
+	end
+
+	-- [DIAG] Deferred layout dump (after 1 frame)
+	task.defer(function()
+		if not btnBar or not btnBar.Parent then
+			return
+		end
+
+		-- Detail panel
+
+		-- UIListLayout
+		local layout = btnBar:FindFirstChildWhichIsA("UIListLayout")
+		if layout then
+		end
+
+		-- Per-button
+		local prevRight = nil
+		for _, child in ipairs(btnBar:GetChildren()) do
+			if child:IsA("ImageButton") then
+				local ap = child.AbsolutePosition
+				local as = child.AbsoluteSize
+				-- Compute gap from previous button
+				if prevRight then
+					local _gap = ap.X - prevRight
+				end
+				prevRight = ap.X + as.X
+			end
+		end
+
+		-- SliceCenter recap
+	end)
+
+end
+
+--------------------------------------------------
+-- SOLO DETAIL CONTENT (reference image 1)
+--------------------------------------------------
+
+-- Helper: generate a fallback flavor line for equipment without authored flavor
+local function getItemFlavor(item)
+	if item.flavor and item.flavor ~= "" then return item.flavor end
+	-- Generate basic flavor from item properties
+	local parts = {}
+	local rarity = item.rarity or "Common"
+	if rarity == "Legendary" then
+		table.insert(parts, "A legendary")
+	elseif rarity == "Epic" then
+		table.insert(parts, "A finely crafted")
+	elseif rarity == "Rare" then
+		table.insert(parts, "A well-forged")
+	elseif rarity == "Uncommon" then
+		table.insert(parts, "A sturdy")
+	else
+		table.insert(parts, "A standard")
+	end
+	-- Category/type
+	local sub = item.sub or ""
+	local cat = item.cat or ""
+	if sub ~= "" then
+		table.insert(parts, sub:lower())
+	elseif cat == "MainHand" then
+		table.insert(parts, "weapon")
+	elseif cat == "OffHand" then
+		table.insert(parts, "off-hand item")
+	elseif cat == "Head" then
+		table.insert(parts, "headpiece")
+	elseif cat == "Torso" then
+		table.insert(parts, "body armor")
+	elseif cat == "Arms" then
+		table.insert(parts, "pair of gloves")
+	elseif cat == "Legs" then
+		table.insert(parts, "pair of boots")
+	elseif cat == "Accessory" then
+		table.insert(parts, "accessory")
+	else
+		table.insert(parts, "piece of equipment")
+	end
+	-- Passive hint
+	if item.passives and #item.passives > 0 then
+		table.insert(parts, "with the " .. item.passives[1].name .. " property.")
+	else
+		table.insert(parts, "built for the battlefield.")
+	end
+	return table.concat(parts, " ")
+end
+
+--------------------------------------------------
+-- SHARED DETAIL HEADER (uniform across all item types)
+--------------------------------------------------
+local DETAIL_PORTRAIT = 52
+local DETAIL_TEXT_X = DETAIL_PORTRAIT + 8
+
+-- "Equipped by" line (2026-11-06): which OTHER unit currently wears this gear, so the
+-- detail tells the player before EQUIP moves it (server auto-unequips the previous
+-- holder, LoadoutRequestHandlers RequestEquip). Display only; read from the client's
+-- copy of the server inventory (MockData.Equipped) and roster names (MockData.Units).
+local HOLDER_SLOT_NAMES = { MainHand = "Main Hand", OffHand = "Off-Hand", Head = "Head",
+	Torso = "Torso", Arms = "Arms", Legs = "Legs", Accessory = "Accessory" }
+local function findOtherHolder(itemId, viewerUnitId)
+	if not itemId or not viewerUnitId then return nil end
+	for unitId, eq in pairs(MockData.Equipped or {}) do
+		if unitId ~= viewerUnitId and type(eq) == "table" then
+			-- Gear slots only (W1): doctrine/consumable keys can never match.
+			for slot in pairs(HOLDER_SLOT_NAMES) do
+				local eqId = eq[slot]
+				if eqId ~= nil and eqId == itemId then
+					local name = unitId
+					for _, u in ipairs(MockData.GetAllUnits() or {}) do
+						if u.id == unitId then name = u.name or unitId; break end
+					end
+					return name, HOLDER_SLOT_NAMES[slot] or tostring(slot)
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function buildDetailHeader(parent, opts)
+	local iconFrame = Instance.new("Frame")
+	iconFrame.Size = UDim2.new(0, DETAIL_PORTRAIT, 0, DETAIL_PORTRAIT)
+	iconFrame.Position = UDim2.new(0, 0, 0, 0)
+	iconFrame.BackgroundColor3 = opts.iconBg or Theme.Colors.Surface
+	iconFrame.BackgroundTransparency = opts.iconBgTransparency or 0.15
+	iconFrame.BorderSizePixel = 0
+	iconFrame.Parent = parent
+	Instance.new("UICorner", iconFrame).CornerRadius = UDim.new(0, 6)
+	local stroke = Instance.new("UIStroke", iconFrame)
+	stroke.Color = opts.iconStrokeColor or Theme.Colors.Border
+	stroke.Thickness = 1.5
+	if opts.iconImage and opts.iconImage ~= "" then
+		local ico = Instance.new("ImageLabel")
+		ico.Size = UDim2.new(1, -4, 1, -4)
+		ico.Position = UDim2.new(0, 2, 0, 2)
+		ico.BackgroundTransparency = 1
+		ico.Image = opts.iconImage
+		ico.ScaleType = Enum.ScaleType.Fit
+		ico.Parent = iconFrame
+	else
+		makeLabel(iconFrame, { Text = opts.iconText or "?", Size = UDim2.fromScale(1, 1),
+			TextSize = Theme.Text.Title(), TextColor3 = opts.iconColor or Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Center })
+	end
+	if opts.level and opts.level > 0 then
+		local lvBadge = Instance.new("Frame")
+		lvBadge.Size = UDim2.new(0, 26, 0, 16)
+		lvBadge.Position = UDim2.new(0, 0, 0, 0)
+		lvBadge.BackgroundColor3 = Theme.Colors.Panel
+		lvBadge.BorderSizePixel = 0
+		lvBadge.ZIndex = 5
+		lvBadge.Parent = iconFrame
+		Instance.new("UICorner", lvBadge).CornerRadius = UDim.new(0, 3)
+		local bStroke = Instance.new("UIStroke", lvBadge)
+		bStroke.Color = Theme.Colors.Border
+		bStroke.ZIndex = 5
+		local bLbl = makeLabel(lvBadge, { Text = "Lv" .. opts.level,
+			Size = UDim2.fromScale(1, 1),
+			TextSize = Theme.Text.Tiny(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Theme.Colors.TextGold,
+			TextXAlignment = Enum.TextXAlignment.Center })
+		if bLbl then bLbl.ZIndex = 5 end
+	end
+	makeLabel(parent, { Text = opts.name or "?",
+		Size = UDim2.new(1, -DETAIL_TEXT_X, 0, 18),
+		Position = UDim2.new(0, DETAIL_TEXT_X, 0, 0),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Heading(),
+		TextColor3 = Theme.Colors.TextPrimary })
+	-- Subtitle: "Lv.X | Rarity" below name
+	local tagY = 20
+	if opts.level and opts.level > 0 then
+		local subParts = { "Lv." .. opts.level }
+		if opts.rarity and opts.rarity ~= "" then table.insert(subParts, opts.rarity) end
+		makeLabel(parent, { Text = table.concat(subParts, " | "),
+			Size = UDim2.new(1, -DETAIL_TEXT_X, 0, 14),
+			Position = UDim2.new(0, DETAIL_TEXT_X, 0, tagY),
+			TextSize = Theme.Text.Small(), Font = Theme.Font.Primary,
+			TextColor3 = opts.subtitleColor or Theme.Colors.TextSecondary })
+		tagY = tagY + 16
+	end
+	if opts.holderText and opts.holderText ~= "" then
+		local holderLbl = makeLabel(parent, { Text = opts.holderText,
+			Size = UDim2.new(1, -DETAIL_TEXT_X, 0, 14),
+			Position = UDim2.new(0, DETAIL_TEXT_X, 0, tagY),
+			TextSize = Theme.Text.Small(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Color3.new(1, 1, 1) })
+		holderLbl.Name = "EquippedByLine"
+		holderLbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+		holderLbl.TextStrokeTransparency = 0
+		-- Long unit names wrap to a second line instead of being cut with "...".
+		holderLbl.TextWrapped = true
+		holderLbl.TextTruncate = Enum.TextTruncate.None
+		local holderH = 14
+		local holderW = holderLbl.AbsoluteSize.X
+		if holderW > 0 then
+			local hb = TextService:GetTextSize(opts.holderText, holderLbl.TextSize, holderLbl.Font, Vector2.new(holderW, 10000))
+			holderH = math.max(14, math.ceil(hb.Y) + 2)
+		end
+		holderLbl.Size = UDim2.new(1, -DETAIL_TEXT_X, 0, holderH)
+		tagY = tagY + holderH + 2
+	end
+	local tags = opts.tags or {}
+	if #tags > 0 then
+		local tagRow = Instance.new("Frame")
+		tagRow.Size = UDim2.new(1, -DETAIL_TEXT_X, 0, 16)
+		tagRow.Position = UDim2.new(0, DETAIL_TEXT_X, 0, tagY)
+		tagRow.BackgroundTransparency = 1
+		tagRow.Parent = parent
+		local tagLayout = Instance.new("UIListLayout", tagRow)
+		tagLayout.FillDirection = Enum.FillDirection.Horizontal
+		tagLayout.Padding = UDim.new(0, 3)
+		for ti, tag in ipairs(tags) do
+			local chip = Instance.new("Frame")
+			chip.Size = UDim2.new(0, #tag * 5 + 10, 0, 14)
+			chip.BackgroundColor3 = Theme.Colors.Surface
+			chip.BackgroundTransparency = 0.3
+			chip.BorderSizePixel = 0
+			chip.LayoutOrder = ti
+			chip.Parent = tagRow
+			Instance.new("UICorner", chip).CornerRadius = UDim.new(0, 7)
+			makeLabel(chip, { Text = tag, Size = UDim2.fromScale(1, 1),
+				TextSize = Theme.Text.Badge(), TextColor3 = Theme.Colors.TextSecondary,
+				TextXAlignment = Enum.TextXAlignment.Center })
+		end
+		tagY = tagY + 18
+	end
+	local desc = opts.description or ""
+	if desc ~= "" then
+		local descLbl = makeLabel(parent, { Text = desc,
+			Size = UDim2.new(1, -DETAIL_TEXT_X, 0, 28),
+			Position = UDim2.new(0, DETAIL_TEXT_X, 0, tagY),
+			TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+			TextWrapped = true })
+		-- Grow to fit the wrapped text instead of cutting it off with "..." (2026-11-01).
+		-- Measured now because callers place rows below by the returned height. Never
+		-- shorter than the old 28 px box, so short descriptions look the same.
+		descLbl.TextTruncate = Enum.TextTruncate.None
+		local descH = 28
+		local descW = descLbl.AbsoluteSize.X
+		if descW > 0 then
+			local bounds = TextService:GetTextSize(desc, descLbl.TextSize, descLbl.Font, Vector2.new(descW, 10000))
+			descH = math.max(28, math.ceil(bounds.Y) + 2)
+		end
+		descLbl.Size = UDim2.new(1, -DETAIL_TEXT_X, 0, descH)
+		tagY = tagY + descH + 2
+	end
+	return math.max(tagY + 2, DETAIL_PORTRAIT + 4)
+end
+
+
+buildSoloDetailContent = function(panel, item, viewerUnitId)
+	local rc = getRarityColor(item.rarity)
+	local holderName, holderSlot = findOtherHolder(item.id, viewerUnitId)
+	local holderText = holderName
+		and string.format("Equipped by %s (%s) · EQUIP moves it", holderName, holderSlot) or nil
+
+	-- Unified header
+	local divY = buildDetailHeader(panel, {
+		iconText = item.icon or "?",
+		iconImage = (item.icon and string.find(item.icon, "rbxassetid://")) and item.icon or nil,
+		iconBg = rc,
+		iconBgTransparency = 0.75,
+		iconColor = Theme.Colors.TextPrimary,
+		iconStrokeColor = rc,
+		name = item.name,
+		tags = item.tags,
+		description = getItemFlavor(item),
+		level = item.lv,
+		rarity = item.rarity,
+		subtitleColor = rc,
+		holderText = holderText,
+	})
+
+	-- Divider
+	local div = Instance.new("Frame")
+	div.Size = UDim2.new(1, 0, 0, 1)
+	div.Position = UDim2.new(0, 0, 0, divY)
+	div.BackgroundColor3 = Theme.Colors.Border
+	div.BorderSizePixel = 0
+	div.Parent = panel
+
+	-- Content area: two columns below divider
+	local bodyY = divY + 6
+	local halfW = 0.48
+
+	-- Container for switchable content (base vs bonus)
+	local contentFrame = Instance.new("Frame")
+	contentFrame.Size = UDim2.new(1, 0, 1, -(bodyY + 30))
+	contentFrame.Position = UDim2.new(0, 0, 0, bodyY)
+	contentFrame.BackgroundTransparency = 1
+	contentFrame.Parent = panel
+
+	-- State: which view is shown
+	local showingBonus = false
+
+	local function buildBaseView()
+		for _, child in ipairs(contentFrame:GetChildren()) do child:Destroy() end
+
+		local leftCol = Instance.new("Frame")
+		leftCol.Size = UDim2.new(halfW, 0, 1, 0)
+		leftCol.Position = UDim2.new(0, 0, 0, 0)
+		leftCol.BackgroundTransparency = 1
+		leftCol.Parent = contentFrame
+
+		local rightCol = Instance.new("Frame")
+		rightCol.Size = UDim2.new(halfW, 0, 1, 0)
+		rightCol.Position = UDim2.new(1 - halfW, 0, 0, 0)
+		rightCol.BackgroundTransparency = 1
+		rightCol.Parent = contentFrame
+
+		-- LEFT: Base stats
+		local statY = 0
+		local rightList = Instance.new("UIListLayout")
+		rightList.FillDirection = Enum.FillDirection.Vertical
+		rightList.SortOrder = Enum.SortOrder.LayoutOrder
+		rightList.Padding = UDim.new(0, 6)
+		rightList.Parent = rightCol
+		local bs = item.baseStats or {}
+
+		if item.isDoctrine then
+			-- Doctrine stat package: six signed PERCENTAGE modifiers (sum 0). Shown here in
+			-- the detail's left column (green = bonus, red = penalty) (2026-10-20).
+			local pkg = item.docStatPackage or {}
+			local pkgOrder = { "STR", "AGI", "INT", "VIT", "DEX", "LUK" }
+			local anyPkg = false
+			for _, sn in ipairs(pkgOrder) do
+				local v = pkg[sn]
+				if v and v ~= 0 then
+					anyPkg = true
+					local sign = v > 0 and "+" or ""
+					local row = Instance.new("Frame")
+					row.Size = UDim2.new(1, 0, 0, 16)
+					row.Position = UDim2.new(0, 0, 0, statY)
+					row.BackgroundTransparency = 1
+					row.Parent = leftCol
+					makeLabel(row, { Text = sn, Size = UDim2.new(0.6, 0, 1, 0),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextSecondary })
+					makeLabel(row, { Text = sign .. v .. "%", Size = UDim2.new(0.4, 0, 1, 0),
+						Position = UDim2.new(0.6, 0, 0, 0),
+						TextSize = Theme.Text.Body(),
+						TextColor3 = v > 0 and Theme.Colors.Success or Theme.Colors.Danger,
+						Font = Theme.Font.PrimaryBold, TextXAlignment = Enum.TextXAlignment.Right })
+					statY = statY + 18
+				end
+			end
+			if not anyPkg then
+				makeLabel(leftCol, { Text = "No stat changes", Size = UDim2.new(1, 0, 0, 14),
+					Position = UDim2.new(0, 0, 0, statY),
+					TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
+			end
+		elseif item.isWeapon then
+			-- Weapon: Attack, Range, Defense, WT, RT Delay
+			local weaponStats = {
+				{ label = "Attack", value = bs.Attack },
+				{ label = "Range", value = bs.Range },
+				{ label = "Defense", value = bs.Defense },
+				{ label = "WT", value = bs.WT },
+				{ label = "RT Delay", value = bs.RTDelay },
+			}
+			for _, s in ipairs(weaponStats) do
+				if s.value ~= nil then
+					local row = Instance.new("Frame")
+					row.Size = UDim2.new(1, 0, 0, 16)
+					row.Position = UDim2.new(0, 0, 0, statY)
+					row.BackgroundTransparency = 1
+					row.Parent = leftCol
+					makeLabel(row, { Text = s.label, Size = UDim2.new(0.6, 0, 1, 0),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextSecondary })
+					makeLabel(row, { Text = tostring(s.value), Size = UDim2.new(0.4, 0, 1, 0),
+						Position = UDim2.new(0.6, 0, 0, 0),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextPrimary,
+						Font = Theme.Font.PrimaryBold, TextXAlignment = Enum.TextXAlignment.Right })
+					statY = statY + 18
+				end
+			end
+		else
+			-- Non-weapon: Defense, HP, MP, WT
+			local armorStats = {
+				{ label = "Defense", value = bs.Defense },
+				{ label = "HP", value = bs.HP },
+				{ label = "MP", value = bs.MP },
+				{ label = "WT", value = bs.WT },
+			}
+			for _, s in ipairs(armorStats) do
+				if s.value ~= nil and s.value ~= 0 then
+					local row = Instance.new("Frame")
+					row.Size = UDim2.new(1, 0, 0, 16)
+					row.Position = UDim2.new(0, 0, 0, statY)
+					row.BackgroundTransparency = 1
+					row.Parent = leftCol
+					makeLabel(row, { Text = s.label, Size = UDim2.new(0.6, 0, 1, 0),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextSecondary })
+					makeLabel(row, { Text = tostring(s.value), Size = UDim2.new(0.4, 0, 1, 0),
+						Position = UDim2.new(0.6, 0, 0, 0),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextPrimary,
+						Font = Theme.Font.PrimaryBold, TextXAlignment = Enum.TextXAlignment.Right })
+					statY = statY + 18
+				end
+			end
+		end
+
+		-- RIGHT: Archetype passives. Cards auto-size to fully show the wrapped
+		-- description (2026-10-23: was a fixed 18px box that clipped long text).
+		-- rightCol flows via its UIListLayout, so no manual Y cursor is needed.
+		local pHeader = makeLabel(rightCol, { Text = "PASSIVES", Size = UDim2.new(1, 0, 0, 12),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary })
+		pHeader.LayoutOrder = 0
+		if item.passives and #item.passives > 0 then
+			for idx, p in ipairs(item.passives) do
+				makeDescCard(rightCol, p.name or "Passive", Theme.Colors.Success,
+					p.desc or "", Theme.Colors.PanelRaised, 0.3, idx)
+			end
+		else
+			local noneLbl = makeLabel(rightCol, { Text = "None", Size = UDim2.new(1, 0, 0, 14),
+				TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
+			noneLbl.LayoutOrder = 1
+		end
+
+		-- Doctrine: list the skills it OFFERS (its choice set) under the passive.
+		if item.isDoctrine and item.skills and #item.skills > 0 then
+			local sHeader = makeLabel(rightCol, { Text = "SKILLS OFFERED", Size = UDim2.new(1, 0, 0, 12),
+				Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary })
+			sHeader.LayoutOrder = 50
+			for sidx, sk in ipairs(item.skills) do
+				makeDescCard(rightCol, sk.name or "Skill", Theme.Colors.Info,
+					sk.desc or "", Theme.Colors.PanelRaised, 0.4, 50 + sidx)
+			end
+		end
+	end
+
+	local function buildBonusView()
+		for _, child in ipairs(contentFrame:GetChildren()) do child:Destroy() end
+
+		local leftCol = Instance.new("Frame")
+		leftCol.Size = UDim2.new(halfW, 0, 1, 0)
+		leftCol.Position = UDim2.new(0, 0, 0, 0)
+		leftCol.BackgroundTransparency = 1
+		leftCol.Parent = contentFrame
+
+		local rightCol = Instance.new("Frame")
+		rightCol.Size = UDim2.new(halfW, 0, 1, 0)
+		rightCol.Position = UDim2.new(1 - halfW, 0, 0, 0)
+		rightCol.BackgroundTransparency = 1
+		rightCol.Parent = contentFrame
+
+		-- LEFT: Bonus numerical stats
+		makeLabel(leftCol, { Text = "BONUS STATS", Size = UDim2.new(1, 0, 0, 12),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary })
+		local rightList = Instance.new("UIListLayout")
+		rightList.FillDirection = Enum.FillDirection.Vertical
+		rightList.SortOrder = Enum.SortOrder.LayoutOrder
+		rightList.Padding = UDim.new(0, 6)
+		rightList.Parent = rightCol
+		local statY = 14
+		local bs = item.bonusStats or {}
+		local hasAny = false
+		for _, sn in ipairs(BONUS_STAT_ORDER) do
+			local bv = bs[sn]
+			if bv and bv ~= 0 then
+				hasAny = true
+				local bp = (item.bonusStatPcts or {})[sn]
+				local pctTxt = (bp and bp ~= 0) and ("  " .. (bp > 0 and "+" or "") .. bp .. "%") or ""
+				local sign = bv > 0 and "+" or ""
+				makeLabel(leftCol, { Text = sn .. "  " .. sign .. bv .. pctTxt,
+					Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 4, 0, statY),
+					TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.Success })
+				statY = statY + 16
+			end
+		end
+		if not hasAny then
+			makeLabel(leftCol, { Text = "None", Size = UDim2.new(1, 0, 0, 14),
+				Position = UDim2.new(0, 4, 0, statY),
+				TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
+		end
+
+		-- RIGHT: Bonus passives. Auto-sizing cards (2026-10-23) so long bonus-
+		-- passive descriptions are never clipped. rightCol flows via UIListLayout.
+		local bpHeader = makeLabel(rightCol, { Text = "BONUS PASSIVES", Size = UDim2.new(1, 0, 0, 12),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary })
+		bpHeader.LayoutOrder = 0
+		local bp = item.bonusPassives or {}
+		if #bp > 0 then
+			for idx, p in ipairs(bp) do
+				makeDescCard(rightCol, p.name or "Passive", Theme.Colors.Info,
+					p.desc or "", Theme.Colors.PanelRaised, 0.3, idx)
+			end
+		else
+			local noneLbl = makeLabel(rightCol, { Text = "None", Size = UDim2.new(1, 0, 0, 14),
+				TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
+			noneLbl.LayoutOrder = 1
+		end
+	end
+
+	-- Show base view initially
+	buildBaseView()
+
+	-- Toggle button (lower-left of panel). Doctrines have no separate bonus view
+	-- (their stat package shows in the base view), so the toggle is hidden for them.
+	if not item.isDoctrine then
+	local toggleBtn = Instance.new("TextButton")
+	toggleBtn.Size = UDim2.new(0, 90, 0, 24)
+	toggleBtn.Position = UDim2.new(0, 0, 1, -28)
+	toggleBtn.BackgroundColor3 = Theme.Colors.Surface
+	toggleBtn.BackgroundTransparency = 0.2
+	toggleBtn.Font = Theme.Font.PrimaryBold
+	toggleBtn.TextSize = 10
+	toggleBtn.TextColor3 = Theme.Colors.TextSecondary
+	toggleBtn.Text = "Show Bonus"
+	toggleBtn.BorderSizePixel = 0
+	toggleBtn.Parent = panel
+	Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 4)
+	local toggleIcon = Instance.new("ImageLabel")
+	toggleIcon.Name = "ToggleIcon"
+	toggleIcon.Size = UDim2.new(0, 12, 0, 12)
+	toggleIcon.Position = UDim2.new(1, -16, 0.5, -6)
+	toggleIcon.BackgroundTransparency = 1
+	toggleIcon.Image = Theme.Icons.Expand
+	toggleIcon.ScaleType = Enum.ScaleType.Fit
+	toggleIcon.ImageColor3 = Theme.Colors.TextSecondary
+	toggleIcon.Parent = toggleBtn
+	toggleBtn.Activated:Connect(function()
+		showingBonus = not showingBonus
+		if showingBonus then
+			buildBonusView()
+			toggleBtn.Text = "Show Base"
+			if toggleBtn:FindFirstChild("ToggleIcon") then toggleBtn.ToggleIcon.Image = Theme.Icons.Collapse end
+		else
+			buildBaseView()
+			toggleBtn.Text = "Show Bonus"
+			if toggleBtn:FindFirstChild("ToggleIcon") then toggleBtn.ToggleIcon.Image = Theme.Icons.Expand end
+		end
+	end)
+	end
+end
+
+
+--------------------------------------------------
+-- COMPARISON CONTENT (reference image 2)
+--------------------------------------------------
+
+buildComparisonContent = function(panel, selectedItem, currentItem, unit)
+	-- Compact header: two item cards side by side (persistent, not affected by toggle)
+	local headerY = 0
+	local cardH = 40
+	local halfW = 0.46
+	-- 'On <unit>' line on the SELECTED card (W2): Small text (>=10px on phone), wraps,
+	-- and both cards grow so nothing below overlaps. Desktop never shrinks (min 40).
+	local selHolder = findOtherHolder(selectedItem.id, unit and unit.id)
+	local selLvText = "Lv." .. (selectedItem.lv or 0) .. (selHolder and ("  · On " .. selHolder) or "")
+	local selLvSize = Theme.Text.Small()
+	local selLvH = 12
+	if selHolder then
+		local panelW = panel.AbsoluteSize.X
+		local lineW = (panelW > 0 and (panelW * halfW - 32)) or 120
+		if lineW < 40 then lineW = 120 end
+		local b = TextService:GetTextSize(selLvText, selLvSize, Theme.Font.Primary, Vector2.new(lineW, 10000))
+		selLvH = math.max(12, math.ceil(b.Y))
+		cardH = math.max(cardH, 18 + selLvH + 4)
+	end
+
+	-- CURRENT label + card (left)
+	makeLabel(panel, { Text = "CURRENT", Size = UDim2.new(halfW, 0, 0, 12),
+		Position = UDim2.new(0, 0, 0, headerY),
+		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Font = Theme.Font.PrimaryBold })
+
+	local curCard = Instance.new("Frame")
+	curCard.Size = UDim2.new(halfW, 0, 0, cardH)
+	curCard.Position = UDim2.new(0, 0, 0, headerY + 14)
+	curCard.BackgroundColor3 = getRarityColor(currentItem.rarity)
+	curCard.BackgroundTransparency = 0.75
+	curCard.BorderSizePixel = 0
+	curCard.Parent = panel
+	Instance.new("UICorner", curCard).CornerRadius = UDim.new(0, 4)
+	Instance.new("UIStroke", curCard).Color = getRarityColor(currentItem.rarity)
+	makeLabel(curCard, { Text = currentItem.icon or "?", Size = UDim2.new(0, 28, 1, 0),
+		TextSize = 20, TextXAlignment = Enum.TextXAlignment.Center })
+	makeLabel(curCard, { Text = currentItem.name,
+		Size = UDim2.new(1, -32, 0, 14), Position = UDim2.new(0, 30, 0, 3),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
+		TextColor3 = Theme.Colors.TextPrimary })
+	makeLabel(curCard, { Text = "Lv." .. (currentItem.lv or 0) .. "  (Equipped)",
+		Size = UDim2.new(1, -32, 0, 12), Position = UDim2.new(0, 30, 0, 18),
+		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary })
+
+	-- SELECTED label + card (right)
+	makeLabel(panel, { Text = "SELECTED", Size = UDim2.new(halfW, 0, 0, 12),
+		Position = UDim2.new(1 - halfW, 0, 0, headerY),
+		TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Font = Theme.Font.PrimaryBold })
+
+	local selCard = Instance.new("Frame")
+	selCard.Size = UDim2.new(halfW, 0, 0, cardH)
+	selCard.Position = UDim2.new(1 - halfW, 0, 0, headerY + 14)
+	selCard.BackgroundColor3 = getRarityColor(selectedItem.rarity)
+	selCard.BackgroundTransparency = 0.75
+	selCard.BorderSizePixel = 0
+	selCard.Parent = panel
+	Instance.new("UICorner", selCard).CornerRadius = UDim.new(0, 4)
+	local selStroke = Instance.new("UIStroke", selCard)
+	selStroke.Color = Theme.Colors.TextGold
+	selStroke.Thickness = 2
+	makeLabel(selCard, { Text = selectedItem.icon or "?", Size = UDim2.new(0, 28, 1, 0),
+		TextSize = 20, TextXAlignment = Enum.TextXAlignment.Center })
+	makeLabel(selCard, { Text = selectedItem.name,
+		Size = UDim2.new(1, -32, 0, 14), Position = UDim2.new(0, 30, 0, 3),
+		Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Small(),
+		TextColor3 = Theme.Colors.TextPrimary })
+	local selLvLbl = makeLabel(selCard, { Text = selLvText,
+		Size = UDim2.new(1, -32, 0, selLvH), Position = UDim2.new(0, 30, 0, 18),
+		TextSize = selHolder and selLvSize or Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+		TextWrapped = selHolder ~= nil })
+	if selHolder then
+		selLvLbl.TextTruncate = Enum.TextTruncate.None
+		selLvLbl.TextYAlignment = Enum.TextYAlignment.Top
+	end
+
+	-- Divider
+	local divY = headerY + 14 + cardH + 4
+	local div = Instance.new("Frame")
+	div.Size = UDim2.new(1, 0, 0, 1)
+	div.Position = UDim2.new(0, 0, 0, divY)
+	div.BackgroundColor3 = Theme.Colors.Border
+	div.BorderSizePixel = 0
+	div.Parent = panel
+
+	-- Content container (switchable)
+	local bodyY = divY + 4
+	local contentFrame = Instance.new("Frame")
+	contentFrame.Size = UDim2.new(1, 0, 1, -(bodyY + 30))
+	contentFrame.Position = UDim2.new(0, 0, 0, bodyY)
+	contentFrame.BackgroundTransparency = 1
+	contentFrame.Parent = panel
+
+	-- Re-measure the 'On <unit>' line at the label's REAL width once layout is known
+	-- (build-time width can be 0 -> 120px guess; a narrow phone line is ~106px).
+	-- Updates both cards, the divider and the content area together. The connection
+	-- lives on the label, so it is cleaned up when the panel is cleared. Only acts when
+	-- the measured height changes; height never feeds back into width, so no loop.
+	if selHolder then
+		local function relayout()
+			local w = selLvLbl.AbsoluteSize.X
+			if w <= 0 then return end
+			local b = TextService:GetTextSize(selLvText, selLvSize, Theme.Font.Primary, Vector2.new(w, 10000))
+			local h = math.max(12, math.ceil(b.Y))
+			if h == selLvH then return end
+			selLvH = h
+			local newCardH = math.max(40, 18 + h + 4)
+			if newCardH == cardH then
+				selLvLbl.Size = UDim2.new(1, -32, 0, h)
+				return
+			end
+			cardH = newCardH
+			curCard.Size = UDim2.new(halfW, 0, 0, cardH)
+			selCard.Size = UDim2.new(halfW, 0, 0, cardH)
+			selLvLbl.Size = UDim2.new(1, -32, 0, h)
+			divY = headerY + 14 + cardH + 4
+			div.Position = UDim2.new(0, 0, 0, divY)
+			bodyY = divY + 4
+			contentFrame.Size = UDim2.new(1, 0, 1, -(bodyY + 30))
+			contentFrame.Position = UDim2.new(0, 0, 0, bodyY)
+		end
+		selLvLbl:GetPropertyChangedSignal("AbsoluteSize"):Connect(relayout)
+		relayout()
+	end
+
+	local showingBonus = false
+
+	-- Helper: build a stat comparison row
+	local COMPARE_STATS = { "Attack", "Range", "Defense", "WT", "RTDelay" }
+	local COMPARE_LABELS = { Attack="Attack", Range="Range", Defense="Defense", WT="WT", RTDelay="RT Delay" }
+	local LOWER_IS_BETTER = { WT = true, RTDelay = true }
+	local _STAT_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK" }
+
+	local function addStatRow(parent, label, cvStr, svStr, delta, isGood, y)
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 16)
+		row.Position = UDim2.new(0, 0, 0, y)
+		row.BackgroundTransparency = 1
+		row.Parent = parent
+		makeLabel(row, { Text = cvStr, Size = UDim2.new(0.18, 0, 1, 0),
+			TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Center, Font = Theme.Font.PrimaryBold })
+		makeLabel(row, { Text = label, Size = UDim2.new(0.24, 0, 1, 0),
+			Position = UDim2.new(0.18, 0, 0, 0),
+			TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary,
+			TextXAlignment = Enum.TextXAlignment.Center })
+		makeLabel(row, { Text = svStr, Size = UDim2.new(0.18, 0, 1, 0),
+			Position = UDim2.new(0.54, 0, 0, 0),
+			TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Center, Font = Theme.Font.PrimaryBold })
+		if delta and delta ~= "" then
+			makeLabel(row, { Text = delta, Size = UDim2.new(0.14, 0, 1, 0),
+				Position = UDim2.new(0.78, 0, 0, 0),
+				TextSize = Theme.Text.Small(), Font = Theme.Font.PrimaryBold,
+				TextColor3 = isGood and Theme.Colors.Success or Theme.Colors.Danger,
+				TextXAlignment = Enum.TextXAlignment.Center })
+		end
+	end
+
+	-- Grow-to-fit passive card for the COMPARE view. Parented into a per-column
+	-- UIListLayout container (built by the callers) so cards auto-stack and the
+	-- description never clips — same shared makeDescCard the solo detail view uses.
+	-- (2026-10-23: replaces the old fixed-36px absolutely-positioned card, which
+	-- clipped long descriptions AND overlapped when an item had 2+ passives.)
+	local function addPassiveCard(parent, name, desc, isLost, layoutOrder)
+		local tagColor = isLost and Theme.Colors.Danger or Theme.Colors.Success
+		local suffix = isLost and " (Lost)" or " (Gained)"
+		return makeDescCard(parent, (name or "Passive") .. suffix, tagColor, desc or "",
+			tagColor, 0.85, layoutOrder or 0)
+	end
+
+	-- Build a 0.48-wide auto-stacking passive column at vertical offset y.
+	local function makePassiveCompareCol(parent, xScale, y)
+		local colf = Instance.new("Frame")
+		colf.Size = UDim2.new(0.48, 0, 0, 0)
+		colf.AutomaticSize = Enum.AutomaticSize.Y
+		colf.Position = UDim2.new(xScale, 0, 0, y)
+		colf.BackgroundTransparency = 1
+		colf.BorderSizePixel = 0
+		colf.Parent = parent
+		local ll = Instance.new("UIListLayout", colf)
+		ll.SortOrder = Enum.SortOrder.LayoutOrder
+		ll.Padding = UDim.new(0, 4)
+		return colf
+	end
+
+	-- ============ BASE COMPARE VIEW ============
+	local function buildBaseCompare()
+		for _, child in ipairs(contentFrame:GetChildren()) do child:Destroy() end
+
+		local curStats = currentItem.baseStats or {}
+		local selStats = selectedItem.baseStats or {}
+		local rowY = 0
+
+		-- Doctrine comparison (2026-10-20): stat packages are %, so pull the real per-unit
+		-- before/after/deltas from the server and show those, then the passive lost/gained.
+		if selectedItem.isDoctrine then
+			local cmp = (MockData.GetDoctrineComparison and unit)
+				and MockData.GetDoctrineComparison(unit.id, selectedItem.doctrineId) or nil
+			local STAT_ROWS = {
+				{k="STR",l="STR"},{k="AGI",l="AGI"},{k="INT",l="INT"},
+				{k="VIT",l="VIT"},{k="DEX",l="DEX"},{k="LUK",l="LUK"},
+				{k="maxHp",l="Max HP"},{k="maxMp",l="Max MP"},
+			}
+			if cmp and cmp.before and cmp.after then
+				for _, sr in ipairs(STAT_ROWS) do
+					local bv, av = cmp.before[sr.k], cmp.after[sr.k]
+					if bv ~= nil or av ~= nil then
+						local delta, isGood = "", false
+						local bn, an = tonumber(bv), tonumber(av)
+						if bn and an then
+							local diff = an - bn
+							if diff ~= 0 then
+								isGood = diff > 0
+								delta = (diff > 0 and "+" or "") .. diff
+							end
+						end
+						addStatRow(contentFrame, sr.l, tostring(bv or "—"), tostring(av or "—"), delta, isGood, rowY)
+						rowY = rowY + 18
+					end
+				end
+			else
+				makeLabel(contentFrame, { Text = "Stat comparison unavailable",
+					Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 0, 0, rowY),
+					TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
+				rowY = rowY + 18
+			end
+			rowY = rowY + 4
+			makeLabel(contentFrame, { Text = "PASSIVE", Size = UDim2.new(1, 0, 0, 12),
+				Position = UDim2.new(0, 0, 0, rowY), Font = Theme.Font.PrimaryBold,
+				TextSize = Theme.Text.Tiny(), TextColor3 = Theme.Colors.TextSecondary,
+				TextXAlignment = Enum.TextXAlignment.Center })
+			rowY = rowY + 14
+			local lpc = makePassiveCompareCol(contentFrame, 0, rowY)
+			local rpc = makePassiveCompareCol(contentFrame, 0.52, rowY)
+			if currentItem.passives then
+				for idx, p in ipairs(currentItem.passives) do
+					addPassiveCard(lpc, p.name, p.desc, true, idx)
+				end
+			end
+			if selectedItem.passives then
+				for idx, p in ipairs(selectedItem.passives) do
+					addPassiveCard(rpc, p.name, p.desc, false, idx)
+				end
+			end
+			return
+		end
+
+		for _, key in ipairs(COMPARE_STATS) do
+			local cv = curStats[key]
+			local sv = selStats[key]
+			if cv ~= nil or sv ~= nil then
+				local delta = ""
+				local isGood = false
+				local cvNum = tonumber(cv)
+				local svNum = tonumber(sv)
+				if cvNum and svNum then
+					local diff = svNum - cvNum
+					if diff ~= 0 then
+						local lowerBetter = LOWER_IS_BETTER[key]
+						isGood = (lowerBetter and diff < 0) or (not lowerBetter and diff > 0)
+						local sign = diff > 0 and "+" or ""
+						delta = sign .. diff
+					end
+				elseif type(cv) == "string" and type(sv) == "string" and cv ~= sv then
+					delta = "~"
+				end
+				addStatRow(contentFrame, COMPARE_LABELS[key] or key,
+					tostring(cv or "—"), tostring(sv or "—"), delta, isGood, rowY)
+				rowY = rowY + 18
+			end
+		end
+
+		-- Archetype passive comparison
+		rowY = rowY + 4
+		makeLabel(contentFrame, { Text = "PASSIVES",
+			Size = UDim2.new(1, 0, 0, 12), Position = UDim2.new(0, 0, 0, rowY),
+			Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+			TextColor3 = Theme.Colors.TextSecondary,
+			TextXAlignment = Enum.TextXAlignment.Center })
+		rowY = rowY + 14
+
+		local curPN = {}
+		if currentItem.passives then for _, p in ipairs(currentItem.passives) do curPN[p.name] = p end end
+		local selPN = {}
+		if selectedItem.passives then for _, p in ipairs(selectedItem.passives) do selPN[p.name] = p end end
+
+		local lpc2 = makePassiveCompareCol(contentFrame, 0, rowY)
+		local rpc2 = makePassiveCompareCol(contentFrame, 0.52, rowY)
+		if currentItem.passives then
+			for idx, p in ipairs(currentItem.passives) do
+				if not selPN[p.name] then
+					addPassiveCard(lpc2, p.name, p.desc, true, idx)
+				end
+			end
+		end
+		if selectedItem.passives then
+			for idx, p in ipairs(selectedItem.passives) do
+				if not curPN[p.name] then
+					addPassiveCard(rpc2, p.name, p.desc, false, idx)
+				end
+			end
+		end
+	end
+
+	-- ============ BONUS COMPARE VIEW ============
+	local function buildBonusCompare()
+		for _, child in ipairs(contentFrame:GetChildren()) do child:Destroy() end
+
+		-- Side-by-side: left = current item bonuses, right = selected item bonuses
+		local leftCol = Instance.new("Frame")
+		leftCol.Size = UDim2.new(0.48, 0, 1, 0)
+		leftCol.Position = UDim2.new(0, 0, 0, 0)
+		leftCol.BackgroundTransparency = 1
+		leftCol.Parent = contentFrame
+
+		local rightCol = Instance.new("Frame")
+		rightCol.Size = UDim2.new(0.48, 0, 1, 0)
+		rightCol.Position = UDim2.new(0.52, 0, 0, 0)
+		rightCol.BackgroundTransparency = 1
+		rightCol.Parent = contentFrame
+
+		-- Helper: list bonus stats + passives for one item into a column
+		local function fillBonusColumn(col, bonusStats, bonusPassives, bonusStatPcts)
+			local y = 0
+
+			-- Bonus numerical stats
+			makeLabel(col, { Text = "BONUS STATS", Size = UDim2.new(1, 0, 0, 12),
+				Position = UDim2.new(0, 0, 0, y),
+				Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+				TextColor3 = Theme.Colors.TextSecondary })
+			y = y + 14
+
+			local bs = bonusStats or {}
+			local pcts = bonusStatPcts or {}
+			local hasStats = false
+			for _, sn in ipairs(BONUS_STAT_ORDER) do
+				local bv = bs[sn]
+				if bv and bv ~= 0 then
+					hasStats = true
+					local bp = pcts[sn]
+					local pctTxt = (bp and bp ~= 0) and ("  " .. (bp > 0 and "+" or "") .. bp .. "%") or ""
+					local sign = bv > 0 and "+" or ""
+					makeLabel(col, { Text = sn .. "  " .. sign .. bv .. pctTxt,
+						Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 4, 0, y),
+						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.Success })
+					y = y + 16
+				end
+			end
+			if not hasStats then
+				makeLabel(col, { Text = "None", Size = UDim2.new(1, 0, 0, 12),
+					Position = UDim2.new(0, 4, 0, y),
+					TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
+				y = y + 14
+			end
+
+			-- Bonus passives
+			y = y + 4
+			makeLabel(col, { Text = "BONUS PASSIVES", Size = UDim2.new(1, 0, 0, 12),
+				Position = UDim2.new(0, 0, 0, y),
+				Font = Theme.Font.PrimaryBold, TextSize = Theme.Text.Tiny(),
+				TextColor3 = Theme.Colors.TextSecondary })
+			y = y + 14
+
+			local bp = bonusPassives or {}
+			if #bp > 0 then
+				local pcol = Instance.new("Frame")
+				pcol.Size = UDim2.new(1, 0, 0, 0)
+				pcol.AutomaticSize = Enum.AutomaticSize.Y
+				pcol.Position = UDim2.new(0, 0, 0, y)
+				pcol.BackgroundTransparency = 1
+				pcol.BorderSizePixel = 0
+				pcol.Parent = col
+				local plist = Instance.new("UIListLayout", pcol)
+				plist.SortOrder = Enum.SortOrder.LayoutOrder
+				plist.Padding = UDim.new(0, 4)
+				for idx, p in ipairs(bp) do
+					makeDescCard(pcol, p.name or "Passive", Theme.Colors.Info, p.desc or "",
+						Theme.Colors.PanelRaised, 0.3, idx)
+				end
+			else
+				makeLabel(col, { Text = "None", Size = UDim2.new(1, 0, 0, 12),
+					Position = UDim2.new(0, 4, 0, y),
+					TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextDisabled })
+			end
+		end
+
+		fillBonusColumn(leftCol, currentItem.bonusStats, currentItem.bonusPassives, currentItem.bonusStatPcts)
+		fillBonusColumn(rightCol, selectedItem.bonusStats, selectedItem.bonusPassives, selectedItem.bonusStatPcts)
+	end
+
+
+	-- Show base view initially
+	buildBaseCompare()
+
+	-- Toggle button (lower-left of panel). Hidden for doctrine compare (no bonus view).
+	if not selectedItem.isDoctrine then
+	local toggleBtn = Instance.new("TextButton")
+	toggleBtn.Size = UDim2.new(0, 90, 0, 24)
+	toggleBtn.Position = UDim2.new(0, 0, 1, -28)
+	toggleBtn.BackgroundColor3 = Theme.Colors.Surface
+	toggleBtn.BackgroundTransparency = 0.2
+	toggleBtn.Font = Theme.Font.PrimaryBold
+	toggleBtn.TextSize = Theme.Text.Small()
+	toggleBtn.TextColor3 = Theme.Colors.TextSecondary
+	toggleBtn.Text = "Show Bonus"
+	toggleBtn.BorderSizePixel = 0
+	toggleBtn.Parent = panel
+	Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 4)
+	local toggleIcon = Instance.new("ImageLabel")
+	toggleIcon.Name = "ToggleIcon"
+	toggleIcon.Size = UDim2.new(0, 12, 0, 12)
+	toggleIcon.Position = UDim2.new(1, -16, 0.5, -6)
+	toggleIcon.BackgroundTransparency = 1
+	toggleIcon.Image = Theme.Icons.Expand
+	toggleIcon.ScaleType = Enum.ScaleType.Fit
+	toggleIcon.ImageColor3 = Theme.Colors.TextSecondary
+	toggleIcon.Parent = toggleBtn
+	toggleBtn.Activated:Connect(function()
+		showingBonus = not showingBonus
+		if showingBonus then
+			buildBonusCompare()
+			toggleBtn.Text = "Show Base"
+			if toggleBtn:FindFirstChild("ToggleIcon") then toggleBtn.ToggleIcon.Image = Theme.Icons.Collapse end
+		else
+			buildBaseCompare()
+			toggleBtn.Text = "Show Bonus"
+			if toggleBtn:FindFirstChild("ToggleIcon") then toggleBtn.ToggleIcon.Image = Theme.Icons.Expand end
+		end
+	end)
+	end
+end
+
+
+
+--------------------------------------------------
+-- TAB SWITCHING
+--------------------------------------------------
+
+switchTab = function()
+	-- Hide all tab-specific panels
+	if inventoryPanel then inventoryPanel.Visible = false end
+	if equippedPanel then equippedPanel.Visible = false end
+	if statPanel then statPanel.Visible = false end
+	if skillsPanel then skillsPanel.Visible = false end
+	if infoPanel then infoPanel.Visible = false end
+	if outfitPanel then outfitPanel.Visible = false end
+	if outfitSidePanel then outfitSidePanel.Visible = false end
+	if currentTab ~= "OUTFIT" and UGCOutfitTab then UGCOutfitTab.Unmount() end
+	if partiesPanel then partiesPanel.Visible = false end
+	if currentTab ~= "PARTIES" and PartiesTab then PartiesTab.Unmount() end
+	-- The unit header column is hidden on PARTIES (approved 2026-11-04) and shown everywhere else.
+	if rightColFrame then rightColFrame.Visible = currentTab ~= "PARTIES" end
+
+	-- Close any open overlays
+	closeDetail()
+	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+
+	if currentTab == "GEARS" then
+		if inventoryPanel then inventoryPanel.Visible = true end
+		if equippedPanel then equippedPanel.Visible = true end
+		-- Reclaim stat panel space
+		local eqTop = 60 + (Theme.FullScreen.PanelGap or 2)
+		if equippedPanel then equippedPanel.Size = UDim2.new(1, 0, 1, -eqTop); equippedPanel.Position = UDim2.new(0, 0, 0, eqTop) end
+		if equippedTab == "cons" then buildConsumableGrid() else buildInventory() end
+		buildEquippedLoadout()
+	elseif currentTab == "SKILLS" then
+		if skillsPanel then skillsPanel.Visible = true end
+		if equippedPanel then equippedPanel.Visible = true end
+		-- Reclaim stat panel space
+		local eqTop = 60 + (Theme.FullScreen.PanelGap or 2)
+		if equippedPanel then equippedPanel.Size = UDim2.new(1, 0, 1, -eqTop); equippedPanel.Position = UDim2.new(0, 0, 0, eqTop) end
+		buildSkillsContent()
+	elseif currentTab == "INFO" then
+		if infoPanel then infoPanel.Visible = true end
+		if statPanel then statPanel.Visible = true end
+		-- Push equipped panel below stat panel
+		local gap = Theme.FullScreen.PanelGap or 2
+		local topUsed = 60 + gap + 160 + gap
+		if equippedPanel then equippedPanel.Size = UDim2.new(1, 0, 1, -topUsed); equippedPanel.Position = UDim2.new(0, 0, 0, topUsed) end
+		buildStatPanel()
+		buildInfoContent()
+	elseif currentTab == "OUTFIT" then
+		if outfitPanel then outfitPanel.Visible = true end
+		if outfitSidePanel then outfitSidePanel.Visible = true end
+		if UGCOutfitTab then UGCOutfitTab.Render(outfitPanel, outfitSidePanel, MockData.GetSelectedUnit()) end
+	elseif currentTab == "PARTIES" then
+		if partiesPanel then partiesPanel.Visible = true end
+		if PartiesTab and partiesPanel then
+			-- View loadout (approved D11): select the unit and open its INFO tab. Pick mode stays.
+			PartiesTab.SetViewLoadout(function(unitId: string)
+				if MockData.SetSelectedUnitById then MockData.SetSelectedUnitById(unitId) end
+				currentTab = "INFO"
+				infoView = "stats"
+				switchTab()
+			end)
+			PartiesTab.Render(partiesPanel)
+		end
+	end
+
+	-- Move the tab highlight in place (builds the bar only if it does not exist yet)
+	refreshTabBar()
+	-- Rebuild unit header (always visible)
+	buildUnitHeader()
+end
+
+--------------------------------------------------
+-- SKILLS TAB CONTENT (v3 — Grid + Loadout Table)
+--------------------------------------------------
+
+-- =====================================================
+-- SKILLS TAB v3: Grid Layout with Detail Overlays
+-- Replaces lines 1843-2881 in LoadoutScreen.lua
+-- =====================================================
+
+-- ==================================================================
+-- buildSkillsContent: Main Skills tab
+-- Uses skillsPanel (left 70%) for card grid
+-- Uses equippedPanel (right 30%) for skill loadout table
+-- ==================================================================
+buildSkillsContent = function()
+	if not skillsPanel then return end
+	clearChildren(skillsPanel)
+	pad(skillsPanel, 8, 8, 8, 8)
+
+	local unit = MockData.GetSelectedUnit()
+	if not unit then return end
+
+	-- Load skill data from server
+	if MockData.LoadSkillData then
+		MockData.LoadSkillData(unit.id)
+	end
+
+	local _loadout = MockData.GetSkillLoadout(unit.id)
+	local _doctrineId = MockData.GetUnitDoctrineId(unit.id)
+
+	-- ============================================================
+	-- LEFT: CARD GRID (in skillsPanel)
+	-- ============================================================
+
+	-- Filter bar
+	local ctrlRow = Instance.new("Frame")
+	ctrlRow.Size = UDim2.new(1, 0, 0, 24)
+	ctrlRow.Position = UDim2.new(0, 0, 0, 0)
+	ctrlRow.BackgroundTransparency = 1
+	ctrlRow.Parent = skillsPanel
+
+	local ctrlLayout = Instance.new("UIListLayout", ctrlRow)
+	ctrlLayout.FillDirection = Enum.FillDirection.Horizontal
+	ctrlLayout.Padding = UDim.new(0, 3)
+	ctrlLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+
+	-- Search box
+	local search = Instance.new("TextBox")
+	search.Size = UDim2.new(1, -195, 1, 0)
+	search.BackgroundColor3 = Theme.Colors.Surface
+	search.BackgroundTransparency = 0.2
+	search.Font = Theme.Font.Primary
+	search.TextSize = Theme.Text.Small()
+	search.TextColor3 = Theme.Colors.TextPrimary
+	search.PlaceholderText = "Search cards..."
+	search.PlaceholderColor3 = Theme.Colors.TextDisabled
+	search.Text = skillSearchText or ""
+	search.BorderSizePixel = 0
+	search.ClearTextOnFocus = false
+	search.LayoutOrder = 1
+	search.Parent = ctrlRow
+	Instance.new("UICorner", search).CornerRadius = UDim.new(0, 3)
+
+	search.FocusLost:Connect(function()
+		skillSearchText = search.Text
+		buildSkillsContent()
+	end)
+
+	-- Shared dropdown helpers (reuse module-level activeDropdown)
+	local function closeDD()
+		if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+	end
+
+	local function showDD(anchorBtn, options, onSelect)
+		closeDD()
+		local rowH = 22
+		local menuH = #options * rowH + 4
+		local menuW = math.max(anchorBtn.AbsoluteSize.X, 80)
+
+		activeDropdown = Instance.new("ScreenGui")
+		activeDropdown.Name = "SkillDropdown"
+		activeDropdown.DisplayOrder = 105
+		activeDropdown.ResetOnSpawn = false
+		activeDropdown.Parent = getPlayerGui()
+
+		local ddBack = Instance.new("TextButton")
+		ddBack.Size = UDim2.fromScale(1, 1)
+		ddBack.BackgroundTransparency = 1
+		ddBack.Text = ""
+		ddBack.Parent = activeDropdown
+		ddBack.Activated:Connect(closeDD)
+
+		local mPanel = Instance.new("Frame")
+		mPanel.Size = UDim2.new(0, menuW, 0, menuH)
+		mPanel.Position = UDim2.new(0,
+			anchorBtn.AbsolutePosition.X,
+			0, anchorBtn.AbsolutePosition.Y + anchorBtn.AbsoluteSize.Y + 2)
+		mPanel.BackgroundColor3 = Theme.Colors.Panel
+		mPanel.BorderSizePixel = 0
+		mPanel.ZIndex = 50
+		mPanel.Parent = activeDropdown
+		Instance.new("UICorner", mPanel).CornerRadius = UDim.new(0, 4)
+		Instance.new("UIStroke", mPanel).Color = Theme.Colors.Border
+		pad(mPanel, 2, 2, 2, 2)
+
+		local mLayout = Instance.new("UIListLayout", mPanel)
+		mLayout.Padding = UDim.new(0, 0)
+		mLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+		for idx, opt in ipairs(options) do
+			local row = Instance.new("TextButton")
+			row.Size = UDim2.new(1, 0, 0, rowH)
+			row.BackgroundColor3 = Theme.Colors.PanelRaised
+			row.BackgroundTransparency = opt.active and 0.2 or 0.6
+			row.Font = Theme.Font.Primary
+			row.TextSize = Theme.Text.Small()
+			row.TextColor3 = opt.active and Theme.Colors.TextGold or Theme.Colors.TextPrimary
+			row.BorderSizePixel = 0
+			row.LayoutOrder = idx
+			row.ZIndex = 51
+			row.Parent = mPanel
+			Instance.new("UICorner", row).CornerRadius = UDim.new(0, 3)
+			local hasImg = opt.icon and string.find(opt.icon, "rbxassetid://")
+			if hasImg then
+				row.Text = ""
+				local ico = Instance.new("ImageLabel")
+				ico.Size = UDim2.new(0, 16, 0, 16)
+				ico.Position = UDim2.new(0, 4, 0.5, -8)
+				ico.BackgroundTransparency = 1
+				ico.Image = opt.icon
+				ico.ScaleType = Enum.ScaleType.Fit
+				ico.ZIndex = 52
+				ico.Parent = row
+				local lbl = Instance.new("TextLabel")
+				lbl.Size = UDim2.new(1, -24, 1, 0)
+				lbl.Position = UDim2.new(0, 22, 0, 0)
+				lbl.BackgroundTransparency = 1
+				lbl.Font = Theme.Font.Primary
+				lbl.TextSize = Theme.Text.Small()
+				lbl.TextColor3 = opt.active and Theme.Colors.TextGold or Theme.Colors.TextPrimary
+				lbl.TextXAlignment = Enum.TextXAlignment.Left
+				lbl.Text = opt.label
+				lbl.ZIndex = 52
+				lbl.Parent = row
+			else
+				row.Text = opt.label
+			end
+			row.Activated:Connect(function()
+				closeDD()
+				onSelect(opt.value, idx)
+			end)
+		end
+	end
+
+	-- Dropdown buttons
+	local function makeDDBtn(text, order, isActive, iconAsset)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(0, 62, 1, 0)
+		btn.BackgroundColor3 = Theme.Colors.Surface
+		btn.BackgroundTransparency = 0.2
+		btn.BorderSizePixel = 0
+		btn.LayoutOrder = order
+		btn.Parent = ctrlRow
+		Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 3)
+		if iconAsset then
+			btn.Text = ""
+			local ico = Instance.new("ImageLabel")
+			ico.Size = UDim2.new(0, 14, 0, 14)
+			ico.Position = UDim2.new(0, 3, 0.5, -7)
+			ico.BackgroundTransparency = 1
+			ico.Image = iconAsset
+			ico.ScaleType = Enum.ScaleType.Fit
+			ico.ImageColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+			ico.Parent = btn
+			local lbl = Instance.new("TextLabel")
+			lbl.Size = UDim2.new(1, -19, 1, 0)
+			lbl.Position = UDim2.new(0, 19, 0, 0)
+			lbl.BackgroundTransparency = 1
+			lbl.Font = Theme.Font.Primary
+			lbl.TextSize = Theme.Text.Small()
+			lbl.TextColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+			lbl.TextXAlignment = Enum.TextXAlignment.Left
+			lbl.TextTruncate = Enum.TextTruncate.AtEnd
+			lbl.Text = text
+			lbl.Parent = btn
+		else
+			btn.Font = Theme.Font.Primary
+			btn.TextSize = Theme.Text.Small()
+			btn.TextColor3 = isActive and Theme.Colors.TextGold or Theme.Colors.TextSecondary
+			btn.Text = text
+		end
+		return btn
+	end
+
+	-- Type filter (All / Skill / Augment + subtypes)
+	local typeLbl = skillTypeFilter == "All" and "Type" or (skillTypeFilter )
+	local typeBtn = makeDDBtn(typeLbl, 2, skillTypeFilter ~= "All", Theme.Icons.Filter)
+	typeBtn.Activated:Connect(function()
+		local opts = {}
+		local TYPE_ICONS = {
+				All = Theme.Icons.Reset, Damage = Theme.Icons.Damage,
+				Heal = Theme.Icons.Heal, Buff = Theme.Icons.Buff,
+				Debuff = Theme.Icons.Debuff, Utility = Theme.Icons.Utility,
+			}
+			for _, ft in ipairs(SKILL_TYPE_FILTERS) do
+				table.insert(opts, { label = ft, value = ft, icon = TYPE_ICONS[ft], active = (skillTypeFilter == ft) })
+			end
+		showDD(typeBtn, opts, function(val)
+			skillTypeFilter = val
+			selectedSkillCardId = nil
+			buildSkillsContent()
+		end)
+	end)
+
+	-- Tag filter
+	local tagLbl = skillTagFilter == "All" and "Tags" or (skillTagFilter )
+	local tagBtn = makeDDBtn(tagLbl, 3, skillTagFilter ~= "All", Theme.Icons.Filter)
+	tagBtn.Activated:Connect(function()
+		local opts = {}
+		local TAG_ICONS = {
+				All = Theme.Icons.Reset, Fire = Theme.Icons.Fire,
+				Ice = Theme.Icons.Ice, Electric = Theme.Icons.Electric,
+				Holy = Theme.Icons.Holy, Dark = Theme.Icons.Dark,
+				Poison = Theme.Icons.Poison, Physical = Theme.Icons.Physical,
+			}
+			for _, t in ipairs(SKILL_TAG_FILTERS) do
+				table.insert(opts, { label = t, value = t, icon = TAG_ICONS[t], active = (skillTagFilter == t) })
+			end
+		showDD(tagBtn, opts, function(val)
+			skillTagFilter = val
+			selectedSkillCardId = nil
+			buildSkillsContent()
+		end)
+	end)
+
+	-- Sort
+	local sortOpt = SKILL_SORT_OPTIONS_SK[skillSortIndex] or SKILL_SORT_OPTIONS_SK[1]
+	local sortBtn = makeDDBtn(sortOpt.label , 4, false, Theme.Icons.Sort)
+	sortBtn.Activated:Connect(function()
+		local opts = {}
+		for si, s in ipairs(SKILL_SORT_OPTIONS_SK) do
+			table.insert(opts, { label = s.label, value = si, active = (skillSortIndex == si) })
+		end
+		showDD(sortBtn, opts, function(val)
+			skillSortIndex = val
+			buildSkillsContent()
+		end)
+	end)
+
+	-- ---- Build card data from inventory ----
+	local skillCards = {}
+	local augmentCards = {}
+
+	-- Server skill card inventory
+	if MockData.SkillCardInventory then
+		for skillId, qty in pairs(MockData.SkillCardInventory) do
+			if qty then
+				local def = MockData.GetSkillDef(skillId)
+				if def then
+					table.insert(skillCards, {
+						id = skillId, name = def.name or skillId,
+						tags = def.tags or {}, mpCost = def.mpCostFormula or "?",
+						rtCost = def.rtCostFormula or "?",
+						desc = def.effects or "", qty = qty,
+						isSkill = true, def = def,
+					})
+				end
+			end
+		end
+	end
+
+	-- Fallback: placeholder catalog ONLY when the server could not be reached.
+	-- Previously this also fired when the player simply had 0 skill cards left
+	-- (all equipped), showing 6 fake early-dev cards that cannot be equipped.
+	if #skillCards == 0 and not MockData._useServerSkillData then
+		for _, sk in ipairs(MockData.SkillCatalog or {}) do
+			if not sk.isDoctrine then
+				table.insert(skillCards, {
+					id = sk.id, name = sk.name,
+					tags = sk.tags or {}, mpCost = "MP " .. (sk.mpCost or 0),
+					rtCost = "RT " .. (sk.rtCost or 0),
+					desc = sk.desc or "", qty = sk.qty or 1,
+					isSkill = true, mockSkill = sk,
+				})
+			end
+		end
+	end
+
+	-- Server augment card inventory
+	if MockData.AugmentCardInventory then
+		for augId, qty in pairs(MockData.AugmentCardInventory) do
+			if qty then
+				local def = MockData.GetAugmentDef(augId)
+				if def then
+					table.insert(augmentCards, {
+						id = augId, name = def.name or augId,
+						family = def.family or "", costFormula = def.costFormula or "",
+						effect = def.effect or "", qty = qty,
+						isAugment = true, def = def,
+					})
+				end
+			end
+		end
+	end
+
+	-- Filter by type
+	if skillTypeFilter ~= "All" then
+		if skillTypeFilter == "Damage" or skillTypeFilter == "Heal" or skillTypeFilter == "Buff"
+			or skillTypeFilter == "Debuff" or skillTypeFilter == "Utility" then
+			-- Filter skills only, remove augments
+			local filtered = {}
+			for _, sk in ipairs(skillCards) do
+				if getSkillType(sk.tags) == skillTypeFilter then
+					table.insert(filtered, sk)
+				end
+			end
+			skillCards = filtered
+			augmentCards = {}
+		end
+	end
+
+	-- Filter by tag
+	if skillTagFilter ~= "All" then
+		local filtered = {}
+		for _, sk in ipairs(skillCards) do
+			local match = false
+			for _, t in ipairs(sk.tags or {}) do
+				if t == skillTagFilter then match = true; break end
+			end
+			if match then table.insert(filtered, sk) end
+		end
+		skillCards = filtered
+		-- Augments: filter by required skill tags
+		local augFiltered = {}
+		for _, aug in ipairs(augmentCards) do
+			local def = aug.def
+			if def and def.requiredSkillTags then
+				-- " OR "-aware: an entry like "Buff OR Healing OR Support" matches the selected
+				-- filter tag if the filter is ANY listed option (2026-10-23).
+				local matched = false
+				for _, rt in ipairs(def.requiredSkillTags) do
+					for option in string.gmatch(rt .. " OR ", "%s*(.-)%s* OR ") do
+						if option == skillTagFilter then matched = true; break end
+					end
+					if matched then break end
+				end
+				if matched then table.insert(augFiltered, aug) end
+			end
+		end
+		augmentCards = augFiltered
+	end
+
+	-- Search filter
+	if skillSearchText and skillSearchText ~= "" then
+		local q = string.lower(skillSearchText)
+		local fSk = {}
+		for _, sk in ipairs(skillCards) do
+			if string.find(string.lower(sk.name), q, 1, true) then
+				table.insert(fSk, sk)
+			end
+		end
+		skillCards = fSk
+		local fAug = {}
+		for _, aug in ipairs(augmentCards) do
+			if string.find(string.lower(aug.name), q, 1, true) then
+				table.insert(fAug, aug)
+			end
+		end
+		augmentCards = fAug
+	end
+
+	-- Sort skill cards
+	local sortDef = SKILL_SORT_OPTIONS_SK[skillSortIndex] or SKILL_SORT_OPTIONS_SK[1]
+	table.sort(skillCards, function(a, b)
+		if sortDef.field == "name" then
+			return (a.name or "") < (b.name or "")
+		elseif sortDef.field == "mpCost" then
+			local ma = tonumber(tostring(a.mpCost):match("%d+")) or 0
+			local mb = tonumber(tostring(b.mpCost):match("%d+")) or 0
+			if ma ~= mb then
+				if sortDef.desc then return ma > mb else return ma < mb end
+			end
+			return false
+		elseif sortDef.field == "rtCost" then
+			local ra = tonumber(tostring(a.rtCost):match("%d+")) or 0
+			local rb = tonumber(tostring(b.rtCost):match("%d+")) or 0
+			if ra ~= rb then
+				if sortDef.desc then return ra > rb else return ra < rb end
+			end
+			return false
+		end
+		return false
+	end)
+
+	-- Sort augment cards by name
+	table.sort(augmentCards, function(a, b)
+		return (a.name or "") < (b.name or "")
+	end)
+
+	-- ---- Build grid ----
+	local cardGrid = Instance.new("ScrollingFrame")
+	cardGrid.Name = "SkillCardGrid"
+	cardGrid.Size = UDim2.new(1, 0, 1, -30)
+	cardGrid.Position = UDim2.new(0, 0, 0, 28)
+	cardGrid.BackgroundTransparency = 1
+	cardGrid.BorderSizePixel = 0
+	cardGrid.ScrollBarThickness = 4
+	cardGrid.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	cardGrid.CanvasSize = UDim2.new(0, 0, 0, 0)
+	cardGrid.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	cardGrid.Parent = skillsPanel
+
+	local grid = Instance.new("UIGridLayout", cardGrid)
+	grid.CellPadding = UDim2.new(0, 4, 0, 3)
+	grid.SortOrder = Enum.SortOrder.LayoutOrder
+	grid.FillDirection = Enum.FillDirection.Horizontal
+
+	-- Compute cell size: same logic as equipment grid (shared Theme.ItemTileCell, 2026-11-07)
+	local skCellW, skCellH = Theme.ItemTileCell(cardGrid.AbsoluteSize.Y)
+	grid.CellSize = UDim2.new(0, skCellW, 0, skCellH)
+	local skIconFrame = math.max(3, math.round(skCellW * 0.05))
+
+	local layoutOrder = 0
+
+	-- Skill tiles
+	for _, sk in ipairs(skillCards) do
+		local stype = getSkillType(sk.tags)
+		local stc = STYPE_COLORS[stype] or STYPE_COLORS.Utility
+		local isSel = (selectedSkillCardId == sk.id)
+
+		local skQty = sk.qty or 1
+		local card = Instance.new("TextButton")
+		card.Size = UDim2.new(1, 0, 1, 0) -- sized by grid
+		card.BackgroundColor3 = stc.bg
+		card.BackgroundTransparency = (skQty <= 0) and 0.85 or 0.65
+		card.BorderSizePixel = 0
+		card.Text = ""
+		card.AutoButtonColor = (skQty > 0)
+		card.LayoutOrder = layoutOrder
+		if skQty <= 0 then
+			local dim = Instance.new("UIGradient", card)
+			dim.Color = ColorSequence.new(Color3.fromRGB(80, 80, 80))
+		end
+		card.Parent = cardGrid
+		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
+
+		-- Border: type-colored normally, gold when selected
+		local stroke = Instance.new("UIStroke", card)
+		stroke.Color = isSel and Theme.Colors.TextGold or stc.icon
+		stroke.Thickness = isSel and 2 or 1
+
+		-- Qty badge (top-right, always shown for stackable items)
+		local qBadge = Instance.new("Frame")
+		qBadge.Size = UDim2.new(0, 22, 0, 12)
+		qBadge.Position = UDim2.new(1, -24, 0, 2)
+		qBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		qBadge.BackgroundTransparency = 0.4
+		qBadge.BorderSizePixel = 0
+		qBadge.ZIndex = 3
+		qBadge.Parent = card
+		Instance.new("UICorner", qBadge).CornerRadius = UDim.new(0, 3)
+		local qLbl = makeLabel(qBadge, { Text = "x" .. skQty, Size = UDim2.fromScale(1, 1),
+			TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Center })
+		if qLbl then qLbl.ZIndex = 3 end
+
+		-- Icon (full frame) — use uploaded image if available, else type emoji
+		local skDef = sk.def or MockData.GetSkillDef(sk.id)
+		if skDef and skDef.icon and skDef.icon ~= "" then
+			local ico = Instance.new("ImageLabel")
+			local skIcoSidePx = skCellW - skIconFrame * 2
+			ico.Size = UDim2.new(1, -skIconFrame * 2, 0, skIcoSidePx)
+			ico.Position = UDim2.fromOffset(skIconFrame, skIconFrame)
+			ico.BackgroundTransparency = 1
+			ico.Image = skDef.icon
+			ico.ScaleType = Enum.ScaleType.Fit
+			ico.Parent = card
+		else
+			makeLabel(card, { Text = STYPE_ICONS[stype] or "[*]",
+				Size = UDim2.new(1, 0, 0, 24),
+				Position = UDim2.new(0, 0, 0, 14),
+				TextSize = Theme.Text.Title(), TextColor3 = stc.icon,
+				TextXAlignment = Enum.TextXAlignment.Center })
+		end
+
+		-- Name strip (bottom)
+		local nameBg = Instance.new("Frame")
+		nameBg.Size = UDim2.new(1, 0, 0, 12 + Theme.Text.BadgeLineH())  -- 22 desktop; +2 on phone for the 10px tag line (2026-11-07)
+		nameBg.Position = UDim2.new(0, 0, 1, -(12 + Theme.Text.BadgeLineH()))
+		nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		nameBg.BackgroundTransparency = 0.45
+		nameBg.BorderSizePixel = 0
+		nameBg.Parent = card
+		makeLabel(nameBg, { Text = sk.name,
+			Size = UDim2.new(1, -4, 0, 12),
+			Position = UDim2.new(0, 2, 0, 0),
+			TextSize = Theme.Text.Tiny(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = stc.icon,
+			TextXAlignment = Enum.TextXAlignment.Left })
+
+		-- Tags line
+		local elem = getElement(sk.tags)
+		local tagStr = table.concat(sk.tags or {}, "  |  ")
+		makeLabel(nameBg, { Text = tagStr,
+			Size = UDim2.new(1, -4, 0, Theme.Text.BadgeLineH()),
+			Position = UDim2.new(0, 2, 0, 12),
+			TextSize = Theme.Text.Badge(),
+			TextColor3 = elem and ELEM_COLORS[elem] or Theme.Colors.TextSecondary })
+
+		card.Activated:Connect(function()
+			openSkillCardDetail(sk)
+		end)
+
+		layoutOrder = layoutOrder + 1
+	end
+
+	-- Augment tiles
+	for _, aug in ipairs(augmentCards) do
+		local isSel = (selectedSkillCardId == aug.id)
+
+		local augQty = aug.qty or 1
+		local card = Instance.new("TextButton")
+		card.Size = UDim2.new(1, 0, 1, 0) -- sized by grid
+		card.BackgroundColor3 = Color3.fromRGB(74, 53, 16)
+		card.BackgroundTransparency = (augQty <= 0) and 0.85 or 0.7
+		card.BorderSizePixel = 0
+		card.Text = ""
+		card.AutoButtonColor = (augQty > 0)
+		card.LayoutOrder = layoutOrder
+		if augQty <= 0 then
+			local dim = Instance.new("UIGradient", card)
+			dim.Color = ColorSequence.new(Color3.fromRGB(80, 80, 80))
+		end
+		card.Parent = cardGrid
+		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
+
+		local stroke = Instance.new("UIStroke", card)
+		stroke.Color = isSel and Theme.Colors.TextGold or Color3.fromRGB(74, 53, 16)
+		stroke.Thickness = isSel and 2 or 1
+
+		-- Cost badge (top-left)
+		local costText = aug.costFormula or ""
+		local costShort = costText:match("×[%d%.]+") or costText:match("x[%d%.]+") or ""
+		if costShort ~= "" then
+			local cBadge = Instance.new("Frame")
+			cBadge.Size = UDim2.new(0, 28, 0, 12)
+			cBadge.Position = UDim2.new(0, 2, 0, 2)
+			cBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			cBadge.BackgroundTransparency = 0.4
+			cBadge.BorderSizePixel = 0
+			cBadge.ZIndex = 3
+			cBadge.Parent = card
+			Instance.new("UICorner", cBadge).CornerRadius = UDim.new(0, 3)
+			makeLabel(cBadge, { Text = costShort, Size = UDim2.fromScale(1, 1),
+				TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextGold,
+				TextXAlignment = Enum.TextXAlignment.Center })
+		end
+
+		-- Qty badge (top-right, always shown for stackable items)
+		local qBadge = Instance.new("Frame")
+		qBadge.Size = UDim2.new(0, 22, 0, 12)
+		qBadge.Position = UDim2.new(1, -24, 0, 2)
+		qBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		qBadge.BackgroundTransparency = 0.4
+		qBadge.BorderSizePixel = 0
+		qBadge.ZIndex = 3
+		qBadge.Parent = card
+		Instance.new("UICorner", qBadge).CornerRadius = UDim.new(0, 3)
+		local qLbl = makeLabel(qBadge, { Text = "x" .. augQty, Size = UDim2.fromScale(1, 1),
+			TextSize = Theme.Text.Badge(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.TextPrimary,
+			TextXAlignment = Enum.TextXAlignment.Center })
+		if qLbl then qLbl.ZIndex = 3 end
+
+		-- Icon (full frame) — use uploaded image if available, else [o]
+		local augDef = aug.def or MockData.GetAugmentDef(aug.id)
+		if augDef and augDef.icon and augDef.icon ~= "" then
+			local ico = Instance.new("ImageLabel")
+			local augIcoSidePx = skCellW - skIconFrame * 2
+			ico.Size = UDim2.new(1, -skIconFrame * 2, 0, augIcoSidePx)
+			ico.Position = UDim2.fromOffset(skIconFrame, skIconFrame)
+			ico.BackgroundTransparency = 1
+			ico.Image = augDef.icon
+			ico.ScaleType = Enum.ScaleType.Fit
+			ico.Parent = card
+		else
+			makeLabel(card, { Text = "[o]",
+				Size = UDim2.new(1, 0, 0, 24),
+				Position = UDim2.new(0, 0, 0, 14),
+				TextSize = Theme.Text.Title(), TextColor3 = Theme.Colors.TextGold,
+				TextXAlignment = Enum.TextXAlignment.Center })
+		end
+
+		-- Name strip (bottom)
+		local nameBg = Instance.new("Frame")
+		nameBg.Size = UDim2.new(1, 0, 0, 12 + Theme.Text.BadgeLineH())  -- 22 desktop; +2 on phone for the 10px tag line (2026-11-07)
+		nameBg.Position = UDim2.new(0, 0, 1, -(12 + Theme.Text.BadgeLineH()))
+		nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		nameBg.BackgroundTransparency = 0.45
+		nameBg.BorderSizePixel = 0
+		nameBg.Parent = card
+		makeLabel(nameBg, { Text = aug.name,
+			Size = UDim2.new(1, -4, 0, 12),
+			Position = UDim2.new(0, 2, 0, 0),
+			TextSize = Theme.Text.Tiny(), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Theme.Colors.TextPrimary })
+		makeLabel(nameBg, { Text = aug.family or "",
+			Size = UDim2.new(1, -4, 0, Theme.Text.BadgeLineH()),
+			Position = UDim2.new(0, 2, 0, 12),
+			TextSize = Theme.Text.Badge(), TextColor3 = Theme.Colors.TextGold })
+
+		card.Activated:Connect(function()
+			openAugmentCardDetail(aug)
+		end)
+
+		layoutOrder = layoutOrder + 1
+	end
+
+	-- Empty state: show message if no cards in grid
+	if #skillCards == 0 and #augmentCards == 0 then
+		local emptyLabel = Instance.new("TextLabel")
+		emptyLabel.Size = UDim2.new(1, 0, 0, 40)
+		emptyLabel.BackgroundTransparency = 1
+		emptyLabel.Font = Theme.Font.Primary
+		emptyLabel.TextSize = Theme.Text.Body()
+		emptyLabel.TextColor3 = Theme.Colors.TextDisabled
+		emptyLabel.Text = "No cards available"
+		emptyLabel.TextXAlignment = Enum.TextXAlignment.Center
+		emptyLabel.Parent = cardGrid
+	end
+
+	-- ============================================================
+	-- RIGHT: SKILL LOADOUT TABLE (in equippedPanel)
+	-- ============================================================
+	buildSkillLoadout()
+end
+
+
+-- =====================================================
+-- CONSUMABLE GRID & DETAIL -> LoadoutConsumables.lua (split 2026-11-10, step 1)
+--------------------------------------------------
+local LoadoutConsumables = require(CTRBLXAI_UI:WaitForChild("LoadoutConsumables", 10))
+LoadoutConsumables.Init({
+	clearChildren = function(...) return clearChildren(...) end,
+	makeLabel = function(...) return makeLabel(...) end,
+	pad = function(...) return pad(...) end,
+	getPlayerGui = function() return getPlayerGui() end,
+	closeDetail = function() return closeDetail() end,
+	buildDetailHeader = function(...) return buildDetailHeader(...) end,
+	buildEquippedLoadout = function(...) return buildEquippedLoadout(...) end,
+	getInventoryPanel = function() return inventoryPanel end,
+	getEquippedTab = function() return equippedTab end,
+	setDetailOverlay = function(gui) detailOverlay = gui end,
+})
+LoadoutScreen.ConsCategoryColors = LoadoutConsumables.ConsCategoryColors
+buildConsumableGrid = LoadoutConsumables.BuildGrid
+openConsumableDetail = LoadoutConsumables.OpenDetail
+openConsumableSlotPicker = LoadoutConsumables.OpenSlotPicker
+openEquippedConsumableDetail = LoadoutConsumables.OpenEquippedDetail
+
+
+--------------------------------------------------
+-- STAT PANEL + INFO TAB -> LoadoutInfo.lua (split 2026-11-10, step 2)
+--------------------------------------------------
+local LoadoutInfo = require(CTRBLXAI_UI:WaitForChild("LoadoutInfo", 10))
+LoadoutInfo.Init({
+	EQUIP_SLOTS = EQUIP_SLOTS,
+	clearChildren = function(...) return clearChildren(...) end,
+	makeLabel = function(...) return makeLabel(...) end,
+	pad = function(...) return pad(...) end,
+	getPlayerGui = function() return getPlayerGui() end,
+	closeDetail = function() return closeDetail() end,
+	getStatPanel = function() return statPanel end,
+	getInfoPanel = function() return infoPanel end,
+	getRootFrame = function() return rootFrame end,
+	getInfoView = function() return infoView end,
+	setInfoView = function(v) infoView = v end,
+	setDetailOverlay = function(gui) detailOverlay = gui end,
+	refresh = function(...) return LoadoutScreen.Refresh(...) end,
+})
+buildStatPanel = LoadoutInfo.BuildStatPanel
+buildInfoContent = LoadoutInfo.BuildInfoContent
+
+
+--------------------------------------------------
+-- SKILL TEXT HELPERS -> LoadoutSkillUtil.lua (split 2026-11-10, step 3)
+--------------------------------------------------
+local LoadoutSkillUtil = require(CTRBLXAI_UI:WaitForChild("LoadoutSkillUtil", 10))
+ELEM_COLORS = LoadoutSkillUtil.ELEM_COLORS
+STYPE_COLORS = LoadoutSkillUtil.STYPE_COLORS
+STYPE_ICONS = LoadoutSkillUtil.STYPE_ICONS
+buildSkillDescription = LoadoutSkillUtil.BuildSkillDescription
+cleanEffects = LoadoutSkillUtil.CleanEffects
+getElement = LoadoutSkillUtil.GetElement
+getSkillType = LoadoutSkillUtil.GetSkillType
+simplifyPattern = LoadoutSkillUtil.SimplifyPattern
+simplifyRange = LoadoutSkillUtil.SimplifyRange
+
+
+--------------------------------------------------
+-- SKILL / AUGMENT DETAIL WINDOWS -> LoadoutSkillDetail.lua (split 2026-11-10, step 3)
+--------------------------------------------------
+local LoadoutSkillDetail = require(CTRBLXAI_UI:WaitForChild("LoadoutSkillDetail", 10))
+LoadoutSkillDetail.Init({
+	setDetailOverlay = function(gui) detailOverlay = gui end,
+	buildDetailHeader = function(...) return buildDetailHeader(...) end,
+	buildSkillsContent = function(...) return buildSkillsContent(...) end,
+	closeDetail = function(...) return closeDetail(...) end,
+	getPlayerGui = function(...) return getPlayerGui(...) end,
+	makeLabel = function(...) return makeLabel(...) end,
+	openAugmentSlotPicker = function(...) return openAugmentSlotPicker(...) end,
+	openSkillSlotPicker = function(...) return openSkillSlotPicker(...) end,
+	pad = function(...) return pad(...) end,
+	getActiveDropdown = function() return activeDropdown end,
+	setActiveDropdown = function(x) activeDropdown = x end,
+})
+openAugmentCardDetail = LoadoutSkillDetail.OpenAugmentCardDetail
+openEquippedAugmentDetail = LoadoutSkillDetail.OpenEquippedAugmentDetail
+openEquippedSkillDetail = LoadoutSkillDetail.OpenEquippedSkillDetail
+openSkillCardDetail = LoadoutSkillDetail.OpenSkillCardDetail
+
+
+--------------------------------------------------
+-- SKILL LOADOUT + SLOT / AUGMENT PICKERS -> LoadoutSkillLoadout.lua (split 2026-11-10, step 4)
+--------------------------------------------------
+local LoadoutSkillLoadout = require(CTRBLXAI_UI:WaitForChild("LoadoutSkillLoadout", 10))
+LoadoutSkillLoadout.Init({
+	buildSkillsContent = function(...) return buildSkillsContent(...) end,
+	clearChildren = function(...) return clearChildren(...) end,
+	closeDetail = function(...) return closeDetail(...) end,
+	getPlayerGui = function(...) return getPlayerGui(...) end,
+	makeLabel = function(...) return makeLabel(...) end,
+	openEquippedAugmentDetail = function(...) return openEquippedAugmentDetail(...) end,
+	openEquippedSkillDetail = function(...) return openEquippedSkillDetail(...) end,
+	openSkillCardDetail = function(...) return openSkillCardDetail(...) end,
+	pad = function(...) return pad(...) end,
+	getActiveDropdown = function() return activeDropdown end,
+	setActiveDropdown = function(x) activeDropdown = x end,
+	getEquippedPanel = function() return equippedPanel end,
+	setDetailOverlay = function(gui) detailOverlay = gui end,
+})
+buildSkillLoadout = LoadoutSkillLoadout.BuildSkillLoadout
+openAugmentPickerForSlot = LoadoutSkillLoadout.OpenAugmentPickerForSlot
+openAugmentSlotPicker = LoadoutSkillLoadout.OpenAugmentSlotPicker
+openSkillSlotPicker = LoadoutSkillLoadout.OpenSkillSlotPicker
+
+
+-- SCREEN BUILD
+--------------------------------------------------
+
+function LoadoutScreen.Show()
+	if screenGui and screenGui.Parent then return end
+
+	-- Fetch real inventory from server (falls back to mock data on failure)
+	MockData.LoadFromServer()
+
+	screenGui, rootFrame = Theme.MakeFullScreen("LoadoutScreen", getPlayerGui())
+
+	-- Remove outer screen border — inner panels' own 9-slice corners
+	-- provide the corner ornaments at the screen edges they each own
+	local sb = rootFrame:FindFirstChild("ScreenBorder")
+	if sb then sb:Destroy() end
+
+	-- Bottom gap (user 2026-11-04): the whole loadout scales with the screen but always keeps a
+	-- gap above the bottom edge (small phones were touching it). Gap = 3% of screen height,
+	-- never under 8 px. Re-applied when the screen size changes.
+	local function applyBottomGap()
+		local cam = workspace.CurrentCamera
+		local h = cam and cam.ViewportSize.Y or 400
+		local gap = math.max(LOADOUT_MIN_BOTTOM_GAP, math.floor(h * LOADOUT_BOTTOM_GAP_SCALE))
+		if rootFrame then rootFrame.Size = UDim2.new(1, 0, 1, -gap) end
+	end
+	applyBottomGap()
+	if viewportConn then viewportConn:Disconnect() end
+	local cam = workspace.CurrentCamera
+	if cam then viewportConn = cam:GetPropertyChangedSignal("ViewportSize"):Connect(applyBottomGap) end
+
+	-- Tab bar (top center)
+	buildTabBar()
+
+	-- RIGHT COLUMN (30% width, flush to right/top/bottom edges)
+	local rightCol = Instance.new("Frame")
+	rightCol.Name = "RightCol"
+	rightCol.Size = UDim2.new(0.30, 0, 1, 0)
+	rightCol.Position = UDim2.new(0.70, 0, 0, 0)
+	rightCol.BackgroundTransparency = 1
+	rightCol.Parent = rootFrame
+	rightColFrame = rightCol
+
+	-- Unit header (top of right column)
+	unitHeaderPanel = makePanel("UnitHeader",
+		UDim2.new(1, 0, 0, 60),
+		UDim2.new(0, 0, 0, 0), nil, rightCol)
+
+	-- Stat panel (below unit header — primary stats + allocation)
+	local gap = Theme.FullScreen.PanelGap
+	local statPanelH = 160
+	statPanel = makePanel("StatPanel",
+		UDim2.new(1, 0, 0, statPanelH),
+		UDim2.new(0, 0, 0, 60 + gap), nil, rightCol)
+
+	-- Equipped loadout (below stat panel)
+	local topUsed = 60 + gap + statPanelH + gap
+	equippedPanel = makePanel("EquippedLoadout",
+		UDim2.new(1, 0, 1, -topUsed),
+		UDim2.new(0, 0, 0, topUsed), nil, rightCol)
+
+	-- LEFT COLUMN: Tab-specific panels (70% width, flush to left/top/bottom edges)
+	-- Equipment tab: inventory
+	inventoryPanel = makePanel("Inventory",
+		UDim2.new(0.70, 0, 1, 0),
+		UDim2.new(0, 0, 0, 0), nil, rootFrame)
+
+	-- Skills tab: skill loadout
+	skillsPanel = makePanel("SkillsPanel",
+		UDim2.new(0.70, 0, 1, 0),
+		UDim2.new(0, 0, 0, 0), nil, rootFrame)
+	skillsPanel.Visible = false
+
+	-- Info tab: unit info
+	infoPanel = makePanel("InfoPanel",
+		UDim2.new(0.70, 0, 1, 0),
+		UDim2.new(0, 0, 0, 0), nil, rootFrame)
+	infoPanel.Visible = false
+
+	-- Outfit tab (loadout_ui_spec 60-62): main panel on the left; worn-slot panel where the
+	-- equipped loadout sits, below the persistent unit header (61).
+	outfitPanel = makePanel("OutfitPanel",
+		UDim2.new(0.70, 0, 1, 0),
+		UDim2.new(0, 0, 0, 0), nil, rootFrame)
+	outfitPanel.Visible = false
+	local outfitTop = 60 + gap
+	outfitSidePanel = makePanel("OutfitSidePanel",
+		UDim2.new(1, 0, 1, -outfitTop),
+		UDim2.new(0, 0, 0, outfitTop), nil, rightCol)
+	outfitSidePanel.Visible = false
+
+	-- Parties tab (2026-11-04): full width, unit header hidden.
+	partiesPanel = makePanel("PartiesPanel",
+		UDim2.new(1, 0, 1, 0),
+		UDim2.new(0, 0, 0, 0), nil, rootFrame)
+	pad(partiesPanel, 10, 10, 10, 10)
+	partiesPanel.Visible = false
+
+	-- Show the correct tab (PARTIES when opened from the guild Party button / Sortie)
+	currentTab = LoadoutScreen._openTab or "GEARS"
+	infoView = "stats"
+	LoadoutScreen.Refresh()
+end
+
+function LoadoutScreen.Refresh()
+	switchTab()
+end
+
+function LoadoutScreen.Hide()
+	BattleEvents.RequestSaveLoadout:FireServer() -- persist staged loadout changes on exit (2026-10-19)
+	closeDetail()
+	if UGCOutfitTab then UGCOutfitTab.Unmount() end -- disconnects its listener, closes the UGC merchant (PRF-004)
+	if activeDropdown then activeDropdown:Destroy(); activeDropdown = nil end
+	if tabBarGui then tabBarGui:Destroy(); tabBarGui = nil end
+	if screenGui then screenGui:Destroy(); screenGui = nil end
+	rootFrame = nil
+	unitHeaderPanel = nil
+	equippedPanel = nil
+	inventoryPanel = nil
+	skillsPanel = nil
+	infoPanel = nil
+	outfitPanel = nil
+	outfitSidePanel = nil
+	if PartiesTab then PartiesTab.Unmount(); PartiesTab.Configure(nil) end
+	partiesPanel = nil
+	rightColFrame = nil
+	if viewportConn then viewportConn:Disconnect(); viewportConn = nil end
+	LoadoutScreen._openTab = nil
+end
+
+-- Open straight on a tab (2026-11-04: the guild Party button and the Sortie open PARTIES).
+-- opts are handed to the Parties tab: { pick, onPick, onViewLoadout }.
+function LoadoutScreen.ShowTab(tab: string, opts: any?)
+	LoadoutScreen._openTab = tab
+	if PartiesTab then
+		local o = opts or {}
+		PartiesTab.Configure(o)
+	end
+	if screenGui and screenGui.Parent then
+		currentTab = tab
+		switchTab()
+	else
+		LoadoutScreen.Show()
+	end
+end
+
+function LoadoutScreen.Toggle()
+	if screenGui and screenGui.Parent then
+		LoadoutScreen.Hide()
+	else
+		LoadoutScreen.Show()
+	end
+end
+
+return LoadoutScreen

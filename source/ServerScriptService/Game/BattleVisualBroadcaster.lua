@@ -784,7 +784,7 @@ function BattleVisualBroadcaster.UnitActed(actor, target, outcome, skillName, sk
 			table.insert(parts, `target RT +{outcome.rtDelay}`)
 		end
 		logEntry("action", table.concat(parts, ", "), actor.id)
-		syncHp(target, "loss", outcome.finalDamage)
+		syncHp(target)
 		if outcome.statusApplied and outcome.statusApplied ~= "" then syncStatus(target, outcome.statusApplied, true) end
 	end
 	task.wait(PACE.Action)
@@ -818,7 +818,7 @@ function BattleVisualBroadcaster.DotDamage(unit, statusId, damage, sourceName)
 	else
 		logEntry("status", `{unitName(unit)} takes {damage or 0} {statusId} damage ({unit.currentHp or 0}/{unit.maxHp or 0})`, unit.id)
 	end
-	syncHp(unit, "loss", damage)
+	syncHp(unit)
 	task.wait(PACE.Dot)
 
 	if not unit.isAlive then
@@ -853,7 +853,7 @@ function BattleVisualBroadcaster.HealingApplied(actor, target, amount, skillName
 	else
 		logEntry("action", `{unitName(actor)} heals {unitName(target)}{if skillName then ` with {skillName}` else ""}: +{amount or 0} HP ({target.currentHp or 0}/{target.maxHp or 0})`, actor.id)
 	end
-	syncHp(target, "gain", amount)
+	syncHp(target)
 	if target and target.statusInstances and target.id ~= nil and _snap[target.id] then _snap[target.id].st = statusSet(target) end
 	task.wait(PACE.Healing)
 end
@@ -1096,7 +1096,7 @@ function BattleVisualBroadcaster.UnitPushed(pusher, target, result, cause)
 		-- after the hit line of the same attack / skill (UnitActed); unclaimed ones at the batch end.
 		if _pd > 0 then
 			local wasShown = shownAlive(target)
-			syncHp(target, "loss", _pd)
+			syncHp(target)
 			if wasShown then queueKo(target) end
 		elseif target and target.id ~= nil and _snap[target.id] then _snap[target.id].alive = target.isAlive ~= false end
 		if hitUnit and hitDmg > 0 then
@@ -1430,8 +1430,8 @@ function BattleVisualBroadcaster.ItemUsed(actor, target, itemName, effectResult)
 		logEntry("action", `{unitName(actor)} uses {itemName or "item"}: {summary}.`, actor.id)
 		-- dedup: the item line already described this; refresh the target snapshot.
 		if target then
-			if et == "Heal" or et == "Healing" then syncHp(target, "gain", amount)
-			elseif et == "Damage" then syncHp(target, "loss", amount)
+			if et == "Heal" or et == "Healing" then syncHp(target)
+			elseif et == "Damage" then syncHp(target)
 			elseif et == "MpRestore" and target.id ~= nil and _snap[target.id] then _snap[target.id].mp = target.currentMp or 0
 			elseif et == "StatusCure" then syncStatus(target, effectResult.statusId, false)
 			elseif et == "StatusApply" then syncStatus(target, effectResult.statusId, true) end
@@ -1450,7 +1450,21 @@ function BattleVisualBroadcaster.UnitRemoved(unit)
 	BattleEvents.UnitDefeated:FireAllClients({ unitId = unit.id, removeUnit = true })
 end
 
+-- MID-BATTLE MODELS (2026-11-10 fix): battle-start / deployment build each unit's R15 race
+-- model in Main, but units that join mid-battle (Dragon Utopia, Mimic, events, summons,
+-- revives) only fired UnitSpawned, so the client found no model and drew the cylinder.
+-- Main injects its model builder here (DI: no require of Main). Runs before the client is
+-- told, so the model already exists when spawnToken looks for it. Missing model -> no-op.
+local _unitModelBuilder: ((unit: any) -> ())? = nil
+function BattleVisualBroadcaster.SetUnitModelBuilder(fn: (unit: any) -> ())
+	_unitModelBuilder = fn
+end
+
 function BattleVisualBroadcaster.UnitSpawned(unit)
+	if _unitModelBuilder then
+		local ok, err = pcall(_unitModelBuilder, unit)
+		if not ok then warn(`[BattleVisualBroadcaster] model build failed for {tostring(unit and unit.name)}: {err}`) end
+	end
 	BattleEvents.UnitSpawned:FireAllClients({
 		unit = serializeUnit(unit),
 	})

@@ -14,52 +14,21 @@ local CommandService          = require(Game:WaitForChild("CommandService"))
 local TargetingService        = require(Game:WaitForChild("TargetingService"))
 local BattleVisualBroadcaster = require(Game:WaitForChild("BattleVisualBroadcaster"))
 local StatusService           = require(Game:WaitForChild("StatusService"))
-local TraitEffectService      = require(Game:WaitForChild("TraitEffectService"))
 local CombatResolver          = require(Game:WaitForChild("CombatResolver"))
-local ItemGenerator           = require(Game:WaitForChild("ItemGenerator"))
-local InventoryService        = require(Game:WaitForChild("InventoryService"))
-local EquipmentService        = require(Game:WaitForChild("EquipmentService"))
-local PersistentStateService  = require(Game:WaitForChild("PersistentStateService"))
-local SaveService             = require(Game:WaitForChild("SaveService"))
-local RewardService           = require(Game:WaitForChild("RewardService"))
-local DisplacementService     = require(Game:WaitForChild("DisplacementService"))
-local TileEffectService       = require(Game:WaitForChild("TileEffectService"))
-local TileCrossEffectService  = require(Game:WaitForChild("TileCrossEffectService"))
-local RacePassiveService      = require(Game:WaitForChild("RacePassiveService"))
 local ArmorPassiveService     = require(Game:WaitForChild("ArmorPassiveService"))
 local _AugmentEffectService    = require(Game:WaitForChild("AugmentEffectService"))
 local AIService               = require(Game:WaitForChild("AIService"))
-local MapService              = require(Game:WaitForChild("MapService"))
-local MapRenderer             = require(Game:WaitForChild("MapRenderer"))
-local EnemyGenerator          = require(Game:WaitForChild("EnemyGenerator"))
-local TraitRoller             = require(Game:WaitForChild("TraitRoller"))
 local ObjectEffectService     = require(Game:WaitForChild("ObjectEffectService"))
-local WeatherService          = require(Game:WaitForChild("WeatherService"))
 local BattlefieldEventService = require(Game:WaitForChild("BattlefieldEventService"))
-local ItemDisplay             = require(Game:WaitForChild("ItemDisplay")) -- item->UI entry builders (extracted 2026-10-12)
 local DoctrinePassiveService  = require(Game:WaitForChild("DoctrinePassiveService")) -- Artificer consumable-range +1 (2026-10-21)
 local StatCalcService         = require(Game:WaitForChild("StatCalcService")) -- shared stat calculation (2026-10-28)
 local ItemEffectService       = require(Game:WaitForChild("ItemEffectService")) -- item aim range (2026-10-26)
 
--- Slice 6 services (switched on this pass). CurrencyService provides AsProvider()
--- used by Recruitment/Blacksmith/Merchant/Dispatch; it is required FIRST so the
--- provider exists before the consumers are wired below.
-local CurrencyService         = require(Game:WaitForChild("CurrencyService"))
-local RecruitmentService      = require(Game:WaitForChild("RecruitmentService"))
-local BlacksmithService       = require(Game:WaitForChild("BlacksmithService"))
-local GuildService            = require(Game:WaitForChild("GuildService"))
-local MerchantService         = require(Game:WaitForChild("MerchantService"))
-local DispatchService         = require(Game:WaitForChild("DispatchService"))
-local ExploreService          = require(Game:WaitForChild("ExploreService"))
-local ProgressionService      = require(Game:WaitForChild("ProgressionService"))
 -- Slice 6 temporary Guild menu (game_flow id 23): server glue for the building
 -- buttons. Requires GuildEvents itself, so the Guild remotes exist from here on.
 local GuildMenuService        = require(Game:WaitForChild("GuildMenuService"))
 -- UGC Rental & Ownership (ugc_rules 2026-10-07). Wired below GuildMenuService.Init.
-local UGCService              = require(Game:WaitForChild("UGCService"))
-local UGCOutfitService        = require(Game:WaitForChild("UGCOutfitService"))
 local UGCRemoteHandler        = require(Game:WaitForChild("UGCRemoteHandler"))
-local UGCRatingService        = require(Game:WaitForChild("UGCRatingService")) -- split from UGCService 2026-10-08 (ARC-005)
 
 
 local WeaponData = require(
@@ -72,11 +41,6 @@ local RaceData = require(
 		:WaitForChild("Content")
 		:WaitForChild("RaceData")
 )
-local TraitData = require(
-	game:GetService("ReplicatedStorage")
-		:WaitForChild("Content")
-		:WaitForChild("TraitData")
-)
 local DoctrineData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
@@ -88,35 +52,11 @@ local SkillData = require(
 		:WaitForChild("SkillData")
 )
 
-local BonusData = require(
-	game:GetService("ReplicatedStorage")
-		:WaitForChild("Content")
-		:WaitForChild("BonusData")
-)
-local ArmorData = require(
-	game:GetService("ReplicatedStorage")
-		:WaitForChild("Content")
-		:WaitForChild("ArmorData")
-)
-
-local AugmentData = require(
-	game:GetService("ReplicatedStorage")
-		:WaitForChild("Content")
-		:WaitForChild("AugmentData")
-)
-
 -- Moved up (was declared mid-file, after the roster builder that uses it).
 local ConsumableData = require(
 	game:GetService("ReplicatedStorage")
 		:WaitForChild("Content")
 		:WaitForChild("ConsumableData")
-)
-
--- Portrait pools per race (player 2D-portrait picker validation).
-local PortraitData = require(
-	game:GetService("ReplicatedStorage")
-		:WaitForChild("Content")
-		:WaitForChild("PortraitData")
 )
 
 local GameConstants = require(
@@ -732,7 +672,17 @@ local function buildTurnPrompt(unit)
 	local ObjectDataForInteract = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("ObjectData"))
 	local modBaseRtForInteract = StatusService.GetModifiedBaseRt(unit)
 	local interactTargets = {}
+	-- Roster capacity (2026-11-10): count recruits already won this battle too, so the
+	-- Recruit option disappears once the roster would be full.
+	local _rosterCap = GuildMenuService.GetRosterCapacity and GuildMenuService.GetRosterCapacity() or nil
+	local _rosterNow = GuildMenuService.GetRosterCount and GuildMenuService.GetRosterCount() or 0
+	for _, u in ipairs(state.units) do
+		if u.recruited and not u.adoptedToRoster then _rosterNow += 1 end
+	end
 	for _, c in ipairs(interactCands) do
+		if c.interactKind == "recruitEnemy" and _rosterCap and _rosterNow >= _rosterCap then
+			continue -- roster full: no Recruit option
+		end
 		-- Per-kind RT preview (native percentages; headgear may reduce later).
 		local rtPct = 0.10
 		local label = "Interact"
@@ -741,7 +691,7 @@ local function buildTurnPrompt(unit)
 		elseif c.interactKind == "reviveAlly" then
 			rtPct = 0.30; label = "Resuscitate (channel)"
 		elseif c.interactKind == "recruitEnemy" then
-			rtPct = 0.10; label = "Recruit"
+			rtPct = 0.10; label = if _rosterCap then `Recruit ({_rosterNow}/{_rosterCap})` else "Recruit"
 		elseif c.interactKind == "mapObject" then
 			rtPct = 0.10; label = "Activate"
 		elseif c.interactKind == "neutralizeHazard" then
@@ -770,6 +720,8 @@ local function buildTurnPrompt(unit)
 			tileY        = c.tileY,
 			label        = label,
 			rtPreview    = rtPreview,
+			rosterCount  = if c.interactKind == "recruitEnemy" then _rosterNow else nil,
+			rosterCapacity = if c.interactKind == "recruitEnemy" then _rosterCap else nil,
 		})
 	end
 
@@ -960,6 +912,52 @@ BattleEvents.PreviewSkillHits.OnServerInvoke = function(plr: any, skillId: any, 
 			result.landingTileX = landing.x
 			result.landingTileY = landing.y
 			result.chargePath = CommandService.ComputeChargePath(unit.tileX, unit.tileY, landing.x, landing.y)
+		end
+	end
+	return result
+end
+
+-- TURN-ORDER CHANNEL PEEK (2026-11-10): read-only details of a channel / delayed skill shown in the
+-- turn order (caster, skill, target, predicted hits). The entry is already public on the timeline;
+-- this adds only what the cast will do. SEC-001: player + type checked, rate limited, no state change.
+local _lastPeekClock = 0
+BattleEvents.PeekChannel.OnServerInvoke = function(plr: any, casterId: any)
+	if player and plr ~= player then return { ok = false } end
+	if typeof(casterId) ~= "string" or #casterId > 64 then return { ok = false } end
+	local now = os.clock()
+	if now - _lastPeekClock < 0.1 then return { ok = false, reason = "busy" } end
+	_lastPeekClock = now
+	if not (state and state.units) then return { ok = false } end
+	local caster
+	for _, u in ipairs(state.units) do
+		if u.id == casterId then caster = u; break end
+	end
+	local data = caster and caster.isAlive and caster.isChanneling and caster.channelingData
+	if not (data and data.skillDef) then return { ok = false } end
+	local castDef = data.skillDef
+	local target = data.target
+	local result = {
+		ok = true,
+		casterName = caster.name,
+		casterSide = caster.side,
+		skillName = castDef.name or "Skill",
+		description = castDef.description,
+		phase = caster.channelPhase,
+		targetName = if target and target ~= caster then target.name elseif target == caster then "Self" else nil,
+		targetSide = target and target.side or nil,
+	}
+	-- Predicted hits on the aimed tile, from the same server preview the aiming UI uses. Base def
+	-- (not the stored cast def) so the cast modifiers are not applied twice. Prediction = state NOW;
+	-- it can change before the skill lands (units move, HP changes).
+	local aimX = data.aimX or (target and target.tileX)
+	local aimY = data.aimY or (target and target.tileY)
+	local baseDef = castDef.id and CommandService.GetSkill(castDef.id) or nil
+	if baseDef and aimX and aimY then
+		local okPrev, entries = pcall(CommandService.PreviewSkillHits, state, caster, baseDef, aimX, aimY)
+		if okPrev and type(entries) == "table" then
+			result.hits = entries
+		else
+			warn("[BattleTurnController] PeekChannel preview failed for " .. tostring(castDef.id) .. ": " .. tostring(entries))
 		end
 	end
 	return result
@@ -1162,8 +1160,14 @@ local function executePlayerCommand(unit, command)
 	if actionType == "Guard" then
 		local ok, reason = CommandService.ValidateAndCommit(state, unit.id, "Guard", nil)
 		if ok then
-			-- Guard forfeits remaining AP — offer facing choice
-			promptPlayerFacing(unit, Players:GetPlayers()[1])
+			-- Rule 257 (2026-11-10): offer the facing choice ONLY when this Guard ends the turn, i.e. the
+			-- runPlayerTurn loop will not ask this unit for another command (same test as its loop condition).
+			-- AP, a Quick Draw or a free Push still left: no prompt, the unit keeps acting.
+			local turnContinues = BattleCoordinator.GetPhase(state) == "TurnOpen"
+				and ((unit.currentAp or 0) > 0 or CommandService.IsQuickDrawReady(unit) or CommandService.IsFreePushReady(unit))
+			if not turnContinues and unit.isAlive then
+				promptPlayerFacing(unit, Players:GetPlayers()[1])
+			end
 			return { actionType = "Guard", unit = unit }
 		else
 			warn("[Main] Guard rejected: " .. (reason or "unknown"))

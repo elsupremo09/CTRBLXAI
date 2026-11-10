@@ -28,7 +28,6 @@ local UnitSchema       = require(Game:WaitForChild("UnitSchema"))
 local GameConstants    = require(ReplicatedStorage:WaitForChild("CTRBLXAI"):WaitForChild("Shared"):WaitForChild("GameConstants"))
 local EquipmentService = require(Game:WaitForChild("EquipmentService"))
 local StatusService    = require(Game:WaitForChild("StatusService"))
-local TraitEffectService = require(Game:WaitForChild("TraitEffectService"))
 local StatCalcService = require(Game:WaitForChild("StatCalcService")) -- shared starting RT (2026-10-28)
 local ItemGenerator    = require(Game:WaitForChild("ItemGenerator"))
 local TraitRoller      = require(Game:WaitForChild("TraitRoller"))
@@ -38,8 +37,6 @@ local AugmentCompatibility = require(ReplicatedStorage:WaitForChild("CTRBLXAI"):
 
 -- Content registries
 local RaceData       = require(Content:WaitForChild("RaceData"))
-local DoctrineData   = require(Content:WaitForChild("DoctrineData"))
-local SkillData      = require(Content:WaitForChild("SkillData"))
 local ArmorData      = require(Content:WaitForChild("ArmorData"))
 local ConsumableData = require(Content:WaitForChild("ConsumableData"))
 local UnitNameData   = require(Content:WaitForChild("UnitNameData"))
@@ -657,11 +654,6 @@ function EnemyGenerator.GenerateEnemy(spec: {type: string, level: number}, index
 	unit.initiativeBaseRt = tier.baseRt
 	-- Starting RT (one-time) now derives from Modified Base RT so gear WT + permanent
 	-- modifiers flow into the first turn too (initiativeBaseRt set above feeds it).
-	-- Trait Starting-RT % (Timeline Sovereign/Temporal Drag) layers on the one-time
-	-- reduction (symmetric with players; enemies get no Player Initiative Edge).
-	-- Single rounding (DB core_stats 54): raw Modified Base RT × LUK factor × trait %.
-	local egModBaseRt = StatusService.GetModifiedBaseRt(unit)
-	local egLukFactor = 1 - 0.30 * lukNow / (100 + lukNow)
 	-- One shared calculation (StatCalcService.GetStartingRt, 2026-10-28; enemies get no player edge).
 	unit.remainingRt = StatCalcService.GetStartingRt(unit, "battle")
 

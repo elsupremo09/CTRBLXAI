@@ -24,7 +24,6 @@ local Players          = game:GetService("Players")
 local RunService       = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
-local StarterGui       = game:GetService("StarterGui")
 local GuiService       = game:GetService("GuiService")
 
 local player = Players.LocalPlayer
@@ -725,18 +724,18 @@ UserInputService.TouchEnded:Connect(function(touch)
 	end
 
 	-- Classify BEFORE removing
-	local classification = "ignored"
-	local tapEmitted = 0
+	local _classification = "ignored"
+	local _tapEmitted = 0
 
 	if not entry.exceededDrag and not entry.inMultitouch then
 		-- Valid TAP
 		pendingTapPos = touch.Position
-		tapEmitted = 1
-		classification = "tap"
+		_tapEmitted = 1
+		_classification = "tap"
 	elseif entry.inMultitouch then
-		classification = "multitouch"
+		_classification = "multitouch"
 	else
-		classification = "pan"
+		_classification = "pan"
 	end
 
 	-- Remove this touch

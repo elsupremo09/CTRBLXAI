@@ -151,11 +151,6 @@ function EquipmentService.ValidateEquip(unit, itemInstance, slot)
 				end
 			end
 		end
-		-- If equipping a 2H weapon, off-hand must be cleared
-		-- Titan: Colossal Arsenal — 2H melee equipped as 1H, OffHand NOT cleared
-		if slot == "MainHand" and archetype.handClass == "2H" and not RacePassiveService.CanEquip2HAsWith1H(unit) then
-			-- This is allowed; OffHand will be force-cleared during equip
-		end
 	elseif itemType == "armor" then
 		-- Armor → matching slot only
 		if archetype.slot ~= slot then

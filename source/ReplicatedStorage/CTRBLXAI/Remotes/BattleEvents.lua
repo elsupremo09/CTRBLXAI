@@ -191,11 +191,14 @@ local FUNCTION_NAMES = {
 	"GetConsumableSlots",
 	-- Dismiss a roster unit from the Loadout Info tab (2026-10-15). Two modes:
 	-- (unitId) preview -> { ok, cost, canAfford, isAvatar, name }; (unitId, true)
-	-- commits: unequips all gear to inventory, charges 5x recruitment severance, removes the unit.
+	-- commits: unequips all gear to inventory, removes the unit (free since 2026-11-10).
 	"RequestDismissUnit",
 	-- Skill hit preview (2026-10-30): (skillId, tileX, tileY) -> { ok, entries }. Read-only list of
 	-- every unit a skill would affect on that tile and the predicted amount. Battle-time only.
 	"PreviewSkillHits",
+	-- Turn-order channel peek (2026-11-10): (casterId) -> { ok, casterName, skillName, description,
+	-- targetName, phase, hits }. Read-only info for a channel/delayed-skill entry in the turn order.
+	"PeekChannel",
 	-- Black Market buy (v2 build step 6b, 2026-11-01): (objectId, slot) -> { ok, slot?, gold?, name?, error? }
 	"BlackMarketBuy",
 }

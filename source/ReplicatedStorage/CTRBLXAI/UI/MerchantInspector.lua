@@ -49,16 +49,13 @@ export type GridOptions = {
 	selectedKey: any?,
 	width: number,      -- px width of the grid area (drives tile size)
 	onSelect: (key: any) -> (),
-	-- 2026-11-07 (Runeforge): true = Loadout-size tiles (Theme.ItemTileCell from the grid's
-	-- real height, kept up to date if it changes). nil/false = the merchant sizing below.
-	-- 2026-11-08: also the Loadout grid itself (no inner padding, its cell spacing, its grey
-	-- "Lv.N" label instead of the merchant level badge; user: "the Loadout is our model").
+	-- 2026-11-10: no longer used -- every grid is the Loadout grid now (kept so older callers
+	-- still type-check). Was: true = Loadout-size tiles (Runeforge, 2026-11-07/08).
 	loadoutTiles: boolean?,
-	heightHint: number?, -- px grid height to use until the real height is known
+	heightHint: number?, -- px grid height to use until the real height is known (GridHeightHint)
 }
 
-local GRID_GAP = 4
-local MIN_CELL = 56           -- >= 44 px touch target with room for the name strip
+local GRID_GAP = 4            -- fallback cell gap if InventoryControls is missing
 local STAT_ROW_H = 18
 local QUEUED_DIM = 0.5        -- overlay transparency for pending tiles ("dim only", user 2026-10-31)
 
@@ -126,14 +123,16 @@ local function addStatRow(list: Instance, order: number, label: string, value: s
 	row.Parent = list
 end
 
--- Small corner badge on a tile (level top-left, price top-right).
-local function addTileBadge(tile: Instance, text: string, rightSide: boolean)
+-- Small corner badge on a tile (level top-left, price top-right). y = px from the tile top
+-- (2 = first badge row; 16 = second row, the Loadout NEW / dropped-E row).
+local function addTileBadge(tile: Instance, text: string, rightSide: boolean, y: number?)
 	local t = Theme.ItemTile
+	local top = y or 2
 	local badge = Instance.new("TextLabel")
 	badge.AutomaticSize = Enum.AutomaticSize.X
 	badge.Size = UDim2.new(0, 0, 0, t.CountBadgeH + 2)
 	badge.AnchorPoint = if rightSide then Vector2.new(1, 0) else Vector2.new(0, 0)
-	badge.Position = if rightSide then UDim2.new(1, -2, 0, 2) else UDim2.new(0, 2, 0, 2)
+	badge.Position = if rightSide then UDim2.new(1, -2, 0, top) else UDim2.new(0, 2, 0, top)
 	badge.BackgroundColor3 = t.CountBadgeBg
 	badge.BackgroundTransparency = t.CountBadgeBgTransparency
 	badge.BorderSizePixel = 0
@@ -278,48 +277,75 @@ function MerchantInspector.ResolveSelected(entries: { Entry }, key: any?): Entry
 	return entries[1]
 end
 
--- Fills a ScrollingFrame with item tiles (Theme.MakeItemTile + level / price badges;
--- pending items dimmed). Tapping a tile calls opts.onSelect(key).
+-- Grid height to size tiles with until the grid is laid out (UI-001): Main's height minus
+-- everything already listed above the grid and the list gaps. Call it just before BuildGrid,
+-- while the grid is not yet parented (same formula as the Runeforge grid frame, 2026-11-07).
+function MerchantInspector.GridHeightHint(main: Instance, list: UIListLayout): number
+	local usedH, rows = 0, 0
+	for _, c in main:GetChildren() do
+		if c:IsA("GuiObject") then
+			usedH += c.AbsoluteSize.Y
+			rows += 1
+		end
+	end
+	return (main :: any).AbsoluteSize.Y - usedH - list.Padding.Offset * rows
+end
+
+-- Price badge (top-right). On a narrow phone tile where the "Lv.N" label would reach it, it
+-- drops to the second badge row instead of overlapping (as the Loadout E / NEW markers do).
+local function addPriceBadge(tile: Instance, text: string, cellW: number, lvW: number)
+	local w = Theme.MeasureText(text, Theme.Text.Badge(), Theme.Font.Mono).X + 6 -- 3 px padding each side
+	local drops = lvW > 0 and (3 + lvW + 2) > (cellW - (w + 2))
+	addTileBadge(tile, text, true, if drops then 16 else 2)
+end
+
+-- Portrait icons are a fixed px square (cellW - 2 * inset); when the grid re-fits its cells,
+-- resize them so the icon keeps its equal top / left / right border.
+local function refitPortraitIcons(scroll: Instance, cellW: number)
+	local t = Theme.ItemTile
+	local inset = math.max(t.IconInsetMin, math.round(cellW * t.IconInsetFactor))
+	for _, tile in scroll:GetChildren() do
+		if tile:IsA("TextButton") then
+			for _, c in tile:GetChildren() do
+				if c:IsA("ImageLabel") then
+					c.Size = UDim2.new(1, -inset * 2, 0, cellW - inset * 2)
+					c.Position = UDim2.fromOffset(inset, inset)
+				end
+			end
+		end
+	end
+end
+
+-- Fills a ScrollingFrame with item tiles. 2026-11-10 (user, one look on every guild screen):
+-- the Loadout Gears grid recipe for every caller -- Loadout cell size (Theme.ItemTileCell from
+-- the grid's height, re-fitted once the real height is known), Loadout cell spacing with no
+-- inner padding, the portrait Theme.MakeItemTile (inset square icon, two-row name strip,
+-- rarity border, gold when selected, no hover colour), the grey "Lv.N" label top-left and the
+-- Loadout E / NEW markers. Screen extras stay on top: price badge top-right, pending items
+-- dimmed. Items without a level (consumables, cards) show no level, as in the Loadout.
+-- Tapping a tile calls opts.onSelect(key).
 function MerchantInspector.BuildGrid(scroll: ScrollingFrame, opts: GridOptions)
 	local selected = MerchantInspector.ResolveSelected(opts.entries, opts.selectedKey)
-	local cellW, cellH
-	if opts.loadoutTiles then
-		local h = scroll.AbsoluteSize.Y
-		if h < 100 then h = opts.heightHint or 0 end
-		cellW, cellH = Theme.ItemTileCell(h)
-	else
-		local gridW = math.max(MIN_CELL * 3, opts.width - 8)
-		local cols = math.clamp(math.floor(gridW / 90), 3, 8)
-		cellW = math.max(MIN_CELL, math.floor((gridW - GRID_GAP * (cols - 1)) / cols))
-		cellH = cellW + Theme.ItemTile.NameBarHeight // 2
-	end
+	local h = scroll.AbsoluteSize.Y
+	if h < 100 then h = opts.heightHint or 0 end
+	local cellW, cellH = Theme.ItemTileCell(h)
 
-	local loadoutGrid = opts.loadoutTiles == true and InventoryControls ~= nil
-	if not loadoutGrid then
-		local gridPad = Instance.new("UIPadding")
-		gridPad.PaddingTop = UDim.new(0, 3)
-		gridPad.PaddingLeft = UDim.new(0, 3)
-		gridPad.PaddingRight = UDim.new(0, 3)
-		gridPad.PaddingBottom = UDim.new(0, 3)
-		gridPad.Parent = scroll
-	end
 	local gridLayout = Instance.new("UIGridLayout")
 	gridLayout.CellSize = UDim2.fromOffset(cellW, cellH)
-	gridLayout.CellPadding = if loadoutGrid then InventoryControls.GridCellPadding else UDim2.fromOffset(GRID_GAP, GRID_GAP)
+	gridLayout.CellPadding = if InventoryControls then InventoryControls.GridCellPadding else UDim2.fromOffset(GRID_GAP, GRID_GAP)
 	gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	gridLayout.Parent = scroll
-	if opts.loadoutTiles then
-		-- The grid's real height is only known after layout (UI-001): re-fit once it is.
-		-- Owned by the grid, so it goes away with it. Changing CellSize never resizes the grid.
-		scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-			local h = scroll.AbsoluteSize.Y
-			if h < 100 then return end
-			local w2, h2 = Theme.ItemTileCell(h)
-			if gridLayout.CellSize.X.Offset ~= w2 or gridLayout.CellSize.Y.Offset ~= h2 then
-				gridLayout.CellSize = UDim2.fromOffset(w2, h2)
-			end
-		end)
-	end
+	-- The grid's real height is only known after layout (UI-001): re-fit once it is.
+	-- Owned by the grid, so it goes away with it. Changing CellSize never resizes the grid.
+	scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		local gh = scroll.AbsoluteSize.Y
+		if gh < 100 then return end
+		local w2, h2 = Theme.ItemTileCell(gh)
+		if gridLayout.CellSize.X.Offset ~= w2 or gridLayout.CellSize.Y.Offset ~= h2 then
+			gridLayout.CellSize = UDim2.fromOffset(w2, h2)
+			refitPortraitIcons(scroll, w2)
+		end
+	end)
 
 	for i, e in opts.entries do
 		local detail = e.detail
@@ -333,17 +359,26 @@ function MerchantInspector.BuildGrid(scroll: ScrollingFrame, opts: GridOptions)
 			name = e.name,
 			selected = selected ~= nil and e.key == selected.key,
 			layoutOrder = i,
+			portrait = true,
 			onClick = function()
 				opts.onSelect(key)
 			end,
 		})
-		if loadoutGrid then
-			local _lv, lvW = InventoryControls.MakeLevelLabel(tile, `Lv.{e.level or 1}`)
-			InventoryControls.AddTileMarkers(tile, cellW, lvW, false, e.equippedBy ~= nil, e.isNew == true, false)
-		else
-			addTileBadge(tile, `Lv{e.level or 1}`, false)
+		local lvW = 0
+		if e.level ~= nil then
+			if InventoryControls then
+				local _lv
+				_lv, lvW = InventoryControls.MakeLevelLabel(tile, `Lv.{e.level}`)
+			else
+				addTileBadge(tile, `Lv{e.level}`, false)
+			end
 		end
-		if e.price ~= nil then addTileBadge(tile, `{e.price}g`, true) end
+		local hasPrice = e.price ~= nil
+		if hasPrice then addPriceBadge(tile, `{e.price}g`, cellW, lvW) end
+		if InventoryControls then
+			-- No selected unit on these screens: E is the grey "another unit" E (server data).
+			InventoryControls.AddTileMarkers(tile, cellW, lvW, false, e.equippedBy ~= nil, e.isNew == true, hasPrice)
+		end
 		if e.queued then addDimOverlay(tile) end
 	end
 end

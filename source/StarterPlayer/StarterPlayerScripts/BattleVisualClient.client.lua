@@ -92,10 +92,6 @@ if not _thlOk then warn("[BVC] TileHighlightManager failed: " .. tostring(TileHL
 --------------------------------------------------
 
 local TILE_SIZE = 5
--- Must match server MapRenderer.ELEVATION_STEP (dev-locked 2026-09-24: 1.2 for the
--- expanded 1–20 elevation scale). Drives client selection ring, camera focus,
--- hover tooltips, and ray-miss fallback positioning. Keep in sync with server.
-local ELEVATION_STEP = GameConstants.ELEVATION_STEP  -- single source of truth (2026-10-20)
 local MAP_WIDTH, MAP_HEIGHT = 30, 20
 local MAP_OFFSET_X = -75
 local MAP_OFFSET_Z = -50
@@ -356,6 +352,10 @@ local selectedSkill   = nil
 local selectedItem    = nil -- consumable entry selected during ItemSelection
 local highlightParts  = {}
 local aimTarget       = nil
+-- Facing tile pick (rule 257, 2026-11-10): set while a FacingPrompt is open, else nil.
+-- { tiles = {["bx,by"] = dir}, choose = function(dir), cleanup = function() }. Read by
+-- processTileClick (a tap on one of these tiles picks the facing) and by BattleEnded (teardown).
+local facingTilePick = nil
 -- Move-target attack-range preview (on-demand): the destination tile we last
 -- asked the server about. The async AttackRangeResponse only paints if it still
 -- matches this stamp (the player may have moved on to another tile). Cleared
@@ -628,89 +628,10 @@ local function orientUnitToFacing(unitId, facing, skipModelRotate)
 		pcall(function() token.model:PivotTo(CFrame.lookAt(p, p + worldDir)) end)
 	end
 
-	-- 2) Ground chevron (lazy-created, one per token). Stud-free SurfaceGui on an
-	-- invisible plane — same technique as the facing arrows/tile frames.
-	local pad = token.facePad
-	if not pad then
-		pad = Instance.new("Part")
-		pad.Name         = "FaceIndicator_" .. tostring(unitId)
-		pad.Anchored     = true
-		pad.CanCollide   = false
-		pad.CanQuery     = false
-		pad.CastShadow   = false
-		pad.Transparency = 1
-		pad.Size         = Vector3.new(2.5, 0.1, 2.5)   -- halved per request
-		local sg = Instance.new("SurfaceGui")
-		sg.Face           = Enum.NormalId.Top
-		sg.SizingMode     = Enum.SurfaceGuiSizingMode.PixelsPerStud
-		sg.PixelsPerStud  = 48
-		sg.LightInfluence = 0
-		sg.Parent         = pad
-		-- Facing arrow = uploaded green-arrow Image (asset 111086634875547),
-		-- drawn pointing UP so rotation 0 = world-North. It rides inside the
-		-- "Glyph" container so the atan2(dx,-dy) rotation below points it head-
-		-- forward along the unit's world facing (camera-proof). ImageLabel on a
-		-- SurfaceGui is stud-free (no part face). Image is left untinted so the
-		-- arrow keeps its own green; set ImageColor3 to tint per-state if wanted.
-		local glyphRoot = Instance.new("ImageLabel")
-		glyphRoot.Name             = "Glyph"
-		glyphRoot.AnchorPoint      = Vector2.new(0.5, 0.5)
-		glyphRoot.Position         = UDim2.fromScale(0.5, 0.5)
-		glyphRoot.Size             = UDim2.fromScale(1, 1)
-		glyphRoot.BackgroundTransparency = 1
-		glyphRoot.Image            = "rbxassetid://111086634875547"
-		glyphRoot.ScaleType        = Enum.ScaleType.Fit
-		glyphRoot.Parent           = sg
-		pad.Parent = visualFolder
-		token.facePad = pad
-	end
-	-- Float the chevron ABOVE the unit's head, not on the ground. Ground-level
-	-- placement (even offset forward) was buried by tall grass and occluded by
-	-- voxel terrain at the 45-degree camera. Overhead clears all terrain, is
-	-- always visible, and stays model-independent (reads facing + position only).
-	-- A small forward nudge along the facing keeps the pointing direction clear.
-	-- Store the facing direction so the per-frame follow loop can keep the small
-	-- forward lean without recomputing facing every frame.
-	token._faceDir = worldDir
-	-- Immediate placement (the Heartbeat follow below keeps it glued afterward).
-	pad.CFrame = CFrame.new(
-		token.part.Position.X + worldDir.X * FACE_FWD_NUDGE,
-		token.part.Position.Y + FACE_OVERHEAD_H,
-		token.part.Position.Z + worldDir.Z * FACE_FWD_NUDGE
-	)
-	local glyph = pad:FindFirstChild("Glyph", true)
-	if glyph then
-		-- Top-face GUI: up (-Y) maps to world -Z (North). Clockwise per (dx,dy).
-		-- The uploaded arrow art points DOWN, and testing showed the result was a
-		-- consistent 90 deg CCW off, so the total offset is 270 deg (180 for the
-		-- down-pointing art + 90 to correct the observed CCW skew). This makes the
-		-- arrowhead point along the unit's true world facing.
-		glyph.Rotation = math.deg(math.atan2(vec.dx, -vec.dy)) + 270
-	end
+	-- 2) Overhead green facing arrow REMOVED (user ruling 2026-11-10): the rotated R15
+	-- model is the facing cue. Cylinder-fallback units (no model) show no facing.
 end
 
--- Facing-indicator placement constants (shared by orientUnitToFacing + follow loop)
-FACE_OVERHEAD_H  = 5.5   -- studs above the unit anchor
-FACE_FWD_NUDGE   = 0.6   -- slight lean toward the faced direction
-
--- Continuously glue each unit's facing arrow above the unit so it follows moves,
--- knockback, and any displacement in real time. Discrete repositioning (spawn /
--- facing-choice / one delayed call after a move) left the arrow stranded on
--- multi-move and mid-tween cases. Position-only per frame (cheap for <=6 units);
--- rotation changes only on facing change, handled in orientUnitToFacing.
-RunService.Heartbeat:Connect(function()
-	for _, token in pairs(unitTokens) do
-		local pad = token.facePad
-		if pad and pad.Parent and token.part then
-			local dir = token._faceDir or Vector3.zero
-			pad.CFrame = CFrame.new(
-				token.part.Position.X + dir.X * FACE_FWD_NUDGE,
-				token.part.Position.Y + FACE_OVERHEAD_H,
-				token.part.Position.Z + dir.Z * FACE_FWD_NUDGE
-			)
-		end
-	end
-end)
 
 -- HP-bar name label: ONE source of truth for its text + colour, so spawn, HP
 -- updates and turn start/end can't drift apart (they previously overwrote the
@@ -2104,7 +2025,18 @@ end
 --------------------------------------------------
 
 
-local function processTileClick(bx, by)
+local function processTileClick(bx, by, skipFacingPick)
+	-- Facing tile pick (rule 257): while a FacingPrompt is open, a tap on one of its highlighted
+	-- tiles picks that direction and nothing else happens (no inspector update). Any other tile
+	-- falls through to normal inspection. Same tap path as Move/skill aim (mouse + touch pads).
+	-- skipFacingPick: the timeline portrait tap reuses this function; it must never pick a facing.
+	if facingTilePick and not skipFacingPick then
+		local pickDir = facingTilePick.tiles[bx .. "," .. by]
+		if pickDir then
+			facingTilePick.choose(pickDir)
+			return
+		end
+	end
 
 	-- During deployment: allow tile inspection but skip combat flow.
 	-- BattleHUD view mode provides tile + object info during placement.
@@ -2455,6 +2387,10 @@ local function processTileClick(bx, by)
 					local desc
 					if t.interactKind == "recruitEnemy" then
 						desc = "Recruit " .. (t.name or "enemy") .. " — becomes a neutral ally."
+						-- Capacity + dismiss cost note (user 2026-11-10).
+						if t.rosterCapacity then
+							desc ..= ` Units {t.rosterCount or 0}/{t.rosterCapacity} after battle: {(t.rosterCount or 0) + 1}/{t.rosterCapacity}.`
+						end
 					elseif t.interactKind == "allyRtHelp" then
 						desc = "Aid " .. (t.name or "ally") .. " — cut their current RT by 35%."
 					elseif t.interactKind == "reviveAlly" then
@@ -3442,15 +3378,30 @@ BattleEvents.TileEffectApplied.OnClientEvent:Connect(function(data)
 	if not (VFXController and VFXController.SetTileEffect and data and data.tileX and data.tileY) then return end
 	local pos = tileToWorldGrounded(data.tileX, data.tileY) - Vector3.new(0, 0.9, 0)
 	pcall(VFXController.SetTileEffect, data.tileX, data.tileY, data.effectId, pos)
+	-- 2D effect image on the tile top (2026-11-10). tileToWorldGrounded = surface + 1.
+	if VFXController.SetTileEffectImage then
+		local groundPos = tileToWorldGrounded(data.tileX, data.tileY) - Vector3.new(0, 1, 0)
+		pcall(VFXController.SetTileEffectImage, data.tileX, data.tileY, data.effectId, groundPos)
+	end
 end)
 
 BattleEvents.TileEffectRemoved.OnClientEvent:Connect(function(data)
 	if data and data.tileX and data.tileY then activeTileEffects[`{data.tileX},{data.tileY}`] = nil end
 	if not (VFXController and VFXController.ClearTileEffect and data and data.tileX and data.tileY) then return end
 	pcall(VFXController.ClearTileEffect, data.tileX, data.tileY)
+	if VFXController.ClearTileEffectImage then pcall(VFXController.ClearTileEffectImage, data.tileX, data.tileY) end
 end)
 
 _G.CTRBLXAI_GetTileEffect = function(x, y) return activeTileEffects[`{x},{y}`] end
+
+-- Turn-order channel peek (2026-11-10): BattleHUD asks for a channel entry's details. Yields
+-- (RemoteFunction), so BattleHUD calls this inside task.spawn. Returns nil on failure.
+_G.CTRBLXAI_PeekChannel = function(casterId: string)
+	local ok, res = pcall(function() return BattleEvents.PeekChannel:InvokeServer(casterId) end)
+	if not ok then warn("[BattleVisualClient] PeekChannel failed: " .. tostring(res)); return nil end
+	if type(res) ~= "table" or not res.ok then return nil end
+	return res
+end
 
 -- Temporary road (ENV-019, 2026-10-27): a faint path tint on the tile's top face.
 BattleEvents.RoadChanged.OnClientEvent:Connect(function(data)
@@ -3693,6 +3644,14 @@ BattleEvents.UnitSpawned.OnClientEvent:Connect(function(data)
 	-- every other unit (Slice 3 consistency).
 	UnitRecords.Update(unit.id, unit)
 	unitData[unit.id] = UnitRecords.Get(unit.id)
+	-- Mid-battle model (2026-11-10): the server builds the R15 model just before this event,
+	-- but the remote can arrive before the model replicates. Wait briefly (same 5 s / 3 s
+	-- budget as DeploymentUI.resolveServerUnitModel) so spawnToken finds the real model
+	-- instead of drawing the cylinder. Races with no model time out -> cylinder, as before.
+	local umf = workspace:FindFirstChild("UnitModels")
+	local m = umf and umf:WaitForChild("Unit_" .. unit.id, 5)
+	if m then m:WaitForChild("HumanoidRootPart", 3) end
+	if unitTokens[unit.id] then return end  -- a duplicate event spawned it while we waited
 	spawnToken(unit)
 	updateHpBar(unit.id, unit.currentHp, unit.maxHp)
 	updateMpBar(unit.id, unit.currentMp or 0, unit.maxMp or 0)
@@ -4121,7 +4080,6 @@ BattleEvents.DotDamage.OnClientEvent:Connect(function(data)
 	local t = unitTokens[data.unitId]
 	if t then showDamageText(t.part.Position, data.damage, false)
 		showStatusText(t.part.Position, data.statusId, Theme.GetStatusColor(data.statusId)) end
-	local uName = unitData[data.unitId] and unitData[data.unitId].name or "?"
 end)
 
 BattleEvents.HealingApplied.OnClientEvent:Connect(function(data)
@@ -4648,8 +4606,9 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	-- Close any player prompt still open when the battle ends (2026-11-09): dev Instant Win/Lose can
 	-- end a battle while the facing arrows, siege tile/cancel prompt or a pick list is showing. The
 	-- server stops waiting on them; remove them here so nothing is left to tap.
+	if facingTilePick then facingTilePick.cleanup() end  -- facing tile pick (rule 257): highlights + pick state
 	for _, inst in ipairs(workspace:GetChildren()) do
-		if inst.Name == "FacingArrows" or inst.Name == "SiegeTilePrompt" then inst:Destroy() end
+		if inst.Name == "SiegeTilePrompt" then inst:Destroy() end
 	end
 	do
 		local pg = player:FindFirstChildOfClass("PlayerGui")
@@ -5040,7 +4999,7 @@ end
 
 _G.CTRBLXAI_TimelineClickTile = function(tileX, tileY)
 	if tileX and tileY then
-		processTileClick(tileX, tileY)
+		processTileClick(tileX, tileY, true)  -- true: a portrait tap never picks a facing (rule 257)
 
 		-- Focus camera on the clicked unit's tile
 		CameraController.FocusActiveUnit(tileToWorld(tileX, tileY))
@@ -5444,23 +5403,43 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	local backdrop = Instance.new("Frame")
 	backdrop.Size = UDim2.fromScale(1, 1)
 	backdrop.BackgroundColor3 = Theme.Colors.Overlay
-	backdrop.BackgroundTransparency = 0.4
+	-- No dimming (user 2026-11-10): the victory panel covers the screen anyway.
+	backdrop.BackgroundTransparency = 1
 	backdrop.BorderSizePixel = 0
 	backdrop.Parent = gui
 
 	-- Main panel using Theme
-	local frame = Theme.MakePanel("VictoryPanel",
-		UDim2.new(0.70, 0, 0.85, 0),
+	-- Panel never touches the screen edge (12 px margin, user 2026-11-10); all content sits
+	-- in a scrolling area (`frame`) so long results can be dragged up to read the bottom.
+	local _vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+	-- This ScreenGui does not ignore the top-bar inset, so the usable height is the viewport
+	-- minus the inset (phone 382 - 58 = 324). 12 px margin top and bottom inside that.
+	local _availH = _vp.Y - game:GetService("GuiService"):GetGuiInset().Y
+	local victoryPanel = Theme.MakePanel("VictoryPanel",
+		UDim2.new(0.70, 0, 0, math.max(160, math.min(_availH * 0.85, _availH - 24))),
 		UDim2.new(0.5, 0, 0.5, 0),
 		Vector2.new(0.5, 0.5),
 		gui)
-	frame.ClipsDescendants = true
+	victoryPanel.ClipsDescendants = true
 
-	local framePad = Instance.new("UIPadding", frame)
+	local framePad = Instance.new("UIPadding", victoryPanel)
 	framePad.PaddingTop = UDim.new(0, 10)
 	framePad.PaddingLeft = UDim.new(0, 12)
 	framePad.PaddingRight = UDim.new(0, 12)
 	framePad.PaddingBottom = UDim.new(0, 10)
+
+	local frame = Instance.new("ScrollingFrame")
+	frame.Name = "VictoryScroll"
+	frame.Size = UDim2.fromScale(1, 1)
+	frame.BackgroundTransparency = 1
+	frame.BorderSizePixel = 0
+	frame.ScrollingDirection = Enum.ScrollingDirection.Y
+	frame.ScrollBarThickness = 3
+	frame.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+	frame.CanvasSize = UDim2.new()
+	frame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	frame.Parent = victoryPanel
+	Theme.MakeDragScroll(frame)
 
 	-- VICTORY! title
 	local title = Instance.new("TextLabel")
@@ -5653,11 +5632,16 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		goldLabel.TextColor3 = Theme.Colors.TextGold
 		goldLabel.TextXAlignment = Enum.TextXAlignment.Left
 		goldLabel.Text = if data.defeat then `+{data.gold} GOLD kept (half of gold dropped)` else `+{data.gold} GOLD`
+		-- Materials on the gold line (user 2026-11-10): battle mercury (kills + chests +
+		-- salvage). Elite / boss / daily materials keep their own lines below.
+		if type(data.mercury) == "number" and data.mercury > 0 then
+			goldLabel.Text ..= `   +{data.mercury} MERCURY`
+		end
 		goldLabel.Parent = frame
 		recY = recY + 18
 	end
-	-- Mercury earned this battle (v2 build step 6a, 2026-11-01): kills + chests + salvage.
-	if type(data.mercury) == "number" and data.mercury > 0 then
+	-- Mercury with no gold: its own line (otherwise it is already on the gold line).
+	if type(data.mercury) == "number" and data.mercury > 0 and not (type(data.gold) == "number" and data.gold > 0) then
 		local mercuryLabel = Instance.new("TextLabel")
 		mercuryLabel.Size = UDim2.new(1, 0, 0, 16)
 		mercuryLabel.Position = UDim2.new(0, 0, 0, recY)
@@ -5815,8 +5799,12 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	local rewards = data.rewards or {}
 	local gridY = recY + 18
 
+	-- Grid grows with its items (no inner scroll); the whole victory area scrolls instead.
+	-- 40 px spacer under it keeps the last row clear of the bottom button bar.
 	local lootGrid = Instance.new("ScrollingFrame")
-	lootGrid.Size = UDim2.new(1, 0, 1, -(gridY + 40))
+	lootGrid.Size = UDim2.new(1, 0, 0, 0)
+	lootGrid.AutomaticSize = Enum.AutomaticSize.Y
+	lootGrid.ScrollingEnabled = false
 	lootGrid.Position = UDim2.new(0, 0, 0, gridY)
 	lootGrid.BackgroundTransparency = 1
 	lootGrid.BorderSizePixel = 0
@@ -5825,6 +5813,16 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	lootGrid.CanvasSize = UDim2.new(0, 0, 0, 0)
 	lootGrid.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	lootGrid.Parent = frame
+	local lootSpacer = Instance.new("Frame")
+	lootSpacer.Name = "BottomSpacer"
+	lootSpacer.BackgroundTransparency = 1
+	lootSpacer.Size = UDim2.new(1, 0, 0, 40)
+	lootSpacer.Parent = frame
+	local function placeSpacer()
+		if lootGrid.Parent then lootSpacer.Position = UDim2.new(0, 0, 0, gridY + lootGrid.AbsoluteSize.Y) end
+	end
+	lootGrid:GetPropertyChangedSignal("AbsoluteSize"):Connect(placeSpacer)
+	task.defer(placeSpacer)
 
 	local grid = Instance.new("UIGridLayout", lootGrid)
 	grid.CellSize = UDim2.new(0, 72, 0, 82)
@@ -6018,6 +6016,19 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 				Vector2.new(0, 0.5),
 				detailGui)
 			detailFrame.ClipsDescendants = true
+
+			-- Tap outside the detail panel closes it (user 2026-11-10). Full-screen invisible
+			-- catcher BEHIND the panel (created first = drawn under; panel is Active, so a tap
+			-- on the panel never reaches it).
+			local outside = Instance.new("TextButton")
+			outside.Name = "OutsideCatcher"
+			outside.Size = UDim2.fromScale(1, 1)
+			outside.BackgroundTransparency = 1
+			outside.Text = ""
+			outside.AutoButtonColor = false
+			outside.ZIndex = 0
+			outside.Parent = detailGui
+			outside.Activated:Connect(closeRewardDetail)
 
 			local dp = Instance.new("UIPadding", detailFrame)
 			dp.PaddingTop = UDim.new(0, 10)
@@ -6304,13 +6315,13 @@ BattleEvents.MapDataSync.OnClientEvent:Connect(function(mapData)
 	print("[BattleVisualClient] MapDataSync received — terrain/elevation updated on client")
 	-- Initialize terrain-conforming tile highlights
 	if TileHL then
-		local mf = workspace:FindFirstChild("TemplateViewerMap")
+		local tileMapFolder = workspace:FindFirstChild("TemplateViewerMap")
 		local mw = mapData.width or MAP_WIDTH
 		local mh = mapData.height or MAP_HEIGHT
 		local mOffX = -(mw * TILE_SIZE) / 2
 		local mOffZ = -(mh * TILE_SIZE) / 2
 		TileHL.Init({
-			mapFolder    = mf,
+			mapFolder    = tileMapFolder,
 			tileSize     = TILE_SIZE,
 			mapOffsetX   = mOffX,
 			mapOffsetZ   = mOffZ,
@@ -6411,10 +6422,6 @@ end)
 -- shows floating combat text, and logs the usage.
 BattleEvents.ItemUsed.OnClientEvent:Connect(function(data)
 	if not data then return end
-	local actorName  = (data.actorId and unitData[data.actorId] and unitData[data.actorId].name)
-		or data.actorName or "?"
-	local targetName = (data.targetId and unitData[data.targetId] and unitData[data.targetId].name)
-		or data.targetName or "?"
 	local amount     = data.amount or 0
 	local effectType = data.effectType or ""
 	-- SFX: map the item's effect to a sound bucket (payload carries effectType,
@@ -6458,21 +6465,6 @@ BattleEvents.ItemUsed.OnClientEvent:Connect(function(data)
 		showFloatingText(tgtToken.part.Position, info, Theme.Colors.TextSecondary or Color3.fromRGB(200,200,200), 1.0)
 	end
 
-	-- Build a readable effect summary for the battle log.
-	local summary
-	if effectType == "HpRestore" then
-		summary = "healed " .. targetName .. " +" .. amount .. " HP"
-	elseif effectType == "MpRestore" then
-		summary = "restored " .. amount .. " MP to " .. targetName
-	elseif effectType == "StatusCure" then
-		summary = "cured " .. (data.statusId or "status") .. " on " .. targetName
-	elseif effectType == "StatusApply" then
-		summary = "applied " .. (data.statusId or "status") .. " to " .. targetName
-	elseif effectType == "Damage" then
-		summary = "dealt " .. amount .. " " .. (data.element or "") .. " to " .. targetName
-	else
-		summary = "on " .. targetName
-	end
 	-- Battle log line authored server-side (BattleLogEntry).
 end)
 
@@ -6482,120 +6474,108 @@ BattleEvents.BattleLogEntry.OnClientEvent:Connect(function(data)
 	if type(data) == "table" then BattleHUD.AddLogEntry(data) end
 end)
 
--- FacingPrompt: server asks player to choose a direction via the ground ring.
--- Used for Guard/Wait facing AND for siege aiming (Ballista cardinal bolt —
--- aimMode="siege" in the payload); renders the same ring for any FacingPrompt
--- carrying a unitId + known position.
+-- FacingPrompt (rule 257, 2026-11-10): the server asks the player to choose a direction by
+-- tapping one of the 8 tiles around the unit (siege aim, aimMode="siege": only the 4 straight
+-- tiles N/E/S/W). Used for Guard/Wait facing AND Ballista aiming; the reply is unchanged:
+-- SetFacing { unitId, facing }. Tiles use the Move highlight look; in facing mode the current
+-- facing tile is gold ("selected"). Tiles outside the battle grid are not shown; tiles inside
+-- it (even impassable / empty) still pick their direction. Taps arrive through processTileClick
+-- (the shared mouse + touch tap path with parallax-proof click pads): tap only, no hover
+-- (rule 243), no ClickDetectors, no new connections, and inputMode/currentPrompt are untouched.
+-- Replaces the green-arrow ring.
+local FACING_PICK_GROUP = "facing"  -- own TileHL group, so clearHighlights() cannot erase it mid-prompt
+local SIEGE_AIM_DIRS = { N = true, E = true, S = true, W = true }
 BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
-	if not data or not data.unitId then return end
-
-	-- World-space facing arrows (camera-proof). 8 flat SurfaceGui arrow planes
-	-- sit on the ground ringing the unit, each pointing along its WORLD direction via
-	-- GameConstants.FACING_VECTORS (dx,dy -> world X,Z). Because they live in 3D
-	-- space they rotate WITH the map, so orbiting the camera never changes which
-	-- world direction an arrow means. Replaces the old screen-fixed 3x3 button
-	-- grid, where screen-up stopped meaning world-north once the camera orbited.
+	if type(data) ~= "table" or not data.unitId then return end
+	if facingTilePick then facingTilePick.cleanup() end  -- one facing prompt at a time
 	local udata = unitData[data.unitId]
-	if not udata or not udata.tileX or not udata.tileY then return end
-	local tx, ty = udata.tileX, udata.tileY
+	local tx = data.tileX or (udata and udata.tileX)
+	local ty = data.tileY or (udata and udata.tileY)
+	if type(tx) ~= "number" or type(ty) ~= "number" then
+		warn(`[BVC] FacingPrompt: no tile for unit {data.unitId}`)
+		return
+	end
+	-- Without TileHL the tiles are not drawn, but a tap still resolves through the tile Parts.
+	if not TileHL then warn("[BVC] FacingPrompt: TileHighlightManager unavailable - facing tiles not drawn") end
 
-	local ARROW_RING   = 8.25  -- studs from tile center out to each arrow (25% reduction; ring+plane scaled together so 2*ring*sin(22.5) >= plane still holds)
-	local ARROW_HEIGHT = 5.5   -- studs above ground so arrows clear SURROUNDING higher terrain (raised from 2.0; matches overhead-indicator clearance). Note: only lifts the arrows physically — a unit boxed by very tall cliffs could still occlude the click target. Future top-view/minimap facing UI is the full ceiling-buster.
-	local _ARROW_LEN    = 2.2
-	local _ARROW_WID    = 1.4
+	local isSiege = data.aimMode == "siege"
+	local tiles = {}  -- ["bx,by"] = direction
+	for dir, vec in GameConstants.FACING_VECTORS do
+		if not isSiege or SIEGE_AIM_DIRS[dir] then
+			local nx, ny = tx + vec.dx, ty + vec.dy
+			if nx >= 1 and nx <= MAP_WIDTH and ny >= 1 and ny <= MAP_HEIGHT then
+				tiles[nx .. "," .. ny] = dir
+				if TileHL then
+					local style = if (not isSiege and dir == data.currentFacing) then "selected" else "move"
+					TileHL.Add(nx + BATTLE_OFFSET_X, ny + BATTLE_OFFSET_Y, style, FACING_PICK_GROUP)
+				end
+			end
+		end
+	end
 
-
-	local baseWX  = MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE
-	local baseWZ  = MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE
-	local groundY = groundSurfaceY(tx, ty) + ARROW_HEIGHT
-
-	local folder = Instance.new("Folder")
-	folder.Name = "FacingArrows"
-	folder.Parent = workspace
-
-	local chosen = false
-	local conns = {}  -- PRF-004: track connections, disconnect on cleanup
-
-	-- Hide THIS unit's overhead facing arrow while its choice arrows are on screen.
-	-- The choice arrows use the SAME green arrow image, so they now communicate the
-	-- unit's facing directly and the overhead one would be redundant clutter. It is
-	-- restored on cleanup (choice made or prompt torn down); FacingChanged then
-	-- re-orients it to the chosen direction.
+	-- Hide THIS unit's overhead facing arrow while the choice is open (no double cue); it is
+	-- restored on cleanup and FacingChanged then turns it to the chosen direction.
 	local promptToken = unitTokens[data.unitId]
 	local overheadGlyph = promptToken and promptToken.facePad and promptToken.facePad:FindFirstChild("Glyph", true)
 	if overheadGlyph then overheadGlyph.Visible = false end
 
-	local function cleanup()
-		for _, c in conns do c:Disconnect() end
-		table.clear(conns)
-		if overheadGlyph then overheadGlyph.Visible = true end
-		if folder and folder.Parent then folder:Destroy() end  -- MEM-002
+	-- On-screen hint (2026-11-11, user request): the facing choice has no time limit and hides the
+	-- action menu, so without a cue it looks like the battle froze. Display-only label (no input,
+	-- no connections); destroyed in cleanup. Properties set before Parent (NET-004).
+	local hintGui = nil
+	do
+		local pg = player:FindFirstChildOfClass("PlayerGui")
+		if pg then
+			hintGui = Instance.new("ScreenGui")
+			hintGui.Name = "FacingPromptHint"
+			hintGui.ResetOnSpawn = false
+			hintGui.IgnoreGuiInset = true
+			hintGui.DisplayOrder = 50
+			local lbl = Instance.new("TextLabel")
+			lbl.Name = "Hint"
+			lbl.AnchorPoint = Vector2.new(0.5, 0)
+			lbl.Position = UDim2.new(0.5, 0, 0, 56)
+			lbl.AutomaticSize = Enum.AutomaticSize.XY
+			lbl.Size = UDim2.fromOffset(0, 0)
+			lbl.BackgroundColor3 = Theme.Colors.Background
+			lbl.BackgroundTransparency = 0.2
+			lbl.BorderSizePixel = 0
+			lbl.Font = Theme.Font.PrimaryBold
+			lbl.TextSize = Theme.Text.Body() + Theme.Scaled(2)
+			lbl.TextColor3 = Theme.Colors.TextGold
+			lbl.Text = if isSiege then "Choose aim direction: tap a highlighted tile" else "Choose facing: tap a highlighted tile"
+			local hp = Instance.new("UIPadding")
+			hp.PaddingTop = UDim.new(0, 6); hp.PaddingBottom = UDim.new(0, 6)
+			hp.PaddingLeft = UDim.new(0, 12); hp.PaddingRight = UDim.new(0, 12)
+			hp.Parent = lbl
+			local hc = Instance.new("UICorner")
+			hc.CornerRadius = Theme.CornerRadius.sm
+			hc.Parent = lbl
+			lbl.Parent = hintGui
+			hintGui.Parent = pg
+		end
 	end
 
-	local ARROW_PLANE = 6.0   -- studs; flat plane footprint per arrow (25% reduction; ring reduced in lockstep to keep no-overlap)
-
-	for dir, vec in GameConstants.FACING_VECTORS do
-		local mag = math.sqrt(vec.dx * vec.dx + vec.dy * vec.dy)
-		local nx, nz = vec.dx / mag, vec.dy / mag
-		local pos = Vector3.new(baseWX + nx * ARROW_RING, groundY, baseWZ + nz * ARROW_RING)
-
-		-- Flat INVISIBLE carrier plane. A SurfaceGui on its Top face draws the
-		-- arrow glyph, so there is no visible part surface (no studs, ever) -
-		-- same stud-free technique the tile-highlight frames use. Kept axis-
-		-- aligned; the glyph is rotated in 2D to point along its world dir, so
-		-- it stays camera-proof (rotates WITH the map, not the screen).
-		-- NET-004: all properties before parenting.
-		local plane = Instance.new("Part")
-		plane.Name         = "Face_" .. dir
-		plane.Anchored     = true
-		plane.CanCollide   = false
-		plane.CanQuery     = true    -- ClickDetector needs it hittable
-		plane.CastShadow   = false
-		plane.Transparency = 1       -- invisible carrier; SurfaceGui does the drawing
-		plane.Size         = Vector3.new(ARROW_PLANE, 0.1, ARROW_PLANE)
-		plane.CFrame       = CFrame.new(pos)
-
-		local sg = Instance.new("SurfaceGui")
-		sg.Face           = Enum.NormalId.Top
-		sg.SizingMode     = Enum.SurfaceGuiSizingMode.PixelsPerStud
-		sg.PixelsPerStud  = 48
-		sg.LightInfluence = 0        -- fullbright glyph, ignores world lighting
-		sg.AlwaysOnTop    = true   -- draw the arrow glyph OVER terrain so it is never visually buried (click target is still the carrier Part below)
-		sg.Parent         = plane
-
-		-- Use the SAME green arrow image as the overhead facing indicator, so the
-		-- choose-facing arrows and the per-unit facing arrow are visually identical.
-		-- This teaches the player that a green arrow == facing direction, and a
-		-- full-bleed image reads much larger than the old TextScaled triangle.
-		local lbl = Instance.new("ImageLabel")
-		lbl.Size                   = UDim2.fromScale(1, 1)
-		lbl.BackgroundTransparency = 1
-		lbl.Image                  = "rbxassetid://111086634875547"
-		lbl.ScaleType              = Enum.ScaleType.Fit
-		-- Same rotation convention as the overhead indicator (+270 for the
-		-- down-pointing green art) so each choice arrow points along its world dir.
-		lbl.Rotation               = math.deg(math.atan2(vec.dx, -vec.dy)) + 270
-		-- No UIStroke: a stroke on the full-bleed ImageLabel traced the label's
-		-- rectangular border (visible squares around each arrow), not the arrow shape.
-		-- The green arrows read fine against terrain on their own.
-		lbl.Parent                 = sg
-
-		local cd = Instance.new("ClickDetector")
-		cd.MaxActivationDistance = 1000
-		cd.Parent = plane
-
-		plane.Parent = folder
-
-		table.insert(conns, cd.MouseClick:Connect(function()
-			if chosen then return end
-			chosen = true
+	local pick
+	pick = {
+		tiles = tiles,
+		-- Teardown: on choice, on a newer prompt, and at BattleEnded (also covers dev Instant Win/Lose).
+		cleanup = function()
+			if facingTilePick ~= pick then return end  -- already torn down
+			facingTilePick = nil
+			if TileHL then TileHL.ClearGroup(FACING_PICK_GROUP) end
+			if overheadGlyph and overheadGlyph.Parent then overheadGlyph.Visible = true end
+			if hintGui then hintGui:Destroy(); hintGui = nil end  -- MEM-002
+		end,
+		choose = function(dir)
+			if facingTilePick ~= pick then return end  -- one reply per prompt
 			BattleEvents.SetFacing:FireServer({ unitId = data.unitId, facing = dir })
-			print(string.format("[BVC] Facing chosen: %s -> %s", data.unitId, dir))
-			cleanup()
-		end))
-	end
-
-	-- Turn-based: no timer. Arrows stay until the player chooses a facing.
+			print(`[BVC] Facing chosen: {data.unitId} -> {dir}`)
+			pick.cleanup()
+		end,
+	}
+	facingTilePick = pick
+	-- Turn-based: no timer. The tiles stay until the player taps one.
 end)
 
 -- Steal slot picker (2026-10-24). Server (BattleTurnController) fires StealPrompt when the

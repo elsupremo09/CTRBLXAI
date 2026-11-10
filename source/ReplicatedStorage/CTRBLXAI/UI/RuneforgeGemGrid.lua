@@ -87,17 +87,19 @@ end
 
 -- Black portrait square behind the stat icon (user request 2026-11-08): the stat icons have a
 -- transparent background, the gear art has its own black square, so gem tiles get the same
--- black square for a uniform look. Same box as Theme.MakeItemTile's icon (inset from the top
--- and sides, down to just above the name strip), as a centred square, under the icon (ZIndex
--- 1 < icon 2). Passive gems (no icon) get the square too.
+-- black square for a uniform look. Same box as Theme.MakeItemTile's PORTRAIT icon (2026-11-10,
+-- Loadout Gears look on every guild screen: a square inset equally from the top and sides), under
+-- the icon (ZIndex 1 < icon 2). Passive gems (no icon) get the square too.
 local PORTRAIT_BG = Color3.new(0, 0, 0)
-local function addPortraitBg(tile: Instance, cellW: number)
+local function portraitBox(cellW: number): (UDim2, UDim2)
 	local t = Theme.ItemTile
 	local inset = math.max(t.IconInsetMin, math.round(cellW * t.IconInsetFactor))
+	return UDim2.new(1, -inset * 2, 0, cellW - inset * 2), UDim2.fromOffset(inset, inset)
+end
+local function addPortraitBg(tile: Instance, cellW: number)
 	local box = Instance.new("Frame")
 	box.Name = "PortraitBox"
-	box.Size = UDim2.new(1, -inset * 2, 1, -(inset + t.NameBarHeight + 2))
-	box.Position = UDim2.fromOffset(inset, inset)
+	box.Size, box.Position = portraitBox(cellW)
 	box.BackgroundTransparency = 1
 	box.BorderSizePixel = 0
 	box.Active = false
@@ -166,6 +168,18 @@ function RuneforgeGemGrid.BuildGrid(grid: ScrollingFrame, cells: { Cell }, heigh
 		local w2, h2 = Theme.ItemTileCell(gh)
 		if gl.CellSize.X.Offset ~= w2 or gl.CellSize.Y.Offset ~= h2 then
 			gl.CellSize = UDim2.fromOffset(w2, h2)
+			-- Portrait icon + its black square are fixed px squares: keep them fitted.
+			local size, pos = portraitBox(w2)
+			for _, tile in grid:GetChildren() do
+				if tile:IsA("TextButton") then
+					for _, c in tile:GetChildren() do
+						if c:IsA("ImageLabel") or c.Name == "PortraitBox" then
+							(c :: any).Size = size;
+							(c :: any).Position = pos
+						end
+					end
+				end
+			end
 		end
 	end)
 
@@ -182,6 +196,7 @@ function RuneforgeGemGrid.BuildGrid(grid: ScrollingFrame, cells: { Cell }, heigh
 			-- A greyed tile drops its count badge so the reason has the whole upper area.
 			countText = if c.reason and not c.enabled then nil else c.countText,
 			layoutOrder = i,
+			portrait = true, -- Loadout Gears tile layout (2026-11-10)
 			onClick = if c.enabled and onTap then function()
 				if held then
 					held = false

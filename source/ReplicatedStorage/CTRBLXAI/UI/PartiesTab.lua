@@ -104,13 +104,6 @@ local function findParty(id: string?): any?
 	return nil
 end
 
-local function fmtDate(t: any): string
-	if type(t) ~= "number" or t <= 0 then return "-" end
-	local d = os.date("*t", t) :: any
-	local months = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
-	return `{months[d.month]} {d.day}, {d.year}`
-end
-
 -- Emblem: user art when it exists, else a navy tile with a bronze border and the number.
 local function emblem(parent: Instance, party: any, index: number, size: number, pos: UDim2?): Frame
 	local f = frame(parent, "Emblem", UDim2.fromOffset(size, size), pos, Color3.fromRGB(20, 28, 48), 0)

@@ -1,0 +1,499 @@
+[
+ {
+  "id": 1,
+  "section": "Core Identity",
+  "topic": "Medieval-fantasy tactical RPG with RT timeline, AP turns, square-grid movement, elevation, deterministic resolution, procedural generation, and persistent unit identity.",
+  "rule": "Locked",
+  "notes": "Manual Overview"
+ },
+ {
+  "id": 2,
+  "section": "Deployment Target",
+  "topic": "Roblox Studio",
+  "rule": "Locked",
+  "notes": "Manual Overview"
+ },
+ {
+  "id": 3,
+  "section": "Current Prototype",
+  "topic": "8x8 board is for testing only. Intended maps: 20x20 to 40x40 depending on battle type.",
+  "rule": "Locked",
+  "notes": "Manual Overview"
+ },
+ {
+  "id": 4,
+  "section": "Max Deployment",
+  "topic": "Maximum player-controlled deployment is 7 units. Standard PvE encounters generally contain at least two more enemies than player units.",
+  "rule": "Locked",
+  "notes": "Manual Overview"
+ },
+ {
+  "id": 5,
+  "section": "Core identity",
+  "topic": "Medieval-fantasy tactical RPG with RT timeline, AP turns, square-grid movement, elevation, deterministic combat, and strong status interactions.",
+  "rule": "Locked",
+  "notes": "Manual Overview"
+ },
+ {
+  "id": 6,
+  "section": "Current prototype",
+  "topic": "8x8 board is for testing only. Intended maps may range from 20x20 to 40x40 depending on battle type.",
+  "rule": "Locked",
+  "notes": "Manual Overview"
+ },
+ {
+  "id": 7,
+  "section": "Deployment target",
+  "topic": "Maximum player-controlled deployment is 7 units. Standard PvE encounters generally contain at least twice the deployed player-unit count; at maximum deployment, a normal PvE encounter should generally contain at least approximately 14 enemies. This is encounter guidance, not an absolute enemy-count formula.",
+  "rule": "Locked",
+  "notes": "Manual Overview"
+ },
+ {
+  "id": 8,
+  "section": "Obsolete terms",
+  "topic": "Speed, SPD, FFT-style unit CT meter, Accuracy, Miss Chance, Critical Hit, RES, separate Magic Defense.",
+  "rule": "Locked",
+  "notes": "Manual Overview"
+ },
+ {
+  "id": 9,
+  "section": "Authority",
+  "topic": "Skills, Augments, Doctrines, and Trigger Recursion are the authoritative detailed catalogs. Subject-rule sheets in this workbook are canonical for their domains. Archived workbooks do not override this implementation manual.",
+  "rule": "Locked",
+  "notes": "Consolidation rule"
+ },
+ {
+  "id": 10,
+  "section": "Authority",
+  "topic": "Most recently approved conversation decision supersedes earlier manual text when conflict exists.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 12,
+  "section": "Guard exclusions",
+  "topic": "Collision damage, fall damage, hazards, debuffs, statuses, forced movement, and other non-direct effects are not covered unless explicit.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 13,
+  "section": "Guard Stability",
+  "topic": "Guard grants a Stability bonus while active; exact value remains pending.",
+  "rule": "Pending value",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 14,
+  "section": "Armor Off-Hand WT",
+  "topic": "Passive shield Defense is free outside Guard. Armor Off-Hand WT does not increase Base RT. Guard RT adds 50% of Effective Armor Off-Hand WT.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 15,
+  "section": "Off-Hand slot ownership",
+  "topic": "A shield or Armor Off-Hand occupies the off-hand slot, uses the reserved 350 BP flexibility of a 1H setup, and is incompatible with a 2H weapon.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 16,
+  "section": "Weapon WT",
+  "topic": "Weapon WT applies to Basic Attacks and may be inherited by Skill Cards only when the Skill explicitly declares Weapon WT Inheritance. Each Skill Card explicitly declares whether and how much Effective Weapon WT it inherits from its equipped main-hand weapon. Effective Weapon WT uses the normal weapon-WT formula and STR reduction. Focus uses the same Weapon WT pricing, STR reduction, and inheritance rules as other weapon families. A Focus may provide additional Skill-support passives, but Focus is not the only weapon family whose WT may be inherited by a Skill.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 17,
+  "section": "Universal weapon passive delivery",
+  "topic": "Built-in weapon passives apply to a Skill Card only when compatibility is established through the passive’s declared Compatible Skill Tags (tags only - REVISED 2026-10-26 USER RULING: Target Rules are no longer used for compatibility).\n\nAfter compatibility is established, the passive resolves according to its declared delivery rule.\n\nDelivery may be:\n- Once per Skill action\n- Once per affected target\n- Once per successful hit\n\nReduced Pattern damage does not reduce passive magnitude unless the passive explicitly scales from damage dealt.\n\nMulti-hit and multi-target Skills repeat a passive only when the passive’s declared delivery rule permits repetition.\n\nWeapon RT Delay applies to a Skill Card only when that Skill explicitly declares Weapon RT Delay Inheritance. Weapon RT Delay is not automatically delivered by every Skill Card.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 18,
+  "section": "Negative Weapon Defense",
+  "topic": "Cannot fall below negative balanced Armor Defense at the same Item Level.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 19,
+  "section": "Negative RT Delay",
+  "topic": "Minimum base RT Delay = -150; target RT cannot go below 0; maximum BP refund = -100.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 20,
+  "section": "Hook",
+  "topic": "Parked. Complete effect, compatible Skill Tags, compatible Target Rules, delivery rule, timing, and final BP price are not approved. Do not use the former 80 BP value as a current rule.",
+  "rule": "Parked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 21,
+  "section": "Weapon catalog",
+  "topic": "The current weapon catalog remains provisional and incomplete. The conventional weapon archetypes retain their approved working endpoints. The Focus Weapon Family is an approved conceptual family whose numerical archetypes and endpoints remain pending. Do not treat the current archetype count as final or authoritative.",
+  "rule": "Current / Pending Focus archetypes",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 22,
+  "section": "Rarity bonus BP",
+  "topic": "Rarity determines positive BP allowance for bonus attributes only. Base weapon stats are ignored. Negative bonus BP is not permitted.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 23,
+  "section": "Unique",
+  "topic": "Authored or curated; may have bonus attributes and ignore ordinary Weapon Builder BP limits; not automatically stronger than Transcendent.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 24,
+  "section": "Deployment limit",
+  "topic": "Maximum player-controlled deployment is 7 units. Normal PvE encounters generally contain at least twice deployed player-unit count; at max deployment, approximately 14 enemies is guidance, not a formula.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 25,
+  "section": "DEX Interaction Efficiency",
+  "topic": "Map objects explicitly opt in and declare affected property. Universal DEX Interaction Efficiency is removed; object-by-object classification remains pending.",
+  "rule": "Locked / Pending catalog",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 26,
+  "section": "Focus weapons",
+  "topic": "Focus is a weapon family for Skill Card interactions. Focus provides no Spell Power and does not replace authored Skill Card Base Power. Exact Focus passive BP prices and archetypes remain pending.",
+  "rule": "Locked / Pending prices",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 27,
+  "section": "Focus LoS bypass",
+  "topic": "Eligible Focus LoS bypass removes LoS plus intervening unit, terrain, object, and direct projectile-path blocking. It does not remove range, target validity, occupancy, area elevation, or Skill-specific restrictions.\n\nUnified Skill compatibility metadata remains pending. Before this passive can be assigned a final BP price or used in normal Focus endpoint validation, it must explicitly declare:\n\n- Compatible Skill effect tags\n- Compatible Target Rules\n- Delivery frequency\n- Timing\n- Restrictions\n- Projectile interaction\n- Final BP price\n\nThe approved bypass effect remains locked. Its compatibility metadata and BP price are not yet approved.",
+  "rule": "Locked effect / compatibility and price pending",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 28,
+  "section": "Weapon passive delivery safety",
+  "topic": "Bleed, Raptured, and Wounded evolution can advance by no more than one stage per successful hit; a status created by an evolution cannot recursively trigger another evolution during the same hit.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 29,
+  "section": "Procedural pattern conversions",
+  "topic": "Normal procedural Line 2, Impact Splash, Cleave, Cone, Adjacent, and Chain conversions cost 250 BP, are Single-base only unless restricted, replace Single, and cannot coexist with another Pattern conversion.\n\nThe converted Pattern applies to Basic Attacks and to Skill Cards only when the Skill explicitly inherits Weapon Pattern.\n\nCompatible weapon passives resolve through the converted Pattern according to each passive’s declared Skill-tag compatibility and delivery frequency (Target Rules no longer used for compatibility, 2026-10-26).\n\nWeapon RT Delay resolves through the converted Pattern for Basic Attacks and for Skill Cards only when the Skill explicitly declares Weapon RT Delay Inheritance.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 30,
+  "section": "Impact Splash",
+  "topic": "Projectile only. Primary Target receives 100% damage; four cardinally adjacent splash tiles receive 50% damage. Friendly fire applies under normal pattern rules. Splash is centered on the impact tile; Maximum Range does not enlarge splash.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication | USER RULING 2026-10-29: splash/edge falloff cuts FINAL damage after Defense; items follow the same rule (project_rules 238)."
+ },
+ {
+  "id": 31,
+  "section": "Extended Reach",
+  "topic": "Extended Reach I = 150 BP for Maximum Attack Range +1; Extended Reach II = 300 BP for +2. Only one tier may roll. No global Maximum Range cap is established.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 32,
+  "section": "Close-Quarters Mechanism",
+  "topic": "Projectile ranged only. Tier I = 75 BP for Minimum Range -1; Tier II = 150 BP for -2. Final Minimum Range cannot fall below 1 and only one tier may roll.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 33,
+  "section": "Rarity ladder",
+  "topic": "Common, Uncommon, Rare, Epic, Exalted, Legendary, Mythic, Transcendent, Unique. Normal procedural equipment budgets and tolerance bands are locked in Item Rarity Generation.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 34,
+  "section": "Fortune formulas",
+  "topic": "Drop, quality, rarity weighting, and Gold formulas are locked in Activities and Loot / LUK Fortune Discovery. Fortune is multiplicative, cannot unlock ineligible rarity, and cannot add slots or change categories.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 36,
+  "section": "Skill Card property inheritance",
+  "topic": "Skill Cards do not automatically inherit every equipped-weapon property. Each Card explicitly declares inherited statistics/properties, how each is multiplied/converted/scaled, the affected mechanic, and binary compatibility requirements. Possible declared sources include Weapon Defense.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 37,
+  "section": "Weapon Defense distinction",
+  "topic": "Weapon Defense is not a normal procedural weapon bonus roll, but existing base Weapon Defense remains a weapon property. A Skill Card may inherit or scale from Weapon Defense only when the Card explicitly declares how it does so.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 39,
+  "section": "Future patch versioning",
+  "topic": "Every future manual patch must update the visible workbook title, Index manual-version entry, Version Tracking, and relevant Current Decisions / Parked Topics entries.",
+  "rule": "Locked process",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 40,
+  "section": "Unified Skill Card architecture",
+  "topic": "Skill Cards are level-less authored active abilities. Each Skill explicitly declares effect tags, Target Rules, costs, formulas, weapon-property inheritance, Bonus Skill Range inheritance, eligible weapon passives, projectile behavior, pattern behavior, Skill Potency eligibility, and special rules.\n\nSkill Potency Multiplier = 1 + INT / (200 + INT).\n\nSkill Potency Bonus = Skill Potency Multiplier - 1.\n\nEvery Skill Card explicitly declares whether Skill Potency applies and identifies the damage, healing, shield, or other approved formula component it modifies.\n\nSkill Potency does not apply to a Skill formula unless the Skill explicitly declares it.\n\nNo separate Spell Power stat exists.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 41,
+  "section": "Max MP and Bonus Skill Range",
+  "topic": "Max MP = 20 + INT x 2.\n\nBonus Skill Range = floor(INT / 75) + Flat Skill Range Bonuses.\n\nEvery Skill Card explicitly declares its Skill Range Inheritance percentage.\n\nDefault Skill Range Inheritance is 100%.\n\nInherited Bonus Skill Range = round(Bonus Skill Range × Skill Range Inheritance).\n\nFlat Skill Range bonuses apply even when INT has not reached the next 75-point threshold.\n\nBonus Skill Range changes targeting distance only.\n\nBonus Skill Range does not automatically enlarge Pattern dimensions, AOE dimensions, splash size, Line length, Cone size, Chain-jump distance, or any other area dimension unless the Skill explicitly says otherwise.\n\nUse the Manual’s global rounding rule where .5 rounds up.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 42,
+  "section": "Effective Skill Level",
+  "topic": "Effective Skill Level = Main-hand Item Level. Every combat-capable unit requires a main-hand weapon and Doctrine; normal generated units require valid compatible Skill loadout.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 45,
+  "section": "Weapon property inheritance",
+  "topic": "Every Skill explicitly declares which main-hand weapon properties it uses and how each is multiplied, converted, or applied. No automatic inheritance. Range, Pattern, and Projectile Type inheritance are always explicit.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 46,
+  "section": "Weapon passive compatibility",
+  "topic": "Weapon-passive compatibility is determined only by Skill tags (REVISED 2026-10-26 USER RULING: Target Rules are no longer used for compatibility; weapon-derived tags are resolved from the equipped weapon). Each passive declares compatible tags, effect, delivery frequency, timing, and restrictions.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 48,
+  "section": "Doctrine framework",
+  "topic": "Exactly 15 baseline Doctrines. Each has one fixed six-primary-stat package totaling 0% with each adjustment within ±15%, one Breakable Doctrine Passive, and exactly 3 fixed Doctrine Skill choices; select 1 active Doctrine Skill. Rarity does not alter choice count or mechanics. Doctrine Skills remain usable during Break and have 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79).",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): topic: Exactly 15 baseline Doctrines. Each has one fixed six-primary-stat package totaling 0% with each adjustment within ±15%, one Breakable Doctrine Passive, and exactly 3 fixed Doctrine Skill choices; select 1 active Doctrine Skill. Rarity does not alter choice count or mechanics. Doctrine Skills remain usable during Break and have exactly 2 Augment Slots.]"
+ },
+ {
+  "id": 49,
+  "section": "Race framework",
+  "topic": "Each Race has name, description/tags, starting primary stats, growth rates, and one Breakable Race Passive. Starting stats total 8; growth totals 2.00; no separate race benefit/drawback fields are used in current rules. Race Tags are not Breakable.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 50,
+  "section": "Focus weapon family",
+  "topic": "Focus remains a normal weapon family using standard weapon BP target, curves, handedness, range, pattern, stat, passive, and synergy pricing. Focus is defined by a built-in passive designed to improve eligible Skill Cards.",
+  "rule": "Locked / endpoints pending",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 51,
+  "section": "Steal baseline Skill",
+  "topic": "Steal is a deterministic Utility Skill at fixed Range 1 with no weapon inheritance or weapon-passive compatibility. It uses authored MP/RT formulas, 200 CT Channel Time, 0 CT Activation Time, rear-position validation at activation, and one successful steal per target per battle. Exact Steal reward-pool content remains parked.",
+  "rule": "Locked / reward pool parked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 52,
+  "section": "Highest-priority dependency",
+  "topic": "1. Baseline Skill Card simulation and numerical calibration; 2. Focus passive definitions and normal BP pricing; 3. Focus archetype endpoint completion; 4. Consumable Architecture; 5. Skill Card Acquisition and Scarcity; 6. Augment Card Acquisition and Scarcity; 7. Doctrine Acquisition, Rarity, and Fortune; 8. Armor BP Framework; 9. Accessory BP Framework; 10. Shield and Armor Off-Hand BP Framework.",
+  "rule": "Current",
+  "notes": "Current Decisions — unique after exact rule-text deduplication | 2026-11-04 (Training Grounds): items 5-7 partly answered - skill cards, augment cards and doctrines can now be bought and sold at the Training Grounds (guild_facilities 74-83); loot rates unchanged, doctrine loot still display-only."
+ },
+ {
+  "id": 53,
+  "section": "Representative Skill explicit AP Cost",
+  "topic": "All 29 representative Skills explicitly record AP Cost. The current baseline uses 1 AP for every representative Skill under the approved global default.",
+  "rule": "Working simulation baseline",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 54,
+  "section": "Representative Skill Targeting Range completeness",
+  "topic": "Every representative Skill explicitly records its targeting-range source. All 29 have working fixed, formula-based, movement-based, or complete Weapon Range inheritance rules. No representative targeting range remains blank or marked Pending working simulation range.",
+  "rule": "Working simulation baseline",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 55,
+  "section": "Representative Skill Augment Slot completeness",
+  "topic": "Every representative Skill and every future Skill Card has 2 Augment Slots. Slot 1 is always open; slot 2 opens only when the owner's Training Grounds is at effective level 10 AND the unit is level 80+ (USER RULING 2026-11-04, guild_facilities 79). This includes Doctrine-provided Skills and Steal. Slot count does not vary by Skill type, rarity, source, tags, power, complexity, costs, timing, inheritance, projectile behavior, Pattern, AOE behavior, or acquisition source.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): topic: Every representative Skill and every future Skill Card has exactly 2 Augment Slots. This includes Doctrine-provided Skills and Steal. Slot count does not vary by Skill type, rarity, source, tags, power, complexity, costs, timing, inheritance, projectile behavior, Pattern, AOE behavior, or acquisition source.]"
+ },
+ {
+  "id": 56,
+  "section": "Ordinary Dual-Wield Doctrine baseline",
+  "topic": "Ordinary dual wield requires two naturally legal 1H weapons and retains 75% of each weapon’s numerical properties. Structural properties remain intact; the shared sequential Basic Attack, Knockback, passive-delivery, Break, and main-hand-only Skill-inheritance rules apply.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 57,
+  "section": "Universal Skill Card Augment Slots",
+  "topic": "All Skill Cards have 2 Augment Slots: slot 1 always open, slot 2 locked until the owner's Training Grounds is at effective level 10 and the unit is level 80+ (USER RULING 2026-11-04, guild_facilities 79). Doctrine-provided Skills use the same rule. Skill rarity and source do not modify Augment Slot count.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): topic: All Skill Cards have exactly 2 Augment Slots. Doctrine-provided Skills use the same 2-slot rule. Skill rarity and source do not modify Augment Slot count.]"
+ },
+ {
+  "id": 58,
+  "section": "Representative Skill working targeting ranges",
+  "topic": "All 29 representative Skills now have explicit working targeting-range rules. Twenty-three formerly pending values received provisional simulation ranges. These values support comparative spatial simulation but remain working baselines, not final balance. Bonus Skill Range affects targeting distance only and never enlarges Pattern or AOE dimensions unless a Skill explicitly says otherwise.",
+  "rule": "Working simulation baseline",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 60,
+  "section": "Recharge",
+  "topic": "Recharge immediately restores 10% Max MP, then restores 5% Max MP every 300 CT for four ticks over 1200 CT. Reapplication refreshes duration without repeating the immediate restoration.",
+  "rule": "Working simulation baseline",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 61,
+  "section": "Mechanical Race Tag drawback",
+  "topic": "Mechanical units have Raw Weapon WT +15%. Apply this before weapon-use scaling and STR-based Weapon WT reduction.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 62,
+  "section": "Power Strike working calibration",
+  "topic": "Power Strike uses Weapon Attack Power ×1.25 × Skill Potency Multiplier. Its previous ×1.50 coefficient is superseded.",
+  "rule": "Working simulation baseline",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 63,
+  "section": "Weapon-use percentage hierarchy",
+  "topic": "Natural single 1H use retains 100%; Colossal Arsenal single converted 2H use retains 75%; ordinary dual wield retains 75% per naturally 1H weapon; Titan dual wield retains 65% per normally 2H melee weapon.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 64,
+  "section": "Dual-Wield Basic Attack RT",
+  "topic": "One shared round(Modified Base RT ×0.10) component plus the Effective Reduced WT of both weapons. Dual wield does not pay two separate base-RT components.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 65,
+  "section": "Doctrine fixed-choice baseline",
+  "topic": "The baseline contains exactly 15 Doctrines. Every Doctrine has exactly 3 fixed Doctrine Skill choices and the unit selects 1 active choice. Rarity does not alter choice count; Doctrine Skills remain usable during Break and have 2 Augment Slots (slot 2 locked until Training Grounds L10 + unit L80, guild_facilities 79).",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication | RESOLVED (USER) 2026-11-04 (Training Grounds). NOT BUILT - the Dev is building it now. [Superseded 2026-11-04 (Training Grounds): topic: The baseline contains exactly 15 Doctrines. Every Doctrine has exactly 3 fixed Doctrine Skill choices and the unit selects 1 active choice. Rarity does not alter choice count; Doctrine Skills remain usable during Break and have exactly 2 Augment Slots.]"
+ },
+ {
+  "id": 66,
+  "section": "Doctrine scarcity",
+  "topic": "Doctrines use one scarcity band comparable to Epic-to-Legendary equipment acquisition frequency. Scarcity does not alter the stat package, passive, fixed three choices, Skill profile, costs, timing, Augment Slots, or mechanics.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 67,
+  "section": "Universal Augment ownership",
+  "topic": "Skills own ordinary gameplay data only. Augments own Augment compatibility requirements, effects, costs, restrictions, and conflicts. Skills do not declare individual Augment permission lists or Augment-specific exception fields.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 68,
+  "section": "Augment cost model",
+  "topic": "Augments are optional specializations, not free upgrades. Costs may use MP, RT, Channel/Activation Time, positive weapon-scaling reduction, range, Pattern-to-Single, HP, or another concise authored sacrifice. Percentage costs multiply; flat costs apply afterward.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 69,
+  "section": "Documentation-first authority",
+  "topic": "Documentation is the project priority. Completion requires every field in the authoritative schema populated, every reference resolved, every invariant validated, all active contradictions/placeholders removed, and logical combination safety documented.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 70,
+  "section": "Dedicated content authority",
+  "topic": "Skills, Augments, Doctrines, and Trigger Recursion are the authoritative detailed worksheets. Older sheets retain summary/history only and do not override these dedicated sheets.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 71,
+  "section": "Doctrine content correction",
+  "topic": "The earlier statement that the Doctrine baseline was complete was overstated. v0.9 supplies working numerical packages, complete working passives, Doctrine-only Skill profiles, and cross-sheet references. Final numerical calibration remains working, not final balance.",
+  "rule": "Corrective audit record",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 72,
+  "section": "Universal trigger and recursion baseline",
+  "topic": "v0.9 records examined candidate sets, state updates between Chain jumps, Augment commitment snapshots, reaction eligibility and recursion guards, Executioner and kill-trigger turn caps, primary-versus-secondary effect ownership, Explosive Death qualification, finite explosion queues, periodic propagation guards, one-pass elemental processing, HP-payment legality, Shield decay, and deterministic Break equipment legality.",
+  "rule": "Locked",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 73,
+  "section": "v0.9 Current Manual",
+  "topic": "CTRBLXAI Core Game Manual v0.9 is current. v0.8 and earlier versions remain historical in Version Tracking.",
+  "rule": "Current",
+  "notes": "Current Decisions — unique after exact rule-text deduplication"
+ },
+ {
+  "id": 74,
+  "section": "Skill Scaling (NEW)",
+  "topic": "All skills scale with equipped main weapon and may additionally scale with a primary stat. The old distinction between \"weapon-based skills\" and \"spell-based skills\" is obsolete and must not be used.",
+  "rule": "Locked",
+  "notes": "Consolidation Decision 2026-08-19"
+ },
+ {
+  "id": 75,
+  "section": "2H Guard RT (NEW)",
+  "topic": "If the unit is equipped with a two-handed weapon, Armor Off-Hand WT equals zero for Guard RT calculation purposes.",
+  "rule": "Locked",
+  "notes": "Consolidation Decision 2026-08-19"
+ },
+ {
+  "id": 76,
+  "section": "Inventory Limit (NEW)",
+  "topic": "No hard inventory cap. Storage past a configurable threshold costs in-game currency per maintenance cycle (soft economic pressure). Exact threshold, currency, and interval are tunable during testing.",
+  "rule": "Locked",
+  "notes": "Consolidation Decision 2026-08-19"
+ },
+ {
+  "id": 77,
+  "section": "Obsolete Terms",
+  "topic": "Speed, SPD, FFT-style unit CT meter, Accuracy, Miss Chance, Critical Hit, RES, separate Magic Defense. These terms must never be used.",
+  "rule": "Locked",
+  "notes": "Manual Overview"
+ },
+ {
+  "id": 78,
+  "section": "Authority Model",
+  "topic": "Two documents: Game Rules (this file) = what the game does. Build Plan = how to implement it. They answer different questions and do not compete.",
+  "rule": "Locked",
+  "notes": "Consolidation Decision 2026-08-19"
+ }
+]

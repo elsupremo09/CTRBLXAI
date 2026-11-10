@@ -173,6 +173,8 @@ local function buildMain(res: any, isBuy: boolean, entries: { any }, selected: a
 	flex.FlexMode = Enum.UIFlexMode.Fill
 	flex.Parent = grid
 	MerchantInspector.BuildGrid(grid, {
+		-- Loadout tile size from the grid's height (2026-11-10: same tiles on every guild screen).
+		heightHint = MerchantInspector.GridHeightHint(main, list),
 		entries = entries,
 		selectedKey = if selected then selected.key else nil,
 		width = math.max(240, main.AbsoluteSize.X - 6),

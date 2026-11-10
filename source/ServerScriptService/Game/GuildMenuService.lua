@@ -68,6 +68,7 @@ local UnitNameData = require(Content:WaitForChild("UnitNameData"))
 local TraitData    = require(Content:WaitForChild("TraitData"))
 local PartyArtData = require(Content:WaitForChild("PartyArtData")) -- party emblems/backgrounds (2026-11-04)
 local PortraitData = require(Content:WaitForChild("PortraitData"))
+local GameConstants = require(CTRBLXAI:WaitForChild("Shared"):WaitForChild("GameConstants"))
 
 local GuildMenuService = {}
 
@@ -169,6 +170,23 @@ local lastCallAt: { [string]: number } = {}
 
 local function playerUnits(): { [string]: any }
 	return (_getPlayerUnits and _getPlayerUnits()) or {}
+end
+
+-- ROSTER CAPACITY (user ruling 2026-11-10): base 10. Guild Level bonus (every 5 levels up
+-- to Guild Level 99) is a planned hook only; the curve is not decided, so it adds 0 today.
+local function rosterCount(): number
+	local n = 0
+	for _ in playerUnits() do n += 1 end
+	return n
+end
+function GuildMenuService.GetRosterCapacity(): number
+	return GameConstants.ROSTER_BASE_CAPACITY or 10
+end
+function GuildMenuService.GetRosterCount(): number
+	return rosterCount()
+end
+function GuildMenuService.IsRosterFull(): boolean
+	return rosterCount() >= GuildMenuService.GetRosterCapacity()
 end
 
 local function mapLevel(): number
@@ -685,6 +703,10 @@ function GuildMenuService.AdoptBattleRecruits(battleUnits: { any }): { any }
 				print(`[GuildMenuService] Recruit {tostring(src.name)} was KO'd at battle end — not added (rule 133)`)
 			elseif type(src.raceId) ~= "string" then
 				warn(`[GuildMenuService] Recruit {tostring(src.name)} has no race — not added`)
+			elseif GuildMenuService.IsRosterFull() then
+				-- Capacity (2026-11-10): the in-battle Recruit option is hidden when full, so this
+				-- only trips if the roster filled mid-battle (e.g. two recruits with 1 slot left).
+				warn(`[GuildMenuService] Roster full ({rosterCount()}/{GuildMenuService.GetRosterCapacity()}) — recruit {tostring(src.name)} not added`)
 			else
 				src.adoptedToRoster = true -- guard: never adopt the same unit twice
 				local level = math.clamp(math.floor(src.level or 1), 1, ITEM_LEVEL_CAP)
@@ -1067,6 +1089,19 @@ local function blacksmithGate(item: any): (boolean, string?)
 	local bLevel = GuildMenuService.GetBuildingLevel("Blacksmith")
 	local maxLevel = math.min(ITEM_LEVEL_CAP, bLevel * 10)
 	if bLevel >= BUILDING_MAX_LEVEL then maxLevel = ITEM_LEVEL_CAP end
+	-- Roster cap (user ruling 2026-11-10): never above the highest-level unit owned, since no
+	-- one could equip it. Applies to staging (upgradeCurve), single upgrades and Confirm.
+	local highest = 1
+	for _, u in playerUnits() do
+		local lv = tonumber(u.level) or 1
+		if lv > highest then highest = lv end
+	end
+	if highest < maxLevel then
+		maxLevel = highest
+		if item.itemLevel + 1 > maxLevel then
+			return false, `Your highest-level unit is L{highest}; items cannot go above that`
+		end
+	end
 	if item.itemLevel + 1 > maxLevel then
 		return false, `Blacksmith L{bLevel} upgrades items up to L{maxLevel}`
 	end
@@ -1106,7 +1141,8 @@ local function onGetTavernPool(player: Player)
 			preview = c.preview, -- race, perk, flaw, doctrine, primary stats (display only)
 		})
 	end
-	return { ok = true, pool = list, reason = cache.reason, tavernLevel = GuildMenuService.GetBuildingLevel("Tavern") }
+	return { ok = true, pool = list, reason = cache.reason, tavernLevel = GuildMenuService.GetBuildingLevel("Tavern"),
+		rosterCount = rosterCount(), rosterCapacity = GuildMenuService.GetRosterCapacity() }
 end
 
 local function onRequestHire(player: Player, candidateId: any)
@@ -1749,17 +1785,10 @@ end
 -- dismissed (project_rules 114; is_avatar not yet flagged in code, so the Hero id is the
 -- stand-in until the Designer adds the flag). Not gated by the guild menu being open -- the
 -- Loadout screen is its own surface -- but the firing player must be the session player.
+-- FREE DISMISSAL (user ruling 2026-11-10): the severance fee (5x recruitment cost) is
+-- REMOVED. Dismissing costs nothing; preview/commit keep cost = 0 / canAfford = true so the
+-- remote shape is unchanged for any caller.
 local AVATAR_UNIT_ID = "unit_hero"
-local DISMISS_SEVERANCE_MULT = 5
-
-local function dismissFeeFor(unitId: string): (number, string, number)
-	local units = playerUnits()
-	local u = units[unitId]
-	local level = (u and tonumber(u.level)) or 1
-	local quality = (recruitDefs[unitId] and recruitDefs[unitId].quality) or "Standard"
-	local base = RecruitmentService.ResolveHireCost(level, quality)
-	return base * DISMISS_SEVERANCE_MULT, quality, level
-end
 
 -- Consumable return on dismissal (2026-11-03 ownership). Injected by Main (owns cardInventory).
 local _returnConsumable: ((id: string) -> ())? = nil
@@ -1923,9 +1952,8 @@ local function onDismissUnit(player: Player, unitId: any, confirm: any): any
 	if not unit then return fail("That unit is no longer on your roster") end
 
 	local isAvatar = (unitId == AVATAR_UNIT_ID) or (unit.is_avatar == true)
-	local fee = dismissFeeFor(unitId)
-	local gold = (CurrencyService.GetBalance(_playerId) or {}).gold or 0
-	local canAfford = gold >= fee
+	local fee = 0
+	local canAfford = true
 
 	-- PREVIEW: no mutation. The client shows the exact cost in its confirm dialog.
 	if confirm ~= true then
@@ -1935,7 +1963,6 @@ local function onDismissUnit(player: Player, unitId: any, confirm: any): any
 
 	-- COMMIT.
 	if isAvatar then return fail("The Hero cannot be dismissed") end
-	if not canAfford then return fail(string.format("Not enough gold for separation pay (need %d)", fee)) end
 	-- Items are never destroyed (consumable_framework 1, 2026-11-03): a unit holding a partly
 	-- used consumable can't leave until it is refilled (DEV DEFAULT, replaces discarding).
 	for _, slotData in pairs(unit.consumableSlots or {}) do
@@ -1963,8 +1990,7 @@ local function onDismissUnit(player: Player, unitId: any, confirm: any): any
 		end
 	end
 
-	-- 2) Charge the severance fee.
-	CurrencyService.Debit(_playerId, { gold = fee })
+	-- 2) (No severance fee since 2026-11-10.)
 
 	-- 3) Remove from the live roster (same table Main owns via the injected provider).
 	units[unitId] = nil
@@ -1989,7 +2015,7 @@ local function onDismissUnit(player: Player, unitId: any, confirm: any): any
 	PartyService.PruneToOwned(_playerId, ownedSet)
 
 	markDirty()
-	print(string.format("[GuildMenuService] Dismissed %s (%s) | severance %dg", unit.name, unitId, fee))
+	print(string.format("[GuildMenuService] Dismissed %s (%s) | no fee", unit.name, unitId))
 	local balGold = (CurrencyService.GetBalance(_playerId) or {}).gold or 0
 	return { ok = true, done = true, cost = fee, gold = balGold }
 end
@@ -2371,6 +2397,10 @@ function GuildMenuService.Init(deps: any)
 	_doSave = deps.doSave
 	_getMapLevel = deps.getMapLevel
 	_isSkillRegistered = deps.isSkillRegistered
+	-- Roster capacity -> hires are refused when full ("Roster full", no gold charged).
+	RecruitmentService.SetRosterCapacityProvider(function(_pid: string)
+		return rosterCount(), GuildMenuService.GetRosterCapacity()
+	end)
 	TrainingGroundsService.SetLevelProvider(GuildMenuService.GetTrainingGroundsLevel)
 	CardShopService.Init({
 		getLevel = GuildMenuService.GetTrainingGroundsLevel,

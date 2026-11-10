@@ -1,0 +1,11 @@
+2026-11-10T00:19:20.715979 MerchantInspector.lua edit1: addTileBadge gains y param (second badge row)
+2026-11-10T00:19:42.320524 MerchantInspector.lua edit2: BuildGrid -> Loadout recipe for all callers (portrait tile, ItemTileCell+refit, GridCellPadding, Lv.N label, E/NEW markers, price badge drop row); added GridHeightHint, addPriceBadge, refitPortraitIcons
+2026-11-10T00:19:51.480251 MerchantInspector.lua edit3: GridOptions comment (loadoutTiles now unused), removed unused MIN_CELL
+2026-11-10T00:20:07.561820 RuneforgeGemGrid.lua: gem tiles portrait=true; PortraitBox = portrait square (portraitBox helper); refit resizes icon+box
+2026-11-10T00:20:21.012802 MerchantScreen.lua: BuildGrid call gets heightHint = MerchantInspector.GridHeightHint(main, list) (L175)
+2026-11-10T00:20:21.028934 BlacksmithScreen.lua: BuildGrid call gets heightHint = MerchantInspector.GridHeightHint(main, list) (L215)
+2026-11-10T00:20:21.039027 ApothecaryScreen.lua: BuildGrid call gets heightHint = MerchantInspector.GridHeightHint(main, list) (L218)
+2026-11-10T00:20:21.049161 CrucibleScreen.lua: BuildGrid call gets heightHint = MerchantInspector.GridHeightHint(main, list) (L271)
+2026-11-10T00:20:21.059335 TavernScreen.lua: BuildGrid call gets heightHint = TileGrid.GridHeightHint(main, list) (L234)
+2026-11-10T00:20:21.070964 TrainingGroundsScreen.lua: BuildGrid call gets heightHint = MerchantInspector.GridHeightHint(main, list) (L204)
+2026-11-10T00:20:21.080972 BlackMarket.client.lua: BuildGrid call gets heightHint = MerchantInspector.GridHeightHint(main, list) (L175)

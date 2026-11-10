@@ -25,6 +25,7 @@ local CTRBLXAI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10) :: Instance
 local UI = CTRBLXAI:WaitForChild("UI", 10) :: Instance
 local Theme = require(UI:WaitForChild("Theme", 10) :: ModuleScript) :: any
 local UGCClient = require(UI:WaitForChild("UGCClient", 10) :: ModuleScript) :: any
+local PreviewIdle = require(UI:WaitForChild("PreviewIdle", 10) :: ModuleScript) :: any
 local UGCCatalogData = require(ReplicatedStorage:WaitForChild("Content", 10):WaitForChild("UGCCatalogData", 10) :: ModuleScript) :: any
 
 local UGCInspectorOutfit = {}
@@ -40,6 +41,7 @@ local PREVIEW_START_YAW = 200
 
 local _conns: { RBXScriptConnection } = {}
 local _token = 0
+local _previewTrack: AnimationTrack? = nil -- preview idle (PreviewIdle, 2026-11-09); stopped in Cleanup
 
 --------------------------------------------------
 -- HELPERS
@@ -99,6 +101,8 @@ end
 function UGCInspectorOutfit.Cleanup()
 	for _, c in _conns do c:Disconnect() end
 	table.clear(_conns)
+	PreviewIdle.Stop(_previewTrack) -- PRF-004: idle track dies with the preview (tab switch / close / re-render)
+	_previewTrack = nil
 	_token += 1 -- drops any in-flight async result
 end
 
@@ -342,6 +346,9 @@ local function buildPreview(parent: Instance, unitId: string, token: number)
 		cam.CFrame = CFrame.lookAt(cf.Position + Vector3.new(0, 0, dist), cf.Position)
 		copy.Parent = world -- local copy, framed before showing
 		model = copy :: Model
+		-- Idle instead of the T-pose (2026-11-09): same base idle as the battle units, local copy only.
+		PreviewIdle.Stop(_previewTrack)
+		_previewTrack = PreviewIdle.Play(copy :: Model)
 		applyYaw()
 		status.Visible = false
 	end)

@@ -200,8 +200,6 @@ end
 -- CONSTANTS
 --------------------------------------------------
 
-local BASE_MOVEMENT_RANGE = 3
-
 local DIRECTIONS = {
 	{ dx =  1, dy =  0, cost = 1.0 },
 	{ dx = -1, dy =  0, cost = 1.0 },
@@ -1938,8 +1936,6 @@ function TargetingService.GetInteractCandidates(actor, allUnits, state)
 	-- recruited regardless of its current HP (no need to weaken it below the HP threshold first).
 	local ignoreRecruitHostility = ArmorPassiveService.CanIgnoreRecruitHostility
 		and ArmorPassiveService.CanIgnoreRecruitHostility(actor) or false
-
-	local actorElev = getEffectiveElevation(actor)
 
 	-- UNIT-TARGET NATIVES (functional now) --------------------------------
 	for _, u in ipairs(allUnits) do

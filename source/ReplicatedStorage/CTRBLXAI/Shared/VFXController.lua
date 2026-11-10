@@ -890,10 +890,77 @@ function VFXController.ClearTileEffect(tx, ty)
 	tileEffectVfx[key] = nil
 end
 
+--------------------------------------------------
+-- TILE-EFFECT 2D IMAGES (2026-11-10). Flat image on the tile top while an effect is
+-- active (TileImageData.TileEffects). Independent of the particle VFX above.
+--------------------------------------------------
+local tileEffectImages = {}  -- "tx,ty" -> { id = effectId, inst = Part }
+local TileImageData = nil
+pcall(function()
+	TileImageData = require(
+		ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+			:WaitForChild("Shared", 10):WaitForChild("TileImageData", 10)
+	)
+end)
+if not TileImageData then warn("[VFXController] TileImageData missing — tile-effect images disabled") end
+
+function VFXController.ClearTileEffectImage(tx, ty)
+	local key = `{tx},{ty}`
+	local cur = tileEffectImages[key]
+	if cur and cur.inst then cur.inst:Destroy() end
+	tileEffectImages[key] = nil
+end
+
+-- groundY = the tile's top surface Y. Returns the plate, or nil if the effect has no image.
+function VFXController.SetTileEffectImage(tx, ty, effectId, groundPos: Vector3)
+	local key = `{tx},{ty}`
+	local cur = tileEffectImages[key]
+	if cur and cur.id == effectId and cur.inst and cur.inst.Parent then return cur.inst end
+	VFXController.ClearTileEffectImage(tx, ty)
+	local imageId = TileImageData and TileImageData.TileEffects[effectId]
+	if type(imageId) ~= "string" or imageId == "" then return nil end
+	local plate = Instance.new("Part")
+	plate.Name = `TileEffectImage_{key}`
+	plate.Anchored = true; plate.CanCollide = false; plate.CanQuery = false; plate.CanTouch = false
+	plate.CastShadow = false
+	plate.Transparency = 1  -- DRW-003: invisible carrier, SurfaceGui draws
+	plate.Size = Vector3.new(5, 0.05, 5)  -- TILE_SIZE
+	-- Voxel tiles (Grassland / water): the floor ray in BattleVisualClient only sees tile
+	-- Parts, so lift to the Terrain voxel surface when it is higher (2026-11-10).
+	local surfaceY = groundPos.Y
+	local rp = RaycastParams.new()
+	rp.FilterType = Enum.RaycastFilterType.Include
+	rp.FilterDescendantsInstances = { workspace.Terrain }
+	local hit = workspace:Raycast(Vector3.new(groundPos.X, 200, groundPos.Z), Vector3.new(0, -400, 0), rp)
+	if hit and hit.Position.Y > surfaceY then surfaceY = hit.Position.Y end
+	plate.CFrame = CFrame.new(groundPos.X, surfaceY + TileImageData.EFFECT_LIFT, groundPos.Z)
+	local gui = Instance.new("SurfaceGui")
+	gui.Name = "EffectImage"
+	gui.Face = Enum.NormalId.Top
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = TileImageData.PIXELS_PER_STUD
+	gui.LightInfluence = 1
+	local img = Instance.new("ImageLabel")
+	img.Name = "Image"
+	img.Size = UDim2.fromScale(1, 1)
+	img.BackgroundTransparency = 1
+	img.Image = imageId
+	img.ScaleType = Enum.ScaleType.Stretch
+	img.Parent = gui
+	gui.Parent = plate
+	plate.Parent = vfxFolder  -- NET-004: parent last
+	tileEffectImages[key] = { id = effectId, inst = plate }
+	return plate
+end
+
 function VFXController.ClearAllTileEffects()
 	for key, cur in pairs(tileEffectVfx) do
 		if cur.inst then cur.inst:Destroy() end
 		tileEffectVfx[key] = nil
+	end
+	for key, cur in pairs(tileEffectImages) do
+		if cur.inst then cur.inst:Destroy() end
+		tileEffectImages[key] = nil
 	end
 end
 

@@ -35,8 +35,6 @@ local TraitData               = require(game:GetService("ReplicatedStorage"):Wai
 -- BattleVisualBroadcaster/EnemyGenerator do NOT require ObjectEffectService, so
 -- no cycle. EnemyGenerator builds + inserts the unit; we broadcast UnitSpawned.
 local EnemyGenerator          = require(script.Parent.EnemyGenerator)
-local InventoryService        = require(script.Parent.InventoryService)
-local ItemGenerator           = require(script.Parent.ItemGenerator)
 local ObjectiveService        = require(script.Parent.ObjectiveService)
 local GameConstants = require(
 	game:GetService("ReplicatedStorage")
@@ -2116,6 +2114,10 @@ local function ringTiles(cx: any, cy: any, count: any, radius: any)
 	return out
 end
 
+local DRAGON_UTOPIA_NAMES = table.freeze({
+	"Azure Dragon", "Rust Dragon", "Faerie Dragon", "Black Dragon", "Gold Dragon", "Ghost Dragon",
+})
+
 local function doSummon(ctx: any, specType: any, countMin: any, countMax: any, side: any, raceOverride: any, label: any)
 	local a, obj = ctx.actor, ctx.objInstance
 	local lvl = summonLevel(ctx.allUnits)
@@ -2139,6 +2141,10 @@ local function doSummon(ctx: any, specType: any, countMin: any, countMax: any, s
 			-- live count so the death-sweep can decrement it.
 			if label == "Dragon Utopia" then
 				unit.fromDragonUtopia = true
+				-- Dragon names (user ruling 2026-11-10): one of six, picked with the battle's
+				-- seeded rng (deterministic). Repeats are allowed (4-6 dragons, 6 names).
+				-- Race stays Dragonkin (override above); doctrine stays GenerateEnemy's random pick.
+				unit.name = DRAGON_UTOPIA_NAMES[ctx.rng:NextInteger(1, #DRAGON_UTOPIA_NAMES)]
 				ObjectiveService.RecordEvent(ctx.state, "dragonsAlive", 1)
 			end
 			-- Treasure Hunter (project_rules 229): a Mimic woken BY the Treasure Hunter hunts that

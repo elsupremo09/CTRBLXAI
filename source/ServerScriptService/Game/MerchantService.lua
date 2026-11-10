@@ -72,9 +72,6 @@
 --   (FLAG-M1 per-slot mix and FLAG-M2 Rare-in-shop tension were resolved by the
 --   2026-10-30 user decision above.)
 
-local ServerScriptService = game:GetService("ServerScriptService")
-local Game = ServerScriptService:WaitForChild("Game")
-
 -- These are DATA/generation modules the EXISTING RewardService already requires
 -- the same way; requiring them here does not form a cycle (they are leaf data /
 -- generators, not services that require MerchantService).

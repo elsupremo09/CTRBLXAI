@@ -1,0 +1,12 @@
+2026-11-09T23:44:38 | UGCOutfitTab.lua L29 | JOB1 require PreviewIdle | verified=True
+2026-11-09T23:44:47 | UGCOutfitTab.lua L55 | JOB1 _previewTrack var | verified=True
+2026-11-09T23:44:47 | UGCOutfitTab.lua L469 | JOB1 play idle on preview copy | verified=True
+2026-11-09T23:44:47 | UGCOutfitTab.lua L320 | JOB1 stop idle in clearPreviewConns | verified=True
+2026-11-09T23:45:04 | UGCInspectorOutfit.lua L27 | JOB1 require PreviewIdle | verified=True
+2026-11-09T23:45:04 | UGCInspectorOutfit.lua L42 | JOB1 _previewTrack var | verified=True
+2026-11-09T23:45:13 | UGCInspectorOutfit.lua L102 | JOB1 stop idle in Cleanup | verified=True
+2026-11-09T23:45:18 | UGCInspectorOutfit.lua L347 | JOB1 play idle on inspector preview copy | verified=True
+2026-11-09T23:45:24 | Theme.lua L704 | JOB2/3 MakeItemTile no hover colour (rule 243) | verified=True
+2026-11-09T23:45:37 | LoadoutScreen.lua L1030 | JOB3 gear grid tile -> Theme.MakeItemTile portrait + Lv/count/E/NEW overlays | verified=True
+2026-11-09T23:45:41 | LoadoutScreen.lua L960 | JOB3 drop unused iconFrame (inset now inside Theme.MakeItemTile) | verified=True
+2026-11-09T23:46:38 | LoadoutScreen.lua L810 | JOB2 equipped consumable slots -> Theme.MakeItemTile portrait + slot number/[X] overlays | verified=True

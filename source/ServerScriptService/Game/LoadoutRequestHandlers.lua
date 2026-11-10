@@ -288,6 +288,14 @@ BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId, 
 		warn(string.format("[Management] Equip FAILED: %s + %s — Unknown archetype", tostring(unitId), tostring(instanceId)))
 		return { ok = false, reason = "Unknown archetype" }
 	end
+	-- Item level gate (user ruling 2026-11-10): a unit cannot equip gear above its own level.
+	-- Player-request path only; enemy generation, recruit starter gear and save-load are untouched.
+	local unitLevel = tonumber(unit.level) or 1
+	if type(item.itemLevel) == "number" and item.itemLevel > unitLevel then
+		warn(string.format("[Management] Equip FAILED: %s (L%d) + %s (L%d) — item level above unit level",
+			tostring(unit.name), unitLevel, archetype.name, item.itemLevel))
+		return { ok = false, reason = `Requires level {item.itemLevel} ({unit.name} is level {unitLevel})` }
+	end
 	-- Determine slot: armor uses archetype.slot, weapons use category
 	local slot = isArmor and archetype.slot or ((archetype.category == "OffHand") and "OffHand" or "MainHand")
 	if slotOverride == "OffHand" and not isArmor and archetype.category == "Weapon" then
