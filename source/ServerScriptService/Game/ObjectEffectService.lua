@@ -509,15 +509,6 @@ function ObjectEffectService.GetPushableObjectTargets(state: any, unit: any, min
 	return out
 end
 
--- Inject the direction prompter (Main wires promptCardinalDirection). Lets a siege
--- handler ask the player to AIM in a cardinal direction: fn(actor) -> "N"/"E"/"S"/"W"
--- or nil. Blocking (yields until the player chooses). nil-safe: if unset, siege
--- handlers fall back to auto-targeting the nearest enemy.
-local _directionPrompter = nil
-function ObjectEffectService.SetDirectionPrompter(fn: any)
-	_directionPrompter = fn
-end
-
 -- Inject the TILE prompter (BattleTurnController wires promptTargetTile). The tile
 -- analogue of the direction prompter: lets an object handler ask the player to
 -- pick a target TILE within a range of an origin. Signature:

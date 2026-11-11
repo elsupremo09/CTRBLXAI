@@ -1003,47 +1003,10 @@ local function promptPlayerFacing(unit, playerObj)
 	if not responded then print(string.format("[BattleTurnController] %s facing prompt closed: battle over", unit.name)) end
 end
 
---------------------------------------------------
--- CARDINAL DIRECTION PROMPT: reuse the facing ring to let the player AIM a
--- siege weapon (Ballista) in one of the 4 cardinal directions. Unlike
--- promptPlayerFacing this does NOT change the unit's facing — it just returns
--- the chosen direction. Diagonal picks snap to the nearest cardinal (the bolt
--- travels cardinally per DB). Single-player: uses Players:GetPlayers()[1].
--- Blocking prompt-and-wait, same pattern as promptPlayerFacing.
---------------------------------------------------
-local DIAG_TO_CARDINAL = { NE = "N", SE = "S", SW = "S", NW = "N" }
-local function promptCardinalDirection(unit)
-	local playerObj = Players:GetPlayers()[1]
-	if not playerObj then return nil end
-	BattleEvents.FacingPrompt:FireClient(playerObj, {
-		unitId        = unit.id,
-		currentFacing = unit.facing,
-		tileX         = unit.tileX,
-		tileY         = unit.tileY,
-		aimMode       = "siege",   -- client may style the ring differently; optional
-	})
-	local chosen, responded = nil, false
-	local conn
-	conn = BattleEvents.SetFacing.OnServerEvent:Connect(function(player, data)
-		if player == playerObj and data and data.unitId == unit.id then
-			local dir = data.facing
-			if dir and DIAG_TO_CARDINAL[dir] then dir = DIAG_TO_CARDINAL[dir] end
-			if dir == "N" or dir == "E" or dir == "S" or dir == "W" then
-				chosen = dir
-				responded = true
-			end
-		end
-	end)
-	while not responded and not battleDecided() do
-		task.wait(0.1)
-	end
-	if conn then conn:Disconnect() end
-	return chosen  -- nil when the battle ended first (same as no player)
-end
 
 --------------------------------------------------
 -- TILE PROMPT: ask the player to pick a target TILE within range of an origin.
--- The tile analogue of promptCardinalDirection, used by the Catapult (pick a
+-- Tile prompt-and-wait, used by the Catapult (pick a
 -- landing tile within range 6). Fires TilePrompt with the legal tile list and
 -- blocks on SetTile. Self-contained prompt-and-wait, same pattern as the facing
 -- prompt — it does NOT enter the turn-action currentPrompt/inputMode flow, so it
@@ -1084,19 +1047,15 @@ local function promptTargetTile(unit, originX, originY, range, legalTiles)
 	return chosen
 end
 
--- Inject the cardinal direction prompter into ObjectEffectService now that it is
--- defined (the main OES injection block near the top runs before this function
--- exists, so wiring it here avoids a nil-prompter forward-reference).
-if ObjectEffectService.SetDirectionPrompter then
-	ObjectEffectService.SetDirectionPrompter(promptCardinalDirection)
-end
+-- Inject the tile prompter into ObjectEffectService now that it is defined (the main OES
+-- injection block near the top runs before this function exists).
 if ObjectEffectService.SetTilePrompter then
 	ObjectEffectService.SetTilePrompter(promptTargetTile)
 end
 
 --------------------------------------------------
 
--- Steal slot pick (2026-10-24): prompt-and-wait like promptCardinalDirection. Fires the
+-- Steal slot pick (2026-10-24): prompt-and-wait like promptTargetTile. Fires the
 -- server-authored list of the target's stealable slots to the player and blocks until
 -- they tap one; validates the reply against that list. Single-player (first player).
 local function promptStealSlot(unit, target, slots)

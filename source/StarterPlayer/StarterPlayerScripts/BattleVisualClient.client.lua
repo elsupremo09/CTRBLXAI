@@ -4613,7 +4613,7 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	do
 		local pg = player:FindFirstChildOfClass("PlayerGui")
 		if pg then
-			for _, n in ipairs({ "StealPicker", "SiegeCancelGui" }) do
+			for _, n in ipairs({ "StealPicker", "SiegeCancelGui", "TilePromptHint" }) do  -- + tile-picker hint (2026-11-11)
 				local g = pg:FindFirstChild(n)
 				while g do g:Destroy(); g = pg:FindFirstChild(n) end
 			end
@@ -6475,16 +6475,14 @@ BattleEvents.BattleLogEntry.OnClientEvent:Connect(function(data)
 end)
 
 -- FacingPrompt (rule 257, 2026-11-10): the server asks the player to choose a direction by
--- tapping one of the 8 tiles around the unit (siege aim, aimMode="siege": only the 4 straight
--- tiles N/E/S/W). Used for Guard/Wait facing AND Ballista aiming; the reply is unchanged:
--- SetFacing { unitId, facing }. Tiles use the Move highlight look; in facing mode the current
--- facing tile is gold ("selected"). Tiles outside the battle grid are not shown; tiles inside
+-- tapping one of the 8 tiles around the unit. Used for Guard/Wait facing only (siege aim uses the
+-- TilePrompt 8-line picker, rule 219); the reply is SetFacing { unitId, facing }. Tiles use the
+-- Move highlight look; the current facing tile is gold ("selected"). Tiles outside the battle grid are not shown; tiles inside
 -- it (even impassable / empty) still pick their direction. Taps arrive through processTileClick
 -- (the shared mouse + touch tap path with parallax-proof click pads): tap only, no hover
 -- (rule 243), no ClickDetectors, no new connections, and inputMode/currentPrompt are untouched.
 -- Replaces the green-arrow ring.
 local FACING_PICK_GROUP = "facing"  -- own TileHL group, so clearHighlights() cannot erase it mid-prompt
-local SIEGE_AIM_DIRS = { N = true, E = true, S = true, W = true }
 BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
 	if type(data) ~= "table" or not data.unitId then return end
 	if facingTilePick then facingTilePick.cleanup() end  -- one facing prompt at a time
@@ -6498,15 +6496,14 @@ BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
 	-- Without TileHL the tiles are not drawn, but a tap still resolves through the tile Parts.
 	if not TileHL then warn("[BVC] FacingPrompt: TileHighlightManager unavailable - facing tiles not drawn") end
 
-	local isSiege = data.aimMode == "siege"
 	local tiles = {}  -- ["bx,by"] = direction
 	for dir, vec in GameConstants.FACING_VECTORS do
-		if not isSiege or SIEGE_AIM_DIRS[dir] then
+		do
 			local nx, ny = tx + vec.dx, ty + vec.dy
 			if nx >= 1 and nx <= MAP_WIDTH and ny >= 1 and ny <= MAP_HEIGHT then
 				tiles[nx .. "," .. ny] = dir
 				if TileHL then
-					local style = if (not isSiege and dir == data.currentFacing) then "selected" else "move"
+					local style = if dir == data.currentFacing then "selected" else "move"
 					TileHL.Add(nx + BATTLE_OFFSET_X, ny + BATTLE_OFFSET_Y, style, FACING_PICK_GROUP)
 				end
 			end
@@ -6543,7 +6540,7 @@ BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
 			lbl.Font = Theme.Font.PrimaryBold
 			lbl.TextSize = Theme.Text.Body() + Theme.Scaled(2)
 			lbl.TextColor3 = Theme.Colors.TextGold
-			lbl.Text = if isSiege then "Choose aim direction: tap a highlighted tile" else "Choose facing: tap a highlighted tile"
+			lbl.Text = "Choose facing: tap a highlighted tile"
 			local hp = Instance.new("UIPadding")
 			hp.PaddingTop = UDim.new(0, 6); hp.PaddingBottom = UDim.new(0, 6)
 			hp.PaddingLeft = UDim.new(0, 12); hp.PaddingRight = UDim.new(0, 12)
@@ -6657,6 +6654,7 @@ BattleEvents.TilePrompt.OnClientEvent:Connect(function(data)
 	local chosen = false
 	local conns = {}  -- PRF-004: track + disconnect on cleanup
 	local cancelGui = nil
+	local hintGui = nil  -- on-screen "Choose a target" hint (2026-11-11), destroyed in cleanup
 
 	local function cleanup()
 		for _, c in conns do c:Disconnect() end
@@ -6664,6 +6662,7 @@ BattleEvents.TilePrompt.OnClientEvent:Connect(function(data)
 		clearHighlights()  -- remove the tile-highlight frames we added below
 		if folder and folder.Parent then folder:Destroy() end  -- MEM-002
 		if cancelGui then cancelGui:Destroy(); cancelGui = nil end
+		if hintGui then hintGui:Destroy(); hintGui = nil end  -- MEM-002
 	end
 
 	-- Cancel button (user request 2026-10-26): a screen-space X to abort targeting
@@ -6695,6 +6694,42 @@ BattleEvents.TilePrompt.OnClientEvent:Connect(function(data)
 				print(string.format("[BVC] Siege targeting cancelled: %s", data.unitId))
 				cleanup()
 			end))
+		end
+	end
+
+	-- On-screen hint (2026-11-11, user request): same look as the facing hint. Shared object tile
+	-- picker (Ballista, Catapult, Forge and other object targeting), so the wording stays general.
+	-- Display-only label: no input, no connections. Properties set before Parent (NET-004).
+	do
+		local pg = player:FindFirstChildOfClass("PlayerGui")
+		if pg then
+			hintGui = Instance.new("ScreenGui")
+			hintGui.Name = "TilePromptHint"
+			hintGui.ResetOnSpawn = false
+			hintGui.IgnoreGuiInset = true
+			hintGui.DisplayOrder = 50
+			local lbl = Instance.new("TextLabel")
+			lbl.Name = "Hint"
+			lbl.AnchorPoint = Vector2.new(0.5, 0)
+			lbl.Position = UDim2.new(0.5, 0, 0, 56)
+			lbl.AutomaticSize = Enum.AutomaticSize.XY
+			lbl.Size = UDim2.fromOffset(0, 0)
+			lbl.BackgroundColor3 = Theme.Colors.Background
+			lbl.BackgroundTransparency = 0.2
+			lbl.BorderSizePixel = 0
+			lbl.Font = Theme.Font.PrimaryBold
+			lbl.TextSize = Theme.Text.Body() + Theme.Scaled(2)
+			lbl.TextColor3 = Theme.Colors.TextGold
+			lbl.Text = "Choose a target: tap a highlighted tile"
+			local hp = Instance.new("UIPadding")
+			hp.PaddingTop = UDim.new(0, 6); hp.PaddingBottom = UDim.new(0, 6)
+			hp.PaddingLeft = UDim.new(0, 12); hp.PaddingRight = UDim.new(0, 12)
+			hp.Parent = lbl
+			local hc = Instance.new("UICorner")
+			hc.CornerRadius = Theme.CornerRadius.sm
+			hc.Parent = lbl
+			lbl.Parent = hintGui
+			hintGui.Parent = pg
 		end
 	end
 
