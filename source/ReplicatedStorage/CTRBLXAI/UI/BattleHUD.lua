@@ -41,6 +41,10 @@ local _bedOk, BattlefieldEventData = pcall(require, Content and Content:WaitForC
 if not _bedOk then BattlefieldEventData = nil end
 local _wcdOk, WeatherConditionData = pcall(require, Content and Content:WaitForChild("WeatherConditionData", 5))
 if not _wcdOk then WeatherConditionData = nil end
+-- Terrain tile images for the tile inspector (2026-11-12): the SAME table the map tiles are
+-- painted from (Shared/TerrainTextures.Assets), so the inspector shows the tile the player sees.
+local _ttOk, TerrainTextures = pcall(require, Shared:WaitForChild("TerrainTextures", 5))
+if not _ttOk then TerrainTextures = nil end
 
 local BattleHUD = {}
 
@@ -50,7 +54,7 @@ local TIME_ICON = {
 	Dawn  = "rbxassetid://139621458129215",
 	Day   = "rbxassetid://73208029569539",
 	Dusk  = "rbxassetid://83114762295560",
-	Night = "rbxassetid://105196630521814",
+	Night = "rbxassetid://133010917741556", -- 2026-11-15 re-upload (old 105196630521814 stopped loading)
 }
 
 -- State
@@ -1997,7 +2001,22 @@ end
 
 
 -- Place the tile inspector flush right of the turn-order bar, same height,
--- at least 110 px wide.
+-- at least 110 px wide (plus the terrain square when one is shown).
+local TILE_INFO_MIN_W = 110    -- text column minimum (unchanged)
+local TILE_INFO_PAD_V = 8      -- UIPadding top / bottom set in buildTileInfo
+local TILE_INFO_IMG_GAP = 6    -- px between the terrain square and the text
+-- Undo the turn-order bar shrink alignTileInfo applies for the terrain image (no-op if none,
+-- or if a layout pass already rewrote the bar's Size).
+local function restoreTurnBarWidth()
+	if not turnOrderBar then return end
+	local applied = turnOrderBar:GetAttribute("TileInfoShrink") or 0
+	local sz = turnOrderBar.Size
+	if applied ~= 0 and turnOrderBar:GetAttribute("TileInfoShrunkOff") == sz.X.Offset then
+		turnOrderBar.Size = UDim2.new(sz.X.Scale, sz.X.Offset + applied, sz.Y.Scale, sz.Y.Offset)
+	end
+	turnOrderBar:SetAttribute("TileInfoShrink", nil)
+	turnOrderBar:SetAttribute("TileInfoShrunkOff", nil)
+end
 alignTileInfo = function()
 	-- Anchor to the turn-order bar in battle, or the roster strip during deployment
 	-- (set via SetTileAnchor) -- the strip sits in the bar's exact bottom-left spot, so
@@ -2009,17 +2028,46 @@ alignTileInfo = function()
 	if bs.Y <= 0 then return end
 	-- Flush against the bar (0 gap). Width runs up to the right column's left edge
 	-- (action panel / unit panel), never below 110 px.
-	local left = bp.X + bs.X
 	local rightEdge = rootAbs.X + rootFrame.AbsoluteSize.X
 	for _, col in ipairs({ actionPanel, activeUnitPanel }) do
 		if col and col.Visible and col.AbsoluteSize.X > 0 then
 			rightEdge = math.min(rightEdge, col.AbsolutePosition.X)
 		end
 	end
-	local w = math.max(110, math.floor(rightEdge - left))
+	-- Terrain image (2026-11-12): a square on the LEFT, the full content height, text to its right.
+	-- With the image the minimum width also makes room for the square + gap.
+	local img = tileInfoPanel:FindFirstChild("TerrainImage")
+	local side = math.max(0, bs.Y - TILE_INFO_PAD_V * 2)
+	local minW = if img then TILE_INFO_MIN_W + side + TILE_INFO_IMG_GAP else TILE_INFO_MIN_W
+	-- When the room up to the right column is short (phone), the turn-order bar (a scrolling
+	-- list) gives up at most the image's width so the panel never runs under the right column
+	-- (unit inspector / command bar). Only the battle bar shrinks, never the deployment strip.
+	local left = bp.X + bs.X
+	if anchor == turnOrderBar then
+		local sz = turnOrderBar.Size
+		local applied = turnOrderBar:GetAttribute("TileInfoShrink") or 0
+		-- A layout pass that rewrote the bar's Size dropped our shrink: count it as none.
+		if turnOrderBar:GetAttribute("TileInfoShrunkOff") ~= sz.X.Offset then applied = 0 end
+		local naturalRight = bp.X + bs.X + applied
+		local need = if img then math.clamp(minW - math.floor(rightEdge - naturalRight), 0, side + TILE_INFO_IMG_GAP) else 0
+		if need ~= applied then
+			local newOff = sz.X.Offset + applied - need
+			turnOrderBar.Size = UDim2.new(sz.X.Scale, newOff, sz.Y.Scale, sz.Y.Offset)
+			turnOrderBar:SetAttribute("TileInfoShrink", need)
+			turnOrderBar:SetAttribute("TileInfoShrunkOff", newOff)
+		end
+		left = naturalRight - need
+	end
+	local w = math.max(minW, math.floor(rightEdge - left))
 	tileInfoPanel.AnchorPoint = Vector2.new(0, 0)
 	tileInfoPanel.Size = UDim2.fromOffset(w, bs.Y)
 	tileInfoPanel.Position = UDim2.fromOffset(left - rootAbs.X, bp.Y - rootAbs.Y)
+	local rows = tileInfoPanel:FindFirstChild("Rows")
+	if img and rows then
+		img.Size = UDim2.fromOffset(side, side)
+		rows.Position = UDim2.fromOffset(side + TILE_INFO_IMG_GAP, 0)
+		rows.Size = UDim2.new(1, -(side + TILE_INFO_IMG_GAP), 1, 0)
+	end
 end
 
 local function buildTileInfo()
@@ -2030,29 +2078,63 @@ local function buildTileInfo()
 	-- bar in battle, or the roster strip during deployment (_tileAnchor). (2026-10-23)
 	local anchor = (turnOrderBar and turnOrderBar.Visible) and turnOrderBar or _tileAnchor
 	tileInfoPanel.Visible = (t ~= nil) and (anchor ~= nil)
-	if not tileInfoPanel.Visible then return end
+	if not tileInfoPanel.Visible then
+		restoreTurnBarWidth()  -- give back any width lent to the terrain image
+		return
+	end
 	local pd = tileInfoPanel:FindFirstChildOfClass("UIPadding") or Instance.new("UIPadding")
-	pd.PaddingTop = UDim.new(0, 8); pd.PaddingBottom = UDim.new(0, 8)
+	pd.PaddingTop = UDim.new(0, TILE_INFO_PAD_V); pd.PaddingBottom = UDim.new(0, TILE_INFO_PAD_V)
 	pd.PaddingLeft = UDim.new(0, 10); pd.PaddingRight = UDim.new(0, 10)
 	pd.Parent = tileInfoPanel
 	-- Rows live in their own frame: the full-size tap layer below must NOT be part
 	-- of the list layout (it was laid out first and pushed the rows to mid-panel).
+	-- Terrain image on the left (2026-11-12, user request): same asset as the map tile. A terrain
+	-- with no image shows none and the text keeps the full width. alignTileInfo sizes the
+	-- square to the content height and moves the rows to its right.
+	local terrainAsset = TerrainTextures and TerrainTextures.Assets
+		and TerrainTextures.Assets[t.terrainName or "Clear"] or nil
+	local side0 = math.max(0, tileInfoPanel.AbsoluteSize.Y - TILE_INFO_PAD_V * 2)
+	if terrainAsset then
+		local img = Instance.new("ImageLabel")
+		img.Name = "TerrainImage"
+		img.Size = UDim2.fromOffset(side0, side0)
+		img.Position = UDim2.fromOffset(0, 0)
+		img.BackgroundTransparency = 1
+		img.BorderSizePixel = 0
+		img.ScaleType = Enum.ScaleType.Crop
+		img.Image = terrainAsset
+		local ic = Instance.new("UICorner")
+		ic.CornerRadius = Theme.CornerRadius.sm
+		ic.Parent = img
+		img.Parent = tileInfoPanel  -- properties before Parent (NET-004)
+	end
 	local rows = Instance.new("Frame")
-	rows.Name = "Rows"; rows.Size = UDim2.fromScale(1, 1); rows.BackgroundTransparency = 1
+	rows.Name = "Rows"; rows.BackgroundTransparency = 1
+	if terrainAsset then
+		rows.Position = UDim2.fromOffset(side0 + TILE_INFO_IMG_GAP, 0)
+		rows.Size = UDim2.new(1, -(side0 + TILE_INFO_IMG_GAP), 1, 0)
+	else
+		rows.Size = UDim2.fromScale(1, 1)
+	end
 	rows.Parent = tileInfoPanel
 	local layout = Instance.new("UIListLayout", rows)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
 	layout.Padding = UDim.new(0, 1)
 	local rowH = 14
-	makeLabel(rows, t.terrainName or "Clear", { size = UDim2.new(1, 0, 0, rowH),
-		font = Theme.Font.PrimaryBold, textSize = Theme.Text.Body(), order = 1 })
+	local infoRows = {
+		makeLabel(rows, t.terrainName or "Clear", { size = UDim2.new(1, 0, 0, rowH),
+			font = Theme.Font.PrimaryBold, textSize = Theme.Text.Body(), order = 1 }),
+	}
 	local hasEffect = t.effect ~= nil and t.effect ~= "None"
-	makeLabel(rows, if hasEffect then t.effect else "No effect", { size = UDim2.new(1, 0, 0, rowH),
-		textSize = Theme.Text.Small(), color = if hasEffect then Theme.Colors.Warning else Theme.Colors.TextDisabled, order = 2 })
-	makeLabel(rows, string.format("X:%d, Y:%d, Z:%d", t.x or 0, t.y or 0, t.elevation or 0), {
+	table.insert(infoRows, makeLabel(rows, if hasEffect then t.effect else "No effect", { size = UDim2.new(1, 0, 0, rowH),
+		textSize = Theme.Text.Small(), color = if hasEffect then Theme.Colors.Warning else Theme.Colors.TextDisabled, order = 2 }))
+	table.insert(infoRows, makeLabel(rows, string.format("X:%d, Y:%d, Z:%d", t.x or 0, t.y or 0, t.elevation or 0), {
 		size = UDim2.new(1, 0, 0, rowH), font = Theme.Font.Mono, textSize = Theme.Text.Small(),
-		color = Theme.Colors.TextSecondary, order = 3 })
+		color = Theme.Colors.TextSecondary, order = 3 }))
+	-- Beside the terrain image the text column is narrower on phone: a long terrain name
+	-- (e.g. Monolith (Two-way)) ends in "..." instead of being cut mid-letter (2026-11-12).
+	for _, l in infoRows do l.TextTruncate = Enum.TextTruncate.AtEnd end
 	-- Tap: peek card with the terrain effect + move cost.
 	local tap = Instance.new("TextButton")
 	tap.Name = "PeekTap"; tap.Size = UDim2.fromScale(1, 1); tap.BackgroundTransparency = 1
@@ -2358,8 +2440,10 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 			st.Color = Theme.Colors.TextSecondary; st.Thickness = 1
 		end
 
-		-- Top label: name (skipped for split channel — halves already show caster + skill)
-		if not isSplitChannel then
+		-- Top label: round / channel text only. Unit slots show NO name (user ruling 2026-11-12
+		-- 4:59 PM: names caused info overload; the portrait, side colour and RT identify the unit).
+		-- Skipped for split channel (halves already show caster + skill).
+		if not isSplitChannel and not isUnit then
 		local nameL = Instance.new("TextLabel")
 		nameL.Name = "SlotName"
 		nameL.Size = UDim2.new(1, 0, 0.55, 0)
@@ -2422,7 +2506,7 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 			if img then
 				local topZ = img.ZIndex + 1
 				-- Corner layout over the portrait (user rule 2026-10-12):
-				--   NAME  -> bottom strip (full width)
+				--   NAME  -> none on unit slots since 2026-11-12 (nameL is nil; branch kept nil-safe)
 				--   RT    -> upper-left corner
 				--   STAR  -> upper-right corner (Elite gold / Veteran silver)
 				-- Both labels stay pure white + black outline (button text style).

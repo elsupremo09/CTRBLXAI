@@ -44,6 +44,7 @@ local ItemDisplay            = require(Game:WaitForChild("ItemDisplay"))
 local DoctrineInventoryService = require(Game:WaitForChild("DoctrineInventoryService"))
 local StatCalcService = require(Game:WaitForChild("StatCalcService")) -- Info panel values (2026-10-28)
 local GearPassiveSummary = require(Game:WaitForChild("GearPassiveSummary")) -- combined gear passives (2026-10-29)
+local ProgressionService = require(Game:WaitForChild("ProgressionService")) -- INFO tab EXP line (2026-11-13)
 
 local PlayersService = game:GetService("Players")
 
@@ -1034,6 +1035,8 @@ BattleEvents.GetUnitFullStats.OnServerInvoke = function(player, unitId)
 		-- Resources
 		currentHp = unit.currentHp, maxHp = unit.maxHp,
 		currentMp = unit.currentMp, maxMp = unit.maxMp,
+		-- EXP (2026-11-13): same source as the guild Units screen (GetUnitLevelProgress).
+		expProgress = ProgressionService.GetUnitLevelProgress(PLAYER_ID, unitId),
 		-- Race
 		raceId = unit.raceId,
 		raceName = raceEntry and raceEntry.name or nil,

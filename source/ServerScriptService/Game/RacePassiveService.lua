@@ -741,6 +741,23 @@ function RacePassiveService.ProcessZombieRevive(unit, ctPassed, units)
 	-- Deferred require (call-time) of TraitEffectService — this file has no top-level require
 	-- for it, and a load-time one risks a cycle (RacePassiveService -> StatusService ->
 	-- TraitEffectService already exists). Same pattern as OnUnitKO below.
+	-- Dungeon relic RL-09 Second Wind (step 8, rule 271): once per RUN, the first party unit that falls
+	-- gets up with 50% HP on the next tick. Main sets the shared token table _dgSecondWind (one per battle,
+	-- spent = the run's use) on every dungeon party unit; the first KO'd unit claims it.
+	local sw = unit._dgSecondWind
+	if sw and not sw.used and placeForSelfRevive(unit, units) then
+		sw.used = true
+		sw.unitId = unit.id
+		unit.isAlive = true
+		UnitSchema.ClearChannelState(unit)
+		unit._revivedThisBattle = true
+		unit.currentHp = math.max(1, math.ceil((unit.maxHp or 1) * (sw.hpPct or 50) / 100))
+		StatusService.WeakenVenomOnHeal(unit)
+		unit.remainingRt = unit.startingRt or 400
+		print(string.format("[RacePassiveService] Second Wind (relic): %s gets up with %d/%d HP", unit.name, unit.currentHp, unit.maxHp))
+		return true
+	end
+
 	local _tes = (require :: any)(script.Parent.TraitEffectService)
 	if _tes.HasUndyingWillPerk(unit) and not unit.undyingWillUsed then
 		if not unit.undyingWillKoCt then unit.undyingWillKoCt = 0 end

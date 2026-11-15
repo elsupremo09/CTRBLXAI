@@ -11,6 +11,9 @@ local BiomeData = require(
 		:WaitForChild("BiomeData")
 )
 
+-- Renown step 3 (2026-11-13): quest level from Renown Rank (loot_progression 87). Pure module, no deps.
+local RenownRules = require(script.Parent:WaitForChild("RenownRules"))
+
 local QuestGenerator = {}
 
 --------------------------------------------------
@@ -174,13 +177,15 @@ for _, entry in ipairs(QUEST_TYPE_WEIGHTS) do
 end
 
 -- opts (optional; nil keeps the normal board unchanged): noBoss = never a boss quest,
--- noMercuryRoll = skip the 1-in-7 quest mercury roll.
+-- noMercuryRoll = skip the 1-in-7 quest mercury roll. Dungeon rooms (build step 3) also pass
+-- questType / biome / condition / difficulty / fixedLevel; absent = the normal rolls (same RNG order).
 local function generateOneQuest(questIndex, playerLevel, rng, opts)
 	-- 1. Quest type (weighted)
-	local questType = weightedPick(rng, if opts and opts.noBoss then NON_BOSS_TYPE_WEIGHTS else QUEST_TYPE_WEIGHTS)
+	local questType = if opts and opts.questType then opts.questType
+		else weightedPick(rng, if opts and opts.noBoss then NON_BOSS_TYPE_WEIGHTS else QUEST_TYPE_WEIGHTS)
 
 	-- 2. Biome (uniform from all biomes — prototype has no gating)
-	local biome = pickRandom(rng, ALL_BIOMES)
+	local biome = if opts and opts.biome then opts.biome else pickRandom(rng, ALL_BIOMES)
 
 	-- 3. Template from quest type mapping
 	local templates = QUEST_TEMPLATES[questType]
@@ -189,16 +194,20 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 	-- 4. Battle condition from biome's condition weights
 	local biomeInfo = BiomeData[biome]
 	local condition = "Clear"
-	if biomeInfo and biomeInfo.battleConditionWeights then
+	if opts and opts.condition then
+		condition = opts.condition
+	elseif biomeInfo and biomeInfo.battleConditionWeights then
 		condition = weightedPickMap(rng, biomeInfo.battleConditionWeights)
 	end
 
 	-- 5. Difficulty (1-5 uniform for prototype)
-	local difficulty = rng:NextInteger(1, 5)
+	local difficulty = if opts and opts.difficulty then opts.difficulty else rng:NextInteger(1, 5)
 
-	-- 6. Recommended level: playerLevel + (difficulty - 1) * 3, ± 2
-	local baseLvl = playerLevel + (difficulty - 1) * 3
-	local recommendedLvl = math.max(1, baseLvl + rng:NextInteger(-2, 2))
+	-- 6. Recommended level (loot_progression 87, Renown step 3 2026-11-13): playerLevel is the
+	-- Renown Rank. Rank + (difficulty - 3) x 2 +/- 1, kept 1-99. Enemy levels below are clamped <= 99.
+	local recommendedLvl = if opts and opts.fixedLevel then opts.fixedLevel
+		else RenownRules.QuestLevel(playerLevel, difficulty, rng:NextInteger(-1, 1))
+	local clampLvl = RenownRules.ClampEnemyLevel
 
 	-- 7. Player slots
 	local slotOptions = QUEST_PLAYER_SLOTS[questType]
@@ -211,10 +220,10 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 	if questType == "Boss" then
 		-- Boss quests always have 1 Boss + supporting Grunts
 		local bossLvl = recommendedLvl + rng:NextInteger(0, 2)
-		table.insert(enemyTypes, { type = "Boss", level = bossLvl, count = 1 })
+		table.insert(enemyTypes, { type = "Boss", level = clampLvl(bossLvl), count = 1 })
 		local gruntCount = rng:NextInteger(1, 2)
 		local gruntLvl = recommendedLvl + rng:NextInteger(-2, 0)
-		table.insert(enemyTypes, { type = "Grunt", level = math.max(1, gruntLvl), count = gruntCount })
+		table.insert(enemyTypes, { type = "Grunt", level = clampLvl(gruntLvl), count = gruntCount })
 		totalEnemyCount = 1 + gruntCount
 	else
 		local roster = ENEMY_ROSTER_BY_DIFFICULTY[difficulty]
@@ -224,15 +233,15 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 
 		if gruntCount > 0 then
 			local gruntLvl = recommendedLvl + rng:NextInteger(-2, 0)
-			table.insert(enemyTypes, { type = "Grunt", level = math.max(1, gruntLvl), count = gruntCount })
+			table.insert(enemyTypes, { type = "Grunt", level = clampLvl(gruntLvl), count = gruntCount })
 		end
 		if vetCount > 0 then
 			local vetLvl = recommendedLvl + rng:NextInteger(-1, 1)
-			table.insert(enemyTypes, { type = "Veteran", level = math.max(1, vetLvl), count = vetCount })
+			table.insert(enemyTypes, { type = "Veteran", level = clampLvl(vetLvl), count = vetCount })
 		end
 		if eliteCount > 0 then
 			local eliteLvl = recommendedLvl + rng:NextInteger(0, 2)
-			table.insert(enemyTypes, { type = "Elite", level = math.max(1, eliteLvl), count = eliteCount })
+			table.insert(enemyTypes, { type = "Elite", level = clampLvl(eliteLvl), count = eliteCount })
 		end
 
 		totalEnemyCount = gruntCount + vetCount + eliteCount
@@ -256,7 +265,7 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 			existing.count = existing.count + needed
 		else
 			local gruntLvl = recommendedLvl + rng:NextInteger(-2, 0)
-			table.insert(enemyTypes, { type = "Grunt", level = math.max(1, gruntLvl), count = needed })
+			table.insert(enemyTypes, { type = "Grunt", level = clampLvl(gruntLvl), count = needed })
 		end
 		totalEnemyCount = enemyTarget
 	elseif totalEnemyCount > enemyTarget then
@@ -398,6 +407,37 @@ function QuestGenerator.GenerateTestArena(level)
 	return quest
 end
 
+-- DUNGEON ROOM BATTLE (Dungeon build step 3, 2026-11-13; project_rules 121/263): the room gives the
+-- type (Boss room = Boss quest, else a normal non-boss type), the run gives biome, fixed weather and
+-- difficulty, DungeonService gives the level (quest level + floor - 1). No quest gold and no quest
+-- mercury (dungeon battles have no guaranteed rewards); battle completion and kill gold still apply.
+function QuestGenerator.GenerateDungeonBattle(spec)
+	local rng = Random.new(spec.seed)
+	local quest = generateOneQuest(0, spec.level, rng, {
+		noBoss = not spec.isBoss, noMercuryRoll = true,
+		questType = if spec.isBoss then "Boss" else nil,
+		biome = spec.biome, condition = spec.condition,
+		difficulty = spec.difficulty, fixedLevel = spec.level,
+	})
+	quest.id = "dungeon_" .. tostring(spec.nodeId)
+	quest.isDungeon = true
+	quest.dungeonNodeId = spec.nodeId
+	quest.dungeonPlayed = spec.played
+	quest.dungeonDropMult = spec.dropMultiplier
+	quest.dungeonLootScale = spec.lootScale
+	quest.dungeonRarityBonus = spec.rarityFortuneBonus -- Elite/Boss rarity step (0 on normal rooms)
+	quest.dungeonMapSeed = spec.seed -- same room = same battlefield on replay (project_rules 266)
+	quest.dungeonStage = spec.stage or 1 -- stages (rule 277)
+	quest.dungeonGoldMult = spec.goldMult or 1 -- stage gold x1.25 / x1.5 (rule 263)
+	quest.rewards.questGold = 0
+	quest.rewards.gold = { min = 0, max = 0 }
+	quest.rewards.mercury = nil
+	print(string.format("[QuestGenerator] Dungeon room %s (%s): %s | %s | Lv %d | %d enemies | %s",
+		tostring(spec.nodeId), tostring(spec.played), quest.questType, quest.biome, quest.recommendedLvl,
+		quest.enemyCount, quest.condition))
+	return quest
+end
+
 -- ELITE ENCOUNTERS (daily systems decisions 10-14, USER DECISION 2026-11-01; loot_progression 69).
 -- About 1 in 30 normal quest battles (0.034) is an elite encounter, hidden until the departure
 -- briefing. Anti-fishing (DEV DEFAULT 2026-11-01, Simulator finding): the roll is fixed by the
@@ -439,16 +479,17 @@ function QuestGenerator.MakeEliteEncounter(quest)
 			table.insert(kept, et)
 		end
 	end
-	table.insert(kept, 1, { type = "Elite", level = recLvl + 2, count = 1, isLeader = true })
+	local leaderLvl = RenownRules.ClampEnemyLevel(recLvl + 2) -- <= 99 (loot_progression 87)
+	table.insert(kept, 1, { type = "Elite", level = leaderLvl, count = 1, isLeader = true })
 	quest.enemyTypes = kept
 	quest.enemyCount = oldTotal + 1
 	quest.isEliteEncounter = true
-	print(string.format("[QuestGenerator] Elite encounter: %s | %d enemies, Elite leader Lv %d", quest.name, quest.enemyCount, recLvl + 2))
+	print(string.format("[QuestGenerator] Elite encounter: %s | %d enemies, Elite leader Lv %d", quest.name, quest.enemyCount, leaderLvl))
 	return quest
 end
 
 --- Generate 3 quests for the quest board.
---- @param playerLevel number Current player level (prototype: 1)
+--- @param playerLevel number Renown Rank (quest level = Rank + (difficulty - 3) x 2 +/- 1)
 --- @param seed number Base seed (e.g. os.time())
 --- @return table { quest1, quest2, quest3 }
 function QuestGenerator.Generate(playerLevel, seed)

@@ -1,0 +1,76 @@
+--!strict
+-- DungeonRelicBar.lua
+-- CTRBLXAI | Dungeon relics on the map screen (Dungeon build step 8, 2026-11-14; project_rules 271/275).
+-- Display only: relic list comes from the server state (run.relics), nothing is sent back except
+-- the AckRelic action when a "Relic found" popup closes. Only approved text (rule 275):
+--   RL-UI-HEAD "Relics", RL-UI-NONE "No relics yet", RL-UI-RARITY "{rarity} relic", RL-UI-USED "Used",
+--   RL-UI-FOUND-T "Relic found!", RL-UI-FOUND-1 "{name}", RL-UI-FOUND-2 "{effect}",
+--   RL-UI-FOUND-3 "Lasts until this run ends.", Boss handover "The Boss's hoard glints. Relic found: {name}!",
+--   RL-UI-END "Relics fade when you leave the dungeon."
+-- Placeholder icons: a round gem coloured by rarity (Theme.GetRarityColor), no new art.
+
+local uiFolder = script.Parent
+local Theme: any = (require :: any)(uiFolder:WaitForChild("Theme", 10))
+
+local Bar = {}
+
+Bar.END_LINE = "Relics fade when you leave the dungeon." -- RL-UI-END
+
+
+-- Bar.Draw (the map relic row) removed 2026-11-15: relics are listed in the Bag popup now (Tester A10).
+
+--- "Relic found" popup for run.relicFound = { id, boss }. onClose sends AckRelic.
+function Bar.ShowFound(found: any, relics: { any }?, deps: any, onClose: () -> ())
+	local r: any = nil
+	for _, x in relics or {} do if x.id == found.id then r = x end end
+	if not r then onClose() return end
+	local lines: { any }
+	if found.boss then
+		lines = {
+			{ `The Boss's hoard glints. Relic found: {r.name}!`, Theme.Text.Heading(), Theme.Colors.TextGold, true },
+			{ tostring(r.text) },
+			{ "Lasts until this run ends.", nil, Theme.Colors.TextSecondary },                  -- RL-UI-FOUND-3
+		}
+	else
+		lines = {
+			{ "Relic found!", Theme.Text.Heading(), Theme.Colors.TextGold, true },             -- RL-UI-FOUND-T
+			{ tostring(r.name), nil, Theme.GetRarityColor(r.rarity or "Common"), true },      -- RL-UI-FOUND-1
+			{ `{r.rarity} relic`, nil, Theme.Colors.TextSecondary },                           -- RL-UI-RARITY
+			{ tostring(r.text) },                                                            -- RL-UI-FOUND-2
+			{ "Lasts until this run ends.", nil, Theme.Colors.TextSecondary },                 -- RL-UI-FOUND-3
+		}
+	end
+	-- Curse paired with this relic (rule 271): its name + effect in red (existing strings only; the
+	-- "comes with a curse" sentence is DRAFT text, not built until approved).
+	if found.curse then
+		for _, x in relics or {} do
+			if x.id == found.curse then
+				table.insert(lines, { tostring(x.name), nil, Theme.Colors.Danger, true })
+				table.insert(lines, { tostring(x.text), nil, Theme.Colors.Danger })
+			end
+		end
+	end
+	deps.popup("RelicFound", lines, { { icon = "Back", onTap = function() deps.closeOverlay(); onClose() end } })
+end
+
+--- Boss pick 1 of 2 (rule 271, relics v2). pick = { a = relic view (Boss relic), b = relic view (normal) }.
+--- onPick("a" | "b"). ALL TEXT HERE IS DRAFT (BP-*), see DRAFT_dungeon_curse_popup_text_20261115.md.
+function Bar.ShowBossPick(pick: any, deps: any, onPick: (string) -> ())
+	local lines: { any } = {
+		{ "The Boss guards two relics. Take one.", Theme.Text.Heading(), Theme.Colors.TextGold, true }, -- BP-T (DRAFT)
+	}
+	local buttons: { any } = {}
+	for _, k in { "a", "b" } do
+		local r = pick[k]
+		if r then
+			table.insert(lines, { tostring(r.name), nil, Theme.GetRarityColor(r.rarity or "Common"), true })
+			table.insert(lines, { `{r.rarity} relic`, nil, Theme.Colors.TextSecondary })            -- RL-UI-RARITY
+			table.insert(lines, { tostring(r.text) })
+			table.insert(buttons, { text = `Take {r.name}`, style = if k == "a" then "Primary" else "Secondary", -- BP-TAKE (DRAFT)
+				onTap = function() deps.closeOverlay(); onPick(k) end })
+		end
+	end
+	deps.popup("BossPick", lines, buttons)
+end
+
+return table.freeze(Bar)

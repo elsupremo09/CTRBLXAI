@@ -1,0 +1,275 @@
+--!strict
+-- DungeonEventPanel.lua
+-- CTRBLXAI | Dungeon Event room panel (Dungeon build step 7a, 2026-11-14; project_rules 272 / 275).
+-- Split out of DungeonScreen.lua (990 lines) so that file stays under 1000.
+--
+-- Display + input only (ARC-001 / SEC-002): the client sends a choice key, the server resolves and
+-- applies it (DungeonAction EventState / EventChoose) and answers with fresh state + result lines.
+-- TEXT: all strings approved (events approved 2026-11-14 10:19 AM, workspace DRAFT_dungeon_events_20261114.md;
+-- shared EV-UI strings rule 275). Ids in comments.
+
+local uiFolder = script.Parent
+local Theme: any = (require :: any)(uiFolder:WaitForChild("Theme", 10))
+local GuildScreen: any = (require :: any)(uiFolder:WaitForChild("GuildScreen", 10))
+
+local DungeonEventPanel = {}
+
+export type Ctx = {
+	gui: Instance,
+	act: (data: { [string]: any }) -> any?,
+	onFight: () -> (),     -- the event turned into a fight: launch the room battle
+	onDone: () -> (),      -- room cleared: close + re-render the map
+	lastError: (() -> string?)?, -- step 7b (Tester W3): last server refusal text
+}
+
+-- Approved event text (title, story, choice labels). {cost} is filled from the server quote.
+local EVENTS = {
+	["EV-01"] = { "Forgotten Cache", "A rotted crate hides under the rubble. Something still glints inside.",
+		{ open = "Open it", leave = "Leave it" }, { "open", "leave" } },
+	["EV-02"] = { "Healing Spring", "Clear water bubbles from the stone. It feels warm to the touch.",
+		{ drink = "Drink", flask = "Fill a flask", move = "Move on" }, { "drink", "flask", "move" } },
+	["EV-03"] = { "Wandering Peddler", "A hooded peddler waves you over. \"Charges, fresh charges. Cheap.\"",
+		{ buy = "Buy refills ({cost}g)", no = "No thanks" }, { "buy", "no" } },
+	["EV-04"] = { "Fallen Adventurer", "A long-dead adventurer clutches a coin pouch. No one will miss it now.",
+		{ pouch = "Take the pouch", bury = "Bury them" }, { "pouch", "bury" } },
+	["EV-05"] = { "Lucky Shrine", "A tiny shrine to a forgotten god of fortune. Coins cover the altar.",
+		{ offer = "Leave an offering (100g)", walk = "Walk away" }, { "offer", "walk" } },
+	["EV-06"] = { "Blood Altar", "A stained altar hums with dark power. It asks for blood.",
+		{ offer = "Offer blood", refuse = "Refuse" }, { "offer", "refuse" } },
+	["EV-07"] = { "Sealed Door", "A heavy door, sealed with old chains. Something moves behind it.",
+		{ ["break"] = "Break the seal", leave = "Leave it shut" }, { "break", "leave" } },
+	["EV-08"] = { "Gambler's Table", "A grinning skeleton shuffles cards. \"One game, traveler?\"",
+		{ bet = "Bet 200g", walk = "Walk away" }, { "bet", "walk" } },
+	["EV-09"] = { "Collapsing Tunnel", "The ceiling groans. Rocks start falling all around you.",
+		{ run = "Run for it", shield = "Shield the weakest" }, { "run", "shield" } },
+	["EV-10"] = { "Cutpurse Ambush", "Shadows close in. \"Your bag, or your blood.\"",
+		{ hand = "Hand over loot", fight = "Fight" }, { "hand", "fight" } },
+}
+
+local MAT_NAME = { mercury = "Mercury" }
+
+local overlay: Instance? = nil
+local lastCtx: Ctx? = nil
+
+local function close()
+	if overlay then
+		overlay:Destroy()
+		overlay = nil
+	end
+end
+
+local function text(parent: Instance?, s: string, size: number, color: Color3, bold: boolean?): TextLabel
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.BorderSizePixel = 0
+	l.Font = if bold then Theme.Font.PrimaryBold else Theme.Font.Primary
+	l.TextSize = math.max(10, size) -- 10 px phone floor
+	l.TextColor3 = color
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextWrapped = true
+	l.Text = s
+	l.Size = UDim2.new(1, 0, 0, 0)
+	l.AutomaticSize = Enum.AutomaticSize.Y
+	l.ZIndex = 22
+	l.Parent = parent
+	return l
+end
+
+-- Result line text (EV-UI-*). Returns nil for a line kind with no text.
+local function lineText(l: any): string?
+	if l.k == "bagGold" then
+		return if l.n >= 0 then `+{l.n} gold (in your bag)` else `−{-l.n} gold`  -- EV-UI-GOLD
+	elseif l.k == "realGold" then
+		return if l.n >= 0 then `+{l.n} gold` else `−{-l.n} gold`                  -- EV-UI-GOLD-REAL
+	elseif l.k == "gear" then
+		return `Found {l.name or "an item"}! It's in your bag.`                     -- EV-UI-GEAR
+	elseif l.k == "mat" then
+		return `+{l.n} {MAT_NAME[l.id] or tostring(l.id)} (in your bag)`            -- EV-UI-MAT
+	elseif l.k == "heal" then
+		return `Your party heals {l.n}%.`                                           -- EV-UI-HEAL
+	elseif l.k == "hurt" then
+		return `Your party loses {l.n}% HP.`                                        -- EV-UI-HURT
+	elseif l.k == "revive" then
+		return `{l.name or "?"} is back on their feet.`                             -- EV-UI-REVIVE
+	elseif l.k == "loot" then
+		return string.format("Loot ×%.2f", tonumber(l.mult) or 1)                   -- EV-UI-LOOT
+	elseif l.k == "fight" then
+		return "Enemies attack!"                                                     -- EV-UI-FIGHT
+	elseif l.k == "nothing" then
+		return "Nothing happens."                                                    -- EV-UI-NOTHING
+	end
+	return nil
+end
+
+local function shell(name: string): (Instance, Frame)
+	close()
+	local o = Instance.new("TextButton")
+	o.Name = name
+	o.Text = ""
+	o.AutoButtonColor = false
+	o.Modal = true
+	o.Size = UDim2.fromScale(1, 1)
+	o.BackgroundColor3 = Color3.new(0, 0, 0)
+	o.BackgroundTransparency = 0.4
+	o.BorderSizePixel = 0
+	o.ZIndex = 20
+	local box = Instance.new("Frame")
+	box.Name = "Box"
+	box.AnchorPoint = Vector2.new(0.5, 0.5)
+	box.Position = UDim2.fromScale(0.5, 0.5)
+	box.Size = UDim2.new(0.8, 0, 0, 0)
+	box.AutomaticSize = Enum.AutomaticSize.Y
+	box.BackgroundColor3 = Theme.Colors.PanelRaised
+	box.BorderSizePixel = 0
+	box.ZIndex = 21
+	local maxW = Instance.new("UISizeConstraint")
+	maxW.MaxSize = Vector2.new(480, math.huge)
+	maxW.Parent = box
+	local cr = Instance.new("UICorner")
+	cr.CornerRadius = Theme.CornerRadius.md
+	cr.Parent = box
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 14)
+	pad.PaddingRight = UDim.new(0, 14)
+	pad.PaddingTop = UDim.new(0, 10)
+	pad.PaddingBottom = UDim.new(0, 10)
+	pad.Parent = box
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 6)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = box
+	box.Parent = o
+	return o, box
+end
+
+local function buttonRow(box: Frame, order: number): Frame
+	local row = Instance.new("Frame")
+	row.Name = "Buttons"
+	row.Size = UDim2.new(1, 0, 0, 0)
+	row.AutomaticSize = Enum.AutomaticSize.Y
+	row.BackgroundTransparency = 1
+	row.BorderSizePixel = 0
+	row.LayoutOrder = order
+	local rl = Instance.new("UIListLayout")
+	rl.FillDirection = Enum.FillDirection.Horizontal
+	rl.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	rl.Wraps = true
+	rl.Padding = UDim.new(0, 6)
+	rl.SortOrder = Enum.SortOrder.LayoutOrder
+	rl.Parent = row
+	row.Parent = box
+	return row
+end
+
+local renderResult: (ev: any, res: any) -> () = function() end
+
+local function choose(ev: any, key: string)
+	local c = lastCtx
+	if not c then return end
+	local res = c.act({ action = "EventChoose", choice = key })
+	if res and res.eventResult then renderResult(ev, res.eventResult) return end
+	-- Tester 7a W3: refused (e.g. "Not enough gold") -> show the approved server message in the panel.
+	if not res and c.lastError then
+		local msg = c.lastError()
+		if type(msg) == "string" and msg ~= "" and overlay then
+			local box = overlay:FindFirstChild("Box")
+			local old = box and box:FindFirstChild("Refusal")
+			if old then old:Destroy() end
+			if box then
+				local lbl = text(box, msg, Theme.Text.Body(), Theme.Colors.Danger or Theme.Colors.TextPrimary, true)
+				lbl.Name = "Refusal"
+				lbl.LayoutOrder = 99
+			end
+		end
+	end
+end
+
+local function renderChoices(ev: any)
+	local c = lastCtx
+	if not c then return end
+	local def = EVENTS[ev.id]
+	if not def then return end
+	local o, box = shell("EventPanel")
+	local t = text(box, def[1], Theme.Text.Heading(), Theme.Colors.TextGold, true)  -- EV-UI-TITLE
+	t.LayoutOrder = 1
+	local s = text(box, def[2], Theme.Text.Body(), Theme.Colors.TextPrimary)
+	s.LayoutOrder = 2
+	local row = buttonRow(box, 3)
+	for i, key in def[4] do
+		if key == "flask" and not ev.hasKO then continue end -- shown only if a unit is KO'd (draft)
+		local label = def[3][key]
+		if key == "buy" then
+			local q = ev.refill
+			if not q or (q.missing or 0) <= 0 then continue end -- nothing to refill: no buy choice
+			label = string.gsub(label, "{cost}", tostring(if (q.cost or 0) > 0 then q.cost else (q.need or 0)))
+		end
+		local style = if i == 1 then "Primary" else "Secondary"
+		local b = Theme.MakeBarButton(nil, label, style, function() choose(ev, key) end, {
+			name = "Btn_" .. key, minHeight = GuildScreen.ROW_H })
+		b.LayoutOrder = i
+		b.Parent = row
+	end
+	o.Parent = c.gui -- parent last (NET-004)
+	overlay = o
+end
+
+renderResult = function(ev: any, res: any)
+	local c = lastCtx
+	if not c then return end
+	local def = EVENTS[ev.id] or { "", "" }
+	local o, box = shell("EventResult")
+	local t = text(box, def[1], Theme.Text.Heading(), Theme.Colors.TextGold, true)
+	t.LayoutOrder = 1
+	local n = 2
+	for _, l in (res and res.lines) or {} do
+		local s = lineText(l)
+		if s then
+			local lbl = text(box, s, Theme.Text.Body(), Theme.Colors.TextPrimary)
+			lbl.LayoutOrder = n
+			n += 1
+		end
+	end
+	local row = buttonRow(box, 100)
+	local fight = res and res.fight
+	local b = Theme.MakeBarButton(nil, "Continue", "Primary", function()               -- EV-UI-CONT
+		close()
+		if fight then c.onFight() else c.onDone() end
+	end, { name = "Btn_Continue", minHeight = GuildScreen.ROW_H })
+	b.Parent = row
+	o.Parent = c.gui
+	overlay = o
+end
+
+--- Open the Event panel for the current room. Shows the choices, or the saved result if already chosen.
+function DungeonEventPanel.Open(ctx: Ctx)
+	lastCtx = ctx
+	local res = ctx.act({ action = "EventState" })
+	local ev = res and res.eventRoom
+	if not ev then return end
+	if ev.done then
+		renderResult(ev, { lines = ev.result or {}, fight = ev.fight })
+	else
+		renderChoices(ev)
+	end
+end
+
+DungeonEventPanel.Close = close
+
+function DungeonEventPanel.IsOpen(): boolean
+	return overlay ~= nil
+end
+
+-- Test hooks (simulated taps don't register): same paths as taps.
+DungeonEventPanel._Test = table.freeze({
+	choose = function(key: string)
+		local c = lastCtx
+		if not c then return nil end
+		local res = c.act({ action = "EventState" })
+		local ev = res and res.eventRoom
+		if ev then choose(ev, key) end
+		return ev
+	end,
+	overlayName = function() return overlay and overlay.Name or nil end,
+})
+
+return table.freeze(DungeonEventPanel)

@@ -18,8 +18,8 @@
 -- WRITES:
 --   Expedition progress (which battle in the series, accumulated earned XP/gold,
 --   loot held pending). It commits per-battle rewards through the EXISTING
---   RewardService path on each battle VICTORY, and Guild XP through the EXISTING
---   GuildService on completion. It opens no new store.
+--   RewardService path on each battle VICTORY, and Renown through the injected
+--   RenownService on completion (Guild XP retired, Renown step 8). It opens no new store.
 --
 -- MUST NOT OWN:
 --   The battle loop (BattleCoordinator / Main), reward GENERATION
@@ -103,7 +103,6 @@ local ExploreService = {}
 --------------------------------------------------
 
 local WIPEOUT_GOLD_KEEP = 0.50     -- keep 50% of gold earned on wipeout/escape
-local DEFEAT_GUILD_XP_PENALTY = 100 -- unit_progression 94 (Locked; user approved 2026-10-07)
 local VICTORY_GOLD_KEEP = 1.00     -- keep 100% on victory
 local EXPLORATION_GOLD_BASE = 25   -- economy_framework Battle Completion Gold (Exploration)
 local GOLD_MAP_LEVEL_DIVISOR = 50  -- Base × (1 + Map Level / 50)
@@ -115,14 +114,31 @@ local DEFAULT_SERIES_LENGTH = 3    -- LOCKED (unit_progression 'Expedition Lengt
 --------------------------------------------------
 
 local _rewardService: any = nil     -- GenerateRewards(playerId, mapLevel, opportunityId) — EXISTING pipeline
-local _guildService: any = nil      -- AwardGuildXp(playerId, contentType, contentLevel, bonus?)
 local _currency: any = nil          -- CurrencyService.AsProvider(): AddGold (gold is credited here)
 local _unitXpSink: any = nil        -- how a battle's kill XP reaches the EXPEDITION SQUAD (see header + ReportBattleResult)
+local _renownService: any = nil     -- Renown step 6: EnsureConverted + Award (unit_progression 98)
 
 function ExploreService.SetRewardService(svc: any) _rewardService = svc end
-function ExploreService.SetGuildService(svc: any) _guildService = svc end
 function ExploreService.SetCurrencyProvider(svc: any) _currency = svc end
 function ExploreService.SetUnitXpSink(fn: any) _unitXpSink = fn end
+function ExploreService.SetRenownService(svc: any) _renownService = svc end
+
+-- RENOWN (Renown step 6, 2026-11-13; unit_progression 98, loot_progression 74/90).
+-- An expedition pays Renown ONCE: Exploration 250 after the 3rd (last) win, or the
+-- 3x penalty (-750, floored at the start of the Rank) once when the run fails.
+-- No Renown per battle. Quest level for the anti-farm band = the expedition map level.
+local function awardExpeditionRenown(playerId: string, success: boolean, mapLevel: number): any
+	if not (_renownService and _renownService.Award) then return nil end
+	local ok, res = pcall(function()
+		if _renownService.EnsureConverted then _renownService.EnsureConverted(playerId) end
+		return _renownService.Award(playerId, { success = success, kind = "Exploration", questLevel = mapLevel })
+	end)
+	if not ok then
+		warn("[ExploreService] Renown award failed: " .. tostring(res))
+		return nil
+	end
+	return res
+end
 
 --------------------------------------------------
 -- STATE
@@ -314,12 +330,7 @@ function ExploreService.ReportBattleResult(playerId: string, outcome: string, ba
 			end
 		end
 
-		-- Guild XP: full, on victory (LOCKED). Content type defaults to Normal.
-		local guildResult = nil
-		if _guildService and _guildService.AwardGuildXp then
-			local contentType = type(ctx.contentType) == "string" and ctx.contentType or "Normal"
-			guildResult = _guildService.AwardGuildXp(playerId, contentType, s.mapLevel)
-		end
+		-- Guild XP retired (Renown step 8, loot_progression 75): Renown pays once after the last win.
 
 		-- Advance the series.
 		local finished = (s.battleIndex >= s.seriesLength)
@@ -327,6 +338,7 @@ function ExploreService.ReportBattleResult(playerId: string, outcome: string, ba
 
 		if finished then
 			s.active = false
+			local renownResult = awardExpeditionRenown(playerId, true, s.mapLevel) -- once, after the last win
 			print(string.format(
 				"[ExploreService] VICTORY — expedition COMPLETE for %s | battles %d | earned XP %d | gold %d | loot %d",
 				playerId, s.seriesLength, s.earnedXp, s.earnedGold, s.committedLoot))
@@ -338,8 +350,9 @@ function ExploreService.ReportBattleResult(playerId: string, outcome: string, ba
 				killXp = killXp,
 				committedLoot = committedThisBattle,
 				totals = { earnedXp = s.earnedXp, earnedGold = s.earnedGold, committedLoot = s.committedLoot },
-				guild = guildResult,
 				rewardResults = ctx._rewardResults,
+				renown = renownResult,
+				explorationWin = { index = s.seriesLength, total = s.seriesLength },
 			}
 		end
 
@@ -354,14 +367,15 @@ function ExploreService.ReportBattleResult(playerId: string, outcome: string, ba
 			killXp = killXp,
 			committedLoot = committedThisBattle,
 			totals = { earnedXp = s.earnedXp, earnedGold = s.earnedGold, committedLoot = s.committedLoot },
-			guild = guildResult,
 			rewardResults = ctx._rewardResults,
+			-- No Renown yet (paid after the last win); step 7 shows "Exploration {index}/{total} ...".
+			explorationWin = { index = s.battleIndex - 1, total = s.seriesLength },
 		}
 
 	elseif outcome == "wipeout" or outcome == "escape" then
 		-- Defeat rule (LOCKED): keep kill XP (already added above), keep 50% of
 		-- THIS battle's kill gold, lose ALL loot (none generated), no quest
-		-- progress, Guild XP penalty 100 (unit_progression 94). Expedition ends.
+		-- progress, Renown penalty (loot_progression 90). Expedition ends.
 		local keptGold = math.floor(goldEarned * WIPEOUT_GOLD_KEEP)
 		s.earnedGold += keptGold
 		if _currency and _currency.AddGold and keptGold > 0 then
@@ -369,17 +383,13 @@ function ExploreService.ReportBattleResult(playerId: string, outcome: string, ba
 		end
 
 		-- NO loot generated/committed (only victory commits loot — LOCKED).
-		-- FLAG-E2 RESOLVED (user approved 2026-10-07): lose 100 Guild XP, floored
-		-- at the current Guild level's start (GuildService.DeductGuildXp).
-		local guildXpLost = 0
-		if _guildService and _guildService.DeductGuildXp then
-			guildXpLost = _guildService.DeductGuildXp(playerId, DEFEAT_GUILD_XP_PENALTY)
-		end
+		-- The old Guild XP penalty is retired (Renown step 8): the failed run costs Renown instead.
 
 		s.active = false
+		local renownResult = awardExpeditionRenown(playerId, false, s.mapLevel) -- failed run: once
 		print(string.format(
-			"[ExploreService] %s — expedition ENDED for %s | kept %d XP | kept 50%% kill gold (+%d) | loot LOST | no quest progress | Guild XP -%d",
-			string.upper(outcome), playerId, s.earnedXp, keptGold, guildXpLost))
+			"[ExploreService] %s — expedition ENDED for %s | kept %d XP | kept 50%% kill gold (+%d) | loot LOST | no quest progress",
+			string.upper(outcome), playerId, s.earnedXp, keptGold))
 
 		return true, {
 			outcome = outcome,
@@ -389,8 +399,7 @@ function ExploreService.ReportBattleResult(playerId: string, outcome: string, ba
 			killXp = killXp,
 			committedLoot = 0,
 			lootLost = true,
-			guildXpPenaltyApplied = true,
-			guildXpLost = guildXpLost,
+			renown = renownResult,
 			totals = { earnedXp = s.earnedXp, earnedGold = s.earnedGold, committedLoot = s.committedLoot },
 		}
 
@@ -415,9 +424,12 @@ function ExploreService.AbortExpedition(playerId: string)
 		return false
 	end
 	s.active = false
+	-- Abandoning partway = a failed run (user ruling 2026-11-13 3:01 PM): -750 once, floored, never drops a Rank.
+	-- s.active is cleared first, so a later wipeout/escape report can't award again (and vice versa).
+	local renown = awardExpeditionRenown(playerId, false, s.mapLevel)
 	print(string.format("[ExploreService] ABORTED expedition for %s | banked XP %d gold %d loot %d",
 		playerId, s.earnedXp, s.earnedGold, s.committedLoot))
-	return true
+	return true, renown
 end
 
 --------------------------------------------------

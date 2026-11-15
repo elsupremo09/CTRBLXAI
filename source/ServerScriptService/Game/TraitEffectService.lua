@@ -1198,8 +1198,10 @@ end
 -- modifier applies turn 1 (flagged for designer confirmation).
 function TraitEffectService.GetAttackRangeModifier(unit)
 	if type(unit) ~= "table" then return 0 end
-	if unit._movedLastTurn then return 0 end -- moved last turn -> no modifier
-	local d = 0
+	-- Dungeon relics (relics v2): RL-25 Longshot / RL-43 Chains / RL-49-50 Creeds, battle-only, always on.
+	local relic = tonumber(unit._dgRangeBonus) or 0
+	if unit._movedLastTurn then return relic end -- moved last turn -> no trait modifier
+	local d = relic
 	if hasTraitId(unit, "TRAIT-P-042") then d = d + 1 end  -- Sniper's Perch
 	if hasTraitId(unit, "TRAIT-P-112") then d = d + 2 end  -- Sniper's Perch (Greater)
 	if hasTraitId(unit, "TRAIT-F-042") then d = d - 1 end  -- Restless

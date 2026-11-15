@@ -4114,20 +4114,55 @@ end
 -- feet (an effect emitter, a trailing bone), the bbox bottom sits under the real
 -- feet and the model floats slightly. The [PIVOT-CHECK] edit-mode snippet flags
 -- any such model (negative gap) at authoring time.
+-- TRUE FEET (2026-11-15 weapon-float fix): lowest bottom of the BODY only.
+-- Skips parts inside an Accessory or Tool (weapons, shields, capes hang below the
+-- feet and made armed units float) and the HumanoidRootPart. Prefers R15
+-- LeftFoot/RightFoot; falls back to the bounding-box bottom if no body part found.
+local function partBottomY(p)
+	local cf, s = p.CFrame, p.Size
+	local hy = math.abs(cf.RightVector.Y) * s.X / 2 + math.abs(cf.UpVector.Y) * s.Y / 2 + math.abs(cf.LookVector.Y) * s.Z / 2
+	return cf.Position.Y - hy
+end
+local function insideGear(inst, model)
+	local a = inst.Parent
+	while a and a ~= model do
+		if a:IsA("Accessory") or a:IsA("Tool") then return true end
+		a = a.Parent
+	end
+	return false
+end
+function GameConstants.ModelFeetY(model)
+	local feet
+	for _, n in ipairs({ "LeftFoot", "RightFoot" }) do
+		local f = model:FindFirstChild(n)
+		if f and f:IsA("BasePart") then
+			local b = partBottomY(f)
+			if not feet or b < feet then feet = b end
+		end
+	end
+	if feet then return feet end
+	for _, p in ipairs(model:GetDescendants()) do
+		if p:IsA("BasePart") and p.Name ~= "HumanoidRootPart" and p.Transparency < 1 and not insideGear(p, model) then
+			local b = partBottomY(p)
+			if not feet or b < feet then feet = b end
+		end
+	end
+	if feet then return feet end
+	local bboxCF, bboxSize = model:GetBoundingBox()
+	return bboxCF.Position.Y - bboxSize.Y / 2
+end
+
 function GameConstants.GroundModelPivotCFrame(model, wx, feetY, wz, facingCFrame)
 	local pivot = model:GetPivot()
-	local bboxCF, bboxSize = model:GetBoundingBox()
-	local bboxBottomY = bboxCF.Position.Y - bboxSize.Y / 2
+	local bboxBottomY = GameConstants.ModelFeetY(model)
 	local gap = pivot.Position.Y - bboxBottomY  -- >=0 when pivot is above true feet
 	local rot = facingCFrame or CFrame.new()
 	-- Keep the facing rotation, replace the position so true feet sit on feetY.
 	return CFrame.new(wx, feetY + gap, wz) * (rot - rot.Position)
 end
 
--- ROSTER CAPACITY (user ruling 2026-11-10): starting unit capacity 10. A future Guild Level
--- (max 99) adds capacity every 5 levels; that curve is not decided, so only the base exists.
--- Read through GuildMenuService.GetRosterCapacity(), never this constant directly, so the
--- Guild Level bonus can be added in one place later.
+-- ROSTER CAPACITY: base 10; Renown adds +1 per 5 Ranks (loot_progression 91, RenownRules).
+-- Read through GuildMenuService.GetRosterCapacity(), never this constant directly.
 GameConstants.ROSTER_BASE_CAPACITY = 10
 
 return GameConstants

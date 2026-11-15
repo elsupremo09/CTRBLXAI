@@ -173,7 +173,10 @@ function RuneforgeGemGrid.BuildGrid(grid: ScrollingFrame, cells: { Cell }, heigh
 			for _, tile in grid:GetChildren() do
 				if tile:IsA("TextButton") then
 					for _, c in tile:GetChildren() do
-						if c:IsA("ImageLabel") or c.Name == "PortraitBox" then
+						if c:IsA("ImageLabel") then
+							-- Keep the per-icon fit (Theme.IconFitScale, e.g. MP) on every re-fit.
+							c.Size, c.Position = Theme.FitIconBox(c.Image, size, pos)
+						elseif c.Name == "PortraitBox" then
 							(c :: any).Size = size;
 							(c :: any).Position = pos
 						end

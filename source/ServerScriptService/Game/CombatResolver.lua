@@ -556,6 +556,7 @@ local function calcHitQuality(attackerDex, defenderAgi, attackerUnit, defenderUn
 	if attackerUnit then
 		precision = precision + TraitEffectService.GetPrecisionModifier(attackerUnit)
 		precision = precision + (attackerUnit.gearDerived and attackerUnit.gearDerived.precision or 0)
+		precision = precision + (tonumber(attackerUnit._dgPrecBonus) or 0) -- RL-52 Duelist's Creed (relics v2)
 	end
 	if defenderUnit then
 		evasiveness = evasiveness + TraitEffectService.GetEvasivenessModifier(defenderUnit)
@@ -862,7 +863,8 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage, opt
 	-- Slice 5 buff: Battle Rage (+20% physical) / Rune Ward (+10% attack) on the
 	-- attacker. Basic attacks are always physical (isSpell=false).
 	finalDamage = math.max(0, math.round(finalDamage * StatusService.GetDamageDealtMultiplier(attacker, false)
-		* StatusService.GetDamageReceivedMultiplier(defender))) -- Hold the Line x0.85 (2026-10-07)
+		* StatusService.GetDamageReceivedMultiplier(defender) -- Hold the Line x0.85 (2026-10-07)
+		* (if attacker._dgEliteDmgMult and (defender.enemyType == "Elite" or defender.enemyType == "Boss") then attacker._dgEliteDmgMult else 1))) -- RL-13 (step 8)
 	-- Weapon passives (Group 1): Backstab (rear +50%) / Executioner (<25% HP +30%).
 	if _wp then
 		finalDamage = math.max(0, math.round(finalDamage * WeaponPassiveService.ConditionalDamageMultiplier(attacker, defender, facingZone)))
@@ -1290,6 +1292,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	-- Rune Ward (+10% attack) on the caster. skillIsPhysical selects which.
 	finalDamage = math.max(0, math.round(finalDamage * StatusService.GetDamageDealtMultiplier(attacker, not skillIsPhysical)
 		* StatusService.GetDamageReceivedMultiplier(defender) -- Hold the Line x0.85 (2026-10-07)
+		* (if attacker._dgEliteDmgMult and (defender.enemyType == "Elite" or defender.enemyType == "Boss") then attacker._dgEliteDmgMult else 1) -- RL-13 (step 8)
 		* (skillDef.potencyBonusMult or 1))) -- Mana Surge +10% potency, snapshotted at commit
 	-- Weapon skill: Backstab (rear +50%) / Executioner (<25% HP +30%), as on a Basic Attack.
 	if _wsHit then

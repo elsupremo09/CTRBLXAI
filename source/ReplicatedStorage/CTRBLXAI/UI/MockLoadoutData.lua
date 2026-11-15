@@ -40,14 +40,16 @@ MockLoadoutData.AugmentCardInventory = {} -- [augmentId] = quantity
 MockLoadoutData.SkillDefs = SkillDataModule
 MockLoadoutData.AugmentDefs = AugmentDataModule
 
+-- Placeholder roster until server data loads. Levels match the real starting units (level 1,
+-- USER RULING 2026-11-12 7:59 PM); the server roster replaces this list on load.
 MockLoadoutData.Units = {
-	{ id = "unit_hero", name = "Hero", level = 25, raceId = "RACE-HUMAN", raceName = "Human", side = "Player",
+	{ id = "unit_hero", name = "Hero", level = 1, raceId = "RACE-HUMAN", raceName = "Human", side = "Player",
 	  doctrineId = "DOC-BERSERKER", doctrineName = "Berserker",
 	  stats = { STR = 42, INT = 18, DEX = 30, AGI = 28, VIT = 35, LUK = 22 } },
-	{ id = "unit_ranger", name = "Ranger", level = 20, raceId = "RACE-ELF", raceName = "Elf", side = "Player",
+	{ id = "unit_ranger", name = "Ranger", level = 1, raceId = "RACE-AVIAN", raceName = "Avian", side = "Player",
 	  doctrineId = "DOC-RANGER", doctrineName = "Ranger",
 	  stats = { STR = 20, INT = 22, DEX = 38, AGI = 34, VIT = 18, LUK = 28 } },
-	{ id = "unit_mage", name = "Mage", level = 22, raceId = "RACE-HUMAN", raceName = "Human", side = "Player",
+	{ id = "unit_mage", name = "Mage", level = 1, raceId = "RACE-ELF", raceName = "Elf", side = "Player",
 	  doctrineId = "DOC-ARCANIST", doctrineName = "Arcanist",
 	  stats = { STR = 12, INT = 44, DEX = 20, AGI = 18, VIT = 16, LUK = 30 } },
 }
@@ -74,9 +76,12 @@ function MockLoadoutData.GetAllUnits()
 end
 
 -- Roster capacity for the unit-picker header (2026-11-10). Display only: the server enforces
--- it (GuildMenuService.GetRosterCapacity). Same shared constant, so the numbers agree until
--- the Guild Level bonus lands -- then this must read the server value instead.
+-- it (GuildMenuService.GetRosterCapacity). Reads the server's Renown-based value from the
+-- player's "RosterCapacity" attribute (step 5 2026-11-13), else the shared base constant.
 function MockLoadoutData.GetRosterCapacity()
+	local lp = game:GetService("Players").LocalPlayer
+	local attr = lp and lp:GetAttribute("RosterCapacity")
+	if type(attr) == "number" then return attr end
 	local ok, GC = pcall(function()
 		return require(game:GetService("ReplicatedStorage"):WaitForChild("CTRBLXAI", 10)
 			:WaitForChild("Shared", 10):WaitForChild("GameConstants", 10))

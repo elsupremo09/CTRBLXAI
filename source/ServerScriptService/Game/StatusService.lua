@@ -438,6 +438,11 @@ function StatusService.IsImmune(unit, statusId)
 		return true, "revealed by a scan"
 	end
 
+	-- 0b. Dungeon relic immunities (relics v2: RL-35..40, RL-55), battle-only.
+	if type(unit._dgImmune) == "table" and unit._dgImmune[statusId] then
+		return true, "relic immune to " .. statusId
+	end
+
 	-- 1. Race tag immunities
 	local tags = getUnitTags(unit)
 	for _, tag in ipairs(tags) do
@@ -589,6 +594,15 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 
 	local disruptsChannel = CHANNEL_DISRUPTORS[statusId] == true
 
+	-- Dungeon relic RL-14 Warding Sigil (step 8, rule 271): the first bad status (Debuff) on this unit
+	-- each dungeon battle is resisted. Flag set by Main per battle; spent here (apply path only).
+	-- A curse (source "Curse", e.g. RL-18 Leaden Shackles) can't be blocked (rule 271, 2026-11-15 12:21 PM).
+	if unit._dgWardReady and def.kind == "Debuff" and sourceUnitId ~= "Curse" then
+		unit._dgWardReady = nil
+		print(string.format("[StatusService] %s resisted %s (Warding Sigil)", unit.name, statusId))
+		return false, false, "Warding Sigil"
+	end
+
 	-- Plague Doctor Virulence (2026-10-28): a debuff applied by a Dark-tagged skill (the applier's
 	-- current cast element) ignores 15% of the target's Debuff Resistance (DB Passive_Effect: Dark only).
 	local resistPen = 0
@@ -676,7 +690,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 				-- D2 (2026-10-27): a refreshed Command Relay is a fresh relay -> its RT discount is back.
 				if def.relayRtMult then inst.relayState = nil end
 				inst.resistPen = if resistPen > 0 then resistPen else nil
-				applyDebuffResistance(unit, statusId, def, inst, resistPen)
+				if sourceUnitId ~= "Curse" then applyDebuffResistance(unit, statusId, def, inst, resistPen) end -- curses ignore Debuff Resistance (rule 271)
 				-- D5 (2026-11-07): a unit held by a Venus Man-Trap keeps its endless hold. Another
 				-- source's Pin runs on its own timer (venusOtherCt) under the hold; the hold itself never
 				-- gets a timer, and when the plant lets go that other Pin carries on for its time left.
@@ -857,7 +871,7 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 
 	-- Debuff Resistance (ruling 11): applied last, after trait / Lore duration changes.
 	if resistPen > 0 then instance.resistPen = resistPen end -- DoT ticks read it (Plague Doctor)
-	applyDebuffResistance(unit, statusId, def, instance, resistPen)
+	if sourceUnitId ~= "Curse" then applyDebuffResistance(unit, statusId, def, instance, resistPen) end -- curses ignore Debuff Resistance (rule 271)
 
 	if statusId == "Burn" and fireDamageDealt then
 		instance.storedBurn = math.round(fireDamageDealt * (burnFractionOverride or def.burnFraction))
@@ -1294,6 +1308,7 @@ function StatusService.GetModifiedBaseRt(unit, permanentOnly)
 	-- Permanent modifiers (traits) and Haste/Slow multiply this below. All per-turn
 	-- RT costs and the one-time starting RT derive from this value.
 	local baseRt = (unit.initiativeBaseRt or GameConstants.BASE_RT_STANDARD) + GameConstants.CalcEffectiveArmorWt(unit)
+	if not permanentOnly then baseRt = math.max(1, baseRt + (tonumber(unit._dgBaseRtAdd) or 0)) end -- RL-54 Swift Sigil -30 / RL-44 enemies +50 (relics v2)
 	local multiplier = 1.0
 
 	for _, inst in ipairs(if permanentOnly then {} else (unit.statusInstances or {})) do
@@ -1708,7 +1723,8 @@ function StatusService.GetDamageDealtMultiplier(unit, isSpell)
 	if (unit._commandantDmgCt or 0) > 0 then
 		mult = mult + (unit._commandantDmgBonus or 0.20)
 	end
-	return math.max(0, mult)
+	-- Dungeon RL-19 Berserker's Oath (2026-11-15): x0.75 damage dealt, battle-only stamp (nil elsewhere).
+	return math.max(0, mult) * (tonumber(unit._dgDealtMult) or 1)
 end
 
 -- Incoming-defense multiplier from status buffs (Slice 5): Rune Ward +10%
@@ -1731,7 +1747,8 @@ function StatusService.GetDefenseMultiplier(unit)
 		end
 	end
 	for _, d in pairs(groupBest) do mult = mult + d end
-	return math.max(0, mult)
+	-- Dungeon RL-17 War Banner (2026-11-15): enemies x1.10 Defense in that dungeon battle only (nil elsewhere).
+	return math.max(0, mult) * (tonumber(unit._dgDefMult) or 1)
 end
 
 -- Equipment-Defense multiplier from statuses (Armored x1.20, Armor Break x0.80; status rows
@@ -1781,7 +1798,9 @@ function StatusService.GetDamageReceivedMultiplier(unit)
 			mult = mult + (def.damageTakenMult - 1) * vscale(inst)
 		end
 	end
-	return math.max(0, mult)
+	-- Dungeon relics (step 8; rule 271 RL-10 / RL-15): x the relic damage-taken scale (direct hits only, like
+	-- the statuses above). Set by Main on dungeon party units for a dungeon battle; nil elsewhere.
+	return math.max(0, mult) * (unit._dgDamageTakenMult or 1)
 end
 
 function StatusService.GetCrippledReduction(unit, currentRange, currentJump)

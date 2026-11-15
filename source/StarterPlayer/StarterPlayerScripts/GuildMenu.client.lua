@@ -15,6 +15,7 @@
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService        = game:GetService("RunService")
+local GuiService        = game:GetService("GuiService")
 
 local WAIT = 10
 
@@ -63,6 +64,18 @@ local ApothecaryScreen: any = if apothecaryScreenModule then (require :: any)(ap
 local tgScreenModule = UIFolder:WaitForChild("TrainingGroundsScreen", WAIT)
 if not tgScreenModule then warn("[GuildMenu] TrainingGroundsScreen module missing") end
 local TrainingGroundsScreen: any = if tgScreenModule then (require :: any)(tgScreenModule) else nil
+-- Dispatch (2026-11-11, user-approved layout): its own full screen too.
+local dispatchScreenModule = UIFolder:WaitForChild("DispatchScreen", WAIT)
+if not dispatchScreenModule then warn("[GuildMenu] DispatchScreen module missing") end
+local DispatchScreen: any = if dispatchScreenModule then (require :: any)(dispatchScreenModule) else nil
+-- Units (2026-11-13, user): its own full screen too.
+local unitsScreenModule = UIFolder:WaitForChild("UnitsScreen", WAIT)
+if not unitsScreenModule then warn("[GuildMenu] UnitsScreen module missing") end
+local UnitsScreen: any = if unitsScreenModule then (require :: any)(unitsScreenModule) else nil
+-- Dungeon (build step 5, 2026-11-13): its own full screen.
+local dungeonScreenModule = UIFolder:WaitForChild("DungeonScreen", WAIT)
+if not dungeonScreenModule then warn("[GuildMenu] DungeonScreen module missing") end
+local DungeonScreen: any = if dungeonScreenModule then (require :: any)(dungeonScreenModule) else nil
 -- Always-on dev panel (2026-10-31): shop refresh, building levels, gold, saves.
 -- Shown in Studio, or when the server marks this player as an allow-listed owner (the
 -- "DevAccess" attribute, 2026-11-06). Display only: the server re-checks every dev request.
@@ -95,6 +108,7 @@ if not playerGui then warn("[GuildMenu] PlayerGui not found"); return end
 
 local ROW_HEIGHT = 56      -- >= 44 px touch target with padding
 local BUTTON_HEIGHT = 48
+local NAV_ICON_PX = BUTTON_HEIGHT - 8 -- building icons, 40 px (2026-11-13)
 
 --------------------------------------------------
 -- STATE
@@ -103,8 +117,6 @@ local BUTTON_HEIGHT = 48
 local currentPhase = "PreBattle"
 local currentPage = "Units"
 local isBusy = false
-local selectedMission: string? = nil
-local selectedUnits: { [string]: boolean } = {}
 local sortiePartySlot: string? = nil   -- party chosen for THIS sortie (shown on Continue)
 local sortiePartyName: string? = nil
 local updateSortieButton: () -> () = function() end  -- reassigned once leaveButton exists
@@ -222,6 +234,22 @@ end
 -- Wider side padding so the text clears the frame's corner ornaments.
 local header = framePanel("Header", UDim2.new(0.96, 0, 0.12, 0), UDim2.fromScale(0.02, 0.02), 14, 4)
 
+-- Guild crest left of "GUILD" (user ruling 2026-11-13 12:40 AM): Adventurer's Guild icon,
+-- a square the full header height (Theme.GuildIcons, the one place for these ids).
+local headerCrest = Instance.new("ImageLabel")
+headerCrest.Name = "Crest"
+headerCrest.BackgroundTransparency = 1
+headerCrest.ScaleType = Enum.ScaleType.Fit
+headerCrest.Image = Theme.GuildIcons.AdventurersGuild
+headerCrest.Size = UDim2.fromScale(1, 1)
+do
+	local ar = Instance.new("UIAspectRatioConstraint")
+	ar.AspectRatio = 1
+	ar.DominantAxis = Enum.DominantAxis.Height
+	ar.Parent = headerCrest
+end
+headerCrest.Parent = header -- properties before Parent (NET-004)
+
 local titleLabel = makeText(header, "GUILD", Theme.Text.Title(), Theme.Colors.TextGold, true)
 titleLabel.Size = UDim2.fromScale(0.4, 0.6)
 titleLabel.Font = Theme.Font.Display
@@ -229,11 +257,330 @@ titleLabel.Font = Theme.Font.Display
 local phaseLabel = makeText(header, "", Theme.Text.Small(), Theme.Colors.TextSecondary)
 phaseLabel.Size = UDim2.fromScale(0.6, 0.4)
 phaseLabel.Position = UDim2.fromScale(0, 0.6)
+-- Auto-fit (user ruling 2026-11-12 7:40 PM): shrink the status line so it fits the header,
+-- never below the 10 px phone text floor; anything still too long ends with "...".
+phaseLabel.TextScaled = true
+phaseLabel.TextTruncate = Enum.TextTruncate.AtEnd
+do
+	local fit = Instance.new("UITextSizeConstraint")
+	fit.MaxTextSize = Theme.Text.Small()
+	fit.MinTextSize = 10
+	fit.Parent = phaseLabel
+end
 
 local balanceLabel = makeText(header, "", Theme.Text.Body(), Theme.Colors.TextPrimary, true)
 balanceLabel.Size = UDim2.fromScale(0.6, 1)
 balanceLabel.Position = UDim2.fromScale(0.4, 0)
 balanceLabel.TextXAlignment = Enum.TextXAlignment.Right
+-- Hidden since 2026-11-13: the header shows icon + number per currency (currencyUI below).
+-- Its Text is still built, because the building screens read it through SetGold().
+balanceLabel.Visible = false
+
+-- Currencies, right side of the header (user ruling 2026-11-13 12:40 AM): Gold, Mercury,
+-- Crystal, Sulfur, each as its icon + number (thousands separators). If staged "a -> b" values
+-- would not fit the right 60%, the numbers step down in size (never below the 10 px floor), then
+-- wrap to two rows; the strip clips, so it can never spill left over the Rank block.
+local TextService = game:GetService("TextService")
+local currencyUI: { [string]: TextLabel } = {}
+local currencyIcons: { [string]: ImageLabel } = {}
+local CURRENCY_KEYS = { "Gold", "Mercury", "Crystal", "Sulfur" }
+local CURRENCY_GAP, CURRENCY_ICON_GAP = 10, 4
+local fitCurrencies: () -> () = function() end
+do
+	local strip = Instance.new("Frame")
+	strip.Name = "Currencies"
+	strip.BackgroundTransparency = 1
+	strip.BorderSizePixel = 0
+	strip.Size = UDim2.fromScale(0.6, 1)
+	strip.Position = UDim2.fromScale(0.4, 0)
+	strip.ClipsDescendants = true -- never spill left over the Rank block
+	-- Two row frames (user ruling 2026-11-13 12:42 AM): one row when everything fits (as before);
+	-- otherwise Gold + Mercury on the top row and Crystal + Sulfur below, in the same header height.
+	local function makeRow(name: string): (Frame, UIListLayout)
+		local r = Instance.new("Frame")
+		r.Name = name
+		r.BackgroundTransparency = 1
+		r.BorderSizePixel = 0
+		r.Size = UDim2.fromScale(1, 1)
+		local l = Instance.new("UIListLayout")
+		l.FillDirection = Enum.FillDirection.Horizontal
+		l.HorizontalAlignment = Enum.HorizontalAlignment.Right
+		l.VerticalAlignment = Enum.VerticalAlignment.Center
+		l.SortOrder = Enum.SortOrder.LayoutOrder
+		l.Padding = UDim.new(0, CURRENCY_GAP)
+		l.Parent = r
+		r.Parent = strip
+		return r, l
+	end
+	local rowTop, layoutTop = makeRow("RowTop")
+	local rowBottom, layoutBottom = makeRow("RowBottom")
+	rowBottom.Visible = false
+	local BOTTOM_KEYS = { Crystal = true, Sulfur = true }
+	local cells: { [string]: Frame } = {}
+	for i, key in ipairs(CURRENCY_KEYS) do
+		local cell = Instance.new("Frame")
+		cell.Name = key
+		cell.BackgroundTransparency = 1
+		cell.BorderSizePixel = 0
+		cell.AutomaticSize = Enum.AutomaticSize.X
+		cell.Size = UDim2.fromScale(0, 1)
+		cell.LayoutOrder = i
+		local cl = Instance.new("UIListLayout")
+		cl.FillDirection = Enum.FillDirection.Horizontal
+		cl.VerticalAlignment = Enum.VerticalAlignment.Center
+		cl.SortOrder = Enum.SortOrder.LayoutOrder
+		cl.Padding = UDim.new(0, CURRENCY_ICON_GAP)
+		cl.Parent = cell
+		local ico = Instance.new("ImageLabel")
+		ico.Name = "Icon"
+		ico.BackgroundTransparency = 1
+		ico.ScaleType = Enum.ScaleType.Fit
+		ico.Image = Theme.GuildIcons[key]
+		ico.Size = UDim2.fromOffset(24, 24) -- re-sized to 70% of the header height in fit
+		ico.LayoutOrder = 1
+		ico.Parent = cell
+		local num = makeText(cell, "", Theme.Text.Body(), Theme.Colors.TextPrimary, true)
+		num.Name = "Value"
+		num.TextWrapped = false
+		num.AutomaticSize = Enum.AutomaticSize.X
+		num.Size = UDim2.fromScale(0, 1)
+		num.LayoutOrder = 2
+		cell.Parent = rowTop
+		cells[key] = cell
+		currencyUI[key] = num
+		currencyIcons[key] = ico
+	end
+	strip.Parent = header -- properties and children before Parent (NET-004)
+	-- Measured, not scaled: pick the largest number size (Body down to 10 px) whose total width
+	-- (icons + gaps + text bounds from TextService) fits the strip. No feedback loop.
+	fitCurrencies = function()
+		local w, h = strip.AbsoluteSize.X, strip.AbsoluteSize.Y
+		if w <= 0 or h <= 0 then return end
+		local font = currencyUI.Gold.Font
+		local function textW(k: string, size: number): number
+			return math.ceil(TextService:GetTextSize(currencyUI[k].Text, size, font, Vector2.new(4000, 200)).X)
+		end
+		local function totalWidth(keys: { string }, size: number, px: number, gap: number): number
+			local total = gap * (#keys - 1)
+			for _, k in keys do
+				total += px + CURRENCY_ICON_GAP + textW(k, size)
+			end
+			return total
+		end
+		-- ONE ROW (unchanged): 1) shrink the numbers to the 10 px floor; 2) if still too wide
+		-- (staged "a -> b"), shrink the icons to 16 px and the gaps to 6 px.
+		local px = math.max(16, math.floor(h * 0.7))
+		local gap = CURRENCY_GAP
+		local size = Theme.Text.Body()
+		while size > 10 and totalWidth(CURRENCY_KEYS, size, px, gap) > w do size -= 1 end
+		while px > 16 and totalWidth(CURRENCY_KEYS, size, px, gap) > w do px -= 1 end
+		if totalWidth(CURRENCY_KEYS, size, px, gap) > w then gap = 6 end
+		-- 3) still too wide: TWO ROWS, 16 px icons and 10 px numbers. A row that still overflows
+		-- caps each of its two cells at half the strip and ends the number with "...".
+		local twoRows = totalWidth(CURRENCY_KEYS, size, px, gap) > w
+		if twoRows then
+			px, size, gap = 16, 10, 6
+		end
+		rowBottom.Visible = twoRows
+		rowTop.Size = if twoRows then UDim2.fromScale(1, 0.5) else UDim2.fromScale(1, 1)
+		rowBottom.Position = UDim2.fromScale(0, 0.5)
+		rowBottom.Size = UDim2.fromScale(1, 0.5)
+		for k, cell in cells do
+			local want = if twoRows and BOTTOM_KEYS[k] then rowBottom else rowTop
+			if cell.Parent ~= want then cell.Parent = want end
+		end
+		for _, ico in currencyIcons do
+			if ico.Size.X.Offset ~= px then ico.Size = UDim2.fromOffset(px, px) end
+		end
+		if layoutTop.Padding.Offset ~= gap then layoutTop.Padding = UDim.new(0, gap) end
+		if layoutBottom.Padding.Offset ~= gap then layoutBottom.Padding = UDim.new(0, gap) end
+		local capped: { [string]: number } = {}
+		if twoRows then
+			local maxText = math.max(0, math.floor((w - gap) / 2) - px - CURRENCY_ICON_GAP)
+			for _, rowKeys in { { "Gold", "Mercury" }, { "Crystal", "Sulfur" } } do
+				if totalWidth(rowKeys, size, px, gap) > w then
+					for _, k in rowKeys do
+						if textW(k, size) > maxText then capped[k] = maxText end
+					end
+				end
+			end
+		end
+		for _, k in CURRENCY_KEYS do
+			local lbl = currencyUI[k]
+			if lbl.TextSize ~= size then lbl.TextSize = size end
+			local cap = capped[k]
+			if cap then
+				lbl.AutomaticSize = Enum.AutomaticSize.None
+				lbl.Size = UDim2.new(0, cap, 1, 0)
+				lbl.TextTruncate = Enum.TextTruncate.AtEnd
+			elseif lbl.AutomaticSize ~= Enum.AutomaticSize.X then
+				lbl.AutomaticSize = Enum.AutomaticSize.X
+				lbl.Size = UDim2.fromScale(0, 1)
+				lbl.TextTruncate = Enum.TextTruncate.None
+			end
+		end
+	end
+	strip:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitCurrencies)
+	task.defer(fitCurrencies)
+end
+
+-- Renown Rank (step 2, USER RULING 2026-11-12, loot_progression 94): "Renown Rank 12" with a
+-- progress bar "1,240 / 1,310 Renown", on the GUILD row, right of the title, inside the left 40%
+-- (the gold line keeps the right 60%). Two stacked lines; the progress text sits on the bar.
+-- Display only: the server sends rank / renown / need in the guild overview.
+local renownUI = {}
+do
+	local block = Instance.new("Frame")
+	block.Name = "Renown"
+	block.BackgroundTransparency = 1
+	block.BorderSizePixel = 0
+	block.Size = UDim2.new(0.4, -60, 0.6, 0)
+	block.Position = UDim2.fromOffset(56, 0)
+	local function fitText(lbl: TextLabel)
+		lbl.TextScaled = true
+		lbl.TextTruncate = Enum.TextTruncate.AtEnd
+		local c = Instance.new("UITextSizeConstraint")
+		c.MaxTextSize = Theme.Text.Small()
+		c.MinTextSize = 10 -- phone text floor (project_rules 244)
+		c.Parent = lbl
+	end
+	local rankLabel = makeText(block, "", Theme.Text.Small(), Theme.Colors.TextGold, true)
+	rankLabel.Name = "Rank"
+	rankLabel.TextWrapped = false
+	rankLabel.Size = UDim2.fromScale(1, 0.5)
+	fitText(rankLabel)
+	local track = Instance.new("Frame")
+	track.Name = "Bar"
+	track.BackgroundColor3 = Theme.Colors.Background
+	track.BackgroundTransparency = 0.2
+	track.BorderSizePixel = 0
+	track.ClipsDescendants = true
+	track.Size = UDim2.new(1, 0, 0.5, -1)
+	track.Position = UDim2.new(0, 0, 0.5, 1)
+	local fill = Instance.new("Frame")
+	fill.Name = "Fill"
+	fill.BackgroundColor3 = Theme.Colors.TextGold
+	fill.BackgroundTransparency = 0.45
+	fill.BorderSizePixel = 0
+	fill.Size = UDim2.fromScale(0, 1)
+	fill.Parent = track
+	local progressLabel = makeText(track, "", Theme.Text.Small(), Theme.Colors.TextPrimary, true)
+	progressLabel.Name = "Progress"
+	progressLabel.TextWrapped = false
+	progressLabel.Size = UDim2.fromScale(1, 1)
+	progressLabel.TextXAlignment = Enum.TextXAlignment.Center
+	progressLabel.TextStrokeTransparency = 0.4
+	progressLabel.ZIndex = 2
+	fitText(progressLabel)
+	track.Parent = block
+	block.Visible = false -- until the first overview arrives
+	block.Parent = header -- properties before Parent (NET-004)
+	-- Keep the block just right of the "GUILD" text whatever its rendered width.
+	-- Crest first, then "GUILD" and the status line right of it, then this block.
+	local function place()
+		local cw = headerCrest.AbsoluteSize.X + 6
+		titleLabel.Position = UDim2.fromOffset(cw, 0)
+		titleLabel.Size = UDim2.new(0.4, -cw, 0.6, 0)
+		phaseLabel.Position = UDim2.new(0, cw, 0.6, 0)
+		phaseLabel.Size = UDim2.new(0.4, -cw, 0.4, 0) -- left 40% only: the currencies own the right 60%
+		local x = cw + titleLabel.TextBounds.X + 10
+		block.Position = UDim2.fromOffset(x, 0)
+		block.Size = UDim2.new(0.4, -(x + 4), 0.6, 0)
+	end
+	place()
+	titleLabel:GetPropertyChangedSignal("TextBounds"):Connect(place)
+	headerCrest:GetPropertyChangedSignal("AbsoluteSize"):Connect(place)
+	renownUI.block, renownUI.rank, renownUI.fill, renownUI.progress = block, rankLabel, fill, progressLabel
+	-- Tap the Rank block = Renown help (user ruling 2026-11-13 3:01 PM; approved text, loot_progression 94).
+	-- Tap anywhere on the popup to close it. One popup, created once; no per-tap connections.
+	local help = Instance.new("TextButton")
+	help.Name = "RenownHelp"
+	help.Text = ""
+	help.AutoButtonColor = false
+	help.BackgroundColor3 = Color3.new(0, 0, 0)
+	help.BackgroundTransparency = 0.45
+	help.BorderSizePixel = 0
+	help.Size = UDim2.fromScale(1, 1)
+	help.ZIndex = 50
+	help.Visible = false
+	local card = Instance.new("Frame")
+	card.Name = "Card"
+	card.AnchorPoint = Vector2.new(0.5, 0.5)
+	card.Position = UDim2.fromScale(0.5, 0.5)
+	card.Size = UDim2.new(0.6, 0, 0, 96)
+	card.BackgroundColor3 = Theme.Colors.Surface
+	card.BorderSizePixel = 0
+	card.ZIndex = 51
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Theme.Colors.TextGold
+	stroke.Thickness = 2
+	stroke.Parent = card
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 12), UDim.new(0, 12)
+	pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 8), UDim.new(0, 8)
+	pad.Parent = card
+	local helpText = makeText(card, "Renown shows how well-known your guild is. Finish quests to earn it. A higher Rank brings harder quests, better gear upgrades and more room for recruits.", Theme.Text.Small(), Theme.Colors.TextPrimary)
+	helpText.Name = "Text"
+	helpText.Size = UDim2.fromScale(1, 1)
+	helpText.TextWrapped = true
+	helpText.TextXAlignment = Enum.TextXAlignment.Left
+	helpText.TextYAlignment = Enum.TextYAlignment.Center
+	helpText.ZIndex = 52
+	do
+		local c = Instance.new("UITextSizeConstraint")
+		c.MaxTextSize = Theme.Text.Small(); c.MinTextSize = 10 -- phone text floor
+		c.Parent = helpText
+		helpText.TextScaled = true
+	end
+	card.Parent = help
+	help.Parent = screenGui -- properties before Parent (NET-004)
+	help.Activated:Connect(function() help.Visible = false end)
+	local tap = Instance.new("TextButton")
+	tap.Name = "RenownTap"
+	tap.Text = ""
+	tap.AutoButtonColor = false
+	tap.BackgroundTransparency = 1
+	tap.Size = UDim2.fromScale(1, 1)
+	tap.ZIndex = 5
+	tap.Parent = block
+	tap.Activated:Connect(function() help.Visible = true end)
+	renownUI.help = help
+end
+
+local function withCommas(n: number): string
+	local s = tostring(math.floor(n))
+	local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+	return (out:gsub("^,", ""))
+end
+
+local function updateRenownHeader(r: any)
+	if type(r) ~= "table" or type(r.rank) ~= "number" then
+		renownUI.block.Visible = false
+		return
+	end
+	local have = math.max(0, tonumber(r.renown) or 0)
+	local need = math.max(1, tonumber(r.need) or 1)
+	-- "Rank 12" / "1,240 / 1,310" (user ruling 2026-11-13 12:40 AM; was "Renown Rank 12" / "... Renown").
+	renownUI.rank.Text = `Rank {r.rank}`
+	renownUI.progress.Text = `{withCommas(have)} / {withCommas(need)}`
+	renownUI.fill.Size = UDim2.fromScale(math.clamp(have / need, 0, 1), 1)
+	renownUI.block.Visible = true
+end
+
+-- Roblox's top-left buttons (menu, chat, voice) always draw on top of game UI. Keep the header
+-- clear of them, the same way the shared guild screens do (GuildScreen layout, TopbarInset).
+-- Re-fit when the top bar changes (e.g. chat/voice buttons appear) and on every open.
+local function fitHeaderToTopbar()
+	local leftX = GuiService.TopbarInset.Min.X
+	local gap = 8
+	if leftX > 0 then
+		header.Position = UDim2.new(0, leftX + gap, 0.02, 0)
+		header.Size = UDim2.new(0.98, -(leftX + gap), 0.12, 0)
+	else
+		header.Position = UDim2.fromScale(0.02, 0.02)
+		header.Size = UDim2.new(0.96, 0, 0.12, 0)
+	end
+end
 
 -- Left column: one button per building
 local navFrame = framePanel("BuildingsFrame", UDim2.new(0.28, 0, 0.8, 0), UDim2.fromScale(0.02, 0.16), 10, 10)
@@ -280,6 +627,32 @@ local statusLabel = makeText(root, "", Theme.Text.Small(), Theme.Colors.TextSeco
 statusLabel.Size = UDim2.new(0.66, 0, 0.07, 0)
 statusLabel.Position = UDim2.fromScale(0.32, 0.9)
 
+-- Column fit (user 2026-11-13 1:25 PM): the right panel's left edge lines up with the header's
+-- left edge (both edges match the header), and the nav takes the space to its left.
+local function fitColumnsToHeader()
+	local leftX = GuiService.TopbarInset.Min.X
+	if leftX > 0 then
+		local x = leftX + 8 -- header left edge (fitHeaderToTopbar)
+		navFrame.Size = UDim2.new(-0.02, x - 8, 0.8, 0) -- nav starts at 0.02 scale, ends 8 px before the panel
+		contentFrame.Position = UDim2.new(0, x, 0.16, 0)
+		contentFrame.Size = UDim2.new(0.98, -x, 0.72, 0)
+		statusLabel.Position = UDim2.new(0, x, 0.9, 0)
+		statusLabel.Size = UDim2.new(0.98, -x, 0.07, 0)
+	else
+		navFrame.Size = UDim2.new(0.28, 0, 0.8, 0)
+		contentFrame.Position = UDim2.fromScale(0.32, 0.16)
+		contentFrame.Size = UDim2.new(0.66, 0, 0.72, 0)
+		statusLabel.Position = UDim2.fromScale(0.32, 0.9)
+		statusLabel.Size = UDim2.new(0.66, 0, 0.07, 0)
+	end
+end
+local function fitLayoutToTopbar()
+	fitHeaderToTopbar()
+	fitColumnsToHeader()
+end
+fitLayoutToTopbar()
+GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(fitLayoutToTopbar)
+
 local function setStatus(text: string, isError: boolean?)
 	statusLabel.Text = text
 	statusLabel.TextColor3 = isError and Theme.Colors.Danger or Theme.Colors.Success
@@ -291,6 +664,9 @@ local function setStatus(text: string, isError: boolean?)
 	if CrucibleScreen then CrucibleScreen.SetStatus(text, isError) end
 	if ApothecaryScreen then ApothecaryScreen.SetStatus(text, isError) end
 	if TrainingGroundsScreen then TrainingGroundsScreen.SetStatus(text, isError) end
+	if DispatchScreen then DispatchScreen.SetStatus(text, isError) end
+	if UnitsScreen then UnitsScreen.SetStatus(text, isError) end
+	if DungeonScreen then DungeonScreen.SetStatus(text, isError) end
 end
 
 --------------------------------------------------
@@ -429,6 +805,14 @@ local showPage: (string) -> () -- forward declaration
 -- screen has staged changes it shows the PROJECTED balance (gold after sells/buys/upgrade
 -- cost/dispatch fees, plus the materials that will be spent) so the player sees the result
 -- before committing. Pure client math over the cart tables + lastOverview; no server call.
+-- Header currency numbers (2026-11-13): "40,041", or "40,041 -> 39,991" while changes are staged.
+local function setCurrency(key: string, now: number, delta: number)
+	local lbl = currencyUI[key]
+	if not lbl then return end
+	lbl.Text = if delta ~= 0 then `{withCommas(now)} -> {withCommas(now + delta)}` else withCommas(now)
+	fitCurrencies()
+end
+
 local function updateBalanceLabel()
 	local realGold = lastOverview.gold or 0
 	local realRes = lastOverview.resources or {}
@@ -445,6 +829,10 @@ local function updateBalanceLabel()
 		or next(cartUpgrades) ~= nil or next(cartDowngrades) ~= nil
 		or #cartDispatches > 0 or next(cartHires) ~= nil or next(cartDismantles) ~= nil
 	if not staged then
+		setCurrency("Gold", realGold, 0)
+		setCurrency("Mercury", realRes.mercury or 0, 0)
+		setCurrency("Crystal", realRes.crystals or 0, 0)
+		setCurrency("Sulfur", realRes.sulfur or 0, 0)
 		balanceLabel.Text = `Gold {realGold}   |   {resourcesText(realRes)}`
 		if MerchantScreen then MerchantScreen.SetGold(balanceLabel.Text) end
 		if TavernScreen then TavernScreen.SetGold(balanceLabel.Text) end
@@ -453,6 +841,7 @@ local function updateBalanceLabel()
 		if CrucibleScreen then CrucibleScreen.SetGold(balanceLabel.Text) end
 		if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
 		if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
+		if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text) end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text) end
 		return
 	end
 	local projGold = realGold + goldDelta
@@ -470,6 +859,10 @@ local function updateBalanceLabel()
 	local matStr = `   |   {proj("Mercury", realRes.mercury or 0, gain.mercury - mercurySpend)}`
 		.. `  {proj("Crystals", realRes.crystals or 0, gain.crystals)}  {proj("Sulfur", realRes.sulfur or 0, gain.sulfur)}`
 	balanceLabel.Text = goldStr .. matStr
+	setCurrency("Gold", realGold, goldDelta)
+	setCurrency("Mercury", realRes.mercury or 0, gain.mercury - mercurySpend)
+	setCurrency("Crystal", realRes.crystals or 0, gain.crystals)
+	setCurrency("Sulfur", realRes.sulfur or 0, gain.sulfur)
 	if MerchantScreen then MerchantScreen.SetGold(balanceLabel.Text) end
 	if TavernScreen then TavernScreen.SetGold(balanceLabel.Text) end
 	if BlacksmithScreen then BlacksmithScreen.SetGold(balanceLabel.Text) end
@@ -477,6 +870,7 @@ local function updateBalanceLabel()
 	if CrucibleScreen then CrucibleScreen.SetGold(balanceLabel.Text) end
 	if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
 	if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
+	if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text) end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text) end
 end
 
 local shownRefillNote = false -- reset each time the menu opens after a battle
@@ -485,6 +879,7 @@ local function refreshOverview()
 	if not res then return end
 	lastOverview = { gold = res.gold or 0, resources = res.resources or {} }
 	updateBalanceLabel()
+	updateRenownHeader(res.renown)
 	-- Apothecary refill on return to base (2026-11-03, gf 69): say what was not refilled.
 	-- Base notes (refill + locked augment slots) are joined so one never hides the other.
 	local notes = {}
@@ -649,7 +1044,9 @@ local function confirmLeaveWithCart(proceed: () -> ())
 		or (BlacksmithScreen and BlacksmithScreen.GetGui()) or (RuneforgeScreen and RuneforgeScreen.GetGui())
 		or (CrucibleScreen and CrucibleScreen.GetGui())
 		or (ApothecaryScreen and ApothecaryScreen.GetGui())
-		or (TrainingGroundsScreen and TrainingGroundsScreen.GetGui()) or nil
+		or (TrainingGroundsScreen and TrainingGroundsScreen.GetGui())
+		or (DispatchScreen and DispatchScreen.GetGui()) or (UnitsScreen and UnitsScreen.GetGui())
+		or (DungeonScreen and DungeonScreen.GetGui()) or nil
 	overlay.Parent = host or screenGui
 	overlay.Activated:Connect(function() end)  -- absorb background taps
 	leaveDialog = overlay
@@ -987,6 +1384,11 @@ if RuneforgeScreen then
 			local remote = BattleEvents.MarkItemSeen
 			if remote then remote:FireServer(instanceId) end
 		end,
+		-- Gem Craft tab (2026-11-12): ids + a count only; the server prices, checks and rolls.
+		-- No success text (approved wording only); a refusal shows the server's reason.
+		craftGems = function(req: any): any?
+			return call(GuildEvents.CraftGems, req)
+		end,
 		onChanged = function()
 			invalidatePageCache() -- forge / reroll changed items, gems and resources
 			refreshOverview()
@@ -1138,6 +1540,51 @@ if TrainingGroundsScreen then
 	})
 end
 
+-- DISPATCH SCREEN (2026-11-11, user-approved layout): same model as the Tavern. Staged
+-- dispatches stay in this menu's basket (cartDispatches); Confirm sends only mission and unit
+-- ids, and the server re-checks slots, units and the keep-one-home rule.
+local function openDispatch()
+	if not DispatchScreen then
+		setStatus("Dispatch screen not loaded", true)
+		return
+	end
+	screenGui.Enabled = false
+	DispatchScreen.Open()
+	updateBalanceLabel()
+end
+
+if DispatchScreen then
+	DispatchScreen.Init({
+		parent = playerGui,
+		getBoard = function(): any?
+			return cachedCall("Dispatch", GuildEvents.GetDispatchBoard)
+		end,
+		getStaged = function(): { any }
+			return cartDispatches
+		end,
+		queue = function(missionId: string, unitIds: { string }, fee: number)
+			table.insert(cartDispatches, { missionId = missionId, unitIds = unitIds, fee = fee })
+			updateBalanceLabel()
+		end,
+		pendingCount = cartCount,
+		-- Dispatch Recall (2026-11-12): a live action (not staged in the cart). Returns the
+		-- server answer, or nil on refusal (call() already showed the error).
+		recall = function(missionId: string): any?
+			local res = call(GuildEvents.RecallDispatch, missionId)
+			if res then invalidatePageCache() end -- units came home: re-fetch the board
+			updateBalanceLabel()
+			return res
+		end,
+		requestBack = confirmLeaveWithCart,
+		onClosed = function()
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage(currentPage)
+		end,
+		setStatus = setStatus,
+	})
+end
+
 -- DEV PANEL wiring (Studio only, 2026-10-31). A dev change to the shops or a building level
 -- drops pending buys and dispatches (their offer / mission ids may now point at a different
 -- offer), then redraws whatever guild screen is showing.
@@ -1164,6 +1611,8 @@ local function onDevGuildChanged(what: string)
 		ApothecaryScreen.Render()
 	elseif TrainingGroundsScreen and TrainingGroundsScreen.IsOpen() then
 		TrainingGroundsScreen.Render()
+	elseif DispatchScreen and DispatchScreen.IsOpen() then
+		DispatchScreen.Render()
 	elseif screenGui.Enabled then
 		showPage(currentPage)
 	end
@@ -1291,137 +1740,127 @@ local function pageBlacksmith()
 	end
 end
 
-local function pageDispatch()
-	addHeading("DISPATCH - send units on missions")
-	local res = cachedCall("Dispatch", GuildEvents.GetDispatchBoard)
-	if not res then return end
-	addCartSummaryRow()
-	-- Staged-dispatch guards (2026-10-14): dispatch entries interact (one unit per mission,
-	-- one mission per group, keep >=1 home, slot cap), so staged missions are hidden, staged
-	-- units are greyed, and a stage that would empty the roster or exceed slots is blocked up
-	-- front -- rather than letting the server silently refuse part of the batch at commit.
-	local stagedUnits: { [string]: boolean } = {}
-	local stagedMissions: { [string]: boolean } = {}
-	local nStaged = 0
-	for _, d in cartDispatches do
-		nStaged += 1
-		stagedMissions[d.missionId] = true
-		for _, uid in d.unitIds do stagedUnits[uid] = true end
+-- Dispatch page moved to its own screen (DispatchScreen, 2026-11-11).
+
+-- UNITS is its own full screen (UnitsScreen, user 2026-11-13 1:41 PM): 3 unit cards per row,
+-- tap a card = the Loadout on INFO with that unit selected (no Loadout button). The "Units"
+-- page key stays only as the base landing page (empty panel); the nav button opens the screen.
+local function pageUnits() end
+
+local function openUnits()
+	if not UnitsScreen then
+		setStatus("Units screen not loaded", true)
+		return
 	end
-	local slotsUsed = (res.slotsUsed or 0) + nStaged
-	local slotCap = res.slotCap or 1
-	local homeCount = 0
-	for _, u in res.units or {} do
-		if not u.away and not stagedUnits[u.id] then homeCount += 1 end
-	end
-	addNote(`Sent units miss battles until they return, then bring back XP and mercury. Fee {res.feeGold or 50}g per mission. Keep >=1 home. Slots {slotsUsed}/{slotCap}.`)
-	if not selectedMission then
-		local anyMission = false
-		for _, m in res.missions or {} do
-			if not stagedMissions[m.missionId] then
-				anyMission = true
-				local mid = m.missionId
-				addRow(`Tier {m.tier}  |  away {m.duration} battle(s)  |  {m.xp} XP each  |  {m.rewardMercury or 1} mercury`, {
-					{ text = "Select", color = Theme.Colors.Info, enabled = slotsUsed < slotCap, onTap = function()
-						selectedMission = mid
-						selectedUnits = {}
-						showPage("Dispatch")
-					end },
-				})
-			end
-		end
-		if not anyMission then addNote("No missions available (all queued, or none left until the next battle).") end
-		if slotsUsed >= slotCap then addNote("All dispatch slots are in use (queued or active). Upgrade the Guild Hall for more.") end
-	else
-		addNote("Tap units to select them, then Queue dispatch. Units already queued or away cannot be picked.")
-		for _, u in res.units or {} do
-			local uid = u.id
-			if u.away then
-				addRow(`{u.name}  Lv{u.level}  |  AWAY (back after battle {u.returnBattle or "?"})`, nil, true)
-			elseif stagedUnits[uid] then
-		addRow(`{u.name}  Lv{u.level}  |  QUEUED`, nil, true)
-			else
-				local picked = selectedUnits[uid] == true
-				addRow(`{u.name}  Lv{u.level}{picked and "  [SELECTED]" or ""}`, {
-					{ text = picked and "Remove" or "Select", color = picked and Theme.Colors.Warning or Theme.Colors.Info, onTap = function()
-						selectedUnits[uid] = not picked or nil
-						showPage("Dispatch")
-					end },
-				})
-			end
-		end
-		local ids = {}
-		for id in selectedUnits do table.insert(ids, id) end
-		local mid = selectedMission
-		addRow(`{#ids} unit(s) selected  |  leaves {homeCount - #ids} home`, {
-			{ text = "Back", color = Theme.Colors.Surface, onTap = function()
-				selectedMission = nil
-				selectedUnits = {}
-				showPage("Dispatch")
-			end },
-			{ text = "Queue dispatch", color = Theme.Colors.Success, enabled = #ids > 0, onTap = function()
-				if #ids < 1 then return end
-				if homeCount - #ids < 1 then setStatus("Keep at least one unit home", true) return end
-				if slotsUsed >= slotCap then setStatus("No free dispatch slot", true) return end
-				table.insert(cartDispatches, { missionId = mid, unitIds = ids, fee = res.feeGold or 50 })
-				selectedMission = nil
-				selectedUnits = {}
-				setStatus(`Dispatch queued ({#ids} unit(s)). Confirm to send.`)
-				showPage("Dispatch")
-			end },
-		})
-	end
+	screenGui.Enabled = false
+	UnitsScreen.Open()
+	updateBalanceLabel()
 end
 
-local function pageUnits()
-	addHeading("UNITS")
-	addRow("Equipment, skills, doctrine and stats", {
-		{ text = "Loadout", color = Theme.Colors.Info, onTap = function()
-			local open = (_G :: any).CTRBLXAI_OpenLoadout
+if UnitsScreen then
+	UnitsScreen.Init({
+		parent = playerGui,
+		getUnits = function(): any?
+			return cachedCall("Units", GuildEvents.GetGuildUnits)
+		end,
+		-- Away units can open too: the Loadout has no dispatch rule (only Parties blocks adding them).
+		openUnit = function(unitId: string)
+			local open = (_G :: any).CTRBLXAI_OpenLoadoutTab
 			if type(open) ~= "function" then setStatus("Loadout screen not loaded", true) return end
-			-- The Loadout is a separate full-screen UI. Hide the guild menu while it is up, then
-			-- restore the guild menu when Loadout closes -- otherwise opening Loadout mid-sortie
-			-- left the player with no guild screen (no Sortie/Abandon). Client-only; watches the
-			-- Loadout ScreenGui ("LoadoutScreen") in PlayerGui and re-shows + re-renders on close. (2026-10-16)
 			local pg = player:FindFirstChild("PlayerGui")
-			screenGui.Enabled = false
-			open()
+			UnitsScreen.Hide()
+			open("INFO", { unitId = unitId })
+			-- Loadout closed (or never opened): back to the Units screen with fresh data.
 			task.spawn(function()
-				local appeared = false
-				for _ = 1, 100 do
+				local appeared, waited = false, 0
+				while true do
 					local ls = pg and pg:FindFirstChild("LoadoutScreen")
 					if ls then appeared = true elseif appeared then break end
+					if not appeared and waited > 10 then break end
 					task.wait(0.1)
+					waited += 0.1
 				end
-				-- Loadout closed (or never opened): bring the guild menu back and refresh the page.
-				screenGui.Enabled = true
+				if not guildMenuIsOpen then return end -- menu closed meanwhile: stay hidden
 				invalidatePageCache()
 				refreshOverview()
-				showPage(currentPage)
+				UnitsScreen.Open()
+				updateBalanceLabel()
 			end)
-		end },
+		end,
+		requestBack = confirmLeaveWithCart,
+		onClosed = function()
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage(if currentPage == "Units" then "Adventurers" else currentPage) -- "Units" = empty landing key; Back shows the Quest Board
+		end,
+		setStatus = setStatus,
 	})
-	local res = cachedCall("Units", GuildEvents.GetGuildUnits)
-	if not res then return end
-	for _, u in res.units or {} do
-		local xpText = u.atCap and "MAX" or `{u.xp}/{u.xpToNext} XP`
-		local state = u.away and `  |  AWAY (back after battle {u.returnBattle or "?"})` or ""
-		local tag = u.isRecruit and " (hired)" or ""
-		local row = addRow(`{u.name}{tag}  Lv{u.unitLevel}  |  XP level {u.xpLevel}: {xpText}\n{u.race} {u.doctrine}  |  HP {u.hp}/{u.maxHp}{state}`, nil, u.away)
-		-- XP progress bar along the bottom of the row
-		local bar = Instance.new("Frame")
-		bar.Size = UDim2.new(1, -16, 0, 4)
-		bar.Position = UDim2.new(0, 8, 1, -6)
-		bar.BackgroundColor3 = Theme.Colors.EmptySlot
-		bar.BorderSizePixel = 0
-		bar.Parent = row
-		local fill = Instance.new("Frame")
-		local ratio = (u.atCap and 1) or ((u.xpToNext or 0) > 0 and math.clamp((u.xp or 0) / u.xpToNext, 0, 1) or 0)
-		fill.Size = UDim2.fromScale(ratio, 1)
-		fill.BackgroundColor3 = Theme.Colors.Info
-		fill.BorderSizePixel = 0
-		fill.Parent = bar
+end
+
+-- DUNGEON (build step 5, 2026-11-13; project_rules 258-274). Its own full screen. A battle room is
+-- played through the normal activity launch ({ activity = "dungeon" }); the server only listens for
+-- it at the base wait, so if the quest board was already asked for this visit, it is cancelled first
+-- and the launch is sent on the next base open. After the battle the base reopens on the Dungeon.
+local dungeonLaunchPending = false
+local returnToDungeon = false
+local DUNGEON_LOCKED_TEXT = "Build up your Guild Hall to level 6 to open the Dungeon." -- DG-LOCKED (approved)
+
+local function openDungeon()
+	if not DungeonScreen then
+		setStatus("Dungeon screen not loaded", true)
+		return
 	end
+	local res = DungeonScreen.Refresh()
+	if not res then return end
+	if (res.level or 0) < 1 and not res.run then
+		setStatus(DUNGEON_LOCKED_TEXT, true)
+		return
+	end
+	screenGui.Enabled = false
+	DungeonScreen.Open()
+	updateBalanceLabel()
+end
+
+local function fireDungeonLaunch()
+	dungeonLaunchPending = false
+	returnToDungeon = true
+	if DungeonScreen then DungeonScreen.Hide() end
+	BattleEvents.OpenAdventurersGuild:FireServer({ activity = "dungeon" })
+end
+
+if DungeonScreen then
+	DungeonScreen.Init({
+		parent = playerGui,
+		action = function(data: { [string]: any }): any?
+			local res = call(GuildEvents.DungeonAction, data)
+			if res then invalidatePageCache() end -- runs lock units / pay out: re-fetch other screens
+			updateBalanceLabel()
+			return res
+		end,
+		getUnits = function(): any?
+			return call(GuildEvents.GetGuildUnits) -- fresh (away flags); the screen asks once per party view
+		end,
+		launchBattle = function()
+			if isBusy or currentPhase ~= "Base" then return end
+			if guildQuests ~= nil then
+				-- The server is waiting on a quest pick, not at the base wait: back out first.
+				dungeonLaunchPending = true
+				guildQuests = nil
+				if DungeonScreen then DungeonScreen.Hide() end
+				BattleEvents.QuestBoardCancel:FireServer()
+				return
+			end
+			fireDungeonLaunch()
+		end,
+		requestBack = confirmLeaveWithCart,
+		onClosed = function()
+			returnToDungeon = false
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage(if currentPage == "Units" then "Adventurers" else currentPage)
+		end,
+		setStatus = setStatus,
+	})
 end
 
 -- PARTIES moved into the Loadout screen as its 5th tab (USER DECISION 2026-11-04). This page
@@ -1475,7 +1914,7 @@ local embarkToken = 0
 local EMBARK_PHRASES = { "Scouting the area", "Mapping the location", "Locating the target", "Scanning the terrain" }
 
 local function pageAdventurersGuild()
-	addHeading("ADVENTURER'S GUILD")
+	addHeading("QUEST BOARD") -- renamed from Adventurer's Guild (user 2026-11-13 1:25 PM)
 	embarkButton = nil  -- content was just wiped; drop any stale reference
 
 	if sortieMode and chosenQuest then
@@ -1598,7 +2037,11 @@ local function pageAdventurersGuild()
 		if q.rewards and (tonumber(q.rewards.mercury) or 0) > 0 then
 			goldText = `{goldText} + {q.rewards.mercury} mercury`
 		end
-		local line = `{q.name}\n{q.biome}  Lv {q.recommendedLvl}  |  {q.enemyCount} enemies  |  {goldText}  |  Deploy {q.playerSlots}`
+		-- Renown preview (step 7, loot_progression 94): "+100 Renown" / "+50 Renown (too easy)".
+		local rp = q.renownPreview
+		local renownText = if type(rp) == "table" and tonumber(rp.amount)
+			then `  |  +{rp.amount} Renown` .. (if rp.tooEasy then " (too easy)" else "") else ""
+		local line = `{q.name}\n{q.biome}  Lv {q.recommendedLvl}  |  {q.enemyCount} enemies  |  {goldText}{renownText}  |  Deploy {q.playerSlots}`
 		addRow(line, {
 			{ text = "Select", color = Theme.Colors.Success, onTap = function()
 				chosenQuest = quest
@@ -1613,6 +2056,7 @@ local function pageAdventurersGuild()
 			BattleEvents.QuestBoardCancel:FireServer()
 			guildQuests = nil
 			showPage("Units")
+			openUnits() -- base lands on the Units screen (user 2026-11-13 1:57 PM)
 		end },
 	})
 end
@@ -1621,7 +2065,6 @@ local PAGES: { [string]: () -> () } = {
 	-- Tavern and Merchant are their own screens (openTavern / openMerchant), 2026-10-31.
 	-- Merchant is its own screen (openMerchant), not a page of this menu (2026-10-31).
 	Blacksmith = pageBlacksmith,
-	Dispatch = pageDispatch,
 	Units = pageUnits,
 	Party = pageParty,
 	Adventurers = pageAdventurersGuild,
@@ -1665,14 +2108,18 @@ local function buildNav()
 	for _, b in navButtons do b:Destroy() end
 	navButtons = {}
 	table.clear(navPageOf) -- destroyed buttons must not stay referenced (PRF-004)
+	-- Third field = Theme.GuildIcons key (user ruling 2026-11-13 12:40 AM). Units has none:
+	-- it keeps an empty icon column so its name lines up with the others.
 	local entries = {
-		{ "Tavern", "Tavern" }, { "Merchant", "Merchant" }, { "Blacksmith", "Blacksmith" },
-		{ "Runeforge", "Runeforge" }, { "Crucible", "Crucible" },
-		{ "Apothecary", "Apothecary" }, { "Training", "TrainingGrounds" },
+		{ "Tavern", "Tavern", "Recruitment" }, { "Merchant", "Merchant", "GearMerchant" },
+		{ "Blacksmith", "Blacksmith", "Blacksmith" },
+		{ "Runeforge", "Runeforge", "Runeforge" }, { "Crucible", "Crucible", "Crucible" },
+		{ "Apothecary", "Apothecary", "Apothecary" }, { "Training", "TrainingGrounds", "TrainingGrounds" },
 		-- "Party" removed 2026-11-05 (user): parties live in the Loadout PARTIES tab. The Sortie's
 		-- "Change party" still opens that tab through the "Party" page entry.
-		{ "Dispatch", "Dispatch" }, { "Units", "Units" },
-		{ "UGC Merchant", "UGCMerchant" }, -- 2026-11-05 (user); the Outfit tab shortcut stays
+		{ "Dispatch", "Dispatch", "Dispatch" }, { "Units", "Units", "Units" },
+		{ "UGC Merchant", "UGCMerchant", "UGCMarket" }, -- 2026-11-05 (user); the Outfit tab shortcut stays
+		{ "Dungeon", "Dungeon", "Dungeon" }, -- build step 5 (2026-11-13), approved DG-NAV
 	}
 	for i, e in entries do
 		local pageName = e[2]
@@ -1685,6 +2132,29 @@ local function buildNav()
 				confirmLeaveWithCart(function()
 					setStatus("")
 					openTavern()
+				end)
+				return
+			end
+			if pageName == "Dungeon" then
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openDungeon()
+				end)
+				return
+			end
+			if pageName == "Units" then
+				-- Own full screen (2026-11-13): same keep/discard prompt first, then open it.
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openUnits()
+				end)
+				return
+			end
+			if pageName == "Dispatch" then
+				-- Own full screen (2026-11-11): same keep/discard prompt first, then open it.
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openDispatch()
 				end)
 				return
 			end
@@ -1746,18 +2216,18 @@ local function buildNav()
 			end
 			if currentPage == pageName then return end
 			confirmLeaveWithCart(function()
-				selectedMission = nil
 				setStatus("")
 				showPage(pageName)
 			end)
 		end, { name = "Nav_" .. pageName, size = UDim2.new(1, 0, 0, BUTTON_HEIGHT), layoutOrder = i,
-			textSize = Theme.Text.Body() })
+			textSize = Theme.Text.Body(), icon = if e[3] then Theme.GuildIcons[e[3]] else nil,
+			iconSize = NAV_ICON_PX, iconReserve = true, textAlign = Enum.TextXAlignment.Left })
 		registerNav(btn, pageName)
 		table.insert(navButtons, btn)
 	end
 	-- Adventurer's Guild: opens the quest board (2026-10-12). Fires OpenAdventurersGuild;
 	-- the server is waiting at the guild base and responds by showing the quest board.
-	local advGuild = makeButton(nav, "Adventurer's Guild", Theme.Colors.Accent or Theme.Colors.Success, function()
+	local advGuild = makeButton(nav, "Quest Board", Theme.Colors.Accent or Theme.Colors.Success, function()
 		if isBusy then return end
 		confirmLeaveWithCart(function()
 			-- Open the in-menu Adventurer's Guild page. The server offers quests ONCE per base
@@ -1773,6 +2243,23 @@ local function buildNav()
 	end)
 	advGuild.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
 	advGuild.LayoutOrder = 90
+	-- Adventurer's Guild icon, same column as the building icons (2026-11-13).
+	do
+		local ico = Instance.new("ImageLabel")
+		ico.Name = "Icon"
+		ico.BackgroundTransparency = 1
+		ico.ScaleType = Enum.ScaleType.Fit
+		ico.Image = Theme.GuildIcons.AdventurersGuild
+		ico.AnchorPoint = Vector2.new(0, 0.5)
+		ico.Size = UDim2.fromOffset(NAV_ICON_PX, NAV_ICON_PX)
+		-- UIPadding below also shifts children: -(icon + 4) puts it 10 px from the edge.
+		ico.Position = UDim2.new(0, -(NAV_ICON_PX + 4), 0.5, 0)
+		ico.Parent = advGuild
+		local pad = Instance.new("UIPadding")
+		pad.PaddingLeft = UDim.new(0, 10 + NAV_ICON_PX + 4)
+		pad.Parent = advGuild
+		advGuild.TextXAlignment = Enum.TextXAlignment.Left
+	end
 	advGuildButton = advGuild
 	table.insert(navButtons, advGuild)
 
@@ -1905,6 +2392,7 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	if CrucibleScreen then CrucibleScreen.Hide() end
 	if ApothecaryScreen then ApothecaryScreen.Hide() end
 	if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
+	if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end
 	closeLeaveDialog() -- a leftover Confirm/Discard/Cancel prompt must not reappear later
 	currentPhase = (type(data) == "table" and type(data.phase) == "string") and data.phase or "PreBattle"
 	-- Button visibility by phase (2026-10-13 fix for the "Continue to Deployment at the
@@ -1934,8 +2422,6 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 			end
 		end
 	end
-	selectedMission = nil
-	selectedUnits = {}
 	setStatus("")
 	screenGui.Enabled = true
 	invalidatePageCache()  -- server state changed; next render re-fetches fresh
@@ -1973,6 +2459,13 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	-- Sortie lands on the in-screen Adventurer's Guild page (sortie controls); otherwise
 	-- the base opens on Units. (2026-10-16)
 	showPage(sortieMode and "Adventurers" or "Units")
+	if currentPhase == "Base" and dungeonLaunchPending then
+		fireDungeonLaunch() -- quest board was backed out of: now the server listens for the room
+	elseif currentPhase == "Base" and returnToDungeon and DungeonScreen then
+		openDungeon() -- back from a dungeon room: the base reopens on the map
+	elseif not sortieMode then
+		openUnits() -- base lands on the Units screen (user 2026-11-13 1:57 PM)
+	end
 	print(`[GuildMenu] Opened ({currentPhase})`)
 end)
 
@@ -1988,6 +2481,7 @@ GuildEvents.GuildMenuClosed.OnClientEvent:Connect(function()
 	if CrucibleScreen then CrucibleScreen.Hide() end
 	if ApothecaryScreen then ApothecaryScreen.Hide() end
 	if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
+	if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end
 	closeLeaveDialog() -- and so does any open Confirm/Discard/Cancel prompt
 	-- Pending changes never outlive the menu (Tester D-1, 2026-10-31).
 	local pendingCount = cartCount()
@@ -2027,6 +2521,7 @@ if BattleEvents.MapBuildComplete then
 				if CrucibleScreen then CrucibleScreen.Hide() end
 				if ApothecaryScreen then ApothecaryScreen.Hide() end
 				if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
+				if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end
 				screenGui.Enabled = false
 				BattleEvents.StartBattle:FireServer()
 			end)

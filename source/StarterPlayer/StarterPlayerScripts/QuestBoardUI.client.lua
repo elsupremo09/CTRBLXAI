@@ -336,6 +336,11 @@ local function populateCard(cardData, quest)
 		cardData.goldRow.Text = `{cardData.goldRow.Text} + {quest.rewards.mercury} mercury`
 	end
 	cardData.dropRow.Text      = quest.rewards.drops .. " drops"
+	-- Renown preview (step 7, loot_progression 94), shown on both quest boards.
+	local rp = quest.renownPreview
+	if type(rp) == "table" and tonumber(rp.amount) then
+		cardData.dropRow.Text = `{cardData.dropRow.Text}  +{rp.amount} Renown` .. (if rp.tooEasy then " (too easy)" else "")
+	end
 
 	cardData.conditionRow.Text = quest.condition
 	cardData.deployRow.Text    = "Deploy: " .. quest.playerSlots .. " units"

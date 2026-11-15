@@ -633,21 +633,16 @@ local function orientUnitToFacing(unitId, facing, skipModelRotate)
 end
 
 
--- HP-bar name label: ONE source of truth for its text + colour, so spawn, HP
--- updates and turn start/end can't drift apart (they previously overwrote the
--- tier star with the plain name and recoloured enemy names gold/white).
--- Enemy names are always red; players are gold while active, light otherwise.
-local function unitNameColor(u, isActive)
-	if u and u.side == "Enemy" then return Theme.Colors.Danger end
-	if u and u.side == "Neutral" then return Theme.Colors.Warning end
-	return isActive and Theme.Colors.TextGold or Theme.Colors.TextPrimary
-end
-
--- Plain name text for the HP-bar label (the tier star is a separate ImageLabel,
--- applied by applyUnitNameStar — image assets, not a text glyph, so no font risk).
-local function unitNameLabelText(u)
-	if not u then return "" end
-	return tostring(u.name or u.id or "")
+-- Overhead HP/MP bar outline = the unit's SIDE colour (user ruling 2026-11-12 5:18 PM). The
+-- overhead name label was removed (user ruling 2026-11-12 4:59 PM: info overload), so the bar
+-- outline tells ally / enemy / neutral apart. Colours come from the ONE shared source
+-- Theme.GetSideColor (Player / Enemy / Neutral); no new colour values (DAT-001).
+local BAR_SIDE_STROKE = 2  -- px; visible at battle zoom, bar fill stays readable
+local function applyBarSideColor(token, u)
+	if not token or not u then return end
+	local c = Theme.GetSideColor(u.side)
+	if token.hpStroke then token.hpStroke.Color = c end
+	if token.mpStroke then token.mpStroke.Color = c end
 end
 
 -- Tier star images: gold for Elite, silver for Veteran, hidden otherwise.
@@ -813,25 +808,15 @@ local function spawnToken(unit)
 	hpBg.Position = UDim2.new(0, 0, 0, BAR_TOP)
 	hpBg.BackgroundColor3 = Theme.Colors.Panel; hpBg.BorderSizePixel = 0; hpBg.Parent = barBb
 	Instance.new("UICorner", hpBg).CornerRadius = UDim.new(0,2)
-	local hpStroke = Instance.new("UIStroke", hpBg)
-	hpStroke.Color = Theme.Colors.BadgeBg; hpStroke.Thickness = 1
+	local hpStroke = Instance.new("UIStroke")
+	hpStroke.Color = Theme.GetSideColor(unit.side); hpStroke.Thickness = BAR_SIDE_STROKE
+	hpStroke.Parent = hpBg  -- side outline (2026-11-12); properties before Parent (NET-004)
 	local hpFill = Instance.new("Frame"); hpFill.Name = "Fill"
 	hpFill.Size = UDim2.fromScale(1,1); hpFill.BackgroundColor3 = Theme.Colors.HP
 	hpFill.BorderSizePixel = 0; hpFill.Parent = hpBg
 	Instance.new("UICorner", hpFill).CornerRadius = UDim.new(0,2)
 
-	-- Name label (inside HP bar)
-	local lbl = Instance.new("TextLabel"); lbl.Size = UDim2.fromScale(1,1)
-	lbl.BackgroundTransparency = 1
-	lbl.TextSize = 8; lbl.Font = Theme.Font.PrimaryBold
-	-- Crisp black outline on the name (all units).
-	lbl.TextStrokeColor3 = Color3.new(0, 0, 0)
-	lbl.TextStrokeTransparency = 0
-	-- Enemy names render red; players keep the default light color (active = gold).
-	lbl.TextColor3 = unitNameColor(unit)
-	lbl.Text = unitNameLabelText(unit)
-	lbl.ZIndex = 2
-	lbl.Parent = hpBg
+	-- (Name label inside the HP bar removed: user ruling 2026-11-12 4:59 PM, info overload.)
 
 	-- MP bar (bottom portion: 4px, directly below HP), aligned under the HP bar
 	local mpBg = Instance.new("Frame")
@@ -839,8 +824,9 @@ local function spawnToken(unit)
 	mpBg.Position = UDim2.new(0, 0, 0, BAR_TOP + 9)
 	mpBg.BackgroundColor3 = Theme.Colors.Panel; mpBg.BorderSizePixel = 0; mpBg.Parent = barBb
 	Instance.new("UICorner", mpBg).CornerRadius = UDim.new(0,2)
-	local mpStroke = Instance.new("UIStroke", mpBg)
-	mpStroke.Color = Theme.Colors.BadgeBg; mpStroke.Thickness = 1
+	local mpStroke = Instance.new("UIStroke")
+	mpStroke.Color = Theme.GetSideColor(unit.side); mpStroke.Thickness = BAR_SIDE_STROKE
+	mpStroke.Parent = mpBg  -- side outline (2026-11-12); properties before Parent (NET-004)
 	local mpFill = Instance.new("Frame"); mpFill.Name = "Fill"
 	mpFill.Size = UDim2.fromScale(1,1); mpFill.BackgroundColor3 = Theme.Colors.MP
 	mpFill.BorderSizePixel = 0; mpFill.Parent = mpBg
@@ -861,12 +847,11 @@ local function spawnToken(unit)
 		-- Measuring to the bbox bottom matches the server spawn grounding
 		-- (GameConstants.GroundModelPivotCFrame) so spawn and move agree.
 		local hrpY = anchorPart.Position.Y
-		local bboxCF, bboxSize = model:GetBoundingBox()
-		local feetY = bboxCF.Position.Y - bboxSize.Y / 2  -- true feet, not pivot
+		local feetY = GameConstants.ModelFeetY(model)  -- body feet, ignores weapons/accessories (2026-11-15)
 		_hipH = math.abs(hrpY - feetY)
 		if _hipH < 0.5 then _hipH = R15_STAND_OFFSET_DEFAULT end  -- sanity fallback
 	end
-	unitTokens[unit.id] = { part = anchorPart, model = model, bar = barBb, fill = hpFill, mpFill = mpFill, label = lbl, star = starImg, hipHeight = _hipH }
+	unitTokens[unit.id] = { part = anchorPart, model = model, bar = barBb, fill = hpFill, mpFill = mpFill, hpStroke = hpStroke, mpStroke = mpStroke, star = starImg, hipHeight = _hipH }
 	-- Set the tier star (gold Elite / silver Veteran / hidden otherwise). Tier is
 	-- fixed for the battle, so applying once at spawn is enough; the star is its
 	-- own ImageLabel so HP/turn label updates never disturb it.
@@ -885,15 +870,12 @@ local function updateHpBar(uid, hp, maxHp)
 	-- serialized with maxHp=0 during deployment, or a death-time snapshot). Without
 	-- this, hp/maxHp is a divide-by-zero -> nan -> UDim2.fromScale(nan,1) renders a
 	-- BROKEN/empty bar. Mirror updateMpBar's guard: keep the last good bar instead.
-	-- Still refresh the name label so it stays correct.
 	if not hp or not maxHp or maxHp <= 0 then
-		t.label.Text = unitData[uid] and unitNameLabelText(unitData[uid]) or uid
 		return
 	end
 	local r = math.clamp(hp/maxHp, 0, 1)
 	t.fill.BackgroundColor3 = Theme.GetHPColor(r)
 	TweenService:Create(t.fill, TweenInfo.new(0.4, Enum.EasingStyle.Quad), {Size = UDim2.fromScale(r,1)}):Play()
-	t.label.Text = unitData[uid] and unitNameLabelText(unitData[uid]) or uid
 end
 
 local function updateMpBar(uid, mp, maxMp)
@@ -3827,8 +3809,6 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	if data.allUnitsRt and #data.allUnitsRt > 0 then
 		timelineSnapshot = data.allUnitsRt; updateTimeline(data.allUnitsRt, nil, nil)
 	end
-	local token = unitTokens[data.unitId]
-	if token then token.label.TextColor3 = unitNameColor(unitData[data.unitId], true) end
 	showSelectionRing(data.unitId)
 	-- Enemy / neutral turn: keep the unit panel up and show the ACTIVE unit instead of
 	-- hiding it. Player turns are handled by PlayerTurnPrompt (full action data).
@@ -4205,6 +4185,12 @@ BattleEvents.UnitStateChanged.OnClientEvent:Connect(function(data)
 		if data.maxMp ~= nil then u.maxMp = data.maxMp end
 		if data.mp ~= nil then u.currentMp = data.mp end
 		if data.isAlive ~= nil then u.isAlive = data.isAlive end
+		-- Side rides along (2026-11-12): a recruit / Traitor flips Enemy -> Neutral mid-battle; keep
+		-- the overhead bar outline (the only side cue overhead) in sync.
+		if type(data.side) == "string" and data.side ~= u.side then
+			u.side = data.side
+			applyBarSideColor(unitTokens[data.unitId], u)
+		end
 		-- Statuses ride along so a heal that weakens/cures Venom shows at once (2026-10-26).
 		if data.statuses then
 			u.statuses = mergeStatusSourceIcons(data.unitId, data.statuses)
@@ -4453,7 +4439,6 @@ end)
 
 BattleEvents.TurnEnded.OnClientEvent:Connect(function(data)
 	UnitAnimController.EndThinking(data.unitId)
-	local t = unitTokens[data.unitId]; if t then t.label.TextColor3 = unitNameColor(unitData[data.unitId]) end
 	hideSelectionRing()
 	if unitData[data.unitId] then
 		unitData[data.unitId].statuses = mergeStatusSourceIcons(data.unitId, data.statuses)
@@ -5515,8 +5500,18 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		recY = recY + 16
 		for _, d in ipairs(data.dispatch) do
 			local xpText = (d.xp and d.xp > 0) and ("+" .. d.xp .. " XP") or ""
-			local matText = (d.mercury and d.mercury > 0)
-				and ((xpText ~= "" and "  \u{00B7}  " or "") .. "+" .. d.mercury .. " mercury") or ""
+			-- Material missions (2026-11-12): one material per mission, in the names the reward
+			-- screen already uses; older summaries carry only mercury.
+			local matPart = ""
+			local _amt = tonumber(d.amount) or 0
+			if d.material == "gems" and _amt > 0 then
+				matPart = "+" .. _amt .. " Rune gem" .. (if d.gem then " (" .. tostring(d.gem) .. ")" else "")
+			elseif (d.material == "crystals" or d.material == "sulfur") and _amt > 0 then
+				matPart = "+" .. _amt .. " " .. (if d.material == "crystals" then "Crystals" else "Sulfur")
+			elseif d.mercury and d.mercury > 0 then
+				matPart = "+" .. d.mercury .. " Mercury"
+			end
+			local matText = (matPart ~= "") and ((xpText ~= "" and "  \u{00B7}  " or "") .. matPart) or ""
 			local dLabel = Instance.new("TextLabel")
 			dLabel.Size = UDim2.new(1, 0, 0, 14)
 			dLabel.Position = UDim2.new(0, 0, 0, recY)
@@ -5727,6 +5722,37 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 		lbl.Parent = frame
 		recY = recY + (height or 14) + 2
 		return lbl
+	end
+
+	-- RENOWN (step 7, approved text loot_progression 94). Victory: "Quest complete! +N Renown";
+	-- defeat/escape: the amount ACTUALLY lost after the Rank floor ("-120", "-0"). Rank-up banner
+	-- under the Renown line; numbers come from the server (rankUpInfo).
+	if type(data.renown) == "table" and type(data.renown.delta) == "number" then
+		local rn = data.renown
+		addDivider()
+		if rn.success then
+			addRow(`Quest complete! +{rn.delta} Renown`, Theme.Colors.TextGold, Theme.Font.PrimaryBold, Theme.Text.Small(), 16)
+		else
+			addRow(`The quest failed. \u{2212}{math.abs(rn.delta)} Renown`, Theme.Colors.Danger, Theme.Font.PrimaryBold, Theme.Text.Small(), 16)
+		end
+		if type(rn.rankUps) == "table" and #rn.rankUps > 0 then
+			addRow(`Your guild's renown grows! Renown Rank {tonumber(rn.rankAfter) or rn.rankUps[#rn.rankUps]}`,
+				Theme.Colors.TextGold, Theme.Font.PrimaryBold, Theme.Text.Small(), 16)
+			local info = rn.rankUpInfo
+			if type(info) == "table" then
+				if tonumber(info.rosterSlots) == 1 then addRow("+1 roster slot", Theme.Colors.Success) end
+				if tonumber(info.questMax) then addRow(`Quests now up to level {info.questMax}`, Theme.Colors.TextPrimary) end
+				if tonumber(info.blacksmithCap) then addRow(`Blacksmith can now upgrade to level {info.blacksmithCap}`, Theme.Colors.TextPrimary) end
+			end
+		end
+	end
+	-- Exploration battles 1-2 pay no Renown (only the 3rd win): approved line from explorationWin.
+	if type(data.explorationWin) == "table" then
+		local idx, tot = tonumber(data.explorationWin.index), tonumber(data.explorationWin.total)
+		if idx and tot and idx < tot then
+			addDivider()
+			addRow(`Exploration {idx}/{tot} \u{2014} Renown paid after the 3rd win.`, Theme.Colors.TextSecondary)
+		end
 	end
 
 	-- EXPERIENCE earned this battle + level-ups (2026-10-28). Kill XP is granted on

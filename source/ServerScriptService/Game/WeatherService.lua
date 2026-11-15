@@ -85,6 +85,9 @@ local _blockedConditions = {}
 -- damage change. Locked weather effects (Snow Storm's locked Frozen) still apply.
 local _shieldZones: { any } = {}
 local _nextConditionOverride = nil
+-- Dungeon (project_rules 263, map_gen_rules 71 exception; build step 3): when set, rounds never
+-- re-roll. An item weather hold still works; when it ends the run's condition comes back.
+local _fixedCondition: string? = nil
 
 local PERIODIC_INTERVAL = 300
 
@@ -396,7 +399,7 @@ Periodic["Mana Storm"] = function(ctx: any)
 		local maxMp = u.maxMp or 0
 		u.currentMp = math.min(maxMp, (u.currentMp or 0) + math.floor(maxMp * 0.10))
 		local dmg = math.floor((u.currentMp or 0) * 0.50)
-		if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
+		if guardHazardImmune(u) then dmg = 0 end; dmg = math.floor(dmg * (u._dgWeatherMult or 1))  -- BD-011 Hazard Suit; RL-07 Weatherward Cloak (step 8)
 		u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 		if u.currentHp <= 0 then u.isAlive = false end
 		if _broadcaster then _broadcaster.UnitStateChanged(u, "Mana Storm") end
@@ -417,7 +420,7 @@ Periodic["Severe Hail"] = function(ctx: any)
 	for i = 1, half do
 		local u = units[i]
 		local dmg = math.floor((u.maxHp or 0) * 0.10)
-		if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
+		if guardHazardImmune(u) then dmg = 0 end; dmg = math.floor(dmg * (u._dgWeatherMult or 1))  -- BD-011 Hazard Suit; RL-07 Weatherward Cloak (step 8)
 		u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 		if u.currentHp <= 0 then u.isAlive = false end
 		if _broadcaster then _broadcaster.UnitStateChanged(u, "Hail") end
@@ -427,7 +430,7 @@ end
 Periodic["Hunger Virus"] = function(ctx: any)
 	for _, u in ipairs(affectedUnits(ctx.state)) do
 		local dmg = math.floor((u.maxHp or 0) * 0.05)
-		if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
+		if guardHazardImmune(u) then dmg = 0 end; dmg = math.floor(dmg * (u._dgWeatherMult or 1))  -- BD-011 Hazard Suit; RL-07 Weatherward Cloak (step 8)
 		-- Mechanical race tag (DB race_tags): immune to the Hunger Virus HP drain (re-check 2026-10-29).
 		do
 			local okR, cr = pcall(function() return (require :: any)(script.Parent.CombatResolver) end)
@@ -455,7 +458,7 @@ Periodic["Thunderstorm"] = function(ctx: any)
 	end
 	local tgt = top[ctx.rng:NextInteger(1, #top)]
 	local dmg = math.floor((tgt.maxHp or 0) * 0.20)
-	if guardHazardImmune(tgt) then dmg = 0 end  -- BD-011 Hazard Suit
+	if guardHazardImmune(tgt) then dmg = 0 end; dmg = math.floor(dmg * (tgt._dgWeatherMult or 1))  -- BD-011 Hazard Suit; RL-07 Weatherward Cloak (step 8)
 	tgt.currentHp = math.max(0, (tgt.currentHp or 0) - GameConstants.CapUnitDamage(tgt, dmg))
 	if tgt.currentHp <= 0 then tgt.isAlive = false end
 	reshapeTile(tgt.tileX, tgt.tileY, nil, math.max(1, best - 1))
@@ -576,7 +579,7 @@ local function resolvePendingStrikes(state: any, nowCt: any)
 							and _tileEffectService.IsFirebreak(u.tileX, u.tileY) then
 							dmg = math.floor(dmg * 0.5)
 						end
-						if guardHazardImmune(u) then dmg = 0 end  -- BD-011 Hazard Suit
+						if guardHazardImmune(u) then dmg = 0 end; dmg = math.floor(dmg * (u._dgWeatherMult or 1))  -- BD-011 Hazard Suit; RL-07 Weatherward Cloak (step 8)
 						u.currentHp = math.max(0, (u.currentHp or 0) - GameConstants.CapUnitDamage(u, dmg))
 						if u.currentHp <= 0 then u.isAlive = false end
 						if _broadcaster then _broadcaster.UnitStateChanged(u, if p.kind == "Meteor" then "Meteor" else "Eruption") end
@@ -655,12 +658,15 @@ function WeatherService.RerollForNewRound(state: any, rng: any, nowCt: any)
 	end
 	if newRound == _roundIndex then return false end
 	_roundIndex = newRound
+	if _fixedCondition and _active == _fixedCondition then return false end
 	-- Clear last round's weather-sourced statuses, pick a new condition, apply onset.
 	clearWeatherStatuses(state)
 	_pendingStrikes = {}
 	-- Fortune Teller override (battlefield event): the chosen condition replaces
 	-- this round's roll once (unless it has since become blocked), then clears.
-	if _nextConditionOverride and not _blockedConditions[_nextConditionOverride] then
+	if _fixedCondition then
+		_active = _fixedCondition -- dungeon: back to the run's condition after an item hold
+	elseif _nextConditionOverride and not _blockedConditions[_nextConditionOverride] then
 		_active = _nextConditionOverride
 		print(string.format("[WeatherService] Round %d uses chosen condition (Fortune Teller)", newRound))
 	else
@@ -702,6 +708,15 @@ function WeatherService.Tick(state: any, ctPassed: any, rng: any, nowCt: any)
 end
 
 -- Apply onset for the STARTING condition at battle start (after Init).
+-- Dungeon battles: the run's one condition for every round (nil = normal per-round re-roll).
+-- Main sets it at every battle start, after Init.
+function WeatherService.SetFixedCondition(conditionId: string?)
+	_fixedCondition = if type(conditionId) == "string" and conditionId ~= "" then conditionId else nil
+	if _fixedCondition then
+		print(string.format("[WeatherService] Fixed condition for this dungeon run: %s", _fixedCondition))
+	end
+end
+
 function WeatherService.ApplyStartingOnset(state: any)
 	applyOnset(state)
 end

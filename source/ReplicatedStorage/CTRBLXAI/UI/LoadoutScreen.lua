@@ -657,6 +657,9 @@ function LoadoutScreen.Show()
 
 	-- Fetch real inventory from server (falls back to mock data on failure)
 	MockData.LoadFromServer()
+	-- Opened for one unit (guild Units screen card tap, 2026-11-13): select it after the roster loads.
+	if LoadoutScreen._openUnitId and MockData.SetSelectedUnitById then MockData.SetSelectedUnitById(LoadoutScreen._openUnitId) end
+	LoadoutScreen._openUnitId = nil
 
 	screenGui, rootFrame = Theme.MakeFullScreen("LoadoutScreen", getPlayerGui())
 
@@ -776,17 +779,23 @@ function LoadoutScreen.Hide()
 	rightColFrame = nil
 	if viewportConn then viewportConn:Disconnect(); viewportConn = nil end
 	LoadoutScreen._openTab = nil
+	LoadoutScreen._openUnitId = nil
 end
 
 -- Open straight on a tab (2026-11-04: the guild Party button and the Sortie open PARTIES).
--- opts are handed to the Parties tab: { pick, onPick, onViewLoadout }.
+-- opts are handed to the Parties tab: { pick, onPick, onViewLoadout }. opts.unitId (2026-11-13):
+-- open with that unit selected (guild Units screen); INFO always opens on Stats.
 function LoadoutScreen.ShowTab(tab: string, opts: any?)
 	LoadoutScreen._openTab = tab
+	LoadoutScreen._openUnitId = opts and opts.unitId or nil
+	if tab == "INFO" then infoView = "stats" end
 	if PartiesTab then
 		local o = opts or {}
 		PartiesTab.Configure(o)
 	end
 	if screenGui and screenGui.Parent then
+		if LoadoutScreen._openUnitId and MockData.SetSelectedUnitById then MockData.SetSelectedUnitById(LoadoutScreen._openUnitId) end
+		LoadoutScreen._openUnitId = nil
 		currentTab = tab
 		switchTab()
 	else

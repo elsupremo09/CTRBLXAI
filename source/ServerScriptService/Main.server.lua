@@ -67,12 +67,15 @@ local DailyService            = require(Game:WaitForChild("DailyService")) -- re
 local RecruitmentService      = require(Game:WaitForChild("RecruitmentService"))
 local BlacksmithService       = require(Game:WaitForChild("BlacksmithService"))
 local RuneforgeService        = require(Game:WaitForChild("RuneforgeService"))
-local GuildService            = require(Game:WaitForChild("GuildService"))
+-- GuildService retired (Renown step 8, loot_progression 75): Renown is the only account progression.
 local MerchantService         = require(Game:WaitForChild("MerchantService"))
 local BlackMarketService      = require(Game:WaitForChild("BlackMarketService"))
 local DispatchService         = require(Game:WaitForChild("DispatchService"))
 local PartyService            = require(Game:WaitForChild("PartyService"))
 local ExploreService          = require(Game:WaitForChild("ExploreService"))
+local DungeonRules            = require(Game:WaitForChild("DungeonRules")) -- relic numbers (step 8)
+local DungeonService          = require(Game:WaitForChild("DungeonService")) -- Dungeon run state (build step 2, 2026-11-13)
+local DungeonRemotes          = require(Game:WaitForChild("DungeonRemotes")) -- Dungeon screen remote (build step 5)
 local ProgressionService      = require(Game:WaitForChild("ProgressionService"))
 -- Slice 6 temporary Guild menu (game_flow id 23): server glue for the building
 -- buttons. Requires GuildEvents itself, so the Guild remotes exist from here on.
@@ -196,7 +199,8 @@ local function computeBattleGold(units, playerUnitsById, quest, isVictory)
 		local cBase = (r and r.completionGoldBase) or 30
 		completionGold = math.floor(cBase * (1 + recLvl / 50))
 		questGold = (r and r.questGold) or 0
-	else
+	elseif not (quest and quest.isDungeon) then
+		-- Dungeon battles skip the defeat halving: the run's wipeout keeps 50% of the bag (project_rules 264).
 		killGold = math.floor(killGold * 0.5)
 	end
 	local total = math.floor((killGold + completionGold + questGold) * eventGoldMult)
@@ -466,13 +470,12 @@ DoctrineInventoryService.InitPlayer(PLAYER_ID)
 -- defined (they capture it), see the block just below the playerUnits lookup.
 --------------------------------------------------
 CurrencyService.InitPlayer(PLAYER_ID)
-GuildService.InitPlayer(PLAYER_ID)
 local currencyProvider = CurrencyService.AsProvider()
 
 -- Batch-1: Recruitment + Blacksmith
 RecruitmentService.SetCurrencyProvider(currencyProvider)
 BlacksmithService.SetCurrencyProvider(currencyProvider)
-RecruitmentService.SetGuildService(GuildService)
+RecruitmentService.SetRenownService(require(Game:WaitForChild("RenownService"))) -- recruits Rank-5..Rank (Renown step 5, 2026-11-13)
 RecruitmentService.SetPersistentStateService(PersistentStateService)
 BlacksmithService.SetEquipmentService(EquipmentService)
 BlacksmithService.SetWeaponData(WeaponData)
@@ -498,9 +501,11 @@ BlackMarketService.SetItemDisplay(ItemDisplay)
 BlackMarketService.SetContentData(WeaponData, ArmorData)
 DispatchService.SetCurrencyProvider(currencyProvider)
 DispatchService.SetCurrencyCredit(function(pid, grant) return CurrencyService.Credit(pid, grant) end)
+-- Rune-gem dispatch missions (USER RULING 2026-11-12): the same Rare-level roll as elite encounters.
+DispatchService.SetGemRoller(function(lvl) return RewardService.RollRuneGem(lvl, "Rare") end)
 ExploreService.SetCurrencyProvider(currencyProvider)
 ExploreService.SetRewardService(RewardService)
-ExploreService.SetGuildService(GuildService)
+ExploreService.SetRenownService(require(Game:WaitForChild("RenownService"))) -- Renown step 6 (unit_progression 98)
 -- Mimic disguise (rules 224): a disguised Mimic counts toward chestCount. DI (no cycle).
 ObjectiveService.SetDisguiseChecker(ObjectEffectService.IsDisguised)
 -- Torture objective gate (2026-10-24): tell ObjectiveService how to detect a
@@ -572,6 +577,13 @@ RuneforgeService.SetWeaponData(WeaponData)
 RuneforgeService.SetArmorData(ArmorData)
 RuneforgeService.SetLevelProvider(GuildMenuService.GetRuneforgeLevel)
 RuneforgeService.SetItemPersist(GuildMenuService.PersistItem)
+-- Gem Craft tab (USER RULING 2026-11-12 1:54 PM): level + discount come from RuneforgeService.
+do -- own block: Main is close to the Luau local-variable limit
+	local GemCraftService = require(Game:WaitForChild("GemCraftService"))
+	GemCraftService.SetCurrencyProvider(currencyProvider)
+	GemCraftService.SetBonusData(BonusData)
+	GemCraftService.SetStateProvider(RuneforgeService.GetState)
+end
 -- Crucible gear merging (USER DECISION 2026-11-02). Wired in its own block so Main's top
 -- level does not gain another local (Main is close to the Luau local-variable limit).
 do
@@ -586,11 +598,27 @@ do
 end
 DispatchService.SetAvailabilitySink(GuildMenuService.AvailabilitySink)
 DispatchService.SetRosterProvider(GuildMenuService.RosterProvider)
+-- Dungeon run state (build step 2, 2026-11-13; project_rules 264-269). Facility level: the
+-- Dungeon building, 0 until Guild Hall L6 and never above the Guild Hall (guild_facilities 86).
+DungeonService.SetFacilityLevelProvider(function(_pid)
+	local gh = GuildMenuService.GetBuildingLevel("GuildHall")
+	if gh < 6 then return 0 end
+	return math.min(GuildMenuService.GetBuildingLevel("Dungeon"), gh)
+end)
+DungeonService.SetBattlesProvider(GuildMenuService.GetBattlesCompleted)
+DungeonService.SetDevNonceProvider(GuildMenuService.GetDevShopNonce) -- dev "Refresh all shops" rerolls dungeon choices (2026-11-15)
+DungeonService.SetRosterProvider(GuildMenuService.RosterProvider)
+DungeonService.SetDispatchCheck(DispatchService.IsUnitDispatched)
+-- Party lock (project_rules 265): dungeon units count as away for Dispatch, parties and deploy.
+GuildMenuService.SetUnitLockCheck(DungeonService.IsUnitLocked)
+-- Dungeon build step 3: no Apothecary refill for dungeon party units mid-run (project_rules 266).
+ApothecaryService.SetSkipUnit(function(id) return DungeonService.IsUnitLocked(PLAYER_ID, id) end)
 -- Blacksmith has no level provider in BlacksmithService; its locked level gates
 -- (guild_facilities id 12/13) are enforced in GuildMenuService before a commit.
 
 
 -- Attempt to load saved state (Slice 4C)
+local legacyGuildSave: any = nil -- old progression.guild, kept as-is for rollback (Renown step 8)
 local loadedSave, loadErr = SaveService.Load(PLAYER_ID)
 local hasSave = false
 local savedEquipMap = {} -- unitId -> { MainHand = instanceId, OffHand = instanceId }
@@ -670,9 +698,14 @@ if loadedSave then
 		-- Daily counters ride in the currencies table (save slot 2, daily systems decision 3).
 		DailyService.Import(PLAYER_ID, loadedSave.currencies and loadedSave.currencies.daily)
 	end
-	if loadedSave.progression and loadedSave.progression.guild then
-		GuildService.Import(PLAYER_ID, loadedSave.progression.guild)
-	end
+	-- Old Guild Level save block (retired in Renown step 8): never read for gameplay, but kept
+	-- byte-for-byte and written back unchanged so a rollback to older code still finds it.
+	legacyGuildSave = loadedSave.progression and loadedSave.progression.guild or nil
+	-- Renown (step 2, USER RULING 2026-11-12, loot_progression 93): load the saved Rank. A save
+	-- from before Renown has no entry; it converts once, after unit levels are restored (below).
+	-- The old `guild` entry is passed through untouched (step 8); conversion uses unit levels.
+	require(Game:WaitForChild("RenownService")).Import(PLAYER_ID,
+		loadedSave.progression and loadedSave.progression.renown or nil)
 	if loadedSave.progression and loadedSave.progression.dispatch then
 		DispatchService.Import(PLAYER_ID, loadedSave.progression.dispatch)
 	end
@@ -682,12 +715,26 @@ if loadedSave then
 	if loadedSave.progression and loadedSave.progression.explore then
 		ExploreService.Import(PLAYER_ID, loadedSave.progression.explore)
 	end
+	-- Dungeon run (build step 2): old saves have no block = no run.
+	DungeonService.Import(PLAYER_ID, loadedSave.progression and loadedSave.progression.dungeon or nil)
 elseif loadErr then
 	-- SaveService now refuses every Save for this player this session, so the fresh
 	-- runtime state below can never overwrite the real save (save_data_contract).
 	warn("[Main] Load failed: " .. loadErr .. " — playing on fresh runtime state; saving is DISABLED this session")
 else
 	print("[Main] No save found — new session")
+end
+-- Brand-new player (USER RULING 2026-11-12 9:23 PM, loot_progression 93): no save, a failed load
+-- (saving is disabled then), or a save with no units saved starts at Renown Rank 1 with 0 Renown and
+-- is marked converted, so the old-save conversion (highest unit - 2) never runs. A save with units
+-- but no Renown entry is an OLD save and still converts once after the roster loads (below).
+do
+	local prog = loadedSave and loadedSave.progression
+	local hasRenown = type(prog) == "table" and prog.renown ~= nil
+	local hasUnits = loadedSave ~= nil and type(loadedSave.roster) == "table" and next(loadedSave.roster) ~= nil
+	if not hasRenown and not hasUnits then
+		require(Game:WaitForChild("RenownService")).StartFresh(PLAYER_ID)
+	end
 end
 -- Slice 6 Guild menu: restore the completed-battle counter and the identity of
 -- units hired in earlier sessions (rides the existing progression payload, Key 3).
@@ -745,7 +792,7 @@ end
 local hero = UnitSchema.Create({
 	id           = "unit_hero",
 	name         = "Hero",
-	level        = 25,
+	level        = 1, -- new players' starting units start at level 1 (USER RULING 2026-11-12 7:59 PM)
 	raceId       = "RACE-HUMAN",
 	side         = "Player",
 	controller   = "Player",
@@ -759,13 +806,13 @@ local hero = UnitSchema.Create({
 -- truth for dismissal protection; the unit_hero id check in GuildMenuService is now a redundant
 -- safety net rather than the only guard.
 hero.is_avatar = true
-equipGeneratedWeapon(hero, "WPN-SWORD", 5, "Uncommon", 1001)
+equipGeneratedWeapon(hero, "WPN-SWORD", 1, "Uncommon", 1001) -- starter gear item level 1 (USER RULING 2026-11-12 9:23 PM)
 
 -- Starter off-hand shield (inventory only, not equipped)
 if not hasSave then
 	local starterShield = ItemGenerator.Generate({
 		baseArchetypeId = "OFF-SHIELD",
-		itemLevel = 5,
+		itemLevel = 1, -- starter gear item level 1 (USER RULING 2026-11-12 9:23 PM)
 		rarity = "Common",
 		seed = 1004,
 		sourceType = "Debug",
@@ -794,7 +841,7 @@ if not hasSave then
 			local armorInstance = {
 				instanceId = "armor_" .. def.seed .. "_1",
 				baseArchetypeId = def.id,
-				itemLevel = 5,
+				itemLevel = 1, -- starter gear item level 1 (USER RULING 2026-11-12 9:23 PM)
 				rarityId = "Common",
 				bonusLines = {},
 				bonusPassiveIds = {},
@@ -814,7 +861,7 @@ end
 local mage = UnitSchema.Create({
 	id           = "unit_mage",
 	name         = "Mage",
-	level        = 25,
+	level        = 1, -- USER RULING 2026-11-12 7:59 PM
 	raceId       = "RACE-ELF",
 	side         = "Player",
 	controller   = "Player",
@@ -823,12 +870,12 @@ local mage = UnitSchema.Create({
 	doctrineId   = "DOC-ARCANIST",
 	skillIds     = { "skill_fire_bolt", "skill_healing_light" },
 })
-equipGeneratedWeapon(mage, "WPN-WAND", 5, "Uncommon", 1002)
+equipGeneratedWeapon(mage, "WPN-WAND", 1, "Uncommon", 1002)
 
 local ranger = UnitSchema.Create({
 	id           = "unit_ranger",
 	name         = "Ranger",
-	level        = 25,
+	level        = 1, -- USER RULING 2026-11-12 7:59 PM
 	raceId       = "RACE-AVIAN",
 	side         = "Player",
 	controller   = "Player",
@@ -837,7 +884,7 @@ local ranger = UnitSchema.Create({
 	doctrineId   = "DOC-RANGER",
 	skillIds     = { "skill_crippling_shot", "skill_venom_strike" },
 })
-equipGeneratedWeapon(ranger, "WPN-CROSSBOW", 5, "Uncommon", 1003)
+equipGeneratedWeapon(ranger, "WPN-CROSSBOW", 1, "Uncommon", 1003)
 
 -- Perks & Flaws Phase 1: player roster units roll 1 perk + 1 flaw at first
 -- appearance (data only, no gameplay effect yet). AssignIfEmpty never re-rolls a
@@ -1103,6 +1150,264 @@ end
 
 local doSave               -- fwd-declared; assigned inside the loop so dev actions at boot can call it
 
+-- DUNGEON RUN END (build step 4, 2026-11-13; project_rules 264/266/267). Wired here, after the
+-- card inventory exists. Payer: an ended run's kept loot goes to the player once (unit EXP was
+-- already granted battle by battle). Healer: Rest room. Treasure: 1 item at the room's level.
+DungeonService.SetPayer(function(p: any)
+	local kept = p and p.kept
+	if type(kept) ~= "table" then return end
+	local grant: any = { gold = tonumber(kept.gold) or 0, gems = {} }
+	for _, bucket in ipairs({ "normalMats", "eliteMats", "bossMats" }) do
+		for k, v in pairs(kept[bucket] or {}) do
+			if k == "mercury" or k == "crystals" or k == "sulfur" then
+				grant[k] = (grant[k] or 0) + v
+			elseif string.sub(k, 1, 4) == "gem:" then
+				local id = string.sub(k, 5)
+				grant.gems[id] = (grant.gems[id] or 0) + v
+			end
+		end
+	end
+	CurrencyService.Credit(PLAYER_ID, grant)
+	local items = 0
+	for _, id in ipairs(kept.gear or {}) do
+		local it = kept.gearItems and kept.gearItems[id]
+		if type(it) == "table" and InventoryService.AddItem(PLAYER_ID, it, { markNew = true }) ~= false then items += 1 end
+	end
+	local cards = 0
+	for key, q in pairs(kept.cards or {}) do
+		local cat, id = string.match(key, "^(%w+):(.+)$")
+		if cat and id and type(cardInventory[cat]) == "table" then
+			cardInventory[cat][id] = (cardInventory[cat][id] or 0) + q
+			cards += q
+		end
+	end
+	print(string.format("[Main] Dungeon payout %s: +%d gold, %d gear, %d card(s), mercury %d, crystals %d, sulfur %d",
+		tostring(p.kind), grant.gold, items, cards, grant.mercury or 0, grant.crystals or 0, grant.sulfur or 0))
+end)
+DungeonService.SetHealer(function(unitId: string, pct: number)
+	local st = PersistentStateService.GetUnitState(PLAYER_ID, unitId)
+	if not st then return nil end
+	-- Step 5 fix: keep the roster unit in step (the Units / party screens and the save read it).
+	local function sync()
+		local u = playerUnits and playerUnits[unitId]
+		if u then
+			u.currentHp = math.min(st.currentHp, u.maxHp or st.currentHp)
+			u.currentMp = math.min(st.currentMp, u.maxMp or st.currentMp)
+		end
+	end
+	if st.isKO then
+		st.isKO = false
+		st.currentHp = 1
+		sync()
+		return { revived = true, hp = 1 }
+	end
+	local hpBefore, mpBefore = st.currentHp, st.currentMp
+	st.currentHp = math.min(st.maxHp, st.currentHp + math.ceil(st.maxHp * pct / 100))
+	st.currentMp = math.min(st.maxMp, st.currentMp + math.ceil(st.maxMp * pct / 100))
+	sync()
+	return { hp = st.currentHp - hpBefore, mp = st.currentMp - mpBefore }
+end)
+DungeonService.SetTreasureRoll(function(level: number, oppId: string)
+	local results = RewardService.GenerateRewards(PLAYER_ID, math.max(1, level), oppId,
+		{ count = 1, allowedCategories = { "Equipment" }, noCommit = true })
+	for _, r in ipairs(results or {}) do
+		if r.item then return r.item end
+	end
+	return nil
+end)
+-- Run over: normal rules resume for the party (KO -> 1 HP, project_rules 266).
+DungeonService.SetRunEndedHook(function(party: any)
+	local set: { [string]: boolean } = {}
+	for _, id in ipairs(party or {}) do set[id] = true end
+	PersistentStateService.ClearAllKO(PLAYER_ID, function(id) return not set[id] end)
+end)
+-- DUNGEON MERCHANT (build step 6, 2026-11-14; project_rules 268, Q9/Q10). Bought items go straight
+-- to the player (kept on any run end). Gold first, item after; DungeonService refunds a failed hand-in.
+DungeonService.SetMerchantHooks({
+	gear = function(level: number, rarity: string, seed: number) return MerchantService.GenerateDungeonGear(level, rarity, seed) end,
+	gearPrice = function(item: any) return MerchantService.DungeonPrice(item, 1) end,
+	consumables = function()
+		local out = {}
+		for _, id in ConsumableData.GetAllIds() do
+			local def = ConsumableData.GetById(id)
+			if def and not def.parked and def.tier and (def.shopPrice or 0) > 0 then
+				table.insert(out, { id = id, name = def.name, tier = def.tier, price = def.shopPrice })
+			end
+		end
+		table.sort(out, function(a, b) return a.id < b.id end)
+		return out
+	end,
+	pay = function(gold: number) return (CurrencyService.Debit(PLAYER_ID, { gold = math.max(0, math.floor(gold)) })) == true end,
+	refund = function(gold: number) CurrencyService.Credit(PLAYER_ID, { gold = math.max(0, math.floor(gold)) }) end,
+	giveItem = function(item: any) return InventoryService.AddItem(PLAYER_ID, item, { markNew = true }) end,
+	giveConsumable = function(id: string)
+		cardInventory.consumables[id] = (cardInventory.consumables[id] or 0) + 1
+	end,
+	refill = function(party: any, commit: boolean)
+		local only = {}
+		for _, id in ipairs(party or {}) do only[id] = true end
+		return ApothecaryService.Refill(PLAYER_ID, commit, { onlyUnits = only, priceMult = 1.5 })
+	end,
+})
+-- DUNGEON EVENTS (build step 7a, 2026-11-14; project_rules 272). Gear rolls go to the run bag (held, not
+-- in the inventory); real gold via CurrencyService; HP changes on the dungeon party only, 1 HP floor.
+DungeonService.SetEventHooks({
+	rolls = function(level: number, count: number, oppId: string)
+		local results = RewardService.GenerateRewards(PLAYER_ID, math.max(1, level), oppId,
+			{ count = math.clamp(math.floor(count), 1, 10), allowedCategories = { "Equipment" }, noCommit = true })
+		local out = {}
+		for _, r in ipairs(results or {}) do if r.item then table.insert(out, { item = r.item }) end end
+		return out
+	end,
+	gold = function() return (CurrencyService.GetBalance(PLAYER_ID) or {}).gold or 0 end,
+	pay = function(g: number) return (CurrencyService.Debit(PLAYER_ID, { gold = math.max(0, math.floor(g)) })) == true end,
+	give = function(g: number) CurrencyService.Credit(PLAYER_ID, { gold = math.max(0, math.floor(g)) }) end,
+	hasKO = function(party: any)
+		for _, id in ipairs(party or {}) do
+			local st = PersistentStateService.GetUnitState(PLAYER_ID, id)
+			if st and st.isKO then return true end
+		end
+		return false
+	end,
+	isKO = function(id: string)
+		local st = PersistentStateService.GetUnitState(PLAYER_ID, id)
+		return st ~= nil and st.isKO == true
+	end,
+	-- EV-02 flask: the lowest-level KO'd unit back at pct% HP (draft). Returns its name.
+	revive = function(party: any, pct: number)
+		local best, bestLv = nil, math.huge
+		for _, id in ipairs(party or {}) do
+			local st = PersistentStateService.GetUnitState(PLAYER_ID, id)
+			local u = playerUnits and playerUnits[id]
+			if st and st.isKO and ((u and u.level) or 1) < bestLv then best, bestLv = id, (u and u.level) or 1 end
+		end
+		if not best then return nil end
+		local st = PersistentStateService.GetUnitState(PLAYER_ID, best)
+		st.isKO = false
+		st.currentHp = math.max(1, math.floor(st.maxHp * pct / 100))
+		local u = playerUnits and playerUnits[best]
+		if u then u.currentHp = math.min(st.currentHp, u.maxHp or st.currentHp) end
+		return (u and u.name) or best
+	end,
+	-- HP loss, never below 1 HP and never a KO (rule 272). top = only the unit with the highest current HP.
+	hurt = function(party: any, pct: number, top: boolean)
+		local ids = {}
+		if top then
+			local best, hp = nil, -1
+			for _, id in ipairs(party or {}) do
+				local st = PersistentStateService.GetUnitState(PLAYER_ID, id)
+				if st and not st.isKO and st.currentHp > hp then best, hp = id, st.currentHp end
+			end
+			if best then ids = { best } end
+		else
+			ids = party or {}
+		end
+		for _, id in ipairs(ids) do
+			local st = PersistentStateService.GetUnitState(PLAYER_ID, id)
+			if st and not st.isKO then
+				st.currentHp = math.max(1, st.currentHp - math.ceil(st.maxHp * pct / 100))
+				local u = playerUnits and playerUnits[id]
+				if u then u.currentHp = math.min(st.currentHp, u.maxHp or st.currentHp) end
+			end
+		end
+	end,
+	-- EV-03 Peddler: party-only refill at 1.0x the Apothecary price (rule 272).
+	refill = function(party: any, commit: boolean)
+		local only = {}
+		for _, id in ipairs(party or {}) do only[id] = true end
+		return ApothecaryService.Refill(PLAYER_ID, commit, { onlyUnits = only, priceMult = 1.0 })
+	end,
+	-- EV-11..16 hooks (stages build 2026-11-15, rule 272). Server-side only; amounts come from DungeonRules.
+	unitInfo = function(id: string)
+		local u = playerUnits and playerUnits[id]
+		return u and { raceId = u.raceId, doctrineId = u.doctrineId } or nil
+	end,
+	kinName = function(kind: string, id: string)
+		if kind == "race" then local r = RaceData.GetRace(id) return r and r.name or nil end
+		local d = DoctrineData[id]
+		return d and d.name or nil
+	end,
+	-- EV-13 Barter Post: real resources, all-or-nothing (CurrencyService.Debit is atomic).
+	trade = function(give: string, giveN: number, get: string, getN: number)
+		local ok = CurrencyService.Debit(PLAYER_ID, { [give] = math.max(0, math.floor(giveN)) })
+		if ok ~= true then return false end
+		CurrencyService.Credit(PLAYER_ID, { [get] = math.max(0, math.floor(getN)) })
+		return true
+	end,
+	-- EV-14 Campfire "Search the camp" (USER RULING 2026-11-15 10:01 AM): ALL party consumable charges, free.
+	campRefill = function(party: any)
+		for _, id in ipairs(party or {}) do
+			local u = playerUnits and playerUnits[id]
+			for _, s in pairs((u and u.consumableSlots) or {}) do
+				if type(s) == "table" and s.consumableId and (s.maxCharges or 0) > 0 then s.currentCharges = s.maxCharges end
+			end
+		end
+	end,
+	-- EV-14 Campfire "Rest a while": EVERY KO'd party unit back at pct% HP. Returns their names.
+	reviveAll = function(party: any, pct: number)
+		local names = {}
+		for _, id in ipairs(party or {}) do
+			local st = PersistentStateService.GetUnitState(PLAYER_ID, id)
+			if st and st.isKO then
+				st.isKO = false
+				st.currentHp = math.max(1, math.floor(st.maxHp * pct / 100))
+				local u = playerUnits and playerUnits[id]
+				if u then u.currentHp = math.min(st.currentHp, u.maxHp or st.currentHp) end
+				table.insert(names, (u and u.name) or id)
+			end
+		end
+		return names
+	end,
+	-- EV-16 Altar of Change (10:08 AM; matches the Mutation Bench, ObjectEffectService): a unit's traits.
+	traits = function(id: string)
+		local u = playerUnits and playerUnits[id]
+		if not u then return nil end
+		local function one(listKey: string): any
+			local tid = type(u[listKey]) == "table" and u[listKey][1] or nil
+			local t = tid and TraitData.GetTrait(tid) or nil
+			return t and { id = tid, name = t.name, tier = t.tier } or nil
+		end
+		return { name = u.name, level = u.level, perk = one("perkIds"), flaw = one("drawbackIds") }
+	end,
+	-- Same roll as the Mutation Bench: TraitRoller, normal recruit tier odds, same kind only.
+	rollTrait = function(kind: string, rng: Random)
+		local tid = if kind == "perk" then TraitRoller.RollPerk(rng) else TraitRoller.RollFlaw(rng)
+		local t = tid and TraitData.GetTrait(tid) or nil
+		return t and { id = tid, name = t.name, tier = t.tier } or nil
+	end,
+	-- PERMANENT swap on the roster unit (saved with the roster, so it stays after the run and on wipeout).
+	setTrait = function(id: string, kind: string, traitId: string)
+		local u = playerUnits and playerUnits[id]
+		if not (u and TraitData.GetTrait(traitId)) then return false end
+		u[if kind == "perk" then "perkIds" else "drawbackIds"] = { traitId }
+		if EquipmentService.RebuildUnitStats then EquipmentService.RebuildUnitStats(u) end
+		return true
+	end,
+	-- EV-15 Forge of Chance: a new bonus-line set for the higher rarity (same generator as loot / Runeforge).
+	reforge = function(archetypeId: string, itemLevel: number, rarity: string, seed: number)
+		local set, why = ItemGenerator.RollBonusSet(archetypeId, itemLevel, rarity, seed)
+		if not set then error(why or "no bonus set") end
+		set.displayName = ItemGenerator.ComposeName(archetypeId, set.bonusLines, set.bonusPassiveIds)
+		return set
+	end,
+	-- EV-12 Smith's Wager: a RANDOM gear for the same slot as the one handed over (draft), +1 rarity, +5 levels.
+	-- Same slot = same armor slot, or weapon / off-hand category. Seeded, so a rejoin gives the same item.
+	smithGear = function(archetypeId: string, itemLevel: number, rarity: string, seed: number)
+		local w, a = WeaponData.GetByArchetypeId(archetypeId), ArmorData.GetByArchetypeId(archetypeId)
+		local pool: { string } = {}
+		if w then
+			for id, def in WeaponData.Archetypes do if def.category == w.category then table.insert(pool, id) end end
+		elseif a then
+			for id, def in ArmorData.Archetypes do if def.category == "Armor" and def.slot == a.slot then table.insert(pool, id) end end
+		end
+		if #pool == 0 then pool = { archetypeId } end
+		table.sort(pool)
+		return ItemGenerator.GenerateFromPool(pool, math.clamp(math.floor(itemLevel), 1, 99), rarity, seed, "Loot")
+	end,
+})
+-- A result left pending by an older build (step 3 had no payout) is paid once at load.
+DungeonService.PayPending(PLAYER_ID)
+
 BattleEvents.StartBattle.OnServerEvent:Connect(function(player)
 	if not mapReadyForStart then
 		print("[Hub] StartBattle ignored — map not ready yet (early tap)")
@@ -1365,6 +1670,59 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 			local t, r = UGCService.DevResetTrialRentRecords(PLAYER_ID)
 			print(string.format("[Dev] UGC records reset (%d trials, %d rent prices)", t, r))
 			doSave()
+
+		elseif cmd.action == "DevDungeon" then
+			-- Dungeon build step 3 test hooks (dev only). op: memorySave | level | start | move | state | end.
+			local op = cmd.op
+			if op == "memorySave" then
+				SaveService.SetMode("memory") -- this session only: the real save is not written
+			elseif op == "level" then
+				DungeonService.DevSetFacilityLevel(tonumber(cmd.level))
+			elseif op == "start" then
+				local ch = DungeonService.GetChoices(PLAYER_ID)
+				local card = ch[1]
+				local ok, res = DungeonService.StartRun(PLAYER_ID, card and card.id, cmd.party)
+				print("[Dev] Dungeon start: " .. tostring(ok) .. " " .. (if ok then tostring(res.card.id) else tostring(res)))
+			elseif op == "move" then
+				local ok, res = DungeonService.MoveTo(PLAYER_ID, cmd.node)
+				print("[Dev] Dungeon move " .. tostring(cmd.node) .. ": " .. tostring(ok) .. " " .. (if ok then tostring(res.played) else tostring(res)))
+			elseif op == "end" then
+				local ok, res = DungeonService.EndRun(PLAYER_ID, cmd.kind)
+				print("[Dev] Dungeon end " .. tostring(cmd.kind) .. ": " .. tostring(ok) .. (if ok then "" else " " .. tostring(res)))
+			elseif op == "rest" then
+				local ok, res = DungeonService.UseRest(PLAYER_ID)
+				print("[Dev] Dungeon rest: " .. tostring(ok) .. " " .. (if ok then tostring(res.healPct) .. "%" else tostring(res)))
+			elseif op == "treasure" then
+				local ok, res = DungeonService.OpenTreasure(PLAYER_ID, require(Game:WaitForChild("RenownService")).GetRank(PLAYER_ID))
+				print("[Dev] Dungeon treasure: " .. tostring(ok) .. " " .. (if ok then tostring(res.item and res.item.instanceId) else tostring(res)))
+			elseif op == "clear" then
+				local ok, res = DungeonService.MarkNodeCleared(PLAYER_ID, cmd.node)
+				print("[Dev] Dungeon clear " .. tostring(cmd.node) .. ": " .. tostring(ok))
+			elseif op == "unit" then
+				-- Dev probe (step 5): a unit's live HP/MP (persistent record + roster unit).
+				local ps = PersistentStateService.GetUnitState(PLAYER_ID, cmd.unitId)
+				local u = playerUnits[cmd.unitId]
+				if ps and type(cmd.hp) == "number" then ps.currentHp = math.clamp(math.floor(cmd.hp), 1, ps.maxHp) end
+				if u and ps then u.currentHp = ps.currentHp end
+				workspace:SetAttribute("DevDungeonUnit", string.format("ps=%s roster=%s/%s",
+					if ps then `{ps.currentHp}/{ps.maxHp} mp {ps.currentMp}/{ps.maxMp} ko {tostring(ps.isKO)}` else "nil",
+					tostring(u and u.currentHp), tostring(u and u.maxHp)))
+			elseif op == "relic" then
+				-- Dev probe (step 8): give the active run a relic by id (dev-gated like every DevDungeon op).
+				local run = DungeonService.GetActiveRun(PLAYER_ID)
+				local ok = DungeonService.DevGiveRelic and DungeonService.DevGiveRelic(PLAYER_ID, cmd.id)
+				print("[Dev] Dungeon relic " .. tostring(cmd.id) .. ": " .. tostring(ok) .. " (run " .. tostring(run ~= nil) .. ")")
+			elseif op == "loot" then
+				local ok, res = DungeonService.AddLoot(PLAYER_ID, cmd.kind, cmd.a, cmd.b)
+				print("[Dev] Dungeon loot " .. tostring(cmd.kind) .. ": " .. tostring(ok) .. " " .. tostring(res))
+			end
+			if op ~= "state" and op ~= "level" and op ~= "memorySave" and op ~= "unit" and doSave then doSave() end
+			local run = DungeonService.GetActiveRun(PLAYER_ID)
+			workspace:SetAttribute("DevDungeonState", game:GetService("HttpService"):JSONEncode({ run = run,
+				pending = DungeonService.GetPendingOutcome(PLAYER_ID), mode = SaveService.GetMode(),
+				balance = CurrencyService.GetBalance(PLAYER_ID), items = InventoryService.GetItemCount(PLAYER_ID),
+				renown = { require(Game:WaitForChild("RenownService")).GetProgress(PLAYER_ID) },
+				battles = GuildMenuService.GetBattlesCompleted() }))
 
 		elseif cmd.action == "SaveNow" then
 			local ok, err = doSave()
@@ -2095,6 +2453,21 @@ GuildMenuService.SetLockedAugmentSweep(function()
 	end
 	TrainingGroundsService.AddMoved(n)
 end)
+-- Dungeon save hook (build step 2): set here, after `local doSave` is declared, so the closure
+-- sees the live doSave (same lazy pattern as GuildMenuService.Init below).
+DungeonService.SetSaver(function() if doSave then return doSave() end return nil end)
+-- Dungeon screen remote (build step 5, 2026-11-13). Changes only at the base hub; ids only.
+DungeonRemotes.Init({
+	playerId = PLAYER_ID,
+	sessionPlayer = player,
+	isMenuOpenAtBase = GuildMenuService.IsOpenAtBase,
+	getRank = function()
+		local Renown = require(Game:WaitForChild("RenownService"))
+		Renown.EnsureConverted(PLAYER_ID)
+		return Renown.GetRank(PLAYER_ID)
+	end,
+	lockedText = "Build up your Guild Hall to level 6 to open the Dungeon.", -- approved DG-LOCKED
+})
 GuildMenuService.Init({
 	playerId       = PLAYER_ID,
 	sessionPlayer  = player,
@@ -2255,13 +2628,14 @@ local function establishPlayerUnitFromSave(u)
 	end
 
 	-- SLICE 6 LEVEL FIX (2026-10-07): ProgressionService reads level/xp/raceId
-	-- from this record and defaults a missing level to 1, so level-25 starting
+	-- from this record and defaults a missing level to 1, so the (then level-25) starting
 	-- units levelled up to 2. Reconcile record level with the unit's level:
 	--   * record level missing or LOWER than the unit -> raise the record to the
 	--     unit's level (seeds new records; one-time correction for old saves that
 	--     stored the bogus 1). XP toward next level is kept as-is.
 	--   * record level HIGHER than the unit -> the unit levelled up in an earlier
-	--     session (starting units are always rebuilt at 25), so restore that level
+	--     session (starting units are always rebuilt at their starting level, level 1 since
+	--     USER RULING 2026-11-12 7:59 PM), so restore that level
 	--     and recompute base stats from race growth + saved allocation.
 	-- Never lowers a level. (ARC-006: nil-safe on every read.)
 	do
@@ -2345,6 +2719,23 @@ for _, u in pairs(playerUnits) do
 	if u.side == "Player" then
 		establishPlayerUnitFromSave(u)
 	end
+end
+
+-- Renown old-save conversion (step 2, loot_progression 93): once, after the boot roster and
+-- the saved unit levels are restored. Own block (Main is close to the Luau local limit).
+do
+	local RenownService = require(Game:WaitForChild("RenownService"))
+	RenownService.SetHighestUnitLevelProvider(function(_pid)
+		local highest = nil
+		for _, u in pairs(playerUnits) do
+			local lv = tonumber(u.level)
+			if u.side == "Player" and lv and (highest == nil or lv > highest) then highest = lv end
+		end
+		return highest
+	end)
+	RenownService.EnsureConverted(PLAYER_ID)
+	local have, need = RenownService.GetProgress(PLAYER_ID)
+	print(string.format("[Main] Renown Rank %d (%d / %d Renown)", RenownService.GetRank(PLAYER_ID), have, need))
 end
 
 -- Locked 2nd augment slots (USER DECISION 2026-11-04): clean up at BOOT too, so the base never
@@ -2496,10 +2887,16 @@ function doSave()
 	local progression = {
 		cardInventory = cardInventory,
 		doctrineInventory = DoctrineInventoryService.ExportInventory(PLAYER_ID), -- owned doctrine instances (2026-10-20)
-		guild    = GuildService.Export(PLAYER_ID),
+		guild    = legacyGuildSave, -- retired Guild Level block, passed through unchanged (Renown step 8)
+		renown   = (function() -- Renown Rank (step 2, 2026-11-12); converts first if still pending
+			local RenownService = require(Game:WaitForChild("RenownService"))
+			RenownService.EnsureConverted(PLAYER_ID)
+			return RenownService.Export(PLAYER_ID)
+		end)(),
 		dispatch = DispatchService.Export(PLAYER_ID),
 		party    = PartyService.Export(PLAYER_ID),
 		explore  = ExploreService.Export(PLAYER_ID),
+		dungeon  = DungeonService.Export(PLAYER_ID), -- Dungeon run state (build step 2, 2026-11-13)
 		guildMenu = GuildMenuService.Export(PLAYER_ID), -- Slice 6 Guild menu (battle counter + hired units)
 		ugc      = UGCService.Export(PLAYER_ID), -- UGC rentals/trials/cart/votes (ownership never saved)
 	}
@@ -2642,8 +3039,41 @@ while true do
 	-- post-battle recovery, auto-save, return to base. (The only mode today; exploration adds "run".)
 	local betweenBattleMode = "standalone"
 
+	-- DUNGEON ROOM BATTLE (Dungeon build step 3, 2026-11-13; project_rules 263-266). The activity
+	-- { activity = "dungeon" } plays the current room of the active run: the node, not the quest
+	-- board, makes the battle. Level = quest level from Rank + (floor - 1); the run's biome and its
+	-- one fixed weather/crisis. Mode "run": no recovery / refill / KO clearing after the battle.
+	local dungeonBattle: any = nil
+	local dungeonParty: { string }? = nil
+	if launchedActivity == "dungeon" then
+		local okDg, errDg = pcall(function()
+			local Renown = require(Game:WaitForChild("RenownService"))
+			Renown.EnsureConverted(PLAYER_ID)
+			local okS, spec = DungeonService.GetBattleSpec(PLAYER_ID, Renown.GetRank(PLAYER_ID))
+			if not okS then error(spec, 0) end
+			local run = DungeonService.GetActiveRun(PLAYER_ID)
+			dungeonParty = run and run.party or nil
+			dungeonBattle = QuestGenerator.GenerateDungeonBattle(spec)
+		end)
+		if not okDg or not dungeonBattle then
+			warn("[Main] Dungeon battle not started: " .. tostring(errDg))
+			continue
+		end
+		betweenBattleMode = "run"
+	end
+
+	if dungeonBattle then
+		quests = { dungeonBattle }
+		selectedQuest = dungeonBattle
+	else -- quest board (unchanged below, up to the selected-quest fallback)
 	-- Generate 3 quests
-	playerLevel = 1  -- prototype: hardcoded level 1. Future: read from save.
+	-- Renown step 3 (2026-11-13, loot_progression 87): quests scale from the Renown Rank.
+	-- EnsureConverted first so an old save has a Rank before it is read.
+	do
+		local Renown = require(Game:WaitForChild("RenownService"))
+		Renown.EnsureConverted(PLAYER_ID)
+		playerLevel = Renown.GetRank(PLAYER_ID)
+	end
 	quests = QuestGenerator.Generate(playerLevel, os.time())
 
 	-- Show Quest Board to all clients
@@ -2670,6 +3100,24 @@ while true do
 		else
 			warn("[Main] Test Arena quest could not be generated: " .. tostring(ta))
 		end
+	end
+	-- Renown step 7 (loot_progression 94): quest-card preview "+100 Renown" / "+50 Renown (too easy)".
+	-- Server-computed from the same rules Award uses; the Test Arena gets none.
+	do
+		local okP, errP = pcall(function()
+			local Renown = require(Game:WaitForChild("RenownService"))
+			local RRules = require(Game:WaitForChild("RenownRules"))
+			for _, q in ipairs(quests) do
+				if not q.isTestArena then
+					local kind = RRules.QuestKind(q.difficulty, q.questType == "Boss", q.isEliteEncounter == true, false, false)
+					local amount = Renown.PreviewQuestRenown(PLAYER_ID, kind, tonumber(q.recommendedLvl) or 1)
+					if amount > 0 then
+						q.renownPreview = { amount = amount, tooEasy = amount < RRules.BaseReward(kind) }
+					end
+				end
+			end
+		end)
+		if not okP then warn("[Main] Renown preview failed: " .. tostring(errP)) end
 	end
 	BattleEvents.QuestBoardOpen:FireAllClients({ quests = quests, newDayIn = DailyService.SecondsUntilNewDay(),
 		bossRewardsLeft = DailyService.BossRewardsLeft(PLAYER_ID), bossRewardsPerDay = DailyService.BOSS_REWARDS_PER_DAY })
@@ -2711,12 +3159,16 @@ while true do
 		end
 	end
 	if not selectedQuest then selectedQuest = quests[1] end -- fallback
+	end -- quest board (dungeon rooms skip it)
 
 	print(string.format("[Main] Quest selected: %s (%s/%s)", selectedQuest.name, selectedQuest.biome, selectedQuest.template))
 
 	-- ELITE ENCOUNTER (daily systems decisions 10-14, 2026-11-01): fixed by the count of completed
 	-- battles (not by the card, so abandoning cannot fish for elites); normal quests only.
-	if not selectedQuest.isDailyContract and not selectedQuest.isTestArena and selectedQuest.questType ~= "Boss"
+	if selectedQuest.isDungeon then
+		-- Dungeon Elite room = an elite encounter (its grants + elite reward item); no random elites.
+		if selectedQuest.dungeonPlayed == "Elite" then QuestGenerator.MakeEliteEncounter(selectedQuest) end
+	elseif not selectedQuest.isDailyContract and not selectedQuest.isTestArena and selectedQuest.questType ~= "Boss"
 		and QuestGenerator.IsEliteBattle(PLAYER_ID, GuildMenuService.GetBattlesCompleted()) then
 		QuestGenerator.MakeEliteEncounter(selectedQuest)
 	end
@@ -2739,7 +3191,10 @@ while true do
 	} })
 
 	-- Generate map from quest parameters
-	generatedMap = MapService.Generate(selectedQuest.biome, selectedQuest.template)
+	-- Dungeon rooms: seeded from the room so a replayed room gets the same battlefield (project_rules 266).
+	local dgMapSeed = if selectedQuest.isDungeon then tonumber(selectedQuest.dungeonMapSeed) else nil
+	if dgMapSeed then MapService.ClearCache() end -- the cache is keyed by biome+template only
+	generatedMap = MapService.Generate(selectedQuest.biome, selectedQuest.template, dgMapSeed)
 	MAP_WIDTH    = generatedMap.width
 	MAP_HEIGHT   = generatedMap.height
 	GameConstants.SetGeneratedMap(generatedMap)
@@ -3103,10 +3558,194 @@ end)
 			EquipmentService.RebuildUnitStats(u)
 		end
 	end
+	-- DUNGEON RELICS (build step 8, 2026-11-14; project_rules 271). The Boss relic is given as the boss
+	-- fight STARTS (user confirmed 10:32 AM), then every held relic is stamped on the dungeon party for
+	-- THIS battle only (cleared at battle end / next battle). Nothing applies outside dungeon battles.
+	local dgRelics: { [string]: boolean } = {}
+	local dgSecondWind: any = nil
+	if dungeonBattle then
+		if selectedQuest and selectedQuest.dungeonPlayed == "Boss" then
+			local okR, rid = pcall(DungeonService.GrantBossRelic, PLAYER_ID)
+			if not okR then warn("[Main] Boss relic failed: " .. tostring(rid)) end
+		end
+		for _, id in DungeonService.GetRelics(PLAYER_ID) do dgRelics[id] = true end
+		local R = DungeonRules.Data.Relic
+		if dgRelics["RL-09"] then dgSecondWind = { used = false, hpPct = R.SecondWindHpPct } end
+		for _, u in ipairs(allUnitsList) do
+			if u.side == "Player" and table.find(dungeonParty or {}, u.id) then
+				local hpPct = (if dgRelics["RL-01"] then R.HeartstoneHpPct else 0) + (if dgRelics["RL-15"] then R.CrownHpPct else 0)
+					- (if dgRelics["RL-46"] then R.GlassHpPct else 0) -- RL-46 Glass Crown: Max HP -10% (relics v2)
+				if hpPct ~= 0 then
+					local before = u.maxHp or 0
+					local start = u.currentHp or 0 -- before the rebuild (a lower Glass Crown max would cap it first)
+					u.battleMaxHpBonusPct = hpPct / 100
+					EquipmentService.RebuildUnitStats(u)
+					if u.isAlive then
+						u.currentHp = math.min(u.maxHp, start + math.max(0, u.maxHp - before))
+						u._dgHpBonusAdded = u.currentHp - start -- taken back at battle end (no free heal, rule 266); < 0 = given back
+					end
+				end
+				local dmg = 1 - ((if dgRelics["RL-10"] then R.IronDamagePct else 0) + (if dgRelics["RL-15"] then R.CrownDamagePct else 0)) / 100
+				u._dgDamageTakenMult = if dmg < 1 then dmg else nil
+				u._dgWeatherMult = if dgRelics["RL-07"] then 1 - R.CloakWeatherPct / 100 else nil
+				u._dgEliteDmgMult = if dgRelics["RL-13"] then 1 + R.BannerDamagePct / 100 else nil
+				u._dgWardReady = if dgRelics["RL-14"] then true else nil
+				u._dgSecondWind = dgSecondWind
+				u._dgBootsRt = if dgRelics["RL-04"] then R.BootsRt else nil
+			else
+				u._dgDamageTakenMult, u._dgWeatherMult, u._dgEliteDmgMult, u._dgWardReady, u._dgSecondWind, u._dgBootsRt = nil, nil, nil, nil, nil, nil
+			end
+		end
+		-- RL-05 Refill Satchel: at battle start, ONE equipped consumable in the party (not full) gains +1
+		-- charge. Seeded per run room; the lowest-charge slot first (agent default).
+		if dgRelics["RL-05"] then
+			local best, bestU = nil, nil
+			for _, u in ipairs(allUnitsList) do
+				if u.side == "Player" and table.find(dungeonParty or {}, u.id) then
+					for _, s in pairs(u.consumableSlots or {}) do
+						if s and s.consumableId and (s.currentCharges or 0) < (s.maxCharges or 0) and (not best or (s.currentCharges or 0) < (best.currentCharges or 0)) then best, bestU = s, u end
+					end
+				end
+			end
+			if best then
+				best.currentCharges = math.min(best.maxCharges, (best.currentCharges or 0) + R.SatchelCharges)
+				print(string.format("[Main] Refill Satchel: %s %s +%d charge", bestU and bestU.name or "?", tostring(best.consumableId), R.SatchelCharges))
+			end
+		end
+		local n = 0 for _ in dgRelics do n += 1 end
+		if n > 0 then print(string.format("[Main] Dungeon relics this battle: %d", n)) end
+		-- EV-11 doctrine buff for this battle (stages build 2026-11-15, rule 272). EV-16 mutators retired 10:01 AM.
+		local dbuff = DungeonService.TakeNextBattleBuff(PLAYER_ID)
+		for _, u in ipairs(allUnitsList) do
+			u._dgStatBuff = nil
+			if u.side == "Player" and table.find(dungeonParty or {}, u.id) then
+				if dbuff and u.doctrineId == dbuff.doctrineId then
+					-- the doctrine's main stat = its largest positive stat package entry (agent default)
+					local pkg = (DoctrineData[u.doctrineId] or {}).statPackage or {}
+					local best, bv = nil, 0
+					for _, s in ipairs({ "STR", "AGI", "INT", "VIT", "DEX", "LUK" }) do
+						if (pkg[s] or 0) > bv then best, bv = s, pkg[s] end
+					end
+					if best then u._dgStatBuff = { stat = best, pct = dbuff.pct } end
+				end
+				if u._dgStatBuff then EquipmentService.RebuildUnitStats(u) end
+			end
+		end
+		-- RL-16..RL-22 (stages part 3, 2026-11-15, rule 271): battle-only stamps on the dungeon party (and,
+		-- for War Banner, +Defense on the enemies). Cleared at the start of every battle and before HP save.
+		for _, u in ipairs(allUnitsList) do
+			u._dgStrRelic, u._dgApBonus, u._dgDealtMult, u._dgMoveBonus, u._dgDefMult, u._dgUndeadRelic = nil, nil, nil, nil, nil, nil
+			if u.side == "Player" and table.find(dungeonParty or {}, u.id) then
+				if dgRelics["RL-16"] then u._dgStrRelic = { flat = R.OgreStrFlat, pct = R.OgreStrPct } end
+				if dgRelics["RL-19"] then u._dgApBonus = R.OathApBonus; u._dgDealtMult = 1 - R.OathDamagePct / 100 end
+				if dgRelics["RL-20"] then u._dgMoveBonus = R.LeagueMoveBonus end
+				if u._dgStrRelic then EquipmentService.RebuildUnitStats(u) end
+				-- RL-21 Featherfall Crest: permanent Flight for this battle (same as the Flying race tag).
+				if dgRelics["RL-21"] and u.isAlive then
+					if not StatusService.HasStatus(u, "Flight") then StatusService.ApplyStatus(u, "Flight", "Relic") end
+					local fi = StatusService.HasStatus(u, "Flight")
+					if type(fi) == "table" then fi.remainingTurns = nil; fi.remainingCt = nil; fi.permanent = true end
+				end
+				-- RL-22 Lich's Phylactery: the Undead status for this battle (Dark heals, Holy x2, Poison/Bleed immune).
+				if dgRelics["RL-22"] and u.isAlive and not StatusService.HasStatus(u, "Undead") then
+					StatusService.ApplyStatus(u, "Undead", "Relic")
+					u._dgUndeadRelic = true
+				end
+				-- RL-18 Leaden Shackles (curse): Slow timed in CT (2000 CT) instead of its usual 3 turns.
+				if dgRelics["RL-18"] and u.isAlive then
+					StatusService.ApplyStatus(u, "Slow", "Curse") -- "Curse": Warding Sigil / Debuff Resistance can't block it (rule 271)
+					local si = StatusService.HasStatus(u, "Slow")
+					if type(si) == "table" then si.remainingTurns = nil; si.remainingCt = R.ShacklesSlowCt end
+				end
+			elseif u.side == "Enemy" and dgRelics["RL-17"] then -- enemies only, not neutral (auto-accepted 12:38 PM)
+				u._dgDefMult = 1 + R.BannerEnemyDefPct / 100 -- War Banner: enemies +10% Defense
+			end
+		end
+		-- RL-25..RL-60 (relics v2, 2026-11-15; Simulator v11 numbers). Battle-only stamps, cleared at the start of
+		-- every battle and before HP save. "Creeds" hit every unit with that weapon, foes too.
+		local rng = Random.new()
+		local hexDebuff = if dgRelics["RL-32"] then R.HexDebuffs[rng:NextInteger(1, #R.HexDebuffs)] else nil
+		local totemBuff = if dgRelics["RL-33"] then R.TotemBuffs[rng:NextInteger(1, #R.TotemBuffs)] else nil
+		local immune: { [string]: boolean } = {}
+		for rid, list in R.Immunities do if dgRelics[rid] then for _, s in list do immune[s] = true end end end
+		local anyImmune = next(immune) ~= nil
+		for _, u in ipairs(allUnitsList) do
+			u._dgRangeBonus, u._dgStabBonus, u._dgJumpAdd, u._dgBaseRtAdd, u._dgPrecBonus, u._dgImmune, u._dgKinMult, u._dgSkillRange, u._dgDiscBonus = nil, nil, nil, nil, nil, nil, nil, nil, nil
+			local inParty = u.side == "Player" and table.find(dungeonParty or {}, u.id) ~= nil
+			local wid = u.equipmentSlots and u.equipmentSlots.MainHand and u.equipmentSlots.MainHand.baseArchetypeId
+			local range = 0
+			if wid and dgRelics["RL-49"] and R.SpearWeapons[wid] then range += R.CreedRange end
+			if wid and dgRelics["RL-50"] and R.BowWeapons[wid] then range += R.CreedRange end
+			if wid and dgRelics["RL-52"] and R.SwordWeapons[wid] then u._dgPrecBonus = R.DuelistPrecision end
+			if inParty then
+				if dgRelics["RL-25"] then range += R.LongshotRange end
+				if dgRelics["RL-43"] then range += R.ChainsPartyRange end
+				if dgRelics["RL-26"] then u._dgStabBonus = R.StabilityBonus end
+				if dgRelics["RL-57"] then u._dgJumpAdd = R.LeadenJump end
+				if dgRelics["RL-54"] then u._dgBaseRtAdd = -R.SwiftRt end
+				if dgRelics["RL-41"] then u._dgKinMult = R.KinSummonHpMult end
+				if anyImmune then u._dgImmune = immune end
+				if dgRelics["RL-46"] then u._dgMoveBonus = (u._dgMoveBonus or 0) + R.GlassMoveBonus end
+				local dealt = (if dgRelics["RL-45"] then 1 + R.ReaverDamagePct / 100 else 1) * (if dgRelics["RL-46"] then 1 + R.GlassDamagePct / 100 else 1)
+				if dealt ~= 1 then u._dgDealtMult = (u._dgDealtMult or 1) * dealt end
+				if dgRelics["RL-44"] then u._dgDamageTakenMult = (u._dgDamageTakenMult or 1) * (1 + R.TyrantDamageTakenPct / 100) end
+				if dgRelics["RL-53"] then u._dgDefMult = (u._dgDefMult or 1) * (1 + R.IronSkinDefPct / 100) end
+				if dgRelics["RL-27"] or dgRelics["RL-56"] then
+					u._dgSkillRange = if dgRelics["RL-27"] then R.FarFocusRange else nil
+					u._dgDiscBonus = if dgRelics["RL-56"] then R.StargazerRadius else nil
+					EquipmentService.RebuildUnitStats(u)
+				end
+				if u.isAlive then
+					if dgRelics["RL-29"] then u.currentHp = math.min(u.maxHp, (u.currentHp or 0) + math.floor((u.maxHp or 0) * R.BloodWellHpPct / 100)) end
+					local mpPct = (if dgRelics["RL-28"] then R.ManaWellMpPct else 0) - (if dgRelics["RL-58"] then R.HungerMpPct else 0)
+					if mpPct ~= 0 and (u.maxMp or 0) > 0 then
+						u.currentMp = math.clamp((u.currentMp or 0) + math.floor(u.maxMp * mpPct / 100), 0, u.maxMp)
+					end
+					if totemBuff then StatusService.ApplyStatus(u, totemBuff, "Relic") end
+				end
+				if dgRelics["RL-30"] then
+					for _, s in pairs(u.consumableSlots or {}) do
+						if s and s.consumableId and (s.maxCharges or 0) > 0 then s.currentCharges = math.min(s.maxCharges, (s.currentCharges or 0) + R.BottomlessCharges) end
+					end
+				end
+			elseif u.side == "Enemy" and u.isAlive then
+				if dgRelics["RL-43"] then u._dgMoveBonus = (u._dgMoveBonus or 0) + R.ChainsEnemyMove end
+				if dgRelics["RL-44"] then u._dgBaseRtAdd = R.TyrantEnemyRt end
+				if dgRelics["RL-60"] then -- Black Lantern: +10% Max HP (enemies are not saved)
+					local before = u.maxHp or 0
+					u.maxHp = before + math.round(before * R.LanternHpPct / 100)
+					u.currentHp = math.min(u.maxHp, (u.currentHp or 0) + (u.maxHp - before))
+				end
+				if dgRelics["RL-31"] then -- Withering Mist: lose 10% current HP (Boss 5%), never below 1
+					local pct = if u.enemyType == "Boss" or u.isBoss then R.MistBossHpPct else R.MistHpPct
+					u.currentHp = math.max(1, (u.currentHp or 0) - math.floor((u.currentHp or 0) * pct / 100))
+				end
+				if hexDebuff then StatusService.ApplyStatus(u, hexDebuff, "Relic") end
+			end
+			if range ~= 0 then
+				-- Range never drops below 1 (RL-43 "min 1").
+				u._dgRangeBonus = math.max(1 - (u.weaponMaxRange or 1), range)
+			end
+		end
+		if hexDebuff or totemBuff then print(`[Main] Relic statuses: hex {tostring(hexDebuff)} | totem {tostring(totemBuff)}`) end
+	else
+		for _, u in ipairs(allUnitsList) do
+			if u.side == "Player" then
+				u._dgDamageTakenMult, u._dgWeatherMult, u._dgEliteDmgMult, u._dgWardReady, u._dgSecondWind, u._dgBootsRt = nil, nil, nil, nil, nil, nil
+			end
+			u._dgStatBuff = nil -- EV-11 stamp (EV-16 mutator stamps retired 2026-11-15)
+			u._dgStrRelic, u._dgApBonus, u._dgDealtMult, u._dgMoveBonus, u._dgDefMult, u._dgUndeadRelic = nil, nil, nil, nil, nil, nil -- RL-16..22
+			u._dgRangeBonus, u._dgStabBonus, u._dgJumpAdd, u._dgBaseRtAdd, u._dgPrecBonus, u._dgImmune, u._dgKinMult, u._dgSkillRange, u._dgDiscBonus = nil, nil, nil, nil, nil, nil, nil, nil, nil -- RL-25..60
+		end
+	end
 	-- Expedition Fortune for mid-battle rewards (chests / treasure / Interact): reset each
 	-- battle from the deployed team so ObjectEffectService reward hooks use THIS team's
 	-- Fortune. The post-battle block re-sets it from who actually fought. (2026-10-23)
-	RewardService.SetExpeditionFortune(RewardService.ComputeExpeditionFortune(allUnitsList))
+	RewardService.SetExpeditionFortune(RewardService.ComputeExpeditionFortune(allUnitsList)
+		+ (if dungeonBattle and DungeonService.HasRelic(PLAYER_ID, "RL-06") then DungeonRules.Data.Relic.CharmFortune else 0)) -- RL-06 Lucky Charm (step 8)
+	if dungeonBattle and DungeonService.HasRelic(PLAYER_ID, "RL-45") then -- RL-45 Reaver's Pact: Fortune -35% (relics v2)
+		RewardService.SetExpeditionFortune(RewardService.GetExpeditionFortune() * (1 - DungeonRules.Data.Relic.ReaverFortunePct / 100))
+	end
 
 	print("====================================")
 	print("CTRBLXAI — Slice 3: Skills and Real Combat")
@@ -3422,7 +4061,7 @@ end)
 	-- First party with at least one unit at home (all-away parties would deploy nobody).
 	local function partyUsable(id: string): boolean
 		for _, uid in PartyService.GetMembers(PLAYER_ID, id) do
-			if not DispatchService.IsUnitDispatched(PLAYER_ID, uid) then return true end
+			if not DispatchService.IsUnitDispatched(PLAYER_ID, uid) and not DungeonService.IsUnitLocked(PLAYER_ID, uid) then return true end
 		end
 		return false
 	end
@@ -3479,7 +4118,21 @@ end)
 	-- The full party attends; the quest's unit limit is enforced later as a
 	-- placement cap during deployment, not by benching here. Passing MAX_DEPLOY
 	-- (SyncBattleRoster clamps to min(MAX_DEPLOY, cap)) keeps the whole party.
-	GuildMenuService.SyncBattleRoster(allUnitsList, PartyService.MAX_PARTY_SIZE, PartyService.GetMembers(PLAYER_ID, chosenPartySlot or ""))
+	if dungeonBattle then
+		-- Dungeon room: always the run's own (locked) party (project_rules 265); KO'd units sit out
+		-- until a Rest node revives them (project_rules 266).
+		-- step 7b: the whole dungeon party (up to 10) attends; the deploy screen places at most 7.
+		GuildMenuService.SyncBattleRoster(allUnitsList, 10, dungeonParty or {}, { dungeon = true })
+		for i = #allUnitsList, 1, -1 do
+			local u = allUnitsList[i]
+			if u.side == "Player" and not u.isAlive then
+				table.remove(allUnitsList, i)
+				print(string.format("[Main] %s is KO'd and sits out this dungeon battle", u.name))
+			end
+		end
+	else
+		GuildMenuService.SyncBattleRoster(allUnitsList, PartyService.MAX_PARTY_SIZE, PartyService.GetMembers(PLAYER_ID, chosenPartySlot or ""))
+	end
 
 	-- === DEPLOYMENT PHASE ===
 	-- Player manually places each unit on PD (Player Deployment) tiles.
@@ -3540,6 +4193,11 @@ end)
 	-- and at least a few tiles stay empty when the battle starts (tactical
 	-- choice of WHERE to place, not just whether).
 	local questDeployLimit = math.max(1, math.floor((selectedQuest and selectedQuest.playerSlots) or 7))
+	if dungeonBattle then
+		-- step 7b: only 7 fight (rule 265); RL-17 War Banner: 8 (stages part 3, 2026-11-15, rule 271).
+		local _cap = DungeonRules.Data.DeployMax + (if table.find(DungeonService.GetRelics(PLAYER_ID), "RL-17") then DungeonRules.Data.Relic.BannerDeployBonus else 0)
+		questDeployLimit = if _cap > DungeonRules.Data.DeployMax then _cap else math.min(questDeployLimit, _cap)
+	end
 	local desiredTiles     = math.ceil(questDeployLimit * 1.5)
 	local deployAnchorsToShow = {}
 	local maxPDAnchors = math.min(#playerSpawns, desiredTiles)
@@ -3683,7 +4341,7 @@ end)
 		playerAnchors = deployAnchorsToShow,
 		enemyUnits    = serializeForDeployment(allUnitsList, "Enemy"),
 		playerUnits   = serializeForDeployment(allUnitsList, "Player"),
-		awayUnits     = GuildMenuService.GetAwayUnitsForDeployment(), -- greyed out, not placeable
+		awayUnits     = GuildMenuService.GetAwayUnitsForDeployment(if dungeonBattle then { dungeon = true } else nil), -- greyed out, not placeable
 		mapWidth      = MAP_WIDTH,
 		mapHeight     = MAP_HEIGHT,
 		-- Max units the player may actually DEPLOY this battle (quest playerSlots),
@@ -3890,6 +4548,11 @@ end)
 			-- rounded ONCE, then the flat Player Initiative Edge last.
 			-- One shared calculation (StatCalcService.GetStartingRt, 2026-10-28), also shown on the Info panels.
 			u.remainingRt = StatCalcService.GetStartingRt(u, "battle")
+			if u._dgBootsRt then -- RL-04 Quickstep Boots (step 8): first turn only
+				local rt0 = u.remainingRt
+				u.remainingRt = math.max(1, u.remainingRt - u._dgBootsRt)
+				print(string.format("[Initiative] %s Quickstep Boots: RT %d -> %d", u.name, rt0, u.remainingRt))
+			end
 			print(string.format("[Initiative] %s LUK %d: starting RT %d (incl. player edge -%d)",
 				u.name, luk, u.remainingRt, GameConstants.PLAYER_INITIATIVE_EDGE_RT))
 		end
@@ -3959,6 +4622,8 @@ end)
 		startCondition = selectedQuest.condition
 	end
 	WeatherService.InitFromBiome(selectedQuest.biome, startCondition, state.ct)
+	-- Dungeon: the run's one condition for every round (map_gen_rules 71 exception); nil = re-roll.
+	WeatherService.SetFixedCondition(if selectedQuest.isDungeon then startCondition else nil)
 	WeatherService.ApplyStartingOnset(state)
 
 	-- Slice 5 map objects: reset the per-battle object usage ledger, then apply any
@@ -4742,11 +5407,28 @@ end)
 	local battleMercuryEarned = 0 -- kill + quest + chest/salvage mercury (block below)
 	local dailyContractResult: any = nil -- set when a Daily Contract was won (reward screen)
 	local bossRewardResult: any = nil    -- set after a boss win (reward screen + guaranteed item)
+local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed materials (not multiplied, project_rules 263)
 	local eliteRewardResult: any = nil   -- set after an elite-encounter win (reward screen + item)
+	local renownResult: any = nil         -- Renown step 4: RenownService.Award result (reward screen, steps 6-7)
+	-- Dungeon room battle (build step 3): balance + inventory + card counts BEFORE any post-battle
+	-- credit, so everything this battle pays can be moved into the run bag instead (project_rules 264).
+	local isDungeonBattle = activeQuest ~= nil and activeQuest.isDungeon == true
+	local dgBalanceBefore: any = if isDungeonBattle then CurrencyService.GetBalance(PLAYER_ID) else nil
+	local dgItemsBefore: { [string]: boolean } = {}
+	local dgCardsBefore: any = nil
+	if isDungeonBattle then
+		for id in pairs(InventoryService.ExportInventory(PLAYER_ID)) do dgItemsBefore[id] = true end
+		dgCardsBefore = { skillCards = table.clone(cardInventory.skillCards), augmentCards = table.clone(cardInventory.augmentCards),
+			consumables = table.clone(cardInventory.consumables) }
+	end
 	-- Expedition Fortune (loot_progression, 2026-10-23): the deployed team's post-gear
 	-- Fortune drives loot rarity quality AND the Fortune gold multiplier for THIS battle's
 	-- rewards. Computed from who actually fought (allUnitsList); neutral when LUK+gear low.
-	RewardService.SetExpeditionFortune(RewardService.ComputeExpeditionFortune(allUnitsList))
+	RewardService.SetExpeditionFortune(RewardService.ComputeExpeditionFortune(allUnitsList)
+		+ (if dungeonBattle and DungeonService.HasRelic(PLAYER_ID, "RL-06") then DungeonRules.Data.Relic.CharmFortune else 0)) -- RL-06 Lucky Charm (step 8)
+	if dungeonBattle and DungeonService.HasRelic(PLAYER_ID, "RL-45") then -- RL-45 Reaver's Pact: Fortune -35% (relics v2)
+		RewardService.SetExpeditionFortune(RewardService.GetExpeditionFortune() * (1 - DungeonRules.Data.Relic.ReaverFortunePct / 100))
+	end
 
 	--------------------------------------------------
 	-- POST-BATTLE: UPDATE UNIT RECORDS (Slice 4K)
@@ -4836,7 +5518,10 @@ end)
 		for unitId in pairs(playerUnits) do
 			-- UAT D2 fix 2026-10-07: units away on dispatch are unavailable and earn
 			-- dispatch XP only (unit_progression 52/77/78) — never benched XP.
-			local isAway = DispatchService.IsUnitDispatched(PLAYER_ID, unitId)
+			-- step 7b (rule 265): in a dungeon battle, benched members of the dungeon party earn bench EXP;
+			-- other dungeon-locked units (none today) and dispatched units stay away.
+			local inThisDungeonParty = dungeonBattle ~= nil and table.find(dungeonParty or {}, unitId) ~= nil
+			local isAway = DispatchService.IsUnitDispatched(PLAYER_ID, unitId) or (DungeonService.IsUnitLocked(PLAYER_ID, unitId) and not inThisDungeonParty)
 			if not deployedSet[unitId] and not isAway then
 				table.insert(benched, unitId)
 			end
@@ -4906,6 +5591,15 @@ end)
 			local killGold, completionGold, questGold = gb.killGold, gb.completionGold, gb.questGold
 			local band, eventGoldMult = gb.band, gb.eventGoldMult
 			local total = RewardService.ApplyGold(gb.total)
+			if isDungeonBattle and (tonumber(activeQuest.dungeonGoldMult) or 1) > 1 then -- stage gold x1.25 / x1.5 (rule 263)
+				total = math.floor(total * activeQuest.dungeonGoldMult)
+			end
+			if isDungeonBattle and DungeonService.HasRelic(PLAYER_ID, "RL-02") then -- RL-02 Gilded Purse (step 8): +10% battle gold (bag)
+				total = math.floor(total * (1 + DungeonRules.Data.Relic.PurseGoldPct / 100))
+			end
+			if isDungeonBattle and DungeonService.HasRelic(PLAYER_ID, "RL-59") then -- RL-59 Coin-Eater curse: -15% battle gold (relics v2)
+				total = math.floor(total * (1 - DungeonRules.Data.Relic.CoinEaterGoldPct / 100))
+			end
 			if total > 0 then CurrencyService.Credit(PLAYER_ID, { gold = total }) end
 			battleGoldEarned = total
 			-- Thief Fortune Hand (2026-10-28): steal gold is kept only on a win, like stolen items.
@@ -4919,12 +5613,12 @@ end)
 			-- Chest / salvage gold (held since the chest opened; daily systems decision 15,
 			-- 2026-11-01): full on a qualifying victory, 50% on a defeat (defeat rule, like kill gold).
 			local chestGold = (state and tonumber(state.chestGold)) or 0
-			local chestGoldKept = if isQualifyingVictory then chestGold else math.floor(chestGold * 0.5)
+			local chestGoldKept = if isQualifyingVictory or isDungeonBattle then chestGold else math.floor(chestGold * 0.5) -- dungeon: wipeout halves the bag once
 			if chestGoldKept > 0 then
 				CurrencyService.Credit(PLAYER_ID, { gold = chestGoldKept })
 				battleGoldEarned = battleGoldEarned + chestGoldKept
 				print(string.format("[PostBattle] Chest/salvage gold +%d (of %d held, %s)", chestGoldKept, chestGold,
-					if isQualifyingVictory then "victory" else "defeat: half kept"))
+					if isQualifyingVictory then "victory" elseif isDungeonBattle then "dungeon defeat: into the run bag" else "defeat: half kept"))
 			end
 			print(string.format("[PostBattle] Gold +%d (kills %d, completion %d, quest %d, band x%.2f, event x%.1f, %s)",
 				total, killGold, completionGold, questGold, band, eventGoldMult, if isQualifyingVictory then "victory" else "defeat"))
@@ -5032,6 +5726,7 @@ end)
 					gemId = nil
 				end
 				local sulfur = if lvl >= 60 then 1 else 0
+				dgBossFixed = { mercury = 3, crystals = 5, sulfur = sulfur, gem = gemId }
 				CurrencyService.Credit(PLAYER_ID, {
 					mercury = 3, crystals = 5, sulfur = sulfur,
 					gems = if gemId then { [gemId] = 1 } else nil,
@@ -5079,6 +5774,51 @@ end)
 			print(string.format("[PostBattle] Elite encounter grants: +2 mercury +3 crystals +%d sulfur, rune gem %s",
 				sulfur, tostring(gemId)))
 		end
+		-- RENOWN (Renown step 4, 2026-11-13; loot_progression 74/88/90, unit_progression 94/95).
+		-- Server-only. A quest win pays Normal 100 / Hard (difficulty 4-5) 130 / Boss & Elite 200,
+		-- scaled by the anti-farming band on min(Rank, 99); a failed quest costs 3x the base reward
+		-- but never drops a Rank (RenownService reports the amount actually lost). The Daily
+		-- Contract pays as its own type and difficulty; the Test Arena (dev) pays nothing.
+		-- Exploration (250, paid after the 3rd win) is not reachable yet: its explore path must pass
+		-- isExploration = true and award only on the 3rd win. ESCAPE HOOK: when Escape is built it
+		-- must reach this block as a failed quest (success = false) - loot_progression 90.
+		if activeQuest and not activeQuest.isTestArena and not activeQuest.isDungeon then -- no Renown in dungeons (Q5)
+			local okR, err = pcall(function()
+				local Renown = require(Game:WaitForChild("RenownService"))
+				local RRules = require(Game:WaitForChild("RenownRules"))
+				Renown.EnsureConverted(PLAYER_ID) -- old saves get their Rank before any award
+				local kind = RRules.QuestKind(activeQuest.difficulty, activeQuest.questType == "Boss",
+					activeQuest.isEliteEncounter == true, false, false)
+				renownResult = Renown.Award(PLAYER_ID, {
+					success = isQualifyingVictory, kind = kind, questLevel = activeQuest.recommendedLvl,
+				})
+			end)
+			if not okR then
+				warn("[PostBattle] Renown award failed: " .. tostring(err))
+				renownResult = nil
+			end
+			-- Rank-up banner numbers (step 7, loot_progression 94), computed server-side: roster
+			-- slots gained, quest max level (Rank + 5, max 99) and the Blacksmith's REAL cap
+			-- = min(Rank + 5, building x 10 (99 at max building), highest unit level), capped 99.
+			if renownResult and renownResult.rankUps and #renownResult.rankUps > 0 then
+				pcall(function()
+					local RRules = require(Game:WaitForChild("RenownRules"))
+					local after, before = renownResult.rankAfter, renownResult.rankBefore
+					local bl = GuildMenuService.GetBuildingLevel("Blacksmith")
+					local bCap = if bl >= 10 then 99 else bl * 10
+					local highest = 1
+					for _, u in pairs(playerUnits) do
+						local lv = tonumber(u.level) or 1
+						if lv > highest then highest = lv end
+					end
+					renownResult.rankUpInfo = {
+						rosterSlots = RRules.RosterBonus(after) - RRules.RosterBonus(before),
+						questMax = math.min(99, after + 5),
+						blacksmithCap = math.min(99, RRules.BlacksmithRankCap(after), bCap, highest),
+					}
+				end)
+			end
+		end
 		if xpSummary and xpSummary.flags and #xpSummary.flags > 0 then
 			for _, f in ipairs(xpSummary.flags) do
 				print("[PostBattle][XP-FLAG] " .. tostring(f))
@@ -5086,6 +5826,31 @@ end)
 		end
 	end
 
+	-- EV-11 battle-only stamp (stages build 2026-11-15) is dropped before HP/MP are saved.
+	for _, u in ipairs(allUnitsList) do
+		if u._dgStatBuff or u._dgStrRelic or u._dgSkillRange or u._dgDiscBonus then
+			u._dgStatBuff = nil
+			u._dgStrRelic = nil -- RL-16 Ogre's Belt is battle-only too (2026-11-15)
+			u._dgSkillRange, u._dgDiscBonus = nil, nil -- RL-27 / RL-56 (relics v2)
+			if u.side == "Player" then EquipmentService.RebuildUnitStats(u) end
+		end
+		u._dgApBonus, u._dgDealtMult, u._dgMoveBonus, u._dgDefMult, u._dgUndeadRelic = nil, nil, nil, nil, nil
+		u._dgRangeBonus, u._dgStabBonus, u._dgJumpAdd, u._dgBaseRtAdd, u._dgPrecBonus, u._dgImmune, u._dgKinMult = nil, nil, nil, nil, nil, nil, nil -- RL-25..60
+	end
+	-- Dungeon relics (step 8): the battle-only Max HP bonus (RL-01 / RL-15) is dropped before HP is saved.
+	for _, u in ipairs(allUnitsList) do
+		if u.battleMaxHpBonusPct then
+			local liveHp = u.currentHp or 0 -- before the rebuild caps it at the normal max
+			u.battleMaxHpBonusPct = nil
+			EquipmentService.RebuildUnitStats(u)
+			-- Take back the HP the bonus added at battle start (fix 2026-11-15): KO stays KO, alive floors at 1.
+			local added = u._dgHpBonusAdded or 0
+			u._dgHpBonusAdded = nil
+			if added ~= 0 and u.isAlive and liveHp > 0 then -- added < 0: RL-46 Glass Crown HP given back
+				u.currentHp = math.clamp(liveHp - added, 1, u.maxHp or 1)
+			end
+		end
+	end
 	-- Garden of Revelation (2026-11-07): the +20% max MP lasts until battle end only. Drop it and
 	-- rebuild BEFORE HP/MP are persisted (RebuildUnitStats clamps current MP to the normal max).
 	for _, u in ipairs(allUnitsList) do
@@ -5107,6 +5872,33 @@ end)
 			)
 		end
 	end
+	-- Dungeon relics after a WON dungeon battle (step 8, rule 271): RL-09 used up if it fired; RL-11 Mana
+	-- Font +10% Max MP to the party; RL-12 Field Medic's Kit +15% Max HP to the living party unit with the
+	-- lowest HP (ties: first in party order). Persistent state only, before KO clearing / recovery skip.
+	if isDungeonBattle then
+		if dgSecondWind and dgSecondWind.used then DungeonService.MarkRelicUsed(PLAYER_ID, "RL-09") end
+		if isQualifyingVictory then
+			local R = DungeonRules.Data.Relic
+			if DungeonService.HasRelic(PLAYER_ID, "RL-11") then
+				for _, id in ipairs(dungeonParty or {}) do
+					local ps = PersistentStateService.GetUnitState(PLAYER_ID, id)
+					if ps and not ps.isKO then ps.currentMp = math.min(ps.maxMp, ps.currentMp + math.ceil(ps.maxMp * R.FontMpPct / 100)) end
+				end
+			end
+			if DungeonService.HasRelic(PLAYER_ID, "RL-12") then
+				local low, lowHp = nil, math.huge
+				for _, id in ipairs(dungeonParty or {}) do
+					local ps = PersistentStateService.GetUnitState(PLAYER_ID, id)
+					if ps and not ps.isKO and ps.currentHp < ps.maxHp and ps.currentHp < lowHp then low, lowHp = ps, ps.currentHp end
+				end
+				if low then low.currentHp = math.min(low.maxHp, low.currentHp + math.ceil(low.maxHp * R.MedicHpPct / 100)) end
+			end
+			for _, id in ipairs(dungeonParty or {}) do
+				local u, ps = playerUnits[id], PersistentStateService.GetUnitState(PLAYER_ID, id)
+				if u and ps then u.currentHp = math.min(ps.currentHp, u.maxHp or ps.currentHp); u.currentMp = math.min(ps.currentMp, u.maxMp or ps.currentMp) end
+			end
+		end
+	end
 
 	-- Step 2a: post-battle recovery -- QUALIFYING VICTORY ONLY, survivors only (BUG-071,
 	-- 2026-11-01; persistent_hp_mp_rules 3/5/8, unit_progression 96). KO'd units get nothing:
@@ -5120,6 +5912,7 @@ end)
 		PersistentStateService.PruneToOwned(PLAYER_ID, ownedSet)
 	end
 	if isQualifyingVictory then
+		-- Dungeon party units (in a run) are skipped below: no recovery between rooms (project_rules 266).
 		print("[PostBattle] Applying 35% recovery to survivors")
 		-- Perks & Flaws (2026-10-23): build per-unit recovery-fraction overrides from the LIVE
 		-- units (which carry trait ids; the persistent-state layer does not). Resilient adds to
@@ -5133,7 +5926,10 @@ end)
 				if frac ~= 0.35 then recoveryOverrides[u.id] = frac end
 			end
 		end
-		recovery = PersistentStateService.ApplyPostBattleRecovery(PLAYER_ID, recoveryOverrides)
+		-- Dungeon party units mid-run get nothing from other battles (project_rules 266).
+		recovery = PersistentStateService.ApplyPostBattleRecovery(PLAYER_ID, recoveryOverrides, function(id)
+			return DungeonService.IsUnitLocked(PLAYER_ID, id)
+		end)
 		for unitId, result in pairs(recovery) do
 			print(string.format("  %s: HP+%d MP+%d", unitId, result.hpRecovered, result.mpRecovered))
 		end
@@ -5143,7 +5939,13 @@ end)
 
 	-- Step 2b: returning to base clears KO -> Current HP 1, MP unchanged (rule 9). Runs AFTER
 	-- recovery so KO'd units come home at exactly 1 HP (rule 9: "intentionally harsh").
-	PersistentStateService.ClearAllKO(PLAYER_ID)
+	-- Dungeon: party units in a run stay KO'd until a Rest node revives them (project_rules 266).
+	-- A dungeon wipeout ends the run (below), so it returns to base under the normal rule: KO -> 1 HP.
+	if isDungeonBattle and not isQualifyingVictory then
+		PersistentStateService.ClearAllKO(PLAYER_ID)
+	else
+		PersistentStateService.ClearAllKO(PLAYER_ID, function(id) return DungeonService.IsUnitLocked(PLAYER_ID, id) end)
+	end
 
 	--------------------------------------------------
 	-- POST-BATTLE: GENERATE REWARDS (Slice 4D)
@@ -5181,8 +5983,21 @@ end)
 				if u._treasureHunted and not u.isAlive then _thBonus = 1 break end
 			end
 		end
-		local results, equipCommitted = RewardService.GenerateRewards(PLAYER_ID, MAP_LEVEL, opportunityId,
-			_thBonus > 0 and { bonusRarityTiers = _thBonus } or nil)
+		local _lootOpts: any = _thBonus > 0 and { bonusRarityTiers = _thBonus } or nil
+		if isDungeonBattle then
+			-- Growing drop rate (project_rules 263): the victory roll count (1-2) x the run's loot scale
+			-- (x1.5 +0.25 per battle cleared, cap x2.5; Elite/Boss rooms x the facility loot bonus).
+			-- The fraction is a chance of one more roll.
+			local lrng = Random.new()
+			local want = lrng:NextInteger(1, 2) * (tonumber(activeQuest.dungeonLootScale) or 1)
+			local n = math.floor(want) + (if lrng:NextNumber() < want % 1 then 1 else 0)
+			_lootOpts = _lootOpts or {}
+			_lootOpts.count = n
+			local rb = tonumber(activeQuest.dungeonRarityBonus) or 0
+			if rb > 0 then _lootOpts.fortuneBonus = rb end -- Elite/Boss rarity step (project_rules 258/263)
+			print(string.format("[PostBattle] Dungeon loot rolls: %d (scale x%.2f, rarity Fortune +%.2f)", n, tonumber(activeQuest.dungeonLootScale) or 1, rb))
+		end
+		local results, equipCommitted = RewardService.GenerateRewards(PLAYER_ID, MAP_LEVEL, opportunityId, _lootOpts)
 
 		-- Stolen gear (Steal / Mug, 2026-10-24): items taken in-battle are kept ONLY on a
 		-- qualifying victory. Commit each to the player's inventory and append it to the loot
@@ -5261,6 +6076,19 @@ end)
 				eliteRewardResult.item = okAdd ~= false
 			elseif not okE then
 				warn("[PostBattle] Elite reward roll failed: " .. tostring(eliteItem))
+			end
+		end
+		-- RL-08 Hunter's Trophy (step 8, rule 271): dungeon Elite rooms drop 1 extra item (the fixed Elite
+		-- item, x1). It goes to the inventory here and the dungeon bag block below moves it into the bag.
+		if isDungeonBattle and activeQuest.dungeonPlayed == "Elite" and DungeonService.HasRelic(PLAYER_ID, "RL-08") then
+			for _ = 1, DungeonRules.Data.Relic.TrophyItems do
+				local okT, extra = pcall(RewardService.RollEliteReward, MAP_LEVEL)
+				if okT and extra then
+					local okAdd = InventoryService.AddItem(PLAYER_ID, extra, { markNew = true })
+					table.insert(results, { category = "Equipment", item = extra, committed = okAdd ~= false })
+					if okAdd ~= false then equipCommitted = equipCommitted + 1 end
+					print("[PostBattle] Hunter's Trophy: +1 Elite item")
+				end
 			end
 		end
 
@@ -5362,6 +6190,82 @@ end)
 		end
 	end
 
+	-- DUNGEON RUN BAG (build step 3; project_rules 263/264). Everything this room battle paid (gold,
+	-- materials, gear, cards) comes back out of the balance / inventory into the run bag, to be
+	-- kept or lost when the run ends (paid out in step 4). Unit EXP was granted above and is always
+	-- kept. Materials: Normal room = normalMats, Elite room = eliteMats, Boss room = bossMats
+	-- (x the growing multiplier; gold, normal and Elite materials are not multiplied).
+	if isDungeonBattle then
+		local okBag, errBag = pcall(function()
+			local after = CurrencyService.GetBalance(PLAYER_ID)
+			local gold = math.max(0, (after.gold or 0) - (dgBalanceBefore.gold or 0))
+			local mats = DungeonService.MaterialDelta(dgBalanceBefore, after)
+			local cost: any = { gold = gold, gems = {} }
+			for k, v in pairs(mats) do
+				if k == "mercury" or k == "crystals" or k == "sulfur" then cost[k] = v
+				else cost.gems[string.sub(k, 5)] = v end
+			end
+			CurrencyService.Debit(PLAYER_ID, cost)
+			if gold > 0 then DungeonService.AddLoot(PLAYER_ID, "gold", gold) end
+			local played = activeQuest.dungeonPlayed
+			local kind = if played == "Boss" then "bossMats" elseif played == "Elite" then "eliteMats" else "normalMats"
+			local mult = if kind == "bossMats" then (tonumber(activeQuest.dungeonDropMult) or 1) else 1
+			for k, v in pairs(mats) do
+				-- The boss grant (3 mercury, 5 crystals, sulfur, 1 rune gem) is a fixed reward: x1.
+				local fixed = 0
+				if kind == "bossMats" and dgBossFixed then
+					fixed = if k == "gem:" .. tostring(dgBossFixed.gem) then 1 else (tonumber(dgBossFixed[k]) or 0)
+					fixed = math.min(fixed, v)
+					if fixed > 0 then DungeonService.AddLoot(PLAYER_ID, kind, k, fixed) end
+					v -= fixed
+				end
+				-- Same rounding as the gear rolls: the fraction is a chance of one more (project_rules 263).
+				local want = v * mult
+				local q = math.floor(want) + (if mult ~= 1 and Random.new():NextNumber() < want % 1 then 1 else 0)
+				if q > 0 then DungeonService.AddLoot(PLAYER_ID, kind, k, q) end
+			end
+			local moved = 0
+			for id, item in pairs(InventoryService.ExportInventory(PLAYER_ID)) do
+				if not dgItemsBefore[id] then
+					InventoryService.RemoveItem(PLAYER_ID, id)
+					DungeonService.AddLoot(PLAYER_ID, "gearItem", item)
+					moved += 1
+				end
+			end
+			local cardsMoved = 0
+			for _, cat in ipairs({ "skillCards", "augmentCards", "consumables" }) do
+				for id, q in pairs(cardInventory[cat]) do
+					local gain = (tonumber(q) or 0) - (tonumber(dgCardsBefore[cat][id]) or 0)
+					if gain > 0 then
+						local left = q - gain
+						cardInventory[cat][id] = if left > 0 then left else nil
+						DungeonService.AddLoot(PLAYER_ID, "cards", cat .. ":" .. tostring(id), gain)
+						cardsMoved += gain
+					end
+				end
+			end
+			print(string.format("[PostBattle] Dungeon bag +%d gold, %d gear, %d card(s), materials -> %s (x%.2f)",
+				gold, moved, cardsMoved, kind, mult))
+			if isQualifyingVictory then
+				local okC, res = DungeonService.MarkNodeCleared(PLAYER_ID, activeQuest.dungeonNodeId)
+				if not okC then warn("[PostBattle] Dungeon room not marked cleared: " .. tostring(res)) end
+				-- Stages (rule 277): a stage boss waits for Go deeper / Go home; the last allowed stage boss
+				-- ends the run, all loot home (project_rules 264).
+				if okC and activeQuest.dungeonPlayed == "Boss" then
+					local okE, out = DungeonService.OnBossWin(PLAYER_ID)
+					if okE then DungeonRemotes.SetLastResult(out)
+					else warn("[PostBattle] Dungeon boss end not recorded: " .. tostring(out)) end
+				end
+			else
+				-- Full party KO (there is no escape mid-battle): the run ends as a wipeout. Paid out in step 4.
+				local okW, res = DungeonService.EndRun(PLAYER_ID, "Wipeout")
+				if okW then DungeonRemotes.SetLastResult(res)
+				else warn("[PostBattle] Dungeon wipeout not recorded: " .. tostring(res)) end
+			end
+		end)
+		if not okBag then warn("[PostBattle] Dungeon run bag failed: " .. tostring(errBag)) end
+	end
+
 	-- Step 3: Save to DataStore (now includes committed rewards)
 	doSave()
 
@@ -5385,6 +6289,8 @@ end)
 	GuildMenuService.AdoptBattleRecruits(state.units)
 	-- Apothecary paid refill on return to base (USER DECISION 2026-11-03, gf 69): every
 	-- equipped consumable missing charges, for gold; one charge at a time when short.
+	-- Dungeon party units in a run are skipped (ApothecaryService.SetSkipUnit): no refill between
+	-- rooms (project_rules 266). After a wipeout the run is over, so the party is refilled as usual.
 	ApothecaryService.OnReturnToBase(PLAYER_ID)
 	doSave()
 
@@ -5418,8 +6324,14 @@ end)
 			local nm = r.unitId
 			local pu = playerUnits[r.unitId]
 			if pu and pu.name then nm = pu.name end
+			local gemName = nil
+			if r.gemId then
+				local okD, desc = pcall(RuneforgeService.DescribeGem, r.gemId)
+				gemName = if okD and desc then desc.name else r.gemId
+			end
 			table.insert(dispatchSummary, {
 				name = nm, xp = r.xp, mercury = r.mercury,
+				material = r.material, amount = r.amount, gem = gemName, -- material missions 2026-11-12
 			})
 		end
 	end
@@ -5476,12 +6388,12 @@ end)
 	end
 	if #rewardSummaries > 0 or battleGoldEarned > 0 or battleMercuryEarned > 0 or dailyContractResult ~= nil
 		or bossRewardResult ~= nil or eliteRewardResult ~= nil or #dispatchSummary > 0 or #activeDispatch > 0
-		or #objectivesScreen > 0 or #xpScreen > 0 or not isQualifyingVictory then
+		or #objectivesScreen > 0 or #xpScreen > 0 or renownResult ~= nil or not isQualifyingVictory then
 		print(string.format("[PostBattle] Sending %d reward(s) + %d gold + %d dispatch + %d active-dispatch to client", #rewardSummaries, battleGoldEarned, #dispatchSummary, #activeDispatch))
 		BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary, gold = battleGoldEarned,
 			mercury = battleMercuryEarned, daily = dailyContractResult, boss = bossRewardResult, elite = eliteRewardResult,
 			dispatch = dispatchSummary, activeDispatch = activeDispatch, daysElapsed = daysElapsed, defeat = not isQualifyingVictory,
-			objectives = objectivesScreen, xp = xpScreen })
+			objectives = objectivesScreen, xp = xpScreen, renown = renownResult })
 		rewardContinueSignal.Event:Wait()
 		print("[PostBattle] Player acknowledged rewards")
 	end

@@ -21,6 +21,8 @@
 --   a Fortune value.
 --
 -- PRIMARY INTERFACE:
+--   RETIRED 2026-11-13 (Renown step 8, loot_progression 75): nothing requires this module any
+--   more; RenownService replaces it. Kept on disk only (file not deleted, per user rule).
 --   AwardGuildXp(playerId, contentType, contentLevel, optionalBonusXp?)
 --   GetUnlocks(playerId)
 --   GetGuildLevel(playerId)

@@ -1304,6 +1304,9 @@ function BattleVisualBroadcaster.UnitStateChanged(unit, cause, logMp)
 		mp        = unit.currentMp,
 		maxMp     = unit.maxMp,
 		isAlive   = unit.isAlive,
+		-- Side rides along (2026-11-12, display only): a recruit / Traitor flip (Enemy -> Neutral) keeps
+		-- the client's overhead bar side outline in sync. The server stays the authority.
+		side      = unit.side,
 		-- Statuses ride along so a heal that weakens/cures Venom shows at once (2026-10-26).
 		statuses  = if unit.statusInstances then StatusService.GetStatusSummary(unit) else nil,
 	})

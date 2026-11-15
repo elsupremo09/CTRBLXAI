@@ -1,0 +1,272 @@
+--!strict
+-- DungeonMap.lua
+-- CTRBLXAI | Seeded Slay-the-Spire style dungeon map. (Build step 1, 2026-11-13)
+--
+-- Server-only, pure: Generate(seed, facilityLevel) -> map table. Same seed + level = same map.
+-- Rules: project_rules 260 (shape), 261 (weights), 262 (placement). Numbers live in DungeonRules.
+--
+-- Map:  { seed, facilityLevel, floors, width, rows = { [row] = { [col] = node } }, boss = node,
+--         starts = { node ids on row 1 } }
+-- Node: { id = "r3c2", row, col, type, played, next = { ids } }   (Boss row = floors + 1)
+
+local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local D = DungeonRules.Data
+
+local DungeonMap = {}
+
+local MAX_ATTEMPTS = 50
+
+local function nid(r: number, c: number): string
+	return "r" .. r .. "c" .. c
+end
+
+-- Draw MapPaths bottom-to-top paths. Each step goes to one of the 3 nearest rooms above;
+-- edges never cross; the first two start rooms differ. Returns edges[r][c] = { [c2]=true }.
+-- Fixed Rest rows (project_rules 260, USER RULING 2026-11-13 6:54 PM): the last row before the Boss,
+-- plus row N-2 on maps with 6+ floors.
+local function isFixedRest(r: number, floors: number): boolean
+	return r == floors or (floors >= 6 and r == floors - 2)
+end
+
+local function drawPaths(rng: Random, floors: number, width: number): ({ [number]: { [number]: { [number]: boolean } } }, { number })
+	local edges: { [number]: { [number]: { [number]: boolean } } } = {}
+	for r = 1, floors - 1 do
+		edges[r] = {}
+		for c = 1, width do edges[r][c] = {} end
+	end
+	local starts: { number } = {}
+	local firstStart = 0
+	for p = 1, D.MapPaths do
+		local c = rng:NextInteger(1, width)
+		if p == 2 then
+			while c == firstStart do c = rng:NextInteger(1, width) end
+		end
+		if p == 1 then firstStart = c end
+		table.insert(starts, c)
+		for r = 1, floors - 1 do
+			local options: { number } = {}
+			for dc = -1, 1 do
+				local c2 = c + dc
+				if c2 >= 1 and c2 <= width then
+					-- crossing: moving c->c+1 crosses an existing (c+1)->c edge, and vice versa
+					local crosses = (dc == 1 and edges[r][c + 1][c] == true)
+						or (dc == -1 and edges[r][c - 1][c] == true)
+					if not crosses then table.insert(options, c2) end
+				end
+			end
+			local c2 = if #options > 0 then options[rng:NextInteger(1, #options)] else c
+			edges[r][c][c2] = true
+			c = c2
+		end
+	end
+	return edges, starts
+end
+
+local function pickWeighted(rng: Random, allowed: { [string]: boolean }): string
+	local total = 0
+	for _, w in D.NodeWeights do
+		if allowed[w.type] then total += w.weight end
+	end
+	if total <= 0 then return "Battle" end
+	local roll = rng:NextNumber() * total
+	for _, w in D.NodeWeights do
+		if allowed[w.type] then
+			roll -= w.weight
+			if roll < 0 then return w.type end
+		end
+	end
+	return "Battle"
+end
+
+local function build(rng: Random, seed: number, facilityLevel: number): any
+	local floors = DungeonRules.Floors(facilityLevel)
+	local width = D.MapWidth
+	local edges, starts = drawPaths(rng, floors, width)
+
+	-- rooms that are on a path
+	local used: { [number]: { [number]: boolean } } = {}
+	for r = 1, floors do used[r] = {} end
+	for _, c in starts do used[1][c] = true end
+	for r = 1, floors - 1 do
+		for c = 1, width do
+			for c2 in edges[r][c] do used[r + 1][c2] = true end
+		end
+	end
+	-- parents[r][c] = list of cols on row r-1 leading here
+	local parents: { [number]: { [number]: { number } } } = {}
+	for r = 1, floors do
+		parents[r] = {}
+		for c = 1, width do parents[r][c] = {} end
+	end
+	for r = 1, floors - 1 do
+		for c = 1, width do
+			for c2 in edges[r][c] do table.insert(parents[r + 1][c2], c) end
+		end
+	end
+
+	local types: { [number]: { [number]: string } } = {}
+	local treasureRow = math.ceil(floors / 2)
+	for r = 1, floors do
+		types[r] = {}
+		for c = 1, width do
+			if used[r][c] then
+				local t: string
+				if r == 1 then
+					t = "Battle"
+				elseif r == treasureRow then
+					t = "Treasure"
+				elseif isFixedRest(r, floors) then
+					t = "Rest"
+				else
+					local allowed: { [string]: boolean } = {}
+					for _, w in D.NodeWeights do allowed[w.type] = true end
+					if r <= 2 then allowed.Elite = false; allowed.Rest = false end
+					if isFixedRest(r + 1, floors) then allowed.Rest = false end -- no Rest just below a fixed Rest row
+					local ps = parents[r][c]
+					for _, pc in ps do
+						local pt = types[r - 1][pc]
+						if pt == "Elite" then allowed.Elite = false end
+						if pt == "Rest" then allowed.Rest = false end
+						if pt == "Merchant" then allowed.Merchant = false end
+						-- Escape: at most 1 per 3-row path segment (parent or grandparent)
+						if pt == "Escape" then allowed.Escape = false end
+						if r >= 3 then
+							for _, gc in parents[r - 1][pc] do
+								if types[r - 2][gc] == "Escape" then allowed.Escape = false end
+							end
+						end
+						-- rooms branching from the same parent must differ
+						for c2 in edges[r - 1][pc] do
+							if c2 < c and types[r][c2] then allowed[types[r][c2]] = false end
+						end
+					end
+					t = pickWeighted(rng, allowed)
+				end
+				types[r][c] = t
+			end
+		end
+	end
+
+	local rows: { [number]: { [number]: any } } = {}
+	for r = 1, floors do
+		rows[r] = {}
+		for c = 1, width do
+			if used[r][c] then
+				local nxt: { string } = {}
+				if r < floors then
+					for c2 = 1, width do
+						if edges[r][c][c2] then table.insert(nxt, nid(r + 1, c2)) end
+					end
+				else
+					nxt = { "boss" }
+				end
+				rows[r][c] = {
+					id = nid(r, c), row = r, col = c, type = types[r][c],
+					played = DungeonRules.PlayedType(types[r][c]), next = nxt,
+				}
+			end
+		end
+	end
+	local startIds: { string } = {}
+	for c = 1, width do
+		if used[1][c] then table.insert(startIds, nid(1, c)) end
+	end
+	return {
+		seed = seed, facilityLevel = facilityLevel, floors = floors, width = width,
+		rows = rows, starts = startIds,
+		boss = { id = "boss", row = floors + 1, col = 0, type = "Boss", played = "Boss", next = {} },
+	}
+end
+
+--- Validate a map against project_rules 260/262. Returns ok, list of problems.
+function DungeonMap.Validate(map: any): (boolean, { string })
+	local problems: { string } = {}
+	local function bad(s: string) table.insert(problems, s) end
+	local floors = map.floors
+	local treasureRow = math.ceil(floors / 2)
+	local byId: { [string]: any } = { boss = map.boss }
+	for r = 1, floors do
+		for _, n in map.rows[r] do byId[n.id] = n end
+	end
+	local parentsOf: { [string]: { any } } = {}
+	for _, n in byId do
+		for _, x in n.next do
+			parentsOf[x] = parentsOf[x] or {}
+			table.insert(parentsOf[x], n)
+		end
+	end
+	for r = 1, floors do
+		for _, n in map.rows[r] do
+			local t = n.type
+			if r == 1 and t ~= "Battle" then bad(n.id .. " row1 not Battle") end
+			if r == treasureRow and t ~= "Treasure" then bad(n.id .. " treasure row") end
+			if isFixedRest(r, floors) and t ~= "Rest" then bad(n.id .. " rest row") end
+			if (t == "Elite" or t == "Rest") and r <= 2 then bad(n.id .. " " .. t .. " on row " .. r) end
+			if t == "Rest" and not isFixedRest(r, floors) and isFixedRest(r + 1, floors) then bad(n.id .. " Rest before Rest row") end
+			if (t == "Merchant" or t == "Escape") and r == 1 then bad(n.id .. " " .. t .. " on row 1") end
+			for _, p in parentsOf[n.id] or {} do
+				if t == p.type and (t == "Elite" or t == "Rest" or t == "Merchant") then
+					bad(n.id .. " " .. t .. " twice in a row")
+				end
+				if t == "Escape" then
+					if p.type == "Escape" then bad(n.id .. " Escape after Escape") end
+					for _, g in parentsOf[p.id] or {} do
+						if g.type == "Escape" then bad(n.id .. " Escape within 3 rows") end
+					end
+				end
+			end
+			if #n.next == 0 then bad(n.id .. " dead end") end
+			if r > 1 and not parentsOf[n.id] then bad(n.id .. " unreachable") end
+		end
+		-- siblings differ (random rows only; fixed rows are one type by design)
+		if r < floors then
+			for _, n in map.rows[r] do
+				local seen: { [string]: boolean } = {}
+				for _, x in n.next do
+					local cn = byId[x]
+					if cn and cn.row ~= 1 and cn.row ~= treasureRow and not isFixedRest(cn.row, floors) then
+						if seen[cn.type] then bad(n.id .. " children share " .. cn.type) end
+						seen[cn.type] = true
+					end
+				end
+			end
+		end
+	end
+	-- crossing edges
+	for r = 1, floors - 1 do
+		for c = 1, map.width do
+			local n = map.rows[r][c]
+			if n then
+				for _, x in n.next do
+					local c2 = byId[x].col
+					if c2 == c + 1 then
+						local m = map.rows[r][c + 1]
+						if m then
+							for _, y in m.next do
+								if byId[y].col == c then bad(n.id .. " crossing edge") end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	local s = map.starts
+	if #s < 2 then bad("fewer than 2 start rooms") end
+	return #problems == 0, problems
+end
+
+--- Seeded map for a facility level. Retries (same rng stream) until placement rules hold.
+function DungeonMap.Generate(seed: number, facilityLevel: number): any
+	local rng = Random.new(seed)
+	local map: any = nil
+	for _ = 1, MAX_ATTEMPTS do
+		map = build(rng, seed, facilityLevel)
+		local ok = DungeonMap.Validate(map)
+		if ok then return map end
+	end
+	warn("[DungeonMap] no valid map after " .. MAX_ATTEMPTS .. " attempts (seed " .. seed .. ")")
+	return map
+end
+
+return table.freeze(DungeonMap)

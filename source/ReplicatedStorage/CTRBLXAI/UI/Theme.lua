@@ -740,13 +740,17 @@ function Theme.MakeItemTile(opts)
 		-- keeps the image aspect-correct and centered inside this box, and it self-adjusts to
 		-- any cell height (the tile fills the grid cell, so scale-1 height = full cell).
 		local ico = Instance.new("ImageLabel")
+		-- Per-image fit (2026-11-12, user ruling): some icon art fills its whole canvas (StatMP) and
+		-- looks oversized/off-centre beside icons with built-in margin. s < 1 shrinks the icon box
+		-- around its own centre (Theme.FitIconBox); s = 1 is the unchanged layout.
+		local baseSize: UDim2
 		if opts.portrait then
 			-- Same box as the Loadout Skills/Augments tiles: full-width square from the top inset.
-			ico.Size = UDim2.new(1, -iconInset * 2, 0, cellW - iconInset * 2)
+			baseSize = UDim2.new(1, -iconInset * 2, 0, cellW - iconInset * 2)
 		else
-			ico.Size = UDim2.new(1, -iconInset * 2, 1, -(iconInset + t.NameBarHeight + 2))
+			baseSize = UDim2.new(1, -iconInset * 2, 1, -(iconInset + t.NameBarHeight + 2))
 		end
-		ico.Position = UDim2.fromOffset(iconInset, iconInset)
+		ico.Size, ico.Position = Theme.FitIconBox(opts.icon, baseSize, UDim2.fromOffset(iconInset, iconInset))
 		ico.BackgroundTransparency = 1
 		ico.Image = opts.icon
 		ico.ScaleType = Enum.ScaleType.Fit
@@ -998,7 +1002,7 @@ function Theme.MakeTabButton(parent, text, state, onActivated, opts)
 
 	local maxText = opts.textSize or Theme.Text.Small()
 	local hasIcon = type(opts.icon) == "string" and string.find(opts.icon, "rbxassetid://") ~= nil
-	local iconPx = 18
+	local iconPx = opts.iconSize or 18 -- opts.iconSize: larger icons (guild nav, 2026-11-13)
 	local icon
 	if hasIcon then
 		icon = Instance.new("ImageLabel")
@@ -1041,13 +1045,15 @@ function Theme.MakeTabButton(parent, text, state, onActivated, opts)
 		lbl.TextSize = maxText
 	else
 		-- Fixed or Scale width: the text shrinks to fit instead of running off the bar.
-		local iconW = if hasIcon then iconPx + 4 else 0
+		-- opts.iconReserve: keep the icon column empty so labels line up with iconed buttons.
+		local iconW = if hasIcon or opts.iconReserve then iconPx + 4 else 0
 		if icon then
 			icon.AnchorPoint = Vector2.new(0, 0.5)
 			icon.Position = UDim2.new(0, TAB_TEXT_PAD, 0.5, 0)
 		end
 		lbl.Size = UDim2.new(1, -(TAB_TEXT_PAD * 2 + iconW), 1, -8)
 		lbl.Position = UDim2.new(0, TAB_TEXT_PAD + iconW, 0, 4)
+		if opts.textAlign then lbl.TextXAlignment = opts.textAlign end
 		lbl.TextScaled = true
 		local fit = Instance.new("UITextSizeConstraint")
 		fit.MaxTextSize = maxText
@@ -1332,6 +1338,11 @@ Theme.Icons = {
 	StatRT              = "rbxassetid://107531305940944",
 	StatRTDelay         = "rbxassetid://87418287536058",
 	StatRTDelayResist   = "rbxassetid://123660748376135",
+	StatMPRegen         = "rbxassetid://116860287729218", -- 2026-11-15 v3 (old 138876534377724 never loaded)
+	StatChannelSpeed    = "rbxassetid://130562498010565", -- 2026-11-15 v3 (old 87582766748829 never loaded)
+	StatDiscoveryRadius = "rbxassetid://108231223390229", -- 2026-11-14 icon-stat-discovery-radius
+	StatStartingRT      = "rbxassetid://133183615732922", -- 2026-11-14 icon-stat-starting-rt
+	StatRange           = "rbxassetid://114599037264241", -- 2026-11-14 icon-stat-range
 	StatPrecision       = "rbxassetid://76225531091303",
 	StatEvasiveness     = "rbxassetid://128457268755069",
 	StatFortune         = "rbxassetid://107941794185677",
@@ -1369,6 +1380,93 @@ Theme.Icons = {
 -- Bonus family -> icon (2026-11-07, Runeforge gem portraits). Keyed by the BonusData
 -- NumericalAttributes `family`; the ONE place this mapping lives (DAT-001). Bonus passives have
 -- no icon (Theme.GetBonusIcon returns nil -> plain tile).
+-- Guild base icons (user upload 2026-11-12 11:56 PM). ONE place for these ids (DAT-001).
+-- Dungeon, Townhall, Shrine, Temple, TradingPost, Artisan, HomeBase: RESERVED for future
+-- buildings (no button uses them yet).
+Theme.GuildIcons = table.freeze({
+	Mercury          = "rbxassetid://108506668722725",
+	UGCMarket        = "rbxassetid://87978619456098",
+	Dungeon          = "rbxassetid://105920919000000", -- reserved
+	AdventurersGuild = "rbxassetid://74693472072142",
+	Recruitment      = "rbxassetid://96682037094815",
+	Crucible         = "rbxassetid://117074978827390",
+	Townhall         = "rbxassetid://71181033000454", -- reserved
+	Gold             = "rbxassetid://130699860652862",
+	Crystal          = "rbxassetid://74158758399745",
+	GearMerchant     = "rbxassetid://106916078789855",
+	TrainingGrounds  = "rbxassetid://88841466856627",
+	Apothecary       = "rbxassetid://107904493439258",
+	Shrine           = "rbxassetid://107159902591385", -- reserved
+	Runeforge        = "rbxassetid://74132381910226",
+	TradingPost      = "rbxassetid://115610208163062", -- reserved
+	Temple           = "rbxassetid://118731651230998", -- reserved
+	Sulfur           = "rbxassetid://120896999901784",
+	HomeBase         = "rbxassetid://93389993459092", -- reserved
+	Artisan          = "rbxassetid://129356073581903", -- reserved
+	Blacksmith       = "rbxassetid://100021754504369",
+	Dispatch         = "rbxassetid://84363568386921",
+	Units            = "rbxassetid://132653392640514", -- 2026-11-14 icon-guild-units
+})
+
+-- Dungeon map room icons (project_rules 260, USER RULING 2026-11-14 2:30-2:51 AM). ONE place for the
+-- asset ids. Art: D:\AI\Projects\CTRBLXAI\art_staging\dungeon_nodes\ (user uploads, then pastes ids).
+-- Empty string = not uploaded yet: the map shows a coloured circle with the room's one-word label.
+Theme.DungeonRoomIcons = table.freeze({
+	Battle   = "rbxassetid://90483240321726", -- dungeon-node-battle-swords.png (uploaded by El_Pi0818 2026-11-14)
+	Elite    = "rbxassetid://117323966821589", -- dungeon-node-elite-skull.png (uploaded by El_Pi0818 2026-11-14)
+	Boss     = "rbxassetid://107426529282685", -- dungeon-node-boss-crown.png (uploaded by El_Pi0818 2026-11-14)
+	Rest     = "rbxassetid://119030253338964", -- dungeon-node-rest-campfire.png (uploaded by El_Pi0818 2026-11-14)
+	Merchant = "rbxassetid://112120858085613", -- dungeon-node-merchant-coinbag.png (uploaded by El_Pi0818 2026-11-14)
+	Treasure = "rbxassetid://98252916063800", -- dungeon-node-treasure-chest.png (uploaded by El_Pi0818 2026-11-14)
+	Event    = "rbxassetid://83023102261336", -- dungeon-node-event-scroll.png (uploaded by El_Pi0818 2026-11-14)
+	Mystery  = "rbxassetid://111862040941594", -- dungeon-node-surprise-question.png (uploaded by El_Pi0818 2026-11-14)
+})
+
+-- Dungeon map background per biome (user request 2026-11-15 12:42 AM). ONE place for these ids.
+-- Art: D:\AI\Projects\CTRBLXAI\assets\dungeon_backgrounds\dungeon-bg-<biome>.png. Missing biome = plain background.
+Theme.DungeonBiomeBackgrounds = table.freeze({
+	Plains    = "rbxassetid://133385396316020",
+	Forest    = "rbxassetid://84565635254792",
+	Desert    = "rbxassetid://98692429859120",
+	Swamp     = "rbxassetid://110949780015324",
+	Highlands = "rbxassetid://80648347222470",
+	Tundra    = "rbxassetid://122009074826763",
+	Volcano   = "rbxassetid://99698018083104",
+	Cave      = "rbxassetid://96655955961970",
+	Ruins     = "rbxassetid://126292266907561",
+	Castle    = "rbxassetid://114048498099343",
+	Corrupted = "rbxassetid://107373833678868",
+})
+
+-- Ring / fill colour per room type (same rule).
+Theme.DungeonRoomColors = table.freeze({
+	Battle   = Color3.fromRGB(130, 130, 145), -- grey
+	Elite    = Color3.fromRGB(205, 55, 50),   -- red
+	Boss     = Color3.fromRGB(140, 20, 25),   -- dark red (drawn larger)
+	Rest     = Color3.fromRGB(60, 185, 85),   -- green
+	Merchant = Color3.fromRGB(230, 185, 50),  -- gold
+	Treasure = Color3.fromRGB(70, 135, 230),  -- blue
+	Event    = Color3.fromRGB(150, 80, 200),  -- purple
+	Mystery  = Color3.fromRGB(175, 120, 255), -- violet
+})
+
+-- Icon fit scale (2026-11-12, user ruling): shrink icon art that fills its whole canvas so it
+-- sits like the others on item/gem tiles. Missing = 1 (unchanged). Used by Theme.MakeItemTile.
+Theme.IconFitScale = table.freeze({
+	[Theme.Icons.StatMP] = 0.88,
+})
+
+-- Shrink an icon Size/Position box by its fit scale around the box's own centre. s = 1 returns
+-- the box unchanged. Shared by MakeItemTile and any grid that re-fits tile icons (one place).
+function Theme.FitIconBox(icon: string?, size: UDim2, pos: UDim2): (UDim2, UDim2)
+	local s = (icon and Theme.IconFitScale[icon]) or 1
+	if s == 1 then return size, pos end
+	local m = (1 - s) / 2
+	return UDim2.new(size.X.Scale * s, size.X.Offset * s, size.Y.Scale * s, size.Y.Offset * s),
+		UDim2.new(pos.X.Scale + size.X.Scale * m, pos.X.Offset + size.X.Offset * m,
+			pos.Y.Scale + size.Y.Scale * m, pos.Y.Offset + size.Y.Offset * m)
+end
+
 Theme.BonusFamilyIcons = table.freeze({
 	["STR Bonus"]           = Theme.Icons.STR,
 	["AGI Bonus"]           = Theme.Icons.AGI,
@@ -1392,6 +1490,102 @@ Theme.BonusFamilyIcons = table.freeze({
 	["RT Delay Resistance"] = Theme.Icons.StatRTDelayResist,
 })
 
+-- Loadout INFO tab stat rows -> icon (2026-11-12, user ruling 9:51/10:07 PM). Keyed by the Info
+-- row statKey; the ONE place this mapping lives (DAT-001). Rows not listed (mpRegen,
+-- channelReduction, discoveryRadius, startingRt) now have icons too (2026-11-14).
+-- The STR..LUK stat panel uses Theme.Icons[stat] directly (same table as the gems).
+Theme.StatKeyIcons = table.freeze({
+	maxHp            = Theme.Icons.StatHP,
+	maxMp            = Theme.Icons.StatMP,
+	attackPower      = Theme.Icons.StatAttack,
+	effectiveWt      = Theme.Icons.StatWT,
+	precision        = Theme.Icons.StatPrecision,
+	evasiveness      = Theme.Icons.StatEvasiveness,
+	basicAttackRt    = Theme.Icons.StatRT,
+	defensePower     = Theme.Icons.StatDefense,
+	debuffResist     = Theme.Icons.StatDebuffResist,
+	rtDelayResist    = Theme.Icons.StatRTDelayResist,
+	stability        = Theme.Icons.StatStability,
+	movementRange    = Theme.Icons.StatMovement,
+	jump             = Theme.Icons.StatJump,
+	force            = Theme.Icons.StatForce,
+	skillPotency     = Theme.Icons.StatSkillPotency,
+	bonusSkillRange  = Theme.Icons.StatSkillRange,
+	healEfficiency   = Theme.Icons.StatHealing,
+	unitFortune      = Theme.Icons.StatFortune,
+	baseRt           = Theme.Icons.StatRT,
+	mpRegen          = Theme.Icons.StatMPRegen, -- 2026-11-14
+	channelReduction = Theme.Icons.StatChannelSpeed, -- 2026-11-14
+	discoveryRadius  = Theme.Icons.StatDiscoveryRadius, -- 2026-11-14
+	startingRt       = Theme.Icons.StatStartingRT, -- 2026-11-14
+})
+
+-- Gear stat rows -> icon (2026-11-12, user ruling 10:49 / 10:51 PM): item detail, compare, the
+-- shared Merchant inspector (and the battle unit inspector, which reuses the item detail). Keyed
+-- by the stat name as DISPLAYED. Two lists because one name means different things: base "WT"
+-- is the item's weight (StatWT); a bonus "WT" line is the Weight Reduction family, whose gem uses
+-- StatWeaponWTReduction (same icons as the gems). Image ids live only in Theme.Icons (DAT-001).
+-- A name not listed has no icon: callers keep a blank gap of the same width (Range has one since 2026-11-14).
+Theme.GearStatIcons = table.freeze({
+	base = table.freeze({
+		["Attack"]   = Theme.Icons.StatAttack,
+		["Defense"]  = Theme.Icons.StatDefense,
+		["HP"]       = Theme.Icons.StatHP,
+		["MP"]       = Theme.Icons.StatMP,
+		["WT"]       = Theme.Icons.StatWT,
+		["RT Delay"] = Theme.Icons.StatRTDelay,
+		["RTDelay"]  = Theme.Icons.StatRTDelay,
+		["Range"]    = Theme.Icons.StatRange, -- 2026-11-14
+	}),
+	bonus = table.freeze({
+		["STR"] = Theme.Icons.STR, ["AGI"] = Theme.Icons.AGI, ["INT"] = Theme.Icons.INT,
+		["VIT"] = Theme.Icons.VIT, ["DEX"] = Theme.Icons.DEX, ["LUK"] = Theme.Icons.LUK,
+		["HP"]              = Theme.Icons.StatHP,
+		["MP"]              = Theme.Icons.StatMP,
+		["Attack"]          = Theme.Icons.StatAttack,
+		["Defense"]         = Theme.Icons.StatDefense,
+		["RT Delay"]        = Theme.Icons.StatRTDelay,
+		["WT"]              = Theme.Icons.StatWeaponWTReduction,
+		["Precision"]       = Theme.Icons.StatPrecision,
+		["Evasiveness"]     = Theme.Icons.StatEvasiveness,
+		["Fortune"]         = Theme.Icons.StatFortune,
+		["Skill Potency"]   = Theme.Icons.StatSkillPotency,
+		["Healing"]         = Theme.Icons.StatHealing,
+		["Debuff Resist"]   = Theme.Icons.StatDebuffResist,
+		["RT Delay Resist"] = Theme.Icons.StatRTDelayResist,
+	}),
+})
+
+--- Icon for a gear stat name as displayed. isBonus picks the bonus list; a bonus name that is a
+--- raw BonusData family (ItemDisplay falls back to the family) uses the gem family icons.
+function Theme.GetGearStatIcon(name: string?, isBonus: boolean?): string?
+	if not name then return nil end
+	if isBonus then
+		return Theme.GearStatIcons.bonus[name] or Theme.BonusFamilyIcons[name]
+	end
+	return Theme.GearStatIcons.base[name]
+end
+
+-- Small stat icon left of a row name (14 px, 2 px in, vertically centred). FitIconBox keeps the
+-- per-icon fit (MP 0.88). nil icon = nothing drawn (the caller keeps the blank gap).
+-- Properties first, Parent last (NET-004). Theme.StatIconGap = left inset the name moves by.
+Theme.StatIconPx = 14
+Theme.StatIconGap = Theme.StatIconPx + 4
+function Theme.AddStatIcon(parent: Instance, icon: string?, xOffset: number?, xScale: number?): ImageLabel?
+	if not icon then return nil end
+	local px = Theme.StatIconPx
+	local img = Instance.new("ImageLabel")
+	img.Name = "StatIcon"
+	img.BackgroundTransparency = 1
+	img.ScaleType = Enum.ScaleType.Fit
+	img.Image = icon
+	img.Size, img.Position = Theme.FitIconBox(icon, UDim2.fromOffset(px, px),
+		UDim2.new(xScale or 0, xOffset or 2, 0.5, -px / 2))
+	img.ZIndex = 2
+	img.Parent = parent
+	return img
+end
+
 function Theme.GetBonusIcon(family: string?): string?
 	return if family then Theme.BonusFamilyIcons[family] else nil
 end
@@ -1409,33 +1603,6 @@ Theme.UGCFilterIcons = {
 	Back  = Theme.Icons.Accessory, -- PLACEHOLDER: replace when user uploads back icon
 }
 
-
---------------------------------------------------
--- TERRAIN TEXTURES (uploaded tile surface images)
---------------------------------------------------
-
-Theme.Terrain = {
-	["Clear"]          = "rbxassetid://74692826345872",
-	["Grassland"]      = "rbxassetid://89238035189625",
-	["Clover Field"]   = "rbxassetid://86809605502149",
-	["Forest"]         = "rbxassetid://92048265218097",
-	["Wooden Floor"]   = "rbxassetid://72918745499013",
-	["Rocky"]          = "rbxassetid://86134990751716",
-	["Sand"]           = "rbxassetid://105434745636051",
-	["Mud"]            = "rbxassetid://97058803836850",
-	["Dirt Road"]      = "rbxassetid://74896495319547",
-	["Stone Road"]     = "rbxassetid://105323659190313",
-	["Shallow Water"]  = "rbxassetid://111962301136930",
-	["Deep Water"]     = "rbxassetid://138905752952965",
-	["Swamp"]          = "rbxassetid://82636405695018",
-	["Ice"]            = "rbxassetid://93574916698714",
-	["Metal"]          = "rbxassetid://106647711046909",
-	["Molten"]         = "rbxassetid://120698732334060",
-	["Magic Circle"]   = "rbxassetid://96217583623367",
-	["Tainted Ground"] = "rbxassetid://90980399497254",
-	["Cracked Ground"] = "rbxassetid://80266846327057",
-	["Quicksand"]      = "rbxassetid://103522632282664",
-}
 
 
 --------------------------------------------------

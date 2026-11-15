@@ -712,7 +712,7 @@ function BattleCoordinator.AdvanceClock(state)
 	-- Main.server.lua will check unit.isChanneling and handle activation.
 	-- We still give AP so EndTurn doesn't error, but the unit won't use it.
 	UnitSchema.RefreshAp(nextUnit)
-	nextUnit.currentAp = AP_PER_TURN_STANDARD
+	nextUnit.currentAp = AP_PER_TURN_STANDARD + (tonumber(nextUnit._dgApBonus) or 0) -- RL-19 Berserker's Oath (dungeon, 2026-11-15)
 	-- Dev god mode (2026-11-06): full HP/MP once at the start of a protected unit's turn, so damage
 	-- taken during other turns was already shown with its real numbers. Flagged for a HUD sync.
 	if UnitSchema.IsGodProtected(nextUnit) and nextUnit.isAlive then
@@ -809,7 +809,7 @@ function BattleCoordinator.ResolveChannelDeadline(state)
 		local dotEvents = StatusService.ProcessStartOfTurn(unit)
 		state.dotEvents = dotEvents
 		UnitSchema.RefreshAp(unit)
-		unit.currentAp = AP_PER_TURN_STANDARD
+		unit.currentAp = AP_PER_TURN_STANDARD + (tonumber(unit._dgApBonus) or 0) -- RL-19 Berserker's Oath (dungeon, 2026-11-15)
 		if unit._sluggishPendingAp then  -- Sluggish Finisher (F-162), see above
 			unit._sluggishPendingAp = nil
 			unit.currentAp = math.max(0, unit.currentAp - 1)

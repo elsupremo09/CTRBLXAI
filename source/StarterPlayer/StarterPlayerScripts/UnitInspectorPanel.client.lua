@@ -637,7 +637,7 @@ local function renderPassiveTab(content, data, panelH)
 		createSection(left, isPerk and "PERSONAL PERK" or "PERSONAL FLAW", nl())
 		local tierTxt = trait.tier and (" [" .. trait.tier:gsub("^%l", string.upper) .. "]") or ""
 		createLabel(left, {
-			Text = "  " .. (trait.name or "Unknown") .. tierTxt,
+			Text = (trait.name or "Unknown") .. tierTxt,
 			Size = UDim2.new(1, 0, 0, 14), AutoY = true,
 			Font = Theme.Font.PrimaryBold,
 			Color = isPerk and Theme.Colors.RarityEpic or Theme.Colors.Danger,
@@ -645,7 +645,7 @@ local function renderPassiveTab(content, data, panelH)
 		})
 		if trait.effect and trait.effect ~= "" then
 			createLabel(left, {
-				Text = "  " .. trait.effect,
+				Text = trait.effect,
 				Size = UDim2.new(1, 0, 0, 0), AutoY = true,
 				TextSize = Theme.Text.Small(),
 				Color = Theme.Colors.TextSecondary,
@@ -665,7 +665,7 @@ local function renderPassiveTab(content, data, panelH)
 	createSection(left, "RACE PASSIVE", nl())
 	if data.racePassiveName then
 		createLabel(left, {
-			Text = "  " .. data.racePassiveName,
+			Text = data.racePassiveName,
 			Size = UDim2.new(1, 0, 0, 14), AutoY = true,
 			Font = Theme.Font.PrimaryBold,
 			Color = Theme.Colors.RarityEpic,
@@ -673,7 +673,7 @@ local function renderPassiveTab(content, data, panelH)
 		})
 		if data.racePassiveEffect and data.racePassiveEffect ~= "" then
 			createLabel(left, {
-				Text = "  " .. data.racePassiveEffect,
+				Text = data.racePassiveEffect,
 				Size = UDim2.new(1, 0, 0, 0), AutoY = true,
 				TextSize = Theme.Text.Small(),
 				Color = Theme.Colors.TextSecondary,
@@ -688,7 +688,7 @@ local function renderPassiveTab(content, data, panelH)
 	createSection(left, "DOCTRINE", nl())
 	if data.doctrine then
 		createLabel(left, {
-			Text = "  " .. (data.doctrine.name or data.doctrineId or "Unknown"),
+			Text = (data.doctrine.name or data.doctrineId or "Unknown"),
 			Size = UDim2.new(1, 0, 0, 14), AutoY = true,
 			Font = Theme.Font.PrimaryBold,
 			Color = Theme.Colors.Info,
@@ -699,7 +699,7 @@ local function renderPassiveTab(content, data, panelH)
 		local docPassiveEffect = data.doctrine.passiveEffect or data.doctrine.effect or data.doctrine.description
 		if docPassiveName and docPassiveName ~= "" then
 			createLabel(left, {
-				Text = "  " .. docPassiveName,
+				Text = docPassiveName,
 				Size = UDim2.new(1, 0, 0, 14), AutoY = true,
 				Font = Theme.Font.PrimaryBold,
 				Color = Theme.Colors.RarityEpic,
@@ -708,7 +708,7 @@ local function renderPassiveTab(content, data, panelH)
 		end
 		if docPassiveEffect and docPassiveEffect ~= "" then
 			createLabel(left, {
-				Text = "  " .. docPassiveEffect,
+				Text = docPassiveEffect,
 				Size = UDim2.new(1, 0, 0, 0), AutoY = true,
 				TextSize = Theme.Text.Small(),
 				Color = Theme.Colors.TextSecondary,
@@ -725,7 +725,7 @@ local function renderPassiveTab(content, data, panelH)
 				end
 			end
 			if #parts > 0 then
-				createLabel(left, { Text = "  Stats: " .. table.concat(parts, "  "),
+				createLabel(left, { Text = "Stats: " .. table.concat(parts, "  "),
 					Order = nl(), Padding = 8, AutoY = true })
 			end
 		end
@@ -749,7 +749,7 @@ local function renderPassiveTab(content, data, panelH)
 		t.TextSize = Theme.Text.Small(); t.TextColor3 = color
 		t.TextXAlignment = Enum.TextXAlignment.Left; t.TextYAlignment = Enum.TextYAlignment.Top
 		t.TextWrapped = true; t.RichText = rich == true
-		t.Text = "  " .. text
+		t.Text = text
 		t.LayoutOrder = nr()
 		t.Parent = right -- parent last (NET-004)
 	end

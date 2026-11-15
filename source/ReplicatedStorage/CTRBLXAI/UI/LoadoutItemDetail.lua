@@ -552,7 +552,10 @@ buildSoloDetailContent = function(panel, item, viewerUnitId)
 					row.Position = UDim2.new(0, 0, 0, statY)
 					row.BackgroundTransparency = 1
 					row.Parent = leftCol
-					makeLabel(row, { Text = s.label, Size = UDim2.new(0.6, 0, 1, 0),
+					-- Stat icon left of the name (2026-11-12, user ruling 10:49 PM); no icon = blank gap.
+					Theme.AddStatIcon(row, Theme.GetGearStatIcon(s.label, false), 0)
+					makeLabel(row, { Text = s.label, Size = UDim2.new(0.6, -Theme.StatIconGap, 1, 0),
+						Position = UDim2.new(0, Theme.StatIconGap, 0, 0),
 						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextSecondary })
 					makeLabel(row, { Text = tostring(s.value), Size = UDim2.new(0.4, 0, 1, 0),
 						Position = UDim2.new(0.6, 0, 0, 0),
@@ -576,7 +579,10 @@ buildSoloDetailContent = function(panel, item, viewerUnitId)
 					row.Position = UDim2.new(0, 0, 0, statY)
 					row.BackgroundTransparency = 1
 					row.Parent = leftCol
-					makeLabel(row, { Text = s.label, Size = UDim2.new(0.6, 0, 1, 0),
+					-- Stat icon left of the name (2026-11-12, user ruling 10:49 PM); no icon = blank gap.
+					Theme.AddStatIcon(row, Theme.GetGearStatIcon(s.label, false), 0)
+					makeLabel(row, { Text = s.label, Size = UDim2.new(0.6, -Theme.StatIconGap, 1, 0),
+						Position = UDim2.new(0, Theme.StatIconGap, 0, 0),
 						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextSecondary })
 					makeLabel(row, { Text = tostring(s.value), Size = UDim2.new(0.4, 0, 1, 0),
 						Position = UDim2.new(0.6, 0, 0, 0),
@@ -649,8 +655,15 @@ buildSoloDetailContent = function(panel, item, viewerUnitId)
 				local bp = (item.bonusStatPcts or {})[sn]
 				local pctTxt = (bp and bp ~= 0) and ("  " .. (bp > 0 and "+" or "") .. bp .. "%") or ""
 				local sign = bv > 0 and "+" or ""
-				makeLabel(leftCol, { Text = sn .. "  " .. sign .. bv .. pctTxt,
-					Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 4, 0, statY),
+				-- Stat icon left of the name (2026-11-12, user ruling 10:49 PM); no icon = blank gap.
+				local brow = Instance.new("Frame")
+				brow.Size = UDim2.new(1, 0, 0, 14)
+				brow.Position = UDim2.new(0, 0, 0, statY)
+				brow.BackgroundTransparency = 1
+				brow.Parent = leftCol
+				Theme.AddStatIcon(brow, Theme.GetGearStatIcon(sn, true), 4)
+				makeLabel(brow, { Text = sn .. "  " .. sign .. bv .. pctTxt,
+					Size = UDim2.new(1, -(4 + Theme.StatIconGap), 1, 0), Position = UDim2.new(0, 4 + Theme.StatIconGap, 0, 0),
 					TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.Success })
 				statY = statY + 16
 			end

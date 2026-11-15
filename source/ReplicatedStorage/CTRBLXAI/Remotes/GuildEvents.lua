@@ -42,6 +42,7 @@ local FUNCTION_NAMES = table.freeze({
 	"FinalizeCart",     -- ({ buys = {offerIndex}, sells = {instanceId} }) -> batch commit (cart, 2026-10-13)
 	"GetDispatchBoard", -- () -> missions + unit availability
 	"RequestDispatch",  -- (missionId, { unitId }) -> result
+	"RecallDispatch",   -- (missionId) -> { returnedUnitIds } (2026-11-12: early return, no reward, no refund)
 	"GetGuildUnits",    -- () -> unit list with level / XP / availability
 	"GetParties",       -- () -> { parties, roster, maxSize }
 	"SetPartyName",     -- (slot, name) -> result
@@ -58,6 +59,8 @@ local FUNCTION_NAMES = table.freeze({
 	"GetRerollSets",    -- (instanceId) -> cost + current lines; the saved sets only once paid
 	"PayReroll",        -- (instanceId) -> pays the sulfur, saves + returns the new sets
 	"CommitReroll",     -- (instanceId, choice 0..N) -> closes the paid choice (0 = keep current)
+	-- Gem Craft tab (USER RULING 2026-11-12 1:54 PM). Client sends gem ids + a count only.
+	"CraftGems",        -- ({ action, gem?, times?, gems? }) -> spent + gained gems, gold
 	-- Crucible gear merging (2026-11-02). Client sends instance IDs only; the server prices.
 	"GetCrucible",      -- () -> level, inputs needed, items
 	"PreviewMerge",     -- ({ instanceId }) -> result rarity, level and cost (charges nothing)
@@ -69,6 +72,8 @@ local FUNCTION_NAMES = table.freeze({
 	-- Training Grounds card shop (2026-11-04). Client sends a shelf slot or a card id only.
 	"GetCardShop",      -- () -> level, shelf, owned loose cards
 	"CardShopAction",   -- ({ action = "Buy", slot } | { action = "Sell", kind, id }) -> result + state
+	-- Dungeon screen (build step 5, 2026-11-13). Client sends ids only (card, units, room).
+	"DungeonAction",    -- ({ action = "State" | "Start" | "Move" | "Rest" | "Treasure" | "Escape" | "Leave" | "AckResult" | "MerchantState" | "MerchantBuy" | "MerchantRefill", ... }) -> state
 })
 
 local GuildEvents = {}

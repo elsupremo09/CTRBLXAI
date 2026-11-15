@@ -89,10 +89,57 @@ local DispatchService = {}
 local DISPATCH_XP_TIER_FACTOR = 60   -- unit_progression: (Tier × 60) × Duration
 local MIN_TIER, MAX_TIER = 1, 5      -- Difficulty Tier 1-5 (Locked)
 
--- materials_system 12 (v2, LOCKED USER DECISION 2026-11-01): the reward is mercury,
--- paid ONCE per mission (not per unit): 1, or 2 for tier 4-5 missions.
+-- MATERIAL-SPECIFIC MISSIONS (USER RULING 2026-11-12 1:42 PM, materials_system 12 /
+-- unit_progression 99). Each mission pays ONE material, paid once per mission. Per tier: the
+-- materials it may roll, the amount, and the draw weight. One table, frozen (DAT-001/DAT-002).
+--   mercury   tiers 1-5, 1/1/1/2/2, weight 1
+--   gems      tiers 3-5, 1 Rare-level rune gem (kind rolled on return), weight 1
+--   crystals  tiers 4-5, 1, weight 0.25
+--   sulfur    tier 5,    1, weight 0.06
+local DISPATCH_REWARDS = table.freeze({
+	[1] = table.freeze({ table.freeze({ material = "mercury", amount = 1, weight = 1 }) }),
+	[2] = table.freeze({ table.freeze({ material = "mercury", amount = 1, weight = 1 }) }),
+	[3] = table.freeze({
+		table.freeze({ material = "mercury", amount = 1, weight = 1 }),
+		table.freeze({ material = "gems", amount = 1, weight = 1 }),
+	}),
+	[4] = table.freeze({
+		table.freeze({ material = "mercury", amount = 2, weight = 1 }),
+		table.freeze({ material = "gems", amount = 1, weight = 1 }),
+		table.freeze({ material = "crystals", amount = 1, weight = 0.25 }),
+	}),
+	[5] = table.freeze({
+		table.freeze({ material = "mercury", amount = 2, weight = 1 }),
+		table.freeze({ material = "gems", amount = 1, weight = 1 }),
+		table.freeze({ material = "crystals", amount = 1, weight = 0.25 }),
+		table.freeze({ material = "sulfur", amount = 1, weight = 0.06 }),
+	}),
+})
+local REWARD_MATERIALS = table.freeze({ mercury = true, crystals = true, sulfur = true, gems = true })
+DispatchService.REWARDS = DISPATCH_REWARDS -- read-only (tests / tools)
+
+-- Mercury amount for a tier, read from the single table above (2026-11-12 leftover fix: no second
+-- copy of the numbers). Used by Import for old saves whose record has no mercury amount.
 local function rewardMercuryFor(tier: number): number
-	return if tier >= 4 then 2 else 1
+	for _, o in DISPATCH_REWARDS[math.clamp(tier, MIN_TIER, MAX_TIER)] do
+		if o.material == "mercury" then return o.amount end
+	end
+	return 0
+end
+
+-- Deterministic weighted pick of a tier's reward from a mission seed (same seed = same board,
+-- so the v2 D-1 no-double-send rule still holds).
+local function pickReward(tier: number, missionSeed: number): (string, number)
+	local options = DISPATCH_REWARDS[tier] or DISPATCH_REWARDS[MIN_TIER]
+	local total = 0
+	for _, o in options do total += o.weight end
+	local roll = Random.new(missionSeed):NextNumber() * total
+	for _, o in options do
+		roll -= o.weight
+		if roll < 0 then return o.material, o.amount end
+	end
+	local last = options[#options]
+	return last.material, last.amount
 end
 
 --------------------------------------------------
@@ -104,6 +151,9 @@ local _currencyGrant: any = nil       -- CurrencyService.Credit(playerId, grant)
 local _unitXpSink: ((string, string, number) -> ())? = nil  -- (playerId, unitId, xp) FLAG-D3
 local _availabilitySink: any = nil    -- marks/queries unit availability on the EXISTING roster path
 local _rosterProvider: ((string) -> ({ string }?))? = nil   -- owned unit ids (read-only)
+-- Rune-gem roller (USER RULING 2026-11-12): Main wires RewardService.RollRuneGem(level, "Rare"),
+-- the same roll elite encounters use. (level) -> gemId?
+local _gemRoller: ((number) -> string?)? = nil
 
 function DispatchService.SetCurrencyProvider(svc: any) _currency = svc end
 -- Direct Credit hook so the mercury reward is granted through CurrencyService.Credit.
@@ -115,6 +165,7 @@ function DispatchService.SetUnitXpSink(fn: ((string, string, number) -> ())?) _u
 --   sink.IsAvailable(playerId, unitId) -> boolean   (optional; we also track locally)
 function DispatchService.SetAvailabilitySink(svc: any) _availabilitySink = svc end
 function DispatchService.SetRosterProvider(fn: ((string) -> ({ string }?))?) _rosterProvider = fn end
+function DispatchService.SetGemRoller(fn: ((number) -> string?)?) _gemRoller = fn end
 
 --------------------------------------------------
 -- SLOTS + FEE (USER RULING 2026-10-07; economy_framework 26: 50 gold per mission)
@@ -139,7 +190,8 @@ end
 --------------------------------------------------
 -- STATE
 --   active[playerId] = {
---     [unitId] = { missionId, tier, duration, startBattle, returnBattle, xp, mercury }
+--     [unitId] = { missionId, tier, duration, startBattle, returnBattle, xp, mercury,
+--                  material, amount, gemLevel }   (material/amount: 2026-11-12)
 --   }
 -- This is the dispatch LEDGER (who is away, how much they will earn). It is
 -- serialized through the EXISTING SaveService path via Export/Import (same
@@ -151,6 +203,12 @@ end
 local active: { [string]: { [string]: any } } = {}
 -- Offered-but-unsent missions, cached per player from the last OfferMissions.
 local offered: { [string]: { [string]: any } } = {}
+-- Recalled mission ids (USER RULING 2026-11-12, Dispatch Recall): a recalled mission is not
+-- offered again on the same board. Board mission ids carry the board seed
+-- ("dispatch_<seed>_<i>"), so ids from an older board can never match a new one;
+-- OfferMissions drops them when the board changes. Saved via Export so a restart that rebuilds
+-- the same board from its seed still hides the mission.
+local recalled: { [string]: { [string]: boolean } } = {}
 
 local function activeOf(playerId: string)
 	if not active[playerId] then active[playerId] = {} end
@@ -217,7 +275,11 @@ end
 -- tier as a neutral placeholder, unless the caller supplies a `missionSpec`
 -- override list of { tier, duration }.
 --
--- Returns: { missions = { { missionId, tier, duration, xp, rewardMercury } } }
+-- Each mission pays ONE material (USER RULING 2026-11-12): rewardMaterial + rewardAmount,
+-- picked from DISPATCH_REWARDS by the mission seed. rewardMercury = the amount when the material
+-- is mercury, else 0 (compatibility).
+--
+-- Returns: { missions = { { missionId, tier, duration, xp, rewardMaterial, rewardAmount, rewardMercury } } }
 --------------------------------------------------
 
 function DispatchService.OfferMissions(playerId: string, mapLevel: number, seed: number?, missionSpec: { any }?)
@@ -239,6 +301,16 @@ function DispatchService.OfferMissions(playerId: string, mapLevel: number, seed:
 		if rec.missionId then awayMissions[rec.missionId] = true end
 	end
 
+	-- Recalled ids from an older board (different seed prefix) are stale: drop them.
+	local boardPrefix = string.format("dispatch_%d_", baseSeed)
+	local rset = recalled[playerId]
+	if rset then
+		for mid in rset do
+			if string.sub(mid, 1, #boardPrefix) ~= boardPrefix then rset[mid] = nil end
+		end
+		if next(rset) == nil then recalled[playerId] = nil; rset = nil end
+	end
+
 	offered[playerId] = {}
 	for i, spec in specs do
 		local tier = math.clamp(math.floor(spec.tier or MIN_TIER), MIN_TIER, MAX_TIER)
@@ -249,12 +321,19 @@ function DispatchService.OfferMissions(playerId: string, mapLevel: number, seed:
 		if awayMissions[missionId] then
 			continue -- already sent and still away
 		end
+		if rset and rset[missionId] then
+			continue -- recalled from this board: not offered again until the next board
+		end
+		local material, amount = pickReward(tier, missionSeed)
 		local m = {
 			missionId = missionId,
 			tier = tier,
 			duration = duration,
 			xp = xp,
-			rewardMercury = rewardMercuryFor(tier),
+			rewardMaterial = material,
+			rewardAmount = amount,
+			rewardMercury = if material == "mercury" then amount else 0,
+			gemLevel = math.max(1, math.floor(mapLevel or 1)), -- rune-gem missions roll at this level
 			seed = missionSeed,
 		}
 		offered[playerId][missionId] = m
@@ -351,6 +430,9 @@ function DispatchService.SendUnits(playerId: string, missionId: string, unitIds:
 			remainingDays = mission.duration,  -- 2026-10-16: duration is now DAYS (1 day = 4000 CT)
 			xp = mission.xp,
 			mercury = mission.rewardMercury,
+			material = mission.rewardMaterial,
+			amount = mission.rewardAmount,
+			gemLevel = mission.gemLevel,
 		}
 		markAway(playerId, unitId, returnBattle)
 	end
@@ -368,6 +450,8 @@ function DispatchService.SendUnits(playerId: string, missionId: string, unitIds:
 		returnBattle = returnBattle,
 		xpEach = mission.xp,
 		rewardMercury = mission.rewardMercury,
+		rewardMaterial = mission.rewardMaterial,
+		rewardAmount = mission.rewardAmount,
 	}
 end
 
@@ -380,7 +464,8 @@ end
 -- through the injected unit-XP sink (FLAG-D3), and its reward materials are
 -- credited through CurrencyService.Credit.
 --
--- Returns: { returned = { { unitId, missionId, xp, mercury, xpGranted } } }
+-- Returns: { returned = { { unitId, missionId, xp, mercury, xpGranted, material, amount, gemId } } }
+-- (material/amount/gemId = what this unit's line paid; only the first unit of a mission pays.)
 --------------------------------------------------
 
 -- daysElapsed = days this battle was worth = ceil(elapsed CT / 4000), min 1 (2026-10-16,
@@ -415,19 +500,48 @@ function DispatchService.ResolveReturns(playerId: string, daysElapsed: number?)
 					unitId, rec.xp))
 			end
 
-			-- 3) Mercury reward through CurrencyService.Credit, ONCE per mission
-			--    (materials_system 12): the first returning unit of a mission carries it.
+			-- 3) The mission's ONE material through CurrencyService.Credit, ONCE per mission
+			--    (materials_system 12, USER RULING 2026-11-12): the first returning unit carries it.
+			--    Old records with no material pay mercury (rec.mercury, set on Import).
 			local mercury = 0
+			local paidMaterial: string? = nil
+			local paidAmount = 0
+			local gemId: string? = nil
 			local missionKey = tostring(rec.missionId or unitId)
 			if not paidMissions[missionKey] then
 				paidMissions[missionKey] = true
-				mercury = math.max(0, math.floor(tonumber(rec.mercury) or 0))
-				if mercury > 0 then
-					if _currencyGrant then
-						_currencyGrant(playerId, { mercury = mercury })
+				local mat = if type(rec.material) == "string" and REWARD_MATERIALS[rec.material] then rec.material else "mercury"
+				local amount = if mat == "mercury" and rec.material == nil
+					then math.max(0, math.floor(tonumber(rec.mercury) or 0))
+					else math.max(0, math.floor(tonumber(rec.amount) or 0))
+				if amount > 0 then
+					local grant: any = nil
+					if mat == "gems" then
+						if _gemRoller then
+							local okG, g = pcall(_gemRoller, math.max(1, math.floor(tonumber(rec.gemLevel) or 1)))
+							if okG and type(g) == "string" then
+								gemId = g
+								grant = { gems = { [g] = amount } }
+							else
+								warn(string.format("[DispatchService] Rune gem roll failed for %s (%s) — gem not granted",
+									tostring(rec.missionId), tostring(g)))
+							end
+						else
+							warn("[DispatchService] No rune-gem roller wired — gem reward not granted (recorded)")
+						end
 					else
-						-- No credit path injected: report it rather than invent one.
-						warn("[DispatchService] No CurrencyService.Credit wired — mercury reward not granted (recorded)")
+						grant = { [mat] = amount }
+					end
+					if grant then
+						if _currencyGrant then
+							_currencyGrant(playerId, grant)
+							paidMaterial = mat
+							paidAmount = amount
+							if mat == "mercury" then mercury = amount end
+						else
+							-- No credit path injected: report it rather than invent one.
+							warn(string.format("[DispatchService] No CurrencyService.Credit wired — %s reward not granted (recorded)", mat))
+						end
 					end
 				end
 			end
@@ -438,17 +552,63 @@ function DispatchService.ResolveReturns(playerId: string, daysElapsed: number?)
 				xp = rec.xp,
 				xpGranted = xpGranted,
 				mercury = mercury,
+				material = paidMaterial,
+				amount = paidAmount,
+				gemId = gemId,
 			})
 
 			a[unitId] = nil
 
 			print(string.format(
-				"[DispatchService] RETURNED %s from %s | +%d XP%s | +%d mercury",
-				unitId, rec.missionId, rec.xp, xpGranted and "" or " (sink missing)", mercury))
+				"[DispatchService] RETURNED %s from %s | +%d XP%s | +%d %s%s",
+				unitId, rec.missionId, rec.xp, xpGranted and "" or " (sink missing)", paidAmount,
+				tostring(paidMaterial or "none"), if gemId then " (" .. gemId .. ")" else ""))
 		end
 	end
 
 	return { returned = returned }
+end
+
+--------------------------------------------------
+-- PRIMARY INTERFACE: RecallMission (USER RULING 2026-11-12, Dispatch Recall)
+--
+-- Ends an active mission early: every unit on it comes home now (same availability path as a
+-- normal return). NO reward: no XP, no mercury, and the gold fee is NOT refunded. The mission
+-- is not offered again on the current board. Callers (GuildMenuService) only allow this at the
+-- guild base. Atomic: an unknown or non-active mission changes nothing.
+--
+-- Returns: ok(boolean), result { missionId, returnedUnitIds } | reason(string)
+--------------------------------------------------
+
+function DispatchService.RecallMission(playerId: string, missionId: string)
+	assert(type(playerId) == "string", "DispatchService.RecallMission: playerId required")
+	if type(missionId) ~= "string" or missionId == "" then
+		return false, "Invalid mission"
+	end
+	local a = activeOf(playerId)
+	local unitIds: { string } = {}
+	for unitId, rec in a do
+		if rec.missionId == missionId then table.insert(unitIds, unitId) end
+	end
+	if #unitIds == 0 then
+		return false, "That mission is not out on dispatch"
+	end
+	table.sort(unitIds)
+	for _, unitId in unitIds do
+		a[unitId] = nil -- removed from the ledger, so Export no longer saves it
+		markBack(playerId, unitId)
+	end
+	if not recalled[playerId] then recalled[playerId] = {} end
+	recalled[playerId][missionId] = true
+	print(string.format("[DispatchService] RECALLED %s for %s | %d unit(s) home: %s | no reward, fee not refunded",
+		missionId, playerId, #unitIds, table.concat(unitIds, ", ")))
+	return true, { missionId = missionId, returnedUnitIds = unitIds }
+end
+
+-- Is this mission id recalled on the current board? (Board filters; tests.)
+function DispatchService.IsRecalled(playerId: string, missionId: string): boolean
+	local rset = recalled[playerId]
+	return rset ~= nil and rset[missionId] == true
 end
 
 --------------------------------------------------
@@ -501,14 +661,30 @@ function DispatchService.Export(playerId: string)
 			remainingDays = rec.remainingDays,
 			xp = rec.xp,
 			mercury = rec.mercury,
+			material = rec.material,
+			amount = rec.amount,
+			gemLevel = rec.gemLevel,
 		}
 	end
-	return { active = copy }
+	-- Recalled ids of the current board (Dispatch Recall 2026-11-12); string list, save-safe.
+	local rlist: { string } = {}
+	for mid in recalled[playerId] or {} do table.insert(rlist, mid) end
+	table.sort(rlist)
+	return { active = copy, recalled = rlist }
 end
 
 function DispatchService.Import(playerId: string, data: any)
 	active[playerId] = {}
+	recalled[playerId] = nil
 	if type(data) ~= "table" or type(data.active) ~= "table" then return end
+	if type(data.recalled) == "table" then
+		for _, mid in data.recalled do
+			if type(mid) == "string" and #mid <= 64 then
+				if not recalled[playerId] then recalled[playerId] = {} end
+				recalled[playerId][mid] = true
+			end
+		end
+	end
 	for unitId, rec in data.active do
 		if type(unitId) == "string" and type(rec) == "table" then
 			local tier = math.clamp(math.floor(tonumber(rec.tier) or MIN_TIER), MIN_TIER, MAX_TIER)
@@ -523,6 +699,12 @@ function DispatchService.Import(playerId: string, data: any)
 				-- the v2 rule for their tier (materials_system 12).
 				mercury = if rec.mercury ~= nil then math.max(0, math.floor(tonumber(rec.mercury) or 0)) else rewardMercuryFor(tier),
 				remainingDays = math.max(1, math.floor(tonumber(rec.remainingDays) or tonumber(rec.duration) or 1)),
+				-- Material missions (2026-11-12). Saves before this have no material: they pay mercury
+				-- (the mercury field above). An unknown material is dropped the same way.
+				material = if type(rec.material) == "string" and REWARD_MATERIALS[rec.material] then rec.material else nil,
+				amount = if type(rec.material) == "string" and REWARD_MATERIALS[rec.material]
+					then math.max(0, math.floor(tonumber(rec.amount) or 0)) else nil,
+				gemLevel = if rec.gemLevel ~= nil then math.max(1, math.floor(tonumber(rec.gemLevel) or 1)) else nil,
 			}
 			-- Re-assert unavailability on the roster path after load.
 			markAway(playerId, unitId, active[playerId][unitId].returnBattle)
@@ -533,6 +715,7 @@ end
 function DispatchService.ClearPlayer(playerId: string)
 	active[playerId] = nil
 	offered[playerId] = nil
+	recalled[playerId] = nil
 end
 
 return DispatchService

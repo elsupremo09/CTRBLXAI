@@ -1482,3 +1482,266 @@ Parties tab:
  - Parties tab built (2026-11-04/05) -> open_decisions 129
 
 - 2026-11-08: NEW badge on new gear (user ruling, built) -> project_rules 251 (UI Layout, next to 243/244/247); Game Rules xlsx '01 Project Identity' row 248. Cross-ref note added to project_rules 236 (STOLEN badge).
+
+--- 2026-11-12 DISPATCH RECALL (USER RULING 2026-11-12) + DISPATCH SCREEN LAYOUT (USER APPROVED 2026-11-11) ---
+ - NEW unit_progression 106 (Dispatch / Recall): recall from Out now, all units return, no XP/material, 50g fee not refunded, guild base only (server-checked), mission stays off board until next refresh, D-1 unchanged.
+ - NEW loadout_ui_spec 121 (Dispatch screen layout + ? help bullets 1-5) and 122 (Recall wording: button, prompt, bullet 6, 5 messages).
+ - Pointer notes: unit_progression 77, 99; materials_system 12.
+ - Status: BUILT 2026-11-11/12, Tester source PASS, Studio test pending, NOT committed.
+ - Game_Rules.xlsx synced: '21 Unit Progression' (77, 99, new 106), '30 Loadout UI Spec' (new 121, 122), materials sheet row 12.
+ - Backups: backups\*_before_20261112_dispatchrecall.*
+
+--- 2026-11-12 DISPATCH: ONE MATERIAL PER MISSION + 3-UNIT CAP (LOCKED - USER RULING 2026-11-12 1:42 PM. NOT BUILT (Dev building now)) ---
+ - Source: RULING_dispatch_material_missions_20261112.md (Simulator report SIM_dispatch_materials_20261112.md).
+ - Each mission pays ONE material. Tier 1-5: mercury 1/1/1/2/2 (weight 1); crystals tiers 4-5, 1 (weight 0.25); rune gems tiers 3-5, 1 Rare-level gem rolled like an elite gem (weight 1); sulfur tier 5, 1 (weight 0.06).
+ - Board: 5 offers, one per tier; material = weighted pick by board seed; D-1 unchanged. Max 3 units per mission (was 7). Recall unchanged (pays nothing). Sending stays unlimited.
+ - Rows: materials_system 12 (rule), unit_progression 99 (rule), loadout_ui_spec 121 (help bullet 3), guild_facilities 38 (note: mercury over the 15-20 target ACCEPTED for busy dispatch players; 25-28 levellings with 3 slots, 35-38 with 6), materials_system 15 (cross-ref note), unit_progression 77 (pointer note).
+ - The 7-unit limit was never written in any rule; the 3-unit cap now lives in unit_progression 99.
+ - Still OPEN: mission names (missions keep the "Tier N mission" placeholder).
+ - Old text kept as "[Superseded 2026-11-12 (dispatch materials): ...]". Integrity ok before and after.
+ - Game_Rules.xlsx synced and read back: '21 Unit Progression' (77, 99), '23 Materials System' (12 - both copies, rows 13 and 44; 15), '25 Guild Facilities' (38), '30 Loadout UI Spec' (121).
+ - Backups: backups\*_before_20261112_dispatchmaterials.*; change log backups\dispatchmaterials_20261112_changes.json
+
+
+--- 2026-11-12 GEM CRAFT TAB AT THE RUNEFORGE + DISPATCH LEFTOVERS (LOCKED - USER RULING 2026-11-12 1:54 PM. NOT BUILT (Dev building now).) ---
+ - Source: RULING_gem_crafting_20261112.md + PROPOSAL_gem_crafting_20261112.md (all on-screen text approved as written; proposal now CLOSED). Simulator: SIM_gem_crafting_20261112.md.
+ - NEW guild_facilities 85 (Runeforge / Gem Craft): Upgrade 3→1 (40/100/250), Break Down 1→2 (10/25/60), Mix 5 stat gems same tier → 1 random one tier up (30/75/180; 20 in-game families, 5% each incl. Fortune; 5 DB-only families excluded; no T4 mix), Mix Passives 5 same rarity → 1 random of that rarity (150; Electric Negation/Absorption never come out). Runeforge discount 3%/level up to -27%, rounded down. No limits; Craft ×N / Craft All. Open from Runeforge level 1, gold only.
+ - NEW loadout_ui_spec 123 (Runeforge Screen / Gem Craft wording): tab name, sub-buttons, action buttons, 4 confirm prompts, 6 greyed-out reasons, help text.
+ - Notes added: loot_progression 11 (Fortune ACCEPTED as is, with Simulator figures), economy_framework 45 (gold use +1-5 points from ~111-114% ACCEPTED), materials_system 4 (rune gems craftable), materials_system 12 (dispatch leftovers: single DISPATCH_REWARDS mercury table, title-case victory line, raw gem id fallback kept), project_rules 247 (pointer: third Runeforge tab).
+ - Integrity ok before and after.
+ - Game_Rules.xlsx synced and read back: '25 Guild Facilities' (new 85), '30 Loadout UI Spec' (new 123), '10 Loot Progression' (11), '22 Economy Framework' (45), '23 Materials System' (4; 12 - both copies), '01 Project Identity' (247 if found: row 246).
+ - Backups: backups\*_before_20261112_gemcraft.*
+
+2026-11-12 2:19 PM - Gem Craft follow-ups (LOCKED - USER RULING): Gem Craft tab is a Runeforge Forge/Reroll sub-tab (old wording kept as Superseded); extra text + behaviour approved as built; 3 fixes recorded NOT BUILT. Rows: loadout_ui_spec 123, guild_facilities 85, project_rules 247 (notes). xlsx synced.
+
+
+--- 2026-11-12 6:17 PM RENOWN REPLACES GUILD LEVEL / GUILD XP (LOCKED - USER RULING 2026-11-12 6:17 PM. NOT BUILT.) ---
+ - Source: RULING_renown_20261112.md + PROPOSAL_renown_20261112.md (on-screen text approved as written). Proposal marked CLOSED.
+ - Renown from successful quests only (Normal 100 / Hard 130 / Boss 200 / Exploration 250). Ranks, not levels. Next Rank = 250 + Rank x 5. NO Rank cap. Failed quest = 3x reward, never drops a Rank. Anti-farming uses min(Rank, 99) - quest level. Quest level = Rank + (difficulty - 3) x 2 +-1, 1-99. Blacksmith cap = min(Rank + 5, building x 10, highest unit). +1 roster slot per 5 Ranks (base 10). Units and gear stay capped at 99 (unit_progression 48/87).
+ - Rewritten (old wording kept as [Superseded 2026-11-12 6:17 PM: ...]): loot_progression 34, 44, 74, 75, 80, 82, 83; unit_progression 79, 82, 85, 94, 95, 97, 98; live_service_features 9; service_boundaries Recruitment Service, Guild Service (renamed Renown Service), Progression Service.
+ - Notes added: guild_facilities 12, 41, 50 (Blacksmith cap); unit_progression 62 (quest level from Rank).
+ - NEW loot_progression 87 Quest Level, 88 Anti-farming above Rank 99, 89 No Rank Cap, 90 Failed Quest Penalty, 91 Roster Slots, 92 Roster Over-Cap Saves (2026-11-10 ruling), 93 Old Save Conversion, 94 On-Screen Text.
+ - FLAG on loot_progression 94: approved defeat text says "-50 Renown" and Blacksmith text assumes cap = Rank; locked rules are 3x penalty and Rank + 5. Recorded as approved; user to confirm.
+ - xlsx synced: Game_Rules '10 Loot Progression', '21 Unit Progression', '25 Guild Facilities'; Build_Plan '02 - Service Boundaries'. live_service_features has no xlsx sheet.
+ - Backups: backups\*_before_20261112_renown.*
+
+
+2026-11-12 6:21 PM - Renown on-screen text fix (LOCKED - USER RULING 2026-11-12 6:21 PM. NOT BUILT.): loot_progression 94 defeat text now -{3x quest Renown reward} (Normal -300, per row 90); Blacksmith cap text now 'needs Renown Rank {target-4} to upgrade past level {Rank+5}' (guild_facilities 50). Old text kept as Superseded; conflict FLAG removed. xlsx '10 Loot Progression' synced. Backups: backups\*_before_20261112_renowntext.*
+
+
+2026-11-12 6:30 PM - Renown gap fixes (LOCKED - USER RULING 2026-11-12 6:30 PM. NOT BUILT.): loot_progression 74 (Hard = difficulty 4-5, Normal = 1-3 non-boss; Elite pays as Boss 200/-600; Daily Contract by own type/difficulty; Test Arena none*), 87 (enemy level clamp <=99 incl. boss/elite bonus*), 90 (loss shown = actual after Rank floor; defeat-only until Escape exists*), 94 (defeat line shows real number, '-0' when floor absorbs*; '(too easy)' one word*, both quest boards*, rank-up banner under Renown line on victory screen*, help text in guild menu ? guide*). * = DECIDED (DEV DEFAULT) 2026-11-12, user can veto. xlsx '10 Loot Progression' synced. Backups: backups\*_before_20261112_renown630.*
+
+
+2026-11-12 6:47 PM - Renown on-screen text approved (LOCKED - USER RULING 2026-11-12 6:47 PM. NOT BUILT.): loot_progression 94 rank-up banner now "Quests now up to level {Rank + 5}" and "Blacksmith can now upgrade to level {real cap}" (min of Rank + 5, Blacksmith building level x 10, highest unit level; guild_facilities 50); new Exploration "1/3"/"2/3 — Renown paid after the 3rd win." lines. Old text kept as Superseded. xlsx '10 Loot Progression' synced. Backups: backups\*_before_20261112_renown647.*
+
+
+2026-11-12 9:23 PM - New player start (LOCKED - USER RULING 2026-11-12 9:23 PM. NOT BUILT (Dev building now).): loot_progression 93 (new player = Renown Rank 1, 0 Renown; Rank conversion only for old saves with units but no Renown entry); unit_progression 107 NEW (starting units Hero/Mage/Ranger start at unit level 1, was 25 in code); unit_progression 108 NEW (starter gear item level 1, was 5). Accepted: pre-2026-10-07 saves with bogus record level 1 would drop to level 1 (only player's save unaffected). xlsx '10 Loot Progression' + '21 Unit Progression' synced. Backups: backups\*_before_20261112_newplayer923.*
+
+
+2026-11-12 10:07 PM - Loadout INFO tab stat icons (USER RULING 2026-11-12 9:51 PM + 10:07 PM. BUILT 2026-11-12, Tester source PASS thread-c36f2ed7e6ed, Studio test pending, NOT COMMITTED): loadout_ui_spec 124 NEW (Info Tab / Stat icons): gem stat icons left of Info stat names (19-stat mapping), blank same-width gap for MP Regen/Channel Speed/Discovery Radius/Starting RT, no icon/gap on perk/flaw/race/doctrine passive rows, STR-LUK panel icons, one shared icon list with gems, MP icon keeps smaller fit. xlsx '30 Loadout UI Spec' synced. Backups: backups\*_before_20261112_infoicons1007.*
+
+
+2026-11-13 12:40 AM - Guild menu icons + Renown header text (USER RULING 2026-11-13 12:40 AM. NOT BUILT (Dev building now).): loot_progression 94 (guild screen header now "Rank {n}" + "{renown} / {need}" with progress bar; old text kept as Superseded; banner/quest card/victory/defeat text unchanged); loadout_ui_spec 125 NEW (Guild Menu / building, header and currency icons; Units blank gap; GUILD crest; Gold/Mercury/Crystal/Sulfur with thousands separators; 7 reserved future-building icons; button background art + ornate gold header bar still need art). xlsx '10 Loot Progression' + '30 Loadout UI Spec' synced. Backups: backups\*_before_20261113_guildicons1240.*
+
+
+2026-11-13 1:00 AM - Loadout STR-LUK stat panel + Adventurer's Guild nav icon (USER RULINGS 2026-11-13 12:55 AM / 1:00 AM): loadout_ui_spec 126 NEW (Info Tab / STR-LUK stat panel layout: +/- buttons 30x30 px, deliberate exception to 44 px tap rule for this panel only - do not flag; rows 34 px with points to spend, 20 px with none (no buttons); values on one line e.g. "80 (50 + 30)"; panel extended down to just above Confirm/Discard so all six stats show without scrolling) - NOT BUILT (Dev building now). loadout_ui_spec 125 item (7) added: Adventurer's Guild nav button keeps its Adventurer's Guild icon - BUILT (Tester source PASS thread-46cb9a14f592), Studio test pending. xlsx '30 Loadout UI Spec' synced (only that sheet changed). Backups: backups\*_before_20261113_statpanel100.*
+
+
+2026-11-13 1:04 AM - Loadout STR-LUK stat panel row height + Confirm/Discard buttons (USER RULING 2026-11-13 1:04 AM. BUILT, Studio measured at phone size, Tester pending.): loadout_ui_spec 126 updated - item (2) rows 30 px with points to spend (was 34; 34 pushed Confirm off a phone screen), still 20 px with none; item (5) NEW: Confirm/Discard check and X buttons 30x30 px like +/-, X directly under "-", check directly under "+", 2 px below the panel; note: long values (e.g. 3-digit staged) shrink to fit, 10 px minimum, 3-digit values can still be cut off. xlsx '30 Loadout UI Spec' synced (only that sheet changed). Backups: backups\*_before_20261113_statpanel104.*
+
+
+2026-11-13 1:25 PM - Quest Board rename + guild panel alignment + INFO EXP line + Guild Units rows (USER RULING 2026-11-13 1:25 PM. BUILT, Tester source PASS thread-b309926122e7, Studio test pending.): loadout_ui_spec 125 updated (item 8: player-visible "Adventurer's Guild" renamed "Quest Board" - nav button "Quest Board", page title "QUEST BOARD", internal ids + icon unchanged; item 9: right content panel edges line up with header, nav narrower and fills space to its left; item 7 wording uses new name); loadout_ui_spec 127 NEW (Info Tab / EXP line: "EXP cur / need" under MP, "EXP MAX" at cap, thin 3 px bar); loadout_ui_spec 128 NEW (Guild Units Screen / unit rows: 48 px portrait left, HP cur/max green bar, MP cur/max blue bar, no EXP). game_flow 9 player-facing text "Adventurer's Guild / quest board tab" -> "Quest Board tab" (no spreadsheet sheet for game_flow). Known WARNs: no minimum nav width on desktop; AWAY note may cut off on narrow screens; bars not dimmed for away units. xlsx '30 Loadout UI Spec' synced (only that sheet changed). Backups: backups\*_before_20261113_questboard125.*
+
+
+2026-11-13 1:57 PM - Guild Units full screen (USER RULINGS 2026-11-13 1:41 PM, 1:42 PM, 1:57 PM. BUILT, Tester source PASS thread-f535015ac5bb + badge fix thread-54db70ce27c8, Studio test pending.): loadout_ui_spec 128 REPLACED (Guild Units Screen / Units screen layout: own full screen like the Merchant screens - "UNITS" title, gold line, Back lower right, nav menu hidden, nav keeps a Units button; cards 3 per row scrolling, ~4 rows on phone; card = portrait + "Lv.44" badge, name (2 rows), race, doctrine, HP green bar, MP blue bar, no EXP, no "(hired)"; away units whole card dimmed + AWAY tag, can still open Loadout; no Loadout button - tap card opens Loadout on INFO with that unit, closing returns to Units; base opens on Units on return to base (not during sortie) and after Quest Board "Not today" -> Back; Back on Units goes to Quest Board; text 10 px min on phones incl. badge). Old row-128 text kept in notes as replaced. loadout_ui_spec 102 path wording "Units > Loadout > PARTIES" -> "Units > tap a unit card (opens the Loadout) > PARTIES" (old wording kept as replaced). Checked, still correct, unchanged: game_flow 20/30 (base screen opens after return), loadout_ui_spec 75/108/125, open_decisions 129 (historical log). Known WARNs: Units opens twice if guild menu closes/reopens while Loadout is up (harmless); Desktop/Compact badge width only script-measured ("Lv.99" 24 px in 26 px box). xlsx '30 Loadout UI Spec' synced (only that sheet changed). Backups: backups\*_before_20261113_unitsscreen128.*
+
+
+2026-11-13 Quest Level row status (loot_progression 87): marked BUILT (Renown step 3, 2026-11-13). Tester source PASS thread-07c070a6fe5a; Studio formula check done at Rank 1/42/98; live quest board check pending; not committed. Note added: Daily Contract now scales from Rank too (shares the quest generator); Test Arena still uses highest unit level (dev tool). Rule text unchanged. xlsx '10 Loot Progression' E86 synced (only that cell). Backups: backups\*_before_20261113_questlevel87.*
+
+
+2026-11-13 Renown step 4 status (loot_progression 74/88/90, unit_progression 94/95): marked BUILT (Renown step 4). Tester source PASS thread-43c08d17eb12 (24/24); math checked in Studio on a test profile; live quest win/loss in Studio pending; not committed. Row 74 note adds: Test Arena pays no Renown; Elite pays as Boss (200); Daily Contract pays as its own type/difficulty; Exploration not reachable in play (FLAG-E4); Escape hook marked in code, not built. Rule text unchanged. xlsx '10 Loot Progression' + '21 Unit Progression' notes synced (only those 5 cells). Backups: backups\*_before_renown_step4_20261113.*
+
+
+2026-11-13 Renown step 6 status (unit_progression 98, loot_progression 74): marked BUILT (Renown step 6, ExploreService). Tester source PASS thread-f8363c8a1b18; test-profile math checked in Studio (3 wins +250 once; wipeout floored; escape 0); live expedition blocked by FLAG-E4; not committed. WARN: once FLAG-E4 is wired, expedition battles must skip the step-4 quest award block in Main.server.lua or they double-award. OPEN RULE QUESTION: abandoning an expedition currently costs nothing (loot_progression 90 only names defeat/escape). Rule text unchanged. xlsx '10 Loot Progression' + '21 Unit Progression' notes synced (only those 2 cells). Backups: backups\*_before_renown_step6_20261113.*
+
+
+2026-11-13 Renown rulings (USER RULING 3:01 PM): (1) loot_progression 94 Blacksmith message corrected to "Renown Rank {target − 5}" (target = level being upgraded to; matches guild_facilities 50 cap = Rank + 5 and the row example); old "{target level − 4}" kept as superseded. (2) loot_progression 90 + unit_progression 98 note: abandoning an expedition partway = failed run, −750 (3× Exploration), Rank-floored, never drops a Rank; closes the step-6 open question. NOT BUILT. (3) loot_progression 94: Renown help text appears when tapping the Rank in the guild header (no "?" guide); old placement kept as superseded. (4) Step 5 status note on loot_progression 75/91/92 and guild_facilities 12/41/50 (BUILT, Tester PASS except Blacksmith message fixed; Studio roster check pending; not committed); step 7 status note on loot_progression 94 (Tester PASS thread-4cd48b316388; Studio pending; not committed). xlsx sheets 10/21/25 synced (rule+notes of those 9 rows). Backups: backups\*_before_20261113_renownrulings1501.*
+
+2026-11-13 Renown step 8 status notes: notes appended (" | ") on loot_progression 75 (Guild Level/XP retired in code, Renown only account progression; old progression.guild save block kept for rollback; GuildService.lua left unused), unit_progression 94 (old Guild XP penalty retired, Renown penalty applies), loot_progression 90 (abandon = failed run BUILT via ExploreService.AbortExpedition; live expedition blocked by FLAG-E4), loot_progression 94 (Blacksmith target−5 message + header-Rank help BUILT). All Tester pending; not committed. Rule text unchanged. xlsx '10 Loot Progression' + '21 Unit Progression' notes synced (only those 4 cells). Backups: backups\*_before_renown_step8_20261113.*
+
+--- DUNGEON MODE (added 2026-11-13, USER RULINGS 4:24 PM + 4:36 PM) — NOT BUILT ---
+Design approved; nothing built yet. Replaces the old 3-battle Exploration (FLAG-E4 retired).
+project_rules 258-274 (section 'Dungeons'): 258 facility level table L1-L10 (drops x1.5, Elite/Boss bonus up to +25%,
+  L10 = 8 floors), 259 unlock (Guild Hall L6) + cost (7,495g), 260 map shape, 261 node types + weights, 262 placement rules,
+  263 battles from nodes, 264 run bag / escape / wipeout, 265 party lock, 266 no recovery or refill between battles,
+  267 Rest node (30%->50% + revive at 1 HP), 268 dungeon Merchant, 269 choices reset, 270 Q1-Q13 answers,
+  271 relics (15, APPROVED 2026-11-14 10:32 AM, NOT BUILT), 272 events (10, APPROVED 2026-11-14 10:13 AM, NOT BUILT), 273 PLANNING ESTIMATES, 274 build plan.
+  Updated: project_rules 116, 120, 121, 122, 124; development_slices 9; game_flow 7, 19.
+  2026-11-14 10:30 AM: 265 party lock now says the player picks the 7 who fight before EVERY battle room (8-10 unit party, rest benched w/ bench EXP); 274 build plan notes: user auto-accepts agent Dungeon defaults, each logged with reason. NOT BUILT.
+guild_facilities 86 (Dungeon parameters), 87 (level table), 88 (cost table); updated 5, 8, 15, 68, 69.
+Cross-reference notes added to: unit_progression 76, 96, 97, 98, 99; loot_progression 13, 14, 15, 20, 24, 74, 87, 90;
+  economy_framework 15 (Legendary shop markup x8.0 - [Replaced 2026-11-13 6:19 PM: DRAFT x9.0, needs Simulator check]), 18; consumable_framework 41;
+  map_gen_rules rowid 71 (weather fixed for the run); persistent_hp_mp_rules 3; open_decisions rowid 154 (follow-ups).
+Query: SELECT id, topic, rule FROM project_rules WHERE section = 'Dungeons' ORDER BY id
+
+
+--- DUNGEON GROWING DROP RATE (USER RULING 2026-11-13 5:43 PM + 5:49 PM) — NOT BUILT ---
+Replaces the flat x1.5 dungeon drop rate. Drops start at x1.5, +0.25 per battle node cleared (Elite = 1 step), cap x2.5, reset each run.
+Only losable loot (battle gear/cards, Boss materials). Not gold, normal-battle or Elite materials; not chests, Elite +1 item or boss guaranteed gear.
+Boss uses the multiplier reached when fought. Elite/Boss loot bonus unchanged. Source: SIM_dungeon_v3_20261113.md.
+Rows: project_rules 263 (main rule), 258, 274; loot_progression 13, 15, 24; guild_facilities 86, 87; development_slices 9.
+Note: the 'drops x1.5' in the DUNGEON MODE entry above is replaced by this entry.
+
+
+--- DUNGEON RULINGS (USER RULING 2026-11-13 6:19 PM) — NOT BUILT ---
+1. Legendary shop markup = x8.0 (replaces DRAFT x9.0; continues +2.0 step after Epic/Exalted x6.0; Simulator v2).
+   Example: L99 one-hand Legendary 16,576g normal shop / 20,720g dungeon Merchant (x1.25), ~36 battles of income.
+2. First build: Event nodes are shown and played as normal Battle nodes (same weights + map layout, map keeps final shape;
+   runs ~1 battle longer/harder than simulated). Ends when the 10 approved events are built (build step 7).
+3. Confirmed: dungeon Merchant prices = normal Merchant x1.25; below facility L9 the 1% Legendary chance goes to Common.
+Rows: economy_framework 15 (rule + notes); project_rules 261, 268, 272, 274 (notes; 268 rule too); open_decisions rowid 154.
+
+
+--- DUNGEON BATTLE LEVEL (USER RULING 2026-11-13 6:27 PM) — BUILT (DungeonRules.lua), not wired into play, not committed ---
+Dungeon battle level = quest level (Rank + (difficulty-3) x 2 +/-1, kept 1-99 FIRST), then + (floor - 1), then kept 1-99 again.
+Deeper floors always add +1, even at low Ranks (Rank 1, difficulty 1, floor 5 = level 5). Matches DungeonRules.BattleLevel (Tester thread-9a01a6d1d619).
+Dungeon build step 1 BUILT (DungeonRules.lua, DungeonMap.lua; Tester PASS thread-9a01a6d1d619; not committed).
+Rows: project_rules 263 (rule + notes, old wording kept as replaced), 274 (notes); loot_progression 87 (notes).
+
+
+--- DUNGEON REST FIX + CONFIRMATIONS (USER RULING 2026-11-13 6:54 PM) — Rest fix NOT BUILT ---
+1. Rest fix: maps with 6+ floors (facility L4-L10) get a SECOND fixed Rest row at row N-2 (N = floors; row N stays Rest).
+   5-floor maps (L1-L3) keep one Rest row, Rest heal +15 points: L1 45%, L2 45%, L3 50%. L4 stays 35% (user choice).
+   Sim v4: boss-win L1 75->89%, L3 82->92%, L5 59->93%, L10 42->78%. Source: SIM_dungeon_v4_20261113.md.
+2. Confirmed: one run per dungeon card until the next 5-battle reroll (DungeonService, step 2).
+3. Biome unlock order accepted as built: Plains, Forest, Desert, Swamp, Highlands, Tundra, Volcano, Cave, Ruins, Castle, Corrupted (L1 = Plains + Forest).
+Dungeon build step 2 BUILT (DungeonService.lua + GuildMenuService/Main wiring; Tester PASS thread-8fbf0089e6e6; not committed).
+OPEN for step 9 (Tester W1): Dungeon counts as L1 once Guild Hall reaches L6 without being built.
+Rows: project_rules 258, 260, 262 (rule + notes, old wording kept as replaced), 269, 274.
+
+
+--- DUNGEON STEPS 3-4 + REST FIX BUILT (2026-11-13) — not wired to UI, not committed ---
+1. Dungeon build steps 3 (battle hook) and 4 (run end) and the Rest fix are BUILT. Tester source PASS (threads c9c75492b56c, 17cb8eab2f39, c11e224bb447).
+   Not wired to UI (step 5). Studio live tests pending: loss gold, boss room, rejoin, Rest/Treasure through the real game, battle gear/card payout.
+2. Rest room wording now points to the level table (L1 45, L2 45, L3 50, L4 35, L5 40, L6 40, L7 45, L8 45, L9 50, L10 50); old "30%->50%" kept as replaced.
+3. Rest, Treasure and Escape rooms are done server-side in step 4; step 6 is now only the Merchant.
+OPEN (user): W2 drop interpretation (multiplier on roll count vs per-enemy chance; Elite/Boss rarity step); dismissing dungeon/dispatched units; dungeon roster wording.
+Rows: project_rules 267 (rule + notes), 258, 260, 262, 263, 264, 266, 274 (notes).
+
+
+--- DUNGEON OPEN ITEMS RESOLVED (USER RULINGS 2026-11-13 8:24 PM) — NOT BUILT (build running) ---
+1. Growing drop multiplier applies to the NUMBER of gear/card loot rolls a battle gives (normal battle 1-2 rolls), not a per-enemy chance; a fraction = chance of one extra roll.
+   Elite/Boss facility loot bonus = extra rolls AND keeps the one extra rarity step. Old "per-enemy drop chance" wording kept as replaced.
+2. A unit in an active dungeon run or on Dispatch cannot be dismissed/retired until it returns.
+3. Player text "Exploring a dungeon" wherever a dungeon-locked unit is listed or blocked (roster/deploy, Parties, Dispatch list, Units screen); dispatched units keep their wording.
+Rows: project_rules 263 (rule + notes), 265 (rule + notes), 258, 274 (notes, open items RESOLVED); economy_framework 49 (notes, pointer).
+
+
+2026-11-13 DUNGEON STATUS: project_rules 265 (Party Lock) notes += BUILT (dismiss lock, 'Exploring a dungeon' text), Tester PASS thread-99b0ea797ec5, 2 WARNs, not committed. project_rules 263 (Battles from Nodes) notes += Elite/Boss rarity step NOT BUILT, options a/b/c + stacking pending user ruling. Mirrored to Game Rules sheet 01. Backups: docs\backups\*.pre-dungeonstatus-20261113_213040.bak
+
+
+--- DUNGEON ELITE/BOSS RARITY + STACKING RULED (USER RULING 2026-11-13 9:24 PM) ---
+1. Elite/Boss 'extra rarity step' = facility Elite/Boss loot bonus (0..25%) ADDED to the Fortune input for rarity rolls from Elite and Boss rooms; no new rarity table, no extra cap. NOT BUILT (build running).
+2. Stacking ruled: rolls x growing multiplier x (1 + bonus). BUILT.
+3. Dispatch dismiss refusal keeps '{name} is already away'.
+Rows: project_rules 258, 263 (rule + notes, old wording kept as replaced). Mirrored to Game Rules sheet 01. Backups: docs\backups\*.pre-dungeonrarity-20261113_213950.bak
+
+
+--- DUNGEON ELITE/BOSS RARITY BOOST COVERS CARDS + FORTUNE CAP (USER RULING 2026-11-13 9:40 PM) ---
+1. Elite/Boss bonus added to Fortune input applies to BOTH gear and skill-card rarity rolls from Elite/Boss rooms; elsewhere cards still don't use Fortune. Gear BUILT (Tester source PASS thread-82618398e845, Studio pending, not committed); cards NOT BUILT (build running).
+2. Confirmed: in Elite/Boss rooms Fortune may exceed its old maximum by up to +0.25, stacking with Idol of Fortune; no rarity above Legendary.
+Rows: project_rules 258, 263 (rule + notes, old wording kept as replaced). Mirrored to Game Rules sheet 01. Backups: docs\backups\*.pre-dungeoncardrarity-20261113_214921.bak
+
+
+--- DUNGEON ELITE/BOSS RARITY BOOST COVERS GEAR, SKILL CARDS, AUGMENT CARDS + DOCTRINES (USER RULING 2026-11-13 9:49 PM) ---
+1. Elite/Boss bonus added to Fortune input applies to gear, skill cards, augment cards AND doctrine rewards from Elite/Boss rooms; elsewhere cards/doctrines don't use Fortune.
+2. Status: gear BUILT (Tester PASS thread-82618398e845); skill/augment cards BUILT (Tester PASS thread-05a51e822e9c); doctrines BUILT (Tester PASS thread-143668ceecab). Source-verified; Studio test pending (needs dungeon screen, step 5); not committed. Replaces the 9:40 PM 'card part NOT BUILT' note.
+Rows: project_rules 258, 263 (rule + notes, old wording kept as replaced). Mirrored to Game Rules sheet 01. Backups: docs\backups\*.pre-dungeondoctrinerarity-20261113_220821.bak
+
+
+--- DUNGEON REST LEAVE = FULL ESCAPE + DIFFICULTY WORDS + SCREEN TEXT APPROVED (USER RULING 2026-11-13 10:08 PM) ---
+1. Leaving from a Rest room is a FULL escape: all loot home, same as an Escape room. Old rule 264 wording ("leaving at a Rest is an early escape") kept as replaced. Trade-off accepted: the fixed Rest row before the boss lets players go home with everything without fighting the boss. Earlier dungeon simulations assumed Rest leave = early escape - RE-RUN needed.
+2. Dungeon cards show difficulty as words: 1 Very Easy, 2 Easy, 3 Normal, 4 Hard, 5 Very Hard (agent default, user may veto).
+3. 62 NEW dungeon screen strings (workspace/artifacts/DRAFT_dungeon_screen_text_20261113.md) APPROVED as written, full list in project_rules 275. Still OPEN: 8 "APPROVED?" server messages (DG-E1..E5, E8, E9, generic error), "?" help lines, Merchant room text.
+All NOT BUILT (step 5 build running).
+Rows: project_rules 264, 267 (rule + notes), 269 (notes), 275 (new: Dungeon Screen Text), 276 (new: Difficulty Words). Mirrored to Game Rules sheet 01 (rows 263, 266, 268, 274, 275). Backups: docs\backups\*.pre-dungeonrestscreen-20261113_2210.bak
+
+
+--- DUNGEON ESCAPE ROOM REMOVED (USER RULING 2026-11-13 11:36 PM) ---
+1. The Escape room is removed, because leaving from a Rest room is now a full-loot exit (10:08 PM ruling). Full-loot exits: beat the Boss, or leave from a Rest room. Leaving anywhere else is an early escape.
+2. Its 4% map weight is spread over the other random room types in proportion (agent default, user may veto). DRAFT until the build reports them: Battle 46.9%, Event 20.8%, Elite 10.4%, Rest 10.4%, Merchant 7.3%, Treasure 4.2%. Escape placement rules dropped.
+3. On 5-floor maps (Dungeon facility L1-L3) there is only one Rest row, just before the boss, so the only full-loot exits there are that last Rest or the boss win. Simulations SIM_dungeon v3/v4 counted Escape rooms and must be RE-RUN.
+4. The 6 Escape-room screen strings (DG-ROOM-ESCAPE, DG-ESCROOM-T/-1/-GO/-STAY, DG-END-ESCROOM) are RETIRED, not deleted. DG-ESCAPE-CONFIRM-3 still mentions the Escape room - suggested new wording (needs user yes): "Leave from a Rest room or beat the Boss to keep everything."
+NOT BUILT (build running). Old wording kept as replaced.
+Rows: project_rules 121, 261, 262, 264, 267, 270, 274, 275 (rule + notes); consumable_framework 41 (notes); development_slices 9 (description). Mirrored to Game Rules sheet 01 (rows 120, 260, 261, 263, 266, 269, 273, 274). Backups: docs\backups\*.pre-dungeonnoescape-20261113_2336.bak
+
+
+--- DUNGEON SCREEN TEXT + ESCAPE-ROOM REMOVAL BUILT (USER RULING 2026-11-14 1:43 AM) ---
+1. Dungeon screen text (project_rules 275): approved the open items - DG-E1-E5, DG-E8, "Too fast — try again", Treasure fallback "an item", "Keep exploring" also on the Rest panel, "Stay" also cancels the enter popup, party tile text "{name}  Lv.{n}" / "HP {hp}/{max}", and the 6 "?" help lines as in the dungeon screen file. DG-ESCAPE-CONFIRM-3 now "Leave from a Rest room or beat the Boss to keep everything." DG-END-ESCROOM "You made it out. All loot comes home." UN-RETIRED for a Rest-room leave. Still open: DG-E9, generic error, Merchant text.
+2. Rest-leave balance kept as is (rule 264 notes; Simulator v5 advice accepted). See workspace/artifacts/SIM_dungeon_v5_20261113.md (boss win 89-100%, upgrading pays per run).
+3. Escape-room removal BUILT (Tester PASS thread-c8166468ea2e; not committed; Studio pending) on rules 261, 262, 264, 267, 275. Node weights confirmed (no longer DRAFT): Battle 46.9, Event 20.8, Elite 10.4, Rest 10.4, Merchant 7.3, Treasure 4.2.
+Old wording kept as replaced. Rows: project_rules 261, 262, 264, 267, 275. Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeontext-20261114_0143.bak
+
+2026-11-14 1:47 AM — project_rules 275 (Dungeon Screen Text): generic error "Something went wrong. Try again." approved; DG-E9 "Pick 1 to 7 units" open but not shown in game; only open dungeon text is Merchant room (step 6). Not committed; Studio tests pending.
+
+2026-11-14 2:49 AM — DUNGEON SURPRISE ROOM + MAP ICONS (USER RULINGS 2:30-2:49 AM), NOT BUILT, numbers DRAFT pending Simulator v6.
+1. New room type Surprise ("?"): becomes Battle 45 / Treasure 20 / Merchant 15 / Elite 10 / Event 10 (Event plays as Battle until approved); takes half of Event's weight (Event 20.8->10.4, Surprise 10.4); not on row 1, not on a fixed Rest row, never next to another Surprise; Surprise-Elite counts as Elite for loot, facility bonus, drop-rate growth.
+2. Map rooms shown as round painted icons (art in art_staging\dungeon_nodes\, 8 PNGs; asset IDs pending from user). Event rooms show the scroll icon while still played as battles.
+3. OPEN text: map key labels (one word each) and the Surprise room name.
+Rows: project_rules 260, 261, 262, 275 (rule + notes, old wording kept as replaced). Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeonsurprise-20261114_0249.bak
+
+
+2026-11-14 2:51 AM — DUNGEON MYSTERY ROOM + MAP KEY (USER RULINGS 2:51 AM), NOT BUILT (build running).
+1. The surprise room is named "Mystery" (shown as "?"). Map key labels approved: Battle, Elite, Boss, Rest, Merchant, Treasure, Event, Mystery. Only open dungeon text: Merchant room (step 6).
+2. Node weights and Mystery placement no longer DRAFT: Simulator v6 (workspace/artifacts/SIM_dungeon_v6_20261114.md) found no critical issues. Warning W3: at 1.3x damage, Mystery rooms turn some early escapes into wipes. Read numbers as +/-5 points (v5 script was rebuilt).
+3. Until the Merchant is built, a Mystery room that becomes a Merchant becomes a Treasure instead.
+Rows: project_rules 261, 262, 275 (rule + notes, old wording kept as replaced). Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeonmystery-20261114_0251.bak
+
+
+2026-11-14 10:11 AM — DUNGEON MERCHANT (BUILD STEP 6, USER RULINGS 10:11 AM). BUILT; Tester review running; not committed; Studio partial.
+1. Merchant room text approved: "Bought items go straight to your inventory and are kept.", "{name}  Lv.{n}", "{price}g", "Sold out", "Refill charges ({cost}g)", "Nothing to refill"; reuses "Merchant", "Buy", "Keep exploring", "Every equipped consumable is full.", "Not enough gold". Open dungeon text list now empty (only the unused DG-E9).
+2. Merchant defaults recorded: 3 consumable + 3 gear slots; gear rarity 30/30/22/12/5/1 (Legendary only from facility L9, else Common); consumable tiers 60/25/12/3; gear level = room battle level (quest level + floor - 1); refill whole party at x1.5 Apothecary price, partial when gold is short; purchases to inventory, kept on any run end.
+3. A Mystery room that becomes a Merchant is now a real Merchant; the Treasure stand-in is retired.
+Rows: project_rules 261, 268, 274, 275 (rule + notes, old wording kept as replaced). Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeonmerchant-20261114_1011.bak
+
+
+2026-11-14 10:19 AM — DUNGEON EVENTS + DUNGEON PARTY (USER RULINGS 10:13 AM + 10:19 AM). NOT BUILT. Numbers DRAFT pending Simulator v7.
+1. The 10 Event rooms (EV-01..EV-10: 5 good, 3 mixed, 2 bad) and their 13 shared panel strings are approved as drafted (workspace/artifacts/DRAFT_dungeon_events_20261114.md). Mixed counts as good for the odds; no repeats in a run; Peddler at 1.0x Apothecary; hidden fights at the room's battle level (Sealed Door = full Elite); event HP losses stop at 1 HP; a Mystery that becomes an Event plays these.
+2. Dungeon party cap grows with facility level, 7 at L1 to 10 at L10; only 7 deploy per battle; benched units earn bench EXP. Rest rooms gain "Edit party" (send units home, bring in free home units at their current HP). Replaces "no party swaps mid-run". Units are locked only while in the run.
+3. OPEN text: Rest room "Edit party" screen (also recheck "{n} / 7 units").
+Rows: project_rules 258, 265, 267, 270, 272 (renamed "Events (Approved)"), 275 (rule + notes, old wording kept as replaced). Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeonevents-party-20261114_1019.bak
+- 2026-11-14 10:27 AM: Rule 258 (Dungeons — Facility Level Table): dungeon party cap spread L1-3 = 7, L4-6 = 8, L7-9 = 9, L10 = 10 is now a USER RULING (was a Designer default; old wording marked replaced). Numbers DRAFT pending Simulator v7 balance only. NOT BUILT. See project_rules 258 / sheet 01.
+- 2026-11-14 (Sim v7 defaults, auto-accepted per rule 274, NOT BUILT): 267 Rest 'Edit party' = ONE swap per Rest (max 1 unit brought in; sending home free); 272 Gambler's Table / Lucky Shrine / Sealed Door seeded from run seed + room id; 263 notes: dungeon battles count down Dispatch time; 271 renamed 'Relics (DRAFT)': 15 relics + drop table + rules, Boss relic given at boss-fight start. Mirrored to Game Rules sheet 01. Backups: docs\backups\*.pre-dungeonv7-*.bak
+- 2026-11-14 10:32 AM (USER RULING, NOT BUILT): 275 approves 13 Rest "Edit party" strings + 9 relic UI strings; DG-PARTY-COUNT now "{n} / {cap} units", help line 1 now "Pick a dungeon and your party. Up to 7 fight each battle. Swap units at Rest rooms." (old "7" lines kept as replaced). Open: Boss-relic start-of-fight line. 271 renamed "Relics (Approved)": Boss relic at boss-fight start confirmed; RL-10 -8% damage taken (was -5%); RL-09 revive 50% HP (was 25%); Sim v8 clean, RL-04/05/06/07/11/14 to test in build (watch RL-04). 267 notes: Edit party text approved, one swap per Rest stands. Rows: project_rules 267, 271, 275. Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeonrelicstext-20261114_1032.bak
+
+- 2026-11-14 10:12 PM (USER RULING + BUILD STATUS): 275 Boss relic line approved "The Boss's hoard glints. Relic found: {name}!"; Gambler win shows "+200 gold" (net, kept as built); open text list empty except unused DG-E9. 267 KO unit sent home from a Rest stays KO until next normal battle. 272 events BUILT (step 7a, Tester PASS) + 5 defaults. 258/265/267 bigger party + Edit party BUILT (step 7b, Tester PASS) + 4 defaults in 267. 274 steps 7a/7b BUILT, not committed, Studio pending; step 8 relics building. Rows: project_rules 258, 265, 267, 272, 274, 275. Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeon7ab-20261114_2212.bak
+
+- 2026-11-15 (BUILD STATUS): 271 relics BUILT (step 8; Tester PASS thread-00be9c8d1ccc, one defect fixed, re-check PASS thread-59c482907c11; not committed, Studio pending) + 7 auto-accepted defaults (tier fallback, event good outcome, battle-only bonus HP, Refill Satchel, Field Medic, Second Wind, relic bar placement) + Tester open notes (Second Wind save, RL-13 Boss type, RL-06 battles only, RL-14 Debuff kind, RL-11/12 after win). 275 Boss relic handover line BUILT. 274 step 8 BUILT, not committed; next: Studio tests, relic icon screen check, Tester on Theme.lua/GuildMenu.client.lua icons. Rows: project_rules 271, 274, 275. Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeonrelicsbuilt-20261115.bak
+
+- 2026-11-15 1:28 AM (USER RULING + BUILD STATUS): 275 approves 8 room peek-card lines (DG-PEEK-*) + "Go" button; DG-PICK and DG-DROPRATE-HELP moved into the "?" help (old placement kept as replaced). 260 records the map screen layout (map left ~70% full height, right panel min 150 px with Floor/Loot/resources/bag kept-lost summary; relics inside Bag popup, relic row removed; peek card on tap, Go only on legal rooms, Mystery hidden until entered; painted biome backgrounds, 11 ids in Theme.DungeonBiomeBackgrounds, 15% transparent + 45% dark shade, auto-accepted default). BUILT, Tester review running, not committed. Rows: project_rules 260, 275. Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeonpeek-20261115_0128.bak
+
+- 2026-11-15 1:42 AM (USER RULINGS 1:25 AM + 1:42 AM, NOT BUILT): Dungeon STAGES (new rule 277): up to 3 stages, each a new map + boss; Go deeper / Go home after each boss; HP/KO/bag/drop rate/relics/party carry; stage 2/3 start with a Rest-% heal + one bring-in; gold x1.25/x1.5, battles +3/+6 levels. 276 Easy/Medium/Hard replace the 5 words (Easy=old 2, Medium=old 3, Hard=old 5); floors 8/12/15 (user choice over Simulator 6/9/12). 258 unlocks Medium L3, Hard L6, stage 2 L4, stage 3 L8; floors removed from the level table. 260/262 Rest row every 4 rows from the boss (Sim 'Rest on row 3' fix not needed with 8/12/15). 272 events EV-11..16 (Smith's Wager delivers at next Event/Rest/stage boss or full-loot exit; Forge of Chance up to Epic only). 271 relics RL-16..22 (Berserker's Oath -25% damage; curses always paired with a Major relic; War Banner/Leaden Shackles/Featherfall need new code). 267 dungeon heals count as Dark while Lich's Phylactery is held. 273 run length warning (Hard 3 stages ~156 min, 24x a quest). 275 new text approved (Go deeper/Go home, event panel strings). Rows: project_rules 258, 260, 262, 263, 264, 265, 266, 267, 269, 271, 272, 273, 274, 275, 276, 277 (new). Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeonstages-20261115_0142.bak
+
+
+- 2026-11-15 2:05 AM (USER RULINGS 2:01 + 2:05 AM, NOT BUILT): Smith's Wager screen line approved "The smith will find you at the next Event, Rest or boss." (replaces "The smith will be waiting at the next event.", Simulator v9 fix 5). Simulator optional notes (Thin Air/Fog/Iron Skin, Barter 1 crystal -> 3 mercury) left as is until real Studio runs. Treasure-on-Rest moves one row down recorded as auto-accepted default. Still OPEN in 275: stage counter "Stage {n} / {max}" and stage-start heal "Your party rests before going deeper." (proposed). Rows: project_rules 260, 262, 271, 272, 275. Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeonsmith-20261115_0205.bak
+
+
+- 2026-11-15 8:41 AM (USER RULING, NOT BUILT - stages build restarting): stage counter "Stage {n} / {max}" (right panel on the map) and stage-start heal message "Your party rests before going deeper." (start of stages 2 and 3) APPROVED and removed from the open list in 275 (old "STILL OPEN" wording kept as replaced). Open dungeon text list now empty except unused DG-E9. 277 notes both texts approved. Rows: project_rules 275, 277. Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeonstagetext-20261115_0841.bak
+
+
+- 2026-11-15 10:08-10:17 AM (USER RULINGS, NOT BUILT): EV-14 Campfire now heals living units 35% Max HP/MP, revives KO'd units at 35% HP and fully refills every equipped consumable for free (choices Rest a while / Move on). EV-16 Shifting Hall replaced by EV-16 Altar of Change: pick a unit, pick 1 perk or flaw, pick 1 of 3 seeded replacements of the same kind (Mutation Bench odds, tier can go down), permanent, no undo, units with no traits hidden, or Leave. Mutators and the +0.25 drop bonus retired. Altar of Change text approved (11 new lines, word "flaw" kept), old Shifting Hall text retired. Event + Mystery rooms MERGED into one "?" room: weight 20.8% (10.4 + 10.4); placement = old Mystery rules; on entry becomes Event 50 / Battle 20 / Treasure 10 / Merchant 8 / Rest 7 / Elite 5, never Boss, seeded per stage + room; a "?"-Rest is a full Rest room; icon = "?" crystal, peek line = Mystery line; Event icon, Event map label and Event peek line retired. Simulator v10 clean. Open dungeon text = only unused DG-E9. Rows: project_rules 116, 260, 261, 262, 263, 266, 271, 272, 274, 275, 277. Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-dungeoncampfireperk-20261115_1046.bak
+
+2026-11-15 CORRECTION (NOT BUILT): EV-14 Campfire has TWO separate choices per user ruling 10:01 AM — "Rest a while" (living units heal 35% Max HP/MP, KO'd units revive at 35% HP) OR "Search the camp" (all party consumable charges restored free); pick one, event used up. The 10:46 combined wording is kept as replaced. Added approved result line "All consumables are refilled." (user 10:08 AM). Rows: project_rules 266, 272, 275. Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-campfirefix-20261115_1051.bak
+
+
+- 2026-11-15 CORRECTION (BUILT in build-events-q-merge-campfire-altar; Tester text re-check pending; not committed): 275 records text the user approved 10:08 AM but that was missing (Tester thread-111e1d431b68): race shrine "Your {race}s heal 15%." (replaces "Your party heals 15%"), doctrine shrine "The shrine blesses your {doctrine}s.", Barter refusals "Not enough mercury" / "Not enough crystals", Barter result "Traded {n} {From} for {m} {To}" with capitalised names (replaces "{a} {res} for {b} {res}"), result line after each trade, leave button reuses "Move on". OPEN: does 1 crystal read "Crystal". 261 notes: "?" weight 20.8% but real share ~22.6% in Studio (25,457 rooms) - OPEN for user decision. Rows: project_rules 261 (notes), 275 (rule + notes). Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-barterraceshrine-20261115.bak
+
+
+- 2026-11-15 SETTLED (agent defaults auto-accepted under the user's standing rule; BUILT; Tester source PASS; not committed): 275 - Barter result with 1 crystal reads "Crystal", 2+ "Crystals" (e.g. "Traded 10 Mercury for 1 Crystal"); both OPEN notes marked replaced. 261 - "?" room weight stays 20.8%; measured ~22.6% share after placement (25,457 rooms) accepted as is; OPEN note marked replaced. Rows: project_rules 261 (notes), 275 (rule + notes). Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-closecrystalqweight-20261115_closeopen.bak
+
+
+- 2026-11-15 12:21 PM (USER RULINGS): Dungeon relics v2. 271 now 60 relics: RL-23..RL-60 added exactly as drafted (DRAFT_dungeon_relics_v2_20261115.md; numbers DRAFT pending Simulator v11; NOT BUILT; NEEDS CODE flags kept). New Boss relic type (Boss-only; at each Boss pick 1 of 2: Boss relic or normal relic). Curses: 20% of Majors carry one, take-both/leave-both popup, not blockable by Warding Sigil/Debuff Resistance; War Banner + Leaden Shackles stays fixed. RL-16..22 recorded BUILT (Tester PASS thread-2a9a02df861c) with 5 auto-accepted defaults; War Banner 8+ party gate still to build; Lich's Phylactery healing confirmed as built. 275: RL-16..22 lines + 38 new lines approved; OPEN: curse popup text, red curse display / "Relic found" curse mention. Old wording kept as replaced. Rows: project_rules 271, 275 (rule + notes). Mirrored to Game Rules sheet 01 (by "Dungeons — topic"). Backups: docs\backups\*.pre-relicsv2-20261115_1221.bak
+
+- 2026-11-15 12:38 PM (AUTO-ACCEPTED DEFAULTS, user may veto; Simulator v11 workspace/artifacts/SIM_dungeon_v11_20261115.md): 271 RL-29 Blood Well 20%->10% HP; RL-44 enemy RT +100->+50; RL-46 Max HP -20%->-10%; RL-47 Rest heals -50%->-10% (cap x3.0 kept); RL-45 unchanged pending Studio Fortune check; RL-23 chests never multiplied; Withering Mist unchanged; Boss pick normal option 25% +1 rarity kept; War Banner +10% Defense enemies only (not neutrals). 275: RL-29/46/47 lines updated; curse popup (CP-*), Relic found curse line (RF-CURSE), Boss pick lines (BP-*) accepted from DRAFT_dungeon_curse_popup_text_20261115.md. Open notes: Mimic has no stats; Scholar's Creed "tome" not a DB weapon. Rows: project_rules 271, 275 (rule + notes). Mirrored to Game Rules sheet 01 (rows 270, 274). Backups: docs\backups\*.pre-relicsimv11-20261115_1238.bak
+
+2026-11-15: project_rules 271 notes - added auto-accepted default for Boss pick option b (Boss-source normal relic, Treasure fallback, unanswered-curse skip) and applied-as-built relic values from Tester thread-2a5c8ecca9c1. Built, Tester pending, NOT COMMITTED. Backup tag pre-bosspickb-20261115.

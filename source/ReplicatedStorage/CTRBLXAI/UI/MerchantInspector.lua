@@ -108,14 +108,18 @@ local function addLine(list: Instance, order: number, text: string, size: number
 	lbl.LayoutOrder = order
 end
 
+-- Stat icon left of the name (2026-11-12, user ruling 10:49 PM); a stat with no icon (Range)
+-- keeps a blank gap of the same width so names line up.
 local function addStatRow(list: Instance, order: number, label: string, value: string)
 	local row = Instance.new("Frame")
 	row.Size = UDim2.new(1, 0, 0, STAT_ROW_H)
 	row.BackgroundTransparency = 1
 	row.BorderSizePixel = 0
 	row.LayoutOrder = order
+	Theme.AddStatIcon(row, Theme.GetGearStatIcon(label, false), 0)
 	local l = makeLabel(row, label, Theme.Text.Body(), Theme.Colors.TextSecondary)
-	l.Size = UDim2.new(0.6, 0, 1, 0)
+	l.Size = UDim2.new(0.6, -Theme.StatIconGap, 1, 0)
+	l.Position = UDim2.new(0, Theme.StatIconGap, 0, 0)
 	local v = makeLabel(row, value, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
 	v.Size = UDim2.new(0.4, 0, 1, 0)
 	v.Position = UDim2.new(0.6, 0, 0, 0)
@@ -247,7 +251,19 @@ local function fillInspector(list: Instance, entry: Entry)
 		local p = pcts[k]
 		local flat = if v ~= nil then `{if v > 0 then "+" else ""}{v}` else ""
 		local pct = if p ~= nil and p ~= 0 then `  {if p > 0 then "+" else ""}{p}%` else ""
-		addLine(list, nextOrder(), `{k}  {flat}{pct}`, Theme.Text.Body(), Theme.Colors.TextPrimary)
+		-- Bonus stat line with its icon (2026-11-12, user ruling 10:49 PM); no icon = blank gap.
+		local brow = Instance.new("Frame")
+		brow.Size = UDim2.new(1, 0, 0, STAT_ROW_H)
+		brow.BackgroundTransparency = 1
+		brow.BorderSizePixel = 0
+		brow.AutomaticSize = Enum.AutomaticSize.Y -- a long line can still wrap, as before
+		brow.LayoutOrder = nextOrder()
+		Theme.AddStatIcon(brow, Theme.GetGearStatIcon(k, true), 0)
+		local bl = makeLabel(brow, `{k}  {flat}{pct}`, Theme.Text.Body(), Theme.Colors.TextPrimary)
+		bl.Size = UDim2.new(1, -Theme.StatIconGap, 0, STAT_ROW_H)
+		bl.AutomaticSize = Enum.AutomaticSize.Y
+		bl.Position = UDim2.new(0, Theme.StatIconGap, 0, 0)
+		brow.Parent = list
 	end
 
 	-- Bonus passives

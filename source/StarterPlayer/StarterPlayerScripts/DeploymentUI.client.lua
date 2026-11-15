@@ -770,6 +770,14 @@ local function createRosterUI(playerUnits, awayUnits)
 		awayLabel.TextColor3 = Theme.Colors.TextDisabled
 		awayLabel.TextSize = Theme.Text.Badge()
 		awayLabel.Font = Theme.Font.PrimaryBold
+		if awayInfo.awayReason == "dungeon" then -- "Exploring a dungeon" (2026-11-13 8:24 PM): wrap, 10 px floor
+			awayLabel.TextSize = math.max(10, Theme.Text.Badge())
+			awayLabel.TextWrapped = true
+			awayLabel.TextScaled = true
+			local fit = Instance.new("UITextSizeConstraint")
+			fit.MinTextSize = 10; fit.MaxTextSize = math.max(10, Theme.Text.Badge())
+			fit.Parent = awayLabel
+		end
 		awayLabel.Parent = awayCell
 		awayCell.Parent = strip
 	end

@@ -167,10 +167,11 @@ end
 -- Session rule: base not implemented, so KO clears here.
 --------------------------------------------------
 
-function PersistentStateService.ClearAllKO(playerId)
+-- skip (optional, Dungeon build step 3): unitId -> true leaves that unit KO'd (dungeon party mid-run).
+function PersistentStateService.ClearAllKO(playerId, skip)
 	PersistentStateService.InitPlayer(playerId)
 	for unitId, state in pairs(unitStates[playerId]) do
-		if state.isKO then
+		if state.isKO and not (skip and skip(unitId)) then
 			state.currentHp = 1
 			state.isKO = false
 			print(string.format("[PersistentState] %s KO cleared -> 1 HP", unitId))
@@ -192,12 +193,15 @@ end
 -- (Resilient adds / Slow to Recover replaces) computed from the live units, which hold
 -- the trait ids this persistent-state layer does not. Units absent from the table use the
 -- default fraction. (Perks & Flaws 2026-10-23.)
-function PersistentStateService.ApplyPostBattleRecovery(playerId, recoveryOverrides)
+-- skip (optional, Dungeon build step 3): unitId -> true gets no recovery (dungeon party mid-run,
+-- project_rules 266) and is left out of the results.
+function PersistentStateService.ApplyPostBattleRecovery(playerId, recoveryOverrides, skip)
 	PersistentStateService.InitPlayer(playerId)
 	local results = {}
 	recoveryOverrides = recoveryOverrides or {}
 
 	for unitId, state in pairs(unitStates[playerId]) do
+		if skip and skip(unitId) then continue end
 		-- KO'd units receive NO recovery (rule 8, BUG-071 2026-11-01). The caller runs this
 		-- BEFORE ClearAllKO, so isKO is still set here; they get a 0 result for the summary.
 		if state.isKO then

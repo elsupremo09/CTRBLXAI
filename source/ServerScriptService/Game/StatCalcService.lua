@@ -67,6 +67,7 @@ function StatCalcService.GetMovementRangeParts(unit: any, mode: string): (number
 		parts.imposed = ArmorPassiveService.GetImposedMoveRangePenalty(unit)
 			+ DoctrinePassiveService.GetMovementReduction(unit) -- Gunner Suppressive Fire -1 (2026-10-28)
 			+ ((unit._amphibiousDry == true) and -1 or 0)  -- Amphibious tag: began turn off water (2026-10-29)
+			+ (tonumber(unit._dgMoveBonus) or 0)  -- Dungeon RL-20 Seven-League Boots, battle-only (2026-11-15)
 	end
 	local total = math.max(1, parts.base + parts.race + parts.armor + parts.trait + parts.status + parts.imposed)
 	return total, parts
@@ -85,8 +86,9 @@ function StatCalcService.GetJump(unit: any, mode: string): number
 		+ TraitEffectService.GetJumpModifier(unit)
 	if mode ~= "permanent" then
 		total += StatusService.GetJumpModifier(unit)
+		total += tonumber(unit._dgJumpAdd) or 0 -- RL-57 Leaden Crown curse (relics v2)
 	end
-	return total
+	return math.max(0, total)
 end
 
 -- Effective Stability (resists push). Battle: DisplacementService.ResolvePush and the push
@@ -101,7 +103,7 @@ function StatCalcService.GetStability(unit: any, mode: string, ignoreGuard: any)
 		return s
 	end
 	-- Status Stability buffs (Hold the Line +2, War Cry +1, device auras).
-	s = math.max(0, s + StatusService.GetStabilityModifier(unit))
+	s = math.max(0, s + StatusService.GetStabilityModifier(unit) + (tonumber(unit._dgStabBonus) or 0)) -- + RL-26 Steady Footing (relics v2)
 	-- BD-004 Anchor Mail: Stability +3 while Guarding.
 	if not ignoreGuard and StatusService.HasStatus(unit, "Guard") then
 		s += ArmorPassiveService.GetGuardStabilityBonus(unit)
@@ -127,6 +129,7 @@ end
 -- calcHitQuality = CalcPrecision(DEX) + trait + gear, Blind x0.50.
 function StatCalcService.GetPrecision(unit: any, mode: string): number
 	local p = (derivedOf(unit).precision or 0) + TraitEffectService.GetPrecisionModifier(unit) * 100
+	if mode ~= "permanent" then p += (tonumber(unit._dgPrecBonus) or 0) * 100 end -- RL-52 Duelist's Creed (relics v2)
 	if mode ~= "permanent" and StatusService.HasStatus(unit, "Blind") then
 		p *= 0.5
 	end

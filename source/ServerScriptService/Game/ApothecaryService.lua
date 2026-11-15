@@ -143,9 +143,19 @@ end
 -- REFILL (return to base)
 --------------------------------------------------
 
-local function sortedUnitIds(units: { [string]: any }): { string }
+-- Dungeon build step 3 (project_rules 266): units in an active dungeon run are never refilled at
+-- return to base (only the dungeon Merchant refills them). Injected by Main; nil = none skipped.
+local _skipUnit: ((string) -> boolean)? = nil
+function ApothecaryService.SetSkipUnit(fn: ((string) -> boolean)?) _skipUnit = fn end
+
+local function sortedUnitIds(units: { [string]: any }, only: { [string]: boolean }?): { string }
 	local ids = {}
-	for id in units do table.insert(ids, id) end
+	for id in units do
+		-- only = the dungeon Merchant's party refill (step 6): those units, and the skip rule does not apply.
+		if only then
+			if only[id] then table.insert(ids, id) end
+		elseif not (_skipUnit and _skipUnit(id)) then table.insert(ids, id) end
+	end
 	table.sort(ids, function(a: string, b: string)
 		-- Hero first, then id order (stable "roster order").
 		if a == "unit_hero" then return b ~= "unit_hero" end
@@ -159,13 +169,17 @@ end
 -- ones below the Apothecary max; any Reinforced Cartridge extra above it refills free.
 -- Gold short: one charge at a time, roster then slot order, stop at the first unaffordable
 -- charge; gold never goes below 0. Returns { cost, refilled, skippedCharges, needGold }.
-function ApothecaryService.Refill(playerId: string, commit: boolean): any
+-- opts (Dungeon build step 6, 2026-11-14): { onlyUnits = { [id] = true }, priceMult = 1.5 } = the dungeon
+-- Merchant refill for the run party at the Apothecary formula x1.5 (Q9). nil = the normal refill.
+function ApothecaryService.Refill(playerId: string, commit: boolean, opts: any?): any
 	local units = _getUnits and _getUnits() or {}
+	local only = if type(opts) == "table" and type(opts.onlyUnits) == "table" then opts.onlyUnits else nil
+	local mult = if type(opts) == "table" and type(opts.priceMult) == "number" and opts.priceMult > 0 then opts.priceMult else 1
 	local rate = ApothecaryService.RefillRate()
 	local gold = (CurrencyService.GetBalance(playerId) or {}).gold or 0
 	local spent, refilled, skipped, needGold = 0, 0, 0, 0
 	local stopped = false
-	for _, uid in sortedUnitIds(units) do
+	for _, uid in sortedUnitIds(units, only) do
 		local unit = units[uid]
 		for idx = 1, 6 do
 			local slot = unit.consumableSlots and unit.consumableSlots[idx]
@@ -174,7 +188,7 @@ function ApothecaryService.Refill(playerId: string, commit: boolean): any
 				local cur = slot.currentCharges or 0
 				local slotMax = slot.maxCharges or 1
 				if def and cur < slotMax then
-					local list = def.shopPrice or 0
+					local list = math.round((def.shopPrice or 0) * mult) -- x1.5 for the dungeon Merchant (Q9)
 					local paidMax = math.min(ApothecaryService.GetMaxCharges(def), slotMax)
 					local paidMissing = math.max(0, paidMax - cur)
 					local done = 0

@@ -528,6 +528,17 @@ function EquipmentService.RebuildUnitStats(unit)
 	if armorGearStrDelta ~= 0 then
 		total.STR = math.max(0, (total.STR or 0) + armorGearStrDelta)
 	end
+	-- Dungeon EV-11 "Hall of the {Doctrine}" (stages build 2026-11-15, rule 272): +pct% to one primary
+	-- stat for that dungeon battle only. Set by Main at battle start, cleared at battle end.
+	if type(unit._dgStatBuff) == "table" and total[unit._dgStatBuff.stat] then
+		local s = unit._dgStatBuff.stat
+		total[s] = total[s] + math.round(total[s] * (tonumber(unit._dgStatBuff.pct) or 0) / 100)
+	end
+	-- Dungeon RL-16 Ogre's Belt (stages part 3, 2026-11-15, rule 271): +flat +pct% STR, battle-only (Main stamps/clears).
+	if type(unit._dgStrRelic) == "table" then
+		local s = total.STR or 0
+		total.STR = s + (tonumber(unit._dgStrRelic.flat) or 0) + math.round(s * (tonumber(unit._dgStrRelic.pct) or 0) / 100)
+	end
 	unit.effectiveStats = total
 
 	-- 4. Rebuild weapon combat profile from MainHand
@@ -710,6 +721,11 @@ function EquipmentService.RebuildUnitStats(unit)
 	if type(unit.battleMaxMpBonusPct) == "number" and unit.battleMaxMpBonusPct > 0 then
 		unit.maxMp = unit.maxMp + math.round(unit.maxMp * unit.battleMaxMpBonusPct)
 	end
+	-- Dungeon relics (step 8, 2026-11-14; rule 271 RL-01 / RL-15): battle-only Max HP bonus, same
+	-- pattern as the MP bonus above. Set by Main for a dungeon battle, cleared before HP/MP are saved.
+	if type(unit.battleMaxHpBonusPct) == "number" and unit.battleMaxHpBonusPct ~= 0 then -- < 0: RL-46 Glass Crown (relics v2)
+		unit.maxHp = math.max(1, unit.maxHp + math.round(unit.maxHp * unit.battleMaxHpBonusPct))
+	end
 
 	-- Clamp current to new max (don't increase current beyond max)
 	if unit.currentHp and unit.currentHp > unit.maxHp then
@@ -747,6 +763,7 @@ function EquipmentService.RebuildUnitStats(unit)
 				end
 			end
 		end
+		dMod += tonumber(unit._dgDiscBonus) or 0 -- RL-56 Stargazer Lens, dungeon battle only (relics v2)
 		if derived.discoveryRadius then
 			derived.discoveryRadius = math.max(1, math.floor(derived.discoveryRadius + dMod + 0.5))
 		end
@@ -762,6 +779,10 @@ function EquipmentService.RebuildUnitStats(unit)
 					derived[key] += 1
 				end
 			end
+		end
+		-- RL-27 Far Focus (relics v2): +1 Bonus Skill Range, dungeon battle only (Main clears it before save).
+		if unit._dgSkillRange and derived.bonusSkillRange ~= nil then
+			derived.bonusSkillRange = derived.bonusSkillRange + unit._dgSkillRange
 		end
 		-- ARTIFICER — Applied Artifice drawback: Bonus Skill Range -1, explicitly allowed
 		-- to go below 0 (no floor). 2026-10-20.

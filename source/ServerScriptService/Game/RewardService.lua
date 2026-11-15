@@ -276,8 +276,10 @@ end
 -- Adjusted Weight = Base x (1 + NormExpFortune x Sensitivity[rarity]). Zero base
 -- stays zero; no Fortune -> plain base roll. Mythic+ absent from the table so they
 -- remain impossible in normal encounters.
-local function rollEquipmentRarity(rng)
-	local nf = normalizedExpeditionFortune()
+-- fortuneBonus (optional, 2026-11-13 9:24 PM ruling): extra normalized Fortune for THIS roll only
+-- (dungeon Elite/Boss rooms add the facility loot bonus, project_rules 258/263). nil/0 = unchanged.
+local function rollEquipmentRarity(rng, fortuneBonus: number?)
+	local nf = normalizedExpeditionFortune() + math.max(0, tonumber(fortuneBonus) or 0)
 	if nf <= 0 then
 		return weightedRoll(rng, NORMAL_RARITY_WEIGHTS, "rarity", "weight")
 	end
@@ -293,8 +295,20 @@ end
 
 -- Card rarity: roll equipment weights but clamp to Rare minimum
 -- per DB: "Normal Skill Card rarity begins at Rare"
-local function rollCardRarity(rng)
-	local base = weightedRoll(rng, NORMAL_RARITY_WEIGHTS, "rarity", "weight")
+-- fortuneBonus (optional, USER RULING 2026-11-13 9:40 PM): dungeon Elite/Boss rooms only. Same weighting
+-- as gear (Base x (1 + bonus x Sensitivity[rarity])) but from the bonus ALONE: normal Expedition Fortune
+-- still does not affect cards. nil/0 = the old plain roll (same seed, same result).
+local function rollCardRarity(rng, fortuneBonus: number?)
+	local fb = math.max(0, tonumber(fortuneBonus) or 0)
+	local tbl = NORMAL_RARITY_WEIGHTS
+	if fb > 0 then
+		tbl = {}
+		for _, e in ipairs(NORMAL_RARITY_WEIGHTS) do
+			local w = e.weight * (1 + fb * (RARITY_FORTUNE_SENSITIVITY[e.rarity] or 0))
+			tbl[#tbl + 1] = { rarity = e.rarity, weight = if w < 0 then 0 else w }
+		end
+	end
+	local base = weightedRoll(rng, tbl, "rarity", "weight")
 	if (RARITY_RANK[base] or 0) < 3 then
 		return applyRarityModifier("Rare")
 	end
@@ -523,6 +537,9 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 	-- results without committing anything (equipment is NOT added to the inventory; every entry
 	-- comes back committed=false). Default false = existing callers unchanged.
 	local noCommit = type(opts) == "table" and opts.noCommit == true
+	-- Dungeon Elite/Boss rarity boost (project_rules 258/263, 2026-11-13): opts.fortuneBonus is added to
+	-- the normalized Fortune of the equipment, skill card, augment card and doctrine rarity rolls for THIS generation only. nil = unchanged.
+	local fortuneBonus = (type(opts) == "table" and tonumber(opts.fortuneBonus)) or 0
 	if type(opts) == "table" then
 		if type(opts.count) == "number" and opts.count >= 0 then
 			rewardCount = math.floor(opts.count)
@@ -555,7 +572,7 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 
 		if category == "Equipment" then
 			-- Battlefield-event rarity shift/floor (nil modifier -> unchanged).
-			local rarity = applyRarityModifier(rollEquipmentRarity(itemRng))
+			local rarity = applyRarityModifier(rollEquipmentRarity(itemRng, fortuneBonus))
 			-- Treasure Hunter per-call tier bump (2026-10-25): raise rank, clamp to max.
 			if bonusRarityTiers > 0 then
 				local rk = RARITY_RANK[rarity]
@@ -598,7 +615,7 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 			local pool = getSkillPool()
 			local skillId = pool[itemRng:NextInteger(1, #pool)]
 			local def = SkillData[skillId]
-			local rarity = rollCardRarity(itemRng)
+			local rarity = rollCardRarity(itemRng, fortuneBonus)
 			print(string.format("[RewardService] Reward %d: SkillCard %s (%s) [%s]",
 				i, skillId, def and def.name or "?", rarity))
 			table.insert(results, {
@@ -619,7 +636,7 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 			local pool = getAugmentPool()
 			local augId = pool[itemRng:NextInteger(1, #pool)]
 			local def = AugmentData[augId]
-			local rarity = rollCardRarity(itemRng)
+			local rarity = rollCardRarity(itemRng, fortuneBonus)
 			print(string.format("[RewardService] Reward %d: AugmentCard %s (%s) [%s]",
 				i, augId, def and def.name or "?", rarity))
 			table.insert(results, {
@@ -638,7 +655,7 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 			local pool = getDoctrinePool()
 			local docId = pool[itemRng:NextInteger(1, #pool)]
 			local def = DoctrineData[docId]
-			local rarity = rollCardRarity(itemRng)
+			local rarity = rollCardRarity(itemRng, fortuneBonus) -- Elite/Boss dungeon boost, doctrines too (user 2026-11-13 9:49 PM)
 			print(string.format("[RewardService] Reward %d: Doctrine %s (%s) [%s]",
 				i, docId, def and def.name or "?", rarity))
 			table.insert(results, {

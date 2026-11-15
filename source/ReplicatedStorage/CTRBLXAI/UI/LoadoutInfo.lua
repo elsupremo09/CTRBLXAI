@@ -56,6 +56,34 @@ local previewToken = nil
 local STAT_ORDER = {"STR", "AGI", "INT", "VIT", "DEX", "LUK"}
 
 local pendingTotalFn
+
+-- Small stat icon left of a row name (user ruling 2026-11-12 9:51 / 10:07 PM). Icons come from
+-- Theme (StatKeyIcons for INFO rows, Theme.Icons[stat] for STR..LUK). FitIconBox keeps per-icon
+-- fits (MP 0.88). Properties first, Parent last (NET-004). nil icon -> nothing (blank gap).
+local ROW_ICON_PX = 14
+local ROW_ICON_GAP = ROW_ICON_PX + 4 -- left inset taken by the icon column
+-- STR..LUK +/- buttons (user ruling 2026-11-13 12:55 AM, replaces 44 px): 30x30, right edge,
+-- small gap. Deliberately below the 44 px phone minimum (user design call).
+local STAT_BTN_PX = 30
+local STAT_BTN_GAP = 4      -- between "-" and "+"
+local STAT_BTN_RIGHT = 4    -- "+" inset from the row's right edge
+local STAT_ROW_H = STAT_BTN_PX -- row = button height so 6 rows + Confirm fit a phone (2026-11-13)
+local STAT_BTNS_W = STAT_BTN_RIGHT + STAT_BTN_PX * 2 + STAT_BTN_GAP -- 68: right area kept clear
+-- No points: short rows, no buttons (2026-11-12 11:02 PM). Values always ONE line (2026-11-13 1:00 AM).
+local STAT_ROW_H_SHORT = 20
+local STAT_PANEL_MIN_H, STAT_HEADER_H, STAT_LIST_GAP = 160, 16, 2 -- panel fits header + 6 rows, no scroll (2026-11-13 1:00 AM)
+local function addRowIcon(row: Instance, icon: string?)
+	if not icon then return end
+	local img = Instance.new("ImageLabel")
+	img.Name = "StatIcon"
+	img.BackgroundTransparency = 1
+	img.ScaleType = Enum.ScaleType.Fit
+	img.Image = icon
+	img.Size, img.Position = Theme.FitIconBox(icon, UDim2.fromOffset(ROW_ICON_PX, ROW_ICON_PX),
+		UDim2.new(0, 2, 0.5, -ROW_ICON_PX / 2))
+	img.ZIndex = 2
+	img.Parent = row
+end
 local refreshStatRowsInPlace
 local applyStatPreview
 local requestStatPreview
@@ -297,49 +325,61 @@ buildStatPanel = function()
 	scroller.Parent = ctx.getStatPanel()
 
 	local layout = Instance.new("UIListLayout", scroller)
-	layout.Padding = UDim.new(0, 2)
+	layout.Padding = UDim.new(0, STAT_LIST_GAP)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 
 	-- Header (remaining allocation points)
 	statHeaderLabel = Instance.new("TextLabel")
-	statHeaderLabel.Size = UDim2.new(1, 0, 0, 16); statHeaderLabel.BackgroundTransparency = 0.3
+	statHeaderLabel.Size = UDim2.new(1, 0, 0, STAT_HEADER_H); statHeaderLabel.BackgroundTransparency = 0.3
 	statHeaderLabel.BackgroundColor3 = Theme.Colors.PanelRaised; statHeaderLabel.BorderSizePixel = 0
 	statHeaderLabel.Font = Theme.Font.PrimaryBold; statHeaderLabel.TextSize = Theme.Text.Small()
 	statHeaderLabel.TextXAlignment = Enum.TextXAlignment.Left
 	statHeaderLabel.LayoutOrder = 0; statHeaderLabel.Parent = scroller
 
 	local hasPoints = (statsData.unallocatedPoints or 0) > 0
-
+	local rightClear = if hasPoints then STAT_BTNS_W + 4 else 4
+	do -- fit header + 6 rows (no scroll); set BEFORE the Confirm row, placed from Position + Size
+		local panel, up = ctx.getStatPanel(), ctx.getStatPanel():FindFirstChildOfClass("UIPadding")
+		local h = STAT_HEADER_H + #STAT_ORDER * ((if hasPoints then STAT_ROW_H else STAT_ROW_H_SHORT) + STAT_LIST_GAP)
+			+ (if up then up.PaddingTop.Offset + up.PaddingBottom.Offset else 0)
+		local colH = if panel.Parent then (panel.Parent :: any).AbsoluteSize.Y else 0; if colH > 0 then h = math.min(h, colH - panel.Position.Y.Offset - 32) end -- Confirm row (2+30) stays on screen
+		panel.Size = UDim2.new(panel.Size.X.Scale, panel.Size.X.Offset, 0, math.max(STAT_PANEL_MIN_H, h))
+	end
 	for si, stat in ipairs(STAT_ORDER) do
 		local row = Instance.new("Frame")
-		row.Size = UDim2.new(1, 0, 0, 20); row.BackgroundTransparency = 1
+		row.Size = UDim2.new(1, 0, 0, if hasPoints then STAT_ROW_H else STAT_ROW_H_SHORT); row.BackgroundTransparency = 1
 		row.BorderSizePixel = 0; row.LayoutOrder = si + 1; row.Parent = scroller
 
+		addRowIcon(row, Theme.Icons[stat])
 		local statLbl = Instance.new("TextLabel")
-		statLbl.Size = UDim2.new(0, 36, 1, 0); statLbl.BackgroundTransparency = 1
+		statLbl.Size = UDim2.new(0, 32, 1, 0); statLbl.Position = UDim2.fromOffset(ROW_ICON_GAP, 0)
+		statLbl.BackgroundTransparency = 1
 		statLbl.Font = Theme.Font.PrimaryBold; statLbl.TextSize = Theme.Text.Small()
 		statLbl.TextColor3 = Theme.Colors.TextPrimary
 		statLbl.TextXAlignment = Enum.TextXAlignment.Left
-		statLbl.Text = " " .. stat; statLbl.ZIndex = 2; statLbl.Parent = row
+		statLbl.Text = stat; statLbl.ZIndex = 2; statLbl.Parent = row
 
 		local valLbl = Instance.new("TextLabel")
-		valLbl.Size = UDim2.new(1, -100, 1, 0); valLbl.Position = UDim2.fromOffset(36, 0)
+		valLbl.Size = UDim2.new(1, -(ROW_ICON_GAP + 32 + rightClear), 1, 0) -- ends 4 px left of "-" (or the edge)
+		valLbl.Position = UDim2.fromOffset(ROW_ICON_GAP + 32, 0)
 		valLbl.BackgroundTransparency = 1
 		valLbl.Font = Theme.Font.Mono; valLbl.TextSize = Theme.Text.Small()
 		valLbl.TextColor3 = Theme.Colors.TextPrimary
 		valLbl.TextXAlignment = Enum.TextXAlignment.Left
+		valLbl.TextScaled = true; valLbl.TextWrapped = false; valLbl.TextTruncate = Enum.TextTruncate.AtEnd; do local fit = Instance.new("UITextSizeConstraint"); fit.MaxTextSize = Theme.Text.Small(); fit.MinTextSize = 10; fit.Parent = valLbl end -- long values shrink, min 10 px (2026-11-13)
 		valLbl.ZIndex = 2; valLbl.Parent = row
 
 		-- Tap target for the stat explainer; sits left of the +/- buttons.
 		local tap = Instance.new("TextButton")
-		tap.Size = UDim2.new(1, -64, 1, 0); tap.Position = UDim2.fromOffset(0, 0)
+		tap.Size = UDim2.new(1, -rightClear, 1, 0); tap.Position = UDim2.fromOffset(0, 0)
 		tap.BackgroundTransparency = 1; tap.Text = ""; tap.ZIndex = 1
 		tap.Parent = row
 		tap.Activated:Connect(function() openStatExplain(stat) end)
 
 		local minusBtn, plusBtn
 		if hasPoints then
-			minusBtn = Theme.MakeButton(row, "-", "Primary", nil, { size = UDim2.fromOffset(24, 18), position = UDim2.new(1, -56, 0, 1) })
+			minusBtn = Theme.MakeButton(row, "-", "Primary", nil, { size = UDim2.fromOffset(STAT_BTN_PX, STAT_BTN_PX),
+				position = UDim2.new(1, -STAT_BTNS_W, 0.5, -STAT_BTN_PX / 2) })
 			minusBtn.ZIndex = 3
 			minusBtn.Activated:Connect(function()
 				if (pendingAlloc[stat] or 0) <= 0 then return end
@@ -347,7 +387,8 @@ buildStatPanel = function()
 				refreshStatRowsInPlace()
 				requestStatPreview()
 			end)
-			plusBtn = Theme.MakeButton(row, "+", "Primary", nil, { size = UDim2.fromOffset(24, 18), position = UDim2.new(1, -28, 0, 1) })
+			plusBtn = Theme.MakeButton(row, "+", "Primary", nil, { size = UDim2.fromOffset(STAT_BTN_PX, STAT_BTN_PX),
+				position = UDim2.new(1, -(STAT_BTN_RIGHT + STAT_BTN_PX), 0.5, -STAT_BTN_PX / 2) })
 			plusBtn.ZIndex = 3
 			plusBtn.Activated:Connect(function()
 				local remaining = (statsCache.unallocatedPoints or 0) - pendingTotalFn()
@@ -371,10 +412,12 @@ buildStatPanel = function()
 	-- Visibility follows ctx.getStatPanel().Visible so staged points never leave it floating on other tabs.
 	statConfirmRow = Instance.new("Frame")
 	statConfirmRow.Name = "StatConfirmBelow"
-	statConfirmRow.Size = UDim2.fromOffset(52, 24)
+	-- X directly under "-", check directly under "+": 30 px, same as the stat buttons (2026-11-13).
+	-- 8 = the stat panel's inner side padding (scroller inset).
+	statConfirmRow.Size = UDim2.fromOffset(STAT_BTN_PX * 2 + STAT_BTN_GAP, STAT_BTN_PX)
 	statConfirmRow.AnchorPoint = Vector2.new(1, 0)
-	statConfirmRow.Position = UDim2.new(1, -12, 0,
-		ctx.getStatPanel().Position.Y.Offset + ctx.getStatPanel().Size.Y.Offset + 4)
+	statConfirmRow.Position = UDim2.new(1, -(8 + STAT_BTN_RIGHT), 0,
+		ctx.getStatPanel().Position.Y.Offset + ctx.getStatPanel().Size.Y.Offset + 2)
 	statConfirmRow.BackgroundTransparency = 1; statConfirmRow.BorderSizePixel = 0
 	statConfirmRow.ZIndex = 10; statConfirmRow.Visible = false
 	statConfirmRow.Parent = ctx.getStatPanel().Parent
@@ -412,11 +455,11 @@ buildStatPanel = function()
 	-- X (discard) on the left, check (confirm) on the right -- matches the screen-wide
 	-- back/confirm ordering. Theme icon kinds: "Confirm" = checkmark, "X" = cross.
 	local discardIcon = Theme.MakeIconButton(statConfirmRow, "X", doStatDiscard, {
-		name = "Btn_StatDiscard", size = UDim2.fromOffset(22, 22), position = UDim2.new(0, 0, 0, 1),
+		name = "Btn_StatDiscard", size = UDim2.fromOffset(STAT_BTN_PX, STAT_BTN_PX), position = UDim2.new(0, 0, 0, 0),
 	})
 	discardIcon.ZIndex = 11
 	local confirmIcon = Theme.MakeIconButton(statConfirmRow, "Confirm", doStatConfirm, {
-		name = "Btn_StatConfirm", size = UDim2.fromOffset(22, 22), position = UDim2.new(1, -22, 0, 1),
+		name = "Btn_StatConfirm", size = UDim2.fromOffset(STAT_BTN_PX, STAT_BTN_PX), position = UDim2.new(1, -STAT_BTN_PX, 0, 0),
 	})
 	confirmIcon.ZIndex = 11
 
@@ -543,12 +586,22 @@ buildInfoContent = function()
 		row.BackgroundTransparency = 1; row.BorderSizePixel = 0
 		row.LayoutOrder = orderFn(); row.Parent = parent
 		local lbl = Instance.new("TextLabel")
-		lbl.Size = UDim2.new(0.55, 0, 1, 0)
 		lbl.BackgroundTransparency = 1
 		lbl.Font = Theme.Font.Primary; lbl.TextSize = Theme.Text.Small()
 		lbl.TextColor3 = Theme.Colors.TextSecondary
 		lbl.TextXAlignment = Enum.TextXAlignment.Left
-		lbl.Text = "  " .. label; lbl.Parent = row
+		if statKey then
+			-- Stat rows: icon column on the left (blank gap when the stat has no icon yet), so
+			-- every name lines up. Name rows (perk / flaw / passives) keep the old layout.
+			addRowIcon(row, Theme.StatKeyIcons[statKey])
+			lbl.Size = UDim2.new(0.55, -ROW_ICON_GAP, 1, 0)
+			lbl.Position = UDim2.fromOffset(ROW_ICON_GAP, 0)
+			lbl.Text = label
+		else
+			lbl.Size = UDim2.new(0.55, 0, 1, 0)
+			lbl.Text = "  " .. label
+		end
+		lbl.Parent = row
 		local val = Instance.new("TextLabel")
 		val.Size = UDim2.new(0.45, 0, 1, 0)
 		val.Position = UDim2.new(0.55, 0, 0, 0)
@@ -652,6 +705,20 @@ buildInfoContent = function()
 		idBelow + 40, Theme.Font.Mono, Theme.Text.Body(), Theme.Colors.TextPrimary)
 	identityLabel(string.format("MP %d / %d", statsData.currentMp or 0, statsData.maxMp or 0),
 		idBelow + 58, Theme.Font.Mono, Theme.Text.Body(), Theme.Colors.TextPrimary)
+	do -- EXP line + thin bar (user 2026-11-13 1:25 PM); same data as the old Units-screen XP line
+		local ep = statsData.expProgress
+		if type(ep) == "table" then
+			identityLabel(if ep.atCap then "EXP MAX" else string.format("EXP %d / %d", ep.xp or 0, ep.xpToNext or 0),
+				idBelow + 76, Theme.Font.Mono, Theme.Text.Body(), Theme.Colors.TextPrimary)
+			local bar = Instance.new("Frame"); bar.Name = "ExpBar"
+			bar.Size = UDim2.new(1, -(textX + 4), 0, 3); bar.Position = UDim2.fromOffset(textX, idBelow + 95)
+			bar.BackgroundColor3 = Theme.Colors.EmptySlot; bar.BorderSizePixel = 0
+			local fill = Instance.new("Frame"); fill.BorderSizePixel = 0; fill.BackgroundColor3 = Theme.Colors.Info
+			fill.Size = UDim2.fromScale(if ep.atCap then 1 elseif (ep.xpToNext or 0) > 0 then math.clamp((ep.xp or 0) / ep.xpToNext, 0, 1) else 0, 1)
+			fill.Parent = bar; bar.Parent = identityRow
+			identityRow.Size = UDim2.new(1, 0, 0, math.max(130, idBelow + 95 + 3 + 4)) -- room for the EXP bar
+		end
+	end
 
 	-- ---- 2D PORTRAIT PICKER (opens as a popup when the big portrait is tapped) ----
 	-- User ruling 2026-10-23: the face grid no longer sits in the Info column; the large

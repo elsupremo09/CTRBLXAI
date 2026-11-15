@@ -164,7 +164,9 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 	local LOWER_IS_BETTER = { WT = true, RTDelay = true }
 	local _STAT_ORDER = { "STR", "INT", "DEX", "AGI", "VIT", "LUK" }
 
-	local function addStatRow(parent, label, cvStr, svStr, delta, isGood, y)
+	-- icon (2026-11-12, user ruling 10:49 PM): a gear stat's icon left of its name, or false for a
+	-- gear stat with no icon (blank gap, names line up). nil = no icon column (doctrine rows).
+	local function addStatRow(parent, label, cvStr, svStr, delta, isGood, y, icon)
 		local row = Instance.new("Frame")
 		row.Size = UDim2.new(1, 0, 0, 16)
 		row.Position = UDim2.new(0, 0, 0, y)
@@ -173,8 +175,13 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 		makeLabel(row, { Text = cvStr, Size = UDim2.new(0.18, 0, 1, 0),
 			TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.TextPrimary,
 			TextXAlignment = Enum.TextXAlignment.Center, Font = Theme.Font.PrimaryBold })
-		makeLabel(row, { Text = label, Size = UDim2.new(0.24, 0, 1, 0),
-			Position = UDim2.new(0.18, 0, 0, 0),
+		local gap = 0
+		if icon ~= nil then
+			gap = Theme.StatIconGap
+			Theme.AddStatIcon(row, icon or nil, 0, 0.18) -- at the name column's left edge
+		end
+		makeLabel(row, { Text = label, Size = UDim2.new(0.24, -gap, 1, 0),
+			Position = UDim2.new(0.18, gap, 0, 0),
 			TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary,
 			TextXAlignment = Enum.TextXAlignment.Center })
 		makeLabel(row, { Text = svStr, Size = UDim2.new(0.18, 0, 1, 0),
@@ -299,7 +306,8 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 					delta = "~"
 				end
 				addStatRow(contentFrame, COMPARE_LABELS[key] or key,
-					tostring(cv or "—"), tostring(sv or "—"), delta, isGood, rowY)
+					tostring(cv or "—"), tostring(sv or "—"), delta, isGood, rowY,
+					Theme.GetGearStatIcon(COMPARE_LABELS[key] or key, false) or false)
 				rowY = rowY + 18
 			end
 		end
@@ -374,8 +382,15 @@ buildComparisonContent = function(panel, selectedItem, currentItem, unit)
 					local bp = pcts[sn]
 					local pctTxt = (bp and bp ~= 0) and ("  " .. (bp > 0 and "+" or "") .. bp .. "%") or ""
 					local sign = bv > 0 and "+" or ""
-					makeLabel(col, { Text = sn .. "  " .. sign .. bv .. pctTxt,
-						Size = UDim2.new(1, 0, 0, 14), Position = UDim2.new(0, 4, 0, y),
+					-- Stat icon left of the name (2026-11-12, user ruling 10:49 PM); no icon = blank gap.
+					local brow = Instance.new("Frame")
+					brow.Size = UDim2.new(1, 0, 0, 14)
+					brow.Position = UDim2.new(0, 0, 0, y)
+					brow.BackgroundTransparency = 1
+					brow.Parent = col
+					Theme.AddStatIcon(brow, Theme.GetGearStatIcon(sn, true), 4)
+					makeLabel(brow, { Text = sn .. "  " .. sign .. bv .. pctTxt,
+						Size = UDim2.new(1, -(4 + Theme.StatIconGap), 1, 0), Position = UDim2.new(0, 4 + Theme.StatIconGap, 0, 0),
 						TextSize = Theme.Text.Body(), TextColor3 = Theme.Colors.Success })
 					y = y + 16
 				end

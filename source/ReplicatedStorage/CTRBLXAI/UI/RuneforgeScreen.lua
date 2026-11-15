@@ -90,6 +90,12 @@ if not gemGridModule then
 	error("[RuneforgeScreen] RuneforgeGemGrid module not found")
 end
 local RuneforgeGemGrid: any = (require :: any)(gemGridModule)
+-- Gem Craft tab (USER RULING 2026-11-12 1:54 PM), split out for file size (ARC-005).
+local gemCraftModule = uiFolder:WaitForChild("RuneforgeGemCraft", WAIT)
+if not gemCraftModule then
+	error("[RuneforgeScreen] RuneforgeGemCraft module not found")
+end
+local RuneforgeGemCraft: any = (require :: any)(gemCraftModule)
 -- Shared (?) guide and bonus inspector popups (2026-11-07).
 local facilityInfoModule = uiFolder:WaitForChild("FacilityInfo", WAIT)
 local bonusInspectorModule = uiFolder:WaitForChild("BonusInspector", WAIT)
@@ -117,6 +123,7 @@ export type Context = {
 	payReroll: ((instanceId: string) -> any?)?,              -- pay first: answer holds the new sets
 	commitReroll: (instanceId: string, choice: number) -> any?,
 	markSeen: ((instanceId: string) -> ())?,                 -- NEW badge: the player picked this gear (2026-11-08)
+	craftGems: ((req: any) -> any?)?,                        -- Gem Craft tab (2026-11-12): CraftGems answer, nil on error
 	onChanged: () -> (),                                      -- server state changed: refresh caches
 	onClosed: () -> (),
 }
@@ -877,6 +884,10 @@ local function buildMain(state: any, isForge: boolean, entries: { any }, selecte
 		if state.lockedReason then
 			makeNote(main, tostring(state.lockedReason), 1, Theme.Colors.Warning, true)
 		end
+		if currentTab == RuneforgeGemCraft.TAB then
+			RuneforgeGemCraft.BuildMain(main, list, state)
+			return
+		end
 		if isForge then
 			buildLeftTabs(main, 2, state) -- Loadout sub-tab row, then the Loadout bar
 		end -- Reroll how-to: (?) guide
@@ -1347,23 +1358,38 @@ local function buildSide(state: any, selected: any?, isForge: boolean)
 	layout.Padding = UDim.new(0, SUBTAB_GAP)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = tabs
-	for i, tab in { "Forge", "Reroll" } do
+	for i, tab in { "Forge", "Reroll", RuneforgeGemCraft.TAB } do
 		Theme.MakeTabButton(tabs, tab, if currentTab == tab then "Active" else "Inactive", function()
 			if currentTab == tab then return end
 			currentTab = tab
 			render()
 		end, {
-			name = `SubTab_{tab}`,
-			size = UDim2.new(0.5, -SUBTAB_GAP // 2, 1, 0),
+			name = `SubTab_{(string.gsub(tab, " ", ""))}`,
+			size = UDim2.new(1 / 3, -(SUBTAB_GAP * 2) // 3, 1, 0),
 			layoutOrder = i,
 		})
 	end
 	tabs.Parent = side
 
+	-- Gem Craft: the mode grid + action buttons are PINNED under the sub-tabs so they never
+	-- scroll off a phone screen (USER RULING 2026-11-12 2:19 PM); only the part below scrolls.
+	local top = SUBTAB_H + SUBTAB_GAP
+	if currentTab == RuneforgeGemCraft.TAB then
+		local pinned = Instance.new("Frame")
+		pinned.Name = "GemCraftPinned"
+		pinned.Size = UDim2.new(1, -8, 0, RuneforgeGemCraft.PINNED_H) -- -8 = the panel's scrollbar pad
+		pinned.Position = UDim2.fromOffset(0, top)
+		pinned.BackgroundTransparency = 1
+		pinned.BorderSizePixel = 0
+		RuneforgeGemCraft.BuildPinned(pinned, state)
+		pinned.Parent = side
+		top += RuneforgeGemCraft.PINNED_H + SUBTAB_GAP
+	end
+
 	local scroll = Instance.new("ScrollingFrame")
 	scroll.Name = "Panel"
-	scroll.Size = UDim2.new(1, 0, 1, -(SUBTAB_H + SUBTAB_GAP))
-	scroll.Position = UDim2.fromOffset(0, SUBTAB_H + SUBTAB_GAP)
+	scroll.Size = UDim2.new(1, 0, 1, -top)
+	scroll.Position = UDim2.fromOffset(0, top)
 	scroll.BackgroundTransparency = 1
 	scroll.BorderSizePixel = 0
 	scroll.ScrollBarThickness = 4
@@ -1377,7 +1403,9 @@ local function buildSide(state: any, selected: any?, isForge: boolean)
 	list.SortOrder = Enum.SortOrder.LayoutOrder
 	list.Parent = scroll
 
-	if selected and state then
+	if currentTab == RuneforgeGemCraft.TAB then
+		RuneforgeGemCraft.BuildSide(scroll, state)
+	elseif selected and state then
 		local it = selected.row
 		local tag = if it.runeForged then "  (rune-forged)" else ""
 		makeNote(scroll, `{it.name}  Lv{it.level}  {it.rarity}{tag}`, -2, Theme.GetRarityColor(it.rarity or "Common"), true)
@@ -1539,6 +1567,7 @@ local function openGuide(state: any)
 		{ heading = "Cost", body = "Forging costs gold. Raising the rarity also costs crystals for every step. The cost preview shows the exact price, the result rarity and the new name before you Confirm." },
 		{ heading = "Forge vs Reroll", body = `Forge adds or replaces lines on Common to Epic items. Items above Epic can only be rerolled{rerollText}: first pay sulfur, then the new sets of lines appear: pick a set or keep the current lines. The sulfur is spent either way. If you leave before choosing, the same sets wait for you; until you choose, the item can't be rerolled, sold, dismantled or merged. Tap a line to see what it does.` },
 		{ heading = "Why a gem is greyed out", body = table.concat(reasons, "\n") },
+		{ heading = RuneforgeGemCraft.HELP_HEADING, body = RuneforgeGemCraft.HELP_BODY },
 	})
 end
 
@@ -1550,7 +1579,9 @@ local function buildButtons(state: any, selected: any?, isForge: boolean)
 	iconButton(row, "Help", "Btn_Info", 0, true, function()
 		openGuide(state)
 	end)
-	if isForge then
+	if currentTab == RuneforgeGemCraft.TAB then
+		RuneforgeGemCraft.BuildButtons(row, state)
+	elseif isForge then
 		local hasPicks = #picks > 0
 		iconButton(row, "Minus", "Btn_RemovePick", 1, hasPicks, function()
 			table.remove(picks)
@@ -1627,7 +1658,8 @@ render = function()
 	if not isForge and selId ~= rerollFor then
 		resetReroll()
 	end
-	local gridKey = `{currentTab}|{if isForge then leftTab else "Gears"}`
+	local gridKey = if currentTab == RuneforgeGemCraft.TAB then RuneforgeGemCraft.GRID_KEY
+		else `{currentTab}|{if isForge then leftTab else "Gears"}`
 	buildMain(state, isForge, entries, selected)
 	buildSide(state, selected, isForge)
 	lastGridKey = gridKey
@@ -1643,6 +1675,28 @@ render = function()
 	end
 	buildButtons(state, selected, isForge)
 end
+
+-- Gem Craft tab helpers (dependency injection: the tab module never requires this screen).
+RuneforgeGemCraft.Init({
+	getScreen = function(): any return screen end,
+	getCtx = function(): any return ctx end,
+	render = function() render() end,
+	makeNote = makeNote,
+	listButton = listButton,
+	iconButton = iconButton,
+	makeGridFrame = makeGridFrame,
+	buildGrid = RuneforgeGemGrid.BuildGrid,
+	gemEntry = gemEntry,
+	gemCell = gemCell,
+	applyGemBar = applyGemBar,
+	fitsOnlyOn = fitsOnlyOn,
+	buildGemBar = function(main: Instance, order: number, onChange: () -> ())
+		if gemToolbar then gemToolbar.Build(main, order, onChange) end
+	end,
+	resetGridScroll = resetGridScroll,
+	inspectBonus = inspectBonus,
+	noneLeft = REASON_TEXT.none_left,
+})
 
 --------------------------------------------------
 -- PUBLIC
@@ -1673,6 +1727,7 @@ function RuneforgeScreen.Open()
 	currentTab = "Forge"
 	resetPicks(nil)
 	resetReroll()
+	RuneforgeGemCraft.Reset()
 	stateRetries = STATE_RETRY_MAX
 	if toolbar then toolbar.Reset() end -- each visit starts unfiltered
 	if gemToolbar then gemToolbar.Reset() end -- Gems bar: All / All / Stat / Fits only on
@@ -1699,6 +1754,7 @@ function RuneforgeScreen.Close()
 	FacilityInfo.Close()
 	resetPicks(nil)
 	resetReroll()
+	RuneforgeGemCraft.Reset() -- a craft answer still on its way is not shown (2026-11-12 2:19 PM)
 	if screen then screen.Hide() end
 	local c = ctx
 	if c then c.onClosed() end
@@ -1714,6 +1770,7 @@ function RuneforgeScreen.Hide()
 	FacilityInfo.Close()
 	resetPicks(nil)
 	resetReroll()
+	RuneforgeGemCraft.Reset() -- a craft answer still on its way is not shown (2026-11-12 2:19 PM)
 	if screen then screen.Hide() end
 end
 

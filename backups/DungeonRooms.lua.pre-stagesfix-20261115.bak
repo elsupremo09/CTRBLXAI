@@ -1,0 +1,296 @@
+--!strict
+-- DungeonRooms.lua
+-- CTRBLXAI | Dungeon mode — Event and Merchant room logic, split out of DungeonService (2026-11-14,
+-- step 7b: DungeonService had passed 1,000 lines). Behaviour unchanged. Server-only. No require of
+-- DungeonService (no cycle): DungeonService calls Rooms.Bind(ctx) with its private helpers and hooks.
+
+local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local DungeonEvents = require(script.Parent:WaitForChild("DungeonEvents"))
+local D = DungeonRules.Data
+
+local Rooms = {}
+local C: any = nil
+
+--- ctx = { stateOf, nodeById, effType, currentRoom, persist, isInt, addLoot, healer(), eventHooks(), merchant(), grantEventRelic }.
+function Rooms.Bind(ctx: any) C = ctx end
+
+--------------------------------------------------
+-- EVENT ROOMS (build step 7a, 2026-11-14; project_rules 272). Picked on first look (seeded by run seed +
+-- room, no repeats in a run, facility good/bad odds), resolved server-side, applied once, saved.
+--------------------------------------------------
+
+local function eventRoom(run: any): (any, any, string?)
+	if not run then return nil, nil, "No dungeon run in progress" end
+	if not run.at then return nil, nil, "Pick a room first" end
+	local n = C.nodeById(run.map, run.at)
+	if not n or C.effType(n) ~= "Event" then return nil, nil, "Not an Event room" end
+	local ev = run.events[n.id]
+	if not ev then
+		local id = DungeonEvents.Pick(run.sseed or run.card.seed, n.row, n.col, run.card.facilityLevel, run.seenEvents)
+		ev = { id = id }
+		run.events[n.id] = ev
+		run.seenEvents[id] = true
+		C.persist()
+	end
+	return n, ev, nil
+end
+
+--- The current Event room's event: { id, done, fight, result }. Choices are keys; text lives on the client.
+function Rooms.GetEvent(playerId: string): (boolean, any)
+	local run = C.stateOf(playerId).run
+	local n, ev, why = eventRoom(run)
+	if not n then return false, why end
+	local hasKO = false
+	if C.eventHooks() and C.eventHooks().hasKO then
+		local okK, v = pcall(C.eventHooks().hasKO, run.party)
+		hasKO = okK and v == true
+	end
+	local quote: any = nil
+	if ev.id == "EV-03" and C.eventHooks() and C.eventHooks().refill then
+		local okQ, q = pcall(C.eventHooks().refill, run.party, false)
+		if okQ and type(q) == "table" then quote = { cost = q.cost or 0, missing = (q.refilled or 0) + (q.skippedCharges or 0), need = q.needGold } end
+	end
+	return true, { id = ev.id, done = ev.done == true, fight = ev.fight, result = ev.result,
+		choices = DungeonEvents.Choices[ev.id], hasKO = hasKO, refill = quote }
+end
+
+local function realGold(): number
+	if not (C.eventHooks() and C.eventHooks().gold) then return 0 end
+	local ok, v = pcall(C.eventHooks().gold)
+	return if ok and type(v) == "number" then v else 0
+end
+
+--- Pick a choice. Applied exactly once; the room is cleared unless it turned into a fight (then the
+--- normal battle launch plays it and clears it). Returns ok, { lines = { {k, ...} } } | error.
+function Rooms.ChooseEvent(playerId: string, choice: any, rank: number): (boolean, any)
+	local run = C.stateOf(playerId).run
+	local n, ev, why = eventRoom(run)
+	if not n then return false, why end
+	if ev.done or run.cleared[n.id] then return false, "This room is already used" end
+	if type(choice) ~= "string" or #choice > 16 then return false, "Invalid choice" end
+	local hasKO = false
+	if C.eventHooks() and C.eventHooks().hasKO then
+		local okK, v = pcall(C.eventHooks().hasKO, run.party)
+		hasKO = okK and v == true
+	end
+	local ok, fx = DungeonEvents.Resolve(ev.id, choice, run.sseed or run.card.seed, n.row, n.col, { hasKO = hasKO, realGold = realGold() })
+	if not ok then return false, fx end
+	local h = C.eventHooks() or {}
+	local level = DungeonRules.BattleLevel(rank, run.card.difficulty, n.row, 0, run.stage)
+	local mult = DungeonRules.DropMultiplier(run.battles, run.dropBonus)
+	local lines: { any } = {}
+	-- Real gold is taken first; if that fails nothing else happens (pay-once, no free effects).
+	for _, f in fx do
+		if f.k == "realGold" and f.n < 0 then
+			if not (h.pay and h.pay(-f.n)) then return false, "Not enough gold" end
+		end
+	end
+	if ev.id == "EV-03" then -- Peddler: refill check before marking done
+		if not h.refill then return false, "Something went wrong. Try again." end
+	end
+	ev.done = true
+	ev.choice = choice
+	for _, f in fx do
+		if f.k == "rolls" then
+			local want = f.n * mult
+			local cnt = math.floor(want) + (if Random.new((run.sseed or run.card.seed) * 7 + n.row * 31 + n.col):NextNumber() < want % 1 then 1 else 0)
+			if h.rolls and cnt > 0 then
+				local okR, items = pcall(h.rolls, level, cnt, `dgEvent_{run.card.id}_{n.id}`)
+				if okR and type(items) == "table" then
+					for _, it in items do
+						if type(it) == "table" and it.item then
+							if C.addLoot(playerId, "gearItem", it.item) then table.insert(lines, { k = "gear", name = tostring(it.item.displayName or "an item") }) end
+						elseif type(it) == "table" and it.card then
+							C.addLoot(playerId, "cards", it.card, 1)
+							table.insert(lines, { k = "gear", name = tostring(it.name or "an item") })
+						end
+					end
+				elseif not okR then warn("[DungeonRooms] event rolls failed: " .. tostring(items)) end
+			end
+		elseif f.k == "bagGold" then
+			C.addLoot(playerId, "gold", f.n)
+			table.insert(lines, { k = "bagGold", n = f.n })
+		elseif f.k == "bagMat" then
+			C.addLoot(playerId, "normalMats", f.id, f.n)
+			table.insert(lines, { k = "mat", id = f.id, n = f.n })
+		elseif f.k == "heal" then
+			-- Spring heals living units only (the flask choice is the revive); KO units are skipped.
+			if C.healer() then for _, id in run.party do
+				if not (h.isKO and h.isKO(id)) then pcall(C.healer(), id, f.pct) end
+			end end
+			table.insert(lines, { k = "heal", n = f.pct })
+		elseif f.k == "revive" then
+			if h.revive then
+				local okV, name = pcall(h.revive, run.party, f.pct)
+				if okV and name then table.insert(lines, { k = "revive", name = name }) end
+			end
+		elseif f.k == "hurtAll" or f.k == "hurtTop" then
+			if h.hurt then pcall(h.hurt, run.party, f.pct, f.k == "hurtTop") end
+			table.insert(lines, { k = "hurt", n = f.pct })
+		elseif f.k == "realGold" then
+			if f.n > 0 and h.give then h.give(f.n) end
+			table.insert(lines, { k = "realGold", n = f.n })
+		elseif f.k == "shrine" then
+			run.dropBonus = math.min(D.DropCap, (run.dropBonus or 0) + f.bonus)
+			table.insert(lines, { k = "loot", mult = DungeonRules.DropMultiplier(run.battles, run.dropBonus) })
+		elseif f.k == "refill" then
+			local okF, res = pcall(h.refill, run.party, true)
+			if okF and type(res) == "table" and (res.cost or 0) > 0 then table.insert(lines, { k = "realGold", n = -(res.cost) }) end
+			if not okF or type(res) ~= "table" or (res.refilled or 0) <= 0 then table.insert(lines, { k = "nothing" }) end
+		elseif f.k == "loseBagGoldPct" then
+			local lose = math.floor(run.bag.gold * f.pct / 100)
+			run.bag.gold -= lose
+			table.insert(lines, { k = "bagGold", n = -lose })
+		elseif f.k == "fight" then
+			ev.fight = f.played
+			table.insert(lines, { k = "fight" })
+		elseif f.k == "nothing" then
+			table.insert(lines, { k = "nothing" })
+		end
+	end
+	-- Step 8 relics (rule 271): a GOOD event outcome rolls R x0.5. Good = the event counts as Good
+	-- (rule 258 odds) and the choice did something (not "nothing"), and didn't turn into a fight
+	-- (agent default). Gambler's Table never gives one (checked in DungeonRelics).
+	local isGood = false
+	for _, e in D.Events do if e.id == ev.id then isGood = e.good end end
+	if isGood and not ev.fight and not (#lines == 1 and lines[1].k == "nothing") and C.grantEventRelic then
+		local rid = C.grantEventRelic(playerId, ev.id)
+		if rid then table.insert(lines, { k = "relic", id = rid }) end
+	end
+	ev.result = lines
+	if not ev.fight then run.cleared[n.id] = true end
+	print(`[DungeonRooms] Event {ev.id} | {choice} | {#lines} result(s){if ev.fight then " | fight " .. ev.fight else ""}`)
+	C.persist()
+	return true, { id = ev.id, lines = lines, fight = ev.fight }
+end
+
+--------------------------------------------------
+-- MERCHANT ROOM (build step 6, project_rules 268 / 270 Q9-Q10)
+-- 6 slots: 3 consumables + 3 gear, seeded by run seed + room (same room = same stock after a rejoin).
+-- Paid from the player's real gold; bought items go straight to the player (never the run bag), so
+-- they are kept on any run end. Bought slots are saved with the run.
+--------------------------------------------------
+
+-- Consumable tier weights for a Merchant slot. DEV DEFAULT (rule 268 says "Apothecary pool" only).
+local CONSUMABLE_TIER_WEIGHTS = table.freeze({ { "Common", 60 }, { "Uncommon", 25 }, { "Rare", 12 }, { "Epic", 3 } })
+local stockCache: { [string]: any } = {} -- [cardId..roomId] = stock (session only; rebuilt from the seed)
+
+local function merchantStock(run: any, n: any, rank: number): { any }
+	local key = run.card.id .. ":" .. n.id .. ":" .. tostring(rank)
+	if stockCache[key] then return stockCache[key] end
+	local seed = ((run.sseed or run.card.seed) * 37 + n.row * 2003 + n.col * 113 + 7) % 2147483647
+	local rng = Random.new(seed)
+	local level = DungeonRules.BattleLevel(rank, run.card.difficulty, n.row, 0, run.stage)
+	local stock = {}
+	local h = C.merchant()
+	-- Consumables (slots 1-3), distinct ids.
+	local pool = (h and h.consumables and h.consumables()) or {}
+	local used: { [string]: boolean } = {}
+	for slot = 1, D.MerchantConsumableSlots do
+		local roll, acc, tier = rng:NextInteger(1, 100), 0, "Common"
+		for _, tw in CONSUMABLE_TIER_WEIGHTS do
+			acc += tw[2]
+			if roll <= acc then tier = tw[1] break end
+		end
+		local free = {}
+		for _, e in pool do
+			if e.tier == tier and not used[e.id] then table.insert(free, e) end
+		end
+		if #free == 0 then for _, e in pool do if not used[e.id] then table.insert(free, e) end end end
+		if #free > 0 then
+			local e = free[rng:NextInteger(1, #free)]
+			used[e.id] = true
+			table.insert(stock, { slot = slot, kind = "consumable", id = e.id, name = e.name, tier = e.tier,
+				price = math.round((e.price or 0) * D.MerchantMarkup) })
+		end
+	end
+	-- Gear (slots 4-6).
+	for i = 1, D.MerchantGearSlots do
+		local slot = D.MerchantConsumableSlots + i
+		local rarity = DungeonRules.MerchantGearRarity(rng:NextInteger(1, 100), run.card.facilityLevel)
+		local itemSeed = (seed + slot * 7919) % 2147483647
+		local item = h and h.gear and h.gear(level, rarity, itemSeed) or nil
+		local price = item and h.gearPrice and h.gearPrice(item) or nil
+		if item and price then
+			table.insert(stock, { slot = slot, kind = "gear", item = item, name = item.displayName, rarity = item.rarityId,
+				itemLevel = item.itemLevel, price = math.round(price * D.MerchantMarkup) })
+		end
+	end
+	stockCache[key] = stock
+	return stock
+end
+
+--- Merchant room view: stock (no item tables sent: names / rarity / level / price), bought flags, and
+--- the refill quote for the party (Apothecary refill x1.5).
+function Rooms.GetMerchant(playerId: string, rank: number): (boolean, any)
+	local run = C.stateOf(playerId).run
+	local n, why = C.currentRoom(run, "Merchant")
+	if not n then return false, why end
+	local bought = run.bought[n.id] or {}
+	local out = {}
+	for _, e in merchantStock(run, n, rank) do
+		table.insert(out, { slot = e.slot, kind = e.kind, id = e.id, name = e.name, tier = e.tier, rarity = e.rarity,
+			itemLevel = e.itemLevel, price = e.price, bought = bought[e.slot] == true,
+			instanceId = e.item and e.item.instanceId or nil })
+	end
+	local plan = C.merchant() and C.merchant().refill and C.merchant().refill(run.party, false) or nil
+	-- missing = every charge the party lacks (refillable now + skipped for gold), so the panel can tell
+	-- "full" apart from "can't afford" (Tester thread-7fb38fa8a88d).
+	return true, { stock = out, refill = plan and { cost = plan.cost, charges = plan.refilled, needGold = plan.needGold,
+		missing = (plan.refilled or 0) + (plan.skippedCharges or 0) } or nil }
+end
+
+--- Buy one Merchant slot. Server re-prices; gold first (all-or-nothing), then the item; refund if the
+--- hand-in fails. Saved.
+function Rooms.BuyMerchant(playerId: string, slot: any, rank: number): (boolean, any)
+	local run = C.stateOf(playerId).run
+	local n, why = C.currentRoom(run, "Merchant")
+	if not n then return false, why end
+	if not C.isInt(slot, 1, D.MerchantConsumableSlots + D.MerchantGearSlots) then return false, "Invalid slot" end
+	run.bought[n.id] = run.bought[n.id] or {}
+	if run.bought[n.id][slot] then return false, "Sold out" end
+	local entry
+	for _, e in merchantStock(run, n, rank) do if e.slot == slot then entry = e end end
+	if not entry then return false, "Sold out" end
+	local h = C.merchant()
+	if not (h and h.pay and h.giveItem and h.giveConsumable) then return false, "Merchant not ready" end
+	if not h.pay(entry.price) then return false, "Not enough gold" end
+	local given = false
+	if entry.kind == "gear" then
+		local okG, res = pcall(h.giveItem, entry.item)
+		given = okG and res ~= false
+	else
+		local okG = pcall(h.giveConsumable, entry.id)
+		given = okG
+	end
+	if not given then
+		if h.refund then h.refund(entry.price) end
+		return false, "Merchant not ready"
+	end
+	run.bought[n.id][slot] = true
+	C.persist()
+	print(`[DungeonRooms] Merchant buy | {n.id} slot {slot} | {tostring(entry.name or entry.id)} | {entry.price}g`)
+	return true, { slot = slot, name = entry.name or entry.id, price = entry.price }
+end
+
+--- Refill the party's equipped consumables at the Apothecary refill formula x1.5 (Q9). Partial when gold
+--- is short (same one-charge-at-a-time rule as the Apothecary).
+function Rooms.RefillMerchant(playerId: string): (boolean, any)
+	local run = C.stateOf(playerId).run
+	local n, why = C.currentRoom(run, "Merchant")
+	if not n then return false, why end
+	local h = C.merchant()
+	if not (h and h.refill) then return false, "Merchant not ready" end
+	local plan = h.refill(run.party, false)
+	local missing = plan and ((plan.refilled or 0) + (plan.skippedCharges or 0)) or 0
+	if missing <= 0 then return false, "Nothing to refill" end
+	if (plan.refilled or 0) <= 0 then return false, "Not enough gold" end -- charges missing, none affordable
+	local res = h.refill(run.party, true)
+	C.persist()
+	print(`[DungeonRooms] Merchant refill: {res.refilled or 0} charge(s) for {res.cost or 0}g`
+		.. (if (res.skippedCharges or 0) > 0 then ` | {res.skippedCharges} not refilled - need {res.needGold or 0}g` else ""))
+	return true, { cost = res.cost, charges = res.refilled, skipped = res.skippedCharges }
+end
+
+
+return Rooms

@@ -6,7 +6,7 @@
 --   Recruit pool generation, hire eligibility, hire cost resolution.
 --
 -- READS:
---   Guild level (GuildService), recruitment costs (economy_framework),
+--   Renown Rank (RenownService; Guild Level retired in step 8), recruitment costs (economy_framework),
 --   roster capacity, region/unlock gates (loot_progression / Tavern facility).
 --
 -- WRITES:
@@ -75,13 +75,14 @@ local TAVERN_BONUS_MAX = 3
 -- INJECTED DEPENDENCIES
 --------------------------------------------------
 
-local _guildService: any = nil           -- GetGuildLevel(playerId)
 local _persistentState: any = nil        -- RegisterNewUnit(playerId, unitId, maxHp, maxMp)
 local _currency: any = nil               -- { GetGold, SpendGold } — see note below
 local _unitFactory: any = nil            -- function(candidate) -> unitDef{ id, maxHp, maxMp, ... }
 local _tavernLevelProvider: ((string) -> number)? = nil  -- returns Tavern facility level
 
-function RecruitmentService.SetGuildService(svc: any) _guildService = svc end
+-- Renown (loot_progression 75/91, step 5 2026-11-13): recruits appear at Rank - 5 .. Rank.
+local _renownService: any = nil
+function RecruitmentService.SetRenownService(svc: any) _renownService = svc end
 function RecruitmentService.SetPersistentStateService(svc: any) _persistentState = svc end
 function RecruitmentService.SetCurrencyProvider(svc: any) _currency = svc end
 function RecruitmentService.SetUnitFactory(fn: any) _unitFactory = fn end
@@ -179,20 +180,22 @@ function RecruitmentService.GenerateRecruitPool(playerId: string, seed: number, 
 	local rng = Random.new(seed or 0)
 	local qualities = allowedQualities(playerId)
 
-	-- Center candidate levels on content/Guild level WITHOUT inventing a spread
+	-- Center candidate levels on content level, else the Renown window, WITHOUT inventing a spread
 	-- rule: use a modest +/-2 band around the center. This affects only the
 	-- generated candidate level (which feeds the LOCKED fee formula); it is a
 	-- generation detail, not a balance rule, and does not alter any DB value.
 	local center = 1
+	local lo, hi = nil, nil
 	if context and type(context.recommendedLevel) == "number" then
 		center = math.max(1, math.floor(context.recommendedLevel))
-	elseif _guildService and _guildService.GetGuildLevel then
-		center = math.max(1, _guildService.GetGuildLevel(playerId))
-	end
+	elseif _renownService and _renownService.GetRecruitWindow then
+		if _renownService.EnsureConverted then _renownService.EnsureConverted(playerId) end
+		lo, hi = _renownService.GetRecruitWindow(playerId) -- Rank - 5 .. Rank (1-99)
+	end -- no Renown wired (tests only): centre stays 1. Guild Level retired (Renown step 8).
 
 	local pool = {}
 	for i = 1, poolSize do
-		local level = math.max(1, center + rng:NextInteger(-2, 2))
+		local level = if lo and hi then rng:NextInteger(lo, hi) else math.max(1, center + rng:NextInteger(-2, 2))
 		local quality = qualities[rng:NextInteger(1, #qualities)]
 		local cost = RecruitmentService.ResolveHireCost(level, quality)
 		table.insert(pool, {

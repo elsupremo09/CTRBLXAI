@@ -97,7 +97,9 @@ GuildScreen.ROW_GAP = ROW_GAP
 
 -- opts: name (ScreenGui name), title, parent (PlayerGui).
 -- Returns a screen table: Gui, Main, Side, Buttons, and the methods below.
-function GuildScreen.Create(opts: { name: string, title: string, parent: Instance }): any
+-- opts.fullMain (2026-11-13, Units screen): Main spans the full width above the Buttons row and
+-- the Side panel is hidden (screens with nothing to inspect).
+function GuildScreen.Create(opts: { name: string, title: string, parent: Instance, fullMain: boolean? }): any
 	local gui = Instance.new("ScreenGui")
 	gui.Name = opts.name
 	gui.ResetOnSpawn = false
@@ -222,6 +224,10 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 		sidePanel.Size = UDim2.new(SIDE_SHARE, -MARGIN * 1.5, 1, -(top + MARGIN * 2 + buttonsH))
 		buttons.Position = UDim2.new(1, -MARGIN, 1, -MARGIN)
 		buttons.Size = UDim2.new(SIDE_SHARE, -MARGIN * 1.5, 0, buttonsH)
+		if opts.fullMain then
+			mainPanel.Size = UDim2.new(1, -MARGIN * 2, 1, -(top + MARGIN * 2 + buttonsH))
+			sidePanel.Visible = false
+		end
 	end
 
 	-- Number of button rows the caller will build (sizes the Buttons group and Side panel).

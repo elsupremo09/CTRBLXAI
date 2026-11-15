@@ -51,12 +51,29 @@ local RecruitmentService     = require(Game:WaitForChild("RecruitmentService"))
 local MerchantService        = require(Game:WaitForChild("MerchantService"))
 local BlacksmithService      = require(Game:WaitForChild("BlacksmithService"))
 local RuneforgeService       = require(Game:WaitForChild("RuneforgeService"))
+local GemCraftService        = require(Game:WaitForChild("GemCraftService")) -- Runeforge Gem Craft tab (2026-11-12)
 local CrucibleService        = require(Game:WaitForChild("CrucibleService")) -- gear merging (2026-11-02)
 local ApothecaryService      = require(Game:WaitForChild("ApothecaryService")) -- consumables (2026-11-03)
 local TrainingGroundsService = require(Game:WaitForChild("TrainingGroundsService")) -- 2nd augment slot (2026-11-04)
 local CardShopService        = require(Game:WaitForChild("CardShopService")) -- Training Grounds shop (2026-11-04)
 local DispatchService        = require(Game:WaitForChild("DispatchService"))
+-- Dungeon party lock (project_rules 265, Dungeon build step 2, 2026-11-13): a unit in an active
+-- dungeon run counts as away everywhere a dispatched unit does. Injected by Main (nil-safe).
+local _unitLockCheck: ((string, string) -> boolean)? = nil
+local function isUnitAway(pid: string, unitId: string): boolean
+	if DispatchService.IsUnitDispatched(pid, unitId) then return true end
+	return _unitLockCheck ~= nil and _unitLockCheck(pid, unitId) == true
+end
+-- Why a unit is away (USER RULING 2026-11-13 8:24 PM): "dispatch", "dungeon" or nil. The client
+-- shows "Exploring a dungeon" for dungeon units; dispatched units keep their wording.
+local DUNGEON_AWAY_TEXT = "Exploring a dungeon" -- approved text 2026-11-13 8:24 PM
+local function awayReason(pid: string, unitId: string): string?
+	if DispatchService.IsUnitDispatched(pid, unitId) then return "dispatch" end
+	if _unitLockCheck ~= nil and _unitLockCheck(pid, unitId) == true then return "dungeon" end
+	return nil
+end
 local ProgressionService     = require(Game:WaitForChild("ProgressionService"))
+local RenownService          = require(Game:WaitForChild("RenownService")) -- Renown Rank header (step 2, 2026-11-12)
 -- Item -> UI detail entry (same builder as Loadout/inspector) for the Merchant inspector (2026-10-31).
 local ItemDisplay            = require(Game:WaitForChild("ItemDisplay"))
 
@@ -80,7 +97,7 @@ local GuildMenuService = {}
 -- until Slice 8 builds real facility purchasing). ONE table, Dev-adjustable.
 local DEFAULT_BUILDING_LEVEL = 1
 local BUILDING_MIN_LEVEL, BUILDING_MAX_LEVEL = 1, 10 -- guild_facilities: Max Level 10
-local BUILDING_NAMES = table.freeze({ "GuildHall", "Tavern", "Merchant", "Blacksmith", "Runeforge", "Crucible", "Apothecary", "TrainingGrounds" })
+local BUILDING_NAMES = table.freeze({ "GuildHall", "Tavern", "Merchant", "Blacksmith", "Runeforge", "Crucible", "Apothecary", "TrainingGrounds", "Dungeon" }) -- Dungeon: dev-adjustable 2026-11-15 (Main caps it at Guild Hall, 0 below GH L6)
 -- guild_facilities 46: the Runeforge unlocks at Guild Hall L4 and can never be above the
 -- Guild Hall level. Its building level is Dev-adjustable until Slice 8 facility purchasing.
 local RUNEFORGE_UNLOCK_GUILD_HALL = 4
@@ -108,7 +125,7 @@ local BLACKSMITH_RARITY_LEVEL = table.freeze({
 local ITEM_LEVEL_CAP = 99
 
 local RATE_LIMIT_SECONDS = 0.2 -- SEC-001: per-player, per-request minimum spacing
-local MAX_DISPATCH_PICK = 7
+local MAX_DISPATCH_PICK = 3 -- USER RULING 2026-11-12: up to 3 units per mission (was 7)
 
 local EQUIP_SLOT_ORDER = table.freeze({ "MainHand", "OffHand", "Head", "Body", "Gloves", "Feet", "Accessory" })
 
@@ -172,15 +189,24 @@ local function playerUnits(): { [string]: any }
 	return (_getPlayerUnits and _getPlayerUnits()) or {}
 end
 
--- ROSTER CAPACITY (user ruling 2026-11-10): base 10. Guild Level bonus (every 5 levels up
--- to Guild Level 99) is a planned hook only; the curve is not decided, so it adds 0 today.
+-- ROSTER CAPACITY (loot_progression 91, Renown step 5 2026-11-13): base 10 + 1 per 5 Renown
+-- Ranks. Over-cap saves keep their units; only new hires/recruits are blocked (row 92).
 local function rosterCount(): number
 	local n = 0
 	for _ in playerUnits() do n += 1 end
 	return n
 end
 function GuildMenuService.GetRosterCapacity(): number
-	return GameConstants.ROSTER_BASE_CAPACITY or 10
+	local cap = GameConstants.ROSTER_BASE_CAPACITY or 10
+	if _playerId then
+		RenownService.EnsureConverted(_playerId)
+		cap = RenownService.GetRosterCapacity(_playerId)
+	end
+	-- Display copy for the Loadout unit picker (client reads it; server stays the authority).
+	if _sessionPlayer and _sessionPlayer:GetAttribute("RosterCapacity") ~= cap then
+		_sessionPlayer:SetAttribute("RosterCapacity", cap)
+	end
+	return cap
 end
 function GuildMenuService.GetRosterCount(): number
 	return rosterCount()
@@ -291,7 +317,7 @@ end
 local function homeUnitCount(): number
 	local n = 0
 	for id in playerUnits() do
-		if not DispatchService.IsUnitDispatched(_playerId, id) then n += 1 end
+		if not isUnitAway(_playerId, id) then n += 1 end
 	end
 	return n
 end
@@ -870,6 +896,11 @@ function GuildMenuService.GetBattlesCompleted(): number
 	return battlesCompleted
 end
 
+--- Dev "Refresh all shops" counter (saved). The Dungeon folds it into its choice window (2026-11-15).
+function GuildMenuService.GetDevShopNonce(): number
+	return devShopNonce
+end
+
 --------------------------------------------------
 -- BATTLE ROSTER SYNC (Main calls once, right before deployment)
 -- * adds units hired in the pre-battle menu
@@ -881,7 +912,10 @@ end
 
 local benchedThisBattle: { any } = {}
 
-function GuildMenuService.SyncBattleRoster(allUnitsList: { any }, deployCap: number, partyMembers: { string }?)
+-- opts.dungeon (Dungeon build step 3): the battle is the dungeon party's own room, so the dungeon
+-- lock is not "away" here; dispatched units still are.
+function GuildMenuService.SyncBattleRoster(allUnitsList: { any }, deployCap: number, partyMembers: { string }?, opts: any?)
+	local dungeon = type(opts) == "table" and opts.dungeon == true
 	-- 1) add pending hires after the last Player-side entry
 	for _, unit in pendingBattleUnits do
 		local present = false
@@ -897,7 +931,8 @@ function GuildMenuService.SyncBattleRoster(allUnitsList: { any }, deployCap: num
 	-- 2) remove dispatched units (iterate backwards)
 	for i = #allUnitsList, 1, -1 do
 		local u = allUnitsList[i]
-		if u.side == "Player" and DispatchService.IsUnitDispatched(_playerId, u.id) then
+		local away = if dungeon then DispatchService.IsUnitDispatched(_playerId, u.id) else isUnitAway(_playerId, u.id)
+		if u.side == "Player" and away then
 			table.remove(allUnitsList, i)
 			print(`[GuildMenuService] {u.name} is away on dispatch — not in this battle`)
 		end
@@ -921,7 +956,9 @@ function GuildMenuService.SyncBattleRoster(allUnitsList: { any }, deployCap: num
 	-- 3) bench beyond the cap, from the END of the list. List order is: starting units
 	--     first, then the rest in id-sorted order per the Stage 2 roster snapshot (2026-10-19).
 	benchedThisBattle = {}
-	local cap = math.max(1, math.min(MAX_DEPLOY, math.floor(deployCap or MAX_DEPLOY)))
+	-- Dungeon party (step 7b): up to 10 attend; only 7 are placed (Main's deploy cap), so no bench here.
+	local ceiling = if dungeon then 10 else MAX_DEPLOY
+	local cap = math.max(1, math.min(ceiling, math.floor(deployCap or MAX_DEPLOY)))
 	local count = 0
 	for i = 1, #allUnitsList do
 		if allUnitsList[i].side == "Player" then count += 1 end
@@ -940,13 +977,16 @@ function GuildMenuService.SyncBattleRoster(allUnitsList: { any }, deployCap: num
 end
 
 -- Extra payload for the deployment screen: units shown greyed out ("Away"/"Bench").
-function GuildMenuService.GetAwayUnitsForDeployment(): { any }
+function GuildMenuService.GetAwayUnitsForDeployment(opts: any?): { any }
+	local dungeon = type(opts) == "table" and opts.dungeon == true -- see SyncBattleRoster
 	local out = {}
 	local units = playerUnits()
 	for _, id in sortedKeys(units) do
 		local u = units[id]
-		if DispatchService.IsUnitDispatched(_playerId, id) then
-			table.insert(out, { id = id, name = u.name, level = u.level, reason = "AWAY" })
+		if (if dungeon then DispatchService.IsUnitDispatched(_playerId, id) else isUnitAway(_playerId, id)) then
+			local why = awayReason(_playerId, id)
+			table.insert(out, { id = id, name = u.name, level = u.level, awayReason = why,
+				reason = if why == "dungeon" then DUNGEON_AWAY_TEXT else "AWAY" })
 		end
 	end
 	for _, u in benchedThisBattle do
@@ -998,6 +1038,11 @@ function GuildMenuService.Open(phase: string, extra: { [string]: any }?)
 	print(`[GuildMenuService] Guild menu OPEN ({phase})`)
 end
 
+-- Dungeon screen gate (build step 5): changes only while the menu is open at the base hub.
+function GuildMenuService.IsOpenAtBase(): boolean
+	return isOpen and currentPhase == "Base"
+end
+
 function GuildMenuService.Close()
 	if not isOpen then return end
 	isOpen = false
@@ -1024,6 +1069,12 @@ local function overview()
 		buildings = table.clone(buildingLevels),
 		battlesCompleted = battlesCompleted,
 		rosterCount = count,
+		-- Renown Rank for the header (display only; the server owns it). Step 2, 2026-11-12.
+		renown = (function()
+			if not _playerId then return nil end
+			local have, need = RenownService.GetProgress(_playerId)
+			return { rank = RenownService.GetRank(_playerId), renown = have, need = need }
+		end)(),
 		lastRefill = ApothecaryService.TakeLastReturn(), -- { cost, refilled, skippedCharges, needGold }; given once
 		augmentNotice = TrainingGroundsService.TakeNotice(), -- approved wording, given once (2026-11-04)
 		isStudio = RunService:IsStudio(),
@@ -1089,6 +1140,11 @@ local function blacksmithGate(item: any): (boolean, string?)
 	local bLevel = GuildMenuService.GetBuildingLevel("Blacksmith")
 	local maxLevel = math.min(ITEM_LEVEL_CAP, bLevel * 10)
 	if bLevel >= BUILDING_MAX_LEVEL then maxLevel = ITEM_LEVEL_CAP end
+	-- Renown cap (guild_facilities 12/41/50, step 5 2026-11-13): min(Rank + 5, building x 10,
+	-- highest unit). The highest-unit check below keeps its own message.
+	RenownService.EnsureConverted(_playerId)
+	local rank = RenownService.GetRank(_playerId)
+	local rankCap = math.min(ITEM_LEVEL_CAP, RenownService.GetBlacksmithRankCap(_playerId))
 	-- Roster cap (user ruling 2026-11-10): never above the highest-level unit owned, since no
 	-- one could equip it. Applies to staging (upgradeCurve), single upgrades and Confirm.
 	local highest = 1
@@ -1100,6 +1156,13 @@ local function blacksmithGate(item: any): (boolean, string?)
 		maxLevel = highest
 		if item.itemLevel + 1 > maxLevel then
 			return false, `Your highest-level unit is L{highest}; items cannot go above that`
+		end
+	end
+	if rankCap < maxLevel then
+		maxLevel = rankCap
+		if item.itemLevel + 1 > maxLevel then
+			-- Approved text (loot_progression 94). Rank needed = target level - 5 (cap = Rank + 5, guild_facilities 50; user ruling 2026-11-13 3:01 PM).
+			return false, `Your guild needs Renown Rank {item.itemLevel + 1 - 5} to upgrade past level {rank + 5}.`
 		end
 	end
 	if item.itemLevel + 1 > maxLevel then
@@ -1467,7 +1530,7 @@ local function onFinalizeCart(player: Player, payload: any)
 			for _, id in d.unitIds do
 				if type(id) ~= "string" or seen[id] then okPick = false; break end
 				if not live[id] then okPick = false; break end
-				if DispatchService.IsUnitDispatched(_playerId, id) then okPick = false; break end
+				if isUnitAway(_playerId, id) then okPick = false; break end
 				seen[id] = true
 				table.insert(clean, id)
 			end
@@ -1553,14 +1616,25 @@ local function onGetDispatchBoard(player: Player)
 		table.insert(missions, {
 			missionId = m.missionId, tier = m.tier, duration = m.duration, xp = m.xp,
 			rewardMercury = m.rewardMercury,
+			-- The mission's ONE material (USER RULING 2026-11-12, DispatchService.OfferMissions).
+			rewardMaterial = m.rewardMaterial or "mercury", rewardAmount = m.rewardAmount or m.rewardMercury,
 		})
 	end
 	local units = {}
 	local live = playerUnits()
+	-- Which mission each away unit is on (Dispatch Recall 2026-11-12: the Out now strip
+	-- groups by mission so the player can recall one). Display only.
+	local missionOf: { [string]: any } = {}
+	for _, rec in DispatchService.GetActiveDispatches(_playerId) do
+		if rec.unitId and rec.missionId then missionOf[rec.unitId] = rec end
+	end
 	for _, id in sortedKeys(live) do
-		local away = DispatchService.IsUnitDispatched(_playerId, id)
+		local away = isUnitAway(_playerId, id)
+		local rec = if away then missionOf[id] else nil
 		table.insert(units, { id = id, name = live[id].name, level = live[id].level,
-			away = away, returnBattle = awayUntil[id] })
+			away = away, awayReason = if away then awayReason(_playerId, id) else nil, returnBattle = awayUntil[id],
+			awayMissionId = rec and rec.missionId, awayMissionTier = rec and rec.tier,
+			portraitAssetId = live[id].portraitAssetId }) -- Dispatch screen portraits (display only)
 	end
 	return { ok = true, missions = missions, units = units, battlesCompleted = battlesCompleted,
 		slotsUsed = DispatchService.GetSlotsUsed(_playerId),
@@ -1572,7 +1646,7 @@ local function onRequestDispatch(player: Player, missionId: any, unitIds: any)
 	local g = guard(player, "send"); if g then return fail(g) end
 	if type(missionId) ~= "string" or #missionId > 64 then return fail("Invalid mission") end
 	if type(unitIds) ~= "table" or #unitIds < 1 or #unitIds > MAX_DISPATCH_PICK then
-		return fail("Pick 1 to 7 units")
+		return fail(`Pick 1 to {MAX_DISPATCH_PICK} units`) -- was a typed-in 7 (cap is 3 since 2026-11-12)
 	end
 	local live = playerUnits()
 	local seen = {}
@@ -1580,7 +1654,7 @@ local function onRequestDispatch(player: Player, missionId: any, unitIds: any)
 	for _, id in unitIds do
 		if type(id) ~= "string" or seen[id] then return fail("Invalid unit selection") end
 		if not live[id] then return fail("That unit is not on your roster") end
-		if DispatchService.IsUnitDispatched(_playerId, id) then return fail(`{live[id].name} is already away`) end
+		if isUnitAway(_playerId, id) then return fail(`{live[id].name} is already away`) end
 		seen[id] = true
 		table.insert(clean, id)
 	end
@@ -1596,6 +1670,24 @@ local function onRequestDispatch(player: Player, missionId: any, unitIds: any)
 	table.remove(board.missions, mIdx)
 	markDirty()
 	return { ok = true, returnBattle = result.returnBattle, xpEach = result.xpEach }
+end
+
+-- Dispatch Recall (USER RULING 2026-11-12): end an away mission early, at the guild base only.
+-- guard() = right player + guild menu open + rate limit (SEC-001). The menu also opens in
+-- "PreBattle" (quest scouting, Main.server Open("PreBattle")), so the phase is checked too:
+-- only "Base" may recall. No reward, no fee refund (DispatchService.RecallMission).
+local function onRecallDispatch(player: Player, missionId: any)
+	local g = guard(player, "recall"); if g then return fail(g) end
+	if currentPhase ~= "Base" then return fail("Recall is only possible at the guild base") end
+	if type(missionId) ~= "string" or #missionId == 0 or #missionId > 64 then return fail("Invalid mission") end
+	local ok, result: any = DispatchService.RecallMission(_playerId, missionId)
+	if not ok then return fail(tostring(result)) end
+	-- The board cache keeps its offers; RecallMission also keeps the mission off a rebuilt board.
+	markDirty()
+	local names: { string } = {}
+	local live = playerUnits()
+	for _, id in result.returnedUnitIds do table.insert(names, if live[id] then tostring(live[id].name) else id) end
+	return { ok = true, missionId = result.missionId, returnedUnitIds = result.returnedUnitIds, returnedNames = names }
 end
 
 local function onGetGuildUnits(player: Player)
@@ -1618,7 +1710,10 @@ local function onGetGuildUnits(player: Player)
 			race = race and race.name or "?",
 			doctrine = doc and doc.name or "?",
 			hp = u.currentHp, maxHp = u.maxHp,
-			away = DispatchService.IsUnitDispatched(_playerId, id),
+			mp = u.currentMp, maxMp = u.maxMp, -- Units screen HP/MP bars (2026-11-13)
+			portraitAssetId = u.portraitAssetId, -- Units screen portrait (2026-11-13)
+			away = isUnitAway(_playerId, id),
+			awayReason = awayReason(_playerId, id),
 			returnBattle = awayUntil[id],
 			isRecruit = u.isRecruit == true,
 		})
@@ -1643,7 +1738,8 @@ local function partyMemberInfo(unitId: string): any
 		name = u.name,
 		unitLevel = u.level,
 		race = race and race.name or "?",
-		away = DispatchService.IsUnitDispatched(_playerId, unitId),
+		away = isUnitAway(_playerId, unitId),
+		awayReason = awayReason(_playerId, unitId),
 		-- Parties tab portraits (2026-11-04): face, doctrine icon + name.
 		portraitAssetId = u.portraitAssetId,
 		doctrineName = doc and doc.name or nil,
@@ -1723,7 +1819,7 @@ local function onSetPartyMembers(player: Player, slot: any, unitIds: any): any
 	for _, uid in ipairs(unitIds) do
 		-- Units on dispatch can't be added; members who went on dispatch stay (D-rule).
 		if type(uid) == "string" and live[uid] and not seen[uid]
-			and (already[uid] or not DispatchService.IsUnitDispatched(_playerId, uid)) then
+			and (already[uid] or not isUnitAway(_playerId, uid)) then
 			seen[uid] = true
 			table.insert(clean, uid)
 		end
@@ -1950,6 +2046,11 @@ local function onDismissUnit(player: Player, unitId: any, confirm: any): any
 	local units = playerUnits()
 	local unit = units[unitId]
 	if not unit then return fail("That unit is no longer on your roster") end
+	-- Units in a dungeon run or on dispatch can't be dismissed until they return
+	-- (USER RULING 2026-11-13 8:24 PM). Checked on preview AND commit.
+	local why = awayReason(_playerId, unitId)
+	if why == "dungeon" then return fail(DUNGEON_AWAY_TEXT) end
+	if why == "dispatch" then return fail(`{unit.name} is already away`) end
 
 	local isAvatar = (unitId == AVATAR_UNIT_ID) or (unit.is_avatar == true)
 	local fee = 0
@@ -2266,6 +2367,62 @@ local function onCommitReroll(player: Player, instanceId: any, choice: any)
 	return { ok = true, choice = result.choice, name = itemDisplayName(item), gold = gold, resources = res }
 end
 
+-- GEM CRAFT (USER RULING 2026-11-12 1:54 PM). Rules + prices in GemCraftService / Shared
+-- GemCraftRules; this handler only checks the request shape (SEC-001). Base only, like Recall:
+-- the menu also opens in "PreBattle" (quest scouting).
+local CRAFT_SINGLE = table.freeze({ Upgrade = true, BreakDown = true })
+local CRAFT_MIX = table.freeze({ Mix = true, MixPassives = true })
+local function validGemId(id: any): boolean
+	return type(id) == "string" and #id > 0 and #id <= 64
+end
+local function onCraftGems(player: Player, req: any)
+	local g = guard(player, "gemCraft"); if g then return fail(g) end
+	if currentPhase ~= "Base" then return fail("Gem crafting is only possible at the guild base") end
+	if RuneforgeService.GetState().level < 1 then
+		local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
+		return fail(`The Runeforge unlocks at Guild Hall L{RUNEFORGE_UNLOCK_GUILD_HALL} (yours is L{gh})`)
+	end
+	if type(req) ~= "table" or type(req.action) ~= "string" then return fail("Invalid rune gem selection") end
+	local clean: any
+	if CRAFT_SINGLE[req.action] then
+		local t = req.times
+		if not validGemId(req.gem) or type(t) ~= "number" or t ~= t or t % 1 ~= 0 or t < 1 or t > 999 then
+			return fail("Invalid rune gem selection")
+		end
+		clean = { action = req.action, gem = req.gem, times = t }
+	elseif CRAFT_MIX[req.action] then
+		local list = req.gems
+		if type(list) ~= "table" or #list ~= 5 then return fail("Invalid rune gem selection") end
+		local ids = {}
+		for i = 1, 5 do
+			if not validGemId(list[i]) then return fail("Invalid rune gem selection") end
+			ids[i] = list[i]
+		end
+		clean = { action = req.action, gems = ids }
+	else
+		return fail("Invalid rune gem selection")
+	end
+	local ok, result: any = GemCraftService.Craft(_playerId, clean)
+	if not ok then return fail(tostring(result)) end
+	markDirty()
+	-- What came out, described like the Gems tab (display only: the screen shows a random result
+	-- in the bonus inspector).
+	local gained = {}
+	for id, n in result.gained do
+		local d = RuneforgeService.DescribeGem(id)
+		if d then
+			d.count = n
+			d.group = ItemGenerator.GetExclusiveGroup(id)
+			d.effect, d.effectScales = ItemDisplay.DescribeBonusEffect(id, GEM_EFFECT_LEVEL)
+			d.effectLevel = GEM_EFFECT_LEVEL
+			table.insert(gained, d)
+		end
+	end
+	local gold, res = balance()
+	return { ok = true, action = result.action, spentGold = result.gold, spent = result.spent, gained = gained,
+		times = result.times, gold = gold, resources = res }
+end
+
 -- DEV TOOLS (Studio only, 2026-10-31): the always-on dev panel (DevToolsPanel) uses this
 -- RemoteFunction so it gets an answer back (the building levels after a change). Live servers
 -- refuse every request. Replaces the old DevCommand "SetBuildingLevel" listener.
@@ -2384,10 +2541,13 @@ local function onDevGuild(player: Player, cmd: any): any
 		devShopNonce = math.min(devShopNonce + 1, DEV_NONCE_MAX)
 		tavernCache, merchantCache, dispatchCache = nil, nil, nil
 		markDirty()
-		print(`[Dev] All shops refreshed (Merchant, Tavern, Dispatch) | refresh #{devShopNonce} (saved when the menu closes)`)
+		print(`[Dev] All shops refreshed (Merchant, Tavern, Dispatch, Dungeon choices) | refresh #{devShopNonce} (saved when the menu closes)`)
 	end
 	return { ok = true, buildings = table.clone(buildingLevels), shopRefresh = devShopNonce }
 end
+
+-- Dungeon party lock check (Main wires DungeonService.IsUnitLocked; nil = no lock).
+function GuildMenuService.SetUnitLockCheck(fn: ((string, string) -> boolean)?) _unitLockCheck = fn end
 
 function GuildMenuService.Init(deps: any)
 	_playerId = deps.playerId or _playerId
@@ -2434,6 +2594,7 @@ function GuildMenuService.Init(deps: any)
 	GuildEvents.FinalizeCart.OnServerInvoke = onFinalizeCart
 	GuildEvents.GetDispatchBoard.OnServerInvoke = onGetDispatchBoard
 	GuildEvents.RequestDispatch.OnServerInvoke = onRequestDispatch
+	GuildEvents.RecallDispatch.OnServerInvoke = onRecallDispatch
 	GuildEvents.GetGuildUnits.OnServerInvoke = onGetGuildUnits
 	GuildEvents.GetParties.OnServerInvoke = onGetParties
 	GuildEvents.SetPartyName.OnServerInvoke = onSetPartyName
@@ -2449,6 +2610,7 @@ function GuildMenuService.Init(deps: any)
 	GuildEvents.GetRerollSets.OnServerInvoke = onGetRerollSets
 	GuildEvents.PayReroll.OnServerInvoke = onPayReroll -- pay first, then the sets (2026-11-07)
 	GuildEvents.CommitReroll.OnServerInvoke = onCommitReroll
+	GuildEvents.CraftGems.OnServerInvoke = onCraftGems -- Gem Craft tab (2026-11-12)
 	-- Crucible (gear merging, 2026-11-02).
 	GuildEvents.GetCrucible.OnServerInvoke = onGetCrucible
 	GuildEvents.PreviewMerge.OnServerInvoke = onPreviewMerge

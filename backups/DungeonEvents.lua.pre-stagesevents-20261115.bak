@@ -1,0 +1,120 @@
+--!strict
+-- DungeonEvents.lua
+-- CTRBLXAI | Dungeon Event rooms (Dungeon build step 7a, 2026-11-14; project_rules 258 / 272).
+-- Server-only (ARC-001/003). Pure-ish: picks the event for a room (seeded, no repeats in a run,
+-- weighted by the facility good/bad odds; mixed counts as Good) and resolves a choice into an
+-- effect list that DungeonService applies. All numbers live in DungeonRules.Data.Ev (DAT-001).
+-- Seeded results (Gambler's Table, Sealed Door, the event pick) use run seed + room position, so
+-- quitting and rejoining can never change them (project_rules 272).
+
+local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local D = DungeonRules.Data
+local E = D.Ev
+
+local DungeonEvents = {}
+
+local function seedOf(runSeed: number, row: number, col: number, salt: number): number
+	return (math.floor(runSeed) * 197 + row * 6007 + col * 911 + salt * 53 + 29) % 2147483647
+end
+
+--- Event id for a room. `seen` = ids already played this run. No repeats until all 10 were seen.
+function DungeonEvents.Pick(runSeed: number, row: number, col: number, facilityLevel: number, seen: { [string]: boolean }): string
+	local rng = Random.new(seedOf(runSeed, row, col, 1))
+	local goodPct = DungeonRules.Level(facilityLevel).eventGoodPct
+	local wantGood = rng:NextNumber() * 100 < goodPct
+	local all, fresh, freshAny = {}, {}, {}
+	for _, ev in D.Events do
+		table.insert(all, ev)
+		if not seen[ev.id] then
+			table.insert(freshAny, ev)
+			if ev.good == wantGood then table.insert(fresh, ev) end
+		end
+	end
+	local pool = if #fresh > 0 then fresh elseif #freshAny > 0 then freshAny else all
+	return pool[rng:NextInteger(1, #pool)].id
+end
+
+-- Choices per event (keys are sent to the client; labels are the approved draft text, client side).
+DungeonEvents.Choices = table.freeze({
+	["EV-01"] = { "open", "leave" },
+	["EV-02"] = { "drink", "flask", "move" },
+	["EV-03"] = { "buy", "no" },
+	["EV-04"] = { "pouch", "bury" },
+	["EV-05"] = { "offer", "walk" },
+	["EV-06"] = { "offer", "refuse" },
+	["EV-07"] = { "break", "leave" },
+	["EV-08"] = { "bet", "walk" },
+	["EV-09"] = { "run", "shield" },
+	["EV-10"] = { "hand", "fight" },
+})
+
+local function valid(id: string, choice: string): boolean
+	local cs = DungeonEvents.Choices[id]
+	if not cs then return false end
+	for _, c in cs do if c == choice then return true end end
+	return false
+end
+
+--- Resolve a choice into effects (DungeonService applies them; amounts never come from the client).
+--- Effect kinds: { k = "rolls", n } gear/card rolls into the bag at the current drop rate;
+--- { k = "bagGold", n }; { k = "bagMat", id, n } (normal material); { k = "heal", pct };
+--- { k = "revive", pct }; { k = "hurtAll", pct }; { k = "hurtTop", pct }; { k = "realGold", n } (+/-);
+--- { k = "shrine", bonus }; { k = "refill", mult }; { k = "loseBagGoldPct", pct };
+--- { k = "fight", played = "Battle" | "Elite" }; { k = "nothing" }.
+--- Returns ok, effects | error. `ctx` = { hasKO: boolean, realGold: number }.
+function DungeonEvents.Resolve(id: string, choice: string, runSeed: number, row: number, col: number, ctx: any): (boolean, any)
+	if not valid(id, choice) then return false, "Invalid choice" end
+	local fx: { any } = {}
+	if id == "EV-01" then
+		if choice == "open" then table.insert(fx, { k = "rolls", n = E.CacheRolls }) end
+	elseif id == "EV-02" then
+		if choice == "drink" then table.insert(fx, { k = "heal", pct = E.SpringHealPct })
+		elseif choice == "flask" then
+			if not ctx.hasKO then return false, "Invalid choice" end
+			table.insert(fx, { k = "revive", pct = E.FlaskRevivePct })
+		end
+	elseif id == "EV-03" then
+		if choice == "buy" then table.insert(fx, { k = "refill", mult = E.PeddlerPriceMult }) end
+	elseif id == "EV-04" then
+		if choice == "pouch" then table.insert(fx, { k = "bagGold", n = E.PouchGold })
+		else table.insert(fx, { k = "bagMat", id = "mercury", n = E.BuryMercury }) end
+	elseif id == "EV-05" then
+		if choice == "offer" then
+			if (ctx.realGold or 0) < E.ShrineCost then return false, "Not enough gold" end
+			table.insert(fx, { k = "realGold", n = -E.ShrineCost })
+			table.insert(fx, { k = "shrine", bonus = E.ShrineBonus })
+		end
+	elseif id == "EV-06" then
+		if choice == "offer" then
+			table.insert(fx, { k = "hurtAll", pct = E.AltarHurtPct })
+			table.insert(fx, { k = "rolls", n = E.AltarRolls })
+		end
+	elseif id == "EV-07" then
+		if choice == "break" then
+			local roll = Random.new(seedOf(runSeed, row, col, 7)):NextNumber() * 100
+			if roll < E.DoorTreasurePct then
+				table.insert(fx, { k = "rolls", n = E.DoorRolls })
+				table.insert(fx, { k = "bagGold", n = E.DoorGold })
+			else
+				table.insert(fx, { k = "fight", played = "Elite" })
+			end
+		end
+	elseif id == "EV-08" then
+		if choice == "bet" then
+			if (ctx.realGold or 0) < E.GambleBet then return false, "Not enough gold" end
+			local win = Random.new(seedOf(runSeed, row, col, 8)):NextNumber() * 100 < E.GambleWinPct
+			-- Bet 200: win = 400 back (net +200), lose = -200 (DEV DEFAULT reading: Sim v7 "averages zero").
+			table.insert(fx, { k = "realGold", n = if win then E.GamblePayout - E.GambleBet else -E.GambleBet })
+		end
+	elseif id == "EV-09" then
+		if choice == "run" then table.insert(fx, { k = "hurtAll", pct = E.TunnelAllPct })
+		else table.insert(fx, { k = "hurtTop", pct = E.TunnelOnePct }) end
+	elseif id == "EV-10" then
+		if choice == "hand" then table.insert(fx, { k = "loseBagGoldPct", pct = E.CutpurseGoldPct })
+		else table.insert(fx, { k = "fight", played = "Battle" }) end
+	end
+	if #fx == 0 then table.insert(fx, { k = "nothing" }) end
+	return true, fx
+end
+
+return table.freeze(DungeonEvents)

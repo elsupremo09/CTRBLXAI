@@ -314,6 +314,37 @@ function MerchantService.PriceToBuy(item: any): number?
 	return math.round(baseValue * rarityMult * lvlMult * markup)
 end
 
+-- Dungeon Merchant (Dungeon build step 6, 2026-11-14; project_rules 268, economy_framework 15).
+-- Same shop formula with the Legendary markup x8.0 (used only here), times the dungeon markup.
+-- The base Merchant is unchanged (it never stocks Legendary).
+local DUNGEON_LEGENDARY_MARKUP = 8.0
+function MerchantService.DungeonPrice(item: any, dungeonMarkup: number): number?
+	if type(item) ~= "table" then return nil end
+	local baseValue = baseValueOf(item)
+	local rarityMult = RARITY_MULT[item.rarityId]
+	if not baseValue or not rarityMult then return nil end
+	local markup = if item.rarityId == "Legendary" then DUNGEON_LEGENDARY_MARKUP
+		else (SHOP_MARKUP_BY_RARITY[item.rarityId] or SHOP_MARKUP)
+	return math.round(baseValue * rarityMult * levelMultiplier(item.itemLevel) * markup * (tonumber(dungeonMarkup) or 1))
+end
+
+-- One seeded dungeon Merchant gear item through the existing generator and equip pool ("Shop" tag).
+function MerchantService.GenerateDungeonGear(itemLevel: number, rarity: string, seed: number): any?
+	if not (_itemGenerator and _itemGenerator.GenerateFromPool) then return nil end
+	local pool: { string } = {}
+	for id, def in WeaponData.Archetypes do
+		if def.category == "Weapon" or def.category == "OffHand" then table.insert(pool, id) end
+	end
+	for id, def in ArmorData.Archetypes do
+		if def.category == "Armor" then table.insert(pool, id) end
+	end
+	table.sort(pool)
+	local rng = Random.new(seed)
+	local archetypeId = pool[rng:NextInteger(1, #pool)]
+	local item = _itemGenerator.GenerateFromPool({ archetypeId }, math.max(1, math.floor(itemLevel)), rarity, seed, "Shop")
+	return item
+end
+
 -- Sell Value = floor(Base Value × Rarity Mult × Level Mult × 0.25)  (Locked)
 function MerchantService.PriceToSell(item: any): number?
 	if type(item) ~= "table" then return nil end

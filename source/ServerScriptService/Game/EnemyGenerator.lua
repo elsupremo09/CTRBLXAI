@@ -922,6 +922,16 @@ function EnemyGenerator.SpawnSummon(summonSpec, spawnTile, state)
 		unit.maxHp = math.max(1, math.round(summonSpec.maxHp))
 		unit.currentHp = unit.maxHp
 	end
+	-- RL-41 Bond of Kin (dungeon relic, relics v2): the owner's summons have x2 Max HP.
+	if summonSpec.summonOwnerId then
+		for _, o in ipairs(state.units) do
+			if o.id == summonSpec.summonOwnerId and tonumber(o._dgKinMult) then
+				unit.maxHp = math.max(1, math.round(unit.maxHp * o._dgKinMult))
+				unit.currentHp = unit.maxHp
+				break
+			end
+		end
+	end
 
 	-- All summons enter the timeline at RT 400 (authored "standard summon rule").
 	-- Summons wait a full Base RT before acting (frameworks id 38): 400 unless the

@@ -1,0 +1,105 @@
+--!strict
+-- DungeonRelics.lua
+-- CTRBLXAI | Dungeon relics (build step 8, 2026-11-14; project_rules 271/275). Split out of
+-- DungeonService to keep it under 1000 lines. Server-only. No require of DungeonService (no cycle):
+-- DungeonService calls DungeonRelics.Bind(ctx) with stateOf / persist.
+
+local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+
+local R = {}
+local C: any = nil
+function R.Bind(ctx: any) C = ctx end
+
+--------------------------------------------------
+-- RELICS (Dungeon build step 8; project_rules 271). Seeded per room (run seed + room id + source), one
+-- roll per room (relicRolled, saved), so a rejoin can't re-roll. Run-only: gone when the run ends.
+--------------------------------------------------
+
+local function relicSeed(run: any, roomId: string, source: string): number
+	local h = 0
+	for i = 1, #roomId do h = (h * 31 + string.byte(roomId, i)) % 1000003 end
+	return ((run.sseed or run.card.seed) * 17 + h * 101 + string.byte(source, 1) * 7 + 401) % 2147483647
+end
+
+local function heldSet(run: any): { [string]: boolean }
+	local s: { [string]: boolean } = {}
+	for _, id in run.relics do s[id] = true end
+	return s
+end
+
+--- Roll (once) and grant the room's relic. source = "T" | "E" | "B" | "V". Returns the relic id or nil.
+function R.Grant(run: any, roomId: string, source: string): string?
+	if run.relicRolled[roomId] then return nil end
+	run.relicRolled[roomId] = true
+	local id = DungeonRules.RollRelic(relicSeed(run, roomId, source), source, run.card.facilityLevel, heldSet(run)) -- Fog mutator retired 2026-11-15
+	if id then
+		table.insert(run.relics, id)
+		-- Curse pair (rule 271): a Major relic with a curse brings it too (taking the relic = taking both).
+		local curse = DungeonRules.Data.RelicCursePairs[id]
+		if curse and not table.find(run.relics, curse) then table.insert(run.relics, curse) end
+		run.relicFound = { id = id, boss = source == "B", curse = curse }
+		print(`[DungeonRelics] Relic found | {id} | source {source} | room {roomId} | {#run.relics} held`)
+	end
+	return id
+end
+
+function R.HasRelic(playerId: string, relicId: string): boolean
+	local run = C.stateOf(playerId).run
+	if not run then return false end
+	for _, id in run.relics do if id == relicId then return run.relicUsed[id] ~= true end end
+	return false
+end
+
+--- Held, unused relic ids for the active run ({} when no run).
+function R.GetRelics(playerId: string): { string }
+	local run = C.stateOf(playerId).run
+	local out: { string } = {}
+	if not run then return out end
+	for _, id in run.relics do if not run.relicUsed[id] then table.insert(out, id) end end
+	return out
+end
+
+--- Spend a once-per-run relic (RL-09 Second Wind).
+function R.MarkRelicUsed(playerId: string, relicId: string): boolean
+	local run = C.stateOf(playerId).run
+	if not run or not R.HasRelic(playerId, relicId) then return false end
+	run.relicUsed[relicId] = true
+	C.persist()
+	return true
+end
+
+--- Boss relic: given when the boss battle STARTS (user confirmed 2026-11-14 10:32 AM). Idempotent.
+function R.GrantBossRelic(playerId: string): string?
+	local run = C.stateOf(playerId).run
+	if not run or run.at ~= "boss" or run.cleared.boss then return nil end
+	local id = R.Grant(run, "boss", "B")
+	C.persist()
+	return id
+end
+
+--- Event relic (good outcome only, R x0.5). Called by DungeonRooms after a choice. Gambler's Table
+--- (EV-08) never gives a relic (rule 271).
+function R.GrantEventRelic(playerId: string, eventId: string): string?
+	local run = C.stateOf(playerId).run
+	if not run or not run.at or eventId == "EV-08" then return nil end
+	return R.Grant(run, run.at, "V")
+end
+
+--- Dev test hook only (Main DevDungeon op "relic", DevAccess-gated): add a held relic.
+function R.DevGiveRelic(playerId: string, relicId: string): boolean
+	local run = C.stateOf(playerId).run
+	if not run or not DungeonRules.RelicDef(relicId) or table.find(run.relics, relicId) then return false end
+	table.insert(run.relics, relicId)
+	local curse = DungeonRules.Data.RelicCursePairs[relicId]
+	if curse and not table.find(run.relics, curse) then table.insert(run.relics, curse) end
+	C.persist()
+	return true
+end
+
+--- The client read the "Relic found" popup: clear it.
+function R.AckRelic(playerId: string)
+	local run = C.stateOf(playerId).run
+	if run and run.relicFound then run.relicFound = nil; C.persist() end
+end
+
+return table.freeze(R)
