@@ -1,0 +1,344 @@
+--!strict
+-- DungeonRemotes.lua
+-- CTRBLXAI | Dungeon screen remote (Dungeon build step 5, 2026-11-13; project_rules 258-274).
+--
+-- One RemoteFunction, GuildEvents.DungeonAction({ action = ..., ... }). The client sends ids only
+-- (card id, unit ids, room id) and never amounts; every action is re-validated by DungeonService
+-- (SEC-001 / SEC-002 / ARC-001). Gate per call: the session player, the guild menu open at the
+-- Base, and a per-action rate limit. Answers are compact read-only snapshots (NET-003).
+--
+--   State                       -> screen state (choices, run + map, last result)
+--   Start   { cardId, unitIds } -> start a run
+--   Move    { nodeId }          -> step onto a legal next room
+--   Rest                        -> use the current Rest room
+--   Treasure                    -> open the current Treasure room
+--   Escape                      -> full escape from a Rest room (10:08 PM ruling; Escape rooms removed 11:36 PM)
+--   Continue                    -> move on from a Rest / Merchant room without using it
+--   Leave                       -> early escape from anywhere (project_rules 264)
+--   AckResult                   -> the end-of-run result was shown; forget it
+--   MerchantState / MerchantBuy { slot } / MerchantRefill -> the dungeon Merchant room (step 6)
+--   EventState / EventChoose { choice } -> the current Event room (step 7a)
+--   AckRelic                    -> the "Relic found" popup was shown; forget it (step 8)
+--   CurseAnswer { take }        -> cursed relic popup: Take both (true) / Leave both (false) (relics v2)
+--   BagChoice { keep, discard } -> full-Bag pick: keep the waiting item (discard = { gear = id } | { card = key }) or leave it (rule 279)
+--   GoDeeper / GoHome           -> after a stage boss: next stage map, or all loot home (rule 277)
+--   DepthCurse { which }        -> endless step 6: forced depth curse pick "a" | "b" before Go deeper (rule 281)
+--   AckStageHeal                -> the stage-start heal message was shown; forget it
+--   AckSmith                    -> the "The smith delivers" popup was shown; forget it (EV-12)
+--   AckFurniture                -> the "Furniture found" popup was shown; forget it (furniture step 3)
+--   AltarOptions { unitId, kind } / AltarChoose { unitId, kind, index } -> EV-16 Altar of Change (2026-11-15)
+--   UseItem { consumableId, unitId } -> use one charge of a Bag consumable on the map (rule 266, step 3 2026-11-16)
+--   BagView                     -> the Bag screen list (items + tags, waiting loot, sent home) (steps 4-5, rule 279)
+--   CourierSend { picks }       -> EV-17 Courier's Rest: send Bag items home (picks = { gear, cards, mats, normal, gold })
+-- Gear / skill / consumable swaps use the normal loadout remotes, routed to DungeonLoadout (LoadoutRequestHandlers gate).
+-- Battle rooms are played through the normal activity launch ({ activity = "dungeon" }).
+-- Dependencies are injected by Main (ARC-004 / ARC-006: every one is nil-safe).
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local CTRBLXAI = ReplicatedStorage:WaitForChild("CTRBLXAI")
+local GuildEvents: any = require(CTRBLXAI:WaitForChild("Remotes"):WaitForChild("GuildEvents"))
+local DungeonService = require(script.Parent:WaitForChild("DungeonService"))
+local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local WeaponData: any = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("WeaponData"))
+local ArmorData: any = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("ArmorData"))
+local DungeonCourier = require(script.Parent:WaitForChild("DungeonCourier")) -- Treasure inspector detail (pure; no cycle)
+
+-- Treasure popup name: affix name if the item has one, else its base name (Common items have no displayName).
+local function itemNameOf(item: any): string
+	if type(item) ~= "table" then return "an item" end
+	if type(item.displayName) == "string" and item.displayName ~= "" then return item.displayName end
+	local id = item.baseArchetypeId
+	local arch = id and (WeaponData.GetByArchetypeId(id) or ArmorData.GetByArchetypeId(id))
+	return if arch and type(arch.name) == "string" then arch.name else "an item"
+end
+
+local DungeonRemotes = {}
+
+local RATE_LIMIT_SECONDS = 0.25 -- SEC-001: per-player, per-action minimum spacing
+local GENERIC_ERROR = "Something went wrong. Try again." -- approved by user 2026-11-14 1:47 AM (project_rules 275)
+
+-- Server messages the player may see (exact strings already in DungeonService). Anything else is
+-- internal and is shown as the generic error.
+local SHOWN = table.freeze({
+	["A dungeon run is already in progress"] = true,
+	["This dungeon was already explored"] = true,
+	["Unknown or expired dungeon"] = true,
+	["You can't go there"] = true,
+	["This room is already used"] = true,
+	["That unit is away"] = true,
+	["Dungeon not available"] = true,
+	["Too fast — try again"] = true,
+	-- Dungeon Merchant (step 6). "Not enough gold" is the existing Apothecary/Merchant text; "Sold out" and
+	-- "Nothing to refill" approved by user 2026-11-14 10:11 AM (project_rules 275).
+	["Not enough gold"] = true,
+	["Sold out"] = true,
+	["Nothing to refill"] = true,
+	-- Edit party (step 7b), approved by user 2026-11-14 10:32 AM (project_rules 275).
+	["Your party is full"] = true,
+	["Keep at least 1 unit"] = true,
+	-- EV-15 Forge of Chance, approved 2026-11-15 1:42 AM (project_rules 275).
+	["Can't reforge this rarity"] = true,
+	-- EV-13 Barter Post short of resources, approved 2026-11-15 10:08 AM (project_rules 275).
+	["Not enough mercury"] = true,
+	["Not enough crystals"] = true,
+	-- EV-16 Altar of Change refusal, approved 2026-11-15 10:17 AM (project_rules 275).
+	["This unit has no perks or flaws."] = true,
+	-- Silver step 2: SB-06 / SB-13, approved 2026-11-15 9:09 PM (rule 275).
+	["Not enough silver"] = true, -- SB-06
+	["Your bag is full"] = true, -- SB-13
+	-- Step 3 (loadout in the dungeon, map consumables): SB-22 / SB-24, approved 2026-11-15 9:09 PM.
+	["Locked in the dungeon."] = true, -- SB-22
+	["Only usable in battle."] = true, -- SB-24
+})
+
+local _playerId: string = "player_1"
+local _sessionPlayer: Player? = nil
+local _isMenuOpenAtBase: (() -> boolean)? = nil
+local _getRank: (() -> number)? = nil
+local _lockedText: string = ""
+local lastCallAt: { [string]: number } = {}
+local lastResult: any = nil -- end-of-run summary for the result screen (not saved)
+
+local function err(msg: string): any
+	return { ok = false, error = if SHOWN[msg] or msg == _lockedText then msg else GENERIC_ERROR }
+end
+
+local function rank(): number
+	if not _getRank then return 1 end
+	local ok, r = pcall(_getRank)
+	return if ok and type(r) == "number" then r else 1
+end
+
+local function countMap(t: any): number
+	local n = 0
+	if type(t) == "table" then for _, v in t do n += (tonumber(v) or 0) end end
+	return n
+end
+
+-- Materials earned this run, all buckets added up per material (user 2026-11-17 10:33 AM: the
+-- side panel lists each with its icon). Keys match the payer in Main: mercury / crystals / sulfur
+-- and "gem:<id>" rune gems (shown as one total).
+local function matsView(bag: any): any
+	local out: { [string]: number } = { mercury = 0, crystals = 0, sulfur = 0, gems = 0 }
+	for _, bucket in { "normalMats", "eliteMats", "bossMats" } do
+		local m = bag[bucket]
+		if type(m) == "table" then
+			for k, v in m do
+				local q = tonumber(v) or 0
+				if k == "mercury" or k == "crystals" or k == "sulfur" then out[k] += q
+				elseif type(k) == "string" and string.sub(k, 1, 4) == "gem:" then out.gems += q end
+			end
+		end
+	end
+	return out
+end
+
+-- Compact bag summary (counts only).
+local function bagView(bag: any): any
+	if type(bag) ~= "table" then return nil end
+	return {
+		mats = matsView(bag),
+		gold = bag.gold or 0,
+		normalMats = countMap(bag.normalMats),
+		eliteMats = countMap(bag.eliteMats) + countMap(bag.bossMats),
+		gear = if type(bag.gear) == "table" then #bag.gear else 0,
+		cards = countMap(bag.cards),
+	}
+end
+
+local function resultView(outcome: any): any
+	if type(outcome) ~= "table" then return nil end
+	return { kind = outcome.kind, kept = bagView(outcome.kept), lost = bagView(outcome.lost), hadRelics = (tonumber(outcome.relicCount) or 0) > 0, silverLost = tonumber(outcome.silverLost) or 0,
+		goldPct = if outcome.kind == "EarlyEscape" then math.floor(DungeonRules.Data.EarlyEscapeGoldKeep * 100 + 0.5)
+			elseif outcome.kind == "Wipeout" then math.floor(DungeonRules.Data.WipeoutGoldKeep * 100 + 0.5) else 100 }
+end
+
+local function state(): any
+	local s = DungeonService.GetScreenState(_playerId)
+	local r = rank()
+	for _, c in s.choices do
+		c.level = DungeonRules.BattleLevel(r, c.difficulty, 1, 0, 1)
+		c.seed = nil -- not needed by the client
+		c.partyCap = DungeonRules.PartyCap(c.facilityLevel) -- step 7b (rule 258)
+	end
+	if s.run then
+		s.run.bag = bagView(s.run.bag)
+		s.run.card.seed = nil
+		-- Header 'Lv {level}' (fix 2026-11-17 11:22 AM): run cards had no level. Same formula as the board
+		-- card (room row 1), for the current stage.
+		if s.run.card.level == nil then
+			s.run.card.level = DungeonRules.BattleLevel(r, s.run.card.difficulty, 1, 0, tonumber(s.run.stage) or 1)
+		end
+	end
+	s.result = lastResult
+	s.ok = true
+	return s
+end
+
+local function onAction(player: Player, data: any): any
+	if _sessionPlayer and player ~= _sessionPlayer then return err("Not your guild") end
+	if type(data) ~= "table" or type(data.action) ~= "string" or #data.action > 16 then return err("Invalid request") end
+	local action = data.action
+	local now = os.clock()
+	local key = `{player.UserId}:{action}`
+	if action ~= "State" and lastCallAt[key] and now - lastCallAt[key] < RATE_LIMIT_SECONDS then
+		return err("Too fast — try again")
+	end
+	lastCallAt[key] = now
+	if action == "State" then return state() end
+	if action == "AckResult" then lastResult = nil return state() end
+	if action == "AckRelic" then DungeonService.AckRelic(_playerId) return state() end -- step 8 (display only)
+	if action == "AckStageHeal" then DungeonService.AckStageHeal(_playerId) return state() end -- stages (display only)
+	if action == "AckSmith" then DungeonService.AckSmith(_playerId) return state() end -- EV-12 (display only)
+	if action == "AckFurniture" then DungeonService.AckFurniture(_playerId) return state() end -- furniture step 3 (display only)
+	-- Changes only while the guild menu is open at the base (no battle running).
+	if not _isMenuOpenAtBase or not _isMenuOpenAtBase() then return err("The Guild menu is closed") end
+
+	local ok, res
+	if action == "Start" then
+		if DungeonService.GetFacilityLevel(_playerId) < 1 then return err(_lockedText) end
+		ok, res = DungeonService.StartRun(_playerId, data.cardId, data.unitIds)
+	elseif action == "Move" then
+		ok, res = DungeonService.MoveTo(_playerId, data.nodeId)
+	elseif action == "Rest" then
+		ok, res = DungeonService.UseRest(_playerId)
+	elseif action == "Treasure" then
+		ok, res = DungeonService.OpenTreasure(_playerId, rank())
+		if ok and res and type(res.item) == "table" then
+			-- detail/icon: the same item inspector as the Merchant (user 2026-11-16 7:14 PM: inspect what you got).
+			res = { level = res.level, itemName = itemNameOf(res.item), silver = tonumber(res.silver) or 0,
+				detail = DungeonCourier.GearDetail(res.item) }
+		end
+	elseif action == "MerchantState" then
+		ok, res = DungeonService.GetMerchant(_playerId, rank())
+		if not ok then return err(tostring(res)) end
+		local out = state()
+		out.merchant = res
+		return out
+	elseif action == "MerchantBuy" then
+		ok, res = DungeonService.BuyMerchant(_playerId, data.slot, rank())
+		if ok then
+			local okM, m = DungeonService.GetMerchant(_playerId, rank())
+			local out = state()
+			out.merchant = if okM then m else nil
+			out.bought = res
+			return out
+		end
+	elseif action == "MerchantRefill" then
+		ok, res = DungeonService.RefillMerchant(_playerId)
+		if ok then
+			local okM, m = DungeonService.GetMerchant(_playerId, rank())
+			local out = state()
+			out.merchant = if okM then m else nil
+			out.refilled = res
+			return out
+		end
+	elseif action == "EventState" then
+		ok, res = DungeonService.GetEvent(_playerId)
+		if not ok then return err(tostring(res)) end
+		local out = state()
+		out.eventRoom = res
+		return out
+	elseif action == "EventChoose" then
+		ok, res = DungeonService.ChooseEvent(_playerId, data.choice, rank(), data.gearId) -- gearId: EV-12 / EV-15 bag pick
+		if ok then
+			local out = state()
+			out.eventResult = res
+			return out
+		end
+	elseif action == "AltarOptions" then -- EV-16: the 3 seeded replacements for one unit's perk or flaw
+		ok, res = DungeonService.GetAltarOptions(_playerId, data.unitId, data.kind)
+		if not ok then return err(tostring(res)) end
+		local out = state()
+		out.altar = res
+		return out
+	elseif action == "AltarChoose" then -- EV-16: apply option index 1..3 (server re-rolls the same seeded set)
+		ok, res = DungeonService.ChooseAltar(_playerId, data.unitId, data.kind, data.index)
+		if ok then
+			local out = state()
+			out.eventResult = res
+			return out
+		end
+	elseif action == "BossPick" then -- relics v2: { which = "a" (Boss relic) | "b" (normal relic) }
+		if data.which ~= "a" and data.which ~= "b" then return err("Invalid request") end
+		ok, res = DungeonService.PickBossRelic(_playerId, data.which)
+	elseif action == "CurseAnswer" then -- relics v2: { take = true (Take both) | false (Leave both) }
+		if type(data.take) ~= "boolean" then return err("Invalid request") end
+		ok, res = DungeonService.AnswerCurse(_playerId, data.take)
+	elseif action == "BagChoice" then -- silver step 1 (rule 279): every check is in DungeonBag.Choose
+		if type(data.keep) ~= "boolean" or (data.discard ~= nil and type(data.discard) ~= "table") then return err("Invalid request") end
+		ok, res = DungeonService.BagChoice(_playerId, data.keep, data.discard)
+	elseif action == "BagView" then -- steps 4-5: read-only Bag list (names / tags from the server)
+		local out = state()
+		out.bagList = DungeonService.BagList(_playerId)
+		return out
+	elseif action == "CourierSend" then -- EV-17: every check is in DungeonCourier.Send (items in the Bag, pack size, silver)
+		if type(data.picks) ~= "table" then return err("Invalid request") end
+		ok, res = DungeonService.CourierSend(_playerId, data.picks)
+		if ok then
+			local out = state()
+			out.eventResult = res
+			return out
+		end
+	elseif action == "UseItem" then -- step 3 (rule 266): every check is in DungeonLoadout.UseItem
+		if type(data.consumableId) ~= "string" or type(data.unitId) ~= "string" then return err("Invalid request") end
+		ok, res = DungeonService.UseItem(_playerId, data.consumableId, data.unitId)
+	elseif action == "EditParty" then
+		-- step 7b: { op = "send" | "bring", unitId }. Every check is in DungeonService.EditParty.
+		if data.op ~= "send" and data.op ~= "bring" then return err("Invalid request") end
+		ok, res = DungeonService.EditParty(_playerId, data.op, data.unitId)
+	elseif action == "Continue" then
+		-- Move on from a room that has no battle: Rest (without resting) or Merchant (after shopping).
+		-- Battle and Treasure rooms are cleared by playing / opening them.
+		local run = DungeonService.GetActiveRun(_playerId)
+		local t = run and run.atType
+		if t ~= "Rest" and t ~= "Escape" and t ~= "Merchant" then return err("You can't go there") end
+		ok, res = DungeonService.MarkNodeCleared(_playerId, run.at)
+	elseif action == "DepthCurse" then -- step 6: every check is in DungeonDepth.Pick
+		if data.which ~= "a" and data.which ~= "b" then return err("Invalid request") end
+		ok, res = DungeonService.PickDepthCurse(_playerId, data.which)
+	elseif action == "GoDeeper" then
+		ok, res = DungeonService.GoDeeper(_playerId)
+		if ok then lastResult = nil end
+	elseif action == "GoHome" then
+		ok, res = DungeonService.GoHome(_playerId)
+		if ok then lastResult = resultView(res) end
+	elseif action == "Escape" or action == "Leave" then
+		ok, res = DungeonService.EndRun(_playerId, if action == "Escape" then "EscapeNode" else "EarlyEscape")
+		if ok then lastResult = resultView(res) end
+	else
+		return err("Invalid request")
+	end
+	if not ok then return err(tostring(res)) end
+	local out = state()
+	if action == "Treasure" then out.treasure = res end
+	if action == "Rest" then out.rest = { healPct = res and res.healPct } end
+	return out
+end
+
+--- Main calls this when a run ends outside the screen (boss win, wipeout) so the result shows.
+--- A stage boss win that waits for Go deeper / Go home passes { stageCleared = true, stage, maxStages }.
+function DungeonRemotes.SetLastResult(outcome: any)
+	if type(outcome) == "table" and outcome.stageCleared then
+		lastResult = { kind = "StageCleared", stage = outcome.stage, maxStages = outcome.maxStages, endless = outcome.endless == true }
+		return
+	end
+	lastResult = resultView(outcome)
+end
+
+function DungeonRemotes.Init(opts: { playerId: string, sessionPlayer: Player?, isMenuOpenAtBase: (() -> boolean)?,
+	getRank: (() -> number)?, lockedText: string })
+	_playerId = opts.playerId
+	_sessionPlayer = opts.sessionPlayer
+	_isMenuOpenAtBase = opts.isMenuOpenAtBase
+	_getRank = opts.getRank
+	_lockedText = opts.lockedText
+	if GuildEvents.DungeonAction then
+		GuildEvents.DungeonAction.OnServerInvoke = onAction
+	else
+		warn("[DungeonRemotes] DungeonAction remote missing")
+	end
+end
+
+return DungeonRemotes

@@ -1,0 +1,463 @@
+--!strict
+-- MerchantInspector.lua
+-- CTRBLXAI | Merchant tile grid + item inspector builders, used by MerchantScreen
+-- (2026-10-31, user decision: merchant-only inspector first; a shared item inspector for
+-- Loadout + Merchant + Blacksmith is a later task). No buttons are built here: every button
+-- sits in the screen's single lower-right icon row (MerchantScreen / GuildScreen).
+--
+-- Display only (ARC-001 / SEC-002): renders the server's item detail table
+-- (ItemDisplay.buildItemEntry, sent by GuildMenuService) and reports taps back to the
+-- caller. It never computes a price or a stat. BP is never shown (loadout_ui_spec 28).
+-- Tiles: Theme.MakeItemTile (shared tile look, loadout_ui_spec 26/27). Tap-only (id 73).
+-- Labels reuse the Loadout detail view's existing wording; the price line is the only
+-- addition (user ruling 2026-10-31); no other helper text (id 82).
+
+local WAIT = 10
+
+local themeModule = script.Parent:WaitForChild("Theme", WAIT)
+if not themeModule then
+	error("[MerchantInspector] Theme module not found")
+end
+-- Found at runtime via WaitForChild; the editor cannot follow that path (editor-only cast).
+local Theme: any = (require :: any)(themeModule)
+-- Loadout tiles (Runeforge, 2026-11-08): the Loadout's own grid spacing and level label.
+local controlsModule = script.Parent:WaitForChild("InventoryControls", WAIT)
+local InventoryControls: any = if controlsModule then (require :: any)(controlsModule) else nil
+
+local MerchantInspector = {}
+
+--------------------------------------------------
+-- TYPES / CONSTANTS
+--------------------------------------------------
+
+export type Entry = {
+	key: any,           -- offerIndex (Buy) or instanceId (Sell); passed back on tap
+	detail: any?,       -- ItemDisplay.buildItemEntry() table from the server
+	name: string,
+	level: number?,
+	rarity: string?,
+	price: number?,     -- nil = not sellable (+ button faded)
+	queued: boolean,    -- already pending (dimmed tile; the screen shows - instead of +)
+	-- Loadout tiles only (Runeforge, 2026-11-08): the Loadout "E" / NEW markers. equippedBy = the
+	-- holder's name (server data); there is no selected unit here, so E is the grey "another unit" E.
+	equippedBy: string?,
+	isNew: boolean?,
+	-- Dungeon screens (2026-11-16, user 7:14 PM): optional, nil = the normal Merchant behaviour.
+	priceUnit: string?,   -- inspector price word ("silver"); default "gold"
+	noPriceBadge: boolean?, -- hide the tile's price badge (price shown in the inspector only)
+	countText: string?,   -- tile count badge ("×3")
+	tagText: string?,     -- approved tag line under the rarity line (e.g. "Bought — always kept")
+	tagColor: Color3?,
+	extraLines: { string }?, -- plain lines after the tag (approved strings only)
+}
+
+export type GridOptions = {
+	entries: { Entry },
+	selectedKey: any?,
+	width: number,      -- px width of the grid area (drives tile size)
+	onSelect: (key: any) -> (),
+	-- 2026-11-10: no longer used -- every grid is the Loadout grid now (kept so older callers
+	-- still type-check). Was: true = Loadout-size tiles (Runeforge, 2026-11-07/08).
+	loadoutTiles: boolean?,
+	heightHint: number?, -- px grid height to use until the real height is known (GridHeightHint)
+}
+
+local GRID_GAP = 4            -- fallback cell gap if InventoryControls is missing
+local STAT_ROW_H = 18
+local QUEUED_DIM = 0.5        -- overlay transparency for pending tiles ("dim only", user 2026-10-31)
+
+-- Same split and order as the Loadout detail view: weapon stats for weapons only; every
+-- other item (armor, accessory, off-hand/shield) shows Defense, HP, MP, WT (review fix).
+local WEAPON_STATS = {
+	{ label = "Attack", field = "damage" },
+	{ label = "Range", field = "range" },
+	{ label = "Defense", field = "defense" },
+	{ label = "WT", field = "wt" },
+	{ label = "RT Delay", field = "rtDelay" },
+}
+local OTHER_STATS = {
+	{ label = "Defense", field = "defense" },
+	{ label = "HP", field = "hp" },
+	{ label = "MP", field = "mp" },
+	{ label = "WT", field = "wt" },
+}
+
+-- Player-facing slot names (raw ids like "MainHand" are internal).
+local SLOT_LABEL: { [string]: string } = {
+	MainHand = "Main Hand",
+	OffHand = "Off-Hand",
+}
+
+--------------------------------------------------
+-- SMALL BUILDERS (properties before Parent, NET-004)
+--------------------------------------------------
+
+local function makeLabel(parent: Instance, text: string, size: number, color: Color3, bold: boolean?): TextLabel
+	local lbl = Instance.new("TextLabel")
+	lbl.BackgroundTransparency = 1
+	lbl.BorderSizePixel = 0
+	lbl.Font = if bold then Theme.Font.PrimaryBold else Theme.Font.Primary
+	lbl.TextSize = size
+	lbl.TextColor3 = color
+	lbl.TextWrapped = true
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.TextYAlignment = Enum.TextYAlignment.Center
+	lbl.Text = text
+	lbl.Parent = parent
+	return lbl
+end
+
+-- Full-width wrapped line in a vertical list (height follows the text).
+local function addLine(list: Instance, order: number, text: string, size: number, color: Color3, bold: boolean?)
+	local lbl = makeLabel(list, text, size, color, bold)
+	lbl.Size = UDim2.new(1, 0, 0, 0)
+	lbl.AutomaticSize = Enum.AutomaticSize.Y
+	lbl.LayoutOrder = order
+end
+
+-- Stat icon left of the name (2026-11-12, user ruling 10:49 PM); a stat with no icon (Range)
+-- keeps a blank gap of the same width so names line up.
+local function addStatRow(list: Instance, order: number, label: string, value: string)
+	local row = Instance.new("Frame")
+	row.Size = UDim2.new(1, 0, 0, STAT_ROW_H)
+	row.BackgroundTransparency = 1
+	row.BorderSizePixel = 0
+	row.LayoutOrder = order
+	Theme.AddStatIcon(row, Theme.GetGearStatIcon(label, false), 0)
+	local l = makeLabel(row, label, Theme.Text.Body(), Theme.Colors.TextSecondary)
+	l.Size = UDim2.new(0.6, -Theme.StatIconGap, 1, 0)
+	l.Position = UDim2.new(0, Theme.StatIconGap, 0, 0)
+	local v = makeLabel(row, value, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
+	v.Size = UDim2.new(0.4, 0, 1, 0)
+	v.Position = UDim2.new(0.6, 0, 0, 0)
+	v.TextXAlignment = Enum.TextXAlignment.Right
+	row.Parent = list
+end
+
+-- Small corner badge on a tile (level top-left, price top-right). y = px from the tile top
+-- (2 = first badge row; 16 = second row, the Loadout NEW / dropped-E row).
+local function addTileBadge(tile: Instance, text: string, rightSide: boolean, y: number?)
+	local t = Theme.ItemTile
+	local top = y or 2
+	local badge = Instance.new("TextLabel")
+	badge.AutomaticSize = Enum.AutomaticSize.X
+	badge.Size = UDim2.new(0, 0, 0, t.CountBadgeH + 2)
+	badge.AnchorPoint = if rightSide then Vector2.new(1, 0) else Vector2.new(0, 0)
+	badge.Position = if rightSide then UDim2.new(1, -2, 0, top) else UDim2.new(0, 2, 0, top)
+	badge.BackgroundColor3 = t.CountBadgeBg
+	badge.BackgroundTransparency = t.CountBadgeBgTransparency
+	badge.BorderSizePixel = 0
+	badge.Font = Theme.Font.Mono
+	badge.TextSize = Theme.Text.Badge()
+	badge.TextColor3 = Theme.Colors.TextPrimary
+	badge.Text = text
+	badge.ZIndex = 4
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 3)
+	pad.PaddingRight = UDim.new(0, 3)
+	pad.Parent = badge
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 3)
+	corner.Parent = badge
+	badge.Parent = tile
+end
+
+-- Pending tile: dimmed only, no text (user decision 2026-10-31). Non-Active Frame, so taps
+-- still reach the tile button underneath.
+local function addDimOverlay(tile: Instance)
+	local dim = Instance.new("Frame")
+	dim.Size = UDim2.fromScale(1, 1)
+	dim.BackgroundColor3 = Color3.new(0, 0, 0)
+	dim.BackgroundTransparency = QUEUED_DIM
+	dim.BorderSizePixel = 0
+	dim.Active = false
+	dim.ZIndex = 5
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, Theme.ItemTile.CornerRadius)
+	corner.Parent = dim
+	dim.Parent = tile
+end
+
+--------------------------------------------------
+-- INSPECTOR CONTENT
+--------------------------------------------------
+
+local function statValue(detail: any, field: string): string?
+	if field == "range" then
+		local lo = detail.minRange
+		local hi = detail.maxRange
+		if hi == nil then return nil end
+		return `{lo or hi}-{hi}` -- always min-max, as the Loadout detail ("1-1")
+	end
+	local v = detail[field]
+	if v == nil then return nil end
+	return tostring(v)
+end
+
+local function fillInspector(list: Instance, entry: Entry)
+	local order = 0
+	local function nextOrder(): number
+		order += 1
+		return order
+	end
+	local detail = entry.detail
+	local rarity = entry.rarity or (detail and detail.rarity) or "Common"
+	local rarityColor = Theme.GetRarityColor(rarity)
+
+	addLine(list, nextOrder(), entry.name, Theme.Text.Heading(), rarityColor, true)
+	local lv = entry.level or (detail and detail.itemLevel)
+	local noLevel = detail ~= nil and (detail.isConsumable or detail.isCard or detail.isRelic) and lv == nil
+	local sub = if noLevel then { rarity } else { rarity, `Lv{lv or 1}` }
+	if detail and detail.slot then table.insert(sub, SLOT_LABEL[detail.slot] or tostring(detail.slot)) end
+	addLine(list, nextOrder(), table.concat(sub, " | "), Theme.Text.Small(), Theme.Colors.TextSecondary)
+	-- Price sits inside the inspector (user ruling 2026-10-31): buy price on Buy, sell price on Sell.
+	if entry.price ~= nil then
+		addLine(list, nextOrder(), `{entry.price} {entry.priceUnit or "gold"}`, Theme.Text.Body(), Theme.Colors.TextGold, true)
+	end
+	if entry.tagText then
+		addLine(list, nextOrder(), entry.tagText, Theme.Text.Small(), entry.tagColor or Theme.Colors.Success, true)
+	end
+	for _, l in entry.extraLines or {} do
+		addLine(list, nextOrder(), l, Theme.Text.Small(), Theme.Colors.TextPrimary)
+	end
+
+	if not detail then
+		warn(`[MerchantInspector] No item detail for '{entry.name}' (server sent none)`)
+		return
+	end
+
+	-- Consumables / cards (dungeon Merchant, Treasure, Bag; 2026-11-16): the Loadout consumable detail's
+	-- labels (Charges / RT Cost / Range / Target) and the card's own description. No new wording.
+	if detail.isConsumable then
+		if detail.effectFormula and detail.effectFormula ~= "" then
+			addLine(list, nextOrder(), tostring(detail.effectFormula), Theme.Text.Body(), Theme.Colors.TextPrimary)
+		end
+		if detail.maxCharges ~= nil then addStatRow(list, nextOrder(), "Charges", tostring(detail.maxCharges)) end
+		if detail.rtCost ~= nil then addStatRow(list, nextOrder(), "RT Cost", tostring(detail.rtCost)) end
+		if detail.range ~= nil then addStatRow(list, nextOrder(), "Range", tostring(detail.range)) end
+		if detail.targetRules and detail.targetRules ~= "" then addStatRow(list, nextOrder(), "Target", tostring(detail.targetRules)) end
+		return
+	end
+	if detail.isCard or detail.isRelic then
+		if detail.description and detail.description ~= "" then
+			addLine(list, nextOrder(), tostring(detail.description), Theme.Text.Body(),
+				if detail.isCurse then Theme.Colors.Danger else Theme.Colors.TextPrimary)
+		end
+		return
+	end
+
+	-- Base stats (Loadout detail labels)
+	local stats = if detail.isWeapon then WEAPON_STATS else OTHER_STATS
+	for _, s in stats do
+		-- Non-weapon rows that are 0 are hidden, as in the Loadout detail view.
+		local hideZero = not detail.isWeapon and detail[s.field] == 0
+		local value = statValue(detail, s.field)
+		if value ~= nil and not hideZero then addStatRow(list, nextOrder(), s.label, value) end
+	end
+
+	-- Passive (weapon/off-hand native passive, or armor passive)
+	addLine(list, nextOrder(), "PASSIVES", Theme.Text.Small(), Theme.Colors.TextGold, true)
+	local pName = if detail.isArmor then detail.passiveName else detail.nativePassiveName
+	local pDesc = if detail.isArmor then detail.passiveDesc else detail.nativePassiveDesc
+	if pName then
+		addLine(list, nextOrder(), tostring(pName), Theme.Text.Body(), Theme.Colors.Success, true)
+		if pDesc and pDesc ~= "" then
+			addLine(list, nextOrder(), tostring(pDesc), Theme.Text.Small(), Theme.Colors.TextPrimary)
+		end
+	else
+		addLine(list, nextOrder(), "None", Theme.Text.Small(), Theme.Colors.TextDisabled)
+	end
+
+	-- Bonus stats (sorted so the order never shuffles between renders)
+	addLine(list, nextOrder(), "BONUS STATS", Theme.Text.Small(), Theme.Colors.TextGold, true)
+	local bs = detail.bonusStats or {}
+	local pcts = detail.bonusStatPcts or {}
+	local keys: { string } = {}
+	for k in bs do table.insert(keys, k) end
+	for k in pcts do
+		if bs[k] == nil then table.insert(keys, k) end
+	end
+	table.sort(keys)
+	if #keys == 0 then
+		addLine(list, nextOrder(), "None", Theme.Text.Small(), Theme.Colors.TextDisabled)
+	end
+	for _, k in keys do
+		local v = bs[k]
+		local p = pcts[k]
+		local flat = if v ~= nil then `{if v > 0 then "+" else ""}{v}` else ""
+		local pct = if p ~= nil and p ~= 0 then `  {if p > 0 then "+" else ""}{p}%` else ""
+		-- Bonus stat line with its icon (2026-11-12, user ruling 10:49 PM); no icon = blank gap.
+		local brow = Instance.new("Frame")
+		brow.Size = UDim2.new(1, 0, 0, STAT_ROW_H)
+		brow.BackgroundTransparency = 1
+		brow.BorderSizePixel = 0
+		brow.AutomaticSize = Enum.AutomaticSize.Y -- a long line can still wrap, as before
+		brow.LayoutOrder = nextOrder()
+		Theme.AddStatIcon(brow, Theme.GetGearStatIcon(k, true), 0)
+		local bl = makeLabel(brow, `{k}  {flat}{pct}`, Theme.Text.Body(), Theme.Colors.TextPrimary)
+		bl.Size = UDim2.new(1, -Theme.StatIconGap, 0, STAT_ROW_H)
+		bl.AutomaticSize = Enum.AutomaticSize.Y
+		bl.Position = UDim2.new(0, Theme.StatIconGap, 0, 0)
+		brow.Parent = list
+	end
+
+	-- Bonus passives
+	addLine(list, nextOrder(), "BONUS PASSIVES", Theme.Text.Small(), Theme.Colors.TextGold, true)
+	local bp = detail.bonusPassives or {}
+	if #bp == 0 then
+		addLine(list, nextOrder(), "None", Theme.Text.Small(), Theme.Colors.TextDisabled)
+	end
+	for _, p in bp do
+		addLine(list, nextOrder(), tostring(p.name or "Passive"), Theme.Text.Body(), Theme.Colors.Info, true)
+		if p.desc and p.desc ~= "" then
+			addLine(list, nextOrder(), tostring(p.desc), Theme.Text.Small(), Theme.Colors.TextPrimary)
+		end
+	end
+end
+
+--------------------------------------------------
+-- PUBLIC
+--------------------------------------------------
+
+-- Selected entry: the caller's key if it is still listed, else the first entry, so the
+-- inspector is never empty while the list has items.
+function MerchantInspector.ResolveSelected(entries: { Entry }, key: any?): Entry?
+	for _, e in entries do
+		if e.key == key then return e end
+	end
+	return entries[1]
+end
+
+-- Grid height to size tiles with until the grid is laid out (UI-001): Main's height minus
+-- everything already listed above the grid and the list gaps. Call it just before BuildGrid,
+-- while the grid is not yet parented (same formula as the Runeforge grid frame, 2026-11-07).
+function MerchantInspector.GridHeightHint(main: Instance, list: UIListLayout): number
+	local usedH, rows = 0, 0
+	for _, c in main:GetChildren() do
+		if c:IsA("GuiObject") then
+			usedH += c.AbsoluteSize.Y
+			rows += 1
+		end
+	end
+	return (main :: any).AbsoluteSize.Y - usedH - list.Padding.Offset * rows
+end
+
+-- Price badge (top-right). On a narrow phone tile where the "Lv.N" label would reach it, it
+-- drops to the second badge row instead of overlapping (as the Loadout E / NEW markers do).
+local function addPriceBadge(tile: Instance, text: string, cellW: number, lvW: number)
+	local w = Theme.MeasureText(text, Theme.Text.Badge(), Theme.Font.Mono).X + 6 -- 3 px padding each side
+	local drops = lvW > 0 and (3 + lvW + 2) > (cellW - (w + 2))
+	addTileBadge(tile, text, true, if drops then 16 else 2)
+end
+
+-- Portrait icons are a fixed px square (cellW - 2 * inset); when the grid re-fits its cells,
+-- resize them so the icon keeps its equal top / left / right border.
+local function refitPortraitIcons(scroll: Instance, cellW: number)
+	local t = Theme.ItemTile
+	local inset = math.max(t.IconInsetMin, math.round(cellW * t.IconInsetFactor))
+	local fp = Theme.ItemTileFramePad()
+	for _, tile in scroll:GetChildren() do
+		if tile:IsA("TextButton") then
+			for _, c in tile:GetChildren() do
+				if c:IsA("ImageLabel") and c.Name ~= "ItemFrame" then -- never resize the ornate frame
+					c.Size = UDim2.new(1, -inset * 2, 0, cellW - inset * 2 - fp * 2)
+					c.Position = UDim2.fromOffset(inset, inset)
+				end
+			end
+		end
+	end
+end
+
+-- Fills a ScrollingFrame with item tiles. 2026-11-10 (user, one look on every guild screen):
+-- the Loadout Gears grid recipe for every caller -- Loadout cell size (Theme.ItemTileCell from
+-- the grid's height, re-fitted once the real height is known), Loadout cell spacing with no
+-- inner padding, the portrait Theme.MakeItemTile (inset square icon, two-row name strip,
+-- rarity border, gold when selected, no hover colour), the grey "Lv.N" label top-left and the
+-- Loadout E / NEW markers. Screen extras stay on top: price badge top-right, pending items
+-- dimmed. Items without a level (consumables, cards) show no level, as in the Loadout.
+-- Tapping a tile calls opts.onSelect(key).
+function MerchantInspector.BuildGrid(scroll: ScrollingFrame, opts: GridOptions)
+	local selected = MerchantInspector.ResolveSelected(opts.entries, opts.selectedKey)
+	local h = scroll.AbsoluteSize.Y
+	if h < 100 then h = opts.heightHint or 0 end
+	local cellW, cellH = Theme.ItemTileCell(h)
+
+	local gridLayout = Instance.new("UIGridLayout")
+	gridLayout.CellSize = UDim2.fromOffset(cellW, cellH)
+	gridLayout.CellPadding = if InventoryControls then InventoryControls.GridCellPadding else UDim2.fromOffset(GRID_GAP, GRID_GAP)
+	gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	gridLayout.Parent = scroll
+	-- The grid's real height is only known after layout (UI-001): re-fit once it is.
+	-- Owned by the grid, so it goes away with it. Changing CellSize never resizes the grid.
+	scroll:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		local gh = scroll.AbsoluteSize.Y
+		if gh < 100 then return end
+		local w2, h2 = Theme.ItemTileCell(gh)
+		if gridLayout.CellSize.X.Offset ~= w2 or gridLayout.CellSize.Y.Offset ~= h2 then
+			gridLayout.CellSize = UDim2.fromOffset(w2, h2)
+			refitPortraitIcons(scroll, w2)
+		end
+	end)
+
+	for i, e in opts.entries do
+		local detail = e.detail
+		local key = e.key
+		local tile = Theme.MakeItemTile({
+			parent = scroll,
+			accentColor = Theme.GetRarityColor(e.rarity or "Common"),
+			cellW = cellW,
+			icon = detail and detail.icon or nil,
+			iconText = string.sub(e.name, 1, 1),
+			countText = e.countText,
+			name = e.name,
+			selected = selected ~= nil and e.key == selected.key,
+			layoutOrder = i,
+			portrait = true,
+			onClick = function()
+				opts.onSelect(key)
+			end,
+		})
+		local lvW = 0
+		if e.level ~= nil then
+			if InventoryControls then
+				local _lv
+				_lv, lvW = InventoryControls.MakeLevelLabel(tile, `Lv.{e.level}`)
+			else
+				addTileBadge(tile, `Lv{e.level}`, false)
+			end
+		end
+		local hasPrice = e.price ~= nil and not e.noPriceBadge
+		if hasPrice then addPriceBadge(tile, `{e.price}g`, cellW, lvW) end
+		if InventoryControls then
+			-- No selected unit on these screens: E is the grey "another unit" E (server data).
+			InventoryControls.AddTileMarkers(tile, cellW, lvW, false, e.equippedBy ~= nil, e.isNew == true, hasPrice)
+		end
+		if e.queued then addDimOverlay(tile) end
+	end
+end
+
+-- Builds the inspector (scrollable item detail) for one entry, filling parent.
+function MerchantInspector.BuildDetail(parent: Instance, entry: Entry?)
+	local detailScroll = Instance.new("ScrollingFrame")
+	detailScroll.Name = "Detail"
+	detailScroll.Size = UDim2.fromScale(1, 1)
+	detailScroll.BackgroundTransparency = 1
+	detailScroll.BorderSizePixel = 0
+	detailScroll.ScrollBarThickness = 4
+	detailScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	detailScroll.CanvasSize = UDim2.new()
+	local dPad = Instance.new("UIPadding")
+	dPad.PaddingLeft = UDim.new(0, 4)
+	dPad.PaddingRight = UDim.new(0, 8)
+	dPad.PaddingTop = UDim.new(0, 2)
+	dPad.PaddingBottom = UDim.new(0, 4)
+	dPad.Parent = detailScroll
+	local dList = Instance.new("UIListLayout")
+	dList.Padding = UDim.new(0, 3)
+	dList.SortOrder = Enum.SortOrder.LayoutOrder
+	dList.Parent = detailScroll
+	if entry then fillInspector(detailScroll, entry) end
+	detailScroll.Parent = parent -- parent last (NET-004)
+end
+
+return table.freeze(MerchantInspector)
