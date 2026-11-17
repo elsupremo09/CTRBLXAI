@@ -206,12 +206,19 @@ end
 -- HD-002  Surveyor Visor
 -- "Interact Maximum Range +2"
 --------------------------------------------------
+-- Guild Hall furniture bonus (unit.furnitureBonus, set by EquipmentService for player units only):
+-- threshold Interact / Item Range +1 and Item Direct Damage % (guild_facilities 102/107, step 1).
+local function furnitureBonusValue(unit, key)
+	local fb = type(unit) == "table" and unit.furnitureBonus or nil
+	return (type(fb) == "table" and tonumber(fb[key])) or 0
+end
+
 --- Returns an integer offset added to Interact maximum range.
 function ArmorPassiveService.GetInteractRangeModifier(unit)
 	local p = getPassiveInSlot(unit, "Head")
 	local bonus = if p == "Interact Maximum Range +2" then 2 else 0
 	-- PAS-009 Surveyor Visor Range (rolled, Additive): +2 per copy on any item. 2026-10-28.
-	return bonus + 2 * countRolledPassive(unit, "PAS-009")
+	return bonus + 2 * countRolledPassive(unit, "PAS-009") + furnitureBonusValue(unit, "interactRange")
 end
 
 --------------------------------------------------
@@ -1470,7 +1477,7 @@ function ArmorPassiveService.GetItemRangeBonus(unit)
 	local p = getPassiveInSlot(unit, "Accessory")
 	local bonus = if p == "Item Maximum Range +2" then 2 else 0
 	-- PAS-010 Long-Throw Strap Range (rolled, Additive): +2 per copy on any item. 2026-10-28.
-	return bonus + 2 * countRolledPassive(unit, "PAS-010")
+	return bonus + 2 * countRolledPassive(unit, "PAS-010") + furnitureBonusValue(unit, "itemRange")
 end
 
 --------------------------------------------------
@@ -1480,10 +1487,11 @@ end
 --- Returns the damage bonus multiplier for damaging consumable Items.
 function ArmorPassiveService.GetItemDamageBonus(unit)
 	local p = getPassiveInSlot(unit, "Accessory")
+	local furn = furnitureBonusValue(unit, "itemDamage") -- furniture Item Direct Damage (adds to the bonus)
 	if p and string.find(p, "Damaging consumable Items gain +15", 1, true) then
-		return 0.15
+		return 0.15 + furn
 	end
-	return 0
+	return furn
 end
 
 --------------------------------------------------

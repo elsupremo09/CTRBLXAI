@@ -20,10 +20,17 @@
 --   EventState / EventChoose { choice } -> the current Event room (step 7a)
 --   AckRelic                    -> the "Relic found" popup was shown; forget it (step 8)
 --   CurseAnswer { take }        -> cursed relic popup: Take both (true) / Leave both (false) (relics v2)
+--   BagChoice { keep, discard } -> full-Bag pick: keep the waiting item (discard = { gear = id } | { card = key }) or leave it (rule 279)
 --   GoDeeper / GoHome           -> after a stage boss: next stage map, or all loot home (rule 277)
+--   DepthCurse { which }        -> endless step 6: forced depth curse pick "a" | "b" before Go deeper (rule 281)
 --   AckStageHeal                -> the stage-start heal message was shown; forget it
 --   AckSmith                    -> the "The smith delivers" popup was shown; forget it (EV-12)
+--   AckFurniture                -> the "Furniture found" popup was shown; forget it (furniture step 3)
 --   AltarOptions { unitId, kind } / AltarChoose { unitId, kind, index } -> EV-16 Altar of Change (2026-11-15)
+--   UseItem { consumableId, unitId } -> use one charge of a Bag consumable on the map (rule 266, step 3 2026-11-16)
+--   BagView                     -> the Bag screen list (items + tags, waiting loot, sent home) (steps 4-5, rule 279)
+--   CourierSend { picks }       -> EV-17 Courier's Rest: send Bag items home (picks = { gear, cards, mats, normal, gold })
+-- Gear / skill / consumable swaps use the normal loadout remotes, routed to DungeonLoadout (LoadoutRequestHandlers gate).
 -- Battle rooms are played through the normal activity launch ({ activity = "dungeon" }).
 -- Dependencies are injected by Main (ARC-004 / ARC-006: every one is nil-safe).
 
@@ -33,6 +40,18 @@ local CTRBLXAI = ReplicatedStorage:WaitForChild("CTRBLXAI")
 local GuildEvents: any = require(CTRBLXAI:WaitForChild("Remotes"):WaitForChild("GuildEvents"))
 local DungeonService = require(script.Parent:WaitForChild("DungeonService"))
 local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local WeaponData: any = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("WeaponData"))
+local ArmorData: any = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("ArmorData"))
+local DungeonCourier = require(script.Parent:WaitForChild("DungeonCourier")) -- Treasure inspector detail (pure; no cycle)
+
+-- Treasure popup name: affix name if the item has one, else its base name (Common items have no displayName).
+local function itemNameOf(item: any): string
+	if type(item) ~= "table" then return "an item" end
+	if type(item.displayName) == "string" and item.displayName ~= "" then return item.displayName end
+	local id = item.baseArchetypeId
+	local arch = id and (WeaponData.GetByArchetypeId(id) or ArmorData.GetByArchetypeId(id))
+	return if arch and type(arch.name) == "string" then arch.name else "an item"
+end
 
 local DungeonRemotes = {}
 
@@ -65,6 +84,12 @@ local SHOWN = table.freeze({
 	["Not enough crystals"] = true,
 	-- EV-16 Altar of Change refusal, approved 2026-11-15 10:17 AM (project_rules 275).
 	["This unit has no perks or flaws."] = true,
+	-- Silver step 2: SB-06 / SB-13, approved 2026-11-15 9:09 PM (rule 275).
+	["Not enough silver"] = true, -- SB-06
+	["Your bag is full"] = true, -- SB-13
+	-- Step 3 (loadout in the dungeon, map consumables): SB-22 / SB-24, approved 2026-11-15 9:09 PM.
+	["Locked in the dungeon."] = true, -- SB-22
+	["Only usable in battle."] = true, -- SB-24
 })
 
 local _playerId: string = "player_1"
@@ -105,7 +130,7 @@ end
 
 local function resultView(outcome: any): any
 	if type(outcome) ~= "table" then return nil end
-	return { kind = outcome.kind, kept = bagView(outcome.kept), lost = bagView(outcome.lost), hadRelics = (tonumber(outcome.relicCount) or 0) > 0,
+	return { kind = outcome.kind, kept = bagView(outcome.kept), lost = bagView(outcome.lost), hadRelics = (tonumber(outcome.relicCount) or 0) > 0, silverLost = tonumber(outcome.silverLost) or 0,
 		goldPct = if outcome.kind == "EarlyEscape" then math.floor(DungeonRules.Data.EarlyEscapeGoldKeep * 100 + 0.5)
 			elseif outcome.kind == "Wipeout" then math.floor(DungeonRules.Data.WipeoutGoldKeep * 100 + 0.5) else 100 }
 end
@@ -142,6 +167,7 @@ local function onAction(player: Player, data: any): any
 	if action == "AckRelic" then DungeonService.AckRelic(_playerId) return state() end -- step 8 (display only)
 	if action == "AckStageHeal" then DungeonService.AckStageHeal(_playerId) return state() end -- stages (display only)
 	if action == "AckSmith" then DungeonService.AckSmith(_playerId) return state() end -- EV-12 (display only)
+	if action == "AckFurniture" then DungeonService.AckFurniture(_playerId) return state() end -- furniture step 3 (display only)
 	-- Changes only while the guild menu is open at the base (no battle running).
 	if not _isMenuOpenAtBase or not _isMenuOpenAtBase() then return err("The Guild menu is closed") end
 
@@ -156,7 +182,9 @@ local function onAction(player: Player, data: any): any
 	elseif action == "Treasure" then
 		ok, res = DungeonService.OpenTreasure(_playerId, rank())
 		if ok and res and type(res.item) == "table" then
-			res = { level = res.level, itemName = tostring(res.item.displayName or "an item") }
+			-- detail/icon: the same item inspector as the Merchant (user 2026-11-16 7:14 PM: inspect what you got).
+			res = { level = res.level, itemName = itemNameOf(res.item), silver = tonumber(res.silver) or 0,
+				detail = DungeonCourier.GearDetail(res.item) }
 		end
 	elseif action == "MerchantState" then
 		ok, res = DungeonService.GetMerchant(_playerId, rank())
@@ -214,6 +242,24 @@ local function onAction(player: Player, data: any): any
 	elseif action == "CurseAnswer" then -- relics v2: { take = true (Take both) | false (Leave both) }
 		if type(data.take) ~= "boolean" then return err("Invalid request") end
 		ok, res = DungeonService.AnswerCurse(_playerId, data.take)
+	elseif action == "BagChoice" then -- silver step 1 (rule 279): every check is in DungeonBag.Choose
+		if type(data.keep) ~= "boolean" or (data.discard ~= nil and type(data.discard) ~= "table") then return err("Invalid request") end
+		ok, res = DungeonService.BagChoice(_playerId, data.keep, data.discard)
+	elseif action == "BagView" then -- steps 4-5: read-only Bag list (names / tags from the server)
+		local out = state()
+		out.bagList = DungeonService.BagList(_playerId)
+		return out
+	elseif action == "CourierSend" then -- EV-17: every check is in DungeonCourier.Send (items in the Bag, pack size, silver)
+		if type(data.picks) ~= "table" then return err("Invalid request") end
+		ok, res = DungeonService.CourierSend(_playerId, data.picks)
+		if ok then
+			local out = state()
+			out.eventResult = res
+			return out
+		end
+	elseif action == "UseItem" then -- step 3 (rule 266): every check is in DungeonLoadout.UseItem
+		if type(data.consumableId) ~= "string" or type(data.unitId) ~= "string" then return err("Invalid request") end
+		ok, res = DungeonService.UseItem(_playerId, data.consumableId, data.unitId)
 	elseif action == "EditParty" then
 		-- step 7b: { op = "send" | "bring", unitId }. Every check is in DungeonService.EditParty.
 		if data.op ~= "send" and data.op ~= "bring" then return err("Invalid request") end
@@ -225,6 +271,9 @@ local function onAction(player: Player, data: any): any
 		local t = run and run.atType
 		if t ~= "Rest" and t ~= "Escape" and t ~= "Merchant" then return err("You can't go there") end
 		ok, res = DungeonService.MarkNodeCleared(_playerId, run.at)
+	elseif action == "DepthCurse" then -- step 6: every check is in DungeonDepth.Pick
+		if data.which ~= "a" and data.which ~= "b" then return err("Invalid request") end
+		ok, res = DungeonService.PickDepthCurse(_playerId, data.which)
 	elseif action == "GoDeeper" then
 		ok, res = DungeonService.GoDeeper(_playerId)
 		if ok then lastResult = nil end
@@ -248,7 +297,7 @@ end
 --- A stage boss win that waits for Go deeper / Go home passes { stageCleared = true, stage, maxStages }.
 function DungeonRemotes.SetLastResult(outcome: any)
 	if type(outcome) == "table" and outcome.stageCleared then
-		lastResult = { kind = "StageCleared", stage = outcome.stage, maxStages = outcome.maxStages }
+		lastResult = { kind = "StageCleared", stage = outcome.stage, maxStages = outcome.maxStages, endless = outcome.endless == true }
 		return
 	end
 	lastResult = resultView(outcome)

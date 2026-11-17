@@ -7,6 +7,12 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local BiomeData: any = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("BiomeData"))
 local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local DungeonBag = require(script.Parent:WaitForChild("DungeonBag")) -- silver step 1 (requires only DungeonRules: no cycle)
+local DungeonSilver = require(script.Parent:WaitForChild("DungeonSilver")) -- silver step 2 (requires only DungeonRules: no cycle)
+local DungeonLoadout = require(script.Parent:WaitForChild("DungeonLoadout")) -- step 3 (no DungeonService require: no cycle)
+local DungeonCourier = require(script.Parent:WaitForChild("DungeonCourier")) -- steps 4-5 (no DungeonService require: no cycle)
+local DungeonFurniture = require(script.Parent:WaitForChild("DungeonFurniture")) -- furniture step 3 (requires DungeonRules + FurnitureData only: no cycle)
+local DungeonDepth = require(script.Parent:WaitForChild("DungeonDepth")) -- endless step 6 (requires DungeonRules only: no cycle)
 local D = DungeonRules.Data
 
 local SAVE_VERSION = 1
@@ -30,6 +36,7 @@ function Save.Export(playerId: string): any
 	table.sort(usedList)
 	local out: any = { v = SAVE_VERSION, used = { w = s.used.window, ids = usedList } }
 	if s.pending then out.pending = s.pending end -- ended run not paid out yet (step 4)
+	if (tonumber(s.deepest) or 0) > 0 then out.deepest = s.deepest end -- rule 281: deepest stage reached
 	local run = s.run
 	if run then
 		local cleared: { string } = {}
@@ -77,6 +84,14 @@ function Save.Export(playerId: string): any
 			bossPick = if run.bossPick then { a = run.bossPick.a, b = run.bossPick.b, cb = run.bossPick.cb } else nil, -- relics v2
 			curseOffer = if run.curseOffer then { id = run.curseOffer.id, curse = run.curseOffer.curse } else nil, -- relics v2
 			nextBattleBuff = run.nextBattleBuff, -- EV-11 doctrine variant
+			silver = run.silver or 0, -- silver step 1 (rule 278)
+			benchReady = (function() local l = {} for id in run.benchReady or {} do table.insert(l, id) end table.sort(l) return l end)(), -- rule 280
+			bagHeld = DungeonBag.ExportHeld(run), -- rule 279
+			boughtKeep = DungeonSilver.ExportBought(run), -- silver step 2 (rule 268): bought marks (SB-18 only since 2026-11-16)
+			dgLoad = DungeonLoadout.Export(run), -- step 3: found items on units, home items in the Bag, opened copies
+			courier = DungeonCourier.Export(run), courierStage = run.courierStage, -- steps 4-5: EV-17 sent items (safe), once per stage
+			dgFurn = DungeonFurniture.Export(run), -- furniture step 3: found / sent pieces, rolled rooms
+			depth = DungeonDepth.Export(run), -- endless step 6: curse stacks + the pending curse offer / picks (rule 281)
 		}
 	end
 	return out
@@ -98,8 +113,10 @@ local function importRun(r: any): (any, string?)
 		floors = if isInt(c.floors, 3, 30) then c.floors else DungeonRules.Floors(c.difficulty),
 		difficulty = c.difficulty, biome = c.biome, condition = c.condition,
 		tier = if type(c.tier) == "string" and #c.tier <= 8 then c.tier else DungeonRules.TierFor(c.difficulty).word,
-		maxStages = if isInt(c.maxStages, 1, D.MaxStages) then c.maxStages else 1, -- old saves: one stage
+		maxStages = if isInt(c.maxStages, 1, D.StageLimit) then c.maxStages else 1, -- old saves: one stage
 	}
+	-- Endless (step 5, rule 281): an L10 card saved before endless existed (max 3) can go deeper too.
+	if card.facilityLevel >= D.EndlessFacilityLevel then card.maxStages = DungeonRules.MaxStages(card.facilityLevel) end
 	if type(r.party) ~= "table" or #r.party < 1 or #r.party > DungeonRules.PartyCap(c.facilityLevel) then return nil, "party" end
 	local party: { string } = {}
 	local seen: { [string]: boolean } = {}
@@ -109,7 +126,7 @@ local function importRun(r: any): (any, string?)
 		table.insert(party, id)
 	end
 	-- Tester W3 (step 3): a seed that breaks map generation drops the run instead of stopping the load.
-	local stage = if isInt(r.stage, 1, D.MaxStages) then r.stage else 1 -- old saves = stage 1
+	local stage = if isInt(r.stage, 1, math.min(D.StageLimit, card.maxStages)) then r.stage else 1 -- old saves = stage 1
 	local okB, run = pcall(buildRun, card, party, stage)
 	if not okB then return nil, "map rebuild failed: " .. tostring(run) end
 	if r.at ~= nil then
@@ -129,7 +146,7 @@ local function importRun(r: any): (any, string?)
 	run.stageBringIn = if isInt(r.stageBringIn, 0, D.StageBringIns) then r.stageBringIn else 0
 	if type(r.stageBosses) == "table" then
 		run.stageBosses = {}
-		for _, v in r.stageBosses do if isInt(v, 1, D.MaxStages) then table.insert(run.stageBosses, v) end end
+		for _, v in r.stageBosses do if isInt(v, 1, D.StageLimit) and #run.stageBosses < D.StageLimit then table.insert(run.stageBosses, v) end end
 	end
 	run.bag = copyBag(r.bag)
 	if type(r.bought) == "table" then -- step 6; old saves have none
@@ -218,6 +235,22 @@ local function importRun(r: any): (any, string?)
 		local d, cd = DungeonRules.RelicDef(co.id), DungeonRules.RelicDef(co.curse)
 		if d and cd and cd.kind == "Curse" and not table.find(run.relics, co.id) then run.curseOffer = { id = co.id, curse = co.curse } end
 	end
+	-- Silver step 1 (rules 278-280). Old saves have none: silver 0, the whole party bench-ready, nothing held.
+	run.silver = if isInt(r.silver, 0, MAX_COUNT) then r.silver else 0
+	if type(r.benchReady) == "table" then
+		run.benchReady = {}
+		for _, id in r.benchReady do if type(id) == "string" and run.partySet[id] then run.benchReady[id] = true end end
+	else
+		run.benchReady = table.clone(run.partySet or {}) -- old save: whole party bench-ready (Tester WARN 10)
+	end
+	DungeonBag.ImportHeld(run, r.bagHeld)
+	DungeonSilver.ImportBought(run, r.boughtKeep) -- silver step 2; old saves: nothing bought
+	DungeonLoadout.Import(run, r.dgLoad) -- step 3; old saves: nothing moved yet
+	DungeonCourier.Import(run, r.courier) -- steps 4-5; old saves: nothing sent
+	run.courierStage = if isInt(r.courierStage, 1, D.StageLimit) then r.courierStage else nil
+	DungeonFurniture.Import(run, r.dgFurn) -- furniture step 3; old saves: nothing found
+	DungeonDepth.Import(run, r.depth) -- endless step 6; old saves: 1 stack per held curse, no offer
+	DungeonDepth.EnsureOffer(run) -- a cleared endless stage: the same seeded offer comes back on rejoin
 	return run, nil
 end
 
@@ -225,7 +258,9 @@ function Save.Import(playerId: string, data: any)
 	local s = stateOf(playerId)
 	s.run = nil
 	s.used = { window = -1, ids = {} }
+	s.deepest = 0
 	if type(data) ~= "table" then return end -- old save: no dungeon block = no run
+	if isInt(data.deepest, 0, D.StageLimit) then s.deepest = data.deepest end -- rule 281; old saves: 0
 	if type(data.used) == "table" and isInt(data.used.w, -1, MAX_COUNT) and type(data.used.ids) == "table" then
 		local ids: { [string]: boolean } = {}
 		for _, id in data.used.ids do
@@ -240,6 +275,7 @@ function Save.Import(playerId: string, data: any)
 		local run, why = importRun(data.run)
 		if run then
 			s.run = run
+			s.deepest = math.max(s.deepest, run.stage or 1) -- a run in progress counts toward the record
 			print(`[DungeonService] Run resumed | {run.card.id} | at {tostring(run.at)} | battles {run.battles}`)
 		else
 			warn(`[DungeonService] saved run dropped (bad data: {why})`)

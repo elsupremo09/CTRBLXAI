@@ -705,6 +705,14 @@ end
 --------------------------------------------------
 -- Counter for collision-free ids across all mid-battle spawns in a battle.
 local _reinforcementCounter = 0
+-- Furniture v5 step 2 (gf 108): mid-battle arrivals are weakened by furniture enemy lines on arrival.
+-- Injected by FurnitureEnemy (no require cycle). Called for side "Enemy" only.
+local _arrivalHook: ((any) -> ())? = nil
+function EnemyGenerator.SetArrivalHook(fn: ((any) -> ())?) _arrivalHook = fn end
+-- Endless step 5 (project_rules 281): more arrival hooks by key (DungeonBattleHooks Depth bonus).
+-- Called after the furniture hook, side "Enemy" only, each in its own pcall. fn nil = remove.
+local _extraArrivalHooks: { [string]: any } = {}
+function EnemyGenerator.AddArrivalHook(key: string, fn: ((any) -> ())?) _extraArrivalHooks[key] = fn end
 
 --- Spawn ONE new unit into a LIVE battle (map-object summons: Dragon Utopia,
 --- Mimic, Refugee Camp). Reuses GenerateEnemy so the unit is identical in shape
@@ -786,6 +794,10 @@ function EnemyGenerator.SpawnReinforcement(spec, spawnTile, state, rng, side, ra
 		end
 		unit.portraitAssetId = pickPortrait(rng, overrideId, state.usedPortraits)
 	end
+
+	-- Furniture enemy lines on arrival (v5 step 2). Never fails the spawn.
+	if _arrivalHook and unit.side == "Enemy" then pcall(_arrivalHook, unit) end
+	if unit.side == "Enemy" then for _, h in _extraArrivalHooks do pcall(h, unit) end end -- Depth bonus (rule 281)
 
 	-- Shared insertion tail (id-uniqueness + timeline join + roster insert).
 	insertUnitIntoBattle(unit, state)

@@ -611,6 +611,8 @@ Theme.LevelBadgeAnchor = "TopLeft"   -- reference constant (enforced by conventi
 --
 -- Any deviation is a bug, not a design choice.
 Theme.ItemTile = {
+	FramePad = 2, -- 2026-11-17: inner margin (px) between ornate frame and tile content
+	FrameSliceScale = 0.04, -- 2026-11-16: thinner ornate border on small item tiles (~6px)
 	BgTransparency   = 0.75,      -- rarity color shown at this transparency
 	SelectedBgColor  = Color3.fromRGB(40, 35, 20),
 	SelectedBgTransparency = 0.05,
@@ -683,6 +685,13 @@ end
 ---                          text, shrinks to the phone floor only if a long name needs it).
 ---                          Off = the original layout (Merchant / Runeforge gems unchanged).
 --- Returns: the tile TextButton.
+-- Inner padding of an item tile = drawn thickness of its ornate frame border (2026-11-17).
+function Theme.ItemTileFramePad(): number
+	-- 2026-11-17 (user): minimal margin -- content just clears the visible frame line.
+	-- (The frame art's slice includes empty space, so the full slice width was too thick.)
+	return Theme.ItemTile.FramePad or 2
+end
+
 function Theme.MakeItemTile(opts)
 	opts = opts or {}
 	local t = Theme.ItemTile
@@ -692,22 +701,69 @@ function Theme.MakeItemTile(opts)
 
 	local tile = Instance.new("TextButton")
 	tile.Size = UDim2.new(1, 0, 1, 0)  -- sized by the container UIGridLayout CellSize
-	if opts.selected then
-		tile.BackgroundColor3 = t.SelectedBgColor
-		tile.BackgroundTransparency = t.SelectedBgTransparency
-	else
-		tile.BackgroundColor3 = accent
-		tile.BackgroundTransparency = t.BgTransparency
-	end
+	-- 2026-11-16 (user ruling): item tiles use the ornate panel frame, dark fill like panels.
+	-- Rarity now shows through the name colour only; selected keeps the gold stroke/highlight.
+	-- 2026-11-17 (user): selection = glowing outline, no brown fill. Same dark bg for all tiles.
+	tile.BackgroundColor3 = Theme.PanelFrame.BgColor
+	tile.BackgroundTransparency = Theme.PanelFrame.BgTransparency
 	tile.BorderSizePixel = 0
 	tile.Text = ""
 	tile.AutoButtonColor = false -- project rule 243: no mouse-over colour change (2026-11-09)
 	tile.LayoutOrder = opts.layoutOrder or 0
 	tile.Parent = opts.parent
 	Instance.new("UICorner", tile).CornerRadius = UDim.new(0, t.CornerRadius)
-	local stroke = Instance.new("UIStroke", tile)
-	stroke.Color = opts.selected and Theme.Colors.TextGold or accent
-	stroke.Thickness = opts.selected and t.SelectedStrokeThickness or t.StrokeThickness
+	-- 2026-11-17 (user): text/badges sit INSIDE the ornate frame, not on it.
+	local framePad = Theme.ItemTileFramePad()
+	local pad = Instance.new("UIPadding", tile)
+	pad.PaddingTop = UDim.new(0, framePad); pad.PaddingBottom = UDim.new(0, framePad)
+	pad.PaddingLeft = UDim.new(0, framePad); pad.PaddingRight = UDim.new(0, framePad)
+	if opts.selected then
+		-- Glowing WHITE outline hugging the ornate frame edge (2026-11-17 user ruling).
+		-- Every ring is exactly the frame's bounds (cancels the tile padding), square corners;
+		-- UIStroke draws outward from that edge, so thicker + fainter strokes fake a soft glow.
+		local white = Color3.fromRGB(255, 255, 255)
+		-- 2026-11-17 (user: "glow, not outline"): soft falloff made of 1px rings, each 1px
+		-- further out and fainter. Small steps blend into a gradient instead of visible rings.
+		local fade = { 0, 0.35, 0.55, 0.7, 0.8, 0.88, 0.94 }
+		for i, tr in fade do
+			local off = i - 1
+			local ring = Instance.new("Frame")
+			ring.Name = "SelectGlow" .. i
+			ring.BackgroundTransparency = 1
+			ring.BorderSizePixel = 0
+			ring.Active = false
+			ring.Interactable = false
+			ring.Size = UDim2.new(1, framePad * 2 + off * 2, 1, framePad * 2 + off * 2)
+			ring.Position = UDim2.fromOffset(-framePad - off, -framePad - off)
+			ring.ZIndex = 5
+			ring.Parent = tile
+			local st = Instance.new("UIStroke", ring)
+			st.Color = white
+			st.Thickness = 1
+			st.Transparency = tr
+			st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		end
+	end
+	-- Ornate frame overlay (same art as Theme.MakePanel), above icon/name, ignores taps.
+	do
+		local pf = Theme.PanelFrame
+		local fr = Instance.new("ImageLabel")
+		fr.Name = "ItemFrame"
+		-- Cancels the tile UIPadding so the frame still covers the full tile edge.
+		fr.Size = UDim2.new(1, framePad * 2, 1, framePad * 2)
+		fr.Position = UDim2.fromOffset(-framePad, -framePad)
+		fr.BackgroundTransparency = 1
+		fr.BorderSizePixel = 0
+		fr.Image = pf.Asset
+		fr.ScaleType = Enum.ScaleType.Slice
+		fr.SliceCenter = pf.SliceCenter
+		fr.SliceScale = t.FrameSliceScale or pf.SliceScale
+		fr.ImageTransparency = pf.ImageTransparency
+		fr.Active = false
+		fr.Interactable = false
+		fr.ZIndex = 4
+		fr.Parent = tile
+	end
 
 	-- Count badge (top-right)
 	if opts.countText then
@@ -746,7 +802,7 @@ function Theme.MakeItemTile(opts)
 		local baseSize: UDim2
 		if opts.portrait then
 			-- Same box as the Loadout Skills/Augments tiles: full-width square from the top inset.
-			baseSize = UDim2.new(1, -iconInset * 2, 0, cellW - iconInset * 2)
+			baseSize = UDim2.new(1, -iconInset * 2, 0, cellW - iconInset * 2 - framePad * 2)
 		else
 			baseSize = UDim2.new(1, -iconInset * 2, 1, -(iconInset + t.NameBarHeight + 2))
 		end
@@ -785,8 +841,8 @@ function Theme.MakeItemTile(opts)
 		nameBg.BorderSizePixel = 0
 		nameBg.ZIndex = 3
 		nameBg.Parent = tile
-		local font = Theme.Font.PrimaryBold
-		local labelW = math.max(10, cellW - 4)
+		local font = Theme.Font.Primary -- 2026-11-17 (user): normal weight, not bold
+		local labelW = math.max(10, cellW - 4 - framePad * 2)
 		local minSize = (Theme.GetMode() == "Mobile") and 10 or t.PortraitNameMinDesktop
 		local size = Theme.Text.Tiny()
 		while size > minSize and Theme.MeasureText(opts.name, size, font, labelW).Y > barH do
@@ -1407,6 +1463,82 @@ Theme.GuildIcons = table.freeze({
 	Dispatch         = "rbxassetid://84363568386921",
 	Units            = "rbxassetid://132653392640514", -- 2026-11-14 icon-guild-units
 })
+
+-- Battle button icons (user 2026-11-15 9:22 PM): ONE table for every in-battle button icon (DAT-001).
+-- Keys = BattleVisualClient action ids (Move, Commands, Skill, Item, Undo, Wait, Attack, Interact,
+-- Push, Guard), the Battlefield menu (Battlefield, View, Log, Mission) and the unit inspector tabs.
+-- Every button has its own picture (two buttons never share one). Existing art reused where it fits;
+-- new art: D:\AI\Projects\CTRBLXAI\assets\ui_icons\battle\ (uploaded 2026-11-15, all load-tested).
+-- Colored battle button icons (user 2026-11-15 9:39 PM: monochrome stat icons unreadable on the navy
+-- buttons). Art: assets\ui_icons\battle_color\battle-color-<key>.png. Old monochrome set kept below
+-- as a comment for rollback.
+Theme.BattleButtonIcons = table.freeze({
+	Move        = "rbxassetid://91582823846890",  -- green running boot, speed lines (v2)
+	Commands    = "rbxassetid://131570313856247", -- orange battle standard banner (v2)
+	Skill       = "rbxassetid://132616360273173", -- purple spellbook
+	Item        = "rbxassetid://86073578978947",  -- red potion
+	Undo        = "rbxassetid://87593956591825",  -- cyan curved return arrow (v2)
+	Wait        = "rbxassetid://91461271255024",  -- gold hourglass
+	Attack      = "rbxassetid://91554114141148",  -- crossed red swords
+	Interact    = "rbxassetid://107940918068118", -- gold raised fist (v3, 11:32 PM)
+	Push        = "rbxassetid://103821794970965", -- gothic teal plate palm (H3, 2026-11-16 1:46 AM)
+	Guard       = "rbxassetid://124027213997262", -- blue shield
+	Battlefield = "rbxassetid://83828569883673",  -- red flag on map tile, painted (v2, 11:58 PM)
+	View        = "rbxassetid://123999706290054", -- angle arrows + arc + eye (v4, 12:16 AM)
+	Log         = "rbxassetid://123025568244621", -- parchment scroll
+	Mission     = "rbxassetid://131700731244240", -- sealed quest scroll (v2)
+	TabStats    = "rbxassetid://112840946698298", -- three green stat bars, no shield (v3)
+	TabPassive  = "rbxassetid://138247732227089", -- magenta rune sigil circle (v3)
+	TabGears    = "rbxassetid://136353844908785", -- steel breastplate
+	TabSkills   = "rbxassetid://132616360273173", -- same as Skill (same meaning)
+	TabOutfit   = "rbxassetid://85762494425504",  -- violet cape
+})
+--[[ ROLLBACK — every earlier battle button icon id (newest first; live table above is current):
+  2026-11-16 1:46 AM  Push        90586268733510   teal open palm (replaced by H3 gothic plate palm)
+  2026-11-16 12:16 AM View        77097145895545   teal bracket + eye
+  2026-11-15 11:58 PM Battlefield 86063240846540   flat red flag on tile
+  2026-11-15 11:58 PM View        111833390084129  eye in brass spyglass
+  2026-11-15 11:39 PM TabStats    112239958126679  green tome + rising arrow
+  2026-11-15 11:39 PM TabPassive  109491360495106  magenta amulet
+  2026-11-15 11:32 PM Interact    129840902360832  golden padlock
+  2026-11-15 11:32 PM Push        97037567950124   blue armoured fist + shockwave
+  2026-11-15 10:42 PM Move 74876881268176 (winged boot), Commands 106610320855333 (war horn),
+                      Undo 130628909091461, Interact 101037880221662 (gold hand), Push 104003105721874,
+                      View 83451173331605 (teal eye), Mission 116209088367449 (bullseye),
+                      TabStats 72718133036371 (bar-chart crest), TabPassive 87213972285944 (pink star gem)
+  2026-11-15 9:39 PM  monochrome set: Move = Theme.Icons.StatMovement, Commands 133576079291582,
+                      Skill = Theme.Icons.SkillCard, Item = Theme.Icons.Consumable, Undo = Theme.Icons.Reset,
+                      Wait 73335152261480, Attack = Theme.Icons.StatAttack, Interact 87185967882419,
+                      Push = Theme.Icons.StatForce, Guard = Theme.Icons.StatDefense, Battlefield 79777326481608,
+                      View 127672428084504, Log 71973695314411, Mission = Theme.GuildIcons.AdventurersGuild,
+                      TabStats 73171315016081, TabPassive 101093019655772, TabGears = Theme.Icons.Torso,
+                      TabSkills = Theme.Icons.SkillCard, TabOutfit = Theme.GuildIcons.UGCMarket
+]]
+
+-- Small icon at the LEFT of a TextLabel/TextButton (battle panels, 2026-11-15). The text moves right
+-- by px + 4 through the label's UIPadding; the icon sits in that gap. No icon string = no change.
+-- Properties first, Parent last (NET-004).
+function Theme.AddLeadIcon(lbl: GuiObject?, icon: string?, px: number?): ImageLabel?
+	if not lbl or type(icon) ~= "string" or icon == "" then return nil end
+	local size = px or 18
+	local pad = lbl:FindFirstChildOfClass("UIPadding")
+	if not pad then
+		pad = Instance.new("UIPadding")
+		pad.Parent = lbl
+	end
+	pad.PaddingLeft = UDim.new(0, pad.PaddingLeft.Offset + size + 4)
+	local img = Instance.new("ImageLabel")
+	img.Name = "LeadIcon"
+	img.BackgroundTransparency = 1
+	img.ScaleType = Enum.ScaleType.Fit
+	img.Image = icon
+	img.Size = UDim2.fromOffset(size, size)
+	img.AnchorPoint = Vector2.new(0, 0.5)
+	img.Position = UDim2.new(0, -(size + 4), 0.5, 0)
+	img.ZIndex = (lbl :: any).ZIndex
+	img.Parent = lbl
+	return img
+end
 
 -- Dungeon map room icons (project_rules 260, USER RULING 2026-11-14 2:30-2:51 AM). ONE place for the
 -- asset ids. Art: D:\AI\Projects\CTRBLXAI\art_staging\dungeon_nodes\ (user uploads, then pastes ids).

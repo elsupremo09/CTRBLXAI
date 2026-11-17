@@ -1,0 +1,241 @@
+--!strict
+-- FurnishScreen.lua
+-- CTRBLXAI | Guild Hall "Furnish" tab + furniture craft list, moved out of GuildMenu.client.lua
+-- (furniture v5 build step 4a, 2026-11-16). Code moved word-for-word; no behaviour or text change.
+-- GuildMenu still owns the page content and its row helpers; it passes them in through Init.
+-- Display + input only: the server prices and checks everything (FurnitureService, SEC-001).
+
+local FurnishScreen = {}
+
+type RowButton = { text: string, color: Color3, onTap: () -> (), enabled: boolean?, style: string? }
+
+local C: any = nil
+local Theme: any = nil
+local GuildEvents: any = nil
+local FurnitureData: any = nil
+local call: (remote: RemoteFunction?, ...any) -> any? = function() return nil end
+local clearContent: () -> () = function() end
+local addHeading: (text: string) -> () = function() end
+local addNote: (text: string) -> () = function() end
+local addRow: (text: string, buttons: { RowButton }?, dim: boolean?) -> Frame = function() return nil :: any end
+local guildHallHeader: () -> () = function() end
+local invalidatePageCache: () -> () = function() end
+local refreshOverview: () -> () = function() end
+local setStatus: (text: string, isError: boolean?) -> () = function() end
+local function busy(): boolean return C ~= nil and C.isBusy() == true end
+local function setBusy(v: boolean) if C then C.setBusy(v) end end
+
+local renderFurnish: (res: any) -> () = function() end
+
+local function furnitureCall(cmd: any)
+	if busy() then return end
+	setBusy(true)
+	local r = call(GuildEvents.FurnitureAction, cmd)
+	setBusy(false)
+	if r then
+		invalidatePageCache()
+		refreshOverview()
+		renderFurnish(r)
+	end
+end
+
+renderFurnish = function(res: any)
+	if C.currentPage() ~= "GuildHall" or C.guildHallTab() ~= "Furnish" then return end
+	local f = type(res) == "table" and res.furniture or nil
+	clearContent()
+	guildHallHeader()
+	if type(f) ~= "table" or not FurnitureData then return end
+	addNote(`Bonus: {f.points or 0} / {f.cap or 0}`) -- FUR-CAP (cap = 6 x Guild Hall level)
+	local locked = f.locked == true
+	if locked then addNote("You can't change furniture during a battle or dungeon run.") end -- FUR-LOCKED-RUN
+	local placed: { [string]: boolean } = {}
+	local function slotRow(id: any, idx: number, isDecor: boolean, status: string?)
+		local piece = if type(id) == "string" then FurnitureData.Get(id) else nil
+		if piece then
+			placed[piece.id] = true
+			local line = `{piece.name}\n{piece.text}`
+			if status == "capped" then line = `{piece.name}\nCapped — this bonus is already at its limit.` end -- FUR-CAPPED
+			addRow(line, { {
+				text = "Remove", color = Theme.Colors.Danger, style = "Secondary", enabled = not locked, -- DRAFT FUR-BTN-REMOVE
+				onTap = function() furnitureCall({ action = "Remove", slot = idx, decor = isDecor }) end,
+			} }, status == "capped")
+		else
+			addRow(if isDecor then "Wall decoration — empty" else "Empty slot", nil, true) -- DRAFT FUR-SLOT-DECOR / FUR-SLOT-EMPTY
+		end
+	end
+	for i, id in (type(f.slots) == "table" and f.slots or {}) do
+		slotRow(id, i, false, type(f.slotStatus) == "table" and f.slotStatus[i] or nil)
+	end
+	for i, id in (type(f.decor) == "table" and f.decor or {}) do
+		slotRow(id, i, true, nil)
+	end
+	-- Owned pieces not out yet: Place puts them in the first empty slot of their kind.
+	local function firstEmpty(list: any): number?
+		for i, v in (type(list) == "table" and list or {}) do
+			if v == false then return i end
+		end
+		return nil
+	end
+	for _, id in (type(f.owned) == "table" and f.owned or {}) do
+		local piece = FurnitureData.Get(id)
+		if piece and not placed[piece.id] then
+			local isDecor = piece.looksOnly == true
+			local slotIdx = firstEmpty(if isDecor then f.decor else f.slots)
+			addRow(`{piece.name}\n{piece.text}`, { {
+				text = "Place", color = Theme.Colors.Success, style = "Primary", -- DRAFT FUR-BTN-PLACE
+				enabled = (not locked) and slotIdx ~= nil,
+				onTap = function()
+					if slotIdx then furnitureCall({ action = "Place", piece = piece.id, slot = slotIdx, decor = isDecor }) end
+				end,
+			} })
+		end
+	end
+	if type(f.shop) == "table" and #f.shop > 0 then
+		addHeading("Shop") -- DRAFT FUR-SHOP
+		for _, row in f.shop do
+			local piece = FurnitureData.Get(row.id)
+			if piece then
+				local line = `{piece.name}\n{piece.text}` .. (if row.reason then `  ·  {row.reason}` else "")
+				addRow(line, { {
+					text = `Buy — {row.price} gold`, color = Theme.Colors.Success, style = "Primary", -- DRAFT FUR-BTN-BUY
+					enabled = row.canBuy == true,
+					onTap = function()
+						if row.canBuy then furnitureCall({ action = "Buy", piece = piece.id }) end
+					end,
+				} }, row.canBuy ~= true)
+			end
+		end
+	end
+end
+
+-- Furniture craft list (step 3; approved lines 1-4 + "Already owned" / "Not enough gold"). One small
+-- modal per open; the server prices and checks everything (FurnitureService.Craft, SEC-001).
+local furnGui: ScreenGui = nil :: any -- created in Init (needs PlayerGui)
+local function makeFurnGui(playerGui: Instance)
+	furnGui = Instance.new("ScreenGui")
+	furnGui.Name = "FurnitureCraft"
+	furnGui.ResetOnSpawn = false
+	furnGui.DisplayOrder = 65
+	furnGui.Enabled = false
+	furnGui.Parent = playerGui -- NET-004
+end
+local function closeFurnitureCraft()
+	if not furnGui.Enabled then return end
+	furnGui.Enabled = false
+	furnGui:ClearAllChildren()
+end
+local function renderFurnitureCraft(building: string, rows: { any })
+	furnGui:ClearAllChildren()
+	local dim = Instance.new("TextButton")
+	dim.Name = "Dim"
+	dim.Size = UDim2.fromScale(1, 1)
+	dim.BackgroundColor3 = Color3.new(0, 0, 0)
+	dim.BackgroundTransparency = 0.45
+	dim.Text = ""
+	dim.AutoButtonColor = false
+	dim.Parent = furnGui
+	local rowH = 80 -- name, effect, then the reason line under both (full width)
+	local panel = Theme.MakePanel("FurniturePanel", UDim2.fromOffset(470, 70 + math.max(1, #rows) * (rowH + 6)),
+		UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), furnGui)
+	local title = Instance.new("TextLabel")
+	title.BackgroundTransparency = 1
+	title.Position = UDim2.fromOffset(16, 10)
+	title.Size = UDim2.new(1, -80, 0, 40)
+	title.Font = Theme.Font.PrimaryBold
+	title.TextSize = Theme.Text.Body() + 4
+	title.TextColor3 = Theme.Colors.TextGold
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Text = "Furniture" -- approved step 3 line 1
+	title.Parent = panel
+	Theme.MakeIconButton(panel, "Back", closeFurnitureCraft, { size = UDim2.fromOffset(44, 44), position = UDim2.new(1, -54, 0, 8) })
+	for i, r in ipairs(rows) do
+		local row = Instance.new("Frame")
+		row.BackgroundTransparency = 1
+		row.Position = UDim2.fromOffset(16, 58 + (i - 1) * (rowH + 6))
+		row.Size = UDim2.new(1, -32, 0, rowH)
+		row.Parent = panel
+		local nameL = Instance.new("TextLabel")
+		nameL.BackgroundTransparency = 1
+		nameL.Size = UDim2.new(1, -228, 0, 26)
+		nameL.Font = Theme.Font.PrimaryBold
+		nameL.TextSize = Theme.Text.Body()
+		nameL.TextColor3 = Theme.Colors.TextPrimary
+		nameL.TextXAlignment = Enum.TextXAlignment.Left
+		nameL.TextTruncate = Enum.TextTruncate.AtEnd
+		nameL.Text = tostring(r.name)
+		nameL.Parent = row
+		local fx = nameL:Clone()
+		fx.Position = UDim2.fromOffset(0, 26)
+		fx.Font = Theme.Font.Primary
+		fx.TextSize = Theme.Text.Small()
+		fx.TextColor3 = Theme.Colors.TextSecondary
+		fx.Text = tostring(r.text)
+		fx.Parent = row
+		if r.owned then
+			local o = fx:Clone()
+			o.Position = UDim2.new(1, -220, 0, 10)
+			o.Size = UDim2.fromOffset(220, 30)
+			o.TextXAlignment = Enum.TextXAlignment.Right
+			o.Text = "Already owned"
+			o.Parent = row
+		else
+			local label = `Craft — {tonumber(r.price) or 0} gold` .. (if r.matName then ` + {tonumber(r.matN) or 0} {r.matName}` else "") -- approved step 3 line 2
+			local btn = Theme.MakeTabButton(row, label, if r.canCraft then "Inactive" else "Disabled", function()
+				if not r.canCraft or busy() then return end
+				setBusy(true)
+				local res = call(GuildEvents.FurnitureAction, { action = "Craft", piece = r.id, building = building })
+				setBusy(false)
+				if res then
+					if type(res.message) == "string" then setStatus(res.message) end -- approved step 3 line 4
+					invalidatePageCache()
+					refreshOverview()
+					renderFurnitureCraft(building, type(res.craft) == "table" and res.craft or {})
+				end
+			end, { name = "Craft_" .. tostring(r.id), size = UDim2.fromOffset(220, 44) })
+			btn.Position = UDim2.new(1, -220, 0, 0)
+			if not r.canCraft and type(r.reason) == "string" then
+				local why = fx:Clone()
+				why.Position = UDim2.fromOffset(0, 56)
+				why.Size = UDim2.new(1, 0, 0, 20)
+				why.TextXAlignment = Enum.TextXAlignment.Right
+				why.TextColor3 = Theme.Colors.Danger
+				why.Text = r.reason -- approved step 3 line 3 / "Not enough gold (have / cost)"
+				why.Parent = row
+			end
+		end
+	end
+	furnGui.Enabled = true
+end
+local function openFurnitureCraft(building: string)
+	if busy() then return end
+	setBusy(true)
+	local res = call(GuildEvents.FurnitureAction, { action = "CraftRows", building = building })
+	setBusy(false)
+	if res and type(res.craft) == "table" then renderFurnitureCraft(building, res.craft) end
+end
+
+-- ctx: Theme, GuildEvents, FurnitureData, playerGui, call, clearContent, addHeading, addNote, addRow,
+-- guildHallHeader, invalidatePageCache, refreshOverview, setStatus, isBusy(), setBusy(v),
+-- currentPage(), guildHallTab().
+function FurnishScreen.Init(ctx: any)
+	C = ctx
+	Theme = ctx.Theme
+	GuildEvents = ctx.GuildEvents
+	FurnitureData = ctx.FurnitureData
+	call = ctx.call
+	clearContent = ctx.clearContent
+	addHeading = ctx.addHeading
+	addNote = ctx.addNote
+	addRow = ctx.addRow
+	guildHallHeader = ctx.guildHallHeader
+	invalidatePageCache = ctx.invalidatePageCache
+	refreshOverview = ctx.refreshOverview
+	setStatus = ctx.setStatus
+	makeFurnGui(ctx.playerGui)
+end
+
+function FurnishScreen.Render(res: any) renderFurnish(res) end
+function FurnishScreen.OpenCraft(building: string) openFurnitureCraft(building) end
+function FurnishScreen.CloseCraft() if furnGui then closeFurnitureCraft() end end
+
+return FurnishScreen

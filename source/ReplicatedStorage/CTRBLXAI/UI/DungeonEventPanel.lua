@@ -20,18 +20,21 @@ export type Ctx = {
 	onFight: () -> (),     -- the event turned into a fight: launch the room battle
 	onDone: () -> (),      -- room cleared: close + re-render the map
 	lastError: (() -> string?)?, -- step 7b (Tester W3): last server refusal text
+	onCourier: ((ev: any) -> ())?, -- EV-17 "Send items home": open the Courier's Rest picker (DungeonBagPanel)
 }
 
 -- Approved event text (title, story, choice labels). {cost} is filled from the server quote.
+-- Silver step 2: EV-03 / EV-04 / EV-08 / EV-13 g2m labels and the silver result lines are SB-35..39,
+-- SB-04/05, SB-36 (approved 2026-11-15 9:09 PM, rule 275).
 local EVENTS = {
 	["EV-01"] = { "Forgotten Cache", "A rotted crate hides under the rubble. Something still glints inside.",
 		{ open = "Open it", leave = "Leave it" }, { "open", "leave" } },
 	["EV-02"] = { "Healing Spring", "Clear water bubbles from the stone. It feels warm to the touch.",
 		{ drink = "Drink", flask = "Fill a flask", move = "Move on" }, { "drink", "flask", "move" } },
 	["EV-03"] = { "Wandering Peddler", "A hooded peddler waves you over. \"Charges, fresh charges. Cheap.\"",
-		{ buy = "Buy refills ({cost}g)", no = "No thanks" }, { "buy", "no" } },
+		{ buy = "Buy refills ({cost} silver)", no = "No thanks" }, { "buy", "no" } },
 	["EV-04"] = { "Fallen Adventurer", "A long-dead adventurer clutches a coin pouch. No one will miss it now.",
-		{ pouch = "Take the pouch", bury = "Bury them" }, { "pouch", "bury" } },
+		{ pouch = "Take the pouch (+30 silver)", bury = "Bury them" }, { "pouch", "bury" } },
 	["EV-05"] = { "Lucky Shrine", "A tiny shrine to a forgotten god of fortune. Coins cover the altar.",
 		{ offer = "Leave an offering (100g)", walk = "Walk away" }, { "offer", "walk" } },
 	["EV-06"] = { "Blood Altar", "A stained altar hums with dark power. It asks for blood.",
@@ -39,7 +42,7 @@ local EVENTS = {
 	["EV-07"] = { "Sealed Door", "A heavy door, sealed with old chains. Something moves behind it.",
 		{ ["break"] = "Break the seal", leave = "Leave it shut" }, { "break", "leave" } },
 	["EV-08"] = { "Gambler's Table", "A grinning skeleton shuffles cards. \"One game, traveler?\"",
-		{ bet = "Bet 200g", walk = "Walk away" }, { "bet", "walk" } },
+		{ bet = "Bet 20 silver", walk = "Walk away" }, { "bet", "walk" } },
 	["EV-09"] = { "Collapsing Tunnel", "The ceiling groans. Rocks start falling all around you.",
 		{ run = "Run for it", shield = "Shield the weakest" }, { "run", "shield" } },
 	["EV-10"] = { "Cutpurse Ambush", "Shadows close in. \"Your bag, or your blood.\"",
@@ -50,7 +53,7 @@ local EVENTS = {
 	["EV-12"] = { "Smith's Wager", "A wandering smith eyes your gear. 'Leave me one, and I'll forge you better by the next fork.'",
 		{ hand = "Hand over gear", keep = "Keep it" }, { "hand", "keep" } },
 	["EV-13"] = { "Barter Post", "A trader with full packs. She takes any coin or stone, at her price.",
-		{ m2c = "Mercury → Crystals", c2m = "Crystals → Mercury", g2m = "Gold → Mercury", leave = "Move on" }, { "m2c", "c2m", "g2m", "leave" } },
+		{ m2c = "Mercury → Crystals", c2m = "Crystals → Mercury", g2m = "40 silver → 1 Mercury", leave = "Move on" }, { "m2c", "c2m", "g2m", "leave" } },
 	["EV-14"] = { "Campfire", "Embers still warm. Someone camped here not long ago.",
 		{ rest = "Rest a while", search = "Search the camp" }, { "rest", "search" } },
 	["EV-15"] = { "Forge of Chance", "An anvil hums with old magic. It can raise a weapon's worth, but never as it was.",
@@ -58,12 +61,15 @@ local EVENTS = {
 	-- EV-16 Altar of Change (text approved 2026-11-15 10:17 AM; replaces Shifting Hall).
 	["EV-16"] = { "Altar of Change", "A cracked altar hums with old magic. It can reshape one of your units, for better or worse.",
 		{ reshape = "Reshape a unit", leave = "Leave" }, { "reshape", "leave" } },
+	-- EV-17 Courier's Rest (SB-26..SB-29, approved 2026-11-15 9:09 PM, rule 275).
+	["EV-17"] = { "Courier's Rest", "A guild courier rests by the path. \"I can carry a few things home for you — for a fee.\"",
+		{ send = "Send items home", move = "Move on" }, { "send", "move" } },
 }
 -- EV-12 / EV-15 open a gear pick from the run bag first (approved lines below).
 local GEAR_PICK = { ["EV-12"] = { key = "hand", title = "Choose a gear to hand over" }, ["EV-15"] = { key = "reforge", title = "Choose a gear to reforge" } }
 -- Barter resource names, capitalised (approved 2026-11-15 10:08 AM): "Traded 10 Mercury for 1 Crystals"
 -- Rule 275 approves Crystal/Crystals: 1 reads "Crystal", 2+ "Crystals" (2026-11-15).
-local RES_NAME = { gold = "Gold", mercury = "Mercury", crystals = "Crystals" }
+local RES_NAME = { gold = "Gold", mercury = "Mercury", crystals = "Crystals", silver = "Silver" } -- silver: approved Barter format (rule 275)
 local function resWord(id: string, n: number): string
 	if id == "crystals" and n == 1 then return "Crystal" end
 	return RES_NAME[id] or id
@@ -104,6 +110,10 @@ local function lineText(l: any): string?
 		return if l.n >= 0 then `+{l.n} gold (in your bag)` else `−{-l.n} gold`  -- EV-UI-GOLD
 	elseif l.k == "realGold" then
 		return if l.n >= 0 then `+{l.n} gold` else `−{-l.n} gold`                  -- EV-UI-GOLD-REAL
+	elseif l.k == "silver" then -- SB-04 / SB-05
+		return if l.n >= 0 then `+{l.n} silver` else `−{-l.n} silver`
+	elseif l.k == "silverLost" then -- EV-10 Cutpurse: SB-36
+		return `The cutpurse took {l.n or 0} silver.`
 	elseif l.k == "gear" then
 		return `Found {l.name or "an item"}! It's in your bag.`                     -- EV-UI-GEAR
 	elseif l.k == "mat" then
@@ -127,11 +137,13 @@ local function lineText(l: any): string?
 	elseif l.k == "buff" then -- EV-11 doctrine shrine (approved 2026-11-15 10:08 AM)
 		return `The shrine blesses your {l.doctrine or "?"}s.`
 	elseif l.k == "refilled" then -- EV-14 Campfire "Search the camp" (approved 2026-11-15 10:08 AM)
-		return "All consumables are refilled."
+		return "All consumables are refilled — even the ones in your bag." -- SB-43 (approved 2026-11-15 9:09 PM)
 	elseif l.k == "altar" then -- EV-16 Altar of Change result (approved 2026-11-15 10:17 AM)
 		return `{l.unit or "?"}'s {l.old or "?"} became {l.new or "?"}.`
 	elseif l.k == "smith" then
 		return "The smith will find you at the next Event, Rest or boss."             -- approved 2026-11-15 2:05 AM
+	elseif l.k == "courier" then -- EV-17 result (SB-33)
+		return "Sent home! They'll be waiting for you."
 	elseif l.k == "forged" then -- EV-15: the reforged item is in the bag (reuses EV-UI-GEAR)
 		return `Found {l.name or "an item"}! It's in your bag.`
 	end
@@ -140,42 +152,12 @@ end
 
 local function shell(name: string): (Instance, Frame)
 	close()
-	local o = Instance.new("TextButton")
-	o.Name = name
-	o.Text = ""
-	o.AutoButtonColor = false
-	o.Modal = true
-	o.Size = UDim2.fromScale(1, 1)
-	o.BackgroundColor3 = Color3.new(0, 0, 0)
-	o.BackgroundTransparency = 0.4
-	o.BorderSizePixel = 0
-	o.ZIndex = 20
-	local box = Instance.new("Frame")
-	box.Name = "Box"
-	box.AnchorPoint = Vector2.new(0.5, 0.5)
-	box.Position = UDim2.fromScale(0.5, 0.5)
-	box.Size = UDim2.new(0.8, 0, 0, 0)
-	box.AutomaticSize = Enum.AutomaticSize.Y
-	box.BackgroundColor3 = Theme.Colors.PanelRaised
-	box.BorderSizePixel = 0
-	box.ZIndex = 21
-	local maxW = Instance.new("UISizeConstraint")
-	maxW.MaxSize = Vector2.new(480, math.huge)
-	maxW.Parent = box
-	local cr = Instance.new("UICorner")
-	cr.CornerRadius = Theme.CornerRadius.md
-	cr.Parent = box
-	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0, 14)
-	pad.PaddingRight = UDim.new(0, 14)
-	pad.PaddingTop = UDim.new(0, 10)
-	pad.PaddingBottom = UDim.new(0, 10)
-	pad.Parent = box
+	-- Shared guild popup box, below the Roblox top bar (2026-11-17 style fix).
+	local o, box = GuildScreen.MakeModalBox(name, { maxW = 480, widthScale = 0.8, pad = 14 })
 	local list = Instance.new("UIListLayout")
 	list.Padding = UDim.new(0, 6)
 	list.SortOrder = Enum.SortOrder.LayoutOrder
 	list.Parent = box
-	box.Parent = o
 	return o, box
 end
 
@@ -276,6 +258,7 @@ function renderChoices(ev: any, note: string?)
 		local b = Theme.MakeBarButton(nil, label, style, function()
 			if gp and key == gp.key then renderGearPick(ev, gp)
 			elseif key == "reshape" then renderAltar(ev)
+			elseif key == "send" and ev.id == "EV-17" then if c.onCourier then close() c.onCourier(ev) end
 			else choose(ev, key) end
 		end, {
 			name = "Btn_" .. key, minHeight = GuildScreen.ROW_H })
@@ -492,42 +475,5 @@ function DungeonEventPanel.IsOpen(): boolean
 	return overlay ~= nil
 end
 
--- Test hooks (simulated taps don't register): same paths as taps.
-DungeonEventPanel._Test = table.freeze({
-	choose = function(key: string)
-		local c = lastCtx
-		if not c then return nil end
-		local res = c.act({ action = "EventState" })
-		local ev = res and res.eventRoom
-		if ev then choose(ev, key) end
-		return ev
-	end,
-	overlayName = function() return overlay and overlay.Name or nil end,
-	altar = function() -- EV-16: open the unit pick (same path as the "Reshape a unit" tap)
-		local c = lastCtx
-		if not c then return nil end
-		local res = c.act({ action = "EventState" })
-		local ev = res and res.eventRoom
-		if ev then renderAltar(ev) end
-		return ev
-	end,
-	-- EV-12 / EV-15: open the bag gear pick, then pick gear id (same paths as the taps).
-	gearPick = function()
-		local c = lastCtx
-		if not c then return nil end
-		local res = c.act({ action = "EventState" })
-		local ev = res and res.eventRoom
-		if ev and GEAR_PICK[ev.id] then renderGearPick(ev, GEAR_PICK[ev.id]) end
-		return ev
-	end,
-	chooseGear = function(key: string, gearId: string)
-		local c = lastCtx
-		if not c then return nil end
-		local res = c.act({ action = "EventState" })
-		local ev = res and res.eventRoom
-		if ev then choose(ev, key, gearId) end
-		return ev
-	end,
-})
 
 return table.freeze(DungeonEventPanel)

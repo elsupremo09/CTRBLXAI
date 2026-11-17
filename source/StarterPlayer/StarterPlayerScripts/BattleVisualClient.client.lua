@@ -1477,13 +1477,13 @@ local function enterActionSelection()
 						local skillRtCost = skill.rtCost or 60
 						local isChannel = skill.channelTime and skill.channelTime > 0
 						bp.skill = {
-							name = skill.name, tags = table.concat(skill.tags or {}, ", "),
+							name = skill.name, skillId = skill.id, tags = table.concat(skill.tags or {}, ", "),
 							mpCost = skill.mpCost, rtCost = skill.rtCost, range = skill.range,
 							pattern = skill.pattern, channelTime = skill.channelTime,
 							effects = skill.description or "",
 						}
 						bp.preview = {
-							actionType = "Skill", skillName = skill.name,
+							actionType = "Skill", skillName = skill.name, skillId = skill.id,
 							description = skill.description or "",
 							actorName = prompt.unitName,
 							actorMpBefore = prompt.currentMp, actorMpAfter = (prompt.currentMp or 0) - (skill.mpCost or 0),
@@ -1501,7 +1501,7 @@ local function enterActionSelection()
 					end
 					selectedSkill = skill; inputMode = "skill"; clearHighlights()
 					bp.skill = {
-						name = skill.name, tags = table.concat(skill.tags or {}, ", "),
+						name = skill.name, skillId = skill.id, tags = table.concat(skill.tags or {}, ", "),
 						mpCost = skill.mpCost, rtCost = skill.rtCost, range = skill.range,
 						pattern = skill.pattern, channelTime = skill.channelTime,
 						effects = skill.description or "",
@@ -1544,7 +1544,7 @@ local function enterActionSelection()
 				or (item.targets and #item.targets > 0)
 			)
 			table.insert(entries, {
-				id = item.slotIndex,
+				id = item.slotIndex, consumableId = item.consumableId,
 				name = string.format("%s (%d/%d)", item.name, item.currentCharges or 0, item.maxCharges or 0),
 				rtCost = item.rtCost or 0,
 				enabled = canUse,
@@ -1557,7 +1557,7 @@ local function enterActionSelection()
 						createTileHighlight(storedActorData.tileX or 0, storedActorData.tileY or 0, SKILL_COLOR_HEAL, 0.4)
 						bp.preview = {
 							actionType = "Item",
-							skillName = item.name,
+							skillName = item.name, consumableId = item.consumableId,
 							actorName = prompt.unitName,
 							actorApBefore = prompt.currentAp,
 							actorApAfter = (prompt.currentAp or 1) - 1,
@@ -1578,7 +1578,7 @@ local function enterActionSelection()
 					local pRt = (item.rtCost or 80) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
 					updateTimeline(timelineSnapshot, prompt.unitId, pRt)
 					-- Show the item's description panel during targeting (like skills).
-					bp.skill = { name = item.name or "Item", tags = item.category or "",
+					bp.skill = { name = item.name or "Item", consumableId = item.consumableId, tags = item.category or "",
 						mpCost = 0, rtCost = item.rtCost or 0, range = item.range or 0,
 						pattern = item.pattern or "Single", effects = item.displayText or item.effectFormula or "Item description placeholder." }
 					local c = itemTargetColor(item)
@@ -2253,7 +2253,7 @@ local function processTileClick(bx, by, skipFacingPick)
 					local isChannel = selectedSkill.channelTime and selectedSkill.channelTime > 0
 					bp.preview = {
 						actionType = "Skill",
-						skillName = selectedSkill.name,
+						skillName = selectedSkill.name, skillId = selectedSkill.id,
 						skillTags = bp.skill and bp.skill.tags or nil,
 						actorName = currentPrompt.unitName,
 						actorMpBefore = currentPrompt.currentMp,
@@ -2315,7 +2315,7 @@ local function processTileClick(bx, by, skipFacingPick)
 					local isChannel = selectedSkill.channelTime and selectedSkill.channelTime > 0
 					bp.preview = {
 						actionType = "Skill",
-						skillName = selectedSkill.name,
+						skillName = selectedSkill.name, skillId = selectedSkill.id,
 						skillTags = bp.skill and bp.skill.tags or nil,
 						actorName = currentPrompt.unitName,
 						actorMpBefore = currentPrompt.currentMp,
@@ -2526,7 +2526,7 @@ local function processTileClick(bx, by, skipFacingPick)
 					createTileHighlight(bx, by, "selected")
 					bp.preview = {
 						actionType = "Item",
-						skillName = selectedItem.name,
+						skillName = selectedItem.name, consumableId = selectedItem.consumableId,
 						actorName = currentPrompt.unitName,
 						actorApBefore = currentPrompt.currentAp,
 						actorApAfter = (currentPrompt.currentAp or 1) - 1,
@@ -2551,7 +2551,7 @@ local function processTileClick(bx, by, skipFacingPick)
 					local _tgtData = unitData[t.id]
 					bp.preview = {
 						actionType = "Item",
-						skillName = selectedItem.name,
+						skillName = selectedItem.name, consumableId = selectedItem.consumableId,
 						actorName = currentPrompt.unitName,
 						actorApBefore = currentPrompt.currentAp,
 						actorApAfter = (currentPrompt.currentAp or 1) - 1,
@@ -5702,6 +5702,14 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 			if (tonumber(data.boss.sulfur) or 0) > 0 then table.insert(parts, `+{data.boss.sulfur} SULFUR`) end
 			bossLabel.Text = table.concat(parts, "  ") .. `\nBoss rewards left today: {tonumber(data.boss.left) or 0}`
 		end
+		-- Furniture v5 step 3 (guild_facilities 109/112): every dungeon stage boss gives 1 piece, also after the
+		-- 3-a-day limit. FUR-BOSS-DROP "Furniture found: {name} ({rarity})!" + approved line 6 (loot rule).
+		if type(data.boss.furniture) == "string" then
+			local rar = if type(data.boss.furnitureRarity) == "string" then ` ({data.boss.furnitureRarity})` else ""
+			bossLabel.Text ..= `\nFurniture found: {data.boss.furniture}{rar}!` .. (if data.boss.furnitureLoot then `  {data.boss.furniture} comes home with your loot.` else "")
+			bossLabel.Size = UDim2.new(1, 0, 0, 48)
+			recY = recY + 16
+		end
 		bossLabel.Parent = frame
 		recY = recY + 34
 	end
@@ -5743,6 +5751,15 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 				if tonumber(info.rosterSlots) == 1 then addRow("+1 roster slot", Theme.Colors.Success) end
 				if tonumber(info.questMax) then addRow(`Quests now up to level {info.questMax}`, Theme.Colors.TextPrimary) end
 				if tonumber(info.blacksmithCap) then addRow(`Blacksmith can now upgrade to level {info.blacksmithCap}`, Theme.Colors.TextPrimary) end
+				-- Slice 8 step 1 (2026-11-16): buildings this Rank opened (approved rank text 13).
+				if type(info.newBuildings) == "table" then
+					for _, bName in ipairs(info.newBuildings) do
+						if type(bName) == "string" then addRow(`New building open: {bName}!`, Theme.Colors.Success) end
+					end
+				end
+				if info.pedestal == true then -- furniture step 3 (P4): approved step 3 line 7
+					addRow("Trophy Pedestal earned! It's in your Guild Hall.", Theme.Colors.Success)
+				end
 			end
 		end
 	end

@@ -158,6 +158,12 @@ function ObjectEffectService.InitObjectHp(state: any)
 		if isBreakableObject(def) then
 			inst.hp = def.hitsToDestroy
 			n += 1
+		elseif inst.type and ObjectEffectService.DISGUISES[inst.type] and inst.unmasked ~= true
+			and isBreakableObject(ObjectData.Objects[ObjectEffectService.DISGUISES[inst.type]]) then
+			-- Disguised Mimic: carry the disguise's hp so inspector/push data match a real chest.
+			-- Hits never reduce it (ApplyObjectHit wakes a Mimic before the hp check).
+			inst.hp = ObjectData.Objects[ObjectEffectService.DISGUISES[inst.type]].hitsToDestroy
+			n += 1
 		else
 			inst.hp = nil
 		end

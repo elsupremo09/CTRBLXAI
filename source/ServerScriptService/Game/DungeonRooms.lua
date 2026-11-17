@@ -6,6 +6,9 @@
 
 local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
 local DungeonEvents = require(script.Parent:WaitForChild("DungeonEvents"))
+local DungeonSilver = require(script.Parent:WaitForChild("DungeonSilver")) -- silver step 2 (requires only DungeonRules)
+local DungeonBag = require(script.Parent:WaitForChild("DungeonBag")) -- silver step 2: Bag-full check on Merchant buys
+local DungeonCourier = require(script.Parent:WaitForChild("DungeonCourier")) -- steps 4-5: EV-17 Courier's Rest (requires no Dungeon service: no cycle)
 local D = DungeonRules.Data
 local E = D.Ev
 
@@ -48,12 +51,15 @@ local function eventRoom(run: any): (any, any, string?)
 	if not ev then
 		local seed = run.sseed or run.card.seed
 		local races, docs = kinLists(run)
-		local id = DungeonEvents.Pick(seed, n.row, n.col, run.card.facilityLevel, run.seenEvents, #races + #docs > 0)
+		-- EV-17 Courier's Rest (rule 261): once per stage, not on the run-long no-repeat list.
+		local seen = run.seenEvents
+		if run.courierStage == (run.stage or 1) then seen = table.clone(seen); seen["EV-17"] = true end
+		local id = DungeonEvents.Pick(seed, n.row, n.col, run.card.facilityLevel, seen, #races + #docs > 0)
 		ev = { id = id }
 		-- EV-11 (stages build 2026-11-15): the kin is seeded per room and saved.
 		if id == "EV-11" then ev.kin = DungeonEvents.KinFor(seed, n.row, n.col, races, docs) end
 		run.events[n.id] = ev
-		run.seenEvents[id] = true
+		if id == "EV-17" then run.courierStage = run.stage or 1 else run.seenEvents[id] = true end
 		C.persist()
 	end
 	return n, ev, nil
@@ -70,9 +76,9 @@ function Rooms.GetEvent(playerId: string): (boolean, any)
 		hasKO = okK and v == true
 	end
 	local quote: any = nil
-	if ev.id == "EV-03" and C.eventHooks() and C.eventHooks().refill then
-		local okQ, q = pcall(C.eventHooks().refill, run.party, false)
-		if okQ and type(q) == "table" then quote = { cost = q.cost or 0, missing = (q.refilled or 0) + (q.skippedCharges or 0), need = q.needGold } end
+	if ev.id == "EV-03" then -- silver step 2: Peddler refill quote at 40% of the silver tier price (rule 278)
+		local q = DungeonSilver.Refill(run, E.PeddlerRefillPct, false, "peddler")
+		if type(q) == "table" then quote = { cost = q.cost or 0, missing = (q.refilled or 0) + (q.skippedCharges or 0), need = q.need } end
 	end
 	-- EV-12 / EV-15: the bag gear the player can pick (names + rarity only; ids stay server-checked).
 	local bagGear: any = nil
@@ -82,7 +88,7 @@ function Rooms.GetEvent(playerId: string): (boolean, any)
 			local it = run.bag.gearItems[gid]
 			if type(it) == "table" then
 				local ok = ev.id == "EV-12" or DungeonRules.CanForge(it.rarityId)
-				table.insert(bagGear, { id = gid, name = tostring(it.displayName or "an item"), rarity = it.rarityId, level = it.itemLevel, ok = ok })
+				table.insert(bagGear, { id = gid, name = DungeonCourier.ItemName(it), rarity = it.rarityId, level = it.itemLevel, ok = ok })
 			end
 		end
 	end
@@ -105,7 +111,26 @@ function Rooms.GetEvent(playerId: string): (boolean, any)
 	return true, { id = ev.id, done = ev.done == true, fight = ev.fight, result = ev.result,
 		choices = DungeonEvents.Choices[ev.id], hasKO = hasKO, refill = quote,
 		kin = ev.kin and { kind = ev.kin.kind, name = kinName } or nil, bagGear = bagGear,
-		traded = ev.traded, altarUnits = altarUnits }
+		traded = ev.traded, altarUnits = altarUnits,
+		courier = if ev.id == "EV-17" and not ev.done then DungeonCourier.Options(run) else nil } -- EV-17 picker
+end
+
+--- EV-17 Courier's Rest (rule 272): send the picked Bag items home. Every check is in DungeonCourier.Send
+--- (items really in the Bag, pack size, silver). One send per room; the room is then cleared. No relic roll.
+function Rooms.CourierSend(playerId: string, picks: any): (boolean, any)
+	local run = C.stateOf(playerId).run
+	local n, ev, why = eventRoom(run)
+	if not n then return false, why end
+	if ev.id ~= "EV-17" then return false, "Invalid choice" end
+	if ev.done or run.cleared[n.id] then return false, "This room is already used" end
+	local ok, res = DungeonCourier.Send(run, picks)
+	if not ok then return false, res end
+	local lines: { any } = { { k = "courier", n = res.count } }
+	if res.cost > 0 then table.insert(lines, { k = "silver", n = -res.cost }) end
+	ev.done, ev.choice, ev.result = true, "send", lines
+	run.cleared[n.id] = true
+	C.persist()
+	return true, { id = ev.id, lines = lines }
 end
 
 local function realGold(): number
@@ -138,7 +163,7 @@ function Rooms.ChooseEvent(playerId: string, choice: any, rank: number, gearId: 
 		gid = gearId
 	end
 	local ok, fx = DungeonEvents.Resolve(ev.id, choice, run.sseed or run.card.seed, n.row, n.col,
-		{ hasKO = hasKO, realGold = realGold(), kin = ev.kin, gearId = gid })
+		{ hasKO = hasKO, realGold = realGold(), silver = DungeonSilver.Get(run), kin = ev.kin, gearId = gid })
 	if not ok then return false, fx end
 	local h = C.eventHooks() or {}
 	local level = DungeonRules.BattleLevel(rank, run.card.difficulty, n.row, 0, run.stage)
@@ -149,8 +174,18 @@ function Rooms.ChooseEvent(playerId: string, choice: any, rank: number, gearId: 
 		if f.k == "realGold" and f.n < 0 then
 			if not (h.pay and h.pay(-f.n)) then return false, "Not enough gold" end
 		end
+		-- Silver step 2 (rule 278): silver costs are paid first, all-or-nothing (EV-08 bet, EV-13 silver line).
+		if f.k == "silverPay" and not DungeonSilver.Spend(run, f.n, ev.id) then return false, "Not enough silver" end
+		if f.k == "trade" and f.give == "silver" then
+			if not DungeonSilver.Spend(run, f.giveN, "barter") then return false, "Not enough silver" end
+			local okL = C.addLoot(playerId, "normalMats", f.get, f.getN) -- the mercury goes into the Bag as normal loot (rule 272)
+			if not okL then -- W2: refund the silver if the Bag hand-in failed
+				run.silver = DungeonSilver.Get(run) + f.giveN
+				warn("[DungeonRooms] Barter hand-in failed; refunded " .. tostring(f.giveN) .. " silver")
+				return false, "Something went wrong. Try again."
+			end
 		-- EV-13 Barter Post: the trade is all-or-nothing on real resources (CurrencyService Debit).
-		if f.k == "trade" then
+		elseif f.k == "trade" then
 			if not (h.trade and h.trade(f.give, f.giveN, f.get, f.getN)) then
 				return false, if f.give == "gold" then "Not enough gold" elseif f.give == "mercury" then "Not enough mercury" else "Not enough crystals" -- approved 2026-11-15 10:08 AM
 			end
@@ -171,7 +206,14 @@ function Rooms.ChooseEvent(playerId: string, choice: any, rank: number, gearId: 
 		end
 	end
 	if ev.id == "EV-03" then -- Peddler: refill check before marking done
-		if not h.refill then return false, "Something went wrong. Try again." end
+		if not (C.merchant() and C.merchant().chargeSlots) then return false, "Something went wrong. Try again." end
+		-- W1 (default 9:09 PM): charges missing but none affordable -> refuse like the Merchant; the room stays usable.
+		for _, f in fx do
+			if f.k == "refill" then
+				local q = DungeonSilver.Refill(run, f.pct, false, "peddler")
+				if type(q) == "table" and (q.refilled or 0) <= 0 and (q.skippedCharges or 0) > 0 then return false, "Not enough silver" end
+			end
+		end
 	end
 	ev.done = true
 	ev.choice = choice
@@ -184,7 +226,7 @@ function Rooms.ChooseEvent(playerId: string, choice: any, rank: number, gearId: 
 				if okR and type(items) == "table" then
 					for _, it in items do
 						if type(it) == "table" and it.item then
-							if C.addLoot(playerId, "gearItem", it.item) then table.insert(lines, { k = "gear", name = tostring(it.item.displayName or "an item") }) end
+							if C.addLoot(playerId, "gearItem", it.item) then table.insert(lines, { k = "gear", name = DungeonCourier.ItemName(it.item) }) end
 						elseif type(it) == "table" and it.card then
 							C.addLoot(playerId, "cards", it.card, 1)
 							table.insert(lines, { k = "gear", name = tostring(it.name or "an item") })
@@ -220,13 +262,19 @@ function Rooms.ChooseEvent(playerId: string, choice: any, rank: number, gearId: 
 		elseif f.k == "realGold" then
 			if f.n > 0 and h.give then h.give(f.n) end
 			table.insert(lines, { k = "realGold", n = f.n })
+		elseif f.k == "silver" then -- silver step 2: event silver into the purse (EV-04 / EV-07 / EV-08 win)
+			table.insert(lines, { k = "silver", n = DungeonSilver.Add(run, f.n) })
+		elseif f.k == "silverPay" then -- already paid above
+			table.insert(lines, { k = "silver", n = -f.n })
+		elseif f.k == "loseSilverPct" then -- EV-10 Cutpurse: 25% of the purse, rounded down
+			table.insert(lines, { k = "silverLost", n = DungeonSilver.LosePct(run, f.pct) })
 		elseif f.k == "shrine" then
 			run.dropBonus = math.min(D.DropCap, (run.dropBonus or 0) + f.bonus)
 			table.insert(lines, { k = "loot", mult = DungeonRules.DropMultiplier(run.battles, run.dropBonus) })
-		elseif f.k == "refill" then
-			local okF, res = pcall(h.refill, run.party, true)
-			if okF and type(res) == "table" and (res.cost or 0) > 0 then table.insert(lines, { k = "realGold", n = -(res.cost) }) end
-			if not okF or type(res) ~= "table" or (res.refilled or 0) <= 0 then table.insert(lines, { k = "nothing" }) end
+		elseif f.k == "refill" then -- EV-03 Peddler in silver (step 2): partial when short, cheapest first
+			local res = DungeonSilver.Refill(run, f.pct, true, "peddler")
+			if type(res) == "table" and (res.refilled or 0) > 0 and (res.cost or 0) > 0 then table.insert(lines, { k = "silver", n = -(res.cost) }) end
+			if type(res) ~= "table" or (res.refilled or 0) <= 0 then table.insert(lines, { k = "nothing" }) end
 		elseif f.k == "loseBagGoldPct" then
 			local lose = math.floor(run.bag.gold * f.pct / 100)
 			run.bag.gold -= lose
@@ -248,6 +296,7 @@ function Rooms.ChooseEvent(playerId: string, choice: any, rank: number, gearId: 
 			table.insert(lines, { k = "buff", doctrine = (if ev.kin and h.kinName then (select(2, pcall(h.kinName, ev.kin.kind, ev.kin.id))) else nil) })
 		elseif f.k == "campRefill" then -- EV-14 Campfire "Search the camp": ALL party consumable charges, free
 			if h.campRefill then pcall(h.campRefill, run.party) end
+			if type(run.dgLoad) == "table" then run.dgLoad.open = {} end -- step 3: opened Bag copies are full again (SB-43)
 			table.insert(lines, { k = "refilled" })
 		elseif f.k == "trade" then
 			if not isTrade then table.insert(lines, { k = "trade", give = f.give, giveN = f.giveN, get = f.get, getN = f.getN }) end
@@ -257,6 +306,7 @@ function Rooms.ChooseEvent(playerId: string, choice: any, rank: number, gearId: 
 				run.bag.gearItems[f.gearId] = nil
 				local ix = table.find(run.bag.gear, f.gearId)
 				if ix then table.remove(run.bag.gear, ix) end
+				DungeonSilver.UnmarkBought(run, "gear", f.gearId, "handed in") -- the handed-in item leaves the Bag
 				run.smithOwed = { rarity = DungeonRules.NextGearRarity(it.rarityId) or it.rarityId,
 					level = (tonumber(it.itemLevel) or 1) + E.SmithLevelUp, archetypeId = it.baseArchetypeId,
 					seed = ((run.sseed or run.card.seed) * 13 + n.row * 401 + n.col * 37) % 2147483647 }
@@ -269,10 +319,11 @@ function Rooms.ChooseEvent(playerId: string, choice: any, rank: number, gearId: 
 				local okF, set = pcall(h.reforge, it.baseArchetypeId, it.itemLevel, nr, ((run.sseed or run.card.seed) * 29 + n.row * 211 + n.col) % 2147483647)
 				if okF and type(set) == "table" then
 					it.rarityId = nr
+					DungeonSilver.UnmarkBought(run, "gear", f.gearId, "changed") -- W3: a changed bought item becomes normal Bag loot
 					it.bonusLines = set.bonusLines
 					it.bonusPassiveIds = set.bonusPassiveIds
 					if set.displayName then it.displayName = set.displayName end
-					table.insert(lines, { k = "forged", name = tostring(it.displayName or "an item"), rarity = nr })
+					table.insert(lines, { k = "forged", name = DungeonCourier.ItemName(it), rarity = nr })
 				else warn("[DungeonRooms] reforge failed: " .. tostring(set)) end
 			end
 		end
@@ -371,7 +422,7 @@ function Rooms.DeliverSmith(playerId: string): string?
 		if okS then item = res else warn("[DungeonRooms] smith gear failed: " .. tostring(res)) end
 	end
 	if type(item) == "table" and C.addLoot(playerId, "gearItem", item) then
-		run.smithDelivered = tostring(item.displayName or "an item")
+		run.smithDelivered = DungeonCourier.ItemName(item)
 		print(`[DungeonRooms] Smith delivers | {run.smithDelivered} | {o.rarity} Lv {o.level}`)
 	end
 	C.persist()
@@ -381,8 +432,9 @@ end
 --------------------------------------------------
 -- MERCHANT ROOM (build step 6, project_rules 268 / 270 Q9-Q10)
 -- 6 slots: 3 consumables + 3 gear, seeded by run seed + room (same room = same stock after a rejoin).
--- Paid from the player's real gold; bought items go straight to the player (never the run bag), so
--- they are kept on any run end. Bought slots are saved with the run.
+-- Silver step 2 (rules 268 / 278): priced in SILVER, fixed at every item level; paid from the run purse;
+-- bought items go into the Bag, take a slot and are marked bought (SB-18 only); like any Bag item they are
+-- lost on a failed run (USER RULING 2026-11-16 7:22 PM, rule 264). Bought slots are saved with the run.
 --------------------------------------------------
 
 -- Consumable tier weights for a Merchant slot. DEV DEFAULT (rule 268 says "Apothecary pool" only).
@@ -415,7 +467,7 @@ local function merchantStock(run: any, n: any, rank: number): { any }
 			local e = free[rng:NextInteger(1, #free)]
 			used[e.id] = true
 			table.insert(stock, { slot = slot, kind = "consumable", id = e.id, name = e.name, tier = e.tier,
-				price = math.round((e.price or 0) * D.MerchantMarkup) })
+				price = DungeonSilver.ConsumablePrice(e.tier) })
 		end
 	end
 	-- Gear (slots 4-6).
@@ -424,18 +476,18 @@ local function merchantStock(run: any, n: any, rank: number): { any }
 		local rarity = DungeonRules.MerchantGearRarity(rng:NextInteger(1, 100), run.card.facilityLevel)
 		local itemSeed = (seed + slot * 7919) % 2147483647
 		local item = h and h.gear and h.gear(level, rarity, itemSeed) or nil
-		local price = item and h.gearPrice and h.gearPrice(item) or nil
+		local price = item and DungeonSilver.GearPrice(item.rarityId, h.is2H ~= nil and h.is2H(item) == true) or nil -- silver, 2H x1.5
 		if item and price then
-			table.insert(stock, { slot = slot, kind = "gear", item = item, name = item.displayName, rarity = item.rarityId,
-				itemLevel = item.itemLevel, price = math.round(price * D.MerchantMarkup) })
+			table.insert(stock, { slot = slot, kind = "gear", item = item, name = DungeonCourier.ItemName(item), rarity = item.rarityId, -- base-name fallback: Common gear has no displayName ("?" bug, 2026-11-16)
+				itemLevel = item.itemLevel, price = price })
 		end
 	end
 	stockCache[key] = stock
 	return stock
 end
 
---- Merchant room view: stock (no item tables sent: names / rarity / level / price), bought flags, and
---- the refill quote for the party (Apothecary refill x1.5).
+--- Merchant room view: stock (names / rarity / level / price + the inspector detail the normal Merchant
+--- sends, display only), bought flags, and the refill quote for the party (Apothecary refill x1.5).
 function Rooms.GetMerchant(playerId: string, rank: number): (boolean, any)
 	local run = C.stateOf(playerId).run
 	local n, why = C.currentRoom(run, "Merchant")
@@ -445,17 +497,18 @@ function Rooms.GetMerchant(playerId: string, rank: number): (boolean, any)
 	for _, e in merchantStock(run, n, rank) do
 		table.insert(out, { slot = e.slot, kind = e.kind, id = e.id, name = e.name, tier = e.tier, rarity = e.rarity,
 			itemLevel = e.itemLevel, price = e.price, bought = bought[e.slot] == true,
-			instanceId = e.item and e.item.instanceId or nil })
+			instanceId = e.item and e.item.instanceId or nil,
+			detail = if e.kind == "gear" then DungeonCourier.GearDetail(e.item) else DungeonCourier.ConsumableDetail(e.id) })
 	end
-	local plan = C.merchant() and C.merchant().refill and C.merchant().refill(run.party, false) or nil
-	-- missing = every charge the party lacks (refillable now + skipped for gold), so the panel can tell
+	local plan = DungeonSilver.Refill(run, D.SilverMerchantRefillPct, false, "merchant refill") -- 60% silver (rule 278)
+	-- missing = every charge the party lacks (refillable now + skipped for silver), so the panel can tell
 	-- "full" apart from "can't afford" (Tester thread-7fb38fa8a88d).
-	return true, { stock = out, refill = plan and { cost = plan.cost, charges = plan.refilled, needGold = plan.needGold,
+	return true, { stock = out, silver = DungeonSilver.Get(run), refill = plan and { cost = plan.cost, charges = plan.refilled, need = plan.need,
 		missing = (plan.refilled or 0) + (plan.skippedCharges or 0) } or nil }
 end
 
---- Buy one Merchant slot. Server re-prices; gold first (all-or-nothing), then the item; refund if the
---- hand-in fails. Saved.
+--- Buy one Merchant slot. Server re-prices; silver first (all-or-nothing), then the item into the Bag;
+--- refund if the hand-in fails. Saved.
 function Rooms.BuyMerchant(playerId: string, slot: any, rank: number): (boolean, any)
 	local run = C.stateOf(playerId).run
 	local n, why = C.currentRoom(run, "Merchant")
@@ -466,45 +519,59 @@ function Rooms.BuyMerchant(playerId: string, slot: any, rank: number): (boolean,
 	local entry
 	for _, e in merchantStock(run, n, rank) do if e.slot == slot then entry = e end end
 	if not entry then return false, "Sold out" end
-	local h = C.merchant()
-	if not (h and h.pay and h.giveItem and h.giveConsumable) then return false, "Merchant not ready" end
-	if not h.pay(entry.price) then return false, "Not enough gold" end
-	local given = false
+	local key = if entry.kind == "gear" then nil else "consumables:" .. tostring(entry.id)
+	-- Bag full (rule 279, only once the limit is live): a new gear piece or a new consumable stack needs a slot.
+	local needsSlot = entry.kind == "gear" or ((run.bag.cards or {})[key :: string] or 0) <= 0
+	if DungeonBag.IsLive() and needsSlot and DungeonBag.Free(run) <= 0 then return false, "Your bag is full" end
+	if not DungeonSilver.Spend(run, entry.price, "merchant") then return false, "Not enough silver" end
+	local okA, whyA: any = false, nil
 	if entry.kind == "gear" then
-		local okG, res = pcall(h.giveItem, entry.item)
-		given = okG and res ~= false
+		okA, whyA = C.addLoot(playerId, "gearItem", table.clone(entry.item))
 	else
-		local okG = pcall(h.giveConsumable, entry.id)
-		given = okG
+		okA, whyA = C.addLoot(playerId, "cards", key, 1)
 	end
-	if not given then
-		if h.refund then h.refund(entry.price) end
+	if not okA then
+		run.silver = DungeonSilver.Get(run) + entry.price -- refund
+		warn("[DungeonRooms] Merchant buy hand-in failed: " .. tostring(whyA))
 		return false, "Merchant not ready"
 	end
+	DungeonSilver.MarkBought(run, entry.kind, if entry.kind == "gear" then entry.item.instanceId else key :: string)
 	run.bought[n.id][slot] = true
 	C.persist()
-	print(`[DungeonRooms] Merchant buy | {n.id} slot {slot} | {tostring(entry.name or entry.id)} | {entry.price}g`)
+	print(`[DungeonRooms] Merchant buy | {n.id} slot {slot} | {tostring(entry.name or entry.id)} | {entry.price} silver -> Bag{if why == "held" then " (held)" else ""}`)
 	return true, { slot = slot, name = entry.name or entry.id, price = entry.price }
 end
 
---- Refill the party's equipped consumables at the Apothecary refill formula x1.5 (Q9). Partial when gold
---- is short (same one-charge-at-a-time rule as the Apothecary).
+--- Refill the party's equipped consumables in silver at 60% of the tier price (rule 278). Partial when
+--- silver is short: one charge at a time, cheapest first.
 function Rooms.RefillMerchant(playerId: string): (boolean, any)
 	local run = C.stateOf(playerId).run
 	local n, why = C.currentRoom(run, "Merchant")
 	if not n then return false, why end
-	local h = C.merchant()
-	if not (h and h.refill) then return false, "Merchant not ready" end
-	local plan = h.refill(run.party, false)
-	local missing = plan and ((plan.refilled or 0) + (plan.skippedCharges or 0)) or 0
+	local plan = DungeonSilver.Refill(run, D.SilverMerchantRefillPct, false, "merchant refill")
+	if not plan then return false, "Merchant not ready" end
+	local missing = (plan.refilled or 0) + (plan.skippedCharges or 0)
 	if missing <= 0 then return false, "Nothing to refill" end
-	if (plan.refilled or 0) <= 0 then return false, "Not enough gold" end -- charges missing, none affordable
-	local res = h.refill(run.party, true)
+	if (plan.refilled or 0) <= 0 then return false, "Not enough silver" end -- charges missing, none affordable
+	local res = DungeonSilver.Refill(run, D.SilverMerchantRefillPct, true, "merchant refill")
+	if not res then return false, "Not enough silver" end
 	C.persist()
-	print(`[DungeonRooms] Merchant refill: {res.refilled or 0} charge(s) for {res.cost or 0}g`
-		.. (if (res.skippedCharges or 0) > 0 then ` | {res.skippedCharges} not refilled - need {res.needGold or 0}g` else ""))
+	print(`[DungeonRooms] Merchant refill: {res.refilled or 0} charge(s) for {res.cost or 0} silver`
+		.. (if (res.skippedCharges or 0) > 0 then ` | {res.skippedCharges} not refilled - need {res.need or 0} silver` else ""))
 	return true, { cost = res.cost, charges = res.refilled, skipped = res.skippedCharges }
 end
 
+--- DEV / TEST only (DevDungeon op "force", dev-gated in Main): make the current room a Merchant or an
+--- Event room (evId = the event), not cleared. Never reachable by players.
+function Rooms.DevForceRoom(playerId: string, kind: any, evId: any): boolean
+	local run = C.stateOf(playerId).run
+	local n = run and run.at and C.nodeById(run.map, run.at)
+	if not n or (kind ~= "Merchant" and kind ~= "Event") then return false end
+	n.resolved = kind
+	run.cleared[n.id] = nil
+	if kind == "Event" then run.events[n.id] = if type(evId) == "string" then { id = evId } else nil end
+	if kind == "Merchant" then run.bought[n.id] = nil end
+	return true
+end
 
 return Rooms

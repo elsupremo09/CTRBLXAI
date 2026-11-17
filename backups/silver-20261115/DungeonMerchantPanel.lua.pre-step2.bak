@@ -1,0 +1,228 @@
+--!strict
+-- DungeonMerchantPanel.lua
+-- CTRBLXAI | Dungeon Merchant room panel (Dungeon build step 6, 2026-11-14; project_rules 268, Q9/Q10).
+-- Split out of DungeonScreen.lua (989 lines) so that file stays under 1000.
+--
+-- Display + input only (ARC-001 / SEC-002): the client sends a slot number, the server prices and
+-- validates everything (DungeonAction MerchantState / MerchantBuy / MerchantRefill) and answers with
+-- fresh state. Bought items go straight to the player's inventory (kept on any run end).
+--
+-- TEXT: all strings approved (project_rules 275, user 2026-11-14 10:11 AM).
+
+local uiFolder = script.Parent
+local Theme: any = (require :: any)(uiFolder:WaitForChild("Theme", 10))
+local GuildScreen: any = (require :: any)(uiFolder:WaitForChild("GuildScreen", 10))
+
+local DungeonMerchantPanel = {}
+
+export type Ctx = {
+	gui: Instance,                               -- the screen's ScreenGui (overlay parent)
+	act: (data: { [string]: any }) -> any?,      -- DungeonScreen act(): server call + state update
+	onLeave: () -> (),                           -- Continue (move on) + re-render
+	setStatus: (text: string, isError: boolean?) -> (),
+}
+
+local overlay: Instance? = nil
+local lastCtx: Ctx? = nil
+
+local function close()
+	if overlay then
+		overlay:Destroy()
+		overlay = nil
+	end
+end
+
+local function text(parent: Instance?, s: string, size: number, color: Color3, bold: boolean?): TextLabel
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.BorderSizePixel = 0
+	l.Font = if bold then Theme.Font.PrimaryBold else Theme.Font.Primary
+	l.TextSize = math.max(10, size) -- 10 px phone floor
+	l.TextColor3 = color
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextYAlignment = Enum.TextYAlignment.Center
+	l.TextTruncate = Enum.TextTruncate.AtEnd
+	l.Text = s
+	l.ZIndex = 22
+	l.Parent = parent
+	return l
+end
+
+local render: (m: any) -> () = function() end
+
+local function call(data: { [string]: any })
+	local c = lastCtx
+	if not c then return end
+	local res = c.act(data)
+	if res and res.merchant then
+		render(res.merchant)
+	end
+end
+
+render = function(m: any)
+	local c = lastCtx
+	if not c then return end
+	close()
+	local o = Instance.new("TextButton")
+	o.Name = "MerchantPanel"
+	o.Text = ""
+	o.AutoButtonColor = false
+	o.Modal = true
+	o.Size = UDim2.fromScale(1, 1)
+	o.BackgroundColor3 = Color3.new(0, 0, 0)
+	o.BackgroundTransparency = 0.4
+	o.BorderSizePixel = 0
+	o.ZIndex = 20
+
+	local box = Instance.new("Frame")
+	box.Name = "Box"
+	box.AnchorPoint = Vector2.new(0.5, 0.5)
+	box.Position = UDim2.fromScale(0.5, 0.5)
+	box.Size = UDim2.fromScale(0.86, 0.9)
+	box.BackgroundColor3 = Theme.Colors.PanelRaised
+	box.BorderSizePixel = 0
+	box.ZIndex = 21
+	local maxW = Instance.new("UISizeConstraint")
+	maxW.MaxSize = Vector2.new(560, math.huge)
+	maxW.Parent = box
+	local cr = Instance.new("UICorner")
+	cr.CornerRadius = Theme.CornerRadius.md
+	cr.Parent = box
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 12)
+	pad.PaddingRight = UDim.new(0, 12)
+	pad.PaddingTop = UDim.new(0, 8)
+	pad.PaddingBottom = UDim.new(0, 8)
+	pad.Parent = box
+
+	local title = text(box, "Merchant", Theme.Text.Heading(), Theme.Colors.TextGold, true) -- DG-ROOM-MERCHANT (APPROVED, rule 275)
+	title.Size = UDim2.new(1, 0, 0, 24)
+
+	local note = text(box, "Bought items go straight to your inventory and are kept.", Theme.Text.Small(), -- DGM-NOTE
+		Theme.Colors.TextSecondary)
+	note.Position = UDim2.fromOffset(0, 24)
+	note.Size = UDim2.new(1, 0, 0, 16)
+
+	local list = Instance.new("ScrollingFrame")
+	list.Name = "Stock"
+	list.Position = UDim2.fromOffset(0, 44)
+	list.Size = UDim2.new(1, 0, 1, -44 - GuildScreen.ROW_H - 6)
+	list.BackgroundTransparency = 1
+	list.BorderSizePixel = 0
+	list.ScrollBarThickness = 4
+	list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	list.CanvasSize = UDim2.new()
+	list.ZIndex = 22
+	local ll = Instance.new("UIListLayout")
+	ll.Padding = UDim.new(0, 4)
+	ll.SortOrder = Enum.SortOrder.LayoutOrder
+	ll.Parent = list
+
+	for i, e in (m and m.stock) or {} do
+		local row = Instance.new("Frame")
+		row.Name = "Slot" .. tostring(e.slot)
+		row.Size = UDim2.new(1, -6, 0, 44) -- 44 px touch row
+		row.BackgroundColor3 = Theme.Colors.Panel
+		row.BorderSizePixel = 0
+		row.LayoutOrder = i
+		row.ZIndex = 22
+		local rarity = e.rarity or e.tier or "Common"
+		local accent = Theme.GetRarityColor(rarity) or Theme.Colors.TextPrimary
+		local nameTxt = if e.kind == "gear"
+			then `{e.name or "?"}  Lv.{e.itemLevel or "?"}` -- DGM-GEAR-NAME
+			else tostring(e.name or e.id or "?")
+		local nl = text(row, nameTxt, Theme.Text.Small(), accent, true)
+		nl.Position = UDim2.fromOffset(8, 0)
+		nl.Size = UDim2.new(1, -150, 1, 0)
+		local priceTxt = text(row, `{e.price or 0}g`, Theme.Text.Small(), Theme.Colors.TextGold, true) -- DGM-PRICE
+		priceTxt.AnchorPoint = Vector2.new(1, 0)
+		priceTxt.Position = UDim2.new(1, -84, 0, 0)
+		priceTxt.Size = UDim2.fromOffset(60, 44)
+		priceTxt.TextXAlignment = Enum.TextXAlignment.Right
+		if e.bought then
+			local s = text(row, "Sold out", Theme.Text.Small(), Theme.Colors.TextSecondary, true) -- DGM-SOLD
+			s.AnchorPoint = Vector2.new(1, 0)
+			s.Position = UDim2.new(1, -4, 0, 0)
+			s.Size = UDim2.fromOffset(76, 44)
+			s.TextXAlignment = Enum.TextXAlignment.Center
+		else
+			local slot = e.slot
+			local b = Theme.MakeBarButton(nil, "Buy", "Primary", function() -- APPROVED ("Buy", Merchant/Apothecary screens)
+				call({ action = "MerchantBuy", slot = slot })
+			end, { name = "Btn_Buy" .. tostring(slot), minHeight = 44 }) -- auto width keeps the label at full size
+			b.AnchorPoint = Vector2.new(1, 0)
+			b.Position = UDim2.new(1, -4, 0, 0)
+			b.ZIndex = 23
+			b.Parent = row
+		end
+		row.Parent = list
+	end
+	list.Parent = box
+
+	local btns = Instance.new("Frame")
+	btns.Name = "Buttons"
+	btns.AnchorPoint = Vector2.new(0, 1)
+	btns.Position = UDim2.fromScale(0, 1)
+	btns.Size = UDim2.new(1, 0, 0, GuildScreen.ROW_H)
+	btns.BackgroundTransparency = 1
+	btns.ZIndex = 22
+	local bl = Instance.new("UIListLayout")
+	bl.FillDirection = Enum.FillDirection.Horizontal
+	bl.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	bl.VerticalAlignment = Enum.VerticalAlignment.Center
+	bl.Padding = UDim.new(0, 6)
+	bl.SortOrder = Enum.SortOrder.LayoutOrder
+	bl.Parent = btns
+	local rf = m and m.refill
+	local missing = rf and (rf.missing or rf.charges or 0) or 0
+	if missing > 0 then
+		-- Charges missing: always offer the refill. If none are affordable the price shown is what the
+		-- refill needs and the server answers the approved "Not enough gold".
+		local price = if (rf.cost or 0) > 0 then rf.cost else (rf.needGold or 0)
+		local label = `Refill charges ({price}g)` -- DGM-REFILL
+		local rb = Theme.MakeBarButton(nil, label, "Secondary", function()
+			call({ action = "MerchantRefill" })
+		end, { name = "Btn_Refill", minHeight = GuildScreen.ROW_H, layoutOrder = 1 })
+		rb.Parent = btns
+	else
+		local full = text(btns, "Every equipped consumable is full.", Theme.Text.Small(), -- APPROVED (ApothecaryScreen)
+			Theme.Colors.TextSecondary)
+		full.Size = UDim2.new(0.5, 0, 1, 0)
+		full.LayoutOrder = 1
+	end
+	local leave = Theme.MakeBarButton(nil, "Keep exploring", "Primary", function() -- DG-ESCROOM-STAY (APPROVED, reused)
+		close()
+		c.onLeave()
+	end, { name = "Btn_Leave", minHeight = GuildScreen.ROW_H, layoutOrder = 2 })
+	leave.Parent = btns
+	btns.Parent = box
+
+	box.Parent = o
+	o.Parent = c.gui -- parent last (NET-004)
+	overlay = o
+end
+
+--- Open the panel for the current Merchant room (asks the server for the stock).
+function DungeonMerchantPanel.Open(c: Ctx)
+	lastCtx = c
+	local res = c.act({ action = "MerchantState" })
+	if res and res.merchant then
+		render(res.merchant)
+	end
+end
+
+function DungeonMerchantPanel.Close()
+	close()
+end
+
+function DungeonMerchantPanel.IsOpen(): boolean
+	return overlay ~= nil
+end
+
+-- Test hooks (simulated taps don't register): same paths as taps.
+DungeonMerchantPanel._Test = table.freeze({
+	buy = function(slot: number) call({ action = "MerchantBuy", slot = slot }) end,
+	refill = function() call({ action = "MerchantRefill" }) end,
+})
+
+return table.freeze(DungeonMerchantPanel)

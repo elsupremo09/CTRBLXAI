@@ -73,6 +73,9 @@ local FUNCTION_NAMES = table.freeze({
 	"GetCardShop",      -- () -> level, shelf, owned loose cards
 	"CardShopAction",   -- ({ action = "Buy", slot } | { action = "Sell", kind, id }) -> result + state
 	-- Dungeon screen (build step 5, 2026-11-13). Client sends ids only (card, units, room).
+	-- Guild Hall upgrade list (Slice 8 step 1, 2026-11-16). Client sends an action + building name only.
+	"BuildingAction",   -- ({ action = "List" | "Upgrade" | "Seen", building? }) -> rows, open state, message
+	"FurnitureAction",  -- ({ action = "State" | "Buy" | "Place" | "Remove" | "Seen", piece?, slot?, decor? }) -> furniture state (Slice 8 step 2)
 	"DungeonAction",    -- ({ action = "State" | "Start" | "Move" | "Rest" | "Treasure" | "Escape" | "Leave" | "AckResult" | "MerchantState" | "MerchantBuy" | "MerchantRefill", ... }) -> state
 })
 

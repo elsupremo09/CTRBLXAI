@@ -1,0 +1,273 @@
+--!strict
+-- DungeonSave.lua
+-- CTRBLXAI | Dungeon run save / load (Key 3 progression.dungeon). Split out of DungeonService
+-- 2026-11-15 (stages build) to keep DungeonService under 1000 lines. Moved word for word; DungeonService
+-- passes its private helpers through Save.Bind(ctx) (no require of DungeonService: no cycle).
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local BiomeData: any = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("BiomeData"))
+local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local DungeonBag = require(script.Parent:WaitForChild("DungeonBag")) -- silver step 1 (requires only DungeonRules: no cycle)
+local DungeonSilver = require(script.Parent:WaitForChild("DungeonSilver")) -- silver step 2 (requires only DungeonRules: no cycle)
+local DungeonLoadout = require(script.Parent:WaitForChild("DungeonLoadout")) -- step 3 (no DungeonService require: no cycle)
+local DungeonCourier = require(script.Parent:WaitForChild("DungeonCourier")) -- steps 4-5 (no DungeonService require: no cycle)
+local D = DungeonRules.Data
+
+local SAVE_VERSION = 1
+local MAX_COUNT = 1000000
+local MAX_DIFFICULTY = 5
+
+local Save = {}
+
+local states: any, stateOf: any, isInt: any, copyBag: any, buildRun: any, nodeById: any, resolveMystery: any, OUTCOME_KEEP: any
+function Save.Bind(ctx: any)
+	states, stateOf, isInt, copyBag = ctx.states, ctx.stateOf, ctx.isInt, ctx.copyBag
+	buildRun, nodeById, resolveMystery, OUTCOME_KEEP = ctx.buildRun, ctx.nodeById, ctx.resolveMystery, ctx.OUTCOME_KEEP
+end
+
+
+function Save.Export(playerId: string): any
+	local s = states[playerId]
+	if not s then return nil end
+	local usedList: { string } = {}
+	for id in s.used.ids do table.insert(usedList, id) end
+	table.sort(usedList)
+	local out: any = { v = SAVE_VERSION, used = { w = s.used.window, ids = usedList } }
+	if s.pending then out.pending = s.pending end -- ended run not paid out yet (step 4)
+	local run = s.run
+	if run then
+		local cleared: { string } = {}
+		for id in run.cleared do table.insert(cleared, id) end
+		table.sort(cleared)
+		local c = run.card
+		out.run = {
+			card = { id = c.id, seed = c.seed, window = c.window, facilityLevel = c.facilityLevel,
+				floors = c.floors, difficulty = c.difficulty, biome = c.biome, condition = c.condition,
+				tier = c.tier, maxStages = c.maxStages },
+			stage = run.stage, stageCleared = run.stageCleared or nil, stageBringIn = run.stageBringIn or 0, -- stages (rule 277)
+			stageBosses = table.clone(run.stageBosses or {}),
+			party = table.clone(run.party),
+			at = run.at,
+			cleared = cleared,
+			battles = run.battles,
+			bag = copyBag(run.bag),
+			bought = (function()
+				local t = {}
+				for rid, slots in run.bought or {} do
+					local l = {}
+					for s in slots do table.insert(l, s) end
+					table.sort(l)
+					t[rid] = l
+				end
+				return t
+			end)(),
+			events = (function() -- step 7a
+				local t = {}
+				for rid, ev in run.events or {} do
+					t[rid] = { id = ev.id, done = ev.done, choice = ev.choice, fight = ev.fight, result = ev.result,
+						kin = ev.kin, -- EV-11 (EV-16 mutators retired 2026-11-15)
+						traded = if ev.traded then table.clone(ev.traded) else nil } -- EV-13 each trade once (2026-11-15)
+				end
+				return t
+			end)(),
+			dropBonus = run.dropBonus or 0,
+			restBringIns = table.clone(run.restBringIns or {}), -- step 7b
+			restUsed = (function() local l = {} for rid in run.restUsed or {} do table.insert(l, rid) end table.sort(l) return l end)(),
+			relics = table.clone(run.relics or {}), -- step 8
+			relicRolled = (function() local l = {} for rid in run.relicRolled or {} do table.insert(l, rid) end table.sort(l) return l end)(),
+			relicUsed = (function() local l = {} for id in run.relicUsed or {} do table.insert(l, id) end table.sort(l) return l end)(),
+			seen = (function() local l = {} for id in run.seenEvents or {} do table.insert(l, id) end table.sort(l) return l end)(), -- no repeats across stages
+			smithOwed = run.smithOwed, -- EV-12
+			bossPick = if run.bossPick then { a = run.bossPick.a, b = run.bossPick.b, cb = run.bossPick.cb } else nil, -- relics v2
+			curseOffer = if run.curseOffer then { id = run.curseOffer.id, curse = run.curseOffer.curse } else nil, -- relics v2
+			nextBattleBuff = run.nextBattleBuff, -- EV-11 doctrine variant
+			silver = run.silver or 0, -- silver step 1 (rule 278)
+			benchReady = (function() local l = {} for id in run.benchReady or {} do table.insert(l, id) end table.sort(l) return l end)(), -- rule 280
+			bagHeld = DungeonBag.ExportHeld(run), -- rule 279
+			boughtKeep = DungeonSilver.ExportBought(run), -- silver step 2 (rule 268): Merchant buys always kept
+			dgLoad = DungeonLoadout.Export(run), -- step 3: found items on units, home items in the Bag, opened copies
+			courier = DungeonCourier.Export(run), courierStage = run.courierStage, -- steps 4-5: EV-17 sent items (safe), once per stage
+		}
+	end
+	return out
+end
+
+local function importRun(r: any): (any, string?)
+	if type(r) ~= "table" or type(r.card) ~= "table" then return nil, "no run data" end
+	local c = r.card
+	if type(c.id) ~= "string" or #c.id > 32 then return nil, "card id" end
+	if not isInt(c.seed, 0, 2 ^ 31) then return nil, "card seed" end
+	if not isInt(c.facilityLevel, 1, D.MaxLevel) then return nil, "card level" end
+	if not isInt(c.difficulty, 1, MAX_DIFFICULTY) then return nil, "card difficulty" end
+	if type(c.biome) ~= "string" or not BiomeData[c.biome] then return nil, "card biome" end
+	if type(c.condition) ~= "string" or #c.condition > 32 then return nil, "card condition" end
+	local card = {
+		id = c.id, seed = c.seed, window = if isInt(c.window, 0, MAX_COUNT) then c.window else 0,
+		facilityLevel = c.facilityLevel,
+		-- Stages (2026-11-15): floors follow the difficulty; an old saved card keeps its saved floor count.
+		floors = if isInt(c.floors, 3, 30) then c.floors else DungeonRules.Floors(c.difficulty),
+		difficulty = c.difficulty, biome = c.biome, condition = c.condition,
+		tier = if type(c.tier) == "string" and #c.tier <= 8 then c.tier else DungeonRules.TierFor(c.difficulty).word,
+		maxStages = if isInt(c.maxStages, 1, D.MaxStages) then c.maxStages else 1, -- old saves: one stage
+	}
+	if type(r.party) ~= "table" or #r.party < 1 or #r.party > DungeonRules.PartyCap(c.facilityLevel) then return nil, "party" end
+	local party: { string } = {}
+	local seen: { [string]: boolean } = {}
+	for _, id in r.party do
+		if type(id) ~= "string" or #id > 64 or seen[id] then return nil, "party member" end
+		seen[id] = true
+		table.insert(party, id)
+	end
+	-- Tester W3 (step 3): a seed that breaks map generation drops the run instead of stopping the load.
+	local stage = if isInt(r.stage, 1, D.MaxStages) then r.stage else 1 -- old saves = stage 1
+	local okB, run = pcall(buildRun, card, party, stage)
+	if not okB then return nil, "map rebuild failed: " .. tostring(run) end
+	if r.at ~= nil then
+		if type(r.at) ~= "string" or not nodeById(run.map, r.at) then return nil, "position" end
+		run.at = r.at
+		resolveMystery(run, nodeById(run.map, r.at))
+	end
+	if type(r.cleared) == "table" then
+		for _, id in r.cleared do
+			if type(id) ~= "string" or not nodeById(run.map, id) then return nil, "cleared room" end
+			run.cleared[id] = true
+			resolveMystery(run, nodeById(run.map, id))
+		end
+	end
+	run.battles = if isInt(r.battles, 0, 999) then r.battles else 0
+	run.stageCleared = r.stageCleared == true and run.cleared.boss == true
+	run.stageBringIn = if isInt(r.stageBringIn, 0, D.StageBringIns) then r.stageBringIn else 0
+	if type(r.stageBosses) == "table" then
+		run.stageBosses = {}
+		for _, v in r.stageBosses do if isInt(v, 1, D.MaxStages) then table.insert(run.stageBosses, v) end end
+	end
+	run.bag = copyBag(r.bag)
+	if type(r.bought) == "table" then -- step 6; old saves have none
+		for rid, l in r.bought do
+			if type(rid) == "string" and nodeById(run.map, rid) and type(l) == "table" then
+				local set = {}
+				for _, s in l do if isInt(s, 1, 6) then set[s] = true end end
+				run.bought[rid] = set
+			end
+		end
+	end
+	if type(r.events) == "table" then -- step 7a; old saves have none
+		local valid: { [string]: boolean } = {}
+		for _, e in D.Events do valid[e.id] = true end
+		for rid, ev in r.events do
+			if type(rid) == "string" and nodeById(run.map, rid) and type(ev) == "table" and valid[ev.id] then
+				run.events[rid] = { id = ev.id, done = ev.done == true,
+					choice = if type(ev.choice) == "string" and #ev.choice <= 16 then ev.choice else nil,
+					fight = if ev.fight == "Battle" or ev.fight == "Elite" then ev.fight else nil,
+					result = if type(ev.result) == "table" then ev.result else nil,
+					kin = if type(ev.kin) == "table" and (ev.kin.kind == "race" or ev.kin.kind == "doctrine") and type(ev.kin.id) == "string" and #ev.kin.id <= 64
+						then { kind = ev.kin.kind, id = ev.kin.id } else nil,
+					traded = (function() -- EV-13 each trade once (2026-11-15)
+						if type(ev.traded) ~= "table" then return nil end
+						local t = {}
+						for _, k in { "m2c", "c2m", "g2m" } do if ev.traded[k] == true then t[k] = true end end
+						return t
+					end)() }
+				run.seenEvents[ev.id] = true
+			end
+		end
+	end
+	run.dropBonus = if type(r.dropBonus) == "number" and r.dropBonus >= 0 and r.dropBonus <= D.DropCap then r.dropBonus else 0
+	-- Stages build 2026-11-15 (old saves have none): no-repeat list across stages, Smith owed, doctrine buff.
+	if type(r.seen) == "table" then
+		local valid: { [string]: boolean } = {}
+		for _, e in D.Events do valid[e.id] = true end
+		for _, id in r.seen do if type(id) == "string" and valid[id] then run.seenEvents[id] = true end end
+	end
+	-- r.mutator (EV-16, retired 2026-11-15) is ignored: old saves with a mutator load without one.
+	local so = r.smithOwed
+	if type(so) == "table" and type(so.rarity) == "string" and #so.rarity <= 16 and isInt(so.level, 1, 200) and type(so.archetypeId) == "string" and #so.archetypeId <= 64 and isInt(so.seed, 0, 2 ^ 31) then
+		run.smithOwed = { rarity = so.rarity, level = so.level, archetypeId = so.archetypeId, seed = so.seed }
+	end
+	local nb = r.nextBattleBuff
+	if type(nb) == "table" and type(nb.doctrineId) == "string" and #nb.doctrineId <= 64 and type(nb.pct) == "number" and nb.pct > 0 and nb.pct <= 50 then
+		run.nextBattleBuff = { doctrineId = nb.doctrineId, pct = nb.pct }
+	end
+	if type(r.restBringIns) == "table" then -- step 7b; old saves have none
+		for rid, k in r.restBringIns do
+			if type(rid) == "string" and nodeById(run.map, rid) and isInt(k, 0, D.BringInsPerRest) then run.restBringIns[rid] = k end
+		end
+	end
+	if type(r.restUsed) == "table" then
+		for _, rid in r.restUsed do
+			if type(rid) == "string" and nodeById(run.map, rid) then run.restUsed[rid] = true end
+		end
+	end
+	-- step 8 relics (old saves have none). Unknown ids and duplicates are dropped.
+	if type(r.relics) == "table" then
+		for _, id in r.relics do
+			if type(id) == "string" and DungeonRules.RelicDef(id) and not table.find(run.relics, id) then table.insert(run.relics, id) end
+		end
+	end
+	if type(r.relicRolled) == "table" then
+		for _, rid in r.relicRolled do
+			if type(rid) == "string" and nodeById(run.map, rid) then run.relicRolled[rid] = true end
+		end
+	end
+	if type(r.relicUsed) == "table" then
+		for _, id in r.relicUsed do
+			if type(id) == "string" and table.find(run.relics, id) then run.relicUsed[id] = true end
+		end
+	end
+	-- relics v2 Boss pick (only while standing in the boss room; unknown ids dropped)
+	if type(r.bossPick) == "table" and run.at == "boss" then
+		local function ok(id) return type(id) == "string" and DungeonRules.RelicDef(id) ~= nil and not table.find(run.relics, id) end
+		local a = if ok(r.bossPick.a) then r.bossPick.a else nil
+		local b = if ok(r.bossPick.b) then r.bossPick.b else nil
+		local cb = if b and ok(r.bossPick.cb) and (DungeonRules.RelicDef(r.bossPick.cb) :: any).kind == "Curse" then r.bossPick.cb else nil
+		if a or b then run.bossPick = { a = a, b = b, cb = cb } end
+	end
+	-- relics v2 cursed relic offer (Take both / Leave both), kept on rejoin; bad ids dropped.
+	local co = r.curseOffer
+	if type(co) == "table" and type(co.id) == "string" and type(co.curse) == "string" then
+		local d, cd = DungeonRules.RelicDef(co.id), DungeonRules.RelicDef(co.curse)
+		if d and cd and cd.kind == "Curse" and not table.find(run.relics, co.id) then run.curseOffer = { id = co.id, curse = co.curse } end
+	end
+	-- Silver step 1 (rules 278-280). Old saves have none: silver 0, the whole party bench-ready, nothing held.
+	run.silver = if isInt(r.silver, 0, MAX_COUNT) then r.silver else 0
+	if type(r.benchReady) == "table" then
+		run.benchReady = {}
+		for _, id in r.benchReady do if type(id) == "string" and run.partySet[id] then run.benchReady[id] = true end end
+	else
+		run.benchReady = table.clone(run.partySet or {}) -- old save: whole party bench-ready (Tester WARN 10)
+	end
+	DungeonBag.ImportHeld(run, r.bagHeld)
+	DungeonSilver.ImportBought(run, r.boughtKeep) -- silver step 2; old saves: nothing bought
+	DungeonLoadout.Import(run, r.dgLoad) -- step 3; old saves: nothing moved yet
+	DungeonCourier.Import(run, r.courier) -- steps 4-5; old saves: nothing sent
+	run.courierStage = if isInt(r.courierStage, 1, D.MaxStages) then r.courierStage else nil
+	return run, nil
+end
+
+function Save.Import(playerId: string, data: any)
+	local s = stateOf(playerId)
+	s.run = nil
+	s.used = { window = -1, ids = {} }
+	if type(data) ~= "table" then return end -- old save: no dungeon block = no run
+	if type(data.used) == "table" and isInt(data.used.w, -1, MAX_COUNT) and type(data.used.ids) == "table" then
+		local ids: { [string]: boolean } = {}
+		for _, id in data.used.ids do
+			if type(id) == "string" and #id <= 32 then ids[id] = true end
+		end
+		s.used = { window = data.used.w, ids = ids }
+	end
+	if type(data.pending) == "table" and type(data.pending.kind) == "string" and OUTCOME_KEEP[data.pending.kind] then
+		s.pending = data.pending
+	end
+	if data.run ~= nil then
+		local run, why = importRun(data.run)
+		if run then
+			s.run = run
+			print(`[DungeonService] Run resumed | {run.card.id} | at {tostring(run.at)} | battles {run.battles}`)
+		else
+			warn(`[DungeonService] saved run dropped (bad data: {why})`)
+		end
+	end
+end
+
+return Save

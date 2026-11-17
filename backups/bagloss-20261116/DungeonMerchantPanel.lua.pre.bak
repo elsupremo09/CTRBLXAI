@@ -1,0 +1,314 @@
+--!strict
+-- DungeonMerchantPanel.lua
+-- CTRBLXAI | Dungeon Merchant room panel (Dungeon build step 6, 2026-11-14; project_rules 268, Q9/Q10).
+-- Split out of DungeonScreen.lua (989 lines) so that file stays under 1000.
+--
+-- Display + input only (ARC-001 / SEC-002): the client sends a slot number, the server prices and
+-- validates everything (DungeonAction MerchantState / MerchantBuy / MerchantRefill) and answers with
+-- fresh state. Silver step 2 (rules 268 / 278): prices are in SILVER; bought items go into the run Bag,
+-- marked always kept (kept on every run end).
+--
+-- TEXT: approved (project_rules 275, user 2026-11-14 10:11 AM; silver lines SB-01/07/08/19 approved
+-- 2026-11-15 9:09 PM).
+
+local uiFolder = script.Parent
+local Theme: any = (require :: any)(uiFolder:WaitForChild("Theme", 10))
+local GuildScreen: any = (require :: any)(uiFolder:WaitForChild("GuildScreen", 10))
+-- 2026-11-16 (user 7:14 PM): same tile grid + item inspector as the normal Merchant screen.
+local MerchantInspector: any = (require :: any)(uiFolder:WaitForChild("MerchantInspector", 10))
+
+local DungeonMerchantPanel = {}
+
+export type Ctx = {
+	gui: Instance,                               -- the screen's ScreenGui (overlay parent)
+	act: (data: { [string]: any }) -> any?,      -- DungeonScreen act(): server call + state update
+	onLeave: () -> (),                           -- Continue (move on) + re-render
+	setStatus: (text: string, isError: boolean?) -> (),
+}
+
+local overlay: Instance? = nil
+local lastCtx: Ctx? = nil
+local selectedSlot: number? = nil -- the stock slot shown in the inspector
+local lastM: any = nil -- the stock last drawn (Select re-draws it)
+
+local function close()
+	if overlay then
+		overlay:Destroy()
+		overlay = nil
+	end
+end
+
+local function text(parent: Instance?, s: string, size: number, color: Color3, bold: boolean?): TextLabel
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.BorderSizePixel = 0
+	l.Font = if bold then Theme.Font.PrimaryBold else Theme.Font.Primary
+	l.TextSize = math.max(10, size) -- 10 px phone floor
+	l.TextColor3 = color
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.TextYAlignment = Enum.TextYAlignment.Center
+	l.TextTruncate = Enum.TextTruncate.AtEnd
+	l.Text = s
+	l.ZIndex = 22
+	l.Parent = parent
+	return l
+end
+
+local render: (m: any) -> () = function() end
+
+local function call(data: { [string]: any })
+	local c = lastCtx
+	if not c then return end
+	local res = c.act(data)
+	if res and res.merchant then
+		render(res.merchant)
+	end
+end
+
+render = function(m: any)
+	local c = lastCtx
+	if not c then return end
+	lastM = m
+	close()
+	local o = Instance.new("TextButton")
+	o.Name = "MerchantPanel"
+	o.Text = ""
+	o.AutoButtonColor = false
+	o.Modal = true
+	o.Size = UDim2.fromScale(1, 1)
+	o.BackgroundColor3 = Color3.new(0, 0, 0)
+	o.BackgroundTransparency = 0.4
+	o.BorderSizePixel = 0
+	o.ZIndex = 20
+
+	local box = Instance.new("Frame")
+	box.Name = "Box"
+	box.AnchorPoint = Vector2.new(0.5, 0.5)
+	box.Position = UDim2.fromScale(0.5, 0.5)
+	box.Size = UDim2.fromScale(0.94, 0.92)
+	box.BackgroundColor3 = Theme.Colors.PanelRaised
+	box.BorderSizePixel = 0
+	box.ZIndex = 21
+	local maxW = Instance.new("UISizeConstraint")
+	maxW.MaxSize = Vector2.new(820, math.huge)
+	maxW.Parent = box
+	local cr = Instance.new("UICorner")
+	cr.CornerRadius = Theme.CornerRadius.md
+	cr.Parent = box
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
+	pad.Parent = box
+
+	local title = text(box, "Merchant", Theme.Text.Heading(), Theme.Colors.TextGold, true) -- DG-ROOM-MERCHANT (APPROVED, rule 275)
+	title.Size = UDim2.new(1, 0, 0, 22)
+	local purse = text(box, `Silver {(m and m.silver) or 0}`, Theme.Text.Small(), Theme.Colors.TextGold, true) -- SB-01
+	purse.Size = UDim2.new(1, 0, 0, 22)
+	purse.TextXAlignment = Enum.TextXAlignment.Right
+	local note = text(box, "Bought — always kept", Theme.Text.Small(), Theme.Colors.TextSecondary) -- SB-19
+	note.Position = UDim2.fromOffset(0, 22)
+	note.Size = UDim2.new(1, 0, 0, 14)
+
+	-- Entries: one per stock slot. Price in silver (SB-07) inside the inspector; sold slots dimmed + "Sold out".
+	local entries = {}
+	for _, e in (m and m.stock) or {} do
+		table.insert(entries, {
+			key = e.slot, detail = e.detail, name = tostring(e.name or (e.detail and e.detail.name) or e.id or ""),
+			level = if e.kind == "gear" then e.itemLevel else nil, rarity = e.rarity or e.tier or "Common",
+			price = e.price, priceUnit = "silver", noPriceBadge = true, queued = e.bought == true,
+			tagText = if e.bought then "Sold out" else nil, tagColor = Theme.Colors.TextSecondary, -- DGM-SOLD (APPROVED)
+			bought = e.bought == true,
+		})
+	end
+	local sel = MerchantInspector.ResolveSelected(entries, selectedSlot)
+	selectedSlot = sel and sel.key or nil
+
+	local TOP = 38
+	local bodyH = -(TOP + GuildScreen.ROW_H + 6)
+	local left = Instance.new("ScrollingFrame")
+	left.Name = "Grid"
+	left.Position = UDim2.fromOffset(0, TOP)
+	left.Size = UDim2.new(0.56, -4, 1, bodyH)
+	left.BackgroundTransparency = 1
+	left.BorderSizePixel = 0
+	left.ScrollBarThickness = 4
+	left.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	left.CanvasSize = UDim2.new()
+	local g = c.gui :: any
+	local hint = if g and g.AbsoluteSize then math.max(120, g.AbsoluteSize.Y * 0.92 - 12 - TOP - GuildScreen.ROW_H - 6) else 200
+	MerchantInspector.BuildGrid(left, {
+		entries = entries, selectedKey = selectedSlot, width = 300, heightHint = hint,
+		onSelect = function(key: any) selectedSlot = key render(m) end,
+	})
+	left.Parent = box
+	local right = Instance.new("Frame")
+	right.Name = "Inspector"
+	right.AnchorPoint = Vector2.new(1, 0)
+	right.Position = UDim2.new(1, 0, 0, TOP)
+	right.Size = UDim2.new(0.44, -4, 1, bodyH)
+	right.BackgroundColor3 = Theme.Colors.Panel
+	right.BackgroundTransparency = 0.3
+	right.BorderSizePixel = 0
+	MerchantInspector.BuildDetail(right, sel)
+	right.Parent = box
+
+	local btns = Instance.new("Frame")
+	btns.Name = "Buttons"
+	btns.AnchorPoint = Vector2.new(0, 1)
+	btns.Position = UDim2.fromScale(0, 1)
+	btns.Size = UDim2.new(1, 0, 0, GuildScreen.ROW_H)
+	btns.BackgroundTransparency = 1
+	local bl = Instance.new("UIListLayout")
+	bl.FillDirection = Enum.FillDirection.Horizontal
+	bl.HorizontalAlignment = Enum.HorizontalAlignment.Right
+	bl.VerticalAlignment = Enum.VerticalAlignment.Center
+	bl.Padding = UDim.new(0, 6)
+	bl.SortOrder = Enum.SortOrder.LayoutOrder
+	bl.Parent = btns
+	local rf = m and m.refill
+	local missing = rf and (rf.missing or rf.charges or 0) or 0
+	if missing > 0 then
+		-- Charges missing: always offer the refill (SB-06 refusal comes from the server).
+		local price = if (rf.cost or 0) > 0 then rf.cost else (rf.need or 0)
+		local rb = Theme.MakeBarButton(nil, `Refill all ({price} silver)`, "Secondary", function() -- SB-08
+			call({ action = "MerchantRefill" })
+		end, { name = "Btn_Refill", minHeight = GuildScreen.ROW_H, layoutOrder = 1 })
+		rb.Parent = btns
+	else
+		local full = text(btns, "Every equipped consumable is full.", Theme.Text.Small(), -- APPROVED (ApothecaryScreen)
+			Theme.Colors.TextSecondary)
+		full.Size = UDim2.new(0.4, 0, 1, 0)
+		full.LayoutOrder = 1
+	end
+	if sel and not sel.bought then
+		local slot = sel.key
+		local b = Theme.MakeBarButton(nil, "Buy", "Primary", function() -- APPROVED ("Buy", Merchant/Apothecary screens)
+			call({ action = "MerchantBuy", slot = slot })
+		end, { name = "Btn_Buy", minHeight = GuildScreen.ROW_H, layoutOrder = 2 })
+		b.Parent = btns
+	end
+	local leave = Theme.MakeBarButton(nil, "Keep exploring", "Primary", function() -- DG-ESCROOM-STAY (APPROVED, reused)
+		close()
+		selectedSlot = nil
+		c.onLeave()
+	end, { name = "Btn_Leave", minHeight = GuildScreen.ROW_H, layoutOrder = 3 })
+	leave.Parent = btns
+	btns.Parent = box
+
+	box.Parent = o
+	o.Parent = c.gui -- parent last (NET-004)
+	overlay = o
+end
+
+--- Open the panel for the current Merchant room (asks the server for the stock).
+function DungeonMerchantPanel.Open(c: Ctx)
+	lastCtx = c
+	selectedSlot = nil
+	local res = c.act({ action = "MerchantState" })
+	if res and res.merchant then
+		render(res.merchant)
+	end
+end
+
+--- Treasure result (user 2026-11-16 7:14 PM): the found item as a tile (icon, rarity colour) next to the
+--- same inspector as the Merchant. tr = DungeonAction Treasure answer { itemName, silver, detail }.
+function DungeonMerchantPanel.ShowTreasure(gui: Instance, tr: any, onBack: () -> ())
+	close()
+	local o = Instance.new("TextButton")
+	o.Name = "TreasurePanel"
+	o.Text = ""
+	o.AutoButtonColor = false
+	o.Modal = true
+	o.Size = UDim2.fromScale(1, 1)
+	o.BackgroundColor3 = Color3.new(0, 0, 0)
+	o.BackgroundTransparency = 0.4
+	o.BorderSizePixel = 0
+	o.ZIndex = 20
+	local box = Instance.new("Frame")
+	box.Name = "Box"
+	box.AnchorPoint = Vector2.new(0.5, 0.5)
+	box.Position = UDim2.fromScale(0.5, 0.5)
+	box.Size = UDim2.fromScale(0.8, 0.86)
+	box.BackgroundColor3 = Theme.Colors.PanelRaised
+	box.BorderSizePixel = 0
+	box.ZIndex = 21
+	local maxW = Instance.new("UISizeConstraint")
+	maxW.MaxSize = Vector2.new(620, 420)
+	maxW.Parent = box
+	local cr = Instance.new("UICorner")
+	cr.CornerRadius = Theme.CornerRadius.md
+	cr.Parent = box
+	local pad = Instance.new("UIPadding")
+	pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 6)
+	pad.PaddingBottom = UDim.new(0, 6)
+	pad.Parent = box
+	local name = tostring(tr.itemName or "an item")
+	text(box, "Treasure", Theme.Text.Heading(), Theme.Colors.TextGold, true).Size = UDim2.new(1, 0, 0, 22) -- DG-TREASURE-T
+	local l1 = text(box, `You found {name}! It's in your bag.`, Theme.Text.Small(), Theme.Colors.TextPrimary) -- DG-TREASURE-1
+	l1.Position = UDim2.fromOffset(0, 22)
+	l1.Size = UDim2.new(1, 0, 0, 18)
+	local silver = tonumber(tr.silver) or 0
+	local TOP = 42
+	if silver > 0 then
+		local s = text(box, `+{silver} silver`, Theme.Text.Small(), Theme.Colors.TextGold, true) -- SB-04 (hidden at 0)
+		s.Position = UDim2.fromOffset(0, 40)
+		s.Size = UDim2.new(1, 0, 0, 18)
+		TOP = 60
+	end
+	local d = tr.detail
+	local entry = { key = 1, detail = d, name = tostring((d and d.name) or name), level = d and d.itemLevel or nil,
+		rarity = (d and d.rarity) or "Common" }
+	local bodyH = -(TOP + GuildScreen.ROW_H + 6)
+	local left = Instance.new("ScrollingFrame")
+	left.Name = "Grid"
+	left.Position = UDim2.fromOffset(0, TOP)
+	left.Size = UDim2.new(0.4, -4, 1, bodyH)
+	left.BackgroundTransparency = 1
+	left.BorderSizePixel = 0
+	left.ScrollBarThickness = 0
+	left.CanvasSize = UDim2.new()
+	local g = gui :: any
+	local hint = if g and g.AbsoluteSize then math.max(120, math.min(420, g.AbsoluteSize.Y * 0.86) - 12 - TOP - GuildScreen.ROW_H - 6) else 200
+	MerchantInspector.BuildGrid(left, { entries = { entry }, selectedKey = 1, width = 200, heightHint = hint, onSelect = function() end })
+	left.Parent = box
+	local right = Instance.new("Frame")
+	right.Name = "Inspector"
+	right.AnchorPoint = Vector2.new(1, 0)
+	right.Position = UDim2.new(1, 0, 0, TOP)
+	right.Size = UDim2.new(0.6, -4, 1, bodyH)
+	right.BackgroundColor3 = Theme.Colors.Panel
+	right.BackgroundTransparency = 0.3
+	right.BorderSizePixel = 0
+	MerchantInspector.BuildDetail(right, entry)
+	right.Parent = box
+	local back = Theme.MakeIconButton(nil, "Back", function() close() onBack() end,
+		{ name = "Btn_Back", size = UDim2.fromOffset(GuildScreen.ROW_H, GuildScreen.ROW_H) })
+	back.AnchorPoint = Vector2.new(1, 1)
+	back.Position = UDim2.fromScale(1, 1)
+	back.Parent = box
+	box.Parent = o
+	o.Parent = gui -- parent last (NET-004)
+	overlay = o
+end
+
+--- Show one stock slot in the inspector (the same path as tapping its tile; used by Studio tests).
+function DungeonMerchantPanel.Select(slot: number)
+	if not (overlay and lastM) then return end
+	selectedSlot = slot
+	render(lastM)
+end
+
+function DungeonMerchantPanel.Close()
+	close()
+end
+
+function DungeonMerchantPanel.IsOpen(): boolean
+	return overlay ~= nil
+end
+
+
+return table.freeze(DungeonMerchantPanel)

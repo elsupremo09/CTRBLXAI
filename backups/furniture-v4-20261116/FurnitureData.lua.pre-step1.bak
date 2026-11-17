@@ -1,0 +1,110 @@
+--!strict
+-- FurnitureData.lua
+-- CTRBLXAI | Guild Hall furniture (Slice 8 step 2, 2026-11-16). Data only (DAT-001: the one
+-- place the catalogue lives; client and server both read it).
+--
+-- Source: docs\CTRBLXAI.db guild_facilities 91-95 + 98 (USER RULING 2026-11-16 1:53 PM, with the
+-- Simulator fixes: FUR-01 +1% max HP, FUR-02 +2% max HP, FUR-04 RT Delay Resistance x0.98, total
+-- cap 6 points x Guild Hall level, family cap 30).
+--
+-- effect keys (one key = one bonus family; the family cap is per key):
+--   hpPct          fraction of max HP (0.01 = +1%)
+--   mp             flat max MP
+--   healRecv       added to healing received (0.02 = x1.02)
+--   rtDelayResist  multiplier on RT delay taken (0.98 = -2%)
+--   collision      multiplier on collision damage taken (0.97)      [hooked: DisplacementService]
+--   skillPotency   fraction (0.01 = +1%)
+--   precision      fraction of percentage points (0.005 = +0.5pp)
+--   evasiveness    fraction of percentage points (0.005 = +0.5pp)
+--   fortune        fraction (0.01 = +1%)
+--   STR AGI DEX INT VIT LUK   flat primary stat
+--   battleGold     fraction (0.02 = +2%)                             [hooked: Main post-battle gold]
+--   dispatchFee    gold per mission (Logistics, -5)
+--   inventory      inventory threshold (Logistics, +5)               [no system yet]
+-- category Logistics = no combat power, never counts toward the caps. Display = looks only.
+
+export type Piece = {
+	id: string,
+	name: string,
+	category: string,
+	points: number,           -- gear bonus point price (10 / 15 / 20); 0 = Logistics / Display
+	effect: { [string]: number },
+	text: string,             -- effect line as written in the approved catalogue (guild_facilities 94)
+	source: string,           -- "Shop" | "Crafted" | "DungeonDrop" | "BossDrop" | "TrophyHall" | "GuildHall10"
+	price: number?,           -- gold (Shop and Crafted)
+	needGuildHall: number?,   -- shop gate (Guild Hall level)
+	needRank: number?,        -- shop gate (Renown Rank)
+	looksOnly: boolean?,
+	notInShop: boolean?,      -- in the catalogue but not sold yet (its system is not built)
+	craftAt: string?,         -- Crafted: the building whose Furniture row crafts it (step 3)
+	mats: { [string]: number }?, -- Crafted: materials charged with the gold (mercury / crystals)
+}
+
+local PIECES: { Piece } = {
+	{ id = "FUR-01", name = "Straw Cot", category = "Comfort", points = 10, effect = { hpPct = 0.01 }, text = "+1% max HP", source = "Shop", price = 150 },
+	{ id = "FUR-02", name = "Oak Bed", category = "Comfort", points = 20, effect = { hpPct = 0.02 }, text = "+2% max HP", source = "Shop", price = 450, needGuildHall = 3 },
+	{ id = "FUR-03", name = "Stone Hearth", category = "Comfort", points = 10, effect = { healRecv = 0.02 }, text = "Healing received x1.02", source = "Shop", price = 200 },
+	{ id = "FUR-04", name = "Herbal Rack", category = "Comfort", points = 10, effect = { rtDelayResist = 0.98 }, text = "RT Delay Resistance x0.98 (-2% RT delay taken)", source = "Crafted", price = 250, craftAt = "Apothecary", mats = { mercury = 2 } }, -- P1 (3:40 PM)
+	{ id = "FUR-05", name = "Padded Wall", category = "Comfort", points = 15, effect = { collision = 0.97 }, text = "Collision taken x0.97", source = "DungeonDrop" },
+	{ id = "FUR-06", name = "Scribe's Desk", category = "Study", points = 10, effect = { mp = 2 }, text = "+2 max MP", source = "Shop", price = 150 },
+	{ id = "FUR-07", name = "Arcane Lectern", category = "Study", points = 10, effect = { skillPotency = 0.01 }, text = "Skill Potency +1%", source = "Shop", price = 400, needGuildHall = 4 },
+	{ id = "FUR-08", name = "Star Chart", category = "Study", points = 10, effect = { precision = 0.005 }, text = "Precision +0.5pp", source = "DungeonDrop" },
+	{ id = "FUR-09", name = "Tome Stack", category = "Study", points = 15, effect = { skillPotency = 0.015 }, text = "Skill Potency +1.5%", source = "BossDrop" },
+	{ id = "FUR-10", name = "Practice Dummy", category = "Martial", points = 15, effect = { STR = 1 }, text = "+1 STR", source = "Shop", price = 300 },
+	{ id = "FUR-11", name = "Balance Beam", category = "Martial", points = 15, effect = { AGI = 1 }, text = "+1 AGI", source = "Shop", price = 300, needGuildHall = 5 },
+	{ id = "FUR-12", name = "Target Board", category = "Martial", points = 15, effect = { DEX = 1 }, text = "+1 DEX", source = "Crafted", price = 300, craftAt = "Blacksmith", mats = { mercury = 2 } },
+	{ id = "FUR-13", name = "Meditation Mat", category = "Martial", points = 15, effect = { INT = 1 }, text = "+1 INT", source = "Crafted", price = 300, craftAt = "Runeforge", mats = { crystals = 1 } },
+	{ id = "FUR-14", name = "Iron Training Weights", category = "Martial", points = 15, effect = { VIT = 1 }, text = "+1 VIT", source = "DungeonDrop" },
+	{ id = "FUR-15", name = "Dodge Course", category = "Martial", points = 10, effect = { evasiveness = 0.005 }, text = "Evasion +0.5pp", source = "DungeonDrop" },
+	{ id = "FUR-16", name = "Lucky Coin Shrine", category = "Fortune", points = 10, effect = { fortune = 0.01 }, text = "Fortune +1%", source = "Shop", price = 350 },
+	{ id = "FUR-17", name = "Clover Planter", category = "Fortune", points = 15, effect = { LUK = 1 }, text = "+1 LUK", source = "DungeonDrop" },
+	{ id = "FUR-18", name = "Gilded Chest", category = "Fortune", points = 20, effect = { battleGold = 0.02 }, text = "+2% battle gold", source = "BossDrop" },
+	{ id = "FUR-19", name = "War Table Map", category = "Logistics", points = 0, effect = { dispatchFee = -5 }, text = "Dispatch fee -5g", source = "Shop", price = 500, needRank = 5 },
+	{ id = "FUR-20", name = "Supply Shelf", category = "Logistics", points = 0, effect = { inventory = 5 }, text = "+5 inventory threshold", source = "Shop", price = 400, notInShop = true },
+	{ id = "FUR-21", name = "Trophy Pedestal", category = "Display", points = 0, effect = {}, text = "Looks only — no bonus.", source = "TrophyHall", looksOnly = true },
+	{ id = "FUR-22", name = "Guild Banner", category = "Display", points = 0, effect = {}, text = "Looks only — no bonus.", source = "GuildHall10", looksOnly = true },
+}
+
+local BY_ID: { [string]: Piece } = {}
+for _, p in PIECES do
+	table.freeze(p.effect)
+	if p.mats then table.freeze(p.mats) end
+	table.freeze(p)
+	BY_ID[p.id] = p
+end
+
+local FurnitureData = {}
+
+-- guild_facilities 91: bonus slots by Guild Hall level (index = level).
+FurnitureData.BonusSlots = table.freeze({ 2, 3, 4, 5, 6, 7, 8, 9, 10, 12 })
+
+-- guild_facilities 92: total combat cap = 6 points x Guild Hall level; family cap 30.
+FurnitureData.CapPerGuildHallLevel = 6
+FurnitureData.FamilyCap = 30
+
+FurnitureData.Pieces = table.freeze(PIECES)
+
+function FurnitureData.Get(id: any): Piece?
+	if type(id) ~= "string" then return nil end
+	return BY_ID[id]
+end
+
+--- Wall-decoration slots (looks-only pieces only): 1 at Guild Hall L5, 2 at L8, +banner at L10.
+function FurnitureData.DecorSlots(guildHallLevel: number): number
+	local n = 0
+	if guildHallLevel >= 5 then n += 1 end
+	if guildHallLevel >= 8 then n += 1 end
+	if guildHallLevel >= 10 then n += 1 end
+	return n
+end
+
+function FurnitureData.SlotsFor(guildHallLevel: number): number
+	local l = math.clamp(math.floor(guildHallLevel), 1, 10)
+	return FurnitureData.BonusSlots[l]
+end
+
+function FurnitureData.CapFor(guildHallLevel: number): number
+	return FurnitureData.CapPerGuildHallLevel * math.clamp(math.floor(guildHallLevel), 1, 10)
+end
+
+return table.freeze(FurnitureData)

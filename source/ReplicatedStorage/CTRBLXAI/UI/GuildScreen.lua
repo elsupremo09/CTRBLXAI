@@ -88,6 +88,88 @@ local function clearChildren(holder: Instance)
 end
 
 --------------------------------------------------
+-- SHARED FRAME (header | ornate Main + Side panels | lower-right Buttons)
+--------------------------------------------------
+
+-- Builds the screen parts inside `backdrop`; used by Create (own ScreenGui) and CreateView
+-- (a layer inside an open screen). f.rows = button rows; f.Layout() places everything below
+-- the Roblox top bar (moved word for word from Create, 2026-11-17).
+local function buildFrame(backdrop: GuiObject, titleText: string, fullMain: boolean?): any
+	-- Header: title | status | gold
+	local header = Instance.new("Frame")
+	header.Name = "Header"
+	header.BackgroundTransparency = 1
+	header.BorderSizePixel = 0
+	header.Parent = backdrop
+	local title = makeText(header, Theme.Text.Title(), Theme.Colors.TextGold, true)
+	title.Name = "Title"
+	title.Font = Theme.Font.Display
+	title.Text = titleText
+	title.Size = UDim2.new(0.3, 0, 1, 0)
+	local status = makeText(header, Theme.Text.Small(), Theme.Colors.TextSecondary)
+	status.Name = "Status"
+	status.Size = UDim2.new(0.4, 0, 1, 0)
+	status.Position = UDim2.new(0.3, 0, 0, 0)
+	status.TextXAlignment = Enum.TextXAlignment.Center
+	local gold = makeText(header, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
+	gold.Name = "Gold"
+	gold.Size = UDim2.new(0.3, 0, 1, 0)
+	gold.Position = UDim2.new(0.7, 0, 0, 0)
+	gold.TextXAlignment = Enum.TextXAlignment.Right
+
+	-- Main (left) and Side (right) ornate panels; Buttons group (lower right).
+	local mainPanel = Theme.MakePanel("MainPanel", UDim2.new(), UDim2.new(), nil, backdrop)
+	addPadding(mainPanel, PANEL_PAD)
+	local main = makeHolder("Main", mainPanel)
+	local sidePanel = Theme.MakePanel("SidePanel", UDim2.new(), UDim2.new(), nil, backdrop)
+	addPadding(sidePanel, PANEL_PAD)
+	local side = makeHolder("Side", sidePanel)
+	local buttons = Instance.new("Frame")
+	buttons.Name = "Buttons"
+	buttons.AnchorPoint = Vector2.new(1, 1)
+	buttons.BackgroundTransparency = 1
+	buttons.BorderSizePixel = 0
+	buttons.Parent = backdrop
+
+	local f: any = { Main = main, Side = side, Buttons = buttons, Title = title, rows = 1 }
+
+	function f.Layout()
+		local buttonRows = f.rows
+		local insetY = GuiService:GetGuiInset().Y
+		local headerH = math.max(MIN_HEADER_H, insetY)
+		-- Title starts right of Roblox's own top-left buttons (they always draw on top).
+		local leftX = math.max(MARGIN * 2, GuiService.TopbarInset.Min.X + MARGIN)
+		header.Position = UDim2.fromOffset(leftX, 0)
+		header.Size = UDim2.new(1, -(leftX + MARGIN * 2), 0, headerH)
+
+		local top = headerH + MARGIN // 2
+		local buttonsH = buttonRows * GuildScreen.ROW_H + (buttonRows - 1) * ROW_GAP
+		mainPanel.Position = UDim2.fromOffset(MARGIN, top)
+		mainPanel.Size = UDim2.new(1 - SIDE_SHARE, -MARGIN * 1.5, 1, -(top + MARGIN))
+		sidePanel.Position = UDim2.new(1 - SIDE_SHARE, MARGIN // 2, 0, top)
+		sidePanel.Size = UDim2.new(SIDE_SHARE, -MARGIN * 1.5, 1, -(top + MARGIN * 2 + buttonsH))
+		buttons.Position = UDim2.new(1, -MARGIN, 1, -MARGIN)
+		buttons.Size = UDim2.new(SIDE_SHARE, -MARGIN * 1.5, 0, buttonsH)
+		if fullMain then
+			mainPanel.Size = UDim2.new(1, -MARGIN * 2, 1, -(top + MARGIN * 2 + buttonsH))
+			sidePanel.Visible = false
+		end
+	end
+
+	function f.SetGold(text: string)
+		gold.Text = text
+	end
+
+	-- Server answers / errors (moved here from the guild menu status line while this is open).
+	function f.SetStatus(text: string, isError: boolean?)
+		status.Text = text
+		status.TextColor3 = if isError then Theme.Colors.Danger else Theme.Colors.Success
+	end
+
+	return f
+end
+
+--------------------------------------------------
 -- PUBLIC
 --------------------------------------------------
 
@@ -120,41 +202,9 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 	backdrop.Active = true -- swallow taps so nothing underneath reacts
 	backdrop.Parent = gui
 
-	-- Header: title | status | gold
-	local header = Instance.new("Frame")
-	header.Name = "Header"
-	header.BackgroundTransparency = 1
-	header.BorderSizePixel = 0
-	header.Parent = backdrop
-	local title = makeText(header, Theme.Text.Title(), Theme.Colors.TextGold, true)
-	title.Name = "Title"
-	title.Font = Theme.Font.Display
-	title.Text = opts.title
-	title.Size = UDim2.new(0.3, 0, 1, 0)
-	local status = makeText(header, Theme.Text.Small(), Theme.Colors.TextSecondary)
-	status.Name = "Status"
-	status.Size = UDim2.new(0.4, 0, 1, 0)
-	status.Position = UDim2.new(0.3, 0, 0, 0)
-	status.TextXAlignment = Enum.TextXAlignment.Center
-	local gold = makeText(header, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
-	gold.Name = "Gold"
-	gold.Size = UDim2.new(0.3, 0, 1, 0)
-	gold.Position = UDim2.new(0.7, 0, 0, 0)
-	gold.TextXAlignment = Enum.TextXAlignment.Right
-
-	-- Main (left) and Side (right) ornate panels; Buttons group (lower right).
-	local mainPanel = Theme.MakePanel("MainPanel", UDim2.new(), UDim2.new(), nil, backdrop)
-	addPadding(mainPanel, PANEL_PAD)
-	local main = makeHolder("Main", mainPanel)
-	local sidePanel = Theme.MakePanel("SidePanel", UDim2.new(), UDim2.new(), nil, backdrop)
-	addPadding(sidePanel, PANEL_PAD)
-	local side = makeHolder("Side", sidePanel)
-	local buttons = Instance.new("Frame")
-	buttons.Name = "Buttons"
-	buttons.AnchorPoint = Vector2.new(1, 1)
-	buttons.BackgroundTransparency = 1
-	buttons.BorderSizePixel = 0
-	buttons.Parent = backdrop
+	-- Header, ornate Main / Side panels and the Buttons group (shared with CreateView).
+	local f = buildFrame(backdrop, opts.title, opts.fullMain)
+	local main, side, buttons = f.Main, f.Side, f.Buttons
 
 	Theme.MakeScreenBorder(backdrop)
 
@@ -164,7 +214,6 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 		Side = side,
 		Buttons = buttons,
 	}
-	local buttonRows = 1
 
 	-- KEEP SCROLL (2026-11-06, user bug): every screen rebuilds Main on each tap (select an
 	-- item, stage a level, queue a dismantle), which destroyed the item grid and jumped the
@@ -209,42 +258,18 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 
 	-- Positions depend on the Roblox top bar, so they are recomputed on every Show().
 	local function layout()
-		local insetY = GuiService:GetGuiInset().Y
-		local headerH = math.max(MIN_HEADER_H, insetY)
-		-- Title starts right of Roblox's own top-left buttons (they always draw on top).
-		local leftX = math.max(MARGIN * 2, GuiService.TopbarInset.Min.X + MARGIN)
-		header.Position = UDim2.fromOffset(leftX, 0)
-		header.Size = UDim2.new(1, -(leftX + MARGIN * 2), 0, headerH)
-
-		local top = headerH + MARGIN // 2
-		local buttonsH = buttonRows * GuildScreen.ROW_H + (buttonRows - 1) * ROW_GAP
-		mainPanel.Position = UDim2.fromOffset(MARGIN, top)
-		mainPanel.Size = UDim2.new(1 - SIDE_SHARE, -MARGIN * 1.5, 1, -(top + MARGIN))
-		sidePanel.Position = UDim2.new(1 - SIDE_SHARE, MARGIN // 2, 0, top)
-		sidePanel.Size = UDim2.new(SIDE_SHARE, -MARGIN * 1.5, 1, -(top + MARGIN * 2 + buttonsH))
-		buttons.Position = UDim2.new(1, -MARGIN, 1, -MARGIN)
-		buttons.Size = UDim2.new(SIDE_SHARE, -MARGIN * 1.5, 0, buttonsH)
-		if opts.fullMain then
-			mainPanel.Size = UDim2.new(1, -MARGIN * 2, 1, -(top + MARGIN * 2 + buttonsH))
-			sidePanel.Visible = false
-		end
+		f.Layout()
 	end
 
 	-- Number of button rows the caller will build (sizes the Buttons group and Side panel).
 	function self.SetButtonRows(n: number)
-		buttonRows = math.max(1, n)
+		f.rows = math.max(1, n)
 		layout()
 	end
 
-	function self.SetGold(text: string)
-		gold.Text = text
-	end
-
+	self.SetGold = f.SetGold
 	-- Server answers / errors (moved here from the guild menu status line while this is open).
-	function self.SetStatus(text: string, isError: boolean?)
-		status.Text = text
-		status.TextColor3 = if isError then Theme.Colors.Danger else Theme.Colors.Success
-	end
+	self.SetStatus = f.SetStatus
 
 	-- Confirmation prompt (2026-10-31, user ruling): a modal box over the whole screen with
 	-- Cancel + one confirm button. Confirm closes the prompt, then runs onConfirm. Taps
@@ -366,6 +391,88 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 	layout()
 	gui.Parent = opts.parent -- parent last (NET-004)
 	return self
+end
+
+--------------------------------------------------
+-- VIEWS AND MODAL BOXES INSIDE AN OPEN SCREEN (2026-11-17, user: the dungeon screens did not
+-- follow the established style -- plain dark boxes, title under the Roblox top bar)
+--------------------------------------------------
+
+local CLEAR = 12 -- modal box gap to the screen edges and below the Roblox top bar (12-24 px rule)
+
+-- Modal layer that swallows taps; child of a ScreenGui with IgnoreGuiInset = true (any GuildScreen).
+local function makeModal(name: string, color: Color3, transparency: number): TextButton
+	local o = Instance.new("TextButton")
+	o.Name = name
+	o.Text = ""
+	o.AutoButtonColor = false
+	o.Modal = true
+	o.Size = UDim2.fromScale(1, 1)
+	o.BackgroundColor3 = color
+	o.BackgroundTransparency = transparency
+	o.BorderSizePixel = 0
+	o.ZIndex = 20
+	return o
+end
+
+-- A full screen drawn over an open GuildScreen (dungeon Bag / Merchant / Treasure): the same
+-- header (title | status | gold), ornate Main + Side panels and lower-right Buttons as Create.
+-- The caller parents view.Root (then fills Main / Side / Buttons) and destroys Root to close.
+function GuildScreen.CreateView(opts: { name: string, title: string, fullMain: boolean?, buttonRows: number? }): any
+	local root = makeModal(opts.name, Theme.FullScreen.BackgroundColor, Theme.FullScreen.BackgroundTransparency)
+	local f = buildFrame(root, opts.title, opts.fullMain)
+	Theme.MakeScreenBorder(root)
+	f.Root = root
+	f.rows = math.max(1, opts.buttonRows or 1)
+	function f.SetTitle(text: string)
+		f.Title.Text = text
+	end
+	f.Layout()
+	return f
+end
+
+-- Dimmed modal with one box in the guild popup style (the Prompt / FacilityInfo box: raised
+-- panel, rounded corners, border line), kept clear of the screen edges and below the Roblox top
+-- bar. opts.fill: fixed box using the whole safe height (widthScale of the width, up to maxW px);
+-- otherwise the box grows with its content (AutomaticSize Y) up to the safe height.
+-- Returns the overlay (caller parents it last) and the box (padded) to fill.
+function GuildScreen.MakeModalBox(name: string, opts: { maxW: number?, widthScale: number?, fill: boolean?, pad: number? }?): (TextButton, Frame)
+	local o2 = opts or {}
+	local insetY = GuiService:GetGuiInset().Y
+	local cam = workspace.CurrentCamera
+	local vh = if cam then cam.ViewportSize.Y else 382
+	local maxH = math.max(120, vh - insetY - CLEAR * 2)
+	local overlay = makeModal(name, Color3.new(0, 0, 0), 0.4)
+	local box = Instance.new("Frame")
+	box.Name = "Box"
+	box.BackgroundColor3 = Theme.Colors.PanelRaised
+	box.BorderSizePixel = 0
+	box.ClipsDescendants = true
+	box.ZIndex = 21
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = Theme.CornerRadius.md
+	corner.Parent = box
+	local stroke = Instance.new("UIStroke")
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Color = Theme.Colors.Border
+	stroke.Thickness = Theme.BorderThickness.Default
+	stroke.Parent = box
+	local limit = Instance.new("UISizeConstraint")
+	limit.MaxSize = Vector2.new(o2.maxW or 500, maxH)
+	limit.Parent = box
+	if o2.fill then
+		box.AnchorPoint = Vector2.new(0.5, 0)
+		box.Position = UDim2.new(0.5, 0, 0, insetY + CLEAR)
+		box.Size = UDim2.new(o2.widthScale or 0.94, 0, 0, maxH)
+	else
+		box.AnchorPoint = Vector2.new(0.5, 0.5)
+		box.Position = UDim2.new(0.5, 0, 0.5, insetY // 2)
+		box.Size = UDim2.new(o2.widthScale or 0.86, 0, 0, 0)
+		box.AutomaticSize = Enum.AutomaticSize.Y
+	end
+	addPadding(box, o2.pad or 12)
+	box.Parent = overlay
+	return overlay, box
 end
 
 return table.freeze(GuildScreen)

@@ -26,6 +26,7 @@ function DungeonEvents.Pick(runSeed: number, row: number, col: number, facilityL
 	local all, fresh, freshAny = {}, {}, {}
 	for _, ev in D.Events do
 		if ev.needsKin and hasKin == false then continue end -- EV-11 only with kin in the party
+		if (ev :: any).oncePerStage and seen[ev.id] then continue end -- EV-17: once per stage (caller marks it seen for this stage)
 		table.insert(all, ev)
 		if not seen[ev.id] then
 			table.insert(freshAny, ev)
@@ -33,7 +34,16 @@ function DungeonEvents.Pick(runSeed: number, row: number, col: number, facilityL
 		end
 	end
 	local pool = if #fresh > 0 then fresh elseif #freshAny > 0 then freshAny else all
-	return pool[rng:NextInteger(1, #pool)].id
+	-- Weighted (rule 261, 2026-11-15 7:54 PM: EV-17 weight 2, every other event 1). With all weights 1 this is
+	-- the same single roll as before, so it picks exactly what the old uniform pick did.
+	local total = 0
+	for _, ev in pool do total += (ev :: any).weight or 1 end
+	local r = rng:NextInteger(1, total)
+	for _, ev in pool do
+		r -= (ev :: any).weight or 1
+		if r <= 0 then return ev.id end
+	end
+	return pool[#pool].id
 end
 
 -- Choices per event (keys are sent to the client; labels are the approved draft text, client side).
@@ -54,6 +64,7 @@ DungeonEvents.Choices = table.freeze({
 	["EV-14"] = { "rest", "search" },
 	["EV-15"] = { "reforge", "leave" },
 	["EV-16"] = { "reshape", "leave" }, -- Altar of Change (2026-11-15 10:08 AM)
+	["EV-17"] = { "send", "move" }, -- Courier's Rest (rule 272): "send" goes through DungeonRooms.CourierSend (item picks)
 })
 
 local function valid(id: string, choice: string): boolean
@@ -67,9 +78,11 @@ end
 --- Effect kinds: { k = "rolls", n } gear/card rolls into the bag at the current drop rate;
 --- { k = "bagGold", n }; { k = "bagMat", id, n } (normal material); { k = "heal", pct };
 --- { k = "revive", pct }; { k = "hurtAll", pct }; { k = "hurtTop", pct }; { k = "realGold", n } (+/-);
---- { k = "shrine", bonus }; { k = "refill", mult }; { k = "loseBagGoldPct", pct };
+--- { k = "shrine", bonus } (old saved Lucky Shrine rooms only); { k = "loseBagGoldPct", pct } (legacy);
 --- { k = "fight", played = "Battle" | "Elite" }; { k = "nothing" }.
---- Returns ok, effects | error. `ctx` = { hasKO: boolean, realGold: number }.
+--- Silver step 2 (rules 272 / 278): { k = "silver", n } (+ purse); { k = "silverPay", n } (paid first,
+--- all-or-nothing); { k = "loseSilverPct", pct }; { k = "refill", pct } (silver refill %); trade give = "silver".
+--- Returns ok, effects | error. `ctx` = { hasKO: boolean, realGold: number, silver: number }.
 function DungeonEvents.Resolve(id: string, choice: string, runSeed: number, row: number, col: number, ctx: any): (boolean, any)
 	if not valid(id, choice) then return false, "Invalid choice" end
 	local fx: { any } = {}
@@ -82,9 +95,9 @@ function DungeonEvents.Resolve(id: string, choice: string, runSeed: number, row:
 			table.insert(fx, { k = "revive", pct = E.FlaskRevivePct })
 		end
 	elseif id == "EV-03" then
-		if choice == "buy" then table.insert(fx, { k = "refill", mult = E.PeddlerPriceMult }) end
+		if choice == "buy" then table.insert(fx, { k = "refill", pct = E.PeddlerRefillPct }) end -- 40% silver (rule 278)
 	elseif id == "EV-04" then
-		if choice == "pouch" then table.insert(fx, { k = "bagGold", n = E.PouchGold })
+		if choice == "pouch" then table.insert(fx, { k = "silver", n = E.PouchSilver }) -- +30 silver (rule 272)
 		else table.insert(fx, { k = "bagMat", id = "mercury", n = E.BuryMercury }) end
 	elseif id == "EV-05" then
 		if choice == "offer" then
@@ -102,23 +115,24 @@ function DungeonEvents.Resolve(id: string, choice: string, runSeed: number, row:
 			local roll = Random.new(seedOf(runSeed, row, col, 7)):NextNumber() * 100
 			if roll < E.DoorTreasurePct then
 				table.insert(fx, { k = "rolls", n = E.DoorRolls })
-				table.insert(fx, { k = "bagGold", n = E.DoorGold })
+				table.insert(fx, { k = "silver", n = E.DoorSilver }) -- +40 silver (rule 272)
 			else
 				table.insert(fx, { k = "fight", played = "Elite" })
 			end
 		end
 	elseif id == "EV-08" then
 		if choice == "bet" then
-			if (ctx.realGold or 0) < E.GambleBet then return false, "Not enough gold" end
+			if (ctx.silver or 0) < E.GambleBetSilver then return false, "Not enough silver" end
 			local win = Random.new(seedOf(runSeed, row, col, 8)):NextNumber() * 100 < E.GambleWinPct
-			-- Bet 200: win = 400 back (net +200), lose = -200 (DEV DEFAULT reading: Sim v7 "averages zero").
-			table.insert(fx, { k = "realGold", n = if win then E.GamblePayout - E.GambleBet else -E.GambleBet })
+			-- Silver step 2 (rule 272): bet 20 silver; win = 40 back (net +20), lose = the 20.
+			table.insert(fx, { k = "silverPay", n = E.GambleBetSilver })
+			if win then table.insert(fx, { k = "silver", n = E.GamblePayoutSilver }) end
 		end
 	elseif id == "EV-09" then
 		if choice == "run" then table.insert(fx, { k = "hurtAll", pct = E.TunnelAllPct })
 		else table.insert(fx, { k = "hurtTop", pct = E.TunnelOnePct }) end
 	elseif id == "EV-10" then
-		if choice == "hand" then table.insert(fx, { k = "loseBagGoldPct", pct = E.CutpurseGoldPct })
+		if choice == "hand" then table.insert(fx, { k = "loseSilverPct", pct = E.CutpurseSilverPct }) -- 25% of silver (rule 272)
 		else table.insert(fx, { k = "fight", played = "Battle" }) end
 	-- EV-11..16 (rule 272, approved 2026-11-15). ctx.kin = the room's seeded kin pick (see KinFor).
 	elseif id == "EV-11" then
@@ -140,7 +154,7 @@ function DungeonEvents.Resolve(id: string, choice: string, runSeed: number, row:
 	elseif id == "EV-13" then
 		if choice == "m2c" then table.insert(fx, { k = "trade", give = "mercury", giveN = E.BarterMercuryForCrystal, get = "crystals", getN = 1 })
 		elseif choice == "c2m" then table.insert(fx, { k = "trade", give = "crystals", giveN = 1, get = "mercury", getN = E.BarterCrystalForMercury })
-		elseif choice == "g2m" then table.insert(fx, { k = "trade", give = "gold", giveN = E.BarterGoldForMercury, get = "mercury", getN = 1 }) end
+		elseif choice == "g2m" then table.insert(fx, { k = "trade", give = "silver", giveN = E.BarterSilverForMercury, get = "mercury", getN = 1 }) end -- 40 silver -> 1 mercury into the Bag (rule 272)
 	elseif id == "EV-14" then -- Campfire (USER RULING 2026-11-15 10:01 AM): two separate choices, pick ONE
 		if choice == "rest" then
 			table.insert(fx, { k = "heal", pct = E.CampHealPct })
@@ -153,6 +167,8 @@ function DungeonEvents.Resolve(id: string, choice: string, runSeed: number, row:
 		end
 	elseif id == "EV-16" then -- Altar of Change: the swap itself is applied by DungeonRooms.ChooseAltar
 		if choice == "reshape" then return false, "Invalid choice" end
+	elseif id == "EV-17" then -- Courier's Rest: "move" = nothing; "send" is DungeonRooms.CourierSend (picks)
+		if choice == "send" then return false, "Invalid choice" end
 	end
 	if #fx == 0 then table.insert(fx, { k = "nothing" }) end
 	return true, fx

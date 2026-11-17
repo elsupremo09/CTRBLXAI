@@ -42,6 +42,13 @@ export type Entry = {
 	-- holder's name (server data); there is no selected unit here, so E is the grey "another unit" E.
 	equippedBy: string?,
 	isNew: boolean?,
+	-- Dungeon screens (2026-11-16, user 7:14 PM): optional, nil = the normal Merchant behaviour.
+	priceUnit: string?,   -- inspector price word ("silver"); default "gold"
+	noPriceBadge: boolean?, -- hide the tile's price badge (price shown in the inspector only)
+	countText: string?,   -- tile count badge ("×3")
+	tagText: string?,     -- approved tag line under the rarity line (e.g. "Bought — always kept")
+	tagColor: Color3?,
+	extraLines: { string }?, -- plain lines after the tag (approved strings only)
 }
 
 export type GridOptions = {
@@ -198,16 +205,44 @@ local function fillInspector(list: Instance, entry: Entry)
 	local rarityColor = Theme.GetRarityColor(rarity)
 
 	addLine(list, nextOrder(), entry.name, Theme.Text.Heading(), rarityColor, true)
-	local sub = { rarity, `Lv{entry.level or (detail and detail.itemLevel) or 1}` }
+	local lv = entry.level or (detail and detail.itemLevel)
+	local noLevel = detail ~= nil and (detail.isConsumable or detail.isCard or detail.isRelic) and lv == nil
+	local sub = if noLevel then { rarity } else { rarity, `Lv{lv or 1}` }
 	if detail and detail.slot then table.insert(sub, SLOT_LABEL[detail.slot] or tostring(detail.slot)) end
 	addLine(list, nextOrder(), table.concat(sub, " | "), Theme.Text.Small(), Theme.Colors.TextSecondary)
 	-- Price sits inside the inspector (user ruling 2026-10-31): buy price on Buy, sell price on Sell.
 	if entry.price ~= nil then
-		addLine(list, nextOrder(), `{entry.price} gold`, Theme.Text.Body(), Theme.Colors.TextGold, true)
+		addLine(list, nextOrder(), `{entry.price} {entry.priceUnit or "gold"}`, Theme.Text.Body(), Theme.Colors.TextGold, true)
+	end
+	if entry.tagText then
+		addLine(list, nextOrder(), entry.tagText, Theme.Text.Small(), entry.tagColor or Theme.Colors.Success, true)
+	end
+	for _, l in entry.extraLines or {} do
+		addLine(list, nextOrder(), l, Theme.Text.Small(), Theme.Colors.TextPrimary)
 	end
 
 	if not detail then
 		warn(`[MerchantInspector] No item detail for '{entry.name}' (server sent none)`)
+		return
+	end
+
+	-- Consumables / cards (dungeon Merchant, Treasure, Bag; 2026-11-16): the Loadout consumable detail's
+	-- labels (Charges / RT Cost / Range / Target) and the card's own description. No new wording.
+	if detail.isConsumable then
+		if detail.effectFormula and detail.effectFormula ~= "" then
+			addLine(list, nextOrder(), tostring(detail.effectFormula), Theme.Text.Body(), Theme.Colors.TextPrimary)
+		end
+		if detail.maxCharges ~= nil then addStatRow(list, nextOrder(), "Charges", tostring(detail.maxCharges)) end
+		if detail.rtCost ~= nil then addStatRow(list, nextOrder(), "RT Cost", tostring(detail.rtCost)) end
+		if detail.range ~= nil then addStatRow(list, nextOrder(), "Range", tostring(detail.range)) end
+		if detail.targetRules and detail.targetRules ~= "" then addStatRow(list, nextOrder(), "Target", tostring(detail.targetRules)) end
+		return
+	end
+	if detail.isCard or detail.isRelic then
+		if detail.description and detail.description ~= "" then
+			addLine(list, nextOrder(), tostring(detail.description), Theme.Text.Body(),
+				if detail.isCurse then Theme.Colors.Danger else Theme.Colors.TextPrimary)
+		end
 		return
 	end
 
@@ -320,11 +355,12 @@ end
 local function refitPortraitIcons(scroll: Instance, cellW: number)
 	local t = Theme.ItemTile
 	local inset = math.max(t.IconInsetMin, math.round(cellW * t.IconInsetFactor))
+	local fp = Theme.ItemTileFramePad()
 	for _, tile in scroll:GetChildren() do
 		if tile:IsA("TextButton") then
 			for _, c in tile:GetChildren() do
-				if c:IsA("ImageLabel") then
-					c.Size = UDim2.new(1, -inset * 2, 0, cellW - inset * 2)
+				if c:IsA("ImageLabel") and c.Name ~= "ItemFrame" then -- never resize the ornate frame
+					c.Size = UDim2.new(1, -inset * 2, 0, cellW - inset * 2 - fp * 2)
 					c.Position = UDim2.fromOffset(inset, inset)
 				end
 			end
@@ -372,6 +408,7 @@ function MerchantInspector.BuildGrid(scroll: ScrollingFrame, opts: GridOptions)
 			cellW = cellW,
 			icon = detail and detail.icon or nil,
 			iconText = string.sub(e.name, 1, 1),
+			countText = e.countText,
 			name = e.name,
 			selected = selected ~= nil and e.key == selected.key,
 			layoutOrder = i,
@@ -389,7 +426,7 @@ function MerchantInspector.BuildGrid(scroll: ScrollingFrame, opts: GridOptions)
 				addTileBadge(tile, `Lv{e.level}`, false)
 			end
 		end
-		local hasPrice = e.price ~= nil
+		local hasPrice = e.price ~= nil and not e.noPriceBadge
 		if hasPrice then addPriceBadge(tile, `{e.price}g`, cellW, lvW) end
 		if InventoryControls then
 			-- No selected unit on these screens: E is the grey "another unit" E (server data).

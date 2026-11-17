@@ -61,6 +61,9 @@ local PLAYER_ID
 -- and we write to disk ONCE, only if something changed. Replaces per-change autosave
 -- (which caused lag). Mirrors the guild base menus' save-on-leave model.
 local loadoutDirty = false
+-- Remote handlers by remote name (installed at the end of Init through the dungeon gate, step 3 2026-11-16).
+local Handlers: { [string]: any } = {}
+local dungeonGate: any = nil -- DungeonLoadout.Gate (Main, LoadoutRequestHandlers.SetGate); nil = no run rules
 local function markLoadoutDirty()
 	loadoutDirty = true
 end
@@ -96,6 +99,11 @@ local function rebuildSkillIds(unit)
 		end
 	end
 end
+
+--- Main wires DungeonLoadout.Gate here (step 3): (name, fn, withInv, player, ...) -> handled, result.
+function LoadoutRequestHandlers.SetGate(g: any) dungeonGate = g end
+--- Shared with DungeonLoadout (run end): the unit's live skill list from its doctrine skill + skill cards.
+function LoadoutRequestHandlers.RebuildSkillIds(unit: any) rebuildSkillIds(unit) end
 
 function LoadoutRequestHandlers.Init(deps)
 	playerUnits   = deps.playerUnits
@@ -148,7 +156,7 @@ function LoadoutRequestHandlers.Init(deps)
 	end)
 	PlayersService.PlayerRemoving:Connect(function(p) seenWindow[p.UserId] = nil end)
 
-BattleEvents.GetRosterData.OnServerInvoke = function(player)
+Handlers.GetRosterData = function(player)
 	local roster = {}
 	for unitId, unit in pairs(playerUnits) do
 		local pState = PersistentStateService.GetUnitState(PLAYER_ID, unitId)
@@ -225,7 +233,7 @@ BattleEvents.GetRosterData.OnServerInvoke = function(player)
 	return roster
 end
 
-BattleEvents.GetInventoryData.OnServerInvoke = function(player)
+Handlers.GetInventoryData = function(player)
 	local items = InventoryService.GetAllItems(PLAYER_ID)
 	local result = {}
 	-- Build reverse lookup: instanceId -> unitId that has it equipped
@@ -262,7 +270,7 @@ end
 
 -- slotOverride (optional, 2026-10-28): "OffHand" to put a 1H weapon in a Twinblade's off hand.
 -- Any other value is ignored (slot still comes from the item). Legality is checked by ValidateEquip.
-BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId, slotOverride)
+Handlers.RequestEquip = function(player, unitId, instanceId, slotOverride)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then
@@ -333,7 +341,7 @@ BattleEvents.RequestEquip.OnServerInvoke = function(player, unitId, instanceId, 
 	end
 end
 
-BattleEvents.RequestUnequip.OnServerInvoke = function(player, unitId, slot)
+Handlers.RequestUnequip = function(player, unitId, slot)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then
@@ -351,7 +359,7 @@ BattleEvents.RequestUnequip.OnServerInvoke = function(player, unitId, slot)
 	end
 end
 
-BattleEvents.GetDoctrineChoices.OnServerInvoke = function(player)
+Handlers.GetDoctrineChoices = function(player)
 	local result = {}
 	for docId, doc in pairs(DoctrineData) do
 		if type(doc) == "table" and doc.name then
@@ -371,7 +379,7 @@ BattleEvents.GetDoctrineChoices.OnServerInvoke = function(player)
 	return result
 end
 
-BattleEvents.RequestDoctrineSkillSelect.OnServerInvoke = function(player, unitId, skillId)
+Handlers.RequestDoctrineSkillSelect = function(player, unitId, skillId)
 	local unit = playerUnits[unitId]
 	if not unit then
 		warn(string.format("[Doctrine] Skill select FAILED: %s — Unknown unit", tostring(unitId)))
@@ -416,7 +424,7 @@ end
 -- the unit always has exactly one bound instance; equipping a new one returns the old
 -- one to the loose stash. Mirrors equipment equip, with the always-equipped constraint
 -- (never leaves the unit without a doctrine).
-BattleEvents.RequestEquipDoctrine.OnServerInvoke = function(player, unitId, instanceId)
+Handlers.RequestEquipDoctrine = function(player, unitId, instanceId)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit: " .. tostring(unitId) } end
@@ -463,7 +471,7 @@ end
 -- Owned-doctrine list for the picker (2026-10-20): loose stash grouped by doctrine
 -- (consumables-style stacking with a count) PLUS the unit's currently-equipped one
 -- (marked current). Replaces the old "all 32 doctrines" placeholder source.
-BattleEvents.GetOwnedDoctrines.OnServerInvoke = function(player, unitId)
+Handlers.GetOwnedDoctrines = function(player, unitId)
 	local unit = playerUnits[unitId]
 	local currentInstanceId = unit and unit.doctrineInstanceId or nil
 	local currentDoctrineId = unit and unit.doctrineId or nil
@@ -492,7 +500,7 @@ BattleEvents.GetOwnedDoctrines.OnServerInvoke = function(player, unitId)
 	return { ok = true, doctrines = out, currentInstanceId = currentInstanceId }
 end
 
-BattleEvents.GetSkillLoadout.OnServerInvoke = function(player, unitId)
+Handlers.GetSkillLoadout = function(player, unitId)
 	local unit = playerUnits[unitId]
 	if not unit then
 		return { ok = false, reason = "Unknown unit" }
@@ -552,7 +560,7 @@ BattleEvents.GetSkillLoadout.OnServerInvoke = function(player, unitId)
 	}
 end
 
-BattleEvents.RequestEquipSkillCard.OnServerInvoke = function(player, unitId, slotIndex, skillId)
+Handlers.RequestEquipSkillCard = function(player, unitId, slotIndex, skillId)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then
@@ -610,7 +618,7 @@ BattleEvents.RequestEquipSkillCard.OnServerInvoke = function(player, unitId, slo
 	return { ok = true, skillName = skillDef.name }
 end
 
-BattleEvents.RequestUnequipSkillCard.OnServerInvoke = function(player, unitId, slotIndex)
+Handlers.RequestUnequipSkillCard = function(player, unitId, slotIndex)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
@@ -635,7 +643,7 @@ BattleEvents.RequestUnequipSkillCard.OnServerInvoke = function(player, unitId, s
 	return { ok = true }
 end
 
-BattleEvents.RequestAttachAugment.OnServerInvoke = function(player, unitId, slotIndex, augSlotIndex, augmentId)
+Handlers.RequestAttachAugment = function(player, unitId, slotIndex, augSlotIndex, augmentId)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
@@ -723,7 +731,7 @@ BattleEvents.RequestAttachAugment.OnServerInvoke = function(player, unitId, slot
 	return { ok = true, augmentName = augDef.name }
 end
 
-BattleEvents.RequestDetachAugment.OnServerInvoke = function(player, unitId, slotIndex, augSlotIndex)
+Handlers.RequestDetachAugment = function(player, unitId, slotIndex, augSlotIndex)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
@@ -746,7 +754,7 @@ BattleEvents.RequestDetachAugment.OnServerInvoke = function(player, unitId, slot
 	return { ok = true }
 end
 
-BattleEvents.RequestEquipConsumable.OnServerInvoke = function(player, unitId, slotIndex, consumableId)
+Handlers.RequestEquipConsumable = function(player, unitId, slotIndex, consumableId)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
@@ -805,7 +813,7 @@ BattleEvents.RequestEquipConsumable.OnServerInvoke = function(player, unitId, sl
 	return { ok = true, name = consDef.name, charges = consDef.maxCharges or 1 }
 end
 
-BattleEvents.RequestUnequipConsumable.OnServerInvoke = function(player, unitId, slotIndex)
+Handlers.RequestUnequipConsumable = function(player, unitId, slotIndex)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
@@ -826,7 +834,7 @@ BattleEvents.RequestUnequipConsumable.OnServerInvoke = function(player, unitId, 
 	return { ok = true }
 end
 
-BattleEvents.RequestSetPortrait.OnServerInvoke = function(player, unitId, assetId)
+Handlers.RequestSetPortrait = function(player, unitId, assetId)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
@@ -859,7 +867,7 @@ BattleEvents.RequestSetPortrait.OnServerInvoke = function(player, unitId, assetI
 	return { ok = true, assetId = assetId }
 end
 
-BattleEvents.RequestSetBodyColor.OnServerInvoke = function(player, unitId, r, g, b)
+Handlers.RequestSetBodyColor = function(player, unitId, r, g, b)
 	markLoadoutDirty()
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
@@ -877,7 +885,7 @@ BattleEvents.RequestSetBodyColor.OnServerInvoke = function(player, unitId, r, g,
 	return { ok = true, color = unit.bodyColor }
 end
 
-BattleEvents.GetConsumableSlots.OnServerInvoke = function(player)
+Handlers.GetConsumableSlots = function(player)
 	local result = {}
 	-- Owned loose copies ride along under a reserved key (2026-11-03); unit ids never start with "_".
 	result._owned = table.clone(cardInventory.consumables or {})
@@ -944,7 +952,7 @@ end
 -- PreviewStatAllocation (read-only): runs the REAL stat pipeline on a throwaway copy
 -- of the unit with the staged points added to baseStats, so the Info screen can show
 -- exact projected secondary stats while the player stages. Commits/saves NOTHING.
-BattleEvents.PreviewStatAllocation.OnServerInvoke = function(player, unitId, pending)
+Handlers.PreviewStatAllocation = function(player, unitId, pending)
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	local clean, reason, total = sanitizePendingAlloc(pending)
@@ -969,7 +977,7 @@ end
 -- CommitStatAllocation: applies the whole staged batch to the live unit in ONE call,
 -- rebuilds, and saves once (the player's single "Confirm"). The client only ever sends
 -- non-negative deltas, so previously-confirmed points can't be refunded here.
-BattleEvents.CommitStatAllocation.OnServerInvoke = function(player, unitId, pending)
+Handlers.CommitStatAllocation = function(player, unitId, pending)
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	local clean, reason, total = sanitizePendingAlloc(pending)
@@ -999,7 +1007,7 @@ BattleEvents.CommitStatAllocation.OnServerInvoke = function(player, unitId, pend
 	}
 end
 
-BattleEvents.GetUnitFullStats.OnServerInvoke = function(player, unitId)
+Handlers.GetUnitFullStats = function(player, unitId)
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 
@@ -1062,7 +1070,7 @@ BattleEvents.GetUnitFullStats.OnServerInvoke = function(player, unitId)
 	}
 end
 
-BattleEvents.GetEquipmentComparison.OnServerInvoke = function(player, unitId, instanceId)
+Handlers.GetEquipmentComparison = function(player, unitId, instanceId)
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	local item = InventoryService.GetItem(PLAYER_ID, instanceId)
@@ -1112,7 +1120,7 @@ BattleEvents.GetEquipmentComparison.OnServerInvoke = function(player, unitId, in
 	return { ok = true, slot = slot, before = before, after = after, deltas = deltas }
 end
 
-BattleEvents.GetDoctrineComparison.OnServerInvoke = function(player, unitId, newDoctrineId)
+Handlers.GetDoctrineComparison = function(player, unitId, newDoctrineId)
 	local unit = playerUnits[unitId]
 	if not unit then return { ok = false, reason = "Unknown unit" } end
 	local newDoc = DoctrineData[newDoctrineId]
@@ -1152,6 +1160,32 @@ BattleEvents.GetDoctrineComparison.OnServerInvoke = function(player, unitId, new
 	return { ok = true, before = before, after = after, deltas = deltas }
 end
 
+
+	-- DUNGEON GATE (silver/Bag step 3, 2026-11-16; rules 265/266): every remote above goes through the gate
+	-- (DungeonLoadout.Gate, set by Main). For units in the active dungeon party it routes the request to the run's
+	-- Bag rules; withInv runs a handler on a run-only card inventory (handlers never yield, so the swap is safe).
+	local function withInv(inv: any, fn: any, ...: any): any
+		local saved = cardInventory
+		cardInventory = inv
+		local ok, res = pcall(fn, ...)
+		cardInventory = saved
+		if not ok then error(res, 0) end
+		return res
+	end
+	for name, fn in Handlers do
+		local remote = (BattleEvents :: any)[name]
+		if remote then
+			remote.OnServerInvoke = function(player, ...)
+				if dungeonGate then
+					local handled, res = dungeonGate(name, fn, withInv, player, ...)
+					if handled then return res end
+				end
+				return fn(player, ...)
+			end
+		else
+			warn("[LoadoutRequestHandlers] remote missing: " .. name)
+		end
+	end
 end
 
 --- Save-load cleanup (user ruling 2026-10-26): any equipped augment that no longer fits its

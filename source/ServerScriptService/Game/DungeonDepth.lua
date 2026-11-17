@@ -1,0 +1,199 @@
+--!strict
+-- DungeonDepth.lua — endless stages part 2 (step 6, 2026-11-16; project_rules 264 / 271 / 281 / 282).
+-- Depth curses: before Go deeper into stage 4+ the party must take 1 / 1 / 2 / 2 / 2 / 3... curses, each a
+-- forced pick 1 of 2 from DungeonRules.Data.DepthCursePool (RL-61..68 + the 6 old curses once each).
+--   * The offer is rolled when the stage boss is beaten (run.stageCleared), seeded by card seed + next stage,
+--     and SAVED, so the price is shown before Go deeper and a rejoin shows the same offers (Simulator fix 2).
+--   * Picks are stored as they are made and applied by GoDeeper (going home instead takes nothing).
+--   * Stackable curses (stack = true) count every pick in run.curseStacks; once-only curses are never offered
+--     twice (held, or offered earlier in the same set). Curses are unblockable and last the run (rule 271).
+-- Server-only, pure on the run table. Requires DungeonRules only (no cycle).
+
+local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local D: any = DungeonRules.Data
+
+local M = {}
+
+local function isStack(id: string): boolean
+	local d = DungeonRules.RelicDef(id)
+	return d ~= nil and d.stack == true
+end
+
+--- Stack count of a held curse/relic: stackable depth curses count every pick; any other held relic = 1.
+function M.Stacks(run: any, id: string): number
+	if type(run) ~= "table" then return 0 end
+	local st = run.curseStacks
+	local n = if type(st) == "table" then tonumber(st[id]) or 0 else 0
+	if n > 0 then return n end
+	return if table.find(run.relics or {}, id) then 1 else 0
+end
+
+--- { [relic id] = stacks } for every held relic (battle hooks read the depth curse counts from this).
+function M.StackMap(run: any): { [string]: number }
+	local out: { [string]: number } = {}
+	if type(run) ~= "table" then return out end
+	for _, id in run.relics or {} do out[id] = M.Stacks(run, id) end
+	return out
+end
+
+local function eligible(run: any, offeredOnce: { [string]: boolean }, offeredRestless: number): { string }
+	local pool: { string } = {}
+	for _, id in D.DepthCursePool do
+		if DungeonRules.RelicDef(id) then
+			local ok
+			if isStack(id) then
+				-- Restless Dead max +3; step 6 fix W4: count stacks held + times already offered in this offer
+				ok = not (id == "RL-64" and M.Stacks(run, id) + offeredRestless >= D.Relic.RestlessMax)
+			else
+				ok = not table.find(run.relics or {}, id) and not offeredOnce[id]
+			end
+			if ok then table.insert(pool, id) end
+		end
+	end
+	return pool
+end
+
+local function nextStageOf(run: any): number
+	return (tonumber(run.stage) or 1) + 1
+end
+
+--- Roll (once) the curse offer for the next stage. Called when a stage boss is beaten and after a rejoin.
+function M.EnsureOffer(run: any)
+	if type(run) ~= "table" or not run.stageCleared or not DungeonRules.IsEndless(run.card) then return end
+	local nextStage = nextStageOf(run)
+	if nextStage > (tonumber(run.card.maxStages) or 1) then return end
+	local n = DungeonRules.DepthCurseCount(nextStage)
+	if n <= 0 then run.depthOffer = nil return end
+	local o = run.depthOffer
+	if type(o) == "table" and o.stage == nextStage then return end
+	local rng = Random.new((DungeonRules.StageSeed(run.card.seed, nextStage) * 3 + 60617) % 2147483647)
+	local list = {}
+	local offeredOnce: { [string]: boolean } = {}
+	local offeredRestless = 0
+	for _ = 1, n do
+		local pool = eligible(run, offeredOnce, offeredRestless)
+		if #pool < 2 then break end
+		local a = table.remove(pool, rng:NextInteger(1, #pool)) :: string
+		local b = pool[rng:NextInteger(1, #pool)]
+		table.insert(list, { a = a, b = b })
+		if not isStack(a) then offeredOnce[a] = true end
+		if not isStack(b) then offeredOnce[b] = true end
+		if a == "RL-64" or b == "RL-64" then offeredRestless += 1 end
+	end
+	run.depthOffer = { stage = nextStage, pairs = list, picks = {} }
+	print(`[DungeonDepth] Curse offer for stage {nextStage} | {#list} pick(s)`)
+end
+
+--- Player picks "a" or "b" for the next unanswered pair. Returns ok, { picked, i, n } | reason.
+function M.Pick(run: any, which: any): (boolean, any)
+	local o = type(run) == "table" and run.depthOffer or nil
+	if not run or not run.stageCleared or type(o) ~= "table" or o.stage ~= nextStageOf(run) then return false, "Invalid request" end
+	local i = #o.picks + 1
+	local p = o.pairs[i]
+	if not p or (which ~= "a" and which ~= "b") then return false, "Invalid request" end
+	o.picks[i] = p[which]
+	print(`[DungeonDepth] Curse picked {i}/{#o.pairs} | {p[which]}`)
+	return true, { picked = p[which], i = i, n = #o.pairs }
+end
+
+--- True when Go deeper may go ahead (no offer for this next stage, or every pick made).
+function M.Ready(run: any): boolean
+	local o = type(run) == "table" and run.depthOffer or nil
+	if type(o) ~= "table" or o.stage ~= nextStageOf(run) then return true end
+	return #o.picks >= #o.pairs
+end
+
+--- GoDeeper: the picked curses join the run (stackables add a stack). Clears the offer.
+function M.Apply(run: any)
+	local o = run.depthOffer
+	run.depthOffer = nil
+	if type(o) ~= "table" then return end
+	if type(run.curseStacks) ~= "table" then run.curseStacks = {} end
+	for _, id in o.picks do
+		if not table.find(run.relics, id) then table.insert(run.relics, id) end
+		if isStack(id) then
+			local n = (tonumber(run.curseStacks[id]) or 0) + 1
+			if id == "RL-64" then n = math.min(n, D.Relic.RestlessMax) end
+			run.curseStacks[id] = n
+		end
+	end
+	if #o.picks > 0 then print(`[DungeonDepth] Curses taken for stage {o.stage} | {table.concat(o.picks, ", ")}`) end
+end
+
+--- Rest room / stage-start heal % with RL-65 Fading Embers (5 points lower per stack, never below 10%).
+function M.HealPct(run: any, pct: number): number
+	local n = M.Stacks(run, "RL-65")
+	if n <= 0 then return pct end
+	return math.max(math.min(pct, D.Relic.EmbersMinPct), pct - n * D.Relic.EmbersHealPts)
+end
+
+--- RL-64 Restless Dead: extra enemies in normal battles (max +3).
+function M.ExtraEnemies(run: any): number
+	return math.min(D.Relic.RestlessMax, M.Stacks(run, "RL-64"))
+end
+
+local function relicView(run: any, id: string?): any
+	local d = id and DungeonRules.RelicDef(id)
+	if not d then return nil end
+	return { id = id, name = d.name, rarity = d.rarity, text = d.text, kind = d.kind,
+		icon = DungeonRules.RelicIcon(id :: string), stacks = M.Stacks(run, id :: string) }
+end
+
+--- Screen view: { stage, i, n, done, a, b } for the next unanswered pair (nil = no offer).
+function M.View(run: any): any
+	local o = type(run) == "table" and run.depthOffer or nil
+	if type(o) ~= "table" or not run.stageCleared or o.stage ~= nextStageOf(run) or #o.pairs == 0 then return nil end
+	local i = #o.picks + 1
+	local p = o.pairs[i]
+	return { stage = o.stage, i = math.min(i, #o.pairs), n = #o.pairs, done = p == nil,
+		a = p and relicView(run, p.a) or nil, b = p and relicView(run, p.b) or nil }
+end
+
+function M.Export(run: any): any
+	local st = {}
+	for id, n in (type(run.curseStacks) == "table" and run.curseStacks or {}) do st[id] = n end
+	local o = run.depthOffer
+	local offer = nil
+	if type(o) == "table" then
+		local list = {}
+		for _, p in o.pairs do table.insert(list, { a = p.a, b = p.b }) end
+		offer = { stage = o.stage, pairs = list, picks = table.clone(o.picks) }
+	end
+	return { stacks = st, offer = offer }
+end
+
+local function inPool(id: any): boolean
+	return type(id) == "string" and table.find(D.DepthCursePool, id) ~= nil and DungeonRules.RelicDef(id) ~= nil
+end
+
+--- Load after run.relics / run.stageCleared are set. Bad data is dropped (the seeded offer then rolls again).
+function M.Import(run: any, data: any)
+	run.curseStacks = {}
+	run.depthOffer = nil
+	if type(data) ~= "table" then return end
+	if type(data.stacks) == "table" then
+		for id, n in data.stacks do
+			if type(id) == "string" and isStack(id) and table.find(run.relics, id) and type(n) == "number"
+				and n == math.floor(n) and n >= 1 and n <= D.StageLimit * D.DepthCurseLater then
+				run.curseStacks[id] = if id == "RL-64" then math.min(n, D.Relic.RestlessMax) else n
+			end
+		end
+	end
+	local o = data.offer
+	if type(o) == "table" and run.stageCleared and o.stage == nextStageOf(run) and type(o.pairs) == "table"
+		and type(o.picks) == "table" and #o.pairs <= D.DepthCurseLater and #o.picks <= #o.pairs then
+		local list = {}
+		for _, p in o.pairs do
+			if type(p) ~= "table" or not inPool(p.a) or not inPool(p.b) then return end
+			table.insert(list, { a = p.a, b = p.b })
+		end
+		local picks = {}
+		for i, id in o.picks do
+			if id ~= list[i].a and id ~= list[i].b then return end
+			picks[i] = id
+		end
+		run.depthOffer = { stage = o.stage, pairs = list, picks = picks }
+	end
+end
+
+return table.freeze(M)

@@ -925,7 +925,7 @@ ArmorData.Archetypes = {
 	["FT-016"] = {
 		numericId = 177, name = "Trailblazer Boots",
 		flavor = "Leave fire in your wake. Arson, but make it tactical.", category = "Armor",
-		icon = "rbxassetid://122007195651304",
+		icon = "rbxassetid://97372424081006",
 		slot = "Feet", defense = 11, wt = 12, hp = 25, mp = 8,
 		passiveName = "Tiles traversed this Move are set on fire. Does not burn unit's final tile. Movement −1",
 		passiveDesc = "Tiles traversed this Move are set on fire. Does not burn unit's final tile. Movement −1.",
@@ -973,7 +973,7 @@ ArmorData.Archetypes = {
 	["FT-020"] = {
 		numericId = 181, name = "Phantom Steps",
 		flavor = "Walk through enemies. They'll feel it. So will you.", category = "Armor",
-		icon = "rbxassetid://74981981487904",
+		icon = "rbxassetid://100518700691824",
 		slot = "Feet", defense = 12, wt = 8, hp = 21, mp = 13,
 		passiveName = "May move through enemy-occupied tiles. Each enemy tile costs +1 movement; no extra cost while the wearer has Flight",
 		passiveDesc = "May move through enemy-occupied tiles. Each enemy tile costs +1 movement; no extra cost while the wearer has Flight.",
@@ -986,7 +986,7 @@ ArmorData.Archetypes = {
 	-- === ACCESSORY (Item) ===
 	["AC-001"] = {
 		numericId = 182, name = "Utility Belt",
-		flavor = "One more pocket. One more reason to hoard.", icon = "rbxassetid://100518700691824", category = "Armor",
+		flavor = "One more pocket. One more reason to hoard.", icon = "rbxassetid://74071474851543", category = "Armor",
 		slot = "Accessory", defense = 10, wt = 3, hp = 15, mp = 8,
 		passiveName = "Equipped Item slot capacity +1",
 		passiveDesc = "Equipped Item slot capacity +1.",
@@ -1021,7 +1021,7 @@ ArmorData.Archetypes = {
 	["AC-004"] = {
 		numericId = 185, name = "Grenadier Satchel",
 		flavor = "Makes bombs 15% angrier. Don't ask how.", category = "Armor",
-		icon = "rbxassetid://96376847454848",
+		icon = "rbxassetid://99640102023580",
 		slot = "Accessory", defense = 8, wt = 3, hp = 17, mp = 6,
 		passiveName = "Damaging consumable Items gain +15% final damage",
 		passiveDesc = "Damaging consumable Items gain +15% final damage.",

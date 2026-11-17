@@ -71,7 +71,7 @@ end
 -- LEVEL MATHS
 --------------------------------------------------
 
--- Effective Apothecary level: 0 = not built (Guild Hall rule applied by the provider).
+-- Effective Apothecary level: 0 = not open yet (Renown Rank rule applied by the provider).
 function ApothecaryService.GetLevel(): number
 	local l = _getLevel and _getLevel() or 0
 	return math.clamp(math.floor(tonumber(l) or 0), 0, 10)

@@ -271,6 +271,8 @@ local function buildTabBar()
 	layout.SortOrder = Enum.SortOrder.LayoutOrder -- was default Name sort (alphabetical order bug)
 
 	local tabs = { "INFO", "GEARS", "SKILLS", "OUTFIT", "PARTIES" } -- PARTIES added 2026-11-04 (user)
+	-- Dungeon mode (step 3, 2026-11-16): gear, skills and consumables only; outfits and party presets are home things.
+	if MockData.DungeonMode then tabs = { "INFO", "GEARS", "SKILLS" } end
 	tabButtons = {}
 	for i, name in ipairs(tabs) do
 		-- Old 9-slice text bars (2026-10-08): Active = bronze, Inactive = navy (Theme.MakeTabButton).
@@ -442,6 +444,8 @@ LoadoutConsumables.Init({
 	getInventoryPanel = function() return inventoryPanel end,
 	getEquippedTab = function() return equippedTab end,
 	setDetailOverlay = function(gui) detailOverlay = gui end,
+	-- Dungeon mode map use (step 3): re-fetch the run's view and redraw after a Bag item was used.
+	reload = function() MockData.LoadFromServer(); LoadoutScreen.Refresh() end,
 })
 LoadoutScreen.ConsCategoryColors = LoadoutConsumables.ConsCategoryColors
 buildConsumableGrid = LoadoutConsumables.BuildGrid
@@ -780,12 +784,23 @@ function LoadoutScreen.Hide()
 	if viewportConn then viewportConn:Disconnect(); viewportConn = nil end
 	LoadoutScreen._openTab = nil
 	LoadoutScreen._openUnitId = nil
+	-- Dungeon mode ends with the screen; the dungeon map refreshes (step 3).
+	local wasDungeon = MockData.DungeonMode
+	MockData.DungeonMode = false
+	local onClose = LoadoutScreen._onClose
+	LoadoutScreen._onClose = nil
+	if wasDungeon and onClose then task.spawn(onClose) end
 end
 
 -- Open straight on a tab (2026-11-04: the guild Party button and the Sortie open PARTIES).
 -- opts are handed to the Parties tab: { pick, onPick, onViewLoadout }. opts.unitId (2026-11-13):
 -- open with that unit selected (guild Units screen); INFO always opens on Stats.
+-- opts.dungeon (step 3, 2026-11-16): open in dungeon mode (party units, Bag items only); opts.onClose runs on Back.
 function LoadoutScreen.ShowTab(tab: string, opts: any?)
+	if opts and opts.dungeon and not (screenGui and screenGui.Parent) then
+		MockData.DungeonMode = true
+		LoadoutScreen._onClose = opts.onClose
+	end
 	LoadoutScreen._openTab = tab
 	LoadoutScreen._openUnitId = opts and opts.unitId or nil
 	if tab == "INFO" then infoView = "stats" end

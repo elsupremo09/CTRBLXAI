@@ -503,6 +503,20 @@ function MockLoadoutData.MarkSeen(item: any): boolean
 	return true
 end
 
+-- Dungeon mode (silver/Bag step 3, 2026-11-16; rule 265): the Loadout screen opened from the dungeon map.
+-- The server then lists only the run's party, Bag items and their equipped gear; nil mode = the normal home view.
+MockLoadoutData.DungeonMode = false
+MockLoadoutData.MapUsable = {} -- [consumableId] = Bag copies usable on the map (rule 266)
+MockLoadoutData.BagTags = {} -- ["skillCards:ID" | "augmentCards:ID" | "consumables:ID"] = "bought" | "home" (dungeon mode)
+-- SB-19 / SB-20 retired 2026-11-16 7:22 PM (rules 264 / 275): no Bag tag text any more.
+local BAG_TAG_TEXT: { [string]: string } = {}
+--- Dungeon mode only: Bag tag text for a card / consumable detail (none since 2026-11-16), else nil.
+function MockLoadoutData.BagTagText(cat: string, id: any): string?
+	if not MockLoadoutData.DungeonMode or id == nil then return nil end
+	return BAG_TAG_TEXT[(MockLoadoutData.BagTags or {})[cat .. ":" .. tostring(id)] or ""]
+end
+local function viewMode(): string? return if MockLoadoutData.DungeonMode then "dungeon" else nil end
+
 function MockLoadoutData.LoadFromServer()
 	print("[LoadoutData] Attempting to fetch inventory from server...")
 
@@ -511,7 +525,7 @@ function MockLoadoutData.LoadFromServer()
 	-- mock Units list above stays only as a fallback if the server call fails.
 	if BattleEvents and BattleEvents.GetRosterData then
 		local rOk, roster = pcall(function()
-			return BattleEvents.GetRosterData:InvokeServer()
+			return BattleEvents.GetRosterData:InvokeServer(viewMode())
 		end)
 		if rOk and type(roster) == "table" and next(roster) ~= nil then
 			local STARTING_ORDER = { unit_hero = 1, unit_mage = 2, unit_ranger = 3 }
@@ -562,13 +576,15 @@ function MockLoadoutData.LoadFromServer()
 	end
 
 	local ok, serverItems = pcall(function()
-		return BattleEvents.GetInventoryData:InvokeServer()
+		return BattleEvents.GetInventoryData:InvokeServer(viewMode())
 	end)
-	if ok and serverItems and #serverItems > 0 then
+	-- Dungeon mode can legitimately be empty (nothing found yet, nothing equipped): still use server data.
+	if ok and serverItems and (#serverItems > 0 or MockLoadoutData.DungeonMode) then
 		MockLoadoutData.Inventory = {}
 		MockLoadoutData.Equipped = {}
 		for _, si in ipairs(serverItems) do
 			local uiItem = mapServerItem(si)
+			uiItem.bagTag = si.bagTag -- dungeon mode: "found" | "bought" | "home" (step 3)
 			table.insert(MockLoadoutData.Inventory, uiItem)
 			-- Track equipped items
 			if si.equippedBy then
@@ -590,13 +606,17 @@ function MockLoadoutData.LoadFromServer()
 		-- Fetch consumable slots
 		if BattleEvents and BattleEvents.GetConsumableSlots then
 			local csOk, consSlots = pcall(function()
-				return BattleEvents.GetConsumableSlots:InvokeServer()
+				return BattleEvents.GetConsumableSlots:InvokeServer(viewMode())
 			end)
 			if csOk and consSlots then
 				local totalCons = 0
 				-- Owned loose copies (2026-11-03 ownership) under the reserved "_owned" key.
 				MockLoadoutData.ConsOwned = consSlots._owned or {}
 				consSlots._owned = nil
+				MockLoadoutData.MapUsable = consSlots._mapUsable or {} -- dungeon mode only (step 3)
+				consSlots._mapUsable = nil
+				MockLoadoutData.BagTags = consSlots._bagTags or {}
+				consSlots._bagTags = nil
 				for unitId, slots in pairs(consSlots) do
 					if not MockLoadoutData.Equipped[unitId] then
 						MockLoadoutData.Equipped[unitId] = {}

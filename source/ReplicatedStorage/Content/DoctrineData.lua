@@ -604,7 +604,7 @@ local DoctrineData = {
 		scarcity = "Acquisition scarcity only; exact band pending",
 	},
 	["DOC-CHEMIST"] = {
-		name = "Chemist",
+		name = "Chemist", icon = "rbxassetid://135731521016550",
 		-- icon pending (art asset); UI falls back to "[D]" placeholder via (doc.icon or "[D]")
 		identity = "Alchemical consumable specialist (precision/luck over brawn)",
 		statPackage = {STR = -15, AGI = 0, INT = -10, VIT = 0, DEX = 15, LUK = 10},
@@ -623,7 +623,7 @@ local DoctrineData = {
 		scarcity = "Acquisition scarcity only; exact band pending",
 	},
 	["DOC-ARTIFICER"] = {
-		name = "Artificer",
+		name = "Artificer", icon = "rbxassetid://120020787002445",
 		-- icon pending (art asset); UI falls back to "[D]" placeholder via (doc.icon or "[D]")
 		identity = "Deployable/gadget specialist (durable and precise)",
 		statPackage = {STR = -15, AGI = -10, INT = 0, VIT = 15, DEX = 10, LUK = 0},

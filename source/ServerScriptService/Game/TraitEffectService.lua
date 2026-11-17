@@ -1163,6 +1163,12 @@ end
 --   * Soul Harvest (F-177) CT>=3000 one-way latch -> -8% all stats; rebuild once.
 function TraitEffectService.OnTurnStart(unit, state)
 	if type(unit) ~= "table" then return false end
+	-- RL-51 Scholar's Creed (relic step 2): staff users (foes too) regain _dgScholar % of max MP each turn.
+	if type(unit._dgScholar) == "number" and unit.isAlive and (unit.maxMp or 0) > 0 and (unit.currentMp or 0) < unit.maxMp then
+		local _before = unit.currentMp or 0
+		unit.currentMp = math.min(unit.maxMp, _before + math.max(1, math.floor(unit.maxMp * unit._dgScholar / 100)))
+		print(string.format("[TraitEffectService] Scholar's Creed: %s recovers %d MP (%d/%d)", tostring(unit.name), unit.currentMp - _before, unit.currentMp, unit.maxMp))
+	end
 	-- Move-last-turn rollover. _movedThisTurn is set true by the Move commit in
 	-- CommandService; voluntary Move only (not push / knockback / charge displacement).
 	unit._movedLastTurn = unit._movedThisTurn == true
@@ -1480,7 +1486,8 @@ end
 
 -- Channel-time multiplier (Channeler/Slow Channeler). 1 + sum(channelMult).
 function TraitEffectService.GetChannelTimeMultiplier(unit)
-	return math.max(0, 1 + sumOf(active(unit), "channelMult"))
+	-- RL-48 Sage's Hourglass (relic step 2): dungeon battle-only stamp, x0.65 channel time.
+	return math.max(0, 1 + sumOf(active(unit), "channelMult")) * (if type(unit) == "table" and type(unit._dgCastMult) == "number" then unit._dgCastMult else 1)
 end
 
 -- Skill activation/delay multiplier (Flash-Caster/Laggy Caster). 1 + sum(skillDelayMult).
@@ -1527,7 +1534,8 @@ end
 
 -- Skill RT cost multiplier (Arcane Prodigy). 1 + sum(skillRtMult).
 function TraitEffectService.GetSkillRtMultiplier(unit)
-	return math.max(0, 1 + sumOf(active(unit), "skillRtMult"))
+	-- RL-48 Sage's Hourglass (relic step 2): post-cast RT x0.65 ("cast delay" = RT after casting, ruling 12:21 PM).
+	return math.max(0, 1 + sumOf(active(unit), "skillRtMult")) * (if type(unit) == "table" and type(unit._dgCastMult) == "number" then unit._dgCastMult else 1)
 end
 
 -- Skill potency additive % (Arcane Prodigy). Additive to the skill-potency bonus.

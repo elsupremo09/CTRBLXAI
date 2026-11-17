@@ -492,15 +492,18 @@ end
 --- @param playerLevel number Renown Rank (quest level = Rank + (difficulty - 3) x 2 +/- 1)
 --- @param seed number Base seed (e.g. os.time())
 --- @return table { quest1, quest2, quest3 }
-function QuestGenerator.Generate(playerLevel, seed)
+-- count (2026-11-16): number of quests; the Quest Board level adds one per level above 1
+-- (Quest Board L1 = 3, the old fixed number). Missing or bad = 3.
+function QuestGenerator.Generate(playerLevel, seed, count)
 	local quests = {}
-	for i = 0, 2 do
+	local n = math.clamp(math.floor(tonumber(count) or 3), 1, 12)
+	for i = 0, n - 1 do
 		local rng = Random.new(seed + i)
 		local quest = generateOneQuest(i + 1, playerLevel, rng)
 		table.insert(quests, quest)
 	end
 
-	print(string.format("[QuestGenerator] Generated 3 quests (seed=%d, level=%d):", seed, playerLevel))
+	print(string.format("[QuestGenerator] Generated %d quests (seed=%d, level=%d):", n, seed, playerLevel))
 	for _, q in ipairs(quests) do
 		print(string.format("  [%s] %s | %s/%s | Diff %d | Lv %d | %d enemies | %s",
 			q.id, q.name, q.biome, q.template, q.difficulty, q.recommendedLvl, q.enemyCount, q.condition))

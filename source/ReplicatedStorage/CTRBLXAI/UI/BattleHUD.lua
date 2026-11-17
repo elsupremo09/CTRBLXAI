@@ -35,6 +35,29 @@ local Shared = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("Shar
 local GameConstants = require(Shared:WaitForChild("GameConstants", 10))
 
 local Content = ReplicatedStorage:WaitForChild("Content", 10)
+-- Skill / item icons in the battle menus (user 2026-11-15 9:22 PM). nil = no icon shown.
+local _sdOk, SkillData = pcall(require, Content and Content:WaitForChild("SkillData", 5))
+local _cdOk, ConsumableData = pcall(require, Content and Content:WaitForChild("ConsumableData", 5))
+local function skillIconFor(id: any): string?
+	local d = _sdOk and type(SkillData) == "table" and id and SkillData[id]
+	local ic = d and d.icon
+	return if type(ic) == "string" and string.find(ic, "rbxassetid://%d") then ic else nil
+end
+local function consumableIconFor(id: any): string?
+	local d = _cdOk and type(ConsumableData) == "table" and id and ConsumableData.GetById and ConsumableData.GetById(id)
+	local ic = d and d.icon
+	return if type(ic) == "string" and string.find(ic, "rbxassetid://%d") then ic else nil
+end
+-- Built-in actions shown in the detail / preview panels -> Theme.BattleButtonIcons key.
+local ACTION_ICON_KEY = { Move = "Move", ["Basic Attack"] = "Attack", Attack = "Attack",
+	Interact = "Interact", Push = "Push", Guard = "Guard" }
+local function actionIconFor(t: any): string?
+	if type(t) ~= "table" then return nil end
+	local ic = skillIconFor(t.skillId) or consumableIconFor(t.consumableId)
+	if ic then return ic end
+	local key = ACTION_ICON_KEY[t.name or ""] or ACTION_ICON_KEY[t.actionType or ""]
+	return if key then Theme.BattleButtonIcons[key] else nil
+end
 local _odOk, ObjectData = pcall(require, Content and Content:WaitForChild("ObjectData", 5))
 if not _odOk then ObjectData = nil end
 local _bedOk, BattlefieldEventData = pcall(require, Content and Content:WaitForChild("BattlefieldEventData", 5))
@@ -218,7 +241,17 @@ end
 -- Fixed column layout for the Skills / Items lists (2026-10-08). The theme "Mono" font is not
 -- fixed-width, so padding with spaces can't line columns up; each column is its own label.
 local LIST_COL_W = 30 -- narrowed for name room; 6 px INSET keeps 3-digit values inside the bar (2026-10-09)
-local function listColumns(parent, name, cols, isHeader)
+local LIST_ICON_PX = 28 -- skill / item list icon, desktop (2026-11-15 11:32 PM: costs hidden to make room)
+local PHONE_LIST_ICON_PX = 36 -- skill / item list icon in 44 px phone rows
+local LIST_ROW_H = 32 -- desktop skill / item list row height so the 28 px icon fits (other lists unchanged)
+local function listIconPx(): number return if isPhone() then PHONE_LIST_ICON_PX else LIST_ICON_PX end
+-- Colored battle button icons, bigger (user 2026-11-15 9:39 PM): desktop left of label, phone above it.
+local ACTION_ICON_PX = 22 -- desktop: fits the 24 px button, keeps labels >= 10 px (Tester WARN 1, 10:42 PM)
+local PHONE_ACTION_ICON_PX = 28 -- 30 left only an 11 px label strip in 44 px cells
+local MENU_ICON_PX = 24
+local DETAIL_ICON_PX = 20
+local DETAIL_NAME_ICON_PX = 24 -- selected skill / item name row (row grows to fit)
+local function listColumns(parent, name, cols, isHeader, icon)
 	local function cell(text, size, pos, align)
 		local l = Instance.new("TextLabel")
 		l.Size = size; l.Position = pos
@@ -233,10 +266,38 @@ local function listColumns(parent, name, cols, isHeader)
 		l.TextTruncate = Enum.TextTruncate.AtEnd
 		l.Text = text
 		l.Parent = parent -- NET-004
+		return l
 	end
 	local n = #cols
 	local INSET = 6 -- same gap on both ends so text never meets the bar edge art (2026-10-09)
-	cell(name, UDim2.new(1, -(INSET * 2 + LIST_COL_W * n), 1, 0), UDim2.fromOffset(INSET, 0), Enum.TextXAlignment.Left)
+	-- icon: asset string = draw it left of the name; true = keep that space empty (header line-up).
+	local iconPx = listIconPx()
+	local iconW = if icon then iconPx + 4 else 0
+	if type(icon) == "string" then
+		local img = Instance.new("ImageLabel")
+		img.Name = "ListIcon"
+		img.BackgroundTransparency = 1
+		img.ScaleType = Enum.ScaleType.Fit
+		img.Image = icon
+		img.Size = UDim2.fromOffset(iconPx, iconPx)
+		img.AnchorPoint = Vector2.new(0, 0.5)
+		img.Position = UDim2.new(0, INSET, 0.5, 0)
+		img.Parent = parent -- NET-004
+	end
+	local nameCell = cell(name, UDim2.new(1, -(INSET * 2 + LIST_COL_W * n + iconW), 1, 0), UDim2.fromOffset(INSET + iconW, 0), Enum.TextXAlignment.Left)
+	if not isHeader then
+		-- Long names shrink (down to 9 px) before they are cut with "..." (2026-11-15): the icon
+		-- column takes 32 px (desktop) / 40 px (phone) of name room. Measured after layout, when the real width is known.
+		task.defer(function()
+			if not nameCell.Parent or nameCell.AbsoluteSize.X <= 0 then return end
+			local size = nameCell.TextSize
+			while size > 9 and TextService:GetTextSize(nameCell.Text, size, nameCell.Font,
+				Vector2.new(10000, 10000)).X > nameCell.AbsoluteSize.X do
+				size -= 1
+			end
+			nameCell.TextSize = size
+		end)
+	end
 	for i, v in cols do
 		local x = -(INSET + LIST_COL_W * (n - i + 1))
 		cell(tostring(v), UDim2.new(0, LIST_COL_W, 1, 0), UDim2.new(1, x, 0, 0), Enum.TextXAlignment.Right)
@@ -588,19 +649,11 @@ local function ensureRoot()
 	bfBtn.AutoButtonColor = false
 	bfBtn.Font = Theme.Font.PrimaryBold; bfBtn.TextSize = math.max(8, math.round(Theme.Text.Body() * BF_SCALE))
 	bfBtn.TextColor3 = Theme.Colors.TextPrimary
-	-- Hamburger drawn as 3 bars: the UI font has no U+2630 glyph (rendered as a box).
+	-- Battlefield icon (2026-11-15) replaces the 3 drawn hamburger bars.
 	bfBtn.Text = "Battlefield"; bfBtn.BorderSizePixel = 0
 	bfBtn.TextXAlignment = Enum.TextXAlignment.Left
-	local bfPad = Instance.new("UIPadding", bfBtn); bfPad.PaddingLeft = UDim.new(0, 17)
-	for bi = 0, 2 do
-		local bar = Instance.new("Frame")
-		bar.Size = UDim2.fromOffset(8, 1)
-		bar.AnchorPoint = Vector2.new(0, 0.5)
-		bar.Position = UDim2.new(0, -12, 0.5, (bi - 1) * 3)
-		bar.BackgroundColor3 = Theme.Colors.TextPrimary
-		bar.BorderSizePixel = 0
-		bar.Parent = bfBtn
-	end
+	local bfPad = Instance.new("UIPadding", bfBtn); bfPad.PaddingLeft = UDim.new(0, 3)
+	Theme.AddLeadIcon(bfBtn, Theme.BattleButtonIcons.Battlefield, math.max(10, math.min(16, BF_BTN_H - 4))) -- kept small: a bigger icon squeezes "Battlefield" below 10 px
 	Instance.new("UICorner", bfBtn).CornerRadius = Theme.CornerRadius.sm
 	local bfStroke = Instance.new("UIStroke", bfBtn)
 	bfStroke.Color = Theme.Colors.Border; bfStroke.Thickness = 1
@@ -624,7 +677,7 @@ local function ensureRoot()
 	local function closeBfMenu() bfMenu.Visible = false end
 	bfBtn.Activated:Connect(function() bfMenu.Visible = not bfMenu.Visible end)
 
-	local function menuButton(name: string, text: string, order: number, color: Color3): TextButton
+	local function menuButton(name: string, text: string, order: number, color: Color3, icon: string?): TextButton
 		local b = Instance.new("TextButton")
 		b.Name = name
 		b.Size = UDim2.fromOffset(BF_W, toggleH())
@@ -638,20 +691,21 @@ local function ensureRoot()
 		b.LayoutOrder = order; b.ZIndex = 31
 		Instance.new("UICorner", b).CornerRadius = Theme.CornerRadius.sm
 		local bp = Instance.new("UIPadding", b); bp.PaddingLeft = UDim.new(0, 8)
+		Theme.AddLeadIcon(b, icon, MENU_ICON_PX) -- battle menu icons (2026-11-15) replace the emoji prefixes
 		b.Parent = bfMenu
 		return b
 	end
 
 	-- View stays open after a tap so the player can cycle Isometric -> Top -> Side.
-	viewModeViewBtn = menuButton("ViewToggle", "\xF0\x9F\x91\x81 " .. currentCameraMode, 1,
-		isViewMode and Theme.Colors.TextGold or Theme.Colors.TextPrimary)
+	viewModeViewBtn = menuButton("ViewToggle", currentCameraMode, 1,
+		isViewMode and Theme.Colors.TextGold or Theme.Colors.TextPrimary, Theme.BattleButtonIcons.View)
 	viewModeViewBtn.Activated:Connect(function() BattleHUD.CycleCameraMode() end)
 
-	local logBtn = menuButton("LogToggle", "\xF0\x9F\x93\x9C Log", 2, Theme.Colors.TextSecondary)
+	local logBtn = menuButton("LogToggle", "Log", 2, Theme.Colors.TextSecondary, Theme.BattleButtonIcons.Log)
 	logBtn.Activated:Connect(function() closeBfMenu(); BattleHUD.ToggleBattleLog() end)
 
 	-- "Map" renamed "Mission" (user 2026-11-10); opens the quest/loot/gold snapshot.
-	local mapBtn = menuButton("MapDetailsToggle", "\xF0\x9F\x93\x8B Mission", 3, Theme.Colors.TextSecondary)
+	local mapBtn = menuButton("MapDetailsToggle", "Mission", 3, Theme.Colors.TextSecondary, Theme.BattleButtonIcons.Mission)
 	mapBtn.Activated:Connect(function() closeBfMenu(); BattleHUD.ToggleMapDetails() end)
 
 	-- Apply stored layout if UIController already calculated one
@@ -922,12 +976,13 @@ function BattleHUD._showActionList(actions, parentLabel)
 	end
 
 	for i, action in ipairs(actions) do
+		local abtn: ImageButton? = nil
 		if action.isSubmenu and action.subActions then
 			-- Bar-button art, 24 px (user ruling 2026-10-08): navy = available, dark = unavailable.
 			-- Submenu marker uses a plain ">" to match the Loadout screen's ASCII
 			-- glyph convention ("> Equip", "DOCTRINE v") — the old "▸" (U+25B8)
 			-- renders as missing-glyph tofu in the tactical font. (2026-10-17)
-			Theme.MakeTabButton(actionPanel, action.text .. " >", if action.enabled ~= false then "Inactive" else "Disabled", function()
+			abtn = Theme.MakeTabButton(actionPanel, action.text .. " >", if action.enabled ~= false then "Inactive" else "Disabled", function()
 				-- Disabled tap: explain why, do NOT open the submenu. (2026-10-17)
 				if action.enabled == false then
 					BattleHUD.ShowDisabledReason(action.reason)
@@ -936,9 +991,10 @@ function BattleHUD._showActionList(actions, parentLabel)
 				BattleHUD.ClearSelection()
 				BattleHUD._showActionList(action.subActions, "Back")
 			end, { name = "Act_" .. tostring(action.text), size = UDim2.new(1, 0, 0, actionH),
-				layoutOrder = i, textSize = Theme.Text.Body() })
+				layoutOrder = i, textSize = Theme.Text.Body(), iconSize = ACTION_ICON_PX,
+				icon = Theme.BattleButtonIcons[action.id or ""] or Theme.BattleButtonIcons[action.text or ""] })
 		else
-			Theme.MakeTabButton(actionPanel, action.text, if action.enabled ~= false then "Inactive" else "Disabled", function()
+			abtn = Theme.MakeTabButton(actionPanel, action.text, if action.enabled ~= false then "Inactive" else "Disabled", function()
 				-- Disabled tap: explain why, do NOT run the action. This also closes a
 				-- latent gap where a grayed button's onPress ran anyway. (2026-10-17)
 				if action.enabled == false then
@@ -948,7 +1004,19 @@ function BattleHUD._showActionList(actions, parentLabel)
 				BattleHUD.ClearSelection()
 				if action.onPress then action.onPress() end
 			end, { name = "Act_" .. tostring(action.text), size = UDim2.new(1, 0, 0, actionH),
-				layoutOrder = i, textSize = Theme.Text.Body() })
+				layoutOrder = i, textSize = Theme.Text.Body(), iconSize = ACTION_ICON_PX,
+				icon = Theme.BattleButtonIcons[action.id or ""] or Theme.BattleButtonIcons[action.text or ""] })
+		end
+		-- Phones (2026-11-15): half-width 44 px cells are too narrow for icon + "Commands >" side by
+		-- side, so the icon sits centred on top and the label keeps the full cell width below it.
+		local aIcon = abtn and abtn:FindFirstChild("Icon")
+		local aLbl = abtn and abtn:FindFirstChild("Label")
+		if isPhone() and aIcon and aLbl and aIcon:IsA("ImageLabel") and aLbl:IsA("TextLabel") then
+			aIcon.Size = UDim2.fromOffset(PHONE_ACTION_ICON_PX, PHONE_ACTION_ICON_PX)
+			aIcon.AnchorPoint = Vector2.new(0.5, 0)
+			aIcon.Position = UDim2.new(0.5, 0, 0, 2)
+			aLbl.Size = UDim2.new(1, -8, 0, actionH - PHONE_ACTION_ICON_PX - 3)
+			aLbl.Position = UDim2.new(0, 4, 0, PHONE_ACTION_ICON_PX + 2)
 		end
 	end
 	if isPhone() then
@@ -1112,8 +1180,11 @@ function BattleHUD._buildActionDetail()
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
 	if presentation.skill then
-		makeLabel(actionPanel, presentation.skill.name or "Action", { font = Theme.Font.PrimaryBold,
+		local nameLbl = makeLabel(actionPanel, presentation.skill.name or "Action", { font = Theme.Font.PrimaryBold,
 			textSize = Theme.Text.Body(), order = 1 })
+		if Theme.AddLeadIcon(nameLbl, actionIconFor(presentation.skill), DETAIL_NAME_ICON_PX) then -- selected skill / item icon
+			nameLbl.Size = UDim2.new(1, 0, 0, math.max(Theme.Elem.RowTiny(), DETAIL_NAME_ICON_PX + 2))
+		end
 		if presentation.skill.tags and presentation.skill.tags ~= "" then
 			makeLabel(actionPanel, presentation.skill.tags, { textSize = Theme.Text.Small(),
 				color = Theme.Colors.TextSecondary, order = 2 })
@@ -1381,6 +1452,7 @@ function BattleHUD._renderDamagePreview()
 		-- Wrapped rows grow to fit (2026-11-01); 16 px stays the minimum, so one-line rows
 		-- are unchanged. The preview host scrolls when the rows outgrow the panel.
 		lbl.AutomaticSize = Enum.AutomaticSize.Y
+		return lbl
 	end
 
 	-- Name badge: colored background box (blue=Player, red=Enemy) with white text
@@ -1418,18 +1490,18 @@ function BattleHUD._renderDamagePreview()
 
 	-- Action detail: show what is being performed
 	if p.skillName then
-		row(p.skillName, Theme.Colors.TextPrimary, true)
+		Theme.AddLeadIcon(row(p.skillName, Theme.Colors.TextPrimary, true), actionIconFor(p), DETAIL_ICON_PX)
 		if p.skillTags then
 			row(p.skillTags, Theme.Colors.TextSecondary)
 		end
 	elseif actionType == "Attack" then
-		row("Basic Attack", Theme.Colors.TextPrimary, true)
+		Theme.AddLeadIcon(row("Basic Attack", Theme.Colors.TextPrimary, true), Theme.BattleButtonIcons.Attack, DETAIL_ICON_PX)
 	elseif actionType == "Push" then
-		row("Push", Theme.Colors.TextPrimary, true)
+		Theme.AddLeadIcon(row("Push", Theme.Colors.TextPrimary, true), Theme.BattleButtonIcons.Push, DETAIL_ICON_PX)
 	elseif actionType == "Guard" then
-		row("Guard", Theme.Colors.TextPrimary, true)
+		Theme.AddLeadIcon(row("Guard", Theme.Colors.TextPrimary, true), Theme.BattleButtonIcons.Guard, DETAIL_ICON_PX)
 	elseif actionType == "Move" then
-		row("Move", Theme.Colors.TextPrimary, true)
+		Theme.AddLeadIcon(row("Move", Theme.Colors.TextPrimary, true), Theme.BattleButtonIcons.Move, DETAIL_ICON_PX)
 	end
 
 	-- Action description (shown for any action that supplies one — notably
@@ -2995,7 +3067,7 @@ function BattleHUD.SetCameraMode(mode)
 	currentCameraMode = mode
 	if _G.CTRBLXAI_SetViewMode then _G.CTRBLXAI_SetViewMode(mode) end
 	if viewModeViewBtn then
-		viewModeViewBtn.Text = "\xF0\x9F\x91\x81 " .. mode
+		viewModeViewBtn.Text = mode
 	end
 	-- Side view disallows free-view: if it was on, turn it off.
 	if mode == "Side" and isViewMode then
@@ -3563,16 +3635,22 @@ function BattleHUD._buildSkillList()
 	local layout = Instance.new("UIListLayout", actionPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
+	-- Icon column (2026-11-15): when any row has an icon, every row keeps the column so names line up.
+	local anyIcon = false
+	for _, s in ipairs(presentation.actor.skillEntries) do
+		if skillIconFor(s.id) then anyIcon = true; break end
+	end
 	-- Header
 	do
 		local hdr = Instance.new("Frame")
 		hdr.Size = UDim2.new(1, 0, 0, Theme.Elem.RowTiny()); hdr.BackgroundTransparency = 1; hdr.LayoutOrder = 0
-		listColumns(hdr, "Skill", { "MP", "RT" }, true)
+		-- MP/RT hidden in the list; shown after a skill is picked (user 2026-11-15 10:55 PM).
+		listColumns(hdr, "Skill", {}, true, anyIcon or nil)
 		hdr.Parent = actionPanel
 	end
 
-	-- Phones: 44 px rows in a capped scroll box (2026-11-06); desktop unchanged.
-	local rowH = touchH(Theme.MinSize.TabButton)
+	-- Phones: 44 px rows in a capped scroll box (2026-11-06); desktop rows LIST_ROW_H (32 px).
+	local rowH = if isPhone() then touchH(Theme.MinSize.TabButton) else LIST_ROW_H
 	local rowParent = if isPhone() then makePhoneListScroll(actionPanel, 1) else actionPanel
 	for i, skill in ipairs(presentation.actor.skillEntries) do
 		local enabled = skill.enabled ~= false
@@ -3580,7 +3658,7 @@ function BattleHUD._buildSkillList()
 		local btn = Theme.MakeTabButton(rowParent, "",
 			if enabled then "Inactive" else "Disabled", function() if skill.onPress then skill.onPress() end end,
 			{ name = "Sub_" .. tostring(i), size = UDim2.new(1, 0, 0, rowH), layoutOrder = i })
-		listColumns(btn, skill.name or "?", { skill.mpCost or 0, skill.rtCost or 0 }, false)
+		listColumns(btn, skill.name or "?", {}, false, skillIconFor(skill.id) or (anyIcon or nil))
 	end
 
 	-- Command bar: Back button during SkillSelection
@@ -3608,16 +3686,22 @@ function BattleHUD._buildItemList()
 	local layout = Instance.new("UIListLayout", actionPanel)
 	layout.Padding = UDim.new(0, 2); layout.SortOrder = Enum.SortOrder.LayoutOrder
 
+	-- Icon column (2026-11-15): when any row has an icon, every row keeps the column so names line up.
+	local anyIcon = false
+	for _, it in ipairs(presentation.actor.itemEntries) do
+		if consumableIconFor(it.consumableId) then anyIcon = true; break end
+	end
 	-- Header
 	do
 		local hdr = Instance.new("Frame")
 		hdr.Size = UDim2.new(1, 0, 0, Theme.Elem.RowTiny()); hdr.BackgroundTransparency = 1; hdr.LayoutOrder = 0
-		listColumns(hdr, "Item", { "RT" }, true)
+		-- RT hidden in the list; shown after an item is picked (user 2026-11-15 11:32 PM).
+		listColumns(hdr, "Item", {}, true, anyIcon or nil)
 		hdr.Parent = actionPanel
 	end
 
-	-- Phones: 44 px rows in a capped scroll box (2026-11-06); desktop unchanged.
-	local rowH = touchH(Theme.MinSize.TabButton)
+	-- Phones: 44 px rows in a capped scroll box (2026-11-06); desktop rows LIST_ROW_H (32 px).
+	local rowH = if isPhone() then touchH(Theme.MinSize.TabButton) else LIST_ROW_H
 	local rowParent = if isPhone() then makePhoneListScroll(actionPanel, 1) else actionPanel
 	for i, item in ipairs(presentation.actor.itemEntries) do
 		local enabled = item.enabled ~= false
@@ -3625,7 +3709,7 @@ function BattleHUD._buildItemList()
 		local btn = Theme.MakeTabButton(rowParent, "",
 			if enabled then "Inactive" else "Disabled", function() if item.onPress then item.onPress() end end,
 			{ name = "Sub_" .. tostring(i), size = UDim2.new(1, 0, 0, rowH), layoutOrder = i })
-		listColumns(btn, item.name or "?", { item.rtCost or 0 }, false)
+		listColumns(btn, item.name or "?", {}, false, consumableIconFor(item.consumableId) or (anyIcon or nil))
 	end
 
 	-- Command bar: Back button during ItemSelection

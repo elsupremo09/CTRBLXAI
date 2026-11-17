@@ -55,6 +55,7 @@
 -- DEPENDENCIES ARE INJECTED (no circular require). All nil-safe: missing wiring refuses.
 
 local RuneforgeService = {}
+local BuildingService = require(script.Parent:WaitForChild("BuildingService")) -- pure module (no requires), lock text only
 
 --------------------------------------------------
 -- CONSTANTS
@@ -244,7 +245,7 @@ function RuneforgeService.PlanForge(item: any, installs: any)
 	end
 	local level = currentLevel()
 	if level < 1 then
-		return nil, "The Runeforge is not built yet (needs Guild Hall L4)"
+		return nil, BuildingService.LockLine("Runeforge") -- approved lock line (guild_facilities 98)
 	end
 	local rarity = item.rarityId
 	if rarity == "Unique" then
@@ -705,7 +706,7 @@ local function rerollTerms(item: any)
 	local count = REROLL_SETS[rarity][level]
 	if not count then
 		if level < 1 then
-			return nil, "The Runeforge is not built yet (needs Guild Hall L4)"
+			return nil, BuildingService.LockLine("Runeforge") -- approved lock line (guild_facilities 98)
 		end
 		return nil, `{rarity} rerolls need Runeforge L{REROLL_UNLOCK[rarity]} (yours is L{level})`
 	end

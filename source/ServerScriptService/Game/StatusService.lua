@@ -1085,6 +1085,10 @@ function StatusService.GetHealingReceivedMult(unit)
 	-- Blessed Recovery / Cursed Wounds (DB "healing received +/-X%"): ALL healing the unit receives,
 	-- not only skill heals (checklist fix 2026-10-29). Totaled with the status modifiers (ruling 10).
 	mult = mult + (TraitEffectService.GetHealingReceivedModifier(unit) - 1)
+	-- Guild Hall furniture (Stone Hearth, healing received x1.02; guild_facilities 94): set on the
+	-- unit by EquipmentService.RebuildUnitStats, player units only.
+	local fb = unit.furnitureBonus
+	if type(fb) == "table" then mult = mult + (tonumber(fb.healRecv) or 0) end
 	return math.max(0, mult)
 end
 

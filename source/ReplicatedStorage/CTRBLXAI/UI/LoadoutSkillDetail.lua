@@ -256,6 +256,14 @@ openSkillCardDetail = function(sk)
 	addBtn("BACK", Theme.Colors.Surface, closeDetail)
 
 	btnBar.Size = UDim2.new(0, (btnOrder * fb.BTN_W) + ((btnOrder - 1) * fb.BTN_GAP), 0, fb.BTN_H)
+	-- Dungeon mode Bag tag (SB-19 / SB-20 retired 2026-11-16: BagTagText returns nil), bottom-left beside the buttons.
+	local bagTagText = MockData.BagTagText("skillCards", sk.id)
+	if bagTagText then
+		local tl = makeLabel(detailOverlay, { Text = bagTagText, Size = UDim2.new(0, 220, 0, fb.BTN_H),
+			Position = UDim2.new(0, fb.PAD, 1, -fb.PAD), TextSize = math.max(10, Theme.Text.Small()), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Theme.Colors.TextSecondary, TextXAlignment = Enum.TextXAlignment.Left })
+		tl.AnchorPoint = Vector2.new(0, 1); tl.Name = "BagTag"
+	end
 end
 
 -- ==================================================================
@@ -481,6 +489,14 @@ openAugmentCardDetail = function(aug)
 	end)
 	addBtn("BACK", Theme.Colors.Surface, closeDetail)
 	btnBar.Size = UDim2.new(0, (btnOrder * fb.BTN_W) + ((btnOrder - 1) * fb.BTN_GAP), 0, fb.BTN_H)
+	-- Dungeon mode Bag tag (SB-19 / SB-20 retired 2026-11-16: BagTagText returns nil), bottom-left beside the buttons.
+	local bagTagText = MockData.BagTagText("augmentCards", aug.id)
+	if bagTagText then
+		local tl = makeLabel(detailOverlay, { Text = bagTagText, Size = UDim2.new(0, 220, 0, fb.BTN_H),
+			Position = UDim2.new(0, fb.PAD, 1, -fb.PAD), TextSize = math.max(10, Theme.Text.Small()), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Theme.Colors.TextSecondary, TextXAlignment = Enum.TextXAlignment.Left })
+		tl.AnchorPoint = Vector2.new(0, 1); tl.Name = "BagTag"
+	end
 end
 
 -- ==================================================================

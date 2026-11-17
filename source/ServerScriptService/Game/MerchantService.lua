@@ -314,19 +314,8 @@ function MerchantService.PriceToBuy(item: any): number?
 	return math.round(baseValue * rarityMult * lvlMult * markup)
 end
 
--- Dungeon Merchant (Dungeon build step 6, 2026-11-14; project_rules 268, economy_framework 15).
--- Same shop formula with the Legendary markup x8.0 (used only here), times the dungeon markup.
--- The base Merchant is unchanged (it never stocks Legendary).
-local DUNGEON_LEGENDARY_MARKUP = 8.0
-function MerchantService.DungeonPrice(item: any, dungeonMarkup: number): number?
-	if type(item) ~= "table" then return nil end
-	local baseValue = baseValueOf(item)
-	local rarityMult = RARITY_MULT[item.rarityId]
-	if not baseValue or not rarityMult then return nil end
-	local markup = if item.rarityId == "Legendary" then DUNGEON_LEGENDARY_MARKUP
-		else (SHOP_MARKUP_BY_RARITY[item.rarityId] or SHOP_MARKUP)
-	return math.round(baseValue * rarityMult * levelMultiplier(item.itemLevel) * markup * (tonumber(dungeonMarkup) or 1))
-end
+-- Dungeon Merchant gold price + the x8.0 Legendary markup REMOVED (silver step 2, 2026-11-15; user 8:45 PM):
+-- the dungeon Merchant prices in silver (DungeonSilver, project_rules 268 / 278). The base Merchant is unchanged.
 
 -- One seeded dungeon Merchant gear item through the existing generator and equip pool ("Shop" tag).
 function MerchantService.GenerateDungeonGear(itemLevel: number, rarity: string, seed: number): any?

@@ -1,0 +1,66 @@
+--!strict
+-- DungeonSilver.lua
+-- CTRBLXAI | Dungeon silver: the run-only purse (USER RULINGS 2026-11-15 7:54 PM, project_rules 278).
+-- Silver step 1 (server only, no screen text yet).
+--   * Starts at 0 every run (buildRun), earned per WON room, carried between stages, LOST on every
+--     run end (it lives on the run table, which EndRun drops). Silver never becomes gold.
+--   * Earn (stage 1 / x1.25 stage 2 / x1.5 stage 3, rounded half up): Battle 20, Elite 45, Boss 80,
+--     Treasure 15. A "?" room pays as the room it becomes (the played type). Fortune does NOT apply.
+--   * Relics, after the stage multiplier: RL-02 Gilded Purse +10%, RL-59 Coin-Eater -15% (battle wins
+--     only), RL-45 Reaver's Pact -35%.
+--   * Spending (Merchant, refills, Barter, events, Courier's Rest) and event silver: silver step 2+.
+-- Pure on the run table. DungeonService binds stateOf (no require of DungeonService: no cycle, ARC-004).
+
+local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local D = DungeonRules.Data
+
+local MAX_SILVER = 1000000
+local BATTLE_SOURCES = table.freeze({ Battle = true, Elite = true, Boss = true })
+
+local Silver = {}
+
+local C: any = nil
+function Silver.Bind(ctx: any) C = ctx end
+
+local function roundHalfUp(x: number): number
+	return math.floor(x + 0.5)
+end
+
+--- Pure: silver for one won room. source = "Battle" | "Elite" | "Boss" | "Treasure"; relics = held set.
+function Silver.Amount(source: string, stage: number, relics: { [string]: boolean }): number
+	local base = (D.Silver :: any)[source]
+	if type(base) ~= "number" then return 0 end
+	local mults: { number } = D.SilverStageMult :: any
+	local st = math.clamp(math.floor(tonumber(stage) or 1), 1, #mults)
+	local v = roundHalfUp(base * mults[st])
+	local R: any = D.Relic
+	local m = 1
+	if relics["RL-02"] then m *= 1 + R.PurseSilverPct / 100 end
+	if relics["RL-59"] and BATTLE_SOURCES[source] then m *= 1 - R.CoinEaterSilverPct / 100 end
+	if relics["RL-45"] then m *= 1 - R.ReaverSilverPct / 100 end
+	return math.max(0, roundHalfUp(v * m))
+end
+
+--- Add one won room's silver to the run purse. Returns the amount added.
+function Silver.Earn(run: any, source: string): number
+	if type(run) ~= "table" then return 0 end
+	local held: { [string]: boolean } = {}
+	for _, id in run.relics or {} do held[id] = true end
+	local add = Silver.Amount(source, run.stage or 1, held)
+	run.silver = math.min(MAX_SILVER, (tonumber(run.silver) or 0) + add)
+	if add > 0 then print(`[DungeonSilver] +{add} silver ({source}, stage {run.stage or 1}) | purse {run.silver}`) end
+	return add
+end
+
+--- By player (battle hook after a won room). The battle-end save stores it.
+function Silver.EarnFor(playerId: string, source: string): number
+	local run = C and C.stateOf(playerId).run
+	if not run then return 0 end
+	return Silver.Earn(run, source)
+end
+
+function Silver.Get(run: any): number
+	return if type(run) == "table" then (tonumber(run.silver) or 0) else 0
+end
+
+return Silver

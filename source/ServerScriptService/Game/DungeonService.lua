@@ -25,6 +25,14 @@ local PartyService = require(script.Parent:WaitForChild("PartyService")) -- requ
 
 local DungeonEvents = require(script.Parent:WaitForChild("DungeonEvents")) -- step 7a
 local DungeonRelics = require(script.Parent:WaitForChild("DungeonRelics")) -- step 8 (Bind below, after persist)
+local DungeonSilver = require(script.Parent:WaitForChild("DungeonSilver")) -- silver step 1 (rule 278; Bind below)
+local DungeonBag = require(script.Parent:WaitForChild("DungeonBag")) -- silver step 1 (rule 279; Bind below)
+local DungeonLoadout = require(script.Parent:WaitForChild("DungeonLoadout")) -- step 3 (rules 265/266; Bind below)
+local DungeonCourier = require(script.Parent:WaitForChild("DungeonCourier")) -- steps 4-5: EV-17 + Bag list (no cycle)
+local DungeonFurniture = require(script.Parent:WaitForChild("DungeonFurniture")) -- furniture step 3: room / boss drops (no cycle)
+local DungeonDepth = require(script.Parent:WaitForChild("DungeonDepth")) -- endless step 6: depth curses (no cycle)
+local DungeonRunEnd = require(script.Parent:WaitForChild("DungeonRunEnd")) -- step B (2026-11-16): run end split out (no cycle)
+local DungeonStages = require(script.Parent:WaitForChild("DungeonStages")) -- step B (2026-11-16): stage boss / Go deeper split out (no cycle)
 local D = DungeonRules.Data
 
 local DungeonService = {}
@@ -46,13 +54,8 @@ local MAX_COUNT = 1000000 -- sanity bound for saved numbers
 -- Node types that count as a battle node cleared (project_rules 263: an Elite = 1 step).
 local BATTLE_PLAYED = table.freeze({ Battle = true, Elite = true, Boss = true })
 
--- project_rules 264: what each way of ending a run keeps. EXP is always kept.
-local OUTCOME_KEEP = table.freeze({
-	Boss        = table.freeze({ gold = 1.0, normalMats = true, eliteMats = true, bossMats = true, gear = true, cards = true }),
-	EscapeNode  = table.freeze({ gold = 1.0, normalMats = true, eliteMats = true, bossMats = true, gear = true, cards = true }),
-	EarlyEscape = table.freeze({ gold = D.EarlyEscapeGoldKeep, normalMats = true, eliteMats = false, bossMats = false, gear = false, cards = false }),
-	Wipeout     = table.freeze({ gold = WIPEOUT_GOLD_KEEP, normalMats = false, eliteMats = false, bossMats = false, gear = false, cards = false }),
-})
+-- project_rules 264: what each way of ending a run keeps. The table lives in DungeonRunEnd.lua (step B).
+local OUTCOME_KEEP = DungeonRunEnd.OUTCOME_KEEP
 
 --------------------------------------------------
 -- INJECTED DEPENDENCIES (all optional / nil-safe)
@@ -73,17 +76,15 @@ function DungeonService.SetRosterProvider(fn: ((string) -> ({ string }?))?) _ros
 function DungeonService.SetDispatchCheck(fn: ((string, string) -> boolean)?) _isDispatched = fn end
 function DungeonService.SetSaver(fn: (() -> any)?) _saver = fn end
 -- Build step 4 (2026-11-13). All optional / nil-safe; Main wires them once the inventories exist.
-local _payer: ((any) -> ())? = nil                       -- pays an ended run's kept loot to the player
 local _healer: ((string, number) -> any)? = nil          -- Rest: (unitId, healPct) -> result (KO -> 1 HP)
 local _treasureRoll: ((number, string) -> any)? = nil    -- Treasure: (itemLevel, opportunityId) -> item?
-local _onRunEnded: ((any) -> ())? = nil                  -- normal rules resume (KO -> 1 HP) for the party
-function DungeonService.SetPayer(fn: ((any) -> ())?) _payer = fn end
+DungeonService.SetPayer = DungeonRunEnd.SetPayer -- step B: _payer lives in DungeonRunEnd.lua
 function DungeonService.SetHealer(fn: ((string, number) -> any)?) _healer = fn end
 function DungeonService.SetTreasureRoll(fn: ((number, string) -> any)?) _treasureRoll = fn end
-function DungeonService.SetRunEndedHook(fn: ((any) -> ())?) _onRunEnded = fn end
+DungeonService.SetRunEndedHook = DungeonRunEnd.SetRunEndedHook -- step B: _onRunEnded lives in DungeonRunEnd.lua
 -- Build step 6 (2026-11-14, project_rules 268): the dungeon Merchant. Main wires a table of nil-safe
--- functions: gear(itemLevel, rarity, seed) -> item?, gearPrice(item) -> number?, consumables() -> { {id, tier, price} },
--- pay(gold) -> boolean, giveItem(item) -> boolean, giveConsumable(id), refill(unitIds, commit) -> plan.
+-- functions: gear(itemLevel, rarity, seed) -> item?, consumables() -> { {id, tier} }, chargeSlots(...).
+-- Prices and payment are silver (DungeonSilver, rule 278); the old gold price/pay/give hooks were removed in step 2.
 local _merchant: any = nil
 function DungeonService.SetMerchantHooks(h: any) _merchant = h end
 -- Step 7a events: rolls(level, count, oppId) -> { items }, cards (gear/card loot into the bag); hurt(unitId, pct, floor1)
@@ -327,21 +328,24 @@ local function view(run: any): any
 		event = run.events and run.at and run.events[run.at] and { id = run.events[run.at].id, done = run.events[run.at].done } or nil,
 		floors = run.map.floors,
 		stage = run.stage, maxStages = run.card.maxStages or 1, -- stages (rule 277)
+		endless = DungeonRules.IsEndless(run.card), -- rule 281: "Stage {n}" with no max
+		depth = (function() local h, a = DungeonRules.DepthBonus(run.stage) return { hp = h, atk = a } end)(),
 		stageCleared = run.stageCleared == true, stageHeal = run.stageHeal,
 		stageBroughtIn = run.stageBringIn or 0,
 		partyCap = DungeonRules.PartyCap(run.card.facilityLevel), -- step 7b
 		deployMax = D.DeployMax,
+		silver = DungeonSilver.Get(run), bagSlots = DungeonBag.View(run), -- silver step 1 (rules 278/279; no screen yet)
 		restBroughtIn = run.at and run.restBringIns[run.at] or 0,
 		restUsed = run.at and run.restUsed[run.at] == true or false,
 		relics = (function() -- step 8: { id, name, rarity, text, used }
 			local out = {}
 			for _, id in run.relics or {} do
 				local d = DungeonRules.RelicDef(id)
-				if d then table.insert(out, { id = id, name = d.name, rarity = d.rarity, text = d.text, kind = d.kind, used = run.relicUsed[id] == true }) end
+				if d then table.insert(out, { id = id, name = d.name, rarity = d.rarity, text = d.text, kind = d.kind, used = run.relicUsed[id] == true, icon = DungeonRules.RelicIcon(id), stacks = DungeonDepth.Stacks(run, id) }) end
 			end
 			return out
 		end)(),
-		relicFound = run.relicFound,
+		relicFound = run.relicFound, furniture = DungeonFurniture.View(run), -- furniture step 3: found pieces + "Furniture found" popup
 		bossPick = (function() -- relics v2: { a = relic view (Boss relic), b = relic view (normal relic) }
 			local p = run.bossPick
 			if not p then return nil end
@@ -349,7 +353,7 @@ local function view(run: any): any
 				-- W2: paired curse (rule 271) so the pick screen can show it in red.
 				local cid = DungeonRules.Data.RelicCursePairs and DungeonRules.Data.RelicCursePairs[id]
 				local cd = cid and DungeonRules.RelicDef(cid)
-				return { id = id, name = d.name, rarity = d.rarity, text = d.text, kind = d.kind,
+				return { id = id, name = d.name, rarity = d.rarity, text = d.text, kind = d.kind, icon = DungeonRules.RelicIcon(id),
 					curseName = cd and cd.name or nil, curseText = cd and cd.text or nil }
 			end
 			local b = rv(p.b)
@@ -357,11 +361,12 @@ local function view(run: any): any
 			return { a = rv(p.a), b = b }
 		end)(),
 		smithDelivered = run.smithDelivered, -- EV-12, shown once
+		depthOffer = DungeonDepth.View(run), -- step 6 (rule 281): forced curse pick 1 of 2, shown before Go deeper
 		curseOffer = (function() -- relics v2: cursed Major waiting for Take both / Leave both
 			local o = run.curseOffer
 			local d, cd = o and DungeonRules.RelicDef(o.id), o and DungeonRules.RelicDef(o.curse)
 			if not (d and cd) then return nil end
-			return { id = o.id, name = d.name, rarity = d.rarity, text = d.text, curseName = cd.name, curseText = cd.text }
+			return { id = o.id, name = d.name, rarity = d.rarity, text = d.text, curseName = cd.name, curseText = cd.text, icon = DungeonRules.RelicIcon(o.id), curseIcon = DungeonRules.RelicIcon(o.curse) }
 		end)(),
 	}
 end
@@ -382,7 +387,7 @@ end
 local function buildRun(card: any, party: { string }, stage: number?): any
 	local partySet: { [string]: boolean } = {}
 	for _, id in party do partySet[id] = true end
-	local st = math.clamp(math.floor(tonumber(stage) or 1), 1, D.MaxStages)
+	local st = math.clamp(math.floor(tonumber(stage) or 1), 1, D.StageLimit) -- endless (rule 281)
 	local sseed = DungeonRules.StageSeed(card.seed, st)
 	return {
 		card = card,
@@ -391,7 +396,7 @@ local function buildRun(card: any, party: { string }, stage: number?): any
 		stageCleared = false, -- true while the stage boss is beaten and Go deeper / Go home is pending
 		stageBringIn = 0,     -- bring-ins used at the start of this stage (stages 2/3)
 		stageHeal = nil,      -- { pct } shown once when a stage starts healed
-		map = DungeonMap.Generate(sseed, card.facilityLevel, card.floors),
+		map = DungeonMap.Generate(sseed, card.facilityLevel, DungeonRules.StageFloors(card.floors, st)), -- stages 4+: 8 floors
 		party = party,
 		partySet = partySet,
 		at = nil,
@@ -411,6 +416,9 @@ local function buildRun(card: any, party: { string }, stage: number?): any
 		smithOwed = nil, -- EV-12 Smith's Wager gear owed (saved); delivered at next Event/Rest/stage boss/full-loot exit
 		smithDelivered = nil, -- name shown once by the client
 		nextBattleBuff = nil, -- EV-11 Hall of the {Doctrine}: { doctrineId, pct } for the next battle only
+		silver = 0, -- silver step 1 (rule 278): run purse, lost on every run end
+		benchReady = table.clone(partySet), -- rule 280: starting units get bench recovery; bring-ins after their first battle
+		bagHeld = {}, -- rule 279: loot waiting for the full-Bag pick (DungeonBag)
 	}
 end
 
@@ -473,6 +481,7 @@ function DungeonService.StartRun(playerId: string, cardId: any, unitIds: any): (
 	end
 
 	s.run = buildRun(card, party)
+	s.deepest = math.max(tonumber(s.deepest) or 0, 1) -- rule 281: deepest stage reached
 	usedIds(playerId)[cardId] = true
 	print(`[DungeonService] Run started | {card.id} {card.biome} diff {card.difficulty} L{card.facilityLevel} | {#party} units`)
 	persist() -- project_rules 266: saved after every node (and at start)
@@ -489,6 +498,7 @@ function DungeonService.MoveTo(playerId: string, nodeId: any): (boolean, any)
 		if id == nodeId then ok = true break end
 	end
 	if not ok then return false, "You can't go there" end
+	if DungeonBag.Waiting(run) then return false, "You can't go there" end -- rule 279: the run waits for the full-Bag pick
 	local n = nodeById(run.map, nodeId)
 	if not n then return false, "Invalid room" end
 	run.at = nodeId
@@ -513,7 +523,7 @@ function DungeonService.MarkNodeCleared(playerId: string, nodeId: any): (boolean
 	run.cleared[nodeId] = true
 	local evC = run.events and run.events[nodeId]
 	if BATTLE_PLAYED[n.played] or (evC and evC.fight) then run.battles += 1 end -- event fights count (step 7a)
-	if n.played == "Elite" or (evC and evC.fight == "Elite") then DungeonRelics.Grant(run, nodeId, "E") end -- step 8: Elite R x2
+	if n.played == "Elite" or (evC and evC.fight == "Elite") then DungeonRelics.Grant(run, nodeId, "E"); DungeonFurniture.Roll(run, nodeId, "E") end -- step 8: Elite R x2; furniture v5 (gf 109): Elite chance by facility level
 	persist()
 	return true, { battles = run.battles, dropMultiplier = DungeonRules.DropMultiplier(run.battles, run.dropBonus, DungeonRules.RunDropCap(run)) }
 end
@@ -572,12 +582,14 @@ function DungeonService.AddLoot(playerId: string, kind: string, a: any, b: any):
 	elseif kind == "gearItem" then
 		if type(a) ~= "table" or type(a.instanceId) ~= "string" or #a.instanceId > 128 then return false, "Invalid item" end
 		if bag.gearItems[a.instanceId] then return false, "Duplicate item" end
+		if DungeonBag.Admit(run, kind, a) == 0 then return true, "held" end -- full Bag: waits for the pick (rule 279)
 		bag.gearItems[a.instanceId] = a
 		table.insert(bag.gear, a.instanceId)
 		return true, nil
 	elseif MAP_KINDS[kind] then
 		if type(a) ~= "string" or #a > 64 or not isInt(b, 0, MAX_COUNT) then return false, "Invalid loot" end
 		if kind == "unitXp" and not run.partySet[a] then return false, "Unit not in the dungeon party" end
+		if kind == "cards" then b = DungeonBag.Admit(run, kind, a, b) if b == 0 then return true, "held" end end -- rule 279
 		local t = bag[kind]
 		t[a] = math.min(MAX_COUNT, (t[a] or 0) + b)
 		return true, nil
@@ -586,87 +598,13 @@ function DungeonService.AddLoot(playerId: string, kind: string, a: any, b: any):
 end
 
 --------------------------------------------------
--- RUN END (pure keep/lose; no rewards handed out yet — steps 3-4)
+-- RUN END: ComputeOutcome / EndRun / PayPending live in DungeonRunEnd.lua (step B, 2026-11-16;
+-- moved word for word, behaviour unchanged).
 --------------------------------------------------
-
-local function splitMap(t: { [string]: number }, keep: boolean): ({ [string]: number }, { [string]: number })
-	local kept: { [string]: number }, lost: { [string]: number } = {}, {}
-	for k, v in t do
-		if keep then kept[k] = v else lost[k] = v end
-	end
-	return kept, lost
-end
-
---- Pure: what a bag keeps / loses for an outcome kind (Boss | EscapeNode | EarlyEscape | Wipeout).
-function DungeonService.ComputeOutcome(bag: any, kind: string): any
-	local rule = OUTCOME_KEEP[kind]
-	if not rule then return nil end
-	local b = copyBag(bag)
-	local keptGold = math.floor(b.gold * rule.gold)
-	local kept = { gold = keptGold, unitXp = b.unitXp }
-	local lost: any = { gold = b.gold - keptGold, unitXp = {} }
-	kept.normalMats, lost.normalMats = splitMap(b.normalMats, rule.normalMats)
-	kept.eliteMats, lost.eliteMats = splitMap(b.eliteMats, rule.eliteMats)
-	kept.bossMats, lost.bossMats = splitMap(b.bossMats, rule.bossMats)
-	kept.cards, lost.cards = splitMap(b.cards, rule.cards)
-	if rule.gear then
-		kept.gear, lost.gear = b.gear, {}
-		kept.gearItems, lost.gearItems = b.gearItems, {}
-	else
-		kept.gear, lost.gear = {}, b.gear
-		kept.gearItems, lost.gearItems = {}, b.gearItems
-	end
-	return { kind = kind, kept = kept, lost = lost }
-end
-
---- End the active run. Boss needs the boss cleared; EscapeNode needs to stand on a Rest room
---- (Escape rooms removed 2026-11-13 11:36 PM; an old saved Escape room still counts); EarlyEscape and Wipeout are always allowed. Clears the run (unlocks the party).
-function DungeonService.EndRun(playerId: string, kind: any): (boolean, any)
-	local s = stateOf(playerId)
-	local run = s.run
-	if not run then return false, "No dungeon run in progress" end
-	if type(kind) ~= "string" or not OUTCOME_KEEP[kind] then return false, "Invalid outcome" end
-	if kind == "Boss" and not (run.at == "boss" and run.cleared.boss) then
-		return false, "The boss has not been beaten"
-	end
-	if kind == "EscapeNode" then
-		-- USER RULING 2026-11-13 10:08 PM: leaving from a Rest room is a full escape too (rule 267).
-		local n = run.at and nodeById(run.map, run.at) or nil
-		if not n or (effType(n) ~= "Rest" and n.type ~= "Escape") then return false, "Not on a Rest room" end -- a "?" that became Rest counts (2026-11-15); "Escape" = old saved maps only
-	end
-	-- EV-12: an owed Smith's Wager gear comes home on any full-loot exit; lost on early escape / wipeout.
-	if run.smithOwed and (kind == "Boss" or kind == "EscapeNode") and DungeonService.DeliverSmith then DungeonService.DeliverSmith(playerId) end
-	local outcome = DungeonService.ComputeOutcome(run.bag, kind)
-	outcome.card = table.clone(run.card)
-	outcome.party = table.clone(run.party)
-	outcome.battles = run.battles
-	outcome.relicCount = #(run.relics or {}) -- step 8: relics are run-only and fade here
-	s.run = nil
-	-- The result is saved as pending, then paid out once (build step 4, DungeonService.PayPending).
-	s.pending = outcome
-	print(`[DungeonService] Run ended | {kind} | {run.card.id} | battles {run.battles} | gold kept {outcome.kept.gold}/{run.bag.gold}`)
-	if _onRunEnded then
-		local okH, errH = pcall(_onRunEnded, outcome.party)
-		if not okH then warn("[DungeonService] run-ended hook failed: " .. tostring(errH)) end
-	end
-	DungeonService.PayPending(playerId) -- pays now when the payer is wired; otherwise stays pending
-	persist()
-	return true, outcome
-end
-
---- Pay an ended run's kept loot exactly once (build step 4, project_rules 264). The pending result
---- is taken BEFORE paying, so a second call (or a reload after the save) can't pay it again.
---- Unit EXP is not paid here: battle EXP is granted when each battle ends and is always kept.
-function DungeonService.PayPending(playerId: string): any
-	local s = stateOf(playerId)
-	if not s.pending or not _payer then return nil end
-	local p = s.pending
-	s.pending = nil
-	local ok, err = pcall(_payer, p)
-	if not ok then warn("[DungeonService] payout failed (" .. tostring(p.kind) .. "): " .. tostring(err)) end
-	print(`[DungeonService] Paid out | {tostring(p.kind)} | gold {p.kept and p.kept.gold or 0} | gear {p.kept and #(p.kept.gear or {}) or 0}`)
-	return p
-end
+DungeonRunEnd.Bind({ svc = DungeonService, stateOf = stateOf, copyBag = copyBag, nodeById = nodeById, effType = effType, persist = persist })
+DungeonService.ComputeOutcome = DungeonRunEnd.ComputeOutcome
+DungeonService.EndRun = DungeonRunEnd.EndRun
+DungeonService.PayPending = DungeonRunEnd.PayPending
 
 local function currentRoom(run: any, want: string): (any, string?)
 	if not run then return nil, "No dungeon run in progress" end
@@ -688,6 +626,7 @@ function DungeonService.UseRest(playerId: string): (boolean, any)
 	local pct = DungeonRules.Level(run.card.facilityLevel).restHealPct
 	if DungeonRelics.HasRelic(playerId, "RL-03") then pct += D.Relic.BedrollRestPct end -- step 8: Warm Bedroll
 	if DungeonRelics.HasRelic(playerId, "RL-47") then pct = math.floor(pct * (1 - D.Relic.ThroneRestPct / 100)) end -- RL-47 Hollow Throne: Rests heal 10% less (v11)
+	pct = DungeonDepth.HealPct(run, pct) -- RL-65 Fading Embers (step 6): 5 points lower per stack, min 10%
 	local results = {}
 	if _healer then
 		for _, id in run.party do
@@ -718,6 +657,7 @@ function DungeonService.EditParty(playerId: string, op: any, unitId: any): (bool
 		if not run.partySet[unitId] then return false, "Invalid unit selection" end
 		if #run.party <= 1 then return false, "Keep at least 1 unit" end
 		for i, id in run.party do if id == unitId then table.remove(run.party, i) break end end
+		DungeonLoadout.OnSendHome(run, unitId) -- step 3: found items on that unit go back into the Bag
 		run.partySet[unitId] = nil
 		persist()
 		print(`[DungeonService] Edit party | sent home {unitId} | {#run.party} left`)
@@ -761,69 +701,24 @@ function DungeonService.OpenTreasure(playerId: string, rank: number): (boolean, 
 	if item then DungeonService.AddLoot(playerId, "gearItem", item) end
 	local relic = DungeonRelics.Grant(run, n.id, "T") -- step 8: Treasure R x3
 	run.cleared[n.id] = true
+	local silver = DungeonSilver.Earn(run, "Treasure") -- rule 278: 15 / 19 / 23 plus its item
 	persist()
-	return true, { level = level, item = item, relic = relic }
+	return true, { level = level, item = item, relic = relic, silver = silver } -- furniture v5 (gf 109): Treasure rooms drop no furniture
 end
 
 --------------------------------------------------
 -- STAGES (project_rules 277, 2026-11-15)
 --------------------------------------------------
 
---- Called by Main after a Boss room battle is WON. If a later stage is allowed for this card, the run
---- waits (stageCleared) for Go deeper / Go home; otherwise the run ends with the Boss outcome.
---- Returns ok, { stageCleared = bool } | EndRun outcome.
-function DungeonService.OnBossWin(playerId: string): (boolean, any)
-	local run = stateOf(playerId).run
-	if not run then return false, "No dungeon run in progress" end
-	if not (run.at == "boss" and run.cleared.boss) then return false, "The boss has not been beaten" end
-	if run.stageCleared then return true, { stageCleared = true, stage = run.stage, maxStages = run.card.maxStages } end -- already recorded (fix 2026-11-15)
-	run.stageBosses = run.stageBosses or {}
-	table.insert(run.stageBosses, run.stage)
-	if run.smithOwed and DungeonService.DeliverSmith then DungeonService.DeliverSmith(playerId) end -- EV-12: stage boss delivers
-	if run.stage < (run.card.maxStages or 1) then
-		run.stageCleared = true
-		persist()
-		print(`[DungeonService] Stage {run.stage} cleared | {run.card.id} | waiting for Go deeper / Go home`)
-		return true, { stageCleared = true, stage = run.stage, maxStages = run.card.maxStages }
-	end
-	return DungeonService.EndRun(playerId, "Boss")
-end
-
---- Go home after a stage boss: all loot home (Boss outcome, rule 264/277).
-function DungeonService.GoHome(playerId: string): (boolean, any)
-	local run = stateOf(playerId).run
-	if not run then return false, "No dungeon run in progress" end
-	if not run.stageCleared then return false, "The boss has not been beaten" end
-	return DungeonService.EndRun(playerId, "Boss")
-end
-
---- Go deeper: a new map for the next stage (seed = run seed + stage). Carries HP/MP/charges/KO, bag,
---- drop multiplier, relics, used relics, the event no-repeat list, battle count and party. Room tables
---- reset (room ids repeat). The party heals by the facility level's Rest % (Simulator v9 fix 1).
-function DungeonService.GoDeeper(playerId: string): (boolean, any)
-	local run = stateOf(playerId).run
-	if not run then return false, "No dungeon run in progress" end
-	if not run.stageCleared then return false, "The boss has not been beaten" end
-	if run.stage >= (run.card.maxStages or 1) then return false, "Invalid request" end
-	local nextStage = run.stage + 1
-	local sseed = DungeonRules.StageSeed(run.card.seed, nextStage)
-	local okM, map = pcall(DungeonMap.Generate, sseed, run.card.facilityLevel, run.card.floors)
-	if not okM or not map then return false, "Something went wrong. Try again." end
-	run.stage, run.sseed, run.map = nextStage, sseed, map
-	run.stageCleared, run.stageBringIn = false, 0
-	freshRoomTables(run)
-	local pct = DungeonRules.Level(run.card.facilityLevel).restHealPct
-	if _healer then
-		for _, id in run.party do
-			local okH, res = pcall(_healer, id, pct)
-			if not okH then warn("[DungeonService] stage heal failed for " .. id .. ": " .. tostring(res)) end
-		end
-	end
-	run.stageHeal = { pct = pct }
-	persist()
-	print(`[DungeonService] Stage {nextStage} started | {run.card.id} | healed {pct}%`)
-	return true, view(run)
-end
+--------------------------------------------------
+-- STAGES: OnBossWin / GoHome / GoDeeper / AckStageHeal live in DungeonStages.lua (step B, 2026-11-16;
+-- moved word for word, behaviour unchanged).
+--------------------------------------------------
+DungeonStages.Bind({ svc = DungeonService, stateOf = stateOf, persist = persist, freshRoomTables = freshRoomTables, view = view,
+	healer = function() return _healer end })
+DungeonService.OnBossWin = DungeonStages.OnBossWin
+DungeonService.GoHome = DungeonStages.GoHome
+DungeonService.GoDeeper = DungeonStages.GoDeeper
 
 --- EV-12: the "The smith delivers" popup was shown; forget it.
 function DungeonService.AckSmith(playerId: string)
@@ -845,11 +740,7 @@ function DungeonService.TakeNextBattleBuff(playerId: string): any
 	return b
 end
 
---- The stage-start heal message is shown once by the client, then cleared.
-function DungeonService.AckStageHeal(playerId: string)
-	local run = stateOf(playerId).run
-	if run then run.stageHeal = nil end
-end
+DungeonService.AckStageHeal = DungeonStages.AckStageHeal -- moved to DungeonStages.lua (step B)
 
 --------------------------------------------------
 -- EVENT + MERCHANT ROOMS: live in DungeonRooms.lua (split 2026-11-14, step 7b; behaviour unchanged).
@@ -857,6 +748,30 @@ end
 
 -- RELICS live in DungeonRelics.lua (step 8, 2026-11-14).
 DungeonRelics.Bind({ stateOf = stateOf, persist = persist })
+-- SILVER / BAG / BENCH live in DungeonSilver.lua + DungeonBag.lua (silver step 1, rules 278-280).
+DungeonSilver.Bind({ stateOf = stateOf, merchant = function() return _merchant end }) -- step 2: silver refills
+DungeonBag.Bind({ stateOf = stateOf, persist = persist, addLoot = function(pid: string, k: string, a: any, b: any) return DungeonService.AddLoot(pid, k, a, b) end })
+DungeonService.EarnSilver = function(pid: string, source: string): number -- battle hook after a won room
+	local add = DungeonSilver.EarnFor(pid, source)
+	if add > 0 then persist() end -- saved now, so a quit right after the battle keeps it (Tester WARN 8)
+	return add
+end
+DungeonService.BagChoice = DungeonBag.Choose -- full-Bag pick (remote "BagChoice"; popup = DungeonBagPanel, steps 4-5)
+function DungeonService.BagList(playerId: string): any local run = stateOf(playerId).run return run and DungeonCourier.BagList(run, DungeonLoadout.HomeItems(run)) end -- Bag screen
+DungeonLoadout.Bind({ stateOf = stateOf, persist = persist }) -- step 3: loadout in the dungeon + map consumables
+DungeonService.UseItem = DungeonLoadout.UseItem
+function DungeonService.BenchReady(playerId: string): any local run = stateOf(playerId).run return run and run.benchReady or nil end -- rule 280
+DungeonService.AckFurniture = function(pid: string) local r = stateOf(pid).run if r then DungeonFurniture.Ack(r) persist() end end -- furniture step 3
+DungeonService.FurnitureBossDrop = function(pid: string): any local r = stateOf(pid).run local e = r and DungeonFurniture.BossDrop(r) if e then persist() end return e end -- furniture v5 (gf 109): 1 per stage boss
+DungeonService.SetFurnitureHooks = DungeonFurniture.SetHooks; DungeonService.DevFurnFound = function(pid: string, id: any): boolean local r = stateOf(pid).run return r ~= nil and DungeonFurniture.DevFound(r, id) end -- dev op only
+DungeonService.PickDepthCurse = function(pid: string, which: any): (boolean, any) -- step 6 (remote "DepthCurse")
+	local r = stateOf(pid).run
+	if not r then return false, "No dungeon run in progress" end
+	local ok, res = DungeonDepth.Pick(r, which)
+	if ok then persist() end
+	return ok, res
+end
+DungeonService.CurseStacks = function(pid: string): { [string]: number } local r = stateOf(pid).run return DungeonDepth.StackMap(r) end -- step 6
 for _, k in { "HasRelic", "GetRelics", "MarkRelicUsed", "GrantBossRelic", "GrantEventRelic", "AckRelic", "DevGiveRelic", "PickBossRelic", "AnswerCurse" } do (DungeonService :: any)[k] = (DungeonRelics :: any)[k] end
 
 local DungeonRooms = require(script.Parent:WaitForChild("DungeonRooms"))
@@ -864,10 +779,12 @@ DungeonRooms.Bind({
 	stateOf = stateOf, nodeById = nodeById, effType = effType, currentRoom = currentRoom, persist = persist, isInt = isInt,
 	addLoot = function(...) return DungeonService.AddLoot(...) end,
 	healer = function() return _healer end, eventHooks = function() return _eventHooks end, merchant = function() return _merchant end,
-	grantEventRelic = function(pid: string, evId: string) return DungeonRelics.GrantEventRelic(pid, evId) end, -- step 8
+	grantEventRelic = function(pid: string, evId: string) -- step 8 (furniture v5, gf 109: Events drop no furniture)
+		return DungeonRelics.GrantEventRelic(pid, evId) end,
 })
 DungeonService.GetEvent = DungeonRooms.GetEvent
 DungeonService.ChooseEvent = DungeonRooms.ChooseEvent
+DungeonService.CourierSend = DungeonRooms.CourierSend -- EV-17 Courier's Rest (steps 4-5)
 DungeonService.GetMerchant = DungeonRooms.GetMerchant
 DungeonService.BuyMerchant = DungeonRooms.BuyMerchant
 DungeonService.RefillMerchant = DungeonRooms.RefillMerchant
@@ -894,7 +811,7 @@ function DungeonService.GetScreenState(playerId: string): any
 		if okB and type(v) == "number" then done = math.max(0, math.floor(v)) end
 	end
 	local out: any = { level = DungeonService.GetFacilityLevel(playerId), choices = DungeonService.GetChoices(playerId),
-		rerollIn = CHOICE_REFRESH_BATTLES - done % CHOICE_REFRESH_BATTLES }
+		rerollIn = CHOICE_REFRESH_BATTLES - done % CHOICE_REFRESH_BATTLES, deepest = s.deepest or 0 } -- DG-RECORD (rule 281)
 	local run = s.run
 	if run then
 		out.run = view(run)
@@ -947,5 +864,8 @@ end
 function DungeonService.ClearPlayer(playerId: string)
 	states[playerId] = nil
 end
+
+--- Dev test hook (Main DevDungeon 'raw', DevAccess-gated): the live run table.
+function DungeonService.DevRawRun(playerId: string): any return stateOf(playerId).run end
 
 return DungeonService

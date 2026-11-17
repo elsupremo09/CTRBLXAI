@@ -62,6 +62,7 @@ local KEY_PROGRESSION = "progression_v%d_%s"
 --------------------------------------------------
 
 local _mode = "memory" -- default safe
+local _testGuard = false -- set below (Studio test guard)
 
 -- Load-failure guard (save_data_contract: "Never replace valid save with blank on
 -- load failure"). If Load errors for a player (DataStore down, HTTP 403 with Studio
@@ -88,6 +89,10 @@ end
 function SaveService.SetMode(mode)
 	assert(mode == "memory" or mode == "studio" or mode == "production",
 		"SaveService.SetMode: mode must be 'memory', 'studio', or 'production'.")
+	if _testGuard and mode ~= "memory" then
+		warn("[SaveService] SetMode(" .. mode .. ") refused: test guard keeps memory mode this session")
+		return
+	end
 	_mode = mode
 	print("[SaveService] Mode set: " .. mode)
 end
@@ -101,6 +106,18 @@ if RunService:IsStudio() then
 	_mode = "studio"
 else
 	_mode = "production"
+end
+
+-- Studio TEST GUARD (2026-11-16, after a test session wrote a furniture migration into the
+-- real save before memory mode was switched on). A test sets the workspace attribute
+-- "CTRBLXAI_TestMemorySave" = true in EDIT mode before pressing Play; the Play copy keeps
+-- it, so memory mode is active BEFORE the save loads. Load then reads the real Studio save
+-- read-only (so tests use real data) and every Save stays in memory. Studio only: the
+-- attribute is ignored in live servers. Normal Studio play (no attribute) is unchanged.
+if RunService:IsStudio() and workspace:GetAttribute("CTRBLXAI_TestMemorySave") == true then
+	_testGuard = true
+	_mode = "memory"
+	print("[SaveService] Mode set: memory (test guard)")
 end
 
 --------------------------------------------------
@@ -508,6 +525,9 @@ function SaveService.Save(playerId, rosterState, inventoryItems, progression, cu
 		memSet(getKey(KEY_PROGRESSION, playerId), progressionData)
 		print(string.format("[SaveService] SAVED (memory) | %s | Units:%d Items:%d",
 			playerId, #rosterData.units or 0, #inventoryData.items))
+		if _testGuard then
+			warn("[SaveService] TEST GUARD ON — progress is NOT being saved. Clear workspace attribute CTRBLXAI_TestMemorySave.")
+		end
 		return true, nil
 	end
 
@@ -557,6 +577,23 @@ function SaveService.Load(playerId)
 		rosterRaw = memGet(getKey(KEY_ROSTER, playerId))
 		inventoryRaw = memGet(getKey(KEY_INVENTORY, playerId))
 		progressionRaw = memGet(getKey(KEY_PROGRESSION, playerId))
+		if _testGuard and rosterRaw == nil and inventoryRaw == nil and progressionRaw == nil then
+			-- Test guard: read the real Studio save once, read-only. Nothing here writes.
+			local function devStore(keyType: string)
+				local ok, store = pcall(function()
+					return DataStoreService:GetDataStore("CTRBLXAI_Dev_" .. keyType)
+				end)
+				return if ok then store else nil
+			end
+			local err
+			rosterRaw, err = safeGetAsync(devStore("Roster"), getKey(KEY_ROSTER, playerId))
+			if err then return failLoad(playerId, "Roster load failed (test guard): " .. err) end
+			inventoryRaw, err = safeGetAsync(devStore("Inventory"), getKey(KEY_INVENTORY, playerId))
+			if err then return failLoad(playerId, "Inventory load failed (test guard): " .. err) end
+			progressionRaw, err = safeGetAsync(devStore("Progression"), getKey(KEY_PROGRESSION, playerId))
+			if err then return failLoad(playerId, "Progression load failed (test guard): " .. err) end
+			print("[SaveService] Test guard: real Studio save read (read-only); saves stay in memory")
+		end
 	else
 		local store1 = getDataStore("Roster")
 		local store2 = getDataStore("Inventory")

@@ -230,8 +230,8 @@ local function refitIcons(scroll: Instance, cellW: number)
 	for _, tile in scroll:GetChildren() do
 		if tile:IsA("TextButton") then
 			for _, ch in tile:GetChildren() do
-				if ch:IsA("ImageLabel") then
-					ch.Size = UDim2.new(1, -inset * 2, 0, cellW - inset * 2)
+				if ch:IsA("ImageLabel") and ch.Name ~= "ItemFrame" then -- never resize the ornate frame
+					ch.Size = UDim2.new(1, -inset * 2, 0, cellW - inset * 2 - Theme.ItemTileFramePad() * 2)
 					ch.Position = UDim2.fromOffset(inset, inset)
 				end
 			end
@@ -473,7 +473,7 @@ local function buildSide(res: any, st: any)
 			Theme.Text.Small(), Theme.Colors.TextSecondary)
 	end
 	if st.slotsUsed >= st.slotCap then
-		addLine(scroll, 2, "All dispatch slots are in use (queued or active). Upgrade the Guild Hall for more.",
+		addLine(scroll, 2, "All dispatch slots are in use (queued or active).",
 			Theme.Text.Small(), Theme.Colors.TextSecondary)
 	end
 	for i, m in st.missions do
@@ -542,7 +542,7 @@ local function openHelp(fee: number)
 		"Send units on missions while the rest of your guild fights. They miss battles until they come back.",
 		"Each mission says how long it lasts, e.g. \"back after 3 battles\". A very long battle can count as 2.",
 		"When they return, every unit sent earns the mission's XP, and the mission pays the material shown on it. Up to 3 units per mission.",
-		`Each mission costs {fee} gold. Your Guild Hall level sets how many missions can run at once.`,
+		`Each mission costs {fee} gold. Your Renown Rank sets how many missions can run at once.`,
 		"At least one unit must stay home. Units away still recover HP after your victories.",
 		"You can recall a mission early from the Out now list. The units return with no reward.",
 	}
@@ -748,40 +748,5 @@ function DispatchScreen.SetStatus(text: string, isError: boolean?)
 	if screen then screen.SetStatus(text, isError) end
 end
 
--- Test hooks for the scripted Studio check (simulated taps do not register): pick a mission /
--- units, send, cancel, open and close the help. Same code paths as the taps.
-DispatchScreen._Test = table.freeze({
-	selectMission = function(missionId: string) selectedMission = missionId; render() end,
-	toggleUnit = function(unitId: string)
-		selectedUnits[unitId] = if selectedUnits[unitId] then nil else true
-		render()
-	end,
-	send = function()
-		local c = ctx
-		if not c then return end
-		local res = c.getBoard()
-		if res then send(derive(res)) end
-	end,
-	cancel = function() selectedMission = nil; selectedUnits = {}; selectedRecall = nil; render() end,
-	-- Recall: pick an away mission (as the Out now pill tap) / open the confirm prompt.
-	pickRecall = function(missionId: string?) selectedRecall = missionId; render() end,
-	recall = function()
-		local c = ctx
-		if not c then return end
-		local res = c.getBoard()
-		if res then recall(derive(res)) end
-	end,
-	openHelp = function()
-		local c = ctx
-		local res = c and c.getBoard()
-		openHelp(if res then res.feeGold or 0 else 0)
-	end,
-	closeHelp = closeHelp,
-	state = function(): any
-		local n = 0
-		for _ in selectedUnits do n += 1 end
-		return { mission = selectedMission, picked = n, helpOpen = helpOverlay ~= nil, recall = selectedRecall }
-	end,
-})
 
 return table.freeze(DispatchScreen)

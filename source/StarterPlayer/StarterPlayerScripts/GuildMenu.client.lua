@@ -72,6 +72,10 @@ local DispatchScreen: any = if dispatchScreenModule then (require :: any)(dispat
 local unitsScreenModule = UIFolder:WaitForChild("UnitsScreen", WAIT)
 if not unitsScreenModule then warn("[GuildMenu] UnitsScreen module missing") end
 local UnitsScreen: any = if unitsScreenModule then (require :: any)(unitsScreenModule) else nil
+-- Furnish tab + furniture craft list (furniture v5 step 4a, 2026-11-16): own module.
+local furnishScreenModule = UIFolder:WaitForChild("FurnishScreen", WAIT)
+if not furnishScreenModule then warn("[GuildMenu] FurnishScreen module missing") end
+local FurnishScreen: any = if furnishScreenModule then (require :: any)(furnishScreenModule) else nil
 -- Dungeon (build step 5, 2026-11-13): its own full screen.
 local dungeonScreenModule = UIFolder:WaitForChild("DungeonScreen", WAIT)
 if not dungeonScreenModule then warn("[GuildMenu] DungeonScreen module missing") end
@@ -94,6 +98,13 @@ local function loadDevToolsPanel(): any
 	return DevToolsPanel
 end
 if devPanelAllowed() then loadDevToolsPanel() end
+-- Guild Hall furniture catalogue (Slice 8 step 2, 2026-11-16): names + effect lines for the Furnish tab.
+local FurnitureData: any = nil
+do
+	local contentFolder = ReplicatedStorage:WaitForChild("Content", WAIT)
+	local furnModule = contentFolder and contentFolder:WaitForChild("FurnitureData", WAIT)
+	if furnModule then FurnitureData = (require :: any)(furnModule) else warn("[GuildMenu] FurnitureData module missing") end
+end
 if not GuildEvents.GuildMenuOpened then
 	warn("[GuildMenu] Guild remotes unavailable — menu disabled"); return
 end
@@ -873,6 +884,12 @@ local function updateBalanceLabel()
 	if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text) end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text) end
 end
 
+-- Renown Rank unlocks (Slice 8 step 1, 2026-11-16): nav pages whose building is not open yet.
+-- Filled from the overview's openBuildings; applyNavLocks is set once the nav exists.
+local lockedPages: { [string]: any } = {}
+local applyNavLocks: ((any) -> ())? = nil
+local showLockLine: (string) -> () = function(_page: string) end -- set once the nav exists
+local onGuildHallLink: () -> () = function() end -- 'Upgrade at the Guild Hall' link (set below)
 local shownRefillNote = false -- reset each time the menu opens after a battle
 local function refreshOverview()
 	local res = call(GuildEvents.GetGuildOverview)
@@ -891,7 +908,8 @@ local function refreshOverview()
 	if type(res.augmentNotice) == "string" then table.insert(notes, res.augmentNotice) end
 	if #notes > 0 then setStatus(table.concat(notes, "\n"), true) end
 	local b = res.buildings or {}
-	phaseLabel.Text = `{currentPhase == "PreBattle" and "Before battle" or "After battle"} | Battles done: {res.battlesCompleted or 0} | Tavern L{b.Tavern or 1}  Merchant L{b.Merchant or 1}  Blacksmith L{b.Blacksmith or 1} (temporary levels)`
+	phaseLabel.Text = `{currentPhase == "PreBattle" and "Before battle" or "After battle"} | Battles done: {res.battlesCompleted or 0} | Tavern L{b.Tavern or 1}  Merchant L{b.Merchant or 1}  Blacksmith L{b.Blacksmith or 1}`
+	if applyNavLocks and type(res.openBuildings) == "table" then applyNavLocks(res.openBuildings) end
 end
 
 -- SMARTER SAVE / CART (2026-10-13): buy & sell are staged on the client and only
@@ -1802,8 +1820,14 @@ end
 -- it at the base wait, so if the quest board was already asked for this visit, it is cancelled first
 -- and the launch is sent on the next base open. After the battle the base reopens on the Dungeon.
 local dungeonLaunchPending = false
+-- A dungeon room's battle starts from the Dungeon screen, never the Quest Board (user 2026-11-16
+-- 9:54 AM): while the server scouts the room's map, the Dungeon screen stays up and the battle
+-- departs on MapBuildComplete. No quest briefing, party pick or 'Abandon quest' for a room.
+local dungeonDeparting = false
+local dungeonDepartToken = 0 -- W3: bumped per dungeon departure; a stale 30 s timeout does nothing
+local DUNGEON_DEPART_TIMEOUT = 30
 local returnToDungeon = false
-local DUNGEON_LOCKED_TEXT = "Build up your Guild Hall to level 6 to open the Dungeon." -- DG-LOCKED (approved)
+local DUNGEON_LOCKED_TEXT = "Reach Renown Rank 25 to open the Dungeon." -- DG-LOCKED (approved 2026-11-16, guild_facilities 98)
 
 local function openDungeon()
 	if not DungeonScreen then
@@ -1832,6 +1856,8 @@ if DungeonScreen then
 	DungeonScreen.Init({
 		parent = playerGui,
 		action = function(data: { [string]: any }): any?
+			-- W1 (2026-11-16): while a room's battle is departing, only the read-only State refresh runs.
+			if dungeonDeparting and not (type(data) == "table" and data.action == "State") then return nil end
 			local res = call(GuildEvents.DungeonAction, data)
 			if res then invalidatePageCache() end -- runs lock units / pay out: re-fetch other screens
 			updateBalanceLabel()
@@ -1841,7 +1867,7 @@ if DungeonScreen then
 			return call(GuildEvents.GetGuildUnits) -- fresh (away flags); the screen asks once per party view
 		end,
 		launchBattle = function()
-			if isBusy or currentPhase ~= "Base" then return end
+			if isBusy or dungeonDeparting or currentPhase ~= "Base" then return end
 			if guildQuests ~= nil then
 				-- The server is waiting on a quest pick, not at the base wait: back out first.
 				dungeonLaunchPending = true
@@ -1852,7 +1878,10 @@ if DungeonScreen then
 			end
 			fireDungeonLaunch()
 		end,
-		requestBack = confirmLeaveWithCart,
+		requestBack = function(...)
+			if dungeonDeparting then return end -- leaving for the room's battle: no way back to the guild screen
+			return confirmLeaveWithCart(...)
+		end,
 		onClosed = function()
 			returnToDungeon = false
 			screenGui.Enabled = true
@@ -1860,6 +1889,7 @@ if DungeonScreen then
 			showPage(if currentPage == "Units" then "Adventurers" else currentPage)
 		end,
 		setStatus = setStatus,
+		isLocked = function(): boolean return dungeonDeparting end, -- W1: Dungeon-screen taps do nothing while departing
 	})
 end
 
@@ -2061,7 +2091,218 @@ local function pageAdventurersGuild()
 	})
 end
 
+-- GUILD HALL (Slice 8 step 1, USER RULING 2026-11-16 1:53 PM, guild_facilities 90): every
+-- building is upgraded from this one list. The server builds the rows (level, next level,
+-- cost, reason) and checks + prices the upgrade; the client only shows them. Approved text:
+-- guild_facilities 98 (rank lines 2, 3, 4, 8, 9, 10, 11; furniture lines 5, 6, 7; BS-NOEFFECT).
+local guildHallDialog: Instance? = nil
+local function closeGuildHallDialog()
+	if guildHallDialog then guildHallDialog:Destroy() guildHallDialog = nil end
+end
+
+local function confirmBuildingUpgrade(row: any, onYes: () -> ())
+	closeGuildHallDialog()
+	local overlay = Instance.new("TextButton")
+	overlay.Text = ""
+	overlay.AutoButtonColor = false
+	overlay.Modal = true
+	overlay.Size = UDim2.new(1, 0, 1, 0)
+	overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+	overlay.BackgroundTransparency = 0.4
+	overlay.BorderSizePixel = 0
+	overlay.ZIndex = 10
+	overlay.Parent = screenGui
+	overlay.Activated:Connect(function() end) -- absorb background taps
+	guildHallDialog = overlay
+	local box = Instance.new("Frame")
+	box.AnchorPoint = Vector2.new(0.5, 0.5)
+	box.Position = UDim2.new(0.5, 0, 0.5, 0)
+	box.Size = UDim2.new(0, 340, 0, 140)
+	box.BackgroundColor3 = Theme.Colors.PanelRaised
+	box.BorderSizePixel = 0
+	box.ZIndex = 10
+	box.Parent = overlay
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = Theme.CornerRadius.md
+	corner.Parent = box
+	local msg = makeText(box, `Upgrade {row.display} to level {row.level + 1} for {row.cost} gold?`, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
+	msg.Size = UDim2.new(1, -24, 0, 60)
+	msg.Position = UDim2.new(0, 12, 0, 10)
+	msg.ZIndex = 11
+	local function mk(txt: string, color: Color3, slot: number, cb: () -> ())
+		local b = makeButton(box, txt, color, cb)
+		b.Size = UDim2.new(0.45, -8, 0, BUTTON_HEIGHT)
+		b.AnchorPoint = Vector2.new(0, 0.5)
+		b.Position = UDim2.new(0.04 + 0.5 * slot, 0, 1, -BUTTON_HEIGHT * 0.5 - 12)
+		b.ZIndex = 11
+	end
+	mk("Upgrade", Theme.Colors.Success, 0, function()
+		closeGuildHallDialog()
+		onYes()
+	end)
+	mk("Cancel", Theme.Colors.Danger, 1, closeGuildHallDialog)
+end
+
+-- Guild Hall tabs (Slice 8 step 2, guild_facilities 96/98): "Buildings" (upgrade list) and
+-- "Furnish" (furniture slots + shop). Approved text: furniture lines 1-4, 8-12; rank lines 5, 6, 9.
+local guildHallTab = "Buildings"
+local pageGuildHall: () -> () = function() end -- set below (tabs re-enter it)
+
+local function guildHallHeader()
+	addHeading("GUILD HALL") -- GH-TITLE
+	addNote("Your guild's home. Furnish it and upgrade your buildings.") -- GH-INTRO
+	rowOrder += 1
+	local bar = Instance.new("Frame")
+	bar.Name = "GuildHallTabs"
+	bar.BackgroundTransparency = 1
+	bar.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
+	bar.LayoutOrder = rowOrder
+	bar.Parent = content
+	local list = Instance.new("UIListLayout")
+	list.FillDirection = Enum.FillDirection.Horizontal
+	list.Padding = UDim.new(0, 8)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = bar
+	for i, tab in { "Buildings", "Furnish" } do -- GH-TAB-UPGRADE, GH-TAB-FURNISH
+		Theme.MakeTabButton(bar, tab, if guildHallTab == tab then "Active" else "Inactive", function()
+			if guildHallTab == tab or isBusy then return end
+			guildHallTab = tab
+			pageGuildHall()
+		end, { name = "Tab_" .. tab, size = UDim2.new(0.5, -4, 0, BUTTON_HEIGHT), layoutOrder = i,
+			textSize = Theme.Text.Body() })
+	end
+end
+
+-- Furnish tab rendering: moved to UI/FurnishScreen.lua (furniture v5 step 4a, 2026-11-16).
+local function renderFurnish(res: any)
+	if FurnishScreen then FurnishScreen.Render(res) end
+end
+
+if FurnishScreen then
+	FurnishScreen.Init({
+		Theme = Theme, GuildEvents = GuildEvents, FurnitureData = FurnitureData, playerGui = playerGui,
+		call = call, clearContent = clearContent, addHeading = addHeading, addNote = addNote, addRow = addRow,
+		guildHallHeader = guildHallHeader, invalidatePageCache = invalidatePageCache,
+		refreshOverview = refreshOverview, setStatus = setStatus,
+		isBusy = function(): boolean return isBusy end,
+		setBusy = function(v: boolean) isBusy = v end,
+		currentPage = function(): string return currentPage end,
+		guildHallTab = function(): string return guildHallTab end,
+	})
+end
+
+local function renderGuildHall(res: any)
+	if currentPage ~= "GuildHall" then return end
+	clearContent()
+	guildHallHeader()
+	addHeading("Guild Hall — Upgrades")
+	for _, row in (type(res) == "table" and type(res.rows) == "table") and res.rows or {} do
+		local second: string = if row.open and row.next and not row.reason then row.next
+			elseif row.next and row.reason then `{row.next}  ·  {row.reason}`
+			else (row.reason or "")
+		local text = `{row.display}   Level {row.level} / {row.maxLevel}\n{second}`
+		local buttons: { RowButton }? = nil
+		if row.open and row.cost then
+			buttons = { {
+				text = `Upgrade — {row.cost} gold`, color = Theme.Colors.Success, style = "Primary",
+				enabled = row.canUpgrade == true,
+				onTap = function()
+					if isBusy or not row.canUpgrade then return end
+					confirmBuildingUpgrade(row, function()
+						isBusy = true
+						local r = call(GuildEvents.BuildingAction, { action = "Upgrade", building = row.name })
+						isBusy = false
+						if r then
+							setStatus(tostring(r.message or ""))
+							invalidatePageCache()
+							refreshOverview()
+							renderGuildHall(r)
+						end
+					end)
+				end,
+			} }
+		end
+		local rowFrame = addRow(text, buttons, not row.open or row.noEffect == true)
+		rowFrame.Size = UDim2.new(1, 0, 0, ROW_HEIGHT + 16)
+	end
+end
+
+pageGuildHall = function()
+	if guildHallTab == "Furnish" then
+		local res = call(GuildEvents.FurnitureAction, { action = "State" })
+		if res then renderFurnish(res) end
+		return
+	end
+	local res = call(GuildEvents.BuildingAction, { action = "List" })
+	if res then renderGuildHall(res) end
+end
+
+-- One-time notice for saves made before Slice 8 (guild_facilities 97/98: MIGRATE-NOTICE + FUR-GIFT).
+-- Own ScreenGui so it shows over the Units screen too. "Furnish" opens the Furnish tab; a tap on
+-- the dark background just closes it. Either way the server is told it was seen (once).
+local noticeShown = false
+local function showFurnitureNotice()
+	local ok, res = pcall(function() return GuildEvents.FurnitureAction:InvokeServer({ action = "State" }) end)
+	-- Furniture step 4b (WARN-A): pieces left behind at the 400 limit, shown once on return to base.
+	local lb = ok and type(res) == "table" and type(res.furniture) == "table" and res.furniture.leftBehind or nil
+	if type(lb) == "table" and #lb > 0 then
+		setStatus(table.concat(lb, "\n"), true) -- FUR-STORAGE-FULL (approved 2026-11-16 11:02 PM)
+		pcall(function() GuildEvents.FurnitureAction:InvokeServer({ action = "AckLeftBehind" }) end)
+	end
+	if noticeShown then return end
+	if not ok or type(res) ~= "table" or res.ok == false or type(res.furniture) ~= "table" or not res.furniture.notice then return end
+	noticeShown = true
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "FurnitureNotice"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.DisplayOrder = 200
+	local overlay = Instance.new("TextButton")
+	overlay.Text = ""
+	overlay.AutoButtonColor = false
+	overlay.Modal = true
+	overlay.Size = UDim2.new(1, 0, 1, 0)
+	overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+	overlay.BackgroundTransparency = 0.4
+	overlay.BorderSizePixel = 0
+	overlay.Parent = gui
+	local box = Instance.new("Frame")
+	box.AnchorPoint = Vector2.new(0.5, 0.5)
+	box.Position = UDim2.new(0.5, 0, 0.5, 0)
+	box.Size = UDim2.new(0, 380, 0, 190)
+	box.BackgroundColor3 = Theme.Colors.PanelRaised
+	box.BorderSizePixel = 0
+	box.Parent = overlay
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = Theme.CornerRadius.md
+	corner.Parent = box
+	local msg = makeText(box, "Buildings no longer wait on your Guild Hall. Some of your buildings got stronger. Your Guild Hall now holds furniture: check the Furnish tab!\n\nWelcome gift: Straw Cot and Scribe's Desk.", Theme.Text.Body(), Theme.Colors.TextPrimary) -- MIGRATE-NOTICE + FUR-GIFT
+	msg.Size = UDim2.new(1, -24, 1, -(BUTTON_HEIGHT + 30))
+	msg.Position = UDim2.new(0, 12, 0, 10)
+	local function done(openFurnish: boolean)
+		gui:Destroy()
+		pcall(function() GuildEvents.FurnitureAction:InvokeServer({ action = "Seen" }) end)
+		if openFurnish then
+			guildHallTab = "Furnish"
+			currentPage = "GuildHall"
+			if UnitsScreen and UnitsScreen.IsOpen() then
+				UnitsScreen.Close() -- its onClosed re-enables the menu and shows currentPage
+			else
+				screenGui.Enabled = true
+				showPage("GuildHall")
+			end
+		end
+	end
+	overlay.Activated:Connect(function() done(false) end)
+	local b = makeButton(box, "Furnish", Theme.Colors.Success, function() done(true) end) -- GH-TAB-FURNISH
+	b.Size = UDim2.new(0.5, 0, 0, BUTTON_HEIGHT)
+	b.AnchorPoint = Vector2.new(0.5, 1)
+	b.Position = UDim2.new(0.5, 0, 1, -12)
+	gui.Parent = playerGui -- NET-004: properties before Parent
+end
+
 local PAGES: { [string]: () -> () } = {
+	GuildHall = pageGuildHall, -- Slice 8 step 1 (2026-11-16)
 	-- Tavern and Merchant are their own screens (openTavern / openMerchant), 2026-10-31.
 	-- Merchant is its own screen (openMerchant), not a page of this menu (2026-10-31).
 	Blacksmith = pageBlacksmith,
@@ -2077,7 +2318,7 @@ local navPageOf: { [GuiButton]: string } = {}
 
 local function styleNav()
 	for btn, page in navPageOf do
-		Theme.SetTabState(btn, if page == currentPage then "Active" else "Inactive")
+		Theme.SetTabState(btn, if lockedPages[page] then "Disabled" elseif page == currentPage then "Active" else "Inactive")
 	end
 end
 
@@ -2104,6 +2345,147 @@ local advGuildButton: TextButton? = nil
 local changePartyButton: TextButton? = nil
 local scoutToken = 0
 
+-- "Upgrade at the Guild Hall" link (guild_facilities 90, approved rank text 15; W3 2026-11-16).
+-- One shared button, shown while any building screen is open; it closes that screen and opens the
+-- Guild Hall upgrade list. Every building screen has the same header bar (title left, gold line
+-- right); the link sits in the free gap between them, so it never covers a screen's own buttons.
+-- Polled at 2 Hz (cheap IsOpen checks + a header lookup) so no screen module needs editing.
+local GH_LINK_SCREENS: { [any]: string } = {}
+for name, s in { TavernScreen = TavernScreen, MerchantScreen = MerchantScreen, BlacksmithScreen = BlacksmithScreen,
+	RuneforgeScreen = RuneforgeScreen, CrucibleScreen = CrucibleScreen, ApothecaryScreen = ApothecaryScreen,
+	TrainingGroundsScreen = TrainingGroundsScreen, DispatchScreen = DispatchScreen, DungeonScreen = DungeonScreen } do
+	if s then GH_LINK_SCREENS[s] = name end
+end
+local GH_LINK_W, GH_LINK_H = 180, 44 -- 44 px touch target (rule 244)
+local ghLinkGui = Instance.new("ScreenGui")
+ghLinkGui.Name = "GuildHallLink"
+ghLinkGui.ResetOnSpawn = false
+ghLinkGui.IgnoreGuiInset = false -- same coordinate space as the building screens' headers
+ghLinkGui.DisplayOrder = 60
+ghLinkGui.Enabled = false
+local function openLinkScreen(): (any, string?)
+	for s, name in GH_LINK_SCREENS do
+		local okO, isOpen = pcall(s.IsOpen)
+		if okO and isOpen then return s, name end
+	end
+	return nil, nil
+end
+onGuildHallLink = function()
+	if dungeonDeparting then return end
+	local openScreen = openLinkScreen()
+	if not openScreen then return end
+	confirmLeaveWithCart(function()
+		pcall(openScreen.Close)
+		task.defer(function()
+			screenGui.Enabled = true
+			showPage("GuildHall")
+		end)
+	end)
+end
+local ghLinkBtn: GuiButton = Theme.MakeTabButton(ghLinkGui, "Upgrade at the Guild Hall", "Inactive", function() onGuildHallLink() end,
+	{ name = "GuildHallLinkButton", size = UDim2.fromOffset(GH_LINK_W, GH_LINK_H) })
+-- Furniture craft button (furniture step 3, USER RULING 2026-11-16 3:40 PM; approved step 3 line 1).
+-- Shown beside the Guild Hall link on the Blacksmith / Runeforge / Apothecary screens only.
+local FURN_SCREENS: { [string]: string } = { BlacksmithScreen = "Blacksmith", RuneforgeScreen = "Runeforge", ApothecaryScreen = "Apothecary" }
+local FURN_BTN_W = 76 -- "Furniture" fits at 12 px (measured 750x382)
+local GH_LINK_W_CRAFT = 146 -- the link wraps to 2 lines (12 px) so both fit the header gap
+local openFurnitureCraft: (building: string) -> () = function() end
+local closeFurnitureCraftFn: () -> () = function() end -- set below; closes the list when no craft screen is open
+local furnBuilding: string? = nil
+local furnBtn: GuiButton = Theme.MakeTabButton(ghLinkGui, "Furniture", "Inactive", function()
+	if furnBuilding and not dungeonDeparting then openFurnitureCraft(furnBuilding) end
+end, { name = "FurnitureCraftButton", size = UDim2.fromOffset(FURN_BTN_W, GH_LINK_H) })
+furnBtn.Visible = false
+ghLinkGui.Parent = playerGui -- NET-004
+-- Header gap of the open screen: the two header labels drawn above the safe area (title, gold).
+local function placeLink(screenName: string): boolean
+	local sg = playerGui:FindFirstChild(screenName)
+	if not (sg and sg:IsA("ScreenGui")) then return false end
+	local heads: { TextLabel } = {}
+	for _, d in sg:GetDescendants() do
+		if d:IsA("TextLabel") and d.Text ~= "" and d.AbsolutePosition.Y < 0 and d.AbsoluteSize.X > 40 then
+			local vis = true
+			local a: Instance? = d
+			while a and a ~= sg do
+				if a:IsA("GuiObject") and not a.Visible then vis = false break end
+				a = a.Parent
+			end
+			if vis then table.insert(heads, d) end
+		end
+	end
+	if #heads == 0 then return false end
+	table.sort(heads, function(a: TextLabel, b: TextLabel) return a.AbsolutePosition.X < b.AbsolutePosition.X end)
+	local title = heads[1]
+	local left = title.AbsolutePosition.X + title.AbsoluteSize.X + 6
+	local right = if heads[2] then heads[2].AbsolutePosition.X - 6 else workspace.CurrentCamera.ViewportSize.X - 6
+	furnBuilding = FURN_SCREENS[screenName]
+	local y = math.floor(title.AbsolutePosition.Y + (title.AbsoluteSize.Y - GH_LINK_H) / 2)
+	if furnBuilding then
+		-- Craft screens: measure from the end of the title TEXT (left-aligned) so the link (2 lines) and
+		-- the Furniture button both fit; neither covers a screen button or the gold line.
+		local l2 = title.AbsolutePosition.X + title.TextBounds.X + 6
+		local need = GH_LINK_W_CRAFT + 6 + FURN_BTN_W
+		if right - l2 >= need then
+			local x = math.floor(l2 + (right - l2 - need) / 2)
+			ghLinkBtn.Size = UDim2.fromOffset(GH_LINK_W_CRAFT, GH_LINK_H)
+			ghLinkBtn.Position = UDim2.fromOffset(x, y)
+			furnBtn.Position = UDim2.fromOffset(x + GH_LINK_W_CRAFT + 6, y)
+			furnBtn.Visible = true
+			return true
+		end
+		-- Header too narrow for both: Furniture just below the link's right edge (fallback).
+		furnBtn.Visible = true
+	else
+		furnBtn.Visible = false
+	end
+	if right - left < GH_LINK_W then return false end
+	local x = math.floor(left + (right - left - GH_LINK_W) / 2)
+	ghLinkBtn.Size = UDim2.fromOffset(GH_LINK_W, GH_LINK_H)
+	ghLinkBtn.Position = UDim2.fromOffset(x, y)
+	if furnBuilding then furnBtn.Position = UDim2.fromOffset(x + GH_LINK_W - FURN_BTN_W, y + GH_LINK_H + 4) end
+	return true
+end
+task.spawn(function()
+	while ghLinkGui.Parent do
+		local show = false
+		if not dungeonDeparting then
+			local s, name = openLinkScreen()
+			if s and name then show = placeLink(name) end
+		end
+		ghLinkGui.Enabled = show
+		if not show or not furnBuilding then closeFurnitureCraftFn() end
+		task.wait(0.5)
+	end
+end)
+
+-- Furniture craft list: moved to UI/FurnishScreen.lua (furniture v5 step 4a, 2026-11-16).
+openFurnitureCraft = function(building: string)
+	if FurnishScreen then FurnishScreen.OpenCraft(building) end
+end
+closeFurnitureCraftFn = function()
+	if FurnishScreen then FurnishScreen.CloseCraft() end
+end
+
+-- "New" marks on the nav (Slice 8 step 1): page -> label; cleared on the server once opened.
+local navNewLabels: { [string]: TextLabel } = {}
+local NAV_BUILDING: { [string]: string } = {
+	GuildHall = "GuildHall", Tavern = "Tavern", Merchant = "Merchant", Blacksmith = "Blacksmith",
+	Runeforge = "Runeforge", Crucible = "Crucible", Apothecary = "Apothecary",
+	TrainingGrounds = "TrainingGrounds", Dispatch = "Dispatch", Dungeon = "Dungeon",
+}
+local function clearNewMark(pageName: string)
+	local lbl = navNewLabels[pageName]
+	if not lbl then return end
+	lbl:Destroy()
+	navNewLabels[pageName] = nil
+	local bName = NAV_BUILDING[pageName]
+	if bName then
+		task.spawn(function()
+			pcall(function() GuildEvents.BuildingAction:InvokeServer({ action = "Seen", building = bName }) end)
+		end)
+	end
+end
+
 local function buildNav()
 	for _, b in navButtons do b:Destroy() end
 	navButtons = {}
@@ -2111,6 +2493,7 @@ local function buildNav()
 	-- Third field = Theme.GuildIcons key (user ruling 2026-11-13 12:40 AM). Units has none:
 	-- it keeps an empty icon column so its name lines up with the others.
 	local entries = {
+		{ "Guild Hall", "GuildHall", "Townhall" }, -- upgrade list (Slice 8 step 1, approved rank text 1)
 		{ "Tavern", "Tavern", "Recruitment" }, { "Merchant", "Merchant", "GearMerchant" },
 		{ "Blacksmith", "Blacksmith", "Blacksmith" },
 		{ "Runeforge", "Runeforge", "Runeforge" }, { "Crucible", "Crucible", "Crucible" },
@@ -2124,6 +2507,7 @@ local function buildNav()
 	for i, e in entries do
 		local pageName = e[2]
 		local btn: GuiButton = Theme.MakeTabButton(nav, e[1], "Inactive", function()
+			if clearNewMark then clearNewMark(pageName) end -- "New" mark goes once the building is opened
 			-- PER-SCREEN KEEP/DISCARD (2026-10-14): switching screens with unsaved changes
 			-- prompts Confirm/Discard FIRST, so changes can't pile across screens. Same-screen
 			-- re-tap is a no-op (never prompts). Nothing pending -> switches instantly.
@@ -2289,6 +2673,60 @@ local function buildNav()
 end
 buildNav()
 
+-- Locked buildings (Slice 8 step 1): greyed (Disabled bar art); a tap explains how to open
+-- them (approved rank text 12). Open buildings with a "New" mark show it (rank text 14).
+-- Tapping a locked nav entry shows the approved lock line (rank text 12).
+showLockLine = function(page: string)
+	local info = lockedPages[page]
+	if info then
+		setStatus(`{info.display} unlocks at Renown Rank {info.unlockRank}. Complete quests to earn Renown.`, true)
+	end
+end
+applyNavLocks = function(state: any)
+	table.clear(lockedPages)
+	for btn, page in navPageOf do
+		local bName = NAV_BUILDING[page]
+		local s = bName and state[bName] or nil
+		local catcher = btn:FindFirstChild("LockCatcher")
+		if type(s) == "table" and s.open == false then
+			lockedPages[page] = s
+			if not catcher then
+				local c = Instance.new("TextButton")
+				c.Name = "LockCatcher"
+				c.Text = ""
+				c.BackgroundTransparency = 1
+				c.Size = UDim2.fromScale(1, 1)
+				c.ZIndex = btn.ZIndex + 2
+				c.Parent = btn
+				c.Activated:Connect(function() showLockLine(page) end)
+			end
+		elseif catcher then
+			catcher:Destroy()
+		end
+		local hasNew = type(s) == "table" and s.open == true and s.new == true
+		if hasNew and not navNewLabels[page] then
+			local n = Instance.new("TextLabel")
+			n.Name = "NewMark"
+			n.Text = "New"
+			n.Font = Theme.Font.PrimaryBold
+			n.TextSize = Theme.Text.Small()
+			n.TextColor3 = Theme.Colors.TextGold
+			n.BackgroundTransparency = 1
+			n.AnchorPoint = Vector2.new(1, 0.5)
+			n.Position = UDim2.new(1, -8, 0.5, 0)
+			n.Size = UDim2.new(0, 34, 1, 0)
+			n.TextXAlignment = Enum.TextXAlignment.Right
+			n.ZIndex = btn.ZIndex + 1
+			n.Parent = btn
+			navNewLabels[page] = n
+		elseif not hasNew and navNewLabels[page] then
+			navNewLabels[page]:Destroy()
+			navNewLabels[page] = nil
+		end
+	end
+	styleNav()
+end
+
 --------------------------------------------------
 -- SERVER FACTS
 --------------------------------------------------
@@ -2433,7 +2871,12 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 		-- Deprecated 2026-10-16: "Change party" now lives in the Adventurer's Guild sortie step.
 		changePartyButton.Visible = false
 	end
-	if currentPhase == "PreBattle" then
+	local isDungeonSortie = currentPhase == "PreBattle" and type(data) == "table" and data.dungeon == true
+	dungeonDeparting = isDungeonSortie
+	if isDungeonSortie then
+		sortieMode = false -- the dungeon party is fixed: no quest briefing, no party pick
+		departPending = true -- depart on MapBuildComplete (same deferred-embark path as quests)
+	elseif currentPhase == "PreBattle" then
 		sortieMode = true
 		-- Adopt the quest from the PreBattle payload if the client never captured it via a
 		-- "Choose" tap (fallback pick / old path). Without this the sortie page guard
@@ -2458,6 +2901,33 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	end
 	-- Sortie lands on the in-screen Adventurer's Guild page (sortie controls); otherwise
 	-- the base opens on Units. (2026-10-16)
+	if isDungeonSortie then
+		screenGui.Enabled = false
+		if DungeonScreen then
+			DungeonScreen.Open()
+			DungeonScreen.SetStatus(EMBARK_PHRASES[1] .. "...") -- existing text "Scouting the area..."
+		end
+		if not sortieLocked and departPending then -- map already built: go now
+			departPending = false
+			if DungeonScreen then DungeonScreen.Hide() end
+			BattleEvents.StartBattle:FireServer()
+		end
+		-- W3 (fixed 2026-11-16, Tester thread-f0e64b74e051): if MapBuildComplete is slow, only tell the
+		-- player; keep departPending so a late map still departs exactly once. Do NOT send AbandonQuest
+		-- here: the server only listens for it after MapBuildComplete, so it would be dropped. If the
+		-- server skips the room (map Generate pcall), it closes the menu and the close handler resets.
+		-- Unrecoverable (documented, not fixed): a server error after map generate stops the loop.
+		dungeonDepartToken += 1
+		local myToken = dungeonDepartToken
+		local timeout = DUNGEON_DEPART_TIMEOUT
+		task.delay(timeout, function()
+			if myToken ~= dungeonDepartToken or not dungeonDeparting or not departPending then return end
+			warn(`[GuildMenu] Dungeon room map not ready after {timeout} s -- still waiting`)
+			if DungeonScreen then DungeonScreen.SetStatus("Something went wrong. Try again.", true) end -- existing generic text
+		end)
+		print("[GuildMenu] Opened (PreBattle, dungeon room) -- departing from the Dungeon screen")
+		return
+	end
 	showPage(sortieMode and "Adventurers" or "Units")
 	if currentPhase == "Base" and dungeonLaunchPending then
 		fireDungeonLaunch() -- quest board was backed out of: now the server listens for the room
@@ -2466,6 +2936,7 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	elseif not sortieMode then
 		openUnits() -- base lands on the Units screen (user 2026-11-13 1:57 PM)
 	end
+	if currentPhase == "Base" and not sortieMode then task.spawn(showFurnitureNotice) end -- old-save notice, once
 	print(`[GuildMenu] Opened ({currentPhase})`)
 end)
 
@@ -2496,6 +2967,8 @@ GuildEvents.GuildMenuClosed.OnClientEvent:Connect(function()
 		cartDismantles = {} -- v2 step 3 D-1: a staged dismantle must never outlive the menu (BUG-065)
 	end
 	screenGui.Enabled = false
+	dungeonDeparting = false
+	dungeonDepartToken += 1 -- W3: cancel any pending timeout
 	print("[GuildMenu] Closed")
 end)
 
@@ -2505,6 +2978,22 @@ if BattleEvents.MapBuildComplete then
 	BattleEvents.MapBuildComplete.OnClientEvent:Connect(function()
 		unlockSortie()
 		-- If the player already tapped Embark during scouting, depart now (deferred-embark).
+		if departPending and dungeonDeparting then
+			-- W2 (2026-11-16): a dungeon room departs from the Dungeon screen, which has no building cart;
+			-- never wait on the Confirm/Discard prompt (Cancel would leave dungeonDeparting stuck).
+			departPending = false
+			dungeonDepartToken += 1 -- W3: map arrived, cancel the timeout
+			local pendingCount = cartCount()
+			if pendingCount > 0 then
+				warn(`[GuildMenu] Dungeon departure with {pendingCount} pending change(s) -- discarded`)
+				cartBuys = {}; cartSells = {}; cartUpgrades = {}; cartDowngrades = {}
+				cartDispatches = {}; cartHires = {}; cartDismantles = {}
+			end
+			if DungeonScreen then DungeonScreen.Hide() end
+			screenGui.Enabled = false
+			BattleEvents.StartBattle:FireServer()
+			return
+		end
 		if departPending then
 			departPending = false
 			-- Deferred departure follows the same Confirm/Discard rule as every other exit

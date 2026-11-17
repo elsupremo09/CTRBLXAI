@@ -12,8 +12,8 @@
 --   project_rules 261  node weights
 --   project_rules 262  placement rules (enforced in DungeonMap.lua)
 --   project_rules 263  dungeon level (+1 per floor), growing drop multiplier
---   project_rules 268  dungeon Merchant (x1.25, Legendary 1% from L9, refills x1.5)
---   guild_facilities 86 unlock at Guild Hall L6
+--   project_rules 268  dungeon Merchant (silver prices, Legendary 1% from L9, refills 60% silver; step 2)
+--   guild_facilities 86/89 unlock at Renown Rank 25 (BuildingService; Guild Hall gate removed 2026-11-16)
 --   USER RULING 6:19 PM: Legendary shop markup x8.0; Event nodes play as normal battles
 --     until the 10 approved events are built (build step 7).
 --   Build step 3 (2026-11-13): wipeout gold, choice refresh and biome order moved here from
@@ -46,7 +46,6 @@ DungeonRules.Data = table.freeze({
 	PartyCaps = table.freeze({ 7, 7, 7, 8, 8, 8, 9, 9, 9, 10 }), -- by facility level
 	DeployMax = 7,       -- only 7 fight per battle; the rest wait on the bench (bench EXP)
 	BringInsPerRest = 1, -- Edit party: at most 1 unit brought in per Rest room (Sim v7)
-	UnlockGuildHallLevel = 6,           -- guild_facilities 86
 	AllBiomes = ALL_BIOMES,
 	-- project_rules 258 / guild_facilities 87
 	Levels = table.freeze({
@@ -74,7 +73,14 @@ DungeonRules.Data = table.freeze({
 	StageLevelBonus = table.freeze({ 0, 3, 6 }),        -- battle level + by stage (rule 263)
 	StageGoldMult = table.freeze({ 1.0, 1.25, 1.5 }),   -- battle gold x by stage (rule 263)
 	StageBringIns = 1,                                 -- bring-ins allowed at the start of stages 2/3 (rule 265)
-	MaxStages = 3,
+	MaxStages = 3, -- the normal stages (facility L1-L9 cards stop here)
+	-- Endless stages (v5 step 5, project_rules 281; USER RULING 2026-11-16 7:44 PM): facility L10 only.
+	EndlessFacilityLevel = 10,
+	StageLimit = 99,          -- save / sanity bound on the stage number (agent default; Sim: runs end ~stage 7-8)
+	EndlessFloors = 8,        -- stages 4+ = 8 floors + boss row, whatever the difficulty
+	EndlessLevelPerStage = 3, -- +3 battle levels per stage after 3 (levels stay capped at 99)
+	DepthHpPct = 8,           -- Depth bonus per stage after 3: enemies +8% Max HP (additive, no cap)
+	DepthAtkDefPct = 4,       -- and +4% Attack and Defense (additive, no cap; never AP / RT / Movement)
 	-- project_rules 260
 	MapWidth = 4,
 	MapPaths = 4,
@@ -101,7 +107,8 @@ DungeonRules.Data = table.freeze({
 	Events = table.freeze({
 		table.freeze({ id = "EV-01", good = true }),  table.freeze({ id = "EV-02", good = true }),
 		table.freeze({ id = "EV-03", good = true }),  table.freeze({ id = "EV-04", good = true }),
-		table.freeze({ id = "EV-05", good = true }),  table.freeze({ id = "EV-06", good = true }),
+		-- EV-05 Lucky Shrine REMOVED from the pool (silver step 2, rule 272 7:54 PM; its +0.25 bonus was retired).
+		table.freeze({ id = "EV-06", good = true }),
 		table.freeze({ id = "EV-07", good = true }),  table.freeze({ id = "EV-08", good = true }),
 		table.freeze({ id = "EV-09", good = false }), table.freeze({ id = "EV-10", good = false }),
 		-- EV-11..16 (approved 2026-11-15 1:42 AM, rule 272). Mixed counts as Good. EV-16 is now Altar of Change
@@ -109,6 +116,9 @@ DungeonRules.Data = table.freeze({
 		table.freeze({ id = "EV-11", good = true, needsKin = true }), table.freeze({ id = "EV-12", good = true }),
 		table.freeze({ id = "EV-13", good = true }), table.freeze({ id = "EV-14", good = true }),
 		table.freeze({ id = "EV-15", good = true }), table.freeze({ id = "EV-16", good = false }),
+		-- EV-17 Courier's Rest (rules 261 / 272, 2026-11-15 7:54 PM): Good, weight 2 (others 1), once per stage
+		-- (not on the run-long no-repeat list; DungeonRooms tracks run.courierStage).
+		table.freeze({ id = "EV-17", good = true, weight = 2, oncePerStage = true }),
 	}),
 	-- Event numbers (DRAFT per rule 272, Simulator v7 checked).  Pct = % of max HP (and MP for heals).
 	Ev = table.freeze({
@@ -117,6 +127,10 @@ DungeonRules.Data = table.freeze({
 		AltarHurtPct = 15, AltarRolls = 2, DoorTreasurePct = 60, DoorRolls = 1, DoorGold = 200,
 		GambleBet = 200, GambleWinPct = 50, GamblePayout = 400, TunnelAllPct = 10, TunnelOnePct = 25,
 		CutpurseGoldPct = 25,
+		-- Silver step 2 (rules 272 / 278, 7:54 PM): event silver replaces event gold. Flat amounts (no stage
+		-- multiplier, no relic change: agent default). Old gold keys above stay for saved EV-05 rooms only.
+		PouchSilver = 30, DoorSilver = 40, GambleBetSilver = 20, GamblePayoutSilver = 40, CutpurseSilverPct = 25,
+		BarterSilverForMercury = 40, PeddlerRefillPct = 40,
 		-- EV-11..16 (rule 272, approved 2026-11-15; numbers DRAFT per Simulator v9)
 		KinHealPct = 15, KinRolls = 1, DoctrineStatPct = 10,
 		SmithLevelUp = 5,
@@ -154,11 +168,10 @@ DungeonRules.Data = table.freeze({
 	BaseDropChance = 0.05,              -- loot_progression 13
 	MaxDropChance = 0.95,
 	-- project_rules 268 + 6:19 PM ruling
-	MerchantMarkup = 1.25,              -- x the normal Merchant price
 	MerchantLegendaryChance = 0.01,     -- per item, from facility L9
 	MerchantLegendaryMinLevel = 9,      -- below L9 the 1% goes to Common
-	LegendaryShopMarkup = 8.0,          -- economy_framework 15 (Exalted x6.0 -> Legendary x8.0)
-	RefillPriceMult = 1.5,              -- x Apothecary price (Q9)
+	-- Silver step 2: the x1.25 markup, the x8.0 Legendary markup (removed by user 8:45 PM) and the x1.5
+	-- Apothecary refill are gone: the dungeon Merchant prices in SILVER (rule 278 / 268, below).
 	-- project_rules 264: early escape
 	EarlyEscapeGoldKeep = 0.75,
 	-- project_rules 264: a wipeout follows the existing defeat rule (keep EXP + 50% gold)
@@ -172,7 +185,7 @@ DungeonRules.Data = table.freeze({
 	-- Relic rolls are NOT boosted by the drop rate, Fortune, the Elite/Boss bonus or the Shrine.
 	Relics = table.freeze({
 		table.freeze({ id = "RL-01", name = "Heartstone",        rarity = "Common",    src = "TEBV", text = "Your party's Max HP is 5% higher." }),
-		table.freeze({ id = "RL-02", name = "Gilded Purse",      rarity = "Common",    src = "TEBV", text = "Battles drop 10% more gold." }),
+		table.freeze({ id = "RL-02", name = "Gilded Purse",      rarity = "Common",    src = "TEBV", text = "Earn 10% more silver." }), -- SB-40
 		table.freeze({ id = "RL-03", name = "Warm Bedroll",      rarity = "Common",    src = "TEBV", text = "Rest rooms heal 10% more." }),
 		table.freeze({ id = "RL-04", name = "Quickstep Boots",   rarity = "Uncommon",  src = "TEB",  text = "Your party starts each battle with RT 20 lower." }),
 		table.freeze({ id = "RL-05", name = "Refill Satchel",    rarity = "Uncommon",  src = "TEB",  text = "At battle start, one equipped consumable gains +1 charge." }),
@@ -196,8 +209,8 @@ DungeonRules.Data = table.freeze({
 		table.freeze({ id = "RL-21", name = "Featherfall Crest",  rarity = "Epic",      src = "B",    kind = "Major", text = "Your party has Flight in every battle this run." }),
 		table.freeze({ id = "RL-22", name = "Lich's Phylactery",  rarity = "Epic",      src = "B",    kind = "Major", text = "Your party becomes Undead. Dungeon heals still heal them." }),
 		-- RL-23..RL-60 (relics v2, user ruling 2026-11-15 12:21 PM; numbers = Simulator v11 + auto-accepted 12:38 PM).
-		-- NOT BUILT (need code): RL-23 Prospector's Map, RL-24 Mimic's Bargain, RL-42 Vanguard Oath, RL-48 Sage's
-		-- Hourglass, RL-51 Scholar's Creed -> left out of this table so they can never drop.
+		-- Relic build step 2 (2026-11-15): RL-23 / RL-24 / RL-42 / RL-48 / RL-51 now built (were left out until coded).
+		table.freeze({ id = "RL-23", name = "Prospector's Map",   rarity = "Epic",      src = "TEB", kind = "Major", text = "Each battle has one extra treasure chest." }),
 		table.freeze({ id = "RL-25", name = "Longshot Fletching", rarity = "Rare",      src = "TEB", kind = "Major", text = "Your party's attack range is +1." }),
 		table.freeze({ id = "RL-26", name = "Steady Footing",     rarity = "Common",    src = "TEV", kind = "Minor", text = "Your party gains +1 Stability." }),
 		table.freeze({ id = "RL-27", name = "Far Focus",          rarity = "Uncommon",  src = "TEV", kind = "Minor", text = "Your party's skill range is +1." }),
@@ -215,37 +228,58 @@ DungeonRules.Data = table.freeze({
 		table.freeze({ id = "RL-39", name = "Arcane Seal",        rarity = "Rare",      src = "TEB", kind = "Major", text = "Your party is immune to Mana Burn." }),
 		table.freeze({ id = "RL-40", name = "Rustward Oil",       rarity = "Uncommon",  src = "TEV", kind = "Minor", text = "Your party can't be Corroded." }),
 		table.freeze({ id = "RL-41", name = "Bond of Kin",        rarity = "Uncommon",  src = "TE",  kind = "Minor", text = "Your summons have double HP." }),
+		table.freeze({ id = "RL-42", name = "Vanguard Oath",      rarity = "Uncommon",  src = "TE",  kind = "Minor", text = "Your first deployed unit has 50% more HP." }),
 		-- Boss relics (kind "Boss"): Boss pick option a only, any facility level, shown as Legendary.
 		table.freeze({ id = "RL-43", name = "Chains of the Deep", rarity = "Legendary", src = "",    kind = "Boss",  text = "Enemies move 1 less. Your party's range is -1 (min 1)." }),
 		table.freeze({ id = "RL-44", name = "Tyrant's Hourglass", rarity = "Legendary", src = "",    kind = "Boss",  text = "Enemies act slower. Your party takes 10% more damage." }), -- v11: RT +100 -> +50
-		table.freeze({ id = "RL-45", name = "Reaver's Pact",      rarity = "Legendary", src = "",    kind = "Boss",  text = "Your party deals 20% more damage. Fortune is 35% lower." }),
-		table.freeze({ id = "RL-46", name = "Glass Crown",        rarity = "Legendary", src = "",    kind = "Boss",  text = "More damage and speed, but 10% less HP." }), -- v11: -20% -> -10% (DRAFT text)
-		table.freeze({ id = "RL-47", name = "Hollow Throne",      rarity = "Legendary", src = "",    kind = "Boss",  text = "Loot grows higher, but Rests heal 10% less." }), -- v11: -50% -> -10% (DRAFT text)
+		table.freeze({ id = "RL-45", name = "Reaver's Pact",      rarity = "Legendary", src = "",    kind = "Boss",  text = "Your party deals 10% more damage, but earns 35% less silver." }), -- SB-42
+		table.freeze({ id = "RL-46", name = "Glass Crown",        rarity = "Legendary", src = "",    kind = "Boss",  text = "More damage and speed, but 10% less HP." }), -- v11: -20% -> -10% (text approved 12:38 PM)
+		table.freeze({ id = "RL-47", name = "Hollow Throne",      rarity = "Legendary", src = "",    kind = "Boss",  text = "Loot grows higher, but Rests heal 10% less." }), -- v11: -50% -> -10% (text approved 12:38 PM)
+		table.freeze({ id = "RL-48", name = "Sage's Hourglass",   rarity = "Epic",      src = "EB",  kind = "Major", text = "Your party casts 35% faster." }),
 		table.freeze({ id = "RL-49", name = "Pikeman's Creed",    rarity = "Common",    src = "TEV", kind = "Minor", text = "All spear users gain +1 range, foes too." }),
 		table.freeze({ id = "RL-50", name = "Archer's Creed",     rarity = "Common",    src = "TEV", kind = "Minor", text = "All bow users gain +1 range, foes too." }),
+		table.freeze({ id = "RL-51", name = "Scholar's Creed",    rarity = "Common",    src = "TEV", kind = "Minor", text = "All staff users regain 10% MP each turn, foes too." }),
 		table.freeze({ id = "RL-52", name = "Duelist's Creed",    rarity = "Uncommon",  src = "TEV", kind = "Minor", text = "All sword users gain 10% Precision, foes too." }),
 		table.freeze({ id = "RL-53", name = "Iron Skin Oil",      rarity = "Common",    src = "TEV", kind = "Minor", text = "Your party gains 5% Defense." }),
 		table.freeze({ id = "RL-54", name = "Swift Sigil",        rarity = "Rare",      src = "TEB", kind = "Major", text = "Your party acts a little faster every turn." }),
 		table.freeze({ id = "RL-55", name = "Ironjaw Mantle",     rarity = "Uncommon",  src = "TEV", kind = "Minor", text = "Your party can't be Feared or Taunted." }),
 		table.freeze({ id = "RL-56", name = "Stargazer Lens",     rarity = "Common",    src = "TEV", kind = "Minor", text = "Your party sees 1 tile farther." }),
 		-- Random curses (never rolled alone): 20% of Major relics come with one (take both / leave both).
+		table.freeze({ id = "RL-24", name = "Mimic's Bargain",    rarity = "Epic",      src = "",    kind = "Curse", text = "One chest in each battle is a Mimic." }),
 		table.freeze({ id = "RL-57", name = "Leaden Crown",       rarity = "Epic",      src = "",    kind = "Curse", text = "Your party jumps 1 less." }),
 		table.freeze({ id = "RL-58", name = "Hunger Curse",       rarity = "Epic",      src = "",    kind = "Curse", text = "Your party starts each battle with 5% less MP." }),
-		table.freeze({ id = "RL-59", name = "Coin-Eater",         rarity = "Epic",      src = "",    kind = "Curse", text = "You keep 15% less gold from each win." }),
+		table.freeze({ id = "RL-59", name = "Coin-Eater",         rarity = "Epic",      src = "",    kind = "Curse", text = "You get 15% less silver from each win." }), -- SB-41
 		table.freeze({ id = "RL-60", name = "Black Lantern",      rarity = "Epic",      src = "",    kind = "Curse", text = "Enemies have 10% more HP." }),
+		-- Depth curses (endless step 6, 2026-11-16; rule 282, names + texts APPROVED 8:07 PM). Never rolled as relics:
+		-- only the forced pick 1 of 2 before Go deeper into stage 4+ (DungeonDepth). stack = can be taken again (effects add).
+		table.freeze({ id = "RL-61", name = "Thinning Air",  rarity = "Epic", src = "", kind = "Curse", stack = true, text = "Party −5% Max HP at battle start." }),
+		table.freeze({ id = "RL-62", name = "Dulled Steel",  rarity = "Epic", src = "", kind = "Curse", stack = true, text = "Party deals 4% less damage." }),
+		table.freeze({ id = "RL-63", name = "Brittle Guard", rarity = "Epic", src = "", kind = "Curse", stack = true, text = "Party takes 4% more damage." }),
+		table.freeze({ id = "RL-64", name = "Restless Dead", rarity = "Epic", src = "", kind = "Curse", stack = true, text = "Enemies start each battle with 1 extra enemy (normal battles only, max +3)." }),
+		table.freeze({ id = "RL-65", name = "Fading Embers", rarity = "Epic", src = "", kind = "Curse", stack = true, text = "Rest and stage-start heals 5 points lower (min 10%)." }),
+		table.freeze({ id = "RL-66", name = "Heavy Pack",    rarity = "Epic", src = "", kind = "Curse", text = "Bag −2 slots (items over the limit must be thrown away)." }),
+		table.freeze({ id = "RL-67", name = "Dimming Light", rarity = "Epic", src = "", kind = "Curse", text = "Discovery Radius −1 (min 1)." }),
+		table.freeze({ id = "RL-68", name = "Starved Purse", rarity = "Epic", src = "", kind = "Curse", text = "−10% silver earned." }),
 	}),
 	-- Curse pairs (rule 271): the Major relic always comes with its curse. RL-17 War Banner -> RL-18 Leaden Shackles.
 	RelicCursePairs = table.freeze({ ["RL-17"] = "RL-18" }),
 	-- Random curse pool + chance (relics v2): a Major relic without a fixed pair has 20% to carry one.
-	RelicCursePool = table.freeze({ "RL-18", "RL-57", "RL-58", "RL-59", "RL-60" }),
+	RelicCursePool = table.freeze({ "RL-18", "RL-24", "RL-57", "RL-58", "RL-59", "RL-60" }),
 	RelicCurseChancePct = 20,
+	-- Depth curse picks (endless step 6; rules 281/282): pool = RL-61..68 + the 6 old curses once each. Stackable ones
+	-- (stack = true above) can repeat; the rest only once per run. Curses per stage: 1/1/2/2/2 on stages 4-8, then 3.
+	DepthCursePool = table.freeze({ "RL-61", "RL-62", "RL-63", "RL-64", "RL-65", "RL-66", "RL-67", "RL-68",
+		"RL-18", "RL-24", "RL-57", "RL-58", "RL-59", "RL-60" }),
+	DepthCurseCounts = table.freeze({ [4] = 1, [5] = 1, [6] = 2, [7] = 2, [8] = 2 }),
+	DepthCurseLater = 3,
 	RelicRarityOrder = table.freeze({ "Common", "Uncommon", "Rare", "Epic", "Legendary" }),
 	RelicRarityWeights = table.freeze({ Common = 50, Uncommon = 30, Rare = 13, Epic = 6, Legendary = 1 }),
 	RelicSourceMult = table.freeze({ T = 3, E = 2, V = 0.5 }), -- x the level's relic rate R; Boss = 1 guaranteed
 	RelicBossTierBumpPct = 25,
 	-- Effect numbers (rule 271). Pct = percent.
 	Relic = table.freeze({
-		HeartstoneHpPct = 5, PurseGoldPct = 10, BedrollRestPct = 10, BootsRt = 20, SatchelCharges = 1,
+		HeartstoneHpPct = 5, PurseSilverPct = 10, -- RL-02 now +10% SILVER (rule 271/278, 7:54 PM)
+		BedrollRestPct = 10, BootsRt = 20, SatchelCharges = 1,
 		CharmFortune = 0.05, CloakWeatherPct = 10, TrophyItems = 1, SecondWindHpPct = 50,
 		IronDamagePct = 8, FontMpPct = 10, MedicHpPct = 15, BannerDamagePct = 5,
 		CrownHpPct = 10, CrownDamagePct = 5,
@@ -255,21 +289,44 @@ DungeonRules.Data = table.freeze({
 		LongshotRange = 1, StabilityBonus = 1, FarFocusRange = 1, ManaWellMpPct = 20, BloodWellHpPct = 10,
 		BottomlessCharges = 1, MistHpPct = 10, MistBossHpPct = 5, KinSummonHpMult = 2,
 		ChainsEnemyMove = -1, ChainsPartyRange = -1, TyrantEnemyRt = 50, TyrantDamageTakenPct = 10,
-		ReaverDamagePct = 20, ReaverFortunePct = 35, GlassDamagePct = 15, GlassMoveBonus = 1, GlassHpPct = 10,
+		ReaverDamagePct = 10, ReaverSilverPct = 35, -- RL-45 option A: +10% damage, -35% silver, no Fortune penalty (7:54 PM)
+		GlassDamagePct = 15, GlassMoveBonus = 1, GlassHpPct = 10,
 		ThroneDropCap = 3.0, ThroneRestPct = 10, CreedRange = 1, DuelistPrecision = 0.10, IronSkinDefPct = 5,
-		SwiftRt = 30, StargazerRadius = 1, LeadenJump = -1, HungerMpPct = 5, CoinEaterGoldPct = 15, LanternHpPct = 10,
+		SwiftRt = 30, StargazerRadius = 1, LeadenJump = -1, HungerMpPct = 5, CoinEaterSilverPct = 15, -- RL-59: -15% silver per battle win (7:54 PM)
+		LanternHpPct = 10,
+		-- Depth curses RL-61..68 (rule 282): per stack where stackable
+		ThinAirHpPct = 5, DulledDamagePct = 4, BrittleTakenPct = 4, RestlessMax = 3, EmbersHealPts = 5, EmbersMinPct = 10,
+		HeavyPackSlots = 2, DimRadius = 1, StarvedSilverPct = 10,
+		VanguardHpPct = 50, SageCastPct = 35, ScholarMpPct = 10, -- relic step 2 (RL-42 / RL-48 / RL-51)
 		HexDebuffs = table.freeze({ "Slow", "Weakened", "Enfeebled", "Addled", "Armor Break", "Unsteady", "Blind", "Silence", "Crippled", "Debuff Res Down" }),
 		TotemBuffs = table.freeze({ "Haste", "Regeneration", "Empowered", "Focused", "Stoneskin", "Fleetfoot", "Precise", "Fortunate", "Armored", "Debuff Res Up" }),
 		-- Creed weapon groups (agent default: spear = Spear + Lance; bow = Longbow + Great Bow + Crossbow; sword = Sword + Greatsword + Rapier + Flameberge)
 		SpearWeapons = table.freeze({ ["WPN-SPEAR"] = true, ["WPN-LANCE"] = true }),
 		BowWeapons = table.freeze({ ["WPN-LONGBOW"] = true, ["WPN-GREATBOW"] = true, ["WPN-CROSSBOW"] = true }),
 		SwordWeapons = table.freeze({ ["WPN-SWORD"] = true, ["WPN-GREATSWORD"] = true, ["WPN-RAPIER"] = true, ["WPN-FLAMEBERGE"] = true }),
+		-- RL-51 staff group (agent default 2026-11-15: no "tome" weapon exists; staff = Staff + Wand + Frost Rod)
+		StaffWeapons = table.freeze({ ["WPN-STAFF"] = true, ["WPN-WAND"] = true, ["WPN-FROSTROD"] = true }),
 		Immunities = table.freeze({
 			["RL-35"] = table.freeze({ "Burn" }), ["RL-36"] = table.freeze({ "Poison", "Venom" }), ["RL-37"] = table.freeze({ "Bleed" }),
 			["RL-38"] = table.freeze({ "Drowning" }), ["RL-39"] = table.freeze({ "Mana Burn" }), ["RL-40"] = table.freeze({ "Corroded", "Corroded Lesser" }),
 			["RL-55"] = table.freeze({ "Fear", "Taunted" }),
 		}),
 	}),
+	-- Silver / Bag / bench recovery (USER RULINGS 2026-11-15 7:54 PM; project_rules 278 / 279 / 280). Silver step 1.
+	Silver = table.freeze({ Battle = 20, Elite = 45, Boss = 80, Treasure = 15 }), -- stage-1 silver per won room ("?" pays as the room it becomes)
+	SilverStageMult = table.freeze({ 1, 1.25, 1.5 }), -- stage 1 / 2 / 3, rounded half up (25/56/100/19, 30/68/120/23)
+	BagSlots = table.freeze({ 12, 13, 14, 26, 27, 28, 30, 48, 52, 56 }), -- Bag slots by facility level L1-L10 (rule 279)
+	BagLimitLive = true, -- steps 4-5 (2026-11-16): the Bag screen + full-Bag popup exist, so the limit is enforced (rule 279)
+	-- EV-17 Courier's Rest (rules 258 / 272 / 278): pack size by facility level L1-L10, silver per pack slot.
+	CourierPack = table.freeze({ 4, 4, 4, 6, 6, 6, 6, 8, 8, 8 }),
+	CourierSilverPerSlot = 5,
+	-- Silver step 2 (rules 268 / 278): fixed silver prices at every item level; refills
+	-- ceil(tier price x charges missing / max charges x rate), rate 60% Merchant / 40% Peddler (Ev.PeddlerRefillPct).
+	SilverConsumablePrice = table.freeze({ Common = 15, Uncommon = 25, Rare = 40, Epic = 60 }),
+	SilverGearPrice = table.freeze({ Common = 30, Uncommon = 45, Rare = 70, Epic = 120, Exalted = 165, Legendary = 240 }),
+	SilverTwoHandMult = 1.5,
+	SilverMerchantRefillPct = 60,
+	BenchRecoveryPct = 15, -- rule 280: party units not deployed in a WON battle recover 15% Max HP and Max MP
 	BiomeOrder = table.freeze({
 		"Plains", "Forest", "Desert", "Swamp", "Highlands",
 		"Tundra", "Volcano", "Cave", "Ruins", "Castle", "Corrupted",
@@ -310,21 +367,46 @@ function DungeonRules.AllowedTiers(facilityLevel: number): { any }
 	return out
 end
 
---- Max stages for a facility level (rule 258: 1 / 2 from L4 / 3 from L8).
+--- Max stages for a facility level (rule 258: 1 / 2 from L4 / 3 from L8; rule 281: L10 = endless).
 function DungeonRules.MaxStages(facilityLevel: number): number
+	if toInt(facilityLevel, 1) >= D.EndlessFacilityLevel then return D.StageLimit end -- endless (rule 281)
 	return math.clamp(DungeonRules.Level(facilityLevel).maxStages, 1, D.MaxStages)
 end
-
---- Stage helpers (rule 263/277). stage 1..3.
-function DungeonRules.StageGoldMult(stage: number?): number
-	return D.StageGoldMult[math.clamp(toInt(stage, 1), 1, D.MaxStages)]
+--- Endless run? (the card allows more than the 3 normal stages; rule 281)
+function DungeonRules.IsEndless(card: any): boolean
+	return type(card) == "table" and (tonumber(card.maxStages) or 1) > D.MaxStages
 end
+
+--- Stage helpers (rule 263/277/281). Gold stays at the stage-3 value on stages 4+ (cap held).
+function DungeonRules.StageGoldMult(stage: number?): number
+	return D.StageGoldMult[math.clamp(toInt(stage, 1), 1, #D.StageGoldMult)]
+end
+--- +0 / +3 / +6 on stages 1-3, then +3 more per stage (rule 281); BattleLevel clamps to 99.
 function DungeonRules.StageLevelBonus(stage: number?): number
-	return D.StageLevelBonus[math.clamp(toInt(stage, 1), 1, D.MaxStages)]
+	local s = math.clamp(toInt(stage, 1), 1, D.StageLimit)
+	local n = #D.StageLevelBonus
+	if s <= n then return D.StageLevelBonus[s] end
+	return D.StageLevelBonus[n] + (s - n) * D.EndlessLevelPerStage
+end
+--- Floors for a stage: the card's floors on stages 1-3, 8 on stages 4+ (rule 281).
+function DungeonRules.StageFloors(cardFloors: number, stage: number?): number
+	if toInt(stage, 1) > D.MaxStages then return D.EndlessFloors end
+	return cardFloors
+end
+--- Depth bonus for enemies on a stage (rule 281): (Max HP %, Attack/Defense %). 0, 0 on stages 1-3.
+function DungeonRules.DepthBonus(stage: number?): (number, number)
+	local n = math.max(0, math.clamp(toInt(stage, 1), 1, D.StageLimit) - D.MaxStages)
+	return n * D.DepthHpPct, n * D.DepthAtkDefPct
+end
+--- Forced depth curses before a stage (rule 281): 0 on stages 1-3, then 1/1/2/2/2, then 3 per stage.
+function DungeonRules.DepthCurseCount(stage: number?): number
+	local s = toInt(stage, 1)
+	if s <= D.MaxStages then return 0 end
+	return (D.DepthCurseCounts :: any)[s] or D.DepthCurseLater
 end
 --- Map seed for a stage (rule 277: run seed + stage). Stage 1 = the card seed (old saves unchanged).
 function DungeonRules.StageSeed(cardSeed: number, stage: number?): number
-	local s = math.clamp(toInt(stage, 1), 1, D.MaxStages)
+	local s = math.clamp(toInt(stage, 1), 1, D.StageLimit)
 	return (toInt(cardSeed, 0) + (s - 1) * 7919) % 2147483647
 end
 
@@ -499,6 +581,87 @@ function DungeonRules.CanForge(r: string?): boolean
 	local cap = table.find(o, D.Ev.ForgeMaxRarity) or 4
 	local i = table.find(o, r :: any)
 	return i ~= nil and i < cap
+end
+
+-- Relic icons RL-01..RL-60 (2026-11-16, user 7:14 PM: painted, colored like the battle buttons; curses
+-- darker / red). The ONE place for these ids (DAT-001). Missing id = no icon (the row shows text only).
+DungeonRules.RelicIcons = table.freeze({
+	-- RELIC_ICONS_BEGIN (image ids; uploaded 2026-11-16 as Decals, art in assets/ui_icons/relics/)
+	["RL-01"] = "rbxassetid://131863065464589", -- decal 128913835311044
+	["RL-02"] = "rbxassetid://114807931927626", -- decal 105551394770399
+	["RL-03"] = "rbxassetid://121445400623556", -- decal 133325845662071
+	["RL-04"] = "rbxassetid://138001512394034", -- decal 129199080148607
+	["RL-05"] = "rbxassetid://123688593516654", -- decal 90813140559464
+	["RL-06"] = "rbxassetid://87168760614416", -- decal 97842538760456
+	["RL-07"] = "rbxassetid://85227082314424", -- decal 110796138230836
+	["RL-08"] = "rbxassetid://83923184231626", -- decal 113354795716722
+	["RL-09"] = "rbxassetid://106017396760064", -- decal 94001925240902
+	["RL-10"] = "rbxassetid://99859696105384", -- decal 125208595471175
+	["RL-11"] = "rbxassetid://130589552690641", -- decal 138427130205446
+	["RL-12"] = "rbxassetid://134469925098720", -- decal 96289646815579
+	["RL-13"] = "rbxassetid://103246356014259", -- decal 104050581460735
+	["RL-14"] = "rbxassetid://100278379870896", -- decal 89554494175344
+	["RL-15"] = "rbxassetid://124800405576984", -- decal 130693523969637
+	["RL-16"] = "rbxassetid://70391097570943", -- decal 125246987477785
+	["RL-17"] = "rbxassetid://133342749367038", -- decal 80885727299808
+	["RL-18"] = "rbxassetid://84393757216524", -- decal 77596291248812
+	["RL-19"] = "rbxassetid://132422781394089", -- decal 104240876471423
+	["RL-20"] = "rbxassetid://100121870576238", -- decal 87813371942888
+	["RL-21"] = "rbxassetid://103607093866208", -- decal 93371873968814
+	["RL-22"] = "rbxassetid://116247374389139", -- decal 100937542460650
+	["RL-23"] = "rbxassetid://94859073774118", -- decal 139471330321463
+	["RL-24"] = "rbxassetid://124753715442368", -- decal 109301509212581
+	["RL-25"] = "rbxassetid://131424119968126", -- decal 88307590153821
+	["RL-26"] = "rbxassetid://91816372839745", -- decal 107299366864844
+	["RL-27"] = "rbxassetid://90705488216418", -- decal 80713012065057
+	["RL-28"] = "rbxassetid://119166372586116", -- decal 118551555788088
+	["RL-29"] = "rbxassetid://115815897066346", -- decal 116928784812049
+	["RL-30"] = "rbxassetid://122009217230389", -- decal 83910944128923
+	["RL-31"] = "rbxassetid://114405727661877", -- decal 70435396202004
+	["RL-32"] = "rbxassetid://128636410659836", -- decal 86623773155865
+	["RL-33"] = "rbxassetid://128583602805775", -- decal 111610207926489
+	["RL-34"] = "rbxassetid://91847168780296", -- decal 126121696450385
+	["RL-35"] = "rbxassetid://79458508850433", -- decal 140507209303778
+	["RL-36"] = "rbxassetid://77355765534803", -- decal 93993613889808
+	["RL-37"] = "rbxassetid://101637457677123", -- decal 78362118678582
+	["RL-38"] = "rbxassetid://100206477821138", -- decal 99496736534053
+	["RL-39"] = "rbxassetid://121541075072712", -- decal 79344830604254
+	["RL-40"] = "rbxassetid://111643198601996", -- decal 115493458473899
+	["RL-41"] = "rbxassetid://102768057110037", -- decal 116278107926234
+	["RL-42"] = "rbxassetid://100435999055176", -- decal 133802070666281
+	["RL-43"] = "rbxassetid://132165659099463", -- decal 133167703477369
+	["RL-44"] = "rbxassetid://72466914382120", -- decal 112489029551765
+	["RL-45"] = "rbxassetid://106988935357851", -- decal 135804687226799
+	["RL-46"] = "rbxassetid://78669848332108", -- decal 109031416567025
+	["RL-47"] = "rbxassetid://88374549188663", -- decal 136758877960063
+	["RL-48"] = "rbxassetid://95682463633637", -- decal 85571747560709
+	["RL-49"] = "rbxassetid://129515098457054", -- decal 133579455768103
+	["RL-50"] = "rbxassetid://80996605291922", -- decal 72034001655449
+	["RL-51"] = "rbxassetid://81400310759287", -- decal 77778644226279
+	["RL-52"] = "rbxassetid://120291850378253", -- decal 117262510144236
+	["RL-53"] = "rbxassetid://88014412136688", -- decal 114628491384207
+	["RL-54"] = "rbxassetid://70614637216906", -- decal 132531756460652
+	["RL-55"] = "rbxassetid://85379919172082", -- decal 80549561511573
+	["RL-56"] = "rbxassetid://103077186490982", -- decal 91905482143999
+	["RL-57"] = "rbxassetid://138837985730828", -- decal 94032510894027
+	["RL-58"] = "rbxassetid://81431598335933", -- decal 125014991833096
+	["RL-59"] = "rbxassetid://105425841606843", -- decal 115421092485813
+	["RL-60"] = "rbxassetid://140127355065593", -- decal 137411969442083
+	-- RL-61..RL-68 depth curses (endless step 6, uploaded 2026-11-16; art in assets/ui_icons/relics/)
+	["RL-61"] = "rbxassetid://124188646867571", -- decal 94254085484589
+	["RL-62"] = "rbxassetid://109836449240783", -- decal 140492670920185
+	["RL-63"] = "rbxassetid://139202808428491", -- decal 82094947204608
+	["RL-64"] = "rbxassetid://76166948956617", -- decal 81124755475697
+	["RL-65"] = "rbxassetid://92620523962439", -- decal 111066680092838
+	["RL-66"] = "rbxassetid://129388413177075", -- decal 104165740304354
+	["RL-67"] = "rbxassetid://129363788878484", -- decal 102910761584698
+	["RL-68"] = "rbxassetid://83627520080426", -- decal 133717241714768
+	-- RELIC_ICONS_END
+} :: { [string]: string })
+
+--- "rbxassetid://..." for a relic id, or nil.
+function DungeonRules.RelicIcon(id: string): string?
+	return DungeonRules.RelicIcons[id]
 end
 
 --- Relic definition by id (nil if unknown).

@@ -74,6 +74,8 @@ local function awayReason(pid: string, unitId: string): string?
 end
 local ProgressionService     = require(Game:WaitForChild("ProgressionService"))
 local RenownService          = require(Game:WaitForChild("RenownService")) -- Renown Rank header (step 2, 2026-11-12)
+local BuildingService        = require(Game:WaitForChild("BuildingService")) -- Rank unlocks + Guild Hall upgrades (Slice 8 step 1, 2026-11-16)
+local FurnitureService       = require(Game:WaitForChild("FurnitureService")) -- Guild Hall furniture (Slice 8 step 2, 2026-11-16)
 -- Item -> UI detail entry (same builder as Loadout/inspector) for the Merchant inspector (2026-10-31).
 local ItemDisplay            = require(Game:WaitForChild("ItemDisplay"))
 
@@ -97,16 +99,10 @@ local GuildMenuService = {}
 -- until Slice 8 builds real facility purchasing). ONE table, Dev-adjustable.
 local DEFAULT_BUILDING_LEVEL = 1
 local BUILDING_MIN_LEVEL, BUILDING_MAX_LEVEL = 1, 10 -- guild_facilities: Max Level 10
-local BUILDING_NAMES = table.freeze({ "GuildHall", "Tavern", "Merchant", "Blacksmith", "Runeforge", "Crucible", "Apothecary", "TrainingGrounds", "Dungeon" }) -- Dungeon: dev-adjustable 2026-11-15 (Main caps it at Guild Hall, 0 below GH L6)
--- guild_facilities 46: the Runeforge unlocks at Guild Hall L4 and can never be above the
--- Guild Hall level. Its building level is Dev-adjustable until Slice 8 facility purchasing.
-local RUNEFORGE_UNLOCK_GUILD_HALL = 4
--- Crucible (gear merging, USER DECISION 2026-11-02): unlocks at Guild Hall L5, never above it.
-local CRUCIBLE_UNLOCK_GUILD_HALL = 5
--- Apothecary (USER DECISION 2026-11-03, replaces the Workshop): unlocks at Guild Hall L4, never above it.
-local APOTHECARY_UNLOCK_GUILD_HALL = 4
--- Training Grounds (USER DECISION 2026-11-04, Training Ground + Library merged): Guild Hall L5.
-local TRAINING_GROUNDS_UNLOCK_GUILD_HALL = 5
+local BUILDING_NAMES = table.freeze({ "GuildHall", "QuestBoard", "Tavern", "Merchant", "Blacksmith", "Runeforge", "Crucible", "Apothecary", "TrainingGrounds", "Dungeon" }) -- QuestBoard added 2026-11-16 (L1 = 3 quests, +1 per level above 1)
+-- Slice 8 step 1 (USER RULING 2026-11-16 1:53 PM, guild_facilities 3/8/89): buildings open by
+-- Renown Rank ALONE (BuildingService); the Guild Hall no longer gates or caps any building.
+-- A building that is not open yet works at level 0.
 
 -- game_flow id 4: a party holds up to 7 units (max deployment).
 local MAX_DEPLOY = 7
@@ -140,6 +136,11 @@ local _addPlayerUnit: ((any) -> ())? = nil
 local _doSave: (() -> any)? = nil
 local _getMapLevel: (() -> number)? = nil
 local _isSkillRegistered: ((string) -> boolean)? = nil
+local _dungeonLevelInfo: ((number) -> any)? = nil
+local rankNow: () -> number
+local onBuildingAction: (Player, any) -> any
+local onFurnitureAction: (Player, any) -> any
+local _dungeonRunCheck: (() -> boolean)? = nil -- true while a dungeon run is active (Main wires DungeonService)
 
 --------------------------------------------------
 -- RUNTIME STATE
@@ -330,11 +331,15 @@ function GuildMenuService.GetBuildingLevel(name: string): number
 	return buildingLevels[name] or DEFAULT_BUILDING_LEVEL
 end
 
--- Effective Crucible level: 0 until Guild Hall L5, never above the Guild Hall level (2026-11-02).
+-- Effective level of a building: its own level once it is open (Renown Rank), else 0.
+local function effectiveLevel(name: string): number
+	if not BuildingService.IsOpen(name) then return 0 end
+	return buildingLevels[name] or DEFAULT_BUILDING_LEVEL
+end
+
+-- Effective Crucible level: 0 until it opens at its Renown Rank (guild_facilities 89), else its own level.
 function GuildMenuService.GetCrucibleLevel(): number
-	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
-	if gh < CRUCIBLE_UNLOCK_GUILD_HALL then return 0 end
-	return math.min(buildingLevels.Crucible or DEFAULT_BUILDING_LEVEL, gh)
+	return effectiveLevel("Crucible")
 end
 
 -- Highest level a merged item may reach: the current map level (the same level the Merchant
@@ -353,25 +358,31 @@ function GuildMenuService.CrucibleBlockedReason(item: any): string?
 	return nil
 end
 
--- Effective Runeforge level: 0 until Guild Hall L4, never above the Guild Hall level (gf 46).
+-- Effective Runeforge / Apothecary / Training Grounds / Dungeon levels: 0 until the building
+-- opens at its Renown Rank, then its own level (Guild Hall cap removed, guild_facilities 3).
 function GuildMenuService.GetRuneforgeLevel(): number
-	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
-	if gh < RUNEFORGE_UNLOCK_GUILD_HALL then return 0 end
-	return math.min(buildingLevels.Runeforge or DEFAULT_BUILDING_LEVEL, gh)
+	return effectiveLevel("Runeforge")
 end
 
--- Effective Apothecary level: 0 until Guild Hall L4, never above the Guild Hall level (gf 67).
 function GuildMenuService.GetApothecaryLevel(): number
-	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
-	if gh < APOTHECARY_UNLOCK_GUILD_HALL then return 0 end
-	return math.min(buildingLevels.Apothecary or DEFAULT_BUILDING_LEVEL, gh)
+	return effectiveLevel("Apothecary")
 end
 
--- Effective Training Grounds level: 0 until Guild Hall L5, never above the Guild Hall level.
 function GuildMenuService.GetTrainingGroundsLevel(): number
-	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
-	if gh < TRAINING_GROUNDS_UNLOCK_GUILD_HALL then return 0 end
-	return math.min(buildingLevels.TrainingGrounds or DEFAULT_BUILDING_LEVEL, gh)
+	return effectiveLevel("TrainingGrounds")
+end
+
+function GuildMenuService.GetDungeonLevel(): number
+	return effectiveLevel("Dungeon")
+end
+
+function GuildMenuService.IsBuildingOpen(name: string): boolean
+	return BuildingService.IsOpen(name)
+end
+
+-- Approved BUILDING-LOCKED line (guild_facilities 98, furniture text 16).
+local function lockedText(name: string): string
+	return `Reach Renown Rank {BuildingService.UnlockRank(name)} to open the {BuildingService.Display(name)}.`
 end
 
 function GuildMenuService.TavernLevelProvider(_pid: string): number
@@ -813,6 +824,8 @@ function GuildMenuService.Export(_pid: string)
 		recruitOrder = table.clone(recruitOrder),
 		recruits = defs,
 		buildings = table.clone(buildingLevels), -- facility levels carry over (2026-10-31)
+		openBuildings = BuildingService.Export(), -- Renown Rank unlocks: opened list + "New" marks (2026-11-16)
+		furniture = FurnitureService.Export(), -- Guild Hall furniture: owned, placed, notice (2026-11-16)
 		apothecary = ApothecaryService.Export(), -- auto-refill switch + bought shelf slots (2026-11-03)
 		cardShop = CardShopService.Export(), -- Training Grounds bought shelf slots (2026-11-04)
 		-- Bought Merchant shelf slots stay bought after a restart / rejoin (2026-10-31).
@@ -864,10 +877,16 @@ function GuildMenuService.Import(_pid: string, data: any)
 			end
 		end
 	end
+	-- Opened buildings (Slice 8 step 1). Saves from before this build have building levels but
+	-- no list: every building they could already use is put on it once (guild_facilities 97).
+	BuildingService.Import(data.openBuildings, data.buildings)
 	tavernCache, merchantCache = nil, nil -- pool size / stock depend on building level
 	MerchantService.ImportPurchases(_pid, data.merchantBought) -- nil on older saves = none bought
 	ApothecaryService.Import(data.apothecary) -- nil on older saves = switch on, nothing bought
 	CardShopService.Import(data.cardShop) -- nil on older saves = nothing bought
+	-- Furniture (Slice 8 step 2). A guild save with no furniture yet = an old save: welcome gift once.
+	FurnitureService.Import(data.furniture, true)
+	BuildingService.RunLoadHooks() -- W4: after Apothecary import (a no-op at boot: deps are wired in Init; units are rebuilt later)
 	recruitDefs, recruitOrder = {}, {}
 	if type(data.recruitOrder) == "table" and type(data.recruits) == "table" then
 		for _, id in data.recruitOrder do
@@ -1067,6 +1086,10 @@ local function overview()
 		gold = gold,
 		resources = mats,
 		buildings = table.clone(buildingLevels),
+		openBuildings = (function()
+			BuildingService.Refresh()
+			return BuildingService.OpenState()
+		end)(), -- Renown Rank unlocks: { [name] = { open, unlockRank, display, new } }
 		battlesCompleted = battlesCompleted,
 		rosterCount = count,
 		-- Renown Rank for the header (display only; the server owns it). Step 2, 2026-11-12.
@@ -1137,6 +1160,8 @@ local function dispatchBoard()
 end
 
 local function blacksmithGate(item: any): (boolean, string?)
+	-- Opens at its Renown Rank (guild_facilities 89); refused until then.
+	if not BuildingService.IsOpen("Blacksmith") then return false, lockedText("Blacksmith") end
 	local bLevel = GuildMenuService.GetBuildingLevel("Blacksmith")
 	local maxLevel = math.min(ITEM_LEVEL_CAP, bLevel * 10)
 	if bLevel >= BUILDING_MAX_LEVEL then maxLevel = ITEM_LEVEL_CAP end
@@ -1906,13 +1931,11 @@ end
 
 local function cardShopPayload(): any
 	local lvl = CardShopService.GetLevel()
-	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
 	local gold, res = balance()
 	return {
 		ok = true,
 		level = lvl,
-		guildHallLevel = gh,
-		lockedReason = if lvl < 1 then `The Training Grounds unlocks at Guild Hall L{TRAINING_GROUNDS_UNLOCK_GUILD_HALL} (yours is L{gh})` else nil,
+		lockedReason = if lvl < 1 then lockedText("TrainingGrounds") else nil,
 		discountPct = math.max(0, 3 * (lvl - 1)),
 		slot2Open = TrainingGroundsService.IsMaxed(),
 		shelf = CardShopService.GetShelf(),
@@ -1964,7 +1987,6 @@ end
 
 local function apothecaryPayload(): any
 	local lvl = ApothecaryService.GetLevel()
-	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
 	local owned = (_getOwnedConsumables and _getOwnedConsumables()) or {}
 	local ownedList = {}
 	for id, n in owned do
@@ -1976,8 +1998,7 @@ local function apothecaryPayload(): any
 		ok = true,
 		level = lvl,
 		buildingLevel = buildingLevels.Apothecary or DEFAULT_BUILDING_LEVEL,
-		guildHallLevel = gh,
-		lockedReason = if lvl < 1 then `The Apothecary unlocks at Guild Hall L{APOTHECARY_UNLOCK_GUILD_HALL} (yours is L{gh})` else nil,
+		lockedReason = if lvl < 1 then lockedText("Apothecary") else nil,
 		refillRate = ApothecaryService.RefillRate(),
 		discountPct = ApothecaryService.BuyDiscountPct(),
 		autoRefill = ApothecaryService.GetAutoRefill(),
@@ -2181,7 +2202,6 @@ end
 local function onGetRuneforge(player: Player)
 	local g = guard(player, "runeforge"); if g then return fail(g) end
 	local state = RuneforgeService.GetState()
-	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
 	local bal = CurrencyService.GetBalance(_playerId)
 	local owned = bal.gems or {}
 	local gems = {}
@@ -2233,13 +2253,12 @@ local function onGetRuneforge(player: Player)
 		ok = true,
 		level = state.level,
 		buildingLevel = buildingLevels.Runeforge or DEFAULT_BUILDING_LEVEL,
-		guildHallLevel = gh,
 		capacity = state.capacity,
 		discountPct = state.discountPct,
 		maxInstalls = RuneforgeService.MAX_INSTALLS, -- gems per forge (screen greys out past it)
 		capacitySteps = RuneforgeService.CapacitySteps(), -- display only: (?) guide level caps
 		rerollMinLevel = RuneforgeService.RerollMinLevel(), -- display only: (?) guide
-		lockedReason = if state.level < 1 then `The Runeforge unlocks at Guild Hall L{RUNEFORGE_UNLOCK_GUILD_HALL} (yours is L{gh})` else nil,
+		lockedReason = if state.level < 1 then lockedText("Runeforge") else nil,
 		gems = gems,
 		items = items,
 		gold = gold,
@@ -2379,8 +2398,7 @@ local function onCraftGems(player: Player, req: any)
 	local g = guard(player, "gemCraft"); if g then return fail(g) end
 	if currentPhase ~= "Base" then return fail("Gem crafting is only possible at the guild base") end
 	if RuneforgeService.GetState().level < 1 then
-		local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
-		return fail(`The Runeforge unlocks at Guild Hall L{RUNEFORGE_UNLOCK_GUILD_HALL} (yours is L{gh})`)
+		return fail(lockedText("Runeforge"))
 	end
 	if type(req) ~= "table" or type(req.action) ~= "string" then return fail("Invalid rune gem selection") end
 	local clean: any
@@ -2445,7 +2463,6 @@ end
 local function onGetCrucible(player: Player)
 	local g = guard(player, "crucible"); if g then return fail(g) end
 	local state = CrucibleService.GetState()
-	local gh = buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
 	local items = {}
 	for _, item in InventoryService.GetAllItems(_playerId) do
 		if type(item.itemLevel) == "number" then
@@ -2465,12 +2482,11 @@ local function onGetCrucible(player: Player)
 		ok = true,
 		level = state.level,
 		buildingLevel = buildingLevels.Crucible or DEFAULT_BUILDING_LEVEL,
-		guildHallLevel = gh,
 		needed = state.needed,
 		boost = state.boost,
 		capacity = state.capacity,
 		discountPct = state.discountPct,
-		lockedReason = if state.level < 1 then `The Crucible unlocks at Guild Hall L{CRUCIBLE_UNLOCK_GUILD_HALL} (yours is L{gh})` else nil,
+		lockedReason = if state.level < 1 then lockedText("Crucible") else nil,
 		items = items,
 		gold = gold,
 		resources = res,
@@ -2512,6 +2528,26 @@ local function onCommitMerge(player: Player, ids: any)
 		level = item.itemLevel, gold = gold, resources = res }
 end
 
+-- The ONE building-level setter (Slice 8 step 1): the Guild Hall Upgrade button and the dev
+-- tool both use it, so their side effects always match.
+local function applyBuildingLevel(name: string, level: number)
+	local before = buildingLevels[name] or DEFAULT_BUILDING_LEVEL
+	buildingLevels[name] = math.clamp(level, BUILDING_MIN_LEVEL, BUILDING_MAX_LEVEL)
+	tavernCache, merchantCache = nil, nil -- pool size / stock depend on level
+	-- Apothecary L9 charges / L10 slot change unit numbers: rebuild so they apply now.
+	if name == "Apothecary" then
+		for _, u in playerUnits() do EquipmentService.RebuildUnitStats(u) end
+	end
+	-- Training Grounds below L10 locks slot 2 again: those augments go back to storage.
+	if name == "TrainingGrounds" and buildingLevels[name] < before and _sweepLockedAugments then
+		_sweepLockedAugments()
+	end
+	BuildingService.Refresh() -- a level of 2+ also keeps the building open for good
+	-- Guild Hall level sets furniture slots + the bonus cap (guild_facilities 91/92).
+	if name == "GuildHall" then FurnitureService.OnGuildHallChanged() end
+	markDirty() -- saved when the menu closes or on quit (facility levels carry over)
+end
+
 local function onDevGuild(player: Player, cmd: any): any
 	if not DevAccess.IsAllowed(player) then
 		warn(string.format("[Dev] DevGuild rejected for %s (%d): dev tools not allowed", player.Name, player.UserId))
@@ -2525,17 +2561,7 @@ local function onDevGuild(player: Player, cmd: any): any
 		local name, level = cmd.building, cmd.level
 		if type(name) ~= "string" or buildingLevels[name] == nil then return fail("Unknown building") end
 		if type(level) ~= "number" or level ~= level or level % 1 ~= 0 then return fail("Invalid level") end
-		buildingLevels[name] = math.clamp(level, BUILDING_MIN_LEVEL, BUILDING_MAX_LEVEL)
-		tavernCache, merchantCache = nil, nil -- pool size / stock depend on level
-		-- Apothecary L9 charges / L10 slot change unit numbers: rebuild so they apply now.
-		if name == "Apothecary" or name == "GuildHall" then
-			for _, u in playerUnits() do EquipmentService.RebuildUnitStats(u) end
-		end
-		-- Training Grounds below L10 locks slot 2 again: those augments go back to storage.
-		if (name == "TrainingGrounds" or name == "GuildHall") and _sweepLockedAugments then
-			_sweepLockedAugments()
-		end
-		markDirty() -- saved when the menu closes or on quit (facility levels carry over)
+		applyBuildingLevel(name, level)
 		print(`[Dev] Building {name} set to L{buildingLevels[name]} (saved when the menu closes)`)
 	elseif cmd.action == "RefreshShops" then
 		devShopNonce = math.min(devShopNonce + 1, DEV_NONCE_MAX)
@@ -2545,6 +2571,72 @@ local function onDevGuild(player: Player, cmd: any): any
 	end
 	return { ok = true, buildings = table.clone(buildingLevels), shopRefresh = devShopNonce }
 end
+
+-- Renown Rank now (old saves get their Rank first).
+rankNow = function(): number
+	RenownService.EnsureConverted(_playerId)
+	return RenownService.GetRank(_playerId)
+end
+
+-- Dungeon numbers per facility level for the Guild Hall list (Main wires DungeonRules).
+function GuildMenuService.SetDungeonLevelInfo(fn: ((number) -> any)?) _dungeonLevelInfo = fn end
+
+-- Guild Hall upgrade list (Slice 8 step 1). SEC-001: the client sends an action and, for
+-- Upgrade / Seen, a building name only; BuildingService checks and prices everything.
+onBuildingAction = function(player: Player, cmd: any): any
+	local g = guard(player, "buildingAction"); if g then return fail(g) end
+	if type(cmd) ~= "table" or type(cmd.action) ~= "string" then return fail("Invalid request") end
+	local message: string? = nil
+	if cmd.action == "Upgrade" then
+		local ok, msg = BuildingService.Upgrade(player, cmd.building)
+		if not ok then return fail(msg) end
+		message = msg
+	elseif cmd.action == "Seen" then
+		BuildingService.ClearNew(cmd.building)
+	elseif cmd.action ~= "List" then
+		return fail("Unknown action")
+	end
+	BuildingService.Refresh()
+	local gold, res = balance()
+	return { ok = true, message = message, rows = BuildingService.List(), openBuildings = BuildingService.OpenState(),
+		buildings = table.clone(buildingLevels), gold = gold, resources = res }
+end
+
+--- Called after a Renown award: puts newly opened buildings on the list and returns their
+--- display names for the Rank-up banner ("New building open: {Building}!").
+function GuildMenuService.RefreshOpenBuildings(): { string }
+	return BuildingService.Refresh()
+end
+
+-- Guild Hall furniture tab (Slice 8 step 2). SEC-001: the client sends an action plus a piece id
+-- and / or slot number only; FurnitureService checks ownership, slots, caps, locks and prices.
+onFurnitureAction = function(player: Player, cmd: any): any
+	local g = guard(player, "furnitureAction"); if g then return fail(g) end
+	if type(cmd) ~= "table" or type(cmd.action) ~= "string" then return fail("Invalid request") end
+	local ok, msg = true, nil
+	if cmd.action == "Buy" then
+		ok, msg = FurnitureService.Buy(cmd.piece)
+	elseif cmd.action == "Place" then
+		ok, msg = FurnitureService.Place(cmd.piece, cmd.slot, cmd.decor)
+	elseif cmd.action == "Remove" then
+		ok, msg = FurnitureService.Remove(cmd.slot, cmd.decor)
+	elseif cmd.action == "Craft" then -- step 3: gold + materials together, at the piece's building
+		ok, msg = FurnitureService.Craft(cmd.piece, cmd.building)
+	elseif cmd.action == "Seen" then
+		FurnitureService.ClearNotice()
+	elseif cmd.action == "AckLeftBehind" then -- furniture step 4b (WARN-A): storage-full lines were shown
+		FurnitureService.AckLeftBehind()
+	elseif cmd.action ~= "State" and cmd.action ~= "CraftRows" then
+		return fail("Unknown action")
+	end
+	if not ok then return fail(msg or "Not allowed") end
+	local gold, res = balance()
+	return { ok = true, furniture = FurnitureService.State(), gold = gold, resources = res,
+		message = if cmd.action == "Craft" then msg else nil,
+		craft = if type(cmd.building) == "string" then FurnitureService.CraftRows(cmd.building) else nil }
+end
+
+function GuildMenuService.SetDungeonRunCheck(fn: (() -> boolean)?) _dungeonRunCheck = fn end
 
 -- Dungeon party lock check (Main wires DungeonService.IsUnitLocked; nil = no lock).
 function GuildMenuService.SetUnitLockCheck(fn: ((string, string) -> boolean)?) _unitLockCheck = fn end
@@ -2577,10 +2669,62 @@ function GuildMenuService.Init(deps: any)
 		getNonce = function() return devShopNonce end,
 	})
 
-	-- Dispatch slots follow the temporary Guild Hall level (Dev-adjustable).
-	DispatchService.SetGuildHallLevelProvider(function(_pid: any)
-		return buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL
+	-- Dispatch slots follow the Renown Rank (USER RULING 2026-11-16, guild_facilities 97 /
+	-- economy: 1 at Rank 5, 2 at Rank 10, 3 at Rank 15); 0 until the Dispatch screen opens.
+	DispatchService.SetSlotProvider(function(_pid: any)
+		local r = rankNow()
+		local slots = if r >= 15 then 3 elseif r >= 10 then 2 elseif r >= 5 then 1 else 0
+		if slots < 1 and BuildingService.IsOpen("Dispatch") then slots = 1 end -- nothing ever re-locks
+		return slots
 	end)
+
+	-- Buildings by Renown Rank + Guild Hall upgrades (Slice 8 step 1, 2026-11-16).
+	BuildingService.Init({
+		getRank = rankNow,
+		getLevel = function(name: string) return buildingLevels[name] or DEFAULT_BUILDING_LEVEL end,
+		applyLevel = applyBuildingLevel,
+		getGold = function() return (balance()) end,
+		spendGold = function(n: number) return CurrencyService.Debit(_playerId, { gold = n }) end,
+		canUpgradeNow = function() return isOpen and currentPhase == "Base" end,
+		dungeonLevelInfo = function(level: number): any
+			return if _dungeonLevelInfo then _dungeonLevelInfo(level) else nil
+		end,
+		markDirty = markDirty,
+		onOpened = function(names: { string })
+			-- The Apothecary opening changes unit numbers (its charges): rebuild them now.
+			if table.find(names, "Apothecary") then
+				for _, u in playerUnits() do EquipmentService.RebuildUnitStats(u) end
+			end
+		end,
+	})
+	GuildEvents.BuildingAction.OnServerInvoke = onBuildingAction
+
+	-- Guild Hall furniture (Slice 8 step 2, 2026-11-16, guild_facilities 91-97). Providers first, so
+	-- the rebuild inside FurnitureService.Init already sees the bonus.
+	EquipmentService.SetFurnitureProvider(FurnitureService.BonusFor)
+	DispatchService.SetFeeModifier(FurnitureService.DispatchFeeDelta)
+	FurnitureService.Init({
+		getGuildHallLevel = function() return buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL end,
+		getRank = rankNow,
+		getGold = function() return (balance()) end,
+		spendGold = function(n: number) return CurrencyService.Debit(_playerId, { gold = n }) end,
+		canBuyNow = function() return isOpen and currentPhase == "Base" end,
+		canChangeNow = function()
+			return isOpen and currentPhase == "Base" and not (_dungeonRunCheck ~= nil and _dungeonRunCheck())
+		end,
+		isPlayerUnit = function(u: any): boolean
+			local id = type(u) == "table" and u.id or nil
+			return id ~= nil and playerUnits()[id] == u
+		end,
+		rebuildAll = function()
+			for _, u in playerUnits() do EquipmentService.RebuildUnitStats(u) end
+		end,
+		markDirty = markDirty,
+		getMaterials = function() local _, r = balance() return r end, -- step 3 crafting
+		spendCost = function(c: { [string]: number }) return CurrencyService.Debit(_playerId, c) end,
+		isBuildingOpen = function(n: string) return BuildingService.IsOpen(n) end,
+	})
+	GuildEvents.FurnitureAction.OnServerInvoke = onFurnitureAction
 
 	GuildEvents.GetGuildOverview.OnServerInvoke = onGetOverview
 	GuildEvents.GetTavernPool.OnServerInvoke = onGetTavernPool

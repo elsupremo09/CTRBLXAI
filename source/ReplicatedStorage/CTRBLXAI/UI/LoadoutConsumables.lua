@@ -14,6 +14,11 @@ local BattleEvents = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 	:WaitForChild("Remotes", 10):WaitForChild("BattleEvents", 10))
 local ConsumableData = require(ReplicatedStorage:WaitForChild("Content", 10)
 	:WaitForChild("ConsumableData", 10))
+-- Dungeon map use (silver/Bag step 3, 2026-11-16; rule 266): which items work on the map + the dungeon remote.
+local MapUse: any = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("Shared", 10)
+	:WaitForChild("DungeonMapUse", 10))
+local GuildEvents: any = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+	:WaitForChild("Remotes", 10):WaitForChild("GuildEvents", 10))
 
 local LoadoutConsumables: any = {}
 
@@ -238,8 +243,21 @@ openConsumableDetail = function(ci)
 		yOff = yOff + 60
 	end
 	local fb = Theme.FooterBar
+	-- Dungeon mode Bag tag (SB-19 / SB-20 retired 2026-11-16: BagTagText returns nil), bottom-left beside the buttons.
+	local bagTagText = MockData.BagTagText("consumables", ci.id)
+	if bagTagText then
+		local tl = makeLabel(detailOverlay, { Text = bagTagText, Size = UDim2.new(0, 220, 0, fb.BTN_H),
+			Position = UDim2.new(0, fb.PAD, 1, -fb.PAD), TextSize = math.max(10, Theme.Text.Small()), Font = Theme.Font.PrimaryBold,
+			TextColor3 = Theme.Colors.TextSecondary, TextXAlignment = Enum.TextXAlignment.Left })
+		tl.AnchorPoint = Vector2.new(0, 1); tl.Name = "BagTag"
+	end
+	-- Dungeon mode (step 3): a Bag copy of a heal / MP / revive item gets "Use" (SB-23) on the selected unit.
+	local dungeon = MockData.DungeonMode == true
+	local inBag = dungeon and ((MockData.MapUsable or {})[ci.id] or 0) > 0
+	local canUse = inBag and MapUse.Get(ci.id) ~= nil
+	local nBtn = if canUse then 3 else 2
 	local btnBar = Instance.new("Frame"); btnBar.Name = "ConsBtnBar"
-	btnBar.Size = UDim2.new(0, fb.BTN_W * 2 + fb.BTN_GAP + fb.PAD, 0, fb.BTN_H)
+	btnBar.Size = UDim2.new(0, fb.BTN_W * nBtn + fb.BTN_GAP * (nBtn - 1) + fb.PAD, 0, fb.BTN_H)
 	btnBar.Position = UDim2.new(1, -fb.PAD, 1, -fb.PAD); btnBar.AnchorPoint = Vector2.new(1, 1)
 	btnBar.BackgroundTransparency = 1; btnBar.Parent = detailOverlay
 	local btnLayout = Instance.new("UIListLayout", btnBar)
@@ -250,6 +268,30 @@ openConsumableDetail = function(ci)
 	backBtn.Activated:Connect(closeDetail)
 	local equipBtn = Theme.MakeButton(btnBar, "EQUIP", "Primary"); equipBtn.LayoutOrder = 1
 	equipBtn.Activated:Connect(function() closeDetail(); openConsumableSlotPicker(unit.id, ci) end)
+	if inBag then
+		-- Status line above the buttons: SB-24 for battle-only items, or the server's refusal after Use.
+		local note = makeLabel(panel, { Text = if canUse then "" else "Only usable in battle.", -- SB-24
+			Size = UDim2.new(1, 0, 0, 16), Position = UDim2.new(0, 0, 1, -(fb.BTN_H + fb.PAD + 18)),
+			TextSize = math.max(10, Theme.Text.Small()), Font = Theme.Font.Primary,
+			TextColor3 = Theme.Colors.TextSecondary, TextXAlignment = Enum.TextXAlignment.Left })
+		note.Name = "MapUseNote"
+		if canUse then
+			local useBtn = Theme.MakeButton(btnBar, "Use", "Primary"); useBtn.LayoutOrder = 0 -- SB-23
+			useBtn.Name = "Btn_Use"
+			useBtn.Activated:Connect(function()
+				local ok, res = pcall(function()
+					return GuildEvents.DungeonAction:InvokeServer({ action = "UseItem", consumableId = ci.id, unitId = unit.id })
+				end)
+				if not ok or type(res) ~= "table" or res.ok == false then
+					note.Text = if ok and type(res) == "table" and type(res.error) == "string" then res.error else "Something went wrong. Try again."
+					note.TextColor3 = Theme.Colors.Danger
+					return
+				end
+				closeDetail()
+				if ctx.reload then ctx.reload() end
+			end)
+		end
+	end
 end
 
 openConsumableSlotPicker = function(unitId, ci)

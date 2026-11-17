@@ -62,6 +62,9 @@ local pendingTotalFn
 -- fits (MP 0.88). Properties first, Parent last (NET-004). nil icon -> nothing (blank gap).
 local ROW_ICON_PX = 14
 local ROW_ICON_GAP = ROW_ICON_PX + 4 -- left inset taken by the icon column
+-- STR..LUK panel icons bigger (user 2026-11-16 1:50 AM: 14 px narrow art was unreadable). INFO rows keep 14.
+local STAT_ICON_PX = 20
+local STAT_ICON_GAP = STAT_ICON_PX + 4
 -- STR..LUK +/- buttons (user ruling 2026-11-13 12:55 AM, replaces 44 px): 30x30, right edge,
 -- small gap. Deliberately below the 44 px phone minimum (user design call).
 local STAT_BTN_PX = 30
@@ -72,15 +75,16 @@ local STAT_BTNS_W = STAT_BTN_RIGHT + STAT_BTN_PX * 2 + STAT_BTN_GAP -- 68: right
 -- No points: short rows, no buttons (2026-11-12 11:02 PM). Values always ONE line (2026-11-13 1:00 AM).
 local STAT_ROW_H_SHORT = 20
 local STAT_PANEL_MIN_H, STAT_HEADER_H, STAT_LIST_GAP = 160, 16, 2 -- panel fits header + 6 rows, no scroll (2026-11-13 1:00 AM)
-local function addRowIcon(row: Instance, icon: string?)
+local function addRowIcon(row: Instance, icon: string?, px: number?)
 	if not icon then return end
 	local img = Instance.new("ImageLabel")
 	img.Name = "StatIcon"
 	img.BackgroundTransparency = 1
 	img.ScaleType = Enum.ScaleType.Fit
 	img.Image = icon
-	img.Size, img.Position = Theme.FitIconBox(icon, UDim2.fromOffset(ROW_ICON_PX, ROW_ICON_PX),
-		UDim2.new(0, 2, 0.5, -ROW_ICON_PX / 2))
+	local s = px or ROW_ICON_PX
+	img.Size, img.Position = Theme.FitIconBox(icon, UDim2.fromOffset(s, s),
+		UDim2.new(0, 2, 0.5, -s / 2))
 	img.ZIndex = 2
 	img.Parent = row
 end
@@ -350,9 +354,9 @@ buildStatPanel = function()
 		row.Size = UDim2.new(1, 0, 0, if hasPoints then STAT_ROW_H else STAT_ROW_H_SHORT); row.BackgroundTransparency = 1
 		row.BorderSizePixel = 0; row.LayoutOrder = si + 1; row.Parent = scroller
 
-		addRowIcon(row, Theme.Icons[stat])
+		addRowIcon(row, Theme.Icons[stat], STAT_ICON_PX)
 		local statLbl = Instance.new("TextLabel")
-		statLbl.Size = UDim2.new(0, 32, 1, 0); statLbl.Position = UDim2.fromOffset(ROW_ICON_GAP, 0)
+		statLbl.Size = UDim2.new(0, 32, 1, 0); statLbl.Position = UDim2.fromOffset(STAT_ICON_GAP, 0)
 		statLbl.BackgroundTransparency = 1
 		statLbl.Font = Theme.Font.PrimaryBold; statLbl.TextSize = Theme.Text.Small()
 		statLbl.TextColor3 = Theme.Colors.TextPrimary
@@ -360,8 +364,8 @@ buildStatPanel = function()
 		statLbl.Text = stat; statLbl.ZIndex = 2; statLbl.Parent = row
 
 		local valLbl = Instance.new("TextLabel")
-		valLbl.Size = UDim2.new(1, -(ROW_ICON_GAP + 32 + rightClear), 1, 0) -- ends 4 px left of "-" (or the edge)
-		valLbl.Position = UDim2.fromOffset(ROW_ICON_GAP + 32, 0)
+		valLbl.Size = UDim2.new(1, -(STAT_ICON_GAP + 32 + rightClear), 1, 0) -- ends 4 px left of "-" (or the edge)
+		valLbl.Position = UDim2.fromOffset(STAT_ICON_GAP + 32, 0)
 		valLbl.BackgroundTransparency = 1
 		valLbl.Font = Theme.Font.Mono; valLbl.TextSize = Theme.Text.Small()
 		valLbl.TextColor3 = Theme.Colors.TextPrimary

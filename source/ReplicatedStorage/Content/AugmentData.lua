@@ -730,7 +730,7 @@ local AugmentData = {
 		scarcity = "Acquisition scarcity only; exact band pending",
 	},
 	["AUG-SHARED-RESOLVE"] = {
-		name = "Shared Resolve",
+		name = "Shared Resolve", icon = "rbxassetid://106789319197535",
 		description = "Spreads a self-buff to every standing ally, wherever they are. Triples MP cost and doubles RT cost.",
 		family = "Targeting",
 		requiredSkillTags = {"Buff", "Self", "Not Stance"},

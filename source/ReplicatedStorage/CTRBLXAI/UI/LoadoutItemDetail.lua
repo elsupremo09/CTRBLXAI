@@ -441,6 +441,7 @@ buildSoloDetailContent = function(panel, item, viewerUnitId)
 	local holderName, holderSlot = findOtherHolder(item.id, viewerUnitId)
 	local holderText = holderName
 		and string.format("Equipped by %s (%s) · EQUIP moves it", holderName, holderSlot) or nil
+	-- Dungeon mode Bag tags SB-19 / SB-20 retired 2026-11-16 7:22 PM (rules 264 / 275): no "always kept" line.
 
 	-- Unified header
 	local divY = buildDetailHeader(panel, {

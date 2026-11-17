@@ -320,12 +320,5 @@ function UnitsScreen.SetStatus(text: string, isError: boolean?)
 	if screen then screen.SetStatus(text, isError) end
 end
 
--- Test hook for the scripted Studio check (simulated taps do not register): same path as a tap.
-UnitsScreen._Test = table.freeze({
-	tapUnit = function(unitId: string)
-		local c = ctx
-		if c then c.openUnit(unitId) end
-	end,
-})
 
 return table.freeze(UnitsScreen)

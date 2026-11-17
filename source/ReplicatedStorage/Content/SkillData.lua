@@ -975,7 +975,7 @@ local SkillData = {
 	},
 	["SKL-GALE-THRUST"] = {
 		name = "Gale Thrust",
-		icon = "rbxassetid://111009262273546",
+		icon = "rbxassetid://114978015462091", -- 2026-11-15 re-upload (old 111009262273546 failed to load)
 		description = "Thrusts forward in a cone, dealing physical damage and knocking back everyone caught in it — allies too.",
 		tags = {"Direct Damage", "Physical", "Utility", "Area", "Melee", "Has Number", "Costs MP", "Weapon Scaling"},
 		properties = "Melee Only",
@@ -1740,7 +1740,7 @@ local SkillData = {
 	},
 	["SKL-SET-BEAR-TRAP"] = {
 		name = "Set Bear Trap",
-		icon = "rbxassetid://102588477844731",
+		icon = "rbxassetid://136926341667994",
 		description = "Sets a Bear Trap on an empty tile after a short cast delay. The first enemy to step on it is Pinned.",
 		tags = {"Debuff", "Utility", "Single", "Ranged", "Costs MP"},
 		properties = "Potency: None, Passives: None",
@@ -1761,7 +1761,7 @@ local SkillData = {
 	},
 	["SKL-SET-SPIKE-TRAP"] = {
 		name = "Set Spike Trap",
-		icon = "rbxassetid://102588477844731",
+		icon = "rbxassetid://126372833722076",
 		description = "After a short delay, sets a spike trap. Each time an enemy steps on it: 10% max HP damage and Bleed.",
 		tags = {"Debuff", "Physical", "Utility", "Single", "Ranged", "Costs MP"},
 		properties = "Potency: None, Passives: None",
@@ -1782,7 +1782,7 @@ local SkillData = {
 	},
 	["SKL-SET-SNARE-TRAP"] = {
 		name = "Set Snare Trap",
-		icon = "rbxassetid://102588477844731",
+		icon = "rbxassetid://90821654007814",
 		description = "Sets a Snare Trap on an empty tile after a short cast delay. The first enemy to step on it is Pinned and suffers RT Delay.",
 		tags = {"Debuff", "Utility", "Single", "Ranged", "Costs MP"},
 		properties = "Potency: None, Passives: None",
@@ -1804,7 +1804,7 @@ local SkillData = {
 	},
 	["SKL-SET-LAND-MINE"] = {
 		name = "Set Land Mine",
-		icon = "rbxassetid://102588477844731",
+		icon = "rbxassetid://113516862384623",
 		description = "After a short delay, sets a mine. An enemy stepping on it sets off a blast (25% max HP) on all tiles around it — allies too.",
 		tags = {"Fire", "Utility", "Single", "Ranged", "Costs MP"},
 		properties = "Potency: None, Passives: None",
@@ -2212,7 +2212,7 @@ local SkillData = {
 	},
 	["SKL-ICE-SPIKE"] = {
 		name = "Conjure Ice Spike",
-		icon = "rbxassetid://0",
+		icon = "rbxassetid://100791409243454",
 		description = "Places an ice spike on a nearby tile that blocks movement and sight. Breaks in 3 hits, or 1 Fire hit.",
 		tags = {"Ice", "Utility", "Single", "Ranged", "Costs MP"},
 		properties = "Potency: None, Passives: None",
@@ -2234,7 +2234,7 @@ local SkillData = {
 	},
 	["SKL-RESTOCK"] = {
 		name = "Restock",
-		icon = "",
+		icon = "rbxassetid://122264386768863",
 		description = "Channel to recover one use charge to each of your equipped consumable items.",
 		tags = {"Utility", "Support", "Single", "Costs MP", "Self"},
 		properties = "Channeled self-buff (no projectile). Potency: None, Passives: None",
@@ -2257,7 +2257,7 @@ local SkillData = {
 	},
 	["SKL-REPAIR"] = {
 		name = "Repair",
-		icon = "",
+		icon = "rbxassetid://79285736905711",
 		description = "Channel on a nearby object or deployable to fully restore its durability.",
 		tags = {"Utility", "Support", "Single", "Ranged", "Costs MP"},
 		properties = "Channeled object-target (no projectile). Potency: None, Passives: None",
@@ -2286,7 +2286,7 @@ local SkillData = {
 	-- are DB-authored in a design session.
 	["SKL-BATTLEFIELD-TRIAGE"] = {
 		name = "Battlefield Triage",
-		icon = "rbxassetid://94875330813515",
+		icon = "rbxassetid://124354647955580",
 		description = "Channel a swift resuscitation to bring one KO'd unit back to its feet at range.",
 		tags = {"Healing", "Single", "Ranged", "Has Number", "Costs MP"},
 		properties = "Passives: None",
@@ -2305,7 +2305,7 @@ local SkillData = {
 	},
 	["SKL-PHOENIX-RITE"] = {
 		name = "Phoenix Rite",
-		icon = "rbxassetid://94875330813515",
+		icon = "rbxassetid://80069965846950",
 		description = "Instantly resurrect a KO'd unit in a burst of holy flame, cleansing a wound that felled it.",
 		tags = {"Healing", "Holy", "Single", "Ranged", "Has Number", "Costs MP"},
 		properties = "Passives: None",
@@ -2323,7 +2323,7 @@ local SkillData = {
 		specialRules = "Instant (Channel Time 0). The revived unit's RT is set to 150 so it acts again soon. The revived unit counts as revived (no kill credit) and loses any channel it had before it was KO'd. RT uses the project rule 136 form (base + weapon WT) × 0.50, which is what the code charges; the card text's 'Effective Weapon WT × 0.50' is the old form.",
 	},
 	["EVT-RAISE-DEAD"] = {
-		name = "Raise Dead",
+		name = "Raise Dead", icon = "rbxassetid://140354636702169",
 		description = "Event-only (Chaos Necromancer): once per battle, raises every fallen unit on its side at 25% Max HP as Undead.",
 		tags = {"Utility", "Single", "Has Number", "Self"},
 		properties = "Potency: None, Passives: None",

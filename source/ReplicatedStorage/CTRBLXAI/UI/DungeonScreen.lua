@@ -29,6 +29,7 @@ local EventPanel: any = (require :: any)(uiFolder:WaitForChild("DungeonEventPane
 local MapView: any = (require :: any)(uiFolder:WaitForChild("DungeonMapView", WAIT)) -- step 8 split
 local RelicBar: any = (require :: any)(uiFolder:WaitForChild("DungeonRelicBar", WAIT)) -- step 8 relics
 local SidePanel: any = (require :: any)(uiFolder:WaitForChild("DungeonSidePanel", WAIT)) -- layout 2026-11-15
+local BagPanel: any = (require :: any)(uiFolder:WaitForChild("DungeonBagPanel", WAIT)) -- steps 4-5: Bag screen, full-Bag popup, EV-17
 
 local DungeonScreen = {}
 
@@ -40,6 +41,7 @@ export type Context = {
 	requestBack: (close: () -> ()) -> (),
 	onClosed: () -> (),
 	setStatus: (text: string, isError: boolean?) -> (),
+	isLocked: (() -> boolean)?,                 -- true while a room's battle is departing (W1): no taps
 }
 
 local MAX_PARTY = 7 -- fallback only; the card / run carries the real cap (step 7b, rule 258)
@@ -63,7 +65,7 @@ local ROOM_LABEL = {
 	Merchant = "Merchant", Treasure = "Treasure", Event = "Event", Mystery = "Mystery",
 }
 local KEY_ORDER = { "Battle", "Elite", "Boss", "Rest", "Merchant", "Treasure", "Mystery" }
--- Peek card lines (2026-11-15, DRAFT_dungeon_peek_text_20261115.md: NEEDS APPROVAL).
+-- Peek card lines DG-PEEK-* (approved 2026-11-15 1:28 AM, rule 275).
 local PEEK = {
 	Battle = "A fight. Loot grows with each win.", Elite = "A tough fight with better loot.",
 	Boss = "Beat it to bring all your loot home.", Rest = "Heal, edit your party, or go home with loot.",
@@ -99,6 +101,7 @@ local render: () -> () = function() end
 local legendOpen = false
 local goldText = "" -- last gold line (shown in the right panel on the map, 2026-11-15)
 local peekRoom: (n: any) -> () = function() end
+local heldCheck: () -> () = function() end -- steps 4-5: show the full-Bag pick as soon as nothing else is open
 
 --------------------------------------------------
 -- HELPERS (properties before Parent, NET-004)
@@ -143,11 +146,12 @@ local function stroke(parent: Instance, color: Color3, th: number)
 end
 
 local function closeOverlay()
-	MerchantPanel.Close(); EventPanel.Close(); PartyPanel.Close()
+	MerchantPanel.Close(); EventPanel.Close(); PartyPanel.Close(); BagPanel.Close()
 	if overlay then
 		overlay:Destroy()
 		overlay = nil
 	end
+	heldCheck() -- deferred: a popup opened right after this wins; otherwise waiting loot shows its pick
 end
 
 -- Modal box: lines = { { text, size?, color?, bold? } }; buttons = { { text? | icon?, style?, onTap } }.
@@ -155,35 +159,8 @@ local function popup(name: string, lines: { any }, buttons: { any })
 	if not screen then return end
 	closeOverlay()
 	overlayTaps = {}
-	local o = Instance.new("TextButton")
-	o.Name = name
-	o.Text = ""
-	o.AutoButtonColor = false
-	o.Modal = true
-	o.Size = UDim2.fromScale(1, 1)
-	o.BackgroundColor3 = Color3.new(0, 0, 0)
-	o.BackgroundTransparency = 0.4
-	o.BorderSizePixel = 0
-	o.ZIndex = 20
-	local box = Instance.new("Frame")
-	box.Name = "Box"
-	box.AnchorPoint = Vector2.new(0.5, 0.5)
-	box.Position = UDim2.fromScale(0.5, 0.5)
-	box.Size = UDim2.new(0.8, 0, 0, 0)
-	box.AutomaticSize = Enum.AutomaticSize.Y
-	box.BackgroundColor3 = Theme.Colors.PanelRaised
-	box.BorderSizePixel = 0
-	local maxW = Instance.new("UISizeConstraint")
-	maxW.MaxSize = Vector2.new(460, math.huge)
-	maxW.Parent = box
-	corner(box, Theme.CornerRadius.md)
-	stroke(box, Theme.Colors.Border, Theme.BorderThickness.Default)
-	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0, 14)
-	pad.PaddingRight = UDim.new(0, 14)
-	pad.PaddingTop = UDim.new(0, 10)
-	pad.PaddingBottom = UDim.new(0, 10)
-	pad.Parent = box
+	-- Shared guild popup box, below the Roblox top bar (2026-11-17 style fix).
+	local o, box = GuildScreen.MakeModalBox(name, { maxW = 460, widthScale = 0.8, pad = 14 })
 	local list = Instance.new("UIListLayout")
 	list.Padding = UDim.new(0, 4)
 	list.SortOrder = Enum.SortOrder.LayoutOrder
@@ -225,7 +202,6 @@ local function popup(name: string, lines: { any }, buttons: { any })
 		overlayTaps[i] = bt.onTap
 	end
 	row.Parent = box
-	box.Parent = o
 	o.Parent = screen.Gui -- parent last (NET-004)
 	overlay = o
 end
@@ -237,6 +213,7 @@ local function act(data: { [string]: any }): any?
 	if res then
 		st = res
 		if screen then screen.SetStatus("") end
+		heldCheck()
 	end
 	return res
 end
@@ -343,6 +320,16 @@ local function buildBoard()
 	foot.AnchorPoint = Vector2.new(0, 1)
 	foot.Position = UDim2.fromScale(0, 1)
 	foot.Size = UDim2.new(1, 0, 0, ts() + 4)
+	-- DG-RECORD (approved 2026-11-16 8:07 PM, rule 281): shown once endless is open (L10) or a stage 4+ was reached.
+	local deepest = tonumber(st and st.deepest) or 0
+	if deepest > 0 and ((tonumber(st and st.level) or 0) >= 10 or deepest > 3) then
+		foot.Size = UDim2.new(0.6, 0, 0, ts() + 4)
+		local rec = makeText(main, `Deepest stage: {deepest}`, ts(), Theme.Colors.TextGold, true)
+		rec.AnchorPoint = Vector2.new(1, 1)
+		rec.Position = UDim2.fromScale(1, 1)
+		rec.Size = UDim2.new(0.4, 0, 0, ts() + 4)
+		rec.TextXAlignment = Enum.TextXAlignment.Right
+	end
 end
 
 --------------------------------------------------
@@ -370,7 +357,11 @@ local function buildParty()
 	local hint = makeText(main, "They can't be used anywhere else until the run ends.", ts(), Theme.Colors.TextSecondary) -- DG-PARTY-HINT
 	hint.Position = UDim2.fromOffset(0, body() + 6)
 	hint.Size = UDim2.new(1, 0, 0, ts() + 4)
-	local y0 = body() + ts() + 14
+	-- SB-09 (approved 2026-11-15 9:09 PM): the locked-loadout add-on, on its own line (step 3).
+	local hint2 = makeText(main, "Gear is locked once you enter. Only things you find can be swapped in.", ts(), Theme.Colors.TextSecondary)
+	hint2.Position = UDim2.fromOffset(0, body() + ts() + 10)
+	hint2.Size = UDim2.new(1, 0, 0, ts() + 4)
+	local y0 = body() + ts() * 2 + 18
 	local grid = Instance.new("ScrollingFrame")
 	grid.Name = "Grid"
 	grid.Position = UDim2.fromOffset(0, y0)
@@ -443,6 +434,7 @@ local function confirmEnter()
 	if not card or n < 1 or not screen then return end
 	popup("EnterConfirm", {
 		{ `Enter {card.biome} with {n} units? No healing or refills between battles.` }, -- DG-START-CONFIRM
+		{ "You start with 0 silver." }, -- SB-10 (approved 2026-11-15 9:09 PM)
 	}, {
 		{ text = "Stay", style = "Secondary", onTap = closeOverlay },                   -- DG-ESCAPE-NO
 		{ text = "Enter", style = "Primary", onTap = function()                          -- DG-START
@@ -464,17 +456,14 @@ end
 -- MAP
 --------------------------------------------------
 
-local function bagLines(): { any }
-	local b = (st and st.run and st.run.bag) or {}
-	return {
-		{ "Kept if you leave early", body(), Theme.Colors.Success, true },           -- DG-BAG-SAFE
-		{ `Gold {b.gold or 0} (75% kept if you leave early)` },                        -- DG-BAG-GOLD
-		{ `Materials {b.normalMats or 0}` },                                            -- DG-BAG-MATS
-		{ "Lost if you leave early", body(), Theme.Colors.Danger, true },              -- DG-BAG-RISK
-		{ `Elite/Boss materials {b.eliteMats or 0}` },                                  -- DG-BAG-ELITEMATS
-		{ `Gear {b.gear or 0}` },                                                       -- DG-BAG-GEAR
-		{ `Cards {b.cards or 0}` },                                                     -- DG-BAG-CARDS
-	}
+-- Steps 4-5: the Bag screen / full-Bag popup / Courier picker context (withLines = the Bag screen).
+local function bagCtx(withLines: boolean?): any
+	-- One Bag screen (2026-11-16 7:14 PM): relics in its Relics view (icons from the server), Equip opens the
+	-- dungeon-mode Loadout. The gold / materials summary stays in the side panel.
+	return { gui = screen.Gui, act = act, onChanged = function() render() end,
+		relics = if withLines then ((st and st.run and st.run.relics) or {}) else nil,
+		onEquip = if withLines then function(tab: string) DungeonScreen.OpenLoadout(tab) end else nil,
+		lastError = function() local e = lastErr lastErr = nil return e end }
 end
 
 local function goHome()
@@ -535,9 +524,10 @@ local bossPickToken = 0 -- per-pick token; bumped on each pick and on Close/Hide
 local function arrive(n: any)
 	if not n then return end
 	local c = ctx
+	if c and c.isLocked and c.isLocked() then return end -- departing for a room's battle (W1)
 	if n.played == "Boss" and bossPickPending then return end -- reply pending: ignore extra taps
 	if n.played == "Boss" and not isCleared(n.id) and st and st.run and st.run.bossPick then
-		-- relics v2: pick 1 of 2 before the fight. Text is DRAFT (DRAFT_dungeon_curse_popup_text_20261115.md).
+		-- relics v2: pick 1 of 2 before the fight. Text BP-* approved 2026-11-15 12:38 PM (rule 275).
 		RelicBar.ShowBossPick(st.run.bossPick, { popup = popup, closeOverlay = closeOverlay }, function(which)
 			if bossPickPending then return end -- second pick while waiting does nothing
 			bossPickPending = true
@@ -570,14 +560,17 @@ local function arrive(n: any)
 		-- Only when the server confirms the item (Tester thread-7492a118c395): a refused call shows
 		-- the server error in the status line instead of a false "You found" popup.
 		if not (res and res.ok and type(res.treasure) == "table") then return end
-		local name = res.treasure.itemName or "an item"
-		popup("TreasurePanel", {
-			{ "Treasure", Theme.Text.Heading(), Theme.Colors.TextGold, true },                 -- DG-TREASURE-T
-			{ `You found {name}! It's in your bag.` },                                         -- DG-TREASURE-1
-		}, { { icon = "Back", onTap = closeOverlay } })
+		-- 2026-11-16: item tile + Merchant inspector (DungeonMerchantPanel.ShowTreasure; same approved lines).
+		closeOverlay()
+		MerchantPanel.ShowTreasure(screen.Gui, res.treasure, function() closeOverlay() render() end) -- render: a held item shows its full-Bag pick next
 	elseif shownType(n) == "Event" and not isCleared(n.id) then -- step 7a: the event (a fight launches the battle)
 		EventPanel.Open({ gui = screen.Gui, act = act, onFight = function() if c then c.launchBattle() end end,
-			onDone = function() render() end, lastError = function() local e = lastErr lastErr = nil return e end })
+			onDone = function() render() end, lastError = function() local e = lastErr lastErr = nil return e end,
+			onCourier = function(ev) -- EV-17 Courier's Rest picker (steps 4-5); Back = the event choices again
+				local bc = bagCtx(false)
+				bc.onBack = function() arrive(n) end
+				BagPanel.OpenCourier(bc, ev)
+			end })
 	elseif shownType(n) == "Merchant" and not isCleared(n.id) then
 		MerchantPanel.Open({ gui = screen.Gui, act = act, setStatus = function(t, e) screen.SetStatus(t, e) end, -- step 6
 			onLeave = function() act({ action = "Continue" }); render() end })
@@ -618,6 +611,7 @@ local function buildMap()
 	SidePanel.Draw(main, {
 		makeText = makeText, ts = ts, body = body, run = run, here = here, gold = goldText,
 		onLoot = function() if screen then screen.SetStatus("Loot grows with every battle you win, up to ×2.5.") end end, -- DG-DROPRATE-HELP
+		onBag = function() DungeonScreen.OpenBag() end, -- steps 4-5: the "Bag n / max" line opens the Bag screen
 	})
 	local mapArea = Instance.new("Frame")
 	mapArea.Name = "MapArea"
@@ -653,10 +647,17 @@ end
 local function showResult(r: any)
 	if r.kind == "StageCleared" then -- stages (rule 277): the stage boss is beaten; go deeper or go home
 		popup("StageCleared", {
-			{ `Stage {r.stage or 1} / {r.maxStages or 1}`, Theme.Text.Heading(), Theme.Colors.TextGold, true }, -- DG-STAGE (approved 2026-11-15 8:41 AM)
+			if r.endless then { `Stage {r.stage or 1}`, Theme.Text.Heading(), Theme.Colors.TextGold, true } -- DG-STAGE-ENDLESS (approved 2026-11-16 8:07 PM)
+			else { `Stage {r.stage or 1} / {r.maxStages or 1}`, Theme.Text.Heading(), Theme.Colors.TextGold, true }, -- DG-STAGE (approved 2026-11-15 8:41 AM)
+			-- DG-ENDLESS-INFO (approved 8:07 PM, rule 281): from the stage 3 boss on, deeper = endless stages
+			if r.endless and (r.stage or 1) >= 3 then { "The dungeon goes deeper. Enemies grow stronger and curses gather.", ts(), Theme.Colors.TextSecondary } else nil,
 		}, {
 			{ text = "Go home", onTap = function() closeOverlay() act({ action = "GoHome" }) end },             -- approved (rule 275)
-			{ text = "Go deeper", style = "Primary", onTap = function() closeOverlay() act({ action = "GoDeeper" }) end }, -- approved (rule 275)
+			{ text = "Go deeper", style = "Primary", onTap = function() closeOverlay() -- approved (rule 275)
+				-- endless step 6 (rule 281): forced depth curses are picked first (shown before the next stage starts)
+				RelicBar.DepthPicks(st and st.run and st.run.depthOffer, { popup = popup, closeOverlay = closeOverlay }, act,
+					function() act({ action = "GoDeeper" }) pcall(render) end)
+			end },
 		})
 		return
 	end
@@ -673,6 +674,7 @@ local function showResult(r: any)
 	}
 	local lostTxt = listOf(r.lost, false)
 	if lostTxt ~= "-" then table.insert(lines, { `Lost: {lostTxt}`, nil, Theme.Colors.Danger }) end -- DG-END-LOST
+	if (tonumber(r.silverLost) or 0) > 0 then table.insert(lines, { `Silver left behind: {r.silverLost}`, nil, Theme.Colors.TextSecondary }) end -- SB-25
 	if r.hadRelics then table.insert(lines, { RelicBar.END_LINE, nil, Theme.Colors.TextSecondary }) end -- RL-UI-END (step 8)
 	popup("Result", lines, {
 		{ text = "Back to base", style = "Primary", onTap = function()            -- DG-END-OK
@@ -716,27 +718,15 @@ local function buildButtons()
 		popup("DungeonHelp", lines, { { icon = "Back", onTap = closeOverlay } })
 	end)
 	if view == "map" then
-		Theme.MakeBarButton(row, "Bag", "Secondary", function()                    -- DG-BAG
-			local lines = bagLines()
-			-- Relics live in the Bag now (2026-11-15); approved RL-UI strings.
-			local rel = (st and st.run and st.run.relics) or {}
-			table.insert(lines, { "Relics", body(), Theme.Colors.TextGold, true })                 -- RL-UI-HEAD
-			if #rel == 0 then table.insert(lines, { "No relics yet", nil, Theme.Colors.TextSecondary }) end -- RL-UI-NONE
-			for _, r in rel do
-				table.insert(lines, { tostring(r.name), nil, if r.kind == "Curse" then Theme.Colors.Danger else Theme.GetRarityColor(r.rarity or "Common"), true }) -- RL-UI-FOUND-1 (curse red)
-				table.insert(lines, { `{r.rarity} relic`, ts(), Theme.Colors.TextSecondary }) -- RL-UI-RARITY
-				if r.used then table.insert(lines, { "Used", ts(), Theme.Colors.TextSecondary }) end -- RL-UI-USED (own line, Tester A5)
-				table.insert(lines, { tostring(r.text), ts(), if r.kind == "Curse" then Theme.Colors.Danger else nil })  -- RL-UI-FOUND-2
-			end
-			popup("Bag", lines, { { icon = "Back", onTap = closeOverlay } })
-		end, { name = "Btn_Bag", minHeight = GuildScreen.ROW_H, layoutOrder = 2 })
+		Theme.MakeBarButton(row, "Bag", "Secondary", function() DungeonScreen.OpenBag() end, -- DG-BAG: the Bag screen (steps 4-5)
+			{ name = "Btn_Bag", minHeight = GuildScreen.ROW_H, layoutOrder = 2 })
 		Theme.MakeBarButton(row, "Leave", "Primary", confirmLeave,                  -- DG-ESCAPE-BTN
-			{ name = "Btn_Leave", minHeight = GuildScreen.ROW_H, layoutOrder = 3 })
+			{ name = "Btn_Leave", minHeight = GuildScreen.ROW_H, layoutOrder = 4 })
 	elseif view == "party" then
 		Theme.MakeBarButton(row, "Enter", if pickedCount() > 0 then "Primary" else "Disabled", confirmEnter, -- DG-START
 			{ name = "Btn_Enter", minHeight = GuildScreen.ROW_H, layoutOrder = 3 })
 	end
-	iconButton(row, "Back", "Btn_BACK", 4, function()
+	iconButton(row, "Back", "Btn_BACK", 5, function()
 		if view == "party" then
 			view = "board"
 			render()
@@ -745,6 +735,15 @@ local function buildButtons()
 		end
 	end)
 	row.Parent = screen.Buttons
+end
+
+local function busy(): boolean return overlay ~= nil or BagPanel.IsOpen() or MerchantPanel.IsOpen() end
+heldCheck = function()
+	task.defer(function()
+		if not (isOpen and screen) or busy() then return end
+		local bs = st and st.run and st.run.bagSlots
+		if bs and bs.live and (#(bs.held or {}) > 0 or (tonumber(bs.over) or 0) > 0) then BagPanel.OpenFull(bagCtx(false)) end -- over: RL-66 fix W1
+	end)
 end
 
 render = function()
@@ -758,29 +757,38 @@ render = function()
 	elseif view == "party" then buildParty()
 	elseif st and st.run then buildMap() end
 	buildButtons()
-	if st and st.result and not overlay then showResult(st.result) end
+	-- Steps 4-5 (rule 279): loot waiting for the full-Bag pick comes first; the run waits for it (no Back).
+	local bs = st and st.run and st.run.bagSlots
+	if bs and bs.live and (#(bs.held or {}) > 0 or (tonumber(bs.over) or 0) > 0) and not busy() then BagPanel.OpenFull(bagCtx(false)) end
+	if st and st.result and not busy() then showResult(st.result) end
 	-- Rejoin while a stage is cleared (fix 2026-11-15): the in-memory result is gone, so offer the choice from the saved run.
-	if st and st.run and st.run.stageCleared and not st.result and not overlay then
-		showResult({ kind = "StageCleared", stage = st.run.stage, maxStages = st.run.maxStages })
+	if st and st.run and st.run.stageCleared and not st.result and not busy() then
+		showResult({ kind = "StageCleared", stage = st.run.stage, maxStages = st.run.maxStages, endless = st.run.endless })
 	end
-	if st and st.run and st.run.stageHeal and not overlay then -- stages: heal message once at stage 2/3 start
+	if st and st.run and st.run.stageHeal and not busy() then -- stages: heal message once at stage 2/3 start
 		popup("StageHeal", { { "Your party rests before going deeper." } }, -- approved 2026-11-15 8:41 AM (rule 275)
 			{ { icon = "Back", onTap = function() closeOverlay() act({ action = "AckStageHeal" }) end } })
 	end
-	if st and st.run and st.run.smithDelivered and not overlay then -- EV-12: "The smith delivers: {name}!" once (approved)
+	if st and st.run and st.run.smithDelivered and not busy() then -- EV-12: "The smith delivers: {name}!" once (approved)
 		popup("SmithDelivers", { { `The smith delivers: {st.run.smithDelivered}!` } },
 			{ { icon = "Back", onTap = function() closeOverlay() act({ action = "AckSmith" }) end } })
 	end
-	if st and st.run and st.run.curseOffer and not overlay then -- relics v2: cursed relic, Take both / Leave both
+	if st and st.run and st.run.curseOffer and not busy() then -- relics v2: cursed relic, Take both / Leave both
 		RelicBar.ShowCurseOffer(st.run.curseOffer, { popup = popup, closeOverlay = closeOverlay }, function(take)
 			local res = act({ action = "CurseAnswer", take = take })
 			pcall(render)
 			if take == false and res and res.ok ~= false then
-				popup("CurseLeft", { { "You leave the relic behind." } }, { { icon = "Back", onTap = closeOverlay } }) -- CP-LEFT (DRAFT)
+				popup("CurseLeft", { { "You leave the relic behind." } }, { { icon = "Back", onTap = closeOverlay } }) -- CP-LEFT
 			end
 		end)
 	end
-	if st and st.run and st.run.relicFound and not overlay then -- step 8: "Relic found" once
+	local ff = st and st.run and st.run.furniture -- furniture: approved lines 5 + 6 (gf 100); v5 FUR-BOSS-DROP adds the rarity (gf 112)
+	if ff and ff.popup and not busy() then
+		local rar = if type(ff.popupRarity) == "string" then ` ({ff.popupRarity})` else ""
+		popup("FurnitureFound", { { `Furniture found: {ff.popup}{rar}!` }, { `{ff.popup} comes home with your loot.` } },
+			{ { icon = "Back", onTap = function() closeOverlay() act({ action = "AckFurniture" }) end } })
+	end
+	if st and st.run and st.run.relicFound and not busy() then -- step 8: "Relic found" once
 		RelicBar.ShowFound(st.run.relicFound, st.run.relics, { popup = popup, closeOverlay = closeOverlay }, function() act({ action = "AckRelic" }) end)
 	end
 end
@@ -791,6 +799,20 @@ end
 
 function DungeonScreen.Init(c: Context)
 	ctx = c
+	-- DEV / Studio only (2026-11-16): open the screen, Bag or Loadout from a test script, since simulated taps
+	-- don't register. Set workspace attribute CTRBLXAI_DevDungeonUI = "open" | "bag" | "loadout" | "tap:<name>"
+	-- (BagPanel.Tap), then "" before the next one. Never runs in a live game (RunService:IsStudio()).
+	if game:GetService("RunService"):IsStudio() then
+		workspace:GetAttributeChangedSignal("CTRBLXAI_DevDungeonUI"):Connect(function()
+			local v = workspace:GetAttribute("CTRBLXAI_DevDungeonUI")
+			if type(v) ~= "string" or v == "" then return end
+			if v == "open" then DungeonScreen.Open()
+			elseif v == "bag" or v == "loadout" then
+				if not isOpen then DungeonScreen.Open() task.wait(1) end
+				if v == "bag" then DungeonScreen.OpenBag() else DungeonScreen.OpenLoadout("GEARS") end
+			elseif string.sub(v, 1, 4) == "tap:" then BagPanel.Tap(string.sub(v, 5)) end
+		end)
+	end
 end
 
 function DungeonScreen.IsOpen(): boolean
@@ -862,6 +884,25 @@ function DungeonScreen.Render()
 	render()
 end
 
+--- Step 3 (2026-11-16): open the normal Loadout screen in dungeon mode on the first party unit. Back
+--- returns here and the map refreshes (HP from map consumables, Bag count).
+function DungeonScreen.OpenLoadout(tab: string?)
+	local party = st and st.run and st.run.party
+	local open = (_G :: any).CTRBLXAI_OpenLoadoutTab
+	if not (party and party[1] and open) or overlay then return end
+	if ctx and ctx.isLocked and ctx.isLocked() then return end -- departing for a room's battle (W1)
+	open(tab or "GEARS", { unitId = party[1], dungeon = true, onClose = function()
+		if isOpen then DungeonScreen.Refresh(); render() end
+	end })
+end
+
+--- Steps 4-5: open the Bag screen (Bag button / the side panel's Bag line).
+function DungeonScreen.OpenBag()
+	if not (screen and st and st.run) or busy() then return end
+	if ctx and ctx.isLocked and ctx.isLocked() then return end -- departing for a room's battle (W1)
+	BagPanel.Open(bagCtx(true))
+end
+
 function DungeonScreen.SetGold(text: string)
 	local changed = text ~= goldText
 	goldText = text
@@ -873,31 +914,5 @@ function DungeonScreen.SetStatus(text: string, isError: boolean?)
 	if isError then lastErr = text end if screen then screen.SetStatus(text, isError) end
 end
 
--- Test hooks for the scripted Studio check (simulated taps do not register): same paths as taps.
-DungeonScreen._Test = table.freeze({
-	state = function() return st end,
-	view = function() return view end,
-	pickCard = function(cardId: string)
-		for _, c in (st and st.choices) or {} do
-			if c.id == cardId and not c.used then pickedCard = c; picked = {}; partyUnits = nil; view = "party"; render() end
-		end
-	end,
-	pickUnit = function(id: string) picked[id] = true; render() end,
-	enter = function() confirmEnter() end,
-	move = function(nodeId: string)
-		if act({ action = "Move", nodeId = nodeId }) then render(); arrive(nodeOf(nodeId)) end
-	end,
-	leave = function() confirmLeave() end,
-	peek = function(nodeId: string) peekRoom(nodeOf(nodeId)) end, -- = tap a room on the map (2026-11-15)
-	tapHere = function() if st and st.run and st.run.at then arrive(nodeOf(st.run.at)) end end, -- = tap the room you stand on
-	tapOverlayButton = function(index: number)
-		local f = overlay and overlayTaps[index]
-		if not f then return false end
-		f()
-		return true
-	end,
-	overlayName = function() return overlay and overlay.Name or nil end,
-	closeOverlay = closeOverlay,
-})
 
 return table.freeze(DungeonScreen)

@@ -169,22 +169,31 @@ function DispatchService.SetGemRoller(fn: ((number) -> string?)?) _gemRoller = f
 
 --------------------------------------------------
 -- SLOTS + FEE (USER RULING 2026-10-07; economy_framework 26: 50 gold per mission)
--- Concurrent mission slots = Guild Hall level, min 1, max 3 (guild_facilities 7
--- "+1 dispatch slot per level up to base max"; base max 3 per economy_framework
--- 26/34). Robux +1 slots up to 6 (economy_framework 34) are NOT built yet.
+-- Concurrent mission slots come from the Renown Rank (USER RULING 2026-11-16 1:53 PM: 1 at
+-- Rank 5, 2 at Rank 10, 3 at Rank 15; the Guild Hall no longer sets them). Base max 3 per
+-- economy_framework 26/34. Robux +1 slots up to 6 (economy_framework 34) are NOT built yet.
 --------------------------------------------------
 local DISPATCH_FEE_GOLD = 50
 local DISPATCH_BASE_MAX_SLOTS = 3
-local _guildHallLevelProvider: ((string) -> number)? = nil
-function DispatchService.SetGuildHallLevelProvider(fn: ((string) -> number)?) _guildHallLevelProvider = fn end
+local _slotProvider: ((string) -> number)? = nil
+function DispatchService.SetSlotProvider(fn: ((string) -> number)?) _slotProvider = fn end
 
 function DispatchService.GetSlotCap(playerId: string): number
-	local gh = _guildHallLevelProvider and _guildHallLevelProvider(playerId) or 1
-	return math.clamp(math.floor(tonumber(gh) or 1), 1, DISPATCH_BASE_MAX_SLOTS)
+	local n = _slotProvider and _slotProvider(playerId) or 1
+	return math.clamp(math.floor(tonumber(n) or 1), 0, DISPATCH_BASE_MAX_SLOTS)
 end
 
+-- Fee change from Guild Hall furniture (War Table Map -5g, guild_facilities 94; injected, nil-safe).
+local _feeModifier: (() -> number)? = nil
+function DispatchService.SetFeeModifier(fn: (() -> number)?) _feeModifier = fn end
+
 function DispatchService.GetFeeGold(): number
-	return DISPATCH_FEE_GOLD
+	local delta = 0
+	if _feeModifier then
+		local ok, d = pcall(_feeModifier)
+		if ok then delta = math.floor(tonumber(d) or 0) end
+	end
+	return math.max(0, DISPATCH_FEE_GOLD + delta)
 end
 
 --------------------------------------------------
@@ -403,16 +412,17 @@ function DispatchService.SendUnits(playerId: string, missionId: string, unitIds:
 	local cap = DispatchService.GetSlotCap(playerId)
 	local used = DispatchService.GetSlotsUsed(playerId)
 	if used >= cap then
-		return false, string.format("No free dispatch slot (%d/%d in use) — upgrade the Guild Hall for more", used, cap)
+		return false, string.format("No free dispatch slot (%d/%d in use)", used, cap)
 	end
 	if not (_currency and _currency.GetGold and _currency.SpendGold) then
 		return false, "Gold unavailable — dispatch not sent"
 	end
 	local gold = _currency.GetGold(playerId) or 0
-	if gold < DISPATCH_FEE_GOLD then
-		return false, string.format("Not enough gold: dispatch costs %d (you have %d)", DISPATCH_FEE_GOLD, gold)
+	local fee = DispatchService.GetFeeGold() -- 50, minus furniture (War Table Map)
+	if gold < fee then
+		return false, string.format("Not enough gold: dispatch costs %d (you have %d)", fee, gold)
 	end
-	if not _currency.SpendGold(playerId, DISPATCH_FEE_GOLD) then
+	if fee > 0 and not _currency.SpendGold(playerId, fee) then
 		return false, "Gold payment failed — dispatch not sent"
 	end
 

@@ -1,0 +1,292 @@
+--!strict
+-- DungeonBag.lua
+-- CTRBLXAI | Dungeon Bag capacity (USER RULINGS 2026-11-15 7:54 PM, project_rules 279). Silver step 1:
+-- server only, no Bag screen yet.
+--   * Capacity by facility level: D.BagSlots (12, 13, 14, 26, 27, 28, 30, 48, 52, 56).
+--   * TAKES 1 SLOT: each gear piece, each skill / augment card, each consumable stack (same id = 1).
+--     NO SLOT: materials, gold, silver, relics, items equipped on units, consumables brought in.
+--     (Home items taken off and Merchant buys take a slot too: built with locked loadouts / silver
+--     prices, step 2+.)
+--   * FULL BAG: loot that doesn't fit waits in run.bagHeld (saved). The player keeps it (and throws
+--     one Bag item away for good) or leaves it: Bag.Choose. Held loot still waiting at run end is lost.
+--     The run waits for the pick: DungeonService.MoveTo refuses while something is held.
+--   * The limit is ON since steps 4-5 (2026-11-16, D.BagLimitLive = true): the Bag screen and the full-Bag
+--     popup (client DungeonBagPanel) exist. Held loot on a full-loot exit comes home (Bag.OnRunEnd, default).
+-- Pure on the run table. DungeonService binds stateOf / persist / addLoot (no cycle, ARC-004).
+
+local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local DungeonSilver = require(script.Parent:WaitForChild("DungeonSilver")) -- pure, no cycle (it requires DungeonRules only)
+local D = DungeonRules.Data
+
+local MAX_HELD = 200
+
+local Bag = {}
+
+local C: any = nil
+function Bag.Bind(ctx: any) C = ctx end
+
+-- DEV / TEST override of D.BagLimitLive (nil = use the rule). Never saved.
+local _live: boolean? = nil
+function Bag.DevSetLive(on: boolean?) _live = on end
+local function live(): boolean
+	if _live ~= nil then return _live :: boolean end
+	return (D :: any).BagLimitLive == true
+end
+
+--- True when the Bag limit is enforced (rule 279; D.BagLimitLive or the dev override). Silver step 2.
+function Bag.IsLive(): boolean return live() end
+
+function Bag.Capacity(facilityLevel: number): number
+	local slots: { number } = D.BagSlots :: any
+	local l = math.clamp(math.floor(tonumber(facilityLevel) or 1), 1, #slots)
+	return slots[l]
+end
+
+-- Bag card keys are "skillCards:ID" / "augmentCards:ID" (1 slot per card) or "consumables:ID" (1 per stack).
+local function isStack(key: any): boolean
+	return type(key) == "string" and string.sub(key, 1, 12) == "consumables:"
+end
+
+function Bag.SlotsUsed(bag: any): number
+	if type(bag) ~= "table" then return 0 end
+	local n = #(bag.gear or {})
+	for key, q in bag.cards or {} do
+		if type(key) == "string" and type(q) == "number" and q > 0 then
+			n += if isStack(key) then 1 else math.floor(q)
+		end
+	end
+	return n
+end
+
+local function capOf(run: any): number
+	local cap = Bag.Capacity(run.card and run.card.facilityLevel or 1)
+	-- RL-66 Heavy Pack (endless step 6, rule 282): Bag -2 slots. Step 6 fix W1: items over the limit must be thrown away
+	-- (approved RL-66 text): the run waits (Bag.Waiting) and the full-Bag popup asks the player to pick; nothing auto-deleted.
+	if table.find(run.relics or {}, "RL-66") then cap = math.max(1, cap - (D.Relic :: any).HeavyPackSlots) end
+	return cap
+end
+Bag.CapOf = capOf
+
+-- Home items taken off in the dungeon sit in the Bag view and take slots too (rule 279, step 3 2026-11-16).
+-- They live in run.dgLoad.home (DungeonLoadout); counted here directly so there is no require cycle.
+function Bag.HomeSlots(run: any): number
+	local d = type(run) == "table" and run.dgLoad
+	if type(d) ~= "table" or type(d.home) ~= "table" then return 0 end
+	local n = 0
+	for _ in d.home.gear or {} do n += 1 end
+	for key, q in d.home.cards or {} do
+		if type(q) == "number" and q > 0 then n += if isStack(key) then 1 else math.floor(q) end
+	end
+	return n
+end
+
+function Bag.Free(run: any): number
+	return math.max(0, capOf(run) - Bag.SlotsUsed(run.bag) - Bag.HomeSlots(run))
+end
+
+-- Slots one AddLoot call needs: gear 1; a consumable stack already in the Bag 0, a new stack 1; cards q.
+local function needed(run: any, kind: string, a: any, q: number): number
+	if kind == "gearItem" then return 1 end
+	if kind == "cards" then
+		if isStack(a) then return if ((run.bag.cards or {})[a] or 0) > 0 then 0 else 1 end
+		return q
+	end
+	return 0
+end
+
+--- DungeonService.AddLoot asks before adding gear / cards. Returns how much to add now
+--- (gearItem: 0 or 1; cards: 0..q). The rest waits in run.bagHeld for the player's pick.
+--- charges (2026-11-16, R2): a partly used consumable copy (sent home with a full Bag) keeps its charges left
+--- while it waits; kept later, it becomes an opened Bag copy again (run.dgLoad.open).
+function Bag.Admit(run: any, kind: string, a: any, q: number?, charges: number?): number
+	local want = if kind == "cards" then math.max(0, math.floor(tonumber(q) or 0)) else 1
+	if not live() or (kind ~= "gearItem" and kind ~= "cards") or type(run) ~= "table" then return want end
+	run.bagHeld = run.bagHeld or {}
+	local free = Bag.Free(run)
+	if needed(run, kind, a, want) <= free then return want end
+	local now = 0
+	if kind == "gearItem" then
+		if #run.bagHeld < MAX_HELD then table.insert(run.bagHeld, { kind = "gearItem", item = a }) end
+	elseif isStack(a) then
+		if #run.bagHeld < MAX_HELD then table.insert(run.bagHeld, { kind = "cards", key = a, n = want, charges = charges }) end
+	else
+		now = free -- as many cards as fit now, the rest one by one
+		for _ = 1, want - now do
+			if #run.bagHeld < MAX_HELD then table.insert(run.bagHeld, { kind = "cards", key = a, n = 1 }) end
+		end
+	end
+	print(`[DungeonBag] Bag full ({Bag.SlotsUsed(run.bag)}/{capOf(run)}) | {kind} {if kind == "gearItem" then tostring(a and a.instanceId) else tostring(a)} waits | held {#run.bagHeld}`)
+	return now
+end
+
+--- Step 6 fix W1 (RL-66 Heavy Pack): slots over the limit that the player must throw away. Only Bag items can be
+--- thrown away (home items can't, no server path deletes home storage mid-run), so this never asks for more than that.
+local function overBy(run: any): number
+	if not live() or type(run) ~= "table" or type(run.bag) ~= "table" then return 0 end
+	local inBag = Bag.SlotsUsed(run.bag)
+	local over = inBag + Bag.HomeSlots(run) - capOf(run)
+	return math.max(0, math.min(over, inBag))
+end
+Bag.OverBy = overBy
+
+--- True while loot waits for the full-Bag pick, or the Bag is over its limit (the run waits, rule 279).
+function Bag.Waiting(run: any): boolean
+	return live() and type(run) == "table" and (#(run.bagHeld or {}) > 0 or overBy(run) > 0)
+end
+
+-- Throw one Bag item away for good. discard = { gear = instanceId } | { card = key }.
+local function removeOne(run: any, bag: any, discard: any): boolean
+	if type(discard) ~= "table" then return false end
+	local gid, ckey = discard.gear, discard.card
+	if type(gid) == "string" and #gid <= 128 then
+		for i, id in bag.gear do
+			if id == gid then
+				table.remove(bag.gear, i)
+				bag.gearItems[gid] = nil
+				DungeonSilver.UnmarkBought(run, "gear", gid, "discarded") -- a thrown-away bought item loses its mark
+				return true
+			end
+		end
+	elseif type(ckey) == "string" and #ckey <= 64 then
+		local q = bag.cards[ckey]
+		if type(q) ~= "number" or q <= 0 then return false end
+		local whole = isStack(ckey) or q <= 1
+		bag.cards[ckey] = if whole then nil else q - 1
+		-- a thrown-away stack releases a mark for every copy it held (W2), a single card releases one
+		DungeonSilver.UnmarkBought(run, "card", ckey, "discarded", if isStack(ckey) then q else 1)
+		return true
+	end
+	return false
+end
+
+--- The full-Bag pick for the first held item: keep = true (throw `discard` away if there is no room)
+--- or false (leave it). Returns ok, { held, used, cap } | error.
+function Bag.Choose(playerId: string, keep: any, discard: any): (boolean, any)
+	local run = C and C.stateOf(playerId).run
+	if not run then return false, "No dungeon run in progress" end
+	local held = run.bagHeld
+	-- Step 6 fix W1: over the limit (RL-66) with nothing waiting -> throw one picked Bag item away (keep = true + discard)
+	if (type(held) ~= "table" or #held == 0) and keep == true and overBy(run) > 0 then
+		if not removeOne(run, run.bag, discard) then return false, "Invalid request" end
+		print(`[DungeonBag] Over the limit: threw one item away | over {overBy(run)}`)
+		if C and C.persist then C.persist() end
+		return true, Bag.View(run)
+	end
+	if type(held) ~= "table" or #held == 0 or type(keep) ~= "boolean" then return false, "Invalid request" end
+	local e = held[1]
+	if keep then
+		local a = if e.kind == "gearItem" then e.item else e.key
+		-- Tester advisory (step 1): a held gear piece already in the Bag is not lost and needs no slot or discard.
+		if e.kind == "gearItem" and type(a) == "table" and run.bag.gearItems[a.instanceId] then
+			table.remove(held, 1)
+			print(`[DungeonBag] Held gear already in the Bag: {tostring(a.instanceId)} | held {#held}`)
+			if C and C.persist then C.persist() end
+			return true, Bag.View(run)
+		end
+		-- W2 (2026-11-16): snapshot what a discard touches, so a failed add puts the thrown-away item back.
+		local snap: any = nil
+		if needed(run, e.kind, a, if e.kind == "cards" then e.n else 1) > Bag.Free(run) then
+			local bk = run.boughtKeep
+			snap = { gear = table.clone(run.bag.gear), gearItems = table.clone(run.bag.gearItems), cards = table.clone(run.bag.cards),
+				bkGear = bk and table.clone(bk.gear or {}), bkCards = bk and table.clone(bk.cards or {}) }
+			if not removeOne(run, run.bag, discard) then return false, "Invalid request" end
+		end
+		table.remove(held, 1)
+		local okA, whyA = true, nil
+		if C and C.addLoot then okA, whyA = C.addLoot(playerId, e.kind, a, if e.kind == "cards" then e.n else nil) end
+		if not okA then -- never silently lost: it waits again at the front
+			table.insert(held, 1, e)
+			if snap then -- the discarded item comes back too (W2)
+				run.bag.gear, run.bag.gearItems, run.bag.cards = snap.gear, snap.gearItems, snap.cards
+				if run.boughtKeep and snap.bkGear then run.boughtKeep.gear, run.boughtKeep.cards = snap.bkGear, snap.bkCards end
+			end
+			warn(`[DungeonBag] Keep refused ({tostring(whyA)}); item waits again`)
+			if C and C.persist then C.persist() end
+			return false, "Invalid request"
+		end
+		-- a partly used consumable that waited (R2) is an opened Bag copy again, with its own charges (F1)
+		local ch = e.charges
+		if type(ch) == "number" and e.kind == "cards" and isStack(e.key) and type(run.dgLoad) == "table" then
+			local cid = string.sub(e.key, 13)
+			run.dgLoad.open = run.dgLoad.open or {}
+			local list = run.dgLoad.open[cid] or {}
+			table.insert(list, ch)
+			run.dgLoad.open[cid] = list
+		end
+		print(`[DungeonBag] Kept held {e.kind} | held {#held}`)
+	else
+		table.remove(held, 1)
+		print(`[DungeonBag] Left held {e.kind} | held {#held}`)
+	end
+	if C and C.persist then C.persist() end
+	return true, Bag.View(run)
+end
+
+--- Run end (DungeonService.EndRun, after ComputeOutcome). Default 2026-11-16 (steps 4-5): on a full-loot exit
+--- (Boss / EscapeNode) loot still waiting comes home too (the run is over, so no pick is needed; only the last
+--- boss's loot can still be waiting, because moving on waits for the pick). Early escape / wipeout: lost as before.
+--- W1 (2026-11-16): placeOpened(cid, charges) -> bool puts a waiting partly used consumable on a party unit at
+--- its charges left (rule 264 R3, DungeonLoadout.PlaceOpened); with no free slot it comes home as a full copy.
+function Bag.OnRunEnd(run: any, outcome: any, kind: string, placeOpened: ((string, number) -> boolean)?)
+	local held = run and run.bagHeld
+	if type(held) ~= "table" or #held == 0 or not (outcome and outcome.kept) then return end
+	if kind ~= "Boss" and kind ~= "EscapeNode" then return end
+	local kept = outcome.kept
+	kept.gear = table.clone(kept.gear or {})
+	kept.gearItems = table.clone(kept.gearItems or {})
+	kept.cards = kept.cards or {}
+	for _, e in held do
+		if e.kind == "gearItem" and type(e.item) == "table" and not kept.gearItems[e.item.instanceId] then
+			table.insert(kept.gear, e.item.instanceId)
+			kept.gearItems[e.item.instanceId] = e.item
+		elseif e.kind == "cards" and type(e.key) == "string" then
+			local ch = e.charges
+			if type(ch) == "number" and isStack(e.key) and placeOpened and placeOpened(string.sub(e.key, 13), ch) then
+				print(`[DungeonBag] Run end: waiting opened {e.key} ({ch} charges) comes home on a party unit`)
+			else
+				kept.cards[e.key] = (kept.cards[e.key] or 0) + (tonumber(e.n) or 1)
+			end
+		end
+	end
+	print(`[DungeonBag] Run end ({kind}): {#held} waiting item(s) come home`)
+	run.bagHeld = {}
+end
+
+--- Client view: slots used / capacity, and what waits (ids only; detail = DungeonCourier.BagList).
+function Bag.View(run: any): any
+	if type(run) ~= "table" then return nil end
+	local held = {}
+	for _, e in run.bagHeld or {} do
+		if e.kind == "gearItem" then table.insert(held, { kind = "gear", id = e.item and e.item.instanceId })
+		else table.insert(held, { kind = "card", key = e.key, n = e.n }) end
+	end
+	return { used = Bag.SlotsUsed(run.bag) + Bag.HomeSlots(run), cap = capOf(run), live = live(), held = held, over = overBy(run) }
+end
+
+--- Save helpers (DungeonSave). Held gear is the item table itself, like run.bag.gearItems.
+function Bag.ExportHeld(run: any): { any }
+	local out = {}
+	for _, e in run.bagHeld or {} do
+		if e.kind == "gearItem" and type(e.item) == "table" then table.insert(out, { kind = "gearItem", item = e.item })
+		elseif e.kind == "cards" then table.insert(out, { kind = "cards", key = e.key, n = e.n, charges = e.charges }) end
+	end
+	return out
+end
+
+function Bag.ImportHeld(run: any, list: any)
+	run.bagHeld = {}
+	if type(list) ~= "table" then return end -- old saves: nothing held
+	for _, e in list do
+		if #run.bagHeld >= MAX_HELD then break end
+		if type(e) == "table" then
+			if e.kind == "gearItem" and type(e.item) == "table" and type(e.item.instanceId) == "string" and #e.item.instanceId <= 128 then
+				table.insert(run.bagHeld, { kind = "gearItem", item = e.item })
+			elseif e.kind == "cards" and type(e.key) == "string" and #e.key <= 64 and type(e.n) == "number" and e.n >= 1 and e.n <= 1000 and e.n % 1 == 0 then
+				local ch = if type(e.charges) == "number" and e.charges >= 1 and e.charges <= 999 and e.charges % 1 == 0 then e.charges else nil
+				table.insert(run.bagHeld, { kind = "cards", key = e.key, n = e.n, charges = ch })
+			end
+		end
+	end
+end
+
+return Bag

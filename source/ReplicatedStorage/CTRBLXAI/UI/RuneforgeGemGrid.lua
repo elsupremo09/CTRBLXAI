@@ -94,7 +94,7 @@ local PORTRAIT_BG = Color3.new(0, 0, 0)
 local function portraitBox(cellW: number): (UDim2, UDim2)
 	local t = Theme.ItemTile
 	local inset = math.max(t.IconInsetMin, math.round(cellW * t.IconInsetFactor))
-	return UDim2.new(1, -inset * 2, 0, cellW - inset * 2), UDim2.fromOffset(inset, inset)
+	return UDim2.new(1, -inset * 2, 0, cellW - inset * 2 - Theme.ItemTileFramePad() * 2), UDim2.fromOffset(inset, inset)
 end
 local function addPortraitBg(tile: Instance, cellW: number)
 	local box = Instance.new("Frame")
@@ -173,7 +173,7 @@ function RuneforgeGemGrid.BuildGrid(grid: ScrollingFrame, cells: { Cell }, heigh
 			for _, tile in grid:GetChildren() do
 				if tile:IsA("TextButton") then
 					for _, c in tile:GetChildren() do
-						if c:IsA("ImageLabel") then
+						if c:IsA("ImageLabel") and c.Name ~= "ItemFrame" then -- never resize the ornate frame
 							-- Keep the per-icon fit (Theme.IconFitScale, e.g. MP) on every re-fit.
 							c.Size, c.Position = Theme.FitIconBox(c.Image, size, pos)
 						elseif c.Name == "PortraitBox" then

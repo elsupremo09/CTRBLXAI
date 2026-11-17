@@ -1,0 +1,244 @@
+--!strict
+-- DungeonSilver.lua
+-- CTRBLXAI | Dungeon silver: the run-only purse (USER RULINGS 2026-11-15 7:54 PM, project_rules 278).
+-- Silver step 1 (server only, no screen text yet).
+--   * Starts at 0 every run (buildRun), earned per WON room, carried between stages, LOST on every
+--     run end (it lives on the run table, which EndRun drops). Silver never becomes gold.
+--   * Earn (stage 1 / x1.25 stage 2 / x1.5 stage 3, rounded half up): Battle 20, Elite 45, Boss 80,
+--     Treasure 15. A "?" room pays as the room it becomes (the played type). Fortune does NOT apply.
+--   * Relics, after the stage multiplier: RL-02 Gilded Purse +10%, RL-59 Coin-Eater -15% (battle wins
+--     only), RL-45 Reaver's Pact -35%.
+--   * Silver step 2 (rules 268 / 272 / 278): spending (Merchant prices, refills, Barter, event costs),
+--     event silver. Merchant buys are Bag items: lost on a failed run like any Bag item (USER RULING
+--     2026-11-16 7:22 PM, rules 264 / 268; the old "Bought — always kept" rule is retired).
+-- Pure on the run table. DungeonService binds stateOf (no require of DungeonService: no cycle, ARC-004).
+
+local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local D = DungeonRules.Data
+
+local MAX_SILVER = 1000000
+local BATTLE_SOURCES = table.freeze({ Battle = true, Elite = true, Boss = true })
+
+local Silver = {}
+
+local C: any = nil
+function Silver.Bind(ctx: any) C = ctx end
+
+local function roundHalfUp(x: number): number
+	return math.floor(x + 0.5)
+end
+
+--- Pure: silver for one won room. source = "Battle" | "Elite" | "Boss" | "Treasure"; relics = held set.
+function Silver.Amount(source: string, stage: number, relics: { [string]: boolean }): number
+	local base = (D.Silver :: any)[source]
+	if type(base) ~= "number" then return 0 end
+	local mults: { number } = D.SilverStageMult :: any
+	local st = math.clamp(math.floor(tonumber(stage) or 1), 1, #mults)
+	local v = roundHalfUp(base * mults[st])
+	local R: any = D.Relic
+	local m = 1
+	if relics["RL-02"] then m *= 1 + R.PurseSilverPct / 100 end
+	if relics["RL-59"] and BATTLE_SOURCES[source] then m *= 1 - R.CoinEaterSilverPct / 100 end
+	if relics["RL-45"] then m *= 1 - R.ReaverSilverPct / 100 end
+	return math.max(0, roundHalfUp(v * m))
+end
+
+--- Add one won room's silver to the run purse. Returns the amount added.
+function Silver.Earn(run: any, source: string): number
+	if type(run) ~= "table" then return 0 end
+	local held: { [string]: boolean } = {}
+	for _, id in run.relics or {} do held[id] = true end
+	local add = Silver.Amount(source, run.stage or 1, held)
+	run.silver = math.min(MAX_SILVER, (tonumber(run.silver) or 0) + add)
+	if add > 0 then print(`[DungeonSilver] +{add} silver ({source}, stage {run.stage or 1}) | purse {run.silver}`) end
+	return add
+end
+
+--- By player (battle hook after a won room). The battle-end save stores it.
+function Silver.EarnFor(playerId: string, source: string): number
+	local run = C and C.stateOf(playerId).run
+	if not run then return 0 end
+	return Silver.Earn(run, source)
+end
+
+function Silver.Get(run: any): number
+	return if type(run) == "table" then (tonumber(run.silver) or 0) else 0
+end
+
+--------------------------------------------------
+-- SILVER STEP 2 (USER RULINGS 2026-11-15 7:54 PM; rules 268 / 272 / 278)
+--------------------------------------------------
+
+--- Flat event silver (EV-04 / EV-07 / EV-08 win). No stage multiplier, no relic change (agent default).
+function Silver.Add(run: any, n: number): number
+	if type(run) ~= "table" or type(n) ~= "number" or n <= 0 then return 0 end
+	local add = math.floor(n)
+	run.silver = math.min(MAX_SILVER, Silver.Get(run) + add)
+	print(`[DungeonSilver] +{add} silver (event) | purse {run.silver}`)
+	return add
+end
+
+--- All-or-nothing spend. Returns true when paid. Never goes below 0.
+function Silver.Spend(run: any, n: number, why: string): boolean
+	if type(run) ~= "table" or type(n) ~= "number" or n < 0 then return false end
+	local cost = math.ceil(n)
+	local have = Silver.Get(run)
+	if cost > have then return false end
+	run.silver = have - cost
+	if cost > 0 then print(`[DungeonSilver] -{cost} silver ({why}) | purse {run.silver}`) end
+	return true
+end
+
+--- Lose pct% of the purse, rounded down (EV-10 Cutpurse). Returns the amount lost.
+function Silver.LosePct(run: any, pct: number): number
+	local lose = math.floor(Silver.Get(run) * (tonumber(pct) or 0) / 100)
+	if lose > 0 then
+		run.silver = Silver.Get(run) - lose
+		print(`[DungeonSilver] -{lose} silver (cutpurse) | purse {run.silver}`)
+	end
+	return lose
+end
+
+--- Fixed prices at every item level (rule 278).
+function Silver.ConsumablePrice(tier: any): number
+	local t: any = D.SilverConsumablePrice
+	return t[tier] or t.Common
+end
+
+function Silver.GearPrice(rarityId: any, twoHanded: boolean): number?
+	local t: any = D.SilverGearPrice
+	local base = t[rarityId]
+	if type(base) ~= "number" then return nil end
+	return if twoHanded then math.ceil(base * (D :: any).SilverTwoHandMult) else base
+end
+
+-- Cost of the first k missing charges: ceil(price x k / paidMax x rate%) (integer maths, like the Apothecary),
+-- so charge-by-charge adds up to exactly ceil(price x missing / max x rate).
+local function cumulative(price: number, k: number, m: number, pct: number): number
+	if k <= 0 or m <= 0 then return 0 end
+	local num, den = price * k * pct, m * 100
+	return (num + den - 1) // den
+end
+
+--- Pure refill plan. slots = { { uid, idx, tier, cur, paidMax, slotMax } }. Cheapest charge first
+--- (price per charge, then unit id, then slot); stops at the first charge the budget can't cover.
+--- Returns { cost, refilled, skippedCharges, need, picks = { { uid, idx, newCur } } }.
+function Silver.RefillPlan(slots: any, pct: number, budget: number): any
+	local list = {}
+	for _, s in slots or {} do
+		if type(s) == "table" and (s.cur or 0) < (s.slotMax or 0) then
+			local price = Silver.ConsumablePrice(s.tier)
+			local m = math.max(1, s.paidMax or s.slotMax or 1)
+			table.insert(list, { s = s, price = price, m = m, per = price / m })
+		end
+	end
+	table.sort(list, function(a, b)
+		if a.per ~= b.per then return a.per < b.per end
+		if a.s.uid ~= b.s.uid then return tostring(a.s.uid) < tostring(b.s.uid) end
+		return (a.s.idx or 0) < (b.s.idx or 0)
+	end)
+	local spent, refilled, skipped, need, stopped = 0, 0, 0, 0, false
+	local picks = {}
+	for _, e in list do
+		local s = e.s
+		local cur = s.cur or 0
+		local paidMissing = math.max(0, math.min(e.m, s.slotMax) - cur)
+		local done = 0
+		for i = 1, paidMissing do
+			local c = cumulative(e.price, i, e.m, pct) - cumulative(e.price, i - 1, e.m, pct)
+			if stopped or spent + c > budget then
+				stopped = true
+				skipped += paidMissing - done
+				need += cumulative(e.price, paidMissing, e.m, pct) - cumulative(e.price, done, e.m, pct)
+				break
+			end
+			spent += c
+			done = i
+		end
+		local newCur = cur + done
+		if done == paidMissing then newCur = s.slotMax end -- free extra charges above the paid max
+		if newCur > cur then
+			refilled += newCur - cur
+			table.insert(picks, { uid = s.uid, idx = s.idx, newCur = newCur })
+		end
+	end
+	return { cost = spent, refilled = refilled, skippedCharges = skipped, need = need, picks = picks }
+end
+
+--- Plan (commit=false) or pay + apply (commit=true) a party refill at pct% (60 Merchant / 40 Peddler).
+--- Charges come from the merchant hooks chargeSlots(party) / setCharges(uid, idx, n). Bag consumables are
+--- unequipped full stacks (no charges), so equipped slots are the only charges to refill.
+function Silver.Refill(run: any, pct: number, commit: boolean, why: string): any
+	local h = C and C.merchant and C.merchant()
+	if not (run and h and h.chargeSlots) then return nil end
+	local okS, slots = pcall(h.chargeSlots, run.party)
+	if not okS then warn("[DungeonSilver] chargeSlots failed: " .. tostring(slots)) return nil end
+	local plan = Silver.RefillPlan(slots, pct, Silver.Get(run))
+	if commit and plan.refilled > 0 then
+		if not Silver.Spend(run, plan.cost, why) then return nil end
+		for _, pk in plan.picks do pcall(h.setCharges, pk.uid, pk.idx, pk.newCur) end
+	end
+	return plan
+end
+
+--- Merchant buys are marked "bought" in the Bag (rule 268). Since 2026-11-16 7:22 PM the mark only drives SB-18
+--- ("You paid for this") and the Bag list data: bought items follow the loot rule (lost on a failed run).
+function Silver.MarkBought(run: any, kind: string, key: string)
+	run.boughtKeep = run.boughtKeep or { gear = {}, cards = {} }
+	if kind == "gear" then run.boughtKeep.gear[key] = true
+	else run.boughtKeep.cards[key] = (run.boughtKeep.cards[key] or 0) + 1 end
+end
+
+--- W3 (default 9:09 PM): protection covers the item as bought only; an upgraded item loses its bought mark.
+-- reason (log only): "changed" | "discarded" | "handed in". count = how many card/consumable copies left the Bag (default 1).
+function Silver.UnmarkBought(run: any, kind: string, key: string, reason: string?, count: number?)
+	local k = run and run.boughtKeep
+	if not k then return end
+	local why = reason or "changed"
+	if kind == "gear" then
+		if k.gear[key] then k.gear[key] = nil; print(`[DungeonSilver] Bought mark removed ({why}): {key}`) end
+	else -- copies leaving the Bag release that many bought marks, so a later found copy is never protected
+		local had = k.cards[key] or 0
+		if had <= 0 then return end
+		local n = math.max(1, math.floor(tonumber(count) or 1))
+		local q = had - math.min(had, n)
+		k.cards[key] = if q > 0 then q else nil
+		print(`[DungeonSilver] Bought mark removed ({why}): {key} x{had - q}`)
+	end
+end
+
+--- RETIRED 2026-11-16 7:22 PM (USER RULING, rules 264 / 268): bought items are no longer kept on a failed run.
+--- Kept as a no-op so callers stay valid; nothing moves from lost to kept.
+function Silver.KeepBought(_run: any, _outcome: any)
+end
+
+function Silver.ExportBought(run: any): any
+	local k = run and run.boughtKeep
+	if not k then return nil end
+	local g = {}
+	for id in k.gear do table.insert(g, id) end
+	table.sort(g)
+	return { gear = g, cards = table.clone(k.cards) }
+end
+
+function Silver.ImportBought(run: any, d: any)
+	if type(d) ~= "table" then return end -- old saves: nothing bought
+	local k = { gear = {}, cards = {} }
+	for _, id in (if type(d.gear) == "table" then d.gear else {}) do
+		if type(id) == "string" and #id <= 128 then k.gear[id] = true end
+	end
+	for key, n in (if type(d.cards) == "table" then d.cards else {}) do
+		if type(key) == "string" and #key <= 80 and type(n) == "number" and n >= 1 and n <= 999 then k.cards[key] = math.floor(n) end
+	end
+	run.boughtKeep = k
+end
+
+--- DEV / TEST only (DevDungeon op "silver", dev-gated in Main): set the active run's purse.
+function Silver.DevSet(playerId: string, n: any): boolean
+	local run = C and C.stateOf(playerId).run
+	if not run or type(n) ~= "number" then return false end
+	run.silver = math.clamp(math.floor(n), 0, MAX_SILVER)
+	return true
+end
+
+return Silver

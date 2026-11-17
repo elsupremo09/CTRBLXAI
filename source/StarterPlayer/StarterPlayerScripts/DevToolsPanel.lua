@@ -7,7 +7,7 @@
 -- that need a live battle map.
 --   SHOPS      Refresh all shops (Merchant + Tavern + Dispatch; kept in the save)
 --   BUILDINGS  Guild Hall / Tavern / Merchant / Blacksmith / Runeforge level - / +
---              (the Runeforge and Apothecary work only from Guild Hall L4, the Crucible from L5, the Dungeon from L6; all capped at the Guild Hall level)
+--              (buildings open by Renown Rank; the Guild Hall no longer gates or caps them — BuildingService)
 --   GENERAL    Gold +10,000, Mercury +100, Grant all cards, Save now, Delete save, Reset UGC trial/rent
 --
 -- Studio only: GuildMenu.client requires this only in Studio, and the server refuses every
@@ -39,7 +39,7 @@ local EXPANDED_H = 330
 local BTN_H = 18
 local CONFIRM_WINDOW = 2.5          -- seconds to tap a guarded button a second time
 local GOLD_REFRESH_DELAY = 0.6      -- DevCommand sends no answer; refresh the gold line after this
-local BUILDINGS = { "GuildHall", "Tavern", "Merchant", "Blacksmith", "Runeforge", "Crucible", "Apothecary", "TrainingGrounds", "Dungeon" }
+local BUILDINGS = { "GuildHall", "QuestBoard", "Tavern", "Merchant", "Blacksmith", "Runeforge", "Crucible", "Apothecary", "TrainingGrounds", "Dungeon" }
 local LEVEL_MIN, LEVEL_MAX = 1, 10  -- guild_facilities: Max Level 10 (server clamps too)
 
 local COLOR_PANEL = Color3.fromRGB(28, 28, 38)

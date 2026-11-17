@@ -74,6 +74,20 @@ end
 
 -- Get what type of collision object a blocker is.
 -- Reads objectType from GameConstants.GetBlockerData.
+-- Guild Hall furniture: collision damage TAKEN by the player's own units (FUR-05 Padded Wall x0.97,
+-- guild_facilities 94). EquipmentService stores the capped furniture bonus on the unit at every
+-- rebuild (unit.furnitureBonus, player units only, nil otherwise), so this is read-only here.
+local function furnitureMult(unit, key: string): number
+	local fb = type(unit) == "table" and unit.furnitureBonus or nil
+	local m = type(fb) == "table" and tonumber(fb[key]) or nil
+	if not m or m <= 0 then return 1 end
+	return m
+end
+-- collision TAKEN (Padded Wall x0.97 x furniture Collision Resistance, guild_facilities 102)
+local function furnitureCollisionMult(unit): number
+	return furnitureMult(unit, "collision")
+end
+
 local function getBlockerCollisionType(tileX, tileY)
 	local data = GameConstants.GetBlockerData(tileX, tileY)
 	if data and data.objectType then
@@ -493,6 +507,12 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 		local cfMult = _aps.GetCollisionFallDamageModifier(target)
 		if cfMult ~= 1 then fallDamage = math.round(fallDamage * cfMult) end
 	end
+	-- Guild Hall furniture (step 1, guild_facilities 102): Fall Resistance on the falling unit, Fall
+	-- Damage Dealt on the pusher (player units only; others read 1).
+	if fallDamage > 0 then
+		local furnFall = furnitureMult(target, "fallTaken") * (if isGlobalPush then furnitureMult(pusher, "fallDealt") else 1)
+		if furnFall ~= 1 then fallDamage = math.round(fallDamage * furnFall) end
+	end
 	-- FELINE — Nine Lives (races row 'Feline', 2026-10-02): immune to fall damage
 	-- (any downward displacement, any height). ONLY the fall-damage term is zeroed;
 	-- cross effects and landing-tile / chasm-floor ground effects resolve normally.
@@ -538,6 +558,8 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 			if pusher and pusher._itemCollisionMult then
 				tMult = tMult * pusher._itemCollisionMult
 			end
+			tMult = tMult * furnitureCollisionMult(target) -- FUR-05 Padded Wall (guild_facilities 94)
+			if isGlobalPush then tMult = tMult * furnitureMult(pusher, "collisionDealt") end -- furniture Collision Damage (gf 102)
 			if tMult ~= 1 then
 				wallCollisionResult.damage = math.round(wallCollisionResult.damage * tMult)
 			end
@@ -550,6 +572,8 @@ function DisplacementService.ResolvePush(pusher, target, force, direction, sourc
 			if pusher and pusher._itemCollisionMult then
 				cMult = cMult * pusher._itemCollisionMult  -- Kinetic Ram: the whole collision is harder
 			end
+			cMult = cMult * furnitureCollisionMult(collided) -- FUR-05 Padded Wall (guild_facilities 94)
+			if isGlobalPush then cMult = cMult * furnitureMult(pusher, "collisionDealt") end -- furniture Collision Damage (gf 102)
 			if cMult ~= 1 then
 				wallCollisionResult.collidedUnitDamage = math.round(wallCollisionResult.collidedUnitDamage * cMult)
 			end

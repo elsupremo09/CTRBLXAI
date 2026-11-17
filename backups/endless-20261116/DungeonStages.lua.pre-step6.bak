@@ -1,0 +1,89 @@
+--!strict
+-- DungeonStages.lua — split out of DungeonService.lua 2026-11-16 (furniture v5 / endless plan step B).
+-- Stages (project_rules 277): OnBossWin, GoHome, GoDeeper, AckStageHeal. Code moved word for word;
+-- behaviour unchanged. DungeonService binds its state + helpers (Bind) and re-exports every function.
+-- No require of DungeonService (no cycle).
+
+local DungeonRules = require(script.Parent:WaitForChild("DungeonRules"))
+local DungeonMap = require(script.Parent:WaitForChild("DungeonMap"))
+local DungeonBag = require(script.Parent:WaitForChild("DungeonBag"))
+
+local M = {}
+
+-- Bound by DungeonService (step B): its state + helpers, read at call time.
+local C: any = nil
+local DungeonService: any = nil -- the service table; calls go through it exactly as before the split
+local function stateOf(playerId: string): any return C.stateOf(playerId) end
+local function persist() C.persist() end
+local function freshRoomTables(run: any) C.freshRoomTables(run) end
+local function view(run: any): any return C.view(run) end
+function M.Bind(ctx: any) C = ctx DungeonService = ctx.svc end
+
+--- Called by Main after a Boss room battle is WON. If a later stage is allowed for this card, the run
+--- waits (stageCleared) for Go deeper / Go home; otherwise the run ends with the Boss outcome.
+--- Returns ok, { stageCleared = bool } | EndRun outcome.
+function M.OnBossWin(playerId: string): (boolean, any)
+	local run = stateOf(playerId).run
+	if not run then return false, "No dungeon run in progress" end
+	if not (run.at == "boss" and run.cleared.boss) then return false, "The boss has not been beaten" end
+	if run.stageCleared then return true, { stageCleared = true, stage = run.stage, maxStages = run.card.maxStages, endless = DungeonRules.IsEndless(run.card) } end -- already recorded (fix 2026-11-15)
+	run.stageBosses = run.stageBosses or {}
+	table.insert(run.stageBosses, run.stage)
+	if run.smithOwed and DungeonService.DeliverSmith then DungeonService.DeliverSmith(playerId) end -- EV-12: stage boss delivers
+	if run.stage < (run.card.maxStages or 1) then
+		run.stageCleared = true
+		persist()
+		print(`[DungeonService] Stage {run.stage} cleared | {run.card.id} | waiting for Go deeper / Go home`)
+		return true, { stageCleared = true, stage = run.stage, maxStages = run.card.maxStages, endless = DungeonRules.IsEndless(run.card) }
+	end
+	return DungeonService.EndRun(playerId, "Boss")
+end
+
+--- Go home after a stage boss: all loot home (Boss outcome, rule 264/277).
+function M.GoHome(playerId: string): (boolean, any)
+	local run = stateOf(playerId).run
+	if not run then return false, "No dungeon run in progress" end
+	if not run.stageCleared then return false, "The boss has not been beaten" end
+	if DungeonBag.Waiting(run) then return false, "You can't go there" end -- rule 279: the full-Bag pick first
+	return DungeonService.EndRun(playerId, "Boss")
+end
+
+--- Go deeper: a new map for the next stage (seed = run seed + stage). Carries HP/MP/charges/KO, bag,
+--- drop multiplier, relics, used relics, the event no-repeat list, battle count and party. Room tables
+--- reset (room ids repeat). The party heals by the facility level's Rest % (Simulator v9 fix 1).
+function M.GoDeeper(playerId: string): (boolean, any)
+	local _healer = C.healer() -- step B: the service's healer, read at call time (was an upvalue)
+	local run = stateOf(playerId).run
+	if not run then return false, "No dungeon run in progress" end
+	if not run.stageCleared then return false, "The boss has not been beaten" end
+	if run.stage >= (run.card.maxStages or 1) then return false, "Invalid request" end
+	if DungeonBag.Waiting(run) then return false, "You can't go there" end -- rule 279: the full-Bag pick first
+	local nextStage = run.stage + 1
+	local sseed = DungeonRules.StageSeed(run.card.seed, nextStage)
+	local okM, map = pcall(DungeonMap.Generate, sseed, run.card.facilityLevel, DungeonRules.StageFloors(run.card.floors, nextStage)) -- stages 4+: 8 floors (rule 281)
+	if not okM or not map then return false, "Something went wrong. Try again." end
+	run.stage, run.sseed, run.map = nextStage, sseed, map
+	run.stageCleared, run.stageBringIn = false, 0
+	freshRoomTables(run)
+	local pct = DungeonRules.Level(run.card.facilityLevel).restHealPct
+	if _healer then
+		for _, id in run.party do
+			local okH, res = pcall(_healer, id, pct)
+			if not okH then warn("[DungeonService] stage heal failed for " .. id .. ": " .. tostring(res)) end
+		end
+	end
+	run.stageHeal = { pct = pct }
+	local st = stateOf(playerId)
+	st.deepest = math.max(tonumber(st.deepest) or 0, nextStage) -- rule 281: deepest stage reached (saved)
+	persist()
+	print(`[DungeonService] Stage {nextStage} started | {run.card.id} | healed {pct}%`)
+	return true, view(run)
+end
+
+--- The stage-start heal message is shown once by the client, then cleared.
+function M.AckStageHeal(playerId: string)
+	local run = stateOf(playerId).run
+	if run then run.stageHeal = nil end
+end
+
+return M

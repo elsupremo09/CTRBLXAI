@@ -114,37 +114,8 @@ render = function(run: any, units: any)
 	local c = lastCtx
 	if not c or not run then return end
 	close()
-	local o = Instance.new("TextButton")
-	o.Name = "PartyPanel"
-	o.Text = ""
-	o.AutoButtonColor = false
-	o.Modal = true
-	o.Size = UDim2.fromScale(1, 1)
-	o.BackgroundColor3 = Color3.new(0, 0, 0)
-	o.BackgroundTransparency = 0.4
-	o.BorderSizePixel = 0
-	o.ZIndex = 20
-
-	local box = Instance.new("Frame")
-	box.Name = "Box"
-	box.AnchorPoint = Vector2.new(0.5, 0.5)
-	box.Position = UDim2.fromScale(0.5, 0.5)
-	box.Size = UDim2.fromScale(0.9, 0.92)
-	box.BackgroundColor3 = Theme.Colors.PanelRaised
-	box.BorderSizePixel = 0
-	box.ZIndex = 21
-	local maxW = Instance.new("UISizeConstraint")
-	maxW.MaxSize = Vector2.new(640, math.huge)
-	maxW.Parent = box
-	local cr = Instance.new("UICorner")
-	cr.CornerRadius = Theme.CornerRadius.md
-	cr.Parent = box
-	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0, 12)
-	pad.PaddingRight = UDim.new(0, 12)
-	pad.PaddingTop = UDim.new(0, 8)
-	pad.PaddingBottom = UDim.new(0, 8)
-	pad.Parent = box
+	-- Shared guild popup box filling the safe height below the Roblox top bar (2026-11-17 style fix).
+	local o, box = GuildScreen.MakeModalBox("PartyPanel", { maxW = 640, widthScale = 0.9, fill = true })
 
 	local inRun: { [string]: boolean } = {}
 	for _, id in run.party or {} do inRun[id] = true end
@@ -213,7 +184,6 @@ render = function(run: any, units: any)
 	done.Parent = btns
 	btns.Parent = box
 
-	box.Parent = o
 	o.Parent = c.gui -- parent last (NET-004)
 	overlay = o
 end
@@ -232,10 +202,5 @@ function DungeonPartyPanel.IsOpen(): boolean
 	return overlay ~= nil
 end
 
--- Test hooks (simulated taps don't register): same paths as taps.
-DungeonPartyPanel._Test = table.freeze({
-	send = function(id: string) call({ action = "EditParty", op = "send", unitId = id }) end,
-	bring = function(id: string) call({ action = "EditParty", op = "bring", unitId = id }) end,
-})
 
 return table.freeze(DungeonPartyPanel)

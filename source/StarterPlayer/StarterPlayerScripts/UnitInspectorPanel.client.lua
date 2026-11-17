@@ -1620,6 +1620,10 @@ local function buildPanel(data)
 			size = UDim2.new(1 / #tabs, -4, 0, TAB_H),
 			textSize = Theme.Text.Body(),
 			layoutOrder = i,
+			-- Tab icons (2026-11-15): Theme.BattleButtonIcons.TabStats / TabPassive / ...
+			icon = Theme.BattleButtonIcons and Theme.BattleButtonIcons["Tab" .. tab[2]]
+				or (tab[1] == "equipment" and Theme.BattleButtonIcons and Theme.BattleButtonIcons.TabGears) or nil,
+			iconSize = 16, -- 16 px on every screen: at 20 "Passive" fell to 9-10 px in 413-420 px panels (2026-11-15)
 		})
 	end
 

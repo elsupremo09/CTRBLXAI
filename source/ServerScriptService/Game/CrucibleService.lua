@@ -28,6 +28,7 @@
 -- Dependencies are injected by Main (ARC-006) and are nil-safe.
 
 local CrucibleService = {}
+local BuildingService = require(script.Parent:WaitForChild("BuildingService")) -- pure module (no requires), lock text only
 
 --------------------------------------------------
 -- CONSTANTS (locked by the 2026-11-02 user decision)
@@ -145,7 +146,7 @@ function CrucibleService.PlanMerge(playerId: string, instanceIds: any)
 	end
 	local lvl = currentLevel()
 	if lvl < 1 then
-		return nil, "The Crucible is not built yet (needs Guild Hall L5)"
+		return nil, BuildingService.LockLine("Crucible") -- approved lock line (guild_facilities 98)
 	end
 	if type(instanceIds) ~= "table" or #instanceIds == 0 or #instanceIds > MAX_INPUTS then
 		return nil, "Choose the items to merge"

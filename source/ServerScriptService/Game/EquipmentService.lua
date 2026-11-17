@@ -56,6 +56,13 @@ local GameConstants = require(
 
 local EquipmentService = {}
 
+-- Guild Hall furniture (Slice 8 step 2, 2026-11-16, guild_facilities 92-95): injected provider
+-- (FurnitureService.BonusFor via GuildMenuService; nil-safe, no require cycle). Returns the
+-- furniture bonus for the player's own units, nil for anything else. Folded in from scratch on
+-- every rebuild, so it can never stack.
+local _furnitureProvider: ((any) -> any)? = nil
+function EquipmentService.SetFurnitureProvider(fn: ((any) -> any)?) _furnitureProvider = fn end
+
 --------------------------------------------------
 -- SLOT DEFINITIONS
 --------------------------------------------------
@@ -297,6 +304,14 @@ function EquipmentService.ComputeConsumableSlotCount(unit)
 end
 
 function EquipmentService.RebuildUnitStats(unit)
+	-- Furniture bonus for this unit (nil = none). Stored on the unit for the healing-received
+	-- reader (StatusService.GetHealingReceivedMult); rewritten every rebuild.
+	local furn = nil
+	if _furnitureProvider then
+		local okF, f = pcall(_furnitureProvider, unit)
+		if okF and type(f) == "table" then furn = f end
+	end
+	unit.furnitureBonus = furn
 	-- 1. Start from race base stats (permanent values)
 	local base = unit.baseStats or { STR = 10, AGI = 10, INT = 10, VIT = 10, DEX = 10, LUK = 10 }
 
@@ -494,6 +509,7 @@ function EquipmentService.RebuildUnitStats(unit)
 		end
 	end
 
+	if furn then armorDefense = math.max(0, armorDefense + (tonumber(furn.defense) or 0)) end -- furniture v4 Defense (gf 92/102)
 	unit.armorDefense = armorDefense
 	unit.armorWt = armorWt
 
@@ -522,6 +538,13 @@ function EquipmentService.RebuildUnitStats(unit)
 	for _, stat in ipairs({"STR", "AGI", "INT", "VIT", "DEX", "LUK"}) do
 		if total[stat] < 0 then
 			total[stat] = 0
+		end
+	end
+	-- Furniture flat primary stats (Martial / Fortune pieces, e.g. Practice Dummy +1 STR).
+	if furn then
+		for _, stat in ipairs({"STR", "AGI", "INT", "VIT", "DEX", "LUK"}) do
+			local v = tonumber(furn[stat])
+			if v and v ~= 0 then total[stat] = math.max(0, total[stat] + v) end -- same floor as gear (0)
 		end
 	end
 	-- Strong Back / Weak Grip armor part (see 3c): flat STR change, floored at 0.
@@ -692,6 +715,9 @@ function EquipmentService.RebuildUnitStats(unit)
 		end
 	end
 
+	-- Furniture v4 Attack (gf 92/102, step 1 2026-11-16): flat weapon damage (main hand), floored at 0.
+	if furn and tonumber(furn.attack) then unit.weaponDamage = math.max(0, (unit.weaponDamage or 0) + tonumber(furn.attack)) end
+
 	-- 4b. Off-hand defense contribution (an inactive off-hand weapon contributes nothing)
 	if offHand and offIsWeapon then
 		unit.offHandDefense = if unit.offWeapon then unit.offWeapon.defense else 0
@@ -715,6 +741,18 @@ function EquipmentService.RebuildUnitStats(unit)
 	if mpFromInt ~= 1 then intMp = math.round(intMp * mpFromInt) end
 	unit.maxHp = 50 + vitHp + armorHp
 	unit.maxMp = 20 + intMp + armorMp
+	-- Furniture (Comfort / Study): Straw Cot +1% / Oak Bed +2% max HP, Scribe's Desk +2 max MP.
+	if furn then
+		local hpPct = tonumber(furn.hpPct)
+		if hpPct and hpPct ~= 0 then unit.maxHp = unit.maxHp + math.round(unit.maxHp * hpPct) end
+		local hpFlat = tonumber(furn.hp) -- furniture v4 flat Max HP (step 1)
+		if hpFlat and hpFlat ~= 0 then unit.maxHp = unit.maxHp + hpFlat end
+		local mp = tonumber(furn.mp)
+		if mp and mp ~= 0 then unit.maxMp = unit.maxMp + mp end
+		-- Gear floors after furniture (guild_facilities 92): Max HP >= 1, Max MP >= 0.
+		unit.maxHp = math.max(1, unit.maxHp)
+		unit.maxMp = math.max(0, unit.maxMp)
+	end
 	-- Garden of Revelation (objects_encounters row 120, USER RULING 2026-11-07): battle-only max-MP
 	-- bonus (+20%). Set by ObjectEffectService for the rest of the battle; Main clears it at battle
 	-- end before HP/MP are persisted, so the saved maximum never includes it.
@@ -764,6 +802,7 @@ function EquipmentService.RebuildUnitStats(unit)
 			end
 		end
 		dMod += tonumber(unit._dgDiscBonus) or 0 -- RL-56 Stargazer Lens, dungeon battle only (relics v2)
+		if furn then dMod += tonumber(furn.discoveryRadius) or 0 end -- furniture threshold line (gf 107)
 		if derived.discoveryRadius then
 			derived.discoveryRadius = math.max(1, math.floor(derived.discoveryRadius + dMod + 0.5))
 		end
@@ -778,6 +817,13 @@ function EquipmentService.RebuildUnitStats(unit)
 				if key and derived[key] ~= nil then
 					derived[key] += 1
 				end
+			end
+		end
+		-- Furniture threshold lines (gf 107, step 1): +1 Movement / Jump / Force / Stability after the formulas.
+		if furn then
+			for _, key in { "movementRange", "jump", "force", "stability" } do
+				local v = tonumber(furn[key])
+				if v and derived[key] ~= nil then derived[key] += v end
 			end
 		end
 		-- RL-27 Far Focus (relics v2): +1 Bonus Skill Range, dungeon battle only (Main clears it before save).
@@ -823,6 +869,24 @@ function EquipmentService.RebuildUnitStats(unit)
 	-- additive slot as gear Fortune, so rewards (RewardService.unitFortune) and the Info panel both
 	-- see it. Break-gated like every trait.
 	gearDerived.fortune = gearDerived.fortune + TraitEffectService.GetFortuneModifier(unit)
+	-- Furniture derived lines (own source, same families as gear): Precision / Evasion pp,
+	-- Fortune, Skill Potency (added), RT Delay Resistance (multiplied, Herbal Rack x0.98).
+	if furn then
+		gearDerived.precision    = gearDerived.precision    + (tonumber(furn.precision) or 0)
+		gearDerived.evasiveness  = gearDerived.evasiveness  + (tonumber(furn.evasiveness) or 0)
+		gearDerived.fortune      = gearDerived.fortune      + (tonumber(furn.fortune) or 0)
+		gearDerived.skillPotency = gearDerived.skillPotency + (tonumber(furn.skillPotency) or 0)
+		local hom = tonumber(furn.healingOutput) -- furniture v4 secondary (x mult, step 1)
+		if hom then gearDerived.healingOutput = gearDerived.healingOutput * hom end
+		local drm = tonumber(furn.debuffResist)
+		if drm then gearDerived.debuffResist = math.max(0, gearDerived.debuffResist * drm) end
+		local rtm = tonumber(furn.rtDelayResist)
+		if rtm then gearDerived.rtDelayResist = math.max(0, gearDerived.rtDelayResist * rtm) end
+	end
+	-- Gear limits apply after furniture (user ruling 2026-11-16 3:14 PM, guild_facilities 92). Gear-
+	-- derived stats have no upper cap here; the only gear limits are the 0 floors above, Max HP >= 1
+	-- and Max MP >= 0 right after the furniture HP/MP lines (HP again on the relic line), the use-time RT delay floor (math.max(0, CalcRtDelayResistance)) and the
+	-- Expedition Fortune clamp 0-1.75 (RewardService, loot_progression 11). All run after furniture.
 	unit.gearDerived = gearDerived
 	if derived then
 		-- Percentage-point families are stored as % in derivedStats; add gear as pp.

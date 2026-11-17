@@ -112,7 +112,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤35% or to prevent probable KO.",
 		tier = "Common",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://140500507927264",
 	},
 	["REC-002"] = {
 		numericId = 203,
@@ -154,7 +154,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤30% or to prevent probable KO.",
 		tier = "Uncommon",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://113839678250625",
 	},
 	["REC-004"] = {
 		numericId = 205,
@@ -175,7 +175,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤45%.",
 		tier = "Uncommon",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://99671077126448",
 	},
 	["REC-005"] = {
 		numericId = 206,
@@ -196,7 +196,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤25% or to prevent probable KO.",
 		tier = "Rare",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://96123181561660",
 	},
 	["REC-006"] = {
 		numericId = 207,
@@ -217,7 +217,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤35%.",
 		tier = "Rare",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://127795809461258",
 	},
 	["REC-007"] = {
 		numericId = 208,
@@ -245,7 +245,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when target can survive delayed healing.",
 		tier = "Common",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://117066550089906",
 		pulseNote = "Courier's Seal (AC-016) and Emergency Locket give this item's later heal ticks as well, not only the first heal (USER RULING 2026-10-27).",
 	},
 	["REC-008"] = {
@@ -275,7 +275,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤65% before sustained pressure.",
 		tier = "Uncommon",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://95062000844544",
 		pulseNote = "Courier's Seal (AC-016) and Emergency Locket give this item's later heal ticks as well, not only the first heal (USER RULING 2026-10-27).",
 	},
 	["REC-009"] = {
@@ -318,7 +318,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at MP ≤30%.",
 		tier = "Common",
-		icon = "rbxassetid://94088074365737",
+		icon = "rbxassetid://121472047728845",
 	},
 	["REC-011"] = {
 		numericId = 212,
@@ -339,7 +339,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use for an urgent high-value Skill.",
 		tier = "Rare",
-		icon = "rbxassetid://94088074365737",
+		icon = "rbxassetid://127020407843205",
 	},
 	["REC-012"] = {
 		numericId = 213,
@@ -360,7 +360,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at MP ≤25%.",
 		tier = "Rare",
-		icon = "rbxassetid://94088074365737",
+		icon = "rbxassetid://132899007324280",
 	},
 	["REC-013"] = {
 		numericId = 214,
@@ -402,7 +402,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when wound-family status is active.",
 		tier = "Uncommon",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://137167546556451",
 	},
 	["REC-015"] = {
 		numericId = 216,
@@ -423,7 +423,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when Burn is active.",
 		tier = "Common",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://134427729611902",
 	},
 	["REC-016"] = {
 		numericId = 217,
@@ -444,7 +444,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot remove structural conditions.",
 		aiThreshold = "Use when at least two allies benefit.",
 		tier = "Rare",
-		icon = "rbxassetid://88407837432299",
+		icon = "rbxassetid://112906125814604",
 	},
 	["REC-017"] = {
 		numericId = 218,
@@ -465,7 +465,7 @@ ConsumableData.Items = {
 		restrictions = "KO allies only; cannot restore removed units.",
 		aiThreshold = "Use for an important ally when revival tile is safe.",
 		tier = "Rare",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://89404686836012",
 	},
 	["REC-018"] = {
 		numericId = 219,
@@ -486,7 +486,7 @@ ConsumableData.Items = {
 		restrictions = "KO allies only.",
 		aiThreshold = "Use to recover a key unit in a difficult encounter.",
 		tier = "Epic",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://93397249969542",
 	},
 	["REC-019"] = {
 		numericId = 220,
@@ -507,7 +507,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use at HP ≤20%.",
 		tier = "Rare",
-		icon = "rbxassetid://128924841956387",
+		icon = "rbxassetid://134010667354315",
 	},
 	["REC-020"] = {
 		numericId = 221,
@@ -528,7 +528,7 @@ ConsumableData.Items = {
 		restrictions = "Self-centered; affects allies only.",
 		aiThreshold = "Use when at least three allies gain meaningful recovery.",
 		tier = "Epic",
-		icon = "rbxassetid://88407837432299",
+		icon = "rbxassetid://78869892127794",
 	},
 
 	-- === DAMAGE ===
@@ -572,7 +572,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://108330994096781",
 	},
 	["DAM-003"] = {
 		numericId = 224,
@@ -593,7 +593,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://126877485872993",
 	},
 	["DAM-004"] = {
 		numericId = 225,
@@ -614,7 +614,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://117390129975834",
 	},
 	["DAM-005"] = {
 		numericId = 226,
@@ -635,7 +635,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://131654241108469",
 	},
 	["DAM-006"] = {
 		numericId = 227,
@@ -656,7 +656,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://90444860669232",
 	},
 	["DAM-007"] = {
 		numericId = 228,
@@ -678,7 +678,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://72336604191803",
 	},
 	["DAM-008"] = {
 		numericId = 229,
@@ -700,7 +700,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://90977780172842",
 	},
 	["DAM-009"] = {
 		numericId = 230,
@@ -721,7 +721,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://82636364243884",
 	},
 	["DAM-010"] = {
 		numericId = 231,
@@ -742,7 +742,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://97931729669890",
 	},
 	["DAM-011"] = {
 		numericId = 232,
@@ -763,7 +763,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://117884505638363",
 	},
 	["DAM-012"] = {
 		numericId = 233,
@@ -784,7 +784,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply. Hits allies in the area too (friendly fire, user never hit); damage dealt to allies counts toward the drain (USER RULING 2026-10-27).",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://103367762906117",
 	},
 	["DAM-013"] = {
 		numericId = 234,
@@ -805,7 +805,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://119925298487336",
 	},
 	["DAM-014"] = {
 		numericId = 235,
@@ -827,7 +827,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://103640120431300",
 	},
 	["DAM-015"] = {
 		numericId = 236,
@@ -855,7 +855,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://132057131253353",
 	},
 	["DAM-016"] = {
 		numericId = 237,
@@ -876,7 +876,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://100932447318582",
 	},
 	["DAM-017"] = {
 		numericId = 238,
@@ -897,7 +897,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://122531006187839",
 	},
 	["DAM-018"] = {
 		numericId = 239,
@@ -918,7 +918,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://125665311927300",
 	},
 	["DAM-019"] = {
 		numericId = 240,
@@ -948,7 +948,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://102182693775655",
 	},
 	["DAM-020"] = {
 		numericId = 241,
@@ -978,7 +978,7 @@ ConsumableData.Items = {
 		restrictions = "Normal Defense, element, path, and friendly-fire rules apply.",
 		aiThreshold = "Use when expected damage or secondary value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://138199827225430",
+		icon = "rbxassetid://111930113408240",
 	},
 
 	-- === CONTROL ===
@@ -1030,7 +1030,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://110245475392076",
 	},
 	["CON-003"] = {
 		numericId = 244,
@@ -1051,7 +1051,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://93181793706240",
 	},
 	["CON-004"] = {
 		numericId = 245,
@@ -1072,7 +1072,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://97045647802748",
 	},
 	["CON-005"] = {
 		numericId = 246,
@@ -1093,7 +1093,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://138463868504176",
 	},
 	["CON-006"] = {
 		numericId = 247,
@@ -1114,7 +1114,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://120656284036098",
 	},
 	["CON-007"] = {
 		numericId = 248,
@@ -1135,7 +1135,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://79256705668878",
 	},
 	["CON-008"] = {
 		numericId = 249,
@@ -1156,7 +1156,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://79581881041830",
 	},
 	["CON-009"] = {
 		numericId = 250,
@@ -1177,7 +1177,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://108951464135434",
 	},
 	["CON-010"] = {
 		numericId = 251,
@@ -1198,7 +1198,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://88033582369271",
 	},
 	["CON-011"] = {
 		numericId = 252,
@@ -1219,7 +1219,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://105354864894132",
 		tileEffect = "Steam",
 		tileEffectCt = 1600,
 	},
@@ -1242,7 +1242,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://132338464794380",
 	},
 	["CON-013"] = {
 		numericId = 254,
@@ -1263,7 +1263,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://109808380527770",
 	},
 	["CON-014"] = {
 		numericId = 255,
@@ -1284,7 +1284,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://131472610612494",
 	},
 	["CON-015"] = {
 		numericId = 256,
@@ -1307,7 +1307,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://119142267930748",
 	},
 
 	["CON-017"] = {
@@ -1329,7 +1329,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://134313475121200",
 		appliesStatus = "Fear",
 	},
 	["CON-018"] = {
@@ -1358,7 +1358,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply. DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://80456566887674",
 	},
 	["CON-019"] = {
 		numericId = 260,
@@ -1380,7 +1380,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://124891007173308",
 	},
 	["CON-020"] = {
 		numericId = 261,
@@ -1401,7 +1401,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use against a high-threat target or when positional value is clear.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://114736345886527",
 	},
 
 	-- === SUPPORT ===
@@ -1447,7 +1447,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://119326840871476",
 	},
 	["SUP-003"] = {
 		numericId = 264,
@@ -1469,7 +1469,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://109605957345323",
 	},
 	["SUP-004"] = {
 		numericId = 265,
@@ -1491,7 +1491,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://107604391503312",
 	},
 	["SUP-005"] = {
 		numericId = 266,
@@ -1513,7 +1513,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://95528240584150",
 	},
 	["SUP-006"] = {
 		numericId = 267,
@@ -1535,7 +1535,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://79498081208576",
 	},
 	["SUP-007"] = {
 		numericId = 268,
@@ -1557,7 +1557,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://116184593855271",
 	},
 	["SUP-008"] = {
 		numericId = 269,
@@ -1579,7 +1579,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://79989158873284",
 	},
 	["SUP-009"] = {
 		numericId = 270,
@@ -1600,7 +1600,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://139131695073943",
 	},
 	["SUP-010"] = {
 		numericId = 271,
@@ -1622,7 +1622,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://105009485759052",
 	},
 	["SUP-011"] = {
 		numericId = 272,
@@ -1648,7 +1648,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://110286528065799",
 	},
 	["SUP-012"] = {
 		numericId = 273,
@@ -1670,7 +1670,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://100726065571862",
 	},
 	["SUP-013"] = {
 		numericId = 274,
@@ -1692,7 +1692,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://114304962017057",
 	},
 	["SUP-014"] = {
 		numericId = 275,
@@ -1714,7 +1714,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://125140219873031",
 	},
 	["SUP-015"] = {
 		numericId = 276,
@@ -1736,7 +1736,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://125952543343984",
 	},
 	["SUP-016"] = {
 		numericId = 277,
@@ -1757,7 +1757,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://140278608630171",
 	},
 	["SUP-017"] = {
 		numericId = 278,
@@ -1779,7 +1779,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://72695160444008",
 	},
 	["SUP-018"] = {
 		numericId = 279,
@@ -1800,7 +1800,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://128331162008058",
 	},
 	["SUP-019"] = {
 		numericId = 280,
@@ -1821,7 +1821,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Common",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://73493888441800",
 		appliesStatus = "Warding",
 	},
 	["SUP-020"] = {
@@ -1844,7 +1844,7 @@ ConsumableData.Items = {
 		restrictions = "Normal targeting and resolution rules apply.",
 		aiThreshold = "Use when the affected unit can exploit the effect before expiry.",
 		tier = "Rare",
-		icon = "rbxassetid://100014753110620",
+		icon = "rbxassetid://119553176570903",
 	},
 
 	-- === ENVIRONMENT ===
@@ -1891,7 +1891,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://121908306091319",
 		terrainSideEffect = "DEFER: no terrain swap. Applies tile effect Wet; 'approved Water terrain interactions' = run the Water element reaction per tile via the existing reaction engine, not a hand mapping.",
 		tileElement = "Water",
 	},
@@ -1914,7 +1914,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://79187201067906",
 		terrainTransforms = {
 			{from = {"Shallow Water", "Deep Water"}, to = "Ice"},
 		},
@@ -1940,7 +1940,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://125462500235233",
 		terrainTransforms = {
 			{from = {"Mud", "Swamp"}, to = "Rocky"},
 			{from = {"Cracked Ground"}, to = "Rocky"},
@@ -1967,7 +1967,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://86578440749441",
 		tileEffect = "Steam",
 		tileEffectCt = 1600,
 	},
@@ -1990,7 +1990,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://81819268541071",
 	},
 	["ENV-007"] = {
 		numericId = 288,
@@ -2011,7 +2011,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://109544511924355",
 	},
 	["ENV-008"] = {
 		numericId = 289,
@@ -2032,7 +2032,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://76869284561648",
 	},
 	["ENV-009"] = {
 		numericId = 290,
@@ -2053,7 +2053,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://79267974148354",
 	},
 	["ENV-010"] = {
 		numericId = 291,
@@ -2074,7 +2074,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://132385544678706",
 	},
 	["ENV-011"] = {
 		numericId = 292,
@@ -2099,7 +2099,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://100486729397218",
 	},
 	["ENV-012"] = {
 		numericId = 293,
@@ -2120,7 +2120,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://115720537031990",
 		terrainSideEffect = "BUILT (USER RULING 2026-10-27): Impact 1; lowers elevation by 1; skips water, lava, portal, hazard, chasm and deployment tiles.",
 	},
 	["ENV-013"] = {
@@ -2142,7 +2142,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://108807293877764",
 		terrainTransforms = {
 			{from = {"Tainted Ground"}, to = "Grassland"},
 		},
@@ -2168,7 +2168,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://86579049015662",
 		terrainTransforms = {
 			{from = {"Clear", "Grassland", "Rocky", "Sand", "Mud", "Swamp", "Shallow Water"}, to = "Rocky"},
 			{from = {"Clear", "Grassland", "Rocky", "Sand", "Mud", "Swamp", "Shallow Water"}, to = "Mud"},
@@ -2197,7 +2197,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://132340486829032",
 		terrainSideEffect = "Built 2026-10-27: no terrain swap. Removes Burning and Oily tile effects in the 5x5 area and fireproofs those tiles for 1200 CT (no ignition; units on them cannot gain new Burn and take half Fire damage). Fireproofed tiles cannot catch fire, but Fire's other tile reactions and terrain changes still happen there (Sand->Molten, Wet->Steam, Vines burn away, etc.).",
 	},
 	["ENV-016"] = {
@@ -2219,7 +2219,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Common",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://138196966939638",
 		terrainTransforms = {
 			{from = {"Clear"}, to = "Grassland"},
 		},
@@ -2245,7 +2245,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://106392194267687",
 		terrainTransforms = {
 			{from = {"Ice"}, to = "Shallow Water"},
 		},
@@ -2272,7 +2272,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://134023404377055",
 	},
 	["ENV-019"] = {
 		numericId = 300,
@@ -2293,7 +2293,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://136895757119814",
 		terrainSideEffect = "BUILT (USER RULING 2026-10-27): Line 4 from the user; tiles get -1 movement cost (minimum 1) for 2000 CT, shown with a brown tint.",
 	},
 	["ENV-020"] = {
@@ -2315,7 +2315,7 @@ ConsumableData.Items = {
 		restrictions = "Cannot invalidate protected tiles, required routes, deployment zones, objectives, or Map Template safety.",
 		aiThreshold = "Use only when map-state value exceeds a normal action.",
 		tier = "Rare",
-		icon = "rbxassetid://120372784669630",
+		icon = "rbxassetid://76054869491767",
 	},
 
 	-- === DEPLOYABLE ===
@@ -2414,7 +2414,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): STRUCTURE - retains its own level-scaling, damage-based HP pool as written in the Effect Formula (NOT the 3-hit model); can be chunked or one-shot; scales with item level. Repair (SKL-REPAIR) restores HP to formula max. INTERIM 3-HIT (USER RULING 2026-10-27): until attacks on objects can deal real damage, this breaks after 3 hits from any source like a light gadget. Its HP formula stays recorded for later but is NOT used now.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://132376205026178",
+		icon = "rbxassetid://138867100240177",
 	},
 	["DEP-004"] = {
 		numericId = 305,
@@ -2440,7 +2440,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): STRUCTURE - retains its own level-scaling, damage-based HP pool as written in the Effect Formula (NOT the 3-hit model); can be chunked or one-shot; scales with item level. Repair (SKL-REPAIR) restores HP to formula max. INTERIM 3-HIT (USER RULING 2026-10-27): until attacks on objects can deal real damage, this breaks after 3 hits from any source like a light gadget. Its HP formula stays recorded for later but is NOT used now.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://132376205026178",
+		icon = "rbxassetid://72639875604017",
 	},
 	["DEP-005"] = {
 		numericId = 306,
@@ -2490,7 +2490,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://108063640572152",
+		icon = "rbxassetid://92426608531405",
 	},
 	["DEP-007"] = {
 		numericId = 308,
@@ -2515,7 +2515,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://108063640572152",
+		icon = "rbxassetid://101327704123788",
 	},
 	["DEP-008"] = {
 		numericId = 309,
@@ -2542,7 +2542,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): STRUCTURE - retains its own level-scaling, damage-based HP pool as written in the Effect Formula (NOT the 3-hit model); can be chunked or one-shot; scales with item level. Repair (SKL-REPAIR) restores HP to formula max.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://127780214033853",
+		icon = "rbxassetid://78804828488957",
 	},
 	["DEP-009"] = {
 		numericId = 310,
@@ -2568,7 +2568,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://127780214033853",
+		icon = "rbxassetid://130243879301865",
 	},
 	["DEP-010"] = {
 		numericId = 311,
@@ -2593,7 +2593,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://132376205026178",
+		icon = "rbxassetid://139585652436447",
 	},
 	["DEP-011"] = {
 		numericId = 312,
@@ -2626,7 +2626,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://127780214033853",
+		icon = "rbxassetid://139458550326822",
 	},
 	["DEP-012"] = {
 		numericId = 313,
@@ -2659,7 +2659,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://127780214033853",
+		icon = "rbxassetid://126870391036437",
 	},
 	["DEP-013"] = {
 		numericId = 314,
@@ -2686,7 +2686,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://127780214033853",
+		icon = "rbxassetid://93649402373398",
 	},
 	["DEP-014"] = {
 		numericId = 315,
@@ -2714,7 +2714,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://127780214033853",
+		icon = "rbxassetid://120928534889124",
 	},
 	["DEP-015"] = {
 		numericId = 316,
@@ -2739,7 +2739,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3. AIMING (USER RULING 2026-10-27): no line of sight needed. Cancel during aiming spends nothing; no enemy on any line = cannot fire.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://132376205026178",
+		icon = "rbxassetid://115381718075380",
 	},
 	["DEP-016"] = {
 		numericId = 317,
@@ -2764,7 +2764,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://127780214033853",
+		icon = "rbxassetid://98887158839572",
 	},
 	["DEP-017"] = {
 		numericId = 318,
@@ -2798,7 +2798,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://127780214033853",
+		icon = "rbxassetid://104234458340018",
 	},
 	["DEP-018"] = {
 		numericId = 319,
@@ -2825,7 +2825,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://132376205026178",
+		icon = "rbxassetid://85891103065449",
 	},
 	["DEP-019"] = {
 		numericId = 320,
@@ -2860,7 +2860,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://127780214033853",
+		icon = "rbxassetid://113963229387302",
 	},
 	["DEP-020"] = {
 		numericId = 321,
@@ -2888,7 +2888,7 @@ ConsumableData.Items = {
 		restrictions = "One instance per user unless stated otherwise. Cannot be placed on a unit's tile, a blocked tile, a visible non-trap object, either side's deployment zone, or a protected tile; a trap on the tile is replaced. No route-blocking check (USER RULING 2026-10-27). DURABILITY (2026-10-20 SPLIT): LIGHT GADGET - fixed hitsToDestroy=3 (destroyed after 3 hits from any source, a hit-counter not a damage HP pool). Repair (SKL-REPAIR) resets remaining hits to 3.",
 		aiThreshold = "Deploy only when predicted multi-turn value is high.",
 		tier = "Rare",
-		icon = "rbxassetid://127780214033853",
+		icon = "rbxassetid://136008977448705",
 	},
 
 	-- === UTILITY ===
@@ -2911,7 +2911,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://86400235873508",
 	},
 	["UTI-002"] = {
 		numericId = 323,
@@ -2932,7 +2932,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://126933475901567",
 	},
 	["UTI-003"] = {
 		numericId = 324,
@@ -2953,7 +2953,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules. USER RULING 2026-10-27: for 800 CT the area stays revealed - enemies inside lose Hide and cannot Hide again, and enemy traps placed there later are shown. No object properties / Interact outcomes (no info screen).",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://78944832838432",
 	},
 	["UTI-004"] = {
 		numericId = 325,
@@ -2974,7 +2974,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://125522011972955",
 	},
 	["UTI-005"] = {
 		numericId = 326,
@@ -2995,7 +2995,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://128064330875209",
 	},
 	["UTI-006"] = {
 		numericId = 327,
@@ -3017,7 +3017,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://115632111215503",
 	},
 	["UTI-008"] = {
 		numericId = 329,
@@ -3038,7 +3038,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://76830395187248",
 	},
 	["UTI-009"] = {
 		numericId = 330,
@@ -3059,7 +3059,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://130037934184502",
 	},
 	["UTI-010"] = {
 		numericId = 331,
@@ -3081,7 +3081,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://112346194586117",
 	},
 	["UTI-011"] = {
 		numericId = 332,
@@ -3103,7 +3103,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://93762124581850",
 	},
 
 	["UTI-013"] = {
@@ -3125,7 +3125,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://133931488677193",
 	},
 	["UTI-014"] = {
 		numericId = 335,
@@ -3147,7 +3147,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://113701521367067",
 	},
 	["UTI-015"] = {
 		numericId = 336,
@@ -3169,7 +3169,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://118975284932242",
 	},
 	["UTI-016"] = {
 		numericId = 337,
@@ -3190,7 +3190,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Common",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://89906735706170",
 	},
 	["UTI-017"] = {
 		numericId = 338,
@@ -3211,7 +3211,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://117485924055588",
 	},
 	["UTI-018"] = {
 		numericId = 339,
@@ -3232,7 +3232,7 @@ ConsumableData.Items = {
 		restrictions = "Destination follows deployable placement rules (no deployment zone, protected tile, blocked tile, unit or visible object; a trap there is replaced).",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://85203659780259",
 	},
 	["UTI-019"] = {
 		numericId = 340,
@@ -3259,7 +3259,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://137046844925839",
 	},
 	["UTI-020"] = {
 		numericId = 341,
@@ -3280,7 +3280,7 @@ ConsumableData.Items = {
 		restrictions = "Does not reveal hidden RNG or bypass scenario, objective, or legality rules.",
 		aiThreshold = "Use only when utility creates clear objective, survival, or action-economy value.",
 		tier = "Rare",
-		icon = "rbxassetid://130074402271587",
+		icon = "rbxassetid://123673504716343",
 	},
 
 }

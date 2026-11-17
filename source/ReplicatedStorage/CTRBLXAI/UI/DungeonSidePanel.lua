@@ -13,29 +13,20 @@ local Side = {}
 Side.SHARE = 0.30 -- share of the map area width
 Side.MIN_W = 150  -- px; keeps 10 px text readable on a 750x382 phone
 
--- deps = { makeText, ts, body, run, gold = string?, onLoot = () -> () }
+-- deps = { makeText, ts, body, run, gold = string?, onLoot = () -> (), onBag = (() -> ())? }
 function Side.Draw(main: Instance, deps: any): Frame
 	local run = deps.run
 	local mk, ts, body = deps.makeText, deps.ts, deps.body
-	local panel = Instance.new("Frame")
-	panel.Name = "SideInfo"
-	panel.AnchorPoint = Vector2.new(1, 0)
-	panel.Position = UDim2.fromScale(1, 0)
-	panel.Size = UDim2.new(Side.SHARE, 0, 1, 0)
-	panel.BackgroundColor3 = Theme.Colors.PanelRaised
-	panel.BackgroundTransparency = 0.25
-	panel.BorderSizePixel = 0
+	-- Ornate panel, the same frame as the guild screens' Side panel (2026-11-17 style fix).
+	local panel = Theme.MakePanel("SideInfo", UDim2.new(Side.SHARE, 0, 1, 0), UDim2.fromScale(1, 0), Vector2.new(1, 0), nil)
 	local minW = Instance.new("UISizeConstraint")
 	minW.MinSize = Vector2.new(Side.MIN_W, 0)
 	minW.Parent = panel
-	local c = Instance.new("UICorner")
-	c.CornerRadius = Theme.CornerRadius.sm
-	c.Parent = panel
 	local pad = Instance.new("UIPadding")
-	pad.PaddingLeft = UDim.new(0, 8)
-	pad.PaddingRight = UDim.new(0, 8)
-	pad.PaddingTop = UDim.new(0, 6)
-	pad.PaddingBottom = UDim.new(0, 6)
+	pad.PaddingLeft = UDim.new(0, 10)
+	pad.PaddingRight = UDim.new(0, 10)
+	pad.PaddingTop = UDim.new(0, 8)
+	pad.PaddingBottom = UDim.new(0, 8)
 	pad.Parent = panel
 	local scroll = Instance.new("ScrollingFrame")
 	scroll.Name = "Lines"
@@ -61,7 +52,13 @@ function Side.Draw(main: Instance, deps: any): Frame
 	end
 	local here = deps.here
 	local floorN = if here then math.min(here.row, run.floors) else 1
-	if (run.maxStages or 1) > 1 then line(`Stage {run.stage or 1} / {run.maxStages}`, body(), Theme.Colors.TextGold, true) end -- DG-STAGE (approved 2026-11-15 8:41 AM)
+	if run.endless then line(`Stage {run.stage or 1}`, body(), Theme.Colors.TextGold, true) -- DG-STAGE-ENDLESS (approved 2026-11-16 8:07 PM, rule 281)
+	elseif (run.maxStages or 1) > 1 then line(`Stage {run.stage or 1} / {run.maxStages}`, body(), Theme.Colors.TextGold, true) end -- DG-STAGE (approved 2026-11-15 8:41 AM)
+	local dp = run.depth
+	if type(dp) == "table" and ((dp.hp or 0) > 0 or (dp.atk or 0) > 0) then -- DG-DEPTH-POWER (approved 8:07 PM): stages 4+
+		local t = line(`Depth: +{dp.hp or 0}% HP, +{dp.atk or 0}% Attack and Defense`, body(), Theme.Colors.TextSecondary, false, (body() + 4) * 2)
+		t.TextWrapped = true
+	end
 	line(`Floor {floorN}/{run.floors}`, body(), Theme.Colors.TextGold, true)                  -- DG-FLOOR
 	-- EV-16 mutator lines retired 2026-11-15 10:01 AM (Altar of Change replaces Shifting Hall).
 	-- Loot xN is a 44 px tap target (tap = the approved explanation, shown in the status line).
@@ -77,6 +74,28 @@ function Side.Draw(main: Instance, deps: any): Frame
 	lt.Size = UDim2.fromScale(1, 1)
 	loot.Activated:Connect(function() if deps.onLoot then deps.onLoot() end end)
 	loot.Parent = scroll
+	line(`Silver {run.silver or 0}`, body(), Theme.Colors.TextGold, true) -- SB-01 (approved 2026-11-15 9:09 PM)
+	-- Step 3 (2026-11-16): Bag count (SB-11) and the loadout button (SB-21), both approved 2026-11-15 9:09 PM.
+	local bs = run.bagSlots
+	if type(bs) == "table" and bs.used and bs.cap then
+		if deps.onBag then -- steps 4-5: the Bag line opens the Bag screen (44 px tap target)
+			order += 1
+			local bb = Instance.new("TextButton")
+			bb.Name = "BagLine"
+			bb.Text = ""
+			bb.AutoButtonColor = false
+			bb.BackgroundTransparency = 1
+			bb.Size = UDim2.new(1, 0, 0, 44)
+			bb.LayoutOrder = order
+			local bt = mk(bb, `Bag {bs.used} / {bs.cap}`, body(), if bs.used >= bs.cap then Theme.Colors.Danger else Theme.Colors.TextPrimary, true) -- SB-11
+			bt.Size = UDim2.fromScale(1, 1)
+			bb.Activated:Connect(function() deps.onBag() end)
+			bb.Parent = scroll
+		else
+			line(`Bag {bs.used} / {bs.cap}`, body(), Theme.Colors.TextPrimary, true) -- SB-11
+		end
+	end
+	-- "Equip from bag" (SB-21) removed 2026-11-16 (user 7:14 PM): Equip is on the one Bag screen.
 	-- Resources: the same text the screen's gold line shows (approved format), one item per line.
 	local g = tostring(deps.gold or "")
 	if g ~= "" then
@@ -90,7 +109,7 @@ function Side.Draw(main: Instance, deps: any): Frame
 	-- Run bag summary (approved DG-BAG strings, short form: what is at risk is shown in Bag).
 	local b = run.bag or {}
 	line("Kept if you leave early", ts(), Theme.Colors.Success, true, ts() + 8)               -- DG-BAG-SAFE
-	line(`Gold {b.gold or 0} (75% kept if you leave early)`, ts(), Theme.Colors.TextPrimary, false, 2 * ts() + 6) -- DG-BAG-GOLD
+	line(`Gold {b.gold or 0} (comes home · 75% if you leave early)`, ts(), Theme.Colors.TextPrimary, false, 2 * ts() + 6) -- SB-12 (was DG-BAG-GOLD)
 	line(`Materials {b.normalMats or 0}`, ts(), Theme.Colors.TextPrimary)                        -- DG-BAG-MATS
 	line("Lost if you leave early", ts(), Theme.Colors.Danger, true, ts() + 8)                -- DG-BAG-RISK
 	line(`Elite/Boss materials {b.eliteMats or 0}`, ts(), Theme.Colors.TextPrimary)              -- DG-BAG-ELITEMATS
