@@ -40,6 +40,11 @@ local Theme = require(
 	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 		:WaitForChild("UI", 10):WaitForChild("Theme", 10)
 )
+-- Loadout tile level label + grid spacing for the victory loot grid (2026-11-17).
+local _icOk, InventoryControls = pcall(function()
+	return require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10):WaitForChild("InventoryControls", 10))
+ end)
+if not _icOk then InventoryControls = nil end
 -- Terrain surface textures (per-terrain asset IDs) for the Option-1 textured mesh.
 local _ttOk, TerrainTextures = pcall(function()
 	return require(
@@ -5354,7 +5359,6 @@ end
 --------------------------------------------------
 
 local rewardGui = nil
-local rewardBackBtn = nil
 
 BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	if rewardGui then rewardGui:Destroy() end
@@ -5867,9 +5871,12 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	lootGrid:GetPropertyChangedSignal("AbsoluteSize"):Connect(placeSpacer)
 	task.defer(placeSpacer)
 
+	-- Loot tiles use the shared portrait item tile (Theme.MakeItemTile, as Loadout / Merchant;
+	-- user 2026-11-17): fixed 72 px cells at the shared tile aspect, Loadout cell spacing.
+	local LOOT_CELL_W = 72
 	local grid = Instance.new("UIGridLayout", lootGrid)
-	grid.CellSize = UDim2.new(0, 72, 0, 82)
-	grid.CellPadding = UDim2.new(0, 4, 0, 3)
+	grid.CellSize = UDim2.fromOffset(LOOT_CELL_W, math.floor(LOOT_CELL_W * Theme.ItemTile.GridAspect))
+	grid.CellPadding = if InventoryControls then InventoryControls.GridCellPadding else UDim2.new(0, 4, 0, 3)
 	grid.SortOrder = Enum.SortOrder.LayoutOrder
 	grid.FillDirection = Enum.FillDirection.Horizontal
 
@@ -5890,156 +5897,46 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 
 	for idx, item in ipairs(rewards) do
 		local rc = Theme.GetRarityColor(item.rarity)
-
-		local card = Instance.new("TextButton")
-		card.Size = UDim2.new(1, 0, 1, 0)
-		card.BackgroundColor3 = rc
-		card.BackgroundTransparency = 0.75
-		card.BorderSizePixel = 0
-		card.Text = ""
-		card.AutoButtonColor = true
-		card.LayoutOrder = idx
-		card.Parent = lootGrid
-		Instance.new("UICorner", card).CornerRadius = UDim.new(0, 4)
-		local cardStroke = Instance.new("UIStroke", card)
-		cardStroke.Color = rc
-		cardStroke.Thickness = 1.5
-
-		-- STOLEN badge (2026-10-24): items acquired via Steal/Mug carry item.stolen=true.
-		-- Small red tag, top-right, so theft spoils read at a glance on the victory screen.
-		if item.stolen then
-			local stLbl = Instance.new("TextLabel")
-			stLbl.Size = UDim2.new(0, 44, 0, 14)
-			stLbl.AnchorPoint = Vector2.new(1, 0)
-			stLbl.Position = UDim2.new(1, -2, 0, 2)
-			stLbl.BackgroundColor3 = Theme.Colors.Danger
-			stLbl.BackgroundTransparency = 0.15
-			stLbl.BorderSizePixel = 0
-			stLbl.Font = Theme.Font.PrimaryBold
-			stLbl.TextSize = 8
-			stLbl.TextColor3 = Color3.new(1, 1, 1)
-			stLbl.Text = "STOLEN"
-			stLbl.ZIndex = 4
-			Instance.new("UICorner", stLbl).CornerRadius = UDim.new(0, 3)
-			stLbl.Parent = card
-		end
-
-		-- BONUS badge (2026-10-28): items granted by a completed optional objective
-		-- carry item.objectiveReward=true. Gold tag, top-right (below STOLEN if both).
-		if item.objectiveReward then
-			local bLbl = Instance.new("TextLabel")
-			bLbl.Size = UDim2.new(0, 40, 0, 14)
-			bLbl.AnchorPoint = Vector2.new(1, 0)
-			bLbl.Position = UDim2.new(1, -2, 0, item.stolen and 18 or 2)
-			bLbl.BackgroundColor3 = Theme.Colors.TextGold
-			bLbl.BackgroundTransparency = 0.1
-			bLbl.BorderSizePixel = 0
-			bLbl.Font = Theme.Font.PrimaryBold
-			bLbl.TextSize = 8
-			bLbl.TextColor3 = Color3.new(0, 0, 0)
-			bLbl.Text = "BONUS"
-			bLbl.ZIndex = 4
-			Instance.new("UICorner", bLbl).CornerRadius = UDim.new(0, 3)
-			bLbl.Parent = card
-		end
-
-		-- CHEST badge (2026-11-01): found in a chest or by salvage during the battle (already
-		-- granted then). Blue tag, top-right (below STOLEN / BONUS if present).
-		if item.chestReward then
-			local chY = 2 + (if item.stolen then 16 else 0) + (if item.objectiveReward then 16 else 0)
-			local chLbl = Instance.new("TextLabel")
-			chLbl.Size = UDim2.new(0, 40, 0, 14)
-			chLbl.AnchorPoint = Vector2.new(1, 0)
-			chLbl.Position = UDim2.new(1, -2, 0, chY)
-			chLbl.BackgroundColor3 = Theme.Colors.Info
-			chLbl.BackgroundTransparency = 0.1
-			chLbl.BorderSizePixel = 0
-			chLbl.Font = Theme.Font.PrimaryBold
-			chLbl.TextSize = 8
-			chLbl.TextColor3 = Color3.new(1, 1, 1)
-			chLbl.Text = "CHEST"
-			chLbl.ZIndex = 4
-			local chCorner = Instance.new("UICorner")
-			chCorner.CornerRadius = UDim.new(0, 3)
-			chCorner.Parent = chLbl
-			chLbl.Parent = card
-		end
-
-		-- Level badge (top-left)
-		local lvBg = Instance.new("Frame")
-		lvBg.Size = item.isCard and UDim2.new(0, 48, 0, 14) or UDim2.new(0, 36, 0, 14)
-		lvBg.Position = UDim2.new(0, 2, 0, 2)
-		lvBg.BackgroundColor3 = Theme.Colors.BadgeBg
-		lvBg.BackgroundTransparency = 0.3
-		lvBg.BorderSizePixel = 0
-		lvBg.ZIndex = 3
-		lvBg.Parent = card
-		Instance.new("UICorner", lvBg).CornerRadius = UDim.new(0, 3)
-		local CARD_BADGE = {
-			SkillCard = "SKILL",
-			AugmentCard = "AUGMENT",
-			Doctrine = "DOCTRINE",
-			Consumable = "ITEM",
-		}
-		local badgeText = "Lv." .. (item.itemLevel or 1)
-		if item.isCard and item.category then
-			badgeText = CARD_BADGE[item.category] or item.category
-		end
-		local lvl = Instance.new("TextLabel")
-		lvl.Size = UDim2.fromScale(1, 1)
-		lvl.BackgroundTransparency = 1
-		lvl.Font = Theme.Font.Mono
-		lvl.TextSize = Theme.Text.Tiny()
-		lvl.TextColor3 = Theme.Colors.TextSecondary
-		lvl.TextXAlignment = Enum.TextXAlignment.Center
-		lvl.Text = badgeText
-		lvl.ZIndex = 3
-		lvl.Parent = lvBg
-
-		-- Icon (center) -- use archetype image if available
 		local iconId = item.icon or HAND_ICONS[item.handClass]
-		if iconId and string.find(iconId, "rbxassetid://") then
-			local img = Instance.new("ImageLabel")
-			img.Size = UDim2.new(1, -4, 1, -4)
-			img.Position = UDim2.new(0, 2, 0, 2)
-			img.BackgroundTransparency = 1
-			img.Image = iconId
-			img.ScaleType = Enum.ScaleType.Crop
-			img.Parent = card
-		else
-			local icon = Instance.new("TextLabel")
-			icon.Size = UDim2.new(1, 0, 0, 28)
-			icon.Position = UDim2.new(0, 0, 0.15, 0)
-			icon.BackgroundTransparency = 1
-			icon.Font = Theme.Font.Primary
-			icon.TextSize = 24
-			icon.TextColor3 = Theme.Colors.TextPrimary
-			icon.TextXAlignment = Enum.TextXAlignment.Center
-			icon.Text = "[*]"
-			icon.Parent = card
+		local card = Theme.MakeItemTile({
+			parent = lootGrid,
+			accentColor = rc,
+			cellW = LOOT_CELL_W,
+			icon = if iconId and string.find(iconId, "rbxassetid://") then iconId else nil,
+			iconText = string.sub(item.name or "?", 1, 1),
+			name = item.name or "?",
+			layoutOrder = idx,
+			portrait = true,
+		})
+		-- Level label top-left like Loadout gear tiles; cards / consumables show none (as in the Loadout).
+		if not item.isCard then
+			local lvText = "Lv." .. tostring(item.itemLevel or 1)
+			if InventoryControls then InventoryControls.MakeLevelLabel(card, lvText) end
 		end
-
-		-- Name strip (bottom)
-		local nameBg = Instance.new("Frame")
-		nameBg.Size = UDim2.new(1, 0, 0, 14)
-		nameBg.Position = UDim2.new(0, 0, 1, -14)
-		nameBg.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-		nameBg.BackgroundTransparency = 0.4
-		nameBg.BorderSizePixel = 0
-		nameBg.ZIndex = 3
-		nameBg.Parent = card
-		local nameLabel = Instance.new("TextLabel")
-		nameLabel.Size = UDim2.new(1, -4, 1, 0)
-		nameLabel.Position = UDim2.new(0, 2, 0, 0)
-		nameLabel.BackgroundTransparency = 1
-		nameLabel.Font = Theme.Font.Primary
-		nameLabel.TextSize = Theme.Text.Small()
-		nameLabel.TextColor3 = Theme.Colors.TextPrimary
-		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-		nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
-		nameLabel.Text = item.name or "?"
-		nameLabel.ZIndex = 3
-		nameLabel.Parent = nameBg
+		-- STOLEN / BONUS / CHEST tags (approved, 2026-10-24 / 10-28 / 11-01): top-right, stacked,
+		-- drawn like the Loadout NEW marker (small coloured box, badge text size).
+		local tagRow = 0
+		local function addLootTag(text: string, bg: Color3, fg: Color3)
+			local ts = Theme.Text.Badge()
+			local w = Theme.MeasureText(text, ts, Theme.Font.PrimaryBold).X + 6
+			local tag = Instance.new("TextLabel")
+			tag.Size = UDim2.fromOffset(w, math.max(12, ts + 2))
+			tag.AnchorPoint = Vector2.new(1, 0)
+			tag.Position = UDim2.new(1, -2, 0, 2 + tagRow * 14)
+			tag.BackgroundColor3 = bg
+			tag.BorderSizePixel = 0
+			tag.Font = Theme.Font.PrimaryBold
+			tag.TextSize = ts
+			tag.TextColor3 = fg
+			tag.Text = text
+			tag.ZIndex = 4
+			Instance.new("UICorner", tag).CornerRadius = UDim.new(0, 2)
+			tag.Parent = card
+			tagRow += 1
+		end
+		if item.stolen then addLootTag("STOLEN", Theme.Colors.Danger, Color3.new(1, 1, 1)) end
+		if item.objectiveReward then addLootTag("BONUS", Theme.Colors.TextGold, Color3.new(0, 0, 0)) end
+		if item.chestReward then addLootTag("CHEST", Theme.Colors.Info, Color3.new(1, 1, 1)) end
 
 		-- Click -> detail view
 		card.Activated:Connect(function()
@@ -6188,8 +6085,6 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 				LoadoutScreen.BuildItemDetail(detailFrame, uiItem)
 			end
 
-			-- Show BACK button in the button bar
-			rewardBackBtn.Visible = true
 		end)
 	end
 
@@ -6218,15 +6113,9 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	end, { size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H) })
 	continueBtn.LayoutOrder = 2
 
-	-- 2nd from right: BACK (Secondary, hidden by default)
-	rewardBackBtn = Theme.MakeButton(btnBar, "BACK", "Secondary", function()
-		closeRewardDetail()
-		rewardBackBtn.Visible = false
-	end, { size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H) })
-	rewardBackBtn.LayoutOrder = 1
-	rewardBackBtn.Visible = false
+	-- No BACK button (user 2026-11-17): tapping outside the item panel closes it (OutsideCatcher).
 
-	btnBar.Size = UDim2.new(0, 2 * fb.BTN_W + fb.BTN_GAP, 0, fb.BTN_H)
+	btnBar.Size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H)
 end)
 
 --------------------------------------------------

@@ -271,68 +271,45 @@ local function equipTab(e: any): string?
 	return nil
 end
 
--- Relics view: one row per relic (icon, name in rarity colour / curse red, rarity, Used, effect).
-local function relicRows(parent: Instance, rel: { any })
-	local sf = Instance.new("ScrollingFrame")
-	sf.Name = "Relics"
-	sf.BackgroundTransparency = 1
-	sf.BorderSizePixel = 0
-	sf.Size = UDim2.fromScale(1, 1)
-	sf.ScrollBarThickness = 4
-	sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
-	sf.CanvasSize = UDim2.new()
-	local ll = Instance.new("UIListLayout")
-	ll.Padding = UDim.new(0, 4)
-	ll.SortOrder = Enum.SortOrder.LayoutOrder
-	ll.Parent = sf
-	if #rel == 0 then text(sf, "No relics yet", body(), Theme.Colors.TextSecondary) end -- RL-UI-NONE
+-- Relics view (user 2026-11-17 12:00 PM): relics as item-style tiles in the grid, like the Bag, with the
+-- inspector on the right (name in rarity colour / curse red, rarity, Used, effect). Curses get a red frame;
+-- stacked depth curses show the ×n count badge. Approved strings only (RL-UI-NONE / RL-UI-USED / effect text).
+local relicSel: string? = nil
+local function relicGrid(view: any, rel: { any }, onSelect: (key: string) -> ())
+	local main = view.Main :: any
+	if #rel == 0 then
+		text(view.Main, "No relics yet", body(), Theme.Colors.TextSecondary).Size = UDim2.new(1, 0, 0, body() + 8) -- RL-UI-NONE
+		return
+	end
+	local entries = {}
 	for i, r in rel do
 		local curse = r.kind == "Curse"
-		local row = Instance.new("Frame")
-		row.Name = "Relic_" .. tostring(r.id)
-		row.Size = UDim2.new(1, -6, 0, 0)
-		row.AutomaticSize = Enum.AutomaticSize.Y
-		row.BackgroundColor3 = Theme.Colors.Panel
-		row.BackgroundTransparency = 0.4
-		row.BorderSizePixel = 0
-		row.LayoutOrder = i
-		local cr = Instance.new("UICorner")
-		cr.CornerRadius = UDim.new(0, 6)
-		cr.Parent = row
-		local img = Instance.new("ImageLabel")
-		img.Name = "Icon"
-		img.BackgroundTransparency = 1
-		img.Image = if type(r.icon) == "string" then r.icon else ""
-		img.ScaleType = Enum.ScaleType.Fit
-		img.Size = UDim2.fromOffset(40, 40)
-		img.Position = UDim2.fromOffset(4, 4)
-		img.ZIndex = 23
-		img.Parent = row
-		local col = Instance.new("Frame")
-		col.BackgroundTransparency = 1
-		col.Position = UDim2.fromOffset(50, 2)
-		col.Size = UDim2.new(1, -54, 0, 0)
-		col.AutomaticSize = Enum.AutomaticSize.Y
-		local cl = Instance.new("UIListLayout")
-		cl.Padding = UDim.new(0, 1)
-		cl.SortOrder = Enum.SortOrder.LayoutOrder
-		cl.Parent = col
-		local nm = if (tonumber(r.stacks) or 1) > 1 then `{r.name} ×{r.stacks}` else tostring(r.name) -- step 6: stacked depth curse count
-		text(col, nm, body(), if curse then Theme.Colors.Danger else Theme.GetRarityColor(r.rarity or "Common"), true).LayoutOrder = 1 -- RL-UI-FOUND-1
-		text(col, `{r.rarity} relic`, ts(), Theme.Colors.TextSecondary).LayoutOrder = 2 -- RL-UI-RARITY
-		if r.used then text(col, "Used", ts(), Theme.Colors.TextSecondary).LayoutOrder = 3 end -- RL-UI-USED
-		text(col, tostring(r.text), ts(), if curse then Theme.Colors.Danger else Theme.Colors.TextPrimary).LayoutOrder = 4 -- RL-UI-FOUND-2
-		local padB = Instance.new("UIPadding")
-		padB.PaddingBottom = UDim.new(0, 4)
-		padB.Parent = col
-		col.Parent = row
-		local minH = Instance.new("Frame") -- keeps the row at least icon-high
-		minH.BackgroundTransparency = 1
-		minH.Size = UDim2.fromOffset(1, 48)
-		minH.Parent = row
-		row.Parent = sf
+		local n = tonumber(r.stacks) or 1
+		table.insert(entries, {
+			key = "relic:" .. tostring(r.id or i), name = tostring(r.name or ""), rarity = r.rarity or "Common", queued = false,
+			countText = if n > 1 then `×{n}` else nil, -- step 6: stacked depth curse count
+			accentColor = if curse then Theme.Colors.Danger else nil,
+			tagText = if r.used then "Used" else nil, tagColor = Theme.Colors.TextSecondary, -- RL-UI-USED
+			detail = { isRelic = true, isCurse = curse, icon = if type(r.icon) == "string" then r.icon else nil,
+				description = tostring(r.text or "") }, -- RL-UI-FOUND-2
+		})
 	end
-	sf.Parent = parent
+	local sel = MerchantInspector.ResolveSelected(entries, relicSel)
+	relicSel = sel and sel.key or nil
+	local grid = Instance.new("ScrollingFrame")
+	grid.Name = "Grid"
+	grid.Size = UDim2.fromScale(1, 1)
+	grid.BackgroundTransparency = 1
+	grid.BorderSizePixel = 0
+	grid.ScrollBarThickness = 4
+	grid.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	grid.CanvasSize = UDim2.new()
+	MerchantInspector.BuildGrid(grid, { entries = entries, selectedKey = relicSel,
+		width = math.max(240, main.AbsoluteSize.X - 6), heightHint = math.max(120, main.AbsoluteSize.Y),
+		onSelect = function(key: any) onSelect(key) end })
+	for i, e in entries do taps["Relic_" .. i] = function() onSelect(e.key) end end -- test hook = the same path as a tap
+	grid.Parent = view.Main
+	MerchantInspector.BuildDetail(view.Side, sel)
 end
 
 --- The Bag screen: every Bag item as a tile (icon, rarity colour, count, tag), tap = inspector, Equip from
@@ -344,13 +321,13 @@ local function renderBag(ctx: Ctx)
 	if not bl then return end
 	local used, cap = slotsOf(res)
 	local isRelics = bagView == "relics"
-	local view = bigView("BagScreen", if isRelics then "Relics" else `Bag {used} / {cap}`, ctx.gui, isRelics) -- RL-UI-HEAD / SB-11
+	local view = bigView("BagScreen", if isRelics then "Relics" else `Bag {used} / {cap}`, ctx.gui) -- RL-UI-HEAD / SB-11 (Relics: grid + inspector, 2026-11-17)
 	local row = buttonRow(view.Buttons, 100)
 	row.Size = UDim2.fromScale(1, 1)
 	row.AutomaticSize = Enum.AutomaticSize.None
 	if isRelics then
-		relicRows(view.Main, ctx.relics or {})
-		iconBtn(row, "Back", 1, function() bagView = "items" renderBag(ctx) end)
+		relicGrid(view, ctx.relics or {}, function(key: string) relicSel = key renderBag(ctx) end)
+		iconBtn(row, "Back", 1, function() bagView = "items" relicSel = nil renderBag(ctx) end)
 		return
 	end
 	view.SetStatus(LOSS_WARNING, true) -- SB-44: header status line, red
@@ -398,6 +375,71 @@ end
 function Bag.Open(ctx: Ctx)
 	bagView, bagSel = "items", nil
 	renderBag(ctx)
+end
+
+--------------------------------------------------
+-- ESCAPE CONFIRM (user 2026-11-17 10:06 AM): styled panel, a red warning and every Bag item that will be
+-- lost, shown as the Bag screen's item tiles (scrolls if many). Payout unchanged (rule 264). Lines are
+-- APPROVED 2026-11-17 10:33 AM (workspace/artifacts/DRAFT_dungeon_escape_text_20261117.md).
+--------------------------------------------------
+
+local ESC = {
+	title = "Escape the dungeon?",                                                      -- DG-ESCAPE-CONFIRM-T (APPROVED 2026-11-17 10:33 AM)
+	warn = "Escaping fails this exploration. Everything in your Bag below will be lost.", -- DG-ESCAPE-WARN (APPROVED 2026-11-17 10:33 AM)
+	keep = "You keep unit EXP, 75% of the gold and normal materials.",                   -- DG-ESCAPE-KEEP (APPROVED 2026-11-17 10:33 AM)
+	empty = "Your Bag is empty.",                                                        -- DG-ESCAPE-EMPTY (APPROVED 2026-11-17 10:33 AM)
+	no = "Stay",                                                                         -- DG-ESCAPE-NO (APPROVED)
+	yes = "Escape",                                                                      -- DG-ESCAPE-YES (APPROVED 2026-11-17 10:33 AM)
+}
+
+function Bag.OpenEscapeConfirm(ctx: Ctx, onEscape: () -> ())
+	local res = ctx.act({ action = "BagView" })
+	local bl = (res and res.bagList) or {}
+	local entries = {}
+	for _, e in bl.items or {} do table.insert(entries, bagEntry(e)) end -- sent-home items are safe: not listed
+	local ff = res and res.run and res.run.furniture
+	for i, f in (ff and ff.found) or {} do
+		if not f.safe then -- stage 4+ boss pieces are kept on a failed run (server flag)
+			table.insert(entries, { key = "furn:" .. i, name = tostring(f.name), rarity = f.rarity or "Common", raw = f,
+				detail = { isCard = true, icon = f.icon } })
+		end
+	end
+	close()
+	taps = {}
+	local o, box = GuildScreen.MakeModalBox("EscapeConfirm", { maxW = 640, widthScale = 0.9, fill = true })
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 4)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = box
+	text(box, ESC.title, Theme.Text.Heading(), Theme.Colors.TextGold, true).LayoutOrder = 1
+	text(box, ESC.warn, body(), Theme.Colors.Danger, true).LayoutOrder = 2
+	local fixed = Theme.Text.Heading() + body() * 2 + ts() * 2 + GuildScreen.ROW_H + 40
+	local grid = Instance.new("ScrollingFrame")
+	grid.Name = "Grid"
+	grid.BackgroundTransparency = 1
+	grid.BorderSizePixel = 0
+	grid.Size = UDim2.new(1, 0, 1, -fixed)
+	grid.ScrollBarThickness = 4
+	grid.ScrollingDirection = Enum.ScrollingDirection.Y
+	grid.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	grid.CanvasSize = UDim2.new()
+	grid.LayoutOrder = 3
+	grid.ZIndex = 22
+	grid.Parent = box
+	text(box, ESC.keep, ts(), Theme.Colors.TextSecondary).LayoutOrder = 4
+	local row = buttonRow(box, 5)
+	barBtn(row, ESC.no, "Secondary", 1, function() close() end)
+	barBtn(row, ESC.yes, "Primary", 2, function() close() onEscape() end)
+	o.Parent = ctx.gui -- parent first so the grid can size its tiles from the box
+	overlay = o
+	if #entries == 0 then
+		text(grid, ESC.empty, body(), Theme.Colors.TextSecondary)
+	else
+		local g = grid :: any
+		MerchantInspector.BuildGrid(grid, { entries = entries, selectedKey = nil,
+			width = math.max(240, g.AbsoluteSize.X - 6), heightHint = math.max(88, g.AbsoluteSize.Y),
+			onSelect = function(_key: any) end }) -- display only: the list of what will be lost
+	end
 end
 
 --------------------------------------------------

@@ -1800,3 +1800,33 @@ Rows: project_rules 258, 265, 267, 270, 272 (renamed "Events (Approved)"), 275 (
 2026-11-16 11:02 PM: guild_facilities 91/98/111/112 — 5 furnish-rooms text lines APPROVED (room names FINAL, storage title/empty/full, craft-full). NOT BUILT.
 
 2026-11-17 12:19 AM USER RULINGS (APPROVED, NOT BUILT): (1) At base with no active quest, base Merchant stock, dispatch board, Crucible cap and Training Grounds prices use the Rank's Normal quest level (~Rank, 1-99) instead of 1; after a quest the quest level applies; base prices rise with Rank. Rows: economy_framework 18,48; guild_facilities 62,75,82; unit_progression 99 (dispatch). (2) RL-67 Dimming Light text = 'Discovery Radius −1 (min 1).' (project_rules 282, old text marked replaced). Mirrored to Game Rules sheets 22, 25, 21, 01. Backups: docs\backups\*.pre-20261117_ranklevel.bak
+
+2026-11-17 3:15 PM USER RULING (APPROVED, NOT BUILT): Dungeon mid-map gates - fixed "Sanctuary row then Elite row" gate(s): Easy/Medium/endless 4+ one at the middle, Hard two at ~1/3 and ~2/3; replaces the old Rest-every-4-rows cadence (pre-boss Sanctuary stays). Agent defaults (a)-(e) vetoable. Simulator re-check PENDING. New project_rules 283 (sheet 01 Project Identity, row 282); edited project_rules 260, 262, 277.
+
+
+2026-11-17 3:18 PM USER RULING (APPROVED, NOT BUILT): Dungeon mid-map gates LAYOUT B (Simulator SIM_dungeon_midgate_20261117.md). Medium 12: Sanctuary 6, 9, 12, Elite 7. Hard 15: Sanctuary 3, 5, 10, 13, 15, Elite 6, 11. Easy 8 / endless 4+ unchanged (Sanct 4, Elite 5, Sanct 8). High-pressure wipe ~40-54% -> 2-6%. Agent defaults (vetoable): gate rows keep paths separate (enforced in code); endless 6+ half-Elite gate NOT adopted. Hard L10 3 stages ~194 min (rule 273). Rows: project_rules 260, 262, 273, 277, 283. Mirrored to Game Rules sheet 01. Backups: docs\backups\*.pre-20261117_1818_layoutB.bak
+
+
+2026-11-17 4:38 PM USER RULING (APPROVED, NOT BUILT): In-game Feedback / bug report button on every screen, separate DataStore CTRBLXAI_Feedback, approved text, 500 chars, 1 per 60 s, one icon may be painted/uploaded. Row: project_rules 284 (section UI). Mirrored to Game Rules sheet 01 row 283. Backups: docs\backups\*.pre-20261117_1638_feedback.bak
+
+
+2026-11-17 5:18 PM USER RULING: Guild Hall building-upgrade info + header resource tooltips APPROVED (text verbatim); upgrade economy option 3 Renown Rank gate per level APPROVED IN PRINCIPLE, gold unchanged, Blacksmith keeps own rule, saves keep levels; slope OPEN pending Simulator (default max(unlockRank+2(n-1), 8(n-1)), L10 Rank 72). NOT BUILT. Rows: guild_facilities 113, 114, 115 (section Building Upgrades). Mirrored to Game Rules sheet 25 Guild Facilities. Backups: docs\backups\*.pre-20261117_1718_ghupgrades.bak
+
+2026-11-17 5:23 PM USER RULING (APPROVED, NOT BUILT): guild_facilities row 115 Renown Rank gate slope LOCKED at 8x - building level n needs Rank max(unlockRank + 2x(n-1), 8x(n-1)), L10 = Rank 72; Blacksmith keeps own rule (L10 R86); gold unchanged; saves keep levels. Per-building table + Simulator verdict (8x recommended, 10x rejected endless too late, 7x softer alternative; Rank 72 ~393 battles) recorded in row 115. Old 'APPROVED IN PRINCIPLE, slope OPEN' wording kept marked REPLACED. Mirrored to Game_Rules.xlsx sheet 25. Backups *_before_20261117_1723_rankslope.*
+
+2026-11-17 5:41 PM — guild_facilities 113: Guild Hall next-level DRAFT labels approved & recorded verbatim (built, not Studio-tested/committed); open question: Quest Board Hard/Boss quest unlock lines not shown (no Quest Board level gate).
+
+2026-11-17 5:43 PM — guild_facilities #113: Quest Board 'Unlocks: Hard/Boss quests' lines DROPPED; Hard/Boss quests not gated by Quest Board level; open question closed (no gameplay change).
+
+
+2026-11-17 6:36 PM USER RULINGS — Quest Board redesign (APPROVED, NOT BUILT): own screen with Board / Quest accepted / Choose Party views; cancel fee 50% shown as real gold; enemy level range; Goal row only where win condition differs; 'Back in {n} battles'; Choose Party optional; NEW RULE quest gear rewards are real (type+rarity fixed at board refresh and shown, stats roll at victory; Fortune OPEN, default: no change to promised rarity); no map loading bar (Embark blocked until ready); art: parchment card + wood board approved, biome backgrounds reused; DRAFT text lines pending approval. Rows: game_flow 34-39 (game_flow has no Game Rules sheet - DB only). Corrected: guild_facilities 17, unit_progression 71/72 (Hard/Boss not gated by Quest Board level) - mirrored to sheets 25 / 21. Backups: *_before_questboard_20261117.*
+
+2026-11-17 6:50 PM USER RULINGS — Quest Board (NOT BUILT): game_flow 36 Fortune does NOT change promised gear rarity (closed); agent defaults pending Simulator: promised gear replaces one random gear roll, event rarity modifiers/Treasure Hunter skip it, normal quests + Daily Contract get one, dungeon rooms don't. Row 35 Goal row DROPPED (all quests win by defeating all enemies; Boss note kept). Row 39 final 16 text lines APPROVED verbatim (old DRAFT kept marked replaced; Drops/Goal/loading-bar lines retired). Row 38 parchment card art = user's own image; wood board being repainted. DB only (game_flow has no sheet). Backups *_before_20261117_1850_qbtext.*
+
+
+2026-11-17 7:02 PM USER RULINGS (quest promised gear): game_flow 36 (promised item replaces one gear roll; Option C rarity by quest difficulty, table PENDING Simulator; boss cards no promise; no Fortune; item level = quest level; best-of-13 finding ~1,490 crystals/~153 sulfur), game_flow 38 (wood board v2 98321788039247 approved; parchment = user image 92530315099135, SliceCenter Rect(100,140,583,850)), game_flow 40 NEW (1-2 rolls per win, 40% equipment - from RewardService.lua), guild_facilities 38 (21-26 full levellings ACCEPTED, 15-20 target replaced). APPROVED, NOT BUILT.
+
+2026-11-17 7:22 PM: game_flow row 36 - Quest promised-gear rarity table by difficulty (Option C) CLOSED; D1-D5 table, never Exalted+, Daily Contract min D3, no boss promise. APPROVED, NOT BUILT. Backups *_before_row36_20261117_1922.
+
+
+2026-11-17 7:25 PM USER RULINGS - Quest main goals (NOT BUILT): game_flow 41 NEW (10 goals approved from DRAFT_quest_goals_20261117.md with 5 changes: Capture/Protect/Survive diff 3+; Activate/Kill target/Prevent Hard only [agent reading, user to confirm]; Capture target avoids engaging; Destroy/Reach/Activate on POI tiles, Protect NPC in PD; Survive max 12 alive, 1 spawn per 400 CT; re-balanced frequency, Simulator after build step 3). game_flow 35/39 Goal line returns. unit_progression 73-75 updated. open_decisions 52 RESOLVED. game_flow has no sheet (DB only). Backups *_before_20261117_1925_questgoals.*

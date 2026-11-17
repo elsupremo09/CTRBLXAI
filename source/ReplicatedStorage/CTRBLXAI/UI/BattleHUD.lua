@@ -641,23 +641,15 @@ local function ensureRoot()
 	viewModeButtons.BackgroundTransparency = 1
 	viewModeButtons.Parent = rootFrame
 
-	local bfBtn = Instance.new("TextButton")
-	bfBtn.Name = "BattlefieldToggle"
-	bfBtn.Size = UDim2.fromOffset(BF_BTN_W, BF_BTN_H)
-	bfBtn.BackgroundColor3 = Theme.Colors.Surface
-	bfBtn.BackgroundTransparency = 0.15
-	bfBtn.AutoButtonColor = false
-	bfBtn.Font = Theme.Font.PrimaryBold; bfBtn.TextSize = math.max(8, math.round(Theme.Text.Body() * BF_SCALE))
-	bfBtn.TextColor3 = Theme.Colors.TextPrimary
-	-- Battlefield icon (2026-11-15) replaces the 3 drawn hamburger bars.
-	bfBtn.Text = "Battlefield"; bfBtn.BorderSizePixel = 0
-	bfBtn.TextXAlignment = Enum.TextXAlignment.Left
-	local bfPad = Instance.new("UIPadding", bfBtn); bfPad.PaddingLeft = UDim.new(0, 3)
-	Theme.AddLeadIcon(bfBtn, Theme.BattleButtonIcons.Battlefield, math.max(10, math.min(16, BF_BTN_H - 4))) -- kept small: a bigger icon squeezes "Battlefield" below 10 px
-	Instance.new("UICorner", bfBtn).CornerRadius = Theme.CornerRadius.sm
-	local bfStroke = Instance.new("UIStroke", bfBtn)
-	bfStroke.Color = Theme.Colors.Border; bfStroke.Thickness = 1
-	bfStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	-- Battlefield button on the same navy bar art as the battle action buttons (Move / Skills / Wait
+	-- use Theme.MakeTabButton "Inactive"; user 2026-11-17). Keeps its 35%-smaller size (rule 244).
+	local bfBtn = Theme.MakeTabButton(nil, "Battlefield", "Inactive", nil, {
+		name = "BattlefieldToggle",
+		size = UDim2.fromOffset(BF_BTN_W, BF_BTN_H),
+		textSize = math.max(8, math.round(Theme.Text.Body() * BF_SCALE)),
+		icon = Theme.BattleButtonIcons.Battlefield,
+		iconSize = math.max(10, math.min(16, BF_BTN_H - 4)), -- kept small: a bigger icon squeezes "Battlefield"
+	})
 	bfBtn.Parent = viewModeButtons
 
 	local bfMenu = Instance.new("Frame")

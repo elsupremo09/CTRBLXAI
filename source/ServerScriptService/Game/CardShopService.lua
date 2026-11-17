@@ -44,6 +44,10 @@ local VALUE = table.freeze({ Augment = 60, Skill = 100, Doctrine = 1000 })
 local TYPE_UNLOCK = table.freeze({ Attack = 1, Support = 1, BasicAug = 2, ControlUtility = 3, AdvancedAug = 4 })
 local DOCTRINE_LEVEL = 6
 local RESTOCK_BATTLES = 5
+local DISCOUNT_PER_LEVEL = 3 -- % per Training Grounds level above L1
+local function discountPct(level: number): number
+	return math.max(0, DISCOUNT_PER_LEVEL * (level - 1))
+end
 local SELL_DIVISOR = 16
 
 -- Fixed shop rarity (Designer proposal C3 / Appendix 1). Not listed = Rare.
@@ -147,7 +151,7 @@ function CardShopService.ListPrice(kind: string, id: string): number
 end
 
 function CardShopService.BuyPrice(kind: string, id: string): number
-	local disc = math.max(0, 3 * (CardShopService.GetLevel() - 1))
+	local disc = discountPct(CardShopService.GetLevel())
 	local lvlMult = 1 + (mapLevel() - 1) * 0.02
 	local rarity = CardShopService.Classify(kind, id)
 	if not rarity then return 0 end
@@ -337,4 +341,17 @@ function CardShopService.Import(data: any)
 	bought = { key = data.key, slots = slots }
 end
 
+
+-- Guild Hall next-level info (USER RULING 2026-11-17 5:18 PM, guild_facilities 113): this level's
+-- numbers, read from the tables above (DAT-001). Display only; BuildingService builds the lines.
+function CardShopService.LevelInfo(level: number): any
+	local l = math.clamp(math.floor(tonumber(level) or 1), 1, 10)
+	local top = "Rare"
+	for i, r in RARITIES do
+		if (ODDS[l][i] or 0) > 0 then top = r end
+	end
+	local types: { [string]: number } = {}
+	for k, u in TYPE_UNLOCK do types[k] = u end
+	return { shelf = SHELF_SIZE[l], discount = discountPct(l), top = top, typeUnlock = types, doctrines = l >= DOCTRINE_LEVEL }
+end
 return CardShopService

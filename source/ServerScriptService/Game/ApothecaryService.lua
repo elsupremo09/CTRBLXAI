@@ -376,4 +376,20 @@ function ApothecaryService.Import(data: any)
 	end
 end
 
+
+-- Guild Hall next-level info (USER RULING 2026-11-17 5:18 PM, guild_facilities 113): this level's
+-- numbers, read from the tables above (DAT-001). Display only; BuildingService builds the lines.
+function ApothecaryService.LevelInfo(level: number): any
+	local l = math.clamp(math.floor(tonumber(level) or 1), 1, 10)
+	local types: { [string]: number } = {}
+	for t, u in TYPE_UNLOCK do types[t] = u end
+	local top = "Common"
+	for i, r in TIERS do
+		if (TIER_ODDS[l][i] or 0) > 0 then top = r end
+	end
+	return {
+		shelf = SHELF_SIZE[l], refill = ApothecaryService.RefillRate(l), discount = ApothecaryService.BuyDiscountPct(l),
+		typeUnlock = types, top = top, charges = l >= CHARGE_BONUS_LEVEL, slot = l >= SLOT_BONUS_LEVEL,
+	}
+end
 return ApothecaryService

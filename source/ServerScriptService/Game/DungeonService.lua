@@ -237,6 +237,7 @@ local function makeCard(window: number, index: number, level: number): any
 		difficulty = tier.difficulty,
 		tier = tier.word,
 		maxStages = DungeonRules.MaxStages(level),
+		mapLayout = D.MapLayout, -- mid-map gates (2026-11-17 3:15 PM); not part of the seeded rolls
 		biome = biome,
 		condition = pickCondition(rng, biome),
 	}
@@ -396,7 +397,7 @@ local function buildRun(card: any, party: { string }, stage: number?): any
 		stageCleared = false, -- true while the stage boss is beaten and Go deeper / Go home is pending
 		stageBringIn = 0,     -- bring-ins used at the start of this stage (stages 2/3)
 		stageHeal = nil,      -- { pct } shown once when a stage starts healed
-		map = DungeonMap.Generate(sseed, card.facilityLevel, DungeonRules.StageFloors(card.floors, st)), -- stages 4+: 8 floors
+		map = DungeonMap.Generate(sseed, card.facilityLevel, DungeonRules.StageFloors(card.floors, st), card.mapLayout), -- stages 4+: 8 floors
 		party = party,
 		partySet = partySet,
 		at = nil,

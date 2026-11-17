@@ -46,7 +46,7 @@ function Save.Export(playerId: string): any
 		out.run = {
 			card = { id = c.id, seed = c.seed, window = c.window, facilityLevel = c.facilityLevel,
 				floors = c.floors, difficulty = c.difficulty, biome = c.biome, condition = c.condition,
-				tier = c.tier, maxStages = c.maxStages },
+				tier = c.tier, maxStages = c.maxStages, mapLayout = c.mapLayout },
 			stage = run.stage, stageCleared = run.stageCleared or nil, stageBringIn = run.stageBringIn or 0, -- stages (rule 277)
 			stageBosses = table.clone(run.stageBosses or {}),
 			party = table.clone(run.party),
@@ -114,6 +114,8 @@ local function importRun(r: any): (any, string?)
 		difficulty = c.difficulty, biome = c.biome, condition = c.condition,
 		tier = if type(c.tier) == "string" and #c.tier <= 8 then c.tier else DungeonRules.TierFor(c.difficulty).word,
 		maxStages = if isInt(c.maxStages, 1, D.StageLimit) then c.maxStages else 1, -- old saves: one stage
+		-- Mid-map gates (2026-11-17): runs saved before have no mapLayout -> layout 1, so their map rebuilds the same.
+		mapLayout = if isInt(c.mapLayout, 1, D.MapLayout) then c.mapLayout else 1,
 	}
 	-- Endless (step 5, rule 281): an L10 card saved before endless existed (max 3) can go deeper too.
 	if card.facilityLevel >= D.EndlessFacilityLevel then card.maxStages = DungeonRules.MaxStages(card.facilityLevel) end

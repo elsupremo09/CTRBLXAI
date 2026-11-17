@@ -10,6 +10,8 @@
 -- Display only: callers set each value's text (numbers with thousands separators, or approved text).
 
 local TextService = game:GetService("TextService")
+local Players = game:GetService("Players")
+local GuiService = game:GetService("GuiService")
 
 local uiFolder = script.Parent
 local Theme: any = (require :: any)(uiFolder:WaitForChild("Theme", 10))
@@ -17,6 +19,155 @@ local Theme: any = (require :: any)(uiFolder:WaitForChild("Theme", 10))
 local CurrencyStrip = {}
 
 local CURRENCY_GAP, CURRENCY_ICON_GAP = 10, 4
+
+--------------------------------------------------
+-- RESOURCE TOOLTIPS (USER RULING 2026-11-17 5:18 PM, guild_facilities 114)
+-- Tap a currency icon or number in the guild header, the dungeon header or the dungeon side panel:
+-- a small gold-framed box shows the name (bold) and one approved line. Tap anywhere closes it.
+-- Keyed by the Theme.GuildIcons key the cell uses (the side panel's rune gem cell uses "Runeforge").
+--------------------------------------------------
+local TIP_W = 240
+local TIP_ORDER = 150 -- above the guild / dungeon screens and their popups
+local GEM_TIP = table.freeze({ name = "Rune gems",
+	text = "Add bonus lines to gear at the Runeforge. From Elite and Boss fights, dispatch missions, or by dismantling gear." })
+local TIPS: { [string]: { name: string, text: string } } = table.freeze({
+	Gold = table.freeze({ name = "Gold",
+		text = "The guild's money. Earned from battles and quests, and by selling gear. Spent on upgrades, gear and recruits." }),
+	Mercury = table.freeze({ name = "Mercury",
+		text = "Levels up gear at the Blacksmith. Found in battles, on dispatch missions and daily contracts, or by dismantling gear." }),
+	Crystal = table.freeze({ name = "Crystal",
+		text = "Forges and merges gear at the Runeforge and Crucible. Won from Elite and Boss fights, or by dismantling gear." }),
+	Sulfur = table.freeze({ name = "Sulfur",
+		text = "Rerolls and merges gear above Epic. Rare: from Elites and Bosses (level 60+), every 3rd daily contract, or dismantling top gear." }),
+	Silver = table.freeze({ name = "Silver",
+		text = "Dungeon money. Earned in dungeon rooms and spent at the dungeon Merchant. Leftover silver is lost when the run ends." }),
+	RuneGems = GEM_TIP,
+	Runeforge = GEM_TIP,
+})
+
+local tipGui: ScreenGui? = nil
+
+function CurrencyStrip.CloseTip()
+	local g = tipGui
+	tipGui = nil
+	if g then g:Destroy() end
+end
+
+function CurrencyStrip.HasTip(key: string): boolean
+	return TIPS[key] ~= nil
+end
+
+--- Shows the tooltip for `key` next to `anchor` (below it, or above when near the screen bottom).
+function CurrencyStrip.ShowTip(key: string, anchor: GuiObject)
+	local tip = TIPS[key]
+	if not tip then return end
+	CurrencyStrip.CloseTip()
+	local player = Players.LocalPlayer
+	local pg = player and player:FindFirstChildOfClass("PlayerGui")
+	if not pg then return end
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "CurrencyTip"
+	gui.ResetOnSpawn = false
+	gui.IgnoreGuiInset = true
+	gui.DisplayOrder = TIP_ORDER
+	gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	local catcher = Instance.new("TextButton") -- tap anywhere closes
+	catcher.Name = "CloseCatcher"
+	catcher.BackgroundTransparency = 1
+	catcher.BorderSizePixel = 0
+	catcher.AutoButtonColor = false
+	catcher.Text = ""
+	catcher.Size = UDim2.fromScale(1, 1)
+	catcher.Activated:Connect(CurrencyStrip.CloseTip)
+	catcher.Parent = gui
+	local box = Theme.MakePanel("Tip", UDim2.fromOffset(TIP_W, 0), nil, nil, nil,
+		{ autoY = true, minW = TIP_W, maxW = TIP_W, minH = 40, maxH = 260 })
+	box.ZIndex = 2
+	local pad = Instance.new("UIPadding")
+	local pp = (Theme.PanelFrame.MinPadding or 10) + 2
+	pad.PaddingLeft = UDim.new(0, pp)
+	pad.PaddingRight = UDim.new(0, pp)
+	pad.PaddingTop = UDim.new(0, pp - 2)
+	pad.PaddingBottom = UDim.new(0, pp - 2)
+	pad.Parent = box
+	local list = Instance.new("UIListLayout")
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Padding = UDim.new(0, 2)
+	list.Parent = box
+	local function line(text: string, size: number, color: Color3, bold: boolean, order: number)
+		local l = Instance.new("TextLabel")
+		l.BackgroundTransparency = 1
+		l.BorderSizePixel = 0
+		l.Font = if bold then Theme.Font.PrimaryBold else Theme.Font.Primary
+		l.TextSize = size
+		l.TextColor3 = color
+		l.TextWrapped = true
+		l.TextXAlignment = Enum.TextXAlignment.Left
+		l.TextYAlignment = Enum.TextYAlignment.Top
+		l.Size = UDim2.new(1, 0, 0, 0)
+		l.AutomaticSize = Enum.AutomaticSize.Y
+		l.ZIndex = 3
+		l.LayoutOrder = order
+		l.Text = text
+		l.Parent = box
+	end
+	line(tip.name, Theme.Text.Body(), Theme.Colors.TextGold, true, 1)
+	line(tip.text, Theme.Text.Small(), Theme.Colors.TextPrimary, false, 2)
+	-- Place next to the tapped cell, kept on screen.
+	local cam = workspace.CurrentCamera
+	local vp = if cam then cam.ViewportSize else Vector2.new(750, 382)
+	local inset = 0
+	local ag = anchor:FindFirstAncestorOfClass("ScreenGui")
+	if ag and not ag.IgnoreGuiInset then inset = GuiService:GetGuiInset().Y end
+	local ap, as = anchor.AbsolutePosition, anchor.AbsoluteSize
+	local x = math.clamp(ap.X + as.X / 2 - TIP_W / 2, 8, math.max(8, vp.X - TIP_W - 8))
+	-- Tester W3 (2026-11-17): measure the box's real height (TextService on both wrapped lines + padding,
+	-- same 40..260 clamp as the panel) instead of a fixed 120 px guess, so it never runs off the bottom.
+	local innerW = TIP_W - pp * 2
+	local function textH(text: string, size: number, bold: boolean): number
+		local font = if bold then Theme.Font.PrimaryBold else Theme.Font.Primary
+		return math.ceil(TextService:GetTextSize(text, size, font, Vector2.new(innerW, 2000)).Y)
+	end
+	local boxH = math.clamp((pp - 2) * 2 + textH(tip.name, Theme.Text.Body(), true) + list.Padding.Offset
+		+ textH(tip.text, Theme.Text.Small(), false), 40, 260)
+	local function place(h: number)
+		local below = ap.Y + inset + as.Y + 4
+		local above = ap.Y + inset - 4 - h
+		local y = below
+		if below + h > vp.Y - 8 then
+			-- Not enough room below: above the cell if it fits, else wherever keeps it fully on screen.
+			y = if above >= 8 then above else math.max(8, vp.Y - 8 - h)
+		end
+		box.AnchorPoint = Vector2.new(0, 0)
+		box.Position = UDim2.fromOffset(x, y)
+	end
+	place(boxH)
+	box.Parent = gui
+	gui.Parent = pg -- parent last (NET-004)
+	tipGui = gui
+	-- Re-check with the laid-out size once the engine has measured it (fonts can differ slightly).
+	task.defer(function()
+		if tipGui ~= gui or not box.Parent then return end
+		local real = box.AbsoluteSize.Y
+		if real > 0 and math.abs(real - boxH) > 2 then place(real) end
+	end)
+end
+
+--- Makes `target` (a cell with NO UIListLayout inside) open the tooltip for `key` when tapped.
+--- A transparent button over the whole cell; does nothing for keys with no approved line.
+function CurrencyStrip.AttachTip(target: GuiObject, key: string)
+	if not TIPS[key] then return end
+	local hit = Instance.new("TextButton")
+	hit.Name = "TipHit"
+	hit.BackgroundTransparency = 1
+	hit.BorderSizePixel = 0
+	hit.AutoButtonColor = false
+	hit.Text = ""
+	hit.Size = UDim2.fromScale(1, 1)
+	hit.ZIndex = target.ZIndex + 2
+	hit.Activated:Connect(function() CurrencyStrip.ShowTip(key, target) end)
+	hit.Parent = target
+end
 
 --- "40224" -> "40,224" (same as the guild header).
 function CurrencyStrip.WithCommas(n: number): string
@@ -68,7 +219,9 @@ function CurrencyStrip.Create(parent: Instance, opts: { keys: { string }, bottom
 		l.HorizontalAlignment = Enum.HorizontalAlignment.Right
 		l.VerticalAlignment = Enum.VerticalAlignment.Center
 		l.SortOrder = Enum.SortOrder.LayoutOrder
-		l.Padding = UDim.new(0, CURRENCY_GAP)
+		-- No layout gap: each cell carries half the gap on its inner sides (GapPad, set in fit), so the
+		-- space between currencies is part of a tap target (Tester W1 2026-11-17). Same look as before.
+		l.Padding = UDim.new(0, 0)
 		l.Parent = r
 		r.Parent = strip
 		return r, l
@@ -76,16 +229,25 @@ function CurrencyStrip.Create(parent: Instance, opts: { keys: { string }, bottom
 	local rowTop, layoutTop = makeRow("RowTop")
 	local rowBottom, layoutBottom = makeRow("RowBottom")
 	rowBottom.Visible = false
-	local cells: { [string]: Frame } = {}
+	local cells: { [string]: TextButton } = {}
 	local labels: { [string]: TextLabel } = {}
 	local icons: { [string]: ImageLabel } = {}
 	local topKeys: { string }, lowKeys: { string } = {}, {}
 	for i, key in ipairs(keys) do
 		if bottomKeys[key] then table.insert(lowKeys, key) else table.insert(topKeys, key) end
-		local cell = Instance.new("Frame")
+		-- The whole cell (icon + number) is the tooltip button (guild_facilities 114). It keeps its
+		-- UIListLayout, so it is a TextButton itself rather than a cell with a button inside.
+		local cell = Instance.new("TextButton")
 		cell.Name = key
 		cell.BackgroundTransparency = 1
 		cell.BorderSizePixel = 0
+		cell.AutoButtonColor = false
+		cell.Text = ""
+		if TIPS[key] then
+			cell.Activated:Connect(function() CurrencyStrip.ShowTip(key, cell) end)
+		else
+			cell.Active = false
+		end
 		cell.AutomaticSize = Enum.AutomaticSize.X
 		cell.Size = UDim2.fromScale(0, 1)
 		cell.LayoutOrder = i
@@ -95,6 +257,9 @@ function CurrencyStrip.Create(parent: Instance, opts: { keys: { string }, bottom
 		cl.SortOrder = Enum.SortOrder.LayoutOrder
 		cl.Padding = UDim.new(0, CURRENCY_ICON_GAP)
 		cl.Parent = cell
+		local gp = Instance.new("UIPadding")
+		gp.Name = "GapPad"
+		gp.Parent = cell
 		local art = Theme.GuildIcons and Theme.GuildIcons[key]
 		if art then
 			local ico = Instance.new("ImageLabel")
@@ -150,8 +315,21 @@ function CurrencyStrip.Create(parent: Instance, opts: { keys: { string }, bottom
 		for _, ico in icons do
 			if ico.Size.X.Offset ~= px then ico.Size = UDim2.fromOffset(px, px) end
 		end
-		if layoutTop.Padding.Offset ~= gap then layoutTop.Padding = UDim.new(0, gap) end
-		if layoutBottom.Padding.Offset ~= gap then layoutBottom.Padding = UDim.new(0, gap) end
+		-- Gaps live inside the cells (W1): inner sides get half the gap each, the row's outer edges none,
+		-- so the visible spacing is still `gap` and the right edge stays where it was.
+		local rowListsPad = if twoRows then { topKeys, lowKeys } else { keys }
+		local lgap, rgap = gap // 2, gap - gap // 2
+		for _, rowKeys in rowListsPad do
+			for i, k in rowKeys do
+				local gp = cells[k]:FindFirstChild("GapPad") :: UIPadding?
+				if gp then
+					local wantL = if i > 1 then rgap else 0
+					local wantR = if i < #rowKeys then lgap else 0
+					if gp.PaddingLeft.Offset ~= wantL then gp.PaddingLeft = UDim.new(0, wantL) end
+					if gp.PaddingRight.Offset ~= wantR then gp.PaddingRight = UDim.new(0, wantR) end
+				end
+			end
+		end
 		local capped: { [string]: number } = {}
 		local rowLists = if twoRows then { topKeys, lowKeys } else { keys }
 		for _, rowKeys in rowLists do

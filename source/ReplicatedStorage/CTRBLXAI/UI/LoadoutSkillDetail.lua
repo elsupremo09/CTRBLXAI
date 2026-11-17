@@ -13,6 +13,7 @@ local AugmentCompatibility = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 
 local MockData    = require(CTRBLXAI_UI:WaitForChild("MockLoadoutData", 10))
 local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 local LoadoutSkillUtil = require(CTRBLXAI_UI:WaitForChild("LoadoutSkillUtil", 10))
+local NumberFormat = require(CTRBLXAI_UI:WaitForChild("NumberFormat", 10)) -- no decimals (loadout_ui_spec 129)
 
 local LoadoutSkillDetail: any = {}
 
@@ -412,7 +413,7 @@ openAugmentCardDetail = function(aug)
 		makeLabel(cm, { Text = "COST MODIFIER", Size = UDim2.new(0.4, 0, 1, 0),
 			Position = UDim2.new(0, 4, 0, 0),
 			TextSize = Theme.Text.Badge(), Font = Theme.Font.PrimaryBold, TextColor3 = Theme.Colors.TextSecondary })
-		makeLabel(cm, { Text = def.costFormula, Size = UDim2.new(0.5, 0, 1, 0),
+		makeLabel(cm, { Text = NumberFormat.CostText(def.costFormula), Size = UDim2.new(0.5, 0, 1, 0),
 			Position = UDim2.new(0.45, 0, 0, 0),
 			TextSize = Theme.Text.Body(), Font = Theme.Font.Mono, TextColor3 = Theme.Colors.Danger,
 			TextXAlignment = Enum.TextXAlignment.Right })
@@ -625,7 +626,7 @@ openEquippedSkillDetail = function(slotNum, skillId, augments)
 				Position = UDim2.new(0, 4, 0, 0),
 				TextSize = Theme.Text.Small(), Font = Theme.Font.PrimaryBold,
 				TextColor3 = Theme.Colors.TextGold })
-			makeLabel(ar, { Text = augDef.costFormula or "",
+			makeLabel(ar, { Text = NumberFormat.CostText(augDef.costFormula),
 				Size = UDim2.new(0.35, 0, 1, 0),
 				Position = UDim2.new(0.62, 0, 0, 0),
 				TextSize = Theme.Text.Tiny(), Font = Theme.Font.Mono,
@@ -772,7 +773,7 @@ openEquippedAugmentDetail = function(slotNum, augSlotNum, augmentId)
 
 	-- Cost
 	if def and def.costFormula then
-		makeLabel(panel, { Text = "Cost: " .. def.costFormula,
+		makeLabel(panel, { Text = "Cost: " .. NumberFormat.CostText(def.costFormula),
 			Size = UDim2.new(1, 0, 0, 14),
 			-- Below the slot line, which moves down with a long description (2026-11-01).
 			Position = UDim2.new(0, 0, 0, math.max(88, nextY + 18)),

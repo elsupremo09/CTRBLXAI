@@ -610,7 +610,10 @@ end)
 GuildMenuService.SetDungeonLevelInfo(function(level)
 	local DR = require(Game:WaitForChild("DungeonRules"))
 	local l = math.clamp(level, 1, 10)
-	return { party = DR.PartyCap(l), bag = DR.Data.BagSlots[l], courier = DR.Data.CourierPack[l], stages = DR.MaxStages(l) }
+	local lv = DR.Level(l) -- choices + top difficulty for the Guild Hall next-level lines (guild_facilities 113)
+	return { party = DR.PartyCap(l), bag = DR.Data.BagSlots[l], courier = DR.Data.CourierPack[l], stages = DR.MaxStages(l),
+		choices = lv and lv.choices, maxTier = lv and lv.maxTier, endless = DR.MaxStages(l) > (DR.Data.MaxStages or 3),
+		topTier = lv and DR.Data.Tiers[lv.maxTier] and DR.Data.Tiers[lv.maxTier].word }
 end)
 DungeonService.SetBattlesProvider(GuildMenuService.GetBattlesCompleted)
 DungeonService.SetDevNonceProvider(GuildMenuService.GetDevShopNonce) -- dev "Refresh all shops" rerolls dungeon choices (2026-11-15)
@@ -2557,6 +2560,19 @@ DungeonRemotes.Init({
 	end,
 	lockedText = "Reach Renown Rank 25 to open the Dungeon.", -- approved DG-LOCKED (2026-11-16, guild_facilities 98)
 })
+-- Feedback / bug reports (user 2026-11-17 4:01-4:38 PM): server-side context getters only.
+require(Game:WaitForChild("FeedbackService")).Init({
+	playerId = PLAYER_ID,
+	getRank = function()
+		return require(Game:WaitForChild("RenownService")).GetRank(PLAYER_ID)
+	end,
+	getQuest = function() return activeQuest end, -- the current (or last) quest table
+	getDungeon = function()
+		if not DungeonService.HasActiveRun(PLAYER_ID) then return nil end
+		return DungeonService.GetActiveRun(PLAYER_ID)
+	end,
+	isBattleRunning = function() return battleRunning end,
+})
 GuildMenuService.Init({
 	playerId       = PLAYER_ID,
 	sessionPlayer  = player,
@@ -3231,7 +3247,9 @@ while true do
 		playerLevel = Renown.GetRank(PLAYER_ID)
 	end
 	-- Quest Board level (2026-11-16): L1 = 3 quests, +1 per level above 1 (Guild Hall never counts).
-	quests = QuestGenerator.Generate(playerLevel, os.time(), 2 + GuildMenuService.GetBuildingLevel("QuestBoard"))
+	-- Saved per refresh period (2026-11-17, game_flow 12): reopening / rejoining shows the same board.
+	-- Each quest uses Random.new(seed + i), so a Quest Board upgrade only ADDS a quest at the end.
+	quests = QuestGenerator.Generate(playerLevel, GuildMenuService.GetQuestBoardSeed(), 2 + GuildMenuService.GetBuildingLevel("QuestBoard"))
 
 	-- Show Quest Board to all clients
 	-- DAILY CONTRACT (daily systems decisions 4-6, 2026-11-01): pinned first on the board until it
@@ -3275,6 +3293,14 @@ while true do
 			end
 		end)
 		if not okP then warn("[Main] Renown preview failed: " .. tostring(errP)) end
+	end
+	-- Quest Board redesign step 1 (2026-11-17): card data for the new screen. levelMin/levelMax =
+	-- real enemy level range; cancelFee = what Abandon charges (same helper as the abandon handler).
+	for _, q in ipairs(quests) do
+		local okR, lo, hi = pcall(QuestGenerator.LevelRange, q)
+		if okR then q.levelMin, q.levelMax = lo, hi end
+		local okF, fee = pcall(QuestGenerator.CancelFee, q)
+		q.cancelFee = if okF then fee else 0
 	end
 	BattleEvents.QuestBoardOpen:FireAllClients({ quests = quests, newDayIn = DailyService.SecondsUntilNewDay(),
 		bossRewardsLeft = DailyService.BossRewardsLeft(PLAYER_ID), bossRewardsPerDay = DailyService.BOSS_REWARDS_PER_DAY })
@@ -4099,7 +4125,8 @@ end)
 	if departDecision == "abandon" then
 		-- 50% of the quest's posted gold, clamped to the player's balance.
 		local posted = if dungeonBattle then 0 else ((selectedQuest and selectedQuest.rewards and selectedQuest.rewards.questGold) or 0) -- no quest penalty for a dungeon room
-		local penalty = math.floor(posted * 0.5)
+		-- Shared with the Quest Board card's cancelFee (Quest Board redesign step 1, 2026-11-17).
+		local penalty = if dungeonBattle then 0 else QuestGenerator.CancelFee(selectedQuest)
 		local haveGold = (CurrencyService.GetBalance(PLAYER_ID) or {}).gold or 0
 		local charged = math.min(penalty, haveGold)
 		if charged > 0 then

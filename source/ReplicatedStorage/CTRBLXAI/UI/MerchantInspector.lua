@@ -49,6 +49,7 @@ export type Entry = {
 	tagText: string?,     -- approved tag line under the rarity line (e.g. "Bought — always kept")
 	tagColor: Color3?,
 	extraLines: { string }?, -- plain lines after the tag (approved strings only)
+	accentColor: Color3?,  -- tile frame + inspector name colour override (dungeon curses: red, 2026-11-17)
 }
 
 export type GridOptions = {
@@ -202,7 +203,7 @@ local function fillInspector(list: Instance, entry: Entry)
 	end
 	local detail = entry.detail
 	local rarity = entry.rarity or (detail and detail.rarity) or "Common"
-	local rarityColor = Theme.GetRarityColor(rarity)
+	local rarityColor = entry.accentColor or Theme.GetRarityColor(rarity)
 
 	addLine(list, nextOrder(), entry.name, Theme.Text.Heading(), rarityColor, true)
 	local lv = entry.level or (detail and detail.itemLevel)
@@ -404,7 +405,7 @@ function MerchantInspector.BuildGrid(scroll: ScrollingFrame, opts: GridOptions)
 		local key = e.key
 		local tile = Theme.MakeItemTile({
 			parent = scroll,
-			accentColor = Theme.GetRarityColor(e.rarity or "Common"),
+			accentColor = e.accentColor or Theme.GetRarityColor(e.rarity or "Common"),
 			cellW = cellW,
 			icon = detail and detail.icon or nil,
 			iconText = string.sub(e.name, 1, 1),

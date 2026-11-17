@@ -147,9 +147,13 @@ local function applyUnit(u: any): number
 	return lost
 end
 
-local function fmt(v: number): string
-	if math.abs(v - math.round(v)) < 1e-9 then return tostring(math.round(v)) end
-	return string.format("%.1f", v)
+-- No decimals in player text (loadout_ui_spec 129, user 2026-11-17 1:50 PM): flat values whole,
+-- percent values keep one decimal only for a half step.
+local function fmt(v: number, pct: boolean?): string
+	if not pct then return tostring(math.round(v)) end
+	local r = math.round(v * 2) / 2
+	if r == math.floor(r) then return tostring(math.floor(r)) end
+	return string.format("%.1f", r)
 end
 
 --- Short summary of the normal-enemy effect, for "Guild furniture: enemies {summary}".
@@ -166,7 +170,7 @@ local function summary(p: any): string
 		fallResist = "Fall Resistance", collisionDamage = "Collision Damage", itemDamage = "Item Damage" }
 	for _, k in { "precision", "evasion", "skillPotency", "healingOutput", "debuffResist", "collisionResist",
 		"fallResist", "collisionDamage", "itemDamage" } do
-		if E[k] then add("-" .. fmt(E[k]) .. "% " .. NAMES[k]) end
+		if E[k] then add("-" .. fmt(E[k], true) .. "% " .. NAMES[k]) end
 	end
 	local TN = { movement = "Movement", jump = "Jump", force = "Force", stability = "Stability" }
 	for _, k in { "movement", "jump", "force", "stability" } do

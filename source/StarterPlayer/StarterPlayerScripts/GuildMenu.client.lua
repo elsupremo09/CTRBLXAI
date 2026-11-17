@@ -76,10 +76,17 @@ local UnitsScreen: any = if unitsScreenModule then (require :: any)(unitsScreenM
 local furnishScreenModule = UIFolder:WaitForChild("FurnishScreen", WAIT)
 if not furnishScreenModule then warn("[GuildMenu] FurnishScreen module missing") end
 local FurnishScreen: any = if furnishScreenModule then (require :: any)(furnishScreenModule) else nil
+-- Guild Hall (user 2026-11-17 4:40 PM): its own full screen (Buildings + Furnish tabs, item tiles).
+local guildHallScreenModule = UIFolder:WaitForChild("GuildHallScreen", WAIT)
+if not guildHallScreenModule then warn("[GuildMenu] GuildHallScreen module missing") end
+local GuildHallScreen: any = if guildHallScreenModule then (require :: any)(guildHallScreenModule) else nil
 -- Dungeon (build step 5, 2026-11-13): its own full screen.
 local dungeonScreenModule = UIFolder:WaitForChild("DungeonScreen", WAIT)
 if not dungeonScreenModule then warn("[GuildMenu] DungeonScreen module missing") end
 local DungeonScreen: any = if dungeonScreenModule then (require :: any)(dungeonScreenModule) else nil
+local _dlMod = UIFolder:WaitForChild("DungeonLoading", WAIT)
+local DungeonLoading: any = if _dlMod then (require :: any)(_dlMod) else nil -- battle loading panel (2026-11-17 10:50 AM)
+if not DungeonLoading then warn("[GuildMenu] DungeonLoading module missing -- no battle loading panel") end
 -- Always-on dev panel (2026-10-31): shop refresh, building levels, gold, saves.
 -- Shown in Studio, or when the server marks this player as an allow-listed owner (the
 -- "DevAccess" attribute, 2026-11-06). Display only: the server re-checks every dev request.
@@ -291,148 +298,21 @@ balanceLabel.Visible = false
 -- Crystal, Sulfur, each as its icon + number (thousands separators). If staged "a -> b" values
 -- would not fit the right 60%, the numbers step down in size (never below the 10 px floor), then
 -- wrap to two rows; the strip clips, so it can never spill left over the Rank block.
-local TextService = game:GetService("TextService")
+-- Builder moved to the shared CurrencyStrip module (2026-11-17) so the dungeon header uses the same look.
+local currencyStripModule = UIFolder:WaitForChild("CurrencyStrip", WAIT)
+local CurrencyStrip: any = if currencyStripModule then (require :: any)(currencyStripModule) else nil
 local currencyUI: { [string]: TextLabel } = {}
-local currencyIcons: { [string]: ImageLabel } = {}
-local CURRENCY_KEYS = { "Gold", "Mercury", "Crystal", "Sulfur" }
-local CURRENCY_GAP, CURRENCY_ICON_GAP = 10, 4
 local fitCurrencies: () -> () = function() end
-do
-	local strip = Instance.new("Frame")
-	strip.Name = "Currencies"
-	strip.BackgroundTransparency = 1
-	strip.BorderSizePixel = 0
-	strip.Size = UDim2.fromScale(0.6, 1)
-	strip.Position = UDim2.fromScale(0.4, 0)
-	strip.ClipsDescendants = true -- never spill left over the Rank block
-	-- Two row frames (user ruling 2026-11-13 12:42 AM): one row when everything fits (as before);
-	-- otherwise Gold + Mercury on the top row and Crystal + Sulfur below, in the same header height.
-	local function makeRow(name: string): (Frame, UIListLayout)
-		local r = Instance.new("Frame")
-		r.Name = name
-		r.BackgroundTransparency = 1
-		r.BorderSizePixel = 0
-		r.Size = UDim2.fromScale(1, 1)
-		local l = Instance.new("UIListLayout")
-		l.FillDirection = Enum.FillDirection.Horizontal
-		l.HorizontalAlignment = Enum.HorizontalAlignment.Right
-		l.VerticalAlignment = Enum.VerticalAlignment.Center
-		l.SortOrder = Enum.SortOrder.LayoutOrder
-		l.Padding = UDim.new(0, CURRENCY_GAP)
-		l.Parent = r
-		r.Parent = strip
-		return r, l
-	end
-	local rowTop, layoutTop = makeRow("RowTop")
-	local rowBottom, layoutBottom = makeRow("RowBottom")
-	rowBottom.Visible = false
-	local BOTTOM_KEYS = { Crystal = true, Sulfur = true }
-	local cells: { [string]: Frame } = {}
-	for i, key in ipairs(CURRENCY_KEYS) do
-		local cell = Instance.new("Frame")
-		cell.Name = key
-		cell.BackgroundTransparency = 1
-		cell.BorderSizePixel = 0
-		cell.AutomaticSize = Enum.AutomaticSize.X
-		cell.Size = UDim2.fromScale(0, 1)
-		cell.LayoutOrder = i
-		local cl = Instance.new("UIListLayout")
-		cl.FillDirection = Enum.FillDirection.Horizontal
-		cl.VerticalAlignment = Enum.VerticalAlignment.Center
-		cl.SortOrder = Enum.SortOrder.LayoutOrder
-		cl.Padding = UDim.new(0, CURRENCY_ICON_GAP)
-		cl.Parent = cell
-		local ico = Instance.new("ImageLabel")
-		ico.Name = "Icon"
-		ico.BackgroundTransparency = 1
-		ico.ScaleType = Enum.ScaleType.Fit
-		ico.Image = Theme.GuildIcons[key]
-		ico.Size = UDim2.fromOffset(24, 24) -- re-sized to 70% of the header height in fit
-		ico.LayoutOrder = 1
-		ico.Parent = cell
-		local num = makeText(cell, "", Theme.Text.Body(), Theme.Colors.TextPrimary, true)
-		num.Name = "Value"
-		num.TextWrapped = false
-		num.AutomaticSize = Enum.AutomaticSize.X
-		num.Size = UDim2.fromScale(0, 1)
-		num.LayoutOrder = 2
-		cell.Parent = rowTop
-		cells[key] = cell
-		currencyUI[key] = num
-		currencyIcons[key] = ico
-	end
-	strip.Parent = header -- properties and children before Parent (NET-004)
-	-- Measured, not scaled: pick the largest number size (Body down to 10 px) whose total width
-	-- (icons + gaps + text bounds from TextService) fits the strip. No feedback loop.
-	fitCurrencies = function()
-		local w, h = strip.AbsoluteSize.X, strip.AbsoluteSize.Y
-		if w <= 0 or h <= 0 then return end
-		local font = currencyUI.Gold.Font
-		local function textW(k: string, size: number): number
-			return math.ceil(TextService:GetTextSize(currencyUI[k].Text, size, font, Vector2.new(4000, 200)).X)
-		end
-		local function totalWidth(keys: { string }, size: number, px: number, gap: number): number
-			local total = gap * (#keys - 1)
-			for _, k in keys do
-				total += px + CURRENCY_ICON_GAP + textW(k, size)
-			end
-			return total
-		end
-		-- ONE ROW (unchanged): 1) shrink the numbers to the 10 px floor; 2) if still too wide
-		-- (staged "a -> b"), shrink the icons to 16 px and the gaps to 6 px.
-		local px = math.max(16, math.floor(h * 0.7))
-		local gap = CURRENCY_GAP
-		local size = Theme.Text.Body()
-		while size > 10 and totalWidth(CURRENCY_KEYS, size, px, gap) > w do size -= 1 end
-		while px > 16 and totalWidth(CURRENCY_KEYS, size, px, gap) > w do px -= 1 end
-		if totalWidth(CURRENCY_KEYS, size, px, gap) > w then gap = 6 end
-		-- 3) still too wide: TWO ROWS, 16 px icons and 10 px numbers. A row that still overflows
-		-- caps each of its two cells at half the strip and ends the number with "...".
-		local twoRows = totalWidth(CURRENCY_KEYS, size, px, gap) > w
-		if twoRows then
-			px, size, gap = 16, 10, 6
-		end
-		rowBottom.Visible = twoRows
-		rowTop.Size = if twoRows then UDim2.fromScale(1, 0.5) else UDim2.fromScale(1, 1)
-		rowBottom.Position = UDim2.fromScale(0, 0.5)
-		rowBottom.Size = UDim2.fromScale(1, 0.5)
-		for k, cell in cells do
-			local want = if twoRows and BOTTOM_KEYS[k] then rowBottom else rowTop
-			if cell.Parent ~= want then cell.Parent = want end
-		end
-		for _, ico in currencyIcons do
-			if ico.Size.X.Offset ~= px then ico.Size = UDim2.fromOffset(px, px) end
-		end
-		if layoutTop.Padding.Offset ~= gap then layoutTop.Padding = UDim.new(0, gap) end
-		if layoutBottom.Padding.Offset ~= gap then layoutBottom.Padding = UDim.new(0, gap) end
-		local capped: { [string]: number } = {}
-		if twoRows then
-			local maxText = math.max(0, math.floor((w - gap) / 2) - px - CURRENCY_ICON_GAP)
-			for _, rowKeys in { { "Gold", "Mercury" }, { "Crystal", "Sulfur" } } do
-				if totalWidth(rowKeys, size, px, gap) > w then
-					for _, k in rowKeys do
-						if textW(k, size) > maxText then capped[k] = maxText end
-					end
-				end
-			end
-		end
-		for _, k in CURRENCY_KEYS do
-			local lbl = currencyUI[k]
-			if lbl.TextSize ~= size then lbl.TextSize = size end
-			local cap = capped[k]
-			if cap then
-				lbl.AutomaticSize = Enum.AutomaticSize.None
-				lbl.Size = UDim2.new(0, cap, 1, 0)
-				lbl.TextTruncate = Enum.TextTruncate.AtEnd
-			elseif lbl.AutomaticSize ~= Enum.AutomaticSize.X then
-				lbl.AutomaticSize = Enum.AutomaticSize.X
-				lbl.Size = UDim2.fromScale(0, 1)
-				lbl.TextTruncate = Enum.TextTruncate.None
-			end
-		end
-	end
-	strip:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitCurrencies)
-	task.defer(fitCurrencies)
+if CurrencyStrip then
+	local cs = CurrencyStrip.Create(header, {
+		keys = { "Gold", "Mercury", "Crystal", "Sulfur" },
+		bottomKeys = { Crystal = true, Sulfur = true },
+		size = UDim2.fromScale(0.6, 1), position = UDim2.fromScale(0.4, 0),
+	})
+	currencyUI = cs.Labels
+	fitCurrencies = cs.Fit
+else
+	warn("[GuildMenu] CurrencyStrip module missing; header currencies hidden")
 end
 
 -- Renown Rank (step 2, USER RULING 2026-11-12, loot_progression 94): "Renown Rank 12" with a
@@ -583,6 +463,7 @@ end
 -- Re-fit when the top bar changes (e.g. chat/voice buttons appear) and on every open.
 local function fitHeaderToTopbar()
 	local leftX = GuiService.TopbarInset.Min.X
+	if leftX > 0 then leftX += Theme.TopbarReserve end -- Feedback button slot (2026-11-17)
 	local gap = 8
 	if leftX > 0 then
 		header.Position = UDim2.new(0, leftX + gap, 0.02, 0)
@@ -642,6 +523,7 @@ statusLabel.Position = UDim2.fromScale(0.32, 0.9)
 -- left edge (both edges match the header), and the nav takes the space to its left.
 local function fitColumnsToHeader()
 	local leftX = GuiService.TopbarInset.Min.X
+	if leftX > 0 then leftX += Theme.TopbarReserve end -- same slot as fitHeaderToTopbar
 	if leftX > 0 then
 		local x = leftX + 8 -- header left edge (fitHeaderToTopbar)
 		navFrame.Size = UDim2.new(-0.02, x - 8, 0.8, 0) -- nav starts at 0.02 scale, ends 8 px before the panel
@@ -678,6 +560,7 @@ local function setStatus(text: string, isError: boolean?)
 	if DispatchScreen then DispatchScreen.SetStatus(text, isError) end
 	if UnitsScreen then UnitsScreen.SetStatus(text, isError) end
 	if DungeonScreen then DungeonScreen.SetStatus(text, isError) end
+	if GuildHallScreen then GuildHallScreen.SetStatus(text, isError) end
 end
 
 --------------------------------------------------
@@ -852,7 +735,7 @@ local function updateBalanceLabel()
 		if CrucibleScreen then CrucibleScreen.SetGold(balanceLabel.Text) end
 		if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
 		if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
-		if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text) end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text) end
+		if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text) end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text); if DungeonScreen.SetCurrencies then DungeonScreen.SetCurrencies(realGold, realRes) end end if GuildHallScreen then GuildHallScreen.SetGold(balanceLabel.Text) end
 		return
 	end
 	local projGold = realGold + goldDelta
@@ -881,7 +764,7 @@ local function updateBalanceLabel()
 	if CrucibleScreen then CrucibleScreen.SetGold(balanceLabel.Text) end
 	if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
 	if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
-	if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text) end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text) end
+	if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text) end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text); if DungeonScreen.SetCurrencies then DungeonScreen.SetCurrencies(realGold, realRes) end end if GuildHallScreen then GuildHallScreen.SetGold(balanceLabel.Text) end
 end
 
 -- Renown Rank unlocks (Slice 8 step 1, 2026-11-16): nav pages whose building is not open yet.
@@ -1064,7 +947,7 @@ local function confirmLeaveWithCart(proceed: () -> ())
 		or (ApothecaryScreen and ApothecaryScreen.GetGui())
 		or (TrainingGroundsScreen and TrainingGroundsScreen.GetGui())
 		or (DispatchScreen and DispatchScreen.GetGui()) or (UnitsScreen and UnitsScreen.GetGui())
-		or (DungeonScreen and DungeonScreen.GetGui()) or nil
+		or (DungeonScreen and DungeonScreen.GetGui()) or (GuildHallScreen and GuildHallScreen.GetGui()) or nil
 	overlay.Parent = host or screenGui
 	overlay.Activated:Connect(function() end)  -- absorb background taps
 	leaveDialog = overlay
@@ -1631,6 +1514,8 @@ local function onDevGuildChanged(what: string)
 		TrainingGroundsScreen.Render()
 	elseif DispatchScreen and DispatchScreen.IsOpen() then
 		DispatchScreen.Render()
+	elseif GuildHallScreen and GuildHallScreen.IsOpen() then
+		GuildHallScreen.Render()
 	elseif screenGui.Enabled then
 		showPage(currentPage)
 	end
@@ -1826,6 +1711,9 @@ local dungeonLaunchPending = false
 local dungeonDeparting = false
 local dungeonDepartToken = 0 -- W3: bumped per dungeon departure; a stale 30 s timeout does nothing
 local DUNGEON_DEPART_TIMEOUT = 30
+-- Existing embark phrases (also the Embark button, EMBARK_PHRASES below); reused by the dungeon battle
+-- loading panel so it needs no new text (2026-11-17 10:50 AM).
+local EMBARK_LINES = { "Scouting the area", "Mapping the location", "Locating the target", "Scanning the terrain" }
 local returnToDungeon = false
 local DUNGEON_LOCKED_TEXT = "Reach Renown Rank 25 to open the Dungeon." -- DG-LOCKED (approved 2026-11-16, guild_facilities 98)
 
@@ -1868,6 +1756,7 @@ if DungeonScreen then
 		end,
 		launchBattle = function()
 			if isBusy or dungeonDeparting or currentPhase ~= "Base" then return end
+			if DungeonLoading then DungeonLoading.Show(EMBARK_LINES) end -- tap acknowledged at once; hides at deployment
 			if guildQuests ~= nil then
 				-- The server is waiting on a quest pick, not at the base wait: back out first.
 				dungeonLaunchPending = true
@@ -1941,7 +1830,7 @@ end
 -- when the token advances, the button is destroyed, or scouting finishes. (2026-10-16)
 local embarkButton: TextButton? = nil
 local embarkToken = 0
-local EMBARK_PHRASES = { "Scouting the area", "Mapping the location", "Locating the target", "Scanning the terrain" }
+local EMBARK_PHRASES = EMBARK_LINES -- one list (defined with the dungeon launch code above)
 
 local function pageAdventurersGuild()
 	addHeading("QUEST BOARD") -- renamed from Adventurer's Guild (user 2026-11-13 1:25 PM)
@@ -2091,150 +1980,44 @@ local function pageAdventurersGuild()
 	})
 end
 
--- GUILD HALL (Slice 8 step 1, USER RULING 2026-11-16 1:53 PM, guild_facilities 90): every
--- building is upgraded from this one list. The server builds the rows (level, next level,
--- cost, reason) and checks + prices the upgrade; the client only shows them. Approved text:
--- guild_facilities 98 (rank lines 2, 3, 4, 8, 9, 10, 11; furniture lines 5, 6, 7; BS-NOEFFECT).
-local guildHallDialog: Instance? = nil
-local function closeGuildHallDialog()
-	if guildHallDialog then guildHallDialog:Destroy() guildHallDialog = nil end
-end
-
-local function confirmBuildingUpgrade(row: any, onYes: () -> ())
-	closeGuildHallDialog()
-	local overlay = Instance.new("TextButton")
-	overlay.Text = ""
-	overlay.AutoButtonColor = false
-	overlay.Modal = true
-	overlay.Size = UDim2.new(1, 0, 1, 0)
-	overlay.BackgroundColor3 = Color3.new(0, 0, 0)
-	overlay.BackgroundTransparency = 0.4
-	overlay.BorderSizePixel = 0
-	overlay.ZIndex = 10
-	overlay.Parent = screenGui
-	overlay.Activated:Connect(function() end) -- absorb background taps
-	guildHallDialog = overlay
-	local box = Instance.new("Frame")
-	box.AnchorPoint = Vector2.new(0.5, 0.5)
-	box.Position = UDim2.new(0.5, 0, 0.5, 0)
-	box.Size = UDim2.new(0, 340, 0, 140)
-	box.BackgroundColor3 = Theme.Colors.PanelRaised
-	box.BorderSizePixel = 0
-	box.ZIndex = 10
-	box.Parent = overlay
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = Theme.CornerRadius.md
-	corner.Parent = box
-	local msg = makeText(box, `Upgrade {row.display} to level {row.level + 1} for {row.cost} gold?`, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
-	msg.Size = UDim2.new(1, -24, 0, 60)
-	msg.Position = UDim2.new(0, 12, 0, 10)
-	msg.ZIndex = 11
-	local function mk(txt: string, color: Color3, slot: number, cb: () -> ())
-		local b = makeButton(box, txt, color, cb)
-		b.Size = UDim2.new(0.45, -8, 0, BUTTON_HEIGHT)
-		b.AnchorPoint = Vector2.new(0, 0.5)
-		b.Position = UDim2.new(0.04 + 0.5 * slot, 0, 1, -BUTTON_HEIGHT * 0.5 - 12)
-		b.ZIndex = 11
+-- GUILD HALL SCREEN (user 2026-11-17 4:40 PM): its own full screen, like the Merchant. The old
+-- Guild Hall page (row list + Furnish rows) moved to UI/GuildHallScreen.lua; the server still builds
+-- every row and checks every upgrade / furniture move (BuildingAction, FurnitureAction).
+local function openGuildHall(startTab: string?)
+	if not GuildHallScreen then
+		setStatus("Guild Hall screen not loaded", true)
+		return
 	end
-	mk("Upgrade", Theme.Colors.Success, 0, function()
-		closeGuildHallDialog()
-		onYes()
-	end)
-	mk("Cancel", Theme.Colors.Danger, 1, closeGuildHallDialog)
+	screenGui.Enabled = false
+	GuildHallScreen.Open(startTab)
+	updateBalanceLabel()
 end
 
--- Guild Hall tabs (Slice 8 step 2, guild_facilities 96/98): "Buildings" (upgrade list) and
--- "Furnish" (furniture slots + shop). Approved text: furniture lines 1-4, 8-12; rank lines 5, 6, 9.
-local guildHallTab = "Buildings"
-local pageGuildHall: () -> () = function() end -- set below (tabs re-enter it)
-
-local function guildHallHeader()
-	addHeading("GUILD HALL") -- GH-TITLE
-	addNote("Your guild's home. Furnish it and upgrade your buildings.") -- GH-INTRO
-	rowOrder += 1
-	local bar = Instance.new("Frame")
-	bar.Name = "GuildHallTabs"
-	bar.BackgroundTransparency = 1
-	bar.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
-	bar.LayoutOrder = rowOrder
-	bar.Parent = content
-	local list = Instance.new("UIListLayout")
-	list.FillDirection = Enum.FillDirection.Horizontal
-	list.Padding = UDim.new(0, 8)
-	list.SortOrder = Enum.SortOrder.LayoutOrder
-	list.Parent = bar
-	for i, tab in { "Buildings", "Furnish" } do -- GH-TAB-UPGRADE, GH-TAB-FURNISH
-		Theme.MakeTabButton(bar, tab, if guildHallTab == tab then "Active" else "Inactive", function()
-			if guildHallTab == tab or isBusy then return end
-			guildHallTab = tab
-			pageGuildHall()
-		end, { name = "Tab_" .. tab, size = UDim2.new(0.5, -4, 0, BUTTON_HEIGHT), layoutOrder = i,
-			textSize = Theme.Text.Body() })
-	end
-end
-
--- Furnish tab rendering: moved to UI/FurnishScreen.lua (furniture v5 step 4a, 2026-11-16).
-local function renderFurnish(res: any)
-	if FurnishScreen then FurnishScreen.Render(res) end
-end
-
+-- Furniture picker / swap popup + craft list (FurnishScreen): server calls and shared wording.
 if FurnishScreen then
 	FurnishScreen.Init({
 		Theme = Theme, GuildEvents = GuildEvents, FurnitureData = FurnitureData, playerGui = playerGui,
-		call = call, clearContent = clearContent, addHeading = addHeading, addNote = addNote, addRow = addRow,
-		guildHallHeader = guildHallHeader, invalidatePageCache = invalidatePageCache,
+		call = call, invalidatePageCache = invalidatePageCache,
 		refreshOverview = refreshOverview, setStatus = setStatus,
 		isBusy = function(): boolean return isBusy end,
 		setBusy = function(v: boolean) isBusy = v end,
-		currentPage = function(): string return currentPage end,
-		guildHallTab = function(): string return guildHallTab end,
 	})
 end
 
-local function renderGuildHall(res: any)
-	if currentPage ~= "GuildHall" then return end
-	clearContent()
-	guildHallHeader()
-	addHeading("Guild Hall — Upgrades")
-	for _, row in (type(res) == "table" and type(res.rows) == "table") and res.rows or {} do
-		local second: string = if row.open and row.next and not row.reason then row.next
-			elseif row.next and row.reason then `{row.next}  ·  {row.reason}`
-			else (row.reason or "")
-		local text = `{row.display}   Level {row.level} / {row.maxLevel}\n{second}`
-		local buttons: { RowButton }? = nil
-		if row.open and row.cost then
-			buttons = { {
-				text = `Upgrade — {row.cost} gold`, color = Theme.Colors.Success, style = "Primary",
-				enabled = row.canUpgrade == true,
-				onTap = function()
-					if isBusy or not row.canUpgrade then return end
-					confirmBuildingUpgrade(row, function()
-						isBusy = true
-						local r = call(GuildEvents.BuildingAction, { action = "Upgrade", building = row.name })
-						isBusy = false
-						if r then
-							setStatus(tostring(r.message or ""))
-							invalidatePageCache()
-							refreshOverview()
-							renderGuildHall(r)
-						end
-					end)
-				end,
-			} }
-		end
-		local rowFrame = addRow(text, buttons, not row.open or row.noEffect == true)
-		rowFrame.Size = UDim2.new(1, 0, 0, ROW_HEIGHT + 16)
-	end
-end
-
-pageGuildHall = function()
-	if guildHallTab == "Furnish" then
-		local res = call(GuildEvents.FurnitureAction, { action = "State" })
-		if res then renderFurnish(res) end
-		return
-	end
-	local res = call(GuildEvents.BuildingAction, { action = "List" })
-	if res then renderGuildHall(res) end
+if GuildHallScreen then
+	GuildHallScreen.Init({
+		parent = playerGui, GuildEvents = GuildEvents, FurnitureData = FurnitureData, call = call,
+		isBusy = function(): boolean return isBusy end,
+		setBusy = function(v: boolean) isBusy = v end,
+		invalidatePageCache = invalidatePageCache, refreshOverview = refreshOverview,
+		requestBack = confirmLeaveWithCart,
+		onClosed = function()
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage(currentPage)
+		end,
+		setStatus = setStatus,
+	})
 end
 
 -- One-time notice for saves made before Slice 8 (guild_facilities 97/98: MIGRATE-NOTICE + FUR-GIFT).
@@ -2283,14 +2066,8 @@ local function showFurnitureNotice()
 		gui:Destroy()
 		pcall(function() GuildEvents.FurnitureAction:InvokeServer({ action = "Seen" }) end)
 		if openFurnish then
-			guildHallTab = "Furnish"
-			currentPage = "GuildHall"
-			if UnitsScreen and UnitsScreen.IsOpen() then
-				UnitsScreen.Close() -- its onClosed re-enables the menu and shows currentPage
-			else
-				screenGui.Enabled = true
-				showPage("GuildHall")
-			end
+			if UnitsScreen and UnitsScreen.IsOpen() then UnitsScreen.Hide() end -- no onClosed: the Guild Hall opens instead
+			openGuildHall("Furnish")
 		end
 	end
 	overlay.Activated:Connect(function() done(false) end)
@@ -2302,7 +2079,7 @@ local function showFurnitureNotice()
 end
 
 local PAGES: { [string]: () -> () } = {
-	GuildHall = pageGuildHall, -- Slice 8 step 1 (2026-11-16)
+	-- Guild Hall is its own screen (openGuildHall, 2026-11-17).
 	-- Tavern and Merchant are their own screens (openTavern / openMerchant), 2026-10-31.
 	-- Merchant is its own screen (openMerchant), not a page of this menu (2026-10-31).
 	Blacksmith = pageBlacksmith,
@@ -2377,8 +2154,7 @@ onGuildHallLink = function()
 	confirmLeaveWithCart(function()
 		pcall(openScreen.Close)
 		task.defer(function()
-			screenGui.Enabled = true
-			showPage("GuildHall")
+			openGuildHall("Buildings")
 		end)
 	end)
 end
@@ -2516,6 +2292,14 @@ local function buildNav()
 				confirmLeaveWithCart(function()
 					setStatus("")
 					openTavern()
+				end)
+				return
+			end
+			if pageName == "GuildHall" then
+				-- Own full screen (2026-11-17): same keep/discard prompt first, then open it.
+				confirmLeaveWithCart(function()
+					setStatus("")
+					openGuildHall()
 				end)
 				return
 			end
@@ -2830,7 +2614,7 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	if CrucibleScreen then CrucibleScreen.Hide() end
 	if ApothecaryScreen then ApothecaryScreen.Hide() end
 	if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
-	if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end
+	if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end if GuildHallScreen then GuildHallScreen.Hide() end
 	closeLeaveDialog() -- a leftover Confirm/Discard/Cancel prompt must not reappear later
 	currentPhase = (type(data) == "table" and type(data.phase) == "string") and data.phase or "PreBattle"
 	-- Button visibility by phase (2026-10-13 fix for the "Continue to Deployment at the
@@ -2929,6 +2713,8 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 		return
 	end
 	showPage(sortieMode and "Adventurers" or "Units")
+	-- Back at the base without a pending relaunch (battle refused or finished): loading panel off.
+	if currentPhase == "Base" and not dungeonLaunchPending and DungeonLoading then DungeonLoading.Hide() end
 	if currentPhase == "Base" and dungeonLaunchPending then
 		fireDungeonLaunch() -- quest board was backed out of: now the server listens for the room
 	elseif currentPhase == "Base" and returnToDungeon and DungeonScreen then
@@ -2952,7 +2738,7 @@ GuildEvents.GuildMenuClosed.OnClientEvent:Connect(function()
 	if CrucibleScreen then CrucibleScreen.Hide() end
 	if ApothecaryScreen then ApothecaryScreen.Hide() end
 	if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
-	if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end
+	if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end if GuildHallScreen then GuildHallScreen.Hide() end
 	closeLeaveDialog() -- and so does any open Confirm/Discard/Cancel prompt
 	-- Pending changes never outlive the menu (Tester D-1, 2026-10-31).
 	local pendingCount = cartCount()
@@ -2974,6 +2760,12 @@ end)
 
 -- Battle prep finished on the server: end scouting, unlock the sortie button. Also refresh
 -- the Adventurer's Guild page so its Depart button flips from "Scouting..." to live. (2026-10-16)
+-- Dungeon battle loading panel ends when the battle's deployment (or the battle) starts.
+for _, evName in { "DeploymentPhase", "BattleStarted" } do
+	local ev = (BattleEvents :: any)[evName]
+	if ev and DungeonLoading then ev.OnClientEvent:Connect(function() DungeonLoading.Hide() end) end
+end
+
 if BattleEvents.MapBuildComplete then
 	BattleEvents.MapBuildComplete.OnClientEvent:Connect(function()
 		unlockSortie()
@@ -3010,7 +2802,7 @@ if BattleEvents.MapBuildComplete then
 				if CrucibleScreen then CrucibleScreen.Hide() end
 				if ApothecaryScreen then ApothecaryScreen.Hide() end
 				if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
-				if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end
+				if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end if GuildHallScreen then GuildHallScreen.Hide() end
 				screenGui.Enabled = false
 				BattleEvents.StartBattle:FireServer()
 			end)

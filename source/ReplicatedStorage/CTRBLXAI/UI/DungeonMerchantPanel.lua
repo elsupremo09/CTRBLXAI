@@ -73,7 +73,9 @@ render = function(m: any)
 	-- Same full-screen frame as the guild Merchant screen (2026-11-17 style fix): header title +
 	-- silver, ornate grid / inspector panels, every button lower right (row 1 refill, row 2 Buy / leave).
 	local view = GuildScreen.CreateView({ name = "MerchantPanel", title = "Merchant", buttonRows = 2 }) -- DG-ROOM-MERCHANT (APPROVED, rule 275)
-	view.SetGold(`Silver {(m and m.silver) or 0}`) -- SB-01
+	view.SetGold(`Silver {(m and m.silver) or 0}`) -- SB-01 (fallback text)
+	-- Silver icon + number, the same look as the guild header currencies (user 2026-11-17 10:33 AM).
+	if view.SetCurrencies then view.SetCurrencies({ { "Silver", tostring((m and m.silver) or 0) } }) end
 	local o = view.Root
 	o.Parent = c.gui
 	overlay = o

@@ -69,7 +69,19 @@ DungeonRules.Data = table.freeze({
 		table.freeze({ word = "Medium", difficulty = 3, floors = 12 }),
 		table.freeze({ word = "Hard",   difficulty = 5, floors = 15 }),
 	}),
-	RestRowEvery = 4,                                  -- fixed Rest rows N, N-4, N-8 ... (rule 260)
+	RestRowEvery = 4,                                  -- layout 1 only (old saved runs): fixed Rest rows N, N-4, N-8 ... (rule 260)
+	-- Mid-map gates (USER RULING 2026-11-17 3:15 PM): a full Sanctuary row then a full Elite row, like the
+	-- Sanctuary row before the Boss. Layout 2 = gates (new cards); layout 1 = the old Rest-every-4 cadence,
+	-- kept only so runs saved before this change rebuild the same map (agent default, vetoable).
+	-- Layout 3 (USER RULING 2026-11-17 3:18 PM, Simulator "layout B"): layout 2 + extra fixed Sanctuary rows on
+	-- Medium/Hard + gate Elite rows never merge paths. Layout 2 stays so maps built with it rebuild the same.
+	MapLayout = 3,
+	MidGatesByFloors = table.freeze({ [8] = 1, [12] = 1, [15] = 2 }), -- Easy / Medium / endless 4+: 1, Hard: 2
+	MidGatesDefault = 1,
+	ExtraRestRowsByFloors = table.freeze({ -- layout 3 only (SIM_dungeon_midgate_20261117: wipe 40-54% -> 2-6% at x1.6)
+		[12] = table.freeze({ 9 }),          -- Medium: Sanctuary 6, Elite 7, Sanctuary 9, Sanctuary 12
+		[15] = table.freeze({ 3, 13 }),      -- Hard: Sanctuary 3, 5, Elite 6, Sanctuary 10, Elite 11, Sanctuary 13, 15
+	}),
 	StageLevelBonus = table.freeze({ 0, 3, 6 }),        -- battle level + by stage (rule 263)
 	StageGoldMult = table.freeze({ 1.0, 1.25, 1.5 }),   -- battle gold x by stage (rule 263)
 	StageBringIns = 1,                                 -- bring-ins allowed at the start of stages 2/3 (rule 265)
@@ -186,7 +198,7 @@ DungeonRules.Data = table.freeze({
 	Relics = table.freeze({
 		table.freeze({ id = "RL-01", name = "Heartstone",        rarity = "Common",    src = "TEBV", text = "Your party's Max HP is 5% higher." }),
 		table.freeze({ id = "RL-02", name = "Gilded Purse",      rarity = "Common",    src = "TEBV", text = "Earn 10% more silver." }), -- SB-40
-		table.freeze({ id = "RL-03", name = "Warm Bedroll",      rarity = "Common",    src = "TEBV", text = "Rest rooms heal 10% more." }),
+		table.freeze({ id = "RL-03", name = "Warm Bedroll",      rarity = "Common",    src = "TEBV", text = "Sanctuaries heal 10% more." }),
 		table.freeze({ id = "RL-04", name = "Quickstep Boots",   rarity = "Uncommon",  src = "TEB",  text = "Your party starts each battle with RT 20 lower." }),
 		table.freeze({ id = "RL-05", name = "Refill Satchel",    rarity = "Uncommon",  src = "TEB",  text = "At battle start, one equipped consumable gains +1 charge." }),
 		table.freeze({ id = "RL-06", name = "Lucky Charm",       rarity = "Common",    src = "TEBV", text = "Fortune is 5% higher in this dungeon." }),
@@ -234,7 +246,7 @@ DungeonRules.Data = table.freeze({
 		table.freeze({ id = "RL-44", name = "Tyrant's Hourglass", rarity = "Legendary", src = "",    kind = "Boss",  text = "Enemies act slower. Your party takes 10% more damage." }), -- v11: RT +100 -> +50
 		table.freeze({ id = "RL-45", name = "Reaver's Pact",      rarity = "Legendary", src = "",    kind = "Boss",  text = "Your party deals 10% more damage, but earns 35% less silver." }), -- SB-42
 		table.freeze({ id = "RL-46", name = "Glass Crown",        rarity = "Legendary", src = "",    kind = "Boss",  text = "More damage and speed, but 10% less HP." }), -- v11: -20% -> -10% (text approved 12:38 PM)
-		table.freeze({ id = "RL-47", name = "Hollow Throne",      rarity = "Legendary", src = "",    kind = "Boss",  text = "Loot grows higher, but Rests heal 10% less." }), -- v11: -50% -> -10% (text approved 12:38 PM)
+		table.freeze({ id = "RL-47", name = "Hollow Throne",      rarity = "Legendary", src = "",    kind = "Boss",  text = "Loot grows higher, but Sanctuaries heal 10% less." }), -- v11: -50% -> -10% (text approved 12:38 PM)
 		table.freeze({ id = "RL-48", name = "Sage's Hourglass",   rarity = "Epic",      src = "EB",  kind = "Major", text = "Your party casts 35% faster." }),
 		table.freeze({ id = "RL-49", name = "Pikeman's Creed",    rarity = "Common",    src = "TEV", kind = "Minor", text = "All spear users gain +1 range, foes too." }),
 		table.freeze({ id = "RL-50", name = "Archer's Creed",     rarity = "Common",    src = "TEV", kind = "Minor", text = "All bow users gain +1 range, foes too." }),
@@ -256,7 +268,7 @@ DungeonRules.Data = table.freeze({
 		table.freeze({ id = "RL-62", name = "Dulled Steel",  rarity = "Epic", src = "", kind = "Curse", stack = true, text = "Party deals 4% less damage." }),
 		table.freeze({ id = "RL-63", name = "Brittle Guard", rarity = "Epic", src = "", kind = "Curse", stack = true, text = "Party takes 4% more damage." }),
 		table.freeze({ id = "RL-64", name = "Restless Dead", rarity = "Epic", src = "", kind = "Curse", stack = true, text = "Enemies start each battle with 1 extra enemy (normal battles only, max +3)." }),
-		table.freeze({ id = "RL-65", name = "Fading Embers", rarity = "Epic", src = "", kind = "Curse", stack = true, text = "Rest and stage-start heals 5 points lower (min 10%)." }),
+		table.freeze({ id = "RL-65", name = "Fading Embers", rarity = "Epic", src = "", kind = "Curse", stack = true, text = "Sanctuary and stage-start heals 5 points lower (min 10%)." }),
 		table.freeze({ id = "RL-66", name = "Heavy Pack",    rarity = "Epic", src = "", kind = "Curse", text = "Bag −2 slots (items over the limit must be thrown away)." }),
 		table.freeze({ id = "RL-67", name = "Dimming Light", rarity = "Epic", src = "", kind = "Curse", text = "Discovery Radius −1 (min 1)." }),
 		table.freeze({ id = "RL-68", name = "Starved Purse", rarity = "Epic", src = "", kind = "Curse", text = "−10% silver earned." }),
@@ -410,9 +422,41 @@ function DungeonRules.StageSeed(cardSeed: number, stage: number?): number
 	return (toInt(cardSeed, 0) + (s - 1) * 7919) % 2147483647
 end
 
---- Is row r a fixed Rest row on an N-floor map? (rule 260: N, N-4, N-8 ...)
-function DungeonRules.IsFixedRestRow(r: number, floors: number): boolean
-	return r >= 1 and r <= floors and (floors - r) % D.RestRowEvery == 0
+--- Mid-map gate Sanctuary rows (layout 2): gate i sits at round(N * i / (k + 1)); the Elite row is the row
+--- after it. A gate is skipped if it would land on rows 1-2 or touch the pre-Boss Sanctuary row.
+function DungeonRules.GateRestRows(floors: number): { number }
+	local k = D.MidGatesByFloors[floors] or D.MidGatesDefault
+	local out: { number } = {}
+	for i = 1, k do
+		local r = math.floor(floors * i / (k + 1) + 0.5)
+		if r >= 3 and r + 1 <= floors - 1 then table.insert(out, r) end
+	end
+	return out
+end
+
+--- Is row r a fixed Rest (Sanctuary) row on an N-floor map? Layout 2: the pre-Boss row and each gate's
+--- first row. Layout 1 (old saved runs): N, N-4, N-8 ... (rule 260).
+function DungeonRules.IsFixedRestRow(r: number, floors: number, layout: number?): boolean
+	if r < 1 or r > floors then return false end
+	if (layout or 1) < 2 then return (floors - r) % D.RestRowEvery == 0 end
+	if r == floors then return true end
+	if table.find(DungeonRules.GateRestRows(floors), r) ~= nil then return true end
+	if (layout or 1) >= 3 then
+		local extra = D.ExtraRestRowsByFloors[floors]
+		if extra and table.find(extra, r) ~= nil then return true end
+	end
+	return false
+end
+
+--- Layout 3: gate Elite rows keep every path separate (no two rooms below lead into one gate room).
+function DungeonRules.GateNoMerge(layout: number?): boolean
+	return (layout or 1) >= 3
+end
+
+--- Is row r a mid-map gate Elite row (layout 2 only)?
+function DungeonRules.IsGateEliteRow(r: number, floors: number, layout: number?): boolean
+	if (layout or 1) < 2 then return false end
+	return table.find(DungeonRules.GateRestRows(floors), r - 1) ~= nil
 end
 
 --- Node type a player actually plays (Event stands in as Battle until events are built).

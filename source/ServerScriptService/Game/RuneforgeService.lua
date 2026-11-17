@@ -860,4 +860,13 @@ function RuneforgeService.RerollInfo(item: any): any?
 	}
 end
 
+
+-- Guild Hall next-level info (USER RULING 2026-11-17 5:18 PM, guild_facilities 113): this level's
+-- numbers, read from the tables above (DAT-001). Display only; BuildingService builds the lines.
+function RuneforgeService.LevelInfo(level: number): any
+	local l = math.clamp(math.floor(tonumber(level) or 1), 1, MAX_RUNEFORGE_LEVEL)
+	local rerolls: { [string]: number } = {}
+	for r, u in REROLL_UNLOCK do rerolls[r] = u end
+	return { discount = discountPct(l), forge = capacityRarity(l), rerollUnlock = rerolls }
+end
 return RuneforgeService

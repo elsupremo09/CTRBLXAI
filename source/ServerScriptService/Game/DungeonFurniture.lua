@@ -210,7 +210,9 @@ function F.View(run: any): any
 	local found = {}
 	for _, e in st.found do
 		local p = V4.Get(e.id)
-		table.insert(found, { id = e.id, name = p and p.name or e.id, rarity = shownRarity(e.r) })
+		-- safe: kept even if the run fails (stage 4+ boss piece, rule 264/281) -- the Escape confirm lists only what is lost
+		table.insert(found, { id = e.id, name = p and p.name or e.id, rarity = shownRarity(e.r),
+			safe = (e.b == true and (tonumber(run.stage) or 1) > (DungeonRules.Data :: any).MaxStages) or nil })
 	end
 	local pp = st.popup and V4.Get(st.popup.id)
 	if #found == 0 and not pp then return nil end

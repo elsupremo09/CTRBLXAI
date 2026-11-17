@@ -60,4 +60,10 @@ function TrainingGroundsService.TakeNotice(): string?
 	return `2nd augment slots are locked until your Training Grounds is fully upgraded and the unit reaches level 80. {n} augment(s) were moved to storage.`
 end
 
+
+-- Guild Hall next-level info (USER RULING 2026-11-17 5:18 PM, guild_facilities 113): this level's
+-- numbers, read from the tables above (DAT-001). Display only; BuildingService builds the lines.
+function TrainingGroundsService.Slot2Level(): number
+	return MAX_LEVEL -- the 2nd augment slot opens at max level (and unit Lv 80)
+end
 return table.freeze(TrainingGroundsService)

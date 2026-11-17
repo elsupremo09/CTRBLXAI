@@ -1204,7 +1204,45 @@ Theme.IconButtonAssets = {
 	X            = "rbxassetid://91768764354556",
 	Plus         = "rbxassetid://119616103667863",
 	Minus        = "rbxassetid://74853775677105",
+	-- Feedback / bug report button (user 2026-11-17 4:38 PM gave permission for this one icon):
+	-- gold speech bubble on the Help button frame. Decal 120711169410924, file assets\ui_icons\icon-feedback.png.
+	Feedback     = "rbxassetid://74255790265311",
 }
+
+-- Width kept free right of Roblox's top-left buttons for the always-on Feedback button
+-- (Feedback.client.lua, user 2026-11-17 4:26 PM). Guild headers start this much further right.
+Theme.TopbarReserve = 48
+
+-- Furniture portraits for the Guild Hall Furnish tiles (2026-11-17), keyed by piece id ("FUR-01").
+-- Uploaded 2026-11-17 (user-approved set; FUR-10 = try 11). A missing id shows the tile's letter.
+Theme.FurnitureIcons = {
+	["FUR-01"] = "rbxassetid://118033252857418",
+	["FUR-02"] = "rbxassetid://98609898243214",
+	["FUR-03"] = "rbxassetid://124030211956257",
+	["FUR-04"] = "rbxassetid://105379415979306",
+	["FUR-05"] = "rbxassetid://125065872201880",
+	["FUR-06"] = "rbxassetid://127249865315875",
+	["FUR-07"] = "rbxassetid://124530814041837",
+	["FUR-08"] = "rbxassetid://97582347324215",
+	["FUR-09"] = "rbxassetid://96745725933002",
+	["FUR-10"] = "rbxassetid://115269007209082",
+	["FUR-11"] = "rbxassetid://107425830033831",
+	["FUR-12"] = "rbxassetid://85180210660402",
+	["FUR-13"] = "rbxassetid://78995857529064",
+	["FUR-14"] = "rbxassetid://119156319463666",
+	["FUR-15"] = "rbxassetid://102653507600937",
+	["FUR-16"] = "rbxassetid://100006253776277",
+	["FUR-17"] = "rbxassetid://123025515193858",
+	["FUR-18"] = "rbxassetid://136727928414162",
+	["FUR-19"] = "rbxassetid://130040113033170",
+	["FUR-20"] = "rbxassetid://87909407701357",
+	["FUR-21"] = "rbxassetid://78327327108969",
+	["FUR-22"] = "rbxassetid://95582999434745",
+	["FUR-23"] = "rbxassetid://132137159094232",
+	["FUR-24"] = "rbxassetid://82403305420614",
+	["FUR-25"] = "rbxassetid://117961649883168",
+	["FUR-26"] = "rbxassetid://113682765741583",
+} :: { [string]: string }
 
 -- Button labels that are drawn as icons instead of text (matched case-insensitively).
 local ICON_FOR_TEXT = {
@@ -1457,6 +1495,7 @@ Theme.GuildIcons = table.freeze({
 	TradingPost      = "rbxassetid://115610208163062", -- reserved
 	Temple           = "rbxassetid://118731651230998", -- reserved
 	Sulfur           = "rbxassetid://120896999901784",
+	Silver           = "rbxassetid://98692967796721", -- 2026-11-17 dungeon silver (assets\ui_icons\silver.png, decal 81119923906911)
 	HomeBase         = "rbxassetid://93389993459092", -- reserved
 	Artisan          = "rbxassetid://129356073581903", -- reserved
 	Blacksmith       = "rbxassetid://100021754504369",

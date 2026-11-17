@@ -368,36 +368,71 @@ local function build(c: Context)
 	end)
 
 	-- Drag the title bar to move the panel.
+	-- Fix 2026-11-17 (user: "keeps falling from drag"): the drag used to end ONLY on the title bar's own
+	-- InputEnded. Releasing the mouse/finger anywhere off the 18 px bar (easy once the panel lags a frame
+	-- behind a fast move) never ended the drag, so the panel kept following the pointer after release.
+	-- Touch also took moves from ANY finger (e.g. a camera pan). Now: the drag ends on the GLOBAL release of
+	-- the same button/finger (and on window focus loss), only the finger that started it moves the panel,
+	-- the panel is placed in absolute pixels (no Scale mixing) and is clamped fully on screen.
 	local dragging = false
-	local dragStart = Vector3.zero
-	local startPos = root.Position
+	local dragTouch: InputObject? = nil -- the finger that started a touch drag (nil = mouse drag)
+	local dragStart = Vector2.zero
+	local startXY = Vector2.zero
+	local function clampTo(x: number, y: number): (number, number)
+		local view = screen.AbsoluteSize
+		local size = root.AbsoluteSize
+		x = math.clamp(x, 0, math.max(0, view.X - size.X))
+		y = math.clamp(y, 0, math.max(0, view.Y - TITLE_H)) -- keep at least the title bar on screen
+		return math.floor(x + 0.5), math.floor(y + 0.5)
+	end
+	local function endDrag()
+		dragging = false
+		dragTouch = nil
+	end
 	title.InputBegan:Connect(function(input: InputObject)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
+		if dragging then return end
+		local kind = input.UserInputType
+		if kind == Enum.UserInputType.MouseButton1 or kind == Enum.UserInputType.Touch then
 			dragging = true
 			dragMoved = false
-			dragStart = input.Position
-			startPos = root.Position
+			dragTouch = if kind == Enum.UserInputType.Touch then input else nil
+			dragStart = Vector2.new(input.Position.X, input.Position.Y)
+			-- Start from where the panel really is on screen (offset space of this ScreenGui).
+			local abs = root.AbsolutePosition - screen.AbsolutePosition
+			startXY = Vector2.new(abs.X, abs.Y)
 		end
 	end)
-	title.InputEnded:Connect(function(input: InputObject)
-		if input.UserInputType == Enum.UserInputType.MouseButton1
-			or input.UserInputType == Enum.UserInputType.Touch then
-			dragging = false
+	-- One set of connections for the whole session (the panel is never rebuilt).
+	UserInputService.InputEnded:Connect(function(input: InputObject)
+		if not dragging then return end
+		if dragTouch then
+			if input == dragTouch then endDrag() end
+		elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
+			endDrag()
 		end
 	end)
-	-- One connection for the whole session (the panel is never rebuilt).
+	UserInputService.WindowFocusReleased:Connect(endDrag)
 	UserInputService.InputChanged:Connect(function(input: InputObject)
 		if not dragging then return end
-		if input.UserInputType ~= Enum.UserInputType.MouseMovement
-			and input.UserInputType ~= Enum.UserInputType.Touch then
+		if dragTouch then
+			if input ~= dragTouch then return end -- only the finger that grabbed the bar
+		elseif input.UserInputType ~= Enum.UserInputType.MouseMovement then
 			return
 		end
-		local delta = input.Position - dragStart
+		local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
 		if math.abs(delta.X) + math.abs(delta.Y) > 4 then dragMoved = true end
-		root.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
-			startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		local x, y = clampTo(startXY.X + delta.X, startXY.Y + delta.Y)
+		root.Position = UDim2.fromOffset(x, y)
 	end)
+	-- Keep it on screen when the window/phone rotates or the panel expands.
+	local function reclamp()
+		if dragging then return end
+		local abs = root.AbsolutePosition - screen.AbsolutePosition
+		local x, y = clampTo(abs.X, abs.Y)
+		root.Position = UDim2.fromOffset(x, y)
+	end
+	screen:GetPropertyChangedSignal("AbsoluteSize"):Connect(reclamp)
+	root:GetPropertyChangedSignal("AbsoluteSize"):Connect(reclamp)
 
 	root.Parent = screen
 	screen.Parent = c.parent -- parent last (NET-004)

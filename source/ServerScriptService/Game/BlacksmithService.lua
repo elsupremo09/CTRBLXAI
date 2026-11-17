@@ -202,8 +202,19 @@ local function currentBlacksmithLevel(): number
 	return math.clamp(math.floor(lvl or 1), 1, MAX_BLACKSMITH_LEVEL)
 end
 
+-- Gold discount % of a Blacksmith level (3% per level above L1, guild_facilities 41).
+local DISCOUNT_PER_LEVEL = 3
+local function discountPct(b: number): number
+	return DISCOUNT_PER_LEVEL * (b - 1)
+end
+
+-- Guild Hall next-level info (guild_facilities 113): the discount at a Blacksmith level.
+function BlacksmithService.DiscountPct(level: number): number
+	return discountPct(math.clamp(math.floor(tonumber(level) or 1), 1, MAX_BLACKSMITH_LEVEL))
+end
+
 local function levelCredit(base: number, t: number, b: number): number
-	return base * 3 * (25 + t) * (100 - 3 * (b - 1))
+	return base * 3 * (25 + t) * (100 - discountPct(b))
 end
 
 local function paid(credit: number, r: number): number

@@ -488,6 +488,37 @@ function QuestGenerator.MakeEliteEncounter(quest)
 	return quest
 end
 
+-- QUEST BOARD SCREEN DATA (Quest Board redesign step 1, 2026-11-17). Display helpers only; no
+-- gameplay change.
+-- LevelRange: the real enemy level range of the card, from the same enemyTypes levels the battle
+-- spawns (EnemyGenerator uses spec.level as is). A hidden elite encounter (MakeEliteEncounter, +2
+-- leader) is applied at departure and is not part of the card. Fallback: recommendedLvl.
+function QuestGenerator.LevelRange(quest): (number, number)
+	local lo, hi = math.huge, -math.huge
+	for _, et in ipairs((quest and quest.enemyTypes) or {}) do
+		local lv = tonumber(et.level)
+		if lv and (tonumber(et.count) or 1) > 0 then
+			lo = math.min(lo, lv)
+			hi = math.max(hi, lv)
+		end
+	end
+	if lo == math.huge then
+		local rec = math.max(1, math.floor(tonumber(quest and quest.recommendedLvl) or 1))
+		return rec, rec
+	end
+	return lo, hi
+end
+
+-- CancelFee: the gold AbandonQuest charges (game_flow 28): 50% of the quest's posted gold, floored.
+-- Dungeon room battles post no quest gold, so their fee is 0. The ONE place this rule lives:
+-- Main's abandon handler and the Quest Board card both call it. The charge is still clamped to
+-- the player's balance at abandon time (Main).
+function QuestGenerator.CancelFee(quest): number
+	if not quest or quest.isDungeon then return 0 end
+	local posted = (quest.rewards and tonumber(quest.rewards.questGold)) or 0
+	return math.floor(posted * 0.5)
+end
+
 --- Generate 3 quests for the quest board.
 --- @param playerLevel number Renown Rank (quest level = Rank + (difficulty - 3) x 2 +/- 1)
 --- @param seed number Base seed (e.g. os.time())

@@ -23,7 +23,10 @@ local Theme: any = (require :: any)(themeModule)
 
 local FacilityInfo = {}
 
-export type Section = { heading: string, body: string }
+-- rows (2026-11-17, dungeon guide map key): optional icon rows under the body, each
+-- { icon = image id, label = bold name, text = one line }. body may be "" when rows are given.
+export type Row = { icon: string?, label: string, text: string }
+export type Section = { heading: string, body: string, rows: { Row }? }
 
 -- Above the screen, below GuildScreen's confirm prompt (ZIndex 20, Sibling behaviour).
 local ZINDEX = 19
@@ -89,19 +92,15 @@ function FacilityInfo.Open(gui: Instance, title: string, sections: { Section })
 	local insetY = GuiService:GetGuiInset().Y
 	box.Position = UDim2.new(0.5, 0, 0.5, insetY // 2)
 	box.Size = UDim2.new(0.82, 0, 0.88, -insetY)
-	box.BackgroundColor3 = Theme.Colors.PanelRaised
+	box.BackgroundTransparency = 1
 	box.BorderSizePixel = 0
 	local cap = Instance.new("UISizeConstraint")
 	cap.MaxSize = BOX_MAX
 	cap.Parent = box
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = Theme.CornerRadius.md
-	corner.Parent = box
-	local stroke = Instance.new("UIStroke")
-	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	stroke.Color = Theme.Colors.Border
-	stroke.Thickness = Theme.BorderThickness.Default
-	stroke.Parent = box
+	-- Ornate gold panel frame behind the content, the same art as every guild panel
+	-- (user 2026-11-17 10:06 AM: "use the panel design for ALL screens such as the ? panel").
+	local frame = Theme.MakePanel("Frame", UDim2.fromScale(1, 1), nil, nil, box)
+	frame.Active = false
 
 	local titleLbl = Instance.new("TextLabel")
 	titleLbl.Name = "Title"
@@ -112,23 +111,23 @@ function FacilityInfo.Open(gui: Instance, title: string, sections: { Section })
 	titleLbl.TextColor3 = Theme.Colors.TextGold
 	titleLbl.TextXAlignment = Enum.TextXAlignment.Left
 	titleLbl.TextTruncate = Enum.TextTruncate.AtEnd
-	titleLbl.Size = UDim2.new(1, -(h + 24), 0, h)
-	titleLbl.Position = UDim2.fromOffset(12, 6)
+	titleLbl.Size = UDim2.new(1, -(h + 36), 0, h)
+	titleLbl.Position = UDim2.fromOffset(16, 8)
 	titleLbl.Text = title
 	titleLbl.Parent = box
 
 	Theme.MakeIconButton(box, "X", FacilityInfo.Close, {
 		name = "Btn_InfoClose",
 		size = UDim2.fromOffset(h, h),
-		position = UDim2.new(1, -(h + 6), 0, 6),
+		position = UDim2.new(1, -(h + 10), 0, 8),
 	})
 
 	local scroll = Instance.new("ScrollingFrame")
 	scroll.Name = "Body"
 	scroll.BackgroundTransparency = 1
 	scroll.BorderSizePixel = 0
-	scroll.Position = UDim2.fromOffset(12, h + 12)
-	scroll.Size = UDim2.new(1, -18, 1, -(h + 20))
+	scroll.Position = UDim2.fromOffset(16, h + 14)
+	scroll.Size = UDim2.new(1, -26, 1, -(h + 28))
 	scroll.ScrollBarThickness = 4
 	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	scroll.CanvasSize = UDim2.new()
@@ -145,8 +144,43 @@ function FacilityInfo.Open(gui: Instance, title: string, sections: { Section })
 		order += 1
 		local head = label(scroll, s.heading, true, Theme.Colors.TextGold, order)
 		head.Name = "Heading"
-		order += 1
-		label(scroll, s.body, false, Theme.Colors.TextPrimary, order).Name = "Text"
+		if s.body ~= "" then
+			order += 1
+			label(scroll, s.body, false, Theme.Colors.TextPrimary, order).Name = "Text"
+		end
+		for _, r in s.rows or {} do
+			order += 1
+			local row = Instance.new("Frame")
+			row.Name = "Row"
+			row.BackgroundTransparency = 1
+			row.BorderSizePixel = 0
+			row.Size = UDim2.new(1, 0, 0, 0)
+			row.AutomaticSize = Enum.AutomaticSize.Y
+			row.LayoutOrder = order
+			local icon = Instance.new("ImageLabel")
+			icon.Name = "Icon"
+			icon.BackgroundTransparency = 1
+			icon.ScaleType = Enum.ScaleType.Fit
+			icon.Image = r.icon or ""
+			icon.Size = UDim2.fromOffset(28, 28)
+			icon.Parent = row
+			local col = Instance.new("Frame")
+			col.BackgroundTransparency = 1
+			col.Position = UDim2.fromOffset(34, 0)
+			col.Size = UDim2.new(1, -34, 0, 0)
+			col.AutomaticSize = Enum.AutomaticSize.Y
+			local cl = Instance.new("UIListLayout")
+			cl.SortOrder = Enum.SortOrder.LayoutOrder
+			cl.Parent = col
+			label(col, r.label, true, Theme.Colors.TextPrimary, 1).Name = "Label"
+			label(col, r.text, false, Theme.Colors.TextSecondary, 2).Name = "Text"
+			col.Parent = row
+			local minH = Instance.new("Frame") -- keeps the row at least icon-high
+			minH.BackgroundTransparency = 1
+			minH.Size = UDim2.fromOffset(1, 30)
+			minH.Parent = row
+			row.Parent = scroll
+		end
 	end
 	scroll.Parent = box
 

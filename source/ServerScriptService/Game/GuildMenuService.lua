@@ -119,6 +119,12 @@ local BLACKSMITH_RARITY_LEVEL = table.freeze({
 	Common = 1, Uncommon = 1, Rare = 3, Epic = 5, Exalted = 6, Legendary = 7, Mythic = 9,
 })
 local ITEM_LEVEL_CAP = 99
+-- Blacksmith max upgradeable item level by building level: Level x 10, L10 = 99 (guild_facilities 12).
+-- One place for the formula: the upgrade check and the Guild Hall next-level lines (guild_facilities 113).
+local function blacksmithMaxItemLevel(bLevel: number): number
+	if bLevel >= BUILDING_MAX_LEVEL then return ITEM_LEVEL_CAP end
+	return math.min(ITEM_LEVEL_CAP, bLevel * 10)
+end
 
 local RATE_LIMIT_SECONDS = 0.2 -- SEC-001: per-player, per-request minimum spacing
 local MAX_DISPATCH_PICK = 3 -- USER RULING 2026-11-12: up to 3 units per mission (was 7)
@@ -170,6 +176,13 @@ local MAX_TAVERN_HIRED_SAVE = 20 -- load bound (pool size is at most 10, 13 with
 -- completed battle moves battlesCompleted on and the bonus is gone (used up by that refresh).
 local TAVERN_BONUS_SLOTS = 3
 local tavernBonusFor: number? = nil
+-- Quest board seed (2026-11-17, game_flow 12/20/21): the board is fixed per refresh period so
+-- reopening it, rejoining or reconnecting shows the same quests and rewards (no free reroll).
+-- A period = one battlesCompleted value (+ the dev shop nonce): every battle end
+-- (OnBattleCompleted) starts a new period, so a won/lost quest never reappears. Saved as
+-- guildMenu.questBoard = { seed, battles, nonce }; old saves without it get a seed on first open.
+local QUEST_SEED_MAX = 2000000000
+local questBoard: { seed: number, battles: number, nonce: number }? = nil
 local recruitDefs: { [string]: any } = {} -- unitId -> { name, level, raceId, doctrineId, quality }
 local recruitOrder: { string } = {}
 
@@ -832,6 +845,8 @@ function GuildMenuService.Export(_pid: string)
 		merchantBought = MerchantService.ExportPurchases(_pid),
 		devShopRefresh = devShopNonce, -- dev "Refresh all shops" survives a restart (2026-10-31)
 		tavernBonusFor = tavernBonusFor, -- Tavern map-object bonus pending for this pool (2026-11-06)
+		questBoard = if questBoard then { seed = questBoard.seed, battles = questBoard.battles,
+			nonce = questBoard.nonce } else nil, -- quest board fixed per refresh period (2026-11-17)
 		tavernHired = (function(): any?
 			-- Hired recruits of the current pool stay gone after a restart (2026-10-31).
 			if not tavernHired then return nil end
@@ -852,6 +867,17 @@ function GuildMenuService.Import(_pid: string, data: any)
 	-- Tavern bonus (2026-11-06): only kept if it is for the CURRENT pool; anything else = none.
 	local tbf = tonumber(data.tavernBonusFor)
 	tavernBonusFor = (tbf and tbf % 1 == 0 and tbf == battlesCompleted) and tbf or nil
+	-- Quest board period (2026-11-17): kept only if it is for the CURRENT period and valid;
+	-- anything else (old save, bad data, stale period) = none, so the next open makes a new seed.
+	questBoard = nil
+	local qbd = data.questBoard
+	if type(qbd) == "table" then
+		local s, bt, nc = tonumber(qbd.seed), tonumber(qbd.battles), tonumber(qbd.nonce)
+		if s and bt and nc and s % 1 == 0 and s >= 1 and s <= QUEST_SEED_MAX
+			and bt == battlesCompleted and nc == devShopNonce then
+			questBoard = { seed = s, battles = bt, nonce = nc }
+		end
+	end
 	-- Hired recruits of the saved pool (2026-10-31). Bad data is ignored; old saves = none.
 	tavernHired = nil
 	local th = data.tavernHired
@@ -913,6 +939,20 @@ end
 
 function GuildMenuService.GetBattlesCompleted(): number
 	return battlesCompleted
+end
+
+--- Seed for this refresh period's quest board (2026-11-17). Same value until the next battle
+--- ends (or the dev shop refresh), then a new one. Saved, so a rejoin keeps the same board.
+function GuildMenuService.GetQuestBoardSeed(): number
+	local qb = questBoard
+	if qb ~= nil and qb.battles == battlesCompleted and qb.nonce == devShopNonce then
+		return qb.seed
+	end
+	local seed = Random.new():NextInteger(1, QUEST_SEED_MAX)
+	questBoard = { seed = seed, battles = battlesCompleted, nonce = devShopNonce }
+	markDirty()
+	print(`[GuildMenuService] New quest board period | seed {seed} | battles {battlesCompleted}`)
+	return seed
 end
 
 --- Dev "Refresh all shops" counter (saved). The Dungeon folds it into its choice window (2026-11-15).
@@ -1163,8 +1203,7 @@ local function blacksmithGate(item: any): (boolean, string?)
 	-- Opens at its Renown Rank (guild_facilities 89); refused until then.
 	if not BuildingService.IsOpen("Blacksmith") then return false, lockedText("Blacksmith") end
 	local bLevel = GuildMenuService.GetBuildingLevel("Blacksmith")
-	local maxLevel = math.min(ITEM_LEVEL_CAP, bLevel * 10)
-	if bLevel >= BUILDING_MAX_LEVEL then maxLevel = ITEM_LEVEL_CAP end
+	local maxLevel = blacksmithMaxItemLevel(bLevel)
 	-- Renown cap (guild_facilities 12/41/50, step 5 2026-11-13): min(Rank + 5, building x 10,
 	-- highest unit). The highest-unit check below keeps its own message.
 	RenownService.EnsureConverted(_playerId)
@@ -2688,6 +2727,25 @@ function GuildMenuService.Init(deps: any)
 		canUpgradeNow = function() return isOpen and currentPhase == "Base" end,
 		dungeonLevelInfo = function(level: number): any
 			return if _dungeonLevelInfo then _dungeonLevelInfo(level) else nil
+		end,
+		-- Next-level lines (USER RULING 2026-11-17 5:18 PM, guild_facilities 113): each building's own
+		-- level table, read through the service that owns it (DAT-001). Guild Hall / Quest Board / Dungeon
+		-- are handled inside BuildingService (FurnitureData / quest count / dungeonLevelInfo).
+		levelInfo = function(name: string, level: number): any
+			if name == "Tavern" then return RecruitmentService.LevelInfo(level)
+			elseif name == "Merchant" then return MerchantService.LevelInfo(level)
+			elseif name == "Apothecary" then return ApothecaryService.LevelInfo(level)
+			elseif name == "Runeforge" then return RuneforgeService.LevelInfo(level)
+			elseif name == "Crucible" then return CrucibleService.LevelInfo(level)
+			elseif name == "TrainingGrounds" then
+				local info = CardShopService.LevelInfo(level)
+				info.slot2 = level >= TrainingGroundsService.Slot2Level()
+				return info
+			elseif name == "Blacksmith" then
+				return { maxItemLevel = blacksmithMaxItemLevel(level), discount = BlacksmithService.DiscountPct(level),
+					rarityUnlock = BLACKSMITH_RARITY_LEVEL }
+			end
+			return nil
 		end,
 		markDirty = markDirty,
 		onOpened = function(names: { string })

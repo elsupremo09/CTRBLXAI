@@ -158,7 +158,7 @@ render = function(run: any, units: any)
 	notes.Position = UDim2.new(0, 0, 1, -GuildScreen.ROW_H - 6)
 	notes.Size = UDim2.new(1, 0, 0, 16)
 	if not run.restUsed then
-		local heal = text(box, "Rest heals only units already in the party.", Theme.Text.Small(), Theme.Colors.TextSecondary) -- DG-EDIT-HEAL
+		local heal = text(box, "Sanctuary heals only units already in the party.", Theme.Text.Small(), Theme.Colors.TextSecondary) -- DG-EDIT-HEAL
 		heal.AnchorPoint = Vector2.new(0, 1)
 		heal.Position = UDim2.new(0, 0, 1, -GuildScreen.ROW_H - 22)
 		heal.Size = UDim2.new(1, 0, 0, 16)

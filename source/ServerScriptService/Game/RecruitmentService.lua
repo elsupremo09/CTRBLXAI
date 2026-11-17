@@ -344,4 +344,11 @@ function RecruitmentService.CommitHire(playerId: string, candidate: any)
 	return true, { unitId = unitDef.id, cost = cost, candidate = candidate }
 end
 
+
+-- Guild Hall next-level info (USER RULING 2026-11-17 5:18 PM, guild_facilities 113): this level's
+-- numbers, read from the tables above (DAT-001). Display only; BuildingService builds the lines.
+function RecruitmentService.LevelInfo(level: number): any
+	local l = math.clamp(math.floor(tonumber(level) or 1), 1, TAVERN_MAX_LEVEL)
+	return { recruits = l, quality = l >= TAVERN_QUALITY_LEVEL, elite = l >= TAVERN_ELITE_LEVEL } -- pool size = Tavern level
+end
 return RecruitmentService

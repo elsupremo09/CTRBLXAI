@@ -714,4 +714,11 @@ function MerchantService.Describe(playerId: string): string
 	return string.format("%d offer(s) cached, rerollKey %d", #state.stock, state.rerollKey)
 end
 
+
+-- Guild Hall next-level info (USER RULING 2026-11-17 5:18 PM, guild_facilities 113): this level's
+-- numbers, read from the tables above (DAT-001). Display only; BuildingService builds the lines.
+function MerchantService.LevelInfo(level: number): any
+	local l = math.clamp(math.floor(tonumber(level) or 1), 1, MERCHANT_MAX_LEVEL)
+	return { shelf = slotsFor(l), top = maxStockRarity(l) }
+end
 return MerchantService

@@ -11,6 +11,7 @@ local CTRBLXAI_UI = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild(
 local MockData    = require(CTRBLXAI_UI:WaitForChild("MockLoadoutData", 10))
 local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 local LoadoutSkillUtil = require(CTRBLXAI_UI:WaitForChild("LoadoutSkillUtil", 10))
+local NumberFormat = require(CTRBLXAI_UI:WaitForChild("NumberFormat", 10)) -- no decimals (loadout_ui_spec 129)
 
 local LoadoutSkills: any = {}
 
@@ -584,10 +585,10 @@ buildSkillsContent = function()
 
 		-- Cost badge (top-left)
 		local costText = aug.costFormula or ""
-		local costShort = costText:match("×[%d%.]+") or costText:match("x[%d%.]+") or ""
+		local costShort = NumberFormat.CostShort(costText) -- "×1.20" -> "+20%" (user 2026-11-17)
 		if costShort ~= "" then
 			local cBadge = Instance.new("Frame")
-			cBadge.Size = UDim2.new(0, 28, 0, 12)
+			cBadge.Size = UDim2.new(0, 32, 0, 12)
 			cBadge.Position = UDim2.new(0, 2, 0, 2)
 			cBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 			cBadge.BackgroundTransparency = 0.4

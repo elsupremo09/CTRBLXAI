@@ -37,6 +37,10 @@ local BuildingService = require(script.Parent:WaitForChild("BuildingService")) -
 local MAX_LEVEL = 10
 local MAX_ITEM_LEVEL = 99
 local DISCOUNT_PER_LEVEL = 3 -- % per Crucible level above L1
+-- The ONE place the Crucible discount is worked out (DAT-001; Tester W2 2026-11-17): state, merge price, Guild Hall info.
+local function discountPct(lvl: number): number
+	return math.max(0, DISCOUNT_PER_LEVEL * (lvl - 1))
+end
 local MAX_INPUTS = 5
 
 local NEXT_RARITY = table.freeze({
@@ -113,7 +117,7 @@ function CrucibleService.GetState(): any
 		needed = if lvl >= 1 then INPUTS_NEEDED[lvl] else nil,
 		boost = if lvl >= 1 then LEVEL_BOOST[lvl] else 0,
 		capacity = capacityRarity(lvl),
-		discountPct = math.max(0, DISCOUNT_PER_LEVEL * (lvl - 1)),
+		discountPct = discountPct(lvl),
 	}
 end
 
@@ -201,7 +205,7 @@ function CrucibleService.PlanMerge(playerId: string, instanceIds: any)
 	if type(slotValue) ~= "number" then
 		return nil, "Could not price this item"
 	end
-	local discount = math.max(0, DISCOUNT_PER_LEVEL * (lvl - 1))
+	local discount = discountPct(lvl)
 	-- Whole-number maths (guild_facilities 63; D-2 fix 2026-11-02): no decimal rounding drift.
 	local gold = (math.floor(slotValue) * RARITY_R10[toRarity] * (49 + toLevel) * (100 - discount)) // 100000
 
@@ -277,4 +281,12 @@ function CrucibleService.CommitMerge(playerId: string, instanceIds: any)
 	return true, { item = newItem, plan = plan }
 end
 
+
+-- Guild Hall next-level info (USER RULING 2026-11-17 5:18 PM, guild_facilities 113): this level's
+-- numbers, read from the tables above (DAT-001). Display only; BuildingService builds the lines.
+function CrucibleService.LevelInfo(level: number): any
+	local l = math.clamp(math.floor(tonumber(level) or 1), 1, MAX_LEVEL)
+	return { needed = INPUTS_NEEDED[l], boost = LEVEL_BOOST[l], top = capacityRarity(l),
+		discount = discountPct(l) }
+end
 return table.freeze(CrucibleService)

@@ -9,14 +9,19 @@ local Theme: any = (require :: any)(uiFolder:WaitForChild("Theme", WAIT))
 
 local DungeonMapView = {}
 
+-- Reach styling (user 2026-11-17 10:50 AM). Visual only; the server still checks every move.
+local GONE_BG, GONE_RING, GONE_IMG = 0.8, 0.7, 0.75      -- rooms the party can no longer reach
+local DIM_BG, DIM_RING, DIM_IMG = 0.55, 0.5, 0.45         -- peek preview: reachable now, not via the tapped room
+local GONE_TINT = Color3.fromRGB(130, 130, 130)
+local current: any = nil -- last drawn map: { entries, lines, reach, reachFrom, at, grid }
+
 -- deps: makeText, corner, stroke, ts, isCleared, shownType, nodeOf, act, render, arrive,
 -- getLegendOpen, setLegendOpen, consts { ROW_STEP, ROOM_D, BOSS_D, MAP_PAD, NODE_H }, ROOM_LABEL, KEY_ORDER.
 function DungeonMapView.Draw(main: any, run: any, here: any, deps: any)
-	local makeText, corner, stroke, ts = deps.makeText, deps.corner, deps.stroke, deps.ts
+	local makeText, corner, ts = deps.makeText, deps.corner, deps.ts
 	local isCleared, shownType, nodeOf, act, render, arrive = deps.isCleared, deps.shownType, deps.nodeOf, deps.act, deps.render, deps.arrive
 	local ROW_STEP, ROOM_D, BOSS_D, MAP_PAD, NODE_H = deps.ROW_STEP, deps.ROOM_D, deps.BOSS_D, deps.MAP_PAD, deps.NODE_H
-	local ROOM_LABEL, KEY_ORDER = deps.ROOM_LABEL, deps.KEY_ORDER
-	local legendOpen = deps.getLegendOpen()
+	local ROOM_LABEL = deps.ROOM_LABEL
 	local grid = Instance.new("ScrollingFrame")
 	grid.Name = "Grid"
 	local top = math.max(0, NODE_H + 2 + (deps.topExtra or 0)) -- 2026-11-15: no info/relic rows above the map
@@ -36,6 +41,27 @@ function DungeonMapView.Draw(main: any, run: any, here: any, deps: any)
 	local d = math.max(44, math.min(ROOM_D, colW - 10))
 	local legal: { [string]: boolean } = {}
 	for _, id in run.next do legal[id] = true end
+	-- Forward reach over the room links: what the party can still get to from here.
+	local byId: { [string]: any } = {}
+	for _, n in run.nodes do byId[n.id] = n end
+	local function reachFrom(startId: string): { [string]: boolean }
+		local seen: { [string]: boolean } = {}
+		local stack: { string } = { startId }
+		while #stack > 0 do
+			local id = table.remove(stack) :: string
+			if not seen[id] then
+				seen[id] = true
+				local nn = byId[id]
+				if nn and nn.next then for _, nx in nn.next do if not seen[nx] then table.insert(stack, nx) end end end
+			end
+		end
+		return seen
+	end
+	local reach: { [string]: boolean } = {}
+	if run.at then reach[run.at] = true end
+	for _, id in run.next do for k in reachFrom(id) do reach[k] = true end end
+	local entries: { [string]: any } = {}
+	local lines: { any } = {}
 	local pos: { [string]: Vector2 } = {}
 	for _, n in run.nodes do
 		local x = if n.id == "boss" then W / 2 else (n.col - 0.5) * colW
@@ -59,8 +85,12 @@ function DungeonMapView.Draw(main: any, run: any, here: any, deps: any)
 				line.BorderSizePixel = 0
 				line.BackgroundColor3 = if hot then Theme.Colors.TextGold else Theme.Colors.Border
 				line.BackgroundTransparency = if hot then 0 else 0.3
+				-- A link touching a room the party can't reach any more is faded too.
+				local cut = not (reach[n.id] or isCleared(n.id) or n.id == run.at) or not (reach[nid] or isCleared(nid))
+				if cut and not hot then line.BackgroundTransparency = 0.8 end
 				line.ZIndex = 1
 				line.Parent = grid
+				table.insert(lines, { line = line, a = n.id, b = nid, base = line.BackgroundTransparency })
 			end
 		end
 	end
@@ -74,6 +104,7 @@ function DungeonMapView.Draw(main: any, run: any, here: any, deps: any)
 		local col = Theme.DungeonRoomColors[t] or Theme.DungeonRoomColors.Battle
 		local icon = Theme.DungeonRoomIcons[t] or ""
 		local fade = done and not isHere
+		local gone = not isHere and not done and not reach[n.id] -- off every path still open
 		local btn = Instance.new("TextButton")
 		btn.Name = "Room_" .. n.id
 		btn.Text = ""
@@ -82,7 +113,7 @@ function DungeonMapView.Draw(main: any, run: any, here: any, deps: any)
 		btn.Position = UDim2.fromOffset(p.X, p.Y)
 		btn.Size = UDim2.fromOffset(size, size)
 		btn.BackgroundColor3 = if icon == "" then col else Theme.Colors.PanelRaised
-		btn.BackgroundTransparency = if fade then 0.65 else (if icon == "" then 0.15 else 0.05)
+		btn.BackgroundTransparency = if gone then GONE_BG elseif fade then 0.65 else (if icon == "" then 0.15 else 0.05)
 		btn.BorderSizePixel = 0
 		btn.ZIndex = 3
 		corner(btn, UDim.new(0.5, 0))
@@ -92,8 +123,12 @@ function DungeonMapView.Draw(main: any, run: any, here: any, deps: any)
 		ring.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		ring.Color = ringCol
 		ring.Thickness = if glow or isHere then 3 else 2
-		ring.Transparency = if fade then 0.6 else 0
+		ring.Transparency = if gone then GONE_RING elseif fade then 0.6 else 0
+		if gone then ring.Color = Theme.Colors.Border end
 		ring.Parent = btn
+		local entry: any = { btn = btn, ring = ring, gone = gone, done = done, here = isHere,
+			bg = btn.BackgroundTransparency, rt = ring.Transparency }
+		entries[n.id] = entry
 		if icon ~= "" then
 			local img = Instance.new("ImageLabel")
 			img.Name = "Icon"
@@ -103,9 +138,12 @@ function DungeonMapView.Draw(main: any, run: any, here: any, deps: any)
 			img.Size = UDim2.fromScale(0.8, 0.8)
 			img.Image = icon
 			img.ScaleType = Enum.ScaleType.Fit
-			img.ImageTransparency = if fade then 0.6 else 0
+			img.ImageTransparency = if gone then GONE_IMG elseif fade then 0.6 else 0
+			if gone then img.ImageColor3 = GONE_TINT end
 			img.ZIndex = 4
 			img.Parent = btn
+			entry.img = img
+			entry.it = img.ImageTransparency
 		else
 			-- Fallback until the art is uploaded: coloured circle + the approved one-word label.
 			local label = makeText(btn, ROOM_LABEL[t] or "?", 10, Theme.Colors.TextPrimary, true)
@@ -114,8 +152,10 @@ function DungeonMapView.Draw(main: any, run: any, here: any, deps: any)
 			label.AnchorPoint = Vector2.new(0.5, 0.5)
 			label.Position = UDim2.fromScale(0.5, 0.5)
 			label.Size = UDim2.new(1, -4, 0, 12)
-			label.TextTransparency = if fade then 0.5 else 0
+			label.TextTransparency = if gone then 0.7 elseif fade then 0.5 else 0
 			label.ZIndex = 4
+			entry.label = label
+			entry.lt = label.TextTransparency
 		end
 		local sub = if isHere then "You are here" elseif done then "Cleared" else nil -- DG-HERE / DG-CLEARED
 		if sub then
@@ -142,79 +182,14 @@ function DungeonMapView.Draw(main: any, run: any, here: any, deps: any)
 		btn.Parent = grid
 	end
 
-	-- Map key (legend): toggled by a 44 px swatch button, no new text (labels = the approved names).
-	local keyBtn = Instance.new("TextButton")
-	keyBtn.Name = "KeyToggle"
-	keyBtn.Text = ""
-	keyBtn.AutoButtonColor = false
-	keyBtn.AnchorPoint = Vector2.new(0, 1)
-	keyBtn.Position = UDim2.new(0, 2, 1, -2)
-	keyBtn.Size = UDim2.fromOffset(NODE_H, NODE_H)
-	keyBtn.BackgroundColor3 = Theme.Colors.PanelRaised
-	keyBtn.BackgroundTransparency = 0.1
-	keyBtn.BorderSizePixel = 0
-	keyBtn.ZIndex = 8
-	corner(keyBtn)
-	stroke(keyBtn, if legendOpen then Theme.Colors.TextGold else Theme.Colors.Border, 2)
-	for i = 1, 4 do
-		local sw = Instance.new("Frame")
-		sw.Size = UDim2.fromOffset(12, 12)
-		sw.Position = UDim2.fromOffset(if i % 2 == 1 then 8 else 24, if i <= 2 then 8 else 24)
-		sw.BackgroundColor3 = Theme.DungeonRoomColors[KEY_ORDER[({ 1, 4, 6, 7 })[i]]]
-		sw.BorderSizePixel = 0
-		sw.ZIndex = 9
-		corner(sw, UDim.new(0.5, 0))
-		sw.Parent = keyBtn
-	end
-	keyBtn.Activated:Connect(function()
-		deps.setLegendOpen(not legendOpen)
-		render()
-	end)
-	keyBtn.Parent = main
-	if legendOpen then
-		local panel = Instance.new("Frame")
-		panel.Name = "MapKey"
-		panel.AnchorPoint = Vector2.new(0, 1)
-		panel.Position = UDim2.new(0, NODE_H + 8, 1, -2)
-		panel.Size = UDim2.fromOffset(2 * 104 + 12, 4 * 26 + 10)
-		panel.BackgroundColor3 = Theme.Colors.PanelRaised
-		panel.BackgroundTransparency = 0.05
-		panel.BorderSizePixel = 0
-		panel.ZIndex = 8
-		corner(panel)
-		stroke(panel, Theme.Colors.Border, 1)
-		for i, kt in KEY_ORDER do
-			local cx = 6 + ((i - 1) // 4) * 104
-			local cy = 5 + ((i - 1) % 4) * 26
-			local dot = Instance.new("Frame")
-			dot.Size = UDim2.fromOffset(20, 20)
-			dot.Position = UDim2.fromOffset(cx, cy + 2)
-			dot.BackgroundColor3 = Theme.DungeonRoomColors[kt]
-			dot.BorderSizePixel = 0
-			dot.ZIndex = 9
-			corner(dot, UDim.new(0.5, 0))
-			local ic = Theme.DungeonRoomIcons[kt]
-			if ic ~= "" then
-				local img = Instance.new("ImageLabel")
-				img.BackgroundTransparency = 1
-				img.Size = UDim2.fromScale(1, 1)
-				img.Image = ic
-				img.ScaleType = Enum.ScaleType.Fit
-				img.ZIndex = 10
-				img.Parent = dot
-			end
-			dot.Parent = panel
-			local kl = makeText(panel, ROOM_LABEL[kt], ts(), Theme.Colors.TextPrimary)
-			kl.TextWrapped = false
-			kl.Position = UDim2.fromOffset(cx + 24, cy)
-			kl.Size = UDim2.fromOffset(76, 24)
-			kl.ZIndex = 9
-		end
-		panel.Parent = main
-	end
+	-- Map key (legend) button REMOVED 2026-11-17 (user 10:06 AM): the room key lives in the ? guide
+	-- (DungeonScreen help, FacilityInfo rows). legendOpen / KEY_ORDER deps are no longer read here.
 	-- Biome background behind the map (2026-11-15): image + dark overlay, below paths (ZIndex 0).
 	-- Missing biome or id = no image, the plain background stays.
-	local bgOld = main:FindFirstChild("BiomeBg")
+	-- deps.bgHost (2026-11-17 11:22 AM): draw the background on the whole map screen so it also shows
+	-- through the semi-transparent side panel; default = the map area as before.
+	local bgHost: Instance = deps.bgHost or main
+	local bgOld = bgHost:FindFirstChild("BiomeBg")
 	if bgOld then bgOld:Destroy() end
 	local bgId = run.card and Theme.DungeonBiomeBackgrounds and Theme.DungeonBiomeBackgrounds[run.card.biome]
 	if bgId and bgId ~= "" then
@@ -234,9 +209,10 @@ function DungeonMapView.Draw(main: any, run: any, here: any, deps: any)
 		shade.BorderSizePixel = 0
 		shade.ZIndex = 0
 		shade.Parent = bg
-		bg.Parent = main
+		bg.Parent = bgHost
 	end
 	grid.Parent = main -- parent last (NET-004): rooms and paths are added before the grid goes live
+	current = { entries = entries, lines = lines, reach = reach, reachFrom = reachFrom, at = run.at, grid = grid }
 
 	-- Redraw when the width changes (rotate / resize). The connection lives on the grid, which is
 	-- destroyed by the next render, so nothing leaks.
@@ -255,6 +231,26 @@ function DungeonMapView.Draw(main: any, run: any, here: any, deps: any)
 			grid.CanvasPosition = Vector2.new(0, math.clamp(focusY - grid.AbsoluteSize.Y * 0.6, 0, math.max(0, canvasH - grid.AbsoluteSize.Y)))
 		end
 	end)
+end
+
+--- Peek preview (user 2026-11-17 10:50 AM): with a room's peek card open, the rooms still reachable
+--- through it stay bright and the other open rooms dim. nil (or a room that can't be reached) clears it.
+function DungeonMapView.Preview(nodeId: string?)
+	local c = current
+	if not c or not c.grid or not c.grid.Parent then return end
+	local via: { [string]: boolean }? = nil
+	if nodeId and nodeId ~= c.at and c.reach[nodeId] then via = c.reachFrom(nodeId) end
+	for id, e in c.entries do
+		local dim = via ~= nil and not e.gone and not e.done and not e.here and not via[id]
+		e.btn.BackgroundTransparency = if dim then math.max(e.bg, DIM_BG) else e.bg
+		e.ring.Transparency = if dim then math.max(e.rt, DIM_RING) else e.rt
+		if e.img then e.img.ImageTransparency = if dim then math.max(e.it, DIM_IMG) else e.it end
+		if e.label then e.label.TextTransparency = if dim then math.max(e.lt, 0.4) else e.lt end
+	end
+	for _, l in c.lines do
+		local keep = via == nil or (via[l.a] and via[l.b]) or (l.a == c.at and l.b == nodeId)
+		l.line.BackgroundTransparency = if keep then l.base else math.max(l.base, 0.75)
+	end
 end
 
 return DungeonMapView

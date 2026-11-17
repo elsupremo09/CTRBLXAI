@@ -116,10 +116,29 @@ local function countMap(t: any): number
 	return n
 end
 
+-- Materials earned this run, all buckets added up per material (user 2026-11-17 10:33 AM: the
+-- side panel lists each with its icon). Keys match the payer in Main: mercury / crystals / sulfur
+-- and "gem:<id>" rune gems (shown as one total).
+local function matsView(bag: any): any
+	local out: { [string]: number } = { mercury = 0, crystals = 0, sulfur = 0, gems = 0 }
+	for _, bucket in { "normalMats", "eliteMats", "bossMats" } do
+		local m = bag[bucket]
+		if type(m) == "table" then
+			for k, v in m do
+				local q = tonumber(v) or 0
+				if k == "mercury" or k == "crystals" or k == "sulfur" then out[k] += q
+				elseif type(k) == "string" and string.sub(k, 1, 4) == "gem:" then out.gems += q end
+			end
+		end
+	end
+	return out
+end
+
 -- Compact bag summary (counts only).
 local function bagView(bag: any): any
 	if type(bag) ~= "table" then return nil end
 	return {
+		mats = matsView(bag),
 		gold = bag.gold or 0,
 		normalMats = countMap(bag.normalMats),
 		eliteMats = countMap(bag.eliteMats) + countMap(bag.bossMats),
@@ -140,12 +159,33 @@ local function state(): any
 	local r = rank()
 	for _, c in s.choices do
 		c.level = DungeonRules.BattleLevel(r, c.difficulty, 1, 0, 1)
+		-- Header "Level: {min} - {max}" (user 2026-11-17 11:39 AM): stage 1 rooms, first floor (jitter -1)
+		-- to the Boss row (floors + 1, jitter +1), the same BattleLevel the rooms use.
+		local fl = tonumber(c.floors) or DungeonRules.Floors(c.difficulty)
+		c.levelMin = DungeonRules.BattleLevel(r, c.difficulty, 1, -1, 1)
+		c.levelMax = DungeonRules.BattleLevel(r, c.difficulty, fl + 1, 1, 1)
 		c.seed = nil -- not needed by the client
 		c.partyCap = DungeonRules.PartyCap(c.facilityLevel) -- step 7b (rule 258)
 	end
 	if s.run then
 		s.run.bag = bagView(s.run.bag)
 		s.run.card.seed = nil
+		-- Header 'Lv {level}' (fix 2026-11-17 11:22 AM): run cards had no level. Same formula as the board
+		-- card (room row 1), for the current stage.
+		if s.run.card.level == nil then
+			s.run.card.level = DungeonRules.BattleLevel(r, s.run.card.difficulty, 1, 0, tonumber(s.run.stage) or 1)
+		end
+		-- Header level range for the CURRENT stage (user 2026-11-17 11:39 AM): first floor (jitter -1) to
+		-- the Boss row (highest row on this stage's map, jitter +1). Display only.
+		do
+			local stg = tonumber(s.run.stage) or 1
+			local topRow = 1
+			for _, n in (s.run.nodes or {}) do
+				if type(n.row) == "number" and n.row > topRow then topRow = n.row end
+			end
+			s.run.card.levelMin = DungeonRules.BattleLevel(r, s.run.card.difficulty, 1, -1, stg)
+			s.run.card.levelMax = DungeonRules.BattleLevel(r, s.run.card.difficulty, topRow, 1, stg)
+		end
 	end
 	s.result = lastResult
 	s.ok = true

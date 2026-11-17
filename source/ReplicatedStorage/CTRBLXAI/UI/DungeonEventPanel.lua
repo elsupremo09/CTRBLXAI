@@ -125,7 +125,7 @@ local function lineText(l: any): string?
 	elseif l.k == "revive" then
 		return `{l.name or "?"} is back on their feet.`                             -- EV-UI-REVIVE
 	elseif l.k == "loot" then
-		return string.format("Loot ×%.2f", tonumber(l.mult) or 1)                   -- EV-UI-LOOT
+		return `Loot +{math.floor(((tonumber(l.mult) or 1) - 1) * 100 + 0.5)}%` -- EV-UI-LOOT, percent not decimal (user 2026-11-17 12:00 PM)
 	elseif l.k == "fight" then
 		return "Enemies attack!"                                                     -- EV-UI-FIGHT
 	elseif l.k == "nothing" then
@@ -141,7 +141,7 @@ local function lineText(l: any): string?
 	elseif l.k == "altar" then -- EV-16 Altar of Change result (approved 2026-11-15 10:17 AM)
 		return `{l.unit or "?"}'s {l.old or "?"} became {l.new or "?"}.`
 	elseif l.k == "smith" then
-		return "The smith will find you at the next Event, Rest or boss."             -- approved 2026-11-15 2:05 AM
+		return "The smith will find you at the next Event, Sanctuary or boss."             -- approved 2026-11-15 2:05 AM
 	elseif l.k == "courier" then -- EV-17 result (SB-33)
 		return "Sent home! They'll be waiting for you."
 	elseif l.k == "forged" then -- EV-15: the reforged item is in the bag (reuses EV-UI-GEAR)

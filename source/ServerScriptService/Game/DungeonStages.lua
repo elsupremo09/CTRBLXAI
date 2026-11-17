@@ -64,7 +64,7 @@ function M.GoDeeper(playerId: string): (boolean, any)
 	if not DungeonDepth.Ready(run) then return false, "Invalid request" end -- step 6: every forced curse picked first
 	local nextStage = run.stage + 1
 	local sseed = DungeonRules.StageSeed(run.card.seed, nextStage)
-	local okM, map = pcall(DungeonMap.Generate, sseed, run.card.facilityLevel, DungeonRules.StageFloors(run.card.floors, nextStage)) -- stages 4+: 8 floors (rule 281)
+	local okM, map = pcall(DungeonMap.Generate, sseed, run.card.facilityLevel, DungeonRules.StageFloors(run.card.floors, nextStage), run.card.mapLayout) -- stages 4+: 8 floors (rule 281)
 	if not okM or not map then return false, "Something went wrong. Try again." end
 	run.stage, run.sseed, run.map = nextStage, sseed, map
 	DungeonDepth.Apply(run) -- step 6: the picked curses join the run (before the stage heal: RL-65 counts)

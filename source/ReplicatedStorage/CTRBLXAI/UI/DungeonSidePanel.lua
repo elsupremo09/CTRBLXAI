@@ -1,24 +1,29 @@
 --!strict
 -- DungeonSidePanel.lua
 -- CTRBLXAI | Slim right-hand info panel on the dungeon map (layout change, user 2026-11-15 12:42 AM).
--- Shows: Floor n/total, Loot xN, your resources (gold / mercury / crystals / sulfur) and the run
--- bag summary. Display only; every string is an approved rule-275 string or a number.
+-- Shows: Stage / Floor, Loot xN, Bag n / max, Silver / Gold and every material earned (icons) and the run bag summary (resources are in the
+-- screen header since 2026-11-17; Silver back here per user 10:06 AM). Display only; every string is an approved rule-275 string or a number.
 -- The map gets the rest of the width; guide text lives in the "?" help popup.
 
 local uiFolder = script.Parent
 local Theme: any = (require :: any)(uiFolder:WaitForChild("Theme", 10))
+-- Resource tooltips (guild_facilities 114): tap a resource cell for its name + approved line.
+local stripModule = uiFolder:WaitForChild("CurrencyStrip", 10)
+local CurrencyStrip: any = if stripModule then (require :: any)(stripModule) else nil
 
 local Side = {}
 
 Side.SHARE = 0.30 -- share of the map area width
 Side.MIN_W = 150  -- px; keeps 10 px text readable on a 750x382 phone
 
--- deps = { makeText, ts, body, run, gold = string?, onLoot = () -> (), onBag = (() -> ())? }
+-- deps = { makeText, ts, body, run, here, onLoot = () -> (), onBag = (() -> ())? }
 function Side.Draw(main: Instance, deps: any): Frame
 	local run = deps.run
 	local mk, ts, body = deps.makeText, deps.ts, deps.body
 	-- Ornate panel, the same frame as the guild screens' Side panel (2026-11-17 style fix).
-	local panel = Theme.MakePanel("SideInfo", UDim2.new(Side.SHARE, 0, 1, 0), UDim2.fromScale(1, 0), Vector2.new(1, 0), nil)
+	-- deps.bottomInset (2026-11-17 11:22 AM): the map runs to the bottom; this panel stops above the buttons.
+	local panel = Theme.MakePanel("SideInfo", UDim2.new(Side.SHARE, 0, 1, -(tonumber(deps.bottomInset) or 0)), UDim2.fromScale(1, 0), Vector2.new(1, 0), nil)
+	panel.BackgroundTransparency = 0.4 -- semi-transparent: the biome background shows through (user 2026-11-17 11:22 AM)
 	local minW = Instance.new("UISizeConstraint")
 	minW.MinSize = Vector2.new(Side.MIN_W, 0)
 	minW.Parent = panel
@@ -50,71 +55,192 @@ function Side.Draw(main: Instance, deps: any): Frame
 		l.Parent = scroll
 		return l
 	end
+	-- Compact layout (user 2026-11-17): resources moved to the header; short lines share a row
+	-- (Stage | Floor, Loot | Bag, Gear | Cards) so the panel fits a 750x382 phone without scrolling.
+	-- Wording unchanged (approved rule-275 strings).
+	local function pairRow(h: number): (Frame, Frame, Frame)
+		order += 1
+		local row = Instance.new("Frame")
+		row.BackgroundTransparency = 1
+		row.BorderSizePixel = 0
+		row.Size = UDim2.new(1, 0, 0, h)
+		row.LayoutOrder = order
+		local left = Instance.new("Frame")
+		left.BackgroundTransparency = 1
+		left.Size = UDim2.new(0.5, -2, 1, 0)
+		left.Parent = row
+		local right = Instance.new("Frame")
+		right.BackgroundTransparency = 1
+		right.Size = UDim2.new(0.5, -2, 1, 0)
+		right.Position = UDim2.new(0.5, 2, 0, 0)
+		right.Parent = row
+		row.Parent = scroll
+		return row, left, right
+	end
+	-- Thin divider between the info blocks (user 2026-11-17 12:00 PM), the guild panels' 1 px Border line.
+	local function divider()
+		order += 1
+		local d = Instance.new("Frame")
+		d.Name = "Divider"
+		d.Size = UDim2.new(1, 0, 0, 1)
+		d.BackgroundColor3 = Theme.Colors.Border
+		d.BackgroundTransparency = 0.3
+		d.BorderSizePixel = 0
+		d.LayoutOrder = order
+		d.Parent = scroll
+	end
+	local function cellText(cell: Instance, text: string, size: number, color: Color3, bold: boolean?): TextLabel
+		local l = mk(cell, text, size, color, bold)
+		l.Size = UDim2.fromScale(1, 1)
+		return l
+	end
+	local function tapCell(cell: Instance, name: string, onTap: () -> ()): TextButton
+		local b = Instance.new("TextButton")
+		b.Name = name
+		b.Text = ""
+		b.AutoButtonColor = false
+		b.BackgroundTransparency = 1
+		b.Size = UDim2.fromScale(1, 1)
+		b.Activated:Connect(onTap)
+		b.Parent = cell
+		return b
+	end
 	local here = deps.here
 	local floorN = if here then math.min(here.row, run.floors) else 1
-	if run.endless then line(`Stage {run.stage or 1}`, body(), Theme.Colors.TextGold, true) -- DG-STAGE-ENDLESS (approved 2026-11-16 8:07 PM, rule 281)
-	elseif (run.maxStages or 1) > 1 then line(`Stage {run.stage or 1} / {run.maxStages}`, body(), Theme.Colors.TextGold, true) end -- DG-STAGE (approved 2026-11-15 8:41 AM)
+	local stageText: string? = nil
+	if run.endless then stageText = `Stage {run.stage or 1}` -- DG-STAGE-ENDLESS (approved 2026-11-16 8:07 PM, rule 281)
+	elseif (run.maxStages or 1) > 1 then stageText = `Stage {run.stage or 1} / {run.maxStages}` end -- DG-STAGE (approved 2026-11-15 8:41 AM)
+	local floorText = `Floor {floorN}/{run.floors}` -- DG-FLOOR
+	if stageText then
+		local _, l, r = pairRow(body() + 6)
+		cellText(l, stageText, body(), Theme.Colors.TextGold, true)
+		cellText(r, floorText, body(), Theme.Colors.TextGold, true)
+	else
+		line(floorText, body(), Theme.Colors.TextGold, true)
+	end
 	local dp = run.depth
 	if type(dp) == "table" and ((dp.hp or 0) > 0 or (dp.atk or 0) > 0) then -- DG-DEPTH-POWER (approved 8:07 PM): stages 4+
-		local t = line(`Depth: +{dp.hp or 0}% HP, +{dp.atk or 0}% Attack and Defense`, body(), Theme.Colors.TextSecondary, false, (body() + 4) * 2)
+		local t = line(`Depth: +{dp.hp or 0}% HP, +{dp.atk or 0}% Attack and Defense`, ts(), Theme.Colors.TextSecondary, false, (ts() + 3) * 2)
 		t.TextWrapped = true
 	end
-	line(`Floor {floorN}/{run.floors}`, body(), Theme.Colors.TextGold, true)                  -- DG-FLOOR
 	-- EV-16 mutator lines retired 2026-11-15 10:01 AM (Altar of Change replaces Shifting Hall).
-	-- Loot xN is a 44 px tap target (tap = the approved explanation, shown in the status line).
-	order += 1
-	local loot = Instance.new("TextButton")
-	loot.Name = "Loot"
-	loot.Text = ""
-	loot.AutoButtonColor = false
-	loot.BackgroundTransparency = 1
-	loot.Size = UDim2.new(1, 0, 0, 44)
-	loot.LayoutOrder = order
-	local lt = mk(loot, string.format("Loot ×%.2f", run.dropMultiplier or 1), body(), Theme.Colors.TextPrimary, true) -- DG-DROPRATE
-	lt.Size = UDim2.fromScale(1, 1)
-	loot.Activated:Connect(function() if deps.onLoot then deps.onLoot() end end)
-	loot.Parent = scroll
-	line(`Silver {run.silver or 0}`, body(), Theme.Colors.TextGold, true) -- SB-01 (approved 2026-11-15 9:09 PM)
-	-- Step 3 (2026-11-16): Bag count (SB-11) and the loadout button (SB-21), both approved 2026-11-15 9:09 PM.
+	-- Loot xN and Bag n / max side by side, each a 44 px tap target. Silver moved to the header.
+	local _, lootCell, bagCell = pairRow(44)
+	local loot = tapCell(lootCell, "Loot", function() if deps.onLoot then deps.onLoot() end end)
+	-- Percent, never a decimal (user 2026-11-17 12:00 PM): x1.50 -> "Loot +50%". DG-DROPRATE number format.
+	local lootPct = math.floor(((tonumber(run.dropMultiplier) or 1) - 1) * 100 + 0.5)
+	cellText(loot, `Loot +{lootPct}%`, body(), Theme.Colors.TextPrimary, true) -- DG-DROPRATE
+	-- Step 3 (2026-11-16): Bag count (SB-11), approved 2026-11-15 9:09 PM; tap opens the Bag screen.
 	local bs = run.bagSlots
 	if type(bs) == "table" and bs.used and bs.cap then
-		if deps.onBag then -- steps 4-5: the Bag line opens the Bag screen (44 px tap target)
-			order += 1
-			local bb = Instance.new("TextButton")
-			bb.Name = "BagLine"
-			bb.Text = ""
-			bb.AutoButtonColor = false
-			bb.BackgroundTransparency = 1
-			bb.Size = UDim2.new(1, 0, 0, 44)
-			bb.LayoutOrder = order
-			local bt = mk(bb, `Bag {bs.used} / {bs.cap}`, body(), if bs.used >= bs.cap then Theme.Colors.Danger else Theme.Colors.TextPrimary, true) -- SB-11
-			bt.Size = UDim2.fromScale(1, 1)
-			bb.Activated:Connect(function() deps.onBag() end)
-			bb.Parent = scroll
+		local bagColor = if bs.used >= bs.cap then Theme.Colors.Danger else Theme.Colors.TextPrimary
+		if deps.onBag then
+			local bb = tapCell(bagCell, "BagLine", function() deps.onBag() end)
+			cellText(bb, `Bag {bs.used} / {bs.cap}`, body(), bagColor, true) -- SB-11
 		else
-			line(`Bag {bs.used} / {bs.cap}`, body(), Theme.Colors.TextPrimary, true) -- SB-11
+			cellText(bagCell, `Bag {bs.used} / {bs.cap}`, body(), bagColor, true) -- SB-11
 		end
 	end
 	-- "Equip from bag" (SB-21) removed 2026-11-16 (user 7:14 PM): Equip is on the one Bag screen.
-	-- Resources: the same text the screen's gold line shows (approved format), one item per line.
-	local g = tostring(deps.gold or "")
-	if g ~= "" then
-		g = string.gsub(g, "%s%s+", "|") -- "Gold 1   |   Mercury 2  Crystals 3" -> one item per line
-		for part in string.gmatch(g, "[^|]+") do
-			local t = string.gsub(part, "^%s+", "")
-			t = string.gsub(t, "%s+$", "")
-			if t ~= "" then line(t, ts(), Theme.Colors.TextPrimary, false) end
-		end
-	end
-	-- Run bag summary (approved DG-BAG strings, short form: what is at risk is shown in Bag).
+	-- Run bag summary (approved DG-BAG strings). User 2026-11-17 10:06 AM: no "Kept / Lost if you leave early"
+	-- headings here (what an Escape costs is in the ? guide and the Escape confirm); Silver moved here
+	-- from the header (approved SB-01 "Silver {n}"); Gold is the approved "Gold {n}".
 	local b = run.bag or {}
-	line("Kept if you leave early", ts(), Theme.Colors.Success, true, ts() + 8)               -- DG-BAG-SAFE
-	line(`Gold {b.gold or 0} (comes home · 75% if you leave early)`, ts(), Theme.Colors.TextPrimary, false, 2 * ts() + 6) -- SB-12 (was DG-BAG-GOLD)
-	line(`Materials {b.normalMats or 0}`, ts(), Theme.Colors.TextPrimary)                        -- DG-BAG-MATS
-	line("Lost if you leave early", ts(), Theme.Colors.Danger, true, ts() + 8)                -- DG-BAG-RISK
-	line(`Elite/Boss materials {b.eliteMats or 0}`, ts(), Theme.Colors.TextPrimary)              -- DG-BAG-ELITEMATS
-	line(`Gear {b.gear or 0}`, ts(), Theme.Colors.TextPrimary)                                    -- DG-BAG-GEAR
-	line(`Cards {b.cards or 0}`, ts(), Theme.Colors.TextPrimary)                                  -- DG-BAG-CARDS
+	divider() -- run info | resources
+	-- Icon + text cell (user 2026-11-17 10:33 AM): every resource and material earned this run shows
+	-- its Theme.GuildIcons art next to its name. Text shrinks to fit the half-width cell (min 9 px).
+	local function iconCell(cell: Instance, iconKey: string, text: string, bold: boolean?)
+		local h = ts() + 4
+		local art = Theme.GuildIcons and Theme.GuildIcons[iconKey]
+		local x = 0
+		if art then
+			local ico = Instance.new("ImageLabel")
+			ico.Name = "Icon"
+			ico.BackgroundTransparency = 1
+			ico.ScaleType = Enum.ScaleType.Fit
+			ico.Image = art
+			ico.Size = UDim2.fromOffset(h, h)
+			ico.AnchorPoint = Vector2.new(0, 0.5)
+			ico.Position = UDim2.new(0, 0, 0.5, 0)
+			ico.Parent = cell
+			x = h + 3
+		end
+		local l = mk(cell, text, ts(), Theme.Colors.TextPrimary, bold)
+		l.Size = UDim2.new(1, -x, 1, 0)
+		l.Position = UDim2.fromOffset(x, 0)
+		l.TextScaled = true
+		local cap = Instance.new("UITextSizeConstraint")
+		cap.MaxTextSize = ts()
+		cap.MinTextSize = 9
+		cap.Parent = l
+	end
+	local cellH = ts() + 4
+	local resRow, sl, gc = pairRow(cellH)
+	iconCell(sl, "Silver", `Silver {run.silver or 0}`, true)                     -- SB-01
+	iconCell(gc, "Gold", `Gold {b.gold or 0}`)                                   -- approved "Gold {n}"
+	-- All materials earned this run (replaces DG-BAG-MATS / DG-BAG-ELITEMATS counts), 2 per row.
+	local mats = if type(b.mats) == "table" then b.mats else {}
+	local _, ml, mr = pairRow(cellH)
+	iconCell(ml, "Mercury", `Mercury {mats.mercury or 0}`)
+	iconCell(mr, "Crystal", `Crystal {mats.crystals or 0}`)
+	local _, sfl, gml = pairRow(cellH)
+	iconCell(sfl, "Sulfur", `Sulfur {mats.sulfur or 0}`)
+	iconCell(gml, "Runeforge", `Rune gems {mats.gems or 0}`)
+	-- Bigger tooltip tap areas without a taller panel (Tester W1 2026-11-17). One invisible overlay over
+	-- the whole resource block, 2 columns x 3 bands, each band ANCHORED TO ITS OWN ROW (fix 2026-11-17
+	-- 5:50 PM: equal-height bands drifted below the rows). Band 0 = Silver | Gold from 3 px above its row
+	-- (divider margin; stops short of the 44 px Loot/Bag row) to 1 px above row 1; band 1 = Mercury | Crystal
+	-- from there to 1 px above row 2; band 2 = Sulfur | Rune gems down to the bottom of the non-tappable
+	-- Gear | Cards row. Positions come from the same cellH / list padding the rows use (offsets inside
+	-- the overlay, which moves with the rows, so scrolling and screen insets don't matter).
+	if CurrencyStrip then
+		local gapY = list.Padding.Offset
+		local up, down = 3, gapY + 1 + gapY + cellH -- below row 3: gap, divider, gap, Gear | Cards row
+		local overlay = Instance.new("Frame")
+		overlay.Name = "TipHits"
+		overlay.BackgroundTransparency = 1
+		overlay.BorderSizePixel = 0
+		overlay.Position = UDim2.fromOffset(0, -up)
+		local total = up + cellH * 3 + gapY * 2 + down
+		overlay.Size = UDim2.new(1, 0, 0, total)
+		local pitch = cellH + gapY -- row k starts at k * pitch below the Silver | Gold row's top
+		local function bandTop(k: number): number
+			if k == 0 then return 0 end -- overlay top = 3 px above row 0
+			return up + k * pitch - 1
+		end
+		local function bandBottom(k: number): number
+			if k >= 2 then return total end -- bottom of the Gear | Cards row
+			return up + (k + 1) * pitch - 1
+		end
+		overlay.ZIndex = 5
+		local tiles: { { cell: Frame, key: string } } = {
+			{ cell = sl, key = "Silver" }, { cell = gc, key = "Gold" }, { cell = ml, key = "Mercury" },
+			{ cell = mr, key = "Crystal" }, { cell = sfl, key = "Sulfur" }, { cell = gml, key = "Runeforge" } }
+		for i, tl in tiles do
+			local cell, key = tl.cell, tl.key
+			if CurrencyStrip.HasTip(key) then
+				local hit = Instance.new("TextButton")
+				hit.Name = "TipHit_" .. key
+				hit.BackgroundTransparency = 1
+				hit.BorderSizePixel = 0
+				hit.AutoButtonColor = false
+				hit.Text = ""
+				hit.ZIndex = 5
+				local k = math.floor((i - 1) / 2) -- band = row 0, 1, 2
+				local top, bottom = bandTop(k), bandBottom(k)
+				hit.Size = UDim2.new(0.5, 0, 0, bottom - top)
+				hit.Position = UDim2.new(if i % 2 == 1 then 0 else 0.5, 0, 0, top)
+				hit.Activated:Connect(function() CurrencyStrip.ShowTip(key, cell) end)
+				hit.Parent = overlay
+			end
+		end
+		resRow.ZIndex = 2 -- draws (and takes taps) above the two resource rows after it
+		overlay.Parent = resRow
+	end
+	divider() -- resources | bag summary
+	local _, gl, cr = pairRow(ts() + 4)
+	cellText(gl, `Gear {b.gear or 0}`, ts(), Theme.Colors.TextPrimary)                         -- DG-BAG-GEAR
+	cellText(cr, `Cards {b.cards or 0}`, ts(), Theme.Colors.TextPrimary)                       -- DG-BAG-CARDS
 	scroll.Parent = panel
 	panel.Parent = main -- parent last (NET-004)
 	return panel

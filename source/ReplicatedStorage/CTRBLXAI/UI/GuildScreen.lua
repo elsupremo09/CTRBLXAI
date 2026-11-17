@@ -27,6 +27,9 @@ if not themeModule then
 end
 -- Found at runtime via WaitForChild; the editor cannot follow that path (editor-only cast).
 local Theme: any = (require :: any)(themeModule)
+-- Header currency strip (icon + number), same builder as the guild home header (2026-11-17).
+local currencyStripModule = script.Parent:WaitForChild("CurrencyStrip", WAIT)
+local CurrencyStrip: any = if currencyStripModule then (require :: any)(currencyStripModule) else nil
 
 local GuildScreen = {}
 
@@ -39,6 +42,7 @@ local MARGIN = 8              -- screen edge / panel gap (px)
 local MIN_HEADER_H = 40       -- header height when the Roblox top bar is shorter
 local ROW_GAP = 4             -- gap between button rows
 local PANEL_PAD = 8           -- inner padding of the ornate panels
+local FRAME_EDGE = 4          -- visible edge line of the ornate panel frame (px)
 local PROMPT_W = 340          -- confirmation prompt box (px)
 local PROMPT_H = 170
 
@@ -94,13 +98,33 @@ end
 -- Builds the screen parts inside `backdrop`; used by Create (own ScreenGui) and CreateView
 -- (a layer inside an open screen). f.rows = button rows; f.Layout() places everything below
 -- the Roblox top bar (moved word for word from Create, 2026-11-17).
-local function buildFrame(backdrop: GuiObject, titleText: string, fullMain: boolean?): any
+-- hopts.crest (2026-11-17, user: the dungeon header mimics the guild base header): a gold-framed
+-- header with the crest left, the title, the status line under the title, a two-line details block
+-- right of the title (where the guild base shows Rank; SetDetails) and the currencies on the right.
+local function buildFrame(backdrop: GuiObject, titleText: string, fullMain: boolean?, hopts: { crest: string? }?): any
+	local framed = hopts ~= nil and hopts.crest ~= nil
 	-- Header: title | status | gold
-	local header = Instance.new("Frame")
-	header.Name = "Header"
-	header.BackgroundTransparency = 1
-	header.BorderSizePixel = 0
-	header.Parent = backdrop
+	local header: GuiObject
+	local details: Frame? = nil
+	local detailLines: { TextLabel } = {}
+	local strip: any = nil -- header currency strip (SetCurrencies)
+	local placeText: () -> () = function() end -- framed header: re-fit the text to the width left of the strip
+	if framed then
+		header = Theme.MakePanel("Header", UDim2.new(), UDim2.new(), nil, backdrop)
+		local hp = Instance.new("UIPadding") -- same side padding as the guild base header (clears the corners)
+		hp.PaddingLeft = UDim.new(0, 14)
+		hp.PaddingRight = UDim.new(0, 14)
+		hp.PaddingTop = UDim.new(0, 4)
+		hp.PaddingBottom = UDim.new(0, 4)
+		hp.Parent = header
+	else
+		local plain = Instance.new("Frame")
+		plain.Name = "Header"
+		plain.BackgroundTransparency = 1
+		plain.BorderSizePixel = 0
+		plain.Parent = backdrop
+		header = plain
+	end
 	local title = makeText(header, Theme.Text.Title(), Theme.Colors.TextGold, true)
 	title.Name = "Title"
 	title.Font = Theme.Font.Display
@@ -111,6 +135,72 @@ local function buildFrame(backdrop: GuiObject, titleText: string, fullMain: bool
 	status.Size = UDim2.new(0.4, 0, 1, 0)
 	status.Position = UDim2.new(0.3, 0, 0, 0)
 	status.TextXAlignment = Enum.TextXAlignment.Center
+	if framed and hopts then
+		local crest = Instance.new("ImageLabel")
+		crest.Name = "Crest"
+		crest.BackgroundTransparency = 1
+		crest.ScaleType = Enum.ScaleType.Fit
+		crest.Image = hopts.crest or ""
+		crest.Size = UDim2.fromScale(1, 1)
+		local ar = Instance.new("UIAspectRatioConstraint")
+		ar.AspectRatio = 1
+		ar.DominantAxis = Enum.DominantAxis.Height
+		ar.Parent = crest
+		crest.Parent = header
+		-- Status under the title (guild base look), auto-fit down to the 10 px phone floor.
+		status.TextXAlignment = Enum.TextXAlignment.Left
+		status.TextScaled = true
+		local fit = Instance.new("UITextSizeConstraint")
+		fit.MaxTextSize = Theme.Text.Small()
+		fit.MinTextSize = 10
+		fit.Parent = status
+		local block = Instance.new("Frame")
+		block.Name = "Details"
+		block.BackgroundTransparency = 1
+		block.BorderSizePixel = 0
+		for i = 1, 2 do
+			-- Both lines white, regular (user 2026-11-17 12:00 PM: Difficulty like Battle Field Condition).
+			local l = makeText(block, Theme.Text.Small(), Theme.Colors.TextPrimary)
+			l.Name = "Line" .. i
+			l.TextWrapped = false
+			l.TextScaled = true
+			l.Size = UDim2.fromScale(1, 0.5)
+			l.Position = UDim2.fromScale(0, (i - 1) * 0.5)
+			local c = Instance.new("UITextSizeConstraint")
+			c.MaxTextSize = Theme.Text.Small()
+			c.MinTextSize = 10
+			c.Parent = l
+			detailLines[i] = l
+		end
+		block.Parent = header
+		details = block
+		-- User 2026-11-17 11:39 AM: three stacked lines right of the crest (title, then the two
+		-- details lines); the status sits on the title row after the title. The currency strip is the
+		-- guild base's (right 60%, same fit), and the text gets the width left of the visible icons.
+		title.TextScaled = true
+		local tfit = Instance.new("UITextSizeConstraint")
+		tfit.MaxTextSize = Theme.Text.Title()
+		tfit.MinTextSize = 12
+		tfit.Parent = title
+		local function place()
+			local cw = crest.AbsoluteSize.X + 6
+			local innerW = header.AbsoluteSize.X - 28 -- 14 px side padding each side
+			local used = if strip and strip.Strip.Visible then strip.ContentWidth() + 10 else math.floor(innerW * 0.6)
+			local w = math.max(40, innerW - cw - used)
+			title.Position = UDim2.fromOffset(cw, 0)
+			title.Size = UDim2.new(0, w, 0.44, 0)
+			local sx = math.min(w, title.TextBounds.X + 8)
+			status.Position = UDim2.new(0, cw + sx, 0, 0)
+			status.Size = UDim2.new(0, math.max(0, w - sx), 0.44, 0)
+			block.Position = UDim2.new(0, cw, 0.44, 0)
+			block.Size = UDim2.new(0, w, 0.56, 0)
+		end
+		placeText = place
+		place()
+		title:GetPropertyChangedSignal("TextBounds"):Connect(place)
+		crest:GetPropertyChangedSignal("AbsoluteSize"):Connect(place)
+		header:GetPropertyChangedSignal("AbsoluteSize"):Connect(place)
+	end
 	local gold = makeText(header, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
 	gold.Name = "Gold"
 	gold.Size = UDim2.new(0.3, 0, 1, 0)
@@ -129,20 +219,42 @@ local function buildFrame(backdrop: GuiObject, titleText: string, fullMain: bool
 	buttons.AnchorPoint = Vector2.new(1, 1)
 	buttons.BackgroundTransparency = 1
 	buttons.BorderSizePixel = 0
+	buttons.ZIndex = 2 -- above Main when Main runs to the bottom (SetMainToBottom, 2026-11-17)
 	buttons.Parent = backdrop
 
-	local f: any = { Main = main, Side = side, Buttons = buttons, Title = title, rows = 1 }
+	local f: any = { Main = main, Side = side, Buttons = buttons, Title = title, rows = 1, mainToBottom = false }
 
 	function f.Layout()
 		local buttonRows = f.rows
 		local insetY = GuiService:GetGuiInset().Y
 		local headerH = math.max(MIN_HEADER_H, insetY)
 		-- Title starts right of Roblox's own top-left buttons (they always draw on top).
-		local leftX = math.max(MARGIN * 2, GuiService.TopbarInset.Min.X + MARGIN)
-		header.Position = UDim2.fromOffset(leftX, 0)
+		local leftX = math.max(MARGIN * 2, GuiService.TopbarInset.Min.X + MARGIN
+			+ (if GuiService.TopbarInset.Min.X > 0 then Theme.TopbarReserve else 0)) -- Feedback button slot (2026-11-17)
+		local headerY = 0
+		header.Position = UDim2.fromOffset(leftX, headerY)
 		header.Size = UDim2.new(1, -(leftX + MARGIN * 2), 0, headerH)
-
-		local top = headerH + MARGIN // 2
+		local top = headerY + headerH + MARGIN // 2
+		if framed then
+			-- Same box as the guild base header (GuildMenu fitHeaderToTopbar, user 2026-11-17 11:39 AM):
+			-- 12% of the screen high at 2% from the top, right of Roblox's buttons; panels start at 16%.
+			-- User 2026-11-17 12:00 PM: the header runs down to the top of the main frame (no gap) and
+			-- its right edge lines up with the main frame's right edge (screen width - MARGIN).
+			local tlx = GuiService.TopbarInset.Min.X
+			if tlx > 0 then tlx += Theme.TopbarReserve end -- Feedback button slot (2026-11-17)
+			local bh = backdrop.AbsoluteSize.Y
+			local hy = if bh > 0 then math.floor(bh * 0.02 + 0.5) else 0
+			if bh > 0 then top = math.floor(bh * 0.16 + 0.5) end
+			local hh = math.max(MIN_HEADER_H, top - hy)
+			if tlx > 0 then
+				header.Position = UDim2.new(0, tlx + 8, 0, hy)
+				header.Size = UDim2.new(1, -(tlx + 8 + MARGIN), 0, hh)
+			else
+				header.Position = UDim2.new(0.02, 0, 0, hy)
+				header.Size = UDim2.new(0.98, -MARGIN, 0, hh)
+			end
+			top = hy + hh
+		end
 		local buttonsH = buttonRows * GuildScreen.ROW_H + (buttonRows - 1) * ROW_GAP
 		mainPanel.Position = UDim2.fromOffset(MARGIN, top)
 		mainPanel.Size = UDim2.new(1 - SIDE_SHARE, -MARGIN * 1.5, 1, -(top + MARGIN))
@@ -152,12 +264,63 @@ local function buildFrame(backdrop: GuiObject, titleText: string, fullMain: bool
 		buttons.Size = UDim2.new(SIDE_SHARE, -MARGIN * 1.5, 0, buttonsH)
 		if fullMain then
 			mainPanel.Size = UDim2.new(1, -MARGIN * 2, 1, -(top + MARGIN * 2 + buttonsH))
+			-- Dungeon map (user 2026-11-17 11:22 AM): Main runs down to the button row's bottom edge;
+			-- the buttons sit over its lower right (the caller keeps that corner free).
+			if f.mainToBottom then
+				mainPanel.Size = UDim2.new(1, -MARGIN * 2, 1, -(top + MARGIN))
+				-- User 2026-11-17 12:00 PM: buttons sit inside the frame, ~2 px clear of its edge line.
+				buttons.Position = UDim2.new(1, -(MARGIN + FRAME_EDGE + 2), 1, -(MARGIN + FRAME_EDGE + 2))
+			end
 			sidePanel.Visible = false
 		end
 	end
 
+	if framed then -- plain gold text (fallback until the numbers arrive) on the right half
+		gold.Size = UDim2.new(0.5, 0, 1, 0)
+		gold.Position = UDim2.new(0.5, 0, 0, 0)
+	end
+
 	function f.SetGold(text: string)
 		gold.Text = text
+	end
+
+	-- Icon + number currencies in the gold slot (dungeon header, user 2026-11-17), the guild home
+	-- look. list = { { key, text } } in display order (key = Theme.GuildIcons name; a key without
+	-- art shows its text only); bottom = keys for the second row when one row does not fit.
+	-- nil restores the plain gold text. The strip takes the right 45%; status keeps the middle.
+	local stripKeys = ""
+	function f.SetCurrencies(list: { { any } }?, bottom: { [string]: boolean }?)
+		if not list or not CurrencyStrip then
+			if strip then strip.Strip.Visible = false end
+			gold.Visible = true
+			if not framed then status.Size = UDim2.new(0.4, 0, 1, 0) end
+			return
+		end
+		local keys: { string } = {}
+		for _, e in list do table.insert(keys, tostring(e[1])) end
+		local sig = table.concat(keys, ",")
+		if not strip or sig ~= stripKeys then
+			if strip then strip.Strip:Destroy() end
+			-- Framed header: the guild base strip exactly (right 60%, user 2026-11-17 11:39 AM); plain: right 45%.
+			local share = if framed then 0.6 else 0.45
+			strip = CurrencyStrip.Create(header, { keys = keys, bottomKeys = bottom,
+				size = UDim2.fromScale(share, 1), position = UDim2.fromScale(1 - share, 0), name = "Currencies" })
+			stripKeys = sig
+			if framed and strip.OnContentChanged then strip.OnContentChanged(placeText) end
+		end
+		for _, e in list do strip.Set(tostring(e[1]), tostring(e[2])) end
+		strip.Strip.Visible = true
+		gold.Visible = false
+		if not framed then status.Size = UDim2.new(0.25, 0, 1, 0) end
+		if framed then placeText() end
+	end
+
+	-- Framed header only: the two-line details block right of the title (nil / "" hides a line).
+	function f.SetDetails(line1: string?, line2: string?)
+		if not details then return end
+		detailLines[1].Text = line1 or ""
+		detailLines[2].Text = line2 or ""
+		details.Visible = (line1 or "") ~= "" or (line2 or "") ~= ""
 	end
 
 	-- Server answers / errors (moved here from the guild menu status line while this is open).
@@ -166,6 +329,8 @@ local function buildFrame(backdrop: GuiObject, titleText: string, fullMain: bool
 		status.TextColor3 = if isError then Theme.Colors.Danger else Theme.Colors.Success
 	end
 
+	-- Framed header is sized in screen %, so re-place it when the screen size changes.
+	if framed then backdrop:GetPropertyChangedSignal("AbsoluteSize"):Connect(function() f.Layout() end) end
 	return f
 end
 
@@ -181,7 +346,8 @@ GuildScreen.ROW_GAP = ROW_GAP
 -- Returns a screen table: Gui, Main, Side, Buttons, and the methods below.
 -- opts.fullMain (2026-11-13, Units screen): Main spans the full width above the Buttons row and
 -- the Side panel is hidden (screens with nothing to inspect).
-function GuildScreen.Create(opts: { name: string, title: string, parent: Instance, fullMain: boolean? }): any
+-- opts.crest (2026-11-17): gold-framed header like the guild base (crest, title, status, details, currencies).
+function GuildScreen.Create(opts: { name: string, title: string, parent: Instance, fullMain: boolean?, crest: string? }): any
 	local gui = Instance.new("ScreenGui")
 	gui.Name = opts.name
 	gui.ResetOnSpawn = false
@@ -203,7 +369,7 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 	backdrop.Parent = gui
 
 	-- Header, ornate Main / Side panels and the Buttons group (shared with CreateView).
-	local f = buildFrame(backdrop, opts.title, opts.fullMain)
+	local f = buildFrame(backdrop, opts.title, opts.fullMain, if opts.crest then { crest = opts.crest } else nil)
 	local main, side, buttons = f.Main, f.Side, f.Buttons
 
 	Theme.MakeScreenBorder(backdrop)
@@ -268,6 +434,16 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 	end
 
 	self.SetGold = f.SetGold
+	self.SetCurrencies = f.SetCurrencies
+	self.SetDetails = f.SetDetails
+	-- Header title text (dungeon: the chosen biome, user 2026-11-17 11:22 AM).
+	function self.SetTitle(text: string) f.Title.Text = text end
+	-- fullMain screens: Main down to the bottom edge, buttons over its lower right (dungeon map).
+	function self.SetMainToBottom(on: boolean)
+		if f.mainToBottom == on then return end
+		f.mainToBottom = on
+		layout()
+	end
 	-- Server answers / errors (moved here from the guild menu status line while this is open).
 	self.SetStatus = f.SetStatus
 
@@ -296,21 +472,8 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 		overlay.BorderSizePixel = 0
 		overlay.ZIndex = 20
 
-		local box = Instance.new("Frame")
-		box.Name = "Box"
-		box.AnchorPoint = Vector2.new(0.5, 0.5)
-		box.Position = UDim2.fromScale(0.5, 0.5)
-		box.Size = UDim2.fromOffset(PROMPT_W, PROMPT_H)
-		box.BackgroundColor3 = Theme.Colors.PanelRaised
-		box.BorderSizePixel = 0
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = Theme.CornerRadius.md
-		corner.Parent = box
-		local stroke = Instance.new("UIStroke")
-		stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-		stroke.Color = Theme.Colors.Border
-		stroke.Thickness = Theme.BorderThickness.Default
-		stroke.Parent = box
+		-- Ornate gold panel frame like every other panel (user 2026-11-17 10:06 AM).
+		local box = Theme.MakePanel("Box", UDim2.fromOffset(PROMPT_W, PROMPT_H), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), nil)
 
 		local msg = makeText(box, Theme.Text.Body(), Theme.Colors.TextPrimary)
 		msg.TextTruncate = Enum.TextTruncate.None
@@ -436,27 +599,18 @@ end
 -- bar. opts.fill: fixed box using the whole safe height (widthScale of the width, up to maxW px);
 -- otherwise the box grows with its content (AutomaticSize Y) up to the safe height.
 -- Returns the overlay (caller parents it last) and the box (padded) to fill.
-function GuildScreen.MakeModalBox(name: string, opts: { maxW: number?, widthScale: number?, fill: boolean?, pad: number? }?): (TextButton, Frame)
+function GuildScreen.MakeModalBox(name: string, opts: { maxW: number?, widthScale: number?, fill: boolean?, pad: number? }?): (TextButton, any)
 	local o2 = opts or {}
 	local insetY = GuiService:GetGuiInset().Y
 	local cam = workspace.CurrentCamera
 	local vh = if cam then cam.ViewportSize.Y else 382
 	local maxH = math.max(120, vh - insetY - CLEAR * 2)
 	local overlay = makeModal(name, Color3.new(0, 0, 0), 0.4)
-	local box = Instance.new("Frame")
-	box.Name = "Box"
-	box.BackgroundColor3 = Theme.Colors.PanelRaised
-	box.BorderSizePixel = 0
+	-- Ornate gold panel frame, the same art as every guild screen panel (user 2026-11-17 10:06 AM:
+	-- "use the panel design for ALL screens such as the ? panel"). Theme.MakePanel = the one frame builder.
+	local box = Theme.MakePanel("Box", UDim2.new(), UDim2.new(), nil, nil)
 	box.ClipsDescendants = true
 	box.ZIndex = 21
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = Theme.CornerRadius.md
-	corner.Parent = box
-	local stroke = Instance.new("UIStroke")
-	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	stroke.Color = Theme.Colors.Border
-	stroke.Thickness = Theme.BorderThickness.Default
-	stroke.Parent = box
 	local limit = Instance.new("UISizeConstraint")
 	limit.MaxSize = Vector2.new(o2.maxW or 500, maxH)
 	limit.Parent = box
@@ -470,7 +624,7 @@ function GuildScreen.MakeModalBox(name: string, opts: { maxW: number?, widthScal
 		box.Size = UDim2.new(o2.widthScale or 0.86, 0, 0, 0)
 		box.AutomaticSize = Enum.AutomaticSize.Y
 	end
-	addPadding(box, o2.pad or 12)
+	addPadding(box, math.max(o2.pad or 12, Theme.PanelFrame.MinPadding + 4)) -- clear the frame's corner ornaments
 	box.Parent = overlay
 	return overlay, box
 end
