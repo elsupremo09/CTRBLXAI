@@ -99,7 +99,7 @@ local GuildMenuService = {}
 -- until Slice 8 builds real facility purchasing). ONE table, Dev-adjustable.
 local DEFAULT_BUILDING_LEVEL = 1
 local BUILDING_MIN_LEVEL, BUILDING_MAX_LEVEL = 1, 10 -- guild_facilities: Max Level 10
-local BUILDING_NAMES = table.freeze({ "GuildHall", "QuestBoard", "Tavern", "Merchant", "Blacksmith", "Runeforge", "Crucible", "Apothecary", "TrainingGrounds", "Dungeon" }) -- QuestBoard added 2026-11-16 (L1 = 3 quests, +1 per level above 1)
+local BUILDING_NAMES = table.freeze({ "GuildHall", "QuestBoard", "Tavern", "Merchant", "Blacksmith", "Runeforge", "Crucible", "Apothecary", "TrainingGrounds", "Dungeon", "Dispatch" }) -- QuestBoard added 2026-11-16 (L1 = 3 quests, +1 per level above 1); Dispatch levels 2026-11-18 (guild_facilities 116)
 -- Slice 8 step 1 (USER RULING 2026-11-16 1:53 PM, guild_facilities 3/8/89): buildings open by
 -- Renown Rank ALONE (BuildingService); the Guild Hall no longer gates or caps any building.
 -- A building that is not open yet works at level 0.
@@ -183,6 +183,11 @@ local tavernBonusFor: number? = nil
 -- guildMenu.questBoard = { seed, battles, nonce }; old saves without it get a seed on first open.
 local QUEST_SEED_MAX = 2000000000
 local questBoard: { seed: number, battles: number, nonce: number }? = nil
+-- Quest board period counter (in-battle Escape C1, project_rules 285, 2026-11-18): moves on at EVERY
+-- return to base, also after an escape under 2000 CT that does not count as a battle (unit_progression
+-- 95), so the board still re-rolls while battlesCompleted stays put. questBoard.battles now stores this
+-- period (same save field). Saved as guildMenu.questBoardPeriod; old saves start at battlesCompleted.
+local boardPeriod = 0
 local recruitDefs: { [string]: any } = {} -- unitId -> { name, level, raceId, doctrineId, quality }
 local recruitOrder: { string } = {}
 
@@ -847,6 +852,7 @@ function GuildMenuService.Export(_pid: string)
 		tavernBonusFor = tavernBonusFor, -- Tavern map-object bonus pending for this pool (2026-11-06)
 		questBoard = if questBoard then { seed = questBoard.seed, battles = questBoard.battles,
 			nonce = questBoard.nonce } else nil, -- quest board fixed per refresh period (2026-11-17)
+		questBoardPeriod = boardPeriod, -- board period counter (Escape C1, 2026-11-18)
 		tavernHired = (function(): any?
 			-- Hired recruits of the current pool stay gone after a restart (2026-10-31).
 			if not tavernHired then return nil end
@@ -869,12 +875,15 @@ function GuildMenuService.Import(_pid: string, data: any)
 	tavernBonusFor = (tbf and tbf % 1 == 0 and tbf == battlesCompleted) and tbf or nil
 	-- Quest board period (2026-11-17): kept only if it is for the CURRENT period and valid;
 	-- anything else (old save, bad data, stale period) = none, so the next open makes a new seed.
+	-- Board period (Escape C1, 2026-11-18): old saves without it start at their battle count.
+	local bpd = tonumber(data.questBoardPeriod)
+	boardPeriod = if bpd and bpd % 1 == 0 and bpd >= 0 then bpd else battlesCompleted
 	questBoard = nil
 	local qbd = data.questBoard
 	if type(qbd) == "table" then
 		local s, bt, nc = tonumber(qbd.seed), tonumber(qbd.battles), tonumber(qbd.nonce)
 		if s and bt and nc and s % 1 == 0 and s >= 1 and s <= QUEST_SEED_MAX
-			and bt == battlesCompleted and nc == devShopNonce then
+			and bt == boardPeriod and nc == devShopNonce then
 			questBoard = { seed = s, battles = bt, nonce = nc }
 		end
 	end
@@ -945,13 +954,13 @@ end
 --- ends (or the dev shop refresh), then a new one. Saved, so a rejoin keeps the same board.
 function GuildMenuService.GetQuestBoardSeed(): number
 	local qb = questBoard
-	if qb ~= nil and qb.battles == battlesCompleted and qb.nonce == devShopNonce then
+	if qb ~= nil and qb.battles == boardPeriod and qb.nonce == devShopNonce then
 		return qb.seed
 	end
 	local seed = Random.new():NextInteger(1, QUEST_SEED_MAX)
-	questBoard = { seed = seed, battles = battlesCompleted, nonce = devShopNonce }
+	questBoard = { seed = seed, battles = boardPeriod, nonce = devShopNonce }
 	markDirty()
-	print(`[GuildMenuService] New quest board period | seed {seed} | battles {battlesCompleted}`)
+	print(`[GuildMenuService] New quest board period | seed {seed} | period {boardPeriod} | battles {battlesCompleted}`)
 	return seed
 end
 
@@ -1059,7 +1068,17 @@ end
 -- daysElapsed (2026-10-16): the number of DISPATCH DAYS this battle was worth
 -- (Main computes ceil(elapsed CT / 4000), min 1). Dispatch now counts down in days, not
 -- battle count; forwarded to ResolveReturns. Defaults to 1 if a caller omits it.
-function GuildMenuService.OnBattleCompleted(daysElapsed: number?, tavernBonus: boolean?)
+-- counted (in-battle Escape, project_rules 285 / unit_progression 95, 2026-11-18): false for an escape
+-- under 2000 CT. Then the WHOLE completed-battle increment is skipped (battle count, so the elite
+-- roll, Merchant restock and Dungeon choice window stay put; dispatch days; the Tavern/dispatch
+-- refresh), but the quest board period still moves on (C1). nil/true = a normal counted battle.
+function GuildMenuService.OnBattleCompleted(daysElapsed: number?, tavernBonus: boolean?, counted: boolean?)
+	boardPeriod += 1 -- every return to base re-rolls the quest board (C1)
+	markDirty()
+	if counted == false then
+		print(`[GuildMenuService] Escape under 2000 CT: battle not counted ({battlesCompleted} completed) | quest board period {boardPeriod}`)
+		return { returned = {} }
+	end
 	battlesCompleted += 1
 	if tavernBonus == true then
 		tavernBonusFor = battlesCompleted
@@ -2576,6 +2595,7 @@ local function applyBuildingLevel(name: string, level: number)
 	local before = buildingLevels[name] or DEFAULT_BUILDING_LEVEL
 	buildingLevels[name] = math.clamp(level, BUILDING_MIN_LEVEL, BUILDING_MAX_LEVEL)
 	tavernCache, merchantCache = nil, nil -- pool size / stock depend on level
+	if name == "Dispatch" then dispatchCache = nil end -- missions offered depend on the Dispatch level
 	-- Apothecary L9 charges / L10 slot change unit numbers: rebuild so they apply now.
 	if name == "Apothecary" then
 		for _, u in playerUnits() do EquipmentService.RebuildUnitStats(u) end
@@ -2740,6 +2760,7 @@ function GuildMenuService.Init(deps: any)
 			elseif name == "Apothecary" then return ApothecaryService.LevelInfo(level)
 			elseif name == "Runeforge" then return RuneforgeService.LevelInfo(level)
 			elseif name == "Crucible" then return CrucibleService.LevelInfo(level)
+			elseif name == "Dispatch" then return DispatchService.LevelInfo(level) -- guild_facilities 116
 			elseif name == "TrainingGrounds" then
 				local info = CardShopService.LevelInfo(level)
 				info.slot2 = level >= TrainingGroundsService.Slot2Level()
@@ -2764,6 +2785,8 @@ function GuildMenuService.Init(deps: any)
 	-- the rebuild inside FurnitureService.Init already sees the bonus.
 	EquipmentService.SetFurnitureProvider(FurnitureService.BonusFor)
 	DispatchService.SetFeeModifier(FurnitureService.DispatchFeeDelta)
+	-- Dispatch building level (guild_facilities 116): fee -3%/level, +1 mission at L4/L7/L10.
+	DispatchService.SetLevelProvider(function() return buildingLevels.Dispatch or DEFAULT_BUILDING_LEVEL end)
 	FurnitureService.Init({
 		getGuildHallLevel = function() return buildingLevels.GuildHall or DEFAULT_BUILDING_LEVEL end,
 		getRank = rankNow,

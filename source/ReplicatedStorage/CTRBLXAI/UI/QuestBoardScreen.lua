@@ -585,13 +585,15 @@ local function renderButtons(q: any?)
 	if not c then return end
 	local row = buttonRow()
 	local canAccept = q ~= nil and not accepting
-	Theme.MakeBarButton(row, "Accept quest", if canAccept then "Primary" else "Disabled", function()
+	-- 2026-11-18 user: accepting is a confirmation -> the shared check icon (was the "Accept quest" bar).
+	local acceptBtn = Theme.MakeIconButton(row, "Confirm", function()
 		local cc = ctx
 		if not canAccept or not q or not cc or cc.isBusy() or accepting then return end
 		accepting = true
 		render()
 		cc.onAccept(q)
-	end, { name = "Btn_AcceptQuest", minHeight = GuildScreen.ROW_H, layoutOrder = 1 })
+	end, { name = "Btn_AcceptQuest", size = UDim2.fromOffset(GuildScreen.ROW_H, GuildScreen.ROW_H), disabled = not canAccept })
+	acceptBtn.LayoutOrder = 1
 	local back = Theme.MakeIconButton(nil, "Back", function()
 		local cc = ctx
 		if cc then cc.requestBack(QuestBoardScreen.Close) end

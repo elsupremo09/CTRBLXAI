@@ -18,7 +18,7 @@
 local UserInputService = game:GetService("UserInputService")
 
 -- TEMPORARY (2026-11-18): drag logging for the "panel drops while dragging" test. Set false to silence.
-local DEV_DRAG_DEBUG = true
+local DEV_DRAG_DEBUG = false
 
 local DevToolsPanel = {}
 
@@ -42,7 +42,7 @@ local EXPANDED_H = 330
 local BTN_H = 18
 local CONFIRM_WINDOW = 2.5          -- seconds to tap a guarded button a second time
 local GOLD_REFRESH_DELAY = 0.6      -- DevCommand sends no answer; refresh the gold line after this
-local BUILDINGS = { "GuildHall", "QuestBoard", "Tavern", "Merchant", "Blacksmith", "Runeforge", "Crucible", "Apothecary", "TrainingGrounds", "Dungeon" }
+local BUILDINGS = { "GuildHall", "QuestBoard", "Tavern", "Merchant", "Blacksmith", "Runeforge", "Crucible", "Apothecary", "TrainingGrounds", "Dungeon", "Dispatch" } -- Dispatch levels 2026-11-18
 local LEVEL_MIN, LEVEL_MAX = 1, 10  -- guild_facilities: Max Level 10 (server clamps too)
 
 local COLOR_PANEL = Color3.fromRGB(28, 28, 38)

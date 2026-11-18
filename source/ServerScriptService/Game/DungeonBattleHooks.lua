@@ -614,8 +614,19 @@ function DungeonBattleHooks.CollectRunBag(ctx: any)
 					if okE then DungeonRemotes.SetLastResult(out)
 					else warn("[PostBattle] Dungeon boss end not recorded: " .. tostring(out)) end
 				end
+			elseif ctx.escaped == true then
+				-- In-battle Escape (project_rules 285 O6 / 264, 2026-11-18): the dungeon's early Escape.
+				-- The run fails, the whole Bag is lost; EXP, 75% of the run gold and normal materials kept.
+				local okX, resX = DungeonService.EndRun(PLAYER_ID, "EarlyEscape")
+				if not okX then
+					-- e.g. the run waits on a full-Bag pick (rule 279): end it as a wipeout instead.
+					warn("[PostBattle] Dungeon early escape refused (" .. tostring(resX) .. "): ending as a wipeout")
+					okX, resX = DungeonService.EndRun(PLAYER_ID, "Wipeout")
+				end
+				if okX then DungeonRemotes.SetLastResult(resX)
+				else warn("[PostBattle] Dungeon escape not recorded: " .. tostring(resX)) end
 			else
-				-- Full party KO (there is no escape mid-battle): the run ends as a wipeout. Paid out in step 4.
+				-- Full party KO: the run ends as a wipeout. Paid out in step 4.
 				local okW, res = DungeonService.EndRun(PLAYER_ID, "Wipeout")
 				if okW then DungeonRemotes.SetLastResult(res)
 				else warn("[PostBattle] Dungeon wipeout not recorded: " .. tostring(res)) end

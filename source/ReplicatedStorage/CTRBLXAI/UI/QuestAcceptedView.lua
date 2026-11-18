@@ -369,7 +369,7 @@ local function renderButtons(q: any, st: State)
 		-- Fee 0 / missing: no approved variant, so the existing note is kept.
 		local fee = tonumber(q.cancelFee)
 		local msg = if fee and fee > 0 then `Cancel this quest? You lose {math.floor(fee)} gold.` else TXT_ABANDON_NOTE
-		screen.Prompt(msg, label, "Primary", function()
+		screen.Prompt(msg, label, "Danger", function() -- 2026-11-18: destructive (darker check)
 			local c2 = ctx
 			if not c2 or cancelSent then return end
 			cancelSent = true

@@ -428,8 +428,9 @@ function Bag.OpenEscapeConfirm(ctx: Ctx, onEscape: () -> ())
 	grid.Parent = box
 	text(box, ESC.keep, ts(), Theme.Colors.TextSecondary).LayoutOrder = 4
 	local row = buttonRow(box, 5)
-	barBtn(row, ESC.no, "Secondary", 1, function() close() end)
-	barBtn(row, ESC.yes, "Primary", 2, function() close() onEscape() end)
+	-- 2026-11-18 user: shared Back + check icons (were the "Stay" / "Escape" bars).
+	iconBtn(row, "Back", 1, function() close() end)                   -- DG-ESCAPE-NO
+	iconBtn(row, "Confirm", 2, function() close() onEscape() end)     -- DG-ESCAPE-YES
 	o.Parent = ctx.gui -- parent first so the grid can size its tiles from the box
 	overlay = o
 	if #entries == 0 then
@@ -660,7 +661,7 @@ function Bag.OpenCourier(ctx: Ctx, ev: any)
 	renderCourier(ctx, ev)
 end
 
---- Run an open overlay's tap by name ("Tile_3", "Btn_1", "Btn_Back"...): the same path as a tap (Studio tests).
+--- Run an open overlay's tap by name ("Tile_3", "Btn_Back", "Btn_Confirm"...): the same path as a tap (Studio tests).
 function Bag.Tap(name: string): boolean
 	local f = taps[name]
 	if not f then return false end

@@ -177,10 +177,11 @@ render = function(run: any, units: any)
 	bl.VerticalAlignment = Enum.VerticalAlignment.Center
 	bl.Padding = UDim.new(0, 6)
 	bl.Parent = btns
-	local done = Theme.MakeBarButton(nil, "Done", "Primary", function() -- DG-EDIT-DONE
+	-- 2026-11-18 user: shared check icon (was the "Done" bar).
+	local done = Theme.MakeIconButton(nil, "Confirm", function() -- DG-EDIT-DONE
 		close()
 		c.onDone()
-	end, { name = "Btn_Done", minHeight = GuildScreen.ROW_H })
+	end, { name = "Btn_Done", size = UDim2.fromOffset(GuildScreen.ROW_H, GuildScreen.ROW_H) })
 	done.Parent = btns
 	btns.Parent = box
 

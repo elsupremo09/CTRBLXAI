@@ -130,6 +130,12 @@ function LoadoutScreen.BuildItemDetail(panel, item)
 	buildSoloDetailContent(panel, item)
 end
 
+-- Public (2026-11-18): the shared item detail header (portrait + name + tags + description),
+-- so the victory screen's card / consumable detail matches the Loadout look. Returns its height.
+function LoadoutScreen.BuildDetailHeader(panel, opts)
+	return buildDetailHeader(panel, opts)
+end
+
 local function clearChildren(frame)
 	if not frame then return end
 	for _, child in ipairs(frame:GetChildren()) do

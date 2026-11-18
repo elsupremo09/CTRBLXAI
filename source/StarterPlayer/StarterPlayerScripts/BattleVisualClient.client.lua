@@ -4703,7 +4703,8 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	lbl.BackgroundColor3 = Theme.Colors.Background; lbl.BackgroundTransparency = 0.2
 	lbl.Font = Theme.Font.Display; lbl.TextSize = Theme.Text.Title() + Theme.Scaled(12); lbl.BorderSizePixel = 0
 	lbl.TextColor3 = data.winner == "Player" and Theme.Colors.TextGold or Theme.Colors.Danger
-	lbl.Text = data.winner == "Player" and "VICTORY" or "DEFEAT"; lbl.Parent = gui
+	lbl.Text = if data.winner == "Player" then "VICTORY" elseif data.escaped == true then "ESCAPED" else "DEFEAT" -- ESCAPED: rule 286 (2026-11-18)
+	lbl.Parent = gui
 	Instance.new("UICorner", lbl).CornerRadius = Theme.CornerRadius.lg
 	task.delay(5, function()
 		if gui.Parent then gui:Destroy() end
@@ -5487,10 +5488,14 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	local _vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
 	-- This ScreenGui does not ignore the top-bar inset, so the usable height is the viewport
 	-- minus the inset (phone 382 - 58 = 324). 12 px margin top and bottom inside that.
-	local _availH = _vp.Y - game:GetService("GuiService"):GetGuiInset().Y
+	local _inset = game:GetService("GuiService"):GetGuiInset().Y
+	local _availH = _vp.Y - _inset
+	-- 2026-11-18 user: centred on the WHOLE screen (was centred below the top bar, so it leaned low).
+	-- This gui's y = 0 is the inset line, so the screen middle is 0.5 scale minus half the inset.
+	-- Height keeps 12 px clear of the top bar and the same gap at the bottom (symmetric).
 	local victoryPanel = Theme.MakePanel("VictoryPanel",
-		UDim2.new(0.70, 0, 0, math.max(160, math.min(_availH * 0.85, _availH - 24))),
-		UDim2.new(0.5, 0, 0.5, 0),
+		UDim2.new(0.70, 0, 0, math.max(160, math.min(_availH * 0.85, _vp.Y - 2 * (_inset + 12)))),
+		UDim2.new(0.5, 0, 0.5, -math.floor(_inset / 2)),
 		Vector2.new(0.5, 0.5),
 		gui)
 	victoryPanel.ClipsDescendants = true
@@ -5521,7 +5526,7 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	title.Font = Theme.Font.PrimaryBold
 	title.TextSize = Theme.Text.Title()
 	title.TextColor3 = Theme.Colors.TextGold
-	title.Text = if data.defeat then "DEFEAT" else "VICTORY!"
+	title.Text = if data.escaped == true then "ESCAPED" elseif data.defeat then "DEFEAT" else "VICTORY!" -- BTL-ESCAPE-RESULT (rule 286, 2026-11-18)
 	if data.defeat then title.TextColor3 = Theme.Colors.Danger end
 	title.TextXAlignment = Enum.TextXAlignment.Center
 	title.Parent = frame
@@ -6071,57 +6076,100 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 			dp.PaddingBottom = UDim.new(0, 10)
 
 			if item.isCard then
-				-- Non-equipment card detail (simple text layout)
-				local scrollArea = Instance.new("ScrollingFrame")
-				scrollArea.Size = UDim2.new(1, 0, 1, 0)
-				scrollArea.BackgroundTransparency = 1
-				scrollArea.BorderSizePixel = 0
-				scrollArea.ScrollBarThickness = 3
-				scrollArea.ScrollBarImageColor3 = Theme.Colors.TextSecondary
-				scrollArea.CanvasSize = UDim2.new(0, 0, 0, 0)
-				scrollArea.AutomaticCanvasSize = Enum.AutomaticSize.Y
-				scrollArea.Parent = detailFrame
-				local layout = Instance.new("UIListLayout", scrollArea)
-				layout.SortOrder = Enum.SortOrder.LayoutOrder
-				layout.Padding = UDim.new(0, 6)
-
+				-- Card / consumable detail (2026-11-18, user): the same layout as gear and the Loadout
+				-- consumable detail -- shared header (portrait tile, name, tags, description), divider,
+				-- then "label: value" rows. Existing labels only; no new wording.
 				local rc = Theme.GetRarityColor(item.rarity)
 				local CARD_TYPE_LABEL = {
 					SkillCard = "Skill Card", AugmentCard = "Augment Card",
 					Doctrine = "Doctrine", Consumable = "Consumable",
 				}
 				local catLabel = CARD_TYPE_LABEL[item.category] or "Card"
-
-				makeLabel(scrollArea, catLabel, { font = Theme.Font.Mono, textSize = Theme.Text.Tiny(), color = Theme.Colors.TextSecondary, order = 1 })
-				makeLabel(scrollArea, item.name or "Unknown", { font = Theme.Font.PrimaryBold, textSize = Theme.Text.Title(), color = rc, order = 2 })
-				makeLabel(scrollArea, item.rarity or "Common", { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = rc, order = 3 })
-
-				-- Description
-				if item.desc and item.desc ~= "" then
-					local descLbl = makeLabel(scrollArea, item.desc, {
-						font = Theme.Font.Primary, textSize = Theme.Text.Body(),
-						color = Theme.Colors.TextPrimary, order = 5, wrap = true,
-					})
-					descLbl.Size = UDim2.new(1, 0, 0, 60)
-					descLbl.AutomaticSize = Enum.AutomaticSize.Y
-				end
-
-				-- Category-specific fields
-				if item.category == "SkillCard" then
-					if item.mpCost then makeLabel(scrollArea, "MP Cost: " .. item.mpCost, { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 10 }) end
-					if item.element then makeLabel(scrollArea, "Element: " .. item.element, { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 11 }) end
-				elseif item.category == "AugmentCard" then
-					if item.family then makeLabel(scrollArea, "Family: " .. item.family, { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 10 }) end
-				elseif item.category == "Doctrine" then
-					if item.passiveName then makeLabel(scrollArea, "Passive: " .. item.passiveName, { font = Theme.Font.PrimaryBold, textSize = Theme.Text.Small(), color = Theme.Colors.TextGold, order = 10 }) end
-					if item.passiveEffect then
-						local peLbl = makeLabel(scrollArea, item.passiveEffect, { font = Theme.Font.Primary, textSize = Theme.Text.Tiny(), color = Theme.Colors.TextSecondary, order = 11, wrap = true })
-						peLbl.Size = UDim2.new(1, 0, 0, 40)
-						peLbl.AutomaticSize = Enum.AutomaticSize.Y
+				local def: any = nil
+				if item.category == "Consumable" and item.cardId then
+					local content = ReplicatedStorage:FindFirstChild("Content")
+					local mod = content and content:FindFirstChild("ConsumableData")
+					if mod then
+						local okD, CD = pcall(require, mod)
+						if okD and CD and CD.GetById then def = CD.GetById(item.cardId) end
 					end
-				elseif item.category == "Consumable" then
-					if item.conCategory then makeLabel(scrollArea, "Type: " .. item.conCategory, { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 10 }) end
-					if item.maxCharges then makeLabel(scrollArea, "Charges: " .. item.maxCharges, { font = Theme.Font.Mono, textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary, order = 11 }) end
+				end
+				local tags = { item.rarity or "Common", catLabel }
+				if item.category == "Consumable" and item.conCategory then table.insert(tags, tostring(item.conCategory)) end
+				if item.category == "SkillCard" and item.element then table.insert(tags, tostring(item.element)) end
+				local hdrH = LoadoutScreen.BuildDetailHeader(detailFrame, {
+					iconText = string.sub(item.name or "?", 1, 1),
+					iconImage = (item.icon and string.find(item.icon, "rbxassetid://")) and item.icon or nil,
+					iconBg = rc, iconBgTransparency = 0.75,
+					iconColor = Theme.Colors.TextPrimary, iconStrokeColor = rc,
+					name = item.name or "Unknown",
+					tags = tags,
+					description = item.desc or "",
+				})
+				local div = Instance.new("Frame")
+				div.Size = UDim2.new(1, 0, 0, 1)
+				div.Position = UDim2.new(0, 0, 0, hdrH)
+				div.BackgroundColor3 = Theme.Colors.Border
+				div.BorderSizePixel = 0
+				div.Parent = detailFrame
+				-- Rows scroll below the header so a long list never runs off a phone-sized panel.
+				local rowsArea = Instance.new("ScrollingFrame")
+				rowsArea.Name = "DetailRows"
+				rowsArea.Size = UDim2.new(1, 0, 1, -(hdrH + 6))
+				rowsArea.Position = UDim2.new(0, 0, 0, hdrH + 6)
+				rowsArea.BackgroundTransparency = 1
+				rowsArea.BorderSizePixel = 0
+				rowsArea.ScrollBarThickness = 3
+				rowsArea.ScrollBarImageColor3 = Theme.Colors.TextSecondary
+				rowsArea.CanvasSize = UDim2.new()
+				rowsArea.AutomaticCanvasSize = Enum.AutomaticSize.Y
+				rowsArea.Parent = detailFrame
+				local rowsLayout = Instance.new("UIListLayout", rowsArea)
+				rowsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+				rowsLayout.Padding = UDim.new(0, 2)
+				local rowN = 0
+				-- Same row look as the Loadout consumable detail (label 40% secondary, value bold).
+				local function addStatRow(label: string, value: any)
+					if value == nil or value == "" then return end
+					rowN += 1
+					local row = Instance.new("Frame")
+					row.Size = UDim2.new(1, -4, 0, 16)
+					row.BackgroundTransparency = 1
+					row.LayoutOrder = rowN
+					row.Parent = rowsArea
+					makeLabel(row, label, { size = UDim2.new(0.4, 0, 1, 0), font = Theme.Font.Primary,
+						textSize = Theme.Text.Small(), color = Theme.Colors.TextSecondary })
+					local vl = makeLabel(row, tostring(value), { size = UDim2.new(0.58, 0, 1, 0), pos = UDim2.new(0.42, 0, 0, 0),
+						font = Theme.Font.PrimaryBold, textSize = Theme.Text.Small(), color = Theme.Colors.TextPrimary })
+					vl.TextTruncate = Enum.TextTruncate.AtEnd
+				end
+				local function addWrapLine(text: any, color: Color3, bold: boolean?)
+					if text == nil or text == "" then return end
+					rowN += 1
+					local lbl = makeLabel(rowsArea, tostring(text), { size = UDim2.new(1, -4, 0, 0),
+						font = if bold then Theme.Font.PrimaryBold else Theme.Font.Primary,
+						textSize = Theme.Text.Small(), color = color, wrap = true, order = rowN })
+					lbl.AutomaticSize = Enum.AutomaticSize.Y
+					lbl.TextYAlignment = Enum.TextYAlignment.Top
+				end
+				if item.category == "Consumable" then
+					addStatRow("Charges:", (def and def.maxCharges) or item.maxCharges)
+					if def then
+						addStatRow("RT Cost:", def.rtCost)
+						addStatRow("Range:", def.range)
+						addStatRow("Target:", def.targetRules)
+						addStatRow("Pattern:", def.pattern)
+						addStatRow("Duration:", def.duration or "Instant")
+						addStatRow("Scaling:", def.scalingBasis)
+					end
+				elseif item.category == "SkillCard" then
+					addStatRow("MP Cost:", item.mpCost)
+					addStatRow("Element:", item.element)
+				elseif item.category == "AugmentCard" then
+					addStatRow("Family:", item.family)
+				elseif item.category == "Doctrine" then
+					if item.passiveName then addWrapLine("Passive: " .. tostring(item.passiveName), Theme.Colors.TextGold, true) end
+					addWrapLine(item.passiveEffect, Theme.Colors.TextSecondary)
 				end
 			else
 				-- Equipment detail (existing path)

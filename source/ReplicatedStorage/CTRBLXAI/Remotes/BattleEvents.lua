@@ -153,6 +153,9 @@ local EVENT_NAMES = {
 	-- NEW item badge (USER RULING 2026-11-08): C->S instanceId of an item the player opened/picked.
 	"MarkItemSeen",
 	"BlackMarketOpened", -- S->C: { objectId, items = {{ slot, name, level, rarity, price, bought, detail }}, gold }
+	-- In-battle Escape (project_rules 285/286, user approved 2026-11-18 1:50 PM)
+	"EscapeState",       -- S->C: { available = bool?, allowed = bool? } button shown / tappable (server decides)
+	"EscapeBattle",      -- C->S: {} player confirmed Escape (server re-checks everything, once per battle)
 }
 
 -- RemoteFunctions for Slice 4D management contracts
@@ -204,6 +207,8 @@ local FUNCTION_NAMES = {
 	"PeekChannel",
 	-- Black Market buy (v2 build step 6b, 2026-11-01): (objectId, slot) -> { ok, slot?, gold?, name?, error? }
 	"BlackMarketBuy",
+	-- In-battle Escape popup numbers (2026-11-18): () -> { ok, early, dungeon, fee, renownLoss }
+	"RequestEscapeInfo",
 }
 
 local BattleEvents = {}

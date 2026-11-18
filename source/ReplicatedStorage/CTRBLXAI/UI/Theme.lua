@@ -1278,6 +1278,9 @@ function Theme.IconKindForText(text: string?): string?
 	return ICON_FOR_TEXT[string.upper(text)]
 end
 
+-- Darker tint for destructive confirm icons (Discard / Recall / Abandon quest; user 2026-11-18).
+Theme.DestructiveIconTint = Color3.fromRGB(205, 120, 110)
+
 -- Square icon ImageButton. kind = "Back" | "Confirm" | "Options".
 -- opts: size (UDim2; height is kept, width follows height), position, anchor, name, disabled.
 function Theme.MakeIconButton(parent: Instance?, kind: string, onClick: (() -> ())?, opts: any?): ImageButton
@@ -1292,7 +1295,9 @@ function Theme.MakeIconButton(parent: Instance?, kind: string, onClick: (() -> (
 	btn.BackgroundTransparency = 1
 	btn.BorderSizePixel = 0
 	btn.AutoButtonColor = false
-	btn.ImageColor3 = Color3.new(1, 1, 1)
+	-- opts.tint (2026-11-18): base image colour, e.g. Theme.DestructiveIconTint for destructive confirms.
+	local baseColor: Color3 = opts.tint or Color3.new(1, 1, 1)
+	btn.ImageColor3 = baseColor
 	local aspect = Instance.new("UIAspectRatioConstraint")
 	aspect.AspectRatio = 1
 	aspect.AspectType = Enum.AspectType.FitWithinMaxSize
@@ -1305,11 +1310,11 @@ function Theme.MakeIconButton(parent: Instance?, kind: string, onClick: (() -> (
 	else
 		-- Tap-only (user ruling 2026-11-06): no hover colour. Press visuals below fire for touch too.
 		btn.MouseButton1Down:Connect(function()
-			btn.ImageColor3 = Color3.fromRGB(180, 180, 180)
+			btn.ImageColor3 = baseColor:Lerp(Color3.new(0, 0, 0), 0.3)
 			btn.Position = btn.Position + UDim2.new(0, 0, 0, 2)
 		end)
 		btn.MouseButton1Up:Connect(function()
-			btn.ImageColor3 = Color3.new(1, 1, 1)
+			btn.ImageColor3 = baseColor
 			btn.Position = btn.Position - UDim2.new(0, 0, 0, 2)
 		end)
 		if onClick then btn.Activated:Connect(onClick) end

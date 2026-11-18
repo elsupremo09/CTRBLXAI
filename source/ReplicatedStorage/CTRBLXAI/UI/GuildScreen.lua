@@ -495,16 +495,22 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 		layout.Padding = UDim.new(0, 8)
 		layout.SortOrder = Enum.SortOrder.LayoutOrder
 		layout.Parent = row
-		local half = UDim2.new(0.5, -4, 1, 0)
-		Theme.MakeBarButton(row, cancelText or "Cancel", "Secondary", function()
+		-- 2026-11-18 user: confirmations use the shared icon pair (Back = cancel, check = confirm),
+		-- like Loadout and the dungeon Bag popups. confirmText / cancelText stay as the buttons'
+		-- accessibility names only; the message itself says what the check does.
+		local iconSize = UDim2.fromOffset(GuildScreen.ROW_H, GuildScreen.ROW_H)
+		local cancelBtn = Theme.MakeIconButton(row, "Back", function()
 			self.ClosePrompt()
-		end, { name = "Btn_PromptCancel", size = half, autoWidth = false,
-			minHeight = GuildScreen.ROW_H, layoutOrder = 1 })
-		Theme.MakeBarButton(row, confirmText, confirmStyle, function()
+		end, { name = "Btn_PromptCancel", size = iconSize })
+		cancelBtn.LayoutOrder = 1
+		cancelBtn:SetAttribute("Label", cancelText or "Cancel")
+		local okBtn = Theme.MakeIconButton(row, "Confirm", function()
 			self.ClosePrompt()
 			onConfirm()
-		end, { name = "Btn_PromptConfirm", size = half, autoWidth = false,
-			minHeight = GuildScreen.ROW_H, layoutOrder = 2 })
+		end, { name = "Btn_PromptConfirm", size = iconSize, disabled = confirmStyle == "Disabled",
+			tint = if confirmStyle == "Tertiary" or confirmStyle == "Danger" then Theme.DestructiveIconTint else nil })
+		okBtn.LayoutOrder = 2
+		okBtn:SetAttribute("Label", confirmText)
 		row.Parent = box
 		box.Parent = overlay
 		overlay.Parent = gui -- parent last (NET-004)

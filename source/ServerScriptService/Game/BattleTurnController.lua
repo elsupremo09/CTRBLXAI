@@ -157,6 +157,12 @@ function BattleTurnController.ForceEndTurn()
 	pendingCommand = { actionType = "Wait" }
 	if commandReceived then commandReceived:Fire() end
 end
+-- In-battle Escape (project_rules 285 O2, 2026-11-18): true only while a player unit's turn prompt
+-- is open (inside waitForPlayerCommand). Not during animations, the enemy turn, or the facing /
+-- tile / steal / choice pickers (those run after the command arrived, when _previewUnit is nil).
+function BattleTurnController.IsAwaitingPlayerCommand(): boolean
+	return _previewUnit ~= nil and _previewUnit.side == "Player" and _previewUnit.isAlive == true
+end
 
 -- Battle already decided (dev Instant Win/Lose sets the phase straight to BattleOver, 2026-11-09).
 -- The player prompt waits below (facing, siege direction/tile, steal and choice lists) have no
@@ -859,6 +865,7 @@ local function waitForPlayerCommand(unit, playerObj)
 		playerObj.Name, unit.name, unit.currentAp, #prompt.skills, #prompt.moveCandidates
 	))
 	BattleEvents.PlayerTurnPrompt:FireClient(playerObj, prompt)
+	BattleEvents.EscapeState:FireClient(playerObj, { allowed = true }) -- Escape tappable while this prompt is open (O2)
 
 	-- Wait for response
 	pendingCommand = nil
@@ -869,6 +876,7 @@ local function waitForPlayerCommand(unit, playerObj)
 		if elapsed > PLAYER_TURN_TIMEOUT then
 			print("[Main] Player turn TIMEOUT — auto-waiting.")
 			_previewUnit = nil
+			BattleEvents.EscapeState:FireClient(playerObj, { allowed = false })
 			return { actionType = "Wait" }
 		end
 		commandReceived.Event:Wait()
@@ -877,6 +885,7 @@ local function waitForPlayerCommand(unit, playerObj)
 	local cmd = pendingCommand
 	pendingCommand = nil
 	_previewUnit = nil
+	BattleEvents.EscapeState:FireClient(playerObj, { allowed = false }) -- command in: Escape dims until the next prompt
 	return cmd
 end
 

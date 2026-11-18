@@ -26,11 +26,11 @@ local MAX_LEVEL = 10
 -- Display order of the Guild Hall list (open rows keep this order; locked rows go to the
 -- bottom in unlock order).
 local ORDER = table.freeze({
-	"GuildHall", "QuestBoard", "Tavern", "Merchant", "Blacksmith", "Apothecary",
+	"GuildHall", "QuestBoard", "Tavern", "Merchant", "Blacksmith", "Dispatch", "Apothecary",
 	"Runeforge", "TrainingGrounds", "Crucible", "Dungeon",
 })
 
--- guild_facilities 8 / 89: unlock Rank per building (screens included: Dispatch has no levels).
+-- guild_facilities 8 / 89: unlock Rank per building. Dispatch is a leveled building since 2026-11-18 (guild_facilities 116).
 local UNLOCK_RANK: { [string]: number } = table.freeze({
 	GuildHall = 1, QuestBoard = 1, Tavern = 1, Merchant = 1,
 	Blacksmith = 3, Dispatch = 5, Apothecary = 8, Runeforge = 12,
@@ -56,6 +56,12 @@ local COSTS: { [string]: { number } } = table.freeze({
 	Apothecary      = { 157, 177, 211, 259, 320, 395, 484, 586, 702, 832 },
 	TrainingGrounds = { 234, 275, 344, 440, 564, 715, 894, 1100, 1334, 1595 },
 	Dungeon         = { 234, 275, 344, 440, 564, 715, 894, 1100, 1334, 1595 },
+	Dispatch        = { 157, 177, 211, 259, 320, 395, 484, 586, 702, 832 }, -- Apothecary curve, guild_facilities 117 (L2-L10 = 3,966g)
+})
+
+-- Building description in the Guild Hall inspector (approved text, guild_facilities 113).
+local DESCRIPTION: { [string]: string } = table.freeze({
+	Dispatch = "Send units on missions while you fight. Higher levels lower the fee and offer more missions.", -- DISPATCH-BLD-DESC
 })
 
 -- Renown Rank gate per level (USER RULINGS 2026-11-17 5:18 / 5:23 PM, guild_facilities 115, slope 8x):
@@ -339,6 +345,11 @@ local function nextLines(name: string, from: number, to: number): { string }
 			unlockAt(out, b.typeUnlock, to, CARD_TYPES, CARD_TYPE_LABEL)
 			if b.doctrines and not a.doctrines then unlock(out, "Doctrines") end -- approved (guild_facilities 78)
 			if b.slot2 and not a.slot2 then unlock(out, "2nd augment slot (Lv 80+ units)") end -- approved
+		elseif name == "Dispatch" then
+			if a.fee ~= nil and b.fee ~= nil and a.fee ~= b.fee then
+				table.insert(out, `Dispatch fee {a.fee} → {b.fee} gold`) -- approved GH-NEXT-DISPATCH-FEE
+			end
+			change(out, "Missions offered", a.offers, b.offers) -- approved GH-NEXT-DISPATCH-OFFERS (only when it changes)
 		elseif name == "Crucible" then
 			change(out, "Items needed", a.needed, b.needed) -- approved
 			if a.boost ~= b.boost and a.boost ~= nil and b.boost ~= nil then
@@ -360,6 +371,7 @@ local function rowFor(name: string, gold: number): any
 	local row: any = {
 		name = name, display = DISPLAY[name] or name, level = lvl, maxLevel = MAX_LEVEL,
 		open = open, unlockRank = BuildingService.UnlockRank(name), canUpgrade = false,
+		description = DESCRIPTION[name],
 	}
 	if not open then
 		row.reason = `Opens at Renown Rank {row.unlockRank}` -- approved GH-ROW-LOCKED

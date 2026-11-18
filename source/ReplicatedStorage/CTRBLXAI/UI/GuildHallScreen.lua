@@ -306,6 +306,9 @@ local function renderBuildings()
 	if sel then
 		add(tostring(sel.display or sel.name), Theme.Text.Heading(), Theme.Colors.TextGold, true)
 		add(`Level {sel.level} / {sel.maxLevel}`, Theme.Text.Body(), Theme.Colors.TextPrimary)
+		if type(sel.description) == "string" and sel.description ~= "" then -- e.g. DISPATCH-BLD-DESC
+			add(sel.description, Theme.Text.Small(), Theme.Colors.TextSecondary)
+		end
 		local lines = sel.nextLines
 		if type(lines) == "table" and #lines > 0 then
 			add("Next level", Theme.Text.Body(), Theme.Colors.TextGold, true) -- GH-NEXT-HEAD

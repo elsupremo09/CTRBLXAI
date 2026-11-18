@@ -68,8 +68,9 @@ function Bar.ShowCurseOffer(offer: any, deps: any, onAnswer: (boolean) -> ())
 		{ "Curses can't be blocked or removed.", nil, Theme.Colors.TextSecondary },                             -- CP-4
 	}
 	deps.popup("CurseOffer", lines, {
-		{ text = "Take both", style = "Primary", onTap = function() deps.closeOverlay(); onAnswer(true) end },  -- CP-TAKE
-		{ text = "Leave both", style = "Secondary", onTap = function() deps.closeOverlay(); onAnswer(false) end }, -- CP-LEAVE
+		-- 2026-11-18 user: shared icon pair. Back = Leave both (CP-LEAVE), check = Take both (CP-TAKE).
+		{ icon = "Back", onTap = function() deps.closeOverlay(); onAnswer(false) end },    -- CP-LEAVE
+		{ icon = "Confirm", onTap = function() deps.closeOverlay(); onAnswer(true) end },  -- CP-TAKE
 	})
 end
 

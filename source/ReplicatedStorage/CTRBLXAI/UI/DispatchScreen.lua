@@ -545,6 +545,7 @@ local function openHelp(fee: number)
 		`Each mission costs {fee} gold. Your Renown Rank sets how many missions can run at once.`,
 		"At least one unit must stay home. Units away still recover HP after your victories.",
 		"You can recall a mission early from the Out now list. The units return with no reward.",
+		"Upgrade the Dispatch at the Guild Hall for lower fees and more missions.", -- DISPATCH-HELP-UPGRADE (approved 2026-11-18)
 	}
 	for i, b in bullets do
 		addLine(box, 1 + i, `•  {b}`, Theme.Text.Body(), Theme.Colors.TextPrimary)
@@ -605,7 +606,7 @@ local function recall(st: any)
 	local mid: string = u.awayMissionId
 	local name = awayMissionName(u)
 	screen.Prompt(`Recall {name}? All units on it return now. No reward, and the fee is not refunded.`,
-		"Recall", "Primary", function()
+		"Recall", "Danger", function() -- 2026-11-18: destructive (darker check)
 			local recallFn = c.recall
 			local res = if recallFn then recallFn(mid) else nil
 			if res then

@@ -147,6 +147,9 @@ local viewModeButtons     = nil   -- top-left toggle frame
 local viewModeViewBtn     = nil   -- reference for visual update
 local currentCameraMode   = "Isometric"  -- Isometric | Top | Side (drives View dropdown)
 local viewModeDropdown    = nil   -- the open dropdown frame, if any
+-- In-battle Escape (project_rules 285, 2026-11-18): Battlefield menu button + server-driven state.
+local escapeBtn           = nil   -- the Escape menu button (rebuilt with the HUD)
+local escapeState         = { shown = false, allowed = false } -- EscapeState.available / .allowed
 
 -- Padding constant
 local PAD = 6
@@ -672,21 +675,20 @@ local function ensureRoot()
 	local function closeBfMenu() bfMenu.Visible = false end
 	bfBtn.Activated:Connect(function() bfMenu.Visible = not bfMenu.Visible end)
 
-	local function menuButton(name: string, text: string, order: number, color: Color3, icon: string?): TextButton
-		local b = Instance.new("TextButton")
-		b.Name = name
-		b.Size = UDim2.fromOffset(BF_W, toggleH())
-		b.BackgroundColor3 = Theme.Colors.Surface
-		b.BackgroundTransparency = 0.15
-		b.AutoButtonColor = false
-		b.Font = Theme.Font.PrimaryBold; b.TextSize = Theme.Text.Body()
-		b.TextColor3 = color
-		b.TextXAlignment = Enum.TextXAlignment.Left
-		b.Text = text; b.BorderSizePixel = 0
-		b.LayoutOrder = order; b.ZIndex = 31
-		Instance.new("UICorner", b).CornerRadius = Theme.CornerRadius.sm
-		local bp = Instance.new("UIPadding", b); bp.PaddingLeft = UDim.new(0, 8)
-		Theme.AddLeadIcon(b, icon, MENU_ICON_PX) -- battle menu icons (2026-11-15) replace the emoji prefixes
+	local function menuButton(name: string, text: string, order: number, color: Color3, icon: string?): ImageButton
+		-- 2026-11-18 user: same bar art as the action buttons (Move / Skills / Wait), not flat rows.
+		-- `color` is unused now: these labels start white with a black outline (2026-10-08);
+		-- the View label is recoloured gold in view mode via its Label child (see toggleViewMode).
+		local _ = color
+		local b = Theme.MakeTabButton(nil, text, "Inactive", nil, {
+			name = name, size = UDim2.fromOffset(BF_W, toggleH()), layoutOrder = order,
+			textSize = Theme.Text.Body(), icon = icon, iconSize = math.min(MENU_ICON_PX, math.max(12, toggleH() - 4)),
+			iconReserve = icon == nil, -- text-only Escape lines up with the iconed rows (2026-11-18)
+			textAlign = Enum.TextXAlignment.Left })
+		b.ZIndex = 31
+		for _, d in b:GetDescendants() do
+			if d:IsA("GuiObject") then d.ZIndex = 31 end
+		end
 		b.Parent = bfMenu
 		return b
 	end
@@ -702,6 +704,19 @@ local function ensureRoot()
 	-- "Map" renamed "Mission" (user 2026-11-10); opens the quest/loot/gold snapshot.
 	local mapBtn = menuButton("MapDetailsToggle", "Mission", 3, Theme.Colors.TextSecondary, Theme.BattleButtonIcons.Mission)
 	mapBtn.Activated:Connect(function() closeBfMenu(); BattleHUD.ToggleMapDetails() end)
+
+	-- In-battle Escape (project_rules 285 O1/O2, 2026-11-18): 4th menu button on the same bar art, no new
+	-- icon (standing rule). Shown only when the server says this battle allows it (never the Test Arena,
+	-- O8) and dimmed except while a player unit's turn prompt is open. The server re-checks everything.
+	escapeBtn = menuButton("EscapeToggle", "Escape", 4, Theme.Colors.TextSecondary, nil) -- BTL-ESCAPE-BTN (rule 286)
+	escapeBtn.Visible = escapeState.shown
+	Theme.SetTabState(escapeBtn, if escapeState.allowed then "Inactive" else "Disabled")
+	local myEscapeBtn = escapeBtn
+	myEscapeBtn.Activated:Connect(function()
+		if myEscapeBtn:GetAttribute("TabState") == "Disabled" then return end
+		closeBfMenu()
+		if BattleHUD.OnEscapeRequested then BattleHUD.OnEscapeRequested() end
+	end)
 
 	-- Apply stored layout if UIController already calculated one
 	if currentLayout then
@@ -3061,8 +3076,9 @@ end
 function BattleHUD.SetCameraMode(mode)
 	currentCameraMode = mode
 	if _G.CTRBLXAI_SetViewMode then _G.CTRBLXAI_SetViewMode(mode) end
-	if viewModeViewBtn then
-		viewModeViewBtn.Text = mode
+	if viewModeViewBtn then -- bar button since 2026-11-18: the text lives on its "Label" child
+		local lbl = viewModeViewBtn:FindFirstChild("Label")
+		if lbl and lbl:IsA("TextLabel") then lbl.Text = mode end
 	end
 	-- Side view disallows free-view: if it was on, turn it off.
 	if mode == "Side" and isViewMode then
@@ -3142,8 +3158,8 @@ function BattleHUD.ToggleViewMode()
 	BattleHUD.Render(nil)
 	-- Update button visual
 	if viewModeViewBtn then
-		viewModeViewBtn.BackgroundTransparency = isViewMode and 0 or 0.15
-		viewModeViewBtn.TextColor3 = isViewMode and Theme.Colors.TextGold or Theme.Colors.TextPrimary
+		local lbl = viewModeViewBtn:FindFirstChild("Label") -- bar button: colour goes on its Label child
+		if lbl and lbl:IsA("TextLabel") then lbl.TextColor3 = isViewMode and Theme.Colors.TextGold or Theme.Colors.TextPrimary end
 	end
 end
 
@@ -3171,6 +3187,17 @@ local missionOutsideConn: RBXScriptConnection? = nil
 function BattleHUD.CloseMapDetails()
 	if missionOutsideConn then missionOutsideConn:Disconnect(); missionOutsideConn = nil end
 	if mapDetailsPanel then mapDetailsPanel:Destroy(); mapDetailsPanel = nil end
+end
+
+-- In-battle Escape (2026-11-18): server EscapeState -> button shown (available) / tappable (allowed).
+-- nil leaves that part unchanged. BattleHUD.OnEscapeRequested is set by BattleEscape.client.
+function BattleHUD.SetEscapeState(available: boolean?, allowed: boolean?)
+	if available ~= nil then escapeState.shown = available == true end
+	if allowed ~= nil then escapeState.allowed = allowed == true end
+	if escapeBtn and escapeBtn.Parent then
+		escapeBtn.Visible = escapeState.shown
+		Theme.SetTabState(escapeBtn, if escapeState.allowed then "Inactive" else "Disabled")
+	end
 end
 
 function BattleHUD.ToggleMapDetails()
@@ -3951,6 +3978,7 @@ function BattleHUD.Cleanup()
 	_tileAnchor = nil
 	if viewModeDropdown then viewModeDropdown:Destroy() end
 	viewModeButtons = nil; viewModeViewBtn = nil; viewModeDropdown = nil; currentCameraMode = "Isometric"
+	escapeBtn = nil; escapeState.shown = false; escapeState.allowed = false -- in-battle Escape (2026-11-18)
 end
 
 -- Raise/lower the HUD ScreenGui's DisplayOrder. Used by the deployment phase, whose

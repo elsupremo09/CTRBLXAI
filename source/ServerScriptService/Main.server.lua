@@ -1456,6 +1456,84 @@ BattleEvents.RewardContinue.OnServerEvent:Connect(function(player)
 	rewardContinueSignal:Fire()
 end)
 
+-- IN-BATTLE ESCAPE (project_rules 285/286, unit_progression 95; user approved 2026-11-18 1:50 PM).
+-- Own server-checked requests (C4), not the unchecked PlayerCommand channel: only the session
+-- player, only while the battle loop runs and a player unit's turn prompt is open (O2), never in
+-- the Test Arena (O8), once per battle, rate limited. The escape ends the battle through the same
+-- path as the dev Instant Lose (phase BattleOver, winner Enemy, ForceEndTurn) WITHOUT killing any
+-- unit (O5), so the normal defeat path runs in the BUG-013 order (rewards -> save -> BattleEnded).
+-- One table (not several locals): this chunk is close to the local-variable limit.
+local EscapeCtl = { EARLY_CT = 2000, requested = false, lastAt = 0, infoAt = 0 }
+function EscapeCtl.check(plr: Player): (boolean, string?)
+	if plr ~= player then return false, "not the session player" end
+	if not battleRunning or not state or not activeQuest then return false, "no battle in progress" end
+	if activeQuest.isTestArena then return false, "Test Arena" end
+	if EscapeCtl.requested then return false, "already escaping" end
+	if BattleCoordinator.GetPhase(state) == "BattleOver" then return false, "battle already decided" end
+	if not (BattleTurnController and BattleTurnController.IsAwaitingPlayerCommand
+		and BattleTurnController.IsAwaitingPlayerCommand()) then
+		return false, "not a player turn prompt"
+	end
+	return true, nil
+end
+-- Popup numbers, server-computed (O3/O4): early = under 2000 CT; fee = the board Cancel fee clamped
+-- to the balance (only when early, never in a dungeon); renownLoss = the 3x base penalty floored at
+-- the start of the Rank, i.e. what RenownService.Award will really take (0 in dungeons, Q5).
+function EscapeCtl.info(): any
+	local early = (tonumber(state.ct) or 0) < EscapeCtl.EARLY_CT
+	local dungeon = activeQuest.isDungeon == true
+	local fee, renownLoss = 0, 0
+	if not dungeon then
+		if early then
+			local okF, f = pcall(QuestGenerator.CancelFee, activeQuest)
+			local haveGold = (CurrencyService.GetBalance(PLAYER_ID) or {}).gold or 0
+			fee = math.min(if okF then math.max(0, math.floor(tonumber(f) or 0)) else 0, haveGold)
+		end
+		pcall(function()
+			local RRules = require(Game:WaitForChild("RenownRules"))
+			local Renown = require(Game:WaitForChild("RenownService"))
+			local kind = RRules.QuestKind(activeQuest.difficulty, activeQuest.questType == "Boss",
+				activeQuest.isEliteEncounter == true, false, false)
+			Renown.EnsureConverted(PLAYER_ID) -- WARN-1 fix 2026-11-18: same as the real charge, so old saves show the true loss
+			local have = Renown.GetProgress(PLAYER_ID)
+			renownLoss = math.min(RRules.FailPenalty(kind), tonumber(have) or 0)
+		end)
+	end
+	return { early = early, dungeon = dungeon, fee = fee, renownLoss = renownLoss }
+end
+BattleEvents.RequestEscapeInfo.OnServerInvoke = function(plr)
+	local now = os.clock()
+	if now - EscapeCtl.infoAt < 0.25 then return { ok = false } end
+	EscapeCtl.infoAt = now
+	if not EscapeCtl.check(plr) then return { ok = false } end
+	local out = EscapeCtl.info()
+	out.ok = true
+	return out
+end
+BattleEvents.EscapeBattle.OnServerEvent:Connect(function(plr)
+	local now = os.clock()
+	if now - EscapeCtl.lastAt < 0.5 then return end
+	EscapeCtl.lastAt = now
+	local ok, why = EscapeCtl.check(plr)
+	if not ok then
+		warn("[Escape] Request ignored: " .. tostring(why))
+		return
+	end
+	EscapeCtl.requested = true
+	-- WARN-2 fix 2026-11-18: the fee quoted now (same numbers the popup showed) is the most the real
+	-- charge may take, so the defeat gold paid later can't raise it above what the player saw.
+	EscapeCtl.quotedFee = EscapeCtl.info().fee
+	state.escaped = true
+	local ct = tonumber(state.ct) or 0
+	print(string.format("[Escape] Party escaped at CT %d (%s)", ct,
+		if ct < EscapeCtl.EARLY_CT then "under 2000 CT: battle not counted" else "battle counted"))
+	BattleEvents.EscapeState:FireClient(player, { allowed = false })
+	BattleVisualBroadcaster.Log("info", "Your party escaped.") -- BTL-ESCAPE-LOG (rule 286)
+	state.phase = "BattleOver"
+	state.winner = "Enemy"
+	BattleTurnController.ForceEndTurn()
+end)
+
 do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-checked on EVERY call.
 	BattleEvents.DevCommand.OnServerEvent:Connect(function(player, cmd)
 		if not DevAccess.IsAllowed(player) then
@@ -5002,6 +5080,9 @@ end)
 	end
 
 	battleRunning = true  -- turn loop starting: dev battle commands allowed (2026-11-08)
+	EscapeCtl.quotedFee = nil
+	EscapeCtl.requested = false -- in-battle Escape: once per battle (2026-11-18); no button in the Test Arena (O8)
+	BattleEvents.EscapeState:FireClient(player, { available = not (activeQuest and activeQuest.isTestArena), allowed = false })
 	while BattleCoordinator.GetPhase(state) ~= "BattleOver" do
 		local activeUnit = BattleCoordinator.AdvanceClock(state)
 		-- Dev god mode (2026-11-06): show the start-of-turn HP/MP refill on the client.
@@ -5466,6 +5547,7 @@ end)
 		end
 	end
 	battleRunning = false  -- turn loop finished: dev battle commands are ignored again (2026-11-08)
+	BattleEvents.EscapeState:FireClient(player, { available = false, allowed = false }) -- Escape button off
 
 	--------------------------------------------------
 	-- RESULT
@@ -5886,8 +5968,9 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 		-- but never drops a Rank (RenownService reports the amount actually lost). The Daily
 		-- Contract pays as its own type and difficulty; the Test Arena (dev) pays nothing.
 		-- Exploration (250, paid after the 3rd win) is not reachable yet: its explore path must pass
-		-- isExploration = true and award only on the 3rd win. ESCAPE HOOK: when Escape is built it
-		-- must reach this block as a failed quest (success = false) - loot_progression 90.
+		-- isExploration = true and award only on the 3rd win. ESCAPE HOOK (built 2026-11-18, project_rules
+		-- 285): an in-battle Escape reaches this block as a failed quest (winner Enemy, so
+		-- isQualifyingVictory = false -> success = false) - loot_progression 90.
 		if activeQuest and not activeQuest.isTestArena and not activeQuest.isDungeon then -- no Renown in dungeons (Q5)
 			local okR, err = pcall(function()
 				local Renown = require(Game:WaitForChild("RenownService"))
@@ -6278,7 +6361,22 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 	-- DUNGEON RUN BAG (project_rules 263/264): this battle's gold, materials, gear and cards go into the run bag.
 	DungeonBattleHooks.CollectRunBag({ playerId = PLAYER_ID, isDungeonBattle = isDungeonBattle, quest = activeQuest,
 		isQualifyingVictory = isQualifyingVictory, balanceBefore = dgBalanceBefore, itemsBefore = dgItemsBefore,
-		cardsBefore = dgCardsBefore, bossFixed = dgBossFixed, cardInventory = cardInventory })
+		cardsBefore = dgCardsBefore, bossFixed = dgBossFixed, cardInventory = cardInventory,
+		escaped = state.escaped == true }) -- in-battle Escape in a dungeon = early run Escape (O6, 2026-11-18)
+
+	-- IN-BATTLE ESCAPE (project_rules 285 O4 / unit_progression 95, 2026-11-18): an escape under 2000 CT
+	-- doesn't count as a battle and also pays the quest's cancel fee (the board Cancel rule, clamped to
+	-- the balance; never in a dungeon or the Test Arena). Charged here, BEFORE the save below.
+	state.escapeCounted = state.escaped ~= true or (tonumber(state.ct) or 0) >= EscapeCtl.EARLY_CT
+	if state.escaped == true and not state.escapeCounted and activeQuest and not activeQuest.isDungeon
+		and not activeQuest.isTestArena then
+		local okF, fee = pcall(QuestGenerator.CancelFee, activeQuest)
+		local haveGold = (CurrencyService.GetBalance(PLAYER_ID) or {}).gold or 0
+		local charged = math.min(if okF then math.max(0, math.floor(tonumber(fee) or 0)) else 0, haveGold)
+		if type(EscapeCtl.quotedFee) == "number" then charged = math.min(charged, EscapeCtl.quotedFee) end -- = popup amount
+		if charged > 0 then CurrencyService.Debit(PLAYER_ID, { gold = charged }) end
+		print(string.format("[Escape] Cancel fee charged: %d gold (fee %s, balance %d)", charged, tostring(fee), haveGold))
+	end
 
 	-- Step 3: Save to DataStore (now includes committed rewards)
 	doSave()
@@ -6286,7 +6384,7 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 	-- END BATTLE LAST (persistent_hp_mp_rules authored order: victory -> finish action +
 	-- triggered resolutions -> commit rewards -> persist/recovery -> save -> END). The
 	-- BattleEnded end-signal must fire only AFTER rewards are committed and state is saved.
-	BattleVisualBroadcaster.BattleEnded(winner or "None", state.units)
+	BattleVisualBroadcaster.BattleEnded(winner or "None", state.units, { escaped = state.escaped == true })
 
 	-- Slice 6 Guild menu "return to base" bookkeeping (game_flow id 20), AFTER the
 	-- protected commit -> save -> BattleEnded order above (BUG-013 order unchanged):
@@ -6296,8 +6394,10 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 	-- DB 2026-10-16). This battle was worth ceil(elapsed CT / 4000) days, minimum 1.
 	local daysElapsed = math.max(1, math.ceil((state.ct or 0) / 4000))
 	-- Tavern map object (user ruling 2026-11-06): +3 recruit choices next refresh, WIN ONLY.
+	-- Escape under 2000 CT (unit_progression 95): counted = false skips the whole completed-battle step.
+	if state.escapeCounted == false then daysElapsed = 0 end
 	local dispatchReturns = GuildMenuService.OnBattleCompleted(daysElapsed,
-		isQualifyingVictory and state.tavernBonusEarned == true)
+		isQualifyingVictory and state.tavernBonusEarned == true, state.escapeCounted ~= false)
 	-- Battle recruits (project_rules id 133): alive recruited Neutrals are purified and
 	-- join the roster on ANY battle end. Runs after the protected BUG-013 order above.
 	GuildMenuService.AdoptBattleRecruits(state.units)
@@ -6413,7 +6513,8 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 		BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary, gold = battleGoldEarned,
 			mercury = battleMercuryEarned, daily = dailyContractResult, boss = bossRewardResult, elite = eliteRewardResult,
 			dispatch = dispatchSummary, activeDispatch = activeDispatch, daysElapsed = daysElapsed, defeat = not isQualifyingVictory,
-			objectives = objectivesScreen, xp = xpScreen, renown = renownResult, goal = goalScreen })
+			objectives = objectivesScreen, xp = xpScreen, renown = renownResult, goal = goalScreen,
+			escaped = state.escaped == true }) -- "ESCAPED" title (BTL-ESCAPE-RESULT, rule 286)
 		rewardContinueSignal.Event:Wait()
 		print("[PostBattle] Player acknowledged rewards")
 	end

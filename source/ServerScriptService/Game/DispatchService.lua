@@ -187,13 +187,60 @@ end
 local _feeModifier: (() -> number)? = nil
 function DispatchService.SetFeeModifier(fn: (() -> number)?) _feeModifier = fn end
 
-function DispatchService.GetFeeGold(): number
-	local delta = 0
-	if _feeModifier then
-		local ok, d = pcall(_feeModifier)
-		if ok then delta = math.floor(tonumber(d) or 0) end
+-- Dispatch building level (guild_facilities 116/117, USER RULING 2026-11-18 11:28 AM, Package A).
+-- Injected (GuildMenuService owns building levels); nil-safe = Level 1.
+local DISPATCH_MAX_LEVEL = 10
+local FEE_DISCOUNT_PCT_PER_LEVEL = 3 -- -3% per level above L1 (50 -> 36 at L10)
+local BASE_OFFERS = 5                -- one mission per tier 1-5
+local EXTRA_OFFER_LEVELS = table.freeze({ 4, 7, 10 }) -- +1 offer each (5 -> 8)
+local EXTRA_OFFER_MIN_TIER, EXTRA_OFFER_MAX_TIER = 3, 5 -- the extra offers are Tier 3-5
+local _levelProvider: (() -> number)? = nil
+function DispatchService.SetLevelProvider(fn: (() -> number)?) _levelProvider = fn end
+
+local function clampLevel(level: any): number
+	return math.clamp(math.floor(tonumber(level) or 1), 1, DISPATCH_MAX_LEVEL)
+end
+
+function DispatchService.GetLevel(): number
+	if not _levelProvider then return 1 end
+	local ok, l = pcall(_levelProvider)
+	return if ok then clampLevel(l) else 1
+end
+
+local function feeDelta(): number
+	if not _feeModifier then return 0 end
+	local ok, d = pcall(_feeModifier)
+	return if ok then math.floor(tonumber(d) or 0) else 0
+end
+
+--- Fee at a Dispatch level, before furniture: floor(50 x (100 - 3 x (level - 1)) / 100).
+function DispatchService.BaseFeeForLevel(level: number): number
+	local l = clampLevel(level)
+	return math.floor(DISPATCH_FEE_GOLD * (100 - FEE_DISCOUNT_PCT_PER_LEVEL * (l - 1)) / 100)
+end
+
+--- Fee the player pays at a Dispatch level: level fee, then War Table furniture (-5), never below 0.
+function DispatchService.FeeForLevel(level: number): number
+	return math.max(0, DispatchService.BaseFeeForLevel(level) + feeDelta())
+end
+
+--- Missions offered at a Dispatch level: 5, +1 at L4, L7 and L10.
+function DispatchService.OffersForLevel(level: number): number
+	local l = clampLevel(level)
+	local n = BASE_OFFERS
+	for _, at in EXTRA_OFFER_LEVELS do
+		if l >= at then n += 1 end
 	end
-	return math.max(0, DISPATCH_FEE_GOLD + delta)
+	return n
+end
+
+--- Numbers for the Guild Hall next-level lines (guild_facilities 113).
+function DispatchService.LevelInfo(level: number): { fee: number, offers: number }
+	return { fee = DispatchService.FeeForLevel(level), offers = DispatchService.OffersForLevel(level) }
+end
+
+function DispatchService.GetFeeGold(): number
+	return DispatchService.FeeForLevel(DispatchService.GetLevel())
 end
 
 --------------------------------------------------
@@ -311,6 +358,15 @@ function DispatchService.OfferMissions(playerId: string, mapLevel: number, seed:
 		-- FLAG-D1 placeholder: one mission per tier, duration = tier.
 		specs = {}
 		for tier = MIN_TIER, MAX_TIER do
+			table.insert(specs, { tier = tier, duration = tier })
+		end
+		-- Dispatch level offers (guild_facilities 116): +1 Tier 3-5 mission at L4, L7, L10. The tier
+		-- comes from the board seed, so the same board always shows the same extra missions.
+		local extra = DispatchService.OffersForLevel(DispatchService.GetLevel()) - #specs
+		local span = EXTRA_OFFER_MAX_TIER - EXTRA_OFFER_MIN_TIER + 1
+		for k = 1, math.max(0, extra) do
+			local tier = math.clamp(EXTRA_OFFER_MIN_TIER + (math.abs(math.floor(baseSeed)) + k * 104729) % span,
+				MIN_TIER, MAX_TIER)
 			table.insert(specs, { tier = tier, duration = tier })
 		end
 	end

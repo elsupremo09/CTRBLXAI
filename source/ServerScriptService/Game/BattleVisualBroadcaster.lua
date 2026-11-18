@@ -1000,7 +1000,8 @@ function BattleVisualBroadcaster.TurnEnded(unit, nextRt)
 	task.wait(PACE.TurnEnd)
 end
 
-function BattleVisualBroadcaster.BattleEnded(winner, units)
+-- extra (2026-11-18, in-battle Escape): optional { escaped = true } -> the client shows "ESCAPED".
+function BattleVisualBroadcaster.BattleEnded(winner, units, extra)
 	BattleVisualBroadcaster.FlushHeldPushes()  -- Job 1: nothing held is lost at battle end
 	local serialized = {}
 	for _, unit in ipairs(units) do
@@ -1010,6 +1011,7 @@ function BattleVisualBroadcaster.BattleEnded(winner, units)
 	BattleEvents.BattleEnded:FireAllClients({
 		winner = winner,
 		units  = serialized,
+		escaped = type(extra) == "table" and extra.escaped == true or nil,
 	})
 	flushPendingKo()  -- R7: a held KO line still goes before the result line
 	logEntry("info", `Battle over: {tostring(winner)} wins.`)

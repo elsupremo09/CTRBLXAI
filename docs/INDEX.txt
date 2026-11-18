@@ -1850,3 +1850,16 @@ Rows: project_rules 258, 265, 267, 270, 272 (renamed "Events (Approved)"), 275 (
 - 2026-11-18 12:56 AM (USER RULING, BUILT in BattleVisualBroadcaster.lua, not Studio-tested, not committed): project_rules 275 - battle log weather/crisis change line now "Battle Field Condition: {name}." (old "Weather: {name}." kept as replaced); "Weather clears." unchanged. Mirrored to Game Rules sheet 01. Backups: docs\backups\*.pre-bfcondlog-20261118_0056.bak
 
 2026-11-18 9:02 AM — USER RULING: label "Battle Field Condition" renamed "Condition" (format "Condition: {condition}"; battle log "Condition: {name}."). Applies to dungeon header/list cards (project_rules 275) and Quest Board inspector/accepted view (game_flow 39/41). Old lines kept as replaced. BUILT 2026-11-18 (code, not Studio-tested, not committed).
+
+
+2026-11-18 11:28 AM USER RULING — Dispatch upgrade levels, Package A 'Wider board' (Simulator PASS). Dispatch is now a leveled building, max L10, opens Rank 5: new guild_facilities 116 (rules) + 117 (cost table, Apothecary curve 3,966g); guild_facilities 8/89 updated; approved text added to guild_facilities 113; economy_framework 9 'Dispatch = 40' replaced (dispatch pays no gold); OPEN note on unit_progression 95 (battle-end day count vs. escape rule mismatch). APPROVED, NOT BUILT. Backups *_before_20261118_dispatchlv.*
+
+
+2026-11-18 12:12 PM USER RULING — unit_progression 95 OPEN note RESOLVED: escape before 2000 CT does not count a dispatch day and does not refresh the dispatch board (no free rerolls). Written rule stands; code fix in progress, NOT BUILT. Mirrored to Game Rules sheet 21 row 80. Backups docs\backups\*.pre-up95-20261118_1212.bak
+
+2026-11-18 note correction: unit_progression 95 notes (DB + Game Rules '21 Unit Progression' E80) — earlier 12:12 PM 'code mismatch / code fix in progress' withdrawn; game has no in-battle Escape, code already matches. 2000 CT escape rule to be built with Escape. Rule text unchanged. Backups .bak_20261118_125810.
+
+
+2026-11-18 1:50 PM USER APPROVAL — In-battle Escape (O1-O8 + 9 text lines, Simulator PASS, no number changes). New project_rules 285 (rules O1-O8 + build requirements C1 board period counter, C4 own checked request, save order, 2 Tester items) and 286 (text BTL-ESCAPE-BTN..LOG). Updated loot_progression 90, unit_progression 95 (+ O4 cancel fee), game_flow 20 note, game_flow 28 (+ O4 cancel fee), project_rules 264 (O6 dungeon mapping). APPROVED, NOT BUILT. Mirrored to Game Rules sheets 01 (rows 263, 284, 285), 10 (row 89), 21 (rows [65, 80]). Backups *pre-20261118_escape* / CTRBLXAI_Game_Rules_before_20261118_escape.xlsx.
+
+2026-11-18 2:01 PM USER RULINGS — In-battle Escape notes added to project_rules 285/286 (notes only): (1) escape popup line 3 'half the gold' hidden in dungeon battles (dungeon escape keeps 75% run gold), SB-44 bag line still shown; (2) UGC outfit battle charges still tick on an uncounted escape - accepted. Status still approved; built code-only, Studio pending.

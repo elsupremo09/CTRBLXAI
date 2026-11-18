@@ -451,8 +451,8 @@ local function confirmEnter()
 		{ `Enter {card.biome} with {n} units? No healing or refills between battles.` }, -- DG-START-CONFIRM
 		{ "You start with 0 silver." }, -- SB-10 (approved 2026-11-15 9:09 PM)
 	}, {
-		{ text = "Stay", style = "Secondary", onTap = closeOverlay },                   -- DG-ESCAPE-NO
-		{ text = "Enter", style = "Primary", onTap = function()                          -- DG-START
+		{ icon = "Back", onTap = closeOverlay },                   -- DG-ESCAPE-NO (2026-11-18: shared Back icon)
+		{ icon = "Confirm", onTap = function()                     -- DG-START (2026-11-18: shared check icon)
 			closeOverlay()
 			local ids: { string } = {}
 			for id in picked do table.insert(ids, id) end
@@ -601,14 +601,15 @@ peekRoom = function(n: any)
 	local btns: { any } = {}
 	local legal = false
 	for _, id in st.run.next do if id == n.id then legal = true end end
+	-- 2026-11-18 user: entering a room is a confirmation -> Back, then the shared check icon (was "Go").
+	table.insert(btns, { icon = "Back", onTap = closeOverlay })
 	if legal then
 		local nid = n.id
-		table.insert(btns, { text = "Go", style = "Primary", onTap = function()                     -- DG-PEEK-GO (NEEDS APPROVAL)
+		table.insert(btns, { icon = "Confirm", onTap = function()                     -- DG-PEEK-GO
 			closeOverlay()
 			if act({ action = "Move", nodeId = nid }) then render(); arrive(nodeOf(nid)) end
 		end })
 	end
-	table.insert(btns, { icon = "Back", onTap = closeOverlay })
 	popup("RoomPeek", lines, btns)
 	MapView.Preview(n.id) -- dim open rooms not reachable through this one (cleared by closeOverlay)
 end
@@ -750,8 +751,10 @@ local function buildButtons()
 		Theme.MakeBarButton(row, "Escape", "Primary", confirmLeave,                 -- DG-ESCAPE-BTN (APPROVED 2026-11-17 10:33 AM, was "Leave")
 			{ name = "Btn_Leave", minHeight = GuildScreen.ROW_H, layoutOrder = 4, size = barW, autoWidth = false })
 	elseif view == "party" then
-		Theme.MakeBarButton(row, "Enter", if pickedCount() > 0 then "Primary" else "Disabled", confirmEnter, -- DG-START
-			{ name = "Btn_Enter", minHeight = GuildScreen.ROW_H, layoutOrder = 3 })
+		-- 2026-11-18 user: shared check icon (was the "Enter" bar); dimmed until a unit is picked.
+		local enterBtn = Theme.MakeIconButton(row, "Confirm", confirmEnter, { -- DG-START
+			name = "Btn_Enter", size = UDim2.fromOffset(GuildScreen.ROW_H, GuildScreen.ROW_H), disabled = pickedCount() < 1 })
+		enterBtn.LayoutOrder = 3
 	end
 	iconButton(row, "Back", "Btn_BACK", 5, function()
 		if view == "party" then

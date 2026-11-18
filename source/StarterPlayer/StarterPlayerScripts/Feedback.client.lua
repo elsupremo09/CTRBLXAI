@@ -264,8 +264,9 @@ local function openPopup()
 	end
 
 	local btnRow = hRow(box, 6, Enum.HorizontalAlignment.Right)
-	Theme.MakeBarButton(btnRow, TXT.send, "Primary", send, { name = "Btn_FeedbackSend", minHeight = BTN, layoutOrder = 1 })
-	Theme.MakeIconButton(btnRow, "Back", closePopup, { name = "Btn_FeedbackBack", size = UDim2.fromOffset(BTN, BTN) }).LayoutOrder = 2
+	-- 2026-11-18 user: popups confirm with the shared icon pair (Back, then the check), not a "Send" bar.
+	Theme.MakeIconButton(btnRow, "Back", closePopup, { name = "Btn_FeedbackBack", size = UDim2.fromOffset(BTN, BTN) }).LayoutOrder = 1
+	Theme.MakeIconButton(btnRow, "Confirm", send, { name = "Btn_FeedbackSend", size = UDim2.fromOffset(BTN, BTN) }).LayoutOrder = 2
 
 	ov.Parent = gui
 end

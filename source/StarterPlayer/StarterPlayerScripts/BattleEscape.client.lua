@@ -1,0 +1,163 @@
+--!strict
+-- BattleEscape.client.lua
+-- CTRBLXAI | In-battle Escape: confirm popup + button state (project_rules 285/286,
+-- unit_progression 95; USER APPROVED 2026-11-18 1:50 PM, all recommendations O1-O8).
+--
+-- The button itself is the 4th Battlefield menu entry (BattleHUD, same bar art as Move / Wait).
+-- The server decides everything: EscapeState { available, allowed } shows / dims the button
+-- (never in the Test Arena; tappable only while a player unit's turn prompt is open),
+-- RequestEscapeInfo returns the popup numbers (actual Renown loss, cancel fee, early flag), and
+-- EscapeBattle is re-checked on the server (session player, prompt open, once per battle).
+-- This script only shows the shared confirm popup (GuildScreen.MakeModalBox, Back + the red
+-- destructive check) and sends the request. It never changes game state itself.
+--
+-- APPROVED TEXT (rule 286, verbatim): (2) "Escape the battle?", (3) "Your units keep their EXP and
+-- half the gold. All loot is lost and the quest fails.", (4) "Renown {−n}", (5) "Too early to
+-- count as a battle: dispatch and shop timers won't move.", (6) "You also pay the {fee} gold
+-- cancel fee.", (7) SB-44 "Everything in the bag is lost if the run fails." (dungeon battles).
+-- (1) "Escape", (8) "ESCAPED" and (9) "Your party escaped." live in BattleHUD /
+-- BattleVisualClient / the server log.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local WAIT = 10
+local BTN = 44 -- touch target (Theme.MinSize.TouchTarget)
+local DISPLAY_ORDER = 180 -- above the battle HUD and inspector (140-160), below Feedback (200)
+
+local TXT = {
+	title = "Escape the battle?",                                                              -- BTL-ESCAPE-TITLE
+	body = "Your units keep their EXP and half the gold. All loot is lost and the quest fails.", -- BTL-ESCAPE-BODY
+	early = "Too early to count as a battle: dispatch and shop timers won't move.",           -- BTL-ESCAPE-EARLY
+	dungeon = "Everything in the bag is lost if the run fails.",                              -- SB-44 (BTL-ESCAPE-DUNGEON)
+}
+local function renownText(n: number): string return `Renown −{n}` end                 -- BTL-ESCAPE-RENOWN ("−0" when the floor absorbs it)
+local function feeText(n: number): string return `You also pay the {n} gold cancel fee.` end -- BTL-ESCAPE-FEE
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui", WAIT)
+local root = ReplicatedStorage:WaitForChild("CTRBLXAI", WAIT)
+local uiFolder = root and root:WaitForChild("UI", WAIT)
+local remotes = root and root:WaitForChild("Remotes", WAIT)
+local themeModule = uiFolder and uiFolder:WaitForChild("Theme", WAIT)
+local guildScreenModule = uiFolder and uiFolder:WaitForChild("GuildScreen", WAIT)
+local hudModule = uiFolder and uiFolder:WaitForChild("BattleHUD", WAIT)
+local eventsModule = remotes and remotes:WaitForChild("BattleEvents", WAIT)
+if not (playerGui and themeModule and guildScreenModule and hudModule and eventsModule) then
+	warn("[BattleEscape] Required modules missing; Escape not available")
+	return
+end
+local Theme: any = (require :: any)(themeModule)
+local GuildScreen: any = (require :: any)(guildScreenModule)
+local BattleHUD: any = (require :: any)(hudModule)
+local BattleEvents: any = (require :: any)(eventsModule)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "BattleEscapeGui"
+gui.DisplayOrder = DISPLAY_ORDER
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true -- MakeModalBox works in true screen coordinates
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = playerGui
+
+-- Server-driven button state, cached here so a HUD rebuild picks it up again.
+local available = false
+local allowed = false
+local overlay: any = nil
+local busy = false
+
+local function closePopup()
+	if overlay then overlay:Destroy() end
+	overlay = nil
+end
+
+local function label(parent: Instance, text: string, size: number, color: Color3, bold: boolean?, order: number)
+	local l = Instance.new("TextLabel")
+	l.BackgroundTransparency = 1
+	l.Text = text
+	l.TextSize = size
+	l.Font = if bold then Theme.Font.PrimaryBold else Theme.Font.Primary
+	l.TextColor3 = color
+	l.TextWrapped = true
+	l.TextXAlignment = Enum.TextXAlignment.Center
+	l.Size = UDim2.new(1, 0, 0, 0)
+	l.AutomaticSize = Enum.AutomaticSize.Y
+	l.LayoutOrder = order
+	l.ZIndex = 22
+	l.Parent = parent
+end
+
+local function openPopup(info: any)
+	closePopup()
+	local ov, box = GuildScreen.MakeModalBox("EscapeConfirm", { maxW = 420, widthScale = 0.8 })
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 6)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = box
+	local body = Theme.Text.Body()
+	label(box, TXT.title, Theme.Text.Heading(), Theme.Colors.TextGold, true, 1)
+	if info.dungeon ~= true then -- user 2026-11-18 2:01 PM: line 3 hidden in dungeon battles (run keeps 75% gold)
+		label(box, TXT.body, body, Theme.Colors.TextPrimary, false, 2)
+	end
+	if info.dungeon == true then
+		label(box, TXT.dungeon, body, Theme.Colors.Danger, true, 3) -- no Renown in dungeons (Q5)
+	else
+		label(box, renownText(math.max(0, math.floor(tonumber(info.renownLoss) or 0))), body, Theme.Colors.Danger, true, 3)
+		local fee = math.max(0, math.floor(tonumber(info.fee) or 0))
+		if info.early == true and fee > 0 then
+			label(box, feeText(fee), body, Theme.Colors.Danger, false, 5) -- O4: only under 2000 CT
+		end
+	end
+	if info.early == true then
+		label(box, TXT.early, Theme.Text.Small(), Theme.Colors.TextSecondary, false, 4)
+	end
+
+	local row = Instance.new("Frame")
+	row.Name = "Buttons"
+	row.BackgroundTransparency = 1
+	row.BorderSizePixel = 0
+	row.Size = UDim2.new(1, 0, 0, BTN)
+	row.LayoutOrder = 6
+	row.ZIndex = 22
+	local rl = Instance.new("UIListLayout")
+	rl.FillDirection = Enum.FillDirection.Horizontal
+	rl.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	rl.VerticalAlignment = Enum.VerticalAlignment.Center
+	rl.Padding = UDim.new(0, 8)
+	rl.SortOrder = Enum.SortOrder.LayoutOrder
+	rl.Parent = row
+	-- Shared icon pair (rulings 2026-11-18 10:00 / 10:22 AM): Back = stay, red check = escape.
+	Theme.MakeIconButton(row, "Back", closePopup, { name = "Btn_Back", size = UDim2.fromOffset(BTN, BTN) }).LayoutOrder = 1
+	Theme.MakeIconButton(row, "Confirm", function()
+		closePopup()
+		BattleEvents.EscapeBattle:FireServer({})
+	end, { name = "Btn_Confirm", size = UDim2.fromOffset(BTN, BTN), tint = Theme.DestructiveIconTint }).LayoutOrder = 2
+	row.Parent = box
+
+	overlay = ov
+	ov.Parent = gui -- parent last (NET-004)
+end
+
+-- Button tap (BattleHUD): ask the server for the popup numbers, then show the confirm.
+BattleHUD.OnEscapeRequested = function()
+	if busy or overlay or not (available and allowed) then return end
+	busy = true
+	local ok, info = pcall(function() return BattleEvents.RequestEscapeInfo:InvokeServer() end)
+	busy = false
+	if not ok or type(info) ~= "table" or info.ok ~= true then return end -- e.g. the prompt just closed
+	if not allowed then return end -- the turn moved on while we waited
+	openPopup(info)
+end
+
+BattleEvents.EscapeState.OnClientEvent:Connect(function(data: any)
+	if type(data) ~= "table" then return end
+	if data.available ~= nil then available = data.available == true end
+	if data.allowed ~= nil then allowed = data.allowed == true end
+	if not (available and allowed) then closePopup() end -- prompt closed (timeout / battle over)
+	if BattleHUD.SetEscapeState then BattleHUD.SetEscapeState(available, allowed) end
+end)
+
+BattleEvents.BattleEnded.OnClientEvent:Connect(function()
+	available, allowed = false, false
+	closePopup()
+end)

@@ -358,13 +358,14 @@ local function altarConfirm(ev: any, u: any, kind: string, cur: any, pick: any, 
 	local w = text(box, "This change is permanent. The new tier may be lower.", Theme.Text.Body(), Theme.Colors.TextPrimary)
 	w.LayoutOrder = 2
 	local row = buttonRow(box, 3)
-	local stay = Theme.MakeBarButton(nil, "Stay", "Secondary", function() renderAltar(ev) end, { name = "Btn_Stay", minHeight = GuildScreen.ROW_H })
+	-- 2026-11-18 user: shared Back + check icons (were the "Stay" / "Replace" bars).
+	local stay = Theme.MakeIconButton(nil, "Back", function() renderAltar(ev) end, { name = "Btn_Stay", size = UDim2.fromOffset(GuildScreen.ROW_H, GuildScreen.ROW_H) })
 	stay.LayoutOrder = 1
 	stay.Parent = row
-	local rep2 = Theme.MakeBarButton(nil, "Replace", "Primary", function()
+	local rep2 = Theme.MakeIconButton(nil, "Confirm", function()
 		local res = c.act({ action = "AltarChoose", unitId = u.id, kind = kind, index = index })
 		if res and res.eventResult then renderResult(ev, res.eventResult) end
-	end, { name = "Btn_Replace", minHeight = GuildScreen.ROW_H })
+	end, { name = "Btn_Replace", size = UDim2.fromOffset(GuildScreen.ROW_H, GuildScreen.ROW_H) })
 	rep2.LayoutOrder = 2
 	rep2.Parent = row
 	o.Parent = c.gui -- parent last (NET-004)
@@ -447,10 +448,11 @@ renderResult = function(ev: any, res: any)
 	end
 	local row = buttonRow(box, 100)
 	local fight = res and res.fight
-	local b = Theme.MakeBarButton(nil, "Continue", "Primary", function()               -- EV-UI-CONT
+	-- 2026-11-18 user: "Continue" is a Confirm label (Theme ICON_FOR_TEXT) -> shared check icon.
+	local b = Theme.MakeIconButton(nil, "Confirm", function()               -- EV-UI-CONT
 		close()
 		if fight then c.onFight() else c.onDone() end
-	end, { name = "Btn_Continue", minHeight = GuildScreen.ROW_H })
+	end, { name = "Btn_Continue", size = UDim2.fromOffset(GuildScreen.ROW_H, GuildScreen.ROW_H) })
 	b.Parent = row
 	o.Parent = c.gui
 	overlay = o
