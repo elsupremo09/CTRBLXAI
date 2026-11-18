@@ -40,6 +40,11 @@ local Theme = require(
 	ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 		:WaitForChild("UI", 10):WaitForChild("Theme", 10)
 )
+-- Quest main-goal text (build step 8): approved goal lines for the defeat screen + target tag.
+local _qgtOk, QuestGoalText = pcall(function()
+	return require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10):WaitForChild("QuestGoalText", 10))
+end)
+if not _qgtOk then QuestGoalText = nil end
 -- Loadout tile level label + grid spacing for the victory loot grid (2026-11-17).
 local _icOk, InventoryControls = pcall(function()
 	return require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10):WaitForChild("InventoryControls", 10))
@@ -3351,6 +3356,76 @@ end)
 -- Map Details (2026-10-17): the HUD's Map button calls this bridge; we ask the
 -- server for the read-only battle snapshot. The response handler below renders
 -- it via BattleHUD. Nothing is rolled/committed server-side.
+-- QUEST MAIN-GOAL TRACKER (game_flow 41, build step 8, 2026-11-17). The server pushes the goal
+-- snapshot (QuestGoalService.Describe) when it changes; the HUD tracker shows it, and the Capture
+-- target / Protect NPC get a "Target" tag over their HP bar plus an outline (Roblox Highlight).
+local goalData: any = nil
+local goalTagged: { [any]: { tag: Instance?, hl: Instance? } } = {}
+local function clearGoalTags()
+	for _, t in pairs(goalTagged) do
+		if t.tag then t.tag:Destroy() end
+		if t.hl then t.hl:Destroy() end
+	end
+	table.clear(goalTagged)
+end
+local function applyGoalTags(d: any)
+	if not QuestGoalText or type(d) ~= "table" then return end
+	local ids = {}
+	if d.id == "Capture" and d.targetId ~= nil and not d.captured then table.insert(ids, d.targetId) end
+	if d.id == "Protect" and d.npcId ~= nil and not d.npcFell then table.insert(ids, d.npcId) end
+	local want = {}
+	for _, id in ipairs(ids) do want[id] = true end
+	for id, t in pairs(goalTagged) do -- drop tags no longer wanted (captured / fell)
+		if not want[id] then
+			if t.tag then t.tag:Destroy() end
+			if t.hl then t.hl:Destroy() end
+			goalTagged[id] = nil
+		end
+	end
+	for _, id in ipairs(ids) do
+		local tok = unitTokens[id]
+		if tok and tok.bar and not (goalTagged[id] and goalTagged[id].tag and goalTagged[id].tag.Parent) then
+			local lbl = Instance.new("TextLabel")
+			lbl.Name = "GoalTargetTag"
+			lbl.BackgroundTransparency = 1
+			lbl.AnchorPoint = Vector2.new(0.5, 1)
+			lbl.Position = UDim2.new(0.5, 0, 0, -1)
+			lbl.Size = UDim2.fromOffset(60, 12)
+			lbl.Font = Theme.Font.PrimaryBold
+			lbl.TextSize = 11
+			lbl.TextColor3 = Theme.Colors.TextGold
+			lbl.TextStrokeTransparency = 0.3
+			lbl.Text = QuestGoalText.TargetTag -- "Target" (approved, game_flow 41 line 20)
+			lbl.ZIndex = 5
+			lbl.Parent = tok.bar
+			local hl: Instance? = nil
+			local adornee = tok.model or tok.part
+			if adornee then
+				local h = Instance.new("Highlight")
+				h.Name = "GoalTargetHighlight"
+				h.FillTransparency = 1
+				h.OutlineColor = Theme.Colors.TextGold
+				h.OutlineTransparency = 0.2
+				h.DepthMode = Enum.HighlightDepthMode.Occluded
+				h.Parent = adornee
+				hl = h
+			end
+			goalTagged[id] = { tag = lbl, hl = hl }
+		end
+	end
+end
+BattleEvents.QuestGoalUpdate.OnClientEvent:Connect(function(d)
+	if type(d) ~= "table" or d.cleared then
+		goalData = nil
+		clearGoalTags()
+		if BattleHUD.SetGoal then BattleHUD.SetGoal(nil) end
+		return
+	end
+	goalData = d
+	if BattleHUD.SetGoal then BattleHUD.SetGoal(d) end
+	applyGoalTags(d)
+end)
+
 _G.CTRBLXAI_RequestMapDetails = function()
 	BattleEvents.MapDetailsRequest:FireServer()
 end
@@ -3552,6 +3627,11 @@ end
 
 BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	if SoundController then SoundController.StopAllChannels() end
+	-- Goal tracker (step 8): the first push can arrive before the HUD / unit tokens exist.
+	if goalData then
+		if BattleHUD.SetGoal then BattleHUD.SetGoal(goalData) end
+		task.defer(applyGoalTags, goalData)
+	end
 	UnitAnimController.StartFidgets()  -- random alternate idles for every unit (2026-10-28)
 	if VFXController and VFXController.ClearAllTileEffects then pcall(VFXController.ClearAllTileEffects) end
 	table.clear(activeTileEffects)
@@ -4568,6 +4648,10 @@ end)
 
 BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	if SoundController then SoundController.StopAllChannels() end
+	-- Goal tracker (step 8): hide it and drop the target tags; the defeat screen gets the outcome.
+	goalData = nil
+	clearGoalTags()
+	if BattleHUD.SetGoal then BattleHUD.SetGoal(nil) end
 	if VFXController and VFXController.ClearAllTileEffects then pcall(VFXController.ClearAllTileEffects) end
 	if BattleHUD.SetActiveEvent then BattleHUD.SetActiveEvent(nil) end
 	BattleHUD.ClearSelection()
@@ -5801,6 +5885,16 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 				addRow(string.format("LEVEL UP! %s reached Lv %s%s", tostring(x.name), tostring(x.level or "?"),
 					x.atCap and " (max level)" or ""), Theme.Colors.TextGold, Theme.Font.PrimaryBold, Theme.Text.Small(), 14)
 			end
+		end
+	end
+
+	-- QUEST GOAL loss line (build step 8): when the main goal ended the battle as a loss, its own
+	-- approved line ("{name} has fallen.", "Time ran out.", "Too many runners got through.").
+	if data.defeat and QuestGoalText and type(data.goal) == "table" then
+		local lossLine = QuestGoalText.LossLine(data.goal)
+		if lossLine ~= "" then
+			addDivider()
+			addRow(lossLine, Theme.Colors.Danger, Theme.Font.PrimaryBold, Theme.Text.Small(), 14)
 		end
 	end
 

@@ -690,6 +690,10 @@ function EnemyGenerator.GenerateEnemies(enemyTypes: {any}, enemySpawns: {any}, r
 				created + 1, spawn, rng, usedPortraits
 			)
 			if unit then
+				-- Quest goal Capture (game_flow 41, step 5): the roster entry's target flag rides on the unit.
+				if entry.isCaptureTarget then unit.isCaptureTarget = true end
+				-- Quest goal Prevent (step 7): the runner flag rides on the unit too.
+				if entry.isRunner then unit.isRunner = true end
 				table.insert(units, unit)
 				created += 1
 				spawnIdx += 1

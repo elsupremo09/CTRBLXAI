@@ -17,6 +17,9 @@
 
 local UserInputService = game:GetService("UserInputService")
 
+-- TEMPORARY (2026-11-18): drag logging for the "panel drops while dragging" test. Set false to silence.
+local DEV_DRAG_DEBUG = true
+
 local DevToolsPanel = {}
 
 --------------------------------------------------
@@ -242,6 +245,7 @@ local function build(c: Context)
 	screen.ResetOnSpawn = false
 	screen.DisplayOrder = DISPLAY_ORDER
 	screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screen.IgnoreGuiInset = true -- 2026-11-18: let the panel drag up over the Roblox top bar
 
 	local root = Instance.new("Frame")
 	root.Name = "DevToolsPanel"
@@ -374,10 +378,19 @@ local function build(c: Context)
 	-- Touch also took moves from ANY finger (e.g. a camera pan). Now: the drag ends on the GLOBAL release of
 	-- the same button/finger (and on window focus loss), only the finger that started it moves the panel,
 	-- the panel is placed in absolute pixels (no Scale mixing) and is clamped fully on screen.
+	-- Fix 2 2026-11-18 (user: "keeps getting dropped while being dragged"; Studio runs in phone emulation,
+	-- so drags arrive as Touch). (1) A new press on the bar always RESTARTS the drag (it used to be ignored
+	-- while a stale drag was stuck). (2) A touch drag ends on TouchEnded as well as InputEnded, and movement
+	-- is followed from TouchMoved as well as InputChanged, so the drag keeps going after the finger leaves
+	-- the 16 px bar. Clamping and tap-to-toggle (no toggle after a drag) are unchanged.
 	local dragging = false
 	local dragTouch: InputObject? = nil -- the finger that started a touch drag (nil = mouse drag)
 	local dragStart = Vector2.zero
 	local startXY = Vector2.zero
+	local moveLogged = false
+	local function dlog(...: any)
+		if DEV_DRAG_DEBUG then print("[DevToolsDrag]", ...) end
+	end
 	local function clampTo(x: number, y: number): (number, number)
 		local view = screen.AbsoluteSize
 		local size = root.AbsoluteSize
@@ -385,16 +398,32 @@ local function build(c: Context)
 		y = math.clamp(y, 0, math.max(0, view.Y - TITLE_H)) -- keep at least the title bar on screen
 		return math.floor(x + 0.5), math.floor(y + 0.5)
 	end
-	local function endDrag()
+	local function endDrag(why: string)
+		if dragging then dlog("end", why) end
 		dragging = false
 		dragTouch = nil
 	end
+	local function isTouch(input: InputObject): boolean
+		return input.UserInputType == Enum.UserInputType.Touch
+	end
+	local function moveTo(input: InputObject)
+		local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
+		if math.abs(delta.X) + math.abs(delta.Y) > 4 then dragMoved = true end
+		if not moveLogged then
+			moveLogged = true
+			dlog("move-start", input.UserInputType.Name)
+		end
+		local x, y = clampTo(startXY.X + delta.X, startXY.Y + delta.Y)
+		root.Position = UDim2.fromOffset(x, y)
+	end
 	title.InputBegan:Connect(function(input: InputObject)
-		if dragging then return end
 		local kind = input.UserInputType
 		if kind == Enum.UserInputType.MouseButton1 or kind == Enum.UserInputType.Touch then
+			dlog("press", kind.Name, "wasDragging=" .. tostring(dragging))
+			-- Always (re)start: a stale drag must never block a new press.
 			dragging = true
 			dragMoved = false
+			moveLogged = false
 			dragTouch = if kind == Enum.UserInputType.Touch then input else nil
 			dragStart = Vector2.new(input.Position.X, input.Position.Y)
 			-- Start from where the panel really is on screen (offset space of this ScreenGui).
@@ -403,15 +432,29 @@ local function build(c: Context)
 		end
 	end)
 	-- One set of connections for the whole session (the panel is never rebuilt).
-	UserInputService.InputEnded:Connect(function(input: InputObject)
+	local function onEnded(input: InputObject, gameProcessed: boolean, source: string)
 		if not dragging then return end
 		if dragTouch then
-			if input == dragTouch then endDrag() end
+			if isTouch(input) then
+				local same = input == dragTouch
+				dlog(source, "Touch", "sameTouch=" .. tostring(same), "gp=" .. tostring(gameProcessed))
+				if same then endDrag(source) end
+			end
 		elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
-			endDrag()
+			dlog(source, "MouseButton1", "gp=" .. tostring(gameProcessed))
+			endDrag(source)
 		end
+	end
+	UserInputService.InputEnded:Connect(function(input: InputObject, gp: boolean)
+		onEnded(input, gp, "InputEnded")
 	end)
-	UserInputService.WindowFocusReleased:Connect(endDrag)
+	UserInputService.TouchEnded:Connect(function(input: InputObject, gp: boolean)
+		onEnded(input, gp, "TouchEnded")
+	end)
+	UserInputService.WindowFocusReleased:Connect(function()
+		dlog("focus lost")
+		endDrag("focus")
+	end)
 	UserInputService.InputChanged:Connect(function(input: InputObject)
 		if not dragging then return end
 		if dragTouch then
@@ -419,10 +462,11 @@ local function build(c: Context)
 		elseif input.UserInputType ~= Enum.UserInputType.MouseMovement then
 			return
 		end
-		local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
-		if math.abs(delta.X) + math.abs(delta.Y) > 4 then dragMoved = true end
-		local x, y = clampTo(startXY.X + delta.X, startXY.Y + delta.Y)
-		root.Position = UDim2.fromOffset(x, y)
+		moveTo(input)
+	end)
+	UserInputService.TouchMoved:Connect(function(input: InputObject)
+		if not dragging or not dragTouch or input ~= dragTouch then return end
+		moveTo(input)
 	end)
 	-- Keep it on screen when the window/phone rotates or the panel expands.
 	local function reclamp()

@@ -459,7 +459,7 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 		end
 	end
 
-	function self.Prompt(message: string, confirmText: string, confirmStyle: string, onConfirm: () -> ())
+	function self.Prompt(message: string, confirmText: string, confirmStyle: string, onConfirm: () -> (), cancelText: string?)
 		self.ClosePrompt()
 		local overlay = Instance.new("TextButton")
 		overlay.Name = "Prompt"
@@ -496,7 +496,7 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 		layout.SortOrder = Enum.SortOrder.LayoutOrder
 		layout.Parent = row
 		local half = UDim2.new(0.5, -4, 1, 0)
-		Theme.MakeBarButton(row, "Cancel", "Secondary", function()
+		Theme.MakeBarButton(row, cancelText or "Cancel", "Secondary", function()
 			self.ClosePrompt()
 		end, { name = "Btn_PromptCancel", size = half, autoWidth = false,
 			minHeight = GuildScreen.ROW_H, layoutOrder = 1 })

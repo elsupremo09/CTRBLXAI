@@ -1686,6 +1686,13 @@ function CombatResolver.GetHitRecorder()
 end
 
 function CombatResolver.ApplyOutcome(outcome, target, attacker)
+	-- QUEST GOAL Capture (step 6 follow-up to step-5 Tester WARN-2): the capture target "avoids
+	-- engaging", so it never hurts its attacker through a reaction either: Retribution Shell break,
+	-- Retaliator / Toxic Skin debuffs, Reptilian Spiked Hide, Mirror Mail, Spiked Plate, Deflect
+	-- (counter-attacks are refused in CommandService.TriggerCounterIfEligible). That is 7 reactions in
+	-- 6 guarded sites below (Retaliator and Toxic Skin share one check). Effects that only touch the
+	-- target itself still apply.
+	local _noReact = target ~= nil and target.isCaptureTarget == true
 	if outcome.type == "Healing" then
 		local healAmt = outcome.finalHealing
 		-- Darkened Ground augment (2026-10-25): a unit standing on Darkened Ground receives
@@ -1906,7 +1913,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- pass is wanted on the retaliation, that is a balance refinement, not part of
 	-- the grant wiring. shield_total on the breaker still soaks it first (gate in
 	-- UnitSchema.ApplyDamage), which is correct.
-	if shieldBroke and retributionDamage and retributionDamage > 0
+	if shieldBroke and retributionDamage and retributionDamage > 0 and not _noReact
 		and attacker and attacker.isAlive and attacker ~= target then
 		local retDealt = UnitSchema_ApplyDamage(retributionDamage, attacker)
 		print(string.format(
@@ -2351,7 +2358,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			print(string.format("[CombatResolver] Defenseless/Lingering Curse: %s self-inflicts %s", target.name, dbf))
 		end
 		-- Retaliator: inflict the target's per-unit rolled debuff on the attacker.
-		if attacker and attacker.isAlive and TraitEffectService.HasDebuffAttackerOnHit(target) then
+		if attacker and attacker.isAlive and not _noReact and TraitEffectService.HasDebuffAttackerOnHit(target) then
 			if not target.retaliatorDebuff or target.retaliatorDebuff == "Burn" then  -- Burn left the pool 2026-10-29
 				target.retaliatorDebuff = TraitEffectService.RollRandomDebuff()
 			end
@@ -2378,7 +2385,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- or AOE hits. Applied with UnitSchema_ApplyDamage directly (never through
 	-- ApplyOutcome), so a reflect cannot re-trigger reflects / lifesteal / other
 	-- reaction hooks -- no loop (TRG-010 pattern). outcome.isReflect guards re-entry.
-	if attacker and actual > 0 and attacker ~= target and attacker.isAlive
+	if attacker and actual > 0 and attacker ~= target and attacker.isAlive and not _noReact
 		and not outcome.isReflect and isMeleeHit(outcome, attacker, target) then
 		local reflect = RacePassiveService.GetMeleeReflectDamage(target)
 		if reflect > 0 then
@@ -2414,7 +2421,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		if outcome.guardMitigatedAmount and outcome.guardMitigatedAmount > 0 then
 			_aps.OnGuardDamageMitigated(target, outcome.guardMitigatedAmount)
 		end
-		if actual > 0 and attacker.isAlive and attacker ~= target then
+		if actual > 0 and attacker.isAlive and attacker ~= target and not _noReact then
 			-- BD-007 Mirror Mail: reflect 30% of damage taken back to a PROJECTILE attacker.
 			local refl = _aps.GetGuardProjectileReflect(target)
 			-- Projectile = the HIT, not the attacker's weapon (re-check 2026-10-29): a basic attack uses the
@@ -2463,7 +2470,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		-- Deflect (weapon native, Buckler): reflect 20% of the damage Guard just MITIGATED back to
 		-- the attacker (DB "On Guard, reflect 20% of mitigated damage"). Keyed on mitigated amount,
 		-- so it fires even on a fully-absorbed hit. Direct ApplyDamage (TRG-010, no reaction re-entry).
-		if attacker.isAlive and attacker ~= target and (outcome.guardMitigatedAmount or 0) > 0 then
+		if attacker.isAlive and attacker ~= target and not _noReact and (outcome.guardMitigatedAmount or 0) > 0 then
 			local deflectPct = WeaponPassiveService.GetGuardDeflectPercent(target)
 			if deflectPct > 0 then
 				local dmg = math.max(0, math.round(outcome.guardMitigatedAmount * deflectPct))
@@ -2507,7 +2514,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 	-- hit lands, inflict Poison on the attacker -- UNLESS the attack element is Fire,
 	-- Ice, or Electric. Mirrors the Retaliator status-to-attacker idiom; gated against
 	-- reaction re-entry (not reflect / not counter) so it cannot loop (TRG-010 pattern).
-	if attacker and actual > 0 and attacker ~= target and attacker.isAlive
+	if attacker and actual > 0 and attacker ~= target and attacker.isAlive and not _noReact
 		and not outcome.isReflect and not outcome.isCounter
 		and RacePassiveService.GetToxicSkinStatus(target) then
 		local atkElement = outcome.element or attacker.weaponElement or "Physical"
@@ -2625,6 +2632,13 @@ function UnitSchema_ApplyDamage(amount, unit, element)
 	local actual = math.min(unit.currentHp, amount)
 	unit.currentHp = unit.currentHp - actual
 	if unit.currentHp <= 0 then
+		-- KO floor (quest goal step 6 follow-up to step-5 Tester WARN-1): the Capture target and god
+		-- mode stay at 1 HP on this fallback path too (UnitSchema.IsKoProtected via the GameConstants
+		-- hook, same rule as CapUnitDamage / UnitSchema.Kill).
+		if GameConstants.IsGodProtected and GameConstants.IsGodProtected(unit) then
+			unit.currentHp = 1
+			return math.max(0, actual - 1)
+		end
 		-- Armor passive: survive lethal damage at 1 HP (once per battle)
 		if ArmorPassiveService.CanSurviveLethalDamage(unit) then
 			unit._armorLethalSurviveUsed = true

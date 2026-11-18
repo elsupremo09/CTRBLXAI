@@ -38,6 +38,13 @@ local ObjectData = require(
 		:WaitForChild("ObjectData")
 )
 
+-- Quest main goals (read-only data, safe direct require): the Protect bias numbers (step 6).
+local QuestGoalData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("QuestGoalData")
+)
+
 local AIService = {}
 
 -- Injected dependencies (set by Main)
@@ -151,6 +158,16 @@ local function isHostileTo(unit: any, target: any)
 		return target.enemyPriorityTarget == true
 	end
 	return true
+end
+
+-- QUEST GOAL Protect (game_flow 41, build step 6 2026-11-17): enemies prioritise the Guild Courier.
+-- A bias, not exclusive: a hit that would land on it gets aiPriority extra score (QuestGoalData), so
+-- a Player unit in reach can still be the better target.
+local function protectBonus(unit: any, target: any, predicted: number): number
+	if target and target.isProtectNpc and predicted > 0 and isHostileTo(unit, target) then
+		return tonumber((QuestGoalData.Goals :: any).Protect.aiPriority) or 0
+	end
+	return 0
 end
 
 local function chebyshev(ax: any, ay: any, bx: any, by: any)
@@ -408,6 +425,7 @@ local function scoreAttack(unit: any, target: any, dials: any, allUnits: any)
 	end
 	-- Decoy (SKL-SUMMON-DECOY): enemies treat it as highest-priority target in range.
 	if target.summonType == "Decoy" then score = score + W.DECOY_PRIORITY end
+	score = score + protectBonus(unit, target, predicted) -- quest goal Protect (step 6)
 	local lowHp = 1 - (target.currentHp / math.max(1, target.maxHp))
 	score = score + lowHp * W.LOW_HP_FOCUS * dials.lowHpFocus
 	score = score - exposureAt(unit, unit.tileX, unit.tileY, allUnits) * W.SELF_DANGER * dials.selfDanger
@@ -511,6 +529,7 @@ local function scoreSkill(unit: any, def: any, target: any, dials: any, allUnits
 		if target.summonType == "Decoy" and isHostileTo(unit, target) then
 			score = score + W.DECOY_PRIORITY
 		end
+		score = score + protectBonus(unit, target, predicted) -- quest goal Protect (step 6)
 		local lowHp = 1 - (target.currentHp / math.max(1, target.maxHp))
 		score = score + lowHp * W.LOW_HP_FOCUS * dials.lowHpFocus
 	end
@@ -809,6 +828,7 @@ end
 -- MP. Pick the best-scoring basic attack in reach (same scorecard as a normal attack); nil = decline.
 function AIService.DecideQuickDrawAttack(unit: any, allUnits: any): any
 	if not unit.isAlive or not _TargetingService then return nil end
+	if unit.isCaptureTarget then return nil end -- quest goal Capture: the target never attacks (step 5)
 	local personality = resolvePersonality(unit, allUnits)
 	local dials = DIALS[personality] or DIALS[DEFAULT_PERSONALITY]
 	local best, bestScore = nil, 0
@@ -846,6 +866,131 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 	end
 
 	local moveTiles = _TargetingService.GetMoveCandidates(unit, allUnits, mapW, mapH) or {}
+
+	-- QUEST GOAL Capture (game_flow 41, build step 5 2026-11-17, USER 7:25 PM): the capture target
+	-- avoids engaging. A scoring layer on this same brain: it never attacks, casts or uses items; it
+	-- moves to the reachable tile that keeps it farthest from hostile units (fewest that could hit it,
+	-- no hazards), and ends its turn when no tile is strictly better than where it stands.
+	if unit.isCaptureTarget then
+		local function minHostileDist(tx: any, ty: any): number
+			local best = math.huge
+			for _, u in ipairs(allUnits) do
+				if u.isAlive and isHostileTo(unit, u) and u.tileX then
+					local d = chebyshev(tx, ty, u.tileX, u.tileY)
+					if d < best then best = d end
+				end
+			end
+			return best
+		end
+		local function evadeScore(tx: any, ty: any, pathCost: any): number
+			local s = math.min(minHostileDist(tx, ty), 30) * 10 - exposureAt(unit, tx, ty, allUnits) * 15
+			if isTileHazardous(tx, ty) then s -= 100 end
+			return s - (tonumber(pathCost) or 0) * 0.1
+		end
+		local bestTile: any, bestScore = nil, evadeScore(unit.tileX, unit.tileY, 0)
+		for _, tile in ipairs(moveTiles) do
+			local s = evadeScore(tile.tileX, tile.tileY, tile.pathCost)
+			if s > bestScore + 0.5 then bestTile, bestScore = tile, s end
+		end
+		if bestTile then
+			return { actionType = "Move", selection = bestTile, skillName = nil,
+				score = W.MOVE_TOWARD, rtEstimate = 0, tile = bestTile,
+				targetName = string.format("(%d,%d)", bestTile.tileX, bestTile.tileY) }
+		end
+		return nil -- nothing better: end the turn (never attacks)
+	end
+
+	-- QUEST GOAL Activate leash (game_flow 41, build step 7 2026-11-17): while the Activate object is
+	-- unused, an Enemy-side unit never ENDS a move more than `leash` tiles (Chebyshev) from it. A unit
+	-- outside that radius moves toward it first (true walking distance, same flood fill as the gap
+	-- close). Inside, every move option this turn is limited to tiles within the radius, so attacks on
+	-- anything in range still happen. A Taunt can't pull a unit past the leash (agent default: the
+	-- leash wins, so the goal object can't be left unguarded by taunting). Skills that move the caster
+	-- are not limited here (logged limitation).
+	local leashed = false
+	do
+		local qg = state and state.questGoal
+		local lr = tonumber((QuestGoalData.Goals :: any).Activate.leash) or 0
+		if qg and qg.id == "Activate" and qg.tile and not qg.activated and unit.side == "Enemy" and lr > 0 then
+			local ox, oy = qg.tile.x, qg.tile.y
+			local here = chebyshev(unit.tileX, unit.tileY, ox, oy)
+			-- User ruling 2026-11-17 10:32 PM: outside the radius, a unit with a Player-side target in
+			-- attack range from where it stands attacks first (normal action choice below); only with
+			-- nothing to hit does it head back. Either way it never ends a move farther out than here.
+			local canHitNow = false
+			if here > lr then
+				local inRange = _TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1) or {}
+				for _, t in ipairs(inRange) do
+					if t and t.isAlive ~= false and t.side and isHostileTo(unit, t) then canHitNow = true break end
+				end
+			end
+			if here > lr and not canHitNow then
+				local field = _TargetingService.ComputeDistanceField(ox, oy, mapW, mapH)
+				local function od(tx: any, ty: any): number
+					local v = field[tostring(tx) .. "," .. tostring(ty)]
+					if v ~= nil then return v end
+					return chebyshev(tx, ty, ox, oy) + 1000
+				end
+				local cur = od(unit.tileX, unit.tileY)
+				local best: any, bestS = nil, -math.huge
+				for _, tile in ipairs(moveTiles) do
+					local d = od(tile.tileX, tile.tileY)
+					if d < cur then
+						local s = -d * 10 - (tile.pathCost or 0) * 0.1
+						if isTileHazardous(tile.tileX, tile.tileY) then s -= 100 end
+						if s > bestS then best, bestS = tile, s end
+					end
+				end
+				if best then
+					return { actionType = "Move", selection = best, skillName = nil,
+						score = W.MOVE_TOWARD, rtEstimate = 0, tile = best,
+						targetName = string.format("leash (%d,%d)", best.tileX, best.tileY) }
+				end
+				-- Can't get closer this turn: act normally from here, but never step farther away.
+				local kept = {}
+				for _, tile in ipairs(moveTiles) do
+					if chebyshev(tile.tileX, tile.tileY, ox, oy) <= here then table.insert(kept, tile) end
+				end
+				moveTiles = kept
+			elseif here > lr then
+				-- Has a target in range: act normally, but never step farther from the object.
+				local kept = {}
+				for _, tile in ipairs(moveTiles) do
+					if chebyshev(tile.tileX, tile.tileY, ox, oy) <= here then table.insert(kept, tile) end
+				end
+				moveTiles = kept
+			else
+				local kept = {}
+				for _, tile in ipairs(moveTiles) do
+					if chebyshev(tile.tileX, tile.tileY, ox, oy) <= lr then table.insert(kept, tile) end
+				end
+				moveTiles = kept
+			end
+			leashed = true
+		end
+	end
+
+	-- QUEST GOAL Prevent (user ruling 2026-11-17 10:32 PM): ordinary (non-runner) Enemy units never end a
+	-- move on the goal tile while any runner is still running, so they can't block the runners.
+	-- Runners and Player-side units are unaffected.
+	do
+		local qg = state and state.questGoal
+		if qg and qg.id == "Prevent" and qg.tile and unit.side == "Enemy" and not unit.isRunner then
+			local running = false
+			for _, u in ipairs(allUnits) do
+				if u.isRunner and u.isAlive and not u.reachedGoal and u.side == "Enemy" then running = true break end
+			end
+			if running then
+				local gx, gy = qg.tile.x, qg.tile.y
+				local kept = {}
+				for _, tile in ipairs(moveTiles) do
+					if not (tile.tileX == gx and tile.tileY == gy) then table.insert(kept, tile) end
+				end
+				moveTiles = kept
+			end
+		end
+	end
+
 	local attackTargets = _TargetingService.GetAttackCandidates(unit, allUnits, unit.weaponMaxRange or 1) or {}
 	local skillEntries = enumerateSkillEntries(unit, allUnits)
 	-- TAUNT (user ruling 2026-10-27): a Taunted unit closes in on its taunter (attack and
@@ -854,6 +999,72 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 	if _taunter then
 		nearest = _taunter
 		nearestDist = chebyshev(unit.tileX, unit.tileY, _taunter.tileX, _taunter.tileY)
+	end
+	-- QUEST GOAL Protect (step 6): the gap-close move heads for the Guild Courier instead of the
+	-- nearest Player unit when it is at most aiMoveSlack tiles farther. Only the advance target
+	-- changes (threat / kiting checks still use the nearest unit), and a Taunt still wins.
+	local advanceTo: any = nearest
+	if not _taunter then
+		local slack = tonumber((QuestGoalData.Goals :: any).Protect.aiMoveSlack) or 0
+		if slack > 0 then
+			for _, u in ipairs(allUnits) do
+				if u.isAlive and u.isProtectNpc and u.tileX and isHostileTo(unit, u) then
+					if chebyshev(unit.tileX, unit.tileY, u.tileX, u.tileY) <= nearestDist + slack then
+						advanceTo = u
+					end
+					break
+				end
+			end
+		end
+	end
+
+	-- QUEST GOAL Prevent (game_flow 41, build step 7 2026-11-17): a runner is a scoring layer on this
+	-- same brain. Every turn it takes the reachable tile that gets it closest to the goal tile (true
+	-- walking distance), i.e. its full movement toward the tile. Only when no tile gets it closer (the
+	-- way is blocked, or it has no movement left) does it hit an adjacent blocker (its best basic
+	-- attack on a hostile next to it); failing that it tries to open a route through a blocker object,
+	-- else it ends its turn (no stall: nothing is retried). A Taunt still wins (agent default: a
+	-- Taunted runner fights its taunter like any unit).
+	do
+		local qg = state and state.questGoal
+		if unit.isRunner and not _taunter and qg and qg.id == "Prevent" and qg.tile then
+			local gx, gy = qg.tile.x, qg.tile.y
+			local field = _TargetingService.ComputeDistanceField(gx, gy, mapW, mapH)
+			local function gd(tx: any, ty: any): number
+				local v = field[tostring(tx) .. "," .. tostring(ty)]
+				if v ~= nil then return v end
+				return chebyshev(tx, ty, gx, gy) + 1000
+			end
+			local cur = gd(unit.tileX, unit.tileY)
+			local best: any, bestS = nil, -math.huge
+			for _, tile in ipairs(moveTiles) do
+				local d = gd(tile.tileX, tile.tileY)
+				if d < cur then
+					local s = -d * 10 - (tile.pathCost or 0) * 0.1
+					if isTileHazardous(tile.tileX, tile.tileY) then s -= 15 end
+					if s > bestS then best, bestS = tile, s end
+				end
+			end
+			if best then
+				return { actionType = "Move", selection = best, skillName = nil,
+					score = W.MOVE_TOWARD, rtEstimate = 0, tile = best,
+					targetName = string.format("run (%d,%d)", best.tileX, best.tileY) }
+			end
+			local tgt: any, tScore = nil, -math.huge
+			for _, t in ipairs(attackTargets) do
+				if t.tileX and chebyshev(unit.tileX, unit.tileY, t.tileX, t.tileY) == 1 then
+					local s = scoreAttack(unit, t, dials, allUnits)
+					if s > tScore then tgt, tScore = t, s end
+				end
+			end
+			if tgt then
+				return { actionType = "Attack", selection = tgt, skillName = nil,
+					score = tScore, rtEstimate = 0, tile = nil, targetName = tgt.name }
+			end
+			local obs = AIService.ConsiderObsBreak(unit, allUnits, state, dials)
+			if obs then return obs end
+			return nil
+		end
 	end
 
 	----------------------------------------------------------------
@@ -877,13 +1088,13 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 		-- so the tile that actually leads around the barrier (toward the bridge /
 		-- chokepoint) wins. Falls back to straight-line only for tiles the field cannot
 		-- reach (no walkable route to the player at all), so behavior is never worse.
-		local distField = _TargetingService.ComputeDistanceField(nearest.tileX, nearest.tileY, mapW, mapH)
+		local distField = _TargetingService.ComputeDistanceField(advanceTo.tileX, advanceTo.tileY, mapW, mapH)
 		local function trueDist(tx: any, ty: any): any
 			local v = distField[tostring(tx) .. "," .. tostring(ty)]
 			if v ~= nil then return v end
 			-- No walkable route to the player from here: fall back to straight-line so
 			-- the tile is still comparable (and always worse than any routed tile).
-			return chebyshev(tx, ty, nearest.tileX, nearest.tileY) + 1000
+			return chebyshev(tx, ty, advanceTo.tileX, advanceTo.tileY) + 1000
 		end
 		local curDist = trueDist(unit.tileX, unit.tileY)
 		local best: any, bestScore = nil, -math.huge
@@ -940,6 +1151,9 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 				print(string.format(
 					"[AIService] %s cannot advance (boxed): best reachable tile (%d,%d) dist=%d >= current dist=%d — taking best available",
 					unit.name, best.tileX, best.tileY, bestDist, curDist))
+				-- Activate leash (step 7): a leashed unit with no closer tile inside the radius holds
+				-- its ground instead of shuffling sideways or breaking a route out of the radius.
+				if leashed then return nil end
 				-- Last resort: boxed with no progress — try opening a route by breaking
 				-- a blocker-prop OBS object (one-shot solo, or multi-hit if the team can
 				-- break it this round). Only replaces the futile move if it finds one.
@@ -954,6 +1168,7 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 		print(string.format(
 			"[AIService] %s has NO reachable move tile (fully boxed in) — will Guard/Wait",
 			unit.name))
+		if leashed then return nil end -- Activate leash (step 7): hold inside the radius
 		-- Last resort before giving up: a fully-boxed unit may still open a route
 		-- by breaking an in-range OBS object (same worth-it rules as above).
 		local obsFB = AIService.ConsiderObsBreak(unit, allUnits, state, dials)

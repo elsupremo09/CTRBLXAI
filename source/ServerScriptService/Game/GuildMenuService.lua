@@ -1808,6 +1808,9 @@ local function partyMemberInfo(unitId: string): any
 		portraitAssetId = u.portraitAssetId,
 		doctrineName = doc and doc.name or nil,
 		doctrineIcon = doc and doc.icon or nil,
+		-- Quest Board Choose Party view (2026-11-18): HP/MP bars + days left on a dispatch.
+		hp = u.currentHp, maxHp = u.maxHp, mp = u.currentMp, maxMp = u.maxMp,
+		dispatchLeft = DispatchService.GetRemainingDays(_playerId, unitId),
 	}
 end
 

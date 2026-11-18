@@ -692,6 +692,8 @@ local function buildTurnPrompt(unit)
 			rtPct = 0.30; label = "Resuscitate (channel)"
 		elseif c.interactKind == "recruitEnemy" then
 			rtPct = 0.10; label = if _rosterCap then `Recruit ({_rosterNow}/{_rosterCap})` else "Recruit"
+		elseif c.interactKind == "captureTarget" then
+			rtPct = 0.10; label = "Capture"  -- quest goal Capture (game_flow 41 approved text, step 5)
 		elseif c.interactKind == "mapObject" then
 			rtPct = 0.10; label = "Activate"
 		elseif c.interactKind == "neutralizeHazard" then
@@ -702,6 +704,17 @@ local function buildTurnPrompt(unit)
 			rtPct = 0.10; label = "Refresh"  -- HD-015 (2026-10-29)
 		end
 		local rtPreview = math.round(modBaseRtForInteract * rtPct)
+		-- Quest goal Activate object (step 8): players see the approved name "Ancient Mechanism"
+		-- (game_flow 41), never the reused Obelisk type.
+		local shownName = c.name
+		if c.interactKind == "mapObject" and c.objectId ~= nil then
+			for _, o in pairs(state.objects or {}) do
+				if type(o) == "table" and o.id == c.objectId and o.isGoalObject then
+					shownName = "Ancient Mechanism"
+					break
+				end
+			end
+		end
 		if c.interactKind == "mapObject" then
 			-- Displayed type (Mimic disguise) so the RT preview matches what the player sees.
 			local od = ObjectDataForInteract.Objects and ObjectDataForInteract.Objects[c.displayType or c.archetypeId]
@@ -715,7 +728,7 @@ local function buildTurnPrompt(unit)
 			interactKind = c.interactKind,
 			id           = c.id,            -- unit targets
 			objectId     = c.objectId,      -- map-object targets
-			name         = c.name,
+			name         = shownName,
 			tileX        = c.tileX,
 			tileY        = c.tileY,
 			label        = label,

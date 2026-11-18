@@ -344,6 +344,15 @@ local function getEquipPool()
 	return pool
 end
 
+-- Public read of the cached equipment pool (promised quest gear, game_flow 36, 2026-11-17): the
+-- quest board pre-roll picks its gear type from the SAME pool the victory loot uses (DAT-001).
+-- Sorted ids; callers must not modify the returned list.
+function RewardService.GetEquipPool(): { string }
+	return getEquipPool()
+end
+
+local PROMISED_RARITIES = { Common = true, Uncommon = true, Rare = true, Epic = true } -- C-Lean never goes higher
+
 local function getSkillPool()
 	if cachedSkillPool then return cachedSkillPool end
 	local pool = {}
@@ -563,6 +572,92 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 	local results = {}
 	local equipCommitted = 0
 
+	-- PROMISED QUEST GEAR (game_flow 36/40, 2026-11-17): opts.promisedGear = { archetypeId, rarity,
+	-- level } fixed on the quest card at board refresh. It REPLACES the first equipment roll of this
+	-- generation (not an extra item); a win that rolls no equipment still grants it, nothing else is
+	-- skipped. Exact gear type and rarity: Fortune, battlefield-event rarity modifiers and Treasure
+	-- Hunter tiers never touch it. Stats roll now. nil = unchanged behaviour.
+	local promised: any = nil
+	if type(opts) == "table" and type(opts.promisedGear) == "table" then
+		local pg = opts.promisedGear
+		local archOk = type(pg.archetypeId) == "string"
+			and (WeaponData.GetByArchetypeId(pg.archetypeId) or ArmorData.GetByArchetypeId(pg.archetypeId)) ~= nil
+		if archOk and PROMISED_RARITIES[pg.rarity] then
+			promised = pg
+		else
+			warn("[RewardService] Promised gear ignored (bad data): " .. tostring(pg.archetypeId) .. " / " .. tostring(pg.rarity))
+		end
+	end
+	local promisedUsed = false
+	local function grantPromised(i: number, seed: number): boolean
+		promisedUsed = true
+		local lvl = math.max(1, math.floor(tonumber(promised.level) or mapLevel))
+		local item, genErr = ItemGenerator.GenerateFromPool({ promised.archetypeId }, lvl, promised.rarity, seed, "Loot")
+		if not item then
+			-- Tester W3 (2026-11-17): fall back to a normal random equipment roll instead of an error entry.
+			warn(string.format("[RewardService] Promised gear gen failed %d: %s -> normal equipment roll", i, genErr or "unknown"))
+			return false
+		elseif noCommit then
+			table.insert(results, { category = "Equipment", item = item, committed = false, promised = true })
+		else
+			local ok, addErr = InventoryService.AddItem(playerId, item, { markNew = true })
+			if ok then
+				equipCommitted = equipCommitted + 1
+				print(string.format("[RewardService] Reward %d: PROMISED Equipment %s | %s L%d %s",
+					i, item.instanceId, tostring(promised.archetypeId), item.itemLevel or 0, item.rarityId or "?"))
+				table.insert(results, { category = "Equipment", item = item, committed = true, promised = true })
+			else
+				warn(string.format("[RewardService] Promised gear commit failed %d: %s", i, addErr or "unknown"))
+				table.insert(results, { category = "Equipment", item = item, committed = false, promised = true, error = addErr or "Commit failed" })
+			end
+		end
+		return true
+	end
+
+	-- Normal random equipment roll (victory loot rules). Shared by the regular Equipment branch and the
+	-- promised-gear fallback (Tester W3, 2026-11-17): a failed promised item never leaves the win with less gear.
+	local function rollNormalEquipment(i: number, seed: number, itemRng: Random)
+		-- Battlefield-event rarity shift/floor (nil modifier -> unchanged).
+		local rarity = applyRarityModifier(rollEquipmentRarity(itemRng, fortuneBonus))
+		-- Treasure Hunter per-call tier bump (2026-10-25): raise rank, clamp to max.
+		if bonusRarityTiers > 0 then
+			local rk = RARITY_RANK[rarity]
+			if rk then rarity = RANK_TO_RARITY[math.clamp(rk + bonusRarityTiers, 1, MAX_LOOT_RANK)] or rarity end
+		end
+		local pool = getEquipPool()
+		local item, genErr = ItemGenerator.GenerateFromPool(pool, mapLevel, rarity, seed, "Loot")
+		if not item then
+			warn(string.format("[RewardService] Equipment gen failed %d: %s", i, genErr or "unknown"))
+			table.insert(results, {
+				category = "Equipment", committed = false,
+				error = genErr or "Generation failed",
+			})
+		elseif noCommit then
+			-- Rolled but held (Treasure Hunter): nothing enters the inventory here.
+			print(string.format("[RewardService] Reward %d: Equipment %s HELD (noCommit)", i, tostring(item.instanceId)))
+			table.insert(results, { category = "Equipment", item = item, committed = false })
+		else
+			local ok, addErr = InventoryService.AddItem(playerId, item, { markNew = true })
+			if ok then
+				equipCommitted = equipCommitted + 1
+				local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
+					or ArmorData.GetByArchetypeId(item.baseArchetypeId)
+				print(string.format("[RewardService] Reward %d: Equipment %s | %s L%d %s",
+					i, item.instanceId, arch and arch.name or "?",
+					item.itemLevel or 0, item.rarityId or "?"))
+				table.insert(results, {
+					category = "Equipment", item = item, committed = true,
+				})
+			else
+				warn(string.format("[RewardService] Equipment commit failed %d: %s", i, addErr or "unknown"))
+				table.insert(results, {
+					category = "Equipment", item = item, committed = false,
+					error = addErr or "Commit failed",
+				})
+			end
+		end
+	end
+
 	for i = 1, rewardCount do
 		local seed = generateRewardSeed()
 		local itemRng = Random.new(seed)
@@ -570,46 +665,14 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 		-- Step 1: Roll reward category (restricted set when opts.allowedCategories given)
 		local category = weightedRoll(itemRng, categoryWeights, "category", "weight")
 
-		if category == "Equipment" then
-			-- Battlefield-event rarity shift/floor (nil modifier -> unchanged).
-			local rarity = applyRarityModifier(rollEquipmentRarity(itemRng, fortuneBonus))
-			-- Treasure Hunter per-call tier bump (2026-10-25): raise rank, clamp to max.
-			if bonusRarityTiers > 0 then
-				local rk = RARITY_RANK[rarity]
-				if rk then rarity = RANK_TO_RARITY[math.clamp(rk + bonusRarityTiers, 1, MAX_LOOT_RANK)] or rarity end
-			end
-			local pool = getEquipPool()
-			local item, genErr = ItemGenerator.GenerateFromPool(pool, mapLevel, rarity, seed, "Loot")
-			if not item then
-				warn(string.format("[RewardService] Equipment gen failed %d: %s", i, genErr or "unknown"))
-				table.insert(results, {
-					category = "Equipment", committed = false,
-					error = genErr or "Generation failed",
-				})
-			elseif noCommit then
-				-- Rolled but held (Treasure Hunter): nothing enters the inventory here.
-				print(string.format("[RewardService] Reward %d: Equipment %s HELD (noCommit)", i, tostring(item.instanceId)))
-				table.insert(results, { category = "Equipment", item = item, committed = false })
-			else
-				local ok, addErr = InventoryService.AddItem(playerId, item, { markNew = true })
-				if ok then
-					equipCommitted = equipCommitted + 1
-					local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
-						or ArmorData.GetByArchetypeId(item.baseArchetypeId)
-					print(string.format("[RewardService] Reward %d: Equipment %s | %s L%d %s",
-						i, item.instanceId, arch and arch.name or "?",
-						item.itemLevel or 0, item.rarityId or "?"))
-					table.insert(results, {
-						category = "Equipment", item = item, committed = true,
-					})
-				else
-					warn(string.format("[RewardService] Equipment commit failed %d: %s", i, addErr or "unknown"))
-					table.insert(results, {
-						category = "Equipment", item = item, committed = false,
-						error = addErr or "Commit failed",
-					})
-				end
-			end
+		local promisedDone = false
+		if category == "Equipment" and promised and not promisedUsed then
+			promisedDone = grantPromised(i, seed)
+		end
+		if promisedDone then
+			-- promised item granted in place of this equipment roll
+		elseif category == "Equipment" then
+			rollNormalEquipment(i, seed, itemRng)
 
 		elseif category == "SkillCard" then
 			local pool = getSkillPool()
@@ -691,6 +754,13 @@ function RewardService.GenerateRewards(playerId, mapLevel, opportunityId, opts)
 					maxCharges = def and def.maxCharges or 1,
 				},
 			})
+		end
+	end
+
+	if promised and not promisedUsed then
+		local extraSeed = generateRewardSeed()
+		if not grantPromised(rewardCount + 1, extraSeed) then
+			rollNormalEquipment(rewardCount + 1, extraSeed, Random.new(extraSeed))
 		end
 	end
 

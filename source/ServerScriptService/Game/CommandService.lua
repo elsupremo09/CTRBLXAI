@@ -2194,6 +2194,9 @@ function CommandService.TriggerCounterIfEligible(defender: any, attacker: any, s
 	if not defender or not attacker then return false end
 	if not defender.isAlive or not attacker.isAlive then return false end
 	if defender.id == attacker.id then return false end
+	-- Guard 2a: the quest-goal Capture target never counter-attacks (it avoids engaging; step 6
+	-- follow-up to step-5 Tester WARN-2). Its other reactions are refused in CombatResolver.ApplyOutcome.
+	if defender.isCaptureTarget then return false end
 	-- Guard 2b: enemy-only (DB trigger rule TRG-004). An ally striking the
 	-- stance holder (friendly fire, mind-control, etc.) must NOT provoke a counter.
 	if attacker.side == defender.side then return false end
@@ -8261,6 +8264,31 @@ function CommandService.ValidateAndCommit(
 				actor.name, target.name, rt, actor.currentAp
 			))
 			BattleVisualBroadcaster.Log("action", `{actor.name} recruits {target.name} (now a neutral ally).`, actor.id)
+
+		elseif chosen.interactKind == "captureTarget" then
+			-- QUEST GOAL Capture (game_flow 41, build step 5 2026-11-17): capture the goal target at
+			-- exactly 1 HP. Native-style cost: 1 AP (STEP 8) + RT 10% of Modified Base RT (same basis
+			-- as recruit). Marks the target captured; QuestGoalService.Evaluate turns that into the win.
+			local target = nil
+			for _, u in ipairs(state.units) do
+				if u.id == chosen.id then target = u; break end
+			end
+			if not target or not target.isAlive or not target.isCaptureTarget or target.captured
+				or (target.currentHp or 0) > 1 then
+				actor._interactAmp = _ampSaved
+				return false, "Capture target is invalid."
+			end
+			local rt = math.round(modBaseRt * 0.10 * interactRtMult)
+			rt = math.round(rt * StatusService.GetAllRtMultiplier(actor))
+			BattleVisualBroadcaster.ActionAnnounced(actor, "Interact", "Interact")
+			BattleCoordinator.AccrueRt(state, rt)
+			target.captured = true
+			BattleVisualBroadcaster.UnitStateChanged(target)
+			print(string.format(
+				"[CommandService] INTERACT CAPTURE | %s captures %s | RT:%d | AP left:%d",
+				actor.name, target.name, rt, actor.currentAp
+			))
+			BattleVisualBroadcaster.Log("action", `{actor.name} interacts with {target.name}.`, actor.id)
 
 		elseif chosen.interactKind == "allyRtHelp" then
 			local target = nil

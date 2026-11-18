@@ -80,6 +80,18 @@ local FurnishScreen: any = if furnishScreenModule then (require :: any)(furnishS
 local guildHallScreenModule = UIFolder:WaitForChild("GuildHallScreen", WAIT)
 if not guildHallScreenModule then warn("[GuildMenu] GuildHallScreen module missing") end
 local GuildHallScreen: any = if guildHallScreenModule then (require :: any)(guildHallScreenModule) else nil
+-- Quest Board full screen, Board view (Quest Board redesign step 2, 2026-11-17).
+local questBoardScreenModule = UIFolder:WaitForChild("QuestBoardScreen", WAIT)
+if not questBoardScreenModule then warn("[GuildMenu] QuestBoardScreen module missing") end
+local QuestBoardScreen: any = if questBoardScreenModule then (require :: any)(questBoardScreenModule) else nil
+-- Quest accepted view (Quest Board redesign step 3, 2026-11-18): replaces the old sortie text pages.
+local questAcceptedModule = UIFolder:WaitForChild("QuestAcceptedView", WAIT)
+if not questAcceptedModule then warn("[GuildMenu] QuestAcceptedView module missing -- old sortie pages used") end
+local QuestAcceptedView: any = if questAcceptedModule then (require :: any)(questAcceptedModule) else nil
+-- Choose Party view (Quest Board redesign step 4, 2026-11-18). Missing -> "Choose party" opens the Loadout picker.
+local questPartyModule = UIFolder:WaitForChild("QuestPartyView", WAIT)
+if not questPartyModule then warn("[GuildMenu] QuestPartyView module missing -- Loadout party picker used") end
+local QuestPartyView: any = if questPartyModule then (require :: any)(questPartyModule) else nil
 -- Dungeon (build step 5, 2026-11-13): its own full screen.
 local dungeonScreenModule = UIFolder:WaitForChild("DungeonScreen", WAIT)
 if not dungeonScreenModule then warn("[GuildMenu] DungeonScreen module missing") end
@@ -87,6 +99,9 @@ local DungeonScreen: any = if dungeonScreenModule then (require :: any)(dungeonS
 local _dlMod = UIFolder:WaitForChild("DungeonLoading", WAIT)
 local DungeonLoading: any = if _dlMod then (require :: any)(_dlMod) else nil -- battle loading panel (2026-11-17 10:50 AM)
 if not DungeonLoading then warn("[GuildMenu] DungeonLoading module missing -- no battle loading panel") end
+-- Quest main-goal text (quest goals build step 8): "Goal: {goal}" on the quest cards.
+local _qgtMod = UIFolder:WaitForChild("QuestGoalText", WAIT)
+local QuestGoalText: any = if _qgtMod then (require :: any)(_qgtMod) else nil
 -- Always-on dev panel (2026-10-31): shop refresh, building levels, gold, saves.
 -- Shown in Studio, or when the server marks this player as an allow-listed owner (the
 -- "DevAccess" attribute, 2026-11-06). Display only: the server re-checks every dev request.
@@ -521,7 +536,15 @@ statusLabel.Position = UDim2.fromScale(0.32, 0.9)
 
 -- Column fit (user 2026-11-13 1:25 PM): the right panel's left edge lines up with the header's
 -- left edge (both edges match the header), and the nav takes the space to its left.
+local homeLayout = false -- Home page (user 2026-11-18 1:32 AM): no nav column, the grid uses the full width
 local function fitColumnsToHeader()
+	if homeLayout then
+		contentFrame.Position = UDim2.fromScale(0.02, 0.16)
+		contentFrame.Size = UDim2.new(0.96, 0, 0.72, 0)
+		statusLabel.Position = UDim2.fromScale(0.02, 0.9)
+		statusLabel.Size = UDim2.new(0.96, 0, 0.07, 0)
+		return
+	end
 	local leftX = GuiService.TopbarInset.Min.X
 	if leftX > 0 then leftX += Theme.TopbarReserve end -- same slot as fitHeaderToTopbar
 	if leftX > 0 then
@@ -561,6 +584,7 @@ local function setStatus(text: string, isError: boolean?)
 	if UnitsScreen then UnitsScreen.SetStatus(text, isError) end
 	if DungeonScreen then DungeonScreen.SetStatus(text, isError) end
 	if GuildHallScreen then GuildHallScreen.SetStatus(text, isError) end
+	if QuestBoardScreen then QuestBoardScreen.SetStatus(text, isError) end if QuestAcceptedView then QuestAcceptedView.SetStatus(text, isError) end if QuestPartyView then QuestPartyView.SetStatus(text, isError) end
 end
 
 --------------------------------------------------
@@ -694,6 +718,7 @@ local function cachedCall(key: string, remote: RemoteFunction?, ...: any): any?
 end
 
 local showPage: (string) -> () -- forward declaration
+local openQuestBoard: () -> boolean -- forward declaration (Quest Board screen, 2026-11-17)
 
 -- Live header balance. With nothing staged it shows the real gold + materials; once a
 -- screen has staged changes it shows the PROJECTED balance (gold after sells/buys/upgrade
@@ -736,6 +761,7 @@ local function updateBalanceLabel()
 		if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
 		if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
 		if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text) end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text); if DungeonScreen.SetCurrencies then DungeonScreen.SetCurrencies(realGold, realRes) end end if GuildHallScreen then GuildHallScreen.SetGold(balanceLabel.Text) end
+		if QuestBoardScreen then QuestBoardScreen.SetGold(balanceLabel.Text); QuestBoardScreen.SetCurrencies(realGold, realRes) end if QuestAcceptedView then QuestAcceptedView.SetGold(balanceLabel.Text); QuestAcceptedView.SetCurrencies(realGold, realRes) end if QuestPartyView then QuestPartyView.SetGold(balanceLabel.Text); QuestPartyView.SetCurrencies(realGold, realRes) end
 		return
 	end
 	local projGold = realGold + goldDelta
@@ -765,6 +791,7 @@ local function updateBalanceLabel()
 	if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
 	if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
 	if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text) end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text); if DungeonScreen.SetCurrencies then DungeonScreen.SetCurrencies(realGold, realRes) end end if GuildHallScreen then GuildHallScreen.SetGold(balanceLabel.Text) end
+	if QuestBoardScreen then QuestBoardScreen.SetGold(balanceLabel.Text); QuestBoardScreen.SetCurrencies(realGold, realRes) end if QuestAcceptedView then QuestAcceptedView.SetGold(balanceLabel.Text); QuestAcceptedView.SetCurrencies(realGold, realRes) end if QuestPartyView then QuestPartyView.SetGold(balanceLabel.Text); QuestPartyView.SetCurrencies(realGold, realRes) end
 end
 
 -- Renown Rank unlocks (Slice 8 step 1, 2026-11-16): nav pages whose building is not open yet.
@@ -947,7 +974,8 @@ local function confirmLeaveWithCart(proceed: () -> ())
 		or (ApothecaryScreen and ApothecaryScreen.GetGui())
 		or (TrainingGroundsScreen and TrainingGroundsScreen.GetGui())
 		or (DispatchScreen and DispatchScreen.GetGui()) or (UnitsScreen and UnitsScreen.GetGui())
-		or (DungeonScreen and DungeonScreen.GetGui()) or (GuildHallScreen and GuildHallScreen.GetGui()) or nil
+		or (DungeonScreen and DungeonScreen.GetGui()) or (GuildHallScreen and GuildHallScreen.GetGui())
+		or (QuestBoardScreen and QuestBoardScreen.GetGui()) or (QuestAcceptedView and QuestAcceptedView.GetGui()) or (QuestPartyView and QuestPartyView.GetGui()) or nil
 	overlay.Parent = host or screenGui
 	overlay.Activated:Connect(function() end)  -- absorb background taps
 	leaveDialog = overlay
@@ -1694,7 +1722,7 @@ if UnitsScreen then
 		onClosed = function()
 			screenGui.Enabled = true
 			updateBalanceLabel()
-			showPage(if currentPage == "Units" then "Adventurers" else currentPage) -- "Units" = empty landing key; Back shows the Quest Board
+			showPage(currentPage) -- Home (user 2026-11-18 1:32 AM): Back returns to the home page
 		end,
 		setStatus = setStatus,
 	})
@@ -1775,7 +1803,7 @@ if DungeonScreen then
 			returnToDungeon = false
 			screenGui.Enabled = true
 			updateBalanceLabel()
-			showPage(if currentPage == "Units" then "Adventurers" else currentPage)
+			showPage(currentPage) -- Home (user 2026-11-18 1:32 AM)
 		end,
 		setStatus = setStatus,
 		isLocked = function(): boolean return dungeonDeparting end, -- W1: Dungeon-screen taps do nothing while departing
@@ -1832,11 +1860,182 @@ local embarkButton: TextButton? = nil
 local embarkToken = 0
 local EMBARK_PHRASES = EMBARK_LINES -- one list (defined with the dungeon launch code above)
 
+-- QUEST BOARD SCREEN (Quest Board redesign step 2, 2026-11-17): the Board view. The guild menu keeps
+-- the server flow (OpenAdventurersGuild / QuestBoardOpen / QuestSelected / QuestBoardCancel).
+local function questBoardData(): any
+	local newDay: string? = nil
+	if newDayAt then
+		local left = math.max(0, math.floor(newDayAt - os.clock()))
+		newDay = `New day in {left // 3600}h {(left % 3600) // 60}m` -- existing Quest Board line
+	end
+	return { quests = guildQuests, newDayText = newDay, bossRewardsText = bossRewardsText }
+end
+
+-- Opens the Board view, or refreshes it when it is already open (quests arrived). false = no module.
+openQuestBoard = function(): boolean
+	if not QuestBoardScreen then return false end
+	if QuestBoardScreen.IsOpen() then
+		QuestBoardScreen.SetData(questBoardData())
+		return true
+	end
+	screenGui.Enabled = false
+	QuestBoardScreen.Open(questBoardData())
+	updateBalanceLabel()
+	return true
+end
+
+if QuestBoardScreen then
+	QuestBoardScreen.Init({
+		parent = playerGui,
+		isBusy = function(): boolean return isBusy end,
+		requestBack = confirmLeaveWithCart,
+		onAccept = function(quest: any)
+			-- Same as the old board's Select: the screen stays up (Accept greyed) until the server
+			-- re-opens the menu in PreBattle, which hides it and lands on the sortie overview.
+			chosenQuest = quest
+			guildSortieStep = "overview"
+			departPending = false
+			BattleEvents.QuestSelected:FireServer({ questId = quest.id })
+		end,
+		onClosed = function()
+			-- Same as the old board's Back ("Not today").
+			BattleEvents.QuestBoardCancel:FireServer()
+			guildQuests = nil
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage("Home") -- Back returns to the home page (user 2026-11-18 1:32 AM)
+		end,
+	})
+end
+
+-- QUEST ACCEPTED VIEW (Quest Board redesign step 3, 2026-11-18): after Accept, one GuildScreen view
+-- replaces the old overview / Quest details / Sortie text pages. Server calls are unchanged:
+-- Choose party -> Loadout PARTIES pick mode (openPartiesTab), Embark -> StartBattle or the existing
+-- deferred embark (game_flow 37: no loading bar), Cancel -> AbandonQuest (confirm prompt in the view).
+local function questAcceptedState(): any
+	if not chosenQuest then return nil end
+	return { quest = chosenQuest, partyName = sortiePartyName, locked = sortieLocked, departPending = departPending }
+end
+
+-- Opens the view (or re-renders it). false = no module (the old sortie pages run instead).
+local function openQuestAccepted(): boolean
+	if not QuestAcceptedView then return false end
+	screenGui.Enabled = false
+	QuestAcceptedView.Open()
+	updateBalanceLabel()
+	return true
+end
+
+if QuestAcceptedView then
+	QuestAcceptedView.Init({
+		parent = playerGui,
+		isBusy = function(): boolean return isBusy end,
+		getState = questAcceptedState,
+		embarkLines = EMBARK_PHRASES,
+		onChooseParty = function()
+			-- Step 4 (2026-11-18): the Choose Party view; the Loadout picker stays reachable from its
+			-- "Open Parties" button (and is the fallback when the module is missing).
+			if QuestPartyView then
+				QuestAcceptedView.Hide()
+				QuestPartyView.Open()
+				updateBalanceLabel()
+				return
+			end
+			-- Loadout PARTIES tab in pick mode; when it closes, the guild menu re-renders the
+			-- Quest Board page, which re-opens this view (openPartiesTab -> showPage("Adventurers")).
+			if type((_G :: any).CTRBLXAI_OpenLoadoutTab) ~= "function" then
+				setStatus("Loadout screen not loaded", true) -- existing line; the view stays up
+				return
+			end
+			QuestAcceptedView.Hide()
+			guildSortieStep = "sortie"
+			openPartiesTab()
+		end,
+		onEmbark = function()
+			-- Same as the old Sortie page's Embark: departs now, or defers until the map is ready.
+			if sortieLocked then
+				departPending = true
+				setStatus("The party will move out as soon as scouting is done.")
+				QuestAcceptedView.Refresh()
+			else
+				QuestAcceptedView.Hide()
+				screenGui.Enabled = false
+				BattleEvents.StartBattle:FireServer()
+			end
+		end,
+		onCancelQuest = function()
+			-- Same as the old "Abandon quest" button; the server charges the fee and re-opens the base.
+			BattleEvents.AbandonQuest:FireServer()
+		end,
+		onBack = function()
+			-- Back to the guild menu; the quest stays accepted (the Quest Board button re-opens this view).
+			QuestAcceptedView.Hide()
+			screenGui.Enabled = true
+			updateBalanceLabel()
+			showPage("Home") -- home page (user 2026-11-18 1:32 AM); the quest stays accepted
+		end,
+	})
+end
+
+-- CHOOSE PARTY VIEW (Quest Board redesign step 4, 2026-11-18). Server calls unchanged: a row tap fires the
+-- existing SelectSortieParty with the party id (same remote + payload as the Loadout PARTIES pick mode;
+-- the server checks the party is usable); Embark = the Quest accepted view's Embark.
+if QuestPartyView then
+	QuestPartyView.Init({
+		parent = playerGui,
+		isBusy = function(): boolean return isBusy end,
+		getState = function(): any
+			if not chosenQuest then return nil end
+			return { quest = chosenQuest, partyId = sortiePartySlot, locked = sortieLocked, departPending = departPending }
+		end,
+		embarkLines = EMBARK_PHRASES,
+		onPick = function(id: string, name: string)
+			BattleEvents.SelectSortieParty:FireServer(id)
+			sortiePartySlot = id
+			sortiePartyName = name
+			updateSortieButton()
+			setStatus(`{name} will deploy`) -- existing line (Loadout pick mode)
+		end,
+		onEmbark = function()
+			if sortieLocked then
+				departPending = true
+				setStatus("The party will move out as soon as scouting is done.")
+				QuestPartyView.Refresh()
+			else
+				QuestPartyView.Hide()
+				screenGui.Enabled = false
+				BattleEvents.StartBattle:FireServer()
+			end
+		end,
+		onOpenParties = function()
+			-- Edit parties in the Loadout PARTIES tab (pick mode); closing it returns to the Quest accepted view.
+			if type((_G :: any).CTRBLXAI_OpenLoadoutTab) ~= "function" then
+				setStatus("Loadout screen not loaded", true)
+				return
+			end
+			QuestPartyView.Hide()
+			guildSortieStep = "sortie"
+			openPartiesTab()
+		end,
+		onBack = function()
+			QuestPartyView.Hide()
+			if not openQuestAccepted() then
+				screenGui.Enabled = true
+				showPage("Adventurers")
+			end
+		end,
+	})
+end
+
 local function pageAdventurersGuild()
 	addHeading("QUEST BOARD") -- renamed from Adventurer's Guild (user 2026-11-13 1:25 PM)
 	embarkButton = nil  -- content was just wiped; drop any stale reference
 
 	if sortieMode and chosenQuest then
+		-- Choose Party view open (step 4): re-render it (map ready / party picked) instead of switching views.
+		if QuestPartyView and QuestPartyView.IsOpen() then QuestPartyView.Refresh() return end
+		-- Quest accepted view (step 3, 2026-11-18). The old pages below run only if the module is missing.
+		if openQuestAccepted() then return end
 		local q = chosenQuest
 
 		if guildSortieStep == "details" then
@@ -1844,6 +2043,16 @@ local function pageAdventurersGuild()
 			if q.elite then addNote("Scouts report an elite war band! An Elite leads it, with one extra enemy. Win for extra rewards: mercury, crystals, maybe a rune gem, and a chance at better gear.") end
 			addNote(`Location: {q.biome}   Recommended Lv {q.recommendedLvl}`)
 			addNote(`Enemies: {q.enemyCount}   Difficulty: {tostring(q.difficulty or "?")}`)
+			-- Main goal (step 8, game_flow 39 line 17 / 41): "Goal: {goal}" + the goal sentence.
+			if QuestGoalText and q.goal then
+				local gl = QuestGoalText.CardLine(q.goal)
+				if gl ~= "" then addNote(gl) end
+				local gp = q.goalParams or {}
+				local sentence = QuestGoalText.Sentence({ id = q.goal, rounds = gp.rounds, total = gp.objects or gp.killTarget,
+					lossAt = gp.lossAt })
+				-- Capture / Kill target name the unit only in battle; the card keeps the 1-word goal.
+				if sentence ~= "" and q.goal ~= "Capture" and q.goal ~= "KillTarget" then addNote(sentence) end
+			end
 			local g = q.rewards and q.rewards.gold
 			if g then
 				addNote("Reward gold: " .. ((g.min == g.max) and (g.min .. " + kills") or (g.min .. "-" .. g.max)))
@@ -1930,54 +2139,13 @@ local function pageAdventurersGuild()
 		return
 	end
 
-	-- board: list the offered quests. Choosing one accepts it (fires QuestSelected -> the server
-	-- starts building the map); the server re-opens the menu in PreBattle and we land on overview.
-	if not guildQuests then
-		addNote("Consulting the board for available quests...")
-		return
+	-- board (Quest Board redesign step 2, 2026-11-17): the Board view is its own full screen
+	-- (UI/QuestBoardScreen.lua). Accept fires QuestSelected -> the server starts building the map
+	-- and re-opens the menu in PreBattle (sortie pages above, until build step 3); Back fires
+	-- QuestBoardCancel and the base lands on Units, as the old text page did.
+	if not openQuestBoard() then
+		setStatus("Quest Board screen not loaded", true)
 	end
-	addNote("Choose a quest to embark on, or head back to base.")
-	for _, q in guildQuests do
-		if q.isDailyContract then
-			addNote("Daily Contract (one a day): win it for 3 mercury. Every 3rd one also gives 1 sulfur.")
-			break
-		end
-	end
-	if newDayAt then
-		local left = math.max(0, math.floor(newDayAt - os.clock()))
-		addNote(`New day in {left // 3600}h {(left % 3600) // 60}m`)
-	end
-	if bossRewardsText then addNote(bossRewardsText) end
-	for _, q in ipairs(guildQuests) do
-		local quest = q
-		local g = q.rewards and q.rewards.gold
-		local goldText = ""
-		if g then goldText = (g.min == g.max) and (`{g.min} gold + kills`) or (`{g.min}-{g.max} gold`) end
-		if q.rewards and (tonumber(q.rewards.mercury) or 0) > 0 then
-			goldText = `{goldText} + {q.rewards.mercury} mercury`
-		end
-		-- Renown preview (step 7, loot_progression 94): "+100 Renown" / "+50 Renown (too easy)".
-		local rp = q.renownPreview
-		local renownText = if type(rp) == "table" and tonumber(rp.amount)
-			then `  |  +{rp.amount} Renown` .. (if rp.tooEasy then " (too easy)" else "") else ""
-		local line = `{q.name}\n{q.biome}  Lv {q.recommendedLvl}  |  {q.enemyCount} enemies  |  {goldText}{renownText}  |  Deploy {q.playerSlots}`
-		addRow(line, {
-			{ text = "Select", color = Theme.Colors.Success, onTap = function()
-				chosenQuest = quest
-				guildSortieStep = "overview"
-				departPending = false
-				BattleEvents.QuestSelected:FireServer({ questId = quest.id })
-			end },
-		})
-	end
-	addRow("Not today", {
-		{ text = "Back", color = Theme.Colors.Surface, onTap = function()
-			BattleEvents.QuestBoardCancel:FireServer()
-			guildQuests = nil
-			showPage("Units")
-			openUnits() -- base lands on the Units screen (user 2026-11-13 1:57 PM)
-		end },
-	})
 end
 
 -- GUILD HALL SCREEN (user 2026-11-17 4:40 PM): its own full screen, like the Merchant. The old
@@ -2092,6 +2260,26 @@ local PAGES: { [string]: () -> () } = {
 -- The building list is a tab bar: old 9-slice text bars (user ruling 2026-10-08),
 -- the open building = Active (bronze), the others = Inactive (navy). Theme.MakeTabButton.
 local navPageOf: { [GuiButton]: string } = {}
+local homeButtons: { GuiButton } = {} -- the Home page grid buttons (also in navPageOf while shown)
+-- "New" marks shared by the nav and the Home grid (user 2026-11-18 8:44 AM): one source of truth.
+local newPages: { [string]: boolean } = {} -- page -> has a "New" mark (from the server building state)
+local homeNewLabels: { [string]: TextLabel } = {} -- Home grid marks (rebuilt every Home visit)
+local function makeNewMark(btn: GuiButton): TextLabel
+	local n = Instance.new("TextLabel")
+	n.Name = "NewMark"
+	n.Text = "New"
+	n.Font = Theme.Font.PrimaryBold
+	n.TextSize = Theme.Text.Small()
+	n.TextColor3 = Theme.Colors.TextGold
+	n.BackgroundTransparency = 1
+	n.AnchorPoint = Vector2.new(1, 0.5)
+	n.Position = UDim2.new(1, -8, 0.5, 0)
+	n.Size = UDim2.new(0, 34, 1, 0)
+	n.TextXAlignment = Enum.TextXAlignment.Right
+	n.ZIndex = btn.ZIndex + 1
+	n.Parent = btn
+	return n
+end
 
 local function styleNav()
 	for btn, page in navPageOf do
@@ -2103,8 +2291,84 @@ local function registerNav(btn: GuiButton, page: string)
 	navPageOf[btn] = page
 end
 
+-- GUILD HOME PAGE (user 2026-11-18 1:32 AM): the landing page. Same buttons, icons, labels and order
+-- as the nav list, 4 per row; every screen's Back comes back here. One entry list for both (DAT-001);
+-- third field = Theme.GuildIcons key (user ruling 2026-11-13 12:40 AM).
+local NAV_ENTRIES = {
+	-- Order = expected use frequency (user 2026-11-18 8:56 AM). Quest Board is added first,
+	-- outside this list (Home: order 0; nav: LayoutOrder 0).
+	{ "Units", "Units", "Units" },
+	{ "Dungeon", "Dungeon", "Dungeon" }, -- build step 5 (2026-11-13), approved DG-NAV
+	{ "Merchant", "Merchant", "GearMerchant" },
+	{ "Blacksmith", "Blacksmith", "Blacksmith" },
+	{ "Dispatch", "Dispatch", "Dispatch" },
+	{ "Tavern", "Tavern", "Recruitment" },
+	{ "Apothecary", "Apothecary", "Apothecary" },
+	{ "Runeforge", "Runeforge", "Runeforge" },
+	{ "Training", "TrainingGrounds", "TrainingGrounds" },
+	{ "Crucible", "Crucible", "Crucible" },
+	{ "Guild Hall", "GuildHall", "Townhall" }, -- upgrade list (Slice 8 step 1, approved rank text 1)
+	{ "UGC Merchant", "UGCMerchant", "UGCMarket" }, -- 2026-11-05 (user); the Outfit tab shortcut stays
+	-- "Party" removed 2026-11-05 (user): parties live in the Loadout PARTIES tab. The Sortie's
+	-- "Change party" still opens that tab through the "Party" page entry.
+}
+local navAction: (string) -> () = function(_page: string) end -- set with the nav (buildNav)
+local openQuestBoardNav: () -> () = function() end -- set with the nav (buildNav)
+
+local function pageHome()
+	rowOrder += 1
+	local grid = Instance.new("Frame")
+	grid.Name = "HomeGrid"
+	grid.BackgroundTransparency = 1
+	grid.BorderSizePixel = 0
+	grid.Size = UDim2.new(1, 0, 0, 0)
+	grid.AutomaticSize = Enum.AutomaticSize.Y
+	grid.LayoutOrder = rowOrder
+	local gl = Instance.new("UIGridLayout")
+	gl.CellPadding = UDim2.fromOffset(6, 6)
+	gl.CellSize = UDim2.new(0.25, -5, 0, BUTTON_HEIGHT) -- 4 per row (3 gaps of 6 px)
+	gl.FillDirectionMaxCells = 4
+	gl.SortOrder = Enum.SortOrder.LayoutOrder
+	gl.Parent = grid
+	local function add(label: string, key: string, iconKey: string?, order: number, onTap: () -> ()): GuiButton
+		local btn: GuiButton = Theme.MakeTabButton(nil, label, "Inactive", onTap, { name = "Home_" .. key,
+			size = UDim2.new(0.25, -5, 0, BUTTON_HEIGHT), layoutOrder = order, textSize = Theme.Text.Body(),
+			icon = if iconKey then Theme.GuildIcons[iconKey] else nil,
+			iconSize = NAV_ICON_PX, iconReserve = true, textAlign = Enum.TextXAlignment.Left })
+		btn.Parent = grid
+		return btn
+	end
+	for i, e in NAV_ENTRIES do
+		local page = e[2]
+		local btn = add(e[1], page, e[3], i, function() navAction(page) end)
+		registerNav(btn, page) -- same Disabled / lock handling as the nav buttons (applyNavLocks)
+		table.insert(homeButtons, btn)
+		if newPages[page] and not lockedPages[page] then homeNewLabels[page] = makeNewMark(btn) end
+		if lockedPages[page] then -- approved lock line on tap (rank text 12), like the nav
+			local c = Instance.new("TextButton")
+			c.Name = "LockCatcher"
+			c.Text = ""
+			c.BackgroundTransparency = 1
+			c.Size = UDim2.fromScale(1, 1)
+			c.ZIndex = btn.ZIndex + 2
+			c.Parent = btn
+			c.Activated:Connect(function() showLockLine(page) end)
+		end
+	end
+	add("Quest Board", "Adventurers", "AdventurersGuild", 0, function() openQuestBoardNav() end) -- first (user 2026-11-18 8:56 AM)
+	grid.Parent = content -- properties before Parent (NET-004)
+end
+PAGES.Home = pageHome
+
 showPage = function(name: string)
+	if name == "Units" then name = "Home" end -- "Units" was the empty landing key; Units is its own screen
+	for _, hb in homeButtons do navPageOf[hb] = nil end -- destroyed below (PRF-004)
+	table.clear(homeButtons)
+	table.clear(homeNewLabels) -- their buttons are destroyed with the Home grid
 	currentPage = name
+	homeLayout = (name == "Home")
+	navFrame.Visible = not homeLayout
+	fitColumnsToHeader()
 	clearContent()
 	local fn = PAGES[name]
 	if fn then fn() end
@@ -2251,9 +2515,13 @@ local NAV_BUILDING: { [string]: string } = {
 }
 local function clearNewMark(pageName: string)
 	local lbl = navNewLabels[pageName]
-	if not lbl then return end
-	lbl:Destroy()
+	local hlbl = homeNewLabels[pageName]
+	if not (lbl or hlbl or newPages[pageName]) then return end
+	if lbl then lbl:Destroy() end
+	if hlbl then hlbl:Destroy() end
 	navNewLabels[pageName] = nil
+	homeNewLabels[pageName] = nil
+	newPages[pageName] = nil
 	local bName = NAV_BUILDING[pageName]
 	if bName then
 		task.spawn(function()
@@ -2262,132 +2530,124 @@ local function clearNewMark(pageName: string)
 	end
 end
 
+-- One tap action for a building button, shared by the nav list and the Home page (2026-11-18).
+navAction = function(pageName: string)
+	if clearNewMark then clearNewMark(pageName) end -- "New" mark goes once the building is opened
+	-- PER-SCREEN KEEP/DISCARD (2026-10-14): switching screens with unsaved changes
+	-- prompts Confirm/Discard FIRST, so changes can't pile across screens. Same-screen
+	-- re-tap is a no-op (never prompts). Nothing pending -> switches instantly.
+	if pageName == "Tavern" then
+		-- Own full screen (2026-10-31): same keep/discard prompt first, then open it.
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openTavern()
+		end)
+		return
+	end
+	if pageName == "GuildHall" then
+		-- Own full screen (2026-11-17): same keep/discard prompt first, then open it.
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openGuildHall()
+		end)
+		return
+	end
+	if pageName == "Dungeon" then
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openDungeon()
+		end)
+		return
+	end
+	if pageName == "Units" then
+		-- Own full screen (2026-11-13): same keep/discard prompt first, then open it.
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openUnits()
+		end)
+		return
+	end
+	if pageName == "Dispatch" then
+		-- Own full screen (2026-11-11): same keep/discard prompt first, then open it.
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openDispatch()
+		end)
+		return
+	end
+	if pageName == "Merchant" then
+		-- Own full screen (2026-10-31): same keep/discard prompt first, then open it.
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openMerchant()
+		end)
+		return
+	end
+	if pageName == "UGCMerchant" then
+		-- Same UGC merchant screen as the Outfit tab shortcut (its own full screen).
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openUGCMerchant()
+		end)
+		return
+	end
+	if pageName == "TrainingGrounds" then
+		-- Own full screen (2026-11-04). It has no page fallback.
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openTrainingGrounds()
+		end)
+		return
+	end
+	if pageName == "Apothecary" then
+		-- Own full screen (2026-11-03). It has no page fallback.
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openApothecary()
+		end)
+		return
+	end
+	if pageName == "Crucible" then
+		-- Own full screen (2026-11-02). It has no page fallback.
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openCrucible()
+		end)
+		return
+	end
+	if pageName == "Runeforge" then
+		-- Own full screen (v2 step 5, 2026-11-01). It has no page fallback.
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openRuneforge()
+		end)
+		return
+	end
+	if pageName == "Blacksmith" and BlacksmithScreen then
+		-- Own full screen (v2 step 3, 2026-11-01); the old page stays only as a fallback.
+		confirmLeaveWithCart(function()
+			setStatus("")
+			openBlacksmith()
+		end)
+		return
+	end
+	if currentPage == pageName then return end
+	confirmLeaveWithCart(function()
+		setStatus("")
+		showPage(pageName)
+	end)
+end
+
 local function buildNav()
 	for _, b in navButtons do b:Destroy() end
 	navButtons = {}
 	table.clear(navPageOf) -- destroyed buttons must not stay referenced (PRF-004)
 	-- Third field = Theme.GuildIcons key (user ruling 2026-11-13 12:40 AM). Units has none:
 	-- it keeps an empty icon column so its name lines up with the others.
-	local entries = {
-		{ "Guild Hall", "GuildHall", "Townhall" }, -- upgrade list (Slice 8 step 1, approved rank text 1)
-		{ "Tavern", "Tavern", "Recruitment" }, { "Merchant", "Merchant", "GearMerchant" },
-		{ "Blacksmith", "Blacksmith", "Blacksmith" },
-		{ "Runeforge", "Runeforge", "Runeforge" }, { "Crucible", "Crucible", "Crucible" },
-		{ "Apothecary", "Apothecary", "Apothecary" }, { "Training", "TrainingGrounds", "TrainingGrounds" },
-		-- "Party" removed 2026-11-05 (user): parties live in the Loadout PARTIES tab. The Sortie's
-		-- "Change party" still opens that tab through the "Party" page entry.
-		{ "Dispatch", "Dispatch", "Dispatch" }, { "Units", "Units", "Units" },
-		{ "UGC Merchant", "UGCMerchant", "UGCMarket" }, -- 2026-11-05 (user); the Outfit tab shortcut stays
-		{ "Dungeon", "Dungeon", "Dungeon" }, -- build step 5 (2026-11-13), approved DG-NAV
-	}
-	for i, e in entries do
+	for i, e in NAV_ENTRIES do -- one list with the Home page (2026-11-18)
 		local pageName = e[2]
-		local btn: GuiButton = Theme.MakeTabButton(nav, e[1], "Inactive", function()
-			if clearNewMark then clearNewMark(pageName) end -- "New" mark goes once the building is opened
-			-- PER-SCREEN KEEP/DISCARD (2026-10-14): switching screens with unsaved changes
-			-- prompts Confirm/Discard FIRST, so changes can't pile across screens. Same-screen
-			-- re-tap is a no-op (never prompts). Nothing pending -> switches instantly.
-			if pageName == "Tavern" then
-				-- Own full screen (2026-10-31): same keep/discard prompt first, then open it.
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openTavern()
-				end)
-				return
-			end
-			if pageName == "GuildHall" then
-				-- Own full screen (2026-11-17): same keep/discard prompt first, then open it.
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openGuildHall()
-				end)
-				return
-			end
-			if pageName == "Dungeon" then
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openDungeon()
-				end)
-				return
-			end
-			if pageName == "Units" then
-				-- Own full screen (2026-11-13): same keep/discard prompt first, then open it.
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openUnits()
-				end)
-				return
-			end
-			if pageName == "Dispatch" then
-				-- Own full screen (2026-11-11): same keep/discard prompt first, then open it.
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openDispatch()
-				end)
-				return
-			end
-			if pageName == "Merchant" then
-				-- Own full screen (2026-10-31): same keep/discard prompt first, then open it.
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openMerchant()
-				end)
-				return
-			end
-			if pageName == "UGCMerchant" then
-				-- Same UGC merchant screen as the Outfit tab shortcut (its own full screen).
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openUGCMerchant()
-				end)
-				return
-			end
-			if pageName == "TrainingGrounds" then
-				-- Own full screen (2026-11-04). It has no page fallback.
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openTrainingGrounds()
-				end)
-				return
-			end
-			if pageName == "Apothecary" then
-				-- Own full screen (2026-11-03). It has no page fallback.
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openApothecary()
-				end)
-				return
-			end
-			if pageName == "Crucible" then
-				-- Own full screen (2026-11-02). It has no page fallback.
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openCrucible()
-				end)
-				return
-			end
-			if pageName == "Runeforge" then
-				-- Own full screen (v2 step 5, 2026-11-01). It has no page fallback.
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openRuneforge()
-				end)
-				return
-			end
-			if pageName == "Blacksmith" and BlacksmithScreen then
-				-- Own full screen (v2 step 3, 2026-11-01); the old page stays only as a fallback.
-				confirmLeaveWithCart(function()
-					setStatus("")
-					openBlacksmith()
-				end)
-				return
-			end
-			if currentPage == pageName then return end
-			confirmLeaveWithCart(function()
-				setStatus("")
-				showPage(pageName)
-			end)
-		end, { name = "Nav_" .. pageName, size = UDim2.new(1, 0, 0, BUTTON_HEIGHT), layoutOrder = i,
+		local btn: GuiButton = Theme.MakeTabButton(nav, e[1], "Inactive", function() navAction(pageName) end, {
+			name = "Nav_" .. pageName, size = UDim2.new(1, 0, 0, BUTTON_HEIGHT), layoutOrder = i,
 			textSize = Theme.Text.Body(), icon = if e[3] then Theme.GuildIcons[e[3]] else nil,
 			iconSize = NAV_ICON_PX, iconReserve = true, textAlign = Enum.TextXAlignment.Left })
 		registerNav(btn, pageName)
@@ -2395,7 +2655,7 @@ local function buildNav()
 	end
 	-- Adventurer's Guild: opens the quest board (2026-10-12). Fires OpenAdventurersGuild;
 	-- the server is waiting at the guild base and responds by showing the quest board.
-	local advGuild = makeButton(nav, "Quest Board", Theme.Colors.Accent or Theme.Colors.Success, function()
+	openQuestBoardNav = function() -- same action for the Home page's Quest Board button (2026-11-18)
 		if isBusy then return end
 		confirmLeaveWithCart(function()
 			-- Open the in-menu Adventurer's Guild page. The server offers quests ONCE per base
@@ -2408,9 +2668,12 @@ local function buildNav()
 			end
 			showPage("Adventurers")
 		end)
+	end
+	local advGuild = makeButton(nav, "Quest Board", Theme.Colors.Accent or Theme.Colors.Success, function()
+		openQuestBoardNav()
 	end)
 	advGuild.Size = UDim2.new(1, 0, 0, BUTTON_HEIGHT)
-	advGuild.LayoutOrder = 90
+	advGuild.LayoutOrder = 0 -- first, same order as Home (user 2026-11-18 8:56 AM)
 	-- Adventurer's Guild icon, same column as the building icons (2026-11-13).
 	do
 		local ico = Instance.new("ImageLabel")
@@ -2488,24 +2751,15 @@ applyNavLocks = function(state: any)
 			catcher:Destroy()
 		end
 		local hasNew = type(s) == "table" and s.open == true and s.new == true
-		if hasNew and not navNewLabels[page] then
-			local n = Instance.new("TextLabel")
-			n.Name = "NewMark"
-			n.Text = "New"
-			n.Font = Theme.Font.PrimaryBold
-			n.TextSize = Theme.Text.Small()
-			n.TextColor3 = Theme.Colors.TextGold
-			n.BackgroundTransparency = 1
-			n.AnchorPoint = Vector2.new(1, 0.5)
-			n.Position = UDim2.new(1, -8, 0.5, 0)
-			n.Size = UDim2.new(0, 34, 1, 0)
-			n.TextXAlignment = Enum.TextXAlignment.Right
-			n.ZIndex = btn.ZIndex + 1
-			n.Parent = btn
-			navNewLabels[page] = n
-		elseif not hasNew and navNewLabels[page] then
-			navNewLabels[page]:Destroy()
-			navNewLabels[page] = nil
+		-- Same "New" mark on the nav button and the Home grid button (user 2026-11-18 8:44 AM).
+		newPages[page] = if hasNew then true else nil
+		local isHome = table.find(homeButtons, btn) ~= nil
+		local marks = if isHome then homeNewLabels else navNewLabels
+		if hasNew and not marks[page] then
+			marks[page] = makeNewMark(btn)
+		elseif not hasNew and marks[page] then
+			marks[page]:Destroy()
+			marks[page] = nil
 		end
 	end
 	styleNav()
@@ -2614,7 +2868,7 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	if CrucibleScreen then CrucibleScreen.Hide() end
 	if ApothecaryScreen then ApothecaryScreen.Hide() end
 	if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
-	if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end if GuildHallScreen then GuildHallScreen.Hide() end
+	if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end if GuildHallScreen then GuildHallScreen.Hide() end if QuestBoardScreen then QuestBoardScreen.Hide() end if QuestAcceptedView then QuestAcceptedView.Hide() end if QuestPartyView then QuestPartyView.Hide() end
 	closeLeaveDialog() -- a leftover Confirm/Discard/Cancel prompt must not reappear later
 	currentPhase = (type(data) == "table" and type(data.phase) == "string") and data.phase or "PreBattle"
 	-- Button visibility by phase (2026-10-13 fix for the "Continue to Deployment at the
@@ -2712,15 +2966,13 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 		print("[GuildMenu] Opened (PreBattle, dungeon room) -- departing from the Dungeon screen")
 		return
 	end
-	showPage(sortieMode and "Adventurers" or "Units")
+	showPage(sortieMode and "Adventurers" or "Home") -- base lands on the home page (user 2026-11-18 1:32 AM)
 	-- Back at the base without a pending relaunch (battle refused or finished): loading panel off.
 	if currentPhase == "Base" and not dungeonLaunchPending and DungeonLoading then DungeonLoading.Hide() end
 	if currentPhase == "Base" and dungeonLaunchPending then
 		fireDungeonLaunch() -- quest board was backed out of: now the server listens for the room
 	elseif currentPhase == "Base" and returnToDungeon and DungeonScreen then
 		openDungeon() -- back from a dungeon room: the base reopens on the map
-	elseif not sortieMode then
-		openUnits() -- base lands on the Units screen (user 2026-11-13 1:57 PM)
 	end
 	if currentPhase == "Base" and not sortieMode then task.spawn(showFurnitureNotice) end -- old-save notice, once
 	print(`[GuildMenu] Opened ({currentPhase})`)
@@ -2738,7 +2990,7 @@ GuildEvents.GuildMenuClosed.OnClientEvent:Connect(function()
 	if CrucibleScreen then CrucibleScreen.Hide() end
 	if ApothecaryScreen then ApothecaryScreen.Hide() end
 	if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
-	if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end if GuildHallScreen then GuildHallScreen.Hide() end
+	if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end if GuildHallScreen then GuildHallScreen.Hide() end if QuestBoardScreen then QuestBoardScreen.Hide() end if QuestAcceptedView then QuestAcceptedView.Hide() end if QuestPartyView then QuestPartyView.Hide() end
 	closeLeaveDialog() -- and so does any open Confirm/Discard/Cancel prompt
 	-- Pending changes never outlive the menu (Tester D-1, 2026-10-31).
 	local pendingCount = cartCount()
@@ -2802,7 +3054,7 @@ if BattleEvents.MapBuildComplete then
 				if CrucibleScreen then CrucibleScreen.Hide() end
 				if ApothecaryScreen then ApothecaryScreen.Hide() end
 				if TrainingGroundsScreen then TrainingGroundsScreen.Hide() end
-				if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end if GuildHallScreen then GuildHallScreen.Hide() end
+				if DispatchScreen then DispatchScreen.Hide() end if UnitsScreen then UnitsScreen.Hide() end if DungeonScreen then DungeonScreen.Hide() end if GuildHallScreen then GuildHallScreen.Hide() end if QuestBoardScreen then QuestBoardScreen.Hide() end if QuestAcceptedView then QuestAcceptedView.Hide() end if QuestPartyView then QuestPartyView.Hide() end
 				screenGui.Enabled = false
 				BattleEvents.StartBattle:FireServer()
 			end)

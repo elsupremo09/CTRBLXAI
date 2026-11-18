@@ -30,6 +30,9 @@ local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 -- UIComponents hosts the shared portrait-overlay helper (ApplyPortrait). Require
 -- is acyclic: UIComponents requires only Theme, which BattleHUD already requires.
 local UIComponents = require(CTRBLXAI_UI:WaitForChild("UIComponents", 10))
+-- Quest main-goal text (build step 8): the one place for the approved goal lines. nil = no tracker.
+local _qgtOk, QuestGoalText = pcall(function() return require(CTRBLXAI_UI:WaitForChild("QuestGoalText", 10)) end)
+if not _qgtOk then QuestGoalText = nil end
 
 local Shared = ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("Shared", 10)
 local GameConstants = require(Shared:WaitForChild("GameConstants", 10))
@@ -3270,6 +3273,18 @@ function BattleHUD.ShowMapDetails(data)
 		line("No active quest.", Theme.Colors.TextSecondary)
 	end
 
+	-- Quest main goal (game_flow 41, build step 8): the goal sentence and live progress, above the
+	-- optional objectives. Approved text only (UI/QuestGoalText).
+	if QuestGoalText and type(data.goal) == "table" then
+		local sentence = QuestGoalText.Sentence(data.goal)
+		if sentence ~= "" then
+			line(QuestGoalText.CardLine(data.goal.id), Theme.Colors.TextGold, true)
+			line(sentence, Theme.Colors.TextPrimary)
+			local prog = QuestGoalText.Progress(data.goal)
+			if prog ~= "" then line(prog, Theme.Colors.TextSecondary) end
+		end
+	end
+
 	-- Optional objectives (2026-10-28): live list from ObjectiveService.Describe.
 	-- Each shows name + mode, what to do, live progress, and the bonus reward.
 	-- Fail-and-erase: unfinished objectives fail when the battle ends.
@@ -3308,6 +3323,79 @@ function BattleHUD.ShowMapDetails(data)
 	line("Kill XP is kept on defeat. Benched units get 65%; overleveled units get less.", Theme.Colors.TextDisabled)
 
 	mapDetailsPanel = panel
+end
+
+-- Quest main-goal tracker (game_flow 41, build step 8, 2026-11-17). A compact panel in the free
+-- strip right of the Battlefield button (top-left): the goal sentence and, for goals with a counter,
+-- the live progress line ("Round {a} / {n}", "{a} / {n} destroyed", ...). Fed by the server's
+-- QuestGoalUpdate push (only when the goal data changes). nil / { cleared = true } hides it.
+-- Display only: no taps, so the 44 px touch rule does not apply.
+local goalTracker: Frame? = nil
+local GOAL_TRACKER_W = 220
+function BattleHUD.SetGoal(d: any)
+	if not QuestGoalText then return end
+	ensureRoot()
+	if type(d) ~= "table" or d.cleared then
+		if goalTracker then goalTracker.Visible = false end
+		return
+	end
+	local sentence = QuestGoalText.Sentence(d)
+	if sentence == "" then
+		if goalTracker then goalTracker.Visible = false end
+		return
+	end
+	if not goalTracker or not goalTracker.Parent then
+		local f = Instance.new("Frame")
+		f.Name = "GoalTracker"
+		f.BackgroundColor3 = Theme.Colors.Panel
+		f.BackgroundTransparency = 0.25
+		f.BorderSizePixel = 0
+		f.AutomaticSize = Enum.AutomaticSize.Y
+		f.ZIndex = 20
+		Instance.new("UICorner", f).CornerRadius = UDim.new(0, 4)
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = Theme.Colors.TextGold
+		stroke.Transparency = 0.5
+		stroke.Thickness = 1
+		stroke.Parent = f
+		local pad = Instance.new("UIPadding", f)
+		pad.PaddingTop = UDim.new(0, 3); pad.PaddingBottom = UDim.new(0, 3)
+		pad.PaddingLeft = UDim.new(0, 6); pad.PaddingRight = UDim.new(0, 6)
+		local lay = Instance.new("UIListLayout", f)
+		lay.Padding = UDim.new(0, 1); lay.SortOrder = Enum.SortOrder.LayoutOrder
+		for i, nm in ipairs({ "Sentence", "Progress" }) do
+			local lbl = Instance.new("TextLabel")
+			lbl.Name = nm
+			lbl.BackgroundTransparency = 1
+			lbl.Size = UDim2.new(1, 0, 0, 0)
+			lbl.AutomaticSize = Enum.AutomaticSize.Y
+			lbl.Font = if i == 1 then Theme.Font.Primary else Theme.Font.PrimaryBold
+			lbl.TextSize = Theme.Text.Tiny()
+			lbl.TextColor3 = if i == 1 then Theme.Colors.TextPrimary else Theme.Colors.TextGold
+			lbl.TextXAlignment = Enum.TextXAlignment.Left
+			lbl.TextWrapped = true
+			lbl.LayoutOrder = i
+			lbl.ZIndex = 21
+			lbl.Parent = f
+		end
+		f.Parent = rootFrame
+		goalTracker = f
+	end
+	local f = goalTracker :: Frame
+	-- Right of the Battlefield button, same top (viewModeButtons sits at y 58).
+	local x = PAD + 6
+	if viewModeButtons then x = viewModeButtons.Position.X.Offset + viewModeButtons.Size.X.Offset + 6 end
+	f.Position = UDim2.fromOffset(x, 58)
+	f.Size = UDim2.fromOffset(GOAL_TRACKER_W, 0)
+	local s = f:FindFirstChild("Sentence") :: TextLabel?
+	local p = f:FindFirstChild("Progress") :: TextLabel?
+	if s then s.Text = sentence end
+	local prog = QuestGoalText.Progress(d)
+	if p then
+		p.Text = prog
+		p.Visible = prog ~= ""
+	end
+	f.Visible = true
 end
 
 -- Selection for the unit panel. Pass nil to go back to the acting unit.

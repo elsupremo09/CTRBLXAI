@@ -1072,9 +1072,12 @@ function BattlefieldEventService.SelectEventsForBattle(state: any, biome: any, r
 	-- the rest form the start pool (filtered by biome allow-list where set).
 	local biomeName = (type(biome) == "table" and biome.name) or biome
 	local startPool, conditional = {}, {}
+	-- Quest main-goal conflict rule (game_flow 41, quest goals step 2): Main sets the events this
+	-- quest's goal blocks (e.g. no Lost Noble on a Protect quest) before calling this.
+	local blocked = state.bfExcludedEvents or {}
 	for _, name in ipairs(BattlefieldEventData.Order) do
 		local def = BattlefieldEventData.Events[name]
-		if def then
+		if def and not blocked[name] then
 			local rule = eventRule(name)
 			-- Biome allow-list (e.g. Zombie Horde): if set and this biome not listed, skip entirely.
 			local biomeOk = (rule.biomes == nil) or (biomeName ~= nil and rule.biomes[biomeName] == true)

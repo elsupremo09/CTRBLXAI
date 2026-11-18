@@ -55,6 +55,13 @@ local _battlefieldEventService = nil
 function BattleCoordinator.SetBattlefieldEventService(bes)
 	_battlefieldEventService = bes
 end
+
+-- Quest main goals (game_flow 41, build step 1 2026-11-17). QuestGoalService, injected by Main
+-- (cycle-free; nil = every battle is Wipe out, as before).
+local _questGoalService = nil
+function BattleCoordinator.SetQuestGoalService(qgs)
+	_questGoalService = qgs
+end
 --------------------------------------------------
 -- CONSTANTS
 --------------------------------------------------
@@ -423,6 +430,25 @@ local function advanceToNextReady(state)
 			end
 		end
 
+		-- Quest main goal round counter (1000-CT rounds, same boundary as the events above).
+		if _questGoalService and state.questGoal then
+			local roundIndex = math.floor((state.ct or 0) / 1000)
+			if state.goalRoundIndex == nil or roundIndex > state.goalRoundIndex then
+				state.goalRoundIndex = roundIndex
+				local ok, err = pcall(_questGoalService.OnRoundStart, state, roundIndex)
+				if not ok then
+					warn("[BattleCoordinator] QuestGoalService.OnRoundStart error: " .. tostring(err))
+				end
+			end
+			-- Goal clock (step 3): Survive spawns (every 400 CT while < 12 alive) + the goal tile marker.
+			if _questGoalService.OnClock then
+				local okC, errC = pcall(_questGoalService.OnClock, state)
+				if not okC then
+					warn("[BattleCoordinator] QuestGoalService.OnClock error: " .. tostring(errC))
+				end
+			end
+		end
+
 		-- Weather and round-start events may have killed or revived units this step: refresh.
 		clearDeadChannels(state)
 		alive = getAliveUnits(state)
@@ -501,6 +527,27 @@ local function checkBattleEnd(state)
 		return true
 	end
 
+	-- Quest main goal (game_flow 41): after the all-down loss (a loss always wins a tie), before the
+	-- all-enemies-down win. A goal can end the battle with enemies still standing (Slay, Kill target).
+	if _questGoalService then
+		local ok, verdict = pcall(_questGoalService.Evaluate, state)
+		-- Live HUD tracker (build step 8): push the goal snapshot when it changed. After Evaluate so
+		-- Prevent runners that just got through are already counted. Never blocks the end check.
+		if _questGoalService.Broadcast then pcall(_questGoalService.Broadcast, state) end
+		if not ok then
+			warn("[BattleCoordinator] QuestGoalService.Evaluate error: " .. tostring(verdict))
+		elseif verdict == "Win" or verdict == "Loss" then
+			state.phase  = "BattleOver"
+			state.winner = if verdict == "Win" then "Player" else "Enemy"
+			state.goalVerdict = verdict
+			return true
+		elseif verdict == "Hold" then
+			-- Survive (step 3) and Destroy with targets left (USER 2026-11-17 9:21 PM): the goal is
+			-- still running; an empty enemy side does not end it.
+			return false
+		end
+	end
+
 	if enemiesAlive == 0 then
 		state.phase  = "BattleOver"
 		state.winner = "Player"
@@ -520,8 +567,19 @@ end
 -- for winning (same getSideAlive rule: summons and item devices don't count, rule 240). The turn
 -- loops call it after each action and only then run CheckBattleEnd (which runs the Rescue Beacon
 -- hook first), so beacon timing is unchanged unless a side was just wiped.
+-- Quest goals (2026-11-17): also true when the main goal is already decided, so the turn loops run
+-- CheckBattleEnd for a Slay / Kill target win too (they only call it when this returns true).
+-- Survive (step 3) / Destroy with targets left: an empty enemy side is NOT a wipe while the goal holds, so the turn loops don't
+-- call CheckBattleEnd (and the Rescue Beacon hook) after every action of an empty-field round.
 function BattleCoordinator.IsSideWiped(state): boolean
-	return getSideAlive(state, "Player") == 0 or getSideAlive(state, "Enemy") == 0
+	if getSideAlive(state, "Player") == 0 then return true end
+	local enemyWiped = getSideAlive(state, "Enemy") == 0
+	if _questGoalService and state.questGoal then
+		local ok, verdict = pcall(_questGoalService.Evaluate, state)
+		if ok and (verdict == "Win" or verdict == "Loss") then return true end
+		if ok and verdict == "Hold" then return false end
+	end
+	return enemyWiped
 end
 
 --------------------------------------------------

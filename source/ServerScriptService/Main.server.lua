@@ -50,6 +50,7 @@ local ObjectEffectService     = require(Game:WaitForChild("ObjectEffectService")
 local DiscoveryService        = require(Game:WaitForChild("DiscoveryService")) -- Discovery Radius reveal (2026-10-28)
 local StatCalcService         = require(Game:WaitForChild("StatCalcService")) -- shared stat calculation (2026-10-28)
 local ObjectiveService        = require(Game:WaitForChild("ObjectiveService"))
+local QuestGoalService        = require(Game:WaitForChild("QuestGoalService")) -- quest main goals (game_flow 41, 2026-11-17)
 local WeatherService          = require(Game:WaitForChild("WeatherService"))
 local BattlefieldEventService = require(Game:WaitForChild("BattlefieldEventService"))
 local ItemDisplay             = require(Game:WaitForChild("ItemDisplay")) -- item->UI entry builders (extracted 2026-10-12)
@@ -168,7 +169,8 @@ local function computeBattleGold(units, playerUnitsById, quest, isVictory)
 	local killCount = 0
 	local kills = {}
 	for _, u in ipairs(units or {}) do
-		if u.side == "Enemy" and not u.isSummon and not u.isAlive then
+		-- leftMap (quest goal Prevent, step 7): a runner that got through left the field; it is not a kill.
+		if u.side == "Enemy" and not u.isSummon and not u.isAlive and not u.leftMap then
 			kills[#kills + 1] = {
 				enemyType = u.enemyType,
 				level = u.level or 0,
@@ -1472,7 +1474,8 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 			print("[Dev] Instant Win triggered")
 			for _, u in ipairs(allUnitsList) do
 				if u.side == "Enemy" and u.isAlive then
-					UnitSchema.Kill(u)
+					-- The Capture goal's target can't be KO'd (KO floor); dev Instant Win still removes it.
+					if u.isCaptureTarget then UnitSchema.ForceKill(u) else UnitSchema.Kill(u) end
 					clearTileOccupant(u.tileX, u.tileY)
 					BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id })
 					print(string.format("[Dev] Killed %s", u.name))
@@ -1952,7 +1955,16 @@ do -- Dev commands: Studio, or an allow-listed owner account (DevAccess). Re-che
 				-- Per-battle seed, stored on state so the round/turn/weather rolls vary per battle too.
 				state.battleSeed = (generatedMap and generatedMap.seed) or os.time()
 				local bfRng = Random.new(state.battleSeed + 70007)
+				do -- quest goal conflict rule (game_flow 41, step 2): same blocked events as battle start
+					local okEx, ex = pcall(QuestGoalService.BlockedEvents, activeQuest)
+					state.bfExcludedEvents = if okEx then ex else {}
+				end
 				BattlefieldEventService.SelectEventsForBattle(state, activeQuest and activeQuest.biome or nil, bfRng)
+				-- Quest goal (step 3): the Reach tile / Activate object belong to the old map; pick them
+				-- again on the new one (dev Regenerate only; the round count follows the clock).
+				local okGoal, errGoal = pcall(QuestGoalService.BeginBattle, state, activeQuest, generatedMap)
+				if not okGoal then warn("[Main] QuestGoalService.BeginBattle (regenerate) failed: " .. tostring(errGoal)) end
+				pcall(QuestGoalService.Broadcast, state, true) -- step 8: refresh the HUD tracker
 			end
 
 			-- Sync terrain, elevation, blockers, AND dimensions to client.
@@ -2494,13 +2506,16 @@ BattleEvents.MapDetailsRequest.OnServerEvent:Connect(function(playerObj)
 	-- same text the victory screen uses). Replaces the dead pendingOptionalQuests
 	-- read (the Chaos Statue no longer writes there since its conversion).
 	local optional = ObjectiveService.Describe(state)
+	-- Main goal (game_flow 41): data only; the client formats it at Quest Board build step 8.
+	local okGoal, goal = pcall(QuestGoalService.Describe, state)
+	if not okGoal then goal = nil end
 
 	-- XP so far (2026-10-28): projected kill XP per deployed unit, same formula as
 	-- the real payout (ProgressionService.ProjectKillXp) and the same kills snapshot
 	-- the battle-end award builds (dead, non-summon enemies). Read-only.
 	local xpKills = {}
 	for _, u in ipairs(allUnitsList or {}) do
-		if u.side == "Enemy" and not u.isSummon and not u.isAlive then
+		if u.side == "Enemy" and not u.isSummon and not u.isAlive and not u.reachedGoal then -- Prevent runners through aren't kills
 			xpKills[#xpKills + 1] = { enemyType = u.enemyType, aiRole = u.aiRole, level = u.level or 0 }
 		end
 	end
@@ -2509,6 +2524,7 @@ BattleEvents.MapDetailsRequest.OnServerEvent:Connect(function(playerObj)
 	BattleEvents.MapDetailsResponse:FireClient(playerObj, {
 		quest         = quest,
 		optional      = optional,
+		goal          = goal,
 		-- "goldSoFar" = kill gold banked so far (victory rate); "goldOnVictory" =
 		-- the fixed quest + completion gold added only on a win. Client shows the
 		-- sum as "if you win" and notes defeat keeps 50% kill gold only.
@@ -3354,6 +3370,7 @@ while true do
 		local okRD, errRD = pcall(DungeonBattleHooks.ApplyRestlessDead, PLAYER_ID, selectedQuest) -- RL-64 (endless step 6)
 		if not okRD then warn("[Main] Restless Dead failed: " .. tostring(errRD)) end
 	elseif not selectedQuest.isDailyContract and not selectedQuest.isTestArena and selectedQuest.questType ~= "Boss"
+		and selectedQuest.goal ~= "KillTarget" -- Kill target already has its Elite and no forced objective (open question 3)
 		and QuestGenerator.IsEliteBattle(PLAYER_ID, GuildMenuService.GetBattlesCompleted()) then
 		QuestGenerator.MakeEliteEncounter(selectedQuest)
 	end
@@ -3541,6 +3558,22 @@ while true do
 	StatusService.SetHideBlockQuery(function(u) return ObjectEffectService.IsHideBlocked(u) end)
 	-- Rescue Beacon (2026-10-26): before every battle-end check, revive the first allied KO
 	-- near a beacon, then re-label the tiles here (tile labels live in Main).
+	BattleCoordinator.SetQuestGoalService(QuestGoalService) -- quest main goals (game_flow 41, build step 1)
+	-- Step 3 (Survive spawns, Activate object, goal tile marker): runtime services for the goal service.
+	-- Step 6 (Protect): equipmentService rebuilds the Guild Courier's stats after its gear is removed.
+	-- Step 7 (Prevent): unitRemover takes a runner that got through off the field (same as the event
+	-- unit remover: frees the tile, removes the token, logs the existing "leaves the battlefield" line).
+	QuestGoalService.Init({ enemyGenerator = EnemyGenerator, objectEffectService = ObjectEffectService,
+		broadcaster = BattleVisualBroadcaster, equipmentService = EquipmentService,
+		unitRemover = function(u)
+			clearTileOccupant(u.tileX, u.tileY)
+			BattleEvents.UnitDefeated:FireAllClients({ unitId = u.id, removeUnit = true })
+			BattleVisualBroadcaster.Log("ko", `{u.name} leaves the battlefield.`, u.id)
+		end,
+		-- Step 8: live goal tracker push (QuestGoalService.Broadcast -> client HUD tracker).
+		goalUpdate = function(d)
+			BattleEvents.QuestGoalUpdate:FireAllClients(d)
+		end })
 	BattleCoordinator.SetKoHook(function(st)
 		local revived = CommandService.ProcessRescueBeacons(st)
 		for _, r in ipairs(revived or {}) do
@@ -3647,6 +3680,12 @@ end)
 				break
 			end
 		end
+	end
+	-- Quest main goal (game_flow 41): tag the Kill target (Boss, or the card's Elite leader) at spawn,
+	-- before any battlefield event can add another Elite.
+	do
+		local okTag, errTag = pcall(QuestGoalService.TagTarget, activeQuest, generatedEnemies)
+		if not okTag then warn("[Main] QuestGoalService.TagTarget failed: " .. tostring(errTag)) end
 	end
 
 	-- STAGE 2 (2026-10-19): battle BORROWS the base roster instead of rebuilding it.
@@ -4688,7 +4727,23 @@ end)
 		-- Per-battle seed, stored on state so the round/turn/weather rolls vary per battle too.
 		state.battleSeed = (generatedMap and generatedMap.seed) or os.time()
 		local bfRng = Random.new(state.battleSeed + 70007)
+		-- Quest goal conflict rule (game_flow 41, step 2): events this goal blocks (Protect -> no Lost Noble).
+		do
+			local okEx, ex = pcall(QuestGoalService.BlockedEvents, activeQuest)
+			state.bfExcludedEvents = if okEx then ex else {}
+		end
 		BattlefieldEventService.SelectEventsForBattle(state, activeQuest and activeQuest.biome or nil, bfRng)
+	end
+
+	-- Quest main goal (game_flow 41, build step 1): build state.questGoal for the battle-end check.
+	do
+		local okGoal, errGoal = pcall(QuestGoalService.BeginBattle, state, activeQuest, generatedMap)
+		if not okGoal then
+			warn("[Main] QuestGoalService.BeginBattle failed (battle plays as Wipe out): " .. tostring(errGoal))
+			state.questGoal = nil
+		end
+		-- Step 8: first tracker push for this battle (forced, so a repeat goal still shows).
+		pcall(QuestGoalService.Broadcast, state, true)
 	end
 
 	-- Optional in-battle objectives (Phase 1): roll this battle's optional
@@ -5477,7 +5532,7 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 	end
 	-- Enemy defeat tracking: count how many enemies each player unit killed
 	for _, u in ipairs(allUnitsList) do
-		if u.side == "Enemy" and not u.isAlive and u._killedBy then
+		if u.side == "Enemy" and not u.isAlive and u._killedBy and not u.reachedGoal then
 			local killer = playerUnits[u._killedBy]
 			if killer and killer.records then
 				killer.records.enemiesDefeated = (killer.records.enemiesDefeated or 0) + 1
@@ -5512,7 +5567,7 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 				-- Summons are not Grunt/Veteran/Elite/Boss and are rewardEligible=false
 				-- (EnemyGenerator SpawnSummon): no kill XP (FLAG-P3 — they used to fall
 				-- back to Grunt XP).
-				if not u.isAlive then
+				if not u.isAlive and not u.reachedGoal then -- Prevent runners through give no kill XP
 					table.insert(kills, {
 						enemyType = u.enemyType,          -- Grunt/Veteran/Elite/Boss (BUG-009 field)
 						aiRole    = u.aiRole,             -- fallback only
@@ -5712,7 +5767,7 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 			local rolled = 0
 			if isQualifyingVictory then
 				for _, u in ipairs(allUnitsList) do
-					if u.side == "Enemy" and not u.isSummon and not u.isAlive then
+					if u.side == "Enemy" and not u.isSummon and not u.isAlive and not u.reachedGoal then
 						rolled += 1
 						if rng:NextNumber() < KILL_MERCURY_CHANCE then
 							killMercury += 1
@@ -6016,6 +6071,16 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 			local rb = tonumber(activeQuest.dungeonRarityBonus) or 0
 			if rb > 0 then _lootOpts.fortuneBonus = rb end -- Elite/Boss rarity step (project_rules 258/263)
 			print(string.format("[PostBattle] Dungeon loot rolls: %d (scale x%.2f, rarity Fortune +%.2f)", n, tonumber(activeQuest.dungeonLootScale) or 1, rb))
+		end
+		-- Promised quest gear (game_flow 36, 2026-11-17): the card's fixed gear type + rarity replaces
+		-- one gear roll of this victory loot (RewardService). Normal quests and the Daily Contract only:
+		-- never dungeon rooms or the test arena. Victory only (we are inside isQualifyingVictory).
+		if not isDungeonBattle and activeQuest and not activeQuest.isTestArena
+			and type(activeQuest.rewards) == "table" and type(activeQuest.rewards.promisedGear) == "table" then
+			_lootOpts = _lootOpts or {}
+			_lootOpts.promisedGear = activeQuest.rewards.promisedGear
+			print(string.format("[PostBattle] Promised gear: %s %s L%s", tostring(activeQuest.rewards.promisedGear.rarity),
+				tostring(activeQuest.rewards.promisedGear.archetypeId), tostring(activeQuest.rewards.promisedGear.level)))
 		end
 		local results, equipCommitted = RewardService.GenerateRewards(PLAYER_ID, MAP_LEVEL, opportunityId, _lootOpts)
 
@@ -6335,6 +6400,12 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 			return a.name < b.name
 		end)
 	end
+	-- Quest main goal outcome for the reward / defeat screen (step 8): the defeat screen shows the
+	-- goal's own loss line (e.g. "Time ran out.") when the goal ended the battle.
+	local okGoalScreen, goalScreen = pcall(QuestGoalService.Describe, state)
+	if not okGoalScreen then goalScreen = nil end
+	-- Step-8 Tester WARN-2: clear the live tracker snapshot at battle end so the next battle starts fresh.
+	pcall(QuestGoalService.ClearBroadcast)
 	if #rewardSummaries > 0 or battleGoldEarned > 0 or battleMercuryEarned > 0 or dailyContractResult ~= nil
 		or bossRewardResult ~= nil or eliteRewardResult ~= nil or #dispatchSummary > 0 or #activeDispatch > 0
 		or #objectivesScreen > 0 or #xpScreen > 0 or renownResult ~= nil or not isQualifyingVictory then
@@ -6342,7 +6413,7 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 		BattleEvents.RewardScreen:FireAllClients({ rewards = rewardSummaries, recovery = recoverySummary, gold = battleGoldEarned,
 			mercury = battleMercuryEarned, daily = dailyContractResult, boss = bossRewardResult, elite = eliteRewardResult,
 			dispatch = dispatchSummary, activeDispatch = activeDispatch, daysElapsed = daysElapsed, defeat = not isQualifyingVictory,
-			objectives = objectivesScreen, xp = xpScreen, renown = renownResult })
+			objectives = objectivesScreen, xp = xpScreen, renown = renownResult, goal = goalScreen })
 		rewardContinueSignal.Event:Wait()
 		print("[PostBattle] Player acknowledged rewards")
 	end

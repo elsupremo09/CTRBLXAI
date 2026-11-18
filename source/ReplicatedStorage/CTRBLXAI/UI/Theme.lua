@@ -1244,6 +1244,20 @@ Theme.FurnitureIcons = {
 	["FUR-26"] = "rbxassetid://113682765741583",
 } :: { [string]: string }
 
+-- Quest Board art (Quest Board redesign step 2, 2026-11-17; user-approved uploads, game_flow 38).
+-- Board = painted wood planks behind the quest grid (ScaleType Crop). Card = the user's own
+-- parchment sheet (683x1024), 9-sliced so the pins / torn edges / curled corner stay crisp.
+-- Ink = text colour on the parchment. ONE place for these values (DAT-001).
+Theme.QuestBoardArt = table.freeze({
+	Board = "rbxassetid://98321788039247",
+	Card = "rbxassetid://92530315099135",
+	CardSlice = Rect.new(100, 140, 583, 850),
+	CardSliceScalePhone = 0.25,
+	CardSliceScale = 0.35,
+	Ink = Color3.fromRGB(52, 34, 18),
+	InkSoft = Color3.fromRGB(92, 66, 40),
+})
+
 -- Button labels that are drawn as icons instead of text (matched case-insensitively).
 local ICON_FOR_TEXT = {
 	BACK = "Back", CANCEL = "Back",

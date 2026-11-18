@@ -243,6 +243,16 @@ function DispatchService.IsUnitDispatched(playerId: string, unitId: string): boo
 	return activeOf(playerId)[unitId] ~= nil
 end
 
+-- Days left on a unit's dispatch (nil = not dispatched). Each battle burns at least 1 day, so this is
+-- the most battles until the unit is back (Quest Board Choose Party view, 2026-11-18).
+function DispatchService.GetRemainingDays(playerId: string, unitId: string): number?
+	local rec = activeOf(playerId)[unitId]
+	if not rec then return nil end
+	local d = rec.remainingDays
+	if d == nil then d = math.max(1, math.floor(rec.duration or 1)) end
+	return math.max(1, math.floor(d))
+end
+
 -- Number of concurrent missions in use (one slot per mission, not per unit).
 function DispatchService.GetSlotsUsed(playerId: string): number
 	local missions, n = {}, 0

@@ -1,0 +1,143 @@
+--!strict
+-- QuestGoalData.lua
+-- CTRBLXAI | Quest main goals (game_flow 41, USER 2026-11-17 7:25 PM + 7:51 PM).
+--
+-- The ONE place for the goal frequency table and every per-goal number (DAT-001). QuestGenerator
+-- rolls from it, QuestGoalService runs it in battle, the Quest Board UI (build step 8) will read the
+-- same table. Pure data + tiny helpers, no requires.
+--
+-- Difficulty tiers: Easy = difficulty 1-2, Normal = 3, Hard = 4-5.
+-- built = false: approved but not built yet. QuestGenerator still rolls these at their real
+-- weights, then plays them as Wipe out (logged), so the card never promises a goal the battle
+-- can't run and the built goals already appear at their final rates (build step 1 default).
+
+local QuestGoalData = {}
+
+export type Tier = "Easy" | "Normal" | "Hard"
+
+function QuestGoalData.TierOf(difficulty: number?): Tier
+	local d = tonumber(difficulty) or 1
+	if d >= 4 then return "Hard" end
+	if d >= 3 then return "Normal" end
+	return "Easy"
+end
+
+-- Frequency by tier (game_flow 41; Simulator re-check after build steps 3 and 7). Each row sums to 100.
+-- Arrays, not maps, so the roll order is fixed for the same seed.
+QuestGoalData.Weights = {
+	Easy = {
+		{ id = "WipeOut", weight = 50 }, { id = "Slay", weight = 20 },
+		{ id = "Destroy", weight = 15 }, { id = "Reach", weight = 15 },
+	},
+	Normal = {
+		{ id = "WipeOut", weight = 22 }, { id = "Slay", weight = 12 },
+		{ id = "Destroy", weight = 10 }, { id = "Reach", weight = 10 },
+		{ id = "Capture", weight = 10 }, { id = "Protect", weight = 10 },
+		{ id = "Survive", weight = 10 }, { id = "KillTarget", weight = 8 },
+		{ id = "Activate", weight = 8 },
+	},
+	Hard = {
+		{ id = "WipeOut", weight = 10 }, { id = "Slay", weight = 8 },
+		{ id = "Destroy", weight = 8 }, { id = "Reach", weight = 8 },
+		{ id = "Survive", weight = 12 }, { id = "Capture", weight = 10 },
+		{ id = "KillTarget", weight = 14 }, { id = "Protect", weight = 12 },
+		{ id = "Prevent", weight = 10 }, { id = "Activate", weight = 8 },
+	},
+}
+
+-- Per-goal numbers. templates = nil means every quest template fits (all of T01-T08 have POI tiles
+-- and a deploy area; checked at step 3, 2026-11-17). Template lists on unbuilt goals are the draft's
+-- provisional fit; confirm them at each goal's build step. If a battle's map has no usable POI tile
+-- for Reach / Activate, the battle plays as Wipe out and the saved quest follows (logged).
+QuestGoalData.Goals = {
+	WipeOut = { built = true },
+	-- Slay X: X = share of the starting enemy count, rounded up; this share of Grunts become Veterans.
+	Slay = { built = true, killShare = { Easy = 0.6, Normal = 0.7, Hard = 0.8 }, veteranShare = 0.5 },
+	-- Kill target: one Elite leader at quest level + eliteLevelBonus (same roster rule as the
+	-- elite encounter). Boss quests always use the Boss as the target instead (open question 2).
+	KillTarget = { built = true, eliteLevelBonus = 2 },
+
+	-- Survive (step 3): survive `rounds` rounds (win at the start of round rounds + 1). At most
+	-- maxAlive enemies alive at once; while fewer are alive, one enemy spawns every spawnEveryCt CT
+	-- on a free enemy deploy (ED) tile (none free = that spawn is skipped and logged). Wiping every
+	-- enemy does NOT end it. Spawn level = quest level + levelOffset (min..max); type by spawnTypes
+	-- ("mostly Grunts", agent default 80/20).
+	Survive = { built = true, rounds = { Normal = 6, Hard = 8 }, maxAlive = 12, spawnEveryCt = 400,
+		levelOffset = { min = -2, max = 0 },
+		spawnTypes = { { type = "Grunt", weight = 80 }, { type = "Veteran", weight = 20 } },
+		templates = { "T07", "T05" } },
+	Capture = { built = false, levelBonus = 1 },
+	Destroy = { built = false, objects = { Easy = 2, Normal = 3, Hard = 4 } },
+	Protect = { built = false, npcLevelOffset = -10, npcHpShare = 0.6 },
+	-- Reach (step 3): a Player unit (not a summon, device, recruit or the Protect NPC) standing on
+	-- the marked tile wins (move end, push, teleport); round `rounds` ending first is a loss. The
+	-- tile is a template POI tile reachable from the player deploy area (PD), at least
+	-- minPathFromDeploy walking steps away when one exists (else the farthest). Wiping every enemy
+	-- still wins (agent default).
+	Reach = { built = true, rounds = { Easy = 8, Normal = 6, Hard = 5 }, minPathFromDeploy = 12,
+		templates = { "T03", "T01" } },
+	Prevent = { built = false, runners = { Hard = 4 }, lossAt = { Hard = 3 },
+		templates = { "T05", "T03", "T08" } },
+	-- Activate (step 3): a Player unit Interacts with the marked object (normal Interact cost) to win;
+	-- round `rounds` ending first is a loss. The object (objectType model, reused) is placed on a
+	-- template POI tile reachable from PD, at least minPathFromDeploy steps away when possible; it
+	-- can't be broken or pushed for this goal. leash = enemy AI radius, built at step 7.
+	Activate = { built = true, rounds = { Normal = 6, Hard = 5 }, leash = 6, objectType = "Obelisk",
+		minPathFromDeploy = 10 },
+}
+
+-- CONFLICT RULE (game_flow 41, quest goals step 2): an optional objective never has the same goal as
+-- the main quest. Per goal: ObjectiveService catalog ids that must not roll (and must not be forced),
+-- and BattlefieldEventData event names that must not fire. Applied to the goal the battle really
+-- runs (quest.goal), so an unbuilt goal that plays as Wipe out has no conflicts until it is built.
+-- Wipe out / Slay -> "All defeated" exists in the DB only (unit_progression 69), not in the
+-- ObjectiveService catalog, so there is nothing to block for them yet.
+QuestGoalData.Conflicts = {
+	WipeOut    = { objectives = {}, events = {} },
+	Slay       = { objectives = {}, events = {} },
+	KillTarget = { objectives = { "elite_slayer" }, events = {} }, -- also no forced elite objective
+	Survive    = { objectives = { "speed_clear" }, events = {} },
+	Capture    = { objectives = { "recruit" }, events = {} },
+	Destroy    = { objectives = { "demolition" }, events = {} },
+	Protect    = { objectives = { "npc_survive" }, events = { "Lost Noble" } },
+	Reach      = { objectives = { "speed_clear" }, events = {} },
+	Prevent    = { objectives = {}, events = {} },
+	Activate   = { objectives = { "speed_clear" }, events = {} },
+}
+
+local function listHas(list: { string }?, value: string): boolean
+	for _, v in ipairs(list or {}) do
+		if v == value then return true end
+	end
+	return false
+end
+
+-- True when this optional objective id must not roll (or be forced) with this main goal.
+function QuestGoalData.BlocksObjective(goalId: string?, objectiveId: string): boolean
+	local c = goalId and (QuestGoalData.Conflicts :: any)[goalId]
+	return c ~= nil and listHas(c.objectives, objectiveId)
+end
+
+-- True when this battlefield event must not fire with this main goal.
+function QuestGoalData.BlocksEvent(goalId: string?, eventName: string): boolean
+	local c = goalId and (QuestGoalData.Conflicts :: any)[goalId]
+	return c ~= nil and listHas(c.events, eventName)
+end
+
+-- True when the goal's template list (if any) includes this template.
+function QuestGoalData.FitsTemplate(goalId: string, template: string?): boolean
+	local def = (QuestGoalData.Goals :: any)[goalId]
+	if not def then return false end
+	if def.templates == nil then return true end
+	for _, t in ipairs(def.templates) do
+		if t == template then return true end
+	end
+	return false
+end
+
+function QuestGoalData.IsBuilt(goalId: string?): boolean
+	local def = goalId and (QuestGoalData.Goals :: any)[goalId]
+	return def ~= nil and def.built == true
+end
+
+return QuestGoalData

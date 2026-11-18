@@ -74,6 +74,9 @@ local EVENT_NAMES = {
 	-- committed — gold/loot still finalize only at battle end).
 	"MapDetailsRequest",    -- C->S: {} (active player's open turn)
 	"MapDetailsResponse",   -- S->C: { quest, optional, goldSoFar, goldOnVictory, lootMin, lootMax }
+	-- Quest main goal tracker (game_flow 41, build step 8, 2026-11-17): the goal snapshot
+	-- (QuestGoalService.Describe) pushed when it changes, so the HUD tracker stays live.
+	"QuestGoalUpdate",      -- S->C: goal data table, or { cleared = true } after the battle
 	-- Phase 2: Status expansion
 	"TurnSkipped",
 	"StatusImmune",

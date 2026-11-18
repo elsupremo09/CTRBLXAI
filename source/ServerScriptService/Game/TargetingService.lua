@@ -1978,6 +1978,19 @@ function TargetingService.GetInteractCandidates(actor, allUnits, state)
 							id = u.id, name = u.name,
 							tileX = u.tileX, tileY = u.tileY,
 						})
+					elseif u.isCaptureTarget and u.side == "Enemy" then
+						-- QUEST GOAL Capture (game_flow 41, build step 5 2026-11-17): the capture target is
+						-- NEVER a recruit candidate. A Player unit (not a summon / item device; recruits are
+						-- Neutral) may Capture it once it is at exactly 1 HP (its HP can't go below 1,
+						-- UnitSchema.IsKoProtected). Normal Interact reach (checked above).
+						if actor.side == "Player" and not actor.isSummon and not actor.isItemDevice
+							and (u.currentHp or 0) <= 1 and not u.captured then
+							table.insert(candidates, {
+								interactKind = "captureTarget",
+								id = u.id, name = u.name,
+								tileX = u.tileX, tileY = u.tileY,
+							})
+						end
 					elseif u.side ~= "Neutral" and not u.recruited then
 						-- Living ENEMY (opposite side, not a Neutral/already-recruited
 						-- unit): recruit if at/under the HP threshold AND

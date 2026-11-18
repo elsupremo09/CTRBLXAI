@@ -292,7 +292,7 @@ local function buildBoard()
 		local lines = {
 			{ tostring(c.biome), Theme.Colors.TextGold, true },                                         -- DG-CARD-BIOME
 			{ `Difficulty {c.tier or DIFF_WORDS[c.difficulty] or "?"} · Lv {c.level or "?"}`, Theme.Colors.TextPrimary }, -- DG-CARD-DIFF (Easy/Medium/Hard, rule 276)
-			{ `Weather: {tostring(c.condition)}`, Theme.Colors.TextSecondary },                          -- DG-CARD-COND
+			{ `Condition: {tostring(c.condition)}`, Theme.Colors.TextSecondary },           -- DG-CARD-COND (rule 275, user 2026-11-18 12:03 AM; was "Weather: {condition}")
 			{ `{c.floors} floors + Boss`, Theme.Colors.TextSecondary },                                  -- DG-CARD-FLOORS
 		}
 		for j, l in lines do
@@ -738,7 +738,13 @@ local function buildButtons()
 		-- User 2026-11-17 3:13 PM: compress the row to the right so "?" stays clear of the map's scroll bar.
 		-- 2 icon buttons (ROW_H each) + 3 gaps of 4 px; Bag and Escape share the rest of the side-panel width.
 		layout.Padding = UDim.new(0, 4)
-		local barW = UDim2.new(0.5, -(GuildScreen.ROW_H + 18), 0, GuildScreen.ROW_H) -- row ends ~24 px short on the left
+		-- 2026-11-18 user: the row spans exactly the side panel's width (same formula as fitMap), right-aligned.
+		local mw = (screen.Main :: any).AbsoluteSize.X
+		local pw = math.floor(math.max(mw * SidePanel.SHARE, SidePanel.MIN_W))
+		row.Size = UDim2.new(0, pw, 0, GuildScreen.ROW_H)
+		row.AnchorPoint = Vector2.new(1, 0)
+		row.Position = UDim2.fromScale(1, 0)
+		local barW = UDim2.new(0, math.max(40, math.floor((pw - GuildScreen.ROW_H * 2 - 12) / 2)), 0, GuildScreen.ROW_H)
 		Theme.MakeBarButton(row, "Bag", "Secondary", function() DungeonScreen.OpenBag() end, -- DG-BAG: the Bag screen (steps 4-5)
 			{ name = "Btn_Bag", minHeight = GuildScreen.ROW_H, layoutOrder = 2, size = barW, autoWidth = false })
 		Theme.MakeBarButton(row, "Escape", "Primary", confirmLeave,                 -- DG-ESCAPE-BTN (APPROVED 2026-11-17 10:33 AM, was "Leave")
@@ -782,9 +788,8 @@ local function applyDetails()
 	local lo = tonumber(card.levelMin) or tonumber(card.level)
 	local hi = tonumber(card.levelMax) or tonumber(card.level)
 	if lo and hi and lo > hi then lo, hi = hi, lo end
-	local lvl = if lo and hi and lo ~= hi then `Level: {lo} - {hi}` elseif lo or hi then `Level: {lo or hi}` else "Level: ?"
-	screen.SetDetails(`Difficulty: {card.tier or DIFF_WORDS[card.difficulty] or "?"} · {lvl}`,
-		`Battle Field Condition: {tostring(card.condition)}`)
+	screen.SetDetails(`Difficulty: {card.tier or DIFF_WORDS[card.difficulty] or "?"}`, -- 2026-11-18 user: level range dropped (clipped)
+		`Condition: {tostring(card.condition)}`)
 end
 
 -- Header currencies like the guild home (user 2026-11-17): Gold, Mercury, Crystal, Sulfur as icon +

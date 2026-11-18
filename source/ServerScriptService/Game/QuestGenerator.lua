@@ -14,6 +14,13 @@ local BiomeData = require(
 -- Renown step 3 (2026-11-13): quest level from Renown Rank (loot_progression 87). Pure module, no deps.
 local RenownRules = require(script.Parent:WaitForChild("RenownRules"))
 
+-- Quest main goals (game_flow 41, build step 1 2026-11-17): frequency table + per-goal numbers.
+local QuestGoalData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("QuestGoalData")
+)
+
 local QuestGenerator = {}
 
 --------------------------------------------------
@@ -170,10 +177,180 @@ end
 -- SINGLE QUEST GENERATION
 --------------------------------------------------
 
+-- Elite leader roster rule (shared by elite encounters and the Kill target goal): every Elite on the
+-- card becomes a Veteran, then ONE Elite leader is added at quest level + 2 (<= 99), so the count
+-- is the card's own count + 1. levelBonus: elite encounters use their own +2 (ELITE_LEADER_LEVEL_BONUS),
+-- Kill target uses QuestGoalData. Returns the leader level.
+local ELITE_LEADER_LEVEL_BONUS = 2 -- elite encounter leader (daily systems decisions 10-14)
+local function addEliteLeader(quest, levelBonus: number): number
+	local recLvl = quest.recommendedLvl or 1
+	local kept, oldTotal = {}, 0
+	for _, et in ipairs(quest.enemyTypes or {}) do
+		oldTotal += et.count
+		if et.type == "Elite" then
+			table.insert(kept, { type = "Veteran", level = et.level, count = et.count })
+		else
+			table.insert(kept, et)
+		end
+	end
+	local leaderLvl = RenownRules.ClampEnemyLevel(recLvl + levelBonus) -- <= 99 (loot_progression 87)
+	table.insert(kept, 1, { type = "Elite", level = leaderLvl, count = 1, isLeader = true })
+	quest.enemyTypes = kept
+	quest.enemyCount = oldTotal + 1
+	return leaderLvl
+end
+
+-- QUEST MAIN GOAL (game_flow 41, build step 1 2026-11-17). Rolled as the LAST roll of a quest
+-- (after quest mercury, before the promised gear when that is built), so every earlier roll is
+-- unchanged for the same seed and the saved board stays stable. Only goals allowed for the
+-- quest's difficulty tier AND template are rolled. Boss quests are always Kill target on the Boss
+-- (open question 2). A goal that isn't built yet is rolled at its real weight but played as Wipe
+-- out (quest.goalRolled keeps the rolled id for logs / the Simulator).
+local function rollGoal(quest, rng)
+	if quest.questType == "Boss" then
+		quest.goal = "KillTarget"
+		quest.goalParams = { target = "Boss" }
+		return
+	end
+	local tier = QuestGoalData.TierOf(quest.difficulty)
+	local pool = {}
+	for _, e in ipairs(QuestGoalData.Weights[tier]) do
+		if QuestGoalData.FitsTemplate(e.id, quest.template) then
+			table.insert(pool, { type = e.id, weight = e.weight })
+		end
+	end
+	local id = if #pool > 0 then weightedPick(rng, pool) else "WipeOut"
+	if not QuestGoalData.IsBuilt(id) then
+		quest.goalRolled = id
+		id = "WipeOut"
+	end
+	quest.goal = id
+	quest.goalParams = {}
+	if id == "Slay" then
+		local def = QuestGoalData.Goals.Slay
+		-- Half the Grunts (rounded down) become Veterans; they keep the Grunt group's level.
+		for i, et in ipairs(quest.enemyTypes) do
+			if et.type == "Grunt" then
+				local vets = math.floor(et.count * def.veteranShare)
+				if vets > 0 then
+					et.count -= vets
+					table.insert(quest.enemyTypes, i + 1, { type = "Veteran", level = et.level, count = vets })
+				end
+				break
+			end
+		end
+		quest.goalParams.killTarget = math.max(1, math.ceil(quest.enemyCount * def.killShare[tier]))
+	elseif id == "KillTarget" then
+		quest.goalParams.target = "Elite"
+		addEliteLeader(quest, QuestGoalData.Goals.KillTarget.eliteLevelBonus)
+	elseif id == "Survive" or id == "Reach" or id == "Activate" then
+		-- Step 3 (2026-11-17): the round limit is fixed on the card. No RNG call (board stays stable);
+		-- the Reach tile / Activate object are picked at battle start from the real map's POI tiles.
+		local rounds = (QuestGoalData.Goals :: any)[id].rounds
+		quest.goalParams.rounds = rounds[tier] or rounds.Normal
+	elseif id == "Capture" then
+		-- Step 5 (2026-11-17): one Veteran capture target at quest level + levelBonus, first in the
+		-- roster (EnemyGenerator copies isCaptureTarget onto the unit). No RNG call (board stays stable).
+		local def = QuestGoalData.Goals.Capture
+		local lvl = RenownRules.ClampEnemyLevel((quest.recommendedLvl or 1) + (def.levelBonus or 1))
+		table.insert(quest.enemyTypes, 1, { type = def.targetType or "Veteran", level = lvl, count = 1, isCaptureTarget = true })
+		quest.enemyCount = (quest.enemyCount or 0) + 1
+		quest.goalParams.target = def.targetType or "Veteran"
+	elseif id == "Destroy" then
+		-- Step 4 (2026-11-17): the object count is fixed on the card (no RNG call; board stays stable).
+		-- The objects are placed at battle start on the real map's POI tiles.
+		local objs = QuestGoalData.Goals.Destroy.objects
+		quest.goalParams.objects = objs[tier] or objs.Normal
+	elseif id == "Prevent" then
+		-- Step 7 (2026-11-17): the runners are first in the roster (EnemyGenerator copies isRunner onto
+		-- the units). Runner and loss counts are fixed on the card; no RNG call (board stays stable).
+		local def = QuestGoalData.Goals.Prevent
+		local n = def.runners[tier] or def.runners.Hard
+		local lvl = RenownRules.ClampEnemyLevel((quest.recommendedLvl or 1) + (def.runnerLevelBonus or 0))
+		table.insert(quest.enemyTypes, 1, { type = def.runnerType or "Veteran", level = lvl, count = n, isRunner = true })
+		quest.enemyCount = (quest.enemyCount or 0) + n
+		quest.goalParams.runners = n
+		quest.goalParams.lossAt = def.lossAt[tier] or def.lossAt.Hard
+	end
+end
+
 -- Quest types a Daily Contract can be (never a boss: daily systems decision 4, 2026-11-01).
 local NON_BOSS_TYPE_WEIGHTS = {}
 for _, entry in ipairs(QUEST_TYPE_WEIGHTS) do
 	if entry.type ~= "Boss" then table.insert(NON_BOSS_TYPE_WEIGHTS, entry) end
+end
+
+-- PROMISED QUEST GEAR (game_flow 36, built 2026-11-17): fixes the gear type and rarity of the
+-- quest's gear reward at board refresh (stats roll at victory, RewardService). Rarity from the C-Lean
+-- row for the goal the quest plays (QuestGoalData.PromisedGearRow: quick goals one row lower, Daily
+-- floor D3 after the shift, Boss none). Gear type from the SAME equipment pool as victory loot. No
+-- Fortune. Item level = quest level. Rolled LAST (after the goal) so every earlier roll is unchanged.
+local PROMISED_ORDER = { "Common", "Uncommon", "Rare", "Epic" }
+local _equipPoolProvider = nil -- optional injection (tests); default = RewardService.GetEquipPool
+function QuestGenerator.SetEquipPoolProvider(fn) _equipPoolProvider = fn end
+local function equipPool()
+	if type(_equipPoolProvider) == "function" then return _equipPoolProvider() end
+	-- Lazy require: only at board generation, never at module load (no require cycle).
+	local RewardService = require(script.Parent:WaitForChild("RewardService"))
+	return RewardService.GetEquipPool()
+end
+
+-- 32-bit multiply mod 2^32 without float overflow.
+local function mul32(a: number, b: number): number
+	local al, ah = a % 65536, a // 65536
+	return (al * b + ((ah * b) % 65536) * 65536) % 4294967296
+end
+-- FNV-1a 32-bit over "key:id" plus the murmur3 fmix32 finaliser (even spread; deterministic, no RNG).
+-- Used for the stable gear-type pick.
+local function gearHash(key: number, id: string): number
+	local s = tostring(key) .. ":" .. id
+	local h = 2166136261
+	for i = 1, #s do
+		h = bit32.bxor(h, string.byte(s, i))
+		h = mul32(h, 16777619)
+	end
+	h = bit32.bxor(h, bit32.rshift(h, 16))
+	h = mul32(h, 0x85ebca6b)
+	h = bit32.bxor(h, bit32.rshift(h, 13))
+	h = mul32(h, 0xc2b2ae35)
+	h = bit32.bxor(h, bit32.rshift(h, 16))
+	return h
+end
+
+local function rollPromisedGear(quest, rng, isDaily)
+	local row = QuestGoalData.PromisedGearRow(quest.goal, quest.difficulty, isDaily, quest.questType == "Boss")
+	if not row then return end
+	local weights = QuestGoalData.PromisedGear.Rows[row]
+	if not weights then return end
+	local total = 0
+	for _, r in ipairs(PROMISED_ORDER) do total += (weights[r] or 0) end
+	local pick = rng:NextNumber() * total
+	local rarity = "Common"
+	local cum = 0
+	for _, r in ipairs(PROMISED_ORDER) do
+		cum += (weights[r] or 0)
+		if (weights[r] or 0) > 0 and pick <= cum then rarity = r break end
+	end
+	local pool = equipPool()
+	if type(pool) ~= "table" or #pool == 0 then return end
+	-- Gear type pick (Tester W4, 2026-11-17): the board only saves its seed, so a promise is rebuilt
+	-- from the seed. A plain list-position pick would change most promises whenever gear is added or
+	-- removed. Rendezvous hashing instead: ONE rng draw (same RNG consumption as before) is combined
+	-- with each archetype id; the highest hash wins. Adding an id only changes promises it now wins
+	-- (about 1 in N); removing one only changes promises that had picked it.
+	local key = rng:NextInteger(1, 2147483646)
+	local bestId, bestHash = nil, -1
+	for _, id in ipairs(pool) do
+		local h = gearHash(key, id)
+		if h > bestHash or (h == bestHash and bestId ~= nil and id < bestId) then bestId, bestHash = id, h end
+	end
+	if not bestId then return end
+	quest.rewards.promisedGear = {
+		archetypeId = bestId,
+		rarity = rarity,
+		level = quest.recommendedLvl,
+		row = row,
+	}
 end
 
 -- opts (optional; nil keeps the normal board unchanged): noBoss = never a boss quest,
@@ -338,6 +515,32 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 		rewards        = rewards,
 	}
 
+	-- 13. Main goal (game_flow 41): LAST roll, after quest mercury. opts.goal fixes it (dungeon
+	-- rooms, test arena) and skips the roll.
+	if opts and opts.goal then
+		quest.goal = opts.goal
+		quest.goalParams = {}
+	else
+		-- W1 (step 2): a failing goal roll never stops quest generation; it plays as Wipe out.
+		-- pcall adds no RNG calls, so a successful roll is unchanged for the same seed.
+		local okGoal, errGoal = pcall(rollGoal, quest, rng)
+		if not okGoal then
+			warn("[QuestGenerator] Goal roll failed (quest plays as Wipe out): " .. tostring(errGoal))
+			quest.goal = "WipeOut"
+			quest.goalParams = {}
+		end
+	end
+
+	-- 14. Promised gear (game_flow 36): LAST roll, after the goal. Dungeon rooms and the test arena
+	-- pass noPromisedGear. A failure never stops quest generation (the quest just has no promise).
+	if not (opts and opts.noPromisedGear) then
+		local okPg, errPg = pcall(rollPromisedGear, quest, rng, opts and opts.isDaily == true)
+		if not okPg then
+			warn("[QuestGenerator] Promised gear roll failed (no promise on this quest): " .. tostring(errPg))
+			quest.rewards.promisedGear = nil
+		end
+	end
+
 	return quest
 end
 
@@ -354,7 +557,7 @@ local DAILY_CONTRACT_MERCURY = 3 -- USER DECISION 2026-11-01 (Simulator boss/dai
 
 function QuestGenerator.GenerateDailyContract(playerLevel, day)
 	local rng = Random.new(day * 1000003 + 424241)
-	local quest = generateOneQuest(0, playerLevel, rng, { noBoss = true, noMercuryRoll = true })
+	local quest = generateOneQuest(0, playerLevel, rng, { noBoss = true, noMercuryRoll = true, isDaily = true })
 	quest.id = string.format("daily_%d", day)
 	quest.name = "Daily Contract: " .. quest.name
 	quest.isDailyContract = true
@@ -373,7 +576,7 @@ end
 function QuestGenerator.GenerateTestArena(level)
 	local lvl = math.max(1, math.floor(tonumber(level) or 1))
 	local rng = Random.new(990099)
-	local quest = generateOneQuest(0, lvl, rng, { noBoss = true, noMercuryRoll = true })
+	local quest = generateOneQuest(0, lvl, rng, { noBoss = true, noMercuryRoll = true, goal = "WipeOut", noPromisedGear = true })
 	quest.id = "test_arena"
 	quest.name = "Test Arena (Studio)"
 	quest.description = "8x8 test map. Enemies are in reach on turn 1."
@@ -418,6 +621,8 @@ function QuestGenerator.GenerateDungeonBattle(spec)
 		questType = if spec.isBoss then "Boss" else nil,
 		biome = spec.biome, condition = spec.condition,
 		difficulty = spec.difficulty, fixedLevel = spec.level,
+		goal = "WipeOut", -- dungeon rooms keep today's win rule (build step 1 default)
+		noPromisedGear = true, -- dungeon rooms never get promised gear (game_flow 36)
 	})
 	quest.id = "dungeon_" .. tostring(spec.nodeId)
 	quest.isDungeon = true
@@ -466,24 +671,21 @@ end
 -- "Defeat the Elite within N rounds" objective (Elite Slayer) can run.
 function QuestGenerator.MakeEliteEncounter(quest)
 	if quest.isEliteEncounter then return quest end
-	local recLvl = quest.recommendedLvl or 1
 	-- D-1 fix (2026-11-01): the result is always the card's own count + 1. Every Elite on the
 	-- card becomes a Veteran, then the Elite leader is added, so a card that had 0 Elites and a
-	-- card that had 1 both end with exactly one Elite and one extra enemy.
-	local kept, oldTotal = {}, 0
-	for _, et in ipairs(quest.enemyTypes or {}) do
-		oldTotal += et.count
-		if et.type == "Elite" then
-			table.insert(kept, { type = "Veteran", level = et.level, count = et.count })
-		else
-			table.insert(kept, et)
-		end
-	end
-	local leaderLvl = RenownRules.ClampEnemyLevel(recLvl + 2) -- <= 99 (loot_progression 87)
-	table.insert(kept, 1, { type = "Elite", level = leaderLvl, count = 1, isLeader = true })
-	quest.enemyTypes = kept
-	quest.enemyCount = oldTotal + 1
+	-- card that had 1 both end with exactly one Elite and one extra enemy (addEliteLeader).
+	local leaderLvl = addEliteLeader(quest, ELITE_LEADER_LEVEL_BONUS)
 	quest.isEliteEncounter = true
+	-- W2 (quest goals step 2): a Slay quest that becomes an elite encounter recounts its kill target
+	-- from the new enemy count, so it stays the game_flow 41 share. The elite encounter is decided
+	-- at departure (hidden on the card), so the card's number can be 1 lower than the battle's;
+	-- the Quest accepted view and the battle tracker (build step 8) must read this updated number.
+	if quest.goal == "Slay" and quest.goalParams then
+		local share = QuestGoalData.Goals.Slay.killShare[QuestGoalData.TierOf(quest.difficulty)]
+		local before = quest.goalParams.killTarget
+		quest.goalParams.killTarget = math.max(1, math.ceil(quest.enemyCount * share))
+		print(string.format("[QuestGenerator] Slay kill target %s -> %d (elite encounter)", tostring(before), quest.goalParams.killTarget))
+	end
 	print(string.format("[QuestGenerator] Elite encounter: %s | %d enemies, Elite leader Lv %d", quest.name, quest.enemyCount, leaderLvl))
 	return quest
 end

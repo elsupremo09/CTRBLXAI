@@ -35,6 +35,25 @@
 
 local ObjectiveService = {}
 
+-- Quest main-goal conflict rule (game_flow 41, quest goals step 2): an optional objective never has
+-- the same goal as the main quest. Pure data from ReplicatedStorage Content QuestGoalData; loaded in
+-- pcall so a missing module can never stop objectives from rolling.
+local QuestGoalData = nil
+do
+	local ok, mod = pcall(function()
+		local content = game:GetService("ReplicatedStorage"):WaitForChild("Content", 5)
+		return require(content:WaitForChild("QuestGoalData", 5))
+	end)
+	if ok then QuestGoalData = mod else warn("[ObjectiveService] QuestGoalData not loaded; no goal conflict filter: " .. tostring(mod)) end
+end
+-- True when the battle's main goal (state.questGoal, set by QuestGoalService.BeginBattle before
+-- objectives roll) blocks this objective id.
+local function goalBlocks(state, objectiveId)
+	local gid = state and state.questGoal and state.questGoal.id
+	if not gid or not QuestGoalData then return false end
+	return QuestGoalData.BlocksObjective(gid, objectiveId) == true
+end
+
 -- Difficulty modes
 local NORMAL, HARD = "Normal", "Hard"
 
@@ -386,7 +405,8 @@ function ObjectiveService.BeginBattle(state, ctx, rng, maxActive)
 
 	local pool = {}
 	for _, def in pairs(Catalog) do
-		if not def.needsKillCause and IMPLEMENTED[def.id] and def.spawnable(ctx or {}) then
+		if not def.needsKillCause and IMPLEMENTED[def.id] and def.spawnable(ctx or {})
+			and not goalBlocks(state, def.id) then -- conflict rule (game_flow 41)
 			pool[#pool + 1] = def
 		end
 	end
@@ -397,6 +417,11 @@ function ObjectiveService.BeginBattle(state, ctx, rng, maxActive)
 	-- spawnable check, so an event that adds a second Elite cannot drop it (D-2 fix); the caller
 	-- makes it count the tagged leader only (state.eliteLeaderOnly).
 	local forced = ctx and ctx.forceObjective
+	if forced and goalBlocks(state, forced) then
+		-- Conflict rule (game_flow 41): the main goal already is this objective's goal.
+		warn("[ObjectiveService] Forced objective " .. tostring(forced) .. " skipped: same goal as the main quest")
+		forced = nil
+	end
 	if forced then
 		for i, def in ipairs(pool) do
 			if def.id == forced then
@@ -594,7 +619,8 @@ function ObjectiveService.AddOne(state, rng)
 	local pool = {}
 	for _, def in pairs(Catalog) do
 		if not def.needsKillCause and IMPLEMENTED[def.id]
-			and not activeById[def.id] and def.spawnable(ctx) then
+			and not activeById[def.id] and def.spawnable(ctx)
+			and not goalBlocks(state, def.id) then -- conflict rule (game_flow 41)
 			pool[#pool + 1] = def
 		end
 	end

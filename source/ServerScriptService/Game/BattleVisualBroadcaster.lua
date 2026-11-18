@@ -1486,7 +1486,7 @@ function BattleVisualBroadcaster.WeatherChanged(condition)
 	BattleEvents.WeatherChanged:FireAllClients({ condition = condition })
 	do
 		local n = if type(condition) == "table" then (condition.name or condition.id) else condition
-		logEntry("field", if n and n ~= "" and n ~= "None" then `Weather: {tostring(n)}.` else "Weather clears.")
+		logEntry("field", if n and n ~= "" and n ~= "None" then `Condition: {tostring(n)}.` else "Weather clears.") -- user 2026-11-18 12:56 AM (rule 275 term)
 	end
 end
 

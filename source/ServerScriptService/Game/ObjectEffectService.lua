@@ -234,6 +234,8 @@ function ObjectEffectService.ApplyObjectHit(state: any, x: any, y: any, n: any, 
 		-- A hidden object cannot be hit until it is revealed (no HP / break news leaks its tile).
 		if inst.x == x and inst.y == y and not inst.hidden then
 			local def = inst.type and ObjectData.Objects[inst.type]
+			-- Quest goal Activate object (game_flow 41, step 3): can't be broken for this goal.
+			if inst.isGoalObject then return "immune" end
 			-- USER RULING 2026-10-30 (project_rules 241 B3): ANY hit on a Mimic — disguised or
 			-- unmasked, from any source — wakes it instead of damaging it. Chests are breakable now,
 			-- so a disguised Mimic must take hits too or it could be spotted by elimination.
@@ -408,6 +410,9 @@ function ObjectEffectService.PushObject(state: any, x: any, y: any, dx: any, dy:
 		if o.x == x and o.y == y then inst = o; break end
 	end
 	if not inst then return "not-found" end
+	-- Quest goal Activate object (game_flow 41, step 3) and Destroy targets (step 4): can't be
+	-- pushed, so the goal markers stay on the right tiles. Destroy targets still take hits.
+	if inst.isGoalObject or inst.isDestroyTarget then return "immovable" end
 	local def = inst.type and ObjectData.Objects[inst.type]
 	if not def or def.passable ~= false then return "not-found" end
 	-- Ad Billboard / immovable objects never move (map_gen_rules rows 85/93).
@@ -3147,7 +3152,8 @@ function ObjectEffectService.ProcessDeaths(allUnits: any, state: any)
 	local sweepEnemyKOs = 0
 	for _, u in ipairs(allUnits) do
 		local wasAlive = _aliveSnapshot[u.id]
-		if wasAlive and not u.isAlive then
+		-- reachedGoal (quest goal Prevent): a runner that got through left the field, it was not killed.
+		if wasAlive and not u.isAlive and not u.reachedGoal then
 			-- Optional-objective kill routing (push/siege KOs, elite timing, NPC
 			-- death). Single choke-point: every death flows through this sweep,
 			-- so one call here covers all death sources without touching each.
@@ -3201,6 +3207,7 @@ end
 -- HD-009 Demolition Mask (2026-11-06): a breakable obstacle with NO interact effect is still an
 -- Interact target for a Mask wearer (CommandService breaks it up front). Exported for targeting.
 function ObjectEffectService.IsMaskBreakTarget(objInstance: any, actorSide: any): boolean
+	if objInstance and objInstance.isGoalObject then return false end -- quest goal object (step 3)
 	local def = objInstance and objInstance.type and ObjectData.Objects[objInstance.type]
 	if not def or Handlers[objInstance.type] then return false end
 	-- Same owner-side gate as IsInteractable: never the OTHER side's placed deployables (keeps the
@@ -3213,6 +3220,17 @@ function ObjectEffectService.IsMaskBreakTarget(objInstance: any, actorSide: any)
 end
 
 function ObjectEffectService.IsInteractable(objInstance: any, actorId: any, actorSide: any, state: any): boolean
+	-- Quest goal Activate object (game_flow 41, step 3): offered once, to Player units only (not
+	-- summons or item devices); enemies and Neutrals never see it.
+	if objInstance and objInstance.isGoalObject then
+		if objInstance.goalActivated or actorSide ~= "Player" then return false end
+		if state and state.units and actorId ~= nil then
+			for _, u in ipairs(state.units) do
+				if u.id == actorId then return not u.isSummon and not u.isItemDevice end
+			end
+		end
+		return true
+	end
 	local def = objInstance and objInstance.type and ObjectData.Objects[objInstance.type]
 	if not def then return false end
 	-- Item-placed interactables (Portable Ballista, 2026-10-26) work for the owner's side only.
@@ -3264,6 +3282,20 @@ function ObjectEffectService.Resolve(actor: any, objInstance: any, state: any, a
 
 	local uses = objDef.uses or "Once"
 	local objId = objInstance.id or ("obj_@" .. tostring(objInstance.x) .. "," .. tostring(objInstance.y))
+
+	-- Quest goal Activate object (game_flow 41, step 3): the Interact completes the main goal
+	-- (QuestGoalService.Evaluate reads state.questGoal.activated); the object's own effect never runs.
+	if objInstance.isGoalObject then
+		if objInstance.goalActivated or not actor or actor.side ~= "Player" or actor.isSummon or actor.isItemDevice then
+			return false, objDef.id .. " has already been used."
+		end
+		objInstance.goalActivated = true
+		_consumed[objId] = true
+		local g = state and state.questGoal
+		if g and g.objectId == objInstance.id then g.activated = true end
+		print(string.format("[ObjectEffectService] Quest goal object %s activated by %s", tostring(objId), tostring(actor.name)))
+		return true, nil
+	end
 
 	-- Usage gates.
 	if uses == "Once" and _consumed[objId] then

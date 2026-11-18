@@ -1830,3 +1830,23 @@ Rows: project_rules 258, 265, 267, 270, 272 (renamed "Events (Approved)"), 275 (
 
 
 2026-11-17 7:25 PM USER RULINGS - Quest main goals (NOT BUILT): game_flow 41 NEW (10 goals approved from DRAFT_quest_goals_20261117.md with 5 changes: Capture/Protect/Survive diff 3+; Activate/Kill target/Prevent Hard only [agent reading, user to confirm]; Capture target avoids engaging; Destroy/Reach/Activate on POI tiles, Protect NPC in PD; Survive max 12 alive, 1 spawn per 400 CT; re-balanced frequency, Simulator after build step 3). game_flow 35/39 Goal line returns. unit_progression 73-75 updated. open_decisions 52 RESOLVED. game_flow has no sheet (DB only). Backups *_before_20261117_1925_questgoals.*
+
+
+2026-11-17 7:51 PM USER RULING - Quest goal difficulty (NOT BUILT): game_flow 41 updated - Activate and Kill target now difficulty 3+; Prevent stays Hard only (default kept, user did not object); diff-3 frequency rebalanced (Wipe out 22, Slay 12, Destroy 10, Reach 10, Capture 10, Protect 10, Survive 10, Kill target 8, Activate 8); Simulator re-check after build steps 3 and 7. unit_progression 73-75 unchanged (no Activate/Kill/Prevent limits there). game_flow has no sheet (DB only). Backups *_before_20261117_1951_goaldiff.*
+
+2026-11-17 9:19 PM - Quest goals step 3 rulings: game_flow 41 (Survive/Reach no map limit, Hard Reach/Activate 4 rounds, Hard Reach 14 tiles, Simulator defaults, tie edge case) and game_flow 36 (Reach/Activate/Kill target promised gear one difficulty row lower). APPROVED, NOT BUILT. Source SIM_quest_goals_s3_20261117.md.
+
+2026-11-17 9:21 PM USER RULING - Quest goal Destroy: game_flow 41 updated - Destroy wins ONLY by breaking all targets; enemy wipe does not end it (continues like Survive Hold); all Player units down = loss, loss wins ties. Step 4 defaults (vetoable): OBS Blocker (3 hits), >=6 steps from deploy, >=3 tiles apart, Demolition Mask one-hit break applies. Destroy built in code; this ruling NOT BUILT. game_flow has no sheet (DB only). Backups *_before_20261117_2121_destroy.*
+
+
+2026-11-17 10:32 PM USER RULINGS - Quest goals step 7: game_flow 41 updated - Activate leash: out-of-radius enemy with a Player unit in attack range attacks first then heads back; never ends a move >6 tiles from the unused object once inside; leash beats Taunt (default kept). Prevent: non-runner enemies never stop on the goal tile. Step 7 defaults (vetoable): runners Veterans at quest level; goal tile >=10 steps from enemy area, closest to player area; Hard 4 runners/3 through = loss; loss count capped at runners spawned; runners through give no gold/XP/mercury/objective credit; Taunt beats runner run; dungeon rooms always Wipe out. Step 7 built in code except these two rulings (NOT BUILT). game_flow has no sheet (DB only). Backups *_before_20261117_2232_step7.*
+
+
+2026-11-18 FIX - Battle Field Condition text re-recorded (user-approved 2026-11-17 11:39 AM; earlier record never persisted): project_rules 275 notes + game_flow 39 rule now hold dungeon run header lines '{Biome} Dungeon', 'Difficulty: {tier} · Level: {min} - {max}' (single 'Level: {n}'), 'Battle Field Condition: {condition}' (umbrella for weather/crisis); also used on Quest Board inspector (game_flow 39/41). Sheet 01 Project Identity row 274 Status column mirrored. game_flow has no sheet (DB only). Backups *_before_20261118_bfcond.*
+
+
+2026-11-18 12:03 AM USER RULINGS - Quest Board/Dungeon text: game_flow 39 - cancel prompt APPROVED 'Cancel this quest? You lose {fee} gold.' + 'Keep quest' button (closes prompt); fee 0/missing = fee line hidden, button reads existing 'Abandon quest'. 'Back in {n} battles' keeps agent default (most battles until back; icon only if unknown). project_rules 275 - dungeon list card line 3 now 'Battle Field Condition: {condition}', old 'Weather: {condition}' marked replaced. APPROVED, NOT BUILT. Sheet 01 Project Identity row 274 mirrored; game_flow has no sheet (DB only). Backups *_before_20261118_0003_qbcancel.*
+
+- 2026-11-18 12:56 AM (USER RULING, BUILT in BattleVisualBroadcaster.lua, not Studio-tested, not committed): project_rules 275 - battle log weather/crisis change line now "Battle Field Condition: {name}." (old "Weather: {name}." kept as replaced); "Weather clears." unchanged. Mirrored to Game Rules sheet 01. Backups: docs\backups\*.pre-bfcondlog-20261118_0056.bak
+
+2026-11-18 9:02 AM — USER RULING: label "Battle Field Condition" renamed "Condition" (format "Condition: {condition}"; battle log "Condition: {name}."). Applies to dungeon header/list cards (project_rules 275) and Quest Board inspector/accepted view (game_flow 39/41). Old lines kept as replaced. BUILT 2026-11-18 (code, not Studio-tested, not committed).

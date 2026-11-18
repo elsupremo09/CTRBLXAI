@@ -330,7 +330,18 @@ function UnitSchema.IsGodProtected(unit): boolean
 	return UnitSchema.DevGodMode == true and unit ~= nil and unit.side == "Player"
 		and DevAccess.SessionAllowed()
 end
-GameConstants.IsGodProtected = function(u) return UnitSchema.IsGodProtected(u) end
+-- KO FLOOR (quest goals build step 5, 2026-11-17, game_flow 41 Capture): a unit that can't be KO'd.
+-- God-mode units, plus the Capture goal's target (its HP never goes below 1 from ANY damage path:
+-- UnitSchema.ApplyDamage/Kill, every direct-write path that routes its amount through
+-- GameConstants.CapUnitDamage, and Sinking). Only the KO floor uses this; the god-mode refills
+-- (GodRefill, BattleCoordinator turn start, CommandService AP refill) keep using IsGodProtected.
+-- Dev kill commands use ForceKill and still kill.
+function UnitSchema.IsKoProtected(unit): boolean
+	if unit ~= nil and unit.isCaptureTarget == true then return true end
+	return UnitSchema.IsGodProtected(unit)
+end
+-- GameConstants hook (no require cycle): the KO floor read by CapUnitDamage and Sinking.
+GameConstants.IsGodProtected = function(u) return UnitSchema.IsKoProtected(u) end
 
 function UnitSchema.GodRefill(unit, skipHp)
 	if not UnitSchema.IsGodProtected(unit) then return end
@@ -348,7 +359,7 @@ function UnitSchema.ForceKill(unit)
 end
 
 function UnitSchema.Kill(unit)
-	if UnitSchema.IsGodProtected(unit) and unit.isAlive ~= false then
+	if UnitSchema.IsKoProtected(unit) and unit.isAlive ~= false then
 		-- Survive at 1 HP so the hit still reads as damage; HP refills at the start of this unit's
 		-- next turn (BattleCoordinator). Clear kill tags so objectives don't count a death.
 		unit.isAlive = true
