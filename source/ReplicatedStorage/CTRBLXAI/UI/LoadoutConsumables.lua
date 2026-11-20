@@ -19,6 +19,11 @@ local MapUse: any = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitF
 	:WaitForChild("DungeonMapUse", 10))
 local GuildEvents: any = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 	:WaitForChild("Remotes", 10):WaitForChild("GuildEvents", 10))
+local TipController: any = nil -- New-player tips (2026-11-19): guarded, a missing module never breaks this screen
+do
+	local okTip, tipMod = pcall(function() return (require :: any)(CTRBLXAI_UI:WaitForChild("TipController", 10)) end)
+	if okTip then TipController = tipMod else warn("[LoadoutConsumables] tips unavailable: " .. tostring(tipMod)) end
+end
 
 local LoadoutConsumables: any = {}
 
@@ -334,7 +339,10 @@ openConsumableSlotPicker = function(unitId, ci)
 		makeLabel(rowBtn, { Text = slotText, Size = UDim2.new(1, -8, 1, 0), Position = UDim2.new(0, 4, 0, 0),
 			Font = Theme.Font.Primary, TextSize = Theme.Text.Small(),
 			TextColor3 = locked and Theme.Colors.TextDisabled or Theme.Colors.TextPrimary })
-		if not locked then
+		if locked then
+			-- New-player tip: first tap on a locked slot (TIP-LOCK-01). Display only, no request.
+			rowBtn.Activated:Connect(function() if TipController then TipController.Trigger("TIP-LOCK-01") end end)
+		else
 			rowBtn.Activated:Connect(function()
 				local result = BattleEvents.RequestEquipConsumable:InvokeServer(unitId, slotIdx, ci.id)
 				if not (result and result.ok) then
@@ -346,6 +354,7 @@ openConsumableSlotPicker = function(unitId, ci)
 				end
 				closeDetail()
 				if result and result.ok then
+					if TipController then TipController.Trigger("TIP-CON-01") end -- new-player tip (first consumable equipped)
 					-- Mirror the server's owned-copy change (one taken, the replaced one returned).
 					local own = MockData.ConsOwned
 					local prev = MockData.Equipped[unitId] and MockData.Equipped[unitId][slotKey]

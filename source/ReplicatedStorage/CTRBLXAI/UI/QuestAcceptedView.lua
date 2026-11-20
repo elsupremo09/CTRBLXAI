@@ -137,11 +137,14 @@ end
 
 local function goalSentence(q: any): string
 	if not QuestGoalText or not q.goal then return "" end
-	-- Capture / Kill target name their unit only in battle (same rule as the Board view).
-	if q.goal == "Capture" or q.goal == "KillTarget" then return "" end
 	local gp = q.goalParams or {}
+	-- 2026-11-18 9:50 PM: the card now carries the target's name (goalParams.targetName, the same
+	-- name the battle unit gets), so the approved battle sentence shows. No name (older board,
+	-- Boss) = no sentence, as before.
+	if (q.goal == "Capture" or q.goal == "KillTarget")
+		and not (type(gp.targetName) == "string" and gp.targetName ~= "") then return "" end
 	return QuestGoalText.Sentence({ id = q.goal, rounds = gp.rounds, total = gp.objects or gp.killTarget,
-		lossAt = gp.lossAt })
+		lossAt = gp.lossAt, targetName = gp.targetName })
 end
 
 local function goldText(q: any): string
@@ -282,7 +285,10 @@ local function renderScene(q: any)
 	name.BackgroundTransparency = 1
 	name.BorderSizePixel = 0
 	name.Font = Theme.Font.PrimaryBold
-	name.TextColor3 = Theme.Colors.TextGold
+	-- Title colour by difficulty (game_flow 35, 2026-11-18), same as the board card; gold if unknown.
+	local okC, diffColor = pcall(function() return Theme.GetDifficultyColor(q.difficulty) end)
+	name.TextColor3 = if okC and typeof(diffColor) == "Color3" and tonumber(q.difficulty) then diffColor
+		else Theme.Colors.TextGold
 	name.TextStrokeColor3 = Color3.new(0, 0, 0)
 	name.TextStrokeTransparency = 0.2
 	name.TextXAlignment = Enum.TextXAlignment.Left

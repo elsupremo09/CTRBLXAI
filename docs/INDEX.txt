@@ -511,7 +511,9 @@ open_decisions rows 79-83: resolution records for the 5 deferred questions (2 ca
   engine built in parallel - these are DESIGN/DB rulings only, not Studio-tested.
 
 
-game_flow (26 rows, sheet '28 Game Flow') - LOCKED 2026-10-07: full out-of-battle flow.
+game_flow (26 rows, database only - no spreadsheet sheet; '28 Game Flow' never existed, fixed 2026-11-18) - LOCKED 2026-10-07: full out-of-battle flow.
+  2026-11-18: game_flow 41 notes now hold the 23 approved quest-goal player text lines verbatim (IDs QG-01..QG-23), matching QuestGoalText.lua.
+  2026-11-18 11:08 PM: game_flow 39 rule holds the APPROVED procedural quest lore grammar (310 fragments by id + composition rules); replaces the 40 fixed lore lines (kept as replaced). Built code-only, Studio pending, not committed.
   Stages: 1 Base (HQ private + shared multiplayer town), 2 Preparation (quest -> party -> depart briefing),
   3 Battle start (opening camera, objectives, points of interest, deployment), 4 Battle end (victory/defeat,
   expedition camp), 5 Return to base (KO to 1 HP, item refill, storage fee, dispatch returns, refresh counters).
@@ -1863,3 +1865,70 @@ Rows: project_rules 258, 265, 267, 270, 272 (renamed "Events (Approved)"), 275 (
 2026-11-18 1:50 PM USER APPROVAL — In-battle Escape (O1-O8 + 9 text lines, Simulator PASS, no number changes). New project_rules 285 (rules O1-O8 + build requirements C1 board period counter, C4 own checked request, save order, 2 Tester items) and 286 (text BTL-ESCAPE-BTN..LOG). Updated loot_progression 90, unit_progression 95 (+ O4 cancel fee), game_flow 20 note, game_flow 28 (+ O4 cancel fee), project_rules 264 (O6 dungeon mapping). APPROVED, NOT BUILT. Mirrored to Game Rules sheets 01 (rows 263, 284, 285), 10 (row 89), 21 (rows [65, 80]). Backups *pre-20261118_escape* / CTRBLXAI_Game_Rules_before_20261118_escape.xlsx.
 
 2026-11-18 2:01 PM USER RULINGS — In-battle Escape notes added to project_rules 285/286 (notes only): (1) escape popup line 3 'half the gold' hidden in dungeon battles (dungeon escape keeps 75% run gold), SB-44 bag line still shown; (2) UGC outfit battle charges still tick on an uncounted escape - accepted. Status still approved; built code-only, Studio pending.
+
+
+2026-11-18 4:43 / 4:48 / 4:59 PM USER APPROVAL — Steeper Renown curve ("Three stages") + S2 reward scaling. loot_progression 82 REPLACED: 200+5×Rank (R1-10), 250+15×(Rank−10) (R11-50), 850+60×(Rank−50) (R51+), no cap; old saves keep Rank + same fraction of in-progress Renown (rounded down); 11/12 6:17 PM curve ruling marked superseded. loot_progression 74: from Rank 51 rewards ×(1+0.01×(Rank−50)) (R99 ×1.49), before anti-farm, rounded down. loot_progression 90 + unit_progression 94: fail penalty 3× BASE R1-50, 1× BASE R51+, not scaled, Rank-floored. project_rules 285 + unit_progression 95 + game_flow 28: from Rank 51 an in-battle Escape always pays the cancel fee (even ≥2000 CT); dungeon battles no fee. Pace (Sim v3, 10% loss): R99 ≈1,280 battles (~139 h) vs 564; first unit L99 ≈ R89; gold R99 ≈645k. Building costs v3 re-price PENDING. APPROVED, NOT BUILT. Mirrored to Game Rules sheets 10 (rows [75, 83, 89]), 21 (rows [64, 65, 80]), 01 (row 284). game_flow has no sheet row. Backups *pre-20261118_renowncurve* / CTRBLXAI_Game_Rules_before_20261118_renowncurve.xlsx.
+
+
+2026-11-18 5:05 PM USER RULING — Renown reward bonus from Rank 51 (×(1+0.01×(Rank−50))) is uncapped past Rank 99 (Rank 150 = ×2.0). Note added to loot_progression 74 only; status unchanged (approved, built code-only, Studio pending). Mirrored to Game Rules sheet 10 row 75 (notes). Backups *pre-20261118_1705_renowncap* / CTRBLXAI_Game_Rules_before_20261118_1705_renowncap.xlsx.
+
+
+2026-11-18 5:09-5:17 PM USER RULINGS — New-player quest gating (HANDOFF_newplayer_quest_gating_20261118.md). NEW game_flow 42 'New-player quest gating (Rank bands)' = master rule: Ranks 1-8 learning period; Easy=1-2, Medium=3, Hard=4-5; Ranks 1-15 Easy+Medium only; Hard needs Quest Board L3+ (Rank 16, guild_facilities 115); Ranks 1-8 enemy count round(units owned x 1.0-1.3) capped at deploy slots, shown slots capped at units owned; Rank 9+ slots x 2.0-2.5 unchanged; Daily Contract same rules (no fixed 6); Survive + elite encounters Rank 9+; Boss quests + Herald Rank 16+; board mix L1 2E+1M, L2 2E+2M, L3+ AGENT DEFAULT (vetoable) Easy 2, +1 slot/level alternating Hard/Medium (L3 2/2/1 ... L10 2/5/5); quest title color 1 gray/2 green/3 blue/4 purple/5 orange. Updated: guild_facilities 17 + 113 ('Unlocks: Hard quests' restored for L3, reverses 2026-11-17 5:43 PM), unit_progression 71/72, loot_progression 69, game_flow 35/36/41, battlefield_events 12 (Herald Rank 16 gate + BUILT/NOT BUILT status CONFLICT flagged), live_service_features 11, open_decisions row 51 (P0 Encounter unit-count budget -> RESOLVED). APPROVED (USER RULING 2026-11-18 5:17 PM), NOT BUILT. Mirrored to Game Rules sheets 25 (rows 18, 114), 21 (rows 41, 42), 10 (row 70), 18 (row 51). game_flow / battlefield_events / live_service_features have no sheet (DB only). Backups CTRBLXAI.db.20261118_172305.bak, *_before_20261118_1717_qgating.*, edit log backups\qgating_edits_20261118_1717.json.
+
+2026-11-18 5:34 PM - USER RULING 5:25 PM (Herald all Ranks): battlefield_events 12 un-gated + status conflict resolved (BUILT, SweepHeraldDeaths L980/OnTurnTick L1045, Elite placeholder, not counted in 3/day boss limit); game_flow 42 Herald: all Ranks (Boss quests stay Rank 16+); implementation_plan 53 Herald removed from NOT BUILT. Game_Rules.xlsx: no sheet for these tables, unchanged. Backup: CTRBLXAI_before_20261118_173406_heraldallranks.db
+
+2026-11-18 USER RULINGS 4:11/4:32/5:19 PM — Building costs v4 (APPROVED, NOT BUILT; PROPOSAL_building_costs_v4_newpace_20261118.md, v3 price rule, v2 gates, SIM_building_costs_v4_20261118.md PASS x1.36 Epic). All building max levels at Rank 80 (gates 9..80; Blacksmith 86; Trophy Hall 34,40,60,80). Levels gated above Rank 30 cost more than one Epic; gates <= Rank 30 keep prices. Total 431,842g. Cuts: shop markup 3.5/5.0, Blacksmith gold 0.25, cards/recruits -15%, Apothecary -10%. Old saves keep levels, no refunds. OPEN: gear-skimper difficulty; dismantle/card/recruit gold loops.
+Rows: guild_facilities 2, 5, 26-34, 49, 65, 72, 75, 80, 88, 115, 116, 117; economy_framework 1, 15, 16, 17, 19, 20, 22, 23, 27, 28, 29, 42-46, 49.
+
+2026-11-18 Building costs v4 Tester warning fixes (text only, status unchanged): guild_facilities 49/65/72/80/88 per-building rank gates; 116 points to 117; economy_framework 19/20/23 v4 wording; 49 5x dismissal pay RETIRED (free since 11/10); Tavern fee-formula line removed (dev default).
+
+
+2026-11-18 5:53 PM - USER RULING 5:52 PM (enemy count 3-5, reverses 5:09 PM 'units owned'; APPROVED, NOT BUILT): Ranks 1-8 every quest/Daily Contract rolls 3-5 enemies by Rank (goal extras inside, drop Grunts first); slots stay normal 5-7; Rank 9+ unchanged; principle: enemy count never depends on roster size (exploit). Dev note fixes: QuestGenerator ~L597 fixed 6 = Studio Test Arena (not Daily Contract); elite encounters decided in Main.server.lua + QuestGenerator only (BattlefieldEventService removed from build list). Rows: game_flow 42, open_decisions 51, live_service_features 11. Game_Rules.xlsx: 18 Open Decisions row 51 E/G. Backup: CTRBLXAI_before_20261118_175335_enemycount3to5.db
+
+20261118_180426 DAILY CONTRACT DAY LOCK - USER RULING 2026-11-18 5:59 PM (APPROVED (USER RULING 2026-11-18 5:59 PM), NOT BUILT). Updated live_service_features 11, game_flow 42 (DB only - neither table has a sheet in CTRBLXAI_Game_Rules.xlsx; xlsx not mirrored). Contract locks to Rank + Quest Board level at first generation of the day (00:00 UTC); saved per day. Backups: CTRBLXAI_before_20261118_180426_dailylock.db, CTRBLXAI_Game_Rules_before_20261118_180426_dailylock.xlsx, INDEX_before_20261118_180426_dailylock.txt. source\ untouched.
+
+project_rules id 287 (section='UI', topic='Battle Name Banner', 2026-11-18): approved battle name banner art/sizes/usage; decal 95319675607852 is correct, 89777455500069 is WRONG/unused. Game_Rules.xlsx '01 Project Identity' row 286.
+
+2026-11-18 9:26/9:35 PM USER RULINGS - Quest Board panel/art/lore (APPROVED, being built, code only, Studio pending): game_flow 38 (parchment v2 image 101654387775851, assets\ui_icons\questboard\parchment_v2.png, Stretch, margins 55/62/53/67 of 1536x1024; old 92530315099135 replaced), game_flow 34 (3 cards per row; side panel 0.27 Quest Board only; panel drops Level/Biome/Rewards/promised gear/cancel note, keeps title, Condition, Deploy up to N, Goal, +N Renown, Elite/Daily notes; black outline only on coloured card lines), game_flow 39 (40 quest lore lines verbatim with IDs B1-A40, deterministic per quest, max 2 sentences + condition line). game_flow has no export; xlsx unchanged. Backups *_before_20261118_2140_qbpanel.
+
+
+--- 2026-11-19 NEW-PLAYER TIPS (approach APPROVED, USER RULING 2026-11-19 1:37 PM; NOT BUILT) ---
+new_player_tips (41 rows): SYS-01..10 system rules (APPROVED) + 31 TIP-* rows (trigger, title, text; DRAFT - pending user text approval). notes column logs Designer corrections vs DB. Pointers: game_flow 43, implementation_plan 'New-player tips system', open_decisions 'Tip wording approval (31 tips) pending user'. Export sheet: '32 New Player Tips'.
+
+
+--- 2026-11-19 REAL-TIME DISPATCH (USER RULINGS 1:42/1:50/2:43/2:48/2:57 PM; APPROVED, NOT BUILT) ---
+Dispatch now earns EXP + one chosen material per hour in real time (online/offline, server clock), up to an earning limit by Dispatch level (3..24 h). Collect banks and continues; recall before tier minimum = 25% EXP only. No random board (pick tier + material). Ladder, slots (Rank + level, 5 max, 6 with Robux), rates. The 4000 CT dispatch-day rule (2026-10-15) is RETIRED. Player text DISPATCH-RT-01..15 in unit_progression 99.
+Rows: unit_progression 77/78/95/99/106, game_flow 20, project_rules 285, materials_system 12, guild_facilities 113/116 (117 costs unchanged), economy_framework 26. Old wording kept in notes as [Replaced 2026-11-19: ...].
+Source: PROPOSAL_dispatch_realtime_v2_20261119.md + SIM_dispatch_realtime_v3_20261119.md. Backups: backups\*_before_20261119_150248_dispatchrealtime.*
+
+2026-11-19 5:10 PM: Real-time Dispatch step 2 user rulings (4:27 PM, 7 items) recorded as notes in unit_progression 99, guild_facilities 116, economy_framework 26. Status unchanged.
+
+
+=== 2026-11-19 5:10 PM — Real-time Dispatch player text RT-16..20 (USER APPROVED 'accept all') ===
+unit_progression 99: added DISPATCH-RT-16 (send hint), RT-17 (fee help bullet), RT-18 (Recall prompt), RT-19 (Recalled message), RT-20 (after-Collect line). Old recall help bullet retired. Tier tiles 'Tier N' + '{h}h' badge approved. Status: built code-only (RT-20 being built), Studio pending.
+
+
+=== 2026-11-19 6:28 PM — Real-time Dispatch RT-20 item names + build status (notes only) ===
+unit_progression 99 notes: agent default (user may veto) — collected item names appended to RT-20 line with " · ", material part omitted when 0. Steps 1-5 built + agent Studio-tested; pending human checks: While you were away popup, Recall warning on screen, phone layout.
+
+2026-11-19 9:16 PM USER RULING (standing balance rule): Economy and Dispatch balance use a player who plays at least 2 hours a day as the MINIMUM reference; once-a-day and idle players no longer the reference. New economy_framework 50; cross-reference note on unit_progression 77 (Dispatch material rates re-tune, Simulator PENDING). Notes/rule text only.
+
+
+=== 2026-11-19 9:49 PM — Battle length estimate replaced (USER RULING) ===
+Old ~6.5 min battle estimate REPLACED: Easy 15 min (minimum) / Medium 20 / Hard 30 (project_rules 273; old text kept in notes). Hours notes added: economy_framework 42-46, 50; loot_progression 82 (Renown curve unchanged, Rank 99 ≈ 1,280 battles = 320+ h, accepted as long-term MMO pacing); unit_progression 77 (Dispatch re-simulation PENDING). Backups: backups\*_before_20261119_215038_battlelength.*
+
+
+=== 2026-11-19 10:20 PM — Dispatch daily cap, new rates, 1,280-battle material limits (USER RULINGS 10:16/10:20 PM) ===
+Dispatch counts max 2 earning hours per server day per mission; per-level earning cap now = max time away (~1.5 d L1 to 12 d L10). Rates 25% (L1 T1) to 75% (L10 T5) of battle income/hour, full table in materials_system 12 (replaces earlier per-hour rates); EXP formula unit_progression 78 (bench EXP ~49% of fighting 2 h player, 25% 4 h). Limits: costs kept, more upgrades accepted; lifetime Mercury 3,594/5,487/4,544, crystals 695/1,061/879, rune gems 424/648/537 (guild_facilities 38, materials_system 36/38); crystal shortage gone; mercury wall ~2.2x. Notes on unit_progression 77, guild_facilities 116. Approved, NOT BUILT. Backups: backups\*_before_20261119_2230_dailycap.*
+
+2026-11-19 10:28 PM: Dispatch player text DISPATCH-RT-21..24 approved (extra-units chip, time per material, next material countdown, EXP per hour); D4 dropped. Recorded in unit_progression 99. Being built, Studio pending.
+
+2026-11-19 10:37 PM: Dispatch rulings ('accept recommendations'): text DISPATCH-RT-25 'Only one material mission at a time' + RT-26 help bullet 'Missions earn up to 2 hours each day.' (unit_progression 99); crystal/rune-gem gating kept; weekly sulfur resets Monday 00:00 Asia/Manila, first collect, not stackable (materials_system 12); L8 +25% material REMOVED, new L8 perk T4/T5 minimums 1 h shorter (6->5 h, 10->9 h; agent default) (guild_facilities 116, unit_progression 99). Built code-only, Studio pending. Backups: backups\*_before_20261119_2240_rt2526.*
+
+2026-11-19 11:11 PM: USER APPROVED Dispatch text DISPATCH-RT-27 'Tier 4–5 missions: Minimum 1h shorter' (Guild Hall next-level line for Dispatch L8; unit_progression 99, noted guild_facilities 113). L8 perk (T4/T5 minimums 1 h shorter) now user-approved, no longer agent default (guild_facilities 116, unit_progression 99 notes). materials_system 12 wording clarified. Built code-only, Studio pending.
+
+2026-11-20: Real-time Dispatch yield choice (EXP or one material per mission; items always roll) + screen layout change recorded in unit_progression 77/78/99, materials_system 12. Benched EXP re-simulation OPEN. Status: approved, being built (Studio pending).
+
+2026-11-20 12:33 AM: USER APPROVED Dispatch text updates (unit_progression 99): RT-16 hint 'Pick a tier and what to earn, then tap the units to send.'; RT-12 help bullet 'EXP or materials'; RT-20 drops the EXP part when only material is earned; new RT-28 'EXP' yield tile label. Built code-only, Studio pending.
+
+2026-11-20 12:53 AM USER RULING — Dispatch NO DAILY CAP (replaces 2026-11-19 10:16/10:20 PM 2-hour cap): missions earn in real time until the level's earning limit, then stop until collected. User-anchor rate table in materials_system 12; EXP in unit_progression 78. RT-26 retired (unit_progression 99). Lifetime totals guild_facilities 38, materials_system 36/38 marked RE-SIMULATION PENDING. Status: approved, being built.

@@ -183,17 +183,29 @@ local function buildFrame(backdrop: GuiObject, titleText: string, fullMain: bool
 		tfit.MinTextSize = 12
 		tfit.Parent = title
 		local function place()
-			local cw = crest.AbsoluteSize.X + 6
+			-- 2026-11-19 (user: the Dispatch crest touched the title): crest art that fills its canvas
+			-- (the Dispatch compass) needs a real gap, so the gap scales with the crest (min 8 px).
+			local crestW = crest.AbsoluteSize.X
+			local cw = crestW + math.max(8, math.floor(crestW * 0.15 + 0.5))
 			local innerW = header.AbsoluteSize.X - 28 -- 14 px side padding each side
 			local used = if strip and strip.Strip.Visible then strip.ContentWidth() + 10 else math.floor(innerW * 0.6)
 			local w = math.max(40, innerW - cw - used)
 			title.Position = UDim2.fromOffset(cw, 0)
 			title.Size = UDim2.new(0, w, 0.44, 0)
-			local sx = math.min(w, title.TextBounds.X + 8)
-			status.Position = UDim2.new(0, cw + sx, 0, 0)
-			status.Size = UDim2.new(0, math.max(0, w - sx), 0.44, 0)
 			block.Position = UDim2.new(0, cw, 0.44, 0)
 			block.Size = UDim2.new(0, w, 0.56, 0)
+			-- 2026-11-19 (user: the Dispatch status was cut off beside the title): screens without
+			-- detail lines show the status UNDER the title, in the details space (full text width,
+			-- wraps to 2 lines, 10 px floor). Screens with details (Dungeon) keep it on the title row.
+			local hasDetails = (detailLines[1].Text ~= "") or (detailLines[2].Text ~= "")
+			if hasDetails then
+				local sx = math.min(w, title.TextBounds.X + 8)
+				status.Position = UDim2.new(0, cw + sx, 0, 0)
+				status.Size = UDim2.new(0, math.max(0, w - sx), 0.44, 0)
+			else
+				status.Position = UDim2.new(0, cw, 0.44, 0)
+				status.Size = UDim2.new(0, w, 0.56, 0)
+			end
 		end
 		placeText = place
 		place()
@@ -257,11 +269,12 @@ local function buildFrame(backdrop: GuiObject, titleText: string, fullMain: bool
 		end
 		local buttonsH = buttonRows * GuildScreen.ROW_H + (buttonRows - 1) * ROW_GAP
 		mainPanel.Position = UDim2.fromOffset(MARGIN, top)
-		mainPanel.Size = UDim2.new(1 - SIDE_SHARE, -MARGIN * 1.5, 1, -(top + MARGIN))
-		sidePanel.Position = UDim2.new(1 - SIDE_SHARE, MARGIN // 2, 0, top)
-		sidePanel.Size = UDim2.new(SIDE_SHARE, -MARGIN * 1.5, 1, -(top + MARGIN * 2 + buttonsH))
+		local ss = f.sideShare or SIDE_SHARE -- per-screen override (Quest Board 2026-11-18)
+		mainPanel.Size = UDim2.new(1 - ss, -MARGIN * 1.5, 1, -(top + MARGIN))
+		sidePanel.Position = UDim2.new(1 - ss, MARGIN // 2, 0, top)
+		sidePanel.Size = UDim2.new(ss, -MARGIN * 1.5, 1, -(top + MARGIN * 2 + buttonsH))
 		buttons.Position = UDim2.new(1, -MARGIN, 1, -MARGIN)
-		buttons.Size = UDim2.new(SIDE_SHARE, -MARGIN * 1.5, 0, buttonsH)
+		buttons.Size = UDim2.new(ss, -MARGIN * 1.5, 0, buttonsH)
 		if fullMain then
 			mainPanel.Size = UDim2.new(1, -MARGIN * 2, 1, -(top + MARGIN * 2 + buttonsH))
 			-- Dungeon map (user 2026-11-17 11:22 AM): Main runs down to the button row's bottom edge;
@@ -321,6 +334,7 @@ local function buildFrame(backdrop: GuiObject, titleText: string, fullMain: bool
 		detailLines[1].Text = line1 or ""
 		detailLines[2].Text = line2 or ""
 		details.Visible = (line1 or "") ~= "" or (line2 or "") ~= ""
+		placeText() -- the status moves between the title row and the details space (2026-11-19)
 	end
 
 	-- Server answers / errors (moved here from the guild menu status line while this is open).
@@ -347,7 +361,7 @@ GuildScreen.ROW_GAP = ROW_GAP
 -- opts.fullMain (2026-11-13, Units screen): Main spans the full width above the Buttons row and
 -- the Side panel is hidden (screens with nothing to inspect).
 -- opts.crest (2026-11-17): gold-framed header like the guild base (crest, title, status, details, currencies).
-function GuildScreen.Create(opts: { name: string, title: string, parent: Instance, fullMain: boolean?, crest: string? }): any
+function GuildScreen.Create(opts: { name: string, title: string, parent: Instance, fullMain: boolean?, crest: string?, sideShare: number? }): any
 	local gui = Instance.new("ScreenGui")
 	gui.Name = opts.name
 	gui.ResetOnSpawn = false
@@ -370,6 +384,7 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 
 	-- Header, ornate Main / Side panels and the Buttons group (shared with CreateView).
 	local f = buildFrame(backdrop, opts.title, opts.fullMain, if opts.crest then { crest = opts.crest } else nil)
+	if type(opts.sideShare) == "number" then f.sideShare = math.clamp(opts.sideShare, 0.2, 0.5) end -- opts.sideShare (2026-11-18)
 	local main, side, buttons = f.Main, f.Side, f.Buttons
 
 	Theme.MakeScreenBorder(backdrop)

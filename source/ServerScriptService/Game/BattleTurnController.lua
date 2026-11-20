@@ -235,6 +235,7 @@ local function buildTurnPrompt(unit)
 				channelPhase = u.channelPhase, -- "Channel" | "Activation" (2026-10-07)
 				channeledSkillName = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.name or nil,
 				channeledSkillIcon = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.icon or nil,
+				channeledSkillId = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.id or nil, -- turn-order skill portrait (2026-11-18)
 			})
 		end
 	end
@@ -1688,7 +1689,8 @@ local function broadcastActions(actions, activeUnit)
 				and action.animKind and action.animKind ~= "None" then
 				-- Ground-aimed skill with no unit target (AI tile casts, 2026-10-28 F-2): there is no
 				-- UnitActed to carry the caster animation, so send it with the skill label instead.
-				BattleVisualBroadcaster.ActionAnnounced(action.unit, action.skillName or "Skill", action.animKind)
+				BattleVisualBroadcaster.ActionAnnounced(action.unit, action.skillName or "Skill", action.animKind,
+					{ animOnly = true }) -- caster animation only: CommandService already sent this cast's name banner at commit (2026-11-18, no double banner)
 			end
 
 		elseif action.actionType == "Guard" then
@@ -1744,6 +1746,7 @@ local function broadcastActions(actions, activeUnit)
 				channelPhase = u.channelPhase, -- "Channel" | "Activation" (2026-10-07)
 				channeledSkillName = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.name or nil,
 				channeledSkillIcon = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.icon or nil,
+				channeledSkillId = u.channelingData and u.channelingData.skillDef and u.channelingData.skillDef.id or nil, -- turn-order skill portrait (2026-11-18)
 			})
 		end
 	end

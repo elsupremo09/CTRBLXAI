@@ -145,6 +145,8 @@ local function renderLevels()
 end
 
 -- Ask the server (GuildEvents.DevGuild). On success the answer carries the building levels.
+local timeOffsetLabel: TextLabel? = nil -- TIME group label (Dispatch step 5); any DevGuild answer refreshes it
+
 local function devGuild(payload: { [string]: any }): any?
 	local c = ctx
 	local remote = c and c.devGuild
@@ -163,6 +165,9 @@ local function devGuild(payload: { [string]: any }): any?
 	if type(res) ~= "table" or res.ok == false then
 		setStatus(if type(res) == "table" then tostring(res.error) else "Unexpected answer", true)
 		return nil
+	end
+	if timeOffsetLabel and type(res.timeOffset) == "number" then
+		timeOffsetLabel.Text = string.format("Clock offset: +%.1fh", res.timeOffset / 3600)
 	end
 	if type(res.buildings) == "table" then
 		for _, name in BUILDINGS do
@@ -349,6 +354,44 @@ local function build(c: Context)
 		devCommand("DevResetUGCRecords")
 		setStatus("UGC reset requested (see Output)")
 	end)
+
+	-- TIME (real-time Dispatch step 5, 2026-11-19): server dev clock offset, memory only, never
+	-- saved. The server re-checks DevAccess and allows only these steps (GuildMenuService DevGuild).
+	local gTime = addGroup(body, "TIME (DISPATCH)", 4)
+	local offsetLabel = makeLabel(gTime, "Clock offset: +0h", COLOR_TEXT, 1)
+	timeOffsetLabel = offsetLabel
+	local function showOffset(res: any)
+		local off = if type(res) == "table" then tonumber(res.timeOffset) else nil
+		if off then offsetLabel.Text = string.format("Clock offset: +%.1fh", off / 3600) end
+	end
+	local timeRow = Instance.new("Frame")
+	timeRow.Name = "TimeSteps"
+	timeRow.Size = UDim2.new(1, 0, 0, BTN_H)
+	timeRow.BackgroundTransparency = 1
+	timeRow.BorderSizePixel = 0
+	timeRow.LayoutOrder = 2
+	local timeList = Instance.new("UIListLayout")
+	timeList.FillDirection = Enum.FillDirection.Horizontal
+	timeList.Padding = UDim.new(0, 2)
+	timeList.SortOrder = Enum.SortOrder.LayoutOrder
+	timeList.Parent = timeRow
+	local function timeBtn(label: string, order: number, payload: { [string]: any })
+		local btn = makeBtn(timeRow, label, Color3.fromRGB(40, 70, 90), order, function()
+			local res = devGuild(payload)
+			if res then
+				showOffset(res)
+				setStatus(`Clock: {label}`)
+				c.onLevelsChanged() -- re-render the open screen with fresh server times
+			end
+		end)
+		btn.Size = UDim2.new(0.2, -2, 1, 0)
+	end
+	timeBtn("+1H", 1, { action = "AddTimeOffset", hours = 1 })
+	timeBtn("+3H", 2, { action = "AddTimeOffset", hours = 3 })
+	timeBtn("+10H", 3, { action = "AddTimeOffset", hours = 10 })
+	timeBtn("+24H", 4, { action = "AddTimeOffset", hours = 24 })
+	timeBtn("RESET", 5, { action = "ResetTimeOffset" })
+	timeRow.Parent = gTime
 
 	local status = makeLabel(body, "", COLOR_OK, 10)
 	status.TextWrapped = true

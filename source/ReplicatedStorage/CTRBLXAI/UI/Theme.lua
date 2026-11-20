@@ -294,6 +294,17 @@ function Theme.GetRarityColor(rarity)
 	return map[rarity] or Theme.Colors.RarityCommon
 end
 
+-- Quest title colour by difficulty (game_flow 35, USER RULING 2026-11-18 5:17 PM): uses the item
+-- rarity colours so Easy quests read gray / green at a glance. 5 = orange: Theme has no orange
+-- "Legendary" (Legendary is gold), so the deep-orange Mythic colour is used.
+local DIFFICULTY_RARITY = { "Common", "Uncommon", "Rare", "Epic", "Mythic" }
+
+function Theme.GetDifficultyColor(difficulty)
+	local d = tonumber(difficulty)
+	local key = d and DIFFICULTY_RARITY[math.clamp(math.floor(d), 1, #DIFFICULTY_RARITY)]
+	return Theme.GetRarityColor(key or "Common")
+end
+
 --------------------------------------------------
 -- HELPER: Get side/faction color
 --------------------------------------------------
@@ -1250,8 +1261,14 @@ Theme.FurnitureIcons = {
 -- Ink = text colour on the parchment. ONE place for these values (DAT-001).
 Theme.QuestBoardArt = table.freeze({
 	Board = "rbxassetid://98321788039247",
-	Card = "rbxassetid://92530315099135",
-	CardSlice = Rect.new(100, 140, 583, 850),
+	-- 2026-11-18 (user 9:26 PM): parchment v2, no corner pins (asset 101654387775851, 1536x1024, Stretch).
+	-- Previous: rbxassetid://92530315099135 (683x1024, 9-slice Rect(100,140,583,850)).
+	Card = "rbxassetid://101654387775851",
+	CardScaleType = "Stretch",
+	CardSize = Vector2.new(1536, 1024),
+	-- Visible sheet edge inside the image (image px): selection outline hugs this.
+	CardSheetMargin = table.freeze({ left = 55, top = 62, right = 53, bottom = 67 }),
+	CardSlice = Rect.new(100, 140, 583, 850), -- old art only (unused while CardScaleType = Stretch)
 	CardSliceScalePhone = 0.25,
 	CardSliceScale = 0.35,
 	Ink = Color3.fromRGB(52, 34, 18),
@@ -1280,6 +1297,15 @@ end
 
 -- Darker tint for destructive confirm icons (Discard / Recall / Abandon quest; user 2026-11-18).
 Theme.DestructiveIconTint = Color3.fromRGB(205, 120, 110)
+
+-- Battle name banner frame (user-approved design 6 "amber gem caps", 2026-11-18 7:44 PM).
+-- 720x128 art = exact 4x upscale of the approved ribbon_m6.png (flat dark bar, diamond gems pointing
+-- out at both ends). 9-slice: the 112 px ends with the gems stay fixed, only the plain middle stretches.
+-- SliceScale = banner height / 128 (32 px -> 0.25, 26 px -> 0.203). Cap on screen = 112 x SliceScale
+-- (28 px at 32 px tall, ~23 px at 26 px). Text only: no icon, no side outline (user 7:44 PM).
+-- (Decal 89777455500069 / image 99875274713516 was a wrong redraw uploaded by mistake: unused.)
+Theme.BattleBannerImage = "rbxassetid://128364944582069" -- decal 95319675607852
+Theme.BattleBannerSlice = table.freeze({ center = Rect.new(112, 12, 608, 116), artHeight = 128, capPx = 112 })
 
 -- Square icon ImageButton. kind = "Back" | "Confirm" | "Options".
 -- opts: size (UDim2; height is kept, width follows height), position, anchor, name, disabled.
@@ -1519,6 +1545,7 @@ Theme.GuildIcons = table.freeze({
 	Artisan          = "rbxassetid://129356073581903", -- reserved
 	Blacksmith       = "rbxassetid://100021754504369",
 	Dispatch         = "rbxassetid://84363568386921",
+	DispatchExp      = "rbxassetid://126540666012445", -- 2026-11-20 4:46 PM user: reuse the Veteran silver star from battle. Previous generated star (image 139530209228603, decal 83204044964683) rejected, unused.
 	Units            = "rbxassetid://132653392640514", -- 2026-11-14 icon-guild-units
 })
 
@@ -1644,6 +1671,8 @@ Theme.DungeonRoomColors = table.freeze({
 -- sits like the others on item/gem tiles. Missing = 1 (unchanged). Used by Theme.MakeItemTile.
 Theme.IconFitScale = table.freeze({
 	[Theme.Icons.StatMP] = 0.88,
+	-- 2026-11-20 5:23 PM user: EXP star read too small next to material icons (art has wide empty margin).
+	[Theme.GuildIcons.DispatchExp] = 1.4,
 })
 
 -- Shrink an icon Size/Position box by its fit scale around the box's own centre. s = 1 returns

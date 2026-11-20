@@ -12,7 +12,8 @@
 -- Rules (CTRBLXAI.db, USER RULING 2026-11-12):
 --   - Earned from successful quests only (loot_progression 74). Callers classify the quest
 --     with RenownRules.QuestKind; a nil kind (Test Arena) changes nothing.
---   - A failed quest costs 3x the quest's base reward (loot_progression 90 / unit_progression 94).
+--   - A failed quest costs 3x the quest's base reward up to Rank 50, 1x from Rank 51
+--     (loot_progression 90 / unit_progression 94; 2026-11-18 4:48 PM).
 --     It never drops a Rank: the loss stops at the start of the current Rank, and the amount
 --     actually lost is reported (0 if the floor absorbs it all).
 --   - No Rank cap (loot_progression 83/89). One award can give several Rank-ups.
@@ -120,7 +121,7 @@ function RenownService.Award(playerId: string, result: any): AwardResult
 			need = RenownRules.RenownToNext(s.rank)
 		end
 	else
-		local penalty = RenownRules.FailPenalty(kind)
+		local penalty = RenownRules.FailPenalty(kind, s.rank)
 		local lost = math.min(penalty, s.renown) -- floor: never below the start of the Rank
 		out.nominal = penalty
 		out.delta = if lost > 0 then -lost else 0 -- plain 0 (not -0) when the floor absorbs it all
@@ -136,10 +137,11 @@ function RenownService.Award(playerId: string, result: any): AwardResult
 	return out
 end
 
---- Save shape: { rank, renown, converted }. Old Guild XP is not saved (loot_progression 93).
+--- Save shape: { rank, renown, converted, curveVersion }. Old Guild XP is not saved (loot_progression 93).
+--- curveVersion 2 = the "Three stages" curve (2026-11-18); a save without it was written on curve 1.
 function RenownService.Export(playerId: string)
 	local s = stateOf(playerId)
-	return { rank = s.rank, renown = s.renown, converted = s.converted }
+	return { rank = s.rank, renown = s.renown, converted = s.converted, curveVersion = RenownRules.Data.CurveVersion }
 end
 
 --- Load saved Renown. `data` is the saved renown table (nil for a save from before Renown).
@@ -152,6 +154,23 @@ function RenownService.Import(playerId: string, data: any)
 	s.rank = math.max(RenownRules.Data.StartRank, toInt(data.rank, RenownRules.Data.StartRank))
 	-- Excess saved Renown is never thrown away: apply any Rank-ups it covers (no Rank cap).
 	s.renown = math.max(0, toInt(data.renown, 0))
+	-- One-time curve rescale (loot_progression 93 note, 2026-11-18): a save written on the old curve
+	-- (no curveVersion) keeps its Rank and the same FRACTION of the Rank's bar, rounded down
+	-- (Rank 42 0/460 -> 0/730; Rank 60 300/550 -> 790/1450). Rank-ups covered by excess Renown are
+	-- applied on the OLD curve first. Export writes curveVersion 2, so this never runs twice.
+	if (toInt(data.curveVersion, 1)) < RenownRules.Data.CurveVersion then
+		local oldNeed = RenownRules.RenownToNextV1(s.rank)
+		while s.renown >= oldNeed do
+			s.renown -= oldNeed
+			s.rank += 1
+			oldNeed = RenownRules.RenownToNextV1(s.rank)
+		end
+		local before = s.renown
+		local newNeed = RenownRules.RenownToNext(s.rank)
+		s.renown = math.clamp(math.floor(before * newNeed / oldNeed), 0, newNeed - 1)
+		print(string.format("[RenownService] %s | curve rescale v1 -> v2 at Rank %d: %d/%d -> %d/%d",
+			playerId, s.rank, before, oldNeed, s.renown, newNeed))
+	end
 	local need = RenownRules.RenownToNext(s.rank)
 	while s.renown >= need do
 		s.renown -= need

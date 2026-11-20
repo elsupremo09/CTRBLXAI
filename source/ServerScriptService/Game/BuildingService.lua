@@ -18,6 +18,8 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Guild Hall rooms / spots / bonus cap / rarity gates for the next-level lines (one source, DAT-001).
 local FurnitureData: any = require(ReplicatedStorage:WaitForChild("Content"):WaitForChild("FurnitureData"))
+-- Quest Board 'Unlocks: Hard quests' level (guild_facilities 113/17, one source). Pure module, no cycle.
+local RenownRules = require(script.Parent:WaitForChild("RenownRules"))
 
 local BuildingService = {}
 
@@ -44,33 +46,36 @@ local DISPLAY: { [string]: string } = table.freeze({
 })
 
 -- Gold price of reaching level n (index n). Level 1 is free (USER RULING 2026-11-16), so
--- index 1 is never charged. guild_facilities 26-30, 49, 65, 72, 80, 88.
+-- index 1 is never charged. v4 tables (USER RULINGS 2026-11-18 4:11/4:32/5:19 PM, x1.36 Epic,
+-- SIM_building_costs_v4_20261118.md), copied verbatim from guild_facilities 26-30, 49, 65, 72, 80,
+-- 88, 117. Levels gated at Rank 30 or lower keep the old price; old saves keep their levels.
 local COSTS: { [string]: { number } } = table.freeze({
-	GuildHall       = { 267, 317, 400, 517, 667, 850, 1067, 1317, 1600, 1917 },
-	Tavern          = { 211, 244, 300, 378, 478, 600, 744, 911, 1100, 1311 },
-	Blacksmith      = { 325, 400, 525, 700, 925, 1200, 1525, 1900, 2325, 2800 },
-	Merchant        = { 211, 244, 300, 378, 478, 600, 744, 911, 1100, 1311 },
-	QuestBoard      = { 189, 216, 261, 324, 405, 504, 621, 756, 909, 1080 },
-	Runeforge       = { 267, 317, 400, 517, 667, 850, 1067, 1317, 1600, 1917 },
-	Crucible        = { 211, 244, 300, 378, 478, 600, 744, 911, 1100, 1311 },
-	Apothecary      = { 157, 177, 211, 259, 320, 395, 484, 586, 702, 832 },
-	TrainingGrounds = { 234, 275, 344, 440, 564, 715, 894, 1100, 1334, 1595 },
-	Dungeon         = { 234, 275, 344, 440, 564, 715, 894, 1100, 1334, 1595 },
-	Dispatch        = { 157, 177, 211, 259, 320, 395, 484, 586, 702, 832 }, -- Apothecary curve, guild_facilities 117 (L2-L10 = 3,966g)
+	GuildHall       = { 267, 317, 400, 517, 6100, 6680, 7350, 7990, 8620, 9260 }, -- gf 26 (47,234g)
+	Tavern          = { 211, 244, 300, 378, 4890, 5350, 5860, 6390, 6900, 7410 }, -- gf 27 (37,722g)
+	Blacksmith      = { 325, 400, 525, 700, 4410, 4940, 5410, 5980, 6450, 7000 }, -- gf 28 (35,815g)
+	Merchant        = { 211, 244, 300, 378, 4410, 4820, 5290, 5750, 6210, 6680 }, -- gf 29 (34,082g)
+	QuestBoard      = { 189, 216, 261, 324, 4410, 4820, 5290, 5750, 6210, 6680 }, -- gf 30 (33,961g)
+	Runeforge       = { 267, 317, 400, 517, 4890, 5350, 5860, 6390, 6900, 7410 }, -- gf 49 (38,034g)
+	Crucible        = { 211, 244, 300, 378, 4890, 5350, 5860, 6390, 6900, 7410 }, -- gf 65 (37,722g)
+	Apothecary      = { 157, 177, 211, 259, 4150, 4540, 5000, 5410, 5860, 6310 }, -- gf 72 (31,917g)
+	TrainingGrounds = { 234, 275, 344, 440, 4890, 5350, 5860, 6390, 6900, 7410 }, -- gf 80 (37,859g)
+	Dungeon         = { 234, 275, 344, 4600, 4890, 5350, 5860, 6390, 6900, 7410 }, -- gf 88 (42,019g; L4 gate R31)
+	Dispatch        = { 0, 177, 211, 259, 4150, 4540, 5000, 5410, 5860, 6310 },   -- gf 117 (31,917g; L1 free)
 })
 
 -- Building description in the Guild Hall inspector (approved text, guild_facilities 113).
 local DESCRIPTION: { [string]: string } = table.freeze({
-	Dispatch = "Send units on missions while you fight. Higher levels lower the fee and offer more missions.", -- DISPATCH-BLD-DESC
+	Dispatch = "Send units out to earn while you are away. Higher levels earn for longer and unlock bigger missions.", -- DISPATCH-RT-15 (2026-11-19; DISPATCH-BLD-DESC retired)
 })
 
--- Renown Rank gate per level (USER RULINGS 2026-11-17 5:18 / 5:23 PM, guild_facilities 115, slope 8x):
--- level n (n >= 2) needs Renown Rank max(unlock Rank + RANK_GATE_STEP x (n - 1), RANK_GATE_SLOPE x (n - 1)),
--- so level 10 needs Rank 72. Gold costs are unchanged. The Blacksmith keeps its own stricter rule
--- ("No effect until Renown Rank {n}", blacksmithEffectRank). The gate only stops the NEXT upgrade:
--- levels a save already has never drop.
+-- Renown Rank gate per level (guild_facilities 115, v4 USER RULING 2026-11-18 4:11 PM: every max
+-- level at Rank 80): level n (n >= 2) needs Renown Rank
+-- max(unlock Rank + RANK_GATE_STEP x (n - 1), round(RANK_GATE_MAX x (n - 1) / (MAX_LEVEL - 1))),
+-- so L2-L10 = 9, 18, 27, 36, 44, 53, 62, 71, 80 (later-opening buildings keep their +2 early steps).
+-- The Blacksmith keeps its own rule 6..86 ("No effect until Renown Rank {n}", blacksmithEffectRank).
+-- The gate only stops the NEXT upgrade: levels a save already has never drop.
 local RANK_GATE_STEP = 2
-local RANK_GATE_SLOPE = 8
+local RANK_GATE_MAX = 80
 
 -- Rarity order for "Unlocks: {rarity} ..." lines (a higher top rarity at the next level).
 local RARITY_RANK: { [string]: number } = table.freeze({
@@ -202,7 +207,8 @@ end
 function BuildingService.RankForLevel(name: string, n: number): number
 	if n <= 1 then return 1 end
 	if name == "Blacksmith" then return blacksmithEffectRank(n) end
-	return math.max(BuildingService.UnlockRank(name) + RANK_GATE_STEP * (n - 1), RANK_GATE_SLOPE * (n - 1))
+	return math.max(BuildingService.UnlockRank(name) + RANK_GATE_STEP * (n - 1),
+		math.floor(RANK_GATE_MAX * (n - 1) / (MAX_LEVEL - 1) + 0.5))
 end
 
 --------------------------------------------------
@@ -288,6 +294,10 @@ local function nextLines(name: string, from: number, to: number): { string }
 		end
 	elseif name == "QuestBoard" then
 		table.insert(out, "+1 quest slot") -- approved (L1 = 3 quests, +1 per level)
+		-- RESTORED 2026-11-18 5:17 PM (guild_facilities 113): Hard quests open at Quest Board L3.
+		if to == RenownRules.Data.HardQuestBoardLevel then
+			unlock(out, "Hard quests")
+		end
 	elseif name == "Dungeon" then
 		local fn = deps.dungeonLevelInfo
 		local a: any, b: any = nil, nil
@@ -346,10 +356,17 @@ local function nextLines(name: string, from: number, to: number): { string }
 			if b.doctrines and not a.doctrines then unlock(out, "Doctrines") end -- approved (guild_facilities 78)
 			if b.slot2 and not a.slot2 then unlock(out, "2nd augment slot (Lv 80+ units)") end -- approved
 		elseif name == "Dispatch" then
-			if a.fee ~= nil and b.fee ~= nil and a.fee ~= b.fee then
-				table.insert(out, `Dispatch fee {a.fee} → {b.fee} gold`) -- approved GH-NEXT-DISPATCH-FEE
+			-- Real-time Dispatch (step 2, 2026-11-19): the fee line and "Missions offered" are RETIRED
+			-- (unit_progression 99). Approved DISPATCH-RT-10 / RT-11, verbatim.
+			if a.earnLimit ~= nil and b.earnLimit ~= nil and a.earnLimit ~= b.earnLimit then
+				table.insert(out, `Earning limit {a.earnLimit}h → {b.earnLimit}h`) -- DISPATCH-RT-10
 			end
-			change(out, "Missions offered", a.offers, b.offers) -- approved GH-NEXT-DISPATCH-OFFERS (only when it changes)
+			if b.tierUnlock ~= nil then
+				table.insert(out, `Unlocks: Tier {b.tierUnlock} missions`) -- DISPATCH-RT-11
+			end
+			if to == 8 then
+				table.insert(out, "Tier 4–5 missions: Minimum 1h shorter") -- DISPATCH-RT-27 (approved 2026-11-19 11:11 PM)
+			end
 		elseif name == "Crucible" then
 			change(out, "Items needed", a.needed, b.needed) -- approved
 			if a.boost ~= b.boost and a.boost ~= nil and b.boost ~= nil then

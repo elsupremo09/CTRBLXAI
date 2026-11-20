@@ -85,11 +85,11 @@ local MerchantService = {}
 -- LOCKED CONSTANTS (mirror of DB — see header)
 --------------------------------------------------
 
-local SHOP_MARKUP = 4.0            -- economy_framework Shop Price ×4.0
+local SHOP_MARKUP = 3.5            -- economy_framework 15 Shop Price ×3.5 (v4 2026-11-18, was ×4.0)
 -- Higher shop markup for top rarities (USER DECISION 2026-10-30, per Simulator: keeps shop
 -- Epics near loot pace in the L50-80 tight phase). In DB: economy_framework rows 15/16.
-local SHOP_MARKUP_BY_RARITY = table.freeze({ Epic = 6.0, Exalted = 6.0 })
-local SELL_RATE = 0.25            -- economy_framework Sell Value ×0.25 (16:1)
+local SHOP_MARKUP_BY_RARITY = table.freeze({ Epic = 5.0, Exalted = 5.0 }) -- v4 2026-11-18 (was ×6.0)
+local SELL_RATE = 0.25            -- economy_framework Sell Value ×0.25 (unchanged; buy:sell 14:1 / 20:1)
 local LEVEL_MULT_STEP = 0.02       -- Level Multiplier = 1 + (Level−1) × 0.02
 
 -- economy_framework id=11 — Base Value by Slot.
@@ -300,8 +300,8 @@ end
 -- PRICING (LOCKED FORMULAS)
 --------------------------------------------------
 
--- Shop Price = round(Base Value × Rarity Mult × Level Mult × Markup). Markup ×4.0, or
--- ×6.0 for Epic/Exalted (USER DECISION 2026-10-30). Sell value is unchanged.
+-- Shop Price = round(Base Value × Rarity Mult × Level Mult × Markup). Markup ×3.5, or
+-- ×5.0 for Epic/Exalted (v4 2026-11-18; was ×4.0 / ×6.0). Sell value is unchanged.
 function MerchantService.PriceToBuy(item: any): number?
 	if type(item) ~= "table" then return nil end
 	local baseValue = baseValueOf(item)

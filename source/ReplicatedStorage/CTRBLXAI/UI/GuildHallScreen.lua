@@ -39,6 +39,12 @@ local InventoryControls: any = if controlsModule then (require :: any)(controlsM
 if not MerchantInspector then warn("[GuildHallScreen] MerchantInspector missing -- no building grid") end
 if not FurnishScreen then warn("[GuildHallScreen] FurnishScreen missing -- no Furnish tab") end
 if not InventoryControls then warn("[GuildHallScreen] InventoryControls missing -- no Furnish search bar") end
+-- New-player tips (2026-11-19, SYS-07): the Tips log opens from here. Guarded: no module = no button.
+local TipController: any = nil
+do
+	local okTip, tipMod = pcall(function() return (require :: any)(uiFolder:WaitForChild("TipController", WAIT)) end)
+	if okTip then TipController = tipMod else warn("[GuildHallScreen] tips unavailable -- no Tips button: " .. tostring(tipMod)) end
+end
 
 local GuildHallScreen = {}
 
@@ -333,6 +339,10 @@ local function renderBuildings()
 		Theme.MakeBarButton(row, `Upgrade — {sel.cost} gold`, if sel.canUpgrade then "Primary" else "Disabled", function()
 			upgrade(sel)
 		end, { name = "Btn_Upgrade", minHeight = GuildScreen.ROW_H, layoutOrder = 1 })
+	end
+	if TipController then -- Tips log (SYS-07): every seen tip + the Show tips switch
+		Theme.MakeBarButton(row, "Tips", "Secondary", function() TipController.OpenLog() end,
+			{ name = "Btn_Tips", minHeight = GuildScreen.ROW_H, layoutOrder = 2 })
 	end
 	addBack(row)
 	row.Parent = screen.Buttons

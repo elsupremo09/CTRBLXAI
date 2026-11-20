@@ -82,6 +82,11 @@
 
 local DispatchService = {}
 
+-- Real-time Dispatch (build step 2, 2026-11-19): numbers + pure math live in DispatchRtRules (DAT-003),
+-- time comes from the server clock only (ServerTime, step 1).
+local Rules = require(script.Parent:WaitForChild("DispatchRtRules"))
+local ServerTime = require(script.Parent:WaitForChild("ServerTime"))
+
 --------------------------------------------------
 -- LOCKED CONSTANTS (mirror of DB — see header)
 --------------------------------------------------
@@ -174,13 +179,24 @@ function DispatchService.SetGemRoller(fn: ((number) -> string?)?) _gemRoller = f
 -- economy_framework 26/34. Robux +1 slots up to 6 (economy_framework 34) are NOT built yet.
 --------------------------------------------------
 local DISPATCH_FEE_GOLD = 50
-local DISPATCH_BASE_MAX_SLOTS = 3
 local _slotProvider: ((string) -> number)? = nil
 function DispatchService.SetSlotProvider(fn: ((string) -> number)?) _slotProvider = fn end
 
+-- Robux slot (economy_framework 34, +1 from the start, user 2026-11-19 2:48 PM). Not built yet: the
+-- provider is nil-safe (0) until the Robux purchase exists.
+local _bonusSlotProvider: ((string) -> number)? = nil
+function DispatchService.SetBonusSlotProvider(fn: ((string) -> number)?) _bonusSlotProvider = fn end
+
+-- Slots = Renown Rank slots (1/2/3) + Dispatch level (+1 at L4, +1 at L10) + the Robux slot, code cap 6
+-- (economy_framework 26, real-time Dispatch step 2 2026-11-19; was Rank only, cap 3).
 function DispatchService.GetSlotCap(playerId: string): number
-	local n = _slotProvider and _slotProvider(playerId) or 1
-	return math.clamp(math.floor(tonumber(n) or 1), 0, DISPATCH_BASE_MAX_SLOTS)
+	local n = math.floor(tonumber(_slotProvider and _slotProvider(playerId) or 1) or 1)
+	n += Rules.LevelSlots(DispatchService.GetLevel())
+	if _bonusSlotProvider then
+		local ok, b = pcall(_bonusSlotProvider, playerId)
+		if ok then n += math.max(0, math.floor(tonumber(b) or 0)) end
+	end
+	return math.clamp(n, 0, Rules.SLOT_CAP)
 end
 
 -- Fee change from Guild Hall furniture (War Table Map -5g, guild_facilities 94; injected, nil-safe).
@@ -190,7 +206,6 @@ function DispatchService.SetFeeModifier(fn: (() -> number)?) _feeModifier = fn e
 -- Dispatch building level (guild_facilities 116/117, USER RULING 2026-11-18 11:28 AM, Package A).
 -- Injected (GuildMenuService owns building levels); nil-safe = Level 1.
 local DISPATCH_MAX_LEVEL = 10
-local FEE_DISCOUNT_PCT_PER_LEVEL = 3 -- -3% per level above L1 (50 -> 36 at L10)
 local BASE_OFFERS = 5                -- one mission per tier 1-5
 local EXTRA_OFFER_LEVELS = table.freeze({ 4, 7, 10 }) -- +1 offer each (5 -> 8)
 local EXTRA_OFFER_MIN_TIER, EXTRA_OFFER_MAX_TIER = 3, 5 -- the extra offers are Tier 3-5
@@ -214,9 +229,9 @@ local function feeDelta(): number
 end
 
 --- Fee at a Dispatch level, before furniture: floor(50 x (100 - 3 x (level - 1)) / 100).
-function DispatchService.BaseFeeForLevel(level: number): number
-	local l = clampLevel(level)
-	return math.floor(DISPATCH_FEE_GOLD * (100 - FEE_DISCOUNT_PCT_PER_LEVEL * (l - 1)) / 100)
+-- Real-time Dispatch (economy_framework 26, 2026-11-19): 50 gold at every level, the fee cut is dropped.
+function DispatchService.BaseFeeForLevel(_level: number): number
+	return DISPATCH_FEE_GOLD
 end
 
 --- Fee the player pays at a Dispatch level: level fee, then War Table furniture (-5), never below 0.
@@ -235,8 +250,11 @@ function DispatchService.OffersForLevel(level: number): number
 end
 
 --- Numbers for the Guild Hall next-level lines (guild_facilities 113).
-function DispatchService.LevelInfo(level: number): { fee: number, offers: number }
-	return { fee = DispatchService.FeeForLevel(level), offers = DispatchService.OffersForLevel(level) }
+-- Real-time Dispatch step 2 (2026-11-19): earnLimit (hours) and tierUnlock (tier newly unlocked at this
+-- level, or nil) feed the approved next-level lines DISPATCH-RT-10 / RT-11 (unit_progression 99).
+function DispatchService.LevelInfo(level: number): { fee: number, offers: number, earnLimit: number, tierUnlock: number? }
+	return { fee = DispatchService.FeeForLevel(level), offers = DispatchService.OffersForLevel(level),
+		earnLimit = Rules.EarnLimitHours(level), tierUnlock = Rules.TierUnlockedAt(level) }
 end
 
 function DispatchService.GetFeeGold(): number
@@ -265,10 +283,28 @@ local offered: { [string]: { [string]: any } } = {}
 -- OfferMissions drops them when the board changes. Saved via Export so a restart that rebuilds
 -- the same board from its seed still hides the mission.
 local recalled: { [string]: { [string]: boolean } } = {}
+-- Real-time Dispatch step 3 (2026-11-19): set once the old battle-count missions were cashed out (saved).
+local legacyCashedOut: { [string]: boolean } = {}
 
 local function activeOf(playerId: string)
 	if not active[playerId] then active[playerId] = {} end
 	return active[playerId]
+end
+
+-- REAL-TIME ledger (build step 2, 2026-11-19), one record per mission (see the REAL-TIME section).
+-- Lives next to the old battle-count ledger until step 3 cashes the old missions out.
+local rt: { [string]: { [string]: any } } = {}
+local function rtOf(playerId: string)
+	if not rt[playerId] then rt[playerId] = {} end
+	return rt[playerId]
+end
+local function rtMissionOfUnit(playerId: string, unitId: string): string?
+	for mid, rec in rtOf(playerId) do
+		for _, u in rec.unitIds do
+			if u == unitId then return mid end
+		end
+	end
+	return nil
 end
 
 --------------------------------------------------
@@ -287,7 +323,7 @@ end
 --------------------------------------------------
 
 function DispatchService.IsUnitDispatched(playerId: string, unitId: string): boolean
-	return activeOf(playerId)[unitId] ~= nil
+	return activeOf(playerId)[unitId] ~= nil or rtMissionOfUnit(playerId, unitId) ~= nil
 end
 
 -- Days left on a unit's dispatch (nil = not dispatched). Each battle burns at least 1 day, so this is
@@ -306,6 +342,7 @@ function DispatchService.GetSlotsUsed(playerId: string): number
 	for _, rec in activeOf(playerId) do
 		if rec.missionId and not missions[rec.missionId] then missions[rec.missionId] = true; n += 1 end
 	end
+	for _ in rtOf(playerId) do n += 1 end -- real-time missions (step 2) use slots too
 	return n
 end
 
@@ -350,6 +387,9 @@ end
 
 function DispatchService.OfferMissions(playerId: string, mapLevel: number, seed: number?, missionSpec: { any }?)
 	assert(type(playerId) == "string", "DispatchService.OfferMissions: playerId required")
+	-- RETIRED (real-time Dispatch step 3, 2026-11-19): the battle-count board is gone; real-time missions
+	-- are picked by tier + material (RtSend). The old screen gets an empty board until step 4 replaces it.
+	do return { missions = {} } end
 	local baseSeed = seed or 0
 	local missions = {}
 
@@ -435,6 +475,8 @@ end
 
 function DispatchService.SendUnits(playerId: string, missionId: string, unitIds: { string }, battlesCompleted: number)
 	assert(type(playerId) == "string", "DispatchService.SendUnits: playerId required")
+	-- RETIRED (real-time Dispatch step 3, 2026-11-19): use RtSend. Existing message, no new text.
+	do return false, "That mission is no longer offered" end
 
 	local mission = offered[playerId] and offered[playerId][missionId]
 	if not mission then
@@ -563,17 +605,26 @@ function DispatchService.ResolveReturns(playerId: string, daysElapsed: number?)
 		if rec.remainingDays <= 0 then
 			-- 1) Mark available again on the roster path.
 			markBack(playerId, unitId)
+			-- Remove the record BEFORE any grant (Tester WARN 1, 2026-11-19): if a corrupt old record
+			-- errors part-way, a retry can never pay this unit a second time.
+			a[unitId] = nil
+			local recXp = math.max(0, math.floor(tonumber(rec.xp) or 0))
+			local recMission = tostring(rec.missionId or "?")
 
 			-- 2) Award unit XP (FLAG-D3: through the injected sink; if absent the
 			--    amount is reported but not invented/dropped silently).
 			local xpGranted = false
 			if _unitXpSink then
-				_unitXpSink(playerId, unitId, rec.xp)
-				xpGranted = true
+				local okXp, errXp = pcall(_unitXpSink, playerId, unitId, recXp)
+				if okXp then
+					xpGranted = true
+				else
+					warn(string.format("[DispatchService] Dispatch XP grant failed for %s: %s", tostring(unitId), tostring(errXp)))
+				end
 			else
 				warn(string.format(
 					"[DispatchService] Unit-XP sink not wired — %s owed %d Dispatch XP (recorded, not granted; FLAG-D3)",
-					unitId, rec.xp))
+					tostring(unitId), recXp))
 			end
 
 			-- 3) The mission's ONE material through CurrencyService.Credit, ONCE per mission
@@ -610,10 +661,14 @@ function DispatchService.ResolveReturns(playerId: string, daysElapsed: number?)
 					end
 					if grant then
 						if _currencyGrant then
-							_currencyGrant(playerId, grant)
-							paidMaterial = mat
-							paidAmount = amount
-							if mat == "mercury" then mercury = amount end
+							local okC, errC = pcall(_currencyGrant, playerId, grant)
+							if okC then
+								paidMaterial = mat
+								paidAmount = amount
+								if mat == "mercury" then mercury = amount end
+							else
+								warn(string.format("[DispatchService] Dispatch %s grant failed for %s: %s", mat, recMission, tostring(errC)))
+							end
 						else
 							-- No credit path injected: report it rather than invent one.
 							warn(string.format("[DispatchService] No CurrencyService.Credit wired — %s reward not granted (recorded)", mat))
@@ -625,7 +680,7 @@ function DispatchService.ResolveReturns(playerId: string, daysElapsed: number?)
 			table.insert(returned, {
 				unitId = unitId,
 				missionId = rec.missionId,
-				xp = rec.xp,
+				xp = recXp,
 				xpGranted = xpGranted,
 				mercury = mercury,
 				material = paidMaterial,
@@ -633,16 +688,33 @@ function DispatchService.ResolveReturns(playerId: string, daysElapsed: number?)
 				gemId = gemId,
 			})
 
-			a[unitId] = nil
-
 			print(string.format(
 				"[DispatchService] RETURNED %s from %s | +%d XP%s | +%d %s%s",
-				unitId, rec.missionId, rec.xp, xpGranted and "" or " (sink missing)", paidAmount,
+				tostring(unitId), recMission, recXp, xpGranted and "" or " (not granted)", paidAmount,
 				tostring(paidMaterial or "none"), if gemId then " (" .. gemId .. ")" else ""))
 		end
 	end
 
 	return { returned = returned }
+end
+
+-- CASH-OUT (real-time Dispatch step 3, user ruling 2026-11-19 2:43 PM, unit_progression 77): every mission
+-- still in the OLD battle-count ledger comes home now with its FULL recorded rewards, through the same
+-- grant path as a normal return (XP sink, CurrencyService credit, rune-gem roll). The old ledger is then
+-- empty, so running it again pays nothing (the empty ledger is the idempotency; the flag is saved as a record).
+function DispatchService.CashOutLegacy(playerId: string)
+	assert(type(playerId) == "string", "DispatchService.CashOutLegacy: playerId required")
+	local result = DispatchService.ResolveReturns(playerId, 1e9) -- burns every remaining day at once
+	legacyCashedOut[playerId] = true
+	offered[playerId] = nil
+	recalled[playerId] = nil
+	print(string.format("[DispatchService] Old battle-count missions cashed out for %s | %d unit(s) home with full rewards",
+		playerId, #(result.returned or {})))
+	return result
+end
+
+function DispatchService.IsLegacyCashedOut(playerId: string): boolean
+	return legacyCashedOut[playerId] == true
 end
 
 --------------------------------------------------
@@ -713,6 +785,477 @@ function DispatchService.GetActiveDispatches(playerId: string)
 end
 
 --------------------------------------------------
+-- REAL-TIME DISPATCH (build step 2, 2026-11-19)
+--   unit_progression 77/78/99/106, materials_system 12, guild_facilities 116, economy_framework 26.
+--   Server logic only; the Dispatch screen switches to it in step 4, old battle-count missions are
+--   cashed out in step 3. Until then both ledgers run side by side (IsUnitDispatched / GetSlotsUsed
+--   count both).
+--
+--   rt[playerId][missionId] = { missionId, tier, material, unitIds, sentAt, lastCollectAt, levelAtSend,
+--     gearLevel, seed, matFrac, xpFrac = { [unitId] = n }, collects }
+--   * Time: SERVER clock only (ServerTime). Earned = seconds since lastCollectAt, up to the level's
+--     earning limit (no daily cap, user 2026-11-20 12:53 AM). Rates per hour = Rules.RATE_TABLE.
+--   * Earning uses the CURRENT Dispatch level (table cell, limit, item unlocks), so an upgrade
+--     helps missions already out; levelAtSend is kept for the record. (Builder default 2026-11-19.)
+--   * Collect: allowed once the tier's minimum time has passed (before that only Recall at 25% EXP,
+--     so collect-then-recall cannot dodge the early-return rule). Banks EXP / material / items, the
+--     meter restarts, the mission keeps going.
+--   * Recall: ends the mission; after the minimum = a full collect, before = 25% EXP only.
+--   * State is updated BEFORE anything is granted (no double pay if a grant errors); the caller saves
+--     right after (grant then save, unit_progression 77).
+--   * No Fortune, no reroll: items roll from the mission seed fixed at send + the collect count.
+--------------------------------------------------
+
+-- Injected (Main): unit level/XP + the game's EXP curve, and the item roller (commits the item).
+--   SetProgressHooks({ getProgress = (pid, unitId) -> { level, xp }, xpToNext = (level) -> number, levelCap = 99 })
+--   SetItemRoller((pid, kind, rarity, level, seed) -> { kind, id, name, rarity }?)   kind: consumable | card | gear
+local _progress: any = nil
+local _itemRoller: any = nil
+function DispatchService.SetProgressHooks(h: any) _progress = h end
+function DispatchService.SetItemRoller(fn: any) _itemRoller = fn end
+
+local RT_ID_MAX = 64
+local MAX_ITEMS_PER_KIND = 10 -- safety cap per collect (expected values are far below 1)
+local rtCounter = 0
+
+local function xpToNextFn(): (number) -> number
+	if _progress and type(_progress.xpToNext) == "function" then return _progress.xpToNext end
+	return function(level: number) return 500 + 20 * level end -- fallback only; Main wires ProgressionService.XpToNext
+end
+
+local function unitProgress(playerId: string, unitId: string): (number, number)
+	if _progress and type(_progress.getProgress) == "function" then
+		local ok, p = pcall(_progress.getProgress, playerId, unitId)
+		if ok and type(p) == "table" then
+			return math.max(1, math.floor(tonumber(p.level) or 1)), math.max(0, tonumber(p.xp) or 0)
+		end
+	end
+	return 1, 0
+end
+
+local function levelCap(): number
+	return math.max(1, math.floor(tonumber(_progress and _progress.levelCap) or 99))
+end
+
+local function rtUnitAway(playerId: string, unitId: string): boolean
+	return activeOf(playerId)[unitId] ~= nil or rtMissionOfUnit(playerId, unitId) ~= nil
+end
+
+local function minSeconds(rec: any): number
+	-- Current Dispatch level (2026-11-19 ruling: earnings use the current level); L8 shortens T4/T5 by 1 h.
+	return Rules.MinHours(rec.tier, DispatchService.GetLevel()) * 3600
+end
+
+-- Earned seconds now (capped by the CURRENT level's limit) and that limit in seconds.
+local function rtEarned(rec: any): (number, number)
+	local limit = Rules.EarnLimitHours(DispatchService.GetLevel()) * 3600
+	-- No daily cap (user 2026-11-20 12:53 AM): real time since the last collect, up to the level's limit.
+	return ServerTime.Elapsed(rec.lastCollectAt, limit), limit
+end
+
+local rtSulfurWeek: { [string]: number } = {} -- last server week the weekly sulfur was paid (per player)
+
+local function rtMaterialMissionOut(playerId: string): boolean
+	for _, rec in rtOf(playerId) do
+		if rec.material ~= Rules.NO_MATERIAL then return true end
+	end
+	return false
+end
+
+local function rtMinReached(rec: any): boolean
+	return ServerTime.Elapsed(rec.sentAt) >= minSeconds(rec)
+end
+
+--- Numbers the Dispatch screen needs (step 4). Minimal (NET-003): tiers, limit, team size, slots, fee.
+function DispatchService.RtConfig(playerId: string)
+	local level = DispatchService.GetLevel()
+	local tiers = {}
+	for _, t in Rules.TIERS do
+		local mats = {}
+		for _, m in Rules.MATERIAL_ORDER do
+			if Rules.MaterialAllowed(m, t.tier, level) then table.insert(mats, m) end
+		end
+		-- Display only (step 4 UI, 2026-11-19): what this tier earns per hour at this level. The server
+		-- still works out every payout itself (NET-003: a few numbers per tier).
+		local perHour: { [string]: number } = {}
+		for _, m in mats do perHour[m] = Rules.MaterialRatePerHour(m, t.tier, level) end
+		local cell = Rules.Cell(level, t.tier)
+		table.insert(tiers, { tier = t.tier, minHours = Rules.MinHours(t.tier, level), unlock = t.unlock,
+			unlocked = level >= t.unlock, materials = mats,
+			materialPerHour = perHour, expFixed = cell and cell.fixed or 0, expPct = cell and cell.pct or 0 })
+	end
+	return {
+		level = level,
+		earnLimitHours = Rules.EarnLimitHours(level),
+		unitsPerMission = Rules.UnitsPerMission(level),
+		slotCap = DispatchService.GetSlotCap(playerId),
+		slotsUsed = DispatchService.GetSlotsUsed(playerId),
+		fee = DispatchService.GetFeeGold(),
+		expMult = 1, -- the table already includes the level (2026-11-19 10:20 PM)
+		materialMissionOut = rtMaterialMissionOut(playerId), -- one material mission at a time
+		tiers = tiers,
+	}
+end
+
+--- Real-time missions out now, for the screen (times as seconds, never absolute client time).
+function DispatchService.RtList(playerId: string)
+	local out = {}
+	for _, rec in rtOf(playerId) do
+		local secs, limit = rtEarned(rec)
+		table.insert(out, {
+			missionId = rec.missionId, tier = rec.tier, material = rec.material,
+			noExp = rec.noExp == true, -- yield: material only (no EXP); old missions sent before 2026-11-20 pay both
+			unitIds = table.clone(rec.unitIds),
+			earnedSeconds = secs, limitSeconds = limit, full = secs >= limit,
+			minSeconds = minSeconds(rec), sinceSentSeconds = ServerTime.Elapsed(rec.sentAt),
+			minReached = rtMinReached(rec),
+			-- Display only (2026-11-19 8:20 PM): carried material fraction + rate per hour at this level, so the
+			-- screen can show "Next {Material} in …" instead of decimals. The server still works out every payout.
+			matFrac = tonumber(rec.matFrac) or 0,
+			matPerHour = Rules.MaterialRatePerHour(rec.material, rec.tier, DispatchService.GetLevel()),
+		})
+	end
+	table.sort(out, function(a, b) return a.missionId < b.missionId end)
+	return out
+end
+
+--- Send units on a real-time mission (unit_progression 99): any unlocked tier, any material that tier
+--- allows, up to the level's team size. Atomic: every check passes before the fee is taken.
+--- The caller (GuildMenuService) checks dungeon locks and keep-1-home, then saves.
+function DispatchService.RtSend(playerId: string, tier: any, material: any, unitIds: any, gearLevel: any)
+	assert(type(playerId) == "string", "DispatchService.RtSend: playerId required")
+	local level = DispatchService.GetLevel()
+	local t = Rules.Tier(tier)
+	if not t then return false, "Invalid request" end
+	if level < t.unlock then return false, string.format("Needs Dispatch level %d", t.unlock) end -- DISPATCH-RT-09
+	if material ~= Rules.NO_MATERIAL then
+		if not Rules.MaterialAllowed(material, t.tier, level) then return false, "Invalid request" end
+		-- One material mission at a time (materials_system 12). Approved text RT-25 (user 2026-11-19 10:37 PM).
+		if rtMaterialMissionOut(playerId) then return false, "Only one material mission at a time" end
+	end
+	local maxUnits = Rules.UnitsPerMission(level)
+	if type(unitIds) ~= "table" or #unitIds < 1 or #unitIds > maxUnits then
+		return false, string.format("Pick 1 to %d units", maxUnits)
+	end
+	local ownedSet: { [string]: boolean }? = nil
+	if _rosterProvider then
+		local roster = _rosterProvider(playerId)
+		if type(roster) == "table" then
+			ownedSet = {}
+			for _, uid in roster do ownedSet[uid] = true end
+		end
+	end
+	local seen: { [string]: boolean } = {}
+	local clean: { string } = {}
+	for _, uid in unitIds do
+		if type(uid) ~= "string" or #uid > RT_ID_MAX or seen[uid] then return false, "Invalid unit selection" end
+		if ownedSet and not ownedSet[uid] then return false, "That unit is not on your roster" end
+		if rtUnitAway(playerId, uid) then return false, string.format("Unit %s is already dispatched", uid) end
+		seen[uid] = true
+		table.insert(clean, uid)
+	end
+	local cap = DispatchService.GetSlotCap(playerId)
+	local used = DispatchService.GetSlotsUsed(playerId)
+	if used >= cap then
+		return false, string.format("No free dispatch slot (%d/%d in use)", used, cap)
+	end
+	if not (_currency and _currency.GetGold and _currency.SpendGold) then
+		return false, "Gold unavailable — dispatch not sent"
+	end
+	local fee = DispatchService.GetFeeGold()
+	local gold = _currency.GetGold(playerId) or 0
+	if gold < fee then
+		return false, string.format("Not enough gold: dispatch costs %d (you have %d)", fee, gold)
+	end
+	if fee > 0 and not _currency.SpendGold(playerId, fee) then
+		return false, "Gold payment failed — dispatch not sent"
+	end
+
+	local now = ServerTime.Now()
+	local book = rtOf(playerId)
+	local missionId
+	repeat
+		rtCounter += 1
+		missionId = string.format("rt_%d_%d", now, rtCounter)
+	until book[missionId] == nil
+	local xpFrac = {}
+	for _, uid in clean do xpFrac[uid] = 0 end
+	book[missionId] = {
+		missionId = missionId, tier = t.tier, material = material, unitIds = clean,
+		sentAt = now, lastCollectAt = now, levelAtSend = level,
+		gearLevel = math.clamp(math.floor(tonumber(gearLevel) or 1), 1, 99),
+		seed = (now * 7919 + rtCounter * 104729 + t.tier * 131) % 2147483647,
+		matFrac = 0, xpFrac = xpFrac, collects = 0,
+		-- Yield choice (user 2026-11-19 11:57 PM): a material mission pays material only, its units earn NO
+		-- EXP; an EXP mission (material "none") pays EXP only. Items roll on every mission (2026-11-20 12:31 AM).
+		noExp = material ~= Rules.NO_MATERIAL,
+	}
+	for _, uid in clean do markAway(playerId, uid, 0) end
+	print(string.format("[DispatchService] RT SENT %s | %s | tier %d %s | %d unit(s) | L%d | fee %d",
+		playerId, missionId, t.tier, tostring(material), #clean, level, fee))
+	return true, { missionId = missionId, tier = t.tier, material = material, unitIds = clean, fee = fee,
+		noExp = material ~= Rules.NO_MATERIAL }
+end
+
+-- Rolls and commits the item rewards for `hours` (from the mission seed + collect count, no Fortune).
+local function rtRollItems(playerId: string, rec: any, level: number, hours: number): { any }
+	local out = {}
+	if hours <= 0 then return out end
+	local expect = Rules.ItemExpectations(rec.tier, level, hours)
+	local rng = Random.new(rec.seed + rec.collects * 104729)
+	for _, it in Rules.ITEMS do -- fixed order, so the same seed always rolls the same way
+		local e = expect[it.kind]
+		if e and e > 0 then
+			local n = math.floor(e)
+			if rng:NextNumber() < e - n then n += 1 end
+			n = math.min(n, MAX_ITEMS_PER_KIND)
+			for _ = 1, n do
+				local rarity
+				if it.kind == "gear" then
+					rarity = Rules.GEAR_RARITY_BY_TIER[rec.tier] or "Common"
+					if rec.tier == Rules.MAX_TIER and level >= Rules.EPIC_GEAR_LEVEL and rng:NextNumber() < Rules.EPIC_GEAR_CHANCE then
+						rarity = "Epic"
+					end
+				elseif it.kind == "card" then
+					rarity = Rules.CARD_RARITY
+				else
+					rarity = Rules.CONSUMABLE_MAX_RARITY
+				end
+				local itemSeed = rng:NextInteger(1, 1073741823)
+				if _itemRoller then
+					local ok, item = pcall(_itemRoller, playerId, it.kind, rarity, rec.gearLevel, itemSeed)
+					if ok and type(item) == "table" then
+						table.insert(out, item)
+					else
+						warn(string.format("[DispatchService] RT item roll failed (%s %s): %s", it.kind, rarity, tostring(item)))
+					end
+				else
+					warn("[DispatchService] No item roller wired — dispatch item not granted")
+				end
+			end
+		end
+	end
+	return out
+end
+
+-- One payout. early = recall before the minimum (25% EXP, nothing else). Updates the record first,
+-- then grants. Returns the summary.
+local function rtPayout(playerId: string, rec: any, early: boolean)
+	local level = DispatchService.GetLevel()
+	local secs, limit = rtEarned(rec) -- 2026-11-20 fix: limit was dropped by the no-cap change (nil -> error at the log line)
+	-- 2026-11-20 guard (user-approved): an old saved mission may lack these fields; default them so
+	-- collect never errors on nil (rec.collects += 1, rec.xpFrac[...] writes below).
+	if type(rec.xpFrac) ~= "table" then rec.xpFrac = {} end
+	rec.collects = tonumber(rec.collects) or 0
+	local hours = secs / 3600
+	local cap, xtn = levelCap(), xpToNextFn()
+	local xpMult = if early then Rules.EARLY_RECALL_XP_MULT else 1
+
+	-- 1) Work everything out (reads only).
+	local unitLines = {}
+	for _, uid in rec.unitIds do
+		local lvl, into = unitProgress(playerId, uid)
+		-- Material missions pay no EXP (yield choice, 2026-11-19 11:57 PM). Early recall: EXP missions 25% EXP,
+		-- material missions nothing (no EXP to take 25% of, and no material before the minimum).
+		local raw = if rec.noExp == true then 0 else Rules.ExpForHours(rec.tier, level, hours, lvl, into, cap, xtn) * xpMult
+		if not early and rec.noExp ~= true then raw += (rec.xpFrac[uid] or 0) end
+		local whole = math.max(0, math.floor(raw))
+		table.insert(unitLines, { unitId = uid, xp = whole, frac = if early then 0 else math.clamp(raw - whole, 0, 0.999999) })
+	end
+	local matWhole, matFrac = 0, rec.matFrac or 0
+	if not early and rec.material ~= Rules.NO_MATERIAL then
+		local m = Rules.MaterialForHours(rec.material, rec.tier, level, hours) + matFrac
+		matWhole = math.max(0, math.floor(m))
+		matFrac = math.clamp(m - matWhole, 0, 0.999999)
+	end
+
+	-- 2) Commit the record (so a second call right after pays nothing).
+	local now = ServerTime.Now()
+	rec.lastCollectAt = now
+	rec.collects += 1
+	-- Weekly sulfur (materials_system 12): 1 per week from Dispatch L7, on the first collect. The week
+	-- starts Monday 00:00 Asia/Manila (user 2026-11-19 10:37 PM).
+	local bonus: { [string]: number }? = nil
+	local week = Rules.SulfurWeek(now)
+	if not early and level >= Rules.SULFUR_WEEKLY_LEVEL and rtSulfurWeek[playerId] ~= week then
+		rtSulfurWeek[playerId] = week
+		bonus = { sulfur = Rules.SULFUR_WEEKLY_AMOUNT }
+	end
+	rec.matFrac = matFrac
+	for _, line in unitLines do rec.xpFrac[line.unitId] = line.frac end
+
+	-- 3) Grant.
+	for _, line in unitLines do
+		if line.xp > 0 then
+			if _unitXpSink then
+				local ok, err = pcall(_unitXpSink, playerId, line.unitId, line.xp)
+				if not ok then warn("[DispatchService] RT EXP grant failed: " .. tostring(err)) end
+			else
+				warn(string.format("[DispatchService] Unit-XP sink not wired — %s owed %d EXP", line.unitId, line.xp))
+			end
+		end
+	end
+	local gemIds: { string } = {}
+	if matWhole > 0 then
+		local grant: any = nil
+		if rec.material == "gems" then
+			local gems: { [string]: number } = {}
+			for _ = 1, matWhole do
+				if _gemRoller then
+					local okG, g = pcall(_gemRoller, rec.gearLevel)
+					if okG and type(g) == "string" then
+						gems[g] = (gems[g] or 0) + 1
+						table.insert(gemIds, g)
+					else
+						warn("[DispatchService] RT rune gem roll failed: " .. tostring(g))
+					end
+				end
+			end
+			if next(gems) then grant = { gems = gems } end
+		else
+			grant = { [rec.material] = matWhole }
+		end
+		if grant then
+			if _currencyGrant then
+				local ok, err = pcall(_currencyGrant, playerId, grant)
+				if not ok then warn("[DispatchService] RT material grant failed: " .. tostring(err)) end
+			else
+				warn("[DispatchService] No CurrencyService.Credit wired — dispatch material not granted")
+			end
+		end
+	end
+	if bonus then
+		if _currencyGrant then
+			local ok, err = pcall(_currencyGrant, playerId, bonus)
+			if not ok then warn("[DispatchService] RT weekly sulfur grant failed: " .. tostring(err)) end
+		else
+			warn("[DispatchService] No CurrencyService.Credit wired — weekly sulfur not granted")
+		end
+	end
+	local items = if early then {} else rtRollItems(playerId, rec, level, hours)
+
+	print(string.format("[DispatchService] RT %s %s | %.2f h (limit %d h)%s | %d %s | %d item(s)",
+		if early then "EARLY RECALL" else "COLLECT", rec.missionId, hours, math.floor(limit / 3600),
+		if early then " | 25% EXP" else "", matWhole, tostring(rec.material), #items))
+	return {
+		missionId = rec.missionId, tier = rec.tier, hours = hours, full = secs >= limit, early = early,
+		units = unitLines, material = rec.material, amount = matWhole, gemIds = gemIds, items = items,
+		bonus = bonus,
+	}
+end
+
+--- Collect one mission: bank what it earned, the meter restarts, the mission keeps going.
+function DispatchService.RtCollect(playerId: string, missionId: any)
+	if type(missionId) ~= "string" or #missionId == 0 or #missionId > RT_ID_MAX then return false, "Invalid mission" end
+	local rec = rtOf(playerId)[missionId]
+	if not rec then return false, "That mission is not out on dispatch" end
+	if not rtMinReached(rec) then
+		return false, string.format("Minimum %dh", math.floor(minSeconds(rec) / 3600)) -- DISPATCH-RT-05
+	end
+	return true, rtPayout(playerId, rec, false)
+end
+
+--- Collect every mission that is past its minimum and has earned something.
+function DispatchService.RtCollectAll(playerId: string)
+	local results = {}
+	local ids = {}
+	for mid in rtOf(playerId) do table.insert(ids, mid) end
+	table.sort(ids)
+	for _, mid in ids do
+		local rec = rtOf(playerId)[mid]
+		if rec and rtMinReached(rec) and (rtEarned(rec)) > 0 then
+			table.insert(results, rtPayout(playerId, rec, false))
+		end
+	end
+	return results
+end
+
+--- Recall: the mission ends, every unit comes home. After the minimum = full collect; before it =
+--- 25% of the EXP earned, no materials, no items (unit_progression 106). The fee is never refunded.
+function DispatchService.RtRecall(playerId: string, missionId: any)
+	if type(missionId) ~= "string" or #missionId == 0 or #missionId > RT_ID_MAX then return false, "Invalid mission" end
+	local book = rtOf(playerId)
+	local rec = book[missionId]
+	if not rec then return false, "That mission is not out on dispatch" end
+	local early = not rtMinReached(rec)
+	local summary = rtPayout(playerId, rec, early)
+	book[missionId] = nil
+	for _, uid in rec.unitIds do markBack(playerId, uid) end
+	summary.returnedUnitIds = table.clone(rec.unitIds)
+	print(string.format("[DispatchService] RT RECALLED %s | %d unit(s) home%s", missionId, #rec.unitIds,
+		if early then " | before the minimum" else ""))
+	return true, summary
+end
+
+local function rtExport(playerId: string)
+	local out = {}
+	for mid, rec in rtOf(playerId) do
+		local xf = {}
+		for uid, f in rec.xpFrac do xf[uid] = f end
+		out[mid] = {
+			missionId = rec.missionId, tier = rec.tier, material = rec.material, unitIds = table.clone(rec.unitIds),
+			sentAt = rec.sentAt, lastCollectAt = rec.lastCollectAt, levelAtSend = rec.levelAtSend,
+			gearLevel = rec.gearLevel, seed = rec.seed, matFrac = rec.matFrac, xpFrac = xf, collects = rec.collects,
+			noExp = rec.noExp,
+		}
+	end
+	return out
+end
+
+-- Old saves have no rt block (nothing to load). Every field is checked; a bad record is dropped.
+local function rtImport(playerId: string, data: any)
+	rt[playerId] = {}
+	if type(data) ~= "table" then return end
+	local book = rt[playerId]
+	for mid, r in data do
+		if type(mid) == "string" and #mid <= RT_ID_MAX and type(r) == "table" and type(r.unitIds) == "table" then
+			local t = Rules.Tier(r.tier)
+			-- Sulfur missions from before the daily cap (sulfur is now a weekly bonus) keep running as EXP
+			-- missions; their tiny carried sulfur fraction is dropped (no double pay, no negative).
+			local material = if r.material == Rules.NO_MATERIAL or r.material == "sulfur" then Rules.NO_MATERIAL
+				elseif type(r.material) == "string" and Rules.MATERIALS[r.material] then r.material else nil
+			local units: { string } = {}
+			local seen: { [string]: boolean } = {}
+			for _, uid in r.unitIds do
+				if type(uid) == "string" and #uid <= RT_ID_MAX and not seen[uid] and not rtUnitAway(playerId, uid)
+					and #units < 5 then
+					seen[uid] = true
+					table.insert(units, uid)
+				end
+			end
+			if t and material and #units > 0 then
+				local sentAt = ServerTime.Sanitize(r.sentAt)
+				local last = math.max(sentAt, ServerTime.Sanitize(r.lastCollectAt))
+				local xf = {}
+				for _, uid in units do
+					local f = type(r.xpFrac) == "table" and tonumber(r.xpFrac[uid]) or 0
+					xf[uid] = if f and f == f then math.clamp(f, 0, 0.999999) else 0
+				end
+				local mf = if material == Rules.NO_MATERIAL then 0 else (tonumber(r.matFrac) or 0)
+				-- Saves from the 2-hour daily cap build may still carry countDay / countUsed: ignored (no daily cap,
+				-- 2026-11-20). lastCollectAt is kept, so a collect pays the time since it once, never twice.
+				book[mid] = {
+					missionId = mid, tier = t.tier, material = material, unitIds = units,
+					sentAt = sentAt, lastCollectAt = last,
+					levelAtSend = Rules.ClampLevel(r.levelAtSend),
+					gearLevel = math.clamp(math.floor(tonumber(r.gearLevel) or 1), 1, 99),
+					seed = math.floor(tonumber(r.seed) or 0) % 2147483647,
+					matFrac = if mf == mf then math.clamp(mf, 0, 0.999999) else 0,
+					xpFrac = xf,
+					collects = math.max(0, math.floor(tonumber(r.collects) or 0)),
+					-- Yield (2026-11-20): only a saved material mission marked noExp skips EXP. Missions saved before
+					-- this change have no flag and keep paying as they were sent (EXP + material), no double pay.
+					noExp = if r.noExp == true and material ~= Rules.NO_MATERIAL then true else nil,
+				}
+				for _, uid in units do markAway(playerId, uid, 0) end
+			else
+				warn("[DispatchService] Dropped a bad real-time dispatch record from the save: " .. mid)
+			end
+		end
+	end
+end
+
+--------------------------------------------------
 -- SAVE INTEGRATION (via the EXISTING SaveService path — Key 3 Progression)
 --
 -- The dispatch ledger (who is away + what they will earn) must survive a
@@ -746,13 +1289,36 @@ function DispatchService.Export(playerId: string)
 	local rlist: { string } = {}
 	for mid in recalled[playerId] or {} do table.insert(rlist, mid) end
 	table.sort(rlist)
-	return { active = copy, recalled = rlist }
+	return { active = copy, recalled = rlist, rt = rtExport(playerId), -- rt: real-time missions (step 2)
+		rtSulfurWeek = rtSulfurWeek[playerId], -- weekly sulfur (daily cap build 2026-11-19)
+		rtSulfurWeekV = if rtSulfurWeek[playerId] ~= nil then 2 else nil, -- 2 = Monday 00:00 Manila weeks
+		legacyCashedOut = if legacyCashedOut[playerId] then true else nil } -- step 3 cash-out record
 end
 
 function DispatchService.Import(playerId: string, data: any)
 	active[playerId] = {}
 	recalled[playerId] = nil
-	if type(data) ~= "table" or type(data.active) ~= "table" then return end
+	rt[playerId] = {}
+	legacyCashedOut[playerId] = nil
+	rtSulfurWeek[playerId] = nil
+	if type(data) ~= "table" then return end
+	if data.legacyCashedOut == true then legacyCashedOut[playerId] = true end
+	local sw = tonumber(data.rtSulfurWeek)
+	if sw and sw == sw and sw >= 0 then
+		sw = math.floor(sw)
+		if data.rtSulfurWeekV ~= 2 then
+			-- Old week numbers (Thursday 00:00 UTC weeks, before 2026-11-19 10:37 PM) -> Monday 00:00 Manila
+			-- weeks. Old week w overlaps new weeks w-1 and w; taking min(w, current week) never pays twice.
+			sw = math.min(sw, Rules.SulfurWeek(ServerTime.Now()))
+		end
+		rtSulfurWeek[playerId] = sw
+	end
+	-- Real-time missions load after the old ledger (below), so a unit can never be on both.
+	local rtData = data.rt
+	if type(data.active) ~= "table" then
+		rtImport(playerId, rtData)
+		return
+	end
 	if type(data.recalled) == "table" then
 		for _, mid in data.recalled do
 			if type(mid) == "string" and #mid <= 64 then
@@ -786,12 +1352,16 @@ function DispatchService.Import(playerId: string, data: any)
 			markAway(playerId, unitId, active[playerId][unitId].returnBattle)
 		end
 	end
+	rtImport(playerId, rtData)
 end
 
 function DispatchService.ClearPlayer(playerId: string)
 	active[playerId] = nil
+	rt[playerId] = nil
 	offered[playerId] = nil
 	recalled[playerId] = nil
+	legacyCashedOut[playerId] = nil
+	rtSulfurWeek[playerId] = nil
 end
 
 return DispatchService

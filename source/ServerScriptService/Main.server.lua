@@ -81,6 +81,9 @@ local ProgressionService      = require(Game:WaitForChild("ProgressionService"))
 -- Slice 6 temporary Guild menu (game_flow id 23): server glue for the building
 -- buttons. Requires GuildEvents itself, so the Guild remotes exist from here on.
 local GuildMenuService        = require(Game:WaitForChild("GuildMenuService"))
+-- New-player tips (2026-11-19): required this early so the tip remote exists before the client's
+-- 30 s wait ends (Import / Init run after the save loads, below). No new top-level local.
+require(Game:WaitForChild("TipService"))
 local FurnitureService        = require(Game:WaitForChild("FurnitureService")) -- dev op "furn"; step 3 drops / Pedestal (2026-11-16)
 -- UGC Rental & Ownership (ugc_rules 2026-10-07). Wired below GuildMenuService.Init.
 local UGCService              = require(Game:WaitForChild("UGCService"))
@@ -634,6 +637,17 @@ ApothecaryService.SetSkipUnit(function(id) return DungeonService.IsUnitLocked(PL
 -- Attempt to load saved state (Slice 4C)
 local legacyGuildSave: any = nil -- old progression.guild, kept as-is for rollback (Renown step 8)
 local loadedSave, loadErr = SaveService.Load(PLAYER_ID)
+-- Save lock held by another live server (user ruling 2026-11-19 3:03 PM): kick with the approved
+-- message and stop boot here, so this session never saves or releases a lock it doesn't own.
+if loadErr == SaveService.LOCKED then
+	local msg = SaveService.LOCKED_MESSAGE
+	warn("[Main] Save locked by another server -- kicking " .. player.Name)
+	Players.PlayerAdded:Connect(function(p) p:Kick(msg) end) -- anyone joining this dead server
+	for _, p in Players:GetPlayers() do
+		p:Kick(msg)
+	end
+	return
+end
 local hasSave = false
 local savedEquipMap = {} -- unitId -> { MainHand = instanceId, OffHand = instanceId }
 local savedRaceMap = {}  -- unitId -> { raceId, perkIds, drawbackIds }
@@ -754,6 +768,22 @@ end
 -- units hired in earlier sessions (rides the existing progression payload, Key 3).
 GuildMenuService.Import(PLAYER_ID, loadedSave and loadedSave.progression
 	and loadedSave.progression.guildMenu or nil)
+-- New-player tips (new_player_tips SYS-01..10, SAVE-01, 2026-11-19): seen ids + Show tips. A loaded
+-- save with no tips list is an old save and migrates once (SYS-09). A failed load starts fresh and
+-- saving stays off (BUG-030). Scoped in do-end: no new Main top-level local (local limit).
+do
+	local TipService = require(Game:WaitForChild("TipService"))
+	local prog = loadedSave and loadedSave.progression
+	TipService.Import(PLAYER_ID, prog and prog.tips or nil, prog and prog.tipsOff or nil, loadedSave ~= nil)
+	TipService.Init({
+		getPlayerId = function(plr) return if plr == player then PLAYER_ID else nil end,
+		-- Tip changes mark the guild save dirty: written on menu close / quit through the normal
+		-- doSave path, so a failed load (BUG-030) or a dev Delete Save (BUG-066) still blocks it.
+		markDirty = function() GuildMenuService.MarkDirty() end,
+		getBattles = function() return GuildMenuService.GetBattlesCompleted() end,
+		getRosterCount = function() return GuildMenuService.GetRosterCount() end,
+	})
+end
 
 -- Helper: generate a weapon, add to inventory, equip on unit
 local function equipGeneratedWeapon(unit, archetypeId, itemLevel, rarity, seed)
@@ -1477,29 +1507,35 @@ function EscapeCtl.check(plr: Player): (boolean, string?)
 	return true, nil
 end
 -- Popup numbers, server-computed (O3/O4): early = under 2000 CT; fee = the board Cancel fee clamped
--- to the balance (only when early, never in a dungeon); renownLoss = the 3x base penalty floored at
--- the start of the Rank, i.e. what RenownService.Award will really take (0 in dungeons, Q5).
+-- to the balance, due when early OR from Renown Rank 51 at any CT (user 2026-11-18 4:59 PM), never in a
+-- dungeon; renownLoss = the base penalty for this Rank (3x up to Rank 50, 1x from 51) floored at the
+-- start of the Rank, i.e. what RenownService.Award will really take (0 in dungeons, Q5).
+-- feeDue is returned so the real charge uses the exact same decision.
 function EscapeCtl.info(): any
 	local early = (tonumber(state.ct) or 0) < EscapeCtl.EARLY_CT
 	local dungeon = activeQuest.isDungeon == true
-	local fee, renownLoss = 0, 0
+	local fee, renownLoss, feeDue = 0, 0, false
 	if not dungeon then
-		if early then
-			local okF, f = pcall(QuestGenerator.CancelFee, activeQuest)
-			local haveGold = (CurrencyService.GetBalance(PLAYER_ID) or {}).gold or 0
-			fee = math.min(if okF then math.max(0, math.floor(tonumber(f) or 0)) else 0, haveGold)
-		end
+		local lateRank = false
 		pcall(function()
 			local RRules = require(Game:WaitForChild("RenownRules"))
 			local Renown = require(Game:WaitForChild("RenownService"))
 			local kind = RRules.QuestKind(activeQuest.difficulty, activeQuest.questType == "Boss",
 				activeQuest.isEliteEncounter == true, false, false)
 			Renown.EnsureConverted(PLAYER_ID) -- WARN-1 fix 2026-11-18: same as the real charge, so old saves show the true loss
+			local rank = Renown.GetRank(PLAYER_ID)
+			lateRank = RRules.IsLateRank(rank)
 			local have = Renown.GetProgress(PLAYER_ID)
-			renownLoss = math.min(RRules.FailPenalty(kind), tonumber(have) or 0)
+			renownLoss = math.min(RRules.FailPenalty(kind, rank), tonumber(have) or 0)
 		end)
+		feeDue = early or lateRank
+		if feeDue then
+			local okF, f = pcall(QuestGenerator.CancelFee, activeQuest)
+			local haveGold = (CurrencyService.GetBalance(PLAYER_ID) or {}).gold or 0
+			fee = math.min(if okF then math.max(0, math.floor(tonumber(f) or 0)) else 0, haveGold)
+		end
 	end
-	return { early = early, dungeon = dungeon, fee = fee, renownLoss = renownLoss }
+	return { early = early, dungeon = dungeon, fee = fee, feeDue = feeDue, renownLoss = renownLoss }
 end
 BattleEvents.RequestEscapeInfo.OnServerInvoke = function(plr)
 	local now = os.clock()
@@ -1522,7 +1558,9 @@ BattleEvents.EscapeBattle.OnServerEvent:Connect(function(plr)
 	EscapeCtl.requested = true
 	-- WARN-2 fix 2026-11-18: the fee quoted now (same numbers the popup showed) is the most the real
 	-- charge may take, so the defeat gold paid later can't raise it above what the player saw.
-	EscapeCtl.quotedFee = EscapeCtl.info().fee
+	local quoted = EscapeCtl.info()
+	EscapeCtl.quotedFee = quoted.fee
+	EscapeCtl.quotedFeeDue = quoted.feeDue == true -- same fee decision as the popup (early OR Rank 51+)
 	state.escaped = true
 	local ct = tonumber(state.ct) or 0
 	print(string.format("[Escape] Party escaped at CT %d (%s)", ct,
@@ -2707,6 +2745,12 @@ local function saveOnQuit(reason: string)
 		if not ok then
 			warn("[Main] Save on quit FAILED: " .. tostring(err))
 		end
+		-- Save session lock (real-time Dispatch step 1, 2026-11-19): free the save for the
+		-- next server only AFTER the quit save above. Memory mode holds no lock (no-op).
+		local okRel, errRel = pcall(SaveService.ReleaseLock, PLAYER_ID)
+		if not okRel then
+			warn("[Main] Save lock release FAILED: " .. tostring(errRel))
+		end
 		quitSaveState = "done"
 	else
 		while quitSaveState == "running" do
@@ -3165,6 +3209,8 @@ function doSave()
 		dungeon  = DungeonService.Export(PLAYER_ID), -- Dungeon run state (build step 2, 2026-11-13)
 		guildMenu = GuildMenuService.Export(PLAYER_ID), -- Slice 6 Guild menu (battle counter + hired units)
 		ugc      = UGCService.Export(PLAYER_ID), -- UGC rentals/trials/cart/votes (ownership never saved)
+		tips     = require(Game:WaitForChild("TipService")).ExportSeen(PLAYER_ID), -- New-player tips seen (SAVE-01, ids only)
+		tipsOff  = require(Game:WaitForChild("TipService")).ExportOff(PLAYER_ID),  -- Show tips switch (SAVE-01, false = on)
 	}
 	local currencies = CurrencyService.Export(PLAYER_ID)
 	currencies.daily = DailyService.Export(PLAYER_ID) -- same save slot and step as the currencies
@@ -3260,7 +3306,72 @@ local function resetUnitForNewBattle(u)
 	u.facing = "S"
 end
 
+-- BATTLE WORLD WIPE (user 2026-11-18 4:38 PM, battle heat fix 1; MEM-002 Destroy, PRF-004).
+-- The last battle's 3D world used to stay in workspace behind the guild menu until the NEXT
+-- quest rendered its map, so phones kept drawing it. At every return to the base (top of the
+-- loop: after rewards -> save -> BattleEnded -> reward screen Continue, BUG-013 order
+-- unchanged; also after an abandon before deployment) destroy the map folder (the ad-image
+-- cycle is cancelled with it), clear the voxel terrain and clear the unit models. The
+-- UnitModels folder itself is kept (UGCOutfitService watches it). mapFolder / questMapFolder
+-- keep pointing at the destroyed folder (lookups on it return nil, no nil errors); the next
+-- quest render reassigns them. The client clears its own battle visuals on GuildMenuOpened "Base".
+-- Real-time Dispatch step 3 (2026-11-19): old battle-count missions are cashed out ONCE, at the first
+-- point where the unit-XP sink and level-up hook are wired (battle setup, below). Their returns show on
+-- that battle's reward screen through the existing returned-dispatch lines.
+local legacyDispatchCashOutDone = false
+local legacyDispatchReturns: { any }? = nil
+
+local function wipeBattleWorld()
+	local hadMap = false
+	local mf = workspace:FindFirstChild("TemplateViewerMap")
+	while mf do
+		hadMap = true
+		mf:Destroy()
+		mf = workspace:FindFirstChild("TemplateViewerMap")
+	end
+	pcall(MapRenderer.StartAdImageCycle, nil) -- cancels the 20 s ad cycle thread
+	local umf = workspace:FindFirstChild("UnitModels")
+	local models = if umf then #umf:GetChildren() else 0
+	if umf then umf:ClearAllChildren() end
+	if hadMap then
+		pcall(function() workspace.Terrain:Clear() end)
+	end
+	if hadMap or models > 0 then
+		print(string.format("[Main] Battle world wiped at return to base (map %s, %d unit model(s)).",
+			if hadMap then "destroyed" else "none", models))
+	end
+end
+
+-- Real-time Dispatch wiring at BOOT (moved out of the battle loop 2026-11-19, step 5): Collect / Recall
+-- happen at the guild base, often before the first battle of a session, so the XP sink, the unit
+-- EXP-curve hooks and the item roller must be live before the base opens. Same code as before.
+-- Dispatch sink: (playerId, unitId, xp) -> direct per-unit grant.
+DispatchService.SetUnitXpSink(function(pid, unitId, xp)
+	ProgressionService.GrantUnitXp(pid, unitId, xp)
+end)
+-- Real-time Dispatch (build step 2, 2026-11-19, unit_progression 78/99): the unit's level/XP and the
+-- game's EXP curve for the per-hour EXP, and the item roller (RewardService builds, Main commits).
+DispatchService.SetProgressHooks({
+	getProgress = function(pid, unitId) return ProgressionService.GetUnitLevelProgress(pid, unitId) end,
+	xpToNext = ProgressionService.XpToNext,
+	levelCap = ProgressionService.LEVEL_CAP,
+})
+DispatchService.SetItemRoller(function(pid, kind, rarity, level, seed)
+	local r = RewardService.RollDispatchItem(kind, rarity, level, seed)
+	if type(r) ~= "table" then return nil end
+	if kind == "consumable" then
+		cardInventory.consumables[r.id] = (cardInventory.consumables[r.id] or 0) + 1
+	elseif kind == "card" then
+		cardInventory.skillCards[r.id] = (cardInventory.skillCards[r.id] or 0) + 1
+	elseif kind == "gear" then
+		if InventoryService.AddItem(pid, r.item, { markNew = true }) == false then return nil end
+	end
+	return { kind = r.kind, id = r.id, name = r.name, rarity = r.rarity }
+end)
+
 while true do
+
+	wipeBattleWorld()
 
 	-- GUILD BASE (hub, 2026-10-13 restructure): the base is HOME, not a step between
 	-- quests. It stays open with all services live (shop/blacksmith/tavern/loadout work
@@ -3343,13 +3454,22 @@ while true do
 	-- Quest Board level (2026-11-16): L1 = 3 quests, +1 per level above 1 (Guild Hall never counts).
 	-- Saved per refresh period (2026-11-17, game_flow 12): reopening / rejoining shows the same board.
 	-- Each quest uses Random.new(seed + i), so a Quest Board upgrade only ADDS a quest at the end.
-	quests = QuestGenerator.Generate(playerLevel, GuildMenuService.GetQuestBoardSeed(), 2 + GuildMenuService.GetBuildingLevel("QuestBoard"))
+	-- New-player gating (game_flow 42, 2026-11-18): Rank + Quest Board level only. Board level drives
+	-- the Easy/Medium/Hard slot mix and the Hard gate. Roster size is deliberately NOT passed (USER
+	-- RULING 5:52 PM: enemy count never depends on units owned - keeping a small roster is an exploit).
+	-- One local only (this loop body is large; keeps register use flat).
+	local questGate = { boardLevel = GuildMenuService.GetBuildingLevel("QuestBoard") }
+	quests = QuestGenerator.Generate(playerLevel, GuildMenuService.GetQuestBoardSeed(), 2 + questGate.boardLevel, questGate)
 
 	-- Show Quest Board to all clients
 	-- DAILY CONTRACT (daily systems decisions 4-6, 2026-11-01): pinned first on the board until it
 	-- is won today. A lost contract stays for a retry the same day; a missed day is simply gone.
 	if not DailyService.IsContractDone(PLAYER_ID) then
-		local okDc, dc = pcall(QuestGenerator.GenerateDailyContract, playerLevel, DailyService.ContractDay(PLAYER_ID))
+		-- DAY LOCK (USER RULING 2026-11-18 5:59 PM, live_service_features 11): the contract uses the
+		-- Rank + Quest Board level saved when today's contract was first built, so a mid-day rank-up
+		-- or board upgrade never changes it. The board quests above keep using the current values.
+		local dcGate = DailyService.ContractGate(PLAYER_ID, playerLevel, questGate.boardLevel)
+		local okDc, dc = pcall(QuestGenerator.GenerateDailyContract, dcGate.rank, DailyService.ContractDay(PLAYER_ID), dcGate)
 		if okDc and dc then
 			table.insert(quests, 1, dc)
 		else
@@ -3381,7 +3501,8 @@ while true do
 					local kind = RRules.QuestKind(q.difficulty, q.questType == "Boss", q.isEliteEncounter == true, false, false)
 					local amount = Renown.PreviewQuestRenown(PLAYER_ID, kind, tonumber(q.recommendedLvl) or 1)
 					if amount > 0 then
-						q.renownPreview = { amount = amount, tooEasy = amount < RRules.BaseReward(kind) }
+						-- "too easy" = a band cut it below the full (Rank-scaled) reward, 2026-11-18
+						q.renownPreview = { amount = amount, tooEasy = amount < RRules.ScaledReward(kind, Renown.GetRank(PLAYER_ID)) }
 					end
 				end
 			end
@@ -3449,6 +3570,9 @@ while true do
 		if not okRD then warn("[Main] Restless Dead failed: " .. tostring(errRD)) end
 	elseif not selectedQuest.isDailyContract and not selectedQuest.isTestArena and selectedQuest.questType ~= "Boss"
 		and selectedQuest.goal ~= "KillTarget" -- Kill target already has its Elite and no forced objective (open question 3)
+		-- loot_progression 69 (2026-11-18): no elite encounters in Ranks 1-8; the roll is skipped, the
+		-- completed-battle count still advances at battle end as before.
+		and QuestGenerator.EliteEncountersAllowed(playerLevel)
 		and QuestGenerator.IsEliteBattle(PLAYER_ID, GuildMenuService.GetBattlesCompleted()) then
 		QuestGenerator.MakeEliteEncounter(selectedQuest)
 	end
@@ -3961,10 +4085,21 @@ end)
 			end
 		end
 	end)
-	-- Dispatch sink: (playerId, unitId, xp) -> direct per-unit grant.
-	DispatchService.SetUnitXpSink(function(pid, unitId, xp)
-		ProgressionService.GrantUnitXp(pid, unitId, xp)
-	end)
+	-- (Dispatch XP sink, EXP-curve hooks and item roller are wired at boot, before the base loop:
+	-- real-time Dispatch collects at the base before any battle, 2026-11-19 step 5.)
+	-- Real-time Dispatch step 3 (2026-11-19, user ruling 2:43 PM): old battle-count missions come home ONCE
+	-- with their full recorded rewards. Runs here because the XP sink and level-up hook are wired above.
+	if not legacyDispatchCashOutDone then
+		legacyDispatchCashOutDone = true
+		if not DispatchService.IsLegacyCashedOut(PLAYER_ID) then
+			local okCo, co = pcall(DispatchService.CashOutLegacy, PLAYER_ID)
+			if okCo and type(co) == "table" and type(co.returned) == "table" and #co.returned > 0 then
+				legacyDispatchReturns = co.returned
+			elseif not okCo then
+				warn("[Main] Old dispatch cash-out failed: " .. tostring(co))
+			end
+		end
+	end
 	-- Explore sink (2026-10-06): ExploreService now calls this with the full context
 	-- (playerId, killXp, { squad, battleId, won, mapLevel }). Per the Designer ruling
 	-- (unit_progression — the SENT expedition squad are full participants for EVERY
@@ -5081,6 +5216,7 @@ end)
 
 	battleRunning = true  -- turn loop starting: dev battle commands allowed (2026-11-08)
 	EscapeCtl.quotedFee = nil
+	EscapeCtl.quotedFeeDue = nil
 	EscapeCtl.requested = false -- in-battle Escape: once per battle (2026-11-18); no button in the Test Arena (O8)
 	BattleEvents.EscapeState:FireClient(player, { available = not (activeQuest and activeQuest.isTestArena), allowed = false })
 	while BattleCoordinator.GetPhase(state) ~= "BattleOver" do
@@ -5102,6 +5238,12 @@ end)
 			end
 		end
 		if not activeUnit then break end
+		-- Cinematic hold (user 2026-11-18 6:10 PM): a battlefield event just spawned units, so the
+		-- client is playing its ~2 s camera focus. Wait (this thread only, capped 2.2 s) before the
+		-- next turn starts, so its moves are not shown off-camera. A battle decided meanwhile ends here.
+		if BattleVisualBroadcaster.WaitCinematicHold() and BattleCoordinator.GetPhase(state) == "BattleOver" then
+			break
+		end
 		-- TAUNT (user ruling 2026-10-27): drop / apply aura taunts before the turn plays.
 		for _, _tu in ipairs(StatusService.ReconcileTaunts(state.units)) do
 			BattleVisualBroadcaster.UnitStateChanged(_tu, "Taunt")
@@ -6368,7 +6510,10 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 	-- doesn't count as a battle and also pays the quest's cancel fee (the board Cancel rule, clamped to
 	-- the balance; never in a dungeon or the Test Arena). Charged here, BEFORE the save below.
 	state.escapeCounted = state.escaped ~= true or (tonumber(state.ct) or 0) >= EscapeCtl.EARLY_CT
-	if state.escaped == true and not state.escapeCounted and activeQuest and not activeQuest.isDungeon
+	-- 2026-11-18 4:59 PM: from Renown Rank 51 the fee is due at ANY CT (decided once, at escape time,
+	-- by EscapeCtl.info(); the battle still counts from 2000 CT). Fallback = the early rule.
+	local escFeeDue = if EscapeCtl.quotedFeeDue ~= nil then EscapeCtl.quotedFeeDue else not state.escapeCounted
+	if state.escaped == true and escFeeDue and activeQuest and not activeQuest.isDungeon
 		and not activeQuest.isTestArena then
 		local okF, fee = pcall(QuestGenerator.CancelFee, activeQuest)
 		local haveGold = (CurrencyService.GetBalance(PLAYER_ID) or {}).gold or 0
@@ -6390,12 +6535,11 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 	-- protected commit -> save -> BattleEnded order above (BUG-013 order unchanged):
 	-- count this battle (win or loss) and bring home dispatches that are due (their
 	-- XP goes through the wired Dispatch sink, materials through CurrencyService).
-	-- Dispatch now counts down in DAYS, where 1 day = 4000 CT (unit_progression 77/78/99,
-	-- DB 2026-10-16). This battle was worth ceil(elapsed CT / 4000) days, minimum 1.
-	local daysElapsed = math.max(1, math.ceil((state.ct or 0) / 4000))
+	-- Real-time Dispatch (2026-11-19, unit_progression 77): the 4000 CT battle-day rule is retired;
+	-- dispatch earns by the server clock, so battles no longer count down dispatch days.
+	local daysElapsed = 0
 	-- Tavern map object (user ruling 2026-11-06): +3 recruit choices next refresh, WIN ONLY.
 	-- Escape under 2000 CT (unit_progression 95): counted = false skips the whole completed-battle step.
-	if state.escapeCounted == false then daysElapsed = 0 end
 	local dispatchReturns = GuildMenuService.OnBattleCompleted(daysElapsed,
 		isQualifyingVictory and state.tavernBonusEarned == true, state.escapeCounted ~= false)
 	-- Battle recruits (project_rules id 133): alive recruited Neutrals are purified and
@@ -6433,6 +6577,11 @@ local dgBossFixed: any = nil         -- dungeon: the boss grant's fixed material
 	-- reward screen (the data was computed server-side then discarded). The unit was
 	-- away (not in state.units), so resolve its name via the roster table playerUnits.
 	local dispatchSummary = {}
+	-- Real-time Dispatch step 3: the one-time cash-out of old missions shows here (existing lines).
+	if legacyDispatchReturns then
+		dispatchReturns = { returned = legacyDispatchReturns }
+		legacyDispatchReturns = nil
+	end
 	if dispatchReturns and type(dispatchReturns.returned) == "table" then
 		for _, r in ipairs(dispatchReturns.returned) do
 			local nm = r.unitId

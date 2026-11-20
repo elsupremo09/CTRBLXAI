@@ -89,6 +89,56 @@ function UIComponents.ApplyPortrait(slot, assetId, abbrevLabel)
 	return img
 end
 
+--- Unit portrait frame (2026-11-20 user: every unit portrait uses the gear-tile ornate frame).
+--- Call AFTER ApplyPortrait. Square corners, face inset just inside the frame line, frame art on
+--- top of the face; slot text/badges are lifted above the frame (now and when added later).
+--- opts.darkBg = true -> gear-tile dark fill (base screens). Omit in battle: the side colour stays
+--- (user: blue background tells friend from enemy).
+function UIComponents.ApplyUnitFrame(slot, opts)
+	if not slot then return nil end
+	-- 2026-11-20 user: no frame on tiny faces (< 24 px) -- the frame art blurs at that size.
+	if slot.Size.X.Scale == 0 and slot.Size.X.Offset > 0 and slot.Size.X.Offset < 24 then return nil end
+	local o = opts or {}
+	if o.darkBg then
+		slot.BackgroundColor3 = Theme.PanelFrame.BgColor
+		slot.BackgroundTransparency = Theme.PanelFrame.BgTransparency
+	end
+	local sc = slot:FindFirstChildOfClass("UICorner")
+	if sc then sc:Destroy() end
+	local fp = Theme.ItemTileFramePad()
+	local img = slot:FindFirstChild("PortraitImage")
+	if img and img:IsA("ImageLabel") then
+		local ic = img:FindFirstChildOfClass("UICorner")
+		if ic then ic:Destroy() end
+		img.Size = UDim2.new(1, -fp * 2, 1, -fp * 2)
+		img.Position = UDim2.fromOffset(fp, fp)
+	end
+	local pf = Theme.PanelFrame
+	local fr = slot:FindFirstChild("UnitFrame") or Instance.new("ImageLabel")
+	fr.Name = "UnitFrame"
+	fr.Size = UDim2.fromScale(1, 1)
+	fr.Position = UDim2.fromScale(0, 0)
+	fr.BackgroundTransparency = 1
+	fr.BorderSizePixel = 0
+	fr.Image = pf.Asset
+	fr.ScaleType = Enum.ScaleType.Slice
+	fr.SliceCenter = pf.SliceCenter
+	fr.SliceScale = Theme.ItemTile.FrameSliceScale or pf.SliceScale
+	fr.ImageTransparency = pf.ImageTransparency
+	fr.Active = false
+	fr.Interactable = false
+	fr.ZIndex = (slot.ZIndex or 1) + 2
+	fr.Parent = slot
+	local function lift(c: Instance)
+		if c ~= fr and c ~= img and c:IsA("GuiObject") and c.ZIndex <= fr.ZIndex then
+			c.ZIndex = fr.ZIndex + 1
+		end
+	end
+	for _, c in slot:GetChildren() do lift(c) end
+	slot.ChildAdded:Connect(lift) -- dies with the slot
+	return fr
+end
+
 --- Try to display an icon. Returns ImageLabel or TextLabel.
 local function createIconOrFallback(parent, props, size)
 	size = size or UDim2.fromOffset(20, 20)
@@ -509,6 +559,7 @@ function UIComponents.TimelineEntry(props)
 	-- carry a portrait; player units pass nil → colored slot + letters unchanged.
 	if not isRound and not isEvent then
 		UIComponents.ApplyPortrait(portrait, props.portraitAssetId, nameLabel)
+		UIComponents.ApplyUnitFrame(portrait) -- 2026-11-20 unit frame, side colour kept
 	end
 
 	return portrait

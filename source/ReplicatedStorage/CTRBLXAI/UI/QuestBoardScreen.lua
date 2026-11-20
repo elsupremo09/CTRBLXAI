@@ -84,12 +84,13 @@ export type BoardData = {
 local ART: any = Theme.QuestBoardArt or {}
 local INK: Color3 = ART.Ink or Color3.fromRGB(52, 34, 18)
 local INK_SOFT: Color3 = ART.InkSoft or INK
-local COLS = 2
+local COLS = 3 -- 2026-11-18 user 9:26 PM: 3 cards per row (was 2)
 local GAP = 8
 local INFO_H = 18
-local CARD_PAD_X = 12
-local CARD_PAD_TOP = 18
-local CARD_PAD_BOTTOM = 12
+-- 2026-11-18: parchment v2 has no corner pins; pads just clear its torn edges (~8-10 px at card size).
+local CARD_PAD_X = 10
+local CARD_PAD_TOP = 12
+local CARD_PAD_BOTTOM = 10
 local ICON = 14
 local BOSS_BADGE = 22
 
@@ -135,12 +136,14 @@ end
 
 local function goalSentence(q: any): string
 	if not QuestGoalText or not q.goal then return "" end
-	-- Capture / Kill target name their unit only in battle; the card keeps the 1-word goal
-	-- (same rule as the old Quest details page).
-	if q.goal == "Capture" or q.goal == "KillTarget" then return "" end
 	local gp = q.goalParams or {}
+	-- 2026-11-18 9:50 PM: the card now carries the target's name (goalParams.targetName, the same
+	-- name the battle unit gets), so the approved battle sentence shows. No name (older board,
+	-- Boss) = no sentence, as before.
+	if (q.goal == "Capture" or q.goal == "KillTarget")
+		and not (type(gp.targetName) == "string" and gp.targetName ~= "") then return "" end
 	return QuestGoalText.Sentence({ id = q.goal, rounds = gp.rounds, total = gp.objects or gp.killTarget,
-		lossAt = gp.lossAt })
+		lossAt = gp.lossAt, targetName = gp.targetName })
 end
 
 local function goldText(q: any): string
@@ -185,6 +188,17 @@ local function rarityColor(r: string?): Color3
 	return Theme.Colors.TextPrimary
 end
 
+-- Quest title colour by difficulty (game_flow 35, 2026-11-18): 1 gray, 2 green, 3 blue, 4 purple,
+-- 5 orange (Theme.GetDifficultyColor, one source). Missing difficulty = the old colour.
+local function titleColor(q: any, fallback: Color3): Color3
+	local d = tonumber(q and q.difficulty)
+	if d and Theme.GetDifficultyColor then
+		local ok, c = pcall(Theme.GetDifficultyColor, d)
+		if ok and typeof(c) == "Color3" then return c end
+	end
+	return fallback
+end
+
 --------------------------------------------------
 -- HELPERS (properties before Parent, NET-004)
 --------------------------------------------------
@@ -202,6 +216,8 @@ local function makeText(parent: Instance?, text: string, size: number, color: Co
 	lbl.Size = UDim2.new(1, 0, 0, 0)
 	lbl.AutomaticSize = Enum.AutomaticSize.Y
 	lbl.Text = text
+	lbl.TextStrokeColor3 = Color3.new(0, 0, 0) -- 2026-11-18 user: black outline on all quest text
+	lbl.TextStrokeTransparency = 0
 	lbl.Parent = parent
 	return lbl
 end
@@ -303,8 +319,8 @@ local function cardLine(parent: Instance, text: string, size: number, color: Col
 	return lbl
 end
 
--- Transparent margins of the parchment image (683x1024; visible sheet bbox 26,64 .. 658,960),
--- in image pixels. One place; Theme.QuestBoardArt.CardSheetMargin overrides if it exists.
+-- Transparent margins of the parchment image, in image pixels. Theme.QuestBoardArt.CardSheetMargin
+-- (parchment v2, 1536x1024: 55/62/53/67) is the live value; the table below is only the fallback.
 local SHEET_MARGIN: { left: number, top: number, right: number, bottom: number } =
 	(ART.CardSheetMargin :: any) or { left = 26, top = 64, right = 25, bottom = 64 }
 
@@ -325,9 +341,16 @@ local function buildCard(q: any, i: number, w: number, h: number, small: number,
 	sheet.BackgroundTransparency = 1
 	sheet.BorderSizePixel = 0
 	sheet.Image = ART.Card or ""
-	sheet.ScaleType = Enum.ScaleType.Slice
-	sheet.SliceCenter = ART.CardSlice or Rect.new(100, 140, 583, 850)
-	sheet.SliceScale = sliceScale
+	-- Parchment v2 (2026-11-18) is drawn Stretch: every card has the same size, so the torn edges
+	-- keep their natural look; Slice would squash the edge bumps unevenly.
+	local stretch = ART.CardScaleType == "Stretch"
+	if stretch then
+		sheet.ScaleType = Enum.ScaleType.Stretch
+	else
+		sheet.ScaleType = Enum.ScaleType.Slice
+		sheet.SliceCenter = ART.CardSlice or Rect.new(100, 140, 583, 850)
+		sheet.SliceScale = sliceScale
+	end
 	sheet.Size = UDim2.fromScale(1, 1)
 	sheet.Active = false
 	sheet.Parent = card
@@ -339,13 +362,17 @@ local function buildCard(q: any, i: number, w: number, h: number, small: number,
 		-- by sliceScale. The inset is never smaller than the stroke, so the outline stays inside the
 		-- card and can't be clipped by the grid's edges.
 		local thick = 3
-		local function inset(px: number): number return math.max(thick, math.floor(px * sliceScale + 0.5)) end
+		-- Stretch: image px scale per axis (card size / image size); Slice: sliceScale on both.
+		local artSize: Vector2? = ART.CardSize
+		local sx = if stretch and artSize then w / artSize.X else sliceScale
+		local sy = if stretch and artSize then h / artSize.Y else sliceScale
+		local function inset(px: number, s: number): number return math.max(thick, math.floor(px * s + 0.5)) end
 		local frame = Instance.new("Frame")
 		frame.Name = "SelectedFrame"
 		frame.BackgroundTransparency = 1
 		frame.BorderSizePixel = 0
 		frame.Active = false
-		local l, tp, r, bt = inset(SHEET_MARGIN.left), inset(SHEET_MARGIN.top), inset(SHEET_MARGIN.right), inset(SHEET_MARGIN.bottom)
+		local l, tp, r, bt = inset(SHEET_MARGIN.left or 0, sx), inset(SHEET_MARGIN.top or 0, sy), inset(SHEET_MARGIN.right or 0, sx), inset(SHEET_MARGIN.bottom or 0, sy)
 		frame.Position = UDim2.fromOffset(l, tp)
 		frame.Size = UDim2.new(1, -(l + r), 1, -(tp + bt))
 		frame.Parent = card
@@ -371,7 +398,11 @@ local function buildCard(q: any, i: number, w: number, h: number, small: number,
 	list.SortOrder = Enum.SortOrder.LayoutOrder
 	list.Parent = body_
 
-	cardLine(body_, tostring(q.name or ""), body, INK, true, 1, 2)
+	local titleLbl = cardLine(body_, tostring(q.name or ""), body, titleColor(q, INK), true, 1, 2)
+	if titleLbl then -- user 2026-11-18 9:35 PM: black outline only on the coloured lines (title, promised gear)
+		titleLbl.TextStrokeColor3 = Color3.new(0, 0, 0)
+		titleLbl.TextStrokeTransparency = 0
+	end
 	cardLine(body_, levelText(q), small, INK, false, 2)
 	cardLine(body_, biomeText(q), small, INK_SOFT, false, 3)
 	cardLine(body_, goalLine(q), small, INK, true, 4)
@@ -426,8 +457,8 @@ local function buildCard(q: any, i: number, w: number, h: number, small: number,
 	local pText, pRarity = promisedText(q)
 	local pl = cardLine(body_, pText, small, rarityColor(pRarity), true, 6)
 	if pl then
-		pl.TextStrokeColor3 = INK
-		pl.TextStrokeTransparency = 0.35
+		pl.TextStrokeColor3 = Color3.new(0, 0, 0)
+		pl.TextStrokeTransparency = 0
 	end
 	body_.Parent = card
 
@@ -488,7 +519,7 @@ local function renderBoard()
 	info.Font = Theme.Font.PrimaryBold
 	info.TextColor3 = Theme.Colors.TextGold
 	info.TextStrokeColor3 = Color3.new(0, 0, 0)
-	info.TextStrokeTransparency = 0.4
+	info.TextStrokeTransparency = 0.4 -- back to its pre-11/18 outline (user 9:35 PM: outline only on coloured card lines)
 	info.TextXAlignment = Enum.TextXAlignment.Left
 	info.TextTruncate = Enum.TextTruncate.AtEnd
 	info.TextScaled = true
@@ -522,7 +553,7 @@ local function renderBoard()
 	pad.PaddingLeft = UDim.new(0, 2)
 	pad.Parent = grid
 
-	-- 2 columns sized from the real panel width; card height fits the 6 card lines.
+	-- COLS (3) columns sized from the real panel width; card height fits the 6 card lines.
 	local mainW = (main :: any).AbsoluteSize.X
 	if mainW <= 0 then mainW = 430 end
 	local gridW = mainW - GAP * 2 - 6 - 2 -- minus the 2px left pad
@@ -544,38 +575,39 @@ local function renderBoard()
 	grid.Parent = main
 end
 
+-- Quest lore (2026-11-18): QuestFlavor builds seeded procedural lore (grammar approved 11:08 PM, live;
+-- DB game_flow 39). The lore area stays hidden whenever the text is empty.
+local QuestFlavor: any = nil
+do
+	local okF, modF = pcall(function()
+		local m = uiFolder:FindFirstChild("QuestFlavor")
+		return if m then (require :: any)(m) else nil
+	end)
+	if okF then QuestFlavor = modF end
+end
+
+local function loreText(q: any): string
+	if not QuestFlavor or type(QuestFlavor.Get) ~= "function" then return "" end
+	local ok, s = pcall(QuestFlavor.Get, q)
+	return if ok and type(s) == "string" then s else ""
+end
+
+-- Side panel (user 2026-11-18 9:26 PM): no repeats of what the card shows (level, biome, gold,
+-- mercury, promised gear) and no cancellation note. Keeps what the card does not show.
 local function renderInspector(q: any?)
 	local sc, add = makeInspector()
 	if q then
 		local small = Theme.Text.Small()
 		local bodyT = Theme.Text.Body()
-		add(tostring(q.name or ""), Theme.Text.Heading(), Theme.Colors.TextGold, true)
-		add(levelText(q), bodyT, Theme.Colors.TextPrimary)
-		add(biomeText(q), bodyT, Theme.Colors.TextPrimary)
-		add(conditionText(q), bodyT, Theme.Colors.TextPrimary)
+		add(tostring(q.name or ""), Theme.Text.Heading(), titleColor(q, Theme.Colors.TextGold), true)
+		add(conditionText(q), bodyT, Theme.Colors.TextPrimary) -- not on the card
 		if tonumber(q.playerSlots) then add(`Deploy up to {q.playerSlots} units`, bodyT, Theme.Colors.TextPrimary) end
 		add(goalLine(q), bodyT, Theme.Colors.TextGold, true)
 		add(goalSentence(q), bodyT, Theme.Colors.TextPrimary)
+		add(renownText(q), bodyT, Theme.Colors.TextPrimary) -- not on the card ("+N Renown" / "(too easy)")
 		if q.elite then add(TXT_ELITE, small, Theme.Colors.TextSecondary) end
 		if q.isDailyContract then add(TXT_DAILY, small, Theme.Colors.TextSecondary) end
-		-- Rewards
-		local gt = goldText(q)
-		local merc = mercuryOf(q)
-		local rt = renownText(q)
-		local pText, pRarity = promisedText(q)
-		if gt ~= "" or merc > 0 or rt ~= "" or pText ~= "" then
-			add("Rewards", bodyT, Theme.Colors.TextGold, true)
-			local reward = gt
-			if merc > 0 then reward = if reward ~= "" then `{reward} + {merc} mercury` else `{merc} mercury` end
-			add(reward, bodyT, Theme.Colors.TextPrimary)
-			add(rt, bodyT, Theme.Colors.TextPrimary)
-			add(pText, bodyT, rarityColor(pRarity), true)
-		end
-		local fee = tonumber(q.cancelFee)
-		-- fee 0 / missing: line hidden (user 2026-11-18 12:03 AM)
-		if fee and fee > 0 then
-			add(`Accepting sends scouts ahead. Cancelling later costs {fee} gold.`, small, Theme.Colors.TextSecondary)
-		end
+		add(loreText(q), small, Theme.Colors.TextSecondary) -- hidden while empty
 	end
 	sc.Parent = screen.Side
 end
@@ -654,7 +686,8 @@ function QuestBoardScreen.Open(d: BoardData?)
 	end
 	if not screen then
 		screen = GuildScreen.Create({ name = "QuestBoardScreen", title = "QUEST BOARD", parent = c.parent, -- renamed 11-13
-			crest = Theme.GuildIcons.AdventurersGuild }) -- same icon as the guild menu Quest Board button
+			crest = Theme.GuildIcons.AdventurersGuild, -- same icon as the guild menu Quest Board button
+			sideShare = 0.27 }) -- 2026-11-18 user: slimmer side panel (default 0.38) so 3 cards fit a row
 		screen.SetButtonRows(1)
 		-- Card sizes come from Main's real width: redraw once when it settles / the window resizes.
 		-- The connection lives with Main (destroyed with the ScreenGui, PRF-004).

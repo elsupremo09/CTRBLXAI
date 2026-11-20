@@ -30,6 +30,9 @@ local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 -- UIComponents hosts the shared portrait-overlay helper (ApplyPortrait). Require
 -- is acyclic: UIComponents requires only Theme, which BattleHUD already requires.
 local UIComponents = require(CTRBLXAI_UI:WaitForChild("UIComponents", 10))
+-- New-player tips (2026-11-19): TIP-BAT-03 on the first attack preview. Guarded.
+local _tipOk, TipController = pcall(function() return require(CTRBLXAI_UI:WaitForChild("TipController", 10)) end)
+if not _tipOk then warn("[BattleHUD] tips unavailable: " .. tostring(TipController)); TipController = nil end
 -- Quest main-goal text (build step 8): the one place for the approved goal lines. nil = no tracker.
 local _qgtOk, QuestGoalText = pcall(function() return require(CTRBLXAI_UI:WaitForChild("QuestGoalText", 10)) end)
 if not _qgtOk then QuestGoalText = nil end
@@ -73,6 +76,14 @@ local _ttOk, TerrainTextures = pcall(require, Shared:WaitForChild("TerrainTextur
 if not _ttOk then TerrainTextures = nil end
 
 local BattleHUD = {}
+
+-- Name banner (2026-11-18): icon for an announced skill / special / item, from the same tables
+-- the battle menus use. nil = no icon (the banner shows the name only).
+function BattleHUD.ActionIconFor(kind: string?, ref: any): string?
+	if kind == "item" then return consumableIconFor(ref) end
+	if kind == "skill" or kind == "special" then return skillIconFor(ref) end
+	return nil
+end
 
 -- Time-of-day icons (user uploads, Oct 5 2026) for the turn-order bar's right end.
 -- The cycle is Dawn->Day->Dusk->Night, one phase per 1000-CT round (server clock).
@@ -697,6 +708,7 @@ local function ensureRoot()
 	viewModeViewBtn = menuButton("ViewToggle", currentCameraMode, 1,
 		isViewMode and Theme.Colors.TextGold or Theme.Colors.TextPrimary, Theme.BattleButtonIcons.View)
 	viewModeViewBtn.Activated:Connect(function() BattleHUD.CycleCameraMode() end)
+	task.defer(function() if BattleHUD.RefreshCameraControl then BattleHUD.RefreshCameraControl() end end) -- re-dim after a rebuild
 
 	local logBtn = menuButton("LogToggle", "Log", 2, Theme.Colors.TextSecondary, Theme.BattleButtonIcons.Log)
 	logBtn.Activated:Connect(function() closeBfMenu(); BattleHUD.ToggleBattleLog() end)
@@ -866,6 +878,7 @@ function BattleHUD._buildActiveUnit()
 	Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
 	-- Portrait face overlay (enemy/neutral/NPC). nil for players/summons → initials box.
 	if UIComponents.ApplyPortrait(portrait, d.portraitAssetId) then portrait.Text = "" end
+	UIComponents.ApplyUnitFrame(portrait) -- 2026-11-20 unit frame, side colour kept
 	portrait.Activated:Connect(function()
 		if _G.CTRBLXAI_OpenInspectorPanel and d.id then
 			_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
@@ -1291,6 +1304,7 @@ function BattleHUD._buildInspector()
 		Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
 		-- Portrait face overlay (enemy/neutral/NPC). nil for players/summons → initials box.
 		if UIComponents.ApplyPortrait(portrait, d.portraitAssetId) then portrait.Text = "" end
+		UIComponents.ApplyUnitFrame(portrait) -- 2026-11-20 unit frame, side colour kept
 		portrait.Activated:Connect(function()
 			if _G.CTRBLXAI_OpenInspectorPanel and d.id then
 				_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
@@ -2466,49 +2480,40 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 		end
 
 
-		-- Channel event: SPLIT portrait — left half = casting unit, right half = skill icon.
-		-- (User-approved Option B visual.) Only when we actually have a skill icon asset.
-		local isSplitChannel = isEvent and type(entry.channeledSkillIcon) == "string"
-			and string.find(entry.channeledSkillIcon, "rbxassetid://") ~= nil
+		-- Channel / delayed skill slot (user 2026-11-18 7:35 PM): the slot shows the SKILL's
+		-- portrait (its skill-card icon) filling the slot, outlined in the caster's side colour.
+		-- Icon = server skillDef.icon, else the same SkillData lookup the battle menus and the
+		-- name banner use (skillIconFor, DOC- skills included). No icon -> today's look
+		-- (hazard circle with spell / caster text). Like unit slots, no name text over the art.
+		local chIcon = nil
+		if isEvent then
+			if type(entry.channeledSkillIcon) == "string" and string.find(entry.channeledSkillIcon, "rbxassetid://%d") then
+				chIcon = entry.channeledSkillIcon
+			else
+				chIcon = skillIconFor(entry.channeledSkillId)
+			end
+		end
+		local isSplitChannel = chIcon ~= nil  -- name kept: "channel slot drawn as an image"
 		if isSplitChannel then
-			portrait.BackgroundTransparency = 1  -- halves draw their own fills
-			-- LEFT half: caster side color + caster initials
-			local leftHalf = Instance.new("Frame")
-			leftHalf.Size = UDim2.new(0.5, 0, 1, 0)
-			leftHalf.Position = UDim2.new(0, 0, 0, 0)
-			leftHalf.BorderSizePixel = 0
-			leftHalf.BackgroundColor3 = Theme.GetSideColor(entry.casterSide or entry.side)
-			leftHalf.BackgroundTransparency = 0.1
-			leftHalf.Parent = portrait
-			local lcorner = Instance.new("UICorner", leftHalf); lcorner.CornerRadius = Theme.CornerRadius.sm
-			local lcInit = Instance.new("TextLabel")
-			lcInit.Size = UDim2.fromScale(1, 1); lcInit.BackgroundTransparency = 1
-			lcInit.Font = Theme.Font.PrimaryBold; lcInit.TextSize = Theme.Text.Small()
-			lcInit.TextColor3 = Theme.Colors.TextPrimary
-			lcInit.Text = string.sub(entry.casterName or "?", 1, 2)
-			lcInit.Parent = leftHalf
-			-- RIGHT half: skill icon image
-			local rightHalf = Instance.new("Frame")
-			rightHalf.Size = UDim2.new(0.5, 0, 1, 0)
-			rightHalf.Position = UDim2.new(0.5, 0, 0, 0)
-			rightHalf.BorderSizePixel = 0
-			rightHalf.BackgroundColor3 = Theme.Colors.EntityHazard
-			rightHalf.BackgroundTransparency = 0.15
-			rightHalf.Parent = portrait
-			local rcorner = Instance.new("UICorner", rightHalf); rcorner.CornerRadius = Theme.CornerRadius.sm
+			portrait.BackgroundColor3 = Theme.Colors.EntityHazard
+			portrait.BackgroundTransparency = 0.15
+			-- Square like a unit portrait so the card art reads (the circle would crop it).
+			local corner = portrait:FindFirstChildOfClass("UICorner")
+			if corner then corner.CornerRadius = Theme.CornerRadius.sm end
 			local skIco = Instance.new("ImageLabel")
-			skIco.Size = UDim2.fromScale(0.85, 0.85); skIco.Position = UDim2.fromScale(0.075, 0.075)
-			skIco.BackgroundTransparency = 1; skIco.ScaleType = Enum.ScaleType.Fit
-			skIco.Image = entry.channeledSkillIcon
-			skIco.Parent = rightHalf
-			-- Center divider line for a clean split seam
-			local seam = Instance.new("Frame")
-			seam.Size = UDim2.new(0, 1, 1, 0); seam.Position = UDim2.new(0.5, 0, 0, 0)
-			seam.BackgroundColor3 = Color3.new(0, 0, 0); seam.BackgroundTransparency = 0.4
-			seam.BorderSizePixel = 0; seam.Parent = portrait
-			-- Gold outline around the whole split portrait to read as one channeling unit
+			skIco.Name = "ChannelSkillPortrait"
+			skIco.Size = UDim2.fromScale(1, 1)
+			skIco.BackgroundTransparency = 1
+			skIco.ScaleType = Enum.ScaleType.Crop
+			skIco.Image = chIcon
+			skIco.Active = false
+			skIco.Parent = portrait
+			Instance.new("UICorner", skIco).CornerRadius = Theme.CornerRadius.sm
+			-- Caster side colour outline (who is casting), like the side colours elsewhere.
 			local chStroke = Instance.new("UIStroke", portrait)
-			chStroke.Color = Theme.Colors.TextGold; chStroke.Thickness = 1.5
+			chStroke.Color = Theme.GetSideColor(entry.casterSide or entry.side)
+			chStroke.Thickness = 2
+			chStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
 		end
 
 		-- Active unit: gold border
@@ -2642,6 +2647,9 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 				end
 			end
 		end
+
+		-- 2026-11-20 unit frame on every real unit slot (side colour kept).
+		if isUnit and not isSplitChannel then UIComponents.ApplyUnitFrame(portrait) end
 
 		-- Phone: two-line name that fits the slot (2026-11-06). Units only (round/event
 		-- slots keep their short labels). Band height comes from the label's own scale.
@@ -2911,6 +2919,7 @@ function BattleHUD._buildViewModeUnit()
 	Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.sm
 	-- Portrait face overlay (enemy/neutral/NPC). nil for players/summons → initials box.
 	if UIComponents.ApplyPortrait(portrait, d.portraitAssetId) then portrait.Text = "" end
+	UIComponents.ApplyUnitFrame(portrait) -- 2026-11-20 unit frame, side colour kept
 	portrait.Activated:Connect(function()
 		if _G.CTRBLXAI_OpenInspectorPanel and d.id then
 			_G.CTRBLXAI_OpenInspectorPanel(d.id, _G.CTRBLXAI_TileUnitIds)
@@ -3091,7 +3100,36 @@ end
 -- Replaces the old dropdown (2026-10-17, user request). Reuses SetCameraMode
 -- so the label update + Side free-view rule stay in one place.
 local VIEW_CYCLE = { "Isometric", "Top", "Side" }
+
+-- 2026-11-18 (user): no player camera control when it is not the player's turn. The battle
+-- client calls this whenever the lock changes; the View button dims and ignores taps.
+local cameraControlEnabled = true
+local function applyViewButtonDim()
+	local b = viewModeViewBtn
+	if not b or not b.Parent then return end
+	local dim = not cameraControlEnabled
+	if b:IsA("ImageButton") then
+		local base = b:GetAttribute("CamBaseImgT")
+		if base == nil then base = b.ImageTransparency; b:SetAttribute("CamBaseImgT", base) end
+		b.ImageTransparency = if dim then math.max(base, 0.5) else base
+	end
+	local lbl = b:FindFirstChild("Label", true)
+	if lbl and lbl:IsA("TextLabel") then
+		local baseT = lbl:GetAttribute("CamBaseTextT")
+		if baseT == nil then baseT = lbl.TextTransparency; lbl:SetAttribute("CamBaseTextT", baseT) end
+		lbl.TextTransparency = if dim then math.max(baseT, 0.5) else baseT
+	end
+end
+function BattleHUD.SetCameraControlEnabled(enabled: boolean)
+	cameraControlEnabled = enabled ~= false
+	applyViewButtonDim()
+end
+function BattleHUD.RefreshCameraControl()
+	applyViewButtonDim()
+end
+
 function BattleHUD.CycleCameraMode()
+	if not cameraControlEnabled then return end -- off-turn: the View button is dimmed
 	local idx = 1
 	for i, m in ipairs(VIEW_CYCLE) do
 		if m == currentCameraMode then idx = i; break end
@@ -3556,6 +3594,7 @@ function BattleHUD.Render(p)
 	end
 
 	local newState = presentation.state
+	if newState == "Preview" and TipController then TipController.Defer("TIP-BAT-03") end -- new-player tip: held, never over the preview (SYS-04)
 	ensureRoot()
 
 	-- Position right-side stack: ActiveUnit → ActionPanel → Inspector → TilePreview

@@ -415,6 +415,11 @@ local function buildItemGrid(parent)
 	grid.CellSize = UDim2.new(0, cellW, 0, cellH)
 
 	local items = MockData.GetFilteredItems(ctx.getCurrentFilter())
+	-- New-player tip (2026-11-19, Tester W5): TIP-DOC-01 the first time the player owns a spare
+	-- doctrine (the Doctrine filter lists spares only). Guarded inline: a missing module never breaks this tab.
+	if ctx.getCurrentFilter() == "Doctrine" and #items > 0 then
+		pcall(function() (require :: any)(CTRBLXAI_UI:WaitForChild("TipController", 10)).Trigger("TIP-DOC-01") end)
+	end
 	-- Twinblade dual wield (2026-10-28): the OFF-HAND list also offers 1H weapons, which then
 	-- equip into the off hand (server re-checks the Twinblade / 1H rules).
 	if ctx.getCurrentFilter() == "OffHand" then

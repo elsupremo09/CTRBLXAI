@@ -11,6 +11,29 @@ local VFXController = {}
 local Lighting     = game:GetService("Lighting")
 local TweenService = game:GetService("TweenService")
 local Debris       = game:GetService("Debris")
+local UserInputService = game:GetService("UserInputService")
+
+-- LIGHTER PHONE GRAPHICS (user 2026-11-18 4:38 PM, battle heat fix 5).
+-- Touch-only devices (phones / tablets: touch, no mouse) get no SunRays and a softer Bloom
+-- in battle. At the guild base (no battle) Bloom and SunRays are off on every device;
+-- Init (battle / map start) turns them back on. Desktop battle look is unchanged.
+local BLOOM_DESKTOP = { Intensity = 0.7, Size = 28 }
+local BLOOM_PHONE   = { Intensity = 0.35, Size = 16 }
+local function isTouchOnly(): boolean
+	return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+end
+local function applyPostFx(inBattle: boolean)
+	local phone = isTouchOnly()
+	local b = Lighting:FindFirstChildOfClass("BloomEffect")
+	if b then
+		local cfg = if phone then BLOOM_PHONE else BLOOM_DESKTOP
+		b.Intensity = cfg.Intensity
+		b.Size = cfg.Size
+		b.Enabled = inBattle
+	end
+	local sr = Lighting:FindFirstChildOfClass("SunRaysEffect")
+	if sr then sr.Enabled = inBattle and not phone end
+end
 
 --------------------------------------------------
 -- TEXTURES (built-in Roblox assets)
@@ -352,7 +375,14 @@ function VFXController.Init(biome)
 	-- SetBattleClock then glides both the sun and the ambient as CT climbs.
 	snapClock(0)
 
+	applyPostFx(true) -- battle look (phones: no SunRays, softer Bloom)
 	print(string.format("[VFX] Init: biome=%s", tostring(biome)))
+end
+
+--- Guild base (no battle on screen): Bloom + SunRays off on every device (battle heat fix 5).
+--- The next Init (map / battle start) turns them back on.
+function VFXController.SetBaseMode()
+	applyPostFx(false)
 end
 
 --==================================================
@@ -666,7 +696,7 @@ local function collectEmitters(root)
 end
 
 -- Anchor a template at a world position. Returns the parented clone (or nil).
-local function spawnAsset(assetName, position, lifetime)
+local function spawnAsset(assetName, position, lifetime, keep: boolean?)
 	if type(assetName) ~= "string" or assetName == "" then return nil end
 	local folder = getAssetFolder()
 	if not folder then return nil end
@@ -713,6 +743,7 @@ local function spawnAsset(assetName, position, lifetime)
 	for _, em in ipairs(emitters) do
 		em.Enabled = true
 	end
+	if keep then return clone end -- loop asset (fix 4): the caller owns it, no timed stop / Debris
 	-- Stop steady emission partway so it fades before cleanup (avoids a hard cut).
 	task.delay(math.max(0.1, lifetime * 0.5), function()
 		for _, em in ipairs(emitters) do
@@ -727,6 +758,78 @@ end
 -- Public: play a named asset at a position (returns clone or nil on miss).
 function VFXController.PlayAsset(assetName, position, lifetime)
 	return spawnAsset(assetName, position, lifetime)
+end
+
+--------------------------------------------------
+-- REUSABLE LOOP ASSETS (user 2026-11-18 4:38 PM, battle heat fix 4; MEM-002 Destroy on end).
+-- The debuff and persistent (channel / guard / stance) loops used to Clone a fresh asset every
+-- 1.5-2.5 s per unit. A loop asset is cloned ONCE, kept (no Debris), and pulsed by toggling its
+-- emitters on/off; its other visuals (parts, decals, beams, trails, lights) are shown/hidden with
+-- their authored values restored. The caller destroys it when the loop stops.
+--------------------------------------------------
+local function collectLoopVisuals(root)
+	local vis = {}
+	local function add(inst)
+		if inst:IsA("BasePart") then
+			table.insert(vis, { inst = inst, prop = "Transparency", on = inst.Transparency, off = 1 })
+		elseif inst:IsA("Decal") then
+			table.insert(vis, { inst = inst, prop = "Transparency", on = inst.Transparency, off = 1 })
+		elseif inst:IsA("Beam") or inst:IsA("Trail") or inst:IsA("Light") then
+			table.insert(vis, { inst = inst, prop = "Enabled", on = inst.Enabled, off = false })
+		end
+	end
+	add(root)
+	for _, d in ipairs(root:GetDescendants()) do add(d) end
+	return vis
+end
+
+--- Clone a loop asset once at `position`. Returns a handle or nil (missing asset).
+--- Starts hidden: call SetLoopAsset(handle, true/false, emit) to show / pulse it.
+function VFXController.SpawnLoopAsset(assetName, position)
+	local clone = spawnAsset(assetName, position, nil, true) -- keep: no Debris, no timed stop
+	if not clone then return nil end
+	local handle = { inst = clone, emitters = collectEmitters(clone), visuals = collectLoopVisuals(clone),
+		shown = true, emitting = true, pos = position }
+	VFXController.SetLoopAsset(handle, false, false)
+	return handle
+end
+
+--- Show / hide a loop asset's visuals and turn its emitters on / off.
+function VFXController.SetLoopAsset(handle, shown: boolean, emit: boolean)
+	if not handle or not handle.inst or not handle.inst.Parent then return end
+	if handle.shown ~= shown then
+		handle.shown = shown
+		for _, v in ipairs(handle.visuals) do
+			if v.inst.Parent then
+				pcall(function() (v.inst :: any)[v.prop] = if shown then v.on else v.off end)
+			end
+		end
+	end
+	emit = shown and emit
+	if handle.emitting ~= emit then
+		handle.emitting = emit
+		for _, em in ipairs(handle.emitters) do
+			if em.Parent then em.Enabled = emit end
+		end
+	end
+end
+
+--- Keep a loop asset on its unit (only writes when it actually moved).
+function VFXController.MoveLoopAsset(handle, position: Vector3)
+	if not handle or not handle.inst or not handle.inst.Parent then return end
+	if handle.pos and (handle.pos - position).Magnitude < 0.05 then return end
+	handle.pos = position
+	local inst = handle.inst
+	pcall(function()
+		if inst:IsA("Model") then inst:PivotTo(CFrame.new(position))
+		elseif inst:IsA("BasePart") then inst.CFrame = CFrame.new(position) end
+	end)
+end
+
+--- Destroy a loop asset (MEM-002).
+function VFXController.DestroyLoopAsset(handle)
+	if handle and handle.inst and handle.inst.Parent then pcall(function() handle.inst:Destroy() end) end
+	if handle then handle.inst = nil end
 end
 
 -- Resolve the VFX asset name for a skill, using the registry + SkillData tags.

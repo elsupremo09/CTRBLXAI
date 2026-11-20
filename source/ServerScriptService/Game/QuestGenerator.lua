@@ -21,6 +21,14 @@ local QuestGoalData = require(
 		:WaitForChild("QuestGoalData")
 )
 
+-- Quest target names (user 2026-11-18 9:50 PM): Kill target / Capture name their unit on the card.
+-- Same word pools as EnemyGenerator.buildEnemyName (no new name lists).
+local UnitNameData = require(
+	game:GetService("ReplicatedStorage")
+		:WaitForChild("Content")
+		:WaitForChild("UnitNameData")
+)
+
 local QuestGenerator = {}
 
 --------------------------------------------------
@@ -206,7 +214,9 @@ end
 -- quest's difficulty tier AND template are rolled. Boss quests are always Kill target on the Boss
 -- (open question 2). A goal that isn't built yet is rolled at its real weight but played as Wipe
 -- out (quest.goalRolled keeps the rolled id for logs / the Simulator).
-local function rollGoal(quest, rng)
+-- allowSurvive (game_flow 41/42, 2026-11-18): false in Ranks 1-8 -> Survive is left out of the pool,
+-- so its weight is shared proportionally by the other allowed goals (same single RNG draw).
+local function rollGoal(quest, rng, allowSurvive: boolean?)
 	if quest.questType == "Boss" then
 		quest.goal = "KillTarget"
 		quest.goalParams = { target = "Boss" }
@@ -215,7 +225,8 @@ local function rollGoal(quest, rng)
 	local tier = QuestGoalData.TierOf(quest.difficulty)
 	local pool = {}
 	for _, e in ipairs(QuestGoalData.Weights[tier]) do
-		if QuestGoalData.FitsTemplate(e.id, quest.template) then
+		if QuestGoalData.FitsTemplate(e.id, quest.template)
+			and not (e.id == "Survive" and allowSurvive == false) then
 			table.insert(pool, { type = e.id, weight = e.weight })
 		end
 	end
@@ -274,6 +285,34 @@ local function rollGoal(quest, rng)
 	end
 end
 
+-- NEW-PLAYER ENEMY TOTAL (game_flow 42, USER RULING 2026-11-18 5:52 PM): in Ranks 1-8 the goal
+-- extras count inside the rolled 3-5. Trims Grunts first, then Veterans, then Elites, down to
+-- `target`, and never the goal's own unit (capture target, Elite leader, runners). A group may go to
+-- 0 here and is then removed. No RNG call, so the saved board stays stable. Returns the new total.
+local TRIM_ORDER = { "Grunt", "Veteran", "Elite" }
+local function trimToTarget(quest, target: number): number
+	local total = 0
+	for _, et in ipairs(quest.enemyTypes or {}) do total += et.count end
+	for _, kind in ipairs(TRIM_ORDER) do
+		if total <= target then break end
+		for _, et in ipairs(quest.enemyTypes or {}) do
+			if total <= target then break end
+			if et.type == kind and not (et.isCaptureTarget or et.isLeader or et.isRunner) then
+				local trim = math.min(total - target, et.count)
+				et.count -= trim
+				total -= trim
+			end
+		end
+	end
+	local kept = {}
+	for _, et in ipairs(quest.enemyTypes or {}) do
+		if et.count > 0 then table.insert(kept, et) end
+	end
+	quest.enemyTypes = kept
+	quest.enemyCount = total
+	return total
+end
+
 -- Quest types a Daily Contract can be (never a boss: daily systems decision 4, 2026-11-01).
 local NON_BOSS_TYPE_WEIGHTS = {}
 for _, entry in ipairs(QUEST_TYPE_WEIGHTS) do
@@ -317,6 +356,38 @@ local function gearHash(key: number, id: string): number
 	return h
 end
 
+-- QUEST TARGET NAME (user 2026-11-18 9:50 PM). Kill target (Elite leader) and Capture quests get the
+-- target's name when the quest is generated, so the card, the lore ({target}) and the battle all show
+-- the same name. Drawn from rng:Clone() AFTER every other roll: the quest's own RNG stream is never
+-- advanced, so every earlier roll (and the saved board) is unchanged, and the same seed always gives
+-- the same name (board reopen, rejoin, battle). Word pools = EnemyGenerator.buildEnemyName's pools:
+-- <first word of a trait> <doctrine word>. QuestGoalService.TagTarget applies it to the spawned unit.
+local function sortedKeys(t: any): { string }
+	local out = {}
+	if type(t) ~= "table" then return out end
+	for k, v in pairs(t) do
+		if type(k) == "string" and type(v) == "table" and #v > 0 then table.insert(out, k) end
+	end
+	table.sort(out)
+	return out
+end
+local _firstKeys: { string }? = nil
+local _docKeys: { string }? = nil
+local function rollTargetName(quest, rng)
+	local gp = quest.goalParams
+	if type(gp) ~= "table" then return end
+	local named = (quest.goal == "Capture") or (quest.goal == "KillTarget" and gp.target == "Elite")
+	if not named then return end
+	_firstKeys = _firstKeys or sortedKeys(UnitNameData.FirstWords)
+	_docKeys = _docKeys or sortedKeys(UnitNameData.DoctrineWords)
+	local fk, dk = _firstKeys :: { string }, _docKeys :: { string }
+	if #fk == 0 or #dk == 0 then return end
+	local r = rng:Clone() -- copy: draws here never move the quest's real RNG
+	local firstPool = UnitNameData.FirstWords[fk[r:NextInteger(1, #fk)]]
+	local docPool = UnitNameData.DoctrineWords[dk[r:NextInteger(1, #dk)]]
+	gp.targetName = `{firstPool[r:NextInteger(1, #firstPool)]} {docPool[r:NextInteger(1, #docPool)]}`
+end
+
 local function rollPromisedGear(quest, rng, isDaily)
 	local row = QuestGoalData.PromisedGearRow(quest.goal, quest.difficulty, isDaily, quest.questType == "Boss")
 	if not row then return end
@@ -356,10 +427,18 @@ end
 -- opts (optional; nil keeps the normal board unchanged): noBoss = never a boss quest,
 -- noMercuryRoll = skip the 1-in-7 quest mercury roll. Dungeon rooms (build step 3) also pass
 -- questType / biome / condition / difficulty / fixedLevel; absent = the normal rolls (same RNG order).
+-- opts.gate (game_flow 42 new-player gating, 2026-11-18; board quests + Daily Contract only):
+--   { rank, diffLo, diffHi, allowBoss }. Same RNG draws as before, different mapping:
+--   the difficulty is ONE draw in [diffLo, diffHi], the boss-free type table is used when
+--   allowBoss is false, and the enemy-count roll maps through RenownRules.EnemyCountTarget.
+--   Never takes roster size (USER RULING 5:52 PM: enemy count must not depend on units owned).
+--   Absent (dungeon rooms, test arena) = the old rules exactly.
 local function generateOneQuest(questIndex, playerLevel, rng, opts)
+	local gate = opts and opts.gate
 	-- 1. Quest type (weighted)
+	local noBoss = (opts and opts.noBoss) or (gate ~= nil and not gate.allowBoss)
 	local questType = if opts and opts.questType then opts.questType
-		else weightedPick(rng, if opts and opts.noBoss then NON_BOSS_TYPE_WEIGHTS else QUEST_TYPE_WEIGHTS)
+		else weightedPick(rng, if noBoss then NON_BOSS_TYPE_WEIGHTS else QUEST_TYPE_WEIGHTS)
 
 	-- 2. Biome (uniform from all biomes — prototype has no gating)
 	local biome = if opts and opts.biome then opts.biome else pickRandom(rng, ALL_BIOMES)
@@ -377,8 +456,11 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 		condition = weightedPickMap(rng, biomeInfo.battleConditionWeights)
 	end
 
-	-- 5. Difficulty (1-5 uniform for prototype)
-	local difficulty = if opts and opts.difficulty then opts.difficulty else rng:NextInteger(1, 5)
+	-- 5. Difficulty: 1-5 uniform without a gate; with a gate ONE draw inside the slot's band (always
+	-- a real NextInteger call, also for Medium 3..3, so the draw count never depends on the band).
+	local difficulty = if opts and opts.difficulty then opts.difficulty
+		elseif gate then rng:NextInteger(gate.diffLo, gate.diffHi)
+		else rng:NextInteger(1, 5)
 
 	-- 6. Recommended level (loot_progression 87, Renown step 3 2026-11-13): playerLevel is the
 	-- Renown Rank. Rank + (difficulty - 3) x 2 +/- 1, kept 1-99. Enemy levels below are clamped <= 99.
@@ -388,6 +470,7 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 
 	-- 7. Player slots
 	local slotOptions = QUEST_PLAYER_SLOTS[questType]
+	-- The quest's normal deploy slots at every Rank (game_flow 42, 5:52 PM: no units-owned cap).
 	local playerSlots = pickRandom(rng, slotOptions)
 
 	-- 8. Enemy roster
@@ -428,8 +511,12 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 	-- NOT the number the player actually deploys. E.g. playerSlots=6 -> 12-15 enemies,
 	-- playerSlots=3 -> 6-8. (dev-locked 2026-09-26; replaces the old fixed 3-6 prototype
 	-- clamp and satisfies the DB's open P0 "Encounter unit-count budget" in code.)
-	local countMultiplier = 2.0 + rng:NextNumber() * 0.5   -- [2.0, 2.5)
-	local enemyTarget = math.max(1, math.floor(playerSlots * countMultiplier + 0.5))
+	-- 2026-11-18 5:52 PM (open_decisions 51 / game_flow 42): Ranks 1-8 roll 3-5 enemies (uniform),
+	-- fixed by Rank, never by units owned. Rank 9+ and ungated quests keep the rule above. Both use
+	-- the same single NextNumber draw; the numbers live in RenownRules.Data (DAT-001). Goal extras
+	-- are trimmed back inside this target after the goal roll (step 13b).
+	local countRoll = rng:NextNumber()
+	local enemyTarget = RenownRules.EnemyCountTarget(gate and gate.rank, playerSlots, countRoll)
 
 	if totalEnemyCount < enemyTarget then
 		-- Pad with Grunts up to target.
@@ -523,11 +610,22 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 	else
 		-- W1 (step 2): a failing goal roll never stops quest generation; it plays as Wipe out.
 		-- pcall adds no RNG calls, so a successful roll is unchanged for the same seed.
-		local okGoal, errGoal = pcall(rollGoal, quest, rng)
+		local allowSurvive = if gate then RenownRules.SurviveAllowed(gate.rank) else nil
+		local okGoal, errGoal = pcall(rollGoal, quest, rng, allowSurvive)
 		if not okGoal then
 			warn("[QuestGenerator] Goal roll failed (quest plays as Wipe out): " .. tostring(errGoal))
 			quest.goal = "WipeOut"
 			quest.goalParams = {}
+		end
+	end
+
+	-- 13b. Ranks 1-8 (game_flow 42, USER RULING 2026-11-18 5:52 PM): goal extras (Capture +1, Kill
+	-- target +1 Elite leader) count INSIDE the rolled 3-5 total. No RNG call (board stays stable).
+	local enemyCap = if gate then RenownRules.NewPlayerEnemyCap(gate.rank) else nil
+	if enemyCap ~= nil then
+		local limit = math.min(enemyTarget, enemyCap)
+		if (quest.enemyCount or 0) > limit then
+			trimToTarget(quest, limit)
 		end
 	end
 
@@ -541,6 +639,13 @@ local function generateOneQuest(questIndex, playerLevel, rng, opts)
 		end
 	end
 
+	-- 15. Target name (user 2026-11-18 9:50 PM): no RNG draw on the real stream (rng:Clone()).
+	-- A failure only leaves the target unnamed on the card (the battle names it as before).
+	do
+		local okNm, errNm = pcall(rollTargetName, quest, rng)
+		if not okNm then warn("[QuestGenerator] Target name roll failed (unnamed on the card): " .. tostring(errNm)) end
+	end
+
 	return quest
 end
 
@@ -548,16 +653,36 @@ end
 -- PUBLIC API
 --------------------------------------------------
 
+-- NEW-PLAYER GATING CONTEXT (game_flow 42, USER RULING 2026-11-18 5:17 PM). ctx (optional):
+-- { boardLevel = number }. Missing boardLevel: Generate uses count - 2, else L1. Roster size is
+-- deliberately NOT part of the gate (USER RULING 5:52 PM: enemy count never depends on units owned).
+local function boardGate(rank: number, slot: number, boardLevel: number): any
+	local band = RenownRules.BoardSlotBand(slot, rank, boardLevel)
+	local lo, hi = RenownRules.DifficultyRange(band)
+	return {
+		rank = rank, band = band, diffLo = lo, diffHi = hi,
+		-- Boss cards (Rank 16+) take a Medium or Hard slot, never an Easy one (game_flow 42 default).
+		allowBoss = RenownRules.BossQuestsAllowed(rank) and band ~= "Easy",
+	}
+end
+
 -- DAILY CONTRACT (daily systems decisions 4-6, USER DECISION 2026-11-01): one per real day,
 -- built from a seed fixed by the day, so refreshing the board always shows the same contract.
 -- A normal battle (never a boss; never an elite once elites exist). Reward = normal quest rewards
 -- + 3 mercury (materials_system 13, paid as its quest mercury; was 5 until 2026-11-01); every 3rd one also gives 1 sulfur
 -- (Main / CurrencyService). It replaces the random quest-mercury roll.
+-- 2026-11-18 (live_service_features 11 / game_flow 42): difficulty is one draw from the same allowed
+-- pool as the board (1-3 until Hard is allowed, then 1-5) and the enemy count follows the Rank rules.
 local DAILY_CONTRACT_MERCURY = 3 -- USER DECISION 2026-11-01 (Simulator boss/daily check): was 5
 
-function QuestGenerator.GenerateDailyContract(playerLevel, day)
+function QuestGenerator.GenerateDailyContract(playerLevel, day, ctx)
 	local rng = Random.new(day * 1000003 + 424241)
-	local quest = generateOneQuest(0, playerLevel, rng, { noBoss = true, noMercuryRoll = true, isDaily = true })
+	local boardLevel = math.max(1, math.floor(tonumber(ctx and ctx.boardLevel) or 1))
+	local gate = {
+		rank = playerLevel, band = "Daily", diffLo = 1,
+		diffHi = RenownRules.MaxAllowedDifficulty(playerLevel, boardLevel), allowBoss = false,
+	}
+	local quest = generateOneQuest(0, playerLevel, rng, { noBoss = true, noMercuryRoll = true, isDaily = true, gate = gate })
 	quest.id = string.format("daily_%d", day)
 	quest.name = "Daily Contract: " .. quest.name
 	quest.isDailyContract = true
@@ -727,22 +852,33 @@ end
 --- @return table { quest1, quest2, quest3 }
 -- count (2026-11-16): number of quests; the Quest Board level adds one per level above 1
 -- (Quest Board L1 = 3, the old fixed number). Missing or bad = 3.
-function QuestGenerator.Generate(playerLevel, seed, count)
+-- ctx (2026-11-18, game_flow 42): { boardLevel } for the new-player gating. Quest i
+-- gets the band of board slot i (RenownRules.BoardSlotBand), so an upgrade still only ADDS a card.
+function QuestGenerator.Generate(playerLevel, seed, count, ctx)
 	local quests = {}
 	local n = math.clamp(math.floor(tonumber(count) or 3), 1, 12)
+	local boardLevel = math.max(1, math.floor(tonumber(ctx and ctx.boardLevel) or (n - 2)))
 	for i = 0, n - 1 do
 		local rng = Random.new(seed + i)
-		local quest = generateOneQuest(i + 1, playerLevel, rng)
+		local quest = generateOneQuest(i + 1, playerLevel, rng, { gate = boardGate(playerLevel, i + 1, boardLevel) })
 		table.insert(quests, quest)
 	end
 
-	print(string.format("[QuestGenerator] Generated %d quests (seed=%d, level=%d):", n, seed, playerLevel))
+	print(string.format("[QuestGenerator] Generated %d quests (seed=%d, level=%d, board L%d):",
+		n, seed, playerLevel, boardLevel))
 	for _, q in ipairs(quests) do
-		print(string.format("  [%s] %s | %s/%s | Diff %d | Lv %d | %d enemies | %s",
-			q.id, q.name, q.biome, q.template, q.difficulty, q.recommendedLvl, q.enemyCount, q.condition))
+		print(string.format("  [%s] %s | %s/%s | Diff %d | Lv %d | %d enemies | %d slots | %s | %s",
+			q.id, q.name, q.biome, q.template, q.difficulty, q.recommendedLvl, q.enemyCount,
+			tonumber(q.playerSlots) or 0, tostring(q.goal), q.condition))
 	end
 
 	return quests
+end
+
+--- Elite encounters allowed at this Rank (loot_progression 69: Rank 9+). Main checks this BEFORE the
+--- hidden roll; the completed-battle count still advances in Ranks 1-8 (the roll is just ignored).
+function QuestGenerator.EliteEncountersAllowed(rank: number?): boolean
+	return RenownRules.EliteEncountersAllowed(rank)
 end
 
 return QuestGenerator

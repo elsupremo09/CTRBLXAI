@@ -41,6 +41,11 @@ if not okOutfitTab then warn("[LoadoutScreen] OUTFIT tab unavailable: " .. tostr
 -- PARTIES tab (USER DECISION 2026-11-04) is its own module too, hosted the same way.
 local okPartiesTab, PartiesTab = pcall(require, CTRBLXAI_UI:WaitForChild("PartiesTab", 10))
 if not okPartiesTab then warn("[LoadoutScreen] PARTIES tab unavailable: " .. tostring(PartiesTab)); PartiesTab = nil end
+local TipController = nil -- New-player tips (2026-11-19): guarded, a missing module never breaks this screen
+do
+	local okTip, tipMod = pcall(function() return (require :: any)(CTRBLXAI_UI:WaitForChild("TipController", 10)) end)
+	if okTip then TipController = tipMod else warn("[LoadoutScreen] tips unavailable: " .. tostring(tipMod)) end
+end
 
 local LoadoutScreen: any = {}
 
@@ -378,6 +383,18 @@ switchTab = function()
 	if currentTab ~= "PARTIES" and PartiesTab then PartiesTab.Unmount() end
 	-- The unit header column is hidden on PARTIES (approved 2026-11-04) and shown everywhere else.
 	if rightColFrame then rightColFrame.Visible = currentTab ~= "PARTIES" end
+	-- New-player tips (new_player_tips): first unit-screen / tab views. Seen tips never repeat.
+	if TipController then
+		TipController.Trigger("TIP-UNIT-01")
+		local tabTips = { GEARS = { "TIP-EQP-01" }, SKILLS = { "TIP-SKL-01" }, PARTIES = { "TIP-PTY-01" } }
+		for _, id in tabTips[currentTab] or {} do TipController.Trigger(id) end
+		-- TIP-DOC-01 fallback (Tester W5): starter units already own their doctrine, so the first
+		-- doctrine the player SEES is slot 1 on the Skills tab. Only when the unit really has one.
+		if currentTab == "SKILLS" then
+			local u = MockData.GetSelectedUnit()
+			if u and MockData.GetEquippedDoctrine(u.id) then TipController.Trigger("TIP-DOC-01") end
+		end
+	end
 
 	-- Close any open overlays
 	closeDetail()

@@ -12,6 +12,11 @@ local MockData    = require(CTRBLXAI_UI:WaitForChild("MockLoadoutData", 10))
 local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 local LoadoutSkillUtil = require(CTRBLXAI_UI:WaitForChild("LoadoutSkillUtil", 10))
 local NumberFormat = require(CTRBLXAI_UI:WaitForChild("NumberFormat", 10)) -- no decimals (loadout_ui_spec 129)
+local TipController: any = nil -- New-player tips (2026-11-19): guarded, a missing module never breaks this screen
+do
+	local okTip, tipMod = pcall(function() return (require :: any)(CTRBLXAI_UI:WaitForChild("TipController", 10)) end)
+	if okTip then TipController = tipMod else warn("[LoadoutSkills] tips unavailable: " .. tostring(tipMod)) end
+end
 
 local LoadoutSkills: any = {}
 
@@ -347,6 +352,8 @@ buildSkillsContent = function()
 			end
 		end
 	end
+
+	if #augmentCards > 0 and TipController then TipController.Trigger("TIP-AUG-01") end -- new-player tip (augment owned)
 
 	-- Filter by type
 	if skillTypeFilter ~= "All" then

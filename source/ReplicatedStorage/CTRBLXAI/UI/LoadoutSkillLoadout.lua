@@ -13,6 +13,11 @@ local AugmentCompatibility = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 
 local MockData    = require(CTRBLXAI_UI:WaitForChild("MockLoadoutData", 10))
 local Theme       = require(CTRBLXAI_UI:WaitForChild("Theme", 10))
 local LoadoutSkillUtil = require(CTRBLXAI_UI:WaitForChild("LoadoutSkillUtil", 10))
+local TipController: any = nil -- New-player tips (2026-11-19): guarded, a missing module never breaks this screen
+do
+	local okTip, tipMod = pcall(function() return (require :: any)(CTRBLXAI_UI:WaitForChild("TipController", 10)) end)
+	if okTip then TipController = tipMod else warn("[LoadoutSkillLoadout] tips unavailable: " .. tostring(tipMod)) end
+end
 
 local LoadoutSkillLoadout: any = {}
 
@@ -576,6 +581,7 @@ openAugmentPickerForSlot = function(unitId, slotNum, augSlotNum)
 		TextColor3 = Theme.Colors.TextGold })
 	-- Locked 2nd slot (2026-11-04): show only the approved reason, no augment list.
 	if augSlotNum == 2 and not (MockData.Slot2Open or {})[unitId] then
+		if TipController then TipController.Trigger("TIP-LOCK-01") end -- new-player tip (locked slot tap)
 		makeLabel(popup, { Text = tostring(MockData.Slot2LockedText or "Locked"),
 			Size = UDim2.new(1, 0, 0, 40), Position = UDim2.new(0, 0, 0, 24),
 			TextSize = Theme.Text.Small(), TextColor3 = Theme.Colors.TextSecondary, TextWrapped = true })

@@ -15,8 +15,13 @@
 --     never write DataStores.
 -- Answers { code = "ok" | "empty" | "cooldown" | "failed", wait = seconds? }; the client maps the
 -- code to the approved lines.
+-- Google Sheet mirror (user ruling 2026-11-18): after a report is stored, a copy is POSTed to a
+-- Google Apps Script web app (tools/FeedbackSheet.gs). The URL (with its ?key=) lives ONLY in
+-- Roblox Secrets as "FeedbackSheetUrl" — never in code. The mirror runs in its own thread and can
+-- never fail or delay the report; the DataStore copy stays the complete record.
 
 local DataStoreService = game:GetService("DataStoreService")
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ServerScriptService = game:GetService("ServerScriptService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -37,6 +42,7 @@ local MAX_SCREENS = 8
 local MAX_INDEX = 2000        -- keys kept per day index
 local RETRIES = 3
 local CATEGORIES = table.freeze({ Bug = true, Suggestion = true, Other = true })
+local SHEET_SECRET = "FeedbackSheetUrl"
 
 type Ctx = {
 	playerId: string?,
@@ -50,6 +56,7 @@ local ctx: Ctx = {}
 local lastSent: { [number]: number } = {}
 local seq = 0
 local store: any = nil
+local sheetWarned = false
 
 -- Text helpers ---------------------------------------------------------------
 
@@ -168,7 +175,38 @@ local function retry(fn: () -> ()): boolean
 	return false
 end
 
-local function storeReport(report: { [string]: any }): boolean
+-- Sheet mirror: best effort, one try, own thread. Never touches the player's answer.
+local function sendToSheet(report: { [string]: any }, key: string, isDev: boolean, playerName: string)
+	local okSecret, url = pcall(function() return HttpService:GetSecret(SHEET_SECRET) end)
+	if not okSecret then
+		if not sheetWarned then
+			sheetWarned = true
+			warn(`[FeedbackService] Secret "{SHEET_SECRET}" not set; sheet mirror off`)
+		end
+		return
+	end
+	local okBody, body = pcall(HttpService.JSONEncode, HttpService, {
+		key = key, dev = isDev, playerName = playerName,
+		category = report.category, text = report.text,
+		client = report.client, server = report.server,
+	})
+	if not okBody then
+		warn(`[FeedbackService] Sheet encode failed for {key}`)
+		return
+	end
+	local ok, res = pcall(function()
+		return HttpService:RequestAsync({
+			Url = url, Method = "POST",
+			Headers = { ["Content-Type"] = "application/json" }, Body = body,
+		})
+	end)
+	if not ok or not res.Success or res.Body ~= "ok" then
+		local why = if ok then `{res.StatusCode} {string.sub(tostring(res.Body), 1, 60)}` else tostring(res)
+		warn(`[FeedbackService] Sheet mirror failed for {key}: {why}`)
+	end
+end
+
+local function storeReport(report: { [string]: any }): (boolean, string?, boolean?)
 	local ds = getStore()
 	if not ds then
 		warn("[FeedbackService] DataStore unavailable")
@@ -194,7 +232,7 @@ local function storeReport(report: { [string]: any }): boolean
 		warn(`[FeedbackService] Stored {key} but could not add it to {day}`)
 	end
 	print(`[FeedbackService] Stored {key} ({report.category})`)
-	return true
+	return true, key, prefix == "dev_"
 end
 
 -- Remote ---------------------------------------------------------------------------
@@ -236,7 +274,9 @@ local function onSubmit(player: Player, payload: any): { [string]: any }
 		return { code = "ok" }
 	end
 
-	if storeReport(report) then
+	local stored, key, isDev = storeReport(report)
+	if stored then
+		task.spawn(sendToSheet, report, key :: string, isDev :: boolean, player.Name)
 		return { code = "ok" }
 	end
 	lastSent[player.UserId] = nil -- failed: the player may try again at once

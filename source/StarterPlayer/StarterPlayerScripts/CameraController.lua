@@ -123,6 +123,18 @@ local rotationTriggered = false  -- Only one 45° step per multi-touch gesture
 -- Tap intent (consumed by BattleVisualClient)
 local pendingTapPos    = nil
 
+-- 2026-11-18 (user): cinematic focus + player camera lock.
+-- _cineActive: a cinematic owns the camera. Gameplay focus calls still update the real
+-- state (focus/distance/yaw/mode) but applyCFrame does not write the camera, so when the
+-- cinematic ends the camera tweens back to the real, current state.
+-- _inputLocks: reasons the PLAYER may not pan/zoom/rotate (e.g. "turn" = not the player's
+-- turn, "cinematic"). Scripted/gameplay camera calls are never blocked by these.
+local _cineActive = false
+local _inputLocks: { [string]: boolean } = {}
+local CINE_PITCH = 45            -- cinematic shots are always isometric
+local CINE_DISTANCE = 38         -- a bit closer than the isometric default (53)
+local CINE_TWEEN = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
 -- Stored native state for restoration
 local storedCameraType     = nil
 local storedCameraSubject  = nil
@@ -161,6 +173,7 @@ local function applyCFrame(instant)
 	if not isActive then return end
 	focus = clampFocus(focus)
 	distance = math.clamp(distance, ZOOM_MIN, ZOOM_MAX)
+	if _cineActive then return end -- a cinematic owns the camera; state is applied when it ends
 	local target = computeCFrame()
 	if instant then
 		camera.CFrame = target
@@ -224,6 +237,65 @@ function CameraController.SetBattlefieldBounds(bounds)
 end
 
 CameraController.IsOverUI = isOverUI
+
+--- Player camera input lock. `reason` is a short key ("turn", "cinematic"); the player can
+--- pan/zoom/rotate only when no reason is set. Gameplay/scripted camera moves are unaffected.
+local function clearHeldInput()
+	table.clear(heldKeys)
+	isDraggingRight = false
+	isDraggingMiddle = false
+	lastPinchDist = nil
+	lastTwistAngle = nil
+end
+
+function CameraController.SetInputLocked(reason: string, locked: boolean)
+	if type(reason) ~= "string" then return end
+	_inputLocks[reason] = if locked then true else nil
+	if locked then clearHeldInput() end
+end
+
+function CameraController.IsInputLocked(): boolean
+	return _cineActive or next(_inputLocks) ~= nil
+end
+
+--- Cinematic: take the camera. Returns false when the tactical camera is not active.
+function CameraController.BeginCinematic(): boolean
+	if not isActive then return false end
+	_cineActive = true
+	clearHeldInput()
+	return true
+end
+
+--- Cinematic shot: look at worldPos (isometric pitch, current yaw). dist overrides the
+--- cinematic distance (used to fit several targets). Only works inside Begin/EndCinematic.
+function CameraController.CinematicLookAt(worldPos: Vector3, dist: number?)
+	if not isActive or not _cineActive then return end
+	if not isValidVector(worldPos) then return end
+	local d = math.clamp(tonumber(dist) or CINE_DISTANCE, VIEW_PROFILES.Isometric.zoomMin, VIEW_PROFILES.Isometric.zoomMax)
+	local f = clampFocus(Vector3.new(worldPos.X, worldPos.Y or 0, worldPos.Z))
+	local pitchRad = math.rad(CINE_PITCH)
+	local yawRad = math.rad(yaw)
+	local off = Vector3.new(d * math.cos(pitchRad) * math.sin(yawRad), d * math.sin(pitchRad), d * math.cos(pitchRad) * math.cos(yawRad))
+	TweenService:Create(camera, CINE_TWEEN, { CFrame = CFrame.lookAt(f + off, f) }):Play()
+end
+
+--- Distance that fits a ground span `span` (studs) in a cinematic shot.
+function CameraController.CinematicFitDistance(span: number): number
+	local halfFov = math.rad(FIXED_FOV / 2)
+	local need = (math.max(tonumber(span) or 0, 20) * 1.4) / math.max(2 * math.tan(halfFov), 0.01)
+	return math.clamp(math.max(need, CINE_DISTANCE), VIEW_PROFILES.Isometric.zoomMin, VIEW_PROFILES.Isometric.zoomMax)
+end
+
+--- Cinematic over: give the camera back and tween to the real (current) tactical state.
+function CameraController.EndCinematic()
+	if not _cineActive then return end
+	_cineActive = false
+	applyCFrame(false)
+end
+
+function CameraController.IsCinematic(): boolean
+	return _cineActive
+end
 
 function CameraController.Pan(deltaX, deltaZ)
 	if not isActive then return end
@@ -543,6 +615,7 @@ function CameraController.EnterBattle(focusPos)
 	inBattle = true
 	camera = workspace.CurrentCamera
 	_scriptedView = nil  -- fresh battle starts with no scripted view held
+	_cineActive = false; table.clear(_inputLocks) -- deployment starts with free camera control
 
 	-- Store native state
 	storedCameraType = camera.CameraType
@@ -585,6 +658,7 @@ function CameraController.ExitBattle()
 	inBattle = false
 	isActive = false
 	_scriptedView = nil  -- never let an AI-turn scripted view leak past battle end
+	_cineActive = false; table.clear(_inputLocks)
 
 	-- Restore camera
 	camera.CameraType = storedCameraType or Enum.CameraType.Custom
@@ -618,6 +692,7 @@ end)
 UserInputService.InputBegan:Connect(function(input, gp)
 	if gp then return end
 	if not isActive then return end
+	if CameraController.IsInputLocked() then return end -- 2026-11-18: no player camera control off-turn
 
 	if input.KeyCode == Enum.KeyCode.Q then CameraController.RotateCCW() end
 	if input.KeyCode == Enum.KeyCode.E then CameraController.RotateCW() end
@@ -646,6 +721,7 @@ end)
 
 UserInputService.InputChanged:Connect(function(input, gp)
 	if not isActive then return end
+	if CameraController.IsInputLocked() then return end
 	if input.UserInputType == Enum.UserInputType.MouseWheel then
 		CameraController.Zoom(input.Position.Z * ZOOM_STEP)
 	end
@@ -658,6 +734,7 @@ end)
 
 RunService.RenderStepped:Connect(function()
 	if not isActive then return end
+	if CameraController.IsInputLocked() then return end
 	local dx, dz = 0, 0
 	if heldKeys["W"] then dz = dz - 1 end
 	if heldKeys["S"] then dz = dz + 1 end
@@ -773,6 +850,13 @@ UserInputService.TouchMoved:Connect(function(touch, gameProcessed)
 	entry.curPos = touch.Position
 
 	local count = countTracked()
+	if CameraController.IsInputLocked() then
+		-- Locked: still classify (a drag never becomes a tap) but never move the camera.
+		if not entry.exceededDrag and (entry.curPos - entry.startPos).Magnitude > DRAG_THRESHOLD then
+			entry.exceededDrag = true
+		end
+		return
+	end
 
 	if count == 1 and not entry.inMultitouch then
 		-- SINGLE FINGER

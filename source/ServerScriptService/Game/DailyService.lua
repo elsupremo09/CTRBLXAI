@@ -10,6 +10,10 @@
 --     so a reward and the counter that limits it are always written in the same save step.
 --   * Tracks today's Daily Contract (won or not) and boss rewards used today (limit 3; the boss
 --     reward itself is built separately). Both reset when a new day starts.
+--   * DAY LOCK (USER RULING 2026-11-18 5:59 PM, live_service_features 11 / game_flow 42): the
+--     Renown Rank and Quest Board level used for today's contract are saved the first time it is
+--     built, so a mid-day rank-up or board upgrade cannot change it. Cleared on the new day.
+--     Old saves with no lock simply lock on first view.
 --   * The lifetime daily-event count is NOT here: CurrencyService keeps it (dailyEventsCompleted).
 --
 -- OWNS: the day number and the per-day flags. MUST NOT OWN: rewards, currencies, quests.
@@ -23,6 +27,8 @@ type State = {
 	lastDay: number,       -- the last UTC day this player was processed for
 	contractDone: boolean, -- today's Daily Contract has been won
 	bossUsed: number,      -- boss rewards given today
+	lockRank: number?,     -- Renown Rank today's contract was first built at (nil = not locked yet)
+	lockBoard: number?,    -- Quest Board level today's contract was first built at
 }
 
 local states: { [string]: State } = {}
@@ -46,6 +52,13 @@ local function toNonNegInt(v: any): number
 	return math.floor(n)
 end
 
+-- Positive whole number, or nil (a missing / bad saved lock is treated as "not locked yet").
+local function toPosIntOrNil(v: any): number?
+	local n = tonumber(v)
+	if not n or n ~= n or n < 1 or n == math.huge then return nil end
+	return math.floor(n)
+end
+
 -- The player's state, rolled forward to today first (forwards only).
 local function stateFor(playerId: string): State
 	local today = DailyService.CurrentDay()
@@ -58,6 +71,8 @@ local function stateFor(playerId: string): State
 		s.lastDay = today
 		s.contractDone = false
 		s.bossUsed = 0
+		s.lockRank = nil
+		s.lockBoard = nil
 		print(`[DailyService] New day {today} for {playerId}: Daily Contract and boss rewards reset`)
 	end
 	return s
@@ -76,6 +91,22 @@ end
 -- its completion always use the same day, so it can never be won twice).
 function DailyService.ContractDay(playerId: string): number
 	return stateFor(playerId).lastDay
+end
+
+-- DAY LOCK (USER RULING 2026-11-18 5:59 PM): the Rank and Quest Board level today's contract uses.
+-- The first call of the day saves the current values; later calls that day return the saved ones,
+-- so ranking up (e.g. crossing Rank 9, or Rank 16 with board L3) never rebuilds today's contract.
+-- Returns { rank, boardLevel } (boardLevel matches the QuestGenerator ctx field).
+function DailyService.ContractGate(playerId: string, rank: number, boardLevel: number): { rank: number, boardLevel: number }
+	local s = stateFor(playerId)
+	if s.lockRank == nil or s.lockBoard == nil then
+		s.lockRank = toPosIntOrNil(rank) or 1
+		s.lockBoard = toPosIntOrNil(boardLevel) or 1
+		print(`[DailyService] Daily Contract for day {s.lastDay} locked for {playerId}: Rank {s.lockRank}, board L{s.lockBoard}`)
+	end
+	local lockedRank: number = s.lockRank or 1
+	local lockedBoard: number = s.lockBoard or 1
+	return { rank = lockedRank, boardLevel = lockedBoard }
 end
 
 -- Called after a won Daily Contract. `day` is the day the contract was offered for: a contract
@@ -112,7 +143,8 @@ end
 
 function DailyService.Export(playerId: string): any
 	local s = stateFor(playerId)
-	return { d = s.lastDay, c = if s.contractDone then 1 else nil, b = s.bossUsed }
+	-- r / q = today's contract lock (Rank / Quest Board level); nil until the contract is first built.
+	return { d = s.lastDay, c = if s.contractDone then 1 else nil, b = s.bossUsed, r = s.lockRank, q = s.lockBoard }
 end
 
 function DailyService.Import(playerId: string, data: any)
@@ -127,9 +159,13 @@ function DailyService.Import(playerId: string, data: any)
 		lastDay = if savedDay > 0 then savedDay else today,
 		contractDone = data.c == 1 or data.c == true,
 		bossUsed = math.min(toNonNegInt(data.b), DailyService.BOSS_REWARDS_PER_DAY),
+		-- Old saves have no r / q: nil = not locked yet, so it locks on first view (5:59 PM ruling).
+		-- Both or neither: a half lock is dropped so the pair is always taken together.
+		lockRank = if toPosIntOrNil(data.q) then toPosIntOrNil(data.r) else nil,
+		lockBoard = if toPosIntOrNil(data.r) then toPosIntOrNil(data.q) else nil,
 	}
-	local s = stateFor(playerId) -- roll forward if a new day started since the save
-	print(`[DailyService] Imported {playerId}: day {s.lastDay}, contract {if s.contractDone then "done" else "open"}, boss rewards used {s.bossUsed}`)
+	local s = stateFor(playerId) -- roll forward if a new day started since the save (also clears the lock)
+	print(`[DailyService] Imported {playerId}: day {s.lastDay}, contract {if s.contractDone then "done" else "open"}, boss rewards used {s.bossUsed}, lock Rank {tostring(s.lockRank)} / L{tostring(s.lockBoard)}`)
 end
 
 function DailyService.ClearPlayer(playerId: string)

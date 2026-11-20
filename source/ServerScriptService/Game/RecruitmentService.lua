@@ -53,6 +53,7 @@ local RecruitmentService = {}
 
 local FEE_BASE = 200            -- economy_framework id=22
 local FEE_PER_LEVEL = 15        -- economy_framework id=22
+local FEE_PERCENT = 85           -- economy_framework id=22 v4 (2026-11-18): recruit fee -15%
 local QUALITY_PREMIUM = table.freeze({  -- economy_framework id=22
 	Standard = 0,
 	Quality  = 300,
@@ -129,7 +130,8 @@ function RecruitmentService.ResolveHireCost(unitLevel: number, quality: string):
 		premium = QUALITY_PREMIUM.Standard
 	end
 	local lvl = math.max(1, math.floor(unitLevel or 1))
-	return FEE_BASE + (lvl * FEE_PER_LEVEL) + premium
+	-- v4 (2026-11-18, economy_framework 22): the formula result x0.85 (-15%), rounded down.
+	return math.floor((FEE_BASE + (lvl * FEE_PER_LEVEL) + premium) * FEE_PERCENT / 100)
 end
 
 --------------------------------------------------

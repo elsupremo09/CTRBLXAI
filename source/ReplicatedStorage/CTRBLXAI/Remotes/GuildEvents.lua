@@ -43,12 +43,16 @@ local FUNCTION_NAMES = table.freeze({
 	"GetDispatchBoard", -- () -> missions + unit availability
 	"RequestDispatch",  -- (missionId, { unitId }) -> result
 	"RecallDispatch",   -- (missionId) -> { returnedUnitIds } (2026-11-12: early return, no reward, no refund)
+	-- Real-time Dispatch (build step 2, 2026-11-19). Client sends intent only; the server clock decides.
+	"DispatchRt",       -- ({ action = "Info" | "Send" (tier, material, unitIds) | "Collect" (missionId) | "CollectAll" | "Recall" (missionId) }) -> result
 	"GetGuildUnits",    -- () -> unit list with level / XP / availability
 	"GetParties",       -- () -> { parties, roster, maxSize }
 	"SetPartyName",     -- (slot, name) -> result
 	"SetPartyMembers",  -- (slot, { unitId }) -> result
 	-- Parties tab (2026-11-04): create / delete / motto / emblem / background in one remote.
 	"PartyAction",      -- ({ action = "Create" | "Delete" | "SetMotto" | "SetArt", id, ... }) -> result + parties
+	-- Guild name + emblem (user 2026-11-18 11:44 PM). Client sends the wanted text / emblem key only.
+	"GuildIdentity",    -- ({ action = "SetName", name } | { action = "SetEmblem", key }) -> { ok, name, emblem }
 	"DevGuild",         -- Studio only: ({ action, ... }) -> { buildings, shopRefresh } (2026-10-31)
 	-- Runeforge (v2 build step 4, 2026-11-01). Client sends ids only; the server prices.
 	"GetRuneforge",     -- () -> level, gem storage, items with their lines and compatible gems

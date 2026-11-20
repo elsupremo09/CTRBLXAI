@@ -32,7 +32,7 @@
 -- LOCKED DATA — copied verbatim from CTRBLXAI.db. Do NOT invent or tune here.
 -- ─────────────────────────────────────────────────────────────────────────
 --
---   economy_framework 19 (v2): gold per level = Base Value × Rarity Mult × 0.30 ×
+--   economy_framework 19 (v4): gold per level = Base Value × Rarity Mult × 0.25 ×
 --     (1 + Target Level / 25) × (1 − 0.03 × (Blacksmith Level − 1)), rounded down on a
 --     RUNNING TOTAL (guild_facilities 48), plus 1 mercury per level for every rarity.
 --   economy_framework 11 (Base Value by Slot): 1H=100, 2H=150, Off-Hand=60, Body=80,
@@ -92,7 +92,9 @@ local RARITY_R = table.freeze({
 	Unique       = 150,
 })
 
-local PAID_DIVISOR = 250000      -- guild_facilities 48: Paid(C, R) = floor(C × R / 250,000)
+-- v4 (2026-11-18, economy_framework 19): levelling gold multiplier 0.30 -> 0.25. The credit keeps its
+-- x3 factor, so the divisor grows by 0.30/0.25 (250,000 -> 300,000). Mercury is unchanged.
+local PAID_DIVISOR = 300000      -- guild_facilities 48: Paid(C, R) = floor(C × R / 300,000)
 local MERCURY_PER_LEVEL = 1      -- materials_system 2/20: every rarity
 local MAX_BLACKSMITH_LEVEL = 10
 
@@ -191,7 +193,7 @@ end
 -- Credit of one bought level t at Blacksmith level b:
 --   slotValue × 3 × (25 + t) × (100 − 3 × (b − 1))
 -- Gold that a credit C is worth at rarity R (multiplier × 10):
---   Paid(C, R) = floor(C × R / 250,000)
+--   Paid(C, R) = floor(C × R / 300,000)   (v4; was 250,000 at the 0.30 multiplier)
 -- Upgrade gold = Paid(C_new, R) − Paid(C_old, R): a running total, so a multi-level
 -- upgrade and +1 steps cost exactly the same (economy_framework 19). The Runeforge
 -- catch-up reads the same credit (build step 4).

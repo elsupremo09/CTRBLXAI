@@ -3909,6 +3909,29 @@ end
 -- with a melee weapon (no projectile type: Shatter Point, Rapid Assault, Precise Disarm, Execution Stroke on a
 -- Single-pattern weapon). Steal keeps its own rear-tile check; leaps / dashes / steps move the caster
 -- themselves; revives and summons keep their own rules.
+--- Is this skill cast deferred (channel, or a zero-channel skill with an activation wait that
+--- ActivateChanneledSkill resolves)? Single source for the commit announce and the channel setup.
+--- Returns activationCt (before zeroing), hasChannel, deferZeroChannel.
+local function skillDeferral(actor: any, skillDef: any): (number, boolean, boolean)
+	if not skillDef then return 0, false, false end
+	-- ACTIVATION TIME (2026-10-07): authored per skill in Content.SkillData, not
+	-- DEX-reduced (frameworks 10/37). A channeled skill waits channel + activation.
+	-- A ZERO-channel skill with activation > 0 is deferred only when its kind is one
+	-- the deferred resolver (ActivateChanneledSkill) already handles in full:
+	-- shield, summon, heal, or an area pattern (not weapon-inherited). Other
+	-- zero-channel skills (single-target strikes with counters/RT delay/charge,
+	-- swaps, self-buffs) stay instant until that resolver supports them.
+	-- Flash-Caster / Laggy Caster (P/F-079): skill delay x0.75 / x1.25.
+	local activationCt = math.round(GameConstants.GetSkillActivationTime(skillDef.id) * TraitEffectService.GetSkillDelayMultiplier(actor))
+	local hasChannel = (skillDef.channelTime and skillDef.channelTime > 0) == true
+	local deferZeroChannel = ((not hasChannel) and activationCt > 0
+		and (skillDef.isShield or skillDef.isSummon or skillDef.isHealing or skillDef.swapWithTarget
+			or (skillDef.aoePattern ~= nil and skillDef.aoePattern ~= "InheritWeapon")
+			or skillDef.createsObject ~= nil)
+		and not skillDef.isCharge) and true or false
+	return activationCt, hasChannel, deferZeroChannel
+end
+
 local function isMeleeReachChannel(unit: any, skillDef: any): boolean
 	if skillDef.id == "SKL-STEAL" or skillDef.isLeapStrike or skillDef.leapsAdjacent
 		or skillDef.stepsToTargetFirst or skillDef.isRevive or skillDef.isSummon then
@@ -4031,7 +4054,7 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 		CommandService.PayCastCost(unit, skillDef, mpCost)
 		-- Channel release animation (2026-10-28 F-1): early branch, so it carries its own hint.
 		BattleVisualBroadcaster.ActionAnnounced(unit, skillDef.name or skillDef.id or "Summon",
-			if (skillDef.channelTime or 0) > 0 then "BigSpell" else nil)
+			if (skillDef.channelTime or 0) > 0 then "BigSpell" else nil, { skillId = skillDef.id })
 		local ok, info = spawnSummonFor(unit, skillDef, target, state)
 		doctrineAfterSkill(unit, target, skillDef, mpCost, true)
 		-- D3 (2026-11-07): a cast completed inside a Soul Well pays its HP on this early return too.
@@ -4056,7 +4079,7 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 		end
 		CommandService.PayCastCost(unit, skillDef, mpCost)
 		BattleVisualBroadcaster.ActionAnnounced(unit, skillDef.name or skillDef.id or "Deploy",
-			if (skillDef.channelTime or 0) > 0 then "BigSpell" else nil)  -- 2026-10-28 F-1
+			if (skillDef.channelTime or 0) > 0 then "BigSpell" else nil, { skillId = skillDef.id })  -- 2026-10-28 F-1
 		local inst = ObjectEffectService.PlaceObjectInstance(state, skillDef.createsObject, target.tileX, target.tileY, unit.side, unit.id)
 		print(string.format("[CommandService] Channel ACTIVATE [%s] PLACE %s | %s at (%s,%s) | owner=%s | MP:%d",
 			skillDef.name or skillDef.id, tostring(skillDef.createsObject), unit.name,
@@ -4082,7 +4105,7 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 		end
 		CommandService.PayCastCost(unit, skillDef, mpCost)
 		BattleVisualBroadcaster.ActionAnnounced(unit, skillDef.name or skillDef.id or "Repair",
-			if (skillDef.channelTime or 0) > 0 then "BigSpell" else nil)  -- 2026-10-28 F-1
+			if (skillDef.channelTime or 0) > 0 then "BigSpell" else nil, { skillId = skillDef.id })  -- 2026-10-28 F-1
 		-- Item devices too (DB: "Repair (SKL-REPAIR) resets remaining hits to 3"), 2026-10-26.
 		local repaired = repairAtTile(state, target.tileX, target.tileY, false)
 		print(string.format("[CommandService] Channel ACTIVATE [Repair] | %s repaired object at (%s,%s) -> %s | MP:%d",
@@ -4237,7 +4260,7 @@ function CommandService.ActivateChanneledSkill(state: any, unit: any): (boolean,
 
 	-- Channel fires now: announce the skill over the caster.
 	BattleVisualBroadcaster.ActionAnnounced(unit, skillDef.name or skillDef.id or "Skill",
-		if (skillDef.channelTime or 0) > 0 then "BigSpell" else nil)  -- channel release animation (2026-10-28)
+		if (skillDef.channelTime or 0) > 0 then "BigSpell" else nil, { skillId = skillDef.id })  -- channel release animation (2026-10-28)
 
 	-- SPEND the cast cost now (MP, or HP for HP/Blood Casting)
 	CommandService.PayCastCost(unit, skillDef, mpCost)
@@ -6337,7 +6360,6 @@ function CommandService.ValidateAndCommit(
 		end
 
 	elseif actionType == "Skill" then
-		BattleVisualBroadcaster.ActionAnnounced(actor, (skillDef and skillDef.name) or "Skill")
 		local target = selection.target
 		-- MANA SURGE (2026-10-07): the next ELIGIBLE skill committed while the caster
 		-- holds "Mana Surge" gets Skill Potency +10% and consumes the status here, at
@@ -6493,14 +6515,16 @@ function CommandService.ValidateAndCommit(
 		-- zero-channel skills (single-target strikes with counters/RT delay/charge,
 		-- swaps, self-buffs) stay instant until that resolver supports them.
 		-- Flash-Caster / Laggy Caster (P/F-079): skill delay x0.75 / x1.25. Was never called. 2026-10-28.
-		local activationCt = math.round(GameConstants.GetSkillActivationTime(skillDef.id) * TraitEffectService.GetSkillDelayMultiplier(actor))
-		local hasChannel = skillDef.channelTime and skillDef.channelTime > 0
-		local deferZeroChannel = (not hasChannel) and activationCt > 0
-			and (skillDef.isShield or skillDef.isSummon or skillDef.isHealing or skillDef.swapWithTarget
-				or (skillDef.aoePattern ~= nil and skillDef.aoePattern ~= "InheritWeapon")
-				or skillDef.createsObject ~= nil)
-			and not skillDef.isCharge
+		local activationCt, hasChannel, deferZeroChannel = skillDeferral(actor, skillDef)
 		if not hasChannel and not deferZeroChannel then activationCt = 0 end
+		-- Name banner (2026-11-18). A channeled / activation-delayed cast shows the banner only when it
+		-- goes off (ActivateChanneledSkill), user 2026-11-18 7:33 PM: the commit sends channelStart (no banner).
+		-- Decided HERE, on the final per-cast skillDef (after Mana Surge / Blood Casting / Concentrated
+		-- Effect / Chain Support / Evasion Surge / Soul Well), from the SAME skillDeferral result the channel
+		-- setup below uses, so the announce and the setup can never disagree (Tester FAIL fix 2026-11-18).
+		-- Still fires before ChannelStarted and before any instant-cast visuals.
+		BattleVisualBroadcaster.ActionAnnounced(actor, (skillDef and skillDef.name) or "Skill", nil,
+			if (hasChannel or deferZeroChannel) then { channelStart = true } else { skillId = skillDef and skillDef.id })
 
 		-- Check if this is a CHANNELED (or activation-delayed) skill
 		if hasChannel or deferZeroChannel then
@@ -8669,7 +8693,8 @@ function CommandService.ValidateAndCommit(
 		local target       = selection.target
 		local slot         = actor.consumableSlots[slotIndex]
 		local consumableDef = ConsumableData.Items[slot.consumableId]
-		BattleVisualBroadcaster.ActionAnnounced(actor, (consumableDef and consumableDef.name) or "Item")
+		BattleVisualBroadcaster.ActionAnnounced(actor, (consumableDef and consumableDef.name) or "Item", nil,
+			{ itemId = slot and slot.consumableId }) -- name banner (2026-11-18)
 
 		-- AC-017 Conservation Charm: the SECOND manual Item action each turn consumes NO charge (and
 		-- costs RT x2, folded below). GetItemConservationConfig returns non-nil only when the unit has

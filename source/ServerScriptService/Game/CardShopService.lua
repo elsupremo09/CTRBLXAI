@@ -150,13 +150,16 @@ function CardShopService.ListPrice(kind: string, id: string): number
 	return math.floor(VALUE[kind] * mult * lvlMult + 1e-9)
 end
 
+local BUY_PERCENT = 85 -- guild_facilities 75 v4 (2026-11-18): Training Grounds card buy prices -15%
+
 function CardShopService.BuyPrice(kind: string, id: string): number
 	local disc = discountPct(CardShopService.GetLevel())
 	local lvlMult = 1 + (mapLevel() - 1) * 0.02
 	local rarity = CardShopService.Classify(kind, id)
 	if not rarity then return 0 end
 	local mult = if kind == "Doctrine" then 1 else (RARITY_MULT[rarity] or 2.5)
-	return math.floor(VALUE[kind] * mult * lvlMult * (100 - disc) / 100 + 1e-9)
+	-- v4 (2026-11-18, guild_facilities 75): buy price x0.85 (-15%). List and sell prices unchanged.
+	return math.floor(VALUE[kind] * mult * lvlMult * (100 - disc) / 100 * BUY_PERCENT / 100 + 1e-9)
 end
 
 function CardShopService.SellPrice(kind: string, id: string): number

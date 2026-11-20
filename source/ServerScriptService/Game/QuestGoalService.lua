@@ -272,12 +272,22 @@ end
 -- Spawn time (Main, right after the enemies are generated, before any battlefield event can add
 -- units): mark the Kill target. Boss quests use the Boss; other Kill target quests use their one
 -- Elite (the roster leader QuestGenerator added), also tagged isEliteLeader like an elite encounter.
+-- Quest target name (user 2026-11-18 9:50 PM): the name QuestGenerator put on the card
+-- (goalParams.targetName) becomes the spawned target's name, so card, lore and battle match.
+-- Older boards without a name keep the battle's own generated name.
+local function applyTargetName(quest: any, unit: any)
+	local gp = quest and quest.goalParams
+	local nm = if type(gp) == "table" then gp.targetName else nil
+	if type(nm) == "string" and nm ~= "" and type(unit) == "table" then unit.name = nm end
+end
+
 function QuestGoalService.TagTarget(quest: any, enemies: { any }?)
 	if quest and quest.goal == "Capture" then
 		-- Capture (step 5): EnemyGenerator copied the roster entry's isCaptureTarget flag.
 		for _, eu in ipairs(enemies or {}) do
 			if eu.isCaptureTarget then
 				eu.isGoalTarget = true
+				applyTargetName(quest, eu)
 				return
 			end
 		end
@@ -293,7 +303,10 @@ function QuestGoalService.TagTarget(quest: any, enemies: { any }?)
 	for _, eu in ipairs(enemies or {}) do
 		if eu.enemyType == want then
 			eu.isGoalTarget = true
-			if want == "Elite" then eu.isEliteLeader = true end
+			if want == "Elite" then
+				eu.isEliteLeader = true
+				applyTargetName(quest, eu) -- Boss quests carry no card name (unchanged)
+			end
 			return
 		end
 	end

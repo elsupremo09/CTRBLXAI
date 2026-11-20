@@ -1416,6 +1416,7 @@ local function buildPanel(data)
 
 	-- Portrait face overlay (enemy/neutral/NPC). nil for players/summons → initials.
 	UIComponents.ApplyPortrait(portrait, data.portraitAssetId, initLbl)
+	UIComponents.ApplyUnitFrame(portrait) -- 2026-11-20 unit frame, side colour kept
 
 	-- Level badge (top-left of portrait)
 	if data.level then

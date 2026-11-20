@@ -504,6 +504,45 @@ function RewardService.RollEliteReward(mapLevel: number)
 	return item
 end
 
+-- DISPATCH ITEM (real-time Dispatch step 2, 2026-11-19; unit_progression 99). DispatchService decides
+-- how many items and their rarity from the mission seed (no Fortune); this only builds ONE item from the
+-- SAME pools the victory loot uses (DAT-001) and returns it. Nothing is committed here (Main commits).
+--   kind "consumable": a non-parked consumable whose fixed tier is at most maxRarity (Common/Uncommon)
+--   kind "card":       a skill card (event-only EVT- skills excluded), shown at `rarity`
+--   kind "gear":       an equipment item of `rarity` at `level` (ItemGenerator, source "Dispatch")
+-- Returns { kind, id, name, rarity, item? } or nil.
+local DISPATCH_TIER_RANK = { Common = 1, Uncommon = 2, Rare = 3, Epic = 4 }
+function RewardService.RollDispatchItem(kind: string, rarity: string, level: number, seed: number)
+	local rng = Random.new(math.floor(tonumber(seed) or 1))
+	if kind == "consumable" then
+		local maxRank = DISPATCH_TIER_RANK[rarity] or 2
+		local pool = {}
+		for _, cid in ipairs(getConsumablePool()) do
+			local d = ConsumableData.GetById(cid)
+			if d and (DISPATCH_TIER_RANK[d.tier] or 99) <= maxRank then table.insert(pool, cid) end
+		end
+		if #pool == 0 then return nil end
+		local cid = pool[rng:NextInteger(1, #pool)]
+		local d = ConsumableData.GetById(cid)
+		return { kind = "consumable", id = cid, name = d and d.name or cid, rarity = d and d.tier or rarity }
+	elseif kind == "card" then
+		local pool = getSkillPool()
+		if #pool == 0 then return nil end
+		local sid = pool[rng:NextInteger(1, #pool)]
+		local def = SkillData[sid]
+		return { kind = "card", id = sid, name = def and def.name or sid, rarity = rarity }
+	elseif kind == "gear" then
+		local item, err = ItemGenerator.GenerateFromPool(getEquipPool(), math.max(1, math.floor(tonumber(level) or 1)),
+			rarity, math.floor(tonumber(seed) or 1), "Dispatch")
+		if not item then
+			warn("[RewardService] Dispatch gear failed: " .. tostring(err))
+			return nil
+		end
+		return { kind = "gear", id = item.instanceId, name = item.displayName or item.instanceId, rarity = rarity, item = item }
+	end
+	return nil
+end
+
 --------------------------------------------------
 -- PUBLIC: GenerateRewards
 --

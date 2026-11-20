@@ -39,6 +39,7 @@ local BattleEvents: any = require(CTRBLXAI:WaitForChild("Remotes"):WaitForChild(
 
 local UnitSchema             = require(Game:WaitForChild("UnitSchema"))
 local DevAccess              = require(Game:WaitForChild("DevAccess")) -- dev-tool gate (2026-11-06)
+local ServerTime             = require(Game:WaitForChild("ServerTime")) -- dev fast-forward (Dispatch step 5)
 local EquipmentService       = require(Game:WaitForChild("EquipmentService"))
 local InventoryService       = require(Game:WaitForChild("InventoryService"))
 local ItemGenerator          = require(Game:WaitForChild("ItemGenerator"))
@@ -137,6 +138,25 @@ local EQUIP_SLOT_ORDER = table.freeze({ "MainHand", "OffHand", "Head", "Body", "
 
 local _playerId: string = "player_1"
 local _sessionPlayer: Player? = nil
+-- Guild identity (user 2026-11-18 11:44 PM): player-chosen guild name + emblem (the party emblem set).
+-- nil = not chosen yet: the header keeps "GUILD" and the Adventurer's Guild crest. Free to change for now.
+local GUILD_NAME_MAX = 16 -- characters (utf8, not bytes); fits the phone header's name slot (measured 2026-11-18)
+local GUILD_NAME_COOLDOWN = 3 -- seconds between name changes per player (each one calls the Roblox text filter)
+local guildName: string? = nil
+local guildEmblem: string? = nil
+local lastGuildNameAt: { [number]: number } = {}
+-- The exact text that would be saved (the filter checks THIS, not the raw input). Same rules as party names.
+local function cleanGuildName(s: any): string
+	if type(s) ~= "string" or utf8.len(s) == nil then return "" end
+	s = s:gsub("[%c]", " ") -- no line breaks / control characters
+	s = s:gsub("^%s+", ""):gsub("%s+$", "")
+	if (utf8.len(s) or 0) > GUILD_NAME_MAX then
+		local cut = utf8.offset(s, GUILD_NAME_MAX + 1)
+		if cut then s = s:sub(1, cut - 1) end
+		s = s:gsub("%s+$", "")
+	end
+	return s
+end
 local _getPlayerUnits: (() -> { [string]: any })? = nil
 local _addPlayerUnit: ((any) -> ())? = nil
 local _doSave: (() -> any)? = nil
@@ -853,6 +873,8 @@ function GuildMenuService.Export(_pid: string)
 		questBoard = if questBoard then { seed = questBoard.seed, battles = questBoard.battles,
 			nonce = questBoard.nonce } else nil, -- quest board fixed per refresh period (2026-11-17)
 		questBoardPeriod = boardPeriod, -- board period counter (Escape C1, 2026-11-18)
+		guildName = guildName, -- player-chosen guild name (filtered when set; nil = default), 2026-11-18
+		guildEmblem = guildEmblem, -- PartyArtData emblem key (nil = Adventurer's Guild crest), 2026-11-18
 		tavernHired = (function(): any?
 			-- Hired recruits of the current pool stay gone after a restart (2026-10-31).
 			if not tavernHired then return nil end
@@ -878,6 +900,12 @@ function GuildMenuService.Import(_pid: string, data: any)
 	-- Board period (Escape C1, 2026-11-18): old saves without it start at their battle count.
 	local bpd = tonumber(data.questBoardPeriod)
 	boardPeriod = if bpd and bpd % 1 == 0 and bpd >= 0 then bpd else battlesCompleted
+	-- Guild identity (2026-11-18). Old saves have none: the header keeps "GUILD" + the crest.
+	-- A saved name was filtered when it was set; here only the length / emblem key are re-checked.
+	local gn = cleanGuildName(data.guildName)
+	guildName = if gn ~= "" then gn else nil
+	local ge = data.guildEmblem
+	guildEmblem = if type(ge) == "string" and PartyArtData.IsValid("emblem", ge) then ge else nil
 	questBoard = nil
 	local qbd = data.questBoard
 	if type(qbd) == "table" then
@@ -1063,11 +1091,8 @@ function GuildMenuService.GetAwayUnitsForDeployment(opts: any?): { any }
 	return out
 end
 
--- Post-battle "return to base" bookkeeping (game_flow id 20): count the battle
--- and resolve returning dispatches (XP via the wired sink, materials via Credit).
--- daysElapsed (2026-10-16): the number of DISPATCH DAYS this battle was worth
--- (Main computes ceil(elapsed CT / 4000), min 1). Dispatch now counts down in days, not
--- battle count; forwarded to ResolveReturns. Defaults to 1 if a caller omits it.
+-- Post-battle "return to base" bookkeeping (game_flow id 20): count the battle.
+-- Dispatch is no longer resolved here (real-time Dispatch step 3, 2026-11-19); daysElapsed is ignored.
 -- counted (in-battle Escape, project_rules 285 / unit_progression 95, 2026-11-18): false for an escape
 -- under 2000 CT. Then the WHOLE completed-battle increment is skipped (battle count, so the elite
 -- roll, Merchant restock and Dungeon choice window stay put; dispatch days; the Tavern/dispatch
@@ -1085,11 +1110,13 @@ function GuildMenuService.OnBattleCompleted(daysElapsed: number?, tavernBonus: b
 		markDirty()
 		print(`[GuildMenuService] Tavern bonus earned: the next Tavern list has +{TAVERN_BONUS_SLOTS} recruit choices`)
 	end
-	local result = DispatchService.ResolveReturns(_playerId, daysElapsed or 1)
-	-- Boards refresh per battle (dispatch/tavern); merchant per its own interval.
+	-- Real-time Dispatch step 3 (2026-11-19, unit_progression 77): battles no longer count down dispatch
+	-- (the 4000 CT day rule is retired). Missions earn by the server clock and are collected on the
+	-- Dispatch screen, so nothing returns here. daysElapsed is kept in the signature for old callers.
+	-- Boards refresh per battle (tavern); merchant per its own interval.
 	tavernCache, dispatchCache = nil, nil
-	print(`[GuildMenuService] Battle counted ({battlesCompleted} completed) | {#(result and result.returned or {})} unit(s) returned from dispatch`)
-	return result
+	print(`[GuildMenuService] Battle counted ({battlesCompleted} completed)`)
+	return { returned = {} }
 end
 
 --------------------------------------------------
@@ -1160,6 +1187,8 @@ local function overview()
 		lastRefill = ApothecaryService.TakeLastReturn(), -- { cost, refilled, skippedCharges, needGold }; given once
 		augmentNotice = TrainingGroundsService.TakeNotice(), -- approved wording, given once (2026-11-04)
 		isStudio = RunService:IsStudio(),
+		-- Guild name + emblem for the header (display only; nil name = "GUILD"), 2026-11-18.
+		identity = { name = guildName, emblem = guildEmblem, maxNameLen = GUILD_NAME_MAX },
 	}
 end
 
@@ -1714,10 +1743,19 @@ local function onGetDispatchBoard(player: Player)
 	for _, id in sortedKeys(live) do
 		local away = isUnitAway(_playerId, id)
 		local rec = if away then missionOf[id] else nil
-		table.insert(units, { id = id, name = live[id].name, level = live[id].level,
+		local lu = live[id]
+		local race = lu.raceId and RaceData.GetRace(lu.raceId) or nil
+		local doc = lu.doctrineId and (DoctrineData :: any)[lu.doctrineId] or nil
+		table.insert(units, { id = id, name = lu.name, level = lu.level,
 			away = away, awayReason = if away then awayReason(_playerId, id) else nil, returnBattle = awayUntil[id],
 			awayMissionId = rec and rec.missionId, awayMissionTier = rec and rec.tier,
-			portraitAssetId = live[id].portraitAssetId }) -- Dispatch screen portraits (display only)
+			portraitAssetId = lu.portraitAssetId, -- Dispatch screen portraits (display only)
+			-- 2026-11-19: the Units screen card fields, so Dispatch shows the same unit card (display only).
+			unitLevel = lu.level, race = race and race.name or "?", doctrine = doc and doc.name or "?",
+			hp = lu.currentHp, maxHp = lu.maxHp, mp = lu.currentMp, maxMp = lu.maxMp,
+			-- Real-time Dispatch step 4 (2026-11-19): EXP-to-next for the screen's earning estimate. Display only.
+			xpToNext = (function() local okP, pr = pcall(ProgressionService.GetUnitLevelProgress, _playerId, id)
+				return if okP and type(pr) == "table" then pr.xpToNext else nil end)() })
 	end
 	return { ok = true, missions = missions, units = units, battlesCompleted = battlesCompleted,
 		slotsUsed = DispatchService.GetSlotsUsed(_playerId),
@@ -1771,6 +1809,64 @@ local function onRecallDispatch(player: Player, missionId: any)
 	local live = playerUnits()
 	for _, id in result.returnedUnitIds do table.insert(names, if live[id] then tostring(live[id].name) else id) end
 	return { ok = true, missionId = result.missionId, returnedUnitIds = result.returnedUnitIds, returnedNames = names }
+end
+
+-- REAL-TIME DISPATCH (build step 2, 2026-11-19; unit_progression 77/99/106, economy_framework 26).
+-- One remote, cmd.action. SEC-001: guard (right player, menu open, rate limit) + type/range checks;
+-- the client sends intent only, the server clock and DispatchService decide every amount (SEC-002);
+-- grant then save once per action (unit_progression 77). Recall at the guild base only (106).
+local function rtNamed(results: { any }): { any }
+	local live = playerUnits()
+	for _, r in results do
+		for _, line in r.units or {} do
+			line.frac = nil -- internal carry, not for the client (NET-003)
+			line.name = if live[line.unitId] then tostring(live[line.unitId].name) else line.unitId
+		end
+	end
+	return results
+end
+
+local function onDispatchRt(player: Player, cmd: any): any
+	local g = guard(player, "dispatchrt"); if g then return fail(g) end
+	if type(cmd) ~= "table" or type(cmd.action) ~= "string" then return fail("Invalid request") end
+	local action = cmd.action
+	if action == "Info" then
+		return { ok = true, config = DispatchService.RtConfig(_playerId), missions = DispatchService.RtList(_playerId) }
+	elseif action == "Send" then
+		local ids = cmd.unitIds
+		if type(ids) ~= "table" or #ids < 1 or #ids > 6 then return fail("Invalid unit selection") end
+		local live = playerUnits()
+		local seen: { [string]: boolean } = {}
+		local clean: { string } = {}
+		for _, id in ids do
+			if type(id) ~= "string" or #id > 64 or seen[id] then return fail("Invalid unit selection") end
+			if not live[id] then return fail("That unit is not on your roster") end
+			if isUnitAway(_playerId, id) then return fail(`{live[id].name} is already away`) end -- dispatch or dungeon
+			seen[id] = true
+			table.insert(clean, id)
+		end
+		if homeUnitCount() - #clean < 1 then return fail("Keep at least one unit at home") end
+		local ok, result: any = DispatchService.RtSend(_playerId, cmd.tier, cmd.material, clean, mapLevel())
+		if not ok then return fail(tostring(result)) end
+		save()
+		return { ok = true, mission = result, gold = balance(), missions = DispatchService.RtList(_playerId) }
+	elseif action == "Collect" then
+		local ok, result: any = DispatchService.RtCollect(_playerId, cmd.missionId)
+		if not ok then return fail(tostring(result)) end
+		save()
+		return { ok = true, results = rtNamed({ result }), missions = DispatchService.RtList(_playerId) }
+	elseif action == "CollectAll" then
+		local results = DispatchService.RtCollectAll(_playerId)
+		if #results > 0 then save() end
+		return { ok = true, results = rtNamed(results), missions = DispatchService.RtList(_playerId) }
+	elseif action == "Recall" then
+		if currentPhase ~= "Base" then return fail("Recall is only possible at the guild base") end
+		local ok, result: any = DispatchService.RtRecall(_playerId, cmd.missionId)
+		if not ok then return fail(tostring(result)) end
+		save()
+		return { ok = true, results = rtNamed({ result }), missions = DispatchService.RtList(_playerId) }
+	end
+	return fail("Invalid request")
 end
 
 local function onGetGuildUnits(player: Player)
@@ -1850,6 +1946,40 @@ local function filterPartyText(player: Player, text: string): (boolean?, string?
 	local ok2, out = pcall(function() return (result :: any):GetNonChatStringForBroadcastAsync() end)
 	if not ok2 or type(out) ~= "string" then return nil, "Couldn't check the text. Try again." end
 	return out == text, nil
+end
+
+-- Guild name / emblem (user 2026-11-18 11:44 PM; free for now). SEC-001: right player + menu open +
+-- rate limit (guard), type and length checks; the name is cleaned, then checked with the same Roblox
+-- text filter as party names (rejected if the filter changes anything) before it is saved.
+local function onGuildIdentity(player: Player, cmd: any): any
+	local g = guard(player, "guildidentity"); if g then return fail(g) end
+	if type(cmd) ~= "table" or type(cmd.action) ~= "string" then return fail("Invalid request") end
+	if cmd.action == "SetName" then
+		local raw = cmd.name
+		if type(raw) ~= "string" or #raw > 200 then return fail("Invalid name") end
+		local clean = cleanGuildName(raw)
+		if clean == "" then return fail("Invalid name") end -- empty keeps the old name
+		if clean == guildName then return { ok = true, name = guildName, emblem = guildEmblem } end
+		local now = os.clock()
+		local last = lastGuildNameAt[player.UserId]
+		if last and now - last < GUILD_NAME_COOLDOWN then return fail("Too fast — try again") end
+		lastGuildNameAt[player.UserId] = now
+		local allowed, why = filterPartyText(player, clean)
+		if allowed == nil then return fail(why or "Couldn't check the text. Try again.") end
+		if not allowed then return fail("That name isn't allowed") end
+		guildName = clean
+		markDirty()
+		return { ok = true, name = guildName, emblem = guildEmblem }
+	elseif cmd.action == "SetEmblem" then
+		local key = cmd.key
+		if type(key) ~= "string" or #key > 32 or not PartyArtData.IsValid("emblem", key) then
+			return fail("Invalid choice")
+		end
+		guildEmblem = key
+		markDirty()
+		return { ok = true, name = guildName, emblem = guildEmblem }
+	end
+	return fail("Invalid request")
 end
 
 local function onGetParties(player: Player): any
@@ -2505,7 +2635,9 @@ end
 -- DEV TOOLS (Studio only, 2026-10-31): the always-on dev panel (DevToolsPanel) uses this
 -- RemoteFunction so it gets an answer back (the building levels after a change). Live servers
 -- refuse every request. Replaces the old DevCommand "SetBuildingLevel" listener.
-local DEV_ACTIONS = table.freeze({ GetLevels = true, SetBuildingLevel = true, RefreshShops = true })
+local DEV_ACTIONS = table.freeze({ GetLevels = true, SetBuildingLevel = true, RefreshShops = true,
+	AddTimeOffset = true, ResetTimeOffset = true }) -- time: real-time Dispatch step 5 (2026-11-19)
+local DEV_TIME_STEPS = table.freeze({ [1] = true, [3] = true, [10] = true, [24] = true }) -- hours
 
 --------------------------------------------------
 -- CRUCIBLE (gear merging, 2026-11-02). Rules live in CrucibleService; these handlers check the
@@ -2625,13 +2757,23 @@ local function onDevGuild(player: Player, cmd: any): any
 		if type(level) ~= "number" or level ~= level or level % 1 ~= 0 then return fail("Invalid level") end
 		applyBuildingLevel(name, level)
 		print(`[Dev] Building {name} set to L{buildingLevels[name]} (saved when the menu closes)`)
+	elseif cmd.action == "AddTimeOffset" then
+		-- Dev fast-forward (step 5): fixed steps only (SEC-001 range check); memory only, never saved.
+		local h = cmd.hours
+		if type(h) ~= "number" or not DEV_TIME_STEPS[h] then return fail("Invalid time step") end
+		local off = ServerTime.AddDevOffset(h * 3600)
+		print(string.format("[Dev] Clock moved +%dh -> dev offset %.1fh", h, off / 3600))
+	elseif cmd.action == "ResetTimeOffset" then
+		ServerTime.ResetDevOffset()
+		print("[Dev] Clock offset reset to 0")
 	elseif cmd.action == "RefreshShops" then
 		devShopNonce = math.min(devShopNonce + 1, DEV_NONCE_MAX)
 		tavernCache, merchantCache, dispatchCache = nil, nil, nil
 		markDirty()
 		print(`[Dev] All shops refreshed (Merchant, Tavern, Dispatch, Dungeon choices) | refresh #{devShopNonce} (saved when the menu closes)`)
 	end
-	return { ok = true, buildings = table.clone(buildingLevels), shopRefresh = devShopNonce }
+	return { ok = true, buildings = table.clone(buildingLevels), shopRefresh = devShopNonce,
+		timeOffset = ServerTime.GetDevOffset() }
 end
 
 -- Renown Rank now (old saves get their Rank first).
@@ -2823,11 +2965,13 @@ function GuildMenuService.Init(deps: any)
 	GuildEvents.GetDispatchBoard.OnServerInvoke = onGetDispatchBoard
 	GuildEvents.RequestDispatch.OnServerInvoke = onRequestDispatch
 	GuildEvents.RecallDispatch.OnServerInvoke = onRecallDispatch
+	GuildEvents.DispatchRt.OnServerInvoke = onDispatchRt -- real-time Dispatch (step 2, 2026-11-19)
 	GuildEvents.GetGuildUnits.OnServerInvoke = onGetGuildUnits
 	GuildEvents.GetParties.OnServerInvoke = onGetParties
 	GuildEvents.SetPartyName.OnServerInvoke = onSetPartyName
 	GuildEvents.SetPartyMembers.OnServerInvoke = onSetPartyMembers
 	GuildEvents.PartyAction.OnServerInvoke = onPartyAction
+	GuildEvents.GuildIdentity.OnServerInvoke = onGuildIdentity -- guild name + emblem (2026-11-18)
 	BattleEvents.RequestDismissUnit.OnServerInvoke = onDismissUnit
 
 	-- Runeforge (v2 build step 4).

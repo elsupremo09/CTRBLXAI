@@ -586,6 +586,7 @@ local function createRosterUI(playerUnits, awayUnits)
 		if UIComponents and UIComponents.ApplyPortrait then
 			UIComponents.ApplyPortrait(cell, unitInfo.portraitAssetId, initials)
 		end
+		if UIComponents and UIComponents.ApplyUnitFrame then UIComponents.ApplyUnitFrame(cell) end -- 2026-11-20 unit frame, side colour kept
 
 		-- Level badge (top-left)
 		local lvl = unitInfo.level or 1

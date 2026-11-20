@@ -685,8 +685,17 @@ function BattleVisualBroadcaster.BattleStarted(units)
 		seedUnit(unit)  -- Battle Log Coverage: first UnitStateChanged must not dump state
 	end
 
+	-- 2026-11-18 6:10 PM: units a battlefield event placed BEFORE the battle starts join the
+	-- client's opening camera focus (after the quest-goal shots), grouped by their event name.
+	local eventUnits = {}
+	for _, unit in ipairs(units) do
+		if unit.isAlive and type(unit.eventName) == "string" and unit.eventName ~= "" then
+			table.insert(eventUnits, { id = unit.id, eventName = unit.eventName })
+		end
+	end
 	BattleEvents.BattleStarted:FireAllClients({
 		units = serialized,
+		eventUnits = eventUnits,
 		elevationMap = GameConstants.ELEVATION_MAP,
 		terrainMap   = GameConstants.TERRAIN_MAP,
 		blockers     = GameConstants.BLOCKERS,
@@ -1380,9 +1389,28 @@ end
 
 -- animKind (optional, 2026-10-28): animation the announcing unit plays with the label
 -- (Push / Interact / Open Treasure / Big Spell). nil = label only.
-function BattleVisualBroadcaster.ActionAnnounced(unit, label, animKind)
+-- meta (optional, 2026-11-18 name banner): { skillId = id } or { itemId = id }. The server only
+-- sends the kind and the content id (NET-001/NET-003); the client draws the text-only
+-- upper-centre banner. kind: "skill" | "special" (doctrine skills, ids "DOC-") | "item" | "basic"
+-- | "channel" (meta.channelStart: a deferred cast begins; meta.animOnly: animation-only re-send;
+-- no banner, no head label).
+function BattleVisualBroadcaster.ActionAnnounced(unit, label, animKind, meta)
 	if not unit or type(label) ~= "string" or label == "" then return end
-	BattleEvents.ActionAnnounced:FireAllClients({ unitId = unit.id, label = label, animKind = animKind })
+	local kind, ref = "basic", nil
+	if type(meta) == "table" then
+		if type(meta.itemId) == "string" and meta.itemId ~= "" then
+			kind, ref = "item", meta.itemId
+		elseif type(meta.skillId) == "string" and meta.skillId ~= "" then
+			ref = meta.skillId
+			kind = if string.sub(ref, 1, 4) == "DOC-" then "special" else "skill"
+		elseif meta.channelStart == true or meta.animOnly == true then
+			-- channel / activation wait begins (banner shows when the skill goes off), or an animation-only
+			-- re-send (AI ground casts, BattleTurnController): no banner, no head label; animKind still plays.
+			kind = "channel"
+		end
+	end
+	BattleEvents.ActionAnnounced:FireAllClients({ unitId = unit.id, label = label, animKind = animKind,
+		kind = kind, ref = ref })
 end
 
 function BattleVisualBroadcaster.FacingChanged(unit)
@@ -1465,13 +1493,33 @@ function BattleVisualBroadcaster.SetUnitModelBuilder(fn: (unit: any) -> ())
 	_unitModelBuilder = fn
 end
 
+-- CINEMATIC HOLD (user 2026-11-18 6:10 PM): a battlefield-event spawn plays a 2 s camera focus on
+-- the client. The turn loop (Main) calls WaitCinematicHold() before each TurnStarted, so the next
+-- turn's moves are not shown off-camera. Only event spawns (unit.eventName) set it; the wait is
+-- capped and only blocks the turn-loop thread (task.wait), nothing else.
+local CINEMATIC_HOLD_SECONDS = 2.2
+local _cinematicHoldUntil = 0
+function BattleVisualBroadcaster.WaitCinematicHold(): boolean
+	local remain = _cinematicHoldUntil - os.clock()
+	_cinematicHoldUntil = 0
+	if remain <= 0 then return false end
+	task.wait(math.min(remain, CINEMATIC_HOLD_SECONDS))
+	return true
+end
+
 function BattleVisualBroadcaster.UnitSpawned(unit)
+	if type(unit) == "table" and type(unit.eventName) == "string" and unit.eventName ~= "" then
+		_cinematicHoldUntil = math.max(_cinematicHoldUntil, os.clock() + CINEMATIC_HOLD_SECONDS)
+	end
 	if _unitModelBuilder then
 		local ok, err = pcall(_unitModelBuilder, unit)
 		if not ok then warn(`[BattleVisualBroadcaster] model build failed for {tostring(unit and unit.name)}: {err}`) end
 	end
 	BattleEvents.UnitSpawned:FireAllClients({
 		unit = serializeUnit(unit),
+		-- 2026-11-18: battlefield-event units carry their event name so the client can play the
+		-- 2 s camera focus with the name banner. Nil for summons, revives and goal spawns.
+		eventName = if type(unit) == "table" and type(unit.eventName) == "string" and unit.eventName ~= "" then unit.eventName else nil,
 	})
 	seedUnit(unit)
 	logEntry("ko", `{unitName(unit)} enters the battle.`, unit.id)

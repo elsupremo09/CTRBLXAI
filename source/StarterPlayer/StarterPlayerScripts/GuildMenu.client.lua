@@ -69,6 +69,8 @@ local dispatchScreenModule = UIFolder:WaitForChild("DispatchScreen", WAIT)
 if not dispatchScreenModule then warn("[GuildMenu] DispatchScreen module missing") end
 local DispatchScreen: any = if dispatchScreenModule then (require :: any)(dispatchScreenModule) else nil
 -- Units (2026-11-13, user): its own full screen too.
+local guildScreenModule = UIFolder:WaitForChild("GuildScreen", WAIT)
+local GuildScreen: any = if guildScreenModule then (require :: any)(guildScreenModule) else nil -- shared popup box (2026-11-19)
 local unitsScreenModule = UIFolder:WaitForChild("UnitsScreen", WAIT)
 if not unitsScreenModule then warn("[GuildMenu] UnitsScreen module missing") end
 local UnitsScreen: any = if unitsScreenModule then (require :: any)(unitsScreenModule) else nil
@@ -126,6 +128,17 @@ do
 	local contentFolder = ReplicatedStorage:WaitForChild("Content", WAIT)
 	local furnModule = contentFolder and contentFolder:WaitForChild("FurnitureData", WAIT)
 	if furnModule then FurnitureData = (require :: any)(furnModule) else warn("[GuildMenu] FurnitureData module missing") end
+end
+-- Guild emblem (user 2026-11-18 11:44 PM): the party emblem set + the Parties tab's own emblem chooser.
+local PartyArtData: any = nil
+local PartiesTab: any = nil
+do
+	local contentFolder = ReplicatedStorage:WaitForChild("Content", WAIT)
+	local artModule = contentFolder and contentFolder:WaitForChild("PartyArtData", WAIT)
+	if artModule then PartyArtData = (require :: any)(artModule) else warn("[GuildMenu] PartyArtData module missing") end
+	local ptModule = UIFolder:WaitForChild("PartiesTab", WAIT)
+	local okPT, pt = pcall(function() return if ptModule then (require :: any)(ptModule) else nil end)
+	if okPT and pt then PartiesTab = pt else warn("[GuildMenu] PartiesTab module missing -- guild emblem chooser off") end
 end
 if not GuildEvents.GuildMenuOpened then
 	warn("[GuildMenu] Guild remotes unavailable — menu disabled"); return
@@ -269,37 +282,83 @@ local header = framePanel("Header", UDim2.new(0.96, 0, 0.12, 0), UDim2.fromScale
 
 -- Guild crest left of "GUILD" (user ruling 2026-11-13 12:40 AM): Adventurer's Guild icon,
 -- a square the full header height (Theme.GuildIcons, the one place for these ids).
+-- 2026-11-19 (user 12:42 AM): the emblem sits centred in a WHITE rounded slot with the party
+-- emblem's bronze border; the slot is the square (full header height), the image is centred in it.
+local crestSlot = Instance.new("Frame")
+crestSlot.Name = "CrestSlot"
+crestSlot.BackgroundColor3 = Color3.new(1, 1, 1)
+crestSlot.BackgroundTransparency = 0
+crestSlot.BorderSizePixel = 0
+crestSlot.Size = UDim2.fromScale(1, 1)
+do
+	local ar = Instance.new("UIAspectRatioConstraint")
+	ar.AspectRatio = 1
+	ar.DominantAxis = Enum.DominantAxis.Height
+	ar.Parent = crestSlot
+	local cc = Instance.new("UICorner")
+	cc.CornerRadius = UDim.new(0, 6)
+	cc.Parent = crestSlot
+	local cs = Instance.new("UIStroke")
+	cs.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	cs.Color = Color3.fromRGB(176, 128, 72) -- same bronze border as the party emblem tiles
+	cs.Thickness = 1.5
+	cs.Parent = crestSlot
+end
 local headerCrest = Instance.new("ImageLabel")
 headerCrest.Name = "Crest"
 headerCrest.BackgroundTransparency = 1
 headerCrest.ScaleType = Enum.ScaleType.Fit
 headerCrest.Image = Theme.GuildIcons.AdventurersGuild
-headerCrest.Size = UDim2.fromScale(1, 1)
+headerCrest.AnchorPoint = Vector2.new(0.5, 0.5)
+headerCrest.Position = UDim2.fromScale(0.5, 0.5)
+headerCrest.Size = UDim2.fromScale(0.84, 0.84)
 do
 	local ar = Instance.new("UIAspectRatioConstraint")
 	ar.AspectRatio = 1
-	ar.DominantAxis = Enum.DominantAxis.Height
 	ar.Parent = headerCrest
 end
-headerCrest.Parent = header -- properties before Parent (NET-004)
+headerCrest.Parent = crestSlot
+crestSlot.Parent = header -- properties before Parent (NET-004)
+-- Guild emblem (user 2026-11-18 11:44 PM): tap the crest = the same emblem chooser as the Parties tab.
+local crestTap = Instance.new("TextButton")
+crestTap.Name = "CrestTap"
+crestTap.Text = ""
+crestTap.AutoButtonColor = false
+crestTap.BackgroundTransparency = 1
+crestTap.Size = UDim2.fromScale(1, 1)
+crestTap.ZIndex = 5
+crestTap.Parent = crestSlot
 
-local titleLabel = makeText(header, "GUILD", Theme.Text.Title(), Theme.Colors.TextGold, true)
-titleLabel.Size = UDim2.fromScale(0.4, 0.6)
+-- Guild name (user 2026-11-18 11:44 PM): tap to edit, free for now. The server cleans it, checks it
+-- with the Roblox text filter and saves it; on refusal the old name comes back. Max length comes
+-- from the server (16); the text shrinks to fit (never below the 10 px floor), then ends with "...".
+local DEFAULT_GUILD_NAME = "GUILD" -- the header's existing title, shown until a name is chosen
+local titleLabel = Instance.new("TextBox")
+titleLabel.Name = "GuildName"
+titleLabel.BackgroundTransparency = 1
+titleLabel.BorderSizePixel = 0
+titleLabel.ClearTextOnFocus = false
+titleLabel.PlaceholderText = "Guild name" -- user-approved 2026-11-19 12:09 AM
+titleLabel.PlaceholderColor3 = Color3.fromRGB(150, 140, 120)
 titleLabel.Font = Theme.Font.Display
-
-local phaseLabel = makeText(header, "", Theme.Text.Small(), Theme.Colors.TextSecondary)
-phaseLabel.Size = UDim2.fromScale(0.6, 0.4)
-phaseLabel.Position = UDim2.fromScale(0, 0.6)
--- Auto-fit (user ruling 2026-11-12 7:40 PM): shrink the status line so it fits the header,
--- never below the 10 px phone text floor; anything still too long ends with "...".
-phaseLabel.TextScaled = true
-phaseLabel.TextTruncate = Enum.TextTruncate.AtEnd
+titleLabel.TextSize = Theme.Text.Title()
+titleLabel.TextColor3 = Theme.Colors.TextGold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.TextWrapped = false
+titleLabel.TextScaled = true
+titleLabel.TextTruncate = Enum.TextTruncate.AtEnd
+titleLabel.ClipsDescendants = true
+titleLabel.Text = DEFAULT_GUILD_NAME
+titleLabel.Size = UDim2.fromScale(0.4, 0.6)
 do
 	local fit = Instance.new("UITextSizeConstraint")
-	fit.MaxTextSize = Theme.Text.Small()
-	fit.MinTextSize = 10
-	fit.Parent = phaseLabel
+	fit.MaxTextSize = Theme.Text.Title()
+	fit.MinTextSize = 10 -- phone text floor (project_rules 244)
+	fit.Parent = titleLabel
 end
+titleLabel.Parent = header -- properties before Parent (NET-004)
+-- The "Before/After battle | Battles done | building levels" status line was removed (user 2026-11-18
+-- 11:44 PM); the Rank + Renown bar now sit in its place under the name.
 
 local balanceLabel = makeText(header, "", Theme.Text.Body(), Theme.Colors.TextPrimary, true)
 balanceLabel.Size = UDim2.fromScale(0.6, 1)
@@ -340,8 +399,8 @@ do
 	block.Name = "Renown"
 	block.BackgroundTransparency = 1
 	block.BorderSizePixel = 0
-	block.Size = UDim2.new(0.4, -60, 0.6, 0)
-	block.Position = UDim2.fromOffset(56, 0)
+	block.Size = UDim2.new(0.4, -60, 0.4, 0)
+	block.Position = UDim2.new(0, 56, 0.6, 0)
 	local function fitText(lbl: TextLabel)
 		lbl.TextScaled = true
 		lbl.TextTruncate = Enum.TextTruncate.AtEnd
@@ -353,7 +412,7 @@ do
 	local rankLabel = makeText(block, "", Theme.Text.Small(), Theme.Colors.TextGold, true)
 	rankLabel.Name = "Rank"
 	rankLabel.TextWrapped = false
-	rankLabel.Size = UDim2.fromScale(1, 0.5)
+	rankLabel.Size = UDim2.fromScale(0.4, 1) -- "Rank 42" left, the Renown bar right of it (one line, 2026-11-18)
 	fitText(rankLabel)
 	local track = Instance.new("Frame")
 	track.Name = "Bar"
@@ -361,8 +420,8 @@ do
 	track.BackgroundTransparency = 0.2
 	track.BorderSizePixel = 0
 	track.ClipsDescendants = true
-	track.Size = UDim2.new(1, 0, 0.5, -1)
-	track.Position = UDim2.new(0, 0, 0.5, 1)
+	track.Size = UDim2.new(0.6, -4, 1, -2)
+	track.Position = UDim2.new(0.4, 4, 0, 1)
 	local fill = Instance.new("Frame")
 	fill.Name = "Fill"
 	fill.BackgroundColor3 = Theme.Colors.TextGold
@@ -381,21 +440,17 @@ do
 	track.Parent = block
 	block.Visible = false -- until the first overview arrives
 	block.Parent = header -- properties before Parent (NET-004)
-	-- Keep the block just right of the "GUILD" text whatever its rendered width.
-	-- Crest first, then "GUILD" and the status line right of it, then this block.
+	-- Crest first, then the guild name (top 60%) and, under it, this block (bottom 40%) where the
+	-- status line used to be (user 2026-11-18 11:44 PM). Left 40% only: the currencies own the right 60%.
 	local function place()
-		local cw = headerCrest.AbsoluteSize.X + 6
+		local cw = crestSlot.AbsoluteSize.X + 6
 		titleLabel.Position = UDim2.fromOffset(cw, 0)
-		titleLabel.Size = UDim2.new(0.4, -cw, 0.6, 0)
-		phaseLabel.Position = UDim2.new(0, cw, 0.6, 0)
-		phaseLabel.Size = UDim2.new(0.4, -cw, 0.4, 0) -- left 40% only: the currencies own the right 60%
-		local x = cw + titleLabel.TextBounds.X + 10
-		block.Position = UDim2.fromOffset(x, 0)
-		block.Size = UDim2.new(0.4, -(x + 4), 0.6, 0)
+		titleLabel.Size = UDim2.new(0.4, -(cw + 4), 0.6, 0)
+		block.Position = UDim2.new(0, cw, 0.6, 0)
+		block.Size = UDim2.new(0.4, -(cw + 4), 0.4, 0)
 	end
 	place()
-	titleLabel:GetPropertyChangedSignal("TextBounds"):Connect(place)
-	headerCrest:GetPropertyChangedSignal("AbsoluteSize"):Connect(place)
+	crestSlot:GetPropertyChangedSignal("AbsoluteSize"):Connect(place)
 	renownUI.block, renownUI.rank, renownUI.fill, renownUI.progress = block, rankLabel, fill, progressLabel
 	-- Tap the Rank block = Renown help (user ruling 2026-11-13 3:01 PM; approved text, loot_progression 94).
 	-- Tap anywhere on the popup to close it. One popup, created once; no per-tap connections.
@@ -471,6 +526,18 @@ local function updateRenownHeader(r: any)
 	renownUI.progress.Text = `{withCommas(have)} / {withCommas(need)}`
 	renownUI.fill.Size = UDim2.fromScale(math.clamp(have / need, 0, 1), 1)
 	renownUI.block.Visible = true
+end
+
+-- Guild name + emblem from the server overview (2026-11-18). nil name = "GUILD"; nil emblem = the crest.
+local guildIdentity = { name = DEFAULT_GUILD_NAME, emblem = nil :: string?, maxLen = 16 }
+local function applyGuildIdentity(id: any)
+	if type(id) ~= "table" then return end
+	guildIdentity.name = if type(id.name) == "string" and id.name ~= "" then id.name else DEFAULT_GUILD_NAME
+	guildIdentity.emblem = if type(id.emblem) == "string" then id.emblem else nil
+	if type(id.maxNameLen) == "number" and id.maxNameLen >= 1 then guildIdentity.maxLen = math.floor(id.maxNameLen) end
+	if not titleLabel:IsFocused() then titleLabel.Text = guildIdentity.name end
+	local art = if guildIdentity.emblem and PartyArtData then PartyArtData.Emblems[guildIdentity.emblem] else nil
+	headerCrest.Image = if art then art.image else Theme.GuildIcons.AdventurersGuild
 end
 
 -- Roblox's top-left buttons (menu, chat, voice) always draw on top of game UI. Keep the header
@@ -695,6 +762,41 @@ local function call(remote: RemoteFunction?, ...: any): any?
 	return res
 end
 
+-- Guild name / emblem edits (user 2026-11-18 11:44 PM). Connections made once. The server decides:
+-- it cleans and filters the name and checks the emblem key; the header shows whatever it answers.
+local function sendGuildIdentity(cmd: any)
+	local res = call(GuildEvents.GuildIdentity, cmd) -- shows the server's error on refusal
+	if res then
+		applyGuildIdentity({ name = res.name, emblem = res.emblem, maxNameLen = guildIdentity.maxLen })
+	else
+		titleLabel.Text = guildIdentity.name -- refused or no answer: the old name comes back
+	end
+end
+-- Typing cap (the server enforces the same limit): never more than the max characters.
+titleLabel:GetPropertyChangedSignal("Text"):Connect(function()
+	local text = titleLabel.Text
+	local n = utf8.len(text)
+	if n and n > guildIdentity.maxLen then
+		local cut = utf8.offset(text, guildIdentity.maxLen + 1)
+		if cut then titleLabel.Text = text:sub(1, cut - 1) end
+	end
+end)
+titleLabel.FocusLost:Connect(function()
+	local text = titleLabel.Text
+	if (text:gsub("%s", "")) == "" or text == guildIdentity.name then
+		titleLabel.Text = guildIdentity.name -- empty or unchanged: keep the old name
+		return
+	end
+	task.spawn(sendGuildIdentity, { action = "SetName", name = text })
+end)
+crestTap.Activated:Connect(function()
+	if not PartiesTab or type(PartiesTab.OpenEmblemPicker) ~= "function" then return end
+	PartiesTab.OpenEmblemPicker(root, guildIdentity.emblem, function(key: string)
+		if key == guildIdentity.emblem then return end
+		task.spawn(sendGuildIdentity, { action = "SetEmblem", key = key })
+	end)
+end)
+
 --------------------------------------------------
 -- PAGES
 --------------------------------------------------
@@ -760,7 +862,7 @@ local function updateBalanceLabel()
 		if CrucibleScreen then CrucibleScreen.SetGold(balanceLabel.Text) end
 		if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
 		if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
-		if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text) end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text); if DungeonScreen.SetCurrencies then DungeonScreen.SetCurrencies(realGold, realRes) end end if GuildHallScreen then GuildHallScreen.SetGold(balanceLabel.Text) end
+		if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text); if DispatchScreen.SetCurrencies then DispatchScreen.SetCurrencies(realGold, realRes, nil) end end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text); if DungeonScreen.SetCurrencies then DungeonScreen.SetCurrencies(realGold, realRes) end end if GuildHallScreen then GuildHallScreen.SetGold(balanceLabel.Text) end
 		if QuestBoardScreen then QuestBoardScreen.SetGold(balanceLabel.Text); QuestBoardScreen.SetCurrencies(realGold, realRes) end if QuestAcceptedView then QuestAcceptedView.SetGold(balanceLabel.Text); QuestAcceptedView.SetCurrencies(realGold, realRes) end if QuestPartyView then QuestPartyView.SetGold(balanceLabel.Text); QuestPartyView.SetCurrencies(realGold, realRes) end
 		return
 	end
@@ -790,7 +892,7 @@ local function updateBalanceLabel()
 	if CrucibleScreen then CrucibleScreen.SetGold(balanceLabel.Text) end
 	if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
 	if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
-	if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text) end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text); if DungeonScreen.SetCurrencies then DungeonScreen.SetCurrencies(realGold, realRes) end end if GuildHallScreen then GuildHallScreen.SetGold(balanceLabel.Text) end
+	if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text); if DispatchScreen.SetCurrencies then DispatchScreen.SetCurrencies(realGold, realRes, { gold = goldDelta, mercury = gain.mercury - mercurySpend, crystals = gain.crystals, sulfur = gain.sulfur }) end end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text); if DungeonScreen.SetCurrencies then DungeonScreen.SetCurrencies(realGold, realRes) end end if GuildHallScreen then GuildHallScreen.SetGold(balanceLabel.Text) end
 	if QuestBoardScreen then QuestBoardScreen.SetGold(balanceLabel.Text); QuestBoardScreen.SetCurrencies(realGold, realRes) end if QuestAcceptedView then QuestAcceptedView.SetGold(balanceLabel.Text); QuestAcceptedView.SetCurrencies(realGold, realRes) end if QuestPartyView then QuestPartyView.SetGold(balanceLabel.Text); QuestPartyView.SetCurrencies(realGold, realRes) end
 end
 
@@ -807,6 +909,7 @@ local function refreshOverview()
 	lastOverview = { gold = res.gold or 0, resources = res.resources or {} }
 	updateBalanceLabel()
 	updateRenownHeader(res.renown)
+	applyGuildIdentity(res.identity) -- guild name + emblem (2026-11-18)
 	-- Apothecary refill on return to base (2026-11-03, gf 69): say what was not refilled.
 	-- Base notes (refill + locked augment slots) are joined so one never hides the other.
 	local notes = {}
@@ -818,7 +921,7 @@ local function refreshOverview()
 	if type(res.augmentNotice) == "string" then table.insert(notes, res.augmentNotice) end
 	if #notes > 0 then setStatus(table.concat(notes, "\n"), true) end
 	local b = res.buildings or {}
-	phaseLabel.Text = `{currentPhase == "PreBattle" and "Before battle" or "After battle"} | Battles done: {res.battlesCompleted or 0} | Tavern L{b.Tavern or 1}  Merchant L{b.Merchant or 1}  Blacksmith L{b.Blacksmith or 1}`
+	-- (status line removed 2026-11-18 11:44 PM: the header shows the guild name, Rank and Renown instead)
 	if applyNavLocks and type(res.openBuildings) == "table" then applyNavLocks(res.openBuildings) end
 end
 
@@ -958,15 +1061,6 @@ local function confirmLeaveWithCart(proceed: () -> ())
 	for _ in cartDispatches do nDisp += 1 end
 	local nDis = 0
 	for _ in cartDismantles do nDis += 1 end
-	local overlay = Instance.new("TextButton")
-	overlay.Text = ""
-	overlay.AutoButtonColor = false
-	overlay.Modal = true
-	overlay.Size = UDim2.new(1, 0, 1, 0)
-	overlay.BackgroundColor3 = Color3.new(0, 0, 0)
-	overlay.BackgroundTransparency = 0.4
-	overlay.BorderSizePixel = 0
-	overlay.ZIndex = 10
 	-- Host the prompt on an open building screen (the guild menu is hidden while one is up).
 	local host: Instance? = (MerchantScreen and MerchantScreen.GetGui()) or (TavernScreen and TavernScreen.GetGui())
 		or (BlacksmithScreen and BlacksmithScreen.GetGui()) or (RuneforgeScreen and RuneforgeScreen.GetGui())
@@ -976,37 +1070,71 @@ local function confirmLeaveWithCart(proceed: () -> ())
 		or (DispatchScreen and DispatchScreen.GetGui()) or (UnitsScreen and UnitsScreen.GetGui())
 		or (DungeonScreen and DungeonScreen.GetGui()) or (GuildHallScreen and GuildHallScreen.GetGui())
 		or (QuestBoardScreen and QuestBoardScreen.GetGui()) or (QuestAcceptedView and QuestAcceptedView.GetGui()) or (QuestPartyView and QuestPartyView.GetGui()) or nil
-	overlay.Parent = host or screenGui
-	overlay.Activated:Connect(function() end)  -- absorb background taps
-	leaveDialog = overlay
-	local box = Instance.new("Frame")
-	box.AnchorPoint = Vector2.new(0.5, 0.5)
-	box.Position = UDim2.new(0.5, 0, 0.5, 0)
-	box.Size = UDim2.new(0, 340, 0, 160)
-	box.BackgroundColor3 = Theme.Colors.PanelRaised
-	box.BorderSizePixel = 0
-	box.ZIndex = 10
-	box.Parent = overlay
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = Theme.CornerRadius.md
-	corner.Parent = box
-	local msg = makeText(box, `Unsaved changes -- buy {nBuy}, sell {nSell}, hire {nHire}, upgrade {nUp}, downgrade {nDown}, dismantle {nDis}, dispatch {nDisp}. Confirm or discard?`, Theme.Text.Body(), Theme.Colors.TextPrimary, true)
-	msg.Size = UDim2.new(1, -24, 0, 70)
-	msg.Position = UDim2.new(0, 12, 0, 10)
-	msg.ZIndex = 11
-	local function mk(txt: string, color: Color3, slot: number, cb: () -> ())
-		local b = makeButton(box, txt, color, cb)
-		b.Size = UDim2.new(0.3, -8, 0, BUTTON_HEIGHT)
-		b.AnchorPoint = Vector2.new(0, 0.5)
-		b.Position = UDim2.new(0.035 + 0.323 * slot, 0, 1, -BUTTON_HEIGHT * 0.5 - 12)
-		b.ZIndex = 11  -- above box (ZIndex 10); Global ZIndexBehavior otherwise hides children
+	-- Same words as before, but only the kinds that have changes (2026-11-19; was "buy 0, sell 0, ...").
+	local parts: { string } = {}
+	for _, kv in { { "buy", nBuy }, { "sell", nSell }, { "hire", nHire }, { "upgrade", nUp },
+		{ "downgrade", nDown }, { "dismantle", nDis }, { "dispatch", nDisp } } do
+		if kv[2] > 0 then table.insert(parts, `{kv[1]} {kv[2]}`) end
 	end
-	mk("Confirm", Theme.Colors.Success, 0, function()
+	if #parts == 0 then -- staged change of another kind: keep the full original line
+		parts = { `buy {nBuy}`, `sell {nSell}`, `hire {nHire}`, `upgrade {nUp}`, `downgrade {nDown}`, `dismantle {nDis}`, `dispatch {nDisp}` }
+	end
+	local text = `Unsaved changes -- {table.concat(parts, ", ")}. Confirm or discard?`
+
+	-- 2026-11-19 (user: "fix this confirmation panel ... apply the proper style"): the shared gold
+	-- popup box (GuildScreen.MakeModalBox, same frame as every other prompt) with the shared icon
+	-- buttons: Back = cancel, X (destructive tint) = discard, check = confirm.
+	local overlay: TextButton, box: any
+	if GuildScreen and GuildScreen.MakeModalBox then
+		overlay, box = GuildScreen.MakeModalBox("LeavePrompt", { maxW = 360, widthScale = 0.6 })
+	else -- fallback if the shared module is missing (ARC-006)
+		overlay = Instance.new("TextButton")
+		overlay.Text = ""
+		overlay.AutoButtonColor = false
+		overlay.Modal = true
+		overlay.Size = UDim2.fromScale(1, 1)
+		overlay.BackgroundColor3 = Color3.new(0, 0, 0)
+		overlay.BackgroundTransparency = 0.4
+		overlay.BorderSizePixel = 0
+		overlay.ZIndex = 20
+		box = Theme.MakePanel("Box", UDim2.fromOffset(340, 0), UDim2.fromScale(0.5, 0.5), Vector2.new(0.5, 0.5), overlay)
+		box.AutomaticSize = Enum.AutomaticSize.Y
+		box.ZIndex = 21
+	end
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 10)
+	list.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = box
+	local msg = makeText(box, text, Theme.Text.Body(), Theme.Colors.TextPrimary, false)
+	msg.TextWrapped = true
+	msg.TextXAlignment = Enum.TextXAlignment.Center
+	msg.Size = UDim2.new(1, 0, 0, 0)
+	msg.AutomaticSize = Enum.AutomaticSize.Y
+	msg.LayoutOrder = 1
+	local row = Instance.new("Frame")
+	row.Name = "Buttons"
+	row.BackgroundTransparency = 1
+	row.BorderSizePixel = 0
+	row.Size = UDim2.new(1, 0, 0, Theme.MinSize.TouchTarget)
+	row.LayoutOrder = 2
+	local rl = Instance.new("UIListLayout")
+	rl.FillDirection = Enum.FillDirection.Horizontal
+	rl.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	rl.VerticalAlignment = Enum.VerticalAlignment.Center
+	rl.Padding = UDim.new(0, 8)
+	rl.SortOrder = Enum.SortOrder.LayoutOrder
+	rl.Parent = row
+	local iconSize = UDim2.fromOffset(Theme.MinSize.TouchTarget, Theme.MinSize.TouchTarget)
+	local function iconBtn(kind: string, name: string, label: string, order: number, tint: Color3?, cb: () -> ())
+		local b = Theme.MakeIconButton(row, kind, cb, { name = name, size = iconSize, tint = tint })
+		b.LayoutOrder = order
+		b:SetAttribute("Label", label) -- accessibility name; the message says what each does
+	end
+	iconBtn("Back", "Btn_LeaveCancel", "Cancel", 1, nil, function()
 		closeLeaveDialog()
-		finalizeCart()
-		if cartCount() == 0 then proceed() end
 	end)
-	mk("Discard", Theme.Colors.Warning, 1, function()
+	iconBtn("X", "Btn_LeaveDiscard", "Discard", 2, Theme.DestructiveIconTint, function()
 		cartBuys = {}
 		cartSells = {}
 		cartUpgrades = {}
@@ -1017,9 +1145,19 @@ local function confirmLeaveWithCart(proceed: () -> ())
 		closeLeaveDialog()
 		proceed()
 	end)
-	mk("Cancel", Theme.Colors.Info, 2, function()
+	iconBtn("Confirm", "Btn_LeaveConfirm", "Confirm", 3, nil, function()
 		closeLeaveDialog()
+		finalizeCart()
+		if cartCount() == 0 then proceed() end
 	end)
+	row.Parent = box
+	-- The fallback host (this menu's own ScreenGui) may use Global ZIndex: keep every box child above the box.
+	for _, d in box:GetDescendants() do
+		if d:IsA("GuiObject") then d.ZIndex = math.max(d.ZIndex, 22) end
+	end
+	overlay.Activated:Connect(function() end) -- absorb background taps
+	leaveDialog = overlay
+	overlay.Parent = host or screenGui -- parent last (NET-004)
 end
 
 -- Tavern page moved to its own screen (TavernScreen, 2026-10-31).
@@ -1036,6 +1174,7 @@ local function openTavern()
 	end
 	screenGui.Enabled = false
 	TavernScreen.Open()
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-TAV-01") end) -- new-player tip (2026-11-19)
 	updateBalanceLabel() -- fill the screen's gold line
 end
 
@@ -1046,6 +1185,7 @@ local function openMerchant()
 	end
 	screenGui.Enabled = false
 	MerchantScreen.Open()
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-MER-01") end) -- new-player tip (2026-11-19)
 	updateBalanceLabel() -- fill the screen's gold line
 end
 
@@ -1152,6 +1292,7 @@ local function openBlacksmith()
 	end
 	screenGui.Enabled = false
 	BlacksmithScreen.Open()
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-BS-01") end) -- new-player tip (2026-11-19)
 	updateBalanceLabel()
 end
 
@@ -1265,6 +1406,7 @@ local function openRuneforge()
 	end
 	screenGui.Enabled = false
 	RuneforgeScreen.Open()
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-RUN-01") end) -- new-player tip (2026-11-19)
 	updateBalanceLabel()
 end
 
@@ -1339,6 +1481,7 @@ local function openCrucible()
 	end
 	screenGui.Enabled = false
 	CrucibleScreen.Open()
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-CRU-01") end) -- new-player tip (2026-11-19)
 	updateBalanceLabel()
 end
 
@@ -1377,6 +1520,7 @@ local function openApothecary()
 	end
 	screenGui.Enabled = false
 	ApothecaryScreen.Open()
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-APO-01") end) -- new-player tip (2026-11-19)
 	updateBalanceLabel()
 end
 
@@ -1440,6 +1584,7 @@ local function openTrainingGrounds()
 	end
 	screenGui.Enabled = false
 	TrainingGroundsScreen.Open()
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-TG-01") end) -- new-player tip (2026-11-19)
 	updateBalanceLabel()
 end
 
@@ -1479,6 +1624,7 @@ local function openDispatch()
 	end
 	screenGui.Enabled = false
 	DispatchScreen.Open()
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-DIS-01") end) -- new-player tip (2026-11-19)
 	updateBalanceLabel()
 end
 
@@ -1488,20 +1634,16 @@ if DispatchScreen then
 		getBoard = function(): any?
 			return cachedCall("Dispatch", GuildEvents.GetDispatchBoard)
 		end,
-		getStaged = function(): { any }
-			return cartDispatches
-		end,
-		queue = function(missionId: string, unitIds: { string }, fee: number)
-			table.insert(cartDispatches, { missionId = missionId, unitIds = unitIds, fee = fee })
-			updateBalanceLabel()
-		end,
-		pendingCount = cartCount,
-		-- Dispatch Recall (2026-11-12): a live action (not staged in the cart). Returns the
+		-- Real-time Dispatch (build step 4, 2026-11-19): Send / Collect / Collect all / Recall are live
+		-- server actions (GuildEvents.DispatchRt); nothing is staged in the cart any more. Returns the
 		-- server answer, or nil on refusal (call() already showed the error).
-		recall = function(missionId: string): any?
-			local res = call(GuildEvents.RecallDispatch, missionId)
-			if res then invalidatePageCache() end -- units came home: re-fetch the board
-			updateBalanceLabel()
+		rt = function(action: string, payload: any?): any?
+			local cmd = if type(payload) == "table" then payload else { action = action }
+			local res = call(GuildEvents.DispatchRt, cmd)
+			if res and action ~= "Info" then
+				invalidatePageCache() -- units / gold / materials changed: re-fetch the board and header
+				refreshOverview()
+			end
 			return res
 		end,
 		requestBack = confirmLeaveWithCart,
@@ -1758,6 +1900,7 @@ local function openDungeon()
 	end
 	screenGui.Enabled = false
 	DungeonScreen.Open()
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-DUN-01") end) -- new-player tip (2026-11-19)
 	updateBalanceLabel()
 end
 
@@ -1817,6 +1960,7 @@ local function openPartiesTab()
 	if type(open) ~= "function" then setStatus("Loadout screen not loaded", true) return end
 	local pg = player:FindFirstChild("PlayerGui")
 	local pickMode = currentPhase == "PreBattle" and sortieMode
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-PTY-01") end) -- new-player tip (2026-11-19)
 	screenGui.Enabled = false
 	open("PARTIES", {
 		pick = pickMode,
@@ -1880,6 +2024,7 @@ openQuestBoard = function(): boolean
 	end
 	screenGui.Enabled = false
 	QuestBoardScreen.Open(questBoardData())
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-QB-01") end) -- new-player tip (2026-11-19)
 	updateBalanceLabel()
 	return true
 end
@@ -2158,6 +2303,7 @@ local function openGuildHall(startTab: string?)
 	end
 	screenGui.Enabled = false
 	GuildHallScreen.Open(startTab)
+	pcall(function() (require :: any)((UIFolder :: any):WaitForChild("TipController", WAIT)).Trigger("TIP-GH-01") end) -- new-player tip (2026-11-19)
 	updateBalanceLabel()
 end
 
@@ -2902,6 +3048,10 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 	screenGui.Enabled = true
 	invalidatePageCache()  -- server state changed; next render re-fetches fresh
 	refreshOverview()
+	-- Real-time Dispatch "While you were away" (RT-07/08, build step 4): once per session, first base open.
+	if atBase and DispatchScreen and DispatchScreen.ShowAwaySummary then
+		task.defer(function() pcall(DispatchScreen.ShowAwaySummary, screenGui) end)
+	end
 	-- Sortie party display (2026-10-15): the Change-party button shows only at the sortie;
 	-- entering PreBattle resets to the default party (first non-empty) so the Continue
 	-- button reflects it once the map finishes scouting (unlockSortie -> updateSortieButton).

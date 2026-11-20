@@ -89,6 +89,8 @@ function ApothecaryService.BuyDiscountPct(level: number?): number
 	return math.max(0, 3 * (l - 1))
 end
 
+local BUY_PERCENT = 90 -- economy_framework 27 v4 (2026-11-18): Apothecary buy prices -10%
+
 function ApothecaryService.ListPrice(id: string): number
 	local def = ConsumableData.GetById(id)
 	return def and def.shopPrice or 0
@@ -96,7 +98,9 @@ end
 
 function ApothecaryService.BuyPrice(id: string): number
 	local list = ApothecaryService.ListPrice(id)
-	return (list * (100 - ApothecaryService.BuyDiscountPct())) // 100
+	-- v4 (2026-11-18, economy_framework 27): buy price -10% (x0.90) on top of the level discount.
+	-- List, sell (20% of list) and refill prices are unchanged.
+	return (list * BUY_PERCENT * (100 - ApothecaryService.BuyDiscountPct())) // 10000
 end
 
 -- Sell value of one owned (full) loose copy: floor(list x 20%).

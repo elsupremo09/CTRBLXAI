@@ -83,6 +83,7 @@ local function buildUnitHeader()
 	if UIComponents and UIComponents.ApplyPortrait and unit.portraitAssetId then
 		if UIComponents.ApplyPortrait(portrait, unit.portraitAssetId) then pText.Text = "" end
 	end
+	if UIComponents and UIComponents.ApplyUnitFrame then UIComponents.ApplyUnitFrame(portrait, { darkBg = true }) end -- 2026-11-20 unit frame
 
 	local lvlBadge = Instance.new("TextLabel")
 	lvlBadge.Size = UDim2.new(0, 28, 0, 12)
@@ -258,6 +259,7 @@ local function buildUnitHeader()
 			if UIComponents and UIComponents.ApplyPortrait and u.portraitAssetId then
 				if UIComponents.ApplyPortrait(pFrame, u.portraitAssetId) then pInit.Text = "" end
 			end
+			if UIComponents and UIComponents.ApplyUnitFrame then UIComponents.ApplyUnitFrame(pFrame, { darkBg = true }) end -- 2026-11-20 unit frame
 			-- Level badge (top-left of portrait); ZIndex above the portrait image (53+1).
 			local badge = Instance.new("TextLabel")
 			badge.Size = UDim2.fromOffset(Theme.BadgeFitW and Theme.BadgeFitW("Lv." .. u.level, Theme.Font.Mono, 28) or 30, 13)

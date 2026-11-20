@@ -162,8 +162,9 @@ local function setStatus(text: string, isError: boolean?)
 end
 
 -- Small modal panel on top of the tab (pickers, menus, delete prompt).
-local function openOverlay(title: string, width: number, height: number): Frame?
-	local main = _main
+-- host (2026-11-18): draw on another full-screen GuiObject (the guild header uses the same emblem chooser).
+local function openOverlay(title: string, width: number, height: number, host: GuiObject?): Frame?
+	local main = host or _main
 	if not main then return nil end
 	closeOverlay()
 	local back = Instance.new("TextButton")
@@ -264,10 +265,12 @@ local function promptDelete(party: any)
 	textButton(box, "Cancel", UDim2.fromOffset(120, 32), UDim2.new(1, -136, 1, -44), closeOverlay, 22)
 end
 
-local function openArtPicker(party: any, kind: string)
+-- host / onChoose (2026-11-18): the guild header opens this same chooser on its own screen and saves
+-- the pick itself; without them the pick is the party's SetArt, as before.
+local function openArtPicker(party: any, kind: string, host: GuiObject?, onChoose: ((string) -> ())?)
 	local order = if kind == "emblem" then PartyArtData.EmblemOrder else PartyArtData.BackgroundOrder
 	local map = if kind == "emblem" then PartyArtData.Emblems else PartyArtData.Backgrounds
-	local box = openOverlay(if kind == "emblem" then "Choose emblem" else "Choose background", 360, 260)
+	local box = openOverlay(if kind == "emblem" then "Choose emblem" else "Choose background", 360, 260, host)
 	if not box then return end
 	local grid = Instance.new("ScrollingFrame")
 	grid.Size = UDim2.new(1, -16, 1, -80)
@@ -295,7 +298,9 @@ local function openArtPicker(party: any, kind: string)
 			b.LayoutOrder = i
 			b.ZIndex = 23
 			corner(b, 4)
-			if (party[kind] or order[1]) == key then
+			local current = party[kind]
+			if current == nil and not onChoose then current = order[1] end -- guild with no emblem yet: nothing marked
+			if current == key then
 				local s = Instance.new("UIStroke")
 				s.Color = Theme.Colors.TextGold
 				s.Thickness = 2
@@ -304,7 +309,11 @@ local function openArtPicker(party: any, kind: string)
 			b.Parent = grid
 			b.Activated:Connect(function()
 				closeOverlay()
-				doAction({ action = "SetArt", id = party.id, field = kind, key = key })
+				if onChoose then
+					onChoose(key)
+				else
+					doAction({ action = "SetArt", id = party.id, field = kind, key = key })
+				end
 			end)
 		end
 	end
@@ -489,6 +498,7 @@ local function portrait(parent: Instance, mi: any?, size: UDim2, pos: UDim2, isL
 	local initials = label(b, string.sub(mi.name or "?", 1, 2), { size = UDim2.fromScale(1, 0.7), bold = true,
 		align = Enum.TextXAlignment.Center, textSize = Theme.Text.Title(), z = 3 })
 	if mi.portraitAssetId and UIComponents.ApplyPortrait(b, mi.portraitAssetId) then initials.Text = "" end
+	UIComponents.ApplyUnitFrame(b, { darkBg = true }) -- 2026-11-20 unit frame
 	-- Level badge, top-left
 	local lv = label(b, `Lv {mi.unitLevel or 1}`, { size = UDim2.fromOffset(40, 14), position = UDim2.fromOffset(2, 2),
 		textSize = Theme.Text.Tiny(), z = 5 })
@@ -616,6 +626,7 @@ render = function()
 				face.ZIndex = 3
 				corner(face, 3)
 				if mi.portraitAssetId then UIComponents.ApplyPortrait(face, mi.portraitAssetId) end
+				UIComponents.ApplyUnitFrame(face, { darkBg = true }) -- 2026-11-20 unit frame
 			end
 		end
 		-- Sortie pick mode: Select / Deploying (phone: small strip under the emblem)
@@ -820,6 +831,12 @@ end
 
 function PartiesTab.IsPickMode(): boolean
 	return _pick.active
+end
+
+-- The same emblem chooser for the guild header (user 2026-11-18 11:44 PM). host = a full-screen
+-- GuiObject to draw the overlay on; onChoose(key) gets the picked PartyArtData emblem key.
+function PartiesTab.OpenEmblemPicker(host: GuiObject, currentKey: string?, onChoose: (string) -> ())
+	openArtPicker({ emblem = currentKey }, "emblem", host, onChoose)
 end
 
 local _ = Players

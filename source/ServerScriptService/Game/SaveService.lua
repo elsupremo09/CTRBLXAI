@@ -75,6 +75,11 @@ local _loadFailed: { [string]: string } = {}
 -- Only the Studio dev panel calls Delete.
 local _deletedThisSession: { [string]: boolean } = {}
 
+-- Load result when another live server still holds the save lock (user ruling 2026-11-19 3:03 PM):
+-- Main kicks the player with SaveService.LOCKED_MESSAGE instead of opening the save read-only.
+SaveService.LOCKED = "SAVE_LOCKED"
+SaveService.LOCKED_MESSAGE = "Your save is still open on another server. Please rejoin in a minute."
+
 local function failLoad(playerId, reason)
 	_loadFailed[playerId] = reason
 	warn("[SaveService] Saving DISABLED for " .. playerId .. " this session: " .. reason)
@@ -196,6 +201,174 @@ local function safeSetAsync(store, key, data)
 		if attempt < MAX_RETRIES then task.wait(RETRY_DELAY) end
 	end
 	return false, "SetAsync failed after " .. MAX_RETRIES .. " retries"
+end
+
+--------------------------------------------------
+-- SESSION LOCK (real-time Dispatch build step 1, 2026-11-19; unit_progression 77)
+--
+-- One live server per save. Real-time Dispatch pays out by the server clock, so if the
+-- same save were open in two servers both could collect the same hours. The lock lives in
+-- its OWN key ("lock_v1_<id>" in "<namespace>_Lock"), so the save data is unchanged and
+-- every old save loads as before.
+--   Claim   : at the start of Load (studio / production only). Free, already ours, or
+--             stale -> claimed. Held by another live server -> wait and retry (2+4+8+8 s),
+--             then Load returns SaveService.LOCKED and Main kicks the player (2026-11-19).
+--   Refresh : every 30 s. If another server holds it now, saving stops (lock lost).
+--   Release : Main calls ReleaseLock after the quit save -> the next server claims at once.
+--   Stale   : not refreshed for 240 s (Studio 120 s) = free (crashed server / killed Studio).
+--   Save    : refused unless we hold the lock and refreshed it within (stale - 30) s.
+-- Memory mode (tests, Studio test guard, dev memorySave) never reads or writes the lock.
+--------------------------------------------------
+
+local HttpService = game:GetService("HttpService")
+local LOCK_KEY = "lock_v%d_%s"
+local LOCK_REFRESH = 30
+local LOCK_STALE = if RunService:IsStudio() then 120 else 240
+local LOCK_SAVE_GRACE = LOCK_STALE - 30
+local LOCK_RETRY_WAITS = { 2, 4, 8, 8 }
+-- Our own id: game.JobId is "" in Studio, so two Studio sessions would look the same.
+local SESSION_ID = HttpService:GenerateGUID(false)
+
+type LockState = { store: any, key: string, lastRefresh: number, lost: boolean, released: boolean, busy: boolean }
+local _locks: { [string]: LockState } = {}
+
+local function lockValue(t: number)
+	return { session = SESSION_ID, jobId = game.JobId, placeId = game.PlaceId, t = t }
+end
+
+-- One claim attempt. Returns claimed, current holder (when not claimed), error text.
+local function tryClaim(store, key: string): (boolean, any, string?)
+	local claimed, holder = false, nil
+	local ok, err = pcall(function()
+		store:UpdateAsync(key, function(current)
+			local now = os.time()
+			claimed, holder = false, current
+			local free = type(current) ~= "table"
+				or current.session == SESSION_ID
+				or (now - (tonumber(current.t) or 0)) > LOCK_STALE
+			if not free then return nil end -- another live server holds it: no write
+			claimed = true
+			return lockValue(now)
+		end)
+	end)
+	if not ok then return false, nil, tostring(err) end
+	return claimed, holder, nil
+end
+
+local function startLockRefresh(playerId: string)
+	task.spawn(function()
+		while true do
+			task.wait(LOCK_REFRESH)
+			local st = _locks[playerId]
+			if not st or st.released or st.lost then return end
+			st.busy = true
+			local stillOurs: boolean? = nil
+			local ok, err = pcall(function()
+				st.store:UpdateAsync(st.key, function(current)
+					if type(current) == "table" and current.session ~= SESSION_ID then
+						stillOurs = false -- someone else claimed it (we went stale): never take it back
+						return nil
+					end
+					stillOurs = true
+					return lockValue(os.time())
+				end)
+			end)
+			st.busy = false
+			if ok and stillOurs == true then
+				st.lastRefresh = os.clock()
+			elseif ok and stillOurs == false then
+				st.lost = true
+				_loadFailed[playerId] = "save lock lost: this save was opened in another server"
+				warn("[SaveService] Save lock LOST for " .. playerId .. " — saving stops this session")
+				return
+			else
+				warn("[SaveService] Save lock refresh failed (will retry): " .. tostring(err))
+			end
+		end
+	end)
+end
+
+-- Claims the lock for this save. Returns ok, reason, heldElsewhere.
+local function acquireLock(playerId: string): (boolean, string?, boolean)
+	if _mode == "memory" then return true, nil, false end
+	local store = getDataStore("Lock")
+	if not store then return true, nil, false end -- fell back to memory mode: nothing to lock
+	local key = string.format(LOCK_KEY, SCHEMA_VERSION, playerId)
+	local errors, waits = 0, 0
+	while true do
+		local claimed, holder, err = tryClaim(store, key)
+		if claimed then
+			_locks[playerId] = { store = store, key = key, lastRefresh = os.clock(), lost = false, released = false, busy = false }
+			startLockRefresh(playerId)
+			print("[SaveService] Save lock claimed | " .. playerId .. " | session " .. string.sub(SESSION_ID, 1, 8))
+			return true, nil, false
+		end
+		if err then
+			errors += 1
+			warn(string.format("[SaveService] Save lock claim failed (attempt %d/%d): %s", errors, MAX_RETRIES, err))
+			if errors >= MAX_RETRIES then
+				return false, "save lock could not be claimed: " .. err, false
+			end
+			task.wait(RETRY_DELAY)
+		else
+			waits += 1
+			local w = LOCK_RETRY_WAITS[waits]
+			local where = if type(holder) == "table" then tostring(holder.jobId) .. " / place " .. tostring(holder.placeId) else "?"
+			if not w then
+				return false, "save is open in another server (" .. where .. ")", true
+			end
+			warn(string.format("[SaveService] Save is open in another server (%s) — waiting %d s", where, w))
+			task.wait(w)
+		end
+	end
+end
+
+-- Whether a real Save may write now (memory mode always may).
+local function lockAllowsSave(playerId: string): (boolean, string?)
+	if _mode == "memory" then return true, nil end
+	local st = _locks[playerId]
+	if not st then return false, "no save lock held (released or never claimed)" end
+	if st.lost then return false, "save lock lost to another server" end
+	if st.released then return false, "save lock already released" end
+	local age = os.clock() - st.lastRefresh
+	if age > LOCK_SAVE_GRACE then
+		return false, string.format("save lock not refreshed for %d s", math.floor(age))
+	end
+	return true, nil
+end
+
+-- Frees the save for the next server. Call AFTER the last save (Main saveOnQuit).
+function SaveService.ReleaseLock(playerId: string)
+	local st = _locks[playerId]
+	if not st or st.released then return end
+	st.released = true
+	local t0 = os.clock()
+	while st.busy and os.clock() - t0 < 10 do
+		task.wait(0.1)
+	end
+	if not st.lost then
+		local ok, err = pcall(function()
+			st.store:UpdateAsync(st.key, function(current)
+				if type(current) == "table" and current.session ~= SESSION_ID then
+					return nil -- another server's lock now: leave it alone
+				end
+				local v = lockValue(0) -- t = 0 -> stale -> the next server claims at once
+				v.released = true
+				return v
+			end)
+		end)
+		if ok then
+			print("[SaveService] Save lock released | " .. playerId)
+		else
+			warn("[SaveService] Save lock release failed (frees itself after " .. LOCK_STALE .. " s): " .. tostring(err))
+		end
+	end
+	_locks[playerId] = nil
+end
+
+-- True while this server holds a live lock for the save (memory mode: always true).
+function SaveService.HasLock(playerId: string): boolean
+	return (lockAllowsSave(playerId))
 end
 
 --------------------------------------------------
@@ -488,6 +661,12 @@ function SaveService.Save(playerId, rosterState, inventoryItems, progression, cu
 		warn("[Save] Skipped — save was deleted this session; restart to begin fresh")
 		return false, "Save blocked: save deleted this session"
 	end
+	-- Session lock (2026-11-19): only the server holding the lock may write the real save.
+	local lockOk, lockWhy = lockAllowsSave(playerId)
+	if not lockOk then
+		warn("[Save] Skipped — " .. tostring(lockWhy))
+		return false, "Save blocked: " .. tostring(lockWhy)
+	end
 
 	-- Encode roster (Key 1)
 	local rosterData = {
@@ -524,7 +703,8 @@ function SaveService.Save(playerId, rosterState, inventoryItems, progression, cu
 		memSet(getKey(KEY_INVENTORY, playerId), inventoryData)
 		memSet(getKey(KEY_PROGRESSION, playerId), progressionData)
 		print(string.format("[SaveService] SAVED (memory) | %s | Units:%d Items:%d",
-			playerId, #rosterData.units or 0, #inventoryData.items))
+			playerId, (function() local n=0; for _ in pairs(rosterData.units or {}) do n=n+1 end; return n end)(), -- keyed table: count like the real-mode line (2026-11-18)
+			#inventoryData.items))
 		if _testGuard then
 			warn("[SaveService] TEST GUARD ON — progress is NOT being saved. Clear workspace attribute CTRBLXAI_TestMemorySave.")
 		end
@@ -572,6 +752,7 @@ function SaveService.Load(playerId)
 	assert(type(playerId) == "string", "SaveService.Load: playerId required")
 
 	local rosterRaw, inventoryRaw, progressionRaw
+	local readOnlyReason: string? = nil -- set when another server holds the save lock
 
 	if _mode == "memory" then
 		rosterRaw = memGet(getKey(KEY_ROSTER, playerId))
@@ -595,6 +776,20 @@ function SaveService.Load(playerId)
 			print("[SaveService] Test guard: real Studio save read (read-only); saves stay in memory")
 		end
 	else
+		-- Session lock (2026-11-19): claim before reading. Held by another live server after
+		-- the waits -> return SaveService.LOCKED (Main kicks; nothing is read or written).
+		local lockOk, lockErr, heldElsewhere = acquireLock(playerId)
+		if not lockOk then
+			if not heldElsewhere then
+				return failLoad(playerId, tostring(lockErr))
+			end
+			-- Held by another live server after the waits: do NOT read the save. Saving stays blocked
+			-- and Main kicks the player (2026-11-19 3:03 PM). This session never owned the lock.
+			_loadFailed[playerId] = "save is open in another server: " .. tostring(lockErr)
+			warn("[SaveService] Save locked by another server for " .. playerId .. ": " .. tostring(lockErr))
+			return nil, SaveService.LOCKED
+		end
+
 		local store1 = getDataStore("Roster")
 		local store2 = getDataStore("Inventory")
 		local store3 = getDataStore("Progression")
@@ -620,6 +815,11 @@ function SaveService.Load(playerId)
 	end
 
 	_loadFailed[playerId] = nil -- reads succeeded; only a schema mismatch below re-blocks
+	if readOnlyReason then
+		-- Data loads normally so the player sees it, but nothing is written this session.
+		_loadFailed[playerId] = readOnlyReason
+		warn("[SaveService] Save loaded READ-ONLY for " .. playerId .. ": " .. readOnlyReason)
+	end
 
 	-- No save exists (new player)
 	if not rosterRaw and not inventoryRaw and not progressionRaw then
@@ -685,6 +885,14 @@ end
 --------------------------------------------------
 
 function SaveService.Delete(playerId)
+	if _mode ~= "memory" then
+		-- Tester WARN 1 (2026-11-19): a server without the save lock (read-only) must never delete the real save.
+		local okLock, why = lockAllowsSave(playerId)
+		if not okLock then
+			warn("[SaveService] Delete refused -- " .. tostring(why))
+			return false
+		end
+	end
 	-- Block every later save this session (see _deletedThisSession).
 	_deletedThisSession[playerId] = true
 	if _mode == "memory" then

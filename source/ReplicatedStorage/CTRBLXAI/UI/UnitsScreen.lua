@@ -100,7 +100,11 @@ local function bar(parent: Instance, y: number, key: string, cur: number?, max: 
 	bg.Parent = parent
 end
 
-local function makeCard(grid: Instance, u: any, order: number)
+-- opts (2026-11-19, shared with the Dispatch screen so unit portraits look the same everywhere):
+--   onTap    = tap handler (default: open the Loadout for the unit)
+--   selected = gold outline (the selected-row look of the Quest Party picker / mission rows)
+--   tag      = dim the card with this tag (e.g. "QUEUED"); default: AWAY / Exploring a dungeon when away
+local function makeCard(grid: Instance, u: any, order: number, opts: { onTap: (() -> ())?, selected: boolean?, tag: string? }?)
 	local h = cardHeight()
 	local ps = h - 8
 	local ts = Theme.Text.Small()
@@ -115,23 +119,45 @@ local function makeCard(grid: Instance, u: any, order: number)
 	local corner = Instance.new("UICorner")
 	corner.CornerRadius = Theme.CornerRadius.sm
 	corner.Parent = card
+	if opts and opts.selected then
+		-- 2026-11-20 5:32 PM user: same white glow as selected gear tiles (Theme.MakeItemTile).
+		local white = Color3.fromRGB(255, 255, 255)
+		local fade = { 0, 0.35, 0.55, 0.7, 0.8, 0.88, 0.94 }
+		for i, tr in fade do
+			local off = i - 1
+			local ring = Instance.new("Frame")
+			ring.Name = "SelectGlow" .. i
+			ring.BackgroundTransparency = 1
+			ring.BorderSizePixel = 0
+			ring.Active = false
+			ring.Interactable = false
+			ring.Size = UDim2.new(1, off * 2, 1, off * 2)
+			ring.Position = UDim2.fromOffset(-off, -off)
+			ring.ZIndex = 7
+			ring.Parent = card
+			local st = Instance.new("UIStroke", ring)
+			st.Color = white
+			st.Thickness = 1
+			st.Transparency = tr
+			st.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		end
+	end
 
 	-- Portrait + level badge (top-left, like the Loadout header portrait).
 	local face = Instance.new("Frame")
 	face.Name = "Portrait"
 	face.Size = UDim2.fromOffset(ps, ps)
 	face.Position = UDim2.fromOffset(4, 4)
-	face.BackgroundColor3 = Theme.Colors.Player
-	face.BackgroundTransparency = 0.2
+	-- 2026-11-20 6:48 PM user: match gear tiles -- dark panel fill, square corners (frame shows clearly).
+	face.BackgroundColor3 = Theme.PanelFrame.BgColor
+	face.BackgroundTransparency = Theme.PanelFrame.BgTransparency
 	face.BorderSizePixel = 0
 	face.ZIndex = 1
-	local fc = Instance.new("UICorner")
-	fc.CornerRadius = Theme.CornerRadius.sm
-	fc.Parent = face
 	local ini = makeText(face, string.sub(tostring(u.name or "?"), 1, 2), ts, Theme.Colors.TextPrimary, true)
 	ini.Size = UDim2.fromScale(1, 1)
 	ini.TextXAlignment = Enum.TextXAlignment.Center
 	if UIComponents then UIComponents.ApplyPortrait(face, u.portraitAssetId, ini) end
+	if UIComponents then UIComponents.ApplyUnitFrame(face, { darkBg = true }) end -- 2026-11-20 shared unit frame
 	local lvText = "Lv." .. tostring(u.unitLevel or "?")
 	local badge = makeText(face, lvText, math.max(10, Theme.Text.Tiny()), Theme.Colors.TextPrimary) -- 10 px phone floor
 	badge.Name = "LevelBadge"
@@ -177,7 +203,10 @@ local function makeCard(grid: Instance, u: any, order: number)
 	bar(stats, ts + 13, "MP", u.mp, u.maxMp, Theme.Colors.MP, ts)
 	stats.Parent = card
 
-	if u.away then
+	local dimTag: string? = if opts and opts.tag then opts.tag
+		elseif u.away then (if u.awayReason == "dungeon" then "Exploring a dungeon" else "AWAY")
+		else nil
+	if dimTag then
 		local dim = Instance.new("Frame")
 		dim.Name = "Dim"
 		dim.Size = UDim2.fromScale(1, 1)
@@ -190,7 +219,7 @@ local function makeCard(grid: Instance, u: any, order: number)
 		dc.CornerRadius = Theme.CornerRadius.sm
 		dc.Parent = dim
 		-- Dungeon units: approved "Exploring a dungeon" (2026-11-13 8:24 PM); dispatched keep AWAY.
-		local tag = makeText(dim, if u.awayReason == "dungeon" then "Exploring a dungeon" else "AWAY", Theme.Text.Small(), Theme.Colors.TextPrimary, true)
+		local tag = makeText(dim, dimTag, Theme.Text.Small(), Theme.Colors.TextPrimary, true)
 		tag.TextXAlignment = Enum.TextXAlignment.Right
 		tag.TextYAlignment = Enum.TextYAlignment.Bottom
 		tag.Size = UDim2.new(1, -6, 1, -3)
@@ -199,7 +228,9 @@ local function makeCard(grid: Instance, u: any, order: number)
 	end
 
 	local uid = u.id
+	local onTap = opts and opts.onTap
 	card.Activated:Connect(function()
+		if onTap then onTap() return end
 		local c = ctx
 		if c and uid then c.openUnit(uid) end
 	end)
@@ -318,6 +349,16 @@ end
 
 function UnitsScreen.SetStatus(text: string, isError: boolean?)
 	if screen then screen.SetStatus(text, isError) end
+end
+
+-- Shared unit card (2026-11-19): the Units screen card, for other screens that list units (Dispatch).
+-- u = { id, name, unitLevel, race, doctrine, hp, maxHp, mp, maxMp, portraitAssetId, away, awayReason }.
+function UnitsScreen.MakeCard(parent: Instance, u: any, order: number, opts: any?)
+	makeCard(parent, u, order, opts)
+end
+
+function UnitsScreen.CardHeight(): number
+	return cardHeight()
 end
 
 

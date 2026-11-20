@@ -104,8 +104,8 @@ local function openPopup(info: any)
 	else
 		label(box, renownText(math.max(0, math.floor(tonumber(info.renownLoss) or 0))), body, Theme.Colors.Danger, true, 3)
 		local fee = math.max(0, math.floor(tonumber(info.fee) or 0))
-		if info.early == true and fee > 0 then
-			label(box, feeText(fee), body, Theme.Colors.Danger, false, 5) -- O4: only under 2000 CT
+		if fee > 0 then -- 2026-11-18 4:59 PM: shown whenever the server charges a fee (early, or Renown Rank 51+)
+			label(box, feeText(fee), body, Theme.Colors.Danger, false, 5)
 		end
 	end
 	if info.early == true then

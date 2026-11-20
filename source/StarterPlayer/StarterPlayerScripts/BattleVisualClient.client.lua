@@ -68,6 +68,28 @@ local CameraController = require(
 	player:WaitForChild("PlayerScripts")
 		:WaitForChild("CameraController", 10)
 )
+-- Cinematic camera focus + upper-center banner (user 2026-11-18). pcall: a missing or broken
+-- module never takes the battle client down (ARC-006); every call site checks for nil.
+local BattleCinematic: any = nil
+do
+	local mod = player:WaitForChild("PlayerScripts"):WaitForChild("BattleCinematic", 10)
+	if mod then
+		local ok, res = pcall(require, mod)
+		if ok then BattleCinematic = res else warn("[BattleVisualClient] BattleCinematic failed to load: " .. tostring(res)) end
+	else
+		warn("[BattleVisualClient] BattleCinematic module not found - cinematic focus disabled")
+	end
+end
+-- Player camera lock (user 2026-11-18): no pan / zoom / rotate / view cycle off the player's turn.
+-- Camera lock safety (Tester WARN 1, user 2026-11-18 6:10 PM): one table so the 7k-line chunk
+-- gains a single local. serial bumps on every lock change; lastAction is stamped by the action
+-- remotes; arm() (defined beside commitCommand) releases a commit lock nothing ever cleared.
+local _camSafety: any = { serial = 0, lastAction = 0, arm = nil, goalRetried = {}, introFocused = {} }
+local function setCamLock(locked: boolean)
+	_camSafety.serial += 1
+	CameraController.SetInputLocked("turn", locked)
+	if BattleHUD.SetCameraControlEnabled then BattleHUD.SetCameraControlEnabled(not locked) end
+end
 -- Unit combat animations (2026-10-28): KO hold, idle fidgets, Thinking, per-action kinds.
 -- Asset ids live in Shared/AnimationRegistry; playback lives in this module.
 local UnitAnimController = require(
@@ -128,6 +150,51 @@ local function _tileToWorldR15(tx, ty, hipHeight)
 	return Vector3.new(MAP_OFFSET_X + (tx - 0.5) * TILE_SIZE, tileSurfaceY(getElevation(tx, ty)) + offset, MAP_OFFSET_Z + (ty - 0.5) * TILE_SIZE)
 end
 
+-- TILE / OBJECT PART CACHE (user 2026-11-18 4:38 PM, battle heat fix 3; PRF-001 event-driven,
+-- PRF-004 tracked connections). The hover, tap, grounding and object rays used to call
+-- mapFolder:GetChildren() and rebuild a fresh filter list EVERY time (600+ children on a 30x20
+-- map, 60x/s for hover). Now one list per map: rebuilt lazily only when the map folder changes
+-- or a child is added/removed (ChildAdded/ChildRemoved mark it dirty). Same filters as before:
+-- tiles = BaseParts with IsTemplateTile, objects = children named MapObjModel_*.
+local _tileCache = { folder = nil :: Instance?, dirty = true, tiles = {}, objects = {}, byName = {}, conns = {} }
+local function _tileCacheBind(folder: Instance?)
+	for _, c in ipairs(_tileCache.conns) do c:Disconnect() end
+	_tileCache.conns = {}
+	_tileCache.folder = folder
+	_tileCache.dirty = true
+	if folder then
+		local function mark() _tileCache.dirty = true end
+		table.insert(_tileCache.conns, folder.ChildAdded:Connect(mark))
+		table.insert(_tileCache.conns, folder.ChildRemoved:Connect(mark))
+	end
+end
+local function getMapPartCache()
+	local mf = workspace:FindFirstChild("TemplateViewerMap")
+	if mf ~= _tileCache.folder then _tileCacheBind(mf) end
+	if _tileCache.dirty then
+		_tileCache.dirty = false
+		local tiles, objects, byName = {}, {}, {}
+		if mf then
+			for _, c in ipairs(mf:GetChildren()) do
+				if c:IsA("BasePart") and c:GetAttribute("IsTemplateTile") then
+					table.insert(tiles, c)
+					byName[c.Name] = c
+				elseif string.sub(c.Name, 1, 12) == "MapObjModel_" then
+					table.insert(objects, c)
+				end
+			end
+		end
+		_tileCache.tiles, _tileCache.objects, _tileCache.byName = tiles, objects, byName
+	end
+	return _tileCache
+end
+-- O(1) tile lookup by template coords (Tile_%02d_%02d), nil if missing.
+local function getCachedTile(tx: number, ty: number): BasePart?
+	local tp = getMapPartCache().byName[string.format("Tile_%02d_%02d", tx, ty)]
+	if tp and tp.Parent then return tp end
+	return nil
+end
+
 -- Raycast down to the ACTUAL rendered ground at a tile center. Roblox Terrain
 -- voxels quantize to a ~4-stud grid, so the visible surface can sit up to ~2
 -- studs above the flat tile-Part top (tileSurfaceY). Placing feet at
@@ -148,15 +215,7 @@ local function groundSurfaceY(tx, ty)
 	-- only ACTUAL terrain tiles (the IsTemplateTile parts) count as ground. Nothing on top
 	-- of a tile can ever be mistaken for the surface again -- closes the whole float/bury
 	-- class, not one map's instance. (Replaces the Oct 5 MapObjModel_ exclude, now moot.)
-	local mapFolder = workspace:FindFirstChild("TemplateViewerMap")
-	local tileParts = {}
-	if mapFolder then
-		for _, child in ipairs(mapFolder:GetChildren()) do
-			if child:IsA("BasePart") and child:GetAttribute("IsTemplateTile") then
-				table.insert(tileParts, child)
-			end
-		end
-	end
+	local tileParts = getMapPartCache().tiles -- cached per map (battle heat fix 3)
 	if #tileParts > 0 then
 		rp.FilterType = Enum.RaycastFilterType.Include
 		rp.FilterDescendantsInstances = tileParts
@@ -283,6 +342,8 @@ end
 
 local unitTokens   = {}
 local unitData     = {}
+-- True from BattleStarted to BattleEnded (battle heat fix 2: the hover loop only runs in a battle).
+local battleActive = false
 -- Animation controller reads tokens / alive state through these (dependency injection).
 UnitAnimController.Init(
 	function() return unitTokens end,
@@ -1044,6 +1105,24 @@ local function isDebuffStatus(statusId)
 	return DEBUFF_KINDS[statusId] == true
 end
 
+-- REUSED LOOP CLONES (user 2026-11-18 4:38 PM, battle heat fix 4; MEM-002). Each loop keeps ONE
+-- clone per asset (VFXController.SpawnLoopAsset) and pulses it, instead of cloning a fresh asset
+-- every 1.5 / 2.5 s. Timing is the same as before: a debuff effect shows DEBUFF_VFX_PLAY seconds
+-- (emitters on for the first half), then DEBUFF_VFX_GAP of silence; a persistent loop stays shown
+-- and pulses its emitters (on for half of PERSIST_VFX_LIFETIME). Clones are destroyed when the loop
+-- stops, the unit dies/leaves, or the battle resets.
+local function destroyLoopHandle(h)
+	if h and VFXController and VFXController.DestroyLoopAsset then pcall(VFXController.DestroyLoopAsset, h) end
+end
+local function destroyDebuffLoop(loop)
+	if not loop then return end
+	if loop.clones then
+		for _, h in pairs(loop.clones) do destroyLoopHandle(h) end
+	end
+	loop.clones = {}
+	loop.curId = nil
+end
+
 -- Rebuild a unit's debuff list from unitData; start/stop its loop as needed.
 local function refreshDebuffLoop(unitId)
 	local ud = unitData[unitId]
@@ -1055,17 +1134,26 @@ local function refreshDebuffLoop(unitId)
 		end
 	end
 	if #ids == 0 then
-		local loop = debuffLoops[unitId]
-		if loop and loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
+		destroyDebuffLoop(debuffLoops[unitId])
 		debuffLoops[unitId] = nil
 		return
 	end
 	local loop = debuffLoops[unitId]
 	if not loop then
-		debuffLoops[unitId] = { ids = ids, idx = 0, nextAt = 0, active = nil }
+		debuffLoops[unitId] = { ids = ids, idx = 0, nextAt = 0, clones = {}, curId = nil }
 	else
 		loop.ids = ids
 		if loop.idx > #ids then loop.idx = 0 end
+		-- Drop clones of debuffs that are gone.
+		local keep = {}
+		for _, id in ipairs(ids) do keep[id] = true end
+		for sid, h in pairs(loop.clones or {}) do
+			if not keep[sid] then
+				destroyLoopHandle(h)
+				loop.clones[sid] = nil
+				if loop.curId == sid then loop.curId = nil end
+			end
+		end
 	end
 end
 
@@ -1076,24 +1164,53 @@ RunService.Heartbeat:Connect(function()
 		local token = unitTokens[unitId]
 		local ud = unitData[unitId]
 		if not token or not token.part or not ud or ud.isAlive == false or #loop.ids == 0 then
-			if loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
+			destroyDebuffLoop(loop)
 			debuffLoops[unitId] = nil
-		elseif now >= loop.nextAt then
-			-- Stop the previous effect if still around, then play the next id.
-			if loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
-			loop.active = nil
-			loop.idx = (loop.idx % #loop.ids) + 1
-			local sid = loop.ids[loop.idx]
-			if VFXController then
-				local assetName = VFXController.ResolveStatus and VFXController.ResolveStatus(sid) or nil
-				if assetName and VFXController.PlayAsset then
-					local ok, clone = pcall(VFXController.PlayAsset, assetName, token.part.Position, DEBUFF_VFX_PLAY)
-					loop.active = (ok and clone) or nil
+		elseif VFXController then
+			local pos = token.part.Position
+			local cur = loop.curId and loop.clones[loop.curId] or nil
+			if cur then
+				pcall(VFXController.MoveLoopAsset, cur, pos)
+				if loop.emitOffAt and now >= loop.emitOffAt then
+					loop.emitOffAt = nil
+					pcall(VFXController.SetLoopAsset, cur, true, false)
 				end
-				if not loop.active then pcall(VFXController.StatusBurst, token.part.Position, sid) end
+				if loop.hideAt and now >= loop.hideAt then
+					loop.hideAt = nil
+					pcall(VFXController.SetLoopAsset, cur, false, false)
+					loop.curId = nil
+				end
 			end
-			-- Next effect after this one finishes plus the gap.
-			loop.nextAt = now + DEBUFF_VFX_PLAY + DEBUFF_VFX_GAP
+			if now >= loop.nextAt then
+				-- Hide the previous effect if still showing, then show the next id.
+				if loop.curId and loop.clones[loop.curId] then
+					pcall(VFXController.SetLoopAsset, loop.clones[loop.curId], false, false)
+				end
+				loop.curId = nil
+				loop.idx = (loop.idx % #loop.ids) + 1
+				local sid = loop.ids[loop.idx]
+				local h = loop.clones[sid]
+				if h == nil then
+					h = false -- false = no pre-made asset: programmatic StatusBurst each cycle (as before)
+					local assetName = VFXController.ResolveStatus and VFXController.ResolveStatus(sid) or nil
+					if assetName and VFXController.SpawnLoopAsset then
+						local ok, hh = pcall(VFXController.SpawnLoopAsset, assetName, pos)
+						if ok and hh then h = hh end
+					end
+					loop.clones[sid] = h
+				end
+				if h then
+					pcall(VFXController.MoveLoopAsset, h, pos)
+					pcall(VFXController.SetLoopAsset, h, true, true)
+					loop.curId = sid
+					loop.emitOffAt = now + DEBUFF_VFX_PLAY * 0.5
+					loop.hideAt = now + DEBUFF_VFX_PLAY
+				else
+					pcall(VFXController.StatusBurst, pos, sid)
+				end
+				-- Next effect after this one finishes plus the gap.
+				loop.nextAt = now + DEBUFF_VFX_PLAY + DEBUFF_VFX_GAP
+			end
 		end
 	end
 end)
@@ -1101,11 +1218,11 @@ end)
 --------------------------------------------------
 -- PERSISTENT LOOP VFX (channel / guard / stance) — standalone, NOT round-robined
 -- with the debuff scheduler above. Each unit can hold several keyed loops at once
--- (e.g. 'channel', 'guard', 'stance'); each plays ONE asset continuously, replayed
--- when its clone expires, until explicitly stopped by a lifecycle event.
+-- (e.g. 'channel', 'guard', 'stance'); each plays ONE asset continuously (one reused
+-- clone, emitters pulsed every PERSIST_VFX_LIFETIME), until explicitly stopped by a lifecycle event.
 --------------------------------------------------
-local PERSIST_VFX_LIFETIME = 1.5  -- each replay lasts this long, then is replayed (user-set 1.5s Sep 28 2026)
--- persistentLoops[unitId][key] = { asset = name, nextAt = clock, active = clone }
+local PERSIST_VFX_LIFETIME = 1.5  -- each pulse lasts this long (user-set 1.5s Sep 28 2026)
+-- persistentLoops[unitId][key] = { asset = name, nextAt = clock, handle = loop clone, handleAsset = name }
 local persistentLoops = {}
 
 local function startPersistentLoop(unitId, key, assetName)
@@ -1114,9 +1231,9 @@ local function startPersistentLoop(unitId, key, assetName)
 	if not byUnit then byUnit = {}; persistentLoops[unitId] = byUnit end
 	local loop = byUnit[key]
 	if loop then
-		loop.asset = assetName  -- retarget in place
+		loop.asset = assetName  -- retarget in place (the scheduler swaps the clone)
 	else
-		byUnit[key] = { asset = assetName, nextAt = 0, active = nil }
+		byUnit[key] = { asset = assetName, nextAt = 0, handle = nil, handleAsset = nil }
 	end
 end
 
@@ -1125,7 +1242,8 @@ local function stopPersistentLoop(unitId, key)
 	if not byUnit then return end
 	local loop = byUnit[key]
 	if loop then
-		if loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
+		destroyLoopHandle(loop.handle)
+		loop.handle = nil
 		byUnit[key] = nil
 	end
 	if next(byUnit) == nil then persistentLoops[unitId] = nil end
@@ -1135,7 +1253,8 @@ local function stopAllPersistentLoops(unitId)
 	local byUnit = persistentLoops[unitId]
 	if not byUnit then return end
 	for _, loop in pairs(byUnit) do
-		if loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
+		destroyLoopHandle(loop.handle)
+		loop.handle = nil
 	end
 	persistentLoops[unitId] = nil
 end
@@ -1158,8 +1277,8 @@ local function syncStanceLoop(unitId)
 	if not stillStance then stopPersistentLoop(unitId, "stance") end
 end
 
--- One scheduler for all persistent loops. Replays each asset when its clone ends;
--- keeps it glued to the unit. Independent of the debuff round-robin.
+-- One scheduler for all persistent loops. Pulses each loop's reused clone and keeps it
+-- glued to the unit. Independent of the debuff round-robin.
 RunService.Heartbeat:Connect(function()
 	local now = os.clock()
 	for unitId, byUnit in pairs(persistentLoops) do
@@ -1167,16 +1286,33 @@ RunService.Heartbeat:Connect(function()
 		local ud = unitData[unitId]
 		if not token or not token.part or not ud or ud.isAlive == false then
 			stopAllPersistentLoops(unitId)
-		else
+		elseif VFXController and VFXController.SpawnLoopAsset then
+			local pos = token.part.Position
 			for _, loop in pairs(byUnit) do
-				if now >= loop.nextAt then
-					if loop.active and loop.active.Parent then pcall(function() loop.active:Destroy() end) end
-					loop.active = nil
-					if VFXController and VFXController.PlayAsset then
-						local ok, clone = pcall(VFXController.PlayAsset, loop.asset, token.part.Position, PERSIST_VFX_LIFETIME)
-						loop.active = (ok and clone) or nil
+				-- Retargeted to another asset: swap the clone once.
+				if loop.handle and loop.handleAsset ~= loop.asset then
+					destroyLoopHandle(loop.handle)
+					loop.handle = nil
+				end
+				if not loop.handle and loop.missingAsset ~= loop.asset then
+					local ok, h = pcall(VFXController.SpawnLoopAsset, loop.asset, pos)
+					if ok and h then
+						loop.handle, loop.handleAsset = h, loop.asset
+						loop.nextAt = 0
+					else
+						loop.missingAsset = loop.asset -- no such asset: don't retry every frame
 					end
-					loop.nextAt = now + PERSIST_VFX_LIFETIME
+				end
+				if loop.handle then
+					pcall(VFXController.MoveLoopAsset, loop.handle, pos)
+					if now >= loop.nextAt then
+						pcall(VFXController.SetLoopAsset, loop.handle, true, true)
+						loop.emitOffAt = now + PERSIST_VFX_LIFETIME * 0.5
+						loop.nextAt = now + PERSIST_VFX_LIFETIME
+					elseif loop.emitOffAt and now >= loop.emitOffAt then
+						loop.emitOffAt = nil
+						pcall(VFXController.SetLoopAsset, loop.handle, true, false)
+					end
 				end
 			end
 		end
@@ -1197,7 +1333,7 @@ local function simulateTurnOrder(snapshot, count, previewUnitId, previewNewRt, p
 		-- Both entries coexist: the caster (its real RT) and the spell (its deadline).
 		local chRemain = u.channelRemaining or u.channelRt
 		if u.isChanneling and chRemain and chRemain > 0 then
-			table.insert(units, { id = u.id.."_ch", name = (u.channeledSkillName or "Skill") .. (u.channelPhase == "Activation" and " (landing)" or ""), side = u.side, remainingRt = chRemain, isEvent = true, channeledSkillIcon = u.channeledSkillIcon, casterSide = u.side })
+			table.insert(units, { id = u.id.."_ch", name = (u.channeledSkillName or "Skill") .. (u.channelPhase == "Activation" and " (landing)" or ""), side = u.side, remainingRt = chRemain, isEvent = true, channeledSkillIcon = u.channeledSkillIcon, channeledSkillId = u.channeledSkillId, casterSide = u.side })
 		end
 	end
 	if previewEvent then table.insert(units, { id = "pev", name = previewEvent.name, side = previewEvent.side, remainingRt = previewEvent.rt or 100, isEvent = true }) end
@@ -1231,7 +1367,7 @@ local function simulateTurnOrder(snapshot, count, previewUnitId, previewNewRt, p
 			return tostring(a.id) < tostring(b.id)  -- safe even if an id is ever a number (Tester W5)
 		end)
 		for _, u in ipairs(ready) do
-			table.insert(result, { id = u.id, name = u.name, side = u.side, rt = 0, isEvent = u.isEvent, isRound = false, isActive = false, channeledSkillIcon = u.channeledSkillIcon, casterSide = u.casterSide })
+			table.insert(result, { id = u.id, name = u.name, side = u.side, rt = 0, isEvent = u.isEvent, isRound = false, isActive = false, channeledSkillIcon = u.channeledSkillIcon, channeledSkillId = u.channeledSkillId, casterSide = u.casterSide })
 			if u.cycleRt then
 				-- Item device: next activation one cycle later; gone after its last one.
 				u.cyclesLeft = (u.cyclesLeft or 1) - 1
@@ -1342,6 +1478,7 @@ local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEven
 				enriched.casterName = unitData[baseId] and unitData[baseId].name or nil
 				enriched.casterSide = (unitData[baseId] and unitData[baseId].side) or e.casterSide
 				enriched.channeledSkillIcon = e.channeledSkillIcon
+				enriched.channeledSkillId = e.channeledSkillId -- turn-order skill portrait (2026-11-18)
 			end
 			if unitData[baseId] then
 				enriched.tileX = unitData[baseId].tileX
@@ -1617,6 +1754,7 @@ local function enterActionSelection()
 		{ id="Move", text="Move", enabled=moveEnabled,
 			reason=(prompt.moveBlockedReason or "No tiles in range to move to"), onPress=function()
 			inputMode = "move"; selectedSkill = nil; clearHighlights()
+			pcall(function() require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10):WaitForChild("TipController", 10)).Trigger("TIP-BAT-02") end) -- new-player tip (first move)
 			local pRt = math.round((prompt.unitBaseRt or 400)*0.0625*2) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
 			updateTimeline(timelineSnapshot, prompt.unitId, pRt)
 			for _, tile in ipairs(prompt.moveCandidates) do createTileHighlight(tile.tileX, tile.tileY, "move") end
@@ -1672,7 +1810,8 @@ local function enterActionSelection()
 			end },
 			{ id="Guard", text="Guard", enabled=not prompt.guardUsed,
 				reason="Already guarded this turn", onPress=function()
-				clearHighlights(); isPlayerTurn = false; inputMode = nil
+				clearHighlights(); isPlayerTurn = false; inputMode = nil; setCamLock(true)
+				if _camSafety.arm then _camSafety.arm() end
 				bp.state = "Resolving"; BattleHUD.Render(bp)
 				BattleEvents.PlayerCommand:FireServer({ actionType = "Guard" })
 			end },
@@ -1693,7 +1832,8 @@ local function enterActionSelection()
 			BattleEvents.PlayerCommand:FireServer({ actionType = "Undo" })
 		end },
 		{ id="Wait", text="Wait", enabled=true, onPress=function()
-			clearHighlights(); isPlayerTurn = false; inputMode = nil
+			clearHighlights(); isPlayerTurn = false; inputMode = nil; setCamLock(true)
+			if _camSafety.arm then _camSafety.arm() end
 			bp.state = "Resolving"; BattleHUD.Render(bp)
 			BattleEvents.PlayerCommand:FireServer({ actionType = "Wait" })
 		end },
@@ -1767,10 +1907,7 @@ end
 -- Touch/ray path: if the ray hits a map object BEFORE any tile, use the object's tile.
 local function rayObjectTile(origin: Vector3, dir: Vector3): BasePart?
 	if not mapFolder then return nil end
-	local objs = {}
-	for _, c in ipairs(mapFolder:GetChildren()) do
-		if string.sub(c.Name, 1, 12) == "MapObjModel_" then table.insert(objs, c) end
-	end
+	local objs = getMapPartCache().objects -- cached per map (battle heat fix 3)
 	if #objs == 0 then return nil end
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Include
@@ -1808,11 +1945,7 @@ local function getTileUnderMouse()
 	if cam and mapFolder then
 		local rp = RaycastParams.new()
 		rp.FilterType = Enum.RaycastFilterType.Include
-		local tileParts = {}
-		for _, c in ipairs(mapFolder:GetChildren()) do
-			if c:IsA("BasePart") and c:GetAttribute("IsTemplateTile") then table.insert(tileParts, c) end
-		end
-		rp.FilterDescendantsInstances = tileParts
+		rp.FilterDescendantsInstances = getMapPartCache().tiles -- cached per map (battle heat fix 3)
 		local ray = cam:ScreenPointToRay(mouse.X, mouse.Y)
 		local res = workspace:Raycast(ray.Origin, ray.Direction * 500, rp)
 		if res and res.Instance then return res.Instance end
@@ -1830,7 +1963,7 @@ local function getTileUnderMouse()
 		local tx = math.floor((hp.X - MAP_OFFSET_X) / TILE_SIZE) + 1
 		local ty = math.floor((hp.Z - MAP_OFFSET_Z) / TILE_SIZE) + 1
 		if tx >= 1 and tx <= MAP_WIDTH and ty >= 1 and ty <= MAP_HEIGHT then
-			local tp = mapFolder:FindFirstChild(string.format("Tile_%02d_%02d", tx, ty))
+			local tp = getCachedTile(tx, ty) or mapFolder:FindFirstChild(string.format("Tile_%02d_%02d", tx, ty))
 			if tp and tp:IsA("BasePart") then return tp end
 		end
 	end
@@ -1848,9 +1981,34 @@ end
 -- COMMIT + CANCEL
 --------------------------------------------------
 
+-- Safety release for the commit lock (Tester WARN 1). A rejected command is re-prompted by the
+-- server (BattleTurnController runPlayerTurn loop -> PlayerTurnPrompt), which unlocks. If nothing
+-- changes the lock (no TurnStarted / prompt / battle end) and no action event arrives for ~6 s,
+-- unlock with a warning. Never during an enemy turn or while a cinematic shot is queued/playing.
+_camSafety.arm = function()
+	local mySerial = _camSafety.serial
+	local t0 = os.clock()
+	task.delay(6, function()
+		while _camSafety.serial == mySerial and battleActive and os.clock() - t0 < 60 do
+			local au = activeUnitId and unitData[activeUnitId]
+			local enemyTurn = au ~= nil and au.side ~= nil and au.side ~= "Player"
+			local cineBusy = BattleCinematic ~= nil and BattleCinematic.IsBusy()
+			local quiet = os.clock() - (_camSafety.lastAction or 0) >= 6
+			if quiet and not enemyTurn and not cineBusy then
+				warn("[BVC] camera lock safety release")
+				setCamLock(false)
+				return
+			end
+			task.wait(1)
+		end
+	end)
+end
+
 -- Assigns into the forward-declared `commitCommand` local (see above).
 function commitCommand(command)
 	clearHighlights(); isPlayerTurn = false; inputMode = nil; selectedSkill = nil; selectedItem = nil; aimTarget = nil
+	setCamLock(true) -- the action resolves: camera locked until the next prompt
+	_camSafety.arm()
 	bp.state = "Resolving"; BattleHUD.Render(bp)
 	BattleEvents.PlayerCommand:FireServer(command)
 end
@@ -2641,15 +2799,7 @@ game:GetService("RunService").Heartbeat:Connect(function()
 	end
 	local rayParams = RaycastParams.new()
 	rayParams.FilterType = Enum.RaycastFilterType.Include
-	local tileParts = {}
-	if mapFolder then
-		for _, c in ipairs(mapFolder:GetChildren()) do
-			if c:IsA("BasePart") and c:GetAttribute("IsTemplateTile") then
-				table.insert(tileParts, c)
-			end
-		end
-	end
-	rayParams.FilterDescendantsInstances = tileParts
+	rayParams.FilterDescendantsInstances = if mapFolder then getMapPartCache().tiles else {} -- cached per map (battle heat fix 3)
 	local result = workspace:Raycast(ray.Origin, ray.Direction * 500, rayParams)
 	local tilePart = result and result.Instance or nil
 	-- A tall map object in front of the tile wins (tap selects the object's tile).
@@ -2657,11 +2807,7 @@ game:GetService("RunService").Heartbeat:Connect(function()
 	if objTile then
 		local objHit = workspace:Raycast(ray.Origin, ray.Direction * 500, (function()
 			local p = RaycastParams.new(); p.FilterType = Enum.RaycastFilterType.Include
-			local list = {}
-			for _, c in ipairs(mapFolder:GetChildren()) do
-				if string.sub(c.Name, 1, 12) == "MapObjModel_" then table.insert(list, c) end
-			end
-			p.FilterDescendantsInstances = list
+			p.FilterDescendantsInstances = getMapPartCache().objects -- cached per map (battle heat fix 3)
 			return p
 		end)())
 		if objHit and (not result or (objHit.Position - ray.Origin).Magnitude < (result.Position - ray.Origin).Magnitude) then
@@ -2690,7 +2836,7 @@ game:GetService("RunService").Heartbeat:Connect(function()
 			local tx = math.floor((hp.X - MAP_OFFSET_X) / TILE_SIZE) + 1
 			local ty = math.floor((hp.Z - MAP_OFFSET_Z) / TILE_SIZE) + 1
 			if tx >= 1 and tx <= MAP_WIDTH and ty >= 1 and ty <= MAP_HEIGHT then
-				local tp = mapFolder:FindFirstChild(string.format("Tile_%02d_%02d", tx, ty))
+				local tp = getCachedTile(tx, ty) or mapFolder:FindFirstChild(string.format("Tile_%02d_%02d", tx, ty))
 				if tp and tp:IsA("BasePart") then tilePart = tp end
 			end
 		end
@@ -2709,13 +2855,27 @@ end)
 
 local lastHoveredUnitId = nil
 
+-- Battle heat fix 2 (user 2026-11-18 4:38 PM, PRF-001): skip entirely with no mouse (phones:
+-- a hover tooltip can't show) or outside a battle; on desktop re-check only when the mouse or
+-- the camera moved, plus a 0.25 s backstop so a unit walking under a still cursor still shows.
+local _hoverLastX, _hoverLastY, _hoverLastCam, _hoverLastAt = nil, nil, nil, 0
 game:GetService("RunService").RenderStepped:Connect(function()
-	if not next(unitData) then
+	if not battleActive or not UserInputService.MouseEnabled or not next(unitData) then
 		if lastHoveredUnitId then
 			lastHoveredUnitId = nil
 			BattleHUD.HideTooltip()
 		end
 		return
+	end
+	do
+		local cam = workspace.CurrentCamera
+		local camCf = cam and cam.CFrame
+		local now = os.clock()
+		if mouse.X == _hoverLastX and mouse.Y == _hoverLastY and camCf == _hoverLastCam
+			and (now - _hoverLastAt) < 0.25 then
+			return
+		end
+		_hoverLastX, _hoverLastY, _hoverLastCam, _hoverLastAt = mouse.X, mouse.Y, camCf, now
 	end
 
 	-- Check what tile is under the mouse
@@ -3414,6 +3574,61 @@ local function applyGoalTags(d: any)
 		end
 	end
 end
+-- Quest point-of-interest focus (user 2026-11-18): a brief camera focus on the goal's target /
+-- tile / marked objects with the approved goal sentence, once per POI per battle (at battle
+-- start, and again only when a NEW POI appears). Goals without a place (Wipe out, Slay,
+-- Survive) never focus. Optional objectives have no place today, so they never focus either.
+local GOAL_FOCUS_SECONDS = 1.5
+local goalFocusKeys: { [string]: boolean } = {}
+local function goalPoi(d: any): (string?, { any }?, { any }?)
+	if type(d) ~= "table" or type(d.id) ~= "string" then return nil end
+	local id = d.id
+	if (id == "KillTarget" or id == "Capture") and d.targetId ~= nil and not d.captured then
+		return `{id}:{tostring(d.targetId)}`, { d.targetId }, nil
+	elseif id == "Protect" and d.npcId ~= nil and not d.npcFell then
+		return `{id}:{tostring(d.npcId)}`, { d.npcId }, nil
+	elseif id == "Destroy" and type(d.tiles) == "table" and #d.tiles > 0 then
+		return "Destroy", nil, d.tiles
+	elseif (id == "Reach" or id == "Activate" or id == "Prevent") and type(d.tile) == "table" then
+		return `{id}:{tostring(d.tile.x)},{tostring(d.tile.y)}`, nil, { d.tile }
+	end
+	return nil
+end
+local function maybeFocusGoal(d: any)
+	if not BattleCinematic or not battleActive then return end
+	local key, ids, tiles = goalPoi(d)
+	if not key or goalFocusKeys[key] then return end
+	if ids then
+		for _, uid in ipairs(ids) do
+			if not unitTokens[uid] then
+				-- Token not built yet (WARN 3): retry ONCE as soon as it appears (UnitSpawned / late
+				-- token build), polling lightly for up to 5 s, instead of skipping the intro shot.
+				if not _camSafety.goalRetried[key] then
+					_camSafety.goalRetried[key] = true
+					task.spawn(function()
+						local t0 = os.clock()
+						while battleActive and os.clock() - t0 < 5 do
+							local all = true
+							for _, u2 in ipairs(ids) do if not unitTokens[u2] then all = false; break end end
+							if all then break end
+							task.wait(0.2)
+						end
+						if battleActive and goalData then maybeFocusGoal(goalData) end
+					end)
+				end
+				return
+			end
+		end
+	end
+	goalFocusKeys[key] = true
+	local text = QuestGoalText and QuestGoalText.Sentence(d) or ""
+	if text == "" and QuestGoalText then text = QuestGoalText.CardLine(d.id) end
+	if ids then
+		BattleCinematic.QueueUnits(ids, text, GOAL_FOCUS_SECONDS)
+	elseif tiles then
+		BattleCinematic.QueueTiles(tiles, text, GOAL_FOCUS_SECONDS)
+	end
+end
 BattleEvents.QuestGoalUpdate.OnClientEvent:Connect(function(d)
 	if type(d) ~= "table" or d.cleared then
 		goalData = nil
@@ -3424,6 +3639,7 @@ BattleEvents.QuestGoalUpdate.OnClientEvent:Connect(function(d)
 	goalData = d
 	if BattleHUD.SetGoal then BattleHUD.SetGoal(d) end
 	applyGoalTags(d)
+	maybeFocusGoal(d) -- new POI mid-battle (no-op before BattleStarted / for a POI already shown)
 end)
 
 _G.CTRBLXAI_RequestMapDetails = function()
@@ -3663,12 +3879,13 @@ BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	BattleHUD.Cleanup()
 	bp = { state = "Idle", actor = nil, target = nil, skill = nil, preview = nil, tile = nil, inspectedEntityId = nil }
 	for _, c in ipairs(visualFolder:GetChildren()) do c:Destroy() end
+	battleActive = true -- hover loop on for this battle (battle heat fix 2)
 	for _, l in pairs(actionLabels) do if l.gui then l.gui:Destroy() end end
 	unitTokens = {}; elevationMap = data.elevationMap
 	roadCuts = {}  -- new battle: no roads yet (UAT DEFECT-1, 2026-10-27)
 	moveCostAdds = {}  -- new battle: no slowed tiles yet
 	actionLabels = {}
-	for _, lp in pairs(debuffLoops) do if lp.active and lp.active.Parent then pcall(function() lp.active:Destroy() end) end end
+	for _, lp in pairs(debuffLoops) do destroyDebuffLoop(lp) end -- reused clones (battle heat fix 4)
 	debuffLoops = {}
 	for uid in pairs(persistentLoops) do stopAllPersistentLoops(uid) end
 	persistentLoops = {}
@@ -3699,6 +3916,35 @@ BattleEvents.BattleStarted.OnClientEvent:Connect(function(data)
 	local mf = workspace:FindFirstChild("TemplateViewerMap")
 	local biome = mf and mf:GetAttribute("BiomeId") or "Plains"
 	if VFXController then pcall(VFXController.Init, biome); pcall(VFXController.ClearAllHighlights) end
+	-- Camera: locked until the first player prompt; the goal POI intro plays first (user 2026-11-18).
+	setCamLock(true)
+	table.clear(goalFocusKeys)
+	table.clear(_camSafety.goalRetried)
+	table.clear(_camSafety.introFocused)
+	if BattleCinematic then BattleCinematic.Cancel() end
+	task.defer(function() if goalData then maybeFocusGoal(goalData) end end)
+	-- Start-of-battle event units (user 2026-11-18 6:10 PM): units a battlefield event placed before
+	-- the battle join the opening sequence AFTER the goal shots (deferred after it), one 1.5 s shot
+	-- per event name (its units framed together); the banner shows the existing event name.
+	local evUnits = data and data.eventUnits
+	if BattleCinematic and type(evUnits) == "table" and #evUnits > 0 then
+		task.defer(function()
+			if not battleActive then return end
+			local order: { string } = {}
+			local byName: { [string]: { any } } = {}
+			for _, e in ipairs(evUnits) do
+				local nm = type(e) == "table" and e.eventName
+				if type(nm) == "string" and nm ~= "" and e.id ~= nil and unitTokens[e.id] then
+					if not byName[nm] then byName[nm] = {}; table.insert(order, nm) end
+					table.insert(byName[nm], e.id)
+					_camSafety.introFocused[e.id] = true
+				end
+			end
+			for _, nm in ipairs(order) do
+				BattleCinematic.QueueUnits(byName[nm], nm, GOAL_FOCUS_SECONDS)
+			end
+		end)
+	end
 end)
 
 -- Reinforcement: a single unit entered the battle mid-fight. Build its token
@@ -3724,6 +3970,12 @@ BattleEvents.UnitSpawned.OnClientEvent:Connect(function(data)
 	updateMpBar(unit.id, unit.currentMp or 0, unit.maxMp or 0)
 	if orientUnitToFacing and unit.facing then
 		pcall(orientUnitToFacing, unit.id, unit.facing)
+	end
+	-- Battlefield-event unit (server sends eventName only for those): 2 s focus with the event
+	-- name (user 2026-11-18). Summons, revives and quest-goal spawns carry no eventName.
+	if BattleCinematic and battleActive and type(data.eventName) == "string" and data.eventName ~= ""
+		and not _camSafety.introFocused[unit.id] then
+		BattleCinematic.QueueUnits({ unit.id }, data.eventName, 2)
 	end
 end)
 
@@ -3836,6 +4088,36 @@ BattleEvents.BattlefieldEventAnnounced.OnClientEvent:Connect(function(data)
 	showEventBanner(name)
 end)
 
+-- Cinematic focus wiring (user 2026-11-18). When a shot starts, the center event banner is cut
+-- short so the same name moves to the upper-center banner over the focused unit.
+if BattleCinematic then
+	BattleCinematic.Init({
+		camera = CameraController,
+		theme = Theme,
+		unitPos = function(id)
+			local tok = unitTokens[id]
+			return tok and tok.part and tok.part.Parent and tok.part.Position or nil
+		end,
+		tileWorld = function(x, y) return tileToWorldGrounded(x, y) end,
+		canPlay = function() return battleActive end,
+		isBlocked = function() return isPlayerTurn end, -- never during the player's own targeting
+		onShotStart = function()
+			if _eventBannerGui then _eventBannerGui:Destroy(); _eventBannerGui = nil end
+		end,
+	})
+end
+
+-- Camera lock safety (WARN 1): any action result stamps lastAction, so a long action keeps the
+-- commit lock; only ~6 s of silence with no new turn / prompt triggers the safety release.
+for _, evName in ipairs({ "UnitMoved", "UnitActed", "ActionAnnounced", "UnitPushed", "GuardActivated",
+	"ItemUsed", "HealingApplied", "StatusApplied", "UnitDefeated", "ChannelStarted", "MultiTargetHit",
+	"TurnEnded", "DotDamage", "ObjectDamage", "UnitSpawned" }) do
+	local ev = (BattleEvents :: any)[evName] -- BattleEvents is the remotes module table
+	if typeof(ev) == "Instance" and ev:IsA("RemoteEvent") then
+		ev.OnClientEvent:Connect(function() _camSafety.lastAction = os.clock() end)
+	end
+end
+
 -- Weather/crisis: receive the active condition (one combined slot, per round).
 -- Stored for display; a visible weather label / VFX is a follow-up.
 local _currentWeather = "Clear"
@@ -3849,6 +4131,7 @@ end)
 
 BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	activeUnitId = data.unitId
+	setCamLock(true) -- any turn start: locked until this turn's player prompt (if any)
 	-- A new turn ends any Thinking loop; a player unit restarts it from its command prompt.
 	UnitAnimController.EndThinking()
 	-- Every new turn refocuses the unit panel on the acting unit.
@@ -3934,6 +4217,11 @@ BattleEvents.TurnOrderUpdate.OnClientEvent:Connect(function(data)
 end)
 
 BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
+	-- A queued / playing cinematic (goal intro, event spawn) finishes before the player acts.
+	if BattleCinematic and BattleCinematic.IsBusy() then
+		BattleCinematic.WaitIdle(8)
+		if not battleActive then return end -- the battle ended while the shot played
+	end
 	if SoundController then SoundController.PlayTurnChime() end
 	currentPrompt = prompt
 	activeUnitId = prompt.unitId
@@ -3945,7 +4233,10 @@ BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
 	end
 	isPlayerTurn = true; inputMode = nil; selectedSkill = nil
 	CameraController.EndScriptedView()  -- restore the player's last chosen zoom + view
+	setCamLock(false) -- the player's turn: camera control back
 	enterActionSelection()
+	-- New-player tips (SYS-04): the player's own turn, after any cinematic -> calm + TIP-BAT-01.
+	pcall(function() require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10):WaitForChild("TipController", 10)).PlayerTurn() end)
 	-- Waiting for a command: Thinking now (first prompt of the turn), then after every 15s
 	-- without an action (2026-10-28).
 	UnitAnimController.OnCommandPrompt(prompt.unitId)
@@ -4236,6 +4527,9 @@ local function showUnitKO(unitId)
 		t.part.Color = Color3.fromRGB(60,60,60); t.part.Transparency = 0.4
 	end
 	if unitData[unitId] then unitData[unitId].isAlive = false end
+	if unitData[unitId] and unitData[unitId].side == "Player" then
+		pcall(function() require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10):WaitForChild("TipController", 10)).Trigger("TIP-BAT-09") end) -- new-player tip (first unit down)
+	end
 	refreshDebuffLoop(unitId)  -- unit dead -> loop self-clears
 	clearActionLabel(unitId)
 	stopAllPersistentLoops(unitId)
@@ -4470,11 +4764,29 @@ BattleEvents.ShieldChanged.OnClientEvent:Connect(function(data)
 	end
 end)
 
--- Action announce: label above the acting unit's head for ~2s (Move / Basic
--- Attack / skill or item name / Guard / Push). Server fires on every AP commit.
+-- Action announce. Server fires on every AP commit.
+-- Name banner (user 2026-11-18 6:21 PM, layout B, no pause): skills, specials (doctrine skills)
+-- and items show their name (text only) in the shared upper-centre banner (BattleCinematic.ShowAction);
+-- items a little smaller. Basic actions: Move / Guard / Wait show nothing; Basic Attack, Push and
+-- the other built-in labels (Interact, Resuscitate, Misdirection, Getaway) keep the small label
+-- above the unit's head (~2 s).
+local HIDDEN_BASIC_LABELS = { Move = true, Guard = true, Wait = true }
 BattleEvents.ActionAnnounced.OnClientEvent:Connect(function(data)
 	if not data or not data.unitId then return end
-	showActionAnnounce(data.unitId, data.label)
+	local kind = data.kind
+	if kind == "skill" or kind == "special" or kind == "item" then
+		clearActionLabel(data.unitId)
+		if BattleCinematic and BattleCinematic.ShowAction then
+			-- Text only (user 2026-11-18 7:44 PM): no skill / item icon, no side-colour outline.
+			BattleCinematic.ShowAction(data.label, { small = kind == "item" })
+		else
+			showActionAnnounce(data.unitId, data.label) -- module missing: old head label
+		end
+	elseif kind == "channel" then
+		-- A channel / activation wait begins: nothing shown; the banner plays when it goes off (2026-11-18).
+	elseif not HIDDEN_BASIC_LABELS[data.label or ""] then
+		showActionAnnounce(data.unitId, data.label)
+	end
 	-- Any announced action counts as activity (restarts the Thinking timer), and some carry
 	-- their own animation: Push / Interact / Open Treasure / Big Spell (2026-10-28).
 	UnitAnimController.NoteActivity(data.unitId)
@@ -4647,6 +4959,9 @@ BattleEvents.UnitPushed.OnClientEvent:Connect(function(data)
 end)
 
 BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
+	battleActive = false -- hover loop off (battle heat fix 2)
+	if BattleCinematic then BattleCinematic.Cancel() end -- no focus over the result screen
+	setCamLock(true)
 	if SoundController then SoundController.StopAllChannels() end
 	-- Goal tracker (step 8): hide it and drop the target tags; the defeat screen gets the outcome.
 	goalData = nil
@@ -6559,6 +6874,7 @@ end)
 local FACING_PICK_GROUP = "facing"  -- own TileHL group, so clearHighlights() cannot erase it mid-prompt
 BattleEvents.FacingPrompt.OnClientEvent:Connect(function(data)
 	if type(data) ~= "table" or not data.unitId then return end
+	setCamLock(false) -- the player chooses: camera control allowed
 	if facingTilePick then facingTilePick.cleanup() end  -- one facing prompt at a time
 	local udata = unitData[data.unitId]
 	local tx = data.tileX or (udata and udata.tileX)
@@ -6656,6 +6972,7 @@ end)
 local stealPickGui = nil
 BattleEvents.StealPrompt.OnClientEvent:Connect(function(data)
 	if not data or not data.casterId or type(data.slots) ~= "table" then return end
+	setCamLock(false)
 	if stealPickGui then stealPickGui:Destroy(); stealPickGui = nil end
 	local gui = Instance.new("ScreenGui")
 	gui.Name = "StealPicker"
@@ -6720,6 +7037,7 @@ end)
 -- one-shot prompt that fires SetTile and tears itself down, exactly like FacingPrompt.
 BattleEvents.TilePrompt.OnClientEvent:Connect(function(data)
 	if not data or not data.unitId or type(data.tiles) ~= "table" then return end
+	setCamLock(false)
 
 	local folder = Instance.new("Folder")
 	folder.Name = "SiegeTilePrompt"
@@ -6903,7 +7221,7 @@ BattleEvents.ObjectMarker.OnClientEvent:Connect(function(data)
 	end
 	clearObjMarker(data.key)
 	if type(data.tiles) ~= "table" or #data.tiles == 0 then return end
-	if not _objMarkerFolder then
+	if not _objMarkerFolder or not _objMarkerFolder.Parent then -- the folder is wiped with BattleVisuals (2026-11-18)
 		local f = Instance.new("Folder")
 		f.Name = "ObjectMarkers"
 		f.Parent = visualFolder
@@ -6932,4 +7250,68 @@ BattleEvents.ObjectMarker.OnClientEvent:Connect(function(data)
 		end
 	end
 	_objMarkers[data.key] = list
+end)
+
+--------------------------------------------------
+-- BATTLE VISUALS WIPE AT THE BASE (user 2026-11-18 4:38 PM, battle heat fix 1; MEM-002 Destroy,
+-- PRF-004). The server wipes the map / terrain / unit models at the top of its loop, just before
+-- it opens the base (GuildMenuOpened "Base"). Here the client drops everything it built for that
+-- battle: overhead bars / tokens / labels (BattleVisuals), reused loop VFX, waterfall splashes,
+-- tile effects, terrain mesh, elevation labels, victory / filler animation tracks, and the
+-- unitData / unitTokens / UnitRecords tables (so nothing keeps per-frame work alive at the base).
+-- The next deployment / BattleStarted rebuilds all of it. Never runs during a battle.
+--------------------------------------------------
+local function wipeBattleVisuals()
+	if battleActive then return end
+	local hadUnits = next(unitTokens) ~= nil or next(unitData) ~= nil
+	for _, token in pairs(unitTokens) do
+		for _, k in ipairs({ "_actionTrack", "_runTrack", "_fillerTrack" }) do
+			local tr = token[k]
+			if tr then pcall(function() tr:Stop(0) end); token[k] = nil end
+		end
+	end
+	pcall(UnitAnimController.StopFidgets)
+	pcall(UnitAnimController.EndThinking)
+	for _, lp in pairs(debuffLoops) do destroyDebuffLoop(lp) end
+	debuffLoops = {}
+	for uid in pairs(persistentLoops) do stopAllPersistentLoops(uid) end
+	persistentLoops = {}
+	for _, l in pairs(actionLabels) do if l.gui then l.gui:Destroy() end end
+	actionLabels = {}
+	for _, c in ipairs(visualFolder:GetChildren()) do c:Destroy() end
+	for k in pairs(_objMarkers) do _objMarkers[k] = nil end
+	_objMarkerFolder = nil
+	unitTokens = {}
+	table.clear(unitData)
+	for id in pairs(UnitRecords.GetAll()) do UnitRecords.Remove(id) end
+	if terrainMeshFolder then terrainMeshFolder:Destroy(); terrainMeshFolder = nil end
+	if elevLabelFolder then elevLabelFolder:Destroy(); elevLabelFolder = nil end
+	if VFXController then
+		pcall(VFXController.ClearWaterfallSplashes)
+		if VFXController.ClearAllTileEffects then pcall(VFXController.ClearAllTileEffects) end
+		pcall(VFXController.ClearAllHighlights)
+		if VFXController.SetBaseMode then pcall(VFXController.SetBaseMode) end -- fix 5: Bloom / SunRays off at the base
+	end
+	if lastHoveredUnitId then
+		lastHoveredUnitId = nil
+		pcall(BattleHUD.HideTooltip)
+	end
+	if hadUnits then print("[BattleVisualClient] Battle visuals cleared at the base.") end
+end
+
+task.spawn(function()
+	local ct = ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
+	local remotes = ct and ct:WaitForChild("Remotes", 10)
+	local guildModule = remotes and remotes:WaitForChild("GuildEvents", 10)
+	if not guildModule then warn("[BattleVisualClient] GuildEvents missing: battle visuals won't be cleared at the base"); return end
+	local okG, GuildEventsMod = pcall(require, guildModule)
+	if not okG or not GuildEventsMod or not GuildEventsMod.GuildMenuOpened then
+		warn("[BattleVisualClient] GuildEvents.GuildMenuOpened missing: battle visuals won't be cleared at the base"); return
+	end
+	GuildEventsMod.GuildMenuOpened.OnClientEvent:Connect(function(data)
+		if type(data) == "table" and data.phase == "Base" then
+			local ok, err = pcall(wipeBattleVisuals)
+			if not ok then warn("[BattleVisualClient] Base wipe failed: " .. tostring(err)) end
+		end
+	end)
 end)

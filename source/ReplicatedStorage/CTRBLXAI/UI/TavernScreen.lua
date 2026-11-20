@@ -213,7 +213,7 @@ local function buildMain(res: any, entries: { any }, selected: any?)
 	list.Parent = main
 	-- Existing Tavern notes, kept as on the Merchant.
 	if res then
-		makeNote(main, `Tavern L{res.tavernLevel or 1}: one recruit per Tavern level. The pool refreshes after each battle. Fee = 200 + 15 x level (+ quality premium).`, 1)
+		makeNote(main, `Tavern L{res.tavernLevel or 1}: one recruit per Tavern level. The pool refreshes after each battle.`, 1)
 		if #(res.pool or {}) == 0 then
 			makeNote(main, if res.reason then tostring(res.reason) else "No recruits left until the next battle.", 2)
 		end

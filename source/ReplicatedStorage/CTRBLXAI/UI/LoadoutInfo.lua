@@ -20,6 +20,11 @@ local GameConstants = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 local UIComponents = require(CTRBLXAI_UI:WaitForChild("UIComponents", 10))
 local PortraitData = require(ReplicatedStorage:WaitForChild("Content", 10)
 	:WaitForChild("PortraitData", 10))
+local TipController: any = nil -- New-player tips (2026-11-19): guarded, a missing module never breaks this screen
+do
+	local okTip, tipMod = pcall(function() return (require :: any)(CTRBLXAI_UI:WaitForChild("TipController", 10)) end)
+	if okTip then TipController = tipMod else warn("[LoadoutInfo] tips unavailable: " .. tostring(tipMod)) end
+end
 
 local LoadoutInfo: any = {}
 
@@ -341,6 +346,7 @@ buildStatPanel = function()
 	statHeaderLabel.LayoutOrder = 0; statHeaderLabel.Parent = scroller
 
 	local hasPoints = (statsData.unallocatedPoints or 0) > 0
+	if hasPoints and TipController then TipController.Trigger("TIP-STAT-01") end -- new-player tip (unspent points)
 	local rightClear = if hasPoints then STAT_BTNS_W + 4 else 4
 	do -- fit header + 6 rows (no scroll); set BEFORE the Confirm row, placed from Position + Size
 		local panel, up = ctx.getStatPanel(), ctx.getStatPanel():FindFirstChildOfClass("UIPadding")
@@ -651,8 +657,7 @@ buildInfoContent = function()
 	portrait.BackgroundTransparency = 0.2; portrait.BorderSizePixel = 0
 	portrait.Parent = identityRow
 	Instance.new("UICorner", portrait).CornerRadius = Theme.CornerRadius.md
-	local pStroke = Instance.new("UIStroke", portrait)
-	pStroke.Color = Theme.Colors.TextGold; pStroke.Thickness = 2
+	-- 2026-11-20 user: gold outline removed; the shared unit frame replaces it.
 	local pLabel = Instance.new("TextLabel")
 	pLabel.Size = UDim2.fromScale(1, 1); pLabel.BackgroundTransparency = 1
 	pLabel.Font = Theme.Font.PrimaryBold; pLabel.TextSize = 40
@@ -664,6 +669,7 @@ buildInfoContent = function()
 	if UIComponents.ApplyPortrait(portrait, statsData.portraitAssetId, pLabel) then
 		pLabel.Visible = false
 	end
+	UIComponents.ApplyUnitFrame(portrait, { darkBg = true }) -- 2026-11-20 unit frame
 	local lvBadge = Instance.new("Frame")
 	lvBadge.Size = UDim2.fromOffset(Theme.BadgeFitW("Lv" .. tostring(statsData.level or 1), Theme.Font.PrimaryBold, 28), 16)  -- 2026-11-07: fits Lv100 at 10px
 	lvBadge.Position = UDim2.fromOffset(0, 0)
