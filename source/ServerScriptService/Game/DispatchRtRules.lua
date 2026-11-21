@@ -105,6 +105,20 @@ R.CARD_RARITY = "Rare"
 -- the DB; builder default: Common (the lowest), 2026-11-19.
 R.GEAR_RARITY_BY_TIER = table.freeze({ "Common", "Common", "Common", "Uncommon", "Rare" })
 
+-- YIELD MULTIPLIER (user-approved 2026-11-21 11:27 AM, option N1; SIM_dispatch_team_level_20261121.md
+-- section 1, proposed DB row materials_system 43). Applied as "today's payout x mult", so the rate table
+-- above is NOT changed:
+--   mult = teamSize(n) / teamSize(units per mission at send)  x  levelFactor  x  (1 + perkBonus)
+--   teamSize(n): 1.00 / 1.25 / 1.45 / 1.60 / 1.70 (n = units sent; a full team pays exactly today's rate)
+--   levelFactor = clamp(1 - 0.04 x deficit, 0.60, 1.00); deficit = average level of the player's top-n
+--     owned units (away ones count) minus the sent team's average level. No bonus above 1.
+--   perkBonus = sum of the sent units' dispatch perks, clamped -0.30..+0.30 (none exist yet).
+R.TEAM_SIZE_STEPS = table.freeze({ 1.00, 1.25, 1.45, 1.60, 1.70 })
+R.LEVEL_FACTOR_PER_LEVEL = 0.04
+R.LEVEL_FACTOR_MIN, R.LEVEL_FACTOR_MAX = 0.60, 1.00
+R.PERK_BONUS_MIN, R.PERK_BONUS_MAX = -0.30, 0.30
+R.YIELD_MULT_MAX = 1.30 -- hard cap under N1 (full team x 1.00 x 1.30)
+
 local function clampInt(n: any, lo: number, hi: number, fallback: number): number
 	local v = tonumber(n)
 	if v == nil or v ~= v then return fallback end
@@ -244,6 +258,43 @@ function R.ItemExpectations(tier: number, level: number, hours: number): { [stri
 		if l >= it.minLevel then out[it.kind] = tier * it.perTier * h end
 	end
 	return out
+end
+
+-- Team size value for n units sent (1..#TEAM_SIZE_STEPS).
+function R.TeamSize(n: any): number
+	return R.TEAM_SIZE_STEPS[clampInt(n, 1, #R.TEAM_SIZE_STEPS, 1)]
+end
+
+-- N1 normalisation: teamSize(n) / teamSize(units per mission). A full team = exactly 1 (x / x).
+function R.TeamRel(n: any, maxUnits: any): number
+	local maxN = clampInt(maxUnits, 1, #R.TEAM_SIZE_STEPS, 1)
+	local k = math.min(clampInt(n, 1, #R.TEAM_SIZE_STEPS, 1), maxN)
+	return R.TeamSize(k) / R.TeamSize(maxN)
+end
+
+-- Level factor from the average level deficit (>= 0). Deficit 0 = exactly 1.
+function R.LevelFactor(deficit: any): number
+	local d = tonumber(deficit) or 0
+	if d ~= d or d < 0 then d = 0 end
+	return math.clamp(1 - R.LEVEL_FACTOR_PER_LEVEL * d, R.LEVEL_FACTOR_MIN, R.LEVEL_FACTOR_MAX)
+end
+
+function R.ClampPerk(x: any): number
+	local v = tonumber(x) or 0
+	if v ~= v then v = 0 end
+	return math.clamp(v, R.PERK_BONUS_MIN, R.PERK_BONUS_MAX)
+end
+
+-- The whole multiplier, kept between 0 and YIELD_MULT_MAX.
+function R.YieldMult(teamRel: number, levelFactor: number, perk: any): number
+	return math.clamp(teamRel * levelFactor * (1 + R.ClampPerk(perk)), 0, R.YIELD_MULT_MAX)
+end
+
+-- A stored multiplier read back (record / save): missing or bad = 1 (missions sent before 2026-11-21).
+function R.SafeYield(x: any): number
+	local v = tonumber(x)
+	if v == nil or v ~= v then return 1 end
+	return math.clamp(v, 0, R.YIELD_MULT_MAX)
 end
 
 return table.freeze(R)

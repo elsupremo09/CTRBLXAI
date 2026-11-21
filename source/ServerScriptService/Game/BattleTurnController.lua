@@ -23,6 +23,8 @@ local BattlefieldEventService = require(Game:WaitForChild("BattlefieldEventServi
 local DoctrinePassiveService  = require(Game:WaitForChild("DoctrinePassiveService")) -- Artificer consumable-range +1 (2026-10-21)
 local StatCalcService         = require(Game:WaitForChild("StatCalcService")) -- shared stat calculation (2026-10-28)
 local ItemEffectService       = require(Game:WaitForChild("ItemEffectService")) -- item aim range (2026-10-26)
+local RacePassiveService      = require(Game:WaitForChild("RacePassiveService")) -- basic-attack range shown on the card (BUG-087)
+local TraitEffectService      = require(Game:WaitForChild("TraitEffectService")) -- basic-attack range shown on the card (BUG-087)
 
 -- Slice 6 temporary Guild menu (game_flow id 23): server glue for the building
 -- buttons. Requires GuildEvents itself, so the Guild remotes exist from here on.
@@ -440,13 +442,27 @@ local function buildTurnPrompt(unit)
 			tileX    = tile.tileX,
 			tileY    = tile.tileY,
 			pathCost = tile.pathCost,
+			-- BUG-PT-02: the RT this Move will add, from the same server code the Move commit
+			-- charges (CommandService.GetMoveRtPreview). The client shows it as-is.
+			rtCost   = CommandService.GetMoveRtPreview(unit, tile),
 			terrain  = tile.terrain,
 			path     = tile.path,
 		})
 	end
 
-	local attackCandidates = TargetingService.GetAttackCandidates(unit, state.units, (unit.weaponMaxRange or 1)
-		+ DoctrinePassiveService.GetProjectileRangeModifier(unit, unit.weaponProjectileType)) -- Ranger (2026-10-28)
+	-- Weapon + Ranger reach from the same server formula the commits use (BUG-082).
+	local attackCandidates = TargetingService.GetAttackCandidates(unit, state.units,
+		CommandService.GetBasicAttackBaseRange(unit))
+	-- BUG-PT-08 (2026-11-21): a status that forbids the Basic Attack (Disarmed; Stun / Sleep /
+	-- Petrify / Knock-out block everything) can arrive MID-TURN (trap, counter, reaction). The
+	-- commit refuses it at STEP 3b (StatusService.IsActionBlocked), but the prompt still listed
+	-- every target, so the attack bounced and the same prompt came back. Same canonical check as
+	-- the commit, per kind (unit Attack / AttackObject), like the Move gate above (2026-10-22).
+	local attackBlocked, attackBlockReason = StatusService.IsActionBlocked(unit, "Attack")
+	-- BUG-080: IsActionBlocked now maps blocks.BasicAttack to "AttackObject" too, so a Disarmed
+	-- unit gets no object targets either -- same answer the AttackObject commit (STEP 3b) gives.
+	local objectAttackBlocked = StatusService.IsActionBlocked(unit, "AttackObject")
+	if attackBlocked then attackCandidates = {} end
 	local attackTargets = {}
 	for _, c in ipairs(attackCandidates) do
 		-- Pre-calculate predicted basic attack damage for aim phase
@@ -464,8 +480,10 @@ local function buildTurnPrompt(unit)
 	-- (map_gen_rules row 82). Same range/LoS/elevation gates as unit attacks (shared
 	-- TargetingService logic); the Ad Billboard is excluded (unbreakable, rows 85/93).
 	-- The unit attack loop above is unchanged.
-	if TargetingService.GetAttackableObjectTargets then
-		for _, oc in ipairs(TargetingService.GetAttackableObjectTargets(unit, state.units, unit.weaponMaxRange or 1, state)) do
+	if TargetingService.GetAttackableObjectTargets and not objectAttackBlocked then
+		-- BUG-082: same base reach as the AttackObject commit (weapon + Ranger; race/trait added inside).
+		for _, oc in ipairs(TargetingService.GetAttackableObjectTargets(unit, state.units,
+			CommandService.GetBasicAttackBaseRange(unit), state)) do
 			table.insert(attackTargets, oc)
 		end
 	end
@@ -797,6 +815,9 @@ local function buildTurnPrompt(unit)
 		-- is allowed). Mirrors the undoReason pattern below. (2026-10-22)
 		moveBlockedReason = moveBlocked and moveBlockReason or nil,
 		attackTargets  = attackTargets,
+		-- BUG-PT-08: grayed-Attack tooltip reason when a status blocks the Basic Attack (same
+		-- pattern as moveBlockedReason; the text is the commit's own refusal reason).
+		attackBlockedReason = attackBlocked and attackBlockReason or nil,
 		-- UNDO (2026-10-17): availability + grayed-button reason for the top-level
 		-- Undo command. Server owns the rule (SEC-002); client only renders the
 		-- state. Available when the newest reversible action for THIS unit exists
@@ -827,6 +848,11 @@ local function buildTurnPrompt(unit)
 		waitRt     = math.round(
 			StatusService.GetModifiedBaseRt(unit) * GameConstants.REST_RT_MULTIPLIER
 		),
+		-- BUG-087: Basic Attack card range = the reach GetAttackCandidates allows (weapon + Ranger via
+		-- CommandService.GetBasicAttackBaseRange, + race/trait as TargetingService adds). Display only.
+		weaponMinRange = unit.weaponMinRange or 1,
+		weaponRange    = CommandService.GetBasicAttackBaseRange(unit)
+			+ RacePassiveService.GetRangeModifier(unit) + TraitEffectService.GetAttackRangeModifier(unit),
 		weaponRtDelay = unit.weaponRtDelay or 0,
 		weaponDamage  = unit.weaponDamage or 10,
 		-- Unit identity (for active unit panel display)
@@ -1270,7 +1296,8 @@ local function executePlayerCommand(unit, command)
 			if ok then
 				return { actionType = "Attack", unit = unit, objectAttack = true }
 			else
-				warn("[Main] Object attack rejected: " .. (reason or "unknown"))
+				-- BUG-085: no [Main] warn here; CommandService.ValidateAndCommit already logs
+				-- "[CommandService] Attack rejected: <reason>" once for Attack / AttackObject (LOG-001).
 				return nil
 			end
 		end
@@ -1306,7 +1333,8 @@ local function executePlayerCommand(unit, command)
 				rtDelay       = rtAdded > 0 and rtAdded or nil,
 			}
 		else
-			warn("[Main] Player attack rejected: " .. (reason or "unknown"))
+			-- BUG-085: no [Main] warn here; CommandService.ValidateAndCommit already logs
+			-- "[CommandService] Attack rejected: <reason>" once for Attack / AttackObject (LOG-001).
 			return nil
 		end
 	end

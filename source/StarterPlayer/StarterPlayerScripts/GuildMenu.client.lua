@@ -1639,6 +1639,13 @@ if DispatchScreen then
 		-- server answer, or nil on refusal (call() already showed the error).
 		rt = function(action: string, payload: any?): any?
 			local cmd = if type(payload) == "table" then payload else { action = action }
+			if action == "Preview" then
+				-- Display only (yield preview, 2026-11-21): silent -- no error line, no page refresh.
+				local remote: any = GuildEvents.DispatchRt
+				if not remote then return nil end
+				local ok, res = pcall(remote.InvokeServer, remote, cmd)
+				return if ok and type(res) == "table" and res.ok ~= false then res else nil
+			end
 			local res = call(GuildEvents.DispatchRt, cmd)
 			if res and action ~= "Info" then
 				invalidatePageCache() -- units / gold / materials changed: re-fetch the board and header
@@ -3080,7 +3087,17 @@ GuildEvents.GuildMenuOpened.OnClientEvent:Connect(function(data: any)
 		-- (sortieMode and chosenQuest) failed and the screen fell through to an empty board
 		-- = the "guild screen disappeared after choosing a quest" bug. (2026-10-16)
 		if type(data) == "table" and type(data.quest) == "table" then
-			chosenQuest = data.quest
+			-- BUG-089 (PT-10): the PreBattle copy is compact (no levelMin/levelMax, goal, cancelFee...).
+			-- Replacing the board's card with it made the Quest accepted view fall back to
+			-- recommendedLvl (board said Level 36, accepted view Level 37). Same quest: overlay the
+			-- server copy (elite flag etc.) onto the card instead, so every field keeps its source.
+			if type(chosenQuest) == "table" and chosenQuest.id ~= nil and chosenQuest.id == data.quest.id then
+				local merged = table.clone(chosenQuest)
+				for k, v in data.quest do merged[k] = v end
+				chosenQuest = merged
+			else
+				chosenQuest = data.quest
+			end
 		end
 		if guildSortieStep ~= "sortie" and guildSortieStep ~= "details" then
 			guildSortieStep = "overview"

@@ -111,6 +111,7 @@ local _activeEventName: string? = nil
 local _weatherName: string? = nil
 local _timePhase: string? = nil        -- current time-of-day phase (for the time peek card)
 local _timeCtRemaining: number? = nil  -- CT left until the next phase (for the time peek card)
+local _timeBattleCt: number? = nil     -- real server battle CT shown on the "CT" label (BUG-081)
 local conditionsPanel   = nil  -- Next to turn order
 local battleLogPanel    = nil  -- Lower-right (25% × 20%)
 local mapDetailsPanel   = nil  -- Top-left popup: quest/loot/gold snapshot (2026-10-17)
@@ -336,6 +337,25 @@ local function makeLabel(parent, text, props)
 	lbl.Text = text or ""
 	lbl.LayoutOrder = props.order or 0
 	lbl.Parent = parent
+	return lbl
+end
+
+-- BUG-PT-04 (2026-11-21): unit names in the top-right unit panel. A long name shrinks (down to
+-- 9 px, project_rules 244 phone sizing minimum, same as the skill/item lists) to fit its box,
+-- then is cut with "..." at the END. It never scrolls or moves, so the start of the name always
+-- shows (the rolling marquee below clipped it on both ends mid-scroll). Measured after layout.
+local NAME_MIN_TEXT_PX = 9
+local function fitNameLabel(lbl: TextLabel): TextLabel
+	lbl.TextTruncate = Enum.TextTruncate.AtEnd
+	task.defer(function()
+		if not lbl.Parent or lbl.AbsoluteSize.X <= 0 then return end
+		local size = lbl.TextSize
+		while size > NAME_MIN_TEXT_PX and TextService:GetTextSize(lbl.Text, size, lbl.Font,
+			Vector2.new(10000, 10000)).X > lbl.AbsoluteSize.X do
+			size -= 1
+		end
+		lbl.TextSize = size
+	end)
 	return lbl
 end
 
@@ -913,9 +933,9 @@ function BattleHUD._buildActiveUnit()
 	local tx = portraitSize + 6
 	local lineH = math.floor(portraitSize / 4)
 
-	makeMarquee(makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, tx, 0, 0),
+	fitNameLabel(makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, tx, 0, 0),
 		size = UDim2.new(1, -tx, 0, lineH), font = Theme.Font.PrimaryBold,
-		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) }))
+		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) }))  -- BUG-PT-04
 	makeLabel(topRow, d.race or "—", { pos = UDim2.new(0, tx, 0, lineH),
 		size = UDim2.new(1, -tx, 0, lineH), textSize = Theme.Text.Small(),
 		color = Theme.Colors.TextSecondary })
@@ -2325,6 +2345,16 @@ function BattleHUD.SetWeather(name: string?)
 	refreshInfoPanels()
 end
 
+-- BUG-081 (2026-11-21): called by BattleVisualClient on EVERY server CT update, so the "CT"
+-- label (and the peek card's countdown) stay current even while the timeline is not rebuilt
+-- (e.g. during aiming). Updates the existing label in place.
+function BattleHUD.SetBattleCt(ct: number, ctRemaining: number?)
+	_timeBattleCt = ct
+	if ctRemaining then _timeCtRemaining = ctRemaining end
+	local lbl = timePanel and timePanel:FindFirstChild("CTCountdown")
+	if lbl and lbl:IsA("TextLabel") then lbl.Text = `CT {ct}` end
+end
+
 function BattleHUD.UpdateTimeline(entries, timeInfo)
 	ensureRoot()
 	BattleHUD._lastTimelineEntries = entries
@@ -2368,7 +2398,8 @@ function BattleHUD.UpdateTimeline(entries, timeInfo)
 			ctLbl.TextColor3 = Theme.Colors.TextPrimary
 			ctLbl.TextStrokeColor3 = Color3.new(0, 0, 0)
 			ctLbl.TextStrokeTransparency = 0
-			ctLbl.Text = `CT {timeInfo.ctRemaining or 0}`
+			if timeInfo.currentCt then _timeBattleCt = timeInfo.currentCt end
+			ctLbl.Text = `CT {_timeBattleCt or 0}`  -- BUG-081: real battle CT, not the phase countdown
 			ctLbl.ZIndex = 6
 			ctLbl.Parent = timePanel
 			-- Stash the clock for the time peek card, then make the panel tappable
@@ -2951,9 +2982,9 @@ function BattleHUD._buildViewModeUnit()
 	local tx = portraitSize + 6
 	local lineH = math.floor(portraitSize / 4)
 
-	makeMarquee(makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, tx, 0, 0),
+	fitNameLabel(makeLabel(topRow, d.name or "Unit", { pos = UDim2.new(0, tx, 0, 0),
 		size = UDim2.new(1, -tx, 0, lineH), font = Theme.Font.PrimaryBold,
-		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) }))
+		textSize = Theme.Text.Heading(), color = Theme.GetSideColor(d.side) }))  -- BUG-PT-04
 	makeLabel(topRow, d.race or "\xE2\x80\x94", { pos = UDim2.new(0, tx, 0, lineH),
 		size = UDim2.new(1, -tx, 0, lineH), textSize = Theme.Text.Small(),
 		color = Theme.Colors.TextSecondary })

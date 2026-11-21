@@ -897,11 +897,148 @@ function DispatchService.RtConfig(playerId: string)
 	}
 end
 
+-- YIELD MULTIPLIER (user-approved 2026-11-21 11:27 AM, N1; SIM_dispatch_team_level_20261121.md, math in
+-- DispatchRtRules). Worked out ONCE at send (rtYieldAtSend) and stored on the record as yieldMat /
+-- yieldItem, so a later level-up or roster change never moves a mission already out.
+--   materials               = team x level x (1 + material perk)
+--   items, material mission = team x level x (1 + item perk)
+--   items, EXP mission      = team x (1 + item perk)           (no level factor: training runs)
+--   EXP and weekly sulfur   = unchanged (never multiplied)
+
+-- Perk hook (ruling c). TODO(dispatch perks): no unit_traits dispatch-yield perk exists yet. When it does,
+-- sum each sent unit's perk here as separate material / item values (flaws negative); the sum is clamped
+-- to -0.30..+0.30 by Rules.ClampPerk. Until then both are 0, so the perk part is exactly x 1.
+local function rtPerkBonus(_playerId: string, _unitIds: { string }): (number, number)
+	return 0, 0
+end
+
+-- Snapshot at send (reads only). Level reference = the player's n highest-level OWNED units, n = units
+-- sent, counting units away on dispatch or in a dungeon (RosterProvider lists every owned unit), so a
+-- player cannot lower the reference by sending the top units away first.
+local function rtYieldAtSend(playerId: string, unitIds: { string }, material: any, level: number)
+	local n = #unitIds
+	local maxUnits = Rules.UnitsPerMission(level)
+	local k = math.clamp(n, 1, maxUnits)
+	local teamRel = Rules.TeamRel(k, maxUnits)
+	local inTeam: { [string]: boolean } = {}
+	local teamSum = 0
+	local levels: { number } = {}
+	for _, uid in unitIds do
+		local lvl = (unitProgress(playerId, uid))
+		inTeam[uid] = true
+		teamSum += lvl
+		table.insert(levels, lvl)
+	end
+	local roster = if _rosterProvider then _rosterProvider(playerId) else nil
+	if type(roster) == "table" then
+		for _, uid in roster do
+			if type(uid) == "string" and not inTeam[uid] then table.insert(levels, (unitProgress(playerId, uid))) end
+		end
+	end
+	table.sort(levels, function(a, b) return a > b end)
+	local refSum = 0
+	for i = 1, math.min(n, #levels) do refSum += levels[i] end
+	-- Whole-number level sums, so a sent top team is exactly deficit 0 -> factor exactly 1.
+	local deficit = if n > 0 then math.max(0, refSum - teamSum) / n else 0
+	local levelFactor = Rules.LevelFactor(deficit)
+	local perkMat, perkItem = rtPerkBonus(playerId, unitIds)
+	local isMat = material ~= Rules.NO_MATERIAL
+	return {
+		mat = Rules.YieldMult(teamRel, levelFactor, perkMat),
+		item = Rules.YieldMult(teamRel, if isMat then levelFactor else 1, perkItem),
+		teamBonusPct = math.floor((Rules.TeamSize(k) - 1) * 100 + 0.5),
+		levelMatchPct = math.floor(levelFactor * 100 + 0.5),
+		avgTeam = if n > 0 then teamSum / n else 0,
+		avgRef = if n > 0 then refSum / n else 0,
+	}
+end
+
+-- The record's stored multipliers (material, item). Missions sent before 2026-11-21 / old saves have no
+-- fields = 1 (same default guard as xpFrac), so they keep paying as they were sent.
+local function rtYieldMult(_playerId: string, rec: any): (number, number)
+	return Rules.SafeYield(rec.yieldMat), Rules.SafeYield(rec.yieldItem)
+end
+
+--- Display-only preview for the Send panel (server truth, SEC-002): the multiplier these units WOULD get.
+--- Same id checks as RtSend (owned, unique, 1..team size). nil = invalid request.
+function DispatchService.RtYieldPreview(playerId: string, material: any, unitIds: any)
+	if material ~= Rules.NO_MATERIAL and not (type(material) == "string" and Rules.MATERIALS[material]) then return nil end
+	local level = DispatchService.GetLevel()
+	if type(unitIds) ~= "table" or #unitIds < 1 or #unitIds > Rules.UnitsPerMission(level) then return nil end
+	local ownedSet: { [string]: boolean }? = nil
+	if _rosterProvider then
+		local roster = _rosterProvider(playerId)
+		if type(roster) == "table" then
+			ownedSet = {}
+			for _, uid in roster do ownedSet[uid] = true end
+		end
+	end
+	local seen: { [string]: boolean } = {}
+	local clean: { string } = {}
+	for _, uid in unitIds do
+		if type(uid) ~= "string" or #uid > RT_ID_MAX or seen[uid] then return nil end
+		if ownedSet and not ownedSet[uid] then return nil end
+		seen[uid] = true
+		table.insert(clean, uid)
+	end
+	local y = rtYieldAtSend(playerId, clean, material, level)
+	local isMat = material ~= Rules.NO_MATERIAL
+	-- Minimal answer (NET-003). levelMatchPct / matMult only on material missions (EXP missions: no level factor).
+	return {
+		teamBonusPct = y.teamBonusPct,
+		levelMatchPct = if isMat then y.levelMatchPct else nil,
+		matMult = if isMat then y.mat else nil,
+		full = (if isMat then y.mat else y.item) >= 1,
+	}
+end
+
+-- Works out one payout from the record (reads only, NO side effects): per-unit EXP lines (whole +
+-- carried fraction) and the material whole + fraction. rtPayout commits and grants it; RtList shows
+-- it as a display-only preview ("Earned so far"). Items are not here: they are rolled at collect.
+local function rtCompute(playerId: string, rec: any, early: boolean)
+	local level = DispatchService.GetLevel()
+	local secs, limit = rtEarned(rec) -- 2026-11-20 fix: limit was dropped by the no-cap change (nil -> error at the log line)
+	local hours = secs / 3600
+	local cap, xtn = levelCap(), xpToNextFn()
+	local xpMult = if early then Rules.EARLY_RECALL_XP_MULT else 1
+	local matMult = rtYieldMult(playerId, rec) -- material multiplier only; EXP is never multiplied (2026-11-21 N1)
+	-- Read-only view of the carried fractions (an old save may lack the table; never written here).
+	local xpFrac: { [string]: number } = if type(rec.xpFrac) == "table" then rec.xpFrac else {}
+
+	local unitLines = {}
+	for _, uid in rec.unitIds do
+		local lvl, into = unitProgress(playerId, uid)
+		-- Material missions pay no EXP (yield choice, 2026-11-19 11:57 PM). Early recall: EXP missions 25% EXP,
+		-- material missions nothing (no EXP to take 25% of, and no material before the minimum).
+		local raw = if rec.noExp == true then 0
+			else Rules.ExpForHours(rec.tier, level, hours, lvl, into, cap, xtn) * xpMult
+		if not early and rec.noExp ~= true then raw += (xpFrac[uid] or 0) end
+		local whole = math.max(0, math.floor(raw))
+		table.insert(unitLines, { unitId = uid, xp = whole, frac = if early then 0 else math.clamp(raw - whole, 0, 0.999999) })
+	end
+	local matWhole, matFrac = 0, rec.matFrac or 0
+	if not early and rec.material ~= Rules.NO_MATERIAL then
+		local m = Rules.MaterialForHours(rec.material, rec.tier, level, hours) * matMult + matFrac
+		matWhole = math.max(0, math.floor(m))
+		matFrac = math.clamp(m - matWhole, 0, 0.999999)
+	end
+	return {
+		level = level, secs = secs, limit = limit, hours = hours,
+		unitLines = unitLines, matWhole = matWhole, matFrac = matFrac,
+	}
+end
+
 --- Real-time missions out now, for the screen (times as seconds, never absolute client time).
 function DispatchService.RtList(playerId: string)
 	local out = {}
 	for _, rec in rtOf(playerId) do
 		local secs, limit = rtEarned(rec)
+		-- Display only (2026-11-21 build): what a collect now would pay, from the same rtCompute as the
+		-- payout (no side effects, whole numbers only; fractions stay on the server, NET-003). Items are
+		-- rolled at collect, so they cannot be previewed. units = { {unitId, xp} } (arrays, NET-003).
+		local preview = rtCompute(playerId, rec, false)
+		local previewUnits = {}
+		for _, line in preview.unitLines do table.insert(previewUnits, { line.unitId, line.xp }) end
 		table.insert(out, {
 			missionId = rec.missionId, tier = rec.tier, material = rec.material,
 			noExp = rec.noExp == true, -- yield: material only (no EXP); old missions sent before 2026-11-20 pay both
@@ -912,7 +1049,16 @@ function DispatchService.RtList(playerId: string)
 			-- Display only (2026-11-19 8:20 PM): carried material fraction + rate per hour at this level, so the
 			-- screen can show "Next {Material} in …" instead of decimals. The server still works out every payout.
 			matFrac = tonumber(rec.matFrac) or 0,
-			matPerHour = Rules.MaterialRatePerHour(rec.material, rec.tier, DispatchService.GetLevel()),
+			-- x the stored material multiplier (2026-11-21), so "1 {Material} every" / "Next {Material} in" match the pay.
+			matPerHour = Rules.MaterialRatePerHour(rec.material, rec.tier, DispatchService.GetLevel()) * (rtYieldMult(playerId, rec)),
+			-- Display only (2026-11-21 N1): the stored team / level numbers (nil on missions sent before it).
+			teamBonusPct = tonumber(rec.yTeamPct),
+			levelMatchPct = if rec.material ~= Rules.NO_MATERIAL then tonumber(rec.yLevelPct) else nil,
+			-- Display only (2026-11-21): true time since the last collect / send (NOT capped by the limit),
+			-- seconds until the meter is full, and the whole amounts earned so far.
+			waitingSeconds = ServerTime.Elapsed(rec.lastCollectAt),
+			fullInSeconds = math.max(0, limit - secs),
+			earnedSoFar = { units = previewUnits, material = rec.material, amount = preview.matWhole },
 		})
 	end
 	table.sort(out, function(a, b) return a.missionId < b.missionId end)
@@ -962,6 +1108,8 @@ function DispatchService.RtSend(playerId: string, tier: any, material: any, unit
 	if not (_currency and _currency.GetGold and _currency.SpendGold) then
 		return false, "Gold unavailable — dispatch not sent"
 	end
+	-- Yield multiplier snapshot (2026-11-21 N1), worked out before the fee is taken (reads only).
+	local y = rtYieldAtSend(playerId, clean, material, level)
 	local fee = DispatchService.GetFeeGold()
 	local gold = _currency.GetGold(playerId) or 0
 	if gold < fee then
@@ -989,10 +1137,13 @@ function DispatchService.RtSend(playerId: string, tier: any, material: any, unit
 		-- Yield choice (user 2026-11-19 11:57 PM): a material mission pays material only, its units earn NO
 		-- EXP; an EXP mission (material "none") pays EXP only. Items roll on every mission (2026-11-20 12:31 AM).
 		noExp = material ~= Rules.NO_MATERIAL,
+		-- Yield multiplier (2026-11-21 N1), fixed at send. yTeamPct / yLevelPct are display only.
+		yieldMat = y.mat, yieldItem = y.item, yTeamPct = y.teamBonusPct, yLevelPct = y.levelMatchPct,
 	}
 	for _, uid in clean do markAway(playerId, uid, 0) end
-	print(string.format("[DispatchService] RT SENT %s | %s | tier %d %s | %d unit(s) | L%d | fee %d",
-		playerId, missionId, t.tier, tostring(material), #clean, level, fee))
+	print(string.format("[DispatchService] RT SENT %s | %s | tier %d %s | %d unit(s) | L%d | fee %d | yield mat x%.4f item x%.4f (team +%d%%, level %d%%, avg %.2f vs top %.2f)",
+		playerId, missionId, t.tier, tostring(material), #clean, level, fee, y.mat, y.item, y.teamBonusPct,
+		y.levelMatchPct, y.avgTeam, y.avgRef))
 	return true, { missionId = missionId, tier = t.tier, material = material, unitIds = clean, fee = fee,
 		noExp = material ~= Rules.NO_MATERIAL }
 end
@@ -1002,9 +1153,10 @@ local function rtRollItems(playerId: string, rec: any, level: number, hours: num
 	local out = {}
 	if hours <= 0 then return out end
 	local expect = Rules.ItemExpectations(rec.tier, level, hours)
+	local _, itemMult = rtYieldMult(playerId, rec) -- expectation x item multiplier (2026-11-21 N1)
 	local rng = Random.new(rec.seed + rec.collects * 104729)
 	for _, it in Rules.ITEMS do -- fixed order, so the same seed always rolls the same way
-		local e = expect[it.kind]
+		local e = if expect[it.kind] then expect[it.kind] * itemMult else nil
 		if e and e > 0 then
 			local n = math.floor(e)
 			if rng:NextNumber() < e - n then n += 1 end
@@ -1041,33 +1193,16 @@ end
 -- One payout. early = recall before the minimum (25% EXP, nothing else). Updates the record first,
 -- then grants. Returns the summary.
 local function rtPayout(playerId: string, rec: any, early: boolean)
-	local level = DispatchService.GetLevel()
-	local secs, limit = rtEarned(rec) -- 2026-11-20 fix: limit was dropped by the no-cap change (nil -> error at the log line)
 	-- 2026-11-20 guard (user-approved): an old saved mission may lack these fields; default them so
 	-- collect never errors on nil (rec.collects += 1, rec.xpFrac[...] writes below).
 	if type(rec.xpFrac) ~= "table" then rec.xpFrac = {} end
 	rec.collects = tonumber(rec.collects) or 0
-	local hours = secs / 3600
-	local cap, xtn = levelCap(), xpToNextFn()
-	local xpMult = if early then Rules.EARLY_RECALL_XP_MULT else 1
 
-	-- 1) Work everything out (reads only).
-	local unitLines = {}
-	for _, uid in rec.unitIds do
-		local lvl, into = unitProgress(playerId, uid)
-		-- Material missions pay no EXP (yield choice, 2026-11-19 11:57 PM). Early recall: EXP missions 25% EXP,
-		-- material missions nothing (no EXP to take 25% of, and no material before the minimum).
-		local raw = if rec.noExp == true then 0 else Rules.ExpForHours(rec.tier, level, hours, lvl, into, cap, xtn) * xpMult
-		if not early and rec.noExp ~= true then raw += (rec.xpFrac[uid] or 0) end
-		local whole = math.max(0, math.floor(raw))
-		table.insert(unitLines, { unitId = uid, xp = whole, frac = if early then 0 else math.clamp(raw - whole, 0, 0.999999) })
-	end
-	local matWhole, matFrac = 0, rec.matFrac or 0
-	if not early and rec.material ~= Rules.NO_MATERIAL then
-		local m = Rules.MaterialForHours(rec.material, rec.tier, level, hours) + matFrac
-		matWhole = math.max(0, math.floor(m))
-		matFrac = math.clamp(m - matWhole, 0, 0.999999)
-	end
+	-- 1) Work everything out (reads only): rtCompute, the same function RtList previews with.
+	local calc = rtCompute(playerId, rec, early)
+	local level, secs, limit, hours = calc.level, calc.secs, calc.limit, calc.hours
+	local unitLines = calc.unitLines
+	local matWhole, matFrac = calc.matWhole, calc.matFrac
 
 	-- 2) Commit the record (so a second call right after pays nothing).
 	local now = ServerTime.Now()
@@ -1197,6 +1332,7 @@ local function rtExport(playerId: string)
 			sentAt = rec.sentAt, lastCollectAt = rec.lastCollectAt, levelAtSend = rec.levelAtSend,
 			gearLevel = rec.gearLevel, seed = rec.seed, matFrac = rec.matFrac, xpFrac = xf, collects = rec.collects,
 			noExp = rec.noExp,
+			yieldMat = rec.yieldMat, yieldItem = rec.yieldItem, yTeamPct = rec.yTeamPct, yLevelPct = rec.yLevelPct,
 		}
 	end
 	return out
@@ -1246,6 +1382,11 @@ local function rtImport(playerId: string, data: any)
 					-- Yield (2026-11-20): only a saved material mission marked noExp skips EXP. Missions saved before
 					-- this change have no flag and keep paying as they were sent (EXP + material), no double pay.
 					noExp = if r.noExp == true and material ~= Rules.NO_MATERIAL then true else nil,
+					-- Yield multiplier (2026-11-21 N1): saved missions without it stay nil = x 1 (paid as sent).
+					yieldMat = if r.yieldMat ~= nil then Rules.SafeYield(r.yieldMat) else nil,
+					yieldItem = if r.yieldItem ~= nil then Rules.SafeYield(r.yieldItem) else nil,
+					yTeamPct = if tonumber(r.yTeamPct) then math.clamp(math.floor(tonumber(r.yTeamPct) or 0), 0, 100) else nil,
+					yLevelPct = if tonumber(r.yLevelPct) then math.clamp(math.floor(tonumber(r.yLevelPct) or 0), 0, 100) else nil,
 				}
 				for _, uid in units do markAway(playerId, uid, 0) end
 			else

@@ -61,7 +61,7 @@ local ROTATION_SNAP   = 45          -- 8 viewing directions
 -- Side is near eye-level to appreciate unit models: looser zoom band and
 -- focus tracks the looked-at unit Y (trackY) so elevated models stay framed.
 local VIEW_PROFILES = {
-	Isometric = { pitch = 45, zoomMin = 15, zoomMax = 96,  zoomDefault = 53, trackY = false },
+	Isometric = { pitch = 47.25, zoomMin = 15, zoomMax = 96,  zoomDefault = 53, trackY = false }, -- pitch +5% 2026-11-21 (user)
 	Top       = { pitch = 88, zoomMin = 20, zoomMax = 90,  zoomDefault = 55, trackY = false },
 	Side      = { pitch = 12, zoomMin = 8,  zoomMax = 140, zoomDefault = 40, trackY = true  },
 }
@@ -131,7 +131,7 @@ local pendingTapPos    = nil
 -- turn, "cinematic"). Scripted/gameplay camera calls are never blocked by these.
 local _cineActive = false
 local _inputLocks: { [string]: boolean } = {}
-local CINE_PITCH = 45            -- cinematic shots are always isometric
+local CINE_PITCH = VIEW_PROFILES.Isometric.pitch            -- cinematic shots are always isometric -- 2026-11-21: follow gameplay pitch (Tester WARN)
 local CINE_DISTANCE = 38         -- a bit closer than the isometric default (53)
 local CINE_TWEEN = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 

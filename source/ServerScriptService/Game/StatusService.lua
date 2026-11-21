@@ -1972,7 +1972,7 @@ end
 --
 -- Reads the `blocks` table from GameConstants.STATUSES.
 -- Returns true + reason if any active status blocks this action type.
--- actionType: "Move", "Attack", "Skill", "Guard", "Wait", "Push"
+-- actionType: "Move", "Attack", "AttackObject", "Skill", "Guard", "Wait", "Push"
 --------------------------------------------------
 
 function StatusService.IsActionBlocked(unit, actionType)
@@ -1990,7 +1990,11 @@ function StatusService.IsActionBlocked(unit, actionType)
 			if actionType == "Skill" and def.blocks.Skills then
 				return true, inst.id .. " prevents skill use"
 			end
-			if actionType == "Attack" and def.blocks.BasicAttack then
+			-- BUG-080 (2026-11-21): a basic attack on an object ("AttackObject": barrels, walls, OBS
+			-- props) is still a Basic Attack (elements_statuses row 65, Disarmed: "Prevents Basic
+			-- Attack only"), so blocks.BasicAttack covers both kinds. "AttackObject" used to match
+			-- no branch here, so a Disarmed unit could still hit objects.
+			if (actionType == "Attack" or actionType == "AttackObject") and def.blocks.BasicAttack then
 				return true, inst.id .. " prevents basic attack"
 			end
 			if actionType == "Move" and def.blocks.Move then

@@ -8,7 +8,7 @@
 -- Pipeline position: runs AFTER ElevationPass (last pass).
 -- Does NOT modify any tiles.
 --
--- 12 checks (V1-V12):
+-- 13 checks (V1-V13):
 --   V1:  Terrain Fill           — every tile has a valid terrain ID
 --   V2:  Elevation Fill         — every tile has elevation in biome range
 --   V3:  Terrain Reference      — every terrain ID resolves in TerrainData
@@ -21,6 +21,7 @@
 --   V10: Minimum Feature Cluster — no isolated special terrain tiles
 --   V11: Deployment Anchors     — ≥ 3 PD + ≥ 3 ED anchors
 --   V12: Biome-Specific Checks  — biome-required terrains present
+--   V13: OBJ Reachability       — every OBJ reachable from PD and back (Jump 1)
 --
 -- Location: ServerScriptService/Game/ValidationPass.lua
 
@@ -28,6 +29,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Content      = ReplicatedStorage:WaitForChild("Content")
 local TerrainData  = require(Content:WaitForChild("TerrainData"))
 local ObjectData   = require(Content:WaitForChild("ObjectData"))
+-- Jump-1 walkability (V13) is single-sourced from ElevationPass (2026-11-21).
+-- One-way require: ElevationPass never requires ValidationPass.
+local ElevationPass = require(script.Parent:WaitForChild("ElevationPass"))
 
 local ValidationPass = {}
 
@@ -383,80 +387,59 @@ function ValidationPass.Run(mapState)
 	})
 
 	--------------------------------------------------
-	-- V13: OBJ Reachability (added Sep 30 2026)
-	-- Every OBJ (objective spawn) tile must be reachable from PD via a
-	-- ≤1-step passable path. OBS is the only marker that blocks — and since
-	-- OBS tiles are raised into impassable walls (ElevationPass Phase 2b,
-	-- isObstacle), the same passability + ≤1-elevation gate used for PD→ED
-	-- naturally excludes them. Only runs for templates that contain OBJ.
+	-- V13: OBJ Reachability, Jump-1 walker (added Sep 30 2026; rewritten
+	-- 2026-11-21 for SIM_pocket_breaker_20261121 R1, map_gen_rules rows 40 / 68).
+	-- Every OBJ (objective / goal) tile must be reachable FROM PD and able to walk
+	-- BACK to PD for a base unit: Jump 1 up / 3 down, 8 directions with the
+	-- diagonal corner rule; OBS (both forms), Quicksand, Molten and chasm floors
+	-- are not standable. This is the same walker ElevationPass Phase 7b repairs
+	-- against (ElevationPass.AnalyzeWalkability is the single source). The old
+	-- check (4-cardinal, |diff| <= 1, reach only) missed goal pockets a unit can
+	-- drop into but never leave. Report-only, like every ValidationPass check:
+	-- never a reject trigger. Residual pocket counts ride along as notes.
 	--------------------------------------------------
 	local v13Violations = {}
+	local v13Notes = nil
 	do
-		local objList = {}
+		local hasObj = false
 		for y = 1, h do
 			for x = 1, w do
-				ops = ops + 1
-				if ops % YIELD_INTERVAL == 0 then task.wait() end
-				if tiles[y][x].marker == "OBJ" then
-					table.insert(objList, { x = x, y = y })
-				end
+				if tiles[y][x].marker == "OBJ" then hasObj = true end
 			end
 		end
-		if #objList > 0 then
-			-- BFS from all PD tiles over passable, ≤1-step, non-OBS tiles.
-			local function keyOf(x, y) return y * 100000 + x end
-			local pdList = {}
+		local walk = ElevationPass.AnalyzeWalkability(mapState)
+		v13Notes = {
+			oneWayPockets       = walk.oneWayPockets,
+			keyTilesOutsideMain = walk.keyTilesOutsideMain,
+			trapTiles           = walk.trapTiles,
+		}
+		if hasObj then
 			for y = 1, h do
 				for x = 1, w do
 					ops = ops + 1
 					if ops % YIELD_INTERVAL == 0 then task.wait() end
-					if tiles[y][x].marker == "PD" then
-						table.insert(pdList, { x = x, y = y })
-					end
-				end
-			end
-			local visited, queue, qHead = {}, {}, 1
-			for _, pos in ipairs(pdList) do
-				local k = keyOf(pos.x, pos.y)
-				if not visited[k] then visited[k] = true; table.insert(queue, pos) end
-			end
-			while qHead <= #queue do
-				local cur  = queue[qHead]; qHead = qHead + 1
-				local tile = tiles[cur.y][cur.x]
-				for _, dir in ipairs(CARDINAL) do
-					local nx, ny = cur.x + dir.x, cur.y + dir.y
-					if isInBounds(nx, ny, w, h) then
-						local nk = keyOf(nx, ny)
-						if not visited[nk] then
-							local nTile = tiles[ny][nx]
-							if not nTile.isObstacle then
-								local tDef  = TerrainData.Types[nTile.terrain]
-								local pass  = tDef and tDef.passable ~= false
-								local noBlock = nTile.object == nil
-									or (ObjectData.Objects[nTile.object]
-										and ObjectData.Objects[nTile.object].passable)
-								local elevOk = math.abs(tile.elevation - nTile.elevation) <= 1
-								if pass and noBlock and elevOk then
-									visited[nk] = true
-									table.insert(queue, { x = nx, y = ny })
-								end
+					if tiles[y][x].marker == "OBJ" then
+						local i = (y - 1) * walk.width + x
+						if not walk.main[i] then
+							if walk.reach[i] then
+								table.insert(v13Violations, string.format(
+									"(%d,%d) OBJ reachable from PD but no walkable way back (Jump %d)",
+									x, y, walk.walkUp))
+							else
+								table.insert(v13Violations, string.format(
+									"(%d,%d) OBJ not reachable from PD (Jump %d)", x, y, walk.walkUp))
 							end
 						end
 					end
 				end
 			end
-			for _, obj in ipairs(objList) do
-				if not visited[keyOf(obj.x, obj.y)] then
-					table.insert(v13Violations,
-						string.format("(%d,%d) OBJ not reachable from PD", obj.x, obj.y))
-				end
-			end
 		end
 	end
 	table.insert(checks, {
-		id = "V13", name = "OBJ Reachability",
+		id = "V13", name = "OBJ Reachability (Jump 1)",
 		passed = #v13Violations == 0,
 		violations = #v13Violations > 0 and v13Violations or nil,
+		notes = v13Notes,
 	})
 
 	--------------------------------------------------

@@ -167,18 +167,78 @@ local function makeInert(inst: Instance)
 	end
 end
 
--- Clone a variant, fit it, rotate (90° steps keep the footprint inside the tile),
--- and ground it by its real bounding box on the tile top.
+-- World-axis bounding box (centre, size) over every BasePart of inst. Model:GetBoundingBox is
+-- oriented to the pivot, so for a template authored with a tilted pivot its Y is not height.
+local function worldBounds(inst: Instance): (Vector3, Vector3)
+	local parts: { BasePart } = {}
+	if inst:IsA("BasePart") then table.insert(parts, inst) end
+	for _, d in inst:GetDescendants() do
+		if d:IsA("BasePart") then table.insert(parts, d) end
+	end
+	if #parts == 0 then
+		local cf, size = boundsOf(inst)
+		return cf.Position, size
+	end
+	local minV = Vector3.new(math.huge, math.huge, math.huge)
+	local maxV = -minV
+	for _, p in parts do
+		local cf, h = p.CFrame, p.Size / 2
+		local e = Vector3.new(
+			math.abs(cf.XVector.X) * h.X + math.abs(cf.YVector.X) * h.Y + math.abs(cf.ZVector.X) * h.Z,
+			math.abs(cf.XVector.Y) * h.X + math.abs(cf.YVector.Y) * h.Y + math.abs(cf.ZVector.Y) * h.Z,
+			math.abs(cf.XVector.Z) * h.X + math.abs(cf.YVector.Z) * h.Y + math.abs(cf.ZVector.Z) * h.Z)
+		minV = minV:Min(cf.Position - e)
+		maxV = maxV:Max(cf.Position + e)
+	end
+	return (minV + maxV) / 2, maxV - minV
+end
+
+-- The template's authored rotation (pivot for a Model, CFrame for a part). BUG-090 (PT-21):
+-- many prop meshes are imported Z-up and stood upright (plants) or laid flat (Animal Bones,
+-- Dino Skull) by a 90° rotation on the template; placing them with a pure yaw threw that
+-- rotation away, so plants grew sideways and skeletons stood up.
+local function authoredRotation(inst: Instance): CFrame
+	if inst:IsA("Model") then return inst:GetPivot().Rotation end
+	if inst:IsA("BasePart") then return (inst :: BasePart).CFrame.Rotation end
+	return CFrame.identity
+end
+
+local function placeAt(inst: Instance, cf: CFrame)
+	if inst:IsA("Model") then
+		inst:PivotTo(cf)
+	else
+		(inst :: BasePart).CFrame = cf
+	end
+end
+
+-- Clone a variant, fit it, rotate (world-Y 90° steps on top of the template's authored
+-- rotation keep the footprint inside the tile), and ground it by its world bounding box on
+-- the tile top. alongX (two-tile props): true/false = turn the long side along world X/Z.
 local function spawnProp(
 	template: Instance, centre: Vector3, rng: Random,
 	fitToTile: boolean, scaleJitter: number, maxOffset: number,
-	yawOverride: number?
+	yawOverride: number?, alongX: boolean?
 ): Instance?
 	local clone = template:Clone()
 	makeInert(clone)
 
 	local ok = pcall(function()
-		local _, size = boundsOf(clone)
+		local baseRot = authoredRotation(template)
+		local yaw = yawOverride or (rng:NextInteger(0, 3) * math.pi / 2)
+		-- Orient first (at the origin) so fitting and the footprint use the real world extents.
+		local function orient(y: number)
+			placeAt(clone, CFrame.Angles(0, y, 0) * baseRot)
+		end
+		orient(yaw)
+		if alongX ~= nil then
+			local _, s0 = worldBounds(clone)
+			if (s0.X >= s0.Z) ~= alongX then
+				yaw += math.pi / 2
+				orient(yaw)
+			end
+		end
+
+		local _, size = worldBounds(clone)
 		local f = 1
 		if fitToTile then
 			f = math.min(1, TILE_SIZE / math.max(size.X, 1e-3), TILE_SIZE / math.max(size.Z, 1e-3),
@@ -187,24 +247,19 @@ local function spawnProp(
 		end
 		scaleBy(clone, f)
 
-		local _, s2 = boundsOf(clone)
+		local _, s2 = worldBounds(clone)
 		local foot = math.max(s2.X, s2.Z)
 		local slack = math.max(0, (TILE_SIZE - foot) / 2)
 		local off = math.min(maxOffset, slack)
 		local ox = (rng:NextNumber() * 2 - 1) * off
 		local oz = (rng:NextNumber() * 2 - 1) * off
-		local yaw = yawOverride or (rng:NextInteger(0, 3) * math.pi / 2)
 
-		local target = CFrame.new(centre.X + ox, centre.Y, centre.Z + oz) * CFrame.Angles(0, yaw, 0)
-		if clone:IsA("Model") then
-			clone:PivotTo(target)
-			local bb, bs = clone:GetBoundingBox()
-			local dy = centre.Y - (bb.Position.Y - bs.Y / 2)
-			clone:PivotTo(clone:GetPivot() + Vector3.new(0, dy, 0))
-		else
-			local p = clone :: BasePart
-			p.CFrame = target + Vector3.new(0, p.Size.Y / 2, 0)
-		end
+		local target = CFrame.new(centre.X + ox, centre.Y, centre.Z + oz) * CFrame.Angles(0, yaw, 0) * baseRot
+		placeAt(clone, target)
+		-- Ground: lowest world point on the tile top, footprint centred on the jittered spot.
+		local bc, bs = worldBounds(clone)
+		local shift = Vector3.new(centre.X + ox - bc.X, centre.Y - (bc.Y - bs.Y / 2), centre.Z + oz - bc.Z)
+		placeAt(clone, target + shift)
 	end)
 	if not ok then
 		clone:Destroy()
@@ -503,7 +558,7 @@ local function placeTileProps(gm: any, tiles: { [string]: BasePart }, out: Folde
 									local mid = (centre + tileTop(np)) / 2
 									local yaw = if d[1] ~= 0 then 0 else math.pi / 2
 									if rng:NextNumber() < 0.5 then yaw += math.pi end
-									inst = spawnProp(v, mid, rng, false, 0, 0, yaw)
+									inst = spawnProp(v, mid, rng, false, 0, 0, yaw, d[1] ~= 0)
 									other = { x = nx, y = ny }
 									break
 								end

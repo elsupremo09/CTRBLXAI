@@ -1088,7 +1088,7 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 		-- so the tile that actually leads around the barrier (toward the bridge /
 		-- chokepoint) wins. Falls back to straight-line only for tiles the field cannot
 		-- reach (no walkable route to the player at all), so behavior is never worse.
-		local distField = _TargetingService.ComputeDistanceField(advanceTo.tileX, advanceTo.tileY, mapW, mapH, unit) -- BUG-18: honor this unit's climb limits
+		local distField = _TargetingService.ComputeDistanceField(advanceTo.tileX, advanceTo.tileY, mapW, mapH, unit) -- BUG-086: honor this unit's climb limits
 		local function trueDist(tx: any, ty: any): any
 			local v = distField[tostring(tx) .. "," .. tostring(ty)]
 			if v ~= nil then return v end

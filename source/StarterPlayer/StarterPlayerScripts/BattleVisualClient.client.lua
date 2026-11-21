@@ -1382,9 +1382,16 @@ local function simulateTurnOrder(snapshot, count, previewUnitId, previewNewRt, p
 	return result
 end
 
+-- BUG-081 (2026-11-21): the time panel's "CT" label shows the REAL server battle CT
+-- (currentCt from TurnOrderUpdate / PlayerTurnPrompt). ctRemaining (CT left to the next
+-- 1000-CT phase flip) is only for the Time peek card's "<n> before <Phase>" line.
+local function timeInfoNow()
+	return { phase = currentTimePhase, currentCt = currentBattleCt, ctRemaining = 1000 - (currentBattleCt % 1000) }
+end
+
 local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEvent)
 	if not snapshot or #snapshot == 0 then
-		BattleHUD.UpdateTimeline({}, { phase = currentTimePhase, ctRemaining = 1000 - (currentBattleCt % 1000) })
+		BattleHUD.UpdateTimeline({}, timeInfoNow())
 		return
 	end
 	-- Look-ahead raised 12 -> 20 (2026-10-26) so the player can drag the turn-order bar to
@@ -1502,10 +1509,9 @@ local function updateTimeline(snapshot, previewUnitId, previewNewRt, previewEven
 		end
 	end
 
-	-- Time-of-day + CT countdown for the bar's right end. Phase + CT come from the
-	-- server clock (currentTimePhase / currentBattleCt); CT counts DOWN to the next
-	-- 1000-CT round boundary (where the phase flips), starting at 1000.
-	local _timeInfo = { phase = currentTimePhase, ctRemaining = 1000 - (currentBattleCt % 1000) }
+	-- Time-of-day + battle CT for the bar's right end, from the server clock
+	-- (currentTimePhase / currentBattleCt). BUG-081: label = real CT; countdown = peek card only.
+	local _timeInfo = timeInfoNow()
 	BattleHUD.UpdateTimeline(finalEntries, _timeInfo)
 end
 
@@ -1755,7 +1761,14 @@ local function enterActionSelection()
 			reason=(prompt.moveBlockedReason or "No tiles in range to move to"), onPress=function()
 			inputMode = "move"; selectedSkill = nil; clearHighlights()
 			pcall(function() require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10):WaitForChild("UI", 10):WaitForChild("TipController", 10)).Trigger("TIP-BAT-02") end) -- new-player tip (first move)
-			local pRt = math.round((prompt.unitBaseRt or 400)*0.0625*2) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
+			-- BUG-083 (2026-11-21): no client RT formula (DAT-001). Preview the cheapest move the
+			-- server priced (moveCandidates[i].rtCost = CommandService.GetMoveRtPreview); picking a
+			-- tile then shows that tile's own rtCost (BUG-076).
+			local minMoveRt = nil
+			for _, mc in ipairs(prompt.moveCandidates or {}) do
+				if type(mc.rtCost) == "number" and (minMoveRt == nil or mc.rtCost < minMoveRt) then minMoveRt = mc.rtCost end
+			end
+			local pRt = (minMoveRt or 0) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
 			updateTimeline(timelineSnapshot, prompt.unitId, pRt)
 			for _, tile in ipairs(prompt.moveCandidates) do createTileHighlight(tile.tileX, tile.tileY, "move") end
 			storedActorData.onBack = enterActionSelection
@@ -1766,10 +1779,10 @@ local function enterActionSelection()
 		end },
 		{ id="Commands", text="Commands", enabled=true, isSubmenu=true, subActions={
 			{ id="Attack", text="Attack", enabled=atkEnabled,
-				reason="No target in attack range", onPress=function()
+				reason=(prompt.attackBlockedReason or "No target in attack range"), onPress=function()  -- BUG-PT-08
 				inputMode = "attack"; selectedSkill = nil; clearHighlights()
 				bp.skill = { name="Basic Attack", tags="Physical",
-					mpCost=0, rtCost=prompt.attackRt or 0, range=prompt.weaponRange or 1, pattern="Single",
+					mpCost=0, rtCost=prompt.attackRt or 0, range=((prompt.weaponMinRange or 1) ~= (prompt.weaponRange or 1)) and ((prompt.weaponMinRange or 1).."-"..(prompt.weaponRange or 1)) or (prompt.weaponRange or 1), pattern="Single", -- BUG-087 server range
 					effects="Weapon Dmg: "..(prompt.weaponDamage or 0).." | RT Delay: "..(prompt.weaponRtDelay or 0) }
 				local pRt = (prompt.attackRt or 80) + (prompt.unitBaseRt or 400) + (prompt.turnRtAccrued or 0)
 				updateTimeline(timelineSnapshot, prompt.unitId, pRt)
@@ -2174,23 +2187,9 @@ end
 -- CLICK HANDLER
 --------------------------------------------------
 
-
-local function processTileClick(bx, by, skipFacingPick)
-	-- Facing tile pick (rule 257): while a FacingPrompt is open, a tap on one of its highlighted
-	-- tiles picks that direction and nothing else happens (no inspector update). Any other tile
-	-- falls through to normal inspection. Same tap path as Move/skill aim (mouse + touch pads).
-	-- skipFacingPick: the timeline portrait tap reuses this function; it must never pick a facing.
-	if facingTilePick and not skipFacingPick then
-		local pickDir = facingTilePick.tiles[bx .. "," .. by]
-		if pickDir then
-			facingTilePick.choose(pickDir)
-			return
-		end
-	end
-
-	-- During deployment: allow tile inspection but skip combat flow.
-	-- BattleHUD view mode provides tile + object info during placement.
-
+-- Tile info data for the bottom tile panel (bp.tile). Shared by a tile click and by a new
+-- turn (BUG-PT-03, 2026-11-21: the panel kept the previous unit's tile when a turn started).
+local function buildTileInfoData(bx, by)
 	-- Find occupant for tile info
 	local occupantName = nil
 	for uid, data in pairs(unitData) do
@@ -2225,7 +2224,7 @@ local function processTileClick(bx, by, skipFacingPick)
 		objectName = GameConstants.GetObjectAt(bx, by)
 	end
 
-	bp.tile = {
+	return {
 		x = bx,
 		y = by,
 		terrainName = terrainId,
@@ -2236,6 +2235,34 @@ local function processTileClick(bx, by, skipFacingPick)
 		objectName = objectName,
 		effect = (_G.CTRBLXAI_GetTileEffect and _G.CTRBLXAI_GetTileEffect(bx, by)) or nil,
 	}
+end
+
+
+local function processTileClick(bx, by, skipFacingPick)
+	-- BUG-093: outside a battle (after BattleEnded / finishResult ran BattleHUD.Cleanup) the map
+	-- tiles are still clickable under the guild menu, and BattleHUD.Render below re-creates the
+	-- whole BattleHUD ScreenGui (ensureRoot). Inspection is only valid during deployment
+	-- (DeploymentPhase -> BattleStarted) or an active battle (BattleStarted -> BattleEnded).
+	if not battleActive and not _G.CTRBLXAI_DeploymentActive then
+		return
+	end
+	-- Facing tile pick (rule 257): while a FacingPrompt is open, a tap on one of its highlighted
+	-- tiles picks that direction and nothing else happens (no inspector update). Any other tile
+	-- falls through to normal inspection. Same tap path as Move/skill aim (mouse + touch pads).
+	-- skipFacingPick: the timeline portrait tap reuses this function; it must never pick a facing.
+	if facingTilePick and not skipFacingPick then
+		local pickDir = facingTilePick.tiles[bx .. "," .. by]
+		if pickDir then
+			facingTilePick.choose(pickDir)
+			return
+		end
+	end
+
+	-- During deployment: allow tile inspection but skip combat flow.
+	-- BattleHUD view mode provides tile + object info during placement.
+
+	bp.tile = buildTileInfoData(bx, by)
+	local objectName = bp.tile.objectName
 	BattleHUD.Render(bp)
 	
 	-- Inspect unit by clicking — works in ALL states.
@@ -2336,7 +2363,9 @@ local function processTileClick(bx, by, skipFacingPick)
 					if destH then
 						table.insert(pathHazards, { tileX = bx, tileY = by, terrain = tile.terrain, warn = destH.warn })
 					end
-					local moveRt = tile.pathCost or 0
+					-- BUG-PT-02: server-computed Move RT for this tile (same code the Move commit
+					-- charges). pathCost is the tile count, not RT, so it is never used as RT here.
+					local moveRt = tile.rtCost or 0
 					bp.preview = {
 						actionType = "Move",
 						actorName = currentPrompt.unitName,
@@ -4139,6 +4168,10 @@ BattleEvents.TurnStarted.OnClientEvent:Connect(function(data)
 	local _au = unitData[data.unitId]
 	local _atk = unitTokens[data.unitId]
 	if TileHL and TileHL.SetInspectMarker and _au and _au.tileX then pcall(TileHL.SetInspectMarker, _au.tileX, _au.tileY, _atk and _atk.part or nil) end
+	-- BUG-PT-03 (2026-11-21): the bottom tile panel follows the inspect marker to the acting
+	-- unit's tile (it kept the previous unit's last clicked tile). Shown on the next Render:
+	-- the enemy-turn Render below, or the PlayerTurnPrompt -> enterActionSelection Render.
+	if _au and _au.tileX and _au.tileY then bp.tile = buildTileInfoData(_au.tileX, _au.tileY) end
 	bp.inspectedEntityId = nil  -- new turn resets inspection
 	-- VFX: highlight active unit (gold outline)
 	local _at = unitTokens[data.unitId]
@@ -4209,6 +4242,7 @@ BattleEvents.TurnOrderUpdate.OnClientEvent:Connect(function(data)
 	if data.units and #data.units > 0 then
 		timelineSnapshot = data.units
 		if data.currentCt then currentBattleCt = data.currentCt end
+		if data.currentCt then BattleHUD.SetBattleCt(currentBattleCt, timeInfoNow().ctRemaining) end -- BUG-081: label follows every CT change
 		if data.currentCt and VFXController and VFXController.SetBattleClock then
 			pcall(VFXController.SetBattleClock, currentBattleCt)  -- CT-driven day/night sky
 		end
@@ -4228,6 +4262,7 @@ BattleEvents.PlayerTurnPrompt.OnClientEvent:Connect(function(prompt)
 	BattleHUD.ClearSelection()  -- refocus on the acting unit
 	timelineSnapshot = prompt.timeline
 	if prompt.currentCt then currentBattleCt = prompt.currentCt end
+	if prompt.currentCt then BattleHUD.SetBattleCt(currentBattleCt, timeInfoNow().ctRemaining) end -- BUG-081
 	if prompt.currentCt and VFXController and VFXController.SetBattleClock then
 		pcall(VFXController.SetBattleClock, currentBattleCt)  -- CT-driven day/night sky
 	end
@@ -5021,7 +5056,16 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 	lbl.Text = if data.winner == "Player" then "VICTORY" elseif data.escaped == true then "ESCAPED" else "DEFEAT" -- ESCAPED: rule 286 (2026-11-18)
 	lbl.Parent = gui
 	Instance.new("UICorner", lbl).CornerRadius = Theme.CornerRadius.lg
-	task.delay(5, function()
+	-- BUG-091 (PT-11): the banner + battle cleanup ran only on this 5 s timer, so a quick
+	-- Continue on the reward/Defeat screen left the DEFEAT banner over the emptied map until
+	-- the timer ran out. The cleanup now runs ONCE: on the timer or on Continue ("Finish").
+	local resultDone = false
+	local finishEv = Instance.new("BindableEvent")
+	finishEv.Name = "Finish"
+	finishEv.Parent = gui
+	local function finishResult()
+		if resultDone then return end
+		resultDone = true
 		if gui.Parent then gui:Destroy() end
 		BattleHUD.Cleanup()
 		bp = { state = "Idle", actor = nil, target = nil, skill = nil, preview = nil, tile = nil, inspectedEntityId = nil }
@@ -5031,7 +5075,9 @@ BattleEvents.BattleEnded.OnClientEvent:Connect(function(data)
 		if type(_G.CTRBLXAI_SetInspectorCollapsed) == "function" then
 			_G.CTRBLXAI_SetInspectorCollapsed(false)
 		end
-	end)
+	end
+	finishEv.Event:Connect(finishResult)
+	task.delay(5, finishResult)
 end)
 
 _G.CTRBLXAI_SelectTileAt = function() end
@@ -6563,16 +6609,26 @@ BattleEvents.RewardScreen.OnClientEvent:Connect(function(data)
 	rowLayout.Parent = btnBar
 
 	-- 1st from right: CONTINUE (Primary)
+	-- BUG-091 (PT-11): 44 px (Theme.MinSize.TouchTarget, same as the shared bar/icon buttons)
+	-- instead of the 35 px footer height; one RewardContinue per screen; Continue also ends the
+	-- DEFEAT/VICTORY banner + battle cleanup at once (BattleEnded "Finish") instead of after 5 s.
+	local continueH = math.max(fb.BTN_H, Theme.MinSize.TouchTarget)
+	local continueSent = false
 	local continueBtn = Theme.MakeButton(btnBar, "CONTINUE", "Primary", function()
+		if continueSent then return end
+		continueSent = true
 		closeRewardDetail()
 		if rewardGui then rewardGui:Destroy(); rewardGui = nil end
+		local br = player:FindFirstChildOfClass("PlayerGui") and player:FindFirstChildOfClass("PlayerGui"):FindFirstChild("BattleResult")
+		local fin = br and br:FindFirstChild("Finish")
+		if fin and fin:IsA("BindableEvent") then fin:Fire() end
 		BattleEvents.RewardContinue:FireServer()
-	end, { size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H) })
+	end, { size = UDim2.new(0, continueH, 0, continueH) })
 	continueBtn.LayoutOrder = 2
 
 	-- No BACK button (user 2026-11-17): tapping outside the item panel closes it (OutsideCatcher).
 
-	btnBar.Size = UDim2.new(0, fb.BTN_W, 0, fb.BTN_H)
+	btnBar.Size = UDim2.new(0, continueH, 0, continueH)
 end)
 
 --------------------------------------------------

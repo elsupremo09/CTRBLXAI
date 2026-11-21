@@ -1990,6 +1990,30 @@ local function calcMoveRt(actor: any, tilesMoving: any)
 	return math.round(perTile * tilesMoving * agiFactor * frozenMult * wetMult * traitMoveMult * armorMoveMult)
 end
 
+-- BUG-PT-02 (2026-11-21): RT a Move to this candidate tile will add, for the turn prompt's move
+-- preview. Uses the SAME pieces the Move commit charges (calcMoveRt, Rescue/Kick extra rtCost,
+-- destination crossCost for a grounded unit) so the preview can never drift from the server
+-- (DAT-001, ARC-001). The client used the raw path cost (tiles) as RT before, e.g. 384 vs 443.
+-- Trap stops / tile reactions mid-walk are not knowable in advance and are not included.
+function CommandService.GetMoveRtPreview(actor: any, tile: any): number
+	if type(actor) ~= "table" or type(tile) ~= "table" then return 0 end
+	local rtCost = calcMoveRt(actor, tile.pathCost or 0)
+	local total = rtCost
+	-- FT-018 Rescue Spurs / FT-019 Kick Boots: the commit accrues one more rtCost (RT x2).
+	if (tile.isRescue and ArmorPassiveService.GetMoveRescueConfig(actor))
+		or (tile.isKick and ArmorPassiveService.GetMoveKickConfig(actor)) then
+		total += rtCost
+	end
+	-- Destination crossCost (grounded units only; Flight bypasses terrain cross effects).
+	if not StatusService.HasStatus(actor, "Flight") and tile.tileX and tile.tileY then
+		local terrainData = GameConstants.GetTerrainData(tile.tileX, tile.tileY)
+		if terrainData and terrainData.crossCost and terrainData.crossCost > 0 then
+			total += math.round(terrainData.crossCost * StatusService.GetModifiedBaseRt(actor) * GameConstants.MOVE_RT_FACTOR)
+		end
+	end
+	return total
+end
+
 local function calcBasicAttackBaseRt(actor: any)
 	-- Moved to StatCalcService.GetBasicAttackRt (2026-10-28) so the Info panels and the turn
 	-- prompt use the exact same calculation: round(Modified Base RT x 0.10) + Effective Weapon WT,
@@ -4863,6 +4887,15 @@ function CommandService.IsQuickDrawReady(unit: any): boolean
 	return quickDrawReady(unit)
 end
 
+-- BUG-082 (2026-11-21): basic-attack reach BEFORE the race / trait modifiers (TargetingService
+-- and the AttackObject commit add those): weapon max range + Ranger Steady Aim (DOC-RANGER:
+-- projectile Maximum Range +1 for direct attacks; melee gets 0). ONE formula for the unit-attack
+-- prompt, the object-attack prompt (BattleTurnController) and the AttackObject commit (DAT-001).
+function CommandService.GetBasicAttackBaseRange(unit: any): number
+	return (unit.weaponMaxRange or 1)
+		+ DoctrinePassiveService.GetProjectileRangeModifier(unit, unit.weaponProjectileType)
+end
+
 -- GL-021 Initiator's Grips (re-check 2026-10-29): the free Push costs no AP, so it stays available
 -- after the last AP is spent -- if something is in push reach and Push is not blocked.
 local function freePushReady(unit: any): boolean
@@ -5096,7 +5129,7 @@ function CommandService.ValidateAndCommit(
 	end
 
 	-- STEP 3b: Status-based action blocking (Phase 2)
-	-- Silence → blocks Skills, Disarmed → blocks Attack, Pinned → blocks Move,
+	-- Silence → blocks Skills, Disarmed → blocks Attack AND AttackObject (BUG-080), Pinned → blocks Move,
 	-- Sleep/Petrify/KO → blocks All. Guard/Wait never blocked.
 	local blocked, blockReason = StatusService.IsActionBlocked(actor, actionType)
 	if blocked then
@@ -8147,7 +8180,8 @@ function CommandService.ValidateAndCommit(
 			return false, "Object attack requires a target tile."
 		end
 		local ox, oy = selection.objX, selection.objY
-		local atkRange = (actor.weaponMaxRange or 1) + RacePassiveService.GetRangeModifier(actor)
+		local atkRange = CommandService.GetBasicAttackBaseRange(actor) -- weapon + Ranger (BUG-082)
+			+ RacePassiveService.GetRangeModifier(actor)
 			+ TraitEffectService.GetAttackRangeModifier(actor) -- Restless / Sniper's Perch (2026-10-23)
 		local atkDist = math.max(math.abs(actor.tileX - ox), math.abs(actor.tileY - oy))
 		if atkDist > atkRange or atkDist < (actor.weaponMinRange or 1) then
@@ -9823,6 +9857,20 @@ function CommandService.ValidateAndCommit(
 	end
 
 	return true, nil
+end
+
+-- BUG-PT-08 (2026-11-21): every refused basic attack (unit or object, player or AI) says why in
+-- the Output, under this module's tag (LOG-001 / LOG-002), so a silent re-prompt can be traced.
+-- Thin wrapper: the validation itself is unchanged and the result is passed straight through.
+local _validateAndCommitImpl = CommandService.ValidateAndCommit
+function CommandService.ValidateAndCommit(state: any, actorId: any, actionType: any, selection: any): (boolean, any)
+	local ok, reason = _validateAndCommitImpl(state, actorId, actionType, selection)
+	if not ok and (actionType == "Attack" or actionType == "AttackObject") then
+		local targetName = type(selection) == "table" and (selection.name or selection.id
+			or (selection.objX and `obj:{selection.objX},{selection.objY}`)) or tostring(selection)
+		warn(`[CommandService] Attack rejected: {tostring(reason)} (actor {tostring(actorId)}, target {tostring(targetName)})`)
+	end
+	return ok, reason
 end
 
 --------------------------------------------------

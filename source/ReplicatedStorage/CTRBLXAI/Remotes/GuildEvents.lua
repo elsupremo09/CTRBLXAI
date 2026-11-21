@@ -44,7 +44,7 @@ local FUNCTION_NAMES = table.freeze({
 	"RequestDispatch",  -- (missionId, { unitId }) -> result
 	"RecallDispatch",   -- (missionId) -> { returnedUnitIds } (2026-11-12: early return, no reward, no refund)
 	-- Real-time Dispatch (build step 2, 2026-11-19). Client sends intent only; the server clock decides.
-	"DispatchRt",       -- ({ action = "Info" | "Send" (tier, material, unitIds) | "Collect" (missionId) | "CollectAll" | "Recall" (missionId) }) -> result
+	"DispatchRt",       -- ({ action = "Info" | "Preview" (material, unitIds; display only) | "Send" (tier, material, unitIds) | "Collect" (missionId) | "CollectAll" | "Recall" (missionId) }) -> result
 	"GetGuildUnits",    -- () -> unit list with level / XP / availability
 	"GetParties",       -- () -> { parties, roster, maxSize }
 	"SetPartyName",     -- (slot, name) -> result

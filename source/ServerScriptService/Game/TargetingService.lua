@@ -673,7 +673,7 @@ end
 -- game is turn-based, so there is no frame-rate pressure.
 --------------------------------------------------
 
--- BUG-18 (2026-11-21): optional `mover`. When given, the flood also honors that unit's climb
+-- BUG-086 (2026-11-21): optional `mover`. When given, the flood also honors that unit's climb
 -- and drop limits (same Jump / downward-jump rule GetMoveCandidates uses; Flight ignores them).
 -- Without it, a cliff it cannot climb looked like a short route, so units in a low pocket
 -- saw no "closer" tile and shuffled in place. Callers that pass no mover keep the old field.

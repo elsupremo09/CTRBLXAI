@@ -24,6 +24,9 @@
 --   6b Cliff re-assert (raise-only, off-corridor ridge cliff edges)
 --   6c Bridge span deck grading (bank -> span -> bank, <=1 steps)
 --   7  Gap depth: deliberate gap tiles sink >= drop below every bank
+--   7b Pocket breaker (2026-11-21, SIM_pocket_breaker R1): Jump-1 walker
+--      (up <= 1, down <= 3); grades the cheapest <=1-step ramp out of one-way
+--      pockets and pockets holding PD/ED/OBJ/POI; key-snap fallback; guarded
 --   8  Audit -> mapState.elevationAudit
 --
 -- Location: ServerScriptService/Game/ElevationPass.lua
@@ -225,6 +228,850 @@ local function cliffStepExempt(a, b)
 	if isSpine(a) and isSpine(b) then return false end
 	return isCliffTile(a) or isCliffTile(b)
 		or hasTag(a.terrain, "Stone") or hasTag(b.terrain, "Stone")
+end
+
+--------------------------------------------------
+-- POCKET BREAKER (Phase 7b) + JUMP-1 WALKABILITY ANALYSIS (2026-11-21)
+-- Source: SIM_pocket_breaker_20261121, recommendation R1-final (user decision
+-- 2026-11-21: keep base Jump 1 and repair stuck pockets in generation; R2 ramp
+-- guarantee NOT adopted). KEY-SNAP fallback ALLOWED by USER RULING 2026-11-21
+-- 2:47 PM: a walled-in PD/ED/OBJ/POI tile may have ONLY its elevation regraded;
+-- its marker, terrain and object never change.
+--
+-- Walker = a base unit, mirroring TargetingService.GetMoveCandidates /
+-- GetWalkJumpLimits at base Jump:
+--   * 8 directions; a diagonal is dropped only when BOTH orthogonal corners are
+--     blockers (OBS in either form = tile.isObstacle, i.e. runtime IsBlocked);
+--   * a step is legal when climb <= WALK_UP and drop <= WALK_DOWN;
+--   * not standable: OBS, passable == false terrain, Quicksand (Sinking; the AI
+--     never paths through it), Molten (lethal) and chasm/gap floors (isGap).
+-- Objects are placed AFTER this pass (MapService Step 8), so they are not part of
+-- this walker; validateConnectivity / validateLanesPassable re-check them.
+-- Repair-only: never rejects, re-seeds or regenerates a map.
+--------------------------------------------------
+
+-- Base Jump = DB core_stats "1 + floor(DEX / 60)" at the base DEX band
+-- (GameConstants derived stats / StatCalcService.GetJump). There is no shared
+-- BASE_JUMP constant to read; the drop limit follows TargetingService
+-- getDownwardJump (Jump + 2).
+local WALK_UP   = 1
+local WALK_DOWN = WALK_UP + 2
+
+local POCKET_BUDGET_RAMPS      = 20   -- ramp applications per map (accepted or undone)
+local POCKET_BUDGET_TILES      = 80   -- tiles regraded per map
+local POCKET_MAX_COST          = 12   -- strict search
+local POCKET_MAX_COST_FALLBACK = 16   -- relaxed / key-snap searches
+local POCKET_YIELD_OPS         = 2000 -- yield cadence (PRF-003), matches the report
+local POCKET_UNREPAIRED_LOG    = 10   -- unrepaired pockets kept in the audit
+local POCKET_KEY_MARKERS = { PD = true, ED = true, OBJ = true, POI = true }
+
+local DIR8 = {
+	{ x =  0, y =  1 }, { x =  0, y = -1 }, { x =  1, y =  0 }, { x = -1, y =  0 },
+	{ x =  1, y =  1 }, { x =  1, y = -1 }, { x = -1, y =  1 }, { x = -1, y = -1 },
+}
+
+-- Stage ids for the per-job fallback ladder (report section 7 step 9).
+local STAGE_STRICT, STAGE_RELAXED, STAGE_KEYSNAP = 1, 2, 3
+
+-- Busy-time accounting + periodic yield shared by every flood / search here.
+local pocketOps, pocketBusy, pocketSeg = 0, 0, 0
+local function pocketTick()
+	pocketOps = pocketOps + 1
+	if pocketOps % POCKET_YIELD_OPS == 0 then
+		pocketBusy = pocketBusy + (os.clock() - pocketSeg)
+		task.wait()
+		pocketSeg = os.clock()
+	end
+end
+
+local function stepLegal(fromElev, toElev)
+	local d = toElev - fromElev
+	return d <= WALK_UP and -d <= WALK_DOWN
+end
+
+--- Static walk graph. Standability and legal directions never change while
+--- ramps regrade elevation, so only the elevation check is done live.
+local function buildWalkGraph(tiles, w, h)
+	local n = w * h
+	local stand, blocker, tileOf, isKey = {}, {}, {}, {}
+	local pdList = {}
+	for y = 1, h do
+		for x = 1, w do
+			local i = (y - 1) * w + x
+			local t = tiles[y][x]
+			tileOf[i] = t
+			blocker[i] = t.isObstacle == true and t.obsForm ~= "spike" -- W2: only object-form OBS seals corners (DB row 77)
+			local tDef = TerrainData.Types[t.terrain]
+			local ok = not t.isObstacle and not t.isGap
+				and tDef ~= nil and tDef.passable ~= false
+				and t.terrain ~= "Quicksand"
+				and not hasTag(t.terrain, "Molten")
+			stand[i] = ok
+			isKey[i] = ok and POCKET_KEY_MARKERS[t.marker] == true
+			if ok and t.marker == "PD" then table.insert(pdList, i) end
+		end
+	end
+	local nbrs = {}
+	for y = 1, h do
+		for x = 1, w do
+			local i = (y - 1) * w + x
+			local list = {}
+			if stand[i] then
+				for _, d in ipairs(DIR8) do
+					local nx, ny = x + d.x, y + d.y
+					if isInBounds(nx, ny, w, h) then
+						local j = (ny - 1) * w + nx
+						if stand[j] then
+							local sealed = false
+							if d.x ~= 0 and d.y ~= 0 then
+								sealed = blocker[(y - 1) * w + nx] and blocker[(ny - 1) * w + x]
+							end
+							if not sealed then table.insert(list, j) end
+						end
+					end
+				end
+			end
+			nbrs[i] = list
+		end
+	end
+	return { w = w, h = h, n = n, stand = stand, nbrs = nbrs,
+		tileOf = tileOf, isKey = isKey, pdList = pdList }
+end
+
+--- Forward flood (walk away from PD) or reverse flood (tiles that can walk TO PD).
+local function floodWalk(g, reverse)
+	local seen, q, head = {}, {}, 1
+	for _, s in ipairs(g.pdList) do
+		if not seen[s] then seen[s] = true; table.insert(q, s) end
+	end
+	local tileOf, nbrs = g.tileOf, g.nbrs
+	while head <= #q do
+		local i = q[head]; head = head + 1
+		pocketTick()
+		local ei = tileOf[i].elevation
+		for _, j in ipairs(nbrs[i]) do
+			if not seen[j] then
+				local ej = tileOf[j].elevation
+				-- reverse: the walker steps j -> i
+				local legal = if reverse then stepLegal(ej, ei) else stepLegal(ei, ej)
+				if legal then
+					seen[j] = true
+					table.insert(q, j)
+				end
+			end
+		end
+	end
+	return seen
+end
+
+--- F = reachable from PD, B = can walk back to PD, Main = F and B,
+--- trapCount = one-way trap tiles (F minus B).
+local function computeFlows(g)
+	local F = floodWalk(g, false)
+	local B = floodWalk(g, true)
+	local main, trapCount = {}, 0
+	for i = 1, g.n do
+		if F[i] then
+			if B[i] then main[i] = true else trapCount = trapCount + 1 end
+		end
+	end
+	return { F = F, B = B, main = main, trapCount = trapCount }
+end
+
+--- Group the standable tiles outside Main into pockets (connected through legal
+--- moves in either direction, same class): "trap" = cannot walk back to PD
+--- (oneWay when any tile is enterable from PD), "exit" = can leave, cannot enter.
+local function computeGroups(g, an)
+	local F, B, main = an.F, an.B, an.main
+	local tileOf, nbrs = g.tileOf, g.nbrs
+	local groups, groupOf = {}, {}
+	for i = 1, g.n do
+		if g.stand[i] and not main[i] and not groupOf[i] then
+			local isTrap = not B[i]
+			local grp = { kind = if isTrap then "trap" else "exit",
+				tiles = { i }, oneWay = false, hasKey = false, keyCount = 0, inSet = {} }
+			groupOf[i] = grp
+			local q, head = grp.tiles, 1
+			while head <= #q do
+				local v = q[head]; head = head + 1
+				pocketTick()
+				grp.inSet[v] = true
+				if isTrap and F[v] then grp.oneWay = true end
+				if g.isKey[v] then grp.hasKey = true; grp.keyCount = grp.keyCount + 1 end
+				local ev = tileOf[v].elevation
+				for _, u in ipairs(nbrs[v]) do
+					if not groupOf[u] and not main[u] and ((not B[u]) == isTrap) then
+						local eu = tileOf[u].elevation
+						if stepLegal(ev, eu) or stepLegal(eu, ev) then
+							groupOf[u] = grp
+							table.insert(q, u)
+						end
+					end
+				end
+			end
+			table.insert(groups, grp)
+		end
+	end
+	an.groups = groups
+	return an
+end
+
+local function isRepairTarget(grp)
+	return (grp.kind == "trap" and grp.oneWay and #grp.tiles > 1) or grp.hasKey
+end
+
+--- Strongly connected parts of one pocket (iterative Kosaraju over legal moves
+--- restricted to the pocket) plus a sink flag (no legal move to another part).
+local function pocketSCCs(g, grp)
+	local tileOf, nbrs, inSet = g.tileOf, g.nbrs, grp.inSet
+	local visited, order = {}, {}
+	for _, s in ipairs(grp.tiles) do
+		if not visited[s] then
+			visited[s] = true
+			local stack, ptr = { s }, { [s] = 1 }
+			while #stack > 0 do
+				local v = stack[#stack]
+				local list = nbrs[v]
+				local k = ptr[v]
+				local pushed = false
+				while k <= #list do
+					local u = list[k]
+					k = k + 1
+					if inSet[u] and not visited[u]
+						and stepLegal(tileOf[v].elevation, tileOf[u].elevation) then
+						visited[u] = true
+						ptr[u] = 1
+						table.insert(stack, u)
+						pushed = true
+						break
+					end
+				end
+				ptr[v] = k
+				if not pushed then
+					table.remove(stack)
+					table.insert(order, v)
+				end
+			end
+		end
+	end
+	local comp, comps = {}, {}
+	for oi = #order, 1, -1 do
+		local s = order[oi]
+		if not comp[s] then
+			local cid = #comps + 1
+			local members, st = {}, { s }
+			comp[s] = cid
+			while #st > 0 do
+				local v = table.remove(st)
+				pocketTick()
+				table.insert(members, v)
+				for _, u in ipairs(nbrs[v]) do
+					if inSet[u] and not comp[u]
+						and stepLegal(tileOf[u].elevation, tileOf[v].elevation) then
+						comp[u] = cid
+						table.insert(st, u)
+					end
+				end
+			end
+			comps[cid] = members
+		end
+	end
+	local isSink = {}
+	for cid, members in ipairs(comps) do
+		local sink = true
+		for _, v in ipairs(members) do
+			for _, u in ipairs(nbrs[v]) do
+				if inSet[u] and comp[u] ~= cid
+					and stepLegal(tileOf[v].elevation, tileOf[u].elevation) then
+					sink = false
+					break
+				end
+			end
+			if not sink then break end
+		end
+		isSink[cid] = sink
+	end
+	return comps, isSink
+end
+
+--- Repair jobs (report step 6): key pockets first, then larger pockets. Each SCC
+--- holding a key tile -> connect to Main; each sink SCC of a trap pocket ->
+--- connect to B (upstream parts then drain through it).
+local function buildJobs(g, an)
+	local targets = {}
+	for _, grp in ipairs(an.groups) do
+		if isRepairTarget(grp) then table.insert(targets, grp) end
+	end
+	table.sort(targets, function(a, b)
+		if a.hasKey ~= b.hasKey then return a.hasKey end
+		if #a.tiles ~= #b.tiles then return #a.tiles > #b.tiles end
+		return a.tiles[1] < b.tiles[1]
+	end)
+	local jobs = {}
+	for _, grp in ipairs(targets) do
+		local comps, isSink = pocketSCCs(g, grp)
+		local keyJobs, sinkJobs = {}, {}
+		for cid, members in ipairs(comps) do
+			local hasKey, minI = false, math.huge
+			for _, v in ipairs(members) do
+				if g.isKey[v] then hasKey = true end
+				if v < minI then minI = v end
+			end
+			if hasKey then
+				table.insert(keyJobs, { tiles = members, goal = "main", group = grp, key = "M" .. minI })
+			elseif grp.kind == "trap" and isSink[cid] then
+				table.insert(sinkJobs, { tiles = members, goal = "back", group = grp, key = "B" .. minI })
+			end
+		end
+		for _, j in ipairs(keyJobs) do table.insert(jobs, j) end
+		for _, j in ipairs(sinkJobs) do table.insert(jobs, j) end
+	end
+	return jobs
+end
+
+-- Binary min-heap on (cost, state); the state id breaks ties -> deterministic.
+local function heapLess(hc, hs, a, b)
+	return hc[a] < hc[b] or (hc[a] == hc[b] and hs[a] < hs[b])
+end
+local function heapPush(hc, hs, c, s)
+	local n = #hc + 1
+	hc[n], hs[n] = c, s
+	while n > 1 do
+		local p = math.floor(n / 2)
+		if not heapLess(hc, hs, n, p) then break end
+		hc[p], hc[n] = hc[n], hc[p]
+		hs[p], hs[n] = hs[n], hs[p]
+		n = p
+	end
+end
+local function heapPop(hc, hs)
+	local n = #hc
+	local c, s = hc[1], hs[1]
+	hc[1], hs[1] = hc[n], hs[n]
+	hc[n], hs[n] = nil, nil
+	n = n - 1
+	local i = 1
+	while true do
+		local l, r, m = 2 * i, 2 * i + 1, i
+		if l <= n and heapLess(hc, hs, l, m) then m = l end
+		if r <= n and heapLess(hc, hs, r, m) then m = r end
+		if m == i then break end
+		hc[m], hc[i] = hc[i], hc[m]
+		hs[m], hs[i] = hs[i], hs[m]
+		i = m
+	end
+	return c, s
+end
+
+--- May tile i be regraded at this stage? (report step 8)
+local function canEdit(ctx, i, stage)
+	if ctx.lockStatic[i] or ctx.used[i] or ctx.frozen[i] then return false end
+	if ctx.g.isKey[i] then
+		-- KEY-SNAP (user ruling 2026-11-21): only a key tile INSIDE this pocket.
+		return stage >= STAGE_KEYSNAP and ctx.jobSet[i] == true
+	end
+	if ctx.liquid[i] and stage < STAGE_RELAXED then return false end
+	return true
+end
+
+--- Neighbours of an OBS spike may only be LOWERED (keeps the >= +5 spike rule).
+local function editDirOk(ctx, i, newElev)
+	return not (ctx.spikeNb[i] and newElev > ctx.g.tileOf[i].elevation)
+end
+
+--- Cheapest cardinal staircase (every step <= 1, so it walks both ways at
+--- Jump 1) from the job's tiles to the goal set (report step 7). Dijkstra over
+--- (tile, elevation) states. Returns the edit list or nil + reason.
+local function rampSearch(ctx, job, an, stage, maxCost)
+	local g = ctx.g
+	local tileOf, stand, w, h = g.tileOf, g.stand, g.w, g.h
+	local floorE, peakE = ctx.floorE, ctx.peakE
+	local goalSet = if job.goal == "main" then an.main else an.B
+	local dist, parent = {}, {}
+	local hc, hs = {}, {}
+	local function relax(s, c, from)
+		if c <= maxCost and (dist[s] == nil or c < dist[s]) then
+			dist[s] = c
+			parent[s] = from
+			heapPush(hc, hs, c, s)
+		end
+	end
+	local single = #job.tiles == 1
+	for _, i in ipairs(job.tiles) do
+		local e0 = tileOf[i].elevation
+		relax(i * 32 + e0, 0, false)
+		if (single or (g.isKey[i] and stage >= STAGE_KEYSNAP)) and canEdit(ctx, i, stage) then
+			for e = floorE, peakE do
+				if e ~= e0 and editDirOk(ctx, i, e) then relax(i * 32 + e, 1, false) end
+			end
+		end
+	end
+	while #hc > 0 do
+		local c, s = heapPop(hc, hs)
+		if c <= dist[s] then
+			pocketTick()
+			local i = math.floor(s / 32)
+			local e = s - i * 32
+			if goalSet[i] and e == tileOf[i].elevation then
+				-- Reconstruct; a tile may not be used at two different heights.
+				local edits, seenE = {}, {}
+				local cur = s
+				while cur do
+					local ci = math.floor(cur / 32)
+					local ce = cur - ci * 32
+					if seenE[ci] ~= nil and seenE[ci] ~= ce then return nil, "self-crossing ramp" end
+					if seenE[ci] == nil then
+						seenE[ci] = ce
+						if ce ~= tileOf[ci].elevation then table.insert(edits, { i = ci, e = ce }) end
+					end
+					cur = parent[cur]
+				end
+				return edits, nil
+			end
+			local x = (i - 1) % w + 1
+			local y = (i - x) / w + 1
+			for _, d in ipairs(CARDINAL) do
+				local nx, ny = x + d.x, y + d.y
+				if isInBounds(nx, ny, w, h) then
+					local j = (ny - 1) * w + nx
+					if stand[j] then
+						local ej0 = tileOf[j].elevation
+						for de = -1, 1 do
+							local e2 = e + de
+							if e2 >= floorE and e2 <= peakE then
+								if e2 == ej0 then
+									relax(j * 32 + e2, c, s)
+								elseif canEdit(ctx, j, stage) and editDirOk(ctx, j, e2) then
+									local cost = 1
+									if ctx.adv[j] then cost = cost + 0.5 end
+									if ctx.liquid[j] then cost = cost + 1 end
+									relax(j * 32 + e2, c + cost, s)
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	return nil, "no ramp within cost"
+end
+
+--- Raise-floor fallback (report step 9.4): only if EVERY pocket tile is editable
+--- (key-snap rules), clamp the pocket to [m, m+1], m = lowest adjacent Main tile.
+local function raiseFloorEdits(ctx, job, an)
+	local g = ctx.g
+	local tileOf, w, h = g.tileOf, g.w, g.h
+	local m = nil
+	for _, i in ipairs(job.group.tiles) do
+		if not canEdit(ctx, i, STAGE_KEYSNAP) then return nil end
+		local x = (i - 1) % w + 1
+		local y = (i - x) / w + 1
+		for _, d in ipairs(CARDINAL) do
+			local nx, ny = x + d.x, y + d.y
+			if isInBounds(nx, ny, w, h) then
+				local j = (ny - 1) * w + nx
+				if an.main[j] and (m == nil or tileOf[j].elevation < m) then m = tileOf[j].elevation end
+			end
+		end
+	end
+	if m == nil then return nil end
+	local edits = {}
+	for _, i in ipairs(job.group.tiles) do
+		local e0 = tileOf[i].elevation
+		local e = math.clamp(e0, m, math.min(m + 1, ctx.peakE))
+		if e ~= e0 then
+			if not editDirOk(ctx, i, e) then return nil end
+			table.insert(edits, { i = i, e = e })
+		end
+	end
+	if #edits == 0 then return nil end
+	return edits
+end
+
+--- Four-cardinal |diff| <= 1 walk over passable terrain: the same rule as
+--- MapService validateConnectivity / laneReachesED / auditGapCrossings
+--- (objects are not placed yet). laneSet: LAN tiles outside it are walls.
+local function cardinalReaches(tiles, w, h, sources, blocked, laneSet, isGoal)
+	local seen, q, head = {}, {}, 1
+	for _, p in ipairs(sources) do
+		local k = coordKey(p.x, p.y)
+		if not seen[k] and not (blocked and blocked[k]) then
+			seen[k] = true
+			table.insert(q, p)
+		end
+	end
+	while head <= #q do
+		local cur = q[head]; head = head + 1
+		pocketTick()
+		if isGoal(cur.x, cur.y) then return true end
+		local tile = tiles[cur.y][cur.x]
+		for _, dir in ipairs(CARDINAL) do
+			local nx, ny = cur.x + dir.x, cur.y + dir.y
+			if isInBounds(nx, ny, w, h) then
+				local k = coordKey(nx, ny)
+				if not seen[k] and not (blocked and blocked[k]) then
+					local n = tiles[ny][nx]
+					local tDef = TerrainData.Types[n.terrain]
+					local laneOk = laneSet == nil or n.marker ~= "LAN" or laneSet[k] == true
+					if laneOk and tDef and tDef.passable ~= false
+						and math.abs(tile.elevation - n.elevation) <= 1 then
+						seen[k] = true
+						table.insert(q, { x = nx, y = ny })
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+--- Spine pairs (LAN family, <= 1 rule of Phase 4) around the edited tiles that
+--- break the Jump-1 lane. Only key-snap can touch a spine tile (PD/ED).
+local function spineBreaks(ctx, edits)
+	local g = ctx.g
+	local tileOf, w, h = g.tileOf, g.w, g.h
+	local count = 0
+	for _, ed in ipairs(edits) do
+		local t = tileOf[ed.i]
+		if isSpine(t) then
+			local x = (ed.i - 1) % w + 1
+			local y = (ed.i - x) / w + 1
+			for _, d in ipairs(CARDINAL) do
+				local nx, ny = x + d.x, y + d.y
+				if isInBounds(nx, ny, w, h) then
+					local n = tileOf[(ny - 1) * w + nx]
+					if isSpine(n) and not cliffStepExempt(t, n)
+						and math.abs(t.elevation - n.elevation) > 1 then
+						count = count + 1
+					end
+				end
+			end
+		end
+	end
+	return count
+end
+
+--- No-regression guard (report step 10). Applies the edits, rechecks, and
+--- reverts on any regression. Returns ok, newFlows|nil, reason|nil.
+--- Structurally safe by the editable rules (never re-checked): OBS tiles and the
+--- OBS spike >= +5 rule (spike neighbours lower only), gap floors / banks / span
+--- chain (Gap Hard Invariant + gap depth), LAN tiles and the Phase-6 corridor.
+local function applyGuarded(ctx, edits, an)
+	local g = ctx.g
+	local tileOf, tiles, w, h = g.tileOf, ctx.tiles, g.w, g.h
+	local spineBefore = spineBreaks(ctx, edits)
+	local old = {}
+	for k, ed in ipairs(edits) do
+		old[k] = tileOf[ed.i].elevation
+		tileOf[ed.i].elevation = ed.e
+	end
+	local function undo(reason)
+		for k, ed in ipairs(edits) do tileOf[ed.i].elevation = old[k] end
+		return false, nil, reason
+	end
+	local nf = computeFlows(g)
+	for i in pairs(an.main) do
+		if not nf.main[i] then return undo("tile left Main") end
+	end
+	for i in pairs(an.F) do
+		if not nf.F[i] then return undo("tile lost PD reach") end
+	end
+	if nf.trapCount > an.trapCount then return undo("new one-way trap") end
+	if spineBreaks(ctx, edits) > spineBefore then return undo("LAN spine break") end
+	local isED = function(x, y) return tiles[y][x].marker == "ED" end
+	if ctx.v6Before and not cardinalReaches(tiles, w, h, ctx.pdCoords, nil, nil, isED) then
+		return undo("V6 PD->ED path")
+	end
+	for _, lane in ipairs(ctx.lanesBefore) do
+		if not cardinalReaches(tiles, w, h, ctx.pdCoords, nil, lane, isED) then
+			return undo("lane passability")
+		end
+	end
+	for _, ch in ipairs(ctx.chokesBefore) do
+		local bx, by = ch.bankOut.x, ch.bankOut.y
+		if cardinalReaches(tiles, w, h, { ch.bankIn }, ch.blocked, nil,
+			function(x, y) return x == bx and y == by end) then
+			return undo("chokepoint leak")
+		end
+	end
+	return true, nf, nil
+end
+
+--- One repair job through the fallback ladder: strict -> relaxed (liquid tiles)
+--- -> key-snap -> raise floor -> give up. A guard undo freezes those tiles and
+--- retries once; a second undo gives the job up.
+local function attemptJob(ctx, job, an)
+	ctx.frozen = {}
+	ctx.jobSet = job.group.inSet
+	local lastReason = "no ramp within cost"
+	local undos = 0
+	local function tryEdits(edits, stage)
+		if ctx.ramps >= POCKET_BUDGET_RAMPS
+			or ctx.tilesChanged + #edits > POCKET_BUDGET_TILES then
+			return "budget"
+		end
+		ctx.ramps = ctx.ramps + 1
+		local ok, nf, why = applyGuarded(ctx, edits, an)
+		if ok then
+			ctx.accepted = ctx.accepted + 1
+			ctx.tilesChanged = ctx.tilesChanged + #edits
+			for _, ed in ipairs(edits) do
+				ctx.used[ed.i] = true
+				if ctx.g.isKey[ed.i] then ctx.keySnaps = ctx.keySnaps + 1 end
+			end
+			if stage == STAGE_RELAXED then ctx.relaxed = ctx.relaxed + 1 end
+			if stage == STAGE_KEYSNAP then ctx.keySnapRamps = ctx.keySnapRamps + 1 end
+			if stage == 4 then ctx.raiseFloors = ctx.raiseFloors + 1 end
+			return "ok", nf
+		end
+		ctx.undone = ctx.undone + 1
+		lastReason = "guard: " .. tostring(why)
+		for _, ed in ipairs(edits) do ctx.frozen[ed.i] = true end
+		undos = undos + 1
+		return "undone"
+	end
+	for stage = STAGE_STRICT, STAGE_KEYSNAP do
+		local maxCost = if stage == STAGE_STRICT then POCKET_MAX_COST else POCKET_MAX_COST_FALLBACK
+		while true do
+			local edits, why = rampSearch(ctx, job, an, stage, maxCost)
+			if not edits or #edits == 0 then
+				if why then lastReason = why end
+				break
+			end
+			local res, nf = tryEdits(edits, stage)
+			if res == "ok" then return true, nf, nil end
+			if res == "budget" then return false, nil, "budget" end
+			if undos >= 2 then return false, nil, lastReason end
+		end
+	end
+	local edits = raiseFloorEdits(ctx, job, an)
+	if edits then
+		local res, nf = tryEdits(edits, 4)
+		if res == "ok" then return true, nf, nil end
+		if res == "budget" then return false, nil, "budget" end
+	end
+	return false, nil, lastReason
+end
+
+--- Phase 7b driver. Returns the audit table (mapState.elevationAudit.pocketBreaker).
+local function runPocketBreaker(mapState)
+	local tiles, w, h = mapState.tiles, mapState.width, mapState.height
+	local cfg = mapState.biomeElevation
+	pocketSeg = os.clock()
+	pocketBusy = 0
+
+	local g = buildWalkGraph(tiles, w, h)
+	local an = computeGroups(g, computeFlows(g))
+
+	local found, foundOneWay, foundKey, sealedEmpty = 0, 0, 0, 0
+	for _, grp in ipairs(an.groups) do
+		if isRepairTarget(grp) then
+			found = found + 1
+			if grp.hasKey then foundKey = foundKey + 1 else foundOneWay = foundOneWay + 1 end
+		elseif grp.kind == "trap" and not grp.oneWay then
+			sealedEmpty = sealedEmpty + 1
+		end
+	end
+
+	-- Static editability (report step 8). Never: non-standable, Phase-6 corridor,
+	-- bridge spans, gap floors, gap span chains, gap banks (cardinal neighbours of
+	-- a gap, keeps gap depth), LAN, Deep water. Liquid tiles: relaxed stage only.
+	local lockStatic, liquid, adv, spikeNb = {}, {}, {}, {}
+	local chainTiles = {}
+	for _, gap in ipairs(mapState.bridgeGaps or {}) do
+		for _, c in ipairs(gap.chain or {}) do chainTiles[coordKey(c.x, c.y)] = true end
+		for _, s in ipairs(gap.spanTiles or {}) do chainTiles[coordKey(s.x, s.y)] = true end
+	end
+	local pdCoords = {}
+	for y = 1, h do
+		for x = 1, w do
+			local i = (y - 1) * w + x
+			local t = tiles[y][x]
+			if t.marker == "PD" then table.insert(pdCoords, { x = x, y = y }) end
+			local lock = not g.stand[i] or t.isCorridor == true or t.isBridge == true
+				or t.isGap == true or chainTiles[coordKey(x, y)] == true
+				or t.marker == "LAN" or hasTag(t.terrain, "Deep")
+			if not lock then
+				for _, d in ipairs(DIR8) do -- W1 (Tester 2026-11-21): diagonal gap banks too, so no off-span diagonal climb-out
+					local nx, ny = x + d.x, y + d.y
+					if isInBounds(nx, ny, w, h) and tiles[ny][nx].isGap then lock = true; break end
+				end
+			end
+			lockStatic[i] = lock
+			liquid[i] = hasAnyTag(t.terrain, { "Liquid", "Frozen", "Slippery", "Water", "Sticky" })
+			adv[i] = t.marker == "ADV"
+			for _, d in ipairs(DIR8) do
+				local nx, ny = x + d.x, y + d.y
+				if isInBounds(nx, ny, w, h) and tiles[ny][nx].obsForm == "spike" then
+					spikeNb[i] = true
+					break
+				end
+			end
+		end
+	end
+
+	local audit = {
+		pocketsFound = found, oneWayFound = foundOneWay, keyPocketsFound = foundKey,
+		sealedEmptyLeft = sealedEmpty, pocketsFixed = 0, unrepairedCount = 0,
+		ramps = 0, rampsUndone = 0, tilesChanged = 0, keySnaps = 0, keySnapRamps = 0,
+		relaxedRamps = 0, raiseFloors = 0, budgetHit = false, unrepaired = {}, ms = 0,
+	}
+	if #g.pdList == 0 then
+		pocketBusy = pocketBusy + (os.clock() - pocketSeg)
+		audit.ms = pocketBusy * 1000
+		audit.skipped = "no standable PD tile"
+		print("[ElevationPass] Phase 7b pocket breaker: skipped (no standable PD tile), 0 tile(s) changed")
+		return audit
+	end
+	if found == 0 then
+		pocketBusy = pocketBusy + (os.clock() - pocketSeg)
+		audit.ms = pocketBusy * 1000
+		print(string.format(
+			"[ElevationPass] Phase 7b pocket breaker: 0 pocket(s) to repair (%d sealed-empty left), 0 tile(s) changed, %.1f ms",
+			sealedEmpty, audit.ms))
+		return audit
+	end
+
+	-- Baselines for the no-regression guard (only checks that pass now must keep passing).
+	local isED = function(x, y) return tiles[y][x].marker == "ED" end
+	local v6Before = cardinalReaches(tiles, w, h, pdCoords, nil, nil, isED)
+	local lanesBefore = {}
+	do
+		local seenLan = {}
+		for y = 1, h do
+			for x = 1, w do
+				local k0 = coordKey(x, y)
+				if tiles[y][x].marker == "LAN" and not seenLan[k0] then
+					local laneSet, q, head = { [k0] = true }, { { x = x, y = y } }, 1
+					seenLan[k0] = true
+					while head <= #q do
+						local cur = q[head]; head = head + 1
+						for _, d in ipairs(CARDINAL) do
+							local nx, ny = cur.x + d.x, cur.y + d.y
+							local nk = coordKey(nx, ny)
+							if isInBounds(nx, ny, w, h) and tiles[ny][nx].marker == "LAN" and not seenLan[nk] then
+								seenLan[nk] = true
+								laneSet[nk] = true
+								table.insert(q, { x = nx, y = ny })
+							end
+						end
+					end
+					if cardinalReaches(tiles, w, h, pdCoords, nil, laneSet, isED) then
+						table.insert(lanesBefore, laneSet)
+					end
+				end
+			end
+		end
+	end
+	local chokesBefore = {}
+	for _, gap in ipairs(mapState.bridgeGaps or {}) do
+		local chain = gap.chain or {}
+		if gap.gapType == "chokepoint" and #chain >= 2 then
+			local blocked = {}
+			for _, s in ipairs(gap.spanTiles or {}) do blocked[coordKey(s.x, s.y)] = true end
+			local bankOut = chain[#chain]
+			local leaks = cardinalReaches(tiles, w, h, { chain[1] }, blocked, nil,
+				function(x, y) return x == bankOut.x and y == bankOut.y end)
+			if not leaks then
+				table.insert(chokesBefore, { bankIn = chain[1], bankOut = bankOut, blocked = blocked })
+			end
+		end
+	end
+
+	local ctx = {
+		g = g, tiles = tiles, floorE = cfg.floor or 1, peakE = cfg.peak or 20,
+		lockStatic = lockStatic, liquid = liquid, adv = adv, spikeNb = spikeNb,
+		used = {}, frozen = {}, jobSet = {},
+		pdCoords = pdCoords, v6Before = v6Before, lanesBefore = lanesBefore, chokesBefore = chokesBefore,
+		ramps = 0, accepted = 0, undone = 0, tilesChanged = 0, keySnaps = 0,
+		keySnapRamps = 0, relaxed = 0, raiseFloors = 0,
+	}
+
+	-- Repair loop (report step 11): re-flood after every accepted ramp.
+	local failReasonAt = {}
+	local failed = {}
+	while true do
+		local progressed = false
+		for _, job in ipairs(buildJobs(g, an)) do
+			if not failed[job.key] then
+				local ok, nf, why = attemptJob(ctx, job, an)
+				if ok then
+					an = computeGroups(g, nf)
+					progressed = true
+					break
+				end
+				failed[job.key] = true
+				for _, i in ipairs(job.tiles) do failReasonAt[i] = why end
+				if why == "budget" then audit.budgetHit = true; break end
+			end
+		end
+		if not progressed or audit.budgetHit then break end
+	end
+
+	-- Residual audit (report step 12).
+	local residual = 0
+	for _, grp in ipairs(an.groups) do
+		if isRepairTarget(grp) then
+			residual = residual + 1
+			if #audit.unrepaired < POCKET_UNREPAIRED_LOG then
+				local reason = "not attempted"
+				for _, i in ipairs(grp.tiles) do
+					if failReasonAt[i] then reason = failReasonAt[i]; break end
+				end
+				local i1 = grp.tiles[1]
+				local x1 = (i1 - 1) % w + 1
+				table.insert(audit.unrepaired, {
+					x = x1, y = (i1 - x1) / w + 1, size = #grp.tiles, kind = grp.kind,
+					oneWay = grp.oneWay, keyTiles = grp.keyCount, reason = reason,
+				})
+			end
+		end
+	end
+	audit.unrepairedCount = residual
+	audit.pocketsFixed = math.max(0, found - residual)
+	audit.ramps = ctx.accepted
+	audit.rampsUndone = ctx.undone
+	audit.tilesChanged = ctx.tilesChanged
+	audit.keySnaps = ctx.keySnaps
+	audit.keySnapRamps = ctx.keySnapRamps
+	audit.relaxedRamps = ctx.relaxed
+	audit.raiseFloors = ctx.raiseFloors
+	pocketBusy = pocketBusy + (os.clock() - pocketSeg)
+	audit.ms = pocketBusy * 1000
+
+	-- LOG-001: one summary line per map (no per-tile output).
+	print(string.format(
+		"[ElevationPass] Phase 7b pocket breaker: %d pocket(s) found (%d one-way, %d with key tile; %d sealed-empty left), %d fixed, %d unrepaired; %d ramp(s) (%d undone by guard), %d tile(s) changed, %d key-snap(s), %d relaxed, %d raise-floor%s; %.1f ms",
+		found, foundOneWay, foundKey, sealedEmpty, audit.pocketsFixed, residual,
+		audit.ramps, audit.rampsUndone, audit.tilesChanged, audit.keySnaps,
+		audit.relaxedRamps, audit.raiseFloors,
+		audit.budgetHit and " (budget hit)" or "", audit.ms))
+	return audit
+end
+
+--- Jump-1 walkability of the current map (the same walker Phase 7b repairs
+--- against). Single source for ValidationPass V13. Read-only.
+--- Index of tile (x, y) = (y - 1) * width + x.
+function ElevationPass.AnalyzeWalkability(mapState)
+	local g = buildWalkGraph(mapState.tiles, mapState.width, mapState.height)
+	local an = computeGroups(g, computeFlows(g))
+	local oneWay, keyOutside = 0, 0
+	for _, grp in ipairs(an.groups) do
+		if grp.kind == "trap" and grp.oneWay and #grp.tiles > 1 then oneWay = oneWay + 1 end
+		keyOutside = keyOutside + grp.keyCount
+	end
+	return {
+		width = g.w,
+		main = an.main,       -- [index] = true: reach PD and walk back
+		reach = an.F,         -- [index] = true: reachable from PD
+		back = an.B,          -- [index] = true: can walk back to PD
+		trapTiles = an.trapCount,
+		oneWayPockets = oneWay,
+		keyTilesOutsideMain = keyOutside,
+		walkUp = WALK_UP,
+		walkDown = WALK_DOWN,
+	}
 end
 
 --------------------------------------------------
@@ -1086,6 +1933,14 @@ function ElevationPass.Run(mapState)
 	end
 
 	---------------------------------------------------------
+	-- PHASE 7b: Pocket breaker (2026-11-21, SIM_pocket_breaker_20261121 R1-final)
+	-- Runs after 6b (cliff re-assert would undo the notches) and after 7 (gap
+	-- depth is final, gap banks are locked). Repair-only, guarded, budgeted.
+	-- See runPocketBreaker above for the walker, editable rules and guard.
+	---------------------------------------------------------
+	local pocketAudit = runPocketBreaker(mapState)
+
+	---------------------------------------------------------
 	-- PHASE 8: Audit (advisory; read by MapService / sample-map tooling)
 	---------------------------------------------------------
 	local bMid = cfg.bMid or math.floor((sea + cfg.max) / 2)
@@ -1139,6 +1994,7 @@ function ElevationPass.Run(mapState)
 		corridorCutCliff = corridorCutCliff,
 		gapTiles         = gapTiles,
 		gapLeaks         = gapLeaks,
+		pocketBreaker    = pocketAudit,
 	}
 
 	return mapState

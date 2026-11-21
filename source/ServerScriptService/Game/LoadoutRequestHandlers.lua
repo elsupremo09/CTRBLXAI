@@ -100,6 +100,21 @@ local function rebuildSkillIds(unit)
 	end
 end
 
+-- BUG-088 / BUG-092: after any out-of-battle stat rebuild, sync the persistent HP/MP record
+-- (GetRosterData reads it first) and mirror it onto the live unit. ONE helper for every
+-- rebuild site (DAT-001). UpdateMaxResources applies persistent_hp_mp_rules 19/20 (max up ->
+-- current += diff, max down -> clamp) and keeps a KO'd unit at 0 (rule 8).
+-- Never call it after a TEMPORARY rebuild (comparison previews): only after the real state.
+local function syncPersistentResources(unitId, unit)
+	if not (unit and unit.maxHp and unit.maxMp) then return end
+	PersistentStateService.UpdateMaxResources(PLAYER_ID, unitId, unit.maxHp, unit.maxMp)
+	local ps = PersistentStateService.GetUnitState(PLAYER_ID, unitId)
+	if ps then
+		unit.currentHp = math.min(ps.currentHp, unit.maxHp)
+		unit.currentMp = math.min(ps.currentMp, unit.maxMp)
+	end
+end
+
 --- Main wires DungeonLoadout.Gate here (step 3): (name, fn, withInv, player, ...) -> handled, result.
 function LoadoutRequestHandlers.SetGate(g: any) dungeonGate = g end
 --- Shared with DungeonLoadout (run end): the unit's live skill list from its doctrine skill + skill cards.
@@ -324,6 +339,7 @@ Handlers.RequestEquip = function(player, unitId, instanceId, slotOverride)
 						return { ok = false, reason = moveErr or "Cannot remove that unit's only weapon" }
 					end
 					EquipmentService.RebuildUnitStats(prevUnit)
+					syncPersistentResources(prevId, prevUnit) -- BUG-092
 					print(string.format("[Management] Auto-unequipped %s from %s to equip on %s", archetype.name, prevUnit.name, unit.name))
 				end
 			end
@@ -333,6 +349,7 @@ Handlers.RequestEquip = function(player, unitId, instanceId, slotOverride)
 	if ok then
 		item.isNew = nil -- equipping counts as seen (NEW badge, 2026-11-08); saved with the loadout
 		EquipmentService.RebuildUnitStats(unit)
+		syncPersistentResources(unitId, unit) -- BUG-092
 		print(string.format("[Management] %s equipped %s [%s] in %s", unit.name, archetype.name, instanceId, slot))
 		return { ok = true, slot = slot, name = archetype.name }
 	else
@@ -351,6 +368,7 @@ Handlers.RequestUnequip = function(player, unitId, slot)
 	local ok, err = EquipmentService.Unequip(unit, slot or "MainHand")
 	if ok then
 		EquipmentService.RebuildUnitStats(unit)
+		syncPersistentResources(unitId, unit) -- BUG-092
 		print(string.format("[Management] %s unequipped %s", unit.name, slot or "MainHand"))
 		return { ok = true }
 	else
@@ -463,6 +481,7 @@ Handlers.RequestEquipDoctrine = function(player, unitId, instanceId)
 	inst.selectedSkillId = sel
 	rebuildSkillIds(unit)
 	EquipmentService.RebuildUnitStats(unit)
+	syncPersistentResources(unitId, unit) -- BUG-092: doctrine stat package changes max HP/MP
 	print(string.format("[Doctrine] %s equipped %s (inst %s), was %s",
 		unit.name, inst.doctrineId, instanceId, tostring(oldDoc)))
 	return { ok = true, doctrineName = doctrine.name, doctrineId = inst.doctrineId, selectedSkill = sel }
@@ -808,6 +827,7 @@ Handlers.RequestEquipConsumable = function(player, unitId, slotIndex, consumable
 	-- AC-009 Reinforced Cartridge (2026-10-29): apply the +20% charges now (the rebuild keeps a
 	-- full item full), so a newly equipped item gets the extra charge.
 	EquipmentService.RebuildUnitStats(unit)
+	syncPersistentResources(unitId, unit) -- BUG-092 (no-op unless max HP/MP changed)
 	print(string.format("[Consumable] %s equipped %s in slot %d (charges: %d)",
 		unit.name, consDef.name, slotIndex, consDef.maxCharges or 1))
 	return { ok = true, name = consDef.name, charges = consDef.maxCharges or 1 }
@@ -994,9 +1014,13 @@ Handlers.CommitStatAllocation = function(player, unitId, pending)
 		end
 	end
 	EquipmentService.RebuildUnitStats(unit)
+	-- BUG-088 (PT-09): GetRosterData reads max/current HP/MP from the persistent record, which
+	-- only caught up at the next battle. Shared sync helper (BUG-092 moved the logic there).
+	syncPersistentResources(unitId, unit)
 	markLoadoutDirty() -- save deferred to nav trigger (2026-10-19)
-	print(string.format("[StatAlloc] %s committed +%d pts, remaining %d",
-		unit.name, total, getUnallocatedPoints(unit)))
+	print(string.format("[StatAlloc] %s committed +%d pts, remaining %d, HP %s/%s MP %s/%s",
+		unit.name, total, getUnallocatedPoints(unit), tostring(unit.currentHp), tostring(unit.maxHp),
+		tostring(unit.currentMp), tostring(unit.maxMp)))
 	return {
 		ok = true,
 		effectiveStats = unit.effectiveStats,
@@ -1109,6 +1133,9 @@ Handlers.GetEquipmentComparison = function(player, unitId, instanceId)
 	-- Restore original
 	unit.equipmentSlots[slot] = savedItem
 	EquipmentService.RebuildUnitStats(unit)
+	-- BUG-092: the temporary rebuild above may have clamped the live currentHp/MP to a lower
+	-- preview max; re-read the (untouched) persistent record. Never synced on the preview itself.
+	syncPersistentResources(unitId, unit)
 	-- Compute deltas
 	local deltas = {}
 	for key, val in pairs(after) do
@@ -1147,6 +1174,7 @@ Handlers.GetDoctrineComparison = function(player, unitId, newDoctrineId)
 	-- Restore
 	unit.doctrineId = savedDoc
 	EquipmentService.RebuildUnitStats(unit)
+	syncPersistentResources(unitId, unit) -- BUG-092: undo the preview clamp (see GetEquipmentComparison)
 	-- Deltas
 	local deltas = {}
 	for _, stat in ipairs(STATS_LIST) do

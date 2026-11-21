@@ -22,6 +22,9 @@
 -- list only. EXP is a yield choice beside the materials (EXP mission = EXP only, material mission = material
 -- only; items on every mission). Tap an away unit = its mission (meter, Collect, Recall) on the right.
 -- "Collect all" sits in the bottom button row when 2+ missions are ready.
+-- 2026-11-21 build (user-approved 11:17 AM): mission panel adds Waiting / Full in / Earned so far / items
+-- note (server RtList preview, display only); "Dispatch collected" summary popup after Collect / Collect
+-- all; Send | Missions sub-tabs on the right (same Buy / Sell sub-tab pattern as the Merchant screen).
 
 local WAIT = 10
 
@@ -90,6 +93,9 @@ local MAT_COLS = 4            -- mercury / rune gems / crystals / sulfur
 local PICK_LABEL_1 = 13        -- picker tiles: one-line name strip under the icon (user 2026-11-20 4:13 PM)
 local PICK_LABEL_2 = 24        -- two lines, only when a yield name can't fit on one
 local ICON = 14
+local SUBTAB_H = 24           -- guild screen sub-tab height (Merchant / Loadout SUBTAB_H, user ruling 2026-10-08)
+local SUBTAB_GAP = 6
+local LIST_ROW_H = 72         -- Missions tab row: whole row is the tap target (>= 44 px)
 
 local MATERIAL_NAMES: { [string]: string } = {
 	mercury = "Mercury", crystals = "Crystals", sulfur = "Sulfur", gems = "Rune gems",
@@ -118,6 +124,21 @@ local function rtFullCount(n: number): string            -- RT-08
 	return if n == 1 then "1 mission is full." else `{n} missions are full.`
 end
 local function rtNeedsLevel(n: number): string return `Needs Dispatch level {n}` end            -- RT-09
+
+-- Approved 2026-11-21 11:17 AM (build brief; Designer to log these as DISPATCH-RT ids).
+local TAB_SEND = "Send"
+local TAB_MISSIONS = "Missions"
+local function rtWaiting(dur: string): string return `Waiting {dur}` end
+local function rtFullIn(dur: string): string return `Full in {dur}` end
+local TXT_FULL_STOPPED = "Full: not earning. Collect to restart."
+local TXT_ITEMS_AT_COLLECT = "Items are found when you collect."
+local TXT_COLLECTED_TITLE = "Dispatch collected"
+local TXT_OK = "OK"
+local TXT_NO_MISSIONS = "No missions out." -- empty Missions tab (approved 2026-11-21 11:27 AM)
+-- Yield multiplier lines (approved 2026-11-21 11:27 AM, exact text). Values come from the server.
+local function rtTeamBonus(n: number): string return `Team bonus +{n}%` end
+local function rtLevelMatch(n: number): string return `Level match {n}%` end
+local TXT_STRONGEST = "Send your strongest units for the full bonus."
 
 -- Display text D1, D2, D3, D5 (APPROVED by the user 2026-11-19 10:28 PM; D4 dropped). One table so the
 -- wording sits in one place. No decimals ever reach the player: materials are shown as time per whole
@@ -180,6 +201,11 @@ local tickThread: thread? = nil
 local awayShown = false            -- "While you were away" once per session
 local YIELD_EXP = "exp"            -- yield choice: EXP (sent to the server as material "none")
 local renderedReady = 0            -- missions past their minimum at the last render (Collect all)
+local sideTab = TAB_SEND           -- right panel view: Send (pickers) | Missions (every mission out)
+local awayParent: Instance? = nil  -- guild menu ScreenGui given to ShowAwaySummary (summary popup host)
+local previewKey: string? = nil    -- yield preview (2026-11-21): picks the last answer was asked for
+local previewData: any = nil       -- server answer for previewKey (nil = waiting, false = refused)
+local PREVIEW_DEBOUNCE = 0.25      -- ask once the picks settle (server rate limit is 0.2 s per key)
 
 --------------------------------------------------
 -- HELPERS (properties before Parent, NET-004)
@@ -359,6 +385,38 @@ local function liveTimes(m: any): (number, number, boolean, boolean)
 	return earned, limit, earned >= limit and limit > 0, since >= minS
 end
 
+-- Display only (2026-11-21): true time since the last collect (not capped) and seconds until full,
+-- from the server answer plus the time since it arrived.
+local function liveWait(m: any): (number, number)
+	local dt = math.max(0, os.clock() - rtAt)
+	local waiting = (tonumber(m.waitingSeconds) or tonumber(m.earnedSeconds) or 0) + dt
+	local fullIn = tonumber(m.fullInSeconds)
+		or math.max(0, (tonumber(m.limitSeconds) or 0) - (tonumber(m.earnedSeconds) or 0))
+	return waiting, math.max(0, fullIn - dt)
+end
+
+-- "Earned so far: +{xp} EXP · +{n} {Material}" from the server preview (whole numbers only). Same rule
+-- as earnedLine: the EXP part is left out when 0 and material was earned; a material-only mission with
+-- nothing yet shows "+0 {Material}" (not "+0 EXP", it can never earn EXP).
+local function earnedSoFarText(m: any): string?
+	local e = m.earnedSoFar
+	if type(e) ~= "table" then return nil end
+	local xp = 0
+	for _, pair in e.units or {} do
+		xp += math.max(0, math.floor(tonumber(if type(pair) == "table" then pair[2] else 0) or 0))
+	end
+	local n = math.max(0, math.floor(tonumber(e.amount) or 0))
+	local mat = e.material
+	local isMat = type(mat) == "string" and mat ~= "none"
+	local matOnly = isMat and m.noExp == true
+	local parts: { string } = {}
+	if xp > 0 or (n == 0 and not matOnly) then table.insert(parts, `+{xp} EXP`) end
+	if isMat and (n > 0 or (matOnly and xp == 0)) then
+		table.insert(parts, `+{n} {MATERIAL_NAMES[mat :: string] or mat}`)
+	end
+	return "Earned so far: " .. table.concat(parts, " · ")
+end
+
 local function tierInfo(cfg: any, tier: number?): any?
 	if not cfg or not tier then return nil end
 	for _, t in cfg.tiers or {} do
@@ -468,12 +526,14 @@ local function buildUnitGrid(grid: ScrollingFrame, res: any, st: any, widthHint:
 				-- Tap an away unit = show its mission on the right (Collect / Recall). Dungeon units: nothing.
 				if mid then
 					selectedRecall = if selectedRecall == mid then nil else mid
+					sideTab = TAB_MISSIONS -- untapping returns to the Missions list
 					pickWarning = false
 					render()
 				end
 				return
 			end
 			selectedRecall = nil -- a home unit = back to the send view
+			sideTab = TAB_SEND
 			if picked then
 				selectedUnits[uid] = nil
 				pickWarning = false
@@ -497,6 +557,24 @@ local function buildUnitGrid(grid: ScrollingFrame, res: any, st: any, widthHint:
 			})
 		end
 	end
+end
+
+-- Yield preview for the picked units (display only; the server works it out, SEC-002). One request per
+-- new set of picks, after a short settle; the answer re-renders. A refused / failed call shows nothing.
+local function requestPreview(key: string, material: string, ids: { string })
+	if previewKey == key then return end
+	previewKey = key
+	previewData = nil
+	local c = ctx
+	if not c then return end
+	task.spawn(function()
+		task.wait(PREVIEW_DEBOUNCE)
+		if previewKey ~= key or not isOpen then return end
+		local res = c.rt("Preview", { action = "Preview", material = material, unitIds = ids })
+		if previewKey ~= key then return end
+		previewData = if type(res) == "table" and type(res.preview) == "table" then res.preview else false
+		if isOpen and not busy then render() end
+	end)
 end
 
 -- RIGHT, under the tiles: the send panel (moved from the left 2026-11-20).
@@ -561,6 +639,18 @@ local function buildDetail(parent: Instance, st: any)
 		else { prefix = "Fee", text = `{st.fee}g per mission`, color = sec }
 	local limitH = if st.cfg then tonumber(st.cfg.earnLimitHours) or 0 else 0
 	if t then
+		-- Yield preview for the picked units (2026-11-21 N1): asked from the server once units are picked.
+		local prev: any = nil
+		local wire: string? = nil
+		if st.nPicked > 0 and selectedMaterial then
+			local ids: { string } = {}
+			for uid in selectedUnits do table.insert(ids, uid) end
+			table.sort(ids)
+			wire = if selectedMaterial == YIELD_EXP then "none" else selectedMaterial
+			local key = `{wire}|{table.concat(ids, ",")}`
+			requestPreview(key, wire :: string, ids)
+			if previewKey == key and type(previewData) == "table" then prev = previewData end
+		end
 		-- Row 2: minimum time | earning limit (RT-01 at zero) | a full limit pays: material + EXP | fee.
 		local pieces: { any } = {
 			{ text = rtMinimum(tonumber(t.minHours) or 0), color = sec },
@@ -573,6 +663,8 @@ local function buildDetail(parent: Instance, st: any)
 		local earn: { any } = {}
 		local mat = selectedMaterial
 		local rate = if mat and t.materialPerHour then tonumber(t.materialPerHour[mat]) else nil
+		-- With a preview, the rate these units would earn (server multiplier); else the full-team rate.
+		if rate and prev and tonumber(prev.matMult) then rate *= tonumber(prev.matMult) :: number end
 		if mat and rate and rate > 0 then
 			local icon = guildIcon(MATERIAL_ICON[mat])
 			local one = MATERIAL_ONE[mat] or MATERIAL_NAMES[mat] or mat
@@ -584,15 +676,25 @@ local function buildDetail(parent: Instance, st: any)
 		local pct = fmtPct((tonumber(t.expPct) or 0) * mult * 100)
 		if mat == YIELD_EXP then table.insert(earn, { text = TEXT.expPerHour(fixed, pct), bold = true }) end
 		if #earn > 0 then iconRow(panel, 3, earn, small) end
+		-- Row 3a (2026-11-21): "Team bonus +{n}%" and, on material missions, "Level match {n}%"; the hint
+		-- line while a material mission would not get the full bonus.
+		if prev then
+			local yp: { any } = { { text = rtTeamBonus(tonumber(prev.teamBonusPct) or 0), color = sec } }
+			if prev.levelMatchPct ~= nil then
+				table.insert(yp, { text = rtLevelMatch(tonumber(prev.levelMatchPct) or 0), color = sec })
+			end
+			iconRow(panel, 4, yp, small)
+			if prev.full ~= true and wire ~= "none" then addLine(panel, 5, TXT_STRONGEST, small, Theme.Colors.TextGold) end
+		end
 		-- Row 3: picked / staying home / keep one home. Kept to one line so the panel fits without a scroll
 		-- bar (user 2026-11-20 4:13 PM): the team-size note takes its place while it shows, and with every
 		-- slot in use the "All dispatch slots..." line below replaces it (nothing can be sent then).
 		if st.slotsUsed >= st.slotCap then
 			-- row left out; line 5 says why
 		elseif pickWarning then
-			iconRow(panel, 4, { { text = `Send at most {st.team} units per mission`, color = Theme.Colors.Danger, bold = true } }, small)
+			iconRow(panel, 6, { { text = `Send at most {st.team} units per mission`, color = Theme.Colors.Danger, bold = true } }, small)
 		else
-			iconRow(panel, 4, {
+			iconRow(panel, 6, {
 				{ text = `{st.nPicked} selected  ·  {st.homeCount - st.nPicked} stay home  ·  Keep 1 unit home`, color = sec },
 			}, small)
 		end
@@ -600,7 +702,7 @@ local function buildDetail(parent: Instance, st: any)
 		iconRow(panel, 2, { feePiece, { text = "Keep 1 unit home", color = sec } }, small)
 	end
 	if st.slotsUsed >= st.slotCap then
-		addLine(panel, 5, "All dispatch slots are in use (queued or active).", small, sec)
+		addLine(panel, 7, "All dispatch slots are in use (queued or active).", small, sec)
 	end
 	panel.Parent = parent
 end
@@ -917,11 +1019,184 @@ local function earnedLine(res: any): string?
 	return table.concat(parts, " · ")
 end
 
+--------------------------------------------------
+-- "DISPATCH COLLECTED" SUMMARY (2026-11-21 build), after Collect / Collect all
+--------------------------------------------------
+
+local summaryHolder: Instance? = nil
+
+local function closeSummary()
+	if summaryHolder then
+		summaryHolder:Destroy()
+		summaryHolder = nil
+	end
+end
+
+-- "{h}h {m}m" from the server's hours (whole minutes, rounded down: what was actually paid for).
+local function fmtHM(hours: any): string
+	local mins = math.max(0, math.floor((tonumber(hours) or 0) * 60))
+	return `{mins // 60}h {mins % 60}m`
+end
+
+-- Unit name for a result line: GuildMenuService.rtNamed sets line.name (falls back to the id when the
+-- unit is not live); then the dispatch board units (display only).
+local function unitNameOf(line: any, board: any?): string
+	local nm = line.name
+	if type(nm) == "string" and nm ~= "" and nm ~= line.unitId then return nm end
+	if type(board) == "table" then
+		for _, u in board.units or {} do
+			if u.id == line.unitId and u.name then return tostring(u.name) end
+		end
+	end
+	return tostring(nm or line.unitId or "?")
+end
+
+-- "{Unit name}" left (cut with "..." when long) and "+{xp} EXP" right, one row.
+local function nameValueRow(parent: Instance, order: number, name: string, value: string, size: number)
+	local row = Instance.new("Frame")
+	row.Name = "Unit" .. order
+	row.BackgroundTransparency = 1
+	row.BorderSizePixel = 0
+	row.Size = UDim2.new(1, 0, 0, size + 6)
+	row.LayoutOrder = order
+	local v = makeText(row, value, size, Theme.Colors.TextGold, true)
+	v.TextWrapped = false
+	v.TextXAlignment = Enum.TextXAlignment.Right
+	v.AnchorPoint = Vector2.new(1, 0)
+	v.Position = UDim2.fromScale(1, 0)
+	v.Size = UDim2.new(0, 96, 1, 0)
+	local n = makeText(row, name, size, Theme.Colors.TextPrimary)
+	n.TextWrapped = false
+	n.TextTruncate = Enum.TextTruncate.AtEnd
+	n.Position = UDim2.fromOffset(8, 0)
+	n.Size = UDim2.new(1, -108, 1, 0)
+	row.Parent = parent -- parent last (NET-004)
+end
+
+-- One block per mission: "{mission} · {Xh Ym}", a line per unit "+{xp} EXP" (units with 0 skipped on
+-- material missions), "+{n} {Material}", item names, the weekly sulfur bonus. Values from the server.
+local function showCollectSummary(res: any)
+	local results = (type(res) == "table" and type(res.results) == "table") and res.results or nil
+	if not results or #results == 0 then return end
+	local pg: any = if isOpen and screen then screen.Gui else awayParent
+	if not pg then return end
+	closeSummary()
+	local board: any = nil
+	local c = ctx
+	if c then
+		local okB, b = pcall(c.getBoard)
+		board = if okB then b else nil
+	end
+	local small = Theme.Text.Small()
+	local overlay, box = GuildScreen.MakeModalBox("DispatchCollected", { maxW = 420 })
+	local list = Instance.new("UIListLayout")
+	list.Padding = UDim.new(0, 4)
+	list.SortOrder = Enum.SortOrder.LayoutOrder
+	list.Parent = box
+	addLine(box, 1, TXT_COLLECTED_TITLE, Theme.Text.Heading(), Theme.Colors.TextGold, true)
+	-- Blocks scroll inside the box when many missions were collected (the box has a max height).
+	local cam = workspace.CurrentCamera
+	local vh = if cam then cam.ViewportSize.Y else 382
+	local body = Instance.new("ScrollingFrame")
+	body.Name = "Blocks"
+	body.BackgroundTransparency = 1
+	body.BorderSizePixel = 0
+	body.Size = UDim2.new(1, 0, 0, 0)
+	body.AutomaticSize = Enum.AutomaticSize.Y
+	body.CanvasSize = UDim2.new()
+	body.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	body.ScrollBarThickness = 4
+	body.LayoutOrder = 2
+	local maxH = Instance.new("UISizeConstraint")
+	maxH.MaxSize = Vector2.new(math.huge, math.max(80, math.floor(vh * 0.5)))
+	maxH.Parent = body
+	local bl = Instance.new("UIListLayout")
+	bl.Padding = UDim.new(0, 1)
+	bl.SortOrder = Enum.SortOrder.LayoutOrder
+	bl.Parent = body
+	local o = 0
+	local function nextOrder(): number
+		o += 1
+		return o
+	end
+	for bi, r in results do
+		if bi > 1 then
+			local gap = Instance.new("Frame")
+			gap.Name = "Gap"
+			gap.BackgroundTransparency = 1
+			gap.BorderSizePixel = 0
+			gap.Size = UDim2.new(1, 0, 0, 4)
+			gap.LayoutOrder = nextOrder()
+			gap.Parent = body
+		end
+		local head = addLine(body, nextOrder(), `{missionName(r.tier)} · {fmtHM(r.hours)}`, small, Theme.Colors.TextGold, true)
+		head.TextWrapped = false
+		head.TextTruncate = Enum.TextTruncate.AtEnd
+		local isMat = type(r.material) == "string" and r.material ~= "none"
+		for _, line in r.units or {} do
+			local xp = math.max(0, math.floor(tonumber(line.xp) or 0))
+			if not (isMat and xp == 0) then
+				nameValueRow(body, nextOrder(), unitNameOf(line, board), `+{xp} EXP`, small)
+			end
+		end
+		local amt = math.floor(tonumber(r.amount) or 0)
+		if isMat and amt > 0 then
+			addLine(body, nextOrder(), `+{amt} {MATERIAL_NAMES[r.material] or r.material}`, small, Theme.Colors.TextPrimary, true)
+		end
+		if type(r.items) == "table" then
+			for _, it in r.items do
+				if type(it) == "table" and type(it.name) == "string" and it.name ~= "" then
+					local il = addLine(body, nextOrder(), it.name, small, Theme.Colors.TextPrimary)
+					il.TextWrapped = false
+					il.TextTruncate = Enum.TextTruncate.AtEnd
+				end
+			end
+		end
+		if type(r.bonus) == "table" then -- weekly sulfur (materials_system 12)
+			for k, v in r.bonus do
+				local n = math.floor(tonumber(v) or 0)
+				if type(k) == "string" and n > 0 then
+					addLine(body, nextOrder(), `+{n} {MATERIAL_NAMES[k] or k}`, small, Theme.Colors.TextPrimary, true)
+				end
+			end
+		end
+	end
+	body.Parent = box
+	local row = Instance.new("Frame")
+	row.Name = "Buttons"
+	row.BackgroundTransparency = 1
+	row.BorderSizePixel = 0
+	row.Size = UDim2.new(1, 0, 0, GuildScreen.ROW_H)
+	row.LayoutOrder = 100
+	local layout = Instance.new("UIListLayout")
+	layout.FillDirection = Enum.FillDirection.Horizontal
+	layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	layout.VerticalAlignment = Enum.VerticalAlignment.Center
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = row
+	Theme.MakeBarButton(row, TXT_OK, "Primary", closeSummary, {
+		name = "Btn_CollectedOK", minHeight = math.max(44, GuildScreen.ROW_H), layoutOrder = 1,
+	})
+	row.Parent = box
+	-- Same fix as ShowAwaySummary (2026-11-20): own Sibling ScreenGui one DisplayOrder above the host,
+	-- so the box (ZIndex 21) never draws over its own text and buttons.
+	local holder = Instance.new("ScreenGui")
+	holder.Name = "DispatchCollectedGui"
+	holder.ResetOnSpawn = false
+	holder.IgnoreGuiInset = true
+	holder.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	holder.DisplayOrder = (if pg:IsA("ScreenGui") then pg.DisplayOrder else 0) + 1
+	overlay.Parent = holder
+	holder.Parent = if pg:IsA("ScreenGui") then pg.Parent else pg -- parent last (NET-004)
+	summaryHolder = holder
+end
+
 local function afterCollect(res: any)
 	logResults("Collected", res)
 	local line = earnedLine(res)
 	local c = ctx
-	if line and c then c.setStatus(line) end
+	if line and c then c.setStatus(line) end -- the bottom status line stays
+	showCollectSummary(res)
 end
 
 local function collect(missionId: string)
@@ -1064,6 +1339,9 @@ local function buildMissionPanel(parent: Instance, m: any, st: any)
 			table.insert(earn, { text = TEXT.expPerHour(fixed, fmtPct((tonumber(ti.expPct) or 0) * 100)), bold = true })
 		end
 	end
+	-- 2026-11-21 N1: the multiplier stored at send (server numbers; missions sent before it show none).
+	if tonumber(m.teamBonusPct) then table.insert(earn, { text = rtTeamBonus(tonumber(m.teamBonusPct) :: number), color = sec }) end
+	if tonumber(m.levelMatchPct) then table.insert(earn, { text = rtLevelMatch(tonumber(m.levelMatchPct) :: number), color = sec }) end
 	if #earn > 0 then iconRow(panel, 2, earn, small) end
 
 	-- Row 3: the meter (RT-01), or "Full" (RT-02) in gold. Row 4: next whole unit (D3).
@@ -1091,16 +1369,25 @@ local function buildMissionPanel(parent: Instance, m: any, st: any)
 	corner(fill, 2)
 	fill.Parent = back
 	back.Parent = panel
+	-- 2026-11-21: Waiting (true time since the last collect), Full in / full sentence, earned so far
+	-- (server preview, whole numbers), items note. Display only.
+	local waiting, fullIn = liveWait(m)
+	local waitLine = addLine(panel, 6, rtWaiting(fmtDuration(waiting)), small, sec)
+	local fullLine = addLine(panel, 7, if full then TXT_FULL_STOPPED else rtFullIn(fmtDuration(fullIn)), small,
+		if full then Theme.Colors.TextGold else sec, full)
+	local soFar = earnedSoFarText(m)
+	if soFar then addLine(panel, 8, soFar, small, Theme.Colors.TextPrimary, true) end
+	addLine(panel, 9, TXT_ITEMS_AT_COLLECT, small, sec)
 	-- "Minimum {h}h" (RT-05) until the tier minimum has passed.
 	local minH = math.floor((tonumber(m.minSeconds) or 0) / 3600 + 0.5)
-	if not minOk then addLine(panel, 6, rtMinimum(minH), small, sec) end
+	if not minOk then addLine(panel, 10, rtMinimum(minH), small, sec) end
 	-- Buttons: Collect (RT-03, after the minimum) and Recall.
 	local row = Instance.new("Frame")
 	row.Name = "Actions"
 	row.BackgroundTransparency = 1
 	row.BorderSizePixel = 0
 	row.Size = UDim2.new(1, 0, 0, 44)
-	row.LayoutOrder = 7
+	row.LayoutOrder = 11
 	local rl = Instance.new("UIListLayout")
 	rl.FillDirection = Enum.FillDirection.Horizontal
 	rl.HorizontalAlignment = Enum.HorizontalAlignment.Right
@@ -1117,14 +1404,131 @@ local function buildMissionPanel(parent: Instance, m: any, st: any)
 		name = "Btn_Recall", minHeight = 44, layoutOrder = 2,
 	})
 	row.Parent = panel
-	table.insert(liveRows, { m = m, meter = meter, nextLine = nextLine, fill = fill, full = full, minOk = minOk })
+	table.insert(liveRows, { m = m, meter = meter, nextLine = nextLine, fill = fill, full = full, minOk = minOk,
+		waitLine = waitLine, fullLine = fullLine })
 	panel.Parent = parent
 end
 
+-- Missions tab row status: "Waiting {dur}  ·  Full in {dur}", or "Full" (RT-02) once full.
+local function rowStatusText(waiting: number, fullIn: number, full: boolean): string
+	return `{rtWaiting(fmtDuration(waiting))}  ·  {if full then TXT_FULL else rtFullIn(fmtDuration(fullIn))}`
+end
+
+-- Missions tab (2026-11-21): every mission out. Tier name + yield icon, portraits (3 + "+N", D1),
+-- Waiting / Full in, bar. The whole row is one tap target: it opens that mission's panel.
+local function buildMissionList(parent: Instance, st: any)
+	local small = Theme.Text.Small()
+	local sec = Theme.Colors.TextSecondary
+	if #st.missions == 0 then
+		addLine(parent, 1, TXT_NO_MISSIONS, small, sec)
+		return
+	end
+	for i, m in st.missions do
+		local units: { any } = {}
+		for _, uid in m.unitIds or {} do table.insert(units, st.byId[uid] or { name = "?" }) end
+		local earned, limit, full, minOk = liveTimes(m)
+		local waiting, fullIn = liveWait(m)
+		local btn = Instance.new("TextButton")
+		btn.Name = "Mission_" .. i
+		btn.Text = ""
+		btn.AutoButtonColor = false
+		btn.Size = UDim2.new(1, 0, 0, LIST_ROW_H)
+		btn.BackgroundColor3 = Theme.Colors.PanelRaised
+		btn.BackgroundTransparency = 0.15
+		btn.BorderSizePixel = 0
+		btn.LayoutOrder = i
+		corner(btn, Theme.ItemTile.CornerRadius)
+		stroke(btn, if full then Theme.Colors.TextGold else Theme.Colors.Border, Theme.ItemTile.StrokeThickness)
+		-- Line 1: yield icon + "Tier N mission".
+		local mat = m.material
+		local isMaterial = type(mat) == "string" and mat ~= "none"
+		local icon = if isMaterial then guildIcon(MATERIAL_ICON[mat]) else guildIcon("DispatchExp")
+		local x = 8
+		if icon then
+			local ic = Instance.new("ImageLabel")
+			ic.Name = "Yield"
+			ic.BackgroundTransparency = 1
+			ic.ScaleType = Enum.ScaleType.Fit
+			ic.Image = icon
+			ic.Size = UDim2.fromOffset(18, 18)
+			ic.Position = UDim2.fromOffset(8, 4)
+			ic.Parent = btn
+			x = 30
+		end
+		local title = makeText(btn, missionName(m.tier), small, Theme.Colors.TextGold, true)
+		title.TextWrapped = false
+		title.TextTruncate = Enum.TextTruncate.AtEnd
+		title.Position = UDim2.fromOffset(x, 3)
+		title.Size = UDim2.new(1, -(x + 8), 0, 20)
+		-- Line 2: portraits, then Waiting / Full in.
+		local nChips = addChips(btn, units, 26)
+		local textX = 6 + math.max(1, nChips) * (CHIP + 3) + 4
+		local status = makeText(btn, rowStatusText(waiting, fullIn, full), small, if full then Theme.Colors.TextGold else sec, full)
+		status.TextWrapped = false
+		status.TextTruncate = Enum.TextTruncate.AtEnd
+		status.Position = UDim2.fromOffset(textX, 26)
+		status.Size = UDim2.new(1, -(textX + 8), 0, CHIP)
+		-- Bar toward the limit.
+		local back = Instance.new("Frame")
+		back.Name = "Bar"
+		back.BackgroundColor3 = Theme.Colors.Surface
+		back.BorderSizePixel = 0
+		back.Position = UDim2.fromOffset(8, LIST_ROW_H - 10)
+		back.Size = UDim2.new(1, -16, 0, BAR_H)
+		corner(back, 2)
+		local fill = Instance.new("Frame")
+		fill.Name = "Fill"
+		fill.BackgroundColor3 = if full then Theme.Colors.TextGold else Theme.Colors.Player
+		fill.BorderSizePixel = 0
+		fill.Size = UDim2.fromScale(if limit > 0 then math.clamp(earned / limit, 0, 1) else 0, 1)
+		corner(fill, 2)
+		fill.Parent = back
+		back.Parent = btn
+		local mid = m.missionId
+		btn.Activated:Connect(function() -- dies with the row on the next render
+			selectedRecall = mid
+			sideTab = TAB_MISSIONS
+			pickWarning = false
+			render()
+		end)
+		btn.Parent = parent
+		table.insert(liveRows, { m = m, fill = fill, full = full, minOk = minOk, waitLine = status, isRow = true })
+	end
+end
+
 local function buildSide(res: any, st: any)
+	-- Send | Missions sub-tabs (2026-11-21; same call shape as the Merchant Buy / Sell sub-tabs).
+	local onMissions = st.recallM ~= nil or sideTab == TAB_MISSIONS
+	local tabs = Instance.new("Frame")
+	tabs.Name = "SubTabs"
+	tabs.Size = UDim2.new(1, 0, 0, SUBTAB_H)
+	tabs.BackgroundTransparency = 1
+	tabs.BorderSizePixel = 0
+	local tl = Instance.new("UIListLayout")
+	tl.FillDirection = Enum.FillDirection.Horizontal
+	tl.Padding = UDim.new(0, SUBTAB_GAP)
+	tl.SortOrder = Enum.SortOrder.LayoutOrder
+	tl.Parent = tabs
+	for i, tab in { TAB_SEND, TAB_MISSIONS } do
+		local active = (tab == TAB_MISSIONS) == onMissions
+		Theme.MakeTabButton(tabs, tab, if active then "Active" else "Inactive", function()
+			-- Tapping Missions while a mission panel shows = back to the list.
+			if active and selectedRecall == nil then return end
+			sideTab = tab
+			selectedRecall = nil
+			pickWarning = false
+			render()
+		end, {
+			name = `SubTab_{tab}`,
+			size = UDim2.new(0.5, -SUBTAB_GAP // 2, 1, 0),
+			layoutOrder = i,
+		})
+	end
+	tabs.Parent = screen.Side
 	local scroll = Instance.new("ScrollingFrame")
 	scroll.Name = "Missions"
-	scroll.Size = UDim2.fromScale(1, 1)
+	scroll.Size = UDim2.new(1, 0, 1, -(SUBTAB_H + SUBTAB_GAP))
+	scroll.Position = UDim2.fromOffset(0, SUBTAB_H + SUBTAB_GAP)
 	scroll.BackgroundTransparency = 1
 	scroll.BorderSizePixel = 0
 	scroll.ScrollBarThickness = 4
@@ -1145,6 +1549,8 @@ local function buildSide(res: any, st: any)
 	-- (user 2026-11-19 11:57 PM): greyed-out cards on the left show who is away.
 	if st.recallM then
 		buildMissionPanel(scroll, st.recallM, st)
+	elseif sideTab == TAB_MISSIONS then
+		buildMissionList(scroll, st)
 	else
 		buildPickers(scroll, st)
 		buildDetail(scroll, st)
@@ -1236,7 +1642,7 @@ local function buildButtons(st: any?)
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = row
 	local hasPick = selectedTier ~= nil or next(selectedUnits) ~= nil or selectedRecall ~= nil
-	local canSend = st ~= nil and st.recallM == nil and st.tier ~= nil and selectedMaterial ~= nil and st.nPicked > 0
+	local canSend = st ~= nil and st.recallM == nil and sideTab == TAB_SEND and st.tier ~= nil and selectedMaterial ~= nil and st.nPicked > 0
 		and st.slotsUsed < st.slotCap and not busy
 	-- "Collect all" (RT-04) in the button row when 2+ missions are past their minimum (2026-11-20).
 	local ready = 0
@@ -1309,6 +1715,15 @@ local function startTicker()
 				if r.fill and r.fill.Parent and limit > 0 then
 					r.fill.Size = UDim2.fromScale(math.clamp(earned / limit, 0, 1), 1)
 				end
+				if r.waitLine and r.waitLine.Parent then -- 2026-11-21: Waiting / Full in
+					local waiting, fullIn = liveWait(r.m)
+					if r.isRow then
+						r.waitLine.Text = rowStatusText(waiting, fullIn, full)
+					else
+						r.waitLine.Text = rtWaiting(fmtDuration(waiting))
+						if r.fullLine and r.fullLine.Parent and not full then r.fullLine.Text = rtFullIn(fmtDuration(fullIn)) end
+					end
+				end
 			end
 			if not changed and rtCache and type(rtCache.missions) == "table" then
 				local ready = 0
@@ -1363,6 +1778,7 @@ end
 function DispatchScreen.ShowAwaySummary(parentGui: Instance?)
 	local c = ctx
 	if awayShown or not c or not parentGui then return end
+	awayParent = parentGui -- hosts the "Dispatch collected" popup from this popup's Collect all
 	rtCache = nil
 	local rt = getRt()
 	if not rt then return end -- Info failed: try again on the next base open (Tester WARN 5)
@@ -1387,12 +1803,20 @@ function DispatchScreen.ShowAwaySummary(parentGui: Instance?)
 		local earned, limit, full = liveTimes(m)
 		local micon = guildIcon(MATERIAL_ICON[m.material or ""])
 		local meter = if full then TXT_FULL else rtMeter(earned, math.floor(limit / 3600 + 0.5))
-		iconRow(box, 10 + i, {
+		-- 2026-11-21 (user): the popup now shows the same detail as the mission panel, using the
+		-- approved lines only (rowStatusText / earnedSoFarText). Orders 10+i*3.. keep each mission grouped.
+		local base = 10 + i * 3
+		iconRow(box, base, {
 			{ text = missionName(m.tier), bold = true },
 			if micon then { icon = micon, text = meter, color = if full then Theme.Colors.TextGold else Theme.Colors.TextSecondary }
 				else { text = meter, color = Theme.Colors.TextSecondary },
 		}, Theme.Text.Small())
+		local waiting, fullIn = liveWait(m)
+		addLine(box, base + 1, rowStatusText(waiting, fullIn, full), Theme.Text.Small(), Theme.Colors.TextSecondary)
+		local so = earnedSoFarText(m)
+		if so then addLine(box, base + 2, so, Theme.Text.Small(), Theme.Colors.TextPrimary, true) end
 	end
+	addLine(box, 99, TXT_ITEMS_AT_COLLECT, Theme.Text.Small(), Theme.Colors.TextSecondary)
 	local row = Instance.new("Frame")
 	row.Name = "Buttons"
 	row.BackgroundTransparency = 1
@@ -1470,7 +1894,10 @@ function DispatchScreen.Open()
 	selectedMaterial = nil
 	selectedUnits = {}
 	selectedRecall = nil
+	sideTab = TAB_SEND
 	pickWarning = false
+	previewKey = nil
+	previewData = nil
 	rtCache = nil -- fresh times on every open
 	isOpen = true
 	screen.SetStatus("")
@@ -1482,6 +1909,7 @@ end
 
 function DispatchScreen.Close()
 	closeAway() -- Tester WARN 6
+	closeSummary()
 	if not isOpen then return end
 	isOpen = false
 	closeHelp()
@@ -1494,6 +1922,7 @@ end
 
 function DispatchScreen.Hide()
 	closeAway()
+	closeSummary()
 	if not isOpen then return end
 	isOpen = false
 	closeHelp()

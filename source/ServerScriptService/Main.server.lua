@@ -3591,6 +3591,8 @@ while true do
 	GuildMenuService.Open("PreBattle", { scouting = true, dungeon = dungeonBattle ~= nil, quest = {
 		id = selectedQuest.id, name = selectedQuest.name, biome = selectedQuest.biome,
 		recommendedLvl = selectedQuest.recommendedLvl, enemyCount = selectedQuest.enemyCount,
+		-- BUG-089 (PT-10): the card's level range (set for the board above) so every view shows the same level.
+		levelMin = selectedQuest.levelMin, levelMax = selectedQuest.levelMax,
 		difficulty = selectedQuest.difficulty, playerSlots = selectedQuest.playerSlots,
 		condition = selectedQuest.condition, rewards = selectedQuest.rewards,
 		elite = selectedQuest.isEliteEncounter == true, -- revealed at the briefing (decision 10)
@@ -4622,7 +4624,8 @@ end)
 		playerAnchors = deployAnchorsToShow,
 		enemyUnits    = serializeForDeployment(allUnitsList, "Enemy"),
 		playerUnits   = serializeForDeployment(allUnitsList, "Player"),
-		awayUnits     = GuildMenuService.GetAwayUnitsForDeployment(if dungeonBattle then { dungeon = true } else nil), -- greyed out, not placeable
+		awayUnits     = GuildMenuService.GetAwayUnitsForDeployment({ dungeon = dungeonBattle == true, -- 2026-11-21: chosen party only
+			partyMembers = if dungeonBattle then (dungeonParty or {}) else PartyService.GetMembers(PLAYER_ID, chosenPartySlot or "") }), -- greyed out, not placeable
 		mapWidth      = MAP_WIDTH,
 		mapHeight     = MAP_HEIGHT,
 		-- Max units the player may actually DEPLOY this battle (quest playerSlots),

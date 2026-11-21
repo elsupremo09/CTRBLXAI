@@ -1075,11 +1075,19 @@ end
 -- Extra payload for the deployment screen: units shown greyed out ("Away"/"Bench").
 function GuildMenuService.GetAwayUnitsForDeployment(opts: any?): { any }
 	local dungeon = type(opts) == "table" and opts.dungeon == true -- see SyncBattleRoster
+	-- 2026-11-21 fix: only the CHOSEN party's away members are shown greyed (same filter as
+	-- SyncBattleRoster step 2.5). Empty/absent party = no restriction (whole roster), as before.
+	local members = if type(opts) == "table" and type(opts.partyMembers) == "table" then opts.partyMembers else nil
+	local inParty: { [string]: boolean }? = nil
+	if members and #members > 0 then
+		inParty = {}
+		for _, mid in ipairs(members) do (inParty :: any)[mid] = true end
+	end
 	local out = {}
 	local units = playerUnits()
 	for _, id in sortedKeys(units) do
 		local u = units[id]
-		if (if dungeon then DispatchService.IsUnitDispatched(_playerId, id) else isUnitAway(_playerId, id)) then
+		if (inParty == nil or (inParty :: any)[id] == true) and (if dungeon then DispatchService.IsUnitDispatched(_playerId, id) else isUnitAway(_playerId, id)) then
 			local why = awayReason(_playerId, id)
 			table.insert(out, { id = id, name = u.name, level = u.level, awayReason = why,
 				portraitAssetId = u.portraitAssetId, -- 2026-11-20: away cells show the normal portrait, greyed
@@ -1828,11 +1836,29 @@ local function rtNamed(results: { any }): { any }
 end
 
 local function onDispatchRt(player: Player, cmd: any): any
-	local g = guard(player, "dispatchrt"); if g then return fail(g) end
+	-- Preview (display only, 2026-11-21) has its own rate-limit key, so a preview just before Send never
+	-- makes the Send "Too fast". Both keys go through the same guard (SEC-001).
+	local key = if type(cmd) == "table" and cmd.action == "Preview" then "dispatchrtpreview" else "dispatchrt"
+	local g = guard(player, key); if g then return fail(g) end
 	if type(cmd) ~= "table" or type(cmd.action) ~= "string" then return fail("Invalid request") end
 	local action = cmd.action
 	if action == "Info" then
 		return { ok = true, config = DispatchService.RtConfig(_playerId), missions = DispatchService.RtList(_playerId) }
+	elseif action == "Preview" then
+		-- Yield multiplier these units would get (server truth, SEC-002). Reads only, no save.
+		local ids = cmd.unitIds
+		if type(ids) ~= "table" or #ids < 1 or #ids > 6 then return fail("Invalid unit selection") end
+		local live = playerUnits()
+		local seen: { [string]: boolean } = {}
+		local clean: { string } = {}
+		for _, id in ids do
+			if type(id) ~= "string" or #id > 64 or seen[id] or not live[id] then return fail("Invalid unit selection") end
+			seen[id] = true
+			table.insert(clean, id)
+		end
+		local p = DispatchService.RtYieldPreview(_playerId, cmd.material, clean)
+		if not p then return fail("Invalid request") end
+		return { ok = true, preview = p }
 	elseif action == "Send" then
 		local ids = cmd.unitIds
 		if type(ids) ~= "table" or #ids < 1 or #ids > 6 then return fail("Invalid unit selection") end
