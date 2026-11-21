@@ -133,7 +133,8 @@ local function rtFullIn(dur: string): string return `Full in {dur}` end
 local TXT_FULL_STOPPED = "Full: not earning. Collect to restart."
 local TXT_ITEMS_AT_COLLECT = "Items are found when you collect."
 local TXT_COLLECTED_TITLE = "Dispatch collected"
-local TXT_OK = "OK"
+-- Collected-popup item type labels; server sends kind = consumable | card | gear (Main SetItemRoller).
+local KIND_LABEL = table.freeze({ consumable = "Item", card = "Skill card", gear = "Gear" })
 local TXT_NO_MISSIONS = "No missions out." -- empty Missions tab (approved 2026-11-21 11:27 AM)
 -- Yield multiplier lines (approved 2026-11-21 11:27 AM, exact text). Values come from the server.
 local function rtTeamBonus(n: number): string return `Team bonus +{n}%` end
@@ -1102,7 +1103,9 @@ local function showCollectSummary(res: any)
 	body.BackgroundTransparency = 1
 	body.BorderSizePixel = 0
 	body.Size = UDim2.new(1, 0, 0, 0)
-	body.AutomaticSize = Enum.AutomaticSize.Y
+	-- 2026-11-21 fix: AutomaticSize on a ScrollingFrame under-reports its height to the auto-sized box,
+	-- so the box came out ~28 px short and clipped the button row. Height is set from the list instead.
+	body.AutomaticSize = Enum.AutomaticSize.None
 	body.CanvasSize = UDim2.new()
 	body.AutomaticCanvasSize = Enum.AutomaticSize.Y
 	body.ScrollBarThickness = 4
@@ -1114,6 +1117,11 @@ local function showCollectSummary(res: any)
 	bl.Padding = UDim.new(0, 1)
 	bl.SortOrder = Enum.SortOrder.LayoutOrder
 	bl.Parent = body
+	local maxBodyH = math.max(80, math.floor(vh * 0.5))
+	local function fitBody()
+		body.Size = UDim2.new(1, 0, 0, math.min(maxBodyH, bl.AbsoluteContentSize.Y))
+	end
+	bl:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(fitBody) -- destroyed with the popup (MEM-002)
 	local o = 0
 	local function nextOrder(): number
 		o += 1
@@ -1146,7 +1154,9 @@ local function showCollectSummary(res: any)
 		if type(r.items) == "table" then
 			for _, it in r.items do
 				if type(it) == "table" and type(it.name) == "string" and it.name ~= "" then
-					local il = addLine(body, nextOrder(), it.name, small, Theme.Colors.TextPrimary)
+					local kind = if type(it.kind) == "string" then KIND_LABEL[it.kind] else nil
+					-- 2026-11-21 user: a bare item name ("Firebreak Projector") wasn't obviously an item.
+					local il = addLine(body, nextOrder(), if kind then `+1 {it.name} ({kind})` else `+1 {it.name}`, small, Theme.Colors.TextPrimary)
 					il.TextWrapped = false
 					il.TextTruncate = Enum.TextTruncate.AtEnd
 				end
@@ -1174,9 +1184,13 @@ local function showCollectSummary(res: any)
 	layout.VerticalAlignment = Enum.VerticalAlignment.Center
 	layout.SortOrder = Enum.SortOrder.LayoutOrder
 	layout.Parent = row
-	Theme.MakeBarButton(row, TXT_OK, "Primary", closeSummary, {
-		name = "Btn_CollectedOK", minHeight = math.max(44, GuildScreen.ROW_H), layoutOrder = 1,
+	-- 2026-11-21 user: a cut-off "OK" bar button -> the standard Confirm (check) icon button,
+	-- same as the Away popup's Back button pattern. Row sized to the icon so nothing clips.
+	row.Size = UDim2.new(1, 0, 0, math.max(44, GuildScreen.ROW_H))
+	local ok = Theme.MakeIconButton(row, "Confirm", closeSummary, {
+		name = "Btn_CollectedOK", size = UDim2.fromOffset(math.max(44, GuildScreen.ROW_H), math.max(44, GuildScreen.ROW_H)),
 	})
+	ok.LayoutOrder = 1
 	row.Parent = box
 	-- Same fix as ShowAwaySummary (2026-11-20): own Sibling ScreenGui one DisplayOrder above the host,
 	-- so the box (ZIndex 21) never draws over its own text and buttons.

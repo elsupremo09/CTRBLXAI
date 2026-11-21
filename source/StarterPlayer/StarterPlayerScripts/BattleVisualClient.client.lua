@@ -2422,10 +2422,19 @@ local function processTileClick(bx, by, skipFacingPick)
 						-- Gear RT Delay Resistance (2026-10-23): derivedStats.rtDelayResist (broadcast by
 						-- the server) already folds VIT resist x gear RT-resist, so the preview matches the
 						-- authoritative server value. Falls back to the VIT-only formula if derivedStats is absent.
-						targetRtDelay = (tgtData and tgtData.derivedStats and tgtData.derivedStats.rtDelayResist)
+						-- Rake (2026-11-21): one resisted RT Delay per hit; the server sends rtDelayHits (nil = 1).
+						targetRtDelay = ((tgtData and tgtData.derivedStats and tgtData.derivedStats.rtDelayResist)
 							and math.round((currentPrompt.weaponRtDelay or 0) * tgtData.derivedStats.rtDelayResist)
-							or GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10),
+							or GameConstants.CalcRtDelayResistance(currentPrompt.weaponRtDelay or 0, tgtData and tgtData.stats and tgtData.stats.VIT or 10))
+							* (t.rtDelayHits or 1),
 						statusEffect = "None",
+						-- Server prediction extras (CombatResolver.PredictBasicAttack): Rake hit count, on-hit
+						-- statuses (Lashed / Blunted ...), Rebound target + damage. Shown as-is, no client math.
+						attackHitCount = t.hitCount,
+						attackStatuses = t.statuses,
+						attackStatusTurns = t.statusTurns,
+						reboundName = t.reboundName,
+						reboundDamage = t.reboundPredicted,
 						onConfirm = function() commitCommand({ actionType = "Attack", targetId = t.id }) end,
 						onBack = cancelToTargeting,
 					}

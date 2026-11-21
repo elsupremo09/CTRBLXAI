@@ -49,6 +49,38 @@ for skillId, def in pairs(SkillData) do
 		POTENCY_DECLARED[skillId] = true
 	end
 end
+-- PT17 Option F (user-approved 2026-11-21): skills the DB tags "Weapon Scaling" (SkillData is generated
+-- from CTRBLXAI.db, DAT-001) add the equipped off-hand ITEM's Damage (Orb, Crystal, Tome, Skull, Quiver,
+-- Parrying Dagger ... weapons_equipment 135-154) to Weapon Damage in Skill Power. Basic attacks, heals
+-- and non-weapon-scaling skills are unchanged; a dual-wielded off-hand WEAPON is not an off-hand item.
+local WEAPON_SCALING_DECLARED = {}
+for skillId, def in pairs(SkillData) do
+	if type(def) == "table" and type(def.tags) == "table" then
+		for _, tag in ipairs(def.tags) do
+			if tag == "Weapon Scaling" then
+				WEAPON_SCALING_DECLARED[skillId] = true
+				break
+			end
+		end
+	end
+end
+-- DESIGNER RULING 2026-11-21 (weapons_equipment 166 / skills SKL-SUMMON-TURRET): Summon Turret is tagged
+-- Weapon Scaling but is a persistent source -> explicitly excluded from the off-hand Damage bonus.
+WEAPON_SCALING_DECLARED["SKL-SUMMON-TURRET"] = nil
+-- Off-hand Damage weight (weapons_equipment 166): 1.0 when the skill's AUTHORED tags carry an element,
+-- 0.5 for a Physical skill. Read from SkillData tags only -- never from weapon transforms or Ignite (a
+-- Torch + Orb Power Strike stays 0.5). Built once at load.
+local OFFHAND_ELEMENT_TAGS = { Fire = true, Water = true, Ice = true, Electric = true,
+	Earth = true, Wind = true, Dark = true, Holy = true, Poison = true }  -- Poison is an element (W1 2026-11-21)
+local OFFHAND_WEIGHT_ELEMENTAL, OFFHAND_WEIGHT_PHYSICAL = 1.0, 0.5
+local OFFHAND_WEIGHT = {}
+for skillId in pairs(WEAPON_SCALING_DECLARED) do
+	local w = OFFHAND_WEIGHT_PHYSICAL
+	for _, tag in ipairs(SkillData[skillId].tags) do
+		if OFFHAND_ELEMENT_TAGS[tag] then w = OFFHAND_WEIGHT_ELEMENTAL break end
+	end
+	OFFHAND_WEIGHT[skillId] = w
+end
 
 local CombatResolver = {}
 
@@ -498,7 +530,7 @@ end
 local function applyElementStatusTriggers(sourceUnitId: any, defender: any, element: any, actualDamage: any, alreadyApplied: any, attackerUnit: any)
 	if actualDamage <= 0 or not defender.isAlive then return end
 
-	-- Ignite (Group 2): a Fire->Burn trigger from an Ignite carrier stores 25% of the
+	-- Ignite (Group 2): a Fire->Burn trigger from an Ignite carrier stores 30% (2026-11-21) of the
 	-- fire damage instead of the base 20% (nil for non-Ignite -> base fraction).
 	local igniteBurnFrac = WeaponPassiveService.IgniteBurnFraction(attackerUnit)
 	local function tryApply(statusId, fireDmg)
@@ -627,11 +659,9 @@ local function calcHitQuality(attackerDex, defenderAgi, attackerUnit, defenderUn
 	return hq, evasiveness
 end
 
-local function calcEffectiveDefense(attackPower, defensePower)
-	if attackPower <= 0 then return 0 end
-	if defensePower <= 0 then return 0 end
-	return (attackPower * defensePower) / (attackPower + defensePower)
-end
+-- (PT17 2026-11-21) calcEffectiveDefense (A x DP / (A + DP)) removed: Defense now resolves through
+-- the ONE shared GameConstants.ApplyDefense (Option A, percent mitigation vs a level reference
+-- attack). Defense modifiers multiply the applied Defense Power (DP') before it.
 
 -- Melee-hit classification for on-hit reactions (Reptilian Spiked Hide, 2026-10-02).
 -- Melee = attacker on one of the 8 adjacent tiles (Chebyshev 1), NOT AOE, and the
@@ -737,15 +767,17 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage, opt
 	-- weapon + off-hand + armor Defense (core_stats id 30). Was hard-coded 0.
 	-- Fortify (weapon native, Spear): add the defender's accumulated on-hit flat Defense (0 without
 	-- the passive / before any hit this turn) to its equipment Defense before the defense-power curve.
-	local dp = GameConstants.CalcDefensePower(GameConstants.GetUnitDefense(defender) * StatusService.GetEquipDefenseMultiplier(defender) + WeaponPassiveService.GetFortifyFlatDefense(defender), dStats.VIT)
-	local effectiveDefense = calcEffectiveDefense(ap, dp)
-	-- Slice 5 buff: Rune Ward raises defender's effective Defense (defenseMult).
-	effectiveDefense = effectiveDefense * StatusService.GetDefenseMultiplier(defender)
+	local dp = GameConstants.CalcDefensePower(GameConstants.ScaleDefensePower(GameConstants.GetUnitDefense(defender), StatusService.GetEquipDefenseMultiplier(defender)) + WeaponPassiveService.GetFortifyFlatDefense(defender), dStats.VIT)
+	-- PT17 Option A: Defense modifiers scale the applied Defense Power (DP'), then the shared
+	-- GameConstants.ApplyDefense turns DP' into a % mitigation (was: multipliers on Effective Defense).
+	local appliedDp = dp -- modifiers go through ScaleDefensePower: DP' < 0 is never scaled (ruling 2026-11-21)
+	-- Slice 5 buff: Rune Ward raises defender's Defense (defenseMult; elements_statuses 91 "Defense x1.10").
+	appliedDp = GameConstants.ScaleDefensePower(appliedDp, StatusService.GetDefenseMultiplier(defender))
 	-- Phase 3: Determined / Coward -- Defense +/-30% while defender below HP threshold.
 	do
 		local dHpFrac = (defender.maxHp and defender.maxHp > 0)
 			and ((defender.currentHp or defender.maxHp) / defender.maxHp) or nil
-		effectiveDefense = effectiveDefense * TraitEffectService.GetDefenseMultiplier(defender, dHpFrac)
+		appliedDp = GameConstants.ScaleDefensePower(appliedDp, TraitEffectService.GetDefenseMultiplier(defender, dHpFrac))
 	end
 	local hitQuality, baTotalEvasiveness = calcHitQuality(aStats.DEX, dStats.AGI, attacker, defender)
 
@@ -788,15 +820,15 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage, opt
 		end
 	end
 
-	-- Weapon passives (Group 1, basic attack): armor penetration on the target's
-	-- effective Defense, then hit-quality passives (Tricky / Precision Strike / True
-	-- Strike). Nil-safe no-ops when the weapon carries none.
-	effectiveDefense = effectiveDefense * (_wp and WeaponPassiveService.DefenseMultiplier(attacker) or 1)
+	-- Weapon passives (Group 1, basic attack): armor penetration on the target's Defense
+	-- (weapons_equipment 102/108 "Applied Defense = Target Defense x 0.70 / 0.80", PT17), then
+	-- hit-quality passives (Tricky / Precision Strike / True Strike). Nil-safe no-ops when absent.
+	appliedDp = GameConstants.ScaleDefensePower(appliedDp, _wp and WeaponPassiveService.DefenseMultiplier(attacker) or 1)
 	-- Dragoon Aerial Supremacy (user ruling 2026-10-28): melee weapon Basic Attack from higher
 	-- elevation ignores 50% of the target's Defense (nil skillDef = Basic Attack). Not for siege shots
 	-- (a Ballista / Catapult is not the Dragoon's melee weapon).
 	if not (opts and opts.isSiege) then
-		effectiveDefense = effectiveDefense * (1 - DoctrinePassiveService.GetDefenseIgnore(attacker, defender, nil))
+		appliedDp = GameConstants.ScaleDefensePower(appliedDp, 1 - DoctrinePassiveService.GetDefenseIgnore(attacker, defender, nil))
 	end
 	if _wp then
 		hitQuality = WeaponPassiveService.AdjustBasicHitQuality(attacker, hitQuality, dStats.AGI, baTotalEvasiveness)
@@ -807,7 +839,8 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage, opt
 		positionalMod = positionalMod + opts.siegeBonus
 	end
 
-	local rawDamage   = ap - effectiveDefense
+	-- Step 2 Defense (PT17 Option A): Raw = AP x (1 - DP' / (DP' + RefAttack(defender level))).
+	local rawDamage, defenseMitigation = GameConstants.ApplyDefense(ap, appliedDp, defender.level)
 	-- Combat Fortune: LUK difference modifies damage (step 7 in pipeline)
 	local fortuneMod = GameConstants.CalcCombatFortune(aStats.LUK, dStats.LUK)
 
@@ -992,7 +1025,8 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage, opt
 		return {
 			type         = "Healing",
 			targetId     = defender.id,
-			finalHealing = finalDamage,
+			-- Rake / Rebound per-hit multiplier scales the converted heal like damage (2026-11-21).
+			finalHealing = if (opts and opts.hitMult) then math.max(0, math.round(finalDamage * opts.hitMult)) else finalDamage,
 			sourceUnitId = attacker.id,
 			element      = attackElement,
 		}
@@ -1003,25 +1037,100 @@ function CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage, opt
 	finalDamage = math.max(0, math.round(finalDamage * ArmorPassiveService.GetRolledElementWardMultiplier(defender, attackElement)))
 	-- Weather passive element modifier (Rain Fire-25%/Water+25%, Heatwave, etc.).
 	finalDamage = math.max(0, math.round(finalDamage * weatherElementMult(attackElement, defender)))
+	-- Per-hit multiplier (2026-11-21): Rake hits x0.55 (weapons_equipment 163), Rebound x0.40 (164).
+	-- Applied last so the commit and PredictBasicAttack round the same way.
+	if opts and opts.hitMult and opts.hitMult ~= 1 then
+		finalDamage = math.max(0, math.round(finalDamage * opts.hitMult))
+	end
+	-- opts.noRiders: a Rake hit after the first damaging one, or a Rebound hit -> no on-hit statuses
+	-- (race / weapon status riders, element triggers such as Ignite Burn).
+	local _noRiders = (opts and opts.noRiders) == true
 
 	return {
 		type           = "Damage",
 		targetId       = defender.id,
 		attackPower    = ap,
 		defensePower   = dp,
+		defenseMitigation = defenseMitigation, -- PT17: % of AP removed by Defense (shared ApplyDefense)
 		rawDamage      = rawDamage,
 		hitQuality     = hitQuality,
 		positionalMod  = positionalMod,
 		facingZone     = facingZone,
 		finalDamage    = finalDamage,
-		appliesStatus  = RacePassiveService.GetBasicAttackStatus(attacker, defender),
-		appliesStatuses = _wp and WeaponPassiveService.OnHitStatuses(attacker) or {}, -- weapon status-appliers (Group 1)
+		appliesStatus  = if _noRiders then nil else RacePassiveService.GetBasicAttackStatus(attacker, defender),
+		appliesStatuses = if (_wp and not _noRiders) then WeaponPassiveService.OnHitStatuses(attacker) else {}, -- weapon status-appliers (Group 1)
+		weaponFreeze   = (_wp and not _noRiders and WeaponPassiveService.HasCombat(attacker, "Freeze")) or nil, -- 1 turn + Thawed (2026-11-21)
+		minRiderDamage = if _noRiders then math.huge else nil, -- blocks element triggers on a rider-free hit
 		weaponDrainFrac = _wp and WeaponPassiveService.DrainFraction(attacker) or 0, -- Drain (Group 1)
 		element        = attackElement,
 		sourceUnitId   = attacker.id,
 		guardMitigatedAmount = guardMitigatedAmount,  -- armor Guard on-hit reactions (2026-10-24)
 		wasGuarding    = wasGuarding,
 	}
+end
+
+--------------------------------------------------
+-- BASIC ATTACK PREDICTION (Rake / Rebound, DESIGNER RULING 2026-11-21)
+-- One function for the turn-prompt preview (BattleTurnController), AI scoring (AIService) and the
+-- shape of the Attack commit (CommandService), so preview == actual (ARC-001, DAT-001). Pure READ:
+-- only ResolveBasicAttack (never ApplyOutcome), safe for previews.
+--------------------------------------------------
+
+-- Rebound target (weapons_equipment 164): an enemy of the attacker on one of the 8 tiles next to the
+-- primary target; the one closest to the attacker (Chebyshev), tie -> lowest current HP. Never the
+-- attacker, the primary, allies, Neutral units or map objects. No line-of-sight check. nil = none.
+function CombatResolver.PickReboundTarget(attacker, primary, units)
+	if not (attacker and primary and primary.tileX and primary.tileY and type(units) == "table") then return nil end
+	local best, bestD, bestHp = nil, math.huge, math.huge
+	for _, u in ipairs(units) do
+		if u.isAlive and u.tileX and u.tileY and u.id ~= primary.id and u.id ~= attacker.id
+			and not u.isObject and not u.isGroundTarget
+			and u.side ~= attacker.side and u.side ~= "Neutral"
+			and math.max(math.abs(u.tileX - primary.tileX), math.abs(u.tileY - primary.tileY)) == 1 then
+			local d = math.max(math.abs(u.tileX - (attacker.tileX or 0)), math.abs(u.tileY - (attacker.tileY or 0)))
+			local hp = u.currentHp or 0
+			if d < bestD or (d == bestD and hp < bestHp) then
+				best, bestD, bestHp = u, d, hp
+			end
+		end
+	end
+	return best
+end
+
+-- Predicted Basic Attack on the primary target: { damage = total over Rake hits, hits, perHit,
+-- rtDelayHits, statuses = on-hit status ids, rebound = { unit, damage } or nil }.
+function CombatResolver.PredictBasicAttack(attacker, defender, weaponDamage, units)
+	local hits, mult = WeaponPassiveService.GetRakeHits(attacker)
+	local r = CombatResolver.ResolveBasicAttack(attacker, defender, weaponDamage or attacker.weaponDamage or 10,
+		if hits > 1 then { hitMult = mult } else nil)
+	local per = r.finalDamage or 0
+	local res = { damage = per * hits, hits = hits, perHit = per, rtDelayHits = hits, statuses = {}, statusTurns = {}, outcome = r }
+	if per > 0 then
+		for _, sid in ipairs(r.appliesStatuses or {}) do
+			local turns = GameConstants.STATUSES[sid] and GameConstants.STATUSES[sid].duration or nil
+			local skip = false
+			if sid == "Frozen" and r.weaponFreeze then
+				-- Weapon Freeze: 1 turn; skipped while Thawed or while a skill / terrain Frozen runs.
+				turns = 1
+				skip = StatusService.HasStatus(defender, "Thawed") ~= nil
+					or (StatusService.HasStatus(defender, "Frozen") ~= nil and not defender._weaponFrozen)
+			end
+			if not skip then
+				table.insert(res.statuses, sid)
+				res.statusTurns[sid] = turns
+			end
+		end
+	end
+	local rbMult = WeaponPassiveService.GetReboundDamageMult(attacker)
+	if rbMult > 0 and per > 0 then
+		local rb = CombatResolver.PickReboundTarget(attacker, defender, units or (_unitsProvider and _unitsProvider()))
+		if rb then
+			local rr = CombatResolver.ResolveBasicAttack(attacker, rb, weaponDamage or attacker.weaponDamage or 10,
+				{ hitMult = rbMult, noRiders = true })
+			res.rebound = { unit = rb, damage = rr.finalDamage or 0 }
+		end
+	end
+	return res
 end
 
 --------------------------------------------------
@@ -1035,7 +1144,14 @@ function CombatResolver.EstimateSkillPower(attacker, skillDef, statOverride, wea
 	local aStats = attacker.effectiveStats or {}
 	-- weaponScaling (optional, user ruling 2026-11-08 11:52 PM item 7): augment weapon-damage scaling cost
 	-- (Executioner x0.75, Gold Harvest x0.90, Vitality Surge x0.90). nil = no cost.
-	local weaponDamage = (attacker.weaponDamage or 10) * (weaponScaling or 1)
+	-- PT17 Option F: Weapon Damage + off-hand item Damage for DB "Weapon Scaling" skills, before the
+	-- skill power multiplier, STR scaling, Skill Potency and the augment weapon-scaling cost.
+	-- Weight 1.0 elemental / 0.5 Physical from the skill's authored tags (weapons_equipment 166, 2026-11-21).
+	local baseWeaponDamage = attacker.weaponDamage or 10
+	if skillDef.id and WEAPON_SCALING_DECLARED[skillDef.id] and not skillDef.isItem then
+		baseWeaponDamage = baseWeaponDamage + (attacker.offHandDamage or 0) * (OFFHAND_WEIGHT[skillDef.id] or OFFHAND_WEIGHT_PHYSICAL)
+	end
+	local weaponDamage = baseWeaponDamage * (weaponScaling or 1)
 	local int = aStats.INT or 10
 	-- ITEM DAMAGE (2026-10-26): a consumable supplies a self-contained flat Power value
 	-- (e.g. "Fire Power = 18 + 0.40×IL + 0.35×INT"), already computed by ItemEffectService.
@@ -1141,19 +1257,24 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 
 	-- Defense Power from real equipment Defense (core_stats id 30/31). Was hard-coded 0.
 	-- Fortify (weapon native, Spear): add the defender's accumulated on-hit flat Defense (skill path).
-	local dp = GameConstants.CalcDefensePower(GameConstants.GetUnitDefense(defender) * StatusService.GetEquipDefenseMultiplier(defender) + WeaponPassiveService.GetFortifyFlatDefense(defender), dStats.VIT)
-	local effectiveDefense = calcEffectiveDefense(sp, dp)
-	-- Augment armor-piercing (2026-10-24): ignore a fraction of effective Defense.
+	local dp = GameConstants.CalcDefensePower(GameConstants.ScaleDefensePower(GameConstants.GetUnitDefense(defender), StatusService.GetEquipDefenseMultiplier(defender)) + WeaponPassiveService.GetFortifyFlatDefense(defender), dStats.VIT)
+	-- PT17 Option A: Defense modifiers scale the applied Defense Power (DP'); the shared
+	-- GameConstants.ApplyDefense turns DP' into a % mitigation (same function as basic attacks).
+	local appliedDp = dp -- modifiers go through ScaleDefensePower: DP' < 0 is never scaled (ruling 2026-11-21)
+	-- Augment armor-piercing (2026-10-24; augments AUG-ARMOR-PIERCING "ignores 30% of target's
+	-- physical damage reduction"): scales the mitigation itself (same result as before, where
+	-- Effective Defense = Power x mitigation).
+	local augMitigationMult = nil
 	if _augCalc.armorPiercing and _augCalc.armorPiercing > 0 then
-		effectiveDefense = effectiveDefense * (1 - _augCalc.armorPiercing)
+		augMitigationMult = 1 - _augCalc.armorPiercing
 	end
-	-- Slice 5 buff: Rune Ward raises defender's effective Defense (defenseMult).
-	effectiveDefense = effectiveDefense * StatusService.GetDefenseMultiplier(defender)
+	-- Slice 5 buff: Rune Ward raises defender's Defense (defenseMult; elements_statuses 91 "Defense x1.10").
+	appliedDp = GameConstants.ScaleDefensePower(appliedDp, StatusService.GetDefenseMultiplier(defender))
 	-- Phase 3: Determined / Coward -- Defense +/-30% while defender below HP threshold.
 	do
 		local dHpFrac = (defender.maxHp and defender.maxHp > 0)
 			and ((defender.currentHp or defender.maxHp) / defender.maxHp) or nil
-		effectiveDefense = effectiveDefense * TraitEffectService.GetDefenseMultiplier(defender, dHpFrac)
+		appliedDp = GameConstants.ScaleDefensePower(appliedDp, TraitEffectService.GetDefenseMultiplier(defender, dHpFrac))
 	end
 	local hitQuality, skTotalEvasiveness = calcHitQuality(aStats.DEX, dStats.AGI, attacker, defender)
 	-- Weapon skill (user ruling 2026-10-29): a skill tagged Weapon Scaling (not an item) also carries
@@ -1198,7 +1319,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 
 	-- Dragoon Aerial Supremacy (user ruling 2026-10-28): melee weapon + Direct Damage Skill from
 	-- higher elevation ignores 50% of the target's Defense.
-	effectiveDefense = effectiveDefense * (1 - DoctrinePassiveService.GetDefenseIgnore(attacker, defender, skillDef))
+	appliedDp = GameConstants.ScaleDefensePower(appliedDp, 1 - DoctrinePassiveService.GetDefenseIgnore(attacker, defender, skillDef))
 	-- (2026-10-29) A consumable item resolves through here as a pseudo-skill; it is not a Skill.
 	local isItemHit = skillDef.isItem == true
 	-- Armor Pierce (Crossbow x0.70) / Piercing Edge (Dagger x0.80): DB "Applies to Basic Attack and
@@ -1206,7 +1327,8 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	if not isItemHit then
 		for _, _t in ipairs(skillDef.tags or {}) do
 			if _t == "Weapon Scaling" then
-				effectiveDefense = effectiveDefense * WeaponPassiveService.DefenseMultiplier(attacker)
+				-- Applied to Defense, not Effective Defense (weapons_equipment 102/108, PT17).
+				appliedDp = GameConstants.ScaleDefensePower(appliedDp, WeaponPassiveService.DefenseMultiplier(attacker))
 				break
 			end
 		end
@@ -1214,7 +1336,8 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 	if _wsHit then
 		hitQuality = WeaponPassiveService.AdjustWeaponSkillHitQuality(attacker, hitQuality, dStats.AGI, skTotalEvasiveness)
 	end
-	local rawDamage   = sp - effectiveDefense
+	-- Step 2 Defense (PT17 Option A): Raw = SP x (1 - DP' / (DP' + RefAttack(defender level))).
+	local rawDamage, defenseMitigation = GameConstants.ApplyDefense(sp, appliedDp, defender.level, augMitigationMult)
 	-- Combat Fortune: LUK difference modifies damage (step 7 in pipeline)
 	local fortuneMod = GameConstants.CalcCombatFortune(aStats.LUK, dStats.LUK)
 
@@ -1450,6 +1573,7 @@ function CombatResolver.ResolveSkill(attacker, defender, skillDef)
 		minRiderDamage = skillDef.minRiderDamage,  -- DAM-017 Venom Repeater (2026-10-27)
 		attackPower    = sp,
 		defensePower   = dp,
+		defenseMitigation = defenseMitigation, -- PT17: % of SP removed by Defense (shared ApplyDefense)
 		rawDamage      = rawDamage,
 		hitQuality     = hitQuality,
 		positionalMod  = positionalMod,
@@ -1860,7 +1984,8 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		UnitSchema_ApplyDamage(outcome.finalDamage, target, outcome.element)  -- element: Draining Ward (2026-11-05)
 
 	-- BLEED (DB elements_statuses 54, 2026-10-28; it never dealt its own damage before): when a
-	-- PHYSICAL hit reduces HP, a Bleeding target takes bonus round(Max HP x 0.05 x Debuff Resistance)
+	-- PHYSICAL hit reduces HP, a Bleeding target takes bonus round(Max HP x 0.03 x Debuff Resistance)
+	-- (3% from the DESIGNER RULING 2026-11-21, was 5%; StatusService.BLEED_HP_FRACTION)
 	-- (x Quick Clotting / Hemophiliac). A barrier that soaks the whole hit means no trigger. Applied
 	-- directly (TRG-010), real hits only (ApplyOutcome is never called by AI previews). The DB Boss HP%
 	-- modifier has no system yet (Poison does not use it either).
@@ -1870,7 +1995,7 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 		local _bleed = (_el == nil or _el == "Physical" or _el == "") and StatusService.HasStatus(target, "Bleed")
 			and not (attacker and TraitEffectService.HasStatusPhobia(attacker, "Bleed"))
 		if _bleed then
-			local _bd = math.max(1, math.round((target.maxHp or 1) * 0.05 * StatusService.GetDebuffResist(target)
+			local _bd = math.max(1, math.round((target.maxHp or 1) * StatusService.BLEED_HP_FRACTION * StatusService.GetDebuffResist(target)
 				* TraitEffectService.GetDotDamageReceivedModifier(target, "Bleed")))
 			UnitSchema_ApplyDamage(_bd, target)
 			print(string.format("[CombatResolver] Bleed: %s takes %d bonus | HP: %d/%d", target.name, _bd,
@@ -2000,9 +2125,15 @@ function CombatResolver.ApplyOutcome(outcome, target, attacker)
 			-- Perks & Flaws Phobia (2026-10-23): skip a status this attacker cannot inflict.
 			local phobiaBlocked = attacker ~= nil and TraitEffectService.HasStatusPhobia(attacker, sid)
 			if not phobiaBlocked then
-				local applied, _, immuneReason = StatusService.ApplyStatus(
-					target, sid, outcome.sourceUnitId or "unknown", nil, outcome.statusDurationCt
-				)
+				local applied, _disrupts, immuneReason
+				if sid == "Frozen" and outcome.weaponFreeze then
+					-- Weapon Freeze (weapons_equipment 156): 1 turn, then Thawed; skipped while Thawed.
+					applied, _disrupts, immuneReason = StatusService.ApplyWeaponFreeze(target, outcome.sourceUnitId or "unknown")
+				else
+					applied, _disrupts, immuneReason = StatusService.ApplyStatus(
+						target, sid, outcome.sourceUnitId or "unknown", nil, outcome.statusDurationCt
+					)
+				end
 				if applied then
 					statusApplied = statusApplied or sid
 				elseif not applied and immuneReason then

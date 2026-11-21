@@ -47,10 +47,11 @@ WeaponData.Archetypes = {
 		numericId = 2, name = "Claws",
 		flavor = "For when you want a hug to leave a lasting impression.", category = "Weapon",
 		icon = "rbxassetid://95215128944096",
+		-- DESIGNER RULING 2026-11-21 (weapons_equipment 26/163): native Stagger -> Rake. Stats unchanged.
 		damage = 45, wt = 25, rtDelay = 110, defense = -5,
 		handClass = "2H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
-		nativePassiveId = "Stagger", nativePassiveBp = 100, totalBp = 988,
+		nativePassiveId = "Rake", nativePassiveBp = 100, totalBp = 988,
 	},
 	["WPN-WARAXE"] = {
 		numericId = 3, name = "War Axe",
@@ -65,9 +66,11 @@ WeaponData.Archetypes = {
 		numericId = 4, name = "Spear",
 		flavor = "The original 'I'd rather not be near you' weapon.", category = "Weapon",
 		icon = "rbxassetid://125296607554192",
-		damage = 42, wt = 90, rtDelay = 45, defense = 21,
+		-- PT17 data pass (SIM_weapon_damage_PT17 Option A+D, user-approved 2026-11-21): damage 42 -> 43. DB row 28 pending.
+		-- DESIGNER RULING 2026-11-21 (weapons_equipment 28/165): WT 90 -> 60, RT Delay 45 -> 60, Line 2 -> Line 3. Range 1-2 unchanged.
+		damage = 43, wt = 60, rtDelay = 60, defense = 21,
 		handClass = "2H", minRange = 1, maxRange = 2,
-		pattern = "Line2", projectileType = nil,
+		pattern = "Line3", projectileType = nil,
 		nativePassiveId = "Fortify", nativePassiveBp = 120, totalBp = 1011,
 	},
 	["WPN-HAMMER"] = {
@@ -102,16 +105,19 @@ WeaponData.Archetypes = {
 		numericId = 8, name = "Whip",
 		flavor = "Three tiles of questionable life choices.", category = "Weapon",
 		icon = "rbxassetid://134252201966866",
-		damage = 52, wt = 80, rtDelay = 45, defense = 0,
+		-- PT17: synced to DB weapons_equipment 33 (44 / 80 / 80 / 0). Was 52 / 80 / 45 / 0.
+		-- DESIGNER RULING 2026-11-21 (weapons_equipment 33/161): WT 80 -> 55 + native Lash. RT Delay stays 80 (Designer adjustment).
+		damage = 44, wt = 55, rtDelay = 80, defense = 0,
 		handClass = "1H", minRange = 1, maxRange = 3,
 		pattern = "Single", projectileType = nil,
-		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 998,
+		nativePassiveId = "Lash", nativePassiveBp = 0, totalBp = 998,
 	},
 	["WPN-CLUB"] = {
 		numericId = 9, name = "Club",
 		flavor = "It's a stick. Hit things with it. You'll be fine.", category = "Weapon",
 		icon = "rbxassetid://70829551214428",
-		damage = 37, wt = 70, rtDelay = 64, defense = 19,
+		-- PT17 data pass: damage 37 -> 40. DB row 34 pending.
+		damage = 40, wt = 70, rtDelay = 64, defense = 19,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
 		nativePassiveId = "Knockback", nativePassiveBp = 150, totalBp = 997,
@@ -120,17 +126,19 @@ WeaponData.Archetypes = {
 		numericId = 10, name = "Sword Breaker",
 		flavor = "Made to ruin someone's favorite sword. And their day.", category = "Weapon",
 		icon = "rbxassetid://133732650802518",
-		damage = 41, wt = 25, rtDelay = 53, defense = 44,
+		-- DESIGNER RULING 2026-11-21 (weapons_equipment 35/162): RT Delay 53 -> 65 + native Breaker.
+		damage = 41, wt = 25, rtDelay = 65, defense = 44,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
-		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 993,
+		nativePassiveId = "Breaker", nativePassiveBp = 0, totalBp = 993,
 	},
 	-- === 2H RANGED ===
 	["WPN-CROSSBOW"] = {
 		numericId = 11, name = "Crossbow",
 		flavor = "Point-and-click adventure through someone's chestplate.", category = "Weapon",
 		icon = "rbxassetid://96792962452777",
-		damage = 34, wt = 20, rtDelay = 64, defense = 0,
+		-- DESIGNER RULING 2026-11-21 (weapons_equipment 37): Dmg 34 -> 40, RT Delay 64 -> 80.
+		damage = 40, wt = 20, rtDelay = 80, defense = 0,
 		handClass = "2H", minRange = 2, maxRange = 4,
 		pattern = "Single", projectileType = "Direct",
 		nativePassiveId = "ArmorPierce", nativePassiveBp = 130, totalBp = 995,
@@ -157,7 +165,8 @@ WeaponData.Archetypes = {
 		numericId = 14, name = "Longbow",
 		flavor = "One more tile of range. One more tile of cowardice.", category = "Weapon",
 		icon = "rbxassetid://134703765635730",
-		damage = 50, wt = 130, rtDelay = 20, defense = -5,
+		-- DESIGNER RULING 2026-11-21 (weapons_equipment 40): WT 130 -> 70, RT Delay 20 -> 60.
+		damage = 50, wt = 70, rtDelay = 60, defense = -5,
 		handClass = "2H", minRange = 2, maxRange = 5,
 		pattern = "Single", projectileType = "Arc",
 		nativePassiveId = "Range+1", nativePassiveBp = 190, totalBp = 1000,
@@ -166,7 +175,8 @@ WeaponData.Archetypes = {
 		numericId = 15, name = "Bazooka",
 		flavor = "Historically inaccurate? Yes. Fun? Also yes.", category = "Weapon",
 		icon = "rbxassetid://111176740344691",
-		damage = 43, wt = 215, rtDelay = 20, defense = -5,
+		-- PT17 data pass: damage 43 -> 61. DB row 41 pending.
+		damage = 61, wt = 215, rtDelay = 20, defense = -5,
 		handClass = "2H", minRange = 3, maxRange = 5,
 		pattern = "ImpactSplash", projectileType = "Arc",
 		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 1002,
@@ -176,7 +186,9 @@ WeaponData.Archetypes = {
 		numericId = 16, name = "Pistol",
 		flavor = "Point. Click. Medieval tech support.", category = "Weapon",
 		icon = "rbxassetid://98884047400618",
-		damage = 20, wt = 70, rtDelay = 58, defense = 0,
+		-- PT17 data pass: damage 20 -> 40. DB row 43 pending.
+		-- DESIGNER RULING 2026-11-21 (weapons_equipment 43): WT 70 -> 45, RT Delay 58 -> 75.
+		damage = 40, wt = 45, rtDelay = 75, defense = 0,
 		handClass = "1H", minRange = 2, maxRange = 4,
 		pattern = "Single", projectileType = "Direct",
 		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 991,
@@ -185,7 +197,9 @@ WeaponData.Archetypes = {
 		numericId = 17, name = "Wand",
 		flavor = "It's a stick that hates you slightly less than a club.", category = "Weapon",
 		icon = "rbxassetid://102940690664734",
-		damage = 25, wt = 50, rtDelay = 45, defense = 0,
+		-- PT17 data pass: damage 25 -> 40. DB row 44 pending.
+		-- DESIGNER RULING 2026-11-21 (weapons_equipment 44): WT 50 -> 30, RT Delay 45 -> 60.
+		damage = 40, wt = 30, rtDelay = 60, defense = 0,
 		handClass = "1H", minRange = 2, maxRange = 3,
 		pattern = "Single", projectileType = "Channeled",
 		nativePassiveId = "ArcaneFlow", nativePassiveBp = 80, totalBp = 990,
@@ -222,7 +236,8 @@ WeaponData.Archetypes = {
 		numericId = 21, name = "Torch",
 		flavor = "The solution to every problem is fire. Always fire.", category = "Weapon",
 		icon = "rbxassetid://111044135377333",
-		damage = 38, wt = 35, rtDelay = 54, defense = 9,
+		-- PT17: synced to DB weapons_equipment 116 (50 / 30 / 45 / 9). Was 38 / 35 / 54 / 9. Already above the ~40 data-pass target.
+		damage = 50, wt = 30, rtDelay = 45, defense = 9,
 		handClass = "1H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
 		nativePassiveId = "Ignite", nativePassiveBp = 150, totalBp = 992,
@@ -259,7 +274,9 @@ WeaponData.Archetypes = {
 		numericId = 25, name = "Needle",
 		flavor = "Armor? What armor? I don't see any armor.", category = "Weapon",
 		icon = "rbxassetid://105565249671472",
-		damage = 29, wt = 64, rtDelay = 54, defense = -3,
+		-- PT17 data pass: damage 29 -> 40. DB row 120 pending.
+		-- DESIGNER RULING 2026-11-21 (weapons_equipment 120): WT 64 -> 40, RT Delay 54 -> 70.
+		damage = 40, wt = 40, rtDelay = 70, defense = -3,
 		handClass = "1H", minRange = 2, maxRange = 3,
 		pattern = "Single", projectileType = "Direct",
 		nativePassiveId = "TrueStrike", nativePassiveBp = 150, totalBp = 1008,
@@ -268,10 +285,13 @@ WeaponData.Archetypes = {
 		numericId = 26, name = "Boomerang",
 		flavor = "Comes back every time. Like regret.", category = "Weapon",
 		icon = "rbxassetid://75120906364509",
-		damage = 39, wt = 74, rtDelay = 42, defense = -3,
+		-- PT17 data pass: damage 39 -> 43. DB row 121 pending.
+		-- DESIGNER RULING 2026-11-21 (weapons_equipment 121/164): WT 74 -> 60 + second native Rebound (Tricky kept).
+		damage = 43, wt = 60, rtDelay = 42, defense = -3,
 		handClass = "1H", minRange = 2, maxRange = 3,
 		pattern = "Single", projectileType = "Arc",
 		nativePassiveId = "Tricky", nativePassiveBp = 130, totalBp = 1008,
+		nativeExtraPassiveIds = { "Rebound" },  -- native only, never rolled (WeaponPassiveService reads it)
 	},
 	["WPN-THROWINGKNIFE"] = {
 		numericId = 27, name = "Throwing Knife",
@@ -314,7 +334,8 @@ WeaponData.Archetypes = {
 		numericId = 31, name = "Flameberge",
 		flavor = "Wavy blade. Wavy damage. Wavy ethics.", category = "Weapon",
 		icon = "rbxassetid://78415023367148",
-		damage = 87, wt = 100, rtDelay = 59, defense = 5,
+		-- DESIGNER RULING 2026-11-21 (weapons_equipment 127): Dmg 87 -> 76 (paired with Bleed 3%).
+		damage = 76, wt = 100, rtDelay = 59, defense = 5,
 		handClass = "2H", minRange = 1, maxRange = 1,
 		pattern = "Single", projectileType = nil,
 		nativePassiveId = "Lacerate", nativePassiveBp = 140, totalBp = 990,
@@ -378,8 +399,9 @@ WeaponData.Archetypes = {
 		numericId = 38, name = "War Horn",
 		flavor = "You don't hit them with it. That's the scary part.", category = "Weapon",
 		icon = "rbxassetid://121825783110835",
-		damage = 5, wt = 68, rtDelay = 94, defense = 0,
-		handClass = "2H", minRange = 1, maxRange = 2,
+		-- PT17: synced to DB weapons_equipment 134 (38 / 68 / 55 / 0, range 1-3). Was 5 / 68 / 94 / 0, range 1-2.
+		damage = 38, wt = 68, rtDelay = 55, defense = 0,
+		handClass = "2H", minRange = 1, maxRange = 3,
 		pattern = "ImpactSplash", projectileType = "Channeled",
 		nativePassiveId = nil, nativePassiveBp = 0, totalBp = 1011,
 	},
@@ -506,11 +528,12 @@ end
 local NATIVE_PASSIVE_DESC = {
 	["ArcaneFlow"] = "Recover MP = 5 + floor(INT/20) on ready turn.",
 	["ArcaneReach"] = "Skills inheriting weapon range gain +1 Maximum Range.",
-	["ArmorPierce"] = "Reduce target Defense by 30% before damage.",
+	["ArmorPierce"] = "Reduce target Defense by 50% before damage.",
 	["Attunement"] = "+25% elemental damage dealt.",
 	["Backstab"] = "+50% damage when attacking from behind.",
 	["Brutal"] = "Weapon Damage x1.20 before STR scaling.",
 	["Bulwark"] = "+25% of base Weapon Defense added to Weapon Damage.",
+	["Breaker"] = "On hit, target deals 20% less damage on its next turn.",
 	["Bypass"] = "Ignores target Guard mitigation.",
 	["Charge"] = "+6% damage per tile moved this turn.",
 	["Deflect"] = "On Guard, reflect 20% of mitigated damage.",
@@ -518,29 +541,38 @@ local NATIVE_PASSIVE_DESC = {
 	["Evasion"] = "+15% final Evasiveness.",
 	["Executioner"] = "+30% damage vs targets below 25% HP.",
 	["Fortify"] = "On hit, gain +20% of Weapon Defense as flat Defense.",
-	["Freeze"] = "Applies Freeze on hit.",
+	["Freeze"] = "Applies Freeze on hit (1 turn, then 2 turns of weapon-Freeze immunity).",
 	["GuardBonus"] = "On Guard, +15% damage mitigation.",
 	["HighGround"] = "From higher ground, the height damage bonus is 35% bigger (can go past the usual +30% cap).",
 	["Ignite"] = "Applies Burn DoT on hit.",
-	["Knockback"] = "Push target floor(Force/2) tiles away on hit.",
+	["Knockback"] = "Push target at least 1 tile away on hit (more with STR; Stability resists).",
 	["Lacerate"] = "Applies Bleed on hit.",
+	["Lash"] = "On hit, target has -1 Movement on its next turn.",
 	["Lore"] = "+30% applied status and buff duration.",
 	["Lullaby"] = "Applies Sleep on hit (2 turns, damage wakes).",
-	["PiercingEdge"] = "Target Defense x0.80 on Basic Attacks and weapon skills.",
+	["PiercingEdge"] = "Target Defense x0.70 on Basic Attacks and weapon skills.",
 	["PrecisionStrike"] = "+15% Hit Quality on Basic Attacks.",
-	["Pull"] = "Drag target floor(Force/2) tiles toward attacker.",
+	["Pull"] = "Drag target at least 1 tile toward attacker on hit (more with STR; Stability resists).",
 	["QuickDraw"] = "Once per turn, after 2 Basic Attacks, pay 10% Max MP for 1 bonus Basic Attack at 0 AP.",
+	["Rake"] = "Basic Attacks hit twice at 55% damage each.",
 	["Range+1"] = "+1 Maximum Range (Minimum unchanged).",
 	["Reap"] = "Heal 5% of total Cleave damage dealt.",
+	["Rebound"] = "Basic Attacks also hit 1 enemy next to the target for 40% damage.",
 	["SkillPotency"] = "+8% Skill damage dealt.",
 	["Stagger"] = "Weapon RT Delay x1.25 on hit.",
 	["Tricky"] = "Ignore 40% of target Evasiveness.",
-	["TrueStrike"] = "Hit Quality cannot go below 100%.",
+	["TrueStrike"] = "Hit Quality cannot go below 105%.",
 	["Venomous"] = "Applies Venom on hit.",
 }
 
 function WeaponData.GetPassiveDesc(passiveId)
 	return NATIVE_PASSIVE_DESC[passiveId] or ""
+end
+
+-- Player label for a weapon pattern key (weapons_equipment 165: "Line 3"). Unlisted keys show as-is.
+local PATTERN_LABEL = { ["Line2"] = "Line 2", ["Line3"] = "Line 3", ["ImpactSplash"] = "Impact Splash" }
+function WeaponData.GetPatternLabel(pattern)
+	return PATTERN_LABEL[pattern] or pattern
 end
 
 -- Player-facing name overrides for native passives whose key is not a good name

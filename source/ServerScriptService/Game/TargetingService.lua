@@ -1869,6 +1869,40 @@ function TargetingService.GetLine2Targets(actor, primaryTarget, allUnits)
 	return results
 end
 
+-- LINE 3 (Spear, weapons_equipment 165; DESIGNER RULING 2026-11-21): the target plus the next 2 tiles
+-- directly behind it on the attack line. Same resolution as Line 2: every unit hit at 100%, each
+-- behind tile within +/-2 elevation of the primary target. Returns { {unit=, dmgMult=1.0}, ... }.
+function TargetingService.GetLine3Targets(actor, primaryTarget, allUnits)
+	local results = { { unit = primaryTarget, dmgMult = 1.0 } }
+	local rawDx = primaryTarget.tileX - actor.tileX
+	local rawDy = primaryTarget.tileY - actor.tileY
+	local dx = rawDx == 0 and 0 or (rawDx > 0 and 1 or -1)
+	local dy = rawDy == 0 and 0 or (rawDy > 0 and 1 or -1)
+	if dx == 0 and dy == 0 then return results end
+	local primaryElev = getEffectiveElevation(primaryTarget)
+	for step = 1, 2 do
+		local bx = primaryTarget.tileX + dx * step
+		local by = primaryTarget.tileY + dy * step
+		if math.abs(GameConstants.GetElevation(bx, by) - primaryElev) <= 2 then
+			for _, u in ipairs(allUnits) do
+				if u.isAlive and u.id ~= primaryTarget.id and u.id ~= actor.id
+					and u.tileX == bx and u.tileY == by then
+					table.insert(results, { unit = u, dmgMult = 1.0 })
+				end
+			end
+		end
+	end
+	return results
+end
+
+-- Weapon line pattern lookup (Line2 / Line3) for the callers that switch on the weapon pattern.
+-- Returns the hit list, or nil when the pattern is not a line.
+function TargetingService.GetWeaponLineTargets(pattern, actor, primaryTarget, allUnits)
+	if pattern == "Line2" then return TargetingService.GetLine2Targets(actor, primaryTarget, allUnits) end
+	if pattern == "Line3" then return TargetingService.GetLine3Targets(actor, primaryTarget, allUnits) end
+	return nil
+end
+
 --------------------------------------------------
 -- GET INTERACT CANDIDATES (Slice 4 — Interact Command framework)
 --
@@ -2273,16 +2307,19 @@ function TargetingService.GetSplashTilesBeside(actor, pattern, px, py, primaryUn
 				table.insert(out, t)
 			end
 		end
-	elseif pattern == "Line2" or pattern == "line" then
+	elseif pattern == "Line2" or pattern == "line" or pattern == "Line3" then
 		local rdx = px - actor.tileX
 		local rdy = py - actor.tileY
 		local dx = if rdx == 0 then 0 elseif rdx > 0 then 1 else -1
 		local dy = if rdy == 0 then 0 elseif rdy > 0 then 1 else -1
 		if dx ~= 0 or dy ~= 0 then
 			local e = if primaryUnit then getEffectiveElevation(primaryUnit) else GameConstants.GetElevation(px, py)
-			local bx, by = px + dx, py + dy
-			if math.abs(GameConstants.GetElevation(bx, by) - e) <= 2 then
-				table.insert(out, { x = bx, y = by })
+			-- Line 3 (Spear, 2026-11-21): the 2 tiles behind; Line 2 / augment "line": 1 tile.
+			for step = 1, (if pattern == "Line3" then 2 else 1) do
+				local bx, by = px + dx * step, py + dy * step
+				if math.abs(GameConstants.GetElevation(bx, by) - e) <= 2 then
+					table.insert(out, { x = bx, y = by })
+				end
 			end
 		end
 	end

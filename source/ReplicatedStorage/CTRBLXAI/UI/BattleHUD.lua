@@ -1588,8 +1588,22 @@ function BattleHUD._renderDamagePreview()
 		row("")  -- spacer
 		nameRow(p.targetName or "Target", "Enemy")
 		diffRow("HP", p.targetHpBefore, p.targetHpAfter, nil, true)
+		if (p.attackHitCount or 1) > 1 then
+			row(p.attackHitCount .. " hits", Theme.Colors.TextSecondary)  -- Rake (Claws)
+		end
 		if (p.targetRtDelay or 0) > 0 then
 			row("RT Delay: +" .. p.targetRtDelay)
+		end
+		-- On-hit statuses from the server prediction (Lash -> Lashed, Breaker -> Blunted, 2026-11-21).
+		for _, sid in ipairs(p.attackStatuses or {}) do
+			local sdef = GameConstants and GameConstants.STATUSES and GameConstants.STATUSES[sid]
+			local dur = (p.attackStatusTurns and p.attackStatusTurns[sid]) or (sdef and sdef.duration) or 0
+			row("+" .. sid .. (if dur > 0 then " (" .. dur .. (if dur == 1 then " turn)" else " turns)") else ""),
+				(sdef and sdef.kind == "Buff") and Theme.Colors.Success or Theme.Colors.TextPrimary)
+		end
+		-- Rebound (Boomerang): the 40% hit on the enemy next to the target.
+		if p.reboundName and (p.reboundDamage or 0) > 0 then
+			row("Rebound: " .. p.reboundName .. " -" .. tostring(p.reboundDamage), Theme.Colors.Danger)
 		end
 
 	-- SKILL

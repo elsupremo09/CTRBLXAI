@@ -34,6 +34,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Content     = ReplicatedStorage:WaitForChild("Content")
 local TerrainData = require(Content:WaitForChild("TerrainData"))
+local GameConstants = require(ReplicatedStorage:WaitForChild("CTRBLXAI"):WaitForChild("Shared"):WaitForChild("GameConstants"))
 
 local ElevationPass = {}
 
@@ -251,11 +252,10 @@ end
 --------------------------------------------------
 
 -- Base Jump = DB core_stats "1 + floor(DEX / 60)" at the base DEX band
--- (GameConstants derived stats / StatCalcService.GetJump). There is no shared
--- BASE_JUMP constant to read; the drop limit follows TargetingService
--- getDownwardJump (Jump + 2).
-local WALK_UP   = 1
-local WALK_DOWN = WALK_UP + 2
+-- (GameConstants.BASE_JUMP, DAT-001 2026-11-21). The drop limit follows
+-- TargetingService getDownwardJump (Jump + 2).
+local WALK_UP   = GameConstants.BASE_JUMP
+local WALK_DOWN = GameConstants.BASE_JUMP + 2
 
 local POCKET_BUDGET_RAMPS      = 20   -- ramp applications per map (accepted or undone)
 local POCKET_BUDGET_TILES      = 80   -- tiles regraded per map
@@ -726,6 +726,49 @@ local function cardinalReaches(tiles, w, h, sources, blocked, laneSet, isGoal)
 	return false
 end
 
+--- WARN-1 (Tester 2026-11-21): tiles of `cells` PD reaches only across the
+--- span, i.e. reachable unblocked but not with `blocked` (MapService
+--- poiAdvReachable "only reachable across this span" test). Set of coordKey.
+local function spanOnlySet(tiles, w, h, sources, blocked, cells)
+	-- Cost fix (Tester 2026-11-21): two full floods per gap (open + span blocked), then a set
+	-- lookup per cell, instead of two floods per cell. Same walk rule as cardinalReaches.
+	local function flood(blk)
+		local seen = {}
+		local q, head = {}, 1
+		for _, p0 in ipairs(sources) do
+			local k = coordKey(p0.x, p0.y)
+			if not seen[k] and not (blk and blk[k]) then seen[k] = true; table.insert(q, p0) end
+		end
+		while head <= #q do
+			local cur = q[head]; head = head + 1
+			pocketTick()
+			local tile = tiles[cur.y][cur.x]
+			for _, dir in ipairs(CARDINAL) do
+				local nx, ny = cur.x + dir.x, cur.y + dir.y
+				if isInBounds(nx, ny, w, h) then
+					local k = coordKey(nx, ny)
+					if not seen[k] and not (blk and blk[k]) then
+						local n = tiles[ny][nx]
+						local tDef = TerrainData.Types[n.terrain]
+						if tDef and tDef.passable ~= false and math.abs(tile.elevation - n.elevation) <= 1 then
+							seen[k] = true
+							table.insert(q, { x = nx, y = ny })
+						end
+					end
+				end
+			end
+		end
+		return seen
+	end
+	local open, shut = flood(nil), flood(blocked)
+	local out = {}
+	for _, c in ipairs(cells) do
+		local k = coordKey(c.x, c.y)
+		if open[k] and not shut[k] then out[k] = true end
+	end
+	return out
+end
+
 --- Spine pairs (LAN family, <= 1 rule of Phase 4) around the edited tiles that
 --- break the Jump-1 lane. Only key-snap can touch a spine tile (PD/ED).
 local function spineBreaks(ctx, edits)
@@ -793,6 +836,21 @@ local function applyGuarded(ctx, edits, an)
 		if cardinalReaches(tiles, w, h, { ch.bankIn }, ch.blocked, nil,
 			function(x, y) return x == bx and y == by end) then
 			return undo("chokepoint leak")
+		end
+	end
+	-- W3 (Tester 2026-11-21): row 62 Chokepoint POI/ADV Seal Guard (MapService
+	-- poiAdvReachable): a POI/ADV that PD reached by cardinal <=1 steps with the
+	-- span blocked must still be reached that way.
+	for _, ps in ipairs(ctx.poiAdvBefore) do
+		if not cardinalReaches(tiles, w, h, ctx.pdCoords, ps.blocked, nil,
+			function(x, y) return ps.region[coordKey(x, y)] == true end) then
+			return undo("POI/ADV seal reach")
+		end
+	end
+	-- WARN-1: no POI/ADV tile may become reachable only across a sealed span.
+	for _, sp in ipairs(ctx.poiAdvSpanBefore) do
+		for k in pairs(spanOnlySet(tiles, w, h, ctx.pdCoords, sp.blocked, sp.cells)) do
+			if not sp.spanOnly[k] then return undo("POI/ADV span-only") end
 		end
 	end
 	return true, nf, nil
@@ -978,12 +1036,52 @@ local function runPocketBreaker(mapState)
 			end
 		end
 	end
+	-- W3: POI/ADV seal baseline (row 62). Same test as MapService poiAdvReachable:
+	-- each sealed POI/ADV tile's same-marker cardinal region is reached from PD
+	-- (cardinal, <=1) with that gap's span blocked. Only passing entries are kept.
+	local poiAdvBefore = {}
+	local poiAdvSpanBefore = {}
+	for _, gap in ipairs(mapState.bridgeGaps or {}) do
+		if gap.sealedOnPoiAdv then
+			local blocked = {}
+			for _, s in ipairs(gap.spanTiles or {}) do blocked[coordKey(s.x, s.y)] = true end
+			local done, cells = {}, {}
+			for _, p in ipairs(gap.poiAdvSealTiles or {}) do
+				local k0 = coordKey(p.x, p.y)
+				if not done[k0] and isInBounds(p.x, p.y, w, h) then
+					local marker = tiles[p.y][p.x].marker
+					local region, q, head = { [k0] = true }, { { x = p.x, y = p.y } }, 1
+					done[k0] = true
+					table.insert(cells, { x = p.x, y = p.y })
+					while head <= #q do
+						local cur = q[head]; head = head + 1
+						for _, d in ipairs(CARDINAL) do
+							local nx, ny = cur.x + d.x, cur.y + d.y
+							local nk = coordKey(nx, ny)
+							if isInBounds(nx, ny, w, h) and not done[nk] and tiles[ny][nx].marker == marker then
+								done[nk] = true
+								region[nk] = true
+								table.insert(q, { x = nx, y = ny })
+								table.insert(cells, { x = nx, y = ny })
+							end
+						end
+					end
+					if cardinalReaches(tiles, w, h, pdCoords, blocked, nil,
+						function(x, y) return region[coordKey(x, y)] == true end) then
+						table.insert(poiAdvBefore, { blocked = blocked, region = region })
+					end
+				end
+			end
+			table.insert(poiAdvSpanBefore, { blocked = blocked, cells = cells,
+				spanOnly = spanOnlySet(tiles, w, h, pdCoords, blocked, cells) })
+		end
+	end
 
 	local ctx = {
 		g = g, tiles = tiles, floorE = cfg.floor or 1, peakE = cfg.peak or 20,
 		lockStatic = lockStatic, liquid = liquid, adv = adv, spikeNb = spikeNb,
 		used = {}, frozen = {}, jobSet = {},
-		pdCoords = pdCoords, v6Before = v6Before, lanesBefore = lanesBefore, chokesBefore = chokesBefore,
+		pdCoords = pdCoords, v6Before = v6Before, lanesBefore = lanesBefore, chokesBefore = chokesBefore, poiAdvBefore = poiAdvBefore, poiAdvSpanBefore = poiAdvSpanBefore,
 		ramps = 0, accepted = 0, undone = 0, tilesChanged = 0, keySnaps = 0,
 		keySnapRamps = 0, relaxed = 0, raiseFloors = 0,
 	}

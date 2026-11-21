@@ -68,10 +68,25 @@ local PAS_ID_TO_KEY: { [string]: string } = {
 local ON_HIT_STATUS: { [string]: string } = {
 	Venomous = "Venom",
 	Lacerate = "Bleed",
-	Freeze = "Frozen",
+	Freeze = "Frozen",   -- weapon Freeze: 1 turn + Thawed (CombatResolver routes it to StatusService.ApplyWeaponFreeze)
 	Lullaby = "Sleep",
 	Poisonous = "Poison",
+	-- DESIGNER RULING 2026-11-21 (weapons_equipment 161/162): Basic Attack on-hit debuffs, native only.
+	Lash = "Lashed",     -- Whip
+	Breaker = "Blunted", -- Sword Breaker
 }
+
+-- Native passive keys of one weapon archetype: nativePassiveId plus nativeExtraPassiveIds (Boomerang
+-- Tricky + Rebound, weapons_equipment 121/164). One reader so every collector sees both (DAT-001).
+local function nativeKeysOf(arch: any): { string }
+	local out: { string } = {}
+	if not arch then return out end
+	if arch.nativePassiveId then table.insert(out, arch.nativePassiveId) end
+	if type(arch.nativeExtraPassiveIds) == "table" then
+		for _, k in ipairs(arch.nativeExtraPassiveIds) do table.insert(out, k) end
+	end
+	return out
+end
 
 -- Collect the set of canonical weapon-passive keys active on a unit's main hand.
 function WeaponPassiveService.GetKeys(unit: any): { [string]: boolean }
@@ -84,8 +99,8 @@ function WeaponPassiveService.GetKeys(unit: any): { [string]: boolean }
 
 	-- (1) native archetype passive (bare canonical string)
 	local arch = WeaponData.GetByArchetypeId(mh.baseArchetypeId)
-	if arch and arch.nativePassiveId then
-		keys[arch.nativePassiveId] = true
+	for _, nk in ipairs(nativeKeysOf(arch)) do
+		keys[nk] = true
 	end
 
 	-- (2) rolled bonus passives on the main hand (PAS-xxx)
@@ -140,8 +155,8 @@ function WeaponPassiveService.GetCombatKeyCounts(unit: any): { [string]: number 
 		end
 		if item then
 			local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
-			if arch and arch.nativePassiveId and not WEAPON_STAT_KEYS[arch.nativePassiveId] then
-				counts[arch.nativePassiveId] = (counts[arch.nativePassiveId] or 0) + 1
+			for _, nk in ipairs(nativeKeysOf(arch)) do
+				if not WEAPON_STAT_KEYS[nk] then counts[nk] = (counts[nk] or 0) + 1 end
 			end
 			if type(item.bonusPassiveIds) == "table" then
 				for _, pid in ipairs(item.bonusPassiveIds) do
@@ -202,8 +217,8 @@ function WeaponPassiveService.GetCombatKeys(unit: any): { [string]: boolean }
 		if item then
 			-- native archetype passive (bare canonical string) -- weapons only carry one
 			local arch = WeaponData.GetByArchetypeId(item.baseArchetypeId)
-			if arch and arch.nativePassiveId and not WEAPON_STAT_KEYS[arch.nativePassiveId] then
-				keys[arch.nativePassiveId] = true
+			for _, nk in ipairs(nativeKeysOf(arch)) do
+				if not WEAPON_STAT_KEYS[nk] then keys[nk] = true end
 			end
 			-- rolled bonus passives (PAS-xxx)
 			if type(item.bonusPassiveIds) == "table" then
@@ -223,12 +238,12 @@ function WeaponPassiveService.HasCombat(unit: any, key: string): boolean
 end
 
 -- Ignite (PAS-037, Group 2): stored-Burn fraction override. DB: Ignite's stored Burn
--- = round(Fire Damage Dealt x 0.25), overriding the base Burn 0.20 for this source.
--- Returns 0.25 when the unit carries Ignite, else nil (caller falls back to base).
+-- = round(Fire Damage Dealt x 0.30) (DESIGNER RULING 2026-11-21, was 0.25), overriding the base
+-- Burn 0.20 for this source. Returns 0.30 when the unit carries Ignite, else nil (caller falls back).
 -- The conditional Fire re-type of an otherwise-Physical attack is applied by
 -- CombatResolver (basic attack AND skill) via Has(unit, "Ignite").
 function WeaponPassiveService.IgniteBurnFraction(unit: any): number?
-	return WeaponPassiveService.HasCombat(unit, "Ignite") and 0.25 or nil
+	return WeaponPassiveService.HasCombat(unit, "Ignite") and 0.30 or nil
 end
 
 -- WEAPON-STAT passives. Mutates unit.weaponDamage / unit.weaponRtDelay in place.
@@ -282,21 +297,24 @@ function WeaponPassiveService.ApplyWeaponStatMods(unit: any)
 end
 
 -- Target Defense multiplier from armor-penetration passives (basic attack).
--- Armor Pierce = x0.70 (PAS-004); Piercing Edge = x0.80 (PAS-051). Each is
+-- Armor Pierce = x0.50 (PAS-004); Piercing Edge = x0.70 (PAS-051) -- DESIGNER RULING 2026-11-21
+-- (weapons_equipment 102/108; was x0.70 / x0.80). Callers apply it through ScaleDefensePower. Each is
 -- "Strongest only"; if both are present, take the stronger penetration (lower
 -- multiplier). Returns 1 when neither is present.
 function WeaponPassiveService.DefenseMultiplier(unit: any): number
 	local keys = WeaponPassiveService.GetCombatKeys(unit)
 	local mult = 1
-	if keys.ArmorPierce then mult = math.min(mult, 0.70) end
-	if keys.PiercingEdge then mult = math.min(mult, 0.80) end
+	if keys.ArmorPierce then mult = math.min(mult, 0.50) end
+	if keys.PiercingEdge then mult = math.min(mult, 0.70) end
 	return mult
 end
+
+local TRUE_STRIKE_FLOOR = 1.05  -- weapons_equipment / PAS-042: "Hit Quality cannot go below 105%"
 
 -- Hit-quality adjustment for the BASIC ATTACK path. Applies, in order:
 --   Tricky         ignore 40% of the target's AGI-derived Evasiveness (PAS-044)
 --   PrecisionStrike +15% Hit Quality on Basic Attacks -> flat +0.15 (PAS-043, user ruling 2026-10-23)
---   TrueStrike     Hit Quality cannot drop below 1.0 (PAS-042)
+--   TrueStrike     Hit Quality cannot drop below TRUE_STRIKE_FLOOR = 1.05 (PAS-042, DESIGNER RULING 2026-11-21)
 -- defenderAgi is the defender's effective AGI (to recover the evasiveness that was
 -- already subtracted upstream). Returns the adjusted hit quality.
 function WeaponPassiveService.AdjustBasicHitQuality(unit: any, hitQuality: number, defenderAgi: number, totalEvasiveness: any): number
@@ -319,8 +337,8 @@ function WeaponPassiveService.AdjustBasicHitQuality(unit: any, hitQuality: numbe
 		-- ruling 2026-10-23), applied before the True Strike floor below.
 		hq = hq + 0.15
 	end
-	if keys.TrueStrike and hq < 1.0 then
-		hq = 1.0
+	if keys.TrueStrike and hq < TRUE_STRIKE_FLOOR then
+		hq = TRUE_STRIKE_FLOOR
 	end
 
 	return hq
@@ -340,8 +358,8 @@ function WeaponPassiveService.AdjustWeaponSkillHitQuality(unit: any, hitQuality:
 		end
 		hq = hq + 0.40 * math.max(0, evasiveness)
 	end
-	if keys.TrueStrike and hq < 1.0 then
-		hq = 1.0
+	if keys.TrueStrike and hq < TRUE_STRIKE_FLOOR then
+		hq = TRUE_STRIKE_FLOOR
 	end
 	return hq
 end
@@ -525,6 +543,27 @@ function WeaponPassiveService.OnTurnStart(unit: any)
 	unit._fortifyFlatDefense = 0  -- Fortify (Spear): on-hit flat Defense resets each turn (Option B)
 	unit._qdBaThisTurn = 0        -- Quick Draw: Basic Attack actions committed this turn
 	unit._qdUsedThisTurn = false  -- Quick Draw: once per turn
+	-- Lash / Breaker (2026-11-21): the unit's own turn is open. StatusService reads this so a Lashed /
+	-- Blunted landed DURING this turn (counter, reaction) still lasts through its NEXT turn; cleared by
+	-- StatusService.TickStatuses at the turn end.
+	unit._inOwnTurn = true
+end
+
+-- RAKE (Claws native, weapons_equipment 163; DESIGNER RULING 2026-11-21): a Basic Attack resolves
+-- RAKE_HITS hits at RAKE_HIT_MULT damage each. Returns (hits, damage multiplier) -- (1, 1) without
+-- Rake. Basic Attacks only; skills are not doubled. Read by the Attack commit and the basic-attack
+-- prediction (CombatResolver.PredictBasicAttack), so preview / AI / commit cannot drift. Pure READ.
+local RAKE_HITS, RAKE_HIT_MULT = 2, 0.55
+function WeaponPassiveService.GetRakeHits(unit: any): (number, number)
+	if WeaponPassiveService.GetCombatKeys(unit).Rake then return RAKE_HITS, RAKE_HIT_MULT end
+	return 1, 1
+end
+
+-- REBOUND (Boomerang native, weapons_equipment 164): after a Basic Attack hit, 1 adjacent enemy takes
+-- REBOUND_DAMAGE_MULT of normal damage. Returns the multiplier, or 0 without Rebound. Pure READ.
+local REBOUND_DAMAGE_MULT = 0.40
+function WeaponPassiveService.GetReboundDamageMult(unit: any): number
+	return WeaponPassiveService.GetCombatKeys(unit).Rebound and REBOUND_DAMAGE_MULT or 0
 end
 
 -- Knockback (weapon native, Hammer/Club): on a landed basic attack, push the primary target

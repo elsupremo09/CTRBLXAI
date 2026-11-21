@@ -719,11 +719,22 @@ function EquipmentService.RebuildUnitStats(unit)
 	if furn and tonumber(furn.attack) then unit.weaponDamage = math.max(0, (unit.weaponDamage or 0) + tonumber(furn.attack)) end
 
 	-- 4b. Off-hand defense contribution (an inactive off-hand weapon contributes nothing)
+	-- PT17 Option F (2026-11-21): an off-hand ITEM (category OffHand: Orb, Crystal, Tome, Skull, Quiver,
+	-- Parrying Dagger ...) also exposes its Damage as unit.offHandDamage, which CombatResolver.
+	-- EstimateSkillPower adds to Weapon Damage for DB "Weapon Scaling" skills. Owning-item stat
+	-- passives only (weapons_equipment 154). An off-hand WEAPON (dual wield) gives 0 here: its damage
+	-- already lands through its own Dual Strike hits, and skills keep inheriting the main hand.
+	unit.offHandDamage = 0
 	if offHand and offIsWeapon then
 		unit.offHandDefense = if unit.offWeapon then unit.offWeapon.defense else 0
 	elseif offHand then
 		local offProfile = EquipmentService.GetEffectiveWeaponProfile(offHand)
 		unit.offHandDefense = offProfile.defense
+		-- Only a WeaponData off-hand item has Damage (the profile's unknown-archetype fallback is 5).
+		if offArch and offArch.category == "OffHand" then
+			local offItemDamage = WeaponPassiveService.ApplyItemStatMods(offHand, offProfile.damage, offProfile.defense, offProfile.rtDelay)
+			unit.offHandDamage = math.max(0, offItemDamage or 0)
+		end
 	else
 		unit.offHandDefense = 0
 	end

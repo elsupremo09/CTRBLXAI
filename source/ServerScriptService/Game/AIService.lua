@@ -414,14 +414,43 @@ end
 -- Score a basic attack against a unit target.
 local function scoreAttack(unit: any, target: any, dials: any, allUnits: any)
 	local predicted = 0
+	local _pred: any = nil
 	if _CombatResolver then
-		local r = _CombatResolver.ResolveBasicAttack(unit, target, unit.weaponDamage or 10)
-		predicted = r.finalDamage or 0
+		-- Same prediction as the player preview (Rake 2 x 55%, Rebound 40%; 2026-11-21), nil-safe fallback.
+		if _CombatResolver.PredictBasicAttack then
+			_pred = _CombatResolver.PredictBasicAttack(unit, target, unit.weaponDamage or 10, allUnits)
+			predicted = _pred.damage or 0
+		else
+			local r = _CombatResolver.ResolveBasicAttack(unit, target, unit.weaponDamage or 10)
+			predicted = r.finalDamage or 0
+		end
 	end
 	local dmgPct = predicted / math.max(1, target.maxHp)
 	local score = dmgPct * W.DAMAGE_PCT * dials.damage
 	if predicted >= target.currentHp then
 		score = score + W.KILL_BONUS
+	end
+	-- Rebound (Boomerang): the 40% bounce on the adjacent enemy counts as damage too.
+	if _pred and _pred.rebound and _pred.rebound.unit and (_pred.rebound.damage or 0) > 0 then
+		local rbU = _pred.rebound.unit
+		score = score + (_pred.rebound.damage / math.max(1, rbU.maxHp or 1)) * W.DAMAGE_PCT * dials.damage
+		if _pred.rebound.damage >= (rbU.currentHp or math.huge) then score = score + W.KILL_BONUS * 0.5 end
+	end
+	-- Lash / Breaker (Whip / Sword Breaker, DESIGNER RULING 2026-11-21): a landed hit applies Lashed
+	-- (Movement -1) or Blunted (damage dealt x0.80) on the target's next turn -> control value, like any
+	-- applied debuff (W.CONTROL), only when the target does not already have it. Blunted is worth more
+	-- the harder the target hits back.
+	if _pred and predicted > 0 and predicted < (target.currentHp or 0) then
+		for _, sid in ipairs(_pred.statuses or {}) do
+			if sid == "Lashed" and not hasActiveStatus(target, "Lashed") then
+				score = score + W.CONTROL * 0.5 * dials.control
+			elseif sid == "Blunted" and not hasActiveStatus(target, "Blunted") then
+				local back = 0
+				local okB, rb = pcall(_CombatResolver.ResolveBasicAttack, target, unit, target.weaponDamage or 10)
+				if okB and rb then back = (rb.finalDamage or 0) / math.max(1, unit.maxHp or 1) end
+				score = score + W.CONTROL * 0.5 * dials.control + back * 0.20 * W.DAMAGE_PCT
+			end
+		end
 	end
 	-- Decoy (SKL-SUMMON-DECOY): enemies treat it as highest-priority target in range.
 	if target.summonType == "Decoy" then score = score + W.DECOY_PRIORITY end

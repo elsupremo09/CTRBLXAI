@@ -117,6 +117,16 @@ local function onStatusEnded(unit, statusId)
 	if statusId == "Sleep" and unit and unit.isAlive ~= false and unit.statusInstances then
 		StatusService.ApplyStatus(unit, "Sleep Immunity", unit.id)
 	end
+	-- Freeze weapon passive (weapons_equipment 156, DESIGNER RULING 2026-11-21): when a WEAPON-applied
+	-- Frozen ends (expiry, Fire, cleanse) the unit gains Thawed for 2 turns. Skill / item / terrain
+	-- Frozen never set _weaponFrozen, so they end without Thawed. Source "WeaponFreeze" (not a unit id)
+	-- so no applier doctrine / Lore changes its fixed 2 turns.
+	if statusId == "Frozen" and unit and unit._weaponFrozen then
+		unit._weaponFrozen = nil
+		if unit.isAlive ~= false and unit.statusInstances then
+			StatusService.ApplyStatus(unit, "Thawed", "WeaponFreeze")
+		end
+	end
 end
 
 -- For status removals done outside this module (augment cleanses).
@@ -526,7 +536,7 @@ local RESIST_AT_USE = { Confuse = true, ["Mana Burn"] = true }
 local BESPOKE_VALUE = { Slow = true, Wet = true, Frozen = true, Cursed = true, Crippled = true }
 local GENERIC_VALUE_FIELDS = { "statPctMod", "defenseMult", "attackMult", "physDamageMult",
 	"spellDamageMult", "damageTakenMult", "stabilityOffset", "moveOffset", "moveRtMult",
-	"rtMultiplier", "healingReceivedMult", "debuffResistPenalty", "hitQualityMod" }
+	"rtMultiplier", "healingReceivedMult", "debuffResistPenalty", "hitQualityMod", "directDamageDealtMult" }
 
 local function hasNumericValue(statusId, def)
 	if BESPOKE_VALUE[statusId] then
@@ -576,7 +586,9 @@ local function vscale(inst)
 	return inst.valueScale or 1
 end
 
-function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt, durationCtOverride, burnFractionOverride)
+-- durationTurnsOverride (optional, 2026-11-21): turn duration used instead of def.duration on a new
+-- application or refresh (weapon Freeze = 1 turn, StatusService.ApplyWeaponFreeze). nil = def.duration.
+function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt, durationCtOverride, burnFractionOverride, durationTurnsOverride)
 	local def = GameConstants.STATUSES[statusId]
 	if not def then
 		warn("[StatusService] Unknown status: " .. tostring(statusId))
@@ -678,7 +690,13 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 					inst.sourceUnitId = inst.sourceUnitId or sourceUnitId
 					return false, disruptsChannel
 				end
-				inst.remainingTurns = def.duration
+				inst.remainingTurns = durationTurnsOverride or def.duration
+				-- Lashed / Blunted (2026-11-21): refreshed during the holder's own turn -> still covers its next turn.
+				if def.untilEndOfNextTurn and unit._inOwnTurn and inst.remainingTurns then
+					inst.remainingTurns += 1
+				end
+				-- A skill / item / terrain Frozen refreshing a weapon Frozen takes it over (no Thawed after).
+				if statusId == "Frozen" and not durationTurnsOverride then unit._weaponFrozen = nil end
 				-- CT-based statuses (e.g. CounterStance: durationCt=1000, duration=nil)
 				-- must refresh their CT window too — resetting remainingTurns alone
 				-- left the original CT deadline running on recast.
@@ -788,10 +806,16 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 	-- New application.
 	local instance = {
 		id             = statusId,
-		remainingTurns = def.duration,
+		remainingTurns = durationTurnsOverride or def.duration,
 		sourceUnitId   = sourceUnitId or "unknown",
 		stacks         = 1,  -- default stack count for all statuses
 	}
+	-- Lashed / Blunted (2026-11-21, elements_statuses 131/132): "until the end of its next turn". Landed
+	-- during the holder's own turn (counter / reaction) -> +1 turn, so it is not spent at this turn's end.
+	if def.untilEndOfNextTurn and unit._inOwnTurn and instance.remainingTurns then
+		instance.remainingTurns += 1
+	end
+	if statusId == "Frozen" and not durationTurnsOverride then unit._weaponFrozen = nil end
 
 	-- CT-based duration: set remainingCt instead of remainingTurns
 	if def.durationCt then
@@ -911,9 +935,13 @@ function StatusService.ApplyStatus(unit, statusId, sourceUnitId, fireDamageDealt
 		end
 	end
 
+	-- BUG-097 (2026-11-21): CT-timed statuses (Pinned, Bleed, Venom...) have duration=nil and
+	-- were logged as "∞ turns" although they expire. Show the live remainingCt instead.
 	print(string.format(
-		"[StatusService] %s APPLIED to %s (%s turns)%s%s",
-		statusId, unit.name, tostring(def.duration or "∞"),
+		"[StatusService] %s APPLIED to %s (%s)%s%s",
+		statusId, unit.name,
+		if instance.remainingCt then (tostring(instance.remainingCt) .. " CT")
+			else (tostring(instance.remainingTurns or def.duration or "∞") .. " turns"),
 		instance.storedBurn and (" | stored:" .. instance.storedBurn) or "",
 		disruptsChannel and " [CHANNEL DISRUPTOR]" or ""
 	))
@@ -1190,6 +1218,7 @@ end
 function StatusService.TickStatuses(unit)
 	local removed = {}
 	local i = 1
+	unit._inOwnTurn = nil  -- own turn is closing (set by WeaponPassiveService.OnTurnStart; Lashed / Blunted)
 
 	while i <= #unit.statusInstances do
 		local inst = unit.statusInstances[i]
@@ -1221,6 +1250,27 @@ end
 --------------------------------------------------
 -- REMOVE STATUS
 --------------------------------------------------
+
+-- WEAPON FREEZE (Frost Rod native Freeze + PAS-053; weapons_equipment 156, DESIGNER RULING
+-- 2026-11-21): Frozen for 1 turn; when it ends the unit gains Thawed (2 turns, see onStatusEnded).
+-- While Thawed the weapon Freeze is skipped. A Frozen from a skill / item / terrain already on the
+-- unit is left alone (never shortened to 1 turn, never turned into a weapon Freeze).
+-- Returns applied, disruptsChannel, immuneReason (same shape as ApplyStatus).
+function StatusService.ApplyWeaponFreeze(unit, sourceUnitId)
+	if not (unit and unit.statusInstances) then return false, false, nil end
+	if StatusService.HasStatus(unit, "Thawed") then
+		print(string.format("[StatusService] %s weapon Freeze skipped (Thawed)", tostring(unit.name)))
+		return false, false, "Thawed"
+	end
+	if StatusService.HasStatus(unit, "Frozen") and not unit._weaponFrozen then
+		return false, false, nil
+	end
+	local applied, disrupts, immuneReason = StatusService.ApplyStatus(unit, "Frozen", sourceUnitId, nil, nil, nil, 1)
+	if StatusService.HasStatus(unit, "Frozen") then
+		unit._weaponFrozen = true
+	end
+	return applied, disrupts, immuneReason
+end
 
 function StatusService.RemoveStatus(unit, statusId)
 	for i, inst in ipairs(unit.statusInstances) do
@@ -1727,8 +1777,17 @@ function StatusService.GetDamageDealtMultiplier(unit, isSpell)
 	if (unit._commandantDmgCt or 0) > 0 then
 		mult = mult + (unit._commandantDmgBonus or 0.20)
 	end
+	-- Blunted (Breaker, elements_statuses 132, 2026-11-21): direct damage dealt x0.80, multiplicative.
+	-- Only Basic Attack / skill resolution read this function, so DoT, traps and collision are untouched.
+	local blunt = 1
+	for _, inst in ipairs(unit.statusInstances) do
+		local def = GameConstants.STATUSES[inst.id]
+		if def and def.directDamageDealtMult then
+			blunt = blunt * (1 - (1 - def.directDamageDealtMult) * vscale(inst))
+		end
+	end
 	-- Dungeon RL-19 Berserker's Oath (2026-11-15): x0.75 damage dealt, battle-only stamp (nil elsewhere).
-	return math.max(0, mult) * (tonumber(unit._dgDealtMult) or 1)
+	return math.max(0, mult) * blunt * (tonumber(unit._dgDealtMult) or 1)
 end
 
 -- Incoming-defense multiplier from status buffs (Slice 5): Rune Ward +10%
@@ -1830,6 +1889,11 @@ end
 -- as GetStatusSummary / ProcessStartOfTurn (the authoritative DOT math lives here). Returns
 -- 0 if the unit does not have the status or it has no current DOT. Pure (no side effects);
 -- the caller applies the damage. Added for Perks & Flaws status Specialist "trigger" (2026-10-23).
+-- Bleed bonus damage fraction of Max HP (elements_statuses 54; DESIGNER RULING 2026-11-21: 5% -> 3%,
+-- every source). Exported so CombatResolver's on-hit Bleed uses the same number (DAT-001).
+local BLEED_HP_FRACTION = 0.03
+StatusService.BLEED_HP_FRACTION = BLEED_HP_FRACTION
+
 function StatusService.GetCurrentDotDamage(unit, statusId)
 	local inst = StatusService.HasStatus(unit, statusId)
 	if not inst then return 0 end
@@ -1853,7 +1917,7 @@ function StatusService.GetCurrentDotDamage(unit, statusId)
 	elseif inst.id == "Bleed" then
 		-- Same as Bleed's own on-hit damage (CombatResolver ApplyOutcome): x Debuff Resistance x
 		-- Quick Clotting / Hemophiliac (2026-10-29).
-		return math.max(1, math.round((unit.maxHp or 1) * 0.05 * StatusService.GetDebuffResist(unit)
+		return math.max(1, math.round((unit.maxHp or 1) * BLEED_HP_FRACTION * StatusService.GetDebuffResist(unit)
 			* TraitEffectService.GetDotDamageReceivedModifier(unit, "Bleed")))
 	end
 	return 0
@@ -1877,7 +1941,7 @@ function StatusService.GetStatusSummary(unit)
 				local stacks = inst.stacks or 1
 				nextDamage = math.max(1, math.round(unit.maxHp * 0.03 * stacks))
 			elseif inst.id == "Bleed" then
-				nextDamage = math.max(1, math.round(unit.maxHp * 0.05))
+				nextDamage = math.max(1, math.round(unit.maxHp * BLEED_HP_FRACTION))
 			elseif inst.id == "Raptured" then
 				nextDamage = math.max(1, math.round(unit.maxHp * 0.02))
 			elseif inst.id == "Wounded" then

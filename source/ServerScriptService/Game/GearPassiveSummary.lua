@@ -161,6 +161,13 @@ function GearPassiveSummary.Build(unit: any): { any }
 				add(key, GearPassiveSummary.NativePassiveName(key), WeaponData.GetPassiveDesc(key),
 					reasonFor(key), bp and bp.stacking or nil)
 			end
+			-- second native passive (Boomerang Rebound, weapons_equipment 164; 2026-11-21)
+			if wArch and type(wArch.nativeExtraPassiveIds) == "table" then
+				for _, key in ipairs(wArch.nativeExtraPassiveIds) do
+					add(key, GearPassiveSummary.NativePassiveName(key), WeaponData.GetPassiveDesc(key),
+						reasonFor(key), nil)
+				end
+			end
 
 			-- armor / gloves / accessory archetype passive
 			if aArch and aArch.passiveName and aArch.passiveName ~= "" then

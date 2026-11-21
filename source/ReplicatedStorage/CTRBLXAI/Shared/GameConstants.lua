@@ -21,6 +21,11 @@ GameConstants.AP_PER_TURN_BOSS = 3
 
 GameConstants.REST_RT_MULTIPLIER = 0.75
 
+-- Base Jump (DB core_stats "1 + floor(DEX / 60)"): the constant term of the Jump
+-- formula. Read by StatCalcService.GetJump, the derived-stats block below and
+-- ElevationPass (Jump-1 walker). DAT-001: defined once here.
+GameConstants.BASE_JUMP = 1
+
 --------------------------------------------------
 -- TILE GEOMETRY (single source of truth, 2026-10-20)
 --------------------------------------------------
@@ -758,7 +763,8 @@ GameConstants.STATUSES = {
 
 	Bleed = {
 		id           = "Bleed",
-		description  = "Takes 5% Max HP bonus damage when hit by physical attacks.",
+		-- DESIGNER RULING 2026-11-21 (elements_statuses 54): bonus 5% -> 3% of Max HP, every source.
+		description  = "Takes 3% Max HP bonus damage when hit by physical attacks.",
 		kind         = "Debuff",
 		duration     = nil,
 		durationCt   = 2000,
@@ -1204,6 +1210,43 @@ GameConstants.STATUSES = {
 		-- DB weapons_equipment 153: "until end of target next ready turn" (was 2 turns). 2026-10-29.
 		duration     = 1,
 		reapply      = "refresh",
+		undispellable = true,
+	},
+
+	-- ===== WEAPON NATIVE PASSIVE STATUSES (DESIGNER RULING 2026-11-21) =====
+	-- duration 1 = until the end of the target's next turn (ticks at its turn end). untilEndOfNextTurn:
+	-- when applied DURING the target's own turn (a counter / reaction), StatusService adds 1 turn so it
+	-- still covers the target's NEXT turn.
+	-- Lash (Whip, weapons_equipment 161 / elements_statuses 131).
+	Lashed = {
+		id           = "Lashed",
+		description  = "Movement -1 until the end of its next turn.",
+		kind         = "Debuff",
+		duration     = 1,
+		reapply      = "refresh",   -- does not stack
+		moveOffset   = -1,          -- final Movement stays >= 1 (StatCalcService clamp)
+		untilEndOfNextTurn = true,
+	},
+	-- Breaker (Sword Breaker, weapons_equipment 162 / elements_statuses 132). Direct damage only: read
+	-- by StatusService.GetDamageDealtMultiplier, which only Basic Attack / skill resolution call (not
+	-- DoT ticks, traps or collision).
+	Blunted = {
+		id           = "Blunted",
+		description  = "Deals 20% less damage until the end of its next turn.",
+		kind         = "Debuff",
+		duration     = 1,
+		reapply      = "refresh",   -- does not stack
+		directDamageDealtMult = 0.80,
+		untilEndOfNextTurn = true,
+	},
+	-- Freeze weapon passive (Frost Rod native + PAS-053; weapons_equipment 156 / elements_statuses 133):
+	-- gained when a WEAPON-applied Frozen ends. Blocks weapon Freeze only (StatusService.ApplyWeaponFreeze).
+	Thawed = {
+		id           = "Thawed",
+		description  = "Can't be Frozen by weapons.",
+		kind         = "Buff",
+		duration     = 2,
+		reapply      = "none",      -- does not refresh while active
 		undispellable = true,
 	},
 
@@ -3384,9 +3427,19 @@ GameConstants.SKILLS = {
 		mpCost        = 5,
 		rtMult        = 1.2,
 		channelTime   = 0,
-		power         = 1.0,
+		-- DB skills SKL-NATURES-GRASP: "Power: N/A (debuff application) ... Does not damage."
+		-- power 0 makes it a pure-status skill (CombatResolver isPureStatusSkill), so Pinned still
+		-- lands unconditionally and no damage is dealt. Was 1.0 (hit for full Weapon Damage). PT17.
+		power         = 0,
 		inheritStr    = false,
 		appliesStatus = "Pinned",
+		-- Simulator decision 2026-11-21: Pinned lasts 1000 CT (~2 of a typical unit's turns).
+		statusDurationCt = 1000,
+		-- DB RT_Delay_Formula "round(Weapon RT Delay x 0.80)" (skillRawRtDelay riderDelayWeaponMult).
+		riderDelayWeaponMult = 0.80,
+		-- DB: "Difficult Terrain on target's tile and adjacent tiles ... (+1 movement cost)".
+		-- ENV-003 move-cost zone (TileEffectService.SetMoveCostZone); DB "2 turns" -> 1000 CT convention.
+		moveCostZone  = { add = 1, ct = 1000 },
 		isHealing     = false,
 		projectileType = "Direct",
 	},
@@ -3652,8 +3705,102 @@ function GameConstants.CalcAttackPower(weaponDmg, str)
 end
 
 function GameConstants.CalcDefensePower(def, vit)
-	if def <= 0 then return 0 end
+	def = tonumber(def) or 0
+	-- USER RULING 2026-11-21 10:23 PM (core_stats 30 "can go negative"): negative Defense is kept
+	-- as-is (VIT must not amplify a penalty); it raises damage taken in CalcDefenseMitigation.
+	if def <= 0 then return def end
 	return def * (1 + vit / 300)
+end
+
+-- Defense-modifier scaling for DP' (Rune Ward, Determined / Coward, Armor Pierce, Piercing Edge,
+-- Dragoon ignore 50%, ...). USER RULING 2026-11-21: modifiers only scale POSITIVE Defense Power;
+-- a negative DP' is left unchanged (piercing must never reduce a vulnerability).
+function GameConstants.ScaleDefensePower(dp, mult)
+	dp = tonumber(dp) or 0
+	if dp <= 0 then return dp end
+	return dp * (tonumber(mult) or 1)
+end
+
+-- ============================================================
+-- DEFENSE MITIGATION (PT17 Option A, user-approved 2026-11-21; SIM_weapon_damage_PT17 sec. 5).
+-- ONE shared formula (DAT-001 / AP-021): every basic attack, skill, item hit, siege shot, hit
+-- preview (PreviewSkillHits) and AI damage estimate resolves through CombatResolver, which calls
+-- only GameConstants.ApplyDefense. Replaces Effective Defense = A x DP / (A + DP),
+-- Raw = A - Effective Defense (that squared the damage gap between weapons).
+--   RefSTR(L)     = 1 + floor(0.33 x (L - 1)) + floor((L - 1) / 2)
+--   RefAttack(L)  = 67 x WeaponScale(L) x (1 + RefSTR(L) / 200)   (67 = Sword L99 damage)
+--   Mitigation    = DP' / (DP' + RefAttack(L_def))                 (L_def = defender level)
+--   Raw Damage    = Attack Power or Skill Power x (1 - Mitigation)
+-- DP' = Defense Power after the Defense modifiers (Armor Pierce x0.70 / Piercing Edge x0.80
+-- per weapons_equipment 102/108 "Applied Defense = Target Defense x ...", Rune Ward, Determined /
+-- Coward, Dragoon "ignore 50% of Defense"). An attack equal to RefAttack takes exactly the old
+-- A^2 / (A + DP) damage, so the level-matched Sword reference is unchanged; damage is linear in A.
+-- Negative Defense (USER RULING 2026-11-21 10:23 PM, core_stats 30 "can go negative"): DP' < 0
+-- uses the mirrored curve Mitigation = DP' / (RefAttack - DP'), in (-1, 0): -RefAttack Defense =
+-- -50% mitigation = x1.5 damage; never reaches x2. DP' = 0 -> 0. Modifiers never touch DP' < 0.
+-- WeaponScale is WeaponData.GetScale (the one item-level scale). Deferred require, same pattern as
+-- GetSkillActivationTime: WeaponData requires nothing; keeps GameConstants free of top-level deps.
+-- ============================================================
+GameConstants.DEFENSE_REF_WEAPON_DAMAGE = 67 -- Sword L99 Weapon Damage (weapons_equipment 31)
+
+local _weaponDataForDefense = nil
+local function getItemLevelScale(level)
+	if _weaponDataForDefense == nil then
+		local ok, data = pcall(function()
+			return require(game:GetService("ReplicatedStorage"):WaitForChild("Content", 10):WaitForChild("WeaponData", 10))
+		end)
+		_weaponDataForDefense = (ok and type(data) == "table") and data or false
+	end
+	if _weaponDataForDefense and _weaponDataForDefense.GetScale then
+		return _weaponDataForDefense.GetScale(level)
+	end
+	-- Fallback only if WeaponData failed to load (same formula as WeaponData.GetScale).
+	warn("[GameConstants] WeaponData unavailable for the defense reference scale; using inline formula")
+	if level < 1 then level = 1 end
+	return 0.30 + 0.70 * ((level - 1) / 98) ^ 0.55
+end
+
+function GameConstants.CalcReferenceStr(level)
+	local l = math.max(1, tonumber(level) or 1)
+	-- +1e-9 guards float error in 0.33 x (L - 1) at whole numbers (e.g. L = 101).
+	return 1 + math.floor(0.33 * (l - 1) + 1e-9) + math.floor((l - 1) / 2)
+end
+
+function GameConstants.CalcReferenceAttack(level)
+	local l = math.max(1, tonumber(level) or 1)
+	return GameConstants.DEFENSE_REF_WEAPON_DAMAGE * getItemLevelScale(l)
+		* (1 + GameConstants.CalcReferenceStr(l) / 200)
+end
+
+-- Mitigation fraction (-1 .. <1) for an applied Defense Power against a defender of this level.
+-- dp > 0: dp / (dp + ref)  (0 .. <1, unchanged).
+-- dp < 0: dp / (ref - dp)  (mirrored curve, -1 .. <0; USER RULING 2026-11-21: negative Defense
+--         INCREASES damage taken; dp = -ref -> -0.5 = x1.5 damage; limit -1 = x2, never reached).
+function GameConstants.CalcDefenseMitigation(appliedDefensePower, defenderLevel)
+	local dp = tonumber(appliedDefensePower) or 0
+	if dp == 0 then return 0 end
+	local ref = GameConstants.CalcReferenceAttack(defenderLevel)
+	if ref <= 0 then return 0 end
+	if dp < 0 then
+		return dp / (ref - dp)
+	end
+	return dp / (dp + ref)
+end
+
+-- Raw Damage after Defense (damage sequence step 2, core_stats 34). power = Attack Power or
+-- Skill Power; appliedDefensePower = DP'; mitigationMult (optional) scales the mitigation itself
+-- (augment Armor Piercing "ignores 30% of the target's damage reduction" -> 0.70). Returns
+-- rawDamage, mitigation.
+function GameConstants.ApplyDefense(power, appliedDefensePower, defenderLevel, mitigationMult)
+	local p = tonumber(power) or 0
+	if p <= 0 then return 0, 0 end
+	local m = GameConstants.CalcDefenseMitigation(appliedDefensePower, defenderLevel)
+	-- Augment Armor Piercing scales only positive mitigation (USER RULING 2026-11-21: piercing
+	-- never reduces a negative-Defense vulnerability).
+	if mitigationMult ~= nil and m > 0 then
+		m = m * math.max(0, mitigationMult)
+	end
+	return p * (1 - m), m
 end
 
 -- Total equipment Defense feeding Defense Power (DB core_stats id 30: "Defense comes
@@ -3739,7 +3886,7 @@ function GameConstants.ComputeDerivedStats(unit)
 
 		-- DEX derived
 		precision       = math.round(GameConstants.CalcPrecision(dex) * 1000) / 10, -- store as % (e.g. 5.7)
-		jump            = 1 + math.floor(dex / 60),
+		jump            = GameConstants.BASE_JUMP + math.floor(dex / 60),
 		channelReduction = math.round(dex / (300 + dex) * 1000) / 10, -- store as % reduction
 
 		-- LUK derived
@@ -3856,7 +4003,7 @@ GameConstants.STAT_META = {
 	rtDelayResist   = { label = "RT Delay Resist",  formula = "1 - VIT / (300 + VIT)", parent = "VIT", unit = "×", desc = "Scales incoming RT delay; a negative % means enemies slow you that much LESS. VIT improves it." },
 	stability       = { label = "Stability",        formula = "floor(VIT / 60)", parent = "VIT", desc = "Resists being pushed. Tiles you are pushed = attacker Force − your Stability. VIT raises it." },
 	precision       = { label = "Precision",        formula = "DEX / (DEX + 200)", parent = "DEX", unit = "%", desc = "Raises your Hit Quality — how hard your hits land (Hit Quality = 1 + your Precision − target Evasiveness). DEX raises it." },
-	jump            = { label = "Jump",             formula = "1 + floor(DEX / 60)", parent = "DEX", desc = "How many elevation levels you can step up or down while moving. DEX raises it." },
+	jump            = { label = "Jump",             formula = tostring(GameConstants.BASE_JUMP) .. " + floor(DEX / 60)", parent = "DEX", desc = "How many elevation levels you can step up or down while moving. DEX raises it." },
 	channelReduction = { label = "Channel Speed",   formula = "DEX / (300 + DEX) reduction", parent = "DEX", unit = "%", desc = "Cuts skill channel time so casts finish faster. DEX raises it." },
 	discoveryRadius = { label = "Discovery Radius", formula = "1 + floor(LUK / 60)", parent = "LUK", desc = "How many tiles around this unit it can spot hidden traps, objects and enemies. LUK raises it." },
 	unitFortune     = { label = "Unit Fortune",     formula = "LUK / (LUK + 200)", parent = "LUK", unit = "%", desc = "Your fortune factor (reward and tie-break luck). LUK raises it." },

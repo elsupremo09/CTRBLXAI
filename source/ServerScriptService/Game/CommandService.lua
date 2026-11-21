@@ -1248,6 +1248,16 @@ local function applySkillPostHit(state: any, actor: any, target: any, skillDef: 
 			target.remainingRt = target.remainingRt + actualDelay
 		end
 	end
+	-- Skill-made Difficult Terrain (Nature's Grasp, DB SKL-NATURES-GRASP): +add move cost on the
+	-- target's tile and its 4 adjacent tiles for ct CT. Reuses the ENV-003 move-cost zone.
+	if skillDef.moveCostZone and _tileEffectService and _tileEffectService.SetMoveCostZone and target.tileX then
+		local z = skillDef.moveCostZone
+		for _, d in ipairs({ {0,0}, {1,0}, {-1,0}, {0,1}, {0,-1} }) do
+			_tileEffectService.SetMoveCostZone(target.tileX + d[1], target.tileY + d[2], z.ct, z.add)
+		end
+		print(string.format("[CommandService] DIFFICULT TERRAIN | %s around (%d,%d): +%d move cost for %d CT",
+			skillDef.name or skillDef.id, target.tileX, target.tileY, z.add, z.ct))
+	end
 	if skillDef.knockbackOnHit and (dealtDamage or 0) > 0 and target.isAlive and actor.isAlive then
 		local force = (actor.derivedStats and actor.derivedStats.force or 1) + skillDef.knockbackOnHit
 		applyKnockback(state, actor, target, force, "SKILL")
@@ -1623,7 +1633,7 @@ local function skillAffectedTiles(caster: any, skillDef: any, centerX: any, cent
 	if fromWeapon then
 		p = caster.weaponPattern
 	end
-	local weaponShape = fromWeapon and (p == "ImpactSplash" or p == "Line2" or p == "Adjacent")
+	local weaponShape = fromWeapon and (p == "ImpactSplash" or p == "Line2" or p == "Line3" or p == "Adjacent")
 	if type(p) == "string" and p ~= "Single" and not weaponShape and not isUnitAnchoredPattern({ aoePattern = p }) then
 		local ok, tiles = pcall(TargetingService.GetAOETargetTiles, p, caster, centerX, centerY, _mapWidth, _mapHeight)
 		if ok and type(tiles) == "table" and #tiles > 0 then
@@ -1647,8 +1657,8 @@ end
 local function weaponPatternTargets(actor: any, target: any, units: any, pattern: any): any
 	if pattern == "ImpactSplash" then
 		return TargetingService.GetImpactSplashTargets(actor, target, units)
-	elseif pattern == "Line2" then
-		return TargetingService.GetLine2Targets(actor, target, units)
+	elseif pattern == "Line2" or pattern == "Line3" then
+		return TargetingService.GetWeaponLineTargets(pattern, actor, target, units)
 	elseif pattern == "Cleave" or pattern == "Adjacent" then
 		local out = {}
 		for _, u in ipairs(TargetingService.GetCleaveTargets(actor, target, units)) do
@@ -1990,6 +2000,15 @@ local function calcMoveRt(actor: any, tilesMoving: any)
 	return math.round(perTile * tilesMoving * agiFactor * frozenMult * wetMult * traitMoveMult * armorMoveMult)
 end
 
+-- Destination terrain crossCost RT for a grounded mover (0 when the terrain has none).
+-- DAT-001 (2026-11-21): ONE formula shared by the Move commit and GetMoveRtPreview.
+local function calcCrossCostRt(actor: any, terrainData: any): number
+	if terrainData and terrainData.crossCost and terrainData.crossCost > 0 then
+		return math.round(terrainData.crossCost * StatusService.GetModifiedBaseRt(actor) * GameConstants.MOVE_RT_FACTOR)
+	end
+	return 0
+end
+
 -- BUG-PT-02 (2026-11-21): RT a Move to this candidate tile will add, for the turn prompt's move
 -- preview. Uses the SAME pieces the Move commit charges (calcMoveRt, Rescue/Kick extra rtCost,
 -- destination crossCost for a grounded unit) so the preview can never drift from the server
@@ -2006,10 +2025,7 @@ function CommandService.GetMoveRtPreview(actor: any, tile: any): number
 	end
 	-- Destination crossCost (grounded units only; Flight bypasses terrain cross effects).
 	if not StatusService.HasStatus(actor, "Flight") and tile.tileX and tile.tileY then
-		local terrainData = GameConstants.GetTerrainData(tile.tileX, tile.tileY)
-		if terrainData and terrainData.crossCost and terrainData.crossCost > 0 then
-			total += math.round(terrainData.crossCost * StatusService.GetModifiedBaseRt(actor) * GameConstants.MOVE_RT_FACTOR)
-		end
+		total += calcCrossCostRt(actor, GameConstants.GetTerrainData(tile.tileX, tile.tileY))
 	end
 	return total
 end
@@ -2279,8 +2295,8 @@ function CommandService.TriggerCounterIfEligible(defender: any, attacker: any, s
 		for _, entry in ipairs(splash) do
 			resolveCounterHit(entry.unit, entry.dmgMult)
 		end
-	elseif weaponPattern == "Line2" then
-		local line = TargetingService.GetLine2Targets(defender, attacker, state.units)
+	elseif weaponPattern == "Line2" or weaponPattern == "Line3" then
+		local line = TargetingService.GetWeaponLineTargets(weaponPattern, defender, attacker, state.units)
 		for _, entry in ipairs(line) do
 			resolveCounterHit(entry.unit, entry.dmgMult or 1.0)
 		end
@@ -3277,7 +3293,7 @@ local function splashObjectsForSkill(state: any, actor: any, skillDef: any, targ
 	local primaryUnit = if target.isGroundTarget then nil else target
 	local tiles = {}
 	if type(p) == "string" and p ~= "Single" and string.sub(p, 1, 5) ~= "Chain" then
-		if p == "Cleave" or (fromWeapon and (p == "Adjacent" or p == "ImpactSplash" or p == "Line2")) then
+		if p == "Cleave" or (fromWeapon and (p == "Adjacent" or p == "ImpactSplash" or p == "Line2" or p == "Line3")) then
 			tiles = TargetingService.GetSplashTilesBeside(actor, p, target.tileX, target.tileY, primaryUnit)
 		else
 			tiles = TargetingService.GetAreaObjectTiles(p, actor, target.tileX, target.tileY, _mapWidth, _mapHeight)
@@ -5881,8 +5897,8 @@ function CommandService.ValidateAndCommit(
 				-- Apply crossCost as extra RT (terrains like Sand +1, Swamp +2)
 				-- Note: base moveCost is already handled by GetTerrainCost in pathfinding.
 				-- crossCost is for future terrains not yet on the map.
-				if terrainData.crossCost and terrainData.crossCost > 0 then
-					local extraRt = math.round(terrainData.crossCost * StatusService.GetModifiedBaseRt(actor) * GameConstants.MOVE_RT_FACTOR)
+				local extraRt = calcCrossCostRt(actor, terrainData)
+				if extraRt > 0 then
 					BattleCoordinator.AccrueRt(state, extraRt)
 					undoMoveRt = undoMoveRt + extraRt
 				end
@@ -6112,6 +6128,7 @@ function CommandService.ValidateAndCommit(
 		local weaponPattern = actor.weaponPattern or "Single"
 		local totalDmg = 0
 		local hitCount = 0
+		local _reboundDmg = 0  -- Rebound damage is excluded from Reap's heal base (W2 2026-11-21)
 		-- Reaction window (TRG-004): a Basic Attack of any pattern provokes from every unit it hits.
 		local _attackReactionHits = beginReactionWindow(actor)
 
@@ -6137,6 +6154,7 @@ function CommandService.ValidateAndCommit(
 		-- the attack. Applies to every multi-hit basic attack (dual wield, Dual Strike perk).
 		local _objSplash = {}  -- rule 250: each hand's weapon splash tiles, hit once after the whole attack
 		local _kbPush, _kbPull = 0, 0
+		local _rakeDelayHits = 1  -- Rake (Claws): each resolved hit delivers its own Weapon RT Delay (row 163)
 		local _kbIsGiant = false
 		if actor.raceId and not StatusService.IsRacePassiveSuppressed(actor) then  -- a Broken Giant loses it
 			local RaceData = require(game:GetService("ReplicatedStorage"):WaitForChild("Content"):WaitForChild("RaceData"))
@@ -6152,8 +6170,11 @@ function CommandService.ValidateAndCommit(
 			if _kbIsGiant then
 				_kbPush += (DisplacementService.CalcPushDistance(target, force, false, nil))
 			end
-			local half = math.floor(force / 2)
-			if half > 0 then
+			-- DESIGNER RULING 2026-11-21 (weapons_equipment 100, PAS-003/048, TRAIT-P-176): distance per source
+			-- = min(max(0, Force - Stability), max(1, floor(Force/2))) -> at least 1 tile at any STR, and
+			-- Stability still resists (CalcPushDistance = max(0, Force - Stability) after armor). Wind unchanged.
+			local half = math.max(1, math.floor(force / 2))
+			do
 				-- Knockback / Pull sources (native + rolled PAS-003 / PAS-048, DB "Independent;
 				-- displacement merges"): each source adds its own Stability-checked distance. 2026-10-28.
 				local _per = math.min((DisplacementService.CalcPushDistance(target, force, false, nil)), half)
@@ -6189,11 +6210,22 @@ function CommandService.ValidateAndCommit(
 			end
 		end
 		if not _skipHand then
+		local _handDmgBefore = totalDmg
+		-- RAKE (Claws native, weapons_equipment 163; DESIGNER RULING 2026-11-21): the Basic Attack resolves
+		-- 2 hits at x0.55, each with its own Hit Quality. On-hit statuses ride only the first hit that
+		-- deals damage (noRiders after it). Knockback accrues per hit (multi-hit rule). Same opts as
+		-- CombatResolver.PredictBasicAttack, so the preview matches.
+		local _rkHits, _rkMult = WeaponPassiveService.GetRakeHits(actor)
+		local _rkRidersDone = false
+		for _rk = 1, _rkHits do
+		if _rk > 1 and not target.isAlive then break end
+		local _baOpts = if _rkHits > 1 then { hitMult = _rkMult, noRiders = _rkRidersDone } else nil
+		local _rkDmgBefore = totalDmg
 		if weaponPattern == "ImpactSplash" then
 			local splashTargets = TargetingService.GetImpactSplashTargets(actor, target, state.units)
 			for _, entry in ipairs(splashTargets) do
 				if entry.unit.isAlive then
-					local outcome = CombatResolver.ResolveBasicAttack(actor, entry.unit, weaponDamage)
+					local outcome = CombatResolver.ResolveBasicAttack(actor, entry.unit, weaponDamage, _baOpts)
 					if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * entry.dmgMult)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * entry.dmgMult)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 					if entry.dmgMult < 1.0 then outcome.isAOE = true end
 					CombatResolver.ApplyOutcome(outcome, entry.unit, actor)
@@ -6201,11 +6233,12 @@ function CommandService.ValidateAndCommit(
 					hitCount = hitCount + 1
 				end
 			end
-		elseif weaponPattern == "Line2" then
-			local lineTargets = TargetingService.GetLine2Targets(actor, target, state.units)
+		elseif weaponPattern == "Line2" or weaponPattern == "Line3" then
+			-- Line 3 (Spear, weapons_equipment 165): target + 2 tiles behind, same resolution as Line 2.
+			local lineTargets = TargetingService.GetWeaponLineTargets(weaponPattern, actor, target, state.units)
 			for _, entry in ipairs(lineTargets) do
 				if entry.unit.isAlive then
-					local outcome = CombatResolver.ResolveBasicAttack(actor, entry.unit, weaponDamage)
+					local outcome = CombatResolver.ResolveBasicAttack(actor, entry.unit, weaponDamage, _baOpts)
 					CombatResolver.ApplyOutcome(outcome, entry.unit, actor)
 					totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 					hitCount = hitCount + 1
@@ -6215,7 +6248,7 @@ function CommandService.ValidateAndCommit(
 			local cleaveTargets = TargetingService.GetCleaveTargets(actor, target, state.units)
 			for _, u in ipairs(cleaveTargets) do
 				if u.isAlive then
-					local outcome = CombatResolver.ResolveBasicAttack(actor, u, weaponDamage)
+					local outcome = CombatResolver.ResolveBasicAttack(actor, u, weaponDamage, _baOpts)
 					if u.id ~= target.id then
 						if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * 0.5)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * 0.5)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 						outcome.isAOE = true
@@ -6230,7 +6263,7 @@ function CommandService.ValidateAndCommit(
 			local adjTargets = TargetingService.GetCleaveTargets(actor, target, state.units)
 			for _, u in ipairs(adjTargets) do
 				if u.isAlive then
-					local outcome = CombatResolver.ResolveBasicAttack(actor, u, weaponDamage)
+					local outcome = CombatResolver.ResolveBasicAttack(actor, u, weaponDamage, _baOpts)
 					if u.id ~= target.id then
 						if outcome.finalDamage then outcome.finalDamage = math.max(0, math.round(outcome.finalDamage * 0.5)) elseif outcome.finalHealing then outcome.finalHealing = math.max(0, math.round(outcome.finalHealing * 0.5)) end -- Dark vs Undead heal is reduced the same way as damage (user ruling 2026-11-06)
 						outcome.isAOE = true
@@ -6242,7 +6275,7 @@ function CommandService.ValidateAndCommit(
 			end
 		else
 			-- Single-target (default)
-			local outcome = CombatResolver.ResolveBasicAttack(actor, target, weaponDamage)
+			local outcome = CombatResolver.ResolveBasicAttack(actor, target, weaponDamage, _baOpts)
 			CombatResolver.ApplyOutcome(outcome, target, actor)
 			totalDmg = totalDmg + (outcome.finalDamage or 0)  -- nil on absorb/heal outcomes (sweep 2026-11-06)
 			hitCount = hitCount + 1
@@ -6254,6 +6287,35 @@ function CommandService.ValidateAndCommit(
 				tiles = TargetingService.GetSplashTilesBeside(actor, weaponPattern, target.tileX, target.tileY, target) })
 		end
 		_accrueKnockback()  -- this hit's own knockback (primary target), moved at the end
+		if _rkHits > 1 then
+			if totalDmg > _rkDmgBefore then _rkRidersDone = true end
+			_rakeDelayHits = math.max(_rakeDelayHits, _rk)
+			print(string.format("[CommandService] Rake hit %d/%d: %s -> %s (x%.2f)", _rk, _rkHits, actor.name, target.name, _rkMult))
+		end
+		end  -- Rake hits
+		-- REBOUND (Boomerang native, weapons_equipment 164; DESIGNER RULING 2026-11-21): after this hand's
+		-- hit lands, 1 enemy next to the target takes 40% damage. Damage only: no RT Delay (the delay
+		-- below is primary-only), no on-hit statuses / Drain, no further rebound. Same pick as the preview.
+		do
+			local _rbMult = WeaponPassiveService.GetReboundDamageMult(actor)
+			if _rbMult > 0 and totalDmg > _handDmgBefore
+				and not (CombatResolver.WasLastHitBlocked and CombatResolver.WasLastHitBlocked(target)) then
+				local _rb = CombatResolver.PickReboundTarget(actor, target, state.units)
+				if _rb then
+					local _ro = CombatResolver.ResolveBasicAttack(actor, _rb, weaponDamage, { hitMult = _rbMult, noRiders = true })
+					_ro.isAOE = true
+					_ro.weaponDrainFrac = 0
+					CombatResolver.ApplyOutcome(_ro, _rb, actor)
+					totalDmg = totalDmg + (_ro.finalDamage or 0)
+					_reboundDmg = _reboundDmg + (_ro.finalDamage or 0)
+					hitCount = hitCount + 1
+					BattleVisualBroadcaster.UnitStateChanged(_rb)
+					BattleVisualBroadcaster.Log("action", `{actor.name}'s Rebound hits {_rb.name} for {_ro.finalDamage or 0}.`, actor.id)
+					print(string.format("[CommandService] Rebound: %s -> %s (next to %s) %d dmg (x%.2f)",
+						actor.name, _rb.name, target.name, _ro.finalDamage or 0, _rbMult))
+				end
+			end
+		end
 		end  -- not _skipHand
 		if _swap then
 			actor._dwHand = nil
@@ -6276,13 +6338,14 @@ function CommandService.ValidateAndCommit(
 		-- dealt across all targets (DB "Heal 5% of total Cleave damage dealt"). Summed-then-once (a
 		-- cleave hitting 3 heals 5% of the combined total). Direct heal, basic-attack only. No heal
 		-- when totalDmg rounds the 5% to 0 (small hits). Gated on the Reap passive; 0 otherwise.
-		if (totalDmg or 0) > 0 and actor.isAlive then
+		local _reapBase = (totalDmg or 0) - _reboundDmg
+		if _reapBase > 0 and actor.isAlive then
 			local reapFrac = WeaponPassiveService.GetReapHealFraction(actor)
 			if reapFrac > 0 then
-				local reapHeal = math.round(totalDmg * reapFrac)
+				local reapHeal = math.round(_reapBase * reapFrac)
 				if reapHeal > 0 then
 					UnitSchema.ApplyHealing(actor, reapHeal)
-					print(string.format("[CommandService] Reap: %s heals %d (5%% of %d cleave damage)", actor.name, reapHeal, totalDmg))
+					print(string.format("[CommandService] Reap: %s heals %d (5%% of %d cleave damage)", actor.name, reapHeal, _reapBase))
 				end
 			end
 		end
@@ -6353,7 +6416,8 @@ function CommandService.ValidateAndCommit(
 		if rawDelay > 0 and target.isAlive and not _blockedHit then
 			local targetVit = target.effectiveStats and target.effectiveStats.VIT or 10
 			local actualDelay = GameConstants.CalcRtDelayResistance(math.round(rawDelay), targetVit, (target.gearDerived and target.gearDerived.rtDelayResist or 1))
-			target.remainingRt = target.remainingRt + math.max(0, actualDelay)
+			-- Rake (row 163): RT Delay on each hit -> one resisted delay per resolved hit (1 without Rake).
+			target.remainingRt = target.remainingRt + math.max(0, actualDelay) * _rakeDelayHits
 		end
 
 		-- KNOCKBACK / PULL (Giant race, Hammer/Club Knockback, Chains Pull; primary target only).

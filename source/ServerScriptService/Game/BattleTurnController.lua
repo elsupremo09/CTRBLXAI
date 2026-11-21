@@ -465,14 +465,23 @@ local function buildTurnPrompt(unit)
 	if attackBlocked then attackCandidates = {} end
 	local attackTargets = {}
 	for _, c in ipairs(attackCandidates) do
-		-- Pre-calculate predicted basic attack damage for aim phase
-		local atkResult = CombatResolver.ResolveBasicAttack(unit, c, unit.weaponDamage or 10)
+		-- Pre-calculate predicted basic attack damage for aim phase. Same prediction the AI and the
+		-- Attack commit use (2026-11-21): Rake total over its hits (+ RT Delay per hit), on-hit statuses
+		-- (Lashed / Blunted / Frozen ...) and the Rebound hit on the adjacent enemy (ARC-001, DAT-001).
+		local pred = CombatResolver.PredictBasicAttack(unit, c, unit.weaponDamage or 10, state.units)
 		table.insert(attackTargets, {
 			id        = c.id,
 			name      = c.name,
 			tileX     = c.tileX,
 			tileY     = c.tileY,
-			predicted = atkResult.finalDamage or 0,
+			predicted = pred.damage or 0,
+			hitCount  = if (pred.hits or 1) > 1 then pred.hits else nil,
+			rtDelayHits = if (pred.rtDelayHits or 1) > 1 then pred.rtDelayHits else nil,
+			statuses  = if #pred.statuses > 0 then pred.statuses else nil,
+			statusTurns = if #pred.statuses > 0 then pred.statusTurns else nil,
+			reboundId = pred.rebound and pred.rebound.unit.id or nil,
+			reboundName = pred.rebound and pred.rebound.unit.name or nil,
+			reboundPredicted = pred.rebound and pred.rebound.damage or nil,
 		})
 	end
 

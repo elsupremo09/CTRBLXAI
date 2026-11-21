@@ -80,7 +80,7 @@ end
 
 function StatCalcService.GetJump(unit: any, mode: string): number
 	local d = derivedOf(unit)
-	local total = (d.jump or (1 + math.floor(statOf(unit, "DEX") / 60)))
+	local total = (d.jump or (GameConstants.BASE_JUMP + math.floor(statOf(unit, "DEX") / 60)))
 		+ RacePassiveService.GetJumpModifier(unit)
 		+ ArmorPassiveService.GetJumpBonus(unit)
 		+ TraitEffectService.GetJumpModifier(unit)
