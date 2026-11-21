@@ -349,7 +349,7 @@ function ApothecaryScreen.Open()
 		return
 	end
 	if not screen then
-		screen = GuildScreen.Create({ name = "ApothecaryScreen", title = "APOTHECARY", parent = c.parent })
+		screen = GuildScreen.Create({ name = "ApothecaryScreen", title = "APOTHECARY", parent = c.parent , crest = Theme.GuildIcons.Apothecary, autoCurrencies = true }) -- 2026-11-20 user: nav button icon + currency icons
 		screen.SetButtonRows(1)
 	end
 	currentTab = "Buy"

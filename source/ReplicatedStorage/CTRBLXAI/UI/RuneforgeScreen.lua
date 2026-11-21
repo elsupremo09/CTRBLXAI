@@ -1721,7 +1721,7 @@ function RuneforgeScreen.Open()
 		return
 	end
 	if not screen then
-		screen = GuildScreen.Create({ name = "RuneforgeScreen", title = "RUNEFORGE", parent = c.parent })
+		screen = GuildScreen.Create({ name = "RuneforgeScreen", title = "RUNEFORGE", parent = c.parent , crest = Theme.GuildIcons.Runeforge, autoCurrencies = true }) -- 2026-11-20 user: nav button icon + currency icons
 		screen.SetButtonRows(BUTTON_ROWS)
 	end
 	currentTab = "Forge"

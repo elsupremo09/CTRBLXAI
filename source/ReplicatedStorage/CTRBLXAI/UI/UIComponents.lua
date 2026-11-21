@@ -105,19 +105,28 @@ function UIComponents.ApplyUnitFrame(slot, opts)
 	end
 	local sc = slot:FindFirstChildOfClass("UICorner")
 	if sc then sc:Destroy() end
-	local fp = Theme.ItemTileFramePad()
+	-- 2026-11-20 8:16 PM user: every badge sits INSIDE the frame. A UIPadding insets all slot
+	-- content (badges, face, initials) past the frame line; the frame cancels it to keep the edge.
+	local fp = Theme.ItemTileFramePad() + 1
+	if not slot:FindFirstChild("UnitFramePad") then
+		local pad = Instance.new("UIPadding")
+		pad.Name = "UnitFramePad"
+		pad.PaddingTop = UDim.new(0, fp); pad.PaddingBottom = UDim.new(0, fp)
+		pad.PaddingLeft = UDim.new(0, fp); pad.PaddingRight = UDim.new(0, fp)
+		pad.Parent = slot
+	end
 	local img = slot:FindFirstChild("PortraitImage")
 	if img and img:IsA("ImageLabel") then
 		local ic = img:FindFirstChildOfClass("UICorner")
 		if ic then ic:Destroy() end
-		img.Size = UDim2.new(1, -fp * 2, 1, -fp * 2)
-		img.Position = UDim2.fromOffset(fp, fp)
+		img.Size = UDim2.fromScale(1, 1)
+		img.Position = UDim2.fromScale(0, 0)
 	end
 	local pf = Theme.PanelFrame
 	local fr = slot:FindFirstChild("UnitFrame") or Instance.new("ImageLabel")
 	fr.Name = "UnitFrame"
-	fr.Size = UDim2.fromScale(1, 1)
-	fr.Position = UDim2.fromScale(0, 0)
+	fr.Size = UDim2.new(1, fp * 2, 1, fp * 2) -- cancels UnitFramePad: frame covers the full edge
+	fr.Position = UDim2.fromOffset(-fp, -fp)
 	fr.BackgroundTransparency = 1
 	fr.BorderSizePixel = 0
 	fr.Image = pf.Asset
@@ -129,13 +138,15 @@ function UIComponents.ApplyUnitFrame(slot, opts)
 	fr.Interactable = false
 	fr.ZIndex = (slot.ZIndex or 1) + 2
 	fr.Parent = slot
+	-- Lift every descendant, not just children: under Global ZIndex a badge's own text
+	-- (ZIndex <= frame) drew under the frame and vanished (2026-11-20 Loadout Info Lv badge).
 	local function lift(c: Instance)
 		if c ~= fr and c ~= img and c:IsA("GuiObject") and c.ZIndex <= fr.ZIndex then
 			c.ZIndex = fr.ZIndex + 1
 		end
 	end
-	for _, c in slot:GetChildren() do lift(c) end
-	slot.ChildAdded:Connect(lift) -- dies with the slot
+	for _, c in slot:GetDescendants() do lift(c) end
+	slot.DescendantAdded:Connect(lift) -- dies with the slot
 	return fr
 end
 

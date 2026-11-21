@@ -1082,11 +1082,12 @@ function GuildMenuService.GetAwayUnitsForDeployment(opts: any?): { any }
 		if (if dungeon then DispatchService.IsUnitDispatched(_playerId, id) else isUnitAway(_playerId, id)) then
 			local why = awayReason(_playerId, id)
 			table.insert(out, { id = id, name = u.name, level = u.level, awayReason = why,
+				portraitAssetId = u.portraitAssetId, -- 2026-11-20: away cells show the normal portrait, greyed
 				reason = if why == "dungeon" then DUNGEON_AWAY_TEXT else "AWAY" })
 		end
 	end
 	for _, u in benchedThisBattle do
-		table.insert(out, { id = u.id, name = u.name, level = u.level, reason = "BENCH" })
+		table.insert(out, { id = u.id, name = u.name, level = u.level, portraitAssetId = u.portraitAssetId, reason = "BENCH" })
 	end
 	return out
 end

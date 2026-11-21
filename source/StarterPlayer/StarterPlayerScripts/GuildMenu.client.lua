@@ -863,7 +863,7 @@ local function updateBalanceLabel()
 		if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
 		if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
 		if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text); if DispatchScreen.SetCurrencies then DispatchScreen.SetCurrencies(realGold, realRes, nil) end end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text); if DungeonScreen.SetCurrencies then DungeonScreen.SetCurrencies(realGold, realRes) end end if GuildHallScreen then GuildHallScreen.SetGold(balanceLabel.Text) end
-		if QuestBoardScreen then QuestBoardScreen.SetGold(balanceLabel.Text); QuestBoardScreen.SetCurrencies(realGold, realRes) end if QuestAcceptedView then QuestAcceptedView.SetGold(balanceLabel.Text); QuestAcceptedView.SetCurrencies(realGold, realRes) end if QuestPartyView then QuestPartyView.SetGold(balanceLabel.Text); QuestPartyView.SetCurrencies(realGold, realRes) end
+		if QuestBoardScreen then QuestBoardScreen.SetGold(balanceLabel.Text); QuestBoardScreen.SetCurrencies(realGold, realRes) end if QuestAcceptedView then QuestAcceptedView.SetGold(balanceLabel.Text); QuestAcceptedView.SetCurrencies(realGold, realRes) end if QuestPartyView then QuestPartyView.SetGold(balanceLabel.Text); QuestPartyView.SetCurrencies(realGold, realRes) end if GuildScreen and GuildScreen.ApplyCurrencyAll then GuildScreen.ApplyCurrencyAll(realGold, realRes) end -- 2026-11-20 currency icons
 		return
 	end
 	local projGold = realGold + goldDelta
@@ -893,7 +893,7 @@ local function updateBalanceLabel()
 	if ApothecaryScreen then ApothecaryScreen.SetGold(balanceLabel.Text) end
 	if TrainingGroundsScreen then TrainingGroundsScreen.SetGold(balanceLabel.Text) end
 	if DispatchScreen then DispatchScreen.SetGold(balanceLabel.Text); if DispatchScreen.SetCurrencies then DispatchScreen.SetCurrencies(realGold, realRes, { gold = goldDelta, mercury = gain.mercury - mercurySpend, crystals = gain.crystals, sulfur = gain.sulfur }) end end if UnitsScreen then UnitsScreen.SetGold(balanceLabel.Text) end if DungeonScreen then DungeonScreen.SetGold(balanceLabel.Text); if DungeonScreen.SetCurrencies then DungeonScreen.SetCurrencies(realGold, realRes) end end if GuildHallScreen then GuildHallScreen.SetGold(balanceLabel.Text) end
-	if QuestBoardScreen then QuestBoardScreen.SetGold(balanceLabel.Text); QuestBoardScreen.SetCurrencies(realGold, realRes) end if QuestAcceptedView then QuestAcceptedView.SetGold(balanceLabel.Text); QuestAcceptedView.SetCurrencies(realGold, realRes) end if QuestPartyView then QuestPartyView.SetGold(balanceLabel.Text); QuestPartyView.SetCurrencies(realGold, realRes) end
+	if QuestBoardScreen then QuestBoardScreen.SetGold(balanceLabel.Text); QuestBoardScreen.SetCurrencies(realGold, realRes) end if QuestAcceptedView then QuestAcceptedView.SetGold(balanceLabel.Text); QuestAcceptedView.SetCurrencies(realGold, realRes) end if QuestPartyView then QuestPartyView.SetGold(balanceLabel.Text); QuestPartyView.SetCurrencies(realGold, realRes) end if GuildScreen and GuildScreen.ApplyCurrencyAll then GuildScreen.ApplyCurrencyAll(realGold, realRes) end -- 2026-11-20 currency icons
 end
 
 -- Renown Rank unlocks (Slice 8 step 1, 2026-11-16): nav pages whose building is not open yet.
@@ -2059,7 +2059,16 @@ end
 -- deferred embark (game_flow 37: no loading bar), Cancel -> AbandonQuest (confirm prompt in the view).
 local function questAcceptedState(): any
 	if not chosenQuest then return nil end
-	return { quest = chosenQuest, partyName = sortiePartyName, locked = sortieLocked, departPending = departPending }
+	-- Party member faces for the Party line (2026-11-20 user): read from the cached GetParties reply.
+	local members = nil
+	local res = sortiePartySlot and cachedCall("Party", GuildEvents.GetParties)
+	if res then
+		for _, p in ipairs(res.parties or {}) do
+			if p.slot == sortiePartySlot then members = p.memberInfo break end
+		end
+	end
+	return { quest = chosenQuest, partyName = sortiePartyName, members = members, locked = sortieLocked,
+		departPending = departPending }
 end
 
 -- Opens the view (or re-renders it). false = no module (the old sortie pages run instead).

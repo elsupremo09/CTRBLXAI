@@ -361,7 +361,33 @@ GuildScreen.ROW_GAP = ROW_GAP
 -- opts.fullMain (2026-11-13, Units screen): Main spans the full width above the Buttons row and
 -- the Side panel is hidden (screens with nothing to inspect).
 -- opts.crest (2026-11-17): gold-framed header like the guild base (crest, title, status, details, currencies).
-function GuildScreen.Create(opts: { name: string, title: string, parent: Instance, fullMain: boolean?, crest: string?, sideShare: number? }): any
+-- Shared currency icons (2026-11-20 9:42 PM user): screens created with autoCurrencies show gold, mercury,
+-- crystals and sulfur as icons + numbers, like the guild home. The guild menu pushes the totals once
+-- (GuildScreen.ApplyCurrencyAll); new screens pick up the last totals when created.
+local autoScreens: { any } = {}
+local lastGold: number? = nil
+local lastRes: any = nil
+local function applyAuto(f: any)
+	if lastGold == nil then return end
+	local wc = if CurrencyStrip and CurrencyStrip.WithCommas then CurrencyStrip.WithCommas
+		else function(n: any): string return tostring(n) end
+	local r = lastRes or {}
+	f.SetCurrencies({
+		{ "Gold", wc(lastGold) },
+		{ "Mercury", wc(r.mercury or 0) },
+		{ "Crystal", wc(r.crystals or 0) },
+		{ "Sulfur", wc(r.sulfur or 0) },
+	}, { Crystal = true, Sulfur = true }) -- same keys / rows as the guild base header
+end
+
+function GuildScreen.ApplyCurrencyAll(gold: number?, res: any)
+	if type(gold) ~= "number" then return end
+	lastGold = gold
+	lastRes = res
+	for _, f in autoScreens do applyAuto(f) end
+end
+
+function GuildScreen.Create(opts: { name: string, title: string, parent: Instance, fullMain: boolean?, crest: string?, sideShare: number?, autoCurrencies: boolean? }): any
 	local gui = Instance.new("ScreenGui")
 	gui.Name = opts.name
 	gui.ResetOnSpawn = false
@@ -450,6 +476,14 @@ function GuildScreen.Create(opts: { name: string, title: string, parent: Instanc
 
 	self.SetGold = f.SetGold
 	self.SetCurrencies = f.SetCurrencies
+	if opts.autoCurrencies then
+		table.insert(autoScreens, f)
+		applyAuto(f)
+		gui.Destroying:Connect(function()
+			local i = table.find(autoScreens, f)
+			if i then table.remove(autoScreens, i) end
+		end)
+	end
 	self.SetDetails = f.SetDetails
 	-- Header title text (dungeon: the chosen biome, user 2026-11-17 11:22 AM).
 	function self.SetTitle(text: string) f.Title.Text = text end

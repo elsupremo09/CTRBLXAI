@@ -85,33 +85,8 @@ local function buildUnitHeader()
 	end
 	if UIComponents and UIComponents.ApplyUnitFrame then UIComponents.ApplyUnitFrame(portrait, { darkBg = true }) end -- 2026-11-20 unit frame
 
-	local lvlBadge = Instance.new("TextLabel")
-	lvlBadge.Size = UDim2.new(0, 28, 0, 12)
-	lvlBadge.Position = UDim2.new(0, 0, 0, 0)
-	lvlBadge.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	lvlBadge.BackgroundTransparency = 0.3
-	lvlBadge.Font = Theme.Font.Mono
-	lvlBadge.TextSize = Theme.Text.Tiny()
-	lvlBadge.TextColor3 = Theme.Colors.TextPrimary
-	lvlBadge.Text = "Lv." .. unit.level
-	lvlBadge.BorderSizePixel = 0
-	lvlBadge.TextXAlignment = Enum.TextXAlignment.Left
-	-- ApplyPortrait adds the face image at (frame.ZIndex + 1); the badge must sit
-	-- ABOVE that or it hides behind the portrait. Frame is ZIndex 1 -> image 2 ->
-	-- badge 3. (2026-10-18, same fix pattern as the turn-order bar.)
-	lvlBadge.ZIndex = 3
-	lvlBadge.Parent = portrait
-
-	-- Unallocated stat points indicator (red dot, top-right of portrait)
-	if unit.unallocatedPoints and unit.unallocatedPoints > 0 then
-		local alertDot = Instance.new("Frame")
-		alertDot.Size = UDim2.new(0, 10, 0, 10)
-		alertDot.Position = UDim2.new(1, -12, 0, 2)
-		alertDot.BackgroundColor3 = Theme.Colors.Danger
-		alertDot.BorderSizePixel = 0
-		alertDot.Parent = portrait
-		Instance.new("UICorner", alertDot).CornerRadius = UDim.new(0.5, 0)
-	end
+	-- 2026-11-20 8:16 PM user: no badges on this small persistent portrait (Lv / stat-point dot removed).
+	-- The unit picker below keeps its Lv and doctrine badges.
 
 	-- Name + "Race - Doctrine" (user ruling 2026-10-18: doctrine right after race).
 	local textX = portraitX + 52

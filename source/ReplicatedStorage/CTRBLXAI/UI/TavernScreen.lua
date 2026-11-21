@@ -364,7 +364,7 @@ function TavernScreen.Open()
 		return
 	end
 	if not screen then
-		screen = GuildScreen.Create({ name = "TavernScreen", title = "TAVERN", parent = c.parent })
+		screen = GuildScreen.Create({ name = "TavernScreen", title = "TAVERN", parent = c.parent , crest = Theme.GuildIcons.Recruitment, autoCurrencies = true }) -- 2026-11-20 user: nav button icon + currency icons
 		screen.SetButtonRows(BUTTON_ROWS)
 	end
 	isOpen = true

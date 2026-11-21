@@ -68,6 +68,7 @@ local QuestAcceptedView = {}
 export type State = {
 	quest: any,               -- the accepted quest (chosenQuest / PreBattle payload)
 	partyName: string?,       -- the saved party that will deploy (nil -> "your party")
+	members: { any }?,        -- that party's memberInfo (portrait, hp/mp, away) for the face row
 	locked: boolean,          -- the map is still being built (sortieLocked)
 	departPending: boolean,   -- Embark was tapped while locked; departs on MapBuildComplete
 }
@@ -84,6 +85,8 @@ export type Context = {
 }
 
 local GAP = 8
+local uiComponentsModule = uiFolder:WaitForChild("UIComponents", WAIT)
+local UIComponents: any = if uiComponentsModule then (require :: any)(uiComponentsModule) else nil
 local NAME_H = 34
 local CYCLE_SECONDS = 2
 
@@ -234,7 +237,79 @@ local function makeInspector(): (ScrollingFrame, (text: string, size: number, co
 		local l = makeText(sc, text, size, color, bold)
 		l.LayoutOrder = order
 	end
-	return sc, add
+	return sc, add, function() order += 1; return order end
+end
+
+-- Party face row (2026-11-20 9:32 PM user): small framed portraits under "Party:", each with a thin
+-- HP and MP bar so the player sees a hurt or unavailable unit before Embark. Away units are greyed.
+local FACE = 32
+local function partyFaces(sc: Instance, members: { any }, order: number)
+	local row = Instance.new("Frame")
+	row.Name = "PartyFaces"
+	row.BackgroundTransparency = 1
+	row.BorderSizePixel = 0
+	row.Size = UDim2.new(1, 0, 0, 0)
+	row.AutomaticSize = Enum.AutomaticSize.Y
+	row.LayoutOrder = order
+	local gl = Instance.new("UIGridLayout")
+	gl.CellSize = UDim2.fromOffset(FACE, FACE + 9)
+	gl.CellPadding = UDim2.fromOffset(4, 4)
+	gl.SortOrder = Enum.SortOrder.LayoutOrder
+	gl.Parent = row
+	for i, mi in members do
+		local cell = Instance.new("Frame")
+		cell.Name = "Member_" .. tostring(mi.id)
+		cell.BackgroundTransparency = 1
+		cell.LayoutOrder = i
+		local face = Instance.new("Frame")
+		face.Name = "Face"
+		face.Size = UDim2.fromOffset(FACE, FACE)
+		face.BackgroundColor3 = Theme.Colors.Player
+		face.BorderSizePixel = 0
+		local ini = Instance.new("TextLabel")
+		ini.Size = UDim2.fromScale(1, 1)
+		ini.BackgroundTransparency = 1
+		ini.Font = Theme.Font.PrimaryBold
+		ini.TextSize = 12
+		ini.TextColor3 = Theme.Colors.TextPrimary
+		ini.Text = string.sub(tostring(mi.name or "?"), 1, 2)
+		ini.Parent = face
+		if UIComponents then
+			UIComponents.ApplyPortrait(face, mi.portraitAssetId, ini)
+			UIComponents.ApplyUnitFrame(face, { darkBg = true })
+		end
+		face.Parent = cell
+		local function bar(y: number, cur: number?, max: number?, color: Color3)
+			local bg = Instance.new("Frame")
+			bg.Size = UDim2.fromOffset(FACE, 3)
+			bg.Position = UDim2.fromOffset(0, y)
+			bg.BackgroundColor3 = Theme.Colors.EmptySlot
+			bg.BorderSizePixel = 0
+			local fill = Instance.new("Frame")
+			local m = tonumber(max) or 0
+			fill.Size = UDim2.fromScale(if m > 0 then math.clamp((tonumber(cur) or 0) / m, 0, 1) else 0, 1)
+			fill.BackgroundColor3 = color
+			fill.BorderSizePixel = 0
+			fill.Parent = bg
+			bg.Parent = cell
+		end
+		bar(FACE + 2, mi.hp, mi.maxHp, Theme.Colors.HP)
+		bar(FACE + 6, mi.mp, mi.maxMp, Theme.Colors.MP)
+		if mi.away then
+			local img = face:FindFirstChild("PortraitImage")
+			if img and img:IsA("ImageLabel") then img.ImageColor3 = Color3.fromRGB(120, 120, 120) end
+			local wash = Instance.new("Frame")
+			wash.Name = "Unavailable"
+			wash.Size = UDim2.fromScale(1, 1)
+			wash.BackgroundColor3 = Color3.new(0, 0, 0)
+			wash.BackgroundTransparency = 0.45
+			wash.BorderSizePixel = 0
+			wash.ZIndex = 20
+			wash.Parent = cell
+		end
+		cell.Parent = row
+	end
+	row.Parent = sc
 end
 
 local function makeRow(parent: Instance, order: number): Frame
@@ -308,7 +383,7 @@ local function renderScene(q: any)
 end
 
 local function renderInspector(q: any, st: State)
-	local sc, add = makeInspector()
+	local sc, add, nextOrder = makeInspector()
 	local small = Theme.Text.Small()
 	local bodyT = Theme.Text.Body()
 	add("Quest accepted", Theme.Text.Heading(), Theme.Colors.TextGold, true)
@@ -332,6 +407,7 @@ local function renderInspector(q: any, st: State)
 		add(pText, bodyT, rarityColor(pRarity), true)
 	end
 	add(`Party: {st.partyName or TXT_PARTY_DEFAULT}`, bodyT, Theme.Colors.TextPrimary, true)
+	if type(st.members) == "table" and #st.members > 0 then partyFaces(sc, st.members, nextOrder()) end
 	sc.Parent = screen.Side
 end
 

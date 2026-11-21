@@ -398,7 +398,7 @@ function CrucibleScreen.Open()
 		return
 	end
 	if not screen then
-		screen = GuildScreen.Create({ name = "CrucibleScreen", title = "CRUCIBLE", parent = c.parent })
+		screen = GuildScreen.Create({ name = "CrucibleScreen", title = "CRUCIBLE", parent = c.parent , crest = Theme.GuildIcons.Crucible, autoCurrencies = true }) -- 2026-11-20 user: nav button icon + currency icons
 		screen.SetButtonRows(1)
 	end
 	resetPicks()

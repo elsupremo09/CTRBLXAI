@@ -455,7 +455,7 @@ function BlacksmithScreen.Open()
 		return
 	end
 	if not screen then
-		screen = GuildScreen.Create({ name = "BlacksmithScreen", title = "BLACKSMITH", parent = c.parent })
+		screen = GuildScreen.Create({ name = "BlacksmithScreen", title = "BLACKSMITH", parent = c.parent , crest = Theme.GuildIcons.Blacksmith, autoCurrencies = true }) -- 2026-11-20 user: nav button icon + currency icons
 		screen.SetButtonRows(BUTTON_ROWS)
 	end
 	currentTab = "Upgrade"

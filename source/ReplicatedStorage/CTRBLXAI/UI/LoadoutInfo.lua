@@ -20,6 +20,8 @@ local GameConstants = require(ReplicatedStorage:WaitForChild("CTRBLXAI", 10)
 local UIComponents = require(CTRBLXAI_UI:WaitForChild("UIComponents", 10))
 local PortraitData = require(ReplicatedStorage:WaitForChild("Content", 10)
 	:WaitForChild("PortraitData", 10))
+local DoctrineData = require(ReplicatedStorage:WaitForChild("Content", 10)
+	:WaitForChild("DoctrineData", 10))
 local TipController: any = nil -- New-player tips (2026-11-19): guarded, a missing module never breaks this screen
 do
 	local okTip, tipMod = pcall(function() return (require :: any)(CTRBLXAI_UI:WaitForChild("TipController", 10)) end)
@@ -681,6 +683,23 @@ buildInfoContent = function()
 	lvLbl.Font = Theme.Font.PrimaryBold; lvLbl.TextSize = Theme.Text.Badge()
 	lvLbl.TextColor3 = Theme.Colors.TextPrimary; lvLbl.ZIndex = 3
 	lvLbl.Text = "Lv" .. (statsData.level or 1); lvLbl.Parent = lvBadge
+	-- Doctrine badge, bottom-right (2026-11-20 user): same style as the unit picker badge, sized up.
+	local docDef = statsData.doctrineId and DoctrineData[statsData.doctrineId]
+	local docIcon = docDef and docDef.icon
+	if type(docIcon) == "string" and docIcon ~= "" then
+		local db = Instance.new("ImageLabel")
+		db.Name = "DoctrineBadge"
+		db.Size = UDim2.fromOffset(28, 28)
+		db.AnchorPoint = Vector2.new(1, 1)
+		db.Position = UDim2.new(1, -4, 1, -4)
+		db.BackgroundColor3 = Color3.new(0, 0, 0)
+		db.BackgroundTransparency = 0.25
+		db.Image = docIcon
+		db.ScaleType = Enum.ScaleType.Fit
+		db.ZIndex = 6
+		Instance.new("UICorner", db).CornerRadius = UDim.new(0.5, 0)
+		db.Parent = portrait
+	end
 
 	local textX = 130
 	local function identityLabel(text, yPos, font, size, color)

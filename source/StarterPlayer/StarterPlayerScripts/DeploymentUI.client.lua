@@ -756,30 +756,68 @@ local function createRosterUI(playerUnits, awayUnits)
 	-- Greyed, non-interactive cells for units that cannot deploy this battle.
 	for j, awayInfo in ipairs(awayUnits) do
 		if #playerUnits + j > 8 then break end
+		-- 2026-11-20 9:23 PM user: unavailable units show their NORMAL portrait (face, frame, Lv,
+		-- name), greyed out and not tappable. The old "MA / AWAY" letters + reason text are gone.
 		local awayCell = Instance.new("Frame")
 		awayCell.Name = "Away_" .. tostring(awayInfo.id)
 		awayCell.Size = UDim2.new(0, cellSize, 0, cellSize)
 		awayCell.LayoutOrder = #playerUnits + j
-		awayCell.BackgroundColor3 = Theme.Colors.Defeated
-		awayCell.BackgroundTransparency = 0.3
+		awayCell.BackgroundColor3 = Theme.Colors.Player
+		awayCell.BackgroundTransparency = 0.15
 		awayCell.BorderSizePixel = 0
-		Instance.new("UICorner", awayCell).CornerRadius = Theme.CornerRadius.sm
-		local awayLabel = Instance.new("TextLabel")
-		awayLabel.Size = UDim2.fromScale(1, 1)
-		awayLabel.BackgroundTransparency = 1
-		awayLabel.Text = string.upper(string.sub(tostring(awayInfo.name), 1, 2)) .. "\n" .. tostring(awayInfo.reason or "AWAY")
-		awayLabel.TextColor3 = Theme.Colors.TextDisabled
-		awayLabel.TextSize = Theme.Text.Badge()
-		awayLabel.Font = Theme.Font.PrimaryBold
-		if awayInfo.awayReason == "dungeon" then -- "Exploring a dungeon" (2026-11-13 8:24 PM): wrap, 10 px floor
-			awayLabel.TextSize = math.max(10, Theme.Text.Badge())
-			awayLabel.TextWrapped = true
-			awayLabel.TextScaled = true
-			local fit = Instance.new("UITextSizeConstraint")
-			fit.MinTextSize = 10; fit.MaxTextSize = math.max(10, Theme.Text.Badge())
-			fit.Parent = awayLabel
+		local awayInit = Instance.new("TextLabel")
+		awayInit.Name = "Initials"
+		awayInit.Size = UDim2.new(1, 0, 1, -12)
+		awayInit.BackgroundTransparency = 1
+		awayInit.Text = string.upper(string.sub(tostring(awayInfo.name), 1, 2))
+		awayInit.TextColor3 = Theme.Colors.TextPrimary
+		awayInit.TextSize = math.max(Theme.Text.Body(), math.floor(cellSize * 0.32))
+		awayInit.Font = Theme.Font.PrimaryBold
+		awayInit.Parent = awayCell
+		if UIComponents and UIComponents.ApplyPortrait then
+			UIComponents.ApplyPortrait(awayCell, awayInfo.portraitAssetId, awayInit)
 		end
-		awayLabel.Parent = awayCell
+		if UIComponents and UIComponents.ApplyUnitFrame then UIComponents.ApplyUnitFrame(awayCell) end
+		local aLvl = awayInfo.level or 1
+		local aBadge = Instance.new("TextLabel")
+		aBadge.Name = "LvBadge"
+		aBadge.Size = UDim2.new(0, Theme.BadgeFitW("Lv." .. aLvl, Theme.Font.Mono, math.floor(cellSize * 0.5)), 0, math.max(11, Theme.Text.Badge() + 2))
+		aBadge.Position = UDim2.new(0, 1, 0, 1)
+		aBadge.BackgroundColor3 = Theme.Colors.BadgeBg
+		aBadge.BackgroundTransparency = 0.25
+		aBadge.BorderSizePixel = 0
+		aBadge.Text = "Lv." .. aLvl
+		aBadge.TextColor3 = Theme.Colors.TextPrimary
+		aBadge.TextSize = Theme.Text.Badge()
+		aBadge.Font = Theme.Font.Mono
+		aBadge.Parent = awayCell
+		local aStripH = math.max(18, Theme.Text.Badge() * 2 + 2)
+		local aName = Instance.new("TextLabel")
+		aName.Name = "NameStrip"
+		aName.Size = UDim2.new(1, 0, 0, aStripH)
+		aName.Position = UDim2.new(0, 0, 1, -aStripH)
+		aName.BackgroundColor3 = Theme.Colors.BadgeBg
+		aName.BackgroundTransparency = 0.4
+		aName.BorderSizePixel = 0
+		aName.Text = tostring(awayInfo.name)
+		aName.TextColor3 = Theme.Colors.TextPrimary
+		aName.TextSize = Theme.Text.Badge()
+		aName.Font = Theme.Font.PrimaryBold
+		aName.TextWrapped = true
+		aName.TextTruncate = Enum.TextTruncate.AtEnd
+		aName.Parent = awayCell
+		-- Grey out: desaturate the face and lay a dark wash over the whole cell (frame included).
+		local face = awayCell:FindFirstChild("PortraitImage")
+		if face and face:IsA("ImageLabel") then face.ImageColor3 = Color3.fromRGB(120, 120, 120) end
+		awayCell.BackgroundColor3 = Theme.Colors.Defeated
+		local wash = Instance.new("Frame")
+		wash.Name = "Unavailable"
+		wash.Size = UDim2.fromScale(1, 1)
+		wash.BackgroundColor3 = Color3.new(0, 0, 0)
+		wash.BackgroundTransparency = 0.45
+		wash.BorderSizePixel = 0
+		wash.ZIndex = 20
+		wash.Parent = awayCell
 		awayCell.Parent = strip
 	end
 

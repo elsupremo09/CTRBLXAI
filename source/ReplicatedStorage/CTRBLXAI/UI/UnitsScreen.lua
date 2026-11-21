@@ -314,7 +314,7 @@ function UnitsScreen.Open()
 		return
 	end
 	if not screen then
-		screen = GuildScreen.Create({ name = "UnitsScreen", title = "UNITS", parent = c.parent, fullMain = true })
+		screen = GuildScreen.Create({ name = "UnitsScreen", title = "UNITS", parent = c.parent, fullMain = true , crest = Theme.GuildIcons.Units, autoCurrencies = true }) -- 2026-11-20 user: nav button icon + currency icons
 		screen.SetButtonRows(1)
 	end
 	isOpen = true

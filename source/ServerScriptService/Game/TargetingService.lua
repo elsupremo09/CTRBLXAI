@@ -673,8 +673,19 @@ end
 -- game is turn-based, so there is no frame-rate pressure.
 --------------------------------------------------
 
-function TargetingService.ComputeDistanceField(goalX: any, goalY: any, mapWidth: any, mapHeight: any): any
+-- BUG-18 (2026-11-21): optional `mover`. When given, the flood also honors that unit's climb
+-- and drop limits (same Jump / downward-jump rule GetMoveCandidates uses; Flight ignores them).
+-- Without it, a cliff it cannot climb looked like a short route, so units in a low pocket
+-- saw no "closer" tile and shuffled in place. Callers that pass no mover keep the old field.
+-- The field floods FROM the goal, so each step goes neighbour -> current in walking terms:
+-- the mover walks from (nx,ny) onto (current), climbing elev(current) - elev(nx).
+function TargetingService.ComputeDistanceField(goalX: any, goalY: any, mapWidth: any, mapHeight: any, mover: any?): any
 	local field = {}
+	local climbLimit, dropLimit = nil, nil
+	if mover and not StatusService.HasStatus(mover, "Flight") then
+		climbLimit = getJump(mover)
+		dropLimit = getDownwardJump(mover)
+	end
 
 	-- Goal tile itself must be inside the map; if the goal somehow sits on a blocked
 	-- tile we still seed from it (its neighbors are what matter for ranking).
@@ -706,6 +717,14 @@ function TargetingService.ComputeDistanceField(goalX: any, goalY: any, mapWidth:
 					local blocked = GameConstants.IsBlocked(nx, ny)
 						or GameConstants.IsImpassableTerrain(nx, ny)
 						or (GameConstants.IsChasmFloor and GameConstants.IsChasmFloor(nx, ny))
+					if not blocked and climbLimit then
+						local rise = GameConstants.GetElevation(current.x, current.y) - GameConstants.GetElevation(nx, ny)
+						if rise > 0 then
+							blocked = rise > climbLimit
+						elseif rise < 0 then
+							blocked = -rise > dropLimit
+						end
+					end
 					if not blocked then
 						field[key] = curDist + 1
 						table.insert(queue, { x = nx, y = ny })

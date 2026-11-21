@@ -925,7 +925,7 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 				end
 			end
 			if here > lr and not canHitNow then
-				local field = _TargetingService.ComputeDistanceField(ox, oy, mapW, mapH)
+				local field = _TargetingService.ComputeDistanceField(ox, oy, mapW, mapH, unit)
 				local function od(tx: any, ty: any): number
 					local v = field[tostring(tx) .. "," .. tostring(ty)]
 					if v ~= nil then return v end
@@ -1029,7 +1029,7 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 		local qg = state and state.questGoal
 		if unit.isRunner and not _taunter and qg and qg.id == "Prevent" and qg.tile then
 			local gx, gy = qg.tile.x, qg.tile.y
-			local field = _TargetingService.ComputeDistanceField(gx, gy, mapW, mapH)
+			local field = _TargetingService.ComputeDistanceField(gx, gy, mapW, mapH, unit)
 			local function gd(tx: any, ty: any): number
 				local v = field[tostring(tx) .. "," .. tostring(ty)]
 				if v ~= nil then return v end
@@ -1088,7 +1088,7 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 		-- so the tile that actually leads around the barrier (toward the bridge /
 		-- chokepoint) wins. Falls back to straight-line only for tiles the field cannot
 		-- reach (no walkable route to the player at all), so behavior is never worse.
-		local distField = _TargetingService.ComputeDistanceField(advanceTo.tileX, advanceTo.tileY, mapW, mapH)
+		local distField = _TargetingService.ComputeDistanceField(advanceTo.tileX, advanceTo.tileY, mapW, mapH, unit) -- BUG-18: honor this unit's climb limits
 		local function trueDist(tx: any, ty: any): any
 			local v = distField[tostring(tx) .. "," .. tostring(ty)]
 			if v ~= nil then return v end
@@ -1378,7 +1378,7 @@ function AIService.DecideAction(unit: any, allUnits: any, mapW: any, mapH: any, 
 				-- rejoined formation. Now rank reachable tiles by TRUE walking distance to
 				-- the ally (flood-fill around barriers), falling back to straight-line only
 				-- for tiles with no walkable route to the ally.
-				local allyField = _TargetingService.ComputeDistanceField(nearestAllyTile.tileX, nearestAllyTile.tileY, mapW, mapH)
+				local allyField = _TargetingService.ComputeDistanceField(nearestAllyTile.tileX, nearestAllyTile.tileY, mapW, mapH, unit)
 				local function allyDist(tx: any, ty: any): any
 					local v = allyField[tostring(tx) .. "," .. tostring(ty)]
 					if v ~= nil then return v end

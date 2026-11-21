@@ -776,7 +776,7 @@ function GuildHallScreen.Open(startTab: string?)
 		return
 	end
 	if not screen then
-		screen = GuildScreen.Create({ name = "GuildHallScreen", title = "GUILD HALL", parent = c.parent }) -- GH-TITLE
+		screen = GuildScreen.Create({ name = "GuildHallScreen", title = "GUILD HALL", parent = c.parent , crest = Theme.GuildIcons.Townhall, autoCurrencies = true }) -- 2026-11-20 user: nav button icon + currency icons -- GH-TITLE
 		screen.SetButtonRows(1)
 	end
 	tab = if startTab == "Furnish" then "Furnish" else "Buildings"

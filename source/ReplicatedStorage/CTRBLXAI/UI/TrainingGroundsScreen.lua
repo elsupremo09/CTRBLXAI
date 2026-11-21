@@ -291,7 +291,7 @@ function TrainingGroundsScreen.Open()
 		return
 	end
 	if not screen then
-		screen = GuildScreen.Create({ name = "TrainingGroundsScreen", title = "TRAINING GROUNDS", parent = c.parent })
+		screen = GuildScreen.Create({ name = "TrainingGroundsScreen", title = "TRAINING GROUNDS", parent = c.parent , crest = Theme.GuildIcons.TrainingGrounds, autoCurrencies = true }) -- 2026-11-20 user: nav button icon + currency icons
 		screen.SetButtonRows(1)
 	end
 	currentTab = "Buy"
